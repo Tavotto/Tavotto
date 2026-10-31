@@ -7,6 +7,7 @@ import {
   Download,
   Ellipsis,
   HardDrive,
+  Images,
   Info,
   Lock,
   Redo2,
@@ -21,22 +22,26 @@ import {
   openRecentDocument,
   setDocumentName,
   toggleTimeline,
+  openTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
 import { bindingForProject } from '@/lib/projectFile'
 import { useProjectStore } from '@/store/projectStore'
+import { AppMenuButton } from './AppMenuButton'
 import { HomeButton, ProjectSwitcher } from './ProjectSwitcher'
 import { useWriteBackMenuEntry } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
-import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { bannerReport, useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { pendingCount } from '@/lib/readinessText'
 import {
   discardLocalCopy,
   dismissDocNotice,
@@ -44,8 +49,9 @@ import {
   saveNow,
   useDocumentStore,
 } from '@/store/documentStore'
+import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button, IconButton } from './ui/Button'
@@ -55,13 +61,20 @@ import { TextInput } from './ui/Input'
 import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
+import { BuildMismatchChip } from './BuildMismatchChip'
+import { TutorialChip } from './onboarding/TutorialChip'
+import { ContactButton } from './contact/ContactButton'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
+import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
+import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
 export function TopBar() {
+  // macOS 全屏：红绿灯收起，左侧让位的那段随之收回（进入方向过渡走 motion token，reduced-motion 下全局硬切；退出方向立即恢复）
+  const fullscreen = useWindowFullscreen()
   // 写回原始文件住在「⋯」第一项；它的窗口挂在菜单外面（菜单一合上，项就卸载）
   const writeBack = useWriteBackMenuEntry()
   return (
@@ -69,11 +82,27 @@ export function TopBar() {
     // 顶栏坐在灰色桌面上（2026-09-30 重设计）：底色就是桌面色 `bg`，不再由 App 的级联补丁覆盖（2026-10-07 审计 §4.1）。
     // 窄于 900：两段之间的空隙与两侧内边距收紧（12 → 6、12 → 8），段内按钮间距也收到 4——600 宽下仍要放下
     // 首页胶囊 / 面包屑 / 状态芯片 / 时间线 | 撤销重做 / 导出 / 更多（e2e/topbar-narrow.spec.ts）
+    // 窗框（`lib/desktop.ts` 的 `windowChrome`）：macOS 的红绿灯就坐在这一行最左——左内边距让给它们
+    // （行内样式压过窄屏那档 px），空白处是拖动区；Windows 的应用菜单是最左那颗「菜单」按钮，
+    // 右侧让给右上角的窗口按钮（`WindowControls`，与顶栏同高）
     <header
       data-topbar
-      className="flex h-11 shrink-0 items-center justify-between gap-3 bg-bg px-3 max-[899px]:gap-1.5 max-[899px]:px-2"
+      {...dragRegionProps()}
+      style={
+        windowChrome() === 'overlay' && !fullscreen
+          ? { paddingLeft: TRAFFIC_LIGHTS_INSET }
+          : windowChrome() === 'menu-button'
+            ? { paddingRight: WINDOW_CONTROLS_INSET }
+            : undefined
+      }
+      className={cn(
+        'flex h-11 shrink-0 items-center justify-between gap-3 bg-bg px-3 max-[899px]:gap-1.5 max-[899px]:px-2',
+        // 只有进入全屏方向有过渡；退出时红绿灯马上回来，占位必须立刻恢复（否则控件会压在红绿灯下）
+        fullscreen && 'transition-[padding-left] duration-base',
+      )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5 max-[899px]:gap-1">
+        <AppMenuButton />
         {/* 品牌并进「回到项目列表」（2026-10-07 设计审计 §10.1 P2）：左上角一颗胶囊 = 标 + 产品名，点它离开这里。
             窄于 900 只留标（名字给读屏，可达名本来就是「回到项目列表」） */}
         <HomeButton>
@@ -82,6 +111,8 @@ export function TopBar() {
         </HomeButton>
         {/* 项目（图库目录）→ 文档（画布）：从大到小，与对象层级一致 */}
         <ProjectSwitcher />
+        {/* 项目锚点（2026-10 设计审计第二轮）：项目的事实贴在项目名后面——此前是工作面板里的一条提示条 */}
+        <ProjectStatusPill />
         {/* 项目 / 文档是一条面包屑（2026-09-15 打磨批次 F）：一个斜杠，不是竖线加两个 chip */}
         <span aria-hidden className="type-meta shrink-0 select-none">
           /
@@ -95,7 +126,12 @@ export function TopBar() {
           与紧接着要做的事（导出）都远。缩放在画布标签行、画布工具在画布底部的浮动工具条（2026-09-30 A1）；
           导出是顶栏唯一填色主动作 */}
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 max-[899px]:gap-1">
+        <TutorialChip />
+        <BuildMismatchChip />
         <UndoRedo />
+        {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。
+            引擎说关着（`TAVOTTO_NO_CONTACT=1`）就不渲染 */}
+        <ContactButton placement="topbar" />
         <ExportButton />
         <MoreMenu writeBackItem={writeBack.item} />
         {writeBack.dialog}
@@ -207,26 +243,34 @@ function useHeldFor(on: boolean, ms: number): boolean {
 
 /**
  * 需要用户裁决 / 知道的那几件文档级的事，按急迫排第一个（顶栏状态芯片只说一件）：
- * 冲突、保存失败、本机有未恢复的编辑、上次的排版没打开、来自更新版本的排版。
- * 冲突 / 保存失败**另外**在工作面板顶上常驻一条（`DocumentBanner`，丢编辑的事不能只藏在一颗胶囊后面）；
- * 其余三件只在这里——它们不打断编辑，此前却各占一整条横幅把应用往下推（2026-10-07 设计审计 §10.1）。
+ * 冲突、保存失败、上次的排版没能恢复（`restore`，门关着、占位文档不能写）、本机有未恢复的编辑、
+ * 上次的排版没打开、来自更新版本的排版、保存元数据没更新（`restore_meta`，正文已存下）。
+ * 全都只在这里（2026-10 设计审计第二轮）：冲突 / 保存失败此前**另外**在工作面板顶上常驻一条，把画布往下推；
+ * 现在它们进入时说明块自动展开一次（`URGENT_ISSUES`）、读屏 assertive 播报，胶囊一直留到事情解决。
  */
-type DocIssue = 'conflict' | 'save_error' | 'recovery' | 'last_doc' | 'too_new'
+type DocIssue = 'conflict' | 'save_error' | 'restore' | 'recovery' | 'last_doc' | 'too_new' | 'restore_meta'
+
+/** 会丢编辑、要用户裁决的两件：进入时说明块自动展开一次，读屏按 assertive 播报 */
+const URGENT_ISSUES: ReadonlySet<DocIssue> = new Set(['conflict', 'save_error'])
 
 const ISSUE_TONE: Record<DocIssue, StatusTone> = {
   conflict: 'warn',
   save_error: 'danger',
+  restore: 'warn',
   recovery: 'info',
   last_doc: 'neutral',
   too_new: 'neutral',
+  restore_meta: 'neutral',
 }
 
 const ISSUE_ICON: Record<DocIssue, typeof Info> = {
   conflict: TriangleAlert,
   save_error: CircleAlert,
+  restore: TriangleAlert,
   recovery: RotateCcwClock,
   last_doc: Info,
   too_new: Lock,
+  restore_meta: Info,
 }
 
 /** 锚点色胶囊（24 高）：底 / 字 / 环都从状态锚点派生，与 `ui/StatusPill` 同一份配色，但它是一颗按钮 */
@@ -242,14 +286,19 @@ function useDocIssue(): DocIssue | null {
   const saveState = useDocumentStore((s) => s.saveState)
   const notice = useDocumentStore((s) => s.docNotice?.kind ?? null)
   const lastDoc = useProjectStore((s) => !!s.lastDocumentIssue)
+  // 恢复问题与保存进度是两根轴：`saved → clean` 清不掉它，只有恢复成功 / 用户选了出口才清
+  const restore = useDocumentStore((s) => s.restoreIssue !== null)
+  const metaIssue = useDocumentStore((s) => s.restoreMetaIssue?.docId === s.documentId)
   if (saveState === 'conflict') return 'conflict'
   if (saveState === 'save_error') return 'save_error'
+  if (restore) return 'restore'
   if (notice === 'recovery') return 'recovery'
   // 版本过新排在「上次的排版没打开」之前：启动时那份上次的排版若来自更新的版本，两件会同时在
   // （切项目接回失败记 `lastDocumentIssue`，工作台挂载的 `restoreSession` 读同一份记 `schema_too_new`），
   // 而「打开上次文档」那条重试只会再失败一次——该说的是具体原因
   if (notice === 'schema_too_new') return 'too_new'
   if (lastDoc) return 'last_doc'
+  if (metaIssue) return 'restore_meta'
   return null
 }
 
@@ -257,8 +306,8 @@ function useDocIssue(): DocIssue | null {
  * 顶栏的文档状态芯片（2026-10-07 设计审计 §10.1）。两根轴（ADR 0096）：`saveState` 说本机自动保存走到哪一步；
  * 绑定的项目文件说「项目里那份是不是最新」。
  *
- *   - **落定**：只有一枚图标——✓ = 已保存到项目、硬盘 = 存在本机（项目里那份落后时，文档名旁另有一枚空心环）。
- *     那句话进读屏与悬停气泡，不占顶栏的字宽；
+ *   - **落定**：图标 + 一句短字（≥ 900 宽；更窄只留图标，字进读屏与气泡）——✓ 已保存到项目、硬盘 = 存在本机 /
+ *     未存进项目（项目里那份落后时，文档名旁另有一枚空心环）。整枚芯片是按钮，点击 = ⌘S；已存进项目且最新时空操作；
  *   - **进行中**：持续满 `SAVE_PENDING_REVEAL_MS` 才出字（快的一轮里一直是那枚落定图标），字的格宽按会轮到的
  *     那几句里最宽的那句占位（同格叠放、只有当前那句可见），换字不推邻居；
  *   - **出事**（冲突 / 保存失败 / 未恢复的编辑 / 上次的排版没打开 / 版本过新）：锚点色 24px 胶囊，点开是一块
@@ -275,9 +324,17 @@ export function SaveStateLabel() {
   const bound = useActiveProjectFile()
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
   const issue = useDocIssue()
+  const restoreKind = useDocumentStore((s) => s.restoreIssue?.kind ?? null)
   const localPending = saveState === 'dirty' || saveState === 'saving'
   const held = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
-  if (!hasContent && !bound && !issue) return null
+  // 空排版不显示标签，但播报区照样挂着（空的）：空排版改名 / 改版面也会自动保存，失败时要填进一个早已挂着的节点
+  // （Codex #947）。三个分支的根都是 span、播报区同一个 key
+  if (!hasContent && !bound && !issue)
+    return (
+      <span data-save-idle className="contents">
+        <span key="save-live" aria-live="assertive" data-save-live className="sr-only" />
+      </span>
+    )
   // 还从没落过盘（新排版的第一次改动）：没有「上一句落定的话」可以继续显示，
   // 不等 600ms 直接说进行中——否则会在第一轮自动保存完成前就声称「已存在本机」
   const neverPersisted = !bound && !lastPersisted && saveState !== 'saved'
@@ -287,11 +344,14 @@ export function SaveStateLabel() {
   // 落定时那句话（也是快的一轮里继续显示的那句）
   const settledText = bound
     ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
-    : saveState === 'saved'
-      ? t('topbar.saveLocal')
-      : lastPersisted
-        ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
-        : t('topbar.saveLocal')
+    : projectOpen
+      ? // 开着项目但这份排版只在本机（没有项目文件）：说「未存进项目」，点它走 ⌘S 的「存进项目」命名框
+        t('topbar.saveProjectPending')
+      : saveState === 'saved'
+        ? t('topbar.saveLocal')
+        : lastPersisted
+          ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
+          : t('topbar.saveLocal')
   const text =
     saveState === 'save_error'
       ? t('topbar.saveError')
@@ -309,9 +369,11 @@ export function SaveStateLabel() {
     : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
   const shownState = bad ? saveState : revealPending ? saveState : 'settled'
   // 读屏只在出事时说：标签本身不 aria-live（每秒一轮的保存不该每秒播一次）。
-  // 不带 role（`role=status` 全产品只留通知轨那一个）
+  // 不带 role（`role=status` 全产品只留通知轨那一个）。两个分支的根都是同一种 span、播报区带同一个 key：
+  // 从「已保存」进入冲突 / 保存失败时它是**早已挂着的那个节点**被填字——和字同一帧新挂上的
+  // live region 读屏多半不播（Codex #947）
   const live = (
-    <span aria-live="polite" data-save-live className="sr-only">
+    <span key="save-live" aria-live="assertive" data-save-live className="sr-only">
       {bad ? text : ''}
     </span>
   )
@@ -325,7 +387,11 @@ export function SaveStateLabel() {
         data-doc-issue={issue}
         className="flex min-w-0 shrink items-center"
       >
-        <IssuePill issue={issue} text={bad ? text : issueLabel(issue)} title={`${text} · ${title}`} />
+        <IssuePill
+          issue={issue}
+          text={bad ? text : issueLabel(issue, restoreKind)}
+          title={`${text} · ${title}`}
+        />
         {live}
       </span>
     )
@@ -334,56 +400,90 @@ export function SaveStateLabel() {
   // 落定那枚图标：项目里那份是最新的才打 ✓；只在本机（或项目里那份落后）是一枚硬盘
   const SettledIcon = bound && !bound.dirty ? Check : HardDrive
   // 占位：会在本机自动保存一轮里轮到的那几句（落定那句 + 两句进行中）。叠在同一格里，
-  // 格宽取最宽那句——只是给宽度，不可见、不给读屏。落定时整格只给读屏（芯片只剩图标）
+  // 格宽取最宽那句——只是给宽度，不可见、不给读屏。窄于 900 时整格只给读屏（芯片只剩图标）
   const localSettled = bound
     ? []
     : [t('topbar.saveLocal'), ...(lastPersisted ? [t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })] : [])]
   const reserve = [...new Set([settledText, ...localSettled, t('topbar.saveDirty'), t('topbar.saveSaving')])].filter(
     (r) => r !== text,
   )
+  // 已经存进项目且最新：点它没有事可做（不禁用——禁用钮会退出 Tab 顺序、气泡也更难出），点击空操作 + aria-disabled
+  const nothingToSave = !!bound && !bound.dirty && settled && !revealPending
+  const textShown = 'max-[899px]:sr-only min-[900px]:truncate'
   return (
+    // 根仍是 span（与出事分支同种元素：播报区 `live` 是早已挂着的同一个节点，Codex #947），里面一颗整枚芯片大的按钮：
+    // 点击 = ⌘S（`runManualSave`：本机那份先写、绑了项目文件就写回、开着项目没文件就弹「存进项目」命名框）。
+    // 窄于 900 只留图标，字进 sr-only 当可达名；悬停气泡说全（2026-10-22 用户裁决：落定时也常驻短字 + 可点）
     <span
       data-save-state
       data-save-destination={bound ? 'project' : 'local'}
       data-save-shown={shownState}
-      className="flex h-6 min-w-0 shrink items-center gap-1 px-1 text-xs text-ink-3"
-      // 落定时字只给读屏，悬停气泡要连状态一起说
+      className="flex h-6 min-w-0 shrink items-center"
       title={`${text} · ${title}`}
     >
-      {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
-          进行中画一颗墨点代替那句字 */}
-      <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
-        {revealPending ? (
-          <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
-        ) : (
-          <SettledIcon size={ICON_SIZE.sm} />
+      <button
+        type="button"
+        data-save-button
+        aria-disabled={nothingToSave || undefined}
+        onClick={() => {
+          if (!nothingToSave) void runManualSave()
+        }}
+        className={cn(
+          'flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs text-ink-3 outline-none focus-visible:focus-ring',
+          !nothingToSave && 'hover:bg-surface-hover hover:text-ink-2',
         )}
-      </span>
-      <span className={cn('grid min-w-0', !revealPending && 'sr-only')}>
-        <span
-          data-save-text
-          className={cn('col-start-1 row-start-1', revealPending && 'max-[899px]:sr-only min-[900px]:truncate')}
-        >
-          {text}
+      >
+        {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
+            进行中画一颗墨点代替那句字 */}
+        <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
+          {revealPending ? (
+            <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
+          ) : (
+            <SettledIcon size={ICON_SIZE.sm} />
+          )}
         </span>
-        {reserve.map((r) => (
-          <span
-            key={r}
-            aria-hidden
-            className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
-          >
-            {r}
+        <span className="grid min-w-0 text-left">
+          <span data-save-text className={cn('col-start-1 row-start-1', textShown)}>
+            {text}
           </span>
-        ))}
-      </span>
+          {reserve.map((r) => (
+            <span
+              key={r}
+              aria-hidden
+              className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
+            >
+              {r}
+            </span>
+          ))}
+        </span>
+      </button>
       {live}
     </span>
   )
 }
 
 /** 出事那几件在胶囊上的短名（冲突 / 保存失败用保存状态那两句，见上） */
-function issueLabel(issue: DocIssue): string {
+function issueLabel(issue: DocIssue, restoreKind: string | null): string {
   switch (issue) {
+    case 'restore':
+      switch (restoreKind) {
+        case 'missing':
+          return msgText('restore.pill.missing')
+        case 'invalid':
+          return msgText('restore.pill.invalid')
+        case 'too_new':
+          return msgText('restore.pill.tooNew')
+        case 'choose':
+          return msgText('restore.pill.choose')
+        case 'prepare_failed':
+          return msgText('restore.pill.prepareFailed')
+        case 'index_degraded':
+          return msgText('restore.pill.indexDegraded')
+        default:
+          return msgText('restore.pill.unavailable')
+      }
+    case 'restore_meta':
+      return msgText('restore.meta.pill')
     case 'recovery':
       return msgText('docBanner.recoveryTitle')
     case 'last_doc':
@@ -403,12 +503,31 @@ const msgText = (key: string) => translate(key, { ns: 'workspace' })
 function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; title: string }) {
   const { t } = useTranslation('workspace')
   const [open, setOpen] = useState(false)
+  // 自动展开的那一次不搬焦点：用户可能正在画布上打字，说明块只是摆出来，Esc / 点外面就收
+  const [autoOpened, setAutoOpened] = useState(false)
+  const shownFor = useRef<DocIssue | null>(null)
+  useEffect(() => {
+    // 会丢编辑、要用户裁决的两件（冲突 / 保存失败）进入时自动展开一次（2026-10 设计审计第二轮）：
+    // 工作面板里那条常驻提示条已删，事情不能只藏在一颗胶囊后面
+    if (URGENT_ISSUES.has(issue) && shownFor.current !== issue) {
+      setAutoOpened(true)
+      setOpen(true)
+    }
+    shownFor.current = issue
+  }, [issue])
+  // 关掉的路有两条（Esc / 点外面走 onOpenChange，说明块里的出口走 close），都要清「自动展开」：
+  // 否则手动再点开时仍当成自动展开、不把焦点搬进说明块（Codex #947）
+  const changeOpen = (v: boolean) => {
+    setOpen(v)
+    if (!v) setAutoOpened(false)
+  }
   const tone = ISSUE_TONE[issue]
   const Icon = ISSUE_ICON[issue]
   return (
     <Popover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={changeOpen}
+      keepFocus={autoOpened}
       width={320}
       align="start"
       ariaLabel={text}
@@ -433,7 +552,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
       }
     >
       <div data-doc-status-popover={issue} className="flex flex-col gap-2 p-1">
-        <IssueBody issue={issue} close={() => setOpen(false)} />
+        <IssueBody issue={issue} close={() => changeOpen(false)} />
       </div>
     </Popover>
   )
@@ -444,6 +563,7 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   const notice = useDocumentStore((s) => s.docNotice)
   const saveIssue = useDocumentStore((s) => s.saveIssue)
   const lastDoc = useProjectStore((s) => s.lastDocumentIssue)
+  const restoreIssue = useDocumentStore((s) => s.restoreIssue)
   const done = (fn: () => unknown) => () => {
     close()
     void fn()
@@ -479,6 +599,8 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
       </>
     )
   }
+  if (issue === 'restore' && restoreIssue) return <RestoreIssueBody issue={restoreIssue} close={close} />
+  if (issue === 'restore_meta') return <RestoreMetaBody close={close} />
   if (issue === 'recovery' && notice?.kind === 'recovery') {
     const s = notice.summary
     return (
@@ -555,7 +677,7 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
  */
 function TimelineButton() {
   const { t } = useTranslation('workspace')
-  const open = useUiStore((s) => s.versionsOpen)
+  const open = useUiStore(isTimelineOpen)
   return (
     <IconButton
       label={t('topbar.timelineButton')}
@@ -656,7 +778,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => setEditing(true)} shortcut={keyOf('tabRename')}>
         {t('topbar.renameDocument')}
       </MenuItem>
-      <MenuItem onSelect={newBlankDocument}>{t('topbar.newBlankDocument')}</MenuItem>
+      <MenuItem data-new-document onSelect={newBlankDocument}>{t('topbar.newBlankDocument')}</MenuItem>
 
       <MenuSeparator />
       <MenuLabel>{t('topbar.projectDocuments')}</MenuLabel>
@@ -669,7 +791,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)} shortcut={keyOf('timeline')}>
+      <MenuItem onSelect={openTimeline} shortcut={keyOf('timeline')}>
         {t('topbar.versionTimeline')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
@@ -737,6 +859,7 @@ function UndoRedo() {
           size="icon"
           disabled={!canUndo}
           onClick={runUndo}
+          data-history-action="undo"
           aria-label={t('workspace:topbar.undo')}
         >
           <Undo2 size={ICON_SIZE.md} />
@@ -754,6 +877,7 @@ function UndoRedo() {
           size="icon"
           disabled={!canRedo}
           onClick={runRedo}
+          data-history-action="redo"
           aria-label={t('workspace:topbar.redo')}
         >
           <Redo2 size={ICON_SIZE.md} />
@@ -853,5 +977,83 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t(`topbar.tutorial.${tutorialKind}`)}
       </MenuItem>
     </Menu>
+  )
+}
+
+/**
+ * 顶栏的**项目锚点**（2026-10 设计审计第二轮）：项目接入状态贴在项目名后面——此前是工作面板里的一条提示条
+ * 「已找到 N 张图：……」，把画布往下推。
+ *
+ * 判据只有一份：出不出现、显示哪一份报告都是 `bannerReport`（全部可编辑 / 空项目 / 报告未到 / 这一版已关掉都不出现）；
+ * 接入中心开着时不重复说。胶囊只说最要紧的一个数：有待连接的 → warn「N 张待连接」，否则中性「N 张仅版面」——
+ * `layout_only` 不是错误（那些图照样能排版、裁剪、标注和导出），不画成警告。点开是与文档芯片同一副 320 宽说明块：
+ * 全句 + 「查看接入状态」（打开接入中心）+ 「关闭」（按报告指纹关掉，事实变了会再出现——所以文案不许诺「不再」）。
+ */
+export function ProjectStatusPill() {
+  const { t } = useTranslation(['workspace', 'common'])
+  const report = useProjectReadinessStore(bannerReport)
+  const centerOpen = useUiStore((s) => s.registryOpen)
+  const [open, setOpen] = useState(false)
+  if (!report || centerOpen) return null
+  const { total, editable, layout_only: layoutOnly } = report.summary
+  const pending = pendingCount(report.summary)
+  const tone: StatusTone = pending > 0 ? 'warn' : 'neutral'
+  const text =
+    pending > 0
+      ? t('workspace:readiness.pillPending', { count: pending })
+      : t('workspace:readiness.pillLayoutOnly', { count: layoutOnly })
+  const summary = t('workspace:readiness.bannerSummary', { total, editable, pending, layoutOnly })
+  return (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      width={320}
+      align="start"
+      ariaLabel={summary}
+      trigger={
+        <button
+          type="button"
+          data-project-status-pill={tone}
+          aria-label={t('workspace:readiness.pillAria', { status: text })}
+          title={summary}
+          className={cn(
+            'inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+            'focus-visible:focus-ring',
+            PILL_TONE[tone],
+          )}
+        >
+          <Images size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <span className="truncate max-[899px]:sr-only">{text}</span>
+        </button>
+      }
+    >
+      <div data-project-status-popover className="flex flex-col gap-2 p-1">
+        <p className="type-title text-ink">{summary}</p>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <Button
+            variant="primary"
+            size="sm"
+            data-project-status-action="open-center"
+            onClick={() => {
+              setOpen(false)
+              // 遥测的入口值沿用 'banner'：后端白名单是闭集，它说的是「项目接入状态的那句提示」，换了位置不换语义
+              useProjectReadinessStore.getState().openCenter({ source: 'banner' })
+            }}
+          >
+            {t('workspace:readiness.openCenter')}
+          </Button>
+          <Button
+            size="sm"
+            data-project-status-action="dismiss"
+            onClick={() => {
+              setOpen(false)
+              useProjectReadinessStore.getState().dismissBanner()
+            }}
+          >
+            {t('workspace:readiness.pillDismiss')}
+          </Button>
+        </div>
+      </div>
+    </Popover>
   )
 }

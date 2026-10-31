@@ -152,8 +152,15 @@ def test_fo01_same_directory_csv_opens_automatically(tmp_path):
         assert plan["environment"]["source"] and plan["environment"]["source_label"]
         assert plan["environment"]["python"] is None
         assert plan["environment"]["error"] is None
-        assert plan["environment"]["discovery"]["ok"] is False
-        assert plan["environment"]["discovery"]["code"] == "project_env_not_found"
+        # ADR 0114：确认模式下解析解释器不再替用户发现 / 体检项目 venv（`discovery` 是静默采用时代的证据）；
+        # 候选与是否需要用户先选，是纯读的 `recommendation`——这个夹具里没有任何项目环境线索
+        assert plan["environment"]["discovery"] is None
+        assert plan["environment"]["recommendation"]["decision"]["needs_decision"] is False
+        assert not [
+            c
+            for c in plan["environment"]["recommendation"]["candidates"]
+            if c["scope"] == "project"
+        ]
         receipt = result["receipt"]
         assert receipt["completeness"] == "complete"
         assert receipt["launch_context"]["cwd_origin"] == "sandbox"

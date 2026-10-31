@@ -17,25 +17,46 @@ import {
 } from '@/lib/api'
 import {
   documentHasContent,
-  loadProjectDocument,
+  notifyDocumentPersisted,
   readProjectDocument,
   rememberProjectDocument,
   type ProjectDocumentRef,
 } from '@/lib/projectDocs'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import {
+  cancelStartupProbe,
+  isConnectFailure,
+  retryOnConnectFailure,
+  STARTUP_PROBE_CANCELLED,
+  startupProbeEpoch,
+} from '@/lib/startupProbe'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { markMoment } from '@/lib/timelineCheckpoint'
 import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
+import {
+  captureClues,
+  beginStartupRestore,
+  continueNew,
+  resolveProjectDocument,
+  retryRestore,
+  settlePrepared,
+  type RestoreClues,
+} from '@/store/documentRestore'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import {
+  armRestoreToken,
+  beginRestore,
   flushAutosave,
-  loadAutosavedDocument,
+  isDocumentPlaceholder,
   onDocumentClaimed,
+  onDocumentPersisted,
   pinDocumentOwner,
+  releaseRestoreGate,
   useDocumentStore,
+  type RestoreToken,
 } from '@/store/documentStore'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
@@ -44,8 +65,10 @@ import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
+import { useExportRouteStore } from '@/store/exportRouteStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
@@ -53,14 +76,16 @@ import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { useSourceBackedReview } from '@/store/sourceBackedReview'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
 import { setCurrentProjectLabel } from '@/lib/projectLabel'
 import { emptyDocument } from '@/types/document'
-import { useWorkspaceStore } from '@/store/workspace'
+import { settleMode, useWorkspaceStore } from '@/store/workspace'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /**
  * 当前项目状态。'loading' 只出现在启动探测阶段；'none' = 后端没有打开的
@@ -75,6 +100,11 @@ export interface ProjectState {
   recent: RecentProject[]
   /** 收藏的项目，按用户排的顺序（左栏「工作区」抽屉）；与最近列表互相独立 */
   pinned: RecentProject[]
+  /**
+   * 最近 / 收藏列表至少成功取到过一次。后端暂时不可达时 `recent` / `pinned` 也是空数组——
+   * 「空」只有在这一项为 true 时才说明用户真的没有项目（新手教程据此判断第一次打开）
+   */
+  listsLoaded: boolean
   /**
    * 正在切项目（`open` / `adoptOpenedProject` 在跑）。切换是串行的，界面据此把所有
    * 「打开项目」的入口置灰——并发的两次换代会让 A 的请求落进 B（Codex #550 P1）。
@@ -99,8 +129,12 @@ export interface ProjectState {
        * 在「前端状态已换代、但工作台还没宣布打开」的那个空档里装文档。
        * 教程用它把教程画布换进来：工作台一挂载就会 `restoreSession()`，那时
        * `tavotto.currentDoc` 记的必须已经是教程文档，否则它会把空白文档再装回去。
+       *
+       * **返回值是「准备成功了没有」**，不是「Promise 正常结束了」：回调把装载失败吞掉再正常返回，
+       * 过去会被当成成功、初始空白被标成 ready。现在以返回值 + 恢复门的落定（`settlePrepared`）双重确认，
+       * 失败 = `needs_user{prepare_failed}`，出口是「继续新建」。
        */
-      prepareDocument?: () => Promise<void>
+      prepareDocument?: () => Promise<boolean>
     },
   ) => Promise<ProjectStatus>
   /**
@@ -163,19 +197,6 @@ export interface ProjectState {
 }
 
 /**
- * 把这个项目上次开着的文档换回来。读的是它的自动保存槽位（磁盘优先、本机
- * 副本兜底——`readAutosaveDoc` 那套既有规则），换的是**同一个 documentId**，
- * 所以槽位不会分叉。任何一步失败都回 false，由调用方决定怎么说。
- */
-async function restoreProjectDocument(ref: ProjectDocumentRef): Promise<boolean> {
-  try {
-    return (await loadAutosavedDocument(ref.id)).loaded
-  } catch {
-    return false
-  }
-}
-
-/**
  * 离开当前文档（去 Picker / 换项目 / 项目失效）之前，把还开着的手势收掉，**再**冲刷。
  *
  *  - 指针手势（拖动 / 缩放 / 框选 / 绘制）按取消处理，与拖动中按 Esc 同一条出口：
@@ -198,12 +219,20 @@ function settleAndMarkLeaving(leaving: boolean): void {
   if (leaving) void markMoment('close')
 }
 
-/** 换项目时把属于旧项目的前端会话状态全部丢掉。 */
-async function resetForNewProject() {
+/**
+ * 换项目时把属于旧项目的前端会话状态全部丢掉，并把**恢复门关上**、换上一份占位空白文档。
+ * 返回这一轮恢复的令牌（持它才能在门关着时安装文档）。
+ *
+ * 顺序是硬的：先收手势、**先冲刷旧文档**（此刻门还开着，旧文档的最后一笔照常落盘，DiskWriter
+ * 已排的队也不清），再设门，最后才换占位。线索（currentDoc / 项目缓存 / 内存文档身份）由调用方在
+ * 调这里**之前**捕获——占位文档不写 currentDoc，但捕获不依赖这条细节。
+ */
+async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 1. 冲刷当前文档的自动保存（切走的文档可从「最近文档」取回）；手势先收掉，
   //    否则松手那一笔会落进换上来的空白文档
   settleGesturesBeforeLeaving()
   flushAutosave()
+  const token = beginRestore(pj)
   // 2. 清选择 / 图内编辑态 / 渲染缓存
   useSelectionStore.getState().set([])
   const ui = useUiStore.getState()
@@ -220,6 +249,8 @@ async function resetForNewProject() {
   // 新项目的 /api/panels 挂起或失败时 B 下面显示的是 A 的卡片和 A 的文件名（#577）；
   // 换代同时作废 A 还在飞的那次请求
   useAssetStore.getState().clear()
+  // 导出来源（route）说的是旧项目的脚本登记：丢掉，在飞的 validate 回来不落地
+  useExportRouteStore.getState().clear()
   // 改图助手的对话属于旧项目：会话列表丢掉并换代，在途的发起 / 撤销 / 中止回来不落地（#589）。
   // 后端任务不取消——它照样改完、记进 A 的历史，切回 A 在历史里看得到
   useAiStore.getState().clear()
@@ -238,6 +269,12 @@ async function resetForNewProject() {
   // ——那些进程是他自己在终端里起的，切个项目不该杀掉它们（ADR 0021 §14）。
   // 切回去时 refresh() 会把它们重新对上账。
   useNativeSessionStore.getState().clear()
+  // 准备会话（T09）：报告、订阅、轮询与迟到响应都属于旧项目，换代丢掉；**后端什么都不取消**——用户的执行与已授权的
+  // 安装照常跑完，切回来重新打开时会话复用（同一目标同一份会话）。
+  // **必须排在环境重置之前**：`resetProject()` 清掉 workdir / Python 字段会同步触发准备 store 对环境的订阅
+  // （`recheckIdle`），旧条目还在的话就会对离开的项目发出 recheck 请求，响应再被丢掉——切项目应当零请求
+  // （Codex 评 #914 补审 P2）
+  useProjectPreparationStore.getState().clear()
   // 项目环境 / 工作目录模式是项目级的（ADR 0018 / 0045）：清掉旧项目的，按新
   // 项目重取——否则开关与错误块的建议说的是上一个项目的模式
   useEnvStore.getState().resetProject()
@@ -261,11 +298,19 @@ async function resetForNewProject() {
   // 接入就绪度整份丢掉：报告、错误、聚焦目标、横幅关闭记录都属于旧项目。
   // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
   // 「当前项目关过哪一版」这个投影。
+  // PNG 采用被拒的会话记忆属于旧项目：不清的话，B 项目里同名 fileId 会被误判成「已被拒过」
+  usePngAdmissionMemory.getState().clear()
+  // 开着的「对照确认」属于旧项目：按取消收掉（什么都不写）
+  useSourceBackedReview.getState().clear()
   useProjectReadinessStore.getState().clear()
   // 导入即扫描（T02）：快照与「条被关掉」都属于旧项目；在途的补拉按换代失去落地资格。
   // **后端那一笔账不取消**——它在项目关闭时才收；切回来时 `start()` 会复用或增量重扫
   useProjectScanStore.getState().clear()
-  useUiStore.getState().setScanPanelOpen(false)
+  // 引导卡（T13b）属于旧项目：收起；新项目要不要自动弹由它自己的扫描与本机标记决定
+  useUiStore.getState().setGuideCard('closed')
+  // 通知轨上说旧项目的事的 toast 撤掉：错误 toast 不会自己消失，而它们的撤销事件（`render.done` 等）按 pj 过滤、
+  // 新项目收不到。事件按项目过滤，此刻挂着的只可能是旧项目的
+  for (const prefix of ['render.failed:', 'project.error:', 'export.result', 'png.admit:', 'source.review:', 'workdir.hint:']) ui.clearStatusOwnedByPrefix(prefix)
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
   // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
   // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是
@@ -274,20 +319,18 @@ async function resetForNewProject() {
   // **只清前端状态，不取消后端那个作业**：用户切个项目不是在说"我不要那次
   // 导出了"，文件该照常写完（与 native 会话同一条纪律，ADR 0021 §14）。
   resetExportState()
-  // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
-  await useDocumentStore.getState().switchDocument(emptyDocument(), newId('d'))
-  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
-  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
-  //
-  // **必须排在 `switchDocument` 之后。** 排在前面的话，
-  // `startWorkspacePersistence` 的那个订阅此刻认的还是**旧**文档 id：它会把
-  // `{mode:'layout'}` 写进 `tavotto.workspace.<旧 id>`，把用户在那份文档里停
-  // 的那张图抹掉——上面这句"切回去仍然作数"就成了一句假话。派生状态不许覆盖
-  // 用户偏好，切项目这件事更不是用户在表达"我不要快速编辑了"。
+  // 3. 换成占位空白文档（旧文档属于旧项目；素材引用跨项目不可靠）。占位不是用户的文档：不写 currentDoc /
+  //    最近文档 / 归属 / last / 时间线，也不排自动保存——恢复落定（有历史就换回去，没有就转正）之前一直如此
+  await useDocumentStore.getState().switchDocument(emptyDocument(), newId('d'), undefined, { placeholder: true })
+  armRestoreToken(token)
+  // 工作区模式指着旧文档里的一个对象 id，跟着换代：清掉内存里"现在停在哪张图上"。
+  // 模式本身由图数推出（`workspace.startWorkspaceModeSync`，不落本机），占位文档是空白的 = 排版；
+  // 恢复落定、换进真文档时订阅会按它的图数重新判。
   useWorkspaceStore.getState().clear()
   // 4. 重载新项目素材 + 它的接入就绪度（两份是同一次后端计算的两个投影）
   await useAssetStore.getState().load()
   void useProjectReadinessStore.getState().load()
+  return token
 }
 
 /**
@@ -327,6 +370,9 @@ let pinnedRev = 0
  */
 let listSeq = 0
 
+const fetchProjectOnConnect = (): Promise<ProjectStatus> =>
+  retryOnConnectFailure(fetchProject, (e) => !isConnectFailure(e))
+
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
@@ -362,33 +408,37 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   ): Promise<ProjectStatus> => {
     // 认领新项目之前把内存里这份排版的归属钉在旧项目上：下面换代时那次冲刷写的是旧项目的排版
     pinDocumentOwner()
+    // 线索在任何 reset / currentDoc 写入**之前**捕获（currentDoc、内存文档身份、一次性的开空白标记）：
+    // 重置会改写它们，恢复协调不能从已经被覆盖的状态里再去读候选
+    const clues: RestoreClues = captureClues(status.id ?? null)
     if (status.id) setCurrentProjectId(status.id)
     // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
     // documentStore 只读那份投影（否则两个 store 互相 import 成环）
     setCurrentProjectLabel(status.name)
     // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
     armNoProjectRecovery()
-    // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
-    // 而那一档记的是「最近一份有内容的文档」，空白不会盖掉它——但读在前面
-    // 才不依赖这条细节。
-    // 读的是**后端**的记录（#715 PR-B）：桌面版换了端口就是换了 origin，本机那份缓存是空的；
-    // 后端没有这组端点（404）时 `loadProjectDocument` 退回本机缓存，即改造前的行为。
-    const last = status.id ? await loadProjectDocument(status.id) : null
-    await resetForNewProject()
+    const token = await resetForNewProject(status.id ?? null)
     resume()
-    // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
-    // 必须赶在 `phase: 'open'` 之前（见接口注释）
-    let issue: ProjectDocumentRef | null = null
-    if (opts?.prepareDocument) await opts.prepareDocument()
-    else if (last && !(await restoreProjectDocument(last))) issue = last
+    // 占位空白文档已经就位、门关着；要换成别的文档就在这里换，必须赶在 `phase: 'open'` 之前
+    // （见接口注释）。教程自带 `prepareDocument`（显式意图，不走「上次文档」）；其余走与冷启动
+    // 同一条 `resolveProjectDocument`——读 last 的暂态失败 / 正文 500 / 归属未知都有终态，不再折成空白
+    if (opts?.prepareDocument) await settlePrepared(token, opts.prepareDocument)
+    else await resolveProjectDocument(token, clues)
     // 文档就位了就按它的页面适配视口。从 Project Picker 进来时舞台还没挂载
     // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
     // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
     {
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fit(page.w, page.h)
+      // 取景之前先把派生的模式对一遍：从选择器打开时 Workspace 还没挂、模式订阅没在跑，前面的 reset 把模式留在排版；
+      // 不先对的话这里按页面取景，`phase: 'open'` 之后首次对模式切成单图编辑却不再取景，停在错的缩放 / 平移。
+      // `settleMode` 仍是模式的唯一写入点
+      settleMode()
+      fitStageNow()
     }
-    set({ project: status, phase: 'open', lastDocumentIssue: issue })
+    set({
+      project: status,
+      phase: 'open',
+      lastDocumentIssue: useDocumentStore.getState().restoreIssue?.ref ?? null,
+    })
     // 排版时间线的关键时刻（ADR 0101 §3）：只管「编辑器开着时直接切到另一个项目」
     // ——Workspace 不重挂、时间线一直在跑。从 Picker 打开 / 启动恢复时 Workspace 还没
     // 挂上，这一下是空的，那两条路由 Workspace 在文档恢复完之后调 `markWorkspaceOpened()`
@@ -404,9 +454,19 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   /** 排进切换队列；排队 + 执行期间 `switching` 一直亮着 */
   let inFlight = 0
   const runSwitch = <T,>(fn: () => Promise<T>): Promise<T> => {
+    // 切项目一开始就作废在飞的开局 init（它捕获的是旧项目与 phase，返回后会覆盖新打开的项目）。
+    // 三个入口（open / adoptOpenedProject / switchTransaction）都经此；init 自己不走 runSwitch
+    cancelStartupProbe()
     inFlight += 1
     set({ switching: true })
-    return switchQueue(fn).finally(() => {
+    return switchQueue(fn)
+      .catch((e: unknown) => {
+        // 开局 init 已被上面作废：切换又失败、phase 仍是 loading 时没有别的路径会落定它，
+        // 落到 Picker（现有的可恢复界面），否则界面永远停在 loading
+        if (get().phase === 'loading') set({ phase: 'none' })
+        throw e
+      })
+      .finally(() => {
       inFlight -= 1
       if (inFlight === 0) set({ switching: false })
     })
@@ -442,25 +502,37 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   project: null,
   recent: [],
   pinned: [],
+  listsLoaded: false,
   switching: false,
   opened: [],
   lastDocumentIssue: null,
 
   init: async () => {
+    // 代次贯穿整个 init：任何 await 回来发现已被取消 / 取代，就静默退出，不再写 store 或起副作用
+    const mine = startupProbeEpoch()
+    const cancelled = (): boolean => mine !== startupProbeEpoch()
     try {
       let project: ProjectStatus
       try {
-        project = await fetchProject()
-      } catch {
+        project = await fetchProjectOnConnect()
+      } catch (e) {
+        // 被取代（组件卸载 / 重新 init）：静默退出，不把 phase 落到 none
+        if (e === STARTUP_PROBE_CANCELLED) return
+        // 连接层重试用尽：后端就是没起来，忘掉项目 id 也救不了，交给外层落到 Picker
+        if (isConnectFailure(e)) throw e
+        // 收到了响应但失败（ApiError / 非 JSON 体等）：
         // 本标签页记着的项目在后端已不存在（进程重启/项目已关闭）：
         // 忘掉它退回默认项目，绝不继续拿一个失效 id 去请求
-        if (!currentProjectId()) throw new Error('unreachable')
+        if (!currentProjectId()) throw e
         setCurrentProjectId(null)
-        project = await fetchProject()
+        project = await fetchProjectOnConnect()
       }
+      if (cancelled()) return
       if (project.open && project.id) {
         setCurrentProjectId(project.id)
         armNoProjectRecovery()
+        // 先关上恢复门、再发布 phase:'open'：否则 open 与工作台挂载之间到达的交接看到的是初值的 ready，落进马上被恢复换掉的空白
+        beginStartupRestore(project.id)
       }
       setCurrentProjectLabel(project.open ? project.name : null)
       const rev = pinnedRev
@@ -470,20 +542,22 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
+      if (cancelled()) return
       // 列表过期（期间又发过一次、或换了项目）时项目与阶段照常认，只是不写旧列表
       const fresh = seq === listSeq && pj === currentProjectId()
       set({
         project,
         phase: project.open ? 'open' : 'none',
-        ...(fresh ? { recent, opened } : {}),
+        ...(fresh ? { recent, opened, listsLoaded: true } : {}),
         ...(fresh && rev === pinnedRev ? { pinned } : {}),
       })
       // 启动恢复：应用重启 / 刷新页面后项目还开着——后端按 pj 复用或重开一轮扫描（与认领同一个入口）
       if (project.open && project.tutorial !== true) {
         void useProjectScanStore.getState().start({ reason: 'restore' })
       }
-    } catch {
-      // 后端不可达时也进 Picker——它会在重试里继续探测
+    } catch (e) {
+      if (e === STARTUP_PROBE_CANCELLED || cancelled()) return
+      // 后端不可达（连接层重试用尽）时也进 Picker：它是现有的可恢复界面，用户点打开 / 新建即再试一次
       set({ phase: 'none' })
     }
   },
@@ -498,7 +572,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         fetchOpenProjects().catch(() => []),
       ])
       if (seq !== listSeq || pj !== currentProjectId()) return
-      set({ recent, opened, ...(rev === pinnedRev ? { pinned } : {}) })
+      set({ recent, opened, listsLoaded: true, ...(rev === pinnedRev ? { pinned } : {}) })
     } catch {
       /* 列表刷新失败不致命 */
     }
@@ -545,7 +619,14 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   openLastDocument: async () => {
     const ref = get().lastDocumentIssue
     if (!ref) return false
-    // 走「最近文档」同一条路（读槽位 → 换文档 → 适配视口 → 说一句话）；
+    // 恢复协调还有未决的恢复问题：重试走**同一条**协调（同一份线索、重新读 last 与正文），
+    // 不是另起一条只认这个 id 的路
+    if (useDocumentStore.getState().restoreIssue) {
+      await retryRestore()
+      const ok = useDocumentStore.getState().documentId === ref.id && !useDocumentStore.getState().restoreIssue
+      return ok
+    }
+    // 没有协调状态（旧用例 / 外部直接设了 ref）：走「最近文档」同一条路（读槽位 → 换文档 → 适配视口 → 说一句话）；
     // 它失败时自己会报「本机副本已不存在」那句
     await openRecentDocument(ref.id)
     const ok = useDocumentStore.getState().documentId === ref.id
@@ -553,7 +634,12 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     return ok
   },
 
-  dismissLastDocumentIssue: () => set({ lastDocumentIssue: null }),
+  dismissLastDocumentIssue: () => {
+    // 「知道了」= 接受现状往下走：恢复问题还未决时，占位空白转成正式的新文档（旧稿一个字节不动），
+    // 否则门一直关着、用户对着一份写不进去的空白
+    if (useDocumentStore.getState().restoreIssue) void continueNew()
+    set({ lastDocumentIssue: null })
+  },
 
   showPicker: () => {
     if (get().switching) return
@@ -588,6 +674,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     flushAutosave()
     // 先冲刷再忘掉 pj：反过来的话这份自动保存会落到后端的默认项目里去。
     setCurrentProjectId(null)
+    // 项目没了：这个项目上还在等的恢复不再有人等（等待者拿 superseded）
+    releaseRestoreGate()
     set({ project: null, phase: 'none', lastDocumentIssue: null })
     // 选择器要用「最近 / 已打开」两份列表；这两个端点与项目无关，不会再 409
     void get().refreshRecent()
@@ -616,6 +704,9 @@ let rememberSuspended = 0
 
 useDocumentStore.subscribe((s, prev) => {
   if (rememberSuspended > 0) return
+  // 占位文档（恢复还没落定）不是用户的文档：它的任何变化都不记成「上次开着的」。
+  // 令牌安装的那一刻（装回来的真文档）不算占位——恢复出来的文档照常被登记
+  if (isDocumentPlaceholder()) return
   if (
     s.documentId === prev.documentId &&
     s.doc === prev.doc &&
@@ -631,7 +722,7 @@ useDocumentStore.subscribe((s, prev) => {
 // 那一笔的变化在上面的订阅里已经被判成别的项目的（归属是在它之后才转的），只改一笔就离开的话
 // 不会再有下一次变化（#773 Codex 复核 P2）
 onDocumentClaimed(() => {
-  if (rememberSuspended > 0) return
+  if (rememberSuspended > 0 || isDocumentPlaceholder()) return
   rememberOpenDocument(useDocumentStore.getState())
 })
 
@@ -649,3 +740,15 @@ function rememberOpenDocument(s: ReturnType<typeof useDocumentStore.getState>): 
   if (isForeignDocument(s.documentId, pj)) return
   rememberProjectDocument(pj, { id: s.documentId, name })
 }
+
+// `lastDocumentIssue` 是恢复协调状态（`restoreIssue`）的薄适配：有 ref 时同步，横幅 / 旧用例仍读它
+useDocumentStore.subscribe((s, prev) => {
+  if (s.restoreIssue === prev.restoreIssue) return
+  const ref = s.restoreIssue?.ref ?? null
+  if (useProjectStore.getState().lastDocumentIssue?.id !== ref?.id) {
+    useProjectStore.setState({ lastDocumentIssue: ref })
+  }
+})
+
+// 某份文档的正文真的写盘成功了（不看是不是当前文档、pj 是排队那一刻的）：补记「上次开着的」可以重试了
+onDocumentPersisted((docId, pj) => notifyDocumentPersisted(docId, pj))

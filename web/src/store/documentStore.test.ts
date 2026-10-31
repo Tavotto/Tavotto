@@ -11,8 +11,12 @@ import {
   restoreSession,
   saveNow,
   startAutosave,
+  beginRestore,
+  supersedeRestore,
   useDocumentStore,
 } from './documentStore'
+// 恢复协调：加载时把自己登记成 `restoreSession` 的实现（documentStore 不 import 它，见那里的说明）
+import { resetRestoreStateForTests } from './documentRestore'
 
 const text = (id: string, t: string): TextObject => ({
   id, type: 'text', text: t, sizePt: 9, bold: false,
@@ -57,6 +61,8 @@ const tick = () => new Promise((r) => setTimeout(r, 10))
 const reset = async () => {
   localStorage.clear()
   diskSlots.clear()
+  // 每个用例都是又一次全新启动：恢复门回初值（真实的全新启动是模块重新求值）
+  resetRestoreStateForTests()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_test')
 }
 
@@ -234,6 +240,10 @@ describe('多画布数据层', () => {
     await tick()
     const docId = s().documentId
     localStorage.setItem('tavotto.currentDoc', docId)
+    // 装它的那一方（教程 prepare / 切项目接回上次的文档）是在恢复这一代里装的：门已经落定。
+    // 旧实现靠 `currentDoc === documentId` 判「已经装好」；现在只认「这一代明确落定了」（见 restoreGate / documentRestore 用例）
+    beginRestore(null)
+    supersedeRestore(docId, 'prepared')
     // 内存里这份在磁盘那一版之后又改过
     s().commit(literal('再加字'), (d) => {
       d.objects.push(text('t2', 'y'))
@@ -252,7 +262,7 @@ describe('多画布数据层', () => {
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1', 't2'])
   })
 
-  it('读盘在路上时别处换过或改过文档：恢复让位，不把旧的盖回来', async () => {
+  it('读盘在路上时用户动手编辑：编辑被恢复门拒掉（不再抢走初始空白），恢复完成后原文档回来', async () => {
     const s = () => useDocumentStore.getState()
     s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', 'x'))
@@ -271,10 +281,39 @@ describe('多画布数据层', () => {
     }) as typeof fetch
     try {
       const restoring = restoreSession()
-      // 读盘还在路上，用户已经在当前文档上动手了
+      // 读盘还在路上，用户已经在当前（占位）文档上动手了——旧设计里这一笔会让恢复让位、旧文档的入口跟着丢（R1）
       s().commit(literal('用户的编辑'), (d) => {
         d.objects.push(text('mine', 'z'))
       })
+      expect(s().doc.objects).toEqual([])
+      release()
+      expect(await restoring).toBe(true)
+    } finally {
+      globalThis.fetch = baseFetchImpl
+    }
+    expect(s().documentId).toBe(docId)
+    expect(s().doc.objects.map((o) => o.id)).toEqual(['t1'])
+  })
+
+  it('读盘在路上时占位文档被**绕过恢复门**改过（直接 setState）：恢复让位，不把旧的盖回来（persistedIdentity 守卫还在）', async () => {
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    const docId = s().documentId
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+    localStorage.setItem('tavotto.currentDoc', docId)
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (!init?.method || init.method === 'GET') await gate
+      return baseFetchImpl(url as string, init)
+    }) as typeof fetch
+    try {
+      const restoring = restoreSession()
+      useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [text('mine', 'z')] } }))
       release()
       expect(await restoring).toBe(false)
     } finally {
@@ -284,23 +323,26 @@ describe('多画布数据层', () => {
     expect(s().doc.objects.map((o) => o.id)).toEqual(['mine'])
   })
 
+  // 身份（`persistedIdentity`）覆盖 `buildProject()` 读的每一片。写入口都看门之后，这几片的改动只能绕过门才发生；
+  // 守卫仍要认得出每一片（守卫是纵深，不是摆设）
   it.each([
-    ['改项目名', () => useDocumentStore.getState().renameProject('用户刚改的名字')],
     [
-      '挪动非激活画布的顺序',
-      () => {
-        useDocumentStore.getState().reorderCanvases(0, 1)
-      },
+      '项目名',
+      () =>
+        useDocumentStore.setState((st) => ({ projectMeta: { ...st.projectMeta, name: '用户刚改的名字' } })),
     ],
     [
-      '改非激活画布的名字',
-      () => {
-        const st = useDocumentStore.getState()
-        const other = st.canvases.find((c) => c.id !== st.activeCanvasId)!
-        st.renameCanvas(other.id, '用户刚改的画布名')
-      },
+      '非激活画布的顺序',
+      () => useDocumentStore.setState((st) => ({ canvases: [...st.canvases].reverse() })),
     ],
-  ])('读盘在路上时%s（不动激活画布的 doc）：恢复同样让位', async (_label, edit) => {
+    [
+      '非激活画布的名字',
+      () =>
+        useDocumentStore.setState((st) => ({
+          canvases: st.canvases.map((c) => (c.id === st.activeCanvasId ? c : { ...c, name: '用户刚改的画布名' })),
+        })),
+    ],
+  ])('读盘在路上时绕过门改了%s（不动激活画布的 doc）：恢复同样让位', async (_label, edit) => {
     const s = () => useDocumentStore.getState()
     s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', 'x'))
@@ -378,9 +420,9 @@ describe('多画布数据层', () => {
     expect(JSON.parse(diskSlots.get('d_x')!).updatedAt).toBe(100)
   })
 
-  it('本机副本不比磁盘新 = 陈旧残留，直接清掉，不打扰用户', async () => {
+  it('本机副本内容相同 = 冗余残留，直接清掉，不打扰用户', async () => {
     const disk = { ...emptyProject(), updatedAt: 300 }
-    const stale = { ...emptyProject(), updatedAt: 300 }
+    const stale = { ...disk, updatedAt: 300 }
     diskSlots.set('d_y', JSON.stringify(disk))
     localStorage.setItem('tavotto.autosave.d_y', JSON.stringify(stale))
     const { doc, notice } = await readAutosaveDoc('d_y')
@@ -652,11 +694,12 @@ describe('自动保存磁盘写入队列', () => {
 
     await releaseNext() // d_a 第一次写成功 → 推进到 d_a 的最新一份
     expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a'])
-    expect(slot('d_a')).toBeNull() // 只清 d_a 自己的兜底副本
+    expect(slot('d_a')).not.toBeNull() // 最新一份还未落盘，旧成功不能删掉它（#646）
     expect(slot('d_b')).not.toBeNull()
 
     await releaseNext() // d_a 最新一份写成功 → 推进到 d_b
     expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a', 'd_b'])
+    expect(slot('d_a')).toBeNull() // 与本机副本相同的快照落盘后才清
     expect(slot('d_b')).not.toBeNull() // d_b 还没写成功，兜底副本必须留着
 
     await releaseNext() // d_b 写成功
@@ -973,5 +1016,37 @@ describe('遥测 document_saved / recovery_action（ADR 0041）', () => {
     expect(flushAutosave()).toBe('saved')
     await tick()
     expect(telemetry).toEqual([])
+  })
+})
+
+
+describe('Autosave SVG snapshot gaps stay silent', () => {
+  beforeEach(reset)
+  afterEach(() => { globalThis.fetch = baseFetchImpl })
+
+  it('records nothing in the store and never emits a save-error event', async () => {
+    let warnings = ['source.pdf']
+    globalThis.fetch = (async (url, init) => {
+      const res = await baseFetchImpl(url, init)
+      if (init?.method === 'PUT' && res.ok) {
+        return new Response(JSON.stringify({ ...await res.json(), svg_snapshot_warnings: warnings }))
+      }
+      return res
+    }) as typeof fetch
+    const errors: Event[] = []
+    const onError = (event: Event) => errors.push(event)
+    window.addEventListener('tavotto:autosave-error', onError)
+    try {
+      useDocumentStore.getState().commit(literal('text'), (d) => { d.objects.push(text('svg', 'SVG')) })
+      await saveNow()
+      expect(useDocumentStore.getState().saveState).toBe('saved')
+      expect('svgSnapshotWarnings' in useDocumentStore.getState()).toBe(false)
+      warnings = []
+      await saveNow()
+      expect(useDocumentStore.getState().saveState).toBe('saved')
+      expect(errors).toEqual([])
+    } finally {
+      window.removeEventListener('tavotto:autosave-error', onError)
+    }
   })
 })

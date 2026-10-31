@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, privatepython, runtime
+from . import config, interpreterpath, privatepython, runtime
 
 LOG = logging.getLogger("tavotto.managedenv")
 
@@ -226,6 +226,27 @@ def _same_distribution(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
+def ledger_entry(
+    *,
+    import_name: str,
+    distribution: str,
+    requested_specifier: str,
+    resolved_version: str,
+    reason: str,
+    scope: str = "",
+) -> dict:
+    """账上的一笔（`record_install` 与「换成本作用域」随激活一起落的整本新账共用这一个形状）。"""
+    return {
+        "import_name": import_name,
+        "distribution": distribution,
+        "requested_specifier": requested_specifier,
+        "resolved_version": resolved_version,
+        "reason": reason,
+        "at": int(time.time()),
+        **({"scope": scope} if scope else {}),
+    }
+
+
 def record_install(
     project: str | Path,
     *,
@@ -234,11 +255,16 @@ def record_install(
     requested_specifier: str,
     resolved_version: str,
     reason: str,
+    scope: str = "",
 ) -> None:
     """记一笔「Tavotto 往这个环境里装过什么」。
 
     重建时照着这份装回去。**同一个 distribution 只留最后一笔**：装过两次的
     是同一个包的两个版本，不是两个包。
+
+    `scope`（T06）：这笔是为哪个作用域装的——脚本所在目录的项目相对 POSIX 路径（根目录 = `.`）。受管环境是
+    项目级的，一个项目里两个子目录的依赖可能互斥；有了归属才分得清「用户改了自己的声明」与「另一个作用域已经
+    占着这个版本」。老账没有这个字段（空串 = 归属未知，不参与互斥判断）。
     """
     with _lock:
         data = read_manifest(project)
@@ -250,17 +276,23 @@ def record_install(
             if isinstance(e, dict) and not _same_distribution(e.get("distribution"), distribution)
         ]
         entries.append(
-            {
-                "import_name": import_name,
-                "distribution": distribution,
-                "requested_specifier": requested_specifier,
-                "resolved_version": resolved_version,
-                "reason": reason,
-                "at": int(time.time()),
-            }
+            ledger_entry(
+                import_name=import_name,
+                distribution=distribution,
+                requested_specifier=requested_specifier,
+                resolved_version=resolved_version,
+                reason=reason,
+                scope=scope,
+            )
         )
         data["installed_by_tavotto"] = entries[-64:]
         write_manifest(project, data)
+
+
+def ledger_entries(project: str | Path) -> list[dict]:
+    """账上的条目（只读副本）：`distribution` / `resolved_version` / `requested_specifier` / `scope`（可能没有）。"""
+    data = read_manifest(project) or {}
+    return [dict(e) for e in data.get("installed_by_tavotto") or [] if isinstance(e, dict)]
 
 
 def forget_install(project: str | Path, distribution: str) -> bool:
@@ -449,7 +481,18 @@ def remove(project: str | Path) -> bool:
 
 
 # --------------------------------------------------------------- 创建
-def base_python() -> str | None:
+#: 上一次不带范围收窄的基础解释器探测里，探得到、却因版本在支持区间之外被拒的完整版本串（探到合格者则为空）。
+_last_rejected: tuple[str, ...] = ()
+
+
+def rejected_python_versions() -> tuple[str, ...]:
+    """这台机器上装着、却因版本不在支持区间被拒的 Python 版本（上一次探测的结论；还没探过为空）。"""
+    return _last_rejected
+
+
+def base_python(
+    *, within: tuple[tuple[int, int], tuple[int, int]] | None = None, patch_spec: str = ""
+) -> str | None:
     """能用来建 venv 的基础解释器；一个都没有回 None。
 
     直接复用 `bootstrap.find_base_python()`——它已经排除了内置 runtime
@@ -462,23 +505,96 @@ def base_python() -> str | None:
     界面提供受管修复 → 建 venv → 下载装 matplotlib 与那个包 → **最后**才在
     体检那一步报「这个 Python 不在支持范围内」。用户白等一场下载。
     把判据提到选解释器那一刻，代价从「几十 MB + 几分钟」降到一次版本探测。
+
+    `within=((lo_major, lo_minor), (hi_major, hi_minor))`（半开区间，ADR 0114 修订 2026-10-23「版本不合自动换」）：
+    再收窄到脚本 / 项目要的小版本范围，且在范围内**挑最高的**（默认形态仍是候选清单里的第一个合格者）。
     """
+    pick = base_pick(within=within, with_version=False, patch_spec=patch_spec)
+    return pick[0] if pick else None
+
+
+def base_pick(
+    *,
+    within: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    with_version: bool = True,
+    patch_spec: str = "",
+) -> tuple[str, str] | None:
+    """`base_python` 的带版本形态：回 `(解释器路径, "主.次")`；没有回 None。选择逻辑只此一处。
+    `with_version=False`（`base_python` 用）时默认形态不为取版本多起一个子进程，版本串为空。
+
+    `patch_spec`（PEP 440 specifier 串，只含带补丁位的子句；ADR 0114 §七）：候选的**完整**版本（探测本来就带「主.次.微」）
+    要满足它；拿不到完整版本（探测只给了「主.次」）就当不满足——宁可不换。私有 Python 的锁版本同样按完整版本判。"""
     from . import bootstrap, projectenv
 
-    def _supported(_path: str, version: str) -> bool:
+    spec = None
+    if patch_spec:
+        from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
+        try:
+            spec = SpecifierSet(patch_spec)
+        except InvalidSpecifier:
+            return None  # 读不懂的约束 = 推不出，不选
+
+    def _full_ok(version: str) -> bool:
+        if spec is None:
+            return True
+        parts = version.strip().split(".")
+        if len(parts) != 3 or not all(x.isdigit() for x in parts):
+            return False
+        return spec.contains(".".join(parts), prereleases=True)
+
+    def _minor(version: str) -> tuple[int, int] | None:
         try:
             parts = tuple(int(x) for x in version.strip().split(".")[:2])
         except ValueError:
+            return None
+        return (parts[0], parts[1]) if len(parts) == 2 else None
+
+    rejected: list[str] = []
+
+    def _supported(_path: str, version: str) -> bool:
+        parts = _minor(version)
+        if parts is None:
             return False
-        return bool(parts) and projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE
+        if not (projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE):
+            rejected.append(version.strip())
+            return False
+        if within is not None and not within[0] <= parts < within[1]:
+            return False
+        return _full_ok(version)
+
+    found: list[tuple[tuple[int, ...], str]] = []
+
+    def _micro(version: str) -> int:
+        tail = version.strip().split(".")[2:3]
+        return int(tail[0]) if tail and tail[0].isdigit() else 0
+
+    def _accept(path: str, version: str) -> bool:
+        ok = _supported(path, version)
+        if ok and within is not None:
+            # 要「范围内最高」：收集全部合格者，不在第一个就停
+            found.append(((*(_minor(version) or (0, 0)), _micro(version)), path))
+            return False
+        return ok
 
     try:
-        found = bootstrap.find_base_python(accept=_supported)
+        first = bootstrap.find_base_python(accept=_accept)
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
-        found = None
-    if found:
-        return found
+        first = None
+    if within is None and not patch_spec:
+        # 没找到合格者时，界面要能说「你装的 3.15 太新」而不是笼统的「请安装 Python」：
+        # 记下这一轮因版本区间被拒的候选（只记探测本来就拿到的版本，不多起进程）
+        global _last_rejected
+        _last_rejected = tuple(dict.fromkeys(rejected)) if not first else ()
+    if within is not None and found:
+        best = max(range(len(found)), key=lambda i: (found[i][0], -i))
+        version, path = found[best]
+        return path, f"{version[0]}.{version[1]}"
+    if first:
+        if not with_version:
+            return first, ""
+        return first, ".".join(python_version_of(first).split(".")[:2])
     # 这台机器上没有合格的基础解释器 → **已经供应好的**私有 Python（U05，ADR 0063）。
     # 只认磁盘上已就位的那份，这里一个字节都不下载：下载要经计划里明示的授权
     # （`deprepair` 的事务在 `provision_private` 为真时才去取），探测路径上不联网。
@@ -487,7 +603,15 @@ def base_python() -> str | None:
     source = privatepython.source_for()
     if source is None or not privatepython.offered(source):
         return None
-    return privatepython.python_of(source)
+    private = privatepython.python_of(source)
+    if not private:
+        return None
+    private_minor = _minor(source.version)
+    if within is not None and (private_minor is None or not within[0] <= private_minor < within[1]):
+        return None
+    if not _full_ok(source.version):
+        return None
+    return private, ".".join(source.version.split(".")[:2])
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
@@ -724,9 +848,20 @@ def mark_generation(project: str | Path, generation: str, state: str, reason: st
         write_manifest(project, data)
 
 
-def activate(project: str | Path, generation: str, *, python_version: str = "") -> None:
+def activate(
+    project: str | Path,
+    generation: str,
+    *,
+    python_version: str = "",
+    ledger: list[dict] | None = None,
+) -> None:
     """**提交点**：把 `active` 指向这一代（manifest 原子写）。之前它一直是 `incomplete`。
-    写不下去抛 `OSError`（磁盘上 `active` 仍指旧的一代，内存里也不能说切了）。"""
+    写不下去抛 `OSError`（磁盘上 `active` 仍指旧的一代，内存里也不能说切了）。
+
+    `ledger` 给了（「换成本作用域」，`scope_policy=switch`）= 整本新账随同这一次写一起落：新一代只装了本作用域的
+    集合，账要如实反映，否则重建会把别的作用域的包又装回去、重新撞上互斥。**换代与换账是同一次 manifest 提交**——
+    分两次写的话，在两次之间进程终止 / 第二次写失败，active 已是新一代而账还是旧的（Codex 评 #911 补审 P1）。
+    `None` = 不动账（普通安装由 `record_install` 追加）。"""
     with _lock:
         data = read_manifest(project) or {}
         gens = data.get("generations")
@@ -743,6 +878,8 @@ def activate(project: str | Path, generation: str, *, python_version: str = "") 
         if python_version:
             data["python_version"] = python_version
         data["last_used"] = int(time.time())
+        if ledger is not None:
+            data["installed_by_tavotto"] = [dict(e) for e in ledger][-64:]
         # 提交点必须真的落盘：写失败照抛 `OSError`，调用方据此不宣称 committed（Codex #470 P1）
         write_manifest(project, data, strict=True)
 
@@ -778,21 +915,13 @@ def create_generation_venv(project: str | Path, generation: str, base: str) -> t
 
 
 def is_managed_python(project: str | Path, python: str | None) -> bool:
-    """这条解释器是不是这个项目受管环境的**某一代**（含旧布局）。"""
+    """是不是这个项目受管环境的某一代（含旧布局）：按路径身份，不跟随 venv 指向基础 Python 的软链接。"""
     if not python:
         return False
-    try:
-        target = os.path.normcase(os.path.realpath(str(python)))
-    except OSError:
-        return False
-    for gen in list(generations(project)) or [LEGACY_GENERATION]:
-        try:
-            cand = os.path.normcase(os.path.realpath(str(generation_python(project, gen))))
-        except OSError:
-            continue
-        if cand == target:
-            return True
-    return False
+    return any(
+        interpreterpath.same_python(python, str(generation_python(project, gen)))
+        for gen in generations(project) or [LEGACY_GENERATION]
+    )
 
 
 def referenced_base_runtimes() -> set[str]:

@@ -8,7 +8,9 @@ import {
   backendErrorText,
   deleteAiEndpoint,
   fetchAiInstallStatus,
+  logoutAiEndpoint,
   patchAiAgent,
+  migrateAiEndpoint,
   saveAiEndpoint,
   setAiEndpointActive,
   startAiInstall,
@@ -29,10 +31,16 @@ import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { cn } from '@/lib/utils'
 import { AgentIcon } from './AgentIcon'
+import { VendorIcon } from './VendorIcon'
 import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
+import { OAuthLoginDialog } from './OAuthLoginDialog'
+import { useAgentLogin } from './useAgentLogin'
 import { useSettingsCrumb } from './settingsPageContext'
+
+/** 「改动后重新拉能力」回调。返回 `false` = 刷新失败（父级 reload 自己吞掉错误，只用它告知）。 */
+type OnRefreshed = (next?: AiCapabilities) => Promise<boolean | void> | boolean | void
 
 /**
  * 单个编码 Agent 的详情。
@@ -63,18 +71,19 @@ export function AgentDetailView({
   caps: AiCapabilities
   onBack: () => void
   /** 任何改动之后重新拉能力（父级负责 loadCaps） */
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<null | { id?: string }>(null)
+  const [oauthLogin, setOauthLogin] = useState<null | { provider: string; region?: string; name: string }>(null)
 
   // 页头换成面包屑：「改图助手」那一截是返回（可达名与左侧导航的同名项区分开）
   useSettingsCrumb({ current: agent.display_name, onBack, backLabel: ag('backAria'), backAnchor: 'data-agent-back' })
 
   /** 跑一个改动，然后重新拉能力。`fn` 自己就是重探测时不再多跑一次。 */
-  const run = async (fn: () => Promise<AiCapabilities | unknown> | void) => {
+  const run = async (fn: () => Promise<unknown> | unknown) => {
     setError(null)
     setBusy(true)
     try {
@@ -102,7 +111,86 @@ export function AgentDetailView({
     if (ok) void run(() => deleteAiEndpoint(id))
   }
 
+  // 官方登录按钮：只在「未登录」且适配器声明了官方登录命令时出现
+  const login = useAgentLogin(agent, onRefreshed, setError)
+  const showLogin = agent.state === 'needs_auth' && agent.features.login
+
+  const loginButton = (
+    showLogin && (
+      <Button
+        data-agent-login={login.phase}
+        variant="primary"
+        size="sm"
+        loading={login.phase === 'waiting'}
+        disabled={login.phase === 'waiting'}
+        onClick={() =>
+          login.phase === 'terminal' || login.phase === 'manual' || login.phase === 'retry'
+            ? login.confirm()
+            : login.begin()
+        }
+      >
+        {login.phase === 'waiting'
+          ? ag('login.waiting')
+          : login.phase === 'retry'
+            ? ag('login.retry')
+            : login.phase === 'terminal' || login.phase === 'manual'
+              ? ag('login.done')
+            : ag('login.action', { account: agent.login_account ?? agent.display_name })}
+      </Button>
+    )
+  )
+  const loginHints = (
+    <>
+      {showLogin && login.phase === 'waiting' && login.authUrl && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.browserHint')}{' '}
+          <a
+            data-agent-login-link
+            href={login.authUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            {ag('login.openLink')}
+          </a>
+        </p>
+      )}
+      {showLogin && login.phase === 'retry' && (
+        <p data-agent-login-hint role="alert" className="text-xs leading-relaxed text-danger">
+          {ag('login.refreshFailed')}
+        </p>
+      )}
+      {showLogin && login.phase === 'terminal' && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.terminalHint')}
+        </p>
+      )}
+      {showLogin && login.phase === 'manual' && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.manualHint', { command: login.command })}
+        </p>
+      )}
+    </>
+  )
+
   const mine = (caps.endpoints ?? []).filter((e) => e.agent === agent.id)
+  // 账号登录入口：只给后端说「有 Tavotto 自己的 client_id」的厂商；没有就一个字都不出现。登录的记录走 claude 协议
+  const loginEntries =
+    agent.id === 'claude'
+      ? Object.entries(caps.oauth ?? {}).flatMap(([provider, info]) =>
+          info.oauth_available
+            ? info.regions.map((region) => ({
+                provider,
+                region,
+                name: info.regions.length > 1 ? `${info.label}（${ag(`oauth.region.${region}`)}）` : info.label,
+              }))
+            : [],
+        )
+      : []
+  const reloginFor = (e: AiCapabilities['endpoints'][number]) => {
+    const entry = loginEntries.find((x) => x.provider === e.oauth_provider && x.region === e.oauth_region)
+    return entry ? () => setOauthLogin(entry) : undefined
+  }
   const activeId = agent.active_endpoint_id ?? ''
   const usingEndpoint = !!agent.active_endpoint_id
   const radioName = `endpoint-${agent.id}`
@@ -154,6 +242,21 @@ export function AgentDetailView({
         </FormSection>
       )}
 
+      {/* ---------------- 账号：不支持第三方接口的 agent 的官方登录（支持的在「模型服务」那一行，不重复） ---------------- */}
+      {showLogin && !agent.features.third_party_endpoints && (
+        <FormSection title={ag('detail.account')}>
+          <FieldGroup>
+            <div data-agent-account className="flex min-h-7 items-center gap-3">
+              <span className="min-w-0 flex-1 text-base text-ink">
+                {ag('detail.useAgentLogin', { name: agent.display_name })}
+              </span>
+              {loginButton}
+            </div>
+            {loginHints}
+          </FieldGroup>
+        </FormSection>
+      )}
+
       {/* ---------------- 模型服务 ---------------- */}
       {agent.features.third_party_endpoints && (
         <FormSection
@@ -166,16 +269,21 @@ export function AgentDetailView({
           }
         >
           <FieldGroup role="radiogroup" aria-label={ag('detail.serviceAria', { name: agent.display_name })}>
-            <label className="flex min-h-7 items-center gap-3">
-              <Radio
-                name={radioName}
-                checked={!usingEndpoint}
-                onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
-              />
-              <span className="min-w-0 flex-1 text-base text-ink">
-                {ag('detail.useAgentLogin', { name: agent.display_name })}
-              </span>
-            </label>
+            <div className="flex min-h-7 items-center gap-3">
+              <label className="flex min-w-0 flex-1 items-center gap-3">
+                <Radio
+                  name={radioName}
+                  checked={!usingEndpoint}
+                  onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
+                />
+                <span className="min-w-0 flex-1 text-base text-ink">
+                  {ag('detail.useAgentLogin', { name: agent.display_name })}
+                </span>
+              </label>
+              {/* 一句话 + 一个主按钮：未登录时这一行的行尾就是「登录 ChatGPT / Claude」 */}
+              {loginButton}
+            </div>
+            {loginHints}
             {mine.map((e) => (
               <EndpointRow
                 key={e.id}
@@ -185,7 +293,22 @@ export function AgentDetailView({
                 onSelect={() => void run(() => setAiEndpointActive(agent.id, e.id))}
                 onEdit={() => setEditing({ id: e.id })}
                 onDelete={() => void remove(e.id, e.label)}
+                onMigrate={() => void run(() => migrateAiEndpoint(e.id))}
+                onLogout={() => void run(() => logoutAiEndpoint(e.id))}
+                onRelogin={reloginFor(e)}
               />
+            ))}
+            {loginEntries.map((entry) => (
+              <div key={`${entry.provider}-${entry.region}`} className="flex min-h-7 items-center gap-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-oauth-login={`${entry.provider}:${entry.region}`}
+                  onClick={() => setOauthLogin(entry)}
+                >
+                  {ag('oauth.action', { name: entry.name })}
+                </Button>
+              </div>
             ))}
           </FieldGroup>
         </FormSection>
@@ -239,6 +362,19 @@ export function AgentDetailView({
         </FieldGroup>
       </FormSection>
 
+      {oauthLogin && (
+        <OAuthLoginDialog
+          provider={oauthLogin.provider}
+          region={oauthLogin.region}
+          name={oauthLogin.name}
+          onClose={() => setOauthLogin(null)}
+          onSignedIn={() => {
+            setOauthLogin(null)
+            void run(onRefreshed)
+          }}
+        />
+      )}
+
       {editing && (
         <EndpointDialog
           agent={agent.id}
@@ -269,6 +405,9 @@ function EndpointRow({
   onSelect,
   onEdit,
   onDelete,
+  onMigrate,
+  onLogout,
+  onRelogin,
 }: {
   endpoint: AiCapabilities['endpoints'][number]
   radioName: string
@@ -276,22 +415,70 @@ function EndpointRow({
   onSelect: () => void
   onEdit: () => void
   onDelete: () => void
+  onMigrate: () => void
+  onLogout: () => void
+  /** 只有该厂商的登录入口可用（Tavotto 有它的 client_id）时才有 */
+  onRelogin?: () => void
 }) {
   const menu = useRowMenu()
+  const oauth = e.auth === 'oauth'
   return (
     <div {...menu.rowProps} data-endpoint-row={e.id} className="group flex min-h-7 items-center gap-3">
       <label className="flex min-w-0 flex-1 items-center gap-3">
         <Radio name={radioName} checked={selected} onChange={onSelect} />
+        <VendorIcon iconKey={e.icon_key} size={ICON_SIZE.md} glyphSize={ICON_SIZE.md} />
         <span className="min-w-0 flex-1">
           <span className={cn('block truncate text-base text-ink', selected && 'font-medium')}>{e.label}</span>
           <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs text-ink-3">
             <span className="min-w-0 truncate font-mono" title={e.base_url || undefined}>
               {e.base_url || ag('detail.officialBaseUrl')}
             </span>
-            {!e.has_key && <span className="shrink-0 text-warn-content">{ag('detail.noKeySuffix')}</span>}
+            {oauth ? (
+              <span data-endpoint-signed-in={e.signed_in ? 'true' : 'false'} className="shrink-0">
+                {e.signed_in ? ag('oauth.signedIn') : ag('oauth.signedOut')}
+              </span>
+            ) : (
+              !e.has_key && <span className="shrink-0 text-warn-content">{ag('detail.noKeySuffix')}</span>
+            )}
           </span>
+          {/* 一句话 + 一个主按钮：旧协议的接口能对上已知厂商就给「改由 Claude Code 接入」，否则只给「编辑」 */}
+          {e.incompatible && (
+            <span data-endpoint-incompatible={e.incompatible} className="mt-0.5 block text-xs text-warn-content">
+              {e.migratable ? ag('detail.incompatible') : ag('detail.incompatibleEdit')}
+            </span>
+          )}
         </span>
       </label>
+      {e.incompatible && (
+        <Button
+          data-endpoint-fix={e.id}
+          variant="primary"
+          size="sm"
+          onClick={e.migratable ? onMigrate : onEdit}
+        >
+          {e.migratable === 'codex_responses'
+            ? ag('detail.migrateToResponses')
+            : e.migratable === 'claude'
+              ? ag('detail.migrateToClaude')
+              : ag('detail.edit')}
+        </Button>
+      )}
+      {oauth && e.signed_in && (
+        <Button
+          data-endpoint-logout={e.id}
+          variant="secondary"
+          size="sm"
+          aria-label={ag('oauth.logoutAria', { label: e.label })}
+          onClick={onLogout}
+        >
+          {ag('oauth.logout')}
+        </Button>
+      )}
+      {oauth && !e.signed_in && onRelogin && (
+        <Button data-endpoint-relogin={e.id} variant="primary" size="sm" onClick={onRelogin}>
+          {ag('oauth.relogin')}
+        </Button>
+      )}
       <RowMenu state={menu} label={ag('detail.endpointActions', { label: e.label })} data-endpoint-menu={e.id}>
         <MenuItem icon={Pencil} onSelect={onEdit}>
           {ag('detail.edit')}
@@ -316,7 +503,7 @@ function CustomExecutable({
   onRefreshed,
 }: {
   agent: AiAgentCaps
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   // null = 没在编辑（显示当前值）；字符串 = 正在编辑的草稿
@@ -492,9 +679,10 @@ function InstallPanel({
   onRefreshed,
 }: {
   agent: AiAgentCaps
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
+  const { t: te } = useTranslation('errors')
   const info = agent.install
   const [state, setState] = useState<AiInstallState | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -551,15 +739,19 @@ function InstallPanel({
       {!info.available && <p className="text-xs leading-relaxed text-ink-3">{ag('install.noNpm')}</p>}
       {live?.status === 'error' && (
         <p role="alert" className="text-xs text-danger">
-          {ag(
-            `install.error.${
-              live.code === 'npm_missing' ||
-              live.code === 'installed_but_not_found' ||
-              live.code === 'timeout'
-                ? live.code
-                : 'other'
-            }`,
-          )}
+          {live.code?.startsWith('managed_cli_')
+            ? te(`engine.managedCliError.${live.code}` as 'engine.managedCliError.managed_cli_offline', {
+                product: agent.display_name,
+              })
+            : ag(
+                `install.error.${
+                  live.code === 'npm_missing' ||
+                  live.code === 'installed_but_not_found' ||
+                  live.code === 'timeout'
+                    ? live.code
+                    : 'other'
+                }`,
+              )}
         </p>
       )}
       {live?.log && (

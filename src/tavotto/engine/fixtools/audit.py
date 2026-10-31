@@ -1,0 +1,121 @@
+"""本地审计：每次工具调用一行 JSON，写进 `data_dir()/ai/fix_audit.jsonl`（ADR 0149 §五）。
+
+只记「谁、哪个工具、什么档、参数摘要、谁批准的、结果码」。**内容不落盘**：路径类参数保留（排障要知道读了哪），
+其余字符串参数只记长度；工具返回的文本一个字也不进来。文件超过上限就滚成 `.1`（只留一代）。
+审计失败绝不影响工具调用。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+from pathlib import Path
+
+MAX_BYTES = 1024 * 1024
+#: 值本身可以进审计的参数名：只有**路径**与**闭集枚举**。`glob` / `module` / `name` / `pattern` 之类模型可填任意文字的字段
+#: 可能夹带从上一个工具结果里看到的凭据或文件内容，一律只记长度（Codex #1353）
+PATH_KEYS = frozenset({"path", "root"})
+ENUM_KEYS = {
+    "mode": frozenset({"script", "native", "safe"}),
+    "source": frozenset({"app", "worker"}),
+}
+#: 不透明标识（环境 id、快照 id）：形状合格才记原值，其余只记长度
+ID_KEYS = frozenset({"env", "snapshot"})
+_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+KEEP_KEYS = PATH_KEYS | frozenset(ENUM_KEYS) | ID_KEYS
+_MAX_STR = 300
+#: `run_command` 审计行的 `sandbox`：hardened = 第①档加固沙盒内；outside = 第②档沙盒外（用户单独点头）；none = 没有执行（被拒 / 没有沙盒 / 未获同意）
+SANDBOX_VALUES = frozenset({"hardened", "outside", "none"})
+_lock = threading.Lock()
+
+
+def default_path() -> Path:
+    from .. import config
+
+    return config.data_dir() / "ai" / "fix_audit.jsonl"
+
+
+def summarize_args(args: object) -> dict:
+    if not isinstance(args, dict):
+        return {"_": "not_an_object"}
+    out: dict = {}
+    for k, v in args.items():
+        key = str(k)[:40]
+        if isinstance(v, bool | int | float) or v is None:
+            out[key] = v
+        elif isinstance(v, str):
+            if key in PATH_KEYS:
+                out[key] = v[:_MAX_STR]
+            elif key in ENUM_KEYS and v in ENUM_KEYS[key]:
+                out[key] = v
+            elif key in ID_KEYS and _ID_RE.fullmatch(v):
+                out[key] = v
+            else:
+                out[key] = f"<str len={len(v)}>"
+        else:
+            out[key] = f"<{type(v).__name__}>"
+    return out
+
+
+class AuditLog:
+    def __init__(self, path: str | os.PathLike | None = None, *, max_bytes: int = MAX_BYTES):
+        self._path = Path(path) if path else None
+        self.max_bytes = max_bytes
+
+    @property
+    def path(self) -> Path:
+        return self._path or default_path()
+
+    def record(
+        self,
+        *,
+        session: str,
+        step: int,
+        tool: str,
+        tier: str,
+        args: object,
+        approved_by: str,
+        result: dict,
+        snapshot: str | None = None,
+        approved_step: int | None = None,
+        sandbox: str | None = None,
+        command_tier: int | None = None,
+    ) -> None:
+        line = {
+            "ts": round(time.time(), 3),
+            "session": session,
+            "step": step,
+            "tool": tool,
+            "tier": tier,
+            "args": summarize_args(args),
+            "approved_by": approved_by,  # policy | user | blocked
+            "result": {
+                "ok": bool(result.get("ok")),
+                "code": str(result.get("code") or "")[:60],
+                "summary": str(result.get("summary") or "")[:120],
+            },
+        }
+        if approved_step is not None:
+            line["approved_step"] = int(approved_step)  # 名单外的包是被哪一步 propose_fix 同意的
+        if snapshot:
+            line["snapshot"] = str(snapshot)[:64]  # 改动前打的快照 id（「改」组）
+        if sandbox in SANDBOX_VALUES:  # `run_command`：沙盒形态与档位（闭集）
+            line["sandbox"] = sandbox
+        if command_tier in (1, 2):
+            line["command_tier"] = command_tier
+        try:
+            with _lock:
+                p = self.path
+                p.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    if p.stat().st_size >= self.max_bytes:
+                        os.replace(p, p.with_name(p.name + ".1"))
+                except FileNotFoundError:
+                    pass
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 - 审计失败不拖垮工具调用
+            return

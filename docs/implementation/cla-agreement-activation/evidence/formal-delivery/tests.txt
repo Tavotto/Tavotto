@@ -1,0 +1,37 @@
+✔ activation first real version fences legacy binaries within13 SQL (42.906474ms)
+✔ activation cannot replace a real version transition with source only (14.183687ms)
+✔ activation capability requires an environment flag and an explicit hash pin (9.869844ms)
+✔ activation legacy mode rejects a journal even with two registry rows (10.71015ms)
+✔ activation current config binds hash (11.158283ms)
+✔ activation current config binds repository (17.792907ms)
+✔ activation current config binds holder (11.090574ms)
+✔ activation current config binds reference (10.982451ms)
+✔ activation current config binds policy (12.74566ms)
+✔ activation current config binds agreement (11.122283ms)
+✔ activation runtime verifies stored canonical bytes beyond mirrored columns (11.556363ms)
+✔ activation rejects altered fresh individual bytes (10.748055ms)
+✔ activation requires a version marker matching the selected new agreement (11.516012ms)
+✔ activation rejects a modified prepared proposal without persistent changes (25.039363ms)
+✔ activation replay is an exact read only noop (14.59934ms)
+✔ activation identical concurrent proposals recover the committed winner without another write (13.603076ms)
+✔ activation different concurrent proposals select exactly one atomic winner (14.164356ms)
+✔ activation superseded proposal and configuration cannot become current again (14.826954ms)
+✔ activation cannot consume an unrelated later evidence revision (15.590043ms)
+✔ activation final insert failure rolls back every row and invalidation (29.862799ms)
+✔ activation preserves original document sources personal evidence and delegated receipts (36.916531ms)
+✔ activation current store rejects old tuple for a new subject before commit (13.819918ms)
+✔ activation current store rejects old signing intent (12.513289ms)
+✔ activation current store rejects old signature even with a fresh revision (16.496118ms)
+✔ activation stale signer cannot commit a preactivation revision (14.60055ms)
+✔ activation after packet or intent preread rejects the final stale write (22.832521ms)
+✔ activation historic hold remains available and later evidence revisions stay ready (16.552494ms)
+✔ activation new agreement needs fresh personal contributor and holder consent (36.237756ms)
+✔ activation suite performs zero outbound requests (0.200139ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 653.861325

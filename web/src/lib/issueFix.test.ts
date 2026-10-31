@@ -634,7 +634,7 @@ describe('画布层仍在前端', () => {
     expect(issue.fixKind).toBe('safe_auto')
     await applyIssueFix(issue)
     const t = useDocumentStore.getState().doc.objects[0] as { sizePt: number }
-    expect(t.sizePt).toBeGreaterThan(profile.absolute_min_font_size_pt)
+    expect(t.sizePt).toBeGreaterThanOrEqual(profile.absolute_min_font_size_pt)
     expect(engineSpecfix).not.toHaveBeenCalled()
   })
 

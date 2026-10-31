@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Images } from '@/components/ui/icons'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
@@ -11,7 +10,8 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/workspace'
+import { addPanelToCanvas, useWorkspaceStore } from '@/store/workspace'
+import { acceptsScriptDrag, useCanvasScriptDrop } from './useCanvasScriptDrop'
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
@@ -19,6 +19,7 @@ import { applyStageFit, fitStage, stageFitFrame } from '@/store/zoomToSelection'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
+import { IssueSpotlight } from './IssueSpotlight'
 import { OverlaySvg } from './OverlaySvg'
 import { MeasureChip } from './MeasureChip'
 import { PageSheet } from './PageSheet'
@@ -26,10 +27,13 @@ import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
+import { FigureEdgeHandles, PageEdgeHandles } from './PageEdgeResize'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
+import { groundInkFor } from '@/lib/canvasSelection'
+import { cn } from '@/lib/utils'
 
 export function CanvasStage() {
   perfCount('render.CanvasStage')
@@ -43,6 +47,7 @@ export function CanvasStage() {
   // 切回排版模式看到的还是原来那张版。
   const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const layoutMode = useWorkspaceStore((s) => s.mode === 'layout')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   // 「这一次把图加进了文档」——只用来播报，可见那一行在 WorkspaceContextBar
   const addedForEdit = useWorkspaceStore(
@@ -61,16 +66,18 @@ export function CanvasStage() {
   const tweening = useViewportStore((s) => s.tweening)
   const setViewRect = useViewportStore((s) => s.setViewRect)
   const page = useDocumentStore((s) => s.doc.page)
+  const documentState = useDocumentStore((s) => s.restoreGate.state)
   const objects = useDocumentStore((s) => s.doc.objects)
   const dragging = useInteractionStore((s) => s.kind !== 'none')
   /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
   const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null)
   // 快速编辑这一屏只有那一张图，而画布菜单全是版面级动作（粘贴进版面、全选版面、适应页面、标尺 / 网格）——
-  // 与 useKeyboard 的 inFastEdit 同一条判据：快速编辑里不开。一处管两种来路：在快速编辑里右键（开了当场收掉、
+  // 单图编辑里不开（它不是版面级菜单的主场）。一处管两种来路：在快速编辑里右键（开了当场收掉、
   // 不会提交出来），与开着菜单切进快速编辑。是收起不是藏起：藏起的话回排版时它会在旧落点上重新冒出来
   if (fastEdit && canvasMenu) setCanvasMenu(null)
   /** 素材拖进来时的落点预览（mm，与松手后 `addPanelToCanvas` 落的是同一个框） */
   const ghost = useDropGhost(fastEdit)
+  const dropScript = useCanvasScriptDrop()
 
   // 「适应」看的是哪一块。快速编辑下是那张图的包围盒（图比页面大是常态，
   // 按页面 fit 会把它切掉一半）；排版下是页面。
@@ -203,6 +210,8 @@ export function CanvasStage() {
         // 端到端测试的落点：画布是纯图形区域，没有可靠的语义角色可以选中，
         // 与其套一个会误导读屏器的 role，不如留一个明确的测试钩子
         data-canvas-stage=""
+        data-document-state={documentState}
+        aria-busy={documentState === 'restoring'}
         className="absolute overflow-hidden bg-canvas"
         style={{ left: pad, top: pad, right: 0, bottom: 0, cursor }}
         onPointerDown={onPointerDown}
@@ -223,6 +232,10 @@ export function CanvasStage() {
             e.preventDefault()
             e.dataTransfer.dropEffect = 'copy'
             ghost.over(e.clientX, e.clientY)
+          } else if (acceptsScriptDrag([...e.dataTransfer.types])) {
+            // 系统拖来的文件（.py）：接受这次拖动，macOS 壳才会旁听到路径（ADR 0092）
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
           }
         }}
         onDragLeave={(e) => {
@@ -231,15 +244,23 @@ export function CanvasStage() {
         onDrop={(e) => {
           ghost.clear()
           const pid = e.dataTransfer.getData('application/x-panel-id')
-          if (!pid) return
-          e.preventDefault()
-          if (fastEdit) {
-            // 这条工作流里"拖进来"的意思是"改看这一张"，不是"再摆一张上去"
-            openFastEdit(pid)
+          if (!pid) {
+            if (!acceptsScriptDrag([...e.dataTransfer.types])) return
+            // 拖到这张画布上的脚本：运行它，图放进这张画布（单图编辑这一屏没有页面坐标，不带落点）
+            e.preventDefault()
+            const canvasId = useDocumentStore.getState().activeCanvasId
+            dropScript(e.dataTransfer, fastEdit ? { canvasId } : { canvasId, at: clientToMm(e.clientX, e.clientY) })
             return
           }
+          e.preventDefault()
           const info = useAssetStore.getState().byId[pid]
           if (!info) return
+          // 单图编辑里拖进来的是第二张图：落点是按这一屏（只画那一张）换算的，页面还没画出来，换成页面坐标没有意义——
+          // 不带点，按常规规则摆放；放下去就切到多图排版（`startWorkspaceModeSync`）
+          if (fastEdit) {
+            addPanelToCanvas(info)
+            return
+          }
           const p = clientToMm(e.clientX, e.clientY)
           addPanelToCanvas(info, p.x, p.y)
         }}
@@ -256,8 +277,10 @@ export function CanvasStage() {
             // 不继承界面的 ink（暗色里是浅色，落在白纸上看不见）
             color: 'var(--color-paper-ink)',
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
-            width: mmToWorld(page.w),
-            height: mmToWorld(page.h),
+            // 单图编辑不画页面：世界层不占页面那么大的盒（取景放大到图上时，页面大小的盒会伸到侧栏下面，
+            // 盖在侧栏的文字上——axe 按盒的相交算「背景被别的元素盖住」，把侧栏里的字都判成查不了）
+            width: fastEdit ? 0 : mmToWorld(page.w),
+            height: fastEdit ? 0 : mmToWorld(page.h),
             pointerEvents: spaceDown || tool !== 'select' ? 'none' : 'auto',
           }}
         >
@@ -275,12 +298,18 @@ export function CanvasStage() {
             />
           )}
           {fastEdit && <FastEditPaper panelId={activePanelId} objects={objects} />}
-          <CanvasLayers only={fastEdit ? activePanelId : null} />
+          <CanvasLayers />
         </div>
 
         {/* 页面外画淡、页面轮廓压在内容之上：在世界层之后、选框覆盖层之前 */}
         {!fastEdit && <PageOutsideMask />}
+        {/* 拖页面四条边改画布大小：只在多图排版（单图编辑没有页面）；命中区在选框覆盖层之下 */}
+        {layoutMode && <PageEdgeHandles />}
+        {/* 单图编辑：直接拖这张图的四条边改图幅，手感与上面拖页面边一致 */}
+        {fastEdit && <FigureEdgeHandles panelId={activePanelId} />}
 
+        {/* 定位舞台灯：在选框覆盖层之下，选择框与高亮框始终清晰 */}
+        <IssueSpotlight />
         <OverlaySvg />
         {ghost.box && <DropGhost box={ghost.box} />}
         {/* 贴着选区的尺寸芯片：与选框同一个视口坐标系（2026-10-07 设计审计 §10.1） */}
@@ -381,7 +410,7 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  * 隐藏图层 display:none：无命中、无绘制成本；快照对象的 id 不在活跃 doc 里，
  * 任何按 id 回写（文字自适应高度这类）都会安静落空，不会误写。
  */
-function CanvasLayers({ only }: { only?: string | null }) {
+function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
@@ -391,10 +420,7 @@ function CanvasLayers({ only }: { only?: string | null }) {
     <>
       {openTabs.map((id) => {
         const active = id === activeId
-        // 快速编辑只画那一个对象：其余标签整层不挂（它们是别的画布的排版）
-        if (only && !active) return null
-        const all = active ? objects : canvases.find((c) => c.id === id)?.objects
-        const objs = only ? all?.filter((o) => o.id === only) : all
+        const objs = active ? objects : canvases.find((c) => c.id === id)?.objects
         if (!objs) return null
         return (
           <div
@@ -426,7 +452,11 @@ function FastEditPaper({
   objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
 }) {
   const o = panelId ? objects.find((x) => x.id === panelId) : undefined
-  if (!o) return null
+  // 拖图边改图幅松手后、新图回来之前：背纸一并收起，只留虚线框占位（`FigureEdgeHandles`）
+  const pending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
+  if (pending) return null
+  // 隐藏的图不画，背纸也不画（否则画布上留一块白矩形；取消隐藏图回来、背纸跟着回来）
+  if (!o || o.hidden) return null
   // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top
   // 上的小数原点吸到整像素，纸与图差半像素就露边。面板没有对象级旋转（`objectRotation` 对面板恒 0）。
   return (
@@ -469,6 +499,7 @@ function EmptyHint() {
   const hasAssets = useAssetStore((s) => s.panels.length > 0)
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   if (!selectionEmpty) return null
+  const onLightPaper = groundInkFor(null, page) === 'paper-ink'
   // 锚在纸面**可见部分**的中心：侧栏一开、画布被挤到一边时提示跟着纸面走，
   // 而不是飘在灰色工作区中央；纸面比视野大时（放大 / 首次适配还没算对）落在
   // 看得到的那一块上，永远不出屏（审计 B01）。落点算法在 `lib/emptyStateAnchor`
@@ -486,11 +517,16 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      {/* 提示坐在页面（纸）上：纸两套主题都是白，暗色里给它一块面板色的底（`paper-chrome`，浅色里透明——
-          字照旧直接落在纸上），浅色的字才不会落在白纸上（2026-10-07 暗色主题，宪法第二十八节） */}
-      <div data-on-paper className="pointer-events-auto rounded-lg bg-paper-chrome p-4">
+      {/* 提示坐在页面（纸）上。纸是浅的（默认白纸、浅色背景）：`data-on-paper` 把这一块的界面墨与按钮底换成
+          纸上的墨（index.css 末尾），两套主题都是字直接落在纸上、不垫底（2026-10-13 审计：此前暗色里垫一块深色
+          卡片，白纸正中一块黑，很突兀）。用户把页面背景设成深色时纸上的墨压不住，退回一块主题面板底、字用界面墨
+          （Codex #995）。深浅按页面的实际底色判，与纸上文字 / 选区同一个判据 `groundInkFor`（宪法第二十八节） */}
+      <div
+        {...(onLightPaper ? { 'data-on-paper': '' } : {})}
+        className={cn('pointer-events-auto p-4', !onLightPaper && 'rounded-lg bg-surface')}
+      >
         <EmptyState
-          icon={Images}
+          art="canvas"
           title={sg('emptyTitle')}
           // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
           hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}

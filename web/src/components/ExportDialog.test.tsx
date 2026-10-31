@@ -9,7 +9,7 @@
  * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
-import { initI18n, literal } from '@/i18n'
+import { i18n, initI18n, literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -20,29 +20,46 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   postTelemetryEvent: vi.fn(() => Promise.resolve({ accepted: true })),
   // 后端导出默认值（#715 PR-B）：默认「后端没有这组端点」，个别用例改答
   fetchExportDefaultsRemote: vi.fn(() => Promise.resolve(undefined)),
+  // 预览里「带图内修改的那一版」按 overrides 出图（`useVariantPng`）
+  enginePreviewPng: vi.fn(() => Promise.resolve(new Blob(['png']))),
 }))
 
 // 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
+// 能不能「在文件夹中显示」：桌面壳才有；全部成功只在能显示时改走胶囊（浏览器里照旧留结果块，那里才有下载链接）
+// `can: null` = 用真实判定（多数用例自己装了桌面环境）；true / false = 用例点名覆盖
+const reveal = vi.hoisted(() => ({ can: null as boolean | null }))
+vi.mock('@/lib/desktop', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/desktop')>()
+  return { ...real, canRevealInFileManager: () => reveal.can ?? real.canRevealInFileManager() }
+})
 const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 
 import { ExportDialog } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
+import { enginePreviewPng, fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
+import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
-import { useUiStore } from '@/store/uiStore'
+import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
+import { DEFAULT_PROFILE_ID } from '@/lib/profile'
+import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
+import { currentFigureOf } from '@/lib/problemContext'
+import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
+import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
 
 declare global {
@@ -51,7 +68,7 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-/** 一张 8pt 刻度的图：撞绝对下限 → error，默认阻止导出 */
+/** 一张 7.5pt 刻度的图：撞绝对下限 → error，默认阻止导出 */
 const manifest = (tickPt: number) => ({
   stem: 'Fig1',
   size_mm: [80, 60],
@@ -89,22 +106,48 @@ let root: Root
 let exportBodies: Record<string, unknown>[]
 
 /** 后端把作业**一次跑完**就回终局：用例不必等轮询 */
-let jobStatus: 'done' | 'conflict' = 'done'
+let jobStatus: 'done' | 'partial' | 'conflict' | 'running' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
+let jobWarnings: string[] = []
+/** 后端 validate 的 `route`（#1209）：按请求体现造；null = 旧后端 / 算不出（响应里没有 route） */
+/** 逐个作业依次给的状态（一批作业里每张一个）；用完退回 `jobStatus` */
+/** 每次 `buildBatchInput` 调用时的微任务纪元（见「冻结是一个同步块」） */
+const batchBuildLog: number[] = []
+let jobStatusSeq: string[] | null = null
+/** `/api/export/validate` 回包前先等多久（模拟 route 慢：冻结段每张最多等它 1.5 s） */
+let routeDelayMs = 0
+let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
+/** `/api/runtime/status` 的回答（null = 走兜底）；`runtimeStatusGate` 非 null 时先等它再回（模拟 ensure() 往返） */
+let runtimeStatus: Record<string, unknown> | null = null
+let runtimeStatusGate: Promise<void> | null = null
+/** 非 0 时 `/api/runtime/status` 回这个 HTTP 状态码（模拟服务端瞬时失败）；-1 = 抛网络错误 */
+let runtimeStatusFail = 0
+
+/** 项目设置 PATCH 回包前先等它（模拟位置写入在飞） */
+let settingsGate: Promise<void> | null = null
 
 function stubFetch() {
   exportBodies = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
+    if (url.includes('/api/project/settings')) {
+      await settingsGate
+      const body = JSON.parse(String(init?.body ?? '{}')) as { export_dir?: string }
+      return new Response(
+        JSON.stringify({ settings: { export_dir: body.export_dir }, export_dir: body.export_dir, backup_dir: '/b' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
     if (url.includes('/api/export/start') || url.endsWith('/api/export')) {
       exportBodies.push(JSON.parse(String(init?.body ?? '{}')))
+      const status = jobStatusSeq?.length ? jobStatusSeq.shift()! : jobStatus
       return new Response(
         JSON.stringify({
-          job_id: 'j1',
-          status: jobStatus,
+          job_id: jobStatusSeq ? `j${exportBodies.length}` : 'j1',
+          status,
           outputs:
-            jobStatus === 'done'
+            status === 'done' || status === 'partial'
               ? (jobOutputs ?? [
                   {
                     format: 'pdf',
@@ -119,13 +162,29 @@ function stubFetch() {
                   },
                 ])
               : [],
-          warnings: [],
-          conflicts: jobStatus === 'conflict' ? ['a.pdf'] : [],
+          warnings: jobWarnings,
+          conflicts: status === 'conflict' ? ['a.pdf'] : [],
           export_dir: '/out',
           error: null,
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url.includes('/api/runtime/status') && runtimeStatusFail) {
+      if (runtimeStatusFail < 0) throw new TypeError('network down')
+      return new Response(JSON.stringify({ error: { code: 'boom' } }), { status: runtimeStatusFail })
+    }
+    if (url.includes('/api/runtime/status') && runtimeStatus) {
+      if (runtimeStatusGate) await runtimeStatusGate
+      return new Response(JSON.stringify(runtimeStatus), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    if (url.includes('/api/export/validate') && routeOf) {
+      if (routeDelayMs) await new Promise((r) => setTimeout(r, routeDelayMs))
+      const req = JSON.parse(String(init?.body ?? '{}'))
+      return new Response(JSON.stringify({ ok: true, conflicts: [], writable: true, route: routeOf(req) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
     return new Response(JSON.stringify({ figures_dir: '/figs', panels: [] }), {
       status: 200,
@@ -179,10 +238,25 @@ async function setup(tickPt: number, page = { w: 80, h: 60 }, panelH = 60) {
   })
 }
 
+/**
+ * 单图编辑（画布上恰好一张图）不判画布摆放类规则；要测「画布范围下摆放类阻断还在」的用例
+ * 再放一张隐藏的图，让画布是排版（隐藏的图也计一张、几何上不占位）。
+ */
+async function keepInLayout() {
+  await act(async () => {
+    useDocumentStore.getState().commit(literal('第二张图（隐藏）'), (d) => {
+      d.objects = [...d.objects, { ...panel, id: 'p-pad', hidden: true } as never]
+    })
+  })
+}
+
 const text = () => document.body.textContent ?? ''
 
 /** 位图素材 + 快速编辑（原图范围）的夹具；`overrides` 决定走"照抄"还是"重画" */
-async function setupRaster(overrides: { gid: string; prop: string; value: unknown }[]) {
+async function setupRaster(
+  overrides: { gid: string; prop: string; value: unknown }[],
+  script?: string,
+) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_raster')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.page = { w: 180, h: 120 }
@@ -205,6 +279,7 @@ async function setupRaster(overrides: { gid: string; prop: string; value: unknow
       'r1.png': {
         id: 'r1.png',
         mtime: 1,
+        ...(script ? { script } : {}),
         original_spec: {
           source_kind: 'raster',
           logical_w_mm: 10.16,
@@ -239,15 +314,55 @@ const button = (label: string) =>
 
 /** 格式复选框（组件工作台批次把 aria-pressed 的按钮改成了普通复选框，`FormatCheck`） */
 const formatBox = (title: string) =>
-  [...document.body.querySelectorAll('label')]
-    .find((l) => l.textContent?.trim() === title)
-    ?.querySelector('input[type="checkbox"]') as HTMLInputElement
+  document.body.querySelector<HTMLInputElement>(`[data-export-formats] [data-export-format="${title.toLowerCase()}"] input[type="checkbox"]`)!
 /** 位图分辨率下拉：只在选了位图格式时出现（工作台批次起它坐在文件名那一行右侧，没有「分辨率」文字标签） */
 const ppiSelect = () => document.body.querySelector('[role="combobox"][aria-label="位图分辨率"]')
-/** 知情确认框：格式那四颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
+/** 知情确认框：格式那五颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
 const confirmBox = () =>
   document.body.querySelector<HTMLInputElement>('input[data-export-confirm]')
 
+/**
+ * 「导出内容」那一组单选（多图排版才有；单图编辑没有输出范围）。顺序固定为 [原图, 整版]：
+ * 老用例按下标认，界面上的视觉顺序是「整版 / 每张图单独导出」，两者不是一回事，认 `data-value`。
+ */
+const scopeRadios = () =>
+  ['original', 'canvas']
+    .map((v) =>
+      document.body.querySelector<HTMLButtonElement>(
+        `[data-onboarding-anchor="export-scope"] [data-value="${v}"]`,
+      ),
+    )
+    .filter((b): b is HTMLButtonElement => !!b)
+
+/** 有阻断项的信号：「要改」计数芯片（不再有任何警告句 / 红字提示） */
+const errorHint = () => document.body.querySelector('[data-count-chip="danger"]')
+const anyHint = errorHint
+
+/** 「每张图单独导出」是依次发多个作业（每张各一个）：等这一批收尾 */
+const batchDone = async (ms = 10_000) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms && !useExportStore.getState().batch?.done) {
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 50))
+    })
+  }
+}
+
+/** 等某个条件成立（批里每张之间有 250 ms 的 route 防抖，固定睡眠在负载高时不稳） */
+const until = async (cond: () => boolean, ms = 8000) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms && !cond()) {
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 50))
+    })
+  }
+}
+
+/** 结果块默认只有一句摘要；逐个文件 / 核验 / 警告 / 诊断在折叠的「详情」里，要看先展开 */
+const openResultDetail = async () => {
+  const toggle = document.body.querySelector('[data-export-result] [data-notice-detail-toggle]')
+  if (toggle) await act(async () => { (toggle as HTMLElement).click() })
+}
 const click = async (el: Element) => {
   await act(async () => {
     ;(el as HTMLElement).click()
@@ -258,7 +373,10 @@ const click = async (el: Element) => {
 beforeEach(() => {
   localStorage.clear()
   jobStatus = 'done'
+  jobStatusSeq = null
+  routeDelayMs = 0
   jobOutputs = null
+  jobWarnings = []
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   useSelectionStore.getState().clear()
@@ -272,6 +390,28 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.restoreAllMocks()
+})
+
+/*
+ * 模式：#1292 起 `mode` 由激活画布上的图数推出（`workspaceStore.settleMode` 是唯一写入点），而导出对话框只读 `mode`
+ * （`fast_edit` = 单图档，其余 = 多图档）。本文件的夹具直接给 `mode` 赋值，是**有意的**：它把「对话框怎么读 mode」
+ * 与「mode 怎么推出」拆开，且需要 #1292 之后到不了的组合（排版里只有一张图，才能测「整版 / 每张图」两档在单张图上的口径）。
+ * 「模式随图数推出」本身由 `store/workspace.test.ts` 钉着，这里不重复。
+ */
+vi.mock('@/lib/exportBatchInput', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/exportBatchInput')>()
+  let epoch = 0
+  return {
+    ...real,
+    buildBatchInput: (...args: Parameters<typeof real.buildBatchInput>) => {
+      batchBuildLog.push(epoch)
+      // 如果两次调用之间让出过（任何 await / 微任务），这个纪元就会推进
+      queueMicrotask(() => {
+        epoch += 1
+      })
+      return real.buildBatchInput(...args)
+    },
+  }
 })
 
 describe('信息架构：删掉的东西不许回来', () => {
@@ -322,27 +462,25 @@ describe('信息架构：删掉的东西不许回来', () => {
     expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
     // 没有一个收起的「高级」把它们藏起来
     for (const d of document.body.querySelectorAll('details')) expect(d.textContent).not.toContain('样式检查报告')
-    // 输出组里导出之前就看得见文件落到哪，「更改…」去设置 › 导出
+    // 输出组里导出之前就看得见文件落到哪；「更改…」直接弹选择文件夹（细节在 ExportLocationRow.test.tsx），不再跳设置页
     expect(group('output').querySelector('[data-export-location]')).not.toBeNull()
     await click(group('output').querySelector('[data-export-location-change]')!)
-    expect(useUiStore.getState().settingsOpen).toBe(true)
-    expect(useUiStore.getState().settingsSection).toBe('export')
-    // 设置压在导出上（dialogStack）：收起来，别把这一层栈带进后面的用例
-    await act(async () => useUiStore.getState().setSettingsOpen(false))
+    expect(useUiStore.getState().settingsOpen).toBe(false)
   })
 })
 
 describe('输出范围', () => {
   it('画布模式默认按画布；两个选项都在，不隐藏', async () => {
     await setup(9)
-    const radios = [...document.body.querySelectorAll('[role="radio"]')]
-    expect(radios.map((r) => r.textContent)).toEqual(['原图尺寸', '当前画布'])
+    const radios = scopeRadios()
+    // 多图排版才有「导出内容」；默认整版（= 画布范围），「每张图单独导出」= 原图范围
+    expect(radios.map((r) => r.textContent)).toEqual(['每张图单独导出', '整版'])
     expect(radios[1].getAttribute('aria-checked')).toBe('true')
   })
 
-  it('快速编辑默认按原图，并说出这次忽略了画布上的哪些变换', async () => {
+  it('单图编辑固定按原图，没有「输出范围」；画布上的缩放不另起一行说明', async () => {
     await setup(9)
-    // 面板在画布上被缩小过 → 原图导出不套用这个缩放，界面必须说出来
+    // 面板在画布上被缩小过 → 原图导出不套用这个缩放；用户不要这句说明（beta 0.19.0b4 反馈）
     useDocumentStore.getState().commit(literal('缩小'), (d) => {
       const p0 = d.objects[0] as PanelObject
       p0.w = 40
@@ -356,10 +494,10 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    const radios = [...document.body.querySelectorAll('[role="radio"]')]
-    expect(radios[0].getAttribute('aria-checked')).toBe('true')
-    expect(text()).toContain('80 × 60 mm')
-    expect(text()).toContain('缩放')
+    // 单图编辑隐藏范围选择，固定 original（请求体里的 scope 由下面「单图」组钉住）
+    expect(scopeRadios()).toHaveLength(0)
+    expect(text()).toContain('80 × 60 mm')
+    expect(text()).not.toContain('不会带进导出')
   })
 
   it('渲染回来之后尺寸跟着变：对话框开着时 manifest 到位，说的必须是渲染回来的图幅', async () => {
@@ -379,15 +517,15 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    expect(text()).toContain('75.3 × 58.7 mm')
+    expect(text()).toContain('75.3 × 58.7 mm')
     // 渲染回来：第 ① 档（manifest size_mm）到位——**没有任何素材清单的变化**。
     // 以前对话框只在素材清单变化时重算规格，这一刻它继续说 75.3 × 58.7，
     // 而快速编辑条上已经是 80 × 57.6（审计 T33）
     await act(async () => {
       seedExactRender(panel, { ...manifest(9), size_mm: [80, 57.6] } as never)
     })
-    expect(text()).toContain('80 × 57.6 mm')
-    expect(text()).not.toContain('75.3 × 58.7 mm')
+    expect(text()).toContain('80 × 57.6 mm')
+    expect(text()).not.toContain('75.3 × 58.7 mm')
   })
 
   // 「没有当前图就禁用」那一条被 #295 改掉了：项目里只有一张图时就按它导。
@@ -395,13 +533,13 @@ describe('输出范围', () => {
   // 都会被当成「另一条在管」。
   it('画布模式没选中、但项目里只有一张图：就按它导，不再要求「先选中一张图」', async () => {
     await setup(9)
-    const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
+    const original = scopeRadios()[0]
     expect(original.hasAttribute('disabled')).toBe(false)
     expect(text()).not.toContain('先选中一张图')
     expect(text()).not.toContain('在下方选一张')
   })
 
-  it('源文件不见了：主按钮灰 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
+  it('源文件不见了：单图档静默改按画布导，按钮亮着、预览换成页面', async () => {
     await setup(9)
     // 面板还在，素材清单里没有了（掉线 / 被删）
     useAssetStore.setState({ byId: {} } as never)
@@ -412,14 +550,53 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    // 范围按钮本身不禁用（项目里还有图可挑，清单就在下面）；灰的是「开始导出」
-    const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
-    expect(original.getAttribute('aria-checked')).toBe('true')
-    expect(original.hasAttribute('disabled')).toBe(false)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    expect(text()).toContain('源文件现在找不到了')
-    // 三个原因折成两句的话会说成这一句，用户照做之后按钮还是灰的
+    // 单图编辑没有范围按钮；原图口径不可用时静默改按画布导（不报错、不灰按钮），左栏预览如实显示导出的页面
+    expect(scopeRadios()).toHaveLength(0)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    // 没有范围选择的单图档里，EPS 灰着的原因不能指向不存在的「每张图单独导出」
+    const epsBox = formatBox('EPS')
+    expect(epsBox.disabled).toBe(true)
+    expect(epsBox.closest('label')!.title).toContain('没有可重新运行的脚本')
+    expect(epsBox.closest('label')!.title).not.toContain('每张图单独导出')
     expect(text()).not.toContain('先选中一张图')
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope, '内部改按画布导').toBe('canvas')
+    // 退路按图框裁掉页面白边：请求的页面尺寸 = 预览显示的 80 × 60 mm
+    expect((exportBodies[0].canvas as { page_w_mm: number }).page_w_mm).toBe(80)
+    expect((exportBodies[0].canvas as { page_h_mm: number }).page_h_mm).toBe(60)
+  })
+})
+
+describe('单图退路裁白边：检查 / proof report / 请求吃同一份裁后文档', () => {
+  it('页面 180 × 120、图 80 × 60 摆在 (30, 20)：请求与报告的页面都是 80 × 60，对象坐标平移到 (0, 0)', async () => {
+    await setup(7.5, { w: 180, h: 120 }) // 7.5pt → error，报告必出
+    useDocumentStore.getState().commit(literal('挪'), (d) => {
+      d.objects = d.objects.map((o) => ({ ...o, x: 30, y: 20 }))
+    })
+    useAssetStore.setState({ byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    const canvas = exportBodies[0].canvas as {
+      page_w_mm: number
+      page_h_mm: number
+      objects: { x_mm: number; y_mm: number }[]
+    }
+    expect([canvas.page_w_mm, canvas.page_h_mm]).toEqual([80, 60])
+    expect([canvas.objects[0].x_mm, canvas.objects[0].y_mm]).toEqual([0, 0])
+    const report = exportBodies[0].style_check_report as { page_mm: { w: number; h: number } }
+    expect(report.page_mm.w).toBe(80)
+    expect(report.page_mm.h).toBe(60)
   })
 })
 
@@ -456,7 +633,7 @@ describe('像素预览按范围算', () => {
 })
 
 describe('对话框开着时素材没了', () => {
-  it('可用性跟着素材清单变，不是只挂在 figureId 上', async () => {
+  it('可用性跟着素材清单变，不是只挂在 figureId 上：单图档跟着改按画布', async () => {
     await setup(9)
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await act(async () => {
@@ -465,43 +642,44 @@ describe('对话框开着时素材没了', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    const start = () => button('开始导出')!
-    expect(start().hasAttribute('disabled')).toBe(false)
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '原图口径：预览是图').toBeNull()
 
-    // 对话框开着，素材被删 / 掉线：「开始导出」必须当场灰掉，并说出原因
+    // 对话框开着，素材被删 / 掉线：单图档当场改按画布导（预览换成页面）；memo 只挂 figureId 的话这里还是原图
     await act(async () => {
       useAssetStore.setState({ byId: {} } as never)
     })
-    expect(start().hasAttribute('disabled'), 'memo 只挂 figureId 的话这里还是亮的').toBe(true)
-    expect(text()).toContain('源文件现在找不到了')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览跟着换成页面').toBeTruthy()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('canvas')
   })
 })
 
-describe('阻断与确认', () => {
-  it('有 error 时默认拦住导出，勾选确认后才放行，并写进样式检查报告', async () => {
-    await setup(8) // 8pt = 撞绝对下限 → error
-    expect(text()).toContain('阻断')
+describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () => {
+  it('有 error 时导出照样可点，没有确认勾选框也没有警告句；未处理的项自动写进样式检查报告', async () => {
+    await setup(7.5) // 7.5pt = 撞绝对下限 → error
+    expect(text()).toContain('要改')
 
-    const go = button('开始导出')!
-    expect(go.hasAttribute('disabled')).toBe(true)
-
-    const check = confirmBox()!
-    expect(check, '缺少显式确认勾选框').toBeTruthy()
-    await act(async () => {
-      check.click()
-    })
-
+    // 知情确认框整个删掉了；导出永远可点
+    expect(confirmBox(), '确认勾选框已删除').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(text(), '不出现任何警告句').not.toContain('投稿可能被退回')
+    expect(document.body.querySelector('[data-export-fix]')).toBeNull()
+    expect(document.body.querySelector('[data-export-hint]')).toBeNull()
+    expect(errorHint()?.textContent).toBe('1 项要改')
+
     await click(button('开始导出')!)
 
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
-    // 勾了确认就**必须**留档：确认框上写着这次确认会被记录，
-    // 而报告开关是个记住的偏好，用户可能早就关掉了
-    expect(report, '确认之后必须生成样式检查报告').toBeTruthy()
+    // 有未处理项就**必须**留档：报告是「导出时未处理的项」唯一的落点，
+    // 报告开关是个记住的偏好，用户可能早就关掉了
+    expect(report, '有未处理项必须生成样式检查报告').toBeTruthy()
     expect((report.profile as Record<string, string>).profile_id).toBe('lab-publication-v1')
     expect(report.forced).toBe(true)
     expect(report.acknowledged).toContain('font-below-absolute-floor')
+    // 请求里的检查策略也自动是 acknowledged（后端据此放行阻断项，同时把规则码记进回执）
+    expect((exportBodies[0].validation as { policy: string }).policy).toBe('acknowledged')
     const checks = report.checks as { id: string; severity: string }[]
     expect(checks.some((c) => c.id === 'font-below-absolute-floor' && c.severity === 'error')).toBe(
       true,
@@ -518,19 +696,17 @@ describe('阻断与确认', () => {
   })
 })
 
-describe('确认只对"这一批"问题有效', () => {
-  it('问题集合变了，那个勾必须掉（否则新问题会不经确认被导出）', async () => {
-    await setup(8) // 8pt 刻度 → 一条阻断项
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
-    expect(check().checked).toBe(true)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+describe('未处理的项随每次导出自动记录', () => {
+  it('问题集合变了，下一次导出的报告记的是现在这一批（没有确认状态可以过期）', async () => {
+    await setup(7.5) // 7.5pt 刻度 → 一条阻断项
+    await keepInLayout()
+    await click(button('开始导出')!)
+    const first = exportBodies[0].style_check_report as { checks: unknown[] }
+    expect(first.checks).toHaveLength(1)
+    await click(button('再次导出')!)
+    expect(exportBodies).toHaveLength(2)
 
-    const before = text()
-
-    // 文档被编辑，冒出**第二条**阻断项：确认过的那一批已经不是现在这一批
+    // 文档被编辑，冒出**第二条**阻断项
     await act(async () => {
       useDocumentStore.getState().commit(literal('加一段小字'), (d) => {
         d.objects = [
@@ -556,21 +732,22 @@ describe('确认只对"这一批"问题有效', () => {
       runValidation()
       await new Promise<void>((r) => setTimeout(r, 0))
     })
-    expect(text(), '这一步得真的改变问题集合，不然这条用例是空的').not.toBe(before)
-    const after = confirmBox()
-    expect(after, '还应该要确认').toBeTruthy()
-    expect(after!.checked, '问题集合变了，勾还留着 = 新问题不经确认就放行').toBe(false)
+    expect(errorHint()?.textContent).toMatch(/^[2-9] 项要改/)
+    await click(button('再次导出')!)
+    expect(exportBodies).toHaveLength(3)
+    const second = exportBodies[2].style_check_report as { checks: unknown[]; forced: boolean }
+    expect(second.forced).toBe(true)
+    expect(second.checks.length, '报告里是现在这一批，不是上一次的').toBeGreaterThan(first.checks.length)
   })
 
-  it('导出一次之后要重新确认（一次点头只对那一次有效）', async () => {
-    await setup(8)
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
+  it('导出之后下一次仍然带着未处理的项（不靠任何点头状态）', async () => {
+    await setup(7.5)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
-    expect(check().checked, '导出之后那个勾还留着 = 下一次不经确认就放行').toBe(false)
+    await click(button('再次导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect((exportBodies[1].style_check_report as { forced: boolean }).forced).toBe(true)
+    expect((exportBodies[1].validation as { policy: string }).policy).toBe('acknowledged')
   })
 })
 
@@ -602,8 +779,67 @@ describe('统一 ExportRequest', () => {
   })
 })
 
+describe('SVG 导出（X03）', () => {
+  it('SVG-only keeps its selection (and stays exportable) after following an error count chip', async () => {
+    await setup(7.5)
+    await click(formatBox('SVG'))
+    await click(formatBox('PDF'))
+    await click(formatBox('PNG'))
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    const chip = document.body.querySelector<HTMLElement>('[data-export-group="checks"] [data-count-chip="danger"]')!
+    expect(chip, 'the real font-floor issue must produce a blocking count chip').not.toBeNull()
+    await click(chip)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+    expect(useUiStore.getState().exportOpen).toBe(false)
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(formatBox('SVG').checked).toBe(true)
+    expect(formatBox('PDF').checked).toBe(false)
+    expect(formatBox('PNG').checked).toBe(false)
+    expect(ppiSelect()).toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(exportBodies).toHaveLength(0)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+    expect((exportBodies[0].style_check_report as { acknowledged: string[] }).acknowledged).toContain('font-below-absolute-floor')
+  })
+
+  it('SVG follows the existing formats and sends no PPI', async () => {
+    await setup(9)
+    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect(formatBox('SVG').checked).toBe(false)
+    await click(formatBox('SVG'))
+    await click(formatBox('PDF'))
+    await click(formatBox('PNG'))
+    expect(document.body.querySelector('[data-export-svg-note]')).toBeNull()
+    expect(ppiSelect()).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+    expect(readExportDefaults().formats).toEqual(['svg'])
+  })
+
+  it('restores SVG-only defaults from the backend for the next opening', async () => {
+    await setup(9)
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '1200', formats: ['svg'], withProof: false, strictInspection: false },
+    })
+    await act(async () => { await hydrateExportDefaults() })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(formatBox('SVG').checked).toBe(true)
+    expect(formatBox('PDF').checked).toBe(false)
+    expect(ppiSelect()).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+  })
+})
+
 describe('导出默认值以后端为准（#715 PR-B）', () => {
-  it('对话框常驻挂载之后才取回的后端默认值：下次打开用取回的值（换 origin 首启不退回 600 ppi）', async () => {
+  it('对话框常驻挂载之后才取回的后端默认值：下次打开用取回的值（换 origin 首启不退回 600 ppi）', async () => {
     await setup(9) // 本机缓存是空的：挂载时读到 600
     await act(async () => {
       useUiStore.getState().setExportOpen(false)
@@ -680,42 +916,99 @@ describe('文件名的跨平台校验', () => {
   })
 })
 
-describe('阻断闸没有第二条路绕过去', () => {
-  it('撞名之后点「覆盖」，不许把同一批阻断项不经确认再导一次', async () => {
-    jobStatus = 'conflict'
-    await setup(8) // 一条阻断项
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
+describe('撞名确认只对触发它的输出目标有效（QA-WIN-18）', () => {
+  const nameInput = () => {
+    const all = document.body.querySelectorAll<HTMLInputElement>('input[data-export-filename]')
+    expect(all, '文件名输入框是单例').toHaveLength(1)
+    return all[0]
+  }
+  const typeName = async (v: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput(), v)
+      nameInput().dispatchEvent(new Event('input', { bubbles: true }))
     })
+
+  it('确认态下把文件名改成另一个：确认作废，点不到「覆盖」，不会按新名字覆盖', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].filename).toBe('A')
+    expect(button('覆盖')).toBeTruthy()
+
+    await typeName('B')
+    expect(button('覆盖'), '目标变了：旧的覆盖确认必须撤掉').toBeFalsy()
+    expect(button('开始导出')).toBeTruthy()
+    expect(exportBodies.filter((b) => b.overwrite === 'replace')).toHaveLength(0)
+  })
+
+  it('改回触发撞名的名字也不复活旧确认；重新开始导出重新检测', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    await typeName('B')
+    await typeName('A')
+    expect(button('覆盖')).toBeFalsy()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].overwrite).toBe('ask')
+  })
+
+  it('确认态下改了导出位置：确认作废，没有 replace 请求（目录是目标的一部分）', async () => {
+    jobStatus = 'conflict'
+    useProjectStore.setState({ project: { settings: {}, export_dir: '/out', backup_dir: '/b' } as never })
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    expect(button('覆盖')).toBeTruthy()
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    await act(async () => {
+      await applyProjectSettingsPatch({ export_dir: '/other/dir' })
+    })
+    expect(button('覆盖'), '目录变了：旧的覆盖确认必须撤掉').toBeFalsy()
+    expect(button('开始导出')).toBeTruthy()
+    expect(exportBodies.filter((b) => b.overwrite === 'replace')).toHaveLength(0)
+  })
+
+  it('只改会随「覆盖」取最新的东西（报告等）不作废确认；「覆盖」带的仍是同一个文件名', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    await click(button('覆盖')!)
+    expect(exportBodies[1]).toMatchObject({ filename: 'A', overwrite: 'replace' })
+  })
+})
+
+describe('撞名之后「覆盖」带着的未处理项与第一次一致', () => {
+  it('撞名之后点「覆盖」：同一批阻断项照样自动记录，不会因为没有确认状态而丢', async () => {
+    jobStatus = 'conflict'
+    await setup(7.5) // 一条阻断项
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].validation).toMatchObject({ policy: 'acknowledged' })
 
-    // 撞名那一次**什么都没写**，界面问的是同一次导出的另一个问题 ——
-    // 确认不该被清掉，「覆盖」也就照常可用
+    // 撞名那一次**什么都没写**，界面问的是同一次导出的另一个问题
     await click(button('覆盖')!)
     expect(exportBodies).toHaveLength(2)
     expect(
       (exportBodies[1].validation as Record<string, unknown>).acknowledged,
-      '第二次带着空的 acknowledged = 替用户签了一个他没签过的字',
+      '第二次带着空的 acknowledged = 报告里丢了这批未处理项',
     ).toEqual((exportBodies[0].validation as Record<string, unknown>).acknowledged)
     expect(exportBodies[1].include_style_check_report).toBe(true)
   })
 
-  it('撞名之后问题集合变了 → 「覆盖」这条路也必须被闸挡住', async () => {
+  it('撞名之后问题集合变了：「覆盖」带的是现在这一批（报告随之变）', async () => {
     jobStatus = 'conflict'
-    await setup(8)
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
+    await setup(7.5)
+    await keepInLayout()
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(button('覆盖'), '这一步得真的停在冲突条上').toBeTruthy()
+    const first = (exportBodies[0].style_check_report as { checks: unknown[] }).checks.length
 
-    // 文档被编辑，冒出**另一条**阻断项：确认过的那一批已经不是现在这一批，
-    // 那个勾会被撤销 —— 而「覆盖」按钮没有经过主按钮的 disabled
     await act(async () => {
       useDocumentStore.getState().commit(literal('加一段小字'), (d) => {
         d.objects = [
@@ -739,13 +1032,13 @@ describe('阻断闸没有第二条路绕过去', () => {
       runValidation()
       await new Promise<void>((r) => setTimeout(r, 0))
     })
-    expect(check().checked, '问题集合变了，勾应该已经掉了').toBe(false)
 
     await click(button('覆盖')!)
+    expect(exportBodies).toHaveLength(2)
     expect(
-      exportBodies,
-      '「覆盖」绕过了主按钮的 disabled —— 闸必须在 start() 里',
-    ).toHaveLength(1)
+      (exportBodies[1].style_check_report as { checks: unknown[] }).checks.length,
+      '「覆盖」走的是 start()，报告取的是现在这一批',
+    ).toBeGreaterThan(first)
   })
 })
 
@@ -766,6 +1059,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   }
   const offPage = async (tickPt: number) => {
     await setup(tickPt, { w: 150, h: 100 })
+    await keepInLayout()
     useDocumentStore.getState().commit(literal('摆到页外'), (d) => {
       ;(d.objects[0] as PanelObject).x = -20
     })
@@ -774,16 +1068,12 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   it('画布范围仍是阻断；原图范围没有阻断，直接可导', async () => {
     await offPage(9)
     await reopen()
-    expect(text()).toContain('超出页面范围')
-    expect(button('开始导出')!.hasAttribute('disabled'), '前提：画布范围下它是阻断').toBe(true)
+    expect(errorHint(), '前提：画布范围下它是阻断').toBeTruthy()
 
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
-    expect(text()).not.toContain('超出页面范围')
-    expect(confirmBox()).toBeNull()
+    expect(scopeRadios(), '单图编辑固定按原图，没有范围可选').toHaveLength(0)
+    expect(anyHint()).toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
@@ -791,11 +1081,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   })
 
   it('样式检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
-    await offPage(8) // 8 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
+    await offPage(7.5) // 7.5 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
     await reopen()
-    await act(async () => {
-      confirmBox()!.click()
-    })
     await click(button('开始导出')!)
     const canvasReport = exportBodies[0].style_check_report as Record<string, unknown>
     expect(canvasReport.acknowledged).toContain('out-of-page')
@@ -803,9 +1090,6 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    await act(async () => {
-      confirmBox()!.click()
-    })
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(2)
     expect(exportBodies[1].scope).toBe('original')
@@ -819,12 +1103,42 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   })
 
   /**
+   * 画布上的**缩放**同样不进原图导出（ADR 0028）：9 pt 的图在画布上缩到一半，读者在那页上
+   * 量到 4.5 pt——按画布导出这是阻断；按原图导出，文件里仍是 9 pt，不许被这次缩放阻断，
+   * 报告里也不许出现这条。画布范围那半边是前提（否则「不阻断」恒成立）。
+   */
+  it('画布上缩小摆放的图：画布范围按缩放后的字号阻断，原图范围按原图字号放行', async () => {
+    writeExportDefaults({ withProof: true })
+    await setup(9, { w: 80, h: 60 })
+    useDocumentStore.getState().commit(literal('缩到一半'), (d) => {
+      ;(d.objects[0] as PanelObject).w = 40
+      ;(d.objects[0] as PanelObject).h = 30
+    })
+    await reopen()
+    expect(errorHint(), '前提：画布范围下 4.5 pt 是阻断').toBeTruthy()
+    expect(errorHint()).toBeTruthy()
+
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await reopen()
+    expect(scopeRadios(), '单图编辑固定按原图，没有范围可选').toHaveLength(0)
+    expect(anyHint(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    expect(report, '夹具开了报告').toBeTruthy()
+    expect((report.checks as { id: string }[]).map((c) => c.id).filter((id) => id.startsWith('font-'))).toEqual([])
+    expect(report.page_mm).toEqual({ w: 80, h: 60, margin: 0 })
+  })
+
+  /**
    * 那张图**不在当前画布上**（Codex 评审 #596 P2）：`findFigurePanel()` 会跨画布找到它，
    * 检查与报告就都得按**它所在的那张画布**算——拿当前画布去裁，摘要里一条都剩不下
-   * （8 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
+   * （7.5 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
    */
   it('图在另一张画布上：检查按它所在的画布算，报告里有这张图', async () => {
-    await offPage(8)
+    await offPage(7.5)
     await act(async () => {
       useDocumentStore.getState().addCanvas('空白')
     })
@@ -833,17 +1147,12 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     )
     expect(home, '前提：p1 在另一张画布上').toBeTruthy()
     expect(useDocumentStore.getState().activeCanvasId).not.toBe(home!.id)
+    // 别的画布上的图不在多图排版的「每张图」里（只认当前画布）；这条检查口径只剩单图编辑一条路到得了
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    await click(document.body.querySelectorAll('[role="radio"]')[0])
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
-    // 这张图自己的阻断（8 pt）必须在；画布摆放那条不算
-    expect(button('开始导出')!.hasAttribute('disabled'), '8 pt 的阻断被裁没了').toBe(true)
-    expect(text()).not.toContain('超出页面范围')
-    await act(async () => {
-      confirmBox()!.click()
-    })
+    expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
+    // 这张图自己的阻断（7.5 pt）必须在；画布摆放那条不算
+    expect(errorHint(), '7.5 pt 的阻断被裁没了').toBeTruthy()
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
@@ -855,9 +1164,9 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 
   /**
    * 两张画布绑的规范不同（Codex 评审 #596 P1）：图所在的画布是宽松的 free-form
-   * （8 pt 合规），当前画布是 lab-publication（8 pt 是阻断）。摘要按图所在画布的规范算
+   * （7.5 pt 合规），当前画布是 lab-publication（7.5 pt 是阻断）。摘要按图所在画布的规范算
    * 出「干净」，那么报告的规范戳、严格核验的 `profile_id` 也必须是那一套——各取各的话，
-   * 报告会声称这张 8 pt 的图是按当前画布那套严规范查过并通过的。
+   * 报告会声称这张 7.5 pt 的图是按当前画布那套严规范查过并通过的。
    * 对照：切回画布范围，四处一起换成当前画布的规范（判据不是恒等成立）。
    */
   it('图在另一张画布上且两张画布规范不同：检查、报告、严格核验都按图所在画布的规范', async () => {
@@ -867,7 +1176,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
       return e!
     }
     writeExportDefaults({ withProof: true, strictInspection: true })
-    await setup(8)
+    await setup(7.5)
     useDocumentStore.getState().commit(literal('图所在画布：宽松规范'), (d) => {
       d.profile = bindingFor(entry('free-form-v1'))
     })
@@ -883,13 +1192,11 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(s.activeCanvasId, '前提：p1 不在当前画布上').not.toBe(home!.id)
     expect(s.doc.profile?.id, '前提：当前画布绑的是 lab-publication').toBe('lab-publication-v1')
 
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    await click(document.body.querySelectorAll('[role="radio"]')[0])
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
-    // 按 free-form 算：8 pt 合规，没有要确认的东西
-    expect(confirmBox(), '8 pt 在图所在画布的规范下不是阻断').toBeNull()
+    expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
+    // 按 free-form 算：7.5 pt 合规，没有要确认的东西
+    expect(anyHint(), '7.5 pt 在图所在画布的规范下不是阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(
       document.body.querySelector('[data-export-profile-canvas]'),
@@ -904,11 +1211,12 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(report.checks).toEqual([])
     expect(exportBodies[0].inspection).toEqual({ mode: 'strict', profile_id: 'free-form-v1' })
 
-    // 对照：画布范围 = 当前画布，规范跟着换成 lab-publication
-    await click(document.body.querySelectorAll('[role="radio"]')[1])
+    // 对照：回到多图排版（默认整版 = 当前画布），规范跟着换成 lab-publication
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await reopen()
     expect(document.body.querySelector('[data-export-profile-canvas]')).toBeNull()
     // 上一次已经导完：新的一次是显式的「再次导出」
-    await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
+    await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(2)
     expect(exportBodies[1].scope).toBe('canvas')
     const canvasReport = exportBodies[1].style_check_report as Record<string, unknown>
@@ -918,30 +1226,22 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 })
 
 describe('「能不能导」只有一份判断', () => {
-  it('原图不可用时，「重试」这条路也发不出请求', async () => {
-    jobStatus = 'conflict'
+  it('原图不可用时，「每张图单独导出」那一张发不出请求，如实记失败（单图档则改按画布导，见上）', async () => {
     await setup(9)
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
-    await act(async () => {
-      useUiStore.getState().setExportOpen(false)
-    })
-    await act(async () => {
-      useUiStore.getState().setExportOpen(true)
-    })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    await click(originalRadio())
+    useAssetStore.setState({ byId: {} } as never)
     await click(button('开始导出')!)
-    expect(exportBodies).toHaveLength(1)
-    expect(exportBodies[0].scope).toBe('original')
-
-    // 停在冲突条上时源没了：主按钮会变灰，而「覆盖」不经过它
-    await act(async () => {
-      useAssetStore.setState({ byId: {} } as never)
-    })
-    expect(text()).toContain('源文件现在找不到了')
-    await click(button('覆盖')!)
+    await batchDone()
     expect(
       exportBodies,
       '咽喉闸少了「原图可不可用」这一条 = 起一个界面刚说不可用的导出',
-    ).toHaveLength(1)
+    ).toHaveLength(0)
+    const b = useExportStore.getState().batch!
+    expect(b.failedStarts).toHaveLength(1)
+    expect(b.failedStarts[0].reason).not.toBe('')
   })
 })
 
@@ -950,11 +1250,125 @@ describe('照抄源位图 vs 引擎重画', () => {
     await setupRaster([])
     expect(text(), '照抄源文件时报的就是源像素网格').toContain('120 × 80')
 
-    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }])
+    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }], 's.py')
     expect(
       text(),
-      '带 override = 引擎重画，拿到的是 PDF；再报源像素网格就是界面与文件各说各的',
+      '带 override 且有脚本 = 引擎重画，拿到的是 PDF；再报源像素网格就是界面与文件各说各的',
     ).not.toContain('120 × 80')
+
+    // 没有脚本就画不出：后端 `_resolve_panel_source` 退回磁盘文件，文件仍是源像素网格
+    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }])
+    expect(text(), '带 override 但没有脚本：后端退回磁盘原件').toContain('120 × 80')
+  })
+})
+
+describe('来源读后端 route（#1209）', () => {
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+  const panelRoute = (over: Record<string, unknown>) => ({
+    source: 'disk',
+    embeds_disk_bitmap: true,
+    formats: {},
+    offers: { eps: { how: 'unavailable', reason: 'eps_needs_script' } },
+    ...over,
+  })
+  afterEach(() => { routeOf = null })
+
+  it('route 说这次会被重画：像素预览不再报源像素网格（即使前端旧判据会说照抄）', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ source: 'redraw', embeds_disk_bitmap: false }) },
+    })
+    await setupRaster([])
+    expect(text(), '还没拿到 route：旧判据（无编辑 = 照抄）').toContain('120 × 80')
+    await settle()
+    expect(text(), 'route 说重画，前端不再自己推算').not.toContain('120 × 80')
+  })
+
+  it('EPS 可不可用读 route.offers，不看前端素材表里有没有 script', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ offers: { eps: { how: 'redraw' } } }) },
+    })
+    await setupRaster([]) // 素材表里没有 script：旧判据 = 不可用
+    const epsDisabled = () =>
+      document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
+    expect(epsDisabled(), '还没拿到 route：旧判据').toBe('true')
+    await settle()
+    expect(epsDisabled(), 'route.offers.eps 可用').toBeNull()
+  })
+
+  it('画布范围：route 说某个带编辑的图画不出来，点导出之前就说', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: {
+        'Fig1.pdf': panelRoute({
+          source: 'unavailable',
+          embeds_disk_bitmap: false,
+          formats: { pdf: { how: 'unavailable', reason: 'source_needs_execution' } },
+        }),
+      },
+    })
+    await setup(9)
+    await settle()
+    expect(document.body.querySelector('[data-export-route-unavailable]')?.textContent).toContain('Fig1.pdf')
+  })
+
+  it('重开对话框：新 route 到之前读到的是「没有 route」，不拿旧 offers 禁用 / 放开 EPS', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ offers: { eps: { how: 'redraw' } } }) },
+    })
+    await setupRaster([]) // 素材表里没有 script：退路 = EPS 不可用
+    const epsDisabled = () =>
+      document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
+    await settle()
+    expect(epsDisabled(), 'route 到了：可用').toBeNull()
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(epsDisabled(), '重开后、响应到达前：退路，而不是关着时的旧答案').toBe('true')
+    await settle()
+    expect(epsDisabled(), '新响应到达').toBeNull()
+  })
+
+  it('对话框关着不取 route；每次重新打开都重取，哪怕输入没变', async () => {
+    let validates = 0
+    routeOf = (req) => {
+      validates += 1
+      return { scope: req.scope, formats: req.formats, panels: {} }
+    }
+    await setup(9)
+    await settle()
+    const opened = validates
+    expect(opened, '打开后取了 route').toBeGreaterThan(0)
+
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    // 关着时编辑文档：不发 validate
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('编辑'), (d) => { d.objects = [{ ...d.objects[0], h: 33 } as never] })
+    })
+    await settle()
+    expect(validates, '关着不发请求').toBe(opened)
+
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await settle()
+    expect(validates, '重新打开必须重取').toBeGreaterThan(opened)
+
+    const again = validates
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await settle()
+    expect(validates, '输入没变的重开也重取（脚本登记可能变了）').toBeGreaterThan(again)
+  })
+
+  it('route 缺席（旧后端）：没有那条提示，行为与引入 route 前一致', async () => {
+    routeOf = null
+    await setup(9)
+    await settle()
+    expect(document.body.querySelector('[data-export-route-unavailable]')).toBeNull()
   })
 })
 
@@ -983,10 +1397,15 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     notes: [],
   })
   const badge = () => document.body.querySelector<HTMLElement>('[data-inspection]')
+  // 干净的全部成功不再把结果块插进对话框（胶囊说一声）；这一组看的是结果块里的核验徽标，所以让结果不干净（带一条警告）
+  beforeEach(() => {
+    jobWarnings = ['预览与画布略有出入']
+  })
 
   it('回执里没有 manifest（老服务端 / 检查器没跑）：画「未核验」，没有绿勾', async () => {
     await setup(9)
     await click(button('开始导出')!)
+    await openResultDetail()
     expect(badge()?.dataset.inspection).toBe('unknown')
     expect(badge()?.textContent).toBe('未核验')
     expect(document.body.querySelector('[data-inspection="verified"]')).toBeNull()
@@ -998,6 +1417,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     ]
     await setup(9)
     await click(button('开始导出')!)
+    await openResultDetail()
     expect(badge()?.dataset.inspection).toBe('verified')
     expect(badge()?.textContent).toContain('已核验')
     expect(badge()?.className).toContain('text-ok')
@@ -1009,6 +1429,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     ]
     await setup(9)
     await click(button('开始导出')!)
+    await openResultDetail()
     expect(badge()?.dataset.inspection).toBe('unknown')
     expect(badge()?.textContent).toBe('未核验：裁切')
     expect(badge()?.className).not.toContain('text-ok')
@@ -1020,6 +1441,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     ]
     await setup(9)
     await click(button('开始导出')!)
+    await openResultDetail()
     expect(badge()?.dataset.inspection).toBe('failed')
     expect(badge()?.textContent).toBe('核验未通过：分辨率标签')
     expect(badge()?.className).toContain('text-danger')
@@ -1058,7 +1480,7 @@ describe('检查摘要只给数量，完整清单在问题面板', () => {
   it('摘要里有计数与入口，不列第二套清单', async () => {
     // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn
     await setup(9, { w: 80, h: 40 }, 40)
-    expect(text()).toContain('1 警告')
+    expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')   // 明细归问题面板
     const open = button('在问题面板中查看')!
     await click(open)
@@ -1073,7 +1495,7 @@ describe('预检的匿名用量统计', () => {
     posted.mockClear()
     setTelemetryEnabled(true)
     try {
-      await setup(8)                       // 8pt 刻度：撞绝对下限 → 1 条 error
+      await setup(7.5)                       // 7.5pt 刻度：撞绝对下限 → 1 条 error
       const calls = posted.mock.calls.filter(([event]) => event === 'preflight_completed')
       expect(calls).toHaveLength(1)
       const props = calls[0][1] as Record<string, unknown>
@@ -1156,8 +1578,8 @@ describe('对话框里改规范，不许连带重置用户填过的东西', () =
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { dialogCovered } from '@/store/uiStore'
 
-/** 几条 8pt 刻度：每条一个阻断项（`font-below-absolute-floor`） */
-const manifestWithTicks = (n: number, pt = 8, sizeMm: [number, number] = [80, 60]) => ({
+/** 几条 7.5pt 刻度：每条一个阻断项（`font-below-absolute-floor`） */
+const manifestWithTicks = (n: number, pt = 7.5, sizeMm: [number, number] = [80, 60]) => ({
   stem: 'Fig1',
   size_mm: sizeMm,
   elements: Array.from({ length: n }, (_, i) => ({
@@ -1227,7 +1649,7 @@ async function stage(opts: {
 async function setupTwo(opts: { select?: string[]; open?: boolean } = {}) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_two')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
-    // 页面按默认规范的双栏宽 150 mm、4:3——夹具本身不能带阻断项，否则每条
+    // 页面按默认规范的双栏宽 150 mm、4:3——夹具本身不能带阻断项，否则每条
     // 用例都得先去点确认框，测的就不再是"选对了图"这一件事
     d.page = { w: 150, h: 112.5 }
     d.objects = [
@@ -1302,7 +1724,7 @@ const openDialog = async () => {
 const filenameInput = () =>
   [...document.body.querySelectorAll('input')].find((i) => i.type !== 'checkbox') as HTMLInputElement
 
-const radios = () => [...document.body.querySelectorAll('[role="radio"]')] as HTMLButtonElement[]
+const radios = () => scopeRadios()
 
 const typeFilename = async (value: string) => {
   const input = filenameInput()
@@ -1315,16 +1737,24 @@ const typeFilename = async (value: string) => {
 }
 
 describe('T33 · 默认文件名跟着导出对象走', () => {
-  it('快速编辑里默认是那张图的名字，不是画布名；切到画布再切回来各归各', async () => {
+  it('单图编辑里默认是那张图的名字，不是画布名；多图排版里整版 / 每张图各归各', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
     expect(filenameInput().value, '面板没起名就用文件 stem').toBe('Fig1')
-    await click(radios()[1])
+    expect(radios(), '单图编辑没有范围可切').toHaveLength(0)
+    // 回到多图排版：默认整版，名字是画布名；切到「每张图单独导出」换成图名，再切回来各归各
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await openDialog()
     expect(filenameInput().value).toBe(useDocumentStore.getState().doc.name)
     await click(radios()[0])
-    expect(filenameInput().value).toBe('Fig1')
+    // 「每张图单独导出」每张用各自的名字：文件名输入隐藏，换成一句说明；对象头报的是这张图
+    expect(filenameInput(), '每张图用各自的名字，没有统一文件名输入').toBeUndefined()
+    expect(document.body.querySelector('[data-export-batch-names]')).toBeTruthy()
+    await click(radios()[1])
+    expect(filenameInput().value).toBe(useDocumentStore.getState().doc.name)
   })
 
   it('面板起过名就用面板名', async () => {
@@ -1340,14 +1770,16 @@ describe('T33 · 默认文件名跟着导出对象走', () => {
 
   it('用户改过名字之后切范围**不再替他换**（按标志判，不比字符串）', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
     await mountDialogs()
     await openDialog()
     await typeFilename('mine')
+    await click(radios()[0])
     await click(radios()[1])
     expect(filenameInput().value).toBe('mine')
     // 恰好敲回默认值也算改过：切范围仍然不动它
     await typeFilename('Fig1')
+    await click(radios()[0])
     await click(radios()[1])
     expect(filenameInput().value).toBe('Fig1')
   })
@@ -1378,10 +1810,12 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     await mountDialogs()
     await openDialog()
     expect(header()).toContain('Fig1')
-    expect(header()).toContain('原图尺寸')
-    expect(header()).toContain('80 × 60 mm')
+    expect(header(), '范围词不在一行头部里复述').not.toContain('原图尺寸')
+    expect(header()).toContain('80 × 60 mm')
     expect(text()).not.toContain('磁盘上的原件')
-    expect(document.body.querySelector('[data-export-target] img')).toBeTruthy()
+    // 缩略图只在左栏大预览里（对象头不再重复一份小的）
+    expect(document.body.querySelector('[data-export-target] img')).toBeNull()
+    expect(document.body.querySelector('[data-export-preview-stage] img')).toBeTruthy()
   })
 
   it('磁盘原件被脚本裁过（bbox_inches=tight）：按图幅出图，并说出磁盘那份是多少（审计里 80×57.6 vs 75.3×58.7）', async () => {
@@ -1394,11 +1828,11 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(header()).toContain('80 × 57.6 mm')
-    expect(header()).toContain('磁盘上的原文件为 75.3 × 58.7 mm')
-    expect(header()).toContain('将按图幅 80 × 57.6 mm 导出')
-    // 权威只有一个：头部之外不再报第二个尺寸
-    expect(text().split('80 × 57.6 mm').length - 1).toBe(2)
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).toContain('磁盘上的原文件为 75.3 × 58.7 mm')
+    expect(header()).toContain('将按图幅 80 × 57.6 mm 导出')
+    // 同一份 spec 只在三处出现：对象头、左栏预览、磁盘原件那句「将按图幅 … 导出」
+    expect(text().split('80 × 57.6 mm').length - 1).toBe(3)
   })
 
   it('位图源没有「裁过」这回事：尺寸不一致也不说那句', async () => {
@@ -1410,23 +1844,175 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).toContain('80 × 57.6 mm')
     expect(text()).not.toContain('磁盘上的原件')
   })
 
-  it('画布：画布名 + 页面尺寸 + 对象数，缩略图是画布列表同一张（真实内容，不发渲染）', async () => {
+  it('画布：画布名 + 页面尺寸，缩略图是画布列表同一张（真实内容，不发渲染）', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 180, h: 120 } })
     await mountDialogs()
     await openDialog()
     expect(header()).toContain(useDocumentStore.getState().doc.name)
-    expect(header()).toContain('当前画布')
-    expect(header()).toContain('180 × 120 mm')
-    expect(header()).toContain('1 个对象')
-    // 与画布列表 / 版本列表同一个组件：面板落位处挂的是素材预览图，不是灰方块
-    const thumb = document.body.querySelector('[data-export-target] [data-canvas-thumb]')
+    expect(header()).toContain('180 × 120 mm')
+    expect(header(), '精简成一行：名字 · 尺寸').not.toContain('1 个对象')
+    // 与画布列表 / 版本列表同一个组件（在左栏大预览里）：面板落位处挂的是素材预览图，不是灰方块
+    const thumb = document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]')
     expect(thumb).toBeTruthy()
     expect(thumb!.querySelector('[data-thumb-panel="Fig1.pdf"]')).toBeTruthy()
-    expect(document.body.querySelector('[data-export-target] img')).toBeNull()
+    expect(document.body.querySelector('[data-export-target] [data-canvas-thumb]')).toBeNull()
+  })
+
+  it('整版预览画的是改过的那张：有图内修改的面板按 overrides 出图，不挂磁盘原图', async () => {
+    clearVariantPngCache()
+    vi.mocked(enginePreviewPng).mockClear()
+    URL.createObjectURL = vi.fn(() => 'blob:edited')
+    URL.revokeObjectURL = vi.fn()
+    const edited: PanelObject = {
+      ...panel,
+      overrides: [{ gid: 'legend_0', prop: 'fontsize', value: 8.8 }],
+    }
+    const plain: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 80 }
+    await stage({
+      panels: [edited, plain],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 9) },
+      page: { w: 160, h: 60 },
+    })
+    await mountDialogs()
+    await openDialog()
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    const hrefs = (fileId: string) =>
+      [...document.body.querySelectorAll(`[data-canvas-thumb] [data-thumb-panel="${fileId}"]`)].map((n) =>
+        n.getAttribute('href'),
+      )
+    // 页签缩略图 + 大预览两处都是引擎按 overrides 出的那张
+    expect(hrefs('Fig1.pdf').length).toBeGreaterThanOrEqual(2)
+    expect(hrefs('Fig1.pdf').every((h) => h === 'blob:edited')).toBe(true)
+    expect(vi.mocked(enginePreviewPng).mock.calls.every(([id, patches]) => id === 'Fig1.pdf' && JSON.stringify(patches) === JSON.stringify(edited.overrides))).toBe(true)
+    // 没改过的那张照旧是素材预览图（不为它白跑引擎）
+    expect(hrefs('Fig2.pdf').every((h) => h?.includes('/api/render?id=Fig2.pdf'))).toBe(true)
+  })
+
+  it('整版预览里的序号按导出出来的样子画：字体、字号、粗细取文字对象自己的，不是缩略图的灰字估号', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 150, h: 112.5 } })
+    useDocumentStore.getState().commit(literal('序号'), (d) => {
+      d.objects.push({
+        id: 'lab_a',
+        type: 'text',
+        text: '(a)',
+        x: 1,
+        y: 1,
+        w: 6,
+        h: 4.4,
+        sizePt: 10,
+        bold: true,
+        color: '#000000',
+        align: 'left',
+      } as CanvasObject)
+    })
+    await mountDialogs()
+    await openDialog()
+    const label = document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb] [data-thumb-text] text')
+    expect(label, '大预览里的序号走导出画法').toBeTruthy()
+    expect(label!.textContent).toBe('(a)')
+    expect(Number(label!.getAttribute('font-size'))).toBeCloseTo((10 * 25.4) / 72, 9)
+    expect(label!.getAttribute('font-weight')).toBe('700')
+    expect(label!.getAttribute('fill')).toBe('#000000')
+    expect(label!.getAttribute('style')).toContain('var(--font-doc)')
+  })
+
+  it('runtime 面板带图内修改：重跑脚本（previewNonce 变）后整版预览按新版本重新出图，不停在上一次运行的图', async () => {
+    clearVariantPngCache()
+    vi.mocked(enginePreviewPng).mockClear()
+    URL.createObjectURL = vi.fn(() => 'blob:edited-rt')
+    URL.revokeObjectURL = vi.fn()
+    const RT = 'runtime:fig.py#F'
+    const edited: PanelObject = {
+      ...panel,
+      fileId: RT,
+      fileKind: 'runtime',
+      overrides: [{ gid: 'legend_0', prop: 'fontsize', value: 8.8 }],
+    } as PanelObject
+    const plain: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 80 }
+    await stage({
+      panels: [edited, plain],
+      renders: { [RT]: manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 9) },
+      page: { w: 160, h: 60 },
+    })
+    useRuntimeAssetStore.setState({ previewNonce: { [RT]: 1 } } as never)
+    await mountDialogs()
+    await openDialog()
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 30))
+    })
+    const before = vi.mocked(enginePreviewPng).mock.calls.length
+    expect(before).toBeGreaterThan(0)
+    await act(async () => {
+      useRuntimeAssetStore.setState({ previewNonce: { [RT]: 2 } } as never)
+    })
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    // 页签缩略图 + 大预览各自按新版本重出一次（至少两处）；版本号不进缓存键时只剩单图预览那一处
+    expect(vi.mocked(enginePreviewPng).mock.calls.length - before).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('P02 · 检查的是哪份产物（对象头不再复述文件名清单）', () => {
+  const checkScope = () => document.body.querySelector('[data-export-check-scope]')?.textContent ?? ''
+
+  async function openFast() {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+  }
+
+  it('对象头没有文件名清单（右栏文件名输入框 + 格式勾选已经说了）', async () => {
+    await openFast()
+    expect(document.body.querySelector('[data-export-target-files]')).toBeNull()
+    expect(document.body.querySelector('[data-export-target]')?.textContent).not.toContain('.png')
+  })
+
+  it('仅 PDF：没有 DPI 一行；加上位图才出现', async () => {
+    await openFast()
+    await click(formatBox('PNG'))
+    expect(ppiSelect()).toBeNull()
+    await click(formatBox('TIFF'))
+    expect(ppiSelect()).toBeTruthy()
+  })
+
+  it('原图 ↔ 画布：检查对象各归各，不串', async () => {
+    await openFast()
+    // 多图排版里切「每张图单独导出」才是原图范围（单图编辑固定原图、没有画布可切）
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await openDialog()
+    await click(radios()[0])
+    const canvasName = useDocumentStore.getState().doc.name
+    expect(checkScope()).toContain('仅查原图「Fig1」')
+    expect(checkScope()).not.toContain(canvasName)
+    await click(radios()[1])
+    expect(checkScope()).toContain(`查整个画布「${canvasName}」`)
+    // 尺寸仍只在头部报一次，检查行不报数
+    expect(checkScope()).not.toMatch(/mm/)
+  })
+
+  it('原图不可用（源文件不见了）：单图档静默改按画布导（头部是画布名 · 尺寸）', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useAssetStore.setState({ byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(radios(), '单图编辑没有范围可选').toHaveLength(0)
+    // 原图口径不可用：静默改按画布导；头部仍点名将写出的文件（默认名是这张图的名字，如「spectrum」，不是画布名），
+    // 范围句如实说的是画布（不再是「没有可导出的文件名」）
+    expect(document.body.querySelector('[data-export-target]')?.textContent).toContain(useDocumentStore.getState().doc.name)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
   })
 })
 
@@ -1434,31 +2020,67 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
 
   it('按原图：别的图的阻断项与页面级警告都不算进来；按画布：都算', async () => {
-    // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 8pt：一条 error（别的图）
+    // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 7.5pt：一条 error（别的图）
     await stage({
       panels: [{ ...panel, h: 40 }, second],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 7.5) },
+      page: { w: 80, h: 40 },
+    })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await mountDialogs()
+    await openDialog()
+    await click(radios()[0]) // 多图排版 → 每张图单独导出（原图范围）
+    await click(figureOptions()[0]) // 在左栏缩略图条里点 Fig1：就是这次要导的那张
+    expect(radios()[0].getAttribute('aria-checked')).toBe('true')
+    // 没查出问题时说的是「按哪套规范、查的哪个范围没查出」，不是一句「检查通过」
+    const ok = document.body.querySelector('[data-export-check-ok]')
+    expect(ok, '没查出问题时给出结论行').toBeTruthy()
+    const record = useProfileStore.getState().specs.find((r) => r.id === DEFAULT_PROFILE_ID)
+    expect(record, '夹具里有默认规范').toBeTruthy()
+    const specName = profileName(record!)
+    expect(ok!.textContent).toContain(`按「${specName}」未发现问题`)
+    expect(ok!.textContent).toContain('仅查原图「Fig1」')
+    expect(ok!.textContent).not.toContain('检查通过')
+    // 覆盖范围说在明处：识别不出的内容不在检查之内
+    expect(ok!.querySelector('[data-export-check-coverage]')?.textContent).toContain('不在检查之内')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+
+    await click(radios()[1])
+    expect(text()).toMatch(/\d+ 项要改/)
+    expect(text()).toContain('1 项留意')
+    expect(text()).toContain('查整个画布「')
+    expect(errorHint(), '画布范围有阻断：计数芯片').toBeTruthy()
+  })
+
+  it('换界面语言后结论行里的规范名跟着换（#1194 评审 P2）', async () => {
+    await stage({
+      panels: [{ ...panel, h: 40 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9) },
       page: { w: 80, h: 40 },
     })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(radios()[0].getAttribute('aria-checked')).toBe('true')
-    expect(text()).toContain('导出前检查通过')
-    expect(text()).toContain('仅此图')
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-
-    await click(radios()[1])
-    expect(text()).toMatch(/\d+ 阻断/)
-    expect(text()).toContain('1 警告')
-    expect(text()).toContain('整个画布')
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    const record = useProfileStore.getState().specs.find((r) => r.id === DEFAULT_PROFILE_ID)!
+    const ok = () => document.body.querySelector('[data-export-check-ok]')
+    expect(ok(), '前提：没查出问题，有结论行').toBeTruthy()
+    const zh = profileName(record)
+    expect(ok()!.textContent).toContain(zh)
+    try {
+      await act(async () => { await i18n.changeLanguage('en-US') })
+      const en = profileName(record)
+      expect(en, '前提：内置规范的名字两种语言不同').not.toBe(zh)
+      expect(ok()!.textContent).toContain(en)
+      expect(ok()!.textContent).not.toContain(zh)
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN') })
+    }
   })
 
   it('按原图时这张图自己的阻断项照样拦住，并且报告里只有它的条目', async () => {
     await stage({
       panels: [panel, second],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8), 'Fig2.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5), 'Fig2.pdf': manifestWithTicks(1, 7.5) },
     })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
@@ -1470,13 +2092,10 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
         .issues.filter((i) => i.severity === 'error' && i.objectRef.objectId === id).length
     expect(errorsOn('p1')).toBeGreaterThan(0)
     expect(errorsOn('p2'), '夹具里另一张图也得有阻断项，否则这条什么都没证明').toBeGreaterThan(0)
-    expect(text()).toContain(`${errorsOn('p1')} 阻断`)
-    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 阻断`)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    const check = confirmBox()!
-    await act(async () => {
-      check.click()
-    })
+    expect(text()).toContain(`${errorsOn('p1')} 项要改`)
+    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 项要改`)
+    expect(errorHint(), '计数芯片在，但不拦导出').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
     const checks = report.checks as { id: string; object_ids?: string[]; objectIds?: string[] }[]
@@ -1486,84 +2105,141 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
   })
 })
 
-describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位', () => {
+describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论', () => {
+  const checkScope = () => document.body.querySelector('[data-export-check-scope]')?.textContent ?? ''
+  const offCanvas = {
+    id: 'Fig9.pdf',
+    kind: 'pdf',
+    mtime: 1,
+  }
+
+  /**
+   * 画布上只有一条 5 pt 的文字（一条阻断项），项目里唯一的「图」是素材库里还没上画布的 Fig9。
+   * 多图排版的「每张图」只认画布上的图，所以它只在单图编辑里到得了（项目里只有一张图时就是它）。
+   */
+  async function setupOff(opts: { withCanvasPanel?: boolean } = {}) {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) } })
+    if (!opts.withCanvasPanel) {
+      useDocumentStore.getState().commit(literal('只留一段小字'), (d) => {
+        d.objects = [
+          { id: 't-small', type: 'text', text: '太小的说明文字', sizePt: 5, bold: false, italic: false, color: '#000000', align: 'left', x: 0, y: 70, w: 60, h: 6 } as never,
+        ]
+      })
+    }
+    useAssetStore.setState((st) => ({
+      byId: opts.withCanvasPanel ? { ...st.byId, 'Fig9.pdf': offCanvas } : { 'Fig9.pdf': offCanvas },
+      panels: opts.withCanvasPanel
+        ? [...(st.panels ?? []), { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 }, { ...offCanvas, native_w_mm: 70, native_h_mm: 50 }]
+        : [{ ...offCanvas, native_w_mm: 70, native_h_mm: 50 }],
+    }) as never)
+    await act(async () => {
+      runValidation()
+    })
+    useWorkspaceStore.setState({ mode: opts.withCanvasPanel ? 'layout' : 'fast_edit', activePanelId: null })
+    await mountDialogs()
+    await openDialog()
+  }
+
+  it('范围句如实说没检查；画布上的阻断项不进这次导出；摘要是「没查成」，灰色提示', async () => {
+    await setupOff()
+    const canvasErrors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
+    expect(canvasErrors, '前提：当前画布上有阻断项').toBeGreaterThan(0)
+    expect(document.body.querySelector('[data-export-target]')!.textContent).toContain('Fig9')
+    expect(checkScope()).toBe('「Fig9」不在画布上，这次导出不做规范检查')
+    expect(document.body.querySelector('[data-export-check-ok]')).toBeNull()
+    expect(text()).not.toMatch(/\d+ 项要改/)
+    // 没查成：不拦导出、也没有警告句，仍记进报告的 checkFailed 档
+    expect(document.body.querySelector('[data-export-hint]')).toBeNull()
+    expect(errorHint()).toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect((exportBodies[0].original as { figure_id?: string }).figure_id).toBe('Fig9.pdf')
+    const report = exportBodies[0].style_check_report as { checks?: { id: string }[] } | undefined
+    expect(
+      (report?.checks ?? []).filter((c) => c.id.startsWith('font-')),
+      '画布上的条目不写进这张图的报告',
+    ).toHaveLength(0)
+  })
+
+  it('对照：图在画布上时仍是「仅查原图」、画布阻断项照常给计数芯片', async () => {
+    await setupOff({ withCanvasPanel: true })
+    await click(originalRadio())
+    const opt = figureOptions().find((o) => o.textContent?.includes('Fig1'))
+    if (opt) await click(opt)
+    // 素材库里没上画布的 Fig9 不在缩略图条里
+    expect(figureOptions().map((o) => o.textContent)).toEqual(['Fig1'])
+    expect(checkScope()).not.toContain('不在画布上')
+    expect(text()).toMatch(/\d+ 项要改/)
+    expect(errorHint(), '画布阻断项照常给计数芯片，但不拦').toBeTruthy()
+  })
+})
+
+describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
   const list = () => document.body.querySelector('[aria-label="阻断性问题"]')
-  const rows = () => [...(list()?.querySelectorAll('[data-blocking-issue]') ?? [])]
   const locateButtons = () => [...document.body.querySelectorAll('button')].filter((b) => b.textContent === '定位')
 
-  it('说清是什么、在哪、当前值 → 要求；警告仍只给数量', async () => {
+  it('检查区不逐条列阻断项、没有「定位」入口和任何警告句：只有计数芯片 +「在问题面板中查看」', async () => {
     await stage({
       panels: [panel],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) },
       page: { w: 80, h: 40 },
     })
     await mountDialogs()
     await openDialog()
-    expect(list()).toBeTruthy()
-    // 8pt 撞两条字号规则：一条元素两行，各说各的规则，各有各的「定位」
-    const errors = useValidationStore.getState().issues.filter((i) => i.severity === 'error')
-    expect(errors.length).toBeGreaterThan(0)
-    expect(rows()).toHaveLength(errors.length)
-    const row = rows().find((r) => r.getAttribute('data-blocking-issue') === 'font-below-absolute-floor')!
-    expect(row, '每一行带着稳定的规则码').toBeTruthy()
-    // 规则名在组头只说一遍（2026-09-14 审计 B4），行里是主语与数值
-    expect(row.closest('[data-blocking-group]')!.textContent).toContain('字号低于绝对下限')
-    expect(row.textContent).not.toContain('字号低于绝对下限')
-    expect(row.textContent).toContain('x 刻度 1')
-    expect(row.textContent).toContain('8.00 pt')
-    expect(locateButtons()).toHaveLength(errors.length)
-    // 列表紧挨着确认框：确认框是它的下一个兄弟
-    expect(list()!.nextElementSibling?.querySelector('input[type="checkbox"]')).toBeTruthy()
-    // 警告（page-aspect）不逐条列
-    expect(text()).toContain('1 警告')
-    expect(text()).not.toContain('页面比例')
+    expect(errorHint(), '有阻断项：计数芯片在').toBeTruthy()
+    expect(list(), '逐条清单已删').toBeNull()
+    expect(document.body.querySelector('[data-blocking-issue]')).toBeNull()
+    expect(locateButtons()).toHaveLength(0)
+    expect(text()).not.toContain('投稿可能被退回')
+    expect(button('在问题面板中查看'), '问题面板入口仍在').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
   })
 
-  it('超过 5 条只列 5 条，其余交给问题面板', async () => {
-    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(7, 8) } })
-    await mountDialogs()
-    await openDialog()
-    const errors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
-    expect(errors).toBeGreaterThan(5)
-    expect(rows()).toHaveLength(5)
-    expect(text()).toContain(`还有 ${errors - 5} 条`)
-  })
-
-  it('进不了图内编辑（没有源脚本）：对话框留在原地并说出原因', async () => {
-    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
-    await mountDialogs()
-    await openDialog()
-    await click(locateButtons()[0])
-    expect(useUiStore.getState().exportOpen).toBe(true)
-    expect(useUiStore.getState().statusTone).toBe('error')
-  })
-
-  it('定位成功：对话框让开、真的到了那个元素；再点「导出」填过的东西原样回来', async () => {
+  it('计数芯片来自真实检查结果：要改 / 留意带色点，建议与无法核验永远是灰；点芯片带着这一档去问题面板', async () => {
     await stage({
-      panels: [{ ...panel, script: 'fig1.py' }],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      panels: [panel],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) },
+      page: { w: 80, h: 40 },
     })
     await mountDialogs()
     await openDialog()
-    // 用户已经填了一些东西
-    await typeFilename('mine')
-    await click(formatBox('PNG')) // 关掉 PNG
-    expect(useUiStore.getState().exportOpen).toBe(true)
-
-    await click(locateButtons()[0])
+    // 夹具本身不产出「建议」：补一条（同一份清单里改等级），才能证明「建议」那颗芯片确实是灰的
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: [...cur, { ...cur[0], issueId: 'extra-suggestion', severity: 'suggestion' }] })
+    })
+    const counts = useValidationStore.getState().issues.reduce<Record<string, number>>((m, i) => {
+      m[i.severity] = (m[i.severity] ?? 0) + 1
+      return m
+    }, {})
+    const chip = (tone: string) => document.body.querySelector<HTMLElement>(`[data-count-chip="${tone}"]`)
+    expect(chip('danger')!.textContent).toBe(`${counts.error} 项要改`)
+    expect(chip('warn')!.textContent).toBe(`${counts.warn} 项留意`)
+    // 建议 / 无法核验只会出现在 quiet 档（有才出现），数字与检查结果一致
+    for (const el of document.body.querySelectorAll<HTMLElement>('[data-count-chip="quiet"]')) {
+      const n = Number(el.textContent!.match(/\d+/)![0])
+      expect([counts.suggestion, counts.not_verifiable]).toContain(n)
+    }
+    expect(document.body.querySelectorAll('[data-count-chip="danger"]')).toHaveLength(1)
+    // 每颗芯片的档由它的名字决定：只有「项要改」是 danger、「项留意」是 warn，其余（建议 / 无法核验）一律 quiet
+    const toneOf: Record<string, string> = { 项要改: 'danger', 项留意: 'warn', 条建议: 'quiet', 项无法核验: 'quiet' }
+    const all = [...document.body.querySelectorAll<HTMLElement>('[data-count-chip]')]
+    expect(all.length).toBeGreaterThanOrEqual(2)
+    for (const el of all) {
+      const word = Object.keys(toneOf).find((w) => el.textContent!.includes(w))!
+      expect(word, el.textContent!).toBeTruthy()
+      expect(el.getAttribute('data-count-chip'), el.textContent!).toBe(toneOf[word])
+    }
+    // 圆点之外芯片不染色：没有任何 danger / warn 的字或底
+    expect(chip('danger')!.className).not.toMatch(/text-danger|bg-danger|text-warn|bg-warn/)
+    await click(chip('warn')!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['warn'])
     expect(useUiStore.getState().exportOpen).toBe(false)
-    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
-    expect(useUiStore.getState().elementPanelId).toBe('p1')
-    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
-    expect(useUiStore.getState().statusTone).toBe('info')
-
-    await openDialog()
-    expect(filenameInput().value, '让开再回来，文件名还在').toBe('mine')
-    expect(formatBox('PNG').checked).toBe(false)
   })
-
   it('「在问题面板中查看」同样让开而不丢状态；换了文档才重置', async () => {
-    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) } })
     await mountDialogs()
     await openDialog()
     await typeFilename('kept')
@@ -1595,7 +2271,7 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
     await mountDialogs(true)
     await openDialog()
     await typeFilename('mine')
-    await click(radios()[0].parentElement!.querySelectorAll('[role="radio"]')[1])
+    await click(radios()[1]) // 整版
 
     const edit = document.body.querySelector('button[aria-label="编辑规范"]') as HTMLButtonElement
     // 真浏览器里 mousedown 会先把焦点给按钮；jsdom 的 click() 不会，这里补上
@@ -1638,8 +2314,96 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
   })
 })
 
-const originalRadio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
-const figureOptions = () => [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+const originalRadio = () => scopeRadios()[0]
+/** 多图排版左栏缩略图条里的「图」（不含「整版」那一项）；点它 = 换预览，「每张图单独导出」下同时选中要导的那张 */
+const figureOptions = () =>
+  [...document.body.querySelectorAll('[data-export-preview-tab]:not([data-export-preview-tab="page"])')] as HTMLElement[]
+
+describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#1106 P2）', () => {
+  /** 面板此刻会当作「当前图」的那张（与 `useCurrentFigure` 同一个判据） */
+  const panelCurrentFigure = () =>
+    currentFigureOf(
+      [useWorkspaceStore.getState().activePanelId, useUiStore.getState().elementPanelId, useSelectionStore.getState().ids.at(-1) ?? null],
+      useDocumentStore.getState().doc.objects,
+    ).id
+
+  async function twoWithErrorOnP2() {
+    await setupTwo({ select: ['p1'] })
+    // Fig2 上 5 组 7.5 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
+    const k2 = renderKey('Fig2.pdf', [])
+    await act(async () => {
+      const cur = useRenderStore.getState().byKey[k2]
+      useRenderStore.setState({
+        byKey: { ...useRenderStore.getState().byKey, [k2]: { ...cur, manifest: manifestWithTicks(5, 7.5, [65, 50]) } },
+      } as never)
+      runValidation()
+    })
+    await click(originalRadio())
+    await click(figureOptions()[1]) // 导出目标 = p2；画布上选中的仍是 p1
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(panelCurrentFigure()).toBe('p1')
+  }
+  const danger = () => document.body.querySelector<HTMLElement>('[data-count-chip="danger"]')
+
+  it('点「要改」芯片：面板的当前图 = 导出的那张，范围「当前图」，筛选只留阻断', async () => {
+    await twoWithErrorOnP2()
+    expect(danger(), 'p2 有阻断项，应有芯片').not.toBeNull()
+    await click(danger()!)
+    expect(panelCurrentFigure(), '芯片只带了等级，面板仍看工作区原来的图').toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+
+  it('按画布导出：从画布 A 的芯片进去只列 A 的问题，B 画布的不跟进来（#1106 P2）', async () => {
+    await stage({
+      panels: [panel, { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5), 'Fig2.pdf': manifestWithTicks(1, 9) },
+    })
+    await mountDialogs()
+    await openDialog()
+    const active = useDocumentStore.getState().activeCanvasId
+    expect(text()).toMatch(/\d+ 项要改/)
+    // 另一张画布上也有一条阻断项（克隆 A 的一条、换画布 id）：整份排版里是两张画布的问题
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      const err = cur.find((i) => i.severity === 'error')!
+      useValidationStore.setState({
+        issues: [...cur, { ...err, issueId: 'other-canvas', objectRef: { ...err.objectRef, canvasId: 'c_other' } }],
+      })
+    })
+    await click(danger()!)
+    const all = useValidationStore.getState().issues
+    const scope = effectiveScope(useUiStore.getState().problemScope, null)
+    expect(scope, '导出整块画布落在「当前画布」那档，不是整份排版').toBe('canvas')
+    const listed = issuesInScope(all, scope, null, useDocumentStore.getState().activeCanvasId)
+    expect(listed.some((i) => i.issueId === 'other-canvas'), 'B 画布的问题不该列进来').toBe(false)
+    expect(listed.length).toBeGreaterThan(0)
+    expect(listed.every((i) => i.objectRef.canvasId === active)).toBe(true)
+    expect(all.length, '前提：整份排版里确实比 A 多').toBeGreaterThan(listed.length)
+  })
+
+  it('校验失败、保留上一轮结果的分支：「在问题面板中查看」打开面板，problemFilter 是 null 而不是 click event', async () => {
+    await twoWithErrorOnP2()
+    await act(async () => {
+      useValidationStore.setState({ failed: true })
+    })
+    expect(text()).toContain('来自更早一次')
+    useUiStore.getState().setProblemFilter(['warn'])
+    await click(button('在问题面板中查看')!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    // 筛选必须是 null 或等级数组——click event 被当成 severities 存进去，面板一打开 `.includes` 就崩
+    const f = useUiStore.getState().problemFilter
+    expect(f === null || (Array.isArray(f) && f.every((x) => typeof x === 'string'))).toBe(true)
+    expect(f).toBeNull()
+  })
+
+  it('「在问题面板中查看」同样带目标', async () => {
+    await twoWithErrorOnP2()
+    await click(button('在问题面板中查看')!)
+    expect(panelCurrentFigure()).toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+  })
+})
 
 describe('画布模式下选中的图就是要导的那张（用户反馈 06）', () => {
   it('画布上选中了一个面板：原图尺寸可用，导的就是它', async () => {
@@ -1647,11 +2411,16 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(originalRadio().hasAttribute('disabled'), '选中了面板还说「先选中一张图」').toBe(false)
     expect(text()).not.toContain('先选中一张图')
     await click(originalRadio())
-    expect(text()).toContain('65 × 50 mm')
+    expect(text()).toContain('65 × 50 mm') // 左栏 / 对象头报的是选中的那张
+    // 「每张图单独导出」= 一次点击把每张图各导一份（依次发多个作业）
     await click(button('开始导出')!)
-    expect(exportBodies).toHaveLength(1)
-    expect(exportBodies[0].scope).toBe('original')
-    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig2.pdf')
+    await batchDone()
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies.every((b) => b.scope === 'original')).toBe(true)
+    expect(exportBodies.map((b) => (b.original as { figure_id: string }).figure_id).sort()).toEqual([
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
   })
 
   it('主选是文字、多选里混着一张图：导的是那张图', async () => {
@@ -1665,57 +2434,52 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     })
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     await click(originalRadio())
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
   })
 
-  it('什么都没选、项目里有两张图：画布范围下不摆清单；切到原图才列出两张，点一张就按它导（审计 B20）', async () => {
+  it('什么都没选、项目里有两张图：缩略图条永远在；切到「每张图单独导出」不用先选一张，点哪张只换预览 / 检查摘要', async () => {
     await setupTwo({ select: [] })
-    // 默认按画布：一句「还没定要导哪一张」都不出现——那是原图范围的事，
-    // 与「当前画布」并排出现就是两个状态互相矛盾；清单也不摆
     expect(text()).not.toContain('在下方选一张')
-    expect(figureOptions()).toHaveLength(0)
+    expect(figureOptions()).toHaveLength(2)
+    expect(scopeRadios()[1].getAttribute('aria-checked'), '默认整版').toBe('true')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-    // 「原图尺寸」可点（项目里有图可挑），点了之后清单展开、指引出现、主按钮灰
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     await click(originalRadio())
-    expect(text()).toContain('在下方选一张')
-    expect(text()).not.toContain('没有当前图')
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    // 每张图都导，没有「还没定要导哪一张」这回事；主按钮亮着
+    expect(text()).not.toContain('在下方选一张')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     const options = figureOptions()
     expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2'])
-    expect(options.every((o) => o.getAttribute('aria-selected') === 'false')).toBe(true)
-
     await click(options[1])
-    // 点了就是选了：范围切到原图、按钮亮、说的是这张图的尺寸
-    const radios = [...document.body.querySelectorAll('[role="radio"]')]
-    expect(radios[0].getAttribute('aria-checked')).toBe('true')
-    expect(originalRadio().hasAttribute('disabled')).toBe(false)
     expect(figureOptions()[1].getAttribute('aria-selected')).toBe('true')
-    expect(text()).toContain('65 × 50 mm')
-    expect(text()).not.toContain('在下方选一张')
+    expect(text()).toContain('65 × 50 mm')
 
     await click(button('开始导出')!)
-    expect(exportBodies).toHaveLength(1)
-    expect(exportBodies[0].scope).toBe('original')
-    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig2.pdf')
-    // 点缩略图是这一次导出的选择，不改画布选区
+    await batchDone()
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies.map((b) => (b.original as { figure_id: string }).figure_id).sort()).toEqual([
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
+    // 点缩略图只是换预览，不改画布选区
     expect(useSelectionStore.getState().ids).toEqual([])
   })
 
-  it('画布上选中了 p2，列表里再点 Fig1：以点的为准', async () => {
+  it('画布上选中了 p2，缩略图条里再点 Fig1：预览 / 检查摘要以点的为准，导出仍是每张各一份', async () => {
     await setupTwo({ select: ['p2'] })
     await click(originalRadio())
     await click(figureOptions()[0])
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
     await click(button('开始导出')!)
-    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig1.pdf')
+    await batchDone()
+    expect(exportBodies).toHaveLength(2)
   })
 
   it('关掉再打开：上一次点的那张不带过来，重新按上下文', async () => {
     await setupTwo({ select: ['p2'] })
     await click(originalRadio())
     await click(figureOptions()[0])
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
     await act(async () => {
       useUiStore.getState().setExportOpen(false)
     })
@@ -1723,18 +2487,20 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
       useUiStore.getState().setExportOpen(true)
     })
     await click(originalRadio())
-    expect(text()).toContain('65 × 50 mm')
+    expect(text()).toContain('65 × 50 mm')
   })
 
-  it('清单只在原图范围下出现：可用时收进折叠项，不可用时展开（那句提示得指得到东西）', async () => {
+  it('缩略图条永远在；选中的那张源文件没了：整版下一个字不说，每张图单独导出才说', async () => {
     await setupTwo({ select: ['p2'] })
-    // 默认按画布：不摆列表
-    expect(figureOptions()).toHaveLength(0)
+    // 缩略图条永远在；整版时点图只换预览，导出内容仍是整版
+    expect(figureOptions()).toHaveLength(2)
+    await click(figureOptions()[0])
+    expect(figureOptions()[0].getAttribute('aria-selected')).toBe('true')
+    expect(scopeRadios()[1].getAttribute('aria-checked')).toBe('true')
     await click(originalRadio())
     expect(figureOptions()).toHaveLength(2)
-    // 切回画布：收起
-    await click([...document.body.querySelectorAll('[role="radio"]')][1])
-    expect(figureOptions()).toHaveLength(0)
+    await click(scopeRadios()[1])
+    expect(figureOptions()).toHaveLength(2)
     // 选中的那张源文件没了：画布范围下一个字不说（导画布什么都没挡着）……
     await act(async () => {
       useAssetStore.setState({
@@ -1743,16 +2509,15 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
       } as never)
     })
     expect(text()).not.toContain('源文件现在找不到了')
-    expect(figureOptions()).toHaveLength(0)
-    // ……切到原图才说，并把列表摆出来让用户换一张
+    // ……切到原图才说（选中的那张此刻导不出）；批量导出仍可点，导不出的那张在结果里如实记失败
     await click(originalRadio())
     expect(text()).toContain('源文件现在找不到了')
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(figureOptions()).toHaveLength(2)
     await click(figureOptions()[0])
     expect(text()).not.toContain('源文件现在找不到了')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
   })
 
   /**
@@ -1778,40 +2543,39 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
       panels: [{ id: 'Fig9.pdf', kind: 'pdf', mtime: 1, native_w_mm: 70, native_h_mm: 50, original_spec: onDisk }],
     } as never)
     useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+    // 单图编辑（多图排版的「每张图」不含没上画布的图）：项目里只有这一张，它就是要导的
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: null })
     await mountDialogs()
     await openDialog()
     // 项目里只有这一张：切到原图就是它，清单不出现——对象头是唯一写着对象名与尺寸的地方
-    await click(originalRadio())
+    // 不在画布上 = 这次导出没有规范检查（#1228 P2）：灰色提示，不拦导出
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-    expect(figureOptions()).toHaveLength(0)
+    expect(figureOptions(), '单图编辑没有缩略图条').toHaveLength(0)
     const header = document.body.querySelector('[data-export-target]')
     expect(header, '选中了图就该有对象头').toBeTruthy()
     expect(header!.textContent).toContain('Fig9')
-    expect(header!.textContent).toContain('原图尺寸')
-    expect(header!.textContent).toContain('70 × 50 mm')
+    expect(header!.textContent).toContain('70 × 50 mm')
     expect(header!.textContent).not.toContain('没有当前图')
-    const img = header!.querySelector('img') as HTMLImageElement | null
-    expect(img?.getAttribute('src'), '缩略图走素材同一条地址').toContain('/api/render?id=Fig9.pdf')
+    const img = document.body.querySelector('[data-export-preview-stage] img') as HTMLImageElement | null
+    expect(img?.getAttribute('src'), '左栏大预览走素材同一条地址').toContain('/api/render?id=Fig9.pdf')
     await click(button('开始导出')!)
     expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig9.pdf')
   })
 
-  it('画布上有一张、素材里另有一张还没上画布：在清单里点后者，对象头换成它', async () => {
+  it('素材库里另有一张还没上画布的图：不在缩略图条里，「每张图单独导出」也不导它（Codex / 用户 10-21 裁决）', async () => {
     await setupTwo({ select: [] })
     useAssetStore.setState((st) => ({
       byId: { ...st.byId, 'Fig3.pdf': { id: 'Fig3.pdf', kind: 'pdf', mtime: 1 } },
       panels: [...st.panels, { id: 'Fig3.pdf', kind: 'pdf', mtime: 1, native_w_mm: 42, native_h_mm: 30 }],
     }) as never)
     await click(originalRadio())
-    // 还没定是哪一张：不摆对象头
-    expect(document.body.querySelector('[data-export-target]')).toBeNull()
-    const options = figureOptions()
-    expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2', 'Fig3'])
-    await click(options[2])
-    const header = document.body.querySelector('[data-export-target]')
-    expect(header).toBeTruthy()
-    expect(header!.textContent).toContain('Fig3')
-    expect(header!.textContent).not.toContain('Fig1')
+    expect(figureOptions().map((o) => o.textContent)).toEqual(['Fig1', 'Fig2'])
+    await click(button('开始导出')!)
+    await batchDone()
+    expect(exportBodies.map((b) => (b.original as { figure_id: string }).figure_id).sort()).toEqual([
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
   })
 
   it('项目里一张图都没有：说「还没有可以导的图」，不摆空列表、不说"点选下面"', async () => {
@@ -1883,7 +2647,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(ppiSelect()).toBeNull()
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('EPS 只支持按「原图尺寸」导出单张图')
+    expect(eps.closest('label')!.title).toContain('EPS 只支持导出单张图')
     await click(formatBox('TIFF'))
     expect(ppiSelect(), 'TIFF 是位图，分辨率那一行要出现').toBeTruthy()
     // 「这次会写哪几个文件」的预览行已按工作台批次去掉；发出去的格式清单在请求体里判
@@ -1921,16 +2685,24 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
   })
 
   it('勾着 EPS 切回画布：请求里自动不带它，界面把原因摆出来；只勾 EPS 时按钮变灰', async () => {
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await setup(9)
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
     await act(async () => {
       useAssetStore.setState({
         byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
       } as never)
     })
+    // 素材表是 setup 之后才补的脚本：重开一次让对话框按它重算
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await click(originalRadio())
+    await click(figureOptions().find((o) => o.textContent?.includes('Fig1'))!) // 选定要导的那张
+    // EPS 能不能勾读 route（250 ms 防抖后到）；等它到，否则点的是一颗灰着的框
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
     await click(formatBox('EPS'))
-    await click(button('当前画布')!)
-    expect(text()).toContain('EPS 只支持按「原图尺寸」导出单张图')
+    expect(formatBox('EPS').checked, '前提：原图范围下 EPS 勾得上').toBe(true)
+    await click(scopeRadios()[1])
+    expect(text()).toContain('EPS 只支持导出单张图')
     await click(button('开始导出')!)
     expect(exportBodies[0].scope).toBe('canvas')
     expect(exportBodies[0].formats).toEqual(['pdf', 'png'])
@@ -1942,6 +2714,248 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
   })
 })
 
+
+describe('每张图单独导出：依次发多个作业（后端协议不变）', () => {
+  const start = () => click(button('开始导出')!)
+  const bodiesFigureIds = () => exportBodies.map((b) => (b.original as { figure_id: string }).figure_id)
+
+  it('一次点击，每张图各发一个作业；进度说第几张；全部成功是一份汇总，脚部换成「再次导出 · 完成」', async () => {
+    jobStatusSeq = ['running', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    // 第一张在跑：进度句点名第几张 / 共几张
+    await until(() => exportBodies.length === 1)
+    expect(exportBodies).toHaveLength(1)
+    expect(document.body.querySelector('[data-export-progress]')?.textContent).toContain('第 1/2 张')
+    await act(async () => {
+      applyExportJob({ job_id: 'j1', status: 'done', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    await batchDone()
+    expect(bodiesFigureIds()).toEqual(['Fig1.pdf', 'Fig2.pdf'])
+    expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
+    expect(document.body.querySelector('[data-export-again]')).toBeTruthy()
+    expect(document.body.querySelector('[data-export-finish]')).toBeTruthy()
+  })
+
+  it('每张各自按它自己的原图口径检查与留档：两份请求的 original 各是各的图', async () => {
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(exportBodies.map((b) => (b.original as { figure_id: string; width_mm?: number }).figure_id)).toEqual([
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
+  })
+
+  it('部分失败：汇总走既有 partialSummary，失败的那张点得出名字', async () => {
+    jobStatusSeq = ['done', 'failed']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    const agg = useExportStore.getState().batch!.aggregate!
+    expect(agg.status).toBe('partial')
+    expect(document.body.querySelector('[data-export-partial-summary]')?.textContent).toMatch(/1.*1/)
+    expect(text()).toContain('Fig2')
+  })
+
+  it('撞名逐张走既有冲突流程：停在冲突条上，选「覆盖」重发这一张，再继续下一张', async () => {
+    jobStatusSeq = ['conflict', 'done', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await until(() => !!button('覆盖'))
+    expect(exportBodies).toHaveLength(1)
+    expect(button('覆盖'), '停在第一张的冲突条上').toBeTruthy()
+    expect(useExportStore.getState().batch?.done).toBe(false)
+    await click(button('覆盖')!)
+    await batchDone()
+    expect(bodiesFigureIds()).toEqual(['Fig1.pdf', 'Fig1.pdf', 'Fig2.pdf'])
+    expect(exportBodies[1].overwrite).toBe('replace')
+    expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
+  })
+
+  it('撞名停下后位置写入在飞：覆盖 / 另存一份都不发；落地后确认作废（目录换了，确认框列的不再是会被覆盖的文件，QA-WIN-18）', async () => {
+    jobStatusSeq = ['conflict', 'done', 'done']
+    useProjectStore.setState({ project: { settings: {}, export_dir: '/out', backup_dir: '/b' } as never })
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await until(() => !!button('覆盖'))
+    expect(exportBodies).toHaveLength(1)
+    let release!: () => void
+    settingsGate = new Promise<void>((r) => { release = r })
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    let done!: Promise<void>
+    await act(async () => { done = applyProjectSettingsPatch({ export_dir: '/new/dir' }) })
+    expect(button('覆盖')!.hasAttribute('disabled')).toBe(true)
+    expect(button('另存一份')!.hasAttribute('disabled')).toBe(true)
+    await click(button('覆盖')!)
+    await click(button('另存一份')!)
+    expect(exportBodies, '写入在飞：一个请求都不许发').toHaveLength(1)
+    await act(async () => { release(); await done })
+    settingsGate = null
+    expect(button('覆盖'), '目录换了：旧确认作废，不再能按新目录覆盖').toBeFalsy()
+    expect(exportBodies, '作废后也没有任何 replace / rename 请求').toHaveLength(1)
+  })
+
+  it('撞名停下后位置写入在飞：Esc（安全答案 = 另存一份）也不发请求', async () => {
+    jobStatusSeq = ['conflict', 'done', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await until(() => !!button('覆盖'))
+    let release!: () => void
+    settingsGate = new Promise<void>((r) => { release = r })
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    let done!: Promise<void>
+    await act(async () => { done = applyProjectSettingsPatch({ export_dir: '/new/dir' }) })
+    await act(async () => {
+      document.querySelector('[data-dialog="export"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(exportBodies, '写入在飞：Esc 不许发另存一份').toHaveLength(1)
+    await act(async () => { release(); await done })
+    settingsGate = null
+  })
+
+  it('批开始后改格式 / PPI / 排版、甚至关掉对话框：后面每张的请求仍是点击那一刻冻结的（Codex #1295 P1）', async () => {
+    jobStatusSeq = ['running', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    const before = { formats: ['pdf', 'png'], ppi: 600 }
+    await start()
+    await until(() => exportBodies.length === 1)
+    expect(exportBodies[0].formats).toEqual(before.formats)
+    expect(exportBodies[0].ppi).toBe(before.ppi)
+    // 第一张在跑：用户改格式（去掉 PNG）、改 PPI、改排版，再关掉对话框
+    await click(formatBox('PNG'))
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('批进行中改排版'), (d) => {
+        d.page = { w: 99, h: 77 }
+      })
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      applyExportJob({ job_id: 'j1', status: 'done', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    await batchDone()
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].formats, '第二张用点击那一刻的格式，不是后来改的').toEqual(before.formats)
+    expect(exportBodies[1].ppi).toBe(before.ppi)
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
+  })
+
+  it('冻结段 route 等待期间关掉对话框去改排版：整批一致地用改后的那一份文档，请求全部发出（不混版本、不作废）', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
+    routeDelayMs = 500
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    expect(useExportStore.getState().batch?.phase).toBe('prepare')
+    // 第一张正在等 route：用户关掉对话框，去改排版
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+      useDocumentStore.getState().commit(literal('冻结段里改排版'), (d) => {
+        d.page = { w: 99, h: 77 }
+      })
+    })
+    await batchDone(20_000)
+    const b = useExportStore.getState().batch!
+    expect(exportBodies).toHaveLength(2) // 全部发出，没有作废
+    const docs = b.prepared.map((p) => p.input.doc)
+    expect(docs).toHaveLength(2)
+    expect(docs[0], '两张读的是同一份文档').toBe(docs[1])
+    expect(docs[0], '且是改后的那一份（route 齐了那一刻）').toBe(useDocumentStore.getState().doc)
+    expect(docs[0].page).toEqual({ w: 99, h: 77 })
+  })
+
+  it('冻结是一个同步块：整批的 buildBatchInput 调用之间没有任何 await / 微任务间隔', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
+    routeDelayMs = 100
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    batchBuildLog.length = 0
+    await start()
+    await batchDone(20_000)
+    // 前面是逐张取 route 前的探针调用（中间隔着 await）；最后 N=2 次是冻结块里的真调用，必须在同一个微任务纪元里
+    expect(batchBuildLog.length).toBeGreaterThanOrEqual(4)
+    const last2 = batchBuildLog.slice(-2)
+    expect(last2[0]).toBe(last2[1])
+    const probes = batchBuildLog.slice(0, -2)
+    expect(probes[0], '探针之间隔着 await（纪元不同），证明这个断言能看出间隔').not.toBe(last2[0])
+  })
+
+  it('批里某张的请求体 == 同一张单张导出的请求体（冻结用的是同一条检查 / 留档链）', async () => {
+    await setupTwo({ select: [] })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    await click(button('开始导出')!)
+    const single = exportBodies[0]
+    expect((single.original as { figure_id: string }).figure_id).toBe('Fig1.pdf')
+    exportBodies.length = 0
+    resetExportState()
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    await click(originalRadio())
+    await click(button('开始导出')!)
+    await batchDone(20_000)
+    const inBatch = exportBodies.find((b) => (b.original as { figure_id: string }).figure_id === 'Fig1.pdf')
+    expect(inBatch).toEqual(single)
+  })
+
+  it('冻结段里什么都没动：route 慢也照常整批发出，且每张用同一个文档版本', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
+    routeDelayMs = 300
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone(20_000)
+    expect(exportBodies).toHaveLength(2)
+  })
+
+  it('取消 = 停掉剩余：第二张不再发，已写出的如实报', async () => {
+    jobStatusSeq = ['done', 'running']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await until(() => exportBodies.length === 2)
+    expect(exportBodies).toHaveLength(2) // 第一张写出了，第二张在跑
+    await click(button('取消导出')!)
+    await act(async () => {
+      applyExportJob({ job_id: 'j2', status: 'cancelled', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    await batchDone()
+    const agg = useExportStore.getState().batch!.aggregate!
+    expect(agg.status, '写出过一张 → 如实报部分完成，不是「已取消」一句话盖过').toBe('partial')
+    expect(agg.outputs.filter((o) => o.status === 'done')).toHaveLength(1)
+    expect(exportBodies).toHaveLength(2)
+  })
+
+  it('导不出的那张（源文件没了）记一笔失败，其余照常导', async () => {
+    await setupTwo({ select: [] })
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 } },
+      panels: [{ id: 'Fig1.pdf', kind: 'pdf', mtime: 1 }],
+    } as never)
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(bodiesFigureIds()).toEqual(['Fig1.pdf'])
+    const b = useExportStore.getState().batch!
+    expect(b.failedStarts.map((f) => f.name)).toEqual(['Fig2'])
+    expect(b.failedStarts[0].reason, '那一张没起来的原因随汇总保留').not.toBe('')
+    expect(b.aggregate?.status).toBe('partial')
+    // 批结束后仍可见：摘要说有失败，详情里点名哪张 + 那条原因
+    await openResultDetail()
+    expect(document.body.querySelector('[data-export-result]')?.textContent).toContain('Fig2')
+    expect(document.body.querySelector('[data-export-result]')?.textContent).toContain(b.failedStarts[0].reason)
+  })
+})
 
 describe('visible export recovery', () => {
   afterEach(() => { resetExportState(); initI18n('zh-CN') })
@@ -1963,6 +2977,53 @@ describe('visible export recovery', () => {
     expect(useDocumentStore.getState().doc).toBe(doc)
   })
 
+  it('启动失败有具体原因（源文件已变）：这一句就是正文，通用标题不顶替它；技术细节在详情', async () => {
+    for (const [lng, reason, generic] of [['en-US', 'The source file changed. Your edits are preserved.', 'The export didn’t finish'], ['zh-CN', '源文件已变化，已保留你的修改。', '导出没有完成']] as const) {
+      initI18n(lng)
+      await setup(9)
+      globalThis.fetch = vi.fn(async () => response({ error: 'Source changed', code: 'artifact_source_unavailable', params: { reason: 'source_changed' } }, 409)) as typeof fetch
+      await act(async () => { await runExport(input()) })
+      const notice = document.querySelector('[data-export-start-error]')!
+      expect(notice.textContent).toContain(reason)
+      expect(notice.textContent).not.toContain(generic)
+      expect(notice.querySelector('[data-notice-detail-toggle]')).not.toBeNull()
+      resetExportState()
+    }
+  })
+
+  it('启动失败只有「HTTP 500」：标题是一句人话，状态码折进详情；状态区同时只有一条失败条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({}, 500)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    const notice = document.querySelector('[data-export-start-error]')!
+    expect(notice.textContent).toContain('The export didn’t finish')
+    expect(notice.textContent).not.toContain('HTTP 500')
+    await act(async () => { (notice.querySelector('[data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(notice.querySelector('[data-notice-detail]')?.textContent).toContain('HTTP 500')
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
+  it('失败条的先后与详情展开不依赖译文：先状态失败、再取消失败，切换界面语言后仍是取消那条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response(runningJob)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
+    await act(async () => { await refreshExportStatus() })
+    expect(document.querySelector('[data-export-poll-error]')).not.toBeNull()
+    // 取消失败带一段较长的原文 → 有「详情」可展开
+    globalThis.fetch = vi.fn(async () => { throw new TypeError(`Failed to fetch ${'upstream '.repeat(15)}`) }) as typeof fetch
+    await act(async () => { await cancelCurrentExport() })
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    // 签名只认稳定的失败身份：换语言后所有译文都变了，也不会按固定键序重新盖戳把旧的状态失败顶上来
+    expect(document.querySelector('[data-export-poll-error]')).toBeNull()
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
   it('shows cancel and status failures, keeps dialog/job on dismissal, and retries status', async () => {
     initI18n('en-US')
     await setup(9)
@@ -1970,17 +3031,34 @@ describe('visible export recovery', () => {
     await act(async () => { await runExport(input()) })
     globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
     await act(async () => { await cancelCurrentExport(); await refreshExportStatus() })
-    expect(document.querySelector('[data-export-cancel-error]')?.textContent).toContain('not confirmed')
+    // 失败条同时最多一条：取消失败先出现、状态失败后出现 → 后来的替换前一条（不堆叠）
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
     expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('job may still finish')
-    expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('Check the connection')
+    // 原文较长：折在「详情」里，展开才见
+    expect(document.querySelector('[data-export-poll-error]')?.textContent).not.toContain('Check the connection')
+    await act(async () => { (document.querySelector('[data-export-poll-error] [data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(document.querySelector('[data-export-poll-error] [data-notice-detail]')?.textContent).toContain('Check the connection')
     await act(async () => { useUiStore.getState().setExportOpen(false) })
     expect(useExportStore.getState().ownedJobId).toBe('feedback-job')
     await act(async () => { useUiStore.getState().setExportOpen(true) })
-    expect(document.querySelector('[data-export-cancel-error]')).toBeTruthy()
+    expect(document.querySelector('[data-export-poll-error]')).toBeTruthy()
     globalThis.fetch = vi.fn(async () => response({ ...runningJob, status: 'done' })) as typeof fetch
     await act(async () => { (document.querySelector('[data-export-status-retry]') as HTMLButtonElement).click() })
     expect(document.querySelector('[data-export-poll-error]')).toBeNull()
     expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
+  })
+
+  it('offers the task diagnostic when every requested output failed (failed with nonempty outputs)', async () => {
+    initI18n('en-US')
+    await setup(9)
+    const failedOut = (format: string) => ({ format, name: null, url: null, bytes: null, dimensions: null, vector: false, status: 'failed', replaced: false, error: { code: 'format_failed', params: {}, recoverable: true } })
+    globalThis.fetch = vi.fn(async () => response({ job_id: 'allfail1', status: 'failed', outputs: [failedOut('pdf'), failedOut('png')], warnings: [], conflicts: [], export_dir: '/out', error: { code: 'format_failed', params: {}, recoverable: true } })) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    expect(document.querySelector('[data-export-failed]')).toBeNull() // 走的是逐项结果分支
+    await openResultDetail()
+    expect(document.querySelectorAll('[data-export-result] p.text-danger-content').length).toBe(2)
+    expect(document.querySelector('[data-task-diagnostic][data-task-diagnostic-kind="export"]')).toBeTruthy()
   })
 
   it('disables repeated cancellation before and after acknowledgement without claiming completion', async () => {
@@ -2005,6 +3083,104 @@ describe('visible export recovery', () => {
 })
 
 
+describe('导出终局通知：关窗期间的结果不能无声', () => {
+  afterEach(() => { resetExportState(); initI18n('zh-CN'); useUiStore.getState().setStatus(null) })
+  const input = () => ({ scope: 'canvas' as const, formats: ['pdf', 'png'], filename: 'Keep name', ppi: 600, documentId: 'd_export', doc: useDocumentStore.getState().doc })
+  const response = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const base = { job_id: 'job-1', warnings: [], conflicts: [] as string[], error: null }
+  const failedOut = { format: 'png', name: null, url: null, bytes: null, dimensions: null, vector: false, status: 'failed', replaced: false, error: { code: 'format_failed', params: {}, recoverable: true } }
+  const doneOut = { format: 'pdf', name: 'a.pdf', url: '/exports/a.pdf', bytes: 1, dimensions: { px: null, mm: null }, vector: true, status: 'done', replaced: false, error: null }
+  const status = () => useUiStore.getState()
+
+  async function startThenClose(closeFirst = true) {
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({ ...base, status: 'running', outputs: [] })) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    if (closeFirst) await act(async () => { useUiStore.getState().setExportOpen(false) })
+  }
+  const finish = (job: Record<string, unknown>) => act(async () => { applyExportJob({ ...base, outputs: [], ...job } as never) })
+
+  it.each([
+    ['failed', { status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } }, 'error'],
+    ['partial', { status: 'partial', outputs: [doneOut, failedOut] }, 'error'],
+    ['conflict', { status: 'conflict', conflicts: ['a.pdf'] }, 'info'],
+    ['unknown', { status: 'unknown' }, 'error'],
+  ])('关着对话框时 %s：出一条带「查看」的通知，且不自己消失', async (_n, job, tone) => {
+    await startThenClose()
+    await finish(job)
+    const s = status()
+    expect(s.status).not.toBeNull()
+    expect(s.statusTone).toBe(tone)
+    expect(JSON.stringify(s.status)).toContain('export.toast.')
+    expect(s.statusAction).not.toBeNull()
+    expect(s.statusOwner).toBe('export.result')
+  })
+
+  it('「查看」重新打开对话框并撤掉这条通知', async () => {
+    await startThenClose()
+    await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
+    await act(async () => { status().statusAction!.run() })
+    expect(status().exportOpen).toBe(true)
+    expect(status().status).toBeNull()
+  })
+
+  it('对话框开着时不再弹第二份（结果就在结果块里）', async () => {
+    await startThenClose(false)
+    expect(status().exportOpen).toBe(true)
+    await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
+    expect(status().status).toBeNull()
+    // 全部成功（桌面壳）：结果块不插进对话框（不位移），改由对话框上面的胶囊说一声（带「在文件夹中显示」、6 秒后自己走）
+    reveal.can = true
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
+    expect(JSON.stringify(status().status)).toContain('export.exported')
+    // 浏览器里全部成功也留在结果块（下载链接只在那里），不弹第二份
+    reveal.can = false
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
+    expect(status().status).toBeNull()
+    reveal.can = null
+    // 带警告的成功仍留在结果块里，不弹第二份
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut], warnings: ['预览与画布略有出入'] })
+    expect(status().status).toBeNull()
+  })
+
+  it('对照：关着对话框时成功 / 取消仍有一句话（不带动作、自己消失）', async () => {
+    await startThenClose()
+    await finish({ status: 'done', outputs: [doneOut] })
+    expect(JSON.stringify(status().status)).toContain('export.exported')
+    expect(status().statusAction).toBeNull()
+  })
+
+  it('重复的终态快照只通知一次：用户关掉后同一结果不会再冒出来', async () => {
+    await startThenClose()
+    const job = { status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } }
+    await finish(job)
+    expect(status().status).not.toBeNull()
+    await act(async () => { useUiStore.getState().setStatus(null) })
+    await finish(job)
+    await act(async () => { await refreshExportStatus() })
+    expect(status().status).toBeNull()
+    // 开了又关一次对话框（可见性变化会让通知逻辑重跑）：同一个结果仍然不再冒出来
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    expect(status().status).toBeNull()
+  })
+
+  it('重新打开对话框也撤掉关窗期间挂着的通知', async () => {
+    await startThenClose()
+    await finish({ status: 'conflict', conflicts: ['a.pdf'] })
+    expect(status().status).not.toBeNull()
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(status().status).toBeNull()
+  })
+})
+
+
 /**
  * 设计审计 §10.2 P0：进度 / 冲突 / 结果在可滚正文的最末尾（正文一长就在视口外），
  * 导完之后脚部还挂着「开始导出」——再点一下就撞上自己刚写出的同名文件。
@@ -2019,12 +3195,15 @@ describe('状态区与完成态脚部', () => {
   })
 
   it('结果落在脚部正上方的状态区，不在可滚正文里', async () => {
+    jobWarnings = ['预览与画布略有出入'] // 干净的全部成功不插结果块（见下一条）
     await setup(9)
     expect(statusArea(), '还没导：状态区不占位').toBeNull()
     await click(q('[data-export-start]')!)
     const area = statusArea()
     expect(area).toBeTruthy()
-    expect(area!.textContent).toContain('a.pdf')
+    expect(area!.textContent).toContain('已导出 1 个文件')
+    await openResultDetail()
+    expect(statusArea()!.textContent).toContain('a.pdf')
     // 状态区与可滚正文是兄弟，不是它的后代：正文怎么滚都不会把结果滚出视口
     const scrollBody = document.body.querySelector('[data-dialog="export"] .overflow-y-auto')
     expect(scrollBody?.contains(area!)).toBe(false)
@@ -2130,5 +3309,503 @@ describe('状态区与完成态脚部', () => {
       rejectFirst(new Error('late'))
     })
     expect(document.body.querySelector('[data-export-reveal-error]')).toBeNull()
+  })
+})
+
+describe('预览信息完善（PR3）：缩略图说真话', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const target = () => q('[data-export-target]')!
+  const stage = () => q('[data-export-preview-stage]')!
+
+  it('预览角上只有尺寸，不带「示意 · 非最终文件」之类的说明（两种范围都没有）', async () => {
+    await setup(9)
+    expect(document.body.textContent).not.toContain('仅为示意')
+    expect(stage().querySelector('[data-export-preview-size]')).toBeTruthy()
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(document.body.textContent).not.toContain('仅为示意')
+    expect(target()).toBeTruthy()
+  })
+
+  it('勾了透明背景（PNG 画布范围）：左栏大预览的页面画成棋盘格；不勾就是纸白', async () => {
+    await setup(9)
+    expect(stage().querySelector('[data-thumb-transparent]')).toBeNull()
+    expect(formatBox('PNG').checked, '默认就带 PNG').toBe(true)
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="透明背景（仅 PNG / TIFF）"]')!
+    await click(toggle)
+    const page = stage().querySelector('[data-thumb-page]')!
+    expect(page.hasAttribute('data-thumb-transparent')).toBe(true)
+    expect(page.getAttribute('fill')).toMatch(/^url\(#thumb-checker-/)
+    expect(stage().querySelector('pattern')).toBeTruthy()
+    await click(toggle)
+    expect(stage().querySelector('[data-thumb-transparent]')).toBeNull()
+    expect(stage().querySelector('[data-thumb-page]')!.getAttribute('fill')).toBe('var(--color-paper)')
+  })
+
+  it('原图范围：左栏大预览取编辑后的那一份图——有图内修改就都是引擎 SVG（导出的正是重渲那一版）', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.xticks', prop: 'fontsize', value: 9 },
+      ]
+    })
+    const edited = useDocumentStore.getState().doc.objects[0] as PanelObject
+    seedExactRender(edited, manifest(9) as never, { svg: '<svg data-marker="edited"></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    // 左栏大预览读的是编辑后的引擎 SVG（导出的正是重渲那一版），不是磁盘原图；对象头不再重复一份缩略图
+    const big = q('[data-export-preview-stage] [data-export-thumb="svg"]')
+    expect(big, '大预览读的是编辑后的引擎 SVG，不是磁盘原图').toBeTruthy()
+    expect(big!.innerHTML).toContain('data-marker="edited"')
+    expect(q('[data-export-preview-stage] [data-export-thumb="file"]')).toBeNull()
+    expect(target().querySelector('[data-export-thumb]')).toBeNull()
+  })
+
+  it('原图缩略图的盒按真实图幅比例（不是固定 60×40）：竖图贴高、宽图贴宽，外框尺寸不变', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.xticks', prop: 'fontsize', value: 9 },
+      ]
+    })
+    const edited = useDocumentStore.getState().doc.objects[0] as PanelObject
+    // 竖图 40×80：manifest 的图幅 → 比例 0.5
+    seedExactRender(edited, { ...manifest(9), size_mm: [40, 80] } as never, { svg: '<svg></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    // 内容盒按真实图幅比例定（测不到舞台尺寸的 jsdom 里走 CSS 退路：aspect-ratio + 宽 100%），图本身填满盒子——不留边距
+    const content = q('[data-export-preview-stage] [data-export-preview-content]') as HTMLElement
+    expect(content.style.aspectRatio.replace(' / 1', '')).toBe('0.5')
+    const box = content.querySelector('[data-export-thumb="svg"]') as HTMLElement
+    expect(box.className).toContain('h-full')
+    expect(box.className).toContain('w-full')
+  })
+})
+
+describe('预览信息完善（PR3）：结果块', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const out = (format: string, name: string | null, status: 'done' | 'failed') => ({
+    format,
+    name,
+    url: name ? `/exports/${name}` : null,
+    bytes: name ? 10 : null,
+    dimensions: { px: null, mm: [80, 60] },
+    vector: format === 'pdf',
+    status,
+    replaced: false,
+    error: status === 'failed' ? { code: 'format_failed', params: {} } : null,
+  })
+
+  it('partial：一句汇总的数字取自后端 outputs；逐行不变', async () => {
+    jobStatus = 'partial'
+    jobOutputs = [
+      out('pdf', 'a.pdf', 'done'),
+      out('png', 'a.png', 'done'),
+      out('tiff', null, 'failed'),
+    ]
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-partial-summary]')?.textContent).toBe('2 个成功，1 个失败')
+  })
+
+  it('全部成功：没有汇总句', async () => {
+    jobWarnings = ['预览与画布略有出入']
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')).toBeTruthy()
+    expect(q('[data-export-partial-summary]')).toBeNull()
+  })
+
+  it('干净地全部成功（桌面壳）：结果块不插进对话框（状态区不出现），脚部是「再次导出 · 完成」，胶囊说「已导出」', async () => {
+    reveal.can = true
+    try {
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]')).toBeNull()
+      expect(q('[data-dialog-status]')).toBeNull()
+      expect(q('[data-export-again]')).toBeTruthy()
+      expect(q('[data-export-finish]')).toBeTruthy()
+      expect(JSON.stringify(useUiStore.getState().status)).toContain('export.exported')
+    } finally {
+      reveal.can = null
+    }
+  })
+
+  it('浏览器里干净地全部成功：结果块照旧在对话框里——产物的打开 / 下载链接只在那里（Codex #1466 P1）', async () => {
+    reveal.can = false
+    try {
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]')).toBeTruthy()
+    } finally {
+      reveal.can = null
+    }
+  })
+})
+
+
+describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）', () => {
+  const ID = 'runtime:fig.py#F'
+  async function openRuntime(assets: unknown[] = []) {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_rt')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.page = { w: 80, h: 60 }
+      d.objects = [
+        {
+          ...panel,
+          id: 'rp',
+          fileId: ID,
+          fileKind: 'runtime',
+          source: { script: 'fig.py', stem: 'F' },
+        } as never,
+      ]
+    })
+    useAssetStore.setState({ byId: {} } as never)
+    useRuntimeAssetStore.setState({ assets, byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'rp' })
+    useUiStore.getState().setExportOpen(false)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+  afterEach(() => {
+    runtimeStatus = null
+    runtimeStatusGate = null
+    runtimeStatusFail = 0
+  })
+
+  it('清单缺 id、注册状态未知：先显示「正在确认」且不放行，ensure 回 registered 后可用（EPS 亮、按原图导）', async () => {
+    let release!: () => void
+    runtimeStatusGate = new Promise<void>((r) => (release = r))
+    runtimeStatus = { status: 'fresh', cached: true, registered: true, execution_profile: 'safe' }
+    await setup(9) // 先把组件挂上、store 铺好
+    await openRuntime()
+    expect(document.body.querySelector('[data-export-figure-checking]'), '确认中').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled'), '确认完之前不放行').toBe(true)
+    await act(async () => release())
+    await act(async () => {})
+    expect(document.body.querySelector('[data-export-figure-checking]')).toBeNull()
+    expect(formatBox('EPS').disabled, '单图原图口径可用 → EPS 亮').toBe(false)
+  })
+
+  it('旧的 registered:false（重跑注册之前问的）：打开对话框重新问，拿到 true 后可用', async () => {
+    runtimeStatus = { status: 'fresh', cached: true, registered: true, execution_profile: 'safe' }
+    await setup(9)
+    await openRuntime()
+    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 30))))
+    await settle()
+    // 用户重跑脚本之前问过一次得到 false，之后重跑注册了——store 里还留着旧的 false
+    useRuntimeAssetStore.setState({
+      byId: { [ID]: { registered: false, checked: true, status: 'needs_rerun', cached: false, profile: 'safe' } },
+    } as never)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await settle()
+    expect(useRuntimeAssetStore.getState().byId[ID]?.registered).toBe(true)
+    expect(formatBox('EPS').disabled).toBe(false)
+  })
+
+  const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 30))))
+
+  it.each([500, -1])('status 查询失败（%i）：注册状态仍未知，照常请求原图口径，不静默改走画布', async (fail) => {
+    runtimeStatusFail = fail
+    await setup(9)
+    await openRuntime()
+    await settle()
+    expect(useRuntimeAssetStore.getState().byId[ID]?.registered, '传输失败不是「不认」').toBeNull()
+    expect(document.body.querySelector('[data-export-figure-checking]'), '问过了，不再「确认中」').toBeNull()
+    expect(document.body.querySelector('[data-export-runtime-refused]')).toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope, '按原图口径交给后端权威校验').toBe('original')
+  })
+
+  it('后端明确回 registered:false：不静默改走画布，给 note 与按钮，用户显式选了才按画布导', async () => {
+    runtimeStatus = { status: 'needs_rerun', cached: false, registered: false, execution_profile: 'safe' }
+    await setup(9)
+    await openRuntime()
+    await settle()
+    expect(document.body.querySelector('[data-export-runtime-refused]'), '说清楚要重新运行').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled'), '不静默导出').toBe(true)
+    await click(document.body.querySelector('[data-export-accept-canvas]') as HTMLElement)
+    expect(document.body.querySelector('[data-export-runtime-refused]')).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope, '用户显式选了才走画布').toBe('canvas')
+  })
+
+  it('缓存清单里还有旧条目、但刚问来的结果明确 false：显示 refused 提示、不发原图导出', async () => {
+    runtimeStatus = { status: 'needs_rerun', cached: false, registered: false, execution_profile: 'safe' }
+    await setup(9)
+    await openRuntime([{ id: ID, script: 'fig.py', stem: 'F', cached: true, status: 'fresh', size_mm: [80, 60] }])
+    await settle()
+    expect(document.body.querySelector('[data-export-runtime-refused]'), '新鲜的「不认」优先于旧清单').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(exportBodies).toHaveLength(0)
+  })
+})
+
+describe('导出页改版（beta 0.19.0b3 反馈）', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const out = (format: string, name: string | null, status: 'done' | 'failed') => ({
+    format,
+    name,
+    url: name ? `/exports/${name}` : null,
+    bytes: name ? 10 : null,
+    dimensions: { px: null, mm: [80, 60] },
+    vector: format === 'pdf',
+    status,
+    replaced: false,
+    error: status === 'failed' ? { code: 'format_failed', params: {} } : null,
+  })
+
+  it('勾 SVG 后格式下面没有那段「默认保留文字…」说明', async () => {
+    await setup(9)
+    await click(formatBox('SVG'))
+    expect(q('[data-export-svg-note]')).toBeNull()
+    expect(q('[data-export-group="format"]')!.textContent).not.toContain('转换为形状')
+  })
+
+  it('输出组：只有卡片本身——没有分隔线，单图档也没有空的第一行', async () => {
+    await setup(9)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    const card = q('[data-export-group="output"] [data-ui-field-group]')!
+    expect(card.hasAttribute('data-ui-field-group-plain')).toBe(true)
+    // 范围那一节在单图档里什么都不渲染（没有 segmented、没有说明）：DOM 里它是空的，CSS 的 empty:hidden 让它不占行
+    const scope = card.querySelector('section[aria-label]')!
+    expect(scope.children).toHaveLength(0)
+    expect(scope.className).toContain('empty:hidden')
+    // 其余组仍有分隔线
+    expect(q('[data-export-group="format"] [data-ui-field-group]')!.hasAttribute('data-ui-field-group-plain')).toBe(false)
+  })
+
+  it('预览区没有圆角框套圆角框：舞台不带内边距与边框，也不再有预览下方的名字 + 尺寸块', async () => {
+    await setup(9)
+    const stage = q('[data-export-preview-stage]')!
+    expect(stage.className).not.toMatch(/\bp-3\b|border/)
+    expect(q('[data-export-preview]')!.querySelector('p.font-medium')).toBeNull()
+    expect(q('[data-export-preview-size]')!.textContent).toMatch(/mm/)
+    // 图是直角：预览区里（容器、舞台、内容盒、图本身）没有任何圆角类，overflow-hidden 的容器也不带
+    for (const el of [q('[data-export-preview]')!, stage, ...stage.querySelectorAll<HTMLElement>('*')]) {
+      if (el.closest('[data-export-preview-tabs]') || el.closest('[data-export-preview-reset]')) continue
+      if (el.className && typeof el.className === 'string' && !el.closest('.pointer-events-none')) {
+        expect(el.className, '预览里的图不许有圆角').not.toMatch(/\brounded/)
+      }
+    }
+    expect(q('[data-export-preview] > div')!.className).not.toMatch(/\brounded/)
+  })
+
+  it('全部成功：对话框里没有结果块；「在文件夹中显示」落在脚部，胶囊带同一个动作并 6 秒后自己走', async () => {
+    const w = window as unknown as Record<string, unknown>
+    w.__TAURI_INTERNALS__ = { invoke: vi.fn() }
+    try {
+      jobOutputs = [out('pdf', 'a.pdf', 'done'), out('png', 'a.png', 'done')]
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]'), '干净成功不插结果块').toBeNull()
+      expect(q('[data-dialog-footer] [data-export-reveal]'), '动作落在脚部').toBeTruthy()
+      const ui = useUiStore.getState()
+      expect(JSON.stringify(ui.status)).toContain('export.exported')
+      expect(ui.statusAction).not.toBeNull()
+      expect(statusDismissTimer.running).toBe(true)
+    } finally {
+      delete w.__TAURI_INTERNALS__
+    }
+  })
+
+  it('有失败：摘要是「N 个成功，M 个失败」，失败原因在详情里', async () => {
+    jobStatus = 'partial'
+    jobOutputs = [out('pdf', 'a.pdf', 'done'), out('png', 'a.png', 'done'), out('tiff', null, 'failed')]
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')!.textContent).toContain('2 个成功，1 个失败')
+    expect(q('[data-export-result] p.text-danger-content')).toBeNull()
+    await openResultDetail()
+    expect(q('[data-export-result] p.text-danger-content')).toBeTruthy()
+  })
+
+  it('核验未通过的文件不能藏进详情：摘要行上点名数量；「未核验」常态则不上摘要', async () => {
+    jobOutputs = [
+      {
+        ...out('pdf', 'a.pdf', 'done'),
+        manifest: {
+          manifest_version: 1, format: 'pdf', sha256: 'x', bytes: 10, policy: 'standard', verdict: 'accepted',
+          required: ['integrity', 'size'], notes: [],
+          checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed' },
+        },
+      } as never,
+    ]
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')!.textContent).toContain('1 个文件核验未通过')
+    expect(q('[data-export-result]')!.getAttribute('data-notice')).toBe('warn')
+  })
+
+  it('核验未通过 + 警告 + 导出期间被编辑：摘要一句话里三样都在，不被优先级链吃掉', async () => {
+    jobOutputs = [
+      {
+        ...out('pdf', 'a.pdf', 'done'),
+        manifest: {
+          manifest_version: 1, format: 'pdf', sha256: 'x', bytes: 10, policy: 'standard', verdict: 'accepted',
+          required: ['integrity', 'size'], notes: [],
+          checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed' },
+        },
+      } as never,
+    ]
+    jobWarnings = ['w1', 'w2']
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    // 导出期间文档被改：这个标志由 store 按指纹算，这里直接置位（算法本身另有用例）
+    await act(async () => { useExportStore.setState({ editedDuringExport: true }) })
+    const text = q('[data-export-result]')!.textContent!
+    expect(text).toContain('1 个文件核验未通过')
+    expect(text).toContain('2 条提示')
+    expect(text).toContain('导出期间排版又改了')
+    expect(q('[data-export-result]')!.getAttribute('data-notice')).toBe('warn')
+  })
+
+  it('位置写入在飞：开始导出灰着（免得写到旧目录），落地后恢复；写入失败也恢复', async () => {
+    await setup(9)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    let release!: () => void
+    settingsGate = new Promise<void>((r) => { release = r })
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    let done!: Promise<void>
+    await act(async () => { done = applyProjectSettingsPatch({ export_dir: '/new/dir' }) })
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(q('[data-export-location]')!.textContent).toBe('正在更新…')
+    await act(async () => { release(); await done })
+    settingsGate = null
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+  })
+})
+
+describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
+  const start = () => click(button('开始导出')!)
+  const mergeRow = () => document.body.querySelector('[data-export-merge-pdf]')
+  const RT = (id: string, stem: string, script = 's.py') => ({ id, script, stem, entry: 'main', status: 'ready' })
+  const pages = (over: Record<string, unknown> = {}) => ({
+    name: 'all_samples.pdf',
+    pages: 2,
+    captured: 2,
+    stems: ['a', 'b'],
+    path: 'all_samples.pdf',
+    scope: 'execution',
+    page_stems: ['a', 'b'],
+    complete: true,
+    ...over,
+  })
+  /** 两张图（Fig1 / Fig2）都是脚本 s.py 的 runtime 素材，s.py 这次运行写了一份两页的 PdfPages */
+  async function setupMerge(
+    opts: { pdfPages?: unknown[]; assets?: unknown[]; formats?: string[]; ledgerConfig?: string } = {},
+  ) {
+    await setupTwo({ select: [] })
+    useRuntimeAssetStore.setState({
+      assets: opts.assets ?? [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b')],
+    } as never)
+    useScriptRunStore.setState({
+      byScript: { 's.py': { pdfPages: opts.pdfPages ?? [pages()], pdfPagesRunConfig: opts.ledgerConfig ?? '' } },
+    } as never)
+    await click(originalRadio())
+    for (const f of opts.formats ?? []) {
+      if (!formatBox(f).checked) await click(formatBox(f))
+    }
+  }
+  afterEach(() => {
+    useRuntimeAssetStore.setState({ assets: null, byId: {} } as never)
+    useScriptRunStore.setState({ byScript: {} } as never)
+  })
+
+  it('两张图出自同一份 PdfPages、勾着 PDF：出现勾选，写明文件名与页数，默认勾上', async () => {
+    await setupMerge()
+    expect(mergeRow()).toBeTruthy()
+    expect(mergeRow()!.textContent).toContain('all_samples.pdf')
+    expect(mergeRow()!.textContent).toContain('2 页')
+    expect(mergeRow()!.querySelector<HTMLInputElement>('input')!.checked).toBe(true)
+  })
+
+  it.each([
+    ['页没认全（complete=false）', { pdfPages: [pages({ complete: false })] }],
+    ['PDF 路径取不到', { pdfPages: [pages({ path: null })] }],
+    ['两张图不在同一份 PdfPages 里', { pdfPages: [pages({ page_stems: ['a', 'zzz'] })] }],
+    ['图不是同一个脚本的', { assets: [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b', 'other.py')] }],
+    ['没有 PdfPages 记录', { pdfPages: [] }],
+  ])('%s：不出现', async (_name, opts) => {
+    await setupMerge(opts)
+    expect(mergeRow()).toBeNull()
+  })
+
+  it('取消 PDF 格式：勾选消失（SVG / PNG 没有多页）', async () => {
+    await setupMerge()
+    await click(formatBox('PDF'))
+    expect(mergeRow()).toBeNull()
+  })
+
+  it('勾着：只发一个作业，merge_pdf 按 page_stems 的页序（同一张图写多页就重复），不带 original', async () => {
+    await setupMerge({ pdfPages: [pages({ page_stems: ['b', 'a', 'b'] })] })
+    for (const f of ['PNG', 'TIFF', 'SVG', 'EPS']) {
+      if (formatBox(f).checked) await click(formatBox(f))
+    }
+    await start()
+    await batchDone()
+    expect(exportBodies).toHaveLength(1)
+    const body = exportBodies[0] as Record<string, any>
+    expect(body.formats).toEqual(['pdf'])
+    expect(body.filename).toBe('all_samples')
+    expect(body.original).toBeUndefined()
+    expect(body.merge_pdf.pages.map((p: { figure_id: string }) => p.figure_id)).toEqual([
+      'Fig2.pdf',
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
+  })
+
+  it('勾着 + 还有别的格式：逐张导其余格式（不再含 pdf），再发合成的那一个', async () => {
+    await setupMerge()
+    if (!formatBox('PNG').checked) await click(formatBox('PNG'))
+    await start()
+    await batchDone()
+    expect(exportBodies.map((b) => b.formats)).toEqual([['png'], ['png'], ['pdf']])
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2', 'all_samples'])
+    expect(exportBodies[2].merge_pdf).toBeTruthy()
+    expect(exportBodies[0].merge_pdf).toBeUndefined()
+  })
+
+  it('素材的运行配置与账本那次运行不一致：不出现（不拼混合 PDF）', async () => {
+    await setupMerge({ ledgerConfig: 'rc_x' }) // 素材没有 run_config，账本却是配置 x 那次
+    expect(mergeRow()).toBeNull()
+  })
+
+  it('只勾 PDF 并合成时，报告不丢：勾了报告 → 合成的那一项带报告，且含逐页证据', async () => {
+    await setupMerge()
+    for (const f of ['PNG', 'TIFF', 'SVG', 'EPS']) {
+      if (formatBox(f).checked) await click(formatBox(f))
+    }
+    await click(document.body.querySelector<HTMLInputElement>('[aria-label="生成样式检查报告"]')!)
+    await start()
+    await batchDone()
+    expect(exportBodies).toHaveLength(1)
+    const body = exportBodies[0] as Record<string, any>
+    expect(body.include_style_check_report).toBe(true)
+    expect(body.style_check_report.pages).toHaveLength(2) // Fig1 / Fig2 各一份
+  })
+
+  it('不勾：与从前一样，每张图各一个单页作业，请求里没有 merge_pdf', async () => {
+    await setupMerge()
+    await click(mergeRow()!.querySelector('input')!)
+    await start()
+    await batchDone()
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
+    expect(exportBodies.every((b) => b.merge_pdf === undefined)).toBe(true)
   })
 })

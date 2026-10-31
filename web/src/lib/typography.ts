@@ -45,6 +45,7 @@ import type { TextObject } from '@/types/document'
  */
 export const TYPOGRAPHY_PROPS = [
   'fontFamily',
+  'fontFallback',
   'sizePt',
   'weight',
   'style',
@@ -184,6 +185,7 @@ export const canvasFontStack = (family: CanvasTextFamily): string => {
 const SUPPORT: Record<TypographyKind, ReadonlySet<TypographyProp>> = {
   figureText: new Set<TypographyProp>([
     'fontFamily',
+    'fontFallback',
     'sizePt',
     'weight',
     'style',
@@ -245,6 +247,7 @@ export function commonSupport(kinds: readonly TypographyKind[]): Set<TypographyP
 const PATHS: Record<TypographyKind, Partial<Record<TypographyProp, string>>> = {
   figureText: {
     fontFamily: 'fontfamily',
+    fontFallback: 'fontfamily.fallback',
     sizePt: 'fontsize',
     weight: 'weight',
     style: 'style',
@@ -356,7 +359,7 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
  * 没有本机表的老引擎、并完什么都没变的，原样返回（同一个对象，memo 不白白失效）。
  */
 export function withMachineFamilies<
-  F extends Pick<EditableField, 'prop' | 'options' | 'options_unavailable' | 'option_labels'>,
+  F extends Pick<EditableField, 'prop' | 'options' | 'options_unavailable' | 'option_labels' | 'option_faces'>,
 >(
   field: F | undefined,
   families: readonly string[] | undefined,

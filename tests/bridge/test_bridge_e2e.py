@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from support.bridgekit import child_env, write
+from support.previewkit import preview_file
 from tavotto.engine import bridge
 from test_colorbar_groups import LIBRARY as COLORBAR_LIBRARY
 
@@ -110,7 +111,7 @@ def _full_chain(sess, tmp_path, *, expect_stem_count=1):
     assert Path(rt["cwd"]).resolve() == Path(sess.spec.cwd).resolve()
     assert rt["packages"]["matplotlib"]
 
-    man = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(sess.out_dir, stem, ".json").read_text(encoding="utf-8"))
     gid = _title_gid(man)
     before = _title_fontsize(man, gid)
     assert before != 22.0, "用例前提：初值不能恰好等于要改成的值（同值提交是 no-op）"

@@ -9,8 +9,9 @@
  * 换成 HttpOnly 会话 cookie，再进界面。
  */
 
-import { t } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 import { CodexShellError } from '@/lib/codexInstall'
+import { HostShellError } from '@/lib/hostConnect'
 
 /**
  * 运行在 Tavotto 桌面壳里（Tauri 2 注入的 IPC 标记在）——不管引擎在哪台机器上。
@@ -174,6 +175,8 @@ export async function onDesktopOpen(
  */
 export type NativeFileDrop =
   | { kind: 'script'; folder: string; script: string; name: string; ignored: number }
+  /** R / MATLAB 脚本（`.R` / `.r` / `.m`，ADR 0143 修订二）：打开 `folder`，由页面提议「生成可编辑版本」；语言由页面按文件名后缀判 */
+  | { kind: 'foreign_script'; folder: string; script: string; name: string; ignored: number }
   | { kind: 'folder'; folder: string; name: string; ignored: number }
   | { kind: 'unsupported'; name: string }
 
@@ -193,7 +196,8 @@ export async function nativeFileDropAvailable(): Promise<boolean> {
 
 /**
  * 订阅系统拖放（`tavotto:file-drop`）。壳在每次有文件放进窗口、页面又接受了这次拖动时
- * 都发；**只有主页订阅**——编辑器不订阅，事件落空，画布的 HTML5 拖放照旧。浏览器模式是空订阅。
+ * 都发。订阅的是主页，以及编辑器的画布（`canvas/useCanvasScriptDrop`：只认与画布 DOM `drop` 配上对的那一条，
+ * ADR 0092 修订 2026-10-27）；画布的 HTML5 拖放照旧。浏览器模式是空订阅。
  */
 export async function onNativeFileDrop(
   handler: (drop: NativeFileDrop) => void,
@@ -261,6 +265,79 @@ export async function resolveDesktopCloseRequest(decision: CloseDecision): Promi
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  引擎意外退出与「上次没有正常退出」（ADR 0129）                              */
+/* -------------------------------------------------------------------------- */
+
+/** 引擎意外退出的类型（闭集，与 `src-tauri/src/exit_marker.rs` 的 `EngineExit` 同源；不带 status 文本与日志）。 */
+export const ENGINE_EXIT_KINDS = ['signal', 'nonzero', 'zero'] as const
+export type EngineExitKind = (typeof ENGINE_EXIT_KINDS)[number]
+/** 上次会话的不正常结局（闭集，与 `exit_marker.rs` 的 `Previous` 同源）。 */
+export const PREVIOUS_EXITS = ['app_unclean', 'engine_exited'] as const
+export type PreviousExit = (typeof PREVIOUS_EXITS)[number]
+/** 壳在引擎意外退出时发给主窗口的事件（`main.rs` 的 `ENGINE_EXITED_EVENT`，两侧严格同源）。 */
+export const ENGINE_EXITED_EVENT = 'tavotto:engine-exited'
+
+const asEngineExit = (v: unknown): EngineExitKind | null =>
+  (ENGINE_EXIT_KINDS as readonly unknown[]).includes(v) ? (v as EngineExitKind) : null
+
+/**
+ * 订阅「引擎意外退出」。只有本机引擎的主窗口有这条事件（远程实例窗口的引擎不是壳拉起的）；
+ * 浏览器模式 / 远程窗口返回空的取消函数。类型认不出一律忽略。
+ */
+export async function onEngineExited(cb: (kind: EngineExitKind) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    return await listen<{ kind?: unknown }>(ENGINE_EXITED_EVENT, (e) => {
+      const kind = asEngineExit(e.payload?.kind)
+      if (kind) cb(kind)
+    })
+  } catch {
+    return () => {}
+  }
+}
+
+/** 回读「本次会话里引擎是否已意外退出」（防事件早于监听）。非桌面 / 老壳 / 出错一律 null。 */
+export async function getEngineExited(): Promise<EngineExitKind | null> {
+  if (!isDesktop()) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return asEngineExit(await invoke('current_engine_exit'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 取走「上次没有正常退出」的结局：读一次即清空（页面重载不重复提示）。
+ * 非桌面 / 远程窗口 / 老壳 / 出错一律 null——没有这条信息就当上次正常。
+ */
+export async function takePreviousExit(): Promise<PreviousExit | null> {
+  if (!isDesktop()) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const v = await invoke('take_previous_exit')
+    return (PREVIOUS_EXITS as readonly unknown[]).includes(v) ? (v as PreviousExit) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 重新启动本机引擎（壳关旧句柄、重新起、换 nonce、导航）。成功时页面随即被换掉。
+ * 返回壳是否动了手：重复点击 / 正在重启 / 引擎并没退出 = false；非桌面 / 出错 = false（不抛）。
+ */
+export async function restartEngine(): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return (await invoke('restart_engine')) === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 原生目录选择器（「打开项目」用）。用户取消返回 null——取消不是错误。
  * 浏览器模式返回 null，调用方回退到服务器端目录浏览器。
@@ -273,7 +350,8 @@ export async function pickDirectory(title?: string): Promise<string | null> {
 }
 
 /**
- * 原生文件选择器，只收 `.py`（主页「导入我的脚本」用）。取消返回 null；
+ * 原生文件选择器，收 `.py`，以及 R / MATLAB 脚本 `.R` / `.r` / `.m`（ADR 0143 修订：这些会走“生成可编辑版本”的入口卡，
+ * 不会被当成可运行脚本）。主页「导入我的脚本」用。取消返回 null；
  * 浏览器模式返回 null，调用方回退到服务器端目录浏览器（选脚本所在的文件夹）。
  * 与 `pickDirectory` 同一条 `dialog:allow-open` 权限，壳侧不用加 ACL。
  */
@@ -284,7 +362,7 @@ export async function pickScriptFile(title?: string): Promise<string | null> {
     directory: false,
     multiple: false,
     title,
-    filters: [{ name: 'Python', extensions: ['py'] }],
+    filters: [{ name: 'Python / R / MATLAB', extensions: ['py', 'R', 'r', 'm'] }],
   })
   return typeof picked === 'string' ? picked : null
 }
@@ -313,6 +391,25 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
   } catch {
     return false
   }
+}
+
+/** 项目根 + 相对路径（`/` 分隔）→ 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
+export function joinProjectPath(root: string, rel: string): string {
+  const win = root.includes('\\') && !root.includes('/')
+  const sep = win ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
+}
+
+/**
+ * 在系统文件管理器里选中项目里的一个文件（`rel` 相对项目根；`/` 与 `\` 两种分隔符都认——后端在 Windows 上给的图 id 是反斜杠分隔）。
+ * 走 `reveal_export` 同一条壳命令（目录 + 纯文件名，只 reveal 不 open），壳侧不加 ACL。
+ * 成功返回 true；浏览器模式或失败返回 false——调用方把完整路径告诉用户。
+ */
+export async function revealProjectFile(root: string, rel: string): Promise<boolean> {
+  if (!root || !rel) return false
+  const cut = Math.max(rel.lastIndexOf('/'), rel.lastIndexOf('\\'))
+  const dir = cut < 0 ? root : joinProjectPath(root, rel.slice(0, cut))
+  return revealExportedFile(dir, rel.slice(cut + 1))
 }
 
 /**
@@ -387,6 +484,135 @@ export async function setDesktopMenuLocale(
 }
 
 /* -------------------------------------------------------------------------- */
+/*  窗框：系统标题栏 / 菜单栏与页面顶栏融成一片（2026-10-13；Windows 10-21 改无框）   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 主窗口的窗框形态，由壳在建窗口时注入（`src-tauri/src/window_chrome.rs` 的 `MARKER_GLOBAL`
+ * 与两个取值，两侧严格同源，`tests/test_desktop_window_chrome.py` 看护）：
+ *
+ * - `overlay`（macOS）：系统标题栏透明叠在页面上，红绿灯在页面顶栏那一行——顶栏让出左侧
+ *   `TRAFFIC_LIGHTS_INSET`，空白处是拖动区。
+ * - `menu-button`（Windows）：没有系统标题栏——页面右上角画最小化 / 最大化 / 关闭
+ *   （`WindowControls`，各页顶部右侧让出 `WINDOW_CONTROLS_INSET`），空白处是拖动区；菜单栏
+ *   藏起来，页面顶栏给一个「菜单」按钮弹出同一份菜单。
+ * - `native`：浏览器、远程实例窗口（不注入标记）、以及不认这个标记的旧壳——一切照旧。
+ */
+export type WindowChrome = 'overlay' | 'menu-button' | 'native'
+
+export function windowChrome(): WindowChrome {
+  if (!isDesktop()) return 'native'
+  const v = (window as unknown as Record<string, unknown>).__TAVOTTO_WINDOW_CHROME__
+  return v === 'overlay' || v === 'menu-button' ? v : 'native'
+}
+
+/**
+ * `overlay` 下顶栏左侧给红绿灯让出的宽度（CSS 像素）。与壳的 `TRAFFIC_LIGHTS`（关闭钮 x = 16，
+ * 三颗按钮右缘实测在 76）配套，再留 12：主页胶囊的悬停底色不贴着绿灯。
+ */
+export const TRAFFIC_LIGHTS_INSET = 88
+
+/**
+ * `menu-button` 下右上角三颗窗口按钮（`WindowControls`，每颗 46 宽、与顶栏同高 44，Windows 的
+ * 标题栏按钮尺寸）占的宽度，CSS 像素。顶部一行有内容的页面右侧至少让出这么多。
+ */
+export const WINDOW_CONTROLS_INSET = 138
+
+/** 壳在主窗口进 / 出全屏时发的事件，载荷 `{fullscreen: boolean}`（`window_chrome.rs` 的 `FULLSCREEN_EVENT`，两侧严格同源）。 */
+export const FULLSCREEN_EVENT = 'tavotto:fullscreen'
+
+/**
+ * 订阅主窗口进 / 出全屏。只有 `overlay` 窗框（macOS 主窗口）有这条事件——全屏时红绿灯随系统标题栏
+ * 收起，顶栏就不必再给它们留 `TRAFFIC_LIGHTS_INSET`。别的窗框 / 浏览器 / 远程窗口返回空的取消函数。
+ */
+export async function onFullscreenChange(cb: (fullscreen: boolean) => void): Promise<() => void> {
+  if (windowChrome() !== 'overlay') return () => {}
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    return await listen<{ fullscreen?: unknown }>(FULLSCREEN_EVENT, (e) => {
+      if (typeof e.payload?.fullscreen === 'boolean') cb(e.payload.fullscreen)
+    })
+  } catch {
+    return () => {}
+  }
+}
+
+/** 回读主窗口此刻是否全屏（防事件早于监听）。非 `overlay` / 老壳 / 出错一律 false。 */
+export async function getFullscreen(): Promise<boolean> {
+  if (windowChrome() !== 'overlay') return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return (await invoke('current_fullscreen')) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 拖动区标记（Tauri 的 `data-tauri-drag-region`）：`deep` = 子树里非交互的地方都能拖，按钮 /
+ * 输入框 / 带 tabindex 的元素照常点击。`overlay` 与 `menu-button` 都没有可拖的系统标题栏，都给；
+ * `native` 有系统标题栏（浏览器、远程实例窗口），不给。
+ */
+export function dragRegionProps(mode: 'deep' | 'self' = 'deep'): Record<string, string> {
+  if (windowChrome() === 'native') return {}
+  return { 'data-tauri-drag-region': mode === 'deep' ? 'deep' : '' }
+}
+
+/**
+ * Windows 顶栏「菜单」按钮：在 (x, y)（页面 CSS 像素，一般是按钮左下角）弹出应用菜单。
+ * 选中的项照旧经 `tavotto:menu` 回来（`useDesktopMenu`）。不在 `menu-button` 窗框里返回 false。
+ */
+export async function showDesktopAppMenu(x: number, y: number): Promise<boolean> {
+  if (windowChrome() !== 'menu-button') return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('show_app_menu', { x, y })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** `menu-button` 窗框的三颗窗口按钮要做的事（关闭照旧发 CloseRequested，走关窗询问闸）。 */
+export type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
+
+/** 当前窗口最小化 / 最大化切换 / 请求关闭。不在 `menu-button` 窗框里返回 false。 */
+export async function windowControl(action: WindowControlAction): Promise<boolean> {
+  if (windowChrome() !== 'menu-button') return false
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    if (action === 'minimize') await win.minimize()
+    else if (action === 'toggle-maximize') await win.toggleMaximize()
+    else await win.close()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 订阅当前窗口是否最大化（最大化按钮据它换「还原」图标）：先回读一次，之后每次窗口尺寸变化
+ * 再回读——拖到顶边吸附、双击顶栏、Win+↑ 都只表现为一次 resize。不在 `menu-button` 窗框里
+ * 什么都不做。返回取消订阅。
+ */
+export async function onWindowMaximizedChange(cb: (maximized: boolean) => void): Promise<() => void> {
+  if (windowChrome() !== 'menu-button') return () => {}
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    const read = () => {
+      win.isMaximized().then(cb, () => {})
+    }
+    const off = await win.onResized(read)
+    read()
+    return off
+  } catch {
+    return () => {}
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Codex 集成的安装 / 诊断（ADR 0012）                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -415,6 +641,31 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
   }
 }
 
+/**
+ * 「接入 AI 编辑器」（用户 2026-10-27）：壳命令 `host_integration` spawn `tavotto-cli hosts … --json`，原样交回那一行
+ * JSON。宿主名与 action 在壳里是闭集；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
+ * 壳回的是稳定 code（cli_not_found / spawn_failed / bad_output / bad_args / bad_host / bad_action），其余一律当
+ * spawn_failed——**不把它当句子显示给用户**。
+ */
+export async function runHostIntegration(
+  action: 'list' | 'connect' | 'disconnect',
+  host?: string,
+  projectRoot?: string,
+): Promise<string> {
+  if (!isDesktop()) throw new HostShellError('not_desktop')
+  const { invoke } = await import('@tauri-apps/api/core')
+  try {
+    return await invoke<string>('host_integration', {
+      action,
+      host: host ?? null,
+      projectRoot: projectRoot ?? null,
+    })
+  } catch (e) {
+    const code = typeof e === 'string' ? e : ''
+    throw new HostShellError(code || 'spawn_failed')
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /*  应用内更新（桌面壳）                                                        */
 /* -------------------------------------------------------------------------- */
@@ -424,23 +675,78 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
  * 这里是它在前端的唯一入口：检查 → 下载安装 → 重启，三步各自可见、可失败，
  * **绝不静默进行**——什么时候换版本必须是用户按下按钮的结果。
  *
+ * 检查与下载都走壳自己的命令（`desktop_update_check` / `desktop_update_install`，ADR 0121）：
+ * 国内镜像与 GitHub 按顺序尝试，下载失败也会换来源重来——这些发生在 Rust 侧，前端只看到
+ * 「查到了 / 装上了 / 失败了」和实际用的来源。**不再直接用 `@tauri-apps/plugin-updater`**
+ * （它的多 endpoints 只覆盖 check）。
+ *
  * 更新包的签名由壳里的公钥校验（tauri.conf.json 的 plugins.updater.pubkey），
- * 私钥只在 CI 里；校验不过 downloadAndInstall 当场抛错，装不上去。
+ * 私钥只在 CI 里；来源不影响信任，校验不过当场失败，装不上去。
  */
+export type UpdateSource = 'mirror' | 'github'
+
 export interface DesktopUpdateInfo {
   version: string
   notes?: string
   /** Release 里写的发布时间，原样透出，不在前端解析格式 */
   date?: string
+  /** 这一版是从哪个来源查到的（只放折叠详情里，不进主文案） */
+  source?: UpdateSource
 }
 
-interface UpdateHandle {
-  version: string
-  downloadAndInstall: (cb?: (e: unknown) => void) => Promise<void>
+/** 壳回报的单个来源失败记录（只有闭集枚举，不带原始错误文本） */
+export interface UpdateAttempt {
+  source: UpdateSource
+  stage: 'check' | 'download' | 'install'
+  kind: string
 }
 
-/** check() 拿到的句柄——下载安装要用同一个，不能到时候重新查一次 */
-let pendingUpdate: UpdateHandle | null = null
+/**
+ * 更新失败。`message` 是给人看的一句话（已翻译）；`code` 与 `attempts` 是稳定的机器可读部分，
+ * 进「技术详情」，不当句子显示。
+ */
+export class DesktopUpdateError extends Error {
+  readonly code: string
+  readonly attempts: UpdateAttempt[]
+  constructor(code: string, message: string, attempts: UpdateAttempt[] = []) {
+    super(message)
+    this.name = 'DesktopUpdateError'
+    this.code = code
+    this.attempts = attempts
+  }
+}
+
+function toUpdateError(e: unknown, fallbackKey: 'update.desktopCheckFailed' | 'update.desktopInstallFailed') {
+  const raw = (e && typeof e === 'object' ? e : {}) as { code?: unknown; attempts?: unknown }
+  const code = typeof raw.code === 'string' ? raw.code : typeof e === 'string' ? e : 'unknown'
+  const attempts = Array.isArray(raw.attempts) ? (raw.attempts as UpdateAttempt[]) : []
+  // 壳回的是稳定 code；ACL 拒绝 / 老壳没有这个命令时回的是别的字符串——一律走通用句子，
+  // **不把它当句子显示给用户**
+  const message =
+    code === 'no_pending_update'
+      ? t('update.noPendingUpdate', { ns: 'errors' })
+      : code === 'busy'
+        ? t('update.busy', { ns: 'errors' })
+        : t(fallbackKey, { ns: 'errors' })
+  return new DesktopUpdateError(code, message, attempts)
+}
+
+/** check() 拿到的版本——下载安装要的是壳里留着的同一个句柄，不能到时候重新查一次 */
+let pendingUpdate: DesktopUpdateInfo | null = null
+
+/**
+ * 本次窗口会话里最近一次应用内更新的结果（只放闭集枚举与稳定码，不放错误文本），给「发送问题反馈」的
+ * `detail-shell.json` 用（ADR 0118 修订）：走的是国内镜像还是 GitHub、有没有换来源重试。没发生过 = 不写这个键。
+ * 纯内存；壳没有把「上一次更新结果」存盘，所以重启之后这里是空的，包里如实标 unknown。
+ */
+export interface UpdateOutcome {
+  check?: { at: number; ok: boolean; found?: boolean; source?: UpdateSource; code?: string; attempts?: UpdateAttempt[] }
+  install?: { at: number; ok: boolean; source?: UpdateSource; code?: string; attempts?: UpdateAttempt[] }
+}
+let updateOutcome: UpdateOutcome = {}
+export function getUpdateOutcome(): UpdateOutcome | null {
+  return updateOutcome.check || updateOutcome.install ? { ...updateOutcome } : null
+}
 
 /**
  * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
@@ -448,34 +754,46 @@ let pendingUpdate: UpdateHandle | null = null
  */
 export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
   if (!isDesktop()) return null
-  const { check } = await import('@tauri-apps/plugin-updater')
-  const update = await check()
-  pendingUpdate = update ? (update as unknown as UpdateHandle) : null
-  if (!update) return null
-  return {
-    version: update.version,
-    notes: update.body ?? undefined,
-    date: update.date ?? undefined,
+  pendingUpdate = null
+  const { invoke } = await import('@tauri-apps/api/core')
+  let found: DesktopUpdateInfo | null
+  try {
+    // 界面语言交给壳参与来源顺序（简体中文界面 → 镜像优先）
+    found = await invoke<DesktopUpdateInfo | null>('desktop_update_check', { uiLang: currentLocale() })
+  } catch (e) {
+    const err = toUpdateError(e, 'update.desktopCheckFailed')
+    updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: false, code: err.code, attempts: err.attempts } }
+    throw err
   }
+  updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: true, found: !!found, source: found?.source } }
+  if (!found) return null
+  pendingUpdate = {
+    version: found.version,
+    notes: found.notes ?? undefined,
+    date: found.date ?? undefined,
+    source: found.source,
+  }
+  return pendingUpdate
 }
 
 /**
  * 下载并安装上一次查到的那一版。onProgress 收到 0–1 的进度；服务端没给
  * Content-Length 时收到 null——进度条该显示成不确定态，而不是假装卡在
- * 某个百分比上。
+ * 某个百分比上。**换来源重下时壳会再发一次 Started，进度随之归零。**
+ * 返回实际用的来源。
  *
  * 没有句柄就抛，不在这里偷偷补一次 check：用户看到的版本号与真正装上去的
  * 那一版必须是同一个。
  */
 export async function installDesktopUpdate(
   onProgress?: (fraction: number | null) => void,
-): Promise<void> {
-  const update = pendingUpdate
-  if (!update) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
+): Promise<UpdateSource> {
+  if (!pendingUpdate) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
   let total = 0
   let got = 0
-  await update.downloadAndInstall((event) => {
-    const e = event as { event: string; data?: { contentLength?: number; chunkLength?: number } }
+  const channel = new Channel<{ event: string; data?: { contentLength?: number | null; chunkLength?: number } }>()
+  channel.onmessage = (e) => {
     if (e.event === 'Started') {
       total = e.data?.contentLength ?? 0
       got = 0
@@ -486,8 +804,18 @@ export async function installDesktopUpdate(
     } else if (e.event === 'Finished') {
       onProgress?.(1)
     }
-  })
+  }
+  let source: UpdateSource
+  try {
+    source = await invoke<UpdateSource>('desktop_update_install', { onEvent: channel })
+  } catch (e) {
+    const err = toUpdateError(e, 'update.desktopInstallFailed')
+    updateOutcome = { ...updateOutcome, install: { at: Date.now(), ok: false, code: err.code, attempts: err.attempts } }
+    throw err
+  }
+  updateOutcome = { ...updateOutcome, install: { at: Date.now(), ok: true, source } }
   pendingUpdate = null
+  return source
 }
 
 /** 装完重启到新版本。浏览器模式退化成刷新页面。 */
@@ -503,4 +831,5 @@ export async function relaunchDesktop(): Promise<void> {
 /** 仅供测试：清掉 check 留下的句柄 */
 export function __resetDesktopUpdate(): void {
   pendingUpdate = null
+  updateOutcome = {}
 }

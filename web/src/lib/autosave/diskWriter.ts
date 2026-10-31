@@ -19,7 +19,8 @@
  *     把它盖掉。
  */
 import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
-import type { ProjectDocument } from '@/types/document'
+import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import type { FigureSnapshot, ProjectDocument } from '@/types/document'
 
 /**
  * 当前文档这一次保存走到了哪一步。
@@ -78,6 +79,21 @@ export const isExternalChange = (err: unknown) =>
 export type SaveTrigger = 'manual' | 'autosave'
 export type SaveOutcome = 'ok' | 'conflict' | 'failed'
 
+/**
+ * 一次正文落盘成功之后，后端对「下次自动恢复信息」（归属 / 上次开着的）的结局，原样转给 `onWritten`：
+ * `ok` 已记；`failed` 正文写成了、元数据没记上；`owner_unknown` 项目身份失效没记；`undefined` = 旧后端没说。
+ */
+export type WrittenMetadata = 'ok' | 'failed' | 'owner_unknown' | undefined
+
+/** `onWritten` 带出去的、**排队那一刻**捕获的写入上下文——回包时不再现问 store / 当前项目 */
+export interface WrittenInfo {
+  /** 这份正文是替哪个项目写的（排队时的项目，不是回包时碰巧是哪个） */
+  pj: string | null
+  metadata: WrittenMetadata
+  figureSnapshots?: Record<string, FigureSnapshot>
+  snapshotContext?: FigureSnapshotSaveContext
+}
+
 /** 协调器要用到的那几条磁盘 API（形状与 `@/lib/api` 同名函数一致，便于直接递真的进来）。 */
 export interface DiskApi {
   put: (
@@ -86,7 +102,7 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null }>
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot> }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -102,14 +118,18 @@ export interface DiskWriterPorts {
    */
   /** 一次写盘真正开始（当前文档：状态推成 `saving`） */
   onSaving: (id: string) => void
-  /** 写盘成功：期间又编辑过就还是 dirty，没编辑过才是"存好了" */
-  onWritten: (id: string, savedAt: number) => void
+  /**
+   * 写盘成功：期间又编辑过就还是 dirty，没编辑过才是"存好了"。`info.pj` 取自**队列项**
+   * （排队那一刻的项目），元数据结局取自后端回包；后者是「正文成功但归属 / last 没记上」的唯一信号，
+   * 正文 revision 照常推进（不能因元数据失败当正文失败重试）。
+   */
+  onWritten: (id: string, savedAt: number, info: WrittenInfo) => void
   /** 写盘失败或被 409 挡下；`issue` 为 null = io 失败 */
   onFailed: (id: string, issue: SaveIssue | null) => void
   /** 冲突未决：队列里排着的那份不能继续往磁盘上撞（读的是**此刻**的保存状态） */
   writeBlocked: () => boolean
-  /** 写盘成功后清掉本机兜底副本 */
-  dropLocalCopy: (id: string) => void
+  /** 写盘成功后仅清掉与落盘快照相同的本机兜底副本（期间可能已换成更新的一版） */
+  dropLocalCopy: (id: string, written: ProjectDocument) => void
   /** 遥测：一次写盘的结局 */
   outcome: (trigger: SaveTrigger, outcome: SaveOutcome) => void
 }
@@ -138,7 +158,7 @@ export function conflictIssue(id: string, err: unknown): SaveIssue {
 
 export interface DiskWriter {
   /** 把这一份排进队列（或立刻开始写） */
-  schedule: (id: string, pd: ProjectDocument, pj: string | null) => void
+  schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext) => void
   /** 队列排空（含在途那一次）后 resolve。已经空了就立刻 resolve。 */
   whenIdle: () => Promise<void>
   /** 下一次真正开始的写盘算作手动保存（遥测的 trigger） */
@@ -161,7 +181,7 @@ export interface DiskWriter {
 export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
   let diskBusy = false
   /** 按 documentId 排队：同一个 id 天然合并成最新一份，不同 id 依次串行 PUT。 */
-  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null }>()
+  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext }>()
 
   /**
    * 乐观并发基线：本标签页最后一次**成功落盘**时那份文档的 updatedAt。
@@ -254,9 +274,9 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
     }
   }
 
-  function schedule(id: string, pd: ProjectDocument, pj: string | null): void {
+  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext): void {
     if (diskBusy) {
-      diskQueue.set(id, { pd, pj })
+      diskQueue.set(id, { pd, pj, snapshotContext })
       return
     }
     diskBusy = true
@@ -273,8 +293,12 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
       .then((res) => {
         diskBaseline.set(id, pd.updatedAt)
         if (res.revision) diskRevision.set(id, res.revision)
-        ports.dropLocalCopy(id)
-        ports.onWritten(id, res.saved_at ?? Date.now())
+        ports.dropLocalCopy(id, pd)
+        ports.onWritten(id, res.saved_at ?? Date.now(), {
+          pj,
+          metadata: res.metadata,
+          ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
+        })
         ports.outcome(trigger, 'ok')
       })
       .catch((err: unknown) => {
@@ -299,7 +323,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           // 内容已经在本机副本里，等用户裁决完再写。只跳过它——排在后面的别的
           // 文档照写，否则它们没人处理、等待方也一直醒不来（#411）。
           if (ports.writeBlocked() && ports.isCurrent(qid)) continue
-          schedule(qid, queued.pd, queued.pj)
+          schedule(qid, queued.pd, queued.pj, queued.snapshotContext)
           return
         }
         settleIdle()

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from support.previewkit import publish_fixture
 from tavotto.engine import (
     execspec,
     figcapture,
@@ -340,6 +341,39 @@ def test_a_probe_registration_remembers_the_table_it_ran_under(tmp_path, monkeyp
     assert inputremap.registration_stale(root, "fig.py")
 
 
+def test_a_parameterized_probe_only_marks_its_own_variant_as_current(tmp_path, monkeypatch):
+    """Codex 评 #909 补审 P2：带 argv 的试运行只跑了这一份配置——不许把无参数登记与没有自己标记的别的变体
+    也标成已对账，否则改指后它们渲染时跳过重新登记，注册表里留着按旧表算出的图名。"""
+    from tavotto.engine import discover, probe as engine_probe
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    inputremap.record_registration(root, "fig.py")  # 无参数登记：空表
+    inputremap.record_registration(root, "fig.py", "rc_b")
+    inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+    assert inputremap.registration_stale(root, "fig.py")
+    monkeypatch.setattr(discover, "register", lambda *a, **k: None)
+    monkeypatch.setattr(engine_probe.registry, "load", lambda *a, **k: None)
+    result = {
+        "script": "fig.py",
+        "entry": "__main__",
+        "stems": ["fig"],
+        "run_config": "rc_a",
+        "remap_generation": inputremap.generation(root),
+    }
+    assert engine_probe.register_probed(root, "fig.py", result)["registered"] is True
+    assert not inputremap.registration_stale(root, "fig.py", "rc_a")
+    assert inputremap.registration_stale(root, "fig.py")  # 无参数那一份没被跑过
+    assert inputremap.registration_stale(root, "fig.py", "rc_b")
+    assert inputremap.registration_stale(
+        root, "fig.py", "rc_c"
+    )  # 没有自己标记的变体回落到脚本级：仍过期
+    # 真正的无参数试运行照旧标脚本级
+    result.pop("run_config")
+    assert engine_probe.register_probed(root, "fig.py", result)["registered"] is True
+    assert not inputremap.registration_stale(root, "fig.py")
+
+
 def test_a_pooled_session_from_an_older_table_is_not_reused(tmp_path):
     root = tmp_path / "proj"
     root.mkdir()
@@ -637,6 +671,81 @@ def test_a_file_not_found_that_was_not_a_read_is_not_claimed(remapped):
     )
 
 
+def test_an_exception_without_a_filename_only_claims_the_miss_it_names(remapped):
+    """#1253：pyarrow 的 `FileNotFoundError("cg_data.parquet")` 没有 filename、消息也没有引号。
+    以前退到「最近一次落空的」，被 try 吞掉的可选读（或 import 机制的探测）就被指认成缺失的输入。"""
+    misses = remapped([])
+    for name in ("cg_data.parquet", "optional.cfg"):  # 后一条是「最近一次」
+        with pytest.raises(FileNotFoundError):
+            open(name)
+    named = figcapture.missing_input_of(FileNotFoundError("cg_data.parquet"), misses)
+    assert named is not None and named["requested"] == "cg_data.parquet"
+    # 点的名不在任何一次落空里 / 根本没点名：不判，不拿 optional.cfg 凑数
+    assert figcapture.missing_input_of(FileNotFoundError("other.parquet"), misses) is None
+    assert figcapture.missing_input_of(FileNotFoundError(2, "No such file"), misses) is None
+    # 路径段边界：`a.txt` 不算被 `data.txt` 点了名，`d` 不算被 `d.txt` 点了名
+    with pytest.raises(FileNotFoundError):
+        open("a.txt")
+    assert figcapture.missing_input_of(FileNotFoundError("data.txt not found."), misses) is None
+    with pytest.raises(FileNotFoundError):
+        open("d")
+    assert figcapture.missing_input_of(FileNotFoundError("d.txt not found."), misses) is None
+    # 路径分隔符也不是边界（Codex #1297 r4344277214）：先吞掉的 `open("data")` 是真失败路径
+    # `data/file.parquet` 的前缀，`file.parquet` 是它的后缀——两者都不算被点了名
+    for name in ("data", "file.parquet"):
+        with pytest.raises(FileNotFoundError):
+            open(name)
+    assert figcapture.missing_input_of(FileNotFoundError("data/file.parquet"), misses) is None
+    assert figcapture.missing_input_of(FileNotFoundError("data\\file.parquet"), misses) is None
+
+
+def test_the_interpreters_own_sys_path_probes_are_not_recorded_as_inputs(remapped, monkeypatch):
+    """#1253：`importlib.metadata` 对不存在的 sys.path 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，
+    自己吞掉异常；记账不许收，也不许占掉 `MAX_INPUT_MISSES` 的名额。"""
+    import sys
+
+    ghost = os.path.abspath("/nonexistent-tavotto-sys-path/python399.zip")
+    monkeypatch.setattr(sys, "path", [*sys.path, ghost])
+    misses = remapped([])
+    with pytest.raises(FileNotFoundError):
+        open(ghost, "rb")
+    assert misses.items == []
+    other = os.path.abspath("/nonexistent-tavotto-sys-path/data.csv")  # 脚本自己写的绝对路径照旧记
+    with pytest.raises(FileNotFoundError):
+        open(other)
+    assert misses.names() == [other]
+
+
+def test_enoent_fact_names_a_bare_message_path_and_native_miss_pairs_it(tmp_path):
+    (tmp_path / "fig.py").write_text(
+        "import pyarrow.parquet as pq\n"
+        "y = pq.read_table('cg_data.parquet').column('y').to_pylist()\n",
+        encoding="utf-8",
+    )
+    fact = figcapture.enoent_fact(FileNotFoundError("cg_data.parquet"))
+    assert fact["filename"] is None and fact["named"] == "cg_data.parquet"
+    hit = inputremap.native_miss("fig.py", tmp_path, fact)
+    assert (
+        hit is not None
+        and hit["requested"] == "cg_data.parquet"
+        and hit["literal"] == "cg_data.parquet"
+    )
+    # 多行 / errno 二元形态不是「一条路径」
+    assert figcapture.enoent_fact(FileNotFoundError(2, "No such file"))["named"] is None
+    assert figcapture.enoent_fact(FileNotFoundError("a\nb"))["named"] is None
+
+
+def test_pyarrow_parquet_readers_are_read_calls():
+    import ast
+
+    for call in (
+        "pq.read_table('a.parquet')",
+        "pq.ParquetFile('a.parquet')",
+        "pq.ParquetDataset('d')",
+    ):
+        assert inputremap.is_read_call(ast.parse(call).body[0].value), call
+
+
 # --------------------------------------------------------------- 执行描述
 def _spec(rules=()):
     return execspec.safe_spec(
@@ -903,6 +1012,131 @@ def test_a_plain_script_error_stays_a_script_error(figs):
     assert err.value.missing_input is None
 
 
+# --------------------------------------------------------------- #1253 真 worker：C++ 读取器的落空不被错配
+PARQUET_SCRIPT = """\
+import sys
+import importlib.metadata as md
+import matplotlib.pyplot as plt
+import pyarrow.parquet as pq
+
+# 先造两笔与这次异常无关的落空：被 try 吞掉的可选读（最近一次落空的候选），
+# 以及 importlib.metadata 扫 sys.path 时对不存在的 zip 条目的 zipfile 打开
+sys.path.append({ghost!r})
+list(md.distributions())
+try:
+    open("optional.cfg")
+except OSError:
+    pass
+y = pq.read_table({name!r}).column("y").to_pylist()
+fig, ax = plt.subplots()
+ax.plot(y)
+fig.savefig("p.png")
+"""
+
+
+def _write_parquet(path: Path) -> None:
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    pq.write_table(pa.table({"y": [1, 2, 3]}), str(path))
+
+
+def _worker_has_pyarrow() -> bool:
+    import subprocess
+    import sys
+
+    return (
+        subprocess.run(
+            [WORKER_PY or sys.executable, "-c", "import pyarrow.parquet"], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+@needs_worker
+def test_a_cpp_reader_miss_in_the_sandbox_is_not_pinned_on_an_unrelated_path(figs, tmp_path):
+    """#1253：数据就在脚本目录，沙盒 cwd 下 pyarrow 读不到 → `script_error` + `extra.enoent`（点名
+    `cg_data.parquet`）；绝不指认 import 探测的 zip 或被吞掉的 `optional.cfg`，不报 `missing_input`。
+    （数据在脚本目录里找得到，所以静态证据里它不是「哪儿都找不到」的候选：不挂 native 载荷。）"""
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    ghost = str(tmp_path / "ghost" / "python399.zip")
+    _write_parquet(figs / "cg_data.parquet")
+    (figs / "fig.py").write_text(
+        PARQUET_SCRIPT.format(ghost=ghost, name="cg_data.parquet"), encoding="utf-8"
+    )
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == "script_error"
+    assert err.value.missing_input is None
+    assert err.value.extra["enoent"]["named"] == "cg_data.parquet"
+    assert "python399.zip" not in str(err.value) and "optional.cfg" not in str(err.value)
+
+    # 同一项目切到脚本目录：数据就在 cwd，出图
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    engine_pool.shutdown_all(str(figs), wait=True)
+    _, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["p"]
+
+
+@needs_worker
+def test_a_cpp_reader_miss_of_a_file_that_exists_nowhere_is_native(figs, tmp_path):
+    """数据哪儿都没有：静态证据对得上 → `script_error` + `via=native` 指向缺的那串（ADR 0110 §一），
+    而不是最近一次落空的 `optional.cfg` / import 探测的 zip。"""
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    ghost = str(tmp_path / "ghost" / "python399.zip")
+    (figs / "fig.py").write_text(
+        PARQUET_SCRIPT.format(ghost=ghost, name="cg_absent.parquet"), encoding="utf-8"
+    )
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == "script_error"
+    offer = err.value.missing_input
+    assert offer is not None and offer["via"] == "native"
+    assert offer["requested"] == "cg_absent.parquet"
+    # 被指认的与消息里都没有它们（`others` 是脚本里写着、此刻哪儿都找不到的常量，那两串本来就在脚本里）
+    assert "python399.zip" not in str(err.value) and "optional.cfg" not in str(err.value)
+    assert "python399.zip" not in offer["requested"] and "optional.cfg" not in offer["requested"]
+
+
+@needs_worker
+def test_a_cpp_reader_miss_that_matches_no_literal_claims_nothing(figs, tmp_path):
+    """静态证据对不上（路径是运行时拼出来的）：不判 `missing_input`，也不指认无关的落空。"""
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    ghost = str(tmp_path / "ghost" / "python399.zip")
+    script = PARQUET_SCRIPT.format(ghost=ghost, name="x").replace(
+        "pq.read_table('x')", 'pq.read_table(chr(99) + "g_missing" + chr(46) + "parquet")'
+    )
+    assert "chr(99)" in script
+    (figs / "fig.py").write_text(script, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == "script_error"
+    assert err.value.missing_input is None
+    assert "python399.zip" not in str(err.value) and "optional.cfg" not in str(err.value)
+
+
+@needs_worker
+def test_a_python_open_of_a_missing_file_is_still_missing_input(figs, tmp_path):
+    """原路径不被改坏：Python 层 `open` 读缺失的文件仍是 `missing_input`（via=open）。"""
+    ghost = str(tmp_path / "ghost" / "python399.zip")
+    (figs / "fig.py").write_text(
+        "import sys\nimport importlib.metadata as md\n"
+        f"sys.path.append({ghost!r})\nlist(md.distributions())\n"
+        'with open("data/absent.txt") as f:\n    f.read()\n',
+        encoding="utf-8",
+    )
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == engine_pool.MISSING_INPUT_CODE
+    assert err.value.missing_input["requested"] == "data/absent.txt"
+
+
 # --------------------------------------------------------------- HTTP
 @pytest.fixture
 def client():
@@ -973,6 +1207,37 @@ def test_http_add_list_and_remove(client, figs, tmp_path):
         assert resp.status_code == 200 and resp.get_json()["input_remap"]["rules"] == []
         resp = client.delete("/api/engine/input-remap", json={"kind": P, "from": ""})
         assert resp.get_json()["code"] == inputremap.ERROR_RULE_UNKNOWN
+    finally:
+        for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
+def test_the_endpoint_and_ai_repair_share_one_link_function(client, figs, tmp_path, monkeypatch):
+    """数据失联弹窗的端点与 AI 修复的 `link_data_file` 只调 `inputremap.link`：校验与推导不复制第二份。"""
+    from tavotto import app as m
+
+    m.open_project(str(figs))
+    try:
+        seen = []
+        real = inputremap.link
+
+        def spy(root, requested, chosen, kind):
+            seen.append((requested, kind))
+            return real(root, requested, chosen, kind)
+
+        monkeypatch.setattr(inputremap, "link", spy)
+        chosen = _touch(tmp_path / "moved" / "data" / "values.txt")
+        resp = client.post(
+            "/api/engine/input-remap",
+            json={"requested": "data/values.txt", "chosen": str(chosen), "chosen_kind": "auto"},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert seen == [("data/values.txt", "auto")]
+        bad = client.post(
+            "/api/engine/input-remap", json={"requested": 1, "chosen": "x", "chosen_kind": "file"}
+        )
+        assert bad.status_code == 400
+        assert bad.get_json()["code"] == inputremap.ERROR_REQUESTED_INVALID
     finally:
         for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
             m.close_project(pid, wait=True)
@@ -1269,7 +1534,7 @@ def test_a_remap_during_the_writeback_replace_loop_waits_for_the_commit(
     out = tmp_path / "_replay_out"
     out.mkdir()
     man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
-    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+    publish_fixture(out, "Fig1", man)
 
     class FakeWorker:
         script_name, entry = "fig1.py", "main"

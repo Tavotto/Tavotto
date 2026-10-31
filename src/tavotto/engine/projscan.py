@@ -184,12 +184,54 @@ def _public_problem(problem: dict | None) -> dict | None:
 
 
 def _registered_scripts(root: Path) -> set[str]:
+    return set(_registered_stems(root))
+
+
+def _registered_stems(root: Path) -> dict[str, list[str]]:
     reg = registry.Registry()
     try:
         reg.load(root)
     except (FileNotFoundError, RuntimeError, OSError):
-        return set()
-    return set(reg.all_scripts())
+        return {}
+    return {script: list(reg.stems_of(script)) for script in reg.all_scripts()}
+
+
+def _no_follow_isfile(budget: scanbudget.Budget, root: Path):
+    """扫描路径给 `figcapture.find_original_artifact(isfile=…)` 的谓词：只 lstat、不跟随，每问一次记一次预算。
+
+    符号链接 / Windows 路径替身（junction、指向 UNC 的重解析点）一律不算原件——与素材清单拒绝这类重定向是
+    同一条规则（`scanbudget.is_redirect`），目标（可能是不可达的 UNC）不被探。拼接后的路径再做一次词法包含性
+    校验（归一化 + `startswith` 单独控制通往 lstat 的分支，CodeQL py/path-injection 的 barrier 形状）；
+    项目内中间目录若是链接 / 路径替身同样不探。预算用完 / 取消 / 超时后一律 False。
+    GUI 库路径不传它，仍用默认的跟随式 `os.path.isfile`。"""
+    return scanbudget.no_follow_isfile(root, charge=budget.charge_entry)
+
+
+def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tuple[set[str], bool]:
+    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件，或这张图被某次执行捕获过
+    （`probe.was_captured`：runtime cache 里有物化记录）。「有同名的图文件」只认 `figcapture.find_original_artifact`
+    ——项目根一层、`ARTIFACT_EXTS`——与 handoff / probe 找原件是同一份判据，不另立「素材在哪」的第二条规则
+    （递归素材清单里的 `archive/fig.pdf` 不是这个脚本的原件，不算连接）。
+
+    回 `(已连接的脚本, 是否查全)`：预算 / 取消 / 超时在查的途中耗尽时第二项为 False——没查到 ≠ 没连接，
+    调用方不得据此派生默认目标（三态里的「不确定」）。
+
+    扫描路径（有 `budget`）上，stem 先过 `_project_relative_stem`（绝对 / 盘符 / UNC / `..` 的 stem 不探、
+    不算连接）；GUI 库路径（无 `budget`）保持原行为。
+
+    打开项目时的静态扫描会先把字面量 savefig 的图名写进注册表（T00 deliberate-boundary）——那只是猜测，脚本一次都没
+    跑过、什么都打不开。只按「注册表里有」就报 `already_connected`（「素材已可编辑」）是假话，而且会把只有脚本的项目的
+    「准备并运行」入口藏起来（T11 真首跑发现）。只读：文件名比对 + 数据目录里的 cache 元数据，不执行、不起解释器。"""
+    isfile = _no_follow_isfile(budget, root) if budget is not None else None  # None = 默认安全谓词
+    # 判据唯一出处 `probe.linked_scan`（素材库脚本清单走同一份）；这里只注入扫描路径的约束：
+    # 不跟随链接的 isfile、项目内相对 stem 校验、预算用尽即停（并标记没查全）
+    return probe.linked_scan(
+        root,
+        _registered_stems(root),
+        isfile=isfile,
+        stopped=(lambda: budget.stop_reason() is not None) if budget is not None else None,
+        charge=budget.charge_entry if budget is not None else None,
+    )
 
 
 def _rel_dir_posix(root: Path, directory: Path) -> str:
@@ -322,7 +364,11 @@ def _scope_of(
 
 
 def _targets_of(
-    root: Path, items: list[dict], budget: scanbudget.Budget | None = None
+    root: Path,
+    items: list[dict],
+    linked: set[str] | None = None,
+    budget: scanbudget.Budget | None = None,
+    linkage_known: bool = True,
 ) -> tuple[list[dict], str | None, str]:
     """条目 → 目标列表、默认目标、选择状态。
 
@@ -352,7 +398,17 @@ def _targets_of(
             body["entry"] = target["entry"]
         target["session_target"] = body
         targets.append(target)
-    pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["registered"]]
+    # 「已连接」= 登记了且真有可编辑的图（`_linked_scripts`）；只在注册表里、什么都打不开的仍是待准备的目标
+    if not linkage_known:
+        # 「已连接」没查全（预算 / 取消 / 超时耗尽，任何原因、任何待准备个数）：每个目标的连接性都是「未知」（None），
+        # 不是已连接也不是未连接——不派生 single / ambiguous / connected，不给准备动作（#819 r4221160446）
+        for t in targets:
+            t["linked"] = None
+        return targets, None, "incomplete"
+    linked = {t["script"] for t in targets if t["registered"]} if linked is None else linked
+    for t in targets:
+        t["linked"] = t["script"] in linked
+    pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["linked"]]
     unknown = any(t["role"] == ROLE_UNKNOWN for t in targets)
     if len(pending) == 1 and not unknown:
         # 还有未核验的 unknown 目标时不替用户挑默认（它可能才是要跑的那个）：落到下面的 ambiguous
@@ -413,7 +469,11 @@ def dependency_evidence(
 
 # ---------------------------------------------------------------- 环境线索
 def environment_evidence(
-    root: Path, script: str | None, budget: scanbudget.Budget | None = None
+    root: Path,
+    script: str | None,
+    budget: scanbudget.Budget | None = None,
+    *,
+    private: bool = False,
 ) -> dict:
     """环境**候选线索**（只读磁盘记录）：项目 venv、记住的决策、`.vscode` / `.python-version` /
     `environment.yml` / shebang、Conda / pyenv 的落盘记录。
@@ -421,8 +481,10 @@ def environment_evidence(
     * 每条 `status` 都是 `unchecked`（记住的是 `remembered_unverified`，文件没了是 `missing`）——**没有
       任何一条被体检过**，`verified` 恒为 False；"推荐"与"采用"是 T05 的事，这里不给推荐；
     * 项目内的解释器给项目相对路径，项目外的只给不透明 `id`（`userenvs.env_id`）与来源 / 标签，不出机器路径；
-    * 不问登录 shell（`ask_login_shell=False`）、不 `import`、不 `stat` 以外的东西；
-    * `budget`：Conda / pyenv 的枚举带着墙钟预算与取消回调，到期 / 取消停在已枚举到的部分（账本 → partial）。"""
+    * 不问登录 shell、不 `import`、不 `stat` 以外的东西。登录 shell 的答案只在**已经被明确问过**时才并进来
+      （`userenvs.discover(ask_login_shell=None)` 只读缓存，T05 的检查动作才会去问）；
+    * `budget`：Conda / pyenv 的枚举带着墙钟预算与取消回调，到期 / 取消停在已枚举到的部分（账本 → partial）；
+    * `private=True`（T05 的 `envadvice` 用）：每行多带一个 `_python`（解释器绝对路径）。公开形态永远不带。"""
     root = Path(root)
     by_key: dict[str, dict] = {}
     order: list[str] = []
@@ -447,6 +509,7 @@ def environment_evidence(
                 "python_relative": rel or None,
                 "status": STATUS_UNCHECKED,
                 "fingerprint": _digest(projectenv.interpreter_fingerprint(python)),
+                "_python": python,
             }
             by_key[key] = row
             order.append(key)
@@ -492,16 +555,34 @@ def environment_evidence(
                 remembered["id"] = row["id"]
 
     for entry in userenvs.discover(
-        root, script, ask_login_shell=False, no_follow=True, budget=budget
+        root, script, ask_login_shell=None, no_follow=True, budget=budget
     ):
         add(entry["python"], entry["source"], entry.get("label") or "")
+    # 系统解释器与执行路径是同一个来源（`userenvs.system_candidates`）：只 `is_file`，不起进程
+    # 扫描里用只读版：PATH 过预算与取消、UNC / 网络路径不碰（清单与执行路径同一份）
+    # 系统候选是补充来源：用独立子预算（条目数 + 时间），用尽只少列、记一条无路径 note，不拖垮项目扫描
+    if budget is None:
+        # 没有扫描预算的调用方（页面挂载时的环境建议 `envadvice.recommend`）同样走只读、有界、不碰网络路径的版本，
+        # 不退回执行路径那个不设限的 helper（Codex #957）。执行路径选解释器不经这里，行为不变。
+        system = userenvs.system_candidates(scanbudget.system_sub_budget(scanbudget.Budget()))
+    elif budget.stop_reason() is None:
+        sub = scanbudget.system_sub_budget(budget)
+        system = userenvs.system_candidates(sub)
+        scanbudget.fold_system_issues(budget, sub)
+    else:
+        system = []
+    for entry in system:
+        add(entry["python"], entry["source"], "")
 
     candidates = [by_key[k] for k in order]
     truncated = len(candidates) > MAX_ENV_CANDIDATES
+    candidates = candidates[:MAX_ENV_CANDIDATES]
+    if not private:
+        candidates = [{k: v for k, v in c.items() if k != "_python"} for c in candidates]
     return {
         "verified": False,
         "remembered": remembered,
-        "candidates": candidates[:MAX_ENV_CANDIDATES],
+        "candidates": candidates,
         "truncated": truncated,
     }
 
@@ -517,6 +598,11 @@ def phase_of(state: str, targets: list[dict], choice: str, assets: int, partial:
         return {
             "phase": PHASE_ACTION_REQUIRED,
             "outcome": {"kind": OUTCOME_FAILED, "code": "project_scan_failed"},
+        }
+    if choice == "incomplete":
+        return {
+            "phase": PHASE_ACTION_REQUIRED,
+            "outcome": {"kind": OUTCOME_UNCHECKED, "code": "scan_incomplete"},
         }
     if choice == "single":
         return {"phase": PHASE_AWAITING_CONFIRMATION, "outcome": {"kind": OUTCOME_TARGET_FOUND}}
@@ -624,7 +710,13 @@ def scan(
     for _path, kind in assets:
         asset_kinds[kind] = asset_kinds.get(kind, 0) + 1
 
-    targets, default_target, choice = _targets_of(root, items, budget)
+    # 已停止的遍历不再起新的文件系统发现：停了就是连接性未知（不碰磁盘，也不拿「注册表里有」冒充已连接）
+    if budget.stop_reason() is None:
+        linked, linkage_known = _linked_scripts(root, budget)
+    else:
+        linked, linkage_known = set(), False
+    linkage_known = linkage_known and budget.stop_reason() is None
+    targets, default_target, choice = _targets_of(root, items, linked, budget, linkage_known)
     script_for_env = default_target or (targets[0]["script"] if len(targets) == 1 else None)
     # A stopped traversal must not start fresh filesystem discovery. Keep these
     # stages separately guarded: cancellation/timeout can occur in either one.
@@ -656,8 +748,11 @@ def scan(
     else:
         has_partial = any(i["severity"] == scanbudget.SEVERITY_PARTIAL for i in issues)
         # 设计内的静默剪枝（层级太深）只有在「一个脚本都没找到」时才升级成 partial
+        # 机器级的 note（system 子预算用尽 / machine 逐级剪枝）不算：只说明少列了机器上的解释器，与项目脚本找没找全无关
+        machine_scopes = (scanbudget.SCOPE_SYSTEM, scanbudget.SCOPE_MACHINE)
         notes_matter = (not items) and any(
-            i["severity"] == scanbudget.SEVERITY_NOTE for i in issues
+            i["severity"] == scanbudget.SEVERITY_NOTE and i["scope"] not in machine_scopes
+            for i in issues
         )
         state = STATE_PARTIAL if (has_partial or notes_matter) else STATE_COMPLETE
     partial = state in (STATE_PARTIAL, STATE_CANCELLED)
@@ -667,6 +762,8 @@ def scan(
         "scripts": [(i["script"], i["reason"], i["checked"], i["registered"]) for i in items],
         "sigs": sorted((rel, sig) for rel, (sig, _seen) in cache.items()),
         "assets": sorted((p.relative_to(root).as_posix(), k) for p, k in assets),
+        "linked": sorted(linked),
+        "linkage_known": linkage_known,
         "env": [(c["id"], c["status"], c["fingerprint"]) for c in env["candidates"]],
         "deps": deps["files"],
         "issues": [(i["code"], i["severity"], i.get("path", "")) for i in issues],

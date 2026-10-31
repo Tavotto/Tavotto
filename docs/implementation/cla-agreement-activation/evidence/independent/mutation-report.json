@@ -1,0 +1,57 @@
+[
+  {
+    "mutation": "initial-registry-fence",
+    "source": "/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare/src/native/agreement-activation.ts",
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutated_sha256": "e9be0fffc9df2eda64d6b811288f70885c4ef016dd48f5fd115dae3b85f12742",
+    "replacement_count": 1,
+    "test_pattern": "source-only initial anchor",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "output": "/tmp/cla-activation-independent-mutants/initial-registry-fence/result.tap"
+  },
+  {
+    "mutation": "document-byte-hash",
+    "source": "/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare/src/native/agreement-activation.ts",
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutated_sha256": "d9f2ee3d2702184402939797538e6649b651792b0cf7aab8d9f25a3459d7d6bd",
+    "replacement_count": 1,
+    "test_pattern": "tampered prepared fields",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "output": "/tmp/cla-activation-independent-mutants/document-byte-hash/result.tap"
+  },
+  {
+    "mutation": "runtime-body-hash",
+    "source": "/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare/src/native/store.ts",
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutated_sha256": "9d2c3af62ba7727026928707a58e2aad0776ef8745d303721cfffecf986e7a18",
+    "replacement_count": 1,
+    "test_pattern": "stored canonical body corruption",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "output": "/tmp/cla-activation-independent-mutants/runtime-body-hash/result.tap"
+  },
+  {
+    "mutation": "current-packet-tuple",
+    "source": "/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare/src/native/store.ts",
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutated_sha256": "64eab5de905eec59ae06443d818bc3cd9e6ba8ace0c115dc336c3a8eeebdea83",
+    "replacement_count": 1,
+    "test_pattern": "current store refuses to commit historical tuple for a new subject",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "output": "/tmp/cla-activation-independent-mutants/current-packet-tuple/result.tap"
+  },
+  {
+    "mutation": "current-intent-tuple",
+    "source": "/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare/src/native/store.ts",
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutated_sha256": "1e9dfeac0457ce2b5942de3ba3ccf53b7a4095b2d88a256d332ec5d06d5cbf2f",
+    "replacement_count": 1,
+    "test_pattern": "new store rejects old packet mutation",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "output": "/tmp/cla-activation-independent-mutants/current-intent-tuple/result.tap"
+  }
+]

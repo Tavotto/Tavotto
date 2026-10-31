@@ -10,9 +10,11 @@ import {
   rebuildManagedEnvironment,
   setEngineEnvironment,
   setProjectEnvironment,
+  adoptEnvironmentCandidate,
   setProjectUserEnvironment,
   skipDependencyPreparation,
   backendErrorText,
+  ApiError,
   type DependencyPreparationOffer,
   type DependencyProgress,
   type DependencyRepairOffer,
@@ -24,8 +26,11 @@ import {
   privatePythonOrigin,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { draftFromOffer, userSpecifiedBody, type OriginDraft } from '@/lib/importOrigin'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
+import { usePackageStore } from '@/store/packageStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 
@@ -165,6 +170,12 @@ export interface RepairDisclosure {
   requirements?: string[]
   target_kind: 'tavotto_managed'
   private_python: PrivatePythonOffer | null
+  /**
+   * 用户看到的那份计划的影响摘要（卡片预读的计划 / 确认页上的计划）。有它就必须与新形成的计划**逐字相同**——
+   * 光比包名不够：次要依赖的约束（beta<2 → beta>=2）、环境代、写入范围变了，包名都不变，用户却没看过
+   * （Codex r4217992305）。没有 = 卡片没读过计划，没有可比的摘要，以新计划自己的摘要为准（用户点的就是它）
+   */
+  impact_digest?: string
 }
 
 /**
@@ -179,6 +190,8 @@ export const requirementKey = (requirement: string): string =>
 export function planMatchesDisclosure(plan: DependencyRepairPlan, seen: RepairDisclosure): boolean {
   if (plan.target_kind !== seen.target_kind || plan.modifies_user_environment) return false
   if (plan.requirement !== seen.requirement) return false
+  // 摘要变了 = 实际影响超出了用户看到的（约束 / 环境代 / 范围），哪怕包名一个没变
+  if (seen.impact_digest && plan.impact_digest !== seen.impact_digest) return false
   // 没说过全部清单 = 只披露了 `requirement` 这一个：计划里多出的任何包（脚本 / 声明在点击前多了一个、或 offer
   // 时算不出而计划时算得出）都不在授权之内，停在确认页。按包名比（extras / 版本写法不算另一个包）
   const allowed = new Set((seen.requirements ?? [seen.requirement]).map(requirementKey))
@@ -268,6 +281,8 @@ interface DepRepairState {
     module: string,
     script?: string,
     scriptOffer?: ScriptRepairOffer | null,
+    /** 目标带着「看到它那一刻」的候选 id + 环境代时必须交（确认模式下的项目环境建议）：走代次绑定的采用 */
+    candidate?: { id: string; generation: string } | null,
   ) => Promise<void>
   /**
    * 修复卡上的「恢复自动检测」：清掉全局显式解释器（`setPython(null)`），成功后收起这张卡、重排失败的渲染、重跑
@@ -286,8 +301,15 @@ interface DepRepairState {
    */
   adoptUserEnvironment: (id: string, script: string) => Promise<void>
   cancel: () => Promise<void>
-  rebuildManaged: () => Promise<void>
+  /** `seen`：没有基础解释器时，用户看过并同意的私有 Python 载荷——授权绑在它的 id + 来源 + 下载量上（ADR 0111 §一） */
+  rebuildManaged: (seen?: PrivatePythonOffer) => Promise<void>
   onProgress: (p: DependencyProgress) => void
+  /**
+   * 对账（SSE 重连 / 页面恢复）：后端 `/api/events` 无重放，断线期间丢了终态事件，卡片就永远停在「正在安装」。
+   * 对本标签页起过的、还没看到终态的作业（当前卡片 + 切走项目收着的），按 plan_id 问一次实况，结果走 `onProgress`
+   * 同一条规则（所属项目分格、终态副作用只在所属项目开着时派发）。`idle` = 后端不认识这个 id，不据此改任何东西。
+   */
+  reconcile: () => Promise<void>
   /** 关掉确认卡片 / 换一个目标时回到干净状态 */
   reset: () => void
   /**
@@ -324,6 +346,25 @@ interface DepRepairState {
   cancelPreparation: () => Promise<void>
   /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
   skipPreparation: (offerArg?: DependencyPreparationOffer) => Promise<void>
+
+  // ---- 确认包名（Import Origin PR6）：后端给了预填的来源未定 import，由用户确认（可改）后作为 `user_specified` 提交 ----
+  // 载荷（整份联合计划）住在 `envStore.originConfirmation`；这里管输入、绑定的计划与执行。一次授权：所有输入框一起提交、
+  // 一份计划、一份影响摘要，不逐包弹窗。项目代际与单飞（`busy`）沿用上面 `prepare` 的写法，没有第二套判据。
+  /** 输入草稿：初始值 = 后端预填（原样）；换项目 / 关框 / 新载荷都丢掉 */
+  originDraft: OriginDraft | null
+  /** 提交草稿后绑定回来的计划（不装）；确认页读它标注「用户指定、未经可信来源核实」，`impact_digest` 原样交给 `/prepare` */
+  originPlan: JointDependencyRepairPlan | null
+  /** 打开「确认包名」：设草稿（预填）并把载荷交给 `envStore` */
+  openOrigin: (offer: DependencyPreparationOffer) => void
+  setOriginValue: (importName: string, value: string) => void
+  /** 提交草稿：`createJointDependencyPlan({ script, user_specified })`，成功后进确认页（`originPlan`） */
+  bindOrigin: () => Promise<void>
+  /** 确认页的「回去改」：丢掉绑定的计划（它是一次性的），草稿原样保留 */
+  backToOriginDraft: () => void
+  /** 用户在确认页点了确认：只发 `plan_id` + 绑定回来的那份摘要（用户看到的就是它） */
+  confirmOrigin: () => Promise<void>
+  /** 关框：草稿、绑定的计划、载荷都丢掉；进行中的作业不取消（与 `dismissDependencyPreparation` 同） */
+  closeOrigin: () => void
 }
 
 /** 预读的那份计划：`key` 认是哪个脚本的哪个包；`pending` 期间卡片的主按钮等它 */
@@ -356,6 +397,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   jointBlocked: null,
   jointScript: '',
   jointOffer: null,
+  originDraft: null,
+  originPlan: null,
   request: null,
   authorized: null,
   scriptOffer: null,
@@ -367,6 +410,11 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   prepare: async (target, offerArg) => {
     const offer = offerArg ?? useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
+    // offer 没有影响摘要（不该发生：能授权的计划才会弹框）：不发空串，明确停下，不绑定、不执行
+    if (!offer.impact_digest) {
+      set({ errorCode: 'dependency_impact_required', errorText: '' })
+      return
+    }
     const epoch = projectEpoch
     let planId = ''
     // 脚本行也直接弹框：按发起时的运行记录记归属，切回项目后继续那次试运行。
@@ -380,7 +428,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 绑定回来的计划超出了用户看到的（offer 里那份）：不执行，按此刻的输入重新披露——脚本行重跑一次拿新的 offer，
       // 授权框关掉后重排那次失败的渲染（新的框带新的清单）。计划只是记录、不装，丢掉即可
       const seen = new Set(offer.plan.requirements.map(requirementKey))
-      if (plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
+      // 影响摘要也要对上：同样的包名，环境代 / 约束 / 私有 Python 需求变了就是另一份影响（用户没看过），
+      // 名字比对看不出来。offer 带了摘要而新计划的对不上 = 同样按此刻的输入重新披露
+      const digestDrifted = !!offer.impact_digest && !!plan.impact_digest && plan.impact_digest !== offer.impact_digest
+      if (digestDrifted || plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
         set({ busy: false, jointPlan: null, jointScript: '', jointOffer: null })
         useEnvStore.getState().dismissDependencyPreparation()
         useRenderStore.getState().retryEnvironmentFailures()
@@ -405,7 +456,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           script: plan.script,
         },
       })
-      await prepareJointDependencies(plan.plan_id)
+      // 带上**用户看到的**摘要（offer 的），不是刚绑回来的 plan 的：后端据此拒绝执行用户没确认过的影响
+      await prepareJointDependencies(plan.plan_id, offer.impact_digest)
       if (epoch !== projectEpoch) return // 作业照跑、已经收进 A 那格；B 的界面不动
       set({ busy: false })
     } catch (e) {
@@ -447,6 +499,93 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     useRenderStore.getState().retryEnvironmentFailures()
     // 素材库脚本行上停在这道门上的那次试运行同样重跑（图还没上画布时，门是从那里撞上的）
     useScriptRunStore.getState().rerunGated('needs_preparation', offer.script)
+    // 准备面板（T09b）：同一道门在会话里也是一条待办——空闲的会话只读地重新检查，下一步仍由报告给、用户点（不运行）
+    useProjectPreparationStore.getState().recheckIdle()
+  },
+
+  openOrigin: (offer) => {
+    // 已经开着一份（连点两下 / 另一路也在开）：不重置用户正在改的输入
+    if (get().busy || useEnvStore.getState().originConfirmation) return
+    set({ originDraft: draftFromOffer(offer), originPlan: null, errorCode: '', errorText: '', jointBlocked: null })
+    useEnvStore.getState().requestOriginConfirmation(offer)
+  },
+
+  setOriginValue: (importName, value) => {
+    const draft = get().originDraft
+    if (!draft || !draft.names.includes(importName)) return
+    set({ originDraft: { ...draft, values: { ...draft.values, [importName]: value } }, errorCode: '', errorText: '' })
+  },
+
+  bindOrigin: async () => {
+    const draft = get().originDraft
+    if (!draft || get().busy) return
+    const body = userSpecifiedBody(draft)
+    if (Object.keys(body).length === 0) return
+    const epoch = projectEpoch
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, originPlan: null })
+    try {
+      const { plan } = await createJointDependencyPlan({ script: draft.script, user_specified: body })
+      // 绑定回来时已经切了项目：这是 A 的计划，不落进 B 的确认页（绑定不装，丢掉即可）
+      if (epoch !== projectEpoch) return
+      set({ busy: false, originPlan: plan })
+    } catch (e) {
+      if (epoch !== projectEpoch) return
+      const { code, text } = failure(e)
+      const joint = (e as { body?: { joint?: JointDependencyPlan } })?.body?.joint ?? null
+      set({ busy: false, jointBlocked: joint, errorCode: code, errorText: text })
+    }
+  },
+
+  backToOriginDraft: () => {
+    if (get().busy) return
+    set({ originPlan: null, errorCode: '', errorText: '', jointBlocked: null })
+  },
+
+  confirmOrigin: async () => {
+    const plan = get().originPlan
+    if (!plan || get().busy) return
+    // 绑定回来的计划没有影响摘要（不该发生：能授权的计划才有）：不发空串，明确停下，不执行
+    if (!plan.impact_digest) {
+      set({ errorCode: 'dependency_impact_required', errorText: '' })
+      return
+    }
+    const epoch = projectEpoch
+    startedPlans.set(plan.plan_id, currentProjectId())
+    set({
+      busy: true,
+      errorCode: '',
+      errorText: '',
+      jointBlocked: null,
+      jointScript: '',
+      jointOffer: null,
+      jointPlan: plan,
+      progress: {
+        plan_id: plan.plan_id,
+        state: 'preparing',
+        log: '',
+        error: null,
+        code: '',
+        flow: 'joint',
+        requirements: plan.requirements,
+        target_kind: plan.target_kind,
+        script: plan.script,
+      },
+    })
+    try {
+      // 带上**用户在确认页看到的**摘要（这份计划自己的）：后端据此拒绝执行用户没确认过的影响
+      await prepareJointDependencies(plan.plan_id, plan.impact_digest)
+      if (epoch !== projectEpoch) return
+      set({ busy: false })
+    } catch (e) {
+      if (epoch !== projectEpoch) return lateFailure(plan.plan_id, e)
+      const { code, text } = failure(e)
+      set({ busy: false, progress: null, jointPlan: null, originPlan: null, errorCode: code, errorText: text })
+    }
+  },
+
+  closeOrigin: () => {
+    set({ originDraft: null, originPlan: null, ...(get().busy ? {} : { errorCode: '', errorText: '', jointBlocked: null }) })
+    useEnvStore.getState().dismissOriginConfirmation()
   },
 
   makePlan: async (args, scriptOffer = null) => {
@@ -525,6 +664,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   install: async () => {
     const plan = get().plan
     if (!plan || get().busy) return
+    // 计划没有影响摘要（老后端 / 异常响应）：没有可回显的"用户看到的影响"，后端会拒（dependency_impact_required）。
+    // 不发空串去撞 400，明确停在这里，不执行、不留半截状态
+    if (!plan.impact_digest) {
+      set({ errorCode: 'dependency_impact_required', errorText: '' })
+      return
+    }
     const epoch = projectEpoch
     startedPlans.set(plan.plan_id, currentProjectId())
     set({ busy: true, errorCode: '', errorText: '' })
@@ -537,6 +682,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           ...(plan.requirements && plan.requirements.length > 1 ? { requirements: plan.requirements } : {}),
           target_kind: 'tavotto_managed',
           private_python: plan.private_python ?? null,
+          // 重试沿用它：之后计划的影响再变（约束 / 环境代），同样回到确认页
+          ...(plan.impact_digest ? { impact_digest: plan.impact_digest } : {}),
         },
       })
     }
@@ -557,7 +704,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           script: get().request?.script,
         },
       })
-      await installDependencyPlan(plan.plan_id)
+      // 带上**界面上这份计划**的摘要（确认页 / 一次授权里已逐字比对过的那份）：后端据此拒绝执行用户没看过的影响
+      await installDependencyPlan(plan.plan_id, plan.impact_digest as string)
       if (epoch !== projectEpoch) return
       set({ busy: false })
     } catch (e) {
@@ -607,7 +755,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  adoptSystemPython: async (python, module, script, scriptOffer = null) => {
+  adoptSystemPython: async (python, module, script, scriptOffer = null, candidate = null) => {
     if (get().busy) return
     const owner = currentProjectId()
     const epoch = projectEpoch
@@ -617,7 +765,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     let change: EnvChange
     try {
       // 直接问后端、自己拿**带标签的**结局：`envStore.setProjectPython` 换代之后成败都回 null，分不出来
-      const res = await setProjectEnvironment(python, module)
+      // 带着绑定的目标走与环境建议同一个代次绑定的端点：环境在看到之后被重建 → 409，不采用另一代
+      const res = candidate
+        ? await adoptEnvironmentCandidate(candidate, script, module)
+        : await setProjectEnvironment(python, module)
       change = {
         kind: 'adopt', module, script, peers, scriptOffer,
         outcome: {
@@ -631,6 +782,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         },
       }
     } catch (e) {
+      // 与 `envStore.adoptCandidate` 同一个 409 语义：看到建议之后环境被重建 / 候选没了，建议已过期，重新拿一份
+      if (candidate && e instanceof ApiError && (e.body?.code === 'environment_changed' || e.body?.code === 'environment_candidate_gone'))
+        void useEnvStore.getState().refresh()
       change = {
         kind: 'adopt', module, script, peers, scriptOffer,
         outcome: { ok: false, error: e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' }) },
@@ -682,7 +836,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  rebuildManaged: async () => {
+  rebuildManaged: async (seen) => {
     const owner = currentProjectId()
     if (get().busy || get().rebuildRunningFor(owner)) return
     const epoch = projectEpoch
@@ -706,7 +860,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       progress: started,
     })
     try {
-      await rebuildManagedEnvironment(id)
+      await rebuildManagedEnvironment(id, seen)
       // 进度此后只由 SSE 推进（切走时 `clear()` 已经把它收进 A 那格），这里不再写进度
       if (epoch !== projectEpoch) return
       set({ busy: false })
@@ -733,10 +887,23 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   onProgress: (p) => {
+    // 作业状态只前进（SSE、对账回包、POST 失败后的实况接回都经过这里，判据只此一处）：同一 plan 已经到过终态，
+    // 任何后来的快照（终态的重复、缓冲里的旧非终态）一律丢弃；非终态之间只丢「更早的」——同一状态的重复要收
+    // （下载字节数就是同一状态里一条条来的）
+    const seen = get().progress?.plan_id === p.plan_id ? get().progress : Object.values(get().parked).find((q) => q.plan_id === p.plan_id)
+    if (seen) {
+      if (TERMINAL.includes(seen.state)) return
+      if (!TERMINAL.includes(p.state) && STATE_ORDER[p.state] < STATE_ORDER[seen.state]) return
+    }
     // 重建到了终局：那个项目的单飞放开——不管此刻开着哪个项目
+    // 先记下「这是不是某个项目的重建终态」（放开单飞之后就认不出了）：重建会改包管理页说的环境
+    let rebuildTerminal = false
     if (TERMINAL.includes(p.state)) {
       const owner = startedPlans.get(p.plan_id)
-      if (owner !== undefined) releaseRebuild(owner, p.plan_id)
+      if (owner !== undefined) {
+        rebuildTerminal = get().rebuilding[projectKey(owner)] === p.plan_id
+        releaseRebuild(owner, p.plan_id)
+      }
     }
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
@@ -764,6 +931,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
       void useEnvStore.getState().refresh()
+      // 重建（含包管理页的「自动准备」）的终态：包管理页自己的清单 / 能力（「没有可用 Python」「尚未创建」）也已过期，
+      // 页面轮询不覆盖这一次，成功失败都重读——否则页面停在旧状态、按钮重新可点
+      if (rebuildTerminal) void usePackageStore.getState().load()
       let rerun = false
       if (p.state === 'done') {
         // **装完必须把那次失败的渲染重新排上**，否则这条主路走不完：
@@ -784,8 +954,13 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         if (p.flow === 'joint') {
           const script = p.script || useEnvStore.getState().dependencyPreparation?.script
           useEnvStore.getState().dismissDependencyPreparation()
+          // 「确认包名」框同理：装完收掉（草稿与绑定的计划随之丢；失败 / 取消不收，框里说那一句）
+          if (get().originPlan?.plan_id === p.plan_id) get().closeOrigin()
           if (script) useScriptRunStore.getState().rerunGated('needs_preparation', script)
         }
+        // 准备面板（T09b）：授权框 / 修复卡装完的依赖也是会话里的那条待办——空闲的会话只读地重新检查（不运行）。
+        // 原对话框是薄展示适配器：作答走原端点，会话这一侧只认后端重新检查出来的报告
+        useProjectPreparationStore.getState().recheckIdle()
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
@@ -793,11 +968,32 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
       // plan_id 让用户再点一次「安装」。预读的那些同理：环境刚变过（可能已经有了私有 Python），它们说的下载
       // 已经不算数，下一张卡要按新环境重读
-      set({ plan: null, jointPlan: null, ...(p.state === 'done' ? { managedPreviews: {} } : {}) })
+      set({ plan: null, jointPlan: null, originPlan: null, ...(p.state === 'done' ? { managedPreviews: {} } : {}) })
       // 从脚本行起的修复：那一行已经重跑、卡片随之收起，「已安装」这条进度没有地方再「知道了」——
       // 留着它，别的脚本行会因为「修复属于别人」一直不给卡片
       if (rerun) get().reset()
     }
+  },
+
+  reconcile: async () => {
+    const pending = new Map<string, DependencyProgress>()
+    const note = (p: DependencyProgress | null | undefined) => {
+      if (p && startedPlans.has(p.plan_id) && p.state !== 'idle' && !TERMINAL.includes(p.state)) pending.set(p.plan_id, p)
+    }
+    note(get().progress)
+    for (const p of Object.values(get().parked)) note(p)
+    await Promise.all(
+      [...pending.keys()].map(async (id) => {
+        let actual: DependencyProgress
+        try {
+          actual = await fetchDependencyState(id)
+        } catch {
+          return // 问不到实况不打扰：下一次重连 / 回到页面再对
+        }
+        if (actual.plan_id !== id || actual.state === 'idle') return
+        get().onProgress(actual) // 先后判据在 `onProgress`（唯一落点）
+      }),
+    )
   },
 
   reset: () =>
@@ -812,6 +1008,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       jointBlocked: null,
       jointScript: '',
       jointOffer: null,
+      originDraft: null,
+      originPlan: null,
       request: null,
       authorized: null,
       scriptOffer: null,
@@ -840,6 +1038,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       plan: null,
       jointPlan: null,
       jointBlocked: null,
+      // 确认包名的预填与输入属于旧项目：A 项目的包名不能出现在 B 项目的框里
+      originDraft: null,
+      originPlan: null,
       jointScript: retryCtx?.jointScript ?? '',
       jointOffer: retryCtx?.jointOffer ?? null,
       pinned: null,
@@ -901,15 +1102,34 @@ function releaseRebuild(owner: string | null, id: string): void {
  */
 function adoptActualRebuild(owner: string | null, actual: DependencyProgress): void {
   const store = useDepRepairStore.getState()
-  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格
+  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格。
+  // 终态不在这里预写进度：交给 `onProgress`（先后判据与终局副作用的唯一落点，预写了它会当成重复丢掉）
+  const terminal = TERMINAL.includes(actual.state)
   deliverToOwner(
     owner,
-    () => useDepRepairStore.setState({ busy: false, progress: actual }),
-    () => useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } }),
+    () => useDepRepairStore.setState(terminal ? { busy: false } : { busy: false, progress: actual }),
+    () => {
+      if (!terminal) useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } })
+    },
   )
-  if (TERMINAL.includes(actual.state)) useDepRepairStore.getState().onProgress(actual)
+  if (terminal) useDepRepairStore.getState().onProgress(actual)
 }
 const TERMINAL: readonly DependencyProgress['state'][] = ['done', 'failed', 'cancelled']
+/**
+ * 作业状态的先后（`reconcile` 判「这份回包是不是比我已知的旧」的唯一出处；与 `RepairProgressLine` 的步骤表同序，
+ * 但那张表按阶段分组、不区分 verifying，所以这里单列）。终态同序：互相之间不比。
+ */
+const STATE_ORDER: Record<DependencyProgress['state'], number> = {
+  idle: 0,
+  preparing: 1,
+  downloading_python: 2,
+  creating_env: 3,
+  installing: 4,
+  verifying: 5,
+  done: 6,
+  failed: 6,
+  cancelled: 6,
+}
 
 /**
  * 切项目之后才失败的那次执行请求（install / prepare 的 POST 被拒）：作业没起来，它所属项目那格要说出

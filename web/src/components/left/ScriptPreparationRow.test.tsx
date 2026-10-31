@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 
+// 这组用例钉的是**旧**的同步试运行路径（T09 起它在本地开关关闭时才走；默认走准备面板，见
+// `PreparationPanel.test.tsx` / `scriptLibraryPanel.test.tsx`）
+vi.mock('@/lib/preparationFlag', () => ({ PREPARATION_PANEL_KEY: 'tavotto.preparationPanel', preparationPanelEnabled: () => false }))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchRegistry: vi.fn(),
@@ -102,6 +106,7 @@ const offerOf = (over: Partial<DependencyPreparationOffer> = {}): DependencyPrep
   ],
   rounds_remaining: 3,
   skipped: false,
+  impact_digest: 'shown-digest',
   ...over,
 })
 
@@ -244,10 +249,10 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(createJointDependencyPlan).not.toHaveBeenCalled()
   })
 
-  it('点一次绑定计划并只发 plan_id；进度留在弹窗，完成后关框并自动重跑一次', async () => {
+  it('点一次绑定计划并发 plan_id + 用户看到的影响摘要；进度留在弹窗，完成后关框并自动重跑一次', async () => {
     await startRepair()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: SCRIPT, target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row', 'shown-digest')
     expect(useDepRepairStore.getState().jointScript).toBe(SCRIPT)
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
     expect(dialog()!.querySelector('[data-repair-line]')!.textContent).toBe('正在安装 pandas 和 openpyxl…（3/4）')

@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_protocol.py`、`test_loginpath.py`、`test_tex_diagnostics.py`、`test_worker_roundtrip.py`、`test_worker_exit_report.py`、`test_pool_lru_lease.py`、`test_workerd_client.py`、`test_build_watchdog.py`、`test_windows_regressions.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 60
+改到: `engine/pool.py`、`executionfact.py`、`wireproto.py`、`workerd_client.py`、`texdiag.py`、`loginpath.py`、超时 / 关停 / 计时
+主题: worker 协议、计时、超时与关停、TeX 分类 → `worker-protocol-and-lifecycle.md`
+必守要点: 协议 v1 信封原样回显、`request_id` 对不上 kill；patch 规范化唯一权威 `patchspec.py`；kill 之后必 reap；TeX 先于缺依赖判
+-->
 
 - **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
   worker_generation/render_revision/canonical_patch_hash` 信封，命令
@@ -29,6 +38,9 @@
 - 前端渲染态分键与假实时预览（渲染平面 / 历史平面）的规则在
   `web/AGENTS.md`——引擎侧只需知道：render 请求带 `inline_svg` 时 SVG 与
   manifest 必须同一次响应返回；SSE 的 render.started/done 只带 fileId。
+- **export 的两个可选「保留文字」字段（ADR 0144，加字段协议）**：`svg_fonttype`（`"none"`，仅 `format=svg`）与 `svg_text_path`
+  （要带 `svg_path`、不与 `snapshot_only` 同用；应答多 `svg_text` / `svg_text_error`）。只给成品用，path 基准字节与 #1185 等价证人不动；
+  旧 worker 静默忽略，父进程只对签名里有这两个参数的 worker 带上，回退为 path 版。看护 `tests/test_worker_svg_pair.py`、`tests/test_export_svg.py`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
@@ -42,15 +54,24 @@
   兜底拦一直打印的死循环。**判据两条控制面同一条**——Python 池 `stat` 日志、
   workerd 收 `idle_timeout_ms` 后 `stat` 同一个文件。注册表的 `cost` **不再参与
   引擎侧超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
-  「会打进度的脚本不再有总时长上限」**只在引擎侧成立**：画布前端另有按 `cost`
-  取档的悬挂看门狗（`renderStore.ts` 的 `WATCHDOG_MS`，2 / 5 / 15 分钟，都短于
-  `BUILD_IDLE_TIMEOUT`），冷启动很长的脚本在画布上会先被前端断开请求，服务端 build
-  照常继续——有意保留的现状（#312，ADR 0050 补注）。
+  画布前端按同一个信号续期（#1207）：日志长大时引擎发 SSE `render.progress {pj, id}`
+  （`ProgressListeners`，节流 `PROGRESS_EMIT_INTERVAL`；订阅者含排在同一把 `w.lock` 后面
+  的重试；workerd 路径由 `_relay_log_growth` 转述），`renderStore.ts` 的看门狗是租约
+  （窗口 `WATCHDOG_MS` 2 / 5 / 15 分钟，总上限 `RENDER_HARD_CAP_MS` 对齐
+  `BUILD_HARD_TIMEOUT`）。没有进度通道的消费者（MCP 内嵌画布、SSE 断线）退回「请求开始起
+  一个窗口」。改节流或总上限要同步另一侧（`tests/test_build_watchdog.py` 钉着；ADR 0050 补注）。
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
+- **LRU 淘汰不收「刚取到、还没发请求」的会话（Python 池）**：`acquire` 给会话打 `ACQUIRE_LEASE`（30 秒）租约，
+  调用方第一条请求拿到 `w.lock` 即清零；租约内 `MAX_ALIVE` 淘汰跳过它（上限因此是软的）。否则淘汰线程的优雅
+  `shutdown()` 与该调用方的首条请求在 `w.lock` 上竞争，淘汰一赢，worker 按 shutdown 正常退出（退出码恒为 0），
+  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、`MAX_ALIVE=3` 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
+  排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["evicted"]`（不解释退出码），
+  `app._engine_attempt` 只对这一种重新取会话重试一次。用户取消（`force_kill`）/ 超时 / 看门狗 / 失效重建 / 切项目 / 整体关停
+  都不置、不重试——重试会把用户刚停掉的脚本又跑起来；真崩溃同样不重试。看护 `tests/test_pool_lru_lease.py`。
 - **管道 EOF 先问死因，再说话（#435）**。EOF 之后两条控制面都先给子进程
   `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数——两侧各自钉在 `tests/golden/exit_grace_ms.txt`，
   不拿正则扫对方的源码，没有解析器就分不清注释 / 字符串 / 原始字符串）自己退出，拿到退出状态才 kill
@@ -75,7 +96,39 @@
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。`SystemExit`
+  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。
+  **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
+  改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，
+  拿到旧值 1（直接 Python 是 2）却 `ok`。守卫一字不动，另有一本带外账本 `figcapture.BlockedFileOps`
+  （`worker.BLOCKED_OPS`）：守卫每拦一次记「操作类别 + 影响的路径」，**最外层**（晚于输入观察器与相对读回退，看到的是脚本交出的原始路径，不是回退改写后的；沙盒档项目里有旧 `stage.png` 时
+  装在回退之下会永远对不上，#952 第三轮 P1）的 open / `os.stat` 包装在
+  **拦下之后**看到脚本打开（读，含 `r+`/`a+`）或 stat 了受影响路径，才算 material；脚本自己以 `w`/`x` 重写
+  该路径则清掉嫌疑（成功重写的后代同时记入「已重写」集合，目录级污点盖不到它——`rmtree` 后重建目录再写再读；目录重建**只在直跑也会得到同样成功结果之后**才记：`os.mkdir` 成功、或 `makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 撞上守卫留下的目录（外层吞掉），豁免该目录自身的状态查询；非 `exist_ok` 的 `os.mkdir` 撞上还在的目录（直跑里它成功）抛 `FileExistsError` 是守卫造成的分叉，本身记为观察；被删目录之下没重建就 `open(...,'w')` 写子文件（直跑里 `FileNotFoundError`）也是分叉，不给「已重写」豁免、记为观察；`makedirs` / `mkdir(parents=True)` 建被删目录之内的子目录会连父目录一起重建，不带 `parents` 的算分叉；里面没被重写的文件仍受污点；后来的阻断撤销豁免）；相对只读读还要按回退的同一判据（`install_relative_read_fallback(...).resolve`）解析出实际会读的项目路径一并比对（绝对路径的阻断 + 沙盒里相对路径的回读）；守卫按签名取参，`dst=` / `src=` / `path=` 关键字与位置参数等价（**只在底层 open 成功返回之后清**；`x` 撞上被我们拦删而留下的旧文件抛 `FileExistsError` 时不清，且这次失败本身就是一次观察——直接运行里删除生效、`x` 会成功，不等回读；**只对直跑结果会让该路径不存在的事件**生效：删除、删除目录、改名/移动的源；被拦的写入、改名/移动的目的、savefig 目标直跑后同样存在，`x` 两边都失败，不走这条捷径），`shutil.move` 进已存在目录只记 `dst/basename(src)` 与源，不把整个目录记成受影响，被拦截的 `savefig` 目标记**有效目标名**（`figcapture.savefig_effective_names`：无后缀且无 `format=` 时**只**记补了 `rcParams["savefig.format"]`/`png` 后缀的名字、不记字面名（matplotlib 不会写它，否则同名无关旧文件被读会误判），`format=` 显式则字面名）、只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
+  material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
+  （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
+  `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进
+  app.log）。**拦下超过 200 次也不丢**：事件账上限 `MAX_EVENTS=200`，超出的操作并入按 (op, kind) 的溢出路径集合
+  （去重；超 `MAX_SPILL_PATHS=2048` 粗化为父目录；目录也超则记「丢失」，此后任何观察都算命中），
+  所以清理几百个缓存再回读第 201+ 个路径照样判失败，拦下几百次但从不回读照旧成功；只有拦下上千个互不相干
+  的目录之后才会退化成「之后任何观察都算」，这是宁可误报不假成功的取舍。**状态查询入口**：除 `os.stat` 外，
+  `os.path.exists`/`lexists`/`isfile`/`isdir`/`islink` 逐个包装——Windows 3.12+ 它们是 C 实现、不经 `os.stat`，
+  不包就观察不到（CI Windows 腿抓到的 `os.remove` 后 `os.path.exists` 假成功）；被拦截的 savefig 目标仍只认读内容。
+  盲区写在明处：C 扩展直接 `fopen`、子进程、`os.access` 等未包装的状态查询观察不到，
+  账本不宣称它们干净。
+  **三档保真度与 savefig 衍生的失败（V2 PR3a，用户 2026-10-14 裁决 D1–D5 的执行侧证据）**：账本在 `material()`（确定偏差）之外
+  多记一档弱信号（`suspects()`，只有 (kind, via) 计数）：savefig 目标被 stat（`exists` 校验打印；`via=stat`）、stat / `os.open` /
+  守卫放行的改名删除在受影响路径上 `FileNotFoundError`（`probe_failed` / `move_failed`，可能被脚本 `except OSError` 吞掉）、
+  `listdir` / `scandir`（`glob` / `os.walk` 经它）列了含受影响路径的目录（`listing`）、被守卫静默跳过的改名其源就是 savefig 目标（`rename_src`）。
+  `exists()` / `isfile` / `Path.exists` 这类探路本来靠 stat 落空作答，不算 `probe_failed`。弱信号**不阻断**：build 成功，
+  `runtime.fidelity.level=suspect`；没有任何信号是 `none_observed`（只表示这些通道没看到，`unobserved` 列着盲区）；`deviated` 才对应失败。
+  **savefig 目标衍生的 `FileNotFoundError` 是守卫造成的**：直接运行时 `savefig(p)` 之后 `p` 必然存在，所以终局异常链里指向被拦截
+  savefig 目标（或被拦改名路径）的 `FileNotFoundError`（`getsize` / `Path.stat` / `os.replace(p, q)` / `os.open(p)`）由 `explains(exc)` 升为确定偏差，
+  非零 `sys.exit` 之前查过 savefig 目标状态的由 `explain_exit()` 升级——一律走 `safe_file_operation_blocked`，**排在 `missing_input_of` / `enoent_fact` 之前**，
+  不再弹 `missing_input` 让用户去指认脚本自己的输出。`fidelity` 段（`level` / `blocked` / `intercepted` / `signals` / `unobserved`，闭集枚举 + 计数，无路径）
+  随成功的 `runtime` 进回执（`ExecutionReceipt.fidelity`，不进公开语义身份），随失败的 `error.extra.fidelity` 进诊断；worker.log 留一行 `[fidelity]`。
+  `adapter_available` 仍为 false：它的意思是"这个失败之后桌面是否已会自动换到按真实文件运行的路径"，没接通之前不承诺；终端 `tavotto run` 一直可用。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
+  `file_operation_blocked_params`、HTTP `_worker_error_payload`、probe 透传同一份载荷。看护
+  `tests/test_worker_blocked_file_ops.py`。`SystemExit`
   的载荷若不是整数（`sys.exit("…")`）不进 message——那是用户的文字，message 会进 app.log
   再随诊断包出门；退出状态按 CPython 的规则记 1，文字只在 traceback 区的 `SystemExit: …`。**协议管道上的
   一行先判 UTF-8、再解析 JSON，两条控制面同一口径**：非 UTF-8 字节是「管道上有垃圾」
@@ -122,6 +175,35 @@
   没人能答 → `ScriptNeedsInput`（**BaseException**，脚本的 `except Exception` 吞不掉）→ `script_needs_input`；超时后脚本没接住
   EOF → `script_input_timeout`。写回的 `one_shot(script_inputs=热态 last_build_script_inputs)` 严格重放、从不问人。
   看护：`tests/test_script_input.py`（两条控制面）、`tests/test_script_input_api.py`。
+- **答案复用要上下文全对上；冷重放用执行转录；口令不进记账（ADR 0099 §九，T08）**。每一问带 `context` 摘要
+  （上一问之后的输出 + 前面的回答，口令只记占位）；`scriptanswers.recall()` 只有 (运行配置, 序号, 读取方式, 提示, 上下文)
+  全对上才回填，否则只给建议、重新问（没有界面 = `script_needs_input`）。上下文摘要是无盐 sha256、可枚举，**只记在
+  本机侧表**（`scriptanswers.contexts_path()`，数据目录，绑定所属答案），项目文件 `_script_inputs.json` 里没有它
+  （ADR 0099 §十，T12）；换机器 / 答案被别处改过 = 只当建议。build 成功后 `inputbroker.finished()` 把问答绑成
+  执行转录（`inputtranscript`，数据目录，按 (脚本, 运行配置) 绑这批产物）；`serving()` 进门冻结策略：有转录就按转录重放、
+  不读之后改过的项目答案文件；答案管理按 (脚本, 运行配置, 序号) 改 / 删，只作废对应配置的转录（明确重算）；显式整脚本删除才清全部配置。
+  **不变量：读者校验（Codex #816 r2/r3/r8/r9 收口）**。转录绑定时带「答案状态基线」`basis`（整脚本级 + 配置级两个作废令牌），基线在 build 开始时由 `serving()` 取、`finished()` 绑定时带上；答案管理改 / 删（`inputtranscript.forget`）先换令牌；`lookup()` 比对转录基线与**当前**令牌，对不上 = 当转录不存在（回到项目答案 + 上下文匹配），绝不重放旧值。因此作废 / 绑定 / 写盘的先后、build 在飞时被改答案、写盘失败都不是正确性前提（`bind` 里先作废旧绑定、基线不符不绑只是清理）。**绑定中止必须收回热结果**：`finished()` 抛错（`StaleTranscriptError`）时，两种 worker（`EngineWorker` / `WorkerdWorker`）的 `ensure_built` 在重抛前置 `built=False`、`build_failed=True`，下一次渲染 / 导出重新走 `ensure_built`，不复用未绑定的热结果。**读必须 fail-closed（r4224223190 / r4224295365）**：凡据以做决定的读（比基线、绑不绑、`lookup` 成不成立）用严格读 `_load`——只有文件不存在才是初始（空），读失败 / 损坏 / 形状不对 / 更新版本一律 `StoreUnreadable`：`bind` 不绑也不写、`lookup` 当没有；写一律是对严格读到的当前值做读-改-写，读失败就中止、绝不写 `{}` 抹掉令牌；写不动时只有存储里**没有任何令牌**才允许删存储作废旧绑定，否则 `StaleTranscriptError`。`scriptanswers` 同理：写路径（remember / update / forget）严格读答案文件与本机上下文侧表（`AnswersUnreadable`），纯读（recall / load / digest）仍当「没有」= 重新问。**没有基线的 build 不存在（r4224357981）**：`serving()` 进门取基线 / `_frozen_policy()` 读转录失败（`OSError` / `ValueError`）= 这次 build 直接失败，稳定 code `script_input_transcript_failed`（`WorkerError`），脚本没跑、worker 不算已 build、不被复用。防御层：`bind(basis=None)` 不绑，并**作废该 (脚本, 配置) 现有的绑定**，作废（或读存储）失败抛 `StaleTranscriptError`，`finished()` 置 build_failed。看护 `tests/test_input_transcript.py`（基线）、`tests/test_build_binding_abort.py`。
+  管理投影保留不透明 `run_config`，无参数旧条目缺省；重跑按引用取回参数，不回落到空 argv 或当前草稿。getpass 那一问在 worker 记账里只有
+  `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。
+  问答去向计数（`InputFacts`）经 `facts_projection` 进 T04 任务诊断。不向协议 stdin 写答案；native / 子进程 input 不变。
+  看护：`tests/test_script_input_context.py`、`tests/test_script_input_transcript_api.py`、`tests/test_input_transcript.py`。
+
+## TeX 工具链失败的分类（`texdiag`）
+
+`text.usetex` 的失败在两条错误收口（`pool.EngineWorker._error_of` / `pool._worker_error`）按 matplotlib 的固定模板分四码，
+**先于缺依赖判**（LaTeX 日志不会落进 `missing_dependency` 的 pip 出口）：`tex_command_missing`（`command` 闭集）/
+`tex_package_missing`（`.sty` / `.tfm`，文件名白名单清洗）/ `tex_compile_failed`（LaTeX 的 `! …` 行）/ `tex_failed`
+（落在 matplotlib 的 TeX 模块里但认不出原因；`dviread.find_tex_file` 那句分不清 kpsewhich 缺失与文件缺失，也归这里）。
+build 与之后的 render / export 同一收口；超时 / 取消保持各自的码。参数经错误转换合同 `pool.recovery_params`，渲染端点 /
+试运行探测 / 准备会话同一份。分类只读已发生的那次执行，不另起探测、不执行用户代码。worker 继承父进程 PATH。从 Finder / Dock 启动的
+桌面版只有 GUI 的最小 PATH（没有 `/Library/TeX/texbin`、`/opt/homebrew/bin`），所以 macOS sidecar 启动时（`desktop.run` 最前）调一次
+`engine/loginpath.apply_to_environ()`：继承的 PATH 原样在前，只读 `/etc/paths` 与 `/etc/paths.d/*`（文件名排序、逐行一个目录，不执行
+`path_helper`、不起 shell），把存在且未出现的目录追加在末尾，不改既有顺序、不去重既有项；非 macOS 不变。选「改一次 `os.environ`」而不是只在
+几处 worker env 构造里补：worker（`pool.worker_env` 对用户环境回 None = 继承）、`_has_matplotlib` 探测、用户脚本自己 `subprocess` 调的命令、
+`ai_agents.spawn_env` 全都继承同一份，探测与 worker 天然同一套 PATH，没有「漏补一处」的第二条路（`ai_agents.spawn_env` 补的是猜测的
+安装目录，判据不同，保持不动，它读到的 `os.environ` 已含本补全）。代价：装完 TeX 后要重启 Tavotto 才读到新装的 `/etc/paths.d/TeX`，
+文案正是这么说的「装完重启 Tavotto」；宏包装上后同一会话重跑即重新验证（kpathsea 每次编译现查，
+不依赖环境代）。看护 `tests/test_loginpath.py`（PATH 补全与 worker / 探测同一份）、`tests/test_tex_diagnostics.py`（stub）与 `tests/test_tex_toolchain_real.py`（真 TeX，没有时 environment-blocked）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -136,3 +218,56 @@
 - `_terminate_and_reap()` / `_kill_and_reap()` 闭环
 - export / preview_png 状态中立
 - 请求之间死掉的 worker（拿锁时已死 / 写管道 BrokenPipe / 读到 EOF）一律同一个带退出状态的 `session_dead`，非 shutdown 的 `session_dead` 丢掉那条解释器的体检结论（`pool.forget_python_verdict`）
+
+## 预览发布：同代指针 + 逐图隔离（P01b #958 → P08a）
+
+写预览的是 worker / native 子进程，读的是 app 进程（`/api/engine/svg`、manifest 读取、
+runtimeasset 物化，全经 `figcapture.usable_preview_path` / 各 worker 的 `svg_path`）——
+**进程内内存标记对读方无效**，每一条保证都必须是读方能观测到的东西。
+
+**同代发布**（`figcapture.publish_preview`）：每次发布写一个**不可变**的 `.gen-<序号>/<stem>.svg|json`，
+账本 `.preview-ledger` 里该 stem 的记录（`seq` / `svg_bytes` / `capabilities`）就是**指针**，也是完成描述符；
+切换它（一次 `os.replace`）是唯一提交点。要 SVG + manifest 成对的读方用 `usable_preview_generation`
+一次解出，两份出自同一次发布；只要一份的用 `usable_preview_path`（指向账本里那一代）。没有指针 = 无预览，
+目录里碰巧同名的文件、`.part` 临时件、被取代的旧代目录（落后 `GENERATION_GRACE` 个序号**且**过了 `GENERATION_GRACE_SECONDS` 秒才清，
+刚解出旧路径的读方不会撞上刚删的文件）读方都看不见。
+
+失败语义：提交前任何一步失败，新代目录撤掉、账本不动——**上一版整套原封不动，没有「还原」这一步**；
+账本**存在但读不出来 / 格式坏**（`PreviewLedgerUnreadable`）发布失败并如实报错，**不许**当空账本重建
+（会丢已发布的其它图）；账本不存在才是首次发布。完成计数（`published_preview_stems`）= 账本有记录且指针指向的
+SVG 字节数对得上，不数文件。
+
+**逐图隔离**（`LiveFigureSession.instrument_all`）：一张图在「建状态 / 出预览」里的普通异常只属于这张图——
+记进 `failures`（`preview_capture_failed`）、从活会话撤掉，其它图照常发布；build 响应带 `failed_figures`，
+native 另带 `figure_facts`（逐图 `state` / `generation` / `capabilities` / `saved_originals` / 时刻）与
+`capture_summary`。不是 `except: pass`：失败图动过的 Figure 要核对恢复（`failed_restore_owed`，还原不了照样挡 continue）；
+选定产物上下文（`artifact_source`）、线程归属这类不属于单张图的异常原样抛；产物目录 / 账本的问题（发布段）
+仍整批失败。safe worker 传 `raise_if_none_live=True`（一张活图都不剩时把第一个失败原样抛出，build 仍失败）。
+能力只按实际完成的工作声明：`preview` + `live_edit`（同代发布过的活图）与 `original_readonly`（**这个 Figure
+对象**本次运行成功 save 的原产物，`SavefigObservations.saved_originals` 按 Figure 身份认领并对账字节数 / mtime，
+绝不按 basename 或目录扫描找替身）是独立的事实——Saved Stage 的磁盘原件与之后 Unsaved Final 的活对象不必相同。
+
+### 保留的兜底层级（P01b）
+
+原子指针之后，发布路径不再产生「新旧错配」，下面几级只在遗留路径上可达，代码保留（`mark_preview_invalid` /
+`poison_preview_dir` / `PreviewPoisoned` 仍被父进程三条控制面识别）：
+
+1. **磁盘失效标记**（`.<stem>.preview-invalid`，`mark_preview_invalid` 返回是否写成，**不许吞**）：读方回「无预览」。
+2. **会话作废**：`PreviewPoisoned`（`protocol_code = preview_poisoned`，非 retryable，build 里也不归 `script_error`）。
+   父进程在**三条控制面**上同样处理：Python 池 `_error_of` 与 workerd `_to_worker_error`
+   （`preview_poisoned ∈ _FATAL_CODES`）判死会话、下一次 `get()` 重建；native `_request` 把传输标 `poison`
+   （既有的「会话不再可信」机制）；bridge 同。同时 `figcapture.poison_preview_dir(out_dir)` 把
+   `out_dir` 记进**读方进程**的作废表，`usable_preview_path` 对它回「无预览」，直到新一代会话 build 成功
+   （`clear_preview_poison`：作废之后没重新发布的指针摘掉再解除）。
+
+新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。
+
+## 实际执行事实（X03 快照资格）
+
+`executionfact` 的 48 位不透明 ID 只在 worker 即将进入用户代码的边界产生，v1 成功/错误响应与请求级短文件为独立通道；
+marker 不含脚本、路径、argv 或输出，读写失败不阻止科学运行。owner 由父进程可信 spec 的项目/script/run_config 提供，
+不是从描述符子集、HTTP 成功或 Figure 数量推断。正常轮询早通知；导出按 owner 同步刷新关闭轮询间隔。
+两条证据都丢失时以 dispatch 时序记 unknown，不能说没执行，也不伪造 started。执行中尚无事实时旧快照导出临时拒绝，
+confirmed pre-send/排队取消/依赖门不撤旧代；unknown 的迟到结果不能污染更新执行。单次验证 `one_shot` 不替代当前图。
+safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变化的 worker generation 冒充同一次执行；公开语义身份不变。
+看护：`tests/test_execution_observation.py`、`tests/test_execution_receipt.py`、`tests/test_svg_execution_lifecycle.py`。

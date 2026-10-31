@@ -127,15 +127,17 @@ def test_capabilities_reports_uninstalled(monkeypatch):
         assert p["diagnostics"]["searched"], "必须报出找过的目录"
 
 
-def test_capabilities_agent_specific(monkeypatch):
+def test_capabilities_agent_specific(monkeypatch, tmp_path):
     _no_readiness(monkeypatch)
+    # 不读这台机器真实的 ~/.claude：没有模型目录缓存时 Claude 退回三个别名、无档位
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-empty"))
     monkeypatch.setattr(ai_agents, "candidates", _fake_candidates(lambda i: [f"/fake/{i}"]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1.0")
     ai_agents.clear_cache()
     caps = ai_bridge.capabilities(refresh=True)
     codex, claude = _agent(caps, "codex"), _agent(caps, "claude")
     assert codex["efforts"]  # codex 有推理强度
-    assert claude["efforts"] == []  # claude CLI 不暴露，不假装有
+    assert claude["efforts"] == []  # 读不到 Claude 模型目录：不假装有档位
     assert codex["features"]["effort_selection"] is True
     assert claude["features"]["effort_selection"] is False
     assert codex["models"] != claude["models"]
@@ -183,6 +185,9 @@ def test_broken_candidate_falls_through(monkeypatch):
 
 def test_start_install_reports_missing_npm(monkeypatch):
     """现场没有 npm：结构化 npm_missing，引导装 Node，而不是闷头失败。"""
+    monkeypatch.setattr(
+        ai_bridge.managedcli, "offered", lambda name: False
+    )  # 托管不可用的平台才回落 npm
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: None)
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     st = ai_bridge.start_install("codex")
@@ -269,16 +274,16 @@ def test_cmd_injects_third_party_endpoint(monkeypatch):
 
     codex_ep = {
         "agent": "codex",
-        "label": "DeepSeek",
+        "label": "OpenAI 兼容网关",
         "api_key": "sk-d",
-        "base_url": "https://api.deepseek.com/v1",
-        "wire_api": "chat",
+        "base_url": "https://gw.example/v1",
+        "wire_api": "responses",
     }
     cmd, env = ai_bridge._cmd("codex", "p", "/cwd", endpoint=codex_ep)
     joined = " ".join(cmd)
     assert 'model_provider="tavotto"' in joined
-    assert 'model_providers.tavotto.base_url="https://api.deepseek.com/v1"' in joined
-    assert 'model_providers.tavotto.wire_api="chat"' in joined
+    assert 'model_providers.tavotto.base_url="https://gw.example/v1"' in joined
+    assert 'model_providers.tavotto.wire_api="responses"' in joined
     # 密钥走环境变量，命令行里只出现变量名
     assert env == {"TAVOTTO_CODEX_API_KEY": "sk-d"}
     assert "sk-d" not in joined

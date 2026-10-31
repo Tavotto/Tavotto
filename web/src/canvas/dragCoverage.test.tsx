@@ -25,6 +25,7 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import {
   inFigureImmovableReason,
+  inFigureMoveOf,
   startAxesDrag,
   startElementGroupMove,
   startInFigureDrag,
@@ -271,6 +272,48 @@ describe('锚定框（role artist、引擎宣称可拖）', () => {
     expect(v[1]).toBeCloseTo(0.18 + 20 / layout.height, 4)
     expect(past()).toHaveLength(1)
     expect(status()).toBe('')
+  })
+
+  it('按住框里的文字拖：拖的是外框（引擎报的 drag_host），不说「拖不动」', async () => {
+    await setup()
+    const inner: ManifestElement = {
+      gid: `${anchoredEl.gid}.texts_0`,
+      role: 'text',
+      label: '文字 “(a)”',
+      bbox: [0.15, 0.13, 0.04, 0.03],
+      editable: [],
+      draggable: false,
+      drag_host: anchoredEl.gid,
+    }
+    const withInner: Manifest = { ...manifest, elements: [...manifest.elements, inner] }
+    const moved = startInFigureDrag(down(0, 0), livePanel(), withInner, inner, layout)
+    expect(moved).toBe(true)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+    const v = overrideOf(anchoredEl.gid, 'pos_frac')!
+    expect(v[0]).toBeCloseTo(0.14 + 40 / layout.width, 4)
+    expect(v[1]).toBeCloseTo(0.18 + 20 / layout.height, 4)
+    expect(overrideOf(inner.gid, 'pos_frac')).toBeUndefined()
+    expect(past()).toHaveLength(1)
+    expect(status()).toBe('')
+  })
+
+  it('外框在元素树里锁了：框里的文字不借 drag_host 把它拖走；没锁照旧借道', async () => {
+    await setup()
+    const inner: ManifestElement = {
+      gid: `${anchoredEl.gid}.texts_0`,
+      role: 'text',
+      label: '文字 “(a)”',
+      bbox: [0.15, 0.13, 0.04, 0.03],
+      editable: [],
+      draggable: false,
+      drag_host: anchoredEl.gid,
+    }
+    const withInner: Manifest = { ...manifest, elements: [...manifest.elements, inner] }
+    const locked: PanelObject = { ...livePanel(), lockedGids: [anchoredEl.gid] }
+    expect(inFigureMoveOf(locked, withInner, inner)).toBeNull()
+    expect(startInFigureDrag(down(0, 0), locked, withInner, inner, layout)).toBe(false)
+    expect(inFigureMoveOf(livePanel(), withInner, inner)).not.toBeNull()
   })
 })
 

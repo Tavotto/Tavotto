@@ -20,6 +20,7 @@ import {
 } from './exportRequest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { emptyProject, type FigureDocument, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
@@ -153,6 +154,27 @@ describe('scope', () => {
     expect(a.reason).toBe('source_stale')
   })
 
+  it('runtime 图：素材清单没有它——后端注册表说了算；未知不判假', () => {
+    const rt: PanelObject = { ...panel, id: 'r1', fileId: 'runtime:fig.py#F', fileKind: 'runtime' } as never
+    useAssetStore.setState({ byId: {} } as never)
+    // 后端明确回「不认」：不可用
+    useRuntimeAssetStore.setState({ assets: [], byId: { 'runtime:fig.py#F': { registered: false, checked: true } } } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt })).toMatchObject({ ok: false, reason: 'source_stale' })
+    // 未知（清单没取到 / 失效后）：不判 source_stale，由对话框去问
+    useRuntimeAssetStore.setState({ assets: null, byId: {} } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
+    useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: null, checked: false } } } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
+    useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: true, checked: true } } } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
+    // 缓存的素材清单还留着旧条目、而刚问来的结果明确「不认」：逐面板结果优先
+    useRuntimeAssetStore.setState({
+      assets: [{ id: 'runtime:fig.py#F' }],
+      byId: { 'runtime:fig.py#F': { registered: false, checked: true } },
+    } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt })).toMatchObject({ ok: false, reason: 'source_stale' })
+  })
+
   it('判据是「够不够得着」而不是 `spec.stale`', () => {
     // 刚渲染过的图：manifest 还在手上，`stale` 是 false，而磁盘文件可能早没了。
     // 拿 `stale` 当判据的话这张图会拿到一个按下去必然失败的按钮
@@ -278,7 +300,7 @@ describe('像素预览：照抄源文件才报源像素网格', () => {
 
 describe('EPS 与 TIFF（ADR 0046）', () => {
   it('tiff 是位图、eps 是矢量：PPI 规则对新格式同样成立', () => {
-    expect(FORMATS).toEqual(['pdf', 'png', 'eps', 'tiff'])
+    expect(FORMATS).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
     expect([...RASTER_FORMATS, ...VECTOR_FORMATS].sort()).toEqual([...FORMATS].sort())
     expect(buildExportRequest(inputOf({ formats: ['tiff'] })).request.ppi).toBe(600)
     expect(buildExportRequest(inputOf({ formats: ['pdf', 'tiff'], ppi: 300 })).request.ppi).toBe(
@@ -320,6 +342,36 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(epsAvailability('original', 'runtime:abc')).toEqual({ ok: true, reason: 'none' })
   })
 
+  it('单图档（没有范围选择）静默退到画布时，EPS 的原因不再指向不存在的「每张图单独导出」', () => {
+    // 没有脚本的图（静态文件 / 原文件已删）：先说「没有脚本」，不叫用户去运行一个不存在的脚本
+    expect(epsAvailability('canvas', 'Fig1.pdf', null, true)).toEqual({ ok: false, reason: 'no_script' })
+    expect(epsAvailability('canvas', null, null, true)).toEqual({ ok: false, reason: 'no_script' })
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+    } as never)
+    expect(epsAvailability('canvas', 'Fig1.pdf', null, true)).toEqual({ ok: false, reason: 'figure_not_ready' })
+    expect(epsAvailability('canvas', 'runtime:abc', null, true)).toEqual({ ok: false, reason: 'figure_not_ready' })
+    // 多图档的画布范围仍是「选每张图单独导出」那句
+    expect(epsAvailability('canvas', 'Fig1.pdf', null, false)).toEqual({ ok: false, reason: 'canvas_scope' })
+    // 单图档里原图口径可用就照常给 EPS（runtime 素材天生有脚本）
+    expect(epsAvailability('original', 'runtime:abc', null, true)).toEqual({ ok: true, reason: 'none' })
+  })
+
+  it('SVG 素材与 PDF 同一判据：有脚本可用（字节绑定由后端逐项判，不预先禁用）、没脚本 no_script', () => {
+    useAssetStore.setState({
+      byId: {
+        'S1.svg': { id: 'S1.svg', mtime: 1, kind: 'svg', script: 's1.py' },
+        'S2.svg': { id: 'S2.svg', mtime: 1, kind: 'svg' },
+      },
+    } as never)
+    expect(epsAvailability('original', 'S1.svg')).toEqual({ ok: true, reason: 'none' })
+    // 前端拿不到字节绑定的事实：不预先禁用，请求照带 eps，由后端逐项失败并给真实原因（#1185）
+    expect(
+      buildExportRequest(inputOf({ scope: 'original', figureId: 'S1.svg', formats: ['svg', 'eps'] })).request.formats,
+    ).toEqual(['eps', 'svg'])
+    expect(epsAvailability('original', 'S2.svg')).toEqual({ ok: false, reason: 'no_script' })
+  })
+
   it('EPS 不可用时请求里**不带**它（后端会逐项报失败，但界面已经说过一遍了）', () => {
     const canvas = buildExportRequest(inputOf({ scope: 'canvas', formats: ['pdf', 'eps'] }))
     expect(canvas.request.formats).toEqual(['pdf'])
@@ -333,5 +385,55 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
       inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['pdf', 'eps', 'tiff'] }),
     )
     expect(noScript.request.formats).toEqual(['pdf', 'tiff'])
+  })
+})
+
+
+describe('SVG（X03）', () => {
+  it.each(['canvas', 'original'] as const)('SVG is vector in %s scope with no PPI', (scope) => {
+    const built = buildExportRequest(inputOf({ scope, figureId: 'Fig1.pdf', formats: ['svg'], filename: 'Fig 1.SVG' }))
+    expect(built.request.formats).toEqual(['svg'])
+    expect(built.request.ppi).toBeNull()
+    expect(built.request.filename).toBe('Fig 1')
+    expect(built.names).toEqual(['Fig 1.svg'])
+    expect(VECTOR_FORMATS).toContain('svg')
+    expect(RASTER_FORMATS).not.toContain('svg')
+  })
+
+  it('appends SVG after the previous formats and keeps PPI for mixed raster output', () => {
+    useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } } } as never)
+    const built = buildExportRequest(inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['svg', 'tiff', 'eps', 'png', 'pdf', 'svg'], ppi: 300 }))
+    expect(built.request.formats).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect(built.names).toEqual(['Fig 1.pdf', 'Fig 1.png', 'Fig 1.eps', 'Fig 1.tiff', 'Fig 1.svg'])
+    expect(built.request.ppi).toBe(300)
+  })
+})
+
+describe('合成多页 PDF（#1370）', () => {
+  const pages = [
+    { figureId: 'A.pdf', panel: null, spec: null },
+    { figureId: 'B.pdf', panel: null, spec: null },
+    { figureId: 'A.pdf', panel: null, spec: null },
+  ]
+
+  it('mergePages 变成 merge_pdf.pages（按页序、重复保留），请求里没有 original', () => {
+    const { request } = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'A.pdf', formats: ['pdf'], filename: 'all_samples', mergePages: pages }),
+    )
+    expect(request.original).toBeUndefined()
+    expect(request.merge_pdf?.pages.map((p) => p.figure_id)).toEqual(['A.pdf', 'B.pdf', 'A.pdf'])
+    expect(request.filename).toBe('all_samples')
+  })
+
+  it('不给 mergePages：与从前一样，只有 original', () => {
+    const { request } = buildExportRequest(inputOf({ scope: 'original', figureId: 'A.pdf', formats: ['pdf'] }))
+    expect(request.merge_pdf).toBeUndefined()
+    expect(request.original?.figure_id).toBe('A.pdf')
+  })
+
+  it('页序进快照指纹：换了页序就是另一个导出', () => {
+    const mk = (m: typeof pages) =>
+      buildExportRequest(inputOf({ scope: 'original', figureId: 'A.pdf', formats: ['pdf'], mergePages: m })).revision
+    expect(mk(pages)).not.toBe(mk([pages[1], pages[0], pages[2]]))
   })
 })

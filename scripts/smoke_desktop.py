@@ -127,7 +127,9 @@ def is_packaged(exe: Path) -> bool:
     return (exe.parent / "_internal").is_dir()
 
 
-def check_control_plane(port: int, cookie: str, packaged: bool, rendered: bool) -> None:
+def check_control_plane(
+    port: int, cookie: str, packaged: bool, rendered: bool, data_dir: Path | None = None
+) -> None:
     """渲染控制面必须是 workerd（Rust supervisor），而且渲染真的走了它。
 
     回退到 Python 池是**静默**的（`pool._new_worker()` 的 except 分支），所以
@@ -154,6 +156,15 @@ def check_control_plane(port: int, cookie: str, packaged: bool, rendered: bool) 
         print("⚠ 本次没跑渲染（环境缺 matplotlib）：只验到「带着 workerd」，没验到「渲染真走了它」")
         return
     if "workerd" not in sessions:
+        # CI 上数据目录是临时的、跑完即删：日志不在这里打出来就再也看不到了
+        log = data_dir / "cache" / "workerd.log" if data_dir else None
+        if log and log.is_file():
+            tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+            print(f"--- {log}（最后 {len(tail)} 行）---")
+            print("\n".join(tail))
+            print("--- end ---")
+        elif log:
+            print(f"（没有 {log}）")
         fail(
             f"渲染跑完了，但会话走的是 Python 渲染池: {sessions}"
             "（workerd 起不来？看数据目录 cache/workerd.log）"
@@ -342,7 +353,7 @@ def main() -> None:
             ok(f"导出 PDF+PNG: {[f['name'] for f in body['files']]}")
 
         # ---- 渲染控制面（放在渲染之后问：那时池里才有真会话）----
-        check_control_plane(port, cookie, is_packaged(exe), rendered)
+        check_control_plane(port, cookie, is_packaged(exe), rendered, tmp / "data")
 
         # ---- 退出：关 stdin = 壳没了 ----
         # 关停**之前**把整棵后代快照下来（见 `_descendants`：父进程一死树就断）。

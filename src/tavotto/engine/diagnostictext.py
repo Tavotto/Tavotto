@@ -1,8 +1,4 @@
-"""诊断包与安装日志共用的文本脱敏原语（纯标准库）。
-
-只依赖配置，不探测解释器、不引用 bootstrap / diagnostics / telemetry。
-脱敏规则唯一出处在这里；diagnostics 保留原有导出给其余调用方。
-"""
+"""Shared diagnostic and agent text redaction, independent of report collection."""
 
 from __future__ import annotations
 
@@ -12,21 +8,18 @@ import os
 import re
 import unicodedata
 
-from . import config
-
-# 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点
-_SECRET_VALUE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
+from . import telemetryid
 
 
 def _install_id() -> str:
-    """本机的匿名遥测标识（没同意过就是空串）。只用来把它从输出里抹掉。"""
     try:
-        # 只读现有标识，不 import telemetry（它反向依赖 diagnostics），也绝不生成标识。
-        ident = (config.load().get("telemetry") or {}).get("install_id")
-        return ident if isinstance(ident, str) else ""
-    except Exception:  # noqa: BLE001 — 脱敏不该被它拖垮
+        return telemetryid.current() or ""
+    except Exception:  # noqa: BLE001 - redaction still applies the other rules
         return ""
 
+
+# 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点
+_SECRET_VALUE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
 
 #: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
 #: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希
@@ -50,7 +43,6 @@ _EMAIL_DOTS = ".。．｡"
 #: 放行：`pkg@1.2.3` / `matplotlib@3.10` / `pkg@2.0.0-beta`——域名一侧是版本号（数字段 + 可选的
 #: 预发布 / 构建后缀），不是域名。只认 ASCII 数字：`\d` 会认全角与其他文字的数字。
 _VERSION_AFTER_AT = re.compile(r"v?[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?")
-_JSON_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
 _JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
 
 
@@ -139,7 +131,18 @@ def _redact_json_line(line: str) -> str | None:
         json.loads(line)
     except ValueError:
         return None
-    return _JSON_STRING.sub(lambda m: f'"{_redact_email_tokens(m.group()[1:-1])}"', line)
+    # The standard decoder consumes each complete literal, including escaped
+    # quotes, once. Keep its original spelling and all surrounding JSON bytes;
+    # re-serializing would lose whitespace, escapes and duplicate object keys.
+    decoder = json.JSONDecoder()
+    out: list[str] = []
+    cursor = 0
+    while (start := line.find('"', cursor)) >= 0:
+        _, end = decoder.raw_decode(line, start)
+        out.extend((line[cursor : start + 1], _redact_email_tokens(line[start + 1 : end - 1]), '"'))
+        cursor = end
+    out.append(line[cursor:])
+    return "".join(out)
 
 
 def _redact_emails(text: str) -> str:
@@ -155,7 +158,7 @@ def _redact_emails(text: str) -> str:
     return "".join(out)
 
 
-def redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
+def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
     """文本脱敏：密钥 → 假名标识 → 项目根 → 主目录 → 用户名 → 云盘账号 → 邮箱。
 
     **项目根必须在主目录之前换**：先换主目录的话，项目根的原文就不在文本里了，
@@ -180,3 +183,13 @@ def redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
         lambda m: f"{m.group(1)}{m.group(2)}-acct:{_digest(m.group(3))}", text
     )
     return _redact_emails(text)
+
+
+def redact_text(text: str) -> str:
+    """文本脱敏的**对外名字**（`engine/deprepair.py` 的安装日志走它）。
+
+    刻意不让别的模块各写一份「抹掉主目录名」：那种规则一旦有两份，其中一份
+    迟早漏掉某一条（Windows 的两种分隔符写法就是这么漏过的）。安装日志里
+    pip 特有的那条（index 地址可能带凭据）归 deprepair，其余都在这里。
+    """
+    return _redact_text(text)

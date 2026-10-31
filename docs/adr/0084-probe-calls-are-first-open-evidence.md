@@ -73,6 +73,30 @@ script_dir_evidence`、`recommended = project`（脚本所在目录）。选项�
 **沙盒那档不列**——回退救不回它们，列上就是在确认框里说假话。载荷多一个 `probes` 字段（老前端忽略）。
 桌面确认框、MCP 的 `recovery`、HTTP 的 `PATCH /api/engine/workdir` 都是既有的同一条路，只多一句文案。
 
+### 三、运行时证据（2026-10-22，#1254）
+
+静态探测只认**写在调用里的字符串常量**。目标是参数时（`def read_parts(pattern): glob.glob(pattern)`）它认不出，首开不问，
+脚本在沙盒里 `glob` 回空、继续往下走，最后死在下游（`x and y must have same first dimension`）——错误是对的，
+但诊断卡上看不出是输入没找到，也没有把用户带到「在脚本目录里运行」（Guardian CG-07 的 `glob_dir` 写法发现）。
+
+补一条**运行时**的证据，口径与上面逐条一致，且**只诊断、不改结果**：
+
+* 沙盒会话里 worker 记下「沙盒 cwd 下落空的相对探路调用」（`glob` 回空 / `listdir` 目录不存在 / `exists` 为假……），
+  只记问了什么，所有返回值原样；cwd 已是脚本目录 / 项目根的会话不装这层；
+* 失败 / 没出图时，父进程用**同一把尺子**（`databinding._probe_hit`）按脚本目录再判，至少一条找得到才出引导；
+* 引导挂在错误的 `workdir_hint` 上，载荷与首开确认框同形（`script_dir_evidence`、推荐 `project`）。**它不是 `confirmation`**
+  ——后者是「起会话前先答」的门，所有入口见到都会停下；这里脚本已经跑过了，只补一句话。不新增错误码。
+
+C++ 读取器（pyarrow 的 `read_table` 等，打开不经 Python 层）失败时，`extra.enoent` 点名的相对路径同样是一条运行时证据：
+在脚本目录里找得到就出同一份引导（#1253 的真实场景：数据就在脚本目录，沙盒 cwd 下读不到）。不放宽 ADR 0110 的 `native_miss`。
+前端不论错误码，凡有 `workdir_hint` 都复用既有的 `WorkdirChooseButton`（确认框 = 首开那一个）。
+
+build **成功**但图是空的（沙盒里 glob 回空，`plot([])` 不报错）是这一类里最糟的形态——静默的错误结果。同一份证据随成功的渲染响应与试运行结果
+挂 `workdir_hint`（成功路径只认 `glob` 一类，不认 `exists` / `isdir`，避免先判再建的常规脚本被误提示）；界面走通知轨的胶囊。出图结果与状态码不变。
+
+不变：不扩回退、不自动切换；`listdir()` / `iterdir()` 列 cwd 本身不记（脚本目录里恒有东西，说明不了什么）；
+`os.scandir` 的迭代器不包（只记目录不存在）；项目外不看。看护 `tests/test_runtime_probe_hint.py`。
+
 ## 不做的事
 
 * **不扩回退到 `exists` / `glob` / `listdir`**（ADR 0047 原样）：C++ 读取器照样读不到，只会让脚本「以为」数据在。

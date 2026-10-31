@@ -1,0 +1,1206 @@
+"""TAF 的 `figure_edit` 适配器（Phase 3，ADR 0138）：改图助手在**候选工作区**里改脚本，过了提交前检查才写回项目。
+
+只在实验开关 `ai.taf.enabled`（`config.ai_settings()["taf"]["enabled"] is True`，默认关）打开时由 `ai_bridge.run` 走到；
+开关关着时这个模块一行都不执行，旧路径逐字不变。
+
+候选工作区 `data_dir()/cache/ai_candidates/<sid>/`：**只复制**目标脚本（与项目根的 `paper_style.py`，提示词会提到它），
+不复制数据、不建链接（符号 / 硬链接会让「改副本」变成「改原件」）。Agent 的 cwd 是候选目录；两个 CLI 把写入挡在 cwd
+之外是 CLI 的行为、不是 Tavotto 的保证（`08-risk-register.md` R-03），所以 spawn 前后对原项目做一次有界指纹兜底。
+
+提交前（L1）：候选树里只有目标脚本变了、语法能解析、静态输出名集合不变、原项目没有被动过。全部 verified /
+not_applicable 才提交；提交 = 持脚本锁、核原脚本仍是起跑时那一版、`scriptlock.write_script` 原子替换，随后统一刷新。
+改前快照是 AI 桥起跑时就拍的那份（回滚沿用 `ai_bridge.revert`）。提交后：刷新结局 + 渲染层验证（`on_verify` 注入；
+没接时记 unknown，结局最高 partial——没量过就不说完成）。
+
+纯标准库，Flask 父进程 import。
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import os
+import re
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import (
+    ai_prompt_pack,
+    ai_tasks,
+    config,
+    discover,
+    figureverify,
+    registry,
+    scriptlock,
+    syncnoise,
+)
+from .ai_tasks import FAILED, NOT_APPLICABLE, UNKNOWN, VERIFIED, CheckResult, TaskError
+
+TASK_TYPE = "figure_edit"
+CANDIDATE_DIR = config.data_dir() / "cache" / "ai_candidates"
+#: 和目标脚本一起复制进候选目录的共享样式（`ai_bridge._build_prompt` 按项目根有没有它决定提不提）
+SHARED_STYLE = "paper_style.py"
+
+#: 原项目指纹的上限：文件数、逐字节哈希的单文件上限（更大的只记 size + mtime）。超出文件数 → 这项记 unknown（不提交）
+FINGERPRINT_MAX_FILES = 20000
+FINGERPRINT_HASH_MAX_BYTES = 256 * 1024
+#: 候选目录里最多看多少个文件（Agent 乱建文件时不至于无界遍历）
+CANDIDATE_MAX_FILES = 2000
+#: 指纹不看的目录名：版本库 / 缓存 / Tavotto 自己的项目收纳处（导出、备份由 Tavotto 写，不是 Agent）
+_SKIP_DIRS = frozenset({".git", ".hg", ".svn", "__pycache__", ".ipynb_checkpoints"})
+
+
+def enabled() -> bool:
+    """实验开关：只认显式的 `True`（字符串 "true"、1 都不算），默认关。"""
+    taf = config.ai_settings().get("taf")
+    return isinstance(taf, dict) and taf.get("enabled") is True
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+class StaleSession(Exception):
+    """`after` 钩子抛它：改后取到的会话执行的不是刚提交的那一版源码（去重回旧会话 / 启动采样不等于实际执行）。"""
+
+
+# --------------------------------------------------------------------------- 有界指纹
+def _readlink(p: Path) -> str | None:
+    try:
+        return os.readlink(p)
+    except OSError:
+        return None
+
+
+def is_python_env_dir(p: Path) -> bool:
+    """`p` 是不是 Python 环境目录：有 `pyvenv.cfg`（venv / virtualenv / uv 的标准标记）或 `conda-meta/`（conda 的标记，
+    同 `launcher.conda_prefix_of`）。**不按目录名猜**：叫 `.venv` 但没有这两个标记的目录照常计入指纹。
+    自动装依赖会合法地写进项目自己的环境，所以指纹不含这类目录（盲区见 ADR 0143 修订二）。"""
+    try:
+        return (p / "pyvenv.cfg").is_file() or (p / "conda-meta").is_dir()
+    except OSError:
+        return False
+
+
+def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict:
+    """原项目目录的有界文件指纹：`{"status": "ok", "files": {相对路径: [size, mtime_ns, sha256 | None, 链接目标?]}}`，
+    超出文件数上限回 `{"status": "over_budget"}`。`exclude` 是 posix 相对路径。
+
+    不跟随符号链接，链接本身按 lstat + `readlink` 目标记：文件链接是 `[size, mtime_ns, None, 目标]`（被换指向会变，
+    即使 lstat 的 size / mtime 碰巧相同）；目录链接（`os.walk` 把它放进 `dirnames`）是 `["link", 目标, mtime_ns]`，
+    不进入。命中 `_SKIP_DIRS` / `tavottofile` 的名字照旧跳过（即使它是链接）；Python 环境目录（`pyvenv.cfg` / `conda-meta/`
+    标记，非链接）整棵跳过、不计数。
+
+    边界：经链接写进**链接目标**（在项目外）的内容不在指纹里——cwd 之外的写入由 CLI 沙盒负责，指纹只兜项目内。"""
+    root = Path(root)
+    skip_names = _SKIP_DIRS | {config.PROJECT_STORE_DIRNAME}
+    files: dict[str, list] = {}
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in skip_names
+            and not syncnoise.is_sync_noise(d)
+            # 环境目录整棵跳过（链接目录不在此列：它走下面的链接记录，不进入）
+            and ((Path(dirpath) / d).is_symlink() or not is_python_env_dir(Path(dirpath) / d))
+        )
+        for d in list(dirnames):
+            p = Path(dirpath) / d
+            if not p.is_symlink():
+                continue
+            dirnames.remove(d)  # 不进入链接目录
+            rel = p.relative_to(root).as_posix()
+            if rel in exclude:
+                continue
+            if len(files) >= FINGERPRINT_MAX_FILES:
+                return {"status": "over_budget"}
+            try:
+                mtime = p.lstat().st_mtime_ns
+            except OSError:
+                mtime = None
+            files[rel] = ["link", _readlink(p), mtime]
+        for name in sorted(filenames):
+            if syncnoise.is_sync_noise(name):
+                continue  # 同步客户端 / 系统自己写的（闭集见 `syncnoise`）：不是校验运行改的
+            p = Path(dirpath) / name
+            rel = p.relative_to(root).as_posix()
+            if rel in exclude:
+                continue
+            if len(files) >= FINGERPRINT_MAX_FILES:
+                return {"status": "over_budget"}
+            try:
+                st = p.lstat()
+                digest = None
+                is_link = p.is_symlink()
+                if not is_link and st.st_size <= FINGERPRINT_HASH_MAX_BYTES:
+                    digest = _sha256(p.read_bytes())
+            except OSError:
+                files[rel] = [None, None, None]  # 读不了也是一个可比较的事实：前后都读不了才算没变
+                continue
+            entry = [st.st_size, st.st_mtime_ns, digest]
+            if is_link:
+                entry.append(_readlink(p))
+            files[rel] = entry
+    return {"status": "ok", "files": files}
+
+
+def fingerprint_changes(before: dict, after: dict) -> list[str] | None:
+    """两次指纹之间变了的相对路径（新增 / 删除 / 内容或大小或 mtime 变化），按名排序。任一侧超限回 None（判不了）。"""
+    if before.get("status") != "ok" or after.get("status") != "ok":
+        return None
+    a, b = before["files"], after["files"]
+    return sorted(k for k in a.keys() | b.keys() if _entry_changed(a.get(k), b.get(k)))
+
+
+def _entry_changed(x: list | None, y: list | None) -> bool:
+    """同步客户端常只碰 mtime（内容一字未变）：两侧都有内容摘要且 size + 摘要都相同，就不算改动。
+    没有摘要的（超过哈希上限的大文件、链接、读不了的）仍按完整记录比，mtime 变了算变。"""
+    if x == y:
+        return False
+    if (
+        x is not None
+        and y is not None
+        and len(x) == 3
+        and len(y) == 3
+        and x[2] is not None
+        and x[0] == y[0]
+        and x[2] == y[2]
+    ):
+        return False
+    return True
+
+
+#: 候选目录里的改道区（校验运行写进项目的文件落这里；ADR 0143 修订 2026-10-30）：不算“候选里多出来的文件”
+REDIRECT_DIRNAME = "redirected"
+
+
+def _tree(root: Path) -> dict[str, str] | None:
+    """候选目录的 `{相对路径: sha256}`（不含根下的改道区）；文件数超限回 None。"""
+    out: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        skip = {"__pycache__"} | ({REDIRECT_DIRNAME} if Path(dirpath) == root else set())
+        dirnames[:] = sorted(d for d in dirnames if d not in skip)
+        for name in sorted(filenames):
+            p = Path(dirpath) / name
+            if len(out) >= CANDIDATE_MAX_FILES:
+                return None
+            try:
+                out[p.relative_to(root).as_posix()] = (
+                    "link" if p.is_symlink() else _sha256(p.read_bytes())
+                )
+            except OSError:
+                out[p.relative_to(root).as_posix()] = "unreadable"
+    return out
+
+
+# --------------------------------------------------------------------------- 候选工作区
+@dataclass
+class Candidate:
+    """一次改图任务的候选：目录、目标脚本在项目里和候选里的位置、起跑时的基线。"""
+
+    sid: str
+    dir: Path
+    project_root: Path
+    script_rel: str  # 相对项目根（登记路径，可带子目录）
+    script_path: Path  # 项目里的那一份
+    base_bytes: bytes
+    base_sha256: str
+    base_mode: int
+    tree_before: dict[str, str]
+    project_before: dict
+    stems_before: list[str] | None
+    #: 执行器填：候选里改后的字节、提交与否、刷新结局
+    new_bytes: bytes | None = None
+    committed: bool = False
+    refresh: dict | None = None
+    installed: list[str] = field(default_factory=list)
+    hold: dict | None = None
+    extras: dict = field(default_factory=dict)
+
+    @property
+    def target(self) -> Path:
+        return self.dir / self.target_name
+
+    @property
+    def target_name(self) -> str:
+        return Path(self.script_rel).name
+
+
+def _static_stems(path: Path, root: Path) -> list[str] | None:
+    """宿主解析器静态读出的输出名集合（排序）；不是绘图脚本 / 解析不了 / 读不出名字 → None。不起解释器、不跑脚本。"""
+    try:
+        res = discover.inspect_script(path, root, glob_disk=False)
+    except Exception:  # noqa: BLE001 —— 静态分析器的任何意外都只意味着「这项量不了」
+        return None
+    info = res.get("info")
+    stems = info.get("stems") if isinstance(info, dict) else None
+    return sorted(str(s) for s in stems) if isinstance(stems, list) and stems else None
+
+
+def create_candidate(sid: str, script_path: Path, project_root: Path, script_rel: str) -> Candidate:
+    """建候选目录并复制目标脚本（字节复制，不是链接）；同时拍原项目指纹与静态输出名基线。失败时不留半个目录。"""
+    project_root = Path(project_root)
+    cdir = CANDIDATE_DIR / sid
+    try:
+        cdir.mkdir(parents=True, exist_ok=False)
+        base = script_path.read_bytes()
+        # 候选副本（不是用户脚本：用户脚本只经 write_script 写）
+        copy_path = cdir / Path(script_rel).name
+        copy_path.write_bytes(base)
+        style = project_root / SHARED_STYLE
+        if Path(script_rel).name != SHARED_STYLE and style.is_file() and not style.is_symlink():
+            (cdir / SHARED_STYLE).write_bytes(style.read_bytes())
+        tree = _tree(cdir) or {}
+        cand = Candidate(
+            sid=sid,
+            dir=cdir,
+            project_root=project_root,
+            script_rel=script_rel,
+            script_path=script_path,
+            base_bytes=base,
+            base_sha256=_sha256(base),
+            base_mode=script_path.stat().st_mode & 0o7777,
+            tree_before=tree,
+            project_before=project_fingerprint(project_root, exclude=_own_files(script_rel)),
+            stems_before=_static_stems(script_path, project_root),
+        )
+    except BaseException:
+        remove_candidate(cdir)
+        raise
+    return cand
+
+
+def _own_files(script_rel: str) -> frozenset[str]:
+    """指纹里单独判的文件：目标脚本（`project.target` 那一项专门看它）与 Tavotto 自己写的注册表。"""
+    return frozenset(
+        {Path(script_rel).as_posix(), registry.REGISTRY_NAME, registry.LEGACY_REGISTRY_NAME}
+    )
+
+
+def remove_candidate(cdir: Path) -> None:
+    """删候选目录；只删 `CANDIDATE_DIR` 之内的（防一个算错的路径把别处删掉）。"""
+    try:
+        real = Path(os.path.realpath(cdir))
+        if real.parent != Path(os.path.realpath(CANDIDATE_DIR)):
+            return
+        shutil.rmtree(real, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def prompt_note(cand: Candidate) -> str:
+    """附在改图提示词末尾的一段：说明工作目录是副本、原项目只读（文字在 Prompt Pack 里）。"""
+    return ai_prompt_pack.candidate_note(ai_prompt_pack.DEFAULT, cand.project_root)
+
+
+# --------------------------------------------------------------------------- 适配器
+def _render(
+    st: str, verdict: str, reason: str | None, *, cid="render.figure", not_covered=(), **observed
+):
+    return CheckResult(
+        id=cid,
+        layer="L2",
+        stage=st,
+        role="integrity" if cid == "render.figure" else "preserve",
+        verdict=verdict,
+        reason_code=reason,
+        method="safe worker manifest",
+        observed=observed,
+        not_covered=tuple(not_covered),
+    )
+
+
+def _scope_for(stem: str, target: dict) -> str:
+    """这个 stem 的目标范围：目标 stem 用前端给的 scope（缺省 figure）；别的 stem 里没有目标，除非整张图都是目标。"""
+    scope = (
+        target.get("scope") if target.get("scope") in ("element", "axes", "figure") else "figure"
+    )
+    if scope != "figure" and target.get("stem") not in (None, "", stem):
+        return "none"
+    return scope
+
+
+def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = None, **observed):
+    return CheckResult(
+        id=cid,
+        layer="L1",
+        stage=stage,
+        role=role,
+        verdict=verdict,
+        reason_code=reason,
+        observed=observed,
+        kind="persistence" if cid.startswith("project.") else "figure",
+    )
+
+
+class FigureEditAdapter:
+    """`figure_edit`：自然语言改一份已登记的绘图脚本（路径 B，`02-architecture.md` §三）。"""
+
+    task_type = TASK_TYPE
+
+    def validate(self, envelope) -> list[str]:
+        problems = []
+        if envelope.executor == ai_tasks.DETERMINISTIC:
+            problems.append("executor_must_be_agent")
+        if len(envelope.allowed_writes) != 1:
+            problems.append("exactly_one_script")
+        return problems
+
+    def plan(self, envelope):
+        return ai_tasks.Plan(steps=("execute",))
+
+    def verify(self, stage: str, run, cand: Candidate) -> list[CheckResult]:
+        if stage != "precommit":
+            return self._postcommit(run, cand)
+        checks = self._precommit(cand)
+        if not ai_tasks.precommit_admits(checks):
+            return checks
+        validated_sha = cand.extras.get("dependency_validated_sha256")
+        if validated_sha and (cand.new_bytes is None or _sha256(cand.new_bytes) != validated_sha):
+            checks.append(
+                _check(
+                    "candidate.render",
+                    "precommit",
+                    "integrity",
+                    FAILED,
+                    "candidate_changed_since_validation",
+                )
+            )
+            return checks
+        digest = _sha256(cand.new_bytes) if cand.new_bytes is not None else None
+        failure = (cand.extras.get("missing_dependency_checks") or {}).get(digest)
+        if isinstance(failure, dict):
+            # The current candidate may return to an earlier checked version.
+            cand.extras["missing_dependency_check"] = failure
+            hook = cand.extras.get("dependency_plan")
+            runner = cand.extras.get("runner")
+            validate = cand.extras.get("dependency_validation")
+            if (
+                hook is not None
+                and runner is not None
+                and validate is not None
+                and failure.get("module")
+            ):
+                cand.extras["deps"] = hook
+                cand.extras["runtime_modules"] = [failure["module"]]
+                cand.extras["cancel"] = getattr(run, "cancel_event", None)
+                try:
+                    result = validate(cand, runner)
+                finally:
+                    cand.extras.pop("deps", None)
+                stopped = cand.extras.get("dependency_installed_stopped")
+                if stopped is not None and result.get("status") == stopped:
+                    # Installation committed before cancellation; keep the exact
+                    # candidate until the user explicitly resumes validation.
+                    cand.hold = {
+                        "notice": "dependency_installed_late",
+                        "packages": list(cand.installed),
+                        "runtime_modules": [failure["module"]],
+                    }
+                if result.get("status") == "ok":
+                    if (
+                        getattr(runner, "requires_source_identity", False)
+                        and result.get("source_sha256") != failure["sha256"]
+                    ):
+                        checks.append(
+                            _check(
+                                "candidate.render",
+                                "precommit",
+                                "integrity",
+                                FAILED,
+                                "candidate_changed_since_validation",
+                            )
+                        )
+                        return checks
+                    checked, _ = agent_check(cand, lambda *_: result)
+                    if (
+                        not checked
+                        or cand.new_bytes is None
+                        or _sha256(cand.new_bytes) != failure["sha256"]
+                    ):
+                        checks.append(
+                            _check(
+                                "candidate.render",
+                                "precommit",
+                                "integrity",
+                                FAILED,
+                                "candidate_validation_failed",
+                            )
+                        )
+                        return checks
+                    cand.extras["dependency_validated_sha256"] = failure["sha256"]
+                    return checks
+            checks.append(
+                _check("candidate.render", "precommit", "integrity", FAILED, "missing_dependency")
+            )
+        return checks
+
+    def hold(self, cand: Candidate):
+        if cand.hold is None:
+            return None
+        return ai_tasks.NeedsInput("", reason_code="dependency_decision", data=dict(cand.hold))
+
+    def settle_hold_on_cancel(self, cand: Candidate) -> bool:
+        if (cand.hold or {}).get("notice") == "dependency_installed_late":
+            return True
+        cand.hold = None
+        return False
+
+    def _precommit(self, cand: Candidate) -> list[CheckResult]:
+        st = "precommit"
+        out: list[CheckResult] = []
+        tree = _tree(cand.dir)
+        if tree is None:
+            out.append(_check("candidate.tree", st, "integrity", UNKNOWN, "candidate_over_budget"))
+        else:
+            others = sorted(
+                k
+                for k in cand.tree_before.keys() | tree.keys()
+                if k != cand.target_name
+                and k in cand.tree_before  # 新建的辅助文件不会被提交，不算改动
+                and cand.tree_before.get(k) != tree.get(k)
+            )
+            out.append(
+                _check(
+                    "candidate.tree", st, "integrity", FAILED, "other_file_changed", files=others
+                )
+                if others
+                else _check("candidate.tree", st, "integrity", VERIFIED)
+            )
+        try:
+            cand.new_bytes = cand.target.read_bytes()
+        except OSError:
+            cand.new_bytes = None
+        if cand.new_bytes is None:
+            out.append(_check("candidate.target", st, "integrity", FAILED, "target_missing"))
+            # 目标丢了也得先查原项目：否则「删目标 + 动原项目」会被当成可修而进第二轮
+            out += self._project_untouched(cand, st)
+            return out
+        unchanged = cand.new_bytes == cand.base_bytes
+        out.append(
+            _check(
+                "candidate.target",
+                st,
+                "integrity",
+                NOT_APPLICABLE if unchanged else VERIFIED,
+                "no_change" if unchanged else None,
+            )
+        )
+        if not unchanged:
+            text = cand.new_bytes.decode("utf-8", errors="replace")
+            _tree_, problem = discover.parse_source(text)
+            out.append(
+                _check(
+                    "candidate.syntax",
+                    st,
+                    "integrity",
+                    FAILED,
+                    "syntax_error",
+                    lineno=problem.get("lineno"),
+                    detail=problem.get("detail"),
+                )
+                if problem is not None
+                else _check("candidate.syntax", st, "integrity", VERIFIED)
+            )
+            if cand.stems_before is None:
+                out.append(
+                    _check("candidate.stems", st, "preserve", NOT_APPLICABLE, "stems_not_static")
+                )
+            elif problem is not None:
+                # 解析不了就读不出静态 stem：那是语法错误的后果，不是第二个失败（修正指令里不该多一条「图名变了」）
+                out.append(
+                    _check("candidate.stems", st, "preserve", NOT_APPLICABLE, "syntax_error")
+                )
+            else:
+                after = _static_stems(cand.target, cand.dir)
+                out.append(
+                    _check("candidate.stems", st, "preserve", VERIFIED, stems=after)
+                    if after == cand.stems_before
+                    else _check(
+                        "candidate.stems",
+                        st,
+                        "preserve",
+                        FAILED,
+                        "stems_changed",
+                        before=cand.stems_before,
+                        after=after,
+                    )
+                )
+        out += self._project_untouched(cand, st)
+        return out
+
+    def _project_untouched(self, cand: Candidate, st: str) -> list[CheckResult]:
+        out = []
+        try:
+            now = cand.script_path.read_bytes()
+        except OSError:
+            now = None
+        out.append(
+            _check("project.target", st, "integrity", VERIFIED)
+            if now == cand.base_bytes
+            else _check("project.target", st, "integrity", FAILED, "target_changed_in_project")
+        )
+        changed = fingerprint_changes(
+            cand.project_before,
+            project_fingerprint(cand.project_root, exclude=_own_files(cand.script_rel)),
+        )
+        if changed is None:
+            out.append(_check("project.untouched", st, "integrity", UNKNOWN, "project_over_budget"))
+        elif changed:
+            out.append(
+                _check(
+                    "project.untouched",
+                    st,
+                    "integrity",
+                    FAILED,
+                    "project_files_changed",
+                    files=changed[:50],
+                    total=len(changed),
+                )
+            )
+        else:
+            out.append(_check("project.untouched", st, "integrity", VERIFIED))
+        return out
+
+    def _postcommit(self, run, cand: Candidate) -> list[CheckResult]:
+        st = "postcommit"
+        if not cand.committed:
+            return [_check("commit.refresh", st, "integrity", NOT_APPLICABLE, "no_change")]
+        status = (cand.refresh or {}).get("status")
+        out = [
+            _check("commit.refresh", st, "integrity", VERIFIED)
+            if status == "ok"
+            else _check(
+                "commit.refresh", st, "integrity", UNKNOWN, f"refresh_{status or 'missing'}"
+            )
+        ]
+        return out + self._render_checks(run, cand, st)
+
+    def _render_checks(self, run, cand: Candidate, st: str) -> list[CheckResult]:
+        """渲染层（L2）：改后 manifest 与改前比数据指纹。两份 manifest 都由调用方（app）注入的钩子取：
+
+        * `before`：提交写入之前从**已经 build 过**的那个 worker 读（不执行任何东西）；没有 = 这次会话里没渲染过这张图，
+          没有基线 → unknown（`no_baseline`），**也不去渲染改后**——不为了验证多跑一次用户脚本（R-06）；
+        * `retire`（可选）：写入之后、刷新之前同步退役该脚本的全部旧会话；没确认（`retired` 不是 True）→ unknown
+          （`session_not_retired`），**不调 after**；
+        * `after(expected_sha256)`：`expected` 是刚提交字节的 sha256；钩子须核会话**实际执行**的源码 sha256 与它一致，
+          不一致抛 `StaleSession` → unknown（`stale_session`）。正确性靠这条判据，不靠 `retire` 时序；
+          提交并刷新之后取同一个 safe 会话（同一份运行配置）并 build——就是前端随后本来要做的那次重渲染，前端
+          来时会话已经 built，不再执行第二次。渲染失败（改前同一会话能渲染、改后不能）→ failed。
+
+        比两样：数据（`figureverify.data_unchanged`）与「目标范围以外有没有改动」（`changes_outside_target`，范围取自桥放进
+        `cand.extras["target"]` 的 `{stem, gid, scope}`；范围外有改动记 unknown、结局最高 partial）。`before` 钩子给的是**无
+        override** 的重放基准，与改后同口径；坐标范围 / 刻度 / 版式的目标判定与新出现的版面问题仍不比（列进 not_covered）。"""
+        not_covered = ("坐标范围与刻度", "新出现的版面问题", "用户点名的目标")
+        hooks_after = cand.extras.get("after")
+        if hooks_after is None:
+            return [
+                _render(st, UNKNOWN, "render_not_wired", not_covered=("数据指纹", *not_covered))
+            ]
+        before = cand.extras.get("before_manifests")
+        if not before:
+            return [_render(st, UNKNOWN, "no_baseline", not_covered=("数据指纹", *not_covered))]
+        if cand.extras.get("retire") is not None and cand.extras.get("retired") is not True:
+            # 旧会话没确认退役：workerd 按 by_hash 会把 after 去重回仍已 built 的旧会话，比出来的是两份改前 manifest
+            return [
+                _render(st, UNKNOWN, "session_not_retired", not_covered=("数据指纹", *not_covered))
+            ]
+        run.charge("renders")
+        try:
+            after = hooks_after(_sha256(cand.new_bytes or b"")) or {}
+        except StaleSession:
+            return [_render(st, UNKNOWN, "stale_session", not_covered=("数据指纹", *not_covered))]
+        except Exception as exc:  # noqa: BLE001 —— 渲染失败本身就是这条检查的结论
+            code = getattr(exc, "code", None) or type(exc).__name__
+            return [_render(st, FAILED, "render_failed", code=str(code))]
+        out = [_render(st, VERIFIED, None, stems=sorted(after), not_covered=not_covered)]
+        record_final_labels(cand, after)
+        hook_run_config = cand.extras.get("run_config")
+        verified_config = hook_run_config() if callable(hook_run_config) else None
+        target = cand.extras.get("target") or {}
+        for stem, man in sorted(before.items()):
+            if man is None:  # 这个 stem 的改前重放失败：显式缺基线，不能被静默略过
+                out.append(
+                    _render(
+                        st, UNKNOWN, "no_baseline", cid=f"render.{stem}", not_covered=("数据指纹",)
+                    )
+                )
+                continue
+            if stem not in after:
+                out.append(_render(st, FAILED, "stem_not_rendered", cid=f"render.{stem}"))
+                continue
+            out += [
+                dataclasses.replace(
+                    c,
+                    id=f"{stem}.{c.id}",
+                    # 改名（ADR 0083 §五）要报给前端按 (stem, gid) 改写画布 override 的身份：stem 不从 id 反解（stem 里可以有点）
+                    **(
+                        {
+                            "observed": {
+                                **c.observed,
+                                "stem": stem,
+                                "gid": c.id.split(".", 1)[-1],
+                                # 验证实际用的运行配置引用（不透明 id，非参数值）；None = 无参数运行，不写这个键
+                                **(
+                                    {"run_config": verified_config}
+                                    if isinstance(verified_config, str) and verified_config
+                                    else {}
+                                ),
+                            }
+                        }
+                        if "relabeled" in c.observed
+                        else {}
+                    ),
+                )
+                for c in figureverify.data_unchanged(after[stem], man, stage=st)
+            ] + [
+                dataclasses.replace(c, id=f"{stem}.{c.id}")
+                for c in figureverify.changes_outside_target(
+                    after[stem],
+                    man,
+                    scope=_scope_for(stem, target),
+                    gid=target.get("gid"),
+                    stage=st,
+                )
+            ]
+        if len(out) == 1:
+            out.append(_render(st, NOT_APPLICABLE, "no_data_elements", cid="data"))
+        return out
+
+    def correction(self, run, failed: list[CheckResult]) -> dict | None:
+        """提交前没过、而且失败的是**Agent 在副本里能自己改回来**的那几类，给一段修正指令；否则 None。
+
+        原项目被动了（`project.*`）不修：那是越过了只读边界，再让同一个 Agent 跑一次只会扩大面；只认闭集里的原因，
+        新加的检查默认不可修。指令只写检查自己的观察（行号、stem、副本里的文件名），不回显项目路径以外的内容。"""
+        pack = ai_prompt_pack.DEFAULT
+        lines = []
+        for c in failed:
+            if (c.id, c.reason_code) not in ai_prompt_pack.CORRECTABLE:
+                return None
+            lines.append(ai_prompt_pack.fix_text(pack, (c.id, c.reason_code), c.observed))
+        if not lines:
+            return None
+        return {"prompt": ai_prompt_pack.correction_prompt(pack, lines)}
+
+    def explain(self, outcome: str, unmet: list[dict]) -> dict:
+        return {
+            "message_key": f"task.{TASK_TYPE}.{outcome}",
+            "params": {"unmet": [u["constraint_id"] for u in unmet]},
+        }
+
+
+# --------------------------------------------------------------------------- 执行器（AI 桥的那一次 CLI 运行）
+class BridgeExecutor:
+    """把 AI 桥已经 spawn 的那次 CLI 运行接进编排：`execute` = 读完输出并等进程退出（桥传进来的 `wait`），
+    `commit` = 持锁核基线后原子替换项目里的脚本、再统一刷新（桥传进来的 `refresh`）。"""
+
+    kind = "agent"
+    writes_user_files = True
+
+    def __init__(self, executor_id: str, cand: Candidate, *, wait, refresh, respawn=None):
+        self.executor_id = executor_id
+        self.cand = cand
+        self._wait = wait
+        self._refresh = refresh
+        self._respawn = respawn
+        if respawn is None:
+            self.correct = None  # 桥没给再跑一次的入口：编排器据此不修正
+
+    def execute(self, run) -> Candidate:
+        self._wait()  # 抛 TaskError 表示运行本身没成（超时 / 非零退出），候选作废
+        return self.cand
+
+    def correct(self, run, cand: Candidate, feedback: dict) -> Candidate:
+        """修正 = 在同一个候选目录里按修正指令再跑一次 CLI（桥传进来的 `respawn`），然后照常等它退出。"""
+        self._respawn(feedback["prompt"])
+        self._wait()
+        return cand
+
+    def commit(self, run, cand: Candidate) -> None:
+        if cand.new_bytes is None or cand.new_bytes == cand.base_bytes:
+            return  # 没改动：不写文件、不刷新（与旧路径 changed=False 相同）
+        failure = (cand.extras.get("missing_dependency_checks") or {}).get(_sha256(cand.new_bytes))
+        if isinstance(failure, dict):
+            # Even if a verifier itself raised, a known failing candidate may
+            # not reach the irreversible write without successful revalidation.
+            raise TaskError("missing_dependency", "candidate")
+        validated_sha = cand.extras.get("dependency_validated_sha256")
+        if validated_sha and _sha256(cand.new_bytes) != validated_sha:
+            raise TaskError("candidate_changed_since_validation")
+        with scriptlock.script_guard(cand.script_path):
+            try:
+                now = cand.script_path.read_bytes()
+            except OSError:
+                now = None
+            if now != cand.base_bytes:
+                raise TaskError("script_changed_since_start", cand.script_rel)
+            # 改前的渲染事实只能在写之前拿：写完刷新就会作废那个 worker
+            cand.extras["before_manifests"] = _call_hook(cand.extras.get("before"))
+            scriptlock.write_script(cand.script_path, cand.new_bytes, mode=cand.base_mode)
+            cand.committed = True
+        # 退役只是让「after 去重回旧会话」的概率变小（尽力而为）；正确性由 after 钩子核 build 实际执行的 source_sha256 保证。
+        # 退役旧会话必须在统一刷新之前、锁之外（force 关停可能要等 workerd）：刷新里那次普通 invalidate 才会找不到会话，
+        # 前端收到 panel.file_changed 与 after 钩子拿到的才都是新脚本 spawn 的会话。没注入钩子（纯引擎调用方）不记 retired。
+        retire = cand.extras.get("retire")
+        if retire is not None:
+            try:
+                retire()
+                cand.extras["retired"] = True
+            except Exception:  # noqa: BLE001 —— 确认不了就如实记 False，提交本身已落盘、不因旁路失败
+                cand.extras["retired"] = False
+        cand.refresh = self._refresh()
+
+    def discard(self, run, cand: Candidate) -> None:
+        if cand.hold is None:
+            remove_candidate(cand.dir)
+
+
+def _call_hook(hook):
+    """调 app 注入的取事实钩子；没有 / 抛异常 → None（这项量不了，不让提交因为旁路失败）。"""
+    if hook is None:
+        return None
+    try:
+        return hook()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# --------------------------------------------------------------------------- 内置执行器的 `check`
+#: 渲染这一步量不了、但不是 Agent 的错的运行错误码：写入根绊线（候选脚本把文件写到候选目录以外，如相对路径的 `savefig` /
+#: `to_csv`；校验运行只许写候选目录）。这类结论是“没量到”，不是“坏了”——真正的渲染验证在提交后的 L2 里照常做
+#: `ai_convert.STAGE_PREFIX` 的镜像（import 会成环）；`tests/test_ai_edit_check_app.py` 看护两者一致
+STAGE_PREFIX = "_tavotto_convert_probe_"
+NOT_MEASURABLE_CODES = frozenset({"write_outside_roots"})
+
+
+def tripped_write_roots(code: object, cause: object = None) -> bool:
+    """校验运行的错误是不是“写入根绊线”：生产 runner 经探测把它折成 `script_probe_failed`，底层码在 `cause`，所以两处都看。
+    改图 `check`（`agent_check`）与转换 `run_validation` 共用这一个判据。"""
+    return str(code or "") in NOT_MEASURABLE_CODES or str(cause or "") in NOT_MEASURABLE_CODES
+
+
+def _l1_lines(checks: list[CheckResult]) -> tuple[list[str], list[str]]:
+    """提交前 L1 检查 → `(没过的一句话, 量不出来的一句话)`。可修的失败用 Prompt Pack 的同一份修正文字（CLI 路径的修正指令用它），
+    其余只给稳定的 `检查 id: 原因码`；文字只引用检查自己的观察（行号、stem、候选里的文件名），不回显项目路径。"""
+    pack = ai_prompt_pack.DEFAULT
+    failed, unknown = [], []
+    for c in checks:
+        if c.verdict == FAILED:
+            key = (c.id, c.reason_code)
+            failed.append(
+                ai_prompt_pack.fix_text(pack, key, c.observed)
+                if key in ai_prompt_pack.CORRECTABLE
+                else f"{c.id}: {c.reason_code}"
+            )
+        elif c.verdict == UNKNOWN:
+            unknown.append(f"{c.id}: {c.reason_code}")
+    return failed, unknown
+
+
+def _data_lines(after: dict[str, dict], before: dict[str, dict | None]) -> list[str]:
+    """数据指纹（L2 `figureverify.data_unchanged`，与提交后同一函数）：改后每个 stem 对改前基线。回没过的一句话。"""
+    out: list[str] = []
+    for stem, man in sorted(before.items()):
+        if man is None:
+            continue
+        if stem not in after:
+            out.append(
+                f"figure '{stem}' was not produced any more; keep every figure the script drew."
+            )
+            continue
+        for c in figureverify.data_unchanged(after[stem], man, stage="precommit"):
+            if c.verdict != FAILED:
+                continue
+            gid = str(c.id).split(".", 1)[-1]
+            if c.reason_code == "label_swapped":
+                out.append(
+                    f"label_swapped in figure '{stem}', element {gid}: this series now carries the label of another "
+                    "series (labels swapped or reused). Keep every series under its own label unless the user "
+                    "asked to rename it."
+                )
+                continue
+            parts = ", ".join(str(x) for x in (c.observed or {}).get("parts") or [])
+            out.append(
+                f"{c.reason_code} in figure '{stem}', element {gid}"
+                + (f" (parts: {parts})" if parts else "")
+                + ": the plotted data differs from the original. Only presentation may change; restore the data."
+            )
+    return out
+
+
+def renamed_from_verification(verification: dict | None) -> list[dict]:
+    """从任务的验证段（`verification_summary` 的形状，历史库里也存着同一份）取出「数据没动、只是显式 label 变了」的元素，
+    给 `task.renamed` 用：`[{stem, gid, from_identity, to_identity}]`，**闭集形状、只有身份摘要**（label 原文不出门，ADR 0083）。
+
+    来源是提交后 L2 的数据检查（`figureverify.data_unchanged` 的 `observed.relabeled`，`_render_checks` 补上 stem 与 gid）：
+    只认 verified 的改名——名字对调（`label_swapped`）/ 数据也变了的不在内，它们的身份对不上本来就是要用户看见的。
+    前端据此把该 stem 的面板上、该 gid 处旧身份的 override 改写成新身份（撤销这次修改时反向改回）。"""
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    checks = ((verification or {}).get("figure") or {}).get("checks") or []
+    for c in checks:
+        obs = c.get("observed") if isinstance(c, dict) else None
+        if (
+            not isinstance(obs, dict)
+            or c.get("verdict") != VERIFIED
+            or c.get("stage") != "postcommit"
+        ):
+            continue
+        rel = obs.get("relabeled")
+        if not isinstance(rel, dict):
+            continue
+        item = {
+            "stem": obs.get("stem"),
+            "gid": obs.get("gid"),
+            "from_identity": rel.get("from_identity"),
+            "to_identity": rel.get("to_identity"),
+        }
+        if not all(isinstance(v, str) and v for v in item.values()):
+            continue
+        run_config = obs.get("run_config")
+        key = (item["stem"], item["gid"])
+        if key in seen:
+            continue
+        seen.add(key)
+        # 验证用的运行配置引用：前端只改同配置的运行时面板（磁盘面板恒跟默认配置 = 被验证的那份）。缺席 = 无参数
+        if isinstance(run_config, str) and run_config:
+            item["run_config"] = run_config
+        # 不截断：每一条都是已提交、已验证的改名，漏一条那条线上的画布编辑就失效。条数受验证段本身的体积约束
+        out.append(item)
+    return out
+
+
+#: 文字变化清单里**不报**的角色：刻度文字（刻度器 + 格式化器的输出，数据 / 范围一变就跟着变，不是 Agent 写的字）；
+#: 图例文字是曲线 label 的派生（曲线 label 另报一条）
+_TEXT_SKIP_ROLES = frozenset({"ticklabel", "legend_text"})
+_TEXT_PROPS = ("text", "label", "title")
+_TEXT_CLIP = 60  # 单个文字在清单里最多留多少字符
+_TEXT_LINE_MAX = 900  # 整段清单的字符上限（超出的只报条数）
+
+
+def _visible_texts(man: dict) -> dict[tuple[str, str], tuple[str, str]]:
+    """manifest 里每个可见文字：`(gid, prop) → (role, 值)`。`_` 开头的 label 是 matplotlib 自动起的（不在图例里显示），不算。"""
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    for el in man.get("elements") or []:
+        if not isinstance(el, dict) or el.get("role") in _TEXT_SKIP_ROLES:
+            continue
+        gid = el.get("gid")
+        if not isinstance(gid, str):
+            continue
+        for f in el.get("editable") or []:
+            prop, val = f.get("prop"), f.get("value")
+            if prop not in _TEXT_PROPS or not isinstance(val, str):
+                continue
+            if prop == "label" and val.startswith("_"):
+                continue
+            out[(gid, prop)] = (str(el.get("role") or ""), val)
+    return out
+
+
+def _describe_text(gid: str, prop: str, role: str) -> str:
+    head, _, tail = gid.rpartition(".")
+    if head and tail in ("title", "xlabel", "ylabel"):
+        return f"{tail} of {head}"
+    return f"line label {gid}" if role == "line" and prop == "label" else f"{prop} {gid}"
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= _TEXT_CLIP else text[: _TEXT_CLIP - 1] + "…"
+
+
+def text_changes_note(after: dict[str, dict], before: dict[str, dict | None]) -> str:
+    """改前基线 → 本次校验渲染之间，**每一处可见文字的变化**（标题、轴标题、图例 / 曲线 label、其它文字）的一句话报告，给 Agent 自查：
+    用户没要求改的文字改动应该改回去。**只报事实、不判对错**（意图留给模型；没有“目标范围”之类的机械启发式，用户裁决）。
+    有界：每个文字截断，整段超长只报条数。同一文字按 `(gid, prop)` 配对；只在一侧出现的记 added / removed。"""
+    items: list[str] = []
+    stems = sorted(s for s, m in before.items() if m is not None and s in after)
+    for stem in stems:
+        old, new = _visible_texts(before[stem]), _visible_texts(after[stem])
+        prefix = f"[{stem}] " if len(stems) > 1 else ""
+        for key in sorted(old.keys() | new.keys()):
+            o, n = old.get(key), new.get(key)
+            if o is not None and n is not None and o[1] == n[1]:
+                continue
+            where = _describe_text(key[0], key[1], (n or o)[0])
+            if o is None:
+                items.append(f'{prefix}{where}: added "{_clip(n[1])}"')
+            elif n is None:
+                items.append(f'{prefix}{where}: removed "{_clip(o[1])}"')
+            else:
+                items.append(f'{prefix}{where}: "{_clip(o[1])}" -> "{_clip(n[1])}"')
+    if not items:
+        return "no visible text changes."
+    body, used = [], 0
+    for i, it in enumerate(items):
+        if used + len(it) > _TEXT_LINE_MAX:
+            body.append(f"(+{len(items) - i} more)")
+            break
+        body.append(it)
+        used += len(it) + 2
+    return (
+        "text changes: " + "; ".join(body) + ". Keep only the text changes the user asked for; "
+        "revert the others."
+    )
+
+
+def _with_original_names(manifests, cand: Candidate):
+    """（影子脚本之后校验运行以原脚本自己的路径跑，兜底命名本就是原 stem，这里通常是恒等；旧名识别留作防御。）
+    历史：校验运行曾是临时文件 `tavotto_convert_probe_<sid>.py`；只 show 不 savefig 的图 worker 按脚本 stem 兜底命名（`fallback_stems`：
+    `<stem>`、`<stem>-2`…），于是叫临时文件名。把这个前缀换回原脚本的 stem，才和基线（原脚本）同名可比。savefig 命名的图不受影响。"""
+    if not isinstance(manifests, dict):
+        return manifests
+    staged, orig = f"{STAGE_PREFIX}{cand.sid}", Path(cand.script_rel).stem
+    out = {}
+    for stem, man in manifests.items():
+        if stem == staged or stem.startswith(staged + "-"):
+            stem = orig + stem[len(staged) :]
+        out[stem] = man
+    return out
+
+
+# --------------------------------------------------------------------------- 图例文字跟进（「标题与图例同一个字符串」）
+#: 一次任务最多给几条跟进建议、单条文字最长多少（超过的不建议：这里放的只有已经画在图上的两个 label 字符串）
+LABEL_SUGGESTION_MAX = 3
+LABEL_TEXT_MAX = 200
+LEGEND_LABEL_KIND = "legend_label"
+_LEGEND_ENTRY_GID = re.compile(r"\.texts_\d+$")
+
+
+def _elements_by_gid(man: object) -> dict[str, dict]:
+    els = man.get("elements") if isinstance(man, dict) else None
+    return {e["gid"]: e for e in els if isinstance(e, dict) and "gid" in e} if els else {}
+
+
+def _editable_value(el: dict, prop: str):
+    """元素 `editable` 里 `prop` 的当前值；没有这个 prop 回 None。"""
+    for f in el.get("editable") or ():
+        if isinstance(f, dict) and f.get("prop") == prop:
+            return f.get("value")
+    return None
+
+
+def element_label(man: object, gid: str) -> str | None:
+    """manifest 里 `gid` 元素的 `label` 字段（可编辑的图例文字来源）；元素不在 / 没有这个字段 / 不是字符串 → None。"""
+    el = _elements_by_gid(man).get(gid)
+    val = _editable_value(el, "label") if el else None
+    return val if isinstance(val, str) else None
+
+
+def label_changes(before: dict, after: dict) -> list[dict]:
+    """按 stem、按 gid 比两份 manifest 里元素 `label` 字段（`editable`）的值：同一 gid 两侧都有且文字不同 → `{stem, gid, from, to}`。
+
+    纯函数，**不看 identity、不看数据指纹**——判据只有 `editable` 里的 label 值，所以数据检查对 label 改动怎么判（现在身份里带
+    label 会失败）不影响它。`before` 里值为 None 的 stem（改前没有基线）与只在一侧出现的 stem / gid 略过。按 (stem, gid) 排序。"""
+    out: list[dict] = []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return out
+    for stem in sorted(before.keys() & after.keys()):
+        old, new = _elements_by_gid(before[stem]), _elements_by_gid(after[stem])
+        for gid in sorted(old.keys() & new.keys()):
+            a, b = _editable_value(old[gid], "label"), _editable_value(new[gid], "label")
+            if isinstance(a, str) and isinstance(b, str) and a != b:
+                out.append({"stem": str(stem), "gid": gid, "from": a, "to": b})
+    return out
+
+
+def legend_entry_gid(man: object, line_gid: str, text: str) -> str | None:
+    """这份 manifest 里**绑定到曲线 `line_gid`**（`legend_entry.source_gid`）、正显示 `text` 且没被隐藏的图例项的 gid；没有 → None。
+    只认图例项（`…legend.texts_<j>`，不含图例标题）；这一项与所在图例都没被隐藏才算。按绑定关系找，不按「别处有同名文字」。"""
+    els = _elements_by_gid(man)
+    for gid, el in sorted(els.items()):
+        if el.get("role") != "legend_text" or not _LEGEND_ENTRY_GID.search(gid):
+            continue
+        entry = el.get("legend_entry")
+        if not isinstance(entry, dict) or entry.get("source_gid") != line_gid:
+            continue
+        if _editable_value(el, "text") != text or _editable_value(el, "visible") is False:
+            continue
+        legend = els.get(_LEGEND_ENTRY_GID.sub("", gid))
+        if legend is not None and _editable_value(legend, "visible") is False:
+            continue
+        return gid
+    return None
+
+
+def label_visible_in_legend(man: object, line_gid: str, text: str) -> bool:
+    """曲线 `line_gid` 的 label `text` 此刻是否画在图上：它自己的可见图例项正显示这段文字（见 `legend_entry_gid`）。没有图例 → False。"""
+    return legend_entry_gid(man, line_gid, text) is not None
+
+
+def record_label_findings(cand: Candidate, baseline: dict, after: dict) -> None:
+    """`check` 渲染后调：改后与基线的 label 字段不同的元素记进 `cand.extras["label_findings"]`（按 (stem, gid) 去重，`from` 取最早的基线、
+    `to` 取最近一次）。`visible` = 基线图里有没有图例正显示 `from`。只记，不判——是否提示由收尾时的 `legend_label_suggestions` 决定。"""
+    store: dict = cand.extras.setdefault("label_findings", {})
+    for ch in label_changes(baseline, after):
+        key = (ch["stem"], ch["gid"])
+        if key in store:
+            store[key]["to"] = ch["to"]
+        elif len(store) < 20:
+            store[key] = {
+                **ch,
+                "visible": label_visible_in_legend(baseline.get(ch["stem"]), ch["gid"], ch["from"]),
+            }
+
+
+def record_final_labels(cand: Candidate, after: dict) -> None:
+    """提交后那次渲染：把每条记过的发现在**最终提交的脚本**里的 label 写进 `final`（元素没了 / 渲染没量到则没有这个键）。"""
+    for (stem, gid), f in (cand.extras.get("label_findings") or {}).items():
+        if isinstance(after, dict) and stem in after:
+            f["final"] = element_label(after[stem], gid)
+            # 按钮要写的图例项：最终版里绑定这条曲线、显示原文的那一项（找不到 = 不给建议）
+            f["legend_gid"] = (
+                legend_entry_gid(after[stem], gid, f["final"]) if f["final"] is not None else None
+            )
+
+
+def legend_label_suggestions(cand: object, outcome: str | None) -> list[dict]:
+    """收尾时的跟进建议（闭集形状，进 `sess["task"]["suggestions"]`）：任务成功（`completed`）、改动已提交，且某元素的 label 在
+    `check` 里被改过、最终又回到原文（Agent 改回去了）、而且图例正显示这段文字 → `{kind, stem, gid, legend_gid, from, to}`。
+    条件缺一不给：没有提交后的最终值（渲染没量到）按「不知道」处理，不给。文字之外不带任何用户内容。"""
+    if outcome != "completed" or not getattr(cand, "committed", False):
+        return []
+    out = []
+    for f in (getattr(cand, "extras", {}).get("label_findings") or {}).values():
+        if not (
+            f.get("visible")
+            and f.get("final") == f["from"]
+            and f["to"] != f["from"]
+            and f.get("legend_gid")
+        ):
+            continue
+        if max(len(f["from"]), len(f["to"])) > LABEL_TEXT_MAX:
+            continue
+        out.append(
+            {
+                "kind": LEGEND_LABEL_KIND,
+                "stem": f["stem"],
+                "gid": f["gid"],
+                "legend_gid": f["legend_gid"],
+                "from": f["from"],
+                "to": f["to"],
+            }
+        )
+    return sorted(out, key=lambda s: (s["stem"], s["gid"]))[:LABEL_SUGGESTION_MAX]
+
+
+def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
+    """内置执行器改图任务里 `check` 工具的回调（Agent 在候选里改完自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
+
+    **与产品提交前同一套**，不另写判据：
+    1. 提交前 L1（`FigureEditAdapter._precommit`）：目标还在且改过 / 语法 / 静态输出名集合不变 / 候选里没有别的文件被改 / 原项目没被动；
+    2. 都过了再真渲染：候选字节作为影子脚本（项目里不写任何文件，`__file__` 是原脚本自己的路径）在用户同一路由下跑一遍（`run_validation` = `ai_convert.run_validation`，由桥注入以免 import 成环，写入根绊线只开候选目录，
+       **不写任何用户文件、不运行原脚本本身**），要求仍捕获到图；
+    3. 数据指纹（`figureverify.data_unchanged`，提交后 L2 用的同一个函数）对基线——基线是池里已 build 的那个会话落盘的 manifest（只读，
+       不重放不退役，`check_before` 钩子）；没有基线 = 这一项没量（报告里说明），不影响通过与否。
+    “范围外有没有被改”（`changes_outside_target`）需要无 override 的重放基线，那会动用户正在看的热会话，所以不在这里量，仍由提交后 L2 兜底。
+
+    没有 `check` 的两家 CLI（Codex / Claude Code）看不到任何校验结果：它们改完就结束，被提交前检查拦下时才由 TAF 有界修正再跑一轮
+    （`FigureEditAdapter.correction`）。内置执行器多这一步，是把同一套检查前移到 Agent 手里（≤ 3 次，见 `agent_runner.tools.MAX_CHECKS`）。"""
+    checks = ADAPTER._precommit(cand)
+    failed, unknown = _l1_lines(checks)
+    if failed:
+        return False, "check failed: " + " ".join(failed)[:1400]
+    if cand.new_bytes is None or cand.new_bytes == cand.base_bytes:
+        return False, "no_change: the target script is not modified yet."
+    notes = [f"not measured ({u})" for u in unknown]
+    runner = cand.extras.get("runner")
+    if runner is None:
+        return (
+            True,
+            "check passed: syntax, figure names and project integrity are fine; rendering is not available here.",
+        )
+    res = run_validation(cand, runner)
+    status = res.get("status")
+    if status == "cancelled":
+        return False, "check_cancelled"
+    if status == "no_figure":
+        return False, "check failed: the edited script ran but no Matplotlib figure was captured."
+    if status == "error":
+        code = str(res.get("code") or "")
+        if code == "missing_dependency" and cand.new_bytes is not None:
+            try:
+                same = not cand.target.is_symlink() and cand.target.read_bytes() == cand.new_bytes
+            except OSError:
+                same = False
+            if same:
+                failure = {
+                    "sha256": _sha256(cand.new_bytes),
+                    "module": res.get("module") if isinstance(res.get("module"), str) else "",
+                }
+                cand.extras.setdefault("missing_dependency_checks", {})[failure["sha256"]] = failure
+                cand.extras["missing_dependency_check"] = failure
+        # 生产 runner 经探测把写入绊线折成 script_probe_failed，底层码在 `cause`
+        if tripped_write_roots(code, res.get("cause")):
+            notes.append(
+                "rendering not measured: the script writes files outside the work directory (such as savefig/to_csv with a "
+                "relative path); that is checked again after your change is applied"
+            )
+            return True, "check passed (partly): " + "; ".join(notes)
+        detail = " ".join(str(res.get(k) or "") for k in ("code", "message")).strip()
+        return False, f"check failed (the edited script does not run): {detail}"[:1500]
+    stems = list(res.get("stems") or [])
+    text_note = ""
+    baseline = cand.extras.get("check_baseline", "unset")
+    if baseline == "unset":
+        baseline = _call_hook(cand.extras.get("check_before"))  # 只读；整个会话取一次
+        cand.extras["check_baseline"] = baseline
+    after = _with_original_names(res.get("manifests"), cand)
+    if not baseline or not isinstance(after, dict) or not after:
+        notes.append(
+            "data fingerprint not measured (no baseline render of the original in this session)"
+        )
+    else:
+        # 图例文字跟进：先记、再判数据——现在 label 改动会让数据检查失败（身份里带 label），记录不能依赖它通过
+        record_label_findings(cand, baseline, after)
+        bad = _data_lines(after, baseline)
+        if bad:
+            return False, "check failed: " + " ".join(bad)[:1400]
+        notes.append("data unchanged")
+        text_note = ". " + text_changes_note(after, baseline)
+    # A full successful check supersedes only evidence for the exact bytes it
+    # validated. A later failed check or a different candidate cannot erase it.
+    if cand.new_bytes is not None:
+        digest = _sha256(cand.new_bytes)
+        failures = cand.extras.get("missing_dependency_checks") or {}
+        if status == "ok" and digest in failures:
+            try:
+                same = not cand.target.is_symlink() and cand.target.read_bytes() == cand.new_bytes
+            except OSError:
+                same = False
+            if getattr(runner, "requires_source_identity", False):
+                same = same and res.get("source_sha256") == digest
+            if not same:
+                return False, "check failed: candidate changed during validation."
+            failures.pop(digest, None)
+            if (cand.extras.get("missing_dependency_check") or {}).get("sha256") == digest:
+                cand.extras.pop("missing_dependency_check", None)
+    return True, f"check passed: {len(stems)} figure(s) rendered; " + "; ".join(notes) + text_note
+
+
+def envelope_for(
+    *, agent: str, project_key: str, script_rel: str, prompt: str, rid: str | None, base_sha256: str
+) -> ai_tasks.TaskEnvelope:
+    return ai_tasks.TaskEnvelope.from_dict(
+        {
+            "schema_version": ai_tasks.SCHEMA_VERSION,
+            "task_type": TASK_TYPE,
+            "project_ref": {"project_key": project_key},
+            "client_request_id": rid,
+            "user_intent": prompt,
+            "input_refs": [{"kind": "script", "path_rel": script_rel, "sha256": base_sha256}],
+            "output_contract": {"allowed_writes": [script_rel]},
+            "execution_policy": {"executor": agent},
+            # normal 档（`03-contracts.md` §五）：Agent ≤ 1 + 修正 ≤ 1
+            "budget": {"max_agent_runs": 2, "max_corrections": 1},
+        }
+    )
+
+
+ADAPTER = FigureEditAdapter()
+
+
+def ensure_registered() -> None:
+    """开关打开的那次运行才把适配器登记进 `ai_tasks.ADAPTERS`（不在 import 时登记：开关关着时注册表保持为空）。"""
+    if ai_tasks.ADAPTERS.get(TASK_TYPE) is not ADAPTER:
+        ai_tasks.register(ADAPTER)

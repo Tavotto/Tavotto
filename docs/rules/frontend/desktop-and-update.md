@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「桌面感知与更新」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/desktop.test.ts`、`hooks/menuActions.test.tsx`、`components/UpdateNoticeDialog.test.tsx`、`store/updateStore.test.ts`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 270
+改到: `lib/desktop.ts`、`hooks/menuActions.ts`、`lib/updateNotice.ts`、`UpdateNoticeDialog`
+主题: 桌面感知与更新 → `desktop-and-update.md`
+必守要点: 组件不得直接 import `@tauri-apps/*`；只查一条更新通道；菜单转发与键盘同一个让位判据
+-->
 
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
@@ -15,6 +24,13 @@
   （逐键比「按键」与「菜单转发」的效果，画布那一格必须真的有效果）。
 - `checkUpdateOnStartup()` 按 `isDesktop()` 只查一条更新通道（桌面归 Tauri，
   浏览器归 `/api/update/*`）。壳侧细节见 `src-tauri/AGENTS.md`。
+- **桌面更新经壳的自有命令，不直接用 `@tauri-apps/plugin-updater`**（ADR 0121）：`checkDesktopUpdate` →
+  `desktop_update_check`（带 `uiLang`），`installDesktopUpdate` → `desktop_update_install`（`Channel` 收
+  Started/Progress/Finished，换来源重下时 `Started` 再来一次、进度归零），返回实际来源。来源顺序、回退、
+  超时全在 Rust 侧（`app_update.rs`），前端不重算。错误是 `DesktopUpdateError`（稳定 `code` + 逐来源
+  `attempts`），**壳回的字符串不当句子显示**。来源（镜像 / GitHub）与失败记录**只进「技术详情」折叠区**
+  （`updateStore.desktopSource` / `desktopAttempts`），不新增横幅、不进主文案。看护 `lib/desktop.test.ts`、
+  `store/updateStore.test.ts`、`components/settings/updateStates.test.tsx`。
 - **查到新版怎么说出口**（2026-09-12）：启动时弹一次 `components/UpdateNoticeDialog.tsx`
   （与 `TelemetryConsentDialog` 同一层挂载，项目选择页与工作区都有）；「该不该弹、弹什么」
   只在 `lib/updateNotice.ts` 判——桌面只看 `desktopUpdate`（桌面模式 `status` 可能一直

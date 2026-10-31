@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
-import { askConfirm } from '@/store/uiStore'
-import { msg, t as translate } from '@/i18n'
-import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
+import { askConfirm, useUiStore } from '@/store/uiStore'
+import { formatMessage, msg, t as translate } from '@/i18n'
+import { backendCodeMsg, type EngineSource, type ProjectEnvFailure } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { currentProjectId } from '@/lib/session'
 import { InputRemapRows, ScriptBackupRows, WorkdirRow } from './WorkdirRow'
@@ -15,6 +15,8 @@ import { Button, IconButton } from './ui/Button'
 import { FieldGroup } from './ui/FormSection'
 import { TextInput } from './ui/Input'
 import { Card } from './ui/Card'
+import { Details, Summary } from './ui/Details'
+import { CoverageDetailList } from './OriginDetails'
 import { Menu, MenuItem } from './ui/Menu'
 import { Notice } from './ui/Notice'
 
@@ -38,6 +40,16 @@ import { Notice } from './ui/Notice'
 const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
 
+/**
+ * 失败出在**用户自己选的环境**上（显式指定的解释器用不了、Conda 激活失败）：与安装包是否完整无关，
+ * 桌面版也不许说成「安装文件不完整」（后端同一张表：`bootstrap.USER_ENV_FAILURE_CODES`）。
+ */
+const USER_ENV_FAILURE_CODES = new Set([
+  'explicit_python_unusable',
+  'project_python_unusable',
+  'conda_launcher_unavailable',
+])
+
 /** 后端给的是稳定的 source 枚举，人话在这里按当前语言取。
  *  产品名走 `brand.ts`——界面文案里不手写它（根 AGENTS.md）。 */
 const sourceLabel = (source: EngineSource): string =>
@@ -59,11 +71,25 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   if (!env) return null
   // 正常工作流里不制造多余提示：环境没问题时，紧凑位置（图内元素面板）什么都不显示
   if (env.ok && compact) return null
+  const userEnvFailure = !env.ok && !!env.code && USER_ENV_FAILURE_CODES.has(env.code)
+  const userEnvFailureText = () =>
+    formatMessage(backendCodeMsg(env.code, undefined, env.error ?? ''))
 
   // ---- 紧凑位置（图内元素面板 / 脚本区里的错误块）：一张卡 ------------------------
   // 它在那里是插进别的内容之间的一段独立提示，不套框就散了
   if (compact) {
     const title = (key: string) => <h3 className="type-section">{en(key)}</h3>
+    if (userEnvFailure) {
+      return (
+        <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
+          <div>
+            {title('unusableTitle')}
+            <p className="mt-1 text-xs leading-relaxed text-ink-2">{userEnvFailureText()}</p>
+            <EnvironmentAdviceRow />
+          </div>
+        </Card>
+      )
+    }
     if (env.runtime?.expected) {
       return (
         <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
@@ -75,6 +101,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
               {en('incompleteAfter')}
             </p>
             <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('incompleteHint')}</p>
+            <EnvironmentAdviceRow />
           </div>
         </Card>
       )
@@ -84,6 +111,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
         <div>
           {title('missingTitle')}
           <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
+          <EnvironmentAdviceRow />
         </div>
         <AutoInstall />
         {log && <InstallLog log={log} />}
@@ -99,14 +127,19 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
    */
   return (
     <FieldGroup data-engine-env-card>
-      {!env.ok && env.runtime?.expected && (
+      {userEnvFailure && (
+        <GroupNotice tone="danger" title={en('unusableTitle')}>
+          {userEnvFailureText()}
+        </GroupNotice>
+      )}
+      {!env.ok && !userEnvFailure && env.runtime?.expected && (
         <GroupNotice tone="danger" title={en('incompleteTitle')}>
           {en('incompleteBefore')}
           {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
           {en('incompleteAfter')} {en('incompleteHint')}
         </GroupNotice>
       )}
-      {!env.ok && !env.runtime?.expected && (
+      {!env.ok && !userEnvFailure && !env.runtime?.expected && (
         <GroupNotice
           tone="danger"
           title={en('missingTitle')}
@@ -132,6 +165,10 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
         </div>
       )}
       <InterpreterRow />
+      {/* 项目里有自己的 Python 环境、用户还没决定时的一句话 + 一个主按钮（ADR 0114，T05） */}
+      <div className="empty:hidden">
+        <EnvironmentAdviceRow />
+      </div>
       {env.ok && <ProjectEnvironmentRow />}
       {env.ok && <WorkdirRow />}
       {env.ok && <InputRemapRows />}
@@ -204,7 +241,8 @@ function InstallLog({ log }: { log: string }) {
 function InterpreterRow() {
   useTranslation('errors')
   const { env, setPython } = useEnvStore()
-  const [editing, setEditing] = useState(false)
+  // 缺依赖装不了时从引导卡直达（`openEngineEnvPicker`）：弹窗一开就把「更换…」的路径输入展开，不让用户再找一遍
+  const [editing, setEditing] = useState(() => useUiStore.getState().engineEnvPick)
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
   if (!env) return null
@@ -248,7 +286,7 @@ function InterpreterRow() {
                   </Button>
                 </div>
                 <p className="type-caption">
-                  {en('useOtherHintBefore')}
+                  {en('useOtherHintBefore', { product: PRODUCT_NAME })}
                   <strong className="font-medium text-ink-2">{en('useOtherHintStrong')}</strong>
                   {en('useOtherHintAfter')}
                 </p>
@@ -269,6 +307,85 @@ function InterpreterRow() {
         {en('changeInterpreter')}
       </Button>
     </SettingRow>
+  )
+}
+
+/**
+ * 项目里有自己的 Python 环境、而用户还没决定用哪个时的一句话 + 一个主按钮（ADR 0114）。
+ *
+ * 一切都是后端 `project.recommendation` 的投影：要不要问（`decision.needs_decision`）、问哪一个
+ * （`recommended_id`）、谁锁着（`decision.locked_by`）。这里**不自写「能不能跑」的判据**——点「使用它」时后端
+ * 现场检查所选的环境，环境起不来 / 在这期间被重建会带着稳定 code 回来，原样翻成一句话。
+ */
+function EnvironmentAdviceRow() {
+  useTranslation('errors')
+  const { env, adoptCandidate, setProjectPython } = useEnvStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const rec = env?.project?.recommendation
+  if (!rec) return null
+  const hasProjectEnv = rec.candidates.some((c) => c.scope === 'project')
+  if (rec.decision.locked_by && hasProjectEnv) {
+    return (
+      <p className="mt-1.5 border-t border-border pt-1.5 text-xs leading-relaxed text-ink-3" data-env-advice-locked>
+        {en('envAdviceLocked')}
+      </p>
+    )
+  }
+  const run = async (task: () => Promise<string | null>) => {
+    setBusy(true)
+    setError(await task())
+    setBusy(false)
+  }
+  if (!rec.decision.needs_decision) {
+    // ADR 0114 之前无提示自动采用的记录（`legacy_auto`）照常生效；确认模式下给一次一键确认（T09）：对此刻在用的那个
+    // 候选走同一个采用端点，记录升级为 confirmed——一句话 + 一个主按钮，不确认也照旧能用。检测模式（默认，ADR 0114 §六）
+    // 不让用户确认环境：自动定下的就是定下了，这一行不出现（老后端没有 `mode`，它们是确认模式）
+    const confirming = (rec.decision.mode ?? 'confirm') === 'confirm'
+    const current =
+      confirming && rec.decision.consent === 'legacy_auto' ? rec.candidates.find((c) => c.current) : undefined
+    if (!current) return null
+    return (
+      <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5" data-env-advice-legacy>
+        <span className="text-xs text-ink-2">
+          {en('envAdviceLegacy', { name: current.python_relative || current.name || current.id })}
+        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(() => adoptCandidate(current))}>
+            {en('envAdviceConfirm')}
+          </Button>
+        </div>
+        {error && <p className="text-xs text-danger">{error}</p>}
+      </div>
+    )
+  }
+  const pick = rec.candidates.find((c) => c.id === rec.recommended_id)
+  if (!pick) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5" data-env-advice>
+      <span className="text-xs text-ink-2">
+        {/* 项目内的环境给项目相对路径；没有就用线索里的名字 */}
+        {en('envAdviceAsk', { name: pick.python_relative || pick.name || pick.id })}
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(() => adoptCandidate(pick))}>
+          {en('envAdviceUse')}
+        </Button>
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void run(() => setProjectPython(null))}>
+          {en('envAdviceBuiltIn', { product: PRODUCT_NAME })}
+        </Button>
+      </div>
+      {/* 这个环境对脚本要的库的覆盖度（后端 `candidate.coverage.detail`，只有检查过才有）：每个 detail 码一句人话，默认收起 */}
+      {(pick.coverage?.detail?.length ?? 0) > 0 && (
+        <Details className="text-xs text-ink-3" data-env-advice-coverage>
+          <Summary className="text-ink-2">{en('repairDetails')}</Summary>
+          <div className="mt-1">
+            <CoverageDetailList detail={pick.coverage?.detail} />
+          </div>
+        </Details>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
   )
 }
 
@@ -312,7 +429,7 @@ function ProjectEnvironmentRow() {
       }
     >
       <Button variant="ghost" size="sm" onClick={() => void setProjectPython(null)}>
-        {en('projectEnvUseBuiltIn')}
+        {en('projectEnvUseBuiltIn', { product: PRODUCT_NAME })}
       </Button>
     </SettingRow>
   )
@@ -366,7 +483,7 @@ function ManagedEnvironmentRow() {
         }
       >
         <MenuItem icon={RotateCcw} danger disabled={busy} onSelect={() => void rebuild()}>
-          {en('managedEnvRebuild')}
+          {en('managedEnvRebuild', { product: PRODUCT_NAME })}
         </MenuItem>
       </Menu>
     </SettingRow>
@@ -389,12 +506,14 @@ function ManagedEnvironmentRow() {
 export function MissingDependencyCard({
   module,
   projectEnv,
+  installRoute,
 }: {
   module: string
   projectEnv?: ProjectEnvFailure
+  installRoute?: string
 }) {
   useTranslation('errors')
-  const { env, setPython, setProjectPython } = useEnvStore()
+  const { env, setPython, setProjectPython, adoptCandidate } = useEnvStore()
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -402,9 +521,17 @@ export function MissingDependencyCard({
   const pkg = module || en('missingModulePackage')
   // 后端发现到但还没在用的候选。`projectEnv.candidates` 是这次失败时算出来的，
   // 没有它就退回环境状态里那份（用户是从设置页看到这张卡的场合）。
-  const candidates = projectEnv?.candidates?.length
-    ? projectEnv.candidates
-    : (env?.project?.can_use_project_venv ?? [])
+  const confirmation = projectEnv?.code === 'environment_confirmation_required'
+  const recommendation = projectEnv?.recommended
+  const boundCandidate = recommendation?.id && recommendation.generation
+    ? { id: recommendation.id, generation: recommendation.generation }
+    : null
+  // 确认路径只呈现这次错误里绑定了身份/代次的候选；旧响应缺少绑定时不能退回无代次采用。
+  const candidates = confirmation
+    ? (boundCandidate && recommendation ? [recommendation.venv] : [])
+    : projectEnv?.candidates?.length
+      ? projectEnv.candidates
+      : (env?.project?.can_use_project_venv ?? [])
 
   /** 四种「没接手成」各有各的下一步，绝不合并成一句 */
   const reason = (() => {
@@ -424,6 +551,9 @@ export function MissingDependencyCard({
         return en('projectEnvWorkerImport', { venv: projectEnv.venv || '.venv' })
       case 'project_env_not_found':
         return en('projectEnvNotFound', { module: pkg })
+      case 'environment_confirmation_required':
+        // 项目环境体检通过、缺的包也在里面：这是建议，下面的候选按钮就是「使用」（ADR 0114）
+        return en('projectEnvRecommended', { venv: projectEnv.recommended?.venv || '.venv', module: pkg })
       default:
         return null
     }
@@ -431,8 +561,20 @@ export function MissingDependencyCard({
 
   const applyVenv = async (rel: string) => {
     setBusy(true)
-    setError(await setProjectPython(rel))
+    setError(await (confirmation && boundCandidate
+      // 带上发现这个建议时的脚本与缺的包：后端照同一个脚本枚举候选（脚本在子目录、venv 也在子目录时才找得到），
+      // 并连缺的包一起重新体检
+      ? adoptCandidate(boundCandidate, recommendation?.script || undefined, module || undefined)
+      : setProjectPython(rel)))
     setBusy(false)
+  }
+
+  if (installRoute === 'unsupported_platform') {
+    return (
+      <Card>
+        <p className="type-caption">{translate('prep.line.depsPlatform', { ns: 'workspace', module })}</p>
+      </Card>
+    )
   }
 
   return (
@@ -453,7 +595,7 @@ export function MissingDependencyCard({
           <span className="text-xs text-ink-2">{en('projectEnvPick')}</span>
           <div className="flex flex-wrap gap-1.5">
             {candidates.map((rel) => (
-              <Button key={rel} disabled={busy} onClick={() => void applyVenv(rel)}>
+              <Button key={rel} data-env-candidate={boundCandidate?.id ?? rel} disabled={busy} onClick={() => void applyVenv(rel)}>
                 {rel}
               </Button>
             ))}

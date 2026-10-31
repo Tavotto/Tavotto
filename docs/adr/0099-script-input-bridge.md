@@ -1,7 +1,8 @@
 # ADR 0099：脚本里的 input() 在界面上作答，答案按项目记住
 
 日期：2026-09-26 · 状态：**Accepted**（通道形态、超时语义、答案存放位置（§四 A）均由用户 2026-09-26 拍板；
-位置只收在 `scriptanswers.answers_path()` 一个函数里）
+位置只收在 `scriptanswers.answers_path()` 一个函数里）· **2026-10-06 修订（§九，T08）**：复用键加上下文、执行转录供冷重放、
+getpass 改为掩码且不进记账
 相关：[0003 worker 协议 v1](0003-worker-protocol-v1.md)（本 ADR **不**改协议信封，只给 build 响应加一个字段）、
 [0004 workerd supervisor](0004-workerd-supervisor.md)（Rust 一行不动）、[0008 会话认证](0008-unified-local-session-auth.md)、
 [0014 执行语义](0014-safe-native-execution-profiles.md) / [0020 native bridge](0020-native-matplotlib-bridge.md)（native 不桥接）、
@@ -149,6 +150,68 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 - 界面上的提示与 stdout 片段一律纯文本渲染（React 文本节点，不用 `dangerouslySetInnerHTML`）。
 - stdout 片段有上限：最近 `TAIL_LINES = 40` 行、`TAIL_CHARS = 4000` 字符；提示本身截到 `PROMPT_CHARS = 2000`。
 - 会话认证不开旁路：新端点全在 guard 之内；会合目录只在 Tavotto 自己的缓存里；worker 沙盒与删除守卫原样。
+
+### 九、修订（T08，2026-10-06）：上下文匹配、执行转录、口令掩码
+
+本节**修订** §一 的 getpass 行、§四 的「键」、§五 的策略表与非交互场景表；其余条款不变（通道、超时、claim 竞争、
+无答题方快速失败、native 不桥接、子进程 input 不覆盖）。
+
+1. **答案复用键加上下文**（修订 §四「键」）。worker 每一问附一个上下文摘要 `context`
+   （`scriptinput.context_digest`：读取方式 + 提示 + **上一问之后**脚本打印的那段输出（有界）+ 本次运行里前面每一问的
+   回答；口令只按占位进摘要，不哈希它）。记住的答案按 (脚本, 运行配置引用, 序号, 读取方式, 提示, 上下文) 存
+   （`_script_inputs.json` 版本 2，条目多可选 `context` / `run_config`；旧读者忽略它们）。**只有全部对上才原样复用**；
+   提示相同而上下文 / 运行配置不同、或版本 1 留下的没有上下文的条目，**最多是建议**：重新问，事件里带
+   `suggestion`（旧答案，不预填、不自动交）与 `recheck`（`context_changed` / `config_changed` / `legacy_answer`）。
+   没有能答题的界面时就是 `script_needs_input`——菜单换了序（T00 F2 实测：提示一字不差、清单重排，旧「2」静默选错列）
+   不再画一张错图。任意 stdout 不保证语义识别：输出里有时间戳之类的易变内容会让每次都重问——这是安全方向的代价。
+2. **执行转录与冷重放**（修订 §五「非交互场景」）。build **成功**后，这一次实际用到的问答（build 响应的
+   `script_inputs`）成为不可变的执行转录，绑到 (项目, 脚本, 运行配置引用)——也就是这批 runtime 产物的身份
+   （`engine/inputtranscript.py`，存 Tavotto 数据目录，不写用户项目、不进项目包）。池会话在 `serving()` 进门时冻结策略：
+   这批产物有转录就**按转录重放**（`ReplayAnswers.transcript`），不读之后被同步 / 手改的项目答案文件；上下文对不上
+   就重新问（有界面）或 `script_needs_input`（`reason=transcript_mismatch`）。没有转录（T08 之前的产物、超出上限）
+   回到上下文匹配的项目答案。新的成功执行整条替换转录；失败的执行不动它。答案管理里改 / 删答案 = 明确要用新答案
+   重算：只作废该答案所属运行配置的转录（`_after_script_answers_changed`）；显式删除整个脚本的答案才作废全部配置。写回 verify 的一次性重放不写转录。
+3. **口令**（修订 §一 getpass 行与 §四 隐私）。界面用密码框（`type=password`、不自动补全），交出去就清空输入框；
+   答案不进 store、不进事件、不进 worker.log（原有）、**不进 worker 记账**：build 响应 / `last_build_script_inputs` /
+   执行转录里那一问只有 `secret: true`、没有值。重放到它（冷重放或写回 verify）时**重新问**；没有能答题的界面就
+   `script_needs_input`（`reason=secret_required`），绝不拿空串或 EOF 继续。这只证明 Tavotto 自己不记录口令：
+   用户脚本自己 `print` 出来、写进文件，不在这个保证里。
+4. **展示面**。同一问只有一个 id；准备会话报告在 `phase=awaiting_runtime_input` 时带 `runtime_input`
+   （`Pending.public()`：id / 序号 / 读取方式 / 是否口令，**没有**提示与答案），回答仍走 `/api/script_input/answer`。
+   前端 `scriptInputStore.claimPresentation()` / `releasePresentation()`：准备面板认领时原对话框让开，面板关掉就放手、
+   对话框接着显示同一问——关面板只换展示，不取消脚本。多标签页抢答沿用 claim 竞争。
+5. **任务诊断**。每次 build 的问答去向记成计数（`inputbroker.InputFacts`：asked / shown / answered / eof / autofilled /
+   replayed / timed_out / stopped / secret + 闭集 `no_answer`），经 `inputbroker.facts_projection` 进试运行与准备尝试的
+   T04 白名单快照（`input` 段）；提示、答案、输出片段、上下文摘要都不进。
+
+看护：`tests/test_script_input_context.py`（真 worker：F2 菜单换序重问、冷重放用转录、口令不进记账 / 落盘、重放重问口令）、
+`tests/test_script_input_transcript_api.py`（第二问依赖第一问、准备会话 `runtime_input`、HTTP / SSE / 诊断 / 项目包 /
+日志的口令哨兵、超时与停止进诊断）、`tests/test_input_transcript.py`（单元）、`web/src/components/ScriptInputDialog.test.tsx`。
+
+### 十、修订（T12，2026-10-06）：上下文摘要不进项目文件
+
+本节**修订** §九 第 1 条里「按 (…, 上下文) 存进 `_script_inputs.json` 版本 2」的存放位置；键、复用判据、答案文件位置
+（§四 A：项目的 `tavottofile/`）与明文非口令答案都不变。
+
+上下文摘要是「读取方式 + 提示 + 上一问后的输出 + 前面回答」的**无盐** sha256：菜单类输出熵很低，拿到项目文件的人照着
+脚本就能枚举出来——它不能随项目复制 / 同步 / 分享出去（合同 §3.11：stdout 的低熵 hash 不进可分享载荷）。仓库没有
+现成的持久本机密钥（`execspec._PROCESS_KEY` 每进程一换、遥测 `install_id` 受同意约束，都不能挪用），所以不做 keyed
+digest，而是把摘要**移到本机侧表** `<data_dir>/scriptanswer-contexts/<项目摘要>.json`
+（`scriptanswers.contexts_path()`）：按 (脚本, 运行配置引用, 序号, 读取方式, 提示) 索引，并绑定它所属答案的摘要——
+项目文件里的答案被别处（同步 / 手改 / 另一台机器）换掉，本机记的上下文就不再对它作数。
+
+* 项目文件 `_script_inputs.json` 仍是版本 2：条目 `index / prompt / answer / kind`，可选 `run_config`（随机 opaque 引用，
+  不是 argv 的摘要），**不再有 `context`**。旧读者（版本 1）照旧忽略多出的键。
+* 迁移：T08–T11 的开发版曾把 `context` 写进项目文件（从未发布，main 仍是版本 1）。读入时丢弃该字段、不信任它；
+  下一次写答案时文件里就不再有它。
+* 换机器 / 侧表丢了 / 答案被别处改了：本机没有对得上的上下文 → `recheck=legacy_answer`，旧答案只当建议、重新问
+  （安全方向）。答案管理里改答案：侧表随之改绑新答案（复用语义与 §九 相同）；删答案：侧表一并删。
+* 答案管理公开投影保留不透明 `run_config`，以 (脚本, 运行配置, 序号) 区分行和改 / 删目标；省略配置只表示无参数旧条目，绝不匹配全部配置。重跑按该引用取回原 argv，引用丢失 / 敏感值已清除就报错，不读取参数编辑器里无关的草稿。
+* 侧表有界（每项目 `MAX_CONTEXTS` 条，超出丢最旧，丢了只是再问一次）；不进项目包、诊断、遥测。
+* 敏感 argv 运行继续不记住答案，也不读写持久执行转录；明确的热态 verify 仍按内存记录重放。提示以带密钥的 `prompt_id` 比对，输出 / 前答上下文也用该运行密钥保护，只在内存里取输出片段，公开会合载荷不含原提示与输出。相同占位提示下菜单变了仍拒绝旧答案；口令仍只留 `secret` 标记。
+
+看护：`tests/test_input_transcript.py`（`…never_carries_a_guessable_context_digest` / `…from_another_machine…` /
+`…written_into_the_project_file_is_not_trusted…` / `…synced_answer_does_not_inherit…` / `…keep_the_local_contexts_in_step`）。
 
 ## 用例的等待上限
 

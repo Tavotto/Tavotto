@@ -6,13 +6,15 @@ import { t as translate } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS } from '@/lib/stylePanelModel'
 import { CANVAS_TEXT_FAMILIES, styleIsItalic, weightIsBold, withMachineFamilies } from '@/lib/typography'
+import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { useRenderStore } from '@/store/renderStore'
-import { optionLabel } from '../inspector/roles/registry'
+import { fontFamilyOptionLabel, optionLabel } from '../inspector/roles/registry'
 import { FontMissingHint, FontMissingTag, StyleToggle } from '../inspector/controls/textRows'
 import { IconButton } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { NumberField } from '../ui/Input'
 import { Select } from '../ui/Select'
+import { Tip } from '../ui/Tooltip'
 import { clearPath, rawValueText, readPath, writePath } from './profilePath'
 import { SettingRow, SettingValueRow } from './SettingRow'
 
@@ -151,6 +153,8 @@ const faceValue = (kind: TextRowSpec['kind'], which: 'weight' | 'style', on: boo
 export interface FigureFamilies {
   options: string[]
   unavailable: string[]
+  latinOnly?: string[]
+  names?: Record<string, string>
   /**
    * **每一张**图的运行时都报了完整的本机表（`font_families`）：这时**不在选项里**的名字就是哪个
    * 看得到的运行时都没有的字体，样式里写着它（没有哪张图正在用）也标「未安装」。只要有一个老引擎
@@ -177,10 +181,16 @@ export function figureFamilyOptions(manifests: Record<string, Manifest | null | 
   const missing = new Set<string>()
   let allKnown = true
   let seen = false
+  let latinOnly: Set<string> | null = null
   const renderable = new Set<string>(GENERIC_FAMILIES)
+  const names: Record<string, string> = {}
   for (const key of Object.keys(manifests).sort()) {
     const manifest = manifests[key]
     if (!manifest) continue
+    const safe = new Set(manifest.font_latin_only_families ?? [])
+    if (latinOnly === null) latinOnly = safe
+    else for (const v of latinOnly as Set<string>) if (!safe.has(v)) latinOnly.delete(v)
+    for (const [family, display] of Object.entries(manifest.font_family_names ?? {})) names[family] ??= display
     // 每一个看得到的运行时都报了完整本机表才算已知：混着一个老运行时，它装了什么不知道（Codex #703）
     if (!manifest.font_families?.length) allKnown = false
     seen = true
@@ -205,7 +215,8 @@ export function figureFamilyOptions(manifests: Record<string, Manifest | null | 
       else renderable.add(o)
     }
   }
-  return { options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort(), machineKnown: seen && allKnown }
+  return { latinOnly: [...(latinOnly ?? [])], options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort(), machineKnown: seen && allKnown,
+    ...(Object.keys(names).length ? { names } : {}) }
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
@@ -227,6 +238,8 @@ export function useFigureFamilies(): FigureFamilies {
     if (
       prev &&
       prev.machineKnown === next.machineKnown &&
+      JSON.stringify(prev.names ?? {}) === JSON.stringify(next.names ?? {}) &&
+      sameList(prev.latinOnly ?? [], next.latinOnly ?? []) &&
       sameList(prev.options, next.options) &&
       sameList(prev.unavailable, next.unavailable)
     )
@@ -256,6 +269,11 @@ export function StyleProfileFields({
   const set = (path: string, value: unknown) => onChange((d) => writePath(d, path, value))
   const clear = (paths: (string | null)[]) =>
     onChange((d) => paths.reduce<Record<string, unknown>>((acc, p) => (p ? clearPath(acc, p) : acc), d))
+  const font = (path: string, part: 'primary' | 'fallback', value: string | null) =>
+    onChange((d) => {
+      const next = changeFigureFont(readPath(d, path), part, value)
+      return next === null ? clearPath(d, path) : writePath(d, path, next)
+    })
 
   // 两组直接成为页面内容列的子项（分组之间 24 由外壳给），不再自己包一层 gap
   return (
@@ -270,6 +288,7 @@ export function StyleProfileFields({
               families={row.kind === 'annotation' ? CANVAS_FAMILIES : figureFamilies}
               onSet={set}
               onClear={clear}
+              onFont={font}
             />
           ) : (
             <SettingValueRow key={row.id} data-style-row={row.id} label={ROW_LABEL[row.id]()} value={textSummary(row, draft)} />
@@ -307,15 +326,19 @@ function TextRowEditor({
   families,
   onSet,
   onClear,
+  onFont,
 }: {
   row: TextRowSpec
   draft: Record<string, unknown>
   families: FigureFamilies
   onSet: (path: string, value: unknown) => void
   onClear: (paths: (string | null)[]) => void
+  onFont: (path: string, part: 'primary' | 'fallback', value: string | null) => void
 }) {
   const label = ROW_LABEL[row.id]()
   const family = readPath(draft, row.family)
+  const choice = row.kind === 'element' ? figureFontChoice(family) : null
+  const primaryFamily = choice ? choice.primary : family
   const size = readPath(draft, row.size)
   const weight = row.weight ? readFace(row.kind, 'weight', readPath(draft, row.weight)) : null
   const style = row.style ? readFace(row.kind, 'style', readPath(draft, row.style)) : null
@@ -327,7 +350,7 @@ function TextRowEditor({
   // 控件造不回来的值（`semibold`、认不出的字体名），就丢了。样式里写着控件认不出的值（字号是
   // `large`、字体是一串候选）时照原值显示、不当成没设
   const sizeRaw = size !== undefined && !sizeSet ? rawText(size) : null
-  const familyRaw = family !== undefined && !(typeof family === 'string' && family) ? rawText(family) : null
+  const familyRaw = primaryFamily != null && !(typeof primaryFamily === 'string' && primaryFamily) ? rawText(primaryFamily) : null
   // 粗 / 斜体三态：未设置（应用时保留图里原样）→ 开 → 显式关（应用时一律去掉：图内写 `normal`、
   // 画布标注写 false）→ 回到未设置。「关」与「未设置」应用起来不是一回事，所以看得出来：未设置用
   // 与面板「多个值」同一副第三态视觉（按钮下一道短横、`aria-pressed="mixed"`），名字换成「未设置」。
@@ -358,13 +381,33 @@ function TextRowEditor({
       {/* 两行控件（字体一行、「字号 · 粗体 · 斜体 · ×」一行）铺满控件列：列是贴右缩到内容宽的，
             不给定宽的话字体下拉会缩成它最短的那个选项 */}
         <div className="flex w-[var(--setting-control)] min-w-0 flex-col gap-1 py-0.5">
-        <div data-style-cell={`${row.id}.family`} className="flex min-w-0">
+        {row.kind === 'element' && (
+          <div data-style-cell={`${row.id}.fallback`} className="flex min-w-0 items-center gap-1">
+            <span className="w-16 shrink-0 text-xs text-ink-3">{translate('textBar.cjkFallback', { ns: 'inspector' })}</span>
+            <Select
+              ariaLabel={translate('textBar.cjkFallback', { ns: 'inspector' })}
+              value={choice?.fallback ?? '__auto__'}
+              onChange={(v) => onFont(row.family, 'fallback', v === '__auto__' ? null : v)}
+              options={[
+                { value: '__auto__', label: translate('textBar.cjkFallbackAuto', { ns: 'inspector' }) },
+                ...withCurrent(families.options, choice?.fallback ?? '').map((v) => ({ value: v, label: fontFamilyOptionLabel(v, families.names, families.options) })),
+              ]}
+            />
+            {choice && families.machineKnown && !families.options.includes(choice.fallback) && <FontMissingHint />}
+            {choice && (typeof primaryFamily !== 'string' || !families.latinOnly?.includes(primaryFamily)) && <Tip label={<span className="block max-w-40 whitespace-normal">{translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}</span>} side="left"><button type="button" className="shrink-0 text-xs text-ink-3" aria-label={translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}>ⓘ</button></Tip>}
+          </div>
+        )}
+        <div data-style-cell={`${row.id}.family`} className="flex min-w-0 items-center gap-1">
+          {row.kind === 'element' && <span className="w-16 shrink-0 text-xs text-ink-3">{translate('textBar.latinFont', { ns: 'inspector' })}</span>}
           <FamilySelect
             label={sp('familyOf', { row: label })}
-            value={familyRaw !== null ? RAW_FAMILY : typeof family === 'string' ? family : ''}
+            value={familyRaw !== null ? RAW_FAMILY : typeof primaryFamily === 'string' ? primaryFamily : ''}
             rawLabel={familyRaw}
             families={families}
-            onChange={(v) => (v === UNSET_FAMILY ? onClear([row.family]) : v !== RAW_FAMILY && onSet(row.family, v))}
+            allowed={choice && row.kind === 'element' ? families.latinOnly ?? [] : undefined}
+            onChange={(v) => row.kind === 'element'
+              ? v !== RAW_FAMILY && onFont(row.family, 'primary', v === UNSET_FAMILY ? null : v)
+              : v === UNSET_FAMILY ? onClear([row.family]) : v !== RAW_FAMILY && onSet(row.family, v)}
           />
         </div>
         <div className="flex h-7 min-w-0 items-center gap-1">
@@ -490,6 +533,7 @@ const FamilySelect = memo(
     value,
     rawLabel,
     families,
+    allowed,
     onChange,
   }: {
     label: string
@@ -498,6 +542,7 @@ const FamilySelect = memo(
     rawLabel: string | null
     /** 选项与不可用标记是一个对象（`useFigureFamilies` 内容没变时引用不变）：按它一次比完 */
     families: FigureFamilies
+    allowed?: readonly string[]
     /** 选到「未设置」时交出 `UNSET_FAMILY` */
     onChange: (v: string) => void
   }) {
@@ -506,7 +551,7 @@ const FamilySelect = memo(
     // 样式里写着、却没有哪张图请求过的名字（`withCurrent` 补进来的那个）：运行时的本机表已知时，
     // 它不在任何一份里 = 哪儿都画不出，与图报的不可用同样标
     if (current && families.machineKnown && !families.options.includes(current)) missing.add(current)
-    const fonts = withCurrent(families.options, current)
+    const fonts = withCurrent(allowed ? families.options.filter((v) => allowed.includes(v)) : families.options, current)
     return (
       <div className="flex min-w-0 flex-1 flex-col">
         <Select
@@ -523,7 +568,7 @@ const FamilySelect = memo(
               value: o,
               label: (
                 <span>
-                  {optionLabel('fontfamily', o)}
+                  {fontFamilyOptionLabel(o, families.names, fonts)}
                   {missing.has(o) && <FontMissingTag />}
                 </span>
               ),
@@ -534,7 +579,7 @@ const FamilySelect = memo(
       </div>
     )
   },
-  (a, b) => a.value === b.value && a.rawLabel === b.rawLabel && a.label === b.label && a.families === b.families,
+  (a, b) => a.value === b.value && a.rawLabel === b.rawLabel && a.label === b.label && a.families === b.families && a.allowed === b.allowed,
 )
 
 /* --------------------------------- 只读摘要 -------------------------------- */
@@ -545,10 +590,13 @@ const ptText = (v: unknown): string | null =>
 /** 一行文字在只读摘要里的读法：「Arial · 9 pt · 粗体」；一项都没管就是「未设置」 */
 export function textSummary(row: TextRowSpec, draft: Record<string, unknown>): string {
   const family = readPath(draft, row.family)
+  const choice = figureFontChoice(family)
+  const primary = choice ? choice.primary : family
   const size = readPath(draft, row.size)
   // 认不出的值照原值说（与编辑态同一条：不当成没设）
   const parts = [
-    typeof family === 'string' && family ? optionLabel('fontfamily', family) : family !== undefined ? rawText(family) : null,
+    typeof primary === 'string' && primary ? optionLabel('fontfamily', primary) : primary != null ? rawText(primary) : null,
+    choice ? optionLabel('fontfamily', choice.fallback) : null,
     ptText(size) ?? (size !== undefined ? rawText(size) : null),
   ]
   const weight = row.weight ? readFace(row.kind, 'weight', readPath(draft, row.weight)) : null

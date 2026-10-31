@@ -3,6 +3,16 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「首次使用契约（2026-08-25，勿破坏）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_codex_plugin.py`、`tests/test_codex_install_cli.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：先检查不安装；装完新开会话；安装命令两条分开写、唯一出处 `brand.CODEX_SPARSE_PATHS`；`openai.yaml` 的 `command` 与 `codex.mcp.json` 同步
+
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 10
+改到: `skills/tavotto-figure/SKILL.md` 与 `references/`、README 的首次使用章节、安装命令、`agents/openai.yaml`
+主题: 首次使用契约 → `first-use-contract.md`
+必守要点: 先检查不安装；装完新开会话；安装命令唯一出处 `brand.CODEX_SPARSE_PATHS`；`openai.yaml` 的 `command` 同步 `codex.mcp.json`
+-->
 
 - **普通用户安装绝不需要 clone 仓库**，也不需要 pnpm/npm/cargo/Tauri/前端构建/
   `run.sh`/测试套件/editable install。README 的「在 Codex 中第一次使用

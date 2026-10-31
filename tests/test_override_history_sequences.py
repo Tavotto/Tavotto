@@ -70,6 +70,7 @@ ANCHOR_ATOL = 0.002
 #: redo 只在 undo 之后、下一次提交之前可用，按固定权重抽，12 步里常常一次都碰不上。
 OPS = (("style", 3), ("drag", 4), ("move_axes", 2), ("resize", 2), ("undo", 3), ("redo", 5))
 _FRAC = ("pos_frac", "loc_frac")
+_COMMITS = ("style", "drag", "move_axes", "resize")
 
 
 @pytest.fixture(scope="module")
@@ -147,12 +148,23 @@ class Generator:
         )
         fig = next((e for e in base["elements"] if e["gid"] == "figure"), None)
         self.size = _field(fig, "size_mm")["value"] if fig and _field(fig, "size_mm") else None
+        self.n = 0
+        self.issued: set[str] = set()
 
     def step(self, h: History, man_now: dict) -> str:
         rng = self.rng
         can = {"undo": h.ptr > 0, "redo": h.ptr < len(h.states) - 1}
         ops = [(k, w) for k, w in OPS if can.get(k, True)]
         kind = rng.choices([k for k, _w in ops], [w for _k, w in ops])[0]
+        # 每类提交动作的保底配额：按权重抽签时，候选池大小（rng.choice 消耗的随机位数）一变，
+        # 整条随机流就跟着换，某类动作可能整批种子都抽不到。剩余步数刚好只够补齐没出现过的
+        # 提交动作时，改为强制补它——每条序列必含全部四类提交，与种子、候选池大小无关。
+        owed = [k for k in _COMMITS if k not in self.issued]
+        if owed and len(owed) >= STEPS - self.n:
+            kind = owed[0]
+        self.n += 1
+        if kind in _COMMITS:
+            self.issued.add(kind)
         if kind == "undo":
             h.ptr -= 1
             return "undo"

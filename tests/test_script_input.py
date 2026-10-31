@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from tavotto.engine import inputbroker, pool, scriptanswers, scriptinput
+from tavotto.engine import inputbroker, inputtranscript, pool, scriptanswers, scriptinput
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -198,12 +198,14 @@ def test_all_four_entry_points_are_bridged_on_both_planes(plane, figs, tmp_path,
     ]
     # 用户要看到脚本列出的编号清单才能选
     assert "1. alpha" in asked[0]["stdout_tail"] and "2. beta" in asked[0]["stdout_tail"]
+    # 口令只交给脚本：记账里只有 `secret: true`，没有值（ADR 0099 §九）
     assert [r["answer"] for r in resp["script_inputs"]] == [
         "1,2",
         "line-answer",
-        "s3cret",
+        None,
         "line-answer",
     ]
+    assert [bool(r.get("secret")) for r in resp["script_inputs"]] == [False, False, True, False]
     assert worker.last_build_script_inputs == resp["script_inputs"]
     # 按项目记住——口令除外
     kept = scriptanswers.entries(figs, "all.py")
@@ -241,13 +243,31 @@ def test_a_getpass_answer_leaves_no_trace_on_disk_or_in_the_log(tmp_path, capsys
 
 @needs_worker
 def test_remembered_answers_are_filled_in_without_asking(plane, figs, tmp_path, frontend):
+    """答过一次（记下了上下文）：同样的输出、同样的提示，下次运行直接用，不再弹框。走的是项目答案文件这条路
+    （执行转录先作废，见 `test_script_input_context.py` 的冷重放用例）。"""
+    (figs / "one.py").write_text(ONE_INPUT, encoding="utf-8")
+    fe = frontend({"which: ": "2"})
+    pool.build("one.py", str(figs), "__main__")
+    inputtranscript.forget(figs, "one.py")
+    pool.invalidate("one.py", str(figs))
+    fe.answers.clear()
+    pool.build("one.py", str(figs), "__main__")
+    assert (tmp_path / "result.json").read_text(encoding="utf-8").splitlines() == ['"2"', '"2"']
+    assert len(fe.of("script.input_requested")) == 1
+    assert [(a["index"], a["answer"]) for a in fe.of("script.input_autofilled")] == [(1, "2")]
+
+
+@needs_worker
+def test_an_answer_without_context_is_only_a_suggestion(plane, figs, tmp_path, frontend):
+    """T08 之前记下的答案（没有上下文摘要）：不确定是不是同一份菜单——重新问，旧答案只当建议（ADR 0099 §九）。"""
     (figs / "one.py").write_text(ONE_INPUT, encoding="utf-8")
     scriptanswers.remember(figs, "one.py", 1, "which: ", "2")
-    fe = frontend(present=True)
+    fe = frontend({"which: ": "1"})
     pool.build("one.py", str(figs), "__main__")
-    assert (tmp_path / "result.json").read_text(encoding="utf-8").splitlines() == ['"2"']
-    assert fe.of("script.input_requested") == []
-    assert [(a["index"], a["answer"]) for a in fe.of("script.input_autofilled")] == [(1, "2")]
+    assert (tmp_path / "result.json").read_text(encoding="utf-8").splitlines() == ['"1"']
+    (asked,) = fe.of("script.input_requested")
+    assert asked["suggestion"] == "2" and asked["recheck"] == "legacy_answer"
+    assert fe.of("script.input_autofilled") == []
 
 
 @needs_worker
@@ -400,6 +420,24 @@ def test_uncaught_timeout_reports_script_input_timeout(plane, figs, frontend, mo
         pool.build("one.py", str(figs), "__main__")
     assert ei.value.code == "script_input_timeout"
     assert ei.value.extra.get("prompt") == "which: "
+    assert ei.value.extra.get("input_kind") == "input"
+
+
+@needs_worker
+def test_a_timed_out_getpass_reports_its_input_kind(plane, figs, frontend, monkeypatch):
+    """getpass 等到超时、EOF 让脚本失败：错误要带出读取方式，界面才会按口令说明不会被记住（Codex #973）。"""
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "1.5")
+    (figs / "pw.py").write_text(
+        "import getpass\nimport matplotlib.pyplot as plt\n"
+        "secret = getpass.getpass('password: ')\nplt.plot([0, len(secret)])\n",
+        encoding="utf-8",
+    )
+    frontend({})
+    with pytest.raises(pool.WorkerError) as ei:
+        pool.build("pw.py", str(figs), "__main__")
+    assert ei.value.code == "script_input_timeout"
+    assert ei.value.extra.get("input_kind") == "getpass"
+    assert pool.recovery_params(ei.value)["input_kind"] == "getpass"
 
 
 @needs_worker
@@ -550,3 +588,20 @@ def test_private_channel_directory_is_owner_only(tmp_path):
         pytest.skip("mode bits are POSIX-only")
     ch = _channel(tmp_path, private=True)
     assert ch.dir.stat().st_mode & 0o077 == 0
+
+
+def test_a_no_answer_reply_remembers_how_the_script_read_so_a_first_getpass_is_a_secret(
+    tmp_path, monkeypatch
+):
+    """#818 r4220889705：首问 getpass 的 reason 是 no_interactive_client；读取方式必须随错误带出去（worker 的
+    `script_needs_input` 载荷里的 `input_kind`），否则 MCP 桥分不出口令。"""
+    from tavotto.engine import worker
+
+    for kind in ("getpass", "input"):
+        ch = _channel(tmp_path / kind, private=False)
+        _answer_with(ch, monkeypatch, '{"no_answer": true, "reason": "no_interactive_client"}')
+        with pytest.raises(scriptinput.ScriptNeedsInput) as caught:
+            ch.ask("Password:", kind)
+        err = worker._needs_input_error(caught.value)
+        assert err.extra["input_kind"] == kind
+        assert err.extra["reason"] == "no_interactive_client"

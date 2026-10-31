@@ -198,7 +198,10 @@ def _authorize(client, script: str, timeout: float = 600.0) -> tuple[dict, dict]
     resp = client.post("/api/engine/dependencies/plan", json={"script": script})
     assert resp.status_code == 200, resp.get_json()
     plan = resp.get_json()["plan"]
-    resp = client.post("/api/engine/dependencies/prepare", json={"plan_id": plan["plan_id"]})
+    resp = client.post(
+        "/api/engine/dependencies/prepare",
+        json={"plan_id": plan["plan_id"], "impact_digest": plan["impact_digest"]},
+    )
     assert resp.status_code == 200, resp.get_json()
     deadline = time.time() + timeout
     while True:

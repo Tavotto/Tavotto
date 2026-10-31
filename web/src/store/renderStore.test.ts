@@ -233,7 +233,7 @@ describe('building：文件级的构建提示不写进变体条目', () => {
     store.noteBuilding('Fig1.pdf', { cold: true, cost: 'heavy' })
 
     let s = useRenderStore.getState()
-    expect(s.building['Fig1.pdf']).toEqual({ cold: true, cost: 'heavy' })
+    expect(s.building['Fig1.pdf']).toEqual({ cold: true, cost: 'heavy', phase: 'rendering', startedAt: expect.any(Number) })
     // 另一个副本的条目没被盖成「渲染中」——那样它会永远转圈（没人来收）
     expect(s.byKey[renderKey('Fig1.pdf', [])].status).toBe('ready')
 

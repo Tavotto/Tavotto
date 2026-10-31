@@ -297,6 +297,31 @@ class TestRegistryApi:
         # 旧的 candidates 口径不因清单放宽而改变：show-only 不在 candidates 里
         assert all(c["script"] != "show_only.py" for c in view["candidates"])
 
+    def test_all_scripts_linked_uses_the_scan_predicate(self, client, tmp_path):
+        """T13b：素材库脚本行的「已关联 N 张图」与导入即扫描同一判据（`probe.linked_scripts`）。只在注册表里登记了图名、
+        脚本一次没跑过、项目里也没有同名图的，不算已关联（修前：前端只看 `registered`，从没运行的脚本显示「已关联 1 张图」）；
+        项目里有同名图文件的算。"""
+        figs = _make_project(tmp_path)
+        write(figs, "never_ran.py", SHOW_ONLY)
+        write(figs, "has_file.py", SHOW_ONLY)
+        (figs / "HasFile.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "never_ran.py": {"entry": "main", "stems": ["NeverRan"]},
+                        "has_file.py": {"entry": "main", "stems": ["HasFile"]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+        by = {e["script"]: e for e in client.get("/api/registry").get_json()["all_scripts"]}
+        assert by["never_ran.py"]["registered"] is True and by["never_ran.py"]["linked"] is False
+        assert by["has_file.py"]["registered"] is True and by["has_file.py"]["linked"] is True
+
     @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink 语义")
     def test_symlink_escape_is_rejected(self, client, tmp_path):
         """realpath 之后仍要在项目内——symlink 指到项目外必须拒绝
@@ -354,6 +379,39 @@ class TestProductApiProbe:
             assert d["capture_source"] == "pyplot"
             cfg = json.loads((figs / "tavotto_registry.json").read_text(encoding="utf-8"))
             assert cfg["scripts"]["show_only.py"]["stems"] == ["show_only"]
+        finally:
+            engine_pool.shutdown_all(str(figs), wait=True)
+
+    def test_pdf_pages_reach_the_http_response(self, client, tmp_path):
+        """#1370：写进多页 PDF 的图被逐页认领，`pdf_pages` 经产品 API 到达前端（胶囊靠它）。"""
+        figs = _make_project(tmp_path)
+        write(
+            figs,
+            "deck.py",
+            "import matplotlib.pyplot as plt\n"
+            "from matplotlib.backends.backend_pdf import PdfPages\n"
+            "with PdfPages('deck.pdf') as pdf:\n"
+            "    for i in range(2):\n"
+            "        fig = plt.figure(figsize=(2, 2))\n"
+            "        pdf.savefig(fig)\n"
+            "        plt.close(fig)\n",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+        try:
+            resp = client.post("/api/registry/probe", json={"script": "deck.py"})
+            assert resp.status_code == 200
+            result = resp.get_json()
+            assert result["stems"] == ["deck", "deck-2"]
+            (item,) = result["pdf_pages"]
+            assert {k: item[k] for k in ("name", "pages", "captured", "stems")} == {
+                "name": "deck.pdf",
+                "pages": 2,
+                "captured": 2,
+                "stems": ["deck", "deck-2"],
+            }
+            # PR2：页序与路径（safe 档写在沙盒里，scope 为 execution）
+            assert item["page_stems"] == ["deck", "deck-2"]
+            assert item["path"] == "deck.pdf" and item["complete"] is True
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
 
@@ -450,6 +508,7 @@ class TestEntrySelection:
         result = engine_probe.probe(figs, "allfail.py")
         err = result["error"]
         assert err["code"] == engine_probe.ERROR_PROBE_FAILED
+        assert err["params"]["worker_code"] == "script_error"
         assert "first boom" in err["message"]
         assert "first boom" in err.get("traceback", "")
         assert result["entry"] is None and result["stems"] == []

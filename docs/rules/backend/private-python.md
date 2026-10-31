@@ -2,6 +2,16 @@
 
 > 随 U05 新增；`src/tavotto/AGENTS.md` 只留速查行。这里是这一主题规则的**唯一全文**。改规则改这里，并同步那一行。
 > 架构决策在 `docs/adr/0063-private-python-provisioning.md`；目标资格另立一份 ADR（0064，随 PR C）。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_private_python.py`、`tests/test_private_python_tls.py`、`tests/test_private_python_transaction.py`、`tests/test_private_python_bundle.py`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：只补基础解释器来源、安装器仍是 pip；校验先于一切执行；下载 / 缓存认原锁 SHA；证书按平台原生校验、失败报 `private_python_tls`；`enabled` 全 false 直到目标资格取得（来源链与签名细节见细则）
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 170
+改到: `engine/privatepython.py`、`engine/tlstrust.py`、`resources/private_python_lock.json`、`managedenv.base_python` 的末级、代记录的 `base_runtime`
+主题: 私有完整 Python（ADR 0063 / 0111 / 0112）→ `private-python.md`
+必守要点: 安装器仍是 pip；校验先于一切执行；下载 / 缓存认原锁 SHA；失败报 `private_python_tls`；`enabled` 全 false 到资格取得
+-->
 
 它只回答一个问题：**受管环境的基础解释器从哪来**（这台机器没有合格 Python 时）。装包仍是 U04 的代事务
 （`docs/rules/backend/dependency-repair-and-packages.md`「事务：受管环境按代」）+ pip；本模块交出去的只是一条解释器路径。
@@ -69,7 +79,7 @@
   `private_python` 载荷（`offer_payload()`：id / 版本 / 目标 / `download_bytes` / `cached` / `network_required`，
   无机器路径），`offer()` 的受管目标同样带它；界面必须把 `download_bytes` 说出口。执行端按
   `_GenerationJob.provision_private` 在**锁内、建 venv 之前**先供应（进度状态 `downloading_python`，`result.download`
-  带 stage / 字节数）；**重建 / 包管理首装没有明示过下载**，没有 base 就照旧 `managed_env_unavailable`。
+  带 stage / 字节数）；包管理首装的授权在作业（`PackageJob.private_python`）上、重建的授权是调用方回传用户看过的载荷 id + `origin` + `download_bytes`（`rebuild_managed(private_python_id=, seen_origin=, seen_download_bytes=)`，`resolve_rebuild_offer` 与此刻 `offer_payload()` 逐项一致才供应；来源或下载量变了 = `repair_plan_stale`、零请求；端点在占 id 前先拒）——都不是静默下载；两者都没有授权（或连私有 Python 都不提供）时没有 base 才是 `managed_env_unavailable`。设置→包管理的能力载荷（`list_managed_packages().capability`）带 `private_python`（可自动准备）/ `checking`（后台还在探，不闪）/ `rejected_python`（装着的 Python 因版本区间被拒：版本 + 方向 + 支持范围，来自 `managedenv.rejected_python_versions()`）。
   锁文件 `enabled=false` 且没开逃生门时行为与 U04 逐字相同。
 - **干净机器的第一份计划**（PR B）：一个渲染解释器都没有时 `deprepair.private_python_target()` 以私有 Python 为目标
   ——已供应就真量，没落盘用替身（`private_fresh_facts()`：`privatepython.standin_marker_env` + adapter 已有 + 宿主 stdlib）；
@@ -105,7 +115,7 @@
   缺根 → `private_python_tls` 且日志带异常、主机名不符同样拒、注入带根的上下文（truststore / 标准库各一）能下、协议层
   SSLError 与连不上仍是 offline、truststore 缺失时响亮退回；AST 钉不降级 / 只有一处 import / spec 收得进）
   + `tests/test_private_python_transaction.py`（真事务：一次授权供应 + 建代、
-  资格未取得时行为不变、offer / 单包计划带下载、重建 / 首装不下载、离线 safe_stop 不登记代、坏 hash 旧 active 原样、
+  资格未取得时行为不变、offer / 单包计划带下载、重建 / 首装只在带授权时下载（无授权零请求）、离线 safe_stop 不登记代、坏 hash 旧 active 原样、
   下载期间取消无残留、两项目共享一份、有代记着的旧 runtime 不删；`TestCleanMachine` 四条干净机器；`TestRealChain`
   真归档要 `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_foundation_private_python.py`（FO24 / FO25 / FO26 经产品 HTTP
   入口，进程内 test_client）+ `web/src/components/DependencyPrepareDialog.test.tsx` + `tests/test_mcp_server.py` 的干净机器一条。
@@ -122,7 +132,12 @@
 - 校验先于一切执行（整份 sha256 → 逐成员校验 → 可执行位 → 真起）
 - 离线有缓存零请求、无缓存有界 `private_python_offline`
 - 联网只有 urllib（TLS 默认、代理只从环境变量）
-- 授权绑在计划的 `private_python` 载荷上、重建 / 首装不下载
+- 授权绑在计划的 `private_python` 载荷上、重建 / 首装只在带授权时下载
 - 取消按消费者、提交点后无效
 - 旧 runtime 有代记着（`referenced_base_runtimes`）就不退役
 - `enabled` 按 ADR 0064 §四 逐目标翻（例外写进 ADR），`TAVOTTO_PRIVATE_PYTHON` 只是工程逃生门
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+- 只补基础解释器来源、安装器仍是 pip；校验先于一切执行；归档来源包内 → 缓存 → 锁 URL（主地址慢或失败换镜像）、下载/缓存认原锁 SHA，macOS 包内签名派生物另验同 Team 的 app 封条（ADR 0111 修订）；证书按平台原生校验、失败报 `private_python_tls`；`enabled` 全 false 直到目标资格取得
+- 版本不合时自动换 Python（ADR 0114 §七，`engine/pyversionfix.py`）也走这里的私有 Python：基础解释器只经 `managedenv.base_pick(within=)` 挑（先系统、后私有，私有的锁里只有一个版本，不在需要范围内就不是候选），下载字节进计划、复用同一条进度通道与取消；只往受管环境另建一代，用户的环境不碰

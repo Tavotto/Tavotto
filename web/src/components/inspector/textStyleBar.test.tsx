@@ -26,6 +26,8 @@ import { flushPreviewFrame, resetPreview, setHistoryMode } from '@/store/svgPrev
 import { emptyProject, type PanelObject } from '@/types/document'
 import { propertyPathOf } from '@/lib/typography'
 import { ElementInspector } from './ElementInspector'
+import { richViewOf } from '@/components/ui/RichTextField'
+import { TextSelection } from 'prosemirror-state'
 import { hasTextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { FIGURE_TEXT_SINGLE_PROPS } from './typographyAdapter'
 
@@ -256,10 +258,22 @@ describe('高频样式是带可见标签的行', () => {
     // （平铺那一份是有 `data-prop` 的），工具条却没有补上锚点。表现是
     // 「问题面板上点定位，焦点没落到字段上」——而界面并不报错。
     for (const prop of FIGURE_TEXT_SINGLE_PROPS) {
+      if (prop === 'fontFallback') continue // 旧引擎没声明此能力
       const path = propertyPathOf('figureText', prop)
       expect(path, prop).toBeTruthy()
       expect(host.querySelector(`[data-prop="${path}"]`), prop).not.toBeNull()
     }
+  })
+
+  it('新引擎声明中文字体能力时也有独立锚点', async () => {
+    const upgraded = { ...titleEl, editable: titleEl.editable.map((field) =>
+      field.prop === 'fontfamily' ? { ...field, font_fallback_selection: true } : field,
+    ) }
+    useRenderStore.getState().patch(renderKeyOf(livePanel()), {
+      manifest: { ...manifest, elements: [manifest.elements[0], upgraded, legendEl] },
+    })
+    await mount('axes_0.title')
+    expect(host.querySelector('[data-prop="fontfamily.fallback"]')).not.toBeNull()
   })
 
   it('工具条摘走的那几条 = 规范表算出来的那几条（不许手抄第二份）', () => {
@@ -359,5 +373,34 @@ describe('行里的控件与属性页同一条写入路径', () => {
       reset.click()
     })
     expect(overrideOf('axes_0.title', 'fontsize')).toBeUndefined()
+  })
+})
+
+
+describe('公式字体跟正文（ADR 0152 PR 5）', () => {
+  it('内容框里给一段设斜体：同一次编辑顺带把字体族写成当前正文族；再改不重复写', async () => {
+    await mount('axes_0.title')
+    const box = document.querySelector('[data-prop="text"] [data-rich-text="field"]') as HTMLElement
+    const view = richViewOf(box)!
+    await act(async () => {
+      box.focus()
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, 1)))
+    })
+    await act(async () => {
+      ;(document.querySelector('[data-prop="text"] [data-rich-action="italic"]') as HTMLElement).click()
+    })
+    expect(String(overrideOf('axes_0.title', 'text'))).toContain('$\\mathit{')
+    expect(overrideOf('axes_0.title', 'fontfamily')).toBe('serif')
+  })
+
+  it('只改字、没用样式：不碰字体族', async () => {
+    await mount('axes_0.title')
+    const box = document.querySelector('[data-prop="text"] [data-rich-text="field"]') as HTMLElement
+    const view = richViewOf(box)!
+    await act(async () => {
+      box.focus()
+      view.dispatch(view.state.tr.insertText('x', 0))
+    })
+    expect(overrideOf('axes_0.title', 'fontfamily')).toBeUndefined()
   })
 })

@@ -96,7 +96,7 @@ def test_same_value_does_not_rewrite_the_file(data_dir):
     layoutsession.record_owner("d_a", "/a")
     path = layoutsession.state_path()
     os.utime(path, ns=(0, 10**9))
-    layoutsession.set_last("/a", "d_a", "Fig A")
+    # 只有每次保存都会调的 record_owner 是「同值不写」；durable set_last 的语义见 test_layout_recovery_backend
     assert layoutsession.record_owner("d_a", "/a") is False
     assert path.stat().st_mtime_ns == 10**9, "同值又写了一遍——每次自动保存都会多 fsync 一个文件"
     assert layoutsession.record_owner("d_a", "/b") is True
@@ -128,19 +128,23 @@ def test_concurrent_writers_lose_nothing(data_dir):
 
 
 @pytest.mark.parametrize(
-    "content",
-    [b"{not json", b'{"projects": {"/a": {"last": {"doc_id": "d", "at": NaN}}}}', b"[1, 2]"],
-    ids=["not-json", "nan", "wrong-shape"],
+    "content", [b"{not json", b"[1, 2]", b""], ids=["not-json", "wrong-shape", "empty"]
 )
-def test_corrupt_file_reads_as_empty_and_next_write_replaces_it(data_dir, content):
+def test_corrupt_file_is_preserved_then_replaced_by_the_next_write(data_dir, content):
+    """旧合同「读坏了当成空的、下一次写整份替换」被 1.1 替代：当空照旧，但**先留原字节**，
+    状态是 `degraded`（不是首次空的 `missing`）；原字节在 `corrupt-*.json` 里一个不少。"""
     path = layoutsession.state_path()
     path.parent.mkdir(parents=True)
     path.write_bytes(content)
     assert layoutsession.last_for("/a") is None
     assert layoutsession.owners() == {}
+    assert layoutsession.read_status() == "degraded"
     layoutsession.set_last("/a", "d_a", "A")
     assert layoutsession.last_for("/a")["doc_id"] == "d_a"
     json.loads(path.read_text(encoding="utf-8"))  # 换成了合法 JSON
+    copies = list(path.parent.glob("layout-sessions.corrupt-*.json"))
+    assert [c.read_bytes() for c in copies] == [content]
+    assert layoutsession.read_status() == "ok"
 
 
 def test_bad_entries_are_dropped_good_ones_kept(data_dir):
@@ -169,7 +173,7 @@ def test_an_overflowing_timestamp_reads_as_a_bad_value_not_an_error(data_dir):
         encoding="utf-8",
     )
     assert layoutsession.last_for("/a") == {"doc_id": "d_a", "name": "A", "at": 0}
-    assert layoutsession.set_last("/a", "d_b", "B")["doc_id"] == "d_b"
+    assert layoutsession.set_last("/a", "d_b", "B")["last"]["doc_id"] == "d_b"
     assert json.loads(path.read_text(encoding="utf-8"))["projects"]["/a"]["last"]["doc_id"] == "d_b"
 
 
@@ -190,11 +194,14 @@ def test_export_defaults_roundtrip_and_limits(data_dir):
 def test_layout_session_endpoints_group_by_project(client, tmp_path):
     a = _project(client, tmp_path, "a", default=True)
     b = _project(client, tmp_path, "b")
-    assert client.get("/api/layout-session", headers=_pj(a["id"])).get_json() == {"last": None}
+    assert client.get("/api/layout-session", headers=_pj(a["id"])).get_json()["last"] is None
+    client.put("/api/autosave/d_a", json=PD, headers=_pj(a["id"]))
+    client.put("/api/autosave/d_b", json=PD, headers=_pj(b["id"]))
     r = client.put(
         "/api/layout-session/last", json={"doc_id": "d_a", "name": "A"}, headers=_pj(a["id"])
     )
     assert r.status_code == 200 and r.get_json()["last"]["doc_id"] == "d_a"
+    assert r.get_json()["state"] == "durable"
     client.put(
         "/api/layout-session/last", json={"doc_id": "d_b", "name": "B"}, headers=_pj(b["id"])
     )
@@ -204,8 +211,8 @@ def test_layout_session_endpoints_group_by_project(client, tmp_path):
     )
     got = client.get(f"/api/layout-session?pj={b['id']}").get_json()["last"]
     assert got["doc_id"] == "d_b" and got["name"] == "B"
-    # 回给前端的只有这三样，不带项目路径
-    assert set(got) == {"doc_id", "name", "at"}
+    # 回给前端的只有这几样（revision = 校验时的槽位正文），不带项目路径
+    assert set(got) == {"doc_id", "name", "at", "revision"}
     # 键是规范化后的项目路径（与 `_project_id` 同一份判断），不是短 id
     snap = layoutsession.snapshot()
     assert set(snap["projects"]) == {
@@ -215,7 +222,8 @@ def test_layout_session_endpoints_group_by_project(client, tmp_path):
 
 
 def test_layout_session_without_any_project_is_its_own_group(client):
-    assert client.get("/api/layout-session").get_json() == {"last": None}
+    assert client.get("/api/layout-session").get_json()["last"] is None
+    client.put("/api/autosave/d_loose", json=PD)
     client.put("/api/layout-session/last", json={"doc_id": "d_loose", "name": "L"})
     assert client.get("/api/layout-session").get_json()["last"]["doc_id"] == "d_loose"
     assert layoutsession.snapshot()["projects"] == {}
@@ -296,7 +304,7 @@ def test_put_last_refuses_a_layout_owned_by_another_project(client, tmp_path):
     )
     assert r.status_code == 409 and r.get_json()["code"] == "layout_foreign"
     # 没记成 G 的 last（文件里也没有），G 也读不到它
-    assert client.get("/api/layout-session", headers=_pj(g["id"])).get_json() == {"last": None}
+    assert client.get("/api/layout-session", headers=_pj(g["id"])).get_json()["last"] is None
     assert layoutsession.project_key(g["figures_dir"]) not in layoutsession.snapshot()["projects"]
     # F 自己记它照常
     r = client.put(
@@ -327,7 +335,7 @@ def test_a_polluted_last_owned_by_another_project_reads_as_none(client, tmp_path
     layoutsession.set_last(kf, "d_f", "F")
     layoutsession.set_last(kg, "d_f", "F")  # 归属还不知道时记下（与验收机器上的状态同形）
     layoutsession.record_owner("d_f", kf)
-    assert client.get("/api/layout-session", headers=_pj(g["id"])).get_json() == {"last": None}
+    assert client.get("/api/layout-session", headers=_pj(g["id"])).get_json()["last"] is None
     assert (
         client.get("/api/layout-session", headers=_pj(f["id"])).get_json()["last"]["doc_id"]
         == "d_f"
@@ -382,7 +390,9 @@ def _slot_with_panels(doc_id: str, *file_ids: str) -> None:
 def _owner(client, pid: str, doc_id: str) -> dict:
     r = client.get(f"/api/layout-session/owner?doc_id={doc_id}", headers=_pj(pid))
     assert r.status_code == 200, r.get_json()
-    return r.get_json()
+    body = r.get_json()
+    body.pop("revision")  # revision 另有专门用例（test_layout_recovery_backend）
+    return body
 
 
 def test_owner_evidence_owners_record_is_decisive(client, tmp_path):
@@ -392,8 +402,16 @@ def test_owner_evidence_owners_record_is_decisive(client, tmp_path):
     _slot_with_panels("d_f", "a.pdf")
     layoutsession.record_owner("d_f", layoutsession.project_key(f["figures_dir"]))
     # 素材在 G 里也有，但 owners 记着 F：别的项目的就是别的项目的（projF → projG 的形状）
-    assert _owner(client, g["id"], "d_f") == {"owner": "other", "evidence": "owners"}
-    assert _owner(client, f["id"], "d_f") == {"owner": "this", "evidence": "owners"}
+    assert _owner(client, g["id"], "d_f") == {
+        "owner": "other",
+        "evidence": "owners",
+        "verified": True,
+    }
+    assert _owner(client, f["id"], "d_f") == {
+        "owner": "this",
+        "evidence": "owners",
+        "verified": True,
+    }
 
 
 def test_owner_evidence_from_the_projects_timeline(client, tmp_path):
@@ -401,7 +419,11 @@ def test_owner_evidence_from_the_projects_timeline(client, tmp_path):
     versions = Path(g["figures_dir"]) / "tavottofile" / "versions"
     versions.mkdir(parents=True)
     (versions / "d_old.json").write_text("{}", encoding="utf-8")
-    assert _owner(client, g["id"], "d_old") == {"owner": "this", "evidence": "versions"}
+    assert _owner(client, g["id"], "d_old") == {
+        "owner": "this",
+        "evidence": "versions",
+        "verified": False,
+    }
 
 
 def test_owner_evidence_from_assets_all_in_the_project(client, tmp_path):
@@ -411,7 +433,11 @@ def test_owner_evidence_from_assets_all_in_the_project(client, tmp_path):
     (root / "sub").mkdir()
     (root / "sub" / "b.png").write_bytes(b"x")
     _slot_with_panels("d_all", "a.pdf", "sub/b.png", "runtime:abc")
-    assert _owner(client, g["id"], "d_all") == {"owner": "this", "evidence": "assets"}
+    assert _owner(client, g["id"], "d_all") == {
+        "owner": "this",
+        "evidence": "assets",
+        "verified": False,
+    }
     # 有一张不在这个项目里：不算证据
     _slot_with_panels("d_some", "a.pdf", "missing.pdf")
     assert _owner(client, g["id"], "d_some")["owner"] == "unknown"
@@ -423,7 +449,11 @@ def test_owner_evidence_from_assets_all_in_the_project(client, tmp_path):
     _slot_with_panels("d_runtime", "runtime:abc")
     assert _owner(client, g["id"], "d_runtime")["owner"] == "unknown"
     # 槽位不在
-    assert _owner(client, g["id"], "d_nothing") == {"owner": "unknown", "evidence": None}
+    assert _owner(client, g["id"], "d_nothing") == {
+        "owner": "unknown",
+        "evidence": None,
+        "verified": False,
+    }
 
 
 def test_owner_evidence_rejects_bad_ids(client):
@@ -540,4 +570,4 @@ def test_tutorial_reset_forgets_the_tutorial_session_state(client, monkeypatch):
     assert layoutsession.last_for("/elsewhere")["doc_id"] == "d_user"
     assert layoutsession.owners()["d_user"] == "/elsewhere"
     new_pid = body["project"]["id"]
-    assert client.get("/api/layout-session", headers=_pj(new_pid)).get_json() == {"last": None}
+    assert client.get("/api/layout-session", headers=_pj(new_pid)).get_json()["last"] is None

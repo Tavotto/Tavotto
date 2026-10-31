@@ -118,6 +118,11 @@ def _dev_tree_candidates() -> list[str]:
     return [os.path.join(base, "release", EXE_NAME), os.path.join(base, "debug", EXE_NAME)]
 
 
+#: 会话交给调用方到它发出第一条请求之间的租约（毫秒），租约内 workerd 的 LRU 淘汰不挑它
+#: （ADR 0004 §淘汰）。与 Python 池的 `pool.ACQUIRE_LEASE` 是同一件事、同一个数。
+ACQUIRE_LEASE_MS = 30_000
+
+
 def find_workerd() -> str | None:
     """workerd 可执行文件的路径；显式禁用或找不到回 `None`。
 
@@ -183,7 +188,9 @@ class WorkerdClient:
         base.mkdir(parents=True, exist_ok=True)
         return str(base / "workerd.log")
 
-    def ensure_started(self, max_sessions: int = 3, max_queue: int = 32) -> None:
+    def ensure_started(
+        self, max_sessions: int = 3, max_queue: int = 32, acquire_lease_ms: int = ACQUIRE_LEASE_MS
+    ) -> None:
         """确保有一条活着的 workerd；崩过的自动重启（有上限）。
 
         hello 协商**在 `_lock` 之外**发：它是一次要等响应的往返，而 reader 线程
@@ -256,7 +263,11 @@ class WorkerdClient:
                 "hello",
                 None,
                 None,
-                {"max_sessions": max_sessions, "max_queue": max_queue},
+                {
+                    "max_sessions": max_sessions,
+                    "max_queue": max_queue,
+                    "acquire_lease_ms": acquire_lease_ms,
+                },
                 15.0,
             )
             got = self.hello.get("supervisor_protocol_version")
@@ -372,11 +383,20 @@ class WorkerdClient:
         `slack` 是「workerd 自己都卡住了」的兜底余量，退出路径要把它调小：
         进程收尾时多等 30 秒等于让用户盯着一个关不掉的窗口。
         """
-        self.ensure_started()
+        try:
+            self.ensure_started()
+        except WorkerdError as exc:
+            exc.extra["request_sent"] = False
+            raise
         with self._lock:
             proc = self._proc
         if proc is None or proc.poll() is not None:
-            raise WorkerdError("workerd 进程不可用", code="workerd_unavailable", retryable=True)
+            raise WorkerdError(
+                "workerd 进程不可用",
+                code="workerd_unavailable",
+                retryable=True,
+                extra={"request_sent": False},
+            )
         return self._call_on(proc, op, session_id, stem, payload, timeout, slack, idle_timeout)
 
     def _call_on(
@@ -419,7 +439,12 @@ class WorkerdClient:
             with self._lock:
                 self._pending.pop(rid, None)
             raise WorkerdError(
-                f"写 workerd 失败: {exc}", code="workerd_unavailable", retryable=True
+                f"写 workerd 失败: {exc}",
+                code="workerd_unavailable",
+                retryable=True,
+                # A failed write may be partial. Do not claim it never reached
+                # the supervisor; observation must fall back to the marker.
+                extra={"request_sent": None},
             ) from exc
 
         budget = (timeout or 60.0) + (_SLACK_SECONDS if slack is None else slack)
@@ -432,6 +457,7 @@ class WorkerdClient:
                 f"workerd 在 {int(budget)} 秒内没有回应（op={op}）",
                 code="workerd_unavailable",
                 retryable=True,
+                extra={"request_sent": True},
             )
 
         resp = slot["resp"] or {}
@@ -444,9 +470,12 @@ class WorkerdClient:
             retryable=bool(err.get("retryable")),
             traceback_text=err.get("traceback", ""),
             extra={
-                k: v
-                for k, v in err.items()
-                if k not in ("code", "retryable", "message", "traceback")
+                **{
+                    k: v
+                    for k, v in err.items()
+                    if k not in ("code", "retryable", "message", "traceback")
+                },
+                "request_sent": True,
             },
             # **顶层字段**，不在 error 里面：以前这里只拆 `resp["error"]`，
             # 于是 open 失败时调用方永远学不到这条会话的 id。

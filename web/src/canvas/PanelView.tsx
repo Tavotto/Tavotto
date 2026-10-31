@@ -1,8 +1,8 @@
-import { artifactRequestFields, artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
+import { adoptionGuardOf, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, isSourceBackedZeroEdit, isAdoptedPanel } from '@/lib/artifactValidation'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
-import { formatMessage, t as translate } from '@/i18n'
+import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPngSnapshot, EngineError, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
@@ -18,7 +18,7 @@ import {
   segIntersectsRect,
   selectionHasGroup,
 } from '@/lib/elementGeom'
-import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
+import { DURATION, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
@@ -55,6 +55,7 @@ import {
 } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useRuntimePreview } from '@/hooks/useRuntimePreview'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
@@ -74,13 +75,16 @@ import {
   pickElement,
   explainBlockedGroupDrag,
   startElementGroupMove,
+  startDeferredInFigureDrag,
   startInFigureDrag,
+  resumeDeferredInFigureDrag,
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { pageToContentVec, panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
-import { Info, LoaderCircle } from '@/components/ui/icons'
+import { Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 
 /**
  * 面板显示：
@@ -181,13 +185,17 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const kind = panelKind(obj)
   const runtime = kind === 'runtime'
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
-  const needsEngine =
-    (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime
+  // 来源驱动采用 + 零编辑（只有结构性 FRAME）且**不在图内编辑**：显示磁盘原像素，不出引擎图（ADR 0139 §五.1）。
+  // 进入图内编辑的那一刻起显示可编辑基础（重画的 SVG + 命中层），拖动预览才看得见；退出编辑且仍是零编辑就回原像素。
+  // 超大图（raster / evicted 档）同理：只有编辑态才用引擎位图，编辑外一律原像素。
+  const originalPixels = isSourceBackedZeroEdit(obj) && !editing
+  const needsEngine = !originalPixels &&
+    ((obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
-  const useEnginePng = !artifactValidationIssue(obj) &&
-    (!obj.artifactValidation || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
+  const useEnginePng = !artifactValidationIssue(obj) && !originalPixels &&
+    (!isAdoptedPanel(obj) || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
     (bitmapOnly ? editing || needsEngine : !editing && needsEngine) && (render?.rev ?? 0) > 0
   const renderRev = render?.rev ?? 0
   const pngSource = render?.manifest ?? null
@@ -199,7 +207,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
-    pngBlob.url && !(obj.artifactValidation && pngBlob.failed) && !artifactValidationIssue(obj) && (pngIsCurrent || (!obj.artifactValidation && !pngBlob.failed)) ? pngBlob.url : null
+    pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !artifactValidationIssue(obj) && (pngIsCurrent || (!isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -210,6 +218,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
       : null
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
   const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
+  const previewNonce = useRuntimeAssetStore((s) => (runtime ? (s.previewNonce[obj.fileId] ?? 0) : 0))
   useEffect(() => {
     if (runtime) useRuntimeAssetStore.getState().ensure(obj)
     // ensure 幂等且只认 fileId/source；obj 每次 commit 都是新引用，不能进依赖
@@ -229,16 +238,24 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板只有 cache 里确有预览才给 URL（404 的碎图标比占位符糟）；
   // 未知形态（更新版本文档里的新 fileKind）fail closed：不发任何请求。
   const transport = engineTransport()
+  // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
+  // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
+  // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
+  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
     kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
-        : panelSrc(obj.fileId, kind, bucket, mtime)
+        : runtime
+          ? (runtimePreview.url ?? (runtimePreview.failed ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
+          : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
   // `/api/render` 在候选后端下会以 503 表达背压（child 队列满）；<img> 只看得到「失败」，
   // 有界重试同一地址（`lib/imgRetry`），blob / 磁盘原件失败不在此列
   const retry = useRetryingSrc(src)
+  const [failedImage, setFailedImage] = useState<{ src: string; fileId: string } | null>(null)
+  const imageLoadFailed = failedImage?.src === retry.src && failedImage.fileId === obj.fileId
   // 引擎位图还没落地（首次渲染刚回来、blob 在路上）或取图失败时，**优先挂
   // 引擎 SVG，而不是退回磁盘原图**：store 里那份 SVG 就是按 overrides 画出来
   // 的（自己这版，或 Phase F 的 latest 退路），磁盘原图才是「脚本原值」——
@@ -308,6 +325,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     const st = useRenderStore.getState()
     const cur = activeRenderKey(st, obj)
     reattachPreview(panelId, cur)
+    resumeDeferredInFigureDrag(panelId)
     // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
     perfRenderPainted(cur)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -317,9 +335,15 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无
   // 提示地拿磁盘原图冒充当前视觉状态）。渲染中 / 失败由既有角标压过本条；
   // runtime 面板另有自己的 stale 语义角标，不在此重复。
+  // runtime 例外：挂的若是 cache 里**别的状态**的预览（变体被淘汰 / 旧 cache 配有 overrides / 取预览失败退回
+  // 「最近一次」），同样要说出来——否则就是 QA-WIN-21 的无提示旧图。
   const approxPreview =
-    !runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc
+    (!showSvg && imageLoadFailed) ||
+    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc) ||
+    (runtime && !transport && !showSvg && !(useEnginePng && enginePng) && !!fileSrc &&
+      runtimePreview.exact !== true)
 
+  const figureFramePending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
   // The canvas feedback portal consumes this same transform/opacity chain.
   const contentStyle: CSSProperties = {
     width: contentW,
@@ -341,7 +365,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     >
       <div
         className="absolute overflow-hidden"
-        style={contentStyle}
+        // 只收起旧图，角标必须留在外面：尺寸渲染失败也要能看见错误。
+        style={figureFramePending ? { ...contentStyle, opacity: 0, pointerEvents: 'none' } : contentStyle}
       >
         {showSvg ? (
           <div
@@ -351,14 +376,18 @@ export function PanelView({ obj }: { obj: PanelObject }) {
             dangerouslySetInnerHTML={svgMarkup}
           />
         ) : src ? (
-          <CrossfadeImage
+          <BufferedImage
             src={retry.src}
             onError={() => {
+              setFailedImage({ src: retry.src, fileId: obj.fileId })
               loadedPngUrl.current = null
               if (useEnginePng) useMountedPngStore.getState().show(panelId, docKey, renderRev, pngSource, null)
               retry.onError()
             }}
             onLoad={(url) => {
+              setFailedImage((failure) =>
+                failure?.src === url && failure.fileId === obj.fileId ? null : failure,
+              )
               loadedPngUrl.current = url
               if (pngIsCurrent && url === pngBlob.url) {
                 useMountedPngStore.getState().loaded(panelId, {
@@ -380,7 +409,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} contentStyle={contentStyle} />}
       </div>
 
-      <RenderStatusBadge obj={obj} approx={approxPreview} />
+      <RenderStatusBadge obj={obj} approx={approxPreview} framePending={figureFramePending} retainedAfterFailure={imageLoadFailed} />
     </div>
   )
 }
@@ -427,7 +456,7 @@ function useEnginePngBlob(
     let landed = false
     const transport = engineTransport()
     const issue = artifactValidationIssue(obj)
-    const pending = issue || (obj.artifactValidation && transport)
+    const pending = issue || (isAdoptedPanel(obj) && transport)
       ? Promise.reject(new ArtifactValidationError(issue ?? 'unsupported_render_state'))
       : transport
       ? transport.previewPngSnapshot
@@ -447,9 +476,10 @@ function useEnginePngBlob(
         setState({ ...next, source, fileId, variant, rev, failed: false })
       })
       .catch((error) => {
-        if (!ctrl.signal.aborted && obj.artifactValidation &&
+        const guard = adoptionGuardOf(obj)
+        if (!ctrl.signal.aborted && guard &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
-          rejectArtifactRenders(fileId, obj.artifactValidation, error, variant)
+          rejectArtifactRenders(fileId, guard, error, variant)
           useMountedPngStore.getState().clear(obj.id)
           setState(s => ({...s,url:null,manifest:null,failed:true}))
           return
@@ -474,27 +504,23 @@ function useEnginePngBlob(
 }
 
 /**
- * 面板换图的交叉淡入。
+ * 面板换图的双缓冲。
  *
- * 引擎每出一版新图就换一次 src，硬换会让画布「啪」地闪一下——连续调参时
- * 每次松手都闪一回。这里让**旧的那一帧**压在新图之上淡出，把硬切遮掉。
+ * 新图加载并解码完成前保留旧图；就绪后与几何权威在同一帧切换。
  *
  * 两个不能改的实现约束：
  *
- * 1. **两个图层常驻、轮流当主角，绝不为淡出层现建 `<img>`。**
+ * 1. **两个图层常驻、轮流当主角，绝不为旧图现建 `<img>`。**
  *    引擎位图是 blob: URL，`useEnginePngBlob` 在新 URL 到手的同一刻就
  *    `revokeObjectURL` 掉了旧的——这时候现建一个 `<img>` 指过去只会加载失败、
- *    露出一块空白，比不做淡入淡出更糟。而**已经解码过**的那个 `<img>` 节点
+ *    露出一块空白。而**已经解码过**的那个 `<img>` 节点
  *    即使 URL 已失效照样画得出来，所以旧图层必须还是原来那个节点。
- * 2. **当前图层的 src 永远直接跟着最新值走，不等加载。**
- *    浏览器换 src 时会一直画着旧的一帧直到新图解码完成，底下这张不会空白；
- *    也因此这里不需要任何「等 onLoad 再切」的状态机——那种写法在图加载失败、
- *    或 jsdom 这类根本不加载图片的环境里会永久卡在旧图上。
+ * 2. 新图先在另一层加载；加载并解码完成后才切换，旧层立即隐藏。
+ *    失败或被更新的请求取代时，旧图继续显示，迟到的结果不能覆盖新图。
  *
- * 淡出层 `alt=""` + `aria-hidden`：任何时刻都只有一张图带真实 alt。
- * reduced-motion 下不进入淡出态，行为与从前逐字节一致。
+ * 隐藏层 `alt=""` + `aria-hidden`：任何时刻都只有一张图带真实 alt。
  */
-function CrossfadeImage({
+function BufferedImage({
   src,
   onError,
   onLoad,
@@ -503,7 +529,7 @@ function CrossfadeImage({
   style,
 }: {
   src: string
-  /** 当前层加载失败时（淡出层的失败不关心：它本来就要被换掉） */
+  /** 当前请求的图加载或解码失败时 */
   onError?: () => void
   /** 当前层加载完成时（同上，只认当前层） */
   onLoad?: (src: string) => void
@@ -511,27 +537,63 @@ function CrossfadeImage({
   className?: string
   style?: React.CSSProperties
 }) {
-  const [layers, setLayers] = useState<{ a?: string; b?: string; cur: 'a' | 'b' }>({
+  const [layers, setLayers] = useState<{ a?: string; b?: string; cur: 'a' | 'b'; pending?: 'a' | 'b' }>({
     a: src,
     cur: 'a',
   })
-  const [fading, setFading] = useState(false)
-  const seen = useRef(src)
+  const [landed, setLanded] = useState<string | null>(null)
+  const reported = useRef<string | null>(null)
+  const latestSrc = useRef(src)
+  latestSrc.current = src
+  const layersRef = useRef(layers)
+  layersRef.current = layers
+  const imageRefs = useRef<{ a: HTMLImageElement | null; b: HTMLImageElement | null }>({ a: null, b: null })
 
-  // 依赖只有 src。带上 layers / cur 的话它们自己的 setState 会让 effect 重跑，
-  // 重跑的 cleanup 会把定时器清掉，淡出态就再也退不出来
   useEffect(() => {
-    if (src === seen.current) return
-    seen.current = src
-    setLayers((l) => (l.cur === 'a' ? { ...l, b: src, cur: 'b' } : { ...l, a: src, cur: 'a' }))
-    if (prefersReducedMotion()) return
-    setFading(true)
-    const t = setTimeout(() => setFading(false), DURATION.slow)
-    return () => clearTimeout(t)
+    setLayers((l) => {
+      if (l[l.cur] === src) return { ...l, pending: undefined }
+      const pending = l.cur === 'a' ? 'b' : 'a'
+      return { ...l, [pending]: src, pending }
+    })
   }, [src])
 
-  // 非当前层排在后面 = 画在上面（同层同栈时 DOM 顺序决定叠放）。
-  // key 固定为 'a'/'b'，重排只是移动节点，不重挂、不丢已解码的那一帧
+  // 几何权威只能在新图真正切入 DOM 后登记，不能在排队更新时提前开放命中。
+  useLayoutEffect(() => {
+    if (landed && layers[layers.cur] === landed && src === landed && reported.current !== landed) {
+      reported.current = landed
+      onLoad?.(landed)
+    }
+  }, [landed, layers, src, onLoad])
+
+  const loaded = (k: 'a' | 'b', layerSrc: string, img: HTMLImageElement) => {
+    if (layersRef.current.cur === k && layersRef.current[k] === layerSrc) {
+      if (latestSrc.current === layerSrc) onLoad?.(layerSrc)
+      return
+    }
+    const ready = typeof img.decode === 'function' ? img.decode() : Promise.resolve()
+    void ready.then(() => {
+      const current = layersRef.current
+      if (latestSrc.current !== layerSrc || current.pending !== k || current[k] !== layerSrc) return
+      setLayers({ ...current, cur: k, pending: undefined })
+      setLanded(layerSrc)
+    }).catch(() => {
+      if (latestSrc.current === layerSrc && layersRef.current.pending === k) onError?.()
+    })
+  }
+
+  // A → B → A can reuse the existing hidden node without changing its src.
+  // Browsers then emit no second load event, so explicitly decode that loaded
+  // node before promoting it. A failed/incomplete image still waits for events.
+  useEffect(() => {
+    const k = layers.pending
+    const img = k && imageRefs.current[k]
+    const layerSrc = k && layers[k]
+    if (k && img && layerSrc && img.complete && img.naturalWidth > 0) loaded(k, layerSrc, img)
+    // The layer state identifies the requested node; callbacks are refreshed on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers.pending, layers.a, layers.b])
+
+  // key 固定为 'a'/'b'，重排只是移动节点，不重挂、不丢已解码的那一帧。
   const order: ('a' | 'b')[] = layers.cur === 'a' ? ['a', 'b'] : ['b', 'a']
 
   return (
@@ -541,21 +603,24 @@ function CrossfadeImage({
         // 还没用过的那一层不渲染：<img> 不给 src 会去请求当前页面地址
         if (!layerSrc) return null
         const isCur = k === layers.cur
+        const isPending = k === layers.pending
         return (
           <img
             key={k}
+            ref={(node) => { imageRefs.current[k] = node }}
             src={layerSrc}
             alt={isCur ? alt : ''}
             aria-hidden={isCur ? undefined : true}
-            onError={isCur ? onError : undefined}
-            onLoad={isCur ? () => onLoad?.(layerSrc) : undefined}
+            onError={isCur || isPending ? () => {
+              if (latestSrc.current === layerSrc) onError?.()
+            } : undefined}
+            onLoad={(event) => loaded(k, layerSrc, event.currentTarget)}
             draggable={false}
             className={cn(
               className,
               !isCur && 'pointer-events-none',
-              !isCur && fading && 'animate-crossfade-out',
             )}
-            style={isCur || fading ? style : { ...style, opacity: 0 }}
+            style={isCur ? style : { ...style, opacity: 0 }}
           />
         )
       })}
@@ -600,8 +665,8 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
  * **命中必须打在几何权威上**（issue #131）。命中不是只读的：命中完就是拖动、
  * 就是整组平移、就是框选出一个待对齐的选区——全都以那份 bbox 起算。退回来的
  * 上一版 manifest 会让「点到的」和「看到的」是两个元素，拖出来的位移也以旧
- * 锚点起算。权威没就位时这一层整个停摆（不 hover、不命中、不框选），画布
- * 照常显示上一张图，属性页给出「正在同步」的说明。
+ * 锚点起算。权威没就位时不 hover、不按旧清单命中或框选；刚拖过的同一元素
+ * 可以继续收相对位移意图，等当前权威到达才重算并提交。
  */
 function ElementHitLayer({
   obj,
@@ -841,14 +906,22 @@ function ElementHitLayer({
     if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
   })
 
-  // 权威没就位：留着这一层占位（布局不跳），但不接任何指针事件。
-  // 选区不动——等精确 manifest 回来，框会自己回到正确位置。
+  // 权威没就位：绝不透传到整图。已选元素的连续拖动只记意图，落笔等精确几何。
   if (!manifest) {
     return (
       <div
-        className="pointer-events-none absolute"
+        className="absolute"
         style={{ ...layout, cursor: 'progress' }}
         data-authority="syncing"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          e.stopPropagation()
+          if (!startDeferredInFigureDrag(e, obj, layout)) {
+            useUiStore.getState().setStatus(msg('stylePanel.waitingRender', undefined, 'workspace'), 'progress')
+          }
+        }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
+        onDoubleClick={(e) => e.stopPropagation()}
       />
     )
   }
@@ -1159,7 +1232,7 @@ function useElapsed(on: boolean, ms: number): boolean {
   return on && elapsed
 }
 
-function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?: boolean }) {
+function RenderStatusBadge({ obj, approx = false, framePending = false, retainedAfterFailure = false }: { obj: PanelObject; approx?: boolean; framePending?: boolean; retainedAfterFailure?: boolean }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
   // 「这一份变体正在渲染」才是变体级的
@@ -1201,6 +1274,13 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
   const slowBusy = useElapsed(quietBusy, BUSY_BADGE_DELAY_MS)
   const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
+    const failure: BadgeInfo | null = render?.status === 'error'
+      ? { tone: 'error', cold: false, text: badge('error'),
+          hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
+      : null
+    if (framePending && failure) return failure
+    // 图幅占位没有画面，不能像普通重绘一样等 700ms 才解释空白。
+    if (framePending) return { tone: 'busy', cold: false, text: badge('rendering') }
     if (quietBusy && !slowBusy) return null
     if (render?.status === 'rendering' || building) {
       return {
@@ -1215,10 +1295,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
         ),
       }
     }
-    if (render?.status === 'error') {
-      return { tone: 'error', cold: false, text: badge('error'),
-        hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
-    }
+    if (failure) return failure
     // **阻塞性的压过信息性的。** native 的两句说的是「现在不能编辑」，而
     // `stale`（脚本已更新）/ runtime 的 stale 语义说的是「内容可能不是最新」
     // ——后者不妨碍用户动手，前者妨碍。把 `stale` 排在前面的表现是：native
@@ -1247,7 +1324,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
         tone: 'info',
         cold: false,
         text: badge('approxPreview'),
-        hint: badge('approxPreviewHint'),
+        hint: retainedAfterFailure ? undefined : badge('approxPreviewHint'),
       }
     }
     // **不弹对话框、不责怪用户**：这是我们主动做出的一个显示决定，用户什么
@@ -1274,7 +1351,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, quietBusy, slowBusy, frameLegacy, frameBlocked])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
@@ -1284,9 +1361,16 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
   const { mounted, state } = usePresence(!!info, DURATION.exit)
   const shown = info ?? last.current
 
-  if (!mounted || !shown) return null
+  const live = (
+    <span data-panel-render-live aria-live="polite" className="sr-only">
+      {info?.tone === 'busy' || info?.tone === 'error' ? info.text : ''}
+    </span>
+  )
+  if (!mounted || !shown) return live
 
   return (
+    <>
+    {live}
     <div
       data-state={state}
       className={cn(
@@ -1295,7 +1379,11 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       )}
       style={{ transform: `scale(${scale})` }}
     >
+      {/* 中性两档（构建中 / 提示）挂 `data-on-paper`：角标画在图（纸）上，ink / surface 换成纸上的墨与纸
+          （index.css 末尾）——界面的 ink 在暗色里反成浅灰，浅灰底压在白图上几乎看不见（2026-10-13 UI 审计）。
+          过期 / 出错两档不挂：它们的锚点色底与 -content 字是按界面 surface 配好的一对，换了 surface 就拆散了（Codex #995） */}
       <span
+        {...(shown.tone === 'busy' || shown.tone === 'info' ? { 'data-on-paper': '' } : {})}
         data-panel-badge={shown.tone}
         className={cn(
           // 角标是 chip：胶囊（圆角族 full）。三种语气三种颜色（2026-10-07 设计审计 §10.1：此前「过期」与
@@ -1312,7 +1400,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
         )}
       >
         {shown.tone === 'busy' && (
-          <LoaderCircle size={ICON_SIZE.xs} aria-hidden className="animate-spin opacity-80" />
+          <Spinner size={ICON_SIZE.xs} aria-hidden className="opacity-80" />
         )}
         {shown.text}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
@@ -1338,10 +1426,11 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
             假进度条比没有更坏。 */}
         {shown.cold && (
           <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5">
-            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep" />
+            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep motion-reduce:animate-none" />
           </span>
         )}
       </span>
     </div>
+    </>
   )
 }

@@ -39,7 +39,23 @@ def _agent(body, agent_id):
 def test_capabilities_shape(client, monkeypatch):
     _installed(monkeypatch)
     body = client.get("/api/ai/capabilities?refresh=1").get_json()
-    assert set(body) == {"agents", "endpoints", "presets", "checked_at_ms"}
+    # taf_enabled：TAF 实验开关，只在 app 层并入（不在 engine_ai.capabilities 的缓存里）；默认关
+    # ai_fix_available：AI 环境修复任务能不能跑（ADR 0148 / 0149，同样只在 app 层并入；有可用的 API 连接或 Codex / Claude Code 即 true）
+    # vendors / connections / locale_region：「连接 AI」视图（接口约定 2026-10-24；见 tests/test_ai_connections.py）
+    assert set(body) == {
+        "agents",
+        "vendors",
+        "connections",
+        "locale_region",
+        "endpoints",
+        "presets",
+        "oauth",
+        "checked_at_ms",
+        "taf_enabled",
+        "ai_fix_available",
+    }
+    assert body["ai_fix_available"] is True  # 上面装了（假的）Codex / Claude Code：D3 起 CLI 也能修
+    assert body["taf_enabled"] is False
     assert isinstance(body["checked_at_ms"], int) and body["checked_at_ms"] > 0
     codex = _agent(body, "codex")
     for key in (
@@ -155,7 +171,9 @@ def test_telemetry_agent_falls_back_to_the_enum_not_the_registry(client, monkeyp
 
     from tavotto import app as m
 
-    src = inspect.getsource(m.api_ai_run)
+    src = inspect.getsource(
+        m._ai_run_impl
+    )  # 路由函数只是包了一层「拒绝时后端删账本行」，真身在 _ai_run_impl
     # 判据必须来自 EVENTS 表；拿注册表当白名单是被这条用例挡住的写法
     assert 'EVENTS["ai_assistant_invoked"]["agent"]["values"]' in src
     assert "agent_ids()" not in src

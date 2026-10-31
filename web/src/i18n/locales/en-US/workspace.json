@@ -15,6 +15,11 @@
     "cardTitle": "{{id}}",
     "cardUsed_one": "used {{count}} time in this layout",
     "cardUsed_other": "used {{count}} times in this layout",
+    "editabilityAll": "All",
+    "editabilityAria": "Filter by editability",
+    "editabilityEditable": "Editable",
+    "editabilityLayout": "Layout",
+    "editabilityPending": "Pending",
     "emptyHint": "Put PDF/PNG files in the project folder and they show up here.",
     "emptyTitle": "No figures in this project yet",
     "filterActiveAria_one": "Filter ({{count}} active)",
@@ -30,10 +35,12 @@
     "openAria": "Edit {{name}}",
     "openFigure": "Edit",
     "refresh": "Refresh project",
-    "refreshFailed": "Refresh failed. {{error}}",
+    "refreshFailed": "Couldn’t refresh",
     "refreshTip": "Check the project for new files and script changes",
     "refreshing": "Checking for new files…",
     "removeFilter": "Remove filter: {{label}}",
+    "removeFromAssets": "Remove from assets",
+    "removeInUse": "In use on the canvas",
     "resetFilters": "Reset filters",
     "retry": "Retry",
     "runtimeBadge": "Runtime figure",
@@ -44,7 +51,6 @@
     "runtimeRunAria": "Run {{script}} and discover figures",
     "runtimeSiblingOf": "Same source as {{name}}",
     "scriptBadgeTitle": "Editable",
-    "scriptOnly": "Only editable figures",
     "search": "Search figures…",
     "searchAria": "Search figures",
     "sectionFigures": "Figures",
@@ -63,7 +69,6 @@
     "typeAria": "Filter by type",
     "typeRaster": "Images",
     "typeRuntime": "Runtime figure",
-    "typeScript": "Editable",
     "unsupportedTitle": "These files can’t be used",
     "usedChip": "Used",
     "usedOnly": "Used",
@@ -92,8 +97,8 @@
     "duplicate": "Duplicate canvas",
     "keepOne": "A project needs at least one canvas.",
     "listLabel": "Canvas list",
-    "meta_one": "{{w}} × {{h}} mm · {{count}} object",
-    "meta_other": "{{w}} × {{h}} mm · {{count}} objects",
+    "meta_one": "{{w}} × {{h}} mm · {{count}} object",
+    "meta_other": "{{w}} × {{h}} mm · {{count}} objects",
     "newCanvas": "New canvas",
     "noMatch": "No matching canvas",
     "openCanvas": "Open canvas {{name}}",
@@ -105,6 +110,14 @@
     "moveDown": "Move down",
     "count_one": "{{count}} canvas",
     "count_other": "{{count}} canvases"
+  },
+  "canvasDrop": {
+    "running": "Running “{{name}}”. Its figure will go on this canvas.",
+    "outsideProject": "“{{name}}” isn’t in this project’s folder, so it wasn’t run. To use it, drop it on the home screen.",
+    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run yet. Rename it and drop it again.",
+    "notScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+    "noPath": "Choose “{{name}}” again in the next window.",
+    "browser": "Scripts can’t be dropped in the browser. Run “{{name}}” from the script library on the left."
   },
   "canvasTools": {
     "fit": "Fit",
@@ -141,6 +154,21 @@
     "selectedCount_other": "{{count}} selected",
     "sizeMenu": "Size",
     "textMenu": "Text"
+  },
+  "unexpectedError": {
+    "text": "Something went wrong in Tavotto",
+    "body": "Sending us the diagnostics helps us find the cause and fix it faster."
+  },
+  "exitNotice": {
+    "engine": {
+      "text": "The rendering service stopped unexpectedly",
+      "restart": "Restart",
+      "note": "After restarting you can send a problem report"
+    },
+    "previous": {
+      "text": "Tavotto did not exit normally last time",
+      "body": "If it crashed or froze, sending us the diagnostics helps us find out why."
+    }
   },
   "crash": {
     "blank": "Open a blank layout",
@@ -179,7 +207,7 @@
   },
   "drawer": {
     "pin": "Pin sidebar",
-    "resize": "Resize sidebar ({{min}}–{{max}} px)",
+    "resize": "Resize sidebar ({{min}}–{{max}} px)",
     "unpin": "Unpin sidebar"
   },
   "elementTree": {
@@ -197,6 +225,10 @@
     "hide": "Hide (restorable)",
     "isolateBranch": "Isolate this branch",
     "isolated": "Isolated: {{label}}",
+    "modifiedAfterSave": "Differs from the saved file",
+    "modifiedAfterSaveHint": "The script changed this figure after saving it. You are editing the figure as it was when the script finished, so it can differ from the file on disk.",
+    "savedMoment": "Edited as saved",
+    "savedMomentHint": "The script changed this figure after saving it. You are editing the figure as it was at the moment of that save, so it matches the file on disk; the script's later changes are not included.",
     "listLabel": "Figure elements",
     "load": "Load element list",
     "lock": "Lock (canvas clicks skip it)",
@@ -218,18 +250,16 @@
     "noPanelTitle": "Select an editable figure to see its elements",
     "noEditableTitle": "No editable figure on the canvas yet",
     "noEditableHint": "Only script-generated figures expose their objects",
-    "locateEditable": "Select an editable figure",
-    "openAssets": "Open assets"
+    "locateEditable": "Select an editable figure"
   },
   "fastEdit": {
-    "addToCanvas": "Add to canvas",
     "added": "{{name}} added to the canvas",
-    "addedForEdit": "Added to this layout for editing",
-    "addedForEditLive": "Added to this layout for editing; Remove undoes it.",
+    "enteredLayout": "Multi-figure layout",
+    "addedForEdit": "Created a canvas for editing",
+    "addedForEditLive": "Created a canvas for editing; Remove undoes adding the figure.",
     "removeAdded": "Remove",
     "alreadyOnCanvas": "{{name}} is already on the canvas",
     "connectSource": "Link source script",
-    "crumbTitle": "Back to canvas layout",
     "figureMissing": "{{name}} is not in this project",
     "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside."
   },
@@ -295,6 +325,7 @@
     "switchKind": "Change to {{name}}",
     "switchKindCount": "Change {{count}} objects to {{name}}",
     "resizeAxes": "Resize {{count}} axes",
+    "resizePatch": "Resize box",
     "scaleLegend": "Scale legend",
     "resizeObjects": "Resize objects",
     "restoreAspect": "Restore original ratio",
@@ -402,6 +433,13 @@
       "title": "Stop this script?"
     }
   },
+  "pageEdge": {
+    "height": "H {{mm}} mm",
+    "heightPrefix": "H ",
+    "snapTo": "Snapped to {{name}}",
+    "width": "W {{mm}} mm",
+    "widthPrefix": "W "
+  },
   "panelBadge": {
     "approxPreview": "Approximate preview",
     "approxPreviewHint": "Showing the on-disk original for now — your figure edits aren’t reflected yet.",
@@ -496,6 +534,10 @@
     "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})"
   },
   "readiness": {
+    "foreign": {
+      "matlab": "This figure was drawn in MATLAB",
+      "r": "This figure was drawn in R"
+    },
     "bannerSummary": "{{total}} figures found: {{editable}} editable, {{pending}} waiting to connect, {{layoutOnly}} layout only.",
     "openCenter": "Project readiness",
     "reason": {
@@ -518,29 +560,31 @@
       "needs_probe": "Needs a test run",
       "source_missing": "Source gone"
     },
-    "whyNotEditable": "Why can’t I edit this?"
+    "whyNotEditable": "Why can’t I edit this?",
+    "pillPending_one": "{{count}} to connect",
+    "pillPending_other": "{{count}} to connect",
+    "pillLayoutOnly_one": "{{count}} layout only",
+    "pillLayoutOnly_other": "{{count}} layout only",
+    "pillAria": "Project readiness: {{status}}",
+    "pillDismiss": "Dismiss"
   },
   "runtimePanel": {
     "placeholder": "Figure generated by a script",
     "placeholderHint": "Double-click to edit — this runs {{script}} to regenerate it"
   },
   "scan": {
-    "details": "Details",
-    "rescan": "Check again",
-    "cancel": "Cancel check",
-    "run": "Trial run",
-    "openAssets": "Open assets",
-    "partialNote": "Some of the project was not checked.",
     "line": {
-      "scanning": "Checking the project structure — found {{scripts}} scripts and {{assets}} figures so far. You can lay out figures meanwhile.",
-      "target_found": "Found plotting script {{script}}. Existing figures can be laid out now; to edit the figures it makes, prepare and run it first.",
-      "already_connected": "Plotting scripts are already connected; figures are editable.",
-      "choose_target": "Found {{count}} possible plotting scripts that aren't connected yet. Pick one to prepare.",
-      "static_source": "No scripts found — figures can be laid out directly.",
-      "nothing_found": "This project has no figures or scripts yet.",
-      "unchecked": "The check could not cover the whole project ({{issues}} places unseen), so this does not mean there are no scripts. Existing figures can still be laid out.",
-      "cancelled": "Check cancelled. Existing figures can still be laid out.",
-      "failed": "The check did not finish. Existing figures can still be laid out; you can check again."
+      "scanning": "Checking the project…",
+      "target_found": "Found plot script {{script}}",
+      "already_connected": "Plot scripts are all connected",
+      "choose_target_one": "Found 1 plot script",
+      "choose_target_other": "Found {{count}} plot scripts",
+      "static_source": "No scripts, figures are ready to lay out",
+      "nothing_found": "No figures or scripts here yet",
+      "unchecked": "Couldn't check the whole project",
+      "cancelled": "Check cancelled",
+      "failed": "The check didn't finish",
+      "lost": "Couldn't read the check's progress"
     },
     "issue": {
       "unreadable_dir": "Couldn't read folder {{path}}.",
@@ -562,10 +606,6 @@
       "plot": "Plotting script",
       "unknown": "Not verified",
       "auxiliary": "Helper script"
-    },
-    "env": {
-      "some": "Found {{count}} possible Python environment clues; none are verified yet. They are checked once you pick a script.",
-      "none": "No environment clues found; they are checked once you pick a script."
     },
     "deps": {
       "declared": "Declared dependencies: {{files}} ({{count}} entries); not yet checked for installation."
@@ -606,7 +646,7 @@
     "group_runtimeNames": "Outputs unknown until run",
     "linkedCount_one": "{{count}} linked figure",
     "linkedCount_other": "{{count}} linked figures",
-    "loadFailed": "Couldn’t load the script list. {{error}}",
+    "loadFailed": "Couldn’t load the script list",
     "loading": "Loading script list…",
     "noMatch": "No scripts match",
     "notRunNote": "This script hasn’t run yet",
@@ -626,6 +666,13 @@
     "recoveryDetails": "Details",
     "rerunWithArgs": "Try again with these arguments",
     "group_needsFix": "Needs fixing",
+    "prepareAria": "Prepare and run {{script}}",
+    "group_noFigure": "Ran, no figure",
+    "group_foreign": "R / MATLAB scripts",
+    "foreignLang": {
+      "matlab": "MATLAB",
+      "r": "R"
+    },
     "copyPath": "Copy path",
     "pathCopied": "Copied: {{path}}",
     "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
@@ -643,6 +690,7 @@
   "stage": {
     "addFigure": "Add a figure",
     "backToCanvas": "Back to canvas",
+    "exitElementEdit": "Leave figure editing",
     "contextBarLabel": "Where you are",
     "crumbsLabel": "Current object",
     "emptyHint": "Pick a figure from the asset library and add it to the canvas.",
@@ -700,11 +748,15 @@
     "mismatch_other": "{{count}} places differ from the style",
     "align": "Match",
     "waitingRender": "This version of the figure is still rendering — edit when it finishes",
+    "previewPending": "Updating the figure preview; the image may not be current yet.",
+    "previewFailed": "The figure preview could not be updated; the image may be out of date.",
+    "pendingSizeCancelled": "The font size was not applied because the figure changed or rendering failed. Try again.",
     "bindCancelled": "You switched canvases, so the style you picked wasn’t applied — pick it again on that canvas",
     "bindMissing": "That style is no longer in the library — nothing was changed",
     "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again"
   },
   "status": {
+    "dragSyncCancelled": "The figure could not sync, so the later drag was not applied. Try again.",
     "alignAllLocked": "All selected objects are locked; unlock them to arrange",
     "alignLockedSkipped_one": "Skipped {{count}} locked object",
     "alignLockedSkipped_other": "Skipped {{count}} locked objects",
@@ -722,7 +774,7 @@
     "clipboardWriteDenied": "Can’t access the clipboard. The browser denied permission.",
     "coldHint": {
       "heavy": "a cold start can take a few minutes",
-      "medium": "a cold start takes about ten seconds"
+      "medium": "the first run may take longer"
     },
     "dismissError": "Dismiss error",
     "documentLoaded_one": "Loaded {{name}} ({{count}} canvas)",
@@ -899,16 +951,553 @@
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection"
   },
+  "tutorialChip": {
+    "label": "Tutorial"
+  },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
-    "later": "Later"
+    "chip": "Reload needed"
   },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
     "panel_layout_only": "Lay out this figure; connect its source script to edit its elements.",
     "fast_edit_entered": "Your changes are saved to this layout. The original file stays untouched.",
     "multi_select": "Use the floating bar by the selection to align and distribute.",
-    "problem_found": "“Problems” on the left locates the object and its property field."
+    "problem_found": "“Problems” on the left locates the object and its property field.",
+    "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "pageBoundsOpen": "Open Canvas tab"
+  },
+  "prep": {
+    "aria": "Prepare {{script}}",
+    "line": {
+      "checking": "Checking…",
+      "offline": "Connection lost, reconnecting…",
+      "engineStopped": "The rendering service has stopped",
+      "checkFailed": "Couldn't start checking",
+      "argsMissing_one": "1 argument missing",
+      "argsMissing_other": "{{count}} arguments missing",
+      "argsReady": "Arguments filled in",
+      "rejected": "Settings changed, refreshed",
+      "restarted": "Restarted, nothing ran",
+      "stopping": "Stopping…",
+      "running": "Running…",
+      "input": "The script is asking you",
+      "inputSecret": "The script wants a password",
+      "preparing": "Installing…",
+      "ready": "Ready to run",
+      "readyProject": "Ready to run — your project's own environment is checked when it runs",
+      "dialogFile": "This script opens a file picker that can't appear here, so put the file path in the script",
+      "dialogAsk": "This script opens a prompt that can't appear here, so put the answer in the script",
+      "dialogBoth": "This script opens file pickers and prompts that can't appear here, so put the paths and answers in the script",
+      "completed_one": "Drew 1 figure",
+      "completed_other": "Drew {{count}} figures",
+      "completedNoList": "Done, figures are in the library",
+      "completedPartial": "Drew only {{done}} of {{total}} figures; {{names}} failed",
+      "static": "Ready to lay out",
+      "editReady": "Editing",
+      "editOpening": "Opening the editor…",
+      "noFigure": "Finished without a figure",
+      "notRegistered": "The figure couldn't be registered",
+      "cancelled": "Stopped",
+      "envLocked": "The Python fixed in Settings is missing components",
+      "envChoice": "Run with the one in this project?",
+      "envChoiceOpen": "Choose what to run with first",
+      "workdir": "Run in which folder?",
+      "depsScope": "Component versions conflict",
+      "depsUnknown": "Tavotto can't install {{module}}. Pick a Python environment that has it",
+      "depsStdlib": "Tavotto's built-in environment doesn't include {{module}}",
+      "depsStdlibOther": "The Python in use doesn't include {{module}}",
+      "depsPlatform": "{{module}} is specific to another operating system; this script can't run on this system",
+      "depsRuntime": "{{module}} is missing",
+      "install": "Install missing components first",
+      "needsArgs": "The script needs arguments",
+      "fileOpsConfirm": "This script needs to really write files to disk to finish",
+      "folderUnreadable": "The script uses a folder, “{{folder}}”, that this account can’t read; its permissions need repairing",
+      "fileOpsBlocked": "The script changes project files, then reads them; safe mode doesn't change them, so the result would differ and no figure was made",
+      "fileOpsBlockedSafeOnly": "This project is set to safe mode only; the script changes files, then reads them, so the result would differ and no figure was made",
+      "fileOpsBlockedOff": "Running as-is is turned off; the script changes project files, then reads them, so safe mode's result would differ and no figure was made",
+      "failedAfterFallback": "Safe mode couldn't run the script as written, and running it as-is failed too",
+      "argsRejected_one": "The script rejected the argument you gave",
+      "argsRejected_other": "The script rejected the {{count}} arguments you gave",
+      "inputUnanswered": "The script stopped to ask you something; run it again to answer",
+      "inputUnansweredSecret": "The script wants a password; run it again to enter it (it is never remembered)",
+      "missingData": "Can't find the data it reads",
+      "stale": "Settings changed, check again",
+      "expired": "The last run's record is gone",
+      "unknown": "Something couldn't be checked",
+      "blocked": "Can't run yet",
+      "depsFailed": "Install failed, nothing was changed",
+      "failed": "The run failed",
+      "feedback": "This script can't run for now — want to send it to us?",
+      "aiUnavailable": "AI can't fix this one yet",
+      "depsCancelled": "Install stopped",
+      "attention": "One more thing to handle",
+      "originConfirm_one": "{{count}} library needs a package name from you",
+      "originConfirm_other": "{{count}} libraries need a package name from you",
+      "originUnknown_one": "Can't tell where {{count}} library comes from",
+      "originUnknown_other": "Can't tell where {{count}} libraries come from",
+      "pythonChange": "Switching to Python {{version}}…",
+      "pythonChangeDownload": "Switching to Python {{version}} (about {{size}} MB to download)…"
+    },
+    "btn": {
+      "later": "Later",
+      "run": "Run",
+      "openRun": "Open and run",
+      "allowRun": "Allow and run",
+      "repairFolder": "Repair permissions",
+      "clearReuse": "Don't reuse",
+      "runAnyway": "Run anyway",
+      "runAgain": "Run again",
+      "retry": "Try again",
+      "stop": "Stop run",
+      "install": "Install",
+      "switchScope": "Use this project's versions",
+      "recheck": "Check again",
+      "useIt": "Use it",
+      "workdir": {
+        "project_root": "Use project root",
+        "project": "Use script folder",
+        "sandbox": "Use sandbox",
+        "none": "Use this folder"
+      },
+      "pointAtData": "Point to data",
+      "viewFigures_one": "View 1 figure",
+      "viewFigures_other": "View {{count}} figures",
+      "enterEdit": "Edit",
+      "continue": "Continue",
+      "openSettings": "Open Settings",
+      "pickPython": "Use my own Python",
+      "openRegistry": "Open Connections",
+      "background": "Run in background",
+      "dismiss": "Got it",
+      "answer": "Answer",
+      "openAssets": "Open library",
+      "aiFix": "Fix it with your AI",
+      "send": "Send",
+      "cancelScan": "Cancel check",
+      "confirmOrigins": "Confirm packages"
+    },
+    "card": {
+      "stepOf": "Step {{n}} of {{total}}: {{name}}",
+      "step": {
+        "prepare": "Prepare",
+        "run": "Run",
+        "edit": "Edit"
+      },
+      "minimize": "Minimize",
+      "close": "Close (keeps running)",
+      "more": "More",
+      "details": "Details",
+      "allDetails": "All details",
+      "copied": "Copied",
+      "noArgs": "(no arguments)",
+      "allOutput": "All output",
+      "noOutput": "No output yet",
+      "endInput": "End input",
+      "stopScript": "Stop script",
+      "otherArgs_one": "1 more argument",
+      "otherArgs_other": "{{count}} more arguments",
+      "rawArgs": "Raw arguments / paste command",
+      "answerAria": "Answer",
+      "secretAria": "Password",
+      "rememberNote": "Your answer is remembered",
+      "secretNote": "Not saved, not logged"
+    },
+    "pill": {
+      "pending": "to prepare",
+      "pendingMany_one": "1 plot script to prepare",
+      "pendingMany_other": "{{count}} plot scripts to prepare"
+    },
+    "workdir": {
+      "project_root": "Project root",
+      "project": "Script folder",
+      "sandbox": "Sandbox",
+      "recommended": "Recommended",
+      "found": "Finds {{files}}",
+      "foundNone": "Finds none of the files it reads",
+      "other": "Choose another",
+      "writes": "Files the script writes land in this folder.",
+      "conflicts": "Different in the two places: {{files}}"
+    },
+    "install": {
+      "runtime": "Runtime",
+      "many_one": "{{list}}",
+      "many_other": "{{list}} and {{count}} total",
+      "toManaged": "into Tavotto's folder",
+      "toUser": "into the one already on your computer",
+      "toUserLong": "The one already on your computer; a failed install can't be fully undone",
+      "download": "Needs a download of about {{mb}} MB.",
+      "managedPlace": "Tavotto's folder"
+    },
+    "env": {
+      "builtin": "Tavotto's own",
+      "project": "The one in this project",
+      "user": "The one already on your computer",
+      "managed": "The one Tavotto set up for this project",
+      "locked": "The one set in Settings",
+      "switched": "(the previous one stopped working and was replaced)"
+    },
+    "detail": {
+      "script": "Script",
+      "usedBy": "Runs with",
+      "workdir": "Folder",
+      "args": "Arguments",
+      "argsCount_one": "1",
+      "argsCount_other": "{{count}}",
+      "argsReused_one": "Reusing the last successful argument",
+      "argsReused_other": "Reusing the last {{count}} successful arguments",
+      "argsNone": "None",
+      "argsHidden_one": "1 (has a password, hidden)",
+      "argsHidden_other": "{{count}} (has a password, hidden)",
+      "installs": "Installs",
+      "installTo": "Into",
+      "prompt": "The script asked",
+      "parseKind": "Argument problem",
+      "parseKinds": {
+        "missing_required": "A required argument is missing",
+        "invalid_value": "An argument has an invalid value",
+        "unknown": "The script’s argument parser did not accept these arguments"
+      },
+      "errorFull": "Full error output",
+      "errorTruncated": "Too long; only the last part is kept.",
+      "noFigureWhy": "It never called savefig and left no Figure open.",
+      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
+      "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
+      "history": {
+        "title": "Run history",
+        "attempt": "Run {{n}}",
+        "profile": {
+          "safe": "Safe mode",
+          "native": "As-is"
+        },
+        "outcome": {
+          "pending": "Running",
+          "succeeded": "Succeeded",
+          "failed": "Failed",
+          "blocked": "Blocked",
+          "cancelled": "Stopped"
+        },
+        "switched": "Switched from safe mode to as-is",
+        "declined": {
+          "project_reopened": "The project was reopened; not switched",
+          "superseded": "Replaced by a newer run; not switched",
+          "not_desktop_initiated": "Not started from the desktop window; not switched",
+          "fallback_disabled": "Running as-is is turned off; not switched",
+          "policy_safe_only": "This project is set to safe mode only; not switched",
+          "not_blocked": "The cause wasn't a safe-mode limit; not switched",
+          "cancelled": "Stopped; not switched",
+          "plan_stale": "The environment changed after the check; not switched",
+          "already_fell_back": "Already switched once in this run; not switched again",
+          "native_to_safe": "Doesn't switch from as-is back to safe mode",
+          "no_new_root_cause": "No new cause; not retried",
+          "not_runnable": "Running as-is needs an answer first; not switched",
+          "interpreter_changed": "The interpreter changed; not switched",
+          "plan_unavailable": "Couldn't work out running as-is; not switched",
+          "launch_failed": "Couldn't start running as-is",
+          "attempt_cap": "Already tried several times in this run; not trying again"
+        }
+      },
+      "nativeFallback": "Safe mode blocked the script's file operations, so it was run on your real files instead.",
+      "nativeFallbackNoWriteback": "Safe mode blocked the script's file operations, so it was run on your real files instead. Changes to a figure made this way aren't written back to the script.",
+      "notUsedTitle": "Environments not used",
+      "pythonChanged": "Switched to",
+      "pythonChangedTo": "Python {{version}}"
+    },
+    "fact": {
+      "finished": "The script finished",
+      "notFinished": "The script didn't finish",
+      "captured": "A figure was captured",
+      "notCaptured": "No figure was captured"
+    },
+    "dialog": {
+      "howFile": "Write the file path straight into the script. Keep the data in the project and use a relative path, such as data/points.csv.",
+      "howAsk": "Write the value straight into the script instead of asking in a pop-up.",
+      "where": "Line {{line}}",
+      "more": "More places are not listed. Check again after fixing these."
+    },
+    "rasterHint": {
+      "line": "This script draws an image directly with {{library}}, not a Matplotlib figure",
+      "lineNoFile": "This figure was drawn with {{library}}, so Tavotto can't edit it directly.",
+      "why": "You can bring the image file it saves in to lay out; to edit it element by element, it has to be redrawn with Matplotlib.",
+      "whyNoFile": "To edit it element by element, it has to be redrawn with Matplotlib. Use “Make editable version” to have the assistant write a separate new script; your original script is never changed."
+    },
+    "row": {
+      "checking": "Checking",
+      "offline": "Disconnected",
+      "running": "Running",
+      "input": "Waiting for you",
+      "preparing": "Preparing packages",
+      "ready": "Waiting to run",
+      "captured_one": "Captured 1 figure",
+      "captured_other": "Captured {{count}} figures",
+      "capturedPartial": "Captured {{done}} of {{total}} figures",
+      "static": "No script",
+      "noFigure": "Finished, no figure",
+      "cancelled": "Stopped",
+      "attention": "Needs attention",
+      "originConfirm": "Packages to confirm",
+      "originUnknown": "Origin unclear"
+    },
+    "origin": {
+      "unavailable": "Couldn't load the package names right now; try again in a moment.",
+      "distFailed": "After installing, the packages didn't match what you confirmed.",
+      "detail": {
+        "listIntro": "Tavotto can't tell where these come from, so it won't install them for you:",
+        "notPip": "This script needs {{name}}, which the built-in Python can’t install; use an environment that has it.",
+        "localMissing": "Can’t find local module {{name}} (the script added {{dirs}} to the search path; check that folder is there).",
+        "userSpecifiedBadge": "Named by you, not verified",
+        "trustNote": "A name you type isn't a trusted source: Tavotto can't verify it, so it asks you once more before installing.",
+        "alternatives": "Several packages can provide it; {{distribution}} is installed first, and to use another, switch to your own Python environment."
+      },
+      "dialog": {
+        "heading": "Confirm packages",
+        "names": "Check which package each library below should install, or change it.",
+        "nothing": "There are no package names to confirm right now.",
+        "confirmUnverified_one": "This package was named by you and isn't verified by a trusted source; it's installed only after you confirm.",
+        "confirmUnverified_other": "These {{count}} packages were named by you and aren't verified by a trusted source; they're installed only after you confirm.",
+        "noDisclosure": "Couldn't show where these packages come from, so nothing is installed.",
+        "placeholder": "package, optionally a version, e.g. name>=1.0"
+      },
+      "btn": {
+        "review": "Review packages",
+        "confirmInstall": "Confirm and install",
+        "back": "Back to edit"
+      },
+      "error": {
+        "package_requirement_invalid": "Write just the package name, or “name>=version”.",
+        "dependency_install_not_allowed": "This library can't be installed with that name right now; go back and review."
+      },
+      "reason": {
+        "distribution_unresolved": "Tavotto doesn't recognise it, so it can't tell which package to install.",
+        "module_origin_ambiguous": "Several packages could provide it, and Tavotto won't pick one for you.",
+        "editable_dependency_not_reproducible": "It's a library you're developing on this computer; Tavotto can't reproduce it in a new environment.",
+        "installed_source_not_reproducible": "It was installed from a local file or a web address, so Tavotto can't install the same thing again.",
+        "conda_package_not_pypi": "It came from Conda, and pip may not give you the same thing.",
+        "unverified": "Where it comes from can't be verified yet, so it's left alone.",
+        "module_import_failed_in_target_environment": "It's installed but fails to import, so installing it again won't help.",
+        "unknown": "Where it comes from can't be determined yet."
+      },
+      "coverage": {
+        "module_not_found_in_user_environment": "Not found in your Python.",
+        "module_import_failed_in_user_environment": "In your Python, but it fails to import.",
+        "module_missing_in_target_environment": "Not in the environment Tavotto prepares yet.",
+        "module_import_failed_in_target_environment": "In the prepared environment, but it fails to import.",
+        "environment_not_checked": "This Python hasn't been checked yet.",
+        "environment_unusable": "This Python can't run on its own.",
+        "unknown": "The state of this Python can't be determined yet."
+      },
+      "dist": {
+        "distribution_not_installed": "The package you confirmed wasn't installed.",
+        "distribution_version_mismatch": "The installed version doesn't meet the requirement.",
+        "distribution_does_not_provide_import": "The installed package doesn't contain the library the script uses; the name may be wrong.",
+        "distribution_unverifiable": "Can't read what's in this package, so it can't be confirmed.",
+        "unknown": "What was installed doesn't match the plan."
+      }
+    },
+    "progress": "In progress",
+    "convert": {
+      "running": "Making an editable version…",
+      "runningElapsed": "Generating the editable version… ({{minutes}} min so far)",
+      "ready": "The new version is ready. Compare, then decide",
+      "stoppedLate": "The conversion had already finished; the stop came too late. Compare, and adopt it if you want it",
+      "adopted": "Adopted. Opening the new version…",
+      "original": "Original",
+      "redrawn": "Redrawn version",
+      "noPreview": "No preview",
+      "aspectDiffers": "Aspect ratio differs from the original by about {{pct}}%",
+      "fail": {
+        "unknown": "Couldn’t make an editable version",
+        "no_matplotlib_figure": "The generated script ran but drew no Matplotlib figure",
+        "run_failed": "The generated script failed to run",
+        "no_matplotlib_import": "The generated script doesn’t use Matplotlib",
+        "raster_drawing": "The generated script still paints text or shapes as pixels",
+        "agent_output_truncated": "The model reached its response limit before finishing the script. No candidate was adopted.",
+        "agent_budget": "The conversion reached its time or token limit. No candidate was adopted.",
+        "agent_network": "The model service request failed. You can retry.",
+        "agent_html_response": "The connection address opens a web page, not an API. Check the address.",
+        "agent_auth": "The model credential is invalid or expired. Check the AI connection.",
+        "agent_quota": "The model service has no available quota or is rate limited.",
+        "agent_refused": "The model declined this conversion.",
+        "agent_max_turns": "The conversion reached its step limit.",
+        "agent_tool_error_loop": "The conversion stopped after repeated tool errors.",
+        "agent_internal": "The conversion executor encountered an error. You can review and send a private report.",
+        "target_missing": "The assistant didn’t write the new script",
+        "syntax_error": "The generated script has a syntax error",
+        "other_file_changed": "The assistant changed files it shouldn’t have, so it was discarded",
+        "project_files_changed": "The validation run changed project files, so it was discarded",
+        "project_files_changed_sync": "Project files changed in the meantime, so it was discarded. This project is in a sync folder, so the sync app may be changing files. Wait for syncing to finish, then retry",
+        "render_not_wired": "The new version can’t be checked right now",
+        "budget_exhausted": "Out of attempts",
+        "missing_dependency": "The Python packages the new version needs are not installed (auto-install is off, or they can't be installed automatically). Install them yourself and try again",
+        "dependency_install_failed": "The Python packages the new version needs couldn’t be installed. Try again in a moment",
+        "needs_input": "One step in this script has no reliable Python equivalent, so no new version was made",
+        "needs_input_reason": "No new version was made: {{reason}}",
+        "convert_source_changed": "The original script changed in the meantime, so this new version was written against an older one. Please generate it again",
+        "convert_context_changed": "Resources used for this conversion changed. Generate it again.",
+        "convert_project_changed": "Project files changed in the meantime. Please generate it again",
+        "convert_candidate_changed": "The new version's file was modified. Please generate it again",
+        "resume_unreachable": "Can’t connect right now. Try again in a moment",
+        "resume_error": "Something went wrong while continuing. Please try again"
+      },
+      "foreign": {
+        "r": "This is an R script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched.",
+        "matlab": "This is a MATLAB script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched."
+      },
+      "unverified": "{{product}} didn’t run R / MATLAB. Compare side by side before using it",
+      "adoptAdds": "Adopting only adds {{files}}; your original script is not touched",
+      "installed": "Installed {{names}} for this project",
+      "btn": {
+        "start": "Make editable version",
+        "adopt": "Use the new version",
+        "discard": "Discard",
+        "retry": "Try again"
+      },
+      "deps": {
+        "askOnce": "Install the missing packages into this environment ({{env}})?",
+        "askOnceManaged": "Install the missing packages for this environment ({{env}}), into a separate environment {{product}} sets up for this project, leaving {{env}} itself alone?",
+        "uncommon": "{{names}} is not a common package. Install it only if it's what you want.",
+        "system": "This Python came with your system, and installing packages into it could break system tools. Please choose another environment for the project.",
+        "askSystem": "This Python came with your system, so packages aren't installed into it. {{product}} will set up a separate environment for this project and install {{names}}{{size}}",
+        "uncommonManaged": "{{names}} is not a common package. Install it only if it's what you want (it goes into the separate environment {{product}} sets up for this project).",
+        "askBuiltin": "Packages aren't installed into the built-in environment. {{product}} will set up a separate environment for this project and install {{names}}{{size}}",
+        "downloadSize": " (downloads about {{mb}} MB of Python first)",
+        "resuming": "Installing {{names}}, then continuing…",
+        "replanning": "Re-checking with the new environment…",
+        "continuing": "Continuing to check the new version…",
+        "stopping": "Stopping…",
+        "installedLate": "The dependencies are already installed (the stop came too late to undo).",
+        "env": {
+          "managed": "{{product}} project environment"
+        },
+        "btn": {
+          "installAlways": "Install, and do it automatically for this environment from now on",
+          "prepareEnv": "Set up and install",
+          "otherEnv": "Choose another environment",
+          "installOnce": "Yes, install",
+          "decline": "Don't install",
+          "continue": "Continue",
+          "chooseEnv": "Choose a runtime environment"
+        }
+      },
+      "references": {
+        "label": "Additional reference files",
+        "placeholder": "One project-relative path per line",
+        "disclosure": "When you retry, these files will be provided to your selected AI as references.",
+        "retry": "Retry with references"
+      }
+    },
+    "envNotUsed": {
+      "fallbackLabel": "This environment",
+      "missing_imports": "{{label}} is missing {{names}}, which this script needs, so it was not used.",
+      "missing_imports_unnamed": "{{label}} is missing packages this script needs, so it was not used.",
+      "import_failed": "{{label}} has {{names}} installed, but it failed to load, so it was not used.",
+      "import_failed_unnamed": "{{label}} has the packages this script needs, but they failed to load, so it was not used.",
+      "python_out_of_range": "The Python version in {{label}} is outside what {{product}} supports, so it was not used.",
+      "no_matplotlib": "{{label}} has no matplotlib, so it cannot draw figures and was not used.",
+      "worker_chain_failed": "{{product}}'s rendering component would not start in {{label}}, so it was not used.",
+      "activation_failed": "{{label}} is a Conda environment, but activating it failed, so it was not used.",
+      "probe_timeout": "Checking {{label}} took too long, so it was not used this time.",
+      "unusable": "{{label}} would not start, so it was not used.",
+      "not_checked": "{{label}} can only be confirmed when the script runs, so it was not used this time.",
+      "outranked": "{{label}} works too, but a better environment came first.",
+      "root_python_mismatch": "This {{root}} was built for a different Python version than this environment, so it was not used.",
+      "root_python_mismatch_versions": "This {{root}} was built for Python {{built}}, but this environment uses Python {{env}}, so it was not used.",
+      "root_needs_msvc": "{{root}} needs the Visual Studio C++ tools to run on Windows, and they are not installed on this computer, so it was not used."
+    },
+    "pythonChange": {
+      "downloadBytes": "{{done}} / {{total}} MB downloaded",
+      "stage": {
+        "downloading": "Downloading Python…",
+        "verifying": "Checking…",
+        "extracting": "Unpacking Python…",
+        "launching": "Starting Python…",
+        "preparing": "Getting ready…",
+        "creating": "Creating the new environment…",
+        "installing": "Installing the packages the script needs…"
+      }
+    },
+    "aiFix": {
+      "repairFolder": "The script uses a folder outside the project that this account can’t read; its permissions need repairing",
+      "running": "AI is looking for the cause…",
+      "cancel": "Cancel",
+      "confirm": "Fix",
+      "decline": "Cancel",
+      "commandTitle": "Allow the AI to run this command?",
+      "outsideTitle": "This command needs to change files outside your project",
+      "confirmOutside": "Allow",
+      "commandAria": "Command to run",
+      "reasonLabel": "The AI’s reason: {{reason}}",
+      "outsideBackup": "Your project’s scripts are backed up first, so you can restore them if something goes wrong.",
+      "skip": "Skip",
+      "useIt": "Use it",
+      "other": "Type your own…",
+      "willInstall": "Will install: {{packages}}",
+      "readTitle": "What the AI looked at",
+      "pickFile": "Choose a file…",
+      "pickDir": "Choose a folder…",
+      "pathAria": "Path",
+      "pathPlaceholder": "Paste a path",
+      "sendTitle": "Send us the details of what went wrong?",
+      "sendNote": "The AI's note",
+      "sendSource": "You can attach the script in the next step.",
+      "sendReview": "Review and send",
+      "sendNo": "Don't send",
+      "gotIt": "Got it",
+      "busy": "A fix is already in progress",
+        "stop": "Stop",
+        "activity": {
+          "generic": "The AI is working…",
+          "denied": "The AI is trying another way",
+          "thePackages": "the packages it needs",
+          "read_run_report": "Reading the run report",
+          "read_file": "Reading a file",
+          "list_dir": "Reading a folder",
+          "find_files": "Finding files",
+          "grep_files": "Searching file contents",
+          "list_environments": "Checking Python environments",
+          "inspect_environment": "Checking a Python environment",
+          "read_logs": "Reading logs",
+          "lookup_package": "Looking up a package",
+          "try_import": "Trying an import",
+          "try_run": "Test-running the script",
+          "install_packages": "Installing {{detail}}",
+          "change_python": "Creating a Python environment",
+          "switch_execution": "Changing how the script runs",
+          "select_environment": "Switching environment",
+          "convert_script": "Making an editable version",
+          "link_data_file": "Connecting the data file",
+          "run_command": "Running a command…",
+          "rollback": "Undoing the last change",
+          "propose_fix": "Preparing a fix",
+          "ask_user": "Asking you a question",
+          "pick_file": "Choose a file",
+          "prepare_diagnostics": "Writing the details to send",
+          "finish": "Wrapping up"
+        },
+        "stalled": {
+          "cli_waiting_approval": "The AI is waiting for approval",
+          "cli_tool_not_delivered": "The AI’s request didn’t arrive",
+          "stalled": "The AI isn’t responding"
+        },
+        "stalledWhy": {
+          "cli_waiting_approval": "Codex or Claude Code is waiting for approval, and Tavotto can’t approve it for you. Stop to try again.",
+          "cli_tool_not_delivered": "The AI’s request didn’t arrive. It may be waiting for approval. Stop to try again.",
+          "stalled": "The AI isn’t responding. It will stop automatically soon."
+        },
+      "notFixed": "Couldn't fix it this time",
+      "failed": {
+        "cli_waiting_approval": "The AI got stuck on its own approval and was stopped",
+        "cli_tool_not_delivered": "A call from the AI never arrived and it was stopped",
+        "cli_no_tools": "The repair tools never reached the AI, so nothing was changed",
+        "stalled": "The AI was quiet for too long and was stopped",
+        "budget": "The AI ran out of steps before fixing it",
+        "auth": "The AI key isn’t valid. Check it in Settings.",
+        "quota": "The AI's quota is used up",
+        "network": "Can't reach the AI service; try again later",
+        "refused": "The AI service refused this request",
+        "other": "The AI couldn't fix it this time"
+      }
+    }
   },
   "canvasMenu": {
     "aria": "Canvas actions",
@@ -917,5 +1506,44 @@
     "rulers": "Rulers",
     "grid": "Grid",
     "safeArea": "Safe area"
+  },
+  "restore": {
+    "autoAdopted": "Opened the layout “{{name}}” found on this computer",
+    "blockedWrite": "Your last layout isn’t open yet.",
+    "choose": "Pick one to open",
+    "continueNew": "Start a new layout",
+    "entrySuperseded": "The project was switched, so this action wasn’t carried out.",
+    "entryTimeout": "Your last layout still wasn’t handled, so this action wasn’t carried out.",
+    "indexDegraded": "The record of your last layout couldn’t be read, so a blank layout was opened. Your older layouts are still there — look in “Open layout”.",
+    "meta": {
+      "pill": "Auto-recovery info not updated",
+      "retry": "Save again",
+      "title": "Your layout is saved, but the record used to reopen it next time wasn’t updated."
+    },
+    "openAlt": "Open “{{name}}”",
+    "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
+    "pill": {
+      "choose": "Layouts found on this computer",
+      "indexDegraded": "Recovery record unreadable",
+      "invalid": "Last layout can’t be read",
+      "missing": "Last layout not found",
+      "prepareFailed": "Example layout didn’t open",
+      "tooNew": "Last layout is from a newer version",
+      "unavailable": "Last layout isn’t open yet"
+    },
+    "retry": "Try again",
+    "title": {
+      "choose": "Found a few layouts on this computer — pick one to open.",
+      "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
+      "invalid": "The last layout “{{name}}” can’t be read.",
+      "missing": "The last layout “{{name}}” wasn’t found.",
+      "prepareFailed": "The example layout didn’t open.",
+      "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
+      "unavailable": "Your last layout isn’t open yet."
+    }
+  },
+  "renderProgress": {
+    "preparing": "Preparing the figure…",
+    "elapsed": "{{message}} · {{seconds}} s elapsed"
   }
 }

@@ -10,11 +10,15 @@ macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能�
 下面每条针对单个目标的用例都对**所有目标**跑一遍，免得新增目标时漏掉看护。
 """
 
+import ast
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+from textwrap import dedent
 
 try:
     import tomllib
@@ -526,6 +530,230 @@ def test_spec_and_build_script_share_one_judgement():
     assert "check_runtime_dir" in desktop
 
 
+# ---------------- 打包后 runtime 原样（PyInstaller 改判 / 改写看护）------------------
+def test_runtime_source_dir_honours_the_override(tmp_path, monkeypatch):
+    """spec 收的与 build_desktop 核对的必须是同一份；覆盖了却核对了另一份，闸就空转。"""
+    monkeypatch.delenv("TAVOTTO_RUNTIME_SRC", raising=False)
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "runtime"
+    monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", str(tmp_path / "elsewhere"))
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "elsewhere"
+    # 相对覆盖锚定到仓库根，不随调用方的 cwd 漂移（build_desktop 从别处起时核对的仍是被打包的那份）
+    monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", os.path.join("build", "rt"))
+    monkeypatch.chdir(tmp_path.parent)
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "build" / "rt"
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert "RUNTIME = runtime_source_dir(ROOT)" in spec
+
+
+def _fake_runtime(root: Path) -> None:
+    so = root / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    so.parent.mkdir(parents=True)
+    so.write_bytes(b"\xcf\xfa\xed\xfe@loader_path/../.dylibs/libscipy_openblas64_.dylib")
+    blas = root / "lib" / "site-packages" / "numpy" / ".dylibs" / "libscipy_openblas64_.dylib"
+    blas.parent.mkdir(parents=True)
+    blas.write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 64)
+    (root / "runtime-manifest.json").write_text("{}", encoding="utf-8")
+
+
+def test_diff_collected_runtime_accepts_a_byte_identical_copy(tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+
+def test_diff_collected_runtime_reports_rewritten_and_missing_files(tmp_path):
+    """v0.18.0 macOS 的形状：扩展模块被改写成 @rpath（等长，只比 size 会漏），另有文件没进包。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    so = dst / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    original = so.read_bytes()
+    rewritten = b"\xcf\xfa\xed\xfe@rpath/libscipy_openblas64_.dylib".ljust(len(original), b"\0")
+    assert len(rewritten) == len(original)
+    so.write_bytes(rewritten)
+    (dst / "runtime-manifest.json").unlink()
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("lib", "site-packages", "numpy", "_core", "_multiarray_umath.so")
+        + "（字节不同）",
+        "runtime-manifest.json（缺）",
+    ]
+
+
+def test_diff_collected_runtime_reports_files_only_in_the_packed_tree(tmp_path):
+    """成员也要相同：打包器往 runtime/ 里多塞的文件（原件一个没动）同样算不一致。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    (dst / "lib" / "libgfortran.5.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("lib", "libgfortran.5.dylib") + "（多出）"
+    ]
+
+
+def test_is_under_treats_another_windows_drive_as_outside():
+    """Windows runner：仓库（runtime）在 D:，打包 Python 的 DLL 在 C:——commonpath 会抛 ValueError。"""
+    import ntpath
+
+    root = r"D:\a\Tavotto\Tavotto\runtime"
+    assert brt._is_under(r"C:\hostedtoolcache\Python\python313.dll", root, ntpath) is False
+    assert brt._is_under(r"d:\A\Tavotto\Tavotto\RUNTIME\Lib\x.pyd", root, ntpath) is True
+    assert brt._is_under(r"D:\a\Tavotto\Tavotto\runtime-other\x.dll", root, ntpath) is False
+
+
+def test_runtime_toc_problems_survives_sources_it_cannot_relate(tmp_path, monkeypatch):
+    """任一条目与 runtime 无公共前缀（跨盘符）时整张 TOC 照样判完，不抛。"""
+    rt = tmp_path / "runtime-src"
+    _fake_runtime(rt)
+
+    def boom(paths):
+        raise ValueError("Paths don't have the same drive")
+
+    monkeypatch.setattr(brt.os.path, "commonpath", boom)
+    toc = [("python313.dll", str(tmp_path / "host.dll"), "BINARY")]
+    assert brt.runtime_toc_problems(toc, rt) == []
+
+
+def test_runtime_toc_problems_flags_copies_outside_and_reclassified_entries(tmp_path):
+    """v0.18.0 macOS 的 TOC 形状（PyInstaller 6.22.3 实测）：runtime 里 numpy/.dylibs 的库被依赖分析
+    以 BINARY 复制到顶层；runtime 自己的扩展模块被改判成 BINARY。冻结层自己的同名库（来源不在
+    runtime 下）不算。"""
+    rt = tmp_path / "runtime-src"
+    _fake_runtime(rt)
+    dylibs = rt / "lib" / "site-packages" / "numpy" / ".dylibs"
+    so = rt / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    host_crypto = tmp_path / "host" / "libcrypto.3.dylib"
+    host_crypto.parent.mkdir()
+    host_crypto.write_bytes(b"x")
+    ok = [
+        (
+            os.path.join("runtime", "runtime-manifest.json"),
+            str(rt / "runtime-manifest.json"),
+            "DATA",
+        ),
+        ("libcrypto.3.dylib", str(host_crypto), "BINARY"),
+        (os.path.join("runtime", "bin", "python3"), "python3.13", "SYMLINK"),
+    ]
+    assert brt.runtime_toc_problems(ok, rt) == []
+
+    copied = ("libscipy_openblas64_.dylib", str(dylibs / "libscipy_openblas64_.dylib"), "BINARY")
+    rewritten = (
+        os.path.join("runtime", "lib", "site-packages", "numpy", "_core", so.name),
+        str(so),
+        "EXTENSION",
+    )
+    bad = brt.runtime_toc_problems([*ok, copied, rewritten], rt)
+    assert len(bad) == 2
+    assert bad[0].startswith("libscipy_openblas64_.dylib ← ") and "外面" in bad[0]
+    assert "typecode=EXTENSION" in bad[1]
+
+
+def test_spec_runs_the_runtime_toc_gate_after_adding_the_runtime():
+    """闸要在 Tree 加进去之后、COLLECT 之前跑，对象是 binaries + datas 全体，失败就拒绝打包。"""
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    tree_at = spec.index('Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")')
+    gate_at = spec.index("runtime_toc_problems([*a.binaries, *a.datas], RUNTIME)")
+    assert tree_at < gate_at < spec.index("coll = COLLECT(")
+    assert "raise SystemExit" in spec[gate_at : gate_at + 300]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_accepts_a_flattened_symlink(tmp_path):
+    """Tree 与 Tauri 都会把符号链接拍平成真文件；那不是改写。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    (src / "bin").mkdir()
+    (src / "bin" / "pydoc3.13").write_text("#!/bin/sh\n", encoding="utf-8")
+    (src / "bin" / "pydoc3").symlink_to("pydoc3.13")
+    shutil.copytree(src, dst, symlinks=False)
+    assert not (dst / "bin" / "pydoc3").is_symlink()
+    assert brt.diff_collected_runtime(src, dst) == []
+
+
+def _linked_runtime(tmp_path: Path) -> tuple[Path, Path]:
+    src = tmp_path / "src"
+    _fake_runtime(src)
+    (src / "bin").mkdir()
+    (src / "bin" / "python3.13").write_bytes(b"\xcf\xfa\xed\xfe interpreter")
+    (src / "bin" / "python3").symlink_to("python3.13")
+    (src / "lib" / "real-dir").mkdir()
+    (src / "lib" / "real-dir" / "data.txt").write_text("v1", encoding="utf-8")
+    (src / "lib" / "dir-link").symlink_to("real-dir", target_is_directory=True)
+    return src, tmp_path / "dst"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_checks_flattened_link_contents(tmp_path):
+    """拍平后的链接要与它解析到的源逐字节相同；拍平的目录链接下面的文件也逐个比、计入成员。"""
+    src, dst = _linked_runtime(tmp_path)
+    shutil.copytree(src, dst, symlinks=False)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+    (dst / "bin" / "python3").write_bytes(b"\xcf\xfa\xed\xfe tampered!!")
+    (dst / "lib" / "dir-link" / "data.txt").write_text("v2", encoding="utf-8")
+    (dst / "lib" / "dir-link" / "extra.dylib").write_bytes(b"x")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("bin", "python3") + "（字节不同）",
+        os.path.join("lib", "dir-link", "data.txt") + "（字节不同）",
+        os.path.join("lib", "dir-link", "extra.dylib") + "（多出）",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_checks_preserved_link_targets(tmp_path):
+    """保留为链接时比目标字符串：被改指到别处的链接（哪怕两边文件字节一样）也算不一致。"""
+    src, dst = _linked_runtime(tmp_path)
+    shutil.copytree(src, dst, symlinks=True)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+    (dst / "bin" / "python3-copy").write_bytes((dst / "bin" / "python3.13").read_bytes())
+    (dst / "bin" / "python3").unlink()
+    (dst / "bin" / "python3").symlink_to("python3-copy")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("bin", "python3-copy") + "（多出）",
+        os.path.join("bin", "python3") + "（链接目标不同）",
+    ]
+
+
+def test_build_desktop_checks_the_packed_runtime_after_pyinstaller():
+    """闸要接在 PyInstaller 之后、Tauri 之前，且用与 spec 同一个来源目录。"""
+    text = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
+    main = next(
+        n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    calls = {
+        n.func.id: n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "runtime_source_dir" in calls and "diff_collected_runtime" in calls
+    pyinstaller = next(
+        n.lineno for n in ast.walk(main) if isinstance(n, ast.Constant) and n.value == "PyInstaller"
+    )
+    tauri = next(
+        n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and "@tauri-apps/cli" in n.value
+    )
+    assert pyinstaller < calls["diff_collected_runtime"] < tauri
+
+
+@pytest.mark.parametrize("job", ["windows-exe-smoke", "macos-app-smoke"])
+def test_ci_smoke_legs_check_the_packed_runtime_after_pyinstaller(job):
+    """CI 的两条冒烟腿直接调 pyinstaller、不经 build_desktop.py——同一道闸要在那里也接上。"""
+    text = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    starts = [(m.group(1), m.start()) for m in re.finditer(r"(?m)^  ([\w-]+):\s*$", text)]
+    begin = next(i for i, (name, _) in enumerate(starts) if name == job)
+    end = starts[begin + 1][1] if begin + 1 < len(starts) else len(text)
+    block = text[starts[begin][1] : end]
+    freeze = block.index("run: pyinstaller packaging/tavotto.spec")
+    check = block.index(
+        'diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")'
+    )
+    assert freeze < check
+    assert "sys.exit(1)" in block[check : check + 400]
+
+
 # ---------------- 精简规则 ----------------------------------------------------
 def test_prune_never_touches_public_testing_apis():
     """`numpy.testing` / `pandas._testing` 是公开 API，用户脚本里
@@ -719,6 +947,26 @@ def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fon
             frozen.frozen = saved
 
 
+def _engine_source_datas():
+    """Evaluate the actual spec datas loop, never filenames in comments/other lists."""
+    path = REPO / "packaging" / "tavotto.spec"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    loops = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "name"
+    ]
+    assert len(loops) == 1, "spec must have one explicit external-interpreter source datas loop"
+    namespace = {"PKG": REPO / "src" / "tavotto", "datas": []}
+    exec(compile(ast.Module(body=loops, type_ignores=[]), str(path), "exec"), namespace)
+    datas = namespace["datas"]
+    assert datas and all(destination == "tavotto/engine" for _, destination in datas)
+    assert all(Path(source).is_file() and Path(source).suffix == ".py" for source, _ in datas)
+    return datas
+
+
 def test_spec_ships_every_module_the_worker_imports():
     """worker 平铺 import 的**整条传递闭包**都必须作为真 .py 进包。
 
@@ -767,11 +1015,11 @@ def test_spec_ships_every_module_the_worker_imports():
         assert out, f"用例前提：{path.name} 里确实有 {names} 装载清单"
         return out
 
-    # **两个根**：safe worker 与 native bridge runner 是两条各自独立起进程的
-    # 入口（后者由用户自己的解释器按绝对路径执行，见 ADR 0020）。只查一个根
-    # 就是这条用例 docstring 里说的「只查半条链」的同款缺陷，换了个位置。
-    # 两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
-    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot"]
+    # **三个根**：safe worker、native bridge runner 与公式排版子进程是各自独立起进程的
+    # 入口（bridge 由用户自己的解释器按绝对路径执行，见 ADR 0020；公式排版由内置 runtime
+    # 按绝对路径执行，ADR 0152 PR 4）。只查一个根就是这条用例 docstring 里说的「只查半条链」
+    # 的同款缺陷，换了个位置。两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
+    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot", "mathtext_child"]
     todo += list(load_lists(engine / "worker.py", ("_ENGINE_MODULES",)))
     todo += list(load_lists(engine / "bridge_runner.py", ("_PHASE1", "_PHASE2")))
     while todo:
@@ -789,11 +1037,171 @@ def test_spec_ships_every_module_the_worker_imports():
         "用例前提：worker 确实经 figsession / wireproto 复用编辑语义与信封"
     )
     assert "bridgeboot.py" in siblings, "用例前提：两个根都按文件路径装 bridgeboot"
+    assert "mathtext_child.py" in siblings, "用例前提：公式排版子进程是第三个根"
 
-    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
-    shipped = set(re.findall(r'"(\w+\.py)"', spec))
+    shipped = {Path(source).name for source, _ in _engine_source_datas()}
     missing = siblings - shipped
     assert not missing, f"packaging/tavotto.spec 漏了 worker 要用的模块: {missing}"
+
+
+@pytest.fixture(scope="module")
+def _scientific_interpreter():
+    from support.bridgekit import USER_PYTHON
+
+    if USER_PYTHON is None:
+        pytest.skip("cold source-datas execution requires a scientific interpreter")
+    # Discover dependency directories only. The actual test uses -S so editable
+    # install .pth files cannot silently restore this checkout to sys.path.
+    result = subprocess.run(
+        [
+            USER_PYTHON,
+            "-I",
+            "-c",
+            "import json,sys; print(json.dumps([p for p in sys.path "
+            "if p.endswith(('site-packages', 'dist-packages'))]))",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=30,
+    )
+    return USER_PYTHON, json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("entry", ["worker", "bridge_runner"])
+@pytest.mark.parametrize("omit", [None, "executionfact.py", "figsession.py"])
+def test_packaged_engine_sources_execute_without_checkout_fallback(
+    tmp_path, _scientific_interpreter, entry, omit
+):
+    """Cold artifact-shaped execution, including phase-one and phase-two mutations.
+
+    This is the spec's actual source datas, not a copy of the engine directory.
+    It exercises the separate scientific process, not a PyInstaller bootloader
+    or the target-platform native libraries (those remain the exe smoke jobs).
+    """
+    internal = tmp_path / "dist" / "_internal"
+    for source, destination in _engine_source_datas():
+        target = internal / destination / Path(source).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    engine = internal / "tavotto" / "engine"
+    if omit:
+        assert (engine / omit).is_file(), "mutation must remove a genuinely shipped module"
+        (engine / omit).unlink()
+    project = tmp_path / "project"
+    project.mkdir()
+    script = project / "figure.py"
+    script.write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(figsize=(2, 1))\n"
+        "ax.plot([0, 1], [1, 0])\nfig.savefig('Packaged.pdf')\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    python, dependencies = _scientific_interpreter
+    # No site initialization, repository path, or installed Tavotto fallback.
+    # The private namespace must resolve exclusively to the staged source datas.
+    bootstrap = dedent(
+        f"""\
+        import importlib.abc, runpy, sys
+        from pathlib import Path
+        sys.path.extend({dependencies!r})
+        class NoInstalledTavotto(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == 'tavotto' or fullname.startswith('tavotto.'):
+                    raise ModuleNotFoundError('installed Tavotto fallback forbidden')
+        sys.meta_path.insert(0, NoInstalledTavotto())
+        assert {str(REPO / "src")!r} not in sys.path
+        sys.argv = sys.argv[1:]
+        try:
+            runpy.run_path(sys.argv[0], run_name='__main__')
+        except SystemExit as exc:
+            if exc.code not in (None, 0):
+                raise
+        loaded = {{name: mod for name, mod in sys.modules.items()
+                  if name.startswith('tavotto_bridge_runtime.')}}
+        assert 'tavotto_bridge_runtime.executionfact' in loaded
+        assert 'tavotto_bridge_runtime.figsession' in loaded
+        for mod in loaded.values():
+            assert Path(mod.__file__).resolve().parent == Path({str(engine)!r})
+        """
+    )
+    command = [python, "-I", "-S", "-B", "-c", bootstrap, str(engine / f"{entry}.py")]
+    report = tmp_path / "report.json"
+    if entry == "worker":
+        command += [
+            "--script",
+            str(script),
+            "--figures-dir",
+            str(project),
+            "--out-dir",
+            str(out),
+            "--sandbox",
+            str(tmp_path / "sandbox"),
+            "--entry",
+            "__main__",
+        ]
+        requests = [
+            {"cmd": "build", "payload": {"execution_watch": "1" * 32}},
+            {
+                "cmd": "export",
+                "stem": "Packaged",
+                "payload": {
+                    "path": str(out / "pair.pdf"),
+                    "format": "pdf",
+                    "svg_path": str(out / "pair.svg"),
+                    "require_built": True,
+                },
+            },
+        ]
+        wire = "".join(
+            json.dumps({"protocol_version": 1, "request_id": str(i), **request}) + "\n"
+            for i, request in enumerate(requests)
+        )
+    else:
+        command += [
+            "--target-kind",
+            "script",
+            "--target",
+            str(script),
+            "--out-dir",
+            str(out),
+            "--report",
+            str(report),
+            "--",
+        ]
+        wire = ""
+    result = subprocess.run(
+        command,
+        input=wire,
+        cwd=project,
+        env={**os.environ, "MPLCONFIGDIR": str(tmp_path / "mpl"), "MPLBACKEND": "Agg"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if omit:
+        assert result.returncode != 0, result.stdout
+        assert "ModuleNotFoundError" in result.stderr and omit[:-3] in result.stderr
+        return
+    assert result.returncode == 0, result.stderr
+    if entry == "worker":
+        responses = [json.loads(line) for line in result.stdout.splitlines()]
+        assert len(responses) == 2 and all(r["ok"] for r in responses), responses
+        assert re.fullmatch(r"[0-9a-f]{48}", responses[0]["execution_id"])
+        assert responses[1]["svg"]["path"] == str(out / "pair.svg")
+        assert (out / "pair.pdf").read_bytes().startswith(b"%PDF-")
+        assert b"<svg" in (out / "pair.svg").read_bytes()
+    else:
+        facts = json.loads(report.read_text(encoding="utf-8"))
+        assert facts["stems"] == ["Packaged"] and facts["script_error"] is None
+        assert facts["tavotto_importable"] is False
+        assert facts["owner_thread"] == facts["main_thread"]
 
 
 def test_spec_ships_every_backend_the_contract_layer_can_select():
@@ -936,17 +1344,8 @@ def _release_signing_gate() -> str:
     return step
 
 
-def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
-    """Windows 的 Authenticode 是这道门禁**唯一**的例外，别顺手再开第二个。
-
-    2026-08-22（v0.9.0）把 SignPath 那条从硬失败降成警告：拿不到开源订阅之前，
-    它挡掉的不是「未签名的安装包」而是**整个 Windows 桌面版**，还连带
-    updater-manifest 的两平台硬要求一起落空，于是 macOS 用户也收不到更新。
-
-    但这条例外**极容易被复制**——下一个被某个 secret 卡住的人会照着把 macOS
-    那几条也改成 warning，而那时门禁就只剩一句好听的话。所以逐条钉死：更新包
-    的 minisign 私钥与 macOS 的证书/身份/公证账号仍必须让发行构建**失败**。
-    """
+def test_release_signing_gate_requires_updater_and_macos_credentials():
+    """Authenticode 改为独立 fail-closed 分支，不放松更新包与 macOS 的硬要求。"""
     step = _release_signing_gate()
     hard = [ln.strip() for ln in step.splitlines() if "missing+=" in ln]
     joined = "\n".join(hard)
@@ -957,27 +1356,159 @@ def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
         "APPLE_ID",
     ):
         assert cred in joined, f"{cred} 不再让发行构建失败——门禁被掏空了"
-    assert "exit 1" in step, "凑齐 missing 之后必须真的退出非零"
-    # 例外只有这一个，而且不许扩散到别处
-    assert "SIGNPATH" not in joined, (
-        "SignPath 是自觉的例外（见 docs/code-signing-policy.md），不该回到硬失败；"
-        "要恢复的话连同这条用例一起改"
-    )
 
 
-def test_unsigned_windows_release_is_loud_not_silent():
-    """降级成 warning 的那一支必须**看得见**，否则就是 P1-07 原本要挡的东西。
+@pytest.fixture
+def run_release_signing_gate(tmp_path):
+    """在隔离 Bash 进程里执行 workflow 原始门禁；只用假值，不签名、不联网。
 
-    审计 P1-07 的真正指控不是「没签名」，是「没签名而且工作流全绿」。所以
-    例外成立的前提是它自己会喊：运行页顶部一条 annotation + job summary 里
-    一段说明。把这两样删掉，这道门禁就退化成一句注释。
+    判据主语：该步在给定平台 / 发行标记 / 凭据状态下的退出码与实际摘要。
+    只识别本 workflow 的 run: | + env: 缩进形状；形状变化时当场失败。
     """
     step = _release_signing_gate()
-    assert "::warning" in step, "未签名的发行必须在运行页顶部留下 annotation"
-    assert "GITHUB_STEP_SUMMARY" in step, (
-        "还要写进 job summary——日志第 33 步里的一行 warning 没人会翻到"
+    match = re.search(r"(?ms)^        run: \|\n(.*?)^        env:", step)
+    assert match, "签名门禁的 Bash 正文未找到"
+    script = dedent(match.group(1))
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        git_exe = shutil.which("git")
+        assert git_exe, "Windows 签名门禁合同需要 Git for Windows"
+        candidates = [parent / "bin" / "bash.exe" for parent in Path(git_exe).parents]
+        bash = next((str(path) for path in candidates if path.is_file()), bash)
+    assert bash, "签名门禁行为合同需要 Bash（Windows 使用 Git for Windows）"
+
+    def run(**overrides):
+        # 不继承真实签名凭据、BASH_ENV 或 shell 启动配置；PATH 只用于定位系统命令。
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "IS_RELEASE_BUILD": "1",
+            "RUNNER_OS": "Windows",
+            "SIGNPATH_ENABLED_VAR": "true",
+            "TAURI_SIGNING_PRIVATE_KEY": "fixture-updater-key",
+            "MACOS_CERTIFICATE": "fixture-certificate",
+            "MACOS_SIGN_IDENTITY": "fixture-identity",
+            "APPLE_ID": "fixture@example.invalid",
+            "GITHUB_STEP_SUMMARY": "summary.md",
+        }
+        if "SYSTEMROOT" in os.environ:
+            env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+        env.update(overrides)
+        result = subprocess.run(
+            [bash, "--noprofile", "--norc", "-c", script],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+        )
+        summary = tmp_path / "summary.md"
+        return result, summary.read_text(encoding="utf-8") if summary.exists() else ""
+
+    return run
+
+
+@pytest.mark.parametrize("enabled", ["", "false", "TRUE"])
+def test_unsigned_windows_release_is_fail_closed(run_release_signing_gate, enabled):
+    """更新器密钥齐全时也必须因 SignPath 未使能独立失败，不能借 missing 块的 exit。"""
+    result, summary = run_release_signing_gate(SIGNPATH_ENABLED_VAR=enabled)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "::error" in result.stdout
+    assert "::warning" not in result.stdout
+    assert "已拦停" in summary and "Authenticode" in summary
+
+
+@pytest.mark.parametrize(
+    ("waiver", "tag"),
+    [("", "v0.19.0"), ("v0.18.0", "v0.19.0"), ("v0.19.0", ""), ("", "")],
+)
+def test_unsigned_waiver_must_name_this_exact_tag(run_release_signing_gate, waiver, tag):
+    """豁免只认点名的这一个 tag：空、旧版本号、读不到 RELEASE_TAG 都照样拦停。"""
+    result, summary = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG=waiver, RELEASE_TAG=tag
     )
-    assert "minisign" in step, "摘要要说清更新链仍可信，否则读的人会以为自动更新也不安全了"
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "已拦停" in summary
+
+
+def test_unsigned_waiver_for_this_tag_passes_with_warning(run_release_signing_gate):
+    result, summary = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0", RELEASE_TAG="v0.19.0"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning" in result.stdout and "::error" not in result.stdout
+    assert "维护者豁免" in summary and "v0.19.0" in summary
+
+
+def test_unsigned_waiver_does_not_relax_updater_key(run_release_signing_gate):
+    """豁免只管 Authenticode：缺 minisign 更新包密钥照样失败。"""
+    result, _ = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="",
+        WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0",
+        RELEASE_TAG="v0.19.0",
+        TAURI_SIGNING_PRIVATE_KEY="",
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "TAURI_SIGNING_PRIVATE_KEY" in result.stdout
+
+
+@pytest.mark.parametrize("platform", ["Windows", "macOS"])
+def test_non_release_signing_gate_allows_unsigned_trials(run_release_signing_gate, platform):
+    result, summary = run_release_signing_gate(
+        IS_RELEASE_BUILD="0",
+        RUNNER_OS=platform,
+        SIGNPATH_ENABLED_VAR="",
+        TAURI_SIGNING_PRIVATE_KEY="",
+        MACOS_CERTIFICATE="",
+        MACOS_SIGN_IDENTITY="",
+        APPLE_ID="",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "非发行构建" in result.stdout
+    assert not summary
+
+
+@pytest.mark.parametrize("platform", ["Windows", "macOS"])
+def test_release_signing_gate_accepts_complete_credentials(run_release_signing_gate, platform):
+    # macOS 不依赖 SignPath；Windows 的 true 只表示凭据门通过，最终签名仍另验。
+    result, _ = run_release_signing_gate(
+        RUNNER_OS=platform, SIGNPATH_ENABLED_VAR="true" if platform == "Windows" else ""
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("platform", "credential"),
+    [
+        ("Windows", "TAURI_SIGNING_PRIVATE_KEY"),
+        ("macOS", "TAURI_SIGNING_PRIVATE_KEY"),
+        ("macOS", "MACOS_CERTIFICATE"),
+        ("macOS", "MACOS_SIGN_IDENTITY"),
+        ("macOS", "APPLE_ID"),
+    ],
+)
+def test_release_signing_gate_rejects_missing_credentials(
+    run_release_signing_gate, platform, credential
+):
+    result, _ = run_release_signing_gate(RUNNER_OS=platform, **{credential: ""})
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert credential in result.stdout and "::error" in result.stdout
+
+
+def test_late_unsigned_windows_gate_only_blocks_releases():
+    """晚期 PowerShell 防线不能把前面明确允许的手动试构建再拦掉。"""
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    steps = wf.split("\n      - name:")
+    matches = [step for step in steps if step.startswith(" 未签名即拦停（fail-closed）\n")]
+    assert len(matches) == 1
+    step = matches[0]
+    condition = re.search(r"(?m)^        if: (.+)$", step)
+    assert condition and condition.group(1) == (
+        "runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'"
+        " && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG"
+    )
+    assert re.search(r"(?m)^        shell: pwsh$", step)
+    assert re.search(r"(?m)^        run: throw ", step)
 
 
 # ---------------- 真产物（构建过才跑）------------------------------------------

@@ -70,10 +70,9 @@ describe('e2e 选择器：活动区不能用 role 指代', () => {
   })
 
   /**
-   * jsdom 单测**整片**不进这条门禁：那 5 处（`ProjectReadinessBanner` /
-   * `RegistryDialog` / `panelCapabilityNote` / `AgentDetailView` /
-   * `CodexIntegrationPanel`）此刻都是对的——前三处 scope 在自己的渲染根里，
-   * 后两处只挂载一个设置页组件。把它们点名要开 5 条豁免，那就不是门禁了。
+   * jsdom 单测**整片**不进这条门禁：那 4 处（`RegistryDialog` / `panelCapabilityNote` / `AgentDetailView` /
+   * `CodexIntegrationPanel`）此刻都是对的——前两处 scope 在自己的渲染根里，
+   * 后两处只挂载一个设置页组件。把它们点名要开 4 条豁免，那就不是门禁了。
    *
    * **但「一次只挂载一个组件、document 就是渲染根」这个理由已经不是无条件的了**：
    * `CanvasStage` 现在自带一块常驻活动区（T06 的 `data-fast-edit-live`），凡是挂载

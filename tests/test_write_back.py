@@ -36,6 +36,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from support.previewkit import publish_fixture
 from tavotto import app as m
 from tavotto.engine import patchspec, pool as engine_pool, project_watch as engine_watch
 
@@ -131,9 +132,7 @@ class _FakeWorker:
         self._write_manifest()
 
     def _write_manifest(self) -> None:
-        (self.out_dir / f"{self.manifest['stem']}.json").write_text(
-            json.dumps(self.manifest, ensure_ascii=False), encoding="utf-8"
-        )
+        publish_fixture(self.out_dir, self.manifest["stem"], self.manifest)
 
     def override(self, stem, patches, preview_dpi=None, inline_svg=False):
         self.calls.append("override")
@@ -265,6 +264,44 @@ def test_write_back_cleans_updating_when_second_export_fails(
     assert _leftovers(figs) == []
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf  # 原文件完好
     assert (figs / "Fig1.png").read_bytes() == before_png
+    assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+def test_write_back_over_pixel_budget_is_a_409_with_params_and_zero_file_changes(
+    client, tmp_path, monkeypatch
+):
+    """PNG 目标按 600 dpi 超过 worker 直出的像素预算（`export_raster_too_large`）：
+
+    与别的 verify 段 worker 失败同一纪律——409 + `stage: "verify"`、原件字节不变、不留 `.updating`；
+    错误体带 code 与 `params`（宽 / 高 / 上限），界面据此说得出「图太大」而不是「worker 挂了」。
+    WorkerError 的形状与 `pool` 从 worker 错误信封转出来的一致（真 worker 的转换见
+    `tests/test_worker_export_pixel_budget.py`）。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    real_export = fresh.export
+
+    def export(stem, patches, path, fmt="pdf", dpi=600):
+        if fmt != "png":
+            return real_export(stem, patches, path, fmt, dpi)
+        err = engine_pool.WorkerError("位图导出太大", "", code="export_raster_too_large")
+        err.extra = {"width": 20000, "height": 15000, "max_pixels": 100_000_000}
+        raise err
+
+    fresh.export = export
+    discarded = _use(monkeypatch, hot, fresh)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "export_raster_too_large" and body["stage"] == "verify"
+    assert body["params"] == {"width": 20000, "height": 15000, "max_pixels": 100_000_000}
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
     assert discarded == [fresh]
     assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
@@ -1122,7 +1159,7 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
     for stem in ("Fig2_yield", "Fig2_correlation"):
         man = {**_manifest(), "stem": stem}
-        (out / f"{stem}.json").write_text(json.dumps(man), encoding="utf-8")
+        publish_fixture(out, stem, man)
 
     class Hot:
         """热会话：只在 Fig2_yield 上应用过 patches。"""
@@ -1140,6 +1177,36 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     assert m._hot_manifest(hot, "Fig2_correlation", patches) is None  # 另一个不可比
 
 
+def test_hot_manifest_rereads_the_path_after_the_rerender_repairs_an_invalid_stem(tmp_path):
+    """发布失败且还原也失败后 stem 被作废（`usable_preview_path` 返回哨兵）。同一组 patches 的写回
+    触发 `override` 重渲染，把标记清掉、manifest 重新发布——此时必须按**修好之后**的路径重读，
+    否则读的仍是哨兵、回 None，写回自检降成 `fresh_only`，热态与重放的比对和像素门被跳过。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    stem = "Fig1"
+    patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
+    figcapture.mark_preview_invalid(out, stem)
+    assert figcapture.preview_invalid(out, stem)
+
+    class Hot:
+        built = True
+        out_dir = out
+        last_patch_hash = patchspec.patch_hash(patches)
+        last_patch_hash_by_stem = {stem: patchspec.patch_hash(patches)}
+        calls = 0
+
+        def override(self, s, p):
+            Hot.calls += 1
+            publish_fixture(out, s, {**_manifest(), "stem": s})
+            figcapture.clear_preview_invalid(out, s)
+
+    got = m._hot_manifest(Hot(), stem, patches)
+    assert Hot.calls == 1
+    assert got is not None and got["stem"] == stem
+
+
 def test_verify_replay_answers_script_input_with_the_hot_answers(client, tmp_path, monkeypatch):
     """脚本 `input()` 的答案（ADR 0099 §五）：一次性重放拿的是热会话 build 时**实际用到**的那一组——
     不是此刻记住的、也不是空的。热态 == 重放靠它成立。"""
@@ -1153,4 +1220,6 @@ def test_verify_replay_answers_script_input_with_the_hot_answers(client, tmp_pat
     monkeypatch.setattr(m.engine_pool, "one_shot", lambda *a, **k: (seen.append(k), fresh)[1])
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
-    assert seen == [{"script_inputs": hot.last_build_script_inputs}]
+    assert [k["script_inputs"] for k in seen] == [hot.last_build_script_inputs]
+    # 解释器钉热会话自己的（#820 r4221133372）：形状与 `pool.pin_of_worker` 同一个出处
+    assert [k["pinned"] for k in seen] == [m.engine_pool.pin_of_worker(hot)]

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import tiffprobe
+from tavotto.engine import folderrepair
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
@@ -40,6 +41,10 @@ _SOURCE_FILES = (
     "security.py",
     "desktop.py",
     "engine/ai_bridge.py",
+    # 「连接 AI」：`ConnectionRefused("<code>")` 由 app 的 `_connection_error` 漏斗转成 JSON
+    "engine/ai_connections.py",
+    # 「生成可编辑版本」（ADR 0143）：`ConvertError("<code>")` 由 app 的 `_convert_error` 漏斗转成 JSON
+    "engine/ai_convert.py",
     "engine/project_refresh.py",
     "engine/atomicio.py",
     "engine/profilestore.py",
@@ -64,10 +69,15 @@ _CODE_REGISTRIES = (
     "tavotto.engine.preparation",
     # U04（ADR 0061）：跑前的依赖门——常量式 code，落到确认框与 MCP 的 recovery 上
     "tavotto.engine.deprepair",
+    # T10（ADR 0117）：环境建议的采用（HTTP 与 MCP 同一个 `adopt_candidate`）——常量式 code，经 app 的
+    # `_adoption_refused` 漏斗带 error 原文转成 JSON
+    "tavotto.engine.envadvice",
     # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
+    # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
+    "tavotto.engine.ai_data_figure",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -75,6 +85,12 @@ _CODE_REGISTRIES = (
     "tavotto.engine.runconfig",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
+    # TeX 工具链失败（`texdiag`）：pool 的错误收口按 matplotlib 的模板把 script_error 换成这四个码
+    "tavotto.engine.texdiag",
+    # 没有写入权限的项目另存一份（`projectcopy.CopyError`，由 app 的 `/api/project/save-as` 转出）
+    "tavotto.engine.projectcopy",
+    # 「修复权限」（ADR 0153 修订 2026-10-30）：`RepairError.code` 由 `/api/engine/folder-repair` 转成 JSON
+    "tavotto.engine.folderrepair",
 )
 
 
@@ -98,8 +114,10 @@ def _registry_codes() -> set[str]:
 _CODE_PATTERNS = (
     r'"code":\s*"([a-z0-9_]+)"',
     r'AgentError\(\s*"([a-z0-9_]+)"',
+    r'ConnectionRefused\(\s*"([a-z0-9_]+)"',
     r'RefreshError\(\s*"([a-z0-9_]+)"',
     r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
+    r'ConvertError\(\s*"([a-z0-9_]+)"',
     # ProfileStoreError 既有 `Cls("code", …)` 也有子类里的
     # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
     # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
@@ -123,6 +141,8 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    "svg_asset_unsupported": set(),
+    "svg_asset_export_unsupported": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
@@ -152,11 +172,34 @@ USER_VISIBLE_CODES = {
     "perf_report_write_failed": set(),
     # ADR 0079：依赖弹窗交回的用户环境 id 在本机的发现结果里找不到了
     "user_environment_gone": set(),
+    # 环境建议 / 检查 / 采用（T05，ADR 0114）
+    "environment_changed": set(),
+    "environment_generation_required": set(),
+    "environment_candidate_gone": set(),
+    "environment_save_failed": set(),
+    "environment_locked": set(),
+    "environment_check_running": set(),
     # 交回的环境按此刻的计划复核仍缺包（Codex #522 P2）
     "user_environment_incomplete": {"packages"},
     # 复核时联合计划算不出来：不知道脚本要什么，不拿空集合判「装齐」（Codex #562 P2）
     "user_environment_unverifiable": set(),
     # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
+    # #961：Tavotto 自己的引擎文件缺了（不是缺依赖）；缺的模块名走响应的 engine_module，不进文案
+    "engine_files_incomplete": set(),
+    # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
+    "write_outside_roots": set(),
+    # ADR 0153：脚本加进 sys.path 的项目外文件夹读不了、跳过之后仍失败；参数来自 `pool.recovery_params`（只有目录名）
+    "import_folder_unreadable": {"folder"},
+    # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应
+    **{code: set() for code in folderrepair.ERROR_CODES},
+    # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
+    "export_raster_too_large": {"width", "height", "max_pixels"},
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
+    "tex_command_missing": {"command"},
+    "tex_package_missing": {"file"},
+    "tex_compile_failed": {"line"},
+    "tex_failed": {"error"},
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
@@ -167,6 +210,8 @@ USER_VISIBLE_CODES = {
     "runtime_asset_unknown": {"id"},
     "runtime_asset_has_no_original_artifact": set(),
     "runtime_cache_missing": set(),
+    "runtime_asset_source_present": set(),
+    "runtime_asset_in_use": set(),
     # --- Compatibility Bridge Session 5：素材库普通入口 ---
     "probe_in_progress": {"script"},
     "script_name_missing": set(),
@@ -244,10 +289,72 @@ USER_VISIBLE_CODES = {
     "name_missing": set(),
     "endpoint_save_failed": {"reason"},
     "endpoint_invalid": {"reason"},
+    "ai_endpoint_incompatible": {"endpoint"},
+    # 账号登录（设备码 OAuth，ADR 0146）
+    "ai_endpoint_needs_login": {"endpoint"},
+    "oauth_unavailable": set(),
+    "oauth_start_failed": set(),
+    "oauth_flow_not_found": set(),
+    # 「连接 AI」（ai_connections）：连接 id 不存在 / 订阅类不能在这里删
+    "connection_not_found": set(),
+    "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
     # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
     "ai_revert_conflict": {"script"},
+    # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
+    "ai_script_busy": {"script"},
+    "ai_candidate_changed": set(),
+    "ai_candidate_unavailable": set(),
+    "ai_request_not_found": set(),
+    # 转换会话从不改原脚本：没有可回滚的东西（ADR 0143）
+    "ai_revert_not_applicable": set(),
+    # 「生成可编辑版本」（ADR 0143）：总开关关着 / 采用与丢弃的稳定码
+    "convert_disabled": set(),
+    "convert_not_found": set(),
+    "convert_not_ready": set(),
+    "convert_source_changed": set(),
+    "convert_context_changed": set(),
+    "convert_reference_invalid": set(),
+    "convert_project_changed": set(),
+    "convert_candidate_changed": set(),
+    "convert_outside_project": set(),
+    "convert_write_failed": set(),
+    "convert_name_exhausted": set(),
+    "convert_no_preview": set(),
+    # R / MATLAB 来源（ADR 0143 修订）：声明的语言与文件内容对不上（.m 可能是 Objective-C；判不出就拒绝，不猜）
+    "convert_source_language_mismatch": {"script"},
+    "convert_not_awaiting_dependencies": set(),
+    "convert_resume_busy": set(),
+    # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
+    "ai_request_superseded": set(),
+    "ai_supersede_conflict": set(),
+    # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
+    "ai_pending_unresolved": set(),
+    # TAF 数据出图（ADR 0138 Phase 5b）：开关关着 / 缺输入 / 数据读不成受控摘要（`ai_data_figure.DataSourceError`）
+    "taf_disabled": set(),
+    "data_figure_input_missing": set(),
+    "data_path_outside_project": set(),
+    "data_not_found": set(),
+    "data_not_csv": set(),
+    "data_too_large": set(),
+    "data_too_long": set(),
+    "data_too_wide": set(),
+    "data_unreadable": set(),
+    "data_decode_error": set(),
+    "data_malformed": set(),
+    "data_empty": set(),
+    "data_header_invalid": set(),
+    "data_ragged": set(),
+    "figure_name_exhausted": set(),
+    # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
+    "ai_request_unresolved": set(),
+    # 改图请求里那张图的文件不在项目里了（前端给「刷新项目」）
+    "ai_panel_file_missing": set(),
+    # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
+    "ai_draft_too_large": {"limit_kb"},
+    # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）
+    "ai_pending_limit": {"count"},
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},
@@ -256,6 +363,9 @@ USER_VISIBLE_CODES = {
     "ai_agent_needs_auth": {"agent"},
     "ai_agent_not_usable": {"agent"},
     "ai_agent_install_unsupported": {"agent"},
+    # 官方登录按钮：该 Agent 没有官方登录命令 / 命令没能启动（终端没打开、spawn 失败）
+    "ai_agent_login_unsupported": {"agent"},
+    "ai_agent_login_failed": {"agent"},
     "ai_agent_executable_invalid": {"path"},
     "ai_agent_probe_timeout": {"path"},
     # --- #24（ADR 0008 会话认证）带来的用户可见 code ---
@@ -329,6 +439,7 @@ USER_VISIBLE_CODES = {
     "bad_filename": {"reason"},
     "bad_validation": set(),
     "bad_objects": set(),
+    "bad_merge": set(),
     "missing_original": set(),
     "missing_figure": set(),
     "bad_overrides": set(),
@@ -347,12 +458,22 @@ USER_VISIBLE_CODES = {
     #     与没有脚本的图各报一条，其余格式照常交付（`partial`）---
     "eps_not_for_canvas": set(),
     "eps_needs_script": {"figure"},
+    "eps_source_unverified": {"figure"},
+    "eps_needs_live_figure": {"figure"},
+    "export_basis_mismatch": {"format"},
+    "svg_source_unsupported": {"id"},
+    "svg_figure_unavailable": {"figure"},
+    "svg_snapshot_missing": {"id"},
     # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
     #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},
     "tutorial_resources_invalid": {"reason"},
     "tutorial_copy_failed": {"reason"},
     "tutorial_locked": {"reason"},
+    # 重置时新副本已就位、但旧教程排版因会话状态被另一个进程占着没清掉（500）：文案固定、不带参数
+    "tutorial_reset_incomplete": set(),
+    # 重置确认之后示例副本里的另存排版变了 / 清点不了（409）：文案固定、不带参数，重置未执行
+    "tutorial_layouts_changed": set(),
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
     # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
@@ -364,8 +485,19 @@ USER_VISIBLE_CODES = {
     # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
     #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
     **{code: {"file"} for code in tiffprobe.ERROR_CODES},
+    # --- 只读项目另存一份（`engine/projectcopy`）：体量护栏 / 目标不可用 / 复制中途失败 ---
+    "project_copy_too_large": {"limit_mb"},
+    "project_copy_dest_invalid": set(),
+    "project_copy_dest_unwritable": set(),
+    "project_copy_failed": {"reason"},
+    # --- 只读项目里脚本写不出输出文件（worker 把 EACCES/EROFS 的写失败归成这个码；文案只有 {{product}} 一个占位，由前端填，不带路径）---
+    "output_folder_read_only": {"product"},
     # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
     "write_back_format_unsupported": {"format"},
+    # 同一 stem 下另一张图写的文件（`app.WriteBackForeignFileError`）：写回拒绝覆盖
+    "write_back_foreign_file": {"file"},
+    # 脚本用 `PdfPages` 写的 PDF（`app.WriteBackMultipagePdfError`，#1370）：多页 PDF 不是任何图的原件，写回一律拒绝、引导去导出
+    "write_back_multipage_pdf": {"file"},
     # --- U08（ADR 0068）：有限产物验证。`artifact_rejected` 是逐项失败（partial 那一档），
     #     `bad_inspection` 是请求里的检查政策不合法 / 指向的规范不可用 ---
     "artifact_rejected": {"failed", "policy"},
@@ -375,6 +507,7 @@ USER_VISIBLE_CODES = {
     "script_input_not_found": set(),
     "script_input_invalid": set(),
     "script_input_stream_gone": set(),
+    "script_input_transcript_failed": set(),
 }
 
 pytestmark = pytest.mark.skipif(
@@ -407,6 +540,7 @@ def test_placeholders_match_the_params_the_backend_sends(locale: str):
     table = _errors(locale)["backend"]
     for code, params in USER_VISIBLE_CODES.items():
         used = set(re.findall(r"\{\{\s*(\w+)\s*\}\}", table[code]))
+        params = params - DATA_ONLY_PARAMS.get(code, set())
         assert used == params, f"{locale} {code}：文案用了 {used}，后端给的是 {params}"
 
 
@@ -430,11 +564,13 @@ def test_error_field_is_still_there_as_the_fallback():
                 re.search(rf'{name}(?:\.__init__)?\(\s*(?:self,\s*)?"{code}"', src)
                 for name in (
                     "AgentError",
+                    "ConnectionRefused",
                     "RefreshError",
                     "AtomicWriteError",
                     "ProfileStoreError",
                     "ExportRequestError",
                     "TutorialError",
+                    "ConvertError",
                 )
             )
             # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗
@@ -527,6 +663,12 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # Conversion-run diagnostics are mapped by ai_convert._failure_check to the
+    # existing UI reason run_failed; they are not HTTP response codes.
+    "capture_incomplete",
+    "convert_output_identity",
+    "preview_render_failed",
+    "redirect_area_not_clearable",
     "telemetry_rejected",
     "invalid_telemetry_event",
     "bad_nonce",
@@ -535,6 +677,10 @@ NON_UI_CODES = {
     "bad_secret",
     "no_session_mode",
     "desktop_auth_required",
+    # `GET /api/handoff/render-status` 的参数错误：只有 `tavotto open` 的轮询客户端会调，界面不展示（ADR 0131 §六）
+    "bad_handoff_query",
+    # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
+    "bad_handoff_ack",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。
@@ -545,7 +691,21 @@ NON_UI_CODES = {
     # #715 验收 P1：「上次开着的排版」记到了别的项目的槽位上。只在后台推送里出现，前端认它作废
     # 本机缓存（`lib/projectDocs.LAYOUT_FOREIGN_CODE`），从不显示给用户
     "layout_foreign",
+    # ADR 0120：会话状态此刻读不到 / 跨进程锁拿不到（503）。同样只在后台「上次开着的」推送里出现，前端当成
+    # 可重试的失败、留着待确认标记下次补推（`lib/projectDocs.pushRemote`），从不显示给用户
+    "session_unavailable",
+    # 候选发现（只读）：槽位目录在、却列不出来（权限 / 网络盘）→ 503。前端当成 unavailable 走重试，不折成空项目，
+    # 从不把这个 code 显示给用户
+    "candidates_unavailable",
+    # 执行追踪（ADR 0151）Span 的错误码：只进本地 Trace 的 `error_code`，不是 HTTP 响应、不作为错误文案显示
+    # （PR3 的 Waterfall 若展示它们，届时随界面一起登记双语文案）
+    "agent_exit_nonzero",
+    "agent_spawn_failed",
 }
+
+
+#: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
+DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}}
 
 
 def _error_blocks(text: str):

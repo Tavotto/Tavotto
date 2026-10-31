@@ -32,6 +32,7 @@ import dataclasses
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 
 from . import projectenv, scanbudget
@@ -94,6 +95,8 @@ CURATED: dict[str, str] = {
     "gi": "PyGObject",
     "zmq": "pyzmq",
     "wx": "wxPython",
+    # 生成 / 读写文档（import 名 ≠ 包名）
+    "odf": "odfpy",
 }
 
 #: import 名与发行包名相同、且确认过的高频科研包。
@@ -108,6 +111,8 @@ SAME_NAME: frozenset[str] = frozenset(
         "numba",
         "xarray",
         "statsmodels",
+        # pandas 的时区数据依赖（Windows 上 `pip --target` 依赖夹里最常见的读不了的包，ADR 0153）
+        "tzdata",
         "h5py",
         "netcdf4",
         "zarr",
@@ -162,6 +167,17 @@ SAME_NAME: frozenset[str] = frozenset(
         "openpyxl",
         "xlrd",
         "tabulate",
+        # 生成报告 / 读写文档与表格（python-docx 的 `docx` 在 CURATED；它硬依赖 lxml）
+        "lxml",
+        "xlsxwriter",
+        "xlwt",
+        "docxtpl",
+        "reportlab",
+        "markdown",
+        "jinja2",
+        "tifffile",
+        "imageio",
+        "pyreadstat",
         # 拼图脚本常用来合并 / 裁切导出的 PDF；PyPDF2 是它改名前的旧名（同一上游 py-pdf，已冻结）
         "pypdf",
         "PyPDF2",
@@ -336,6 +352,73 @@ MAX_DECL_FILES = 12
 MAX_DECL_BYTES = 512 * 1024
 
 
+#: 项目标志：声明文件的向上遍历到最近的含其一的目录为止（含该目录）。ADR 0061 修订（2026-10-21）
+PROJECT_MARKERS: tuple[str, ...] = (".git", "pyproject.toml", "setup.cfg", "setup.py")
+
+#: 家目录下「大文件夹」的目录名（英文 / 中文系统各一套）：把它们当项目根打开时，里面常年躺着不相干的 requirements 与脚本。
+BROAD_HOME_SUBDIRS: tuple[str, ...] = (
+    "Desktop",
+    "桌面",
+    "Documents",
+    "文档",
+    "Downloads",
+    "下载",
+)
+
+
+def broad_folders() -> frozenset[str]:
+    """不读依赖声明的「大文件夹」（规范化后的绝对路径）：家目录本身、其下的桌面 / 文档 / 下载（含 OneDrive 重定向）。"""
+    try:
+        home = Path.home()
+    except (RuntimeError, OSError):
+        return frozenset()
+    out = {home}
+    for sub in BROAD_HOME_SUBDIRS:
+        out.add(home / sub)
+        out.add(home / "OneDrive" / sub)
+    return frozenset(os.path.normcase(os.path.abspath(p)) for p in out)
+
+
+def is_broad_folder(path: Path) -> bool:
+    """`path` 是不是大文件夹：上面那组、或文件系统根（盘符根）。家目录的**祖先**同样不读（遍历不会越过家目录）。"""
+    try:
+        key = os.path.normcase(os.path.abspath(path))
+    except (OSError, ValueError):
+        return True
+    if key in broad_folders():
+        return True
+    return Path(key).parent == Path(key)
+
+
+def _marker_present(path: Path, no_follow: bool) -> bool:
+    if not no_follow:
+        return path.exists()
+    try:
+        os.lstat(path)
+    except OSError:
+        return False
+    return True
+
+
+def _bound_decl_dirs(dirs: list[Path], *, no_follow: bool = False) -> list[Path]:
+    """把「脚本目录 → 项目根」的目录列表按用户裁决（2026-10-21）收窄：到最近的项目标志（含）为止；
+    大文件夹一律不读（它们之后的目录也不读——遍历到这里就停）。
+
+    `no_follow`（默认静态扫描）下探测标志用 `lstat`：标志是符号链接时只看链接本身存在，不解引用——
+    否则指向外部 / UNC 的 `.git`、`pyproject.toml` 会在读取守卫之前被 stat（Codex #1276 P2）。"""
+    out: list[Path] = []
+    for d in dirs:
+        if is_broad_folder(d):
+            break
+        out.append(d)
+        try:
+            if any(_marker_present(d / m, no_follow) for m in PROJECT_MARKERS):
+                break
+        except OSError:
+            continue
+    return out
+
+
 def _decl_dirs(
     figures_dir: str | Path, script: str | None, *, no_follow: bool = False
 ) -> list[Path]:
@@ -356,7 +439,7 @@ def _decl_dirs(
         dirs = [start]
         while dirs[-1] != root_real and dirs[-1].parent != dirs[-1]:
             dirs.append(dirs[-1].parent)
-        return dirs
+        return _bound_decl_dirs(dirs, no_follow=no_follow)
     try:
         root_real = root.resolve(strict=False)
         start = ((root / script).parent if script else root).resolve(strict=False)
@@ -372,7 +455,7 @@ def _decl_dirs(
         if cur == root_real or cur.parent == cur:
             break
         cur = cur.parent
-    return dirs
+    return _bound_decl_dirs(dirs, no_follow=no_follow)
 
 
 def _read_text(path: Path) -> str:
@@ -1066,6 +1149,9 @@ class _Walk:
         self.no_follow = no_follow
         self.files = 0
         self.seen: set[tuple[str, str, str]] = set()
+        #: 真正**读成功**的声明文件（相对路径，按首次读到的顺序）。没产出 intent 的空文件 / 只有 `-r` 的父文件也在内；
+        #: 被拒读（链接 / 替身 / 根外）与读失败的不在。诊断包附件照这份清单取，不从 intent 的 source 反推。
+        self.visited: list[str] = []
 
     def rel(self, path: Path) -> str:
         if self.no_follow:
@@ -1116,6 +1202,7 @@ def _read_declaration_file(
     text, why = walk.read(path)
     if text is None:
         return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
+    walk.visited.append(source)
     out: list[DependencyIntent] = []
     for line in _logical_lines(text):
         body = line.split("#", 1)[0].strip()
@@ -1179,7 +1266,11 @@ def _read_declaration_file(
 
 
 def declared_intents(
-    figures_dir: str | Path, script: str | None = None, *, no_follow: bool = False
+    figures_dir: str | Path,
+    script: str | None = None,
+    *,
+    no_follow: bool = False,
+    visited: list[str] | None = None,
 ) -> list[DependencyIntent]:
     """项目声明过的**全部**依赖意图（无损）：requirements 各文件（含有界跟进的 `-r` / `-c`）
     + constraints.txt + pyproject（PEP 621 / 735 / Poetry 表）+ 脚本的 PEP 723 + 管理器锁文件
@@ -1191,6 +1282,9 @@ def declared_intents(
     `no_follow=True`（导入即扫描传）：声明文件不跟随符号链接 / 路径替身（UNC 目标会触发 SMB 访问），
     且只读有上限的普通文件（FIFO 不会挂住）；被拒的记 `unsupported(unreadable)`，不是「没有依赖」。
     默认形态（准备 / 依赖门）保持跟随用户自己的符号链接，但读法同样只认有上限的普通文件。
+
+    `visited`（可选出参）：追加遍历中**读成功**的声明文件相对路径（requirements 系含 `-r` / `-c` 跟进、pyproject；
+    不含脚本的 PEP 723）。与返回的 intents 不同，没产出任何 intent 的文件（空 / 只有注释 / 只有 `-r`）也在内。
     """
     root = Path(figures_dir)
     walk = _Walk(root, no_follow=no_follow)
@@ -1277,6 +1371,8 @@ def declared_intents(
                 if path.name == PYPROJECT_NAME:
                     walk.files += 1
                     text, why = walk.read(path)
+                    if text is not None:
+                        walk.visited.append(walk.rel(path))
                     if text is None:
                         rel = walk.rel(path)
                         out.append(
@@ -1296,6 +1392,8 @@ def declared_intents(
             except (ValueError, TypeError, RecursionError) as exc:
                 LOG.debug("依赖声明解析失败（忽略）: %s: %s", path, exc)
                 continue
+    if visited is not None:
+        visited.extend(walk.visited)
     return out
 
 
@@ -1418,6 +1516,9 @@ def _contradictions(specs: list[str], specifiers, version_mod) -> list[str]:
 # ---------------------------------------------------------------------------
 # 解析入口
 # ---------------------------------------------------------------------------
+_STDLIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
+
+
 def resolve(
     figures_dir: str | Path, import_name: str, script: str | None = None
 ) -> DependencyRequirement | None:
@@ -1433,6 +1534,9 @@ def resolve(
        **绝不**拿 import 名当包名装。
     """
     if not valid_import_name(import_name):
+        return None
+    if import_name.split(".")[0] in _STDLIB_NAMES:
+        # 标准库名不是可装的包：项目 requirements 里即便写了 `tkinter` 也不当可信依赖（pip 上没有它）
         return None
     declared = project_declared(figures_dir, script)
     curated = curated_distribution(import_name)
@@ -1477,3 +1581,113 @@ def from_user_input(import_name: str, text: str) -> DependencyRequirement | None
         resolution_source=SOURCE_USER_SPECIFIED,
         confidence=CONFIDENCE_HIGH,
     )
+
+
+def suggest_distribution(import_name: str) -> str:
+    """表外 import 的**预填**包名（Import Origin PR5b，维护者裁决 C1）：规范化的 import 名本身，或 `""`（不给预填）。
+
+    这**不是**解析结果：`resolve` / `INSTALLABLE_SOURCES` / 联合计划的安装名完全不读它——它只是确认界面输入框里的初始值，
+    用户接受（可改）之后才作为 `SOURCE_USER_SPECIFIED` 经 `from_user_input` 的严格语法进计划。**不给预填**的情形，全部复用现有的表，
+    不新建第二张要维护的表：
+
+    * 不是合法的 import 名 / 标准库顶级名；
+    * curated 里这个 import 已有映射（`CURATED` + `SAME_NAME`）——它根本不是表外名；
+    * 规范化后撞上 curated 的某个 **import 名**（`pil`、`Yaml`、`CV2`：大小写变体的包名是另一个 PyPI 项目，正是抢注 / 易混名的形状）、
+      某个 curated **包名**（`pillow`：这个 import 名不是 `import pillow`，该装的是 `PIL` 对应的那个，不是同名猜测）、
+      或登记过的备选发行包（`ALTERNATIVE_DISTRIBUTIONS`）；
+    * 规范化后过不了 `parse_requirement` 的包名语法（`_private` → `-private`）。
+    """
+    name = str(import_name or "")
+    if not valid_import_name(name) or name.split(".")[0] in _STDLIB_NAMES:
+        return ""
+    if curated_distribution(name) or not_pip_installable(name) is not None:
+        return ""
+    key = normalize_distribution(name)
+    reserved = {normalize_distribution(k) for k in CURATED}
+    reserved |= {normalize_distribution(v) for v in CURATED.values()}
+    reserved |= {normalize_distribution(n) for n in SAME_NAME}
+    for alts in ALTERNATIVE_DISTRIBUTIONS.values():
+        reserved |= {normalize_distribution(a) for a in alts}
+    if key in reserved:
+        return ""
+    return key if parse_requirement(key) == (key, "") else ""
+
+
+# ---------------------------------------------------------------------------
+# 多发行包提供同一个 import 名（Import Origin Resolver PR2，O-11）
+#
+# **只用于观测**：`resolve` / `curated_distribution` / `INSTALLABLE_SOURCES` 完全不读这张表——`cv2` 在
+# 安装路径上仍然是 `CURATED` 里那一个（`opencv-python`），没有任何新的自动可信来源。这张表只让静态来源解析
+# 知道「这个 import 名有不止一个发行包可以提供」，从而把候选全留着、状态报 `ambiguous`，不替用户挑。
+# 每一条都要能一眼看懂：这些发行包在 PyPI 上互相排斥地提供同一个顶级包。
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 已知「装不了」的 import（ADR 0061 修订，2026-10-21）：这些名字的真身不在 PyPI（或 PyPI 上同名的是另一个东西），
+# 内置 Python 用 pip 装不出来，**计划阶段就标出来、不送 pip**。键 = 顶级 import 名（区分大小写）；
+# `dists` = 声明里出现这些规范化名字时同样不送 pip；`hint` 是给人看的出路类别（前端文案按它选句）。
+# 以后加 Geant4 之类，只加一行。
+# ---------------------------------------------------------------------------
+NOT_PIP_HINT_OWN_ENV = "own_env"  # 需要用户自己的（conda）环境
+
+NOT_PIP_INSTALLABLE: dict[str, dict] = {
+    # CERN ROOT：conda-forge 的 `root` 包；PyPI 上没有可用的同名发行包
+    "ROOT": {"label": "ROOT", "dists": ("root",), "hint": NOT_PIP_HINT_OWN_ENV},
+}
+
+
+def not_pip_installable(import_name: str) -> dict | None:
+    """这个顶级 import 名在「装不了」表里吗？是则回表项（含 `label` / `dists` / `hint`）。"""
+    return NOT_PIP_INSTALLABLE.get(str(import_name or "").split(".")[0])
+
+
+def not_pip_for_distribution(dist: str) -> dict | None:
+    """规范化后的发行包名撞上「装不了」表里的某个发行包名 → 表项；否则 None。"""
+    key = normalize_distribution(dist)
+    for entry in NOT_PIP_INSTALLABLE.values():
+        if key in entry["dists"]:
+            return entry
+    return None
+
+
+ALTERNATIVE_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
+    "cv2": (
+        "opencv-python",
+        "opencv-python-headless",
+        "opencv-contrib-python",
+        "opencv-contrib-python-headless",
+    ),
+}
+
+
+def distribution_alternatives(import_name: str) -> tuple[str, ...]:
+    """提供同一个 import 名的全部已知发行包；没有登记（绝大多数）回 `()`。观测用，不是安装来源。"""
+    return ALTERNATIVE_DISTRIBUTIONS.get(str(import_name or ""), ())
+
+
+def provider_peers(distribution: str) -> frozenset[str]:
+    """与 `distribution` 互相排斥地提供同一个 import 名的**其他**发行包（规范化名；没有登记回空集）。
+
+    读的是上面那一张 `ALTERNATIVE_DISTRIBUTIONS`，不另立名单。用途是仲裁而不是授权：项目声明点名了其中一个时，
+    它胜出，其余的不能一起装进同一代环境（P02，AC-08 启用门）。"""
+    key = normalize_distribution(distribution)
+    for alts in ALTERNATIVE_DISTRIBUTIONS.values():
+        group = {normalize_distribution(a) for a in alts}
+        if key in group:
+            return frozenset(group - {key})
+    return frozenset()
+
+
+def version_satisfies(specifier: str, version: str) -> bool | None:
+    """已安装 `version` 是否满足声明的版本约束 `specifier`；约束或版本读不懂、没有 `packaging` 回 None（不判）。
+
+    预发布版本算在内（`prereleases=True`）：这里回答「已装的这个满不满足声明」，不是「该装哪个」。
+    """
+    if not specifier or not version:
+        return None
+    try:
+        _r, _m, specifiers, _u, version_mod = _pkg()
+        return specifiers.SpecifierSet(specifier).contains(
+            version_mod.Version(version), prereleases=True
+        )
+    except Exception:  # noqa: BLE001 — InvalidSpecifier / InvalidVersion / ImportError 都是「不判」
+        return None

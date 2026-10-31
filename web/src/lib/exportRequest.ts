@@ -1,4 +1,5 @@
-import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
+import { figureSnapshotFor } from './figureSnapshot'
+import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
  *
@@ -23,8 +24,9 @@ import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrid
  * 被忽略的变换逐项进 `ignored`：**忽略而不说等于骗人**（ADR 0028）。
  */
 import { t as translate } from '@/i18n'
-import type { ExportObject, ExportRequest } from './api'
+import type { ExportObject, ExportOriginalSource, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
+import { epsFromRoute, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -33,7 +35,7 @@ import type { FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
-export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff'
+export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff' | 'svg'
 export type OverwritePolicy = 'ask' | 'replace' | 'rename'
 export type ExportBackground = 'white' | 'transparent'
 
@@ -41,11 +43,11 @@ export type ExportBackground = 'white' | 'transparent'
  * 画布这条入口认的格式，**顺序与 `engine/exportreq.FORMATS` 同源**：结果里的
  * `outputs[]` 按它排，界面上的清单也按它排。新格式追加在后面（ADR 0046）。
  */
-export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff']
+export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff', 'svg']
 
 /** 位图格式的判据。「PPI 有没有意义」全产品只问这一句（与 `RASTER_FORMATS` 同源） */
 export const RASTER_FORMATS: readonly ExportFormat[] = ['png', 'tiff']
-export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps']
+export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps', 'svg']
 
 /** 与 `engine/exportreq.py` 的 `PPI_MIN/PPI_MAX/PPI_DEFAULT` 同源 */
 export const PPI_MIN = 36
@@ -129,14 +131,28 @@ export function originalAvailability(
   return { ok: true, reason: 'none', spec }
 }
 
+/** runtime 图的注册状态：`true` / `false` 是后端的回答（逐面板问来的先于清单），`null` = 未知（清单里有它也算已知为真） */
+export function runtimeRegistration(figureId: string): boolean | null {
+  const rt = useRuntimeAssetStore.getState()
+  // 逐面板问来的结果（打开对话框时刚问过的）优先于缓存的素材清单：清单可能还留着旧条目，而注册表已经变了
+  const asked = rt.byId[figureId]?.registered
+  if (asked === true || asked === false) return asked
+  if ((rt.assets ?? []).some((a) => a.id === figureId)) return true
+  return null
+}
+
 /** Guarded hidden PNGs still require the exact-source export preflight before publication. */
 function canValidateOriginalSource(figureId: string, panel?: PanelObject | null): boolean {
   if (figureId.startsWith('runtime:')) {
-    return (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === figureId)
+    // 素材清单（`/api/runtime/assets`）会把「磁盘上已有同名原件」的 runtime 图让给 FileAsset，清单也可能还没取到；
+    // 但后端解析 runtime id 只看注册表（`runtimeasset.resolve`）。面板渲染时 `ensure()` 问来的 `registered` 就是同一判据，
+    // 认它，否则脚本跑出来的图被静默按画布导（EPS 灰、SVG 走画布合成）。
+    // **未知（还没问 / 失效后）不判假**：只有后端明确回「不认」才是不可用；未知期间由对话框 `ensure()` 去问并显示「正在确认」。
+    return runtimeRegistration(figureId) !== false
   }
   // /panels prefers a same-stem PDF; absence is not proof that this PNG is missing.
   // This permits validation, not a source-existence or fresh-metadata claim.
-  if (panel?.fileId === figureId && panel.artifactValidation && !artifactValidationIssue(panel)) return true
+  if (panel?.fileId === figureId && isAdoptedPanel(panel) && !artifactValidationIssue(panel)) return true
   return useAssetStore.getState().byId[figureId] != null
 }
 
@@ -147,20 +163,39 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 所以它只在「按原图导出一张**有脚本**的图」时存在：
  *
  * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
- * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画。
+ * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画；
+ * * `figure_not_ready`：单图档（没有范围选择）里这张图此刻按原图导不出（还没运行过 / 源文件不在），
+ *   于是静默按画布导，而画布没有 EPS——此时再说「选每张图单独导出」是指向一个不存在的选项，改说「先运行这张图」。
+ *
+ * 前端只判「有没有脚本」这一条；SVG 素材的 EPS 另需后端的字节绑定证明（`_produce_svg_asset_eps`，#1185），
+ * 前端拿不到这个事实，**不预先禁用**——后端逐项失败并给真实原因（`eps_source_unverified` /
+ * `eps_needs_live_figure`），界面显示逐项失败。
  *
  * 与后端 `_serialize_figure()` 的前提逐条对应：runtime id 放行，磁盘面板看
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
  * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
  */
-export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script'
+export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'figure_not_ready'
 
 export function epsAvailability(
   scope: ExportScope,
   figureId: string | null,
+  /** 后端 validate 发布的 route；有就只读它（`offers.eps`），没有退回下面的旧判据 */
+  route?: ExportRoute | null,
+  /** 单图档（没有范围选择）：画布范围只可能是「原图口径不可用」的静默退路 */
+  single = false,
 ): { ok: boolean; reason: EpsBlockReason } {
-  if (scope !== 'original') return { ok: false, reason: 'canvas_scope' }
+  if (scope !== 'original') {
+    if (!single) return { ok: false, reason: 'canvas_scope' }
+    // 单图档静默退到画布：先说「这张图没有脚本」（静态文件 / 原文件已删），只有 runtime 图才说「先运行它」
+    if (!figureId || (!figureId.startsWith('runtime:') && !useAssetStore.getState().byId[figureId]?.script)) {
+      return { ok: false, reason: 'no_script' }
+    }
+    return { ok: false, reason: 'figure_not_ready' }
+  }
   if (!figureId) return { ok: false, reason: 'no_script' }
+  const fromRoute = epsFromRoute(route, scope, figureId)
+  if (fromRoute) return fromRoute
   if (figureId.startsWith('runtime:')) return { ok: true, reason: 'none' }
   const asset = useAssetStore.getState().byId[figureId]
   if (!asset?.script) return { ok: false, reason: 'no_script' }
@@ -181,8 +216,20 @@ export interface ExportRequestInput {
   doc: FigureDocument
   /** `scope=original` 时是哪一张图 */
   figureId?: string | null
+  /**
+   * 合成一个多页 PDF（#1370）：按页序的每一页来源。给了它请求就是 `merge_pdf: {pages}`、没有 `original`；
+   * `figureId` / `panel` / `spec` 仍是第一页的（检查与预览按它读）。格式必须恰为 `pdf`。
+   */
+  mergePages?: readonly { figureId: string; panel: PanelObject | null; spec: OriginalOutputSpec | null }[]
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
+  /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
+  route?: ExportRoute | null
+  /**
+   * 此刻生效的导出目录（`project.export_dir`）。**不进载荷**（后端自己读项目设置），只参与 `exportTargetKey`：
+   * 撞名确认问的是「这个目录里的这几个文件」，目录换了确认就不再成立（QA-WIN-18）。
+   */
+  exportDir?: string | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   report?: Record<string, unknown>
   /**
@@ -216,7 +263,7 @@ export function filenameProblem(raw: string, formats: readonly string[]): Filena
 export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   // EPS 在这次范围 / 这张图上给不出时**不发**它：后端会逐项报 `eps_*` 失败，
   // 但界面上那个选项已经禁用并说了原因，再发一次等于让用户为同一件事看两遍
-  const epsOk = epsAvailability(input.scope, input.figureId ?? null).ok
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
   const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   const filename = stripOutputExtension(input.filename, formats)
   const raster = hasRaster(formats)
@@ -244,18 +291,27 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       objects: toExportObjects(input.doc.objects) as ExportObject[],
     }
   } else {
-    const spec = input.spec ?? null
-    const patches = input.panel ? originalArtifactOverrides(input.panel) : []
-    request.original = {
-      figure_id: input.figureId ?? '',
-      ...(input.panel ? artifactRequestFields(input.panel) : {}),
-      overrides: patches.length ? patches : undefined,
-      w_mm: spec?.widthMm ?? null,
-      h_mm: spec?.heightMm ?? null,
-      px_w: spec?.pixelWidth ?? null,
-      px_h: spec?.pixelHeight ?? null,
-      source_kind: spec?.sourceKind ?? 'unknown',
-      ignored: spec?.ignored ? [...spec.ignored] : [],
+    const sourceOf = (figureId: string, panel: PanelObject | null, spec: OriginalOutputSpec | null): ExportOriginalSource => {
+      const patches = panel ? originalArtifactOverrides(panel) : []
+      return {
+        figure_id: figureId,
+        ...(panel && panel.fileId === figureId &&
+            JSON.stringify(patches) === JSON.stringify(panel.overrides) && figureSnapshotFor(panel)
+          ? { figure_snapshot: figureSnapshotFor(panel) } : {}),
+        ...(panel ? artifactRequestFields(panel) : {}),
+        overrides: patches.length ? patches : undefined,
+        w_mm: spec?.widthMm ?? null,
+        h_mm: spec?.heightMm ?? null,
+        px_w: spec?.pixelWidth ?? null,
+        px_h: spec?.pixelHeight ?? null,
+        source_kind: spec?.sourceKind ?? 'unknown',
+        ignored: spec?.ignored ? [...spec.ignored] : [],
+      }
+    }
+    if (input.mergePages?.length) {
+      request.merge_pdf = { pages: input.mergePages.map((p) => sourceOf(p.figureId, p.panel, p.spec)) }
+    } else {
+      request.original = sourceOf(input.figureId ?? '', input.panel ?? null, input.spec ?? null)
     }
   }
   if (input.report) request.style_check_report = input.report
@@ -266,6 +322,24 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   const revision = snapshotRevision(request)
   request.document_revision = revision
   return { request, names: formats.map((f) => `${filename}.${f}`), revision }
+}
+
+/**
+ * 这次导出会写到哪些文件的身份（范围 / 对象 / 文件名主干 / 格式 / 导出目录），QA-WIN-18。
+ * 撞名确认问的是「这几个文件已存在，覆盖吗」——之后表单里任何一项变了，那句确认就不再是在问现在这次导出，
+ * 「覆盖」也就不许发。只量会改变输出目标的字段，不量画布内容 / 报告（那些随「覆盖」取最新）。
+ */
+export function exportTargetKey(input: ExportRequestInput): string {
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
+  const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
+  return JSON.stringify([
+    input.documentId,
+    input.scope,
+    input.scope === 'original' ? (input.mergePages?.map((p) => p.figureId) ?? input.figureId ?? null) : null,
+    stripOutputExtension(input.filename, formats),
+    formats,
+    input.exportDir ?? null,
+  ])
 }
 
 function clampPpi(ppi: number): number {
@@ -289,6 +363,7 @@ export function snapshotRevision(request: ExportRequest): string {
     scope: request.scope,
     canvas: request.canvas ?? null,
     original: request.original ?? null,
+    ...(request.merge_pdf ? { merge_pdf: request.merge_pdf } : {}),
   })
   // FNV-1a 32 位，两轮不同种子拼成 64 位：短、稳定、跨平台逐字节一致
   return `${fnv1a(material, 0x811c9dc5)}${fnv1a(material, 0x01000193)}`

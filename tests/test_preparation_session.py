@@ -93,8 +93,8 @@ def test_phase_derivation_matches_the_golden_vectors(vector):
 
 def test_the_vector_file_covers_every_phase_this_stage_can_produce():
     produced = {v["expect"]["phase"] for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]}
-    # scanning（T02 的有界扫描）与 preparing_environment（T06 的联合安装）本阶段不产生，词汇已收进闭集
-    assert produced == set(prepsession.PHASES) - {"scanning", "preparing_environment"}
+    # scanning（T02 的有界扫描）不由 derive 产生；preparing_environment 自 T06 起由依赖作业的事实产生
+    assert produced == set(prepsession.PHASES) - {"scanning"}
     assert set(prepsession.PHASES) >= produced
 
 
@@ -111,44 +111,53 @@ def test_derivation_never_reads_the_clock_or_a_provider(monkeypatch):
 
 
 @pytest.mark.parametrize("code", ["missing_dependency", "script_error"])
-def test_error_result_waits_until_the_session_callback_finalizes(
+def test_error_results_wait_for_session_finalization_before_publishing_recovery(
     client, tmp_path, fake_pool, sessions, monkeypatch, code
 ):
-    """Provider terminal status must not expose retry actions before session finalization."""
+    """A provider error is not settled while its recovery offer is still being assembled."""
     _open(client, _project(tmp_path, "p"))
     fake_pool["error"] = engine_pool.WorkerError("failed", code=code, module="alpha")
     entered, release = threading.Event(), threading.Event()
-    original_start = preparation.SERVICE.start
 
-    def held_start(*args, **kwargs):
-        original_done = kwargs["on_done"]
+    def observe_missing(*_args):
+        entered.set()
+        assert release.wait(10), "test did not release the finalizer"
+        if code != "missing_dependency":
+            return None
+        return {
+            "module": "alpha",
+            "installable": True,
+            "impact": {"installs_packages": True},
+            "impact_digest": "confirmed-impact",
+        }
 
-        def held_done(plan, result):
-            entered.set()
-            assert release.wait(10), "test did not release the finalizer"
-            original_done(plan, result)
-
-        return original_start(*args, **{**kwargs, "on_done": held_done})
-
-    monkeypatch.setattr(preparation.SERVICE, "start", held_start)
+    monkeypatch.setattr(prepsession.SESSIONS, "_observe_missing", observe_missing)
     report = _create(client, {"script": "fig.py"}).get_json()
     sid = report["session_id"]
     try:
-        response = _act(client, sid, _action(report, "run")["id"], report["config_revision"])
-        assert response.status_code == 202
+        started = _act(client, sid, _action(report, "run")["id"], report["config_revision"])
+        assert started.status_code == 202
         assert entered.wait(10)
         pending = _get(client, sid).get_json()
         assert pending["result"]["status"] == preparation.STATUS_ERROR
         assert pending["phase"] == "running", pending
         assert pending["outcome"] == {"kind": "running"}
-        assert not {"run", "recheck"} & {action["kind"] for action in pending["actions"]}
+        assert not {"run", "prepare_dependencies", "recheck"} & {
+            action["kind"] for action in pending["actions"]
+        }
     finally:
         release.set()
         live = prepsession.SESSIONS.get(sid, report["project_id"])
         assert preparation.SERVICE.wait(live.attempts[-1].attempt_id, 10)
+
     done = _get(client, sid).get_json()
-    assert done["phase"] == "action_required", done
+    expected = "awaiting_confirmation" if code == "missing_dependency" else "action_required"
+    assert done["phase"] == expected, done
     assert done["outcome"]["code"] == code
+    if code == "missing_dependency":
+        assert (
+            _action(done, "prepare_dependencies")["impact"]["impact_digest"] == "confirmed-impact"
+        )
 
 
 def test_cancelled_provider_does_not_wait_for_a_shared_worker_finalizer():
@@ -268,8 +277,45 @@ def test_an_unanswered_workdir_question_is_awaiting_configuration_and_never_runn
     assert report["phase"] == "awaiting_configuration"
     assert [r["kind"] for r in report["requirements"]] == ["workdir_choice"]
     assert report["requirements"][0]["payload"]["code"] == "workdir_confirmation_required"
-    assert [a["kind"] for a in report["actions"]] == ["recheck"]  # 没有 run
+    # 没有 run；「打开并运行」只是摆出来（P05b），没人认领就一行不跑
+    assert [a["kind"] for a in report["actions"]] == ["recheck", "run_when_ready"]
     assert fake_pool["build_calls"] == 0
+
+
+def test_a_script_that_opens_a_file_dialog_gets_a_non_blocking_hint_and_still_runs(
+    client, tmp_path, fake_pool, sessions
+):
+    """弹窗写法只是提示：requirements 里多一条 `gui_dialog`（blocking False），phase 仍是 ready_to_run、仍有 run 动作；
+    检查不执行脚本（零 build）；脚本改掉之后下一次读报告提示就消失（按 mtime 重读，不是会话创建时定死）。"""
+    root = _project(tmp_path, "p")
+    (root / "fig.py").write_text(
+        "from tkinter import filedialog\nimport matplotlib.pyplot as plt\n"
+        "path = filedialog.askopenfilename()\nplt.plot([1, 2])\nplt.savefig('fig.pdf')\n",
+        encoding="utf-8",
+    )
+    _open(client, root)
+    report = _create(client, {"script": "fig.py"}).get_json()
+    (req,) = [r for r in report["requirements"] if r["kind"] == "gui_dialog"]
+    assert req["blocking"] is False and req["code"] == "script_uses_gui_dialog"
+    assert req["payload"]["calls"] == [
+        {"api": "tkinter.filedialog.askopenfilename", "kind": "file", "line": 3}
+    ]
+    assert report["phase"] == "ready_to_run"
+    assert _action(report, "run")["kind"] == "run"
+    assert fake_pool["build_calls"] == 0
+    (root / "fig.py").write_text(
+        "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.savefig('fig.pdf')\n"
+        "# filedialog.askopenfilename() 现在写成了注释\n",
+        encoding="utf-8",
+    )
+    again = _get(client, report["session_id"]).get_json()
+    assert [r for r in again["requirements"] if r["kind"] == "gui_dialog"] == []
+
+
+def test_a_plain_script_has_no_dialog_hint(client, tmp_path, fake_pool, sessions):
+    _open(client, _project(tmp_path, "p"))
+    report = _create(client, {"script": "fig.py"}).get_json()
+    assert [r for r in report["requirements"] if r["kind"] == "gui_dialog"] == []
 
 
 def test_a_missing_interpreter_blocks_the_session(
@@ -470,6 +516,8 @@ def test_cancel_closes_only_the_runtime_this_session_created(client, tmp_path, f
     sid = report["session_id"]
     fake_pool["gate"].clear()
     assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     running = _get(client, sid).get_json()
     assert running["phase"] == "running"
     assert [a["kind"] for a in running["actions"]] == ["cancel"]  # 在跑时只有取消
@@ -486,6 +534,8 @@ def test_cancel_does_not_touch_a_runtime_someone_else_owns(client, tmp_path, fak
     fake_pool["created"] = False  # 池里本来就有这条会话（别的消费者的）
     fake_pool["gate"].clear()
     assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     running = _get(client, sid).get_json()
     assert _act(client, sid, _action(running, "cancel")["id"], 1).status_code == 200
     fake_pool["gate"].set()
@@ -525,6 +575,41 @@ def test_a_script_that_finishes_without_a_figure_is_partial_not_a_first_figure(
     assert final["facts"] == {"execution_finished": True, "figure_captured": False}
     assert sessions == []  # 没有捕获到图：不登记、不物化
     assert fake_pool["build_calls"] == 1
+
+
+def test_a_missing_package_is_not_reported_as_a_failure_before_its_difference_plan_is_known(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    """T11（T09b 登记的 unmapped_import 抖动的根因）：provider 已写下 `error/missing_dependency`、执行线程的收尾
+    （`_observe_missing` 算差异计划）还没做完的那一段，报告不能先给出「失败 / 没有待办」的终局——那时还说不出
+    这是「补包后重跑」还是「认不出包名」。收尾做完之前它仍是 `running`；做完之后才落到带 `runtime_missing` 待办的终局。"""
+    _root, _pj, report = _create_ready(client, tmp_path)
+    fake_pool["error"] = engine_pool.WorkerError(
+        "no module", code="missing_dependency", module="tavotto_test_unmapped"
+    )
+    entered, release = threading.Event(), threading.Event()
+    real_observe = prepsession.SESSIONS._observe_missing
+
+    def slow_observe(sess, plan, result):
+        entered.set()
+        assert release.wait(10), "测试没有放行"
+        return real_observe(sess, plan, result)
+
+    monkeypatch.setattr(prepsession.SESSIONS, "_observe_missing", slow_observe)
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    try:
+        assert entered.wait(10)
+        during = _get(client, sid).get_json()
+    finally:
+        release.set()
+    assert during["result"]["status"] == "error"  # provider 已到终局
+    assert during["phase"] == "running", during["outcome"]
+    assert "run" not in [a["kind"] for a in during["actions"]]
+    final = _settle(client, sid)
+    (req,) = [r for r in final["requirements"] if r.get("origin") == "runtime_missing"]
+    assert req["payload"]["module"] == "tavotto_test_unmapped"
+    assert final["phase"] in ("action_required", "awaiting_confirmation")
 
 
 def test_a_known_asset_goes_through_the_same_session_and_the_old_endpoint_is_unchanged(
@@ -940,3 +1025,45 @@ def test_recheck_revises_changed_dependency_authorization_with_the_same_status(
     assert unchanged["config_revision"] == changed["config_revision"]
     assert _action(unchanged, "recheck")["id"] == _action(changed, "recheck")["id"]
     assert fake_pool["build_calls"] == 0
+
+
+def test_partial_capture_is_partial_with_the_failed_figures_named_not_completed():
+    """#1134（G3）：一张图捕获成功、另一张预览捕获失败——phase 是 partial（不是 completed），outcome 仍是 succeeded
+    （成功那张照常可用），失败的图由 `failed_figures_of` 从同一份登记收口事实里读出（稳定码，不带原因文字）。"""
+    facts = next(
+        v["facts"]
+        for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]
+        if v["name"].startswith("captured one figure, another one failed")
+    )
+    derived = prepsession.derive(facts)
+    assert derived["phase"] == prepsession.PHASE_PARTIAL
+    assert derived["outcome"] == {"kind": prepsession.OUTCOME_SUCCEEDED}
+    assert derived["figure_captured"] is True
+    assert prepsession.failed_figures_of(facts["attempt"]["finalize"]) == [
+        {"stem": "bad", "code": "preview_capture_failed"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "finalize",
+    [
+        None,
+        {"registered": True},
+        {"registered": True, "failed_figures": []},
+        {"registered": False, "failed_figures": [{"stem": "bad", "code": "x"}]},
+        {"registered": True, "failed_figures": [{"code": "x"}, "junk"]},
+    ],
+)
+def test_no_failed_figures_means_completed_not_partial(finalize):
+    """全部成功（或没有可读的失败事实）保持 completed；登记被拒仍走原来的 failed 分支。"""
+    assert prepsession.failed_figures_of(finalize) == []
+    facts = next(
+        v["facts"]
+        for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]
+        if v["name"] == "script target captured and registered"
+    )
+    facts["attempt"]["finalize"] = finalize
+    if finalize and finalize.get("registered") is False:
+        assert prepsession.derive(facts)["outcome"]["kind"] == prepsession.OUTCOME_FAILED
+    else:
+        assert prepsession.derive(facts)["phase"] == prepsession.PHASE_COMPLETED

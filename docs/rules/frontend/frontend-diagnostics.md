@@ -2,6 +2,17 @@
 
 > 原文出自 `web/AGENTS.md`「前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`diagnostics/*.test.ts`（含 `privacy.test.ts`、`detail.test.ts`）、`settings/DiagnosticsSendDialog.test.tsx`、`lib/diagSendApi.test.ts`、`components/contact/contact.test.tsx`、`tests/test_diagnostics_bundle.py`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：只观察不当真源、吞异常；定长 240 纯内存；不记 mousemove；发送问题反馈只在用户点「发送」时 `startDiagSend`；detail/复选框仅发送路径、默认不勾；意外错误经 `lib/unexpectedErrors.ts`；联系作者（ADR 0145）只在用户点「发送」时 `sendContact`、失败只给复制（无邮件协议链接）、草稿在 store 里、回信提醒只用小圆点 + 通知轨胶囊
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：只观察不当真源、吞异常；不记 mousemove；诊断与联系作者都只在用户点「发送」时发出、失败只给复制（无邮件协议链接）
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 170
+改到: `web/src/diagnostics/`、`data-display-key`、`settings/DiagnosticsSendDialog.tsx`、`store/diagSendStore.ts`、`components/contact/*`、`store/contactStore.ts`
+主题: 前端诊断：状态快照与交互轨迹 → `frontend-diagnostics.md`
+必守要点: 只观察不当真源、吞异常；不记 mousemove；诊断与联系作者只在用户点「发送」时发出、失败只给复制
+-->
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。
 模块是 `web/src/diagnostics/`，业务代码**只 import `@/diagnostics`**。
@@ -14,6 +25,7 @@
 - **只观察，不当真源**：诊断不参与任何业务判断，快照是**读**业务 store 得来的，
   不维护影子状态（影子状态会漂移，漂移的诊断比没有诊断更坏）。
   `recordDiagnosticEvent` 整体吞异常——诊断把一次编辑弄挂比没有诊断糟得多。
+- **快照里的 `onboarding` 段（新手教程状态摘要，默认收集）**：`snapshot.ts::onboardingSummary` 现读 `useOnboardingStore`——`status`（`isOnboardingStatus`）、`flow_version`、`completed_steps`（`isStepId` 滤过）、`welcome_seen`（`welcomeSeenAt != null`，不带时间戳）、`hint_seen_keys`（`isHintKind` 滤过的键名）。新字段必须同步后端 `diagnostics_frontend._SNAPSHOT_SHAPE`（按 schema 拉取，漏登记会被静默丢）。不含项目 id / 文档 id / 演示图改动 / 任何用户内容。看护 `snapshot.test.ts` 的 `onboarding 摘要`。
 - **隐私是两道判据不同的防线**：`types.ts` 的可辨识联合挡编译期手滑（事件里写
   `text: element.label` 直接 TS 报错），`sanitize.ts` 的**逐事件字段表**挡运行期。
   序列化**遍历 schema 而不是输入的键**——多出来的字段是「根本没被读过」，
@@ -53,3 +65,83 @@
   准备 = 会话报告的 `provider.attempt_id`（T09 的面板直接挂）。
 - 文案在 `dialogs:taskDiagnostic.*`，看护 `components/taskDiagnostic.test.tsx`（两个语种 × 默认可见块数 / 主按钮数、项目绑定、
   过期 / 不存在 / 服务端错误三种结局）、`store/scriptRunStore.test.ts`。
+
+## 发送问题反馈（设置 → 帮助与诊断，ADR 0118；入口由引擎能力说明决定，发行版默认开启）
+
+- **前端不碰远程。** 上传由本机引擎做；`lib/api.ts` 的 `*DiagSend*` 只是本机遥控器，其中**只有 `startDiagSend` 会让引擎去连诊断服务**，且请求体恒带 `confirm: true`
+  （`lib/diagSendApi.test.ts`）。入口是否存在只看 `store/diagSendStore`（`GET /api/diagnostics/send` 的镜像，App 启动取一次；没取到 / 关着（`TAVOTTO_NO_DIAG_UPLOAD=1`）/ 回了别的 = `null` = **不画入口**（前端侧失败即关；引擎侧默认开启），
+  隐私摘要也不多说那一句）。
+- **打开 = 备包，发送 = 确认。** `components/settings/DiagnosticsSendDialog.tsx`：打开时只 `prepareDiagSend`（载荷现采，同导出），列「将发送的内容」类别、大小、保留期，
+  「保存这份诊断包」取的是备好的**同一份**字节（按 id，不重新生成）；点「发送」才 `startDiagSend`。关窗 / 卸载 = `discardDiagSend`（发送中等于取消）；备包响应晚于关窗到达也要丢弃。
+  未确认 / 关窗 / 取消时 `startDiagSend` 调用次数为 0（`DiagnosticsSendDialog.test.tsx`）。**不许**把说明文字、报告编号以外的任何东西放进遥测。
+- **布局不跳（#797）。** 设置页「诊断报告」组自上而下（2026-10-21 起）：发送问题反馈 / 诊断摘要 / 联系维护者（仅中文）/ 诊断包（`DiagnosticsSettingsSend.test.tsx` 钉首尾）；对话框页脚两颗按钮始终在原位只换字 / disabled；状态文字住在页脚左侧、与按钮同一行（Dialog `footer.start` 槽，固定 `h-8`、最多两行、超出截断，完整文字在 `title`），不为它预留大块空白——收起态对话框紧凑（e2e 量高度；2026-10-19 说明框在前之后上限 500px，2026-10-21 三个额外内容框移出折叠区后放宽到 760px），异步结果只换这一格里的字，e2e 量发送前后「发送」按钮坐标不变。
+  发送中 `blockDismiss`，Esc = 取消发送；取消回到可编辑表单并说明「没有发送」。
+- **失败文案与引擎同源。** `settings.diagnostics.send.failure.*` 的键集 = `engine/diagsend.py` 的 `FAILURES`；问题类型 `category.*` = `CATEGORIES`（服务端契约闭集）；
+  `kind.*` ⊇ `ENTRY_KINDS` 的值。三条都由 `DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍；码不认识时按 `unexpected_response` 说，不空白。
+- **故障卡入口与轻确认框（用户 10-10 要求）。** 对话框全应用只挂一处（`components/DiagnosticsSendHost.tsx`，状态 `diagSendStore.open`）；设置页入口行与故障卡的 `components/SendReportButton.tsx` 都只是 `setOpen(true)`
+  （打开 = 本机备包，不发送），开关判据同一个（`diagSendStore.capability`，关着完全不渲染）。覆盖的故障卡（都经 `TaskDiagnostic` 或点名处理）：导出失败卡（`ExportDialog.ResultBlock`：可重试时在折叠的「本次问题的诊断」里；
+  不可恢复、没有任何修复动作时**就是主按钮**）、导出部分失败（折叠详情）、准备卡失败态（`PreparationCard`：有主按钮时在详情里；失败且没有任何可执行动作时是主按钮）、脚本行「详情」里的运行失败、依赖准备失败。
+  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。**说明框在前**（用户 2026-10-19 裁决，取代 10-10 的「默认只露一句话」——用户嫌展开后太臃肿、说明框反被折起来）：默认可见 = 对话框副标题那一句（`Dialog description`：「将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。」——
+  必须如实提醒日志里可能有脚本输出，#1012 4，文案测试钉住，**这句不许折进去**）+ 表单（参照 OpenBitFun 的表单语言：标签在字段上方、间距 6；提示与字数同一行、提示左字数右；框只给可编辑的控件）：「补充说明（可选）」textarea、「问题类型」`Select`；
+  + 一组（`FieldGroup`，3% 底、无边）里的一行可展开项「附带诊断包 · 大小 … 查看内容」（展开内容与标题文字对齐缩进）+「发送」「关闭」（一颗主按钮）。其余（内容类别、额外勾选项、包内文件、保存 ZIP、保存期、隐私政策链接、「脱敏尽力而为」）
+  全在默认收起的「查看内容」里（`DiagnosticsSendDialog.test.tsx`「说明框在前」一条钉可见集合；e2e 量收起态高度 < 500px）。那句承诺由
+  `tests/test_diagnostics_bundle.py` / `test_diagnostics_log_privacy.py` 的金丝雀全文搜索撑着（源码行略去、异常 message 不出门、路径哈希化）；这两处任何一处放松，那句话就得先改。
+- **项目代次与引擎丢会话（Codex #923）。** 备包流程绑定当前项目：`DiagnosticsSendDialog` 订阅 `onCurrentProjectChange`，对话框开着时项目一换（外部 `tavotto open`、切项目）就让备包重来——
+  旧包随清理 `discardDiagSend`（发送中等于取消）、在途的旧备包响应按代号丢弃并通知引擎释放；`send()` 还会在发那一刻核对备包时的项目，不一致就不发、重新备包。
+  状态轮询遇到 404（引擎重启 / 会话过期）是**终态**：停止轮询、解除 `blockDismiss`、说「已不在引擎里」并给「重新准备」，绝不把用户困在模态框里（`DiagnosticsSendDialog.test.tsx` 的「项目代次」「引擎丢了会话」两组，sending 与 cancelling 两态都测）。
+  **备包只在切换完成之后做**（Codex #923 复核 P1）：`projectStore.adoptSteps` 先 `setCurrentProjectId(B)`、之后才 await 加载并 `resetForNewProject`，认领那一刻内存里仍是 A 的文档与轨迹。所以对话框以 `projectStore.switching`（`runSwitch` 排队到执行完一直亮着，既有机制，不另造代次）为「项目已完全加载」的信号：switching 亮起 → 旧包作废、置「正在准备」、发送禁用、不备包；落下 → 才备新包（`DiagnosticsSendDialog.test.tsx`「真实的切换顺序」，反证：去掉等待则红）。
+- **迟到 start 的 409 不是失败（#928，Codex #923）。** 取消先被引擎处理时，引擎正确拒绝迟到的 start（409 `diag_stale_action` / `diag_session_cancelled`）。`DiagnosticsSendDialog` 的 `send()` catch 把这两个 code 当作取消流程的一部分：置 `cancelling`（不覆盖成不可重试的 `failed`），轮询继续到 `cancelled` 后自动重新备包（`DiagnosticsSendDialog.test.tsx`「迟到的 start」两组）。
+- **清理显式带备包时的项目（Codex #955）。** 引擎会话按项目分键，而切项目时全局当前项目先于 effect 清理变成 B；`discardDiagSend(id, pj)` 因此由对话框传 `packagePj`（备包那一刻的项目；迟到的 prepare 响应用闭包里捕获的 `pj`），请求以 `?pj=` + 头显式指向 A。不传则按 B 找不到 A 的 id、静默 `{ok:true}`，A 的上传继续。后端 `?pj=` 本就先于请求头（`app._request_ctx` / `_diag_send_scope`），`test_diag_send_api.py::test_explicit_pj_query_wins_over_a_conflicting_header` 钉住。
+- **联系维护者（企业微信，仅中文界面）。** 两个地址只在 `lib/contact.ts`（获客链接 `WECOM_CONTACT_URL`、名片码地址 `WECOM_CARD_URL`），二维码图 `assets/wecom-contact-qr.png` 必须解码为后者（`tests/test_wecom_contact_qr.py`，无 `cv2` 则跳过）。
+  组件 `settings/WeComContact.tsx`：**判据是界面语言 `currentLocale() === 'zh-CN'`，不看系统区域**；英文界面不渲染元素（不是隐藏）。位置：发送问题反馈确认框的 done / unknown / failed 三态（ready / preparing 不出现），
+  与设置页「诊断报告」组里发送行之前的「联系维护者」行（发送功能关闭也在，联系方式不依赖上传通道）；确认框里链接与「显示二维码」同占一行，其余阶段该行**占位不显示**（`invisible` + `inert`，#797 的发送按钮不跳位；英文界面连占位也不渲染）；二维码默认折叠、展开才挂 `<img>`；链接是 `target=_blank` 外链。不收集、不上传任何联系方式，不进诊断包；/try 不加（`WeComContact.test.tsx`）。
+- **异步回调一律认代号**：`DiagnosticsSendDialog` 里 prepare / startDiagSend / 保存 / 状态轮询的 then·catch 都捕获发起时的 `gen`（轮询用 `stop`），代号变了（项目切换、重新备包、关窗）就忽略——A 的迟到失败不许改 B 的对话框（`DiagnosticsSendDialog.test.tsx`「A 的 start 挂起 → 切到 B」，含 404）。
+
+## 发送包的 detail 载荷与勾选项（bundle schema 8，ADR 0118 修订 2026-10-13，`diagnostics/detail.ts`）
+
+- **只走发送路径。** `buildSendPayload(options)` = `buildDiagnosticPayload()`（老载荷）+ `detail_options` + `detail`；导出路径仍用 `buildDiagnosticPayload()`，一个 detail 字段都没有（`detail.test.ts` 钉）。引擎导出端点也不读这些键。
+- **两个定长全局环**（纯内存、不写盘、不进 telemetry、**切项目不清**——console 输出不属于某个项目，包里 `frontend-console.json` 注明 `scope: global`）：console.error/warn 40 条（原文 + Error 自带栈，字符串消息记调用点栈）、未捕获错误 / unhandledrejection 30 条。
+- **console 实参只记原始值与 Error，其余对象写 `[object]`**（#1012 2）：判断「是不是纯数据」（取原型 / 读描述符 / `for...in`）本身就会触发 Proxy（immer draft）的 trap，所以不判；业务侧确实要记一棵纯数据时用 `markPlainData(tree)` 声明（调用方保证无 Proxy / 副作用 accessor）。Error 判定走 `Error.isError`（不触发 trap），老 WebView 退回 `instanceof`。看护 `detail.test.ts` 的 trap 计数用例。
+- **焦点面板的顺序**（#1012 1）：没有正在编辑的面板时，`overrides[0]` 必须是主选（最后选中的面板），其余按文档顺序——引擎拿它当焦点面板去探环境。
+  `main.tsx` 里 `installConsoleCapture()` 越早装越好；包装函数**吞掉自身所有异常**且一定调用原方法，幂等、可卸载。
+- **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
+- **三个复选框**（`DiagnosticsSendDialog`，2026-10-21 起**不折叠**、排在表单最上面紧跟副标题那一句，标题行右侧一枚「全选 / 全不选」切换 `data-diag-send-extras-all`；各框的风险短句留在各自下面；beta 0.19.0b1 反馈：埋在「查看内容」里要滚才看得到）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 要换一份包，但**点击即时生效、不等后端**（beta 0.19.0b1 反馈：每点一个框卡一下——原先每次勾选都推进 epoch，整个对话框回到「正在准备」、表单全禁用、同步等一次备包往返）：框的状态本地立刻更新，换包走 300 ms 防抖的静默刷新（`scheduleRefresh`：不回「正在准备」、不禁用表单与框、不清已填内容；`refreshSeq` 请求序号只认最新一次，旧响应丢弃并 `discardDiagSend`）；刷新期间只有「发送」「保存」暂不可用。调度刷新即把「已保存」复位（磁盘上只有旧包）；最新一次刷新收到 `diag_stale_prepare` 时重试一次，再 stale 就按失败作废（`prepareFailed`），不得无条件 return 把 `refreshing` 卡死。发送中框 disabled。
+  折叠的「查看内容」里仍有「将发送的内容」类别、「包内文件（N 个）」逐项清单（路径 + 大小）与一句「因体积被截短」说明；默认可见 = 副标题一句 + 三个框（含一键全选）+ 说明框 + 问题类型 + 一行附件 + 发送 + 关闭。
+- 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
+- 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
+
+
+## 意外错误入口（PR A，ADR 0118 补充 2026-10-14）
+
+- **唯一汇聚点** `lib/unexpectedErrors.ts` + 纯内存 `store/unexpectedErrorStore.ts`。来源：`diagnostics/detail.ts` 的 `onUncaughtError`（window error / unhandledrejection 全应用只有那一份监听，**不得再装第二个**）、`ErrorBoundary.componentDidCatch`、`lib/api.ts` 的 `setEngine500Handler`（`status >= 500` 且 `code === 'internal_error'`，只认兜底码；回调注册制避免 api ↔ store 成环）。`main.tsx` 调 `installUnexpectedErrorCapture()`。
+- **事件闭集**：`ui.unexpected_error { source, error_name, message_hash }`。`source` ∈ `UNEXPECTED_ERROR_SOURCES`，`error_name` ∈ `UNEXPECTED_ERROR_NAMES`（`types.ts`；后端 `_ENUM_FIELDS["source" / "error_name"]` 严格同源，`test_unexpected_error_enums_match_frontend` 对拍；字段名由 `test_event_fields_match_frontend_schema` 对拍）。**trace 里没有 message / stack 原文**，原文只在未捕获错误环（`recordUncaughtDetail('boundary' | 'engine_500', …)` 或 detail.ts 自己的 window 记录）随发送包走。
+- **顺序固定**：分类（忽略的不记任何东西）→ 先 `recordDiagnosticEvent`（吞异常）→ 补环 → 仅当 `capability !== null` 且非 boundary 来源、发送对话框没开、栈不指回诊断模块，才进去重 / 上界 / 登记卡片。
+- **分类按结构**：`ApiError`、原型不是内建错误原型的业务错误类、AbortError、`ResizeObserver loop…`、`Script error.`、pyodide / worker 来源、非 Error 的拒绝 → 忽略。**不准凭消息关键词判严重度**；要新增一类忽略，加结构判据与一条看护。
+- **上界**：`MAX_FINGERPRINTS`（64，LRU）、`MAX_PROMPTS_PER_SESSION`（5）、轨上同时 1 张；指纹同一会话只提示一次，关掉后不再提示。
+- **卡片**（2026-10-19 起，用户：「一键反馈只出现在胶囊内，很多人不知道点」）：**窗口右下角**的 `components/FeedbackCorner.tsx`（`data-feedback-corner`，`fixed` + `z-drawer`——在画布浮层之上、任何对话框的遮罩与对话框之下，哪个对话框开着都自然盖住它，Codex #1184；宽 320），不在通知轨里、不占轨的三条名额。
+  `data-unexpected-error-card`：红色图标 + 标题（`unexpectedError.text`）+ 一句为什么（`.body`）+ 主按钮「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`feedbackCorner.test.tsx`、e2e `diagnostics-send.spec.ts`「右下角反馈卡」）。
+  **只认意外错误**（用户 10-19 裁决）：可预期的失败（用户脚本报错、导出失败）不弹这张卡，它们的入口仍在各自故障卡的折叠详情里。同时只有一张：意外错误在前，「上次没有正常退出」在它关掉后才出。点「发送问题反馈」两类一起收起（一份包已覆盖），确认框开着时整个角落不渲染（Codex #1184）。与准备引导卡（`PreparationCard`，画布右下）不叠：卡显示期间观察 `[data-prep-card]`，水平相交时按序挑一个整张都在窗口里的位置：上方 8px（放得下实测高度）→ 左侧 8px 贴底 → 都放不下就留在默认位置（宁可叠也不推出窗口）；属性栏收起时两张卡同在右下角（Codex #1184，e2e「不盖住准备引导卡」在 1024×768 / 1024×560 实量）。准备卡两种形态（`data-prep-card` 展开卡 / `data-prep-pill` 收起角标）都避让；观察面含准备卡的各级定位祖先（属性栏变窄时准备卡自己尺寸不变、是画布把它带走的）；e2e「属性栏变窄」量的是行为——它在不观察祖先时也绿，因为画布视口一变缩放读数就重渲染、MutationObserver 先触发了。
+  App 两个分支（项目选择页 / 工作区）各挂一份，互斥。**绝不往工作面板的文档流里加提示条（`BannerStack` 已于 2026-10-16 删除）。**
+- **ErrorBoundary 崩溃页**：「重新加载」仍是唯一主按钮；`SendReportButton`（secondary）在折叠「详情」里；崩溃页自己渲染 `DiagnosticsSendHost`（`TooltipProvider` + 内层 `SendHostBoundary`，对话框出错退回空）。**放宽的边界仅限 `diagSendStore` 与发送对话框**；关着时元素序列与改动前一致（`errorBoundary.test.tsx` 锚定）。**只有主应用入口 `main.tsx` 传 `<ErrorBoundary diagnostics>`**：playground / mcp 复用该边界但没有 Flask 诊断 API，默认不取能力说明、不渲染入口与对话框（测试锚定「不发 `/api/diagnostics/send`」）。
+- 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/feedbackCorner.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。
+
+## 退出相关入口（PR B，ADR 0129）
+
+- **两张卡，纯内存 store** `store/exitNoticeStore.ts`，接线只在 `lib/exitNotices.ts`（`App` 挂载时 `initExitNotices(diagSendStore.load() 的 promise)`）。**绝不往工作面板的文档流里加提示条（`BannerStack` 已于 2026-10-16 删除）。**
+- **修复卡**（`data-engine-exited-card`）：壳事件 `tavotto:engine-exited` / 回读 `getEngineExited()` 驱动；一句话「渲染服务意外退出了」+ 主按钮「重新启动」（`restartEngineFromCard()`：转圈期间幂等，壳没动手就把按钮还回去），折叠的一句「重启后可以发送问题反馈」只放在 `title`。**不受发送开关控制、不含发送入口**；在通知轨里从不让位。
+- **「上次没有正常退出」卡**（`data-previous-exit-card`）：`diagSendStore.load()` 完成后、且 `capability !== null` 才 `takePreviousExit()`（取走即清空，关着时不取）；取到才登记。住在右下角 `FeedbackCorner`（同意外错误卡）：标题 + 一句为什么（`exitNotice.previous.body`）+ 主按钮「发送问题反馈」+ ×，主动作只 `setOpen(true)` 并收起这张卡，prepare / start 调用次数为 0。排在意外错误卡之后。
+- **假重连**：`PrepContext.engineExited`（`exitNoticeStore.engineExit !== null`）为真时，准备卡断线一句用 `prep.line.engineStopped`（「渲染服务已停止」）而不是「连接断了，正在重连…」；其它原因断线保持原样。
+- **`lib/desktop.ts` 是唯一桌面感知点**：`onEngineExited` / `getEngineExited` / `takePreviousExit` / `restartEngine`；浏览器 / 远程窗口 / try 一律 null / false / 空取消函数。事件名与两个闭集与 `src-tauri/src/{main,exit_marker}.rs` 严格同源（`tests/test_desktop_engine_exit.py`）。
+- 看护：`store/exitNoticeStore.test.ts`、`lib/desktop.test.ts`、`lib/preparationText.test.ts`、`components/notificationRail.test.tsx`（「引擎退出修复卡」一组）、`components/feedbackCorner.test.tsx`。
+
+## 联系作者（ADR 0145）
+
+- **入口只看 `store/contactStore.capability`**（`GET /api/contact`，本机、不联网；关着 / 没取到 = `null` = 不渲染）。两处：编辑器顶栏右组 `UndoRedo` 与 `ExportButton` 之间（`ContactButton placement="topbar"`：次级胶囊，窄于 900 只留图标 + aria-label / 气泡）；
+  主页 `HomeView` 顶行最右（与左上角应用菜单对称）与「全部项目」视图右上角（Windows 让出窗口按钮的 138px）。对话框全应用挂一处（`ContactHost`，App 两个分支各一份、互斥）。图标是新补画的 `Mail`（`ui/icons`，登记在 `docs/ux/ICONOGRAPHY.md`）。
+- **前端不碰远程。** `lib/api.ts` 的 `*Contact*` 是本机遥控器，**只有 `sendContact`（用户点「发送」）与 `refreshContactMessages`（点「检查回信」）会让引擎联网**；打开窗口、改草稿、勾选诊断（只备包）都不联网（`contact.test.tsx` 数调用次数）。
+- **四个状态**：编辑 → 发送中（可取消、上传进度）→ 已发送（`TVM-…` 编号 + 回信去向）/ 失败（草稿保留；「再试一次」「复制内容」「复制地址」）。**没有邮件协议链接**（失败卡里只有复制；全页 HTML 不含该协议字样，`contact.test.tsx` 钉；源码由 `tests/test_contact_no_mailto.py` 扫）。
+  状态区住在 `Dialog status` 槽里，不推挤表单；发送中 `blockDismiss`、Esc = 取消。草稿（主题 / 正文 / 邮箱 / 附件 `File` / 勾选）在 store 里，关窗不丢，发送成功后关窗才清空；回信邮箱「上次填写」只记在本机 localStorage（try/catch 包着，可在窗里忘记），不进引擎、诊断、遥测。
+- **附上诊断信息** = 现有诊断发送的 prepare → 预览 → start：勾选即 `prepareDiagSend`（本机、零远程）并在窗里列出内容类别（`kind.*` 沿用诊断发送的译文），点「发送」才 `startDiagSend`，轮询到 `report_id` 后才 `sendContact({report_id})`；诊断包失败则信不发、失败说清是诊断包的事。
+- **回信提醒只用小圆点 + 通知轨胶囊**（`StatusBar.NotificationRail` 里的 `data-contact-capsule`，最多三条的让位规则里与操作提示同档；× 收起后只有未读数再增加才重现），**不加横条 / BannerStack**。「我的来信」是同一窗里的另一页，列出信与回信，进页即已读（本趟仍标「新」）；未读数每 5 分钟读一次本机记录（引擎自己每 6 小时问服务器）。
+- **信纸（第二期）**：「我的来信」每封信先画用户自己写的主题 / 正文（长正文折前 4 行）/ 附件名（旧记录没有就不画），回信 `has_html` 为真用 `ReplyPaper`（沙盒 iframe `srcDoc`，文档来自 `fetchContactReplyDoc`，**sandbox 不含 `allow-scripts`**、白纸 `bg-paper` 深色模式也是白的），取不到文档退回纯文字；没有 HTML 的回信照旧显示文字（`contact.test.tsx`）。
+- 文案 `dialogs:contact.*`；`contact.failure.*` 的键集 = `contactsend.FAILURES`、`contact.error.*` ⊇ 引擎 `ContactError` 的码（`contact.test.tsx` 读 Python 源码对拍）；`settings.about.privacyContact` 是隐私摘要里的一句（能力开着才出现）。

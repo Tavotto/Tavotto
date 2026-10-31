@@ -362,15 +362,18 @@ def test_tavottofile_store(figs, monkeypatch):
         json={"doc": {"schema": 2, "page": {"w": 10, "h": 10}, "objects": [], "guides": []}},
     )
     assert ok.status_code == 200, ok.get_json()
-    assert (figs / "tavottofile" / "versions" / "doc9.json").is_file()
+    # D2（ADR 0140）起写新存储 `<doc_id>.vx/`，不再写旧单文件；位置仍在 tavottofile/versions/
+    assert (figs / "tavottofile" / "versions" / "doc9.vx").is_dir()
+    assert not (figs / "tavottofile" / "versions" / "doc9.json").exists()
 
     # 数据目录里升级前的历史只读兜底
     m.VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     (m.VERSIONS_DIR / "docold.json").write_text(
-        json.dumps({"versions": [{"id": "v1", "name": "n", "ts": 0, "doc": {}}]}), encoding="utf-8"
+        json.dumps({"versions": [{"id": "v1-1", "name": "n", "ts": 0, "doc": {}}]}),
+        encoding="utf-8",
     )
     got = client.get("/api/versions/docold").get_json()["versions"]
-    assert [v["id"] for v in got] == ["v1"]
+    assert [v["id"] for v in got] == ["v1-1"]
 
     # 素材扫描剪掉 tavottofile/：同一份真 PDF，根目录的收录、export/ 里的不收
     import pymupdf

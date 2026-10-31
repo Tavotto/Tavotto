@@ -9,6 +9,7 @@ unsupported 闭集、3.10 无 tomllib 的分支）、`importscan`（stdlib / 本
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import json
 import os
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import depplan, depresolve, importscan
+from tavotto.engine import depplan, depresolve, distmeta, importscan
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "foundation" / "dependency_declarations"
@@ -860,8 +861,10 @@ class TestPlan:
         # 门：此刻缺 matplotlib 与 tabulate（选中的解释器没有）
         assert [m["distribution"] for m in plan.missing] == ["matplotlib", "tabulate"]
         # 装：新的一代 six / tabulate 都要；matplotlib 由 adapter 带上，不进集合
-        assert plan.requirements == ("six==1.17.0", "tabulate==0.9.0")
-        assert plan.constraints == ("sortedcontainers==2.4.0",)  # marker 按目标的 3.10 求值：选中
+        # marker 按目标的 3.10 求值：sortedcontainers 选中。脚本里有一个归不到任何发行包的 import（目标表里没有 tomllib），
+        # 选中的声明就是权威（P02）：它与 six / tabulate 一起进新一代，而不是只做约束
+        assert plan.requirements == ("six==1.17.0", "sortedcontainers==2.4.0", "tabulate==0.9.0")
+        assert plan.constraints == ()
         assert plan.unknown == ("tomllib",)  # stdlib 按目标的名字表
         assert plan.facts["install"]["installed_count"] == 1  # 只有 adapter 带上的那一样
         assert (
@@ -893,16 +896,24 @@ class TestPlan:
         assert plan.status == "blocked"
         assert plan.blocked[0]["code"] == "dependency_target_unavailable"
 
-    def test_possible_imports_are_listed_but_never_installed(self, tmp_path):
+    def test_possible_imports_are_listed_and_only_declared_deferred_ones_are_installed(
+        self, tmp_path
+    ):
+        """P02 改了这条旧合同的一半：函数体内（延后）的 import 且项目声明了它 = 声明 root，要装（DEP-03）；
+        `try … except ImportError` 的可选 import 脚本自己处理缺席，仍只列出、不装。两者都留在 `possible` 里。"""
         proj = self._project(
             tmp_path,
             "try:\n    import seaborn\nexcept ImportError:\n    seaborn = None\ndef f():\n    import pandas\n",
             "seaborn\npandas\n",
         )
         plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
-        assert plan.status == "nothing_needed"
         assert sorted(p["module"] for p in plan.possible) == ["pandas", "seaborn"]
-        assert plan.requirements == ()
+        assert plan.status == "ready"
+        assert plan.requirements == ("pandas",)
+        assert plan.constraints == ()  # seaborn：没有版本约束，也没有被装
+        # 用户自己的环境不受影响：只进不退的原地安装仍不为「可能」的 import 动手
+        venv = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="project_venv")
+        assert venv.status == "nothing_needed" and venv.requirements == ()
 
     def test_identity_depends_on_intent_not_on_paths(self, tmp_path):
         a = self._project(tmp_path / "a", "import six\n", "six==1.17.0\n")
@@ -951,6 +962,1627 @@ class TestPlan:
             str(tmp_path), {depplan.SETTINGS_KEY: ["requirements-dev.txt", 3]}
         )
         assert depplan.selected_groups_setting(tmp_path) == ["requirements-dev.txt"]
+
+
+# ===========================================================================
+# 来源状态（Import Origin Resolver PR4）：多发行包 / editable / 无元数据 / 导入失败 不进 missing
+# ===========================================================================
+SP_REL = "lib/python3.12/site-packages"
+
+
+def _env(tmp_path: Path, name: str = "venv") -> tuple[Path, Path]:
+    prefix = tmp_path / name
+    site = prefix / SP_REL
+    site.mkdir(parents=True)
+    _write(prefix, "pyvenv.cfg", "home = /usr/bin\nversion = 3.12.1\n")
+    return prefix, site
+
+
+def _dist(
+    site: Path,
+    name: str,
+    version: str,
+    *,
+    top: str,
+    record: list[str] | None = None,
+    direct_url: dict | None = None,
+) -> None:
+    d = site / f"{name.replace('-', '_')}-{version}.dist-info"
+    d.mkdir(parents=True)
+    (d / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\nBODY\n", encoding="utf-8"
+    )
+    (d / "top_level.txt").write_text(top, encoding="utf-8")
+    if record is not None:
+        rows = [f"{p},sha256=abc,10" for p in record] + [f"{d.name}/METADATA,,"]
+        (d / "RECORD").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    if direct_url is not None:
+        (d / "direct_url.json").write_text(json.dumps(direct_url), encoding="utf-8")
+
+
+def _facts_at(prefix: Path, installed: dict) -> depplan.TargetFacts:
+    """目标解释器的事实，前缀指向 tmp_path 里造的真环境（静态索引读它；解释器本身一次也不起）。"""
+    base = _facts(installed)
+    return depplan.TargetFacts(
+        python=str(prefix / "bin" / "python"),
+        marker_env=base.marker_env,
+        stdlib=base.stdlib,
+        installed=dict(installed),
+        prefix=str(prefix),
+    )
+
+
+def _health(**detail) -> dict:
+    return {"ok": True, "modules_detail": dict(detail), "modules_ok": {}}
+
+
+class TestPlanOrigins:
+    """`missing` 只剩「确实该装、且有可信安装名」的。来源未定的进 `unknown` + `origins`，不进 `requirements`。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _project(self, tmp_path: Path, script: str, requirements: str = "") -> Path:
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        if requirements:
+            _write(proj, "requirements.txt", requirements)
+        return proj
+
+    def _plan(self, proj, facts, **kw):
+        return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv", **kw)
+
+    # ---- M5（BASELINE §2-Q3）----------------------------------------------------------------
+    def test_m5_cv2_with_the_headless_build_installed_is_not_missing(self, tmp_path):
+        """审计时的复现：已装 `opencv-python-headless`，计划却报 `missing=['opencv-python']`、要装一个重复的 cv2。"""
+        proj = self._project(tmp_path, "import cv2\n")
+        plan = self._plan(proj, _facts({"opencv-python-headless": "4.9.0"}))
+        assert plan.status == "nothing_needed"
+        assert plan.missing == () and plan.requirements == ()
+        (entry,) = plan.satisfied
+        assert entry["import_name"] == "cv2"
+        assert entry["distribution"] == "opencv-python-headless"  # 装着的那个，不是 curated 的那个
+        assert entry["mapped_distribution"] == "opencv-python"
+        assert entry["installed_version"] == "4.9.0"
+        assert plan.unknown == () and plan.origins == ()
+
+    def test_cv2_with_nothing_installed_keeps_the_curated_default_but_says_it_is_ambiguous(
+        self, tmp_path
+    ):
+        """没有任何备选装着：照旧缺 `opencv-python`（用户确认摘要里看得见），但条目带上「多发行包」的来源状态。"""
+        proj = self._project(tmp_path, "import cv2\n")
+        plan = self._plan(proj, _facts({"numpy": "2.0.0"}))
+        assert plan.status == "ready"
+        assert plan.requirements == ("opencv-python",)
+        (entry,) = plan.missing
+        assert entry["distribution"] == "opencv-python"
+        assert entry["distribution_status"] == "module_origin_ambiguous"
+
+    def test_two_cv2_builds_installed_is_ambiguous_and_nothing_is_installed(self, tmp_path):
+        proj = self._project(tmp_path, "import cv2\n")
+        plan = self._plan(
+            proj, _facts({"opencv-python-headless": "4.9.0", "opencv-contrib-python": "4.9.0"})
+        )
+        assert plan.missing == () and plan.satisfied == () and plan.requirements == ()
+        assert plan.unknown == ("cv2",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "module_origin_ambiguous"
+        assert origin["candidates"] == [
+            "opencv-contrib-python",
+            "opencv-contrib-python-headless",
+            "opencv-python",
+            "opencv-python-headless",
+        ]
+
+    def test_the_declared_name_wins_when_it_is_installed(self, tmp_path):
+        proj = self._project(tmp_path, "import cv2\n", "opencv-python-headless>=4\n")
+        plan = self._plan(
+            proj, _facts({"opencv-python-headless": "4.9.0", "opencv-contrib-python": "4.9.0"})
+        )
+        (entry,) = plan.satisfied
+        assert entry["distribution"] == "opencv-python-headless"
+        assert entry["declared"] is True and entry["matches_declared"] is True
+        assert plan.origins == ()
+
+    # ---- editable / 本地 / Conda / 无元数据：静态索引的来源 --------------------------------------
+    def test_an_editable_provider_is_not_missing_and_never_becomes_a_pip_name(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "my-yaml-fork",
+            "0.1",
+            top="yaml\n",
+            record=["yaml/__init__.py"],
+            direct_url={"url": "file:///src/fork", "dir_info": {"editable": True}},
+        )
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {"my-yaml-fork": "0.1"}))
+        assert plan.status == "nothing_needed"
+        assert plan.missing == () and plan.requirements == ()  # 不装 pyyaml 去盖它
+        assert plan.unknown == ("yaml",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "editable_dependency_not_reproducible"
+        assert origin["distribution_status"] == "editable_dependency_not_reproducible"
+        assert origin["provenance"] == "editable"
+        assert origin["candidates"] == ["my-yaml-fork", "pyyaml"] or origin["candidates"] == [
+            "my-yaml-fork"
+        ]
+
+    @pytest.mark.parametrize(
+        "direct_url,reason",
+        [
+            (
+                {"url": "file:///wheels/fork.whl", "archive_info": {}},
+                "installed_source_not_reproducible",
+            ),
+            (
+                {"url": "https://example.invalid/x.git", "vcs_info": {"vcs": "git"}},
+                "installed_source_not_reproducible",
+            ),
+            ({"url": "file:///src/fork", "dir_info": {}}, "installed_source_not_reproducible"),
+        ],
+        ids=["local-wheel", "vcs", "local-dir"],
+    )
+    def test_local_and_vcs_providers_are_not_missing_either(self, tmp_path, direct_url, reason):
+        prefix, site = _env(tmp_path)
+        _dist(site, "fork", "1.0", top="yaml\n", record=["yaml/__init__.py"], direct_url=direct_url)
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {"fork": "1.0"}))
+        assert plan.missing == () and plan.requirements == ()
+        assert [(o["import_name"], o["reason"]) for o in plan.origins] == [("yaml", reason)]
+
+    def test_a_module_in_site_packages_without_any_metadata_is_not_missing(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(site, "yaml/__init__.py", "")
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.missing == () and plan.requirements == ()
+        (origin,) = plan.origins
+        assert origin["import_name"] == "yaml" and origin["reason"] == "unverified"
+
+    def test_a_package_that_really_is_absent_is_still_missing(self, tmp_path):
+        """静态索引读得到、也读全了，但没有谁声称提供它：照旧缺（负例：来源收紧不能把真缺的也吞掉）。"""
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "2.0.0", top="numpy\n", record=["numpy/__init__.py"])
+        proj = self._project(tmp_path, "import yaml\nimport numpy\n")
+        plan = self._plan(proj, _facts_at(prefix, {"numpy": "2.0.0"}))
+        assert plan.status == "ready"
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+        assert plan.requirements == ("pyyaml",)
+        assert plan.origins == ()
+
+    def test_a_conda_package_without_pip_metadata_is_never_given_a_pip_name(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        conda = prefix / "conda-meta"
+        conda.mkdir()
+        (conda / "pyyaml-6.0-py312.json").write_text(
+            json.dumps(
+                {"name": "pyyaml", "version": "6.0", "files": [f"{SP_REL}/yaml/__init__.py"]}
+            ),
+            encoding="utf-8",
+        )
+        _write(site, "yaml/__init__.py", "")
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["conda_package_not_pypi"]
+
+    # ---- 包在、导入失败（PR3 覆盖度缓存）-----------------------------------------------------
+    def test_a_module_that_imports_with_an_error_is_not_fixed_by_installing_its_package(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import yaml\n")
+        seen: list[tuple] = []
+
+        def cached(names):
+            seen.append(names)
+            return _health(yaml="import_error")
+
+        plan = self._plan(proj, _facts({}), coverage=cached)
+        assert plan.missing == () and plan.requirements == ()
+        assert plan.unknown == ("yaml",)
+        (origin,) = plan.origins
+        assert origin["reason"] == depplan.ORIGIN_IMPORT_FAILED
+        assert origin["coverage"] == "import_error"
+        assert seen == [("yaml",)]  # 只读查询，用的是依赖门 / 检测同一组名字
+
+    @pytest.mark.parametrize(
+        "health",
+        [
+            None,
+            {"ok": False, "modules_detail": {"yaml": "import_error"}},  # 环境本身不健康：不看模块
+            _health(yaml="not_found"),
+            _health(yaml="deferred"),
+            _health(),
+        ],
+        ids=["not-measured", "unusable-env", "not-found", "deferred", "no-detail"],
+    )
+    def test_only_a_measured_import_error_changes_the_verdict(self, tmp_path, health):
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts({}), coverage=lambda names: health)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+        assert plan.requirements == ("pyyaml",) and plan.origins == ()
+
+    def test_an_import_error_for_one_module_does_not_spare_the_others(self, tmp_path):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = self._plan(proj, _facts({}), coverage=lambda names: _health(yaml="import_error"))
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]
+        assert plan.requirements == ("tabulate",)
+        assert plan.unknown == ("yaml",)
+
+    # ---- 表外名 + 环境里装好的唯一 index 来源发行包（#938）---------------------------------------
+    def _lab_env(
+        self, tmp_path, *, direct_url=None, record=("lab_tools/__init__.py",), name="lab-tools"
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, name, "1.0", top="lab_tools\n", record=list(record), direct_url=direct_url)
+        return prefix, site
+
+    def test_938_an_off_table_name_satisfied_by_one_installed_index_dist_is_neither_missing_nor_unknown(
+        self, tmp_path
+    ):
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0"}))
+        assert plan.unknown == () and plan.origins == ()
+        assert plan.missing == () and plan.requirements == ()  # 判满足，但不产生任何安装名
+        assert plan.status == "nothing_needed"
+
+    def test_938_a_different_install_target_never_inherits_the_running_environments_satisfaction(
+        self, tmp_path
+    ):
+        """装到另一个环境（新托管代）时，运行环境里装着的 lab-tools 不会出现在那里：表外名仍是来源未定，
+        不产生安装名；同时缺的已知依赖照常装（Codex #944 P1）。"""
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\nimport yaml\n")
+        running = _facts_at(prefix, {"lab-tools": "1.0"})
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=running,
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert plan.unknown == ("lab_tools",)
+        assert [o["import_name"] for o in plan.origins] == ["lab_tools"]
+        assert plan.requirements == ("pyyaml",)  # 只有已知依赖；从不拿已装元数据造名字
+        # 对照：同一目标（install_facts 就是 facts）仍判满足
+        same = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=running
+        )
+        assert same.unknown == () and same.origins == ()
+
+    def test_938_only_the_satisfied_name_leaves_origins(self, tmp_path):
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\nimport zzz_private\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0"}))
+        assert plan.unknown == ("zzz_private",)
+        assert [o["import_name"] for o in plan.origins] == ["zzz_private"]
+
+    @pytest.mark.parametrize(
+        "direct_url",
+        [
+            {"url": "file:///src/fork", "dir_info": {"editable": True}},
+            {"url": "file:///wheels/fork.whl", "archive_info": {}},
+            {"url": "https://example.invalid/x.git", "vcs_info": {"vcs": "git"}},
+            {"url": "file:///src/fork", "dir_info": {}},
+        ],
+        ids=["editable", "local-wheel", "vcs", "local-dir"],
+    )
+    def test_938_non_reproducible_provenance_stays_unknown(self, tmp_path, direct_url):
+        prefix, _site = self._lab_env(tmp_path, direct_url=direct_url)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0"}))
+        assert plan.unknown == ("lab_tools",)
+        assert plan.requirements == () and plan.missing == ()
+
+    def test_938_two_providers_are_still_ambiguous(self, tmp_path):
+        prefix, site = self._lab_env(tmp_path)
+        _dist(site, "lab-tools-extra", "1.0", top="lab_tools\n", record=["lab_tools/__init__.py"])
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0", "lab-tools-extra": "1.0"}))
+        assert plan.unknown == ("lab_tools",)
+        assert plan.origins[0]["reason"] == "module_origin_ambiguous"
+
+    def test_938_a_module_without_any_metadata_stays_unknown(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(site, "lab_tools/__init__.py", "")
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_a_conda_provider_stays_unknown(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        conda = prefix / "conda-meta"
+        conda.mkdir()
+        (conda / "lab-tools-1.0-py312.json").write_text(
+            json.dumps(
+                {
+                    "name": "lab-tools",
+                    "version": "1.0",
+                    "files": [f"{SP_REL}/lab_tools/__init__.py"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write(site, "lab_tools/__init__.py", "")
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_the_live_provider_is_a_higher_layer_editable_fork_over_a_shadowed_index_dist(
+        self, tmp_path
+    ):
+        """排在前面的 editable fork 遮蔽了 site-packages 里的 index 发行包：真实 import 到的是 fork，不是被遮蔽的那个。"""
+        prefix, site = _env(tmp_path)
+        low = tmp_path / "low" / "site-packages"
+        low.mkdir(parents=True)
+        _dist(
+            site,
+            "lab-tools-fork",
+            "1.0",
+            top="lab_tools\n",
+            record=["lab_tools/__init__.py"],
+            direct_url={"url": "file:///s", "dir_info": {"editable": True}},
+        )
+        _dist(low, "lab-tools", "1.0", top="lab_tools\n", record=["lab_tools/__init__.py"])
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0", "lab-tools-fork": "1.0"}),
+            site_roots=(str(site), str(low)),
+        )
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_an_incomplete_name_layer_stays_unknown(self, tmp_path):
+        if os.name == "nt":
+            pytest.skip("符号链接在 Windows 上需要特权")
+        prefix, site = self._lab_env(tmp_path)
+        target = tmp_path / "elsewhere" / "other_pkg"
+        target.mkdir(parents=True)
+        (target / "__init__.py").write_text("", encoding="utf-8")
+        os.symlink(target, site / "other_pkg")  # 一个我们不跟的链接目录：这一层的名字没读全
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0"}), site_roots=(str(site),)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is False
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_an_unmodelled_pth_hook_stays_unknown(self, tmp_path):
+        prefix, site = self._lab_env(tmp_path)
+        _write(site, "hook.pth", "import os\n")
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0"}), site_roots=(str(site),)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.uncovered_paths > 0
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    # ---- #945：PYTHONPATH / extra 层里没有发行包元数据的同名顶层名，要参与遮蔽（与真解释器的 PathFinder 对拍）-------------
+    _SITE_SHAPES = {
+        "pkg": ["lab_tools/__init__.py"],
+        "mod": ["lab_tools.py"],
+        "ns": ["lab_tools/part/__init__.py"],
+    }
+
+    def _layered(self, tmp_path, site_kind, vendor_kind, *, vendor_first=True, ext=None):
+        """site-packages 里装着 index 来源的 lab-tools（形状 `site_kind`），`vendor/` 是 PYTHONPATH 上无元数据的一层
+        （`vendor_kind`：none / mod / pkg / ns / ns_empty / ext 或具体文件名）。返回 (plan, [sys.path 顺序的两层])。"""
+        prefix, site = _env(tmp_path)
+        rec = self._SITE_SHAPES[site_kind]
+        _dist(site, "lab-tools", "1.0", top="lab_tools\n", record=rec)
+        for r in rec:
+            _write(site, r, "")
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        if vendor_kind == "mod":
+            _write(vendor, "lab_tools.py", "")
+        elif vendor_kind == "pkg":
+            _write(vendor, "lab_tools/__init__.py", "")
+        elif vendor_kind == "ns":
+            _write(vendor, "lab_tools/x.py", "")
+        elif vendor_kind == "ns_empty":
+            (vendor / "lab_tools").mkdir()
+        elif vendor_kind not in ("none",):
+            _write(vendor, vendor_kind, "")
+        order = (str(vendor), str(site)) if vendor_first else (str(site), str(vendor))
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0"}),
+            site_roots=(str(site),),
+            extra_roots=(str(vendor),),
+            path_order=order,
+            ext_suffixes=ext or (),
+        )
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        return plan, list(order), site
+
+    @staticmethod
+    def _real_import_only_in(order: list[str], site: Path) -> bool:
+        """真解释器（隔离、sys.path 只有这两层）里 `lab_tools` 的所有提供者是不是只落在 site 层。"""
+        import subprocess
+
+        code = (
+            "import sys, json, importlib.machinery as m; "
+            "s = m.PathFinder.find_spec('lab_tools', json.loads(sys.argv[1])); "
+            "print(json.dumps(None if s is None else (list(s.submodule_search_locations) "
+            "if s.origin in (None, 'namespace') else [s.origin])))"
+        )
+        out = subprocess.run(
+            [sys.executable, "-I", "-S", "-c", code, json.dumps(order)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+        got = json.loads(out)
+        return bool(got) and all(str(site) in g for g in got)
+
+    def test_945_a_bare_vendor_module_ahead_of_site_packages_is_not_satisfied_by_the_index_dist(
+        self, tmp_path
+    ):
+        plan, order, site = self._layered(tmp_path, "pkg", "mod")
+        assert (
+            self._real_import_only_in(order, site) is False
+        )  # 真实 import 落在 vendor/lab_tools.py
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+        assert plan.missing == ()  # 也不去装同名包
+        (origin,) = plan.origins
+        assert origin["import_name"] == "lab_tools" and "suggested_distribution" not in origin
+
+    def test_945_control_no_same_named_file_in_vendor_is_still_satisfied(self, tmp_path):
+        plan, order, site = self._layered(tmp_path, "pkg", "none")
+        assert self._real_import_only_in(order, site) is True
+        assert plan.unknown == () and plan.origins == () and plan.status == "nothing_needed"
+
+    def test_945_control_vendor_after_site_packages_does_not_shadow(self, tmp_path):
+        plan, order, site = self._layered(tmp_path, "pkg", "mod", vendor_first=False)
+        assert self._real_import_only_in(order, site) is True
+        assert plan.unknown == () and plan.origins == ()
+
+    def test_945_a_vendor_namespace_directory_does_not_beat_a_regular_index_package(self, tmp_path):
+        """命名空间包优先级低于普通包：site 里是常规包时，前面层的无 `__init__` 同名目录不遮蔽它。"""
+        for kind in ("ns", "ns_empty"):
+            plan, order, site = self._layered(tmp_path / kind, "pkg", kind)
+            assert self._real_import_only_in(order, site) is True
+            assert plan.unknown == () and plan.origins == (), kind
+
+    def test_945_a_vendor_namespace_directory_is_one_more_portion_next_to_a_namespace_index_dist(
+        self, tmp_path
+    ):
+        """site 里装的本身就是 namespace portion 时，vendor 里的同名目录是同一个命名空间包的另一份：已装发行包只提供了一部分。"""
+        for kind in ("ns", "ns_empty"):
+            for first in (True, False):
+                plan, order, site = self._layered(
+                    tmp_path / f"{kind}{first}", "ns", kind, vendor_first=first
+                )
+                assert self._real_import_only_in(order, site) is False
+                assert plan.unknown == ("lab_tools",) and plan.requirements == (), (kind, first)
+
+    @pytest.mark.parametrize("vendor_first", [True, False])
+    @pytest.mark.parametrize("vendor", ["none", "mod", "pkg", "ns", "ns_empty"])
+    @pytest.mark.parametrize("site_kind", ["pkg", "mod", "ns"])
+    def test_945_satisfied_exactly_when_the_real_import_lands_only_on_the_index_dist(
+        self, tmp_path, site_kind, vendor, vendor_first
+    ):
+        plan, order, site = self._layered(tmp_path, site_kind, vendor, vendor_first=vendor_first)
+        satisfied = plan.unknown == () and plan.origins == ()
+        assert satisfied == self._real_import_only_in(order, site)
+
+    @pytest.mark.parametrize(
+        ("ext", "filename", "shadows"),
+        [
+            (None, "lab_tools.cpython-312-darwin.so", True),  # 没量到后缀：宽松形状
+            (
+                (".cpython-312-darwin.so", ".abi3.so", ".so"),
+                "lab_tools.cpython-312-darwin.so",
+                True,
+            ),
+            ((".cpython-312-darwin.so", ".abi3.so", ".so"), "lab_tools.cp313-win_amd64.pyd", False),
+            (
+                (".cpython-312-darwin.so", ".abi3.so", ".so"),
+                "lab_tools.cpython-39-x86_64-linux-gnu.so",
+                False,
+            ),
+        ],
+        ids=["loose-so", "exact-so", "foreign-pyd", "foreign-so"],
+    )
+    def test_945_a_vendor_extension_module_shadows_only_when_the_target_can_load_it(
+        self, tmp_path, ext, filename, shadows
+    ):
+        plan, _order, _site = self._layered(tmp_path, "pkg", filename, ext=ext)
+        assert (plan.unknown == ("lab_tools",)) is shadows
+        if shadows:
+            # 真提供者是 vendor 里的扩展模块：site 里的那份是「被遮蔽」（来源未验证），不是形状推不出的「歧义」
+            assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_938_found_but_the_distribution_is_not_installed_stays_unknown(self, tmp_path):
+        """覆盖度说它能 import，目标解释器的已装集合里却没有那个发行包：不冒充满足。"""
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(
+            proj, _facts_at(prefix, {}), coverage=lambda names: _health(lab_tools="found")
+        )
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_an_import_error_stays_unknown(self, tmp_path):
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(
+            proj,
+            _facts_at(prefix, {"lab-tools": "1.0"}),
+            coverage=lambda names: _health(lab_tools="import_error"),
+        )
+        assert plan.unknown == ("lab_tools",)
+        assert plan.origins[0]["coverage"] == "import_error"
+        assert plan.requirements == ()
+
+    @staticmethod
+    def _satisfiable_class(**over):
+        row = {
+            "distribution": "lab-tools",
+            "version": "1.0",
+            "source": "installed",
+            "ecosystem": "pypi",
+            "provenance": "index",
+            "evidence": ["installed_record_files"],
+            "evidence_file": "",
+            "reproducible": True,
+            "shadowed": False,
+        }
+        row.update(over.pop("row", {}))
+        fields = {
+            "module": "lab_tools",
+            "bucket": "unknown",
+            "context": "unconditional",
+            "resolution_status": "resolved",
+            "evidence": ("installed_record_files",),
+            "distribution_candidates": (row,),
+            "distribution_provenance": "index",
+            "distribution_status": "installed_confirmed",
+            "compatibility": (),
+        }
+        fields.update(over)
+        return importscan.ImportClass(**fields)
+
+    def test_938_the_judgement_one_condition_at_a_time(self):
+        """每个条件单独翻转都必须推翻「判满足」（端到端的反例会被相邻条件掩盖，这里逐条隔离）。"""
+        installed = {"lab-tools": "1.0"}
+
+        def ok(c, **kw):
+            return depplan._installed_index_satisfies(
+                c, kw.get("installed", installed), kw.get("state", ""), kw.get("incomplete", False)
+            )
+
+        assert ok(self._satisfiable_class()) is True
+        assert ok(self._satisfiable_class(), incomplete=True) is False
+        assert ok(self._satisfiable_class(), state="import_error") is False
+        assert ok(self._satisfiable_class(), installed={}) is False
+        assert ok(self._satisfiable_class(bucket="third_party")) is False
+        for over in (
+            {"distribution_status": "module_origin_ambiguous"},
+            {"distribution_status": "distribution_version_conflict"},
+            {"resolution_status": "ambiguous"},
+            {"distribution_provenance": "editable"},
+            {"compatibility": ("layer_order_unresolved",)},
+            {"evidence": ("module_present_no_metadata",)},
+        ):
+            assert ok(self._satisfiable_class(**over)) is False, over
+        for row in (
+            {"provenance": "editable"},
+            {"reproducible": False},
+            {"ecosystem": "conda"},
+            {"shadowed": True},  # 唯一的候选被遮蔽 = 没有未被遮蔽的提供者
+        ):
+            assert ok(self._satisfiable_class(row=row)) is False, row
+        two = self._satisfiable_class()
+        extra = dict(two.distribution_candidates[0], distribution="other-lab")
+        two = dataclasses.replace(
+            two, distribution_candidates=(*two.distribution_candidates, extra)
+        )
+        assert ok(two, installed={"lab-tools": "1.0", "other-lab": "1"}) is False
+        # 一个未被遮蔽、一个被遮蔽：判的是那个未被遮蔽的
+        shadowed = dataclasses.replace(
+            two,
+            distribution_candidates=(
+                two.distribution_candidates[0],
+                dict(extra, shadowed=True),
+            ),
+        )
+        assert ok(shadowed) is True
+
+    # ---- 不变量 ------------------------------------------------------------------------------
+    def test_unknown_names_are_exactly_the_origins_names(self, tmp_path):
+        proj = self._project(tmp_path, "import zzz_private\nimport cv2\nimport yaml\n")
+        plan = self._plan(
+            proj,
+            _facts({"opencv-python-headless": "1", "opencv-contrib-python": "1"}),
+            coverage=lambda names: _health(yaml="import_error"),
+        )
+        assert set(plan.unknown) == {o["import_name"] for o in plan.origins}
+        assert {o["reason"] for o in plan.origins} <= set(depplan.ORIGIN_REASONS)
+        assert dict((o["import_name"], o["reason"]) for o in plan.origins)["zzz_private"] == (
+            "distribution_unresolved"
+        )
+        assert plan.to_payload()["origins"] == [dict(o) for o in plan.origins]
+
+    def test_origin_facts_never_carry_paths_or_file_contents(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "my-yaml-fork",
+            "0.1",
+            top="yaml\n",
+            record=["yaml/__init__.py"],
+            direct_url={"url": "file:///SECRET/fork", "dir_info": {"editable": True}},
+        )
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {"my-yaml-fork": "0.1"}))
+        text = json.dumps(plan.to_payload())
+        assert str(tmp_path) not in text and "SECRET" not in text
+
+    def test_a_plan_with_nothing_unusual_is_unchanged_by_the_static_index(self, tmp_path):
+        """回归（BASELINE §6）：没有来源问题的脚本，读不读静态索引，需求 / 约束 / 身份 / 输入指纹逐字相同——
+        受管环境的代目录名与「第二次打开不重装」不受影响。"""
+        prefix, site = _env(tmp_path)
+        _dist(site, "six", "1.17.0", top="six\n", record=["six.py"])
+        proj = self._project(tmp_path, "import six\nimport yaml\n", "six==1.17.0\n")
+        facts = _facts_at(prefix, {"six": "1.17.0"})
+        with_index = self._plan(proj, facts)
+        without = self._plan(proj, facts, dists=None)
+        for field in ("status", "requirements", "constraints", "identity", "inputs_digest"):
+            assert getattr(with_index, field) == getattr(without, field), field
+        assert [m["distribution"] for m in with_index.missing] == ["pyyaml"]
+        assert [m["distribution"] for m in without.missing] == ["pyyaml"]
+
+    def test_reading_the_static_index_for_a_plan_executes_nothing(self, tmp_path, monkeypatch):
+        """零执行：目标环境里放一个 `__init__` / `.pth` / `sitecustomize`，出计划之后没有哨兵文件；起进程 / 联网 /
+        `importlib.metadata` / `find_spec` 全换成调用即失败的桩。"""
+        import importlib.metadata
+        import importlib.util
+        import socket
+        import subprocess
+
+        sentinel = tmp_path / "SIDE_EFFECT"
+        body = f"open({str(sentinel)!r}, 'w').write('ran')\n"
+        prefix, site = _env(tmp_path)
+        _write(site, "dangerous_package/__init__.py", body)
+        _write(site, "evil.pth", f"import os; open({str(sentinel)!r}, 'w').write('pth')\n")
+        _write(site, "sitecustomize.py", body)
+        _dist(
+            site,
+            "dangerous-package",
+            "1.0",
+            top="dangerous_package\n",
+            record=["dangerous_package/__init__.py"],
+            direct_url={"url": "file:///src/d", "dir_info": {"editable": True}},
+        )
+
+        def boom(name):
+            def _boom(*a, **k):
+                raise AssertionError(f"{name} 不许在出计划时被调用")
+
+            return _boom
+
+        for target, attr in (
+            (subprocess, "Popen"),
+            (subprocess, "run"),
+            (os, "system"),
+            (socket, "socket"),
+            (importlib.metadata, "distributions"),
+            (importlib.util, "find_spec"),
+        ):
+            monkeypatch.setattr(target, attr, boom(f"{target.__name__}.{attr}"))
+        proj = self._project(tmp_path, "import dangerous_package\n")
+        facts = _facts_at(prefix, {"dangerous-package": "1.0"})
+        plan = self._plan(proj, facts)
+        assert plan.missing == () and plan.requirements == ()
+        assert not sentinel.exists()
+
+    def test_the_observed_provider_never_becomes_an_install_name(self, tmp_path):
+        """已装元数据是证据不是授权：运行环境里 `cv2` 由 headless 提供，要新建一代时装的仍是表 / 声明里的名字，
+        不是观测到的那个（`selected_distribution` / `observed_distribution` 只用来判「已经有了」）。"""
+        proj = self._project(tmp_path, "import cv2\n")
+        running = _facts({"opencv-python-headless": "4.9.0"})
+        fresh = _facts({})  # 新一代装之前：什么都没有
+        plan = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=fresh
+        )
+        assert plan.missing == ()  # 此刻的环境里有，不缺
+        assert plan.requirements == ("opencv-python",)
+        assert "opencv-python-headless" not in " ".join(plan.requirements)
+
+    def test_the_index_lives_and_dies_with_the_facts(self, tmp_path, monkeypatch):
+        """索引与事实同一刻读、同一个 `reset_cache` 清：装上了但验证没过的包不会 `reset_cache`，事实停在装之前，
+        索引也必须停在装之前（否则同一个包一边说没装、一边说装着，FO22 的门就不再问了）。"""
+        prefix, site = _env(tmp_path)
+        facts = _facts_at(prefix, {})
+        first = depplan.static_index(facts)
+        assert first is not None and depplan.static_index(facts) is first  # 缓存着
+        _dist(
+            site, "late", "1.0", top="late\n", record=["late/__init__.py"]
+        )  # 事实之后才出现在磁盘上
+        assert depplan.static_index(facts) is first  # 不偷偷换成更新的一份
+        depplan.reset_cache(facts.python)
+        fresh = depplan.static_index(facts)
+        assert fresh is not first and fresh.lookup("late").candidates
+
+    def test_measuring_the_facts_reads_the_index_at_the_same_moment(self, monkeypatch):
+        calls: list[str] = []
+        real = distmeta.index_environment
+
+        def counting(prefix, **kw):
+            calls.append(str(prefix))
+            return real(prefix, **kw)
+
+        monkeypatch.setattr(distmeta, "index_environment", counting)
+        facts = depplan.target_facts(sys.executable, use_cache=False)
+        assert facts is not None and facts.prefix
+        assert calls == [facts.prefix]  # 量事实的同时读了索引
+        depplan.static_index(facts)
+        assert calls == [facts.prefix]  # 出计划时不再读第二遍
+        # 重新量事实（环境可能变了）= 索引一起重读，不留着上一份
+        again = depplan.target_facts(sys.executable, use_cache=False)
+        assert again is not None and calls == [facts.prefix, facts.prefix]
+
+    def test_a_plan_without_a_prefix_reads_no_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            distmeta,
+            "index_environment",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该读")),
+        )
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, dataclasses.replace(_facts({}), prefix=""))  # 替身事实：没有前缀
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+
+    def test_the_closed_sets_do_not_grow_blocked(self):
+        """C3：来源未定不是新的 `blocked` 理由——`BLOCK_REASONS` 闭集原样。"""
+        assert depplan.BLOCK_REASONS == (
+            "dependency_declaration_unsupported",
+            "dependency_conflict",
+            "dependency_hashes_incomplete",
+            "dependency_target_unavailable",
+            "dependency_scope_conflict",
+        )
+        assert not set(depplan.ORIGIN_REASONS) & set(depplan.BLOCK_REASONS)
+
+    def test_the_import_failed_reason_is_the_coverage_detail_code(self):
+        from tavotto.engine import envadvice
+
+        assert depplan.ORIGIN_IMPORT_FAILED == envadvice.DETAIL_IMPORT_FAILED_TARGET
+        known = set(distmeta.STATUSES) | {
+            depplan.ORIGIN_UNRESOLVED,
+            depplan.ORIGIN_IMPORT_FAILED,
+        }
+        assert set(depplan.ORIGIN_REASONS) <= known
+
+    def test_a_scan_cut_short_says_so_in_the_plan_payload(self, tmp_path):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import m0\n")
+        for i in range(importscan.MAX_DEPTH + 2):
+            _write(proj, f"m{i}.py", f"import m{i + 1}\n")
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="project_venv")
+        assert plan.scan["truncated"] is True and plan.scan["search_complete"] is False
+
+
+# ===========================================================================
+# Codex #920 评审跟进：P1-1 目标解释器看得见的每一层都要读；P1-2 安装目标单独判
+# ===========================================================================
+_EDITABLE = {"url": "file:///src/fork", "dir_info": {"editable": True}}
+#: 候选 (import 名, 表里的发行包名)：测试要用「宿主解释器里没装」的那一个，否则名字级就已经判成「有」，用例是空的
+_CANDIDATES = (("yaml", "pyyaml"), ("docx", "python-docx"), ("tabulate", "tabulate"))
+
+
+def _free_import(installed: dict) -> tuple[str, str]:
+    for module, dist in _CANDIDATES:
+        if dist not in installed:
+            return module, dist
+    pytest.skip("宿主解释器把候选包都装了，无法构造「名字级未装」的前提")
+
+
+def _sys_site_venv(tmp_path: Path, name: str = "sysvenv") -> tuple[Path, Path]:
+    """真 venv，`include-system-site-packages = true`（基础解释器的 site-packages 与 user site 都在 sys.path 上）。"""
+    import subprocess
+
+    venv = tmp_path / name
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(venv)],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=300,
+    )
+    cfg = (venv / "pyvenv.cfg").read_text(encoding="utf-8").lower().replace(" ", "")
+    assert "include-system-site-packages=true" in cfg
+    from support import envworld
+
+    return venv, envworld.venv_python(venv)
+
+
+def subprocess_output(cmd: list[str]) -> str:
+    import subprocess
+
+    return subprocess.run(
+        cmd, check=True, capture_output=True, encoding="utf-8", timeout=120
+    ).stdout.strip()
+
+
+def _venv_site(python: Path) -> str:
+    import subprocess
+
+    out = subprocess.run(
+        # Windows 的 getsitepackages() 第一项是 sys.prefix 本身，真的 site 目录是叫 site-packages 的那一项
+        [
+            str(python),
+            "-c",
+            "import os, site;print(next(p for p in site.getsitepackages()"
+            " if os.path.basename(p).lower() in ('site-packages', 'dist-packages')))",
+        ],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    return out.stdout.strip()
+
+
+class TestEveryVisibleLayer:
+    """P1-1：`static_index` 读目标解释器看得见的**每一层**，不止前缀内的 site-packages。别的层里的替代提供者被漏掉，
+    计划就会往用户现有环境里装 `pyyaml` 去遮蔽它。某一层没读成 = 索引不完整 = 不当「缺」。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _project(self, tmp_path: Path, script: str) -> Path:
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        return proj
+
+    def _plan(self, proj, facts, **kw):
+        return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv", **kw)
+
+    def _facts(self, python: Path, monkeypatch, *, extra_path: Path | None = None, userbase=None):
+        if extra_path is not None:
+            old = os.environ.get("PYTHONPATH", "")
+            monkeypatch.setenv(
+                "PYTHONPATH", os.pathsep.join(p for p in (str(extra_path), old) if p)
+            )
+        if userbase is not None:
+            monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+            monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts is not None
+        return facts
+
+    def test_the_facts_report_the_base_layer_of_an_include_system_site_packages_venv(
+        self, tmp_path, monkeypatch
+    ):
+        venv, python = _sys_site_venv(tmp_path)
+        base = (
+            tmp_path / "base" / "site-packages"
+        )  # 基础解释器那一层的替身：sys.path 上、叫 site-packages
+        base.mkdir(parents=True)
+        facts = self._facts(python, monkeypatch, extra_path=base)
+        own = os.path.normcase(os.path.realpath(_venv_site(python)))
+        reported = [os.path.normcase(os.path.realpath(p)) for p in facts.site_roots]
+        assert own in reported
+        assert os.path.normcase(os.path.realpath(base)) in reported
+        # 沿 sys.path 的先后：PYTHONPATH 在 site 之前
+        assert reported.index(os.path.normcase(os.path.realpath(base))) < reported.index(own)
+
+    def test_an_editable_provider_in_the_base_layer_is_not_missing(self, tmp_path, monkeypatch):
+        venv, python = _sys_site_venv(tmp_path)
+        base = tmp_path / "base" / "site-packages"
+        base.mkdir(parents=True)
+        facts = self._facts(python, monkeypatch, extra_path=base)
+        module, dist = _free_import(facts.installed)
+        _dist(
+            base,
+            "my-fork",
+            "0.1",
+            top=f"{module}\n",
+            record=[f"{module}/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        facts = self._facts(python, monkeypatch, extra_path=base)  # 元数据放好之后重新量
+        plan = self._plan(self._project(tmp_path, f"import {module}\n"), facts)
+        assert plan.missing == () and plan.requirements == ()  # 不往用户环境里装表里的名字去遮蔽它
+        assert plan.unknown == (module,)
+        (origin,) = plan.origins
+        assert origin["reason"] == "editable_dependency_not_reproducible"
+
+    def test_an_editable_provider_in_the_user_site_is_not_missing(self, tmp_path, monkeypatch):
+        import subprocess
+
+        venv, python = _sys_site_venv(tmp_path)
+        userbase = tmp_path / "userbase"
+        monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+        monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+        user_site = subprocess.run(
+            [str(python), "-c", "import site;print(site.getusersitepackages())"],
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+        ).stdout.strip()
+        Path(user_site).mkdir(parents=True)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        assert probe is not None
+        module, dist = _free_import(probe.installed)
+        _dist(
+            Path(user_site),
+            "my-fork",
+            "0.1",
+            top=f"{module}\n",
+            record=[f"{module}/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts is not None
+        assert os.path.normcase(os.path.realpath(user_site)) in [
+            os.path.normcase(os.path.realpath(p)) for p in facts.site_roots
+        ]
+        plan = self._plan(self._project(tmp_path, f"import {module}\n"), facts)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["editable_dependency_not_reproducible"]
+
+    def test_a_layer_that_cannot_be_read_is_never_a_reason_to_install(self, tmp_path):
+        """control + 三种读不成：消失了 / 是符号链接 / 目录读不动。读不成的那一层里可能正有提供者。"""
+        prefix, site = _env(tmp_path)
+        proj = self._project(tmp_path, "import tabulate\n")
+        good = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(site),))
+        control = self._plan(proj, good)
+        assert [m["distribution"] for m in control.missing] == ["tabulate"]  # 读全了：照旧缺
+        gone = tmp_path / "vanished" / "site-packages"
+        broken = {"vanished": str(gone)}
+        if hasattr(os, "symlink") and os.name != "nt":
+            real = tmp_path / "real_layer"
+            real.mkdir()
+            link = tmp_path / "linked" / "site-packages"
+            link.parent.mkdir()
+            os.symlink(real, link)
+            broken["symlink"] = str(link)
+        for label, layer in broken.items():
+            facts = dataclasses.replace(good, site_roots=(str(site), layer))
+            depplan.reset_cache()
+            index = depplan.static_index(facts)
+            assert index is not None and index.complete is False, label
+            assert str(tmp_path) not in json.dumps(index.to_payload()), label  # 账里没有绝对路径
+            plan = self._plan(proj, facts)
+            assert plan.missing == () and plan.requirements == (), label
+            assert plan.status == "nothing_needed", label
+            (origin,) = plan.origins
+            assert origin["import_name"] == "tabulate", label
+            assert origin["reason"] == "unverified", label
+            assert origin["distribution_status"] == "environment_not_checked", label
+
+    def test_an_unreadable_metadata_file_of_one_distribution_does_not_hide_the_layer(
+        self, tmp_path
+    ):
+        """Homebrew 的 site-packages 里 pip / wheel 的 METADATA 是符号链接：那只让这一个发行包的元数据读不全（`complete=False`），
+        这一层里有哪些名字是看全了的（`names_complete`），不能因此把整个环境的「没查到」都改判成来源未定。"""
+        if os.name == "nt":
+            pytest.skip("符号链接在 Windows 上需要特权")
+        prefix, site = _env(tmp_path)
+        _dist(site, "pip", "25.3", top="pip\n", record=["pip/__init__.py"])
+        real = tmp_path / "elsewhere.txt"
+        real.write_text("Metadata-Version: 2.1\nName: pip\nVersion: 25.3\n", encoding="utf-8")
+        meta = site / "pip-25.3.dist-info" / "METADATA"
+        meta.unlink()
+        os.symlink(real, meta)
+        facts = dataclasses.replace(_facts_at(prefix, {"pip": "25.3"}), site_roots=(str(site),))
+        index = depplan.static_index(facts)
+        assert index is not None and index.complete is False and index.names_complete is True
+        plan = self._plan(self._project(tmp_path, "import tabulate\n"), facts)
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]  # 照旧缺
+
+    def test_a_symlinked_package_directory_is_a_name_nobody_saw(self, tmp_path):
+        """层里有个符号链接的包目录 `yaml/`：Python 会跟进它、我们不跟——这个名字没被看到，不许当「没装」。"""
+        if os.name == "nt":
+            pytest.skip("符号链接在 Windows 上需要特权")
+        prefix, site = _env(tmp_path)
+        target = tmp_path / "elsewhere" / "yaml"
+        target.mkdir(parents=True)
+        (target / "__init__.py").write_text("", encoding="utf-8")
+        os.symlink(target, site / "yaml")
+        facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(site),))
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is False
+        plan = self._plan(self._project(tmp_path, "import yaml\n"), facts)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_an_unreadable_directory_is_not_a_missing_package(self, tmp_path):
+        if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+            pytest.skip("目录权限在 Windows / root 下不起作用")
+        prefix, site = _env(tmp_path)
+        locked = tmp_path / "locked" / "site-packages"
+        locked.mkdir(parents=True)
+        locked.chmod(0o000)
+        try:
+            facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(site), str(locked)))
+            plan = self._plan(self._project(tmp_path, "import tabulate\n"), facts)
+        finally:
+            locked.chmod(0o700)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_the_layers_are_read_in_sys_path_order_and_the_first_regular_provider_wins(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        other = tmp_path / "other" / "site-packages"
+        other.mkdir(parents=True)
+        _dist(
+            other, "my-fork", "0.1", top="yaml\n", record=["yaml/__init__.py"], direct_url=_EDITABLE
+        )
+        facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(other), str(site)))
+        index = depplan.static_index(facts)
+        assert index is not None and index.complete
+        _dist(
+            site, "pyyaml", "6.0", top="yaml\n", record=["yaml/__init__.py"]
+        )  # 后一层的同名提供者
+        facts = dataclasses.replace(facts, site_roots=(str(other), str(site)))
+        depplan.reset_cache()
+        index = depplan.static_index(facts)
+        assert index is not None and index.complete
+        live = {c.distribution: not c.shadowed for c in index.lookup("yaml").candidates}
+        assert live == {"my-fork": True, "pyyaml": False}  # 前一层胜出，后一层被遮蔽
+
+    def test_facts_without_reported_layers_keep_the_prefix_only_reading(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(site, "fork", "1.0", top="yaml\n", record=["yaml/__init__.py"], direct_url=_EDITABLE)
+        facts = _facts_at(prefix, {"fork": "1.0"})  # 替身事实：没有 site_roots
+        assert facts.site_roots == ()
+        plan = self._plan(self._project(tmp_path, "import yaml\n"), facts)
+        assert plan.missing == () and [o["reason"] for o in plan.origins] == [
+            "editable_dependency_not_reproducible"
+        ]
+
+    def test_the_layer_list_is_not_a_plan_input(self, tmp_path):
+        """`site_roots` 与 `builtin` 同理：不进 `digest()` / `to_payload()`，不改 `identity` / `inputs_digest`。"""
+        prefix, site = _env(tmp_path)
+        a = _facts_at(prefix, {"six": "1"})
+        b = dataclasses.replace(a, site_roots=(str(site), str(tmp_path / "x")))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+        proj = self._project(tmp_path, "import six\n")
+        pa, pb = self._plan(proj, a, dists=None), self._plan(proj, b, dists=None)
+        assert (pa.identity, pa.inputs_digest) == (pb.identity, pb.inputs_digest)
+
+
+class TestExtraPathLayers:
+    """P1-1 的剩余缺口：`sys.path` 上不叫 site-packages 的目录（`PYTHONPATH` 的 `--target` 目录、`.pth` 路径行加进来的 src 目录）
+    里的提供者。名字级扫描：模块名出现在那里 = 别处已有它，不判缺；读不了的目录 = 名字没读全，不判缺；没有它时照样报缺。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _plan(self, tmp_path, facts, script, **kw):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv", **kw)
+
+    def test_a_pip_target_directory_on_pythonpath_hides_nothing(self, tmp_path, monkeypatch):
+        venv, python = _sys_site_venv(tmp_path)
+        target = tmp_path / "vendor"  # `pip install --target` 式：目录名不是 site-packages
+        target.mkdir()
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        _write(target, f"{module}/__init__.py", "")
+        old = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(target), old) if p))
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert str(target) in facts.extra_roots
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_a_zip_on_pythonpath_makes_the_names_incomplete_not_missing(
+        self, tmp_path, monkeypatch
+    ):
+        # zipimport 来源（Codex #920 r4237324191）：静态读不到 zip 里有哪些名字——不判缺、不去装同名包遮蔽它
+        import zipfile
+
+        venv, python = _sys_site_venv(tmp_path)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        control = self._plan(tmp_path, probe, f"import {module}\n")
+        assert control.missing != ()  # 对照：没有 zip 时真缺照样报缺
+        archive = tmp_path / "vendor.zip"
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr(f"{module}/__init__.py", "")
+        old = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(archive), old) if p))
+        depplan.reset_cache()
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts.opaque_roots == 1
+        assert str(archive) not in facts.extra_roots + facts.site_roots
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_a_pth_path_line_to_a_source_directory_hides_nothing(self, tmp_path):
+        venv, python = _sys_site_venv(tmp_path)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        src = tmp_path / "oldstyle" / "src"
+        _write(src, f"{module}.py", "")
+        _write(Path(_venv_site(python)), "legacy-editable.pth", f"{src}\n")
+        depplan.reset_cache()
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert str(src) in facts.extra_roots
+        index = depplan.static_index(facts)
+        assert index is not None and index.uncovered_paths == 0  # 路径行指向的目录已作为层读过
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing == () and plan.requirements == ()
+
+    def test_extra_directories_without_the_module_still_report_it_missing(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        other = tmp_path / "vendor"
+        _write(other, "unrelated/__init__.py", "")
+        facts = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(other),)
+        )
+        plan = self._plan(tmp_path, facts, "import tabulate\n")
+        assert [m["distribution"] for m in plan.missing] == [
+            "tabulate"
+        ]  # 老式 editable 的 venv 里真缺的包照样自动准备
+
+    @pytest.mark.parametrize("kind", ["gone", "symlink", "locked"])
+    def test_an_extra_directory_that_cannot_be_read_is_not_a_missing_package(self, tmp_path, kind):
+        if kind != "gone" and os.name == "nt":
+            pytest.skip("Windows 上没有这种权限 / 链接")
+        if kind == "locked" and hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("root 不受目录权限限制")
+        prefix, site = _env(tmp_path)
+        bad = tmp_path / "vendor"
+        if kind == "symlink":
+            (tmp_path / "real").mkdir()
+            os.symlink(tmp_path / "real", bad)
+        elif kind == "locked":
+            bad.mkdir()
+            bad.chmod(0o000)
+        try:
+            facts = dataclasses.replace(
+                _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(bad),)
+            )
+            plan = self._plan(tmp_path, facts, "import tabulate\n")
+        finally:
+            if kind == "locked":
+                bad.chmod(0o700)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_too_many_extra_directories_is_not_complete(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        many = []
+        for i in range(distmeta.MAX_SITE_PATHS + 1):
+            d = tmp_path / f"e{i}"
+            d.mkdir()
+            many.append(str(d))
+        facts = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=tuple(many)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is False
+
+    def test_a_pth_path_line_to_a_directory_the_facts_did_not_report_stays_uncovered(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        known, unknown = tmp_path / "known", tmp_path / "unknown"
+        known.mkdir()
+        unknown.mkdir()
+        _write(site, "a.pth", f"{known}\n")
+        _write(site, "b.pth", f"{unknown}\n")
+        _write(site, "c.pth", "import os\n")
+        facts = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(known),)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.uncovered_paths == 2  # unknown 的路径行 + import 行
+
+    def test_the_new_generation_is_not_spared_by_an_extra_path_provider_of_the_running_one(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        other = tmp_path / "vendor"
+        _write(other, "tabulate.py", "")
+        running = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(other),)
+        )
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import tabulate\n")
+        plan = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=_facts({})
+        )
+        assert plan.missing == ()  # 当前环境里别处已有
+        assert plan.requirements == ("tabulate",)  # 新代没有那个目录：照常装
+
+    def test_the_probe_leaves_out_the_standard_library_and_the_reported_site_layers(self):
+        import sysconfig
+
+        facts = depplan.target_facts(sys.executable, use_cache=False)
+        assert facts is not None
+        norm = [os.path.normcase(p) for p in facts.extra_roots]
+        for stdlib in (
+            os.path.normcase(
+                os.path.dirname(os.path.abspath(os.__file__))
+            ),  # 真标准库目录（venv 里 sysconfig 不可靠）
+            os.path.normcase(os.path.abspath(sysconfig.get_path("stdlib"))),
+        ):
+            assert all(p != stdlib and not p.startswith(stdlib + os.sep) for p in norm), stdlib
+        assert all(os.path.basename(p).lower() not in ("lib-dynload", "dlls") for p in norm)
+        assert not set(norm) & {os.path.normcase(p) for p in facts.site_roots}
+
+    def _probe_with_sys_path(self, entries, *, cwd):
+        """在真解释器里跑 `_FACTS_SRC`，只是先把给定条目插到 sys.path 最前（标准库留着，解释器才起得来）——造出 Windows 形态的 sys.path（含安装根目录）。"""
+        import subprocess
+
+        code = (
+            "import json, sys\n"
+            "sys.path[:0] = json.loads(sys.argv[1])\n"
+            "exec(compile(sys.argv[2], '<facts>', 'exec'))\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code, json.dumps(entries), depplan._FACTS_SRC],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+            cwd=str(cwd),
+            check=True,
+        ).stdout
+        return json.loads(out)
+
+    def test_install_roots_and_the_probe_cwd_are_not_extra_layers(self, tmp_path):
+        """CI 跟进（Windows）：sys.path 上有基础解释器根目录 / venv 根目录 / 探针 cwd 时不当额外路径层扫描（里面的链接 / junction
+        会把整个名字层判成没读全，所有本该判缺的改判来源未定）。真的 `--target` 目录照旧在。"""
+        cwd = tmp_path / "scratch"
+        cwd.mkdir()
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        entries = [
+            "",
+            str(cwd),
+            sys.prefix,
+            sys.exec_prefix,
+            sys.base_prefix,
+            sys.base_exec_prefix,
+            os.path.join(sys.base_prefix, "DLLs"),
+            os.path.join(sys.base_prefix, "Lib"),
+            str(vendor),
+        ]
+        facts = self._probe_with_sys_path(entries, cwd=cwd)
+        extra = [os.path.normcase(p) for p in facts["extra_roots"]]
+        for root in {sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix, str(cwd)}:
+            assert os.path.normcase(os.path.abspath(root)) not in extra, root
+        assert os.path.normcase(os.path.abspath(vendor)) in extra  # 对照：其它目录照旧报
+
+    def test_install_roots_listed_by_getsitepackages_are_not_site_layers(self, tmp_path):
+        """CI 跟进（Windows）：Windows 的 `site.getsitepackages()` 返回 [sys.prefix, sys.prefix\\Lib\\site-packages]——安装根目录
+        本身被当 site 层读，里面的链接 / junction 让名字层判成没读全，所有缺包改判来源未定（「没有缺的依赖」）。这里在真解释器里
+        把 getsitepackages 换成 Windows 的形态再跑探针：安装根目录不能出现在 site_roots，真的 site-packages 照旧在。"""
+        import subprocess
+
+        cwd = tmp_path / "scratch"
+        cwd.mkdir()
+        code = (
+            "import os, site, sys\n"
+            "_real = site.getsitepackages()\n"
+            "site.getsitepackages = lambda prefixes=None: [sys.prefix, *_real]\n"
+            "sys.path[:0] = [sys.prefix]\n"
+            "exec(compile(sys.argv[1], '<facts>', 'exec'))\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code, depplan._FACTS_SRC],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+            cwd=str(cwd),
+            check=True,
+        ).stdout
+        facts = json.loads(out)
+        roots = [os.path.normcase(p) for p in facts["site_roots"]]
+        prefix = os.path.normcase(os.path.abspath(sys.prefix))
+        assert prefix not in roots
+        assert prefix not in [os.path.normcase(p) for p in facts["extra_roots"]]
+        assert any(os.path.basename(p) in ("site-packages", "dist-packages") for p in roots)  # 对照
+
+    def test_a_venv_root_on_pythonpath_does_not_hide_a_missing_package(self, tmp_path, monkeypatch):
+        """Windows 的 sys.path 里本来就有 venv 根目录与基础根目录：这里用 PYTHONPATH 把它们加进真 venv，缺包仍报缺。"""
+        venv, python = _sys_site_venv(tmp_path)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        base = subprocess_output(
+            [str(python), "-c", "import sys;print(sys.base_prefix)"],
+        )
+        old = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(venv), base, old) if p))
+        depplan.reset_cache()
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts is not None
+        norm = {os.path.normcase(os.path.realpath(p)) for p in facts.extra_roots}
+        assert os.path.normcase(os.path.realpath(venv)) not in norm
+        assert os.path.normcase(os.path.realpath(base)) not in norm
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is True
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing != () and plan.status != "nothing_needed"
+
+    def test_the_extra_directories_are_not_a_plan_input(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        a = _facts_at(prefix, {"six": "1"})
+        b = dataclasses.replace(a, extra_roots=(str(tmp_path / "x"),))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+
+
+class TestInstalledButBroken:
+    """评审 P2：目标事实里列着映射到的发行包、但覆盖度缓存说它导入失败（装坏的 PyYAML）——名字级「装着」不能抢在
+    `import_error` 之前，否则依赖检查报 OK。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _plan(self, tmp_path, installed, coverage=None):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import yaml\n")
+        return depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts(installed),
+            target_kind="project_venv",
+            coverage=coverage,
+        )
+
+    def test_an_installed_distribution_whose_import_fails_is_not_satisfied(self, tmp_path):
+        plan = self._plan(tmp_path, {"pyyaml": "6.0"}, lambda names: _health(yaml="import_error"))
+        assert plan.satisfied == () and plan.missing == () and plan.requirements == ()
+        assert plan.unknown == ("yaml",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "module_import_failed_in_target_environment"
+        assert origin["coverage"] == "import_error"
+
+    @pytest.mark.parametrize(
+        "coverage", [lambda names: _health(yaml="found"), None], ids=["found", "no-cache"]
+    )
+    def test_found_or_unmeasured_stays_satisfied(self, tmp_path, coverage):
+        plan = self._plan(tmp_path, {"pyyaml": "6.0"}, coverage)
+        assert [e["distribution"] for e in plan.satisfied] == ["pyyaml"]
+        assert plan.origins == ()
+
+    def test_the_new_generation_still_installs_it(self, tmp_path):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts({"pyyaml": "6.0"}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+            coverage=lambda names: _health(yaml="import_error"),
+        )
+        assert {"pyyaml", "tabulate"} <= set(plan.requirements)
+
+
+class TestInstallTargetIsJudgedSeparately:
+    """P1-2：来源判决只抑制**当前环境**的 missing；装到另一个环境时，当前解释器里的 editable / 本地 / Conda 提供者与缓存的
+    import_error 在那里都不存在，按目标的已装集合单独判，否则新一代 import 失败、验证失败。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _running(self, tmp_path: Path):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "my-yaml-fork",
+            "0.1",
+            top="yaml\n",
+            record=["yaml/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        _dist(
+            site,
+            "myprivate-pkg",
+            "0.1",
+            top="myprivate\n",
+            record=["myprivate/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        return _facts_at(prefix, {"my-yaml-fork": "0.1", "myprivate-pkg": "0.1"})
+
+    def _project(self, tmp_path: Path, script: str) -> Path:
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        return proj
+
+    def test_a_provider_that_only_exists_in_the_running_interpreter_does_not_spare_the_new_one(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert plan.status == "ready"
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]  # 当前环境缺的只有它
+        assert {"pyyaml", "tabulate"} <= set(plan.requirements)  # 新代两个都要装
+        assert [o["import_name"] for o in plan.origins] == ["yaml"]  # 对当前环境的来源说明照旧
+
+    def test_a_name_the_trusted_resolution_cannot_give_is_reported_not_guessed(self, tmp_path):
+        proj = self._project(tmp_path, "import myprivate\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert set(plan.requirements) == {"tabulate"}
+        assert "myprivate" not in " ".join(plan.requirements)  # 不从 unknown 猜 PyPI 名
+        assert "my-private" not in " ".join(plan.requirements)
+        assert plan.unknown == ("myprivate",)
+        (origin,) = plan.origins
+        assert (
+            origin["reason"] == "editable_dependency_not_reproducible"
+        )  # 新环境里无法满足，如实标出
+
+    def test_a_cached_import_error_of_the_running_interpreter_does_not_apply_to_the_new_one(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts({}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+            coverage=lambda names: _health(yaml="import_error"),
+        )
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]
+        assert {"pyyaml", "tabulate"} <= set(plan.requirements)
+        assert [o["reason"] for o in plan.origins] == ["module_import_failed_in_target_environment"]
+
+    def test_what_the_target_already_has_by_name_is_still_not_installed(self, tmp_path):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({"pyyaml": "6.0"}),
+        )
+        assert "pyyaml" not in plan.requirements and "tabulate" in plan.requirements
+
+    def test_ambiguous_cv2_in_the_running_interpreter_installs_the_trusted_name_in_the_new_one(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import cv2\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts({"opencv-python-headless": "4", "opencv-contrib-python": "4"}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert {"opencv-python", "tabulate"} <= set(plan.requirements)
+
+    def test_an_incomplete_index_of_the_running_interpreter_does_not_spare_the_new_one(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        running = dataclasses.replace(
+            _facts_at(prefix, {}),
+            site_roots=(str(site), str(tmp_path / "vanished" / "site-packages")),
+        )
+        proj = self._project(tmp_path, "import tabulate\n")
+        plan = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=_facts({})
+        )
+        assert plan.missing == ()  # 当前环境读不全：不当缺
+        assert plan.requirements == ("tabulate",)  # 新代是全新环境：照常装
+
+    def test_target_only_entries_are_listed_apart_from_missing(self, tmp_path):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert [m["import_name"] for m in plan.missing] == ["tabulate"]  # 当前环境不报缺的语义不变
+        assert [m["import_name"] for m in plan.install_only] == ["yaml"]
+        assert plan.install_only[0]["distribution"] == "pyyaml"
+        assert [m["import_name"] for m in plan.install_entries] == ["tabulate", "yaml"]
+        assert "install_only" not in plan.to_payload()  # 披露不变
+
+    def test_installing_into_the_running_interpreter_itself_is_unchanged(self, tmp_path):
+        running = self._running(tmp_path)
+        proj = self._project(tmp_path, "import yaml\nimport myprivate\nimport tabulate\n")
+        base = depplan.plan(proj, "plot.py", facts=running, target_kind="project_venv")
+        same = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="project_venv", install_facts=running
+        )
+        assert base.requirements == ("tabulate",)  # editable 的 yaml / myprivate 不装
+        for field in ("status", "requirements", "constraints", "identity", "unknown", "origins"):
+            assert getattr(base, field) == getattr(same, field), field
+        assert base.install_only == () and same.install_only == ()
+
+
+# ===========================================================================
+# 同源对：depplan 的闭集 ↔ web/src/lib/api.ts ↔ 文案（docs/rules/repo/same-origin-pairs.md）
+# ===========================================================================
+class TestClosedSetsMirrorTheFrontend:
+    API = ROOT / "web" / "src" / "lib" / "api.ts"
+    DIALOG = ROOT / "web" / "src" / "components" / "DependencyPrepareDialog.tsx"
+
+    def _api(self) -> str:
+        return self.API.read_text(encoding="utf-8")
+
+    def test_block_reasons_are_the_same_on_both_sides_in_the_same_order(self):
+        from support.tsconst import exported_string_array
+
+        assert exported_string_array(self._api(), "JOINT_BLOCK_CODES") == list(
+            depplan.BLOCK_REASONS
+        )
+
+    def test_origin_reasons_are_the_same_on_both_sides_in_the_same_order(self):
+        from support.tsconst import exported_string_array
+
+        assert exported_string_array(self._api(), "JOINT_ORIGIN_REASONS") == list(
+            depplan.ORIGIN_REASONS
+        )
+
+    def test_every_block_reason_has_text_in_both_languages_and_a_dialog_entry(self):
+        dialog = self.DIALOG.read_text(encoding="utf-8")
+        for lang in ("zh-CN", "en-US"):
+            errors = json.loads(
+                (ROOT / "web" / "src" / "i18n" / "locales" / lang / "errors.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            for code in depplan.BLOCK_REASONS:
+                assert errors["engine"][f"dependencyBlocked_{code}"].strip(), (lang, code)
+        for code in depplan.BLOCK_REASONS:
+            assert f"{code}: 'engine.dependencyBlocked_{code}'" in dialog, code
+
+    def test_origin_reasons_are_not_published_error_codes(self):
+        from tavotto.engine import deprepair
+
+        published = {
+            v for k, v in vars(deprepair).items() if k.startswith("ERROR_") and isinstance(v, str)
+        }
+        assert not set(depplan.ORIGIN_REASONS) & published
+        assert not set(depplan.ORIGIN_REASONS) & set(depplan.BLOCK_REASONS)
+
+    def test_the_guard_notices_a_drifted_mirror(self):
+        """看护自己要能红：删掉镜像里的一项，比较必须不相等（不是永真断言）。"""
+        from support.tsconst import exported_string_array
+
+        drifted = self._api().replace("  'conda_package_not_pypi',\n", "", 1)
+        assert exported_string_array(drifted, "JOINT_ORIGIN_REASONS") != list(
+            depplan.ORIGIN_REASONS
+        )
 
 
 class TestInputsDigest:

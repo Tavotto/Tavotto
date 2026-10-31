@@ -28,19 +28,24 @@
  * Readiness 刻意不产生 issue：「这张图还没连上脚本」与「这张图字号偏小」是
  * 两件不同的事，混进同一个清单之后用户既分不清轻重，也找不到各自的下一步。
  */
+import type { ExportRoute } from './exportRoute'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import type { Manifest, PanelInfo } from './api'
 import type { PanelRender } from '@/store/renderStore'
+import { figuresOf } from './figuresOf'
 import { fixOptions, fixRoute, planFix } from './issueFix'
 import { severityOf, type PublicationProfile, type Severity } from './profile'
 import {
+  buildOriginalSpec,
   buildSpec,
   runSpec,
   type PreflightIssue,
   type PreflightOccurrence,
+  type PreflightSpec,
 } from './preflight'
 import type { CanvasData, CanvasObject, FigureDocument } from '@/types/document'
 import { subplotLookup, type SubplotPart } from './subplotParts'
+import { displayText } from './richText'
 
 /* ------------------------------ Issue 模型 -------------------------------- */
 
@@ -150,6 +155,8 @@ const RULES: Record<
   // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
   'glyph-missing': { category: 'text', context: 'document', fix: 'none' },
   'glyph-substituted': { category: 'text', context: 'document', fix: 'none' },
+  // 公式排不出来：能修的动作是改公式本身（只有用户说得出写什么），所以 `fix: 'none'`；点击定位到那条文字
+  'math-unrenderable': { category: 'text', context: 'document', fix: 'none' },
   // 修法是外边距重排（ADR 0051 的 `adapt_margins`）：挪子图、不挪那条文字，有位移预算，
   // 改完真实渲染裁决；放不下就如实说「放不下」、一个字不改（ADR 0080）
   'element-outside-figure': { category: 'layout', context: 'document', fix: 'safe_auto' },
@@ -246,7 +253,7 @@ function subjectOf(
     obj?.type === 'panel'
       ? (obj.name ?? obj.fileId)
       : obj?.type === 'text'
-        ? obj.text.trim().slice(0, 24) || undefined
+        ? displayText(obj.text, obj.textFormat).trim().slice(0, 24) || undefined
         : undefined
   if (!occ.gid) {
     return { kind: 'object', objectType: obj?.type, objectName }
@@ -277,8 +284,57 @@ export function validateCanvas(
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
 ): CanvasResult {
+  const result = resultOf(input, documentId, buildSpec(input.doc, assets, render))
+  // 单图编辑（画布上恰好一张图，隐藏的也计）没有页面：舞台不画页面纸、导出是图本身（ADR 0028 / 0031 §original），
+  // 文档里留着的页面尺寸（默认 150 × 100…）与这张图比没有意义——画布摆放类规则（越界 / 页边距 / 重叠）不判，
+  // 否则一张没动过的大图一打开就被「超出页面范围」阻断。第二张图进来就是排版，规则原样回来。
+  if (figuresOf(input.doc.objects).length !== 1) return result
+  const keep = (code: string) => appliesToOriginal(code)
+  return {
+    ...result,
+    issues: result.issues.filter((i) => keep(i.ruleCode)),
+    raw: result.raw.filter((r) => keep(r.id)),
+  }
+}
+
+/** 原图范围的目标：那张图（画布对象 id）与它按原图导出时的图幅（mm） */
+export interface OriginalTarget {
+  objectId: string
+  widthMm: number
+  heightMm: number
+  /** 本次所选格式：影响原图范围里面板嵌入的是位图还是重画的矢量 */
+  formats: readonly string[]
+  /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
+  route?: ExportRoute | null
+}
+
+/**
+ * **按原图导出**那份产物的检查（同一个求值器，换成原图口径的输入，`buildOriginalSpec`）。
+ *
+ * 画布那一份（`validateCanvas`）量的是「这张图摆在这页上」：字号乘了画布缩放、PPI 按摆放
+ * 宽度算。原图导出的文件里没有那次缩放，拿那一份去裁原图范围，缩小摆放的图会被假阻断、
+ * 放大摆放的图会被假放行。结果仍要经 `summaryFor({ objectId })` / `rawIssuesForObject()`
+ * 裁那一刀（页面级、画布摆放类不算），与从前同一把尺子。图不在这张画布上回 `null`。
+ */
+export function validateOriginal(
+  input: CanvasInput,
+  documentId: string,
+  assets: Record<string, PanelInfo>,
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  target: OriginalTarget,
+): CanvasResult | null {
+  const panel = input.doc.objects.find((o) => o.id === target.objectId)
+  if (panel?.type !== 'panel') return null
+  return resultOf(
+    input,
+    documentId,
+    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats, target.route),
+  )
+}
+
+/** 一份 spec 的求值结果 → 可定位问题。画布范围与原图范围共用，接法只有这一份 */
+function resultOf(input: CanvasInput, documentId: string, spec: PreflightSpec): CanvasResult {
   const { doc, canvasId, canvasName, profile } = input
-  const spec = buildSpec(doc, assets, render)
   const raw = runSpec(spec, profile)
   const manifests = new Map(spec.panels.map((p) => [p.id, p.manifest]))
   const manifestOf = (objectId: string) => manifests.get(objectId) ?? null

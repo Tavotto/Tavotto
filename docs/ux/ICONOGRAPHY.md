@@ -9,7 +9,7 @@
 
 ## 一、结论先行
 
-- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 143 个（2026-10-07 补画 `ListChecks`）。名字与 lucide 时代
+- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 149 个（2026-10-23 为联系作者附件方块补画通用文件 `File`，2026-10-22 补画设置页「支持」钮的实心红心 `Heart` 与「联系作者」的信封 `Mail`，2026-10-07 补画 `ListChecks`，2026-10-13 补画 `Menu`，2026-10-19 为新手教程补画 `ArrowRight` 与拖动把手 `GripVertical`）。名字与 lucide 时代
   一一相同，同一语义只用一个名字（第四节的表不动）。**任何第三方图标库都不许再
   import**（门禁按 import 路径判）。
 - 画法：24 网格；所有线条 2 单位描边、圆头圆角，按比例缩放；闭合外形外角 ≥ 2.5、
@@ -104,6 +104,15 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 
 每条规则都有正反两组自检样例。
 
+## 三·补、不套底座，空状态用手帐线稿（2026-10-28）
+
+图标不放进灰底座 / 圆盘里（底座让每个图标多出一块没有信息的色块，且与进度条的「发丝框 + 铅笔排线」语言不一致）：
+行首与标题行首是无框 16px `IconSlot`，居中在第一行文字上；空状态是 `ui/Sketch` 的 54×42 线稿
+（1px、.5 坐标、45° 整像素排线、ink-faint）。线稿不是图标：图标集管小控件里的符号，线稿管一屏的主图，
+封闭集 11 幅（select / canvas / history / versions / ok / code / search / warn / pencil / sheet / drop）。
+缩略图占位用 `.hatch-box`，不画图标。
+尺寸例外只有一处：首页拖放区的 `drop`（文件卡落进托盘）是整屏主图，画布 96×72（`SKETCH_SIZE_OVERRIDE`），线宽与排线不变。
+
 ## 四、语义统一表（同一含义只用一个图标）
 
 | 语义 | 图标 | 曾经的并存者 |
@@ -116,6 +125,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 外部链接 / 在文件管理器里显示 | `ExternalLink` | `SquareArrowOutUpRight` |
 | 打开设置对话框 | `Settings` | `Settings2` |
 | 编辑（改名、改规范） | `Pencil` | `PenLine`、`Settings2` |
+| 联系作者（顶栏 / 主页入口，2026-10-22） | `Mail`（信封：外框 + 封口折线） | 起初借用的 `Pencil`——读起来是「编辑」 |
 | 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2` |
 | 警告 | `TriangleAlert` | 别名 `AlertTriangle`；`ShieldAlert` 只留给「来源已分叉」 |
 | 阻断（问题等级 error） | `OctagonAlert`（停车牌的形状） | 此前与警告共用 `TriangleAlert`、只靠红 / 琥珀色区分（2026-09-14 二审 C1）；表在 `lib/validationText.SEVERITY_ICON`，问题面板与导出清单同一份 |
@@ -123,7 +133,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 问题清单入口（左轨「问题」） | `ListChecks`（左列两枚对勾 + 右列两道，与 `LayoutList` 同骨架；有实心孪生） | 此前是 `TriangleAlert`——入口与「警告」同形，轨上一枚警告三角一直在余光里报警（2026-10-07 设计审计 §9.4） |
 | 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg、浏览器 `<details>` 三角 |
 | 下拉 | `ChevronDown` | — |
-| 加载中 | `LoaderCircle` | 别名 `Loader2` |
+| 加载中 | `ui/Spinner`（底环 + 短弧；不在图标集里，`LoaderCircle` 只剩集内几何、界面不再引用） | 别名 `Loader2`；3/4 弧的 `LoaderCircle`（2026-10-28 换掉） |
 | 帮助 | `CircleQuestionMark` | 别名 `CircleHelp` |
 | 成功 | `CircleCheck`（状态）/ `Check`（选中标记） | 别名 `CheckCircle2` |
 | 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces` |
@@ -131,6 +141,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 改图助手 | `Sparkles`（一大一小两颗火花） | — |
 | 样式（左轨「样式」面板，2026-09-24） | `Paintbrush` | — |
 | 回到项目列表（顶栏左上角的主页钮，2026-09-26） | `House` | — |
+| 应用菜单（Windows 桌面版顶栏最左，弹出「文件 / 编辑 / 显示 / 帮助」，2026-10-13） | `Menu`（三道等长横线） | — |
 
 三个在第二版换了隐喻的（其余 138 个都是同一隐喻的重画）：设置（8 齿齿轮 → 六角 + 环）、
 图层（三层菱 → 一层实心 + 两道）、项目接入状态（六段剪贴板 → 剪贴板 + 勾）。

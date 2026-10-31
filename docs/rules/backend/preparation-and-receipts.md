@@ -4,12 +4,24 @@
 > （ADR 0070 / 0071）扩到「自报只收这一条会话的」/ 输入观察 / 数据绑定 / 旧计划失效政策 / 阶段轨迹；速查行在
 > `src/tavotto/AGENTS.md`「按改动路径找细则」表里（`engine/preparation.py` / `receipt.py` 那一行）。
 > 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`
+> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
+> `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 320
+改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
+主题: 准备计划、执行回执与源图产物、准备会话 → `preparation-and-receipts.md`
+必守要点: 计划与观测分开；过期不执行
+-->
 
 - **计划与观测分开**：`preparation.PreparationPlan` 是「打算怎么跑」（环境证据 / 依赖意图 /
   LaunchContext / grant / 预算），`PreparationResult` 是「实际发生了什么」（状态 / 现有
   runtime 的事实 / 回执 / 错误 / 取消时刻）。计划**只读**产品自己的决定
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
+- **失败时报告带 `remedy`（智能修复路由，ADR 0148 提议）**：`prepsession.report` 在失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`，把唯一修法放进新字段 `remedy`（闭集 `switch_native / install_packages / change_python / convert_to_matplotlib / ai_fix / connect_ai / feedback`，一次运行最多 3 种，第 4 次 `feedback`）。路由只标注、不执行：safe→native 仍由 `execpolicy.decide_fallback` 做（ADR 0127 不改）。「AI 连没连」由 app 注入 `SESSIONS.ai_connected`（`ai_bridge.capabilities()` 的 `usable`），引擎不探测。诊断包 `detail-runs.json` 的 `fix_journey` 读 `SESSIONS.fix_journeys`。看护 `tests/test_fixrouter*.py`。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
@@ -30,11 +42,23 @@
   `receipt_identity`。默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`；
   `PreparationPlan.to_payload()` 同样：项目外的解释器只给来源标签（路径存私有字段），错误分支的
   `project_env` 只留 `ok / code / module / reason`。
+- **native 执行实例不能只靠 wire generation（X03）**：回执的私有 `instance` 由 native `session_id`
+  与执行 / 屏障 epoch（`snapshot_epoch`）组成，参与不透明 `receipt_id`，不改变公开语义身份或协议里的
+  `generation`。同一 barrier 内重复读取 / 导出回执稳定；成功 continue / released 与新 barrier 都推进 epoch，
+  continue 后直接结束也不能让旧 barrier 的回执继续授权旧快照；
+  重新启动的另一 session 也有不同实例身份，不能把两次用户代码执行的 Figure 当成同一张快照。
+  私有实例值不进公开投影，不为区分执行而记录 / 泄漏 argv；仍沿用已有 argv 计数与占位政策。
+  看护：`tests/test_execution_receipt.py`、`tests/test_run_argv_e2e.py`。文档保存时对回执的明确引用与
+  冷态读取规则见 `layout-versions-and-documents.md`，磁盘 marker 或预览 metadata 不是已观察执行的替身。
 - **LaunchContext 是派生视图**：`execspec.launch_context(spec)` 从 spec 算，`ExecutionSpec`
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
-- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一）：它调 `pool.resolve_worker_python(root,
+- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 §六（2026-10-06）起默认是检测模式**：`plan_for`
+  先调 `deprepair.decide_environment`——候选里能跑这个脚本的直接采用（`trigger=auto_detected`），都不能跑就不采用、只出依赖待办；
+  确认模式（`TAVOTTO_ENV_ADOPTION=confirm`）下只给 `envadvice.recommend()` 的纯读建议、用户采用后才有项目级记录；第 4 档那段
+  「只看健康就采用项目 venv」只在旧模式 `legacy` / `auto` 下发生。计划的 `environment.adoption` 是报告顶层 `environment` 那一个
+  可展示事实（`envadvice.adoption_fact`））：它调 `pool.resolve_worker_python(root,
   script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
   `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
   如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
@@ -71,10 +95,16 @@
   `sys.modules` 里落在项目根内的模块。**解释器自己的目录不算**（QA 2026-09-24 PATH-B2）：项目根里的 `.venv`（ADR 0057 首开第 4 条）
   的 prefix / site-packages 严格落在项目根内时，底下的库文件既不记成数据输入、也不占预算、也不算本地模块
   （`figcapture.interpreter_dirs_within`，主语是跑脚本的那个进程的 `sys.prefix` 等）；前缀等于或包含项目根时不排除。build 那一刻定格，之后进程里再读什么都不是它的输入。
+- **执行保真度（V2 PR3a，`runtime.fidelity` → `ExecutionReceipt.fidelity`）**：safe worker 的 `BlockedFileOps.summary()`——`level` 三档
+  `deviated`（确定偏差，build 以 `safe_file_operation_blocked` 失败）/ `suspect`（弱信号，成功但标注）/ `none_observed`（没看到，盲区在 `unobserved`），
+  外加拦下的操作类别与次数、弱信号 (kind, via) 计数。worker 自报是不可信输入：回执只收闭集枚举与有界整数，其余丢弃（`to_payload` 的 `runtime`
+  也换成过滤后的段）；`public_facts()` / `to_payload()` 带 `fidelity`，**不进 `public_identity`**（疑似偏差不是另一次执行）；native 回执为 None。
+  失败的 build 没有回执，证据在 `error.extra.fidelity`。读它的下游（准备会话 `derive`、启动上下文记录）见各自文档。
 - **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
   文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
   一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +
-  `executed=False`，一行不跑；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
+  `executed=False`，一行不跑（**唯一的授权例外**：未决定过 → 本次运行自动采用用户自己的 Python 派生出脚本目录默认授权，
+  `preparation.implied_grant_absorbable` 判定后就地吸收、接着跑，trace `check` 记 `grant_absorbed`；显式授权 / 其他原因变化仍 stale，ADR 0107 §二之补）；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
   **复用热态会话时不一致不是错误**：`ready` + `binding_check.matched=False` + note「旧快照」——不自动重算、不清编辑，
   用户要重算走既有 `/api/engine/invalidate`。`matched=None` = 一条都没观察到（原生读），不冒充核过。导出路的回执与准备
   接口同一份账（`_execution_receipt` 带 grant 与 binding）。
@@ -97,14 +127,26 @@
   （`tests/test_foundation_first_open.py`，经真实 HTTP 入口，装置在 `tests/support/foundation_app.py`）；
   safe_stop 的 case 记录 `product_outcome=safe_stop` + `test_verdict=pass`，校验器按台账预期的结果
   对拍（`outcome_mismatch`）并分开计数，**不进自动兼容成功的分子**。
+- **台账里 T11 的一条（onboarding 收敛，C23）**：`T11-S1` → enforced（pr），`tests/test_foundation_script_first_run.py`——FO 场景都先在
+  待测目录跑原生脚本生成原件（那是首开），这一条**不预热**：待测项目起点只有夹具 ⑪ 的脚本 / 数据 / 依赖声明，原生参考在另一个临时根，
+  真值是被执行进程自己写在项目外的日志（prefix / argv / cwd / 菜单 / 选项 / y），走扫描 → 会话 → 运行目录待办 → 运行中作答 → 捕获 →
+  进编辑 → 保存排版 → 冷重放 → 导出 → 关掉再开。打开项目时写的注册表（静态图名）是 T00 裁决的既有边界，结果记录里如实记下。
 - **台账里 U09 的两条**：FO30 → enforced（registry 的 contractual 拆成三条 safe_stop 合同在 `tests/test_preparation_api.py`
   + 一条 guided 合同经真实入口 `tests/test_foundation_join.py::test_fo30_*`）；FO32 → observing（两个出口
   `existing_env_join` / `managed_env_join` 各挂一条具名任务：`foundation-u06-rendercore.yml` 的「U09 联调」步、
   `private-python-targets.yml` 的「U09 联调：managed_env_join」步；候选后端未切默认，所以不进 required）。
+- **准备出错保留本地恢复信息（P05a，AC-26）**：`result.error` 除 `code` / `message` 外带 `params`（`script_needs_arguments` 的
+  `argv_count` / `parse_kind`；输入类的 `prompt` / `reason`）与 `traceback`（保尾部，`pool.LOCAL_TRACEBACK_LIMIT`，截断标
+  `traceback_truncated`）。字段由错误转换合同 `pool.recovery_params` / `pool.traceback_tail` 给出，**渲染端点
+  （`app._worker_error_payload`）、试运行探测（`probe._error_from_worker`）与准备会话同一份**；`missing_input` 载荷照旧走
+  `requirements[input_location]`。这是**本地**详情：`diagnostic_projection` 逐字段挑、不读 `params` / `traceback`，共享诊断与
+  遥测不带；敏感运行（`plan.run.sensitive`）不带 `traceback`（worker 已隐藏的内容不在这里恢复），个数与类别不含值照留。前端契约
+  fixture `tests/golden/preparation_error_reports.json` 是这几类错误经准备会话的真实序列化结果
+  （`TAVOTTO_WRITE_GOLDEN=1 pytest tests/test_preparation_error_detail.py` 重生成），`PreparationCard.test.tsx` 读它。
 - 看护：`tests/test_execution_receipt.py`、`tests/test_preparation_api.py`、
   `tests/test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、
   `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、
-  `tests/test_foundation_join.py`、`tests/test_export_identity.py`。
+  `tests/test_foundation_join.py`、`tests/test_export_identity.py`、`tests/test_preparation_error_detail.py`。
 
 ## 准备会话：script-first 的共同生命周期（T01，onboarding 收敛）
 
@@ -114,7 +156,8 @@
 input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/preparation-sessions`（创建 / 复用检查会话）·
 `GET …/<session_id>`（补拉，不重新执行）· `POST …/<session_id>/actions`（只认 `action_id` 与 `expected_config_revision`）。
 
-**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（环境决策，有解释器体检与写配置的副作用），是用户选定目标之后的
+**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（T05 起默认不再有候选解释器体检与采用写配置：环境只给纯读建议，
+但依赖门仍会为 `ready` 的计划体检候选环境，见 `dependency-repair-and-packages.md`），是用户选定目标之后的
 明确动作；项目被认领 / 恢复时自动发生的是**只读零执行**的结构扫描（`engine/projscan.py`，规则全文在
 `registry-discovery-and-probe.md`「导入即扫描」），它列出候选目标并给每个目标一份 `session_target`（= 本端点的创建请求体）。
 扫描**不得**调用 `plan_for` / `decide_environment` / `gate` / `resolve_worker_python`；两者共用 `probe.inventory_entry` 的脚本分类，
@@ -128,13 +171,22 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   失效 / 是否在等 `input()` 这几件已观察的事实。**`unknown` 不当通过**（有一项判不出就不是 `ready_to_run`，给 `recheck`）；
   provider 状态保留原权威，旧终局 `needs_input` 投影成 `awaiting_configuration` / `awaiting_confirmation`；失败事实永远单列在
   `outcome{kind,code,reason}`。「脚本跑完了但没有图」是 `partial` + `execution_finished_no_figure`，不算首图成功。
+  **部分捕获不得投影成 `completed`（#1134）**：登记收口带 `failed_figures`（逐图隔离里预览捕获失败的图）时，phase 是 `partial`、
+  outcome 仍是 `succeeded`（成功那几张照常在 `captured`），报告顶层 `failed_figures=[{stem,code}]` 点名失败的图；判据只有
+  `prepsession.failed_figures_of`。全部成功仍是 `completed`，全部失败 / 登记被拒走原来的 `failed` 分支。前端 `finishedWithFigures`
+  把 `completed` 与 `partial`+`succeeded` 一并当「跑完且有图」，标题说「只画好了 N/M 张」，不自动进入编辑。
   `scanning`（T02）与 `preparing_environment`（T06）词汇已进闭集，本阶段不产生。前端只存这份投影，不另算。
+  **执行线程收尾之前仍是 `running`（T11）**：provider 已写下 `ready` / `error`、但 `_done`（登记 / 缺包差异计划 `_observe_missing`）
+  还没做完时，`attempt_running` 与 `_has_active_attempt` 同一判据——否则 `missing_dependency` 会先投影成没有待办的 `failed`、
+  随后又被改写成 `awaiting_confirmation`（T09b 登记的 unmapped_import 抖动的根因）。取消落地即终局，不等执行线程。
 - **检查不执行用户代码、不写用户项目**（`plan_for` 不跑脚本；e2e 用项目外的计数文件与目录树比对钉着）；执行只在认领后端生成的 `run`
   动作之后发生。注意 `plan_for` **不是**零副作用：它仍会做解释器体检与「记住」（`decide_environment` / `resolve_worker_python`，
   写的是 Tavotto 自己的数据目录配置）——这是 T00 登记的既有行为，T01 没有新增，由 T02（只读扫描）/ T05（推荐与采用分离）拆开；
   会话层不得借「检查」之名再加新的执行或对用户项目的写。动作是不透明 id，
   绑定会话 / `config_revision` / 影响摘要（`executes_user_script` / `writes_to_project` …），kind 闭集 `run` / `cancel` /
-  `recheck`，请求体多一个字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
+  `recheck` / `prepare_dependencies`（T06，授权一次依赖准备，绑定 `deprepair.impact_digest`，规则在
+  `dependency-repair-and-packages.md`「授权影响摘要」），请求体除 `action_id` / `expected_config_revision` 外只多一个可选的
+  `impact_digest`（回显用户看到的影响摘要），多别的字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
 - **check-use 窗口**：「比对修订 → `preparation.stale_reason`（授权 / 解释器 / 数据绑定）→ 认领 → 提交 provider」整段在会话锁内；
   失效就 409 `preparation_plan_stale`、一行不跑、会话标失效等 `recheck`；同一个动作重复认领（重复点击 / 两个标签页）回当初那次
   尝试（`claimed=false`，200），不重复起 worker；新的 `run` 动作（终局之后才有）才是用户明确的重跑，产生新的 attempt。
@@ -150,11 +202,46 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   `outcome.unknown/attempt_expired`。登记表有界（64 会话，闲置 30 min 回收）：有尝试在跑或登记没完成的会话**永不**被 TTL 回收，
   满了且全部活跃就 429 `preparation_sessions_full`，不驱逐。
 - **取消**只经 `PreparationService.cancel`：本会话新起的会话才关，别人的不碰；关闭面板 / 切项目是展示层的事，不取消。
+  依赖作业的取消同样只退役**自己拥有**的（认领了别人先起的同一份作业的会话没有 `cancel`）。**当场生效（T09，ADR 0116 §三）**：
+  `pool.build_owned(on_acquired=…)` 在取到会话、执行之前把 `(worker, created)` 报给 `PreparationService.note_owner`（app 的
+  `_preparation_runner` 接上）；运行中取消 → 本计划新建的会话 `force_cancel(expected_worker=…)` 只关这一条（build 以 WorkerError 回来、
+  按取消收场，不等长计算 / input 自己结束）；共享会话的等待者 → 不碰会话，本计划直接以取消收场，执行线程迟到的结局不改写终局
+  （`_finish` 对已终局的计划不写）；取消比「取到会话」还早到时，取到那一刻按同一规则处理。取消落地的尝试不再算「活跃」，会话可以马上重新检查。
+  没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-card.spec.ts`。
+- **成功的报告带 `captured`（T09）**：这次尝试捕获到的公开描述符（与 `/api/registry/probe` 响应里同一份：项目相对路径、运行配置只是不透明引用），
+  只在 outcome 为 `succeeded` 时非空。界面的「进入编辑」直接用它，不按图名再找一遍、不为换界面再跑一次脚本。
+- **`unlinked_stems`（T09b，T03 已知缺口的可恢复提示）**：无参数的执行按脚本整条替换注册表里的 stems（`discover.register` 的旧语义，
+  注册表格式不动）；`probe.register_probed` 把替换之前登记在这个脚本名下、这次没产出的图名如实带回（带运行配置的执行是并入，不替换，
+  没有这个键）。`/api/registry/probe` 响应与会话报告（outcome `succeeded` 时）同一口径：只是图名（与 `captured[].stem` 同口径），不含参数。
+  界面据此说「此前带其他参数生成的 … 已不再关联，用原参数再运行一次即可恢复」。**只报此前真被捕获过的图名（T11）**：`probe._was_captured`
+  = runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）；打开项目时静态扫描先登记、条件分支里从没产出过的
+  字面量图名被替换掉时不报（那句话对它是假话）。cache 按体积回收过的旧图会漏报——宁可少说不说假话。看护 `tests/test_probe_owner_and_unlinked_stems.py`、
+  e2e `registry-center-preparation.spec.ts`。
+- **`no_figure_hint`（跑完没出图的原因）**：outcome 为 `execution_finished_no_figure` 时报告多一个键，`{"kind": "raster_script", "library": pillow|opencv|imageio|skimage|plotly|root, "in_project": bool, "path": 项目相对路径|null}`，
+  其余时候 `null`（老后端没有这个键）。判据 `engine/rasterhint.detect`：**脚本源码**（含 `importscan` 有界跟进的本地模块）里有保存位图 / 图形的调用
+  （`cv2.imwrite` / `imageio.imwrite…` / `skimage.io.imsave` / 导入了 PIL 的文件里非模块对象的 `.save(...)`；plotly 的 `write_image`（`write_html` 不算）；
+  ROOT 的 `TCanvas.SaveAs` / `.Print`；字面量扩展名不在该库的图片格式里不算，plotly / ROOT 另认 `.pdf` / `.svg` / `.eps`），
+  且这些文件**没有 import matplotlib 家族**（import 了没建 figure 也不提示——宁可不说）；扫描看不全（截断 / 读不了）一律 `null`；有动态 import 时位图库照旧 `null`，
+  只有 plotly / ROOT 例外（RooFit 脚本常动态加载自己生成的参数模块，ADR 0139 修订 2026-10-21）。**文件证据（硬条件）两种**：①字面量输出路径解析出的文件运行后存在且 mtime ≥ 运行开始；
+  ②运行时才定的路径——项目素材盘点（`iter_assets`，带 3 s 预算，不另开全盘扫描）里 mtime ≥ 运行开始（容差 1 s）的新增 / 被改写文件（png / jpg / tiff / pdf；svg / eps 盘点外，只走①）。
+  ②的库归属只看「输出路径运行时才定」的那几处保存（字面量路径已逐个核过）、且扩展名为该库所认：候选库唯一才给，多库都可能（如未调用的 Pillow helper + plotly 都写 PNG）就不说；plotly 的 `to_image` 返回字节不写文件，不算存图调用。`path` 是能确定的输出文件（供「打开素材」定位 / 后续「生成可编辑版本」），不在项目里或判不出为 `null`。
+  只是提示：不改 `outcome` / `facts`，不改捕获。界面一句话 + 主按钮「打开素材库」（现成入口），原因说明折叠在详情；库名映射 `preparationText.RASTER_LIBRARY_NAME` 与 `rasterhint.LIBRARIES` 同源。
+  **Pillow 例外（ADR 0143 修订 2026-10-23）**：上面的“硬条件 / import matplotlib 即沉默”只管文件证据路径；AST 能证明是 Pillow 画图脚本（`ImageDraw.Draw` 对象上的绘制调用，或 `Image.new` 之后 `.save` / `.show`）时，没有文件证据也给 hint（`path: null`、`in_project: false`），同时 import matplotlib 只认强证据（绘制调用）。其它库不变。
+  看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
+- **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
+  报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
+  （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
 - **SSE**：`preparation.session`（`pj` / `session_id` / `target` / `config_revision`）只是「重新读报告」的提示，不带 phase 与序号。
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
+  `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
-  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。尚未接入的旧入口（GUI 素材库的 `/api/registry/probe`、
-  MCP / CLI）由 T09 / T10 接续，它们是暂存的薄兼容 wrapper。
+  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 / T09b 起它是 GUI 首跑的默认入口**（引导卡「开始准备」（T13b，取代检查条）、
+  素材库脚本行 ▶、接入中心逐行「试运行并连接」，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」，ADR 0116）；
+  `/api/registry/probe` 留给本地开关关闭时的旧路径与 MCP / CLI（T10），是暂存的薄兼容 wrapper。它的取消（`/api/registry/probe/cancel`）
+  **按 owner（T09b）**：试运行每次取到会话（`pool.build` 的 `before_build`）就把 `(worker, owned)` 记进 `app._PROBE_OWNERS`
+  （`owned` = `pool.acquired_here`：本线程最近一次 `acquire()` 取到的就是它时那一次的 `created`），取消端点**先置标志、再读所有权**，
+  只 `force_cancel(expected_worker=那一条)`（已不在池里就只杀那一条，绝不碰同键的替换者）；取到的是别人正在用的同键会话（`owned is False`）
+  只停自己的等待意图、不杀；还没取到会话时只置标志，取到那一刻由 `probe` 按同一规则处理。看护 `tests/test_probe_owner_and_unlinked_stems.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -166,7 +253,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 回执两半缺一半就是 `partial`
 - 身份三分不混（私有键含路径、公开身份不含、文件 hash 单列）
 - LaunchContext 是派生视图、四个来源各一个生产者
-- 环境选择前移的落点是 `plan_for`（证据 / 发现 / 作废 / 显式失效如实写）
+- 环境选择前移的落点是 `plan_for`（证据 / 作废 / 显式失效如实写）；ADR 0114 起解析解释器不再发现 / 体检 / 采用项目 venv，计划里多
+  `environment.{generation, consent, recommendation, adoption}`，`discovery` 只在旧模式（`TAVOTTO_ENV_ADOPTION=legacy|auto`）下有值；
+  默认检测模式下 `plan_for` 先让 `decide_environment` 自动检测（ADR 0114 §六），会话报告的 `environment` 是唯一的环境事实
 - 首开要问的是终局 `needs_input`
 - 过期计划 `preparation_plan_stale` 不执行
 - DependencyIntent 只读不装
@@ -192,6 +281,104 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 = 新 `config_revision`），`impact.script_arguments` 只给个数。请求体：`{script, entry?, argv?, argv_sensitive?}`，已知素材（`id`）
 不接受另给 argv（它的配置冻结在资产 id 里）。执行线程取消 / 复用 / 回执都带 `run`，所以取消 A 配置不会杀 B 配置的会话。
 
+## 参数、数据与输出在同一个会话里（T07）
+
+- **弹窗写法只是提示**（`engine/dialogscan.py`）：脚本源码里有 `tkinter.filedialog.*` / `simpledialog` / `messagebox` 询问类、
+  Qt 四家的 `QFileDialog.get*`、`easygui.fileopenbox` 等、`wx.FileDialog` 的调用（AST、按 import 解析后的全名判，注释 / 字符串 /
+  没有 import 绑定的同名函数不算）时，`requirements` 多一条 `gui_dialog`（`blocking: false`，载荷只有 API 全名 / 种类 / 行号，至多 8 处）。
+  不是检查项、不改 phase、不拦 `run`；只读脚本本身（不跟进本地模块），按 mtime 缓存，每次出报告重读。**取舍**：与 `importscan`
+  相反，这里看全部写在源码里的调用（函数体、`if` / `try` 里的都算），只跳过 `if TYPE_CHECKING:` 与常量假的分支——结果只是一句
+  不阻塞的提示，多提示一次只花一次点击，漏提示就是原来那条看不懂的运行失败。运行时 `input()` / getpass 是 ADR 0099 的作答桥，不在这里。
+- **参数**：脚本有 argparse 字面量证据（`scriptargs.analyze_file`，只读源码、按 mtime 缓存）时才多一项检查 `arguments`
+  （**永远 `ok`**，`detail` 只有计数：`schema` / `arguments` / `required` / `output_files` / `form_enabled`）和一项
+  `requirements[kind=script_arguments, blocking=False]`（`payload.schema` + 本次配置的 `argv_count` / `run_config`）。它是表单建议，
+  不改 phase、不撤 `run`：静态看缺必填照样能跑（真 parser 说缺参仍是既有的 `script_needs_arguments`），识别不全标 `partial`。
+  没有 argparse 证据的脚本报告形状与 T06 一字不差；已知素材目标（`asset`）不提议表单。
+- **数据缺失**：执行线程把 `WorkerError.missing_input`（ADR 0106 的指认载荷）存进 `PreparationResult.missing_input`（**不进**
+  `to_payload()`、回执与诊断快照）；当前修订的尝试以错误收场且带它时，报告多 `requirements[kind=input_location, origin=last_attempt,
+  blocking=False]`。回答走既有 `POST /api/engine/input-remap`（用户亲手指认，同名不同内容不就近猜），之后 `recheck`：
+  计划私有字段 `input_remap_generation` 冻结检查时的代次，`_fingerprint` 用这份快照；改指表变了 = 新
+  `config_revision`，旧失败不再是当前的。认领 `run` 与执行线程起跑前均经 `preparation.stale_reason` 核对代次，
+  不一致就 `preparation_plan_stale / data_binding_changed`、`executed=False`，必须重新检查。
+- **沙盒里落空的探路调用（#1254，ADR 0084 §三）**：准备流程是默认的主流程，动态 glob 扫空 → 没捕获到图 / 脚本自己的失败 / 成功但图可能缺数据时，
+  `pool.missing_stem_error` 重建 `extra` 要**保留 `probe_misses`**（不能只留 `known`），失败分支取 `exc.workdir_hint`，成功分支取
+  `pool.workdir_hint_of_build`，一律存进 `PreparationResult.workdir_hint`（与 `missing_input` 同纪律：**不进 `to_payload()`**，取消时清掉）；
+  准备会话在上一次尝试有它时多一项 `requirements[kind=workdir_hint, origin=last_attempt, blocking=False]`（`payload` = 与首开确认框同形的载荷，
+  `source="runtime"`），不改 phase、不改错误码、不改计划判定。回答走既有 `PATCH /api/engine/workdir`。看护
+  `tests/test_preparation_session_e2e.py`（真 worker：动态 glob 扫空 / pyarrow 读 cwd 相对 parquet / 切到脚本目录出图）、`tests/test_runtime_probe_hint.py`。
+- **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
+  `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
+- **源码修订绑进计划**（#815 Codex r4220829632）：`script` 目标的计划记 `script_revision`（`scriptargs.source_revision`：脚本字节摘要 +
+  去掉行号的 schema 摘要，私有）。披露给用户的 `run` 影响（含 `script_writes`）是按那一版源码算的，所以认领 `run` 与执行线程起跑前
+  经 `preparation.stale_reason` 再比一次，不同 = `preparation_plan_stale` / `reason=script_changed` / `executed=False`，会话标失效等 `recheck`
+  重新披露；读报告时 schema 摘要变了就提前撤掉未认领动作。`prepare_dependencies` 的认领不核（`source=False`：它不执行脚本，用自己的
+  `impact_digest` 验证要装什么，与依赖无关的脚本改动不撤销它）；这一修订已经跑过的会话不回头改写结局（写回改了脚本不让已完成的会话变 stale）。
+- **脚本源码按 Python 的规则解码**（r4220829659）：`scriptargs.decode_source` 用 `tokenize.detect_encoding`（BOM / `# coding:`），声明坏了或解不开
+  → `unknown` + `unreadable`，不用 replacement 字符糊过去。
+- **负数 token 文法随 worker 的 Python 版本变**（r4220829672）：≤ 3.13 是 `^-\d+$|^-\d*\.\d+$`，3.14 起是 `-\.?\d`（`.match`）；schema 同时带
+  `negative_number_options`（旧文法）与 `negative_number_options_extended`（新文法）和 `python_version`（项目记住的事实，未知 = 前端取较窄的旧文法）。
+- 看护：`tests/test_script_args_session.py`（假 pool）、`tests/test_script_args_e2e.py`（真 worker：A01 表单路径 = 原始 token 路径、
+  A05 输出参数只执行一次不覆盖、数据指认后同一会话出图）。
+
+## 运行意图（P05b，ADR 0124）
+
+会话里唯一允许「用户没有再点一次 Run」就推进到首次执行的东西。**只由用户明确认领 `run_when_ready`（回显 `InstallGrant` 摘要）创建**；GET / 刷新 / SSE 重放 /
+组件挂载 / 收到 `done` / `recheck` 都不创建，只推进已有的。要点（全文在 ADR 0124）：
+
+- 绑定会话 + 脚本 + 运行配置引用 + `config_revision` + `InstallGrant`（受管环境、项目声明、不改用户环境、不丢 / 改包、不含未核实用户指定包、≤16 包、至多一次安装）；
+  内存里，重启即无（不猜、不重跑）；步数 ≤ `RUN_INTENT_MAX_STEPS`、墙钟 ≤ `RUN_INTENT_TTL_S`。
+- 状态 `active → launched | cancelled | revoked | transferred`，后四者吸收态；`cancel` 先撤意图；手点 `run` 也用尽意图；安装失败 / 取消 / 同一影响装完仍在（`no_progress`）/
+  影响扩大 / 超出合同 → 撤销，不循环。
+- 修订变化只有「本意图批准的安装终局」与「本意图正在等的目录 / 环境回答」两类是预期（`classify_transition`，纯函数）；脚本字节、解释器、授权、数据绑定、已评估依赖变了 → `revoked`。
+- argv 换了：`run_when_ready` + `transfer_from`，在新旧两把会话锁内原子转移**未认领执行**的意图并退役旧会话未认领动作；旧意图已执行 / 在执行 / 不 active → 409
+  `preparation_run_intent_not_transferable`；未转移而并存 → 409 `preparation_run_intent_conflict`（`params.session_id` = 旧意图所在会话，前端状态丢了也能据此转移，前端自动带 `transfer_from` 重试一次）。
+- 已执行之后才缺包（EX13）仍是 `needs_dependencies` + 新一次尝试，意图不复活；运行时 `input()` 复用原 `Pending`。
+- 看护：`tests/test_preparation_run_intent.py`（假 pool：被动 0 次、一次、目录回答后继续、取消 / 外部变化 / 预算 / 重启、argv 转移与竞态；`held`：授权范围内安装、超出授权、影响扩大、
+  取消后迟到 done；真 worker：装好后恰一次执行、**外部计数夹具**写一次后缺包，修复不把计数变 2）。
+
+## 沿用上次成功的运行配置（V2 PR4，#982）
+
+`POST /api/engine/preparation-sessions` 的脚本目标可带 `reuse_last_success: true`（布尔，别的类型 400 `bad_request`；只对脚本目标；给了 `argv` 时被忽略）。消费端只有
+`launchctx.reusable_run_config`（`app._last_success_selection` 解析此刻的解释器后调用）：上次成功的 `launches[脚本]` 记录里的运行配置引用，**全部依据仍成立**才沿用
+（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功但没有完整的 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
+不满足一律当没有（无参数），不报错。**只有省略（或 null）argv 才考虑沿用**：显式给的 `argv: []`（明确要无参数运行）与任何显式 argv 都赢，不被上次的参数覆盖。沿用了几个参数在会话报告 `target.argv_count`（值不进公开投影）。省略标志 = 无参数运行，与 P09 之后逐字节一致。
+看护：`tests/test_reuse_last_success.py`（真服务子进程 + 真 worker：执行的 argv 以脚本日志为准）。
+
+## 执行回退与统一重试闸门（V2 PR1，ADR 0127）
+
+桌面用户发起的运行里，safe 尝试以 `safe_file_operation_blocked` 收场且策略允许 → **同一准备会话**接上第二个 attempt（`execution=native`，#1022 的 `_native_preparation_runner`）。
+裁决处只有 `engine/execpolicy.py`（纯逻辑）；会话侧接线在 `prepsession.SessionService._done_callback` / `_plan_fallback` / `_start_fallback`。要点：
+
+- **根因不另造枚举**：就是已有稳定错误码；`execpolicy.cause_of` 归类，`may_fall_back` **只对 `blocked` 为真**。缺包 / 参数 / 路径 / 脚本异常 / 超时 / 崩溃 / 无图一律不回退。
+- **策略**：项目设置键 `execution_policy`（`compatible` 缺省 / `safe_only`），坏值按缺省；运维开关 `TAVOTTO_EXECUTION_FALLBACK=0`（环境变量优先，其次全局 `worker.execution_fallback`）。
+- **闸门**：`decide_fallback` 固定优先级 开关 → 策略 → 取消 → 过期 → 原因 → `RetryGuard`（native 之后不回 safe、一次 run 至多一次、同执行身份同根因不重复）。回退在锁外规划（只读）、**在锁内最后一刻再核**取消标记 / 闸门，再接第二个 attempt；取消动作落在最新一次尝试上。
+- **只在桌面用户发起的运行里**：`app._desktop_initiated()` = `--desktop-sidecar` 进程 + 无本机凭据 + 窗口 cookie，服务端验证；`SESSIONS.act(desktop_initiated=)` 默认 False，意图创建时记下。`decide_fallback` 默认拒（`not_desktop_initiated`）。会话 safe 尝试开始前上一次桌面 native 会话让位（`_launch_session_attempt`）。
+- **只在会话 `run` / `run_when_ready` 认领之后**：CLI（`runcli`）与 MCP 不 import `execpolicy` / `prepsession`（`tests/test_execution_policy.py` 钉）；旧 `/api/engine/preparation` 不回退；前端永不发 `execution`。
+- **显式 `execution: "native"` 与路由 native 同一道来源闸门**：非桌面来源（浏览器 cookie / 本机凭据 API 客户端 / 无认证入口）显式要 native → 403 `native_requires_desktop`，不降级（客户端明确要求，换语义会误导）；创建会话端点（`app.api_engine_preparation_session_create`）先拒，`prepsession._claim_run` 认领时再核一次（含 `run_when_ready` 推进）。路由 native 在非桌面来源仍静默降 safe 并记 `declined: not_desktop_initiated`。`tests/test_explicit_native_origin_gate.py` 钉。
+- **safe 被拦先换入口（ADR 0127 修订 2026-10-30）**：`prepsession._plan_entry_retry` 复用 `probe.entry_candidates(static_only=True)` / `entry_retry_allowed`（只取静态可解析的出图入口、不盲试），每次运行至多换一次，成功当正常成功；仍被拦才走 native 回退 / 确认卡。与回退共用 `RetryGuard`，总执行次数上限 `execpolicy.MAX_ATTEMPTS_PER_RUN`（3）。`tests/test_entry_retry_session.py` 钉。
+- **浏览器模式的显式确认（ADR 0127 修订 2026-10-30，#1500）**：非桌面来源 safe 被守卫拦下、账本记 `declined: not_desktop_initiated` 时，`_sync_actions` 发 `confirm_native_run`（`_native_confirm_offered`；只用安全运行 / 开关关 / 本次运行已回退过都不发），失败卡 `remedy = switch_native{silent:false}` 优先于 AI 修复。认领 `SESSIONS.act(page_confirmed=, confirm_token=)`：**只认会话 cookie**（`app._page_authenticated()`：cookie 有效且不带本机凭据头，无会话状态 fail closed，403 `native_confirm_requires_page`）+ 服务端为那次失败尝试签发的一次性 token（绑尝试、`hmac.compare_digest`、验证即废、**只随页面认证的报告交出**，403 `native_confirm_invalid`）；通过后走与桌面回退同一套 `_plan_fallback` / `_start_fallback`（`confirmed=True` → `decide_fallback(user_confirmed=True)` 只顶替来源判据，其余闸门不少，同一本账至多一次）。不写 `nativeperm`、不改 `execution_policy`。`page_confirmed` / `user_confirmed` 为真只许由 `app` 的会话动作端点传入（`tests/test_native_confirm_browser.py` 的 AST 扫描钉），MCP / CLI / `engine/fixtools/` 不碰。显式 `execution:"native"` 的 403 不变，这是唯一例外。
+- **解释器沿用 safe 当时那一个**；native 计划算出的解释器 / 源码修订 / 检查项与 safe 当时不一致 → 不回退，闭集理由进 `attempt_history[].declined`。
+- **账本**：`Session.ledger`（有界 16、线程安全、按 run 分组，新的用户运行重算预算）；`attempt_history` 每条 = run · seq · attempt_id · profile · interpreter / launch 摘要 · cause · changed ∈ {profile, interpreter, launch_context} · outcome · code · declined。**无路径 / argv / env 值**。回退不是意图步数（`intent.attempts` 记名下全部尝试）。
+- **诊断**：native 尝试的任务诊断快照多 `retry:{of, cause, changed, execution}`（`PreparationPlan.retry_*`，全是闭集码 / plan id）。
+- 看护：`tests/test_execution_policy.py`（策略 / 开关 / 闸门 / 账本 / CLI·MCP 边界）、`tests/test_execution_fallback.py`（假 pool + 假 native runner：同会话两个 attempt、native 失败不回 safe、非 blocked 不回退、safe_only、kill switch、取消窗口 ×3、重跑重算预算、意图步数不变）、
+  `tests/test_execution_fallback_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数：`os.replace` 脚本 safe 被拦 → 同会话 native 成功、执行 2 次；除零 / 缺包只执行 1 次；safe_only / kill switch 不回退；运行中取消不起 native）。
+
+## 运行前路由（V2 PR2，ADR 0133）
+
+桌面准备会话里，脚本目标不给 `execution` 时是 `auto`：`preparation.plan_for` 调 `runroute.route_for_file`，**静态**（一次 `ast.parse`，零执行）在 safe / native 之间先选一次。裁决处只有 `engine/runroute.py`（纯标准库）。要点：
+
+- **优先级**：`safe_only` 策略 → 运维开关（`TAVOTTO_EXECUTION_FALLBACK=0`，同一个开关也关回退）→ 上次成功沿用（`launchctx` 记录 `profile`，仍成立才算）→ 静态高置信 → 默认 safe。显式 `execution=safe|native`（CLI / MCP / 回退自己的 native 计划）不经路由，`plan.route` 为 None。
+- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982；`true` 时与 safe 记录一样核 helper / 数据摘要，#1047）。
+- **只有 high 才直达 native**：R1 同函数内 `savefig(P)` 后读 P；R3 写 T → `replace/rename/move(T,F)` → 读 F 且 T 在真实图库内（cwd 相对路径看 cwd 档：`sandbox` 不在）。R2（savefig 后只 `exists`）、R3_partial、跨函数读回是 medium；动态路径 R4 是 low——都走 safe，由 0127 回退兜底。**低、中置信度永不升级**。
+- **不可证明门槛（#1086）**：脚本任何位置出现证明不了调用目标的动态分派（名字非字面的 `getattr` 一族、`exec` / `eval` / `compile` / `__import__` / `importlib.import_module`、`globals()` / `__dict__` / `sys.modules`），R1 / R3 不直达 native，reason `unprovable_dynamic_dispatch`（`ScriptFacts.dynamic_dispatch`）。这是「证明不了就不提升」的一条结构规则，**不要往里加函数名黑名单**；看护 `tests/test_runroute_unprovable.py`。
+- **按 import 绑定解析限定名**（`from os import replace as r`、`import PIL.Image as I` 都认；`cache.replace(...)` / 字符串 `.replace` 不认）；路径折叠规则与 blind spots 见 ADR 0133，`Route.blind_spots` 随结果带出，不得宣称覆盖跨函数 / helper / 反射 / subprocess。
+- **只在用户发起的路径里**：`runroute` 只被 `preparation` / `prepsession` import；被动扫描、CLI、MCP 不 import（`tests/test_runroute_boundary.py` 钉，含零执行：Popen / exec / connect / find_spec / import_module 全炸 + 会写哨兵的脚本）。
+- **`PreparationPlan.route`** = `Route.public()`（闭集原因 / 置信度 / 规则 / 行号 / 耗时，无路径与源码），**不入指纹**；日志 `run route …`；任务诊断 `route:{…}`。没有解释器 → 回 safe 且 `declined: no_interpreter`。
+- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe），由 app 的成功收口经 `record_success`（`NativeBasis`）写。
+- **native 的输入依据（#1047）**：桌面拥有的 bridge 带 `--observe-inputs`（`execspec.bridge_argv` 唯一出处，终端拥有的不带），与 safe 同一个 `InputObserver` 在脚本跑完那一刻定格，经 build 响应 `observed_inputs`（`NativeSession.observed_inputs`，不进 `runtime` / 公开状态 / 事件）交给收口：完整 → `basis_observed:true`；收口在 `show()` 屏障上 → 先 `false`，结束屏障上的 build（`app._note_native_inputs`）经 `launchctx.observe_native_basis` 按 `launch_id` 补齐。引擎自己的读（savefig 簿记、屏障）暂停记账（`InputObserver.paused`）。看护：`tests/bridge/test_bridge_input_observation.py`、`tests/test_native_launch_basis.py`、`test_run_routing_e2e.py`。
+- 同源对：`runroute` 的词汇镜像 `worker.REQUIRED_EXECUTION_FILE_SEMANTICS` / `BlockedFileOps.KIND_*` / `execpolicy.MODE_*` / `workdir.MODE_*`（`tests/test_runroute.py` 钉相等）；静态 high ↔ 真 safe worker 被拦、静态 safe ↔ 实跑成功（`tests/test_runroute_consistency.py`）。
+- 看护：`tests/test_runroute.py`（规则向量 / 优先级 / 缓存）、`test_runroute_wiring.py`（假 pool + 假 native：直达 native safe 不跑、动态路径回退、safe_only、开关、上次成功沿用、改脚本失效）、`test_run_routing_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数）。
+
 ## 终局诊断快照（T04）
 
 `PreparationService._finish` 在每个终局（`ready` / `error` / `cancelled`；`needs_input` 在执行线程里同走 `_finish`）之后调
@@ -199,3 +386,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 id = `plan_id` = 会话报告的 `provider.attempt_id`）。白名单：目标类别、argv 个数与 `rc_…` 引用、计划那一刻的环境来源 / 版本、
 阶段轨迹（不含 `facts`）、回执的控制面 / 来源 / 完整度、`error.code` + 闭集 `reason`、取消事实、起止时间；**不含**脚本路径、
 入口名、解释器与项目路径、`error.message`、`note`、`required_input` 内容。完整规则见 `diagnostics.md`「任务绑定诊断」。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 计划与观测分开；执行只走 `pool.build`；过期计划 `preparation_plan_stale` 不执行；会话 phase 纯派生、`unknown` 不当通过、动作在会话锁内一次认领

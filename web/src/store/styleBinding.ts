@@ -79,6 +79,7 @@ import { useInteractionStore } from './interactionStore'
 import { useProfileStore } from './profileStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
+import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { useUiStore } from './uiStore'
 import { documentGeneration, styleLedgerKey, styleWork } from './styleWork'
 
@@ -539,7 +540,11 @@ function withEdit(data: StyleProfileData, edit: StyleEdit): StyleProfileData {
   const next = withPageBasis(structuredClone(data))
   if (edit.kind === 'element') {
     next.element = next.element ?? {}
-    next.element[edit.role] = { ...(next.element[edit.role] ?? {}), [edit.prop]: edit.value }
+    const old = next.element[edit.role]?.[edit.prop]
+    const value = edit.prop === 'fontfamily' && typeof edit.value === 'string' && figureFontChoice(old)
+      ? changeFigureFont(old, 'primary', edit.value)
+      : edit.value
+    next.element[edit.role] = { ...(next.element[edit.role] ?? {}), [edit.prop]: value }
   } else {
     next.annotation = { ...(next.annotation ?? {}), [edit.prop]: edit.value } as StyleProfileData['annotation']
   }

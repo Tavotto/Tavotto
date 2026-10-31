@@ -19,6 +19,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
     all_scripts: [],
   }),
   probeScript: vi.fn(),
+  removeRuntimeAsset: vi.fn().mockResolvedValue({ removed: true, id: '' }),
 }))
 // 落面板的三个动作打桩。**必须回一个真的对象**：快速编辑（Prompt 09）拿它的
 // id 当工作区目标，回 undefined 的话崩的是被测代码之外的地方，看起来像产品坏了。
@@ -29,11 +30,12 @@ vi.mock('@/store/actions', () => ({
   enterElementEdit: vi.fn(),
 }))
 
-import { probeScript, type CapturedFigureDescriptor, type RuntimeAssetInfo } from '@/lib/api'
+import { probeScript, removeRuntimeAsset, fetchRuntimeAssets, type CapturedFigureDescriptor, type RuntimeAssetInfo } from '@/lib/api'
 import { AssetBrowser } from '@/components/left/AssetBrowser'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { addRuntimePanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 
@@ -52,6 +54,8 @@ globalThis.ResizeObserver ??= class {
 
 const mockAdd = vi.mocked(addRuntimePanel)
 const mockProbe = vi.mocked(probeScript)
+const mockRemove = vi.mocked(removeRuntimeAsset)
+const mockList = vi.mocked(fetchRuntimeAssets)
 
 const desc: CapturedFigureDescriptor = {
   asset_id: 'runtime:show.py#show',
@@ -106,6 +110,11 @@ beforeEach(() => {
   useScriptRunStore.getState().clear()
   mockAdd.mockClear()
   mockProbe.mockReset()
+  mockRemove.mockClear()
+  useDocumentStore.setState((st) => ({
+    doc: { ...st.doc, objects: [] },
+    canvases: st.canvases.filter((c) => c.id !== 'cv-other'),
+  }))
 })
 
 afterEach(async () => {
@@ -148,36 +157,150 @@ describe('RuntimeAssetCard', () => {
     expect(mockProbe).toHaveBeenCalledWith('show.py')
   })
 
-  it('stale 素材：卡片里只写状态，「重新运行」是列表外选中页脚的真按钮', async () => {
+  it('stale 素材：卡片里只写状态，「重新运行」在列表外的右键 / ⇧F10 菜单里', async () => {
     useRuntimeAssetStore.setState({ assets: [asset({ status: 'possibly_stale' })] })
     mockProbe.mockImplementation(() => new Promise(() => {}))
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
     expect(card.querySelector('[data-runtime-stale]')?.textContent).toContain('可能有变')
+    // 颜色只在 14px 图标上：整行文字是 ink-3，不是红字
+    const stale = card.querySelector('[data-runtime-stale]')!
+    expect(stale.className).toContain('text-ink-3')
+    expect(stale.className).not.toMatch(/text-danger/)
+    expect(stale.querySelector('svg')!.getAttribute('class')).toContain('text-danger')
     // option 里不嵌可 Tab 控件（axe nested-interactive）
     expect(card.querySelector('button, input, select, textarea, a[href]')).toBeNull()
-    expect(host.querySelector('[data-selected-asset-rerun]')).toBeNull()
-    await act(async () => card.click())
-    const rerun = host.querySelector<HTMLButtonElement>('[data-selected-asset-rerun]')!
-    expect(rerun.closest('[data-selected-asset-actions]')).toBeTruthy()
+    expect(document.querySelector('[data-asset-rerun]')).toBeNull()
+    const open = () =>
+      act(async () => {
+        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+      })
+    await open()
+    const rerun = document.querySelector<HTMLElement>('[data-asset-rerun]')!
     expect(rerun.closest('[role="option"]')).toBeNull()
     expect(rerun.textContent).toContain('重新运行')
-    await act(async () => rerun.click())
+    await act(async () => {
+      rerun.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      rerun.click()
+    })
     expect(mockProbe).toHaveBeenCalledWith('show.py')
-    // 跑着的时候按钮置灰、文案换成「运行中」，不重复发
-    const busy = host.querySelector<HTMLButtonElement>('[data-selected-asset-rerun]')!
-    expect(busy.disabled).toBe(true)
+    // 跑着的时候菜单项置灰、文案换成「运行中」，不重复发
+    await open()
+    const busy = document.querySelector<HTMLElement>('[data-asset-rerun]')!
+    expect(busy.hasAttribute('data-disabled')).toBe(true)
     await act(async () => busy.click())
     expect(mockProbe).toHaveBeenCalledTimes(1)
   })
 
-  it('fresh 素材的选中页脚没有「重新运行」', async () => {
+  it('fresh 素材的菜单里没有「重新运行」；也没有选中页脚', async () => {
     useRuntimeAssetStore.setState({ assets: [asset()] })
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
     await act(async () => card.click())
-    expect(host.querySelector('[data-selected-asset-actions]')).toBeTruthy()
-    expect(host.querySelector('[data-selected-asset-rerun]')).toBeNull()
+    expect(host.querySelector('[data-asset-footer]')).toBeNull()
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+    })
+    expect(document.querySelector('[data-asset-card-menu]')).toBeTruthy()
+    expect(document.querySelector('[data-asset-rerun]')).toBeNull()
     expect(card.querySelector('[data-runtime-stale]')).toBeNull()
+  })
+  describe('从素材中移除（脚本已不在磁盘上的运行时图）', () => {
+    const ID = 'runtime:show.py#show'
+    const openMenu = async () => {
+      const card = host.querySelector<HTMLElement>(`[data-card="${ID}"]`)!
+      await act(async () => {
+        card.dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }),
+        )
+      })
+    }
+    const removeItem = () => document.querySelector<HTMLElement>('[data-asset-remove]')
+
+    it('missing_source 的运行时卡：菜单有这一项，点了以后调用 API（带画布里的 fileId）并刷新清单，卡片消失', async () => {
+      useRuntimeAssetStore.setState({ assets: [asset({ status: 'missing_source' })] })
+      useDocumentStore.setState((st) => ({
+        doc: { ...st.doc, objects: [{ type: 'panel', fileId: 'other.pdf' }] as never },
+      }))
+      mockList.mockResolvedValue({ assets: [] })
+      await mount()
+      await openMenu()
+      const item = removeItem()!
+      expect(item.textContent).toContain('从素材中移除')
+      expect(item.hasAttribute('data-disabled')).toBe(false)
+      await act(async () => item.click())
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(mockRemove).toHaveBeenCalledWith(ID, ['other.pdf'])
+      expect(host.querySelector(`[data-card="${ID}"]`)).toBeNull()
+    })
+
+    it('画布在用：置灰，第二行写「画布中正在使用」，点了不调用 API', async () => {
+      useRuntimeAssetStore.setState({ assets: [asset({ status: 'missing_source' })] })
+      useDocumentStore.setState((st) => ({
+        doc: { ...st.doc, objects: [{ type: 'panel', fileId: ID }] as never },
+      }))
+      await mount()
+      await openMenu()
+      const item = removeItem()!
+      expect(item.hasAttribute('data-disabled')).toBe(true)
+      expect(item.textContent).toContain('画布中正在使用')
+      await act(async () => item.click())
+      expect(mockRemove).not.toHaveBeenCalled()
+    })
+
+    it('只在非当前画布上用到：置灰，且请求的 used_ids 含它（未保存的画布也算）', async () => {
+      useRuntimeAssetStore.setState({ assets: [asset({ status: 'missing_source' })] })
+      useDocumentStore.setState((st) => ({
+        doc: { ...st.doc, objects: [] },
+        canvases: [
+          ...st.canvases,
+          {
+            id: 'cv-other',
+            name: 'B',
+            page: st.doc.page,
+            objects: [{ type: 'panel', fileId: ID }] as never,
+            guides: [],
+          },
+        ],
+      }))
+      await mount()
+      await openMenu()
+      const item = removeItem()!
+      expect(item.hasAttribute('data-disabled')).toBe(true)
+      await act(async () => item.click())
+      expect(mockRemove).not.toHaveBeenCalled()
+      // 换成可点的另一张图，验证别的画布上的引用被带进 used_ids
+      const OTHER = 'runtime:b.py#b'
+      useRuntimeAssetStore.setState({
+        assets: [asset({ status: 'missing_source' }), asset({ id: OTHER, script: 'b.py', stem: 'b', status: 'missing_source' })],
+      })
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      const card = host.querySelector<HTMLElement>(`[data-card="${OTHER}"]`)!
+      await act(async () => {
+        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+      })
+      await act(async () => removeItem()!.click())
+      expect(mockRemove).toHaveBeenCalledWith(OTHER, [ID])
+    })
+
+    it('脚本还在的运行时卡、以及文件素材：菜单里没有这一项', async () => {
+      useRuntimeAssetStore.setState({ assets: [asset({ status: 'fresh' }), asset({ id: 'runtime:b.py#b', script: 'b.py', stem: 'b', status: 'possibly_stale' })] })
+      await mount()
+      await openMenu()
+      expect(document.querySelector('[data-asset-card-menu]')).toBeTruthy()
+      expect(removeItem()).toBeNull()
+      const stale = host.querySelector<HTMLElement>('[data-card="runtime:b.py#b"]')!
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      await act(async () => {
+        stale.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+      })
+      expect(removeItem()).toBeNull()
+    })
   })
 })

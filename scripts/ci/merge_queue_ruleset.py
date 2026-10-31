@@ -44,6 +44,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -69,10 +70,12 @@ GATE_WORKFLOWS = (".github/workflows/ci.yml", ".github/workflows/codeql.yml")
 
 #: Merge Queue 参数（与 docs/ci/merge-queue-rollout.md 的表一致）。
 #: `grouping_strategy: ALLGREEN` 即 UI 上的「Only merge non-failing entries」。
+#: 2026-10-10 与线上 ruleset 21121430 对齐（等待上限 180、并发构建 4）；等待上限必须比
+#: CI Gate 闭包里最长的 job 上限多出 ≥30 分钟（tests/test_merge_queue_workflows.py 看住）。
 MERGE_QUEUE_PARAMS = {
-    "check_response_timeout_minutes": 90,
+    "check_response_timeout_minutes": 180,
     "grouping_strategy": "ALLGREEN",
-    "max_entries_to_build": 2,
+    "max_entries_to_build": 4,
     "max_entries_to_merge": 1,
     "merge_method": "SQUASH",
     "min_entries_to_merge": 1,
@@ -527,9 +530,170 @@ def cmd_apply(
     return 0
 
 
+# ---------------------------------------------------------------- verify-live（只读）
+
+#: 默认 job 超时（GitHub 未写 `timeout-minutes` 时是 360 分钟）——缺失就按它算，必然判红。
+DEFAULT_JOB_TIMEOUT_MINUTES = 360
+#: job 上限（累计路径）与队列等待上限之间至少留多少分钟（Gate 调度 + 重试）。
+QUEUE_HEADROOM_MINUTES = 30
+
+
+def _workflow_jobs(text: str) -> dict[str, dict]:
+    """`jobs:` 下每个 job：{name, needs, timeout, explicit_timeout}。注释行先剥掉。"""
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    head = re.search(r"(?m)^jobs:\s*$", code)
+    if not head:
+        raise MigrationError("workflow 里找不到顶层 jobs:")
+    jobs: dict[str, dict] = {}
+    for m in re.finditer(r"(?m)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)", code[head.end() :], re.S):
+        body = m.group(2)
+        nm = re.search(r"(?m)^    name: (.+)$", body)
+        needs_line = re.search(r"(?m)^    needs:(.*)$", body)
+        needs: list[str] = []
+        if needs_line:
+            lm = re.match(r"\s*\[([^\]]*)\]\s*$", needs_line.group(1))
+            if not lm:
+                raise MigrationError(f"job {m.group(1)} 的 needs 不是单行 [a, b] 形状")
+            needs = [x.strip() for x in lm.group(1).split(",") if x.strip()]
+        tm = re.search(r"(?m)^    timeout-minutes: (\d+)", body)
+        jobs[m.group(1)] = {
+            "name": nm.group(1).strip().strip("\"'") if nm else m.group(1),
+            "needs": needs,
+            "timeout": int(tm.group(1)) if tm else DEFAULT_JOB_TIMEOUT_MINUTES,
+            "explicit_timeout": bool(tm),
+        }
+    return jobs
+
+
+def gate_critical_paths(workflows: dict[str, str]) -> dict[str, tuple[int, list[str], list[str]]]:
+    """每个**必需 context**（`GATE_CONTEXTS`）的最长累计路径。
+
+    返回 {context: (总分钟数, [路径上的 job id，从上游到 Gate], [缺 timeout-minutes 的 job id])}。
+    总分钟数 = 沿 `needs` 的每条路径上 job 级 `timeout-minutes` 之和的最大值，**含 Gate 自身**
+    （队列的等待上限是从候选入队算起的墙钟，上游串行跑完才轮到 Gate）。缺 `timeout-minutes`
+    按 GitHub 默认 360 算。context 名在所有 workflow 里找不到当场抛——必需 context 的集合
+    就是 ruleset 用的那份常量，不另立一份。`workflows` = {路径: 文本}，路径取自 `GATE_WORKFLOWS`。"""
+    parsed = {path: _workflow_jobs(text) for path, text in workflows.items()}
+    out: dict[str, tuple[int, list[str], list[str]]] = {}
+    for context in GATE_CONTEXTS:
+        hits = [
+            (path, jid)
+            for path, jobs in parsed.items()
+            for jid, j in jobs.items()
+            if j["name"] == context
+        ]
+        if len(hits) != 1:
+            raise MigrationError(
+                f"必需 context「{context}」在 {sorted(workflows)} 里对应 {len(hits)} 个 job，期望 1 个"
+            )
+        path, gate = hits[0]
+        jobs = parsed[path]
+        memo: dict[str, tuple[int, list[str]]] = {}
+
+        def longest(jid: str, stack: tuple[str, ...] = ()) -> tuple[int, list[str]]:
+            if jid in stack:
+                raise MigrationError(f"needs 成环：{' -> '.join(stack + (jid,))}")
+            if jid not in jobs:
+                raise MigrationError(f"{path} 里 needs 指向不存在的 job `{jid}`")
+            if jid not in memo:
+                best: tuple[int, list[str]] = (0, [])
+                for n in jobs[jid]["needs"]:
+                    cand = longest(n, stack + (jid,))
+                    if cand[0] > best[0]:
+                        best = cand
+                memo[jid] = (best[0] + jobs[jid]["timeout"], best[1] + [jid])
+            return memo[jid]
+
+        total, route = longest(gate)
+        missing = [j for j in route if not jobs[j]["explicit_timeout"]]
+        out[context] = (total, route, missing)
+    return out
+
+
+def load_gate_workflows(root: Path = Path(".")) -> dict[str, str]:
+    return {w: (root / w).read_text(encoding="utf-8") for w in GATE_WORKFLOWS}
+
+
+def critical_path_problems(
+    paths: dict[str, tuple[int, list[str], list[str]]], deadline: int
+) -> list[str]:
+    problems = []
+    for context, (total, route, missing) in paths.items():
+        if missing:
+            problems.append(
+                f"{context}: 路径上缺 job 级 timeout-minutes（按 GitHub 默认 "
+                f"{DEFAULT_JOB_TIMEOUT_MINUTES} 算）：{', '.join(missing)}"
+            )
+        if total > deadline - QUEUE_HEADROOM_MINUTES:
+            problems.append(
+                f"余量不足 {context}: 最长累计路径 {total} 分钟（{' -> '.join(route)}）"
+                f" > 等待上限 {deadline} - {QUEUE_HEADROOM_MINUTES}"
+            )
+    return problems
+
+
+def cmd_verify_live(api, repo: str, workflows: dict[str, str]) -> int:
+    """只读：线上 merge_queue 参数 == `MERGE_QUEUE_PARAMS`，且三个必需 Gate 各自的最长累计
+    `needs` 路径（含 Gate 自身）≤ 线上等待上限 − 30。用公开的 `rules/branches/<默认分支>` 读
+    （不需要管理员令牌）。"""
+    branch = default_branch(api, repo)
+    rules = api(f"repos/{repo}/rules/branches/{branch}")
+    live = [r for r in rules if r.get("type") == "merge_queue"]  # type: ignore[union-attr]
+    if len(live) != 1:
+        raise MigrationError(f"{branch} 上生效的 merge_queue 规则有 {len(live)} 条，期望 1 条")
+    params = live[0].get("parameters", {})
+    problems: list[str] = []
+    for key in sorted(set(MERGE_QUEUE_PARAMS) | set(params)):
+        want, got = MERGE_QUEUE_PARAMS.get(key), params.get(key)
+        if want != got:
+            problems.append(f"参数漂移 {key}: 仓库副本 {want!r} / 线上 {got!r}")
+    # 必需 context 集合：所有生效的 required_status_checks 规则之并必须**恰好**等于
+    # GATE_CONTEXTS（多一个 = 可能更慢或永不上报；少一个 = Gate 没被要求）；
+    # strict 与 switch-to-gates 的目标一致（False，队列对最终组合负责）。
+    live_ctx: set[str] = set()
+    for r in rules:
+        if r.get("type") == "required_status_checks":
+            rp = r.get("parameters", {})
+            for c in rp.get("required_status_checks", []):
+                live_ctx.add(c.get("context"))
+                # build_switch_to_gates 建的是 {"context": c}（不绑定 integration）；
+                # 非空 integration_id = 有人改绑过，同名检查可能来自别的 App。
+                if c.get("integration_id") is not None:
+                    problems.append(
+                        f"必需 context「{c.get('context')}」被绑定到 integration_id="
+                        f"{c.get('integration_id')}（仓库建的是不绑定的，期望 null）"
+                    )
+            if rp.get("strict_required_status_checks_policy", True):
+                problems.append("线上 required_status_checks 的 strict 开着（期望 false）")
+    want_ctx = set(GATE_CONTEXTS)
+    if live_ctx != want_ctx:
+        problems.append(
+            f"必需 context 漂移：线上缺少 {sorted(want_ctx - live_ctx)}，"
+            f"线上多出 {sorted(live_ctx - want_ctx)}（仓库 GATE_CONTEXTS = {sorted(want_ctx)}）"
+        )
+    deadline = params.get("check_response_timeout_minutes")
+    paths = gate_critical_paths(workflows)
+    if not isinstance(deadline, int):
+        problems.append(f"线上没有 check_response_timeout_minutes（{deadline!r}）")
+    else:
+        problems += critical_path_problems(paths, deadline)
+    for p in problems:
+        print(f"错误：{p}", file=sys.stderr)
+    if problems:
+        return 1
+    print(
+        f"verify-live OK：{repo}@{branch} merge_queue 参数与仓库副本一致"
+        f"（等待上限 {deadline}、并发构建 {params.get('max_entries_to_build')}）；"
+        f"各必需 Gate 最长累计路径（要求 ≤ 上限 - {QUEUE_HEADROOM_MINUTES}）："
+    )
+    for context, (total, route, _) in paths.items():
+        print(f"  {context}: {total} 分钟  {' -> '.join(route)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    ap.add_argument("command", choices=("inspect", "plan", "apply"))
+    ap.add_argument("command", choices=("inspect", "plan", "apply", "verify-live"))
     ap.add_argument("--phase", choices=PHASES, help="plan / apply 必填")
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--ruleset-name", default=DEFAULT_RULESET_NAME)
@@ -551,6 +715,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "inspect":
             return cmd_inspect(gh_api, args.repo, args.ruleset_name)
+        if args.command == "verify-live":
+            return cmd_verify_live(gh_api, args.repo, load_gate_workflows())
         if not args.phase:
             raise MigrationError(f"{args.command} 需要 --phase {'/'.join(PHASES)}")
         plan_file = args.plan_file or plan_path(args.phase)

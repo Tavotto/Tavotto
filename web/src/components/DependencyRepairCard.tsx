@@ -191,7 +191,7 @@ export function DependencyRepairCard({
   const act = (tg: DependencyTarget) =>
     tg.kind === 'system_interpreter'
       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
-        void adoptSystemPython(tg.python, module, script, origin)
+        void adoptSystemPython(tg.python, module, script, origin, tg.candidate ?? null)
       : tg.kind === 'tavotto_managed' && offer.requirement
         ? // 一次授权：卡片已经把计划的要素说出口，点一次就开始
           void installNow(
@@ -201,6 +201,8 @@ export function DependencyRepairCard({
               ...(requirementList.length > 1 ? { requirements: requirementList } : {}),
               target_kind: 'tavotto_managed',
               private_python: disclosed,
+              // 卡片说过的那份计划（预读）的摘要：新形成的计划影响变了就不一键执行
+              ...(preview?.plan?.impact_digest ? { impact_digest: preview.plan.impact_digest } : {}),
             },
             origin,
           )
@@ -283,7 +285,8 @@ export function DependencyRepairCard({
   const primary: DependencyTarget | null = system ?? (managedReady ? managedTarget : null)
   const rest = targets.filter((tg) => tg !== primary)
   // 解析不出包名：用户可以自己指定，但那串东西同样要过后端的语法关
-  const specify = !offer.requirement && !exhausted && (
+  const notPip = offer.not_pip_installable
+  const specify = !offer.requirement && !exhausted && !notPip && (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs text-ink-2">{en('repairSpecifyPackage')}</span>
       <div className="flex items-center gap-1.5">
@@ -429,6 +432,19 @@ export function DependencyRepairCard({
     )
   }
 
+  if (notPip && !exhausted) {
+    // 已知装不了的包（ROOT 等，PyPI 上没有）：一句话 + 一个主按钮（选环境），不给「指定包名」——输进去也会被后端拒
+    return (
+      <Card className="flex flex-col gap-2" data-repair-not-pip={notPip.hint}>
+        <p className="text-sm leading-relaxed text-ink" data-repair-not-pip-sentence>
+          {en('repairNotPipInstallable', { name: notPip.label })}
+        </p>
+        <OpenEnvironment primary />
+        {advanced}
+      </Card>
+    )
+  }
+
   return (
     <Card className="flex flex-col gap-2.5">
       <div>
@@ -530,11 +546,11 @@ function Rejections({ rejected, pkg }: { rejected: SystemInterpreterRejection[];
 }
 
 /** 就地打开渲染环境对话框（`EngineEnvironmentDialog`，与脚本行恢复说明同一个入口，不深链设置页） */
-function OpenEnvironment() {
+function OpenEnvironment({ primary = false }: { primary?: boolean }) {
   useTranslation('workspace')
   return (
     <Button
-      variant="secondary"
+      variant={primary ? 'primary' : 'secondary'}
       size="sm"
       className="self-start"
       data-repair-open-environment
@@ -668,7 +684,7 @@ function Pinned({
           // 点名**供值的那个**变量：旧名 MM_WORKER_PYTHON 供的值同样是 env_override，
           // 只让用户清新名的话固定还在、重启后照旧挡着。
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            {en('repairPinnedEnvHint', { variable })}
+            {en('repairPinnedEnvHint', { variable, product: PRODUCT_NAME })}
           </p>
         )}
       </div>
@@ -749,7 +765,7 @@ function hint(target: DependencyTarget): string {
     })
     // 钉版之外但能 import 的 matplotlib 照用，但要如实标注（ADR 0018 §十）
     return target.support === 'unverified_but_compatible'
-      ? `${base} · ${en('repairSystemUnverified')}`
+      ? `${base} · ${en('repairSystemUnverified', { product: PRODUCT_NAME })}`
       : base
   }
   // 受管环境不需要这一行副标题：装到哪按钮自己已经说清楚了（「将 X 安装到 Tavotto
@@ -845,7 +861,7 @@ function RepairProgress({
         {failed ? (
           // 失败：只露一句（原因 + 下一步，`repairShortMessage`），标题、完整说明、错误码、日志都在「详情」里
           <p className="text-sm leading-relaxed text-danger" data-repair-failure>
-            {repairShortMessage(progress.code)}
+            {repairShortMessage(progress.code, progress.not_found)}
           </p>
         ) : (
           <h3 className="type-section">{en(key, { module: progressPackages(progress, module) })}</h3>
@@ -914,7 +930,7 @@ export function repairCodeMessage(code: string): string | null {
   // 先查修复专用表，再查后端通用表：`environment_in_use_by_native_session` 这种
   // 两条控制面共用的 code 文案只在 `backend.*` 里有一份，不为这张卡再抄一份。
   for (const key of [`engine.repairError.${code}`, `backend.${code}`]) {
-    if (i18n.exists(key, { ns: 'errors' })) return translate(key, { ns: 'errors' })
+    if (i18n.exists(key, { ns: 'errors' })) return translate(key, { ns: 'errors', product: PRODUCT_NAME })
   }
   return null
 }
@@ -925,7 +941,17 @@ export function repairCodeMessage(code: string): string | null {
  * 完整的说明（`repairError.*` / 后端原文，可以是多句）与错误码只进「详情」（`FailureDetail`）——`repairError.*`
  * 那张表设置 › 包管理页照旧整句在用，不动它
  */
-export function repairShortMessage(code: string): string {
+export function repairShortMessage(
+  code: string,
+  notFound?: { name?: string; import_name?: string; source?: string },
+): string {
+  // 找不到的包点名（ADR 0061 修订 2026-10-21）：「软件源里找不到 X（来自 Y）」；Y = 声明文件，没有就写 import 名
+  if (code === 'dependency_not_found' && notFound?.name) {
+    const source = notFound.source || (notFound.import_name ? `import ${notFound.import_name}` : '')
+    return source
+      ? en('repairNotFoundNamedFrom', { name: notFound.name, source })
+      : en('repairNotFoundNamed', { name: notFound.name })
+  }
   if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' }))
     return en(`repairErrorShort.${code}`, { product: PRODUCT_NAME })
   return en('repairErrorShortGeneric')
@@ -1001,7 +1027,7 @@ export function ManagedEnvironmentRow() {
         disabled={busy}
         onClick={() => void rebuildManaged()}
       >
-        {en('managedEnvRebuild')}
+        {en('managedEnvRebuild', { product: PRODUCT_NAME })}
       </Button>
     </div>
   )

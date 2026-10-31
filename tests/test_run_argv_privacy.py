@@ -422,12 +422,20 @@ def test_private_questions_do_not_share_saved_answers_and_replay_checks_the_real
     assert first["prompt_id"] != second["prompt_id"]
     assert SECRET not in json.dumps([payloads, records])
     replay = inputbroker.ReplayAnswers.of([records[0]])
-    assert replay.reply_for(1, first["prompt"], first["prompt_id"]) == {"answer": "2"}
-    assert replay.reply_for(1, second["prompt"], second["prompt_id"])["no_answer"]
+    assert replay.match(1, first["prompt"], "input", first["context"], first["prompt_id"]) == (
+        inputbroker.MATCH_ANSWER,
+        records[0],
+    )
+    assert (
+        replay.match(1, second["prompt"], "input", second["context"], second["prompt_id"])[0]
+        == inputbroker.MATCH_MISMATCH
+    )
 
     # No durable lookup, even if a previous answer already exists under the
     # display marker. New answers in private runs must not be remembered either.
-    monkeypatch.setattr(scriptanswers, "lookup", lambda *a: pytest.fail("private answer lookup"))
+    monkeypatch.setattr(
+        scriptanswers, "recall", lambda *a, **kw: pytest.fail("private answer lookup")
+    )
     monkeypatch.setattr(
         scriptanswers, "remember", lambda *a: pytest.fail("private answer persisted")
     )
@@ -523,3 +531,63 @@ def test_private_input_identity_survives_hot_build_and_frozen_replay(worker_fact
         finally:
             pool.discard(fresh)
     assert len(asked) == 1
+
+
+def test_private_context_detects_changed_menu_without_a_guessable_disk_digest(
+    tmp_path, monkeypatch
+):
+    import io
+
+    from tavotto.engine import inputbroker, scriptinput
+
+    run = runconfig.selection_for(tmp_path, "s.py", [SECRET], sensitive=True)
+    records = []
+    for index, menu in enumerate(("1 A\n2 B", "1 B\n2 A")):
+        tail = scriptinput.StdoutTail(io.StringIO())
+        tail.write(menu + SECRET)
+        channel = scriptinput.Channel(
+            tmp_path / str(index), "s.py", tail, private_key=run.input_key
+        )
+        channel.reset()
+
+        def publish(index, payload, channel=channel):
+            assert payload["stdout_tail"] == ""
+            assert SECRET not in json.dumps(payload)
+            assert payload["context"] != scriptinput.context_digest(
+                "input", "Choose", menu + SECRET, []
+            )
+            (channel.dir / scriptinput.reply_name(index)).write_text(
+                '{"answer":"2"}', encoding="utf-8"
+            )
+
+        monkeypatch.setattr(channel, "_write_request", publish)
+        assert channel.ask("Choose", "input") == "2"
+        records.append(channel.record[0])
+    assert records[0]["prompt_id"] == records[1]["prompt_id"]
+    replay = inputbroker.ReplayAnswers.of([records[0]])
+    second = records[1]
+    assert (
+        replay.match(1, second["prompt"], "input", second["context"], second["prompt_id"])[0]
+        == inputbroker.MATCH_MISMATCH
+    )
+
+
+def test_sensitive_runs_keep_only_explicit_hot_replay_not_durable_transcripts(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tavotto.engine import inputbroker, inputtranscript
+
+    run = runconfig.selection_for(tmp_path, "s.py", [SECRET], sensitive=True)
+    worker = SimpleNamespace(figures_dir=str(tmp_path), script_name="s.py", run=run)
+    monkeypatch.setattr(
+        inputtranscript, "lookup", lambda *a: pytest.fail("private transcript lookup")
+    )
+    monkeypatch.setattr(
+        inputtranscript, "bind", lambda *a: pytest.fail("private transcript persisted")
+    )
+    assert inputbroker._frozen_policy(worker) is None
+    inputbroker.finished(worker, [{"index": 1, "answer": SECRET}])
+    worker.script_input_policy = inputbroker.ReplayAnswers.of([])
+    assert inputbroker._frozen_policy(worker) is worker.script_input_policy

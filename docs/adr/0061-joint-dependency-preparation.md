@@ -350,3 +350,37 @@ MCP `tavotto_open_figure(prepare_dependencies=tavotto_managed | project_venv | s
   升级为「唯一的无损读法」（旧安装路径的窄解析仍在，只服务 `user_specified` 与单包路径）。
 * U05 拿走：§四的接入规则、§五的代目录与指针形状（与 ADR 0056 的 runtime 目录同一种纪律）。
 * U09 拿走：`JointPlan` / 代身份进回执的语义身份（`plan_identity` 应包含 `identity`）。
+
+### 十、修订（2026-10-21）：声明的读取边界、不可 pip 安装的包、本地模块缺失、找不到的包点名
+
+起因是一份真实 Windows 诊断包：用户把整个桌面当项目打开，脚本是 `fit_mass.py`；联合计划把 `root, lhcbstyle,
+pdf-minus-bin1-m … pdf-plus-bin8-r` 一并送进一次 pip，`dependency_not_found` 拖垮整批，界面只说「软件源里没有该包」。
+复现（脚本原件，只读）结论：这些名字**不是**声明 roots 也不是 `importscan` 把它们当待装——`plan()` 对它们给出的是
+`unknown` / `origins`，`requirements` 为空。它们是 `origins[].suggested_distribution` 的**预填**（规范化的 import 名），
+确认界面把预填整批提交成了 `user_specified`。`pdf_*` 是脚本用
+`sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))` 加进搜索路径的本地模块，`importscan` 不认这种写法，
+于是把它们当成「表外名」去预填。因此本节改四处：
+
+1. **声明读取边界**（`depresolve._decl_dirs`）：从脚本目录往上，到**最近的项目标志**（`.git` / `pyproject.toml` /
+   `setup.cfg` / `setup.py`，`depresolve.PROJECT_MARKERS`）所在目录为止（含）；没有标志才一路读到项目根（旧行为）。
+   **大文件夹不读**（`is_broad_folder`）：家目录本身、其下的 Desktop / 桌面 / Documents / 文档 / Downloads / 下载（含 OneDrive
+   重定向）与文件系统根——遍历到它们就停，不越过家目录。仓库里此前没有「大文件夹」判定，这是第一份，放在 `depresolve`。
+   PEP 723 仍只看脚本本身。`project_declared()` 与 `declared_intents()` 共用同一函数，边界只有一处。
+2. **字面量 `sys.path` 搜索根**（`importscan`）：`sys.path.append/insert(0, …)` 的实参若只由 `__file__` 所在目录与字符串字面量拼成
+   （`os.path.dirname(__file__)`、`os.path.join`、`Path(__file__).parent`、`/` 运算、abspath/realpath/resolve 包装），该目录加进本地模块
+   搜索根（标签 `sys_path_literal`，至多 8 个，词法钉在项目内，变量 / 环境 / cwd 相关一律不认）。仍记 `sys_path_modified`，
+   搜索面照旧不算「完整」。脚本加了这类目录、里面却找不到的 import = **本地模块缺失**：`origins[].local_module_missing`，
+   **不预填、不接受 `user_specified`（`UserSpecifiedRejected`）、不送 pip**。
+3. **不可 pip 安装表**（`depresolve.NOT_PIP_INSTALLABLE`，首条 `ROOT`）：计划阶段点名（`origins[].not_pip_installable`；声明里出现
+   的同名发行包进 `JointPlan.not_pip_installable`，带来源声明文件与 import），**不预填、不进 `requirements`**；以后加 Geant4 之类
+   只加一行。界面一句话：「这个脚本需要 ROOT，内置 Python 装不了，请用装有它的环境」。
+4. **找不到的包点名**（`deprepair.not_found_detail`）：pip 报 `dependency_not_found` 时，从输出解析分发名，对着
+   `declared_intents` 找出处，终态进度带 `not_found: {name, import_name, source}`；界面「软件源里找不到 X（来自 Y）」。
+
+**为什么不「剔除该包后重试其余」**：§五的代是原子的（`generation_atomic`）——装前用户确认的是一份完整计划
+（`identity` / 影响摘要 / 账），装后核验要求计划里**每个** `needed_imports` 都能 import、每个发行包都在。剔除一个再装其余，
+得到的是一份用户没确认过、且必然过不了装后核验的代，要么放宽核验（违反「所见 == 所装」），要么白装一遍再失败。
+pip 本身先解析、后安装，`No matching distribution` 发生在任何包落盘之前，所以它已经是一次「不装」的预检——我们不再另跑
+`--dry-run` 或索引查询（那是同一次解析再付一次网络往返）。取而代之的是**点名**：整批仍停在切 active 之前（旧代不动），
+但用户看到的是哪个包、哪份文件，去改声明或换环境后重新形成计划。上面 1–3 把「不该送 pip 的名字」挡在计划阶段，
+剩下送去 pip 的都是有声明或可信映射的包。

@@ -10,9 +10,11 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import sys
+import time
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -30,13 +32,15 @@ from matplotlib.collections import (
 )
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.contour import ContourSet
+from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
-from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
+from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox, OffsetBox, TextArea
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
+from matplotlib.transforms import Bbox
 
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
@@ -54,6 +58,7 @@ from colorbarmodel import (
     declared_parents,
     field_image_of,
     follow_map,
+    scale_colorbars,
     scale_gids,
     scale_siblings,
 )
@@ -70,6 +75,7 @@ from legendmodel import (
     legend_anchor_state,
     legend_entries,
     legend_pos_cfg,
+    legend_proxy_names,
 )
 from overrides import (
     _ARROWSTYLES,
@@ -88,14 +94,21 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    alias_covers,
+    alias_pure,
     annotation_arrow_display,
     annotation_arrow_owner,
     annotation_text_draggable,
     artist_identity,
     cjk_fallback_candidates,
     collection_caps,
+    collection_edge_rgba,
+    collection_face_rgba,
+    collection_linewidths,
+    collection_sizes,
     color_mapping_is_live,
     colorbar_mapping_is_live,
+    entry_face_index,
     font_display_names,
     font_face_index,
     font_file_key,
@@ -106,11 +119,14 @@ from overrides import (
     legend_handle_props,
     offsetbox_draggable,
     offsetbox_frame,
+    on_axes3d,
     open_font_face,
+    patch_resize_geometry,
     register_font_name_aliases,
     remember_axis_directions,
     scale_options,
     set_original_reader,
+    state_reverse_index,
     sync_font_caches,
     text_linespacing,
     to_hex,
@@ -163,9 +179,75 @@ CMAPS = [
 _SKIP_LABELS = ("_child", "_nolegend_")
 
 
+#: 「存盘后脚本又改过这张图」的标记名——与 `figcapture.MODIFIED_AFTER_SAVE` 同一个字面量（manifest 不 import
+#: figcapture；`tests/test_modified_after_save.py` 钉着两边相等）
+MODIFIED_AFTER_SAVE_ATTR = "_mm_modified_after_save"
+#: 保存瞬间快照的结论属性（同源对：figcapture.SAVE_MOMENT；`tests/test_save_moment.py` 钉相等）
+SAVE_MOMENT_ATTR = "_mm_save_moment"
+
+
+def _offsetbox_texts(art) -> list:
+    """框（`AnnotationBbox` / `AnchoredText` / 自己拼的 `HPacker` …）里的每段文字，按绘制顺序。
+
+    文字装在 OffsetBox 树里：`AnnotationBbox.offsetbox` → `HPacker` / `VPacker` → `TextArea._text`；
+    `DrawingArea` / `AuxTransformBox`（`AnchoredDrawingArea` 一族）里则是 `add_artist` 进去的 `Text` 本身。
+    只顺着 OffsetBox 一族往下走，叶子只收 `Text`（`DrawingArea` 里的图块不是文字）。
+    """
+    out: list = []
+    seen: set[int] = set()
+
+    def walk(box) -> None:
+        if id(box) in seen:
+            return
+        seen.add(id(box))
+        if isinstance(box, TextArea):
+            t = getattr(box, "_text", None)
+            if isinstance(t, Text):
+                out.append(t)
+            return
+        for child in box.get_children():
+            if isinstance(child, OffsetBox):
+                walk(child)
+            elif isinstance(child, Text) and id(child) not in seen:
+                seen.add(id(child))
+                out.append(child)
+
+    root = art.offsetbox if isinstance(art, AnnotationBbox) else art
+    if isinstance(root, OffsetBox):
+        walk(root)
+    return out
+
+
+def _register_offsetbox_texts(state: FigState, parent_gid: str, art) -> None:
+    """框里的文字登记成可编辑文字（用户反馈：`AnnotationBbox(HPacker([TextArea, TextArea]))` 的
+    「98.8% (79/80)」右键只有隐藏，改不了字）。
+
+    位置归打包器：每次 draw 都由 `HPacker` / `VPacker` / 锚定规则重排，写进去的落位一画就被顶掉，
+    所以**不宣称可拖**（拖的是外面那个框，ADR 0100）；旋转 / 对齐在框里同样无意义，
+    `_fields_for` 按 `_mm_offsetbox_box`（文字所在的外框）把它们拿掉。文字、字号、颜色、字重、字体照常走 text handler，
+    框的大小随文字现量（TextArea 每次 draw 都重新测量）。
+    """
+    known = state.index_ids()
+    for k, t in enumerate(_offsetbox_texts(art)):
+        if id(t) in known or not t.get_text():
+            continue
+        # 记下外框：既当「这是框里的文字」的标记，也让 build_manifest 在外框隐藏时跳过它
+        t._mm_offsetbox_box = art  # noqa: SLF001
+        _register(state, f"{parent_gid}.texts_{k}", t, "text", f"文字 “{_snippet(t.get_text())}”")
+
+
 def _snippet(text: str, n: int = 18) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _legend_proxy_names_safe(fig) -> dict[int, str]:
+    """`legendmodel.legend_proxy_names` 的护栏：显示名是锦上添花，算不出就当没有。"""
+    try:
+        return legend_proxy_names(fig)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[legend] 代理句柄显示名推断失败: {exc}", file=sys.stderr)
+        return {}
 
 
 def _relabel(registered: str, text: str) -> str:
@@ -366,6 +448,31 @@ def _is_seq(obj) -> bool:
     return isinstance(obj, (list, tuple))
 
 
+def _container_member_ids(ax) -> set[int]:
+    """容器（柱 / 误差棒 / 茎）的成员 id。**只给 3D 轴用**：3D 里容器暂不做语义系列
+    （ADR 0135），它们的成员不当独立曲线 / 集合登记，留在 census 里如实报出来。
+    2D 轴上成员由 `SeriesGroup` 代表，走的是 `instrument` 里自己那一支。"""
+    ids: set[int] = set()
+    for cont in getattr(ax, "containers", []) or []:
+        members: list = []
+        if isinstance(cont, BarContainer):
+            members = list(cont.patches)
+        elif isinstance(cont, ErrorbarContainer):
+            line, caps, bars = cont.lines
+            members = [line, *caps, *bars]
+        elif isinstance(cont, StemContainer):
+            stems = cont.stemlines
+            # baseline（零线）也是这个容器的成员：2D 里它继续作为普通曲线单独可编辑（`instrument`
+            # 那一支），3D 里容器整体不做语义系列，成员**全部**留在 unsupported，边界才一致
+            members = [
+                cont.markerline,
+                *(stems if _is_seq(stems) else [stems]),
+                getattr(cont, "baseline", None),
+            ]
+        ids.update(id(m) for m in members if m is not None)
+    return ids
+
+
 def _collection_gid_prefix(coll) -> str:
     """`ax.collections` 里的这一条对外用哪个 gid 前缀。**唯一出处**。
 
@@ -487,6 +594,9 @@ def instrument(state: FigState) -> None:
     state.elements.clear()
     state.index.clear()
     state.identity.clear()
+    # 重新 instrument = 脚本可能已经改了自己的值（rebase）：旧的「脚本原样」读数作废，
+    # 下一次原样的 manifest 再记；记上之前 `overrides.apply` 照旧当场读。
+    state.pristine_fields = None
 
     # figure 本体（点击空白处选中，可改尺寸）——不占用 artist gid
     state.index["figure"] = fig
@@ -506,6 +616,23 @@ def instrument(state: FigState) -> None:
             )
     for i, leg in enumerate(getattr(fig, "legends", []) or []):
         _register_legend(state, f"fig.legend_{i}", leg)
+    # `fig.add_artist(...)` 贴在整张图上的锚定框 / 插框：与 `ax.artists` 里的同一套（外框按
+    # `offsetbox_draggable` 可拖，setter 本就按 figure 分数算；框里的文字可编辑）。图级的其他
+    # artist（`fig.add_artist(Rectangle)` …）不在本条范围内，仍不登记
+    for j, art in enumerate(getattr(fig, "artists", []) or []):
+        if not isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
+            continue
+        if isinstance(art, AnchoredOffsetbox):
+            _svg_group(art)
+        _register(
+            state,
+            f"fig.artists_{j}",
+            art,
+            "artist",
+            f"{type(art).__name__} {j + 1}",
+            draggable=offsetbox_draggable(art),
+        )
+        _register_offsetbox_texts(state, f"fig.artists_{j}", art)
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
     # **传 `axestraversal.ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
@@ -513,6 +640,8 @@ def instrument(state: FigState) -> None:
     # 色条的内部件（`cb.solids` / `cb.dividers`）会被当成用户图元登记，而它们
     # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `axestraversal.ordered_axes` 一处。
     _all_axes_for_cbar, _, _ = ordered_axes(fig)
+    # 图例代理句柄借来的显示名：按整张图算一次（图例与歧义计数都跨子图，见 legend_proxy_names）
+    proxy_names = _legend_proxy_names_safe(fig)
     cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
     # 独立 mappable 的色条 ↔ 它画的那张已成色位图（`RasterField`）。绑上之后色条
     # 才有宿主（`cax=` 建的独立色条两条宿主判据都落空），所以绑完重查一遍——
@@ -744,75 +873,87 @@ def instrument(state: FigState) -> None:
                     # 别名只进 index、不进 elements（ColorbarProxy 同样思路）。
                     for _m in grp.members():
                         _alias_consumed_member(state, ax, f"axes_{i}", _m)
-            for j, ln in enumerate(ax.lines):
-                if id(ln) in skip_ids:
-                    continue
-                lab = str(ln.get_label())
-                nice = (
-                    f"曲线 “{_snippet(lab)}”"
-                    if lab and not lab.startswith("_")
-                    else f"曲线 {j + 1}"
-                )
-                _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
+        else:
+            # 3D 轴：容器（误差棒 / 茎 / 柱）在 3D 里暂不做语义系列。它们的成员
+            # （Line3D / Line3DCollection）既不当独立曲线登记，也不假装被代表了——
+            # 留在 census 的 `unsupported` 里，如实说出来（ADR 0135）
+            skip_ids = _container_member_ids(ax)
+        # 曲线与 Collection 家族 **2D / 3D 共用同一段登记**：gid 前缀只有
+        # `_collection_gid_prefix` 一处出处，3D 轴上的 `Poly3DCollection` /
+        # `Path3DCollection` / `Line3DCollection` / `QuadContourSet3D` / `Line3D`
+        # 与 2D 同族同前缀（它们是同一族的子类），能改什么由 `collection_caps()` 与
+        # `_line_fields` 的 3D 实况说了算（ADR 0135）。2D 的 gid 一个都没动。
+        for j, ln in enumerate(ax.lines):
+            if id(ln) in skip_ids:
+                continue
+            lab = str(ln.get_label())
+            if not lab or lab.startswith("_"):
+                lab = proxy_names.get(id(ln), "")  # 图例代理句柄借来的显示名
+            nice = f"曲线 “{_snippet(lab)}”" if lab and not lab.startswith("_") else f"曲线 {j + 1}"
+            _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
+        if not is3d:
             for j, im in enumerate(ax.images):
                 _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
-            # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
-            # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
-            # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
-            # 里的下标（不是每种角色各自计数），所以把从前没登记的那些补登记
-            # 进来**不会挪动**已有 gid。能改什么全部由 `collection_caps()` 按
-            # 真实 getter 实况决定，与这里挑哪个前缀无关。
-            for j, coll in enumerate(ax.collections):
-                # 色条轴上的 collection 不是用户的图元：`cb.solids` 是那条色带
-                # 本身、`cb.dividers` 是分隔线，两者每次 `_draw_all()` 都被删掉
-                # 重建（与 extend 的延伸三角同一类）。登记它们等于在元素表里放
-                # 两个随时换身份的幽灵条目，而且与色条代理重复——色条轴对外
-                # 只有一个元素，就是 `axes_i.colorbar`
-                if id(coll) in skip_ids or ax in cbar_of_ax:
-                    continue
-                # gid 前缀只有 `_collection_gid_prefix` 一处出处——
-                # `_alias_consumed_member` 要按同一条规则还原「这个成员从前
-                # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
-                prefix = _collection_gid_prefix(coll)
-                gid = f"axes_{i}.{prefix}_{j}"
-                if prefix == "scatter":
-                    lab = str(coll.get_label())
-                    nice = (
-                        f"散点 “{_snippet(lab)}”"
-                        if lab and not lab.startswith("_")
-                        else f"散点系列 {j + 1}"
-                    )
-                    _register(state, gid, coll, "scatter", nice)
-                elif prefix == "fill":
-                    _register(state, gid, coll, "fill", _coll_label(coll, j))
-                elif prefix == "linecoll":
-                    # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
-                    # `eventplot` 的事件线（EventCollection 是它的子类）、
-                    # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
-                    # 普查里权重最高的缺口（8 处 / 5 个 case），2026-08-21 之前
-                    # 它们在界面上根本不存在。
-                    #
-                    # **`linecoll` 是自己一族、不并进下面的通用 collection**：
-                    # 它对外的 prop 是 `color`（Line2D 那套口径），而
-                    # Collection 族给的是 facecolor/edgecolor——两套命名已经
-                    # 发出去了，合并等于换掉存量文档里的 prop 名。
-                    #
-                    # **标量映射的一律走下面那支通用分支**：那时颜色由
-                    # colormap 每次 draw 重算，`color` 这个单值口径表达不了
-                    # 逐条颜色；通用分支按 `collection_caps()` 的实况说话，
-                    # 反而不会假装认识它。判据是 `overrides.is_linecoll_family`
-                    # ——**登记与 dispatch 共用同一个函数**，`_cls_key` 问的也
-                    # 是它。分开写必然漂开，而漂开的表现是元素表说通用、
-                    # 检查器却按线组给字段，那个控件一个像素都改不动。
-                    lab = str(coll.get_label())
-                    nice = (
-                        f"线组 “{_snippet(lab)}”"
-                        if lab and not lab.startswith("_")
-                        else f"线组 {j + 1}"
-                    )
-                    _register(state, gid, coll, "linecoll", nice)
-                else:
-                    _register(state, gid, coll, "collection", _coll_label(coll, j))
+        # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
+        # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
+        # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
+        # 里的下标（不是每种角色各自计数），所以把从前没登记的那些补登记
+        # 进来**不会挪动**已有 gid。能改什么全部由 `collection_caps()` 按
+        # 真实 getter 实况决定，与这里挑哪个前缀无关。
+        for j, coll in enumerate(ax.collections):
+            # 色条轴上的 collection 不是用户的图元：`cb.solids` 是那条色带
+            # 本身、`cb.dividers` 是分隔线，两者每次 `_draw_all()` 都被删掉
+            # 重建（与 extend 的延伸三角同一类）。登记它们等于在元素表里放
+            # 两个随时换身份的幽灵条目，而且与色条代理重复——色条轴对外
+            # 只有一个元素，就是 `axes_i.colorbar`
+            if id(coll) in skip_ids or ax in cbar_of_ax:
+                continue
+            # gid 前缀只有 `_collection_gid_prefix` 一处出处——
+            # `_alias_consumed_member` 要按同一条规则还原「这个成员从前
+            # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
+            prefix = _collection_gid_prefix(coll)
+            gid = f"axes_{i}.{prefix}_{j}"
+            if prefix == "scatter":
+                lab = str(coll.get_label())
+                if not lab or lab.startswith("_"):
+                    lab = proxy_names.get(id(coll), "")
+                nice = (
+                    f"散点 “{_snippet(lab)}”"
+                    if lab and not lab.startswith("_")
+                    else f"散点系列 {j + 1}"
+                )
+                _register(state, gid, coll, "scatter", nice)
+            elif prefix == "fill":
+                _register(state, gid, coll, "fill", _coll_label(coll, j))
+            elif prefix == "linecoll":
+                # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
+                # `eventplot` 的事件线（EventCollection 是它的子类）、
+                # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
+                # 普查里权重最高的缺口（8 处 / 5 个 case），2026-08-21 之前
+                # 它们在界面上根本不存在。
+                #
+                # **`linecoll` 是自己一族、不并进下面的通用 collection**：
+                # 它对外的 prop 是 `color`（Line2D 那套口径），而
+                # Collection 族给的是 facecolor/edgecolor——两套命名已经
+                # 发出去了，合并等于换掉存量文档里的 prop 名。
+                #
+                # **标量映射的一律走下面那支通用分支**：那时颜色由
+                # colormap 每次 draw 重算，`color` 这个单值口径表达不了
+                # 逐条颜色；通用分支按 `collection_caps()` 的实况说话，
+                # 反而不会假装认识它。判据是 `overrides.is_linecoll_family`
+                # ——**登记与 dispatch 共用同一个函数**，`_cls_key` 问的也
+                # 是它。分开写必然漂开，而漂开的表现是元素表说通用、
+                # 检查器却按线组给字段，那个控件一个像素都改不动。
+                lab = str(coll.get_label())
+                nice = (
+                    f"线组 “{_snippet(lab)}”"
+                    if lab and not lab.startswith("_")
+                    else f"线组 {j + 1}"
+                )
+                _register(state, gid, coll, "linecoll", nice)
+            else:
+                _register(state, gid, coll, "collection", _coll_label(coll, j))
+        if not is3d:
             # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
             # 形状按 **Patch family** 认，不逐个列类名：`ax.fill()` 的 Polygon、
             # 手搓的 PathPatch 之外还有 pie 的 Wedge、axhspan/axvspan 的
@@ -872,6 +1013,7 @@ def instrument(state: FigState) -> None:
                 # （ADR 0100，`overrides._set_offsetbox_pos_frac`）；其余仍只开 visible / zorder
                 draggable=offsetbox_draggable(art),
             )
+            _register_offsetbox_texts(state, f"axes_{i}.artists_{j}", art)
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
             _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
         leg = ax.get_legend()
@@ -1350,6 +1492,32 @@ def _family_options() -> list[str]:
     return [*_GENERIC_FAMILIES, *(n for n in _NAMED_FAMILIES if _font_installed(n))]
 
 
+def _generic_family_faces() -> dict[str, str]:
+    """见 `_generic_family_faces_for`；按字体注册表代次 + rcParams 的族链缓存（每个文字元素都问）。"""
+    key = tuple(tuple(str(x) for x in mpl.rcParams[f"font.{g}"]) for g in _GENERIC_FAMILIES)
+    return dict(_generic_family_faces_for(sync_font_caches(), key))
+
+
+@lru_cache(maxsize=8)
+def _generic_family_faces_for(_generation: tuple, _chains: tuple) -> dict[str, str]:
+    """三个通用族此刻**真正由哪张脸画**：{"serif": "Times New Roman", …}。
+
+    `fontfamily` 字段的值是脚本写的通用族（`serif`），用户看到的却是画出来的
+    Times New Roman——下拉里只写「衬线」对不上（用户反馈）。这里按渲染同一条路解析
+    （`font_faces` → `_resolved_font_paths`，读 rcParams 的 `font.<通用族>`），**只用于显示**：
+    字段的 `value` 仍是 `serif`，写回脚本的也仍是它。解析不出来的族不出现；
+    装的就是 DejaVu 时如实报 DejaVu。"""
+    out: dict[str, str] = {}
+    for g in _GENERIC_FAMILIES:
+        try:
+            face = font_faces("", [g], None).get("face")
+        except Exception:
+            face = None
+        if face:
+            out[g] = face
+    return out
+
+
 def installed_font_families() -> tuple[str, ...]:
     """本机字体族（见 `_installed_font_families`），按字体注册表的代次缓存：脚本或
     fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。
@@ -1388,6 +1556,80 @@ def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
     return tuple(sorted(names, key=lambda n: (n.casefold(), n)))
 
 
+# Script ranges for the explicit Chinese-font choice. Fullwidth ASCII letters and
+# digits are deliberately excluded; they follow the primary face when present.
+_CHINESE_FONT_RANGES = (
+    (0x2E80, 0x2FFF),
+    (0x3000, 0x303F),
+    (0x3100, 0x312F),
+    (0x31A0, 0x31EF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xF900, 0xFAFF),
+    (0xFE30, 0xFE4F),
+    (0xFF01, 0xFF0F),
+    (0xFF1A, 0xFF20),
+    (0xFF3B, 0xFF40),
+    (0xFF5B, 0xFF60),
+    (0xFFE0, 0xFFE6),
+    (0x20000, 0x2EE5F),
+    (0x2F800, 0x2FA1F),
+    (0x30000, 0x3347F),
+)
+
+
+def _chinese_font_codepoint(codepoint: int) -> bool:
+    return any(start <= codepoint <= end for start, end in _CHINESE_FONT_RANGES)
+
+
+@lru_cache(maxsize=4096)
+def _face_is_latin_only(key: tuple) -> bool:
+    try:
+        # Coverage scans touch every installed face; do not retain FT2Font objects
+        # in the rendering cache. Only the boolean result is cached here.
+        face = open_font_face(key[0], key[-1])
+        # Common CJK fonts can be rejected before allocating their huge cmaps.
+        if any(face.get_char_index(cp) for cp in (0x4E2D, 0x6587, 0x3001, 0x3002, 0xFF0C, 0x20000)):
+            return False
+        return not any(_chinese_font_codepoint(codepoint) for codepoint in face.get_charmap())
+    except (RuntimeError, ValueError, OSError):
+        return False
+
+
+def installed_latin_only_families() -> tuple[str, ...]:
+    """Families whose registered faces cannot preempt selected Chinese glyphs.
+
+    Be conservative across styles and weights, and never treat an unreadable face
+    as proof of absence. Generic names depend on the current rcParams chains.
+    """
+    installed_font_families()
+    chains = tuple(tuple(mpl.rcParams[f"font.{g}"]) for g in _GENERIC_FAMILIES)
+    faces = tuple(
+        (str(e.name), font_file_key(e.fname, entry_face_index(e)))
+        for e in font_manager.fontManager.ttflist
+    )
+    return _installed_latin_only_families(sync_font_caches(), chains, faces)
+
+
+@lru_cache(maxsize=8)
+def _installed_latin_only_families(
+    _generation: tuple, chains: tuple, faces: tuple
+) -> tuple[str, ...]:
+    grouped: dict[str, list] = {}
+    for family, key in faces:
+        grouped.setdefault(family, []).append(key)
+    safe = set()
+    for family, entries in grouped.items():
+        if all(_face_is_latin_only(key) for key in entries):
+            safe.add(family)
+    for generic, chain in zip(_GENERIC_FAMILIES, chains):
+        # A generic can resolve to any registered member as style/weight changes.
+        existing = [family for family in chain if family in grouped]
+        if existing and all(family in safe for family in existing):
+            safe.add(generic)
+    return tuple(sorted(safe, key=lambda name: (name.casefold(), name)))
+
+
 def installed_font_display_names() -> dict[str, str]:
     """本机字体族里有中文名的那些：{族名: 中文名}（`overrides.font_display_names`）。
 
@@ -1402,6 +1644,14 @@ def installed_font_display_names() -> dict[str, str]:
 @lru_cache(maxsize=1)
 def _installed_font_display_names(_generation: tuple) -> dict[str, str]:
     return font_display_names(installed_font_families())
+
+
+def _family_faces_attr() -> dict:
+    """`fontfamily` 字段的 `option_faces`（加字段协议，老前端忽略）：三个通用族此刻各由
+    哪张脸画。每个字体族字段都带（下拉末尾的「跟随全局字体族」要列三行，闭合态也要在当前值
+    是通用族时显示它解析出的那张脸）；解析不出来的族不出现，一个都没有就不带。"""
+    faces = _generic_family_faces()
+    return {"option_faces": faces} if faces else {}
 
 
 def _text_fields(t) -> list[dict]:
@@ -1494,9 +1744,12 @@ def _text_fields(t) -> list[dict]:
         {
             "prop": "fontfamily",
             "type": "enum",
+            "font_fallback_selection": not t.get_usetex()
+            and t.get_fontproperties().get_file() is None,
             "value": str(fam),
             "options": fam_opts,
             **({"options_unavailable": fam_missing} if fam_missing else {}),
+            **_family_faces_attr(),
         },
         {
             "prop": "rotation",
@@ -1928,8 +2181,10 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
     import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
 
     caps = collection_caps(coll)
-    ec = coll.get_edgecolor()
-    lw = np.atleast_1d(coll.get_linewidths())
+    # 3D 集合的 get_*color / get_linewidths / get_sizes 读到的是深度排序后的上一帧
+    # （值随视角变），字段值与 handler 的 getter 一律走脚本顺序的那一份（ADR 0135）
+    ec = collection_edge_rgba(coll)
+    lw = np.atleast_1d(collection_linewidths(coll))
     lab = str(coll.get_label())
     fields: list[dict] = []
     if label:
@@ -1937,12 +2192,12 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab}
         )
     if "fill" in caps:
-        fc = coll.get_facecolor()
+        fc = collection_face_rgba(coll)
         fields.append(
             {"prop": "facecolor", "type": "color", "value": to_hex(fc[0]) if len(fc) else "#000000"}
         )
     if "sizes" in caps:
-        sizes = coll.get_sizes()
+        sizes = collection_sizes(coll)
         fields.append(
             {
                 "prop": "size",
@@ -2053,6 +2308,76 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
     return fields
 
 
+def _computed_zorder_3d(artist) -> bool:
+    """这个 artist 的 `zorder` 被一张**由深度算 zorder** 的 3D 轴每帧重写。
+
+    `Axes3D.draw` 在 `computed_zorder=True`（默认）时，**只对 `Collection` 与 `Patch`** 子元素按投影深度
+    重写 `zorder`（源码 `collections_and_patches = (… isinstance(artist, (Collection, Patch)) …)`，
+    mpl 3.8.4 / 3.10.9 / 3.11.2 三版读源码核实一致）——这些元素的 `set_zorder` 一个像素不变，读回来的是
+    上一帧被覆盖的值。**`Line3D` 不在其列**：它的 zorder 照常参与 `Axes` 的绘制排序，改它会把曲线放到
+    别的线 / 自动排序的集合前后（Codex #1159 P1）。脚本自己 `computed_zorder=False` 时全员的 zorder 才
+    归用户管。判据是这条轴**此刻**的实况，不是版本号。"""
+    return (
+        on_axes3d(artist)
+        and isinstance(artist, (Collection, Patch))
+        and bool(getattr(artist.axes, "computed_zorder", True))
+    )
+
+
+def _without_dead_zorder(artist, fields: list[dict]) -> list[dict]:
+    """3D 轴上由深度定序的元素不出 `zorder`：宣称了却被每帧覆盖 = 一个死开关（ADR 0135）。"""
+    if not _computed_zorder_3d(artist):
+        return fields
+    return [f for f in fields if f.get("prop") != "zorder"]
+
+
+def _hatch_style_fields(pt) -> list[dict]:
+    """Patch 族花纹的**线宽**字段（`hatch` 本身另列）。
+
+    `hatch_linewidth` 是 matplotlib 3.10 起的 per-artist 属性（`Patch.set_hatch_linewidth`），
+    **按真实 getter 实况判，不按版本号**：之前只有 `rcParams['hatch.linewidth']`，绘制时全局读取，
+    改不了单个 artist，所以旧版本不发这条字段，而不是发一条改了不生效的。
+
+    没有花纹时照样给值（跟 `facecolor` 之于 `fill` 同一模型：界面 `visibleWhen` 收起，不是引擎隐藏）。
+    花纹**颜色**（`hatchcolor`）同样**按真实 setter 判**：只有 `set_hatchcolor` 的版本（matplotlib ≥3.11）发。
+    ≤3.10 的花纹色是边色的副产品（每次 `set_edgecolor` 覆盖），独立编辑会被下一次边色 / 不透明度写入冲掉，
+    不发比发一条改了又回去的好（#874）。
+    """
+    out: list[dict] = []
+    if hasattr(pt, "set_hatchcolor"):
+        out.append(
+            {
+                "prop": "hatchcolor",
+                "type": "color",
+                # 画出来的花纹色（`'edge'` 时是边色的实况）；「跟随边框」是另一个事实，不塞进色号里
+                "value": to_hex(pt.get_hatchcolor()),
+                "follows_edge": getattr(pt, "_hatch_color", None) == "edge",
+            }
+        )
+    if hasattr(pt, "set_hatch_linewidth"):
+        out.append(
+            {
+                "prop": "hatch_linewidth",
+                "type": "number",
+                "value": round(float(pt.get_hatch_linewidth()), 2),
+                "min": 0,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return out
+
+
+def _hatch_field(pt) -> dict:
+    return {
+        "prop": "hatch",
+        "type": "enum",
+        "value": str(pt.get_hatch() or ""),
+        "options": _hatch_options(pt.get_hatch()),
+    }
+
+
 def _hatch_options(current) -> list[str]:
     cur = str(current or "")
     return ([cur] if cur and cur not in HATCHES else []) + HATCHES
@@ -2131,26 +2456,24 @@ def _cmap_needs_facts(facts: dict) -> bool:
 
 
 def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
-    """与 `gid` 共用同一份色图状态的全部 gid（色条 ↔ 它的 mappable，
-    `overrides.ALIAS_GROUPS` 的那一对）。回答「脚本原样的色图记在谁名下」：
-    用户从图像那边换的色图，override 落在图像 gid 上；色条这边要报「脚本
-    原样」就得去图像的 originals 里找，反之亦然。"""
+    """与 `gid` 共用同一份色图状态的全部 gid——**色阶组的结构性成员表，唯一出处**。
+
+    组 = 它的 mappable（色条）或它自己（图元）、共用同一份 norm 对象的已登记兄弟
+    （`scale_siblings`，按 family 定、**不看此刻是否在映射**）、以及给这组上色的全部色条
+    （`scale_colorbars`：同一个 mappable 或共用 norm——独立 `ScalarMappable` 的色条之间只能
+    靠这一条认出彼此）。两处消费：`_cmap_original`（「脚本原样记在谁名下」）与 manifest 的
+    `cmap_group_gids`（前端写 cmap 时清同组其它成员的旧 override）。只看此刻在映射的成员会漏掉
+    映射被关掉、但旧 cmap override 仍按整组重放的那个；只看兄弟会漏掉独立色条的同伴（#1159 评审）。"""
     out = [gid]
-    if isinstance(artist, ColorbarProxy):
-        target = artist.cb.mappable
-    else:
-        target = artist
-    # 色阶兄弟（共用 norm 对象的 mappable，`colorbarmodel.scale_siblings`）也在
-    # 同一组里：色条的 cmap 写到它们身上，「脚本原样记在谁名下」同样要问到色条
+    target = artist.cb.mappable if isinstance(artist, ColorbarProxy) else artist
+    colorbars = scale_colorbars(state, target)
+    siblings = scale_siblings(state, target)
     for el in state.elements:
         other = el["artist"]
-        if isinstance(other, ColorbarProxy) and el["gid"] != gid:
-            m = other.cb.mappable
-            if m is target or target in scale_siblings(state, m):
+        if isinstance(other, ColorbarProxy):
+            if other in colorbars:
                 out.append(el["gid"])
-        elif isinstance(artist, ColorbarProxy) and (
-            other is target or other in scale_siblings(state, target)
-        ):
+        elif other is target or other in siblings:
             out.append(el["gid"])
     return list(dict.fromkeys(out))
 
@@ -2330,6 +2653,8 @@ def _bar_series_fields(grp) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(r0),
+        *_hatch_style_fields(r0),
         {
             "prop": "bar_width",
             "type": "number",
@@ -2373,6 +2698,8 @@ def _bar_fields(rect) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(rect),
+        *_hatch_style_fields(rect),
         {
             "prop": "alpha",
             "type": "number",
@@ -2545,8 +2872,8 @@ def _patch_fields(pt) -> list[dict]:
     Wedge、axhspan 的 Rectangle、Circle / Ellipse / Arc / FancyBboxPatch /
     StepPatch，以及用户自己继承出来的子类——这些 getter 全在 `Patch` 基类上。
 
-    几何不给编辑字段——它由脚本的数据决定，改它等于改数据。选中 / 命中 /
-    框选靠 manifest 的 `geometry`（沿真实闭合路径），样式在这里。
+    独立矩形 / 圆角框按能力出 size_frac，柱不走这里。其它形状只给样式；选中 /
+    命中仍靠 manifest 的 geometry，缩放另外用未裁剪的 shape_bounds。
     """
     alpha = pt.get_alpha()
     fields: list[dict] = [
@@ -2587,12 +2914,8 @@ def _patch_fields(pt) -> list[dict]:
             "value": _linestyle_name(pt),
             "options": ["-", "--", "-.", ":"],
         },
-        {
-            "prop": "hatch",
-            "type": "enum",
-            "value": str(pt.get_hatch() or ""),
-            "options": _hatch_options(pt.get_hatch()),
-        },
+        _hatch_field(pt),
+        *_hatch_style_fields(pt),
         {
             "prop": "alpha",
             "type": "number",
@@ -2612,6 +2935,12 @@ def _patch_fields(pt) -> list[dict]:
             "group": "排列",
         },
     ]
+    resize = patch_resize_geometry(pt)
+    if resize is not None:
+        # 控件取值消掉仅由平移引入的浮点减法尾差；手柄的 shape_bounds 保留完整几何精度。
+        fields.append(
+            {"prop": "size_frac", "type": "pair", "value": [round(v, 12) for v in resize[0][2:]]}
+        )
     return fields
 
 
@@ -3151,9 +3480,14 @@ def _tick_family_field(ts: TickSet) -> dict:
     return {
         "prop": "fontfamily",
         "type": "enum",
+        "font_fallback_selection": all(
+            not t.get_usetex() and t.get_fontproperties().get_file() is None for t in ts.labels
+        )
+        and not mpl.rcParams["text.usetex"],
         "value": str(fam),
         "options": fam_opts,
         **({"options_unavailable": fam_missing} if fam_missing else {}),
+        **_family_faces_attr(),
     }
 
 
@@ -3920,6 +4254,10 @@ def _with_value_original(fields: list[dict], state: FigState, gid: str) -> list[
     return fields
 
 
+#: 框里的文字不开放的属性：落位 / 对齐每次 draw 都由打包器重排，层级由外面那个框统一画
+_OFFSETBOX_TEXT_FIXED = frozenset({"rotation", "ha", "va", "zorder"})
+
+
 def _fields_for(el, state: FigState) -> list[dict]:
     artist, role, gid = el["artist"], el["role"], el["gid"]
     if role == "figure":
@@ -3950,6 +4288,9 @@ def _fields_for(el, state: FigState) -> list[dict]:
     if key == "ticks":
         return _tick_fields(artist)
     if key == "text":
+        if getattr(artist, "_mm_offsetbox_box", None) is not None:
+            # 框里的文字：落位、旋转、对齐归打包器（见 `_register_offsetbox_texts`）
+            return [f for f in _text_fields(artist) if f["prop"] not in _OFFSETBOX_TEXT_FIXED]
         return _text_fields(artist)
     if key == "legend_text":
         # 一段文字 + 一个条目。`visible` 由条目级的实现接管（整项进出图例盒），
@@ -3958,7 +4299,7 @@ def _fields_for(el, state: FigState) -> list[dict]:
             artist, state, gid
         )
     if key == "line":
-        return _line_fields(artist, state, gid)
+        return _without_dead_zorder(artist, _line_fields(artist, state, gid))
     if key == "legend":
         return _legend_fields(artist)
     if key == "axes":
@@ -3971,9 +4312,11 @@ def _fields_for(el, state: FigState) -> list[dict]:
         return _patch_fields(artist)
     if key == "collection":
         # 历史上「填充区域」没有 label 字段，保持原样；其余 Collection 都给
-        return _collection_fields(artist, state, gid, label=(role != "fill"))
+        return _without_dead_zorder(
+            artist, _collection_fields(artist, state, gid, label=(role != "fill"))
+        )
     if key == "linecoll":
-        return _linecoll_fields(artist)
+        return _without_dead_zorder(artist, _linecoll_fields(artist))
     if key == "artist":
         return _generic_fields(artist)
     if key == "stem_series":
@@ -3989,12 +4332,132 @@ def _fields_for(el, state: FigState) -> list[dict]:
     return []
 
 
+# ---------------------------------------------------------------- 数据指纹（ADR 0138 §七-2，TAF Phase 2）
+#: 一张图里参与数据指纹的数值总数上限。manifest 每次渲染都算，超出的元素记 `over_budget`——验证器据此判
+#: unknown（「没量」不是「没变」），绝不截断着算一个看起来像真的哈希
+FINGERPRINT_BUDGET = 2_000_000
+
+
+def canonical_digest(values) -> dict:
+    """数值数组的规范化摘要：形状 + 小端 float64 字节（NaN / 掩码值统一成同一个 NaN 位型）的 sha256。
+
+    与 `tests/fixtures/figurebench/_probe.py::digest`、`tests/test_figurebench_fixtures.py::_digest` **同一规则**
+    （后两者分别从原生 matplotlib 与手写真值算，对拍用例在 `tests/test_data_fingerprint.py`）。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    arr = np.ma.filled(np.ma.asarray(values, dtype=float), np.nan).astype("<f8", copy=True)
+    arr[np.isnan(arr)] = np.nan
+    head = ("x".join(str(n) for n in arr.shape) + ":").encode()
+    return {
+        "sha256": hashlib.sha256(head + arr.tobytes(order="C")).hexdigest(),
+        "shape": [int(n) for n in arr.shape],
+        "finite": int(np.isfinite(arr).sum()),
+    }
+
+
+def _fingerprint_parts(artist) -> list[tuple[str, object]] | None:
+    """这个元素的**数据**由哪几块数组构成；不是数据类元素回 None（不出字段）。
+
+    主语是数据，不是外观：柱组只取「底 + 高」（竖柱）/「左 + 宽」（横柱），不取柱宽与位置——改柱宽是样式修改，
+    不该让「数据没变」判红；误差棒取数据点 + 误差线段；3D 线取 `get_data_3d()`（`get_xydata` 是投影后的）。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    if isinstance(artist, SeriesGroup):
+        if artist.kind == "bar_series":
+            horizontal = getattr(artist.container, "orientation", "vertical") == "horizontal"
+            rows = [
+                (r.get_x(), r.get_width()) if horizontal else (r.get_y(), r.get_height())
+                for r in artist.artists
+            ]
+            return [("bars", np.asarray(rows, dtype=float).reshape(-1, 2))]
+        if artist.kind == "errorbar":
+            parts: list[tuple[str, object]] = []
+            line = artist.artists.get("line")
+            if line is not None:
+                parts.append(("points", line.get_xydata()))
+            segs = [
+                np.asarray(seg, dtype=float)
+                for col in artist.artists["bars"]
+                for seg in col.get_segments()
+            ]
+            parts.append(("bars", np.concatenate(segs) if segs else np.zeros((0, 2))))
+            return parts
+        if artist.kind == "stem_series":
+            marker = artist.artists.get("marker")
+            return [("xy", marker.get_xydata())] if marker is not None else None
+        return None
+    if isinstance(artist, Line2D):
+        if hasattr(artist, "get_data_3d"):
+            return [("xyz", np.column_stack(artist.get_data_3d()))]
+        return [("xy", artist.get_xydata())]
+    if isinstance(artist, Collection):
+        parts = []
+        off3d = getattr(artist, "_offsets3d", None)
+        if off3d is not None:
+            parts.append(("offsets", np.column_stack(off3d)))
+        else:
+            offsets = artist.get_offsets()
+            if (
+                offsets is not None
+                and len(offsets)
+                and not (len(offsets) == 1 and not np.any(offsets))
+            ):
+                parts.append(("offsets", offsets))
+        array = artist.get_array()
+        if array is not None:
+            parts.append(("array", array))
+        if not parts:
+            # 没有 offsets、没有映射值（fill_between 的 PolyCollection、LineCollection）：数据就是路径顶点
+            verts = [np.asarray(p.vertices, dtype=float) for p in artist.get_paths()]
+            parts.append(("paths", np.concatenate(verts) if verts else np.zeros((0, 2))))
+        return parts
+    # 图像：用 isinstance 而不是精确类名——用户子类化的 AxesImage、NonUniformImage、PcolorImage 都是
+    # `ax.images` 里的图像，数据同样是 `get_array()`。FigureImage / BboxImage 派生自 `_ImageBase`、不是
+    # AxesImage（也不在 `ax.images` 里、不会被登记成元素），isinstance 同样把它们排除在外。
+    if isinstance(artist, AxesImage):
+        array = artist.get_array()
+        return [("array", array)] if array is not None else None
+    return None
+
+
+def data_fingerprint(artist, budget: list[int]) -> dict | None:
+    """只读的数据指纹（不进 `editable`、不参与 gid / identity，ADR 0083）。`budget` 是本张图剩余的数值配额（单元素列表，
+    就地扣减）。回 None = 不是数据类元素；`{"status": "over_budget" | "unavailable"}` = 是数据，但这次没量（验证记 unknown）。"""
+    try:
+        parts = _fingerprint_parts(artist)
+    except Exception:  # noqa: BLE001 —— 自定义 artist 的 getter 什么都可能抛；量不了就说量不了
+        return {"status": "unavailable"}
+    if parts is None:
+        return None
+    try:
+        import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+        sizes = [int(np.size(arr)) for _, arr in parts]
+        if sum(sizes) > budget[0]:
+            return {"status": "over_budget"}
+        budget[0] -= sum(sizes)
+        return {"status": "ok", "parts": {name: canonical_digest(arr) for name, arr in parts}}
+    except Exception:  # noqa: BLE001
+        return {"status": "unavailable"}
+
+
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
+
+#: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
+_DATA_ROLES_3D = ("line", "fill", "scatter", "collection", "linecoll")
 
 
 def _finite_geometry(entry: dict) -> bool:
     """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
-    for field in ("bbox", "anchor", "arrow_endpoints", "geometry", "clip_bbox"):
+    for field in (
+        "bbox",
+        "anchor",
+        "arrow_endpoints",
+        "geometry",
+        "clip_bbox",
+        "shape_bounds",
+        "shape_min_size",
+    ):
         v = entry.get(field)
         if v is None:
             continue
@@ -4026,6 +4489,54 @@ def _finite_box(bb) -> bool:
         return all(math.isfinite(v) for v in (bb.x0, bb.y0, bb.x1, bb.y1))
     except (TypeError, ValueError):
         return False
+
+
+def _probe_autoscale_expected(ax, autoscale: dict[str, bool]) -> dict[str, list[float]]:
+    """非破坏地探出 `ax.autoscale_view()` 此刻会给 x / y 的范围（只含 autoscale 开着的方向）。
+
+    `autoscale_view` 的内部 `handle_single_axis` 在**调用时**才取 `self.set_xbound` / `self.set_ybound`，所以临时在实例上挂
+    捕获函数遮住它们，范围就被截下来而不写进图。除 `set_bound` 外它不改任何状态（matplotlib 3.8 / 3.10 / 3.11 的源码：只有
+    `tight is not None` 才写 `_tight`，这里传 None；其余是只读的 dataLim / sticky / locator 计算）。`finally` 里还原实例属性（原本就有的放回，没有的删掉）。
+    任何一步失败、或结果非有限 → 返回空（没证据）。"""
+    got: dict[str, list[float]] = {}
+
+    def capture(axis):
+        def _set(lo, hi=None, **_kw):
+            if hi is None:  # set_xbound((lo, hi)) 的元组写法
+                lo, hi = lo
+            got[axis] = [float(lo), float(hi)]
+
+        return _set
+
+    want = {a for a, on in autoscale.items() if on and a in ("x", "y")}
+    if not want or not callable(getattr(ax, "autoscale_view", None)):
+        return {}
+    sentinel = object()
+    saved: dict[str, object] = {}
+    try:
+        inst = ax.__dict__  # 无 __dict__（__slots__）→ AttributeError → 没证据
+        for a in want:
+            name = f"set_{a}bound"
+            saved[name] = inst.get(name, sentinel)
+        for a in want:
+            setattr(ax, f"set_{a}bound", capture(a))
+        ax.autoscale_view(scalex="x" in want, scaley="y" in want)
+    except Exception:  # noqa: BLE001 —— 版本不支持 / 非常规 axes：没证据
+        return {}
+    finally:
+        # 实例上原本挂着的自定义 set_[xy]bound 要放回去，没有才删（探测不许改图）
+        inst_dict = getattr(ax, "__dict__", None)
+        if inst_dict is not None:
+            for name, old in saved.items():
+                if old is sentinel:
+                    inst_dict.pop(name, None)
+                else:
+                    inst_dict[name] = old
+    out: dict[str, list[float]] = {}
+    for a, (lo, hi) in got.items():
+        if math.isfinite(lo) and math.isfinite(hi):
+            out[a] = [min(lo, hi), max(lo, hi)]
+    return out
 
 
 def _collection_datalim(artist):
@@ -4219,13 +4730,52 @@ def _clip_extents(artist):
     return x0, y0, x1, y1
 
 
+def _fold_into_clip(artist, bb):
+    """display Bbox 折进 artist 真正被裁到的矩形（画出来的那部分）；返回 `(bb, folded, outside)`。
+
+    `folded`：bb 已被收窄到画出来的部分。`outside`：artist 受裁剪、且**整个**落在裁剪框
+    外（画出来的部分为空，bb 原样回）。「不受裁剪」与「完全在外」两种情形 `folded` 都是
+    False，只有 `outside` 能区分——调用方（系列并集）据此排除完全被裁掉的成员，别靠比较
+    bbox 是否相等来猜。
+
+    **选中框 / 命中框 / 对齐吸附的参考框只该罩住看得见的墨迹。** 柱子从 y=0 画起而
+    `set_ylim(bottom=正数)` 时，`Rectangle.get_window_extent` 是**未裁剪**的整根柱，
+    选中框能从柱顶一直伸到图幅之外（2026-10 Windows 用户：分组柱状图的「柱 7」）。
+    裁剪的判据只有 `_clip_extents` 一处（`get_clip_on` 与 `get_clip_box` /
+    `get_clip_path` 两个维度）；`clip_on=False` 的不裁。
+
+    **只有 Patch（柱 / 色块 / 多边形）调它**：它们的框就是墨迹，折进去不丢任何东西。
+    曲线 / 散点 / 集合的 bbox 刻意保持**未裁剪的数据范围**——扁平线垫出来的可点宽度
+    不能被子图框削掉，预检 `test_manifest_clip_bbox` 的负对照也靠这个口径（摘掉
+    `clip_bbox` 后离群点必须重新被报）。离群曲线的选中框仍可能伸出图幅，见 PR 说明
+    「未验证范围」。
+
+    **画出来的部分为空**（整个元素落在裁剪框外，什么都看不见）时**不折**，原样回
+    `(bb, False, True)`：元素仍留在元素树里、仍可从那里选中与改属性，选中框如实指到它
+    数据所在的位置，好过塌成一个零面积的点（或让它从元素表里凭空消失）。命中不受影响
+    ——`geometry.clip` 本来就把裁剪框外的点判为不中。
+    """
+    ext = _clip_extents(artist)
+    if ext is None:
+        return bb, False, False
+    try:
+        x0, y0 = max(float(bb.x0), ext[0]), max(float(bb.y0), ext[1])
+        x1, y1 = min(float(bb.x1), ext[2]), min(float(bb.y1), ext[3])
+    except (AttributeError, TypeError, ValueError):
+        return bb, False, False
+    # 退化（扁平线正好压在裁剪边上）用 `<` 判：零厚度的交仍是「画出来的那条线」
+    if x1 < x0 or y1 < y0:
+        return bb, False, True
+    return Bbox.from_extents(x0, y0, x1, y1), True, False
+
+
 def _clip_bbox(artist, W: float, H: float):
     """元素的裁剪框（figure 分数、top-origin，与 bbox 同一套坐标）；不裁回 None。
 
-    **不改 `bbox`，另发一条事实。** bbox 同时是前端的命中框与选中高亮框，把它
-    换成「裁剪之后真正画出来的那部分」会连带改掉命中几何与写回自检比对的那个
-    框；而这里要回答的只有一个问题：导出时**图幅边界**处会不会静默丢内容。
-    两件事分开，消费者只有 `preflight` 的 `element-outside-figure` 一条。
+    **这是另一条事实，不是 bbox 的替身。** 这里回答的只有一个问题：导出时
+    **图幅边界**处会不会静默丢内容，消费者是 `preflight` 的 `element-outside-figure`
+    与 `interference`。bbox 自己则在登记处经 `_fold_into_clip` 折进同一个裁剪矩形
+    （选中框 / 命中框只罩画出来的那部分），两处共用 `_clip_extents` 一个判据。
 
     裁剪框把整幅图都包住时不发——那等于什么都没裁掉，发出去只是噪音。
     """
@@ -4348,6 +4898,47 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
+def _refresh_hidden_3d_projections(state: FigState) -> None:
+    """隐藏的 3D 数据图元，几何按**此刻的视角**重投影（ADR 0135）。
+
+    `Axes3D.draw` 只对**可见**的集合调 `do_3d_projection`（Line3D 的投影在自己的 `draw` 里，
+    不看可见性），整条轴隐藏时一个都不投。隐藏的集合于是带着它**上一次**可见时的投影：
+    热会话里「先隐藏、再转视角」与冷启动重放（从未在新视角下投影过）量出两套 bbox / 轮廓，
+    写回自检比的正是这个几何——会话于是 409，而用户什么都没做错。隐藏的元素仍在元素树里、
+    要能点着把它取消隐藏，所以几何要真，不能丢。"""
+    scratch = None
+    for el in state.elements:
+        art = el["artist"]
+        if el["role"] not in _DATA_ROLES_3D or not on_axes3d(art):
+            continue
+        ax = art.axes
+        project = getattr(art, "do_3d_projection", None)
+        if project is None:
+            # Line3D 没有 `do_3d_projection`：投影在它自己的 `draw` 里、不看自己可不可见，但**整条轴
+            # 隐藏**时 `Axes3D.draw` 根本不访问它（#1159 评审）。三个 matplotlib 版本的投影写法各不相同
+            # （3.8 `proj_transform` / 3.10 `_proj_transform_clip` / 3.11 `_scale_proj_transform_clip`
+            # 加缩放掩码），不照抄：让它自己的 `draw` 在一张一次性的 Agg renderer 上走一遍，真 canvas
+            # 一个像素都不碰（与隐藏图例现排同一个做法）
+            if not isinstance(art, Line2D) or ax.get_visible():
+                continue
+            if scratch is None:
+                from matplotlib.backends.backend_agg import RendererAgg  # noqa: PLC0415
+
+                fig = state.fig
+                scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
+
+            def project(art=art, scratch=scratch):
+                art.draw(scratch)
+
+        elif art.get_visible() and ax.get_visible():
+            continue
+        try:
+            ax.M = ax.get_proj()  # Axes3D.draw 每帧开头就是这么刷的
+            project()
+        except Exception:  # noqa: BLE001 — 补投影失败只是几何偏旧，不拦渲染
+            pass
+
+
 def _layout_legends_for_measure(state: FigState, fig, vector_metrics: bool = True) -> None:
     """把每个图例的子项按**文档 dpi + 测量用的矢量度量**重新排一次版，manifest 才能量它的文字。
 
@@ -4402,7 +4993,13 @@ def _is_area_field(artist) -> bool:
     散点（PathCollection）与线组不算：它们是数据系列，子图里有空白可点；
     不填充的等值线（`contour`）不算：它只有线。判据要求色图**此刻在给面上色**
     （`color_mapping_is_live`），写死颜色的多边形集合不是色图场。
+
+    **3D 轴上的不算**（ADR 0135）：曲面 / 底投影等值面是投影出来的菱形，不铺满子图，
+    它的位置是数据 + 视角，拖它既不是挪子图也不是挪数据；留给 `series` 那条「拖不动」
+    的说明（ADR 0100），要挪整个 3D 子图拖 axes3d 本身。
     """
+    if on_axes3d(artist):
+        return False
     if isinstance(artist, ContourSet):
         if not getattr(artist, "filled", False):
             return False
@@ -4563,17 +5160,45 @@ def capture_preview_manifest(state: FigState, stem: str, *, vector_metrics: bool
         fig.canvas.mpl_disconnect(cid)
 
 
-def build_manifest(state: FigState, stem: str) -> dict:
+def build_manifest(state: FigState, stem: str, *, timings: dict | None = None) -> dict:
     """准备布局并测量一份 manifest（`overrides.ticklabel_memo` 只包本次测量）。
 
     普通调用先 draw；预览交付则经 `capture_preview_manifest` 在最终 SVG draw
     之后重测。两条路各开一次刻度记忆表，绝不把它跨过两次 draw。
+    `timings` 为可选的诊断出参；未传时不增加时钟调用。
     """
     with ticklabel_memo(), vector_text_metrics() as arm:
-        return _build_manifest(state, stem, arm)
+        return _build_manifest(state, stem, arm, timings=timings)
 
 
-def _build_manifest(state: FigState, stem: str, arm) -> dict:
+def prepare_preview(state: FigState, *, timings: dict | None = None) -> None:
+    """Prepare the same layout prerequisites without measuring a discarded manifest.
+
+    The final preview manifest is measured from the SVG renderer by
+    ``capture_preview_manifest``. The preliminary draw still has to establish
+    layout, legend offsets, hidden 3D projections, and the live tick registry.
+    """
+    start = time.perf_counter() if timings is not None else 0.0
+    fig = state.fig
+    with ticklabel_memo(), vector_text_metrics() as arm:
+        renderer = _ensure_agg_canvas(fig)
+        with pathgeom.in_frame(fig, renderer) as frame:
+            if frame.active:
+                with fig._cm_set(layout_engine="none"), image_pixels_skipped(fig):  # noqa: SLF001
+                    fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+            measured = time.perf_counter() if timings is not None else 0.0
+            arm(renderer)
+            _layout_legends_for_measure(state, fig)
+            _refresh_hidden_3d_projections(state)
+            sync_tick_elements(state)
+            if timings is not None:
+                timings["manifest_layout_ms"] = round((measured - start) * 1000, 3)
+                timings["manifest_measure_ms"] = round((time.perf_counter() - measured) * 1000, 3)
+
+
+def _build_manifest(state: FigState, stem: str, arm, *, timings: dict | None = None) -> dict:
+    t_start = time.perf_counter() if timings is not None else 0.0
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
     # 图幅（ADR 0098）：布局在上面那次 draw 里已经在 figsize 上跑过（与 `print_figure` 的
@@ -4586,7 +5211,13 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
             with fig._cm_set(layout_engine="none"), image_pixels_skipped(fig):  # noqa: SLF001
                 fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
-        return _measure_manifest(state, stem, arm, fig, renderer)
+        # 这里才开始语义与几何测量：layout 包括 Agg draw 与图幅适配 draw。
+        t_measure = time.perf_counter() if timings is not None else 0.0
+        result = _measure_manifest(state, stem, arm, fig, renderer)
+        if timings is not None:
+            timings["manifest_layout_ms"] = round((t_measure - t_start) * 1000, 3)
+            timings["manifest_measure_ms"] = round((time.perf_counter() - t_measure) * 1000, 3)
+        return result
 
 
 def _measure_manifest(
@@ -4598,10 +5229,14 @@ def _measure_manifest(
     # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的
     # 文字几何是上一次画它那回的像素（#413）
     _layout_legends_for_measure(state, fig, vector_metrics)
+    # 没被这次 draw 投影到的 3D 数据图元（隐藏的、或住在隐藏的 3D 轴里）按**当前**视角补投影
+    _refresh_hidden_3d_projections(state)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
     budget = pathgeom.Budget()
+    # 真实绘制次序（给 geometry 盖 `paint_order` / `fill_alpha` 用，命中评分据此分层）
+    paint_ranks = pathgeom.paint_ranks(fig)
 
     elements = []
     #: 登记了、却在这一轮 build 里被丢掉的元素（量不出几何 / 文字空了 / 刻度
@@ -4643,24 +5278,53 @@ def _measure_manifest(
     gid_by_artist_id: dict[int, str] = {}
     for el in state.elements:
         gid_by_artist_id.setdefault(id(el["artist"]), el["gid"])
+    #: 别名解析用的反查表（含旧 gid 别名），按需建一次——绝大多数元素没有广播型 prop
+    alias_rev: dict[int, str] | None = None
+    alias_registered = frozenset(e["gid"] for e in state.elements)
+    #: Figure 没被任何 override 动过时，这一轮读出的字段就是「脚本原样」：顺手记进
+    #: `state.pristine_fields`，`overrides.apply` 之后采 `value_original` 从这里取（见那里的注释）。
+    #: 读数本来就要读，记一份不多花一次 `_fields_for`。
+    pristine_fields: dict[str, dict] | None = (
+        {} if not state.applied and not state.unrestored else None
+    )
+    if pristine_fields is not None:
+        state.pristine_fields = pristine_fields
 
+    fingerprint_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
             _drop(el, "not_drawn")
             continue
+        # 外框被藏起来时，框里的文字自己的 visible 仍是 True，但画面上没有它：不输出，
+        # 免得看不见的字还能被点中、挡住下面的图，也不被预检去量。元素仍留在 state.elements
+        # （overrides 按 gid 找得到），取消隐藏后下一轮 build 它们就回来。
+        host_box = getattr(artist, "_mm_offsetbox_box", None)
+        if host_box is not None and not host_box.get_visible():
+            continue
+        fields = _fields_for(el, state)
+        if pristine_fields is not None:
+            pristine_fields[el["gid"]] = {f["prop"]: f["value"] for f in fields if "value" in f}
         entry = {
             "gid": el["gid"],
             "role": el["role"],
             "label": el["label"],
             "draggable": el["draggable"],
-            "editable": _with_value_original(_fields_for(el, state), state, el["gid"]),
+            "editable": _with_value_original(fields, state, el["gid"]),
         }
         # 目标身份（ADR 0083）：前端写 override 时抄进 patch 的 `identity`，
         # 之后脚本结构变了，`overrides.apply` 拿它核对 gid 此刻指向的是不是同一个对象
         ident = state.identity.get(el["gid"])
         if ident is not None:
             entry["identity"] = ident
+        if host_box is not None:
+            # 框里的文字自己不可拖（落位归打包器）：按住它拖起来时，前端改拖的是这个外框
+            # （`inFigureMoveOf` 认 `drag_host`；点一下仍是选中这段字）
+            entry["drag_host"] = host_box.get_gid()
+        # 数据指纹（TAF L2「科学内容没被改」的前提）：只读事实，不是 override、不进文档
+        fingerprint = data_fingerprint(artist, fingerprint_budget)
+        if fingerprint is not None:
+            entry["data_fingerprint"] = fingerprint
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
         if el["role"] in ("title", "axis_label", "text", "legend_text"):
@@ -4709,6 +5373,40 @@ def _measure_manifest(
                 entry["follow_gids"] = follow
             if el.get("inset_of"):
                 entry["inset_of"] = el["inset_of"]
+            # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
+            # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
+            # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
+            autoscale: dict = {}
+            peers: dict[str, list[str]] = {}
+            for axis in ("x", "y"):
+                probe = getattr(artist, f"get_autoscale{axis}_on", None)
+                if not callable(probe):
+                    continue
+                autoscale[axis] = bool(probe())
+                try:
+                    sibs = getattr(artist, f"get_shared_{axis}_axes")().get_siblings(artist)
+                except Exception:  # noqa: BLE001 —— 取不到兄弟：不发，判据按「只有自己」处理
+                    sibs = []
+                names = sorted(
+                    g for a in sibs if a is not artist and (g := gid_by_artist_id.get(id(a)))
+                )
+                if names:
+                    peers[axis] = names
+            # `expected`：自动缩放**此刻会算出**的范围（`autoscale_view` 的结果，不落到图上）。autoscale 开关只是最终状态——
+            # `set_xlim(auto=True)`、先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的，数据范围（dataLim）
+            # 的变化也分不开「自动跟着数据」与「显式写了个恰好包住的范围」；唯一分得开的事实是：实际范围 == 自动缩放会给的范围。
+            # 色条轴（范围来自映射对象）与 3D 轴不发：它们的 dataLim 在撤销 / 重放后会漂（Inv Cbar / 3D 的「撤销后 manifest
+            # 逐位一致」不变式），且判据本来也不看它。探测失败 / 非有限 = 不发 = 没证据。
+            if autoscale and not (artist in state.colorbar_axes or el["role"] == "axes3d"):
+                expected = _probe_autoscale_expected(artist, autoscale)
+            else:
+                expected = {}
+            if autoscale:
+                entry["autoscale"] = {
+                    **autoscale,
+                    **({"peers": peers} if peers else {}),
+                    **({"expected": expected} if expected else {}),
+                }
         elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。
@@ -4757,6 +5455,11 @@ def _measure_manifest(
             entry["bbox"] = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
         elif isinstance(artist, SeriesGroup):
             boxes = []
+            # 完全被裁到框外的 Patch 成员：子元素自己的 bbox 保留数据位置（可选），但
+            # 不并入**系列**的并集——否则系列框又伸出轴外，而超过 MAX_MARKERS 时
+            # geometry 省略，前端正是拿这个并集矩形选中 / 命中。全部成员都在外时才退回
+            # 数据位置的并集（与单元素「全在外不折」同一取舍：框不塌成点、系列仍可选）
+            outside_boxes = []
             members = artist.artists if artist.kind == "bar_series" else artist.members()
             for m in members:
                 try:
@@ -4768,9 +5471,16 @@ def _measure_manifest(
                         else m.get_window_extent(renderer)
                     )
                     if bb is not None and (bb.width > 0 or bb.height > 0):
+                        if isinstance(m, Patch):
+                            bb, _folded, outside = _fold_into_clip(m, bb)
+                            if outside:
+                                outside_boxes.append(bb)
+                                continue
                         boxes.append(bb)
                 except Exception:
                     pass
+            if not boxes:
+                boxes = outside_boxes
             if not boxes:
                 _drop(el, "no_geometry")
                 continue
@@ -4887,6 +5597,13 @@ def _measure_manifest(
                     # 报进 `unsupported`，不许静默消失。
                     _drop(el, "no_geometry")
                     continue
+                if isinstance(artist, Patch):
+                    if el["role"] == "patch":
+                        resize = patch_resize_geometry(artist)
+                        if resize is not None:
+                            entry["shape_bounds"], entry["shape_min_size"] = resize
+                    # 先折进裁剪框再垫（只有 Patch：柱 / 色块 / 多边形，它们的框就是墨迹）
+                    bb = _fold_into_clip(artist, bb)[0]
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
                 entry["bbox"] = _padded_bbox(bb, W, H, min_hit)
             except Exception:
@@ -4924,6 +5641,36 @@ def _measure_manifest(
             geom = pathgeom.series_group_geometry(artist.members(), W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom
+        # 色阶组里的映射图元也发 `scale_gids`（组里的**其它**成员）：任一成员改 cmap 都是整组改
+        # （ADR 0135 修订），前端据此清同组其它成员上的 cmap override、并在「回到脚本原样」时一起清
+        if el["role"] in ("fill", "scatter", "collection", "image") and color_mapping_is_live(
+            artist
+        ):
+            peers = [
+                g
+                for g in scale_gids(state, artist)
+                if (m := state.resolve(g)) is not None and color_mapping_is_live(m)
+            ]
+            if peers:
+                entry["scale_gids"] = peers
+        # 色阶组的结构性成员（`_cmap_alias_gids`，唯一出处）：任一成员改 cmap 都是整组改，前端写 cmap 时
+        # 在同一次 commit 里清掉这些 gid 上的旧 cmap override——含映射此刻被关掉、控件收起来的成员
+        # （它的旧 override 仍按整组重放）与独立色条的同伴（#1159 评审）。可选：组里只有自己就不发。
+        if any(f.get("prop") == "cmap" for f in entry.get("editable") or []):
+            group = [g for g in _cmap_alias_gids(state, artist, el["gid"]) if g != el["gid"]]
+            if group:
+                entry["cmap_group_gids"] = group
+        # 广播型字段「会盖掉谁」（`overrides.alias_covers`，唯一出处）：前端写入口据此保证一个量只留一个
+        # override 地址——写广播端清掉被盖的窄端、写 1:1 的窄端清掉广播端（否则引擎里窄端永远排在广播之后，
+        # 控件读到另一端的旧值）。可选：不是广播端 / 没有被盖的就不发；旧前端忽略它。
+        if alias_rev is None:
+            alias_rev = state_reverse_index(state)
+        covers = alias_covers(state, alias_rev, artist, el["gid"], alias_registered)
+        if covers:
+            entry["alias_covers"] = covers
+            # 其中哪些是纯别名（可反向清广播端，见 `overrides.ALIAS_PURE`）；可选
+            if pure := alias_pure(artist, covers):
+                entry["alias_pure"] = pure
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的
@@ -4951,6 +5698,11 @@ def _measure_manifest(
                 entry["arrow_endpoints"] = [
                     [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
                 ]
+                # 端点箭头不出 geometry（前端按端点线命中），次序写在元素级：箭头画在后画的
+                # 不透明填充下面时，前端据此把它降层（ADR 0086 修订）
+                arrow_order = pathgeom.paint_order_of(artist, paint_ranks)
+                if arrow_order is not None:
+                    entry["paint_order"] = arrow_order
             else:
                 # 不出端点的箭头（带字注释的箭头、坐标系逆算不回去的）从前只有 bbox：
                 # 弯箭杆的 bbox 是一大块空白，点空白也选中它（ADR 0086）。描真实的
@@ -4958,6 +5710,17 @@ def _measure_manifest(
                 geom = pathgeom.element_geometry(artist, W, H, budget, arrow_path=True)
                 if geom is not None:
                     entry["geometry"] = geom
+        # 文字 / 标题 / 轴标签 / 图例（画布按 bbox 命中、没有 geometry）：次序写在元素级，
+        # 被后画的不透明填充盖住时前端据此降层。拿不到次序就不写（前端回到旧面积评分）
+        # （图例文字 / 轴标签不是 Axes 的直接 child：`paint_ranks` 让叶子的后代继承叶子的次序）
+        if el["role"] in ("text", "title", "axis_label", "legend", "legend_text"):
+            ink_order = pathgeom.paint_order_of(artist, paint_ranks)
+            if ink_order is not None:
+                entry["paint_order"] = ink_order
+        # 绘制事实：命中评分要知道「谁画在谁上面」与「上面那块填充盖不盖得住」
+        # （ADR 0086）。在所有 geometry 分支之后统一盖章，包括不出端点的箭头。
+        if "geometry" in entry:
+            pathgeom.stamp_paint(entry["geometry"], artist, paint_ranks)
         # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
         # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
         # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的
@@ -5087,6 +5850,7 @@ def _measure_manifest(
         # 本机字体族，整份 manifest 只发一次（理由见 `_family_options`）。
         # 加字段协议：老前端不认识它会原样忽略，字体下拉照旧只有首选项。
         "font_families": list(installed_font_families()),
+        "font_latin_only_families": list(installed_latin_only_families()),
         # 其中有中文名的：{族名: 中文名}，只给下拉显示用（值仍是族名）。
         # 加字段协议：老前端原样忽略，照旧显示族名。
         "font_family_names": dict(installed_font_display_names()),
@@ -5100,6 +5864,16 @@ def _measure_manifest(
         # 脚本按 `bbox_inches` 存过盘、图幅却算不出来：这一版按 figsize 出图（可能切边），说出来
         # ——不说的话它与「脚本本来就不裁」分不开（ADR 0098 §一第 4 条）。加字段协议，同上
         out["frame_unavailable"] = unavailable
+    if getattr(fig, MODIFIED_AFTER_SAVE_ATTR, False):
+        # 脚本存完盘之后又改过这张图（ADR 0139 §八）：编辑的是脚本跑完的最终态，与磁盘上的文件不同。
+        # 只在为真时出现；加字段协议，老前端原样忽略
+        out["modified_after_save"] = True
+        # ADR 0139 §九：编辑基础是保存那一刻的复制品（"restored"），还是还原不了而退回最终态（原因闭集）。同样只在有结论时出现
+        moment = getattr(fig, SAVE_MOMENT_ATTR, None)
+        if moment == "restored":
+            out["save_moment"] = "restored"
+        elif isinstance(moment, str):
+            out["save_moment_unavailable"] = moment
     # 真实的组（共享色条的几个子图 + 那条色条）：可选、只在有组时出现。
     # 加字段协议：老前端不认识它会原样忽略，元素表与几何一个字节不变。
     if groups:

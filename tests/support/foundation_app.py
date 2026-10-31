@@ -58,7 +58,18 @@ class HttpError(Exception):
 
 
 class RunningApp:
-    def __init__(self, base: str, auth: dict, proc: subprocess.Popen, log_path: Path, work: Path):
+    def __init__(
+        self,
+        base: str,
+        auth: dict,
+        proc: subprocess.Popen,
+        log_path: Path,
+        work: Path,
+        env: dict | None = None,
+    ):
+        self.env = dict(
+            env or {}
+        )  # 服务子进程 Popen 的**完整**环境：探针要复现 worker 启动环境时用它
         self.base = base
         self.auth = auth
         self.proc = proc
@@ -86,6 +97,18 @@ class RunningApp:
             except ValueError:
                 body = {}
             raise HttpError(exc.code, body) from None
+
+    def adopt_project_environment(self) -> dict:
+        """用户在渲染环境里点「使用」项目自己的 `.venv`（真实采用端点，体检通过才记）。
+
+        ADR 0114 起首开不再静默采用项目 venv；依赖准备类用例的前提「目标环境就是用户的项目 venv」
+        由这一步显式建立，而不是靠机器替用户挑。"""
+        rel = ".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python"
+        status, body = self.call(
+            "/api/engine/environment", {"scope": "project", "python": rel}, method="PATCH"
+        )
+        assert status == 200 and body.get("ok"), body
+        return body
 
     def prepare(self, panel_id: str, *, timeout: float = 300.0) -> dict:
         """POST 准备 → 轮询到终局，回 `{plan, result}`。"""
@@ -177,13 +200,82 @@ def running_app(
         else:
             raise AssertionError("未认证的 /api/panels 没有被拒绝")
         assert smoke.adopt_session_credentials(data_dir, port), "本机会话凭据文件缺失"
-        app = RunningApp(base, dict(smoke._AUTH), proc, log_path, work)
+        app = RunningApp(base, dict(smoke._AUTH), proc, log_path, work, env)
         yield app
         with contextlib.suppress(Exception):
             app.call("/api/shutdown", {}, timeout=30)
         proc.wait(timeout=60)
     finally:
         if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+        log.close()
+
+
+NONCE = "e2e-desktop-nonce-0123456789"
+
+
+@contextlib.contextmanager
+def sidecar_app(project: Path, work: Path, *, env_overrides: dict | None = None):
+    """真的 `tavotto --desktop-sidecar`（Tauri 壳启动它的方式）：启动 nonce 走 stdin，窗口用它兑换会话 cookie。
+    回退只授权给这条来源（桌面用户主动发起）——浏览器模式的 `fa.running_app` 在这里是反例。"""
+    data_dir, config_dir, home = work / "data", work / "config", work / "home"
+    for d in (data_dir, config_dir, home):
+        d.mkdir(parents=True, exist_ok=True)
+    handshake = work / "handshake.json"
+    env = {
+        **os.environ,
+        "TAVOTTO_DATA_DIR": str(data_dir),
+        "TAVOTTO_CONFIG_DIR": str(config_dir),
+        "HOME": str(home),
+        "TAVOTTO_NO_UPDATE_CHECK": "1",
+        "TAVOTTO_NO_TELEMETRY": "1",
+        "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake),
+        **(env_overrides or {}),
+    }
+    for name in ("TAVOTTO_INSECURE_NO_AUTH", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON"):
+        env.pop(name, None)
+    log_path = work / "server.log"
+    log = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-m", "tavotto", "--figures", str(project), "--desktop-sidecar"],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        cwd=str(work),
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        proc.stdin.write(json.dumps({"nonce": NONCE}) + "\n")
+        proc.stdin.flush()
+        deadline = time.time() + 120
+        port = None
+        while time.time() < deadline:
+            assert proc.poll() is None, log_path.read_text("utf-8")[-2000:]
+            with contextlib.suppress(OSError, ValueError):
+                shake = json.loads(handshake.read_text("utf-8"))
+                if shake.get("ready"):
+                    port = shake["port"]
+                    break
+            time.sleep(0.2)
+        assert port, "sidecar 没有就绪"
+        base = f"http://127.0.0.1:{port}"
+        req = urllib.request.Request(
+            base + "/api/session/bootstrap",
+            data=json.dumps({"nonce": NONCE}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            cookie = resp.headers["Set-Cookie"].split(";", 1)[0]
+        yield RunningApp(base, {"Cookie": cookie}, proc, log_path, work)
+    finally:
+        with contextlib.suppress(Exception):
+            proc.stdin.close()  # EOF = 父进程没了 → sidecar 跟随关闭
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=30)
         log.close()

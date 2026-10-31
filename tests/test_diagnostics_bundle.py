@@ -86,6 +86,13 @@ def snapshot(**extra):
             "object_count": 0,
         },
         "preview": {"active_sessions": 0, "settled": None, "history_mode": "gesture"},
+        "onboarding": {
+            "status": "paused",
+            "flow_version": 3,
+            "completed_steps": ["demo_import"],
+            "welcome_seen": True,
+            "hint_seen_keys": ["panel_editable", "multi_select"],
+        },
         "preview_memory": {
             "resident_svg_bytes": 12_582_912,
             "resident_svg_count": 2,
@@ -151,7 +158,7 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 5
+    assert manifest["schema_version"] == 11
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
@@ -435,6 +442,37 @@ def test_preview_representation_survives_the_backend_sanitiser():
     assert mem["budget_per_file"] == 16 * 1024 * 1024
 
 
+def test_onboarding_summary_survives_the_backend_sanitiser_and_stays_closed():
+    """新手教程状态的结构摘要：字段原样过后端，状态机取值是闭集（内容形状的串整条丢掉），列表只收技术标识。"""
+    out = dfe.sanitize_snapshot(snapshot(), _redact)
+    assert out["onboarding"] == {
+        "status": "paused",
+        "flow_version": 3,
+        "completed_steps": ["demo_import"],
+        "welcome_seen": True,
+        "hint_seen_keys": ["panel_editable", "multi_select"],
+    }
+    hostile = snapshot()
+    hostile["onboarding"]["status"] = SECRET_TITLE
+    hostile["onboarding"]["completed_steps"] = [SECRET_TITLE + " with spaces"]
+    out = dfe.sanitize_snapshot(hostile, _redact)
+    assert out["onboarding"]["status"] is None
+    assert out["onboarding"]["completed_steps"] == []
+    assert SECRET_TITLE not in json.dumps(out, ensure_ascii=False)
+    # 长得像技术标识、但不在闭集里的串（`patient_123`）也挡住；闭集内的保留
+    sneaky = snapshot()
+    sneaky["onboarding"]["completed_steps"] = ["patient_123", "demo_import", 7, None]
+    sneaky["onboarding"]["hint_seen_keys"] = ["secret_codename", "multi_select"]
+    out = dfe.sanitize_snapshot(sneaky, _redact)
+    assert out["onboarding"]["completed_steps"] == ["demo_import"]
+    assert out["onboarding"]["hint_seen_keys"] == ["multi_select"]
+    # 老前端不带这一段：整段退化成空值，不抛
+    old = snapshot()
+    del old["onboarding"]
+    got = dfe.sanitize_snapshot(old, _redact)["onboarding"]
+    assert got["status"] is None and got["flow_version"] == 0 and got["completed_steps"] == []
+
+
 def test_never_estimated_stays_none_instead_of_becoming_zero():
     """**`None` 与 `0` 在这里不是一回事**。
 
@@ -574,6 +612,65 @@ def test_event_fields_match_frontend_schema():
     assert set(table) == set(dfe.EVENT_FIELDS), "事件类型集合两边不一致"
     for name, fields in sorted(table.items()):
         assert set(fields) == set(dfe.EVENT_FIELDS[name]), name
+
+
+def test_unexpected_error_enums_match_frontend():
+    """`ui.unexpected_error` 的来源与内建错误名是闭集：前端 types.ts 的常量数组 == 后端 `_ENUM_FIELDS`。"""
+    import re
+
+    ts = (REPO_ROOT / "web/src/diagnostics/types.ts").read_text(encoding="utf-8")
+
+    def values(const: str) -> set[str]:
+        m = re.search(rf"export const {const} = \[(.*?)\] as const", ts, re.S)
+        assert m, const
+        return set(re.findall(r"'([A-Za-z_0-9]+)'", m.group(1)))
+
+    assert values("UNEXPECTED_ERROR_SOURCES") == set(dfe._ENUM_FIELDS["source"])
+    assert values("UNEXPECTED_ERROR_NAMES") == set(dfe._ENUM_FIELDS["error_name"])
+
+
+def test_onboarding_closed_sets_match_frontend():
+    """新手教程摘要两个列表的元素闭集：前端 `STEP_IDS` / `HINT_KINDS` == 后端 `_CLOSED_LISTS`。"""
+    import re
+
+    def values(path: str, const: str) -> set[str]:
+        ts = (REPO_ROOT / path).read_text(encoding="utf-8")
+        m = re.search(rf"export const {const} = \[(.*?)\] as const", ts, re.S)
+        assert m, const
+        return set(re.findall(r"'([A-Za-z_0-9]+)'", m.group(1)))
+
+    assert values("web/src/lib/onboarding/stepIds.ts", "STEP_IDS") == set(
+        dfe._CLOSED_LISTS["completed_steps"]
+    )
+    assert values("web/src/store/onboardingStore.ts", "HINT_KINDS") == set(
+        dfe._CLOSED_LISTS["hint_seen_keys"]
+    )
+
+
+def test_unexpected_error_event_keeps_only_closed_fields():
+    ok = {
+        "seq": 1,
+        "ts": 1_756_000_000_001,
+        "t_ms": 10,
+        "type": "ui.unexpected_error",
+        "source": "window_error",
+        "error_name": "TypeError",
+        "message_hash": "err:0123456789ab",
+    }
+    out = dfe.sanitize_event(ok, _redact)
+    assert (
+        out is not None
+        and out["source"] == "window_error"
+        and out["message_hash"] == "err:0123456789ab"
+    )
+    # message / stack 原文、开集错误名、未知来源：整条丢
+    for bad in (
+        {"message": SECRET_TITLE},
+        {"stack": FAKE_HOME + "x.js"},
+        {"error_name": SECRET_TITLE},
+        {"source": "user_script"},
+    ):
+        assert dfe.sanitize_event({**ok, **bad}, _redact) is None, bad
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +1047,18 @@ NOT_EMAILS = [
     "(@app.route)",  # 只有「@ 前只有开括号」这一条放行它：域名两段、不是版本号
     json.dumps({"dep": "numpy@1.26.4"}),
 ]
+
+
+@pytest.mark.parametrize("repeats", [16, 50_000])
+def test_json_email_redaction_preserves_escaped_literals_and_duplicate_keys(repeats):
+    from tavotto.engine import diagnostictext
+
+    literal = json.dumps('escaped \\" quote ' * repeats)
+    address = '"\\u0078\\u0040example.com"'
+    line = '{ "same": ' + literal + ', "same" : ' + address + ', "dep": "numpy@1.26.4" }'
+    redacted = diagnostictext._redact_json_line(line)
+    assert redacted == line.replace(address, '"<email>"')
+    assert json.loads(redacted)["same"] == "<email>"
 
 
 def _assert_no_fragment_left(raw: str, out: str) -> None:
@@ -1387,3 +1496,131 @@ def test_both_control_planes_say_which_interpreter_was_missing_the_module():
     err = wd._to_worker_error(_SupervisorError("x"))
     assert err.code == "missing_dependency"
     assert err.python_source == engine_pool.SOURCE_BUNDLED
+
+
+# ---------------------------------------------------------------- 网址只留 origin（schema 7，Codex #923 P2）
+URL_CANARIES = [
+    "https://user:CANARY_PW_1@gw.example.com:8443/v1",
+    "https://gw.example.com/v1?access_token=CANARY_TOK_2",
+    "https://gw.example.com/v1?key=CANARY_KEY_3&x=1",
+    "https://gw.example.com/v1#token=CANARY_FRAG_4",
+    "https://gw.example.com/CANARY_PATHKEY_5/v1/",
+    "http://[::1]:9/CANARY_PATHKEY_6?k=CANARY_KEY_7",
+]
+
+
+@pytest.mark.parametrize("url", URL_CANARIES)
+def test_custom_endpoint_url_keeps_only_its_origin_in_export_and_sent_bundle(client, url):
+    import zipfile as _zf
+    from io import BytesIO as _B
+
+    from tavotto.engine import ai_bridge, ai_providers
+
+    for rec in ai_providers.list_providers():  # 配置目录是共享的：先清空，免得留给后面的用例
+        ai_providers.delete(rec["id"])
+    ai_providers.save({"label": "Gateway", "agent": "claude", "api_key": "sk-x", "base_url": url})
+    ai_bridge.invalidate_capabilities()  # 能力表有进程级缓存：改过第三方接口必须清
+    bundles = [
+        client.get("/api/diagnostics/bundle").data,
+        client.post("/api/diagnostics/bundle", json={}).data,
+    ]
+    # 发送包与导出共用 `_build_diagnostics_bundle`（`test_diag_send_api` 钉同一份字节）；这里直接取它
+    with m.app.test_request_context("/api/diagnostics/send/prepare"):
+        bundles.append(m._build_diagnostics_bundle())
+    for data in bundles:
+        z = _zf.ZipFile(_B(data))
+        blob = "\n".join(z.read(n).decode("utf-8", "replace") for n in z.namelist())
+        assert "CANARY" not in blob, [
+            n for n in z.namelist() if "CANARY" in z.read(n).decode("utf-8", "replace")
+        ]
+        report = json.loads(z.read("report.json"))
+        shown = report["ai_endpoints"][0]["base_url"]
+        assert shown.startswith(("http://", "https://")) and "?" not in shown and "#" not in shown
+        assert shown.count("/") == 2 and "@" not in shown, shown
+        assert (
+            json.loads(z.read("manifest.json"))["schema_version"]
+            == engine_diagnostics.BUNDLE_SCHEMA_VERSION
+            == 11
+        )
+    for rec in ai_providers.list_providers():
+        ai_providers.delete(rec["id"])
+    ai_bridge.invalidate_capabilities()
+
+
+def test_url_fact_and_url_keys_in_generic_objects():
+    f = engine_diagnostics._url_fact
+    assert f("https://a.b:8443/x?y#z") == "https://a.b:8443"
+    assert f("not a url").startswith("url:") and f("ftp://h/CANARY").startswith("url:")
+    out = engine_diagnostics._redact_obj(
+        {"proxy_url": "https://u:p@h/CANARY?k=v", "endpoint": "https://h/CANARY", "name": "x"}
+    )
+    assert out == {"proxy_url": "https://h", "endpoint": "https://h", "name": "x"}
+
+
+def _fake_caps(**diag):
+    return {
+        "agents": [
+            {
+                "id": "codex",
+                "installed": False,
+                "enabled": True,
+                "state": "broken",
+                "executable_path": None,
+                "detection_source": None,
+                "version": None,
+                "diagnostics": {
+                    "searched": [],
+                    "broken_path": "/Users/alice/.codex/bin/codex",
+                    "readiness": "unknown",
+                    "readiness_detail": "probe_failed",
+                    **diag,
+                },
+            }
+        ],
+        "endpoints": [],
+    }
+
+
+def test_report_ai_section_carries_readiness_and_broken_path_from_a_fresh_probe(monkeypatch):
+    from tavotto.engine import ai_bridge
+
+    calls: list[bool] = []
+
+    def caps(refresh=False):
+        calls.append(refresh)
+        return _fake_caps()
+
+    monkeypatch.setattr(ai_bridge, "capabilities", caps)
+    report = engine_diagnostics.build_report()
+    assert calls == [True]  # 报告生成时真刷新，不吃装/登录之前的缓存
+    codex = report["ai"]["codex"]
+    assert codex["readiness"] == "unknown" and codex["readiness_detail"] == "probe_failed"
+    assert codex["broken_path"]
+    assert report["ai_probe"] == "refreshed"
+    # 不含账号信息：就绪细节是稳定串，整份报告里没有邮箱
+    assert "@" not in json.dumps(report["ai"])
+
+
+def test_report_ai_refresh_is_bounded_and_falls_back_to_the_cache(monkeypatch):
+    import threading
+
+    from tavotto.engine import ai_bridge
+
+    release = threading.Event()
+
+    def hang(refresh=False):
+        release.wait(5)
+        return _fake_caps()
+
+    monkeypatch.setattr(ai_bridge, "capabilities", hang)
+    monkeypatch.setattr(engine_diagnostics, "AI_REFRESH_BUDGET_S", 0.05)
+    monkeypatch.setattr(ai_bridge, "cached_capabilities", lambda: {})
+    try:
+        report = engine_diagnostics.build_report()
+        assert report["ai"] == {} and report["ai_probe"] == "timeout"
+        monkeypatch.setattr(ai_bridge, "cached_capabilities", lambda: _fake_caps())
+        report = engine_diagnostics.build_report()
+        assert report["ai"]["codex"]["readiness_detail"] == "probe_failed"
+        assert report["ai_probe"] == "stale"
+    finally:
+        release.set()

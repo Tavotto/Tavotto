@@ -25,11 +25,12 @@ autosave / 版本历史目录（Prompt 02–03 的文档合同）。这个模块
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import atomicio, discover, pool, registry, scanbudget
@@ -59,12 +60,43 @@ def _target_parser(root) -> str | None:
 #: 导出的 PDF/PNG 落在里面，素材扫描必须剪掉，否则导出一次素材面板就多一堆成图。
 EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git", "tavottofile"}
 PDF_EXT = {".pdf"}
+SVG_EXT = {".svg"}
 #: TIFF 也是素材（issue #534）。**列进来不等于用得了**：支持范围在 `tavotto/tiffprobe.py`，
 #: 范围之外的那些由 `/api/panels` 的 `unsupported` 如实报出来、`safe_resolve` 拒绝取用——
 #: 这里只管「哪些文件算素材」这一把尺，判断「这张 TIFF 能不能用」要读文件头，不放进
 #: watcher / inventory 这条只看文件签名的轻量路径。
 TIFF_EXT = {".tif", ".tiff"}
 IMG_EXT = {".png", ".jpg", ".jpeg"} | TIFF_EXT
+
+
+def is_pruned_dir(name: str) -> bool:
+    """素材盘点剪枝的目录名（隐藏目录与 `EXCLUDE_DIRS`）：`iter_assets` 的两条遍历路径与 `is_inventoried` 共用。"""
+    return name in EXCLUDE_DIRS or name.startswith(".")
+
+
+def asset_kind(name: str, *, pdf_twin: bool) -> str | None:
+    """文件名 → 素材 kind（`pdf` / `raster`）或 None（不算素材）。隐藏文件不算；
+    同目录同 stem 有 PDF（`pdf_twin`）时位图让位给矢量版。"""
+    if name.startswith("."):
+        return None
+    ext = Path(name).suffix.lower()
+    if ext in PDF_EXT:
+        return "pdf"
+    if ext in SVG_EXT:
+        return "svg"
+    if ext in IMG_EXT and not pdf_twin:
+        return "raster"
+    return None
+
+
+def is_inventoried(rel: str, *, pdf_twin: bool = False) -> bool:
+    """项目内相对路径（`/` 或 `\\` 分隔）会不会被 `iter_assets` 列为素材——纯判据，不碰磁盘。
+    任何一级目录被剪枝（隐藏 / `EXCLUDE_DIRS`）、文件名隐藏、扩展名不是素材、或有同 stem PDF（调用方告知）都是 False。"""
+    parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
+    if not parts or any(is_pruned_dir(d) for d in parts[:-1]):
+        return False
+    return asset_kind(parts[-1], pdf_twin=pdf_twin) is not None
+
 
 #: 允许的刷新来由。**闭集**：它进日志、进事件、以后还会进遥测的枚举维度，
 #: 客户端传什么就记什么等于让外面的人往我们的指标里写自由文本。
@@ -123,6 +155,11 @@ class RefreshState:
     #: 拿它认自己写的那一下（见模块末尾 `is_self_written()`）。
     registry_revision: str | None = None
 
+    # A successful registry write can describe a worker which already produced
+    # those outputs. Only that exact publication/instance may survive its reload.
+    publication_revision: str | None = None
+    publications: list[ExecutionPublication] = field(default_factory=list)
+
     #: 上一次静态合并**写**注册表时失败了没有（磁盘满、文件本身只读、
     #: Windows 上被杀毒软件锁住）。就绪度（`engine/readiness.py`）拿它区分
     #: 「还没登记」的两种成因：一种再刷新一次就好了，另一种刷多少次都一样。
@@ -149,6 +186,67 @@ def state_of(ctx) -> RefreshState:
                 st = RefreshState(lock=threading.RLock())
                 ctx.refresh_state = st
     return st
+
+
+@dataclass(frozen=True)
+class ExecutionPublication:
+    target: pool.WorkerTarget
+    execution_id: str
+    script: str
+    registration: dict
+
+
+@contextlib.contextmanager
+def publishing_execution(ctx, worker, execution_id):
+    """Serialize successful registration with refresh, never with user execution.
+
+    The callback receives the exact bytes' revision from the atomic writer and
+    its corresponding registry value. Reading the file afterwards would let an
+    intervening external edit masquerade as our own publication.
+    """
+    state = state_of(ctx)
+    with state.lock:
+        target_at_start = next(
+            (
+                target
+                for target in pool.invalidation_targets(None, str(ctx.path))
+                if target.worker is worker
+            ),
+            None,
+        )
+
+        def published(revision, config):
+            scripts = config.get("scripts", {})
+            live = {
+                id(target.worker): target
+                for target in pool.invalidation_targets(None, str(ctx.path))
+            }
+            kept = [
+                fact
+                for fact in state.publications
+                if id(fact.target.worker) in live and scripts.get(fact.script) == fact.registration
+            ]
+            execution = execution_id
+            target = target_at_start
+            script = getattr(worker, "script_name", "")
+            registration = scripts.get(script)
+            if (
+                target is not None
+                and execution
+                and execution == getattr(worker, "execution_id", None)
+                and execution == getattr(worker, "last_build_execution_id", None)
+                and getattr(worker, "built", False)
+                and isinstance(registration, dict)
+                and registration.get("entry") == getattr(worker, "entry", None)
+            ):
+                kept = [fact for fact in kept if fact.target.worker is not worker]
+                kept.append(ExecutionPublication(target, execution, script, registration))
+            # Bound strong references even when dead pool handles have not been reaped;
+            # losing this optimization is conservative. Consume on next refresh.
+            state.publications = kept[-pool.MAX_ALIVE :]
+            state.publication_revision = revision
+
+        yield published
 
 
 def seed_state(ctx) -> RefreshState:
@@ -193,14 +291,47 @@ def _reraise(exc: OSError) -> None:
     raise exc
 
 
+def figure_key_of(root: Path, reg=None) -> Callable[[Path], str]:
+    """素材文件 → 「它是哪张图」的键（同目录内比较）：`Registry.artifact_stem`——与后端解析、CLI 交接同一个判据（#1251）。
+
+    `reg=None` 时读磁盘上的注册表；没有 / 读不了 = 文件名 stem（老项目、没有 `artifacts` 映射的项目逐字节同旧行为）。
+    """
+    if reg is None:
+        try:
+            reg = registry.open_registry(root)
+        except Exception:  # noqa: BLE001 —— 没有注册表 / 坏了：素材盘点不该因此失败
+            reg = None
+    if reg is None:
+        return lambda p: p.stem
+    root = Path(root)
+
+    def key(p: Path) -> str:
+        try:
+            rel = p.relative_to(root).as_posix()
+        except ValueError:
+            return p.stem
+        return reg.artifact_stem(rel)
+
+    return key
+
+
 def iter_assets(
-    root: Path, *, strict: bool = False, budget: scanbudget.Budget | None = None
+    root: Path,
+    *,
+    strict: bool = False,
+    budget: scanbudget.Budget | None = None,
+    reg=None,
+    include_shadowed: bool = False,
 ) -> list[tuple[Path, str]]:
     """项目里的素材文件与它们的 kind —— `/api/panels` 与刷新共用这一份判据。
 
     * 隐藏目录与 `EXCLUDE_DIRS` **当场剪枝，不下探**：图库里常有 .venv、.git、
       工具留下的 .rendered/.qa_* 快照，爬进去既是噪音又很慢；
-    * 同目录同名的 PDF 与位图只算矢量那份（有矢量版就不重复列出位图）。
+    * 同目录同名的 PDF 与位图只算矢量那份（有矢量版就不重复列出位图）。「同名」= **同一张图**（`figure_key_of`）：
+      注册表说 `panel.png`（甲）与 `panel.pdf`（乙，`panel-2`）是两张不同的图时，两个文件各自是一份素材（#1251）；
+      没有 `artifacts` 映射的项目就是文件名 stem 相同，行为不变。`reg`（一个已装载的 `Registry`）缺省读磁盘上的注册表。
+      `include_shadowed=True` 不做「矢量版让位」：被同一张图的 PDF 压掉的位图也列出（`panel.file_changed` 的 `files`
+      要的是「这张图在磁盘上的所有文件」，文档里留着的 PNG 面板不能因为被让位就收不到事件）。其余判据（剪枝 / 扩展名）不变。
 
     `strict=True` 时中途读不动就抛（`_reraise`），**不返回半张表**。
     `/api/panels` 与刷新照旧宽容：一个读不动的子目录不该让素材面板整个空掉；
@@ -211,6 +342,7 @@ def iter_assets(
     判据（哪些算素材、怎么剪枝）与不带预算时是同一份。
     """
     root = Path(root)
+    figure_key = figure_key_of(root, reg)
     files: list[Path] = []
     uncertain_pdf_stems: set[tuple[Path, str]] = set()
 
@@ -227,7 +359,7 @@ def iter_assets(
 
     if budget is None:
         for dirpath, dirnames, filenames in os.walk(root, onerror=on_error if strict else None):
-            dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames if not is_pruned_dir(d)]
             files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
     else:
         # os.walk buffers each whole directory before yielding it. Charge scandir
@@ -263,7 +395,7 @@ def iter_assets(
                             # 单项消失不抹掉其它已发现的素材/子目录；但未知 PDF
                             # 仍遮住同名位图，不能把不完整观测误当成「没有 PDF」。
                             if path.suffix.lower() in PDF_EXT:
-                                uncertain_pdf_stems.add((path.parent, path.stem))
+                                uncertain_pdf_stems.add((path.parent, figure_key(path)))
                             continue
                         if scanbudget.is_redirect(metadata):
                             budget.note(
@@ -273,7 +405,7 @@ def iter_assets(
                         if not stat.S_ISDIR(metadata.st_mode):
                             directory_files.append(path)
                             continue
-                        if entry.name in EXCLUDE_DIRS:
+                        if is_pruned_dir(entry.name):
                             continue
                         if len(rel.parts) > budget.limits.max_asset_depth:
                             budget.note(
@@ -294,17 +426,18 @@ def iter_assets(
             pending.extend(reversed(subdirs))
     files.sort()
     pdf_stems = uncertain_pdf_stems | {
-        (p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT
+        (p.parent, figure_key(p)) for p in files if p.suffix.lower() in PDF_EXT
     }
 
     out: list[tuple[Path, str]] = []
     for p in files:
-        ext = p.suffix.lower()
-        if ext in PDF_EXT:
-            kind = "pdf"
-        elif ext in IMG_EXT and (p.parent, p.stem) not in pdf_stems:
-            kind = "raster"
-        else:
+        kind = asset_kind(
+            p.name,
+            pdf_twin=(not include_shadowed)
+            and p.suffix.lower() in IMG_EXT
+            and (p.parent, figure_key(p)) in pdf_stems,
+        )
+        if kind is None:
             continue
         if budget is not None:
             if len(out) >= budget.limits.max_assets:
@@ -485,7 +618,7 @@ def _static_merge(root: Path, state: RefreshState) -> tuple[dict[str, list[str]]
         current = b""
     if atomicio.dumps_json(cfg, indent=1) != current:
         try:
-            discover.write_config(root, cfg)
+            discover.write_config(root, cfg, static_discovery=True)
         except (OSError, ValueError) as exc:  # AtomicWriteError 是 OSError 的子类
             # 写不下去与扫描失败对用户是两件事（一个是"你的注册表存不了"，
             # 另一个是"你的脚本读不动"），但**对外的 code 不能改**——
@@ -624,8 +757,23 @@ def refresh_project_index(
         # worker 失效：**只动关系真的变了的那些**。新增一张不相干的图片、
         # 或者一次什么都没发现的刷新，一个会话都不该被打掉——那是几十秒的
         # 冷启动，用户会以为是自己点坏了什么。
+        publications, state.publications = state.publications, []
+        publication_revision, state.publication_revision = state.publication_revision, None
         for script in registry_diff["removed_scripts"] + registry_diff["changed_scripts"]:
-            pool.invalidate(script, str(root))
+            preserve = tuple(
+                fact.target
+                for fact in publications
+                if publication_revision == state.registry_revision
+                and fact.script == script
+                and after_registry.get(script) == fact.registration
+                and getattr(fact.target.worker, "execution_id", None) == fact.execution_id
+                and getattr(fact.target.worker, "last_build_execution_id", None)
+                == fact.execution_id
+            )
+            if preserve:
+                pool.invalidate(script, str(root), preserve=preserve)
+            else:
+                pool.invalidate(script, str(root))
 
         # 就绪度缓存：**只在事实真的动了的时候**清。它的键本来就是内容签名
         # （见 `readiness._inputs_signature`），所以这一句是**第二道**判据而

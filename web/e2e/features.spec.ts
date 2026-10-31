@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, openElementsTab, test } from './fixtures'
+import { addSecondFigure, expect, openElementsTab, test, waitForDocumentReady } from './fixtures'
 
 /**
  * 功能登记表的核心路径用例（ADR 0097，`docs/features/registry.json`）。
@@ -125,12 +125,13 @@ test(
   async ({ app, page }) => {
     const a = await app()
     await openFigure(page, a.baseURL)
-    // 回到排版：上下文栏上唯一那颗返回入口
-    await page.locator('[data-context-back]').click()
+    // 进多图排版：画布上放第二张图（单图编辑里没有排版）。两张图可能叠着放，下面认最上面（刚加进来）的那张
+    await addSecondFigure(page)
     await expect(page.locator('[data-element-svg]')).toHaveCount(0)
 
-    const panel = page.locator('[data-canvas-stage] [data-object-id]')
-    await expect(panel).toHaveCount(1, { timeout: 30_000 })
+    const panels = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(panels).toHaveCount(2, { timeout: 30_000 })
+    const panel = panels.last()
     await expectInViewport(page, panel, '画布上的面板')
 
     // ── 首次渲染：面板里是真图，不是空框 / 碎图标 / 占位 ──────────────────
@@ -181,7 +182,7 @@ test(
     await expectHittable(editBtn, '「编辑图内元素」')
 
     // ── 拖动：屏幕上真的移动了 Δ ────────────────────────────────────────────
-    const [b0] = await objectBoxes(page)
+    const b0 = (await objectBoxes(page)).at(-1)!
     const dx = 120
     const dy = 60
     await page.mouse.move(b0.x + b0.w / 2, b0.y + b0.h / 2)
@@ -190,11 +191,11 @@ test(
     await page.mouse.up()
     await expect
       .poll(async () => {
-        const [b] = await objectBoxes(page)
+        const b = (await objectBoxes(page)).at(-1)!
         return Math.abs(b.x - b0.x - dx) < 2 && Math.abs(b.y - b0.y - dy) < 2
       }, { message: '面板应当跟着鼠标平移 (120, 60)' })
       .toBe(true)
-    const [b1] = await objectBoxes(page)
+    const b1 = (await objectBoxes(page)).at(-1)!
     // 松手后单选浮动栏仍在（选区没丢）
     await expect(bar).toBeVisible()
 
@@ -202,14 +203,14 @@ test(
     await page.keyboard.press('ControlOrMeta+z')
     await expect
       .poll(async () => {
-        const [b] = await objectBoxes(page)
+        const b = (await objectBoxes(page)).at(-1)!
         return Math.hypot(b.x - b0.x, b.y - b0.y)
       }, { message: '撤销后面板应当回到拖动前的位置' })
       .toBeLessThan(1)
     await page.keyboard.press('ControlOrMeta+Shift+z')
     await expect
       .poll(async () => {
-        const [b] = await objectBoxes(page)
+        const b = (await objectBoxes(page)).at(-1)!
         return Math.hypot(b.x - b1.x, b.y - b1.y)
       }, { message: '重做后面板应当回到拖动后的位置' })
       .toBeLessThan(1)
@@ -225,6 +226,7 @@ test(
     await page.goto(a.baseURL)
     const stage = page.locator('[data-canvas-stage]')
     await expect(stage).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
 
     // 三段文字，左边各不相同（文字工具的快捷键是 T，见快捷键帮助）
     for (const [x, y, s] of [
@@ -287,6 +289,7 @@ test(
     await page.goto(a.baseURL)
     const stage = page.locator('[data-canvas-stage]')
     await expect(stage).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
 
     // 第一张画布：一段文字（文字工具的快捷键是 T），选中它 ⌘C
     await page.keyboard.press('t')
@@ -379,6 +382,7 @@ test(
     const stage = page.locator('[data-canvas-stage]')
     const sheet = page.locator('[data-page-sheet]')
     await expect(sheet).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
 
     // 页面改成 40 × 30 mm（示例图 Fig1_kinetics 是 73 × 58 mm，约 1.9 倍）。
     // 尺寸行没有逐框的 data 锚点：行上有 `data-page-size-row`，里面依次是 W、H 两个输入框
@@ -417,11 +421,16 @@ test(
     expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2 - 12)), '页面应当垂直居中（让出底部工具条）').toBeLessThan(2)
     expect(s0.width / s0.height).toBeCloseTo(40 / 30, 2)
 
-    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）
-    await page.locator(CARD).click()
+    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）。
+    // 画布上只有一张图是单图编辑（不画页面、不按页面缩放），所以先放一张垫底的，第二张进来才是多图排版——
+    // 下面量的是第二张（最上面那张）的放置与取景
+    await page.locator('[data-card="Fig2_yield.pdf"]').click()
     await page.keyboard.press('Shift+Enter')
-    const obj = page.locator('[data-canvas-stage] [data-object-id]')
-    await expect(obj).toHaveCount(1, { timeout: 30_000 })
+    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
+    await addSecondFigure(page, 'Fig1_kinetics.pdf')
+    const all = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(all).toHaveCount(2, { timeout: 30_000 })
+    const obj = all.last()
 
     const outline = page.locator('[data-page-outline]')
     await expect
@@ -532,6 +541,150 @@ test(
 )
 
 test(
+  '功能：图内标题的内容框是所见即所得的——选中末字点斜体，框里那个字变斜体、引擎按 mathtext 重画；撤销还原',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    const h0 = (await gidBox(page, 'axes_0.title'))!
+    expect(h0, '样例图应当有标题').not.toBeNull()
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+
+    const field = page.locator('[data-prop="text"] [data-rich-text="field"]')
+    await expect(field).toHaveCount(1, { timeout: 15_000 })
+    await expectInViewport(page, field, '标题的内容框')
+    const title = (await field.textContent()) ?? ''
+    expect(title.length, '样例图标题应当非空').toBeGreaterThan(1)
+    await expect(field.locator('em')).toHaveCount(0)
+
+    // 选中末尾一个字，点「斜体（选中的字）」：只有那个字变斜体
+    const key0 = await waitExact(page)
+    await field.click()
+    // 编辑器在 mouseup 之后还会异步落一次点击处的选区（ProseMirror），紧跟着按的 End 可能被它盖回点击处——
+    // CI 上慢机器选中的就是框正中那个字。按到光标真在末尾、选区真是末字为止，再点斜体
+    const selected = () => page.evaluate(() => window.getSelection()?.toString() ?? '')
+    await expect
+      .poll(async () => {
+        await page.keyboard.press('End')
+        await page.keyboard.press('Shift+ArrowLeft')
+        return selected()
+      })
+      .toBe(title.slice(-1))
+    await page.locator('[data-prop="text"] [data-rich-action="italic"]').click()
+    await expect(field.locator('em')).toHaveText(title.slice(-1))
+    await expect(field).toHaveText(title)
+    await page.keyboard.press('Enter') // Enter 提交（失焦结束编辑事务）
+    const key1 = await waitExact(page, key0)
+
+    // 撤销：一次编辑是一条历史，框里回到没有斜体
+    await page.locator('[data-canvas-stage]').focus()
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitExact(page, key1)
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+    await expect(field).toHaveText(title)
+    await expect(field.locator('em')).toHaveCount(0)
+  },
+)
+
+test(
+  '功能：图内标题切到 LaTeX 源码改成 $\\mathit{…}$，切回所见即所得显示斜体，引擎重画',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    const h0 = (await gidBox(page, 'axes_0.title'))!
+    expect(h0, '样例图应当有标题').not.toBeNull()
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+
+    const box = page.locator('[data-prop="text"]')
+    const field = box.locator('[data-rich-text="field"]')
+    await expect(field).toHaveCount(1, { timeout: 15_000 })
+    const title = ((await field.textContent()) ?? '').trim()
+    expect(title.length, '样例图标题应当非空').toBeGreaterThan(1)
+
+    // 切到源码：框里就是存着的那串字
+    const key0 = await waitExact(page)
+    await box.locator('[data-rich-action="mode"]').click()
+    const source = box.locator('[data-rich-source]')
+    await expect(source).toHaveValue(title)
+    await source.fill('$\\mathit{x}$ ' + title)
+    await waitExact(page, key0) // 源码里的改动同样即时写回、引擎重画
+
+    // 切回：$\mathit{x}$ 是规范段，显示成斜体的 x
+    await box.locator('[data-rich-action="mode"]').click()
+    await expect(source).toHaveCount(0)
+    await expect(field.locator('em')).toHaveText('x')
+    await expect(field).toHaveText('x ' + title)
+  },
+)
+
+test(
+  '功能：图内标题的源码模式下方预览公式，切回所见即所得公式块按图上的脸排好',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    const h0 = (await gidBox(page, 'axes_0.title'))!
+    expect(h0, '样例图应当有标题').not.toBeNull()
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+
+    const box = page.locator('[data-prop="text"]')
+    const field = box.locator('[data-rich-text="field"]')
+    await expect(field).toHaveCount(1, { timeout: 15_000 })
+    const title = ((await field.textContent()) ?? '').trim()
+
+    // 源码模式：写一个公式，下方预览条排出它（还没写公式时整条不出现）
+    await box.locator('[data-rich-action="mode"]').click()
+    const source = box.locator('[data-rich-source]')
+    const strip = box.locator('[data-math-preview]')
+    await expect(strip).toHaveCount(0)
+    await source.fill('$\\alpha^2$ ' + title)
+    await expect(strip.locator('[data-math-preview-item="ok"] path')).toHaveCount(1, { timeout: 60_000 })
+    // 写错：预览条给出原因，不是空白
+    await source.fill('$\\nosuchcmd$ ' + title)
+    await expect(strip.locator('[data-math-preview-item="error"]')).toHaveCount(1, { timeout: 60_000 })
+    await source.fill('$\\alpha^2$ ' + title)
+
+    // 切回：公式块是排好的公式，不是源码
+    await box.locator('[data-rich-action="mode"]').click()
+    await expect(source).toHaveCount(0)
+    await expect(field.locator('[data-rt-math] [data-math-state="ok"] svg path')).toHaveCount(1, { timeout: 60_000 })
+    await expect(field).not.toContainText('alpha')
+  },
+)
+
+test(
+  '功能：画布标注里写公式，画布上显示 matplotlib 排出的轮廓（与导出同一份），切回所见即所得是公式块',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.keyboard.type('text')
+    await page.locator('[data-cmd-id="add-text"]').click()
+    const objects = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(objects).toHaveCount(1)
+
+    // 属性栏的标注文字框：切到源码写一段带公式的 LaTeX，再切回
+    const field = page.locator('[data-text-content]')
+    await field.locator('[data-rich-action="mode"]').click()
+    await field.locator('[data-rich-source]').fill('k = $\\frac{a}{b}$')
+    await field.locator('[data-rich-action="mode"]').click()
+
+    // 画布：公式是排好的轮廓（SVG path），不是源码
+    const math = objects.first().locator('[data-math-state="ok"]')
+    await expect(math).toHaveCount(1, { timeout: 60_000 })
+    await expect(math.locator('svg path')).toHaveCount(1)
+    await expect(objects.first()).not.toContainText('\\frac')
+    // 编辑框里的公式块也是排好的公式
+    await expect(field.locator('[data-rt-math] [data-math-state="ok"]')).toHaveCount(1)
+  },
+)
+
+test(
   '功能：图例位置网格点「左上」，引擎重画后图例真的挪到坐标区左上角',
   { tag: ['@feature:legend.properties'] },
   async ({ app, page }) => {
@@ -609,8 +762,8 @@ test(
     test.setTimeout(300_000)
     const a = await app()
     await openFigure(page, a.baseURL)
-    await page.locator('[data-context-back]').click()
-    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1)
+    await addSecondFigure(page)
+    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(2)
 
     await page.keyboard.press('ControlOrMeta+e')
     const dialog = page.getByRole('dialog')
@@ -625,9 +778,6 @@ test(
     }
     const eps = dialog.getByRole('checkbox', { name: 'EPS', exact: true })
     if (await eps.isChecked()) await eps.uncheck()
-
-    const confirm = dialog.locator('input[data-export-confirm]')
-    if (await confirm.count()) await confirm.check()
 
     // 导出走后台作业：`/api/export/start` 当场回作业（带导出目录），结果经 SSE 推给界面。
     // 端点形态不是这条用例的主语——导出目录取自 start 的回包，结果认界面那句话 + 磁盘上的文件
@@ -647,7 +797,7 @@ test(
     const exportDir = job.export_dir!
 
     // 界面说出了结果（不是只有请求成功）
-    await expect(dialog.getByText(/已保存到/)).toBeVisible({ timeout: 240_000 })
+    await expect(dialog.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
     // 文件按扩展名认（同目录里还有预检报告等别的产物）；文件头要对得上格式，不认「有个文件」
     const magic: Record<string, (b: Buffer) => boolean> = {
       '.pdf': (b) => b.subarray(0, 5).toString('latin1') === '%PDF-',
@@ -681,6 +831,112 @@ test(
 )
 
 test(
+  '功能：画布文字导出 SVG，文件落盘、文字保留为可编辑文字且物理尺寸正确',
+  { tag: ['@feature:export.svg'] },
+  async ({ app, page }) => {
+    test.setTimeout(300_000)
+    const a = await app()
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    const objects = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(objects).toHaveCount(0)
+
+    // 用真实命令新建文字；没有已验证 SVG 同源表示的静态 PDF 不支持 SVG 导出。
+    await page.keyboard.press('ControlOrMeta+k')
+    const addText = page.locator('[data-cmd-id="add-text"]')
+    await expect(addText).toBeVisible()
+    await page.keyboard.type('text')
+    await expectInViewport(page, addText, '添加文字命令')
+    await expectHittable(addText, '添加文字命令')
+    await addText.click()
+    await expect(objects).toHaveCount(1)
+    await expectInViewport(page, objects, '新建的画布文字')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('ControlOrMeta+e')
+
+    const svg = page.locator('[data-export-format="svg"] input')
+    await svg.check()
+    for (const format of ['pdf', 'png', 'eps', 'tiff']) {
+      const checkbox = page.locator(`[data-export-format="${format}"] input`)
+      if (await checkbox.isChecked()) await checkbox.uncheck()
+    }
+    // 文件名尚无 data 锚点，使用产品的稳定表单 id；独立名称排除夹具里的历史导出。
+    const filename = `feature-svg-${Date.now()}`
+    await page.locator('#export-filename').fill(filename)
+    const start = page.locator('[data-export-start]')
+    await expect(start).toBeEnabled()
+    await expectInViewport(page, start, '开始导出 SVG')
+    await expectHittable(start, '开始导出 SVG')
+    const started = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST',
+    )
+    await start.click()
+    const response = await started
+    expect(response.ok()).toBe(true)
+    const request = response.request().postDataJSON() as {
+      scope: string
+      formats: string[]
+      ppi: number | null
+      canvas: { page_w_mm: number; page_h_mm: number; objects: { type: string; text?: string }[] }
+    }
+    expect(request.scope).toBe('canvas')
+    expect(request.formats).toEqual(['svg'])
+    expect(request.ppi).toBeNull()
+    expect(request.canvas.objects).toHaveLength(1)
+    expect(request.canvas.objects[0]).toMatchObject({ type: 'text', text: expect.any(String) })
+    expect(request.canvas.objects[0].text!.trim().length).toBeGreaterThan(0)
+    const job = await response.json() as { export_dir: string }
+    expect(job.export_dir).toBeTruthy()
+    await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
+    await expect(page.locator('[data-export-finish]')).toBeVisible()
+    await expect(page.locator('[data-export-failed]')).toHaveCount(0)
+
+    const output = path.join(job.export_dir, `${filename}.svg`)
+    await expect.poll(() => existsSync(output), { timeout: 60_000 }).toBe(true)
+    // 解析的是这次真正落盘的文件，不是画布 DOM 或预览 SVG。
+    const artifact = await page.evaluate((source) => {
+      const doc = new DOMParser().parseFromString(source, 'image/svg+xml')
+      const root = doc.documentElement
+      return {
+        name: root.localName,
+        namespace: root.namespaceURI,
+        parseErrors: doc.querySelectorAll('parsererror').length,
+        paths: Array.from(doc.querySelectorAll('path')).filter((p) => p.getAttribute('d')?.trim()).length,
+        texts: doc.querySelectorAll('text').length,
+        images: doc.querySelectorAll('image').length,
+        textContent: Array.from(doc.querySelectorAll('text')).map((t) => t.textContent ?? '').join('').trim(),
+        fontFamily: doc.querySelector('text')?.getAttribute('font-family') ?? doc.querySelector('text')?.getAttribute('style') ?? '',
+        width: root.getAttribute('width'),
+        height: root.getAttribute('height'),
+        viewBox: root.getAttribute('viewBox'),
+      }
+    }, readFileSync(output, 'utf8'))
+    expect(artifact).toMatchObject({
+      name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, images: 0,
+    })
+    // ADR 0144：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
+    expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
+    expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
+    expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto Sans SC)/)
+    const widthPt = request.canvas.page_w_mm * 72 / 25.4
+    const heightPt = request.canvas.page_h_mm * 72 / 25.4
+    expect(widthPt).toBeGreaterThan(0)
+    expect(heightPt).toBeGreaterThan(0)
+    expect(artifact.width).toMatch(/^[\d.]+pt$/)
+    expect(artifact.height).toMatch(/^[\d.]+pt$/)
+    expect(parseFloat(artifact.width!)).toBeCloseTo(widthPt, 3)
+    expect(parseFloat(artifact.height!)).toBeCloseTo(heightPt, 3)
+    const viewBox = artifact.viewBox!.trim().split(/\s+/).map(Number)
+    expect(viewBox).toHaveLength(4)
+    expect(viewBox.slice(0, 2)).toEqual([0, 0])
+    expect(viewBox[2]).toBeCloseTo(widthPt, 3)
+    expect(viewBox[3]).toBeCloseTo(heightPt, 3)
+  },
+)
+
+test(
   '功能：命令面板 ⌘K 搜索并执行命令——加一段文字、打开快捷键帮助',
   { tag: ['@feature:command.palette'] },
   async ({ app, page }) => {
@@ -688,6 +944,7 @@ test(
     await page.setViewportSize(VIEWPORT)
     await page.goto(a.baseURL)
     await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
     const objs = page.locator('[data-canvas-stage] [data-object-id]')
     const n0 = await objs.count()
 
@@ -730,13 +987,14 @@ async function stageBox(page: Page) {
   return b!
 }
 
-/** 排版画布上唯一那个对象：回到排版、等它出现在视口里。 */
+/** 多图排版画布上最上面那个对象（刚加进来的第二张）：等它出现在视口里。 */
 async function toLayoutWithPanel(page: Page, baseURL: string) {
   await openFigure(page, baseURL)
-  await page.locator('[data-context-back]').click()
+  await addSecondFigure(page)
   await expect(page.locator('[data-element-svg]')).toHaveCount(0)
-  const panel = page.locator('[data-canvas-stage] [data-object-id]')
-  await expect(panel).toHaveCount(1, { timeout: 30_000 })
+  const panels = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(panels).toHaveCount(2, { timeout: 30_000 })
+  const panel = panels.last()
   await expectInViewport(page, panel, '画布上的面板')
   return panel
 }
@@ -1090,6 +1348,8 @@ test(
     // 让标记露出来（用户也是这么做的），再断言它点得到
     const inspectorClose = page.locator('[data-inspector-close]')
     if (await inspectorClose.count()) await inspectorClose.click()
+    // 收起要隔一帧才提交：先等右侧面板真的卸载，否则命中检查会抢在它前面被面板挡住
+    await expect(inspectorClose, '右侧面板收起后画布才会露出标记').toHaveCount(0)
     // 这一屏只有那张两联图一个对象 → 恰好一枚标记，等级是阻断
     await expect(pins, '打开之后那张有问题的图上应当有一枚标记').toHaveCount(1, { timeout: 30_000 })
     const pin = pins.first()

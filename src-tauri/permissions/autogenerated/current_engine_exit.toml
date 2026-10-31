@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-current-engine-exit"
+description = "Enables the current_engine_exit command without any pre-configured scope."
+commands.allow = ["current_engine_exit"]
+
+[[permission]]
+identifier = "deny-current-engine-exit"
+description = "Denies the current_engine_exit command without any pre-configured scope."
+commands.deny = ["current_engine_exit"]

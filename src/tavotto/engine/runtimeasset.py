@@ -18,9 +18,18 @@ ADR 0013 的引擎侧落地（Compatibility Bridge Session 4）。三件事的�
 ## cache 布局与原子性
 
     <data_dir>/cache/runtime/<slug>/
-        preview.svg      最近一次成功 build/渲染的预览（显示占位用）
-        metadata.json    schema、asset_id、描述符、脚本 sha256、
-                         generated_by: "Tavotto"
+        preview.svg      最近一次成功 build/渲染的预览（显示占位用；**只是「最近一次」，
+                         不是任何特定文档状态的预览**）
+        preview-<h>.svg  按 overrides 内容寻址的变体（`<h>` = patch_hash 的十六进制前 24 位），
+                         至多 `MAX_VARIANTS` 份，最旧的先淘汰
+        metadata.json    schema、asset_id、描述符、脚本 sha256、变体表 `variants`
+                         （有序对 [patch_hash, 文件名]，旧→新）、generated_by: "Tavotto"
+
+**显示缓存按状态内容寻址（QA-WIN-21）。** 前端撤销回一个它自己已经画过的变体时不会再发渲染
+请求（`useEngineSync`：`lastPatches === want` 就跳过），「最近一次渲染」于是停在撤销前的
+状态上；重开文档 / 导出预览读它就看到撤销前的图，而文件里存的、导出的都是撤销后的。
+读端因此必须带着 overrides 来问：命中变体才是「这个状态的预览」，没命中就**如实说不是**
+（`variant_path` 回 None），由前端标「近似预览」，绝不拿最近一次冒充。
 
 slug = sha256(规范化项目路径 | asset_id) 截断——只用于目录名去字符集，
 身份仍是 (项目, asset_id)。**metadata.json 永远最后写**（两个文件都
@@ -50,7 +59,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config, figcapture, inputremap, runconfig
+from . import config, documents, figcapture, inputremap, patchspec, runconfig
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -154,12 +163,23 @@ def _norm_project(project_root: str | Path) -> str:
     return runconfig.project_identity(project_root)
 
 
+def cache_slug(identity: str, asset_id: str) -> str:
+    """(项目身份串, asset) → cache 目录名。纯计算，不碰磁盘；`identity` 是 `_norm_project` 的结果。"""
+    return hashlib.sha256(f"{identity}|{asset_id}".encode("utf-8")).hexdigest()[:24]
+
+
 def cache_dir(project_root: str | Path, asset_id: str) -> Path:
     """该 (项目, asset) 的 cache 目录。slug 只是文件名安全化，不是身份。"""
-    slug = hashlib.sha256(f"{_norm_project(project_root)}|{asset_id}".encode("utf-8")).hexdigest()[
-        :24
-    ]
-    return config.data_path("cache", "runtime", slug)
+    return config.data_path("cache", "runtime", cache_slug(_norm_project(project_root), asset_id))
+
+
+def cached_slugs() -> set[str]:
+    """runtime cache 根目录下现存的目录名（一次 `listdir`）；根不存在 / 读不了 → 空集（没有 cache）。
+    配合 `cache_slug` 做成员判断：按一批候选 id 问「哪些有 cache」不必逐个探磁盘（#819 r4232302927）。"""
+    try:
+        return set(os.listdir(config.data_path("cache", "runtime")))
+    except OSError:
+        return set()
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -178,8 +198,73 @@ def script_sha256(project_root: str | Path, script: str) -> str | None:
     return hashlib.sha256(data).hexdigest()
 
 
-def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) -> Path | None:
+#: 每个 asset 至多留几份按状态寻址的预览变体（撤销 / 重做在这么多个近期状态之间来回时都命中）。
+MAX_VARIANTS = 16
+
+
+def _variant_name(patch_hash: str) -> str:
+    """patch_hash（`sha256:<hex>`）→ 变体文件名。只取十六进制、截断，文件名在 Windows 上合法。"""
+    digest = patch_hash.split(":")[-1]
+    if not digest or not all(ch in "0123456789abcdef" for ch in digest):
+        raise ValueError(f"bad patch hash: {patch_hash!r}")
+    return f"preview-{digest[:24]}.svg"
+
+
+def _variant_table(meta: object) -> list[tuple[str, str]]:
+    """metadata 里的变体表（旧→新）：`[[patch_hash, 文件名], …]`。
+
+    存成**有序对列表**而不是字典：metadata 以 `sort_keys=True` 落盘，字典的插入序（= 新旧序）
+    会被按键排序洗掉，「最旧的先淘汰」就成了按哈希字典序淘汰。
+    """
+    table = meta.get("variants") if isinstance(meta, dict) else None
+    if not isinstance(table, list):
+        return []
+    return [
+        (str(item[0]), item[1])
+        for item in table
+        if isinstance(item, list) and len(item) == 2 and isinstance(item[1], str)
+    ]
+
+
+def _execution_of(target: Path) -> str | None:
+    """现有 metadata 记下的「变体是哪次执行画的」指纹；没有（旧 cache / 读不出）→ None。"""
+    try:
+        meta = json.loads((target / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = meta.get("variants_execution") if isinstance(meta, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _read_variants(target: Path) -> dict[str, str]:
+    """现有 metadata 里仍在磁盘上的变体（patch_hash → 文件名，旧→新）；读不出 / 坏了 → 空（变体是可重建的派生物）。"""
+    try:
+        meta = json.loads((target / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        h: name
+        for h, name in _variant_table(meta)
+        if name.startswith("preview-") and (target / name).is_file()
+    }
+
+
+def materialize(
+    project_root: str | Path,
+    descriptor: dict,
+    svg_source: Path,
+    *,
+    patch_hash: str | None = None,
+    fresh_execution: bool = False,
+) -> Path | None:
     """把一张捕获 Figure 的预览物化进 cache；返回 cache 目录（失败 None）。
+
+    `fresh_execution`：这份 SVG 来自一次全新的执行（显式运行 / probe / native 交接，不是对热会话的
+    再渲染）——已有变体全部作废，哪怕脚本哈希等指纹没变（输入数据可能变了）。
+
+    `patch_hash`：这份 SVG 是按哪组 overrides 画的（`patchspec.patch_hash`）。给了就**另存一份
+    按它寻址的变体**并记进变体表——`preview.svg` 仍是「最近一次」；不给 = 调用方说不清这份 SVG
+    属于哪个状态（变体表原样保留，不凭空添一条）。
 
     `descriptor` 是 CapturedFigureDescriptor 的 payload（worker/probe 响应
     原样）；`svg_source` 是 worker out 目录里该 stem 的预览 SVG。写入顺序
@@ -194,9 +279,46 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
     try:
         if not svg_source.is_file():
             return None
+        # Document replays and native/render captures can bypass probe registration.
+        # Persist their identity outside the disposable preview cache as well.
+        if descriptor.get("stem"):
+            runconfig.record_captures(
+                project_root, script, [descriptor["stem"]], str(descriptor.get("run_config") or "")
+            )
         target = cache_dir(project_root, asset_id)
         target.mkdir(parents=True, exist_ok=True)
-        _atomic_write(target / "preview.svg", svg_source.read_bytes())
+        data = svg_source.read_bytes()
+        _atomic_write(target / "preview.svg", data)
+        # 变体的身份 = (overrides 内容, 生成它的那次执行)。执行指纹覆盖决定图内容的全部 metadata 字段
+        # （脚本哈希、改指表指纹、描述符）；它变了、或调用方说这是一次全新执行（显式运行 / probe /
+        # native 交接：同脚本同输入文件路径但数据可能已变），旧执行画的变体一律作废——否则用旧
+        # overrides 重开会以 exact 拿到过时数据的图（Codex #1547 P1）。
+        execution = hashlib.sha256(
+            json.dumps(
+                [
+                    script_sha256(project_root, script),
+                    inputremap.fingerprint(project_root),
+                    dict(descriptor),
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        variants = _read_variants(target)
+        if fresh_execution or _execution_of(target) != execution:
+            for dead in variants.values():
+                (target / dead).unlink(missing_ok=True)
+            variants = {}
+        if patch_hash:
+            name = _variant_name(patch_hash)
+            _atomic_write(target / name, data)
+            variants.pop(patch_hash, None)  # 重新插到队尾 = 最新
+            variants[patch_hash] = name
+            for old in list(variants)[: max(0, len(variants) - MAX_VARIANTS)]:
+                dead = variants.pop(old)
+                if dead not in variants.values():
+                    (target / dead).unlink(missing_ok=True)
         meta = {
             "schema": CACHE_SCHEMA,
             # 这是 Tavotto 生成的派生物，不是用户原件——检视工具与人都
@@ -209,6 +331,8 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
             # 物化那一刻的改指表（ADR 0106）：之后增 / 换 / 删规则，这张图读的可能是旧位置的数据
             "input_remap": inputremap.fingerprint(project_root),
             "preview": "preview.svg",
+            "variants": [[h, name] for h, name in variants.items()],
+            "variants_execution": execution,
         }
         _atomic_write(
             target / "metadata.json",
@@ -246,9 +370,112 @@ def preview_path(project_root: str | Path, asset_id: str) -> Path | None:
     return cache_dir(project_root, asset_id) / meta["preview"]
 
 
+def variant_path(project_root: str | Path, asset_id: str, patch_hash: str) -> Path | None:
+    """按 overrides 内容寻址的预览变体；没有这个状态的预览（从没画过 / 已淘汰 / 旧 cache）→ None。
+
+    这是「这个文档状态的预览」的**唯一**判据：`preview_path`（最近一次）不回答这个问题。
+    """
+    meta = load_metadata(project_root, asset_id)
+    if meta is None:
+        return None
+    name = dict(_variant_table(meta)).get(patch_hash)
+    if name != _variant_name(patch_hash):
+        return None
+    path = cache_dir(project_root, asset_id) / name
+    return path if path.is_file() else None
+
+
+def preview_for_state(
+    project_root: str | Path, asset_id: str, patch_hash: str
+) -> tuple[Path | None, bool]:
+    """(预览文件, 它是不是这个状态的预览)。cache 不存在 → `(None, False)`。
+
+    命中变体 = `(变体, True)`。没命中 = 退到「最近一次」并**如实报 False**，调用方必须标近似。
+    唯一的信任例外：**没有变体表的旧 cache**（本机制之前物化的）+ 请求的是脚本原样（空 overrides）——
+    旧 cache 的 `preview.svg` 绝大多数就是首次运行的原样，也是升级前这条路一直在显示的东西；
+    旧 cache + 有 overrides 说不清它是哪个状态，不信。
+    """
+    meta = load_metadata(project_root, asset_id)
+    if meta is None:
+        return None, False
+    hit = variant_path(project_root, asset_id, patch_hash)
+    if hit is not None:
+        return hit, True
+    latest = cache_dir(project_root, asset_id) / meta["preview"]
+    legacy = "variants" not in meta
+    return latest, legacy and patch_hash == patchspec.patch_hash([])
+
+
 def drop_cache(project_root: str | Path, asset_id: str) -> None:
     """删掉该 asset 的 cache（测试与显式清理用）；不存在就什么都不做。"""
     shutil.rmtree(cache_dir(project_root, asset_id), ignore_errors=True)
+
+
+def drop_stem_caches(project_root: str | Path, script: str, stem: str) -> None:
+    """删掉 (script, stem) 这张图的全部物化 cache：无参数那份 + 运行配置（T03）变体各一份。
+
+    只删 `data_dir()/cache/runtime/` 下 Tavotto 自己的派生物，绝不碰用户文件；"从素材中移除"用。
+    """
+    drop_cache(project_root, figcapture.runtime_asset_id(script, stem))
+    try:
+        configs = runconfig.configs_of(project_root, script)
+    except runconfig.RunConfigError:
+        return  # 登记读不出：变体 cache 是派生物，留给 prune_cache 收，不因此让移除失败
+    for cfg in configs:
+        drop_cache(project_root, figcapture.runtime_asset_id(script, stem, cfg.id))
+
+
+def uses_stem(used_ids: object, registry, script: str, stem: str) -> bool:
+    """`used_ids`（当前画布 / 排版里的面板 fileId）里有没有这张图（含它的运行配置变体）。
+
+    逐个 id 走 `resolve()` 正向重算比对 (script, stem)，不反解 id；解析不到的 id 与它无关。
+    """
+    if not isinstance(used_ids, (list, tuple, set, frozenset)):
+        return False
+    for fid in used_ids:
+        if not is_runtime_id(fid):
+            continue
+        hit = resolve(fid, registry)
+        if hit is not None and hit["script"] == script and hit["stem"] == stem:
+            return True
+    return False
+
+
+def _strings_of(value: object):
+    """递归产出一份 JSON 值里的全部字符串（含字典的键以外的所有值）。显式栈，深文档不会撞递归上限。"""
+    stack = [value]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, str):
+            yield cur
+        elif isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+
+
+def saved_layouts_use_stem(layout_dirs, registry, script: str, stem: str) -> bool:
+    """磁盘上已保存的排版（`layout_dirs` 下的用户文档 `*.json`）有没有引用这张图（含运行配置变体）。
+
+    脚本没了以后 cache 预览是这张图唯一剩下的像素，删掉它会让引用它的排版再也找不回这张图，所以
+    未打开的已存排版也算在用。只读用户文档（`documents.is_user_document_stem` 剔掉 Tavotto 自己的文件），
+    不进 `_autosave/` 与 versions（不在 `layout_dirs` 的直接子文件里）；读不了 / 坏掉的文档跳过。
+    """
+    for d in layout_dirs:
+        try:
+            files = sorted(Path(d).glob("*.json"))
+        except OSError:
+            continue
+        for path in files:
+            if not documents.is_user_document_stem(path.stem):
+                continue
+            try:
+                doc = documents.loads_document(path.read_bytes())
+            except (OSError, ValueError):
+                continue
+            if uses_stem(list(_strings_of(doc)), registry, script, stem):
+                return True
+    return False
 
 
 #: cache 总预算：与引擎会话缓存同一治理思路（超预算按最后使用时间从旧到新删）。
@@ -416,6 +643,20 @@ def is_pyplot_capture(descriptor: object) -> bool:
     return isinstance(descriptor, dict) and descriptor.get("capture_source") == "pyplot"
 
 
+def has_disk_original(project_root: str | Path, info: dict, stem: str) -> bool:
+    """磁盘上有没有这张图（脚本条目 `info` 里的 `stem`）自己的原件。
+
+    注册表登记了「哪个文件是这张图写的」（`artifacts`，#1251）就按它判：同脚本里 `panel.png`（甲）与
+    `panel.pdf`（乙，`panel-2`）时，乙的原件是 `panel.pdf`，不是按名字找 `panel-2.*`（找不到会让乙在素材库里
+    既是磁盘素材又是 runtime 素材，违反「同一张图绝不双列」）；甲也不会被乙的 `panel.pdf` 冒充成有原件。
+    这张图没有任何映射条目（老注册表 / 静态起草）= 旧判据，按文件名 stem 找。
+    """
+    mine = [a for a, s in (info.get("artifacts") or {}).items() if s == stem]
+    if mine:
+        return any(os.path.isfile(os.path.join(str(project_root), a)) for a in mine)
+    return figcapture.find_original_artifact(str(project_root), stem) is not None
+
+
 def list_assets(project_root: str | Path, registry, *, worker_python: object = None) -> list[dict]:
     """当前项目全部 RuntimeFigureAsset 的清单——**只读，绝不执行脚本**。
 
@@ -437,24 +678,31 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
     out: list[dict] = []
     for script, info in sorted(registry.entries().items()):
         entry = info.get("entry", "main")
+        configured_only = runconfig.configured_only_stems(project_root, script)
         for stem in info.get("stems", ()):
             try:
                 asset_id = figcapture.runtime_asset_id(script, stem)
             except ValueError:
                 continue  # 坏条目不该炸掉整张清单
-            variants = [("", asset_id)]
+            base_meta = load_metadata(project_root, asset_id)
+            variants = []
             # T03：同一脚本用不同参数跑出的同名图各是一张素材。只列**真跑过、cache 里有**的配置变体
             # （登记里的配置不等于跑过）；参数值不进清单，只带不透明引用。
             for cfg in runconfig.configs_of(project_root, script):
                 variant_id = figcapture.runtime_asset_id(script, stem, cfg.id)
                 if load_metadata(project_root, variant_id) is not None:
                     variants.append((cfg.id, variant_id))
+            # Cache absence cannot erase a real argument-free identity. Suppress only
+            # stems whose durable history proves configured-only origins; legacy records
+            # without that evidence retain their placeholder even beside a cached variant.
+            if base_meta is not None or stem not in configured_only:
+                variants.insert(0, ("", asset_id))
             for run_config, variant_id in variants:
                 meta = load_metadata(project_root, variant_id)
                 desc = (meta or {}).get("descriptor") or None
                 if (
                     not run_config
-                    and figcapture.find_original_artifact(root, stem) is not None
+                    and has_disk_original(root, info, stem)
                     and not is_pyplot_capture(desc)
                 ):
                     continue  # 磁盘有原件 → FileAsset 的地盘

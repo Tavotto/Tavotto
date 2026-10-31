@@ -5,16 +5,21 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
 import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
+import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
-import { sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
+import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
+import { requestCheckConnection } from '@/store/connectAiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
 import { CopyAction } from './CopyAction'
 import { DiffView } from './DiffView'
+import { EditDependencyNotice } from './EditDependencyNotice'
+import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
-import { formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
+import { TraceDetails } from './TraceDetails'
+import { agentErrorKey, fixedByConnection, formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
 
 /**
  * 改图助手的转录（2026-10-07 设计审计 §6.1 / §6.2，宪法第十八节「2026-10-07 重做」）：从「一轮一张卡」改成「一段对话」。
@@ -33,10 +38,46 @@ const ai = (key: string, values?: Record<string, unknown>) => translate(key, { n
 
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
-  if (s.status === 'running') return ai('session.running')
+  if (s.task?.task_type === DATA_FIGURE_TASK) return dataFigureStatusText(s)
+  if (s.status === 'running') return ai(s.task?.phase === 'correcting' ? 'session.correcting' : 'session.running')
+  // 带任务结局时只翻译 `task.outcome`（检查本身在后端）；其余组合与无 task 一律走原逻辑。
+  // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
+  // 「已完成，脚本没有变化」就是这个结局的准确翻译；没写回就没有渲染层核对，说「数据核对一致」反而是假话
+  const outcome = s.task?.outcome
+  if (outcome === 'needs_input' && s.task?.unmet?.some((item) => item.reason_code === 'dependency_decision')) return ai('dependency.waiting')
+  if (s.status === 'done' && s.changed) {
+    if (outcome === 'completed') {
+      const n = s.task?.corrections ?? 0
+      return n > 0 ? ai('session.taskVerifiedCorrected', { count: n }) : ai('session.taskVerified')
+    }
+    if (outcome === 'partial') return ai('session.taskPartial')
+    if (outcome === 'failed') return ai('session.taskFailedChanged')
+  }
+  // AI 这一侧没跑成的失败不是「没通过写回前检查」：走通用的「失败」
+  if (s.status === 'failed' && !s.changed && outcome === 'failed' && !agentErrorKey(s.error)) return ai('session.taskRejected')
   if (s.status === 'done') return ai(s.changed ? 'session.doneChanged' : 'session.doneNoChange')
   if (s.status === 'reverted') return ai('session.reverted')
   return statusLabel(s.status)
+}
+
+/** 从数据出图（TAF Phase 5c）的状态行：只翻译 `task.outcome`；失败走通用的「失败」 */
+function dataFigureStatusText(s: AiSession): string {
+  if (s.status === 'running') return ai('session.dataFigureRunning')
+  if (s.unconfirmed) return ai('session.dataFigureUnconfirmed')
+  const script = s.task?.script ?? ''
+  switch (s.task?.outcome) {
+    case 'completed':
+      return ai('session.dataFigureDone', { script })
+    case 'partial':
+      return ai('session.dataFigurePartial', { script })
+    case 'needs_input':
+      return ai('session.dataFigureNeedsInput')
+    case 'failed':
+      // 提交后验证失败但文件已建（`script` 在）：如实说出，别让人以为什么都没发生
+      return script ? ai('session.dataFigureFailedWritten', { script }) : statusLabel(s.status)
+    default:
+      return statusLabel(s.status)
+  }
 }
 
 const failedStatus = (s: AiSession) => s.status === 'failed' || s.status === 'timeout'
@@ -71,10 +112,47 @@ export function Turn({
     if (g.type === 'process') lastProcess = i
   })
 
+  // 任务结局卡（TAF）：只翻译 `task.outcome`。done+partial 是 warn，done+failed+changed 是 danger（回滚用 DiffView 上的按钮）
+  const outcome = session.task?.outcome
+  const dependencyCard = session.task?.task_type === 'figure_edit' && outcome === 'needs_input'
+    ? session.task.unmet?.find((item) => item.reason_code === 'dependency_decision')?.data
+    : undefined
+  const dataFigureTurn = session.task?.task_type === DATA_FIGURE_TASK
+  const outcomeCard: 'partial' | 'failed' | null = dataFigureTurn
+    ? null
+    : session.status === 'done' && outcome === 'partial'
+      ? 'partial'
+      : session.status === 'done' && outcome === 'failed' && session.changed
+        ? 'failed'
+        : null
+  // AI 这一侧没跑成（模型 / 连接 / Agent 进程 / 超时）：说具体原因，不落到「没通过写回前检查」——候选根本没写出来；原始码只进「详情」
+  const agentError = agentErrorKey(session.error)
+  const rejected =
+    !agentError && session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
+  const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)
+  const unmetDetail = unmetIds.length ? [ai('notice.unmetHeading'), ...unmetIds].join('\n') : null
+  // 从数据出图：没有 diff、没有回滚；partial / needs_input 各一张 warn 卡，failed 走下面通用的失败卡（正文 = error）
+  const dataCard: 'partial' | 'needs_input' | null =
+    dataFigureTurn && session.status === 'done' && (outcome === 'partial' || outcome === 'needs_input') ? outcome : null
+  // 提交后验证失败、文件已经写进项目：danger 卡（不出重试——再来一次会建出 `_2`）；详情列 unmet id
+  const failedWritten =
+    dataFigureTurn && outcome === 'failed' && !!session.task?.script && !session.unconfirmed
+  // 结果不确定（没收到答复，可能已经生成）：warn 卡 + 「查询结果」；不是失败卡
+  const unconfirmedCard = dataFigureTurn && session.unconfirmed === true && session.status !== 'running'
+  const preview = session.task?.preview
+  const previewY = preview?.y?.[0]
+
   return (
     // 新的一轮落位：淡入 + 4px 上浮 + 0.985 缩放，弹簧收尾（settle-in，宪法第十八节）
     <div data-ai-session={session.status} className="flex animate-settle-in flex-col gap-(--item-gap)">
       <UserBubble session={session} onResend={onResend} canResend={canResend} />
+
+      {/* 接回来的运行中会话（刷新 / 重连 / 回切）：说清为什么没有过程输出，别让人以为卡住了 */}
+      {session.restored && running && session.entries.length === 0 && (
+        <p data-ai-restored className="text-sm text-ink-3">
+          {ai('session.restoredNote')}
+        </p>
+      )}
 
       {groups.map((g, i) =>
         g.type === 'message' ? (
@@ -90,26 +168,114 @@ export function Turn({
         ),
       )}
 
+      {/* 技术详情：完整执行追踪（ADR 0151），默认收起、展开才去取 */}
+      <TraceDetails
+        taskRef={session.id}
+        pj={session.project}
+        running={running}
+        settledKey={session.finalized}
+        hidden={session.provisional}
+      />
+
       {session.changed && session.diff && (
         <div className="animate-settle-in">
           <DiffView diff={session.diff} script={session.script} onRevert={() => revertSession(session)} />
         </div>
       )}
 
-      {(failed || session.error) && (
+      {/* 跟进建议（后端闭集 `task.suggestions`）：图例里也写着刚才没动的那段文字，问一句要不要一起改；点了走画布 override、不经 AI */}
+      {session.changed &&
+        session.status === 'done' &&
+        (session.task?.suggestions ?? []).map((sg) =>
+          sg.kind === 'legend_label' ? (
+            <LegendLabelNotice key={`${sg.stem}/${sg.gid}`} session={session} suggestion={sg} />
+          ) : null,
+        )}
+
+      {dataCard && (
+        <Notice
+          tone="warn"
+          data-ai-task-outcome={outcome}
+          detail={dataCard === 'partial' ? unmetDetail : null}
+        >
+          {dataCard === 'partial'
+            ? ai('notice.dataFigurePartial')
+            : preview?.x && previewY
+              ? ai('notice.dataFigureNeedsInputExample', { x: preview.x, y: previewY })
+              : ai('notice.dataFigureNeedsInput')}
+        </Notice>
+      )}
+
+      {dependencyCard && <EditDependencyNotice session={session} card={dependencyCard} />}
+
+      {outcomeCard && (
+        <Notice
+          tone={outcomeCard === 'partial' ? 'warn' : 'danger'}
+          data-ai-task-outcome={session.task?.outcome}
+          detail={unmetDetail}
+        >
+          {ai(outcomeCard === 'partial' ? 'notice.taskPartial' : 'notice.taskFailedChanged')}
+        </Notice>
+      )}
+
+      {failedWritten && (
+        <Notice tone="danger" data-ai-task-outcome="failed" detail={unmetDetail}>
+          {ai('notice.dataFigureFailedWritten')}
+        </Notice>
+      )}
+
+      {unconfirmedCard && (
+        <Notice
+          tone="warn"
+          data-ai-data-figure-unconfirmed
+          action={
+            <Button
+              data-ai-data-figure-reconcile
+              size="sm"
+              onClick={() => void useAiStore.getState().reconcileDataFigure(session.id)}
+            >
+              {ai('notice.dataFigureReconcile')}
+            </Button>
+          }
+        >
+          {ai('notice.dataFigureUnconfirmed')}
+        </Notice>
+      )}
+
+      {!outcomeCard && !failedWritten && !unconfirmedCard && (failed || session.error) && (
         <Notice
           tone="danger"
           data-ai-error="session"
-          title={statusLabel(session.status)}
+          {...(rejected ? { 'data-ai-task-outcome': 'failed' } : {})}
+          title={rejected ? undefined : statusLabel(session.status)}
+          // 一句话留在正文；长的 / 多行的整段进「详情」（带复制）
+          detail={
+            agentError
+              ? session.error
+              : rejected
+                ? [unmetDetail, splitNoticeText(session.error).detail ?? splitNoticeText(session.error).inline]
+                    .filter(Boolean)
+                    .join('\n\n') || null
+                : splitNoticeText(session.error).detail
+          }
           action={
-            canRetry ? (
-              <Button data-ai-retry variant="secondary" size="sm" onClick={() => onRetry(session)}>
+            fixedByConnection(agentError) ? (
+              // 凭据无效 / 地址指到了网页（中转站少写 `/v1` 之类）：重试只会再失败一次，主按钮去改连接
+              <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
+                {ai('notice.checkConnection')}
+              </Button>
+            ) : canRetry ? (
+              <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
               </Button>
             ) : undefined
           }
         >
-          {session.error}
+          {agentError
+            ? ai(`sessionError.${agentError}`)
+            : rejected
+              ? ai('notice.taskRejected')
+              : splitNoticeText(session.error).inline}
         </Notice>
       )}
 
@@ -120,7 +286,7 @@ export function Turn({
         <span className="shrink-0">{sessionAgentLabel(caps, session)} ·</span>
         <SwapText
           text={statusText(session)}
-          textClassName={running ? 'text-shimmer' : failed ? 'text-danger' : 'text-ink-3'}
+          textClassName={running ? 'text-shimmer' : 'text-ink-3'}
           data-ai-status={session.status}
         />
         {total != null && !running && <span className="type-number shrink-0 text-ink-3">· {formatDuration(total)}</span>}

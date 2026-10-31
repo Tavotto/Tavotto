@@ -62,6 +62,7 @@ from . import (
     bridge,
     config,
     execspec,
+    figcapture,
     handoff,
     nativehandoff,
     nativerelay,
@@ -320,24 +321,18 @@ def _wait_for_child_process(
 
 
 def _exit_code_of(code: int) -> int:
-    """`Popen.wait()` 的返回值 → 进程退出码。
-
-    POSIX 上被信号杀掉时它是**负数**（`-SIGINT`）。按 shell 惯例折成
-    `128 + signo`——直接把 `-2` 当退出码返回会变成 254，那个数字对任何人
-    都没有意义。
-    """
-    return 128 + (-code) if code < 0 else code
+    """`Popen.wait()` 的返回值 → 进程退出码：折法的唯一出处在 `runcodes.exit_code_of`。"""
+    return runcodes.exit_code_of(code)
 
 
 def _figures_written(out_dir: str) -> int:
-    """这次跑出了几张图（按会话产物目录里的预览 SVG 数）。
+    """这次跑出了几张图（按会话产物目录里的**预览发布账本**）。
 
     **不问子进程**：它已经退出了，而这个判据要在它退出之后成立。
+    **不数 `.svg` 文件**：半写的、上一次残留的文件都是文件；只有引擎在
+    SVG 与 manifest 都放到位之后记过账的才算完成（P01b，EX12）。
     """
-    try:
-        return sum(1 for n in os.listdir(out_dir) if n.endswith(".svg"))
-    except OSError:
-        return 0
+    return len(figcapture.published_preview_stems(out_dir))
 
 
 def _cancel_watch(native_id: str):

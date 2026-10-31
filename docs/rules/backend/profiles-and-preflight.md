@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 260
+改到: `profiles/publication.json`、`engine/profiles.py`、`preflight.py`、`profilestore.py`
+主题: 出版规范 profile 与预检 → `profiles-and-preflight.md`
+必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐
+-->
 
 - **规则的唯一权威文件是 `src/tavotto/profiles/publication.json`**（随 wheel 分发）。
   Python 走 `engine/profiles.py`（`importlib.resources` 定位，装成 wheel 后源码树的
@@ -14,12 +23,21 @@
   两份靠 `tests/golden/preflight_vectors.json` 对齐：**pytest 与 vitest 各跑一遍同一份
   向量**（与 patchspec ↔ Rust 同一套纪律），只比 `id/severity/object_ids/gids/detail`，
   不比中文措辞。改任一侧跑 `python scripts/gen_preflight_vectors.py --write` 并人工读 diff。
+- **面板 `kind`（矢量 / 位图）的主语是「本次导出嵌入的产物」**，不是文件后缀（#477）：
+  带 override 且有脚本的 PNG 会被脚本重画成矢量，按 pdf 档判，不报
+  `raster-text-not-verifiable`。前端造输入时的唯一判据是 `web/src/lib/exportRoute.ts`
+  的 `embedsDiskBitmap(panel, assets, scope, formats)`，它与后端真值（原图范围
+  `app._resolve_panel_source`，**受所选格式影响**：要 EPS 且不要 SVG 时 `app._original_rerender`
+  让有脚本的图哪怕未编辑也重画成矢量，所以格式必须一路传到预检——`OriginalTarget.formats`；、画布范围 `rendercore.sources.needs_execution`）是严格同源对，
+  靠 `tests/golden/export_route_vectors.json` 对拍（`tests/test_export_route_vectors.py` 驱动
+  后端真实代码求期望，`exportRoute.test.ts` 比前端）。Python 求值器与 `PreflightPanelSpec`
+  不变；Python 产品代码里 `kind` 一直是 `pdf`（MCP 入口）。
 - 输入是**规范化的 figure spec**（页面 + 面板 + 文字 + 对象几何），不是画布文档也不是
   manifest 本身：同一套规则同时服务「一张图」（MCP，scale=1）与「多面板拼版」
   （画布，每面板带自己的 scale）。
 - **字号按最终物理尺寸判**：manifest 的 `fontsize` 是脚本坐标系里的 pt，面板缩到 60%
   时读者量到的是 `fontsize × scale`。只看原始值 = 「缩一缩就放行」。默认规范里字号下限
-  **只有一个数 8.0pt**（绝对下限，**正好 8.0 不算过**；ADR 0029 删掉了比它更严的那条
+  **只有一个数 8.0pt**（绝对下限，**含等号**：正好 8.0 通过，ADR 0029 §6b；ADR 0029 删掉了比它更严的那条
   8.5pt）。两条检查仍然是两条——规范把两档设成不同值时（`free-form-v1` 6.0/5.0、
   期刊覆盖）各自出场。**阈值一个字都不许写进求值器**，缺键时的兜底只有
   `profiles.FALLBACK_MIN_FONT_SIZE_PT` 一处（TS 侧同名，严格同源对）。

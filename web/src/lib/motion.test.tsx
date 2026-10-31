@@ -17,9 +17,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   DURATION,
+  drawerMotion,
   EASE_POP,
+  EASE_SNAP,
   EASE_SPRING,
-  EASE_STANDARD,
   easeOutCubic,
   prefersReducedMotion,
   tween,
@@ -86,10 +87,6 @@ describe('关键帧的形态约束', () => {
     expect(CSS).not.toMatch(/@keyframes[\s\S]*?translate\(-50%/)
   })
 
-  it('EASE_STANDARD 与 index.css 的 --ease-standard 逐字节相同（2026-09-15 打磨 G1）', () => {
-    expect(cssToken('ease-standard')).toBe(EASE_STANDARD)
-  })
-
   it('EASE_POP 与 index.css 的 --ease-pop 逐字节相同', () => {
     // WAAPI 只认字符串缓动，JS 侧只能自己带一份；带了就必须钉住
     expect(cssToken('ease-pop')).toBe(EASE_POP)
@@ -102,6 +99,13 @@ describe('关键帧的形态约束', () => {
     expect(y1).toBeGreaterThan(1)
     expect(y1).toBeLessThanOrEqual(1.5)
     // y2 = 1：收尾不再抖第二下
+    expect(y2).toBe(1)
+  })
+
+  it('指示物的滑动曲线：--ease-snap 与 EASE_SNAP 逐字节相同，不过冲（y1、y2 都 ≤ 1）（Segmented / Tabs 实际用它：见 keyboardPrimitives.test 渲染后的指示元素 class）', () => {
+    expect(cssToken('ease-snap')).toBe(EASE_SNAP)
+    const [, y1, , y2] = EASE_SNAP.match(/cubic-bezier\(([^)]+)\)/)![1].split(',').map(Number)
+    expect(y1).toBeLessThanOrEqual(1)
     expect(y2).toBe(1)
   })
 
@@ -231,5 +235,13 @@ describe('usePresence', () => {
       await new Promise((r) => setTimeout(r, 140))
     })
     expect(box()?.getAttribute('data-state')).toBe('open')
+  })
+})
+
+describe('drawerMotion：退场保活期间 inert', () => {
+  it('closed 时 inert + aria-hidden，open 时都没有', () => {
+    const o = { overlay: false, width: 300, side: 'left' as const }
+    expect(drawerMotion({ ...o, state: 'closed' })).toMatchObject({ inert: true, 'aria-hidden': true })
+    expect(drawerMotion({ ...o, state: 'open' })).toMatchObject({ inert: false, 'aria-hidden': undefined })
   })
 })

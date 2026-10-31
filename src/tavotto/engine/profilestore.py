@@ -162,10 +162,8 @@ def _num(v: Any) -> float | None:
 def _secondary_font_pt(spec: dict, base: float) -> float:
     """刻度与图例那一档：**规范允许的最小一档**，且不高于正文 `base`。
 
-    「允许」按规范自己的两条下限算：`absolute_min_font_size_pt` 那条边**不含等号**
-    （`eff <= floor` 算违规，ADR 0006 / 0029），`min_effective_font_size_pt` 含等号。
-    所以默认规范（8 / 8）下是 8.5 而不是 8——写成 8 的话，套完默认样式刻度与
-    图例当场红（`font-below-absolute-floor`）。两个键缺席时退到
+    「允许」按规范自己的两条下限算，两条都含等号（`eff < floor` 才算违规，
+    ADR 0029 修订 2026-10-26），所以默认规范（8 / 8）下是 8。两个键缺席时退到
     `profiles.FALLBACK_MIN_FONT_SIZE_PT`（与求值器同一个兜底）。
 
     正文比这一档还小（规范自己的正文就贴着下限）时取正文：层级是「不高于
@@ -177,8 +175,6 @@ def _secondary_font_pt(spec: dict, base: float) -> float:
     floor = fallback if floor is None else floor
     strict = fallback if strict is None else strict
     step = math.ceil(max(floor, strict) / _FONT_GRID_PT - 1e-9) * _FONT_GRID_PT
-    if step <= floor:
-        step += _FONT_GRID_PT
     return min(step, base)
 
 

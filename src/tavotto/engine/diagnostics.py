@@ -20,6 +20,7 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import hashlib
 import io
 import json
@@ -28,6 +29,7 @@ import os
 import platform
 import re
 import sys
+import threading
 import time
 import traceback
 import zipfile
@@ -46,7 +48,7 @@ from . import (
     telemetry,
     updater,
 )
-from .diagnostictext import _digest, redact_text as _redact_text
+from .diagnostictext import _digest, _redact_text, redact_text  # noqa: F401 - public compatibility
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30  # 报告里单列的最近错误条数
@@ -63,6 +65,9 @@ WORKER_LOG_SCAN_LINES = 400
 #: 读文件时的字节上限（一份 worker.log 可能被脚本刷到几十 MB）。`_scan_start` 会从这一截
 #: 里回溯到最近一个崩溃头，所以它要远大于一段完整的崩溃栈。
 WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
+# 敏感判据要扫「这一代」的全部字节（提示行可能在诊断窗口之前），但必须有界：超出这个预算还没扫完
+# 就按敏感处理（fail closed）。比诊断窗口大 4 倍：正常运行的一代远小于它
+WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -73,8 +78,19 @@ WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 #: 当时的解释器来源、体检过的系统候选表、修复目标可用性；2026-09-28 Windows 实测诊断包说不清缺依赖）。
 #: 5 = 新增 `task-diagnostics.json`（T04）：本项目最近几次任务（导出 / 准备 / 脚本试运行）在终局时冻结的白名单
 #: 快照，失败在前；report.json 的形状没变，读不认识的文件的人忽略它即可。
+#: 6 = report.json 的 project 段新增 `recent_runs`（本项目最近几次脚本运行 / 准备的结果分类：成功 / 失败 / 取消计数、
+#: 稳定错误码计数、逐条的 outcome + error_code；2026-10 Windows 实测脚本跑失败多次，recent_errors / worker_logs /
+#: missing_dependencies 全空）；缺依赖现场也开始覆盖试运行与准备两条路（此前只有渲染端点）。
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
-BUNDLE_SCHEMA_VERSION = 5
+#: 8 = 发送包新增 `detail-…` / `optional-…` 条目与 manifest 的 `contains_detail` / `detail_files` / `detail_options` / `truncated`
+#: （ADR 0118 修订 2026-10-13）；导出包的 report.json 与老文件一个字节没动，只有 manifest 多了这几个键。
+#: 9 = 新增 `exec-traces.json`（ADR 0151 PR4）：本项目最近几次任务的执行追踪（层级阶段、耗时、稳定错误码、首个失败与
+#: 归因摘要），出门前经 `exectrace_diag` 的独立白名单投影；report.json 形状没变，读不认识的文件的人忽略它即可。
+#: 10 = report.json 新增顶层 `ai_probe`（AI 候选链探测摘要）与每个 agent 的 `readiness` / `readiness_detail` /
+#: `broken_path`（托管 Codex 安装 PR）；旧读法忽略这些键即可，但换形必升号。
+#: 11 = project.managed_environment_jobs: requested and observed installed package names and
+#: versions, job outcomes and environment generation observations (user-authorized disclosure).
+BUNDLE_SCHEMA_VERSION = 11
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -132,15 +148,26 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
 
 
-def redact_text(text: str) -> str:
-    """文本脱敏的**对外名字**（`engine/deprepair.py` 的安装日志走它）。
+#: 键名以这些结尾的字符串值是**网址**：只留 `scheme://host[:port]`（`_url_fact`）。按出处放行——网址里
+#: 凭据能藏在 userinfo、查询串（`?access_token=`）、片段（`#token=`）与路径段（`/v1/<key>/…`），
+#: 按键名认密钥的脱敏器认不出它们（Codex #923 P2：自定义 AI 接口的 `base_url`）。
+_URL_KEY_SUFFIXES = ("url", "uri", "endpoint")
 
-    刻意不让别的模块各写一份「抹掉主目录名」：那种规则一旦有两份，其中一份
-    迟早漏掉某一条（Windows 的两种分隔符写法就是这么漏过的）。安装日志里
-    pip 特有的那条（index 地址可能带凭据）归调用方，其余统一在 `diagnostictext`，
-    本模块保留兼容入口。
-    """
-    return _redact_text(text)
+
+def _url_fact(value: str) -> str:
+    """网址 → `scheme://host[:port]`；没有 userinfo / 路径 / 查询串 / 片段。解析不出就 `url:<哈希>`。"""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(value.strip())
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        host, port, parts = None, None, None
+    if parts is None or not host or parts.scheme not in ("http", "https", "ws", "wss"):
+        return f"url:{hashlib.sha1(value.encode('utf-8', 'replace')).hexdigest()[:10]}"
+    shown = f"[{host}]" if ":" in host else host
+    return f"{parts.scheme}://{shown}" + (f":{port}" if port else "")
 
 
 def _redact_obj(obj, roots: list[tuple[str, str]] | None = None):
@@ -151,6 +178,8 @@ def _redact_obj(obj, roots: list[tuple[str, str]] | None = None):
             key = str(k).lower()
             if any(s in key for s in _SECRET_KEYS) or key in _PSEUDONYM_KEYS:
                 out[k] = "***" if v else v
+            elif key.endswith(_URL_KEY_SUFFIXES) and isinstance(v, str) and v:
+                out[k] = _url_fact(v)
             elif key in _USER_INVENTORY_KEYS:
                 # 「用户还有哪些项目」是一份**目录清单**：每条都带项目名与路径，
                 # 而排障一次都用不到它——要看的是**当前**这个项目（report.json
@@ -330,6 +359,15 @@ def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict
             for r in (records if isinstance(records, list) else [])
             if isinstance(r, dict)
         ]
+    if "managed_environment_jobs" in out:
+        from . import envdiag
+
+        rows = out.get("managed_environment_jobs")
+        out["managed_environment_jobs"] = [
+            envdiag._project(row)
+            for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict)
+        ][:16]
     return out
 
 
@@ -845,7 +883,7 @@ _KNOWN_SITE_PACKAGES = frozenset(
     {
         "matplotlib", "mpl_toolkits", "numpy", "pandas", "scipy", "seaborn", "PIL",
         "contourpy", "cycler", "fontTools", "kiwisolver", "packaging", "pyparsing", "dateutil",
-        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline",
+        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline", "lxml",
     }
 )  # fmt: skip
 #: 引擎目录里真实存在的文件名（一次性读，进程内不会变）。
@@ -1010,6 +1048,19 @@ def _closer_for_export(line: str) -> str:
 def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
     """worker.log 尾巴 → (可进诊断包的证据块, 略去的行数)。
 
+    只是 `_scan_evidence` 的前两项；第三项（被略去的行里的结构线索）只给 `worker_log_tails`。
+    """
+    blocks, dropped, _orphans = _scan_evidence(tail)
+    return blocks, dropped
+
+
+def _scan_evidence(tail: list[str]) -> tuple[list[list[str]], int, list[str]]:
+    """`evidence_blocks` 的本体，多交一份 `orphans`：**块外**被略去的行里与结构有关的原行
+    （帧行、不缩进的行），给 `_structure_summaries` 提取「异常类型 / 模块 / 帧分类」用。
+
+    orphans 是**原行**，不会进包：它只经 `_structure_summaries` 的闭集白名单变成摘要。
+    块内的源码行（缩进的非帧行）与帧行之外的缩进行不收——那是用户源码。
+
     只认上面说的两种结构块；留下的行里绝对路径缩成 `…/site-packages/pkg/mod.py` 或
     `…/文件名`。块外的一切（脚本自己 print 的、matplotlib 的噪音、引擎的标记行）
     都略去只计数。按块交出去是为了让调用方**按块截尾**：一个块被拦腰截断之后
@@ -1017,6 +1068,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
     """
     blocks: list[list[str]] = []
     dropped = 0
+    orphans: list[str] = []
     i = 0
     n = len(tail)
     #: 上一个非空行是不是刚收尾的 traceback 块——链接语只在这时才算数
@@ -1028,6 +1080,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             continue
         if _TB_HEADER.match(ln):
             block = [ln]
+            raw_block: list[str] = []  # 凑不齐时交给结构摘要的原行（帧行 / 收尾行）
             frames = 0
             i += 1
             closed = False
@@ -1040,6 +1093,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 if cur[:1].isspace():
                     if _TB_FRAME.match(cur):
                         block.append(_frame_for_export(cur))
+                        raw_block.append(cur)
                         frames += 1
                     else:
                         dropped += 1
@@ -1047,12 +1101,14 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                     continue
                 if _TB_CLOSER.match(cur):
                     block.append(_closer_for_export(cur))  # 收尾的异常行
+                    raw_block.append(cur)
                     i += 1
                     closed = True
                 break
             if not (closed and frames):
                 # 没凑齐「头 + 帧 + 收尾」的不是 traceback，是长得像的用户输出
                 dropped += len(block)
+                orphans.extend(raw_block)
                 just_closed_tb = False
                 continue
             # 链式异常：上一块以链接语结尾时，这一块并进去（它们本来就是一段）
@@ -1060,6 +1116,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 blocks[-1].extend(block)
             else:
                 blocks.append(block)
+            orphans.append(_ORPHAN_BOUNDARY)  # 完整块是栈的边界：块前的无头帧不跨块累积
             just_closed_tb = True
             continue
         if _FH_HEADER.match(ln):
@@ -1090,6 +1147,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 just_closed_tb = False
                 continue
             blocks.append(block)
+            orphans.append(_ORPHAN_BOUNDARY)
             just_closed_tb = False
             continue
         if just_closed_tb and _TB_CHAIN.match(ln):
@@ -1099,13 +1157,128 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             i += 1
             continue
         dropped += 1
+        if _TB_FRAME.match(ln) or not ln[:1].isspace():
+            orphans.append(ln)
         just_closed_tb = False
         i += 1
     # 以链接语收尾却没等到下一段 traceback（尾巴正好截在中间）：链接语本身不是证据
     if blocks and _TB_CHAIN.match(blocks[-1][-1]):
         blocks[-1].pop()
         dropped += 1
-    return blocks, dropped
+    return blocks, dropped, orphans
+
+
+#: `_scan_evidence` 在 orphan 流里为每个被接受的完整块放的边界标记（带 NUL；日志里伪造它的最坏结果只是多切一段栈）。
+_ORPHAN_BOUNDARY = "\x00block-boundary"
+
+#: 结构摘要行的前缀——明确标出「这是 Tavotto 从被略去的行里提取的结构，不是日志原文」。
+STRUCTURE_PREFIX = "[structure] "
+#: 敏感运行里 worker 把脚本输出改道给排空器，排空器往 worker.log 写的就是这句。**与
+#: `worker._PRIVATE_OUTPUT_NOTICE.strip()` 同源对**（worker 只在子进程里，父进程不能 import，
+#: 靠 `tests/test_diagnostics_worker_evidence.py` 钉住两边相等）。日志里出现它 = 这一代是敏感运行。
+_SENSITIVE_NOTICE = "[sensitive run: script output omitted]"
+#: 一次最多留几行摘要（取最后几条——最新的失败）。
+STRUCTURE_MAX_SUMMARIES = 3
+#: 自由行里的「异常行」：整行只能是 `[限定前缀.]类型名[: 文本]`，类型名（最后一段）必须是 builtins
+#: 里的异常类——用户自定义的异常名可能含业务词，一个字不出。Warning 家族不收（那是警告行不是失败）。
+_STRUCT_CLOSER = re.compile(r"^(?:[A-Za-z_][\w]*\.)*(?P<name>[A-Za-z_]\w*)(?::\s*(?P<msg>.*))?$")
+_STRUCT_OMITTED = "omitted-exception"  # 类型名被白名单略去的收尾行：只出这个固定占位
+_STRUCT_MODULE_ERRORS = frozenset({"ModuleNotFoundError", "ImportError"})
+_STRUCT_NO_MODULE = re.compile(
+    r"^No module named '(?P<name>[A-Za-z_][\w.]*)'(?:; '[A-Za-z_][\w.]*' is not a package)?$"
+)
+
+
+def _is_trusted_package(top: str) -> bool:
+    return top in _KNOWN_SITE_PACKAGES or top in depresolve.CURATED or top in depresolve.SAME_NAME
+
+
+def _frame_class(path: str) -> str:
+    """帧行里的文件名 → 只出分类：`user` / `engine`（Tavotto 引擎）/ `runtime`（标准库、冻结模块）/
+    `site:<已知包>` / `site:other`。**路径、文件名一个字都不出**；分类只可能把别的归错，不会多露。"""
+    if path.startswith("<frozen"):
+        return "runtime"
+    parts = [seg for seg in re.split(r"[\\/]+", path) if seg]
+    lowered = [seg.lower() for seg in parts]
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        rest = parts[idx + 1 :]
+        if rest:
+            top = rest[0].split(".", 1)[0] if len(rest) == 1 else rest[0]
+            return f"site:{top}" if _is_trusted_package(top) else "site:other"
+        return "site:other"
+    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
+        return "engine"
+    for i, seg in enumerate(lowered[:-1]):
+        nxt = parts[i + 1].split(".", 1)[0]
+        if re.fullmatch(r"python3(?:\.\d+)?t?", seg) or (seg == "lib" and nxt in _STDLIB_MODULES):
+            return "runtime"
+    return "user"
+
+
+def _frame_breakdown(classes: list[str]) -> str:
+    order = {"user": 0, "engine": 1, "runtime": 2}
+    counts: dict[str, int] = {}
+    for c in classes:
+        counts[c] = counts.get(c, 0) + 1
+    items = sorted(counts.items(), key=lambda kv: (order.get(kv[0], 3), kv[0]))
+    return ", ".join(f"{k}={v}" for k, v in items)
+
+
+def _structure_summary(
+    exc_name: str | None, message: str | None, frames: list[str], *, sensitive: bool
+) -> str:
+    """一条摘要。每一段要么是闭集成员（builtins 异常名、已知包名、帧分类）、要么是哈希、要么是个数。"""
+    parts = [exc_name or "no-exception-line"]
+    if sensitive:
+        # 敏感运行：只出异常类型名——模块名可能来自敏感参数，帧分类也一并收起
+        return f"{STRUCTURE_PREFIX}{parts[0]} (sensitive run: details withheld)"
+    if exc_name in _STRUCT_MODULE_ERRORS and message is not None:
+        m = _STRUCT_NO_MODULE.match(message.strip())
+        if m:
+            parts.append("module=" + _import_name_for_export(m.group("name")))
+    if frames:
+        parts.append(f"frames={len(frames)} ({_frame_breakdown(frames)})")
+    return STRUCTURE_PREFIX + " ".join(parts)
+
+
+def _structure_summaries(orphans: list[str], *, sensitive: bool) -> list[str]:
+    """被整行略去的行 → 结构摘要（白名单提取，原行不出）。
+
+    按出现顺序走：帧行累计成「待配帧」，遇到异常行就与待配帧合成一条；末尾剩下的帧单独一条
+    （`no-exception-line`）。异常类型只认 builtins 的（最后一段）；`No module named 'X'` 的 X 经
+    `_import_name_for_export`（标准库 / 已知包原样、其余 `mod:<哈希>`）。其余一律不出。"""
+    out: list[str] = []
+    pending: list[str] = []
+    for raw in orphans:
+        if raw == _ORPHAN_BOUNDARY:
+            # 一个被 `blocks` 认走的完整块在这里：它前面的无头帧自成一段，不挂到块后的异常上
+            if pending:
+                out.append(_structure_summary(None, None, pending, sensitive=sensitive))
+            pending = []
+            continue
+        fm = _TB_FRAME.match(raw)
+        if fm:
+            pending.append(_frame_class(fm.group("path")))
+            continue
+        m = _STRUCT_CLOSER.match(raw.strip())
+        if not m:
+            continue
+        name = m.group("name")
+        if name not in _BUILTIN_EXCEPTIONS or issubclass(getattr(builtins, name), Warning):
+            # 收尾形状的行不论类型是否被略去都结束当前这段栈：否则它的帧会留在 pending 里，
+            # 记到后面另一段栈的 builtins 异常头上（评审 #868 P2）。名字不出，帧摘要仍留
+            if pending:
+                out.append(_structure_summary(_STRUCT_OMITTED, None, pending, sensitive=sensitive))
+            pending = []
+            continue
+        out.append(_structure_summary(name, m.group("msg"), pending, sensitive=sensitive))
+        pending = []
+    if pending:
+        out.append(_structure_summary(None, None, pending, sensitive=sensitive))
+    # 相邻重复的合并，取最后几条
+    dedup = [s for i, s in enumerate(out) if i == 0 or s != out[i - 1]]
+    return dedup[-STRUCTURE_MAX_SUMMARIES:]
 
 
 def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
@@ -1127,23 +1300,15 @@ def last_blocks_within(blocks: list[list[str]], budget: int) -> list[list[str]]:
     return out
 
 
-def worker_log_tails(
-    root: Path | None = None,
-    *,
-    project_dir: str | Path | None,
-    files: int = WORKER_LOG_FILES,
-    lines: int = WORKER_LOG_TAIL_LINES,
-) -> list[dict]:
-    """**当前项目**最近几份 `worker.log` 尾巴里的证据行（未脱敏——调用方经 `_redact_obj`）。
+def owned_worker_logs(
+    project_dir: str | Path | None, root: Path | None = None
+) -> list[tuple[float, Path]]:
+    """**当前项目**名下的 `worker.log`，最近的在前：`[(mtime, 路径), …]`。
 
-    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`
-    （一次性重放是 `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于
-    `pool.cache_digest(project_dir)` 的那些：诊断包是「当前打开的这个项目」的，
-    别的项目的脚本名与报错一个字都不该跟着出门（评审 #443 P1）。**没打开项目就
-    一份都不带**——没有项目就没有「属于谁」这个判据，宁可少给。
-    `empty` 说的是这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃
-    的形状），`omitted` 是按 `evidence_lines` 略去的行数。
-    """
+    目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`（一次性重放是
+    `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于 `pool.cache_digest(project_dir)` 的那些。
+    **没打开项目就一份都没有**。`worker_log_tails`（出门版）与发送包的 `detail-*-log.txt`（原文尾巴）共用
+    这一个「谁属于当前项目」的判据（评审 #443 P1：别的项目的脚本名与报错不该跟着出门）。"""
     if not project_dir:
         return []
     digest = pool.cache_digest(project_dir)
@@ -1169,20 +1334,47 @@ def worker_log_tails(
         except OSError:
             continue
     stamped.sort(reverse=True)
+    return stamped
+
+
+def worker_log_tails(
+    root: Path | None = None,
+    *,
+    project_dir: str | Path | None,
+    files: int = WORKER_LOG_FILES,
+    lines: int = WORKER_LOG_TAIL_LINES,
+) -> list[dict]:
+    """**当前项目**最近几份 `worker.log` 尾巴里的证据行（未脱敏——调用方经 `_redact_obj`）。
+
+    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`
+    （一次性重放是 `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于
+    `pool.cache_digest(project_dir)` 的那些：诊断包是「当前打开的这个项目」的，
+    别的项目的脚本名与报错一个字都不该跟着出门（评审 #443 P1）。**没打开项目就
+    一份都不带**——没有项目就没有「属于谁」这个判据，宁可少给。
+    `empty` 说的是这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃
+    的形状），`omitted` 是按 `evidence_lines` 略去的行数。
+    """
+    stamped = owned_worker_logs(project_dir, root)
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
+            # 起点与大小各**只读一次**：tail 扫描与敏感判定共用同一份快照。worker 在导出期间
+            # 重生时，第二次读到的是下一代的偏移，上一代的敏感判定会错位（评审 #868 第三轮）
+            gen_start = pool.log_generation_start(p)
+            gen_end = p.stat().st_size
             # 只看**这一代**：worker.log 是跨代追加的，`pool.start_log_generation` 在 spawn
             # 前把起点落在旁边；不带这个边界会把上一代的 traceback 当成这一代的
-            text = _read_tail_bytes(
-                p, WORKER_LOG_SCAN_BYTES, start=pool.log_generation_start(p)
-            ).decode("utf-8", errors="replace")
+            text = _read_tail_bytes(p, WORKER_LOG_SCAN_BYTES, start=gen_start, end=gen_end).decode(
+                "utf-8", errors="replace"
+            )
         except OSError:
             continue
         all_lines = text.splitlines()
         scanned = all_lines[_scan_start(all_lines) :]
-        blocks, omitted = evidence_blocks(scanned)
+        sensitive = _generation_is_sensitive(p, gen_start, gen_end)
+        blocks, omitted, orphans = _scan_evidence(scanned)
         kept = last_blocks_within(blocks, lines)
+        summaries = _structure_summaries(orphans, sensitive=sensitive)
         out.append(
             {
                 # README 承诺文件名一律换成不可逆的短哈希：目录名里带着脚本名，只出哈希。
@@ -1193,23 +1385,62 @@ def worker_log_tails(
                 "modified": _iso(mtime),
                 "empty": not any(t.strip() for t in scanned),
                 "omitted": omitted,
-                "tail": "\n".join(ln for block in kept for ln in block),
+                "tail": "\n".join([ln for block in kept for ln in block] + summaries),
             }
         )
     return out
 
 
-def _read_tail_bytes(path: Path, limit: int, *, start: int = 0) -> bytes:
+def _generation_is_sensitive(path: Path, start: int, end: int | None = None) -> bool:
+    """这一代 worker.log 里**任何位置**出现排空器的提示行 = 敏感运行。
+
+    敏感与否只在 worker 子进程里知道，父进程唯一的载体就是这句提示。它可能出现在诊断扫描窗口
+    （最后 400 行 / 4 MB）之前——一次早期 stdout 写入后大量 stderr——所以不能从窗口里判，
+    要流式扫这一代的字节（评审 #868 P2）。
+
+    **有界**（第三轮）：只读 `[start, end)`，`end` 是调用方快照的文件大小（缺省取现在的大小），
+    日志在扫描期间继续增长也不会多读；总预算 `WORKER_LOG_SENSITIVE_SCAN_BYTES`，预算内没找到
+    提示行、又还有没扫的区间 → 按敏感处理。读不了同样按敏感处理：宁可少出。"""
+    needle = _SENSITIVE_NOTICE.encode("utf-8")
+    try:
+        with path.open("rb") as fh:
+            if end is None:
+                fh.seek(0, os.SEEK_END)
+                end = fh.tell()
+            pos = max(start, 0)
+            if end - pos > WORKER_LOG_SENSITIVE_SCAN_BYTES:
+                budget_end = pos + WORKER_LOG_SENSITIVE_SCAN_BYTES
+            else:
+                budget_end = end
+            fh.seek(pos)
+            carry = b""
+            while pos < budget_end:
+                chunk = fh.read(min(1 << 20, budget_end - pos))
+                if not chunk:
+                    break
+                pos += len(chunk)
+                buf = carry + chunk
+                if needle in buf:
+                    return True
+                carry = buf[-(len(needle) - 1) :]
+            return budget_end < end
+    except OSError:
+        return True
+
+
+def _read_tail_bytes(path: Path, limit: int, *, start: int = 0, end: int | None = None) -> bytes:
     """`start` 之后、最多最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审
     #443 第十一轮）：一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]`
     会先把整个文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。`start` 是这一代的
-    起点（第十四轮）：之前的字节属于上一代，一个都不读。"""
+    起点（第十四轮）：之前的字节属于上一代，一个都不读。`end` 是调用方快照的大小：
+    之后追加的字节不读（缺省取现在的大小）。"""
     with path.open("rb") as fh:
-        fh.seek(0, os.SEEK_END)
-        size = fh.tell()
-        begin = max(start, size - limit, 0)
+        if end is None:
+            fh.seek(0, os.SEEK_END)
+            end = fh.tell()
+        begin = max(start, end - limit, 0)
         fh.seek(begin)
-        return fh.read(max(0, size - begin))
+        return fh.read(max(0, end - begin))
 
 
 def _scan_start(all_lines: list[str]) -> int:
@@ -1262,6 +1493,32 @@ def _runtime_section() -> dict:
     return section
 
 
+#: 报告里 AI 能力的刷新上限（秒）。缓存里的结论可能是装/登录之前的（用户刚装完 CLI 就来反馈很常见）：
+#: 生成报告时在后台线程里真刷新一次；到点没回就用缓存兜底并在 `ai_probe` 里如实写 `stale`/`timeout`，
+#: 刷新线程继续跑完并写回缓存。比 `app.DIAG_AI_PROBE_BUDGET_S`（30 s，诊断页自己的等待）短：包是在用户点
+#: 「导出」时同步生成的，不能让它比诊断页还慢。
+AI_REFRESH_BUDGET_S = 20.0
+
+
+def _fresh_ai_capabilities() -> tuple[dict, str]:
+    """→ (能力表, 来源)：`refreshed`（刚真探测过）| `stale`（超时，用的缓存）| `timeout`（超时且缓存为空）。"""
+    box: dict = {}
+
+    def work() -> None:
+        try:
+            box["caps"] = ai_bridge.capabilities(refresh=True)
+        except Exception as exc:  # noqa: BLE001 — 探测失败不许拖垮诊断包
+            box["error"] = type(exc).__name__
+
+    t = threading.Thread(target=work, daemon=True, name="mm-diag-ai-refresh")
+    t.start()
+    t.join(AI_REFRESH_BUDGET_S)
+    if "caps" in box:
+        return box["caps"], "refreshed"
+    cached = ai_bridge.cached_capabilities()
+    return cached, ("stale" if cached else "timeout")
+
+
 def build_report(project: dict | None = None, port: int | None = None) -> dict:
     """结构化诊断报告（已脱敏）。project 由 app 层传入，避免这里反向依赖。"""
     from .. import __version__
@@ -1280,7 +1537,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
         else None
     )
     roots = project_roots(project)
-    caps = ai_bridge.capabilities()
+    caps, ai_probe = _fresh_ai_capabilities()
     lines = _export_log_lines(roots)
     errors = recent_errors(lines)
 
@@ -1339,15 +1596,21 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
                 "path": entry["executable_path"],
                 "source": entry["detection_source"],
                 "version": entry["version"],
+                # 「装了但用不了 / 没登录」的分诊（TVD 反馈里常缺）：就绪状态是闭集三值，detail 是适配器写死的
+                # 稳定诊断串（不含账号信息，见 `ReadinessResult`）；broken_path 是第一个起不来的候选路径
+                "readiness": (entry.get("diagnostics") or {}).get("readiness"),
+                "readiness_detail": (entry.get("diagnostics") or {}).get("readiness_detail"),
+                "broken_path": (entry.get("diagnostics") or {}).get("broken_path"),
             }
             for entry in caps.get("agents", [])
         },
+        "ai_probe": ai_probe,
         "ai_endpoints": [
             {
                 "id": e["id"],
                 "label": e["label"],
                 "agent": e["agent"],
-                "base_url": e["base_url"],
+                "base_url": _url_fact(e["base_url"]) if e["base_url"] else "",
                 "has_key": e["has_key"],
             }
             for e in caps.get("endpoints", [])
@@ -1395,12 +1658,24 @@ def render_text(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+@dataclasses.dataclass
+class DetailPayload:
+    """发送包的 `detail-…` / `optional-…` 部分（`engine/diagdetail.py` 组装）。**导出路径永远不带它。**"""
+
+    files: list[tuple[str, bytes]]  # (扁平条目名 `detail-…` / `optional-…`, 字节)
+    options: dict[str, bool]
+    truncated: list[dict]
+
+
 def build_bundle(
     project: dict | None = None,
     port: int | None = None,
     frontend: dict | None = None,
     frontend_dropped: bool = False,
     task_snapshots: dict | None = None,
+    detail: DetailPayload | None = None,
+    report: dict | None = None,
+    exec_traces: dict | None = None,
 ) -> bytes:
     """诊断包 zip 的字节流（全部内容已脱敏）。
 
@@ -1408,7 +1683,7 @@ def build_bundle(
     （`{frontend_state, interaction_trace}`，见 ADR 0016）。**它是可选的**：
     老的 GET 端点不带，出的包就是 schema 2 但只有老三件 + manifest。
     """
-    report = build_report(project, port)
+    report = report if report is not None else build_report(project, port)
     roots = project_roots(project)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -1439,6 +1714,17 @@ def build_bundle(
                 "task-diagnostics.json", json.dumps(task_snapshots, ensure_ascii=False, indent=1)
             )
 
+        # ---- 执行追踪（ADR 0151 PR4）：调用方给的已是 `exectrace_diag.bundle_section` 的出门投影，原样放进去 ----
+        if exec_traces is not None and exec_traces.get("traces"):
+            z.writestr("exec-traces.json", json.dumps(exec_traces, ensure_ascii=False, indent=1))
+
+        # ---- 发送包独有的 detail-… / optional-… 条目（diagdetail 组装；导出路径 detail=None，一个都不会有）----
+        detail_files: list[dict] = []
+        if detail is not None:
+            for name, blob in sorted(detail.files):
+                z.writestr(name, blob)
+                detail_files.append({"path": name, "bytes": len(blob)})
+
         z.writestr(
             "manifest.json",
             json.dumps(
@@ -1455,6 +1741,14 @@ def build_bundle(
                     "trace_truncated": truncated,
                     "frontend_snapshot_schema": FRONTEND_SNAPSHOT_SCHEMA,
                     "trace_schema": TRACE_SCHEMA,
+                    "contains_detail": detail is not None,
+                    "detail_files": detail_files,
+                    "detail_options": dict(
+                        detail.options
+                        if detail is not None
+                        else {"source": False, "crash_reports": False, "corrupt_sessions": False}
+                    ),
+                    "truncated": list(detail.truncated) if detail is not None else [],
                 },
                 ensure_ascii=False,
                 indent=1,
@@ -1467,6 +1761,8 @@ def build_bundle(
                 bool(trace),
                 list(report.get("project") or {}),
                 has_tasks=task_snapshots is not None,
+                has_exec_traces=bool(exec_traces and exec_traces.get("traces")),
+                detail=detail,
             ),
         )
     return buf.getvalue()
@@ -1500,6 +1796,8 @@ def _readme(
     project_keys: list[str] | None = None,
     *,
     has_tasks: bool = False,
+    has_exec_traces: bool = False,
+    detail: DetailPayload | None = None,
 ) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
 
@@ -1531,7 +1829,17 @@ def _readme(
             "configuration choices, output dimensions/PPI, revision hashes and opaque local "
             "attempt/configuration references; no file names, paths, argument values or error text)\n"
         )
-    return (
+    if has_exec_traces:
+        extra_zh += (
+            "- exec-traces.json：最近几次任务的执行追踪（阶段的父子关系、耗时、状态、稳定错误码、首个失败与归因摘要、"
+            "可验证的 Token 与估算费用；记录不完整会注明；没有提示词、脚本、文件名、路径、工具参数、模型输出）\n"
+        )
+        extra_en += (
+            "- exec-traces.json: execution traces of recent tasks (step hierarchy, timings, statuses, stable error "
+            "codes, first failure and an attribution summary, verifiable tokens and estimated cost; incomplete records "
+            "are marked; no prompts, scripts, file names, paths, tool arguments or model output)\n"
+        )
+    text = (
         "Tavotto 诊断包 / Tavotto diagnostic package\n"
         "\n"
         "包含 / This package contains:\n"
@@ -1542,10 +1850,13 @@ def _readme(
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
         "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
         "  包名）与异常类型名；崩溃栈只留故障名与帧行、扩展模块只留计数；报错文字、脚本自己\n"
-        "  打印的内容与源码行已略去）\n"
+        "  打印的内容与源码行已略去；不成块的报错行另给一行 [structure] 摘要：只含内置异常类型名、\n"
+        "  缺的模块名（公开常见包原样、其余哈希）与帧数分类，不含路径、文件名和文字）\n"
         "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
         "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
+        "  （report.json 的 project.managed_environment_jobs 段：受管环境安装和重建请求的 Python 包名、\n"
+        "  实际观察到的已安装包名和版本、结果及环境代；不含路径、包源网址、凭据或 pip 原始输出）\n"
         + extra_zh
         + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
@@ -1559,12 +1870,17 @@ def _readme(
         "  function names; files of known third-party libraries also carry the package name)\n"
         "  and the exception type; crash stacks keep the fault name, frames and the\n"
         "  extension-module count; error messages, anything your script printed, and source\n"
-        "  lines are left out)\n"
+        "  lines are left out; error lines that are not a complete block get one [structure]\n"
+        "  summary line: built-in exception type, missing module (hashed unless a well-known\n"
+        "  package) and frame counts by category — never paths, file names or message text)\n"
         "  (report.json, project.missing_dependencies: the last few missing-dependency failures —\n"
         "  the missing package (well-known public packages by name, anything else hashed), the\n"
         "  hashed script name, which kind of Python was rendering, the version and verdict of\n"
         "  every other Python that was checked, and whether each one-click fix was available;\n"
         "  paths are hashed segment by segment)\n"
+        "  (report.json, project.managed_environment_jobs: requested Python package names, observed installed\n"
+        "  package names and versions, outcomes and environment generations; no paths, index URLs,\n"
+        "  credentials or raw pip output)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"
@@ -1602,4 +1918,69 @@ def _readme(
         "whether two states are the same, and cannot be reversed.\n"
         "\n"
         "发出去之前仍建议自己扫一眼。/ You may still want to skim it before sharing.\n"
+    )
+    if detail is None:
+        return text
+    return text[: text.index("不包含 / It does NOT intentionally contain:")] + _readme_detail(
+        detail
+    )
+
+
+def _readme_detail(detail: DetailPayload) -> str:
+    """发送包的 README 后半：取代「不包含」那一节（那一节对发送包不成立）。"""
+    opts = detail.options
+    on_zh = (
+        "、".join(
+            n
+            for k, n in (
+                ("source", "脚本源码"),
+                ("crash_reports", "系统崩溃报告"),
+                ("corrupt_sessions", "会话损坏副本内容"),
+            )
+            if opts.get(k)
+        )
+        or "（无）"
+    )
+    on_en = (
+        ", ".join(
+            n
+            for k, n in (
+                ("source", "script source"),
+                ("crash_reports", "system crash reports"),
+                ("corrupt_sessions", "corrupted-session contents"),
+            )
+            if opts.get(k)
+        )
+        or "(none)"
+    )
+    return (
+        '这是「发送问题反馈」的包 / This package was built for "Send problem report":\n'
+        "\n"
+        "为了帮维护者详细定位问题，`detail-…` / `optional-…` 条目里放了更多内容：报错原文与完整调用栈、应用 / sidecar / 渲染进程日志的末尾、\n"
+        "会话状态文件、最近的后端请求记录（只有方法、路由规则、状态码、耗时、错误码）、样式改动、渲染环境、运行记录、\n"
+        "桌面壳与安装信息、存储环境、前端 console 报错、显示环境、网络概况。\n"
+        "项目文件夹名、文件名、图里的文字不再被抹掉；家目录统一写成 ~，系统用户名写成 <user>，\n"
+        "凭证 / cookie / API key / token / 代理账号密码一律去掉。\n"
+        f"你在确认框里勾选了的额外内容 / Extras you ticked: {on_zh}。\n"
+        "「脚本源码」包括 Python / R / MATLAB 脚本，以及「生成可编辑版本」任务留在本机缓存里、没被采用的 AI 候选脚本。\n"
+        "没有勾选「脚本源码」时，包里没有任何脚本源码（日志里 traceback 的源码行也已去掉）。\n"
+        "\n"
+        "This package carries more in its detail-… / optional-… entries so maintainers can diagnose in depth: error messages with full stack\n"
+        "traces, tails of the app / sidecar / render-process logs, session state files, recent backend requests\n"
+        "(method, route rule, status, duration, error code only), style edits, the render environment, run records,\n"
+        "desktop-shell and install facts, storage environment, front-end console errors, display environment and\n"
+        "network facts. Project folder names, file names and text inside figures are kept; your home directory is\n"
+        "written as ~, the system user name as <user>, and credentials / cookies / API keys / tokens / proxy\n"
+        "passwords are removed. Extras you ticked: "
+        + on_en
+        + '. "Script source" covers Python, R and MATLAB scripts and the unadopted AI candidate scripts that\n'
+        '"generate editable version" tasks left in the local cache. Without "script source" ticked, the package contains\n'
+        "no script source at all (source lines inside log tracebacks are removed too).\n"
+        "\n"
+        "manifest.json 的 detail_files 列出了每个 detail-… / optional-… 条目与大小；truncated 记录因体积上限被截短的类别。\n"
+        "manifest.json lists every detail-… / optional-… entry with its size (detail_files) and any category cut short to fit the\n"
+        "size limit (truncated).\n"
+        "\n"
+        "脱敏是尽力而为，不保证绝对；发送前可以保存并查看这份包。\n"
+        "Redaction is best effort, not absolute; you can save and inspect this package before sending.\n"
     )

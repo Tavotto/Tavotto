@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_figure_recognition.py`、`tests/test_axes_traversal_authority.py`、`tests/test_engine_family_modules.py`、`test_parasite_axes.py`、`test_artist_families.py`、`test_worker_roundtrip.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 80
+改到: `axestraversal.ordered_axes`、`spinemodel`、`tickmodel`、`colorbarmodel`、`legendmodel`、`_cls_key`、能力表、3D 数据图元 / 箭头 / marker
+主题: axes 遍历、特殊 artist 与 artist family 能力层 → `axes-and-artist-families.md`
+必守要点: `fig.axes` 只许出现在白名单函数里；族模块是叶子；能力按真实 getter 实况判不按类名
+-->
 
 - **「这张图上有哪些 axes」只有 `axestraversal.ordered_axes` 一处**（看护
   `tests/test_axes_traversal_authority.py` 的源码级门禁）。它住在只依赖标准库 +
@@ -35,6 +44,35 @@
   axis.line、箭头指向坐标增大端，视角旋转/换边自动跟随；matplotlib 升版
   破坏点由 test_axes3d_axis_arrows_roundtrip 看护）。
   盒内数据属性（spines/lim/scale）仍禁用。
+- **3D 轴上的数据图元进元素表（2026-10-18，ADR 0135；用户的「三维连续场云图」曲面 / 底投影 / 色条一样也点不中）**：
+  `Poly3DCollection`（surface / trisurf / bar3d）→ `axes_i.fill_j`、`Path3DCollection` → `scatter_j`、`Line3DCollection` →
+  `linecoll_j`、`QuadContourSet3D` → `collections_j`、`Line3D` → `lines_j`——**与 2D 共用同一段登记**
+  （`_collection_gid_prefix` 唯一出处，序号仍是所属列表下标；2D 的 gid 一个没挪，3D 以前没有这些 gid）。
+  **只放 3D 下真生效且重放一致的字段**：颜色 / 色图 / vmin / vmax / 透明度 / 线宽 / 线型 / 花纹 / marker / 大小（各族
+  按 2D 同一张能力表，`collection_caps()` 实况）。**不放**：Collection / Patch 的 `zorder`（`computed_zorder=True` 时 `Axes3D.draw` 每帧按深度重写，只对这两族，
+  三版读源码核实；`manifest._without_dead_zorder`；脚本关了 `computed_zorder` 才给）——**`Line3D` 的 zorder 是活的、照给**（Codex #1159 P1）、位置 / 数据偏移 / `set_data_3d`、`depthshade`
+  下的逐点颜色与深度 alpha。**不可拖**（`draggable=False`，前端落到 ADR 0100 的 `series` 理由）；面状色图集合代理宿主
+  子图那条（`_is_area_field`）对 3D 不成立。实测坑与对策（三版 matplotlib 一致）：
+  * 3D 集合的 `get_facecolor` / `get_sizes` / `get_linewidths` 读到的是**深度排序后**的上一帧——字段值与 handler getter
+    一律走脚本顺序的那份（`overrides.collection_face_rgba` / `collection_edge_rgba` / `collection_sizes` /
+    `collection_linewidths`，`_sizes3d` / `_linewidths3d` / 未排序的 `_facecolors`）；`pathgeom._drawn_offsets` 用 draw 时的
+    `_offset_zordered`，逐点大小的散点轮廓才对得上号；
+  * `Poly3DCollection` 的面色 / 边色 / alpha **与应用顺序无关**：mplot3d 的 `set_alpha` 烤进 `_facecolor3d`（`None`
+    清不掉）、`set_edgecolor` 按当时的 alpha 合成，热会话逐步累加与冷启动重放因此分叉。改完一律按原始设定 + 此刻 alpha
+    规范化（`overrides._canonical_poly3d_colors`，经 `_set_coll_color` / `_set_alpha_pinned`）：三者设定都回到脚本原样时放回首次触碰前
+    记下的四份数组（`_POLY3D_NATIVE` 快照，撤销逐位回到 mplot3d 留下的状态），否则按原始设定 + 此刻 alpha 重建（口径同 2D
+    `Collection.set_alpha`，alpha 同时落在面与边上）；
+  * `Axes3D.draw` 只给**可见**集合重投影：隐藏的元素几何按此刻视角补投影（`manifest._refresh_hidden_3d_projections`），
+    否则先转视角再隐藏热态 ≠ 冷启动，写回 409；
+  * `linewidth=0` 的集合上虚线被缩放成全 0，SVG / PDF 的 `set_dashes` 抛 ValueError——Collection 的线宽 / 线型 setter 之后
+    `overrides._heal_zero_dashes` 把全 0 的 dash 退成实线（`_us_linestyles` 原样保留，2D 同样受益）；
+  * 超点数预算（160×160 曲面）退回 bbox 且**早退**（不展开每个面）。
+  独立 `ScalarMappable` 色条与共用 Norm 实例的曲面 / 3D contourf 因为登记了而自动是色阶兄弟（`scale_siblings` 没改）：
+  从色条改 cmap 三者一起变、撤销回自定义色图；从曲面改 cmap 只改曲面（兄弟窄 override 压过广播，同 2D）。
+  3D 的容器（误差棒 / 茎 / 柱）与 `Patch3D` 暂不做：成员**全部**（含 stem 的 baseline）不当独立曲线登记，如实留在 `unsupported`；
+  2D 的 stem baseline 仍是单独可编辑的普通曲线（Codex #1159 P2）。
+  看护 `tests/test_mplot3d_data_artists.py`（含 `tests/support/mplot3d_probe.py`）与 `tests/test_invariants_engine.py` 的
+  `Inv3D` / `Inv3DP` / `Inv3DS` + `K-3d-*`。存量缺口（共用 Norm 的两个 mappable 各叠窄 `vmin` / `vmax`，2D 同样复现）见 ADR 0135「不做」。
 - **图内箭头（FancyArrowPatch）**：脚本 `add_patch` 的独立箭头 manifest 带
   `arrow_endpoints`（figure 分数、y 向下），可整体拖动 / 拖单个端点
   （override `endpoints_frac`=[ax,ay,bx,by]，setter 经箭头自身 transform 逆变换
@@ -136,6 +174,22 @@
     instrument 时采一次，不是每帧）：画在图上、既没进元素表也不是结构件的那些，
     按类名 + 归属报出来。容器消费掉的成员不算漏。旧前端不认识这个键会原样忽略，
     写回自检只比 gid 集合与几何。
+  * **花纹两项（图案 / 线宽）在柱形与形状上同口径可编辑（2026-10-08，Windows beta 用户的分组柱状图：
+    选中「柱 7」，纹理一栏写着「由脚本生成」）**。`hatch`（预设 + 重复字符的密度档位，`HATCHES`）、
+    `hatch_linewidth` 对 `patch` / `bar` / `bar_series` 三处发字段、注册 setter；系列级的 `ALIAS_GROUPS` 一行点名这两项
+    （广播与单柱叠加时撤销才回得到脚本原样）。**`hatch_linewidth` 按真实 setter 是否存在发，不按版本号**：它是
+    3.10 起的 per-artist 属性（之前只有全局 `rcParams['hatch.linewidth']`）。旧版本上重放新存的 override 是**静默
+    空操作、不报 warning**（warning 会阻断写回，而用户在界面里已经找不到那一行去撤它）。
+    **纹理颜色 `hatchcolor` 是第三项（#874 第二步，2026-10-12；先决的钉住修复见 `override-application-and-replay.md`）**：
+    `patch` / `bar` / `bar_series` 三处发字段、注册 setter（`_PATCH_CAPS` 一行 + `bar_series` 的 `_bprop` 一串 + `ALIAS_GROUPS`
+    点名）。**按真实 setter 判（`hasattr(pt, "set_hatchcolor")`），不按版本号**：只有 matplotlib ≥3.11 发——≤3.10 的花纹色是边色的
+    副产品（每次 `set_edgecolor` 覆盖），独立编辑会被下一次边色 / 不透明度写入冲掉，不发比发一条改了又回去的好；
+    旧版本重放新存的 override 同样是静默空操作。manifest 形状：`{"prop": "hatchcolor", "type": "color", "value": "#rrggbb",
+    "follows_edge": bool}`——`value` 是**画出来的**色号（跟随边框时是边色的实况），`follows_edge` 说它为什么是这个色；
+    写回取 `'#rrggbb'` 或字面量 `'edge'`（前端 `controls/HatchColorField.FOLLOW_EDGE`，严格同源）。`value_original` 走 `_field_values`
+    的口径（hex）。**Collection（`fill_between` / 散点）第一版不做**（它们的 alpha 钉住照旧）。看护 `tests/test_hatchcolor_editing.py`、
+    `tests/test_hatch_mode_restored.py`（撤空后模式回到「未设」）。
+    Collection（`fill_between` / 散点）的 `hatch` 不变，没有线宽项。
   * **颜色字段不把「没有颜色」显示成一个实色（2026-09-19，#427）**：`overrides.to_hex`
     见到 alpha 为 0 的颜色报 `NO_COLOR`（`"none"`）——没设边色的 patch、`'none'`、空心
     marker 都是；半透明照报 RGB（alpha 另有字段）。之前 `mcolors.to_hex` 默认丢 alpha，
@@ -175,6 +229,15 @@
   预览与 manifest 两次成图差 0.1–0.3 mm。`AnchoredOffsetbox.draw` 不开 SVG 组，`manifest._svg_group`
   给它包一层（只多一个 `<g id=gid>`，别的后端 `open_group` 是空操作），前端的乐观预览才找得到它。
   插图 manifest 带 `inset_of`（宿主 gid），前端拖宿主时带着挪过的插图。看护 `tests/test_drag_coverage.py`。
+- **框里的文字可编辑**（2026-10-26 用户反馈：`AnnotationBbox(HPacker([TextArea, TextArea]))` 的柱上标注改不了字）：
+  登记框时顺着 OffsetBox 树（`AnnotationBbox.offsetbox` / 锚定框自身 → `HPacker` / `VPacker` → `TextArea._text`）把每段非空
+  文字登记成 role `text`，gid `<框的 gid>.texts_k`（`manifest._register_offsetbox_texts`）。文字、字号、颜色、字重、字体照常走
+  text handler，TextArea 每次 draw 现量、框随之变大变小；**落位归打包器**：不宣称可拖（拖的是外框），`rotation` / `ha` / `va` /
+  `zorder` 按 `_mm_offsetbox_box` 从字段里拿掉（`_OFFSETBOX_TEXT_FIXED`）；外框隐藏时不输出其中的文字（看不见的字不可点、不进预检）。
+  叶子还收 `DrawingArea` / `AuxTransformBox` 里 `add_artist` 进去的 `Text`（`AnchoredDrawingArea` 一族、比例尺标签同理）。
+  `fig.add_artist(...)` 贴在整张图上的锚定框 / 插框按 `fig.artists_j` 同一套登记（外框可拖、框里文字可编辑）；图级的其他
+  artist 仍不登记。框里的文字带 `drag_host`（外框 gid）：按住它拖起来时前端 `inFigureMoveOf` 改拖外框（方向键同一处），
+  点一下仍是选中这段字。看护 `tests/test_offsetbox_text.py`、`web/src/canvas/dragCoverage.test.tsx`、`e2e/drag-coverage.spec.ts`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 
@@ -192,4 +255,5 @@
 - 纯箭头注释拖动写注释锚点、有字的不出端点
 - 独立形状可拖（`pos_frac`，平移叠在 transform 上、先回基准再量）
 - 画不画只问 `axis_drawn` / `frame_drawn`
-- 面状色图集合同位图代理宿主
+- 面状色图集合同位图代理宿主（3D 轴上的不代理）
+- 3D 数据图元与 2D 同族同 gid 规则、只放真生效的字段、zorder 被深度覆盖不放、面色 / 边色 / alpha 与顺序无关、隐藏的补投影

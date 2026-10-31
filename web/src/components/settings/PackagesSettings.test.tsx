@@ -27,6 +27,7 @@ import {
   cancelPackageJob,
   fetchManagedPackages,
   planPackageJob,
+  rebuildManagedEnvironment,
   runPackageJob,
   type ManagedPackages,
   type PackageJob,
@@ -34,6 +35,7 @@ import {
 import { t } from '@/i18n'
 import { PackagesSettings } from '@/components/settings/PackagesSettings'
 import { currentProjectId } from '@/lib/session'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useUiStore } from '@/store/uiStore'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -144,7 +146,7 @@ const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElem
 const byName = (name: string) =>
   buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').trim() === name)
 const input = () => document.querySelector<HTMLInputElement>(`input[aria-label="${pk('specAria')}"]`)!
-const rows = (table: string) => [...document.querySelectorAll(`table[aria-label="${table}"] tbody tr`)]
+const rows = (list: string) => [...document.querySelectorAll(`[role="list"][aria-label="${list}"] [data-package-row]`)]
 /**
  * 打开一个 ⋯ 菜单并点其中一项（2026-10-07 设计审计 §9.1：卸载、重建都收进 ⋯）。
  * Radix 的菜单开在 pointerdown 上，jsdom 没有 PointerEvent 构造器——同名的 MouseEvent 照样派发。
@@ -188,6 +190,7 @@ beforeEach(() => {
   planMock.mockReset()
   runMock.mockReset()
   cancelMock.mockReset()
+  vi.mocked(rebuildManagedEnvironment).mockReset()
   usePackageStore.setState({
     data: null,
     loading: false,
@@ -198,6 +201,7 @@ beforeEach(() => {
     errorText: '',
   })
   useUiStore.setState({ confirm: null })
+  useDepRepairStore.setState({ busy: false, rebuilding: {}, progress: null })
 })
 
 afterEach(() => {
@@ -230,8 +234,154 @@ describe('能力与禁用原因', () => {
       builtin_source: 'planned',
       user: [],
     })
-    expect(text()).toContain(pk('disabled.noBasePython'))
+    expect(text()).toContain(pk('disabled.noBasePython', { product: 'Tavotto', min: '3.10', max: '3.14' }))
+    expect(text()).not.toContain('{{')
     expect(input().disabled).toBe(true)
+  })
+
+  // ---- 没有合格基础解释器：不再叫用户去装 Python，而是自动准备（ADR 0063 / 0111）----
+  const OFFER = {
+    id: 'cpython-3.13.5-abc123def456',
+    version: '3.13.5',
+    target: 'macos-aarch64',
+    download_bytes: 52 * 1048576,
+    source_host: 'github.com',
+    required: true,
+    cached: false,
+    network_required: true,
+    origin: 'download' as const,
+  }
+  const NO_ENV = { ...LISTING.environment!, exists: false, in_use: false }
+
+  it('装的 Python 太新：一句话说清版本与支持范围，主按钮「自动准备」，大小说出口，点了就带授权 id 重建', async () => {
+    await mount({
+      ...LISTING,
+      capability: {
+        available: true,
+        reason: '',
+        private_python: OFFER,
+        rejected_python: { version: '3.15.2', direction: 'newer', min: '3.10', max: '3.14' },
+      },
+      environment: NO_ENV,
+      builtin_source: 'planned',
+      user: [],
+    })
+    const note = document.querySelector('[data-packages-python-prepare]')!
+    expect(note.textContent).toContain('3.15.2')
+    expect(note.textContent).toContain('3.10–3.14')
+    expect(note.textContent).toContain('52 MB')
+    expect(note.textContent).not.toContain('请安装')
+    expect(document.querySelector('[data-packages-disabled]')).toBeNull()
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    await act(async () => byName(pk('python.prepare'))!.click())
+    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER)
+  })
+
+  it('完全没有 Python：同样自动准备；安装包自带的那份不提下载', async () => {
+    await mount({
+      ...LISTING,
+      capability: { available: true, reason: '', private_python: { ...OFFER, origin: 'bundled', download_bytes: 0 } },
+      environment: NO_ENV,
+      user: [],
+    })
+    const note = document.querySelector('[data-packages-python-prepare]')!
+    expect(note.textContent).toBe(pk('python.none', { product: 'Tavotto', size: '' }) + pk('python.prepare'))
+    expect(note.textContent).not.toContain('MB')
+  })
+
+  it('探测期间显示「正在检查」，结论出来只变一次：不先出现“请安装”', async () => {
+    const seen: string[] = []
+    const watch = new MutationObserver(() => seen.push(document.body.textContent ?? ''))
+    await mount({
+      ...LISTING,
+      capability: { available: true, reason: '', checking: true },
+      environment: NO_ENV,
+      user: [],
+    })
+    expect(text()).toContain(pk('python.checking'))
+    expect(document.querySelector('[data-packages-disabled]')).toBeNull()
+    expect(document.querySelector('[data-packages-python-prepare]')).toBeNull()
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true })
+    // 后台探完：下一次取回结论
+    listMock.mockResolvedValue({
+      ...LISTING,
+      capability: { available: true, reason: '', private_python: OFFER },
+      environment: NO_ENV,
+      user: [],
+    })
+    await act(async () => usePackageStore.getState().load())
+    watch.disconnect()
+    expect(text()).not.toContain(pk('python.checking'))
+    expect(document.querySelector('[data-packages-python-prepare]')).not.toBeNull()
+    expect(seen.some((t) => t.includes(pk('disabled.noBasePython', { product: 'Tavotto', min: '3.10', max: '3.14' })))).toBe(false)
+  })
+
+  it('连私有 Python 也没有，且装的是太新的：说清版本与范围，不给“自动准备”', async () => {
+    await mount({
+      ...LISTING,
+      capability: {
+        available: false,
+        reason: 'managed_env_unavailable',
+        rejected_python: { version: '3.15.2', direction: 'newer', min: '3.10', max: '3.14' },
+      },
+      environment: NO_ENV,
+      user: [],
+    })
+    expect(text()).toContain(pk('python.tooNewManual', { product: 'Tavotto', version: '3.15.2', min: '3.10', max: '3.14' }))
+    expect(byName(pk('python.prepare'))).toBeUndefined()
+  })
+
+  it('首装没有基础解释器：计划带私有 Python，先确认（含下载大小），取消就不 run', async () => {
+    planMock.mockResolvedValue({ job: job({ creates_environment: true, private_python: OFFER }) })
+    await mount({ ...LISTING, capability: { available: true, reason: '', private_python: OFFER }, environment: NO_ENV, user: [] })
+    await type('lmfit')
+    const pending = act(async () => byName(pk('install'))!.click())
+    await act(async () => {})
+    const confirm = useUiStore.getState().confirm!
+    expect(JSON.stringify(confirm.body)).toContain('52')
+    await act(async () => confirm.resolve(false))
+    await pending
+    expect(runMock).not.toHaveBeenCalled()
+  })
+
+  it('重建时没有基础解释器：确认框说出下载大小，并回传授权 id', async () => {
+    await mount({ ...LISTING, capability: { available: true, reason: '', private_python: OFFER } })
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    vi.mocked(rebuildManagedEnvironment).mockClear()
+    await rebuild()
+    const confirm = useUiStore.getState().confirm!
+    expect(confirm.body.key).toBe('settings.packages.confirm.rebuildBodyPython')
+    expect(JSON.stringify(confirm.body.values)).toContain('52')
+    await act(async () => confirm.resolve(true))
+    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER)
+  })
+
+  it.each(['done', 'failed'] as const)('点「自动准备」后重建到了终态（%s）：包管理页重新读清单，不停在“没有可用 Python / 尚未创建”', async (terminal) => {
+    const noEnv = { ...LISTING, capability: { available: true, reason: '', private_python: OFFER }, environment: NO_ENV, builtin_source: 'planned' as const, user: [] }
+    await mount(noEnv)
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    vi.mocked(rebuildManagedEnvironment).mockResolvedValue({ started: true, progress_id: 'x' })
+    await act(async () => byName(pk('python.prepare'))!.click())
+    const id = vi.mocked(rebuildManagedEnvironment).mock.calls.at(-1)![0]
+    // 进行中：按钮禁用
+    expect((byName(pk('python.prepare')) as HTMLButtonElement).disabled).toBe(true)
+    listMock.mockClear()
+    listMock.mockResolvedValue({ ...LISTING })
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({ plan_id: id, state: terminal, log: '', error: null, code: '', target_kind: 'tavotto_managed' } as never)
+    })
+    expect(listMock).toHaveBeenCalled()
+    expect(document.querySelector('[data-packages-python-prepare]')).toBeNull()
+    expect(useDepRepairStore.getState().rebuildRunningFor(currentProjectId())).toBe(false)
+  })
+
+  it('不是重建的终态（别的作业）不额外读清单', async () => {
+    await mount({ ...LISTING })
+    listMock.mockClear()
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({ plan_id: 'someone-else', state: 'done', log: '', error: null, code: '', target_kind: 'tavotto_managed' } as never)
+    })
+    expect(listMock).not.toHaveBeenCalled()
   })
 
   it('环境正在被别的操作改动（busy）：按钮禁用，清单照常显示', async () => {
@@ -252,7 +402,9 @@ describe('两份清单', () => {
     expect(builtin.map((r) => r.textContent)).toEqual(
       expect.arrayContaining([expect.stringContaining('matplotlib'), expect.stringContaining('numpy')]),
     )
-    for (const r of builtin) expect(r.textContent).toContain(pk('readOnly'))
+    // 内置清单只读：行里没有任何按钮；「只读」只在折叠行的摘要里说一次
+    for (const r of builtin) expect(r.querySelector('button')).toBeNull()
+    expect(text()).toContain(pk('builtinCountMeta', { count: builtin.length }))
     // 每行一颗 ghost「升级」+ ⋯（卸载在 ⋯ 里，是危险项；2026-10-07 设计审计 §9.1）
     const upgrade = byName(pk('updateAria', { name: 'lmfit' }))!
     expect(upgrade).toBeTruthy()
@@ -278,6 +430,24 @@ describe('两份清单', () => {
     expect(text()).toContain('lmfit>=1.3')
     expect(text()).toContain(pk('status.changed'))
     expect(text()).toContain(pk('status.changedDetail', { recorded: '1.3.2' }))
+  })
+
+  it('用户包是条目行：正常不出状态胶囊，版本变了出 warn 胶囊；页面上没有表格', async () => {
+    await mount({
+      ...LISTING,
+      user: [
+        { ...LISTING.user[0], status: 'changed', installed_version: '1.4.0', recorded_version: '1.3.2' },
+        LISTING.user[1],
+      ],
+    })
+    const user = rows(pk('userTitle'))
+    expect(user.length).toBe(2)
+    const changed = user.find((r) => r.getAttribute('data-package-row') === LISTING.user[0].distribution)!
+    const normal = user.find((r) => r.getAttribute('data-package-row') === LISTING.user[1].distribution)!
+    expect(changed.querySelector('[data-package-state="changed"]')!.getAttribute('data-status-pill')).toBe('warn')
+    expect(changed.textContent).toContain('1.4.0')
+    expect(normal.querySelector('[data-package-state]')).toBeNull()
+    expect(document.querySelector('[data-packages-page] table')).toBeNull()
   })
 
   it('环境行：Python 版本、就绪、本项目在用、重建入口', async () => {
@@ -374,14 +544,14 @@ describe('安装', () => {
     expect(panel.querySelector('[role="progressbar"]')).toBeTruthy()
     // 反馈落在用户点的地方：作业面板紧跟安装框（包表之上），不是排在整张表之后
     expect(input().form!.nextElementSibling).toBe(panel)
-    // 不确定态：来回扫（tokenised animate-sweep），轨道是看得见的 border 档——
+    // 不确定态：整片排线慢速流动（.progress-track，纸白底 + 发丝框）——
     // 不再是 surface-2 面板里一条 surface-2 轨道上的呼吸块
     const bar = panel.querySelector<HTMLElement>('[data-packages-progress]')!
     expect(bar.hasAttribute('data-progress-indeterminate')).toBe(true)
     expect(bar.hasAttribute('aria-valuenow')).toBe(false)
-    expect(bar.className).toContain('bg-border')
+    expect(bar.className).toContain('progress-track')
     expect(bar.className).not.toContain('bg-surface-2')
-    expect(bar.firstElementChild!.className).toContain('animate-sweep')
+    expect(bar.querySelector('.progress-fill')).toBeTruthy()
     expect(bar.innerHTML).not.toContain('animate-pulse')
     expect(byName(pk('job.cancel'))).toBeTruthy()
     // 作业期间相关按钮禁用，但页面还在（清单仍显示）
@@ -437,6 +607,51 @@ describe('安装', () => {
     expect(input().disabled).toBe(false)
   })
 
+  it('日志超过 max-h：内层滚动的 <pre> 在还能往下滚时带 data-fade-end 与 mask，滚到底收起', async () => {
+    runMock.mockResolvedValue({ started: true, job_id: 'job-1', state: 'installing', log: '', error: null, code: '' })
+    await mount()
+    await type('lmfit')
+    await act(async () => byName(pk('install'))!.click())
+    // jsdom 没有布局引擎：给 HTMLElement 原型装一份「内容比视口高 200px」的几何，让首次量就读到溢出
+    const proto = HTMLElement.prototype
+    Object.defineProperty(proto, 'clientHeight', { configurable: true, value: 160 })
+    Object.defineProperty(proto, 'scrollHeight', { configurable: true, value: 360 })
+    Object.defineProperty(proto, 'scrollTop', { configurable: true, writable: true, value: 0 })
+    try {
+      await act(async () => {
+        usePackageStore.getState().onProgress({
+          job_id: 'job-1',
+          state: 'installing',
+          log: 'Collecting lmfit\n'.repeat(40),
+          error: null,
+          code: '',
+          op: 'install',
+          distribution: 'lmfit',
+        })
+      })
+      await act(async () => byName(pk('job.log'))!.click())
+      const pre = document.querySelector<HTMLElement>('[data-packages-log]')!
+      expect(pre).not.toBeNull()
+      expect(pre.dataset.fadeEnd).toBe('true')
+      expect(pre.dataset.fadeStart).toBeUndefined()
+      // 渐隐只落在内层 <pre>（mask 样式本身由 scrollFade.test 钉），外壳（带底色 / 边的折叠区）不带 data-fade-*
+      expect(pre.parentElement!.hasAttribute('data-fade-end')).toBe(false)
+      await act(async () => {
+        pre.scrollTop = 200
+        pre.dispatchEvent(new Event('scroll'))
+      })
+      expect(pre.dataset.fadeEnd).toBeUndefined()
+      expect(pre.dataset.fadeStart).toBe('true')
+    } finally {
+      // @ts-expect-error 还原：删掉测试装在原型上的几何
+      delete proto.clientHeight
+      // @ts-expect-error 同上
+      delete proto.scrollHeight
+      // @ts-expect-error 同上
+      delete proto.scrollTop
+    }
+  })
+
   it('空闲标签页不认领别的项目的作业：进度为空时收到陌生 job_id 也不显示、不刷清单', async () => {
     await mount()
     listMock.mockClear()
@@ -484,7 +699,7 @@ describe('反馈落在用户点的地方（2026-10-07 设计审计 P0 / §9.1）
     await act(async () => byName(pk('install'))!.click())
     const form = document.querySelector('[data-packages-form]')!
     const jobRow = document.querySelector('[data-packages-job]')!
-    const table = document.querySelector(`table[aria-label="${pk('userTitle')}"]`)!
+    const table = document.querySelector('[data-packages-user-list]')!
     // 同一组里：表单的下一行就是作业
     expect(form.nextElementSibling).toBe(jobRow)
     expect(jobRow.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

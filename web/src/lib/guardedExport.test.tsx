@@ -84,11 +84,15 @@ beforeEach(async () => {
     const url = String(input)
     const body = JSON.parse(String(init?.body ?? '{}'))
     if (url.includes('/api/export')) exportCalls.push({ url, body })
-    const result = url.includes('/api/export/validate')
-      ? { ok: true, artifact_sources: { 'plot.png': {
-          render_policy: 'selected-figsize-v1', bytes_sha256: guard.bytesSha256,
-          size_bytes: guard.sizeBytes, origin: 'static', kind: 'png', source_id: '/figs/plot.png',
-        } } }
+    const artifactSource = {
+      render_policy: 'selected-figsize-v1', bytes_sha256: guard.bytesSha256,
+      size_bytes: guard.sizeBytes, origin: 'static', kind: 'png', source_id: '/figs/plot.png',
+    }
+    // 导出预览会按 overrides 出图（`useVariantPng`）：回真实后端的帧形状，带上同一份来源事实
+    const result = url.includes('/api/engine/preview_png')
+      ? { png: '', manifest: { elements: [] }, artifact_source: artifactSource }
+      : url.includes('/api/export/validate')
+      ? { ok: true, artifact_sources: { 'plot.png': artifactSource } }
       : url.includes('/api/export') ? doneJob() : { panels: [], styles: [], specs: [] }
     return new Response(JSON.stringify(result), {
       status: 200, headers: { 'Content-Type': 'application/json' },
@@ -180,6 +184,16 @@ describe('saved guarded export refusal', () => {
   })
 })
 
+/** 「每张图单独导出」是依次发作业的（哪怕只有一张）：等条件成立 */
+const until = async (cond: () => boolean, ms = 8000) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms && !cond()) {
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 50))
+    })
+  }
+}
+
 describe('exact original export variant', () => {
   it('a guarded PNG hidden behind PDF reaches original export preflight with honest saved metadata', async () => {
     put([panel()])
@@ -197,6 +211,7 @@ describe('exact original export variant', () => {
     if (confirm && !confirm.checked) await act(async () => confirm.click())
     expect(document.querySelector<HTMLButtonElement>('[data-export-start]')?.disabled).toBe(false)
     await click('[data-export-start]')
+    await until(() => exportCalls.some(call => call.url.includes('/api/export/start')))
     const published = exportCalls.find(call => call.url.includes('/api/export/start'))!
     expect(published.body.original).toMatchObject({
       figure_id: 'plot.png', source_policy: 'selected-figsize-v1',
@@ -240,10 +255,17 @@ describe('exact original export variant', () => {
       }), { status: 409, headers: { 'Content-Type': 'application/json' } })
     }))
     await click('[data-export-start]')
+    await until(() => exportCalls.some(call => call.url.includes('/api/export/validate')) && useExportStore.getState().batch?.done === true)
     expect(exportCalls.some(call => call.url.includes('/api/export/validate'))).toBe(true)
+    // 字节变了就一个文件都不写：素材库里同 stem、没上画布的 plot.pdf 不在「每张图」里，整批零 start
     expect(exportCalls.some(call => call.url.includes('/api/export/start'))).toBe(false)
-    expect(document.querySelector('[data-export-start-error]')?.textContent)
+    // 用户可见：对话框里照原样渲染那条起作业失败的报错（点名哪张 + 原因），不因为是批里的一张就没了
+    expect(document.querySelector('[data-dialog="export"] [data-export-start-error]')?.textContent)
       .toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))
+    // 批里每张各自走一遍：被拒的原因随汇总保留，批结束后仍可见（不被后面一张的 startError 复位冲掉）
+    const refused = useExportStore.getState().batch!.failedStarts[0]
+    expect(refused.reason).toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))
+    expect(document.querySelector('[data-export-result]')?.textContent).toContain(refused.reason)
     expect(exactPanelRender(useRenderStore.getState(), chosen)).toBeNull()
     expect(state().doc).toEqual(before)
   })
@@ -288,7 +310,11 @@ describe('exact original export variant', () => {
       const confirm = document.querySelector<HTMLInputElement>('[data-export-confirm]')
       if (confirm && !confirm.checked) await act(async () => confirm.click())
       expect(document.querySelector<HTMLButtonElement>('[data-export-start]')?.disabled).toBe(false)
+      const sent = () => exportCalls.filter((call) => call.url.includes('/api/export/start')).length
+      const before = sent()
       await click('[data-export-start]')
+      await until(() => sent() > before)
+      await until(() => useExportStore.getState().batch?.done === true)
       const request = exportCalls.filter((call) => call.url.includes('/api/export/start')).at(-1)!.body
       expect(request.original?.overrides).toEqual(currentPanel(id).overrides)
       expect(request.original?.w_mm).toBe(id === 'a' ? 70 : 90)

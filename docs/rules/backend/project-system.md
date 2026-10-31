@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「项目系统（后端侧）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_refresh.py`、`test_project_watch.py`、`test_project_readiness.py`、`test_original_spec.py`、`test_tutorial.py`、`test_tiff_assets.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 220
+改到: `app.py` 的 `PROJECTS` / `_request_ctx` / `bound_project`、`project_refresh.py`、`project_watch.py`、`readiness.py`、`originalspec.py`、`tutorial.py`、`tiffprobe.py`
+主题: 项目系统（后端侧） → `project-system.md`
+必守要点: 指名不存在的项目 409 绝不落默认项目；派生刷新只有 `app.refresh_project()`；readiness 只报告不动手
+-->
 
 - **项目（多开，2026-08-16 起）**：`app.py` 无默认路径；`PROJECTS: dict[id, ProjectCtx]`
   同时端着多个图库，`DEFAULT_PROJECT` 只是「不带 pj 的请求落到哪」。未打开项目时
@@ -76,6 +85,10 @@
     = 这一轮还不知道。三档都不许压成两档。
   * 缓存挂在 `RefreshState.readiness`，键是输入的内容签名；刷新在事实真的
     动了之后额外清一次（依赖方向是 readiness → refresh，**反过来会成环**）。
+  * **`foreign_source`（ADR 0143 修订「项目内入口」，加字段、老前端忽略）**：`layout_only` + `no_source_candidate` 的素材，
+    若同目录有同主干名、`sourcelang.detect_file` 认得出语言的 `.R` / `.r` / `.m`（`engine/foreignsource.py`），就带
+    `{script, language}`，其余一律 `null`；有歧义不给、不猜。它是**素材级**事实（同 stem 的两份素材可在不同目录），不进 stem 级的能力表；
+    候选文件的 `(路径, 大小, mtime_ns)` 在 `body_sig` 里。这些文件**不是**脚本：不进 `iter_scripts` / 注册表 / 探测 / 依赖准备。
 - **「这张图有多大」的事实层只有一处（ADR 0028，2026-08-29）**：
   `engine/originalspec.py`。它回答**文件自己说了什么**，一个字不掺画布信息
   （没有 x/y/w/h、没有画布缩放、没有页面裁切）——「按原图导出」的**决策**在
@@ -146,3 +159,19 @@
 - readiness 六态十码闭集、只报告不动手、「没测量」不压成零
 - `originalspec` 先量后猜
 - TIFF 范围只在 `tiffprobe`（候选后端静态源不经 `safe_resolve`，单独补闸）
+
+## 没有写入权限的项目（2026-10-30，维护者拍板）
+
+* **事实**：`project_status().writable`（`os.access(项目, W_OK)`，与 readiness 同一判据）。Windows 上目录 ACL
+  不一定反映在 `os.access` 里——判不出时前端不弹，失败时走下面第三条的稳定码。
+* **出口是另存一份**：`POST /api/project/save-as {parent}` → `engine/projectcopy.copy_project`，复制到
+  `parent/<项目名>`（重名加序号）。只拷普通文件内容（**不带只读权限位**，否则副本出生就只读）、不跟随符号链接、
+  体量护栏 `MAX_BYTES` / `MAX_FILES` 在写第一个字节前拒绝（`project_copy_too_large`）、中途失败清掉半成品。
+  项目级设置按路径存在用户配置里，**不随副本走**。打开副本是前端的事（`projectStore.open`）。
+* **用户坚决不另存**：`PATCH /api/project/settings {readonly_save_as_declined: true}` 按项目路径记住，之后不再问；
+  项目照常只读运行。脚本因此没写出的输出文件：worker 把「接收文件的文件夹没有写入权限」的 `OSError`
+  （EROFS，或 EACCES / EPERM 且父文件夹 `W_OK` 为假、目标存在则须可读）归成 `output_folder_read_only`
+  （`worker._write_denied_by_folder`；判据主语是**文件夹**，读不了某个文件仍是 `script_error`）。
+  默认沙盒档里 Tavotto 的写守卫本来就不让项目内的写落盘，所以这个码只在脚本目录档 / 项目根档 / native 档出现。
+* **从没打开过的只读文件夹**也能打开：`_open_project` 写不进注册表（无 `W_OK` 或 EROFS/EACCES/EPERM）时，静态扫描草稿只留在内存（`Registry.load_data(..., "<memory>")`），一个字节都不写进去；之后的刷新写不了走已有的 write_failed 路径。另存出的副本里注册表照常落盘。
+* 看护用例：`tests/test_readonly_project_save_as.py`、`tests/test_error_codes.py`。

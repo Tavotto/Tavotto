@@ -34,13 +34,14 @@ mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；看护用�
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import math
 import os
 import subprocess
 import sys
-import urllib.error
+import time
 import urllib.parse
-import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import NamedTuple
@@ -49,6 +50,7 @@ from urllib.parse import quote
 from . import (
     discover as engine_discover,
     figcapture as engine_figcapture,
+    handoffreceipt as engine_receipt,
     locate as engine_locate,
     registry as engine_registry,
     session_client,
@@ -62,6 +64,10 @@ MAX_PARENTS = 3
 #: 桌面 App 路径覆盖（开发态指向 dist/Tavotto，与 TAVOTTO_WORKER_PYTHON 同款惯例）
 APP_ENV = "TAVOTTO_DESKTOP_APP"
 DEFAULT_PORT = 5089
+#: 唤起之后最多等多久，看实例对目标 stem 的那一次渲染有没有结论（秒，`--render-wait`）。
+#: CLI 默认值（`cli()`）；`open_target` 自己默认 0 = 不等，库调用不被偷偷拖慢。
+#: 到点没结论是 `unverified`，不是 `failed`；0 = 不等。
+DEFAULT_RENDER_WAIT = 20.0
 
 
 class HandoffError(RuntimeError):
@@ -146,6 +152,38 @@ def _first_on_disk(stems: list[str], project: str, *, isfile=os.path.isfile) -> 
     return stems[0] if stems else None
 
 
+def _artifact_stem(project: str, rel: str, fallback: str) -> str:
+    """产物文件 → 注册表认的 stem（#1251）：同脚本里 `panel.png` 甲 / `panel.pdf` 乙（`panel-2`）时，
+    `tavotto open panel.pdf` 的目标是 `panel-2`。判据是 `Registry.artifact_stem`——app 记交接回执
+    （`app._handoff_target_stem`）用的是同一个函数，所以 CLI 轮询的键 == app 记账的键。
+    注册表不存在 / 读不了（损坏的报错留给后面的 `ensure_registered`）= 文件名 stem，行为与此前一致。"""
+    try:
+        return engine_registry.open_registry(project).artifact_stem(_real_rel(project, rel))
+    except (OSError, RuntimeError, ValueError):
+        return fallback
+
+
+def _real_rel(project: str, rel: str) -> str:
+    """手输路径 → 磁盘上的真实相对路径（POSIX）。注册表 `artifacts` 的键是真实文件名（`panel.PDF`），在大小写不敏感的
+    文件系统上用户可能敲 `panel.pdf`：逐级列目录，精确同名优先，没有就取**唯一**的不区分大小写匹配（两个以上不猜）；
+    读不了 / 找不到的一级原样保留。"""
+    parts = [p for p in rel.replace("\\", "/").split("/") if p]
+    here, out = project, []
+    for part in parts:
+        real = part
+        try:
+            names = os.listdir(here)
+        except OSError:
+            names = []
+        if part not in names:
+            folded = [n for n in names if n.casefold() == part.casefold()]
+            if len(folded) == 1:
+                real = folded[0]
+        out.append(real)
+        here = os.path.join(here, real)
+    return "/".join(out)
+
+
 def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> Target:
     """`<路径>` → (项目目录, stem)。路径可以是产物、脚本或目录。"""
     if not raw or not raw.strip():
@@ -166,7 +204,8 @@ def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> T
         stems = _script_stems(path, project)
         return Target(project, _first_on_disk(stems, project, isfile=isfile))
     if ext.lower() in OUT_EXTS:
-        return Target(project, stem)
+        rel = os.path.relpath(path, project).replace(os.sep, "/")
+        return Target(project, _artifact_stem(project, rel, stem))
     raise HandoffError(
         f"不认识的文件类型: {name}"
         f"（要一张图 {'/'.join(e.lstrip('.') for e in OUT_EXTS[:3])}…、"
@@ -232,7 +271,9 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     if should_write:
         try:
             # 写出永远是新名——老图库合并一次即完成搬迁。
-            info["registry"] = str(engine_discover.write_config(project, cfg))
+            info["registry"] = str(
+                engine_discover.write_config(project, cfg, static_discovery=True)
+            )
         except OSError as exc:
             # 只读目录 / 没有写权限 / 磁盘满。以前这条裸 OSError 会一路冒到
             # `tavotto open` 外面变成 traceback，插件那侧只看得到「脚本挂了」。
@@ -274,6 +315,19 @@ PROBE_HTTP_TIMEOUT = 1800.0
 _PROBE_CODE_MAP = {"missing_dependency": "native_run_required"}
 
 
+def _loopback_target(url: str) -> tuple[int, str] | None:
+    """`http://127.0.0.1:<端口>/路径?查询` → (端口, 路径+查询)；没有端口 / 端口非法回 None。
+    主机部分不读：请求固定发往 127.0.0.1（`session_client.loopback_request`），不经代理。"""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if not port:
+        return None
+    return port, (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+
+
 def _http_json_status(
     url: str, payload: dict | None = None, timeout: float = 10.0
 ) -> tuple[int | None, dict | None]:
@@ -290,17 +344,20 @@ def _http_json_status(
     except ValueError:
         pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8", "replace"))
-    except urllib.error.HTTPError as exc:
-        try:
-            return exc.code, json.loads(exc.read().decode("utf-8", "replace"))
-        except (OSError, ValueError):
-            return exc.code, None
-    except (urllib.error.URLError, OSError, ValueError):
+    target = _loopback_target(url)
+    if target is None:
         return None, None
+    try:
+        status, raw = session_client.loopback_request(
+            target[0], target[1], payload=data, headers=headers, timeout=timeout
+        )
+    except (http.client.HTTPException, OSError, ValueError):
+        return None, None
+    try:
+        return status, json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        # 2xx 读不懂 = 连不上口径；错误响应读不懂只交状态码（同原 HTTPError 分支）
+        return (status, None) if status >= 400 else (None, None)
 
 
 def _script_figures(project: str, script: str) -> list[dict]:
@@ -358,6 +415,19 @@ def _probe_error(err) -> HandoffError:
     params = err.get("params") or {}
     if params.get("module"):
         extra["module"] = params["module"]
+    folder = params.get("folder")
+    if (
+        isinstance(folder, str)
+        and folder
+        and code in ("missing_dependency", "import_folder_unreadable")
+    ):
+        # 脚本加载的项目外文件夹读不了（ADR 0153）：说清是哪个文件夹，不落进「项目要它自己的环境」那句话
+        extra["folder"] = folder
+        message = (
+            f"脚本加载的项目外文件夹“{folder}”读不了（当前账户没有读取权限）。"
+            "在 Tavotto 界面里打开这张图并按提示安装缺少的依赖，或给这个账户开放该文件夹的读取权限"
+        )
+        return HandoffError(message, "import_folder_unreadable", **{**extra, "probe_code": code})
     tb = err.get("traceback")
     if tb:
         extra["traceback"] = str(tb)[-2000:]
@@ -425,7 +495,12 @@ def _local_probe(project: str, script: str) -> dict:
     就要退出/唤起界面，orphan worker 一个都不许留（交接后的渲染由目标进程
     自己按 lazy 语义重建，registry + cache 都在磁盘上）。
     """
-    from . import pool as engine_pool, probe as engine_probe, runtimeasset as engine_runtimeasset
+    from . import (
+        patchspec as engine_patchspec,
+        pool as engine_pool,
+        probe as engine_probe,
+        runtimeasset as engine_runtimeasset,
+    )
 
     try:
         result = engine_probe.probe_and_register(project, script)
@@ -435,7 +510,12 @@ def _local_probe(project: str, script: str) -> dict:
                 for desc in result.get("descriptors") or []:
                     if isinstance(desc, dict) and desc.get("stem"):
                         engine_runtimeasset.materialize(
-                            project, desc, worker.svg_path(desc["stem"])
+                            project,
+                            desc,
+                            worker.svg_path(desc["stem"]),
+                            # probe 的 build 没有 overrides：这是脚本原样的预览
+                            patch_hash=engine_patchspec.patch_hash([]),
+                            fresh_execution=True,
                         )
             except engine_pool.WorkerError:
                 pass  # cache 是派生物：物化不了只影响首帧占位
@@ -608,10 +688,13 @@ def desktop_argv(app: str, target: Target) -> list[str]:
 #:                在这窗口里就消失了
 #: CRASH_WINDOW   直接 spawn 那条路上观察「起来就死」的窗口
 #: POLL           轮询间隔
+#: REAP_WINDOW    卡住的转发进程 terminate 后最多等多久再 kill
 LAUNCH_READY_TIMEOUT = 20.0
 LAUNCH_SETTLE = 1.5
 LAUNCH_CRASH_WINDOW = 6.0
 LAUNCH_POLL = 0.15
+#: 收卡住的转发进程：terminate 之后等它走多久，不走就 kill
+LAUNCH_REAP_WINDOW = 2.0
 
 
 def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen):
@@ -677,6 +760,8 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
     macOS 上 `ps -axo pid=,comm=` 的 comm 是完整可执行路径——按整条路径比，
     不做子串匹配（`Tavotto` 会撞上别的进程）。
     """
+    if os.name == "nt":
+        return _pids_of_windows(exe)
     if os.name != "posix":
         return None
     try:
@@ -697,6 +782,84 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
             except ValueError:
                 continue
     return pids
+
+
+def _windows_process_images() -> "list[tuple[int, str]] | None":
+    """Windows：枚举 (pid, 完整映像路径)。整体失败（ctypes 不可用 / EnumProcesses 失败）回 None。
+
+    打不开的进程（权限不够、已退出）直接跳过。只读，不起子进程。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.K32EnumProcesses.argtypes = [
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.K32EnumProcesses.restype = wintypes.BOOL
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        capacity = 1024
+        while True:
+            pids = (wintypes.DWORD * capacity)()
+            got = wintypes.DWORD(0)
+            if not kernel32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(got)):
+                return None
+            if got.value < ctypes.sizeof(pids):
+                break
+            capacity *= 2  # 正好填满 = 可能被截断，翻倍重来
+        out: list[tuple[int, str]] = []
+        for pid in pids[: got.value // ctypes.sizeof(wintypes.DWORD)]:
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                continue
+            try:
+                buf = ctypes.create_unicode_buffer(32768)
+                size = wintypes.DWORD(len(buf))
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    out.append((int(pid), buf.value))
+            finally:
+                kernel32.CloseHandle(handle)
+        return out
+    except Exception:  # noqa: BLE001 —— 查不了就是查不了，调用方按旧行为走
+        return None
+
+
+def _norm_win_path(path: str) -> str:
+    if path.startswith("\\\\?\\"):
+        path = path[4:]
+    return os.path.normcase(os.path.normpath(path.replace("/", "\\"))).lower()
+
+
+def _pids_of_windows(exe: str, *, enum=None) -> "list[int] | None":
+    """Windows：正在跑这个可执行文件（按**完整路径**）的进程号；查不了回 None。
+
+    **不能按映像名比**：sidecar 的映像名同样是 `Tavotto.exe`
+    （`…\\sidecar\\Tavotto\\Tavotto.exe`），桌面壳崩了留下孤儿 sidecar 时，
+    按名字比会把它当成「已有实例」，之后每次正常冷启动都被误判成转发卡住。
+    与 macOS 那一支（整条路径精确比）同一语义；两边都去掉 `\\\\?\\` 前缀、
+    统一大小写与分隔符。`enum` 是注入点（列出 (pid, 完整路径)）。
+    """
+    images = (_windows_process_images if enum is None else enum)()
+    if images is None:
+        return None
+    want = _norm_win_path(exe)
+    return [pid for pid, path in images if _norm_win_path(path) == want]
 
 
 # 负 returncode 的编号是 POSIX 语义，解码表就该按 POSIX 编号写死——
@@ -734,6 +897,84 @@ def _launch_failed(
 ) -> HandoffError:
     log = sidecar_log_path()
     return HandoffError(message, code, app=app, log_path=log, retryable=retryable, **extra)
+
+
+def _windows_token_sandbox() -> "str | None":
+    """当前进程令牌是不是受限沙箱：`"app_container"` / `"restricted_token"` / None。
+
+    只读、无副作用，只在 Windows 上有意义。Codex 的默认沙箱（`unelevated`）给命令
+    一枚**受限令牌**（`IsTokenRestricted`），从里面拉起的 `Tavotto.exe` 写不进
+    WebView2 与数据目录，Tauri 的 setup 钩子 panic（os error 5）；已经开着的窗口
+    也收不到转发。判据只看操作系统令牌，**不认任何宿主私有的环境变量**。
+
+    任何 ctypes / OSError 失败都回 None（查不出来就按原有行为走，不误伤）。
+    `GetCurrentProcess` 返回的是伪句柄 -1，argtypes 不写全会 OverflowError。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.IsTokenRestricted.argtypes = [wintypes.HANDLE]
+        advapi32.IsTokenRestricted.restype = wintypes.BOOL
+
+        token = wintypes.HANDLE()
+        token_query = 0x0008
+        if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)
+        ):
+            return None
+        try:
+            value = wintypes.DWORD(0)
+            got = wintypes.DWORD(0)
+            # TokenIsAppContainer(29) 是有文档的信息类
+            ok = advapi32.GetTokenInformation(
+                token, 29, ctypes.byref(value), ctypes.sizeof(value), ctypes.byref(got)
+            )
+            if ok and value.value != 0:
+                return "app_container"
+            # 受限令牌用有文档的 IsTokenRestricted；TokenIsRestricted(40) 这个信息类
+            # 微软标为「保留给系统使用」，不是受支持的查询
+            if advapi32.IsTokenRestricted(token):
+                return "restricted_token"
+            return None
+        finally:
+            kernel32.CloseHandle(token)
+    except Exception:  # noqa: BLE001 —— ctypes 的 OSError / OverflowError / ArgumentError 都算查不出
+        return None
+
+
+def _sandbox_kind(system: str, probe=None) -> "str | None":
+    """桌面路径唤起前的沙箱判据；非 Windows 恒 None，探测抛什么都当没查出来。"""
+    if not system.startswith("win"):
+        return None
+    probe = _windows_token_sandbox if probe is None else probe
+    try:
+        kind = probe()
+    except Exception:  # noqa: BLE001 —— 探测只能放行，不能把交接拦死
+        return None
+    return kind if kind in ("restricted_token", "app_container") else None
 
 
 def _launch_desktop_via_open(
@@ -831,15 +1072,56 @@ def _launch_desktop_via_open(
     )
 
 
+def _reap(proc, *, clock, sleep) -> None:
+    """收掉卡住的转发进程：先 terminate，限期内还没走就 kill——不留孤儿。"""
+    start = clock()
+    try:
+        if hasattr(proc, "terminate"):
+            proc.terminate()
+        while clock() - start < LAUNCH_REAP_WINDOW:
+            if proc.poll() is not None:
+                return
+            sleep(LAUNCH_POLL)
+        if hasattr(proc, "kill"):
+            proc.kill()
+            # 有界地等它真的退出（POSIX 上不收尸会留僵尸）；等不到也不抛、不盖过要报的失败
+            waited = clock()
+            while clock() - waited < LAUNCH_REAP_WINDOW:
+                if proc.poll() is not None:
+                    return
+                sleep(LAUNCH_POLL)
+    except OSError:
+        pass  # 进程已经没了，或权限不够——收不掉也不能盖过要报的失败
+
+
+def _old_instance_still_there(pids_of, app: str, before: set, own_pid) -> bool:
+    """判 forward_stuck 前复查：spawn 前的旧实例（排除新拉起的进程自己）是否还活着。
+
+    旧实例在观察窗口内退出了，新进程活着就是它接手成了主实例，不是卡住。
+    **取舍**：复查探测抛错或返回 None 时一律按「不是卡住」放行（不 kill、返回
+    process_alive）——误杀一个健康的新实例，比多报一次假成功更糟。
+    """
+    try:
+        now = pids_of(app)
+    except Exception:  # noqa: BLE001
+        return False
+    if now is None:
+        return False
+    return bool((set(now) & before) - {own_pid})
+
+
 def _launch_desktop_via_spawn(
-    app: str, target: Target, *, spawn=None, clock=None, sleep=None
+    app: str, target: Target, *, spawn=None, clock=None, sleep=None, pids_of=None
 ) -> dict:
     """Windows（以及指到裸二进制、拼不出 bundle 的 macOS 覆盖）：直接 spawn。
 
     就绪判据（带限期的轮询，不是 sleep）：
       * 进程在观察窗口里退出且退出码非零 → launch_failed（带 exit_code/signal）
       * 进程很快以 0 退出 → 单实例转发给了已在跑的窗口，算成功（forwarded）
-      * 进程活过观察窗口 → 算起来了（process_alive）
+      * 进程活过观察窗口 → 算起来了（process_alive）；**但 spawn 之前就已有实例时
+        不是**：新进程本该把 argv 转发出去就退出，活着不退 = 转发卡住（受限环境里
+        进程被拦在单实例通道外，#1149），先收掉它再报 launch_failed
+        （`reason: "forward_stuck"`）。查不出有没有实例（None）时保持旧行为。
     """
     import time as _time
 
@@ -847,7 +1129,13 @@ def _launch_desktop_via_spawn(
     clock = _time.monotonic if clock is None else clock
     sleep = _time.sleep if sleep is None else sleep
 
+    pids_of = _pids_of if pids_of is None else pids_of
     argv = desktop_argv(app, target)
+    try:
+        before = set(pids_of(app) or ())
+    except Exception:  # noqa: BLE001 —— 只是辅助判据，查不出（None）就按旧行为走，绝不拦死交接
+        before = set()
+    already = bool(before)
     try:
         proc = _spawn_detached(argv, spawn=spawn)
     except OSError as exc:
@@ -895,6 +1183,15 @@ def _launch_desktop_via_spawn(
             app,
             **details,
         )
+    if already and _old_instance_still_there(pids_of, app, before, getattr(proc, "pid", None)):
+        _reap(proc, clock=clock, sleep=sleep)
+        raise _launch_failed(
+            "Tavotto 桌面应用已在运行，但把这次交接转发给它的进程卡住了"
+            f"（{LAUNCH_CRASH_WINDOW:g}s 内没有退出），已结束该进程。"
+            "多半是当前环境（受限沙箱）挡住了进程间转发，请在沙箱外重新运行同一条交接命令。",
+            app,
+            reason="forward_stuck",
+        )
     return {
         "mode": "desktop",
         "app": app,
@@ -922,11 +1219,17 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> d
     except ValueError:
         pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers=headers)
+    target = _loopback_target(url)
+    if target is None:
+        return None
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, ValueError):
+        status, raw = session_client.loopback_request(
+            target[0], target[1], payload=data, headers=headers, timeout=timeout
+        )
+        if not 200 <= status < 300:
+            return None
+        return json.loads(raw.decode("utf-8", "replace"))
+    except (http.client.HTTPException, OSError, ValueError):
         return None
 
 
@@ -958,6 +1261,7 @@ def launch(
     pids_of=None,
     clock=None,
     sleep=None,
+    token_probe=None,
 ) -> dict:
     """唤起界面。返回 {"mode": ..., ...}；mode 是给插件看的机器可读值。
 
@@ -976,7 +1280,24 @@ def launch(
                 return _launch_desktop_via_open(
                     app, bundle, target, run=run, pids_of=pids_of, clock=clock, sleep=sleep
                 )
-            return _launch_desktop_via_spawn(app, target, spawn=spawn, clock=clock, sleep=sleep)
+            kind = _sandbox_kind(sysname, token_probe)
+            if kind:
+                # 不拉进程：受限令牌下 Tauri setup 写不进 WebView2 / 数据目录会 panic，
+                # 转发给已开着的窗口也送不到（#1149）。**不借别的进程绕出沙箱**——
+                # 那是逃逸；让调用方在沙箱外重跑同一条命令。
+                raise _launch_failed(
+                    "当前进程在受限沙箱里"
+                    + ("（AppContainer）" if kind == "app_container" else "（受限令牌）")
+                    + "，Tavotto 桌面应用在这里起不来，也转发不到已开着的窗口。"
+                    "请在沙箱外重新运行同一条交接命令。",
+                    app,
+                    code="sandboxed_launch",
+                    retryable=True,
+                    sandbox=kind,
+                )
+            return _launch_desktop_via_spawn(
+                app, target, spawn=spawn, clock=clock, sleep=sleep, pids_of=pids_of
+            )
         if prefer == "desktop":
             raise HandoffError(
                 "没找到 Tavotto 桌面应用。装一个（GitHub Releases），"
@@ -1041,9 +1362,12 @@ def open_target(
     launch_ui: bool = True,
     stem: str | None = None,
     no_probe: bool = False,
+    render_wait: float = 0.0,
+    receipt_clock=None,
+    receipt_sleep=None,
     **kw,
 ) -> dict:
-    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起。
+    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起 →（`render_wait` > 0 时）查渲染结论。
 
     返回一份可直接 json.dumps 的结果。`.py` 目标带 `probe` / `figures` /
     `pick` 三个附加键（路由细节见 resolve_script_route）。
@@ -1091,8 +1415,70 @@ def open_target(
         result["probe"] = {k: v for k, v in probe_info.items() if k != "figures"}
         result["pick"] = target.pick
     if launch_ui:
-        result["launch"] = launch(target, prefer=prefer, port=port, **kw)
+        result["launch"] = _launch_with_render(
+            target,
+            prefer=prefer,
+            port=port,
+            render_wait=render_wait,
+            # 与插件判 `not_parameterizable` 的同一个判据：无脚本的图界面不发起引擎渲染
+            renderable=registry_info.get("parameterizable") is not False,
+            clock=receipt_clock,
+            sleep=receipt_sleep,
+            **kw,
+        )
     return result
+
+
+def _render_wait_arg(text: str) -> float:
+    """argparse 的 `--render-wait` 类型：只收有限且 >= 0 的数（nan / inf / 负数是用法错误，退出 2）。"""
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"不是数字: {text!r}") from None
+    if not math.isfinite(v) or v < 0:
+        raise argparse.ArgumentTypeError(f"必须是有限且不小于 0 的秒数: {text!r}")
+    return v
+
+
+def _launch_with_render(
+    target: Target,
+    *,
+    render_wait: float,
+    renderable: bool = True,
+    clock=None,
+    sleep=None,
+    **launch_kw,
+) -> dict:
+    """唤起，并给 `launch` 加上 `render`（ADR 0131 第六节「交接三态」）。
+
+    `ok` 的语义**不变**（仍是「唤起成功且进程活着」）；`render` 是加性字段：
+    `ok` / `failed` / `unverified` 三值，**查不到、超时、通道不可用、没有目标 stem 一律 unverified**，
+    只有实例明确报了错才是 failed。确认信号是对实例的**经认证 HTTP 查询**（`handoffreceipt`），CLI 不往磁盘写任何东西；
+    `since` 必须在唤起**之前**取——转发给已在跑的实例时渲染可能比 launch 返回还早。
+    """
+    render_wait = engine_receipt.finite_budget(render_wait)  # 库调用同样防 nan / inf / 负数
+    waiting = target.stem is not None and renderable and render_wait > 0
+    # 回拨一点余量（理由见 SINCE_SKEW_S）
+    since = time.time() - engine_receipt.SINCE_SKEW_S
+    info = launch(target, **launch_kw)
+    if target.stem is None:
+        render = engine_receipt.unverified(engine_receipt.REASON_NO_TARGET_STEM)
+    elif not renderable:
+        # 与插件判 `not_parameterizable` 的同一个判据：无脚本的图界面不发起引擎渲染
+        render = engine_receipt.unverified(engine_receipt.REASON_NOT_RENDERABLE)
+    elif not waiting:
+        render = engine_receipt.unverified(engine_receipt.REASON_NOT_WAITED)
+    else:
+        kw = {}
+        if clock is not None:
+            kw["clock"] = clock
+        if sleep is not None:
+            kw["sleep"] = sleep
+        render = engine_receipt.wait(
+            target.project, target.stem, since, render_wait, port=launch_kw.get("port"), **kw
+        )
+    info["render"] = render
+    return info
 
 
 def _report(result: dict) -> None:
@@ -1146,6 +1532,47 @@ def _report(result: dict) -> None:
         print(f"* 已交给正在运行的 Tavotto: {launch_info['url']}")
     else:
         print(f"* 正在启动 Tavotto: {launch_info['url']}")
+    render = launch_info.get("render") or {}
+    if render.get("status") == "failed":
+        print(f"! 界面里这张图没渲染出来（{render.get('code')}）——窗口已打开，但图没有画成")
+    elif render.get("status") == "ok" and not render.get("verified"):
+        print("! 界面渲染了，但没能确认渲染的就是这张图（stem 与注册表不一致或清单为空）")
+
+
+def _record_origin_cli(args) -> int:
+    """`--origin-json` 仅记录模式。来源记录是弱线索：任何读不了 / 写不进去都报 `recorded: 0`，退出码 0。
+
+    只有「目标解析不了」才是真错误（退出 2）。不碰注册表、不起 worker、不唤起界面。
+    """
+    from . import originrecord
+
+    try:
+        target = resolve_target(args.path)
+    except HandoffError as exc:
+        print(
+            json.dumps(
+                {"protocol": engine_locate.PROTOCOL_VERSION, **exc.payload()}, ensure_ascii=False
+            )
+        )
+        return 2
+    try:
+        with open(args.origin_json, encoding="utf-8") as f:
+            payload = json.load(f)
+        summary = originrecord.record_handoff(target.project, payload)
+    except (OSError, ValueError):
+        summary = {"recorded": 0, "skipped": 0, "reason": "unreadable"}
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "protocol": engine_locate.PROTOCOL_VERSION,
+                "project": target.project,
+                "origin": summary,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
 
 
 def cli(argv: list[str]) -> int:
@@ -1162,6 +1589,25 @@ def cli(argv: list[str]) -> int:
     )
     ap.add_argument("--stem", default=None, help="脚本产出多张图时显式选哪张（只对 .py 目标有效）")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="浏览器模式端口")
+    ap.add_argument(
+        "--render-wait",
+        type=_render_wait_arg,
+        default=DEFAULT_RENDER_WAIT,
+        metavar="SECONDS",
+        help=(
+            "唤起后最多等多少秒，看界面对目标图的那一次渲染有没有结论"
+            f"（默认 {DEFAULT_RENDER_WAIT:g}；0 = 不等）。到点没结论是 unverified，不是失败"
+        ),
+    )
+    ap.add_argument(
+        "--origin-json",
+        default=None,
+        metavar="FILE",
+        help=(
+            "仅记录模式（插件交接跑过脚本之后用）：读 FILE 里的来源事实，按产物字节摘要写进"
+            "来源记录（ADR 0139 PR3），不登记、不唤起、不执行任何东西。记不进去不算失败"
+        ),
+    )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
     # stdout 是管道时 Windows 退回 cp936/cp1252，输出里的中文（项目路径、
@@ -1189,6 +1635,9 @@ def cli(argv: list[str]) -> int:
         return 2
     prefer = "desktop" if args.desktop else "browser" if args.browser else "auto"
 
+    if args.origin_json is not None:
+        return _record_origin_cli(args)
+
     try:
         result = open_target(
             args.path,
@@ -1197,6 +1646,7 @@ def cli(argv: list[str]) -> int:
             launch_ui=not args.no_launch,
             stem=args.stem,
             no_probe=args.no_probe,
+            render_wait=args.render_wait,
         )
     except HandoffError as exc:
         # 失败也必须是**机器可解析的一行 JSON**：调用方按 `code` 分诊，

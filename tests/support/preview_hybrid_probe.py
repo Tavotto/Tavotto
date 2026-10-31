@@ -175,7 +175,7 @@ def case_lifecycle(n: int) -> dict:
         t0 = time.perf_counter()
         sess.instrument_all()  # ← 冷 build 走的就是这一句
         out["cold_build_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
-        svg_path = Path(tmp) / f"{fx.STEM}.svg"
+        svg_path = Path(figcapture.usable_preview_path(tmp, fx.STEM, ".svg"))
         out["cold"] = _svg_stats(svg_path.read_text(encoding="utf-8"))
         out["rasterized_after_cold"] = [m.get_rasterized() for m in meshes]
 
@@ -241,8 +241,12 @@ def case_lifecycle(n: int) -> dict:
             # 路，它多数一个还是少数一个不会有任何地方报错。
             out["counter_agreement"] = {
                 "whole_text": _svg_stats(vres["svg"]),
-                "chunked_1mib": _svg_file_stats(Path(tmp) / f"{fx.STEM}.svg"),
-                "chunked_997b": _svg_file_stats(Path(tmp) / f"{fx.STEM}.svg", chunk_bytes=997),
+                "chunked_1mib": _svg_file_stats(
+                    Path(figcapture.usable_preview_path(tmp, fx.STEM, ".svg"))
+                ),
+                "chunked_997b": _svg_file_stats(
+                    Path(figcapture.usable_preview_path(tmp, fx.STEM, ".svg")), chunk_bytes=997
+                ),
             }
             # 不变量 1：表示法换了，**语义 manifest 逐字节不变**
             out["manifest_identical"] = json.dumps(
@@ -481,7 +485,7 @@ def case_hard_guard(n: int) -> dict:
             READS.clear()
             preview: dict = {}
             res = sess.do_render(fx.STEM, [], inline_svg=True, preview=preview)
-            svg_path = str(Path(tmp) / f"{fx.STEM}.svg")
+            svg_path = str(Path(figcapture.usable_preview_path(tmp, fx.STEM, ".svg")))
             out["preview"] = preview
             out["has_svg_in_response"] = "svg" in res
             out["svg_read_text_calls"] = READS.count(svg_path)
@@ -582,7 +586,7 @@ def _render_once(sess, out_dir: Path) -> dict:
     return {
         "timings": timings,
         "preview": {k: preview[k] for k in ("mode", "reason", "rasterized_artist_count")},
-        "svg": _svg_file_stats(out_dir / f"{fx.STEM}.svg"),
+        "svg": _svg_file_stats(Path(figcapture.usable_preview_path(out_dir, fx.STEM, ".svg"))),
     }
 
 
@@ -605,7 +609,9 @@ def bench(n: int, repeat: int) -> dict:
         t0 = time.perf_counter()
         sess.instrument_all()
         cold_hybrid_ms = round((time.perf_counter() - t0) * 1000.0, 1)
-        cold_hybrid = _svg_file_stats(out_dir / f"{fx.STEM}.svg")
+        cold_hybrid = _svg_file_stats(
+            Path(figcapture.usable_preview_path(out_dir, fx.STEM, ".svg"))
+        )
         for _ in range(repeat):
             rows["hybrid"].append(_render_once(sess, out_dir))
             with _budgets_off():
@@ -621,7 +627,9 @@ def bench(n: int, repeat: int) -> dict:
             t0 = time.perf_counter()
             sess.instrument_all()
             cold_vector_ms = round((time.perf_counter() - t0) * 1000.0, 1)
-            cold_vector = _svg_file_stats(out_dir / f"{fx.STEM}.svg")
+            cold_vector = _svg_file_stats(
+                Path(figcapture.usable_preview_path(out_dir, fx.STEM, ".svg"))
+            )
         plt.close(fig)
 
     def summary(side):

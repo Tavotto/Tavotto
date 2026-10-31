@@ -9,12 +9,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchEngineEnvironment: vi.fn(),
+  adoptEnvironmentCandidate: vi.fn(),
 }))
 
-import type { EngineEnvironment } from '@/lib/api'
-import { EngineEnvironmentCard } from '@/components/EngineEnvironmentCard'
+import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvCoverageDetail, type EnvRecommendation } from '@/lib/api'
+import { EngineEnvironmentCard, MissingDependencyCard } from '@/components/EngineEnvironmentCard'
 import { t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
+import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -65,13 +70,19 @@ afterEach(async () => {
 })
 
 describe('项目改用的系统 Python：缘由按 automatic 分', () => {
+  it('系统专属模块不可用时不提供切换解释器', async () => {
+    useEnvStore.setState({ env: envWith(false) })
+    await render(<MissingDependencyCard module="winreg" installRoute="unsupported_platform" />)
+    expect(text()).toContain('winreg 是其他系统专用模块')
+    expect(host.querySelectorAll('button')).toHaveLength(0)
+  })
   it('自动采用的：说「已自动改用这台机器上装着它的 Python」，不说「你选择的」', async () => {
     useEnvStore.setState({ env: envWith(true) })
     await render(<EngineEnvironmentCard />)
     expect(text()).toContain(en('projectEnvUsingSystem', { path: 'C:\\Python312\\python.exe' }))
     expect(text()).toContain(en('projectEnvWhySystemAuto', { module: 'adjustText' }))
     expect(text()).not.toContain(en('projectEnvWhySystem', { module: 'adjustText' }))
-    expect(text()).toContain(en('projectEnvUseBuiltIn'))
+    expect(text()).toContain(en('projectEnvUseBuiltIn', { product: PRODUCT_NAME }))
   })
 
   it('用户挑的：仍说「已改用你为项目选择的现有环境」', async () => {
@@ -79,6 +90,323 @@ describe('项目改用的系统 Python：缘由按 automatic 分', () => {
     await render(<EngineEnvironmentCard />)
     expect(text()).toContain(en('projectEnvWhySystem', { module: 'adjustText' }))
     expect(text()).not.toContain(en('projectEnvWhySystemAuto', { module: 'adjustText' }))
-    expect(text()).toContain(en('projectEnvUseBuiltIn'))
+    expect(text()).toContain(en('projectEnvUseBuiltIn', { product: PRODUCT_NAME }))
+  })
+})
+
+// ---------------------------------------------------------------- 环境建议（ADR 0114）
+const adviceEnv = (rec: Partial<EnvRecommendation['decision']> & { recommended?: boolean }): EngineEnvironment =>
+  ({
+    ok: true,
+    python: '/x/python',
+    source: 'bundled',
+    matplotlib: '3.11.2',
+    managed: false,
+    bundled: true,
+    runtime: {} as never,
+    state: 'idle',
+    project: {
+      open: true,
+      source: 'bundled',
+      recommendation: {
+        version: 1,
+        decision: {
+          consent: 'none',
+          locked_by: rec.locked_by ?? null,
+          needs_decision: rec.needs_decision ?? true,
+          current_id: null,
+        },
+        recommended_id: rec.recommended === false ? null : 'cand-1',
+        candidates: [
+          {
+            id: 'cand-1',
+            label: 'project_hint',
+            name: '.venv',
+            sources: ['project_venv'],
+            scope: 'project',
+            python_relative: '.venv/bin/python',
+            generation: 'gen-1',
+            status: 'unchecked',
+            checked: false,
+            health: null,
+            current: false,
+          },
+          { id: 'builtin', label: 'bundled', name: '', sources: [], scope: 'machine', python_relative: null, generation: '', status: 'unchecked', checked: false, health: null, current: false, read_only: true },
+        ],
+        python_requirement: { supported: { min: '3.10', max_exclusive: '3.15' }, declared: null, status: 'unknown' },
+        check: { executes_candidates: true, max_candidates: 6, deadline_s: 180, per_candidate_timeout_s: 120, scopes: [] },
+      },
+    },
+  }) as never
+
+describe('环境建议：一句话 + 一个主按钮', () => {
+  it('项目有自己的环境、用户还没决定：问一句，主按钮「使用它」把候选与环境代交回后端', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({
+      ok: true,
+      project: { open: true } as never,
+    })
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+
+    expect(text()).toContain(en('envAdviceAsk', { name: '.venv/bin/python' }))
+    const use = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === en('envAdviceUse'))!
+    await act(async () => use.click())
+
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledTimes(1)
+    const [cand] = vi.mocked(adoptEnvironmentCandidate).mock.calls[0]
+    expect(cand.id).toBe('cand-1')
+    expect(cand.generation).toBe('gen-1')
+  })
+
+  it('已经决定过（needs_decision=false）：不再问', async () => {
+    useEnvStore.setState({ env: adviceEnv({ needs_decision: false }) })
+    await render(<EngineEnvironmentCard />)
+    expect(text()).not.toContain(en('envAdviceUse'))
+  })
+
+  it('全局解释器压着：不给采用按钮，如实说为什么', async () => {
+    useEnvStore.setState({ env: adviceEnv({ locked_by: { source: 'env_override' }, needs_decision: false }) })
+    await render(<EngineEnvironmentCard />)
+    expect(text()).toContain(en('envAdviceLocked'))
+    expect(text()).not.toContain(en('envAdviceUse'))
+  })
+})
+
+describe('ADR 0114 之前自动采用的记录（legacy_auto）：一键确认（T09）', () => {
+  const legacyEnv = () => {
+    const env = adviceEnv({ needs_decision: false }) as unknown as {
+      project: { recommendation: EnvRecommendation }
+    }
+    const rec = env.project.recommendation
+    rec.decision.consent = 'legacy_auto'
+    rec.decision.current_id = 'cand-1'
+    rec.candidates[0].current = true
+    return env as unknown as EngineEnvironment
+  }
+
+  it('一句话 + 一个主按钮；确认 = 对此刻在用的那个候选走同一个采用端点', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockReset()
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({ ok: true, project: { open: true } as never })
+    useEnvStore.setState({ env: legacyEnv() })
+    await render(<EngineEnvironmentCard />)
+    const row = document.querySelector('[data-env-advice-legacy]')!
+    expect(row.textContent).toContain(en('envAdviceLegacy', { name: '.venv/bin/python' }))
+    const buttons = row.querySelectorAll('button')
+    expect(buttons.length).toBe(1)
+    await act(async () => (buttons[0] as HTMLButtonElement).click())
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(adoptEnvironmentCandidate).mock.calls[0][0].id).toBe('cand-1')
+  })
+
+  it('检测模式（默认，ADR 0114 §六）：自动定下的就是定下了，不让用户确认环境', async () => {
+    const env = legacyEnv() as unknown as { project: { recommendation: EnvRecommendation } }
+    env.project.recommendation.decision.mode = 'detect'
+    useEnvStore.setState({ env: env as unknown as EngineEnvironment })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-legacy]')).toBeNull()
+    expect(document.querySelector('[data-env-advice]')).toBeNull()
+    expect(text()).not.toContain(en('envAdviceConfirm'))
+  })
+
+  it('已经明确确认过（confirmed）：不再问', async () => {
+    const env = legacyEnv() as unknown as { project: { recommendation: EnvRecommendation } }
+    env.project.recommendation.decision.consent = 'confirmed'
+    useEnvStore.setState({ env: env as unknown as EngineEnvironment })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-legacy]')).toBeNull()
+  })
+})
+
+describe('环境建议：覆盖度 detail 的人话（Import Origin PR6）', () => {
+  const withCoverage = (detail: EnvCoverageDetail[]) => {
+    const env = adviceEnv({})
+    env.project!.recommendation!.candidates[0].coverage = {
+      state: 'missing',
+      role: 'user',
+      modules: { lab_tools: 'not_found' },
+      detail,
+      executed_user_code: false,
+      versions_checked: false,
+    }
+    return env
+  }
+
+  it('候选带 coverage.detail：每个 detail 码一句人话，收在默认折叠的「详情」里；一句话 + 一个主按钮不变', async () => {
+    useEnvStore.setState({
+      env: withCoverage([
+        { code: 'module_not_found_in_user_environment', module: 'lab_tools', reason: 'not_found' },
+        { code: 'environment_unusable', reason: 'unsupported_python' },
+      ]),
+    })
+    await render(<EngineEnvironmentCard />)
+    const details = document.querySelector('[data-env-advice-coverage]') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    const rows = [...details.querySelectorAll('[data-origin-coverage-code]')]
+    expect(rows.map((r) => r.getAttribute('data-origin-coverage-code'))).toEqual(['module_not_found_in_user_environment', 'environment_unusable'])
+    expect(rows[0].textContent).toBe('lab_tools · 你的这套 Python 里找不到它。')
+    expect(rows[1].textContent).toBe('这套 Python 本身跑不起来。')
+    // 默认可见区：问的那句 + 「使用它」「用 Tavotto 内置环境」+ 折叠标题；detail 的句子不外露，句子数与按钮数和没有 coverage 时一样
+    const advice = document.querySelector('[data-env-advice]') as HTMLElement
+    const sentences = visibleSentenceCount(advice)
+    const blocks = visibleBlocks(advice).map((b) => b.text)
+    expect(visiblePrimaryButtons(advice)).toBe(1)
+    expect(blocks).not.toContain('这套 Python 本身跑不起来。')
+    expect(blocks).toContain(en('repairDetails'))
+    await act(async () => root.unmount())
+    host.remove()
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+    const plain = document.querySelector('[data-env-advice]') as HTMLElement
+    expect(visibleSentenceCount(plain)).toBe(sentences)
+    expect(visiblePrimaryButtons(plain)).toBe(1)
+  })
+
+  it('没有 coverage / detail 为空：不多出「详情」', async () => {
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-coverage]')).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    useEnvStore.setState({ env: withCoverage([]) })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-coverage]')).toBeNull()
+  })
+})
+
+describe('环境建议的错误路径', () => {
+  it.each([false, true])('全局环境不可用仍可采用项目候选（compact=%s）', async (compact) => {
+    const env = adviceEnv({})
+    env.ok = false
+    useEnvStore.setState({ env })
+    await render(<EngineEnvironmentCard compact={compact} />)
+    expect(document.querySelector('[data-env-advice]')).not.toBeNull()
+  })
+
+  it('缺依赖的采用绑定已显示的一代，不读取环境 store 里的较新一代', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockClear()
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({ ok: true, project: { open: true } as never })
+    const env = adviceEnv({})
+    env.project!.recommendation!.candidates[0].generation = 'gen-new'
+    useEnvStore.setState({ env })
+    await render(<MissingDependencyCard module="adjustText" projectEnv={{
+      code: 'environment_confirmation_required', module: 'adjustText', venv: '.venv',
+      candidates: ['.venv'], python_version: '3.13',
+      recommended: { venv: '.venv', id: 'cand-1', generation: 'gen-displayed' },
+    }} />)
+    const button = document.querySelector<HTMLButtonElement>('[data-env-candidate="cand-1"]')!
+    expect(button).not.toBeNull()
+    await act(async () => button.click())
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith({ id: 'cand-1', generation: 'gen-displayed' }, undefined, 'adjustText')
+  })
+
+  it('采用建议时回传发现它的脚本与缺的包（脚本在子目录、venv 也在子目录时才找得到候选）', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockClear()
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({ ok: true, project: { open: true } as never })
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<MissingDependencyCard module="adjustText" projectEnv={{
+      code: 'environment_confirmation_required', module: 'adjustText', venv: 'subdir/.venv',
+      candidates: ['subdir/.venv'], python_version: '3.13',
+      recommended: { venv: 'subdir/.venv', id: 'cand-1', generation: 'gen-displayed', script: 'subdir/plot.py' },
+    }} />)
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-env-candidate="cand-1"]')!.click())
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith(
+      { id: 'cand-1', generation: 'gen-displayed' }, 'subdir/plot.py', 'adjustText')
+  })
+})
+
+describe('缺依赖装不了时从引导卡直达：「使用其他 Python 环境」直接展开', () => {
+  it('意图在：路径输入一打开就在；意图不在：只有「使用其他 Python 环境…」一颗钮', async () => {
+    useEnvStore.setState({ env: envWith(false) })
+    useUiStore.setState({ engineEnvPick: false })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector(`input[aria-label="${en('pathAria')}"]`)).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    useUiStore.setState({ engineEnvPick: true })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector(`input[aria-label="${en('pathAria')}"]`)).not.toBeNull()
+    useUiStore.setState({ engineEnvPick: false })
+  })
+})
+
+// ---------------------------------------------------------------- 品牌名走插值（engine 文案不手写）
+describe('品牌名：生成点把 PRODUCT_NAME 传进插值', () => {
+  const click = async (el: Element) => act(async () => (el as HTMLElement).click())
+  const btn = (name: string) => Array.from(document.querySelectorAll('button')).find((b) => b.textContent === name)
+
+  it('环境建议里「改用内置环境」带品牌名', async () => {
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+    const label = en('envAdviceBuiltIn', { product: PRODUCT_NAME })
+    expect(label).toContain(PRODUCT_NAME)
+    expect(btn(label)).toBeTruthy()
+    expect(text()).not.toContain('{{')
+  })
+
+  it('「更换…」展开的说明末尾带品牌名', async () => {
+    useEnvStore.setState({ env: { ...envWith(false), project: { open: true } } as never })
+    await render(<EngineEnvironmentCard />)
+    await click(btn(en('changeInterpreter'))!)
+    expect(text()).toContain(en('useOtherHintBefore', { product: PRODUCT_NAME }))
+    expect(text()).toContain(`${PRODUCT_NAME}不会改动你选中的环境`)
+    expect(text()).not.toContain('{{')
+  })
+
+  it('受管环境行尾菜单里「重建」带品牌名', async () => {
+    useEnvStore.setState({
+      env: { ...envWith(false), project: { open: true, source: 'managed_project_env', managed: { exists: true, installed: [], python_version: '3.12' } } } as never,
+    })
+    await render(
+      <TooltipProvider>
+        <EngineEnvironmentCard />
+      </TooltipProvider>,
+    )
+    const trigger = document.querySelector(`[aria-label="${en('envActions')}"]`)!
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+    })
+    expect(document.body.textContent).toContain(en('managedEnvRebuild', { product: PRODUCT_NAME }))
+    expect(document.body.textContent).toContain(`重建 ${PRODUCT_NAME} 环境`)
+    expect(document.body.textContent).not.toContain('{{')
+  })
+})
+
+// ---------------------------------------------------------------- 用户自选环境失败 ≠ 安装文件不完整
+describe('桌面版里用户自选的环境用不了：说真实原因，不说「安装文件不完整」', () => {
+  const failing = (code: string): EngineEnvironment =>
+    ({
+      ok: false,
+      python: null,
+      source: '',
+      matplotlib: null,
+      managed: false,
+      bundled: false,
+      runtime: { present: true, valid: true, expected: true, code: '' } as never,
+      state: 'idle',
+      code,
+      error: 'x',
+    }) as never
+
+  for (const code of ['explicit_python_unusable', 'conda_launcher_unavailable']) {
+    for (const compact of [false, true]) {
+      it(`${code}${compact ? '（紧凑）' : ''}`, async () => {
+        useEnvStore.setState({ env: failing(code) })
+        await render(<EngineEnvironmentCard compact={compact} />)
+        expect(text()).toContain(en('unusableTitle'))
+        expect(text()).not.toContain(en('incompleteTitle'))
+        expect(text()).not.toContain(en('missingTitle'))
+      })
+    }
+  }
+
+  it('内置环境真的缺了：仍说安装文件不完整', async () => {
+    useEnvStore.setState({
+      env: {
+        ...failing('bundled_runtime_missing'),
+        runtime: { present: false, valid: false, expected: true, code: 'bundled_runtime_missing' },
+      } as never,
+    })
+    await render(<EngineEnvironmentCard compact />)
+    expect(text()).toContain(en('incompleteTitle'))
   })
 })

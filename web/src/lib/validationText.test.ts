@@ -62,20 +62,18 @@ describe('主语说人话', () => {
 })
 
 describe('当前值 → 要求', () => {
-  it('字号带单位，要求那一侧说清是「不低于」还是「大于」', () => {
-    expect(issueValues(issue())).toEqual({ current: '7.50 pt', expected: '≥ 8 pt' })
+  it('字号带单位，两条下限都说「不低于」（≥）', () => {
+    expect(issueValues(issue())).toEqual({ current: '7.50 pt', expected: '≥ 8 pt', expectedHead: '≥ 8 pt' })
     const floor = issue({
       ruleCode: 'font-below-absolute-floor',
       message: {
         key: 'preflight.fontBelowFloor',
         ns: 'errors',
-        values: { effective: '8.00', floor: '8' },
+        values: { effective: '7.50', floor: '8' },
       },
     })
-    // 绝对下限**不含等号**：这句话必须说成"大于"，说成"≥"就是在骗人。
-    // 8.00 与 8 在屏幕上是同一个数，所以还带上那句解释（见下面的 T41 用例）
-    expect(issueValues(floor).expected).toBe('大于 8 pt，正好等于不算通过。')
-    expect(issueValues(floor).expected).not.toContain('≥')
+    // 绝对下限**含等号**（ADR 0029 修订 2026-10-26）：说成「≥」，与求值器的 `eff < floor` 一致
+    expect(issueValues(floor).expected).toBe('≥ 8 pt')
   })
 
   it('画布标注那两条用的是 size 参数，同一条规则两种主语', () => {
@@ -89,6 +87,7 @@ describe('当前值 → 要求', () => {
     expect(issueValues(issue({ ruleCode: 'overlap', message: { key: 'preflight.overlap', ns: 'errors' } }))).toEqual({
       current: null,
       expected: null,
+      expectedHead: null,
     })
   })
 })
@@ -189,36 +188,32 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
   const floorHit = (spec: PreflightSpec) =>
     runSpec(spec, loadProfile()).find((i) => i.id === 'font-below-absolute-floor')
 
-  it('绝对下限的等号边界：求值器判「正好等于」违规，措辞就得这么说', () => {
+  it('绝对下限含等号：正好等于通过，低一点点就违规，措辞说「≥」', () => {
     const floor = loadProfile().absolute_min_font_size_pt
-    // 判据这一侧：正好等于不通过，高一点点就通过（第二句让第一句不会恒真）
-    expect(floorHit(specWithText(floor))?.id).toBe('font-below-absolute-floor')
-    expect(floorHit(specWithText(floor + 0.01))).toBeUndefined()
+    // 判据这一侧：正好等于通过，低一点点就违规（第二句让第一句不会恒真）
+    expect(floorHit(specWithText(floor))).toBeUndefined()
+    expect(floorHit(specWithText(floor - 0.5))?.id).toBe('font-below-absolute-floor')
 
     // 措辞这一侧：用求值器**真的吐出来的**那份参数，不是手写的样例
-    const hit = floorHit(specWithText(floor))!
+    const hit = floorHit(specWithText(floor - 0.5))!
     const values = issueValues(
       issue({ ruleCode: 'font-below-absolute-floor', message: hit.message }),
     )
-    expect(values.expected).toBe('大于 8 pt，正好等于不算通过。')
+    expect(values.expected).toBe('≥ 8 pt')
   })
 
   it('两个数在屏幕上不一样时不加那句话——它只解释「看起来相等」', () => {
     const hit = floorHit(specWithText(6))!
     expect(
       issueValues(issue({ ruleCode: 'font-below-absolute-floor', message: hit.message })).expected,
-    ).toBe('大于 8 pt')
+    ).toBe('≥ 8 pt')
   })
 
-  it('7.995pt 被显示成 8.00：同一句话也要成立（这一档的真值并不等于下限）', () => {
-    // 图内文字的 `effective` 走 toFixed(2)，7.995×1 显示成 8.00
-    const hit = runSpec(specWithPanelText(7.995, 1), loadProfile()).find(
-      (i) => i.id === 'font-below-absolute-floor',
-    )!
-    expect(hit.message.values?.effective).toBe('8.00')
-    expect(
-      issueValues(issue({ ruleCode: 'font-below-absolute-floor', message: hit.message })).expected,
-    ).toBe('大于 8 pt，正好等于不算通过。')
+  it('7.9996pt（缩放噪声）在容差内通过；7.98pt 仍违规——显示成 8.00 的假违规不再出现', () => {
+    const ids = (pt: number) => runSpec(specWithPanelText(pt, 1), loadProfile()).map((i) => i.id)
+    expect(ids(8)).not.toContain('font-below-absolute-floor')
+    expect(ids(7.9996)).not.toContain('font-below-absolute-floor')
+    expect(ids(7.98)).toContain('font-below-absolute-floor')
   })
 
   it('含等号的那一侧（≥ / ≤）在边界上说的是「显示已四舍五入」', () => {
@@ -242,11 +237,32 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     expect(issueValues(tooLarge).expected).toBe('≤ 12 pt，当前值实际略高，显示已四舍五入。')
   })
 
-  it('设置页问的是同一张表：填 8 时两条下限的要求不是同一句话', () => {
-    expect(ruleExpectation('font-below-absolute-floor', 8)).toBe('大于 8 pt')
+  it('设置页问的是同一张表：填 8 时两条下限都是「≥ 8 pt」', () => {
+    expect(ruleExpectation('font-below-absolute-floor', 8)).toBe('≥ 8 pt')
     expect(ruleExpectation('font-too-small', 8)).toBe('≥ 8 pt')
     expect(ruleExpectation('min_raster_dpi-not-a-rule', 8)).toBeNull()
     // 没登记比较词的规则不硬造一句
     expect(ruleExpectation('page-width', 80)).toBeNull()
+  })
+})
+
+describe('issueValues.expectedHead：行内只留「要求」本身，只剥比较词自己加的边界说明', () => {
+  const issue = (ruleCode: string, values: Record<string, unknown>): ValidationIssue =>
+    ({ ruleCode, message: { values } }) as unknown as ValidationIssue
+
+  it('边界句：expected 带补充说明，expectedHead 是裸的要求', () => {
+    const v = issueValues(issue('font-below-absolute-floor', { effective: '8.00', floor: 8 }))
+    expect(v.expected).toContain('显示已四舍五入')
+    expect(v.expectedHead).toBe('≥ 8 pt')
+    const w = issueValues(issue('font-below-absolute-floor', { effective: '6.00', floor: 8 }))
+    expect(w.expectedHead).toBe(w.expected)
+  })
+
+  it('规范值本身带逗号 / 分号：原样保留，一个字不切', () => {
+    for (const want of ['Surname, year', 'a; b', '1,000; x, y']) {
+      const v = issueValues(issue('axis-label-format', { label: 'x', want }))
+      expect(v.expected).toBe(want)
+      expect(v.expectedHead).toBe(want)
+    }
   })
 })

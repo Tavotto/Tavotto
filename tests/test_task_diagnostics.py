@@ -289,7 +289,8 @@ def test_a_failed_export_keeps_its_own_facts_after_a_successful_retry(env, tmp_p
         by_format["eps"]["status"] == "failed"
         and by_format["eps"]["error_code"] == "eps_not_for_canvas"
     )
-    assert snap["request"]["document_revision"] == REV1
+    assert "document_revision" not in snap["request"]  # 无密钥 FNV 可被离线猜解：不出门
+    assert REV1 not in json.dumps(doc) and REV2 not in json.dumps(doc)
     assert doc["retry_of"] is None
     assert doc["later_attempts"] == [
         {
@@ -303,7 +304,7 @@ def test_a_failed_export_keeps_its_own_facts_after_a_successful_retry(env, tmp_p
     assert (
         two["snapshot"]["request"]["scope"] == "original" and two["snapshot"]["outcome"] == "done"
     )
-    assert two["snapshot"]["request"]["document_revision"] == REV2
+    assert "document_revision" not in two["snapshot"]["request"]
     assert "error" not in two["snapshot"]
     assert two["retry_of"] == first["job_id"]
     # 现场声明：这是冻结的快照，不是此刻采集
@@ -519,6 +520,7 @@ def test_collecting_a_task_diagnostic_executes_nothing(env, tmp_path, monkeypatc
         (engine_pool, "get"),
         (projectenv, "probe_environment"),
         (deprepair, "decide_environment"),
+        (deprepair, "decide_environment_pinned"),
         (deprepair, "gate"),
         (d, "build_report"),
         (subprocess, "run"),
@@ -678,7 +680,7 @@ def test_a_stale_plan_failure_keeps_its_closed_reason(
     pj = _open(client, root)
     calls = {"n": 0}
 
-    def stale(plan):
+    def stale(plan, **_kw):
         # 第 1 次是会话认领动作前的复核（通过），第 2 次是执行线程起会话前的（作废）
         calls["n"] += 1
         return (preparation.STALE_GRANT, {}) if calls["n"] >= 2 else None
@@ -741,7 +743,7 @@ def test_the_global_bundle_carries_this_projects_snapshots_and_nothing_else(env,
     _, job = _export(client, _canvas(filename=f"n-{SECRET[:6]}", formats=["pdf", "eps"]), a)
     files = _bundle_files(client, a)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["schema_version"] == 5 and manifest["contains_task_snapshots"] is True
+    assert manifest["schema_version"] == 11 and manifest["contains_task_snapshots"] is True
     section = json.loads(files["task-diagnostics.json"])
     assert [s["snapshot"]["attempt_id"] for s in section["snapshots"]] == [job["job_id"]]
     for name, data in files.items():
@@ -791,7 +793,7 @@ def test_probe_terminal_exceptions_keep_diagnostic_reference(
     outcome = {"registered": True, "stems": ["fig"], "entry": "main", "descriptors": []}
     monkeypatch.setattr(m.engine_probe, "probe_and_register", lambda *a, **kw: outcome.copy())
     monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **kw: None)
-    monkeypatch.setattr(m.engine_runconfig, "set_default", lambda *a, **kw: None)
+    monkeypatch.setattr(m.engine_runconfig, "commit_success", lambda *a, **kw: None)
     monkeypatch.setattr(m, "refresh_project", lambda *a, **kw: None)
 
     def fail(*args, **kwargs):
@@ -801,7 +803,7 @@ def test_probe_terminal_exceptions_keep_diagnostic_reference(
         "started": (m, "sse_publish"),
         "probe": (m.engine_probe, "probe_and_register"),
         "materialize": (m, "_materialize_runtime"),
-        "default": (m.engine_runconfig, "set_default"),
+        "default": (m.engine_runconfig, "commit_success"),
         "refresh": (m, "refresh_project"),
     }[failure_at]
     monkeypatch.setattr(target, name, fail)
@@ -855,7 +857,7 @@ def test_probe_refresh_failure_keeps_original_status_and_diagnostic(
         lambda *a, **kw: {"registered": True, "stems": ["fig"], "entry": "main", "descriptors": []},
     )
     monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **kw: None)
-    monkeypatch.setattr(m.engine_runconfig, "set_default", lambda *a, **kw: None)
+    monkeypatch.setattr(m.engine_runconfig, "commit_success", lambda *a, **kw: None)
 
     def fail(*args, **kwargs):
         raise m.engine_refresh.RefreshError("registry_invalid", SECRET, {"detail": SECRET})

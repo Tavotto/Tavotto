@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import {
+  answerNativeInput,
   answerScriptInput,
   ApiError,
+  cancelNativeSession,
   fetchScriptAnswers,
   forgetScriptAnswer,
   listenScriptInput,
@@ -12,6 +14,8 @@ import {
 } from '@/lib/api'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { captureNativeExecutionResponse } from '@/lib/nativeExecutionAdmission'
 
 /**
  * 脚本里的 `input()`（ADR 0099）：等作答的问、自动回填的轻提示、记住的答案。
@@ -21,6 +25,9 @@ import { currentProjectId } from '@/lib/session'
  * - **项目代际**：`clear()` 换代并清空；在途响应、旧项目的事件都不落进新项目。事件那道闸由
  *   `handleServerEvent` 按 `pj` 先挡一次，这里按发请求那一刻的代际再挡一次。
  * - 提示与 stdout 片段是用户脚本的文字，组件里**只当纯文本**渲染。
+ * - **同一问只有一个展示面**（T08）：准备面板挂着时认领展示（`claimPresentation`），原对话框让开；面板关掉就放手
+ *   （`releasePresentation`），对话框接着显示同一问——只换展示，不取消脚本。答案本身不进 store（口令尤其）：
+ *   输入框的值只在组件里，`submit` 拿到就发。
  */
 
 export const AUTOFILL_NOTICE_MS = 12_000
@@ -47,7 +54,8 @@ let answersLockHeld: number | null = null
 
 export interface AutofillNotice {
   script: string
-  answer: string
+  /** `null` = 敏感运行 / 口令：后端不给明文 */
+  answer: string | null
   token: number
 }
 
@@ -67,10 +75,12 @@ interface ScriptInputState {
   managing: string | null
   /** 本页那条能答题事件流的 id（`stream.hello`）。**不随项目换代清掉**：事件流跨项目存活 */
   streamId: string | null
+  /** 此刻认领了「展示正在等的那一问」的展示面（如准备面板）；空 = 原对话框展示。挂载状态，不随项目换代清 */
+  presenters: string[]
 
   onRequested: (req: ScriptInputRequest) => void
   onClosed: (id: string) => void
-  onAutofilled: (script: string, answer: string) => void
+  onAutofilled: (script: string, answer: string | null) => void
   dismissAutofilled: () => void
   submit: (answer: string | null) => Promise<void>
   stop: () => Promise<void>
@@ -81,12 +91,28 @@ interface ScriptInputState {
   beginAnswersChange: () => number | null
   /** 放锁；token 已不是持有者（换代清过 / 别人的）就什么都不做 */
   endAnswersChange: (token: number) => void
-  saveAnswer: (token: number, script: string, index: number, answer: string) => Promise<AnswerChange>
-  forgetAnswer: (token: number, script: string, index: number) => Promise<AnswerChange>
+  /** `runConfig`：这条答案属于哪份运行配置（null = 默认配置，ADR 0114 之前的老形状） */
+  saveAnswer: (
+    token: number,
+    script: string,
+    index: number,
+    answer: string,
+    runConfig?: string | null,
+  ) => Promise<AnswerChange>
+  forgetAnswer: (
+    token: number,
+    script: string,
+    index: number,
+    runConfig?: string | null,
+  ) => Promise<AnswerChange>
   /** `stream.hello`：记下流 id 并报一次在看哪个项目 */
   onStreamHello: (streamId: string) => void
   /** 报「这条事件流此刻在看 `pj`」；没有流 / 没有项目时什么都不做 */
   announce: (pj: string | null | undefined) => void
+  /** 某个展示面（准备面板）挂载时认领展示；同名重复认领无效 */
+  claimPresentation: (surface: string) => void
+  /** 展示面卸载 / 关掉时放手：没有别的展示面了，原对话框接着显示同一问 */
+  releasePresentation: (surface: string) => void
   clear: () => void
 }
 
@@ -150,6 +176,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   answersBusy: false,
   managing: null,
   streamId: null,
+  presenters: [],
 
   onRequested: (req) => {
     if (get().queue.some((q) => q.id === req.id)) return
@@ -178,17 +205,27 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     const head = get().queue[0]
     if (!head || get().busy) return
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
+    const execution = head.native ? captureNativeExecutionResponse(head.native.session_id) : undefined
     set({ busy: true, error: null })
     try {
-      await answerScriptInput(head.id, answer)
+      if (head.native) {
+        const response = await answerNativeInput(head.native.session_id, head.native.request_id, answer)
+        if (owner.still()) execution?.acceptSession(response.session)
+      } else await answerScriptInput(head.id, answer)
       if (get().epoch !== epoch) return
       // 后端随后发 `script.input_closed`；这里先出队，界面不必等那条事件
       get().onClosed(head.id)
       if (answer !== null && head.input_kind !== 'getpass') void get().loadAnswers()
     } catch (e) {
       if (get().epoch !== epoch) return
+      if (owner.still()) execution?.acceptError(e)
       // 这一问已经不在等了（脚本结束 / 被停）：收起，不留一个答不了的框
-      if (e instanceof ApiError && e.status === 404) get().onClosed(head.id)
+      // native：409 `native_input_not_pending` = 别的窗口先答了 / 脚本已不在等——同样收起
+      // 同一端点的 409 还可能是 `native_session_disconnected`：只有 not_pending 才收起，其它留框显示原因
+      const notPending =
+        !!head.native && e instanceof ApiError && e.body?.code === 'native_input_not_pending'
+      if (e instanceof ApiError && (e.status === 404 || notPending)) get().onClosed(head.id)
       else set({ busy: false, error: errorText(e) })
     }
   },
@@ -197,13 +234,20 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     const head = get().queue[0]
     if (!head || get().busy) return
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
+    const execution = head.native ? captureNativeExecutionResponse(head.native.session_id) : undefined
     set({ busy: true, error: null })
     try {
-      await stopScriptInput(head.id)
+      // native：停止 = 真终止这个脚本进程（取消桌面拥有的会话）
+      if (head.native) {
+        const response = await cancelNativeSession(head.native.session_id)
+        if (owner.still()) execution?.acceptSession(response.session)
+      } else await stopScriptInput(head.id)
       if (get().epoch !== epoch) return
       get().onClosed(head.id)
     } catch (e) {
       if (get().epoch !== epoch) return
+      if (owner.still()) execution?.acceptError(e)
       if (e instanceof ApiError && e.status === 404) get().onClosed(head.id)
       else set({ busy: false, error: errorText(e) })
     }
@@ -240,11 +284,11 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     set({ answersBusy: false })
   },
 
-  saveAnswer: (token, script, index, answer) =>
-    changeAnswer(get, set, token, () => updateScriptAnswer(script, index, answer)),
+  saveAnswer: (token, script, index, answer, runConfig = null) =>
+    changeAnswer(get, set, token, () => updateScriptAnswer(script, index, answer, runConfig)),
 
-  forgetAnswer: (token, script, index) =>
-    changeAnswer(get, set, token, () => forgetScriptAnswer(script, index)),
+  forgetAnswer: (token, script, index, runConfig = null) =>
+    changeAnswer(get, set, token, () => forgetScriptAnswer(script, index, runConfig)),
 
   onStreamHello: (streamId) => {
     set({ streamId })
@@ -256,6 +300,15 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     if (!streamId || !pj) return
     if (listenInFlight) listenNext = { streamId, pj }
     else sendListen(streamId, pj)
+  },
+
+  claimPresentation: (surface) => {
+    if (get().presenters.includes(surface)) return
+    set((s) => ({ presenters: [...s.presenters, surface] }))
+  },
+
+  releasePresentation: (surface) => {
+    set((s) => ({ presenters: s.presenters.filter((p) => p !== surface) }))
   },
 
   clear: () => {

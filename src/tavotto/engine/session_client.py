@@ -17,23 +17,36 @@
    token 交接，不是裸探测端口）。
 
 服务端退出时删除文件；publish 时顺手清掉遗留的陈旧文件。桌面 sidecar
-**不写**这份文件——它的端口（壳建议、sidecar 实绑）与 nonce 由 Tauri 壳经 stdin 管道 / 握手文件交接，
-不需要（也不应有）磁盘上的凭据。
+**不写**这份**完整**凭据——它的端口（壳建议、sidecar 实绑）与 nonce 由 Tauri 壳经 stdin 管道 / 握手文件交接，
+磁盘上不应有能换 relaunch nonce、能调任何端点的 secret。
+
+桌面 sidecar 只写另一份**范围受限**的文件（ADR 0008 修订 2026-10-16、ADR 0131 第六节）：
+
+    data_dir()/session/handoff-status-<端口>.json（目录 0700、文件 0600）
+    {"port": ..., "pid": ..., "token": "<256-bit 随机，与 nonce / secret 无关>",
+     "scope": "handoff_render_status", "created": ...}
+
+这个 token **只**在 `GET /api/handoff/render-status` 上有效（security.py 的 guard 按路径 + 方法限定），
+换不到 relaunch nonce，调任何其它端点都是 401。它的唯一用途是让 `tavotto open` 查「某项目某 stem 最近一次
+渲染成功与否」。
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import stat
 import time
-import urllib.error
-import urllib.request
 
 from . import config
 
 AUTH_HEADER = "X-Tavotto-Auth"
 RELAUNCH_PATH = "/api/session/relaunch"
+#: 交接状态查询端点——scoped token 唯一能打的路径（security.py 的 guard 与此同源）
+HANDOFF_STATUS_PATH = "/api/handoff/render-status"
+STATUS_SCOPE = "handoff_render_status"
+_STATUS_PREFIX = "handoff-status-"
 _STALE_AFTER_S = 30 * 24 * 3600  # 陈旧文件清理阈值（正常退出会删，这是兜底）
 
 
@@ -97,24 +110,155 @@ def auth_headers(port: int) -> dict:
     return {AUTH_HEADER: secret} if secret else {}
 
 
+#: `relaunch_nonce` 的响应体上限：只有一枚 nonce。其余调用方（refresh / readiness / probe 的响应随项目里
+#: 脚本、素材数量增长）不设上限，与原来 `urlopen` 的完整读取一致，截断会让合法 JSON 解不开
+RELAUNCH_MAX_RESPONSE_BYTES = 64 * 1024
+
+
+def loopback_request(
+    port: int,
+    path: str,
+    *,
+    payload: bytes | None = None,
+    headers: dict | None = None,
+    timeout: float,
+    max_bytes: int | None = None,
+) -> tuple[int, bytes]:
+    """对 `127.0.0.1:<port>` 发一次请求，返回 (状态码, 响应体)；`payload` 非 None 为 POST，否则 GET。
+
+    带 `X-Tavotto-Auth` / 会话 secret 的本机请求一律走这里，**不用 `urlopen`**：后者按
+    `HTTP_PROXY` / `ALL_PROXY` / 系统设置走代理，凭据会连同请求发给代理（#1132）。`HTTPConnection`
+    不读任何代理设置；也不跟随重定向（3xx 原样交给调用方）。`max_bytes=None` 完整读取，给了就最多读这么多。失败抛 `http.client.HTTPException` /
+    `OSError` / `ValueError`，由调用方按自己的「连不上」语义收敛。
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=timeout)
+    try:
+        conn.request(
+            "GET" if payload is None else "POST", path, body=payload, headers=headers or {}
+        )
+        resp = conn.getresponse()
+        return resp.status, resp.read(max_bytes)
+    finally:
+        conn.close()
+
+
 def relaunch_nonce(port: int, timeout: float = 3.0) -> str | None:
     """向已在运行的实例换一枚一次性浏览器 nonce。任何失败都返回 None：
     调用方退回「打开不带 fragment 的地址」，页面侧会给出可操作的提示。"""
     secret = read_secret(port)
     if not secret:
         return None
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{RELAUNCH_PATH}",
-        data=json.dumps({"secret": secret}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, ValueError):
+        status, raw = loopback_request(
+            port,
+            RELAUNCH_PATH,
+            payload=json.dumps({"secret": secret}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+            max_bytes=RELAUNCH_MAX_RESPONSE_BYTES,
+        )
+        if not 200 <= status < 300:
+            return None
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except (http.client.HTTPException, OSError, ValueError):
         return None
     nonce = data.get("nonce") if isinstance(data, dict) else None
     return nonce if isinstance(nonce, str) and nonce else None
+
+
+def status_file_path(port: int) -> str:
+    return os.path.join(session_dir(), f"{_STATUS_PREFIX}{int(port)}.json")
+
+
+def _pid_alive(pid: int) -> bool | None:
+    """`True` / `False`；量不了回 None（Windows 上 `os.kill(pid, 0)` 不是探测）。"""
+    if os.name == "nt":
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def publish_status_token(port: int, token: str) -> str:
+    """原子写入**只读交接状态**凭据（scoped，见模块文档），返回路径。权限与 `publish_secret` 相同。"""
+    d = session_dir()
+    os.makedirs(d, exist_ok=True)
+    try:
+        os.chmod(d, stat.S_IRWXU)
+    except OSError:
+        pass
+    _prune_stale(d)
+    path = status_file_path(port)
+    tmp = path + ".tmp"
+    payload = {
+        "port": int(port),
+        "pid": os.getpid(),
+        "token": token,
+        "scope": STATUS_SCOPE,
+        "created": time.time(),
+    }
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp, path)
+    return path
+
+
+def remove_status_token(port: int) -> None:
+    try:
+        os.unlink(status_file_path(port))
+    except OSError:
+        pass
+
+
+def status_credentials() -> list[tuple[int, str]]:
+    """扫描 `handoff-status-*.json`，返回 (端口, token)：scope 对、pid 没死的才算。
+
+    读不懂 / 不是本人的 / scope 不对 / pid 已死一律跳过——这是发现，不是校验，
+    校验在服务端（token 不对就是 401）。
+    """
+    d = session_dir()
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out: list[tuple[int, str]] = []
+    for name in names:
+        if not (name.startswith(_STATUS_PREFIX) and name.endswith(".json")):
+            continue
+        path = os.path.join(d, name)
+        try:
+            st = os.lstat(path)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > 4096:
+                continue
+            if os.name == "posix" and st.st_uid != os.getuid():
+                continue
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("scope") != STATUS_SCOPE:
+            continue
+        port, pid, token = data.get("port"), data.get("pid"), data.get("token")
+        if not (isinstance(port, int) and 0 < port < 65536 and isinstance(token, str) and token):
+            continue
+        if isinstance(pid, int) and _pid_alive(pid) is False:
+            continue
+        out.append((port, token))
+    return out
 
 
 def _prune_stale(d: str) -> None:
@@ -125,11 +269,20 @@ def _prune_stale(d: str) -> None:
         return
     now = time.time()
     for name in names:
-        if not (name.startswith("port-") and name.endswith(".json")):
+        is_port = name.startswith("port-") and name.endswith(".json")
+        is_status = name.startswith(_STATUS_PREFIX) and name.endswith(".json")
+        if not (is_port or is_status):
             continue
         path = os.path.join(d, name)
         try:
-            if now - os.path.getmtime(path) > _STALE_AFTER_S:
+            stale = now - os.path.getmtime(path) > _STALE_AFTER_S
+            if is_status and not stale:
+                # 桌面 sidecar 崩了没走到清理：pid 已死的 scoped 凭据当场清掉
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                pid = data.get("pid") if isinstance(data, dict) else None
+                stale = isinstance(pid, int) and _pid_alive(pid) is False
+            if stale:
                 os.unlink(path)
-        except OSError:
+        except (OSError, ValueError):
             pass

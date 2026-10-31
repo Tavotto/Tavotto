@@ -5,7 +5,7 @@
 这里复制一份，避免两份文档长期漂移。
 
 - 用户要求安装/运行/试用 Tavotto 而未要求改源码：按 AGENTS.md 的任务路由，
-  只读 README 的「在 Codex 中第一次使用 Tavotto」，绝不构建仓库。
+  只读 README 的「在 Codex 里用 Tavotto（插件）」，绝不构建仓库。
 - 修改任何子系统之前：按根 `AGENTS.md` 的子系统索引 Read 最近目录的
   `AGENTS.md`（`src/tavotto/` / `web/` / `src-tauri/` / `workerd/` /
   `packaging/` / `codex-plugin/` / `.github/`）。后端与前端那两份是**速查表**：

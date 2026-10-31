@@ -309,6 +309,11 @@ def _assert_effect(man: dict, patches: list) -> None:
             got = man.get("size_mm")
             assert got == pytest.approx(want, abs=0.05), (prop, want, got)
             continue
+        if prop == "size_frac":
+            bounds = _el(man, gid).get("shape_bounds")
+            assert bounds is not None, f"{gid} 没有未裁剪形状外框"
+            assert bounds[2:] == pytest.approx(want, abs=1e-6), (gid, prop, want, bounds)
+            continue
         if prop in ("pos_frac", "loc_frac"):
             got = _el(man, gid).get("anchor")
             assert got is not None, f"{gid} 没有 anchor（拖不动？）"
@@ -588,6 +593,43 @@ def _g_patch_drag_carries(getbase):
     return [drag, [*drag, {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]}]]
 
 
+def _patch_resize_and_position(getbase):
+    box = _el(getbase(), "axes_0.patches_0")
+    x, y, w, h = box["shape_bounds"]
+    return (
+        {"gid": box["gid"], "prop": "size_frac", "value": [w * 1.5, h * 0.7]},
+        {"gid": box["gid"], "prop": "pos_frac", "value": [x + 0.04, y + h - 0.08]},
+    )
+
+
+def _g_patch_resize(getbase):
+    """框宽高与拖动叠加，再改图幅和子图，四路必须仍兑现同一未裁剪外框。
+
+    先拖再缩放是实际操作序列；最终列表也把 pos_frac 放在 size_frac 前，
+    避免只在一次有利的列表顺序下通过。尺寸值来自最初图幅，之后图幅改变，
+    框仍应占相同 figure 分数（而不是保留旧像素或旧数据单位的宽高）。
+    """
+    size, pos = _patch_resize_and_position(getbase)
+    return _cumulative(
+        pos,
+        size,
+        {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]},
+        {"gid": "axes_0", "prop": "position", "value": [0.10, 0.25, 0.40, 0.60]},
+    )
+
+
+def _g_patch_resize_undo_size(getbase):
+    """撤掉尺寸但保留拖动：原生框宽高恢复，位置 override 继续成立。"""
+    size, pos = _patch_resize_and_position(getbase)
+    return [[pos], [pos, size], [pos]]
+
+
+def _g_patch_resize_undo_position(getbase):
+    """撤掉拖动但保留尺寸：框回到脚本锚点，尺寸编辑仍然有效。"""
+    size, pos = _patch_resize_and_position(getbase)
+    return [[size], [pos, size], [size]]
+
+
 def _g_axes_range_scale_and_ticks(_getbase):
     """坐标轴范围 / 缩放类型 / spine + 刻度定位模型（Locator + Formatter）。
 
@@ -781,6 +823,9 @@ GROUPS = [
     ("s7-patch-and-stem", "EqvFam", _g_patch_family_and_stem),
     ("s7-patch-drag", "EqvFam", _g_patch_drag),
     ("s7-patch-drag-carries", "EqvFam", _g_patch_drag_carries),
+    ("s7-patch-resize", "EqvFam", _g_patch_resize),
+    ("s7-patch-resize-undo-size", "EqvFam", _g_patch_resize_undo_size),
+    ("s7-patch-resize-undo-position", "EqvFam", _g_patch_resize_undo_position),
     # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
     # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
     # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
@@ -920,6 +965,10 @@ WRITE_BACK_GROUPS = [
     ("s7-patch-drag", "EqvFam", _g_patch_drag, ("Families",)),
     # 拖框带内容：框 / 字 / 箭头尾各写各的 override，写回后重开仍落在一起
     ("s7-patch-drag-carries", "EqvFam", _g_patch_drag_carries, ("Families", "box")),
+    # 尺寸和位置独立撤销，写回、重新打开之后仍按留下的那一项重放。
+    ("s7-patch-resize", "EqvFam", _g_patch_resize, ("Families", "box")),
+    ("s7-patch-resize-undo-size", "EqvFam", _g_patch_resize_undo_size, ("Families", "box")),
+    ("s7-patch-resize-undo-position", "EqvFam", _g_patch_resize_undo_position, ("Families", "box")),
     # 纯箭头注释：拖动写的是注释的锚点（不是箭头 patch），写回的 PDF 与重开后的
     # 重放要落在同一处；constrained_layout + 图幅变过一次
     ("s3-pure-arrow-annotation", "EqvAnnot", _g_pure_arrow_annotation, ("Constrained",)),
@@ -943,6 +992,7 @@ def test_write_back_then_reopen_matches_the_hot_session(
     改动热会话，也不得让下一次冷启动落到另一个状态上。
     """
     _m, client, figs = project
+    script_bytes = (figs / SCRIPT_NAME).read_bytes()
     steps = builder(_base_getter(library, stem))
     full = steps[-1]
 
@@ -1006,6 +1056,7 @@ def test_write_back_then_reopen_matches_the_hot_session(
         text = page.get_text()
     for marker in markers:
         assert marker in text, (marker, text[:400])
+    assert (figs / SCRIPT_NAME).read_bytes() == script_bytes, "图件写回不能改写用户脚本"
 
 
 # ===========================================================================

@@ -1,0 +1,5 @@
+# Isolated CLA service/test dependencies; never enter the Tavotto app closure.
+# Exact versions verified on official PyPI. CI uses CPython 3.13 on Linux.
+cryptography==50.0.0
+cffi==2.1.1
+pycparser==3.0

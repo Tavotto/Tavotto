@@ -35,8 +35,7 @@ test('新开一个空存储的浏览器 context：恢复上次的排版', async 
     )
     .catch(() => null)
   await card(tabA).dblclick({ timeout: 30_000 })
-  // 双击进快速编辑；回到画布排版再量（工作区模式按 documentId 存本机，见 cross-tab-paste）
-  await tabA.locator('[data-context-back]').click()
+  // 双击打开：画布上只有这一张 = 单图编辑，它照样是画布上的对象（模式由图数推出，不落本机）
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
   await autosaved
   await remembered

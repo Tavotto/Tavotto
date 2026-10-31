@@ -17,11 +17,11 @@ runtime / 输入兼容性，并同步 `tests/test_release_workflow_contract.py` 
 | actions/download-artifact | v7 | [37930b1c2abaa49bbe596cd826c3c89aef350131](https://github.com/actions/download-artifact/blob/37930b1c2abaa49bbe596cd826c3c89aef350131/action.yml) |
 | pnpm/action-setup | v6 | [0977fd99725f1db4007ccb2928dbb4e90d06cc86](https://github.com/pnpm/action-setup/blob/0977fd99725f1db4007ccb2928dbb4e90d06cc86/action.yml) |
 | softprops/action-gh-release | v3 | [efb35369e0ad2afab669f228072c1b0d510eae64](https://github.com/softprops/action-gh-release/blob/efb35369e0ad2afab669f228072c1b0d510eae64/action.yml) |
-| signpath/github-action-submit-signing-request | v2 | [c92b958760219087e01f8d67a1669ed57afe2627](https://github.com/signpath/github-action-submit-signing-request/blob/c92b958760219087e01f8d67a1669ed57afe2627/action.yml) |
+| signpath/github-action-submit-signing-request | v3 | [f6d04783b4569d051e0c80105fe66e82819d0092](https://github.com/signpath/github-action-submit-signing-request/blob/f6d04783b4569d051e0c80105fe66e82819d0092/action.yml) |
 
 初始迁移更新 `release.yml`、`release-publish.yml`、`desktop-tauri.yml` 的 action 版本，
 将它们及 `lab-ci.yml` 的 13 个 Linux hosted job 固定为 `ubuntu-24.04`。
-SignPath v2 在 main 已是上述 Node 24 commit，原 pin 原样保留。
+SignPath 已在此分支升级至 v3：核验的 action.yml commit 为 `f6d04783b4569d051e0c80105fe66e82819d0092`，仍使用 Node 24；输入名称、必填属性及其他默认值与 v2 相同，仅默认 connector-url 从 `https://githubactions.connectors.signpath.io` 变为 `https://pipelineconnector.connectors.signpath.io/GitHubActions/GitHubCom`。上游实现另有日志 / 错误文案及 taskVersion（2.2.0 → 3.0.0）更新，见[固定 commit 对比](https://github.com/SignPath/github-action-submit-signing-request/compare/c92b958760219087e01f8d67a1669ed57afe2627...f6d04783b4569d051e0c80105fe66e82819d0092)。
 `lab-ci.yml` 的 checkout、其它 workflow、macOS / Windows 矩阵、项目的 Node 22 / Python 3.13 /
 pnpm 11.27.1 工具链版本均不属于此次迁移。
 后续 alert #217 引出的两个限定加固见下节，不再把最终补丁声称为纯版本替换。

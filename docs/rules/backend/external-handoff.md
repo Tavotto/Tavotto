@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「外部交接（`tavotto open` 与桌面唤起）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_install_locate.py`、`test_handoff.py`、`test_open_script_route.py`、`test_desktop_launch.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 310
+改到: `engine/locate.py`、`cli.py`、`handoff.py`、`tavotto open` / `doctor`、桌面 argv
+主题: 外部交接 → `external-handoff.md`
+必守要点: 发现链唯一权威 `locate.py`；子命令分派在 import Flask 之前；`HandoffError` 一律带稳定 code
+-->
 
 完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
 插件侧（codex-plugin/ 的镜像定位器、update_check、技能纪律）见
@@ -78,12 +87,33 @@
   进程存在且活过稳定窗（或单实例转发完成）才算成功；起来就死回
   `launch_failed` + `exit_code`/`signal`/`log_path`/`retryable`（HandoffError
   的 `extra`，`--json` 逐键并入输出），限期内没出现回 `launch_timeout`。
+  **受限沙箱不拉进程（#1149）**：Windows 桌面路径在 spawn **之前**用 ctypes 查进程令牌
+  （`_windows_token_sandbox`：`GetTokenInformation(TokenIsAppContainer)` / `IsTokenRestricted`，只看操作系统令牌，
+  **不认 `CODEX_*` 之类宿主私有环境变量**），命中就回 `sandboxed_launch`
+  （`sandbox` + `retryable: true`），一次 spawn 都不做；查不出来（ctypes / OSError）按原样走。
+  **绝不借 explorer.exe / 计划任务等手段代为启动——那是逃逸沙箱**，出路只有调用方在沙箱外重跑。
+  **转发卡住不算起来了**：spawn 之前 `_pids_of`（Windows 经 ctypes 枚举进程、按**完整路径**精确比对，不按映像名——sidecar 同名 `Tavotto.exe`，孤儿 sidecar 会被误当成已有实例）已有实例、
+  新进程却活过观察窗口不退，且**复查**时旧 pid 仍在（排除新进程自己；复查抛错 / None 保守放行，误杀健康的新实例比假成功更糟）→ 先 terminate / kill（kill 后有界等退出，不留僵尸）再回 `launch_failed` + `reason: "forward_stuck"`；
+  原本没有实例的 `process_alive` 与查不出实例（None）的旧行为不变。
+  看护同在 `tests/test_desktop_launch.py`。
   sidecar 日志路径由 `handoff.sidecar_log_path()` 按 `brand.DESKTOP_BUNDLE_ID`
   推导（与 tauri 的 app_log_dir 同源）。看护 `tests/test_desktop_launch.py`。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
   ③ 找不到就说找不到，绝不退而求其次选别的面板。重复交接同一张只选中，不叠第二份。
+- **交接三态（ADR 0131 第六节）**：`ok` 的语义不变，只加性地给 `launch.render`
+  （`ok|failed|unverified` + `verified` + 稳定 `code`/`reason`）与插件顶层 `launch_success` /
+  `render_success` / `verified_success`。确认信号是**经认证的 HTTP 查询** `GET /api/handoff/render-status`
+  （`/api/engine/render` 收尾把结论记进 `engine/handoffreceipt.py` 的进程内有界结论表；CLI 唤起**前**取
+  `since`、之后有界轮询；凭据 = 浏览器模式的完整 secret 或桌面 sidecar 发布的 scoped 只读 token
+  `handoff-status-<端口>.json`，只对该端点有效，ADR 0008 修订）。**CLI 不往磁盘写任何东西**。
+  到点没结论 = `unverified/timeout`，没连上实例 = `unverified/channel_unavailable`，绝不记 failed；`verified` 的判据只在 `handoffreceipt.summarize` 一处，插件只搬运。看护
+  `tests/test_handoff_render_receipt.py`。
+  **重复交接已显示的图（#1154）**：前端命中已显示面板只选中不渲染，会让 CLI 白等满预算；所以 `applyOpenRequest` 在那条路径上
+  经**会话认证**的 `POST /api/handoff/display-ack` 回当前渲染状态（`ok`/`failed`/`displayed`），后端按当前时间、同形状记进同一张 `LEDGER`
+  （`registry_match` 后端自己查，`verified` 仍只走 `summarize`）；`displayed` = `unverified/already_displayed`。scoped token 不能写这个入口；
+  老前端不发 = 等到超时。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -95,3 +125,15 @@
 - 子命令分派在 import Flask 之前
 - 桌面契约 `desktop_argv()` ↔ `parse_open_args()`
 - macOS 走 `open -na … --args`
+
+## 来源记录（ADR 0139 PR3 第一片）
+
+- `engine/originrecord.py`：插件交接跑过脚本之后写的**弱线索**，键是原件字节 sha256，落
+  `data_dir()/origin/<sha>.json`；有界（`MAX_RECORDS`，满了先清字节已变 / 文件已没的）、`atomicio` 原子写、
+  白名单校验（形似路径的值拒收）、**读坏了 = 无记录（fail-open）**——与写回闸 / 采用记录
+  （`artifactcontext`，fail-closed）相反：它只用于展示，**绝不进任何判定**。
+- 写：只有插件 `handoff.py` 在 `ran: true` 时经 `tavotto open --origin-json`（仅记录模式）写；
+  不存解释器路径 / argv / 环境变量。读：`app._source_backed_result` 在响应的 `source_backed.origin`
+  只读展示（含本次重画的 `redraw` 版本）；不触发换解释器、不放宽校验。
+- 看护：`tests/test_origin_record.py`（记录有界 / 原子 / fail-open / 隐私；插件真跑脚本记的是脚本进程的实际值、
+  只在 ran:true 写；准入 origin 在场判定不变）。

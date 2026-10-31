@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ContextManager
 
-from . import atomicio, exportreq, taskdiag, trace as tracemod
+from . import atomicio, exectrace, exportreq, taskdiag, trace as tracemod
 from .exportreq import ExportRequest, ExportRequestError
 
 #: 作业状态。`partial` 是独立一档 —— 把它并进 `done` 或 `failed` 都会说谎。
@@ -79,6 +79,18 @@ ERROR_CODES = (
     # `Produced.error_code`，与 `format_failed` 同一条漏斗 `_legacy_export_response`）
     "eps_not_for_canvas",
     "eps_needs_script",
+    # 一次作业里一张图的所有格式出自同一个基准（#1185 / #1209）：有脚本但活 Figure 没被证明出自这份
+    # 文件 → `eps_source_unverified`；有脚本、有证明但现在没有活 Figure（冷 worker）→ `eps_needs_live_figure`；
+    # 作业汇总处发现基准身份对不上 → `export_basis_mismatch`。都是逐项失败，其余格式照常交付
+    "eps_source_unverified",
+    "eps_needs_live_figure",
+    "export_basis_mismatch",
+    "svg_source_unsupported",
+    # 脚本现画的图没有同一次运行产出的 SVG 表示（脚本里有自定义绘制 / 刻度回调等，worker 不给配对）：只这一项失败
+    "svg_figure_unavailable",
+    # 执行来源（有脚本 / 改过 overrides 或运行时素材）缺与当前执行匹配的导出级 SVG 快照：先重新运行脚本；
+    # 与「来源本身没有 SVG 表示」的 `svg_source_unsupported` 分开，后者不该让人去重跑脚本
+    "svg_snapshot_missing",
     "no_output",
     "publish_failed",
     "report_failed",
@@ -143,6 +155,46 @@ class Output:
         }
 
 
+#: 一项产物相对「基准」的做法：原件字节拷贝 / 同一基准转换 / 由活 Figure 重画。
+BASIS_COPY, BASIS_CONVERT, BASIS_REDRAW = "copy", "convert", "redraw"
+
+
+@dataclass(frozen=True)
+class Basis:
+    """一项产物出自哪个基准：做法 + 基准的字节身份（磁盘原件的 sha256）。
+
+    重画（`redraw`）的身份只能是**已被证明绑定到那份字节**的 hash；没有证明就不该有这个值
+    （生产路径应当直接逐项失败），`None` 在断言里一律不等于任何基准。
+    """
+
+    how: str
+    source_sha256: str | None
+
+
+def enforce_one_basis(produced: list[Produced], reference_sha256: str) -> list[Produced]:
+    """作业级断言（#1185 / #1209）：同一张图的所有已声明基准的格式必须出自同一个基准。
+
+    不是在每个格式的生产路径里各加一个 if，而是在作业汇总处对**结果**核一遍：声明了基准、
+    却与 `reference_sha256` 不同（含 `None`）的那一项改成逐项失败 `export_basis_mismatch`，
+    其余格式照常交付。没声明基准的项不受约束（尚未接入的路径行为不变）。
+    """
+    checked: list[Produced] = []
+    for item in produced:
+        if (
+            item.tmp_path is not None
+            and item.error_code is None
+            and item.basis is not None
+            and item.basis.source_sha256 != reference_sha256
+        ):
+            item = Produced(
+                format=item.format,
+                error_code="export_basis_mismatch",
+                error_params={"format": item.format},
+            )
+        checked.append(item)
+    return checked
+
+
 @dataclass
 class Produced:
     """`produce()` 交回来的一件东西：一个临时文件，或者一次失败。"""
@@ -159,6 +211,11 @@ class Produced:
     #: 生产者交出的**计划**半张（页面 pt / 像素 / ppi / 是否矢量 / 期望文字行 / 源与回执引用）与检查器补上的
     #: 观测 / 判据 / 政策——`run()` 里 `inspect` 钩子读写它；发布时投影进 `Output.manifest`。
     manifest: dict | None = None
+    #: 这一项出自哪个基准（`Basis`）；只有声明了的才受 `enforce_one_basis` 的断言约束。
+    basis: Basis | None = None
+    #: 多页 PDF（#1370）：每一页各自的单页产物（带尺寸与临时文件）。检查器只读首页，所以 `inspect` 钩子逐页检查它们；
+    #: 不发布，只是检查的输入。单页导出恒为 `None`。
+    parts: list["Produced"] | None = None
 
 
 class Cancelled(Exception):
@@ -206,8 +263,15 @@ class ExportJob:
     #: 发起这次导出的项目（T04）。任务绑定诊断与 `/api/export/state` 按它认领：别的项目拿 job_id 读不到。
     #: 私有，不进 `to_payload()`。`None` = 没有项目上下文的调用方（测试 / 内部探针）。
     project_id: str | None = field(default=None, repr=False)
+    #: 执行追踪（ADR 0151，只观察；不进 `to_payload()`）：建作业时开，终局时映射阶段轨迹并冻结
+    exec_trace: object = field(default_factory=exectrace.NullTrace, repr=False)
     #: 终局快照只写一次（`_emit` 在每个终局都会走到，这里去重）。
     _diag_recorded: bool = field(default=False, repr=False)
+    #: 终局回调（导出终态遥测 `export_result`）。由**接受了这次导出的路由**在 `prepare` 之后挂上；
+    #: 没挂的调用方（测试 / MCP 桥）一个字节都不发。`_emit` 在作业走到终局时调它**最多一次**
+    #: （`_terminal_notified` 去重）：内部的重复 `_emit`、SSE 补拉、`/state` 轮询都不会再触发。
+    on_terminal: Callable[["ExportJob"], None] | None = field(default=None, repr=False)
+    _terminal_notified: bool = field(default=False, repr=False)
 
     # -- 取消 ---------------------------------------------------------------
     @property
@@ -366,6 +430,10 @@ def prepare(
             export_dir=Path(export_dir),
             project_id=project_id,
         )
+        if project_id:
+            job.exec_trace = exectrace.begin(
+                "export", task_ref=job.id, scope=exectrace.scope_for(project_id)
+            )
         _JOBS[job.id] = job
     return job
 
@@ -722,6 +790,11 @@ def run(
 
         job.outputs = outputs
         guard.close()
+        # 图的失败在进报告那一步**之前**记：不然轨迹的当前步已是 `report`，图没落盘会被记成
+        # 报告坏了（Codex #1103 P2）。生产者早先记过的不盖掉（`failed_phase` 只认第一次）
+        failed_outputs = [o for o in outputs if o.status != STATUS_DONE]
+        if failed_outputs and job.trace.failed_phase is None:
+            job.trace.fail(_last_phase(job), failed_outputs[0].error_code or "partial")
 
         if req.include_report:
             job.phase = "report"
@@ -869,11 +942,49 @@ def _fail(
 def _emit(job: ExportJob, publish: Callable[[dict], None] | None) -> None:
     if job.status in _TERMINAL_STATUSES:
         _record_terminal(job)
+        _notify_terminal(job)
     if publish is None:
         return
     try:
         publish(job.to_payload())
     except Exception:  # noqa: BLE001 —— 推送失败不影响导出本身
+        pass
+
+
+def _notify_terminal(job: ExportJob) -> None:
+    """终局回调，每个作业最多一次；回调的失败不许影响导出本身。"""
+    if job._terminal_notified or job.on_terminal is None:
+        return
+    job._terminal_notified = True
+    try:
+        job.on_terminal(job)
+    except Exception:  # noqa: BLE001 —— 遥测不是导出的一部分
+        pass
+
+
+exectrace.register_vocabulary(
+    "outcome", (STATUS_DONE, STATUS_PARTIAL, STATUS_FAILED, STATUS_CANCELLED, STATUS_CONFLICT)
+)
+#: 导出终局 → 根 Trace。`partial` = 有一部分产物没出来，记失败（第一处失败仍由阶段轨迹点名）
+_EXPORT_TRACE_END = {
+    STATUS_DONE: "ok",
+    STATUS_PARTIAL: "failed",
+    STATUS_FAILED: "failed",
+    STATUS_CANCELLED: "cancelled",
+    STATUS_CONFLICT: "ok",  # 撞名等用户裁决：不是失败，结局记在 outcome 上
+}
+
+
+def _trace_terminal(job: ExportJob) -> None:
+    try:
+        xt = job.exec_trace
+        status = _EXPORT_TRACE_END.get(job.status, "unknown")
+        code = None
+        if status == "failed":
+            code = job.error_code or ("partial" if job.status == STATUS_PARTIAL else job.status)
+        exectrace.observe_stage_trace(xt, job.trace.to_payload(), legacy_t0=job.trace._t0)
+        xt.finish(status, error_code=code, attributes={"outcome": job.status})
+    except Exception:  # noqa: BLE001 —— 观察不是导出的一部分
         pass
 
 
@@ -883,6 +994,7 @@ def _record_terminal(job: ExportJob) -> None:
     if job._diag_recorded or not job.project_id:
         return
     job._diag_recorded = True
+    _trace_terminal(job)
     try:
         subject = {("doc", job.request.document_id)} if job.request.document_id else set()
         if job.request.original and job.request.original.figure_id:
@@ -958,7 +1070,8 @@ def diagnostic_projection(job: ExportJob) -> dict:
                 "inspection_mode": taskdiag.closed(
                     req.inspection.mode, exportreq.INSPECTION_POLICIES
                 ),
-                "document_revision": taskdiag.digest(req.document_revision),
+                # 不带 `document_revision`：它是整份画布载荷的无密钥 FNV，短标题 / 标识符能被离线猜出来比对
+                # （Codex 评 #910 补审 P2）；重试关系靠登记表里私下连的 document_id，不需要它出门
             },
             "stages": taskdiag.stages(job.trace.to_payload(), tracemod.PHASES),
             "progress": {

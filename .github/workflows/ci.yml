@@ -5,7 +5,7 @@ name: CI
 # **覆盖面一条没减，改的是每类验证在哪个提交上执行**：
 #
 #   PR（含草稿）    快速反馈：python-lint（Ruff）/ invariants /
-#                   backend-fast（Linux 3.10 / 3.13 / 3.14，每档按文件分 2 片）/
+#                   backend-fast（Linux 3.10 / 3.13 / 3.14，每档按文件分 4 片）/
 #                   frontend / workerd / compat-smoke / CodeQL。
 #                   重型资格**不在 PR 上跑**——CI integration gate 显式回
 #                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
@@ -36,11 +36,12 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard: [1, 2]` 轴，每一档的全量 pytest 拆成两个并行 job（`--shard K/2`，按文件分、
-# 不拆文件、每个进程先算全部两片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
-# 就是 rc 4；两片里任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
-# 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab / nightly / release 的
-# pytest 命令没有 `--shard`，跑的仍是全集。
+# `shard` 轴，目前 backend-fast 是 `[1..6]`（`--shard=K/6`）、backend-platforms 是 `[1..8]`（`--shard=K/8`），
+# 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
+# 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
+# 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
+# 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab 常规套件同机跑齐全部分片；
+# nightly / desktop-tauri 的 pytest 命令没有 `--shard`，跑的仍是全集。
 #
 # ruleset 的 required contexts = 三个稳定 Gate（CI fast gate / CI integration
 # gate / codeql.yml 的 CodeQL gate），判定逻辑只在 scripts/ci/aggregate_gate.py。
@@ -411,6 +412,100 @@ jobs:
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
 
   # ────────────────────────────────────────────────────────────────
+  # 发行说明闸：用户可见的 PR 必须往 docs/release-notes/UNRELEASED.md 新增一个
+  # `## ` 待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
+  # docs/RELEASING.md；判定逻辑与「用户可见路径」清单在
+  # scripts/ci/release_note_gate.py，看护在 tests/test_release_note_gate.py）。
+  #
+  # 为什么存在：发行说明以前是发版当天回头补的，补一个纯文档 PR 要跑满整条 CI
+  # 加合并队列（v0.19.2 两个，约 3 小时）。
+  #
+  # * **merge_group 上必须跑并且成功，不能 skipped。** fast gate 把 skipped 一律
+  #   当失败，这一格在队列候选上被跳过 = `CI fast gate` 永久红。脚本在
+  #   merge_group 上直接判 not_applicable 退出 0，理由：判据的输入是 PR 的文件列表
+  #   与标签，候选提交上两样都没有，PR 阶段已验过。
+  # * 判定器取自默认分支（与 cla-check / 两个 Gate 同一条纪律：PR 不能改写审判
+  #   自己的尺子）。默认分支上还没有这份脚本时（bootstrap 空窗，只存在于引入它的
+  #   PR 合并之前）才 sparse checkout 本次 revision 的那一份脚本作后备并 notice。
+  # * 只读元数据：不装依赖、几秒跑完。权限 contents: read + pull-requests: read。
+  # * push main 上不跑（与其它快线一致；Gate 也只在 PR / merge_group 上有意义）。
+  # * 标签取自事件 payload；`labeled` / `unlabeled` 本来就在 pull_request 的 types
+  #   里，打上 `no-release-note` 会起新 run，这一格重判。
+  # ────────────────────────────────────────────────────────────────
+  release-note-gate:
+    name: Release note (UNRELEASED)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: 取默认分支上的可信判定器
+        id: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/trusted-release-note/scripts/ci"
+          mkdir -p "$TRUSTED"
+          if gh api "repos/$REPO/contents/scripts/ci/release_note_gate.py?ref=$REF" \
+               --jq .content 2>/dev/null | base64 -d > "$TRUSTED/release_note_gate.py" \
+             && [ -s "$TRUSTED/release_note_gate.py" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "判定器取自默认分支"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::默认分支上还没有 release_note_gate.py（bootstrap 空窗）——退回本仓库副本"
+          fi
+          echo "TRUSTED=$RUNNER_TEMP/trusted-release-note" >> "$GITHUB_ENV"
+
+      # bootstrap 空窗的后备：只 sparse checkout 判定器这一个文件（"判定"步里复制）。
+      - if: steps.trusted.outputs.found != 'true'
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/ci/release_note_gate.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # 文件列表：`pulls/{n}/files` 逐页取全（封顶 3000 个文件），条数用 PR 自己
+      # 声明的 changed_files 对账——列表不全就红，绝不拿不完整的列表判通过。
+      - name: 收集这个 PR 的改动文件
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr-files.json"
+          want=$(gh api "repos/$REPO/pulls/$PR" --jq .changed_files)
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
+            --jq '[.[] | {filename, status, previous_filename, patch}]' > "$out"
+          test -s "$out"
+          echo "RN_EXPECTED_FILES=$want" >> "$GITHUB_ENV"
+
+      - name: 判定
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.trusted.outputs.found }}" != "true" ]; then
+            cp scripts/ci/release_note_gate.py "$TRUSTED/scripts/ci/release_note_gate.py"
+          fi
+          ARGS=(--event "${{ github.event_name }}")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS+=(--pr-author "$PR_AUTHOR"
+                   --labels-json "$PR_LABELS"
+                   --files-json "$RUNNER_TEMP/pr-files.json"
+                   --expected-files "$RN_EXPECTED_FILES")
+          fi
+          python3 -I "$TRUSTED/scripts/ci/release_note_gate.py" "${ARGS[@]}"
+
+  # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
   # + 与它同一族的 artist family / patchspec / preflight 契约）。
   #
@@ -430,7 +525,10 @@ jobs:
     # （见文件抬头的分工表）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 而不是 20：语料加了三张 3D 图（ADR 0135）后「结构性不变式」一步在 ubuntu
+    # runner 上 12–19 分钟，20 分钟的整 job 上限会把后面的 U01 harness 砍成 cancelled
+    # （#1159 合并组）。超时只防挂死，不是速度预算。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -499,6 +597,7 @@ jobs:
             tests/test_foundation_private_python.py \
             tests/test_foundation_join.py \
             tests/test_foundation_cutover.py \
+            tests/test_foundation_script_first_run.py \
             tests/test_execution_receipt.py \
             tests/test_preparation_api.py \
             tests/test_worker_runtime_report.py
@@ -536,17 +635,17 @@ jobs:
   #
   # **每档再按文件分片**（CI03a，2026-09-16；设计与实测见
   # docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md）。以下按 backend-fast
-  # 的 2 片举例——backend-platforms **2026-09-30 起改成 3 片**（理由见它自己的注释），
-  # 机制逐条相同，`K/2` 处换成 `K/3`：
+  # 的 4 片举例——backend-platforms 2026-09-30 起是 3 片（理由见它自己的注释）：
   #   * 为什么按文件、不拆文件：29 个文件有 module 级 fixture、文件内共享 worker /
   #     figure 状态（CI_BASELINE.md §7）；文件是 fixture 生命周期自洽的最小单位。
-  #   * 为什么 2 片：CI00 实测这条腿 35 分钟、前 25 个文件占 900/1129 秒，按文件贪心
-  #     两片理论上 ~565s/片（本机）；先 2 片对比串行，再谈更多（CI03 §7），不加 -n。
-  #   * 自验做了什么：`--shard K/2` 在**同一进程 collection 之后**做（tests/conftest.py
-  #     → tests/support/shard.py），每个进程都算出全部两片，断言 nodeid 集合的并集 ==
+  #   * 为什么 4 片：2026-10-09 两个合并组（#853，run 37900187745 / 37906698476）
+  #     的 Linux 3.10 / 3.14 分片 1 分别撞上 60 分钟，当时由 2 片改为 3 片；3 片后合并组
+  #     每片仍实测 46–59.5 分钟（#896），2026-10-12 再加到 4 片。不加 -n。
+  #   * 自验做了什么：`--shard=K/6` 在**同一进程 collection 之后**做（tests/conftest.py
+  #     → tests/support/shard.py），每个进程都算出全部四片，断言 nodeid 集合的并集 ==
   #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
   #     静默跑空集。
-  #   * 漏片由谁兜：进程内自验是第一层；第二层是 matrix 语义——两片里任一片不
+  #   * 漏片由谁兜：进程内自验是第一层；第二层是 matrix 语义——任一片不
   #     success，`needs.backend-fast.result` 就不是 success，CI fast gate 的
   #     `--required` 闭集里 backend-fast 仍是那一个 job id，Gate 照红。**job id 不变**，
   #     显示名变成 `backend-fast (3.10, 1)`；required context 只有三个 Gate 名字，
@@ -564,20 +663,46 @@ jobs:
       # os 固定 ubuntu-24.04，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
         python: ["3.10", "3.13", "3.14"]
-        shard: [1, 2]
+        shard: [1, 2, 3, 4, 5, 6]
     # 分片后每片实测 10–20 分钟（合入后三个真实合并组 35061049078 / 35069266028 /
     # 35073686963 的 18 片：610–1201s）；分片前整档中位 29–35 分钟、max 36。
     # 2026-09-25 用例增长后分片 1 在 hosted runner 上实测 35–40 分钟，两个合并组
     # （#583 run 36158133514、#620 run 36163120395）撞上 40 分钟被取消、整组被踢出队列
     # ——上限抬到 60 止血；按 runner 实测重算权重 / 拆片见 #636，做完再收回。没有上限的
     # job 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
-    timeout-minutes: 60
+    # 2026-10-09 再抬到 90：main 自己的合并组每片已实测 46–59.5 分钟（run 37883555344 /
+    # 37886523633），#817 加用例后两次合并组都在 60 分钟被取消、整组踢出。合并队列的
+    # check_response_timeout 是 180 分钟（线上值，仓库里 scripts/ci/merge_queue_ruleset.py 已同步，
+    # 测试要求与 job 上限差 ≥30 分钟），90 仍在其内。
+    # 2026-10-12 由 3 片加到 4 片（#896）：3 片下分片 1 仍普遍比分片 2 慢 15–20 分钟，
+    # #882 / #860 的 3.14 / 3.10 分片 1 在 57–60 分钟处撞点被取消（日志里没有失败用例，只是超时）。
+    # 加片摊薄每片总量；超时**暂不收回**，等四片在 main 合并组上有实测再定（目标是每片落在
+    # 45 分钟内再降到 60）。按 runner 实测重算权重表（#636）仍是下一步。
+    # 2026-10-24 由 4 片加到 6 片（与 backend-platforms 改 8 片、权重表改按 Windows 中位重算同一 PR）：
+    # backend-platforms 压到约 38 分钟后，合并组最长腿是这里（4 片实测 62–63 分钟 / 片）。按三个合并组
+    # 的 junit 用新表模拟最重片：3.10 4 片 38/52/54 → 6 片 28/38/35，3.14 49/56/50 → 34/38/34，与 Windows
+    # 8 片持平；再加到 8 片（~30）就被 Windows 那条腿盖住、只多耗 runner。超时仍不收回，等实测。
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      # 独立 CLA 服务不是应用依赖；只在一格运行完整真实 HTTP/SQLite 合同测试。
+      # 仍在 backend-fast 的 required 闭集内，缺依赖/空跑/skip 都使此格失败。
+      - name: CLA service contract tests (isolated)
+        if: matrix.python == '3.13' && matrix.shard == 1
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLA_TEST_ENV="$RUNNER_TEMP/cla-service-tests"
+          python -m venv "$CLA_TEST_ENV"
+          "$CLA_TEST_ENV/bin/python" -m pip --isolated install \
+            --index-url https://pypi.org/simple --only-binary=:all: \
+            -r services/cla/requirements-core.txt
+          "$CLA_TEST_ENV/bin/python" services/cla/tests/run_ci.py
       # matplotlib 单独装：pyproject 的主依赖刻意不含科学栈（Flask 父进程的
       # 依赖边界），CI 里装上让 worker round-trip 用例真正执行而非跳过
       - name: 安装依赖
@@ -602,7 +727,7 @@ jobs:
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
-      # `--shard=K/2` 的 2 与上面 matrix.shard 的长度必须是同一个数
+      # `--shard=K/6` 的 6 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
       # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
@@ -611,9 +736,16 @@ jobs:
       # conftest，tests/conftest.py 没加载，选项就「unrecognized」。`=` 形式让整个 token
       # 进 extras，不产生假路径。托管 runner 上 RUNNER_TEMP 每次都是新的，这个坑在 CI 上
       # 不会自己露头——所以合同测试钉 `=` 形式，别等 self-hosted 复用目录时才发现。
+      # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
+      # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
+      # 是 native 真 spawn 那批（自带 300 秒上限），留 3 倍余量；本 lane 本来就排除 slow。
+      # 同一开关让 ≥60 秒的用例结束时往 stderr 写一行（`[slow-test …]`），取消的 job 也留得下时间线。
+      # 机制与合同：tests/support/hang_watchdog.py、tests/test_hang_watchdog.py。
       - name: pytest
+        env:
+          TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/2
+          python -m pytest --shard=${{ matrix.shard }}/6
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
@@ -645,6 +777,20 @@ jobs:
   # 47:45（#694 job 109764360587），余量已经很薄。上限本身是防挂死的止血阀
   # （2026-08-28 没有上限时堵过合并队列 8 小时 20 分），不该靠抬数字续命；按分片给
   # 余量，上限继续钉在 60。
+  #
+  # **2026-10-21 从 3 片改到 4 片（90 分钟上限不动）**：#1219 合入后的 6 个合并组（run
+  # 39494740923 … 39517350361）Windows 三片 46–80 分钟、单组 junit 合计 171–221 分钟，同一个
+  # 文件在不同 runner 上能差一倍（test_invariants_engine 654 s vs 1261 s）；#1219 自己的合并组
+  # Windows 1 片 82 分钟，离上限 8 分钟。按权重表重平衡只能把中位的最重片从 73.6 压到 67，
+  # 压不住 runner 快慢；runner 排队等待实测 0 分钟、每片固定开销 2–3 分钟，加片是余量最大的
+  # 做法：4 片按 Windows 中位 ≈ 50 分钟 / 片、macOS ≈ 44。
+  #
+  # **2026-10-24 从 4 片改到 8 片，权重表改按 Windows 8 次合并组的中位重算（90 分钟上限不动）**：
+  # 10-23～24 的 10 个合并组里 Windows 四片 39–88 分钟，最慢片中位 74；Windows 套件中位 256 分钟
+  # （10-21 时 171–221），合并组整体被这一片拖到 75–80 分钟，其余 job 早已跑完、runner 空着。按 8 次运行
+  # 留一法交叉验证（用其余 7 次的中位权重分片、拿第 8 次的真实耗时量）：Windows 最重片 pytest
+  # 4 片现表 74 / 新表 68、8 片新表 38（最坏 39）；macOS 8 片新表 21。macOS 与 Windows 共用一个片数，
+  # 合同测试与基线解析器都按「一个 job 一个 N」写。公开仓库 + Enterprise，并发不是约束。
   backend-platforms:
     if: >-
       github.event_name == 'merge_group'
@@ -655,7 +801,7 @@ jobs:
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
         os: [macos-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ${{ matrix.os }}
     # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
     # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
@@ -667,7 +813,11 @@ jobs:
     # 堵住——2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。改到 3 片的
     # 理由见上面 2026-09-30 那段；权重表现在是本机 macOS 的样本，Windows 与 macOS 的真实
     # 平衡要等这次 3 片跑完的 junit artifact。
-    timeout-minutes: 60
+    # 2026-10-10 再抬到 90（与 backend-fast #894 同档）：Windows 3 片里单片已实测 55 分钟，
+    # #919 的 windows-latest 2 在 60:16 被取消（run 38044245065），重跑才过。合并队列的
+    # check_response_timeout 是 180 分钟（线上值，仓库里 scripts/ci/merge_queue_ruleset.py 已同步，
+    # 测试要求与 job 上限差 ≥30 分钟），90 仍在其内；拆片 / 重平衡权重（#636）做完再收回。
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -700,14 +850,21 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/3` 的 3 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/8` 的 8 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
+      # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
+      # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
+      # 是 native 真 spawn 那批（自带 300 秒上限），留 3 倍余量；本 lane 本来就排除 slow。
+      # 同一开关让 ≥60 秒的用例结束时往 stderr 写一行（`[slow-test …]`），取消的 job 也留得下时间线。
+      # 机制与合同：tests/support/hang_watchdog.py、tests/test_hang_watchdog.py。
       - name: pytest
+        env:
+          TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/3
+          python -m pytest --shard=${{ matrix.shard }}/8
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
-          --durations=50 -rs
+          --durations=50 -rs -vv
       # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
       - name: 分片证据
         if: always()
@@ -1035,6 +1192,10 @@ jobs:
       # `tavotto-workerd` 产物的机器上 skip，而 CI 里唯一有 `target/debug/tavotto-workerd` 的地方就是
       # 这里（`cargo test` 刚建的）——两条冒烟腿验的是「产物自带的 workerd 能渲染」，验不了
       # 「三路逐字节等价」。所以在这个 job 里装上科学栈对着刚建的二进制真跑一次。
+      # 同一步也带上 #961 的 workerd 启动期缺件分诊（test_engine_files_incomplete.py 里带 workerd 的那条）。
+      # find_workerd 优先 release：Rust 缓存若恢复出旧的 target/release 二进制，这批用例会对着过期字节
+      # 变绿（Codex #1085 / #1117）。不靠设环境变量钉（那等于替自动发现填答案，test_workerd_packaging
+      # 禁止），而是先删掉可能残留的 release 产物，再断言自动发现落在刚建的 debug 产物上。
       # `-k workerd` 选的就是那 12 条（用例名里都带 workerd）；`-rs` 把仍 skip 的理由打出来——
       # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
       - uses: actions/setup-python@v6
@@ -1061,15 +1222,27 @@ jobs:
           # 批准字体（U10）：等价性矩阵里的导出经 RenderCore，没字体就 fonts_dir_missing
           python scripts/fetch_fonts.py && python scripts/fetch_fonts.py --check
           test -x workerd/target/debug/tavotto-workerd
+          rm -f workerd/target/release/tavotto-workerd
+          python - <<'PY'
+          import os, sys
+          from tavotto.engine.workerd_client import find_workerd
+          found = find_workerd()
+          want = "workerd/target/debug/tavotto-workerd"
+          if not found or not os.path.samefile(found, want):
+              sys.exit(f"find_workerd() -> {found!r}，不是刚建的 {want}")
+          PY
           python -m pytest tests/test_equivalence_matrix.py tests/test_worker_roundtrip.py \
+            tests/test_engine_files_incomplete.py \
             -k workerd -p no:cacheprovider -q -rs --junitxml "${{ runner.temp }}/workerd-pytest.xml"
           python - <<'PY'
           import xml.etree.ElementTree as ET, os
           root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "workerd-pytest.xml")).getroot()
-          cases = root.iter("testcase")
+          cases = list(root.iter("testcase"))
           ran = [c for c in cases if c.find("skipped") is None]
           assert ran, "workerd 那批用例一条都没真跑（全 skip）——产物没被认出来，这一步就成了空转"
-          print(f"真跑了 {len(ran)} 条 workerd 用例")
+          ran_961 = [c for c in ran if "engine_files_incomplete" in c.get("classname", "")]
+          assert ran_961, "#961 的 workerd 启动期缺件用例没真跑"
+          print(f"真跑了 {len(ran)} 条 workerd 用例（其中 #961 {len(ran_961)} 条）")
           PY
 
   # 桌面壳（Tauri）的静态门禁 + 单测。**与 workerd 同一条纪律**，理由也一样：
@@ -1125,15 +1298,28 @@ jobs:
           # （实测 v0-rust-<key>-<job>-Linux-x64-…），原先那条 `key: ${{ matrix.os }}`
           # 是冗余的字面量（CI02 §4）。改成与 cache-seed 的两条 desktop-shell 腿同键。
           shared-key: desktop-shell
-      - name: 装 Tauri 在 Linux 上的系统依赖
+      # 这三步（识别镜像 / 缓存 .deb / 安装）三处必须逐字相同，只有 `if:` 不同（看护：
+      # tests/test_merge_queue_workflows.py::TestTauriAptCache）。Ubuntu 镜像偶发极慢（实测约 7% 吃满
+      # job 的 20 分钟），所以下载的 .deb 按 runner 镜像版本缓存，命中时不跑 apt-get update；
+      # 未命中时脚本自己限时、重试、换镜像。包列表只在 scripts/ci/tauri-linux-apt-packages.txt。
+      - name: 装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像
         # macOS 腿不需要：WebKit 由系统提供，Tauri 直接用 WKWebView。
         if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+        run: echo "APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+      - name: 缓存 Tauri 系统依赖的 .deb 下载
+        if: runner.os == 'Linux'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/tauri-apt-debs/*.deb
+          key: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}
+          restore-keys: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-
+        id: tauri-apt-cache
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        if: runner.os == 'Linux'
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}
+        run: scripts/ci/install_tauri_linux_deps.sh "${RUNNER_TEMP}/tauri-apt-debs"
       - name: 摆一个空的 sidecar 产物目录
         # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，
         # tauri-build 校验它存在才肯生成命令清单。**空目录就够**——这一格不打包，
@@ -1363,7 +1549,7 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
-    # **Playwright 按 project 分到两台机器**（CI03c，2026-09-16）。这条腿是 CI01 删边之后
+    # **Playwright 分到三台机器**（CI03c，2026-09-16 按 project 分两片；2026-10-19 chromium 再拆一刀成三片，见下）。这条腿是 CI01 删边之后
     # 合并资格里第二长的一条（CI00：Playwright 步 1124s 中位，其中 chromium 89 条 505s、
     # webkit 23 条 267s、chromium-en 16 条 111s）。按 project 切而不是按文件切或 `--shard`：
     # Playwright 自带的 `--shard` 按 group 顺序等分、不看时长，跨 project 平衡要自写分区器；
@@ -1375,23 +1561,41 @@ jobs:
     #      Playwright 自己的 `--list` 再比一次集合（本片 == 全集里属于本片 project 的那些、
     #      本片 ∪ 另一片 == 全集的 project 集），不成立就红在 e2e 之前；
     #   ③ matrix 语义：任一片不 success，`needs.windows-exe-smoke.result` 就不是 success，
-    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)`（下面 `name:`），
+    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)` / `(3)`（下面 `name:`），
     #      required contexts 仍只有三个 Gate，仓库设置不用重登记。
-    # 两片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
+    # **chromium 再拆两半（2026-10-19）**：chromium 一个 project 涨到 ~292 条、片 1 的 e2e 一步 36–49 分钟
+    # （合并组里 5 次在 50 分钟被 interrupted，不同用例轮流被中断），按 project 切已经切不动。
+    # 做法是同一 project 内用 Playwright 原生 `--shard=i/2`（片 1 = 前半、片 3 = 后半；片 2 不变，所以
+    # 现有片号 1 / 2 的名字与含义不动，只新增片 3）。选原生 `--shard` 而不是显式文件清单 / grep 分区：
+    # 新增 spec 不需要人工维护清单；本配置 `workers: 1` + `fullyParallel: false`，分组 == 文件，原生
+    # 按文件顺序等分到「前半 151 条 / 32 个文件、后半 141 条 / 43 个文件」。拿 run 39235718807 片 1 的
+    # 日志逐文件累加用例耗时：前半 ≈ 23.4 分钟、后半 ≈ 20.0 分钟（54% / 46%，e2e 步合计 43.4 分钟 → 每片 ≈ 一半），
+    # 目标 ≤ 30 分钟。跨 project 平衡的担忧在这里不成立（只在 chromium 一个 project 内切）。
+    # 代价：`--shard` 按条数等分、不看时长，新增 / 改动的 spec 会让两半慢慢偏；偏到某半 e2e 逼近 30 分钟
+    # 再重估（回头看 playwright-shard-check 证据里的两份 `--list`）。
+    # 每片的 `projects` 现在可以带一个 `--shard=i/n`；`others` 是**其余每一片**的 `projects`，用 `|` 隔开
+    # （值里不能有逗号，`|` 可以）。自验脚本对着真 `--list` 验：各片并集 == 全集、两两不交、同一 project
+    # 的 `--shard` 是 1/n..n/n 各一次；合同测试在源码层钉同样的事。
+    # 三片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
     # **都跑**三条断言与冒烟①②③（合计约 1 分钟）——不用 `if:` 把它们收窄到一片上：
-    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是两片各自独立成立。
-    # 浏览器按片装：片 1 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
+    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是每片各自独立成立。
+    # 浏览器按片装：片 1、3 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
     # 值里不能有逗号（scripts/ci/ci_baseline.py 的 matrix 解析按逗号切）；`projects` /
     # `others` 是 `--project=` 参数的字面形状，直接进 `pnpm e2e` 与自验脚本的命令行。
-    # 回退：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
-    # 片号；自验步骤与 step 级 timeout 留着也无害。
+    # 回退：
+    #   · 只撤销 chromium 拆分：删掉 matrix 里 shard 3 那一行，片 1 的 `projects` 改回 `--project=chromium`、
+    #     `others` 改回 `--project=webkit --project=chromium-en`，片 2 的 `others` 改回 `--project=chromium`
+    #     （合同测试与自验都认单 project 整片的形状；片 3 的 check 名消失前，先把它从必需检查里移除）；
+    #   · 全部撤销：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
+    #     片号；自验步骤与 step 级 timeout 留着也无害。
     name: windows-exe-smoke (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { shard: 1, browsers: "chromium",        projects: "--project=chromium",                    others: "--project=webkit --project=chromium-en" }
-          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium" }
+          - { shard: 1, browsers: "chromium",        projects: "--project=chromium --shard=1/2",         others: "--project=webkit --project=chromium-en|--project=chromium --shard=2/2" }
+          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium --shard=1/2|--project=chromium --shard=2/2" }
+          - { shard: 3, browsers: "chromium",        projects: "--project=chromium --shard=2/2",         others: "--project=chromium --shard=1/2|--project=webkit --project=chromium-en" }
     runs-on: windows-latest
     # 分片 + 去 --with-deps 后整个 job 实测 11–14 分钟（663–824s，合并组 35069266028 /
     # 35073686963）；分片前中位 23.5 分钟（1411s，CI00）。2026-10-07 片 1 已到 34–35 分钟、
@@ -1412,11 +1616,12 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
-      - name: 构建画布产物给 e2e 用
+      - name: 构建画布产物（e2e 与进包共用）
         # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
         # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
         # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
         # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        # 下面 PyInstaller 也收这一份（tavotto.spec：缺了或过期拒绝打包）。
         run: python scripts/build_mcp_widget.py
 
       # Rust supervisor：tavotto.spec 从 workerd/target/release/ 取，取不到直接
@@ -1480,6 +1685,24 @@ jobs:
         env:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      # 发出去的 runtime 必须与构建时冒烟过的那一份逐字节一致：PyInstaller 6 会把 Analysis datas 里的
+      # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 _internal/ 顶层（#1051；macOS ≈ 48 MB）。与
+      # scripts/build_desktop.py 发行链那道闸同一个函数——主语是 dist/ 里真产出的字节。
+      - name: 校验：内置 runtime 原样进包（逐字节）
+        shell: bash
+        # -X utf8：Windows runner 的控制台是 cp1252，打印中文结论会 UnicodeEncodeError（闸门已判完却被打红）
+        run: |
+          python -X utf8 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from build_worker_runtime import diff_collected_runtime, runtime_source_dir
+          bad = diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")
+          if bad:
+              print(f"::error::打包后的内置 runtime 被改动 {len(bad)} 处：" + "；".join(bad[:10]))
+              sys.exit(1)
+          print("内置 runtime 与 runtime/ 逐字节一致")
+          PY
 
       # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
@@ -1670,9 +1893,10 @@ jobs:
       - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）
         # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`
         # （全量 + 本片），按 (project, file:line:col, title) 的**集合**比——不是条数。
-        # 本片 ∪ 另一片 ≠ 全集的 project 集、两片有交集、本片 ≠ 全集里属于本片的那些、
-        # 清单读不懂，都在这里退非零，job 红在 e2e 之前。`--projects` / `--others` 的值以
-        # `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）。
+        # 各片并集 ≠ 全集、两片有交集、同一 project 的 `--shard=i/n` 没凑齐 1..n、清单读不懂，
+        # 都在这里退非零，job 红在 e2e 之前（脚本对本片与其余每一片各跑一次 `--list`）。`--projects` /
+        # `--others` 的值以 `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）；
+        # `--others` 里各片用 `|` 隔开。
         # 两份清单 + check.json 写进 RUNNER_TEMP，下面上传作证据——只作证据，不作判定输入。
         run: >-
           python scripts/ci/playwright_shard_check.py
@@ -1692,6 +1916,8 @@ jobs:
         # PR #828 / #833 在 30.0 分钟被 step 级上限误杀（190–194 条过、约 17 条没跑到）。
         # 按 project 切的片已经切不动了（片 1 只有 chromium 一个 project），所以放到 45：
         # 约 1.5 倍余量，加上前后 ~6 分钟的构建与冒烟仍在 job 级 60 之内（挂起照样带日志失败）。
+        # 2026-10-19 chromium 再拆两半（片 1 / 片 3，各 ≈ 20–23 分钟），这一步的预期时长腰斩；
+        # 45 / 60 的上限刻意不动（它们是防挂死，不是性能预算），要不要收紧等新数据攒够再说。
         # 为什么要有 step 级：
         # PR #373 的 run 34994534095 attempt 1，这一步从 16:30:58Z 起挂着，直到 job 级上限在
         # 17:31:10Z 把整个 job 硬杀——step 停在 in_progress，后面的「大图预览内存基准」「上传」
@@ -1703,6 +1929,11 @@ jobs:
         run: |
           $env:TAVOTTO_WORKER_PYTHON = $null
           $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
+          # 真实首跑资格（web/e2e/first-run-qualification.spec.ts）要一个「原生参考」解释器：用它直接跑一遍脚本，
+          # 与应用里的跑法逐项对拍。这条腿跑的是产物，应用的 worker 就是**内置 runtime**，所以参考也取它——
+          # 同一个解释器、同一套锁定的 numpy / matplotlib，对拍比的是「经产品」与「不经产品」两种跑法，
+          # 不是两套科学栈的版本差。（TAVOTTO_PYTHON 在有 TAVOTTO_EXE 时不参与启动应用，见 web/e2e/fixtures.ts。）
+          $env:TAVOTTO_PYTHON = "$env:GITHUB_WORKSPACE\dist\Tavotto\_internal\runtime\python.exe"
           pnpm e2e ${{ matrix.projects }}
 
       - name: 上传分片自验证据
@@ -1755,7 +1986,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
-          # 按片唯一：upload-artifact v4 同名会失败。两片都出一份（基准本来就只出数据、
+          # 按片唯一：upload-artifact v4 同名会失败。每片都出一份（基准本来就只出数据、
           # 不阻塞；仓库里没有它的消费者，grep 过）。
           name: bench-large-preview-windows-shard${{ matrix.shard }}
           path: ${{ runner.temp }}/bench-large-preview-windows.json
@@ -1821,6 +2052,11 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      - name: 构建画布产物进包
+        # tavotto.spec 只收与本次源码一致的 codex-plugin/mcp/widget/canvas.html（不进库，ADR 0043），
+        # 缺了拒绝打包；`tavotto-cli mcp` 靠它给宿主内嵌画布（上一步已装好 web 依赖）
+        run: python scripts/build_mcp_widget.py
+
       # **不设 TAVOTTO_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -1876,6 +2112,24 @@ jobs:
         env:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      # 发出去的 runtime 必须与构建时冒烟过的那一份逐字节一致：PyInstaller 6 会把 Analysis datas 里的
+      # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 _internal/ 顶层（#1051；macOS ≈ 48 MB）。与
+      # scripts/build_desktop.py 发行链那道闸同一个函数——主语是 dist/ 里真产出的字节。
+      - name: 校验：内置 runtime 原样进包（逐字节）
+        shell: bash
+        # -X utf8：Windows runner 的控制台是 cp1252，打印中文结论会 UnicodeEncodeError（闸门已判完却被打红）
+        run: |
+          python -X utf8 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from build_worker_runtime import diff_collected_runtime, runtime_source_dir
+          bad = diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")
+          if bad:
+              print(f"::error::打包后的内置 runtime 被改动 {len(bad)} 处：" + "；".join(bad[:10]))
+              sys.exit(1)
+          print("内置 runtime 与 runtime/ 逐字节一致")
+          PY
 
       # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
@@ -1968,6 +2222,7 @@ jobs:
           retention-days: 7
 
   posix-e2e:
+    name: posix-e2e (${{ matrix.shard }}/3)
     # **POSIX 那条 e2e 腿**（issue #30 / STATUS 的 R-16）。
     #
     # 在这之前，全仓唯一执行 `pnpm e2e` 的地方是 windows-exe-smoke，于是
@@ -1994,6 +2249,12 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
+    # #768：三台独立 GitHub 托管 Runner 通过 Playwright 原生 --shard 划分测试。
+    # Gate 原有 posix-e2e id 不变；任一矩阵副本失败整个 needs 都失败。
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -2055,8 +2316,8 @@ jobs:
         # **step 级上限 35 分钟**（job 级 45 不动，step 必须严格小于 job 级，留 10 分钟给
         # 收集 / 上传 / Post 步骤）：CI00 实测这一步 7.4 分钟，现在 209 条用例（180 通过、
         # 29 跳过）单 worker 约 19.7 分钟，run 36734896556（#679 的 full-ci）被旧的 20 分钟
-        # 上限杀掉、没有任何用例失败。当初「不分片：7 分钟，不在关键路径上」的前提已不成立；
-        # 35 只是止血的余量，分片是后续动作（见 issue，不在这个 PR 里做）。理由与
+        # 上限杀掉、没有任何用例失败；2026-10-14 #1000 又在 35 分钟时只执行约 274 个用例。
+        # 现在按 #768 用三台 Runner 分片，35 分钟是每片的独立止损线。理由与
         # windows-exe-smoke 那一步相同——job 级上限硬杀时 step 停在 in_progress、
         # `if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1）；
         # step 级超时把挂起变成带日志的失败。
@@ -2064,7 +2325,17 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium
-          pnpm e2e --project=chromium --project=chromium-en
+          # 先让 Playwright 报出本 shard 的预期用例，再真正执行；
+          # 注册表校验以计划的身份集合为主语，不许因为没有执行就悄悄漏报。
+          # 防止 config 的 TAVOTTO_E2E_JSON 把 --list 的 JSON 输到真实运行报告路径。
+          # 先验明两个 POSIX project 的全集覆盖每一条 active 引用，防止
+          # 原来 full verify-run 发现的 webkit-only 注册用例在 shard 模式变成假绿。
+          TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
+            --project=chromium --project=chromium-en > "$RUNNER_TEMP/e2e-planned-all.json"
+          TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
+            --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3 \
+            > "$RUNNER_TEMP/e2e-planned.json"
+          pnpm e2e --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3
 
       # 功能登记表的「真跑」那一半（ADR 0097）：合并态这次运行的报告里，每个 active 功能登记的
       # 用例都出现了、结论都是 expected / flaky。skipped 判红（skip 不是绿），报告里没有它也判红
@@ -2072,13 +2343,16 @@ jobs:
       - name: 功能登记表：登记的用例在合并态真的执行并通过
         env:
           TAVOTTO_E2E_JSON: ${{ runner.temp }}/e2e-results.json
-        run: python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON"
+        run: |
+          python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON" \
+            --expected-list "${{ runner.temp }}/e2e-planned.json" \
+            --all-planned-list "${{ runner.temp }}/e2e-planned-all.json"
 
       - name: 失败时收集 trace 与操作轨迹
         if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: posix-e2e-report
+          name: posix-e2e-report-${{ matrix.shard }}
           path: |
             web/playwright-report/**
             web/test-results/**
@@ -2102,7 +2376,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
+    needs: [python-lint, cla-check, release-note-gate, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2139,7 +2413,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
+            --required python-lint,cla-check,release-note-gate,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:
@@ -2371,15 +2645,28 @@ jobs:
         with:
           workspaces: ${{ matrix.workspace }}
           shared-key: ${{ matrix.rust }}
-      - name: 装 Tauri 在 Linux 上的系统依赖
-        # 与 desktop-shell 那一步逐字相同；macOS 腿不需要（WKWebView 由系统提供）。
+      # 这三步（识别镜像 / 缓存 .deb / 安装）三处必须逐字相同，只有 `if:` 不同（看护：
+      # tests/test_merge_queue_workflows.py::TestTauriAptCache）。Ubuntu 镜像偶发极慢（实测约 7% 吃满
+      # job 的 20 分钟），所以下载的 .deb 按 runner 镜像版本缓存，命中时不跑 apt-get update；
+      # 未命中时脚本自己限时、重试、换镜像。包列表只在 scripts/ci/tauri-linux-apt-packages.txt。
+      - name: 装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像
+        # macOS 腿不需要（WKWebView 由系统提供）。
         if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+        run: echo "APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+      - name: 缓存 Tauri 系统依赖的 .deb 下载
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/tauri-apt-debs/*.deb
+          key: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}
+          restore-keys: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-
+        id: tauri-apt-cache
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}
+        run: scripts/ci/install_tauri_linux_deps.sh "${RUNNER_TEMP}/tauri-apt-debs"
       - name: 摆一个空的 sidecar 产物目录
         # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，tauri-build 校验它
         # 存在才肯生成命令清单（与 desktop-shell 那一步同形；空目录就够）。

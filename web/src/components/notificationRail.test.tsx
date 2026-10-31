@@ -12,16 +12,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   setProjectEnvironment: vi.fn(),
+  prepareDiagSend: vi.fn(),
+  startDiagSend: vi.fn(),
+}))
+
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  restartEngine: vi.fn(async () => true),
 }))
 
 import { NotificationRail } from '@/components/StatusBar'
+import { restartEngine } from '@/lib/desktop'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { literal, t } from '@/i18n'
-import { setProjectEnvironment } from '@/lib/api'
+import { prepareDiagSend, setProjectEnvironment, startDiagSend } from '@/lib/api'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
+import { useNoticeRailStore } from '@/store/noticeRailStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { ADOPTED_NOTICE_MS, useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { HINT_AUTO_DISMISS_MS, showHint, useHintStore } from '@/lib/onboarding/hints'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { STATUS_AUTO_DISMISS_MS, useUiStore } from '@/store/uiStore'
+import { EXPORT_DONE_DISMISS_MS, STATUS_AUTO_DISMISS_MS, useUiStore } from '@/store/uiStore'
+import { registerDialogOpen } from '@/store/dialogLayerStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -65,6 +79,15 @@ afterEach(async () => {
 })
 
 describe('状态 toast 的自动收起', () => {
+  it('规格：成功类 4 秒收；错误类不自己走，留到用户关掉（失败不能只闪一下）', () => {
+    expect(STATUS_AUTO_DISMISS_MS).toBe(4000)
+    act(() => useUiStore.getState().setStatus(literal('导出失败'), 'error'))
+    tick(10 * 60_000)
+    expect(status(), '错误类十分钟后还在').not.toBeNull()
+    expect(statusToast()!.getAttribute('data-status-tone')).toBe('error')
+    act(() => useUiStore.getState().setStatus(null))
+  })
+
   it('没人碰：到时自己走', () => {
     say('已导出')
     tick(STATUS_AUTO_DISMISS_MS - 1)
@@ -129,10 +152,10 @@ describe('状态 toast 的语气（2026-10-07 审计 P0：此前非错误一律�
     expect(shape()).not.toContain('icon-check')
   })
 
-  it('progress：转圈（与 Button 忙碌态同一个 LoaderCircle）', () => {
+  it('progress：转圈（与 Button 忙碌态同一个 Spinner）', () => {
     act(() => useUiStore.getState().setStatus(literal('正在构建 a…'), 'progress'))
     expect(tone()).toBe('progress')
-    expect(shape()).toContain('icon-loader-circle')
+    expect(shape()).toContain('icon-spinner')
     expect(shape()).toContain('animate-spin')
   })
 
@@ -152,6 +175,62 @@ describe('状态 toast 的语气（2026-10-07 审计 P0：此前非错误一律�
     expect(container.querySelector('[data-status-live]')!.textContent).toBe('')
     tick(STATUS_AUTO_DISMISS_MS * 2)
     expect(status()).not.toBeNull()
+  })
+})
+
+describe('带动作的状态 toast（导出关窗后的结果等）', () => {
+  it('非错误语气带动作：渲染按钮、点了执行；常驻不自己走；可手动关', () => {
+    const run = vi.fn()
+    act(() => useUiStore.getState().setStatus(literal('导出在等你'), 'info', { action: { label: literal('查看'), run } }))
+    const btn = [...statusToast()!.querySelectorAll('button')].find((b) => b.textContent === '查看')!
+    expect(btn).toBeTruthy()
+    tick(STATUS_AUTO_DISMISS_MS * 2)
+    expect(status()).not.toBeNull()
+    act(() => btn.click())
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(statusToast()!.querySelector('button[aria-label]:last-child')).toBeTruthy()
+  })
+
+  it('带动作但声明了 dismissMs（导出成功胶囊）：到点自己走；悬停时暂停、移开后接着数', () => {
+    act(() =>
+      useUiStore.getState().setStatus(literal('已导出 a.pdf'), 'done', {
+        action: { label: literal('在文件夹中显示'), run: vi.fn() },
+        dismissMs: EXPORT_DONE_DISMISS_MS,
+      }),
+    )
+    tick(EXPORT_DONE_DISMISS_MS - 500)
+    pointer(statusToast()!, 'pointerover')
+    tick(EXPORT_DONE_DISMISS_MS * 2)
+    expect(status(), '悬停期间不走表').not.toBeNull()
+    pointer(statusToast()!, 'pointerout')
+    tick(600)
+    expect(status()).toBeNull()
+  })
+
+  it('有模态对话框开着：通知移进 body 的 toast 层（压在对话框上），点它不算点了对话框外面', () => {
+    const off = registerDialogOpen()
+    try {
+      act(() => useUiStore.getState().setStatus(literal('已导出 a.pdf'), 'done'))
+      const layer = document.body.querySelector<HTMLElement>('body > [data-notification-rail]')
+      expect(layer).toBeTruthy()
+      expect(layer!.className).toContain('z-toast')
+      expect(layer!.querySelector('[data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => off())
+    }
+    expect(document.body.querySelector('body > [data-notification-rail]')).toBeNull()
+  })
+
+  it('对照：不带动作的非错误 toast 照旧自己走', () => {
+    act(() => useUiStore.getState().setStatus(literal('好了'), 'info'))
+    tick(STATUS_AUTO_DISMISS_MS + 10)
+    expect(status()).toBeNull()
+  })
+
+  it('被新的一句顶掉后动作随之清空（不留上一句的按钮）', () => {
+    act(() => useUiStore.getState().setStatus(literal('A'), 'info', { action: { label: literal('查看'), run: vi.fn() } }))
+    act(() => useUiStore.getState().setStatus(literal('B'), 'info'))
+    expect(useUiStore.getState().statusAction).toBeNull()
   })
 })
 
@@ -234,21 +313,37 @@ describe('「已改用你的环境」', () => {
 })
 
 /**
- * 通知轨的外形与顺序（2026-10-07 设计审计 §10.1）：普通的一条是胶囊；错误是圆角 12 的面板——左侧 danger
- * 竖条 + 标题 + 至多两行原文 + 「复制详情」；**最新的一条最靠近底边**（CSS order，DOM 顺序不动）。
- * 主语：`data-toast-layout` / `data-toast-bar` / `data-copy-details`；顺序认 style.order 的大小。
+ * 通知轨的外形与顺序（2026-10-07 设计审计 §10.1；2026-10-13 错误也改成胶囊）：每一条都是单行胶囊；错误 =
+ * danger 图标 + 「这一步没有完成」+ 原因一行（截断，全文在 title）+「复制详情」图标钮；**最新的一条最靠近底边**
+ * （CSS order，DOM 顺序不动）。主语：`data-toast-layout` / `data-toast-tone` / `data-copy-details`；顺序认 style.order 的大小。
  */
+describe('通知轨把最上面一条的顶边告诉浮动胶囊（避让用）', () => {
+  it('没有通知 = null；来一条状态 = 一个数；它收起走完退场 = null（退场中的不算）', () => {
+    expect(useNoticeRailStore.getState().top).toBeNull()
+    say('第一条')
+    expect(useNoticeRailStore.getState().top).not.toBeNull()
+    tick(STATUS_AUTO_DISMISS_MS + 1000)
+    expect(useNoticeRailStore.getState().top).toBeNull()
+  })
+})
+
 describe('通知轨：外形与先后', () => {
-  it('普通状态是胶囊；错误是面板：竖条 + 标题 + 原文 + 复制详情', async () => {
+  it('普通状态与错误都是单行胶囊；错误的原因截断成一行、全文在 title，复制详情复制全文', async () => {
     say('已导出')
     expect(statusToast()!.dataset.toastLayout).toBe('pill')
     expect(statusToast()!.className).toContain('rounded-full')
     act(() => useUiStore.getState().setStatus(literal('写盘失败：/very/long/path/that/goes/on'), 'error'))
     const box = statusToast()!
-    expect(box.dataset.toastLayout).toBe('panel')
-    expect(box.className).toContain('rounded-lg')
-    expect(box.querySelector('[data-toast-bar]')).not.toBeNull()
+    expect(box.dataset.toastLayout).toBe('pill')
+    expect(box.dataset.toastTone).toBe('error')
+    expect(box.className).toContain('rounded-full')
+    expect(box.querySelector('[data-toast-bar]')).toBeNull()
     expect(box.textContent).toContain('写盘失败：/very/long/path/that/goes/on')
+    expect(box.querySelector('[title="写盘失败：/very/long/path/that/goes/on"]')).not.toBeNull()
+    // 截断要落在块级盒子上：行内 span 的 overflow / text-overflow 不生效（Codex #995）
+    const clipped = box.querySelector<HTMLElement>('.truncate')!
+    expect(clipped.classList.contains('block')).toBe(true)
+    expect(clipped.parentElement!.className).toContain('min-w-0')
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
@@ -264,5 +359,81 @@ describe('通知轨：外形与先后', () => {
     expect(orderOf(hintToast())).toBeGreaterThan(orderOf(statusToast()))
     say('已导出')
     expect(orderOf(statusToast())).toBeGreaterThan(orderOf(hintToast()))
+  })
+})
+
+describe('反馈卡不在通知轨里（2026-10-19 起是右下角的 FeedbackCorner）', () => {
+  beforeEach(() => {
+    useDiagSendStore.setState({ capability: { enabled: true }, open: false })
+  })
+  afterEach(() => {
+    act(() => {
+      useUnexpectedErrorStore.getState().dismiss()
+      useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null })
+    })
+    useDiagSendStore.setState({ capability: null, open: false })
+    useWorkspaceStore.setState({ addedForEdit: null })
+  })
+
+  it('意外错误 / 上次没正常退出：轨里不画，也不占三条的名额（提示照出）', () => {
+    act(() => {
+      useUnexpectedErrorStore.getState().show()
+      useExitNoticeStore.getState().showPrevious('app_unclean')
+      showHint('multi_select')
+    })
+    say('正在构建')
+    tick(200)
+    expect(container.querySelector('[data-unexpected-error-card]')).toBeNull()
+    expect(container.querySelector('[data-previous-exit-card]')).toBeNull()
+    act(() => useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 }))
+    tick(200)
+    expect(hintToast(), '加入说明 + 状态 + 提示 = 三条，反馈卡不算名额').not.toBeNull()
+  })
+})
+
+describe('引擎退出修复卡（ADR 0129）', () => {
+  const engineCard = () => container.querySelector<HTMLElement>('[data-engine-exited-card]')
+
+  beforeEach(() => {
+    useDiagSendStore.setState({ capability: { enabled: true }, open: false })
+    useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null })
+    vi.mocked(prepareDiagSend).mockClear()
+    vi.mocked(startDiagSend).mockClear()
+    vi.mocked(restartEngine).mockClear()
+  })
+  afterEach(() => {
+    act(() => useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null }))
+    useDiagSendStore.setState({ capability: null, open: false })
+  })
+
+  it('修复卡：一句话 + 一个主按钮「重新启动」；折叠的一句只在 title；没有发送入口', () => {
+    act(() => useExitNoticeStore.getState().setEngineExit('nonzero'))
+    const el = engineCard()!
+    expect(el.textContent).toContain(t('exitNotice.engine.text', { ns: 'workspace' }))
+    const buttons = el.querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].textContent).toBe(t('exitNotice.engine.restart', { ns: 'workspace' }))
+    expect(el.title).toBe(t('exitNotice.engine.note', { ns: 'workspace' }))
+    expect(el.textContent).not.toContain(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
+  })
+
+  it('不受发送开关控制：开关 null 时修复卡照出', () => {
+    useDiagSendStore.setState({ capability: null })
+    act(() => useExitNoticeStore.getState().setEngineExit('signal'))
+    expect(engineCard()).not.toBeNull()
+  })
+
+  it('点「重新启动」调 restartEngine，且转圈期间重复点击无效', async () => {
+    let finish!: (v: boolean) => void
+    vi.mocked(restartEngine).mockReturnValueOnce(new Promise<boolean>((r) => (finish = r)))
+    act(() => useExitNoticeStore.getState().setEngineExit('zero'))
+    await act(async () => engineCard()!.querySelector('button')!.click())
+    await act(async () => engineCard()!.querySelector('button')!.click())
+    expect(restartEngine).toHaveBeenCalledTimes(1)
+    expect(useExitNoticeStore.getState().restarting).toBe(true)
+    await act(async () => finish(false)) // 壳没动手：按钮还给用户
+    expect(useExitNoticeStore.getState().restarting).toBe(false)
+    expect(prepareDiagSend).not.toHaveBeenCalled()
+    expect(startDiagSend).not.toHaveBeenCalled()
   })
 })

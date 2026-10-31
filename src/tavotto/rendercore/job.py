@@ -28,15 +28,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..engine import exportjob, exportreq
-from . import BACKEND_NAME, banded, identity, ir, pdfwriter, plan, raster
+from ..engine import artifactinspect, exportjob, exportreq
+from . import BACKEND_NAME, banded, identity, ir, pdfwriter, plan, raster, svgwriter
 from .hbshaper import HbFaceProvider
 from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
 
-#: 一次作业里全部冻结源的字节总预算（读进内存之前按 `SourceArtifact.size_bytes` 判）。像素预算只管解码后的
-#: 位图，管不住「几份很大的 PDF / 压缩得很小的位图」把导出进程挤死（Codex #463 第四轮 P2）；超过就是结构化
-#: 失败（`export_render_failed` + `source_budget_exceeded`），一个字节不读。**记账 = 全部源之和 + 最大的那一份**：
+#: 一次作业实际消费的冻结源字节总预算（读进内存之前按 `SourceArtifact.size_bytes` 判）。像素预算只管解码后的
+#: 位图，管不住「几份很大的 PDF / 压缩得很小的位图」把导出进程挤死（Codex #463 第四轮 P2）。canonical 集合超限
+#: 就全作业零读、结构化失败（`export_render_failed` + `source_budget_exceeded`）；仅 SVG 附加源超限时不读 companion，
+#: 混合请求仍可交付其它格式。**记账 = 消费的全部源之和 + 最大的那一份**：
 #: `read_frozen()` 交出 `bytes` 那一刻同时存在预分配缓冲与结果各一份，峰值多出最大单个源的大小（第六轮 P2）。
 SOURCE_BYTES_BUDGET = 512 * 1024 * 1024
 
@@ -48,12 +49,13 @@ def produce(
     sources: SourceResolver,
     provider: HbFaceProvider,
     host: RenderHost | None = None,
+    math: dict | None = None,
 ) -> list[exportjob.Produced]:
     req = job.request
     job.check_cancelled()
     job.trace.mark("compile")
     try:
-        rp = plan.compile_plan(req, sources=sources, faces=provider)
+        rp = plan.compile_plan(req, sources=sources, faces=provider, math=math)
     except plan.PlanError as exc:
         # reason 里带上里层的 code（source_* / font_*）：读者据它分类，不必解析文案
         inner = exc.params.get("source_code") or exc.params.get("font_code") or ""
@@ -79,12 +81,22 @@ def produce(
         if msg not in job.warnings:
             job.warnings.append(msg)
     # 冻结源在写入之前逐个读进内存并核 hash（RC-014）：写入器用的就是这一份字节，不再碰文件。
-    # 读之前先按冻结时记下的大小判总预算——超过的作业一个字节不读、结构化失败
-    sizes = [int(fs.artifact.size_bytes) for fs in rp.sources.values()]
+    # 读前按冻结大小判 sum + max：canonical 超限全作业零读；仅 SVG 超限不读 companion，其它格式可照常。
+    wants_svg = exportreq.FORMAT_SVG in req.formats
+    svg_only = req.formats == (exportreq.FORMAT_SVG,)
+    svg_sources = {
+        key: companion
+        for key, fs in rp.sources.items()
+        if wants_svg and (companion := fs.svg_representation()) is not None
+    }
+    # PDF / PNG / TIFF 只消费 canonical 源；未请求的 companion 不占内存预算、也不读取。
+    frozen_sources = [*rp.sources.values(), *svg_sources.values()]
+    svg_source_error: exportreq.ExportRequestError | None = None
+    sizes = [int(fs.artifact.size_bytes) for fs in frozen_sources]
     total_bytes = sum(sizes)
     peak_bytes = total_bytes + (max(sizes) if sizes else 0)  # 读最大那份时的瞬时双份
     if peak_bytes > SOURCE_BYTES_BUDGET:
-        raise exportreq.ExportRequestError(
+        error = exportreq.ExportRequestError(
             "export_render_failed",
             f"冻结源合计 {total_bytes} 字节（读取峰值 {peak_bytes}），超过预算 {SOURCE_BYTES_BUDGET}",
             {
@@ -95,7 +107,15 @@ def produce(
                 "budget": SOURCE_BYTES_BUDGET,
             },
         )
+        base_sizes = [int(fs.artifact.size_bytes) for fs in rp.sources.values()]
+        base_peak = sum(base_sizes) + (max(base_sizes) if base_sizes else 0)
+        if not wants_svg or svg_only or base_peak > SOURCE_BYTES_BUDGET:
+            raise error
+        # 只因 companion 超限的混合请求仍可交付其它格式；一个 SVG 字节也不读。
+        svg_source_error = error
     files: dict[str, bytes] = {}
+    imported_svgs: dict[str, bytes] = {}
+    imported_text_svgs: dict[str, bytes] = {}
     for key, fs in rp.sources.items():
         job.check_cancelled()
         try:
@@ -106,6 +126,38 @@ def produce(
                 str(exc),
                 {"id": fs.artifact.source_id, "reason": f"{exc.code}: {exc}"},
             ) from exc
+    if svg_source_error is None:
+        for key, fs in svg_sources.items():
+            job.check_cancelled()
+            try:
+                imported_svgs[key] = read_frozen(fs)
+            except SourceError as exc:
+                error = exportreq.ExportRequestError(
+                    "export_render_failed",
+                    str(exc),
+                    {"id": fs.artifact.source_id, "reason": f"{exc.code}: {exc}"},
+                )
+                if svg_only:
+                    raise error from exc
+                svg_source_error = error
+                imported_svgs.clear()
+                break
+    if svg_source_error is None and svg_sources:
+        # 「保留文字」成品（ADR 0144）：尽力而为，读不到 / 超预算就留在 path 基准，不牵连任何格式。
+        spent = total_bytes
+        for key, fs in rp.sources.items():
+            text = fs.svg_text_representation() if key in svg_sources else None
+            if text is None:
+                continue
+            size = int(text.artifact.size_bytes)
+            if spent + size + max([*sizes, size]) > SOURCE_BYTES_BUDGET:
+                continue
+            job.check_cancelled()
+            try:
+                imported_text_svgs[key] = read_frozen(text)
+            except SourceError:
+                continue
+            spent += size
 
     width_mm, height_mm = round(req.canvas.page_w_mm, 3), round(req.canvas.page_h_mm, 3)
     produced: list[exportjob.Produced] = []
@@ -120,6 +172,21 @@ def produce(
                 format=fmt,
                 error_code="format_failed",
                 error_params={"error": error[:200], **params},
+            )
+        )
+
+    def failed_svg_gaps(gaps: list[dict]) -> None:
+        """SVG 给不出的缺口：面板缺同 Figure 的 SVG 表示时说人话（带图名），技术原文留在 `detail`。"""
+        friendly = _svg_panel_gap(rp, gaps, job.warnings)
+        if friendly is None:
+            failed(exportreq.FORMAT_SVG, _gap_text(gaps), unsupported=gaps)
+            return
+        code, params = friendly
+        produced.append(
+            exportjob.Produced(
+                format=exportreq.FORMAT_SVG,
+                error_code=code,
+                error_params={**params, "detail": _gap_text(gaps)[:200], "unsupported": gaps},
             )
         )
 
@@ -244,6 +311,49 @@ def produce(
                     )
                 )
             continue
+        if fmt == exportreq.FORMAT_SVG:
+            if svg_source_error is not None:
+                failed(fmt, str(svg_source_error), **svg_source_error.params)
+                continue
+            gaps = rp.unsupported.get(fmt) or []
+            if gaps:
+                failed_svg_gaps(gaps)
+                continue
+            tmp = tmp_dir / "out.svg"
+            try:
+                svg_facts = svgwriter.write_svg(
+                    rp.page,
+                    tmp,
+                    provider,
+                    files,
+                    imported_svgs=imported_svgs,
+                    imported_text_svgs=imported_text_svgs,
+                )
+                svg_vector = artifactinspect.svg_vector(tmp)
+            except (svgwriter.WriterError, OSError, ValueError) as exc:
+                failed(fmt, str(exc), svg_code=getattr(exc, "code", ""))
+                continue
+            produced.append(
+                exportjob.Produced(
+                    format=fmt,
+                    tmp_path=tmp,
+                    width_mm=width_mm,
+                    height_mm=height_mm,
+                    vector=svg_vector,
+                    manifest={
+                        "plan": {
+                            **plan_half,
+                            "vector": svg_vector,
+                            "px": None,
+                            "text_policy": svg_facts.text_policy,
+                            "text_fallback_runs": svg_facts.text_fallback_runs,
+                            "render_identity": vector_render_identity,
+                            "sha256": svg_facts.sha256,
+                        }
+                    },
+                )
+            )
+            continue
         if fmt in exportreq.RASTER_FORMATS:
             gaps = rp.unsupported.get(fmt) or []
             if gaps:
@@ -354,11 +464,15 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
     for node, _path in ir.walk(page):
         oid = str(getattr(node, "object_id", "") or "")
         if isinstance(node, ir.ShapedText):
-            text = "".join(
-                r.actual_text if r.actual_text is not None else r.cluster_text for r in node.runs
-            )
-            if text.strip():
-                lines.append(text)
+            # 不画的段（标注公式的源码，ADR 0152 §七）只在 PDF 文本层里有、SVG 不写：在它那里断开，
+            # 期望的只是看得见的字——SVG 与 PDF 两个载体的文字层检查都按这些行找
+            parts: list[str] = [""]
+            for r in node.runs:
+                if r.invisible:
+                    parts.append("")
+                else:
+                    parts[-1] += r.actual_text if r.actual_text is not None else r.cluster_text
+            lines.extend(t for t in parts if t.strip())
             leaf = {"kind": "text"}
         elif isinstance(node, (ir.ImportedPage, ir.Image)):
             x, y, w, h = node.rect
@@ -401,6 +515,7 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
             "bytes_sha256": fs.artifact.bytes_sha256,
             "receipt_identity": fs.artifact.receipt_identity,
             "patch_hash": fs.artifact.patch_hash,
+            **({"svg_sha256": fs.svg.artifact.bytes_sha256} if fs.svg else {}),
         }
         for fs in rp.sources.values()
     ]
@@ -425,8 +540,43 @@ def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:
     return [g for fmt in exportreq.RASTER_FORMATS for g in (rp.unsupported.get(fmt) or [])]
 
 
+def _svg_panel_gap(
+    rp: plan.RenderPlan, gaps: list[dict], warnings: list[str]
+) -> tuple[str, dict] | None:
+    """SVG 缺口全是「面板没有同 Figure 的 SVG 表示」时的用户话：`(错误码, 参数)`，否则 None（走通用 `format_failed`）。
+
+    * **全是**脚本现画的图（`origin=execution`）：`svg_figure_unavailable`，`reason` 是 worker 给的原因（若有）；
+    * 静态 PDF / 位图，或两种来源混在一起：`svg_source_unsupported`（一句话对两种来源都说得准：当前来源无法安全转 SVG，请改用 PDF），
+      不把静态来源错标成「脚本里的自定义函数」。
+    都带图名，不让 `imported_page: A static PDF requires …` 这种内部串到界面上。
+    """
+    if not gaps or any(g.get("operation") != "imported_page" for g in gaps):
+        return None
+    by_id = {getattr(n, "object_id", ""): n for n, _ in ir.walk(rp.page)}
+    figures: list[str] = []
+    origins: set[str] = set()
+    for g in gaps:
+        node = by_id.get(g.get("object_id", ""))
+        res = rp.page.resources.get(getattr(node, "resource", ""))
+        if not isinstance(res, ir.FileResource):
+            return None
+        if res.source_id not in figures:
+            figures.append(res.source_id)
+        origins.add(res.origin)
+    if origins != {"execution"}:
+        return "svg_source_unsupported", {"id": "、".join(figures)}
+    reason = ""
+    for fig in figures:
+        prefix = f"{fig}: SVG unavailable: "
+        reason = next((w[len(prefix) :] for w in warnings if w.startswith(prefix)), reason)
+    return "svg_figure_unavailable", {"figure": "、".join(figures), "reason": reason[:200]}
+
+
 def _gap_text(gaps: list[dict]) -> str:
-    return "; ".join(f"{g['operation']}: {g['reason']}" for g in gaps)
+    return "; ".join(
+        f"{g['object_id'] + ': ' if g.get('object_id') else ''}{g['operation']}: {g['reason']}"
+        for g in gaps
+    )
 
 
 def _renderer_version(host: RenderHost) -> str | None:

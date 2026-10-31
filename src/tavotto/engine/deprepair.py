@@ -31,6 +31,7 @@ Tavotto 给出的仍然是一句 `ModuleNotFoundError` ——用户得先知道 
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import hashlib
@@ -45,21 +46,26 @@ import tempfile
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import (
     depplan,
     depresolve,
+    envdiag,
     envlease,
     execspec,
     importscan,
+    launcher,
     logsafe,
     managedenv,
     pool,
     privatepython,
     projectenv,
+    rootenv,
     runcodes,
     runtime,
+    taskdiag,
     userenvs,
     workdir,
 )
@@ -214,6 +220,21 @@ class _Widened:
 
 
 @dataclasses.dataclass(frozen=True)
+class PipInputs:
+    """交给 pip 的全部输入——**披露（`impact`）与执行（`_GenerationJob` / 原地 pip）读的是同一份**。
+
+    以前 `impact` 与执行各自从计划字段拼一遍，约束漏进披露三次（r4217… / r4218254708 一族）。现在每种计划
+    只有 `pip_inputs` 这一处决定「pip 会收到什么」：影响摘要从它派生，执行端的作业也从它构造；
+    再加一个输入（索引来源、额外参数……）只能加在这里，两边同时看见。"""
+
+    requirements: tuple[str, ...]
+    constraints: tuple[str, ...]
+    hashes: dict
+    require_hashes: bool
+    adapter: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
 class RepairPlan:
     """一次修复的完整描述——**执行端只认它，不读请求体里的任何别的字段**。
 
@@ -242,6 +263,43 @@ class RepairPlan:
     #: 受管目标要**新建一代**时，这一代装的是脚本开跑所需的全部第三方依赖（ADR 0061 §五 2026-09-30 修订）：
     #: 联合计划的求解结果，而不只是缺的那一个包。原地往已有一代加包 / 项目 venv 目标为 None（行为不变）。
     widened: "_Widened | None" = None
+    #: 形成计划那一刻项目级解释器决定的签名（`selection_signature`）：执行前再比，变了 = 期间用户采用了别的环境
+    selection: tuple = ()
+
+    @property
+    def pip_inputs(self) -> PipInputs:
+        """pip 会收到的全部输入（单包 = 只有那一条 + 联合求解出的约束；披露与执行共用，见 `PipInputs`）。"""
+        wide = self.widened if self.target_kind == TARGET_MANAGED else None
+        return PipInputs(
+            requirements=self.requirements,
+            constraints=tuple(wide.constraints) if wide is not None else (),
+            hashes={},
+            require_hashes=False,
+            adapter=tuple(depplan.ADAPTER_REQUIREMENTS)
+            if self.target_kind == TARGET_MANAGED
+            else (),
+        )
+
+    @property
+    def impact(self) -> dict:
+        """这份授权的实际影响（`impact_of`）；摘要见 `impact_digest`。输入集合来自 `pip_inputs`。"""
+        wide = self.widened
+        pi = self.pip_inputs
+        return impact_of(
+            target_kind=self.target_kind,
+            requirements=pi.requirements,
+            constraints=pi.constraints,
+            require_hashes=pi.require_hashes,
+            adapter=pi.adapter,
+            groups=wide.groups if wide is not None else (),
+            creates_environment=self.creates_environment,
+            private_python=self.private_python,
+            env_fingerprint=self.env_fingerprint,
+        )
+
+    @property
+    def impact_digest(self) -> str:
+        return impact_digest(self.impact)
 
     @property
     def requirements(self) -> tuple[str, ...]:
@@ -264,6 +322,8 @@ class RepairPlan:
             "network_required": self.network_required,
             "expires_at": int(self.expires_at),
             "private_python": dict(self.private_python) if self.private_python else None,
+            "impact": self.impact,
+            "impact_digest": self.impact_digest,
             **self.requirement.to_payload(),
         }
 
@@ -334,15 +394,21 @@ def reset_state(project: str | Path | None = None) -> None:
             _plans.clear()
             _joint_plans.clear()
             _running.clear()
+            _jobs.clear()
+            _active_jobs.clear()
+            _joined.clear()
+            _listeners.clear()
             _committed.clear()
             _gate_skipped.clear()
             _progress.clear()
             _cancels.clear()
             _rounds.clear()
             _attempted.clear()
+            pool.reset_unreadable_installs()
             _base_python, _base_python_known = None, False
             _base_epoch += 1
             return
+        pool.reset_unreadable_installs(project)
         pid = managedenv.project_fingerprint(project)
         for key in [k for k, p in _plans.items() if p.project_id == pid]:
             _plans.pop(key, None)
@@ -365,6 +431,394 @@ def _prune_plans() -> None:
             _joint_plans.pop(key, None)
         for key in [k for k, t in _committed.items() if t < now - PLAN_TTL_S]:
             _committed.pop(key, None)
+
+
+# ---------------------------------------------------------------------------
+# 授权影响摘要（T06）
+#
+# 用户确认的不是「某个 plan_id」，而是**这次确认会造成的实际影响**：往哪个环境（含它的代）、装哪一个具体
+# 集合、写入范围、要不要先下载私有 Python、出不出网、能不能回滚。摘要由 `impact_of` 一处算出，摘要的
+# 摘要（`impact_digest`）就是授权的绑定物：
+#
+# * 进度、文案、计划 id、有效期、事实 digest 不在里面——它们变了不撤销授权；
+# * 安装集合 / 约束 / hash 模式 / 目标类型 / 目标环境与代 / 写入范围 / 私有 Python 下载变了，摘要就变，
+#   旧同意**不覆盖**新的范围（`ERROR_IMPACT_CHANGED`，零副作用）；
+# * 新增一类影响要加 `IMPACT_VERSION`——旧版本摘要永远对不上，未知的新范围不会被旧同意继承。
+#
+# 版本 2（Import Origin PR5b）：多了 `user_specified`——这次安装里有哪些包是**用户指定、未经可信来源核实**的
+# （表外 import 的预填被用户接受后提交；不来自 project_declared / curated）。这是新的一类影响（装的包名不是
+# Tavotto 解析出来的），旧版本（1）摘要里没有它，所以升一次；没有用户指定包时该字段为空表，摘要照常按内容算。
+# ---------------------------------------------------------------------------
+IMPACT_VERSION = 2
+#: `impact["user_specified"][].trust` 的唯一取值：这个包名是用户指定的，没有经过 project_declared / curated 的可信来源核实
+TRUST_USER_SPECIFIED_UNVERIFIED = "user_specified_unverified"
+#: 依赖安装结束时 `projectenv.remember` 的 trigger（两处写入点共用这一个字面量）
+TRIGGER_DEPENDENCY_REPAIR = "dependency_repair"
+SCOPE_MANAGED_GENERATION = "managed_generation"
+SCOPE_PROJECT_VENV_IN_PLACE = "project_venv_in_place"
+#: 失败后原环境的状态：受管环境换代是事务（失败的代不 active、上一代原样）；用户 venv 原地装只进不退
+ROLLBACK_GENERATION_ATOMIC = "generation_atomic"
+ROLLBACK_NONE = "none_partial_changes_possible"
+#: 授权的失效码：用户看到的影响与此刻要执行的不是同一份
+ERROR_IMPACT_CHANGED = "dependency_impact_changed"
+#: 执行请求没有带用户确认的影响摘要（`/dependencies/prepare` 必填 `impact_digest`）
+ERROR_IMPACT_REQUIRED = "dependency_impact_required"
+
+
+def new_plan_id() -> str:
+    """计划 / 作业 id（不透明）。带固定前缀：`secrets.token_urlsafe` 的首字符可能是 `-` / `_`，而任务诊断的
+    引用（`taskdiag.ident`）要求首字符是字母数字——不带前缀时约每 32 个计划就有一个终局快照存不进去。"""
+    return "dp-" + secrets.token_urlsafe(24)
+
+
+def _opaque(text: str) -> str:
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
+
+
+def _private_summary(private: dict | None) -> dict | None:
+    """私有 Python 段的影响摘要：只有真要供应（`required`）才算影响，且只留身份 / 来源 / 字节数。"""
+    if not private or not private.get("required", True):
+        return None
+    return {
+        "id": str(private.get("id") or ""),
+        "version": str(private.get("version") or ""),
+        "origin": str(private.get("origin") or ""),
+        "download_bytes": int(private.get("download_bytes") or 0),
+    }
+
+
+def impact_of(
+    *,
+    target_kind: str,
+    requirements,
+    constraints,
+    require_hashes: bool,
+    adapter,
+    groups,
+    creates_environment: bool,
+    private_python: dict | None,
+    env_fingerprint: str,
+    scope_policy: str = "",
+    drops=(),
+    changes=(),
+    user_specified=(),
+) -> dict:
+    """一次依赖安装授权的实际影响（公开形态：没有机器路径，环境只给不透明引用）。
+
+    `scope_policy="switch"`（D04）：换成本作用域——新一代只装本作用域的集合：账上别的作用域装进去的包不再
+    在 active 的环境里（`drops`），保留的包里版本要变的（`changes`，别的作用域依赖的那个版本不在了）。
+    这是**更大的影响**，所以单列、进摘要。"""
+    in_place = target_kind == TARGET_PROJECT_VENV
+    return {
+        "impact_version": IMPACT_VERSION,
+        "target_kind": target_kind,
+        "scope": SCOPE_PROJECT_VENV_IN_PLACE if in_place else SCOPE_MANAGED_GENERATION,
+        "installs": sorted(requirements),
+        "constraints": sorted(constraints),
+        "adapter": sorted(adapter),
+        "require_hashes": bool(require_hashes),
+        "groups": sorted(groups),
+        "creates_environment": bool(creates_environment),
+        "modifies_user_environment": in_place,
+        "private_python": _private_summary(private_python),
+        "network_required": True,
+        "writes": ["user_environment"] if in_place else ["tavotto_managed_environment"],
+        "rollback": ROLLBACK_NONE if in_place else ROLLBACK_GENERATION_ATOMIC,
+        "scope_policy": scope_policy,
+        "drops": sorted(drops),
+        "changes": sorted(changes),
+        # 用户指定、**未经可信来源核实**的包（Import Origin PR5b）：包名是用户在确认界面接受 / 改写的，不是 curated / 项目声明解析出来的。
+        # 披露里必须看得见，界面据 `trust` 标注；`installs` 里同一个需求串仍在（安装的就是它）
+        "user_specified": sorted(
+            (
+                {
+                    "import_name": str(u.get("import_name") or ""),
+                    "requirement": str(u.get("requirement") or ""),
+                    "trust": TRUST_USER_SPECIFIED_UNVERIFIED,
+                }
+                for u in user_specified
+            ),
+            key=lambda u: (u["import_name"], u["requirement"]),
+        ),
+        # 目标环境与它的代：重建 / 换代 / 换成别的环境都换引用（只由指纹算出，不泄露路径）
+        "environment_ref": _opaque(env_fingerprint),
+    }
+
+
+def impact_digest(impact: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(impact, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:32]
+
+
+def impact_delta(previous: dict | None, current: dict | None) -> dict:
+    """已确认的影响 → 此刻的影响：差额（给「差异重计划」用）。只比较公开字段，不推断授权。"""
+    before = set((previous or {}).get("installs") or ())
+    after = set((current or {}).get("installs") or ())
+    return {
+        "added": sorted(after - before),
+        "already_installed": sorted(before - after),
+        "unchanged": sorted(before & after),
+        "target_changed": bool(
+            previous
+            and current
+            and (previous.get("target_kind"), previous.get("environment_ref"))
+            != (current.get("target_kind"), current.get("environment_ref"))
+        ),
+        "scope_widened": bool(
+            current
+            and (
+                (
+                    current.get("modifies_user_environment")
+                    and not (previous or {}).get("modifies_user_environment")
+                )
+                or (current.get("private_python") and not (previous or {}).get("private_python"))
+            )
+        ),
+    }
+
+
+def _managed_scope(root: str, kind: str) -> tuple[bool, dict | None, str]:
+    """(要不要新建环境, 私有 Python 供应载荷, 计划绑定的解释器)——`create_joint_plan` 与跑前的门显示的
+    影响摘要共用这一处，所以两边算出的摘要逐字相同。没有基础解释器又不提供私有 Python 时抛
+    `managed_env_unavailable`（建不出计划，门也就没有可授权的东西）。"""
+    if kind != TARGET_MANAGED:
+        return False, None, ""
+    managed_python = managedenv.python_of(root) or ""
+    # 钉了基础解释器（换 Python 版本）：就算已有 active 代，也是在它旁边另建一代
+    return (
+        (not managed_python) or bool(pinned_base_python()),
+        _private_python_offer(),
+        managed_python,
+    )
+
+
+def offer_impact(root: str, joint, kind: str, python: str, scope_policy: str = "") -> dict | None:
+    """跑前的门 / 准备会话给用户看的影响摘要：与 `create_joint_plan` 绑定出的计划同一个函数、同一组输入。
+    联合计划不可授权（blocked / 没缺的且不是干净机器）或建不出受管环境时回 None。"""
+    try:
+        creates, private, bound = _managed_scope(root, kind)
+    except (RepairError, privatepython.ProvisionError):
+        return None
+    return impact_of(
+        target_kind=kind,
+        requirements=joint.requirements,
+        constraints=joint.constraints,
+        require_hashes=joint.require_hashes,
+        adapter=joint.adapter,
+        groups=tuple(joint.selection.get("selected_groups") or ()),
+        creates_environment=creates,
+        private_python=private,
+        env_fingerprint=_fingerprint(kind, bound if kind == TARGET_MANAGED else python, root),
+        scope_policy=scope_policy,
+        user_specified=getattr(joint, "user_specified", ()),
+        **_effects(root, joint.requirements, joint.constraints, scope_policy),
+    )
+
+
+def selection_signature(project: str | Path) -> tuple:
+    """项目级解释器决定此刻是什么——计划记下它，执行前再比：期间用户采用了别的环境，旧计划不再有效
+    （安装结束会把结果记成项目的环境，不能盖掉用户刚做的选择）。"""
+    record = projectenv.remembered_record(project)
+    if record is None or record.get("trigger") == TRIGGER_DEPENDENCY_REPAIR:
+        # 依赖安装自己写下的记录不算「用户的决定」：A 装完把结果记成项目环境，不能因此让同时形成的 B 计划
+        # 变成"选择变了"（B 该得到更具体的 `dependency_already_attempted`）
+        return ()
+    return (
+        record.get("mode"),
+        os.path.normcase(str(record.get("path") or "")),
+        bool(record.get("automatic")),
+    )
+
+
+def _selection_unchanged(project: str | Path, before: tuple) -> None:
+    """计划形成期间（长事实探测之后）项目级解释器决定被别处改了：目标 / 影响是按旧决定算的，不能把新决定的
+    签名记到这份计划上蒙混过执行前的比对——直接 `repair_plan_stale`，让用户按新决定重新开始。"""
+    if selection_signature(project) != before:
+        raise RepairError(ERROR_PLAN_STALE, "形成计划期间项目的解释器选择变了，请重新开始")
+
+
+#: 作用域策略：空 = 并入（默认，沿用账）；`switch` = 换成本作用域（D04，新一代只装本作用域的集合）。
+SCOPE_POLICY_SWITCH = "switch"
+
+
+def scope_of(script: str) -> str:
+    """脚本的作用域：它所在目录的项目相对 POSIX 路径（项目根 = `.`）。同一目录的脚本共用一套声明（`_decl_dirs`
+    从脚本目录逐级向上），所以目录就是依赖的作用域。"""
+    return Path(str(script)).parent.as_posix() or "."
+
+
+def _scope_conflicts(root: str, script: str, joint: depplan.JointPlan) -> list[dict]:
+    """要装的集合里，哪些与账上**别的作用域**装进去的版本互斥（D04）。
+
+    受管环境是项目级的：A 目录装了 `numpy==1.26`，B 目录的声明要 `numpy>=2`——并入账再装会让 A 的脚本悄悄跑在
+    numpy 2 上（`generation_requirements` 里新声明让位旧账）。这里只在**能判定归属**时才算互斥（账上这一笔记了
+    `scope`、与本脚本的作用域不同、记的版本不满足本次的声明）；老账没有归属不参与，同一作用域里用户改了自己的声明
+    是正常升级，也不算。需求与约束都看。"""
+    ledger = {
+        depresolve.normalize_distribution(str(e.get("distribution") or "")): e
+        for e in managedenv.ledger_entries(root)
+        if e.get("scope") and e.get("resolved_version")
+    }
+    mine = scope_of(script)
+    requirements_mod, _markers, specifiers, _utils, _version = depresolve._pkg()
+    out: list[dict] = []
+    # 已经装着、但版本不满足本作用域的声明、而这一笔是别的作用域装的：`depplan` 对这类只报告不改（FO-038），
+    # 对本作用域的脚本却是实打实的互斥——不能让它悄悄带着不满足的版本"准备好了"
+    for item in joint.satisfied:
+        entry = ledger.get(depresolve.normalize_distribution(str(item.get("distribution") or "")))
+        if item.get("matches_declared", True) or entry is None or entry["scope"] == mine:
+            continue
+        out.append(
+            {
+                "name": depresolve.normalize_distribution(str(item["distribution"])),
+                "installed_version": str(
+                    item.get("installed_version") or entry["resolved_version"]
+                ),
+                "installed_for": str(entry["scope"]),
+                "wanted": ",".join(item.get("specifiers") or ()),
+                "wanted_for": mine,
+                "via": "installed",
+            }
+        )
+    for via, texts in (("requirement", joint.requirements), ("constraint", joint.constraints)):
+        for text in texts:
+            try:
+                req = requirements_mod.Requirement(text)
+            except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦（write_plan_files），这里不替它判
+                continue
+            entry = ledger.get(depresolve.normalize_distribution(req.name))
+            if entry is None or entry["scope"] == mine or not str(req.specifier):
+                continue
+            try:
+                satisfied = req.specifier.contains(str(entry["resolved_version"]), prereleases=True)
+            except specifiers.InvalidSpecifier:
+                continue
+            if not satisfied:
+                out.append(
+                    {
+                        "name": depresolve.normalize_distribution(req.name),
+                        "installed_version": str(entry["resolved_version"]),
+                        "installed_for": str(entry["scope"]),
+                        "wanted": str(req.specifier),
+                        "wanted_for": mine,
+                        "via": via,
+                    }
+                )
+    # 互斥 provider（`cv2` 的四个，P03 / AC-08）：本次要装的 provider 会替掉账上**别的作用域**装进去的那个——
+    # `generation_requirements` 合并时账上互斥的那条会让位，不拦就等于悄悄把另一个目录的脚本换了 provider
+    # （opencv-python 变 headless，GUI 后端没了）。同一作用域里用户改了自己的声明是正常换 provider，不算；老账没有归属不参与
+    named = {depresolve.normalize_distribution(_name_of(t)) for t in joint.requirements}
+    for new in sorted(named):
+        for peer in sorted(depresolve.provider_peers(new) - named):
+            entry = ledger.get(peer)
+            if entry is None or entry["scope"] == mine:
+                continue
+            out.append(
+                {
+                    "name": peer,
+                    "installed_version": str(entry["resolved_version"]),
+                    "installed_for": str(entry["scope"]),
+                    "wanted": "",
+                    "wanted_for": mine,
+                    "via": "provider",
+                    "replaced_by": new,
+                }
+            )
+    return out[:20]
+
+
+def _with_scope_check(
+    root: str, script: str, joint: depplan.JointPlan, kind: str, scope_policy: str
+) -> depplan.JointPlan:
+    """联合计划对着账再核一道作用域互斥：互斥 → `blocked`（`dependency_scope_conflict`，带冲突项与出路），
+    不并入、不装。只对受管目标、没有别的 blocked 理由的计划（ready 或"什么都不缺"）做。
+
+    `scope_policy=switch`：用户选了"换成本作用域"——新一代按本作用域的全部 needed 重装（`requirements` 是
+    全集，不是相对 active 那一代的差额），所以只要有要装的就是 `ready`，哪怕当前环境里"碰巧都有"。"""
+    if kind != TARGET_MANAGED:
+        return joint
+    if scope_policy == SCOPE_POLICY_SWITCH:
+        if joint.status == depplan.STATUS_NOTHING_NEEDED and joint.requirements:
+            return dataclasses.replace(joint, status=depplan.STATUS_READY)
+        return joint
+    if joint.status not in (depplan.STATUS_READY, depplan.STATUS_NOTHING_NEEDED):
+        return joint
+    conflicts = _scope_conflicts(root, script, joint)
+    if not conflicts:
+        return joint
+    entry = {
+        "code": depplan.BLOCK_SCOPE_CONFLICT,
+        "conflicts": conflicts,
+        "count": len(conflicts),
+        # 两条出路：换成本作用域（旧代留着直到没人用；别的作用域的包不再 active）/ 把这个子目录当独立项目
+        # （各有各的受管环境）。第一版只服务一个优先的绘图作用域，不替用户硬合并
+        "options": ["switch_scope", "separate_project"],
+    }
+    return dataclasses.replace(
+        joint, status=depplan.STATUS_BLOCKED, blocked=(*joint.blocked, entry)
+    )
+
+
+def _switch_effects(
+    root: str, requirements, constraints=()
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """换成本作用域时对账上现有内容的影响 `(drops, changes)`（规范化名）：`drops` = 不在新集合里、不再出现在
+    active 环境里的包；`changes` = 新集合里还有、但账上记的版本不满足新声明、所以版本会变的包。都要告诉用户——
+    别的作用域的脚本下次在新环境里会缺它们 / 拿到另一个版本。
+
+    「新声明」= pip 实际会收到的 `-r` 需求**与** `-c` 约束一起（Codex #814 r4218254708）：需求写得没有版本、
+    约束写 `beta>=2` 而账上是 `beta==1` 时，pip 会把它换成 >=2，披露就必须说出来。约束只收紧"装进来的包"，
+    所以只对需求里出现的名字生效（约束里单独出现的名字 pip 不会因它而装）。"""
+    requirements_mod, _markers, specifiers, _utils, _version = depresolve._pkg()
+    wanted: dict[str, list[str]] = {}
+    for text in requirements:
+        try:
+            req = requirements_mod.Requirement(text)
+        except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦
+            continue
+        wanted.setdefault(depresolve.normalize_distribution(req.name), []).append(
+            str(req.specifier)
+        )
+    for text in constraints:
+        try:
+            con = requirements_mod.Requirement(text)
+        except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦
+            continue
+        name = depresolve.normalize_distribution(con.name)
+        if name in wanted:
+            wanted[name].append(str(con.specifier))
+    drops: set[str] = set()
+    changes: set[str] = set()
+    for entry in managedenv.ledger_entries(root):
+        name = depresolve.normalize_distribution(str(entry.get("distribution") or ""))
+        if not name:
+            continue
+        if name not in wanted:
+            drops.add(name)
+            continue
+        version = str(entry.get("resolved_version") or "")
+        if not version:
+            continue
+        for spec in wanted[name]:
+            if not spec:
+                continue
+            try:
+                if not specifiers.SpecifierSet(spec).contains(version, prereleases=True):
+                    changes.add(name)
+                    break
+            except specifiers.InvalidSpecifier:
+                continue
+    return tuple(sorted(drops)), tuple(sorted(changes))
+
+
+def _effects(root: str, requirements, constraints, scope_policy: str) -> dict:
+    """`impact_of` 的 `drops` / `changes` 两个参数（只有"换成本作用域"才有）。需求与约束都要给——
+    它们是 pip 收到的全部输入（见 `_switch_effects`）。"""
+    if scope_policy != SCOPE_POLICY_SWITCH:
+        return {"drops": (), "changes": ()}
+    drops, changes = _switch_effects(root, requirements, constraints)
+    return {"drops": drops, "changes": changes}
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +854,34 @@ def _probe_base_python() -> str | None:
     return found
 
 
+#: 「换 Python 版本」（`engine/pyversionfix.py`，ADR 0114 修订 2026-10-23）钉下的基础解释器：**线程局部**，
+#: 只在 `pinned_base()` 的 with 块里、同一线程上生效（计划与执行是同步的同一线程）。别的线程 / 别的请求
+#: 看到的永远是 `base_python()` 的常规结论，所以它不会漏到别的项目的计划里。
+_pin = threading.local()
+
+
+@contextlib.contextmanager
+def pinned_base(python: str):
+    """块内把受管环境新一代的基础解释器钉成 `python`：计划按它的 fresh venv 量事实、事务拿它建 venv。
+    仍然只往 Tavotto 自己的受管环境里建（目标永远是 `TARGET_MANAGED`），用户的环境一个字节不碰。"""
+    prev = getattr(_pin, "python", "")
+    _pin.python = str(python or "")
+    try:
+        yield
+    finally:
+        _pin.python = prev
+
+
+def pinned_base_python() -> str:
+    """此刻线程上钉着的基础解释器；没钉回空串。"""
+    return str(getattr(_pin, "python", "") or "")
+
+
 def base_python() -> str | None:
     """基础解释器（同步；没有回 None）。计划创建那条路上用它。"""
+    pinned = pinned_base_python()
+    if pinned:
+        return pinned
     with _lock:
         if _base_python_known:
             return _base_python
@@ -412,6 +892,17 @@ def supported_python_range() -> dict:
     """支持的 Python 次版本闭区间 `{"min": "3.10", "max": "3.14"}`（界面文案用）。"""
     lo, hi = projectenv.PYTHON_MIN, projectenv.PYTHON_TESTED[-1]
     return {"min": f"{lo[0]}.{lo[1]}", "max": f"{hi[0]}.{hi[1]}"}
+
+
+def _not_pip_of(module: str, requirement: "depresolve.DependencyRequirement | None") -> dict | None:
+    """这个缺的 import / 解析出的发行包是「已知装不了」表里的吗？是则回 `{label, hint}`（与联合计划同一张表、同一口径）。
+
+    单包兜底路径（`offer` / `create_plan`）也要查：声明 `root`、`import ROOT` 时联合计划已把它从 missing 里摘掉，
+    执行后撞 import 失败才落到这里——这时 `depresolve.resolve()` 仍会解出一个「可装」的 `root`（Codex #1276 P1）。"""
+    hit = depresolve.not_pip_installable(module)
+    if hit is None and requirement is not None and requirement.distribution:
+        hit = depresolve.not_pip_for_distribution(requirement.distribution)
+    return {"label": hit["label"], "hint": hit["hint"]} if hit else None
 
 
 def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
@@ -460,6 +951,38 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # `system_rejected`：用户手边那套环境为什么没被采用，界面要说出来。
     detail = project_env or {}
     system = detail.get("system") if isinstance(detail, dict) else None
+    recommended = (
+        detail.get("recommended")
+        if isinstance(detail, dict) and detail.get("code") == projectenv.ERROR_CONFIRMATION_REQUIRED
+        else None
+    )
+    # 建议带着「看到它那一刻」的候选 id 与环境代：缺一个都不列成目标——没有绑定的「改用」只能退回按路径采用，
+    # 环境在看到之后被重建，就会静默采用用户没看过的那一代（与 `MissingDependencyCard` 同一条纪律）
+    if isinstance(recommended, dict) and recommended.get("id") and recommended.get("generation"):
+        # 确认模式（ADR 0114）：项目自己的 venv 体检通过、缺的包也在里面——不再无提示接手，列成一个
+        # 「改用」目标，用户点一次才记进项目设置（与系统解释器同一个采用端点、同一次现场体检）。项目内的
+        # 解释器给项目相对路径：采用端点把它钉回项目根之内
+        health = recommended.get("health") or {}
+        python = str(recommended.get("python") or "")
+        out["targets"].append(
+            {
+                "kind": TARGET_SYSTEM,
+                "venv": projectenv.project_relative(root, recommended.get("venv") or "") or "",
+                "python": projectenv.project_relative(root, python) or python,
+                "modifies_user_environment": False,
+                "creates_environment": False,
+                "available": True,
+                "reason": "",
+                "python_version": health.get("python_version", ""),
+                "matplotlib_version": health.get("matplotlib_version", ""),
+                "support": health.get("support", ""),
+                # 与 `PATCH /api/engine/environment` 的 `candidate` + `expected_generation` 一一对应
+                "candidate": {
+                    "id": str(recommended["id"]),
+                    "generation": str(recommended["generation"]),
+                },
+            }
+        )
     found = projectenv.healthy_system_candidate(system)
     if found:
         out["targets"].append(
@@ -487,6 +1010,13 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         for r in projectenv.rejected_system_candidates(system)
     ]
 
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        # 点名「需要自己的环境」：不给安装需求，也不给任何装进 Tavotto 管的环境的目标（上面采用已有环境的目标照旧）
+        out["requirement"] = None
+        out["not_pip_installable"] = not_pip
+        out["code"] = ERROR_UNRESOLVED
+        return out
     if requirement is None or not requirement.installable:
         out["code"] = ERROR_UNRESOLVED
         return out
@@ -588,6 +1118,7 @@ def create_plan(
     合理。体检同时给出安装前状态（§安装前后状态的第一层）。
     """
     root = str(Path(project))
+    selection0 = selection_signature(root)  # 先于目标解析与体检：计划记的是**算目标时**的决定
     if target_kind not in TARGETS:
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {target_kind!r}")
     _refuse_if_pinned()  # 与 `offer()` 同一条判据：装进去也不会被用的计划一开始就不形成
@@ -604,6 +1135,13 @@ def create_plan(
         requirement = depresolve.resolve(root, module, script)
         if requirement is None:
             raise RepairError(ERROR_UNRESOLVED, f"无法确定 {module} 对应哪个安装包")
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        raise RepairError(
+            ERROR_UNRESOLVED,
+            f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境",
+            not_pip_installable=not_pip,
+        )
     if not requirement.installable:
         raise RepairError(ERROR_REQUIREMENT_INVALID, "这个需求不可安装")
 
@@ -638,9 +1176,10 @@ def create_plan(
     with _lock:
         if (managedenv.project_fingerprint(root), key, requirement.requirement()) in _attempted:
             raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
+    _selection_unchanged(root, selection0)
     now = time.time()
     plan = RepairPlan(
-        plan_id=secrets.token_urlsafe(24),
+        plan_id=new_plan_id(),
         project=root,
         project_id=managedenv.project_fingerprint(root),
         script=script,
@@ -655,6 +1194,7 @@ def create_plan(
         expires_at=now + PLAN_TTL_S,
         private_python=private,
         widened=widened,
+        selection=selection0,
     )
     _prune_plans()
     with _lock:
@@ -693,6 +1233,8 @@ def _fresh_generation_joint(project: str, script: str) -> depplan.JointPlan | No
         target_kind=TARGET_MANAGED,
         groups=depplan.selected_groups_setting(project),
         install_facts=install,
+        coverage=_coverage_reader(facts),
+        run_env_replaceable=_run_env_ours(project, facts),
     )
 
 
@@ -707,7 +1249,7 @@ def _fold_requested(
     delta = list(joint.requirements)
     if all(depresolve.normalize_distribution(_name_of(r)) != wanted for r in delta):
         delta.append(requirement.requirement())
-    imports = [m["import_name"] for m in joint.missing]
+    imports = [m["import_name"] for m in joint.install_entries if m["import_name"]]
     if requirement.import_name and requirement.import_name not in imports:
         imports.append(requirement.import_name)
     # 账目里用户点的那个包沿用单包修复原来的写法（distribution / specifier 取自它自己的 requirement），其余取自联合计划
@@ -716,6 +1258,7 @@ def _fold_requested(
             "import_name": requirement.import_name,
             "distribution": requirement.distribution,
             "specifier": requirement.specifier,
+            "resolution_source": requirement.resolution_source,
         }
     ]
     record += [
@@ -723,8 +1266,9 @@ def _fold_requested(
             "import_name": m["import_name"],
             "distribution": m["distribution"],
             "specifier": ",".join(m["specifiers"]),
+            "resolution_source": str(m.get("resolution_source") or depresolve.SOURCE_CURATED),
         }
-        for m in joint.missing
+        for m in joint.install_entries
         if depresolve.normalize_distribution(m["distribution"]) != wanted
     ]
     return _Widened(
@@ -797,18 +1341,37 @@ def cancel(plan_id: str) -> bool:
     return cancel_status(plan_id)["accepted"]
 
 
-def install_async(plan_id: str, on_event=None) -> None:
+def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None) -> bool:
+    """起线程执行一份单包修复计划；回 False = 这份计划已在执行（不再起第二个线程）。认领在起线程之前
+    （T06：联合准备早有的 `_claim` 纪律，单包路径同样——两个标签页点同一个「安装」只跑一个 pip）。"""
+    pid = str(plan_id or "")
+    plan = get_plan(pid)
+    _check_confirmed(plan, confirmed_impact)
+    if not _claim(
+        pid,
+        project_id=getattr(plan, "project_id", ""),
+        digest=getattr(plan, "impact_digest", ""),
+        flow=FLOW_SINGLE,
+        scope=_plan_scope(plan),
+    ):
+        return False
+    _register_cancel(pid)
     threading.Thread(
-        target=lambda: _install_guarded(plan_id, on_event), daemon=True, name="tavotto-dep-install"
+        target=lambda: _install_guarded(pid, on_event, claimed=True),
+        daemon=True,
+        name="tavotto-dep-install",
     ).start()
+    return True
 
 
-def _install_guarded(plan_id: str, on_event) -> dict:
+def _install_guarded(
+    plan_id: str, on_event, *, claimed: bool = False, confirmed_impact: str | None = None
+) -> dict:
     # 计划是一次性的：`install()` 的 finally 会把它从表里摘掉，失败的终态要在这之前拿住它——
     # 终态上的 `retryable`（pip 跑成之后再失败的不给重试）按计划里的项目与需求算（Codex #709）
     plan = get_plan(plan_id)
     try:
-        return install(plan_id, on_event)
+        return install(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("依赖修复", plan_id, exc.code)
         pinned = (exc.extra or {}).get("pinned")
@@ -826,13 +1389,40 @@ def _install_guarded(plan_id: str, on_event) -> dict:
         return _emit(plan_id, STATE_FAILED, on_event, plan=plan, code=ERROR_FAILED, error=str(exc))
 
 
-def install(plan_id: str, on_event=None) -> dict:
+def install(
+    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None
+) -> dict:
     """执行一个计划。**这是唯一一处会往磁盘上装包的代码。**
 
     执行端只认 `plan_id`：装什么、装到哪、哪个项目，全部来自计划本身
     （防 TOCTOU，ADR 0019 §计划绑定）。计划不存在 / 过期 / 环境在确认期间
     变过，一律拒绝。
+
+    同一份计划只认领一次（T06，联合准备早有的 `_claim` 纪律）：已在执行的再来一次得
+    `dependency_install_not_allowed`，不起第二个 pip。
+
+    `confirmed_impact` 是**必传**的关键字参数：调用方回显的、它给用户看过的影响摘要（见 `_check_confirmed`）。
+    只有 `claimed=True`（入口已在认领前核过摘要、这里是线程体）时可以传 None。
     """
+    pid = str(plan_id or "")
+    if not claimed:
+        plan0 = get_plan(pid)
+        _check_confirmed(plan0, confirmed_impact)
+        if not _claim(
+            pid,
+            project_id=getattr(plan0, "project_id", ""),
+            digest=getattr(plan0, "impact_digest", ""),
+            flow=FLOW_SINGLE,
+            scope=_plan_scope(plan0),
+        ):
+            raise RepairError(ERROR_NOT_ALLOWED, "这份修复计划已经在执行")
+    try:
+        return _install_claimed(pid, on_event)
+    finally:
+        _release(pid)
+
+
+def _install_claimed(plan_id: str, on_event) -> dict:
     plan = get_plan(plan_id)
     if plan is None:
         # 没有计划就没有用户意图。**后端自己就是能力边界**，不靠
@@ -843,15 +1433,18 @@ def install(plan_id: str, on_event=None) -> dict:
         with _lock:
             _plans.pop(plan.plan_id, None)
         raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
+    if plan.selection != selection_signature(plan.project):
+        with _lock:
+            _plans.pop(plan.plan_id, None)
+        raise RepairError(ERROR_PLAN_STALE, "确认期间项目的解释器选择变了")
 
-    cancel_ev = threading.Event()
-    with _lock:
-        _cancels[plan.plan_id] = cancel_ev
+    cancel_ev = _register_cancel(plan.plan_id)
     try:
         if plan.target_kind == TARGET_MANAGED:
             # 换代的锁：合成 key + active 那一代的解释器，**不收掉**旧代上的 worker
             key = _env_key(TARGET_MANAGED, "", plan.project)
             with pool.mutating_environment(key, plan.python, shutdown=False):
+                _refuse_if_pinned()  # 全局显式解释器压着时，装进受管环境也不会被用（#465 / E05）
                 return _run_install(plan, key, on_event, cancel_ev)
         key = _env_key(plan.target_kind, plan.python, plan.project)
         with pool.mutating_environment(key, plan.python):
@@ -894,14 +1487,15 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         # 验完再切 active。这里不再往 active 那一代原地 pip。从空 venv 新建第一代时集合是脚本开跑
         # 要的全部（`plan.widened`）；往已有账上加一个包时 delta 只有那一条。
         wide = plan.widened
+        pi = plan.pip_inputs
         job = _GenerationJob(
             progress_id=plan.plan_id,
             project=project,
             script=script,
-            delta=plan.requirements,
-            constraints=wide.constraints if wide else (),
-            hashes={},
-            require_hashes=False,
+            delta=pi.requirements,
+            constraints=pi.constraints,
+            hashes=pi.hashes,
+            require_hashes=pi.require_hashes,
             needed_imports=wide.needed_imports
             if wide
             else ((req.import_name,) if req.import_name else ()),
@@ -912,6 +1506,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
                     "import_name": req.import_name,
                     "distribution": req.distribution,
                     "specifier": req.specifier,
+                    "resolution_source": req.resolution_source,
                 },
             ),
             reason=managedenv.REASON_MISSING_DEPENDENCY,
@@ -931,10 +1526,14 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 计划里带着下载 = 事实来自替身：供应之后按真解释器重算，那时仍要把用户点的这一个并进去
             groups=wide.groups if wide else (),
             replan=bool(wide and plan.private_python is not None),
+            confirmed_inputs=pi,
+            confirmed_impact=plan.impact,
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
         )
-        outcome = _run_generation_locked(job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(req.distribution), "")
@@ -946,7 +1545,10 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "import_name": req.import_name,
             "target_kind": plan.target_kind,
             "generation": outcome["generation"],
+            # 代事务生成的回执原样带到对外终态（它自己的 `done` 被 `_emit_repair_step` 吞了）
+            "providers": outcome.get("providers", []),
         }
+        pool.note_unreadable_install(plan.project, req.import_name, result.get("python", ""))
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
         LOG.info(
             "依赖修复成功: %s %s → %s",
@@ -957,13 +1559,19 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         return result
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
+    # 回执要「凭什么装它」：缺了在任何副作用（pip）之前拒绝，不留下「装上了、任务却报失败」
+    record = (
+        {
+            "import_name": req.import_name,
+            "distribution": req.distribution,
+            "resolution_source": req.resolution_source,
+        },
+    )
+    _require_record_sources(record)
 
     # ---- pip 在不在 -------------------------------------------------------
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是
-        # 「装 lmfit」。
-        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是「装 lmfit」。
+    _require_pip(python, ERROR_PIP_UNAVAILABLE)
 
     # ---- 安装 -------------------------------------------------------------
     # 租约在手、解释器已知之后再查一次「这一轮装成功过没有」（Codex 评审 #469 P2）：
@@ -980,9 +1588,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     if already:
         raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
+    # 项目 venv 原地：pip 只收到这一条需求（没有约束文件）——`pip_inputs` 也只披露这一条
+    (in_place_requirement,) = plan.pip_inputs.requirements
     code, out = _pip_install(
         python,
-        req.requirement(),
+        in_place_requirement,
         cancel_ev,
         lambda text: _append_log(plan.plan_id, text, on_event),
         on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
@@ -1002,6 +1612,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     # ---- 验证三层 ---------------------------------------------------------
     _emit(plan.plan_id, STATE_VERIFYING, on_event, plan=plan)
     health = projectenv.probe_environment(python, req.import_name or None)
+    _raise_if_activation_unavailable(health)
     if not health.get("ok"):
         # pip 退出码 0 不等于「装对了」：装进了另一个环境、装的是同名的另一个
         # 包、扩展模块的 ABI 对不上——这三种都是 exit 0 + import 失败。
@@ -1010,9 +1621,17 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             health.get("detail") or health.get("error") or "",
             health=health,
         )
+    # 单包原地装与联合安装用同一份 provider 核验：wrapper 的传递依赖可导入，
+    # 也不代表 wrapper 提供了该 import；用户指定的包读不出元数据同样不放行（#970）。
+    provided = _verify_distributions(
+        python,
+        record,
+        (in_place_requirement,),
+        user_specified=record if req.resolution_source == depresolve.SOURCE_USER_SPECIFIED else (),
+    )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
 
     # ---- 记账 + 换环境 + 作废旧 worker -------------------------------------
     with _lock:
@@ -1022,7 +1641,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         project,
         python,
         automatic=False,
-        trigger="dependency_repair",
+        trigger=TRIGGER_DEPENDENCY_REPAIR,
         module=req.import_name,
         health=health,
     )
@@ -1040,7 +1659,15 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         "distribution": req.distribution,
         "import_name": req.import_name,
         "target_kind": plan.target_kind,
+        # 用户 venv 原地装没有代；provider / 来源只用装后重新核验的元数据。
+        "providers": _provider_receipt(
+            record,
+            provided,
+            {depresolve.normalize_distribution(req.distribution): version},
+            "",
+        ),
     }
+    pool.note_unreadable_install(plan.project, req.import_name, result.get("python", ""))
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info(
         "依赖修复成功: %s %s → %s",
@@ -1064,7 +1691,7 @@ REBUILD_PROGRESS_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 LEGACY_REBUILD_PROGRESS_ID = "managed-rebuild"
 #: 发起方给的 id 格式不对 / 已经被占用
 ERROR_PROGRESS_ID_INVALID = "invalid_progress_id"
-_TERMINAL_STATES = (STATE_DONE, STATE_FAILED, STATE_CANCELLED)
+TERMINAL_STATES = (STATE_DONE, STATE_FAILED, STATE_CANCELLED)
 
 
 def new_rebuild_progress_id() -> str:
@@ -1086,7 +1713,7 @@ def claim_rebuild_progress_id(raw: str | None) -> str:
         if not raw:
             pid = LEGACY_REBUILD_PROGRESS_ID
             rec = _progress.get(pid)
-            if pid in _cancels or (rec is not None and rec.get("state") not in _TERMINAL_STATES):
+            if pid in _cancels or (rec is not None and rec.get("state") not in TERMINAL_STATES):
                 raise RepairError(
                     pool.ENVIRONMENT_MUTATING, "受管环境正在重建，请等这一次结束再试。"
                 )
@@ -1106,25 +1733,75 @@ def claim_rebuild_progress_id(raw: str | None) -> str:
     return pid
 
 
-def start_rebuild(project: str | Path, on_event, progress_id: str) -> None:
+def resolve_rebuild_offer(
+    private_python_id: str = "", seen_origin: str = "", seen_download_bytes: int | None = None
+) -> dict | None:
+    """重建要供应的私有 Python 载荷；授权绑在用户**实际看到的那份**上（ADR 0111 §一）。
+
+    用户确认时看到的是 `id` + `origin` + `download_bytes`（缓存的说「不下载」、下载的说大小）。此刻重算的载荷
+    id 相同但来源或下载量变了（点击前缓存归档被清 = cached 变 download），那不是用户同意过的事——
+    `repair_plan_stale`、零请求，让他按新的来源重新确认。没回显来源 / 下载量（老前端）同样按未确认处理。
+    没传 id / 已有基础解释器 / 锁换了：不供应（照旧，不静默换成另一份下载）。
+    """
+    if not private_python_id or base_python():
+        return None
+    offered = privatepython.offer_payload()
+    if offered is None or offered.get("id") != private_python_id:
+        return None
+    if offered.get("origin") != seen_origin or offered.get("download_bytes") != seen_download_bytes:
+        raise RepairError(ERROR_PLAN_STALE, "确认之后 Python 的来源或下载量变了，请重新确认")
+    return offered
+
+
+def start_rebuild(
+    project: str | Path,
+    on_event,
+    progress_id: str,
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> None:
     """起重建线程（`progress_id` 必须已经由 `claim_rebuild_progress_id` 占用）。"""
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, on_event, progress_id),
+        target=lambda: _rebuild_guarded(
+            project, on_event, progress_id, private_python_id, seen_origin, seen_download_bytes
+        ),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
 
 
-def rebuild_managed_async(project: str | Path, on_event=None, progress_id: str = "") -> str:
+def rebuild_managed_async(
+    project: str | Path,
+    on_event=None,
+    progress_id: str = "",
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> str:
     """占用 id + 起线程；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
     pid = claim_rebuild_progress_id(progress_id)
-    start_rebuild(project, on_event, pid)
+    start_rebuild(project, on_event, pid, private_python_id, seen_origin, seen_download_bytes)
     return pid
 
 
-def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
+def _rebuild_guarded(
+    project,
+    on_event,
+    progress_id: str,
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> dict:
     try:
-        return rebuild_managed(project, on_event, progress_id=progress_id)
+        return rebuild_managed(
+            project,
+            on_event,
+            progress_id=progress_id,
+            private_python_id=private_python_id,
+            seen_origin=seen_origin,
+            seen_download_bytes=seen_download_bytes,
+        )
     except RepairError as exc:
         _log_repair_failure("受管环境重建", progress_id, exc.code)
         return _emit(progress_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
@@ -1139,7 +1816,15 @@ def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
         )
 
 
-def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = "") -> dict:
+def rebuild_managed(
+    project: str | Path,
+    on_event=None,
+    *,
+    progress_id: str = "",
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> dict:
     """重建受管环境：按账上记过的那些**建新的一代**，验完再切 active（U04 起不再删旧的
     重来——旧代留到没人用）。`progress_id` 没给就现生成一个（同步调用方用回值里的 `progress_id`）。
 
@@ -1149,8 +1834,14 @@ def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = ""
     **不声称 lockfile 级复现**：`environment.json` 里记的是安装当时解析出来的
     版本，重建时那个版本可能已经从 index 上撤了。真撤了就如实报错，不悄悄
     换一个别的版本装上——「重建完跟以前不一样」比「重建失败」难查得多。
+
+    **没有基础解释器时的私有 Python**（ADR 0063 / 0111）：授权绑在用户看过的那份载荷上——调用方回传
+    `capability.private_python.id` 并回显看到的 `origin` / `download_bytes`，与此刻的 `offer_payload()`
+    逐项一致才供应（`resolve_rebuild_offer`：锁换了 = 没授权，照旧 `managed_env_unavailable`；来源或下载量变了
+    = `repair_plan_stale`，不把重算出的下载当已授权）；没传 / 有基础解释器则不下载。
     """
     root = str(Path(project))
+    private = resolve_rebuild_offer(private_python_id, seen_origin, seen_download_bytes)
     pid = progress_id or new_rebuild_progress_id()
     cancel_ev = threading.Event()
     with _lock:
@@ -1171,6 +1862,8 @@ def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = ""
             emit=lambda state, **kw: _emit(pid, state, on_event, **kw),
             on_log=lambda text: _append_log(pid, text, on_event),
             label="rebuild",
+            provision_private=private is not None,
+            private_plan=private,
         )
         outcome = _run_generation(job, cancel_ev)
         if outcome.get("ok"):
@@ -1247,6 +1940,57 @@ def classify_pip_failure(text: str) -> str:
     if "could not find a version" in low or "no matching distribution" in low:
         return ERROR_NOT_FOUND if "from versions: none" in low else ERROR_REQUIRES_BUILD
     return ERROR_FAILED
+
+
+_NOT_FOUND_NAME_RES = (
+    re.compile(r"no matching distribution found for\s+([A-Za-z0-9][A-Za-z0-9._-]*)", re.I),
+    re.compile(
+        r"could not find a version that satisfies the requirement\s+([A-Za-z0-9][A-Za-z0-9._-]*)",
+        re.I,
+    ),
+)
+
+
+def not_found_detail(
+    out: str, record: tuple[dict, ...] | list[dict], project: str | Path, script: str
+) -> dict:
+    """pip 报「找不到」时点名：是哪个分发名、来自哪个声明文件 / 哪个 import（ADR 0061 修订 2026-10-21）。
+
+    `{name, import_name, source}`；认不出名字回 `{}`（界面退回通用句，不猜）。声明文件按 `depresolve.declared_intents`
+    重新读（只读），不在 `record` 里加字段（`record` 进回执与指纹）。"""
+    name = ""
+    for rx in _NOT_FOUND_NAME_RES:
+        m = rx.search(out or "")
+        if m:
+            name = m.group(1)
+            break
+    if not name:
+        return {}
+    key = depresolve.normalize_distribution(name)
+    import_name = next(
+        (
+            str(r.get("import_name") or "")
+            for r in record or ()
+            if depresolve.normalize_distribution(str(r.get("distribution") or "")) == key
+        ),
+        "",
+    )
+    source = ""
+    try:
+        for it in depresolve.declared_intents(project, script):
+            if it.declared and it.name == key and it.source:
+                source = it.source
+                break
+    except Exception:  # noqa: BLE001 - 点名是锦上添花，读不了声明不能让失败变形
+        source = ""
+    return {"name": key, "import_name": import_name, "source": source}
+
+
+def _not_found_extra(code: str, out: str, record, project, script) -> dict:
+    if code != ERROR_NOT_FOUND:
+        return {}
+    detail = not_found_detail(out, record, project, script)
+    return {"not_found": detail} if detail else {}
 
 
 def pip_install_argv(
@@ -1637,6 +2381,23 @@ def _run_pip(
     """
     if cancel_ev.is_set():
         return ERROR_CANCELLED, ""
+    if deadline is None:
+        deadline = time.time() + INSTALL_TIMEOUT_S
+    try:
+        # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
+        # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
+        # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装。
+        # 激活捕获可能要几十秒：用安装的剩余预算，捕获完**再查一次取消与期限**才起 pip——
+        # 用户在激活期间点了取消，pip 一个字节都不许动环境
+        env = launcher.activate_env(
+            argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+        )
+    except launcher.LauncherUnavailable as exc:
+        return exc.code, str(exc)
+    if cancel_ev.is_set():
+        return ERROR_CANCELLED, ""
+    if time.time() >= deadline:
+        return ERROR_TIMEOUT, ""
     try:
         proc = subprocess.Popen(
             argv,
@@ -1646,9 +2407,7 @@ def _run_pip(
             text=True,
             encoding="utf-8",
             errors="replace",
-            # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
-            # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
-            env=runtime.owned_env(argv[0]),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except OSError as exc:
@@ -1660,8 +2419,6 @@ def _run_pip(
             LOG.warning("pip 启动回调异常", exc_info=True)
 
     chunks: list[str] = []
-    if deadline is None:
-        deadline = time.time() + INSTALL_TIMEOUT_S
 
     def _pump() -> None:
         for line in proc.stdout or ():
@@ -1708,22 +2465,47 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     问一句不许把 .pyc 写回它的安装目录。装 / 卸走 `_run_pip`，不走这里。"""
     argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
+        # 激活捕获与命令本身共用一个预算：慢的激活不能让 `pip --version` 这类短探测远超它自己的超时
+        deadline = time.monotonic() + timeout
+        env = launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise launcher.LauncherUnavailable(
+                "经 Conda 激活取环境用完了这次探测的时间预算；请稍后再试"
+            )
         proc = subprocess.run(
             argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
-            env=runtime.owned_env(argv[0]),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return 1, f"超时（{timeout}s）"
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：不是 pip / 环境本身的结论。返回专用码，需要报错的调用方（`_require_pip`）透传稳定码
+        return RC_ACTIVATION_UNAVAILABLE, str(exc)
     except OSError as exc:
         return 1, str(exc)
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+#: `_run` 的返回码：Conda 激活取环境失败（什么都没起）。负数，不会与真实进程退出码混淆
+RC_ACTIVATION_UNAVAILABLE = -10_975
+
+
+def _require_pip(python: str, missing_code: str) -> None:
+    """装 / 卸之前确认目标环境的 pip 在。pip 不在 → `missing_code`；激活取环境失败 → `conda_launcher_unavailable`
+    （瞬时，恢复动作不同：不是“这个环境没有 pip”）。"""
+    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc == RC_ACTIVATION_UNAVAILABLE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, out[:400])
+    if rc != 0:
+        raise RepairError(missing_code, _sanitize(out)[-800:])
 
 
 def installed_version(python: str, distribution: str) -> str:
@@ -1758,6 +2540,14 @@ fig.savefig("SelfTest.pdf")
 _SELFTEST_NAME = "tavotto_selftest.py"
 
 
+def _selftest_error(selftest: dict) -> "RepairError":
+    """自检没过 → `RepairError`。Conda 激活取环境失败是瞬时的“不可用”，透传稳定码，不报成“自检失败”。"""
+    detail = _sanitize(selftest.get("detail", ""))[-800:]
+    if selftest.get("code") == launcher.UNAVAILABLE_CODE:
+        return RepairError(launcher.UNAVAILABLE_CODE, detail)
+    return RepairError(ERROR_SELFTEST_FAILED, detail)
+
+
 def worker_self_test(python: str) -> dict:
     """真起一次 worker 跑通一次 build——验证的第三层。
 
@@ -1786,6 +2576,12 @@ def worker_self_test(python: str) -> dict:
                 bundled=pool.same_python(python, runtime.bundled_python())
             ),
         )
+        env_build = pool.build_envelope({"cmd": "build"})
+        env_stop = pool.build_envelope({"cmd": "shutdown"})
+        # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策：解释器路径的纯函数）；激活与自检共用一个预算
+        child_env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), SELFTEST_TIMEOUT_S
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -1795,14 +2591,16 @@ def worker_self_test(python: str) -> dict:
             encoding="utf-8",
             errors="replace",
             # 与池里起 worker 同一份 env 判据（受管环境的 matplotlib 缓存落回数据目录）
-            env=runtime.owned_env(python),
+            env=child_env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
-            # legacy 信封（worker 明确支持，手工调试用的就是它）：一条 build
-            # 一条 shutdown，读到 EOF 即结束，不必在这里重建一套超时读线程。
+            # v1 信封（`pool.build_envelope`，调用侧的唯一出处）：一条 build 一条 shutdown，读到 EOF 即结束，
+            # 不必在这里重建一套超时读线程。回复只认带 `protocol_version` 且 `request_id` 回显对得上的信封——
+            # 别的 JSON（`{"ok": true}` 之类）一律当日志，不能冒充 worker 的回复。
             stdout, stderr = proc.communicate(
-                '{"cmd": "build"}\n{"cmd": "shutdown"}\n', timeout=SELFTEST_TIMEOUT_S
+                json.dumps(env_build) + "\n" + json.dumps(env_stop) + "\n",
+                timeout=remaining,
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
@@ -1812,13 +2610,20 @@ def worker_self_test(python: str) -> dict:
                 resp = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(resp, dict) and "ok" in resp:
+            if (
+                isinstance(resp, dict)
+                and resp.get("protocol_version") == pool.PROTOCOL_VERSION
+                and resp.get("request_id") == env_build["request_id"]
+                and "ok" in resp
+            ):
                 if resp.get("ok"):
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。
                     return {"ok": True, "figures": len(resp.get("stems") or {})}
                 return {"ok": False, "detail": str(resp.get("error", ""))[:800]}
         return {"ok": False, "detail": (stderr or stdout or "")[-800:]}
+    except launcher.LauncherUnavailable as exc:
+        return {"ok": False, "detail": str(exc)[:800], "code": exc.code}
     except OSError as exc:
         return {"ok": False, "detail": str(exc)[:800]}
     finally:
@@ -1931,12 +2736,23 @@ def _emit(
     error: str | None = None,
     result: dict | None = None,
     pinned: dict | None = None,
+    impact: dict | None = None,
+    dist_reasons: list[str] | None = None,
+    not_found: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
+        if not_found:
+            # pip 找不到的那个包（点名：分发名 / 来自哪个 import / 哪份声明文件）：界面一句话说「找不到 X（来自 Y）」
+            rec["not_found"] = {
+                k: str(v) for k, v in not_found.items() if k in ("name", "import_name", "source")
+            }
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if dist_reasons:
+            # 装后核验没过的原因码（闭集，`DIST_REASONS`）：终态上带着，界面按原因分别说人话
+            rec["dist_reasons"] = list(dist_reasons)
         if pinned is not None:
             # 租约里复查到全局固定而失败：界面要的是那条固定（谁、来源、变量），
             # 只有 code 的话它给不出「恢复自动检测」那一步
@@ -1965,13 +2781,115 @@ def _emit(
                 requirements=list(joint.requirements),
                 flow="joint",
             )
+        # T06：授权的实际影响跟着进度走（终态上说清「这次授权是什么」），失败现场也按它冻结（`diagnostic_projection`）
+        for source in (plan, joint):
+            if source is not None:
+                rec["impact"] = source.impact
+                rec["impact_digest"] = source.impact_digest
+        if impact is not None:
+            # 供应私有 Python 之后重算出的、与用户确认的不同的实际影响：终态上带着它与新摘要，界面 / MCP 据此重新披露
+            rec["impact"] = impact
+            rec["impact_digest"] = impact_digest(impact)
+        # 最后一个非终态的阶段：失败 / 取消的终态覆盖了 `state`，「坏在哪一步」靠它
+        if state not in TERMINAL_STATES:
+            rec["stage"] = state
         if plan_id in _committed:
             rec["committed"] = True
         _progress[plan_id] = rec
         snapshot = dict(rec)
+        listeners = list(_listeners.get(plan_id, ()))
+        if state in TERMINAL_STATES:
+            _listeners.pop(plan_id, None)
     if on_event is not None:
         on_event(snapshot)
+    for listener in listeners:
+        try:
+            listener(snapshot)
+        except Exception:  # noqa: BLE001 — 旁观者的异常不能影响安装本身
+            LOG.exception("依赖进度监听失败")
     return snapshot
+
+
+#: 依赖作业走过的非终态阶段（进度记录 `stage`）。
+STAGES = (
+    STATE_PREPARING,
+    STATE_DOWNLOADING_PYTHON,
+    STATE_CREATING_ENV,
+    STATE_INSTALLING,
+    STATE_VERIFYING,
+)
+
+
+def diagnostic_projection(rec: dict) -> dict:
+    """一次依赖作业终局的**白名单**投影（T06；任务诊断 `taskdiag.KIND_DEPENDENCY`）。输入是 `_emit` 的终态快照，
+    逐字段挑：闭集枚举、稳定码、计数、布尔、不透明摘要。不进来的：包名与版本约束原文（只有个数）、解释器 / 项目 /
+    脚本路径、`error` 文字与 pip 日志、镜像地址、`result` 里的路径与已装版本表。"""
+    impact = rec.get("impact") or {}
+    private = impact.get("private_python") or {}
+    result = rec.get("result") or {}
+    return taskdiag.clean(
+        {
+            "snapshot_version": taskdiag.SNAPSHOT_VERSION,
+            "kind": taskdiag.KIND_DEPENDENCY,
+            "attempt_id": taskdiag.ident(rec.get("plan_id")),
+            "outcome": taskdiag.closed(rec.get("state"), TERMINAL_STATES),
+            "target": {
+                "kind": taskdiag.closed(rec.get("target_kind"), TARGETS),
+                "scope": taskdiag.closed(
+                    impact.get("scope"), (SCOPE_MANAGED_GENERATION, SCOPE_PROJECT_VENV_IN_PLACE)
+                ),
+                "flow": taskdiag.closed(rec.get("flow") or FLOW_SINGLE, (FLOW_JOINT, FLOW_SINGLE)),
+            },
+            "impact": {
+                "version": taskdiag.count(impact.get("impact_version")),
+                "installs": taskdiag.count(len(impact.get("installs") or ())),
+                "constraints": taskdiag.count(len(impact.get("constraints") or ())),
+                "require_hashes": taskdiag.flag(impact.get("require_hashes")),
+                "creates_environment": taskdiag.flag(impact.get("creates_environment")),
+                "modifies_user_environment": taskdiag.flag(impact.get("modifies_user_environment")),
+                "private_python_download": taskdiag.flag(bool(private)),
+                "private_python_bytes": taskdiag.count(private.get("download_bytes")),
+                "rollback": taskdiag.closed(
+                    impact.get("rollback"), (ROLLBACK_GENERATION_ATOMIC, ROLLBACK_NONE)
+                ),
+                "digest": taskdiag.digest(rec.get("impact_digest")),
+            },
+            "error": {"code": taskdiag.closed(rec.get("code") or None, LOGGED_ERROR_CODES)},
+            "stage": {
+                "last": taskdiag.closed(rec.get("stage"), STAGES),
+                "committed": taskdiag.flag(bool(rec.get("committed"))),
+            },
+            "result": {
+                "activated": taskdiag.flag(result.get("activated")),
+                "health_ok": taskdiag.flag(result.get("health_ok")),
+            },
+            "package_source": {
+                "source": taskdiag.closed(rec.get("pypi_source"), PIP_SOURCES),
+                "mirror_used": taskdiag.flag(bool(rec.get("pypi_mirror"))),
+            },
+            "retryable": taskdiag.flag(rec.get("retryable")),
+        }
+    )
+
+
+def record_task_diagnostic(project_id, snapshot: dict) -> None:
+    """依赖作业到终局：冻结现场（失败的、取消的、成功的都记，成功的只为对照重试）。`project_id` 是调用方（app）
+    的项目 id——本模块自己的项目指纹是另一套 id，诊断端点按前者认领。从不抛：登记失败不是安装的一部分。"""
+    try:
+        state = snapshot.get("state")
+        if state not in TERMINAL_STATES or not snapshot.get("plan_id"):
+            return
+        taskdiag.STORE.record(
+            project_id,
+            taskdiag.KIND_DEPENDENCY,
+            snapshot["plan_id"],
+            diagnostic_projection(snapshot),
+            outcome=state,
+            failed=state == STATE_FAILED,
+            subject={("script", str(snapshot.get("script") or ""))},
+        )
+    except Exception:  # noqa: BLE001
+        LOG.debug("依赖诊断快照登记失败", exc_info=True)
 
 
 def diagnostics_state(project: str | Path) -> dict:
@@ -2089,6 +3007,35 @@ def note_missing_dependency(
         _missing_evidence.append(record)
 
 
+def note_missing_dependency_of(
+    project: str | Path, exc: BaseException, *, script: str = "", offer: dict | None = None
+) -> bool:
+    """脚本试运行 / 准备路径上的 `missing_dependency` → 同一份进程内记录（与渲染端点 `app._note_missing_dependency` 同一张表）。
+
+    这两条路把 `WorkerError` 在自己里面接住、转成结果里的 `error`（HTTP 200 / 会话终局），不经 `app._worker_error`，
+    所以以前诊断包里一条缺依赖现场都没有。**没有模块名就不记**：含敏感参数的运行 worker 在源头就把模块名清空
+    （`worker.py` `_module_attributable_to_script`），这里不另判、也不去别处找回。记录失败不许盖掉原始错误。
+    返回是否记下了。"""
+    if getattr(exc, "code", "") != "missing_dependency":
+        return False
+    module = getattr(exc, "module", "") or ""
+    if not module or not project:
+        return False
+    detail = getattr(exc, "project_env", None)
+    try:
+        note_missing_dependency(
+            project,
+            script=script or getattr(exc, "script_name", "") or "",
+            module=module,
+            python_source=getattr(exc, "python_source", "") or "",
+            project_env=detail if isinstance(detail, dict) else None,
+            offer=offer,
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
+
+
 def recent_missing_dependencies(project: str | Path) -> list[dict]:
     """这个项目最近的缺依赖现场（旧 → 新，最多 `MISSING_DEPENDENCY_EVIDENCE_LIMIT` 条）。"""
     pid = managedenv.project_fingerprint(project)
@@ -2167,9 +3114,12 @@ class PackageJob:
     dependents: tuple[str, ...]
     created_at: float
     expires_at: float
+    #: 首装且没有基础解释器时，计划里说出口的私有 Python 载荷（`privatepython.offer_payload()`）；其余为 None
+    private_python: dict | None = None
 
     def to_payload(self) -> dict:
         return {
+            "private_python": self.private_python,
             "job_id": self.job_id,
             "op": self.op,
             "distribution": self.distribution,
@@ -2366,10 +3316,9 @@ def list_managed_packages(project: str | Path | None) -> dict:
     busy = envlease.is_mutating_key(_env_key(TARGET_MANAGED, "", root)) or (
         bool(python) and envlease.is_mutating(python)
     )
-    available = True if managed["exists"] else managed_available()
-    capability = {"available": available is not False, "reason": ""}
-    if available is False:
-        capability = {"available": False, "reason": ERROR_MANAGED_UNAVAILABLE}
+    capability = _managed_capability(bool(managed["exists"]))
+    if not capability["available"]:
+        pass
     elif managed["exists"] and inv is None:
         capability = {"available": True, "reason": ERROR_MANAGED_BROKEN}
     elif managed["state"] == managedenv.STATE_INCOMPLETE and (managedenv.read_manifest(root) or {}):
@@ -2394,6 +3343,50 @@ def list_managed_packages(project: str | Path | None) -> dict:
         "snapshots": len(managedenv.list_snapshots(root)),
         # 卸载没有回滚这件事要在界面上**说出来**（ADR 0019 §八）
         "rollback": "snapshot_only",
+    }
+
+
+def _managed_capability(env_exists: bool) -> dict:
+    """设置 → 包管理能不能动手，以及（没有基础解释器时）为什么、还有什么路。
+
+    * 基础解释器还在后台探（`managed_available()` 为 None）：`checking=True`，界面说「正在检查」——
+      不先隐藏提醒再冒出来（探完结论只变一次）；
+    * 没有合格的基础解释器但提供私有 Python：**可用**，带 `private_python` 载荷（界面把字节数说出口，
+      首装 / 重建 / 「自动准备」都凭它授权；ADR 0063 / 0111）——不再叫用户去装 Python；
+    * 连私有 Python 也不提供（不支持的平台 / 锁关着）：才是 `managed_env_unavailable`；
+    * 装着的 Python 因版本在支持区间之外被拒时带 `rejected_python`（版本 + 支持区间），界面说「太新 / 太旧」。
+    """
+    base = managed_available()
+    if base is None:
+        return {"available": True, "reason": "", **({"checking": True} if not env_exists else {})}
+    if base:
+        return {"available": True, "reason": ""}
+    private = privatepython.offer_payload()
+    cap: dict = {"available": env_exists or private is not None, "reason": ""}
+    if private is not None:
+        cap["private_python"] = private
+    if not cap["available"]:
+        cap["reason"] = ERROR_MANAGED_UNAVAILABLE
+    rejected = _rejected_python()
+    if rejected:
+        cap["rejected_python"] = rejected
+    return cap
+
+
+def _rejected_python() -> dict | None:
+    """被支持区间拒掉的已装 Python：`{version, direction: newer|older, min, max}`；没有回 None。"""
+    versions = managedenv.rejected_python_versions()
+    if not versions:
+        return None
+    version = versions[0]
+    try:
+        minor = tuple(int(x) for x in version.split(".")[:2])
+    except ValueError:
+        return None
+    return {
+        "version": ".".join(version.split(".")[:3]),
+        "direction": "newer" if minor >= projectenv.PYTHON_MAX_EXCLUSIVE else "older",
+        **supported_python_range(),
     }
 
 
@@ -2661,12 +3654,13 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
 
     python = managedenv.python_of(root) or ""
     creates = False
+    private_python: dict | None = None
     if not python:
         if op != OP_INSTALL:
             raise RepairError(ERROR_PACKAGE_ENV_MISSING, "这个项目还没有 Tavotto 环境")
         creates = True
-        if not base_python():
-            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+        # 没有基础解释器：提供私有 Python 就把它挂在作业上（授权绑在计划上，ADR 0063 / 0111），否则才拒绝
+        private_python = _private_python_offer()
 
     env_key = _env_key(TARGET_MANAGED, python, root)
     busy = envlease.is_mutating(python) if python else envlease.is_mutating_key(env_key)
@@ -2705,6 +3699,7 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         dependents=dependents,
         created_at=now,
         expires_at=now + PLAN_TTL_S,
+        private_python=private_python,
     )
     with _lock:
         for stale in [k for k, j in _jobs.items() if j.expires_at < now]:
@@ -2803,6 +3798,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
                     "import_name": "",
                     "distribution": job.distribution,
                     "specifier": job.requirement[len(job.distribution) :],
+                    "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
                 },
             ),
             reason=managedenv.REASON_USER_REQUESTED,
@@ -2814,8 +3810,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ),
             on_log=lambda text: _append_log(job.job_id, text, on_event),
             label=f"{job.op}-{job.distribution}",
+            provision_private=job.private_python is not None,
+            private_plan=job.private_python,
         )
-        outcome = _run_generation_locked(gen_job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            gen_job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(job.distribution), "")
@@ -2826,6 +3826,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             "version": version,
             "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
             "generation": outcome["generation"],
+            "providers": outcome.get("providers", []),
         }
         _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
         LOG.info(
@@ -2839,9 +3840,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         managedenv.mark_incomplete(project, f"{job.op} 被取消")
         return _emit_job(job.job_id, STATE_CANCELLED, on_event, job=job, code=ERROR_CANCELLED)
 
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
+    _require_pip(python, ERROR_MANAGED_BROKEN)
 
     # 改动前的快照：不是回滚（pip 没有事务），是修复时的对照
     before = _freeze(python)
@@ -2881,6 +3880,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ERROR_PACKAGE_NOT_FOUND_AFTER, f"pip 退出了，但环境里没有 {job.distribution}"
         )
     health = projectenv.probe_environment(python)
+    _raise_if_activation_unavailable(health)  # 瞬时：不标记这一代不完整
     if not health.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 matplotlib 不可用")
         raise RepairError(ERROR_MANAGED_BROKEN, health.get("detail") or health.get("code") or "")
@@ -2924,6 +3924,25 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         "version": version,
         "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
     }
+    if job.op != OP_UNINSTALL:
+        # 受管环境原地装 / 升：没有新代，`provenance` 留空（没有重新读元数据）
+        result["providers"] = _provider_receipt(
+            (
+                {
+                    "import_name": str(
+                        (managedenv.installed_entry(project, job.distribution) or {}).get(
+                            "import_name"
+                        )
+                        or ""
+                    ),
+                    "distribution": job.distribution,
+                    "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
+                },
+            ),
+            [],
+            {key_name: version},
+            "",
+        )
     _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
     LOG.info(
         "包操作完成: %s %s %s",
@@ -3055,6 +4074,61 @@ class JointRepairPlan:
     replan: bool = False
     #: 规划输入的指纹（`depplan.JointPlan.inputs_digest`）：重算前先比它，变了就是 `repair_plan_stale`。
     inputs_digest: str = ""
+    #: 形成计划那一刻项目级解释器决定的签名（`selection_signature`）：执行前再比。
+    selection: tuple = ()
+    #: 作用域策略（`SCOPE_POLICY_SWITCH` = 换成本作用域）与它会让哪些包不再 active（形成计划时按账算好）。
+    scope_policy: str = ""
+    drops: tuple[str, ...] = ()
+    changes: tuple[str, ...] = ()
+    #: 形成计划那一刻两份事实的 import 层指纹（`depplan.layer_digest`，#922）：执行前重量事实后再比。不进 `impact` /
+    #: `to_payload`，也不进 `identity` / `inputs_digest`——只是执行期的一致性校验，层没变时行为不变。
+    layers_digest: str = ""
+    install_layers_digest: str = ""
+    #: 用户指定、未经可信来源核实的需求（`depplan.JointPlan.user_specified`）：披露（`impact`）与替身重算（`_replan_on_base`）都读它。
+    user_specified: tuple[dict, ...] = ()
+    #: 运行时观察到缺了的顶层模块名（`create_joint_plan(extra_imports=)`）：替身重算（`_replan_on_base`）要把它们再交给 `depplan.plan`。
+    extra_imports: tuple[str, ...] = ()
+    #: 计划用到的 import 名（needed + unknown）与形成计划那一刻这些名字在两份事实的静态索引里的提供状态指纹
+    #: （`depplan.provider_digest`，#932）：执行前重量事实后再比，变了 = `repair_plan_stale`。同 `layers_digest`，只是执行期的一致性校验。
+    names: tuple[str, ...] = ()
+    names_digest: str = ""
+    install_names_digest: str = ""
+
+    @property
+    def pip_inputs(self) -> PipInputs:
+        """pip 会收到的全部输入（披露与执行共用，见 `PipInputs`）。"""
+        return PipInputs(
+            requirements=self.requirements,
+            constraints=self.constraints,
+            hashes=self.hashes,
+            require_hashes=self.require_hashes,
+            adapter=self.adapter,
+        )
+
+    @property
+    def impact(self) -> dict:
+        """这份授权的实际影响（`impact_of`）：跑前的门显示的就是同一个函数算出的同一份（`offer_impact`）。
+        输入集合来自 `pip_inputs`——执行端（作业 / 原地 pip）读的也是它。"""
+        pi = self.pip_inputs
+        return impact_of(
+            target_kind=self.target_kind,
+            requirements=pi.requirements,
+            constraints=pi.constraints,
+            require_hashes=pi.require_hashes,
+            adapter=pi.adapter,
+            groups=self.groups,
+            creates_environment=self.creates_environment,
+            private_python=self.private_python,
+            env_fingerprint=self.env_fingerprint,
+            scope_policy=self.scope_policy,
+            drops=self.drops,
+            changes=self.changes,
+            user_specified=self.user_specified,
+        )
+
+    @property
+    def impact_digest(self) -> str:
+        return impact_digest(self.impact)
 
     def to_payload(self) -> dict:
         return {
@@ -3077,6 +4151,8 @@ class JointRepairPlan:
             "joint": dict(self.joint),
             "private_python": dict(self.private_python) if self.private_python else None,
             "replan": self.replan,
+            "impact": self.impact,
+            "impact_digest": self.impact_digest,
         }
 
 
@@ -3107,6 +4183,12 @@ def private_python_target(project: str | Path, script: str) -> tuple[str, str, o
     这是干净机器上第一份计划的来源（U05 PR B）：没有它，`joint_target_for` 抛 `no_worker_python`、
     `depplan.plan(facts=None)` 是 `dependency_target_unavailable`——都不是「先下载再准备」这条路。"""
     root = str(Path(project))
+    pinned = pinned_base_python()
+    if pinned:
+        # 换 Python 版本：目标永远是受管环境（新建一代），事实按这个基础解释器的 fresh venv 量——
+        # 与干净机器同一个形状（缺什么 / 装什么都按将要新建的那一代，不按此刻跑不了脚本的那个解释器）
+        fresh = depplan.fresh_venv_facts(pinned, provided=depplan.adapter_distributions())
+        return (TARGET_MANAGED, fresh.python, fresh) if fresh is not None else None
     try:
         pool.resolve_worker_python(root, script=script)
         return None
@@ -3138,8 +4220,47 @@ def private_fresh_facts() -> depplan.TargetFacts | None:
     )
 
 
+def _is_managed_generation_path(project: str | Path, python: str) -> bool:
+    """与来源标签共用托管代的路径身份判据。"""
+    return managedenv.is_managed_python(project, python)
+
+
+def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> bool:
+    """此刻跑脚本的环境是不是 Tavotto 自己的、坏了只能换一代而不是原地修（`depplan.plan(run_env_replaceable=)`）：受管环境的某一代、
+    内置 runtime、还没落盘（替身事实）或刚由私有 Python 新建的一代。用户交给我们的系统解释器 / 本进程的解释器 / 任何别的路径都不是——
+    项目声明里多出来的差集在那里只记录，不为它去换环境（能原样跑就不动，ADR 0114 §六）。"""
+    if facts is None or not facts.python or pinned_base_python():
+        return True
+    python = facts.python
+    if _is_managed_generation_path(project, python):
+        return True
+    # Tavotto 自己供应的：内置 runtime、源码模式自建的 worker-env、私有完整 Python（`pool.SOURCE_BUNDLED` / `SOURCE_MANAGED`）
+    ours = (
+        runtime.bundled_python(),
+        pool._bootstrap_venv_python(),
+        privatepython.python_of(privatepython.source_for()),
+    )
+    return any(c and pool.same_python(python, c) for c in ours)
+
+
+def _coverage_reader(facts: depplan.TargetFacts | None):
+    """联合计划读 PR3 覆盖度用的只读查询：目标解释器对这组 import 已有的体检结论（`userenvs` 缓存；没量过回 None）。
+    **不起任何进程**——缓存是明确的环境检查 / 依赖门留下的，键 = 路径 + 环境代 + import 集合 + 是否内置，过期（站点目录变了）
+    的不返回。用来认出「包在、导入失败」（装它救不了），见 `depplan.plan(coverage=)`。"""
+    if facts is None or not facts.python:
+        return None
+    python = facts.python
+    bundled = pool.same_python(python, runtime.bundled_python())
+    return lambda names: userenvs.cached_probe(python, names, bundled=bundled)
+
+
 def joint_plan_for(
-    project: str | Path, script: str, *, groups: list[str] | None = None
+    project: str | Path,
+    script: str,
+    *,
+    groups: list[str] | None = None,
+    scope_policy: str = "",
+    extra_imports: tuple[str, ...] = (),
 ) -> tuple[depplan.JointPlan, str, str]:
     """算一份联合计划（只读）：缺什么按**此刻选中的**解释器量、装什么按目标量（`_facts_for`）。
     回 (计划, 目标类型, 解释器)。
@@ -3155,7 +4276,9 @@ def joint_plan_for(
         install_facts = None
     else:
         target_kind, python, _source = joint_target_for(root, script)
-        facts, install_facts, _measured = _facts_for(target_kind, python, root)
+        facts, install_facts, _measured = _facts_for(
+            target_kind, python, root, fresh=scope_policy == SCOPE_POLICY_SWITCH
+        )
     plan = depplan.plan(
         root,
         script,
@@ -3163,12 +4286,15 @@ def joint_plan_for(
         target_kind=target_kind,
         groups=groups,
         install_facts=install_facts,
+        coverage=_coverage_reader(facts),
+        run_env_replaceable=_run_env_ours(root, facts),
+        extra_imports=extra_imports,
     )
-    return plan, target_kind, python
+    return _with_scope_check(root, script, plan, target_kind, scope_policy), target_kind, python
 
 
 def _facts_for(
-    kind: str, python: str, root: str, *, use_cache: bool = True
+    kind: str, python: str, root: str, *, use_cache: bool = True, fresh: bool = False
 ) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
     """(缺什么按它量的事实, 装到哪的事实——与前者是同一个环境时 None, 前者量的解释器)。
 
@@ -3178,11 +4304,21 @@ def _facts_for(
     （选中的是项目 venv / 系统解释器，目标是受管环境）计划的集合按目标量，否则新的一代会漏装
     选中环境里碰巧有的包、marker 会按另一个 minor 求值（Codex #461 P1）。
     """
+    try:
+        return _facts_for_inner(kind, python, root, use_cache=use_cache, fresh=fresh)
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时、不缓存；稳定码交给用户（不是“目标不可用”）
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+
+
+def _facts_for_inner(
+    kind: str, python: str, root: str, *, use_cache: bool = True, fresh: bool = False
+) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
     run = depplan.target_facts(python, use_cache=use_cache) if python else None
     if kind != TARGET_MANAGED:
         return run, None, python
     managed_python = managedenv.python_of(root) or ""
-    if managed_python:
+    if managed_python and not fresh:
         if python and pool.same_python(managed_python, python):
             return run, None, python
         return run, depplan.target_facts(managed_python, use_cache=use_cache), python
@@ -3190,16 +4326,47 @@ def _facts_for(
     if not base:
         # 没有基础解释器：提供私有 Python 就按它（真量 / 替身）量新的一代，否则计划只能按选中的量
         return run, private_fresh_facts(), python
-    fresh = depplan.fresh_venv_facts(
+    fresh_facts = depplan.fresh_venv_facts(
         base, use_cache=use_cache, provided=depplan.adapter_distributions()
     )
-    return run, fresh, python
+    return run, fresh_facts, python
+
+
+def _user_specified_error(exc: "depplan.UserSpecifiedRejected") -> "RepairError":
+    """`depplan.UserSpecifiedRejected` → 已发布的错误码（不新增码）：语法不合 = `package_requirement_invalid`（与单包路径同一句），
+    这个 import 此刻不是「来源未定的表外名」= `dependency_install_not_allowed`。只带 import 名，不回显用户给的原串。"""
+    if exc.kind == depplan.UserSpecifiedRejected.INVALID:
+        return RepairError(
+            ERROR_REQUIREMENT_INVALID,
+            "只接受 `包名` 或 `包名>=版本` 这样的形态",
+            import_name=exc.import_name,
+        )
+    return RepairError(
+        ERROR_NOT_ALLOWED,
+        "这个 import 此刻不是来源未定的表外名，不能指定安装包",
+        import_name=exc.import_name,
+    )
 
 
 def create_joint_plan(
-    project: str | Path, script: str, *, target_kind: str = "", groups: list[str] | None = None
+    project: str | Path,
+    script: str,
+    *,
+    target_kind: str = "",
+    groups: list[str] | None = None,
+    scope_policy: str = "",
+    user_specified: Mapping[str, str] | None = None,
+    extra_imports: tuple[str, ...] = (),
 ) -> JointRepairPlan:
     """把联合计划绑定成可执行的（发 plan_id）。**不装任何东西。**
+
+    `user_specified`（Import Origin PR5b）：`{import 名: "包名[版本约束]"}`——用户在确认界面接受（可改）预填后提交的、**用户指定且
+    未经可信来源核实**的需求；只收来源未定的表外 import，过 `depresolve.from_user_input` 的严格语法，进联合计划并在影响披露里标明
+    （`impact["user_specified"]`）。不合格的整份拒绝：语法不对 `package_requirement_invalid`，这个 import 不是表外名
+    `dependency_install_not_allowed`——不静默丢弃、不降级成别的需求。
+
+    `extra_imports`：运行时观察到缺了的顶层模块名（转换校验运行的 `missing_dependency`，`convertdeps` 传入），按静态 import 同一棵来源判决并入；
+    随计划保存，替身重算（`_replan_on_base`）再交给 `depplan.plan`。
 
     计划不是 `ready`（没缺的 / blocked）就拒绝：`dependency_plan_blocked` 带 blocked 理由——
     执行端不会「把认不出的那行剥掉偷偷继续」。`target_kind` 可以由调用方指定（用户在用户
@@ -3207,6 +4374,8 @@ def create_joint_plan(
     的那个（不接受任意路径：ADR 0019 §一「从发现结果里取」）。
     """
     root = str(Path(project))
+    selection0 = selection_signature(root)  # 先于目标解析与事实探测：计划记的是**算目标时**的决定
+    _refuse_if_pinned()  # 与单包修复 / `offer()` 同一条判据：装进去也不会被用的计划一开始就不形成（E05）
     if rounds_remaining(root, script) <= 0:
         raise RepairError(ERROR_ROUNDS_EXHAUSTED, "这个脚本的自动依赖修复已经用满")
     standin = private_python_target(root, script)
@@ -3221,14 +4390,34 @@ def create_joint_plan(
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {kind!r}")
     if kind == TARGET_PROJECT_VENV and auto_kind != TARGET_PROJECT_VENV:
         raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有选中自己的虚拟环境，不能往里装")
+    if scope_policy not in ("", SCOPE_POLICY_SWITCH):
+        raise RepairError(ERROR_NOT_ALLOWED, f"未知的作用域策略: {scope_policy!r}")
+    if scope_policy == SCOPE_POLICY_SWITCH and kind != TARGET_MANAGED:
+        # 「换成本作用域」重建的是 Tavotto 自己的受管环境；用户的 venv 不能被整个换掉
+        raise RepairError(ERROR_NOT_ALLOWED, "只有 Tavotto 的受管环境能换成某个作用域")
     if standin is not None:
         install_facts, measured = None, ""
     else:
-        facts, install_facts, measured = _facts_for(kind, python, root)
+        facts, install_facts, measured = _facts_for(
+            kind, python, root, fresh=scope_policy == SCOPE_POLICY_SWITCH
+        )
     groups = depplan.selected_groups_setting(root) if groups is None else list(groups)
-    joint = depplan.plan(
-        root, script, facts=facts, target_kind=kind, groups=groups, install_facts=install_facts
-    )
+    try:
+        joint = depplan.plan(
+            root,
+            script,
+            facts=facts,
+            target_kind=kind,
+            groups=groups,
+            install_facts=install_facts,
+            coverage=_coverage_reader(facts),
+            user_specified=user_specified,
+            run_env_replaceable=_run_env_ours(root, facts),
+            extra_imports=extra_imports,
+        )
+    except depplan.UserSpecifiedRejected as exc:
+        raise _user_specified_error(exc) from exc
+    joint = _with_scope_check(root, script, joint, kind, scope_policy)
     # 干净机器上「什么都不缺」也得建环境（没有任何解释器可用）：nothing_needed 照样成计划，delta 为空 = 只装 adapter
     if joint.status == depplan.STATUS_BLOCKED or (
         joint.status == depplan.STATUS_NOTHING_NEEDED and standin is None
@@ -3238,21 +4427,47 @@ def create_joint_plan(
             "联合计划不可执行" if joint.status == depplan.STATUS_BLOCKED else "没有缺的依赖",
             joint=joint.to_payload(),
         )
-    private: dict | None = None
+    # 没有基础解释器且不提供私有 Python 时在这里抛（与跑前的门显示影响摘要同一处，`_managed_scope`）
+    creates, private, managed_python = _managed_scope(root, kind)
     if kind == TARGET_MANAGED:
-        managed_python = managedenv.python_of(root) or ""
-        creates = not managed_python
-        private = _private_python_offer()  # 没有基础解释器且不提供私有 Python 时在这里抛
         _require_free_disk(root)  # 新的一代要落盘（FO28）
         bound_python = managed_python
     else:
         bound_python = python
-        creates = False
     # 计划里带着下载 = 「装到哪」的事实是替身（私有 Python 还没落盘）：供应之后事务按真解释器重算 delta
     replan = private is not None
+    # 「换成本作用域」：新一代装的是本作用域的**全部** needed（不是相对 active 那一代的差额），所以验证 import 与
+    # 记账也要覆盖已经在当前环境里的那些；并入时只有缺的
+    provided = set(
+        depplan.adapter_distributions()
+    )  # adapter 自己会装，不进账（账里钉版本会钉死它）
+    installing_entries = (
+        (
+            *joint.install_entries,
+            *(
+                e
+                for e in joint.satisfied
+                if depresolve.normalize_distribution(e["distribution"]) not in provided
+                and e["import_name"] not in {m["import_name"] for m in joint.install_only}
+            ),
+        )
+        if scope_policy == SCOPE_POLICY_SWITCH
+        else joint.install_entries
+    )
+    _selection_unchanged(root, selection0)
+    # 计划里每一个将要装 / 要核的 import 名：needed + unknown + 所有安装条目 + 用户指定的（后者已离开 unknown、
+    # 也不在 needed，漏了它提供者指纹就管不到它：前层出现同名提供者时 pip 已经改了环境才由装后核验发现）
+    plan_names = tuple(
+        sorted(
+            {str(n.get("module") or "") for n in joint.needed}
+            | set(joint.unknown)
+            | {str(e["import_name"]) for e in installing_entries if e["import_name"]}
+            | {str(u["import_name"]) for u in joint.user_specified}
+        )
+    )
     now = time.time()
     plan = JointRepairPlan(
-        plan_id=secrets.token_urlsafe(24),
+        plan_id=new_plan_id(),
         project=root,
         project_id=managedenv.project_fingerprint(root),
         script=script,
@@ -3262,20 +4477,28 @@ def create_joint_plan(
         facts_digest=facts.digest() if facts is not None else "",
         facts_python=measured,
         install_facts_digest=install_facts.digest() if install_facts is not None else "",
+        layers_digest=depplan.layer_digest(facts),
+        install_layers_digest=depplan.layer_digest(install_facts),
+        user_specified=tuple(joint.user_specified),
+        extra_imports=tuple(extra_imports),
+        names=plan_names,
+        names_digest=depplan.provider_digest(facts, plan_names),
+        install_names_digest=depplan.provider_digest(install_facts, plan_names),
         requirements=tuple(joint.requirements),
         constraints=tuple(joint.constraints),
         hashes={k: tuple(v) for k, v in joint.hashes.items()},
         require_hashes=joint.require_hashes,
         adapter=tuple(joint.adapter),
         identity=joint.identity,
-        needed_imports=tuple(m["import_name"] for m in joint.missing),
+        needed_imports=tuple(m["import_name"] for m in installing_entries if m["import_name"]),
         record=tuple(
             {
                 "import_name": m["import_name"],
                 "distribution": m["distribution"],
                 "specifier": ",".join(m["specifiers"]),
+                "resolution_source": str(m.get("resolution_source") or ""),
             }
-            for m in joint.missing
+            for m in installing_entries
         ),
         groups=tuple(joint.selection.get("selected_groups") or ()),
         modifies_user_environment=kind == TARGET_PROJECT_VENV,
@@ -3286,6 +4509,9 @@ def create_joint_plan(
         private_python=private,
         replan=replan,
         inputs_digest=joint.inputs_digest,
+        selection=selection0,
+        scope_policy=scope_policy,
+        **_effects(root, joint.requirements, joint.constraints, scope_policy),
     )
     _prune_plans()
     with _lock:
@@ -3308,24 +4534,142 @@ def get_joint_plan(plan_id: str) -> JointRepairPlan | None:
 #: 已认领（正在执行）的联合计划 id：同一份计划只起一个执行线程（Codex #470 P1：第一次还没
 #: 消费掉计划前重复提交 `/prepare`，两个线程各自重算事实、排队拿锁、各装一遍）。
 _running: set[str] = set()
+#: 在途的依赖作业（联合准备与单包修复共用）：plan_id → {project_id, digest, flow}，`_claim` 时登记、结束时清掉。
+#: 「这个项目上有没有安装在跑」（`installing`）与「同一份影响摘要的作业认领」都读它。
+_active_jobs: dict[str, dict] = {}
+#: 同一份已确认影响摘要的在途作业：(项目指纹, 摘要) → plan_id。第二个提交者（另一个标签页 / 另一个会话）
+#: 认领原作业而不是再起一个（T06）。
+_joined: dict[tuple[str, str, str], str] = {}
+#: 在途作业的追加进度监听者：plan_id → [callable(snapshot)]（认领了原作业的另一方也要看到终局）。
+_listeners: dict[str, list] = {}
+FLOW_JOINT = "joint"
+FLOW_SINGLE = "single"
 
 
-def _claim(plan_id: str) -> bool:
-    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。"""
+def _claim(
+    plan_id: str,
+    *,
+    project_id: str = "",
+    digest: str = "",
+    flow: str = FLOW_JOINT,
+    scope: str = "",
+) -> bool:
+    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。
+    `scope` = 依赖作用域（脚本所在目录，`scope_of`）：同项目同摘要、不同目录的两次授权是两份作业，账上的归属
+    记在各自的作用域里（Codex r4218802492）——合并键必须带它。"""
     with _lock:
         if plan_id in _running:
             return False
         _running.add(plan_id)
+        _active_jobs[plan_id] = {
+            "project_id": project_id,
+            "digest": digest,
+            "flow": flow,
+            "scope": scope,
+        }
+        if project_id and digest:
+            _joined[(project_id, scope, digest)] = plan_id
         return True
 
 
-def prepare_async(plan_id: str, on_event=None) -> bool:
+def _release(plan_id: str) -> None:
+    """作业结束（不论怎么结束）：认领 / 登记 / 监听都清掉。"""
+    with _lock:
+        _running.discard(plan_id)
+        meta = _active_jobs.pop(plan_id, None)
+        if meta and meta.get("project_id") and meta.get("digest"):
+            key = (meta["project_id"], meta.get("scope", ""), meta["digest"])
+            if _joined.get(key) == plan_id:
+                _joined.pop(key, None)
+        # 监听者不在这里清：失败终态常在作业返回之后才由 `_prepare_guarded` / `_install_guarded` 发出，
+        # 终态那一次 `_emit` 发完才摘（`_emit`）
+
+
+def is_running(plan_id: str) -> bool:
+    """这个计划 id 此刻有没有作业在跑（已认领、还没清）。"""
+    with _lock:
+        return str(plan_id or "") in _running
+
+
+def installing(project: str | Path) -> bool:
+    """这个项目上此刻有没有依赖安装在跑。采用 / 改项目环境前问它（`unless_installing`）。"""
+    pid = managedenv.project_fingerprint(str(Path(project)))
+    with _lock:
+        return any(meta.get("project_id") == pid for meta in _active_jobs.values())
+
+
+def unless_installing(project: str | Path, action):
+    """没有该项目的安装在跑时，在**同一把锁里**执行 `action`；有就抛 `EnvironmentBusy`（`environment_mutating`）。
+
+    采用 / 选回默认会改项目级的解释器决定，而安装结束要把结果记成项目的环境——两者交错，后写的会静默盖掉先
+    写的。认领（`_claim`）与这里同一把锁：要么先认领（这里被拒、让用户等安装结束），要么先改决定（作业认领后
+    比 `selection_signature` 发现决定变了、以 `repair_plan_stale` 停在写任何东西之前）。`action` 只能是不回头
+    碰本模块的短操作（写一次项目设置）。"""
+    pid = managedenv.project_fingerprint(str(Path(project)))
+    with _lock:
+        if any(meta.get("project_id") == pid for meta in _active_jobs.values()):
+            raise envlease.EnvironmentBusy(
+                "这个项目上有依赖安装正在进行中，请等它结束再改环境。",
+                code=envlease.ENVIRONMENT_MUTATING,
+            )
+        return action()
+
+
+def add_listener(plan_id: str, fn) -> bool:
+    """给在途作业追加进度监听；作业已到终态 / 不在跑回 False（调用方读 `progress()` 拿终局）。"""
+    pid = str(plan_id or "")
+    with _lock:
+        if pid not in _running or (_progress.get(pid) or {}).get("state") in TERMINAL_STATES:
+            return False
+        _listeners.setdefault(pid, []).append(fn)
+        return True
+
+
+def _plan_scope(plan) -> str:
+    """计划的依赖作用域（脚本所在目录）；没有脚本的计划 = 空。"""
+    script = getattr(plan, "script", "") or ""
+    return scope_of(script) if script else ""
+
+
+def _check_confirmed(plan, confirmed_impact: str | None) -> None:
+    """执行入口的唯一一道门（Codex r4217992305 / r4218802478）：**调用方必须回显它给用户看的影响摘要**。
+
+    * 缺 / 空 / 非字符串 -> `dependency_impact_required`，零副作用。**不再有「None = 旧客户端、不绑定」**：
+      服务端自己持有的摘要（计划、动作、缓存里的）一律不得代替调用方回显——那等于没有确认。
+    * 与计划此刻的实际影响对不上 -> `dependency_impact_changed`，零副作用。
+    """
+    if not isinstance(confirmed_impact, str) or not confirmed_impact:
+        raise RepairError(
+            ERROR_IMPACT_REQUIRED, "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。"
+        )
+    if plan is None:
+        return
+    if plan.impact_digest != confirmed_impact:
+        raise RepairError(
+            ERROR_IMPACT_CHANGED,
+            "要执行的安装影响与你确认的不一致，请重新查看再确认",
+            impact=plan.impact,
+            impact_digest=plan.impact_digest,
+        )
+
+
+def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None) -> bool:
     """起线程执行一份联合计划；回 False = 这份计划已在执行，**不再起第二个线程**（调用方把
     在途的进度原样交回去）。**认领与取消句柄都在起线程之前**：调用方一回 202 用户就可能取消，
     那时线程可能还在重算事实、还没拿锁——句柄不在表里的话 `cancel_status` 只能回 `not_found`，
-    安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。"""
+    安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。
+
+    `confirmed_impact`（T06）：**必传**，且必须等于计划此刻的 `impact_digest`；缺 -> `dependency_impact_required`，
+    对不上 -> `dependency_impact_changed`（均在认领之前、零副作用）。"""
     pid = str(plan_id or "")
-    if not _claim(pid):
+    plan = get_joint_plan(pid)
+    _check_confirmed(plan, confirmed_impact)
+    if not _claim(
+        pid,
+        project_id=getattr(plan, "project_id", ""),
+        digest=getattr(plan, "impact_digest", ""),
+        scope=_plan_scope(plan),
+    ):
         return False
     _register_cancel(pid)
     threading.Thread(
@@ -3334,6 +4678,111 @@ def prepare_async(plan_id: str, on_event=None) -> bool:
         name="tavotto-dep-prepare",
     ).start()
     return True
+
+
+def start_confirmed(
+    project: str | Path,
+    script: str,
+    confirmed_digest: str,
+    *,
+    target_kind: str = "",
+    module: str = "",
+    scope_policy: str = "",
+    on_event=None,
+) -> dict:
+    """按**用户确认过的影响摘要**起一次依赖作业——准备会话的动作认领走这里（T06）。
+
+    一次完成「现算计划 → 比摘要 → 认领 → 起线程」，三种结局：
+
+    * 摘要对不上（集合 / 目标 / 环境代 / 写入范围变了）→ `dependency_impact_changed`，计划作废、一个字节不装；
+    * 同一份摘要已经有作业在跑（另一个标签页 / 另一个会话先认领了）→ 认领**原作业**（`started=False,
+      joined=True`，追加进度监听），不起第二个 pip；
+    * 其余 → 新作业（`started=True`）。
+
+    比较—认领在 `_lock` 里（现算计划的子进程不占锁，认领前再看一遍有没有人抢先）。`module` 非空 = 运行时发现的
+    缺包（单包修复，同一个 `create_plan` / `install`）；空 = 联合计划。目标由调用方说（`target_kind`，空 = 按当前
+    选中）；不接受路径。"""
+    root = str(Path(project))
+    pj = managedenv.project_fingerprint(root)
+    # 回显的摘要是**调用方给的**，不是服务端缓存的：缺 -> dependency_impact_required，零副作用（r4218802478）
+    if not isinstance(confirmed_digest, str) or not confirmed_digest:
+        _check_confirmed(None, confirmed_digest)
+    # 合并键带依赖作用域：同项目同摘要、不同目录的两次授权不能合并成一个作业（账上归属只记在第一个作用域里）
+    key = (pj, scope_of(script), confirmed_digest)
+    joined = _join_running(key, on_event)
+    if joined:
+        return {"plan_id": joined, "started": False, "joined": True, "progress": progress(joined)}
+    flow = FLOW_SINGLE if module else FLOW_JOINT
+    if module:
+        plan = create_plan(root, script, module, target_kind=target_kind)
+    else:
+        plan = create_joint_plan(root, script, target_kind=target_kind, scope_policy=scope_policy)
+    try:
+        _check_confirmed(plan, key[2])
+    except RepairError:
+        _discard_plan(plan.plan_id)
+        raise
+    with _lock:
+        again = _joined.get(key)
+        if again is not None and again in _running:
+            claimed = False
+        else:
+            claimed = _claim(plan.plan_id, project_id=pj, digest=key[2], flow=flow, scope=key[1])
+    if not claimed:
+        _discard_plan(plan.plan_id)
+        joined = _join_running(key, on_event)
+        return {
+            "plan_id": joined,
+            "started": False,
+            "joined": bool(joined),
+            "progress": progress(joined),
+        }
+    _register_cancel(plan.plan_id)
+    pid = plan.plan_id
+    if flow == FLOW_SINGLE:
+        threading.Thread(
+            target=lambda: _install_guarded(pid, on_event, claimed=True),
+            daemon=True,
+            name="tavotto-dep-install",
+        ).start()
+    else:
+        threading.Thread(
+            target=lambda: _prepare_guarded(pid, on_event, claimed=True),
+            daemon=True,
+            name="tavotto-dep-prepare",
+        ).start()
+    return {"plan_id": pid, "started": True, "joined": False, "progress": progress(pid)}
+
+
+def preview_impact(
+    project: str | Path, script: str, module: str, *, target_kind: str = TARGET_MANAGED
+) -> dict:
+    """运行时发现缺 `module` 时，授权单包修复的实际影响（T06）：用与 `start_confirmed` 同一个 `create_plan` 算出
+    计划、取它的 `impact`/`impact_digest`，然后把计划作废——预览不留下可执行的东西。抛 `RepairError`（无法解析 /
+    轮次用完 / 已装过 / 全局固定…）= 这件事现在不能在会话里授权。"""
+    plan = create_plan(str(Path(project)), script, module, target_kind=target_kind)
+    try:
+        return {"impact": plan.impact, "impact_digest": plan.impact_digest}
+    finally:
+        _discard_plan(plan.plan_id)
+
+
+def _join_running(key: tuple[str, str, str], on_event) -> str:
+    """同一份摘要在途的作业：回它的 plan_id 并（作业还没到终态时）追加监听；没有回空串。"""
+    with _lock:
+        pid = _joined.get(key)
+        if pid is None or pid not in _running:
+            return ""
+        if on_event is not None and (_progress.get(pid) or {}).get("state") not in TERMINAL_STATES:
+            _listeners.setdefault(pid, []).append(on_event)
+        return pid
+
+
+def _discard_plan(plan_id: str) -> None:
+    """把一份没有执行的计划作废（摘要对不上 / 被别人抢先）——它不该再被任何人拿去执行。"""
+    with _lock:
+        _plans.pop(plan_id, None)
+        _joint_plans.pop(plan_id, None)
 
 
 def _register_cancel(plan_id: str) -> threading.Event:
@@ -3358,23 +4807,39 @@ def _facts_for_plan(
             return standin[2], None
         return None, None
     run, install, _measured = _facts_for(
-        plan.target_kind, plan.facts_python, plan.project, use_cache=use_cache
+        plan.target_kind,
+        plan.facts_python,
+        plan.project,
+        use_cache=use_cache,
+        fresh=plan.scope_policy == SCOPE_POLICY_SWITCH,
     )
     return run, install
 
 
-def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
+def _prepare_guarded(
+    plan_id: str, on_event, *, claimed: bool = False, confirmed_impact: str | None = None
+) -> dict:
     try:
-        return prepare(plan_id, on_event, claimed=claimed)
+        return prepare(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("联合依赖准备", plan_id, exc.code)
-        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+        return _emit(
+            plan_id,
+            STATE_FAILED,
+            on_event,
+            code=exc.code,
+            error=str(exc),
+            dist_reasons=dist_reasons_of(exc),
+            not_found=(exc.extra or {}).get("not_found"),
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
         return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
 
 
-def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
+def prepare(
+    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None
+) -> dict:
     """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹与事实（`repair_plan_stale`）。
 
     同一份计划只能被执行一次（`_claim`；`prepare_async` 已认领的传 `claimed=True`），第二个
@@ -3383,8 +4848,16 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
     不论怎么退出，认领、句柄与计划都在 finally 里清掉。
     """
     pid = str(plan_id or "")
-    if not claimed and not _claim(pid):
-        raise RepairError(ERROR_NOT_ALLOWED, "这份准备计划已经在执行")
+    if not claimed:
+        plan0 = get_joint_plan(pid)
+        _check_confirmed(plan0, confirmed_impact)  # 认领之前：对不上就零副作用
+        if not _claim(
+            pid,
+            project_id=getattr(plan0, "project_id", ""),
+            digest=getattr(plan0, "impact_digest", ""),
+            scope=_plan_scope(plan0),
+        ):
+            raise RepairError(ERROR_NOT_ALLOWED, "这份准备计划已经在执行")
     cancel_ev = _register_cancel(pid)
     try:
         plan = get_joint_plan(pid)
@@ -3392,6 +4865,9 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
             raise RepairError(ERROR_NOT_ALLOWED, "没有这个准备计划（或已过期）")
         if _fingerprint(plan.target_kind, plan.python, plan.project) != plan.env_fingerprint:
             raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
+        if plan.selection != selection_signature(plan.project):
+            # 确认期间用户采用 / 选回了别的环境：安装结束会把结果记成项目的环境，不能盖掉他刚做的选择
+            raise RepairError(ERROR_PLAN_STALE, "确认期间项目的解释器选择变了")
         # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
         # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
         run, install = _facts_for_plan(plan, use_cache=False)
@@ -3399,6 +4875,19 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
             install.digest() if install is not None else ""
         ) != plan.install_facts_digest:
             raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里的包发生了变化")
+        # import 层（site 层 / 额外路径 / .pth 内容）不在上面的 digest 里：`.pth` 或可见 site 层变了而包名版本表没变时，
+        # 新出现的提供者本会改变 missing / requirements（#922）。同一条拒绝路径与错误码，不改 inputs_digest / identity
+        if depplan.layer_digest(run) != plan.layers_digest or (
+            depplan.layer_digest(install) != plan.install_layers_digest
+        ):
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境的 import 层发生了变化")
+        # 层的路径与 `.pth` 没变、层**里面**这些 import 名的提供者变了（往更前的 PYTHONPATH 目录新加一个同名 `yaml.py`、
+        # 前面一层多了 / 少了一个认领它的发行包）：层指纹看不见，旧计划本会装一个运行时已经被遮蔽的包（#932）。同一条拒绝路径
+        if plan.names and (
+            depplan.provider_digest(run, plan.names) != plan.names_digest
+            or depplan.provider_digest(install, plan.names) != plan.install_names_digest
+        ):
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里这些 import 的提供者发生了变化")
         if cancel_ev.is_set():
             # ack 之后、拿锁之前来的取消：明确终态，什么都没改（Codex #470 P1 的那一刻）
             return _emit(
@@ -3410,14 +4899,15 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
                 result={"activated": False},
             )
         if plan.target_kind == TARGET_MANAGED:
+            pi = plan.pip_inputs
             job = _GenerationJob(
                 progress_id=plan.plan_id,
                 project=plan.project,
                 script=plan.script,
-                delta=plan.requirements,
-                constraints=plan.constraints,
-                hashes=plan.hashes,
-                require_hashes=plan.require_hashes,
+                delta=pi.requirements,
+                constraints=pi.constraints,
+                hashes=pi.hashes,
+                require_hashes=pi.require_hashes,
                 needed_imports=plan.needed_imports,
                 record=plan.record,
                 reason=managedenv.REASON_MISSING_DEPENDENCY,
@@ -3429,12 +4919,19 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
                 private_plan=plan.private_python,
                 groups=plan.groups,
                 replan=plan.replan,
+                confirmed_inputs=pi,
+                confirmed_impact=plan.impact,
                 inputs_digest=plan.inputs_digest,
+                replace_ledger=plan.scope_policy == SCOPE_POLICY_SWITCH,
+                refuse_pinned=True,
+                user_specified=plan.user_specified,
+                extra_imports=plan.extra_imports,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
         try:
             with pool.mutating_environment(key, plan.python):
+                _refuse_if_pinned()  # 租约在手之后复查（与单包修复同一条纪律）
                 return _run_joint_in_place(plan, on_event, cancel_ev)
         except pool.EnvironmentBusy as exc:
             raise _busy_error(exc) from exc
@@ -3442,27 +4939,27 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
         with _lock:
             _cancels.pop(pid, None)
             _joint_plans.pop(pid, None)
-            _running.discard(pid)
+        _release(pid)
 
 
 def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Event) -> dict:
     """用户 venv：原地装这次缺的（ADR 0019 §八 的纪律不变）。"""
     python = plan.python
+    _require_record_sources(plan.record)  # 回执的来源字段：缺了在 pip 之前拒绝
     _emit(plan.plan_id, STATE_PREPARING, on_event, joint=plan)
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    _require_pip(python, ERROR_PIP_UNAVAILABLE)
     _emit(plan.plan_id, STATE_INSTALLING, on_event, joint=plan)
+    pi = plan.pip_inputs
     with tempfile.TemporaryDirectory(prefix="tavotto-joint-") as tmp:
         req_file, con_file = write_plan_files(
-            Path(tmp), plan.requirements, plan.constraints, hashes=plan.hashes
+            Path(tmp), pi.requirements, pi.constraints, hashes=pi.hashes
         )
         code, out = _run_pip_install(
             lambda index_url: pip_install_joint_argv(
                 python,
                 req_file,
                 con_file,
-                require_hashes=plan.require_hashes,
+                require_hashes=pi.require_hashes,
                 index_url=index_url,
             ),
             python,
@@ -3479,12 +4976,23 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
     if code:
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **_not_found_extra(code, out, plan.record, plan.project, plan.script),
+        )
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
+    provided = _verify_distributions(
+        python,
+        plan.record,
+        plan.requirements,
+        plan.constraints,
+        user_specified=plan.user_specified,
+    )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
     # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
     # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）。「看事件 + 定提交」
     # 与 `cancel_status` 同一把锁，两边只会有一个赢
@@ -3499,19 +5007,22 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
             plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
-    projectenv.remember(plan.project, python, automatic=False, trigger="dependency_repair")
+    projectenv.remember(plan.project, python, automatic=False, trigger=TRIGGER_DEPENDENCY_REPAIR)
     pool.note_project_python_ok(python)
     pool.invalidate(plan.script, plan.project)
     depplan.reset_cache(python)
     _note_round(plan.project, plan.script)
     with _lock:
         _gate_skipped.discard((plan.project_id, plan.script))
+    installed = _versions_of(python, [r["distribution"] for r in plan.record])
     result = {
         "ok": True,
         "python": python,
         "target_kind": TARGET_PROJECT_VENV,
-        "installed": _versions_of(python, [r["distribution"] for r in plan.record]),
+        "installed": installed,
+        "providers": _provider_receipt(plan.record, provided, installed, ""),
     }
+    _note_unreadable_installs(plan.project, plan.record, python)
     _emit(plan.plan_id, STATE_DONE, on_event, joint=plan, result=result)
     return result
 
@@ -3535,14 +5046,18 @@ class _GenerationJob:
     emit: object  # (state, **kw) -> dict
     on_log: object  # (text) -> None
     label: str = "generation"  # 快照文件名里的动作名（`after-<label>`）
-    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）；重建 / 包管理首装为假——
-    #: 那两条路没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
+    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）：联合准备 / 单包修复由计划载荷、包管理首装由作业载荷、
+    #: 重建由用户回传的载荷 id 授权；没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
     provision_private: bool = False
     #: 计划里告诉用户的那段私有 Python 载荷（`offer_payload()` / `present_payload()`）：执行时来源必须还是它说的
     #: 那一处（`origin`、同一个 id），否则 `repair_plan_stale`——不静默换源、不变成联网下载（ADR 0111 §一）。
     private_plan: dict | None = None
     #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
     replan: bool = False
+    #: 用户确认的那份 pip 输入与影响（`plan.pip_inputs` / `plan.impact`）：替身重算之后的真输入必须与之逐项
+    #: 相同，否则 `dependency_impact_changed`、不装（Codex #814 r4218254708 后续，`_replan_on_base`）。
+    confirmed_inputs: "PipInputs | None" = None
+    confirmed_impact: dict | None = None
     #: 单包修复才有：`_attempted` 的键 (项目指纹, 环境 key, 需求串)。**只在 pip 退出码 0 之后**登记
     #: （#466 的纪律；下载私有 Python 失败 / 取消 / pip 没跑成都不算「装过」）；其余三条路为空。
     attempted: tuple = ()
@@ -3551,10 +5066,26 @@ class _GenerationJob:
     requested: object = None
     #: 用户确认的那份计划是按哪些输入算的（`JointRepairPlan.inputs_digest`）：重算时输入变了就停。
     inputs_digest: str = ""
+    #: 「换成本作用域」（D04）：这一代只装本作用域的集合（不并入账上别的作用域的包），active 之后账一并换掉。
+    replace_ledger: bool = False
+    #: 租约在手之后复查全局显式解释器（E05）：装进去也不会被用的环境，一个字节都不装（联合准备用；重建 / 包管理
+    #: 首装是用户对受管环境本身的明确动作，不查）。
+    refuse_pinned: bool = False
+    #: 用户指定、未经可信来源核实的需求（`JointRepairPlan.user_specified`）：替身重算（`_replan_on_base`）要把它们再交给
+    #: `depplan.plan`，装后核验（`_verify_distributions`）对这些 import 更严（读不出 = 失败）。
+    user_specified: tuple[dict, ...] = ()
+    #: 运行时观察到缺了的顶层模块名（`JointRepairPlan.extra_imports`）：替身重算时再交给 `depplan.plan`。
+    extra_imports: tuple[str, ...] = ()
+    #: Diagnostic observations only; never consulted by the environment transaction.
+    diagnostic: dict = dataclasses.field(default_factory=dict, compare=False, repr=False)
 
 
 def generation_requirements(
-    project: str | Path, delta: tuple[str, ...], *, hash_mode: bool = False
+    project: str | Path,
+    delta: tuple[str, ...],
+    *,
+    hash_mode: bool = False,
+    replace: bool = False,
 ) -> tuple[str, ...]:
     """这一代的完整集合：adapter + 账上记过的 + 这次的（去重、稳定顺序）。
 
@@ -3569,8 +5100,19 @@ def generation_requirements(
         return tuple(dict.fromkeys(delta))
     out: list[str] = list(depplan.ADAPTER_REQUIREMENTS)
     delta_names = {depresolve.normalize_distribution(_name_of(r)) for r in delta}
-    for req in managedenv.installed_requirements(project):
-        if depresolve.normalize_distribution(_name_of(req)) in delta_names:
+    # 互斥的 provider（`cv2` 的四个）：这次点名了其中一个，账上记过的另一个就是被替掉的，不能合并带回来（P02，AC-08）
+    replaced = (
+        set().union(*(depresolve.provider_peers(n) for n in delta_names)) if delta_names else set()
+    )
+    ledger = [] if replace else managedenv.installed_requirements(project)
+    # 账上已经同时有两个互斥 provider（上一次换代的账没来得及清）：只留最后记的那一个
+    for i, req in enumerate(ledger):
+        later = {depresolve.normalize_distribution(_name_of(r)) for r in ledger[i + 1 :]}
+        if depresolve.provider_peers(_name_of(req)) & later:
+            replaced.add(depresolve.normalize_distribution(_name_of(req)))
+    for req in ledger:
+        key = depresolve.normalize_distribution(_name_of(req))
+        if key in delta_names or key in replaced:
             continue
         if req not in out:
             out.append(req)
@@ -3588,22 +5130,85 @@ def _name_of(requirement: str) -> str:
     return text
 
 
+def _note_unreadable_installs(project: str, record, python: str = "") -> None:
+    """联合安装 / 换代事务成功提交之后，按账里每一条的 import 名记一笔「装过了」（`pool.note_unreadable_install`，ADR 0153）：
+    装好后读不了的项目外文件夹里同一个模块仍然失败时，不再弹第二次安装卡。没有 import 名的条目（用户指定的包）跳过。"""
+    for entry in record or ():
+        name = entry.get("import_name") if isinstance(entry, dict) else ""
+        if name:
+            pool.note_unreadable_install(project, name, python)
+
+
+def _observe_generation(job: _GenerationJob, run) -> dict:
+    """Record terminal facts once, including for callers that already hold the lease."""
+    project = job.project
+    facts = job.diagnostic
+    facts["started_at"] = time.time()
+    recorded = False
+
+    def record_terminal(outcome: str, code: str | None = None) -> None:
+        nonlocal recorded
+        if recorded:
+            return
+        recorded = True
+        facts.update(outcome=outcome, error_code=code, finished_at=time.time())
+        with _lock:
+            source = (_progress.get(job.progress_id) or {}).get("pypi_source")
+        facts["source"] = {PIP_SOURCE_USER: "custom", PIP_SOURCE_MIRROR: "mirror"}.get(
+            source, source
+        )
+        envdiag.record_job(project, facts)
+
+    emit = job.emit
+
+    def emit_observed(state, **kwargs):
+        if state in (STATE_DONE, STATE_CANCELLED, STATE_FAILED):
+            record_terminal(state, kwargs.get("code"))
+        return emit(state, **kwargs)
+
+    job = dataclasses.replace(job, emit=emit_observed)
+    try:
+        result = run(job)
+        record_terminal("done" if result.get("ok") else result.get("state", "unknown"))
+        return result
+    except Exception as exc:
+        record_terminal("failed", getattr(exc, "code", None))
+        raise
+    finally:
+        record_terminal("unknown")
+
+
 def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
     project = job.project
     key = _env_key(TARGET_MANAGED, "", project)
     active_python = managedenv.python_of(project) or ""
-    try:
-        # 锁：合成 key（序列化同一项目的两次换代）+ active 那一代的解释器（挡住包管理的原地
-        # 作业同时改它——两者的账要一致）。**不收掉旧代上的 worker**（`shutdown=False`）：
-        # 旧代目录不动，它们跑完自然作废；native 会话同理不杀（有就拒绝开始）。
-        with pool.mutating_environment(key, active_python, shutdown=False):
-            return _run_generation_locked(job, cancel_ev, key)
-    except pool.EnvironmentBusy as exc:
-        raise _busy_error(exc) from exc
+
+    def under_lease(observed):
+        try:
+            # Existing callers of _run_generation_locked already hold this
+            # lease; only the top-level generation path acquires it here.
+            with pool.mutating_environment(key, active_python, shutdown=False):
+                if observed.refuse_pinned:
+                    _refuse_if_pinned()
+                return _run_generation_locked(observed, cancel_ev, key)
+        except pool.EnvironmentBusy as exc:
+            raise _busy_error(exc) from exc
+
+    return _observe_generation(job, under_lease)
+
+
+def _require_record_sources(record) -> None:
+    """装入记录每条都要带「凭什么装它」（P03 回执合同）。在任何副作用之前查：回执是在新一代**激活之后**才生成的，
+    到那时再因缺来源抛错，会留下「已切到新一代、任务却报失败」的错位状态。"""
+    for rec in record or ():
+        dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+        if dist and str(rec.get("resolution_source") or "") not in depresolve.INSTALLABLE_SOURCES:
+            raise RepairError(ERROR_FAILED, f"装入记录缺 resolution_source: {dist}")
 
 
 def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key: str) -> dict:
     project = job.project
+    _require_record_sources(job.record)
     job.emit(STATE_PREPARING)
     managedenv.retire_unused(project, in_use=_generation_in_use)
     base = base_python()
@@ -3623,7 +5228,10 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         job = _replan_on_base(job, base)
     if not base_runtime:
         base_runtime = _private_runtime_of(base)
-    requirements = generation_requirements(project, job.delta, hash_mode=job.require_hashes)
+    requirements = generation_requirements(
+        project, job.delta, hash_mode=job.require_hashes, replace=job.replace_ledger
+    )
+    job.diagnostic["requested"] = [_name_of(req) for req in requirements]
     identity = job.identity or depplan._digest(
         {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
     )
@@ -3670,6 +5278,8 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             result={"generation": generation, "activated": False},
         )
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc == RC_ACTIVATION_UNAVAILABLE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, out[:400])
     if rc != 0:
         managedenv.mark_generation(project, generation, managedenv.GEN_STATE_INCOMPLETE, "没有 pip")
         raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
@@ -3699,10 +5309,18 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             result={"generation": generation, "activated": False},
         )
     if code:
+        job.diagnostic["pip_error_type"] = code
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
-        raise RepairError(code, _sanitize(out)[-800:])
+        not_found = _not_found_extra(code, out, job.record, job.project, job.script)
+        if isinstance(not_found.get("not_found"), dict):
+            job.diagnostic["failed"] = [not_found["not_found"].get("name")]
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **not_found,
+        )
     if job.attempted:
         # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
         # 防循环的黑名单这时才登记——与项目 venv 那条路 `_run_install` 的登记点同一语义
@@ -3723,6 +5341,15 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "关键 import 失败"
         )
         raise exc
+    try:
+        provided = _verify_distributions(
+            python, job.record, job.delta, job.constraints, user_specified=job.user_specified
+        )
+    except RepairError as exc:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "装上的发行包与计划不符"
+        )
+        raise exc
     if cancel_ev.is_set():
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "验证期间取消"
@@ -3737,7 +5364,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
         )
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
     # ---- 提交点：切 active。之后拒绝取消 ----
     # 自检期间接受的取消要算数（Codex #461 P2）：「看事件 + 定提交」与 `cancel_status`「看提交 +
     # 设事件」同一把锁——接受了的取消不会与提交交错，两边只会有一个赢
@@ -3756,9 +5383,49 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
+    inv = inventory(python)
+    installed = {
+        name: str(inv[name].get("version") or "")
+        for rec in job.record
+        if inv
+        and (name := depresolve.normalize_distribution(str(rec["distribution"]))) in inv
+        and inv[name]
+    }
+    if inv is not None:
+        job.diagnostic["installed"] = [
+            {"name": name, "version": str(info.get("version") or "")}
+            for name, info in inv.items()
+            if isinstance(info, dict)
+        ]
+    scope = scope_of(job.script) if job.script else ""
+
+    def ledger_fields(rec: dict) -> dict:
+        return {
+            "import_name": str(rec.get("import_name") or ""),
+            "distribution": str(rec["distribution"]),
+            "requested_specifier": str(rec.get("specifier") or ""),
+            "resolved_version": installed.get(
+                depresolve.normalize_distribution(str(rec["distribution"])), ""
+            ),
+            "reason": job.reason,
+            # 这笔是为哪个作用域（脚本所在目录）装的：之后别的作用域的声明与它互斥时能认出来（D04）
+            "scope": scope,
+        }
+
     try:
         managedenv.activate(
-            project, generation, python_version=managedenv.python_version_of(python)
+            project,
+            generation,
+            python_version=managedenv.python_version_of(python),
+            # 「换成本作用域」：新账（只含本作用域这一笔集合）与 active 同一次 manifest 提交落盘
+            ledger=[managedenv.ledger_entry(**ledger_fields(r)) for r in job.record]
+            if job.replace_ledger
+            else None,
+        )
+        job.diagnostic.update(
+            committed=True,
+            activated_at=time.time(),
+            generation=projectenv.environment_generation(python),
         )
     except OSError as exc:
         # 清单没落盘 = 没切：撤回「已提交」，这一代按 incomplete 记（尽力而为），如实报失败
@@ -3770,26 +5437,21 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         raise RepairError(ERROR_MANAGED_WRITE_FAILED, f"环境清单写入失败: {exc}") from exc
     # 这一代装完之后的 freeze 快照：修复时的对照（不是回滚，ADR 0038）
     managedenv.record_snapshot(project, f"after-{job.label}", _freeze(python))
-    installed = _versions_of(python, [r["distribution"] for r in job.record])
-    for rec in job.record:
-        managedenv.record_install(
-            project,
-            import_name=str(rec.get("import_name") or ""),
-            distribution=str(rec["distribution"]),
-            requested_specifier=str(rec.get("specifier") or ""),
-            resolved_version=installed.get(
-                depresolve.normalize_distribution(str(rec["distribution"])), ""
-            ),
-            reason=job.reason,
-        )
+    if not job.replace_ledger:
+        for rec in job.record:
+            # 新记的 provider 替掉了账上互斥的那个（`cv2`）：旧的划掉，否则之后按账重建会两个一起装回来
+            for peer in depresolve.provider_peers(str(rec["distribution"])):
+                managedenv.forget_install(project, peer)
+            managedenv.record_install(project, **ledger_fields(rec))
     health = projectenv.probe_environment(python)
     projectenv.remember(
         project,
         python,
         automatic=False,
-        trigger="dependency_repair",
+        trigger=TRIGGER_DEPENDENCY_REPAIR,
         health=health if health.get("ok") else None,
     )
+    job.diagnostic["adopted_at"] = time.time()
     pool.note_project_python_ok(python)
     pool.reset_worker_python()
     if job.script:
@@ -3812,15 +5474,55 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         "generation": generation,
         "activated": True,
         "installed": installed,
+        "providers": _provider_receipt(job.record, provided, installed, generation),
         "retired": retired,
     }
+    _note_unreadable_installs(project, job.record, python)
     job.emit(STATE_DONE, result=result)
     LOG.info("受管环境换代: %s → %s（装 %d 条）", project, generation, len(requirements))
     return result
 
 
+def _provider_receipt(
+    record, provided: list[dict], installed: Mapping[str, str], generation: str
+) -> list[dict]:
+    """成功回执里「这一代真正用的 provider」（P03，AC-08 / AC-09）：每个装进来的 (import 名, 发行包) 的实际版本、凭什么装它
+    （`resolution_source`：project_declared / curated / user_specified）、装后重新读元数据看到的来源种类（`provenance`，`index` 才是可由包索引重现），
+    以及落在哪一代。只含发行包名 / 版本 / 来源种类，不带路径；装后读不出来源的条目 `provenance` 留空，不编造。"""
+    seen = {(p["import_name"], p["distribution"]): p for p in provided}
+    out: list[dict] = []
+    for rec in record:
+        dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+        if not dist:
+            continue
+        imp = str(rec.get("import_name") or "")
+        source = str(rec.get("resolution_source") or "")
+        if source not in depresolve.INSTALLABLE_SOURCES:
+            # 回执的 source 只能是「凭什么装它」的三种之一；record 漏带就是构造处的缺陷，不静默写空串
+            raise ValueError(f"装入记录缺 resolution_source: {dist}")
+        got = seen.get((imp.split(".")[0], dist))
+        out.append(
+            {
+                "import_name": imp,
+                "distribution": dist,
+                # 核验过的提供者版本优先：venv 开了 system site-packages 时 inventory 可能留下被遮蔽的那份（Codex #964）
+                "version": str((got or {}).get("version") or installed.get(dist) or ""),
+                "source": source,
+                "provenance": str((got or {}).get("provenance") or ""),
+                "generation": generation,
+            }
+        )
+    return out
+
+
 def _generation_in_use(python: str) -> bool:
-    return pool.safe_workers_using(python) > 0 or bool(envlease.native_sessions_on(python))
+    return (
+        pool.safe_workers_using(python) > 0
+        or bool(envlease.native_sessions_on(python))
+        or bool(
+            envlease.retained_on(python)
+        )  # AI 修复会话保留的旧代（change_python 之后还要能回滚）
+    )
 
 
 def _private_runtime_in_use(runtime_id: str, python: str) -> bool:
@@ -3845,6 +5547,43 @@ def _private_runtime_of(base: str) -> str:
     return source.id if same else ""
 
 
+def _verify_replanned_inputs(job: _GenerationJob, new: _GenerationJob, adapter) -> None:
+    """重算出的真 pip 输入（同一个 `PipInputs`）必须与用户确认的逐项相同；不同 = 用户授权的不是这件事：
+    把此刻的实际影响与新摘要记进进度终态（界面 / MCP 重新披露），抛 `dependency_impact_changed`，一个字节不装。"""
+    confirmed = job.confirmed_inputs
+    if confirmed is None:
+        return
+    actual = PipInputs(
+        requirements=tuple(new.delta),
+        constraints=tuple(new.constraints),
+        hashes={k: tuple(v) for k, v in new.hashes.items()},
+        require_hashes=new.require_hashes,
+        adapter=tuple(adapter),
+    )
+
+    def view(pi: PipInputs) -> tuple:
+        return (
+            sorted(pi.requirements),
+            sorted(pi.constraints),
+            sorted((k, tuple(v)) for k, v in pi.hashes.items()),
+            bool(pi.require_hashes),
+            sorted(pi.adapter),
+        )
+
+    if view(actual) == view(confirmed):
+        return
+    now = {
+        **(job.confirmed_impact or {}),
+        "installs": sorted(actual.requirements),
+        "constraints": sorted(actual.constraints),
+        "adapter": sorted(actual.adapter),
+        "require_hashes": bool(actual.require_hashes),
+    }
+    message = "私有 Python 就位后重算出的安装内容与你确认的不一致，请重新查看再确认"
+    job.emit(STATE_FAILED, code=ERROR_IMPACT_CHANGED, error=message, impact=now)
+    raise RepairError(ERROR_IMPACT_CHANGED, message, impact=now, impact_digest=impact_digest(now))
+
+
 def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
     """替身算的计划在真解释器上重算一遍：delta / 关键 import / 记账 / 身份都换成真量的（U05 PR B）。
 
@@ -3856,13 +5595,19 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
     )
     if facts is None:
         raise RepairError(privatepython.ERROR_LAUNCH_FAILED, "私有 Python 量不出目标事实")
-    plan = depplan.plan(
-        job.project,
-        job.script,
-        facts=facts,
-        target_kind=TARGET_MANAGED,
-        groups=list(job.groups) or None,
-    )
+    try:
+        plan = depplan.plan(
+            job.project,
+            job.script,
+            facts=facts,
+            target_kind=TARGET_MANAGED,
+            groups=list(job.groups) or None,
+            user_specified={u["import_name"]: u["requirement"] for u in job.user_specified} or None,
+            extra_imports=job.extra_imports,
+        )
+    except depplan.UserSpecifiedRejected as exc:
+        # 下载期间脚本 / 声明变了，用户指定的那个 import 不再是来源未定的表外名：用户确认的不是这件事
+        raise RepairError(ERROR_PLAN_STALE, "下载期间脚本或依赖声明发生了变化") from exc
     # 重算读的是**此刻**的脚本与声明：用户确认的是按当时输入算的那份。下载期间脚本多了一个 import、
     # requirements 多了一行，就不能顶着旧 plan_id 装进去——输入指纹不同即 stale，一个字节不装（Codex #475 P1）
     if plan.inputs_digest != job.inputs_digest:
@@ -3874,7 +5619,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         wide = _fold_requested(job.requested, plan)
         if wide is None:
             raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
-        return dataclasses.replace(
+        new = dataclasses.replace(
             job,
             delta=wide.requirements,
             constraints=wide.constraints,
@@ -3885,24 +5630,32 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
             identity="",
             replan=False,
         )
-    return dataclasses.replace(
+        # 单包的 adapter 是常量（`generation_requirements` 恒并入），与确认时同一份
+        _verify_replanned_inputs(
+            job, new, job.confirmed_inputs.adapter if job.confirmed_inputs else ()
+        )
+        return new
+    new = dataclasses.replace(
         job,
         delta=tuple(plan.requirements),
         constraints=tuple(plan.constraints),
         hashes={k: tuple(v) for k, v in plan.hashes.items()},
         require_hashes=plan.require_hashes,
-        needed_imports=tuple(m["import_name"] for m in plan.missing),
+        needed_imports=tuple(m["import_name"] for m in plan.install_entries if m["import_name"]),
         record=tuple(
             {
                 "import_name": m["import_name"],
                 "distribution": m["distribution"],
                 "specifier": ",".join(m["specifiers"]),
+                "resolution_source": str(m.get("resolution_source") or ""),
             }
-            for m in plan.missing
+            for m in plan.install_entries
         ),
         identity=plan.identity,
         replan=False,
     )
+    _verify_replanned_inputs(job, new, plan.adapter)
+    return new
 
 
 def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
@@ -4072,20 +5825,25 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
+        # 激活捕获与 import 探测共用一个预算
+        env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), projectenv.PROBE_TIMEOUT_S
+        )
         proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _IMPORTS_PROBE_SRC, *names],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=projectenv.PROBE_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.owned_env(python),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return {n: str(exc)[:200] for n in names}
+    # `launcher.LauncherUnavailable` 不在这里折成逐个模块的错误：调用方（`_verify_imports`）报稳定码
     finally:
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -4096,14 +5854,154 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     return {n: str(data.get(n, "no result")) for n in names}
 
 
+def _raise_if_activation_unavailable(health: dict) -> None:
+    """装后体检遇到 Conda 激活取环境失败：报瞬时的 `conda_launcher_unavailable`，不报成“装了还 import 不了”
+    （那会叫用户去查包、把受管的一代标成不完整）。"""
+    if not health.get("ok") and health.get("code") == launcher.UNAVAILABLE_CODE:
+        raise RepairError(
+            launcher.UNAVAILABLE_CODE, str(health.get("detail") or "")[:400], health=health
+        )
+
+
 def _verify_imports(python: str, names: tuple[str, ...]) -> None:
-    failed = {n: e for n, e in probe_imports(python, names).items() if e}
+    try:
+        results = probe_imports(python, names)
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时，不是“装了还 import 不了”——不许标记这一代不完整、不许叫用户去查包
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+    failed = {n: e for n, e in results.items() if e}
     if failed:
         raise RepairError(
             ERROR_IMPORT_STILL_FAILED,
             "; ".join(f"{n}: {e}" for n, e in failed.items())[:800],
             imports=failed,
         )
+
+
+#: 装后「发行包与版本」核验的失败原因码（`RepairError(ERROR_IMPORT_STILL_FAILED).extra["imports"]` 的值；闭集，不是新错误码）
+DIST_NOT_INSTALLED = "distribution_not_installed"  # 计划要装的发行包在目标环境里没有
+DIST_VERSION_MISMATCH = "distribution_version_mismatch"  # 装上的版本不满足计划里的约束
+DIST_DOES_NOT_PROVIDE = "distribution_does_not_provide_import"  # 装上了，但提供这个 import 的是别人（或没有任何发行包认领）
+DIST_UNVERIFIABLE = "distribution_unverifiable"  # 用户指定的包：读不出它提供什么，不放行
+#: 上面四个的闭集（顺序与 `web/src/lib/api.ts` 的 `DIST_FAILURE_REASONS` 一对同源）。进度终态的 `dist_reasons` 只带这里的码
+DIST_REASONS = (DIST_NOT_INSTALLED, DIST_VERSION_MISMATCH, DIST_DOES_NOT_PROVIDE, DIST_UNVERIFIABLE)
+
+
+def dist_reasons_of(exc: BaseException) -> list[str]:
+    """`dependency_import_still_failed` 的 `extra["imports"]` 里属于 `DIST_REASONS` 的那些原因码（去重、按闭集顺序）。
+
+    只出码、不出名字：进度记录经 SSE 广播给每个订阅者，界面据此按原因分别说人话，不必去解析 `error` 文案（那是给人读的）。
+    普通的 import 失败（`probe_imports` 的异常原文）不在闭集里，不出——没有闭集就不放进载荷。"""
+    if getattr(exc, "code", "") != ERROR_IMPORT_STILL_FAILED:
+        return []
+    got = (getattr(exc, "extra", None) or {}).get("imports")
+    values = set(got.values()) if isinstance(got, dict) else set()
+    return [r for r in DIST_REASONS if r in values]
+
+
+def _verify_distributions(
+    python: str,
+    record: tuple[dict, ...] | list[dict],
+    requirements: tuple[str, ...] | list[str],
+    constraints: tuple[str, ...] | list[str] = (),
+    *,
+    user_specified: tuple[dict, ...] | list[dict] = (),
+) -> list[dict]:
+    """装后「发行包与版本」核验（Import Origin PR5b）：`pip` 退出码 0、`import X` 成功，都不等于**装上的就是计划要装的那个包**。
+
+    重新量目标环境（`target_facts(use_cache=False)` + 同一刻读的 `static_index`，只读 `distmeta` 的元数据，不 import 用户包），对照：
+
+    1. 计划里每个要装的发行包（`requirements`）已出现在目标环境里，版本满足它自己与 `constraints` 里的约束；
+    2. `record` 里每个 (import 名, 发行包) 的发行包确实是**提供**那个 import 的（`Index.lookup` 里未被遮蔽的候选）——
+       `import foo` 能成功，可能是因为别的包（装上的包的传递依赖、`PYTHONPATH` 里的同名模块）提供了它，而不是用户 / 表指定的这个包。
+
+    不一致 → `RepairError(ERROR_IMPORT_STILL_FAILED)`（与「装成功但 import 失败不 ready」同一条失败路径与错误码；受管环境保持旧代、
+    用户 venv 就地安装的不可完整回滚照旧披露），`extra["imports"]` 是 {名字: 原因码}。
+
+    **判不出就别判**：非用户指定的 import 在读不出 / 没有任何发行包认领它时跳过第 2 项（没有证据 ≠ 不一致；`import` 验证已过）；
+    **用户指定**的包（`user_specified`）是唯一没有可信来源背书的一类，读不出它提供什么就不放行（`DIST_UNVERIFIABLE`）。
+
+    通过时返回「这一代里实际提供这些 import 的发行包」`[{import_name, distribution, version, provenance}]`（P03，回执用）：来自装后
+    重新读的静态索引里**未被遮蔽**、且正是计划里那个发行包的候选；读不出的不列（不编造）。
+    """
+    strict = {str(u.get("import_name") or "") for u in user_specified}
+    wanted: dict[str, list[str]] = {}
+    for text in requirements:
+        it = depresolve.parse_intent(str(text))
+        if it is not None and it.declared:
+            wanted.setdefault(it.name, []).append(it.specifier)
+    limits: dict[str, list[str]] = {}
+    for text in constraints:
+        it = depresolve.parse_intent(str(text))
+        if it is not None and it.declared:
+            limits.setdefault(it.name, []).append(it.specifier)
+    problems: dict[str, str] = {}
+    provided: list[dict] = []
+    try:
+        try:
+            facts = depplan.target_facts(python, use_cache=False)
+        except launcher.LauncherUnavailable as exc:
+            # 装后核验时取不到激活环境：瞬时的 conda_launcher_unavailable，不是“装上的东西不对”
+            raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+        index = depplan.static_index(facts)
+    finally:
+        # 目标环境刚被改动（或这一代即将丢弃）：别让这次量到的事实留在缓存里冒充「装之前」
+        depplan.reset_cache(python)
+    if facts is None:
+        for imp in sorted(strict):
+            problems[imp] = DIST_UNVERIFIABLE
+    else:
+        observed: dict[str, str] = {}
+        if index is not None and index.checked:
+            for rec in record:
+                imp = str(rec.get("import_name") or "").split(".")[0]
+                if not imp:
+                    continue
+                for c in index.lookup(imp).candidates:
+                    if not c.shadowed and c.version:
+                        observed.setdefault(c.key, c.version)
+        for name, specs in sorted(wanted.items()):
+            # 版本以**未被遮蔽**的那份为准：先看静态索引里提供某个 import 的未遮蔽候选（按层顺序，Python 实际用的那份），
+            # 没有再退回 `facts.installed`（include-system-site-packages 的 venv 里同名发行包在两层各一份时别拿被遮蔽的）
+            version = observed.get(name) or facts.installed.get(name)
+            if version is None:
+                problems[name] = DIST_NOT_INSTALLED
+                continue
+            for spec in (*specs, *limits.get(name, ())):
+                if spec and depresolve.version_satisfies(spec, version) is False:
+                    problems[name] = DIST_VERSION_MISMATCH
+        for rec in record:
+            imp = str(rec.get("import_name") or "").split(".")[0]
+            dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+            if not imp or dist not in wanted:
+                continue  # 没要求 pip 装它（已满足 / 别的来源）：不属于「装上的包」
+            look = index.lookup(imp) if index is not None and index.checked else None
+            if look is None or look.order_unresolved:
+                if imp in strict:
+                    problems[imp] = DIST_UNVERIFIABLE
+                continue
+            live = [c for c in look.candidates if not c.shadowed]
+            hit = next((c for c in live if c.key == dist), None)
+            if hit is not None:
+                provided.append(
+                    {
+                        "import_name": imp,
+                        "distribution": dist,
+                        "version": hit.version,
+                        "provenance": hit.provenance,
+                    }
+                )
+                continue
+            if live or look.candidates or imp in strict:
+                # 别的发行包在提供它 / 计划里的发行包被排在前面的提供者遮蔽了（有候选、没有未被遮蔽的）/ 用户指定的包没有任何证据
+                problems[imp] = DIST_DOES_NOT_PROVIDE
+    if problems:
+        raise RepairError(
+            ERROR_IMPORT_STILL_FAILED,
+            "装上的发行包与计划不符: " + "; ".join(f"{k}: {v}" for k, v in problems.items())[:760],
+            imports=problems,
+        )
+    return provided
 
 
 def cancel_status(plan_id: str) -> dict:
@@ -4220,11 +6118,25 @@ def user_environment_candidates(
 ) -> list[dict]:
     """发现到的用户环境 + 老链条里的系统解释器（同一张表，去重、保序），去掉 `exclude`（正缺包的那个）。"""
     root = str(Path(project))
-    out = list(userenvs.discover(root, script))
-    out += [
-        {"python": py, "source": userenvs.SOURCE_SYSTEM, "label": ""}
-        for py, _src in pool.system_python_candidates()
-    ]
+    out: list[dict] = []
+    silent = projectenv.silent_adoption_enabled()
+    if not projectenv.legacy_adoption_enabled():
+        # 检测 / 确认模式（ADR 0114）：项目自己的 venv 是第一个候选——检测时它能跑就直接用，确认模式下用户在这张表里
+        # 点「改用」才算采用。旧模式里它归 `pool` 第 4 档管、不进这张表（`_auto_adopt_allowed` 不碰项目 venv）
+        for venv in projectenv.discover(root, script):
+            py = projectenv.interpreter_of(venv, root=root)
+            if py:
+                out.append(
+                    {"python": py, "source": userenvs.SOURCE_PROJECT_VENV, "label": Path(venv).name}
+                )
+    # 登录 shell 只在机器可以替用户决定时（检测 / 旧模式，都由用户发起的准备 / 运行触发）现问；确认模式只用明确
+    # 检查动作已经问出来的答案
+    out += (
+        userenvs.discover(root, script)
+        if silent
+        else userenvs.discover(root, script, ask_login_shell=None)
+    )
+    out += userenvs.system_candidates()
     seen: set = set()
     uniq: list[dict] = []
     skip = userenvs._key(exclude) if exclude else None
@@ -4234,7 +6146,21 @@ def user_environment_candidates(
             continue
         seen.add(key)
         uniq.append(c)
-    return uniq
+    # 体检有上限：先按静态相关性排好再交出去，截断才不会饿死靠后的项目匹配者（`userenvs.static_order`）
+    return userenvs.static_order(uniq, Path(root).name)
+
+
+def user_environment_python(project: str | Path, script: str, env_id: str) -> str | None:
+    """界面交回的 id → 本机发现结果里的解释器路径（只换路径，不体检）；找不到回 None。"""
+    cand = next(
+        (
+            c
+            for c in user_environment_candidates(str(Path(project)), script)
+            if userenvs.env_id(c["python"]) == env_id
+        ),
+        None,
+    )
+    return cand["python"] if cand else None
 
 
 def recheck_user_environment(project: str | Path, script: str, env_id: str) -> dict | None:
@@ -4266,6 +6192,78 @@ def recheck_user_environment(project: str | Path, script: str, env_id: str) -> d
     return userenvs.evaluate([cand], needed, unknown, use_cache=False)[0]
 
 
+def _evaluate_candidates(
+    root: str,
+    candidates: list[dict],
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+    **extra,
+) -> list[dict]:
+    """`userenvs.evaluate` 的唯一入口（检测 / 门的候选体检都经它）。**项目说了算的候选**（`userenvs.is_project_controlled`）
+    在用户明确点「运行」之前一个都不起：`project_exec=False` 时它们只读已有的体检缓存（`cache_only`，没有就是
+    `checked=False` 的「未检查」条目，与确认模式同一套机器），其余候选照旧。同顺序回（Codex 安全 #820 r4232804805）。"""
+    # 超出体检上限时按静态相关性入选（`userenvs.static_order`）
+    extra.setdefault("project_name", Path(root).name)
+    if project_exec or extra.get("cache_only"):
+        return userenvs.evaluate(candidates, needed, unknown, **extra)
+    # 体检上限（`userenvs.PROBE_LIMIT`）只在这里、拆分之前用一次：拆成两份各自再被 `evaluate` 截断，合起来就超过上限，
+    # 而且下面按原候选逐个取结果会取空（StopIteration 掐断准备；Codex #820 r4234324630）。超出上限的候选这一轮不看，
+    # 与 `evaluate` 自己的口径一致；结果只按**实际回来的**条目重组
+    candidates = candidates[: userenvs.PROBE_LIMIT]
+    held = [userenvs.is_project_controlled(c, root) for c in candidates]
+    live_in = [c for c, h in zip(candidates, held) if not h]
+    cached_in = [c for c, h in zip(candidates, held) if h]
+    # 运行之前：脚本要的模块不 import（落在项目里的延后），见 `userenvs.evaluate(root=)`
+    live = userenvs.evaluate(live_in, needed, unknown, root=root, **extra)
+    cached = userenvs.evaluate(cached_in, needed, unknown, **{**extra, "cache_only": True})
+    by_id = {id(c): e for c, e in zip(live_in, live)}
+    by_id.update({id(c): e for c, e in zip(cached_in, cached)})
+    return [by_id[id(c)] for c in candidates if id(c) in by_id]
+
+
+def static_plan_payload(project: str | Path, script: str) -> dict | None:
+    """不解析任何解释器的联合计划载荷（`_static_joint_plan`）；算不出来回 None。"""
+    try:
+        return _static_joint_plan(str(Path(project)), script).to_payload()
+    except Exception:  # noqa: BLE001 — 算不出来就当没有
+        return None
+
+
+def project_check_pending(project: str | Path, script: str, plan_payload: dict) -> bool:
+    """检测模式下，项目自带的候选解释器（`userenvs.is_project_controlled`）里有没有**还没体检**、也许能跑这个脚本的：
+    有 = 现在不能说「这个脚本需要安装包」——项目环境要等用户点「运行」才会被体检（Codex 安全 #820 r4232804805），
+    报告于是以「运行」为主，不先推用户去往受管环境装包。体检缓存里已有「跑不了」结论的不算。"""
+    if projectenv.adoption_mode() != projectenv.ADOPTION_DETECT or _user_env_discovery_off():
+        return False
+    root = str(Path(project))
+    needed, unknown = _plan_imports(plan_payload)
+    if not needed and not unknown:
+        return False
+    candidates = [
+        c
+        for c in user_environment_candidates(root, script)
+        if not envlease.is_mutating(c["python"])
+    ]
+    held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    free = [c for c in candidates if c not in held]
+    # 项目说了算的候选还没体检；或别的候选已经体检（不 import）过、有模块解析进了项目——都等运行再量
+    if held and any(
+        e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    ):
+        return True
+    return bool(free) and any(
+        e.get("deferred")
+        for e in userenvs.evaluate(free, needed, unknown, cache_only=True, root=root)
+    )
+
+
+def _reprobe_needed(entry: dict, root: str, project_exec: bool) -> bool:
+    """要不要在采用前现量一次：项目说了算的候选只有点了「运行」之后才能量。"""
+    return project_exec or not userenvs.is_project_controlled(entry, root)
+
+
 def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
     带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——
@@ -4278,12 +6276,26 @@ def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     return needed, list(plan.get("unknown") or [])
 
 
+def script_import_names(project: str | Path, script: str) -> list[str] | None:
+    """这个脚本开跑要 import 得到的第三方名（静态：只读源码，不起解释器；`static_plan_payload` 同一份计划）。
+
+    与依赖门 / 检测「装齐」同一个判据：`_plan_imports` 的 `missing + satisfied` 与映射不到包名的 `unknown`，去重保序——
+    `envadvice.check(modules=)` 量的就是这一组，缓存键因此与 `userenvs.evaluate` 对得上。算不出回 None。"""
+    payload = static_plan_payload(project, script)
+    if payload is None:
+        return None
+    needed, unknown = _plan_imports(payload)
+    return list(dict.fromkeys([n["import_name"] for n in needed if n.get("import_name")] + unknown))
+
+
 def _user_env_discovery_off() -> bool:
     # 判据唯一出处在 projectenv：运行后缺包的接手（`pool.try_project_env`，ADR 0107）读同一个开关
     return projectenv.auto_adoption_off()
 
 
-def unknown_imports_missing(plan: dict, python: str) -> list[str]:
+def unknown_imports_missing(
+    plan: dict, python: str, root: str = "", overlay: dict | None = None
+) -> list[str]:
     """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
     2026-09-25，QA ENV-08-B1）。
 
@@ -4298,7 +6310,16 @@ def unknown_imports_missing(plan: dict, python: str) -> list[str]:
         return []
     # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
     bundled = pool.same_python(python, runtime.bundled_python())
-    return userenvs.imports_missing(python, unknown, bundled=bundled)
+    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root, overlay=overlay)
+
+
+def _unknown_missing_here(plan: dict, python: str, project: str, spec_root: str) -> list[str]:
+    """`unknown_imports_missing` 加上"项目记着的解释器若带叠加环境（ROOT），按带着它量"——否则每次都判成缺 ROOT、
+    重新发现一遍。没有叠加层时调用形状与以前逐字相同。"""
+    overlay = projectenv.remembered_overlay(project, python)
+    if overlay is None:
+        return unknown_imports_missing(plan, python, spec_root)
+    return unknown_imports_missing(plan, python, spec_root, overlay=overlay)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -4311,8 +6332,17 @@ def user_environment_offer(project: str | Path, script: str, plan: dict, python:
     needed, unknown = _plan_imports(plan)
     if not needed and not unknown:
         return []
-    entries = userenvs.evaluate(
-        user_environment_candidates(root, script, exclude=python), needed, unknown
+    # 确认模式（ADR 0114）：门不为了「显示推荐」去起候选解释器——只给已有的检查结论，没检查过的列成
+    # `checked=False`，用户点「检查并使用」时才由采用端点（`recheck_user_environment`）现场体检
+    extra = {} if projectenv.silent_adoption_enabled() else {"cache_only": True}
+    # 门 / 准备计划发生在用户点「运行」之前：项目自己的解释器只读缓存，不起（Codex 安全 #820 r4232804805）
+    entries = _evaluate_candidates(
+        root,
+        user_environment_candidates(root, script, exclude=python),
+        needed,
+        unknown,
+        project_exec=False,
+        **extra,
     )
     name = Path(root).name
     return sorted(entries, key=lambda e: (not e["satisfies"], userenvs.rank(e, name)))
@@ -4336,19 +6366,56 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
     # site-packages，记下来就是把一次半成品的观测变成项目的决策。这只是挑选时的过滤；真正挡住
     # 「在被占用的环境上起会话」的是调用方的顺序——决定落地之后才解析解释器、才查租约（`decide_environment`）
     free = [e for e in user_envs if not envlease.is_mutating(e["python"])]
-    entry = userenvs.best(free, Path(project).name)
-    if entry is None or not _auto_adopt_allowed(project, offer):
+    # 旧模式（legacy）的采用发生在起会话 / 运行的时刻：运行之前只读了 dist-info 的候选（`health_deferred`）现在用 import 方式真量
+    pending = [e for e in free if e.get("health_deferred")]
+    needed, unknown = _plan_imports(offer.get("plan") or {})
+    if pending:
+        real = {
+            e["python"]: e
+            for e in userenvs.evaluate(
+                [{k: e[k] for k in ("python", "source", "label") if k in e} for e in pending],
+                needed,
+                unknown,
+            )
+        }
+        free = [real.get(e["python"], e) if e.get("health_deferred") else e for e in free]
+    if not _auto_adopt_allowed(project, offer):
         return None
-    # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
-    # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
-    if not projectenv.remember(
-        project,
-        entry["python"],
-        automatic=True,
-        trigger=TRIGGER_USER_ENVIRONMENT,
-        health=entry,
-        only_if=_record_allows_auto_adopt,
-    ):
+    while True:
+        entry = userenvs.best(free, Path(project).name)
+        if entry is None:
+            return None
+        # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
+        # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
+        # 现量 + 提交整段占住目标环境（`envlease.inspecting`，与手动采用、检测路径同一条）：上面的 `is_mutating` 只是
+        # 挑选时的过滤，租约外那次真量只用来排序——真量期间另一个项目的卸载 / 升级可能已经做完，等拿到租约时环境
+        # 已空闲，过时的结论会被写进记录。所以选中的候选——不论先前结论来自延迟真量还是 import 缓存（Codex
+        # r4254586851）——在租约内一律现量一次，最终决定只认这一次；量不过 / 占不到（装包在跑）就换下一个。持租约期间只调体检与写项目设置，不会回头要安装租约
+        try:
+            with envlease.inspecting(entry["python"]):
+                fresh = userenvs.evaluate(
+                    [{k: entry[k] for k in ("python", "source", "label") if k in entry}],
+                    needed,
+                    unknown,
+                    use_cache=False,
+                )[0]
+                if not fresh.get("satisfies"):
+                    free = [e for e in free if e["python"] != entry["python"]]
+                    continue
+                entry = fresh
+                saved = projectenv.remember(
+                    project,
+                    entry["python"],
+                    automatic=True,
+                    trigger=TRIGGER_USER_ENVIRONMENT,
+                    health=entry,
+                    only_if=_record_allows_auto_adopt,
+                )
+        except envlease.EnvironmentBusy:
+            free = [e for e in free if e["python"] != entry["python"]]
+            continue
+        break
+    if not saved:
         return None
     # 不调 `pool.reset_worker_python()`：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目
     # 决策无关。（以前这里跑在持有 `pool._lock` 的 `_new_worker()` 里，再拿锁就是死锁——2026-09-23 真机
@@ -4395,13 +6462,37 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
         # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
         # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
-        unknown_missing = unknown_imports_missing(plan_payload, python)
+        unknown_missing = _unknown_missing_here(plan_payload, python, root, root)
         if unknown_missing:
             user_envs = user_environment_offer(root, script, plan_payload, python)
+    # 授权的实际影响（T06）：只有真能授权的计划才有——与 `create_joint_plan` 绑定出的计划同一个函数算出，
+    # 用户确认的是这一份的摘要，执行前比的也是它
+    # 全局显式解释器压着（E05）：装进受管环境 / 项目 venv 都不会被用，没有可授权的影响，也不给"换成本作用域"；
+    # 只把"是谁锁的"说出口（来源与变量名，不带路径——公开投影）
+    pinned = pinned_payload()
+    impact = None
+    if pinned is None and (
+        joint.status == depplan.STATUS_READY
+        or (clean and joint.status == depplan.STATUS_NOTHING_NEEDED)
+    ):
+        impact = offer_impact(root, joint, target_kind, python)
+    # 作用域互斥（D04）：不并入，但给一条明确的出路——「换成本作用域」的计划与影响（它自己的摘要，更大的影响：
+    # 账上别的作用域的包不再 active）
+    scope_switch = None
+    if (
+        pinned is None
+        and joint.status == depplan.STATUS_BLOCKED
+        and any(b.get("code") == depplan.BLOCK_SCOPE_CONFLICT for b in joint.blocked)
+    ):
+        scope_switch = _scope_switch_offer(root, script, target_kind, python)
     offer = {
         "code": ERROR_PREPARATION_REQUIRED,
         "script": script,
         "plan": plan_payload,
+        "impact": impact,
+        "impact_digest": impact_digest(impact) if impact else "",
+        "scope_switch": scope_switch,
+        "pinned": {"source": pinned["source"], "variable": pinned["variable"]} if pinned else None,
         "target_kind": target_kind,
         "targets": joint_targets(root, target_kind, python),
         "rounds_remaining": rounds_remaining(root, script),
@@ -4417,14 +6508,58 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     return offer, user_envs
 
 
+def _scope_switch_offer(root: str, script: str, kind: str, python: str) -> dict | None:
+    """「换成本作用域」的可授权形态：按新一代只装本作用域的集合重新算一遍（`scope_policy=switch`），回
+    `{impact, impact_digest, requirements, drops}`；算不出来（目标量不出 / 计划不可执行）回 None。"""
+    try:
+        joint, _kind, _python = joint_plan_for(root, script, scope_policy=SCOPE_POLICY_SWITCH)
+    except pool.WorkerError:
+        return None
+    if joint.status != depplan.STATUS_READY:
+        return None
+    impact = offer_impact(root, joint, kind, python, SCOPE_POLICY_SWITCH)
+    if impact is None:
+        return None
+    return {
+        "impact": impact,
+        "impact_digest": impact_digest(impact),
+        "requirements": list(joint.requirements),
+        "drops": list(impact["drops"]),
+        "changes": list(impact["changes"]),
+    }
+
+
 def _gate_open(root: str, script: str) -> bool:
     """门还问不问（没轮次了 / 用户说过「直接跑」就不问，也不替它换环境）。"""
     return rounds_remaining(root, script) > 0 and not preparation_skipped(root, script)
 
 
 def decide_environment(project: str | Path, script: str) -> dict | None:
+    """`decide_environment_pinned` 的采用那一条（没换回 None）；只关心「换没换」的调用方用它。"""
+    return decide_environment_pinned(project, script).adopted
+
+
+def decide_environment_pinned(
+    project: str | Path, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
+    """（稳定出口包装：Conda 激活取环境失败 → 带 `conda_launcher_unavailable` 的 `WorkerError`，由 `preparation.plan_for` /
+    `_execute` 接住成稳定结论；真正的判据在 `_decide_environment_pinned`。）"""
+    try:
+        return _decide_environment_pinned(project, script, project_exec=project_exec)
+    except launcher.LauncherUnavailable as exc:
+        raise pool.WorkerError(str(exc), code=exc.code) from exc
+    except RepairError as exc:
+        if exc.code != launcher.UNAVAILABLE_CODE:
+            raise
+        raise pool.WorkerError(str(exc), code=exc.code) from exc
+
+
+def _decide_environment_pinned(
+    project: str | Path, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
     """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
-    机器替用户挑的，就把它记成本项目的自动决策；回采用的那一条（`userenvs.evaluate` 的形状），不换回 None。
+    机器替用户挑的，就把它记成本项目的自动决策；回 `pool.EnvironmentDecision`：`adopted` 是采用的那一条（`userenvs.evaluate` 的形状，没换 None）；检测模式还带
+    锁内钉下的解释器（见 `_detect_environment_pinned`）。
 
     **必须在「解析解释器」之前调**，它之后的一切都读决定之后的世界：准备计划的快照（`preparation.plan_for`：
     解释器、LaunchContext、环境事实——否则 `_stale_reason` 拿旧快照比新决策，第一次准备就以
@@ -4433,18 +6568,316 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     `gate()` 里、门又跑在快照与租约检查之后——两条 Codex #522 P1 是同一个顺序错误。
 
     工作目录还要先问时不决定：那道门排在依赖门前面，没答之前不起会话，也就轮不到换环境。"""
+    mode = projectenv.adoption_mode()
+    if mode == projectenv.ADOPTION_CONFIRM:
+        # 确认模式（ADR 0114）：「换不换解释器」不再由机器决定。候选环境的体检结果仍随跑前的门 / 修复
+        # 卡片的载荷（`user_environments`）交给用户，采用是他点的那一下——这里连门都不必问（不去量一遍
+        # 只为了发现自己不该做这个决定）
+        return pool.EnvironmentDecision()
+    if mode == projectenv.ADOPTION_DETECT:
+        root = str(Path(project))
+        if workdir.decision_for(root, script)["needs_confirmation"]:
+            # 与旧模式同一个顺序：运行目录那道门先问，没答之前一个进程都不起（检测要量解释器）
+            return pool.EnvironmentDecision()
+        return _detect_environment_pinned(root, script, project_exec=project_exec)
     root = str(Path(project))
     if not _gate_open(root, script):
-        return None
+        return pool.EnvironmentDecision()
     if workdir.decision_for(root, script)["needs_confirmation"]:
-        return None
+        return pool.EnvironmentDecision()
     got = _preparation_offer(root, script)
     if got is None:
-        return None
+        return pool.EnvironmentDecision()
     offer, user_envs = got
     if offer["plan"]["status"] != depplan.STATUS_READY and not offer.get("unknown_missing"):
+        return pool.EnvironmentDecision()
+    return pool.EnvironmentDecision(adopted=_auto_adopt(root, offer, user_envs))
+
+
+#: 检测模式的单飞：同一项目同一时刻只有一次检测在体检候选；后到的等它落地，再按落地之后的项目记录判断（通常直接
+#: 回 None——记录已经是能跑的那一个）
+_detect_locks: dict[str, threading.Lock] = {}
+_detect_guard = threading.Lock()
+
+
+def _detect_lock(root: str) -> threading.Lock:
+    key = projectenv._key(root)
+    with _detect_guard:
+        return _detect_locks.setdefault(key, threading.Lock())
+
+
+def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
+    """不解析任何解释器的联合计划：目标事实为空（什么都没装），只用来取脚本静态 import 出来的 `needed` / `unknown`
+    给候选体检。状态是 `blocked`（目标不可用），永远不会被当成「默认链条能跑」。"""
+    return depplan.plan(
+        root,
+        script,
+        facts=None,
+        target_kind=TARGET_MANAGED,
+        groups=depplan.selected_groups_setting(root),
+    )
+
+
+def _root_overlay_entries(
+    root: str,
+    entries: list[dict],
+    current: str,
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+) -> list[dict]:
+    """「候选解释器 × 用户装的 ROOT」的体检结果（`userenvs.evaluate` 的形状，带 `overlay`）。
+
+    底 = 此刻的解释器（内置 runtime 也算，它摘 `PYTHONPATH` 之后才叠）+ 已量过、健康、但装不齐的候选；
+    正被安装占着的不叠。Conda 环境也可以当底（2026-10-21 Win11 真机：conda-forge 在 Windows 上没有 `root` 包，
+    用户的 Python 3.14 恰是 conda-forge 的）：叠加层在激活增量**之后**叠（`pool.launch_env` / `projectenv._probe_environment`
+    同一个顺序），激活盖不掉它；conda-forge 自带 ROOT 的环境裸起就导入得了，根本走不到这里。
+    ROOT 至多拿最新的 2 个，组合至多 8 个，一个 ROOT 都找不到就是空表。点「运行」之前不起任何进程
+    （`cache_only`：叠加组合运行之前的体检要 import，那是明确的执行动作）。"""
+    installs = userenvs.root_installs()
+    if not installs:
+        return []
+    bases: list[dict] = []
+    seen: set = set()
+
+    def add(python: str, **extra) -> None:
+        if not python or userenvs._key(python) in seen or envlease.is_mutating(python):
+            return
+        seen.add(userenvs._key(python))
+        bases.append({"python": python, **extra})
+
+    if current:
+        add(current, bundled=pool.same_python(current, runtime.bundled_python()))
+    name = Path(root).name
+    for e in sorted(
+        (e for e in entries if e.get("ok") and not e.get("satisfies") and e.get("checked", True)),
+        key=lambda e: userenvs.rank(e, name),
+    ):
+        add(e["python"], python_version=e.get("python_version", ""))
+    combos = userenvs.overlay_candidates(bases, installs)
+    if not combos:
+        return []
+    return userenvs.evaluate(
+        combos, needed, unknown, cache_only=not project_exec, project_name=name
+    )
+
+
+def _detect_environment_unlocked(
+    root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
+) -> dict | None:
+    """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
+    （`userenvs.evaluate` 的形状），不换回 None。
+
+    「能跑」= 解释器健康 + 联合计划里脚本要的 import（缺的、已有的、映射不到包名的）全都 import 得到——与跑前的门、
+    依赖弹窗「装齐」同一个判据（`userenvs.evaluate` + `_plan_imports`），不另写。候选 = 项目 venv / 编辑器 /
+    `.python-version` / `environment.yml` / shebang / 登录 shell / Conda / pyenv / 系统（`user_environment_candidates`）。
+    挑选顺序：项目自己的线索 → 默认链条（内置，能跑就不换）→ 其余按 `userenvs.rank()`。
+
+    * 不动的：全局显式解释器（环境变量 / 设置里指定的）、用户为本项目选过且仍有效的、明确选回默认链条的——
+      `pool.machine_chosen_interpreter` 判为 False 的一个都不碰；
+    * 失效的记录（不在 / 被重建 / 体检不过）在这之前由 `resolve_worker_python` 作废（检测模式不停下，见
+      `pool._stops_when_unusable`），然后按「没决定过」重新检测；
+    * 机器先前定下的仍能跑 → 不动；不能跑 → 找别的能跑的换过去；都不能跑 → 检测自己记下的那条作废（装进 Tavotto
+      管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
+    * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
+      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。
+
+    `rejected`（调用方给的空表）：本轮体检过、最终没被选用的候选各追加一条落选原因
+    （`userenvs.rejection_reason`，稳定码、不带路径）。默认链条能跑且无项目候选可比时没有体检，表保持为空。"""
+    try:
+        current = pool.resolve_worker_python(root, script=script, discover=False)[0]
+    except pool.WorkerError as exc:
+        if getattr(exc, "explicit", None):
+            return None  # 显式选择失效：那是另一条错误，原路径去报
+        current = ""  # 一个 Python 都没有：照样找用户的环境，找不到才是一键私有 Python
+    if not pool.machine_chosen_interpreter(root):
         return None
-    return _auto_adopt(root, offer, user_envs)
+    record = projectenv.remembered_record(root)
+    try:
+        joint, _kind, python = joint_plan_for(root, script)
+    except pool.WorkerError:
+        if current:
+            return None
+        # 默认链条一个解释器都没有、也没有私有 Python 可提供：联合计划要先解析那个不存在的解释器，必然再抛一次。
+        # 脚本要哪些 import 是静态的（AST），不需要解释器——按「什么都没装」算一份，拿它去体检候选；
+        # 候选都跑不了才回到「安装缺少的组件」（Codex #820 r4232654893）
+        try:
+            joint = _static_joint_plan(root, script)
+        except Exception:  # noqa: BLE001 — 静态计划算不出来：不检测，原路径去报 no_worker_python
+            return None
+        python = ""
+    plan = joint.to_payload()
+    clean = private_python_target(root, script) is not None
+    runs_now = (
+        not clean
+        and joint.status == depplan.STATUS_NOTHING_NEEDED
+        and not _unknown_missing_here(plan, python, root, "" if project_exec else root)
+    )
+    needed, unknown = _plan_imports(plan)
+    candidates = user_environment_candidates(root, script, exclude=current or python)
+    # 两个互不相同的子集（Codex #820 r4233842661）：`declared` = 项目声明 / 指向的（排序里排在默认链条前面的那一档：
+    # 项目 venv / `.vscode` / `.python-version` / `environment.yml` / shebang，加上路径落在项目根里的）；`held` ⊂ 它 = 其中
+    # 项目说了算路径的（`is_project_controlled`），点「运行」之前不能起。`.python-version` / `environment.yml` 指向用户
+    # 自己 pyenv / Conda 里的环境，属于 `declared` 但不是 `held`：检查阶段照旧体检、按排序采用
+    held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    declared = [
+        c
+        for c in candidates
+        if c.get("source") in userenvs.PROJECT_SOURCES or userenvs.is_project_controlled(c, root)
+    ]
+    free_declared = [c for c in declared if c not in held]
+    if runs_now and record is not None:
+        # 机器先前定下的那个仍能跑：不动——除非它不是项目自己的环境，而项目带了更靠前的候选还没被体检过（点「运行」
+        # 才体检，Codex #820 r4233340712）：不能让一个排在后面的先前选择把项目环境永远挡在体检之外
+        mine = userenvs.is_project_controlled({"python": current or python, "source": ""}, root)
+        if mine or not declared or (not project_exec and not free_declared):
+            return None
+    if not project_exec and any(
+        e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    ):
+        # 项目自带的候选还没体检、检查阶段又不能起它：不在这时采用排在它后面的候选（点「运行」先体检项目的那个，
+        # 跑不了才按既有排序落到下一个；Codex #820 r4233340712）。同档但不归项目说了算的（pyenv / Conda 里的）照旧可体检
+        if not free_declared:
+            return None
+        candidates = free_declared
+    elif runs_now:
+        # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面（不只是项目说了算路径的那几个）
+        candidates = declared
+    candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
+    entry = None
+    adopted = False
+    evaluated: list[dict] = []
+    wants_root = not runs_now and rootenv.wants_root(
+        [n["import_name"] for n in needed if n.get("import_name")] + unknown
+    )
+    if (candidates or wants_root) and not _user_env_discovery_off():
+        entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        evaluated = list(entries)
+        if not project_exec and any(e.get("deferred") for e in entries):
+            # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
+            return None
+        if wants_root and userenvs.best(entries, Path(root).name) is None:
+            # 脚本 import ROOT、而没有一个候选**裸起**就导入得了它：把用户装的 ROOT 叠到候选解释器上再试
+            # （ADR 0079 修订 2026-10-21 b）。叠加组合与裸起的候选进同一张表，走同一个 best / 采用 / 落选原因
+            entries = entries + _root_overlay_entries(
+                root, entries, current or python, needed, unknown, project_exec=project_exec
+            )
+            evaluated = list(entries)
+        while True:
+            entry = userenvs.best(entries, Path(root).name)
+            if entry is None:
+                break
+            # 现量 + 提交整段占住候选环境（`envlease.inspecting`，与手动采用同一条）：上面的 `is_mutating` 只是挑选时的
+            # 过滤，过滤之后别的项目开始往这个环境装包的话，决定落地后会话就起在装包中的环境上。占不到（装包在跑）=
+            # 这一个不采用、换下一个；占到之后装包被拒、等这里结束。租约内只调 `unless_installing` + 写项目设置，
+            # 不会回头要安装租约
+            try:
+                with envlease.inspecting(entry["python"]):
+                    if _reprobe_needed(entry, root, project_exec):
+                        # 缓存里的"装齐"结论来自过去的某一刻（装包被卸掉不换代）：记下之前现量一次，量不过就换下一个
+                        # （Codex #820 r4233884149）。项目说了算的候选在运行之前不能现量，只信带环境代的缓存
+                        fresh = userenvs.evaluate(
+                            [entry],
+                            needed,
+                            unknown,
+                            use_cache=False,
+                            **({} if project_exec else {"root": root}),
+                        )[0]
+                        if not fresh.get("satisfies"):
+                            # 缓存说装齐、现量说不齐：落选原因以现量的为准
+                            evaluated = [
+                                fresh if userenvs.entry_key(e) == userenvs.entry_key(entry) else e
+                                for e in evaluated
+                            ]
+                            entries = [
+                                e
+                                for e in entries
+                                if userenvs.entry_key(e) != userenvs.entry_key(entry)
+                            ]
+                            continue
+                        entry = {**entry, **fresh}
+                    try:
+                        adopted = unless_installing(
+                            root,
+                            lambda: projectenv.remember(
+                                root,
+                                entry["python"],
+                                automatic=True,
+                                trigger=projectenv.TRIGGER_AUTO_DETECTED,
+                                health=entry,
+                                only_if=_record_allows_auto_adopt,
+                                env_overlay=entry.get("overlay"),
+                            ),
+                        )
+                    except envlease.EnvironmentBusy:
+                        return None
+            except envlease.EnvironmentBusy:
+                entries = [e for e in entries if userenvs.entry_key(e) != userenvs.entry_key(entry)]
+                continue
+            break
+    if rejected is not None and evaluated:
+        rejected.extend(userenvs.rejections(evaluated, entry if adopted else None))
+    if entry is None:
+        if (
+            not runs_now
+            and record is not None
+            and record.get("trigger") == projectenv.TRIGGER_AUTO_DETECTED
+        ):
+            # 检测先前挑的环境不再能跑这个脚本、别处也没有能跑的：作废它，「安装缺少的组件」装进 Tavotto
+            # 管理的环境——检测从不把用户的环境当成安装目标
+            try:
+                unless_installing(root, lambda: pool.invalidate_remembered(root, record))
+            except envlease.EnvironmentBusy:
+                pass
+        return None
+    if not adopted:
+        return None
+    pool.note_project_python_ok(entry["python"])
+    LOG.info(
+        "自动检测：改用 %s（%s%s）",
+        entry["python"],
+        entry.get("source"),
+        "，叠加 " + rootenv.label_of(entry["overlay"]) if entry.get("overlay") else "",
+    )
+    for listener in list(_adoption_listeners):
+        try:
+            listener(root, userenvs.public(entry))
+        except Exception:  # noqa: BLE001 — 通知失败不能挡住准备
+            LOG.exception("用户环境改用通知失败")
+    return entry
+
+
+def _detect_environment_pinned(
+    root: str, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
+    """检测 + 在**同一把锁内**把此刻生效的解释器、来源与环境代取下，作为不可变的 `EnvironmentDecision` 交出去。
+
+    锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
+    同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
+    with _detect_lock(root):
+        rejected: list[dict] = []
+        adopted = _detect_environment_unlocked(
+            root, script, project_exec=project_exec, rejected=rejected
+        )
+        try:
+            python, source = pool.resolve_worker_python(root, script=script, discover=False)
+        except pool.WorkerError:
+            # 解析不出来：原路径去报那条错
+            return pool.EnvironmentDecision(adopted=adopted, rejected=tuple(rejected))
+        return pool.EnvironmentDecision(
+            adopted=adopted,
+            rejected=tuple(rejected),
+            env_overlay=projectenv.remembered_overlay(root, python),
+            python=python,
+            source=source,
+            generation=projectenv.environment_generation(python),
+            launch_context=launcher.context_key(python),
+        )
+
+
+def _detect_environment(root: str, script: str) -> dict | None:
+    return _detect_environment_pinned(root, script).adopted
 
 
 def gate(project: str | Path, script: str) -> dict | None:
@@ -4460,6 +6893,10 @@ def gate(project: str | Path, script: str) -> dict | None:
     if got is None:
         return None
     offer, _user_envs = got
+    if offer.get("pinned"):
+        # 全局显式解释器压着：授权安装没有意义（装进去不会被用）。门放行，脚本缺包时以 `missing_dependency` + 带 `pinned`
+        # 的修复 offer 收场——告诉用户怎么解开锁，而不是先让他确认一次必败的安装（E05）
+        return None
     if offer["plan"]["status"] == depplan.STATUS_READY:
         return offer
     # 干净机器：什么都不缺也没有解释器可跑——环境（含私有 Python）本身就是要授权的东西。判据是
@@ -4487,7 +6924,7 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
 
 
 pool.register_spawn_gate(_spawn_gate)
-pool.register_environment_decider(decide_environment)
+pool.register_environment_decider(decide_environment_pinned)
 
 
 #: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /

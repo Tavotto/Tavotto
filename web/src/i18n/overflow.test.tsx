@@ -77,8 +77,6 @@ const BUDGETS: Budget[] = [
   // Button 是 whitespace-nowrap + shrink-0 的，超出预算就直接把整栏撑破
   // ——所以这几条的预算是硬边界，不是审美偏好。
   ['errors', 'engine.repairUseProjectEnv', 32, '缺依赖卡片：装进项目环境'],
-  ['errors', 'engine.repairCreateManaged', 32, '缺依赖卡片：建一个 Tavotto 环境'],
-  ['errors', 'engine.repairUseManaged', 32, '缺依赖卡片：装进 Tavotto 环境'],
   ['errors', 'engine.repairInstallToProject', 32, '缺依赖卡片：确认装进项目环境'],
   ['errors', 'engine.repairPrepareAndContinue', 32, '缺依赖卡片：确认建环境并继续'],
   ['errors', 'engine.repairCancel', 12, '安装进度里的取消'],
@@ -97,7 +95,7 @@ const BUDGETS: Budget[] = [
   ['workspace', 'readiness.whyNotEditable', 26, '画布工具条上的解释入口'],
   // 快速编辑（Prompt 09）：模式标签在顶栏那一行里，两个出口在画布上方那条
   // 浮动条上——它必须能整条塞进窄画布，所以按钮文案压得比一般按钮还紧
-  ['workspace', 'fastEdit.addToCanvas', 16, '上下文栏上的主动作'],
+  ['workspace', 'stage.exitElementEdit', 22, '单图编辑上下文栏的出口（退出图内编辑）'],
   ['workspace', 'stage.backToCanvas', 16, '上下文栏上唯一的返回入口'],
   ['workspace', 'fastEdit.connectSource', 24, '降级说明条上的下一步'],
   ['workspace', 'assets.openFigure', 8, '素材卡悬停时右下角那个就近入口'],

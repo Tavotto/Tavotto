@@ -1,0 +1,52 @@
+{
+  "source_sha": "2cf74761ce823eb19f962235839fb0c99f0e7df9",
+  "source_tree": "1ad83b70b6cfa6c8345bf9b4bf30e6484da92eb4",
+  "finding": {
+    "url": "https://github.com/Tavotto/Tavotto/pull/1151#discussion_r4306034335",
+    "thread_id": "PRRT_kwDOT51-YM6toEnO",
+    "review_id": 5561770416,
+    "priority": "P1",
+    "path": "services/cla-cloudflare/src/native/store.ts",
+    "start_line": 86,
+    "line": 87,
+    "independent_verdict": "confirmed",
+    "scope": "fixed-time failure proposal with unavailable synthetic send outcome; no successful publication and no expiry transition"
+  },
+  "commands": [
+    {
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=negative fixed-time reproduction",
+        "tests/independent-inflight-review.test.mjs"
+      ],
+      "exit_code": 0,
+      "log": "reproduction.txt"
+    },
+    {
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=desired safety",
+        "tests/independent-inflight-review.test.mjs"
+      ],
+      "exit_code": 1,
+      "failure": "AssertionError manual != issued; terminal missing-run state during in-flight journal",
+      "log": "desired-safety-red.txt"
+    }
+  ],
+  "hashes": {
+    "review-threads.json": "36bd3d4ace451a5d5c5e0f131fb37ae5c6d0a746d9b8a78fec97a9e426f3b68d",
+    "reproduction.txt": "3ce3516833f82956da81de11323fc001f38d624cd9f4e95e96097d9c8aeda148",
+    "desired-safety-red.txt": "597c344e3f60d10052a8f93831b5e95f26667f3c1004f259df6be0db124c69d9",
+    "services/cla-cloudflare/tests/independent-inflight-review.test.mjs": "de468e805745a219166efce7557d38a14ae0665c78502626fd8abf173f31177d"
+  },
+  "workspace_status": "",
+  "not_executed": [
+    "workspace edits",
+    "external writes or additional review requests",
+    "dependency download",
+    "live signing, credentials, deployment",
+    "successful publication across proof expiry"
+  ]
+}

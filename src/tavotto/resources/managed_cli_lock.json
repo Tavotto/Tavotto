@@ -1,0 +1,176 @@
+{
+  "_comment": "受控 CLI 的锁；不要手改。更新流程见 scripts/managed_cli_lock.py 文件头：--update <版本> 生成，--check [--online] 校验。",
+  "clis": {
+    "claude": {
+      "platforms": {
+        "darwin-arm64": {
+          "entrypoint": "claude",
+          "file_count": 1,
+          "gcs": {
+            "sha256": "ca923c86ac84b30574a82331a05b6e066c27477a926ceaffe46a845a33e4dd37",
+            "size": 274675680
+          },
+          "mirror": {
+            "integrity": "sha512-fdIEbsrjlOiB8XLD3HWMi7fFGNrRzz7vPUmstgL/7qf4DLWzoWpgpCYaovrX8fp2wRsexiNok/9WZea938jJUw==",
+            "sha256": "643eef6426295ad0a669237c52baa87a3d9591b2f7d64e4bb1c98d80ea095797",
+            "size": 122251473
+          },
+          "npm": "darwin-arm64",
+          "tree_sha256": "2115116f6a18b13003c5484b11d36252b0be3cc4371b5bf42a4730d5b013061b",
+          "triple": "darwin-arm64",
+          "unpacked_size": 274675680
+        },
+        "darwin-x64": {
+          "entrypoint": "claude",
+          "file_count": 1,
+          "gcs": {
+            "sha256": "9a0bc140f5fb06e6366624d770371ef290e6731d1e84c4def5daf4df946d1b59",
+            "size": 285902384
+          },
+          "mirror": {
+            "integrity": "sha512-GdddpKPDe/tvxdScf0P59eSqF7QQJbwZa21vsRIzEyZPLhE7Qc43YBx2jtGRZMNpFh+dnkRoZoo6b8a1bWQQyw==",
+            "sha256": "a6ece101881631f5cf5542e3f842caa41e9d015ea89e23c759135893ebfc7f46",
+            "size": 127327457
+          },
+          "npm": "darwin-x64",
+          "tree_sha256": "7e0995ada1ac6410b1496087614e0bb05567d2146a6be430bf8e99060d31222a",
+          "triple": "darwin-x64",
+          "unpacked_size": 285902384
+        },
+        "linux-x64": {
+          "entrypoint": "claude",
+          "file_count": 1,
+          "gcs": {
+            "sha256": "356733f185fa988e6bf3aa9a555269fdd167982a2e2a80d3c8a78037bb92ad58",
+            "size": 292232560
+          },
+          "mirror": {
+            "integrity": "sha512-ffUryevpH7POStPJ/xpUI5R1ozYbH9o/Dbh/xPSmyVJehELnRMZmRnejdQmq0TejOW/SbNnJFhCGMgwIsOqFTQ==",
+            "sha256": "f329748feb169a1bcddb578f0195af810a1a5287ebf629728464821490b04333",
+            "size": 132044055
+          },
+          "npm": "linux-x64",
+          "tree_sha256": "aa726c4d3549c9b4b1387985663cfaafdc2f3d3b38393d519d136edf5c80c428",
+          "triple": "linux-x64",
+          "unpacked_size": 292232560
+        },
+        "win32-x64": {
+          "entrypoint": "claude.exe",
+          "file_count": 1,
+          "gcs": {
+            "sha256": "c9796ba22a9221586b36371b36f5b66198d66eb4badf6a4cf4a5f7b07becea53",
+            "size": 297376928
+          },
+          "mirror": {
+            "integrity": "sha512-OxskS6onyOdKqdvd9/33M5//ItBdAnoI/cjdp0PU47KDMDF5WWE82Slo0ISq8kpNr2wK0lXB5Z2Rv1weJR0znw==",
+            "sha256": "bfb51c874e4697627e16bf5254cdec5761a57f207b346593b7236a2671002c8f",
+            "size": 135835495
+          },
+          "npm": "win32-x64",
+          "tree_sha256": "2c15b96ed1db94005c32c9e0f104ecfb5d6bee65bc10854f6cbeda065cb4a29d",
+          "triple": "win32-x64",
+          "unpacked_size": 297376928
+        }
+      },
+      "sources": [
+        {
+          "key": "mirror",
+          "only": "{entry}",
+          "strip": "package/",
+          "url": "https://registry.npmmirror.com/@anthropic-ai/claude-code-{npm}/-/claude-code-{npm}-{version}.tgz"
+        },
+        {
+          "key": "gcs",
+          "raw": true,
+          "url": "https://downloads.claude.ai/claude-code-releases/{version}/{npm}/{entry}"
+        }
+      ],
+      "version": "2.1.308"
+    },
+    "codex": {
+      "platforms": {
+        "darwin-arm64": {
+          "entrypoint": "bin/codex",
+          "file_count": 41,
+          "github": {
+            "sha256": "34d12384d90f8e09b0b9abaabf2a0ac02a52093b131504aeaf282107f54a44b2",
+            "size": 136607094
+          },
+          "mirror": {
+            "integrity": "sha512-MQ/Z0Xw9v08DHunnzodi9NwA844MI3+RO72IM8o0Lr/UemnlEoBMCxpojstxX6mf5ZQwUrIg0yekDd9cFZ29hg==",
+            "sha256": "a991b0abcb6b6d2ae4d0221b55dd74afe8b87847044483ec68d290908a5a0f97",
+            "size": 141326129
+          },
+          "npm": "darwin-arm64",
+          "tree_sha256": "9d392f7a912bf1c405da03311a70d15696b6a07804fdccb1b16e01d3b4d2461e",
+          "triple": "aarch64-apple-darwin",
+          "unpacked_size": 355991955
+        },
+        "darwin-x64": {
+          "entrypoint": "bin/codex",
+          "file_count": 41,
+          "github": {
+            "sha256": "792ecab0596006bd9f286430b2790aa487fd40fca2f351ca313ad85991720226",
+            "size": 147952114
+          },
+          "mirror": {
+            "integrity": "sha512-mxMtlntnUq0Xb8rjvHph3Ws045Q82BLbeKRRdkN70Es9mho/D/Blh1ShZvzQOnsoeVw8lbV9fOLjW1vncoufKQ==",
+            "sha256": "311e1eaa38e403e480852d1b48a7abe8fdb30cdbdf60523c363dfdc9dc4da818",
+            "size": 150199720
+          },
+          "npm": "darwin-x64",
+          "tree_sha256": "285b45b64ac7d9b032c1d716dcd9b61e57471bbf0e11ee99b0152dbf94bc7c85",
+          "triple": "x86_64-apple-darwin",
+          "unpacked_size": 379927839
+        },
+        "linux-x64": {
+          "entrypoint": "bin/codex",
+          "file_count": 43,
+          "github": {
+            "sha256": "e97c4463d7f146692a955d7b0e1c8cf48f97cd4d616cd45c5dcab2e8d9743316",
+            "size": 163200349
+          },
+          "mirror": {
+            "integrity": "sha512-FotDc7bVHwaommtsdDP8PPrH0a5IwC/t8H/LhdEcH4EBqgeYFRCtptiHcuwgvNRCLbTbOyFE/Ur6GzYCljgaSQ==",
+            "sha256": "f997cd6ef5987126e19cd3c82e847a4a6461270f32f97340c5e99a65fb6f9b8a",
+            "size": 166008118
+          },
+          "npm": "linux-x64",
+          "tree_sha256": "ffb3b884a5cd3c18bfcaec6c8dd2500854aad194b4b5664b634637f3088d8827",
+          "triple": "x86_64-unknown-linux-musl",
+          "unpacked_size": 445943197
+        },
+        "win32-x64": {
+          "entrypoint": "bin/codex.exe",
+          "file_count": 45,
+          "github": {
+            "sha256": "2a64beb5856c3170738793e0aa65b44aa3f2d7b8f53221a3f72bdafe6485d119",
+            "size": 167949249
+          },
+          "mirror": {
+            "integrity": "sha512-f5LMyugPSnAovnTnR1N+SNHSTfWZ+ym5A4H3zZHz/zhuMGMGZD8IxUdlSUlEbiENYyPXrJ8G3Jh+CLyzTfQB6Q==",
+            "sha256": "53ebec84d5a380bbb654a796e695576a4dbd2c228ec9bc02982f2013f261969d",
+            "size": 173677955
+          },
+          "npm": "win32-x64",
+          "tree_sha256": "c43c6b558c5f9e6ec2790d16f48bb7d069d63570d3969da4cfc1990d99fc7aad",
+          "triple": "x86_64-pc-windows-msvc",
+          "unpacked_size": 486491003
+        }
+      },
+      "sources": [
+        {
+          "key": "github",
+          "url": "https://github.com/openai/codex/releases/download/rust-v{version}/codex-package-{triple}.tar.gz"
+        },
+        {
+          "key": "mirror",
+          "strip": "package/vendor/{triple}/",
+          "url": "https://registry.npmmirror.com/@openai/codex/-/codex-{version}-{npm}.tgz"
+        }
+      ],
+      "version": "0.165.0"
+    }
+  },
+  "schema": 1
+}

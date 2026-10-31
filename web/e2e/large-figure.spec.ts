@@ -29,10 +29,10 @@
  */
 import { expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startApp, test, type RunningApp } from "./fixtures";
+import { startApp, test, waitForDocumentReady, type RunningApp } from "./fixtures";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 
@@ -135,12 +135,8 @@ function largeFigureLibrary(): string {
  * 文案——文案是 i18n 资源，改了它、切了语言，等的就是永不出现的元素；
  * ② 定位类的等待压短并在报文里点名「这是定位失败，不是性能问题」。
  */
-async function openLargePanel(
-  app: RunningApp,
-  page: import("@playwright/test").Page,
-) {
+async function openLargePanel(page: import("@playwright/test").Page) {
   const tOpen = Date.now();
-  await page.goto(app.baseURL);
   // **先挂上等待再触发**：`page.on('response')` 的回调是 async 的，
   // `res.json()` 还没 resolve 时断言就已经跑了（实测 verdicts 恒为空）。
   // `waitForResponse` 是确定的——它 resolve 的那一刻响应体已经在手上。
@@ -214,21 +210,22 @@ test.afterAll(async () => {
   await app?.stop();
 });
 
-// 每条用例从空白排版起步。这几条共用**一个后端**（上面 serial + beforeAll），而 #719 起「上次开着
-// 哪份排版」记在后端数据目录（`state/layout-sessions.json`）：新开的浏览器 context 本机存储是空的，
-// 照样会被恢复到上一条用例留下的那份（画布上已经有一个面板），「撤销把双击加的面板撤掉 → 画布
-// 回到 0 个」就量错了主语。删掉这份记录 = 这一条用例对后端来说是「没记过」，与改造前每条用例
-// 一个空 localStorage 的起点相同；自动保存槽位不动。
-test.beforeEach(async () => {
-  rmSync(path.join(app.dataDir, "state", "layout-sessions.json"), { force: true });
+// 共用后端时先正常恢复，再通过应用新建空白排版。只删会话索引、留下正文会进入 ADR 0120 的
+// 找回判决，既不是空白起点，也不能证明「撤销这次加图」。不在测试之间制造损坏的恢复状态。
+test.beforeEach(async ({ page }) => {
+  await page.goto(app.baseURL);
+  await waitForDocumentReady(page);
+  await page.locator('[data-document-menu]').click();
+  await page.locator('[data-new-document]').click();
+  await waitForDocumentReady(page);
+  await expect(page.locator(CANVAS_OBJECTS)).toHaveCount(0);
 });
 
 test("大图预览：落到 hybrid/raster，DOM 不再吃下几十万个节点，且照常可编辑", async ({
   page,
 }) => {
-  const a = app;
   // 引擎的裁决从**响应**里读，不从界面上猜：mode 是协议里的一等公民
-  const { preview } = await openLargePanel(a, page);
+  const { preview } = await openLargePanel(page);
 
   /* ---- 1. 引擎的裁决：不许是 vector ---- */
   expect(preview, "渲染响应里必须带 preview 元数据").toBeTruthy();
@@ -275,7 +272,7 @@ test("大图预览：落到 hybrid/raster，DOM 不再吃下几十万个节点�
 test("降档之后：选中图内元素、属性面板打得开、撤销回得去", async ({ page }) => {
   // 面板本身的可见性由 `openLargePanel` 断言过了，这里不再解构它：
   // 下面的点击目标是从图内 SVG 里算出来的，不用面板的外框尺寸
-  await openLargePanel(app, page);
+  await openLargePanel(page);
 
   // 第四格那两条普通曲线与图例**没有被 rasterize**（hybrid 的契约），
   // 所以图内元素照常选得中。

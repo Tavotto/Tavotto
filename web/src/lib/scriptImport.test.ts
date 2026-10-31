@@ -35,6 +35,33 @@ describe('parentDir / folderForPath', () => {
   })
 })
 
+describe('R / MATLAB 脚本（ADR 0143 修订）', () => {
+  it('folderForPath：.R / .r / .m 取上级目录（与 .py 同）', () => {
+    expect(folderForPath('/Users/a/paper/fig.R')).toBe('/Users/a/paper')
+    expect(folderForPath('C:\\work\\fig.m')).toBe('C:\\work')
+    expect(folderForPath('/Users/a/paper/data.csv')).toBe('/Users/a/paper/data.csv')
+  })
+
+  it('带路径放下：foreign-path（打开所在目录 + 脚本名 + 语言）', () => {
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.R', files: ['fig.R'] }))).toEqual({
+      kind: 'foreign-path', folder: '/Users/a', script: 'fig.R', language: 'r',
+    })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.m', files: ['fig.m'] }))).toEqual({
+      kind: 'foreign-path', folder: '/Users/a', script: 'fig.m', language: 'matlab',
+    })
+  })
+
+  it('只有文件名：foreign-no-path；.py 与其它类型的判据不变', () => {
+    expect(dropTargetOf(drop({ files: ['fig.r'] }))).toEqual({ kind: 'foreign-no-path', name: 'fig.r', language: 'r' })
+    expect(dropTargetOf(drop({ files: ['fig.py'] }))).toEqual({ kind: 'no-path', name: 'fig.py' })
+    expect(dropTargetOf(drop({ files: ['fig.Rmd'] }))).toEqual({ kind: 'not-script', name: 'fig.Rmd' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.mlx', files: ['fig.mlx'] }))).toEqual({ kind: 'not-script', name: 'fig.mlx' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.py', files: ['fig.py'] }))).toEqual({
+      kind: 'path', folder: '/Users/a', script: 'fig.py',
+    })
+  })
+})
+
 describe('pathFromFileUri', () => {
   it('POSIX、Windows 盘符、UNC、百分号编码', () => {
     expect(pathFromFileUri('file:///Users/a/%E8%AE%BA%E6%96%87%20%E5%9B%BE/plot.py')).toBe(
@@ -55,9 +82,10 @@ describe('dropTargetOf', () => {
     expect(dropTargetOf(drop({ uris: '# comment\r\nfile:///Users/a/paper/plot.py', files: ['plot.py'] }))).toEqual({
       kind: 'path',
       folder: '/Users/a/paper',
+      script: 'plot.py',
     })
     // 放下的是目录：它自己就是项目
-    expect(dropTargetOf(drop({ uris: 'file:///Users/a/paper' }))).toEqual({ kind: 'path', folder: '/Users/a/paper' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/paper' }))).toEqual({ kind: 'path', folder: '/Users/a/paper', script: null })
   })
 
   it('带 file URI 但放下的不是 .py 也不像目录：如实说不收，不当项目去开（#688）', () => {
@@ -67,7 +95,7 @@ describe('dropTargetOf', () => {
     })
     expect(dropTargetOf(drop({ uris: 'file:///C:/work/data.CSV' }))).toEqual({ kind: 'not-script', name: 'data.CSV' })
     // 以分隔符结尾的总是目录，最后一段带点也一样
-    expect(dropTargetOf(drop({ uris: 'file:///Users/a/v1.2/' }))).toEqual({ kind: 'path', folder: '/Users/a/v1.2/' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/v1.2/' }))).toEqual({ kind: 'path', folder: '/Users/a/v1.2/', script: null })
   })
 
   it('只有文件、没有路径（浏览器与桌面壳的常态）：.py 退回选择器，别的说不收', () => {

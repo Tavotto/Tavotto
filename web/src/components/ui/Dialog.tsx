@@ -1,3 +1,4 @@
+import { registerDialogOpen } from '@/store/dialogLayerStore'
 import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
 import { X } from './icons'
@@ -141,14 +142,18 @@ interface DialogProps {
    * 自己决定哪一列滚。
    * `palette`：命令面板（2026-10-07 设计审计 §10.1）——钉在视口上方 18vh、标题只给读屏、没有右上角 ×
    * （Esc / 点外面就是关）、正文不带内边距也不滚（输入行与结果列表自己排）。焦点陷阱与归还照旧由本外壳给。
+   * `split`：整块自己排版的横向弹窗（连接 AI：左侧品牌画布 + 右侧列表）——居中、标题 / 说明只给读屏（可见的标题由正文自己画）、
+   * 正文不带内边距也不滚，右上角 × 照旧。
    */
-  chrome?: 'default' | 'shell' | 'palette'
+  chrome?: 'default' | 'shell' | 'palette' | 'split'
   /**
    * 打开时焦点落在哪个控件上。**默认落在容器上**（第一下 Tab 进正文第一个控件，
    * 2026-09-14 审计 S1）；只给「默认动作必须是安全的那一个」的对话框用——排版
    * 时间线的预览（ADR 0101）默认焦点在「关闭」上，回车不会误触恢复。
    */
   initialFocusRef?: RefObject<HTMLElement | null>
+  /** 标题栏右端（关闭 × 之前）的一小块控件，如搜索框；只给 `shell` 那种一条标题栏的外壳用 */
+  headerEnd?: ReactNode
 }
 
 /**
@@ -178,10 +183,12 @@ export function Dialog({
   anchor,
   chrome = 'default',
   initialFocusRef,
+  headerEnd,
 }: DialogProps) {
   const palette = chrome === 'palette'
+  const split = chrome === 'split'
   // 命令面板与 shell 一样自己管正文的排版与滚动
-  const shell = chrome === 'shell' || size === 'shell' || palette
+  const shell = chrome === 'shell' || size === 'shell' || palette || split
   const locked = busy || blockDismiss
   const ownsScrim = useScrimOwner(open && !covered)
   const slots = isSlots(footer) ? footer : null
@@ -271,6 +278,8 @@ export function Dialog({
     ;(initialFocusRef?.current ?? content).focus({ preventScroll: true })
   }, [open, initialFocusRef])
 
+  // 登记「有模态开着」：通知轨据此把自己移到对话框上面（`dialogLayerStore`）
+  useEffect(() => (open ? registerDialogOpen() : undefined), [open])
   const hasBody = children != null && children !== false
   // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部
   // 留出同样高的内边距——滚动时内容从页脚底下滑过、滚到底时最后一行停在页脚上方。页脚**永远**是 Content 的
@@ -372,7 +381,10 @@ export function Dialog({
             }
             if (locked) e.preventDefault()
           }}
-          onInteractOutside={(e) => locked && e.preventDefault()}
+          onInteractOutside={(e) => {
+            // 压在对话框上面的通知胶囊（`NotificationRail` 的 body 层）：点它不算「点了对话框外面」
+            if (locked || (e.target instanceof Element && e.target.closest('[data-notification-rail]'))) e.preventDefault()
+          }}
           className={cn(
             'fixed left-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)] -translate-x-1/2',
             palette ? 'top-[18vh]' : 'top-1/2 -translate-y-1/2',
@@ -388,7 +400,7 @@ export function Dialog({
           <div
             className={cn(
               'flex gap-3',
-              palette && 'sr-only',
+              (palette || split) && 'sr-only',
               // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
               shell
                 ? 'h-11 shrink-0 items-center border-b border-border pl-4 pr-12'
@@ -406,6 +418,7 @@ export function Dialog({
                 </RD.Description>
               )}
             </div>
+            {headerEnd && !palette && !split && <div className="ms-auto flex min-w-0 items-center gap-2">{headerEnd}</div>}
           </div>
           {/* 没有正文（标题已说完）就不摆这块留白。正文是阅读面：type-reading 13 / 1.6
               （子元素自己写了字号的照旧）。浮动页脚时正文底部留出页脚的高度（见 floating） */}
@@ -446,7 +459,7 @@ export function Dialog({
                 tip={false}
                 className={cn(
                   'absolute text-ink-3 hover:text-ink',
-                  shell ? 'right-2.5 top-2' : 'right-3 top-3',
+                  shell && !split ? 'right-2.5 top-2' : 'right-3 top-3',
                 )}
               >
                 <X size={ICON_SIZE.md} />

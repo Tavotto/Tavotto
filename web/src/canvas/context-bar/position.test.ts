@@ -13,6 +13,7 @@ import {
   TOP_SAFE,
   barVariant,
   bboxToScreen,
+  bottomSafeFor,
   elementObstacles,
   freeWidthOf,
   placeToolbar,
@@ -256,5 +257,45 @@ describe('elementObstacles：哪些元素算障碍物', () => {
     for (const r of ['line', 'axes', 'axes3d', 'scatter', 'fill', 'image', 'figure']) {
       expect(COVER_SENSITIVE_ROLES.has(r), r).toBe(false)
     }
+  })
+})
+
+/**
+ * 单图编辑取景铺满舞台后，选中对象下方的浮动胶囊会落进底部通知轨，盖住通知上的按钮（guarded-png 的「重建」钮点不到）。
+ * 通知轨最上面一条的顶边（量真实的盒，长文案会折成多行）把窗口底边的禁区抬高；胶囊整体落在禁区之上、与通知轨不相交。
+ */
+describe('避让通知轨', () => {
+  const vh = vp.height
+  const bottomOf = (p: { y: number }) => p.y + size.h
+
+  it('没有通知 = 原来的工具条禁区；有通知 = 窗口底边到通知顶边 + 缝（取大者）', () => {
+    expect(bottomSafeFor(null, vh)).toBe(BOTTOM_SAFE)
+    expect(bottomSafeFor(vh - 40, vh)).toBe(BOTTOM_SAFE) // 比工具条那一带还矮：不变
+    expect(bottomSafeFor(vh - 160, vh)).toBe(160 + MARGIN)
+  })
+
+  it('图铺满舞台、上方放不下：胶囊落在下方 / 内侧，但在（多行、很高的）通知轨顶边之上、不与它相交', () => {
+    const big = { left: 300, top: TOP_SAFE + 4, width: 600, height: vh - TOP_SAFE - 20 }
+    const railTop = vh - 110 // 一条折成四行的通知：顶边离窗口底边 110
+    const without = placeToolbar(big, size, vp, none)
+    expect(bottomOf(without)).toBeGreaterThan(railTop) // 没有避让时落进通知轨（被盖住的现场）
+    const withRail = placeToolbar(big, size, vp, none, bottomSafeFor(railTop, vh))
+    expect(bottomOf(withRail)).toBeLessThanOrEqual(railTop)
+    expect(withRail.y).toBeGreaterThanOrEqual(TOP_SAFE)
+  })
+
+  it('下方会与通知轨相交、上方放得下：留在上方', () => {
+    const lower = { left: 300, top: 560, width: 300, height: 120 }
+    const railTop = vh - 140
+    const p = placeToolbar(lower, size, vp, none, bottomSafeFor(railTop, vh))
+    expect(p.placement).toBe('above')
+    expect(bottomOf(p)).toBeLessThanOrEqual(railTop)
+  })
+
+  it('带避让别的文字的版本同样尊重通知轨', () => {
+    const big = { left: 300, top: TOP_SAFE + 4, width: 600, height: vh - TOP_SAFE - 20 }
+    const railTop = vh - 110
+    const p = placeToolbarAvoiding(big, size, vp, none, { obstacles: [], zone: big }, bottomSafeFor(railTop, vh))
+    expect(bottomOf(p)).toBeLessThanOrEqual(railTop)
   })
 })

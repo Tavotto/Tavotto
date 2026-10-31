@@ -21,11 +21,15 @@
                                        换后端实现时这条闭集要跟着新后端画得出
                                        什么走，不能照抄——它是一句能力承诺。
   compare_png(a, b)                 → 两张 PNG 的像素差异指标（写回像素门）
+  compare_png_extent(a, b)          → 两张 PNG 的逐字节差异范围（差异像素数 / 比例 / 包围框，
+                                       无底噪无阈值；来源驱动采用 ADR 0139 的对照用）
   compose(page_w_mm, page_h_mm, transparent=False)
                                     → 合成画布；place() 逐个落对象，save_*() 出图
   original_pdf(src, out, page_pt)   → 按原图尺寸出 PDF（矢量源整页搬运，不重画；
                                        位图源的页面尺寸由调用方给——密度的解析
                                        只有 engine/originalspec 一处）
+  concat_pdf(singles, out)          → 把若干单页 PDF 按顺序拼成一个多页 PDF（不重画；回页数；
+                                       输入不是恰好一页 → `PdfConcatError`；#1370）
   original_png(src, out, ppi, transparent)
                                     → 按原图出 PNG（位图**永远**保源像素网格；
                                        JPEG 源换容器不换像素）
@@ -206,12 +210,28 @@ def compare_png(baseline, candidate):
     return _impl().compare_png(baseline, candidate)
 
 
+def compare_png_extent(baseline, candidate):
+    return _impl().compare_png_extent(baseline, candidate)
+
+
 def compose(page_w_mm, page_h_mm, transparent=False):
     return _impl().compose(page_w_mm, page_h_mm, transparent)
 
 
 def original_pdf(src, out, page_pt=None):
     return _impl().original_pdf(src, out, page_pt)
+
+
+class PdfConcatError(ValueError):
+    """`concat_pdf` 的输入不是「恰好一页的可读 PDF」，或没有输入（契约层的异常类，与实现无关）。"""
+
+
+def concat_pdf(singles, out):
+    impl = _impl()
+    try:
+        return impl.concat_pdf(singles, out)
+    except impl.PdfConcatError as exc:
+        raise PdfConcatError(str(exc)) from exc
 
 
 def original_png(src, out, ppi, transparent=False):
@@ -222,8 +242,8 @@ def original_tiff(src, out, ppi, transparent=False, *, dpi_meta=None):
     return _impl().original_tiff(src, out, ppi, transparent, dpi_meta=dpi_meta)
 
 
-def annotate_asset(pdf_path, png_path, objects, dpi=600):
-    return _impl().annotate_asset(pdf_path, png_path, objects, dpi)
+def annotate_asset(pdf_path, png_path, objects, dpi=600, math=None):
+    return _impl().annotate_asset(pdf_path, png_path, objects, dpi, math=math)
 
 
 def mm2pt(mm):
@@ -255,6 +275,7 @@ __all__ = [
     "annotate_asset",
     "compare_png",
     "compose",
+    "concat_pdf",
     "coverage_ranges",
     "hex2rgb",
     "missing_glyphs",

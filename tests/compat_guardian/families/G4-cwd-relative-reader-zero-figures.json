@@ -1,0 +1,85 @@
+{
+  "schema": "tavotto-guardian-family/1",
+  "id": "G4-cwd-relative-reader-zero-figures",
+  "title": "A C++ reader given a cwd-relative data path finds nothing in the sandbox cwd: Tavotto draws zero figures, native draws one",
+  "affected_script_shapes": [
+    "a script that reads data next to itself through a cwd-relative path handed to a C++ reader (pyarrow.parquet.read_table('x.parquet'), pandas.read_parquet and the like) and then plots it"
+  ],
+  "root_cause": "The script is run in a sandbox cwd, and the read-only fallback only covers the four open entry points (open / io.open / Path.open / os.open), not C++ readers, glob or exists (ADR 0047 / 0084). The reader cannot see the file next to the script, the script dies with script_error and Tavotto has zero figures while `python script.py` in the script directory draws one (issue #1253). The behavior is kept on purpose; the root cure is the project-level 'run in the script directory' switch. What was fixed is the diagnosis: #1297 makes missing_input_of accept only what the message names as missing and routes enoent to native_miss, and #1299 attaches workdir_hint ('run in the script directory') to the error.",
+  "category": "cwd_or_data_path",
+  "signature": {
+    "behavior_kind": "zero_figures",
+    "call_site": [
+      "figure",
+      "savefig"
+    ],
+    "tavotto_error": "script_error"
+  },
+  "repro": {
+    "script": "tests/compat_guardian/families/G4-cwd-relative-reader-zero-figures/repro.py",
+    "sha256": "d8c6be34d9a40c7d3dc8758d64148f7940196af120570fc956829f1100c4f638",
+    "entry": "main",
+    "data_files": [
+      "tests/compat_guardian/families/G4-cwd-relative-reader-zero-figures/cg_data.parquet"
+    ],
+    "derived_from": {
+      "parent": {
+        "suite": "compat_engine",
+        "case": "shape_oo_savefig"
+      },
+      "chain": [
+        "read_parquet"
+      ],
+      "seed": 202643
+    },
+    "minimized_by": "compat_guardian.py minimize",
+    "before": {
+      "statements": 11,
+      "lines": 11,
+      "bytes": 426,
+      "files": 2
+    },
+    "after": {
+      "statements": 6,
+      "lines": 10,
+      "bytes": 296,
+      "files": 1
+    },
+    "reproducibility": {
+      "confirmed": 3,
+      "total": 3
+    },
+    "runs": 42
+  },
+  "key_regression_tests": [
+    "tests/test_compat_guardian_families.py::RealRepro::test_g4_minimal_repro_still_differs_by_design",
+    "tests/test_runtime_probe_hint.py::test_pyarrow_reading_a_cwd_relative_parquet_points_at_the_script_dir",
+    "tests/test_runtime_probe_hint.py::test_an_enoent_relative_path_found_in_the_script_dir_is_runtime_evidence"
+  ],
+  "environments": {
+    "verified": [
+      {
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.13.16",
+        "matplotlib": "3.11.2",
+        "route": "Safe engine path via the product discovery chain, sandbox cwd",
+        "revision": "main at 3f8b3965e (after #1297 / #1299)"
+      }
+    ],
+    "unverified": [
+      "Linux",
+      "Windows",
+      "the desktop (Native) route",
+      "other matplotlib / Python versions",
+      "a real user session through the UI (the workdir_hint is covered at the engine / HTTP-body level, not clicked)",
+      "the project-level 'run in the script directory' switch (it is the root-cause fix, not a default)"
+    ]
+  },
+  "recurrence": "6 zero_figures candidates in the weekly sweep (run 39758109474, main 602ccf61f, seed 202643): 3 via read_parquet, 3 via glob_dir that die in the script (the glob family is G5)",
+  "in_corpus": false,
+  "fix_pr": 1297,
+  "promoted": false,
+  "issues": [
+    1253
+  ]
+}

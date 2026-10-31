@@ -14,6 +14,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 这组用例钉的是**旧**的同步试运行路径（T09 起它在本地开关关闭时才走；默认走准备面板，见
+// `PreparationPanel.test.tsx` / `scriptLibraryPanel.test.tsx`）
+vi.mock('@/lib/preparationFlag', () => ({ PREPARATION_PANEL_KEY: 'tavotto.preparationPanel', preparationPanelEnabled: () => false }))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchRegistry: vi.fn(),
@@ -322,6 +326,19 @@ describe('运行 / 取消 / 结果', () => {
     ).toBe(false)
   })
 
+  it('系统专属模块缺失：旧试运行入口也不给换环境的恢复建议', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    mockProbe.mockResolvedValue({
+      ...ok([]), registered: false,
+      error: { code: 'missing_dependency', message: '平台不支持', params: { module: 'winreg' }, install_route: 'unsupported_platform' },
+    })
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    expect(host.textContent).toContain('winreg 是其他系统专用模块')
+    expect(host.querySelector('[data-script-recovery]')).toBeNull()
+  })
+
   it('「选择渲染环境」就地打开渲染环境对话框（卡片在里面），不跳设置页', async () => {
     // 环境状态先备好：卡片挂上就有东西可画，不去真的请求 /api/engine
     useEnvStore.setState({
@@ -457,7 +474,7 @@ describe('运行 / 取消 / 结果', () => {
     }
     const groups = [...host.querySelectorAll('section ul[aria-label]')].map((ul) => ({
       name: ul.getAttribute('aria-label'),
-      scripts: [...ul.querySelectorAll('li > div span.font-mono')].map((s) => s.getAttribute('title')),
+      scripts: [...ul.querySelectorAll('li > div span.font-mono > span.truncate')].map((s) => s.getAttribute('title')),
     }))
     expect(groups[0]).toEqual({ name: '需要修复', scripts: ['a.py'] })
     expect(groups.find((g) => g.name === '可能需要原环境')?.scripts).toEqual(['b.py', 'c.py'])
@@ -587,7 +604,7 @@ describe('运行 / 取消 / 结果', () => {
     })
     vi.mocked(createDependencyPlan).mockResolvedValue({
       plan: {
-        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        plan_id: 'plan-row', impact_digest: 'dg-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
         modifies_user_environment: false, network_required: true, expires_at: 0,
         private_python: privatePython, ...offer.requirement!,
       },
@@ -606,7 +623,7 @@ describe('运行 / 取消 / 结果', () => {
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
     })
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     // 装好：后端的进度带着计划所属的脚本 → 这一行自动重跑
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
@@ -689,7 +706,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     })
     vi.mocked(createDependencyPlan).mockResolvedValue({
       plan: {
-        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        plan_id: 'plan-row', impact_digest: 'dg-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
         modifies_user_environment: false, network_required: true, expires_at: 0,
         private_python: privatePython, ...offer.requirement!,
       },
@@ -709,7 +726,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     await flush()
     await act(async () => buttonByText('一键修复').click())
     await flush()
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
     expect(buttonByText('取消'), 'A 上安装中应有「取消」').toBeTruthy()
     await switchTo('pB')
@@ -748,7 +765,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
     })
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     expect(card(), '重试之后卡片仍在脚本行上').toBeTruthy()
   })
 
@@ -877,6 +894,7 @@ describe('试运行撞上起会话之前的门', () => {
     ],
     rounds_remaining: 3,
     skipped: false,
+    impact_digest: 'row-digest',
   }
   const gateProbe = (): ProbeResult => ({
     ...ok([]),
@@ -934,7 +952,7 @@ describe('试运行撞上起会话之前的门', () => {
     await act(async () => prepDialog()!.querySelector<HTMLButtonElement>('[data-dependency-prepare-start]')!.click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row', 'row-digest')
     // ④ 准备成功（SSE 带着计划所属的脚本）→ #740 的 `rerunGated`：这一行自动再试运行一次、出图
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })

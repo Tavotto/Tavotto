@@ -64,6 +64,12 @@ describe('导出载荷', () => {
     })
   })
 
+  it('`textFormat` 同一条纪律：老文档不发，LaTeX 写法才发 text_format（ADR 0152）', () => {
+    const wire = (o: TextObject) => JSON.stringify(toExportObjects([o])[0])
+    expect(wire(text())).not.toContain('text_format')
+    expect(JSON.parse(wire(text({ textFormat: 'latex' })))).toMatchObject({ text_format: 'latex' })
+  })
+
   it('writer 那一侧：回到 auto 就删字段，不写一个等于默认值的显式值', () => {
     // 留着它的话，一份「什么都没改」的文档在载荷里会凭空多一个字段，
     // 而老后端拿到的字节就不再与旧版逐字相同了。

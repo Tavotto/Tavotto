@@ -49,19 +49,19 @@
     "openFailed": "Couldn’t open the project: {{error}}",
     "panelMissing": "Figure {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
     "projectOpened": "Opened project {{name}}",
-    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library"
+    "restoreTimeout": "This handed-off figure wasn’t placed: your last layout isn’t open yet. It’s in the asset library.",
+    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library",
+    "superseded": "The project was switched, so this handoff wasn’t placed."
   },
   "picker": {
     "backToCurrent": "Back to current project",
-    "browse": "Browse folder…",
+    "browse": "Browse…",
     "create": "New project",
     "createIn": "Will be created inside {{dir}}",
     "filterNoMatch": "No recent project matches “{{query}}”",
     "missingDir": "Folder not found",
+    "missingCount": "{{count}} missing",
     "missingGroup": "Folders that no longer exist",
-    "missingGroupCollapse": "Collapse folders that no longer exist",
-    "missingGroupExpand": "Expand folders that no longer exist",
-    "missingHint": "These folders are gone from disk; removing them from the list deletes nothing.",
     "nativeCreateTitle": "Choose where to create the new project",
     "nativePickerTitle": "Choose a project folder (where your plotting scripts are)",
     "openButton": "Open",
@@ -69,21 +69,21 @@
     "openProject": "Open project {{name}}",
     "opening": "Opening…",
     "pathLabel": "Project path",
-    "pathPlaceholder": "Type a path to open it, or a name to filter recent projects",
+    "pathPlaceholder": "Search projects, or paste a path and press Enter",
     "recentCount": "{{count}}",
     "recentHeading": "Recent projects",
     "recentLabel": "Recent projects",
     "regionLabel": "Choose a project",
     "removeAllMissing": "Remove all",
+    "removeFromList": "Remove from list",
     "removeFromListTitle": "Remove from the list — deletes nothing",
-    "tagline": "A project is the folder that holds your plotting scripts. Choose one to start laying out.",
     "tutorial": {
       "start": "Learn Tavotto with a sample",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again"
     },
+    "title": "All projects",
     "tutorialBadge": "Tutorial project",
-    "tutorialHint": "An offline sample project: edit freely and start over any time. Your own projects are never affected.",
     "tutorialLabel": "Tutorial",
     "tutorialOpening": "Preparing…",
     "tutorialUnavailable": "The tutorial resources are incomplete. Reinstall Tavotto."
@@ -95,10 +95,11 @@
       "dropNoPath": "Your system didn’t tell {{product}} which folder “{{name}}” is in. Select it in the window that opens next.",
       "dropNotScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
       "droppedMany": "You dropped {{total}} items; only “{{name}}” was used to open a project",
+      "foreignNotFound": "“{{name}}” isn’t in this folder. Select the folder it’s in.",
       "folderTitle": "Choose the folder that contains your script",
       "nativeTitle": "Choose a Python plotting script",
       "openedFolder": "Opened the project “{{name}}”",
-      "openedScript": "Opened the project that contains “{{name}}”"
+      "openedScript": "Opened the project that contains “{{name}}” and started running it; its figure will open when it’s ready"
     },
     "menuOpen": "Open",
     "more": "More",
@@ -138,6 +139,7 @@
     "filter": "Filter by name or path",
     "filterLabel": "Filter projects",
     "hint": "A project is your script folder; one project can hold several layouts.",
+    "hintLabel": "About projects and layouts",
     "listLabel": "{{section}} projects",
     "moveDown": "Move down",
     "moveUp": "Move up",
@@ -164,5 +166,14 @@
     "scriptCount_other": "{{count}} linked scripts",
     "unpin": "Remove bookmark",
     "unpinLabel": "Remove bookmark for {{name}}"
+  },
+  "readOnlyPrompt": {
+    "title": "{{product}} can’t write to this folder. Save a copy to a folder of your own to edit it?",
+    "save": "Save a copy…",
+    "continue": "Open read-only",
+    "pickTitle": "Choose where to save the copy",
+    "partial_one": "{{count}} file couldn’t be read, so it wasn’t copied.",
+    "partial_other": "{{count}} files couldn’t be read, so they weren’t copied.",
+    "openCopy": "Open the copy"
   }
 }

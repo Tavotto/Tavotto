@@ -39,6 +39,12 @@
     "clsx": "^2.1.1",
     "i18next": "^26.3.6",
     "immer": "^11.1.16",
+    "prosemirror-commands": "1.7.2",
+    "prosemirror-history": "1.5.1",
+    "prosemirror-keymap": "1.2.3",
+    "prosemirror-model": "1.25.12",
+    "prosemirror-state": "1.4.4",
+    "prosemirror-view": "1.42.6",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-i18next": "^17.0.11",
@@ -60,7 +66,7 @@
     "oxlint": "^1.75.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
-    "vite": "^8.2.0",
+    "vite": "^8.2.4",
     "vitest": "^4.1.11"
   }
 }

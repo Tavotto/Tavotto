@@ -12,12 +12,16 @@ import {
   type InputRemapRule,
   type MissingInputOffer,
   removeInputRemap,
+  adoptEnvironmentCandidate,
+  cancelProjectEnvironmentCheck,
+  checkProjectEnvironment,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
   setProjectEnvironment,
   setProjectWorkdir,
   type EngineEnvironment,
+  type EnvCandidate,
   type UserEnvironmentSource,
   type WorkdirConfirmation,
   type WorkdirMode,
@@ -51,6 +55,24 @@ interface EnvState {
    */
   setProjectPython: (path: string | null, module?: string) => Promise<string | null>
   /**
+   * 环境建议（ADR 0114）：候选 / 推荐 / 是否需要用户先选，都是后端 `project.recommendation` 的投影，这里只保存
+   * 与转发，**不自写「能不能跑」的判据**。`checkEnvironment` 是明确的检查动作（后端对被点名范围里的候选运行健康
+   * 探测，有预算 / 可取消），检查 ≠ 采用；`adoptCandidate` 是用户在建议上点「使用」——把候选 id 与看到建议那一刻
+   * 的环境代交回，后端现场再体检、环境代对不上会拒绝。回 null 或一句失败原文（本地化过的）。
+   */
+  checkingEnvironment: boolean
+  checkEnvironment: (opts?: {
+    script?: string
+    scope?: 'project' | 'machine' | 'all'
+    includeLoginShell?: boolean
+  }) => Promise<string | null>
+  cancelEnvironmentCheck: () => Promise<void>
+  adoptCandidate: (
+    candidate: Pick<EnvCandidate, 'id' | 'generation'>,
+    script?: string,
+    module?: string,
+  ) => Promise<string | null>
+  /**
    * 切当前项目 safe worker 的工作目录模式（ADR 0047）。开到 `project` 要先
    * 确认一次——文案与机制逐条一致：相对路径读得到、相对路径写的文件落进项目、
    * 守卫与 savefig 捕获不变。用户取消回 `null` 且什么都不改；失败回错误文案。
@@ -79,6 +101,13 @@ interface EnvState {
   dependencyPreparation: DependencyPreparationOffer | null
   requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
   dismissDependencyPreparation: () => void
+  /**
+   * 「确认包名」（Import Origin PR6）：计划里有 import 后端给了预填、要用户确认包名才能装。载荷同样住这里（与上面的授权同一个家），
+   * `ImportOriginDialog` 渲染它；输入与绑定的计划归 `depRepairStore`（`openOrigin` 一起设）。与授权框互不挤占；换项目 `resetProject` 清掉。
+   */
+  originConfirmation: DependencyPreparationOffer | null
+  requestOriginConfirmation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
+  dismissOriginConfirmation: () => void
   /**
    * 数据找不到（ADR 0106）：渲染以 `missing_input`（或带 `missing_input` 载荷的「没出图」）回来时，
    * 请用户指认那个文件或它所在的文件夹。载荷放这里（与运行目录的确认同一个家），
@@ -179,6 +208,76 @@ export interface AdoptedEnvironment {
  * 的采用、设置页）不必各自再挡一遍，也挡不住（写在它们看得见结果之前就发生了）。
  */
 let projectEpoch = 0
+/**
+ * 引擎 bootstrap（自助安装渲染环境）的状态：**只有一份** `{ attempt, state }`，来源三路（SSE `engine.bootstrap` /
+ * 环境状态 GET / install POST 响应）都经 `applyBootstrap` 这一个入口，规则两条：
+ *   (a) 快照的 `attempt` 更大 → 直接采用（新的一次）；相同 → 按单调序合并（idle < running < done / failed，终态锁定、
+ *       同序重复只更新日志）；更小 → 丢弃。服务端给每次安装一个单调的 `attempt`，所以不需要任何「谁先到」的推断。
+ *   (b) 本地点安装后到 POST 响应回来之前是**待定**：此时已知的 `attempt` 还是上一次的，待定期间 `installing` 不会因为
+ *       上一次的快照翻回 false；一旦采用了 `attempt` 比点击时更大的快照（SSE / 响应 / GET 谁先到都行），待定即解除。
+ * 老后端不带 `attempt`（兼容分支，唯一一处）：快照一律按「同一次」合并，待定由「观察到 running / 终态的快照」或 30 s 兜底解除。
+ */
+export const INSTALL_PENDING_TIMEOUT_MS = 30_000
+const BOOTSTRAP_RANK = { idle: 0, running: 1, done: 2, failed: 2 } as const
+type BootstrapState = keyof typeof BOOTSTRAP_RANK
+let bootstrapKnown: { boot?: string; attempt: number; state: BootstrapState } = { attempt: 0, state: 'idle' }
+/** 待定：点击那一刻已知的 attempt；null = 不在待定 */
+let pendingFloor: number | null = null
+let pendingTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPending(): void {
+  pendingFloor = null
+  if (pendingTimer) clearTimeout(pendingTimer)
+  pendingTimer = null
+}
+
+/** 只给测试用：把模块级的 bootstrap 账本清零 */
+export function resetBootstrapForTests(): void {
+  bootstrapKnown = { attempt: 0, state: 'idle' }
+  clearPending()
+}
+
+/**
+ * bootstrap 快照的唯一入口。回 `adopted`（采用了新信息）与 `terminal`（这次采用让状态进入了终态）。
+ * `installing` = 已知状态是 running，或仍在待定。
+ */
+function applyBootstrap(
+  snap: { boot?: string; attempt?: number; state?: string; log?: string; error?: string | null },
+  set: (p: Partial<EnvState>) => void,
+): { adopted: boolean; terminal: boolean } {
+  const state = snap.state as BootstrapState | undefined
+  if (!state || !(state in BOOTSTRAP_RANK)) return { adopted: false, terminal: false }
+  const legacy = typeof snap.attempt !== 'number'
+  const attempt = legacy ? bootstrapKnown.attempt : (snap.attempt as number)
+  const known = bootstrapKnown
+  let adopted = false
+  // 后端进程换了（引擎重启 / 端口复用）：attempt 从头计，与上一个进程的不可比——直接采用，待定一并作废
+  // （点击发出去的那个进程已经没了）。第一次见到 boot 只是「学会它」，不算换了
+  const newBoot = snap.boot !== undefined && known.boot !== undefined && snap.boot !== known.boot
+  if (newBoot) {
+    adopted = true
+    clearPending()
+  } else if (attempt > known.attempt) adopted = true
+  else if (attempt === known.attempt) {
+    const r = BOOTSTRAP_RANK[state]
+    const k = BOOTSTRAP_RANK[known.state]
+    adopted = r > k || (r === k && state === 'running') // 终态锁定；running 的重复只收日志
+  }
+  if (!adopted) return { adopted: false, terminal: false }
+  const wasTerminal = !newBoot && BOOTSTRAP_RANK[known.state] === 2 && attempt === known.attempt
+  bootstrapKnown = { boot: snap.boot ?? known.boot, attempt, state }
+  if (pendingFloor !== null) {
+    // 采用了比点击时更新的一次（老后端：看到 running / 终态）= 这次尝试已经被观察到
+    if (legacy ? state !== 'idle' : attempt > pendingFloor) clearPending()
+  }
+  const terminal = BOOTSTRAP_RANK[state] === 2 && !wasTerminal
+  set({
+    installing: state === 'running' || pendingFloor !== null,
+    ...(snap.log !== undefined ? { log: snap.log } : {}),
+    ...(state === 'failed' && snap.error ? { log: snap.error } : {}),
+  })
+  return { adopted: true, terminal }
+}
 
 /**
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
@@ -221,11 +320,13 @@ async function restaleProjectRenders(epoch: number, retryMissingInput = false): 
 
 export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
+  checkingEnvironment: false,
   adoptedEnvironment: null,
   log: '',
   installing: false,
   workdirConfirmation: null,
   dependencyPreparation: null,
+  originConfirmation: null,
   missingInput: null,
   inputRemapGeneration: 0,
   probeResultsGeneration: 0,
@@ -388,6 +489,12 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ dependencyPreparation: offer })
   },
   dismissDependencyPreparation: () => set({ dependencyPreparation: null }),
+  requestOriginConfirmation: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().originConfirmation) return
+    set({ originConfirmation: offer })
+  },
+  dismissOriginConfirmation: () => set({ originConfirmation: null }),
   noteEnvironmentAdopted: (env) => {
     set((s) => ({ adoptedEnvironment: { ...env, token: (s.adoptedEnvironment?.token ?? 0) + 1 } }))
     adoptedDismissTimer.start(ADOPTED_NOTICE_MS, () => get().dismissAdoptedEnvironment())
@@ -410,24 +517,60 @@ export const useEnvStore = create<EnvState>((set, get) => ({
 
   refresh: async () => {
     const epoch = projectEpoch
-    try {
-      const env = await fetchEngineEnvironment()
-      if (epoch !== projectEpoch) return // 响应里的 project 是发请求那个项目的
-      set({ env })
-      // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
-      const g = env.project?.input_remap?.generation
-      if (typeof g === 'number') get().noteInputRemapGeneration(g)
-    } catch {
-      // 探测失败不该打扰用户：真要渲染时自然会报错
+    // 读取在路上时 env 被别的回包写过（确认运行目录 / 采用环境 / 另一次读取）：这份快照可能是那次写**之前**的，
+    // 整份写进来就把刚确认的事实盖回去（T12：装载期那次读取比紧接着的确认晚回来）。不盖，按此刻再读一次；
+    // 再读的那份在路上又被写过就不落地——store 里已经是更晚到的事实
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const seen = get().env
+      try {
+        const env = await fetchEngineEnvironment()
+        if (epoch !== projectEpoch) return // 响应里的 project 是发请求那个项目的
+        if (get().env !== seen) {
+          if (attempt === 0) continue
+          return
+        }
+        set({ env })
+        // 安装进度主要靠 SSE：断线期间丢了终态事件，`installing` 会永久为真——环境状态里的 `{ attempt, state }`
+        // 与 SSE 同一个入口、同一套规则（旧 / 同序的快照自动丢弃，不用在这里猜先后）
+        applyBootstrap(env, (p) => set(p))
+        // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
+        const g = env.project?.input_remap?.generation
+        if (typeof g === 'number') get().noteInputRemapGeneration(g)
+        return
+      } catch {
+        // 探测失败不该打扰用户：真要渲染时自然会报错
+        return
+      }
     }
   },
 
   install: async () => {
     if (get().installing) return
+    pendingFloor = bootstrapKnown.attempt
     set({ installing: true, log: '' })
     try {
-      await installEngineEnvironment()
+      const res = await installEngineEnvironment()
+      // 响应本身就是一份快照（带新 attempt；终态响应立即应用）。老后端没有 attempt：待定留到观察到 running / 终态
+      // 或 30 s 兜底
+      applyBootstrap(res, (p) => set(p))
+      if (pendingFloor !== null && typeof res.attempt === 'number') {
+        // 响应带着 (boot, attempt)：它就是这次点击的结算。attempt 比点击时更大 = 开出了新的一次（上面已采用并解除）；
+        // 没变 = 这次点击没开出新尝试（已经在跑 / 装不了）——按响应里的状态说话，待定到此为止，不再等一个永远不来的新 attempt
+        clearPending()
+        set({ installing: bootstrapKnown.state === 'running' })
+      }
+      if (pendingFloor !== null && typeof res.attempt !== 'number') {
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null
+          if (pendingFloor === null) return
+          if (import.meta.env.DEV) console.warn('[envStore] 安装已提交但 30s 内没观察到 running / 终态（老后端），用一次读取收尾')
+          clearPending()
+          set({ installing: bootstrapKnown.state === 'running' })
+          void get().refresh()
+        }, INSTALL_PENDING_TIMEOUT_MS)
+      }
     } catch (e) {
+      clearPending()
       set({
         installing: false,
         log: e instanceof Error ? e.message : t('engine.installFailed', { ns: 'errors' }),
@@ -472,6 +615,56 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     } catch (e) {
       if (epoch !== projectEpoch) return null
       return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
+    }
+  },
+
+  checkEnvironment: async (opts) => {
+    if (get().checkingEnvironment) return null
+    const epoch = projectEpoch
+    set({ checkingEnvironment: true })
+    try {
+      const res = await checkProjectEnvironment(opts)
+      // 检查结论属于发请求那个项目：A 的建议不摆到 B 上
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env?.project) set({ env: { ...env, project: { ...env.project, recommendation: res.recommendation } } })
+      else await get().refresh()
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      return backendErrorText(e)
+    } finally {
+      // 换了项目时清空已由 `resetProject` 做过；这里只收自己这一次
+      if (epoch === projectEpoch) set({ checkingEnvironment: false })
+    }
+  },
+
+  cancelEnvironmentCheck: async () => {
+    try {
+      await cancelProjectEnvironmentCheck()
+    } catch {
+      // 取消失败不打扰：检查自己有总时限
+    }
+  },
+
+  adoptCandidate: async (candidate, script, module) => {
+    const epoch = projectEpoch
+    try {
+      const res = await adoptEnvironmentCandidate(candidate, script, module)
+      // 采用记在 A 上；B 的环境状态、面板与建议一个都不动
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env) set({ env: { ...env, project: res.project } })
+      else await get().refresh()
+      // 后端已关掉本项目的会话；每个在用的面板按新环境重建（成功画过的也可能是按旧环境画的）
+      await restaleProjectRenders(epoch)
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      // 环境在看到建议之后被重建 / 候选没了：建议已经过期，重新拿一份再让用户看
+      if (e instanceof ApiError && (e.body?.code === 'environment_changed' || e.body?.code === 'environment_candidate_gone'))
+        await get().refresh()
+      return backendErrorText(e)
     }
   },
 
@@ -538,33 +731,33 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         inputRemapSeen: null,
         workdirConfirmation: null,
         dependencyPreparation: null,
+        originConfirmation: null,
         missingInput: null,
         rewritePreview: null,
         rewriteSkipped: [],
         rewriteError: null,
         adoptedEnvironment: null,
+        checkingEnvironment: false,
       })
     else
       set({
         inputRemapSeen: null,
         workdirConfirmation: null,
         dependencyPreparation: null,
+        originConfirmation: null,
         missingInput: null,
         rewritePreview: null,
         rewriteSkipped: [],
         rewriteError: null,
         adoptedEnvironment: null,
+        checkingEnvironment: false,
       })
     void get().refresh()
   },
 
   onProgress: (p) => {
-    set({ log: p.log })
-    if (p.state === 'done' || p.state === 'failed') {
-      set({ installing: false })
-      void get().refresh()
-    } else if (p.state === 'running') {
-      set({ installing: true })
-    }
+    const { terminal } = applyBootstrap(p, (patch) => set(patch))
+    // 终态：环境那半边变了（建好了 / 失败了），读一次
+    if (terminal) void get().refresh()
   },
 }))

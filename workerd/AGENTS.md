@@ -35,7 +35,7 @@
 - 语义要点：generation 每 (re)spawn +1 且**上一代的迟到响应一律丢弃**；
   per (会话, stem) 的 render 队列里至多一条、新的顶掉旧的（回 `queue_superseded`）；
   export 一条都不合并；队列有界，满了立即拒绝；取消在飞 = **杀进程**
-  （协议层没有协作中断）；淘汰 = kill，不等锁。
+  （协议层没有协作中断）；淘汰 = kill，不等锁，但只挑闲着的（在飞 / 排队 / 租约内的不杀，宁可暂时超上限，ADR 0004 §7）。
 - 验证：`cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check`。
 - 桌面产物必须自带 workerd（`build_desktop.py` 先 cargo build，`tavotto.spec`
   收进 `_internal/`），少了它渲染回退到 Python 池——功能全在、只是慢、零报错。

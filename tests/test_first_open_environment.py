@@ -52,6 +52,13 @@ SCRIPT = (
 
 
 @pytest.fixture(autouse=True)
+def _legacy_silent_adoption(monkeypatch):
+    """本文件测的是 ADR 0057 / 0079 / 0107 的**静默采用**机制——ADR 0114 把它收进兼容开关保留一版
+    （`TAVOTTO_ENV_ADOPTION=auto`）。默认的确认模式（建议 → 检查 → 采用）见 `test_environment_adoption.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
+
+
+@pytest.fixture(autouse=True)
 def _clean():
     projectenv.reset_cache()
     engine_pool.reset_worker_python()
@@ -349,6 +356,11 @@ def test_a_project_venv_rebuilt_broken_at_the_same_path_is_rechecked_not_trusted
     worker, _ = engine_pool.build("figure.py", str(root), "__main__")
     assert worker.python_source == engine_pool.SOURCE_PROJECT_VENV
     assert engine_pool.first_open_outcome(root)["ok"] is True
+    # ADR 0114 之前记下的记录没有「环境代」：删掉它，守住的仍是进程内体检指纹这一道（有环境代的记录由
+    # `generation_changed` 先拦下，见 test_environment_adoption.py）
+    stored = dict(engine_config.project_settings(str(root))[projectenv.SETTINGS_KEY])
+    assert stored.pop("generation")
+    engine_config.set_project_settings(str(root), {projectenv.SETTINGS_KEY: stored})
     engine_pool.shutdown_all(wait=True)
     shutil.rmtree(venv)
     _bare_venv(root, ".venv")  # 同一路径，没有 matplotlib

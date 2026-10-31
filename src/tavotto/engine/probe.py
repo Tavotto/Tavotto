@@ -29,9 +29,25 @@ spawn 路径都是 `execspec.safe_spec()` 的消费者）：cwd 在沙盒、argv
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from . import discover, inputremap, pool, projectenv, registry, taskdiag
+from . import (
+    discover,
+    execspec,
+    figcapture,
+    inputbroker,
+    inputremap,
+    pool,
+    projectenv,
+    registry,
+    runconfig,
+    runtimeasset,
+    scanbudget,
+    shadowscript,
+    taskdiag,
+    texdiag,
+)
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -61,6 +77,10 @@ ERROR_STEM_CONFLICT = "multiple_stem_conflict"
 #: `script_probe_failed` 会把出路（给默认值或 `tavotto run` / 去掉那句 exit）说丢。
 ERROR_NEEDS_ARGUMENTS = "script_needs_arguments"
 ERROR_SCRIPT_EXITED = "script_exited"
+#: safe 守卫拦下了脚本的关键文件操作、脚本随后又观察了它（P01a）：原样透传——出路（保留文件语义的执行路径）
+#: 归成通用的 `script_probe_failed` 会被说丢。**不**算「与入口无关」：被拦的操作可能只在某个入口函数里
+#: （`main()` 删缓存再读，而 `render()` 是干净的图入口），换下一个入口照旧要试；都失败时报的是第一次的这个码。
+ERROR_FILE_OPERATION_BLOCKED = pool.FILE_OPERATION_BLOCKED_CODE
 #: 脚本 `input()`（ADR 0099）：没人能答 / 等到超时脚本没接住 EOF。worker 原样透传。
 ERROR_NEEDS_INPUT = "script_needs_input"
 ERROR_INPUT_TIMEOUT = "script_input_timeout"
@@ -116,11 +136,15 @@ def _error_from_worker(
     映射是收敛的：缺包与超时各有可执行出口（换环境 / 检查死循环），单独
     成码；会话被中途终止（脚本在探测期间被改、workerd 会话被回收）是
     execution_cancelled；其余一律 script_probe_failed——绝大多数是脚本自己
-    的问题，worker 侧的细分 code（如 script_error）留在 params 里备查。
+    的问题，worker 侧的细分 code（如 script_error）留在 params.worker_code 里备查。
     """
     reason = _short(str(exc), exc.traceback_text)
     if exc.code == "missing_dependency":
         params = {"module": exc.module}
+        # 读不了的项目外文件夹里的包（ADR 0153）：文件夹名随参数带出，`tavotto open` 据此说清原因
+        folder = ((getattr(exc, "extra", None) or {}).get("unreadable_folder") or {}).get("folder")
+        if folder:
+            params["folder"] = folder
         # 项目环境自动接手为什么没成（ADR 0018）：找不到 venv / venv 里也没这个
         # 包 / 那个环境没有 matplotlib / Python 版本不支持。四种情况用户要做的
         # 事完全不同，只报「缺少依赖包」等于把可执行的出路藏起来。
@@ -140,18 +164,36 @@ def _error_from_worker(
         # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
         # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
         # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
-        if figures_dir and exc.module:
+        route = getattr(exc, "install_route", "") or ""
+        if route:
+            out["install_route"] = route
+        # 标准库缺了不出安装 offer（与 Flask worker 错误、准备会话同一个判据 `pool.install_offer_blocked`）
+        if figures_dir and exc.module and not pool.install_offer_blocked(route):
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
+        # 诊断包的「最近缺依赖现场」（bundle schema 4）：这条路在自己里面接住 WorkerError、以 200 + `error` 交出，
+        # 不经 `app._worker_error`，以前一条都没记。含敏感参数的运行 module 为空，记不下（见该函数）。
+        if figures_dir:
+            from . import deprepair
+
+            deprepair.note_missing_dependency_of(
+                figures_dir, exc, script=script, offer=out.get("dependency_repair")
+            )
         return out
     if exc.code in (ERROR_NEEDS_INPUT, ERROR_INPUT_TIMEOUT):
         # 脚本要输入而没人能答 / 等到超时（ADR 0099）：提示原文走 params，界面按 code 翻
-        extra = getattr(exc, "extra", None) or {}
         return _err(
             exc.code,
             str(exc),
-            params={"prompt": str(extra.get("prompt") or "")},
+            params=pool.recovery_params(exc),
+            traceback_text=exc.traceback_text,
+        )
+    if exc.code == ERROR_FILE_OPERATION_BLOCKED:
+        return _err(
+            exc.code,
+            str(exc),
+            params=pool.file_operation_blocked_params(getattr(exc, "extra", None)),
             traceback_text=exc.traceback_text,
         )
     if exc.code in (ERROR_NEEDS_ARGUMENTS, ERROR_SCRIPT_EXITED):
@@ -162,12 +204,8 @@ def _error_from_worker(
         if exc.code == ERROR_NEEDS_ARGUMENTS:
             # T03：用户给了精确 token 时（`argv_count` > 0）脚本自己的解析器仍拒绝；`parse_kind` 只在 worker
             # 有 argparse 的实际证据时才有（missing_required / invalid_value / unknown）。
-            # 只带类别与个数，不带参数值。
-            extra = getattr(exc, "extra", None) or {}
-            if extra.get("argv_count"):
-                params["argv_count"] = str(int(extra["argv_count"]))
-            if extra.get("parse_kind"):
-                params["parse_kind"] = str(extra["parse_kind"])
+            # 只带类别与个数，不带参数值（字段来自错误转换合同 `pool.recovery_params`）。
+            params.update(pool.recovery_params(exc))
         out = _err(
             exc.code,
             str(exc),
@@ -178,6 +216,7 @@ def _error_from_worker(
         offer = getattr(exc, "missing_input", None)
         if isinstance(offer, dict):
             out["missing_input"] = offer
+        _attach_workdir_hint(out, exc)
         return out
     if exc.code == ERROR_MISSING_INPUT:
         offer = getattr(exc, "missing_input", None)
@@ -205,6 +244,12 @@ def _error_from_worker(
         out = _err(exc.code, str(exc))
         out["dependency_preparation"] = dependency
         return out
+    if exc.code in (*texdiag.ERROR_CODES, pool.IMPORT_FOLDER_UNREADABLE_CODE):
+        # TeX / 项目外文件夹读不了（ADR 0153） 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
+        # （`pool.recovery_params`）——素材库这条入口不能退化成一句「试运行失败」，更不能落成缺 Python 包
+        return _err(
+            exc.code, str(exc), params=pool.recovery_params(exc), traceback_text=exc.traceback_text
+        )
     # build 超时有自己的码（ADR 0048）；试运行走的正是 build，两个都要认——
     # 漏掉的话「脚本执行超时」会退化成一句通用的「试运行失败」。
     if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):
@@ -222,7 +267,7 @@ def _error_from_worker(
             return _err(
                 ERROR_PROBE_FAILED,
                 f"试运行失败（入口 {entry}）：{exc}",
-                params={"entry": entry, "reason": str(exc)},
+                params={"entry": entry, "reason": str(exc), "worker_code": exc.code},
                 traceback_text=exc.traceback_text,
             )
         return _err(
@@ -233,41 +278,96 @@ def _error_from_worker(
     out = _err(
         ERROR_PROBE_FAILED,
         f"试运行失败（入口 {entry}）：{reason}",
-        params={"entry": entry, "reason": reason},
+        # `worker_code`：底层细分码（`script_error` / `write_outside_roots` …）。只多一个键，码与文案不变；
+        # 需要区分“脚本坏了”与“写入绊线”的调用方（改图 `check`）读它
+        params={"entry": entry, "reason": reason, "worker_code": str(exc.code or "")},
         traceback_text=exc.traceback_text,
     )
+    if exc.code == "write_outside_roots":
+        # Worker-owned, already relativized evidence; consumers must not parse
+        # localized advice or replay advice for a different execution scope.
+        extra = getattr(exc, "extra", None) or {}
+        if isinstance(extra, dict):
+            out["params"]["write_violation"] = {
+                key: extra[key][:limit]
+                for key, limit in (("path", 512), ("event", 64))
+                if isinstance(extra.get(key), str)
+            }
     # C++ 读取器找不到数据（ADR 0110 §一）：码照旧是「试运行失败」，载荷原样带出——素材库弹同一个
     # 「指认数据位置」对话框（`pool._offer_missing_input` 只在对上脚本里一串常量时挂）
     offer = getattr(exc, "missing_input", None)
     if isinstance(offer, dict):
         out["missing_input"] = offer
+    _attach_workdir_hint(out, exc)
     return out
 
 
-def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
+def _success_workdir_hint(worker) -> dict:
+    hint = pool.workdir_hint_of_build(worker)
+    return {"workdir_hint": hint} if hint is not None else {}
+
+
+def _attach_workdir_hint(out: dict, exc: pool.WorkerError) -> None:
+    """沙盒里落空的探路调用、脚本目录里找得到（#1254）：把「在脚本目录里运行」的引导原样带出，素材库的试运行失败
+    与渲染端点是同一份载荷。码、文案一字不变。"""
+    hint = getattr(exc, "workdir_hint", None)
+    if isinstance(hint, dict):
+        out["workdir_hint"] = hint
+
+
+def entry_candidates(
+    figures_dir: str | Path,
+    script: str,
+    *,
+    source: str | Path | None = None,
+    static_only: bool = False,
+) -> list[str]:
     """该脚本值得一试的 entry 列表（静态推断优先，去重保序）。
 
     两级静态推断：`discover.analyze_script`（存图口径，注册表草稿同款）给出
     的入口最优先；`discover.probe_entry_candidates`（绘图宽口径，show-only
     也解得出）补齐其余。脚本解析不了时退回盲试 FALLBACK_ENTRIES——运行期
     会给出真正的报错（语法错误的 traceback 比静态猜测有解释力）。
+
+    `static_only`（准备会话的「换入口」，ADR 0127 修订 2026-10-30）：只要**能静态解析出**的出图入口，解析不了就空表，
+    绝不退回盲试——换入口是一次真执行，不拿不存在的入口去试。候选的算法仍只此一份。
     """
     # 脚本钉在项目根之内的 realpath 才读；在外面就是「解析不了」那一档，退回盲试列表
-    real = projectenv.contained_path(figures_dir, script)
-    if real is None:
-        return list(FALLBACK_ENTRIES)
-    path = Path(real)
-    info = discover.analyze_script(path, Path(figures_dir))
+    # `source`（影子脚本，ADR 0143 修订）：项目里没有这个文件，字节在候选目录；静态分析钉在它自己的目录里读，
+    # 判入口的 AST 口径与采用后重开同一把尺子（只有 stems 的磁盘比对用的根不同，入口不依赖它）
+    if source is not None:
+        path = Path(source)
+        root = path.parent
+        real = projectenv.contained_path(root, path.name)
+        if real is None:
+            return [] if static_only else list(FALLBACK_ENTRIES)
+        path = Path(real)
+    else:
+        real = projectenv.contained_path(figures_dir, script)
+        if real is None:
+            return [] if static_only else list(FALLBACK_ENTRIES)
+        path = Path(real)
+        root = Path(figures_dir)
+    info = discover.analyze_script(path, root)
     static = discover.probe_entry_candidates(path)
     out: list[str] = []
     if info:
         out.append(info["entry"])
+    if static is None and static_only:
+        return out  # 只有存图口径的入口（可能为空）；不盲试
     for e in static if static is not None else FALLBACK_ENTRIES:
         if e not in out:
             out.append(e)
+    if not out and static_only:
+        return out
     if not out:
         out.append(registry.INLINE_ENTRY)
     return out
+
+
+#: 结果里这次运行每一问去向的键（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由。
+#: HTTP 端点在落任务诊断之后把它从响应体里摘掉（响应形状不变）。
+INPUT_FACTS_KEY = "input_facts"
 
 
 def probe(
@@ -276,6 +376,40 @@ def probe(
     entries: list[str] | None = None,
     should_cancel=None,
     run=None,
+    on_acquired=None,
+    on_built=None,
+    write_roots=None,
+) -> dict:
+    """`_probe()` + 这次运行的输入去向（T08）：成功取 worker 的 `last_input_facts`，失败取第一处错误那次
+    build 挂在异常上的 `input_facts`——与 `error` 说的是同一次尝试。"""
+    box: dict = {}
+    result = _probe(
+        figures_dir,
+        script,
+        entries,
+        should_cancel,
+        run,
+        facts=box,
+        on_acquired=on_acquired,
+        on_built=on_built,
+        write_roots=write_roots,
+    )
+    if box.get("facts") is not None:
+        result[INPUT_FACTS_KEY] = box["facts"]
+    return result
+
+
+def _probe(
+    figures_dir: str | Path,
+    script: str,
+    entries: list[str] | None = None,
+    should_cancel=None,
+    run=None,
+    *,
+    facts: dict,
+    on_acquired=None,
+    on_built=None,
+    write_roots=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -306,6 +440,10 @@ def probe(
     `pool.force_cancel` 硬杀在跑的 worker）：一旦为真，**不再尝试下一个
     entry**，并把本轮的失败（多半是被杀 worker 的「进程崩溃」）如实归类为
     `execution_cancelled`——被用户取消的 probe 报「脚本坏了」是撒谎。
+
+    `on_acquired(worker, owned)`（T09b）：每次取到会话、执行之前报一次——`owned` 是 `pool.acquired_here`：True =
+    这次试运行新建的、False = 别人（渲染路 / 准备会话）正在用的同键会话、None = 说不清。取消端点据此**按 owner**
+    只关自己建的那条；共享会话只停自己的等待意图，一根手指不碰（ADR 0116 §三，与准备会话的取消同一条规则）。
     """
     figures_dir = str(Path(figures_dir))
     cancelled = (lambda: bool(should_cancel())) if callable(should_cancel) else (lambda: False)
@@ -322,7 +460,8 @@ def probe(
     _cancel_err = lambda: _err(  # noqa: E731 —— 两个出口共用同一句
         ERROR_CANCELLED, "试运行已取消"
     )
-    script_path = Path(figures_dir) / script
+    shadow = shadowscript.lookup(figures_dir, script, execspec.write_roots_key(write_roots))
+    script_path = Path(shadow) if shadow else Path(figures_dir) / script
     if not script_path.is_file():
         return {
             **empty,
@@ -341,47 +480,72 @@ def probe(
             }
 
     run_ctx = {"run": run} if run is not None else {}
+    # 写入根绊线（ADR 0141 / 0143）：给了就是带绊线的会话（池键多一段），取消 / 作废 / 取会话都要带同一份根
+    roots_ctx = {"write_roots": write_roots} if write_roots is not None else {}
 
     def before_build(worker):
+        owned = pool.acquired_here(worker)
+        if on_acquired is not None:
+            on_acquired(worker, owned)
         # Cancellation may arrive while get() discovers an interpreter, before the
         # worker exists in the pool. Check again after every acquisition, including fallback.
         if cancelled():
-            if not pool.force_cancel(script, figures_dir, expected_worker=worker, **run_ctx):
+            if owned is False:
+                # 别人的会话（渲染路正在用的同键会话）：本次试运行只是放弃等待，不杀它
+                raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
+            if not pool.force_cancel(
+                script, figures_dir, expected_worker=worker, **run_ctx, **roots_ctx
+            ):
                 worker.force_kill()  # Already detached: never retire its replacement.
             raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
 
     tried: list[str] = []
     first_error: dict | None = None
-    for entry in entries or entry_candidates(figures_dir, script):
+    for entry in entries or entry_candidates(figures_dir, script, source=shadow):
         if cancelled():
             return {**empty, "tried": tried, "error": _cancel_err()}
         tried.append(entry)
         # 每次换 entry 都要换掉旧会话：worker 的 entry 是启动参数，
         # 复用旧进程等于一直用错的入口重试。
-        pool.invalidate(script, figures_dir, run, only_run=True)
         try:
+            # 重跑必须**同步**退役旧会话（`force=True`）：workerd 对同一份 spawn 规格复用活着的会话，异步关停还没落地
+            # 就开新的会拿到旧会话——它的 `build` 命中「已建好」直接回缓存，脚本一行没重跑，`input()` 不再被问、
+            # 自动回填的轻提示也就不会出（Windows 打包产物上 `script-input.spec` 的红）。关停未确认 =
+            # WorkerError，当作这次试运行失败如实报，不假装重跑过。
+            pool.invalidate(script, figures_dir, run, only_run=True, force=True, **roots_ctx)
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
             _worker, resp = pool.build(
-                script, figures_dir, entry, before_build=before_build, **run_ctx
+                script, figures_dir, entry, before_build=before_build, **run_ctx, **roots_ctx
             )
         except pool.WorkerError as exc:
             if cancelled():
                 # worker 是被 cancel 硬杀的：报「进程崩溃」是把用户的取消
                 # 说成脚本的错。不再试下一个 entry——取消就是取消。
                 LOG.info("探测被取消 %s [entry=%s]", script, entry)
+                facts["facts"] = getattr(exc, "input_facts", None)  # 在等输入时被停：诊断里看得到
                 return {**empty, "tried": tried, "error": _cancel_err()}
-            pool.invalidate(script, figures_dir, run, only_run=True)
+            pool.invalidate(script, figures_dir, run, only_run=True, **roots_ctx)
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
+                facts["facts"] = getattr(exc, "input_facts", None)
             if not entry_retry_allowed(exc):
                 break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
+        if cancelled():
+            # 共享会话的等待者被取消：别人的 build 照常跑完（不杀它），但本次试运行不得再当成功返回——
+            # 否则 probe_and_register 会替换注册表 stem，可能摘掉别的参数建出来的图。
+            LOG.info("探测完成但已被取消 %s [entry=%s]", script, entry)
+            facts["facts"] = getattr(_worker, "last_input_facts", None)
+            return {**empty, "tried": tried, "error": _cancel_err()}
         stems = sorted(resp.get("stems") or {})
+        facts["facts"] = getattr(_worker, "last_input_facts", None)
         if stems:
+            if on_built is not None:
+                on_built(_worker, resp.get("execution_id"))
             LOG.info("探测成功 %s [entry=%s] → %s", script, entry, stems)
             return {
                 "script": script,
@@ -392,10 +556,16 @@ def probe(
                 "error": None,
                 "timings": dict(resp.get("timings") or {}),
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
+                # 写进多页 PDF 而被逐页认领的图（#1370）：没有时不出现；前端据此出通知轨胶囊
+                **({"pdf_pages": list(resp["pdf_pages"])} if resp.get("pdf_pages") else {}),
+                # 逐图隔离（P08a）：有图预览捕获失败时如实带出去——部分成功不是"一切正常"
+                **_partial_fields(resp),
                 # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
                 "remap_generation": getattr(_worker, "remap_generation", None),
                 # T03：这次执行绑定的运行配置引用（不透明 id；argv 原文不出现在结果里）
                 **({"run_config": run.config_id} if run is not None else {}),
+                # 跑通了有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）
+                **_success_workdir_hint(_worker),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
@@ -409,7 +579,11 @@ def probe(
             offer = pool.missing_input_offer(script, figures_dir)
             if offer is not None:
                 first_error["missing_input"] = offer
-        pool.invalidate(script, figures_dir, run, only_run=True)
+            # 跑通了没出图：build 响应里带着沙盒里落空的探路调用（#1254）
+            hint = pool.workdir_hint_for(script, figures_dir, resp.get("probe_misses"))
+            if hint is not None:
+                first_error["workdir_hint"] = hint
+        pool.invalidate(script, figures_dir, run, only_run=True, **roots_ctx)
 
     return {
         **empty,
@@ -451,8 +625,56 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
     return out
 
 
+def descriptor_artifacts(descriptors) -> dict[str, str] | None:
+    """一次执行的描述符 → `{磁盘文件相对路径: stem}`：登记进注册表的 `artifacts`（#1251）。
+
+    每张图收它写过的**全部**文件（描述符的 `artifacts`，缺省退回只有 `original_artifact` 的旧描述符）：乙存了
+    `panel.pdf` 与 `panel.svg` 时两个文件都记到 `panel-2`，打开哪个都是乙。文件已经是按这张图**自己存过的
+    格式**绑定的（`figcapture.find_artifacts(formats=…)`，与 #1250 的「原件归属」同一份判据），pyplot 捕获没有。
+
+    同一路径被两张不同的图都声称（两张图都存过 `panel.pdf`，磁盘上只剩最后写的那个）时**不记**：这里没有
+    「谁最后写」的证据（那是捕获层 `note_savefig_writer` 的事），猜错比不记更糟——不记 = 退回按文件名 stem，
+    与没有这张表时的行为一致。
+    """
+    if descriptors is None:
+        return None  # 没有执行证据（不是「执行了、没有原件」）：调用方沿用已知映射
+    owner: dict[str, str] = {}
+    contested: set[str] = set()
+    for d in descriptors:
+        if not isinstance(d, dict):
+            continue
+        stem = d.get("stem")
+        if not (isinstance(stem, str) and stem):
+            continue
+        files = d.get("artifacts")
+        paths = list(files) if isinstance(files, (list, tuple)) else []
+        if isinstance(d.get("original_artifact"), str):
+            paths.append(d["original_artifact"])
+        for art in paths:
+            if not (isinstance(art, str) and art):
+                continue
+            art = art.replace("\\", "/")
+            if owner.setdefault(art, stem) != stem:
+                contested.add(art)
+    return {a: s for a, s in owner.items() if a not in contested}
+
+
+def _partial_fields(build_resp) -> dict:
+    """build 响应里被逐图隔离的图 → `{"failed_figures": [...], "partial": True}`；没有失败时不加任何键。"""
+    failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
+    if not isinstance(failed, list) or not failed:
+        return {}
+    return {"failed_figures": [dict(f) for f in failed if isinstance(f, dict)], "partial": True}
+
+
 def probe_and_register(
-    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None, run=None
+    figures_dir: str | Path,
+    script: str,
+    cost: str = "medium",
+    should_cancel=None,
+    run=None,
+    on_acquired=None,
+    register_result=None,
 ) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
@@ -465,19 +687,29 @@ def probe_and_register(
     取消（`should_cancel`）输给成功：脚本在取消到达前跑完了就是跑完了，
     照常登记——「已经发生的执行」不因迟到的取消而假装没发生。
     """
+    built = []
     result = probe(
         figures_dir,
         script,
         should_cancel=should_cancel,
         **({"run": run} if run is not None else {}),
+        **({"on_acquired": on_acquired} if on_acquired is not None else {}),
+        **(
+            {"on_built": lambda worker, execution: built.append((worker, execution))}
+            if register_result is not None
+            else {}
+        ),
     )
     if not result["stems"]:
         return {**result, "registered": False}
+    if register_result is not None:
+        worker, execution = built[-1] if built else (None, None)
+        return register_result(result, worker, execution)
     return register_probed(figures_dir, script, result, cost=cost)
 
 
 def register_probed(
-    figures_dir: str | Path, script: str, result: dict, cost: str = "medium"
+    figures_dir: str | Path, script: str, result: dict, cost: str = "medium", *, on_registered=None
 ) -> dict:
     """把一次**已经成功**的执行（`stems` 非空）按真实产出登记进注册表：冲突 / 改指代次的判据只此一份。
 
@@ -485,7 +717,15 @@ def register_probed(
     探测的私事，是「捕获到的图要能被编辑请求按 stem 找到」的那一步。`result` 至少带 `stems` /
     `entry` / `remap_generation`；原样展开回去，加 `registered`（与可能的 `error` / `stem_conflicts`）。
     """
-    conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])
+    # 预览捕获失败的图（P08a 逐图隔离）也是这个脚本产出的图：照样登记，否则部分成功会把它此前的登记整条替换掉；
+    # 编辑请求落到它身上时拿到的是失败原因（`preview_capture_failed`），不是"不存在"
+    failed_stems = [
+        str(f["stem"])
+        for f in (result.get("failed_figures") or ())
+        if isinstance(f, dict) and f.get("stem")
+    ]
+    all_stems = sorted({*result["stems"], *failed_stems})
+    conflicts = _live_stem_conflicts(figures_dir, script, all_stems)
     if conflicts:
         detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
         return {
@@ -500,23 +740,66 @@ def register_probed(
         }
     # 登记在改指表的锁里、核对过代次才落地（ADR 0106 §五）：试运行途中改了指认，产出的图名 / 描述
     # 是按旧位置的数据来的——丢弃、可重试，注册表零改动
+    append = bool(result.get("run_config"))
+    written = []
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
-            discover.register(
+            # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
+            # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
+            origins = discover.registered_stem_origins(figures_dir, script)
+            before = list(origins or {})
+            legacy_candidates = (
+                None
+                if origins is None
+                else [stem for stem, origin in origins.items() if origin != "static"]
+            )
+            # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
+            # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
+            # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
+            unlinked = (
+                []
+                if append
+                else sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
+            )
+            # A pre-history base cache is positive capture evidence even if discovery
+            # recorded a static candidate locally. Persist it before that cache is pruned.
+            # Cache absence is never used as evidence against an unknown legacy stem.
+            for stem in set(result["stems"]).intersection(
+                stem for stem, origin in (origins or {}).items() if origin == "static"
+            ):
+                if (
+                    runtimeasset.load_metadata(
+                        figures_dir, figcapture.runtime_asset_id(script, stem)
+                    )
+                    is not None
+                ):
+                    runconfig.record_captures(figures_dir, script, [stem])
+            # Snapshot provenance before recording the capture consumes discovery evidence. Unknown
+            # old entries stay legacy; discovery-only entries are not capture evidence.
+            runconfig.record_captures(
                 figures_dir,
                 script,
                 result["stems"],
+                str(result.get("run_config") or ""),
+                registered_stems=legacy_candidates,
+            )
+            registered_config = discover.register(
+                figures_dir,
+                script,
+                all_stems,
                 entry=result["entry"],
                 cost=cost,
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
-                append=bool(result.get("run_config")),
+                append=append,
+                artifacts=descriptor_artifacts(result.get("descriptors")),
+                **({"on_written": written.append} if on_registered is not None else {}),
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
-            inputremap.record_registration(figures_dir, script)
-            if result.get("run_config"):
-                inputremap.record_registration(figures_dir, script, result["run_config"])
+            # 带运行配置的执行只对账**这一份**配置：脚本级标记留给真正的无参数试运行，否则无参数登记与没有
+            # 自己标记的别的 argv 变体会被误算成已对账，改指后渲染不再重新登记（Codex 评 #909 补审 P2）
+            inputremap.record_registration(figures_dir, script, str(result.get("run_config") or ""))
     except inputremap.RemapChanged as exc:
         LOG.info("试运行结果作废（%s）: %s", exc, script)
         return {
@@ -524,7 +807,163 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    return {**result, "registered": True}
+    if on_registered is not None and written:
+        on_registered(written[-1], registered_config)
+    return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+
+
+def captured_stems(
+    figures_dir: str | Path,
+    script: str,
+    stems: Iterable[str],
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+    stop_at_first: bool = False,
+) -> tuple[set[str], bool]:
+    """`stems` 里此前真被某次执行捕获过的那些：runtime cache 里有物化记录（无参数或这个脚本登记过的任一份
+    运行配置）。回 `(捕获过的 stem, 是否查全)`。
+
+    注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
+    条件分支里的那张从没产出过。对它说「此前带其他参数生成的……已不再关联」是假话（T11：第一次无参数运行就报）。
+    cache 被按体积回收过的旧图会漏报——宁可少说，不说假话。导入即扫描判「这个脚本已经连着可编辑的图」与登记时判
+    「替换掉了哪些图名」都用它（`projscan._linked_scripts` / `register_probed`），一份判据两处用。
+
+    成本是**每个脚本**的，不是 stems × 配置：运行配置登记读一次（`configs` 可由调用方预读）；cache 根目录列一次，
+    候选 id 的目录名纯计算后做成员判断，只有真存在的目录才读元数据（#819 r4232302927）。
+
+    坏的脚本键（绝对 / 盘符 / 空——`figcapture.normalize_relative_script` 拒的那些，与 `runtime_asset_id` 同一条判据）、
+    坏的 stem 都当**没有证据**：手改过的注册表不能让扫描或登记炸掉（r4232302913）。
+
+    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，**整个脚本**当没有证据（连无参数变体也不算）：素材清单
+    （`/api/runtime/assets`）此刻对该脚本报 `run_config_unreadable`，用户打不开任何一张，说「已连接」是假话（r4232390785）；
+    登记（`register_probed`）也因此不声称「已不再关联」——读不出就什么都不说。不因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
+    `run_config_secret_missing`，不是「可直接编辑」（r4221248582）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    `run_config_unreadable` 显式拒绝（那条不在这里）。
+
+    `charge`（导入即扫描传 `budget.charge_entry`）在每次真实的磁盘操作（列目录、读元数据）前调用，返回 False
+    （预算用完 / 超时 / 取消）就停止并回 `complete=False`——调用方据此判「没查全」，绝不是「没捕获」。
+    `stop_at_first` 为真时找到第一个就返回（只要「有没有」的调用方用）。"""
+    wanted = [s for s in stems if isinstance(s, str) and s]
+    try:
+        figcapture.normalize_relative_script(script)
+    except ValueError:
+        return set(), True
+    if not wanted:
+        return set(), True
+    if configs is None:
+        try:
+            configs = runconfig.executable_configs_of(figures_dir, script)
+        except runconfig.RunConfigError:
+            # 登记读不出 / 来自新版本：素材清单此刻整个报 `run_config_unreadable`，连无参数变体也打不开——
+            # 没有任何可用的 cache 证据（不是「没有配置」，r4232390785）。调用方据此既不判已连接，也不声称「已不再关联」
+            return set(), True
+    if charge is not None and not charge():
+        return set(), False
+    present = runtimeasset.cached_slugs()
+    if not present:
+        return set(), True
+    identity = runconfig.project_identity(figures_dir)
+    found: set[str] = set()
+    for stem in wanted:
+        if stem in found:
+            continue
+        for run_config in ["", *(cfg.id for cfg in configs)]:
+            try:
+                asset_id = figcapture.runtime_asset_id(script, stem, run_config)
+            except ValueError:
+                break
+            if runtimeasset.cache_slug(identity, asset_id) not in present:
+                continue
+            if charge is not None and not charge():
+                return found, False
+            if runtimeasset.load_metadata(figures_dir, asset_id) is not None:
+                found.add(stem)
+                if stop_at_first:
+                    return found, True
+                break
+    return found, True
+
+
+def was_captured(
+    figures_dir: str | Path,
+    script: str,
+    stem: str,
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+) -> bool:
+    """单个图名版的 `captured_stems`（语义、预算协议见那里）；预算在途中耗尽回 False——要区分「没查全」的
+    调用方直接用 `captured_stems`。"""
+    found, _complete = captured_stems(
+        figures_dir, script, [stem], configs=configs, charge=charge, stop_at_first=True
+    )
+    return bool(found)
+
+
+def linked_scripts(figures_dir: str | Path, stems_by_script: dict[str, list[str]]) -> set[str]:
+    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目根一层有这个图名的原件
+    （`figcapture.find_original_artifact`——与 handoff / probe 找原件是同一份判据；递归素材清单里的 `archive/fig.pdf`
+    不是这个脚本的原件，不算，#819 P2），或这张图被某次执行捕获过（`was_captured`）。「已关联」只有这一份判据：
+    导入即扫描（`projscan`）与素材库脚本清单（`/api/registry` 的 `all_scripts[].linked`）都用它——打开项目时静态扫描
+    先登记的字面量图名只是猜测，脚本一次没跑过时不算已关联（T11 修了扫描，T13b 发现素材库脚本行是第二个消费者）。
+    只读：文件名比对 + cache 元数据，不执行、不起解释器。"""
+    return linked_scan(figures_dir, stems_by_script)[0]
+
+
+def linked_scan(
+    figures_dir: str | Path,
+    stems_by_script: dict[str, list[str]],
+    *,
+    isfile=None,
+    stem_ok=None,
+    stopped=None,
+    charge=None,
+) -> tuple[set[str], bool]:
+    """`linked_scripts` 的三态版：回 `(已关联的脚本, 是否查全)`。判据只有这一份——导入即扫描（带预算）与素材库脚本清单
+    （不带）共用，扫描路径只通过参数注入自己的约束：
+    `isfile`（`figcapture.find_original_artifact` 的探测谓词，扫描路径给不跟随链接的版本）、
+    `stem_ok`（先于任何路径拼接过滤掉非项目内相对名的 stem，不探也不算连接）、
+    `stopped`（预算 / 取消 / 超时是否已耗尽：耗尽时第二项为 False——没查到 ≠ 没关联，调用方不得据此派生默认目标）；
+    `charge`（每次真实的 cache 磁盘操作前记一笔预算，返回 False 即停，见 `captured_stems`）。cache 证据按脚本一次
+    索引，不是 stems × 配置逐个探（#819 r4232209726 / r4232302927）。"""
+    root = str(figures_dir)
+    # 默认就是安全形状（#820 r4232425162）：stem 先过项目内相对名校验、探文件只 lstat 不跟随且限于项目内；
+    # 扫描路径只是把同一谓词换成「每问一次记一笔预算」的版本
+    if isfile is None:
+        isfile = scanbudget.no_follow_isfile(root)
+    if stem_ok is None:
+        stem_ok = figcapture.project_relative_stem
+    find_kwargs = {"isfile": isfile}
+    complete = True
+
+    def linked(script: str, stems: list[str]) -> bool:
+        nonlocal complete
+        candidates: list[str] = []
+        for stem in stems:
+            if not stem_ok(stem):
+                continue
+            if stopped is not None and stopped():
+                complete = False
+                return False
+            if figcapture.find_original_artifact(root, stem, **find_kwargs) is not None:
+                return True
+            if stopped is not None and stopped():
+                complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
+                return False
+            candidates.append(stem)
+        # cache 证据按脚本一次判完（运行配置读一次、cache 目录列一次；`captured_stems`），不是每个 stem 探一遍
+        found_any, done = captured_stems(
+            figures_dir, script, candidates, charge=charge, stop_at_first=True
+        )
+        if found_any:
+            return True
+        if not done or (stopped is not None and stopped()):
+            complete = False  # cache 探测中耗尽预算：没查到 ≠ 没捕获
+            return False
+        return False
+
+    return {script for script, stems in stems_by_script.items() if linked(script, stems)}, complete
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +990,7 @@ def diagnostic_projection(
     argv_count: int,
     run_config: str | None,
     elapsed_ms: int | None,
+    input_facts: dict | None = None,
 ) -> dict:
     """一次试运行的**白名单**投影。逐字段挑，不读 `result` 的其余部分：`error.message` / `params` /
     `traceback` 是脚本自己的异常文字，`descriptors` / `stems` 有图名与路径，`entry` 是用户的函数名，
@@ -570,6 +1010,7 @@ def diagnostic_projection(
                 "stem_conflict_count": len(result.get("stem_conflicts") or {}),
             },
             "error": {"code": taskdiag.code(err.get("code"))} if err else None,
+            "input": inputbroker.facts_projection(input_facts),
             "timing": {"elapsed_ms": taskdiag.count(elapsed_ms)},
         }
     )

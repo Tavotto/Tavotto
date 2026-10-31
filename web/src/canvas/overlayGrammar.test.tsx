@@ -18,6 +18,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ShapeObject } from '@/types/document'
 import { OverlaySvg } from './OverlaySvg'
+import { DRAW_COLOR } from './interactions'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -56,6 +57,29 @@ afterEach(async () => {
 })
 
 describe('覆盖层语法', () => {
+  it.each(['arrow', 'line'])('拖画 %s 的主题描边包住文档色，结束后移除', async (tool) => {
+    await act(async () => useInteractionStore.getState().setDraft({
+      tool, x: -20, y: -20, w: 40, h: 30,
+      start: { x: -20, y: -20 }, end: { x: 20, y: 10 },
+    }))
+    const draft = container.querySelector('[data-draft-line-preview]')!
+    expect(draft.querySelector('[data-draft-outline="line"]')?.getAttribute('stroke')).toBe('var(--color-sel)')
+    expect(draft.querySelector('[data-draft-content="line"]')?.getAttribute('stroke')).toBe(DRAW_COLOR)
+    const head = draft.querySelector('[data-draft-outline="head"]')
+    const contentHead = draft.querySelector('[data-draft-content="head"]')
+    if (tool === 'arrow') {
+      expect(head?.getAttribute('fill')).toBe('var(--color-sel)')
+      expect(head?.getAttribute('stroke')).toBe('var(--color-sel)')
+      expect(contentHead?.getAttribute('fill')).toBe(DRAW_COLOR)
+    } else {
+      expect(head).toBeNull()
+      expect(contentHead).toBeNull()
+    }
+    expect(useDocumentStore.getState().doc.objects).toEqual([rect])
+    await act(async () => useInteractionStore.getState().end())
+    expect(container.querySelector('[data-draft-line-preview]')).toBeNull()
+  })
+
   it('手柄：16px 命中层带钩子，8px 视觉层填 --handle-fill；中心重合', () => {
     const hit = container.querySelector<SVGRectElement>('[data-handle="se"]')!
     expect(hit.getAttribute('width')).toBe('16')
@@ -94,6 +118,50 @@ describe('覆盖层语法', () => {
     const snap = container.querySelector('[data-snap-line="x"]')!
     expect(snap.querySelector('line')!.hasAttribute('stroke-opacity')).toBe(false)
     expect(snap.querySelector('path')!.getAttribute('d')!.match(/M/g)!.length).toBe(4)
+  })
+
+  it('吸附反馈：只框对方（目标虚线框）+ 自身加粗的边（只画 self 的跨度，不画自身虚线框）；颜色只走 token、线宽不随倍率变', async () => {
+    const self = { x: 10, y: 20, w: 30, h: 10 }
+    const target = { x: 60, y: 40, w: 20, h: 15 }
+    await act(async () =>
+      useInteractionStore.getState().setSnap([40], [], [{ axis: 'x', v: 40, self, target }]),
+    )
+    const fb = container.querySelector('[data-snap-feedback="x"]')!
+    expect(fb.querySelector('[data-snap-self]')).toBeNull()
+    const targetBox = fb.querySelector<SVGRectElement>('[data-snap-target]')!
+    const edge = fb.querySelector<SVGLineElement>('[data-snap-self-edge]')!
+    // 同一种虚线（--sel-dash）、同一个 sel token；加粗的边比框线粗
+    for (const el of [targetBox, edge]) expect(el.getAttribute('stroke')).toBe('var(--color-sel)')
+    expect(targetBox.style.strokeDasharray).toBe('var(--sel-dash)')
+    expect(Number(edge.getAttribute('stroke-width'))).toBeGreaterThan(Number(targetBox.getAttribute('stroke-width')))
+    // 边与整页吸附线同一 x；只画 self 的跨度（高度 = self.h 对应的屏幕长度，不贯穿整页）
+    const full = container.querySelector('[data-snap-line="x"] line')!
+    expect(edge.getAttribute('x1')).toBe(full.getAttribute('x1'))
+    const len = Math.abs(Number(edge.getAttribute('y2')) - Number(edge.getAttribute('y1')))
+    const fullLen = Math.abs(Number(full.getAttribute('y2')) - Number(full.getAttribute('y1')))
+    expect(len).toBeGreaterThan(0)
+    expect(len).toBeLessThan(fullLen / 2)
+    // 目标框的屏幕宽 / 自身那条边的跨度 = 毫米比（坐标换算正确：目标 w 20 : 自身 h 10 = 2）
+    expect(Number(targetBox.getAttribute('width')) / len).toBeCloseTo(2, 1)
+    // 放大一倍：框随倍率变，线宽不变
+    const w1 = Number(targetBox.getAttribute('width'))
+    await act(async () => useViewportStore.setState({ zoom: 2 }))
+    const targetBox2 = container.querySelector<SVGRectElement>('[data-snap-target]')!
+    expect(Number(targetBox2.getAttribute('width'))).toBeGreaterThan(w1 * 1.8)
+    expect(targetBox2.getAttribute('stroke-width')).toBe('1')
+    expect(container.querySelector('[data-snap-self-edge]')!.getAttribute('stroke-width')).toBe('2')
+  })
+
+  it('吸附反馈：没有 target 就不画对方框；没有反馈就什么都不画', async () => {
+    await act(async () =>
+      useInteractionStore.getState().setSnap([40], [], [{ axis: 'x', v: 40, self: { x: 10, y: 20, w: 30, h: 10 } }]),
+    )
+    expect(container.querySelector('[data-snap-self]')).toBeNull() // 自身从不画虚线框
+    expect(container.querySelector('[data-snap-self-edge]')).not.toBeNull()
+    expect(container.querySelector('[data-snap-target]')).toBeNull()
+    await act(async () => useInteractionStore.getState().setSnap([40], []))
+    expect(container.querySelector('[data-snap-feedback]')).toBeNull()
+    expect(container.querySelector('[data-snap-line="x"]')).not.toBeNull()
   })
 
   it('框选是实线', async () => {

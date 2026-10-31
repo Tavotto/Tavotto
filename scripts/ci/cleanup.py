@@ -29,13 +29,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import signal
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import proctree  # noqa: E402
 from _common import (  # noqa: E402
     CiError,
     ensure_layout,
@@ -144,11 +143,10 @@ def kill_stale_processes(root: Path, dry_run: bool = False) -> list[dict]:
             continue
         record = {"pid": pid, "cmd": cmd.strip()[:160], "killed": False}
         if not dry_run:
-            try:
-                os.kill(pid, signal.SIGTERM)
+            if proctree.terminate_pid(pid):
                 record["killed"] = True
-            except OSError as exc:
-                record["error"] = str(exc)
+            else:
+                record["error"] = "结束失败（进程已不在，或无权限）"
         killed.append(record)
     return killed
 

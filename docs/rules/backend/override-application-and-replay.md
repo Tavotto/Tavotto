@@ -2,6 +2,16 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_invariants_engine.py`、`test_override_identity.py`、`test_equivalence_matrix.py`、`test_layout_engine_pinning.py`、`test_normalize.py`、`test_specfix*.py`、`test_value_original_pair.py`；其余看护用例见细则
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：override 是全量列表；七档顺序是契约；刻度类与 frac 锚定 prop 每次重放；带 `identity` 的 patch 对不上目标身份就不应用（ADR 0083）
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 70
+改到: `engine/overrides.py` 的 `apply` / `_apply_rank` / `_FRAC_ANCHORED`、tight 布局、字体脸、`normalize.py` 三模块、`specfix.py`
+主题: override 语义、应用顺序与全量重放 → `override-application-and-replay.md`
+必守要点: override 是全量列表；七档顺序是契约；刻度类与 frac 锚定 prop 每次重放；带 `identity` 的 patch 对不上身份就不应用
+-->
 
 - **导出 PDF / PS 一律 fonttype 42**（`figsession.export_font_context`，T-122）：matplotlib 默认的
   Type 3 把 U+00FF 之外的字符画成 XObject，像素对、文本层没有它们（`⁵ μ α ≤`……），
@@ -142,6 +152,53 @@
   同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
+- **Collection 只改 RGB 时保留源颜色的逐元素 alpha**：matplotlib 的 `set_color` / `set_facecolor` /
+  `set_edgecolor` 整体替换，`_alpha is None` 时把每段补成不透明——`LineCollection(colors=[逐段 RGBA])` 改一次色就全实心。
+  `overrides._rgb_keeping_source_alpha` 是 2D Collection 面 / 边色（`_set_coll_color`）与线组 `color` 的唯一入口：`v` 不带
+  alpha（`_rgb_only`）且源设定（`_original_*`）有不全为 1 的 alpha 列时，只换 RGB、留 alpha 列；Artist 全局 alpha（`_alpha`）
+  不碰（改 alpha 滑块覆盖颜色 alpha，清掉后逐元素透明度回来，matplotlib 语义）；用户显式给的 alpha 原样用；`alpha=数组`、
+  3D 集合原样透传。线组 `color` 的 getter 回灌 `_original_edgecolor`（设定）而不是 `get_color()`（已被标量 alpha 抹平）。
+  看护 `tests/test_collection_color_alpha.py`（原生对照、逐段 alpha 反推、改色→改 alpha→留 alpha→清空 冷热一致、同色独立
+  marker / proxy / 自定义 handler / 重复 label 不被改）。
+- **会读环境重解析的 setter，调用期间把「未设」花纹色钉成创建时的值、跑完还原模式（#874）**：matplotlib ≥3.11 的
+  `Patch.set_alpha` / `Patch.set_fill` / `Collection.set_alpha` 把 `_original_hatchcolor is None` 的花纹色
+  按**此刻**的 `rcParams['hatch.color']` 重解析。脚本在 `rc_context` / `style.context` 里改过 `hatch.color`
+  时，创建时的 red / `'edge'` / 半透明 RGBA 被环境值盖掉，撤销回不去——编辑那一刻热态与重放一致，分叉只在
+  撤销之后（像素不同、manifest 相同、warnings 为空，写回 verify 报 409 `replay_divergence`）。
+  `overrides._with_hatch_pinned` 包住 alpha / fill setter：动手**之前**`set_hatchcolor(创建时已解析的值)`，
+  跑完 setter **立刻把 `_original_hatchcolor` 还原成 None**（只还原模式，`_hatch_color` 留着按当前 alpha 合成的值，
+  不重解析 rc）。所以钉只活在 setter 调用期间：native 屏障释放 `apply([])`、safe worker 撤空、编辑进行中，
+  任何时刻这个 artist 的模式都与没被 Tavotto 编辑过的一样，用户恢复运行的 Python 再改 rc 并 `set_alpha` 照常跟随
+  新 rc（Codex #950 r4245786615；还原挂在 setter 里而不是某条 restore 上，因为 restore 本来就走同一个 setter）。
+  还原只在跑完后模式**仍是我们钉进去的那个对象**时才做（钉的是独有副本、身份比较）：用户子类若重写
+  `set_alpha` / `set_fill` 并自己调 `set_hatchcolor`，那是它有意装的模式，保留；setter 抛异常时同样（Codex #950
+  r4246080546；`tests/test_hatch_mode_restored.py` 子类用例）。
+  创建时的值另记在 artist 的 `_mm_hatch_base = (创建时的值, 我们上次写完的样子)`：撤销要找回 rc 里的内在 alpha，
+  当下的值已被 alpha 编辑合成过；第二项对不上说明屏障之间用户代码动过，按实况重记。脚本显式给过 hatchcolor 的
+  artist 原样跑。≤3.10 没有重解析，但 `set_fill(False)` 把 `_hatch_color` 改成边色而
+  `set_fill(True)` 不写回：`_set_patch_fill` 用记在 artist 上的创建时值（`_ORIG_HATCH`，边色 getter 也采）
+  在 `_original_edgecolor is None` 时写回。看护 `tests/test_override_sequences.py::test_rc_context_hatch_*`、
+  `tests/test_hatch_rc_context_writeback.py` 与 `tests/test_hatch_mode_restored.py`。
+  **消费方清单（#956，共享判据修一处不算修完）**：凡作用于可能带花纹的 Patch / Collection 的 alpha / fill 入口，
+  一律经 `_set_alpha_pinned` / `_set_patch_fill`，不得直接 `set_alpha` / `set_fill`——柱 / 矩形 / fill_between /
+  scatter（`_CAP_ALPHA`，#950）、箭头 patch（`arrowpatch.alpha`）、**文本背景框 `text.bbox_alpha`**、**图例框
+  `legend.framealpha`**（legendmodel 是叶子、不 import overrides，由 overrides 导入时 `install_alpha_setter` 接线，
+  没接线就抛而不是退回裸调用）、**线集合 `linecoll.alpha`**。不钉的直接调用：Text（`text.alpha`、图例文字 / 标题）、AxesImage、Line2D 没有花纹色；
+  误差线 / 茎线系列 alpha 的 LineCollection 成员会重解析，但它们是两点线段、没有可填充面积，花纹画不出来
+  （3.11.2 / 3.10.9 实测前后像素逐字节相同），无可观测分叉，故不钉（将来若支持多点线集合的系列，要回头补）。
+  登记清单在 `tests/test_hatch_alpha_consumers.py`（AST 扫 overrides /
+  legendmodel 的每一处 `set_alpha(` / `set_fill(`，新增一处会红）；行为看护在 `tests/support/rc_hatch_text_legend_figure.py`
+  那张图上的 `test_override_sequences.py::test_rc_context_hatch_text_legend_*`、写回 `test_hatch_rc_context_writeback.py`
+  与 `test_hatch_mode_restored.py`。
+- **`hatchcolor` 可编辑：getter 回「模式」不回值，setter 复用钉住（#874 第二步）**：只在有 `set_hatchcolor` 的 artist 上生效（≤3.10 getter 回 None、
+  setter 空操作）。getter 的两条分支——显式模式（`_original_hatchcolor` 非 None）回它的副本（RGBA / 颜色名 / `'edge'`，setter
+  吃得回去）；「脚本没设」模式回 `_HatchUnset(base)` 哨兵（`base` = `_hatch_base`，创建时已解析的花纹色，与 `_with_hatch_pinned`
+  共用一份判据）。**不能回解析后的当前值**：按值写回会把模式永久换成显式，native 屏障释放后用户的 Python 改 rc 再 `set_alpha`
+  就不再跟随（与 `_PatchEdge` 同一个坑，Codex #950 r4245786615）；撤销到哨兵时 `_restore_hatch_unset` 用 `base` 配**当前** alpha
+  重新合成，再把 `_original_hatchcolor` 还原成 None。setter 设显式值是直接 `set_hatchcolor(颜色)`（不读 rc，不需要钉住；包进 `_with_hatch_pinned` 做过变异，是等价变异，故不留死分支）。与 alpha / fill 的应用顺序无关
+  （先 alpha：钉住 → 收尾还原 None → 再显式设；先 hatchcolor：模式已显式，alpha 的钉住见显式模式原样放行，花纹色以显式色配当前 alpha）。
+  哨兵只活在 `originals` 里，不过 JSON。`bar_series` 照 `hatch` 加进 `for _bprop` 一串。**柱系列代采原样（#968，已修）**：系列代采每根柱的「原样」时，若该柱在单柱层已有 `originals`（单柱先改过），取那一份脚本原样而不是此刻的热态——否则全撤时系列的还原把单柱的编辑写回。`ALIAS_GROUPS[("bar_series", *)]` 带 `_member_aligned` 标记（成员序与 getter 列表序一致），`apply()` 采原样那段据此替换，对 `_bprop` 整串通用（hatch / hatch_linewidth / hatchcolor / 颜色 / 线宽…）。看护 `test_single_and_series_undo_orders_match_replay_and_return_to_the_script`。
+  看护 `tests/test_hatchcolor_editing.py`、`tests/test_hatch_mode_restored.py`、`tests/test_override_sequences.py`（采样器 `_ENABLERS["hatchcolor"]`）。
 - **`value_original`：override 之前脚本的值，与 `value` 同一口径（ADR 0081 §十三，2026-09-25）**。
   前端拿它判「脚本重跑后改没改这一项」：样式写的 override 在脚本改过的那一项上让位（用户裁决：
   重跑后脚本赢）。`originals` 存的是 getter 的原始对象（元组 / Colormap / 哨兵），前端没法拿它与
@@ -192,3 +249,5 @@
 - 原样是模式的 getter 回哨兵（`_AUTOSCALE` / `_NO_BBOX` / `_PatchEdge` / `_PatchFace`）
 - 颜色字段 alpha 0 报 `NO_COLOR`
 - 拖过的文字不进重排（`_ensure_text_pin_hook`）
+
+速查表看护列精简时挪出的用例（仍是本主题的看护）：`tests/test_text_bbox_visibility.py`、`test_patch_edgecolor_mode.py`、`test_text_drag_anchor.py`、`test_drag_coverage.py`、`test_scientific_text_matrix.py`、`test_restore_failure_retry.py`、`test_manifest_value_original.py`。

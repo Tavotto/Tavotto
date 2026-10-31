@@ -5,50 +5,60 @@ import {
   ArrowUp,
   CaseSensitive,
   ChartLine,
-  ChevronRight,
+  ChevronDown,
   FileCodeCorner,
   Image as ImageIcon,
   LayoutGrid,
   LayoutList,
   Minus,
   MoveHorizontal,
-  RotateCcwClock,
-  Sparkles,
   Square,
   Type,
   type IconComponent,
 } from '@/components/ui/icons'
+import { describeRequestFailure } from '@/lib/noticeText'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
-  agentDisplayName,
-  backendErrorText,
   effectiveAgent,
+  effectiveConnection,
+  hasConnectionView,
+  hasUsableAi,
+  readyConnections,
   usableAgents,
-  type AiCapabilities,
+  type AiAgentCaps,
   type ManifestElement,
 } from '@/lib/api'
 import { cn, modKey } from '@/lib/utils'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
+import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { isSessionOf, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { ApiError } from '@/lib/api'
+import { refreshProjectNow } from '@/store/liveSync'
+import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
+import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
+import { Menu, MenuRadioGroup, MenuRadioItem } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
-import { Select } from '../ui/Select'
-import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
-import { TaskHistory } from './TaskHistory'
+import { TaskHistory, TaskHistoryPopover } from './TaskHistory'
+import { BrandLogo } from '@/components/settings/BrandLogo'
+import { requestConnectAi } from '@/store/connectAiStore'
+import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
+import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
+import { currentProjectId } from '@/lib/session'
+import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
+import { DataFigureForm } from './DataFigureForm'
 
 export { TaskHistory }
 
@@ -60,11 +70,27 @@ export const ASSISTANT_TAB_ICON = FileCodeCorner
 const ai = (key: string, values?: Record<string, unknown>) =>
   translate(key, { ns: 'ai', ...(values ?? {}) })
 
+/** 发送失败 → 「一句原因」+「详情」（HTTP 状态 / 后端 detail / 诊断引用折叠在说明条的详情里） */
+const sendFailure = (e: unknown) => {
+  const { reason, detail } = describeRequestFailure(e, ai('panel.sendFailedReason'))
+  const code = e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : null
+  return { text: reason, detail, code }
+}
+
 /**
  * 贴底跟随的松弛量：离底部这么近仍算「看着最新内容」。滚轮一格通常 ≥ 40px，
  * 用户真往上翻时一步就超过它；小于它的偏差只是子像素 / 滚动条尾巴。
  */
 const STICK_SLACK = 24
+
+/**
+ * 一次发送的来源：`composer` = 输入框里的草稿（发之前要先把草稿写成功、记戳；被接受后草稿才清得掉）；
+ * `history` = 历史会话里的原话（气泡「重新发送」/ 失败会话的「重试」），**不碰草稿**。
+ */
+type SendSource = 'composer' | 'history'
+type SendRequest =
+  | { source: 'composer'; pinned?: SendTarget }
+  | { source: 'history'; text: string; pinned?: SendTarget }
 
 /** 一次发送钉住的目标：作用范围 + 元素上下文（整张图时 gid / label 为空） */
 type SendTarget = { scope: AiScope; gid: string | null; label: string | null; target: string }
@@ -82,20 +108,6 @@ const COMPOSER_MAX_ROWS = 8
 const EXAMPLE_COUNT = 3
 
 const SCOPE_VALUES: AiScope[] = ['element', 'axes', 'figure']
-
-/**
- * 「执行器 · 模型」合成选择器的值编码（审计 T37）。
- *
- * 呈现上是一个控件，存下去仍是 aiStore 的两个字段。Agent id 是后端注册表里的
- * 短标识（`codex` / `claude`），不含 `/`；模型名整段留给右边，所以按**第一个**
- * `/` 切开，模型名里真出现斜杠也不会被截断。
- */
-const PAIR_SEP = '/'
-const pairValue = (agentId: string, model: string) => `${agentId}${PAIR_SEP}${model}`
-const splitPair = (v: string): [string, string] => {
-  const i = v.indexOf(PAIR_SEP)
-  return i < 0 ? [v, ''] : [v.slice(0, i), v.slice(i + 1)]
-}
 
 const scopeItems = () =>
   SCOPE_VALUES.map((value) => ({ value, label: ai(`scope.${value}`) }))
@@ -224,16 +236,21 @@ function useAgentChoice() {
   const caps = useAiStore((s) => s.caps)
   const models = useAiStore((s) => s.models)
   const efforts = useAiStore((s) => s.efforts)
-  const usable = usableAgents(caps)
-  const active = effectiveAgent(agent, caps)
-  const cur = agentById(caps, active)
+  const connection = useAiStore((s) => s.connection)
+  // 「连接 AI」视图（后端给了 connections）：按连接选；老后端退回按执行器选
+  const view = hasConnectionView(caps)
+  const conns = view ? readyConnections(caps) : []
+  const activeConn = view ? effectiveConnection(connection, caps) : null
+  const usable = view ? [] : usableAgents(caps)
+  const active = activeConn ? activeConn.id : view ? null : effectiveAgent(agent, caps)
+  const cur = activeConn ? connectionInfo(activeConn) : agentById(caps, active)
   const model = (active && models[active]) ?? cur?.default_model ?? ''
-  const effort = (active && efforts[active]) ?? cur?.default_effort ?? ''
-  // 档位下标由**真实能力数组**算出来；记忆里那个已经不在清单里时回落到 0，
-  // 绝不凭字符串造一个数组里没有的档位
-  const effortList: string[] = cur?.efforts ?? []
+  // 档位清单、当前档都跟着**型号**走：型号自己声明了就用它的，切型号时记着的档位不被
+  // 新型号支持就回落到新型号的默认档；永远不产出清单外的值
+  const effortList: string[] = effortsForModel(cur, model)
+  const effort = resolveEffort(cur, model, active ? efforts[active] : undefined)
   const effortIndex = Math.max(0, effortList.indexOf(effort))
-  return { caps, usable, active, cur, model, effortList, effortIndex }
+  return { caps, usable, conns, activeConn, active, cur, model, effortList, effortIndex }
 }
 
 /**
@@ -251,10 +268,58 @@ function AssistantPanelBody() {
   const storedScope = useAiStore((s) => s.scope)
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
-  const [prompt, setPrompt] = useState('')
-  const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
-  const [sending, setSending] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
+  // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0132；落盘只是缓存）
+  const {
+    prompt,
+    setPrompt,
+    restored,
+    tooLarge,
+    clearIfUnchanged,
+    draftSnapshot,
+    draftSeq,
+    project: claimedProject,
+    ledgerState,
+    retryLedger,
+    reconcileNow,
+    restoreBlockers,
+    draftLoading,
+    draftStalled,
+    draftReplaced,
+  } = useAiDraft(panel)
+  // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
+  const sendInFlight = useRef(false)
+  const [error, setError] = useState<{
+    text: string
+    /** 读得懂的原因之外的技术细节（进「详情」折叠，`describeRequestFailure`） */
+    detail: string | null
+    /** 后端的稳定 code：`ai_panel_file_missing` 时主按钮换成「刷新项目」（重发只会再 404 一次） */
+    code?: string | null
+    prompt: string
+    target: SendTarget
+    panelId: string
+    /** 失败的那次发送的**来源**（重试要知道原始来源，不能靠「有没有 override」猜） */
+    source: SendSource
+    /** 失败时输入框的本地版本号：重试时没变 = 输入框自那以后没改过 */
+    draftSeq: number
+  } | null>(null)
+  // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，
+  // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
+  const submissions = useAiStore((s) => s.submissions)
+  const submission = panel
+    ? Object.values(submissions).find(
+        (x) => x.project === claimedProject && submissionBlocks(x, panel.fileId, panel.script),
+      )
+    : undefined
+  const docObjects = useDocumentStore((s) => s.doc.objects)
+  // 发起这条请求的图已不在画布上（删了 / 换了图）：仍要显示、仍能查询结果，只是说明一句来源不在了
+  const sourceGone =
+    !!submission && !docObjects.some((o) => o.type === 'panel' && (o as PanelObject).fileId === submission.fileId)
+  const sending = submission?.phase === 'sending'
+  // 面板挂载（刷新、切页签回来、A→B→A 回切时按代际重挂）：把后端仍在跑的会话接回来
+  useEffect(() => {
+    void useAiStore.getState().restoreRunning()
+  }, [])
+  const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // 贴底跟随（ChatGPT / Claude 的约定）：只在用户本来就看着底部时才跟着新内容滚（判据在下面的
@@ -306,13 +371,26 @@ function AssistantPanelBody() {
   ]
   const scope = scopes.includes(storedScope) ? storedScope : scopes[0]
 
+  // 「从数据出图」的轮次不属于任何面板（它新建脚本）：无论选没选图都在对话里，按发起时间与本面板的轮次合排
+  const dataTurns = sessions.filter(isDataFigureSession)
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
+  const turns = dataTurns.length
+    ? [...mine, ...dataTurns].sort((a, b) => a.startedAt - b.startedAt)
+    : mine
+  const tafEnabled = !!caps?.taf_enabled
+  const [dataFormOpen, setDataFormOpen] = useState(false)
   // 只有「同一个脚本正在被改」才该挡住发送——别的面板在跑与这里无关
   const runningHere = mine.some((s) => s.status === 'running')
+  // 已取消、但后端还没给出最终结果（`cancelled` 且未 finalize，含刷新后恢复出来的）：任务还没真正结束、脚本仍被占着——
+  // 发送继续锁（共用 `isOpenSession` 谓词，直到 final 才释放），否则再记一条提交就会撞上 ai_script_busy。
+  // 已经取消了，不再显示「中止」，而是禁用的发送 + 一句「正在结束上一次修改」
+  const finishingHere = !runningHere && mine.some(isOpenSession)
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
-  const noAgent = caps !== null && usableAgents(caps).length === 0
-  const canSend = !!panel && !noAgent && !sending && !runningHere
+  const noAgent = caps !== null && !hasUsableAi(caps)
+  // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
+  // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
+  const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && ledgerState === 'ok'
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -324,6 +402,8 @@ function AssistantPanelBody() {
     stick.current = near
     setDetached(!near)
   }
+  // 「回到底部」只有进场没有退场会在到底的那一帧硬消失：走 usePresence，退场播完再卸载
+  const scrollBtn = usePresence(detached && runningHere, DURATION.exit)
   const jumpToBottom = () => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -354,11 +434,13 @@ function AssistantPanelBody() {
    * 「重试」再带上**那一次的目标**（`pinned`）：失败之后用户可能已经选了别的元素 / 换了范围，
    * 重试必须改原来那处，不能悄悄改到此刻选中的东西上（Codex #827 P1）
    */
-  const send = async (override?: string, pinned?: SendTarget) => {
-    const text = (override ?? prompt).trim()
+  const send = async (req: SendRequest = { source: 'composer' }) => {
+    const source = req.source
+    const pinned = req.pinned
+    const text = (req.source === 'history' ? req.text : prompt).trim()
     if (!text || !canSend || !panel) return
-    setSending(true)
     setError(null)
+    setCheckNote(null)
     // 自己发的消息一定要看见：不管刚才翻到哪，发出去就回到底部
     jumpToBottom()
     // 作用范围直接决定发给后端的元素上下文：整张图不带 gid，
@@ -370,8 +452,55 @@ function AssistantPanelBody() {
         : scope === 'axes' && axes
           ? { scope, gid: axes.gid, label: axes.label, target: axes.label }
           : { scope, gid: null, label: null, target: ai('scope.figure') })
+    // 输入框里的指令超过上限：直接不发（界面也已禁用 + 提示），不等发送时才失败
+    if (source === 'composer' && tooLarge) return
+    if (sendInFlight.current) return
+    sendInFlight.current = true
+    // **在第一个 await 之前固定发送所属的 (项目 id, 项目代次)**，一路传给 `start`：`await draftSnapshot()` 期间切了项目，
+    // 同名文件的指令就会被发到别的项目里。每个 await 之后核对，变了就中止（不发送、不写账本）
+    const pinnedProject = claimedProject
+    const pinnedGeneration = useAiStore.getState().generation
+    const projectMoved = () => useAiStore.getState().generation !== pinnedGeneration || currentProjectId() !== pinnedProject
     try {
-      await useAiStore.getState().start({
+      // 发的是输入框里的草稿（不是气泡 / 重试带来的原话）：先把草稿写成功、拿到服务器的写入戳，记进账本——
+      // 确认之后后端按「草稿戳没变」清草稿，不比文本（提交文本是 trim 过的，草稿是原样）
+      // **来源是显式标明的，不靠「有没有 override」猜**：输入框来的（含失败后的重试）一律先把草稿写成功、拿戳记进账本；
+      // 只有从历史会话重发（气泡「重新发送」/ 失败会话的「重试」）才跳过快照——那条路的文本不是输入框里的草稿
+      // 发的文本、草稿的版本号与写入戳必须指同一份草稿：文本是点发送那一刻取的，版本号也在 await 之前记下
+      const seqAtClick = draftSeq()
+      const snap = source === 'composer' ? await draftSnapshot() : { seq: 0, stamp: null }
+      if (projectMoved()) return // 草稿快照期间切了项目：作废
+      if (source === 'composer' && snap.seq !== seqAtClick) {
+        // 等草稿写成功的途中用户又改了输入框：快照拿到的版本号 / 戳属于**新**稿，发出去的却是旧文本——被接受后后端按戳删掉新稿、
+        // 本地按版本号清空输入框，途中打的字就悄悄没了。不发；一句话，输入框原样留着，用户确认后再发
+        setError({
+          text: ai('panel.draftChangedWhileSending'),
+          detail: null,
+          prompt: text,
+          target: ctx,
+          panelId: panel.id,
+          source,
+          draftSeq: draftSeq(),
+        })
+        return
+      }
+      if (source === 'composer' && snap.stamp === null) {
+        // 草稿没写成（PUT 暂时失败 / 后端不可用）：没有草稿戳，被接受后草稿清不掉、同一条指令还能再发——**不发**：
+        // 不发 run、不写账本，一句话 + 重试，输入框保持原样（与「账本写不成就不发」同一种处理）
+        setError({
+          text: ai('panel.draftNotSaved'),
+          detail: null,
+          prompt: text,
+          target: ctx,
+          panelId: panel.id,
+          source,
+          draftSeq: draftSeq(),
+        })
+        return
+      }
+      const outcome = await useAiStore.getState().start({
+        project: pinnedProject,
+        generation: pinnedGeneration,
         prompt: text,
         fileId: panel.fileId,
         panelId: panel.id,
@@ -381,13 +510,99 @@ function AssistantPanelBody() {
         target: ctx.target,
         overrides: panel.overrides,
         canvas: useDocumentStore.getState().activeCanvasId,
+        script: panel.script ?? null,
+        draftStamp: snap.stamp,
       })
-      if (override == null) setPrompt('')
+      // 只有后端给出会话 id 才算送达；本地没再动过（`seq` 不变）才清输入框，**不比文本**。
+      // 没拿到草稿戳（后端不可用）时后端不会动草稿，这里也不清；`unconfirmed` 时原样留着（面板进「已发出未确认」）
+      if (outcome === 'accepted' && source === 'composer' && snap.stamp !== null) clearIfUnchanged(snap.seq)
     } catch (e) {
-      setError({ text: backendErrorText(e), prompt: text, target: ctx, panelId: panel.id })
+      if (e instanceof ProjectChangedError) return // 发送中途切了项目：作废，不报错
+      // 失败的响应回来时已经切了项目：它说的是 A 的事——不还原、不查询、不报错（还原进 B 的 store，A 的会话就会挂到 B 上、锁住 B）
+      if (projectMoved()) return
+      if (e instanceof ApiError && e.body?.code === 'ai_pending_unresolved') {
+        // 后端（写账本的事务里）说这个面板 / 这份脚本上还有没落定的提交——本页的视图过期了（别的标签页刚留下、对账还在读、
+        // 旧请求迟到登记……）。不发；把它们还原出来（照旧锁住发送），再按 rid 逐条查询：执行过的接回会话，没收到的交给用户
+        // 「重发」或「改写后再发」显式取代
+        // 照着 409 带回的行还原（不等另读一次列表：那之前别的标签页可能已确认并删了它），再逐条查询；之后对账一次补齐其余状态
+        const blockers = Array.isArray(e.body?.pendings) ? (e.body.pendings as Parameters<typeof restoreBlockers>[1]) : []
+        restoreBlockers(pinnedProject, blockers)
+        for (const b of blockers) void useAiStore.getState().queryRequest(b.rid)
+        void reconcileNow()
+      }
+      // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
+      setError({
+        ...(e instanceof AiLedgerError ? { text: ai('panel.ledgerFailed'), detail: null } : sendFailure(e)),
+        prompt: text,
+        target: ctx,
+        panelId: panel.id,
+        source,
+        draftSeq: draftSeq(),
+      })
     } finally {
-      setSending(false)
+      sendInFlight.current = false
     }
+  }
+
+  /** 「已发出，尚未收到确认」时唯一的动作：问后端。只读，不会让任何东西被执行 */
+  const checkResult = async () => {
+    if (!submission) return
+    setCheckNote(null)
+    const out = await useAiStore.getState().queryRequest(submission.rid)
+    // 接受之后输入框怎么变，由后端清草稿的结果经 `mm:ai-draft-changed` 的对账带回（不在这里比文本清）
+    if (out === 'already_run') {
+      // 后端登记过、任务记录被删：已执行过，不再发，说一句
+      useUiStore.getState().setStatus(msg('status.aiAlreadyRan', undefined, 'ai'), 'info')
+    } else if (out === 'superseded') {
+      useUiStore.getState().setStatus(msg('status.aiSuperseded', undefined, 'ai'), 'info')
+    } else if (out === 'unreachable') setCheckNote('unreachable')
+  }
+  /** 后端明确说没收到之后，用**同一个**请求 id 重发（后端按 id 去重，与迟到的原请求赛跑也不会双跑） */
+  const resendSame = async () => {
+    if (!submission) return
+    const text = submission.prompt
+    try {
+      await useAiStore.getState().resend(submission.rid)
+    } catch (e) {
+      setError({
+        ...sendFailure(e),
+        prompt: text,
+        target: submission.target,
+        panelId: submission.panelId,
+        source: 'history', // 同 rid 重发用的是账本里那一份原文，与输入框草稿无关
+        draftSeq: draftSeq(),
+      })
+    }
+  }
+  /** 失败会话的「重试」：原任务已经改过脚本（`changed`）时先让用户点头——静默重跑会在改过的脚本上再改一遍 */
+  const retrySession = async (t: AiSession) => {
+    if (t.changed) {
+      const ok = await askConfirm({
+        title: msg('panel.retryChangedTitle', undefined, 'ai'),
+        body: msg('panel.retryChangedBody', undefined, 'ai'),
+        confirmLabel: msg('panel.retryChangedConfirm', undefined, 'ai'),
+        danger: true,
+      })
+      if (!ok) return
+    }
+    void send({ source: 'history', text: t.prompt, pinned: targetOf(t) })
+  }
+
+  /**
+   * 失败后的「重试」按失败时的**来源**走：来自输入框、且输入框自那以后没改过 → 仍按输入框发（重新取草稿快照、记戳，
+   * 被接受后草稿才清得掉）；输入框已被改过 / 原本就来自历史会话 → 按失败的那段原文走 history 来源（不碰草稿，
+   * 免得把用户新写的草稿当成「已发送」清掉）。
+   */
+  // 文件找不到：刷新项目让画布与磁盘对齐，卡随之收起；文件真没了，画布上这张图自己会显示缺失
+  const refreshMissingFile = () => {
+    setError(null)
+    void refreshProjectNow()
+  }
+
+  const retryFailed = () => {
+    if (!error) return
+    if (error.source === 'composer' && draftSeq() === error.draftSeq) void send({ source: 'composer', pinned: error.target })
+    else void send({ source: 'history', text: error.prompt, pinned: error.target })
   }
 
   // 发送 ↔ 中止同一颗按钮、同一个位置（ChatGPT / Claude 的约定）：正在跑的时候它就是「中止」
@@ -397,32 +612,24 @@ function AssistantPanelBody() {
   }
 
   const suggestions = panel ? chipsFor(scope, element, !!axes) : []
-  // 两态（§6.5）：空着时是 42px 的单行胶囊；一有内容（或正在跑）就展开成「内容 / 工具行」两行
-  const expanded = prompt !== '' || runningHere
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 面板顶部只剩历史：作用目标挪到了输入框上方的上下文带（§6.5） */}
-      <div className="flex shrink-0 items-center justify-end px-3 pb-1">
-        <Popover
-          width={320}
-          align="end"
-          open={historyOpen}
-          onOpenChange={setHistoryOpen}
-          trigger={
-            <IconButton
-              data-ai-history-trigger
-              label={ai('panel.taskHistory')}
-              tip={!historyOpen}
-              iconSize="sm"
-              className="text-ink-2"
-            >
-              <RotateCcwClock size={ICON_SIZE.sm} />
-            </IconButton>
-          }
-        >
-          <TaskHistory onClose={() => setHistoryOpen(false)} />
-        </Popover>
+      <div className={cn('flex shrink-0 items-center px-3 pb-1', tafEnabled ? 'justify-between' : 'justify-end')}>
+        {/* 「从数据出图」（TAF 实验开关后面）：开关关着时整个不渲染，这一行与以前逐字相同（只剩右侧的历史钮） */}
+        {tafEnabled && (
+          <Button
+            data-ai-data-figure-open
+            size="sm"
+            aria-expanded={dataFormOpen}
+            className="text-ink-2"
+            onClick={() => setDataFormOpen((v) => !v)}
+          >
+            <ChartLine size={ICON_SIZE.xs} aria-hidden />
+            {ai('dataFigure.open')}
+          </Button>
+        )}
+        <TaskHistoryPopover />
       </div>
 
       <div ref={stageRef} className="relative min-h-0 flex-1">
@@ -433,24 +640,24 @@ function AssistantPanelBody() {
           className="h-full overflow-y-auto px-3 pt-2"
           style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
         >
-          {!panel ? (
+          {!panel && dataTurns.length === 0 ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
-            <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
-          ) : mine.length > 0 ? (
+            <EmptyState art="select" title={ai('panel.noPanelTitle')} />
+          ) : turns.length > 0 ? (
             // 节奏由列表容器统一管（§6.1）：轮与轮 16、轮内各块 8；子组件不带外边距
             <div
               ref={contentRef}
               data-ai-transcript
               className="flex flex-col gap-(--turn-gap) [--item-gap:8px] [--turn-gap:16px]"
             >
-              {mine.map((s) => (
+              {turns.map((s) => (
                 <Turn
                   key={s.id}
                   session={s}
-                  onResend={(text) => void send(text)}
-                  onRetry={(t) => void send(t.prompt, targetOf(t))}
-                  canResend={canSend}
-                  canRetry={canSend && s.panelId === panel?.id}
+                  onResend={(text) => void send({ source: 'history', text })}
+                  onRetry={(t) => void retrySession(t)}
+                  canResend={canSend && !isDataFigureSession(s)}
+                  canRetry={canSend && !isDataFigureSession(s) && s.panelId === panel?.id}
                 />
               ))}
             </div>
@@ -458,7 +665,7 @@ function AssistantPanelBody() {
             /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */
             <div data-ai-empty className="flex min-h-full flex-col items-center justify-center pb-4">
               <div className="w-full">
-                <EmptyState icon={Sparkles} title={ai('panel.emptyTitle')} hint={ai('panel.emptyHint')} />
+                <EmptyState art="pencil" title={ai('panel.emptyTitle')} hint={ai('panel.emptyHint')} />
               </div>
               <div className="-mt-4 flex w-full max-w-[17rem] flex-col gap-1.5">
                 {suggestions.slice(0, EXAMPLE_COUNT).map((c) => (
@@ -482,17 +689,18 @@ function AssistantPanelBody() {
           )}
         </div>
         {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮（34px 毛玻璃圆）；到底了它自己消失 */}
-        {detached && runningHere && (
+        {scrollBtn.mounted && (
           <div
             className="pointer-events-none absolute inset-x-0 flex justify-center"
             style={{ bottom: 'calc(var(--composer-h, 0px) + 8px)' }}
           >
             <IconButton
               data-ai-scroll-bottom
+              data-state={scrollBtn.state}
               label={ai('panel.scrollToBottom')}
               iconSize="sm"
               side="top"
-              className="pointer-events-auto h-[34px] w-[34px] animate-pop-in bg-glass text-ink-2 shadow-pop backdrop-blur-lg hover:bg-glass hover:text-ink"
+              className="pointer-events-auto h-[34px] w-[34px] bg-glass text-ink-2 shadow-pop backdrop-blur-lg hover:bg-glass hover:text-ink data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in"
               onClick={jumpToBottom}
             >
               <ArrowDown size={ICON_SIZE.md} />
@@ -502,6 +710,10 @@ function AssistantPanelBody() {
 
         {/* 输入区浮在对话流的底部（absolute），内容从它底下滚过；玻璃在下面那个框上 */}
         <div ref={composerRef} data-ai-composer-dock className="absolute inset-x-0 bottom-0 z-drawer px-3 pb-3 pt-1">
+          {/* 从数据出图的小表单：就地展开（Reveal 跟着内容长高，转录的底边距随 --composer-h 跟着走），不是弹窗也不是横条 */}
+          <Reveal open={tafEnabled && dataFormOpen}>
+            <DataFigureForm onClose={() => setDataFormOpen(false)} />
+          </Reveal>
           {/* 起手式（有对话之后的快捷追问）：一开始打字 / 正在跑就收起——收起是跟着内容合上（Reveal）。
               空态时它们以「示例提示」的形态在正中，这里不重复摆 */}
           <Reveal open={!!panel && mine.length > 0 && !prompt.trim() && !runningHere}>
@@ -529,14 +741,85 @@ function AssistantPanelBody() {
               tone="danger"
               data-ai-error="send"
               className="mb-2"
+              // 一句话「没有发出去 · 原因」+ 「重试」；HTTP 状态 / 后端 detail / 诊断引用在「详情」里
               title={ai('panel.sendFailed')}
+              detail={error.detail}
               action={
-                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={() => send(error.prompt, error.target)}>
+                error.code === 'ai_panel_file_missing' ? (
+                  <Button data-ai-refresh-project size="sm" onClick={refreshMissingFile}>
+                    {translate('topbar.refreshProject', { ns: 'workspace' })}
+                  </Button>
+                ) : (
+                  <Button data-ai-retry size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
+                    {ai('panel.retry')}
+                  </Button>
+                )
+              }
+            >
+              {error.text}
+            </Notice>
+          )}
+          {/* 已发出、后端还没确认：这条指令可能已经在改脚本。普通发送 / 重试一律禁用，只给「查询结果」 */}
+          {submission?.phase === 'unconfirmed' && (
+            <Notice
+              tone="warn"
+              data-ai-submission="unconfirmed"
+              className="mb-2"
+              title={ai('panel.unconfirmedTitle')}
+              action={
+                <Button data-ai-check variant="secondary" size="sm" onClick={() => void checkResult()}>
+                  {ai('panel.checkResult')}
+                </Button>
+              }
+            >
+              {checkNote === 'unreachable'
+                ? ai('panel.checkUnreachable')
+                : sourceGone
+                  ? ai('panel.unconfirmedGoneBody')
+                  : ai('panel.unconfirmedBody')}
+              {/* 待确认的那条原文在这一行里展示（不进输入框——输入框永远是草稿）：重发 / 查询用的就是它 */}
+              <span data-ai-submission-text className="mt-0.5 line-clamp-2 block break-words text-ink-3">
+                {submission.prompt}
+              </span>
+            </Notice>
+          )}
+          {/* 查过了，后端明确说没收到：这时才允许重发，而且用同一个请求 id */}
+          {submission?.phase === 'not_received' && (
+            <Notice
+              tone="neutral"
+              data-ai-submission="not_received"
+              className="mb-2"
+              title={ai('panel.notReceivedTitle')}
+              action={
+                <Button data-ai-resend-same variant="secondary" size="sm" onClick={() => void resendSame()}>
+                  {ai('panel.resendSame')}
+                </Button>
+              }
+            >
+              <span>{ai('panel.notReceivedBody')}</span>{' '}
+              <button
+                type="button"
+                data-ai-edit-resend
+                className="text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring"
+                onClick={() => useAiStore.getState().dismissSubmission(submission.rid)}
+              >
+                {ai('panel.editAndResend')}
+              </button>
+            </Notice>
+          )}
+          {/* 读不到这张图有没有未结的发送记录：按「不知道」处理、继续锁住发送，一句话 + 重试（不当成空账本） */}
+          {panel && ledgerState === 'failed' && (
+            <Notice
+              tone="warn"
+              data-ai-ledger="failed"
+              className="mb-2"
+              action={
+                <Button data-ai-ledger-retry variant="secondary" size="sm" onClick={retryLedger}>
                   {ai('panel.retry')}
                 </Button>
               }
             >
-              {error.text}
+              {ai('panel.ledgerUnreadable')}
             </Notice>
           )}
           {noAgent && (
@@ -546,30 +829,45 @@ function AssistantPanelBody() {
               data-ai-no-agent
               className="mb-2"
               action={
-                <Button variant="secondary" size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
-                  {ai('panel.openAiSettings')}
+                <Button size="sm" onClick={() => requestConnectAi()}>
+                  {hasConnectionView(caps) ? ai('panel.connectAi') : ai('panel.openAiSettings')}
                 </Button>
               }
             >
-              {ai('panel.noCli')}
+              {hasConnectionView(caps) ? ai('panel.noAi') : ai('panel.noCli')}
             </Notice>
+          )}
+          {/* 草稿提示：安静的一行字，不是横条——不挤页面，打字或发送即消失 */}
+          {panel && (tooLarge || draftStalled || draftReplaced || (restored && prompt !== '')) && (
+            <p
+              data-ai-draft-note={
+                tooLarge ? 'too-large' : draftStalled ? 'stalled' : draftReplaced ? 'replaced' : 'restored'
+              }
+              className="mb-1.5 px-1 text-xs text-ink-3"
+            >
+              {tooLarge
+                ? ai('panel.draftTooLong', { limit: INSTRUCTION_MAX_BYTES / 1024 })
+                : draftStalled
+                  ? ai('panel.draftStalled')
+                  : draftReplaced
+                    ? ai('panel.draftReplaced')
+                    : ai('panel.draftRestored')}
+            </p>
           )}
           {panel && (
             <ContextBand panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
           )}
           {/* 玻璃（2026-09-15 参考 Codex，用户拍板）：field 90% 的底 + 16px 背景模糊 + --shadow-composer。
               聚焦只把边框加深到 border-strong（§6.5：只变色无环，更安静；插入点是框里唯一的一点 accent）。
-              两态由 data-layout 说：compact = 42px 胶囊 [内容 | 发送]；expanded = 16px 圆角
-              [内容 / 工具行 + 发送]。同一个 textarea 节点换格子，焦点不丢。禁用只有 opacity-40 一档 */}
+              只有一态（2026-10-16）：16px 圆角 [内容 / 工具行 + 发送]，空着就是这个高度，控件行常驻——
+              此前空态是 42px 胶囊、首字才长到 96px，整块跳一下，模型 / 推理强度平时也看不见。
+              禁用只有 opacity-40 一档 */}
           <div
             data-ai-composer
-            data-layout={expanded ? 'expanded' : 'compact'}
             className={cn(
               'relative grid grid-cols-[minmax(0,1fr)_auto] border border-transparent bg-glass text-ink shadow-composer backdrop-blur-lg',
               'transition-[border-color] duration-fast focus-within:border-border-strong',
-              expanded
-                ? "min-h-24 gap-y-2 rounded-panel pb-2 pl-3.5 pr-2 pt-2.5 [grid-template-areas:'content_content'_'start_end']"
-                : "h-[42px] items-center gap-x-2 rounded-full pl-4 pr-2 [grid-template-areas:'content_end']",
+              "min-h-24 gap-y-2 rounded-panel pb-2 pl-3.5 pr-2 pt-2.5 [grid-template-areas:'content_content'_'start_end']",
               (!panel || noAgent) && 'opacity-40',
             )}
           >
@@ -579,40 +877,47 @@ function AssistantPanelBody() {
               value={prompt}
               rows={1}
               disabled={!panel || noAgent}
-              placeholder={panel ? ai('panel.placeholder') : undefined}
+              readOnly={draftLoading}
+              placeholder={panel ? (draftLoading ? ai('panel.draftLoading') : ai('panel.placeholder')) : undefined}
               aria-label={ai('panel.inputAria')}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => {
+                if (!draftLoading) setPrompt(e.target.value) // 草稿还没载入：输入框只读，程序化的变更也不收（两层）
+              }}
               onKeyDown={(e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault()
-                  void send()
+                  void send({ source: 'composer' })
                 }
               }}
               className={cn(
                 'block w-full resize-none bg-transparent text-base leading-5 [grid-area:content]',
                 // 占位是要读的字：ink-3，与其它输入框同一档（faint 只给装饰 / 禁用）
-                'text-ink outline-none placeholder:text-ink-3',
-                expanded ? 'min-h-10 self-start' : 'h-5 overflow-hidden',
+                'min-h-10 self-start text-ink outline-none placeholder:text-ink-3',
               )}
             />
-            {expanded && (
-              <div className="flex min-w-0 items-center gap-1 [grid-area:start]">
-                <AgentPills panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
-              </div>
-            )}
+            <div className="flex h-[26px] min-w-0 items-center gap-0.5 [grid-area:start]">
+              <AgentPills panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
+            </div>
             <div className="flex items-center self-end [grid-area:end]">
               {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽（打磨 A5） */}
-              <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
+              <Tip label={runningHere ? ai('panel.abort') : finishingHere ? ai('panel.finishing') : ai('panel.send', { key: modKey('↵') })}>
                 <Button
                   variant="primary"
                   size="icon-sm"
                   data-ai-send={runningHere ? 'stop' : 'send'}
                   className="relative h-[26px] w-[26px]"
-                  disabled={!panel || noAgent || sending || (!runningHere && !prompt.trim())}
+                  // 运行中时按钮是「中止」：未确认的提交 / 账本恢复状态 / 指令超限都不该把中止也禁掉（任务就在跑，用户要能停它）
+                  // `noAgent`（最后一个可用 agent 被停用 / 可执行文件消失）只影响「发送」：任务还在跑时「中止」是唯一的停止入口，不能被它禁掉
+                  disabled={
+                    !panel ||
+                    (runningHere
+                      ? false
+                      : noAgent || !!submission || finishingHere || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
+                  }
                   aria-busy={sending || runningHere || undefined}
-                  onClick={runningHere ? stopRunning : () => send()}
-                  aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}
+                  onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}
+                  aria-label={runningHere ? ai('panel.abort') : finishingHere ? ai('panel.finishing') : ai('panel.sendAria')}
                 >
                   <SendStopGlyph stop={runningHere} busy={sending || runningHere} />
                 </Button>
@@ -706,70 +1011,101 @@ function ContextBand(props: TargetProps) {
 }
 
 /**
- * 工具行的两颗胶囊（§6.5）：「执行器 · 模型」与「推理 强度」直接可见，不再埋进弹层；点开是同一份详情弹层。
+ * 工具行的两颗文字胶囊（§6.5，2026-10-16 推理强度改版）：「执行器 · 模型」与「推理 强度」常驻在输入框底栏，
+ * 一个点开作用范围 / 模型详情，一个点开推理强度菜单。同一套胶囊语言：26 高、12px、无底，hover / 打开时
+ * ink 4% 底，不带彩色点，尾部一枚 12px 向下的小箭头。
  * 写的是**这一刻真的会派给谁**，不是用户存着的首选值。探测中 / 没有可用 Agent 时不摆（上下文带与说明条说）。
  */
+const COMPOSER_PILL_CLASS = cn(
+  'inline-flex h-[26px] min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent px-2 text-sm text-ink-2',
+  'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink',
+  'focus-visible:focus-ring data-[state=open]:bg-surface-hover data-[state=open]:text-ink',
+)
+
 function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: PanelObject | null }) {
   useTranslation('ai')
-  const { caps, active, cur, model, effortList, effortIndex } = useAgentChoice()
+  const { active, cur, model } = useAgentChoice()
   if (!panel || !active || !cur) return null
-  const pill = (key: string, text: string, aria: string) => (
-    <Popover
-      width={288}
-      align="start"
-      side="top"
-      trigger={
-        <Button
-          data-ai-pill={key}
-          variant="secondary"
-          size="sm"
-          aria-label={aria}
-          className="h-6 min-w-0 px-2 text-ink-2 hover:text-ink"
-        >
-          <span className="min-w-0 truncate">{text}</span>
-        </Button>
-      }
-    >
-      <ScopeAgentContent panel={panel} {...rest} />
-    </Popover>
-  )
   return (
     <>
-      {pill('model', modelText(caps, active, model), ai('panel.agentModel'))}
-      {effortList.length > 0 &&
-        pill('effort', ai('panel.effortPill', { effort: effortLabel(effortList[effortIndex]) }), ai('panel.effort'))}
+      <Popover
+        width={288}
+        align="start"
+        side="top"
+        trigger={
+          <button type="button" data-ai-pill="model" aria-label={ai('panel.agentModel')} className={COMPOSER_PILL_CLASS}>
+            <span className="min-w-0 truncate">{modelText(cur, model)}</span>
+            <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
+          </button>
+        }
+      >
+        <ScopeAgentContent panel={panel} {...rest} />
+      </Popover>
+      <EffortPill />
     </>
   )
 }
 
-const modelText = (caps: AiCapabilities | null, active: string, model: string) =>
-  model ? `${agentDisplayName(caps, active)} · ${model}` : agentDisplayName(caps, active)
+/**
+ * 推理强度菜单：每档一行「名称 + 一句说明」，当前档左侧一枚蓝色 ✓，默认档挂灰色「默认」小标。
+ * 档位来自 caps 的真实数组，一格一个值——选中写的就是 `efforts[i]`，绝不生成数组里没有的值。
+ * 只有一档时菜单照开（一行，已选中），不装成能选的样子；一档都没有时胶囊整颗不出现。
+ */
+export function EffortPill() {
+  useTranslation('ai')
+  const { active, cur, model, effortList, effortIndex } = useAgentChoice()
+  if (!active || !cur || effortList.length === 0) return null
+  const current = effortList[effortIndex]
+  // 「默认」小标跟着型号走：该型号自己的默认档，没声明才用 Agent 级默认
+  const defaultEffort = modelDetail(cur, model)?.default_effort ?? cur.default_effort
+  return (
+    <Menu
+      align="start"
+      side="top"
+      width={248}
+      fixedWidth
+      trigger={
+        <button type="button" data-ai-pill="effort" aria-label={ai('panel.effort')} className={COMPOSER_PILL_CLASS}>
+          <span className="min-w-0 truncate">{ai('panel.effortPill', { effort: effortLabel(current) })}</span>
+          <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
+        </button>
+      }
+    >
+      <MenuRadioGroup
+        data-ai-effort="menu"
+        value={current}
+        onValueChange={(v) => useAiStore.getState().setEffort(active, v)}
+      >
+        {effortList.map((e) => (
+          <MenuRadioItem
+            key={e}
+            value={e}
+            data-ai-effort-item={e}
+            description={effortDescription(e)}
+            tag={e === defaultEffort ? ai('panel.effortDefault') : undefined}
+          >
+            {effortLabel(e)}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </Menu>
+  )
+}
+
+const modelText = (info: AiAgentCaps, model: string) =>
+  model ? `${info.display_name} · ${modelLabel(info, model)}` : info.display_name
 
 export function ScopeAgentContent({ panel, element, axes, scope, scopes }: TargetProps) {
   useTranslation('ai')
-  const { caps, usable, active, cur, model, effortList, effortIndex } = useAgentChoice()
-  const [effortOpen, setEffortOpen] = useState(false)
+  const { caps, usable, conns, activeConn, active, cur, model } = useAgentChoice()
+  const view = hasConnectionView(caps)
 
-  // 「执行器 · 模型」的候选。装了两个 Agent 时每一项都带执行器名，只装一个时
-  // 不重复它（触发按钮上已经写着）。**模型清单为空 = 跟随 CLI 默认**，给一条
-  // 只有执行器名的项，绝不伪造一个模型名。
-  const pairs = usable.flatMap((a) =>
-    a.models.length
-      ? a.models.map((m: string) => ({
-          value: pairValue(a.id, m),
-          label: usable.length > 1 ? `${a.display_name} · ${m}` : m,
-        }))
-      : [{ value: pairValue(a.id, ''), label: a.display_name }],
-  )
-  const currentPair = active ? pairValue(active, model) : ''
-  // 记忆里（或 CLI 默认里）那个模型已经不在清单里时**照实把它显示出来**，
-  // 不静默换成清单里的另一项：控件上写着 A、任务却交给 B 是最难查的一类错。
-  if (currentPair && cur && !pairs.some((p) => p.value === currentPair)) {
-    pairs.unshift({
-      value: currentPair,
-      label: usable.length > 1 ? `${cur.display_name} · ${model}` : model,
-    })
-  }
+  // 候选总数：每个执行器的型号数（清单为空 = 跟随 CLI 默认，算一项），记忆里已下架的当前值再算一项。
+  // 只有一项可选时不摆一个选不动的选择器（见下）。
+  const optionCount = (view ? conns : usable).reduce((n, a) => {
+    const stale = a.id === active && model && !a.models.includes(model) ? 1 : 0
+    return n + Math.max(1, a.models.length) + stale
+  }, 0)
 
   return (
     <div className="flex flex-col gap-2">
@@ -792,91 +1128,54 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
       </div>
       {caps == null ? (
         <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
-      ) : usable.length === 0 ? (
+      ) : (view ? conns.length === 0 : usable.length === 0) ? (
         /* 缺件是**错误恢复路径**，不能因为「减负」被折叠掉 */
         <div className="flex flex-col gap-1">
-          <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
+          <p className="text-xs leading-relaxed text-ink-3">{view ? ai('panel.noAi') : ai('panel.noCli')}</p>
           <div>
             <Button
               data-ai-open-settings
+              data-ai-connect-open={view ? '' : undefined}
               variant="secondary"
               size="sm"
-              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
+              onClick={() => requestConnectAi()}
             >
-              {ai('panel.openAiSettings')}
+              {view ? ai('panel.connectAi') : ai('panel.openAiSettings')}
             </Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {/* 执行器与模型合成一个紧凑选择器（审计 T37）。**只是呈现合并**：
-              底下仍是 aiStore 的两个字段（agent / models[agent]），选中一项时
+          {/* 执行器与模型：两级选择器（第一级执行器家族，第二级型号；`ModelPicker`）。
+              **只是呈现**：底下仍是 aiStore 的两个字段（agent / models[agent]），选中一项时
               各写各的，切回另一个 Agent 时它自己的模型记忆还在。
-              只有一项可选时不摆一个选不动的选择器：**但那一项写的是什么仍要
-              看得见**，退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块
-              不出现——执行器是谁，工具行的胶囊上已经写着了 */}
-          {pairs.length > 1 ? (
+              只有一项可选时不摆一个选不动的选择器（旧执行器视图；连接视图的选择器底部有「连接更多 AI…」，要常驻）：**但那一项写的是什么仍要看得见**，
+              退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块不出现——执行器是谁，
+              工具行的胶囊上已经写着了 */}
+          {optionCount > 1 || view ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
-              <Select
-                className="min-w-0 flex-1"
-                ariaLabel={ai('panel.agentModel')}
-                value={currentPair}
-                onChange={(v) => {
-                  const [id, m] = splitPair(v)
-                  useAiStore.getState().setAgent(id)
-                  if (m) useAiStore.getState().setModel(id, m)
-                }}
-                options={pairs}
-              />
+              <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
+              {view ? (
+                <ConnectionModelPicker connections={conns} active={active ?? ''} model={model} />
+              ) : (
+                <ModelPicker usable={usable} active={active ?? ''} model={model} />
+              )}
             </div>
           ) : (
             cur &&
             model && (
               <div data-ai-agent-model="static" className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-ink" title={model}>
-                  {`${cur.display_name} · ${model}`}
+                <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink" title={model}>
+                  {activeConn ? (
+                    <BrandLogo logo={activeConn.logo} size={16} />
+                  ) : (
+                    <FamilyIcon iconKey={cur.icon_key} />
+                  )}
+                  <span className="truncate">{`${cur.display_name} · ${modelLabel(cur, model)}`}</span>
                 </span>
               </div>
             )
-          )}
-          {/* 推理强度：档位来自 caps 的真实数组，一格一个值。
-              **控件按需展示，当前值不藏**（审计 T37）——收起时那一行就写着
-              「推理强度 · 高」，要动它才展开滑杆。只有一档时滑杆不可调
-              （不是一个假装能拖的滑杆）；一档都没有时整块不出现 */}
-          {effortList.length > 0 && (
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <button
-                data-ai-effort="disclosure"
-                onClick={() => setEffortOpen((v) => !v)}
-                aria-expanded={effortOpen}
-                className="flex min-w-0 items-center gap-1 text-left outline-none focus-visible:focus-ring"
-              >
-                <ChevronRight
-                  size={ICON_SIZE.xs}
-                  aria-hidden
-                  className={cn('shrink-0 text-ink-3 transition-transform', effortOpen && 'rotate-90')}
-                />
-                <span className="shrink-0 text-xs text-ink-2">{ai('panel.effort')}</span>
-                <span
-                  className="ml-auto min-w-0 truncate text-xs font-medium text-ink"
-                  title={effortLabel(effortList[effortIndex])}
-                >
-                  {effortLabel(effortList[effortIndex])}
-                </span>
-              </button>
-              {effortOpen && (
-                <StepSlider
-                  value={effortIndex}
-                  count={effortList.length}
-                  disabled={effortList.length === 1}
-                  ariaLabel={ai('panel.effort')}
-                  valueText={effortLabel(effortList[effortIndex])}
-                  onChange={(i) => active && useAiStore.getState().setEffort(active, effortList[i])}
-                />
-              )}
-            </div>
           )}
         </div>
       )}
@@ -892,6 +1191,12 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
 function effortLabel(value: string | undefined): string {
   if (!value) return ''
   return translate(`effortLabel.${value}`, { ns: 'ai', defaultValue: value })
+}
+
+/** 档位的一句说明；开集，表里没有的档位不编说明（菜单里只显示名称） */
+function effortDescription(value: string): string | undefined {
+  const text = translate(`effortDesc.${value}`, { ns: 'ai', defaultValue: '' })
+  return text || undefined
 }
 
 /** 旧名保留：右栏 tab 仍按 AiPanel 引用这个面板 */

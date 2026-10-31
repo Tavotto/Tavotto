@@ -22,6 +22,12 @@
     （ADR 0050 的静默看门狗，`pool.BUILD_IDLE_TIMEOUT` / `BUILD_HARD_TIMEOUT`），
     ADR 0048 的分档已删除，标 heavy 不再改变引擎侧任何超时
   * notes: "3d" = 仅文字类元素可编辑；"dead" = 产物已不在磁盘
+  * artifacts（可选，#1251）：`{项目相对路径: stem}`，「磁盘上的这个文件是这个脚本里哪张图
+    写的」。同一脚本里两张不同的图写同 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙，
+    乙以 `panel-2` 登记）时，文件名 stem 回答不了「这个文件是谁的」——磁盘文件 → 图的解析
+    一律走 `for_artifact()`：先查这张表，查不到再退回按 stem。字段可缺（旧文件），旧版本
+    读新文件时按未知键忽略（`load_data` 只取已知键）；表是**派生数据**，坏的条目（非字符串、
+    stem 不在本脚本 stems 里、同一路径被两个脚本认领）静默丢弃，不让整份注册表打不开
 
 **一个进程可以同时端着多个项目的注册表**（不同标签页各开各的图库），所以
 索引数据装在 Registry 实例里；模块级函数代理到一个默认实例，保持老调用方式。
@@ -78,6 +84,8 @@ class Registry:
     def __init__(self) -> None:
         self._scripts: dict[str, dict] = {}
         self._index: dict[str, str] = {}
+        #: 磁盘文件（项目相对路径，POSIX）→ stem；见模块说明的 artifacts
+        self._artifacts: dict[str, str] = {}
         self._source: str = "<未加载>"
 
     # ---------------- 装载 ----------------
@@ -103,6 +111,7 @@ class Registry:
             raise RuntimeError(f"注册表缺少 scripts 表: {source}")
         cleaned: dict[str, dict] = {}
         index: dict[str, str] = {}
+        per_script: dict[str, dict[str, str]] = {}
         for script, cfg in scripts.items():
             if not isinstance(cfg, dict):
                 raise RuntimeError(f"{source}: {script} 的配置必须是对象")
@@ -124,13 +133,24 @@ class Registry:
                 if stem in index:
                     raise RuntimeError(f"stem 重复注册: {stem} ({index[stem]} vs {script})")
                 index[stem] = script
+            mine = clean_artifacts(cfg.get("artifacts"), stems)
+            per_script[script] = mine
             cleaned[script] = {
                 "entry": entry,
                 "cost": cost,
                 "notes": str(cfg.get("notes", "")),
                 "stems": list(stems),
             }
+        # 同一路径被两个脚本认领 = 歧义：整条丢掉（解析退回按文件名 stem），与脚本在 JSON 里的顺序无关
+        artifacts = unambiguous_artifacts(per_script)
+        for script, mine in per_script.items():
+            mine = {a: s for a, s in mine.items() if a in artifacts}
+            # 有才带：`entries()` 要与磁盘上的脚本条目同形——`project_refresh` 拿「登记时的条目」和
+            # 「此刻的 entries()」比相等来判这次执行是否仍有效，少一个键会让活 worker 被当成过期收掉
+            if mine:
+                cleaned[script]["artifacts"] = dict(mine)
         self._scripts, self._index, self._source = cleaned, index, source
+        self._artifacts = artifacts
 
     # ---------------- 查询 ----------------
     def loaded(self) -> bool:
@@ -147,6 +167,36 @@ class Registry:
         cfg = self._scripts[script]
         return {"script": script, "entry": cfg["entry"], "cost": cfg["cost"], "notes": cfg["notes"]}
 
+    def for_artifact(self, rel: str) -> dict | None:
+        """磁盘上的一个素材文件（项目相对路径）→ 产出它的那张图：`for_stem` 的字段加 `stem`。
+
+        **「磁盘文件 → 图」的唯一解析出处**（#1251）：先查注册表登记的 `artifacts`（哪张图写了这个
+        文件），查不到再退回按文件名 stem——老注册表、手写注册表、静态起草登记的图都没有这张表。
+        不是「stem 的原件在哪」（那是 `figcapture.find_original_artifact`），方向相反。
+        """
+        key = str(rel).replace("\\", "/")
+        stem = self._artifacts.get(key)
+        if stem is None or stem not in self._index:
+            stem = Path(key).stem
+        info = self.for_stem(stem)
+        return None if info is None else {**info, "stem": stem}
+
+    def artifact_stem(self, rel: str) -> str:
+        """磁盘文件 → 它属于哪个 stem：`for_artifact` 认得就用登记的，认不得退回文件名 stem。
+
+        app 的 `_disk_panel_rel` 与 CLI 的 `handoff.resolve_target` **共用这一个函数**：app 记交接回执的键
+        与 CLI 轮询回执的键必须逐字相同，两边各算一份迟早分叉（#1251）。
+        """
+        info = self.for_artifact(rel)
+        return info["stem"] if info is not None else Path(str(rel).replace("\\", "/")).stem
+
+    def artifacts_of(self, script: str) -> dict[str, str]:
+        """某脚本登记的 `{文件: stem}`（只读副本）。"""
+        stems = set(self._scripts.get(script, {}).get("stems", []))
+        return {
+            a: s for a, s in self._artifacts.items() if s in stems and self._index.get(s) == script
+        }
+
     def all_scripts(self) -> list[str]:
         return list(self._scripts)
 
@@ -156,6 +206,42 @@ class Registry:
     def entries(self) -> dict[str, dict]:
         """完整表（界面上的「脚本注册表」面板用）。"""
         return {k: dict(v) for k, v in self._scripts.items()}
+
+
+def clean_artifacts(raw: object, stems: list[str]) -> dict[str, str]:
+    """`artifacts` 字段的宽容清洗：只留「字符串路径 → 本脚本 stems 里的 stem」，其余丢弃。
+
+    读（`load_data`）与写（`discover.register`）共用这一份，两边对「什么算有效条目」不会分叉。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    allowed = set(stems)
+    out: dict[str, str] = {}
+    clash: set[str] = set()
+    for art, stem in raw.items():
+        if isinstance(art, str) and art and isinstance(stem, str) and stem in allowed:
+            key = art.replace("\\", "/")
+            if out.setdefault(key, stem) != stem:
+                clash.add(key)  # `a\b` 与 `a/b` 归一后指向不同的图：歧义，不记
+    return {a: s for a, s in out.items() if a not in clash}
+
+
+def unambiguous_artifacts(per_script: dict[str, dict[str, str]]) -> dict[str, str]:
+    """各脚本清洗后的 `{文件: stem}` → 全表：**同一路径被两个及以上脚本认领就整条不要**（#1251）。
+
+    「有歧义就不记」的**唯一判据**：读（`load_data`）用它；写（`discover.register`）靠「本次执行写出了它，别处的认领
+    摘掉」保证落盘的文件里不会出现争用——所以读到争用只会来自手写 / 合并出来的文件，此时哪个脚本都不该赢，
+    也不取决于 JSON 里脚本键的顺序。第三个认领者同样不会把它加回来。
+    """
+    seen: dict[str, str] = {}
+    contested: set[str] = set()
+    for mine in per_script.values():
+        for art, stem in mine.items():
+            if art in seen:
+                contested.add(art)
+            else:
+                seen[art] = stem
+    return {a: s for a, s in seen.items() if a not in contested}
 
 
 def open_registry(figures_dir: str | Path) -> Registry:
@@ -193,6 +279,10 @@ def source() -> str:
 
 def for_stem(stem: str) -> dict | None:
     return _DEFAULT.for_stem(stem)
+
+
+def for_artifact(rel: str) -> dict | None:
+    return _DEFAULT.for_artifact(rel)
 
 
 def all_scripts() -> list[str]:

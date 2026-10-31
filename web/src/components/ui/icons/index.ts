@@ -1,5 +1,5 @@
 /**
- * 图标集的公开面：143 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
+ * 图标集的公开面：147 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
  * 表在 `docs/ux/ICONOGRAPHY.md` 第四节）。几何在 `defs.ts`，组件工厂在 `createIcon.tsx`。
  * 写法 `<X size={ICON_SIZE.md} />`，选中态 `<X filled />`。
  */
@@ -36,10 +36,13 @@ export const Minimize2 = createIcon('Minimize2', ICON_DEFS.Minimize2)
 export const Download = createIcon('Download', ICON_DEFS.Download)
 export const Upload = createIcon('Upload', ICON_DEFS.Upload)
 export const Ellipsis = createIcon('Ellipsis', ICON_DEFS.Ellipsis)
+export const GripVertical = createIcon('GripVertical', ICON_DEFS.GripVertical)
+export const Menu = createIcon('Menu', ICON_DEFS.Menu)
 export const ChevronDown = createIcon('ChevronDown', ICON_DEFS.ChevronDown)
 export const ChevronUp = createIcon('ChevronUp', ICON_DEFS.ChevronUp)
 export const ChevronRight = createIcon('ChevronRight', ICON_DEFS.ChevronRight)
 export const Sparkles = createIcon('Sparkles', ICON_DEFS.Sparkles)
+export const Heart = createIcon('Heart', ICON_DEFS.Heart)
 export const Pin = createIcon('Pin', ICON_DEFS.Pin)
 export const MousePointerClick = createIcon('MousePointerClick', ICON_DEFS.MousePointerClick)
 export const SlidersHorizontal = createIcon('SlidersHorizontal', ICON_DEFS.SlidersHorizontal)
@@ -100,6 +103,7 @@ export const Folder = createIcon('Folder', ICON_DEFS.Folder)
 export const FolderOpen = createIcon('FolderOpen', ICON_DEFS.FolderOpen)
 export const House = createIcon('House', ICON_DEFS.House)
 export const FolderPlus = createIcon('FolderPlus', ICON_DEFS.FolderPlus)
+export const File = createIcon('File', ICON_DEFS.File)
 export const FileUp = createIcon('FileUp', ICON_DEFS.FileUp)
 export const FileCodeCorner = createIcon('FileCodeCorner', ICON_DEFS.FileCodeCorner)
 export const FileExclamationPoint = createIcon('FileExclamationPoint', ICON_DEFS.FileExclamationPoint)
@@ -111,6 +115,8 @@ export const CornerUpLeft = createIcon('CornerUpLeft', ICON_DEFS.CornerUpLeft)
 export const ArrowUp = createIcon('ArrowUp', ICON_DEFS.ArrowUp)
 export const ArrowDown = createIcon('ArrowDown', ICON_DEFS.ArrowDown)
 export const ArrowLeft = createIcon('ArrowLeft', ICON_DEFS.ArrowLeft)
+export const Mail = createIcon('Mail', ICON_DEFS.Mail)
+export const ArrowRight = createIcon('ArrowRight', ICON_DEFS.ArrowRight)
 export const ArrowLeftRight = createIcon('ArrowLeftRight', ICON_DEFS.ArrowLeftRight)
 export const ArrowUpToLine = createIcon('ArrowUpToLine', ICON_DEFS.ArrowUpToLine)
 export const ArrowDownToLine = createIcon('ArrowDownToLine', ICON_DEFS.ArrowDownToLine)

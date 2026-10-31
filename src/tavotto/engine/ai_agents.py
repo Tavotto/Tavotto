@@ -27,10 +27,11 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from . import config, managedcli
 from .runtime import CREATE_NO_WINDOW
 
 #: 候选来源。**只是诊断信息，不参与「能不能用」的判断**——能不能用只看
@@ -38,6 +39,7 @@ from .runtime import CREATE_NO_WINDOW
 Source = str
 SOURCES: tuple[str, ...] = (
     "custom",  # 用户在设置里指定的可执行文件
+    "managed",  # Tavotto 应用内安装的官方 CLI（`data_dir()/cli/<名>/…`，`engine/managedcli.py`）
     "path",  # 系统 PATH
     "homebrew",  # Homebrew 前缀
     "common_location",  # 各平台常见安装目录（bun / volta / scoop / winget / choco…）
@@ -72,13 +74,36 @@ class CliCandidate:
 
 
 @dataclass(frozen=True)
+class ModelDetail:
+    """一个模型型号的展示信息与它自己支持的推理强度（加字段协议：旧前端忽略）。
+
+    `efforts_known` 区分「未知」与「明确没有档位」：False（默认）= 目录里没有这个型号
+    （只在 config.toml 里有 / 目录读不到），`efforts` 为空只表示“不知道”，前端回落到
+    Agent 级 `efforts`；True = 目录明确给了这个型号，`efforts` 就是它的全部档位，
+    为空 = 明确没有档位（不暴露选择、不传 `--effort`）。
+    """
+
+    id: str
+    display_name: str
+    description: str = ""
+    efforts: list[str] = field(default_factory=list)
+    default_effort: str | None = None
+    efforts_known: bool = False
+
+
+@dataclass(frozen=True)
 class ModelCapabilities:
-    """该 Agent 当前能提供的模型 / 推理强度选项。"""
+    """该 Agent 当前能提供的模型 / 推理强度选项。
+
+    `models` 仍是型号 id 的有序清单（旧前端只认它）；`model_details` 是并行的
+    新字段，按 id 带显示名 / 说明 / 每型号自己的强度档位。
+    """
 
     models: list[str] = field(default_factory=list)
     default_model: str | None = None
     efforts: list[str] = field(default_factory=list)
     default_effort: str | None = None
+    model_details: list[ModelDetail] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -105,6 +130,41 @@ class InstallSpec:
     package: str
 
 
+def _effort_supported(details: list[ModelDetail], model: str | None, effort: str | None) -> bool:
+    """所选型号在目录里且 `efforts_known` 时，请求档位必须在其档位内（含明确无档位 = 一律不传）。
+
+    没选型号 / 目录里没有该型号 = 未知，沿用请求。Claude 与 Codex 的 `build_command` 共用。
+    """
+    if not model:
+        return True
+    d = next((x for x in details if x.id == model), None)
+    if d is None or not d.efforts_known:
+        return True
+    return effort in d.efforts
+
+
+@dataclass(frozen=True)
+class LoginSpec:
+    """「官方登录按钮」要启动的那条官方命令。**子命令写死在适配器里**，绝不来自请求体。
+
+    `mode`：
+      background — 官方命令自己开浏览器、自己在本机起回调，不需要终端交互；
+                   Tavotto 后台启动它、不读它的输出（`codex login`）
+      terminal   — 官方命令需要交互，只能交给用户的系统终端（`claude auth login`）
+
+    `account` 是按钮上的账号名（产品名，不翻译）：「登录 ChatGPT」「登录 Claude」。
+    Tavotto 不读、不存、不刷新、不转发该命令产生的任何登录凭据。
+    """
+
+    argv_suffix: tuple[str, ...]
+    mode: str
+    account: str
+    #: 非空 = 后台命令会把「浏览器没打开时请手动访问」的授权地址打在输出里，Tavotto 只从输出里
+    #: 取**第一条主机精确命中这里的 https 地址**（授权地址只含 state / PKCE challenge，不是凭据），
+    #: 其余输出一概不存、不进日志。空 = 输出直接丢弃。
+    url_hosts: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class RunContext:
     """构造一次任务命令所需的全部输入。"""
@@ -117,6 +177,15 @@ class RunContext:
     #: 第三方接口的注入（由 ai_bridge 经 ai_providers 算好）
     endpoint_args: list[str] = field(default_factory=list)
     endpoint_env: dict[str, str] = field(default_factory=dict)
+    #: 目标脚本（相对 `cwd`）。只有内置执行器要（它的写权限收窄到这一个文件）；两家 CLI 靠提示词指目标，忽略它
+    target: str | None = None
+    #: 内置执行器的任务（`figure_edit` | `convert_to_editable`）与转换任务要新建的文件名
+    task: str = "figure_edit"
+    output: str | None = None
+    resume_output_sha256: str = ""
+    checks_used: int = 0
+    #: 内置执行器：`check` 经 stdout/stdin 回调父进程（改图任务只在有 TAF 候选时才给；转换任务恒给）
+    check_ipc: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +194,58 @@ class SpawnSpec:
 
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)
+
+
+def toml_string(text: str) -> str:
+    """TOML 基本字符串。不用 `json.dumps`：它对非 BMP 字符（🧪）输出 UTF-16 代理对转义，TOML 不接受。
+    这里：`\\` `"` 与全部控制字符（含 DEL）转义，其余 Unicode 原样（命令行经 UTF-8 传递）。"""
+    out = ['"']
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif o in (8, 9, 10, 12, 13):
+            out.append({8: "\\b", 9: "\\t", 10: "\\n", 12: "\\f", 13: "\\r"}[o])
+        elif o < 0x20 or o == 0x7F:
+            out.append(f"\\u{o:04X}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def toml_value(value: object) -> str:
+    if isinstance(value, str):
+        return toml_string(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_value(v) for v in value) + "]"
+    raise TypeError(type(value).__name__)
+
+
+@dataclass(frozen=True)
+class FixRunContext:
+    """「使用你的 AI 来修复」经 MCP 起 CLI 的输入（ADR 0149 D3）。**这里没有任何密钥**：令牌只以环境变量**名**出现，
+    值由调用方放进子进程环境（`SpawnSpec.env` 之外的那一份），绝不进 argv。"""
+
+    argv: list[str]  # 已通过启动验证的 CLI 启动 argv
+    prompt: str
+    cwd: str
+    #: 本地 MCP 修复模式服务的启动命令（可执行文件 + 参数，不含令牌）
+    mcp_command: list[str]
+    #: MCP 服务在 CLI 配置里的名字；工具在 Claude 里叫 `mcp__<名字>__<工具>`
+    mcp_name: str
+    #: 令牌所在的环境变量名（CLI 要把它转交给 MCP 子进程）
+    token_env: str
+    #: 单次工具调用的上限秒数（要比弹卡等用户的上限长）
+    tool_timeout_s: int
+    #: 硬拦表（`fixtools.readscope.deny_spec()` 的结果）；适配器把它翻成自家的权限语法
+    deny: dict = field(default_factory=dict)
+    endpoint_args: list[str] = field(default_factory=list)
+    endpoint_env: dict[str, str] = field(default_factory=dict)
+    #: 用户给这个 Agent 选了第三方接口时的型号（接口自己的型号名）；官方登录态为 None（CLI 用自己的默认）
+    model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +259,12 @@ def search_locations(name: str) -> list[SearchLocation]:
     从桌面快捷方式启动的进程拿的又是启动那一刻的旧环境块。所以这里把
     npm / winget / scoop / bun / volta / 官方安装器的落点全部直接翻一遍。
     """
+    managed = managedcli.bin_dir(name)
+    head = [SearchLocation(str(managed), "managed")] if managed is not None else []
+    return head + _platform_locations(name)
+
+
+def _platform_locations(name: str) -> list[SearchLocation]:
     home = os.path.expanduser("~")
     if os.name == "nt":
         appdata = os.environ.get("APPDATA") or home + r"\AppData\Roaming"
@@ -281,6 +408,8 @@ def spawn_env(cli_path: str | None, extra: dict | None = None) -> dict:
         if d and d not in parts and os.path.isdir(d):
             parts.append(d)
     env["PATH"] = os.pathsep.join(parts)
+    # 托管安装的 CLI（claude）：关掉它自己的自动升级——版本只由 `managed_cli_lock.json` 控制
+    env.update(managedcli.child_env(cli_path))
     if extra:
         env.update(extra)
     return env
@@ -364,11 +493,17 @@ class AgentDefinition:
     install_spec: InstallSpec | None = None
     supports_model_selection: bool = False
     supports_effort_selection: bool = False
+    #: 档位来自官方目录：接第三方接口（网关）时网关后面的型号未必认，界面不给档位、命令不传。
+    #: 默认 False（Codex 现状不变，网关下仍可传）
+    effort_official_only: bool = False
     #: 该族的第三方接口要不要选 wire api（OpenAI 兼容那一族才有 responses/chat
     #: 两种协议）。**由适配器声明**，前端不该靠 `id === "codex"` 猜。
     supports_wire_api: bool = False
     #: 有没有官方的、无副作用的本地登录状态命令
     supports_readiness_probe: bool = False
+    #: 内部执行器（Tavotto 自己的进程，没有可探测的 CLI）：不进 `AGENT_REGISTRY`、不出现在 capabilities 的 `agents[]`，
+    #: 只经 `get_agent` 被改图执行路径找到（ADR 0147 第二阶段）
+    internal: bool = False
 
     # -- 探测 --------------------------------------------------------------
     def extra_search_locations(self) -> list[SearchLocation]:
@@ -401,9 +536,24 @@ class AgentDefinition:
         """
         return ReadinessResult()
 
+    # -- 登录 --------------------------------------------------------------
+    def login_spec(self) -> LoginSpec | None:
+        """官方登录命令的规格。**默认不支持**——没有官方登录子命令就不画按钮。"""
+        return None
+
     # -- 运行 --------------------------------------------------------------
     def build_command(self, ctx: RunContext) -> SpawnSpec:
         raise NotImplementedError
+
+    def build_fix_command(self, ctx: FixRunContext) -> SpawnSpec | None:
+        """AI 修复会话里起 CLI 的命令（MCP 接法，ADR 0149 D3）。**默认 None = 不支持**。"""
+        return None
+
+    def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
+        """修复会话读 CLI 结构化输出（stdout 一行一个事件）用的解析器工厂；每次会话取一个新的（可带状态）。
+        解析器把一行变成 0..n 个 `{"kind": "mcp_begin"|"mcp_end"|"approval"|"denied"|"output", "tool": 工具名(不带前缀)}`。
+        **事件只用来显示进度和发现卡住，从不当结论**（结论只认 `finish` 工具）。默认 None = 不解析。"""
+        return None
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         raise NotImplementedError
@@ -420,6 +570,10 @@ class CodexAgent(AgentDefinition):
     supports_effort_selection = True
     supports_wire_api = True
     supports_readiness_probe = True
+
+    def login_spec(self) -> LoginSpec | None:
+        # `codex login` 自己开浏览器、自己在本机起回调：后台启动即可
+        return LoginSpec(("login",), "background", "ChatGPT", ("auth.openai.com",))
 
     #: 推理强度档位。**模型名故意不写死**——OpenAI 换代时旧名会被服务端直接
     #: 拒绝（"The 'gpt-5' model is not supported when using Codex with a
@@ -499,16 +653,78 @@ class CodexAgent(AgentDefinition):
         out["models"] = seen
         return out
 
+    @classmethod
+    def _catalog(cls) -> list[ModelDetail]:
+        """codex CLI 自己的模型目录缓存 `$CODEX_HOME/models_cache.json` 里 `visibility == "list"` 的型号。
+
+        只读、只取我们认得的字段；文件缺失 / 损坏 / 结构变了一律返回空表（调用方退回
+        只用 config.toml 的老行为），绝不抛。`hide` 的型号（内部 / 已下架）不列。
+        按 `priority` 升序（缺省沿用原序，稳定排序）。
+        """
+        try:
+            data = json.loads((cls._home() / "models_cache.json").read_text(encoding="utf-8"))
+            raw = data["models"]
+            if not isinstance(raw, list):
+                return []
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
+        rows: list[tuple[float, int, ModelDetail]] = []
+        for i, m in enumerate(raw):
+            if not isinstance(m, dict) or m.get("visibility") != "list":
+                continue
+            slug = m.get("slug")
+            if not isinstance(slug, str) or not slug:
+                continue
+            name = m.get("display_name")
+            desc = m.get("description")
+            levels = m.get("supported_reasoning_levels")
+            efforts: list[str] = []
+            if isinstance(levels, list):
+                for lv in levels:
+                    e = lv.get("effort") if isinstance(lv, dict) else lv
+                    if isinstance(e, str) and e and e not in efforts:
+                        efforts.append(e)
+            default = m.get("default_reasoning_level")
+            prio = m.get("priority")
+            has_prio = isinstance(prio, (int, float)) and not isinstance(prio, bool)
+            rows.append(
+                (
+                    float(prio) if has_prio else float("inf"),
+                    i,
+                    ModelDetail(
+                        id=slug,
+                        display_name=name if isinstance(name, str) and name else slug,
+                        description=desc if isinstance(desc, str) else "",
+                        efforts=efforts,
+                        default_effort=default if isinstance(default, str) and default else None,
+                        efforts_known=True,
+                    ),
+                )
+            )
+        rows.sort(key=lambda r: (r[0], r[1]))
+        return [r[2] for r in rows]
+
     def model_capabilities(self) -> ModelCapabilities:
         cfg = self._config()
+        catalog = self._catalog()
+        by_id = {d.id: d for d in catalog}
+        # config.toml 当前在用的（含 profiles）在前，其后是 CLI 目录里可选的型号
+        ids = list(cfg["models"])
+        for d in catalog:
+            if d.id not in ids:
+                ids.append(d.id)
+        details = [by_id.get(i) or ModelDetail(id=i, display_name=i) for i in ids]
         efforts = list(self.EFFORTS)
-        if cfg["default_effort"] and cfg["default_effort"] not in efforts:
-            efforts.append(cfg["default_effort"])
+        extra = [cfg["default_effort"]] + [e for d in details for e in d.efforts]
+        for e in extra:
+            if e and e not in efforts:
+                efforts.append(e)
         return ModelCapabilities(
-            models=list(cfg["models"]),
+            models=ids,
             default_model=cfg["default_model"],
             efforts=efforts,
             default_effort=cfg["default_effort"] or "medium",
+            model_details=details,
         )
 
     def readiness(self, argv: list[str]) -> ReadinessResult:
@@ -544,9 +760,79 @@ class CodexAgent(AgentDefinition):
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]
-        if ctx.effort:
+        # 目录明确给了所选型号的档位时，请求档位必须在其中；明确无档位就不传（Codex 会拒绝）
+        if ctx.effort and _effort_supported(self._catalog(), ctx.model, ctx.effort):
             cmd += ["-c", f"model_reasoning_effort={ctx.effort}"]
         return SpawnSpec(cmd + [ctx.prompt], dict(ctx.endpoint_env))
+
+    def build_fix_command(self, ctx: FixRunContext) -> SpawnSpec | None:
+        """修复会话：`--sandbox read-only`（Codex 自带的命令行读不受限、写被沙盒拦——维护者已知并接受，ADR 0149 D3），
+        MCP 服务只出现在**本次**的 `-c mcp_servers.<名>.…` 里（TOML 值；绝不写 `~/.codex/config.toml`）。令牌不在 argv：
+        `env_vars` 只列变量**名**，值由 Codex 从它自己的环境转给 MCP 子进程。"""
+        pre = f"mcp_servers.{ctx.mcp_name}"
+
+        def toml(value: object) -> str:
+            return toml_value(value)
+
+        cmd = [
+            *ctx.argv,
+            "exec",
+            "-C",
+            ctx.cwd,
+            "--json",  # JSONL 事件：只用来显示进度 / 发现卡住，不当结论
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "-c",
+            f"{pre}.command={toml(ctx.mcp_command[0])}",
+            "-c",
+            f"{pre}.args={toml(list(ctx.mcp_command[1:]))}",
+            "-c",
+            f"{pre}.env_vars={toml([ctx.token_env])}",
+            "-c",
+            f"{pre}.tool_timeout_sec={int(ctx.tool_timeout_s)}",
+            "-c",
+            f"{pre}.startup_timeout_sec=60",
+            # 本服务的工具一律免 Codex 自己的审批（exec 模式没人点，不放行就一直挂着——10-24 真机跑出来的）；
+            # 要用户点头的改动由 Tavotto 自己弹卡（fixtools 的档位 + ctx.ask），不靠 Codex 这一层
+            "-c",
+            f'{pre}.default_tools_approval_mode="approve"',
+            "-c",
+            'approval_policy="never"',
+        ]
+        cmd += ctx.endpoint_args
+        if ctx.endpoint_args:
+            # Tavotto 已把 provider（-c model_provider…）和型号都显式给了：不再加载用户的 config.toml——
+            # 去掉用户自己的 MCP 服务与 hooks（它们会被拉进修复会话），登录态仍在 CODEX_HOME，Tavotto 不读。
+            # 官方登录态（没有 endpoint_args）不加：默认型号 / 认证方式可能就写在用户 config.toml 里，忽略它会换掉用户的设定
+            cmd += ["--ignore-user-config"]
+            if ctx.model:
+                cmd += ["-m", ctx.model]
+        return SpawnSpec(cmd + [ctx.prompt], dict(ctx.endpoint_env))
+
+    def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
+        def parse(line: str) -> list[dict]:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                return []
+            if not isinstance(ev, dict):
+                return []
+            etype = str(ev.get("type", ""))
+            item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
+            itype = str(item.get("type") or item.get("item_type") or "")
+            tool = str(item.get("tool") or ev.get("tool") or "")
+            low = (etype + " " + itype).lower()
+            if "approval" in low or "elicitation" in low:
+                return [{"kind": "approval", "tool": tool}]
+            if "mcp" in itype.lower() and str(item.get("server") or "tavotto_fix") == "tavotto_fix":
+                if etype.endswith(".started") or etype.endswith("begin"):
+                    return [{"kind": "mcp_begin", "tool": tool}]
+                if etype.endswith(".completed") or etype.endswith("end"):
+                    return [{"kind": "mcp_end", "tool": tool}]
+            return [{"kind": "output", "tool": ""}]
+
+        return parse
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:
@@ -590,14 +876,140 @@ class ClaudeAgent(AgentDefinition):
     endpoint_family = "anthropic"
     install_spec = InstallSpec(method="npm", package="@anthropic-ai/claude-code")
     supports_model_selection = True
-    #: claude CLI 没有推理强度开关，不假装有
-    supports_effort_selection = False
+    #: claude CLI 有 `--effort <level>`；档位来自它自己的模型目录缓存（读不到就不暴露档位）
+    supports_effort_selection = True
+    effort_official_only = True
     supports_readiness_probe = True
 
+    #: 模型目录缓存不可用时的退路：三个别名，行为与引入目录之前完全一致
     MODELS = ["sonnet", "opus", "haiku"]
 
+    @staticmethod
+    def _home() -> Path:
+        """Claude Code 自己的配置目录（`CLAUDE_CONFIG_DIR` 是其官方覆盖变量，测试也用它重定向）。"""
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+
+    @classmethod
+    def _catalog(cls) -> tuple[list[ModelDetail], dict[str, str], dict[str, str]]:
+        """读 `<home>/cache/model-catalog/*.json`（CLI 自己缓存的模型目录），只读。
+
+        返回 (`section == "main"` 的型号按文件原序, id→family, 别名→id)。文件名里带账号
+        uuid、可能有多份：取 `fetchedAt` 最大且**可解析、main 段非空**的一份。缺失 / 损坏 /
+        结构变了一律返回空（调用方退回三个别名），绝不抛、不猜。`overflow` 段是旧型号，不列。
+        """
+        best: tuple[float, list, dict] | None = None
+        try:
+            files = sorted((cls._home() / "cache" / "model-catalog").glob("*.json"))
+        except OSError:
+            return [], {}, {}
+        for f in files:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                cfg = data["catalog"]["config"]
+                raw = cfg["models"]
+                fetched = data.get("fetchedAt")
+                if not isinstance(raw, list) or isinstance(fetched, bool):
+                    continue
+                stamp = float(fetched)
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if best is None or stamp > best[0]:
+                if any(isinstance(m, dict) and m.get("section") == "main" for m in raw):
+                    best = (stamp, raw, cfg)
+        if best is None:
+            return [], {}, {}
+        details: list[ModelDetail] = []
+        families: dict[str, str] = {}
+        for m in best[1]:
+            if not isinstance(m, dict) or m.get("section") != "main":
+                continue
+            mid = m.get("id")
+            if not isinstance(mid, str) or not mid or any(d.id == mid for d in details):
+                continue
+            name = m.get("name")
+            desc = m.get("description")
+            rt = m.get("runtime") if isinstance(m.get("runtime"), dict) else {}
+            levels = rt.get("effort_levels")
+            efforts = (
+                [e for e in levels if isinstance(e, str) and e] if isinstance(levels, list) else []
+            )
+            default = rt.get("default_effort")
+            fam = rt.get("family")
+            if isinstance(fam, str) and fam:
+                families[mid] = fam
+            details.append(
+                ModelDetail(
+                    id=mid,
+                    display_name=name if isinstance(name, str) and name else mid,
+                    description=desc if isinstance(desc, str) else "",
+                    efforts=list(dict.fromkeys(efforts)),
+                    default_effort=default if isinstance(default, str) and default else None,
+                    efforts_known=True,
+                )
+            )
+        aliases: dict[str, str] = {}
+        pat = best[2].get("provider_alias_targets")
+        if isinstance(pat, dict):
+            for alias, spec in pat.items():
+                target = spec.get("default") if isinstance(spec, dict) else None
+                if isinstance(alias, str) and isinstance(target, str):
+                    aliases[alias] = target
+        return details, families, aliases
+
+    @classmethod
+    def _user_model(cls) -> str | None:
+        """用户 `settings.json` 里的 `model`（只读）；`[1m]` 之类方括号后缀去掉。"""
+        try:
+            data = json.loads((cls._home() / "settings.json").read_text(encoding="utf-8"))
+            value = data["model"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not isinstance(value, str):
+            return None
+        return re.sub(r"\[[^\]]*\]$", "", value.strip()) or None
+
+    def login_spec(self) -> LoginSpec | None:
+        # `claude auth login` 无 TTY 也能用：自己开浏览器、自己在本机起回调，后台启动即可（与 `codex login` 同一模式）。
+        # 授权地址只从输出里取主机精确命中下面表的 https 地址（只含 state / PKCE challenge，不是凭据）；
+        # Tavotto 不读、不存、不转发 claude 产生的任何登录凭据
+        return LoginSpec(
+            ("auth", "login"),
+            "background",
+            "Claude",
+            ("claude.ai", "claude.com", "platform.claude.com"),
+        )
+
     def model_capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(models=list(self.MODELS), default_model="sonnet")
+        details, families, aliases = self._catalog()
+        if not details:
+            return ModelCapabilities(
+                models=list(self.MODELS),
+                default_model="sonnet",
+                model_details=[ModelDetail(id=m, display_name=m.capitalize()) for m in self.MODELS],
+            )
+        ids = [d.id for d in details]
+        wanted = self._user_model()
+        default = ids[0]
+        if wanted:
+            if wanted in ids:
+                default = wanted
+            elif aliases.get(wanted) in ids:
+                default = aliases[wanted]
+            else:
+                default = next((i for i in ids if families.get(i) == wanted), ids[0])
+        by_id = {d.id: d for d in details}
+        efforts: list[str] = []
+        for d in details:
+            for e in d.efforts:
+                if e not in efforts:
+                    efforts.append(e)
+        return ModelCapabilities(
+            models=ids,
+            default_model=default,
+            efforts=efforts,
+            default_effort=by_id[default].default_effort,
+            model_details=details,
+        )
 
     def readiness(self, argv: list[str]) -> ReadinessResult:
         """`claude auth status` —— 官方的本地状态子命令，回一段 JSON。
@@ -645,7 +1057,147 @@ class ClaudeAgent(AgentDefinition):
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["--model", ctx.model]
+        # 网关（注入了接口参数 / 环境）后面的型号未必认这个档位：宁可不传
+        # 目录明确给了所选型号的档位时，请求的档位必须在其中；明确无档位就不传
+        if ctx.effort and not (ctx.endpoint_args or ctx.endpoint_env) and self._effort_ok(ctx):
+            cmd += ["--effort", ctx.effort]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
+
+    #: 修复会话里允许 Claude 自带命令行跑的只读命令（`Bash(<命令>)` 与 `Bash(<命令> *)` 各一条）。**故意不含 cat / head / tail / grep**：
+    #: 它们能绕过 `Read` 的 deny 去读凭据位置，读内容走 `Read` / `Grep` / `Glob`（有 deny 表）或 MCP 的 read_file。
+    FIX_READONLY_COMMANDS = (
+        "ls",
+        "pwd",
+        "which",
+        "file",
+        "stat",
+        "wc",
+        "uname",
+        "pip list",
+        "pip freeze",
+        "pip show",
+        "conda list",
+        "conda env list",
+    )
+    #: 精确匹配的只读命令（带参数就不是它了）
+    FIX_READONLY_EXACT = (
+        "python --version",
+        "python3 --version",
+        "python -V",
+        "pip --version",
+    )
+
+    def fix_permissions(self, deny: dict, mcp_name: str) -> dict:
+        """`--settings` 的 `permissions`：允许 MCP 工具与只读的读文件 / 只读命令，其余（写文件、联网、其它命令）一律拒；
+        `deny` 里的凭据位置不许 `Read`（Claude 把 Read 规则也用在 Grep / Glob 上）。表是 `readscope.deny_spec()` 现生成的，
+        不在这里抄第二份。`~/x` = 主目录相对，`//x` = 绝对路径，`**/x` = 相对工作目录的任意深度；文件名类再给 `//**/x` 覆盖工作目录之外。"""
+        rules: list[str] = []
+        for rel in deny.get("home_relative", ()):
+            rules += [f"Read(~/{rel})", f"Read(~/{rel}/**)"]
+        for pat in deny.get("names", ()):
+            rules += [f"Read(**/{pat})", f"Read(//**/{pat})"]
+        for ab in deny.get("absolute", ()):
+            rules.append("Read(//" + str(ab).replace("\\", "/").lstrip("/") + ")")
+        rules += [
+            "Edit",
+            "Write",
+            "NotebookEdit",
+            "WebFetch",
+            "WebSearch",
+        ]  # Claude Code 2.1 已没有 MultiEdit（写了会报「matches no known tool」）
+        rules += ["Bash(*>*)", "Bash(*tee *)", "Bash(*sed -i*)", "Bash(*-exec*)"]
+        allow = [f"mcp__{mcp_name}__*", "Read", "Grep", "Glob"]
+        for c in self.FIX_READONLY_COMMANDS:
+            allow += [f"Bash({c})", f"Bash({c} *)"]
+        allow += [f"Bash({c})" for c in self.FIX_READONLY_EXACT]
+        return {"allow": allow, "deny": rules}
+
+    def build_fix_command(self, ctx: FixRunContext) -> SpawnSpec | None:
+        """修复会话：权限与 MCP 配置都只经**本次**启动参数（`--settings` / `--mcp-config` JSON 字符串，加 `--strict-mcp-config`
+        不读别处的 MCP），不写 `~/.claude`。`dontAsk` = 没明确允许的工具一律拒、不弹确认。令牌只以 `${变量名}` 出现在 MCP 的 env 里，
+        值由 Claude 从它自己的环境展开。"""
+        mcp = {
+            "mcpServers": {
+                ctx.mcp_name: {
+                    "type": "stdio",
+                    "command": ctx.mcp_command[0],
+                    "args": list(ctx.mcp_command[1:]),
+                    "env": {ctx.token_env: "${" + ctx.token_env + "}"},
+                }
+            }
+        }
+        settings = {"permissions": self.fix_permissions(ctx.deny, ctx.mcp_name)}
+        cmd = [
+            *ctx.argv,
+            "-p",
+            ctx.prompt,
+            "--output-format",
+            "stream-json",  # 一行一个事件：只用来显示进度 / 发现权限拒绝，不当结论
+            "--verbose",
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools=mcp__" + ctx.mcp_name + "__*",
+            "--settings",
+            json.dumps(settings),
+            "--mcp-config",
+            json.dumps(mcp),
+            "--strict-mcp-config",
+        ]
+        cmd += ctx.endpoint_args
+        env = {"MCP_TOOL_TIMEOUT": str(int(ctx.tool_timeout_s) * 1000), **ctx.endpoint_env}
+        if ctx.model and ctx.endpoint_env:
+            cmd += ["--model", ctx.model]
+        return SpawnSpec(cmd, env)
+
+    def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
+        prefix = "mcp__tavotto_fix__"
+        names: dict[str, str] = {}  # tool_use id -> 工具名
+
+        def parse(line: str) -> list[dict]:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                return []
+            if not isinstance(ev, dict):
+                return []
+            out: list[dict] = []
+            t = str(ev.get("type", ""))
+            content = (
+                (ev.get("message") or {}).get("content")
+                if isinstance(ev.get("message"), dict)
+                else None
+            )
+            for block in content if isinstance(content, list) else ():
+                if not isinstance(block, dict):
+                    continue
+                if t == "assistant" and block.get("type") == "tool_use":
+                    name = str(block.get("name") or "")
+                    names[str(block.get("id") or "")] = name
+                    if name.startswith(prefix):
+                        out.append({"kind": "mcp_begin", "tool": name[len(prefix) :]})
+                elif t == "user" and block.get("type") == "tool_result":
+                    name = names.get(str(block.get("tool_use_id") or ""), "")
+                    text = block.get("content")
+                    text = text if isinstance(text, str) else json.dumps(text)[:400]
+                    if block.get("is_error") and "permission" in text.lower():
+                        out.append({"kind": "denied", "tool": name.removeprefix(prefix)})
+                    elif name.startswith(prefix):
+                        out.append({"kind": "mcp_end", "tool": name[len(prefix) :]})
+            for d in ev.get("permission_denials") or ():
+                if isinstance(d, dict):
+                    out.append(
+                        {
+                            "kind": "denied",
+                            "tool": str(d.get("tool_name") or "").removeprefix(prefix),
+                        }
+                    )
+            return out or [{"kind": "output", "tool": ""}]
+
+        return parse
+
+    def _effort_ok(self, ctx: RunContext) -> bool:
+        details, _families, _aliases = self._catalog()
+        return _effort_supported(details, ctx.model, ctx.effort)
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:
@@ -685,6 +1237,116 @@ class ClaudeAgent(AgentDefinition):
         return []  # system / rate_limit 等噪音
 
 
+#: 内置执行器的 id。**不是用户可选的「执行器」**：界面只讲「连接」，它只经 connections 的 `route` 体现。
+BUILTIN_ID = "builtin"
+
+#: 内置执行器的密钥环境变量名（与 `agent_runner.__main__.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
+BUILTIN_KEY_ENV = "TAVOTTO_AGENT_API_KEY"
+
+
+def tavotto_launcher() -> list[str]:
+    """拉起 Tavotto 自己的子命令（`fix-mcp` / `agent-run`）的命令前缀。冻结产物里 `sys.executable` 就是 Tavotto 自己，
+    优先用同目录的 console 版 `tavotto-cli`（GUI 子系统的 exe 没有可靠的 stdio）；源码 / pip 形态走 `-m tavotto`。"""
+    if getattr(sys, "frozen", False):
+        from . import locate
+
+        cli = Path(sys.executable).with_name(locate.CLI_NAME)
+        return [str(cli if cli.is_file() else sys.executable)]
+    return [sys.executable, "-m", "tavotto"]
+
+
+class BuiltinAgent(AgentDefinition):
+    """内置执行器（ADR 0147）：`tavotto agent-run`（= `python -m tavotto.engine.agent_runner`）子进程，自己跑「模型 ↔ 工具」循环。
+
+    与两家 CLI 同一套会话生命周期（候选工作区 / TAF 校验 / 事件流 / 取消 / 历史库）；区别只在命令怎么拼：
+    提示词走 **stdin**，密钥只在子进程**环境变量**里，argv 里只有地址 / 型号 / 协议名。
+    `endpoint_args` / `endpoint_env` 由 `ai_providers.spawn_overrides("builtin", …)` 算好。"""
+
+    id = BUILTIN_ID
+    display_name = "Tavotto"
+    internal = True
+    supports_model_selection = True
+
+    def build_command(self, ctx: RunContext) -> SpawnSpec:
+        cmd = [
+            *tavotto_launcher(),
+            "agent-run",
+            "--cwd",
+            ctx.cwd,
+            "--target",
+            ctx.target or "",
+            *ctx.endpoint_args,
+        ]
+        if ctx.task == "convert_to_editable":
+            # 转换任务：`check` 经 stdin/stdout 回调父进程的校验流水（提示词是 stdin 的第一行 JSON）
+            cmd += ["--task", ctx.task, "--output", ctx.output or "", "--check-ipc"]
+            if ctx.resume_output_sha256:
+                cmd += ["--resume-output-sha256", ctx.resume_output_sha256]
+            if ctx.checks_used:
+                cmd += ["--checks-used", str(ctx.checks_used)]
+        elif ctx.check_ipc:
+            # 改图任务：同一条 IPC，父进程在候选副本上跑提交前同一套检查（`ai_figure_edit.agent_check`）。
+            # 两家 CLI 没有这个入口——它们的 Agent 看不到校验结果，只有提交后被 TAF 拦下时的有界修正一轮
+            cmd += ["--check-ipc"]
+        return SpawnSpec(cmd, dict(ctx.endpoint_env))
+
+    #: `done.reason` → 给对话里看的一句话（不带内容、不带密钥）
+    _FAILURES = {
+        "auth": "密钥无效或已过期",
+        "quota": "额度不足或被限流",
+        "refused": "模型拒绝了这次请求",
+        "network": "连不上模型服务",
+        "budget": "这次修改用量超出上限，已停止",
+        "max_turns": "这次修改步骤过多，已停止",
+        "tool_error_loop": "反复失败，已停止",
+        "internal": "出错",
+    }
+
+    def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            return []
+        if not isinstance(ev, dict):
+            return []
+        t = ev.get("type")
+        if t == "text" and ev.get("text"):
+            return [("message", str(ev["text"]))]
+        if t == "thinking":
+            return [("thinking", "思考中…")]
+        if t == "tool":
+            summary = str(ev.get("summary") or "")
+            if len(summary) > 80:
+                summary = summary[:77] + "…"
+            return [("action", f"✎ {ev.get('name') or '工具'} {summary}".rstrip())]
+        if (
+            t == "done"
+            and not ev.get("ok")
+            and ev.get("reason") not in (None, "completed", "cancelled")
+        ):
+            # Preserve only closed short codes, never model/provider error text.
+            reason = str(ev["reason"])
+            if reason == "network" and ev.get("detail") == "html_response":
+                # 接口地址打开的是网页：比「连不上」说得准，前端失败卡据此给「检查连接」
+                state["runner_error"] = "agent_html_response"
+                return [("message", "连接地址打开的是网页，不是接口")]
+            if reason in self._FAILURES:
+                state["runner_error"] = (
+                    "agent_output_truncated"
+                    if reason == "budget" and ev.get("detail") == "output_truncated"
+                    else "agent_" + reason
+                )
+                # The trace vocabulary is a closed set; never retain arbitrary
+                # provider output or exception text from the child.
+                detail = ev.get("detail")
+                from . import exectrace
+
+                if isinstance(detail, str) and detail in exectrace._VOCABULARIES["runner_detail"]:
+                    state["runner_detail"] = detail
+            return [("message", self._FAILURES.get(str(ev["reason"]), "出错"))]
+        return []
+
+
 #: **生产注册表**。顺序即界面顺序。
 #:
 #: 这里只放当前真的能跑起来的 Agent。架构允许再加第三个而不用改前后端的
@@ -701,9 +1363,13 @@ def agent_ids() -> tuple[str, ...]:
     return tuple(a.id for a in AGENT_REGISTRY)
 
 
+#: 内部执行器：`get_agent` 找得到，`agents()` / `agent_ids()` / 注册表里没有（用户可选的 Agent 只在 `AGENT_REGISTRY`）
+INTERNAL_AGENTS: tuple[AgentDefinition, ...] = (BuiltinAgent(),)
+
+
 def get_agent(agent_id: str) -> AgentDefinition | None:
     """按 id 取适配器。**未知 id 一律回 None**，绝不把它继续往下传。"""
-    for a in AGENT_REGISTRY:
+    for a in (*AGENT_REGISTRY, *INTERNAL_AGENTS):
         if a.id == agent_id:
             return a
     return None
@@ -762,6 +1428,24 @@ def path_override(agent_id: str) -> str | None:
     return value or None
 
 
+def managed_paths(command_names: tuple[str, ...] | list[str]) -> list[str]:
+    """应用内托管安装的可执行文件（`managedcli.bin_dir` 下 which 得到的）。
+
+    **「托管那份在哪」只有这一处**：AI 候选链（`candidates`）与 `codexinstall.find_codex`
+    （插件安装流水线 / `hostconnect.installed('codex')`）共用它，两边对「这台机器上有没有
+    codex」的回答不许分叉。没装 / 数据目录不可解析 = 空表。
+    """
+    out: list[str] = []
+    for name in command_names:
+        managed_dir = managedcli.bin_dir(name)
+        if managed_dir is None:
+            continue
+        hit = shutil.which(name, path=str(managed_dir))
+        if hit:
+            out.append(hit)
+    return out
+
+
 def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliCandidate]:
     """该 Agent 的候选（按优先级、按实际路径去重）：设置 → PATH → 常见位置 →
     Agent 独有的具体文件（Codex 桌面版自带那份）→ npm 包内二进制 → MSIX 包体。
@@ -785,6 +1469,10 @@ def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliC
         p = Path(custom).expanduser()
         if p.is_file():
             add(str(p), "custom")
+    # 应用内托管安装的那份（用户点过「安装」才会有）：排在 PATH 之前——它是用户刚让 Tavotto 装的，
+    # 不能被 PATH 上某份旧的 / 坏的壳挡在后面；起不来时 resolve() 照样落到下一个候选
+    for managed_path in managed_paths(agent.command_names):
+        add(managed_path, "managed")
     for name in agent.command_names:
         add(shutil.which(name), "path")
     # PATH 里没有：把常见安装目录当成 PATH 再 which（Windows 上 PATHEXT 的

@@ -1,0 +1,232 @@
+{
+ "comparable": false,
+ "environment_after": {
+  "facts": {
+   "distribution_count": 19,
+   "distributions_sha256": "dd18e33020c0587c643424c49b34db538815cdef89c3c30c3f306eb4e1c9d1c9",
+   "executable_sha256": "329d378575992732511d75b3bd675cb91b3c65f3082783cd97ccb14f0ecd5a74",
+   "execution_env": {
+    "LANG": null,
+    "LC_ALL": null,
+    "MPLBACKEND": "Agg",
+    "PYTHONHASHSEED": "0"
+   },
+   "guardian": {
+    "distribution_count": 51,
+    "distributions_sha256": "9065a20c49d7fb364834128ec8f2798a80edc36f26cd76db463d82161247d8c6",
+    "executable_sha256": "329d378575992732511d75b3bd675cb91b3c65f3082783cd97ccb14f0ecd5a74",
+    "execution_env": {
+     "LANG": null,
+     "LC_ALL": null,
+     "MPLBACKEND": "Agg",
+     "PYTHONHASHSEED": "0"
+    },
+    "key_distributions": {
+     "flask": "3.1.3",
+     "fonttools": "4.63.0",
+     "numpy": "2.5.2",
+     "pikepdf": "10.17.0",
+     "pillow": "12.3.0",
+     "pypdfium2": "5.14.0",
+     "uharfbuzz": "0.56.4"
+    },
+    "machine": "x86_64",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "python": "3.13.16 (main, Oct  1 2026, 02:37:54) [GCC 13.3.0]"
+   },
+   "key_distributions": {
+    "fonttools": "4.63.0",
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "pillow": "12.3.0",
+    "scipy": "1.18.0",
+    "seaborn": "0.13.2"
+   },
+   "machine": "x86_64",
+   "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+   "python": "3.13.16 (main, Oct  1 2026, 02:37:54) [GCC 13.3.0]"
+  },
+  "fingerprint": "89a01eef446315f42880946a0c3f0b63c2552b6134fc18558dc53a939fefaca8"
+ },
+ "environment_before": {
+  "facts": {
+   "distribution_count": 19,
+   "distributions_sha256": "dd18e33020c0587c643424c49b34db538815cdef89c3c30c3f306eb4e1c9d1c9",
+   "executable_sha256": "329d378575992732511d75b3bd675cb91b3c65f3082783cd97ccb14f0ecd5a74",
+   "execution_env": {
+    "LANG": null,
+    "LC_ALL": null,
+    "MPLBACKEND": "Agg",
+    "PYTHONHASHSEED": "0"
+   },
+   "guardian": {
+    "distribution_count": 51,
+    "distributions_sha256": "9065a20c49d7fb364834128ec8f2798a80edc36f26cd76db463d82161247d8c6",
+    "executable_sha256": "329d378575992732511d75b3bd675cb91b3c65f3082783cd97ccb14f0ecd5a74",
+    "execution_env": {
+     "LANG": null,
+     "LC_ALL": null,
+     "MPLBACKEND": "Agg",
+     "PYTHONHASHSEED": "0"
+    },
+    "key_distributions": {
+     "flask": "3.1.3",
+     "fonttools": "4.63.0",
+     "numpy": "2.5.2",
+     "pikepdf": "10.17.0",
+     "pillow": "12.3.0",
+     "pypdfium2": "5.14.0",
+     "uharfbuzz": "0.56.4"
+    },
+    "machine": "x86_64",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "python": "3.13.16 (main, Oct  1 2026, 02:37:54) [GCC 13.3.0]"
+   },
+   "key_distributions": {
+    "fonttools": "4.63.0",
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "pillow": "12.3.0",
+    "scipy": "1.18.0",
+    "seaborn": "0.13.2"
+   },
+   "machine": "x86_64",
+   "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+   "python": "3.13.16 (main, Oct  1 2026, 02:37:54) [GCC 13.3.0]"
+  },
+  "fingerprint": "89a01eef446315f42880946a0c3f0b63c2552b6134fc18558dc53a939fefaca8"
+ },
+ "executions": {
+  "attempt_history": null,
+  "attempt_history_agrees": null,
+  "basis": "python_exec_audit",
+  "native": 1,
+  "tavotto": null
+ },
+ "expected_after_fix": {
+  "failure_category": {
+   "category": "cwd_or_data_path",
+   "source_code": "launch_context_unsupported"
+  },
+  "status": "failed"
+ },
+ "figures": {
+  "native": 1,
+  "tavotto_captured": null,
+  "tavotto_valid": null
+ },
+ "id": "research_cantera_sofc",
+ "native": {
+  "result": {
+   "artifacts": [
+    {
+     "bytes": 9847,
+     "path": "data/sofc.csv",
+     "readable": true,
+     "sha256": "0a5870b407a2704e0f82e20d06b5595c7bf542d93f7b3994e90ee540d033865b"
+    }
+   ],
+   "error": null,
+   "exit_status": 0,
+   "figure_count": 1,
+   "figures_shown": 1,
+   "ok": true,
+   "script_entries": 1,
+   "side_effects": {
+    "created": [
+     "data/sofc.csv"
+    ],
+    "deleted": [],
+    "modified": []
+   }
+  },
+  "status": "passed"
+ },
+ "observed_before_fix": {
+  "failure_category": {
+   "basis": "status unknown without a mapped failure code",
+   "category": "unknown",
+   "source_code": null
+  },
+  "status": "unknown"
+ },
+ "product_classification": "product_bug",
+ "raw": {
+  "classification": "product_bug",
+  "detail": {
+   "discover": {
+    "code": "launch_context_unsupported",
+    "expressible_modes": [
+     "project",
+     "project_root"
+    ],
+    "launch_cwd": "data"
+   }
+  },
+  "launch_environments": {
+   "native": [
+    {
+     "facts": {
+      "distribution_count": 19,
+      "distributions_sha256": "dd18e33020c0587c643424c49b34db538815cdef89c3c30c3f306eb4e1c9d1c9",
+      "executable_sha256": "329d378575992732511d75b3bd675cb91b3c65f3082783cd97ccb14f0ecd5a74",
+      "execution_env": {
+       "LANG": null,
+       "LC_ALL": null,
+       "MPLBACKEND": "Agg",
+       "PYTHONHASHSEED": "0"
+      },
+      "key_distributions": {
+       "fonttools": "4.63.0",
+       "matplotlib": "3.11.1",
+       "numpy": "2.5.2",
+       "pandas": "3.0.5",
+       "pillow": "12.3.0",
+       "scipy": "1.18.0",
+       "seaborn": "0.13.2"
+      },
+      "machine": "x86_64",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "python": "3.13.16 (main, Oct  1 2026, 02:37:54) [GCC 13.3.0]"
+     },
+     "fingerprint": "d6ecff215b35c8d974c5475bf38fadac946a422128ad4b1f672a906e0dac91ec"
+    }
+   ],
+   "tavotto": []
+  },
+  "stages": {
+   "discover": false
+  }
+ },
+ "stages": {
+  "capture": {
+   "status": "not_run"
+  },
+  "discover": {
+   "status": "failed"
+  },
+  "edit": {
+   "status": "not_run"
+  },
+  "execute": {
+   "status": "not_run"
+  },
+  "export": {
+   "status": "not_run"
+  },
+  "fidelity": {
+   "status": "not_run"
+  },
+  "open": {
+   "status": "not_run"
+  },
+  "replay": {
+   "status": "not_run"
+  },
+  "semantic": {
+   "status": "not_run"
+  }
+ }
+}

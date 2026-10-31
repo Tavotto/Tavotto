@@ -148,9 +148,9 @@ const input = () =>
   document.querySelector<HTMLInputElement>(`input[aria-label="${pk('specAria')}"]`)!
 const lookupButton = () => document.querySelector<HTMLButtonElement>('[data-packages-lookup]')!
 const panel = () => document.querySelector('[data-packages-lookup-panel]')
-const rowNames = (table: string) =>
-  [...document.querySelectorAll(`table[aria-label="${table}"] tbody tr td:first-child`)].map((td) =>
-    (td.textContent ?? '').trim(),
+const rowNames = (list: string) =>
+  [...document.querySelectorAll(`[role="list"][aria-label="${list}"] [data-package-name]`)].map((el) =>
+    (el.textContent ?? '').trim(),
   )
 
 async function type(value: string) {

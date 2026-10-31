@@ -4,7 +4,7 @@ import { Check, Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from './ui/Badge'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
-import { stemOf } from '@/lib/openRequest'
+import { panelStemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
@@ -54,7 +54,7 @@ export function FigurePickerDialog() {
   const entries: Entry[] = [
     ...panels
       .filter((p) => p.script === script)
-      .map((p): Entry => ({ kind: 'panel', stem: stemOf(p.id), info: p })),
+      .map((p): Entry => ({ kind: 'panel', stem: panelStemOf(p), info: p })),
     ...(assets ?? [])
       .filter((a) => a.script === script)
       .map((a): Entry => ({ kind: 'runtime', stem: a.stem, asset: a })),
@@ -74,16 +74,14 @@ export function FigurePickerDialog() {
       useSelectionStore.getState().set([existing.id])
       return false
     }
-    if (e.kind === 'panel') addPanelToCanvas(e.info)
+    if (e.kind === 'panel') return addPanelToCanvas(e.info) !== null
     // runtime 条目没有描述符时按钮根本不渲染（见下），这里必然有
-    else addRuntimePanelToCanvas(e.asset.descriptor!)
-    return true
+    return addRuntimePanelToCanvas(e.asset.descriptor!) !== null
   }
   // 加一张**不关框**（2026-10-07 设计审计 §10.2：此前加一张就关，多图脚本要重开 N 次）：
   // 行尾换成「✓ 已在画布上」，用户自己点「完成」
   const pickEntry = (e: Entry) => {
-    add(e)
-    setStatus(msg('handoff.added', { name: e.stem }, 'project'), 'done')
+    if (add(e)) setStatus(msg('handoff.added', { name: e.stem }, 'project'), 'done')
   }
   const addAll = () => {
     const added = remaining.filter((e) => add(e))

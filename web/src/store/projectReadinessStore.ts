@@ -38,6 +38,11 @@ const DISMISS_MAX = 20
 /* -------------------------------------------------------------------------- */
 let seq = 0
 let applied = 0
+/**
+ * 项目代际（T09）：`clear()` 每换一次项目 +1。只比项目 id 挡不住 A → B → A——回到 A 时 id 又对上了，A 第一次
+ * 认领时发出的那次请求晚到就会落地，`load()` 还会把它当成「同一项目在途」直接复用。代际对不上一律作废。
+ */
+let generation = 0
 let inflight: { pj: string | null; promise: Promise<ReadinessReport | null> } | null = null
 
 function readDismissed(): Record<string, string> {
@@ -118,14 +123,16 @@ export const useProjectReadinessStore = create<ReadinessState>((set, get) => ({
   dismissed: null,
 
   load: (opts) => {
+    // 换代时 `clear()` 已把在途清掉：这里拿到的在途一定属于这一代
     if (!opts?.force && inflight && inflight.pj === currentProjectId()) return inflight.promise
 
     const mine = ++seq
     const pj = currentProjectId()
+    const gen = generation
     set({ loading: true })
     const promise = fetchReadiness()
       .then((data) => {
-        if (pj !== currentProjectId()) return null
+        if (gen !== generation || pj !== currentProjectId()) return null
         if (mine < applied) return null
         applied = mine
 
@@ -151,7 +158,7 @@ export const useProjectReadinessStore = create<ReadinessState>((set, get) => ({
         return data
       })
       .catch((err: unknown) => {
-        if (pj !== currentProjectId() || mine < applied) return null
+        if (gen !== generation || pj !== currentProjectId() || mine < applied) return null
         // **report 不清**：后台刷新失败时清空等于让横幅与接入中心当场空掉，
         // 而磁盘上的事实一个字都没变。首次失败时 report 本来就是 null，
         // 界面照旧显示错误态。
@@ -160,7 +167,7 @@ export const useProjectReadinessStore = create<ReadinessState>((set, get) => ({
       })
       .finally(() => {
         if (inflight?.promise === promise) inflight = null
-        if (mine === seq) set({ loading: false })
+        if (mine === seq && gen === generation) set({ loading: false })
       })
 
     if (!opts?.force) inflight = { pj, promise }
@@ -208,7 +215,9 @@ export const useProjectReadinessStore = create<ReadinessState>((set, get) => ({
   },
 
   clear: () => {
-    // 在途响应由 `pj` 判据挡住，这里只清已经落地的
+    // 换代：在途响应（含 A → B → A 回到同一 id 时 A 第一次的那一次）失去落地资格，也不再被当成「在途」复用
+    generation += 1
+    inflight = null
     set({ report: null, error: null, loading: false, focusId: null, dismissed: null })
   },
 }))
@@ -241,5 +250,6 @@ export function bannerReport(s: {
 export function resetReadinessBookkeeping(): void {
   seq = 0
   applied = 0
+  generation = 0
   inflight = null
 }

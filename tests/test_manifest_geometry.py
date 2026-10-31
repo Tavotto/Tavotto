@@ -184,6 +184,34 @@ def main():
     ax11.set_xlim(-0.2, 1.2)
     ax11.set_ylim(0.5, 1.2)
     fig9.savefig("MeshConcaveFig.pdf")
+
+    # ClipBarFig：ylim 把柱子从下面切掉（柱从 y=0 画起，下沿在子图框外）。
+    # barseries_0：被切的带 hatch 的柱；barseries_1：clip_on=False 的柱（不裁）；
+    # barseries_2：整根落在 ylim 之外的柱（画出来的部分为空）。axes_1 是负值柱被截断。
+    fig10, (ax12, ax13) = plt.subplots(1, 2, figsize=(5.0, 3.0))
+    ax12.bar([0, 1, 2], [5.0, 6.0, 7.0], hatch="//")
+    ax12.bar([3], [6.0], clip_on=False)
+    ax12.bar([4], [1.0])
+    ax12.set_ylim(bottom=4.0, top=8.0)
+    ax13.bar([0, 1, 2], [-5.0, 3.0, -2.0])
+    ax13.set_ylim(-2.5, 3.5)
+    fig10.savefig("ClipBarFig.pdf")
+
+    # ClipSeriesFig：系列并集不并入完全被裁掉的成员。
+    # axes_0：两根可见 + 一根整根在 ylim 之外；axes_1：三根全在外（退回数据位置并集）。
+    fig11, (ax14, ax15) = plt.subplots(1, 2, figsize=(5.0, 3.0))
+    ax14.bar([0, 1, 2], [5.0, 6.0, 1.0])
+    ax14.set_ylim(bottom=4.0, top=8.0)
+    ax15.bar([0, 1, 2], [1.0, 2.0, 3.0])
+    ax15.set_ylim(bottom=4.0, top=8.0)
+    fig11.savefig("ClipSeriesFig.pdf")
+    # 超过 MAX_MARKERS 的系列（geometry 省略）：最后一根整根在外
+    fig12, ax16 = plt.subplots(figsize=(4.0, 3.0))
+    h = np.ones(__CAP__ + 1)
+    h[-1] = 0.2
+    ax16.bar(np.arange(__CAP__ + 1), h)
+    ax16.set_ylim(0.5, 1.5)
+    fig12.savefig("ClipOverCapFig.pdf")
 """
 
 
@@ -485,6 +513,101 @@ def test_bar_series_outlines_every_bar_not_the_union_box(library):
     # bbox 会罩住、而逐根轮廓不会的那块
     gap = boxes[1][0] - (boxes[0][0] + boxes[0][2])
     assert gap > 0.02, f"柱间应当有空白（gap={gap}）"
+
+
+def _inside_frac(box, clip, tol=2e-3):
+    return (
+        box[0] >= clip[0] - tol
+        and box[1] >= clip[1] - tol
+        and box[0] + box[2] <= clip[0] + clip[2] + tol
+        and box[1] + box[3] <= clip[1] + clip[3] + tol
+    )
+
+
+def test_clipped_bar_selection_box_stops_at_the_axes_edge(library):
+    """柱子下沿被 ylim 切掉：选中框（bbox）只罩画出来的那部分，不伸出子图框。
+
+    从前 bbox 是未裁剪的整根柱，能从柱顶一直伸到图幅之外（Windows 用户的分组柱状图）。"""
+    man = _manifest(library, stem="ClipBarFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    fig_box = [0.0, 0.0, 1.0, 1.0]
+    for k in range(3):
+        bar = _el(man, f"axes_0.barseries_0.bar_{k}")
+        assert _inside_frac(bar["bbox"], ax_box), (k, bar["bbox"], ax_box)
+        assert _inside_frac(bar["bbox"], fig_box)
+        # 下沿正好贴在子图框下沿（柱被切在那里），不是更低
+        assert bar["bbox"][1] + bar["bbox"][3] == pytest.approx(ax_box[1] + ax_box[3], abs=2e-3)
+    series = _el(man, "axes_0.barseries_0")
+    assert _inside_frac(series["bbox"], ax_box)
+    # 命中几何同口径：每根柱的轮廓 ∩ geometry.clip 恰是 bbox
+    geom = series["geometry"]
+    for k, path in enumerate(geom["paths"]):
+        x0, y0, w, h = _path_box(path["points"])
+        c = geom["clip"]
+        vis = (max(x0, c[0]), max(y0, c[1]), min(x0 + w, c[0] + c[2]), min(y0 + h, c[1] + c[3]))
+        bb = _el(man, f"axes_0.barseries_0.bar_{k}")["bbox"]
+        assert [vis[0], vis[1], vis[2] - vis[0], vis[3] - vis[1]] == pytest.approx(bb, abs=2e-3)
+
+
+def test_clip_on_false_bar_keeps_its_unclipped_box(library):
+    """`clip_on=False` 的柱真的画到子图框外，选中框要跟着，不许被折进子图框。"""
+    man = _manifest(library, stem="ClipBarFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    bar = _el(man, "axes_0.barseries_1.bar_0")
+    assert not _inside_frac(bar["bbox"], ax_box)
+    assert bar["bbox"][1] + bar["bbox"][3] > ax_box[1] + ax_box[3] + 0.05
+
+
+def test_bar_entirely_outside_the_clip_box_keeps_its_data_position(library):
+    """整根柱在 ylim 之外（什么都看不见）：不折成零面积，选中框仍指到数据所在处，
+    元素留在表里（元素树里仍可选）；命中由 geometry.clip 保证点不中。"""
+    man = _manifest(library, stem="ClipBarFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    bar = _el(man, "axes_0.barseries_2.bar_0")
+    assert bar["bbox"][2] > 0 and bar["bbox"][3] > 0
+    assert not _inside_frac(bar["bbox"], ax_box)
+
+
+def test_series_union_skips_members_entirely_outside_the_clip(library):
+    """可见柱 + 一根整根在轴外的柱：子柱保留数据位置 bbox，但系列并集只并画出来的成员。"""
+    man = _manifest(library, stem="ClipSeriesFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    gone = _el(man, "axes_0.barseries_0.bar_2")["bbox"]
+    assert not _inside_frac(gone, ax_box)  # 子柱自己仍在数据位置
+    assert _inside_frac(_el(man, "axes_0.barseries_0")["bbox"], ax_box)
+
+
+def test_series_union_falls_back_to_data_positions_when_all_members_outside(library):
+    """全部成员都被裁掉：系列 bbox 退回数据位置的并集（与单元素「全在外不折」同一取舍）。"""
+    man = _manifest(library, stem="ClipSeriesFig")
+    ax_box = _el(man, "axes_1")["bbox"]
+    kids = [_el(man, f"axes_1.barseries_0.bar_{k}")["bbox"] for k in range(3)]
+    x0 = min(b[0] for b in kids)
+    y0 = min(b[1] for b in kids)
+    x1 = max(b[0] + b[2] for b in kids)
+    y1 = max(b[1] + b[3] for b in kids)
+    series = _el(man, "axes_1.barseries_0")["bbox"]
+    assert series == pytest.approx([x0, y0, x1 - x0, y1 - y0], abs=2e-3)
+    assert not _inside_frac(series, ax_box)
+
+
+def test_over_cap_series_without_geometry_is_also_narrowed(library):
+    """超过 MAX_MARKERS 的系列没有 geometry，前端只剩 bbox 可用：它同样不能被轴外成员撑大。"""
+    man = _manifest(library, stem="ClipOverCapFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    series = _el(man, "axes_0.barseries_0")
+    assert "geometry" not in series
+    assert _inside_frac(series["bbox"], ax_box)
+
+
+def test_negative_bars_are_cut_at_the_axes_edge(library):
+    man = _manifest(library, stem="ClipBarFig")
+    ax_box = _el(man, "axes_1")["bbox"]
+    for k in range(3):
+        assert _inside_frac(_el(man, f"axes_1.barseries_0.bar_{k}")["bbox"], ax_box)
+    # -5 的柱被切在下沿；3 的柱没被切到（ylim 上限 3.5），框不变
+    cut = _el(man, "axes_1.barseries_0.bar_0")["bbox"]
+    assert cut[1] + cut[3] == pytest.approx(ax_box[1] + ax_box[3], abs=2e-3)
 
 
 def test_bar_series_edge_gives_stroke_semantics_with_the_widest_linewidth(library):

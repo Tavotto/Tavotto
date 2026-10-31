@@ -313,6 +313,8 @@ class BridgeSession:
             )
         if not frame.get("ok"):
             err = frame.get("error") or {}
+            if err.get("code") == pool.figcapture.PREVIEW_POISONED_CODE:
+                pool.figcapture.poison_preview_dir(self.out_dir)  # 读方进程：回「无预览」
             raise BridgeError(
                 err.get("message") or "native bridge 错误",
                 code=err.get("code", ""),
@@ -330,7 +332,20 @@ class BridgeSession:
         self.rev += 1
         return self.request({"cmd": "override", "stem": stem, "patches": patches, **kw})
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
+    ) -> dict:
         return self.request(
             {
                 "cmd": "export",
@@ -339,6 +354,11 @@ class BridgeSession:
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
             },
             BARRIER_TIMEOUT,
         )
@@ -358,7 +378,7 @@ class BridgeSession:
         self.close()
 
     def svg_path(self, stem: str) -> Path:
-        return self.out_dir / f"{stem}.svg"
+        return Path(pool.figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 
 
 class _suppress_os:

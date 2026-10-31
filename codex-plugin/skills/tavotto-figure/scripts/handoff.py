@@ -8,11 +8,29 @@
 
     {"ok": true, "ran": true, "project": "...", "stem": "Fig1_removal_rate",
      "parameterizable": true, "launch": "desktop", "conflicts": [],
-     "dynamic_names": [], "tavotto": {"source": "manifest", "cmd": "..."}}
+     "dynamic_names": [], "tavotto": {"source": "manifest", "cmd": "..."},
+     "launch_success": true, "render_success": true, "verified_success": true,
+     "render": {"status": "ok", "verified": true, ...}}
 
 判据只有一个：**parameterizable 为 true 才算交接成功**。false 说明这张图在
 Tavotto 里双击进不去——多半是脚本没跟产物放在同一个目录，或产物名要到运行期
 才知道（见 SKILL.md 的约定 1 与 3）。
+
+## 交接三态（ADR 0131 第六节；加性字段，`ok` 与退出码的语义一字未改）
+
+`ok` 只说「解析、登记、唤起成功」（以及 `parameterizable`），**不说图画出来了**。
+三个顶层字段把这件事拆开说：
+
+    launch_success   true=CLI 报了成功且唤起了界面；null=没唤起（`--no-launch`）；false=交接没走到唤起
+    render_success   true=界面对目标图的那次渲染成功；false=界面**明确报了渲染失败**
+                     （`render.code` 是稳定码，如 `engine_files_incomplete`）；
+                     null=不知道（没等到结论 / 老 CLI / 没唤起）——**null 不是失败**
+    verified_success 只有 true 才算确认：渲染成功，且确认渲染的就是目标 Figure
+                     （stem 一致、注册表里有这个 stem、manifest 非空）；其余一律 false
+
+`render` 是 CLI 原样给的细节：`{"status": "ok|failed|unverified", "code"?, "reason"?, ...}`；
+老 CLI 没有这个字段时补成 `{"status": "unverified", "reason": "cli_without_render_signal"}`。
+判据只在 CLI 那边写一份（`engine/handoffreceipt.summarize`），这里只搬运，不另判。
 
 退出码（**不可参数化也是非零**：图出来了但只是一张死图，那不是成功，
 用 0 报出去等于把「要修」写在一行 JSON 里等人自己发现）：
@@ -74,6 +92,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 #: 与 Tavotto 的静态扫描同源的产物后缀
 OUT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff")
@@ -507,30 +526,178 @@ def script_env(environ: dict | None = None) -> dict:
     return env
 
 
-def run_script(python: str, script: str) -> tuple[bool, str]:
+#: 来源探针（ADR 0139 PR3）：跑用户脚本的**那个进程**在退出时把「我是什么环境」写进旁路 JSON。
+#: 以 `sitecustomize` 注入（`PYTHONPATH` 前置一个临时目录），脚本本身、`sys.argv`、cwd、stdout 一字不动；
+#: 先链回用户原有的 `sitecustomize`，退出时（`atexit`）只读 `sys.modules` 里已有的 matplotlib——没导入
+#: matplotlib 就什么都不写，**绝不替脚本 import 它**。只写版本串 / 后端名 / `rcParams["figure.dpi"]`（退出时刻的值，含脚本自己改过的）；
+#: 不写解释器路径、argv、环境变量。savefig 的 dpi / bbox_inches 等逐次实参它看不到，所以一概不记。与 `engine/originrecord.sanitize_process_facts` 是同源对（后者是白名单校验）。
+_ORIGIN_PROBE_SOURCE = r"""
+import os, sys
+
+_out = os.environ.pop("TAVOTTO_ORIGIN_OUT", None)  # 弹掉：脚本的子进程不再写
+
+
+def _chain():
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        import importlib.machinery as _m
+        import importlib.util as _u
+        for p in list(sys.path):
+            if os.path.abspath(p or ".") == here:
+                continue
+            spec = _m.PathFinder.find_spec("sitecustomize", [p])
+            if spec is not None and spec.loader is not None:
+                mod = _u.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return
+    except Exception:
+        pass
+
+
+def _dump():
+    try:
+        mpl = sys.modules.get("matplotlib")
+        if mpl is None or not _out:
+            return
+        import json, platform
+        rc = mpl.rcParams
+        data = {
+            "python_version": platform.python_version(),
+            "matplotlib_version": str(mpl.__version__),
+            "backend": str(mpl.get_backend()),
+            "figure_dpi": rc["figure.dpi"],
+        }
+        with open(_out, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+_chain()
+if _out:
+    import atexit
+    atexit.register(_dump)
+"""
+
+
+def run_script(python: str, script: str, *, origin_out: str | None = None) -> tuple[bool, str]:
     """在脚本自己的目录里跑它——脚本里的相对路径按这个目录解析。
 
     成败**只看退出码**：matplotlib 的 UserWarning/DeprecationWarning 走 stderr，
     把 stderr 有内容当失败会把一半正常脚本误杀。
+
+    `origin_out`：给了就让脚本进程退出时把来源事实写到这个文件（`_ORIGIN_PROBE_SOURCE`）；
+    不给，行为与以前字节级相同。
     """
-    proc = subprocess.run(
-        [python, script],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=script_env(),
-        cwd=os.path.dirname(os.path.abspath(script)) or ".",
-    )
+    env = script_env()
+    probe_dir = None
+    if origin_out:
+        probe_dir = tempfile.mkdtemp(prefix="tavotto-origin-")
+        with open(os.path.join(probe_dir, "sitecustomize.py"), "w", encoding="utf-8") as f:
+            f.write(_ORIGIN_PROBE_SOURCE)
+        prior = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = probe_dir + (os.pathsep + prior if prior else "")
+        env["TAVOTTO_ORIGIN_OUT"] = origin_out
+    try:
+        proc = subprocess.run(
+            [python, script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            cwd=os.path.dirname(os.path.abspath(script)) or ".",
+        )
+    finally:
+        if probe_dir:
+            shutil.rmtree(probe_dir, ignore_errors=True)
     if proc.returncode == 0:
         return True, ""
     tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
     return False, "\n".join(tail)
 
 
+# ---------------------- 来源记录（ADR 0139 PR3：只记事实，不改执行）----------------------
+def _png_snapshot(dirs: "list[str]") -> dict:
+    """各目录（不递归）里 .png 产物 → (mtime_ns, size)。跑前跑后各一份，差异 = 这次真的写出来的。"""
+    snap: dict = {}
+    for d in dirs:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names[:2000]:
+            if not name.lower().endswith(".png"):
+                continue
+            full = os.path.join(d, name)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            snap[full] = (st.st_mtime_ns, st.st_size)
+    return snap
+
+
+def _rewritten(before: dict, after: dict) -> "list[str]":
+    return sorted(p for p, sig in after.items() if before.get(p) != sig)
+
+
+def record_origin(
+    cmd: "list[str]", script: str, project: str, products: "list[str]", origin_out: str
+) -> dict:
+    """把脚本进程的自报事实 + 这次真的重写了的 PNG 交给 `tavotto open --origin-json`（仅记录模式）。
+
+    **只在这次真的跑了脚本、且旁路文件和重写的产物都在时调用**；任何一步不成立都不写（诚实缺失）。
+    记录失败从不影响交接：老 CLI 不认识这个参数（argparse 退出 2）就当没记。
+    """
+    try:
+        with open(origin_out, encoding="utf-8") as f:
+            process = json.load(f)
+    except (OSError, ValueError):
+        return {"recorded": 0, "reason": "no_probe_output"}
+    rels = []
+    for p in products:
+        rel = os.path.relpath(p, project).replace(os.sep, "/")
+        if not rel.startswith(".."):
+            rels.append(rel)
+    if not rels:
+        return {"recorded": 0, "reason": "no_rewritten_png"}
+    script_rel = os.path.relpath(script, project).replace(os.sep, "/")
+    payload = {
+        "schema": 1,
+        "process": process,
+        "products": rels,
+        "script": None if script_rel.startswith("..") else script_rel,
+    }
+    fd, tmp = tempfile.mkstemp(prefix="tavotto-origin-payload-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        argv = [*cmd, "open", script, "--origin-json", tmp, "--json"]
+        try:
+            proc = subprocess.run(
+                argv, capture_output=True, text=True, encoding="utf-8", errors="replace"
+            )
+            line = (proc.stdout or "").strip().splitlines()
+            result = json.loads(line[-1]) if line else {}
+        except (OSError, ValueError):
+            return {"recorded": 0, "reason": "cli_unavailable"}
+        origin = result.get("origin") if isinstance(result, dict) else None
+        if not isinstance(origin, dict):
+            return {"recorded": 0, "reason": "cli_without_origin_support"}
+        return {"recorded": int(origin.get("recorded") or 0)}
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 #: `tavotto open` 失败时随 code 一起透传的结构化细节（桌面启动失败的分诊线索：
-#: 是「装坏了」还是「这个环境起不了 GUI」，只有 `signal` / `log_path` 说得清）
-_FAILURE_DETAIL_KEYS = ("app", "exit_code", "signal", "log_path", "retryable")
+#: 是「装坏了」还是「这个环境起不了 GUI」，只有 `signal` / `log_path` 说得清；
+#: `sandbox`（`sandboxed_launch`：受限令牌 / AppContainer）与 `reason`
+#: （`launch_failed` 的 `forward_stuck`：转发给已开窗口时卡住）同理）
+_FAILURE_DETAIL_KEYS = ("app", "exit_code", "signal", "log_path", "retryable", "sandbox", "reason")
 
 
 def _open_failure(result: dict, tavotto: dict, **extra) -> dict:
@@ -576,12 +743,40 @@ def update_notice(tavotto_version: str | None = None) -> dict | None:
     return None if found.get("status") == "disabled" else found
 
 
+#: 交接三态没走到唤起（路径错 / 脚本失败 / 没有 Tavotto / `tavotto open` 失败）时的默认值：
+#: 没唤起 → launch 未成功；渲染没发生 → 未知（null）；当然也没有确认。
+_STATE_DEFAULTS = {"launch_success": False, "render_success": None, "verified_success": False}
+#: 老 CLI（没有 `launch.render`）：不是失败也不是成功，是「这一版没法告诉你」
+RENDER_UNSUPPORTED = {"status": "unverified", "reason": "cli_without_render_signal"}
+
+
+def three_state(final: dict) -> dict:
+    """从 `tavotto open --json` 的成功结果里取出交接三态。**只搬运，不另判。**
+
+    `verified_success` 取 CLI 给的 `render.verified`（判据唯一在 `handoffreceipt.summarize`），
+    且必须严格 `is True`——缺字段、非布尔一律 False。
+    """
+    launch = final.get("launch")
+    render = launch.get("render") if isinstance(launch, dict) else None
+    if not isinstance(render, dict) or render.get("status") not in ("ok", "failed", "unverified"):
+        render = dict(RENDER_UNSUPPORTED) if isinstance(launch, dict) else None
+    status = render.get("status") if render else None
+    return {
+        "launch_success": True if isinstance(launch, dict) and final.get("ok") else None,
+        "render_success": True if status == "ok" else False if status == "failed" else None,
+        "verified_success": bool(render) and render.get("verified") is True and status == "ok",
+        **({"render": render} if render else {}),
+    }
+
+
 def emit(payload: dict, code: int, tavotto_version: str | None = None) -> int:
     """**唯一的输出出口。** stdout 只有那一行 JSON，别的一律 stderr。
 
     调用方读的是 stdout 的最后一行；往里写一句「有新版本」就等于把整条链路
     弄坏（json.loads 当场炸）。所以人话走 stderr，机器读的进 JSON 字段。
     """
+    for key, default in _STATE_DEFAULTS.items():
+        payload.setdefault(key, default)
     update = update_notice(tavotto_version)
     if update:
         payload["update"] = update
@@ -678,6 +873,7 @@ def main(argv: list[str] | None = None) -> int:
     # 什么都不产出，白付一次 CLI 冷启动（frozen CLI 一跳几百 ms）。
     probe: dict = {}
     ran = False
+    origin: dict | None = None
     if args.run != "never" and path.endswith(".py"):
         # 1. 先问 Tavotto：这是哪个项目、哪个 stem（顺手把注册表补齐）
         t = time.monotonic()
@@ -689,8 +885,24 @@ def main(argv: list[str] | None = None) -> int:
         # 2. 需要的话跑一遍脚本
         if needs_run(path, probe["project"], probe.get("stem"), args.run):
             t = time.monotonic()
-            ran, err = run_script(args.python, path)
-            timings["run_ms"] = int((time.monotonic() - t) * 1000)
+            png_dirs = sorted({probe["project"], os.path.dirname(path)})
+            before = _png_snapshot(png_dirs)
+            origin_dir = tempfile.mkdtemp(prefix="tavotto-origin-out-")
+            origin_out = os.path.join(origin_dir, "process.json")
+            try:
+                ran, err = run_script(args.python, path, origin_out=origin_out)
+                timings["run_ms"] = int((time.monotonic() - t) * 1000)
+                if ran:
+                    # 只有「这次真的跑了」才有取证机会；记录失败不影响交接
+                    origin = record_origin(
+                        cmd,
+                        path,
+                        probe["project"],
+                        _rewritten(before, _png_snapshot(png_dirs)),
+                        origin_out,
+                    )
+            finally:
+                shutil.rmtree(origin_dir, ignore_errors=True)
             if not ran:
                 return emit(
                     {
@@ -733,7 +945,10 @@ def main(argv: list[str] | None = None) -> int:
         "dynamic_names": reg.get("dynamic_names", []),
         "tavotto": tavotto,
         "timings": timings,
+        **three_state(final),
     }
+    if origin is not None:
+        payload["origin"] = origin
     if payload["parameterizable"] is not True:
         payload["ok"] = False
         payload["error_code"] = "not_parameterizable"

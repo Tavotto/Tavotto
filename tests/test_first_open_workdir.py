@@ -382,6 +382,37 @@ def test_a_relative_glob_asks_first_and_recommends_the_script_directory(tmp_path
     assert spawned == [] and not engine_pool._workers
 
 
+def test_a_glob_built_from_a_module_constant_and_an_f_string_also_asks_first(tmp_path, monkeypatch):
+    """qudit_tomography（真实科研脚本）：`data_dir = "./data/"` + `glob.glob(data_dir + f"times_{tag}_d*.txt")`。
+    以前首开认不出（模式拼自常量名与 f-string），不问就进沙盒，`np.vstack([])` 崩；现在与字面量 glob 同一道门。"""
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "times_CB_d2-140.txt").write_text("1 2\n", encoding="utf-8")
+    (root / "plot.py").write_text(
+        "import glob\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "import numpy as np\n"
+        'data_dir = "./data/"\n'
+        "def get_data(tag):\n"
+        '    files = sorted(glob.glob(data_dir + f"times_{tag}_d*.txt"))\n'
+        "    return np.vstack([np.loadtxt(f) for f in files])\n"
+        "plt.plot(*get_data('CB').T)\nplt.savefig('p.png')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda *a, **k: ("/nonexistent/python", "system")
+    )
+    spawned = []
+    monkeypatch.setattr(engine_pool.subprocess, "Popen", lambda *a, **k: spawned.append(a) or 0)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.get("plot.py", str(root), "__main__")
+    assert err.value.code == workdir.ERROR_CONFIRMATION_REQUIRED
+    c = err.value.confirmation
+    assert c["reason"] == workdir.REASON_SCRIPT_DIR_EVIDENCE
+    assert c["recommended"] == workdir.MODE_PROJECT
+    assert c["probes"] == ["./data/times_*_d*.txt"]
+    assert spawned == [] and not engine_pool._workers
+
+
 @needs_worker
 def test_answering_the_recommended_mode_makes_the_relative_glob_script_draw(tmp_path):
     """端到端：没决定过 → 问；按推荐回答（`set_mode` 是 `PATCH /api/engine/workdir` 的落点）→

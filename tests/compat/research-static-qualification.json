@@ -1,0 +1,182 @@
+{
+  "method": "AST-only discover.merge; no target interpreter, probe, or research execution",
+  "cases": [
+    {
+      "case_id": "research_sgwbprobe",
+      "discovery": "requires_probe",
+      "target_stem": "Fig_1",
+      "static_entry": {
+        "entry": "__main__",
+        "stems": [],
+        "unresolved": [],
+        "dynamic_names": true,
+        "save_calls": 1
+      },
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_qudit_tomography",
+      "discovery": "discoverable",
+      "target_stem": "qudit_times",
+      "static_entry": {
+        "entry": "__main__",
+        "stems": [
+          "qudit_times"
+        ],
+        "unresolved": [],
+        "dynamic_names": false,
+        "save_calls": 1
+      },
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_steel_dilatometry",
+      "discovery": "requires_probe",
+      "target_stem": "data_plotter",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_monogenic_signal",
+      "discovery": "requires_probe",
+      "target_stem": "synthetic",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_infiltration_theory",
+      "discovery": "discoverable",
+      "target_stem": "hydrus_fluxes",
+      "static_entry": {
+        "entry": "__main__",
+        "stems": [
+          "hydrus_fluxes"
+        ],
+        "unresolved": [],
+        "dynamic_names": false,
+        "save_calls": 1
+      },
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_burnman_seismic",
+      "discovery": "requires_probe",
+      "target_stem": "example_seismic",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_aec_calibration",
+      "discovery": "discoverable",
+      "target_stem": "02_fit_sakas",
+      "static_entry": {
+        "entry": "__main__",
+        "stems": [
+          "02_fit_sakas"
+        ],
+        "unresolved": [],
+        "dynamic_names": false,
+        "save_calls": 1
+      },
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_cantera_sofc",
+      "discovery": "requires_probe",
+      "target_stem": "sofc",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_astro_celerite_sho",
+      "discovery": "discoverable",
+      "target_stem": "sho",
+      "static_entry": {
+        "entry": "__main__",
+        "stems": [
+          "sho"
+        ],
+        "unresolved": [],
+        "dynamic_names": false,
+        "save_calls": 1
+      },
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_astro_ztf_m31",
+      "discovery": "discoverable",
+      "target_stem": "magpsf",
+      "static_entry": {
+        "entry": "__main__",
+        "stems": [
+          "fwhm",
+          "jd",
+          "magpsf",
+          "rb"
+        ],
+        "unresolved": [],
+        "dynamic_names": false,
+        "save_calls": 4
+      },
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_astro_gala_draco",
+      "discovery": "requires_probe",
+      "target_stem": "Milky-Way-model-2",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_bio_brian_hindmarsh",
+      "discovery": "requires_probe",
+      "target_stem": "Hindmarsh_Rose_1984",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_bio_vitay_timing",
+      "discovery": "requires_probe",
+      "target_stem": "Fig3-Load",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_bio_pysb_tyson",
+      "discovery": "requires_probe",
+      "target_stem": "run_tyson_oscillator",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_engineering_leaf_hppc",
+      "discovery": "requires_probe",
+      "target_stem": "plot",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    },
+    {
+      "case_id": "research_engineering_cruise_control",
+      "discovery": "requires_probe",
+      "target_stem": "cruise-control",
+      "static_entry": null,
+      "conflicts": {},
+      "problems": {}
+    }
+  ]
+}

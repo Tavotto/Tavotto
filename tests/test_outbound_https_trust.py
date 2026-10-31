@@ -273,7 +273,12 @@ class TestUpdater:
 #: 产品里的出站 HTTPS（非回环）调用点：模块 → 建 opener 的那个函数。与 `tlstrust` 模块头的清单、
 #: PR 里的枚举表是同一份事实——多一处少一处这里都红，逼着清单跟着改。
 OUTBOUND = {
+    "engine/agent_runner/wires.py": "_opener",
+    "engine/ai_catalog.py": "_opener",
+    "engine/ai_oauth.py": "_opener",
     "engine/codexinstall.py": "_fetch",
+    "engine/diagsend.py": "_opener",
+    "engine/managedcli.py": "_fetch",
     "engine/privatepython.py": "_fetch",
     "engine/telemetry.py": "_post",
     "engine/updater.py": "_fetch_latest_release",
@@ -289,6 +294,12 @@ _TLS_BUILDERS = {
 #: `http.client` 的 import 本身不禁（privatepython 要它的异常类型），禁的是直接建连接。
 _BANNED_MODULES = {"requests", "httpx", "urllib3", "aiohttp", "truststore.inject"}
 _BANNED_CALLS = {"HTTPSConnection", "HTTPConnection", "urlretrieve", "inject_into_ssl"}
+
+
+def _is_loopback_connection(call: ast.Call) -> bool:
+    """`HTTPConnection("127.0.0.1", ...)` / `HTTPConnection("::1", ...)`：主机是字面量回环（HTTPSConnection / 变量主机仍被拦）。"""
+    first = call.args[0] if call.args else None
+    return isinstance(first, ast.Constant) and first.value in ("127.0.0.1", "::1")
 
 
 def _modules():
@@ -326,10 +337,28 @@ def _is_tlstrust_call(node: ast.AST, name: str) -> bool:
     )
 
 
+def _is_no_proxy_handler(node: ast.AST) -> bool:
+    """`urllib.request.ProxyHandler({})`——只许空字典：它只关代理（回环 http 不能交给 HTTP_PROXY），不碰 TLS。"""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "ProxyHandler"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Dict)
+        and not node.args[0].keys
+    )
+
+
 def _opener_shape_ok(call: ast.Call, fn: ast.AST) -> bool:
     """`build_opener(tlstrust.https_handler(ctx))`，且 `ctx` 在同一个函数里取自 `tlstrust.client_context()`
-    （或直接内联那一次调用）。"""
-    if len(call.args) != 1 or call.keywords or not _is_tlstrust_call(call.args[0], "https_handler"):
+    （或直接内联那一次调用）。唯一允许的第二个参数是关掉代理的 `ProxyHandler({})`。"""
+    extra_ok = len(call.args) == 2 and _is_no_proxy_handler(call.args[1])
+    if (
+        (len(call.args) != 1 and not extra_ok)
+        or call.keywords
+        or not _is_tlstrust_call(call.args[0], "https_handler")
+    ):
         return False
     handler = call.args[0]
     if len(handler.args) != 1:
@@ -384,6 +413,12 @@ def _outbound_violations(rel: str, tree: ast.AST) -> tuple[list[str], dict[str, 
                 for lit in _scheme_literals(tree):
                     if not lit.startswith("http://127.0.0.1:"):
                         bad.append(f"{where} urlopen 所在模块里有非回环地址字面量 {lit!r}")
+        elif name == "HTTPConnection" and (
+            _is_loopback_connection(call)
+            # 明文 http 的局域网 / 回环直连只有 `netpolicy.pinned_connection` 一处：先按放行段校验、再连判定时解析出的 IP
+            or (rel == "engine/netpolicy.py" and owner == "pinned_connection")
+        ):
+            continue  # 直连 socket、不读代理设置：带凭据的回环请求靠它保证绝不经过代理
         elif name in _BANNED_CALLS:
             bad.append(f"{where} {name}（绕开 urllib opener 的传输）")
         elif name in _TLS_BUILDERS and rel != "engine/tlstrust.py":
@@ -419,17 +454,25 @@ class TestStructure:
         offenders: list[str] = []
         openers: dict[str, str] = {}
         urlopen_modules: set[str] = set()
+        loopback_conn_modules: set[str] = set()
         for rel, tree in _modules():
             bad, found = _outbound_violations(rel, tree)
             offenders += bad
             openers.update(found)
             if any(_callee(c) == "urlopen" for c, _ in _calls_with_owner(tree)):
                 urlopen_modules.add(rel)
+            if any(
+                _callee(c) == "HTTPConnection" and _is_loopback_connection(c)
+                for c, _ in _calls_with_owner(tree)
+            ):
+                loopback_conn_modules.add(rel)
         assert not offenders, "\n".join(offenders)
         assert openers == OUTBOUND, openers
-        # 对照：三个回环模块真的被扫到了（扫描器不是空转）
-        assert {"app.py", "engine/handoff.py", "engine/session_client.py"} <= urlopen_modules, (
-            urlopen_modules
+        # 对照：回环模块真的被扫到了（扫描器不是空转）。带凭据的回环请求（#1132）已全部改走字面量
+        # `HTTPConnection("127.0.0.1", ...)`，只剩不带凭据的 app.py 探测还用模块级 `urlopen`
+        assert {"app.py"} <= urlopen_modules, urlopen_modules
+        assert {"engine/session_client.py", "engine/handoffreceipt.py"} <= loopback_conn_modules, (
+            loopback_conn_modules
         )
         assert not urlopen_modules & set(OUTBOUND), "出站各处不许再留模块级 urlopen"
 
@@ -448,6 +491,9 @@ class TestStructure:
             ),
             ("def f():\n    urllib.request.urlopen(f'https://{H}/x')\n", "不是本机回环"),
             ("def f():\n    http.client.HTTPSConnection('api.github.com')\n", "绕开 urllib opener"),
+            ("def f():\n    http.client.HTTPConnection('example.com')\n", "绕开 urllib opener"),
+            ("def f(h):\n    http.client.HTTPConnection(h, 80)\n", "绕开 urllib opener"),
+            ("def f():\n    http.client.HTTPSConnection('127.0.0.1')\n", "绕开 urllib opener"),
             ("import requests\n", "绕开 urllib opener"),
         ],
         ids=[
@@ -456,6 +502,9 @@ class TestStructure:
             "urlopen-external",
             "urlopen-fstring",
             "http-client",
+            "http-conn-external",
+            "http-conn-variable-host",
+            "https-conn-loopback",
             "requests",
         ],
     )
@@ -469,9 +518,29 @@ class TestStructure:
             "def f(req):\n    ctx = tlstrust.client_context()\n"
             "    opener = urllib.request.build_opener(tlstrust.https_handler(ctx))\n"
             "def g(port):\n    urllib.request.urlopen(f'http://127.0.0.1:{port}/api/version')\n"
+            "def h(port):\n    http.client.HTTPConnection('127.0.0.1', port, timeout=1)\n"
         )
         bad, openers = _outbound_violations("engine/x.py", ast.parse(ok))
         assert bad == [] and openers == {"engine/x.py": "f"}
+
+    def test_only_an_empty_proxy_handler_may_ride_along(self):
+        """回环 http 关代理的那一种写法放行；ProxyHandler 带代理、或第二个参数是别的处理器都不行。"""
+        good = (
+            "def f(req):\n    urllib.request.build_opener(\n"
+            "        tlstrust.https_handler(tlstrust.client_context()), urllib.request.ProxyHandler({})\n"
+            "    ).open(req)\n"
+        )
+        assert _outbound_violations("engine/x.py", ast.parse(good))[0] == []
+        for extra in (
+            "urllib.request.ProxyHandler({'http': 'http://p:1'})",
+            "urllib.request.HTTPSHandler()",
+        ):
+            bad_src = (
+                "def f(req):\n    urllib.request.build_opener(\n"
+                f"        tlstrust.https_handler(tlstrust.client_context()), {extra}\n"
+                "    ).open(req)\n"
+            )
+            assert _outbound_violations("engine/x.py", ast.parse(bad_src))[0], extra
 
     def test_the_tlstrust_inventory_names_the_same_call_sites(self):
         """`tlstrust` 模块头的清单与 `OUTBOUND` 同一份事实：每一处的函数名都写在那里。"""

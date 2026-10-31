@@ -37,6 +37,9 @@
   `DataSource.open`（`np.loadtxt` / `np.genfromtxt`，2026-09-24）只读打开的
   项目内文件（相对路径 + sha256）与 import 到的本地模块；`observation=partial` 永远如实——原生 I/O / 网络 /
   子进程看不见（D13 / FO-061）。观察到的文件身份**进公开语义身份**（数据换了就是另一次执行），机器路径不进。
+* **执行保真度**（`runtime["fidelity"]`，safe 账本 `BlockedFileOps.summary()`，V2 PR3a）：`level` 三档（`deviated` /
+  `suspect` / `none_observed`）+ 拦下的操作类别与次数 + 弱信号计数；只收闭集枚举与有界整数，无路径。
+  **不进**公开语义身份（疑似偏差不是另一次执行）；native 回执没有这一段（None）。
 * **数据绑定**（`binding`，控制面给）：准备计划在预检那一刻按静态证据记下的「打算读哪些文件、内容是什么」
   （`databinding.binding_for()`），回执把它与观察到的输入逐条对：`binding_check()` 回 `matched ∈ {True, False,
   None}`——None = 一条都没观察到（原生读），不冒充核过。
@@ -50,8 +53,9 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 
-from . import execspec, figcapture
+from . import execspec, executionfact, figcapture
 
 #: 回执形态的版本。加可选字段不升；改语义 / 删字段才升。
 RECEIPT_VERSION = 1
@@ -74,6 +78,18 @@ RUNTIME_REJECTIONS = (RUNTIME_REJECTED_NOT_BUILD, RUNTIME_REJECTED_PID)
 #: `tests/test_execution_receipt.py` 钉两边相等）。
 REPORT_ORIGIN_BUILD = "build"
 
+#: 自报的执行保真度（`runtime["fidelity"]`，V2 PR3a）里允许出现的闭集：与 safe 账本同源（`figcapture.BlockedFileOps`）。
+FIDELITY_LEVELS = figcapture.BlockedFileOps.LEVELS
+FIDELITY_VIAS = figcapture.BlockedFileOps.SIGNAL_VIAS
+FIDELITY_OPS = figcapture.BlockedFileOps.OPS
+FIDELITY_KINDS = (
+    figcapture.BlockedFileOps.KIND_RENAME,
+    figcapture.BlockedFileOps.KIND_DELETE,
+    figcapture.BlockedFileOps.KIND_DELETE_DIR,
+    figcapture.BlockedFileOps.KIND_WRITE,
+    figcapture.BlockedFileOps.KIND_SAVEFIG,
+)
+
 PID_CHECK_OK = "ok"
 #: 控制面起的那个进程是个 launcher（Windows 上 venv 的 `python.exe` 就是：它 CreateProcess 出真正的解释器再等它），
 #: 自报的 `ppid` 等于控制面的 `child_pid`——仍是这一条会话跑脚本的进程，但要如实写是经 launcher 核的
@@ -87,6 +103,100 @@ def _canon(payload: dict) -> str:
 
 def _sha(payload: dict) -> str:
     return "sha256:" + hashlib.sha256(_canon(payload).encode("utf-8")).hexdigest()
+
+
+#: `fidelity` 投影的白名单 schema：集合字段 → (行内字符串字段 → 闭集)。行内另有有界整数 `count`。
+_FIDELITY_ROW_SCHEMA = {
+    "blocked": {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS},
+    "intercepted": {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS},
+    "signals": {"kind": FIDELITY_KINDS, "via": FIDELITY_VIAS},
+}
+#: `unobserved`：盲区通道的闭集（与输入观察器同源）。
+_FIDELITY_UNOBSERVED = tuple(figcapture.INPUT_OBSERVER_UNOBSERVED)
+_FIDELITY_MAX_ROWS = 32
+_FIDELITY_MAX_COUNT = 9999
+
+
+#: 跳过记录里模块名的形状（点分标识符）与条数上限；不合形状的行整行丢弃
+_IMPORT_SKIP_MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,8}\Z")
+_IMPORT_SKIP_MAX_ROWS = 64
+
+
+def project_import_skips(raw, *, include_private: bool = False) -> list[dict]:
+    """worker 自报的 `import_skips`（ADR 0153：查找器跳过「找到了但读不了」的 import 位置）→ 投影。
+
+    公开面只有 `module`（点分标识符）与 `error`（闭集：`PermissionError`）；被跳过的位置是机器路径，
+    只在 `include_private`（诊断包）里带，且限长。自报是不可信输入：非 list / 非 dict 行 / 畸形模块名一律丢，不抛。"""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for row in raw[:_IMPORT_SKIP_MAX_ROWS]:
+        if not isinstance(row, dict):
+            continue
+        module = row.get("module")
+        if not isinstance(module, str) or not _IMPORT_SKIP_MODULE.match(module):
+            continue
+        item = {"module": module, "error": "PermissionError"}
+        entry = row.get("entry")
+        if include_private and isinstance(entry, str):
+            item["entry"] = entry[:1024]
+        out.append(item)
+    return out
+
+
+def project_fidelity(raw) -> dict | None:
+    """worker 自报的 `fidelity` → 公开投影。**这是它进入回执公开面的唯一一处。**
+
+    自报是不可信输入，按白名单 schema 逐字段投影：
+    * 每个字符串字段（`level` / `op` / `kind` / `via` / `unobserved` 各项）必须落在闭集里，否则丢弃该项；
+    * 每个集合先核是 list 再取，行必须是 dict；最多 `_FIDELITY_MAX_ROWS` 行（先截再验，超长输入不被整个遍历）；
+    * `count` 是 0..9999 的 int（拒 bool / float / 超界）；
+    * 未知键一律丢弃，输出只有 schema 里的键；
+    * 任何畸形都不抛：整体不合格（非 dict / `level` 不在闭集）返回 None，局部不合格丢那一项。
+    """
+    try:
+        if not isinstance(raw, dict):
+            return None
+        level = raw.get("level")
+        if not isinstance(level, str) or level not in FIDELITY_LEVELS:
+            return None
+        out: dict = {"level": level}
+        for key, fields in _FIDELITY_ROW_SCHEMA.items():
+            rows: list[dict] = []
+            value = raw.get(key)
+            if isinstance(value, list):
+                for row in value[:_FIDELITY_MAX_ROWS]:
+                    if not isinstance(row, dict):
+                        continue
+                    clean: dict = {}
+                    for field, allowed in fields.items():
+                        item = row.get(field)
+                        if not isinstance(item, str) or item not in allowed:
+                            break
+                        clean[field] = item
+                    else:
+                        count = row.get("count")
+                        if (
+                            isinstance(count, int)
+                            and not isinstance(count, bool)
+                            and 0 <= count <= _FIDELITY_MAX_COUNT
+                        ):
+                            clean["count"] = count
+                            rows.append(clean)
+            out[key] = rows
+        blind = raw.get("unobserved")
+        out["unobserved"] = (
+            [
+                item
+                for item in blind[:_FIDELITY_MAX_ROWS]
+                if isinstance(item, str) and item in _FIDELITY_UNOBSERVED
+            ]
+            if isinstance(blind, list)
+            else []
+        )
+        return out
+    except Exception:  # noqa: BLE001 —— 投影永不抛：一份畸形自报不能让回执 / 准备接口失败
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -110,6 +220,14 @@ class ExecutionReceipt:
     pid_check: str | None = None
     #: 控制面在预检那一刻记下的数据绑定（`databinding.binding_for()` 的载荷）；None = 没给。
     binding: dict | None = None
+    #: 启动方式的结构化引用（P09，`launcher.CondaLauncher.public()`）；None = 直接启动。含机器路径：只进私有投影，
+    #: **不进** `public_identity` / `public_facts`（身份仍是「用户 Python 跑了这个脚本」，启动方式不改它）。
+    launcher: dict | None = None
+    #: 起会话那一刻的环境事实（P09）：`{"generation": …, "env_state": …}`。成功记录用它而不是收口时的值。私有，不进公开投影。
+    session_env: dict | None = None
+    #: 执行实例的私有键：native 会话 id + 屏障代次；safe 实际执行 id（旧 worker 留空）。
+    #: 两次启动或用户代码续跑后的不同 Figure 不能得到同一个 `receipt_id`。
+    instance: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -145,6 +263,11 @@ class ExecutionReceipt:
         rt = self.runtime or {}
         ins = rt.get("inputs")
         return dict(ins) if isinstance(ins, dict) else None
+
+    @property
+    def fidelity(self) -> dict | None:
+        """safe worker 自报的执行保真度，经 `project_fidelity` 投影（唯一的公开出口）；没报 / 畸形是 None。"""
+        return project_fidelity((self.runtime or {}).get("fidelity"))
 
     def observed_files(self) -> dict[str, str | None]:
         """观察到的项目内文件：相对 POSIX 路径 → sha256（大文件没算 hash 是 None）。"""
@@ -233,13 +356,14 @@ class ExecutionReceipt:
     @property
     def receipt_id(self) -> str:
         """这一次执行实例的不透明 id（公开身份 + 私有键 + generation）。"""
-        return _sha(
-            {
-                "public": self.public_identity(),
-                "private": self.private_invalidation_key(),
-                "generation": self.generation,
-            }
-        )
+        payload = {
+            "public": self.public_identity(),
+            "private": self.private_invalidation_key(),
+            "generation": self.generation,
+        }
+        if self.instance:
+            payload["instance"] = self.instance
+        return _sha(payload)
 
     def public_facts(self) -> dict:
         """给 ArtifactManifest 的那一小段（U09）：可公开的事实，**没有路径、没有 argv、没有 stem**——
@@ -263,6 +387,7 @@ class ExecutionReceipt:
             "packages": dict(rt.get("packages") or {}),
             "cwd_origin": self.launch_context.get("cwd_origin"),
             "observation": (self.inputs or {}).get("observation"),
+            "fidelity": self.fidelity,
             "binding": {
                 "revision": check["revision"],
                 "matched": check["matched"],
@@ -279,6 +404,15 @@ class ExecutionReceipt:
         版本类字段，私有那几项归 `include_private`。
         """
         rt = self.runtime
+        if rt is not None and "fidelity" in rt:
+            rt = {**rt, "fidelity": self.fidelity}  # 自报的原样段不外泄：只出过滤后的闭集
+        if rt is not None and "import_skips" in rt:
+            rt = {
+                **rt,
+                "import_skips": project_import_skips(
+                    rt["import_skips"], include_private=include_private
+                ),
+            }
         if rt is not None and not include_private:
             rt = {
                 k: v
@@ -301,6 +435,7 @@ class ExecutionReceipt:
             "runtime_rejected": self.runtime_rejected,
             "pid_check": self.pid_check,
             "inputs": self.inputs,
+            "fidelity": self.fidelity,
             "binding": dict(self.binding) if self.binding is not None else None,
             "binding_check": self.binding_check(),
             "descriptors": [dict(d) for d in self.descriptors],
@@ -309,6 +444,10 @@ class ExecutionReceipt:
             out["private_invalidation_key"] = self.private_invalidation_key()
             out["interpreter"] = self.interpreter
             out["project_root"] = self.project_root
+            if self.launcher is not None:
+                out["launcher"] = dict(self.launcher)
+            if self.instance:
+                out["instance"] = self.instance
         return out
 
 
@@ -363,6 +502,12 @@ def from_worker(
         if isinstance(build_resp, dict)
         else ()
     )
+    # Supervisor child restarts and retries can reuse the pool generation.
+    execution_id = (
+        build_resp["execution_id"]
+        if isinstance(build_resp, dict) and "execution_id" in build_resp
+        else getattr(worker, "execution_id", None)
+    )
     return ExecutionReceipt(
         profile=spec.profile,
         control_plane=control_plane,
@@ -378,7 +523,30 @@ def from_worker(
         runtime_rejected=rejected,
         pid_check=pid_check,
         binding=dict(binding) if isinstance(binding, dict) else None,
+        launcher=_launcher_public(worker),
+        session_env=_session_env(worker),
+        instance=execution_id if executionfact.valid_id(execution_id) else "",
     )
+
+
+def _session_env(worker) -> dict | None:
+    gen = getattr(worker, "python_generation", None)
+    state = getattr(worker, "env_state", None)
+    if gen is None and not isinstance(state, str):
+        return None
+    out: dict = {}
+    if gen is not None:
+        out["generation"] = gen
+    if isinstance(state, str):
+        out["env_state"] = state
+    return out
+
+
+def _launcher_public(worker) -> dict | None:
+    lau = getattr(worker, "launcher", None)
+    public = getattr(lau, "public", None)
+    out = public() if callable(public) else None
+    return dict(out) if isinstance(out, dict) else None
 
 
 def worker_pid(worker) -> int | None:
@@ -402,17 +570,26 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
     """
     from . import execspec
 
-    kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
-    root = str(getattr(session, "project_root", "") or "")
-    raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
-    spec = execspec.native_spec(
-        raw_target,
-        interpreter=str(getattr(session, "interpreter", "") or ""),
-        cwd=str(getattr(session, "cwd", "") or ""),
-        project_root=root,
-        target_kind=kind,
-        argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
-    )
+    owned_spec = getattr(session, "spec", None)
+    if (
+        isinstance(owned_spec, execspec.ExecutionSpec)
+        and owned_spec.owner == execspec.OWNER_DESKTOP
+    ):
+        # 桌面拥有的会话（P06，ADR 0125）：启动身份就在会话上（不可变、spawn 时定的），回执直接取它的公开
+        # 投影——owner / 运行配置引用 / env 键名 / stdin 通道进身份，argv 与 env 的值不出进程
+        spec = owned_spec
+    else:
+        kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
+        root = str(getattr(session, "project_root", "") or "")
+        raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
+        spec = execspec.native_spec(
+            raw_target,
+            interpreter=str(getattr(session, "interpreter", "") or ""),
+            cwd=str(getattr(session, "cwd", "") or ""),
+            project_root=root,
+            target_kind=kind,
+            argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
+        )
     # native 的 pid 是用户进程自己的（bridge 附着时记下的 `pid`，没记就不核）
     runtime, rejected, pid_check = accept_runtime(
         getattr(session, "last_build_runtime", None), expected_pid=worker_pid(session)
@@ -434,6 +611,11 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         descriptors=descriptors,
         runtime_rejected=rejected,
         pid_check=pid_check,
+        instance=(
+            str(getattr(session, "session_id", "") or "")
+            + ":"
+            + str(getattr(session, "snapshot_epoch", 0))
+        ),
     )
 
 

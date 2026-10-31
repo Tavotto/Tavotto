@@ -120,6 +120,13 @@ def _text(manifest: dict, gid: str) -> str:
     return next(f["value"] for f in el["editable"] if f["prop"] == "text")
 
 
+@pytest.fixture(autouse=True)
+def _legacy_silent_adoption(monkeypatch):
+    """本文件测的是 ADR 0057 / 0107 的**首开静默采用**机制——ADR 0114 把它收进兼容开关保留一版
+    （`TAVOTTO_ENV_ADOPTION=auto`）。默认的确认模式（建议 → 检查 → 采用）见 `test_environment_adoption.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
+
+
 @needs_worker
 def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_file(tmp_path):
     proj = tmp_path / "paper"
@@ -145,11 +152,12 @@ def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_fi
     _install_signal(venv_b, "B", SIGNAL_B)
     python_a = venvfixture.interpreter_of(venv_a)
     # 用户在终端里站在项目根、用项目环境跑过一次：原件落在项目根（素材卡片）
-    subprocess.run(
+    first_run = subprocess.run(
         [python_a, "scripts/entry.py"],
         cwd=proj,
-        check=True,
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
         env={
             **{k: v for k, v in os.environ.items() if k in ("SYSTEMROOT", "TEMP", "TMP")},
@@ -158,6 +166,10 @@ def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_fi
             "MPLCONFIGDIR": str(tmp_path / "mpl"),
             "PYTHONDONTWRITEBYTECODE": "1",
         },
+    )
+    # check=True 的 CalledProcessError 不带 stderr，报告里只剩「退出 1」；把它放进断言消息
+    assert first_run.returncode == 0, (
+        f"用户在终端里跑 scripts/entry.py 退出 {first_run.returncode}\n{first_run.stderr[-4000:]}"
     )
     script_bytes = (proj / "scripts" / "entry.py").read_bytes()
     site_before_a, site_before_b = _site_listing(venv_a), _site_listing(venv_b)

@@ -255,7 +255,7 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
 
 - 顶栏只剩时钟钮；`NamedNodeButton`（顶栏浮层）删除。
 - ⌥⌘S 与命令面板「把现在存为命名节点…」仍不开抽屉，改为在**工作面板顶部居中**就地弹一个小框
-  （`NamedNodeQuickBox`，挂在 `App` 里 `VersionDrawer` 旁）：名字框 + 「存为命名节点」，回车保存、
+  （`NamedNodeQuickBox`，挂在 `App` 的工作面板里；2026-10-21 起时间线面板是右栏页签）：名字框 + 「存为命名节点」，回车保存、
   Esc / 点外面关闭；成功后关闭（`saveNamedNode` 自带「已把现在存为命名节点」状态条）；失败（命名节点
   超上限的 409）那句话留在小框里、名字不丢。开关仍是 `timelineStore.namingOpen`，只管这个小框。
 - 抽屉顶上原来常开的命名输入收成按钮「给现在存个名字…」（气泡带 ⌥⌘S），点开才展开名字框 +
@@ -284,3 +284,69 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
 
 看护：`VersionDialog.test.tsx`（默认焦点在容器、没有页脚「关闭」、一颗 ⋯ 与内联条、抽屉焦点）、
 `e2e/layout-timeline.spec.ts`、`e2e/timeline-row-actions.spec.ts`。
+
+### 修订（2026-10-21，beta 0.19.0b1 用户反馈）：时间线挪进右栏页签；预览按显示宽 × DPR 取图
+
+- **入口形态**：原「盖在画布上的 400 px 右侧浮板抽屉」（`VersionDrawer`，`uiStore.versionsOpen`）整条渲染路径删除，
+  改成右栏（`Inspector`）的第四个页签「时间线」（`RightTab = 'timeline'`，页签顺序 属性 | 画布 | 时间线 | 助手）。
+  顶栏时钟钮、排版菜单、命令面板、⇧⌘H 都只是切页签（`actions.openTimeline / closeTimeline / toggleTimeline`；
+  「亮着」的唯一判据 `uiStore.isTimelineOpen`）；Esc 先退预览、再回属性页。面板组件改名 `TimelinePanel`，
+  只在页签亮着时挂载（挂载 = 打开；卸载 = 预览一并退出、命名输入收起）。该页签是**会话态**：不写进偏好（刷新后落回属性页），
+  选中对象时 `autoShowProperties` 照旧把右栏切回属性页。预览仍是模态对话框，不变。
+- **恢复在飞不被卸载**（Codex #1268 P1）：预览 / 恢复对话框（`TimelinePreviewDialog`）不再嵌在 `TimelinePanel` 里，
+  而是与 `Inspector` 平级挂在 `App`，由 `timelineStore.preview` 驱动；`timelineStore.restoring` 期间面板被卸载
+  （原生 View 菜单收起右栏、切页签、选中对象自动回属性页、窗口变窄挤掉右栏）也不清 `preview`，对话框仍以 `busy` 挡住画布。
+- 旧「形态」一行「右侧浮板抽屉，不做成左栏抽屉」的结论保留（时间线仍是整份排版的东西，放右栏而不是左栏）；
+  被取代的是「浮板」。稳定钩子 `data-timeline-drawer` 改为 `data-timeline-panel`，面板头的标题与 × 删除
+  （页签就是标题，右栏的 × 关整栏）；`versions.title` / `versions.close` 两个文案键随之删除。
+- 最窄 320 px 英文下四个页签排不下，容器 < 340 px 时右栏的图钉让位（`@max-[339px]:hidden`，钉住偏好不丢）。
+- **预览清晰度（改动 1）**：根因是 `LayoutSnapshot` 给每个面板取图的档位写死 200（并且文字字号写死 6 px），
+  而预览对话框里的页面可宽到上千 px——位图被 CSS 放大 5 倍以上，Retina 下更糟。现在预览传 `displayWidth`：
+  面板按 `snapshotBucket()`（面板占页宽比例 × 显示宽 × `devicePixelRatio`，向上取 `RENDER_BUCKETS`，与画布 `PanelView`
+  同一把 `pickBucket`）取档，文字按 `sizePt × mm/pt × 显示宽 / 页宽` 缩放；SVG 面板本来就是 `/api/file` 的原矢量，不变。
+  没有第二套渲染态：仍是同一个 `useVariantPng` / `/api/render`。列表行的缩略图不给 `displayWidth`，仍是 200 档。
+
+看护：`components/layoutSnapshotSharpness.test.tsx`（档位像素宽 ≥ 显示宽 × DPR、字号随显示宽，变异反证过）、
+`VersionDialog.test.tsx`、`inspector/inspectorRedesign.test.tsx`（页签顺序与时间线页签内容）、`store/uiStore.test.ts`
+（open / toggle / 不持久化）、`e2e/timeline-row-actions.spec.ts`（右栏内、320 / 480 不溢出）、`e2e/layout-timeline.spec.ts`。
+
+### 修订（2026-10-23，beta 0.19.0b3 用户反馈）：点一行弹对比小卡片，悬停不再冒按钮
+
+- 悬停 / 选中的那一行下面不再露「预览 · 恢复到这里」两颗按钮（用户觉得丑）；悬停只有轻微底色。
+- **单击行 = 在该行左侧弹出锚定的小卡片**（`CompareCard`，`ui/Popover`）：自动取那一刻的正文，左「那一刻」右「当前」并排
+  （两格各按 `LayoutSnapshot` 的 `displayWidth` 取档），一句话（与行上同一份摘要 `versionSummaryText`）、一个主按钮
+  「恢复到这里」+ 取消；Esc / 点外面 / 再点该行收起。卡片只读，不开模态、不占 `timelineStore.preview` 槽，
+  所以双击改名仍成立（双击进改名时卡片收起）。
+- 「恢复到这里」仍走 `restoreFromRow` → `restoreUnderLock` → `restoreNode`：同一把锁、同一个恢复动作，语义不变
+  （恢复在飞时的模态锁照旧）。
+- ⋯ 菜单里的「预览」删掉（与卡片重复）；缩放 / 差异列表的大预览对话框保留，入口改为卡片角上的「放大查看」小图标，
+  并把卡片已取回的正文直接交给它，不重复取。
+- 看护：`VersionDialog.test.tsx`（卡片自动取正文、不开模态、Esc 收起、无悬停条）、`e2e/timeline-row-actions.spec.ts`、
+  `e2e/layout-timeline.spec.ts`（卡片里那一刻只有甲、当前格里有乙）。
+
+### 修订（2026-10-23，beta 0.19.0b3 用户反馈）：每张画布各有自己的时间线
+
+- 版本按 documentId（整个项目）归档，但每个节点自己记着 `canvasId`（R-03）；「打开」一张图 = 它自己的画布（ADR 0028），
+  所以来回编辑不同脚本的图，节点就是按画布混在同一条里。**不改存储、不迁移**：只在面板里按 `canvasId` 过滤。
+- 项目里多于一张画布时，筛选器下面多一个「这张画布 / 全部画布」（`data-timeline-scope`），默认「这张画布」，
+  只显示 `canvasId === 激活画布` 的节点；缺 `canvasId` 的旧节点与来自已删画布的节点只在「全部画布」里（缺席就是缺席，不猜归属）。
+  单画布项目不出这个开关、不过滤。当前画布没有节点时说明并告诉用户另有多少。
+- 「这张画布」下行上不再重复「来自画布 X」；「上一版」仍由 `comparableEarlier` 在**完整**列表里取同画布最近一版，摘要不受过滤影响。
+- 单图编辑 = 这张图自己的画布；多图排版 = 该排版画布。同一画布里按「哪张图」再分组需要节点元信息带面板 / 脚本 id，
+  属存储格式变更，未做。
+
+### 修订（2026-10-24，b4 真机反馈）：按「哪张图」分开；打开第二个脚本的图要落在自己的画布上
+
+- **根因**：真机上「打开了不同的脚本，时间线还是混在一起」。`prepEnterEdit.enterEdit`（准备卡「进入编辑」、打开并运行、
+  `projectPreparationStore`）在素材清单还没有这张新图时先 `addRuntimePanelToCanvas`——把它加进**当前**画布，再 `openFastEdit`
+  按素材 id 在当前画布上找到它，于是 A、B 两个脚本的图落在**同一张画布**上，违背「打开 = 换看那一张」（ADR 0028），
+  节点的 `canvasId` 也就一样，#1350 按画布分不开。看护：`store/enterEditCanvas.test.ts`（修前两张图在一张画布上，修后各一张）。
+- **修法一（行为）**：`enterEdit` 不再先加图，改把这次捕获的描述符交给 `openFastEdit(id, { descriptor })`（素材清单里没有时的来源），
+  由它按普通打开的规则新建画布放它。唯一例外是「重建为可编辑版」（`host.beside`）：新面板摆在原 PNG 旁边，仍走加图。
+- **修法二（时间线）**：版本列表的每条元信息多一个**读时派生**字段 `figures`（那一版画布上面板的 `fileId`，去重、保持文档顺序；
+  `app._version_figures`）。**不落盘、不迁移、旧节点同样有**——版本里本来就存着整份文档，`fileId` 就是 `findFigurePanel` 的同一把尺子。
+  没有图的版本不带这个键。
+- **前端**：「当前这张图」= 画布上恰好一张图（单图编辑），或排版里正在图内编辑的那一张。有别的图的版本时，筛选器下出现
+  「这张图 / 全部」（`data-timeline-scope`），默认「这张图」，只显示 `figures` 含当前图的节点；没有别的图的版本就不出开关、不过滤。
+  多图排版（没有「当前这张图」）仍是排版级：只剩 #1350 的「这张画布 / 全部画布」。缺 `figures` 的旧节点 / 空画布节点只在「全部」里。
+  开关不加说明文字。

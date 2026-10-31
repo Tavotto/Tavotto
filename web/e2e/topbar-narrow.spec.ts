@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 /**
  * 顶栏在窄窗口下元素两两不重叠（#677 集成时 600 宽实测：保存状态与时间线的时钟 / 书签钮
@@ -46,9 +46,7 @@ for (const width of [600, 780, 920, 1024]) {
     const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
     await expect(card).toHaveCount(1, { timeout: 30_000 })
     await card.dblclick()
-    const back = page.locator('[data-context-back]')
-    await expect(back).toHaveCount(1)
-    await back.click()
+    await addSecondFigure(page)
     await expect(page.locator('[data-topbar] [data-save-state]')).toHaveCount(1)
     await expect(page.locator('[data-topbar] [data-timeline-button]')).toHaveCount(1)
     await expect(page.locator('[data-topbar] [data-timeline-button]')).toBeVisible()

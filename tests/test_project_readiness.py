@@ -1039,6 +1039,7 @@ class TestEndpoint:
             "can_probe",
             "can_manual_link",
             "details",
+            "foreign_source",
         }
 
     def test_readiness_is_project_isolated(self, client, tmp_path):

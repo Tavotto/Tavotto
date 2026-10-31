@@ -10,14 +10,18 @@ import {
   Play,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import type { RecentProject } from '@/lib/api'
+import { Sketch } from '@/components/ui/Sketch'
+import { backendErrorText, browseDirs, type RecentProject } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
+  dragRegionProps,
   isDesktop,
   nativeFileDropAvailable,
   onNativeFileDrop,
   pickScriptFile,
   type NativeFileDrop,
+  WINDOW_CONTROLS_INSET,
+  windowChrome,
 } from '@/lib/desktop'
 import { msg } from '@/i18n'
 import { formatRelativeTime } from '@/i18n/format'
@@ -30,15 +34,19 @@ import {
   useTutorialStore,
   type HomeVariant,
 } from '@/lib/onboarding/tutorial'
+import { foreignLanguageOf, type ForeignLanguage } from '@/lib/foreignScript'
 import {
   createDropArbiter,
   dragHasFiles,
   dropTargetOf,
   folderForPath,
+  scriptForPath,
   type DropTarget,
 } from '@/lib/scriptImport'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useForeignScriptStore } from '@/store/foreignScriptStore'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { BrandMark } from '../ui/BrandMark'
@@ -46,6 +54,7 @@ import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { dropZoneClass } from '../ui/dropZone'
 import { Menu, MenuItem } from '../ui/Menu'
+import { AppMenuButton } from '../AppMenuButton'
 import { DirBrowser, TailPath } from '../DirBrowser'
 
 /**
@@ -65,6 +74,13 @@ import { DirBrowser, TailPath } from '../DirBrowser'
  * 新建项目、按路径打开 / 筛选、失效目录、教程的「重新开始」都在「全部项目」视图里
  * （`ProjectPicker` 的另一半），这里的「浏览更多项目 / 更多 / 其他打开方式」都通到那儿。
  */
+/**
+ * Windows 窗口按钮（`WindowControls`，固定在视口右上角）压在首页顶上那一行的右段上时要让出的
+ * 宽度：这一列居中、最宽 1000、左右各 24 内边距，视口越宽列离右边越远，宽到一定程度就不用让。
+ * 多算 16 给竖向滚动条（按钮压在滚动条上方，列的右缘却在滚动条左边）。
+ */
+const HOME_CONTROLS_INSET = `max(0px, calc(${WINDOW_CONTROLS_INSET + 16 - 24}px - max(0px, (100vw - 1000px) / 2)))`
+
 export function HomeView({
   variant,
   error,
@@ -113,14 +129,32 @@ export function HomeView({
       data-home-variant={variant}
       className="h-full overflow-y-auto bg-bg"
       {...dropHandlers}
+      {...dragRegionProps('self')}
     >
-      <div className="mx-auto flex w-full max-w-[1000px] flex-col px-6 pb-10 pt-4">
-        {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回 */}
-        <div className="flex h-7 shrink-0 items-center justify-end">
+      {/* 列宽 = 内容列 720 + 两侧内边距：顶行（返回链接）与拖放区 / 最近项目共用同一条右边界。
+          min-h-full + 下面 flex-1 / justify-center：窗口高时内容块在顶行以下的可用高度里垂直居中，
+          矮时撑高整列、由 main 滚动（不重叠、不裁切）。各段间距统一读 --home-gap（index.css，随窗高伸缩） */}
+      <div className="mx-auto flex min-h-full w-full max-w-[768px] flex-col px-6 pb-6 pt-4" {...dragRegionProps('self')}>
+        {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回。
+            这一行也是窗框的一部分：空白处可拖动窗口，Windows 的应用菜单在最左、右侧给窗口按钮让位 */}
+        <div
+          // 右上角窗口级的「联系作者」按钮（`ProjectPicker` 的 fixed 角落：右 12px、宽约 110px、高 28px，离顶 12px）会压在这一行右端的
+          // 「返回当前项目」上，当且仅当内容列的右缘（居中、最宽 768）离窗口右缘不到「按钮宽 + 12 + 返回钮自己的 24 内边距」：
+          // (W + 768) / 2 − 24 > W − 140 ⇒ W < 1000（Windows 另让出 138px 的窗口按钮：W < 1138）。取断点而不测量——
+          // 断点以上布局完全不变；以下整行下移 28px（落在按钮 40px 的底边之下），横向位置不动（「返回链接与内容列右缘对齐」仍成立）。
+          className={cn(
+            'flex h-7 shrink-0 items-center justify-end',
+            windowChrome() === 'menu-button' ? 'max-[1137px]:mt-7' : 'max-[999px]:mt-7',
+          )}
+          style={windowChrome() === 'menu-button' ? { paddingRight: HOME_CONTROLS_INSET } : undefined}
+          {...dragRegionProps('self')}
+        >
+          <AppMenuButton className="-ml-2.5 mr-auto" />
           {currentOpen && (
             <Button
               size="md"
-              className="-mr-2.5 text-ink-2"
+              className="text-ink-2"
+              data-home-back-current
               disabled={switching}
               onClick={() => useProjectStore.getState().returnToCurrent()}
             >
@@ -129,22 +163,28 @@ export function HomeView({
             </Button>
           )}
         </div>
-        {variant === 'newcomer' ? (
-          <Newcomer importer={importer} dragging={dragging} />
-        ) : (
-          <Returning importer={importer} dragging={dragging} openPath={openPath} />
-        )}
-        {error && (
-          <p role="alert" className="mt-3 text-center text-sm leading-relaxed text-danger">
-            {error}
-          </p>
-        )}
-        <RecentSection
-          variant={variant}
-          busyPath={busyPath}
-          openPath={openPath}
-          onShowAll={onShowAll}
-        />
+        <div
+          data-home-content
+          className="flex flex-1 flex-col justify-center gap-(--home-gap) py-(--home-gap)"
+          {...dragRegionProps('self')}
+        >
+          {variant === 'newcomer' ? (
+            <Newcomer importer={importer} dragging={dragging} />
+          ) : (
+            <Returning importer={importer} dragging={dragging} openPath={openPath} />
+          )}
+          {error && (
+            <p role="alert" className="text-center text-sm leading-relaxed text-danger">
+              {error}
+            </p>
+          )}
+          <RecentSection
+            variant={variant}
+            busyPath={busyPath}
+            openPath={openPath}
+            onShowAll={onShowAll}
+          />
+        </div>
       </div>
       {importer.dialogs}
     </main>
@@ -160,14 +200,25 @@ type Importer = ReturnType<typeof useScriptImport>
  * （与打开任何项目同一条 `projectStore.open`）。桌面壳用原生文件选择器（只收 .py），
  * 浏览器回退到服务器端目录浏览器选脚本所在的文件夹。
  *
+ * 入口给出的是**一个 .py**（选择器选的、拖进来的）时，打开目录之后还要运行**这个**脚本：走脚本库 ▶ 同一条
+ * 「打开并运行」（`projectPreparationStore.open(…, { run: true })`），恰好一张图就放进当前画布并进入编辑、
+ * 多张由卡片让用户挑。只开目录不跑的话，同一文件夹里拖进不同脚本打开的都是同一个项目，画布上恢复的是
+ * 上次的排版，用户看到的永远是第一张图（2026-10-21 诊断包）。只给目录的入口（目录浏览器、拖文件夹）不运行任何脚本。
+ *
  * 拖放（ADR 0092）：macOS 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
- * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、文件夹直接当项目、别的说不收，
+ * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、`.R` / `.r` / `.m` 打开所在文件夹并提议“生成可编辑版本”、文件夹直接当项目、别的说不收，
  * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、其它平台）退回选择器并说清是
  * 哪个文件。同一次放下两条路都会到，谁先谁后不定，由 `createDropArbiter` 仲裁。
  */
 function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const { t } = useTranslation('project')
   const [browsing, setBrowsing] = useState(false)
+  /**
+   * 浏览器拖入 R / MATLAB 脚本拿不到路径：记下文件名与语言，等用户在目录浏览器里选好文件夹后走 `openForeign`。
+   * 只在这一次选择内有效——取消 / 换别的入口 / 选完（成功或不对）都清掉；`problem` = 选错了文件夹的那句话。
+   */
+  const [pendingForeign, setPendingForeign] = useState<{ name: string; language: ForeignLanguage } | null>(null)
+  const [pickProblem, setPickProblem] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'info' | 'error'; text: string } | null>(null)
   /**
    * 壳能不能交来真实路径：`pending` = 能力探测与事件订阅还没都完成。两件事都是异步、先后不定，
@@ -178,15 +229,54 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const arbiter = useRef<ReturnType<typeof createDropArbiter> | null>(null)
   if (!arbiter.current) arbiter.current = createDropArbiter({ graceMs: NATIVE_DROP_GRACE_MS })
 
+  /**
+   * 打开目录；`script`（目录里的文件名）不为空就接着「打开并运行」它。只在项目真的打开了才运行。
+   * 文件名带首尾空白（` plot.py`）不运行：后端各脚本端点按约定 `strip()` 脚本名，会找不到它、
+   * 或在同目录还有 `plot.py` 时静默跑错脚本（Codex #1267）——只开项目，后端统一支持之后（#1278）再放开
+   */
+  const openFolder = (folder: string, script: string | null): Promise<boolean> =>
+    openPath(folder).then((ok) => {
+      if (ok && script && script === script.trim()) void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
+      return ok
+    })
+
+  /**
+   * R / MATLAB 脚本（ADR 0143 修订）：它们不是可运行的 Python 脚本，不走「打开并运行」。打开所在文件夹，
+   * 然后由画布右下的入口卡提议「生成可编辑版本」（原脚本不动）。后缀只是粗判，内容由后端复核。
+   */
+  const openForeign = (folder: string, script: string, language: ForeignLanguage): Promise<boolean> =>
+    openPath(folder).then((ok) => {
+      if (ok && script === script.trim()) useForeignScriptStore.getState().setOffer({ script, language })
+      return ok
+    })
+
   const openDropped = (drop: NativeFileDrop) => {
     // 壳的事件不经过页面的 onDrop，切换中的闸要在这里再挡一次（与主页其它入口的 disabled 同一个判据）
     if (useProjectStore.getState().switching) return
+    // 新手教程层盖在主页上时，系统拖进来的文件一律不认（教程层自己拒收并说明，ADR 0136）：
+    // 壳本来只在页面接受了拖动时才发这条事件，这里是第二道闸
+    if (useOnboardingStore.getState().surface !== 'none') return
     if (drop.kind === 'unsupported') {
       setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
       return
     }
+    if (drop.kind === 'foreign_script') {
+      // R / MATLAB 脚本：与 DOM 拖放、选择器同一个入口（openForeign）→ 画布右下的“生成可编辑版本”卡；语言只按后缀粗判，后端复核内容
+      const language = foreignLanguageOf(drop.name)
+      if (!language) {
+        setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
+        return
+      }
+      setNotice(null)
+      void openForeign(drop.folder, drop.name, language).then((ok) => {
+        // 单个：画布右下的入口卡自己会说话；多拖了的说只用了哪个（openedScript 的“正在运行它”对外语脚本不成立）
+        if (ok && drop.ignored > 0)
+          useUiStore.getState().setStatus(msg('home.import.droppedMany', { name: drop.name, total: drop.ignored + 1 }, 'project'), 'done')
+      })
+      return
+    }
     setNotice(null)
-    void openPath(drop.folder).then((ok) => {
+    void openFolder(drop.folder, drop.kind === 'script' ? drop.name : null).then((ok) => {
       if (!ok) return
       // 页面已经换成编辑器：说明走通知轨。说出是哪个脚本（关联），多拖了的说只开了哪个
       const values = { name: drop.name, total: drop.ignored + 1 }
@@ -219,12 +309,16 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const choose = () => {
+  const choose = (pending: { name: string; language: ForeignLanguage } | null = null) => {
+    setPendingForeign(pending)
+    setPickProblem(null)
     if (isDesktop()) {
       void pickScriptFile(t('home.import.nativeTitle')).then((path) => {
         if (path) {
           setNotice(null)
-          void openPath(folderForPath(path))
+          const foreign = foreignLanguageOf(path)
+          if (foreign) void openForeign(folderForPath(path), path.replace(/^.*[\\/]/, ''), foreign)
+          else void openFolder(folderForPath(path), scriptForPath(path))
         }
       })
     } else setBrowsing(true)
@@ -242,11 +336,16 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     switch (target.kind) {
       case 'path':
         setNotice(null)
-        void openPath(target.folder)
+        void openFolder(target.folder, target.script)
+        return
+      case 'foreign-path':
+        setNotice(null)
+        void openForeign(target.folder, target.script, target.language)
         return
       case 'no-path':
+      case 'foreign-no-path':
         setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name, product: PRODUCT_NAME }) })
-        choose()
+        choose(target.kind === 'foreign-no-path' ? { name: target.name, language: target.language } : null)
         return
       case 'not-script':
         setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: target.name }) })
@@ -269,7 +368,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       role={notice.tone === 'error' ? 'alert' : undefined}
       aria-live={notice.tone === 'error' ? undefined : 'polite'}
       className={cn(
-        'mt-3 text-center text-sm leading-relaxed',
+        'text-center text-sm leading-relaxed',
         notice.tone === 'error' ? 'text-danger' : 'text-ink-2',
       )}
     >
@@ -281,11 +380,35 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     <DirBrowser
       mode="open"
       title={t('home.import.folderTitle')}
-      onClose={() => setBrowsing(false)}
-      onPick={(path) => {
+      problem={pickProblem}
+      onClose={() => {
         setBrowsing(false)
-        setNotice(null)
-        void openPath(path)
+        setPendingForeign(null)
+        setPickProblem(null)
+      }}
+      onPick={(path) => {
+        const pending = pendingForeign
+        if (!pending) {
+          setBrowsing(false)
+          setNotice(null)
+          void openPath(path)
+          return
+        }
+        // 先核「这个文件夹里确有这个文件」再开项目：选错了不动当前状态、对话框不关，换个文件夹再选
+        void browseDirs(path, pending.name).then(
+          (r) => {
+            if (!r.has_file) {
+              setPickProblem(t('home.import.foreignNotFound', { name: pending.name }))
+              return
+            }
+            setBrowsing(false)
+            setPendingForeign(null)
+            setPickProblem(null)
+            setNotice(null)
+            void openForeign(path, pending.name, pending.language)
+          },
+          (e) => setPickProblem(backendErrorText(e)),
+        )
       }}
     />
   )
@@ -346,7 +469,7 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
   const { t } = useTranslation('project')
   const switching = useProjectStore((s) => s.switching)
   return (
-    <Card interactive={!switching} padding="none" className="mx-auto mt-8 w-full max-w-[720px]">
+    <Card interactive={!switching} padding="none" className="mx-auto w-full max-w-[720px]">
       <button
         type="button"
         data-home-dropzone
@@ -355,19 +478,14 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
         onClick={importer.start}
         aria-describedby="home-dropzone-hint"
         className={cn(
-          'flex w-full flex-col items-center rounded-lg px-6 py-10',
+          'flex w-full flex-col items-center rounded-lg px-6 py-(--home-dz-pad)',
           'disabled:cursor-not-allowed disabled:opacity-40',
           dropZoneClass(dragging),
         )}
       >
-        <span
-          aria-hidden
-          className={cn(
-            'flex size-10 items-center justify-center rounded-lg text-ink-2',
-            dragging ? 'bg-surface text-accent' : 'bg-surface-hover',
-          )}
-        >
-          <FileCodeCorner size={ICON_SIZE.lg} />
+        {/* 手帐线稿（96×72）：文件卡落进托盘；拖入时由 ink-faint 提到 ink-3，卡下落 4px、落点虚线变 accent（index.css 按 data-dragging） */}
+        <span aria-hidden className={cn('flex', dragging ? 'text-ink-3' : 'text-ink-faint')}>
+          <Sketch name="drop" className="block" />
         </span>
         <span className="type-heading mt-4">
           {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
@@ -389,21 +507,20 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
 
 function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolean }) {
   const { t } = useTranslation('project')
-  const sample = useSampleAvailability()
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
   const switching = useProjectStore((s) => s.switching)
   return (
     <>
-      <header className="flex flex-col items-center pt-4 text-center">
+      <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
         <Wordmark size="sm" />
-        <h1 className="type-display mt-6">{t('home.newcomer.title')}</h1>
+        <h1 className="type-display">{t('home.newcomer.title')}</h1>
       </header>
 
       <DropZone importer={importer} dragging={dragging} />
       {importer.noticeView}
 
       {/* 这一屏唯一的填色主动作（EmptyState v2 的约定：一屏一颗、32px） */}
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
+      <div className="flex flex-wrap justify-center gap-3">
         <Button
           variant="primary"
           size="lg"
@@ -414,28 +531,18 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
           <FolderOpen size={ICON_SIZE.md} />
           {t('home.newcomer.import')}
         </Button>
-        {!sample.hidden && (
-          <Button
-            variant="secondary"
-            size="lg"
-            disabled={sample.disabled}
-            loading={sample.opening}
-            loadingLabel={t('picker.tutorialOpening')}
-            data-onboarding-anchor="tutorial-entry"
-            onClick={() => void runTutorialEntry('picker')}
-          >
-            <Play size={ICON_SIZE.md} />
-            {t(entry === 'resume' ? 'home.newcomer.tryResume' : 'home.newcomer.tryStart')}
-          </Button>
-        )}
+        {/* 三步原生教程（ADR 0136）：内置演示、不依赖后端的教程资源，所以总是可用 */}
+        <Button
+          variant="secondary"
+          size="lg"
+          disabled={switching}
+          data-onboarding-anchor="tutorial-entry"
+          onClick={() => void runTutorialEntry('picker')}
+        >
+          <Play size={ICON_SIZE.md} />
+          {t(entry === 'resume' ? 'home.newcomer.tryResume' : 'home.newcomer.tryStart')}
+        </Button>
       </div>
-      {/* 只在示例用不了（要重新安装）时说话：正常时那句「已内置」不影响任何决定 */}
-      {!sample.hidden && sample.unavailable && (
-        <p className="mt-3 text-center text-sm text-ink-3" data-home-sample-note="unavailable">
-          {t('picker.tutorialUnavailable')}
-        </p>
-      )}
-      <SampleFailure failure={sample.failure} />
     </>
   )
 }
@@ -455,7 +562,7 @@ function Returning({
   const sample = useSampleAvailability()
   return (
     <>
-      <header className="flex flex-col items-center pt-6 text-center">
+      <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
         <h1>
           <Wordmark />
         </h1>
@@ -466,7 +573,7 @@ function Returning({
       {importer.noticeView}
 
       {!sample.hidden && (
-        <div className="mt-6 flex flex-col items-center">
+        <div className="flex flex-col items-center">
           <Button
             variant="secondary"
             size="lg"
@@ -474,7 +581,7 @@ function Returning({
             loading={sample.opening}
             loadingLabel={t('picker.tutorialOpening')}
             data-home-sample
-            onClick={() => void openSampleProject('picker')}
+            onClick={() => void openSampleProject()}
           >
             <FileCodeCorner size={ICON_SIZE.md} />
             {t('home.returning.sample')}
@@ -521,7 +628,7 @@ function Narrative({ importer, openPath }: { importer: Importer; openPath: (path
     </NarrativeChip>
   )
   return (
-    <p className="mt-4 text-xl leading-8 text-ink-2" data-home-narrative>
+    <p className="text-xl leading-8 text-ink-2" data-home-narrative>
       {recent ? (
         <Trans
           t={t}
@@ -597,7 +704,7 @@ function RecentSection({
   const allLink = (
     <Button
       size="md"
-      className={cn('text-ink-2', recent.length > 0 && '-mr-2.5')}
+      className="text-ink-2"
       data-home-all
       onClick={onShowAll}
     >
@@ -612,13 +719,13 @@ function RecentSection({
 
   if (recent.length === 0) {
     // 还没有最近项目：只留一条通往「新建项目 / 按路径打开」的路
-    return <div className="mt-8 flex justify-center">{allLink}</div>
+    return <div className="flex justify-center">{allLink}</div>
   }
 
   return (
     <section
       aria-labelledby="home-recent-heading"
-      className={cn('mt-10', variant === 'returning' && 'mx-auto w-full max-w-[720px]')}
+      className="mx-auto w-full max-w-[720px]"
     >
       <div className="flex items-center justify-between">
         <h2 id="home-recent-heading" className="type-section flex items-baseline gap-1.5">
@@ -628,17 +735,19 @@ function RecentSection({
         {allLink}
       </div>
       {/* Card interactive 网格（2026-10-07 设计审计 §4.2 / §5）：此前新手版是三列 hover 行、老手版是带分隔线的列表 */}
+      {/* 居中的等宽卡（flex-wrap + 固定列宽，不用 grid）：1–2 个项目不再孤零零靠左、右边空一大块——
+          整页是居中的一列（Logo / 叙事句 / 拖放区 / 示例按钮），卡片跟着居中；列宽仍按 1 / 2 / 3 列等分，
+          列数随视口：窄 1 列、sm 2 列、宽 3 列 */}
       <ul
-        className={cn(
-          'mt-2 grid grid-cols-1 gap-3',
-          variant === 'newcomer' ? 'sm:grid-cols-2 lg:grid-cols-3' : 'sm:grid-cols-2 md:grid-cols-3',
-        )}
+        data-home-recent-list
+        className="mt-2 flex flex-wrap justify-center gap-3"
       >
         {shown.map((r) => (
           <RecentItem
             key={r.path}
             entry={r}
             detail={variant === 'newcomer' ? 'when' : 'path'}
+            columns={variant === 'newcomer' ? 'lg3' : 'sm3'}
             busy={busyPath === r.path}
             disabled={switching}
             onOpen={() => void openPath(r.path)}
@@ -660,6 +769,7 @@ function RecentSection({
 function RecentItem({
   entry,
   detail,
+  columns,
   busy,
   disabled,
   onOpen,
@@ -668,6 +778,8 @@ function RecentItem({
   entry: RecentProject
   /** 卡片第二行：新手版说「打开于 …」，老手版给路径（时间放在第三行） */
   detail: 'when' | 'path'
+  /** 三列在哪个断点出现：老手版 md（768），新手版 lg（1024） */
+  columns: 'sm3' | 'lg3'
   busy: boolean
   disabled: boolean
   onOpen: () => void
@@ -683,27 +795,35 @@ function RecentItem({
     <span className="block text-sm text-ink-3">{t('home.openedAgo', { when })}</span>
   ) : null
   return (
-    <li data-home-recent={entry.path} className="min-w-0">
-      <Card interactive padding="none" className="group h-full">
+    <li
+      data-home-recent={entry.path}
+      className={cn(
+        'min-w-0 max-w-full w-full sm:w-[calc((100%-0.75rem)/2)]',
+        columns === 'sm3' ? 'md:w-[calc((100%-1.5rem)/3)]' : 'lg:w-[calc((100%-1.5rem)/3)]',
+      )}
+    >
+      <Card interactive lift disabled={busy || disabled} padding="none" className="group h-full min-w-0 max-w-full">
         <button
           type="button"
           onClick={onOpen}
           disabled={busy || disabled}
           aria-label={t('picker.openProject', { name: entry.name })}
           title={entry.tutorial ? undefined : entry.path}
-          className="flex h-full w-full flex-col gap-2 rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="block h-full w-full min-w-0 max-w-full overflow-hidden rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
-          <span aria-hidden className="flex h-20 items-center justify-center rounded-md bg-canvas text-ink-3">
-            <Folder size={ICON_SIZE.lg} />
-          </span>
-          <span className="flex min-w-0 flex-col gap-0.5 px-2">
-            <span className="flex items-center gap-1.5 pr-6">
-              <span className="truncate text-base font-medium text-ink">{entry.name}</span>
-              {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}
+          {/* button 只做 block 外壳，flex 排版放进里面这层：旧 WebKit（macOS 14 / Safari 17）里 <button> 当 flex 容器时
+              子项不按容器宽拉伸、按内容宽度排（缩略图格塌成细条、长路径撑出卡外） */}
+          <span className="flex h-full w-full min-w-0 max-w-full flex-col gap-2">
+            {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
+            <span aria-hidden data-home-thumb-placeholder className="hatch-box h-20 w-full shrink-0 rounded-md" />
+            <span className="flex w-full min-w-0 max-w-full flex-col gap-0.5 overflow-hidden px-2">
+              <span className="flex items-center gap-1.5 pr-6">
+                <span className="truncate text-base font-medium text-ink">{entry.name}</span>
+                {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}
+              </span>
+              {sub}
+              {detail === 'path' && when && <span className="type-meta">{when}</span>}
             </span>
-            {sub}
-            {detail === 'path' && when && <span className="type-meta">{when}</span>}
           </span>
         </button>
         <div className="absolute right-1.5 top-1.5">
@@ -716,7 +836,11 @@ function RecentItem({
                 tip={false}
                 label={t('home.recentMenu', { name: entry.name })}
                 // 平时收起、悬停 / 聚焦 / 菜单开着时出现（坐在缩略图格上，白底才看得清）
-                className="bg-surface text-ink-3 opacity-0 transition-[opacity,background-color] hover:bg-surface-hover focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                className={cn(
+                  'bg-surface text-ink-3 opacity-0 transition-[opacity,background-color] hover:bg-surface-hover focus-visible:opacity-100 data-[state=open]:opacity-100',
+                  // 卡置灰（切换项目 / 正在打开）时 hover 不再把它揭出来：置灰的卡不应有任何「活着」的 hover 反应
+                  !(busy || disabled) && 'group-hover:opacity-100',
+                )}
               >
                 <Ellipsis size={ICON_SIZE.sm} />
               </IconButton>

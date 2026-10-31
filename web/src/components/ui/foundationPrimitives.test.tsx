@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingRow } from '../settings/SettingRow'
 import { Button, IconButton } from './Button'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { Card } from './Card'
 import { EmptyState } from './EmptyState'
 import { FieldGroup, FormSection } from './FormSection'
@@ -18,6 +20,8 @@ import { MenuItem } from './Menu'
 import { Notice } from './Notice'
 import { RowMenu } from './RowMenu'
 import { StatusPill } from './StatusPill'
+import { Toggle } from './Toggle'
+import { UNIT_GAP } from '@/lib/units'
 import { TooltipProvider } from './Tooltip'
 import { useRowMenu } from './useRowMenu'
 
@@ -82,33 +86,127 @@ describe('Card', () => {
     // 静态卡不画焦点环（里面的控件自己有）
     expect(q('[data-c="p"]')!.className).not.toMatch(/ring-2/)
   })
+
+  it('按压只换底色（几何永不变化）：interactive 卡带 press 类，类名里没有 scale / translate / 布局属性的 transition', async () => {
+    await render(
+      <>
+        <Card data-c="i" interactive>{T}</Card>
+        <Card data-c="s" interactive selected>{T}</Card>
+        <Card data-c="d" interactive disabled>{T}</Card>
+        <Card data-c="p">{T}</Card>
+      </>,
+    )
+    const i = q('[data-c="i"]')!
+    expect(i.className).toMatch(/has-\[>button:active:not\(:disabled\)\]:bg-surface-active/)
+    for (const sel of ['i', 's', 'd', 'p']) {
+      const cls = q(`[data-c="${sel}"]`)!.className
+      expect(cls, sel).not.toMatch(/scale|translate|rotate|-skew/)
+      // transition 只许是颜色类的属性；不得出现 width / height / padding / margin / transform / all
+      const tr = cls.match(/transition-\[([^\]]*)\]/)?.[1] ?? ''
+      expect(tr, sel).not.toMatch(/width|height|padding|margin|transform|inset|top|left|all/)
+    }
+    // 选中的卡底色另有主人，静态卡无交互
+    expect(q('[data-c="s"]')!.className).not.toMatch(/bg-surface-active/)
+    expect(q('[data-c="p"]')!.className).not.toMatch(/bg-surface-active/)
+  })
+
+  it('lift 是登记豁免（用户 2026-10-15 裁决）：位移只许整数 px 的 translateY ≤2px、缩放 ≤1.02、光晕只许 1px 品牌蓝描边（无外发光）/ will-change / filter；没开 lift 的卡仍不位移不缩放', async () => {
+    await render(
+      <>
+        <Card data-c="n" interactive>{T}</Card>
+        <Card data-c="l" interactive lift>{T}</Card>
+        <Card data-c="ld" interactive lift disabled>{T}</Card>
+        <Card data-c="ls" interactive lift selected>{T}</Card>
+      </>,
+    )
+    // 非 lift：沿用「几何默认不变」——类名里没有任何位移 / 缩放 / 升档阴影
+    expect(q('[data-c="n"]')!.className).not.toMatch(/translate|scale|shadow-lift/)
+    const lift = q('[data-c="l"]')!.className
+    const tokens = lift.split(/\s+/)
+    const moves = tokens.filter((t) => /(^|:)-?translate-/.test(t)).map((t) => t.replace(/^.*:/, ''))
+    const scales = tokens.filter((t) => /(^|:)scale-/.test(t)).map((t) => t.replace(/^.*:/, ''))
+    expect(moves.length).toBeGreaterThan(0)
+    expect(scales.length).toBeGreaterThan(0)
+    // 每一个位移都是 Y 轴的 -px（1px）/ -0.5（2px）/ 0（回落）：整数像素、上限 2px
+    for (const m of moves) expect(m, m).toMatch(/^(-translate-y-(px|0\.5)|translate-y-0)$/)
+    // 缩放只许两种写法：scale-100（静止 / 按下）与读 --card-lift-scale 的变量；不许写死任意倍数
+    for (const m of scales) expect(m, m).toMatch(/^(scale-100|scale-\(--card-lift-scale\))$/)
+    // --card-lift-scale 的值 ≤1.02（1.05 之类会让文字栅格化变糊、盖住邻卡）
+    const css = readFileSync(path.resolve(import.meta.dirname, '../../index.css'), 'utf8')
+    const v = Number(css.match(/--card-lift-scale:\s*([\d.]+)\s*;/)?.[1])
+    expect(v, '--card-lift-scale').toBeGreaterThan(1)
+    expect(v, '--card-lift-scale 上限 1.02').toBeLessThanOrEqual(1.02)
+    // 描边：--lift-halo 是 accent 20% 的 1px 环（零模糊），不是外发光（用户 2026-10-16 选定方案 B）
+    expect(css.match(/--lift-halo:\s*([^;]+);/)?.[1].replace(/\s+/g, ' ')).toBe(
+      '0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent)',
+    )
+    // 位移与缩放只在 motion-safe 下有（reduced-motion 只换阴影 / 描边）
+    for (const t of tokens) if (/(hover|focus-visible):.*(translate|scale)-/.test(t)) expect(t, t).toMatch(/^motion-safe:/)
+    expect(lift).toMatch(/hover:shadow-lift/)
+    expect(lift).toMatch(/motion-safe:has-\[:focus-visible\]:-translate-y-0\.5/) // 键盘聚焦同样浮起
+    // 静止态恒等变换（不是 none：none ↔ 非 none 会让每次 hover 重排一次）
+    expect(tokens).toContain('translate-y-0')
+    expect(tokens).toContain('scale-100')
+    // 按下回落：位移 0、缩放 1
+    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:translate-y-0/)
+    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:scale-100/)
+    expect(lift).not.toMatch(/rotate|skew|will-change|blur|filter|gradient/)
+    // 禁用 / 选中的卡不浮起
+    for (const sel of ['ld', 'ls'])
+      expect(q(`[data-c="${sel}"]`)!.className.replace(/transition-\[[^\]]*\]/, ''), sel).not.toMatch(/translate|scale|shadow-lift/)
+  })
+
+  it('disabled：写 data-disabled，不亮 hover / press / 焦点环；interactive 标记仍在', async () => {
+    await render(
+      <>
+        <Card data-c="d" interactive disabled>{T}</Card>
+        <Card data-c="p" disabled>{T}</Card>
+      </>,
+    )
+    const d = q('[data-c="d"]')!
+    expect(d.dataset.disabled).toBe('true')
+    expect(d.dataset.interactive).toBe('true')
+    expect(d.className).not.toMatch(/hover:outline-border/)
+    expect(d.className).not.toMatch(/bg-surface-active/)
+    expect(d.className).not.toMatch(/ring-2/)
+    // 非 interactive 的卡没有可禁用的交互外观，不写 data-disabled
+    expect(q('[data-c="p"]')!.hasAttribute('data-disabled')).toBe(false)
+  })
 })
 
 describe('Notice / StatusPill', () => {
-  it.each(['neutral', 'info', 'ok', 'warn', 'danger'] as const)('Notice tone=%s：data-notice 落在根上，字走 -content（neutral 是 ink-2）', async (tone) => {
+  it.each(['neutral', 'info', 'ok', 'warn', 'danger'] as const)('Notice tone=%s：data-notice 落在根上，8 圆角、中性底、无彩框，role 不随改版变', async (tone) => {
     await render(<Notice tone={tone} title={T} action={<Button data-n-action>{T}</Button>}>{T}</Notice>)
     const n = q(`[data-notice="${tone}"]`)!
     expect(n).not.toBeNull()
     expect(n.className).toMatch(/\brounded-md\b/)
-    expect(n.className).toContain(tone === 'neutral' ? 'text-ink-2' : `text-${tone}-content`)
     expect(n.querySelector('[data-n-action]')).not.toBeNull()
     expect(n.getAttribute('role')).toBe(tone === 'danger' ? 'alert' : null)
   })
 
-  it('StatusPill：20px 胶囊、500、锚点派生；dot 是 aria-hidden 的锚点色圆点', async () => {
-    await render(<StatusPill tone="ok" dot>{T}</StatusPill>)
-    const p = q('[data-status-pill="ok"]')!
+  it('StatusPill：20px 胶囊、500、中性底、文字 ink；语义色只在 6px 圆点（aria-hidden）上', async () => {
+    await render(
+      <>
+        <StatusPill tone="ok" data-sp="ok">{T}</StatusPill>
+        <StatusPill data-sp="n">{T}</StatusPill>
+      </>,
+    )
+    const p = q('[data-sp="ok"]')!
     expect(p.className).toMatch(/\bh-5\b/)
     expect(p.className).toMatch(/\brounded-full\b/)
     expect(p.className).toMatch(/\bfont-medium\b/)
-    expect(p.className).toContain('text-ok-content')
+    expect(p.className).toContain('bg-surface-hover')
+    expect(p.className).toContain('text-ink')
+    expect(p.className).not.toMatch(/(?:ok|warn|danger|info)-(?:surface|content|border)/)
     const dot = p.querySelector('[aria-hidden]')!
     expect(dot.className).toContain('bg-ok')
+    // 中性（版本号 / 选区这类数据）不画点
+    expect(q('[data-sp="n"] [aria-hidden]')).toBeNull()
   })
 })
 
 describe('FormSection + FieldGroup + SettingRow', () => {
-  it('组里的 SettingRow 不再自带上下留白（内边距交给组），组外的照旧；balanced 是 4 : 6 两列、控件左起', async () => {
+  it('组里的 SettingRow 不再自带上下留白（内边距交给组），组外的照旧；balanced 是 4 : 6 两列、控件贴控件列右缘', async () => {
     await render(
       <FormSection title={T} description={T} data-fs>
         <FieldGroup data-fg>
@@ -129,19 +227,23 @@ describe('FormSection + FieldGroup + SettingRow', () => {
     const bal = q('[data-row="bal"]')!
     expect(bal.getAttribute('data-layout')).toBe('balanced')
     expect(bal.className).toContain('grid-cols-[minmax(0,4fr)_minmax(0,6fr)]')
-    expect(bal.lastElementChild!.className).not.toMatch(/justify-end/)
+    expect(bal.lastElementChild!.className).toMatch(/justify-end/)
+    expect(bal.lastElementChild!.className).not.toMatch(/justify-self-end/)
   })
 })
 
 describe('EmptyState v2', () => {
-  it('40px lg 圆角图标底座 + type-title 标题 + type-caption 说明（42ch）+ 32px 主动作', async () => {
+  it('54×42 手帐线稿（无底座）+ type-title 标题 + type-caption 说明（42ch）+ 32px 主动作', async () => {
     const onClick = vi.fn()
-    await render(<EmptyState icon={Pencil} title={T} hint={T} action={{ label: T, onClick }} data-es />)
+    await render(<EmptyState art="pencil" title={T} hint={T} action={{ label: T, onClick }} data-es />)
     const es = q('[data-es]')!
     expect(es.hasAttribute('data-empty-state')).toBe(true)
-    const tile = es.firstElementChild!
-    expect(tile.className).toMatch(/\bsize-10\b/)
-    expect(tile.className).toMatch(/\brounded-lg\b/)
+    const art = es.firstElementChild!
+    expect(art.className).not.toMatch(/\bbg-/)
+    expect(art.className).toMatch(/\btext-ink-faint\b/)
+    const svg = art.querySelector('svg')!
+    expect(svg.getAttribute('data-sketch')).toBe('pencil')
+    expect([svg.getAttribute('width'), svg.getAttribute('height')]).toEqual(['54', '42'])
     expect(es.querySelector('.type-title')).not.toBeNull()
     expect(es.querySelector('.type-caption')!.className).toContain('max-w-[42ch]')
     const btn = es.querySelector<HTMLButtonElement>('button[data-variant]')!
@@ -160,6 +262,22 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
     for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\brounded-md\b/)
     expect(listRowClass({ selected: true })).toMatch(/\bbg-selected\b.*\bfont-semibold\b|\bfont-semibold\b.*\bbg-selected\b/)
     expect(listRowClass()).not.toMatch(/font-semibold/)
+    // 结构侧栏变体：圆角 6；叶子 ink-2、分组头 500 + ink、选中 600 + ink
+    expect(listRowClass({ tree: true })).toMatch(/\brounded-sm\b/)
+    expect(listRowClass({ tree: true })).toMatch(/\btext-ink-2\b/)
+    expect(listRowClass({ tree: true, group: true })).toMatch(/\bfont-medium\b.*\btext-ink\b|\btext-ink\b.*\bfont-medium\b/)
+    expect(listRowClass({ tree: true, selected: true })).toMatch(/\bfont-semibold\b/)
+    expect(listRowClass({ tree: true, selected: true })).not.toMatch(/text-ink-2/)
+    expect(listRowClass()).toMatch(/\brounded-md\b/)
+    // 被拖行淡化：用 opacity-dragging，且压过 hidden 的 45
+    expect(listRowClass({ dragging: true })).toMatch(/\bopacity-dragging\b/)
+    expect(listRowClass({ dragging: true, hidden: true })).not.toMatch(/opacity-45/)
+    expect(listRowClass()).not.toMatch(/opacity-dragging/)
+    // 焦点环内凹：密排的行不许用外扩的 focus-ring（会盖邻行、触抽屉边）
+    for (const size of ['sm', 'md', 'lg'] as const) {
+      expect(listRowClass({ size })).toMatch(/\bfocus-visible:focus-ring-inset\b/)
+      expect(listRowClass({ size })).not.toMatch(/focus-visible:focus-ring(?!-inset)/)
+    }
   })
 
   it('meta：常态 ink-3，选中升 ink-2，字重恒 400', () => {
@@ -259,5 +377,32 @@ describe('RowMenu：⋯ / 右键 / ⇧F10 同一份菜单', () => {
     const pm = q('[data-row-point-menu]')!
     expect(pm).not.toBeNull()
     expect(pm.querySelector('[data-mi="rename"]')).not.toBeNull()
+  })
+})
+
+describe('Toggle：关态是空心描边轨道 + 缩小的同色滑块（精致感审计第二批 #3）', () => {
+  it('关：透明轨道 + 1.5px 内描边 border-control，滑块 scale-75 同色无投影；开：黑轨 + 白钮 + 投影', async () => {
+    await render(<Toggle checked={false} onChange={() => {}} aria-label="x" />)
+    const track = q('[role=switch] > span')!
+    const thumb = track.firstElementChild!
+    expect(track.className).toContain('bg-transparent')
+    expect(track.className).toContain('ring-[1.5px]')
+    expect(track.className).toContain('ring-border-control')
+    expect(track.className).not.toContain('bg-ink')
+    expect(thumb.className).toContain('scale-75')
+    expect(thumb.className).toContain('bg-border-control')
+    expect(thumb.className).not.toContain('shadow-thumb')
+    await render(<Toggle checked onChange={() => {}} aria-label="x" />)
+    const on = q('[role=switch] > span')!
+    expect(on.className).toContain('bg-ink')
+    expect(on.className).not.toContain('ring-')
+    expect(on.firstElementChild!.className).toContain('bg-thumb')
+    expect(on.firstElementChild!.className).not.toContain('scale-75')
+  })
+})
+
+describe('数字与单位的间隔', () => {
+  it('全产品一个字符：U+2009 细空格', () => {
+    expect(UNIT_GAP).toBe('\u2009')
   })
 })

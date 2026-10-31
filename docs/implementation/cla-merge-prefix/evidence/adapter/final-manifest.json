@@ -1,0 +1,127 @@
+{
+  "scope": "Synthetic in-process actual native GitHub adapter + actual installationToken + SQLite read-only assessment. NOT real GitHub E2E, NOT deployment or permission acceptance.",
+  "tests": 61,
+  "tests_exit": 0,
+  "mutants": 16,
+  "mutation_runner_exit": 0,
+  "each_selected_mutant_exit": 1,
+  "each_mutant_unique_location": true,
+  "each_mutant_AssertionError": true,
+  "two_members": {
+    "external": 32,
+    "SQL": 6,
+    "eligible": true,
+    "publication": "not_attempted"
+  },
+  "three_members": {
+    "external": 35,
+    "SQL": 5,
+    "error": "budget_deferred",
+    "assessment_returned": false
+  },
+  "database_unchanged": true,
+  "default_network_calls": 0,
+  "publication_calls": 0,
+  "token_permissions_unchanged": true,
+  "query_matches_existing_Python_ignoring_whitespace": true,
+  "frozen_test_files": {
+    "services/cla-cloudflare/tests/merge-prefix-fixture.mjs": "08a5e754aab09ea5938873539d2c81d82c05ff101c9c6660d34fc13570a5072d",
+    "services/cla-cloudflare/tests/merge-prefix.test.mjs": "22863cc979e43029b74042e38dc19c2cafa8b0348e0771504db72b31ff1a994f",
+    "services/cla-cloudflare/tests/merge-prefix-adapter-mutation-cases.json": "975fd4a3fa1243b85ce75a4a9950c1a6651ee4cbd3fe59d5e9b06c6866b768e1"
+  },
+  "raw_log_members": {
+    "accounting.raw.log": {
+      "sha256": "07d9b43a4aef52f7c10731e5c4197bc9d80ab455ccd678d3602dd8287ff52c9b",
+      "bytes": 22056
+    },
+    "final-tests.raw.log": {
+      "sha256": "7124246957ca8de28c4f71ebd753ac14d9f66f4efe5db66203256e7e8bc32ac8",
+      "bytes": 5720
+    },
+    "initial-tests.raw.log": {
+      "sha256": "1e7461dc9d24e8afc8c500bb37d1dc593fc537be206cbc3bffa0228b9b19a9c3",
+      "bytes": 5719
+    },
+    "mutation-01.raw.log": {
+      "sha256": "b2fc0ded4b97d09f2e4382385ea2814074d1276ac36cad0cb23920bd39d93941",
+      "bytes": 932
+    },
+    "mutation-02.raw.log": {
+      "sha256": "85ebc1f84a2157ad06f31024c8cbacffaadce69fa8c7f56711b08d20083c322a",
+      "bytes": 938
+    },
+    "mutation-03.raw.log": {
+      "sha256": "6c98024fb8990f9daaf4c5afcb80f8d93707ce151ea0fbdf4877f3f4b2734ec7",
+      "bytes": 979
+    },
+    "mutation-04.raw.log": {
+      "sha256": "2ffdeb4b1af56190db30da4255ca187f0d3b37047338c5c6ec73ffc847e95b28",
+      "bytes": 910
+    },
+    "mutation-05.raw.log": {
+      "sha256": "a0ea93d360cdf5989212f23a30b9530bf355856b3d59f0e3005257b129db47a1",
+      "bytes": 1623
+    },
+    "mutation-06.raw.log": {
+      "sha256": "c0aba49f6a2d98fdd894cc31cab51e8f978b9575fefc3eebb7eef4a7a8e2d3e4",
+      "bytes": 919
+    },
+    "mutation-07.raw.log": {
+      "sha256": "1112fe22f73797c828ef6c770b9bd5549643a6c3c4512d46bd18d791662e0c2d",
+      "bytes": 1411
+    },
+    "mutation-08.raw.log": {
+      "sha256": "bd80121fa0d47d595ffa294026e5775e31cfbf2f3877fe5cf29c7d20504d0d69",
+      "bytes": 920
+    },
+    "mutation-09.raw.log": {
+      "sha256": "b0f3dae008cbcd177a96282af6ddf1bda469a79235b51aa43ab83f9b38942eaa",
+      "bytes": 964
+    },
+    "mutation-10.raw.log": {
+      "sha256": "4461b075473d8494cb437524eb1e66f50df195c8341b6e14c11ddecd090c3eff",
+      "bytes": 909
+    },
+    "mutation-11.raw.log": {
+      "sha256": "5ec4b33a6254eb235bdbf7e691e86faf668856a387bacefb5ebbedf73bfe69ab",
+      "bytes": 927
+    },
+    "mutation-12.raw.log": {
+      "sha256": "c8a24a4131c904b7dc1e977f7c7c1ffc26ff36f6d022d57ba94405ef6dabc1f1",
+      "bytes": 2107
+    },
+    "mutation-13.raw.log": {
+      "sha256": "cffbb5d2987cdffc35fea49cc2a1652578b9425a9ffefbc4f879b0c57499240c",
+      "bytes": 930
+    },
+    "mutation-14.raw.log": {
+      "sha256": "04a8f141ab900bf0cee9a33e838e227c2ccc95843f357f93474a6f998425b700",
+      "bytes": 2093
+    },
+    "mutation-15.raw.log": {
+      "sha256": "ef8adeb30aaa53d760fea629b7ab1949c02a60396f18a5053ddd8deed72d169b",
+      "bytes": 1005
+    },
+    "mutation-16.raw.log": {
+      "sha256": "53b048156b1dbbada8d6d6172b13742739e7b76e81d56c73f0879976714b3929",
+      "bytes": 1151
+    },
+    "mutations-run.raw.log": {
+      "sha256": "8566f04c1753687b9d7b9d1bc3839108fbf569a9233fa1333f1ada2d2a7a8773",
+      "bytes": 8133
+    },
+    "query-reuse.raw.log": {
+      "sha256": "61b155040338bf1079f9025e1671e60510b19652574fd43ada27f32ea376aa2f",
+      "bytes": 1036
+    }
+  },
+  "artifacts": {
+    "source-manifest.json": "18ba5c3fc0a0e34939cd7d3a88e964a718a615e98ee778e715ac4bbb07e75a8c",
+    "commands.json": "6973aaadc62e3a4cec8d5528800033994a691c6e550d5630428db24f300eb428",
+    "raw-logs.json": "8352135c1ea6ca833ab9416afc89e77a8d2c5df48285eb9cce14eb9ec319d653",
+    "mutations.json": "fb00d32b7d3db1ebb41403d0776e330a229db3c6f6c971940cbe64f553dffd57"
+  },
+  "remaining_blockers": [
+    "Real GitHub GraphQL schema and Merge queues read authorization are not exercised. No real resources/permissions/production activation are authorized."
+  ]
+}

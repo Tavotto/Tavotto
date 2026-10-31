@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, widget
+from . import bridge, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -58,6 +58,8 @@ AUTO_REVIEWER_META = ("approvals_reviewer", "auto_review")
 #: 量「宿主多久作答」的钟。单列出来是为了让用例能模拟真人的作答耗时，
 #: 不必真的睡一秒；``_client_request`` 的超时仍用 ``time.monotonic``。
 _confirmation_clock = time.monotonic
+#: 退出前等用量事件送出的上限（秒）。引擎单次投递超时是 3 s；这里只给排空一次机会。
+USAGE_FLUSH_TIMEOUT_S = 1.5
 
 #: Codex 把每个 MCP 工具结果的**事件副本**——送给桌面 UI 去喂 iframe、写进 rollout
 #: 的那一份——封顶在 1 MiB（codex-rs `core/src/mcp_tool_call.rs` 的
@@ -77,6 +79,24 @@ CANVAS_INLINE_BUDGET_BYTES = 768 * 1024
 #: 模型显式请求的 apply 摘要：整个 CallToolResult（包括资源元数据）最多 16 KiB。
 #: 旧调用与画布默认仍拿同一次渲染的完整负载，不能把另跳取件当作原子响应。
 APPLY_SUMMARY_BUDGET_BYTES = 16 * 1024
+#: 其余工具的**失败**结果（T10）：整个 CallToolResult 最多 64 KiB。失败载荷没有画布要取（没有会话可取件），只给
+#: 模型读：完整 traceback、几千条找不到的数据、巨大的依赖计划都可能把它顶过宿主 1 MiB 的事件上限。预算内
+#: 逐字段不变；超了按 `ERROR_ELISION_ORDER` 逐项截，`code` / `requirements`（要用户决定什么、用哪个参数答）不截。
+ERROR_RESULT_BUDGET_BYTES = 64 * 1024
+#: 失败载荷超预算时先截谁：先截对下一步最没用的（worker 原始输出），最后才动「怎么答」的说明。
+ERROR_ELISION_ORDER = (
+    "traceback",
+    "missing_input",
+    "dependency_preparation",
+    "confirmation",
+    "environment",
+    "arguments",
+    "explicit",
+    "recovery",
+    "error",
+)
+#: 失败载荷里永远不截的键：结局、稳定码与待办索引都是定长小字段。
+ERROR_PROTECTED_KEYS = frozenset({"ok", "code", "requirements", "capability", "input", "elided"})
 #: 超预算时省略的顺序：先省对模型没用的（SVG 它读不了），再省画布反正要另取的
 #: （manifest / 位图），最后才是预检的逐条清单（计数与阻断布尔永远留着）。
 #: 每省一步量一次，够了就停——能留给模型的尽量留。
@@ -120,6 +140,7 @@ HANDLE_ONLY_KEYS = frozenset(
         "rejected_count",
         "preview_png_error",
         "canvas_ui",
+        "run_config",  # 这张图按哪份运行配置画的（引用 / 个数 / 来源，定长）——没有它模型分不清同名的两张图
         "elided",
         "preflight",  # 只留计数与布尔（见 fit_inline_budget），清单早在省略表那几步没了
     }
@@ -138,6 +159,21 @@ def _version() -> str:
 
 
 # ------------------------------- 工具定义 -----------------------------------
+#: 内嵌画布发起的调用带 `origin="canvas"`（`web/src/mcp/appsBridge.ts` 的 `callTool` 统一加），
+#: server 据此**不记**用量事件——画布不发遥测（`docs/rules/frontend` 与 ADR 0134 §MCP），手拖一下
+#: 也不该被记成「Agent 调了 apply」。放在参数里而不是 `_meta`：宿主转发 App 的 tools/call 时参数
+#: 必须原样到达工具，`_meta` 保不保留看宿主；schema 是 additionalProperties=False，所以画布会调的
+#: 每个工具都要声明它（`tests/test_mcp_usage.py` 从画布源码对拍这份名单）。
+ORIGIN_ARG = "origin"
+ORIGIN_CANVAS = "canvas"
+CANVAS_TOOLS = (
+    "tavotto_session_state",
+    "tavotto_apply_overrides",
+    "tavotto_preflight",
+    "tavotto_export",
+)
+
+
 def _tools() -> list[dict]:
     ui = widget.available()
     tools = [
@@ -251,6 +287,49 @@ def _tools() -> list[dict]:
                             "再传目标进来：tavotto_managed（Tavotto 自己的隔离环境，不改用户环境）/ "
                             "project_venv（项目自己的 venv，会修改它）/ skip（用户明确不准备、直接运行）。"
                             "安装是同步的（要联网、几十秒到几分钟），装完接着开图。不传 = 这道门继续问。"
+                            "tavotto_managed / project_venv 必须同时传 prepare_impact_digest。"
+                        ),
+                    },
+                    "prepare_impact_digest": {
+                        "type": "string",
+                        "description": (
+                            "用户授权时看到的影响摘要：原样回显 dependency_preparation.impact_digest。"
+                            "prepare_dependencies 选 tavotto_managed / project_venv 时必填；缺 → "
+                            "dependency_impact_required，与此刻计划的实际影响对不上 → "
+                            "dependency_impact_changed（一个字节不装，请重新查看再让用户确认）。"
+                        ),
+                    },
+                    "argv": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 256,
+                        "description": (
+                            "脚本的命令行参数，一项一个 token、原样传入（空串、空格、中文、负数、-- 都保留；"
+                            "不要把整条命令按空格拆，不要写管道 / 重定向）。上一次 open 以 "
+                            "script_needs_arguments 回来时，按 structuredContent.arguments.schema 向用户确认每个"
+                            "值再传；值不知道就问用户，不要猜。[] = 明确不带参数；不传 = 沿用这个脚本最近一次在 "
+                            "Tavotto 里明确运行的参数（没有就是不带参数）。与 run_config 二选一；批量不接受。"
+                        ),
+                    },
+                    "run_config": {
+                        "type": "string",
+                        "description": (
+                            "已有运行配置的不透明引用（rc_…，来自之前回包的 run_config.id）。与 argv 二选一。"
+                        ),
+                    },
+                    "adopt_environment": {
+                        "type": "string",
+                        "description": (
+                            "对环境建议的回答：上一次 open 的 structuredContent.environment.candidates 里用户"
+                            "选定的那个 id。采用只决定这个项目用哪个 Python 环境，不安装任何东西；按用户的选择传，"
+                            "不要替用户选。"
+                        ),
+                    },
+                    "expected_environment_generation": {
+                        "type": "string",
+                        "description": (
+                            "与 adopt_environment 一起传：该候选的 generation。环境在这期间被重建过就会被拒绝，"
+                            "请重新给用户看候选。"
                         ),
                     },
                 },
@@ -520,8 +599,14 @@ def _tools() -> list[dict]:
             },
         },
     ]
+    by_name = {t["name"]: t for t in tools}
+    for name in CANVAS_TOOLS:
+        by_name[name]["inputSchema"]["properties"][ORIGIN_ARG] = {
+            "type": "string",
+            "enum": [ORIGIN_CANVAS],
+            "description": "只有 Tavotto 内嵌画布自己发起的调用才带它；模型调用不要传。",
+        }
     if ui:
-        by_name = {t["name"]: t for t in tools}
         by_name["tavotto_open_figure"]["_meta"] = widget.tool_meta(
             invoking="正在打开 Tavotto 画布…", invoked="Tavotto 画布已就绪"
         )
@@ -700,11 +785,42 @@ def _call_open(args: dict) -> dict:
             INVALID_PARAMS,
             "prepare_dependencies 必须是字符串（tavotto_managed / project_venv / skip）",
         )
+    argv = args.get("argv")
+    if argv is not None and not isinstance(argv, list):
+        # 一整串命令要猜 token 边界，猜错就静默改了参数：只收数组
+        raise RpcError(INVALID_PARAMS, "argv 必须是字符串数组（一项一个 token）")
+    run_config = args.get("run_config")
+    if run_config is not None and not isinstance(run_config, str):
+        raise RpcError(INVALID_PARAMS, "run_config 必须是字符串（rc_…）")
+    if argv is not None and run_config is not None:
+        raise RpcError(INVALID_PARAMS, "argv 与 run_config 二选一")
+    adopt = args.get("adopt_environment")
+    generation = args.get("expected_environment_generation")
+    if (adopt is not None and not isinstance(adopt, str)) or (
+        generation is not None and not isinstance(generation, str)
+    ):
+        raise RpcError(
+            INVALID_PARAMS, "adopt_environment / expected_environment_generation 必须是字符串"
+        )
+    if (adopt is None) != (generation is None):
+        # 候选与它的环境代是一份绑定的回答：缺一个就会跳过比对，采用用户没看过的那一代
+        raise RpcError(
+            INVALID_PARAMS,
+            "adopt_environment 与 expected_environment_generation 必须一起给（候选 id + 它的 generation）",
+        )
+    digest = args.get("prepare_impact_digest")
+    if digest is not None and not isinstance(digest, str):
+        raise RpcError(INVALID_PARAMS, "prepare_impact_digest 必须是字符串")
     plan = _batch_request(args)
     if plan is not None:
         if prepare is not None:
             raise RpcError(
                 INVALID_PARAMS, "prepare_dependencies 只对单张图有效：按脚本准备，一次一张"
+            )
+        if argv is not None or run_config is not None or adopt is not None:
+            # 参数与环境都是按脚本的回答：批量里每张图可能来自不同脚本，悄悄套给所有图等于替用户做了决定
+            raise RpcError(
+                INVALID_PARAMS, "argv / run_config / adopt_environment 只对单张图有效：一次一张"
             )
         return _call_open_batch(str(target), args, plan, workdir=workdir)
     out = bridge.open_figure(
@@ -715,6 +831,11 @@ def _call_open(args: dict) -> dict:
         include_png=bool(args.get("include_png")),
         workdir=workdir,
         prepare_dependencies=prepare,
+        argv=argv,
+        run_config=run_config,
+        adopt_environment=adopt,
+        expected_environment_generation=generation,
+        prepare_impact_digest=digest,
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。
@@ -769,6 +890,16 @@ def _call_open(args: dict) -> dict:
             f"! 会话数已达上限，挤掉了最久没用的 {len(out['evicted_sessions'])} 个"
             f"（{'、'.join(out['evicted_sessions'])}）——它们已经关掉了，要用得重新打开。"
         )
+    run = out.get("run_config")
+    if run:
+        origin = {
+            "argv": "这次给的参数",
+            "run_config": "引用的运行配置",
+            "script_default": "这个脚本最近一次在 Tavotto 里明确运行的参数",
+        }.get(run.get("source"), "")
+        lines.append(f"运行参数：{run['argv_count']} 个 token（{origin}）")
+    if out.get("adopted_environment"):
+        lines.append("已按用户的选择改用项目的 Python 环境（只改了用哪个环境，没有安装任何东西）")
     if out["registry"].get("parameterizable") is False:
         lines.append("! 这张图不可参数化（没有对应脚本），只能当素材排版")
     if out.get("warnings"):
@@ -1259,6 +1390,8 @@ def _call_health(args: dict) -> dict:
         "roots": root_info["roots"],
         "root_authority": root_info,
         "sessions": sorted(bridge.sessions()),
+        # 已装引擎宣告的能力（`engine/capabilities.py`）：Agent 发 argv / 采用环境之前看这里；旧引擎是空列表
+        "engine_features": bridge.engine_features(),
     }
     if not widget.available():
         out["canvas"]["reason"] = widget.missing_reason()
@@ -1403,6 +1536,60 @@ def _fit_apply_error_budget(result: dict) -> dict:
     return result
 
 
+def _shrink_error_field(body: dict, key: str, counts: dict) -> None:
+    value = body[key]
+    if isinstance(value, str):
+        body[key] = _bounded_error_text(value)
+    elif isinstance(value, (list, tuple)):
+        counts[key] = len(value)
+        sample = list(value[:3])
+        while sample and _serialized_bytes(sample) > 1024:
+            sample.pop()
+        body[key] = sample
+    else:
+        del body[key]
+
+
+def _fit_error_budget(result: dict, budget: int = ERROR_RESULT_BUDGET_BYTES) -> dict:
+    """失败结果守 `budget`（编码后的整个 CallToolResult）。预算内原样返回；超了逐项截并在 `elided` 里说清：
+    截了哪些字段、列表原来几条、完整诊断**没有保留**（不冒称别的工具能取回）。"""
+    if _serialized_bytes(result) <= budget:
+        return result
+    body = result["structuredContent"]
+    fields: list[str] = []
+    counts: dict[str, int] = {}
+    reserve = INLINE_ELISION_RESERVE_BYTES
+    order = [k for k in ERROR_ELISION_ORDER if k in body] + [
+        k for k in body if k not in ERROR_ELISION_ORDER and k not in ERROR_PROTECTED_KEYS
+    ]
+    for key in order:
+        if _serialized_bytes(result) + reserve <= budget:
+            break
+        if key not in body or _serialized_bytes(body[key]) <= 1024:
+            continue
+        _shrink_error_field(body, key, counts)
+        fields.append(key)
+        result["content"] = _text(_human_error(body))
+    body["elided"] = {
+        "fields": fields,
+        "counts": counts,
+        "reason": "error_budget",
+        "budget_bytes": budget,
+        "diagnostics_unavailable": True,
+    }
+    note = "! 错误诊断已截断或省略（完整诊断未保留）；结局与要用户决定的事见 code / requirements。"
+    result["content"] = _text(_human_error(body), note)
+    if _serialized_bytes(result) > budget:
+        # 单项都小、合计仍大：只留结局、怎么答与说明
+        for key in list(body):
+            if key not in ERROR_PROTECTED_KEYS and key not in {"error", "recovery"}:
+                del body[key]
+                if key not in fields:
+                    fields.append(key)
+        result["content"] = _text(_human_error(body), note)
+    return result
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -1423,8 +1610,12 @@ def call_tool(name: str, args: dict) -> dict:
             "content": _text(_human_error(payload)),
             "structuredContent": payload,
         }
-        if name == "tavotto_apply_overrides" and args.get("summary") is True:
-            _fit_apply_error_budget(result)
+        if name == "tavotto_apply_overrides":
+            # apply 的失败有自己的两档：显式摘要守 16 KiB；省略 summary 的旧调用保留完整失败（ADR 0069）
+            if args.get("summary") is True:
+                _fit_apply_error_budget(result)
+        else:
+            _fit_error_budget(result)
         return result
     if name in UI_TOOLS:
         if (result.get("structuredContent") or {}).get("mode") == bridge.BATCH_MODE:
@@ -1514,6 +1705,7 @@ class Server:
         self._deferred: deque[dict] = deque()
         self._request_seq = {"roots": 0, "elicitation": 0}
         self._input_closed = False
+        self._client_name: str | None = None
 
     def handle(self, msg: dict) -> None:
         method = msg.get("method")
@@ -1695,7 +1887,7 @@ class Server:
             name = params.get("name")
             if not isinstance(name, str):
                 raise RpcError(INVALID_PARAMS, "tools/call 缺少 name")
-            return call_tool(name, params.get("arguments") or {})
+            return self._call_tool_counted(name, params.get("arguments") or {})
         if method == "resources/list":
             return {"resources": [widget.resource_descriptor()] if widget.available() else []}
         if method == "resources/templates/list":
@@ -1713,10 +1905,47 @@ class Server:
             return {"prompts": []}
         raise RpcError(METHOD_NOT_FOUND, f"不支持的方法: {method}")
 
+    def _call_tool_counted(self, name: str, args: dict) -> dict:
+        """`call_tool` + 一条匿名用量事件（ADR 0134 §MCP）。
+
+        内嵌画布发起的调用（`origin="canvas"`）照常执行、**不记**：画布不发遥测。
+        计时只罩住工具本身：工作区授权框在 `handle` 里、在这之前就等完了，人读路径的那几秒不算。
+        事件属性全是闭集（`usage.properties`），参数与返回内容不进去；没同意 / 硬开关关着时
+        `bridge.note_tool_call` 什么都不做，也永不抛。
+        """
+        # 标记先摘掉：处理函数不认识它，也不该看到它
+        from_canvas = (
+            args.pop(ORIGIN_ARG, None) == ORIGIN_CANVAS if isinstance(args, dict) else False
+        )
+        if from_canvas:
+            return call_tool(name, args)
+        started = time.monotonic()
+        outcome = "internal_error"
+        result: dict | None = None
+        try:
+            result = call_tool(name, args)
+            outcome = "tool_error" if result.get("isError") else "ok"
+            return result
+        except RpcError:
+            outcome = "protocol_error"
+            raise
+        finally:
+            bridge.note_tool_call(
+                usage.properties(
+                    name,
+                    outcome,
+                    seconds=time.monotonic() - started,
+                    client_name=self._client_name,
+                    result=result,
+                )
+            )
+
     def initialize(self, params: dict) -> dict:
         want = params.get("protocolVersion")
         version = want if want in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
         self.initialized = True
+        info = params.get("clientInfo")
+        self._client_name = info.get("name") if isinstance(info, dict) else None
         bridge.observe_mcp_client(version, params.get("capabilities"), params.get("clientInfo"))
         caps: dict = {"tools": {"listChanged": False}}
         if widget.available():
@@ -1782,6 +2011,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         bridge.shutdown_all()
+        # 宿主一断开进程就退，发送线程是守护线程：排着的用量事件给一个有界的机会送出去。
+        # 等不完就丢（与引擎「断网 = 丢事件」同一取舍），不许拖住宿主收摊。
+        bridge.flush_usage(USAGE_FLUSH_TIMEOUT_S)
 
 
 def _self_check() -> int:

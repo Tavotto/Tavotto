@@ -70,6 +70,7 @@ import matplotlib.container as c
 | 色条 `_inside` / `_reset_locator_formatter_scale` / `_draw_all` 还在 | 翻转方向 / 开 extend 当场抛异常 |
 | `_ColorbarAxesLocator` 仍在 `extend=="neither"` 时不收回 `box_aspect` | 「开了又关」的色条比从没开过的宽 10% |
 | `axis3d._get_coord_info` / `_get_axis_line_edge_points` 还在 | 3D 轴箭头落错边 |
+| `Path3DCollection._sizes3d` / `_linewidths3d` / `_offset_zordered`、`Poly3DCollection._facecolor3d` / `_edgecolor3d`、`Axes3D.computed_zorder`、集合的 `do_3d_projection()` 还在、语义没变（ADR 0135） | 3D 散点撤销后逐点大小被打乱、曲面 alpha / 边色热态 ≠ 冷启动、zorder 宣称了却被覆盖、隐藏的 3D 图元写回 409 |
 
 ## 5. 私有 API 清单
 
@@ -110,3 +111,9 @@ python scripts/build_mcp_widget.py --check     # 只有动过 web/src 才需要�
 ```
 
 然后到网站仓库 `pnpm sync-playground`。
+
+## 9. PDF / SVG 单次绘制（`engine/teedraw`，ADR 0150）
+
+升级 matplotlib 后先跑 `tests/test_teedraw.py`（含自检）。它依赖两处内部：`backend_pdf` 模块里的 `MixedModeRenderer` 名字，
+以及 renderer 协议（`draw_*` 集合、`flipy`、`start/stop_rasterizing`、`copy_properties` 方向）。新增了 `draw_*` 方法时要补进
+`teedraw._DRAW_CALLS`。自检不过不会导出错文件（自动退回二次绘制 + 回调阻断），但会让带用户回调的图重新导不出 SVG——要尽快修。

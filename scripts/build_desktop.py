@@ -122,7 +122,12 @@ RUNTIME_MANIFEST = RUNTIME_DIR / "runtime-manifest.json"
 RUNTIME_LOCK = ROOT / "packaging" / "runtime-lock.json"
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
+from build_worker_runtime import (  # noqa: E402
+    BuildError,
+    check_runtime_dir,
+    diff_collected_runtime,
+    runtime_source_dir,
+)
 
 
 def _runtime_is_current() -> str:
@@ -223,6 +228,9 @@ def main() -> None:
     sync_version(version)
 
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
+    # 画布（MCP App UI）：`tavotto-cli mcp` 带上它，宿主里的内嵌画布才在；构建物不进库（ADR 0043），
+    # tavotto.spec 只收与本次源码一致的这一份
+    run([sys.executable, str(ROOT / "scripts" / "build_mcp_widget.py")])
     build_workerd()
     build_runtime(args.skip_runtime, args.rebuild_runtime)
     # 批准字体（U10，ADR 0060 / 0072）：不进 git，按 allowlist 的 sha256 取到 src/tavotto/resources/fonts/，
@@ -252,6 +260,20 @@ def main() -> None:
             "  packaging/tavotto.spec 的 binaries 落点与 "
             "engine/workerd_client.find_workerd() 对不上了。"
         )
+
+    # 发出去的 runtime 必须就是构建时冒烟过的那一份，逐字节。PyInstaller 6 会把 Analysis datas 里的
+    # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 `_internal/` 顶层（macOS 多出 ≈ 48 MB；Windows #1051），
+    # spec 因此在 Analysis 之后以 DATA 加入——这里量的是打包器真产出的字节，不是 spec 怎么写。
+    runtime_src = runtime_source_dir(ROOT)
+    if (runtime_src / "runtime-manifest.json").is_file():
+        changed = diff_collected_runtime(runtime_src, sidecar.parent / "_internal" / "runtime")
+        if changed:
+            raise SystemExit(
+                f"打包后的内置 runtime 与 {runtime_src} 不一致（{len(changed)} 处），例如：\n  "
+                + "\n  ".join(changed[:10])
+                + "\n  多半是 runtime 又被交给了 Analysis（packaging/tavotto.spec 文件头说明 3）。"
+            )
+        print(f"* 内置 runtime：与 {runtime_src} 逐字节一致")
 
     # console 版 CLI 同理**缺了就中止**：少了它，装完的桌面版功能一样不缺，
     # 只有「Codex 插件找不到 Tavotto」这一种表现，而那要等用户装完才发现。
@@ -283,6 +305,24 @@ def main() -> None:
             f"  stderr: {(probe.stderr or '').strip()[:400]}"
         )
     print(f"* tavotto-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
+
+    # 冻结产物里 OpenSSL 必须能加载（#1051）：`doctor` 不 import ssl，所以上面那条挡不住「_ssl 与 libcrypto 不配套」，
+    # 而那种包一启动（app 的 import 链里有 ssl）就崩。真产物、真加载。
+    ssl_probe = subprocess.run(
+        [str(cli), "--ssl-selftest"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if ssl_probe.returncode != 0:
+        raise SystemExit(
+            f"tavotto-cli --ssl-selftest 失败（退出码 {ssl_probe.returncode}）：\n"
+            f"  stdout: {(ssl_probe.stdout or '').strip()[:400]}\n"
+            f"  stderr: {(ssl_probe.stderr or '').strip()[-800:]}\n"
+            "  多半是 _ssl 与收进包的 libcrypto/libssl 版本不配套（#1051，见 scripts/frozen_ssl_gate.py）。"
+        )
+    print(f"* tavotto-cli: ssl 自检通过（{(ssl_probe.stdout or '').strip()}）")
 
     # `tavotto run` 的**打包闭包复核**（ADR 0021）。`runcli` / `runspec` /
     # `runcodes` 这几个模块是靠 PyInstaller 的字节码分析被收进去的——与

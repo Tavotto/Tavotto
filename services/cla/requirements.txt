@@ -1,0 +1,4 @@
+# Standalone trusted service only; do not add to Tavotto application dependencies.
+-r requirements-core.txt
+# Production server. Lock and scan its closure before deployment approval.
+gunicorn>=23.0.0,<24

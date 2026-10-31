@@ -3,6 +3,17 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「首次使用契约 / MCP server 与内嵌画布」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_resolver.py`、`tests/test_mcp_stdio.py`、`tests/test_codex_install_cli.py`、`tests/test_pip_config_pair.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：启动器对的形态约束（cmd 半边第一行 `@echo off`、stdout 首帧前零字节）；每个候选都真的验证 `import tavotto.engine`；venv 只在区间内的解释器上建；自管环境落后时后台重装（Windows 用 `CREATE_NO_WINDOW` 不用 DETACHED；Popen 返回且记号写入后退避 30 分钟，spawn 失败不计）、互斥只用内核文件锁；子进程除交棒外都带 `CREATE_NO_WINDOW`；它的 pip / matplotlib 缓存在 `mcp-runtime/cache`；pip 索引让 pip 自己在目标解释器里解析 install 选项（探测脚本与引擎同源），问不到报 unknown 不猜
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：stdout 首帧前零字节；每个候选真验证 `import tavotto.engine`；自管环境后台重装、互斥只用内核文件锁；子进程带 `CREATE_NO_WINDOW`
+
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 20
+改到: `mcp/launch` 与 `mcp/launch.cmd`、`codex.mcp.json`（Codex 的 MCP 配置，ADR 0109 起不叫 `.mcp.json`）的 `command`、`mcp/server.py` 的 resolver 与 `--provision`
+主题: MCP 启动器、运行时解析与自管环境 → `mcp-launcher-and-provision.md`
+必守要点: stdout 首帧前零字节；每个候选真验证 `import tavotto.engine`；自管环境后台重装、互斥只用内核文件锁
+-->
 
 ## 启动器对（原「首次使用契约」一节的「双语启动器」）
 
@@ -58,6 +69,11 @@
   Python 就没有能说话的 server，只剩技能那条路）。
 
 ## 运行时解析器与 `--provision`（原「MCP server 与内嵌画布」一节）
+
+- **第三条路：桌面版的 `tavotto-cli mcp`**（2026-10-27，「接入 AI 编辑器」）：宿主配置直接写
+  `<桌面版>/tavotto-cli mcp`，冻结产物在进程内跑**同一个** `tavotto_mcp` 服务端（`engine/mcpserve.py`），不经
+  本文件的解析器、不需要 `--provision`。解析器与候选链不变：插件（Codex / Claude Code 市场）照旧走 `mcp/server.py`；
+  pip / pipx 装的 `tavotto mcp` 没有 `codex-plugin/`，如实报 `mcp_server_not_bundled`、不降级成假的工具列表。
 
 - **启动器 `mcp/server.py` 是运行时解析器（2026-08-20 重做）**：候选链
   当前解释器 → `TAVOTTO_MCP_PYTHON`（显式，失败要指名道姓报

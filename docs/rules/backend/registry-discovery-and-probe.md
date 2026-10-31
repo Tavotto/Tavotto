@@ -2,6 +2,16 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_registry.py`、`test_foreign_source.py`、`test_discover.py`、`test_discover_problems.py`、`test_script_probe.py`、`test_asset_library.py`、`test_project_scan.py`、`test_project_scan_zero_exec.py`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：冲突只报告不裁决；probe 失败不写注册表、取得会话后复查取消且只退役当次实例；导入即扫描只读零执行、看不全 = partial 不是「没有」
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 130
+改到: `engine/registry.py`、`discover.py`、`probe.py`、`projscan.py`、`/api/registry/*`、`/api/project/scan*`
+主题: 注册表、静态扫描与试运行探测 → `registry-discovery-and-probe.md`
+必守要点: 冲突只报告不裁决；probe 失败不写注册表；导入即扫描只读零执行、看不全 = partial 不是「没有」
+-->
 
 - 素材扫描用 `os.walk` 当场剪枝隐藏目录（.venv/.git/.rendered/.qa_*）与隐藏文件，
   不是 rglob 后过滤——既是噪音也是性能（图库旁边常年躺着工具产物）。
@@ -18,6 +28,23 @@
   与常量 for 循环展开。递归扫子目录（剪掉 .venv/__pycache__/node_modules…）。
   手动生成/合并：`python -m tavotto.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
+  * **静态来源不是执行证据**：项目注册表条目仍只有 `entry/cost/notes/stems`（T09b），不写来源字段。
+    `build_draft` / `merge` 只生成草稿，不写来源历史；首次打开、静态刷新、交接与命令行登记显式传
+    `write_config(static_discovery=True)`，在项目锁内对比写入前的归属，只将成功新增的候选记到本机
+    `runconfig.captures[script].discovered`。原子写失败不记证据；重扫不重新定性已有未知 stem。
+    `discover.registered_stem_origins` 将当前归属与本机证据对应；真实捕获消耗本次产出的 discovered 候选，
+    尚未运行的候选保留。历史缺失或损坏按未知处理，完整清单规则见 [RuntimeFigureAsset](runtime-figure-assets.md)。
+  * **通配输出名的磁盘比对有界（#684）**：每份 `discover()` 报告共用一份惰性输出索引，
+    每个目录只列一次，宿主解析的所有脚本 / 模式 / 输出格式共用（目标解析器子进程各自受限）；
+    复用 `scanbudget` 的目录项、墙钟与取消预算，
+    剪掉 `PRUNE_DIRS` 与隐藏项、不跟随链接 / Windows 路径替身，层级沿用素材预算。
+    默认墙钟从第一次实际通配查找才开始，前面的枚举 / AST 不扣它；显式给的预算保留原期限。
+    预算耗尽 / 读不全时所有通配模式留在 `unresolved`，`unresolved_reasons` 给出闭集原因，
+    冲突判定前撤下整份共享索引的通配认领（含先前匹配成功的脚本），不把局部命中当完整认领；
+    各脚本自己的字面量 stem 照常可用，包括与通配结果重叠的那一个。
+    文件名与扩展名统一沿用 pathlib glob 的平台语义（Windows Unicode `IGNORECASE`、POSIX 区分大小写），
+    不是 `.lower()` / `normcase`。T02 的 `glob_disk=False` 仍然不列磁盘。
+    看护 `tests/test_discover_output_budget.py`（真目录 / 真链接、预算 / 取消 / 超时与报告原因）。
   * **读不动 / 解析不了与「确认非绘图」分开（U03，ADR 0057 §五）**：`read_source` 按 PEP 263
     声明 / BOM 解码（`tokenize.detect_encoding`），`inspect_script` 回 `{info, problem, parser,
     entry_candidates}`，problem ∈ {io_error, decode_error, syntax_error}；报告多 `problems` 表，
@@ -51,7 +78,10 @@
     由前端换语言，traceback 只进诊断详情。`session_dead` 只在退出状态说明是
     被杀 / 未知时才归 execution_cancelled（`pool.exited_on_its_own`）；进程自己
     死的归 script_probe_failed 并带退出码的解释——把一次真崩溃报成「被中断」
-    是撒谎。**失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
+    是撒谎。通用 `script_probe_failed` 在 `params.worker_code` 保留底层稳定原因码，
+    消费方据此提供任务特定的修正指导，不解析本地化文案 / traceback 来猜原因。
+    写入拒绝另带 `params.write_violation`（worker 已相对化的 path / event，有界）；转换反馈沿应用 runner 传递这份现场，不能复用 MCP 的不同写入范围建议。
+    **失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
     登记时报 `multiple_stem_conflict` 而不是静默抢走（裁决走 PUT
     /api/registry 的手工路——那才是用户显式指认；归属脚本已不存在的死条目
     照旧顺畅重登记）。
@@ -59,7 +89,10 @@
     `_PROBES` 按 (项目 id, script) 登记在跑的试运行（第二个请求 409
     `probe_in_progress`）；`POST /api/registry/probe/cancel` 置取消
     Event 并 `pool.force_cancel`（**当场 kill**，不走优雅关停——shutdown
-    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。
+    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。**按 owner（T09b）**：
+    只杀这次试运行取到、自己建的那条（`expected_worker`，所有权来自
+    `pool.acquired_here`），别人正在用的同键会话 / 同键替换者不碰——全文在
+    `preparation-and-receipts.md`「准备会话」末段。
     `probe(should_cancel=...)` 一旦判取消**不再尝试下一个 entry**，被杀
     worker 的失败如实归类 `execution_cancelled`（不报「脚本坏了」）；
     取消可能先于 worker 入池：共享 build 编排在初次 / 环境 fallback 每次取得会话后、
@@ -106,7 +139,7 @@
   逐字不变（符号链接目录照旧会被下探，既有行为）。
 - **零执行（可证明）**：`projscan.py` 不 import `pool` / `preparation` / `deprepair` / `subprocess` 等（AST 门禁）；解析
   永远 `target_python=None`（宿主判语法错误 = `syntax_error` + `parser=None`，**未核验**）；环境线索只读磁盘记录
-  （`userenvs.discover(ask_login_shell=False)`、`projectenv.discover`、`remembered_record`——记住的解释器只 `stat`），
+  （`userenvs.discover(ask_login_shell=None)`——只读登录 shell **已被明确问过**的缓存答案（T05 的检查动作才会去问）、`projectenv.discover`、`remembered_record`——记住的解释器只 `stat`），
   不问登录 shell、不体检；扫描期间 `Popen` / `os.exec*` / `posix_spawn*` / `socket.connect` 被换成会炸的桩仍通过。
   **有副作用、扫描路径不得调用**：`pool.resolve_worker_python`（任何形态，含 `discover=False`——有记住的解释器时它仍会
   `import matplotlib`）、`preparation.plan_for`、`deprepair.decide_environment` / `gate` / `joint_plan_for`、
@@ -127,6 +160,14 @@
 - **目标**：绘图证据（已登记 / 静态产图 / 动态图名）才是 `plot`；工具 / 测试 / 样式模块是 `auxiliary`，不默认当目标、缺包
   缺参不阻塞别的绘图脚本；读不动 / 没核验的是 `unknown`（可手动选）。默认目标只在**恰好一个尚未连接的绘图脚本**时给；
   多个就让用户选（`choose_target`），不同作用域（最近的依赖声明目录）的 requirements 不混装。
+  **「已连接」= 登记了且真有可编辑的图（T11）**：`projscan._linked_scripts`——登记的图名里至少一个在项目里有同名图文件，或被某次执行
+  捕获过（`probe.was_captured`，与 `unlinked_stems` 同一判据）；目标多一个 `linked` 字段。打开项目时静态扫描先写进注册表的字面量图名
+  不算（脚本一次没跑、什么都打不开）——否则只有脚本的项目报 `already_connected`（「图可以直接编辑」）、首跑入口被藏起来。
+  只读：文件名比对 + 数据目录 cache 元数据；`linked` 集合进 `evidence_revision`。**判据唯一出处 `probe.linked_scan`**（`linked_scripts` 只取集合；扫描路径注入不跟随链接的探测、相对 stem 校验与预算），第二个消费者是
+  素材库脚本清单：`GET /api/registry` 的 `all_scripts[].linked`（T13b：修前前端只看 `registered`，从没运行的脚本显示「已关联 1 张图」）；
+  看护 `tests/test_script_probe.py::test_all_scripts_linked_uses_the_scan_predicate`。
+  **带运行配置的 cache 只在该配置此刻还能运行时才算证据**（`runconfig.executable_configs_of`）：敏感配置重启后只剩 ID 占位（`argv is None`，打开会得到 `run_config_secret_missing`）、登记读不出 / 来自新版本（`run_config_unreadable` / 新版本 `run_config_unsupported`）时素材清单（`runtimeasset.list_assets`）整个报错、连无参数变体也打不开，该脚本**整个**当没有证据（`executable_configs_of` 原样抛 `RunConfigError`，`probe.captured_stems` 接住回空集；`register_probed` 也因此不声称「已不再关联」），不报 `already_connected`、不藏准备入口。
+  **连接性是三态**：预算 / 取消 / 超时在检查前或检查中耗尽（任何原因、任何未连接个数）时 `linkage_known=False`，每个目标的 `linked` 是 `None`（未知，不是临时的 True/False），`target_choice` 一律 `incomplete`、`phase` 为 `action_required / scan_incomplete`，不得落成 `connected` / `single` / `ambiguous`，也不给 `prepare` 动作（仍可重扫 / 手选）——不要再按未连接个数分支。
 - **报告**：`phase` 是准备会话词汇的子集（`scanning` / `awaiting_confirmation` / `awaiting_configuration` / `completed` /
   `action_required` / `cancelled`，子集关系由测试钉着），`outcome` 单列事实；`checks` 里环境与依赖恒为 `unknown`
   （`environment.verified` 恒 False，不给推荐），依赖只说声明文件与条数（不带原文行）。`evidence_revision` 是内容证据的
@@ -145,3 +186,54 @@
 `/api/registry/probe` 每次落地（成功或失败）冻结一份 `probe.diagnostic_projection`（`kind=script_run`），响应多一个可选键
 `diagnostic: {kind, ref}`（老客户端忽略）。投影只取：终局词汇（`ready` / `error` / `cancelled`）、`error.code`、argv 个数与
 `rc_…` 引用、捕获张数、耗时；`error.message` / `params` / `traceback`、`stems`、`entry`、`descriptors`、`stem_conflicts` 不进。
+
+## SVG 图片素材（2026-10-18）
+
+`project_refresh.SVG_EXT` 是静态 SVG 的素材边界。只读零执行；SVG 与同名 PDF 分别保留。
+`svgasset.read` 有界读取并复用 `rendercore.svgcheck.parse_svg` 的完整静态白名单。
+只删除 Matplotlib 完全匹配的惰性标准 DTD，任何剩余 DTD、实体、外部资源和活动内容仍拒绝；
+响应只发送校验过的同一份字节，带 sandbox CSP 与 nosniff。两种已有图片端点均先经项目
+路径与会话认证，文件变化后重新校验。物理单位与 viewBox 尺寸换算使用 SVG 的 96 px/in 口径。
+
+只做整图预览、摆放和原图 SVG 导出，不宣称静态 SVG 已有跨格式渲染闭包；不支持的导出
+明确报错。看护：`tests/test_svg_assets.py`，含去掉静态白名单后的反证。
+
+## 磁盘文件 → 图：注册表的 `artifacts`（#1251，2026-10-22）
+
+同一脚本里两张**不同**的图写同 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙，乙以 `panel-2` 补认领，#1250）时，
+文件名 stem 回答不了「这个文件是哪张图写的」。注册表每个脚本条目因此多一个**可选**字段
+`artifacts: {项目相对路径(POSIX): stem}`：
+
+- **写入**：`probe.register_probed`（试运行 / 准备会话的登记）与改指表对账（`app._resync_registration`）把一次执行描述符里的
+  `original_artifact`（#1250 起按这张图自己存过的格式绑定）经 `probe.descriptor_artifacts` 传给 `discover.register(artifacts=…)`。
+  默认整条替换（以这次执行为准，空映射也替换——不沿用陈旧文件）；带运行配置的执行 `append` 并进去（同一张图换了文件时新的让位旧的）。
+  **没有执行证据的写入（PUT /api/registry 手工裁决、AI 新建脚本）不传 `artifacts`，沿用已知映射**，只按本次 stems 修剪；
+  被别的脚本认领走的 stem / 文件，原脚本里的映射随之摘掉（一个文件只属于一个脚本）。
+  **「有歧义就不记」的单一判据是 `registry.unambiguous_artifacts`**（读路径 `load_data` 用它）：同一路径被两个及以上脚本认领就整条不要，退回按文件名 stem，与 JSON 里脚本键的顺序无关，第三个认领者也加不回来；`clean_artifacts` 对同一脚本内归一后同名却指向不同图的键同样丢弃。写路径 `discover.register` 靠「本次执行写出了它，别处认领摘掉」保证落盘文件里没有争用，所以读到争用只会来自手写 / 合并出来的文件。没有映射时文件字节与此前逐字节一致。
+- **读取**：`Registry.for_artifact(rel)` 是**「磁盘文件 → 图」的唯一解析出处**——先查 `artifacts`，查不到再退回按文件名 stem
+  （老注册表、手写注册表、静态起草登记的图都没有这张表）。app 层包成 `_disk_panel_rel` / `_disk_panel`，凡主语是「磁盘上的这个文件」的解析
+  （素材清单、渲染/写回/历史恢复的 worker 解析 `_resolve_engine_worker`、`update_source`、两图同步、AI 目标、准备目标描述符、作废重建、
+  `_has_runnable_script`、交接结论表的 stem）都走它，不再各自 `for_stem(path.stem)`。主语是 stem 的（runtime 素材、worker 返回的 stem、
+  `_stem_known`）才直接 `for_stem`。新增消费点照此判断，别回到 `for_stem(path.stem)`。
+- **兼容**：新版本读没有该字段的老文件 = 行为与按 stem 完全一致；旧版本读新文件，`load_data` 只取已知键，未知键忽略（旧版本整条重登记该脚本时会丢掉
+  映射，回落按 stem，不崩）。
+  `Registry.entries()` 在该脚本有映射时带 `artifacts` 键（与磁盘条目同形）：`project_refresh` 用「登记时的条目 == 此刻 `entries()`」判一次执行是否仍有效，少这个键会让刚跑完的活 worker 被当成过期收掉（`tests/test_export_svg.py` 的 EPS 同基准用例钉着）。表是派生数据，坏条目（非字符串 / stem 不在本脚本 stems 里 / 同一路径被两个脚本认领）静默丢弃，不让注册表打不开。
+- **写回**：打开 `panel.pdf` 得到乙（`panel-2`），编辑与基线归乙；`_write_source_files(stem=…)` 的目标仍是 `src` 同名的 `WRITE_BACK_EXT` 文件，
+  经 `_own_write_back_targets` 去掉别的图的原件（`panel.png`），只写 `panel.pdf`。`write_back_foreign_file` 守卫不变（`src` 本身是别的图的原件才拒）。
+- **一张图的全部文件**：描述符新增可选字段 `artifacts`（该图写过的**所有**磁盘文件，含 `original_artifact`；`original_artifact` 语义不变，仍是首选原件与写回目标）。
+  捕获层 `figsession.artifacts_of` 与 `original_artifact` 同源（`figcapture.find_artifacts`：它写文件时的 stem、只认它存过的格式、每个存在的都收；
+  不知道格式时只取首个，不把别的图的文件算进来）。乙存 `panel.pdf` + `panel.svg` 时两个都记到 `panel-2`。空时 payload 里没有这个键（旧描述符字节不变）；
+  worker ↔ 主进程协议是加字段，旧一侧忽略，没有严格同源对。`probe.descriptor_artifacts` 汇总各图的文件：**同一路径被两张不同的图都声称（都存过 `panel.pdf`）时不记**
+  ——那里没有「谁最后写」的证据（该判据在捕获层 `note_savefig_writer`，#1250 的原件归属只按「自己存过的格式」绑定），不记 = 退回按文件名 stem，不猜。
+- **CLI 与 app 的回执键**：`tavotto open <panel.pdf>` 的目标 stem 由 `handoff.resolve_target` 经 `Registry.artifact_stem` 解出（同脚本另一张图写的 `panel.pdf` → `panel-2`），
+  app 记交接回执（`_handoff_target_stem` / display-ack）用的是 `_disk_panel_rel` → 同一个 `Registry.artifact_stem`。**CLI 轮询的键 == app 记账的键，由这一个函数算出，不许各写一份。**
+  CLI 打开 `?open=panel-2` 时前端按 stem 没有磁盘面板（`panel-2` 不是文件名），落到 runtime 素材 `panel-2`，这就是乙。注册表不存在 / 读不了 = 文件名 stem（与此前一致，损坏的报错仍由 `ensure_registered` 给）。
+- **素材盘点与交接落地（真机验证补的回归）**：`project_refresh.iter_assets` 里「同目录同名 PDF 压掉位图」的「同名」= 同一张图（`figure_key_of` → `Registry.artifact_stem`），
+  不是文件名 stem 相同：注册表说 `panel.png`（甲）与 `panel.pdf`（乙）是两张图时各是一份素材，同一张图存的多种格式照旧矢量优先。`/api/panels` 在 stem 与文件名 stem
+  不同时才发 `stem`（没有映射的项目响应不变）；前端凡主语是「这张图」的匹配都走 `lib/panelStem.ts`（`panelStemOf` / `panelStemOfFileId`，`stem ?? 文件名 stem`）：`openRequest.findByStem`、Figure 选择器、素材库「同源」配对、`useServerEvents` 的 `panel.file_changed`（stems → 文档面板，否则乙不会标 stale）、`pngRebuild`；主语是文件名的（导出文件名、写回目标文件名与报错里的名字）仍用 `stemOf`。**前端不拿异步加载的素材清单去推断「这个文件是哪张图」**：`panel.file_changed` 事件由后端 `_panel_files_of_stems`（`figure_key_of` / `Registry.artifact_stem`，与素材盘点同一出处）直接带上这些图在磁盘上的**所有**文件 id（`files`，与 `/api/panels` 的 `id` 相同；含被同一张图的 PDF 让位隐藏的位图——`iter_assets(include_shadowed=True)`，排版里留着的 PNG 面板不能因为素材盘点不再列它就收不到事件；同 stem 另一张图的文件不算）；**只发完整的列表**：枚举用 `strict=True`，任何一处读不动就不带 `files`（前端退回按文件名 stem），不「部分带」、不发空数组。`artifacts` 的键是**磁盘上的真实文件名**（`figcapture.find_artifacts` 列目录取，扩展名大小写原样，`panel.PDF`），与素材盘点的 id 逐字相同，`for_artifact` 精确匹配、不做大小写归一（只有一个出处：真实文件名）；判「是不是真磁盘」用 import 时的 `_DISK_ISFILE`，不拿 `os.path.isfile` 模块属性比（worker 沙箱会替换它）；列目录用 import 时捕获的真 `os.scandir`（`_DISK_SCANDIR`）——worker 的 `install_probe_observer` 会把 `os.scandir` / `listdir` 换成记账版，Tavotto 自己找原件的列目录不是用户脚本的探测，不能进缺失输入诊断；CLI `tavotto open <手输路径>` 先经 `handoff._real_rel` 逐级列目录规范成磁盘真实文件名（精确同名优先，否则取唯一的不区分大小写匹配）再查映射，前端非 runtime 面板按 fileId 精确匹配，不依赖 `assetStore`、没有跨事件状态；事件没有 `files`（老后端 / 后端算不出）才退回按文件名 stem；`pngRebuild`（重建为可编辑图）的 stem 由后端 `GET /api/panel-stem?id=<fileId>`（`Registry.artifact_stem`）给出权威值——**不从素材清单取**：被同一张图的 PDF 让位隐藏的 PNG 不在 `/api/panels` 里（e2e `guarded-png-activation` 的单图场景就是这样），清单也可能被试运行的刷新清空；取不到就不猜、交给 Figure 选择器，绝不退回文件名 stem；这一步 await 在 guard / origin 捕获之后、回来立刻复核，所以
+  `?open=panel` 落到甲、`?open=panel-2` 落到乙，**两者都落在磁盘素材上**，CLI 等的键仍是 `Registry.artifact_stem` 算的那个。协议没变，老 `?open=<stem>` 链接照旧。
+  `runtimeasset.has_disk_original` 按 `artifacts` 判一张图有没有自己的原件，乙不再同时以磁盘素材与 runtime 素材双列（没有映射条目的图仍按文件名找）。
+- **已知未覆盖**：同一路径被两张图都写过时（见上）退回按文件名 stem，不论谁最后写。
+看护 `tests/test_artifact_stem_map.py`（注册表 / register 语义 / 假 worker 端点 / 真 worker 同 stem 夹具登记→解析）。
+- **`/api/registry` 的 `foreign_scripts`（ADR 0143 修订「项目内入口」）**：项目内认得出语言的 `.R` / `.r` / `.m`（`discover.iter_foreign_scripts` = `_iter_py` 换后缀，
+  同一套剪枝；`sourcelang.detect_file` 判语言，判不出的不列）。**独立于 `all_scripts`**：它们不进探测、依赖准备、可运行脚本判据，也不被静态起草 / 注册表认领。

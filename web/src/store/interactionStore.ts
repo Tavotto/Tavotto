@@ -5,13 +5,43 @@ import type { Rect } from '@/lib/geometry'
 
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
-  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element'
+  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge' | 'figureedge'
 
 export type DraftPreview = Rect & {
   tool: string
   start?: { x: number; y: number }
   end?: { x: number; y: number }
 }
+
+export interface ElementPreview {
+  boxes: Record<string, Rect4>
+  group?: Rect4
+  /** 只改图框尺寸时用矩形表达目标，暂不描画引擎的旧圆角路径。 */
+  resizingGid?: string
+}
+
+/** 一个吸上的轴：`v` 是线（页面 mm），`self` 是自身所属框，`target` 是别的图里被吸上的元素框 */
+export interface SnapFeedback {
+  axis: 'x' | 'y'
+  v: number
+  self: Rect
+  target?: Rect
+}
+
+const NO_FEEDBACK: SnapFeedback[] = []
+
+const sameRect = (a: Rect | undefined, b: Rect | undefined) =>
+  a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h)
+
+const sameFeedback = (a: SnapFeedback[], b: SnapFeedback[]) =>
+  a.length === b.length &&
+  a.every(
+    (f, i) =>
+      f.axis === b[i].axis &&
+      f.v === b[i].v &&
+      sameRect(f.self, b[i].self) &&
+      sameRect(f.target, b[i].target),
+  )
 
 interface InteractionState {
   kind: DragKind
@@ -26,6 +56,11 @@ interface InteractionState {
   /** 命中的吸附参考线（mm） */
   snapXs: number[]
   snapYs: number[]
+  /**
+   * 吸附反馈（ADR 0128 §四）：每个吸上的轴一项——自身所属框（边加粗 + 虚线框）与，目标是别的图的
+   * 元素时，对方的框。与 `snapXs/snapYs` 同一生命周期；不带反馈的吸附（画布对象平移等）为空。
+   */
+  snapFeedback: SnapFeedback[]
   hoverId: string | null
   /** 图内元素编辑：hover 中的 gid */
   hoverGid: string | null
@@ -37,7 +72,7 @@ interface InteractionState {
    * 子图拖动 / 缩放的预览框（figure 分数、top-origin），按 gid 索引。
    * 成组缩放时同时给出组框，单个子图拖动时只有 boxes 里的一项。
    */
-  elementPreview: { boxes: Record<string, Rect4>; group?: Rect4 } | null
+  elementPreview: ElementPreview | null
   /** 光标位置（mm），状态栏显示 */
   cursor: { x: number; y: number } | null
   /**
@@ -48,20 +83,42 @@ interface InteractionState {
   nudge: { dx: number; dy: number } | null
   /** 从标尺拖出中的参考线 */
   pendingGuide: { axis: 'x' | 'y'; pos: number } | null
+  /**
+   * 拖页面边中的尺寸标注状态：哪条边、吸上了哪一档栏宽（`snapLabel` 是已翻好的「规范 栏名」）；
+   * `rolls` = 这一帧的读数是离散跳变（吸上 / 离开栏宽、⌥ 按下 / 松开）→ 会滚的数字滚过去，
+   * 逐 mm 的连续拖动为 false → 读数即时换（与缩放读数同一条规矩）。
+   * 只是画布叠加层的读数，不进文档；尺寸本身读文档（手势事务里每帧在写）。
+   */
+  pageEdge: { edge: 'l' | 'r' | 't' | 'b'; snapLabel: string | null; rolls: boolean } | null
+  /** 单图编辑拖图边中的虚线预览框（页面 mm）：拖动中不写文档，松手才一次 `setFigureFrame` */
+  figureEdgeBox: { x: number; y: number; w: number; h: number } | null
+  /**
+   * 拖图边松手后、新图幅的渲染回来之前：这张图的目标框（页面 mm）。画布上旧图与背纸先收起来、只留虚线框占位
+   * （旧图按旧尺寸画在新位置上会错位闪一下）；新图回来**且面板几何已追上目标图幅**（或撤销 / 超时 / 面板没了）才清掉；期间该面板的选区轮廓与缩放手柄也压住。**不随 `end()` 清**，由 `figureEdgeDrag` 管。
+   */
+  figureFramePending: {
+    id: string
+    box: { x: number; y: number; w: number; h: number }
+    /** 目标图幅（脚本 mm）：面板的 nativeW / nativeH 追上它才算新图落定 */
+    sizeMm: [number, number]
+  } | null
 
   begin: (kind: DragKind) => void
   end: () => void
   setMarquee: (r: Rect | null) => void
   setDraft: (d: DraftPreview | null) => void
-  setSnap: (xs: number[], ys: number[]) => void
+  setSnap: (xs: number[], ys: number[], feedback?: SnapFeedback[]) => void
   setHover: (id: string | null) => void
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
   setArrowPreview: (p: { gid: string; a: [number, number]; b: [number, number] } | null) => void
-  setElementPreview: (p: { boxes: Record<string, Rect4>; group?: Rect4 } | null) => void
+  setElementPreview: (p: ElementPreview | null) => void
   setCursor: (c: { x: number; y: number } | null) => void
   setNudge: (n: { dx: number; dy: number } | null) => void
   setPendingGuide: (g: { axis: 'x' | 'y'; pos: number } | null) => void
+  setPageEdge: (p: InteractionState['pageEdge']) => void
+  setFigureEdgeBox: (b: InteractionState['figureEdgeBox']) => void
+  setFigureFramePending: (p: InteractionState['figureFramePending']) => void
 }
 
 export const useInteractionStore = create<InteractionState>((set) => ({
@@ -70,6 +127,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   draft: null,
   snapXs: [],
   snapYs: [],
+  snapFeedback: [],
   hoverId: null,
   hoverGid: null,
   gidDrag: null,
@@ -78,6 +136,9 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   cursor: null,
   nudge: null,
   pendingGuide: null,
+  pageEdge: null,
+  figureEdgeBox: null,
+  figureFramePending: null,
 
   // 一次拖动 = 性能探针的一个片段（ADR 0075）；没在录制时两个调用都是空转
   begin: (kind) => {
@@ -92,7 +153,10 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       draft: null,
       snapXs: [],
       snapYs: [],
+      snapFeedback: [],
       pendingGuide: null,
+      pageEdge: null,
+      figureEdgeBox: null,
       gidDrag: null,
       arrowPreview: null,
       elementPreview: null,
@@ -100,14 +164,15 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   },
   setMarquee: (marquee) => set({ marquee }),
   setDraft: (draft) => set({ draft }),
-  setSnap: (snapXs, snapYs) =>
+  setSnap: (snapXs, snapYs, snapFeedback = NO_FEEDBACK) =>
     set((s) =>
       s.snapXs.length === snapXs.length &&
       s.snapYs.length === snapYs.length &&
       s.snapXs.every((v, i) => v === snapXs[i]) &&
-      s.snapYs.every((v, i) => v === snapYs[i])
+      s.snapYs.every((v, i) => v === snapYs[i]) &&
+      sameFeedback(s.snapFeedback, snapFeedback)
         ? s
-        : { snapXs, snapYs },
+        : { snapXs, snapYs, snapFeedback },
     ),
   setHover: (hoverId) => set((s) => (s.hoverId === hoverId ? s : { hoverId })),
   setHoverGid: (hoverGid) => set((s) => (s.hoverGid === hoverGid ? s : { hoverGid })),
@@ -117,4 +182,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setCursor: (cursor) => set({ cursor }),
   setNudge: (nudge) => set({ nudge }),
   setPendingGuide: (pendingGuide) => set({ pendingGuide }),
+  setPageEdge: (pageEdge) => set({ pageEdge }),
+  setFigureEdgeBox: (figureEdgeBox) => set({ figureEdgeBox }),
+  setFigureFramePending: (figureFramePending) => set({ figureFramePending }),
 }))

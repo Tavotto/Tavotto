@@ -207,6 +207,29 @@ class NativeRelay:
             )
         return hello
 
+    def adopt_child(
+        self, timeout: float, *, watch=None, timeout_code: str = runcodes.NATIVE_ATTACH_TIMEOUT
+    ) -> tuple[socket.socket, dict]:
+        """只要 child 一侧：**桌面自己 spawn 用户进程**时（ADR 0125）没有 CLI、也没有第二条 attach 连接。
+
+        认证 accept 与 `wait_for_child` 是同一份（token 比对、认证失败不收摊、`watch` 盯子进程）；
+        不同的只有两点：不开 attach 侧（关掉它的 listener），以及握手之后**把已认证的 socket 交给调用方**
+        （`NativeTransport` 的单 reader 接手），relay 此后不再持有它，`close()` 也不会替调用方关。
+        返回 `(socket, 去掉 token 的握手帧)`。本方法之后本模块仍然一个字节都不转发。
+        """
+        _quiet_close(self._attach_listener)
+        conn, hello = self._accept_authenticated(
+            self._child_listener,
+            self.child_token,
+            side="child",
+            timeout=timeout,
+            hello_key=HELLO_KEY,
+            timeout_code=timeout_code,
+            watch=watch,
+        )
+        _quiet_close(self._child_listener)
+        return conn, hello
+
     # ------------------------------------------------------------------
     # 转发
     # ------------------------------------------------------------------

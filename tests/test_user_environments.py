@@ -19,11 +19,18 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import deprepair, pool as engine_pool, projectenv, userenvs
+from tavotto.engine import deprepair, envlease, pool as engine_pool, projectenv, userenvs
 
 pytest_plugins = ("support.dependency_repair",)
 
 POSIX = pytest.mark.skipif(os.name == "nt", reason="登录 shell / bin/python 布局只在 POSIX 上")
+
+
+@pytest.fixture(autouse=True)
+def _legacy_silent_adoption(monkeypatch):
+    """本文件测的是 ADR 0057 / 0079 / 0107 的**静默采用**机制——ADR 0114 把它收进兼容开关保留一版
+    （`TAVOTTO_ENV_ADOPTION=auto`）。默认的确认模式（建议 → 检查 → 采用）见 `test_environment_adoption.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
 
 
 @pytest.fixture(autouse=True)
@@ -274,6 +281,13 @@ def adopt_env(tmp_path, monkeypatch):
     monkeypatch.setattr(deprepair, "_adoption_listeners", [lambda p, e: heard.append((p, e))])
     monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: "")
     monkeypatch.setattr(engine_pool.config, "worker_python", lambda: "")
+    # 自动采用在租约内对选中的候选现量一次（Codex r4254586851）；这些候选是假解释器，缺省替身说「此刻仍满足」，
+    # 要量出「已被改掉」的用例自己再换替身
+    monkeypatch.setattr(
+        userenvs,
+        "evaluate",
+        lambda cands, needed, unknown, **kw: [_entry(c["python"], c["source"]) for c in cands],
+    )
     return project, env, heard
 
 
@@ -358,10 +372,12 @@ def test_offer_excludes_the_interpreter_that_is_missing_things(tmp_path, monkeyp
             {"python": str(good), "source": userenvs.SOURCE_CONDA, "label": "good"},
         ],
     )
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [(str(good), "system")])
+    monkeypatch.setattr(
+        engine_pool, "system_python_candidates", lambda **_: [(str(good), "system")]
+    )
     probed = []
 
-    def fake_eval(cands, needed, unknown):
+    def fake_eval(cands, needed, unknown, **kw):
         probed.extend(c["python"] for c in cands)
         return [_entry(c["python"], c["source"], label=c["label"]) for c in cands]
 
@@ -409,6 +425,127 @@ def test_a_user_decision_landing_during_the_decision_is_not_overwritten(adopt_en
     assert verdicts == [True], "尺子是活的：判的那一刻确实允许"
     record = projectenv.remembered_record(project)
     assert record["mode"] == projectenv.MODE_DEFAULT_CHAIN, record
+    assert heard == []
+
+
+def test_auto_adopt_holds_the_environment_through_the_commit(adopt_env, monkeypatch):
+    """自动采用的提交整段占住目标环境（`envlease.inspecting`，与手动采用同一条）：写入决定的那一刻，另一个项目
+    要往这个环境装包会被拒。同步点：`remember` 一进来就让别的项目来装，不用 sleep。
+    也钉住不死锁：持租约期间 `remember` 不回头要安装租约（要的话这里会被 EnvironmentBusy 拒掉、采用不成立）。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    real = projectenv.remember
+    install: list = []
+
+    def remember_while_another_project_installs(*a, **k):
+        try:
+            with envlease.mutating("other-project-install", str(env)):
+                install.append("started")
+        except envlease.EnvironmentBusy as busy:
+            install.append(busy.code)
+        return real(*a, **k)
+
+    monkeypatch.setattr(projectenv, "remember", remember_while_another_project_installs)
+    got = deprepair.decide_environment(project, "fig.py")
+    assert install == [envlease.ENVIRONMENT_MUTATING]
+    assert got is not None and projectenv.remembered_record(project)["path"] == str(env)
+    with envlease.mutating("later-install", str(env)):  # 采用结束，租约放掉
+        pass
+
+
+def test_auto_adopt_refuses_an_environment_an_install_took_after_the_filter(adopt_env, monkeypatch):
+    """挑选时的 `is_mutating` 过滤是瞬时的：过滤放行之后装包才开始，决定不能落在装包中的环境上。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    monkeypatch.setattr(envlease, "is_mutating", lambda python: False)  # 过滤时还没人在装
+    with envlease.mutating("other-project-install", str(env)):  # 过滤之后、提交之前开始装
+        assert deprepair.decide_environment(project, "fig.py") is None
+    assert projectenv.remembered_record(project) is None
+    assert heard == []
+
+
+def _deferred_world(adopt_env, monkeypatch, verdicts):
+    """两个只读过 dist-info 的候选（`health_deferred`）；`userenvs.evaluate` 的替身按调用次序给结论：
+    第 n 次调用对每个候选回 `verdicts[n]` 里它的 satisfies（缺省 True），并记下 `use_cache`。"""
+    project, env, heard = adopt_env
+    other = _python(env.parent.parent / "lab2")
+    envs = [
+        {
+            **_entry(str(env), userenvs.SOURCE_LOGIN_SHELL),
+            "health_deferred": True,
+            "satisfies": None,
+        },
+        {**_entry(str(other), userenvs.SOURCE_CONDA), "health_deferred": True, "satisfies": None},
+    ]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    calls: list = []
+
+    def evaluate(cands, needed, unknown, **kw):
+        n = len(calls)
+        calls.append(([c["python"] for c in cands], kw.get("use_cache", True)))
+        said = verdicts[min(n, len(verdicts) - 1)]
+        return [
+            _entry(
+                c["python"],
+                c["source"],
+                missing=() if said.get(c["python"], said.get("*", True)) else ("x",),
+            )
+            for c in cands
+        ]
+
+    monkeypatch.setattr(userenvs, "evaluate", evaluate)
+    return project, str(env), str(other), calls
+
+
+def test_auto_adopt_reprobes_a_deferred_candidate_inside_the_lease(adopt_env, monkeypatch):
+    """挑选时的真量（租约外）只用来排序：它之后、拿租约之前另一个项目的卸载已经做完，租约内的复核量不过 → 不采用
+    这一个，退到复核仍满足的下一个（Codex r4254448384）。"""
+    env_path = str(adopt_env[1])
+    verdicts = [{}, {env_path: False}]  # 第一次（挑选）都满足；第二次（租约内复核）第一个已被卸掉
+    project, first, second, calls = _deferred_world(adopt_env, monkeypatch, verdicts)
+    got = deprepair.decide_environment(project, "fig.py")
+    assert got is not None and got["python"] == second
+    assert projectenv.remembered_record(project)["path"] == second
+    assert [use_cache for _py, use_cache in calls] == [True, False, False]
+
+
+def test_auto_adopt_adopts_a_deferred_candidate_that_still_fits_after_the_reprobe(
+    adopt_env, monkeypatch
+):
+    """对照：环境没被改动，租约内复核照样满足 → 照常采用排名第一的。"""
+    project, first, second, calls = _deferred_world(adopt_env, monkeypatch, [{}])
+    got = deprepair.decide_environment(project, "fig.py")
+    assert got is not None and got["python"] == first
+    assert [use_cache for _py, use_cache in calls] == [True, False]
+
+
+def test_auto_adopt_adopts_nothing_when_every_deferred_candidate_fails_the_reprobe(
+    adopt_env, monkeypatch
+):
+    verdicts = [{}, {"*": False}]
+    project, first, second, calls = _deferred_world(adopt_env, monkeypatch, verdicts)
+    assert deprepair.decide_environment(project, "fig.py") is None
+    assert projectenv.remembered_record(project) is None
+
+
+def test_auto_adopt_reprobes_a_cached_candidate_inside_the_lease_too(adopt_env, monkeypatch):
+    """不只延迟候选：结论来自先前 import 缓存的普通候选（`health_deferred` 未置），在租约前被另一个项目卸掉了包，
+    租约内的复核同样量不过 → 不采用（Codex r4254586851）。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]  # 缓存结论：satisfies=True
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    calls: list = []
+
+    def evaluate(cands, needed, unknown, **kw):
+        calls.append(kw.get("use_cache", True))
+        return [_entry(c["python"], c["source"], missing=("x",)) for c in cands]
+
+    monkeypatch.setattr(userenvs, "evaluate", evaluate)
+    assert deprepair.decide_environment(project, "fig.py") is None
+    assert calls == [False], "租约内现量一次，且不读缓存"
+    assert projectenv.remembered_record(project) is None
     assert heard == []
 
 
@@ -652,7 +789,7 @@ def adopt_api(project, client, monkeypatch, tmp_path):
     )
     state = {"has_openpyxl": True}
 
-    def probe(python, module=None, *, modules=()):
+    def probe(python, module=None, *, modules=(), **kw):
         return {
             "ok": True,
             "code": "",
@@ -711,7 +848,9 @@ def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monk
         "modules_ok": {"openpyxl": True},
     }
     imports = ("openpyxl",)
-    key = (userenvs._key("/lab/python"), imports, False)  # 第三维：是不是按内置 runtime 的环境量的
+    key = userenvs._cache_key(
+        "/lab/python", imports, False
+    )  # 路径 + 环境代 + 要量的 import + 是不是内置
 
     class Racy(dict):
         def pop(self, k, *default):
@@ -781,7 +920,7 @@ def test_the_recheck_measures_everything_the_script_needs_not_only_the_current_g
     )
     probed = []
 
-    def probe(python, module=None, *, modules=()):
+    def probe(python, module=None, *, modules=(), **kw):
         probed.append(tuple(modules))
         return {
             "ok": True,
@@ -864,6 +1003,18 @@ def conda_layout(tmp_path, home, monkeypatch):
     base = venvfixture.make_project_venv(home, "miniforge3", python=_WORKER_PY)
     (base / "envs").mkdir()
     lab = venvfixture.make_project_venv(base / "envs", "lab", python=_WORKER_PY)
+    # 真实 Conda 环境的包就在它的 site-packages 里；夹具 venv 靠 .pth 里的 `import` 行把宿主接进来——那是可执行 .pth，运行之前的
+    # 隔离体检按设计不执行它。这个用例的意图是 Conda 发现，不是 .pth 语义：换成普通路径行
+    for env in (base, lab):
+        site_dir = (
+            env / "Lib" / "site-packages"
+            if (env / "Lib" / "site-packages").is_dir()
+            else next((env / "lib").glob("python*")) / "site-packages"
+        )  # 只看这个环境自己的（base 的 rglob 会先撞上嵌套的 envs/lab）
+        for pth in site_dir.glob("_tavotto_fixture_host_site*.pth"):
+            pth.unlink()
+        host = [p for p in sys.path if p and "site-packages" in p and os.path.isdir(p)]
+        (site_dir / "zz_host_paths.pth").write_text("\n".join(host) + "\n", encoding="utf-8")
     site = next(p for p in lab.rglob("site-packages") if p.is_dir())
     (site / "qa_probe_pkg").mkdir()
     (site / "qa_probe_pkg" / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
@@ -873,7 +1024,7 @@ def conda_layout(tmp_path, home, monkeypatch):
     project.mkdir()
     (project / "environment.yml").write_text("name: lab\ndependencies:\n  - matplotlib\n")
     # 这台机器上真实的系统 Python 不进候选：结果不许随机器变
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
     discovered = []
     real_discover = userenvs.discover
     monkeypatch.setattr(userenvs, "discover", lambda *a: discovered.append(a) or real_discover(*a))
@@ -901,8 +1052,9 @@ def test_an_unmapped_import_finds_and_adopts_the_named_conda_env_that_has_it(con
     assert offer["plan"]["status"] == "nothing_needed", offer["plan"]["status"]
     assert offer["plan"]["unknown"] == ["qa_probe_pkg"]
     assert offer["unknown_missing"] == ["qa_probe_pkg"]
-    complete = [e for e in offer["user_environments"] if e["satisfies"]]
-    assert [e["label"] for e in complete] == ["lab"], offer["user_environments"]
+    # 运行之前只读了 dist-info（没 import）：lab 装了它但健康没量过，列成"未检查"，不可采用；起会话（运行）时才真量并采用
+    pending = [e["label"] for e in offer["user_environments"] if e.get("checked") is False]
+    assert pending == ["lab"], offer["user_environments"]
     assert str(conda_layout["lab"]) not in json.dumps(offer), "载荷不带路径（ADR 0053 §二）"
     # 起会话：决定在解析解释器之前（`pool.ENVIRONMENT_DECIDERS`）
     worker, resp = engine_pool.build("figure.py", str(project), "__main__")

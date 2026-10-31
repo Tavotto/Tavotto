@@ -13,7 +13,12 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyProject, type TextObject } from '@/types/document'
-import { useDocumentStore, type SaveState } from '@/store/documentStore'
+import {
+  resumeAutosave,
+  suspendAutosaveFor,
+  useDocumentStore,
+  type SaveState,
+} from '@/store/documentStore'
 import { SAVE_PENDING_REVEAL_MS, SaveStateLabel } from './TopBar'
 
 declare global {
@@ -44,10 +49,16 @@ const tick = (ms: number) => act(() => vi.advanceTimersByTime(ms))
 beforeEach(async () => {
   localStorage.clear()
   globalThis.fetch = (async () => new Response('{}', { status: 404 })) as typeof fetch
+  // 换文档前先挂起：每条用例都是同一个 id，换文档时会先把**上一条用例**留下的那份写盘
+  suspendAutosaveFor('d_save_label')
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_save_label')
   useDocumentStore.getState().silent((d) => {
     d.objects.push(text)
   })
+  // 这里只测标签怎么随 saveState 变，saveState 由用例手动推。真写盘必须关掉：fetch 一律 404，
+  // 换文档后那一次真写盘必然失败，它的 save_error 什么时候回来取决于 Node 版本——
+  // Node 22 落在断言之后（碰巧绿），Node 26 落在第一句断言之前，把手动推的 saved 改成 save_error
+  suspendAutosaveFor('d_save_label')
   // 真实流程里 saved 总伴随着一次落盘时间（afterWriteOk）；「从没落过盘」另有用例
   useDocumentStore.setState({ saveState: 'saved', lastPersisted: Date.now() })
   vi.useFakeTimers()
@@ -61,6 +72,7 @@ afterEach(() => {
   act(() => root.unmount())
   host.remove()
   vi.useRealTimers()
+  resumeAutosave()
 })
 
 describe('顶栏保存状态', () => {

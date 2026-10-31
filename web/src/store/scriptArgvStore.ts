@@ -21,6 +21,8 @@ export interface ScriptArgvDraft {
 interface ScriptArgvStore {
   drafts: Record<string, ScriptArgvDraft>
   setToken: (script: string, index: number, value: string) => void
+  /** 整串换掉（T07：表单编辑 / 粘贴命令算出的新 token 列表；表单不另存一份意图） */
+  setTokens: (script: string, tokens: readonly string[]) => void
   addToken: (script: string, value?: string) => void
   removeToken: (script: string, index: number) => void
   moveToken: (script: string, index: number, delta: -1 | 1) => void
@@ -49,6 +51,7 @@ export const useScriptArgvStore = create<ScriptArgvStore>((set) => ({
           : { ...d, tokens: d.tokens.map((t, i) => (i === index ? value : t)) },
       ),
     ),
+  setTokens: (script, tokens) => set((s) => update(s, script, (d) => ({ ...d, tokens: [...tokens] }))),
   addToken: (script, value = '') =>
     set((s) => update(s, script, (d) => ({ ...d, tokens: [...d.tokens, value] }))),
   removeToken: (script, index) =>
@@ -87,7 +90,7 @@ export const snapshotScriptArgs = (script: string): ScriptArgs | undefined => {
 
 /**
  * 按草稿调 `probeScript`：没有参数 → 调用形状与 T03 之前一致（只有脚本名）；有参数 → 第三个参数是**此刻**的拷贝。
- * 两个试运行入口（左栏脚本库的 `scriptRunStore`、`RegistryDialog` 的全部脚本段）共用这一处，不各写各的。
+ * 旧试运行只有一个入口（`scriptRunStore.run`；T09b 起接入中心委派到它）：参数快照也只在这一处取。
  */
 export const probeWithDraft = (probe: typeof probeScript, script: string) => {
   const args = snapshotScriptArgs(script)

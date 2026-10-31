@@ -433,20 +433,47 @@ describe('Codex #547 评审', () => {
 })
 
 describe('Codex #547 第七轮评审', () => {
-  it('P1 没绑样式、这张图的这一版还没渲染回来（只有上一版的 manifest）：控件置灰，不拿过期的 gid 写 override', async () => {
+  it('P1 只有旧清单时排队字号，等当前清单到达后按当前目标写入', async () => {
     await seed()
     // override 变了、这一版还在渲染：显示用的 manifest 是上一版
     s().commit(literal('改了别的'), (d) => {
       ;(d.objects[0] as PanelObject).overrides = [{ gid: 'axes_0.title', prop: 'color', value: '#ff0000' }]
     })
     await mount()
-    expect(input('标题字号').disabled).toBe(true)
-    expect(input('标题字号').closest('[title]')?.getAttribute('title')).toBe('这张图的这一版还在渲染，渲染完才能改')
-    // 这一版回来了：可以改
-    await act(async () => {
-      seedExactRender(current(), manifest() as never)
-    })
     expect(input('标题字号').disabled).toBe(false)
+    await type(input('标题字号'), '19')
+    expect(current().overrides).toEqual([{ gid: 'axes_0.title', prop: 'color', value: '#ff0000' }])
+    // 这一版的标题换了 gid：不得用显示退路的旧目标写入。
+    const fresh = manifest()
+    fresh.elements = fresh.elements.map((e) => e.gid === 'axes_0.title' ? { ...e, gid: 'axes_1.title' } : e)
+    await act(async () => {
+      seedExactRender(current(), fresh as never)
+    })
+    expect(current().overrides).toContainEqual(expect.objectContaining({ gid: 'axes_1.title', prop: 'fontsize', value: 31.67 }))
+    expect(current().overrides.some((p) => p.gid === 'axes_0.title' && p.prop === 'fontsize')).toBe(false)
+  })
+
+  it('同一事件中刚改变变体时，旧控件闭包也不能写旧 gid', async () => {
+    await seed()
+    await mount()
+    const field = input('标题字号')
+    await act(async () => {
+      field.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '19')
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      s().commit(literal('变体刚改变'), (d) => {
+        ;(d.objects[0] as PanelObject).overrides = [{ gid: 'axes_0.title', prop: 'color', value: '#01abef' }]
+      })
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(current().overrides).toEqual([{ gid: 'axes_0.title', prop: 'color', value: '#01abef' }])
+    const fresh = manifest()
+    fresh.elements = fresh.elements.map((e) => e.gid === 'axes_0.title' ? { ...e, gid: 'axes_1.title' } : e)
+    await act(async () => seedExactRender(current(), fresh as never))
+    expect(current().overrides).toContainEqual(expect.objectContaining({ gid: 'axes_1.title', prop: 'fontsize', value: 31.67 }))
+    expect(current().overrides.some((p) => p.gid === 'axes_0.title' && p.prop === 'fontsize')).toBe(false)
   })
 })
 

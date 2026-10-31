@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-integration"
+description = "Enables the host_integration command without any pre-configured scope."
+commands.allow = ["host_integration"]
+
+[[permission]]
+identifier = "deny-host-integration"
+description = "Denies the host_integration command without any pre-configured scope."
+commands.deny = ["host_integration"]

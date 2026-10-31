@@ -29,7 +29,8 @@
     此后 /api、/exports、渲染图片、SSE 一律凭 cookie；Host/Origin 同时校验。
 
 桌面与浏览器模式的差别只剩参数：桌面的 cookie 是会话级（窗口即进程）、
-没有磁盘上的本机凭据文件（nonce 走 stdin，实例复用由壳的单实例转发负责）。
+没有磁盘上的完整本机凭据文件（nonce 走 stdin，实例复用由壳的单实例转发负责）；
+只发布一份 scoped 只读的 `handoff-status-<端口>.json`（只对 render-status 一个端点有效，ADR 0008 修订）。
 """
 
 from __future__ import annotations
@@ -45,7 +46,15 @@ import time
 from pathlib import Path
 
 from . import localserver, security
-from .engine import ai_bridge as engine_ai, pool as engine_pool, project_watch as engine_watch
+from .engine import (
+    ai_bridge as engine_ai,
+    loginpath,
+    nativesession as engine_nativesession,
+    pool as engine_pool,
+    project_watch as engine_watch,
+    session_client as engine_session_client,
+    startupphase,
+)
 
 LOG = logging.getLogger("tavotto.desktop")
 
@@ -64,6 +73,9 @@ PREFERRED_PORT_MAX = 65535
 #: 所以只给两三秒，再占不到就本次换端口（壳那边记一次落空，ADR 0108）。
 PREFERRED_PORT_RETRY_SECONDS = 2.5
 PREFERRED_PORT_RETRY_INTERVAL = 0.1
+#: stdin 首行 JSON 里壳的「安全启动」字段（TVD-DT76）：只有字面 `true` 生效，别的取值一律当没有。
+#: 与生产方 `src-tauri/src/sidecar/safe_start.rs` 严格同源：两侧各读 `tests/golden/desktop_safe_start.json`。
+SAFE_START_FIELD = "safe_start"
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +115,34 @@ def parse_preferred_port(value: object) -> int | None:
     return value if PREFERRED_PORT_MIN <= value <= PREFERRED_PORT_MAX else None
 
 
+def parse_safe_start(value: object) -> bool:
+    """stdin 里的安全启动标志 → bool；只有 JSON `true` 算，`1` / `"true"` / 缺席都是 False。"""
+    return value is True
+
+
+def read_hello(stdin=None, environ=None) -> dict | None:
+    """读掉 stdin 首行 JSON（壳的 hello）。给 `app.main` 在恢复项目**之前**取安全启动标志用，
+    读到的字典再原样交给 `run(hello=…)`，首行只读这一次。
+
+    环境变量里已有 nonce（调试用）/ stdin 是 tty / 没有 stdin → None（没读）；读了但内容坏 → 空字典（已消费）：与
+    `read_launch_credentials` 同一条「不读」的边界，调试时 stdin 不会无限等一行永远不来的输入。
+    """
+    env = environ if environ is not None else os.environ
+    stream = stdin if stdin is not None else sys.stdin
+    if env.get("TAVOTTO_DESKTOP_NONCE") is not None or stream is None:
+        return None
+    try:
+        if stream.isatty():
+            return None
+        line = stream.readline()
+        msg = json.loads(line) if line.strip() else {}
+    except (OSError, ValueError):
+        return {}  # 首行已被读走（或读坏）：给 run 一个空 hello，别让它再去等下一行
+    return msg if isinstance(msg, dict) else {}
+
+
 def read_launch_credentials(
-    stdin=None, environ=None
+    stdin=None, environ=None, hello: dict | None = None
 ) -> tuple[str | None, int | None, int | None, object]:
     """取启动 nonce、父 PID 与建议端口。
 
@@ -125,9 +163,12 @@ def read_launch_credentials(
 
     if nonce is None and stream is not None:
         try:
-            if not stream.isatty():
-                line = stream.readline()
-                msg = json.loads(line) if line.strip() else {}
+            if hello is not None or not stream.isatty():
+                if hello is not None:
+                    msg = hello  # 已由 read_hello 提前读掉
+                else:
+                    line = stream.readline()
+                    msg = json.loads(line) if line.strip() else {}
                 if isinstance(msg, dict):
                     n = msg.get("nonce")
                     if isinstance(n, str) and n:
@@ -256,6 +297,8 @@ class SidecarServer:
         self._srv.server_port = self._srv.port
         # Host / Origin 校验钉的是这里——**实际**拿到的端口，不是建议的那个
         state.port = self._srv.server_port
+        self._state = state
+        self._status_published = False
         flask_app.config["TAVOTTO_DESKTOP_MODE"] = True
         flask_app.config[security.STATE_KEY] = state
         self._shutting_down = threading.Event()
@@ -266,7 +309,20 @@ class SidecarServer:
         return self._srv.server_port
 
     def announce_ready(self) -> None:
+        self._publish_status_token()
         write_handshake(self._handshake, ready=True, port=self.port)
+
+    def _publish_status_token(self) -> None:
+        """发布**只读交接状态**凭据（scoped，只对 render-status 一个端点有效；ADR 0008 修订 2026-10-16）。
+
+        发不出去只意味着 `tavotto open` 落成 `unverified/channel_unavailable`，不影响启动。
+        **绝不**把 nonce 或别的 secret 写盘（ADR 0008「桌面模式的差异」）。
+        """
+        try:
+            engine_session_client.publish_status_token(self.port, self._state.status_token)
+            self._status_published = True
+        except OSError:
+            LOG.warning("交接状态凭据写不出去（tavotto open 将无法确认渲染结果）", exc_info=True)
 
     def serve_forever(self) -> None:
         try:
@@ -291,18 +347,31 @@ class SidecarServer:
         return self._stopped.wait(timeout)
 
     def _cleanup(self) -> None:
-        """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。
+        """serve 循环退出后：收 native 会话 → 停 watcher → 同步关 worker → 中断 AI → 清握手（各步相互隔离）。
 
         监听 socket 此时已经关了（werkzeug 的 `serve_forever` 在 finally 里 `server_close()`）：
         同步关 worker 最多要等好几秒，端口不必陪着等——紧接着启动的下一个 sidecar（应用内更新
         后的重启）才拿得到建议端口（`test_a_stopped_sidecar_releases_its_port_at_once` 看护）。
         """
-        try:
-            engine_watch.stop()  # None = 停掉全部项目的 watcher
-            engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走
-            engine_ai.interrupt_all()
-        except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死
-            LOG.exception("sidecar 清理异常（继续退出）")
+        # 每一步各自隔离：任何一步抛错都跳不过后面的（尤其 native 收尾——跳过它，桌面自己拉起的进程组
+        # 会在 Tavotto 关闭后成孤儿，ADR 0125 §五）。native 放最前：终端拥有的只放手（脚本是用户的，
+        # ADR 0021 §8.1），桌面拥有的先收，进程越早消失越好
+        for what, step in (
+            ("native 会话收尾", engine_nativesession.REGISTRY.shutdown_all),
+            ("watcher 停止", engine_watch.stop),  # None = 停掉全部项目的 watcher
+            (
+                "worker 关闭",
+                lambda: engine_pool.shutdown_all(wait=True),
+            ),  # 同步等 worker 真的退了再走
+            ("AI 中断", engine_ai.interrupt_all),
+            ("AI 登录进程收尾", engine_ai.stop_logins),
+        ):
+            try:
+                step()
+            except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死
+                LOG.exception("sidecar 清理：%s异常（继续退出）", what)
+        if self._status_published:
+            engine_session_client.remove_status_token(self.port)
         if self._handshake is not None:
             try:
                 self._handshake.unlink(missing_ok=True)
@@ -315,10 +384,12 @@ class SidecarServer:
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
-def run(flask_app) -> int:
+def run(flask_app, hello: dict | None = None) -> int:
     """`tavotto --desktop-sidecar` 的主体。项目打开逻辑仍在 app.main（与浏览器
     模式同一套），这里只负责认证、server 生命周期与父进程跟随。"""
-    nonce, parent_pid, preferred_port, stdin_stream = read_launch_credentials()
+    # Finder / Dock 启动只带 GUI 的最小 PATH：补上终端会有的 /etc/paths(.d)（MacTeX 等），所有子进程继承
+    loginpath.apply_to_environ()
+    nonce, parent_pid, preferred_port, stdin_stream = read_launch_credentials(hello=hello)
     handshake_raw = os.environ.pop("TAVOTTO_DESKTOP_HANDSHAKE", None)
     handshake = Path(handshake_raw) if handshake_raw else None
 
@@ -334,6 +405,7 @@ def run(flask_app) -> int:
         return 2
 
     state = DesktopState(nonce)
+    startupphase.mark("serving")
     try:
         srv = SidecarServer(flask_app, state, handshake, preferred_port=preferred_port)
     except OSError as exc:

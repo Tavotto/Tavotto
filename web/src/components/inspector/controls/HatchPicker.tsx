@@ -56,8 +56,8 @@ function HatchPreview({ code }: { code: string }) {
   if (!lines.length) {
     return <span aria-hidden className="max-w-10 truncate font-mono text-xs">{code}</span>
   }
-  // 重复字符（"//"、"xx"）= 更密：tile 从 8 缩到 5
-  const tile = code.length > 1 ? 5 : 8
+  // 重复字符（"//"、"xx"）= 更密：tile 从 8 缩到 5，三个字符再密一档
+  const tile = code.length > 2 ? 3.5 : code.length > 1 ? 5 : 8
   return (
     <svg width="26" height="16" aria-hidden className="shrink-0">
       <defs>
@@ -75,7 +75,7 @@ function HatchPreview({ code }: { code: string }) {
 /**
  * matplotlib 的 hatch 代码 → 名字的 i18n 尾段。
  *
- * 键是**引擎 `HATCHES` 里那 16 个代码**（`engine/overrides.HATCHES`），
+ * 键是**引擎 `HATCHES` 里那 20 个代码**（`engine/overrides.HATCHES`），
  * 值是人看得懂的名字：审计 T21 的验收要求「所有纹理选项有可理解的名称，
  * 图形与底层图案一一对应」，而以前界面上写的是「花纹 //」——那是把实现值
  * 换了个前缀又端出来。
@@ -100,6 +100,10 @@ const HATCH_NAMES: Record<string, string> = {
   xx: 'diagonalDense',
   '..': 'dotsDense',
   '++': 'crossDense',
+  '///': 'forwardDenser',
+  '\\\\\\': 'backDenser',
+  xxx: 'diagonalDenser',
+  '+++': 'crossDenser',
 }
 
 const hatchLabel = (code: string): string => {

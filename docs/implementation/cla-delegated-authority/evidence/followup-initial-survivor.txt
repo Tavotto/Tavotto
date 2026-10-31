@@ -1,0 +1,25 @@
+✔ independent archive remains verifiable and inactive after current id changes (55.550149ms)
+✔ independent archive remains verifiable and inactive after current key changes (32.856954ms)
+✔ independent archive remains verifiable and inactive after current agreement changes (20.531766ms)
+✔ independent archive validates original stored public key rather than accepting corrupted registration (32.026304ms)
+✔ independent audit marks subject-wide hold inactive without deleting historical receipt (53.324169ms)
+✔ independent private audit rechecks session after evidence construction (47.690005ms)
+✔ independent private audit rejects an authenticated different contributor (44.02588ms)
+✔ independent journal rejects a stale evidence revision despite a fresh matching request lease (50.78448ms)
+✔ independent journal rejects fixed-time expired proof before durable dispatch (15.423122ms)
+✔ independent unknown publication on another head blocks new head journal (6.933973ms)
+✔ independent new head binding change before journal leaves no send or durable attempt (24.196638ms)
+✔ independent external budget exhaustion stops before committing the send journal (19.768945ms)
+✔ independent existing owned remote check is rejected before durable journal or POST (5.720513ms)
+✔ independent automatic publication configuration requires the recovery capability (3.973775ms)
+✔ independent status returns captured revision when a hold commits after the last revision read (21.12733ms)
+✔ independent journal refuses proof for a different expected request head (5.985438ms)
+✔ independent journal refuses lease at exact expiry with a still fresh proof (5.867356ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 642.996513

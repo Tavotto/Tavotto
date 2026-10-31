@@ -531,7 +531,7 @@ class TestEndpoint:
         (figs / "runner.py").write_text("print('hi')\n", encoding="utf-8")
         ctx = _open(client, figs)
 
-        def fake_probe(figures_dir, script, cost="medium", should_cancel=None):
+        def fake_probe(figures_dir, script, cost="medium", should_cancel=None, **_kw):
             engine_discover.register(figures_dir, script, ["Probed"], entry="main", cost=cost)
             return {"registered": True, "entry": "main", "stems": ["Probed"], "descriptors": []}
 

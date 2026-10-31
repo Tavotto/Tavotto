@@ -14,18 +14,21 @@
  *    死循环（`UX_CONTRACTS.md` §1a）。
  */
 import { create } from 'zustand'
+import { subscribeMath } from '@/lib/mathtext'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import {
   filterIssues,
   summaryFor,
   validateCanvas,
+  validateOriginal,
   type CanvasInput,
   type CanvasResult,
   type IssueFilter,
+  type OriginalTarget,
   type ValidationIssue,
   type ValidationSummary,
 } from '@/lib/validation'
-import { canvasToDoc } from '@/types/document'
+import { canvasToDoc, type FigureDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useProfileStore } from './profileStore'
@@ -260,8 +263,13 @@ export function startValidation(): () => void {
     schedule()
   })
 
+  // 公式排版结果到了（ADR 0152 §七）：排不出来的公式要进问题面板，而「排不出」这个事实
+  // 只有排版回来才知道——求值器是纯函数，所以结果一到就重算一遍
+  const stopMath = subscribeMath(() => schedule())
+
   return () => {
     cancelScheduled()
+    stopMath()
     stopDoc()
     stopRender()
     stopAssets()
@@ -300,4 +308,61 @@ export function listIssues(filter?: IssueFilter): ValidationIssue[] {
  */
 export function rawIssuesFor(canvasId: string) {
   return useValidationStore.getState().results.find((r) => r.canvasId === canvasId)?.raw ?? []
+}
+
+/**
+ * **按原图导出**那份产物的检查（导出对话框的原图范围认它，ADR 0028 / 0030）。
+ *
+ * 画布那几片（`results`）量的是「图摆在页面上」——字号乘了画布缩放。原图导出不带那次缩放，
+ * 所以原图范围是同一个求值器对**原图口径**输入的一次求值（`lib/validation.validateOriginal`），
+ * 不是在画布那份结果上裁一刀。输入与画布那几片同一份（`collectCanvases()`：规范按那张画布
+ * 的绑定解析），只读、不进 store、不推进代次。`issues` / `raw` 仍要经 `summaryFor({ objectId })`
+ * 与 `rawIssuesForObject()` 裁页面级与摆放类规则。
+ *
+ * 求值抛异常回 `failed: true`——「查不了」不许变成一份空清单（与 `runValidation` 同一条）。
+ */
+export function originalValidationFor(
+  canvasId: string,
+  target: OriginalTarget,
+): { result: CanvasResult | null; failed: boolean } {
+  try {
+    const input = collectCanvases().find((c) => c.canvasId === canvasId)
+    if (!input) return { result: null, failed: false }
+    const render = useRenderStore.getState()
+    const result = validateOriginal(
+      input,
+      useDocumentStore.getState().documentId,
+      useAssetStore.getState().byId,
+      { byKey: render.byKey, latest: render.latest },
+      target,
+    )
+    return { result, failed: false }
+  } catch {
+    return { result: null, failed: true }
+  }
+}
+
+/**
+ * **单图退路导出**（原图口径不可用、按画布导且裁到可见对象包围盒）那份产物的检查：
+ * 同一个求值器，输入是裁后的文档（页面 = 包围盒、对象平移；`lib/exportCrop.croppedDocument`），
+ * 所以页面宽 / 比例 / 边距判的是交付物本身。只读、不进 store、不推进代次；对象 id 不变，问题仍可定位。
+ */
+export function croppedValidationFor(
+  canvasId: string,
+  croppedDoc: FigureDocument,
+): { result: CanvasResult | null; failed: boolean } {
+  try {
+    const input = collectCanvases().find((c) => c.canvasId === canvasId)
+    if (!input) return { result: null, failed: false }
+    const render = useRenderStore.getState()
+    const result = validateCanvas(
+      { ...input, doc: croppedDoc },
+      useDocumentStore.getState().documentId,
+      useAssetStore.getState().byId,
+      { byKey: render.byKey, latest: render.latest },
+    )
+    return { result, failed: false }
+  } catch {
+    return { result: null, failed: true }
+  }
 }

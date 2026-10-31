@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "vectors": [
+    {
+      "name": "ok_darwin-aarch64",
+      "note": "",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\n  \"notes\": \"…\",\n  \"platforms\": {\n    \"darwin-aarch64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz\"\n    },\n    \"darwin-x86_64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"\n    },\n    \"windows-x86_64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"\n    }\n  },\n  \"version\": \"0.18.0\"\n}",
+      "expect": {
+        "mode": "mirror",
+        "reason": "ok",
+        "version": "0.18.0",
+        "url": "https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz",
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K"
+      }
+    },
+    {
+      "name": "ok_darwin-x86_64",
+      "note": "",
+      "platform": "darwin-x86_64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\n  \"notes\": \"…\",\n  \"platforms\": {\n    \"darwin-aarch64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz\"\n    },\n    \"darwin-x86_64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"\n    },\n    \"windows-x86_64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"\n    }\n  },\n  \"version\": \"0.18.0\"\n}",
+      "expect": {
+        "mode": "mirror",
+        "reason": "ok",
+        "version": "0.18.0",
+        "url": "https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz",
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K"
+      }
+    },
+    {
+      "name": "ok_windows-x86_64",
+      "note": "",
+      "platform": "windows-x86_64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\n  \"notes\": \"…\",\n  \"platforms\": {\n    \"darwin-aarch64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz\"\n    },\n    \"darwin-x86_64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"\n    },\n    \"windows-x86_64\": {\n      \"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\",\n      \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"\n    }\n  },\n  \"version\": \"0.18.0\"\n}",
+      "expect": {
+        "mode": "mirror",
+        "reason": "ok",
+        "version": "0.18.0",
+        "url": "https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip",
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K"
+      }
+    },
+    {
+      "name": "fetch_failed_or_withdrawn",
+      "note": "超时 / 网络错误 / 非 200。镜像关闭、回滚到无 updater 的版本、自检撤下指针时的表现就是 404",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": null,
+      "expect": {
+        "mode": "github",
+        "reason": "latest_unavailable"
+      }
+    },
+    {
+      "name": "not_json",
+      "note": "",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "<html>captive portal</html>",
+      "expect": {
+        "mode": "github",
+        "reason": "latest_invalid"
+      }
+    },
+    {
+      "name": "no_platforms",
+      "note": "",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\"version\": \"0.18.0\"}",
+      "expect": {
+        "mode": "github",
+        "reason": "latest_invalid"
+      }
+    },
+    {
+      "name": "bad_version",
+      "note": "",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\"notes\": \"\\u2026\", \"platforms\": {\"darwin-aarch64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz\"}, \"darwin-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"}, \"windows-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"}}, \"version\": \"latest\"}",
+      "expect": {
+        "mode": "github",
+        "reason": "latest_invalid"
+      }
+    },
+    {
+      "name": "platform_missing",
+      "note": "",
+      "platform": "windows-x86_64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\"notes\": \"\\u2026\", \"platforms\": {\"darwin-aarch64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz\"}, \"darwin-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"}}, \"version\": \"0.18.0\"}",
+      "expect": {
+        "mode": "github",
+        "reason": "platform_missing"
+      }
+    },
+    {
+      "name": "empty_signature",
+      "note": "",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\"notes\": \"\\u2026\", \"platforms\": {\"darwin-aarch64\": {\"signature\": \"\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto.app.tar.gz\"}, \"darwin-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"}, \"windows-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"}}, \"version\": \"0.18.0\"}",
+      "expect": {
+        "mode": "github",
+        "reason": "entry_invalid"
+      }
+    },
+    {
+      "name": "url_on_foreign_host",
+      "note": "清单把客户端带去别的主机：不跟（签名能挡住篡改，但不该用镜像清单去访问非镜像主机）",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\"notes\": \"\\u2026\", \"platforms\": {\"darwin-aarch64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\", \"url\": \"https://evil.example/releases/0.18.0/Tavotto.app.tar.gz\"}, \"darwin-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"}, \"windows-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"}}, \"version\": \"0.18.0\"}",
+      "expect": {
+        "mode": "github",
+        "reason": "url_not_on_mirror"
+      }
+    },
+    {
+      "name": "url_in_other_version_dir",
+      "note": "",
+      "platform": "darwin-aarch64",
+      "mirror_base": "https://dl.tavotto.cn",
+      "latest": "{\"notes\": \"\\u2026\", \"platforms\": {\"darwin-aarch64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEx2OWV0OVgwYURXMWdac0o3RUViRkU5VUhyQXJycmlOVTZLbkY5aWtUWU0raWNsN3FpaXV0M3VWM2RrOHNZS0NDajh3MEFQeCtYRlZnRm9GSDM4ZUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ5MTQ4CWZpbGU6VGF2b3R0by5hcHAudGFyLmd6CjgyZDF5dUNvYnlVV3Foc3htcXBGSC9EcCsvWW5xL2pqSnFTSUM4SWtvVHBydFZ4ejkyL21GNWlkWEdNRTNwSmVLTVVPb2JkQmp3UGVINDlkdXgxR0FBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.17.0/Tavotto.app.tar.gz\"}, \"darwin-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbEFDektBeG80K2tkK2VaRGRpS0NzOFNQZUdhaHJ5T21kWVJiTVZySEhRaUk2ZUYyNnUvK2d4RFE3VkFEcGRBRmlmTFdhNFM4a3BtY1J6MmgxZzVRUUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDgzCWZpbGU6VGF2b3R0by1JbnRlbC5hcHAudGFyLmd6Ck40UGtLa29xay9JZFUyNGlHVERiSjVoT0hsazFqY205RFpiQXBuNEREakN0dTJEdXdmMk5hVWlsb1ZhaEhQVWt4eVVDc0d0SnBJYnZ2U3A4czdKQUFnPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto-Intel.app.tar.gz\"}, \"windows-x86_64\": {\"signature\": \"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUlludkdlQVYxbElkZXdLQ1lsNGRJQVpNYlVtNFAyOHk4YVp3OXh2OWdJWE5UYnhUazM1NVI2YUx0NFp4M1FnWUNLbnBLZjJpejk2QkNhWis5WlVYenJPMjcxTjc4Z0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzQ4OTg1CWZpbGU6VGF2b3R0b18wLjE4LjBfeDY0LXNldHVwLm5zaXMuemlwCkFMcWhDRVBlZllBVUFpRy9yNmxhM0NNSUJuQ0R3WjZSSlpmb3J3Q3M1YkI5YVlUUW11ckhFVDQzUEhtWTJkdXBpTXlsblUrdE92SS80V2Mydm82dkFBPT0K\", \"url\": \"https://dl.tavotto.cn/releases/0.18.0/Tavotto_0.18.0_x64-setup.nsis.zip\"}}, \"version\": \"0.18.0\"}",
+      "expect": {
+        "mode": "github",
+        "reason": "url_not_on_mirror"
+      }
+    }
+  ]
+}

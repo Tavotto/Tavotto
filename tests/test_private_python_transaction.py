@@ -122,7 +122,11 @@ def _project(tmp_path, name="paper") -> Path:
 
 def _prepare(plan_id: str) -> tuple[dict, list[dict]]:
     events: list[dict] = []
-    deprepair.prepare_async(plan_id, on_event=events.append)
+    deprepair.prepare_async(
+        plan_id,
+        on_event=events.append,
+        confirmed_impact=deprepair.get_joint_plan(plan_id).impact_digest,
+    )
     return wait_for(plan_id), events
 
 
@@ -286,7 +290,9 @@ class TestPrivateBase:
         assert plan.private_python is not None and plan.to_payload()["private_python"]["required"]
         assert server.requests == []
         events: list[dict] = []
-        deprepair.install_async(plan.plan_id, on_event=events.append)
+        deprepair.install_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert deprepair.STATE_DOWNLOADING_PYTHON in [e["state"] for e in events]
@@ -315,7 +321,7 @@ class TestPrivateBase:
         )
         assert plan.private_python is not None and plan.widened is not None
         assert set(plan.requirements) == {ALPHA[0], beta[0]}
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         managed = managedenv.python_of(project)
@@ -351,8 +357,10 @@ class TestPrivateBase:
         assert plan.private_python is not None and plan.private_python["required"] is True
         assert server.requests == []
 
-    def test_rebuild_and_package_first_install_never_download(self, tmp_path, house, no_base, fake):
-        """没有明示过下载的两条路：重建 / 包管理首装——没有基础解释器就照旧 unavailable，零请求。"""
+    def test_rebuild_without_the_users_authorization_never_downloads(
+        self, tmp_path, house, no_base, fake
+    ):
+        """重建没有拿到用户看过的那份载荷 id（没传 / 传错 / 锁换了）：没有基础解释器就照旧 unavailable，零请求。"""
         server, src, _ = fake
         project = _project(tmp_path)
         managedenv.write_manifest(project, managedenv.new_manifest(project, "x"))
@@ -362,6 +370,73 @@ class TestPrivateBase:
         assert server.requests == []
         assert privatepython.python_of(src) is None
         assert managedenv.referenced_base_runtimes() == set()
+        wrong = deprepair._rebuild_guarded(
+            project, None, deprepair.new_rebuild_progress_id(), "cpython-9.9.9-000000000000"
+        )
+        assert wrong["code"] == deprepair.ERROR_MANAGED_UNAVAILABLE
+        assert server.requests == [], "id 不是用户看过的那一份：不供应，也不静默换成另一份"
+
+    @needs_real_base
+    def test_rebuild_with_the_disclosed_offer_id_provisions_private_python(
+        self, tmp_path, house, no_base, fake
+    ):
+        """设置→包管理的“自动准备”/重建：授权 = 回传 `capability.private_python.id`（与此刻 offer 同一份）。
+        没有基础解释器也能建出环境，不再“请安装 Python”；账上记着私有 runtime 为 base。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        assert deprepair.base_python() is None  # 同步探完（页面上第一次是后台探：见 checking 用例）
+        cap = deprepair.list_managed_packages(project)["capability"]
+        assert cap["available"] is True and cap["private_python"]["id"] == src.id
+        assert cap["private_python"]["download_bytes"] == src.size
+        seen = cap["private_python"]
+        # 授权绑在用户看到的来源与下载量上：回显的来源对不上（用户看到的是“已缓存”、此刻要下载）= 过期，零请求
+        stale = deprepair._rebuild_guarded(
+            project, None, deprepair.new_rebuild_progress_id(), seen["id"], "cached", 0
+        )
+        assert stale.get("code") == deprepair.ERROR_PLAN_STALE, stale
+        assert server.requests == [], "来源变了：一个请求都不发"
+        out = deprepair._rebuild_guarded(
+            project,
+            None,
+            deprepair.new_rebuild_progress_id(),
+            seen["id"],
+            seen["origin"],
+            seen["download_bytes"],
+        )
+        assert out.get("ok") is True, json.dumps(out, ensure_ascii=False, default=str)
+        assert server.requests == [f"/{src.archive_name}"]
+        assert managedenv.python_of(project)
+        assert src.id in managedenv.referenced_base_runtimes()
+
+    @needs_real_base
+    def test_package_first_install_without_base_carries_and_runs_the_private_python_offer(
+        self, tmp_path, house, no_base, fake
+    ):
+        """包管理首装：作业（计划）里挂着说出口的私有 Python 载荷；执行时先供应再建第一代再装包。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        job = deprepair.create_package_job(project, deprepair.OP_INSTALL, ALPHA[0])
+        assert job.creates_environment is True and job.private_python["required"] is True
+        payload = job.to_payload()
+        assert payload["private_python"]["download_bytes"] == src.size
+        assert server.requests == [], "计划阶段不联网"
+        out = deprepair.run_package_job(job.job_id)
+        assert out["ok"] is True, json.dumps(out, ensure_ascii=False, default=str)
+        assert server.requests == [f"/{src.archive_name}"]
+        assert managedenv.python_of(project)
+
+    def test_package_first_install_is_unavailable_when_private_python_is_not_offered(
+        self, tmp_path, no_base, monkeypatch
+    ):
+        """连私有 Python 也不提供（不支持的平台 / 锁关着）：才是 managed_env_unavailable。"""
+        monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
+        assert deprepair.base_python() is None
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_package_job(_project(tmp_path), deprepair.OP_INSTALL, ALPHA[0])
+        assert err.value.code == deprepair.ERROR_MANAGED_UNAVAILABLE
+        cap = deprepair.list_managed_packages(_project(tmp_path, "p2"))["capability"]
+        assert cap["available"] is False and cap["reason"] == deprepair.ERROR_MANAGED_UNAVAILABLE
+        assert "private_python" not in cap
 
     @needs_real_base
     def test_offline_prepare_is_a_safe_stop_and_registers_no_generation(
@@ -421,7 +496,7 @@ class TestPrivateBase:
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
         assert plan.private_python is not None
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED
         assert rec["code"] == privatepython.ERROR_OFFLINE
@@ -431,7 +506,7 @@ class TestPrivateBase:
         again = deprepair.create_plan(
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
-        deprepair.install_async(again.plan_id)
+        deprepair.install_async(again.plan_id, confirmed_impact=again.impact_digest)
         rec2 = wait_for(again.plan_id)
         assert rec2["state"] == deprepair.STATE_DONE, json.dumps(rec2, ensure_ascii=False)
 
@@ -489,7 +564,9 @@ class TestPrivateBase:
 
         monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         answer = deprepair.cancel_status(plan.plan_id)  # ack 之后立刻取消
         gate.set()
         assert answer == {"accepted": True, "reason": ""}, answer
@@ -526,14 +603,24 @@ class TestPrivateBase:
         project = _project(tmp_path)
         plan = deprepair.create_joint_plan(project, "figure.py")
         events: list[dict] = []
-        assert deprepair.prepare_async(plan.plan_id, on_event=events.append) is True
+        assert (
+            deprepair.prepare_async(
+                plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+            )
+            is True
+        )
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
         assert server.requests == [f"/{src.archive_name}"]
-        assert deprepair.prepare_async(plan.plan_id, on_event=events.append) is False  # 已在跑
+        assert (
+            deprepair.prepare_async(
+                plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+            )
+            is False
+        )  # 已在跑
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.prepare(plan.plan_id)  # 同步入口同样认领
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)  # 同步入口同样认领
         assert err.value.code == deprepair.ERROR_NOT_ALLOWED
         time.sleep(0.3)
         assert server.requests == [f"/{src.archive_name}"]  # 还是那一次
@@ -589,7 +676,9 @@ class TestPrivateBase:
         project = _project(tmp_path)
         plan = deprepair.create_joint_plan(project, "figure.py")
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
@@ -636,11 +725,11 @@ class TestPrivateBase:
         pa = deprepair.create_joint_plan(a, "figure.py")
         pb = deprepair.create_joint_plan(b, "figure.py")
         assert pa.private_python and pb.private_python
-        deprepair.prepare_async(pa.plan_id)
+        deprepair.prepare_async(pa.plan_id, confirmed_impact=pa.impact_digest)
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
-        deprepair.prepare_async(pb.plan_id)
+        deprepair.prepare_async(pb.plan_id, confirmed_impact=pb.impact_digest)
         time.sleep(0.5)
         server.gate.set()
         ra, rb = wait_for(pa.plan_id), wait_for(pb.plan_id)
@@ -1024,7 +1113,9 @@ class TestCleanMachine:
         server.mode = "hold"
         server.gate.clear()
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
@@ -1150,7 +1241,9 @@ class TestRealChain:
         assert plan.private_python["id"] == src.id
         assert plan.private_python["download_bytes"] in (0, src.size)
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         rec = wait_for(plan.plan_id, timeout=1500)
         elapsed = round(time.perf_counter() - t0, 1)
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)

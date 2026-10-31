@@ -1,0 +1,26 @@
+✖ independent historical path rejects signed enable (32.956065ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 238.357018
+
+✖ failing tests:
+
+test at tests/independent-historical-revocation.test.mjs:15:42
+✖ independent historical path rejects signed enable (32.956065ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async denied (file:///tmp/cla-historical-revocation-review/mutants/historical-only-terminal/tests/independent-historical-revocation.test.mjs:6:55)
+      at async file:///tmp/cla-historical-revocation-review/mutants/historical-only-terminal/tests/independent-historical-revocation.test.mjs:16:70
+      at async iso (file:///tmp/cla-historical-revocation-review/mutants/historical-only-terminal/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

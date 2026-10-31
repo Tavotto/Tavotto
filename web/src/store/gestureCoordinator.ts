@@ -21,6 +21,17 @@ let active: (() => void) | null = null
 
 /** 收尾进行中——回调内部大多会走 endTxn → commit，绝不能再递归收一次 */
 let finishing = false
+const listeners = new Set<() => void>()
+
+/** 异步工作等手势收尾时订阅同一份登记，不用轮询或自行猜测焦点状态。 */
+export function subscribeGestureCoordinator(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
+function changed(): void {
+  for (const listener of listeners) listener()
+}
 
 /**
  * 登记「我这一轮开始了」，返回注销函数。
@@ -31,8 +42,12 @@ let finishing = false
 export function registerGesture(finish: () => void): () => void {
   if (active && active !== finish) finishActiveGesture()
   active = finish
+  changed()
   return () => {
-    if (active === finish) active = null
+    if (active === finish) {
+      active = null
+      changed()
+    }
   }
 }
 
@@ -60,7 +75,14 @@ export function finishActiveGesture(): void {
     finish()
   } finally {
     finishing = false
+    changed()
   }
+}
+
+/** 保存前让富文本框失焦：它会先冲刷组字期暂存的内容，再结束宿主的事务。 */
+export function finishFocusedRichText(): void {
+  const el = document.activeElement
+  if (el instanceof HTMLElement && el.matches('[data-rich-text], [data-rich-source]')) el.blur()
 }
 
 /**
@@ -73,9 +95,23 @@ let pointerCancel: (() => void) | null = null
 /** 登记这一次指针追踪的取消出口，返回注销函数（只注销自己那一份）。 */
 export function registerPointerCancel(cancel: () => void): () => void {
   pointerCancel = cancel
+  changed()
   return () => {
-    if (pointerCancel === cancel) pointerCancel = null
+    if (pointerCancel === cancel) {
+      pointerCancel = null
+      changed()
+    }
   }
+}
+
+/**
+ * 只在没有别的指针手势占着时登记；占着就回 null、不覆盖。这个槽位是全局单主的（`trackPointer` 也用它），
+ * 后来的独立手势（例如触屏上第二根手指按到宽度把手）若直接覆盖，Esc 只会取消后来者，
+ * 先开始的画布拖动失去取消出口、松手照样提交（Codex #1102）。
+ */
+export function tryRegisterPointerCancel(cancel: () => void): (() => void) | null {
+  if (pointerCancel && pointerCancel !== cancel) return null
+  return registerPointerCancel(cancel)
 }
 
 /**
@@ -89,6 +125,9 @@ export function cancelActivePointerGesture(): boolean {
   return true
 }
 
+/** 此刻有没有进行中的指针手势：Esc 的归属判据——有的话这一下 Esc 属于它（`useKeyboard` 会取消它），别的 Esc 监听别抢 */
+export const hasActivePointerGesture = (): boolean => pointerCancel != null
+
 /** 现在有没有开着的一轮（开发态不变式与测试用） */
 export const hasActiveGesture = (): boolean => active != null
 
@@ -96,6 +135,7 @@ export const hasActiveGesture = (): boolean => active != null
 export function resetGestureCoordinator(): void {
   active = null
   finishing = false
+  changed()
 }
 
 /**

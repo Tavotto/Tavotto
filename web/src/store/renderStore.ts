@@ -1,4 +1,4 @@
-import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, validationFromSource, retryArtifactEntry, type ArtifactValidation } from '@/lib/artifactValidation'
+import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
 import { msg, type UiMessage } from '@/i18n'
@@ -22,19 +22,32 @@ import {
 import { engineTransport } from '@/lib/engineTransport'
 import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
+import { noticeWorkdirHint, workdirHintOwner, type WorkdirHintNoticeDeps } from '@/lib/workdirHintNotice'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
+import { notifyReconstructionReview } from '@/store/sourceBackedReview'
+import { classifyArtifactFailure } from '@/lib/artifactReason'
 
 export type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error'
+
+/** 文件级等待；准备阶段尚不知道会话是否为冷启动。时间只用于本地显示。 */
+export interface BuildingInfo {
+  cold: boolean
+  cost: string
+  phase?: 'preparing' | 'rendering'
+  startedAt?: number
+}
 
 export interface PanelRender {
   /** 这份渲染态属于哪个素材文件（文件级操作靠它反查，见 markStale / reset） */
   fileId: string
-  artifactValidation?: ArtifactValidation
+  artifactValidation?: AdoptionGuard
   rev: number
   manifest: Manifest | null
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
@@ -99,6 +112,8 @@ export interface PanelRender {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
+  /** 后端缺依赖分类；消费事实，不在前端根据模块名再判平台 */
+  installRoute?: string
   /**
    * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
    * （ADR 0018）：找不到 venv / 找到了但也没这个包 / 没有 matplotlib /
@@ -119,6 +134,8 @@ export interface PanelRender {
   dependencyPreparation: DependencyPreparationOffer | null
   /** 数据找不到（ADR 0106）时「指认数据位置」的载荷（同上：留着，关了对话框还能从错误块再开） */
   missingInput: MissingInputOffer | null
+  /** 沙盒里落空、脚本目录里找得到时的「在脚本目录里运行」引导（#1254）；码不变，错误块据此多给一个入口 */
+  workdirHint: WorkdirConfirmation | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -155,6 +172,7 @@ const EMPTY: PanelRender = {
   confirmation: null,
   dependencyPreparation: null,
   missingInput: null,
+  workdirHint: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -182,7 +200,7 @@ export function renderKey(fileId: string, patches: unknown[], guard?: unknown): 
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
-  return renderKey(panel.fileId, panel.overrides, Object.hasOwn(panel, 'artifactValidation') ? panel.artifactValidation ?? null : undefined)
+  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel))
 }
 
 /**
@@ -204,6 +222,13 @@ function prepareSvg(text: string): string {
  * （后端按 `rel_id` 发 started / done / failed 三件套），toast 上显示的短名不唯一（`a/Fig1.pdf` 与
  * `b/Fig1.pdf` 都叫 Fig1），不能拿它认主人。
  */
+/** 通知轨提醒（`lib/workdirHintNotice`）要的两个 store 句柄：由持有它们的这一层递进去，lib 不 import store */
+export const workdirHintDeps = (): WorkdirHintNoticeDeps => ({
+  ui: useUiStore.getState(),
+  decided: useEnvStore.getState().env?.project?.workdir?.decided,
+  request: (hint, projectId) => useEnvStore.getState().requestWorkdirConfirmation(hint, projectId),
+})
+
 export const renderFailureOwner = (pj: string | null | undefined, id: string) =>
   `render.failed:${pj ?? ''}:${id}`
 
@@ -271,13 +296,13 @@ interface RenderState {
   get: (key: string) => PanelRender
   patch: (key: string, next: Partial<PanelRender>) => void
   /**
-   * 文件级「正在构建」（SSE 的 render.started/done，只带 fileId）。
+   * 文件级「正在准备/构建」（SSE 的 preparing/started/done/failed，只带 fileId）。
    * **不写进变体条目**：manifest / status 属于某个具体变体，被一条文件级事件
    * 盖掉的话，同文件另一个副本会永远转着圈——它自己根本没在渲染，也就没人
    * 来把那个状态收掉。冷启动提示本来就是文件粒度的（worker 一个 stem 一份）。
    */
-  building: Record<string, { cold: boolean; cost: string }>
-  noteBuilding: (fileId: string, info: { cold: boolean; cost: string } | null) => void
+  building: Record<string, BuildingInfo>
+  noteBuilding: (fileId: string, info: BuildingInfo | null) => void
   /** 渲染并取回 SVG（与 manifest 同一响应）；同键渲染中重复调用只保留最后一次待办。
    *  `policy` 只进诊断事件，**不影响任何渲染行为**——它是「这次是定稿还是防抖」
    *  的说明，缺省按 immediate 记。
@@ -289,7 +314,7 @@ interface RenderState {
     previewDpi?: number,
     policy?: RenderRequestPolicy,
     epoch?: number,
-    artifactValidation?: ArtifactValidation,
+    artifactValidation?: AdoptionGuard | null,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -522,16 +547,26 @@ export function renderEpoch(): number {
 
 /**
  * 渲染请求看门狗：fetch 永不 settle（服务重启留下的半开连接、代理悬挂）时
- * busy 永远不释放，该面板从此渲染不动。它按脚本 cost 取档、刻意宽松——heavy
- * 冷启动本身就是分钟级；本意是兜连接悬挂，不是性能预算。
+ * busy 永远不释放，该面板从此渲染不动。
  *
- * **但它实际裁决的不止悬挂**（#312，选定保持现状、只改文档）：冷启动 build 就在
- * 这条请求里，而三档（2 / 5 / 15 分钟）都短于引擎的静默阈值
- * `pool.BUILD_IDLE_TIMEOUT`（20 分钟）——引擎侧「会打进度的脚本不再有总时长上限」
- * （ADR 0050）到了画布上不成立，这里就是画布路径上冷启动的总时长上限。到点只
- * abort 这条 HTTP 请求：服务端 build 不停、可能仍在后台跑，所以超时文案
- * `errors:render.timeout` 说的是「服务可能仍在后台运行，可稍后重试」，而不是
- * 引擎的 `worker_build_timeout`。MCP 内嵌画布经同一个 signal 共用这份阈值。
+ * **租约，不是总时长**（#1207，取代 #312 的「保持现状」）：冷启动 build 就在这条
+ * 请求里，而引擎判「卡没卡死」看的是 worker 日志还在不在长（`pool.BUILD_IDLE_TIMEOUT`，
+ * ADR 0050）。引擎在日志增长时发 `render.progress`（节流 5 s），`noteRenderProgress`
+ * 把对应文件的租约续上：**距最近一次进度（或请求开始）`watchdogMs` 无动静才 abort**，
+ * 总上限 `RENDER_HARD_CAP_MS` 对齐 `pool.BUILD_HARD_TIMEOUT`。会持续打印进度的脚本
+ * 不论冷启动多久都等得到图；真正卡死的仍在一个窗口后被放弃。
+ *
+ * 窗口 N 仍按脚本 cost 取档（2 / 5 / 15 分钟，认不出按 medium）：它至少是进度节流
+ * 间隔的 24 倍，丢几个事件不会误判；同时它也是**没有进度通道时的退路**——
+ * SSE 断线（收不到进度）与 MCP 内嵌画布（iframe 里没有事件流）都退回「请求开始起 N
+ * 分钟」，与改动前逐字相同，所以断线不会比以前更早判死（也没有"断线期间暂停计时"那种
+ * 会让真悬挂永不释放的口子）。静默但在算的脚本（引擎允许 20 分钟静默）在窗口内
+ * 打一行进度即可续期。
+ *
+ * 到点只 abort 这条 HTTP 请求：服务端 build 不停、可能仍在后台跑，所以超时文案
+ * `errors:render.timeout` 说的是「服务可能仍在后台运行，可稍后重试」。重试若排在同一次
+ * build 后面，引擎对等锁的请求同样扇出进度（`app._relay_build_progress`），
+ * 它在窗口内收得到续期。桌面画布与 MCP 内嵌画布共用同一个 signal。
  */
 const WATCHDOG_MS: Record<string, number> = {
   light: 2 * 60_000,
@@ -539,12 +574,51 @@ const WATCHDOG_MS: Record<string, number> = {
   heavy: 15 * 60_000,
 }
 
+/** 总上限，与 `pool.BUILD_HARD_TIMEOUT`（4 小时）同源；`tests/test_build_watchdog.py` 钉着两侧相等 */
+export const RENDER_HARD_CAP_MS = 4 * 3600_000
+
 function watchdogMs(fileId: string): number {
   // 调试后门：agent-browser 实测超时链路时把阈值压到秒级
   const dev = (window as { __MM_RENDER_TIMEOUT_MS__?: unknown }).__MM_RENDER_TIMEOUT_MS__
   if (typeof dev === 'number' && dev > 0) return dev
   const cost = useAssetStore.getState().byId[fileId]?.cost ?? ''
   return WATCHDOG_MS[cost] ?? WATCHDOG_MS.medium
+}
+
+/** 文件 → 引擎最近一次说「build 还在跑」的时刻。事件只带文件（build 是文件级的），按文件续租。 */
+const lastRenderProgress = new Map<string, number>()
+
+/** `render.progress` 到达：续上该文件所有在等的渲染请求（含排在同一次 build 后面的重试） */
+export function noteRenderProgress(fileId: string): void {
+  lastRenderProgress.set(fileId, Date.now())
+}
+
+/**
+ * 给一条渲染请求挂租约看门狗；返回清除函数与「为什么断」的查询。
+ * 计时器到点先按租约重算：续过期就按新的到期点重新挂，而不是直接 abort。
+ */
+function armRenderWatchdog(fileId: string, windowMs: number, abort: () => void) {
+  const startedAt = Date.now()
+  let timer = 0
+  let cause: 'idle' | 'cap' | null = null
+  const arm = () => {
+    const last = Math.max(startedAt, lastRenderProgress.get(fileId) ?? 0)
+    const due = Math.min(last + windowMs, startedAt + RENDER_HARD_CAP_MS)
+    timer = window.setTimeout(() => {
+      const now = Date.now()
+      if (now >= startedAt + RENDER_HARD_CAP_MS) cause = 'cap'
+      else if (now - Math.max(startedAt, lastRenderProgress.get(fileId) ?? 0) >= windowMs) cause = 'idle'
+      if (cause) abort()
+      else arm()
+    }, Math.max(0, due - Date.now()))
+  }
+  arm()
+  return {
+    clear: () => window.clearTimeout(timer),
+    /** 断掉时报给用户的分钟数：租约窗口，或撞总上限时的总上限 */
+    minutes: () => Math.round((cause === 'cap' ? RENDER_HARD_CAP_MS : windowMs) / 60_000),
+    timedOut: () => cause !== null,
+  }
 }
 
 export const useRenderStore = create<RenderState>((set, get) => ({
@@ -571,7 +645,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         delete building[fileId]
         return { building }
       }
-      return { building: { ...s.building, [fileId]: info } }
+      return { building: { ...s.building, [fileId]: {
+        ...info,
+        phase: info.phase ?? 'rendering',
+        // worker 准备完只是换阶段，不是另一次等待；冷启动前半段也要算进去。
+        startedAt: s.building[fileId]?.startedAt ?? Date.now(),
+      } } }
     }),
 
   render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation) => {
@@ -597,6 +676,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     // 发请求那一刻的项目：失败回来时它决定「首开确认框」能不能弹（切了项目就不弹，
     // A 的问题不摆到 B 上）。同一条纪律：请求序号挡旧响应、发请求那一刻的 pj 挡串项目。
     const projectAtStart = currentProjectId()
+    const executionOwner = captureProjectEpoch()
 
     try {
       let current = patches
@@ -604,7 +684,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       for (;;) {
         patch(key, {
           fileId,
-          artifactValidation,
+          artifactValidation: artifactValidation ?? undefined,
           status: 'rendering',
           error: null,
           traceback: '',
@@ -624,19 +704,14 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         let perfHandle = -1
         const ctrl = new AbortController()
         slot.abort = () => ctrl.abort()
-        const timeoutMs = watchdogMs(fileId)
-        let timedOut = false
-        const watchdog = window.setTimeout(() => {
-          timedOut = true
-          ctrl.abort()
-        }, timeoutMs)
+        const watchdog = armRenderWatchdog(fileId, watchdogMs(fileId), () => ctrl.abort())
         try {
           // SVG 与 manifest 同一响应（inline_svg）：第二跳 GET 读的是磁盘上
           // 那一份，另一个变体的渲染插进来就会与本次 manifest 错配
           // 装了替代传输就走它（Codex 内嵌画布 → MCP 的 tools/call），
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
-          const source = artifactValidation === undefined ? {} : artifactRequestFields({ fileId, overrides: current as PanelObject['overrides'], artifactValidation })
+          const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
           const opts = { signal: ctrl.signal, previewDpi: dpi, ...source }
           const transport = engineTransport()
           if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
@@ -645,11 +720,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
-          if (artifactValidation) validationFromSource(res.artifact_source, fileId, artifactValidation)
+          if (artifactValidation) verifiedSource(res.artifact_source, fileId, policyOfGuard(artifactValidation), artifactValidation)
           perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
           // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
           // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
           if (epochAtStart !== projectEpoch || ctrl.signal.aborted) return
+          if (executionOwner.still()) observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
           if (res.environment_switched) {
             // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
             // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
@@ -662,7 +738,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           }
           const next: Partial<PanelRender> = {
             fileId,
-            artifactValidation,
+            artifactValidation: artifactValidation ?? undefined,
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
@@ -672,6 +748,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             confirmation: null,
             dependencyPreparation: null,
             missingInput: null,
+            workdirHint: res.workdir_hint ?? null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -679,6 +756,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             lastPatches: JSON.stringify(current),
             previewDpi: dpi ?? null,
           }
+          // 沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊，同一份证据只提醒一次
+          noticeWorkdirHint(workdirHintOwner(projectAtStart, key), res.workdir_hint, projectAtStart, workdirHintDeps())
           // 二道闸（ADR 0022）：后端的 pre-read 闸才是第一道保护，这里拦的是
           // 「字节已经进了浏览器进程」之后的那一步——绝不 prepareSvg + 存进
           // store + 塞进 DOM。判据收在 `resolvePreview` 一处。
@@ -756,10 +835,11 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             duration_ms: Date.now() - startedAt,
             // **机器可读的 code**，不是 traceback、不是报错原文——
             // 那两样里装着用户的脚本与路径
-            code: timedOut ? 'timeout' : err instanceof EngineError ? err.code : 'unknown',
+            code: watchdog.timedOut() ? 'timeout' : err instanceof EngineError ? err.code : 'unknown',
           })
           // 换过项目：旧项目的失败同样不落进当前项目（条目、确认框、排队的重试都不要）
           if (epochAtStart !== projectEpoch) return
+          if (err instanceof EngineError && executionOwner.still()) observeFigureExecution(err.figureSnapshotInvalidation, projectAtStart)
           // 后端说这一版是按旧改指表画的、表已经变了（ADR 0106 §五；别的窗口改的也算）：不是失败，
           // 不留错误块——标 stale，同步器按新表重排（本窗口自己改的表，`invalidateInflight` 通常已先丢掉它）
           if (err instanceof EngineError && err.code === INPUT_REMAP_CHANGED_CODE && slot.queued == null) {
@@ -811,15 +891,16 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             ...(artifactValidation ? { stale: true, manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}),
             code: err instanceof EngineError || err instanceof ArtifactValidationError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
+            installRoute: err instanceof EngineError ? err.installRoute : undefined,
             projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
             dependencyRepair:
               err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
             confirmation,
             dependencyPreparation,
             missingInput,
-            error: timedOut
-              ? msg('render.timeout',
-                    { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
+            workdirHint: err instanceof EngineError ? (err.workdirHint ?? null) : null,
+            error: watchdog.timedOut()
+              ? msg('render.timeout', { minutes: watchdog.minutes() }, 'errors')
               // code 有文案时按当前语言包装（worker 的 error 原文是中文，
               // 英文界面直接透出 = 泄漏系统文案，issue #30 实测撞见）
               : engineErrorMsg(err),
@@ -827,7 +908,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           })
           return
         } finally {
-          window.clearTimeout(watchdog)
+          watchdog.clear()
         }
         if (slot.queued == null) break
         current = slot.queued.patches
@@ -866,7 +947,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 指认了数据位置 / 改写了脚本里的路径之后（ADR 0106 / 0110）：「找不到数据」那些面板重排——
           // 带载荷的都算（C++ 读取器是 script_error、先判空再 exit 是 script_exited）
           v.code === MISSING_INPUT_CODE ||
-          v.missingInput != null)
+          v.missingInput != null ||
+          // 沙盒里落空、脚本目录里找得到的引导（#1254）：换了运行目录之后这些面板同样值得重排
+          v.workdirHint != null)
       ) {
         ids.add(v.fileId)
       }
@@ -1005,6 +1088,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
 
   clear: () => {
     projectEpoch += 1
+    lastRenderProgress.clear()
     inflight.clear()
     liveKeys.clear()
     set({
@@ -1020,13 +1104,17 @@ export const useRenderStore = create<RenderState>((set, get) => ({
 }))
 
 /** Source failures revoke saved bytes; a visibility choice belongs only to its full variant key. */
-export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation, error: unknown, ownerKey?: string): void {
+export function rejectArtifactRenders(fileId: string, guard: AdoptionGuard, error: unknown, ownerKey?: string): void {
   const store = useRenderStore.getState()
   const message = engineErrorMsg(error)
   const variantOnly = message.key === 'artifact.backgroundVisibilityRequired'
   for (const [key, r] of Object.entries(store.byKey)) {
     if (r.fileId !== fileId || r.artifactValidation?.bytesSha256 !== guard.bytesSha256 || r.artifactValidation?.sizeBytes !== guard.sizeBytes) continue
     if (variantOnly && key !== ownerKey) continue
+    // 来源驱动的确认失效只落在摘要对得上的那批渲染：同一 PNG 另一个实例若已重新确认（摘要不同），它的渲染不该被牵连
+    if ('policy' in guard && classifyArtifactFailure(error).recoverability === 'needs_review' &&
+        r.artifactValidation && 'policy' in r.artifactValidation &&
+        r.artifactValidation.reconstructionSha256 !== guard.reconstructionSha256) continue
     const slot = inflight.get(key)
     if (slot) { slot.queued = null; slot.abort?.() }
     store.patch(key, {status:'error',code:'artifact_source_unavailable',error:message,
@@ -1035,6 +1123,9 @@ export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation,
       if (png.key === key) useMountedPngStore.getState().clear(id)
     }
   }
+  // 来源驱动面板的确认失效：编辑保留、不自动换基，给「重新对照确认」这一个出路
+  const failure = classifyArtifactFailure(error)
+  if (failure.recoverability === 'needs_review') notifyReconstructionReview(fileId, guard, failure.reason)
 }
 
 export const emptyRender = EMPTY
@@ -1068,7 +1159,7 @@ export function panelRender(
   const own = state.byKey[renderKeyOf(panel)]
   const issue = artifactValidationIssue(panel)
   if (issue) return invalidArtifactRender(issue, own)
-  if (panel.artifactValidation) return own
+  if (isAdoptedPanel(panel)) return own
   if (own?.manifest) return own
   const prev = state.byKey[state.latest[panel.fileId] ?? '']
   return mergeRender(own, prev)
@@ -1132,6 +1223,23 @@ export function exactPanelManifest(
     renderKeyOf(panel), render.rev, render.manifest,
     useMountedPngStore.getState().byPanel[panel.id],
   )
+}
+
+/**
+ * 面板的**结构性** manifest：只回答「这张图里有哪些元素、元素之间是什么结构关系」（如 `alias_covers`），
+ * 不回答几何。所以与 `exactPanelManifest` 不同——不要求这一版已经画好：连续写入时（输入框打字、
+ * 第二次点击赶在上一次渲染返回之前）当前变体的 manifest 还没回来，结构事实却没有变，退到该文件最近
+ * 一次成功渲染的那份（`latest`，即画布上挂着的显示退路）。**绝不可拿它做几何写操作**
+ * （`display-fallback-vs-geometry-authority.md`）。拿不到（还没渲染过）= `null`，调用方退化为不处理。
+ */
+export function structuralPanelManifest(
+  state: Pick<RenderState, 'byKey' | 'latest'>,
+  panel: PanelObject,
+): Manifest | null {
+  const own = state.byKey[renderKeyOf(panel)]?.manifest
+  if (own) return own
+  const key = state.latest[panel.fileId]
+  return (key && state.byKey[key]?.manifest) || null
 }
 
 /**
@@ -1244,7 +1352,7 @@ export function panelDisplayView(
       render: exact,
     }
   }
-  if (Object.hasOwn(panel, 'artifactValidation')) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
+  if (isAdoptedPanel(panel)) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
   const sourceKey = own?.svg ? currentKey : (state.latest[panel.fileId] ?? '')
   const prev = state.byKey[sourceKey]
   if (prev?.svg) {
@@ -1273,7 +1381,7 @@ export function activeRenderKey(
 export function usePanelRender(panel: PanelObject | null | undefined): PanelRender | undefined {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
   const prev = useRenderStore((s) =>
-    panel && !Object.hasOwn(panel, 'artifactValidation') ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
+    panel && !isAdoptedPanel(panel) ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
   )
   const issue = panel ? artifactValidationIssue(panel) : null
   return useMemo(() => issue ? invalidArtifactRender(issue, own) : (own?.manifest ? own : mergeRender(own, prev)), [own, prev, issue])
@@ -1306,7 +1414,7 @@ export function usePanelDisplayView(panel: PanelObject | null | undefined): Pane
     () => (panel ? panelDisplayView({ byKey, latest }, panel) : null),
     // variant 表达 overrides 的内容变化（panel 每次 commit 都是新引用）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [byKey, latest, panel?.id, panel?.fileId, panel?.artifactValidation, variant],
+    [byKey, latest, panel?.id, panel?.fileId, adoptionGuardOf(panel ?? {}), variant],
   )
 }
 

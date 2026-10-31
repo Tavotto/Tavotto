@@ -21,13 +21,14 @@ import {
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
+import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
 import { dirTail } from '@/lib/pathDisplay'
 import { FormRow } from './FormRow'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
+import { LayoutRecover } from './LayoutRecover'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -162,12 +163,15 @@ export function LayoutDialog() {
       if (!overwrite) useDocumentStore.getState().renameProject(stem)
       const edited = projectFileSnapshot()
       const baseRevision = overwrite?.revision ?? knownLayoutRevision(stem, pj) ?? REVISION_ABSENT
+      const pd = useDocumentStore.getState().buildProject()
+      const snapshots = captureFigureSnapshotSave(pd, pj)
       const res = await saveLayout(
         stem,
-        useDocumentStore.getState().buildProject(),
+        pd,
         baseRevision,
         toProject ? { target: 'project' } : undefined,
       )
+      mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
       // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步
       // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
       // 那一份（`ctx.moment`：入口取的快照，与上面序列化的是同一刻）。存进项目的是项目文件，
@@ -359,6 +363,7 @@ export function LayoutDialog() {
             <FormRow label={t('dialogs:layout.nameLabel')}>
               <TextInput
                 id="layout-save-name"
+                data-layout-save-name
                 ref={nameRef}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -418,6 +423,9 @@ export function LayoutDialog() {
             ))}
           </ul>
         )}
+
+        {/* 找回本机排版（ADR 0108 §四）：只在「打开」那一屏；自动保存槽位里没人记着的那些 */}
+        {!saving && <LayoutRecover open={open} onClose={() => setOpen(false)} />}
 
         {/* 撞名：一条警示放在页脚上方，裁决（改名 / 覆盖）在页脚 */}
         {conflict && (

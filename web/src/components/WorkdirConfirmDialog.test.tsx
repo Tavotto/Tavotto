@@ -26,7 +26,7 @@ import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
-import { onGateResolved, useScriptRunStore } from '@/store/scriptRunStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -167,7 +167,7 @@ describe('WorkdirConfirmDialog', () => {
     expect(text()).toContain(en('workdirChooseConflicts', { files: 'data.csv' }))
     for (const m of ['project_root', 'project', 'sandbox']) expect(radio(m)!.checked).toBe(false)
     expect(text()).not.toContain(en('workdirRecommended'))
-    expect(button(en('workdirChooseRun'))!.disabled).toBe(true)
+    expect(button(en('workdirChooseConfirm'))!.disabled).toBe(true)
   })
 
   it('选一档点「运行」：只发一次 PATCH、不弹第二层确认、关框并把「先选目录」的面板重新排上', async () => {
@@ -188,7 +188,7 @@ describe('WorkdirConfirmDialog', () => {
     })
     await render(<WorkdirConfirmDialog />)
     await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
-    await act(async () => button(en('workdirChooseRun'))!.click())
+    await act(async () => button(en('workdirChooseConfirm'))!.click())
     await act(async () => {})
     expect(setMock).toHaveBeenCalledTimes(1)
     expect(setMock).toHaveBeenCalledWith('project_root')
@@ -208,7 +208,7 @@ describe('WorkdirConfirmDialog', () => {
     await render(<WorkdirConfirmDialog />)
     await act(async () => useEnvStore.getState().requestWorkdirConfirmation(ambiguous()))
     await act(async () => radio('sandbox')!.click())
-    await act(async () => button(en('workdirChooseRun'))!.click())
+    await act(async () => button(en('workdirChooseConfirm'))!.click())
     await act(async () => {})
     expect(setMock).toHaveBeenCalledWith('sandbox')
   })
@@ -269,8 +269,11 @@ describe('WorkdirConfirmDialog', () => {
   })
 
   it('作答期间换了项目：A 的确认不去重跑 B 停在门上的试运行；同项目照常重跑（#740 Codex P2）', async () => {
+    // 「重跑停在门上的试运行」只有一个入口（`rerunGated`；T09b 起接入中心不再另挂监听）：直接数它被调了几次
     const resolved: string[] = []
-    const off = onGateResolved((phase) => resolved.push(phase))
+    const realRerun = useScriptRunStore.getState().rerunGated
+    useScriptRunStore.setState({ rerunGated: (phase) => void resolved.push(phase) })
+    const off = () => useScriptRunStore.setState({ rerunGated: realRerun })
     const ok = {
       ok: true,
       workdir: { mode: 'project_root', modes: [] },
@@ -282,7 +285,7 @@ describe('WorkdirConfirmDialog', () => {
       setMock.mockResolvedValue(ok)
       await render(<WorkdirConfirmDialog />)
       await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
-      await act(async () => button(en('workdirChooseRun'))!.click())
+      await act(async () => button(en('workdirChooseConfirm'))!.click())
       await act(async () => {})
       expect(resolved).toEqual(['needs_workdir'])
       // 换项目：PATCH 在路上时切到 B，回来之后不重跑
@@ -290,7 +293,7 @@ describe('WorkdirConfirmDialog', () => {
       let release!: (v: unknown) => void
       setMock.mockReturnValue(new Promise((r) => (release = r)) as never)
       await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
-      await act(async () => button(en('workdirChooseRun'))!.click())
+      await act(async () => button(en('workdirChooseConfirm'))!.click())
       const { fetchEngineEnvironment } = await import('@/lib/api')
       vi.mocked(fetchEngineEnvironment).mockResolvedValue(env())
       await act(async () => {
@@ -308,7 +311,7 @@ describe('WorkdirConfirmDialog', () => {
       await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
       let release2!: (v: unknown) => void
       setMock.mockReturnValue(new Promise((r) => (release2 = r)) as never)
-      await act(async () => button(en('workdirChooseRun'))!.click())
+      await act(async () => button(en('workdirChooseConfirm'))!.click())
       await act(async () => {
         setCurrentProjectId('pB')
         useScriptRunStore.getState().clear()

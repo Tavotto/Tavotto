@@ -48,19 +48,19 @@
     "openFailed": "打不开项目：{{error}}",
     "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
     "projectOpened": "已打开项目 {{name}}",
-    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。"
+    "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
+    "superseded": "项目已切换，这次交接没有放入。"
   },
   "picker": {
     "backToCurrent": "返回当前项目",
-    "browse": "浏览目录…",
+    "browse": "浏览…",
     "create": "新建项目",
     "createIn": "将在 {{dir}} 下新建",
     "filterNoMatch": "没有与“{{query}}”匹配的最近项目",
     "missingDir": "目录不存在",
+    "missingCount": "已不存在 {{count}}",
     "missingGroup": "已不存在的目录",
-    "missingGroupCollapse": "收起已不存在的目录",
-    "missingGroupExpand": "展开已不存在的目录",
-    "missingHint": "目录已不在磁盘上；从列表移除不会删除文件。",
     "nativeCreateTitle": "选择新项目所在的上级目录",
     "nativePickerTitle": "选择项目文件夹（绘图脚本所在的文件夹）",
     "openButton": "打开",
@@ -68,21 +68,21 @@
     "openProject": "打开项目 {{name}}",
     "opening": "打开中…",
     "pathLabel": "项目路径",
-    "pathPlaceholder": "输入路径打开，或输入名字筛选最近项目",
+    "pathPlaceholder": "搜索项目，或粘贴路径后回车",
     "recentCount": "{{count}} 个",
     "recentHeading": "最近项目",
     "recentLabel": "最近项目",
     "regionLabel": "选择项目",
     "removeAllMissing": "全部移除",
+    "removeFromList": "从列表移除",
     "removeFromListTitle": "从列表移除，不删文件",
-    "tagline": "项目是绘图脚本所在的文件夹。选择一个开始做图。",
     "tutorial": {
       "start": "用示例了解 Tavotto",
       "resume": "继续教程",
       "restart": "再看一遍教程"
     },
+    "title": "全部项目",
     "tutorialBadge": "教程项目",
-    "tutorialHint": "离线示例项目，可随意修改、随时重来，不会影响你的项目。",
     "tutorialLabel": "新手教程",
     "tutorialOpening": "准备中…",
     "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
@@ -94,10 +94,11 @@
       "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
       "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
       "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
+      "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
       "folderTitle": "选择脚本所在的文件夹",
       "nativeTitle": "选择 Python 绘图脚本",
       "openedFolder": "已打开项目「{{name}}」",
-      "openedScript": "已打开「{{name}}」所在的项目"
+      "openedScript": "已打开「{{name}}」所在的项目，正在运行它，出图后直接打开这张图"
     },
     "menuOpen": "打开",
     "more": "更多",
@@ -137,6 +138,7 @@
     "filter": "按名称或路径筛选",
     "filterLabel": "筛选项目",
     "hint": "项目是你的脚本文件夹；一个项目可以有多份排版。",
+    "hintLabel": "关于项目与排版",
     "listLabel": "{{section}}项目",
     "moveDown": "下移",
     "moveUp": "上移",
@@ -161,5 +163,13 @@
     "scriptCount_other": "{{count}} 个已关联脚本",
     "unpin": "取消收藏",
     "unpinLabel": "取消收藏 {{name}}"
+  },
+  "readOnlyPrompt": {
+    "title": "{{product}} 没有这个文件夹的写入权限。另存一份到你自己的文件夹再编辑？",
+    "save": "另存为…",
+    "continue": "继续只读打开",
+    "pickTitle": "选择另存到哪个文件夹",
+    "partial_other": "有 {{count}} 个文件读不了，没有复制进副本。",
+    "openCopy": "打开副本"
   }
 }

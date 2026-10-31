@@ -1,0 +1,258 @@
+[
+  {
+    "name": "merge prefix adapter GraphQL repository identity",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ validates\\ GraphQL\\ repository\\ ID\\ before\\ using\\ queue\\ members",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-01.raw.log",
+    "sha256": "b2fc0ded4b97d09f2e4382385ea2814074d1276ac36cad0cb23920bd39d93941"
+  },
+  {
+    "name": "merge prefix adapter stable pagination total",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ changing\\ middle\\-page\\ total\\ refuses\\ before\\ any\\ PR\\ read",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-02.raw.log",
+    "sha256": "85ebc1f84a2157ad06f31024c8cbacffaadce69fa8c7f56711b08d20083c322a"
+  },
+  {
+    "name": "merge prefix adapter repeated pagination cursor",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ repeated\\ cursor\\ is\\ rejected\\ at\\ the\\ first\\ repeated\\ cursor",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-03.raw.log",
+    "sha256": "6c98024fb8990f9daaf4c5afcb80f8d93707ce151ea0fbdf4877f3f4b2734ec7"
+  },
+  {
+    "name": "merge prefix adapter unique entry ID",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ rejects\\ duplicate\\ or\\ incomplete\\ queue\\ entry\\ ID",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-04.raw.log",
+    "sha256": "2ffdeb4b1af56190db30da4255ca187f0d3b37047338c5c6ec73ffc847e95b28"
+  },
+  {
+    "name": "merge prefix adapter unique PR number",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ rejects\\ duplicate\\ or\\ incomplete\\ queue\\ PR\\ number",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-05.raw.log",
+    "sha256": "a0ea93d360cdf5989212f23a30b9530bf355856b3d59f0e3005257b129db47a1"
+  },
+  {
+    "name": "merge prefix adapter complete queue positions",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ rejects\\ duplicate\\ or\\ incomplete\\ queue\\ position\\ gap",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-06.raw.log",
+    "sha256": "c0aba49f6a2d98fdd894cc31cab51e8f978b9575fefc3eebb7eef4a7a8e2d3e4"
+  },
+  {
+    "name": "merge prefix adapter complete approved prefix",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ full\\ prefix\\ includes\\ earlier\\ PRs\\ and\\ excludes\\ later\\ queue\\ members",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-07.raw.log",
+    "sha256": "1112fe22f73797c828ef6c770b9bd5549643a6c3c4512d46bd18d791662e0c2d"
+  },
+  {
+    "name": "merge prefix adapter candidate base SHA",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ candidate\\ requires\\ exact\\ baseSha\\ AND\\ its\\ other\\ SHA",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-08.raw.log",
+    "sha256": "bd80121fa0d47d595ffa294026e5775e31cfbf2f3877fe5cf29c7d20504d0d69"
+  },
+  {
+    "name": "merge prefix adapter unambiguous candidate",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ ambiguous\\ head\\-and\\-base\\ candidate\\ refuses\\ rather\\ than\\ selecting\\ the\\ first",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-09.raw.log",
+    "sha256": "b0f3dae008cbcd177a96282af6ddf1bda469a79235b51aa43ab83f9b38942eaa"
+  },
+  {
+    "name": "merge prefix adapter full second queue comparison",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ second\\ queue\\ read\\ detects\\ entry\\ identity\\ change",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-10.raw.log",
+    "sha256": "4461b075473d8494cb437524eb1e66f50df195c8341b6e14c11ddecd090c3eff"
+  },
+  {
+    "name": "merge prefix adapter queued PR head pin",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ queued\\ PR\\ head\\ must\\ match\\ the\\ full\\ current\\ PR\\ snapshot",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-11.raw.log",
+    "sha256": "5ec4b33a6254eb235bdbf7e691e86faf668856a387bacefb5ebbedf73bfe69ab"
+  },
+  {
+    "name": "merge prefix adapter own PR base comparison",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ comparisons\\ use\\ each\\ PR\\ own\\ base\\ and\\ head\\ rather\\ than\\ queue\\ SHAs",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-12.raw.log",
+    "sha256": "c8a24a4131c904b7dc1e977f7c7c1ffc26ff36f6d022d57ba94405ef6dabc1f1"
+  },
+  {
+    "name": "merge prefix adapter unchanged token permission list",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ real\\ token\\ handshake\\ rejects\\ added\\ merge\\-queues\\ permission",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-13.raw.log",
+    "sha256": "cffbb5d2987cdffc35fea49cc2a1652578b9425a9ffefbc4f879b0c57499240c"
+  },
+  {
+    "name": "merge prefix adapter opaque visible ASCII identity",
+    "file": "src/native/merge-prefix.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ accepts\\ opaque\\ visible\\-ASCII\\ entry\\ IDs\\ without\\ guessing\\ their\\ encoding",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-14.raw.log",
+    "sha256": "04a8f141ab900bf0cee9a33e838e227c2ccc95843f357f93474a6f998425b700"
+  },
+  {
+    "name": "merge prefix adapter unchanged external work cap",
+    "file": "src/native/budget.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ three\\-member\\ assessment\\ refuses\\ unchanged35\\ external\\ budget\\ without\\ a\\ report\\ or\\ write",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-15.raw.log",
+    "sha256": "ef8adeb30aaa53d760fea629b7ab1949c02a60396f18a5053ddd8deed72d169b"
+  },
+  {
+    "name": "merge prefix adapter actual external cost accounting",
+    "file": "src/native/service.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=merge\\ prefix\\ adapter\\ actual\\ two\\-member\\ assessment\\ costs32\\ external\\ and6\\ SQL\\ with\\ unchanged\\ read\\-only\\ state",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-16.raw.log",
+    "sha256": "53b048156b1dbbada8d6d6172b13742739e7b76e81d56c73f0879976714b3929"
+  }
+]

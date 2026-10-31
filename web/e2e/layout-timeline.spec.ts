@@ -43,7 +43,7 @@ async function settleInspectorMotion(page: Page) {
   })
 }
 
-/** 素材卡上画布，再回到排版 */
+/** 素材卡上画布（画布上只有这一张 = 单图编辑），再退出图内编辑（出口按钮只在图内编辑时有） */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
   await (await only(page.locator('[data-context-back]'))).click()
@@ -253,7 +253,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 顶栏时钟钮打开时间线；等第一个自动节点 ──────────────────────────
   const clock = await only(page.locator('[data-timeline-button]'))
   await clock.click()
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   await expect(drawer).toBeVisible()
   const nodes = drawer.locator('[data-timeline-node]')
   await expect.poll(() => nodes.count(), { timeout: 30_000 }).toBeGreaterThan(0)
@@ -377,9 +377,19 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
   await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
-  // 「预览」在选中行下面的内联条上（2026-10-07 设计审计 §10.2）：先选中这一行
+  // 点一行弹出对比小卡片：左「那一刻」右「现在」自动并排；卡片角上的「放大查看」才开模态
   await (await only(named.locator('[data-timeline-row]'))).click()
-  await (await only(named.locator('[data-timeline-preview-button]'))).click()
+  const card = await only(page.locator('[data-timeline-card]'))
+  await expect(card.locator('[data-timeline-card-frame="moment"]')).toBeVisible()
+  await expect(card.locator('[data-timeline-card-frame="current"]')).toBeVisible()
+  // 那一刻只有甲；当前（甲 + 乙）那一格里才有乙
+  const momentFrame = card.locator('[data-timeline-card-frame="moment"]')
+  const currentFrame = card.locator('[data-timeline-card-frame="current"]')
+  await expect(momentFrame.getByText('甲版标注', { exact: true })).toHaveCount(1)
+  await expect(momentFrame.getByText('乙版标注', { exact: true })).toHaveCount(0)
+  await expect(currentFrame.getByText('乙版标注', { exact: true })).toHaveCount(1)
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-compare-card.png') })
+  await (await only(card.locator('[data-timeline-card-enlarge]'))).click()
   const preview = await only(page.locator('[data-dialog="timeline-preview"]'))
   await expect(preview).toBeVisible()
   await expect(preview).toContainText('投稿前')
@@ -417,7 +427,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(before).toHaveCount(1, { timeout: 15_000 })
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-before-restore.png') })
   await (await only(before.locator('[data-timeline-row]'))).click()
-  await (await only(before.locator('[data-timeline-preview-button]'))).click()
+  await (await only(page.locator('[data-timeline-card-enlarge]'))).click()
   await expect(preview).toBeVisible()
   await expect(preview.getByText('乙版标注', { exact: true })).toBeVisible()
   await (await only(preview.locator('[data-timeline-preview-restore]'))).click()
@@ -637,7 +647,7 @@ test('同一 SVG、同一几何只差水平翻转：节点缩略图是左右镜�
   await expect(flip).toHaveAttribute('data-active', 'true')
   await expect(display).toHaveAttribute('data-display-key', sourceKey!)
   await page.keyboard.press('ControlOrMeta+Shift+H')
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   const thumbOf = (name: string) =>
     drawer.locator('[data-timeline-node][data-timeline-named]', {
       has: page.locator('[data-timeline-name]', { hasText: name }),
@@ -801,7 +811,7 @@ for (const locale of ['zh-CN', 'en-US']) {
           return { x: r.x, y: r.y, w: r.width, h: r.height }
         }
         const status = root.querySelector('[data-panel-engine-status]')!
-        // 身份头路径行右端的状态胶囊（「n 个问题 ›」随检查结果到来）在固定高的那一行里出现 / 消失，
+        // 身份头路径行右端的状态胶囊（如「已锁定」）在固定高的那一行里出现 / 消失，
         // 不挪动任何东西；这把尺子量的是属性表本身（2026-10-07 §9.2 身份头固定两行）
         const controls = [...root.querySelectorAll('button, input')].filter((el) => !el.closest('[data-identity]'))
         return { status: rect(status), controls: controls.map(rect) }
@@ -814,6 +824,22 @@ for (const locale of ['zh-CN', 'en-US']) {
         )).toEqual(visible)
         const geometry = await measure()
         expect(geometry, state).toEqual(baseline)
+        // 引擎提示一行放得下、不盖到下一节（三条都量：不可见的也占着真实布局；Codex #1110 P2）
+        const fit = await inspector.evaluate((root) => {
+          const sec = root.querySelector('[data-panel-engine-status]')!.closest('section')!
+          const nextTop = sec.nextElementSibling!.getBoundingClientRect().top
+          return [...root.querySelectorAll<HTMLElement>('[data-panel-engine-message]')].map((el) => ({
+            kind: el.dataset.panelEngineMessage,
+            oneLine: el.scrollWidth <= el.clientWidth + 1 || getComputedStyle(el).textOverflow === 'ellipsis',
+            height: el.getBoundingClientRect().height,
+            overflowBelow: el.getBoundingClientRect().bottom - nextTop,
+          }))
+        })
+        for (const m of fit) {
+          expect(m.height, `${state} ${m.kind} 高度`).toBeLessThanOrEqual(12.5)
+          expect(m.overflowBelow, `${state} ${m.kind} 盖到下一节`).toBeLessThanOrEqual(0.5)
+          expect(m.oneLine, `${state} ${m.kind} 单行`).toBe(true)
+        }
         measurements.push({ state, geometry })
       }
       await check('warm', ['building'])

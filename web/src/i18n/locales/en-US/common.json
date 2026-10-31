@@ -1,5 +1,6 @@
 {
   "actions": {
+    "appMenu": "Menu",
     "cancel": "Cancel",
     "clearSearch": "Clear search",
     "close": "Close",
@@ -8,7 +9,10 @@
     "delete": "Delete",
     "refresh": "Refresh",
     "reload": "Reload",
-    "save": "Save"
+    "save": "Save",
+    "windowMaximize": "Maximize",
+    "windowMinimize": "Minimize",
+    "windowRestore": "Restore"
   },
   "colorField": {
     "picker": "{{label}}: colour picker",
@@ -28,14 +32,18 @@
   },
   "literal": "{{text}}",
   "measure": {
-    "cmSize": "{{w}} × {{h}} cm",
-    "mm": "{{value}} mm",
-    "mmPair": "{{a}}, {{b}} mm",
-    "mmSize": "{{w}} × {{h}} mm",
-    "ppi": "{{value}} ppi",
-    "pxSize": "{{w}} × {{h}} px"
+    "cmSize": "{{w}} × {{h}} cm",
+    "mm": "{{value}} mm",
+    "mmPair": "{{a}}, {{b}} mm",
+    "mmSize": "{{w}} × {{h}} mm",
+    "ppi": "{{value}} ppi",
+    "pxSize": "{{w}} × {{h}} px"
   },
   "mixed": "Mixed",
+  "notice": {
+    "details": "Details",
+    "copied": "Copied"
+  },
   "objectType": {
     "arrow": "Arrow",
     "emptyText": "Empty text",

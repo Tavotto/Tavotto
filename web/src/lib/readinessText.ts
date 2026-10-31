@@ -34,7 +34,10 @@ export const statusLabel = (status: ReadinessStatus): string =>
  * 就分不出来了。
  */
 export const reasonText = (cap: PanelCapability): string =>
-  translate(`readiness.reason.${cap.reason_code}`, {
+  cap.foreign_source
+    ? // 后端报了“这张图旁边有同名 R / MATLAB 脚本”：一句话说它是谁画的（取代“没有找到生成它的脚本”）
+      translate(`readiness.foreign.${cap.foreign_source.language}`, { ns: 'workspace' })
+    : translate(`readiness.reason.${cap.reason_code}`, {
     ns: 'workspace',
     script: cap.script ?? cap.candidates[0] ?? '',
   })

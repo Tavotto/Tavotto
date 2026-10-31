@@ -7,7 +7,7 @@
 三条纪律（每一条都有看护用例）：
 
 * **白名单投影，不是递归删键。** 各来源在自己的模块里写 `diagnostic_projection()`（`exportjob` / `preparation` /
-  `probe`），逐字段挑：闭集枚举、稳定码、计数、数字、不透明 id。完整请求、文件名、路径、argv、答案、stdout、
+  `probe` / `deprepair`），逐字段挑：闭集枚举、稳定码、计数、数字、不透明 id。完整请求、文件名、路径、argv、答案、stdout、
   报错文字、`error.params` 一个都不进快照——不是「过一遍正则」，而是根本不读。本模块只提供取值的形状守卫
   （`code` / `ident` / `closed` / `count`…）：不合形状的值**丢掉**，不哈希（低熵值的哈希是可猜的）。
 * **终局即冻结。** 作业走到终局那一刻写一次，之后不可改。重试是新的 attempt、新的快照；「谁重试了谁」用
@@ -26,7 +26,7 @@ import json
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 SNAPSHOT_VERSION = 1
 DOCUMENT_SCHEMA = "tavotto.task-diagnostic"
@@ -35,7 +35,11 @@ DOCUMENT_VERSION = 1
 KIND_EXPORT = "export"
 KIND_PREPARATION = "preparation"
 KIND_SCRIPT_RUN = "script_run"
-KINDS = (KIND_EXPORT, KIND_PREPARATION, KIND_SCRIPT_RUN)
+#: 依赖安装 / 受管环境换代的终局（T06）：`deprepair.diagnostic_projection`
+KIND_DEPENDENCY = "dependency"
+KINDS = (KIND_EXPORT, KIND_PREPARATION, KIND_SCRIPT_RUN, KIND_DEPENDENCY)
+#: 一次尝试的终局词汇（准备 `STATUSES` 与试运行 `OUTCOME_*` 共用这一套；不在里面的读作 other）
+_RUN_OUTCOMES = ("ready", "error", "cancelled", "needs_input")
 
 #: 登记表的上限。快照本身已被白名单限住（通常 1–3 KB），这里是第二道、与来源无关的闸。
 MAX_ENTRIES = 48
@@ -76,7 +80,8 @@ def ident(value) -> str | None:
 
 
 def digest(value) -> str | None:
-    """文档修订这类十六进制摘要（前端按请求结构算的 64 位 FNV，不含任何原文）。"""
+    """安装影响摘要这类十六进制摘要（`deprepair.impact_digest`：对计划影响的 sha256，不含原文）。
+    **不用于**整份画布载荷的摘要——导出的 `document_revision` 是无密钥 FNV，短标题可被离线猜出，不出门。"""
     return value if isinstance(value, str) and _HEX.fullmatch(value) else None
 
 
@@ -274,6 +279,33 @@ class Store:
             self._evict(keep=key)
             return entry
 
+    def amend_post_terminal_failure(self, project_id, kind: str, ref, error_code) -> Entry | None:
+        """终局之后才发生的失败：把一条已冻结的 `ready` 改记为 `error` + 稳定码（准备会话的构建后 finalizer
+        失败，如登记撞 stem）。**唯一**允许改写冻结快照的入口，且只做这一件事：条目必须存在且当前是 `ready`
+        （其余终局——已失败 / 已取消——不动），只改 `outcome` 与 `error.code`（`code()` 过闸），其余字段
+        （阶段、计时、执行事实）原样保留；`recorded_at` / `retry_of` / `subject` 不变。幂等：改过一次就不再是 ready。"""
+        err = code(error_code)
+        if err is None:
+            return None
+        with self._lock:
+            key = (project_id, kind, ref)
+            e = self._entries.get(key)
+            if e is None or e.outcome != "ready":
+                return None
+            try:
+                snap = json.loads(e.blob)
+            except ValueError:
+                return None
+            if not isinstance(snap, dict):
+                return None
+            snap["outcome"] = "error"
+            snap["error"] = {"code": err}
+            new = replace(
+                e, outcome="error", failed=True, blob=json.dumps(snap, ensure_ascii=False)
+            )
+            self._entries[key] = new
+            return new
+
     def _latest_same_subject(self, project_id, kind, subj) -> Entry | None:
         best = None
         for e in self._entries.values():
@@ -328,6 +360,18 @@ class Store:
             ]
         return max(hits, key=lambda e: e.recorded_at, default=None)
 
+    def failures(self, project_id, kinds=None) -> list[Entry]:
+        """这个项目还在保留期内的失败条目，新的在前；`kinds` 给了就只要这几类。"""
+        with self._lock:
+            self._expire(time.time())
+            hits = [
+                e
+                for e in self._entries.values()
+                if e.project_id == project_id and e.failed and (kinds is None or e.kind in kinds)
+            ]
+        hits.sort(key=lambda e: -e.recorded_at)
+        return hits
+
     def recent(self, project_id, limit: int = BUNDLE_SNAPSHOTS) -> list[Entry]:
         with self._lock:
             self._expire(time.time())
@@ -335,6 +379,29 @@ class Store:
         # 失败在前，同档新的在前
         mine.sort(key=lambda e: (not e.failed, -e.recorded_at))
         return mine[:limit]
+
+    def attempted_scripts(self, project_id, kinds=None) -> list[tuple[str, bool]]:
+        """这个项目还在保留期内、尝试过的脚本 `[(脚本, 是否有失败的尝试)]`：失败的在前，同档新的在前，按脚本去重。
+
+        读的是 `subject` 里私有的 `("script", 脚本)`——只给进程内的采集方（可选的「附脚本源码」）用来决定**收哪些脚本**，
+        不进任何快照 / 报告；`Entry.subject` 本身仍不出门。"""
+        with self._lock:
+            self._expire(time.time())
+            mine = [
+                e
+                for e in self._entries.values()
+                if e.project_id == project_id and (kinds is None or e.kind in kinds)
+            ]
+        mine.sort(key=lambda e: (not e.failed, -e.recorded_at))
+        out: dict[str, bool] = {}
+        for e in mine:
+            for tag, value in sorted(e.subject, key=repr):
+                if tag != "script" or not isinstance(value, str) or not value:
+                    continue
+                out[value] = out.get(value, False) or e.failed
+        return sorted(
+            out.items(), key=lambda kv: not kv[1]
+        )  # 稳定排序：失败档在前，档内保持上面的新旧序
 
     def later_attempts(self, entry: Entry) -> list[dict]:
         with self._lock:
@@ -422,6 +489,64 @@ def bundle_section(store: Store, project_id, *, limit: int = BUNDLE_SNAPSHOTS) -
         "snapshots": docs,
         "omitted": omitted,
         "collection": {"executed_anything": False, "current_state_included": False},
+    }
+
+
+#: 全局报告 `project.recent_runs` 里「脚本是否跑得起来」的两类尝试（导出不算：它不执行用户脚本）。
+RUN_KINDS = (KIND_SCRIPT_RUN, KIND_PREPARATION)
+#: `recent_runs.recent` 最多列几条（逐条的结论）；`counts` / `by_error_code` 数的是登记表里的全部（≤ MAX_ENTRIES）。
+RUN_SUMMARY_LIMIT = 8
+
+
+def run_summary(store: Store, project_id, *, limit: int = RUN_SUMMARY_LIMIT) -> dict:
+    """全局报告 report.json 的 `project.recent_runs`：本项目最近几次脚本运行 / 准备的**结果分类**。
+
+    这是已冻结快照的二次投影，不是新的采集：只读登记表，一个脚本都不执行、不体检。输出里的每个值都来自
+    `diagnostic_projection` 已经过形状守卫的字段——outcome 与 kind 是闭集，`error_code` 是稳定码
+    （`taskdiag.code`），其余是计数 / 毫秒数。**没有**脚本名、路径、argv、图名、traceback 与模块名
+    （缺的包名走 `project.missing_dependencies`，那边有「敏感运行不带包名」的出处）。
+    读不出结构的快照当不存在，不抛。"""
+    with store._lock:
+        store._expire(time.time())
+        mine = [
+            e for e in store._entries.values() if e.project_id == project_id and e.kind in RUN_KINDS
+        ]
+    mine.sort(key=lambda e: -e.recorded_at)
+    counts: dict[str, int] = {}
+    by_code: dict[str, int] = {}
+    recent: list[dict] = []
+    for e in mine:
+        outcome = closed(e.outcome, _RUN_OUTCOMES) or "other"
+        counts[outcome] = counts.get(outcome, 0) + 1
+        try:
+            snap = json.loads(e.blob)
+        except ValueError:
+            snap = {}
+        snap = snap if isinstance(snap, dict) else {}
+        err = snap.get("error") if isinstance(snap.get("error"), dict) else {}
+        run_code = code(err.get("code"))
+        if run_code:
+            by_code[run_code] = by_code.get(run_code, 0) + 1
+        if len(recent) < limit:
+            ex = snap.get("execution") if isinstance(snap.get("execution"), dict) else {}
+            tm = snap.get("timing") if isinstance(snap.get("timing"), dict) else {}
+            recent.append(
+                clean(
+                    {
+                        "kind": e.kind,
+                        "outcome": outcome,
+                        "error_code": run_code,
+                        "captured_count": count(ex.get("captured_count")),
+                        "elapsed_ms": count(tm.get("elapsed_ms")),
+                        "at": round(e.recorded_at, 3),
+                    }
+                )
+            )
+    return {
+        "window": {"entries": len(mine), "retention_s": RETENTION_S},
+        "counts": dict(sorted(counts.items())),
+        "by_error_code": dict(sorted(by_code.items())),
+        "recent": recent,
     }
 
 

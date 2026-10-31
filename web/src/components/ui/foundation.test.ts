@@ -95,6 +95,13 @@ const RULES: Rule[] = [
     spares: '<div className="transition duration-fast" />',
   },
   {
+    name: '时长 token 用同名工具类，不拿任意值写 duration-[var(--duration-*)]（值相同，写法只许一种）',
+    pattern: /\bduration-\[var\(--duration-/,
+    fix: 'duration-fast / duration-base / duration-slow / duration-exit',
+    catches: '<div className="transition duration-[var(--duration-base)]" />',
+    spares: '<div className="transition duration-base" />',
+  },
+  {
     name: '分区小标题是 type-section，不手拼大写 + 字距',
     pattern: /\buppercase tracking-/,
     fix: 'className="type-section"',
@@ -108,11 +115,22 @@ const RULES: Rule[] = [
     catches: '<div className="rounded-md bg-surface p-3 shadow-card" />',
     spares: '<Card padding="md" className="shadow-pop" />',
     exempt: {
-      '/src/components/ui/Card.tsx': { count: 1, why: '它就是那一处实现（raised）' },
+      '/src/components/ui/Card.tsx': { count: 2, why: '它就是那一处实现（raised）+ lift 变体按下时阴影回落到 card 档' },
       '/src/App.tsx': {
         count: 1,
         why: '工作面板（data-work-panel，宪法第二十五节）不是卡，是一块面板；它的抬升与卡同一档是拍板过的，常驻豁免',
       },
+    },
+  },
+  {
+    // 「几何永不变化」的唯一登记豁免是 ui/Card 的 lift 变体（ui-visual-discipline.md「Card lift」）：别处不许在交互态上写位移 / 缩放
+    name: '交互态不位移不缩放：hover: / active: / focus-visible: 之后没有 scale-* / translate-*（唯一豁免 ui/Card 的 lift：translateY ≤2px 整数 + scale ≤1.02，用户 2026-10-15 裁决）',
+    pattern: /\b(hover|active|focus-visible|group-hover|has-\[[^\]]*\]):(motion-safe:)?-?(scale|translate)-/,
+    fix: '用 outline / 背景色 / 阴影表达交互态；要浮起走 <Card lift>（只首页最近项目卡）',
+    catches: '<div className="hover:scale-105" />',
+    spares: '<div className="hover:bg-surface-hover" />',
+    exempt: {
+      '/src/components/ui/Card.tsx': { count: 6, why: 'lift 变体（用户 2026-10-15 裁决）：hover / 聚焦各 -translate-y-0.5 + scale-(--card-lift-scale)（≤2px、≤1.02，读 index.css 变量，foundationPrimitives.test 钉上限）、按下 translate-y-0 / scale-100' },
     },
   },
   {
@@ -129,7 +147,7 @@ const RULES: Rule[] = [
     catches: '<span className="font-semibold" />',
     spares: '<span className="font-medium type-title" />',
     exempt: {
-      '/src/components/ui/tabClass.ts': { count: 1, why: '选中的页签：600 + ink，与未选中的 400 + ink-3 拉开两档' },
+      '/src/components/ui/tabClass.ts': { count: 2, why: '选中的页签（下划线式与分段式各一处）：600 + ink，与未选中的拉开两档' },
       '/src/components/ui/Segmented.tsx': { count: 1, why: '选中的分段项：白色 thumb 上 600 + ink' },
       '/src/components/inspector/controls/OptionGrid.tsx': { count: 1, why: '样张网格与 Segmented 同一副皮（2026-10-07 §9.2）：选中格浮起 + 600' },
       '/src/components/ui/listRow.ts': { count: 1, why: '选中的列表 / 树行：selected 底 + 600（2026-10-07 §10.3）' },
@@ -233,14 +251,14 @@ const RULES: Rule[] = [
     spares: '<span className="peer-focus-visible:ring-2 peer-focus-visible:ring-accent" />',
   },
   {
-    name: '加载只有四种写法：sweep / 静态骨架 / text-shimmer / 转圈——没有 Tailwind 的 animate-pulse（宪法第七节）',
+    name: '加载只有四种写法：sweep（含进度条排线流动）/ 静态骨架 / text-shimmer / 转圈——没有 Tailwind 的 animate-pulse（宪法第七节）',
     pattern: /\banimate-pulse\b/,
-    fix: '不定进度 ProgressBar（animate-sweep）；骨架静态 bg-surface-hover + opacity-65；进行中的字 text-shimmer；按钮 / 行内 LoaderCircle animate-spin；一次性「看这里」animate-attention',
+    fix: '不定进度 ProgressBar（排线流动）；骨架静态 bg-surface-hover + opacity-65；进行中的字 text-shimmer；按钮 / 行内 Spinner（animate-spin）；一次性「看这里」animate-attention',
     catches: '<span className="h-2 w-2 animate-pulse rounded-full" />',
     spares: '<span className="animate-sweep animate-spin text-shimmer animate-attention" />',
   },
   {
-    name: '层级只来自 z-index token（z-sticky / z-canvas-chrome / z-drawer / z-overlay / z-dialog / z-popover / z-tooltip / z-toast / z-onboarding），没有数字',
+    name: '层级只来自 z-index token（z-sticky / z-canvas-chrome / z-drawer / z-overlay / z-dialog / z-popover / z-tooltip / z-toast / z-onboarding / z-window-controls），没有数字',
     pattern: /(?:^|[\s'"`:])-?z-(?:\d+|\[)/,
     fix: 'index.css 的 --z-* 表里挑一档；新的一层先在那张表里加 token',
     catches: '<div className="fixed z-50" /> <div className="z-[59]" />',
@@ -289,7 +307,7 @@ const RULES: Rule[] = [
     exempt: {
       '/src/components/StyleDialog.tsx': { count: 2, why: '文档数据：文字样式的缺省颜色 #000000' },
       '/src/components/VersionDialog.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF（比较两版页面是否同底）' },
-      '/src/components/CanvasTabs.tsx': { count: 4, why: '遮罩：标签条两端渐隐的 mask-image，黑只表示不透明度' },
+      '/src/components/ui/scrollFade.ts': { count: 4, why: '遮罩：滚动边缘渐隐的 mask-image（原在 CanvasTabs，抽成共享件后豁免随之搬来、个数不变），黑只表示不透明度' },
       '/src/components/ui/Input.tsx': { count: 1, why: '文档数据：原生取色框没有值时的占位 #000000（input[type=color] 只认 hex）' },
       '/src/components/ui/icons/createIcon.tsx': { count: 4, why: '遮罩：图标的镂空 mask（白 = 留、黑 = 挖），不是颜色' },
       '/src/components/inspector/StrokeSection.tsx': { count: 1, why: '文档数据：新加填充的缺省色 #FFFFFF' },
@@ -303,6 +321,7 @@ const RULES: Rule[] = [
       '/src/components/inspector/controls/TypographyControls.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
       '/src/components/settings/StyleSamplePreview.tsx': { count: 9, why: '文档数据：样式样张是一张小图（印刷色，跟纸一起不随主题变）' },
       '/src/components/settings/AgentIcon.tsx': { count: 1, why: '第三方品牌色（编码助手的标）' },
+      '/src/components/settings/brandLogoData.ts': { count: 23, why: '第三方品牌色（厂商彩色标志，取自 lobe-icons 的 -color 版；VS Code 取自 Simple Icons）' },
       '/src/canvas/context-bar/ElementBar.tsx': { count: 1, why: '文档数据：取色框没有值时的 #000000' },
       '/src/canvas/context-bar/textQuick.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
       '/src/canvas/interactions.ts': { count: 2, why: '文档数据：新画的标注 / 文字的缺省颜色' },
@@ -521,5 +540,80 @@ describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
       .filter((c) => /^text-(?!xs$|sm$|center$|left$|right$)/.test(c))
     expect(texts.length).toBeGreaterThan(0)
     for (const c of texts) expect(['text-paper-ink', 'text-paper-ink-2', 'text-paper-ink-3'], c).toContain(c)
+  })
+})
+
+/*
+ * ---- 说明条不再用彩底 / 彩框（2026-10-16 UI 2.0「错误与警告」）----
+ * 主语：`ui/Notice` 这个原语，以及所有写出 `<Notice className=…>` 的调用处。改版前它是「彩底 + 彩框 + 彩色图标 + 彩色整句」
+ * 四件套、warn 与 danger 只差颜色；现在底是中性的 surface-hover、无边框、字永远是 ink，颜色只允许出现在 danger 档的一枚图标上。
+ * 正面形式：原语源码里没有任何语义色 token（-surface / -border / -content / 文字或描边的 danger|warn|ok|info），
+ * 唯一的例外是图标上那一个 `text-danger`；调用处给 `<Notice>` 的 className 只许是版面类（外边距 / 内边距 / 宽 / 收缩 / 字号 /
+ * 换行），不许带颜色、描边、阴影。
+ */
+const SEMANTIC_COLOR =
+  /(?<![\w-])(?:[\w-]+:)*(?:bg|text|border(?:-[trblxy])?|ring|inset-ring|outline|shadow|fill|stroke|from|to|via)-(?:danger|warn|ok|info)(?:-[\w-]+)?(?![\w-])/g
+/** 给 `<Notice>` 的 className 允许的版面类 */
+const NOTICE_LAYOUT_CLASS =
+  /^(?:-?m[trblxy]?-[\w.[\]-]+|p[trblxy]?-[\w.[\]-]+|shrink(?:-0)?|grow|flex-1|min-w-0|w-[\w./[\]-]+|max-w-[\w./[\]-]+|text-(?:xs|sm|base)|break-(?:all|words)|items-\w+|self-\w+|self-stretch)$/
+
+function noticeClassNameOffenders(path: string, src: string): string[] {
+  const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const out: string[] = []
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText() === 'Notice') {
+      const cls = attr(node, 'className')?.initializer
+      if (cls) {
+        for (const s of stringsIn(cls)) {
+          for (const token of s.text.split(/\s+/).filter(Boolean)) {
+            if (!NOTICE_LAYOUT_CLASS.test(token)) {
+              out.push(`${sf.getLineAndCharacterOfPosition(s.pos).line + 1}:${token}`)
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return out
+}
+
+describe('说明条（Notice）不再用彩底 / 彩框', () => {
+  it('原语源码里没有语义色 token；唯一的颜色是 danger 档图标上的 text-danger', () => {
+    const src = stripComments(SOURCES['/src/components/ui/Notice.tsx'])
+    const hits = [...src.matchAll(SEMANTIC_COLOR)].map((m) => m[0])
+    expect(hits).toEqual(['text-danger'])
+  })
+
+  it('所有调用处给 <Notice> 的 className 只有版面类（不带颜色 / 描边 / 阴影）', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of sources()) {
+      if (!raw.includes('<Notice')) continue
+      for (const o of noticeClassNameOffenders(path, raw)) offenders.push(`${path}:${o}`)
+    }
+    expect(offenders, '彩色只属于 danger 档图标；底 / 框一律由原语给').toEqual([])
+  })
+
+  it('StatusPill 同理：源码里唯一的语义色是字前 6px 圆点的 bg-<tone>，底与字都是中性', () => {
+    const src = stripComments(SOURCES['/src/components/ui/StatusPill.tsx'])
+    const hits = [...src.matchAll(SEMANTIC_COLOR)].map((m) => m[0])
+    expect(hits).toEqual(['bg-info', 'bg-ok', 'bg-warn', 'bg-danger'])
+  })
+
+  it('自检：抓得住彩底彩框，放得过版面类与 ink 墨', () => {
+    const bad = `<Notice tone="warn" className="mx-2 bg-warn-surface inset-ring inset-ring-warn-border text-danger-content" />`
+    const good = `<Notice className="mx-2 mb-2 shrink-0 text-xs break-all" />`
+    expect(noticeClassNameOffenders('x.tsx', bad).map((s) => s.split(':')[1])).toEqual([
+      'bg-warn-surface',
+      'inset-ring',
+      'inset-ring-warn-border',
+      'text-danger-content',
+    ])
+    expect(noticeClassNameOffenders('x.tsx', good)).toEqual([])
+    expect([...'bg-danger-surface text-ink-3 text-danger'.matchAll(SEMANTIC_COLOR)].map((m) => m[0])).toEqual([
+      'bg-danger-surface',
+      'text-danger',
+    ])
   })
 })

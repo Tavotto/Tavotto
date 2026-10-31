@@ -33,17 +33,18 @@
     "createLayoutTip": "Turn the selection into a {{kind}} layout that re-flows after asset swaps",
     "dissolve": "Dissolve layout",
     "dissolveTitle": "Remove layout and grouping; positions stay",
-    "distributeToolbar": "Distribute",
     "distributeNeed": "Needs {{count}}+",
+    "distributeToolbar": "Distribute",
+    "foldSpacingGroup": "Spacing, group, row / column / grid",
+    "foldStyle": "Copy / paste style",
     "group": "Group",
     "hdist": "Distribute horizontally (needs 3+ objects)",
+    "layerValue": "Layer {{n}} of {{total}}",
     "layout": "Layout",
     "layoutCol": "Column",
     "layoutGrid": "Grid",
     "layoutGroup": "Layout",
     "layoutRow": "Row",
-    "foldSpacingGroup": "Spacing, group, row / column / grid",
-    "foldStyle": "Copy / paste style",
     "pasteStyle": "Paste style",
     "pasteStyleEmpty": "No style has been copied yet",
     "pasteStyleTip": "Paste onto the {{kind}} in the selection",
@@ -62,8 +63,8 @@
     "spacingHTitle": "Horizontal spacing; the first object stays put",
     "spacingV": "Vertical spacing",
     "spacingVTitle": "Vertical spacing; the first object stays put",
-    "titleMulti_one": "Arrange · {{count}} selected",
     "title": "Align to canvas",
+    "titleMulti_one": "Arrange · {{count}} selected",
     "titleMulti_other": "Arrange · {{count}} selected",
     "ungroup": "Ungroup",
     "ungroupTip": "Break up the groups in the selection",
@@ -85,10 +86,10 @@
     "background": "Background",
     "bgColor": "Background colour",
     "clearAll": "Clear all",
-    "deleteGuide": "Delete {{axis}} guide at {{pos}} mm",
+    "deleteGuide": "Delete {{axis}} guide at {{pos}} mm",
     "grid": "Grid",
     "gridSize": "Grid size",
-    "gridSummary": "Grid {{size}} mm",
+    "gridSummary": "Grid {{size}} mm",
     "guideCount_one": "{{count}} guide",
     "guideCount_other": "{{count}} guides",
     "guideHorizontal": "Horizontal",
@@ -98,13 +99,13 @@
     "guidesNone": "None",
     "lock": "Lock",
     "margin": "Margin",
-    "marginSummary": "Margin {{margin}} mm",
+    "marginSummary": "Margin {{margin}} mm",
     "objects": "Objects",
     "pageSize": "Page size",
     "presetGroup": "Page presets",
     "presets": {
       "double": {
-        "hint": "150 mm — full width",
+        "hint": "{{w}} mm — double-column width of the current publication spec",
         "label": "Double"
       },
       "full": {
@@ -112,7 +113,7 @@
         "label": "Full page"
       },
       "single": {
-        "hint": "85 mm — single-column width in most journals",
+        "hint": "{{w}} mm — single-column width of the current publication spec",
         "label": "Single"
       },
       "square": {
@@ -137,7 +138,7 @@
     "transparent": "Transparent",
     "transparentBg": "Transparent background",
     "viewAids": "Display aids",
-    "sizeMeta": "{{w}} × {{h}} mm",
+    "sizeMeta": "{{w}} × {{h}} mm",
     "preset": "Preset",
     "presetCustom": "Custom",
     "size": "Size",
@@ -145,7 +146,7 @@
     "portrait": "Portrait",
     "landscape": "Landscape",
     "export": "Export",
-    "exportSummary": "{{formats}} · {{dpi}} ppi"
+    "exportSummary": "{{formats}} · {{dpi}} ppi"
   },
   "closePanel": "Close right panel",
   "control": {
@@ -155,15 +156,19 @@
     "hatch": {
       "back": "Backslash",
       "backDense": "Dense backslash",
+      "backDenser": "Denser backslash",
       "circles": "Circles",
       "cross": "Cross",
       "crossDense": "Dense cross",
+      "crossDenser": "Denser cross",
       "diagonal": "Diagonal cross",
       "diagonalDense": "Dense diagonal cross",
+      "diagonalDenser": "Denser diagonal cross",
       "dots": "Dots",
       "dotsDense": "Dense dots",
       "forward": "Forward slash",
       "forwardDense": "Dense forward slash",
+      "forwardDenser": "Denser forward slash",
       "horizontal": "Horizontal lines",
       "largeCircles": "Large circles",
       "none": "None",
@@ -262,8 +267,9 @@
     "clickToEdit": "Click an element in the figure to start editing",
     "editElement": "Edit figure element",
     "editProp": "Change {{label}}",
-    "figureSize": "Figure {{w}} × {{h}} mm",
+    "figureSize": "Figure {{w}} × {{h}} mm",
     "foldBackground": "Background & more",
+    "foldBboxDetail": "Background details",
     "foldCoords": "Axes, flip, aspect",
     "foldCount_one": "{{count}} item",
     "foldCount_other": "{{count}} items",
@@ -280,6 +286,7 @@
     "foldTickPlacement": "Tick placement",
     "groupFrame": "Frame",
     "groupTicksGrid": "Ticks and grid",
+    "hatchFollowEdge": "Follow the edge",
     "hiddenElements_one": "Hidden elements ({{count}})",
     "hint": {
       "scatterSize": "pt² is an area, not a diameter; doubling the value makes each dot about 1.4× wider."
@@ -358,6 +365,8 @@
     "selectScalePartnerShort": "Select",
     "groupRangeTransform": "Range & transform",
     "sizeHead": "Axes size",
+    "patchSizeHead": "Box size",
+    "patchSizeHint": "Resize the box while keeping text and connectors in place.",
     "groupLine": "Line",
     "groupMarker": "Data points",
     "relatedTicksAll": "Edit all of {{label}}…",
@@ -708,7 +717,7 @@
     "nativeMixed": "Multiple original sizes",
     "nativeSize": "Original size",
     "nativeSizeTip": "Back to the asset’s own mm size",
-    "nativeTip": "The asset’s own size: {{w}} × {{h}} cm",
+    "nativeTip": "The asset’s own size: {{w}} × {{h}} cm",
     "nativeTipMulti": "The assets’ own sizes",
     "noAssetMatch": "No matching asset",
     "opacity": "Opacity",
@@ -716,8 +725,8 @@
     "opacityMixed": "Mixed",
     "overrideCount_one": "This figure has {{count}} edit",
     "overrideCount_other": "{{count}} figure edits",
-    "ptHint": "{{base}} pt in the original × {{scale}}% scale",
-    "ptHintBad": "{{base}} pt in the original × {{scale}}% scale: effective size below 6 pt, too small for print",
+    "ptHint": "{{base}} pt in the original × {{scale}}% scale",
+    "ptHintBad": "{{base}} pt in the original × {{scale}}% scale: effective size below 6 pt, too small for print",
     "replace": "Replace asset",
     "replacePicture": "Replace image",
     "rotateFlipOpacity": "Rotate, flip, opacity",
@@ -739,7 +748,7 @@
     "cropRow": "Framing",
     "fitRow": "Fit",
     "frameLegacyTitle": "Differs from the figure the script saved",
-    "frameLegacyBody": "This figure is still shown at its figsize; the script saved it cropped to {{w}} × {{h}} mm. Switching keeps its position; only the outer box changes.",
+    "frameLegacyBody": "This figure is still shown at its figsize; the script saved it cropped to {{w}} × {{h}} mm. Switching keeps its position; only the outer box changes.",
     "frameLegacyAdopt": "Use the saved figure size",
     "frameLegacyAdoptBlocked": "The cropped part of this figure lies entirely outside the saved figure size, so nothing would be left after switching. Adjust or reset the crop first."
   },
@@ -803,6 +812,8 @@
     "handlelength": "Handle length",
     "handletextpad": "Handle–text gap",
     "hatch": "Hatch pattern",
+    "hatch_linewidth": "Hatch width",
+    "hatchcolor": "Hatch color",
     "interpolation": "Interpolation",
     "invert_x": "Invert X axis",
     "invert_y": "Invert Y axis",
@@ -843,6 +854,7 @@
     "rotation": "Rotation",
     "size": "Point size",
     "size_mm": "Figure size",
+    "size_frac": "Box size",
     "spine_bottom": "Bottom spine",
     "spine_bottom_color": "Bottom border colour",
     "spine_bottom_linewidth": "Bottom border width",
@@ -906,7 +918,7 @@
       "linewidth": "Edge width"
     }
   },
-  "resize": "Resize the properties panel ({{min}}–{{max}} px)",
+  "resize": "Resize the properties panel ({{min}}–{{max}} px)",
   "role": {
     "arrow_patch": "Arrow",
     "axes": "Axes",
@@ -990,7 +1002,8 @@
   },
   "tab": {
     "canvas": "Canvas",
-    "properties": "Properties"
+    "properties": "Properties",
+    "timeline": "Timeline"
   },
   "tabsLabel": "Right panel mode",
   "text": {
@@ -1023,8 +1036,8 @@
     "italic": "Italic (Latin glyphs only)",
     "lineHeight": "Line height",
     "matchAction": "Match",
-    "matchHint": "Body text in the figure renders at about {{eff}} pt",
-    "matchTitle": "Annotation size is absolute on the page. With “{{panel}}” scaled to {{scale}}%, {{base}} pt body text renders at about {{eff}} pt; use this value to match it.",
+    "matchHint": "Body text in the figure renders at about {{eff}} pt",
+    "matchTitle": "Annotation size is absolute on the page. With “{{panel}}” scaled to {{scale}}%, {{base}} pt body text renders at about {{eff}} pt; use this value to match it.",
     "newlineTitle": "Insert a line break at the cursor (on-canvas editing also uses {{alt}} / {{mod}})",
     "padding": "Padding",
     "placeholder": "Type text…",
@@ -1049,6 +1062,10 @@
     "upper": "UPPERCASE"
   },
   "textBar": {
+    "cjkFallback": "Chinese font",
+    "cjkFallbackAuto": "Automatic",
+    "cjkFallbackShadowed": "Choose an English font without Chinese characters.",
+    "latinFont": "English font",
     "alignCenter": "Center",
     "alignLeft": "Align left",
     "alignRight": "Align right",
@@ -1082,6 +1099,7 @@
     "align": "Align",
     "color": "Colour",
     "font": "Font",
+    "fontFromGeneric": "From the script’s “{{generic}}” font setting",
     "fontMissingHint": "That font isn’t installed, so the figure uses another one.",
     "fontMissingTag": " (not installed)",
     "size": "Size"
@@ -1119,7 +1137,7 @@
   },
   "transform": {
     "rotation": "Rotation",
-    "summary": "X {{x}} · Y {{y}} mm",
+    "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "Height follows the content",
     "title": "Position and size"
   },
@@ -1233,15 +1251,32 @@
     "relinkAction": "Relink",
     "entryActions": "Actions for “{{label}}”"
   },
-  "identity": {
-    "problems_one": "{{count}} issue",
-    "problems_other": "{{count}} issues"
-  },
   "docSummary": {
     "title": "This layout",
-    "size": "{{w}} × {{h}} mm",
+    "size": "{{w}} × {{h}} mm",
+    "details": "Details",
     "annotations_one": "{{count}} text or annotation",
     "annotations_other": "{{count}} texts and annotations",
     "canvasSettings": "Canvas settings"
+  },
+  "richText": {
+    "bold": "Bold (selection)",
+    "boldTitle": "Bold: applies to the selected text ({{key}})",
+    "italic": "Italic (selection)",
+    "italicTitle": "Italic: applies to the selected text ({{key}})",
+    "sup": "Superscript",
+    "supTitle": "Superscript: applies to the selected text ({{key}})",
+    "sub": "Subscript",
+    "subTitle": "Subscript: applies to the selected text ({{key}})",
+    "newline": "Insert line break",
+    "newlineTitle": "Insert a line break at the cursor ({{alt}} / {{mod}})",
+    "modeLatex": "LaTeX source",
+    "modeToLatexTitle": "Switch to LaTeX source (paste or edit formulas directly)",
+    "modeToRichTitle": "Back to rich text",
+    "errorBrace": "Character {{at}}: unmatched brace — fix it to switch back to rich text",
+    "errorDollar": "Character {{at}}: unmatched $ — fix it to switch back to rich text",
+    "modeShort": "TeX",
+    "preview": "Formula preview",
+    "previewNoRuntime": "No typesetting environment available"
   }
 }

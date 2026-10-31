@@ -157,25 +157,22 @@ describe('标尺的选区带在快速编辑里只认那张图', () => {
     expect(xBand()).toEqual([px(10), px(140)])
   })
 
-  it('快速编辑里选区含那张图与版面对象：带只跨那张图', async () => {
+  it('单图编辑里选区含那张图与标注：带跨整个选区（2026-10-21 与排版同口径）', async () => {
     useWorkspaceStore.getState().enterFastEdit('p1')
     await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
     calls = []
     await act(async () => useSelectionStore.getState().set(['r1', 'p1']))
-    expect(xBand()).toEqual([px(100), px(140)])
+    expect(xBand()).toEqual([px(10), px(140)])
   })
 
-  it('快速编辑里选区只有版面对象：没有带', async () => {
+  it('单图编辑里选区只有标注：带跨那个标注', async () => {
     useWorkspaceStore.getState().enterFastEdit('p1')
     await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
-    // 先让带出现（选那张图），再换成只有版面对象：带的落点变了必然重画，量的是那一次重画
     await act(async () => useSelectionStore.getState().set(['p1']))
     expect(xBand()).toEqual([px(100), px(140)])
     calls = []
     await act(async () => useSelectionStore.getState().set(['r1']))
-    // 主语核对：确实重画了（刻度照画），不是什么都没画
-    expect(calls.some((c) => c.op === 'fillText')).toBe(true)
-    expect(calls.filter((c) => c.op === 'fillRect' && c.fill === '#4685e2')).toHaveLength(0)
+    expect(xBand()).not.toBeNull()
   })
 })
 

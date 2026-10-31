@@ -14,6 +14,7 @@ import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator
 import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
 import { useBoldWidthLock } from './ui/useBoldWidthLock'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
+import { scrollFadeStyle, useScrollFade } from './ui/scrollFade'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -86,36 +87,38 @@ export function CanvasTabs() {
       : gap.parentElement?.querySelector<HTMLElement>('[data-all-canvases]')
     const from = gap.getBoundingClientRect()
     const slack = (menu ? menu.getBoundingClientRect().right : from.right) - from.left
-    setOverflowing(el.scrollWidth > el.clientWidth + slack + 1)
+    // 内容宽与条宽都按**小数**量（getBoundingClientRect），不用取整的 scrollWidth / clientWidth：取整各差最多 1px，
+    // 原先靠一道 `+ 1` 的容差兜，结果判据与真实几何在边上差到 2~3px（e2e 宽度扫描因此随字宽取整随机红）。
+    // 两个状态用同一个量：有菜单时条缩着、`slack` 是撤掉菜单能多出来的 菜单 + 它前面那道 gap；没菜单时是空白宽。
+    // 条一旦放得下，撤掉菜单后条恰好多出 `slack`，内容仍 ≤ 条宽，不会来回翻
+    // 要的是**布局**位置：`useFlip` 在这个 layout effect 之前就给页签挂上了 WAAPI 的 translate（重排滑动），rect 量到的是
+    // 动画中的视觉位置。computed transform 反映动画当前值，把它的平移分量减回去就是布局右缘（FLIP 只有 translate，没有缩放）
+    const last = el.lastElementChild
+    const box = el.getBoundingClientRect()
+    const shift = last && typeof DOMMatrix !== 'undefined' ? new DOMMatrix(getComputedStyle(last).transform).m41 : 0
+    const content = last
+      ? last.getBoundingClientRect().right - shift - box.left + el.scrollLeft + parseFloat(getComputedStyle(el).paddingRight)
+      : 0
+    setOverflowing(content > box.width + slack)
   }, [menuPinned])
-
-  // 溢出边缘的渐隐（2026-10-07 设计审计 §3.7 / §10.1）：条外还有页签的那一侧 16px alpha mask，
-  // 不叠色块。只在真的还能往那边滚时画，滚到头就收
-  const [fade, setFade] = useState<{ start: boolean; end: boolean }>({ start: false, end: false })
-  const measureFade = useCallback(() => {
-    const el = strip.current
-    if (!el) return
-    const start = el.scrollLeft > 1
-    const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-    setFade((f) => (f.start === start && f.end === end ? f : { start, end }))
-  }, [])
 
   useLayoutEffect(() => {
     measureOverflow()
     keepActiveInView()
-    measureFade()
   })
+  // 溢出边缘的渐隐（2026-10-07 设计审计 §3.7 / §10.1；量法与 mask 在 ui/scrollFade）。
+  // 放在上面那个布局副作用之后：先滚进视野，再量
+  const { fade } = useScrollFade(strip, 'x')
   useEffect(() => {
     const el = strip.current
     if (!el || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(() => {
       measureOverflow()
       keepActiveInView()
-      measureFade()
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [measureOverflow, keepActiveInView, measureFade])
+  }, [measureOverflow, keepActiveInView])
 
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
@@ -179,13 +182,12 @@ export function CanvasTabs() {
         data-fade-end={fade.end || undefined}
         role="tablist"
         aria-label={t('tabs.listLabel')}
-        onScroll={measureFade}
         // scrollbar-none：横滚条不画（用户拍板），滚动靠触控板横滑 / Shift+滚轮 / 激活时自动滚到；
         // relative 让页签的 offsetLeft 以这条为基准，下面「滚进视野」用它量
         // pr-1：条宽常是小数（654.86px），浏览器的最大 scrollLeft 向下取整，最后一个页签滚到头仍差不到 1px
         // 露在条外；尾部留 4px，「滚到最后一张」才真的整颗在里面（e2e/canvas-tabs-scroll.spec.ts）
         className="scrollbar-none relative flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto pr-1"
-        style={fadeMask(fade)}
+        style={scrollFadeStyle(fade, 'x')}
       >
         {openTabs.map((id, i) => (
           <TabItem
@@ -240,15 +242,6 @@ export function CanvasTabs() {
       <ZoomControls />
     </div>
   )
-}
-
-/** 溢出那一侧的 16px alpha 渐隐（mask-image，不叠色块：底下是什么颜色都对） */
-function fadeMask(f: { start: boolean; end: boolean }): React.CSSProperties | undefined {
-  if (!f.start && !f.end) return undefined
-  const a = f.start ? 'transparent 0, #000 16px' : '#000 0'
-  const b = f.end ? '#000 calc(100% - 16px), transparent 100%' : '#000 100%'
-  const mask = `linear-gradient(to right, ${a}, ${b})`
-  return { maskImage: mask, WebkitMaskImage: mask }
 }
 
 function TabItem({

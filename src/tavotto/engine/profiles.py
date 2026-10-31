@@ -48,6 +48,13 @@ SEVERITIES = ("error", "warn", "not_verifiable", "suggestion")
 #: 用到（MCP 直接喂进来的 dict）。那时宁可按默认规范判，也不许当作"没有下限"。
 FALLBACK_MIN_FONT_SIZE_PT = 8.0
 
+#: 字号下限判据的数值容差（pt）：`eff + FONT_FLOOR_TOL_PT >= floor` 算通过（含等号）。
+#: 吸收 mm↔pt、图缩放（如 scale 0.75 / 1.33）带来的浮点噪声，让「8 pt 的字乘缩放
+#: 再除回来得到 7.9996」不被判违规。0.005 pt 小于任何人能在 0.5 pt 步进编辑器里
+#: 输入的差（最小一格 0.01 pt），又大于 pt↔mm 往返的实测误差（~1e-4）。
+#: 严格同源对：`web/src/lib/profile.ts` 的同名常量。
+FONT_FLOOR_TOL_PT = 0.005
+
 #: journal 覆盖里允许深合并的子对象（其余键整体替换）
 _DEEP_KEYS = (
     "widths_mm",

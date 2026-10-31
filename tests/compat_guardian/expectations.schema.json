@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tavotto.org/schemas/compatibility-guardian/expectations-1.json",
+  "title": "Guardian declared expectations",
+  "type": "object",
+  "properties": {
+    "schema": {"const": "tavotto-guardian-expectations/1"},
+    "expectations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "suite": {"enum": ["compat_engine", "compat_v2"]},
+          "case": {"type": "string", "minLength": 1},
+          "outcome": {
+            "enum": [
+              "invalid_fixture",
+              "expected_limitation",
+              "environment_unavailable",
+              "partial_coverage",
+              "not_reproduced"
+            ]
+          },
+          "reason": {"type": "string", "minLength": 20},
+          "references": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {"enum": ["issue", "test"]},
+                "ref": {"type": "string", "minLength": 2}
+              },
+              "required": ["kind", "ref"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["suite", "case", "outcome", "reason", "references"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema", "expectations"],
+  "additionalProperties": false
+}

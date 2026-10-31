@@ -71,20 +71,27 @@ export const issueDetailText = (issue: ValidationIssue): string => formatMessage
 export interface IssueValues {
   current: string | null
   expected: string | null
+  /**
+   * 「要求」在**一行里**的写法：边界那几句（`…AtBoundary`）在要求后面补了一句解释（「，当前值实际略低，显示已四舍五入。」），
+   * 行内只留要求本身（`atLeast` / `atMost` 那条裸文案），整句留给 title / 技术详情。
+   * **由来源处的比较词模板直接算出**（`comparatorKey` 的裸档），不是对整句按标点截——规范值本身可以带逗号、分号
+   * （坐标轴标签格式「Surname, year」）。没有比较词的规则它就等于 `expected`。
+   */
+  expectedHead: string | null
 }
 
 /**
  * 「要求」那半句用得到的**全部比较词**，闭集。
  *
  * 它同时是 `errors:problems.cmp.*` 子键的唯一出处：**每个比较词恰好两条文案**
- * ——裸的那条（`above`）与就在边界上的那条（`aboveAtBoundary`，见
+ * ——裸的那条（`atLeast`）与就在边界上的那条（`atLeastAtBoundary`，见
  * `comparatorKey`）。`tests/test_i18n_dead_keys.py` 现读这一行核对两种语言的
- * 文案表，多一条少一条都红：边界那三条只由模板串拼出来，逐键的字面量扫描
+ * 文案表，多一条少一条都红：边界那几条只由模板串拼出来，逐键的字面量扫描
  * 看不见它们，整片放行又会让某个比较词被删掉之后文案静默变成死键。
  *
  * 加一个比较词 = 这里加一项 + 两种语言各加两条文案，缺一门禁就红。
  */
-export const COMPARATORS = ['above', 'atLeast', 'atMost'] as const
+export const COMPARATORS = ['atLeast', 'atMost'] as const
 
 export type Comparator = (typeof COMPARATORS)[number]
 
@@ -94,7 +101,7 @@ const VALUES: Record<
   { current?: string; expected?: string; unit?: string; cmp?: Comparator }
 > = {
   'font-too-small': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
-  'font-below-absolute-floor': { current: 'effective', expected: 'floor', unit: 'pt', cmp: 'above' },
+  'font-below-absolute-floor': { current: 'effective', expected: 'floor', unit: 'pt', cmp: 'atLeast' },
   'font-too-large': { current: 'effective', expected: 'max', unit: 'pt', cmp: 'atMost' },
   'legend-font-size': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
   'line-width-off-preset': { current: 'effective', expected: 'presets', unit: 'pt' },
@@ -114,7 +121,7 @@ const VALUES: Record<
 
 export function issueValues(issue: ValidationIssue): IssueValues {
   const spec = VALUES[issue.ruleCode]
-  if (!spec) return { current: null, expected: null }
+  if (!spec) return { current: null, expected: null, expectedHead: null }
   // 画布标注那两条用的是 `size` 而不是 `effective`（同一条规则、两种主语）
   const params = (issue.message.values ?? {}) as Record<string, unknown>
   const read = (key: string | undefined): string | null => {
@@ -135,6 +142,7 @@ export function issueValues(issue: ValidationIssue): IssueValues {
         : spec.cmp
           ? pr(`cmp.${comparatorKey(spec.cmp, currentRaw, expectedRaw)}`, { value: expected })
           : expected,
+    expectedHead: expected == null ? null : spec.cmp ? pr(`cmp.${spec.cmp}`, { value: expected }) : expected,
   }
 }
 
@@ -142,10 +150,9 @@ export function issueValues(issue: ValidationIssue): IssueValues {
  * 「要求」那半句用哪个说法（审计 T41）。
  *
  * 边界的包含性**只有一个出处**：上面那张 `VALUES` 表里的 `cmp`，它照抄两侧
- * 求值器的判据形状——`font-below-absolute-floor` 是 `eff <= floor`（所以要求
- * 是**大于**，等于不算通过），`font-too-small` 是 `eff < strict`（所以要求是
- * **≥**）。2026-09-06 用真实样本在 `engine/preflight.run()` 上逐个跑过 7.99 /
- * 7.995 / 8.00 / 8.005：8.00 命中绝对下限、8.005 通过，等号确实不含在内。
+ * 求值器的判据形状——`font-below-absolute-floor` 与 `font-too-small` 现在都是
+ * 含等号（`eff < floor - 容差` 才违规，要求是 **≥**；ADR 0029 修订 2026-10-28，
+ * 容差 0.005 pt）。2026-09-06 的旧实测（8.00 命中绝对下限）已作废。
  *
  * 剩下的问题是**显示舍入**：图内文字的 `effective` 是 `toFixed(2)` 的结果，
  * 阈值却是 `%g`，于是 7.996pt 与 8.000pt 都显示成 `8.00`，配上「要求 大于 8pt」

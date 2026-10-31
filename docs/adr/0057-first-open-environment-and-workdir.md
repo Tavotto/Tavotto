@@ -152,3 +152,5 @@ spec 的 datas，`tests/test_import_architecture.py` 把它登记成 worker.py �
 （FO01 / FO02 / FO03 / FO07 / FO15 / FO19 经真实 HTTP 入口，结果记录进 harness）、
 `tests/test_import_architecture.py` + `tests/test_runtime_build.py`（worker 的装载清单 ↔ 登记 ↔
 spec datas）。
+
+> V2 PR2（[0133](0133-run-routing-compatibility-first.md)）：运行前路由选 native 后，这里的「首开要不要问 cwd」**不短路**——native 的 cwd 只有项目根 / 脚本目录两档，数据证据指向项目根时这一问仍决定 native 用哪一个。

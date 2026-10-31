@@ -7,6 +7,7 @@ import {
   type ScriptEditSkipped,
   VIAS_NEED_REWRITE,
 } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
@@ -168,7 +169,7 @@ export function MissingInputDialog() {
           {stepMeta(1)}
         </>
       }
-      description={t(pickable ? 'engine.missingInputSentence' : 'engine.missingInputSentenceProbe', { name })}
+      description={t(pickable ? 'engine.missingInputSentence' : 'engine.missingInputSentenceProbe', { name, product: PRODUCT_NAME })}
       size="md"
       busy={busy}
       anchor="missing-input"

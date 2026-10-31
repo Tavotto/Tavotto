@@ -10,6 +10,8 @@
  */
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { isHintKind, isOnboardingStatus, useOnboardingStore } from '@/store/onboardingStore'
+import { isStepId } from '@/lib/onboarding/stepIds'
 import { useUiStore } from '@/store/uiStore'
 import {
   exactPanelManifest,
@@ -149,8 +151,24 @@ export function buildFrontendDiagnosticSnapshot(): FrontendDiagnosticSnapshot {
       settled: session ? session.settled : null,
       history_mode: getHistoryMode(),
     },
+    onboarding: onboardingSummary(),
     preview_memory: previewMemory(panels),
     panels: panels.map(panelSnapshot),
+  }
+}
+
+/**
+ * 新手教程状态的结构摘要。现读 `useOnboardingStore`（`tavotto.onboarding` 的内存镜像），不碰 localStorage；
+ * 每个值都过闭集判据（状态机、步骤 id、提示种类），认不出的丢掉——时间戳只折成「欢迎页出现过没有」。
+ */
+function onboardingSummary(): FrontendDiagnosticSnapshot['onboarding'] {
+  const o = useOnboardingStore.getState()
+  return {
+    status: isOnboardingStatus(o.status) ? o.status : 'not_started',
+    flow_version: o.flowVersion,
+    completed_steps: o.completedSteps.filter(isStepId),
+    welcome_seen: o.welcomeSeenAt != null,
+    hint_seen_keys: Object.keys(o.hintSeen).filter(isHintKind),
   }
 }
 

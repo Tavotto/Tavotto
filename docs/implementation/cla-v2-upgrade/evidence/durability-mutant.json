@@ -1,0 +1,6 @@
+{
+  "name": "v2 upgrade committed WAL result persists before success",
+  "unique_locations": 1,
+  "exit": 1,
+  "assertionError": true
+}

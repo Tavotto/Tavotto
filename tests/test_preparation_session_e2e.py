@@ -242,3 +242,109 @@ def test_explicit_rerun_executes_again_and_refreshes_an_unobserved_input(tmp_pat
         _, duplicate = app.call(f"{SESSIONS}/{sid}/actions", payload)
         assert duplicate["claimed"] is False
         assert _runs(counter) == 2
+
+
+# ---------------------------------------------------------------- #1254：沙盒里 glob 扫空，准备流程也要把用户带到「在脚本目录里运行」
+#: 模式是 helper 的参数（首开静态探测认不出）；沙盒里扫空就不画图——准备流程是默认的主流程
+GLOB_SCRIPT = """\
+import glob
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def _read_parts(pattern):
+    out = []
+    for p in sorted(glob.glob(pattern)):
+        with open(p, encoding="utf-8") as f:
+            out.extend(float(x) for x in f.read().split())
+    return out
+
+
+ys = _read_parts("data/run_*.txt")
+if ys:
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.plot(ys)
+    fig.savefig("p.pdf")
+"""
+
+PARQUET_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pyarrow.parquet as pq
+
+y = pq.read_table("cg_data.parquet").column("y").to_pylist()
+fig, ax = plt.subplots(figsize=(3, 2))
+ax.plot(y)
+fig.savefig("p.pdf")
+"""
+
+
+def _run_session(app: fa.RunningApp) -> dict:
+    status, report = app.call(SESSIONS, {"script": "fig.py"}, timeout=120)
+    assert status in (200, 201), report  # 同一目标再创建 = 回到已有的会话
+    (run,) = [a for a in report["actions"] if a["kind"] == "run"]
+    body = {"action_id": run["id"], "expected_config_revision": report["config_revision"]}
+    status, first = app.call(f"{SESSIONS}/{report['session_id']}/actions", body, timeout=60)
+    assert status == 202, first
+    return _wait_settled(app, report["session_id"])
+
+
+def _hint_of(report: dict):
+    found = [r for r in report["requirements"] if r["kind"] == "workdir_hint"]
+    return found[0] if found else None
+
+
+def _worker_has_pyarrow() -> bool:
+    import subprocess
+    import sys
+
+    return (
+        subprocess.run(
+            [WORKER_PY or sys.executable, "-c", "import pyarrow.parquet"], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+@needs_worker
+def test_prepare_session_with_an_empty_dynamic_glob_points_at_the_script_dir(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "data").mkdir(parents=True)
+    (proj / "data" / "run_1.txt").write_text("1 2 3", encoding="utf-8")
+    (proj / "fig.py").write_text(GLOB_SCRIPT, encoding="utf-8")
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _run_session(app)
+        # 脚本跑完了、没有图：错误码仍是既有的 no_figures_captured*，只多一项不阻塞的需求
+        assert final["facts"]["figure_captured"] is False, final
+        assert final["outcome"]["code"].startswith("no_figures_captured"), final["outcome"]
+        req = _hint_of(final)
+        assert req is not None and req["blocking"] is False and req["origin"] == "last_attempt"
+        assert req["payload"]["reason"] == "script_dir_evidence"
+        assert req["payload"]["recommended"] == "project" and req["payload"]["source"] == "runtime"
+        assert req["payload"]["probes"] == ["data/run_*.txt"]
+
+        # 切到脚本目录（首开确认框同一个 PATCH）→ 重新检查 / 运行 → 出图
+        status, _ = app.call("/api/engine/workdir", {"mode": "project"}, method="PATCH", timeout=30)
+        assert status == 200
+        final2 = _run_session(app)
+        assert final2["phase"] == "completed" and final2["facts"]["figure_captured"] is True, final2
+        assert _hint_of(final2) is None
+
+
+@needs_worker
+def test_prepare_session_with_pyarrow_reading_a_cwd_relative_parquet_gets_the_hint(tmp_path):
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    pq.write_table(pa.table({"y": [1, 2, 3]}), str(proj / "cg_data.parquet"))
+    (proj / "fig.py").write_text(PARQUET_SCRIPT, encoding="utf-8")
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _run_session(app)
+        assert final["outcome"]["code"] == "script_error", final["outcome"]
+        req = _hint_of(final)
+        assert req is not None and req["payload"]["probes"] == ["cg_data.parquet"]

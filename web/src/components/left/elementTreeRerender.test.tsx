@@ -332,7 +332,9 @@ describe('A3 一行自己的状态变了：那一行重画并显示新状态', (
     })
     expect(changedSince(before)).toEqual([key])
     expect(row(key).getAttribute('aria-expanded')).toBe('false')
-    expect(row('axes_0.lines_0')).toBeNull()
+    // 收起的子树保活一个退场时长（高度过渡）：行还在 DOM 里，但整棵 inert
+    expect(row('axes_0.lines_0')).not.toBeNull()
+    expect(row('axes_0.lines_0').closest('[inert]')).not.toBeNull()
   })
 })
 

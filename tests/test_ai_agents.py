@@ -124,7 +124,9 @@ def test_a_third_agent_needs_no_new_branch(monkeypatch):
         "effort_selection": False,
         "wire_api_selection": False,
         "readiness_probe": False,
+        "login": False,
     }
+    assert fake["login_account"] is None
     # 不声明 install spec 就没有安装入口（界面据此不画那个按钮）
     assert "install" not in fake
     # 第三方接口的白名单也跟着注册表走，不是第二份手写清单
@@ -542,15 +544,15 @@ def test_endpoint_backed_agent_stays_usable_without_cli_login(monkeypatch):
 
     ai_providers.save(
         {
-            "id": "deepseek-oai",
-            "label": "DeepSeek",
+            "id": "oai-gw",
+            "label": "OpenAI 兼容网关",
             "agent": "codex",
-            "base_url": "https://api.deepseek.com/v1",
+            "base_url": "https://gw.example/v1",
             "api_key": "sk-x",
-            "wire_api": "chat",
+            "wire_api": "responses",
         }
     )
-    ai_providers.set_active("codex", "deepseek-oai")
+    ai_providers.set_active("codex", "oai-gw")
     ai_bridge.invalidate_capabilities()
     entry = _codex(ai_bridge.capabilities(refresh=True))
     assert entry["state"] == "installed"  # 不再是 needs_auth
@@ -814,6 +816,7 @@ def test_install_package_comes_only_from_the_adapter(monkeypatch):
         ran.append(list(argv))
         return subprocess.CompletedProcess(argv, 0, "ok", "")
 
+    monkeypatch.setattr(ai_bridge.managedcli, "offered", lambda name: False)  # 本组钉 npm 回落路径
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: ["/usr/bin/npm"])
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     monkeypatch.setattr(ai_bridge.subprocess, "run", fake_run)
@@ -831,6 +834,7 @@ def test_install_package_comes_only_from_the_adapter(monkeypatch):
 
 def test_npm_success_still_requires_a_real_launch(monkeypatch):
     """npm 说成了不算数：CLI 仍然起不来就如实报「装完还是不可用」。"""
+    monkeypatch.setattr(ai_bridge.managedcli, "offered", lambda name: False)
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: ["/usr/bin/npm"])
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     monkeypatch.setattr(

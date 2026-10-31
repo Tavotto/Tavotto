@@ -680,6 +680,33 @@ jobs:
             --require wheel,sdist,windows-installer,macos-installer,macos-intel-installer \
             --version "$VER" --source-sha "$SOURCE_SHA"
 
+      - name: 不带版本号的稳定别名（README「下载最新版」直链）
+        # `releases/latest/download/<名字>` 要求文件名跨版本不变，而安装包带版本号。
+        # 这里**额外**造三份同内容副本，原文件一个字不动——应用内更新、中国站镜像、
+        # 官网 sync-release 读的都是带版本号的名字与 artifact-manifest.json。
+        # 副本由产物清单按 role 解出的**那一个**文件 cp 而来（同源，不是重新构建），
+        # 放在 assets/alias/，**不进 dist/**（dist/* 是清单、校验、溯源的输入）、
+        # **不进 artifact-manifest.json**（role 恰好一个的约束不放宽）；
+        # 它们的 SHA-256 行追加到 SHA256SUMS.txt，哈希与原文件逐字相同。
+        run: |
+          set -euo pipefail
+          M=assets/dist/artifact-manifest.json
+          mkdir -p assets/alias
+          for pair in \
+            macos-installer:Tavotto-macOS.dmg \
+            macos-intel-installer:Tavotto-macOS-Intel.dmg \
+            windows-installer:Tavotto-Windows-Setup.exe; do
+            role="${pair%%:*}"
+            alias="${pair#*:}"
+            src="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role "$role")"
+            test -f "$src" || { echo "::error::$role 的文件不在 $src"; exit 1; }
+            cp -- "$src" "assets/alias/$alias"
+            cmp -- "$src" "assets/alias/$alias"
+            (cd assets/alias && shasum -a 256 -- "$alias") >> assets/out/SHA256SUMS.txt
+          done
+          ls -la assets/alias
+          tail -n 3 assets/out/SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ needs.trust2.outputs.tag }}
@@ -702,6 +729,7 @@ jobs:
           # 造的、validate 成对验过的那一份），随 `assets/dist/*` 一起挂上。
           files: |
             assets/dist/*
+            assets/alias/*
             assets/out/SHA256SUMS.txt
             assets/out/tavotto-sbom.spdx.json
             assets/out/latest.json

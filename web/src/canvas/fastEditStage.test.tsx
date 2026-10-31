@@ -6,7 +6,7 @@
  * 实现，谁坏了都不会红。这里问的是三件事：
  *
  * 1. 这一屏只画那一张图（页面纸、网格、别的对象都让开）；
- * 2. 出口在（添加到画布 / 回画布排版）；
+ * 2. 单图编辑没有「回排版」「添加到画布」（模式由图数推出：第二张图进来才是多图排版）；
  * 3. **文档一个字节没动**——快速编辑是一种看法，不是一次编辑。
  */
 import { act } from 'react'
@@ -16,14 +16,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasStage } from './CanvasStage'
 import { NotificationRail } from '@/components/StatusBar'
 import { literal } from '@/i18n'
-import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { DURATION } from '@/lib/motion'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useHintStore } from '@/lib/onboarding/hints'
 import { useUiStore } from '@/store/uiStore'
-import { openFastEdit, returnToLayout, useWorkspaceStore } from '@/store/workspace'
+import { addFigureToLayout, openFastEdit, startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
 import { emptyProject } from '@/types/document'
 import type { PanelInfo } from '@/lib/api'
 
@@ -50,6 +50,7 @@ const info = (id: string, script?: string): PanelInfo => ({
 
 let container: HTMLDivElement
 let root: Root
+let stopModeSync: () => void = () => {}
 
 const mount = () =>
   act(() => {
@@ -65,16 +66,20 @@ beforeEach(async () => {
   URL.createObjectURL = vi.fn(() => 'blob:mock/1')
   useWorkspaceStore.getState().clear()
   useUiStore.getState().setElementPanel(null)
+  useUiStore.setState({ status: null }) // 前一条用例的「已进入多图排版」通知不带进来
   const a = info('a.pdf', 'fig.py')
   const b = info('b.pdf', 'fig.py')
   useAssetStore.setState({ panels: [a, b], byId: { 'a.pdf': a, 'b.pdf': b } })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_stage')
+  // 模式由图数推出：挂上真订阅，加图 / 撤销就和应用里一样切模式
+  stopModeSync = startWorkspaceModeSync()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
 })
 
 afterEach(() => {
+  stopModeSync()
   act(() => root.unmount())
   container.remove()
 })
@@ -85,26 +90,49 @@ const objectIds = () =>
   )
 
 describe('快速编辑这一屏', () => {
-  it('只画当前那一张图，别的对象与页面纸都让开', async () => {
+  it('画这张画布上的全部对象（图 + 标注），页面纸让开', async () => {
+    act(() => openFastEdit('a.pdf'))
     act(() => {
-      openFastEdit('a.pdf')
-      openFastEdit('b.pdf')
+      useDocumentStore.getState().commit(literal('文字'), (d) => {
+        d.objects.push({
+          id: 't1', type: 'text', text: '图注', sizePt: 6, bold: false, color: '#000000', align: 'left', x: 5, y: 5, w: 20, h: 6,
+        })
+      })
     })
     await mount()
 
     const active = useWorkspaceStore.getState().activePanelId
-    expect(objectIds()).toEqual([active])
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(objectIds().sort()).toEqual([active, 't1'].sort())
     // 页面纸（PageSheet）是排版的语言：这一屏上不该有它
     expect(container.querySelector('[data-page-sheet]')).toBeNull()
   })
 
-  it('画布排版模式照旧画整张版', async () => {
+  it('单图编辑里隐藏唯一的图：模式不变、不画白色背纸；取消隐藏背纸回来', async () => {
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    const id = useWorkspaceStore.getState().activePanelId!
+    const setHidden = (hidden: boolean) =>
+      act(() => {
+        useDocumentStore.getState().commit(literal('隐藏'), (d) => {
+          d.objects.find((o) => o.id === id)!.hidden = hidden
+        })
+      })
+    expect(container.querySelector('[data-fast-edit-paper]')).not.toBeNull()
+    setHidden(true)
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(container.querySelector('[data-fast-edit-paper]'), '图隐藏了，背纸不该还留一块白矩形').toBeNull()
+    setHidden(false)
+    expect(container.querySelector('[data-fast-edit-paper]')).not.toBeNull()
+  })
+
+  it('第二张图进来 = 多图排版：画整张版', async () => {
     act(() => {
       openFastEdit('a.pdf')
-      openFastEdit('b.pdf')
-      returnToLayout()
+      addFigureToLayout('b.pdf')
     })
     await mount()
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
     expect(objectIds()).toHaveLength(2)
     expect(container.querySelector('[data-page-sheet]')).not.toBeNull()
     // 排版里图坐在页面纸上，不另垫一张
@@ -124,23 +152,28 @@ describe('快速编辑这一屏', () => {
     expect(paper!.compareDocumentPosition(obj) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('两个出口都在：添加到画布 / 返回画布', async () => {
+  it('单图编辑没有「回排版」：不在图内编辑时没有出口，在图内编辑时只有一颗（退出图内编辑）；也没有「添加到画布」', async () => {
     act(() => openFastEdit('a.pdf'))
+    act(() => useUiStore.getState().setElementPanel(null))
     await mount()
+    expect(container.querySelectorAll('[data-context-back]')).toHaveLength(0)
+    act(() => useUiStore.getState().setElementPanel(useWorkspaceStore.getState().activePanelId))
+    expect(container.querySelectorAll('[data-context-back]')).toHaveLength(1)
+    expect(container.querySelector('[data-onboarding-anchor="add-to-layout"]')).toBeNull()
     const labels = [...container.querySelectorAll('button')].map((b) => b.textContent ?? '')
-    expect(labels.some((l) => l.includes('添加到画布'))).toBe(true)
-    expect(labels.some((l) => l.includes('返回画布'))).toBe(true)
+    expect(labels.some((l) => l.includes('添加到画布'))).toBe(false)
   })
 
-  it('切进切出不动文档：对象、位置、历史长度全都一样', async () => {
+  it('单图 → 多图 → 单图（撤销第二张）不动文档：对象、位置、历史长度全都一样', async () => {
     act(() => openFastEdit('a.pdf'))
     await mount()
     const before = JSON.stringify(useDocumentStore.getState().doc)
     const past = useDocumentStore.getState().past.length
 
-    act(() => returnToLayout())
-    act(() => openFastEdit('a.pdf'))
-    act(() => returnToLayout())
+    act(() => void addFigureToLayout('b.pdf'))
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    act(() => useDocumentStore.getState().undo())
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
 
     expect(JSON.stringify(useDocumentStore.getState().doc)).toBe(before)
     expect(useDocumentStore.getState().past.length).toBe(past)
@@ -222,7 +255,7 @@ describe('「刚为编辑加入本文档」的说明', () => {
   /** 通知轨的 toast 退场要保活 90ms（usePresence）：「消失」= 已卸载，或正在播退场 */
   const noteGone = () => note() === null || note()!.getAttribute('data-state') === 'closed'
 
-  it('加进来的那一次显示；回排版再进同一张（已在文档里）不显示', async () => {
+  it('加进来的那一次显示；第二张图进来切成多图排版后它收起，再打开同一张（已在文档里）不显示', async () => {
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     expect(note()).not.toBeNull()
@@ -230,7 +263,7 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(note()!.textContent).toContain('移除')
     expect(note()!.querySelector('button')?.textContent).toBe('移除')
 
-    act(() => returnToLayout())
+    act(() => void addFigureToLayout('b.pdf'))
     act(() => openFastEdit('a.pdf'))
     expect(noteGone()).toBe(true)
   })
@@ -281,9 +314,9 @@ describe('「刚为编辑加入本文档」的说明', () => {
   })
 
   /**
-   * 通知轨最多两条（二审 D1）。实测踩到的是三条同屏：双击素材卡进快速编辑时
-   * 「加入说明」「操作提示」「渲染完成」同时想上屏，而三块此前各自 usePresence、
-   * 互不让位（2026-09-15 打磨 N1）。
+   * 通知轨有条数上限（二审 D1 定的两条，UI 2.0 放宽到三条：`RAIL_MAX`）。实测踩到的是多条同屏：
+   * 双击素材卡进快速编辑时「加入说明」「操作提示」「渲染完成」同时想上屏，而几块此前各自
+   * usePresence、互不让位（2026-09-15 打磨 N1）。
    *
    * 让位顺序按「丢了会不会再有」定：加入说明带着一次性的「移除」出口，状态报的是
    * 刚发生的事，**操作提示第一个让**——它本来就会重来，少说一次不丢信息，而且让位
@@ -294,14 +327,14 @@ describe('「刚为编辑加入本文档」的说明', () => {
       (e) => !e.className.includes('sr-only'),
     )
   const hintToast = () => container.querySelector('[data-onboarding-hint]')
-  /** 正在播退场的那条还在 DOM 里（usePresence 保活 90ms），它不算「叠着的一条」 */
+  /** 正在播退场的那条还在 DOM 里（usePresence 保活 120ms），它不算「叠着的一条」 */
   const openToasts = () => toasts().filter((e) => e.getAttribute('data-state') === 'open')
   const afterExit = () =>
     act(async () => {
-      await new Promise((r) => setTimeout(r, DURATION.exit + 40))
+      await new Promise((r) => setTimeout(r, DURATION.fast + 40))
     })
 
-  it('三条同时想上屏时只留两条：先顶掉操作提示，状态走完它自己回来', async () => {
+  it('四条同时想上屏时只留三条：先顶掉操作提示，修复卡走完它自己回来', async () => {
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     // 加入说明 + 操作提示：两条，都在
@@ -309,27 +342,31 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(toasts().length).toBe(2)
     expect(hintToast(), '还没有状态，提示有位子').not.toBeNull()
 
-    // 状态来了 → 三条候选，提示让位
+    // 状态来了 → 三条（加入说明 + 提示 + 状态），正好是上限，提示还在
     act(() => useUiStore.getState().setStatus(literal('渲染完成')))
-    expect(openToasts().length, '最多两条').toBe(2)
+    expect(openToasts().length, '上限三条').toBe(3)
+    expect(hintToast()!.getAttribute('data-state'), '三条没超上限，提示不让').toBe('open')
+
+    // 引擎修复卡来了 → 四条候选，提示让位
+    act(() => useExitNoticeStore.getState().setEngineExit('nonzero'))
+    expect(openToasts().length, '最多三条').toBe(3)
     expect(hintToast()!.getAttribute('data-state'), '让位的是提示').toBe('closed')
     expect(note(), '加入说明优先级最高，不让').not.toBeNull()
-    // 退场播完之后 DOM 里也只剩两条
+    // 退场播完之后 DOM 里也只剩三条
     await afterExit()
-    expect(toasts().length).toBe(2)
+    expect(toasts().length).toBe(3)
     expect(hintToast()).toBeNull()
 
-    // 状态走完 → 提示自己回来（让位只是不渲染，没有把它 dismiss 掉）
-    act(() => useUiStore.getState().setStatus(null))
+    // 修复卡走完 → 提示自己回来（让位只是不渲染，没有把它 dismiss 掉）
+    act(() => useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null }))
     expect(useHintStore.getState().current, '让位期间提示仍在 store 里').toBe('problem_found')
     expect(hintToast()!.getAttribute('data-state')).toBe('open')
     await afterExit()
-    expect(openToasts().length).toBe(2)
+    expect(openToasts().length).toBe(3)
   })
 
   it('撤销那次加入 → 快速编辑退出，说明跟着消失', async () => {
-    // 「对象消失就退出快速编辑」的清扫在 App 层挂（usePruneSelection）：这里手动订阅
-    const stopPrune = subscribePruneSelection()
+    // 唯一一张图被撤销掉：画布上 0 张 = 空画布（排版），由模式订阅改判
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     expect(note()).not.toBeNull()
@@ -337,6 +374,5 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(useWorkspaceStore.getState().mode).toBe('layout')
     expect(useWorkspaceStore.getState().addedForEdit).toBeNull()
     expect(noteGone()).toBe(true)
-    stopPrune()
   })
 })

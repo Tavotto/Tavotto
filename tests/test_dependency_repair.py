@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,10 @@ from support.dependency_repair import (
     FIXTURE_DIST,
     FIXTURE_IMPORT,
     WORKER_PY,
+    build_wheel,
     needs_worker,
     real_venv,
+    site_packages,
     wait_for,
 )
 from tavotto.engine import (
@@ -53,6 +56,15 @@ pytest_plugins = ("support.dependency_repair",)
 @pytest.fixture(autouse=True)
 def _clean(clean_state):
     """本文件每条用例前后都清一遍模块级状态（实现在 support 里，只有一份）。"""
+
+
+def _publish_fixture_wheel(python: str) -> None:
+    """假 pip 成功也要留下真实提供者证据；后续核验仍读目标 venv 的 metadata。"""
+    venv = Path(python).parent.parent
+    assert (venv / "pyvenv.cfg").is_file(), "只写测试创建的 venv，不能写宿主环境"
+    wheel = build_wheel(venv / "fixture-wheelhouse")
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(site_packages(venv))
 
 
 # ===========================================================================
@@ -83,6 +95,32 @@ def test_same_name_packages_still_need_explicit_registration(tmp_path):
     """同名也要显式登记：`同名 = 可信` 正是抢注攻击的入口。"""
     assert depresolve.resolve(tmp_path, "lmfit").distribution == "lmfit"
     assert depresolve.resolve(tmp_path, "astropy").distribution == "astropy"
+
+
+@pytest.mark.parametrize(
+    "import_name,distribution",
+    [
+        ("lxml", "lxml"),  # python-docx 的硬依赖；真实 Windows 用户报「找不到安装包」
+        ("xlsxwriter", "xlsxwriter"),
+        ("xlwt", "xlwt"),
+        ("docxtpl", "docxtpl"),
+        ("reportlab", "reportlab"),
+        ("markdown", "markdown"),
+        ("jinja2", "jinja2"),
+        ("tifffile", "tifffile"),
+        ("imageio", "imageio"),
+        ("pyreadstat", "pyreadstat"),
+        ("odf", "odfpy"),  # import 名 ≠ 包名，走 CURATED
+        ("docx", "python-docx"),
+    ],
+)
+def test_report_and_document_packages_resolve_as_installable(tmp_path, import_name, distribution):
+    """生成报告 / 读写文档与表格的高频包：登记前落在「未知」，引导卡只报缺包、没有一键装。"""
+    req = depresolve.resolve(tmp_path, import_name)
+    assert req is not None, f"{import_name} 应该解析得出来"
+    assert req.distribution == distribution
+    assert req.resolution_source == depresolve.SOURCE_CURATED
+    assert req.installable
 
 
 @pytest.mark.parametrize("import_name", ["pypdf", "PyPDF2"])
@@ -331,7 +369,7 @@ def test_install_endpoint_refuses_without_a_plan(client, project):
 def test_direct_install_call_refuses_an_unknown_plan():
     """API 之外也一样：`install()` 只认计划，不认参数。"""
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install("not-a-real-plan")
+        deprepair.install("not-a-real-plan", confirmed_impact="x")
     assert err.value.code == deprepair.ERROR_NOT_ALLOWED
 
 
@@ -351,9 +389,13 @@ def test_the_plan_binds_the_requirement_not_the_request(project, monkeypatch):
     assert plan.python == projectenv.interpreter_of(venv)
 
     installs: list[str] = []
-    monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log, **_: (installs.append(req), ("", ""))[1]
-    )
+
+    def _install_fixture(py, req, ev, log, **_):
+        installs.append(req)
+        _publish_fixture_wheel(py)
+        return "", ""
+
+    monkeypatch.setattr(deprepair, "_pip_install", _install_fixture)
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
     monkeypatch.setattr(
         deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
@@ -361,7 +403,7 @@ def test_the_plan_binds_the_requirement_not_the_request(project, monkeypatch):
     monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
 
-    deprepair.install(plan.plan_id)
+    deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert installs == [plan.requirement.requirement()]
 
 
@@ -377,7 +419,7 @@ def test_a_changed_environment_makes_the_plan_stale(project):
     cfg = venv / "pyvenv.cfg"
     cfg.write_text(cfg.read_text(encoding="utf-8") + "# 变了\n", encoding="utf-8")
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_PLAN_STALE
 
 
@@ -445,8 +487,9 @@ class _FakeWorker:
     def alive(self) -> bool:
         return not self.closed
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> bool:
         self.closed = True
+        return True
 
 
 def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
@@ -460,10 +503,11 @@ def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
     other = _FakeWorker("/env/b/bin/python", "another.py")
     monkeypatch.setitem(engine_pool._workers, ("/p1", "figure.py"), mine)
     monkeypatch.setitem(engine_pool._workers, ("/p2", "another.py"), other)
+    monkeypatch.setattr(engine_pool, "_pending_retirements", {})
     monkeypatch.setattr(
         engine_pool.threading,
         "Thread",
-        lambda target, **kw: type("T", (), {"start": lambda s: target()})(),
+        lambda target, args=(), **kw: type("T", (), {"start": lambda s: target(*args)})(),
     )
 
     with engine_pool.mutating_environment(
@@ -654,7 +698,12 @@ def test_imports_can_pass_while_the_worker_still_cannot_run(project, monkeypatch
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
     )
     monkeypatch.setattr(deprepair, "_run", lambda argv, t: (0, "pip 24.0"))
-    monkeypatch.setattr(deprepair, "_pip_install", lambda *a, **_: ("", "ok"))
+
+    def _install_fixture(py, *args, **kwargs):
+        _publish_fixture_wheel(py)
+        return "", "ok"
+
+    monkeypatch.setattr(deprepair, "_pip_install", _install_fixture)
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
     # 第一、二层：都说没问题
     monkeypatch.setattr(
@@ -664,7 +713,7 @@ def test_imports_can_pass_while_the_worker_still_cannot_run(project, monkeypatch
     # 真实成因一致——子进程根本跑不起来）
     monkeypatch.setattr(engine_pool, "WORKER_PY", project / "no-such-worker.py")
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_SELFTEST_FAILED
 
 
@@ -752,7 +801,7 @@ def test_an_environment_without_pip_is_reported_not_silently_fixed(project, monk
         deprepair, "_pip_install", lambda *a, **_: pytest.fail("没有 pip 就不该走到安装")
     )
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_PIP_UNAVAILABLE
     assert seen == [[plan.python, "-m", "pip", "--version"]]
     assert not [a for a in seen if "ensurepip" in " ".join(a)]
@@ -1202,7 +1251,7 @@ def test_a_pin_set_during_confirmation_stops_the_install(project, monkeypatch):
         deprepair, "_pip_install", lambda *a, **_: pytest.fail("固定生效时一个字节都不该装")
     )
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_INTERPRETER_PINNED
     assert err.value.extra["pinned"]["python"] == sys.executable
     assert deprepair.get_plan(plan.plan_id) is None, "前提已不成立的计划不该留着"
@@ -1218,7 +1267,7 @@ def test_the_failed_event_carries_the_pin_for_the_interface(project, monkeypatch
     )
     _pin_in_settings(monkeypatch, sys.executable)
     events: list[dict] = []
-    deprepair._install_guarded(plan.plan_id, events.append)
+    deprepair._install_guarded(plan.plan_id, events.append, confirmed_impact=plan.impact_digest)
     last = events[-1]
     assert last["state"] == deprepair.STATE_FAILED
     assert last["code"] == deprepair.ERROR_INTERPRETER_PINNED
@@ -1299,13 +1348,38 @@ def test_a_failed_pip_run_leaves_the_requirement_retryable(project, monkeypatch)
     )
     _stub_pip(monkeypatch, pip_code=deprepair.ERROR_NETWORK)
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_NETWORK
     # 目标环境里仍然没有它（pip 没跑成）——第二次 create_plan 的体检要看到这一点
     again = deprepair.create_plan(
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
     )
     assert again.plan_id, "pip 没跑成的那次不该进黑名单"
+
+
+def test_a_failed_activation_after_install_is_the_launcher_code_not_import_still_failed(
+    project, monkeypatch
+):
+    """pip 成功之后、装后体检时 Conda 激活取环境失败：报瞬时的 conda_launcher_unavailable，不说“装了还 import 不了”（P09，Codex #975）。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _stub_pip(monkeypatch, pip_code="")
+    monkeypatch.setattr(
+        deprepair.projectenv,
+        "probe_environment",
+        lambda py, mod=None: {
+            "ok": False,
+            "code": "conda_launcher_unavailable",
+            "python": py,
+            "detail": "x",
+        },
+    )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
+    assert err.value.code == "conda_launcher_unavailable"
 
 
 def test_a_successful_pip_run_is_not_repeated_even_when_verification_fails(project, monkeypatch):
@@ -1323,7 +1397,7 @@ def test_a_successful_pip_run_is_not_repeated_even_when_verification_fails(proje
         lambda py, mod=None: {"ok": False, "code": projectenv.ERROR_MODULE_MISSING, "python": py},
     )
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_IMPORT_STILL_FAILED
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.create_plan(
@@ -1347,18 +1421,22 @@ def test_a_second_plan_formed_before_the_first_install_finished_does_not_repeat_
     )
     runs: list[str] = []
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
-    monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log, **_: (runs.append(req), ("", ""))[1]
-    )
+
+    def _install_fixture(py, req, ev, log, **_):
+        runs.append(req)
+        _publish_fixture_wheel(py)
+        return "", ""
+
+    monkeypatch.setattr(deprepair, "_pip_install", _install_fixture)
     monkeypatch.setattr(
         deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
     )
     monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
-    deprepair.install(plan_a.plan_id)
+    deprepair.install(plan_a.plan_id, confirmed_impact=plan_a.impact_digest)
     assert len(runs) == 1
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan_b.plan_id)
+        deprepair.install(plan_b.plan_id, confirmed_impact=plan_b.impact_digest)
     assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
     assert len(runs) == 1, "第二个计划不该再跑 pip"
 
@@ -1437,11 +1515,11 @@ def test_a_failed_private_python_download_leaves_the_managed_requirement_retryab
 
     monkeypatch.setattr(deprepair, "_provision_private_base", _provision)
     if outcome == "cancelled":
-        rec = deprepair.install(plan.plan_id)
+        rec = deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert rec["state"] == deprepair.STATE_CANCELLED
     else:
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.install(plan.plan_id)
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert err.value.code == deprepair.privatepython.ERROR_OFFLINE
     again = deprepair.create_plan(
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
@@ -1459,10 +1537,13 @@ def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
     plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
     runs = _stub_generation_until_pip(monkeypatch, pip_code=pip_code)
     if pip_code == deprepair.ERROR_CANCELLED:
-        assert deprepair.install(plan.plan_id)["state"] == deprepair.STATE_CANCELLED
+        assert (
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)["state"]
+            == deprepair.STATE_CANCELLED
+        )
     else:
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.install(plan.plan_id)
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert err.value.code == pip_code
     # 断网那条按 ADR 0111 再走一次镜像（桩里问包源回「什么源都没配」），仍断网就如实失败；取消不换源
     assert runs == (["pip", "pip"] if pip_code == deprepair.ERROR_NETWORK else ["pip"])
@@ -1489,7 +1570,7 @@ def test_the_managed_generation_records_the_mirror_on_its_progress(project, monk
 
     monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
     try:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     except deprepair.RepairError:
         pass
     assert len(seen) == 2
@@ -1520,7 +1601,7 @@ def test_the_managed_generation_names_its_pypi_source_on_the_progress(
 
     monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
     try:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     except deprepair.RepairError:
         pass
     assert len(seen) == (2 if switch else 1)
@@ -1545,7 +1626,7 @@ def test_the_terminal_progress_says_whether_the_same_requirement_can_be_retried(
         monkeypatch.setattr(
             deprepair, "_verify_imports", lambda python, modules: deprepair.cancel(plan.plan_id)
         )
-    rec = deprepair.install(plan.plan_id)
+    rec = deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert rec["state"] == deprepair.STATE_CANCELLED
     assert deprepair.progress(plan.plan_id)["retryable"] is retryable
     if not retryable:
@@ -1567,7 +1648,7 @@ def test_an_async_failure_after_pip_ran_is_not_offered_as_retryable(project, mon
         raise deprepair.RepairError(deprepair.ERROR_MANAGED_WRITE_FAILED, "磁盘满")
 
     monkeypatch.setattr(deprepair, "_verify_imports", _write_failed)
-    rec = deprepair._install_guarded(plan.plan_id, None)
+    rec = deprepair._install_guarded(plan.plan_id, None, confirmed_impact=plan.impact_digest)
     assert rec["state"] == deprepair.STATE_FAILED
     assert rec["code"] == deprepair.ERROR_MANAGED_WRITE_FAILED
     assert rec["retryable"] is False
@@ -1586,7 +1667,7 @@ def test_a_successful_managed_pip_run_still_blocks_the_same_requirement(
 
     monkeypatch.setattr(deprepair, "_verify_imports", _still_missing)
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.install(plan.plan_id)
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_IMPORT_STILL_FAILED
     assert runs == ["pip"]
     with pytest.raises(deprepair.RepairError) as err:
@@ -1669,6 +1750,10 @@ def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse
     (project / "figure.py").write_text(f"import {FIXTURE_IMPORT}\n", encoding="utf-8")
     venv = real_venv(project)
     python = projectenv.interpreter_of(venv)
+    # ADR 0114：项目 venv 不再被静默采用——这条的前提是用户已经采用了它（目标 = 他的 venv）
+    assert projectenv.remember(
+        project, python, automatic=False, trigger=projectenv.TRIGGER_RECOMMENDED
+    )
     plan = deprepair.create_joint_plan(project, "figure.py")
     assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
     # 把执行线程按在**入口**（还没跑到 `prepare()` 的第一行）：登记若在线程里做——不管在哪一行——
@@ -1681,7 +1766,7 @@ def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse
         return real_guarded(plan_id, on_event, claimed=claimed)
 
     monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
-    deprepair.prepare_async(plan.plan_id)
+    deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
     answer = deprepair.cancel_status(plan.plan_id)  # ack 之后立刻取消
     gate.set()
     assert answer == {"accepted": True, "reason": ""}, answer
@@ -1784,6 +1869,7 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
     class _Plan:
         project = root
         plan_id = "jp-claim"
+        impact_digest = "d-claim"
 
     monkeypatch.setattr(
         deprepair, "get_joint_plan", lambda pid: _Plan if pid == "jp-claim" else None
@@ -1800,8 +1886,9 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
         return {"state": "done"}
 
     monkeypatch.setattr(deprepair, "_prepare_guarded", _held)
-    first = client.post("/api/engine/dependencies/prepare", json={"plan_id": "jp-claim"})
-    second = client.post("/api/engine/dependencies/prepare", json={"plan_id": "jp-claim"})
+    body = {"plan_id": "jp-claim", "impact_digest": "d-claim"}
+    first = client.post("/api/engine/dependencies/prepare", json=body)
+    second = client.post("/api/engine/dependencies/prepare", json=body)
     assert first.status_code == 200 and first.get_json()["started"] is True
     assert second.status_code == 200 and second.get_json()["started"] is False
     deadline = time.time() + 5
@@ -1819,7 +1906,7 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
     assert deprepair._claim("jp-claim") is True
     try:
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.prepare("jp-claim")
+            deprepair.prepare("jp-claim", confirmed_impact="d-claim")
         assert err.value.code == deprepair.ERROR_NOT_ALLOWED
         assert "已经在执行" in str(err.value)
     finally:

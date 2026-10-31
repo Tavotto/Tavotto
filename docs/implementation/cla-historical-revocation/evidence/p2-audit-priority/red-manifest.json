@@ -1,0 +1,48 @@
+{
+  "recorded_at_utc": "2026-10-18T09:04:46.012103+00:00",
+  "source": {
+    "commit": "6d8809f03150b762cfafeacdaf89af6c9c9bbc05",
+    "tree": "d41fd75664f54b40b9b1e5d960d815fec6db07a9",
+    "delegation_sha256": "249fac5bcbe95b0c6d774de4f1016a0f0f1688464bfb44afd99df254126170f0"
+  },
+  "review_finding": {
+    "pr": 1161,
+    "thread": "PRRT_kwDOT51-YM6tpAP-",
+    "comment": 4306424012,
+    "priority": "P2"
+  },
+  "command": {
+    "argv": [
+      "node",
+      "--test",
+      "tests/independent-terminal-audit-priority.test.mjs"
+    ],
+    "cwd": "/tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare",
+    "exit_code": 1,
+    "failed": 5,
+    "log": "red.txt"
+  },
+  "actual_states": {
+    "disabled-rotated": "disabled",
+    "enabled-rotated": "superseded",
+    "held-rotated": "blocked",
+    "expired-current-pin": "expired",
+    "expired-disabled-rotated": "disabled"
+  },
+  "all_states_current": false,
+  "all_latest_controls": "revoke",
+  "independent_script": {
+    "path": "/tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs",
+    "sha256": "04703983c4641f7cf532e22c9b4bb2c4f1e4816f6db32d69bb4f1ba644b24da3"
+  },
+  "log_sha256": "b82a648a214c70159a8ccb38b00363361fb4ecb6d0023168e1de04bf57f1f5d2",
+  "pending": "Actual workspace fix not yet present; do not treat proposed fix as executed or green.",
+  "not_executed": [
+    "workspace writes",
+    "HTTP/worker.fetch",
+    "publication/deployment/credentials",
+    "dependency download",
+    "external review trigger",
+    "dynamic successful publication across proof expiry"
+  ]
+}

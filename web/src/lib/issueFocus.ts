@@ -28,6 +28,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { cancelArtifactEntry } from '@/lib/artifactValidation'
 import { useWorkspaceStore } from '@/store/workspace'
 import { problemContextNow } from './problemContext'
 import {
@@ -69,8 +70,11 @@ export type FocusOutcome =
   | { ok: true; mode: 'layout' | 'fast_edit'; field: FieldFocus }
   | { ok: false; reason: FocusFailure }
 
-/** 高亮持续多久（ms）。够看见，短到不碍事。 */
-export const HIGHLIGHT_MS = 1400
+/**
+ * 高亮持续多久（ms）。够看见，短到不碍事：画布上的 `animate-attention` 是 900 ms × 3 次，
+ * 此前 1400 ms 就撤掉，第二次闪到一半就没了——用户反馈「提醒不够明显」（2026-10-23）。
+ */
+export const HIGHLIGHT_MS = 2700
 
 let clearTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -82,6 +86,9 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
  * 崩溃，是一个说得出原因的失败（`not_editable`）。
  */
 export function focusObject(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
+  // 每一次定位都是一次新的导航：上一次还在逐帧重试的字段落点先作废（失败 / 没有字段的这一次也算），
+  // 否则它会在这次之后把焦点与亮框落到旧字段上（Codex #1365 P2）
+  cancelFieldLocate()
   const outcome = focusObjectInner(ref, propertyPath)
   // 本地活动信号：只说成功没成功、落在哪条工作流、字段聚焦到哪一档——不带 id / gid
   emitActivity(
@@ -91,6 +98,9 @@ export function focusObject(ref: ObjectRef, propertyPath?: string | null): Focus
   )
   return outcome
 }
+
+/** 此刻的工作区模式（由图数推出，定位不去改它） */
+const workspaceModeNow = () => useWorkspaceStore.getState().mode
 
 function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
   const s0 = useDocumentStore.getState()
@@ -116,16 +126,17 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
   if (!ref.objectId) {
     // 页面级问题（页宽、比例）：没有对象可选，把属性页切到「画布」那一栏
     ui.setRightTab('canvas')
-    useWorkspaceStore.getState().exitToLayout()
-    return { ok: true, mode: 'layout', field: 'none' }
+    // 定位是一次导航：还悬着的「进入图内编辑」采纳作废（以前由 `exitToLayout` 顺带取消）
+    cancelArtifactEntry()
+    return { ok: true, mode: workspaceModeNow(), field: 'none' }
   }
   const obj = useDocumentStore.getState().doc.objects.find((o) => o.id === ref.objectId)
   if (!obj) return { ok: false, reason: 'object_deleted' }
 
   if (ref.gid) {
     if (obj.type !== 'panel' || !obj.script) return { ok: false, reason: 'not_editable' }
-    // 图内元素：快速编辑那一屏才是"看一张图"的工作流（ADR 0028）
-    useWorkspaceStore.getState().enterFastEdit(obj.id)
+    // 图内元素：图内编辑是单图 / 排版两条工作流共有的子状态；模式不在这里定（画布上只有这一张就是单图编辑，
+    // 有别的图就留在排版里进图内编辑），由图数推出（ADR 0028）
     ui.setTool('select')
     useSelectionStore.getState().set([obj.id])
     reveal(obj)
@@ -136,18 +147,18 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
     else if (entered) useUiStore.getState().setSelectedGid(ref.gid)
     useUiStore.getState().setRightTab('properties')
     flash(ref)
-    return { ok: true, mode: 'fast_edit', field: focusField(propertyPath) }
+    return { ok: true, mode: workspaceModeNow(), field: focusField(ref.gid ?? null, propertyPath) }
   }
 
-  // 画布对象：排版模式（越界、重叠、页边距这些只在版面上说得清）
-  useWorkspaceStore.getState().exitToLayout()
+  // 画布对象：越界、重叠、页边距这些只在版面上说得清；模式照图数推出，这里只收起图内编辑、选中它
+  cancelArtifactEntry()
   ui.setElementPanel(null)
   ui.setTool('select')
   useSelectionStore.getState().set([obj.id])
   reveal(obj)
   useUiStore.getState().setRightTab('properties')
   flash(ref)
-  return { ok: true, mode: 'layout', field: focusField(propertyPath) }
+  return { ok: true, mode: workspaceModeNow(), field: focusField(ref.gid ?? null, propertyPath) }
 }
 
 /** 定位到一条问题（面板整行点击与「定位」按钮共用）。 */
@@ -170,33 +181,116 @@ function flash(ref: ObjectRef): void {
   }, HIGHLIGHT_MS)
 }
 
+/** 等落点进 DOM 最多等几帧（≈0.5 s）：进图内编辑、换元素、展开「更多」各要一两次提交 */
+const FIELD_FRAMES = 30
+
+/** 落点那一行亮多久（ms）：与画布上的 `HIGHLIGHT_MS` 同长，两处一起亮、一起灭 */
+export const FIELD_FLASH_MS = HIGHLIGHT_MS
+
+let fieldRun = 0
+let fieldFlash: { host: HTMLElement; timer: ReturnType<typeof setTimeout> } | null = null
+
 /**
- * 把焦点落到属性页里对应的那个字段上。
+ * 作废还在重试的字段落点并撤下挂着的请求。每次定位开头调一次；切项目时文档 id 变了，重试也会自己停
+ * （`focusField` 认发起时的 documentId）。
+ */
+export function cancelFieldLocate(): void {
+  fieldRun++
+  if (useUiStore.getState().fieldLocate) useUiStore.getState().setFieldLocate(null)
+}
+
+/**
+ * 这个锚点是不是**目标元素**的那一个字段。
+ *
+ * 同名字段到处都有（图例与图例标题都有 `fontsize`）：定位从一个元素跳到另一个时，
+ * 旧元素的属性页还挂着，按 `data-prop` 取第一个就会把焦点放进**上一个元素**的同名字段
+ * ——随后新属性页一挂载，焦点又被抢走，用户看到的是「定位没反应」。所以锚点要认主人：
+ * 自己的 `data-gid`，或外层图内属性页的 `data-inspector-gid`（排版控件那类锚点不带 gid）。
+ * 目标是画布对象（`gid` 为 null）时，只认不属于任何图内元素的锚点。
+ */
+function ownsField(host: HTMLElement, gid: string | null): boolean {
+  const owner =
+    host.getAttribute('data-gid') ??
+    host.closest('[data-inspector-gid]')?.getAttribute('data-inspector-gid') ??
+    null
+  return owner === gid
+}
+
+/** 落点那一行亮一下（`index.css` 的 `[data-locate-flash]`）；上一次的先撤 */
+function flashField(host: HTMLElement): void {
+  if (fieldFlash) {
+    clearTimeout(fieldFlash.timer)
+    fieldFlash.host.removeAttribute('data-locate-flash')
+  }
+  host.setAttribute('data-locate-flash', '')
+  fieldFlash = {
+    host,
+    timer: setTimeout(() => {
+      host.removeAttribute('data-locate-flash')
+      fieldFlash = null
+    }, FIELD_FLASH_MS),
+  }
+}
+
+/**
+ * 把焦点落到属性页里对应的那个字段上，并让那一行亮一下。
  *
  * 选择器用 `data-prop`（属性名是稳定的机器标识），**不用 aria-label**
  * ——那是本地化文案，换个语言就选不中了（`focusRescue.ts` 踩过同一个坑）。
  * 锚点由属性能力层统一挂（`lib/typography.propertyPathOf()` →
- * `controls/TypographyControls` 的 `Anchor`），报字段名的和挂锚点的读同一张表。
+ * `controls/TypographyControls` 的 `Anchor`），报字段名的和挂锚点的读同一张表；
+ * 锚点还要**属于目标元素**（`ownsField`）。
  *
- * 当场找得到就当场聚焦并回 `focused`；找不到不是失败——切模式 / 进图内编辑
- * 会换掉整棵属性页，DOM 这时候还没重排完，所以再排一帧重试，回 `requested`。
+ * 当场找得到就当场聚焦并回 `focused`；找不到不是失败——切模式 / 进图内编辑 /
+ * 换元素会换掉整棵属性页，字段收在「更多」里时还要先展开那一折，所以把请求挂到
+ * `uiStore.fieldLocate`（属性页据此展开字段所在的那一折），
+ * 再逐帧重试，最多 `FIELD_FRAMES` 帧，回 `requested`。
  * **回 `requested` 不等于成功**：调用方不许拿它说「已定位到字段」。
  */
-function focusField(propertyPath?: string | null): FieldFocus {
+function focusField(gid: string | null, propertyPath?: string | null): FieldFocus {
   if (!propertyPath || typeof document === 'undefined') return 'none'
-  const run = (): boolean => {
-    const host = document.querySelector<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
+  const run = ++fieldRun
+  // 重试只属于发起它的那份文档：切了项目 / 换了排版就停，不把焦点落进另一个项目
+  const docId = useDocumentStore.getState().documentId
+  const current = () => run === fieldRun && useDocumentStore.getState().documentId === docId
+  const attempt = (): boolean => {
+    const hosts = document.querySelectorAll<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
+    const host = [...hosts].find((h) => ownsField(h, gid))
     if (!host) return false
     const control = host.querySelector<HTMLElement>('input, select, textarea, button')
     const target = control ?? host
     // 两个方法都可选调用：jsdom 没有 scrollIntoView，而"定位"这一步失手
     // 不该把整条动作炸掉——用户要的是焦点落到字段上，滚动只是顺带
-    target.scrollIntoView?.({ block: 'nearest' })
+    target.scrollIntoView?.({ block: 'center' })
     target.focus?.()
+    // 行内锚点（加粗 / 斜体）是 `display:contents`，自己没有盒子、画不出亮框：亮控件本身
+    const contents = typeof getComputedStyle === 'function' && getComputedStyle(host).display === 'contents'
+    flashField(contents ? target : host)
     return true
   }
-  if (run()) return 'focused'
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+  const settle = () => {
+    // 只清自己挂的那一张：中途又定位了别处，`fieldLocate` 已经是下一次的
+    if (run === fieldRun) useUiStore.getState().setFieldLocate(null)
+  }
+  if (attempt()) {
+    settle()
+    return 'focused'
+  }
+  useUiStore.getState().setFieldLocate({ gid, prop: propertyPath })
+  if (typeof requestAnimationFrame !== 'function') {
+    settle()
+    return 'requested'
+  }
+  let left = FIELD_FRAMES
+  const retry = () => {
+    if (!current()) {
+      settle()
+      return
+    }
+    if (attempt() || --left <= 0) settle()
+    else requestAnimationFrame(retry)
+  }
+  requestAnimationFrame(retry)
   return 'requested'
 }
 
@@ -204,10 +298,45 @@ function focusField(propertyPath?: string | null): FieldFocus {
 const cssEscape = (v: string): string => v.replace(/[^A-Za-z0-9_-]/g, (c) => `\\${c}`)
 
 /**
+ * 问题面板要看的目标：`figureId` = 某张图（面板「当前图」那一档）；null = 整份排版。
+ * `canvasId` 给了就先切到那张画布（面板的清单按激活画布 / 整份排版取）。
+ */
+export interface ProblemsTarget {
+  canvasId?: string | null
+  figureId: string | null
+}
+
+/**
+ * 把「当前图」与范围落到目标上，**不进快速编辑、不动文档**：当前图的判据是
+ * 快速编辑图 → 图内编辑图 → 选中的面板（`problemContext.currentFigureOf`），前两档清掉、
+ * 第三档选中目标，面板的「当前图」就是它；没有图的目标（按画布导出）切到「当前画布」（`ProblemScope` 的 canvas 档，只列这张画布的问题）。
+ */
+function aimProblemsAt(target: ProblemsTarget): void {
+  if (target.canvasId && target.canvasId !== useDocumentStore.getState().activeCanvasId) {
+    activateCanvas(target.canvasId)
+  }
+  const ui = useUiStore.getState()
+  const figure = target.figureId
+    ? useDocumentStore.getState().doc.objects.find((o) => o.id === target.figureId && o.type === 'panel')
+    : null
+  if (!figure) {
+    // 按画布导出：只看这一张画布的问题（摘要就是按它算的），不是整份排版里别的画布的也列进来
+    ui.setProblemScope('canvas')
+    return
+  }
+  ui.setElementPanel(null)
+  useSelectionStore.getState().set([figure.id])
+  ui.setProblemScope('figure')
+}
+
+/**
  * 打开左侧「问题」面板（可带筛选）。**Prompt 12 的导出面板用它把用户
  * 交回问题清单**，而不是在弹窗里再列一遍。
  */
-export function openProblems(filter?: { severities?: Severity[] }): void {
+export function openProblems(filter?: { severities?: Severity[]; target?: ProblemsTarget }): void {
+  // 导出对话框的摘要是按**导出目标**算的（可能是别的画布上、也不是工作区当前选中的那张图）：
+  // 只带等级过去，面板的「当前图」仍取工作区现状，非零芯片会打开另一张图的清单。先把目标落成现场
+  if (filter?.target) aimProblemsAt(filter.target)
   useUiStore.getState().setProblemFilter(filter?.severities ?? null)
   // 交回的是**总览**：带着筛选点进去的那张卡片不一定还装着这些等级
   useUiStore.getState().setProblemDrill(null)
@@ -241,7 +370,7 @@ export function openProblemAt(
   // 面板里不再有「看到游标在卡片外就钻进去」的第二套机制。只有一张卡片的单图没有
   // 卡片层（`singleDrill`），那时不点开，面板直接列它的清单。游标按那张卡片的清单算——
   // 与面板里点一行时 `cursorFor(groups)` 的 groups 是同一份，修好之后「顶上来的那条」才找得对
-  const scoped = issuesInScope(all, scope, figureId)
+  const scoped = issuesInScope(all, scope, figureId, useDocumentStore.getState().activeCanvasId)
   const figures = bucketsByFigure(scoped)
   const single = singleDrill(ui.problemView, figures, scoped.filter(isUnverifiable).length)
   const drill = single && drillIssues(scoped, single).some((i) => i.issueId === issue.issueId)

@@ -16,16 +16,22 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   patchAiAgent: vi.fn(),
   setAiEndpointActive: vi.fn(),
   deleteAiEndpoint: vi.fn(),
+  migrateAiEndpoint: vi.fn(),
   startAiInstall: vi.fn(),
   fetchAiInstallStatus: vi.fn(),
+  startAiLogin: vi.fn(),
+  fetchAiLoginStatus: vi.fn(),
 }))
 
 import {
   deleteAiEndpoint,
   fetchAiCapabilities,
+  migrateAiEndpoint,
   patchAiAgent,
   setAiEndpointActive,
   startAiInstall,
+  startAiLogin,
+  fetchAiLoginStatus,
   type AiCapabilities,
 } from '@/lib/api'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -48,6 +54,8 @@ const fetchMock = vi.mocked(fetchAiCapabilities)
 const patchMock = vi.mocked(patchAiAgent)
 const activeMock = vi.mocked(setAiEndpointActive)
 const installMock = vi.mocked(startAiInstall)
+const loginMock = vi.mocked(startAiLogin)
+const loginStatusMock = vi.mocked(fetchAiLoginStatus)
 
 const ag = (key: string, v?: Record<string, unknown>) =>
   t(`settings.agents.${key}`, { ns: 'dialogs', ...(v ?? {}) })
@@ -115,9 +123,12 @@ beforeEach(() => {
   patchMock.mockReset()
   activeMock.mockReset()
   installMock.mockReset()
+  loginMock.mockReset()
+  loginStatusMock.mockReset()
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   act(() => root.unmount())
   host.remove()
   document.body.innerHTML = ''
@@ -252,7 +263,7 @@ describe('Agent 详情', () => {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex',
         base_url: 'https://api.moonshot.cn/anthropic', models: ['k2'],
-        default_model: 'k2', wire_api: 'chat', has_key: true, key_hint: '…cdef',
+        default_model: 'k2', wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: null,
       }],
     })
     await openDetail(caps)
@@ -262,11 +273,62 @@ describe('Agent 详情', () => {
     expect(text()).not.toContain('sk-')
   })
 
+  it('旧协议的接口：一句话 + 一个主按钮；能对上厂商给「改由 Claude Code 接入」并真的发迁移请求', async () => {
+    vi.mocked(migrateAiEndpoint).mockResolvedValue(capsOf([agentCaps()]))
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'old', label: '百炼', agent: 'codex',
+        base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['m'],
+        default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
+        incompatible: 'codex_chat_removed', migratable: 'claude',
+      }],
+    }))
+    const row = document.querySelector('[data-endpoint-row="old"]')!
+    expect(row.textContent).toContain(ag('detail.incompatible'))
+    const fix = document.querySelector<HTMLButtonElement>('[data-endpoint-fix="old"]')!
+    expect(fix.textContent).toBe(ag('detail.migrateToClaude'))
+    await act(async () => fix.click())
+    expect(vi.mocked(migrateAiEndpoint)).toHaveBeenCalledWith('old')
+  })
+
+  it('旧协议的 DeepSeek：按钮是「改用 Responses 协议」（原地改，不是改由 Claude Code）', async () => {
+    vi.mocked(migrateAiEndpoint).mockResolvedValue(capsOf([agentCaps()]))
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'ds', label: 'DeepSeek', agent: 'codex',
+        base_url: 'https://api.deepseek.com/v1', models: ['deepseek-chat'],
+        default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
+        incompatible: 'codex_chat_removed', migratable: 'codex_responses',
+      }],
+    }))
+    const fix = document.querySelector<HTMLButtonElement>('[data-endpoint-fix="ds"]')!
+    expect(fix.textContent).toBe(ag('detail.migrateToResponses'))
+    expect(fix.textContent).not.toBe(ag('detail.migrateToClaude'))
+    await act(async () => fix.click())
+    expect(vi.mocked(migrateAiEndpoint)).toHaveBeenCalledWith('ds')
+  })
+
+  it('旧协议且对不上已知厂商：只给「编辑」，不给迁移', async () => {
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'mine', label: '我的网关', agent: 'codex',
+        base_url: 'https://gw.example/v1', models: [],
+        default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
+        incompatible: 'codex_chat_removed', migratable: null,
+      }],
+    }))
+    const row = document.querySelector('[data-endpoint-row="mine"]')!
+    expect(row.textContent).toContain(ag('detail.incompatibleEdit'))
+    const fix = document.querySelector<HTMLButtonElement>('[data-endpoint-fix="mine"]')!
+    expect(fix.textContent).toBe(ag('detail.edit'))
+    expect(document.body.textContent).not.toContain(ag('detail.migrateToClaude'))
+  })
+
   it('模型服务是一组单选：点另一条就真的切过去', async () => {
     const ep = (id: string, label: string) => ({
       id, label, agent: 'codex' as const,
       base_url: 'https://example.test', models: ['m'],
-      default_model: 'm', wire_api: 'chat' as const, has_key: true, key_hint: '…abcd',
+      default_model: 'm', wire_api: 'responses' as const, has_key: true, key_hint: '…abcd', incompatible: null, migratable: null,
     })
     await openDetail(capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [ep('kimi', 'Kimi'), ep('glm', 'GLM')],
@@ -286,7 +348,7 @@ describe('Agent 详情', () => {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex',
         base_url: 'https://example.test', models: ['m'],
-        default_model: 'm', wire_api: 'chat', has_key: true, key_hint: '…abcd',
+        default_model: 'm', wire_api: 'responses', has_key: true, key_hint: '…abcd', incompatible: null, migratable: null,
       }],
     }))
     // 行上不再常驻「编辑 / 删除」两颗钮
@@ -328,7 +390,8 @@ describe('Agent 详情', () => {
     await openDetail(capsOf([agentCaps({
       features: { third_party_endpoints: false, model_selection: true,
                   effort_selection: false, wire_api_selection: false,
-                  readiness_probe: false },
+                  readiness_probe: false, login: false },
+      login_account: null,
     })]))
     expect(text()).not.toContain(ag('detail.modelService'))
   })
@@ -337,7 +400,7 @@ describe('Agent 详情', () => {
     const caps = capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex', base_url: 'https://x/v1',
-        models: [], default_model: null, wire_api: 'chat', has_key: true, key_hint: '…cdef',
+        models: [], default_model: null, wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: null,
       }],
     })
     await openDetail(caps)
@@ -360,6 +423,199 @@ describe('Agent 详情', () => {
     installMock.mockResolvedValue({ status: 'running' })
     await act(async () => byName(ag('install.confirmAction'))!.click())
     expect(installMock).toHaveBeenCalledExactlyOnceWith('codex')
+  })
+
+  describe('官方登录按钮', () => {
+    const needsAuth = (over = {}) => agentCaps({ state: 'needs_auth', usable: false, ...over })
+    const loginBtn = (name: string) => byName(ag('login.action', { account: name }))
+
+    it('只在未登录且适配器声明了官方登录时出现，文案带账号名', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      expect(loginBtn('ChatGPT')).toBeTruthy()
+      act(() => root.unmount())
+      host.remove()
+      // 已登录：没有按钮
+      await openDetail(capsOf([agentCaps()]))
+      expect(loginBtn('ChatGPT')).toBeUndefined()
+    })
+
+    it('不支持第三方接口的 agent（无 endpoint_family）也能看到并点到登录按钮', async () => {
+      await openDetail(
+        capsOf([
+          needsAuth({
+            features: { ...agentCaps().features, third_party_endpoints: false, login: true },
+          }),
+        ]),
+      )
+      expect(document.querySelectorAll('[data-agent-login]')).toHaveLength(1)
+      expect(document.querySelector('[data-agent-account] [data-agent-login]')).not.toBeNull()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      expect(loginMock).toHaveBeenCalledExactlyOnceWith('codex')
+    })
+
+    it('支持第三方接口的 agent 登录按钮只出现一次，且在模型服务区块里', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      expect(document.querySelectorAll('[data-agent-login]')).toHaveLength(1)
+      expect(document.querySelector('[data-agent-account]')).toBeNull()
+    })
+
+    it('适配器没声明官方登录（features.login=false）时不出现', async () => {
+      await openDetail(
+        capsOf([
+          needsAuth({
+            login_account: null,
+            features: { ...agentCaps().features, login: false },
+          }),
+        ]),
+      )
+      expect(document.querySelector('[data-agent-login]')).toBeNull()
+    })
+
+    it('后台模式：点击后变「等待登录…」，每 3 秒问一次，进程结束就重新探测并停止轮询', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      fetchMock.mockClear()
+      await act(async () => loginBtn('ChatGPT')!.click())
+      expect(loginMock).toHaveBeenCalledExactlyOnceWith('codex')
+      expect(byName(ag('login.waiting'))).toBeTruthy()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock).not.toHaveBeenCalled() // 还在登录：不重复探测
+      loginStatusMock.mockResolvedValue({ status: 'idle' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock).toHaveBeenCalledWith(true) // 重新探测
+      // 轮询已停
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('卸载即停止轮询，最多等 10 分钟', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(9000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(3)
+      act(() => root.unmount())
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(loginStatusMock).toHaveBeenCalledTimes(3)
+    })
+
+    it('一直没等到：10 分钟后停止轮询，按钮回到可点', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 6000)
+      })
+      const calls = loginStatusMock.mock.calls.length
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(loginStatusMock.mock.calls.length).toBe(calls)
+      expect(loginBtn('ChatGPT')).toBeTruthy()
+    })
+
+    it('后台模式拿到授权地址后显示「浏览器没打开？」和链接', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(document.querySelector('[data-agent-login-link]')).toBeNull()
+      loginStatusMock.mockResolvedValue({
+        status: 'running',
+        auth_url: 'https://auth.openai.com/oauth/authorize?state=s',
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      const a = document.querySelector<HTMLAnchorElement>('[data-agent-login-link]')!
+      expect(a.getAttribute('href')).toBe('https://auth.openai.com/oauth/authorize?state=s')
+      expect(a.target).toBe('_blank')
+      expect(text()).toContain(ag('login.browserHint'))
+    })
+
+    it('终端模式：一句提示 + 「我已登录」，不轮询，点了才重新探测', async () => {
+      await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'terminal', command: 'claude auth login' })
+      fetchMock.mockClear()
+      await act(async () => loginBtn('Claude')!.click())
+      expect(loginMock).toHaveBeenCalledExactlyOnceWith('claude')
+      expect(text()).toContain(ag('login.terminalHint'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000)
+      })
+      expect(loginStatusMock).not.toHaveBeenCalled()
+      expect(fetchMock).not.toHaveBeenCalled()
+      await act(async () => byName(ag('login.done'))!.click())
+      expect(fetchMock).toHaveBeenCalledWith(true)
+    })
+
+    it('找不到终端：直接告诉用户自己运行哪条命令', async () => {
+      await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      loginMock.mockResolvedValue({
+        started: false,
+        mode: 'terminal',
+        reason: 'terminal_unavailable',
+        command: 'claude auth login',
+      })
+      await act(async () => loginBtn('Claude')!.click())
+      expect(text()).toContain(ag('login.manualHint', { command: 'claude auth login' }))
+      expect(byName(ag('login.done'))).toBeTruthy()
+    })
+
+    it('终端登录后刷新失败：说一句没能刷新 + 「重试」，不回到初始登录按钮；重试成功才收尾', async () => {
+      await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      loginMock.mockResolvedValue({ started: true, mode: 'terminal', command: 'claude auth login' })
+      await act(async () => loginBtn('Claude')!.click())
+      fetchMock.mockRejectedValue(new Error('network down')) // 父级 reload 吞掉它，只返回 false
+      await act(async () => byName(ag('login.done'))!.click())
+      expect(text()).toContain(ag('login.refreshFailed'))
+      expect(byName(ag('login.retry'))).toBeTruthy()
+      expect(loginBtn('Claude')).toBeUndefined() // 没有回到初始登录按钮
+      expect(document.querySelector('[data-agent-login="retry"]')).not.toBeNull()
+      // 重试成功 -> 正常收尾（caps 里仍是 needs_auth，则回到初始登录按钮）
+      fetchMock.mockResolvedValue(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      await act(async () => byName(ag('login.retry'))!.click())
+      expect(text()).not.toContain(ag('login.refreshFailed'))
+      expect(document.querySelector('[data-agent-login="idle"]')).not.toBeNull()
+    })
+
+    it('后台登录进程结束后刷新失败：同样停在重试，不静默回到初始按钮', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'idle' })
+      fetchMock.mockRejectedValue(new Error('network down'))
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(text()).toContain(ag('login.refreshFailed'))
+      expect(byName(ag('login.retry'))).toBeTruthy()
+      expect(loginBtn('ChatGPT')).toBeUndefined()
+    })
   })
 
   it('装好的 Agent 不显示安装入口', async () => {

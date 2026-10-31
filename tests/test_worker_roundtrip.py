@@ -20,6 +20,7 @@ import pymupdf
 import pytest
 
 from support.pipedrain import StderrDrain
+from support.previewkit import preview_file
 from tavotto.engine import patchspec, pool, project_watch
 
 try:
@@ -161,7 +162,7 @@ def test_full_roundtrip(worker):
     assert "TestFig_a" in resp["stems"]
     assert not list((tmp / "figures").glob("*.pdf")), "build 期间不得写出真实图文件"
 
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     title_gid = next(
         el["gid"]
         for el in man["elements"]
@@ -173,7 +174,7 @@ def test_full_roundtrip(worker):
     patch = [{"gid": title_gid, "prop": "text", "value": "Changed Title"}]
     resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
     assert _text_value(resp["manifest"], title_gid) == "Changed Title"
-    assert (out / "TestFig_a.svg").exists()  # 预览 SVG 已重出
+    assert preview_file(out, "TestFig_a", ".svg").exists()  # 预览 SVG 已重出
 
     # ---- 全量列表语义：空列表 = 撤销全部，自动恢复原值 ----
     resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": []})
@@ -211,7 +212,7 @@ def test_export_is_state_neutral(worker):
     """
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     title_gid = next(
         el["gid"]
         for el in man["elements"]
@@ -257,7 +258,7 @@ def test_export_stays_state_neutral_when_it_fails(worker):
     """
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     title_gid = next(
         el["gid"]
         for el in man["elements"]
@@ -308,7 +309,7 @@ def test_axes3d_position_roundtrip(worker):
     Axes3D.set_position 后 matplotlib 按盒比例微调 x/w，断言按 y 落位判定。"""
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_3d.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_3d", ".json").read_text(encoding="utf-8"))
     ax = next(el for el in man["elements"] if el["role"] == "axes3d")
     assert ax.get("resizable") is True
     pos0 = _pos_of(man, ax["gid"])
@@ -334,7 +335,7 @@ def test_axes3d_zlabel_exposed_with_labelpad(worker):
     set_label_coords 无效），位置微调走 labelpad。"""
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_3d.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_3d", ".json").read_text(encoding="utf-8"))
     zl = next(e for e in man["elements"] if e["gid"].endswith(".zlabel"))
     assert zl["draggable"] is False
     assert _field(man, zl["gid"], "text")["value"] == "z depth"
@@ -353,7 +354,7 @@ def test_axes3d_axis_arrows_roundtrip(worker):
     的私有几何助手，matplotlib 升版时此处最先报警。"""
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_3d.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_3d", ".json").read_text(encoding="utf-8"))
     ax = next(el for el in man["elements"] if el["role"] == "axes3d")
     assert _field(man, ax["gid"], "axis_arrows")["value"] is False
 
@@ -391,7 +392,7 @@ def test_scatter_marker_roundtrip(worker):
     """散点 marker 可整体替换（set_paths），全量列表语义可恢复原始路径。"""
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_sc.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_sc", ".json").read_text(encoding="utf-8"))
     sc = next(e for e in man["elements"] if e["role"] == "scatter")
     f = _field(man, sc["gid"], "marker")
     assert f is not None and f["value"] == "original"
@@ -409,7 +410,7 @@ def test_legend_entry_order_roundtrip(worker):
     """图例条目顺序：按原始序号排列重建图例盒；空列表恢复原序。"""
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_sc.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_sc", ".json").read_text(encoding="utf-8"))
     leg = next(e for e in man["elements"] if e["role"] == "legend")
     f = _field(man, leg["gid"], "entry_order")
     assert f is not None and f["value"] == [0, 1, 2]
@@ -474,7 +475,7 @@ def test_fontfamily_override_syncs_mathtext(worker):
     所有字形（含上标的 −1）字体族必须一致。"""
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     el = next(
         e
         for e in man["elements"]
@@ -543,7 +544,7 @@ def test_non_ascii_survives_the_pipe(worker):
     """
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     title_gid = next(
         el["gid"]
         for el in man["elements"]
@@ -1426,13 +1427,15 @@ def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
         assert _field_value(man, cb_b["gid"], "cmap") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) is None
 
-        # 只改兄弟自己的（窄 override 从没动过 A）：A 与它的色条**不**报「脚本原样」——
-        # 否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B（#474 评审第五轮）
+        # 只改兄弟自己的（窄 override）：**整组一起换**（用户裁决 2026-10-18，ADR 0135 修订：
+        # 色阶组任一成员改 cmap = 整组改）。每个成员仍各报**自己**的脚本原样——A 与它的色条报
+        # paper_b、B 与它的色条报 paper_c，谁也不拿对方的当自己的（#474 评审第五轮的初衷保留）
         narrow = [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}]
         man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": narrow})["manifest"]
-        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
-        assert _cmap_original_name(man, "axes_0.collections_0") is None
-        assert _cmap_original_name(man, cb_a["gid"]) is None
+        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb_a["gid"], cb_b["gid"]):
+            assert _field_value(man, gid, "cmap") == "cividis", gid
+        assert _cmap_original_name(man, "axes_0.collections_0") == "paper_b"
+        assert _cmap_original_name(man, cb_a["gid"]) == "paper_b"
         assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) == "paper_c"
     finally:
@@ -2097,7 +2100,7 @@ def test_v1_envelope_echoes_generation_revision_and_hash(worker):
     assert resp["worker_generation"] == 2 and resp["render_revision"] == 0
     assert "TestFig_a" in resp["stems"]
 
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     title_gid = next(
         el["gid"]
         for el in man["elements"]
@@ -2205,7 +2208,7 @@ def test_v1_hash_mismatch_is_flagged_but_still_executed(worker):
     """
     proc, out, tmp = worker
     _ok(proc, _v1("build", rid="r-b3"))
-    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(out, "TestFig_a", ".json").read_text(encoding="utf-8"))
     title_gid = next(
         el["gid"]
         for el in man["elements"]
@@ -2295,7 +2298,7 @@ def test_v1_render_reports_the_preview_verdict(worker):
     assert preview["rasterized_artist_count"] == 0
     # `svg_bytes` 说的是**磁盘上那一份**的大小，不是响应里那串的长度——
     # 判定发生在读之前，量的必须是同一个东西
-    assert preview["svg_bytes"] == (out / "TestFig_a.svg").stat().st_size
+    assert preview["svg_bytes"] == preview_file(out, "TestFig_a", ".svg").stat().st_size
     assert len(resp["svg"].encode("utf-8")) == preview["svg_bytes"]
 
     # 不要 inline_svg 时判定照做（表示法是这一版的属性，与要不要那串文本无关）
@@ -2357,7 +2360,7 @@ def test_v1_render_reports_hybrid_for_a_heavy_data_layer(tmp_path):
         assert preview["rasterized_artist_count"] == 1
         assert preview["estimated_primitives"] > 20_000
         # 有 SVG，且判定量与产物是同一个东西
-        assert preview["svg_bytes"] == (tmp_path / "out" / "Mesh.svg").stat().st_size
+        assert preview["svg_bytes"] == preview_file(tmp_path / "out", "Mesh", ".svg").stat().st_size
         assert len(resp["svg"].encode("utf-8")) == preview["svg_bytes"]
         # mesh 变成一个 `<image>`，22 500 个 `<path>` 一个都没生出来
         assert resp["svg"].count("<image") == 1
@@ -2488,10 +2491,27 @@ def test_v1_timings_have_the_documented_shape(worker):
 
     resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []}, rid="r-t2"))
     t = resp["timings"]
-    assert set(t) == {"patch_apply_ms", "canvas_draw_ms", "manifest_ms", "preview_plan_ms"}
+    assert set(t) == {
+        "patch_apply_ms",
+        "canvas_draw_ms",
+        "manifest_ms",
+        "manifest_prepare_ms",
+        "manifest_layout_ms",
+        "manifest_measure_ms",
+        "manifest_final_geometry_ms",
+        "preview_plan_ms",
+    }
     assert "svg_ms" not in t
     assert all(isinstance(v, float) and v >= 0 for v in t.values())
     assert t["canvas_draw_ms"] > 0 and t["manifest_ms"] > 0
+    assert (
+        abs(t["manifest_prepare_ms"] + t["manifest_final_geometry_ms"] - t["manifest_ms"]) <= 0.01
+    )
+    # ticklabel_memo / vector_text_metrics 上下文收尾在 prepare 里但不属于测量。
+    # 不得让漏算了大量时间的分段报告自称完整。
+    prep = t["manifest_prepare_ms"]
+    gap = prep - t["manifest_layout_ms"] - t["manifest_measure_ms"]
+    assert abs(gap) <= max(2.0, prep * 0.05)
     # 复杂度分析（ADR 0022 / Session 03）进的是热路径，它必须比它省下的那件事
     # 便宜几个数量级——量它就是为了让「它其实很贵」这件事没法悄悄发生
     assert t["preview_plan_ms"] < t["canvas_draw_ms"]
@@ -2554,7 +2574,7 @@ def test_v1_inline_svg_returns_the_very_svg_it_just_wrote(worker):
     svg = resp["svg"]
     assert svg.lstrip().startswith("<?xml") or svg.lstrip().startswith("<svg")
     # 与磁盘上那一份逐字节相同（同一次渲染的产物，不是另存的第二份）
-    assert svg == (out / "TestFig_a.svg").read_text(encoding="utf-8")
+    assert svg == preview_file(out, "TestFig_a", ".svg").read_text(encoding="utf-8")
     # 而且确实是这一次的：manifest 与 SVG 里都是新标题
     assert "Inline" in svg
     assert any(
@@ -2588,7 +2608,7 @@ def test_v1_preview_dpi_is_optional_and_validated(worker):
         proc,
         _v1("render", stem="TestFig_a", payload={"patches": [], "preview_dpi": 72}, rid="r-d1"),
     )
-    assert (out / "TestFig_a.svg").exists() and resp["manifest"]["elements"]
+    assert preview_file(out, "TestFig_a", ".svg").exists() and resp["manifest"]["elements"]
 
     for bad in (0, -10, "很高"):
         resp = _raw(
@@ -2648,7 +2668,7 @@ def workerd_figs(tmp_path, monkeypatch):
 
 
 def _title_gid(worker, stem="TestFig_a"):
-    man = json.loads((worker.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(worker.out_dir, stem, ".json").read_text(encoding="utf-8"))
     return next(
         el["gid"]
         for el in man["elements"]
@@ -2996,6 +3016,84 @@ def _run_write_back(client, figs, paired_preview=False):
     body = resp.get_json()
     assert body["patch_hash"] == ps.patch_hash(patches)
     return body, patches
+
+
+def test_drag_font_and_figure_size_write_back_and_reopen(write_back, tmp_path):
+    """Compare the edited session, the actual written PDF, and a reopened session."""
+    from tavotto import pdfbackend
+
+    m, client, figs = write_back
+    original = figs / "TestFig_a.pdf"
+    original_bytes = original.read_bytes()
+    script_bytes = (figs / "fig_test.py").read_bytes()
+    edits = [
+        {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.3, 0.4]},
+        {"gid": "axes_0.xlabel", "prop": "fontsize", "value": 18},
+        {"gid": "axes_0.ylabel", "prop": "fontsize", "value": 18},
+        {"gid": "figure", "prop": "size_mm", "value": [120, 80]},
+    ]
+    base = client.post("/api/engine/render", json={"id": original.name, "patches": []})
+    assert base.status_code == 200, base.get_json()
+    for end in (1, 3, 4):
+        rendered = client.post(
+            "/api/engine/render", json={"id": original.name, "patches": edits[:end]}
+        )
+        assert rendered.status_code == 200, rendered.get_json()
+        assert not rendered.get_json().get("warnings"), rendered.get_json()
+    hot = rendered.get_json()["manifest"]
+    assert hot["size_mm"] == pytest.approx([120, 80], abs=0.01)
+    assert _bbox_of(hot, "axes_0.legend") != pytest.approx(
+        _bbox_of(base.get_json()["manifest"], "axes_0.legend"), abs=0.005
+    )
+
+    worker, stem = m._engine_worker(original.name, safe_only=True)
+    hot_png = worker.render_png(stem, 800).read_bytes()
+    hot_pdf = tmp_path / "hot.pdf"
+    assert not worker.export(stem, edits, str(hot_pdf), fmt="pdf", dpi=600).get("warnings")
+    response = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": original.name,
+            "patches": edits,
+            "expected_mtime": int(original.stat().st_mtime),
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+    receipt = response.get_json()
+    assert receipt["verification"]["replay"] == "ok"
+    assert receipt["verification"]["pixels"] == "ok"
+    assert receipt["verification"]["elements"] > 0
+    assert receipt["warnings"] == [] and "post_check" not in receipt
+    assert original.read_bytes() != original_bytes
+    assert (Path(receipt["backup_dir"]) / original.name).read_bytes() == original_bytes
+    assert (figs / "fig_test.py").read_bytes() == script_bytes
+
+    # PDFium independently reopens the written PDF and the hot export at the same resolution.
+    hot_pdf_png, written_png = tmp_path / "hot-pdf.png", tmp_path / "written-pdf.png"
+    pdfbackend.render_preview_png(hot_pdf, 800, hot_pdf_png)
+    pdfbackend.render_preview_png(original, 800, written_png)
+    extent = pdfbackend.compare_png_extent(hot_pdf_png, written_png)
+    assert extent["ok"] and extent["total_pixels"] > 0 and extent["differing_pixels"] == 0
+    size = pdfbackend.probe_asset(original, "pdf")
+    assert [size["w_pt"] * 25.4 / 72, size["h_pt"] * 25.4 / 72] == pytest.approx(
+        [120, 80], abs=0.05
+    )
+
+    # A new project and worker inherit the saved baseline from the written file.
+    pool.shutdown_all(figures_dir=str(figs), wait=True)
+    m.reset_projects()
+    m.open_project(str(figs))
+    panels = client.get("/api/panels").get_json()["panels"]
+    reopened = next(p for p in panels if p["id"] == original.name)
+    assert reopened["baked_current"] is True and reopened["baked_overrides"] == edits
+    again = client.post(
+        "/api/engine/render", json={"id": original.name, "patches": reopened["baked_overrides"]}
+    )
+    assert again.status_code == 200, again.get_json()
+    diffs, compared = m._compare_manifests(hot, again.get_json()["manifest"])
+    assert compared > 0 and not diffs, diffs
+    cold, stem = m._engine_worker(original.name, safe_only=True)
+    assert cold.render_png(stem, 800).read_bytes() == hot_png
 
 
 @pytest.mark.parametrize("paired_preview", [False, True])

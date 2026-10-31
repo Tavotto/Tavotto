@@ -12,19 +12,36 @@ import {
   snapCandidates,
   snapEdge,
   snapMove,
+  createSnapHold,
   snapMoveNearest,
+  type SnapEdge,
+  type SnapKind,
+  type SnapLine,
+  type SnapPick,
+  type SnapLineCandidates,
   unrotateVecDeg,
   type Rect,
   type ResizeDir,
 } from '@/lib/geometry'
-import type { Manifest, ManifestElement } from '@/lib/api'
-import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import type { ElementGeometry, Manifest, ManifestElement } from '@/lib/api'
+import {
+  axesAspectLocked,
+  flipY,
+  lockedAxesResize,
+  resizeGroup,
+  round4,
+  sameAfterRound4,
+  unionBox,
+  type Rect4,
+} from '@/lib/axesLayout'
 import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import {
   anchorOf,
   arrowEndpointsOf,
   axesCompanions,
   companionPatchesFor,
+  crossFigurePair,
+  crossFigureSnapCandidates,
   elementBoxOf,
   elementSnapCandidates,
   fracBoxToMm,
@@ -34,6 +51,7 @@ import {
   groupPatches,
   isElementHidden,
   panelFullRect,
+  snapKindOf,
   patchContents,
   positionOf,
   type AlignEntry,
@@ -43,6 +61,7 @@ import {
   type GroupBlockReason,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
+import { patchBoundsOf, patchMinSize, resizePatchBox } from '@/lib/patchResize'
 import {
   boxAfterScale,
   clampLegendScale,
@@ -57,24 +76,44 @@ import {
   geomDistMm,
   geomHitTolMm,
   geomInkAreaFrac,
+  geomIsOpaqueFill,
+  strokeDistBucket,
 } from '@/lib/pathGeom'
+import {
+  createScaleHold,
+  scaleAnchorsFor,
+  scaledRect,
+  scaleFixedPoint,
+  scaleSnapCandidates,
+  scaledAnchorRect,
+  snapScaleNearest,
+} from '@/lib/scaleSnap'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
-import { registerPointerCancel } from '@/store/gestureCoordinator'
-import { useInteractionStore } from '@/store/interactionStore'
+import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
+import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
+import { feedbackFor } from '@/lib/snapFeedback'
 import { displayedExactManifest } from '@/store/mountedSvgStore'
-import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
   clientToMm,
+  currentVisibleRectMm,
   getTransform,
   pxToMm,
   snapTolMm,
   useViewportStore,
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
-import { previewLine, previewScale, previewTransform } from '@/store/svgPreviewStore'
+import { resizePatch } from '@/store/patchResizeAction'
+import {
+  cancelQueuedTranslation, captureQueuedTranslationCommit, findGidNode, findPanelSvg,
+  flushPreviewFrame, flushQueuedTranslation, markPreviewMove, prepareQueuedTranslationCommit,
+  previewLine, previewScale, previewSession, previewTransform, queuedTranslation,
+  rebaseQueuedTranslation, updateQueuedTranslation, type QueuedTranslation,
+} from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
   cancelElementPreview,
@@ -354,6 +393,28 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const rot = objectRotation(target)
   // 面板的等比与否由它自己的宽高比锁定开关决定，形状仍是默认等比
   const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
+  // 等比缩放吸附（ADR 0128 §三）：锚点与候选在手势开始时定下，整个手势里下标不变（hold 靠它）
+  const prefs = snapPrefs()
+  const scaleSnap =
+    prefs && !rot && !isText
+      ? {
+          fixed: scaleFixedPoint(orig, dir),
+          anchors: scaleAnchorsFor(
+            target,
+            target.type === 'panel' ? exactPanelManifest(useRenderStore.getState(), target) : null,
+            prefs.objects,
+          ),
+          cands: scaleSnapCandidates({
+            objects: doc().objects,
+            exclude: excluded,
+            page: doc().page,
+            guides: doc().guides,
+            prefs,
+            manifestOf: (p) => exactPanelManifest(useRenderStore.getState(), p),
+          }),
+          hold: createScaleHold(),
+        }
+      : null
 
   interaction().begin('resize')
   store.beginTxn(hist('resizeObjects'))
@@ -386,6 +447,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       const tol = snapTolMm(t)
       const snapX: number[] = []
       const snapY: number[] = []
+      let feedback: SnapFeedback[] = []
       if (cands && !rot && !ev.metaKey && !ev.ctrlKey && !proportional) {
         if (dir.includes('e')) {
           const hit = snapEdge(next.x + next.w, cands.xs, tol)
@@ -416,7 +478,32 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
           }
         }
       }
-      interaction().setSnap(snapX, snapY)
+      if (scaleSnap) {
+        if (proportional && !ev.metaKey && !ev.ctrlKey) {
+          const hit = snapScaleNearest({
+            ...scaleSnap,
+            size: orig,
+            s0: next.w / orig.w,
+            tol,
+          })
+          if (hit) {
+            next = scaledRect(orig, dir, hit.s)
+            ;(hit.axis === 'x' ? snapX : snapY).push(hit.line.v)
+            // 反馈：胜出锚点所属的框（外框锚点 = 外框，子图 / 色条锚点 = 那个元素），吸附后的位置
+            feedback = [
+              feedbackFor(
+                hit.axis,
+                hit.line,
+                scaledAnchorRect(hit.anchor, scaleSnap.fixed, hit.s),
+                objectId,
+              ),
+            ]
+          }
+        } else {
+          scaleSnap.hold.held = null
+        }
+      }
+      interaction().setSnap(snapX, snapY, feedback)
 
       const placed = anchoredRect(orig, next, dir, rot)
       store.txnUpdate((d) => {
@@ -990,21 +1077,56 @@ export function pickElementStack(
 ): ManifestElement[] {
   if (!manifest) return []
   const PAD = 0.004
-  const hits: { el: ManifestElement; score: number; i: number }[] = []
+  /**
+   * 分层（ADR 0086 修订，「看得见的墨迹在哪，就选谁」）：
+   *  0 = 描边命中——在容差内的曲线 / 空心路径 / 填充元素的边线 / 箭头 / 字（字本身就是墨迹），
+   *      且没有被画在它上面的**不透明**填充盖住；
+   *  1 = 其余按旧规则（面积评分）：仅落在填充内部、bbox 命中的背景类元素（子图、图像、色条…）；
+   *  2 = 被上层不透明填充盖住的候选（线或填充）：看不见，只留给 ⌥ 轮换。
+   */
+  type Tier = 0 | 1 | 2
+  interface Hit {
+    el: ManifestElement
+    i: number
+    tier: Tier
+    /** 旧评分（面积），tier 1/2 用它排；tier 0 里作为墨迹面积 */
+    score: number
+    /** tier 0：光标离可见墨迹边缘的量化档（mm 档，0 = 落在墨迹上） */
+    bucket: number
+    /** 真实绘制次序；未知 = -1 */
+    order: number
+    /** 被盖判据的两个输入：是否参与遮挡检查，以及有效的盖住者 */
+    geom?: ElementGeometry
+    inside: boolean
+  }
+  const hits: Hit[] = []
+  // 能盖住别人的不透明填充：光标落在它里面。锁定的也算——它在画面上照样盖着
+  // （只是不参与被选）；隐藏的不算（画面上没有）
+  const covers: { gid: string; order: number }[] = []
   for (const [i, el] of manifest.elements.entries()) {
     if (el.gid === 'figure') continue
     if (isElementHidden(el)) continue // 隐藏的元素不该再挡住点击
-    if (lockedGids?.includes(el.gid)) continue // 锁定元素只能从元素树选中
+    const locked = lockedGids?.includes(el.gid) ?? false // 锁定元素只能从元素树选中
     // 图内独立箭头按线本身命中（与画布箭头同语义，见 hitTest.test 的沿线命中）：
     // 斜箭头的 bbox 是一大块空白矩形，按矩形命中会让远离线的点击也选中箭头、
     // 还把底下元素的点击偷走。评分用线的「墨迹面积」（长 × 2×容差，换算回
     // 分数系），与其余元素的 bbox 面积同一量纲。
     if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
+      if (locked) continue
       const [a, b] = el.arrow_endpoints
       const [sw, sh] = manifest.size_mm
-      if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > PATH_HIT_MM) continue
+      const d = arrowDistMm(manifest.size_mm, fx, fy, a, b)
+      if (d > PATH_HIT_MM) continue
       const lenMm = Math.hypot((b[0] - a[0]) * sw, (b[1] - a[1]) * sh)
-      hits.push({ el, score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh), i })
+      hits.push({
+        el,
+        i,
+        tier: 0,
+        score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh),
+        bucket: strokeDistBucket(null, d),
+        order: el.paint_order ?? -1,
+        inside: false,
+      })
       continue
     }
     // 有真实路径的元素（曲线 / 填充 / 独立形状）按**路径**命中，不用 bbox：
@@ -1017,26 +1139,87 @@ export function pickElementStack(
       // 粗线的边缘像素会落在容差之外（geomHitTolMm 的注释里有账）
       const tol = geomHitTolMm(geom, PATH_HIT_MM)
       const inside = geomContains(geom, fx, fy)
-      const dist = inside ? 0 : geomDistMm(geom, manifest.size_mm, fx, fy)
-      if (!inside && dist > tol) continue
-      // 评分与 bbox 面积同一量纲：填充按真实面积（小的赢），空心按墨迹面积
-      // （一条线的墨迹极小，因此总能从子图容器手里把点击拿回来）
-      const score = inside
-        ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
-        : geomInkAreaFrac(geom, manifest.size_mm, tol)
-      hits.push({ el, score, i })
+      const order = geom.paint_order ?? -1
+      if (inside && geomIsOpaqueFill(geom) && order >= 0) covers.push({ gid: el.gid, order })
+      if (locked) continue
+      // 离路径多远：填充内部且自己没画边线的，不需要算（只有 `inside` 才是命中）
+      const dist =
+        inside && geom.fill && !geom.stroke ? Infinity : geomDistMm(geom, manifest.size_mm, fx, fy)
+      const near = dist <= tol
+      if (!inside && !near) continue
+      // 描边命中：空心路径靠近路径；填充元素只有**自己画了边线**才算（没边线的半透明幕墙，
+      // 边界上什么也看不到）。填充外沿的容差带照旧是命中，但只算「填充类」（tier 1，
+      // 旧的墨迹面积评分），不升到描边层
+      if (near && (!geom.fill || geom.stroke)) {
+        // 描边命中：墨迹面积评分（一条线的墨迹极小，因此总能从子图容器手里把点击拿回来），
+        // 同一量纲；再按离墨迹的远近分档
+        hits.push({
+          el,
+          i,
+          tier: 0,
+          score: geomInkAreaFrac(geom, manifest.size_mm, tol),
+          bucket: strokeDistBucket(geom, dist),
+          order,
+          geom,
+          inside,
+        })
+      } else {
+        // 仅落在填充内部（或外沿容差带）：评分用真实面积（小的赢），沿用旧规则
+        hits.push({
+          el,
+          i,
+          tier: 1,
+          score: inside
+            ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
+            : geomInkAreaFrac(geom, manifest.size_mm, tol),
+          bucket: 0,
+          order,
+          geom,
+          inside,
+        })
+      }
       continue
     }
+    if (locked) continue
     const [x, y, w, h] = el.bbox
     if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
-    hits.push({ el, score: w * h * (HIT_PENALTY[el.role] ?? 1), i })
+    // 字 / 图例本身就是墨迹：命中它的框 = 点在可见的东西上，和线同一层（落在 0 档、按面积比，
+    // 与旧评分逐位相同）。背景类（子图、图像、色条、刻度外壳、散点退回的 bbox…）留在 tier 1
+    // 只有**次序已知**的字 / 图例才升到 tier 0：次序未知就没法判它是否被后画的不透明填充
+    // 盖住，留在 tier 1 按旧面积评分（逐位回到旧行为）
+    const order = el.paint_order ?? -1
+    hits.push({
+      el,
+      i,
+      tier: INK_BBOX_ROLES.has(el.role) && order >= 0 ? 0 : 1,
+      score: w * h * (HIT_PENALTY[el.role] ?? 1),
+      bucket: 0,
+      order,
+      inside: false,
+    })
   }
-  // 评分打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
+  // 被上层不透明填充盖住的候选（几何元素与端点箭头）降到 tier 2（次序未知不判遮挡）
+  for (const h of hits) {
+    if (h.order < 0 || h.tier === 2) continue
+    if (covers.some((c) => c.gid !== h.el.gid && c.order > h.order)) h.tier = 2
+  }
+  // 次序：先分层。tier 0 里先比离墨迹的远近档，再比墨迹面积（短网格段不能因为面积小就
+  // 抢走正落在长曲线上的点击），同档再看谁画在上层；其余层按旧面积评分。
+  // 全部打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
   // 的兑现点。别改成纯 `a.score - b.score` 靠 sort 的稳定性兜着——那是隐含依赖，
   // 而这里正是重叠候选唯一的次序来源。
-  hits.sort((a, b) => a.score - b.score || a.i - b.i)
+  hits.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier
+    if (a.tier === 0) {
+      return a.bucket - b.bucket || a.score - b.score || b.order - a.order || a.i - b.i
+    }
+    return a.score - b.score || a.i - b.i
+  })
   return hits.map((h) => h.el)
 }
+
+/** 本身就是墨迹的 bbox 元素（字、图例）：点中它们的框就是点在可见的东西上 */
+const INK_BBOX_ROLES = new Set(['text', 'title', 'axis_label', 'legend', 'legend_text'])
 
 export function pickElement(
   manifest: Manifest | null | undefined,
@@ -1255,29 +1438,6 @@ function noteDragCommit(
 const carriesContents = (ev: { metaKey: boolean; ctrlKey: boolean }) => !ev.metaKey && !ev.ctrlKey
 
 /**
- * 停住不动时按下 / 松开 ⌘ / Ctrl：没有 pointermove，预览也得跟着换——否则画面上是
- * 「带着走」、松手提交的却是「只拖自己」（提交认的是 pointerup 上的修饰键）。
- * 回一个解绑函数，收尾时调用。
- */
-function watchCarryKeys(
-  items: CarriedItem[],
-  delta: () => [number, number],
-): () => void {
-  if (!items.length) return () => {}
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key !== 'Meta' && ev.key !== 'Control') return
-    const [dfx, dfy] = delta()
-    previewCarried(items, dfx, dfy, carriesContents(ev))
-  }
-  window.addEventListener('keydown', onKey)
-  window.addEventListener('keyup', onKey)
-  return () => {
-    window.removeEventListener('keydown', onKey)
-    window.removeEventListener('keyup', onKey)
-  }
-}
-
-/**
  * 被带着走的内容的乐观预览：整体平移的（文字、形状、两端都在框里的箭头）平移 SVG 组；
  * 只有一端跟随的箭头形状变了，交给覆盖层画虚线（`previewLine`，预览平面的一部分：
  * 松手后留到权威渲染换上来）。`on=false`（按住了 ⌘）时全部归位。
@@ -1310,10 +1470,22 @@ function previewCarried(items: CarriedItem[], dfx: number, dfy: number, on: bool
 export interface InFigureMove {
   /** 吸附用：被移动的框（内容分数、top-origin）；null = 这类移动不吸附 */
   snapBox: Rect4 | null
+  /**
+   * 被移动元素的吸附语义类型（`snapKindOf`），跨图只配同类（ADR 0128 §二）；
+   * 缺省 = 不跨图（多选整组、箭头），只吸本图与参考线
+   */
+  snapKind?: SnapKind
   /** 吸附候选里要排除的：被移动的元素、它们的后代、随行元素与被带着走的内容 */
   moving: (gid: string) => boolean
-  /** 按住 / 松开 ⌘ / Ctrl 时要切换预览的那些被带着走的内容（`watchCarryKeys`） */
+  /** 按住 / 松开 ⌘ / Ctrl 时要切换预览的那些被带着走的内容（`trackInFigureMove` 的 `frame` 按键重算） */
   carryPreview: CarriedItem[]
+  /**
+   * 累计位移在落点处被钳位后的**实际**位移（子图被钳在图框内）；缺省 = 不钳位。吸附反馈的自身框取它，
+   * 免得虚线框跑到子图实际够不着的线上
+   */
+  settle?: (dfx: number, dfy: number) => [number, number]
+  /** 落点会被钳在面板内（子图 / 色条平移）：吸附候选只留面板范围内的线 */
+  clampedToPanel?: boolean
   /** 预览到累计位移：只改 SVG DOM 与覆盖层，不写文档、不进历史、不发后端 */
   preview: (dfx: number, dfy: number, carry: boolean) => void
   /** 以累计位移提交：一条撤销、一次权威渲染。净位移为零时与取消同样处理，回 false */
@@ -1335,6 +1507,12 @@ export function inFigureMoveOf(
   if (el.resizable) return axesMove(panel, geomTarget(manifest, el))
   if (el.arrow_endpoints) return arrowMove(panel, el)
   if (el.draggable && el.anchor) return elementMove(panel, el)
+  // 框里的文字：拖的是外框（引擎报的 `drag_host`）；外框自己拖不动（像素坐标的插框）就照旧说「拖不动」；
+  // 外框在元素树里锁了就不借道拖它（文字自己没锁，指针与方向键都会走到这里，不拦就绕过了锁）
+  if (el.drag_host && !panel.lockedGids?.includes(el.drag_host)) {
+    const host = manifest?.elements.find((m) => m.gid === el.drag_host)
+    if (host && host.gid !== el.gid && !host.drag_host) return inFigureMoveOf(panel, manifest, host)
+  }
   return null
 }
 
@@ -1514,38 +1692,267 @@ function trackInFigureMove(
   e.stopPropagation()
   interaction().begin('element')
   const toContent = contentDelta(panel, layout)
+  // raw = 未吸附的原始位移（含 ⇧ 锁向）；last = 按当前修饰键算出的最终位移（松手提交它）。
+  // 吸上后手不动、只按下 / 松开 ⌘ / Ctrl 没有新的 pointermove，预览与提交都得按此刻的修饰键重算
+  // （与 startAxesDrag 同一做法）；带着走的内容预览也在 frame 里随修饰键换
+  let raw: [number, number] = [0, 0]
+  // raw 是按最后一次 pointermove 的 ⇧ 锁向算的；重算时 ⇧ 沿用它，只换 ⌘ / Ctrl（否则松手前先松 ⇧
+  // 会让吸附放开被锁的那一轴、提交与最后的预览不一致，Codex #1069）
+  let rawShift = false
   let last: [number, number] = [0, 0]
-  const unwatchKeys = watchCarryKeys(mv.carryPreview, () => last)
+  let started = false
   const box0 = mv.snapBox
-  const snapper = box0 ? inFigureSnapper(panel, mv.moving) : null
+  const snapper = box0 ? inFigureSnapper(panel, mv.moving, mv.snapKind, mv.clampedToPanel) : null
+  const frame = (ev: { metaKey: boolean; ctrlKey: boolean }) => {
+    const mods = { metaKey: ev.metaKey, ctrlKey: ev.ctrlKey, shiftKey: rawShift }
+    let [dfx, dfy] = raw
+    if (snapper && box0) {
+      const [sx, sy] = snapper([box0[0] + dfx, box0[1] + dfy, box0[2], box0[3]], mods, [dfx, dfy])
+      dfx += sx
+      dfy += sy
+      const [rx, ry] = mv.settle ? mv.settle(dfx, dfy) : [dfx, dfy]
+      snapper.report([box0[0] + rx, box0[1] + ry, box0[2], box0[3]])
+    }
+    last = [dfx, dfy]
+    mv.preview(dfx, dfy, carriesContents(mods))
+  }
+  const onKey = (ev: KeyboardEvent) => {
+    if (started && (ev.key === 'Meta' || ev.key === 'Control')) frame(ev)
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
-      if (snapper && box0) {
-        const [sx, sy] = snapper(
-          [box0[0] + dfx, box0[1] + dfy, box0[2], box0[3]],
-          ev,
-          [dfx, dfy],
-        )
-        dfx += sx
-        dfy += sy
-      }
-      last = [dfx, dfy]
-      mv.preview(dfx, dfy, carriesContents(ev))
+      raw = [dfx, dfy]
+      rawShift = ev.shiftKey
+      started = true
+      frame(ev)
     },
     onEnd: (moved, ev, end) => {
-      unwatchKeys()
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      // 吸附与跟随集合都按松手那一下的修饰键定（见 carriesContents）；先重算再 end（end 收掉吸附线 / 反馈）
+      if (moved && !end.cancelled) frame(ev)
       interaction().end()
       if (!moved || end.cancelled) {
         mv.cancel(end.cancelled)
         if (!moved && !end.cancelled) onTap?.()
+      } else {
+        mv.commit(last[0], last[1], carriesContents(ev))
       }
-      // 跟随集合按松手那一下的修饰键定（见 carriesContents）
-      else mv.commit(last[0], last[1], carriesContents(ev))
     },
   })
+}
+
+type DeferredIntent = {
+  delta: [number, number]
+  shift: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+  complete: boolean
+}
+
+type DeferredMove = {
+  panelId: string
+  gid: string
+  role: string
+  dragProp: string
+  identity: string
+  expectedKey: string
+  documentId: string | null
+  loadSeq: number
+  canvasId: string
+  basis: string
+  layout: { width: number; height: number }
+  intents: DeferredIntent[]
+  committed: boolean
+  internal: boolean
+  preview: QueuedTranslation
+  cleanups: (() => void)[]
+}
+
+let deferredMove: DeferredMove | null = null
+
+const deferredBasis = (panel: PanelObject) => JSON.stringify([
+  panel.x, panel.y, panel.w, panel.h, panel.crop, panelContentTransform(panel),
+])
+
+function deferredContextValid(d: DeferredMove): boolean {
+  const ds = useDocumentStore.getState()
+  const panel = ds.doc.objects.find((o) => o.id === d.panelId)
+  const ui = useUiStore.getState()
+  return ds.documentId === d.documentId && ds.loadSeq === d.loadSeq && ds.activeCanvasId === d.canvasId &&
+    panel?.type === 'panel' && renderKeyOf(panel) === d.expectedKey &&
+    !panel.hidden && !panel.locked && deferredBasis(panel) === d.basis &&
+    ui.elementPanelId === d.panelId && ui.selectedGids.length === 1 && ui.selectedGids[0] === d.gid
+}
+
+/** DOM 只是位移预览；正式锚点和吸附候选都在对应版本渲染完后重取。 */
+function drawDeferredMove(d: DeferredMove) {
+  const [dx, dy] = d.intents.reduce<[number, number]>(
+    (sum, intent) => [sum[0] + intent.delta[0], sum[1] + intent.delta[1]], [0, 0],
+  )
+  updateQueuedTranslation(d.preview, [dx, dy])
+}
+
+function endDeferredMove(d: DeferredMove, explain = false) {
+  if (deferredMove !== d) return
+  deferredMove = null
+  for (const cleanup of d.cleanups) cleanup()
+  cancelQueuedTranslation(d.preview)
+  if (explain && d.intents.some((i) => i.complete)) {
+    useUiStore.getState().setStatus(msg('status.dragSyncCancelled', undefined, 'workspace'), 'error')
+  }
+}
+
+/** 在 SVG 挂载、前一预览认领之后执行；每次只用当前权威提交一条手势。 */
+export function resumeDeferredInFigureDrag(panelId: string) {
+  const d = deferredMove
+  if (!d || d.panelId !== panelId || d.internal) return
+  const ds = useDocumentStore.getState()
+  const panel = ds.doc.objects.find((o) => o.id === d.panelId)
+  if (!deferredContextValid(d) || panel?.type !== 'panel') {
+    endDeferredMove(d, true)
+    return
+  }
+  const own = useRenderStore.getState().byKey[d.expectedKey]
+  if (own?.status === 'error') {
+    endDeferredMove(d, true)
+    return
+  }
+  const manifest = displayedExactManifest(panel)
+  if (!manifest) return
+  const el = manifest.elements.find((entry) => entry.gid === d.gid)
+  if (!el || el.role !== d.role || el.drag_prop !== d.dragProp ||
+      JSON.stringify(el.identity ?? null) !== d.identity || panel.lockedGids?.includes(d.gid)) {
+    endDeferredMove(d, true)
+    return
+  }
+  if (d.committed) {
+    // 同一 SVG 字符串可能复用同一个节点；复位那次已被权威接管的预览。
+    rebaseQueuedTranslation(d.preview)
+    d.committed = false
+  }
+  const next = d.intents[0]
+  if (!next) return endDeferredMove(d)
+  if (!next.complete) return drawDeferredMove(d)
+  // 这次提交来自渲染回包，不得结束或并入另一个正在进行的用户手势。
+  if (ds.txn || hasActiveGesture() || hasActivePointerGesture() || interaction().kind !== 'none') {
+    return drawDeferredMove(d)
+  }
+
+  // 已挂的临时位移不能成为新预览的 base，否则每次交接都会翻倍。
+  prepareQueuedTranslationCommit(d.preview)
+  const mv = inFigureMoveOf(panel, manifest, el)
+  if (!mv) return endDeferredMove(d, true)
+  let [dx, dy] = next.delta
+  const mods = { metaKey: next.metaKey, ctrlKey: next.ctrlKey, shiftKey: next.shift }
+  if (mv.snapBox) {
+    const box = mv.snapBox
+    const snapper = inFigureSnapper(panel, mv.moving, mv.snapKind, mv.clampedToPanel)
+    if (snapper) {
+      const [sx, sy] = snapper([box[0] + dx, box[1] + dy, box[2], box[3]], mods, [dx, dy])
+      dx += sx
+      dy += sy
+    }
+  }
+  mv.preview(dx, dy, carriesContents(mods))
+  flushPreviewFrame()
+  interaction().end()
+  d.internal = true
+  const changed = mv.commit(dx, dy, carriesContents(mods))
+  d.intents.shift()
+  const current = useDocumentStore.getState().doc.objects.find((o) => o.id === d.panelId)
+  if (current?.type === 'panel') d.expectedKey = renderKeyOf(current)
+  d.internal = false
+  captureQueuedTranslationCommit(d.preview)
+  if (changed) {
+    d.committed = true
+    drawDeferredMove(d)
+  } else {
+    rebaseQueuedTranslation(d.preview)
+    resumeDeferredInFigureDrag(panelId)
+  }
+}
+
+/** 同步中只接已经精确命中过的同一元素，保存指针位移而不读取旧 manifest。 */
+export function startDeferredInFigureDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  layout: { width: number; height: number },
+): boolean {
+  const ui = useUiStore.getState()
+  const prior = previewSession()
+  let d = deferredMove
+  const move = prior?.move
+  const gid = d?.panelId === panel.id ? d.gid : move?.gid
+  const node = gid ? findGidNode(findPanelSvg(panel.id), gid) : null
+  const rect = node?.getBoundingClientRect()
+  if (!gid || !rect || e.clientX < rect.left || e.clientX > rect.right ||
+      e.clientY < rect.top || e.clientY > rect.bottom || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
+  if (!d) {
+    if (!move || !prior?.pendingCommit?.some((p) => p.gid === gid && p.prop === move.dragProp) ||
+        prior.awaitKey !== renderKeyOf(panel)) return false
+    const ds = useDocumentStore.getState()
+    d = {
+      panelId: panel.id, gid, role: move.role, dragProp: move.dragProp,
+      identity: JSON.stringify(move.identity ?? null), expectedKey: prior.awaitKey,
+      documentId: ds.documentId, loadSeq: ds.loadSeq, canvasId: ds.activeCanvasId,
+      basis: deferredBasis(panel),
+      layout, intents: [], committed: false, internal: false,
+      preview: queuedTranslation(panel.id, gid), cleanups: [],
+    }
+    deferredMove = d
+    const mine = d
+    const check = () => {
+      if (mine.internal || deferredMove !== mine) return
+      // 撤销时先收排队预览，再让既有账本还原已提交的上一笔。
+      if (!deferredContextValid(mine)) return endDeferredMove(mine, true)
+      queueMicrotask(() => resumeDeferredInFigureDrag(mine.panelId))
+    }
+    d.cleanups.push(useDocumentStore.subscribe(check), useRenderStore.subscribe(check),
+      useUiStore.subscribe(check), useInteractionStore.subscribe(check), subscribeGestureCoordinator(check))
+  }
+  if (d.panelId !== panel.id || d.gid !== gid || d.intents.some((i) => !i.complete)) return false
+  e.stopPropagation()
+  e.preventDefault()
+  const intent: DeferredIntent = { delta: [0, 0], shift: false, metaKey: false, ctrlKey: false, complete: false }
+  d.intents.push(intent)
+  const mine = d
+  const toContent = contentDelta(panel, layout)
+  interaction().begin('element')
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      if (deferredMove !== mine) return
+      let [dx, dy] = toContent(dxPx, dyPx)
+      if (ev.shiftKey) [dx, dy] = contentAxisLock(layout, dx, dy)
+      intent.delta = [dx, dy]
+      intent.shift = ev.shiftKey
+      intent.metaKey = ev.metaKey
+      intent.ctrlKey = ev.ctrlKey
+      drawDeferredMove(mine)
+    },
+    onEnd: (moved, ev, end) => {
+      interaction().end()
+      if (deferredMove !== mine) return
+      if (!moved || end.cancelled) {
+        mine.intents = mine.intents.filter((i) => i !== intent)
+        drawDeferredMove(mine)
+        flushQueuedTranslation(mine.preview)
+        if (!mine.intents.length && !mine.committed) endDeferredMove(mine)
+        return
+      }
+      intent.metaKey = ev.metaKey
+      intent.ctrlKey = ev.ctrlKey
+      intent.complete = true
+      flushQueuedTranslation(mine.preview)
+      resumeDeferredInFigureDrag(mine.panelId)
+    },
+  })
+  return true
 }
 
 /** 可拖的图内文字 / 图例 / 形状：挪锚点（`drag_prop`，pos_frac / loc_frac …） */
@@ -1561,6 +1968,7 @@ export function elementMove(panel: PanelObject, element: ManifestElement): InFig
   const carried = manifest ? patchContents(panel, manifest, [element.gid]) : []
 
   beginElementPreview(panel)
+  markPreviewMove({ gid: element.gid, role: element.role, dragProp, identity: element.identity })
   noteDragBegin(
     'element.drag.begin',
     panel,
@@ -1579,6 +1987,7 @@ export function elementMove(panel: PanelObject, element: ManifestElement): InFig
   return {
     // 吸附：被拖的框 = 起手时的墨迹框；图例的条目是它的后代、形状装着的内容跟着它走，都不出线
     snapBox: elementBoxOf(panel, element),
+    snapKind: snapKindOf(element),
     moving: underAny([element.gid, ...carried.map((c) => c.gid)]),
     carryPreview: carried,
     preview: (dfx, dfy, carry) => {
@@ -1780,6 +2189,142 @@ function contentDelta(panel: PanelObject, layout: { width: number; height: numbe
 }
 
 /**
+ * 图内手势在本图候选之外再加的线（ADR 0128 §二，手势起手算一次、整个手势同一份数组）：
+ * - 别的图里的同类元素——只在排版模式（快速编辑里别的图让开了）、且被拖的是单个元素（`selfKind`）；
+ * - 页面参考线——「吸附到参考线」开着时（快速编辑里参考线照样画在画布上，所以照吸）。
+ */
+function crossAndGuideLines(
+  panel: PanelObject,
+  selfKind: SnapKind | undefined,
+  clampToPanel: boolean,
+): SnapLineCandidates {
+  const xs: SnapLine[] = []
+  const ys: SnapLine[] = []
+  if (selfKind && useWorkspaceStore.getState().mode !== 'fast_edit') {
+    const rs = useRenderStore.getState()
+    const cross = crossFigureSnapCandidates(
+      doc().objects,
+      (o) => exactPanelManifest(rs, o),
+      panel.id,
+      currentVisibleRectMm(),
+    )
+    xs.push(...cross.xs)
+    ys.push(...cross.ys)
+  }
+  if (snapPrefs()?.guides) {
+    for (const g of doc().guides)
+      (g.axis === 'x' ? xs : ys).push({ v: g.pos, kind: 'guide', edge: null })
+  }
+  // 只有会被钳在面板里的路径（子图 / 色条的平移与缩放手柄）才过滤：范围外的线它们够不着，吸附线与反馈不能指向它。
+  // 图例 / 标题 / 文字提交的是未钳位的锚点，够得着图外的参考线与相邻图的元素（Codex #1036），由调用方显式传，不按 kind 猜
+  if (!clampToPanel) return { xs, ys }
+  // 按面板**可见**范围（裁剪后的 x/y/w/h）过滤：整图矩形含被裁掉的部分，线落在裁掉区域里同样够不着
+  const within = (v: number, lo: number, size: number) => v >= lo - 1e-6 && v <= lo + size + 1e-6
+  return {
+    xs: xs.filter((l) => within(l.v, panel.x, panel.w)),
+    ys: ys.filter((l) => within(l.v, panel.y, panel.h)),
+  }
+}
+
+/**
+ * 图内子图缩放手柄的吸附（ADR 0128 §二）：正在动的那条边（角柄两条）吸本图其他子图的同一条边、
+ * 整图四边、别的图子图的同一条边与参考线，不动的边不吸。复用图内拖动的容差、吸住后保持
+ * （两个方向各一份 hold）与 ⌘ / Ctrl 临时不吸。返回要**额外加上**的内容分数位移（y 向下）；
+ * 吸附总开关 / 「吸附到对象」关、旋转 / 翻转、几何权威不在时返回 null。
+ */
+function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: ResizeDir) {
+  const prefs = snapPrefs()
+  if (!prefs?.objects) return null
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!manifest) return null
+  const own = inFigureSnapCandidates(panel, manifest, underAny([element.gid]))
+  if (!own) return null
+  const selfKind = snapKindOf(element)
+  const extra = crossAndGuideLines(panel, selfKind, true)
+  const cands: SnapLineCandidates = { xs: [...own.xs, ...extra.xs], ys: [...own.ys, ...extra.ys] }
+  const crossPair = crossFigurePair(selfKind, panel.id, cands.xs)
+  const pair = (selfEdge: SnapEdge, line: SnapLine) => {
+    if (line.kind === 'guide') return true
+    if (line.panelId === panel.id) {
+      // 本图：整图的四边（不要中线），其他子图 / 色条只配同一条边
+      if (line.kind === 'figure') return line.edge !== 1
+      return (line.kind === 'axes' || line.kind === 'colorbar') && line.edge === selfEdge
+    }
+    return crossPair(selfEdge, line)
+  }
+  const full = panelFullRect(panel)
+  const holdX = createSnapHold()
+  const holdY = createSnapHold()
+  // 本帧吸上的线；反馈要等调用方算出钳位后的最终框才能发（`report`）
+  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapPick; y?: SnapPick } | null = null
+  const snapper = (
+    pos: Rect4,
+    ev: { metaKey: boolean; ctrlKey: boolean },
+  ): [number, number] => {
+    pending = null
+    if (ev.metaKey || ev.ctrlKey) {
+      holdX.x = holdY.y = null
+      interaction().setSnap([], [])
+      return [0, 0]
+    }
+    const tol = snapTolMm(getTransform())
+    const guideXs: number[] = []
+    const guideYs: number[] = []
+    let sx = 0
+    let sy = 0
+    let lineX: SnapPick | undefined
+    let lineY: SnapPick | undefined
+    if (dir.includes('e') || dir.includes('w')) {
+      const e: SnapEdge = dir.includes('e') ? 2 : 0
+      const f = e === 2 ? pos[0] + pos[2] : pos[0]
+      const r = snapMoveNearest(
+        { x: full.x + f * full.w, y: 0, w: 0, h: 0 },
+        { xs: cands.xs, ys: [] },
+        tol,
+        { pair: (se, l) => se === e && pair(e, l), hold: holdX },
+      )
+      sx = r.dx / full.w
+      guideXs.push(...r.guideXs)
+      lineX = r.x ?? undefined
+    }
+    if (dir.includes('n') || dir.includes('s')) {
+      // position 是左下角原点：上沿 = y + h，下沿 = y；换成页面（top-origin）
+      const e: SnapEdge = dir.includes('n') ? 0 : 2
+      const f = e === 0 ? 1 - (pos[1] + pos[3]) : 1 - pos[1]
+      const r = snapMoveNearest(
+        { x: 0, y: full.y + f * full.h, w: 0, h: 0 },
+        { xs: [], ys: cands.ys },
+        tol,
+        { pair: (se, l) => se === e && pair(e, l), hold: holdY },
+      )
+      sy = r.dy / full.h
+      guideYs.push(...r.guideYs)
+      lineY = r.y ?? undefined
+    }
+    pending = { guideXs, guideYs, x: lineX, y: lineY }
+    return [sx, sy]
+  }
+  /** 发吸附线与反馈：`rect` = 调用方钳位后的最终子图框（position，左下角原点） */
+  snapper.report = (rect: Rect4) => {
+    if (!pending) return
+    const self = fracBoxToMm(panel, flipY(rect))
+    const fb: SnapFeedback[] = []
+    let { guideXs, guideYs } = pending
+    // 被钳位够不着的轴：吸附线与反馈都不发
+    if (pending.x) {
+      if (reached(self, 'x', pending.x.selfEdge, pending.x.line.v)) fb.push(feedbackFor('x', pending.x.line, self, panel.id))
+      else guideXs = []
+    }
+    if (pending.y) {
+      if (reached(self, 'y', pending.y.selfEdge, pending.y.line.v)) fb.push(feedbackFor('y', pending.y.line, self, panel.id))
+      else guideYs = []
+    }
+    interaction().setSnap(guideXs, guideYs, fb)
+  }
+  return snapper
+}
+
+/**
  * 图内拖动的吸附（2026-09-25 用户反馈：拖「Vacuum」吸不到「Superconductor」、轴标题
  * 也不吸）。起手时量一次候选线（别的元素的三线 + 整图四边与中线，见
  * `inFigureSnapCandidates`），每帧把被拖的框换算到页面 mm，与画布对象的吸附同一把
@@ -1789,26 +2334,51 @@ function contentDelta(panel: PanelObject, layout: { width: number; height: numbe
  * 与画布层一样，按住 ⌘ / Ctrl 临时不吸。shift 锁成水平 / 垂直时只在仍在走的那个轴上吸；
  * 锁成 45° 时修正沿锁定方向投影——否则一吸就把锁拆了。
  */
-function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
+function inFigureSnapper(
+  panel: PanelObject,
+  moving: (gid: string) => boolean,
+  selfKind?: SnapKind,
+  clampToPanel = false,
+) {
   const prefs = snapPrefs()
   if (!prefs?.objects) return null
   const manifest = exactPanelManifest(useRenderStore.getState(), panel)
   if (!manifest) return null
-  const cands = inFigureSnapCandidates(panel, manifest, moving)
-  if (!cands) return null
+  const own = inFigureSnapCandidates(panel, manifest, moving)
+  if (!own) return null
+  const extra = crossAndGuideLines(panel, selfKind, clampToPanel)
+  const cands: SnapLineCandidates = { xs: [...own.xs, ...extra.xs], ys: [...own.ys, ...extra.ys] }
+  // 配对过滤只在有跨图候选时才需要；多选整组（selfKind 缺省）没有跨图线，本图线全收
+  const pair = selfKind ? crossFigurePair(selfKind, panel.id, cands.xs) : undefined
   const full = panelFullRect(panel)
-  return (
+  // 吸住后保持（ADR 0128 §一）：一次手势一份，手势结束随闭包丢弃
+  const hold = createSnapHold()
+  // 本帧吸上的线；反馈要等调用方算出钳位后的最终框才能发（`report`，与子图缩放手柄同一做法）
+  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapPick; y?: SnapPick } | null = null
+  const snapper = (
     box: Rect4,
     ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
     locked: [number, number],
   ): [number, number] => {
+    pending = null
     if (ev.metaKey || ev.ctrlKey) {
+      hold.x = hold.y = null
       interaction().setSnap([], [])
       return [0, 0]
     }
     const snap = perfSpan('snap.compute', () =>
-      snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform())),
+      snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform()), { hold, pair }),
     )
+    const report = (
+      guideXs: number[],
+      guideYs: number[],
+      useX: boolean,
+      useY: boolean,
+      out: [number, number],
+    ) => {
+      pending = { guideXs, guideYs, x: useX ? (snap.x ?? undefined) : undefined, y: useY ? (snap.y ?? undefined) : undefined }
+      return out
+    }
     const sx = snap.dx / full.w
     const sy = snap.dy / full.h
     if (ev.shiftKey && locked[0] !== 0 && locked[1] !== 0) {
@@ -1818,18 +2388,54 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
       const ky = snap.guideYs.length ? sy / locked[1] : null
       const useX = kx != null && (ky == null || Math.abs(kx) <= Math.abs(ky))
       const k = useX ? kx : ky
+      // 没被采用的轴不算吸着，别让它悄悄留在 hold 里
+      if (k == null || !useX) hold.x = null
+      if (k == null || useX) hold.y = null
       if (k == null) {
         interaction().setSnap([], [])
         return [0, 0]
       }
-      interaction().setSnap(useX ? snap.guideXs : [], useX ? [] : snap.guideYs)
-      return [k * locked[0], k * locked[1]]
+      return report(useX ? snap.guideXs : [], useX ? [] : snap.guideYs, useX, !useX, [
+        k * locked[0],
+        k * locked[1],
+      ])
     }
     const freeX = !ev.shiftKey || locked[0] !== 0
     const freeY = !ev.shiftKey || locked[1] !== 0
-    interaction().setSnap(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [])
-    return [freeX ? sx : 0, freeY ? sy : 0]
+    if (!freeX) hold.x = null
+    if (!freeY) hold.y = null
+    return report(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [], freeX, freeY, [
+      freeX ? sx : 0,
+      freeY ? sy : 0,
+    ])
   }
+  /** 发吸附线与反馈：`finalBox` = 调用方钳位后实际落下的框（内容分数、top-origin） */
+  snapper.report = (finalBox: Rect4) => {
+    if (!pending) return
+    const self = fracBoxToMm(panel, finalBox)
+    const fb: SnapFeedback[] = []
+    let { guideXs, guideYs } = pending
+    // 被钳位够不着的轴：吸附线与反馈都不发
+    if (pending.x) {
+      if (reached(self, 'x', pending.x.selfEdge, pending.x.line.v)) fb.push(feedbackFor('x', pending.x.line, self, panel.id))
+      else guideXs = []
+    }
+    if (pending.y) {
+      if (reached(self, 'y', pending.y.selfEdge, pending.y.line.v)) fb.push(feedbackFor('y', pending.y.line, self, panel.id))
+      else guideYs = []
+    }
+    interaction().setSnap(guideXs, guideYs, fb)
+  }
+  return snapper
+}
+
+/**
+ * 吸附是否真的落在了最终框上：框的 `edge`（0/1/2 = 左中右 / 上中下）沿 `axis` 的位置与线重合。
+ * 元素被钳在图内时位移已被钳位，够不着的线不能再画吸附线 / 反馈（Codex #1036）。
+ */
+function reached(self: Rect, axis: 'x' | 'y', edge: SnapEdge, v: number): boolean {
+  const at = axis === 'x' ? self.x + (self.w * edge) / 2 : self.y + (self.h * edge) / 2
+  return Math.abs(at - v) <= 1e-6
 }
 
 /** `gid` 是 roots 之一或其后代 */
@@ -1883,6 +2489,9 @@ export function axesMove(panel: PanelObject, element: ManifestElement): InFigure
 
   return {
     snapBox: flipY(start),
+    snapKind: snapKindOf(element),
+    settle: (dfx, dfy) => netDelta(rectAt(dfx, dfy)),
+    clampedToPanel: true,
     // 随行元素一起动，不出线
     moving: underAny([element.gid, ...(element.follow_gids ?? []), ...companions.map((c) => c.gid)]),
     carryPreview: [],
@@ -1955,8 +2564,15 @@ export function startAxesDrag(
   )
   const toContent = contentDelta(panel, layout)
 
-  const compute = (dxPx: number, dyPx: number): Rect4 => {
-    const [dfx, dfy] = toContent(dxPx, dyPx)
+  const snapper = axesResizeSnapper(panel, element, mode)
+
+  // 锁比例的子图（imshow / equal）：宽高同比缩放，否则重渲时 apply_aspect 把框缩回原比例、
+  // 线框与吸附都对不上结果（见 `lockedAxesResize`）
+  const locked = axesAspectLocked(element)
+  const full = panelFullRect(panel)
+
+  const compute = (dfx: number, dfy: number, by?: 'x' | 'y'): Rect4 => {
+    if (locked) return lockedAxesResize(start, mode, dfx, dfy, MIN, by)
     let [x, y, w, h] = start
     if (mode.includes('e')) w = clamp(w + dfx, MIN, 1 - x)
     else if (mode.includes('w')) {
@@ -1974,19 +2590,56 @@ export function startAxesDrag(
     return [x, y, w, h]
   }
 
-  // 松手写 onMove 最后一次的结果（与 trackInFigureMove 同一取舍）
+  // 松手写最后一次的框（与 trackInFigureMove 同一取舍）。吸附要按**此刻**的修饰键重算：
+  // 吸上后手不动、只按下 / 松开 ⌘ / Ctrl，没有新的 pointermove，预览与提交都得跟着退回 / 回到吸附
+  let raw: [number, number] | null = null
   let last: Rect4 | null = null
+  const frame = (mods: { metaKey: boolean; ctrlKey: boolean }) => {
+    if (!raw) return
+    let [dfx, dfy] = raw
+    let rect = compute(dfx, dfy)
+    // 吸附只改最终框（写法不变：仍是一条 position）；吸的是钳位后正在动的那条边
+    if (snapper) {
+      const [sx, sy] = snapper(rect, mods)
+      if (locked && (sx || sy)) {
+        // 等比：倍数只能由一轴定——角柄两轴都吸上时取修正小的那一轴（mm），另一轴跟着比例走
+        // （够不着的那条线 report 不发）。修正是相对**等比框**的边，不是相对原始位移
+        const by = sx && (!sy || Math.abs(sx * full.w) <= Math.abs(sy * full.h)) ? 'x' : 'y'
+        const dw = rect[2] - start[2]
+        const dh = rect[3] - start[3]
+        rect = compute(
+          (mode.includes('w') ? -dw : dw) + sx,
+          (mode.includes('n') ? -dh : dh) + sy,
+          by,
+        )
+      } else if (sx || sy) {
+        dfx += sx
+        dfy += sy
+        rect = compute(dfx, dfy)
+      }
+    }
+    last = rect
+    snapper?.report(rect)
+    // 只给覆盖层线框：缩放要 matplotlib 重排（刻度、字号、图例都不会跟着线性缩放），
+    // 假装缩放只会画出一张必然被纠正的图——线框如实表达「框会变成这么大」，
+    // 成图由权威渲染说了算
+    interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
+  }
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === 'Meta' || ev.key === 'Control') frame(ev)
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
 
   trackPointer(e, {
-    onMove: (_ev, dxPx, dyPx) => {
-      const rect = compute(dxPx, dyPx)
-      last = rect
-      // 只给覆盖层线框：缩放要 matplotlib 重排（刻度、字号、图例都不会跟着线性缩放），
-      // 假装缩放只会画出一张必然被纠正的图——线框如实表达「框会变成这么大」，
-      // 成图由权威渲染说了算
-      interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
+    onMove: (ev, dxPx, dyPx) => {
+      raw = toContent(dxPx, dyPx)
+      frame(ev)
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      if (moved && !end.cancelled) frame(ev)
       interaction().end()
       // 终点净位移为零（拖回原处 / 贴边钳回原位）同样不写（GEO-07）
       if (!moved || !last || end.cancelled || sameAfterRound4(last, start)) {
@@ -1996,6 +2649,46 @@ export function startAxesDrag(
       setOverride(panel.id, element.gid, 'position', last.map(round4), true)
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'position', 1)
+    },
+  })
+}
+
+/**
+ * 独立矩形 / 圆角框的八方向改尺寸。只预览目标线框，线宽、圆角、文字与箭头都
+ * 不做线性缩放；松手由引擎原生重建形状。取消或终点回到原框时不写任何 override。
+ */
+export function startPatchResize(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+  dir: ResizeDir,
+) {
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (manifest?.elements.find((el) => el.gid === element.gid) !== element) return
+  const start = patchBoundsOf(element)
+  if (!start) return
+  e.stopPropagation()
+  interaction().begin('element')
+  beginElementPreview(panel)
+  noteDragBegin('resize.begin', panel, element.gid, 'size_frac', hasOverride(panel, element.gid, 'size_frac'))
+  const toContent = contentDelta(panel, layout)
+  const min = patchMinSize(element)
+  let last: Rect4 | null = null
+  trackPointer(e, {
+    onMove: (_ev, dx, dy) => {
+      const [dfx, dfy] = toContent(dx, dy)
+      last = resizePatchBox(start, dir, dfx, dfy, min)
+      interaction().setElementPreview({ boxes: { [element.gid]: last }, resizingGid: element.gid })
+    },
+    onEnd: (moved, _ev, end) => {
+      interaction().end()
+      if (!moved || !last || end.cancelled || !resizePatch(panel, element, last)) {
+        cancelElementPreview()
+        return
+      }
+      commitElementPreview(panel.id)
+      noteDragCommit('resize.commit', panel.id, element.gid, 'size_frac', 2)
     },
   })
 }

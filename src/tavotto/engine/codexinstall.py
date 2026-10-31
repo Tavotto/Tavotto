@@ -138,6 +138,9 @@ def find_codex() -> tuple[str | None, list[str]]:
     而一串路径他一眼就能看出该往哪儿指（与 AI 桥的 `diagnostics.searched` 同一纪律）。
     """
     searched: list[str] = ["PATH"]
+    # 应用内托管安装的那份排最前（与 AI 候选链同序，且同一份解析：`ai_agents.managed_paths`）
+    for managed in ai_agents.managed_paths(("codex",)):
+        return managed, ["managed", *searched]
     hit = shutil.which("codex")
     if hit:
         return hit, searched
@@ -988,7 +991,7 @@ _ARCHIVE_MANUAL = (
     + brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
     + " 目录>` 与 `codex plugin add "
     + brand.CODEX_PLUGIN_REF
-    + "`（README「在 Codex 中第一次使用 Tavotto」有 Windows 上的逐行步骤）"
+    + "`（README「在 Codex 里用 Tavotto（插件）」有 Windows 上的逐行步骤）"
 )
 
 
@@ -1642,7 +1645,9 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
     return _step(
         "interpreter",
         ok=True,
-        detail=f"启动命令由 `{command}` 换成 `{chosen}`（改了 {'、'.join(changed)}）",
+        # 带上换掉的理由：只说「换了」分不出是真起不来，还是慢机器撞了 120 s 探测超时
+        detail=f"`{command}` 起不来启动器（{detail}），启动命令换成 `{chosen}`"
+        f"（改了 {'、'.join(changed)}）",
     )
 
 

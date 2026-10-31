@@ -76,6 +76,21 @@ describe('scriptInputStore', () => {
     })
   })
 
+  it('敏感运行的自动回填不带答案明文，界面只收到 null', () => {
+    handleServerEvent({
+      kind: 'script.input_autofilled',
+      pj: 'A',
+      script: 'pick.py',
+      index: 1,
+      prompt: 'token: ',
+      answer: null,
+    })
+    expect(useScriptInputStore.getState().autofilled).toMatchObject({
+      script: 'pick.py',
+      answer: null,
+    })
+  })
+
   it('重连后从 pending 把还在等的问接回来，并取到记住的答案', async () => {
     mockFetch.mockResolvedValue({
       scripts: { 'pick.py': [{ index: 1, prompt: 'numbers: ', answer: '2', kind: 'input' }] },

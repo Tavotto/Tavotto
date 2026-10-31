@@ -141,6 +141,35 @@ describe('PresetsDialog', () => {
     }
   })
 
+  it('缩略图文字只显示，不向真实文档发起无效高度回写', () => {
+    // jsdom 默认 offsetHeight=0，旧代码在测试里会跳过写回；必须显式给非零高度
+    // 才能证明这道门禁真的拦住了工作，而不是因为测量没有发生才绿。
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120)
+    const silent = vi.spyOn(useDocumentStore.getState(), 'silent')
+    try {
+      open()
+      expect(document.querySelectorAll('[data-preset-preview] [data-object-id]').length).toBeGreaterThan(0)
+      expect(silent, '九种预设的临时文字对象不得调用 documentStore.silent').not.toHaveBeenCalled()
+
+      // 反向对照：真正的 TextView 仍然具有高度测量/写回能力。
+      // 同一个临时文档对象走普通 ObjectView，应当触发 silent（即使 ID 不匹配）；
+      // 去掉上面的 preview 保护后，此用例第一条断言必须变红。
+      const text = buildPreset('scalebar', { x: 0, y: 0 }).find((o) => o.type === 'text')
+      expect(text).toBeTruthy()
+      act(() =>
+        refRoot.render(
+          <TooltipProvider>
+            <ObjectView obj={text!} />
+          </TooltipProvider>,
+        ),
+      )
+      expect(silent).toHaveBeenCalled()
+    } finally {
+      silent.mockRestore()
+      height.mockRestore()
+    }
+  })
+
   it('预览不吃指针与焦点（inert）', () => {
     open()
     const preview = document.querySelector('[data-preset-preview="dimension"]')!

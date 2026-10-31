@@ -28,7 +28,8 @@ import { drillKey } from './drillKey'
 
 /* --------------------------------- 范围 ----------------------------------- */
 
-export type ProblemScope = 'figure' | 'document'
+/** 当前图 / 当前画布（激活的那一张）/ 整份排版（所有画布） */
+export type ProblemScope = 'figure' | 'canvas' | 'document'
 
 /**
  * 用户的选择 + 现场 → 实际生效的范围。
@@ -37,7 +38,8 @@ export type ProblemScope = 'figure' | 'document'
  * 没选过时默认看它——在快速编辑里打开问题面板，用户要的是**这张图**的问题。
  */
 export function effectiveScope(choice: ProblemScope | null, figureId: string | null): ProblemScope {
-  if (!figureId) return 'document'
+  // 没有当前图：「当前图」那档不可选，但「当前画布」仍可以（导出整块画布时落在这一档）
+  if (!figureId) return choice === 'canvas' ? 'canvas' : 'document'
   return choice ?? 'figure'
 }
 
@@ -49,7 +51,10 @@ export function issuesInScope(
   issues: readonly ValidationIssue[],
   scope: ProblemScope,
   figureId: string | null,
+  /** 「当前画布」那档按它裁（激活画布 id）；不给 = 不裁 */
+  canvasId?: string | null,
 ): ValidationIssue[] {
+  if (scope === 'canvas') return canvasId ? issues.filter((i) => i.objectRef.canvasId === canvasId) : [...issues]
   if (scope === 'document' || !figureId) return [...issues]
   return issues.filter((i) => i.objectRef.objectId === figureId)
 }
@@ -368,7 +373,14 @@ export function problemContextKey(c: {
   loadSeq: number
   scope: ProblemScope
   figureId: string | null
+  /** 「当前画布」那档的现场含激活画布：换了画布，卡片与游标就是过期的 */
+  canvasId?: string | null
   view: ProblemView
 }): string {
-  return [c.loadSeq, c.scope, c.scope === 'figure' ? (c.figureId ?? '') : '', c.view].join('|')
+  return [
+    c.loadSeq,
+    c.scope,
+    c.scope === 'figure' ? (c.figureId ?? '') : c.scope === 'canvas' ? (c.canvasId ?? '') : '',
+    c.view,
+  ].join('|')
 }

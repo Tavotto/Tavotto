@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
@@ -8,6 +8,7 @@ import { CloseGuardDialog } from '@/components/CloseGuardDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ExportDialog } from '@/components/ExportDialog'
 import { Inspector } from '@/components/inspector/Inspector'
+import { TimelinePreviewDialog } from '@/components/VersionDialog'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
@@ -19,28 +20,30 @@ import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
+import { ConnectAiHost } from '@/components/ConnectAiHost'
+import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
+import { ContactHost } from '@/components/contact/ContactHost'
+import { useContactStore } from '@/store/contactStore'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
-import { BannerStack, DocumentBanner } from '@/components/DocumentBanner'
-import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
-import { ProjectScanBar } from '@/components/ProjectScanBar'
-import { VersionDrawer } from '@/components/VersionDialog'
+import { ForeignScriptCard, PreparationCard } from '@/components/PreparationCard'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
+import { FeedbackCorner } from '@/components/FeedbackCorner'
 import { PerfProbeHud } from '@/components/PerfProbeHud'
 import { TopBar } from '@/components/TopBar'
-import { BuildMismatchNotice } from '@/components/BuildMismatchNotice'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
+import { ImportOriginDialog } from '@/components/ImportOriginDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
+import { ReadOnlyProjectPrompt } from '@/components/ReadOnlyProjectPrompt'
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
 import { startStyleBindingSync } from '@/store/styleBinding'
-import { useBuildVersion } from '@/hooks/useBuildVersion'
 import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
@@ -48,9 +51,8 @@ import { useServerEvents } from '@/hooks/useServerEvents'
 import { usePickerHistory } from '@/hooks/usePickerHistory'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
-import { OnboardingLayer } from '@/components/onboarding/OnboardingLayer'
+import { NativeTutorial } from '@/components/onboarding/NativeTutorial'
 import { startActivityTelemetry } from '@/lib/activityTelemetry'
-import { startOnboardingEngine } from '@/lib/onboarding/flow'
 import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
@@ -60,9 +62,9 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
-import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startPageSizeFit } from '@/store/pageFit'
 import { markWorkspaceOpenedAfter, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
@@ -71,12 +73,16 @@ import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { useUiStore } from '@/store/uiStore'
 import { startValidation } from '@/store/validationStore'
-import { startWorkspacePersistence, useWorkspaceStore } from '@/store/workspace'
-import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
+import { startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
+import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
-import { applyOpenRequest, readOpenRequestFromUrl, type OpenRequest } from '@/lib/openRequest'
+import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
+import { initExitNotices } from '@/lib/exitNotices'
+import { cancelStartupProbe } from '@/lib/startupProbe'
+import { SourceBackedReviewDialog } from '@/components/SourceBackedReviewDialog'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -92,23 +98,41 @@ export function App() {
     // 连 install_id 都不会生成；同意态还是 unset 时由 TelemetryConsentDialog
     // 问一次（问之前同样什么都没发）。
     void useTelemetryStore.getState().load()
+    // 「发送问题反馈」默认关闭；只问本机引擎开没开（不联网），设置页与隐私摘要读这一份
+    const diagLoaded = useDiagSendStore.getState().load()
+    // 「联系作者」（ADR 0143）：同样只问本机引擎开没开 + 未读回信数（不联网）；之后每 5 分钟刷新一次本机未读数
+    void useContactStore.getState().load()
+    const stopContactWatch = useContactStore.getState().watch()
+    // 引擎意外退出的修复卡 + 上次没正常退出的提示卡（ADR 0129）；后者等上面的能力读完再判
+    const stopExitNotices = initExitNotices(diagLoaded)
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
     // 导出对话框 / 设置页同步读本机缓存，这一步在它们打开之前就落地了
     void hydrateExportDefaults()
+    return () => {
+      stopContactWatch()
+      stopExitNotices()
+      cancelStartupProbe()
+    }
   }, [])
   useDesktopMenu()
   useHandoff()
   usePickerHistory()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
-  if (phase === 'loading') return <div className="h-full bg-bg" />
+  // 探测中的空白屏也是窗框的一部分：桌面主窗口没有可拖的系统标题栏，没有拖动区窗口就拖不动
+  if (phase === 'loading') return <div className="h-full bg-bg" {...dragRegionProps('self')} />
   // 首启询问挂在 Picker 与 Workspace **共同的**根上：还没打开项目的用户
   // 一样该被问到，而不是等他开了项目才弹
   if (phase === 'none')
     return (
       <>
         <ProjectPicker />
+        {/* 新手教程也挂在这一层：首启的欢迎页就出现在还没打开项目的主页上 */}
+        <NativeTutorial />
         <TelemetryConsentDialog />
+        <DiagnosticsSendHost />
+        <ConnectAiHost />
+        <ContactHost />
         {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
         <UpdateNoticeDialog />
         {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
@@ -117,6 +141,13 @@ export function App() {
         {/* 关窗询问闸也挂在这一层：它一挂上壳才开始拦关闭按钮，
             少了这一份，Project Picker 上点关闭要等一次看门狗超时 */}
         <CloseGuardDialog />
+        {/* 通知轨也挂在这一层（它自己 absolute 贴底）：引擎退出的修复卡 / 上次没正常退出的提示卡
+            不能等用户先打开项目才看得见。Workspace 分支里它在画布角位里，两个分支互斥，不会挂两份 */}
+        <div data-picker-notification-host className="pointer-events-none fixed inset-0 z-canvas-chrome">
+          <NotificationRail announceRole={null} />
+        </div>
+        {/* 右下角的问题反馈卡同理：上次没正常退出的那张要在选择页就看得见 */}
+        <FeedbackCorner />
       </>
     )
   return <Workspace />
@@ -132,11 +163,13 @@ function Workspace() {
   // 画布跟随样式（ADR 0081）：纯订阅、不画东西，挂一次
   useEffect(() => startStyleBindingSync(), [])
   useSelectionRouting()
-  const outdated = useBuildVersion()
 
   // 快速编辑不显示画布标签行：那是排版的语言（哪几张版、当前在哪一张），
   // 而这条工作流里用户面对的只有一张图。
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 模式按画布各自判：单图编辑的这一张画布若还有别的画布，标签行要留着，否则切不走
+  const multiCanvas = useDocumentStore((s) => s.canvases.length > 1)
+  const showTabs = !fastEdit || multiCanvas
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
   const overlay = useWorkspaceLayout() === 'narrow'
@@ -155,8 +188,7 @@ function Workspace() {
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
     const loaded = Promise.all([assets, restoreSession()]).then(([, restored]) => {
       if (restored) {
-        const page = useDocumentStore.getState().doc.page
-        useViewportStore.getState().fit(page.w, page.h)
+        fitStageNow()
       }
       // 素材清单与文档**都到齐**之后再对账：两个请求谁先回来是不定的，
       // 只挂在其中一个上就会有一半的时候拿着空清单去同步（= 什么都没做）
@@ -173,9 +205,9 @@ function Workspace() {
     const stopReflow = startLayoutAutoReflow()
     // 换了画布尺寸 / 类型：视口按新页面重新取景（切标签、换文档各有自己的适配点）
     const stopPageFit = startPageSizeFit()
-    // 工作区模式（快速编辑 / 画布排版）按 documentId 存本机一档：一个订阅
-    // 负责恢复与写入，恢复前先验那个对象还在不在
-    const stopWorkspace = startWorkspacePersistence()
+    // 工作区模式（单图编辑 / 多图排版）由激活画布上的图数推出：一个订阅在每次文档变化后对一遍，
+    // 并在单图 ↔ 多图切换时动视口、说一句。不落本机——它是文档的纯函数
+    const stopWorkspace = startWorkspaceModeSync()
     // 统一检查（ADR 0030）：**唯一的驱动点**。防抖 + 代次在 store 里，
     // 组件一个都不许自己跑一遍求值器
     const stopValidation = startValidation()
@@ -183,9 +215,8 @@ function Workspace() {
     // 只有用户点「导出诊断包」时这些事件才会进一个 zip
     const stopDiagnostics = installDiagnosticsWiring()
     installDiagnosticsDevHook()
-    // 新手教程引擎 + 一次性提示引擎：订阅本地活动信号与 store，随工作台生命周期
-    // 清理。它们不碰文档、不发请求（ADR 0040）
-    const stopOnboarding = startOnboardingEngine()
+    // 一次性提示引擎：订阅本地活动信号与 store，随工作台生命周期清理。不碰文档、不发请求（ADR 0040）。
+    // 新手教程不再有引擎：三步原生教程（ADR 0136）的完成由教程界面在交互成功时直接记
     const stopHints = startHintEngine()
     // 活动信号 → 遥测的白名单映射（只有多选栏那一条；经同意态与后端白名单）
     const stopActivityTelemetry = startActivityTelemetry()
@@ -229,7 +260,6 @@ function Workspace() {
       stopWorkspace()
       stopValidation()
       stopDiagnostics()
-      stopOnboarding()
       stopHints()
       stopActivityTelemetry()
       window.removeEventListener('mm:sse-open', syncNative)
@@ -241,7 +271,7 @@ function Workspace() {
   return (
     <TooltipProvider>
       {/* 顶栏坐在灰色桌面上（2026-09-30 重设计）：底色是它自己给的 `bg`（2026-10-07 起不再由这里级联覆盖）。
-          提示条不再横贯整个窗口：进了工作面板（见下面的 BannerStack） */}
+          工作面板里没有任何提示条：长期状态在顶栏的芯片里，一次性消息在画布底部的浮动通知轨 */}
       <div className="flex h-full flex-col overflow-hidden bg-bg text-ink">
         <TopBar />
         <div className="relative flex min-h-0 flex-1">
@@ -256,15 +286,10 @@ function Workspace() {
             className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
           >
             <div className="relative flex min-w-0 flex-1 flex-col">
-              {/* 文档 / 项目级的提示条（2026-10-07 设计审计 §10.1）：内嵌在工作面板里、画布标签行上方，锚点色分轻重。
-                  此前横贯整个窗口、把整个应用往下推 32 / 64px */}
-              <BannerStack>
-                {outdated && <BuildMismatchNotice />}
-                <DocumentBanner />
-                <ProjectReadinessBanner />
-                <ProjectScanBar />
-              </BannerStack>
-              {!fastEdit && <CanvasTabs />}
+              {/* 工作面板里不再有提示条（2026-10-16 UI 2.0）：文档的事（冲突 / 保存失败……）在顶栏的文档状态芯片里，
+                  项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
+                  没有任何东西会在这里插进一行把画布往下推 */}
+              {showTabs && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
                 {/* 画布视口的浮层按角位摆（2026-10-07 设计审计 §10.1）：四个角各 12px 内距、每角一个堆叠容器。
@@ -276,8 +301,9 @@ function Workspace() {
                   data-canvas-corner="top-right"
                   className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
                 >
-                  {fastEdit && (
-                    <div className="pointer-events-auto rounded-full bg-surface shadow-pop">
+                  {!showTabs && (
+                    // data-capsule：胶囊里的输入框跟着变成胶囊（fieldBox 的 in-data-capsule）
+                    <div data-capsule className="pointer-events-auto rounded-full bg-surface shadow-pop">
                       <ZoomControls />
                     </div>
                   )}
@@ -286,6 +312,11 @@ function Workspace() {
                 </div>
                 <CanvasHud />
                 <NotificationRail />
+                {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
+                    不占布局（页面不下移），缩成角标 / 收起只改呈现 */}
+                <PreparationCard />
+                {/* R / MATLAB 脚本的入口卡（ADR 0143 修订）：它出现时 PreparationCard 自己让开 */}
+                <ForeignScriptCard />
               </div>
             </div>
             {right.mounted && <Inspector overlay={overlay} state={right.state} />}
@@ -308,8 +339,9 @@ function Workspace() {
               className="absolute inset-0 z-canvas-chrome cursor-default bg-shadow/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
             />
           )}
-          <VersionDrawer />
         </div>
+        {/* 时间线预览 / 恢复对话框：与 Inspector 平级常驻，不随右栏开合、页签切换卸载（恢复在飞时它就是锁） */}
+        <TimelinePreviewDialog />
         <ExportDialog />
         <SettingsDialog />
         <LayoutDialog />
@@ -319,23 +351,33 @@ function Workspace() {
         <EngineEnvironmentDialog />
         <FigurePickerDialog />
         <NativeConfirmDialog />
+        {/* 来源驱动采用的对照确认（ADR 0139）：左原图右重画，确认才以重画为编辑基础 */}
+        <SourceBackedReviewDialog />
         {/* 脚本里的 input()（ADR 0099）：等作答的问 + 记住的答案 */}
         <ScriptInputDialog />
         <ScriptAnswersDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
+        <DiagnosticsSendHost />
+        <ConnectAiHost />
+        <ContactHost />
+        {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
+        <FeedbackCorner />
         <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />
         {/* 首开要先选运行目录（U03）：渲染 store 把后端的「需要输入」交到 envStore，这里渲染 */}
         <WorkdirConfirmDialog />
+        {/* 项目文件夹没有写入权限：打开时问一次要不要另存一份到自己的文件夹 */}
+        <ReadOnlyProjectPrompt />
         <MissingInputDialog />
         {/* 跑前的依赖门（U04）：同一种「需要输入」，载荷在依赖修复 store 里，这里渲染 */}
         <DependencyPrepareDialog />
+        <ImportOriginDialog />
         <CloseGuardDialog />
-        {/* 新手教程的 coachmark 层：没有遮罩，只在教程进行中出现 */}
-        <OnboardingLayer />
+        {/* 三步原生新手教程（ADR 0136）：盖在工作台上的一整层，只在打开时出现 */}
+        <NativeTutorial />
         <EngineRenderSync />
       </div>
     </TooltipProvider>
@@ -357,14 +399,11 @@ function Workspace() {
  */
 function useHandoff() {
   const phase = useProjectStore((s) => s.phase)
-  const fromUrl = useRef<OpenRequest | null | undefined>(undefined)
-  if (fromUrl.current === undefined) fromUrl.current = readOpenRequestFromUrl()
 
   useEffect(() => {
-    if (phase !== 'open' || !fromUrl.current) return
-    const req = fromUrl.current
-    fromUrl.current = null // 只认一次：换项目后不该再被重放
-    void applyOpenRequest(req)
+    if (phase !== 'open') return
+    const req = claimUrlOpenRequest()
+    if (req) void applyOpenRequest(req)
   }, [phase])
 
   useEffect(() => {

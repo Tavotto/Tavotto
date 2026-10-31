@@ -9,8 +9,9 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { perfSegmentBegin, perfStart, perfStop } from '@/perf/core'
 import { MeasureChip } from './MeasureChip'
 import { nudgeKeyDown, nudgeKeyUp, resetNudge } from './nudge'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
@@ -71,13 +72,46 @@ describe('MeasureChip', () => {
     expect(chip()).toBeNull()
   })
 
+  it('图内指针拖动：预览平面每次更新不能唤醒不可见的读数芯片', () => {
+    // 子图/标签指针拖动的读数不由 MeasureChip 显示（只有方向键微调报 Δ）。
+    // 原实现直接订阅 gidDrag 和 elementPreview：每个 pointermove 仍白重渲染一次。
+    act(() => useInteractionStore.getState().begin('element'))
+    expect(chip()).toBeNull()
+
+    // jsdom 没有真 rAF：探针只用于记录 render.Count，帧循环在本测试里不调度。
+    vi.stubGlobal('requestAnimationFrame', () => 1)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    try {
+      expect(perfStart()).toBe(true)
+      perfSegmentBegin('element')
+      for (let i = 0; i < 12; i++) {
+        act(() => {
+          useInteractionStore.getState().setGidDrag({ gid: 'axes_0.title', dfx: i / 100, dfy: 0 })
+          useInteractionStore.getState().setElementPreview({
+            boxes: { 'axes_0.title': [i / 100, 0.1, 0.2, 0.03] },
+          })
+        })
+      }
+      const report = perfStop()!
+      expect(report.segments).toHaveLength(1)
+      expect(
+        report.segments[0].counts['render.MeasureChip'] ?? 0,
+        '隐藏的 MeasureChip 不得跟着图内元素的每次 pointermove 重渲染',
+      ).toBe(0)
+      expect(chip()).toBeNull()
+    } finally {
+      perfStop()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('移动：报对象的 X, Y（不是指针坐标），贴在框下方居中', () => {
     act(() => {
       useInteractionStore.getState().begin('move')
       useInteractionStore.getState().setCursor({ x: 99, y: 99 })
     })
     expect(chip()!.dataset.measureChip).toBe('position')
-    expect(chip()!.textContent).toBe('10.0, 20.0 mm')
+    expect(chip()!.textContent).toBe('10.0, 20.0 mm')
     expect(chip()!.style.left).toBe(`${mmToWorld(10) + mmToWorld(100) / 2}px`)
     expect(chip()!.style.top).toBe(`${mmToWorld(28) + 8}px`)
   })
@@ -85,7 +119,7 @@ describe('MeasureChip', () => {
   it('缩放：W × H', () => {
     act(() => useInteractionStore.getState().begin('resize'))
     expect(chip()!.dataset.measureChip).toBe('size')
-    expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
+    expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
   })
 
   // Codex #833：旋转 90° 的 100×8 横条转出来是竖条（中心 60, 24：x 56–64、y −26–74）；读数仍是逻辑的 W × H，
@@ -98,13 +132,13 @@ describe('MeasureChip', () => {
       useViewportStore.setState({ viewH: 2000 })
       useInteractionStore.getState().begin('resize')
     })
-    expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
+    expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
     expect(chip()!.style.left).toBe(`${mmToWorld(56) + mmToWorld(8) / 2}px`)
     expect(chip()!.style.top).toBe(`${mmToWorld(74) + 8}px`)
   })
 
-  // Codex #833：快速编辑里舞台只画那一张图；从图层抽屉 ⇧ 选进来的别的对象看不见，读数与锚点都不算它
-  it('快速编辑：只量舞台上画着的那一张，选区里看不见的对象不并进来', () => {
+  // 2026-10-21：单图编辑的舞台画着这张画布上的全部对象，选区里的都看得见 → 读数与排版同口径，量选区并集
+  it('单图编辑：与排版同口径，量选区里没隐藏对象的并集', () => {
     const before = useWorkspaceStore.getState()
     try {
       act(() => {
@@ -115,8 +149,7 @@ describe('MeasureChip', () => {
         useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'r1' })
         useInteractionStore.getState().begin('resize')
       })
-      expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
-      expect(chip()!.style.left).toBe(`${mmToWorld(10) + mmToWorld(100) / 2}px`)
+      expect(chip()!.textContent).toBe('300.0 × 200.0 mm')
     } finally {
       useWorkspaceStore.setState({ mode: before.mode, activePanelId: before.activePanelId })
     }
@@ -125,7 +158,7 @@ describe('MeasureChip', () => {
   it('方向键微调：Δ 带正负号', () => {
     act(() => useInteractionStore.getState().setNudge({ dx: 0.5, dy: -1 }))
     expect(chip()!.dataset.measureChip).toBe('offset')
-    expect(chip()!.textContent).toBe('Δ +0.5, −1.0 mm')
+    expect(chip()!.textContent).toBe('Δ +0.5, −1.0 mm')
   })
 
   it('框贴到视口底：芯片翻到框上面', () => {
@@ -284,7 +317,7 @@ describe('MeasureChip', () => {
         useInteractionStore.getState().setGidDrag({ gid: title.gid, dfx: 0.02, dfy: 0 })
       })
       expect(chip()!.dataset.measureChip).toBe('offset')
-      expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
+      expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
       expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(62), 6)
       expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(36.4) + 8, 6)
     })
@@ -302,7 +335,7 @@ describe('MeasureChip', () => {
         // 页面向下 1 mm = 内容里向右 1 mm（内容宽 100 mm）
         useInteractionStore.getState().setGidDrag({ gid: title.gid, dfx: 0.01, dfy: 0 })
       })
-      expect(chip()!.textContent).toBe('Δ 0.0, +1.0 mm')
+      expect(chip()!.textContent).toBe('Δ 0.0, +1.0 mm')
       expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(94.8), 6)
       expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(81) + 8, 6)
     })
@@ -312,11 +345,11 @@ describe('MeasureChip', () => {
     //   - flipH：标题内容 x 52–72（Δ 内容 +2）中心 62 → 镜像到 78；页面上是往左挪了 2；
     //   - flipV：标题内容 y 35–37.4（Δ 内容 +1）中心 36.2 → 镜像到 103.8、底边 105；页面上是往上挪了 1
     it.each([
-      ['flipH', { flipH: true }, { dfx: 0.02, dfy: 0 }, 78, 36.4, 'Δ −2.0, 0.0 mm'],
-      ['flipV', { flipV: true }, { dfx: 0, dfy: 0.0125 }, 60, 105, 'Δ 0.0, −1.0 mm'],
+      ['flipH', { flipH: true }, { dfx: 0.02, dfy: 0 }, 78, 36.4, 'Δ −2.0, 0.0 mm'],
+      ['flipV', { flipV: true }, { dfx: 0, dfy: 0.0125 }, 60, 105, 'Δ 0.0, −1.0 mm'],
       // 先翻转、再旋转（顺序反了中心会落到 25.2）：版上 80 × 100、中心 60, 80；标题内容中心偏移 (−8, −34.8)
       // → 翻转 (8, −34.8) → 转 90° (34.8, 8) → 中心 94.8, 88、2.4 × 20、底边 98；Δ 内容 (+2, 0) → (−2, 0) → (0, −2)
-      ['flipH + 90°', { flipH: true, rotation: 90, w: 80, h: 100 }, { dfx: 0.02, dfy: 0 }, 94.8, 98, 'Δ 0.0, −2.0 mm'],
+      ['flipH + 90°', { flipH: true, rotation: 90, w: 80, h: 100 }, { dfx: 0.02, dfy: 0 }, 94.8, 98, 'Δ 0.0, −2.0 mm'],
     ])('%s 面板：芯片贴在镜像后的元素下面，Δ 是页面上看得见的方向', (_n, flip, drag, cxMm, bottomMm, text) => {
       act(() => {
         useDocumentStore.getState().commit(literal('翻'), (d) => {
@@ -352,7 +385,7 @@ describe('MeasureChip', () => {
         }
       })
       expect(useInteractionStore.getState().nudge).toEqual({ dx: -15, dy: 0 })
-      expect(chip()!.textContent).toBe('Δ −10.0, 0.0 mm')
+      expect(chip()!.textContent).toBe('Δ −10.0, 0.0 mm')
       expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(50), 6)
       expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(86) + 8, 6)
     })
@@ -382,7 +415,7 @@ describe('MeasureChip', () => {
       })
       expect(useInteractionStore.getState().nudge).toEqual({ dx: 2, dy: 0 })
       expect(useInteractionStore.getState().elementPreview?.boxes[title.gid]).toBeDefined()
-      expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
+      expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
     })
 
     it('几何权威缺席（上一段刚提交、渲染没回来）：不报，不拿面板的框顶替', () => {

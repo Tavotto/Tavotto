@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {fixture,coauthor,metrics,networkCalls} from '/workspace/Tavotto-cla-prefix-read-session/services/cla-cloudflare/tests/prefix-read-session-fixture.mjs';
+const results=[];
+for(const [prefix,withCoauthor,expected,personalContributors=0] of [[2,false,28],[3,false,34],[4,false,35],[2,true,32],[3,true,35],[2,false,28,2]]){
+ const f=await fixture({prefix,personalContributors});
+ try{
+  if(withCoauthor)coauthor(f);
+  const before=await f.digest();let assessment,error;
+  try{assessment=await f.assess();}catch(e){error={name:e.name,code:e.code};}
+  f.assertReadOnly();assert.equal(await f.digest(),before);assert.equal(networkCalls(),0);assert.equal(f.calls.length,expected);assert.equal(f.state.tokenReads,1);
+  if(prefix===4||prefix===3&&withCoauthor){assert.equal(error.code,'budget_deferred');assert.equal(assessment,undefined);}
+  else{assert.equal(assessment.eligible,!withCoauthor);assert.equal(assessment.publication,'not_attempted');}
+  results.push({prefix,withCoauthor,personalContributors,outcome:assessment??error,...metrics(f),databaseUnchanged:true,defaultNetworkCalls:networkCalls(),publicationCalls:f.forbidden.length});
+ }finally{f.close();}
+}
+console.log(JSON.stringify(results,null,2));

@@ -69,10 +69,56 @@
         {
           "spec": "asset-library.spec.ts",
           "title": "show-only 项目：素材库普通入口 → Runtime Figure → 画布 → 图内编辑 → undo/redo"
+        },
+        {
+          "spec": "first-run-qualification.spec.ts",
+          "title": "真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出"
         }
       ],
       "desktop_manual": [
         "左栏「素材」→ 脚本行点「运行并发现图」：跑完素材里出现那张图，双击放上画布后进图内编辑改一处，撤销 / 重做都生效"
+      ]
+    },
+    {
+      "id": "assets.open-and-run",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "素材库脚本行点一次「打开并运行」，准备、运行、进入编辑一次完成",
+        "en-US": "One click on a script row's “Open and run” prepares, runs and enters editing"
+      },
+      "entry": "左栏「素材」→ 脚本行 ▶（打开并运行）",
+      "e2e": [
+        {
+          "spec": "open-and-run.spec.ts",
+          "title": "素材库 ▶ 点一次：检查 → 认领 run_when_ready → 运行 → 自动进入编辑，脚本恰好执行一次、请求里没有 execution"
+        }
+      ],
+      "desktop_manual": [
+        "桌面窗口里点脚本行 ▶：不再需要点「运行」「进入编辑」，画好一张图自动进入编辑；脚本写了真实文件又读回时（os.replace / savefig 后 Image.open）同一次点击里自动换成保留文件语义的运行，标签页只开一个（需要 --desktop-sidecar 真窗口，浏览器 e2e 触发不了回退）"
+      ]
+    },
+    {
+      "id": "assets.editability-filter",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "素材库按能不能编辑筛图：全部 / 可编辑 / 待连接 / 仅版面",
+        "en-US": "Filter the asset library by editability: all / editable / to connect / layout only"
+      },
+      "entry": "左栏「素材」→ 搜索框下的胶囊「全部 / 可编辑 / 仅版面」（有待连接的图时多一档「待连接」）",
+      "e2e": [
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：可编辑 / 仅版面一点就分开，回到全部恢复"
+        },
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：英文四档在 280px 最窄抽屉里不溢出"
+        }
+      ],
+      "desktop_manual": [
+        "左栏「素材」→ 点「可编辑」只剩有脚本的图、点「仅版面」只剩没有脚本的图，点「全部」恢复"
       ]
     },
     {
@@ -101,6 +147,49 @@
       "desktop_manual": [
         "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：直接弹修复框，只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」主按钮（下载大小、完整需求与备选方式在折叠的详情里）；点一次，进度在弹窗里显示一行（下载时显示「12 / 25 MB」，之后是「（3/4）」这样的第几步），装好后关闭弹窗并自动重跑出图",
         "打开一个同时 import pandas 与 openpyxl 的脚本项目，运行脚本或点击关联 PNG 的「改图里的内容」：跑前缺依赖直接弹「一键修复」；点击「稍后」能再次打开；点一次修复，进度留在弹窗，安装期间切走再切回仍能看进度和取消，完成后继续刚才的操作"
+      ]
+    },
+    {
+      "id": "assets.png-adoption-recovery",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "PNG 进不了编辑时：一句话说明原因 + 一个「重建为可编辑图」按钮，用它自己的脚本重画一张新的可编辑图放在旁边，原 PNG 一个字节不动；同一张 PNG 不会每次点击都重跑脚本",
+        "en-US": "When a PNG cannot enter editing: one sentence says why plus one \"Rebuild as editable figure\" button that redraws a new editable figure from its script beside it; the original PNG is untouched and the script is not rerun on every click"
+      },
+      "entry": "点含图例等无法逐像素核对元素的 PNG 的「编辑图内元素」→ 底部提示一句话 + 「重建为可编辑图」",
+      "e2e": [
+        {
+          "spec": "guarded-png-activation.spec.ts",
+          "title": "guarded PNG: an unverifiable legend gets one sentence and one rebuild button; the PNG stays and a new editable figure appears beside it"
+        }
+      ],
+      "desktop_manual": [
+        "打开一个脚本里带 ax.legend() 的项目，在素材库把它的 PNG 加进画布并点「编辑图内元素」：底部只出现一句话（说明有图例等暂时无法逐像素核对的元素、已保留原图）和一个「重建为可编辑图」按钮，没有「再试一次」；再点一次「编辑图内元素」不会重新跑脚本；点按钮后画布上原 PNG 旁边多出一张可进图内编辑的新图，原 PNG 的位置与像素不变"
+      ]
+    },
+    {
+      "id": "assets.source-backed-adoption",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "实验开关打开后，含图例等无法逐像素核对元素、或与原图有可见差异的 PNG 仍可编辑：先并排对照原图与脚本重画，确认后以重画为编辑基础；没改时画布显示原 PNG 像素，改了之后整图以重画渲染，撤销回零编辑即回原像素；原 PNG 永不被改写",
+        "en-US": "With the experiment switch on, a PNG with elements that can't be checked pixel by pixel (such as a legend) or a visible difference from its redraw can still be edited: compare the original and the script's redraw side by side, confirm to edit from the redraw; unedited, the canvas shows the original PNG pixels, edited, the whole figure is redrawn, and undoing back to zero edits returns the original pixels; the original PNG is never rewritten"
+      },
+      "entry": "（默认开；配置 experiments.script_backed_figure=false 可应急关闭）点含图例的 PNG 的「编辑图内元素」→ 对照原图与重画 → 「以重画为基础编辑」",
+      "e2e": [
+        {
+          "spec": "guarded-png-activation.spec.ts",
+          "title": "source-backed PNG: legend + pixel difference → compare dialog → confirm → edit shows the engine redraw with no old legend → undo returns the disk pixels"
+        },
+        {
+          "spec": "guarded-png-activation.spec.ts",
+          "title": "source-backed PNG: saved-moment snapshot → edits the figure as it was saved and says so (no compare dialog when the fixture and the engine share one interpreter)"
+        }
+      ],
+      "desktop_manual": [
+        "打开一个脚本里带 ax.legend()、且保存 PNG 之后又改了图的项目，先在环境变量设 TAVOTTO_SAVE_MOMENT_SNAPSHOT=0 关掉保存瞬间快照（ADR 0139 §九），把它的 PNG 加进画布并点「编辑图内元素」：弹出对照窗口，左原图右重画，一句话说明差异像素比例与「原 PNG 不会被改动」，主按钮「以重画为基础编辑」、次要「保留原图」；点「保留原图」什么都不变；再点确认后进入图内编辑，此时画布仍是原 PNG 的像素；挪一下图例，整张图按重画渲染且原位置没有旧图例残影；一路撤销到没有修改，画布回到原 PNG 的像素；磁盘上的原 PNG 一个字节不变",
+        "同一个项目不设该环境变量（快照默认开）：点「编辑图内元素」不弹对照窗口，元素面板提示「按存盘时的样子编辑」，图内标题等是保存那一刻的样子而不是脚本之后改成的样子；磁盘上的原 PNG 与脚本一个字节不变"
       ]
     },
     {
@@ -179,6 +268,38 @@
       ]
     },
     {
+      "id": "canvas.proportional-scale-snap",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "锁比例缩放图时，图里的子图边吸到别的图的子图边（智能对齐）",
+        "en-US": "Proportional resize snaps a figure's subplot edges to other figures' subplot edges (smart alignment)"
+      },
+      "entry": "画布 → 选中图 → 拖角柄（默认锁比例）",
+      "e2e": [
+        {
+          "spec": "proportional-scale-snap.spec.ts",
+          "title": "功能：锁比例角柄缩放时，面板的子图边吸到别的图的子图边，松手后对齐、宽高比不变"
+        }
+      ]
+    },
+    {
+      "id": "canvas.single-figure-edge-resize",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "单图编辑里直接拖图的四条边改图幅（内容不缩放、重新渲染）：虚线框 + 机械制图式尺寸标注、栏宽吸附，松手一步撤销",
+        "en-US": "In single-figure editing, drag any of the figure's four edges to change its size, with dimension lines, column-width snapping and a single undo step"
+      },
+      "entry": "画布 → 单图编辑 → 悬停并拖图的上 / 下 / 左 / 右边",
+      "e2e": [
+        {
+          "spec": "figure-edge-resize.spec.ts",
+          "title": "单图编辑拖右边：拖动中只有虚线框与标注，松手图幅变宽（重渲染）、左边不动，撤销一步回到原样"
+        }
+      ]
+    },
+    {
       "id": "canvas.single-context-bar",
       "status": "active",
       "platform": "both",
@@ -247,14 +368,50 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "文字工具加标注（行内上标）",
-        "en-US": "Add a text annotation with the text tool (inline superscript)"
+        "zh-CN": "文字工具加标注（所见即所得：选中后 ⌘↑ 设上标）",
+        "en-US": "Add a text annotation with the text tool (WYSIWYG: select and press ⌘↑ for superscript)"
       },
       "entry": "顶栏「文字」/ 快捷键 T → 点画布",
       "e2e": [
         {
           "spec": "golden-paths.spec.ts",
           "title": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复"
+        }
+      ]
+    },
+    {
+      "id": "text.rich-editor",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字内容框所见即所得：选中一段设斜体 / 粗体 / 上下标；可切 LaTeX 源码、粘贴公式；标注里的公式排成真公式（画布与导出同一份）",
+        "en-US": "WYSIWYG text boxes: style a selected range in place; LaTeX source mode and formula paste; annotation formulas typeset identically on canvas and in exports"
+      },
+      "entry": "图内文字元素或画布标注 → 属性栏内容框（或右键快捷编辑、画布上双击）→ 选中一段 → 角上的 B / I / x² / x₂",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：图内标题的内容框是所见即所得的——选中末字点斜体，框里那个字变斜体、引擎按 mathtext 重画；撤销还原"
+        },
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复"
+        },
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：图内标题切到 LaTeX 源码改成 $\\mathit{…}$，切回所见即所得显示斜体，引擎重画"
+        },
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：画布标注里写公式，画布上显示 matplotlib 排出的轮廓（与导出同一份），切回所见即所得是公式块"
+        },
+        {
+          "spec": "export-preview.spec.ts",
+          "title": "导出预览：标注里的公式画成排好的轮廓，落在前后文字之间（ADR 0152）"
+        },
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：图内标题的源码模式下方预览公式，切回所见即所得公式块按图上的脸排好"
         }
       ]
     },
@@ -362,6 +519,30 @@
         {
           "spec": "fake-realtime.spec.ts",
           "title": "拖图内元素：预览跟手、拖动期间零后端、松手一次定稿"
+        }
+      ]
+    },
+    {
+      "id": "figure.patch-resize",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "独立矩形与圆角流程图框的八方向缩放和精确宽高编辑",
+        "en-US": "Resize independent rectangular and rounded flowchart boxes with eight handles or precise dimensions"
+      },
+      "entry": "图内编辑 → 选中图框 → 拖动边角手柄或修改右栏图框宽高",
+      "e2e": [
+        {
+          "spec": "flowchart-resize.spec.ts",
+          "title": "流程图框：八方向手柄和精确宽高改变真图，文字箭头不变，撤销重做恢复"
+        },
+        {
+          "spec": "flowchart-resize.spec.ts",
+          "title": "流程图框：取消和拖回起点不保存尺寸改动"
+        },
+        {
+          "spec": "flowchart-resize.spec.ts",
+          "title": "流程图框：单脚本运行图的尺寸保存到磁盘，冷重开后继续编辑并导出"
         }
       ]
     },
@@ -665,6 +846,54 @@
       ]
     },
     {
+      "id": "export.svg",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出 SVG（文字默认保留为可编辑文字）",
+        "en-US": "Export SVG with editable text kept by default"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 勾 SVG → 开始导出",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：画布文字导出 SVG，文件落盘、文字保留为可编辑文字且物理尺寸正确"
+        }
+      ]
+    },
+    {
+      "id": "export.preview-zoom",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出对话框的预览：整列铺满不留边距，滚轮以指针为中心缩放、拖动平移、双击回到适合大小",
+        "en-US": "Export dialog preview: edge-to-edge, wheel zoom around the pointer, drag to pan, double-click to fit"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 左侧预览区",
+      "e2e": [
+        {
+          "spec": "export-preview.spec.ts",
+          "title": "导出预览：图在预览区里不留边距，滚轮以指针为中心缩放、可拖动、双击回到适合大小"
+        }
+      ]
+    },
+    {
+      "id": "export.location-picker",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出对话框的「位置」：显示家目录缩写后的路径，点「更改…」直接选文件夹，导出写到新位置",
+        "en-US": "Export dialog Location: shows a shortened path; Change… opens a folder picker and the export lands in the new folder"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 输出 › 位置 › 更改…",
+      "e2e": [
+        {
+          "spec": "export-location.spec.ts",
+          "title": "导出位置：点「更改…」弹目录浏览器 → 选目录 → 位置更新 → 导出写到新目录"
+        }
+      ]
+    },
+    {
       "id": "keyboard.core-loop",
       "status": "active",
       "platform": "both",
@@ -721,14 +950,14 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "交互式教程：从入口进入并完整走完",
-        "en-US": "Interactive tutorial: start from its entry and finish it"
+        "zh-CN": "三步新手教程：从首启欢迎页进入并完整走完（拖入示例脚本、拖动图例、改标题字号、前后对比）",
+        "en-US": "Three-step tutorial: from the first-run welcome page to the finish (drop the sample script, drag the legend, enlarge the title, compare before/after)"
       },
-      "entry": "项目选择器 / 更多菜单「教程」",
+      "entry": "首次启动欢迎页 / 主页「用示例学一遍」/ 更多菜单「教程」",
       "e2e": [
         {
           "spec": "tutorial.spec.ts",
-          "title": "完整走完教程：每一步都由真实动作完成"
+          "title": "完整走完新手教程：欢迎页 → 拖入示例脚本 → 拖动图例 → 改标题字号 → 前后对比 → 开始使用"
         }
       ]
     },
@@ -959,6 +1188,80 @@
         "远程窗口里点「浏览目录…」：出现网页里的目录浏览器（列的是服务器的目录），不是系统的文件夹选择框",
         "粘 `http://localhost:5189/…`、一个没人监听的端口、以及 0.17.0 服务器的地址：分别说清「要写 127.0.0.1」「连不上」「服务器上的 Tavotto 太旧」，窗口留在连接页",
         "远程窗口有未保存修改时点红灯：先问再关；主窗口不弹框"
+      ]
+    },
+    {
+      "id": "figure.cross-figure-align",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑时，拖元素 / 子图缩放手柄会吸到别的图里的同类元素和页面参考线上",
+        "en-US": "While editing inside a figure, dragging an element or an axes resize handle snaps to the same kind of element in other figures and to page guides"
+      },
+      "entry": "画布 → 双击进图内编辑 → 拖图例 / 轴标题 / 子图（旁边有另一张图时）",
+      "e2e": [
+        {
+          "spec": "cross-figure-align.spec.ts",
+          "title": "图内编辑拖图例靠近另一张图的图例：左边与对方图例左边对齐（页面 mm 误差 < 0.1）"
+        }
+      ]
+    },
+    {
+      "id": "assets.svg-preview",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "静态 SVG 在素材区显示并可加入画布",
+        "en-US": "Preview static SVG images in assets and place them on the canvas"
+      },
+      "entry": "项目内 SVG → 素材 → 添加到画布",
+      "e2e": [
+        {
+          "spec": "svg-assets.spec.ts",
+          "title": "SVG 素材：真实解码、加入画布并保持矢量预览"
+        }
+      ],
+      "desktop_manual": [
+        "打开含静态 SVG 的项目，确认缩略图、添加到画布及缩放后图像清晰。"
+      ]
+    },
+    {
+      "id": "contact.maker",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "右上角「联系作者」：不登录邮箱就能写信给作者，可附截图 / 诊断信息，回信经邮件或应用内收到（带图排版的回信显示成信纸）",
+        "en-US": "\"Contact the maker\" in the top-right corner: write to the maker without signing in to any mailbox, attach screenshots or diagnostics, and get replies by email or in the app (formatted replies with images are shown as a letter)"
+      },
+      "entry": "主页 / 编辑器右上角 → 联系作者",
+      "e2e": [
+        {
+          "spec": "contact.spec.ts",
+          "title": "主页：入口在右上角；点发送前零连接；失败有人话、草稿还在、只有复制（没有邮件链接）"
+        },
+        {
+          "spec": "contact.spec.ts",
+          "title": "我的来信：收到 HTML 回信显示成白色信纸（沙盒 iframe、无 allow-scripts、附图本机内联），上面是自己写的原文"
+        }
+      ],
+      "desktop_manual": [
+        "桌面版主页与编辑器右上角各点一次「联系作者」，确认按钮可点、拖入截图可加为附件、窗口拖动区不受影响。"
+      ]
+    },
+    {
+      "id": "figure.mixed-script-fonts",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内文字可选择中文字体与兼容的英文字体",
+        "en-US": "Choose a Chinese font and a compatible English font for figure text"
+      },
+      "entry": "图内文字属性 → 中文字体 / 英文字体；设置 → 样式",
+      "e2e": [
+        {
+          "spec": "mixed-font-fallback.spec.ts",
+          "title": "中文回退字体：编辑、撤销、保存、重开和导出"
+        }
       ]
     }
   ]

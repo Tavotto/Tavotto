@@ -13,7 +13,7 @@ import { ColorField, NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
 import { Select } from '../../ui/Select'
 import { Tip } from '../../ui/Tooltip'
-import { fontStackOf } from './fontStack'
+import { fontFamilySelectModel } from './fontFamilySelect'
 import { INSPECTOR_CONTROL_X } from '../layout'
 
 /**
@@ -238,6 +238,7 @@ export function FontMissingHint({ className }: { className?: string } = {}) {
 }
 
 function FontFamilyRowView({
+  labelText,
   value,
   options,
   onChange,
@@ -245,11 +246,14 @@ function FontFamilyRowView({
   overridden,
   onReset,
   optionLabelOf,
+  optionLabels,
+  optionFaces,
   mixed,
   unavailable = [],
 }: {
   /** 只用来让语言切换时重画（选项标签随语言变）；memo 比较它，组件体不读 */
   lang?: string
+  labelText?: string
   value: string
   options: string[]
   onChange: (v: string) => void
@@ -266,6 +270,8 @@ function FontFamilyRowView({
    * `optionLabelOf`；它在这里只为让 memo 在显示名到达 / 变化时重画
    */
   optionLabels?: Readonly<Record<string, string>>
+  /** 通用族 → 此刻真正画它的脸（`option_faces`）；与 `optionLabels` 同理，只为让 memo 重画 */
+  optionFaces?: Readonly<Record<string, string>>
   /** 多选且字体不一致：显示「多个值」占位，绝不谎报其中某一个的字体 */
   mixed?: boolean
   /**
@@ -277,8 +283,18 @@ function FontFamilyRowView({
 }) {
   // 性能探针（ADR 0075）：它下面挂着本机字体并表的几百个选项，重画一次很贵
   perfCount('render.FontFamilyRow')
-  const label = tc('font')
+  const label = labelText ?? tc('font')
   const missing = new Set(unavailable)
+  // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
+  const fm = fontFamilySelectModel({
+    value: mixed ? '' : value,
+    options,
+    labels: optionLabels,
+    faces: optionFaces,
+    labelOf: optionLabelOf,
+    onChange,
+    extra: (o) => missing.has(o) && <FontMissingTag />,
+  })
   return (
     <>
       <Row
@@ -290,19 +306,11 @@ function FontFamilyRowView({
           className="min-w-0 flex-1"
           ariaLabel={label}
           // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
-          value={mixed ? '' : value}
+          value={fm.value}
           placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
-          onChange={onChange}
-          options={options.map((o) => ({
-            value: o,
-            // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
-            label: (
-              <span style={{ fontFamily: fontStackOf(o) }}>
-                {optionLabelOf(o)}
-                {missing.has(o) && <FontMissingTag />}
-              </span>
-            ),
-          }))}
+          onChange={fm.onChange}
+          options={fm.options}
+          title={fm.title}
         />
       </Row>
       {!mixed && missing.has(value) && (
@@ -340,11 +348,13 @@ const FontFamilyRowMemo = memo(
   FontFamilyRowView,
   (a, b) =>
     a.value === b.value &&
+    a.labelText === b.labelText &&
     a.mixed === b.mixed &&
     a.overridden === b.overridden &&
     a.labelWidth === b.labelWidth &&
     a.lang === b.lang &&
     sameLabels(a.optionLabels, b.optionLabels) &&
+    sameLabels(a.optionFaces, b.optionFaces) &&
     !!a.onReset === !!b.onReset &&
     sameList(a.options, b.options) &&
     sameList(a.unavailable, b.unavailable),

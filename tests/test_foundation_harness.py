@@ -84,6 +84,7 @@ def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_a
             "FO25",
             "FO26",
             "U08-R1",  # U10：RenderCore 切成默认后的真实入口实例（进程内 HTTP；ADR 0072）
+            "T11-S1",  # onboarding 收敛 T11：不预热的真实 script-only 首跑（C23；真实 HTTP 入口）
         }
     )
     file_part, func = enforced[CASE_ID]["test"].split("::", 1)
@@ -100,8 +101,9 @@ def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_a
     # 35 条：32 个 FO + U01-S1 + U07-R1 + U08-R1；U05：FO23 由 planned → observing（具名任务
     # private-python-targets.yml，ADR 0064），U05 PR B：FO24 / FO25 / FO26 → enforced；U09：FO30 → enforced
     # （合同拆开后经真实入口），FO32 → observing（两个出口各挂一条具名任务）；U10：U08-R1 observing → enforced
-    # （RenderCore 切成默认，ADR 0072；U07-R1 仍 observing：主语是别的平台的字节）
-    assert counts == {"planned": 8, "observing": 9, "later": 1, "enforced": 17}
+    # （RenderCore 切成默认，ADR 0072；U07-R1 仍 observing：主语是别的平台的字节）；onboarding 收敛 T11：+T11-S1（enforced，
+    # 不预热的真实 script-only 首跑，36 条）
+    assert counts == {"planned": 8, "observing": 9, "later": 1, "enforced": 18}
     # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 

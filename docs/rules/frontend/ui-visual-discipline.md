@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「UI 视觉纪律」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 300
+改到: `components/ui/*`、`src/index.css` 的 `@theme` 与暗色值表、`lib/theme.ts`、图标、设置窗口排版、工作台结构
+主题: UI 视觉纪律 → `ui-visual-discipline.md`（全文 `docs/ux/DESIGN_CONSTITUTION.md`）
+必守要点: 尺寸 / 层级 / 颜色只走语义 token（纸两套同值）；卡只经 `ui/Card`；同类控件第二套先删
+-->
 
 全文是 `docs/ux/DESIGN_CONSTITUTION.md`（Paper × Instrument；2026-09-11 Visual
 Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
@@ -36,8 +45,8 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
 `-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、
-插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画）；光标一律箭头（可拖的卡用抓手）。
-新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1.5px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
+插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画；`ui/ProgressBar` 是铅笔排线：11px、发丝框、整像素 5px 斜线 mask，不确定态排线 2.2s 线性流动、确定态宽度吸附整条线）；光标一律箭头（可拖的卡用抓手）。
+新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
 `Button variant="danger-tinted"`（浅底危险胶囊，永不实心红）；按钮层级的稳定判据是 `data-variant`。门禁全在 `foundation.test`（含逐页阶段的 `LATER_PHASE` 豁免）。
@@ -47,7 +56,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 改了脚本是唯一带边框的显著卡（`DiffView`：文件头 + hover 替换计数的操作 + 22px 行 + 4px 变更条 + 行号 + 词级高亮）；代码块无边框 + 语言 + 复制 +
 `--color-syntax-*` 语法色（/try 的 Code Sheet 共用）；回答里的链接 accent 是「链接灰字」的唯一例外；输入框 42px 胶囊 ↔ 两行两态、聚焦只加深到
 border-strong、上方玻璃上下文带（目标 · 作用范围 chip）、工具行两颗模型 / 推理强度胶囊、26px 圆形发送 / 中止（交叉淡化不缩放，进行中 1px 轨道）；
-任务历史是 320px 弹层；错误是 danger `Notice` + 重试。600 字重在 `ai/Markdown`（h2 / h3）与 `ai/DiffView`（「已修改」）有带个数的门禁豁免。
+任务历史是 320px 弹层；错误是 danger `Notice`（一行中性提示，2026-10-16 起，见「说明条与不推挤」）+ 重试。600 字重在 `ai/Markdown`（h2 / h3）与 `ai/DiffView`（「已修改」）有带个数的门禁豁免。
 选择器认 `data-ai-*`（`data-ai-input` / `-composer[data-layout]` / `-context` / `-target` / `-pill` / `-user` / `-process-toggle` / `-step` /
 `-diff` / `-revert` / `-code` / `-history` …）。
 
@@ -59,7 +68,7 @@ border-strong、上方玻璃上下文带（目标 · 作用范围 chip）、工�
 radius（2026-10-07 起，见上）：`xs` 4、`sm` 6、`md` 8（行 / 输入框 / 说明条）、`lg` 12（卡片 / 浮层外壳）、`panel` 16（对话框 / 工作面板）、`full`（带字的按钮 / 图标钮 / 分段）；
 Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
 控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
-`surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
+`surface-active` < `selected`（ink 4% / 8% / 12%，selected 是 hover 的三倍；轻 tint + 字重，不靠深灰块）。主按钮近黑色
 （`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点（链接是灰字，2026-09-30）；
 每个上下文最多一个填色主动作（顶栏=导出、助手=发送、弹窗=确认）。禁用态一档 `opacity-40 +
 cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `border-control`（≥3:1）；焦点环
@@ -67,6 +76,9 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 由 `ui/slidingIndicator` 滑动（jsdom 量不到几何，用例要自己给 `offsetLeft / offsetWidth` 装值）；折叠
 分组的展开走 `ui/Field.Reveal`（`usePresence` 保活退场那 90ms，所以收起后内容还在 DOM 里一小会儿）；
 没写时长的 `transition-*` 默认就是 `--duration-fast` + `--ease-standard`（`motion.test` 守着）。
+**Card 几何默认不变，`lift` 是登记豁免**（宪法第二十五节「Card `lift`」，用户 2026-10-15 裁决）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-2px) + scale(`--card-lift-scale`，默认 1.015、上限 1.02) + 阴影升到 `shadow-lift`（含 1px accent/20% 描边，不要外发光；用户 2026-10-16 选定整卡放大 + 描边），按下回落，
+reduced-motion 下只换阴影 / 描边，disabled / selected 不浮起；静止态写恒等变换（`translate-y-0 scale-100`）以免 none↔非 none 引发重排。只许首页项目卡（品牌位置）用，别处不开。
+门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`（≤2px 整数、缩放 ≤1.02）。
 **键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点
 在容器、关闭钮 DOM 排最后；Segmented / Tabs 一个 Tab 停靠点 + 方向键；`keyboardPrimitives.test`
 与 `foundation.test`（`role="radio"` / `aria-haspopup` / disabled 写法 / `ring-accent/N`）守着。
@@ -95,8 +107,9 @@ Document 字体（Times）与 UI 字体严格分离。
 公共 primitive 只在 `components/ui/`：Button / IconButton（长得像按钮的 `<a href>` 用 `ui/buttonClass` 取同一份外观，不手写按钮类名）、TextInput（框内 `suffix`）、
 NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs（视图）、`listRowClass`、
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、StatusPill、Card、
-FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
+FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
+树的键位只有 `ui/treeKeys` 一份、列表行焦点环内凹 `focus-ring-inset`；抽屉 / 栏的宽度把手只有 `ui/ResizeHandle`（双击复位、拖动中 Esc 回滚、键盘步进 + Home/End）。子树展开 / 折叠只有 `ui/TreeBranch`（grid rows 过渡，收起保活期间 inert；可见行查找 `findVisibleRow`）；抽屉 / 列表的空态一行用 `ui/EmptyLine`。
 跨区域的语义图标在 `ui/semanticIcons.ts`（「可编辑的图」= `EditableFigureIcon`，左轨 / 图层
 角标 / 素材卡 / 元素树空态从同一处取）；角色图标在 `inspector/roles/roleIcons.ts`。
 图内元素的**归属**（谁挂在谁下面、面包屑里子图与元素之间那一级）只有
@@ -107,8 +120,8 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 
 **2026-10-07 外壳与画布浮层（宪法第二十七节·外壳）**——与下文冲突处以它为准：画布视口四个角位各 12px 内距，右上一个堆叠容器
 （缩放 → 会话卡 → 探针，`data-canvas-corner="top-right"`）；覆盖层只描边不着色、虚线只有 `--sel-dash` 一种且只给暂定的东西、框选实线、
-手柄 8 + 16 命中 + 沿边命中带、吸附线带 × 帽；拖动读数贴着选区（`canvas/MeasureChip`：读数是逻辑盒，贴在 `visualBounds` 的并下面；标尺选区带同样按 `visualBounds`，与 `zoomToSelection` 同口径，取的对象也同一判据 `renderedSelection`——快速编辑里只认正在编辑的那张图，Codex #833），HUD 只剩工具提示；顶栏 = 首页胶囊（含品牌）/ 面包屑 /
-文档状态芯片 / 时间线 ……撤销重做 / 导出 / 更多（空心环 = 未写进项目文件，实心 accent 点 = 有更新）；提示条在工作面板里（`BannerStack`）；
+手柄 8 + 16 命中 + 沿边命中带、吸附线带 × 帽、吸附反馈（跨图目标的 `--sel-dash` 虚线框，不框自身 + 自身那条边加粗 2px）；拖动读数贴着选区（`canvas/MeasureChip`：读数是逻辑盒，贴在 `visualBounds` 的并下面；标尺选区带同样按 `visualBounds`，与 `zoomToSelection` 同口径，取的对象也同一判据 `renderedSelection`——快速编辑里只认正在编辑的那张图，Codex #833），HUD 只剩工具提示；顶栏 = 首页胶囊（含品牌）/ 面包屑 /
+项目锚点（项目接入状态胶囊）/ 文档状态芯片 / 时间线 ……撤销重做 / 导出 / 更多（空心环 = 未写进项目文件，实心 accent 点 = 有更新）；工作面板里**没有任何提示条**（2026-10-16：「构建版本不一致」也成了顶栏右侧的 `BuildMismatchChip`，`BannerStack` 已删）；
 快捷键只出自 `lib/keymap.ts`（`lib/keymap.test.tsx` 对拍 `useKeyboard`，按美式布局合成真浏览器给的事件：⇧ 改写后的 key，⇧⌘] 是 `}`）；命令面板 = `Dialog chrome="palette"`。
 
 工作台结构：顶栏 44px（左=首页胶囊/文档名/状态芯片/时间线，右=撤销重做/导出/更多）；
@@ -125,8 +138,9 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 280–360px 上下文抽屉（再点收起）；右栏 296–320px 三模式（属性/改图助手/
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：拖动中的几何读数贴在选区下方（`MeasureChip`；放不下翻到上方，最后整体夹进舞台，选区占满 / 出界时也不被裁掉；底部浮动工具条显示时那一条（`viewportStore.fitBottomClear` = `TOOLBAR_FIT_CLEARANCE`，与「适应」取景同一个值）不算舞台，翻转与夹取都让开它；图内编辑态的方向键微调贴在被推的图内元素下面——位置与 Δ 都取 `InFigureMove.preview` 发布的预览（`elementPreview` / `gidDrag`，与 `ElementBoxes` 同源），落到页面走画布画这张图的同一个变换 `lib/panelTransform`（先翻转再旋转，翻转面板上贴在镜像后的元素下、Δ 报看得见的方向，#832 评审），子图贴边被钳住时芯片跟着停、Δ 报真正挪了的量，权威缺席时不报，不拿面板的框顶替，Codex #833），左下 HUD 只有工具提示，
-通知只有一条轨（`NotificationRail`，底部居中、最多两条叠着、最新的最靠近底边）：普通状态短暂即逝、错误常驻可关（面板形 + 复制详情）、
-操作提示可关、「已为编辑加入本文档」带撤销；保存状态是顶栏文档名旁的状态芯片。
+通知只有一条轨（`NotificationRail`，底部居中、宽 ≤ 360、**最多三条**叠着、最新的最靠近底边；`StatusBar` 的 `RAIL_MAX`）：普通状态短暂即逝
+（成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`；带动作的状态默认常驻，唯一例外是声明了 `dismissMs` 的导出成功胶囊——6 秒收，`EXPORT_DONE_DISMISS_MS`，悬停 / 聚焦暂停）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
+`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。**有模态对话框开着时**（`ui/Dialog` 经 `dialogLayerStore` 登记）整列通知移进 body 的 `z-toast` 层压在对话框上面（画布列里的那条会被遮罩盖暗），点它不算「点了对话框外面」（`Dialog` 的 `onInteractOutside` 认 `[data-notification-rail]`）。
 
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与
@@ -138,6 +152,48 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 按个数豁免）、不许引入图标集里没有的名字、不许拿字符 / emoji 当图标、不许裸 `<summary>`
 ——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）；加新
 图标是在 `defs.ts` 里**画**，不是去别的库挑。
+**对齐、加载、状态**（2026-10-28 图标审计）：①「图标 + 文字」行的图标一律包 `ui/Icon` 的 `IconSlot`
+（槽高 = 该行行高 `1lh`、图标居中），行容器 `items-start`；图标 / `Spinner` 的 className 上不许写
+`mt-px / mt-0.5 / mt-[3px]` 之类的 margin-top 微调（`iconography.test` 的 `icon-nudge`，豁免表
+`NUDGE_ALLOWLIST` 目前为空）；文字的行高在兄弟元素上时给槽写同一组文字类（`text-xs leading-relaxed`）或
+`h-5`。②「加载中」只有 `ui/Spinner`（淡底环 + 约 100° 短弧，描边 2.5/24、12 / 14px 档不低于 1.4px，
+减少动态效果时不转），不再有 `LoaderCircle` 式 3/4 弧；其余图标的描边仍按比例缩放、不设下限。
+④ **手帐线稿（2026-10-28，framed-icons 审计）：图标不套底座。** 空状态的图形是 `ui/Sketch` 的线稿（封闭集 11 幅、54×42（唯一尺寸例外：首页拖放区的 `drop` 96×72，`SKETCH_SIZE_OVERRIDE`）、1px 发丝线落在 .5 坐标、45° 整像素排线、仅 `currentColor` = ink-faint，亮暗同源；`EmptyState` 的 `art` 属性按意思选，同义复用，不为一个调用处新画）。行首 / 标题行的角色图标（项目行、属性栏标题、连接 AI 方式行、教程脚本卡）是无框 16px + `IconSlot`，居中在**第一行文字**上（名字折两行也不动）；不再有 `bg-surface-hover` 一类的 28/32/40px 图标底座，也不再有 48px 绿底圆盘（联系作者「已发送」是标题行首的 ok 色对勾）。缩略图占位是 `.hatch-box`（发丝框 + 与进度条同一张 45° 排线瓦片，`index.css`），不画图标。`Sketch.tsx` 在 `iconography.test` 的内联 svg 豁免表里占 1 个。
+③ 状态不画彩色圆盘：语义色只留在图形上，状态图标用实心孪生（`CircleCheck` / `CircleAlert` /
+`CircleQuestionMark` 的 `filled`），进行中是 `Spinner`；点状标记（脚本行状态点）6px、空心环描边 1.5px，
+与文字同在一个 `items-baseline` 组里、用 `vertical-align: middle` 对准小写字母中心，不靠 margin。
+
+## 说明条与不推挤（2026-10-16 UI 2.0·PR10，规格 02 / 05；与上文冲突处以本节为准）
+
+用户原话：「大卡片黄色/红色字体图标有点丑」「看到这些红色橙色的大块图标就很焦虑」「不太喜欢突然出现一段文字，然后把整体页面往下移」。
+
+- **`ui/Notice` = 一行中性提示**：8 圆角（`rounded-md`）、`bg-surface-hover` 底、**无边框**、最小高 30；**文字永远是 ink**（有 `title` 时
+  `children` 是次要灰字 ink-2——不用 ink-3，说明条常坐在桌面灰上，ink-3 叠 5% 墨底实测 4.2:1 过不了 AA；不是染色）；图标 14px 单色 ink-3，**只有 `tone="danger"`（需要用户处理的那一档）图标染 danger 色**；
+  warn / info / ok / neutral 同样安静，靠图标形状分严重度（警告三角 / 信息圆 / 完成对勾 / 阻断圆叹号），不再是「同形换色」。
+  `role` 不变（只有 danger 默认 `alert`，其余不带，调用方可显式传）。
+- **一句话 + 至多一个动作 + 可选详情**：`title`（主句）· `children`（次要灰字）· `action`（**一颗 ghost `sm` 按钮**，不再是 secondary 灰底）· `detail`
+  （默认折叠，「详情 ›」展开，`Reveal` 的 grid 行过渡，里面是等宽小字灰底块 +「复制」）。错误码 / HTTP 状态 / 后端 detail / 请求 id / 长路径 /
+  traceback 一律放 `detail`，**正文只放读得完的一句**；`lib/noticeText.ts` 的 `splitNoticeText`（> 80 字或多行 → 详情）与 `describeRequestFailure`
+  （「HTTP 500」这类裸状态换成通用原因，原话 + 状态 + 稳定码 + 诊断引用进详情）是这条规则的唯一实现。
+- **门禁**（`ui/foundation.test.ts`「说明条不再用彩底 / 彩框」，正面形式）：`Notice.tsx` 源码里唯一的语义色是 danger 图标上的 `text-danger`；
+  所有写出 `<Notice className=…>` 的调用处，className 只许是版面类（外边距 / 内边距 / 宽 / 收缩 / 字号 / 换行）。`ui/notice.test.tsx` 钉：
+  底中性、文字不染色、只有 danger 图标染色、五种 tone 的 role 不变、详情折叠 / 展开 / 复制、动作槽里是调用方给的那一个。
+- **助手发送失败**：一句话「没有发出去 · 原因」（后端给了读得懂的一句就用它，否则通用原因）+「重试」，HTTP 状态 / 后端 detail / 诊断引用在详情里。
+- **不推挤**（原则：系统触发的变化绝不位移用户正在看的东西；用户触发的可以，但要有过渡且限在自己的盒子里）：
+  - 工作面板的文档流里**不再有任何提示条**——`DocumentBanner` 的 `Banner` / `BannerStack` 已删，**绝不往工作面板文档流插提示条**。
+  - 长期状态 → 顶栏状态芯片：「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`（24 高、surface 底 + 1px 描边环、6px warn 圆点 + 一句
+    「界面需要刷新」；点开是一句话 + 一个「刷新」；窄于 900 只留圆点）。文档级的事在文档状态芯片、项目接入在项目锚点（既有）。
+  - 一次性消息 → 通知轨（见上）。预留不了、必须就地展开的（左栏刷新失败、问题面板「保留上一轮结果」、属性栏 `capability-note` /
+    `frame-note`）→ 包 `NoticeReveal`（`Reveal` 的 0fr → 1fr + 淡入，退场期间留着最后一份内容），它长出来时下面的内容是顺着滑下去的。
+  - 失败不能只靠 toast：错误类 toast 常驻到用户关（`STATUS_AUTO_DISMISS_MS` 只管非错误）。
+- **同一原则的其它落点**（第二轮盘点）：`ui/StatusPill` 中性底、文字 ink，语义色只在字前 6px 圆点（门禁在 `foundation.test`）；素材页 runtime 卡 stale
+  行文字 ink-3、只有 14px 图标染 danger；素材首次读不出是一行 Notice（原文进详情，不再整屏空态里摆原始文本）；导出脚部状态区的失败条
+  **同时最多一条**（拒绝 / 启动 / 取消 / 状态 / 在文件夹中显示五路，后来的替换前一条，`ExportDialog` 的 `useLatestFailure`），标题是一句人话
+  （「导出没有完成」），裸的「HTTP 500」、过长或多行的原文连同稳定码进详情；接入状态对话框的过期 / 错误条包 `NoticeReveal`、多条只留第一条在行上、
+  其余折进详情；属性栏 `capability-note` / `frame-note` 是「一句话 + 详情 › + 入口」（换不过去的原因常显，按钮 `aria-describedby` 指它）；属性栏空选态
+  「本排版」是一行 Notice（事实用 · 连起来 +「画布设置 ›」，起步提示折进详情）。
+- **时长**：只用现有 motion token（详情展开 `Reveal` 180ms；通知轨入场 180 / 退场 120 = base / fast，规格的 200 / 130 落到最近一档）；位移 ≤ 4px 的
+  纪律保留（规格写的 6px 没采，`motion.test` 的 ≤4px 门禁在）；reduced-motion 由 index.css 全局兜底直接切换。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

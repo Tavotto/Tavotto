@@ -1,12 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
+import { literal } from '@/i18n/message'
 import { formatDateTime } from '@/i18n/format'
-import type { PackageOp, PackageProgress, UserPackage } from '@/lib/api'
+import { privatePythonOrigin, type PackageOp, type PackageProgress, type PackagesCapability, type UserPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
-import { repairCodeMessage } from '../DependencyRepairCard'
+import { privatePythonText, repairCodeMessage } from '../DependencyRepairCard'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { isPackageJobRunning, searchTerm, usePackageStore } from '@/store/packageStore'
 import { askConfirm } from '@/store/uiStore'
@@ -18,9 +19,11 @@ import { Menu, MenuItem } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { StatusPill } from '../ui/StatusPill'
 import { ProgressBar } from '../ui/ProgressBar'
+import { scrollFadeStyle, useScrollFade } from '../ui/scrollFade'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { CopyButton } from './CopyButton'
+import { AutoInstallEnvsSection } from './AutoInstallEnvs'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
 
 /** 本页文案在 dialogs:settings.packages.* 下 */
@@ -87,6 +90,14 @@ export function PackagesSettings() {
     return () => window.clearInterval(timer)
   }, [running])
 
+  // 基础解释器还在后台探：隔一会儿取一次，探完结论只变一次（不先隐藏提醒再冒出来）
+  const checking = !!data?.capability?.checking
+  useEffect(() => {
+    if (!checking) return
+    const timer = window.setInterval(() => void usePackageStore.getState().load(), 1500)
+    return () => window.clearInterval(timer)
+  }, [checking])
+
   const capability = data?.capability
   const available = !!capability?.available
   const locked = !available || running || busy || !!data?.busy
@@ -106,6 +117,15 @@ export function PackagesSettings() {
     const api = usePackageStore.getState()
     const job = await api.plan(op, target)
     if (!job) return false
+    // 首装且没有基础解释器：计划里带着私有 Python，授权要把它（含下载大小）说出口
+    if (job.creates_environment && job.private_python?.required) {
+      const ok = await askConfirm({
+        title: msg('settings.packages.confirm.privatePythonTitle', undefined, 'dialogs'),
+        body: literal(privatePythonText(job.private_python)),
+        confirmLabel: msg('settings.packages.confirm.privatePythonAction', undefined, 'dialogs'),
+      })
+      if (!ok) return false
+    }
     if (op === 'uninstall') {
       const ok = await askConfirm({
         title: msg('settings.packages.confirm.uninstallTitle', { name: job.distribution }, 'dialogs'),
@@ -141,19 +161,14 @@ export function PackagesSettings() {
     // 分区之间的间距由外壳统一给（`display: contents`）；这一页是管理页，信息架构不动，
     // 只把字级 / 按钮 / 折叠区收到与别的分区同一套
     <div data-packages-page className="contents">
-      {!available && capability && (
-        <p className="type-caption" data-packages-disabled>
-          {capability.reason === 'no_project'
-            ? pk('disabled.noProject', { product: PRODUCT_NAME })
-            : capability.reason === 'managed_env_unavailable'
-              ? pk('disabled.noBasePython')
-              : pk('disabled.other')}
-        </p>
-      )}
+      {capability && <PythonNotice capability={capability} envExists={!!data?.environment?.exists} />}
       {loadError && !data && <Notice tone="danger">{loadError}</Notice>}
 
       {/* ---------------- 环境（先说现状，再给动作；2026-09-13 审计 B39） ---------------- */}
       <EnvironmentSection />
+
+      {/* ---------------- 「生成可编辑版本」允许自动装包的环境（可撤销） ---------------- */}
+      <AutoInstallEnvsSection />
 
       {/* ---------------- 用户安装（这一页存在的理由） ---------------- */}
       <FormSection title={pk('userTitle')} data-settings-anchor="packages.install">
@@ -207,37 +222,19 @@ export function PackagesSettings() {
           <LookupPanel locked={locked} onInstall={start} />
         </FieldGroup>
 
-        <FieldGroup data-packages-user-table>
-          <PackageTable
-            ariaLabel={pk('userTitle')}
-            empty={loading && !data ? pk('loading') : term ? noMatch : pk('userEmpty')}
-            rows={shownUser.map((u) => ({
-              key: u.distribution,
-              name: (
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-ink">{u.distribution}</span>
-                  <span className="type-caption truncate">
-                    {pk(`reason.${u.reason === 'user_requested' ? 'user' : 'repair'}`)}
-                    {u.requested_specifier ? ` · ${u.distribution}${u.requested_specifier}` : ''}
-                    {u.installed_at ? ` · ${formatDateTime(u.installed_at * 1000)}` : ''}
-                  </span>
-                </span>
-              ),
-              version: u.installed_version || u.recorded_version || '—',
-              status: (
-                <StatusText
-                  status={u.status}
-                  detail={
-                    u.status === 'changed' && u.recorded_version
-                      ? pk('status.changedDetail', { recorded: u.recorded_version })
-                      : undefined
-                  }
-                />
-              ),
-              actions: <UserActions pkg={u} locked={locked} onAction={start} />,
-            }))}
-          />
-        </FieldGroup>
+        {/* 用户包是一组条目行（2026-10 设计审计第二轮）：一包一行，名称 + 版本胶囊 + 只在不正常时出现的状态胶囊，
+            来源在第二行，动作贴右。此前是一张四列表，列头与每格的「已安装」把一屏占满，真正要看的变化反而不显眼 */}
+        {shownUser.length ? (
+          <FieldGroup data-packages-user-list role="list" aria-label={pk('userTitle')}>
+            {shownUser.map((u) => (
+              <UserPackageRow key={u.distribution} pkg={u} locked={locked} onAction={start} />
+            ))}
+          </FieldGroup>
+        ) : (
+          <FieldGroup data-packages-user-list>
+            <p className="type-caption">{loading && !data ? pk('loading') : term ? noMatch : pk('userEmpty')}</p>
+          </FieldGroup>
+        )}
       </FormSection>
 
       {/* ---------------- 背景材料：内置包 · 技术详情（两条原地展开的行） ---------------- */}
@@ -265,16 +262,9 @@ export function PackagesSettings() {
                   ? pk('builtinFromBundled', { product: PRODUCT_NAME })
                   : pk('builtinPlanned')}
             </p>
-            <PackageTable
-              ariaLabel={pk('builtinTitle')}
+            <BuiltinList
+              rows={shownBuiltin}
               empty={loading && !data ? pk('loading') : term ? noMatch : pk('builtinEmpty')}
-              rows={shownBuiltin.map((b) => ({
-                key: b.name,
-                name: b.name,
-                version: b.version || '—',
-                status: <StatusText status={b.status} />,
-                actions: <span className="text-sm text-ink-3">{pk('readOnly')}</span>,
-              }))}
             />
           </DiagnosticDisclosure>
 
@@ -302,6 +292,68 @@ export function PackagesSettings() {
  * `StatusPill`（就绪 / 未完成 / 尚未创建，2026-10-07 设计审计 §9.1：状态一律胶囊、带字）+ ⋯，「重建环境…」在 ⋯ 里
  * ——它是高影响、低频的动作，先确认、说清会删什么、重装什么；菜单项第二行就是那句说明。
  */
+/** 提示里的“（需下载约 N MB）”：只有这次真要下载才有（安装包自带 / 已缓存的不提） */
+function downloadSize(offer: PackagesCapability['private_python']): string {
+  return offer && privatePythonOrigin(offer) === 'download' && offer.download_bytes > 0
+    ? pk('python.downloadSize', { mb: Math.max(1, Math.round(offer.download_bytes / 1048576)) })
+    : ''
+}
+
+/**
+ * 这台电脑没有 {{product}} 能用的基础 Python 时的那一句（卡片纪律：一句话 + 一个主按钮）。
+ *
+ *   * 还在探：「正在检查 Python…」（探完再换，不先消失再冒出来）；
+ *   * 能自动准备（提供私有 Python）：一句话说清原因（没有 / 装的太新 / 太旧，带版本与支持范围）+ 主按钮「自动准备」，
+ *     字节数在句子里说出口，点按钮就是那一次授权（ADR 0063 / 0111）——不再叫用户去装 Python；
+ *   * 连这条路也没有：才让用户自己装，并说清要哪个范围。
+ * 环境已经在时不出现（重建走环境菜单）。
+ */
+function PythonNotice({ capability, envExists }: { capability: PackagesCapability; envExists: boolean }) {
+  useTranslation('dialogs')
+  const rebuildManaged = useDepRepairStore((s) => s.rebuildManaged)
+  const rebuildBusy = useDepRepairStore((s) => s.busy || s.rebuildRunningFor(currentProjectId()))
+  if (capability.reason === 'no_project') {
+    return (
+      <p className="type-caption" data-packages-disabled>
+        {pk('disabled.noProject', { product: PRODUCT_NAME })}
+      </p>
+    )
+  }
+  if (capability.checking) {
+    return (
+      <p className="type-caption" role="status" data-packages-python-checking>
+        {pk('python.checking')}
+      </p>
+    )
+  }
+  const rej = capability.rejected_python
+  const range = { min: rej?.min ?? '3.10', max: rej?.max ?? '3.14' }
+  const offer = capability.private_python
+  if (offer && !envExists) {
+    const why = rej
+      ? pk(rej.direction === 'newer' ? 'python.tooNew' : 'python.tooOld', { product: PRODUCT_NAME, version: rej.version, ...range, size: downloadSize(offer) })
+      : pk('python.none', { product: PRODUCT_NAME, size: downloadSize(offer) })
+    return (
+      <div className="flex items-center gap-3" data-packages-python-prepare>
+        <p className="type-caption min-w-0 flex-1">{why}</p>
+        <Button variant="primary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged(offer)}>
+          {pk('python.prepare')}
+        </Button>
+      </div>
+    )
+  }
+  if (capability.available) return null
+  return (
+    <p className="type-caption" data-packages-disabled>
+      {capability.reason !== 'managed_env_unavailable'
+        ? pk('disabled.other')
+        : rej
+          ? pk(rej.direction === 'newer' ? 'python.tooNewManual' : 'python.tooOldManual', { product: PRODUCT_NAME, version: rej.version, ...range })
+          : pk('disabled.noBasePython', { product: PRODUCT_NAME, ...range })}
+    </p>
+  )
+}
+
 function EnvironmentSection() {
   useTranslation('dialogs')
   const env = usePackageStore((s) => s.data?.environment)
@@ -316,14 +368,19 @@ function EnvironmentSection() {
         ' · ',
       )
     : pk('env.notCreated')
+  // 没有基础解释器（用户的 Python 被卸了 / 版本不在范围内）而提供私有 Python：重建要先准备它，
+  // 授权绑在这份载荷上（回传 id），确认框里把下载大小说出口
+  const offer = capability.private_python
   const rebuild = async () => {
     const ok = await askConfirm({
       title: msg('settings.packages.confirm.rebuildTitle', undefined, 'dialogs'),
-      body: msg('settings.packages.confirm.rebuildBody', undefined, 'dialogs'),
+      body: offer
+        ? msg('settings.packages.confirm.rebuildBodyPython', { python: privatePythonText(offer) }, 'dialogs')
+        : msg('settings.packages.confirm.rebuildBody', undefined, 'dialogs'),
       confirmLabel: msg('settings.packages.confirm.rebuildAction', undefined, 'dialogs'),
       danger: true,
     })
-    if (ok) await rebuildManaged()
+    if (ok) await rebuildManaged(offer ?? undefined)
   }
   return (
     <FormSection title={pk('envSection')}>
@@ -500,21 +557,62 @@ function LookupPanel({
   )
 }
 
-function StatusText({ status, detail }: { status: string; detail?: string }) {
+/**
+ * 状态胶囊：**正常（已安装）不出胶囊**——整列都是「已安装」等于没说；只有缺失 / 版本变了 / 说不清 / 创建时安装
+ * 这几种值得看一眼的才出现。缺失与版本变了带点（danger / warn），其余中性。
+ */
+function PackageStatePill({ status }: { status: string }) {
   useTranslation('dialogs')
-  const tone =
-    status === 'installed'
-      ? 'text-ink-2'
-      : status === 'missing'
-        ? 'text-danger-content'
-        : status === 'changed'
-          ? 'text-warn-content'
-          : 'text-ink-3'
+  if (status === 'installed') return null
+  const tone = status === 'missing' ? 'danger' : status === 'changed' ? 'warn' : 'neutral'
   return (
-    <span className={cn('flex flex-col text-sm', tone)}>
-      <span>{status ? pk(`status.${status}`) : pk('status.unknown')}</span>
-      {detail && <span className="type-caption">{detail}</span>}
-    </span>
+    <StatusPill tone={tone} dot={tone !== 'neutral'} data-package-state={status || 'unknown'}>
+      {status ? pk(`status.${status}`) : pk('status.unknown')}
+    </StatusPill>
+  )
+}
+
+/**
+ * 用户包的一行：标准 `SettingRow`（不是新的 primitive）。标题列 = 包名（等宽，它是代码里的标识符）+ 版本胶囊 +
+ * 状态胶囊；说明 = 来源 · 请求的规范 · 安装时间，版本变了时补一句安装时是多少；控件列 = `UserActions`。
+ * 外面那层 `listitem` 是 FieldGroup 的直接子项：组的内边距与行间细线落在它身上。
+ */
+function UserPackageRow({
+  pkg,
+  locked,
+  onAction,
+}: {
+  pkg: UserPackage
+  locked: boolean
+  onAction: (op: PackageOp, target: string) => Promise<boolean>
+}) {
+  useTranslation('dialogs')
+  const version = pkg.installed_version || pkg.recorded_version
+  const source = [
+    pk(`reason.${pkg.reason === 'user_requested' ? 'user' : 'repair'}`),
+    pkg.requested_specifier ? `${pkg.distribution}${pkg.requested_specifier}` : '',
+    pkg.installed_at ? formatDateTime(pkg.installed_at * 1000) : '',
+    pkg.status === 'changed' && pkg.recorded_version ? pk('status.changedDetail', { recorded: pkg.recorded_version }) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <div role="listitem" data-package-row={pkg.distribution}>
+      <SettingRow
+        label={
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span data-package-name className="min-w-0 truncate font-mono text-sm">
+              {pkg.distribution}
+            </span>
+            {version && <StatusPill className="tabular-nums">{version}</StatusPill>}
+            <PackageStatePill status={pkg.status} />
+          </span>
+        }
+        description={source}
+      >
+        <UserActions pkg={pkg} locked={locked} onAction={onAction} />
+      </SettingRow>
+    </div>
   )
 }
 
@@ -583,52 +681,28 @@ function UserActions({
 }
 
 /**
- * 一张四列的小表：名称 / 版本 / 状态 / 操作。真 `<table>`，读屏能按列读。坐在 `FieldGroup` 里（组给底、圆角与
- * 12 / 16 的内边距——行线因此天然左右各内缩 16，与组里别的行同一条线），行 36px。
+ * 内置包清单（折叠行展开后）：只读，一包一行的紧凑列表——名称、版本，状态不正常时才多一枚胶囊。
+ * 「只读」只在折叠行的摘要里说一次，不再每行重复。
  */
-function PackageTable({
-  ariaLabel,
-  rows,
-  empty,
-}: {
-  ariaLabel: string
-  rows: { key: string; name: ReactNode; version: ReactNode; status: ReactNode; actions: ReactNode }[]
-  empty: string
-}) {
+function BuiltinList({ rows, empty }: { rows: { name: string; version: string; status: string }[]; empty: string }) {
   useTranslation('dialogs')
   if (!rows.length) return <p className="type-caption">{empty}</p>
-  const edge = 'first:pl-0 last:pr-0'
   return (
-    <div className="overflow-x-auto">
-      <table aria-label={ariaLabel} className="w-full table-fixed border-collapse text-sm">
-        <thead>
-          <tr className="text-left text-ink-3">
-            <th scope="col" className={cn('h-8 w-[38%] px-2 align-top font-medium', edge)}>
-              {pk('col.name')}
-            </th>
-            <th scope="col" className={cn('h-8 w-[17%] px-2 align-top font-medium', edge)}>
-              {pk('col.version')}
-            </th>
-            <th scope="col" className={cn('h-8 w-[20%] px-2 align-top font-medium', edge)}>
-              {pk('col.status')}
-            </th>
-            <th scope="col" className={cn('h-8 px-2 text-right align-top font-medium', edge)}>
-              {pk('col.actions')}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key} className="border-t border-border align-middle">
-              <td className={cn('h-9 min-w-0 px-2 py-1', edge)}>{r.name}</td>
-              <td className={cn('h-9 px-2 py-1 font-mono text-xs text-ink-3', edge)}>{r.version}</td>
-              <td className={cn('h-9 px-2 py-1', edge)}>{r.status}</td>
-              <td className={cn('h-9 px-2 py-1 text-right', edge)}>{r.actions}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul role="list" aria-label={pk('builtinTitle')} className="flex flex-col">
+      {rows.map((b) => (
+        <li
+          key={b.name}
+          data-package-row={b.name}
+          className="flex min-h-8 items-center gap-2 border-t border-border text-sm first:border-t-0"
+        >
+          <span data-package-name className="min-w-0 flex-1 truncate font-mono">
+            {b.name}
+          </span>
+          <PackageStatePill status={b.status} />
+          <span className="text-ink-3 tabular-nums">{b.version || '—'}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -698,11 +772,9 @@ function JobPanel({
       {/* 包管理器不报百分比：不确定态，来回扫（轨道 border 档） */}
       {running && <ProgressBar pct={null} label={pk('job.progressAria')} data-packages-progress />}
       {failure && (
-        <Notice tone="danger">
+        // 稳定码是技术信息：进「详情」（可复制），不再挤在那一句话后面
+        <Notice tone="danger" detail={errorText && repairCodeMessage(errorCode) ? errorCode : null}>
           {failure}
-          {errorText && repairCodeMessage(errorCode) && (
-            <span className="ml-1 font-mono text-xs">{errorCode}</span>
-          )}
         </Notice>
       )}
       {progress?.log && (
@@ -710,11 +782,30 @@ function JobPanel({
           title={pk('job.log')}
           action={<CopyButton text={progress.log} label={pk('job.copyLog')} />}
         >
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink-3">
-            {progress.log}
-          </pre>
+          <JobLog log={progress.log} />
         </DiagnosticDisclosure>
       )}
     </div>
+  )
+}
+
+/**
+ * 作业日志：超过 max-h 的长日志在盒子上下缘不再拦腰截断，还能滚的那一侧淡出（`ui/scrollFade`）。
+ * mask 挂在内层滚动的 `<pre>` 上——它没有底色，淡掉的只有字；外面 `DiagnosticDisclosure` 的底与边不受影响
+ */
+function JobLog({ log }: { log: string }) {
+  const ref = useRef<HTMLPreElement>(null)
+  const { fade } = useScrollFade(ref, 'y')
+  return (
+    <pre
+      ref={ref}
+      data-packages-log
+      data-fade-start={fade.start || undefined}
+      data-fade-end={fade.end || undefined}
+      style={scrollFadeStyle(fade, 'y')}
+      className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink-3"
+    >
+      {log}
+    </pre>
   )
 }

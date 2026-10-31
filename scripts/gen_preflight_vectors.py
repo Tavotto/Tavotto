@@ -90,6 +90,9 @@ def _clean_manifest(stem: str = "Fig1") -> dict:
             _el("axes_0.legend", "legend", frameon=False, fontsize=9.0),
             _el("axes_0.lines_0", "line", linewidth=1.0, marker="o", label="Sample A"),
             _el("axes_0.lines_1", "line", linewidth=1.0, marker="s", label="Sample B"),
+            # 图例里画出来的条目文字：`legend-font-size` 量的是它，不是图例的设置器。
+            # 放在最后，别的向量按下标改前面那些元素不受影响
+            _el("axes_0.legend.texts_0", "legend_text", fontsize=9.0),
         ],
     }
 
@@ -163,10 +166,10 @@ def cases() -> list[dict]:
         }
     )
 
-    # 2. 字号：8.2pt 低于 8.5 下限；8.0pt 撞绝对下限（两条等级不同）
+    # 2. 字号：7.9pt 低于绝对下限；正好 8.0pt 通过（下限含等号，ADR 0029 修订 2026-10-26）
     m = _clean_manifest()
-    m["elements"][1]["editable"][1]["value"] = 8.2  # xticks fontsize
-    m["elements"][2]["editable"][1]["value"] = 8.0  # yticks fontsize
+    m["elements"][1]["editable"][1]["value"] = 8.0  # xticks fontsize
+    m["elements"][2]["editable"][1]["value"] = 7.9  # yticks fontsize
     out.append(
         {
             "name": "font-below-thresholds",
@@ -211,7 +214,7 @@ def cases() -> list[dict]:
     m["elements"][0]["editable"][1]["value"] = False  # spine_right
     m["elements"][1]["editable"][0]["value"] = "out"  # xticks direction
     m["elements"][5]["editable"][0]["value"] = True  # legend frameon
-    m["elements"][5]["editable"][1]["value"] = 8.0  # legend fontsize
+    m["elements"][-1]["editable"][0]["value"] = 8.0  # legend 条目 fontsize（图例字号量的是它）
     m["elements"][6]["editable"][0]["value"] = 1.2  # line linewidth
     out.append(
         {
@@ -222,7 +225,12 @@ def cases() -> list[dict]:
     )
 
     # 7. 画布层：小字号标注 + 越界 + 重叠 + 隐藏 + 越过安全区
-    texts = [_text("t-small", 7.0), _text("t-floor", 8.0, rect_mm=[2, 2, 10, 5])]
+    texts = [
+        _text("t-small", 7.0),
+        _text("t-floor", 8.0, rect_mm=[2, 2, 10, 5]),
+        _text("t-noise", 7.9996, rect_mm=[2, 12, 10, 5]),  # 容差内：通过
+        _text("t-short", 7.98, rect_mm=[2, 22, 10, 5]),  # 超出容差：违规
+    ]  # 正好 8.0 的通过
     panels = [
         _panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, 60.0, 40.0], scale=0.75),
         _panel("p2", manifest=_clean_manifest(), rect_mm=[50.0, 30.0, 60.0, 40.0], scale=0.75),
@@ -544,6 +552,47 @@ def cases() -> list[dict]:
         }
     )
 
+    # 13e'. 排不出来的公式（ADR 0152 §七）：事实由 spec 的 `math_errors` 带进来——
+    #       ① 失败的公式 → math-unrenderable（warn）；② 空列表 / 缺席 → 不报；
+    #       ③ 隐藏的文字 → 不报；④ 两条失败 → 一条问题、count 2。
+    out.append(
+        {
+            "name": "canvas-text-math-unrenderable",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[
+                    _text(
+                        "t-bad",
+                        9.0,
+                        "$\\notacommand{x}$ and $\\alpha$",
+                        text_format="latex",
+                        math_errors=[{"src": "\\notacommand{x}", "why": "unknown symbol"}],
+                    ),
+                    _text("t-ok", 9.0, "$\\alpha$", text_format="latex", math_errors=[]),
+                    _text(
+                        "t-hidden",
+                        9.0,
+                        "$\\bad$",
+                        text_format="latex",
+                        hidden=True,
+                        math_errors=[{"src": "\\bad", "why": "x"}],
+                    ),
+                    _text(
+                        "t-two",
+                        9.0,
+                        "$a_$ $\\frac{1}$",
+                        text_format="latex",
+                        math_errors=[
+                            {"src": "a_", "why": "Expected end of text\nline two"},
+                            {"src": "\\frac{1}", "why": "x" * 100},
+                        ],
+                    ),
+                ],
+            ),
+        }
+    )
+
     # 13f. 字形覆盖（Prompt 14）。四条各盯一个具体的错法：
     #      ① 画布文字里有谁都画不出的字符 → glyph-missing（导出上是方框）；
     #      ② 画布文字里的 `⁵`：U10 之前它退到 PyMuPDF 自己挑的回退脸 → glyph-substituted；批准字体集合
@@ -696,6 +745,121 @@ def cases() -> list[dict]:
                 [_panel("p1", manifest=m, rect_mm=[0, 0, 101.6, 76.2])],
                 page=(150.0, 112.5),
             ),
+        }
+    )
+
+    # 18. 字号只量**画出来的文字元素**（容器上的设置器不量）与隐藏图例不报。
+    #     探针取自真 worker 跑出来的 manifest：图例 `legend(title=…, title_fontsize=5,
+    #     fontsize=7)`、`set_visible(False)` 的带标题图例、`labelsize=5` 的色条。
+    #     四条向量各盯一个：标题只报一次且挂 `.title`；逐条改好条目后图例级不再报；
+    #     隐藏图例（条目仍自报 visible=True）整体不报；色条刻度只报一次（挂 `ticks`）。
+    def _legend_probe(
+        gid: str,
+        *,
+        container: float,
+        title: float | None,
+        entries: list[float],
+        family: str = "Times New Roman",
+        **leg,
+    ) -> list[dict]:
+        els = [_el(gid, "legend", frameon=False, fontsize=container, title_fontsize=title, **leg)]
+        if title is not None:
+            els.append(_el(f"{gid}.title", "legend_text", fontsize=title, fontfamily=family))
+        els += [
+            _el(f"{gid}.texts_{j}", "legend_text", fontsize=size) for j, size in enumerate(entries)
+        ]
+        return els
+
+    def _swap_legend(m: dict, probe: list[dict]) -> list[dict]:
+        """用探针图例换掉干净图例（下标 5）及其末尾那条默认条目，其余元素原样保留"""
+        return m["elements"][:5] + probe + m["elements"][6:-1]
+
+    # 18a. 图例标题 4.5pt：只在 `.title` 上报一次（旧行为：图例本体 title_fontsize 再报一次）
+    m = _clean_manifest()
+    m["elements"] = _swap_legend(
+        m, _legend_probe("axes_0.legend", container=9.0, title=4.5, entries=[9.0])
+    )
+    out.append(
+        {
+            "name": "legend-title-small-reported-once-on-title",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 18b. 逐条改好条目（9pt）后，图例级设置器仍是创建时的 7 / 标题 7：什么都不该报
+    m = _clean_manifest()
+    m["elements"] = _swap_legend(
+        m, _legend_probe("axes_0.legend", container=7.0, title=9.0, entries=[9.0, 8.5])
+    )
+    out.append(
+        {
+            "name": "legend-entries-fixed-container-setter-silent",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 18c. `legend-font-size` 量条目：两条出界（5pt 离 8 区间 3、11pt 离 9 区间 2）取最远的 5pt；
+    #      隐藏的条目（visible=False）不参与
+    m = _clean_manifest()
+    m["elements"] = _swap_legend(
+        m, _legend_probe("axes_0.legend", container=9.0, title=None, entries=[5.0, 11.0, 4.0])
+    )
+    m["elements"][8]["editable"].append({"prop": "visible", "type": "bool", "value": False})
+    out.append(
+        {
+            "name": "legend-font-size-measures-visible-entries",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 18d. 隐藏图例：条目与标题仍报 visible=True，但整体没画——字号 / 字体族 / 无框 /
+    #      示意线宽 / 图例字号一律不报
+    m = _clean_manifest()
+    hidden = _legend_probe(
+        "axes_0.legend", container=5.0, title=4.5, entries=[5.0], family="Arial", visible=False
+    )
+    hidden[0]["editable"][0]["value"] = True  # frameon：隐藏的图例带框也不报
+    hidden[-1]["editable"].append({"prop": "handle_linewidth", "type": "number", "value": 1.234})
+    m["elements"] = _swap_legend(m, hidden)
+    out.append(
+        {
+            "name": "hidden-legend-reports-nothing",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 18e. 色条 `labelsize=5`：色条元素的 tick_fontsize 不量，色条轴自己的刻度组
+    #      （真实字号）只报一次
+    m = _clean_manifest()
+    m["elements"] += [
+        _el("axes_1.colorbar", "colorbar", tick_fontsize=5.0),
+        _el("axes_1.yticks", "ticks", direction="in", fontsize=5.0),
+    ]
+    out.append(
+        {
+            "name": "colorbar-ticks-reported-once",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 18f. 柱形系列：容器 linewidth 是设置器（广播到每根柱），柱各自是 `bar` 元素。
+    #      数字取自真 worker 探针：容器与三根柱都是 0.3pt（不在档位）——只报在柱上，
+    #      容器不报（茎叶 / 误差棒系列的线宽规则另有出处，不在此列）
+    m = _clean_manifest()
+    m["elements"] += [
+        _el("axes_1.barseries_0", "bar_series", linewidth=0.3),
+        *(_el(f"axes_1.barseries_0.bar_{k}", "bar", linewidth=0.3) for k in range(3)),
+    ]
+    out.append(
+        {
+            "name": "bar-series-container-linewidth-not-measured",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
         }
     )
     return out

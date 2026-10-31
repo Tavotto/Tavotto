@@ -3,6 +3,16 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「工具结果的体积预算与画布取件（2026-09-21，ADR 0069，issue #457）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`、`web/src/mcp/boot.test.ts`、`web/e2e/mcp-canvas.spec.ts`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：单图 open 与显式 apply 摘要量紧凑 UTF-8（错误也有界且保留错误码）；旧 apply 默认完整；诊断账本有界；取件只读不重渲染；画布启动三路都不自己发起 open
+
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 60
+改到: 工具结果体积、`CANVAS_INLINE_BUDGET_BYTES`、`APPLY_SUMMARY_BUDGET_BYTES`、`tavotto_session_state`、`web/src/mcp/boot.ts`
+主题: 工具结果的体积预算与画布取件 → `result-budget-and-session-state.md`
+必守要点: 单图 open 与显式 apply 摘要量紧凑 UTF-8；旧 apply 默认完整；取件只读不重渲染；画布启动三路都不自己发起 open
+-->
 
 - **Codex 把 MCP 工具结果送给桌面 UI 的事件副本封顶在 1 MiB**，超过就把 `structuredContent`
   / `_meta` 置空——模型那份与画布自己发的 `tools/call` 不受影响，症状是「模型正常、画布永远
@@ -35,6 +45,10 @@
   会种出空画布；矢量图必须带 svg 字符串）；只有把手就取件、回来的
   `patches` 原样种进账本；空壳当场报形状（`data-boot-state` / `data-boot-detail`），30 秒没
   结果也说出口但继续收。都不自己发起 open。真宿主验收加大图一条（acceptance 文档 D 节）。
+- **其余工具的失败结果守 `ERROR_RESULT_BUDGET_BYTES`（64 KiB，T10，ADR 0117 §五）**：`call_tool` 的 BridgeError 分支、apply 除外
+  （显式摘要守 16 KiB、省略 summary 的旧 apply 保留完整失败）。量编码后的整个 CallToolResult；预算内逐字段不变；超了按
+  `ERROR_ELISION_ORDER` 逐项截（traceback 先），`ERROR_PROTECTED_KEYS`（`ok` / `code` / `requirements` / `input` / `capability`）不截，
+  `elided` 写明截了哪些、列表原来几条、完整诊断没有保留。看护 `tests/test_mcp_compat.py` 的有界错误两条。
 - 看护：`tests/test_mcp_server.py` 末节、`tests/test_mcp_resolver.py`、`web/src/mcp/boot.test.ts`、
   `web/e2e/mcp-canvas.spec.ts`。**跑变异一律 `-B` 并清 `__pycache__`**：等长改动一秒内还原，
   pyc 头不变，跑的是变异版。

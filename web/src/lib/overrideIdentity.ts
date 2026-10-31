@@ -86,3 +86,76 @@ export function isStaleIdentityOverride(o: PanelOverride, manifest: Manifest): b
   if (!el) return false // gid 整个没了是另一条判据（孤儿 override）
   return el.identity !== o.identity
 }
+
+/**
+ * 后端报的“改名”（`ai.done.task.renamed` / 撤销回应的 `renamed`，ADR 0083 §五）：AI 改图时某个元素的数据逐部件没动、
+ * 只有显式 label 变了，身份（label 的摘要）因此从 `from_identity` 变成 `to_identity`。**只有身份摘要，没有 label 原文。**
+ */
+export interface IdentityRename {
+  stem: string
+  gid: string
+  from_identity: string
+  to_identity: string
+  /** 提交后验证实际用的运行配置引用（`rc_…`，不透明 id）；缺席 = 无参数运行。运行时面板只在配置相同时才跟着改。 */
+  run_config?: string
+}
+
+/** 方向：`forward` = 旧身份 → 新身份（AI 改完）；`back` = 新身份 → 旧身份（撤销这次修改）。 */
+export type RebindDirection = 'forward' | 'back'
+
+/**
+ * 在 `objects`（immer 草稿）上把「写在被改名元素上的 override」的 `identity` 改写成改名后的身份，回改了几条。
+ *
+ * 为什么要改写：引擎重放时拿 override 的 `identity` 与 gid 此刻指向的对象的身份比，对不上就当“编辑的对象已找不到”拒绝
+ * （ADR 0083 §一）。AI 改名之后，用户在画布上已有的编辑还写着旧名字的摘要——不改写的话，一次改图例就让这条线上的全部
+ * 编辑静默失效。数据没动（后端用数据指纹确认过）所以它还是同一个元素。
+ *
+ * **幂等、只碰该碰的**：只改 `gid` 相同、且 `identity` **恰好等于**当前方向的起点身份的条目——没带身份的（按位置）、
+ * 带着别的身份的、已经是目标身份的（重复调用 / 另一个窗口已经改过）一律不动。`stemMatches(panel, stem)` 决定哪些面板属于
+ * 那张图（同一张图可以在画布上摆多份）。
+ */
+export function rebindOverrideIdentities(
+  objects: FigureDocument['objects'],
+  renames: readonly IdentityRename[],
+  direction: RebindDirection,
+  stemMatches: (panel: PanelObject, stem: string, rename: IdentityRename) => boolean,
+  /** false = 只数不改（预检：没有要改的就不必开一条历史；`objects` 可以是冻结的） */
+  apply = true,
+): number {
+  let n = 0
+  for (const obj of objects) {
+    if (obj.type !== 'panel') continue
+    for (const r of renames) {
+      if (!stemMatches(obj, r.stem, r)) continue
+      const [from, to] = direction === 'forward' ? [r.from_identity, r.to_identity] : [r.to_identity, r.from_identity]
+      for (const o of obj.overrides) {
+        if (o.gid === r.gid && o.identity === from) {
+          if (apply) o.identity = to
+          n++
+        }
+      }
+    }
+  }
+  return n
+}
+
+/** 把后端给的 `renamed` 收成闭集形状（脏数据 / 老后端没有这个键 → 空）。 */
+export function parseRenames(raw: unknown): IdentityRename[] {
+  if (!Array.isArray(raw)) return []
+  const out: IdentityRename[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const { stem, gid, from_identity: from, to_identity: to } = r as Record<string, unknown>
+    if ([stem, gid, from, to].every((v) => typeof v === 'string' && v !== '') && from !== to) {
+      const rc = (r as Record<string, unknown>).run_config
+      out.push({
+        stem: stem as string,
+        gid: gid as string,
+        from_identity: from as string,
+        to_identity: to as string,
+        ...(typeof rc === 'string' && rc ? { run_config: rc } : {}),
+      })
+    }
+  }
+  return out
+}

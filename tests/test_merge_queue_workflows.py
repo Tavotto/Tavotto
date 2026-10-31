@@ -28,6 +28,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -757,6 +758,19 @@ class TestGates:
             assert f"name: {gate}\n" in CI, f"ci.yml 里没有固定名字「{gate}」"
         assert f"name: {GATE_IN_CODEQL}\n" in CODEQL
 
+    def test_repo_copy_of_queue_deadline_is_consistent_with_required_job_timeouts(self):
+        """证明的只是**仓库内一致**：三个必需 Gate（`GATE_CONTEXTS`，含 CodeQL gate）各自沿 needs 的最长累计
+        `timeout-minutes`（含 Gate 自身）+ 30 ≤ 仓库声明的 `MERGE_QUEUE_PARAMS` 等待上限。
+        它**不**证明线上 ruleset 的值——PR 期读不到线上（没有管理员令牌）。线上对拍是
+        `merge_queue_ruleset.py verify-live`（nightly 的 merge-queue-live-check 每晚跑；
+        改 job 超时 / 队列参数前手动跑一次）。解析与 verify-live 共用 `gate_critical_paths`。"""
+        deadline = MQ.MERGE_QUEUE_PARAMS["check_response_timeout_minutes"]
+        paths = MQ.gate_critical_paths(MQ.load_gate_workflows(ROOT))
+        assert set(paths) == set(MQ.GATE_CONTEXTS)
+        assert not MQ.critical_path_problems(paths, deadline), MQ.critical_path_problems(
+            paths, deadline
+        )
+
     def test_gates_run_on_always(self):
         for job_id, text in (
             ("ci-fast-gate", CI),
@@ -1032,10 +1046,10 @@ class TestGates:
         }, f"backend 覆盖漂了：{sorted(tiers)}"
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
-    #: 各 job 现在定的片数——两个 job **不必相同**（2026-09-30 起 backend-platforms 是
-    #: 3 片、backend-fast 仍是 2 片，理由见 docs/rules/ci/pytest-shards.md）。改一个 job
+    #: 各 job 现在定的片数——两个 job **不必相同**；backend-fast 2026-10-12 起 4 片（#896）、2026-10-24 起 6 片、
+    #: backend-platforms 2026-10-21 起 4 片、2026-10-24 起 8 片（docs/rules/ci/pytest-shards.md）。改一个 job
     #: 的片数要同时改这里与文档里的实测。
-    _EXPECTED_SHARD_COUNTS = {"backend-fast": 2, "backend-platforms": 3}
+    _EXPECTED_SHARD_COUNTS = {"backend-fast": 6, "backend-platforms": 8}
 
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
@@ -1549,13 +1563,37 @@ def _project_flags(arg: str, label: str) -> set[str]:
     return set(names)
 
 
+def _slice_flags(arg: str, label: str) -> tuple[set[str], tuple[int, int] | None]:
+    """`"--project=a --shard=1/2"` → `({a}, (1, 2))`：只认 `--project=NAME` 与至多一个 `--shard=i/n`。
+
+    与 scripts/ci/playwright_shard_check.py 的 `parse_slice` **刻意不同源**（对拍要两侧独立）。
+    """
+    names: list[str] = []
+    shard: tuple[int, int] | None = None
+    for tok in arg.split():
+        pm = re.fullmatch(r"--project=(\S+)", tok)
+        sm = re.fullmatch(r"--shard=(\d+)/(\d+)", tok)
+        if pm:
+            names.append(pm.group(1))
+        else:
+            assert sm and shard is None, (
+                f"{label}：`{tok}` 不是 `--project=NAME` / 唯一的 `--shard=i/n`"
+            )
+            shard = (int(sm.group(1)), int(sm.group(2)))
+    assert names, f"{label}：空片（一个 --project= 都没有）"
+    assert len(set(names)) == len(names), f"{label}：project 重复 {names}"
+    return set(names), shard
+
+
 class TestPlaywrightShards:
-    """`windows-exe-smoke` 的 Playwright 按 project 分两片（CI03c，2026-09-16）。
+    """`windows-exe-smoke` 的 Playwright 分三片（CI03c，2026-09-16 按 project 分两片；
+    2026-10-19 chromium 内部再用原生 `--shard=1/2`、`--shard=2/2` 拆成片 1 与片 3）。
 
     分片漏掉一个 project 的两个方向都**不会有任何用例红**：漏片时两片各自全绿，重叠时只是慢。
     漏片兜底三层里这里是第一层（源码层）：matrix include 的 `--project=` 集合与
-    `web/playwright.config.ts` 的 project 集合比——并集相等、两两不交、无空片、`others` 是
-    其余片之并、浏览器按片装的正是本片 project 要的引擎。第二层是每片 e2e 之前的自验
+    `web/playwright.config.ts` 的 project 集合比——并集相等、无空片；同一 project 被多片声称
+    时必须每片都带 `--shard=i/n`、n 相同、i 恰好 1..n 各一次，否则就是重叠或漏片；`others` 是
+    其余每一片（按 matrix 顺序、`|` 隔开）、浏览器按片装的正是本片 project 要的引擎。第二层是每片 e2e 之前的自验
     （scripts/ci/playwright_shard_check.py，对着真 `--list`），第三层是 matrix 语义 + Gate 闭集。
     另外钉住：artifact 名按片唯一（upload-artifact v4 同名会失败）、必需步骤没有 `if:`、
     两条 Playwright 步都有 step 级 timeout（job 级硬杀时 step 停在 in_progress、收集步骤
@@ -1565,13 +1603,14 @@ class TestPlaywrightShards:
     """
 
     JOB = "windows-exe-smoke"
+    SHARDS = 3
 
     def _entries(self) -> list[dict[str, str]]:
         entries = _matrix_include(_job(CI, self.JOB))
         assert [e.get("shard") for e in entries] == [str(i) for i in range(1, len(entries) + 1)], (
             f"{self.JOB} 的 include 条目的 shard 必须恰好是 1..N：{entries}"
         )
-        assert len(entries) == 2, "现在定的是 2 片；改片数要同时改这里与文档里的实测"
+        assert len(entries) == self.SHARDS, "现在定的是 3 片；改片数要同时改这里与文档里的实测"
         for e in entries:
             assert set(e) == {"shard", "browsers", "projects", "others"}, (
                 f"include 条目的字段变了：{sorted(e)}——四个字段各有消费者（自验脚本 / e2e 命令 / 装浏览器）"
@@ -1579,31 +1618,47 @@ class TestPlaywrightShards:
         return entries
 
     def test_the_shards_partition_exactly_the_configured_projects(self):
-        """并集 == 配置的 project 集、两两不交、无空片；`others` == 其余片之并。"""
+        """并集 == 配置的 project 集、无空片；同一 project 的多片必须是 `--shard=1/n..n/n` 各一次；
+        `others` == 其余每一片的 `projects`（按 matrix 顺序、`|` 隔开）。"""
         entries = self._entries()
         configured = set(_playwright_projects())
-        sets = [_project_flags(e["projects"], f"片 {e['shard']} projects") for e in entries]
-        for i, a in enumerate(sets):
-            for b in sets[i + 1 :]:
-                assert not (a & b), f"两片都要跑 {sorted(a & b)}——同一片内容跑两遍、判定却只算一次"
-        union = set().union(*sets)
+        slices = [_slice_flags(e["projects"], f"片 {e['shard']} projects") for e in entries]
+        union = set().union(*(s for s, _ in slices))
         assert union == configured, (
-            f"两片的 project 并集 {sorted(union)} ≠ 配置里的 {sorted(configured)}："
+            f"各片的 project 并集 {sorted(union)} ≠ 配置里的 {sorted(configured)}："
             f"漏 {sorted(configured - union)} / 多 {sorted(union - configured)}"
         )
+        for proj in sorted(configured):
+            owners = [sh for s, sh in slices if proj in s]
+            if len(owners) == 1:
+                assert owners[0] is None, f"{proj} 只有一片却带了 --shard={owners[0]}——另一半没人跑"
+                continue
+            assert all(o is not None for o in owners), (
+                f"{proj} 被 {len(owners)} 片声称，其中有不带 --shard 的整 project——同一内容跑两遍"
+            )
+            ns = {o[1] for o in owners if o}
+            assert len(ns) == 1 and sorted(o[0] for o in owners if o) == list(
+                range(1, next(iter(ns)) + 1)
+            ), f"{proj} 的 --shard 没凑成 1/n..n/n 各一次：{owners}"
         for i, e in enumerate(entries):
-            others = _project_flags(e["others"], f"片 {e['shard']} others")
-            rest = set().union(*(s for j, s in enumerate(sets) if j != i))
-            assert others == rest, (
-                f"片 {e['shard']} 的 others {sorted(others)} 不是其余片之并 {sorted(rest)}——"
-                "自验脚本会拿它去算「本片 ∪ 另一片 == 全集」"
+            rest = [x["projects"] for j, x in enumerate(entries) if j != i]
+            assert e["others"].split("|") == rest, (
+                f"片 {e['shard']} 的 others {e['others'].split('|')} 不是其余各片的 projects {rest}——"
+                "自验脚本会拿它去逐片跑 `--list`"
             )
 
+    def test_the_chromium_halves_are_shards_1_and_3_and_shard_2_keeps_its_meaning(self):
+        """已登记为必需检查的 check 名不许消失 / 改义：片 1 / 片 2 保持，新增的是片 3。"""
+        by = {e["shard"]: e["projects"] for e in self._entries()}
+        assert by["1"] == "--project=chromium --shard=1/2"
+        assert by["2"] == "--project=webkit --project=chromium-en"
+        assert by["3"] == "--project=chromium --shard=2/2"
+
     def test_each_shard_installs_exactly_the_engines_its_projects_need(self):
-        """片 1 只装 chromium，片 2 chromium + webkit——按 project 的设备家族推，不按名字猜。"""
+        """片 1、3 只装 chromium，片 2 chromium + webkit——按 project 的设备家族推，不按名字猜。"""
         engine_of = _playwright_projects()
         for e in self._entries():
-            need = {engine_of[p] for p in _project_flags(e["projects"], "projects")}
+            need = {engine_of[p] for p in _slice_flags(e["projects"], "projects")[0]}
             installed = set(e["browsers"].split())
             assert installed == need, (
                 f"片 {e['shard']} 装的是 {sorted(installed)}，它的 project 要的是 {sorted(need)}"
@@ -1660,8 +1715,8 @@ class TestPlaywrightShards:
         assert len(names) >= 3, f"前提：这条腿至少三个 upload-artifact：{names}"
         for n in names:
             assert "${{ matrix.shard }}" in n, f"artifact `{n}` 的名字里没有片号——两片会撞名"
-        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in ("1", "2")}
-        assert len(expanded) == 2 * len(names)
+        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in ("1", "2", "3")}
+        assert len(expanded) == 3 * len(names)
 
     @pytest.mark.parametrize(
         "job_id, step_minutes, job_minutes",
@@ -1690,15 +1745,31 @@ class TestPlaywrightShards:
         gate = _job(CI, "ci-integration-gate")
         assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
 
-    def test_posix_e2e_stays_a_single_job_on_configured_projects(self):
-        """posix-e2e 目前不分片（单 worker 约 19.7 分钟，step 上限 35；分片另开 issue）；它写死的 project 名必须仍在配置里。"""
+    def test_posix_e2e_shard_matrix_checks_all_planned_registered_cases(self):
+        """Issue #768：三台真 Runner、计划对拍、防漏测、不改变原 Gate 闭集。"""
         block = _job(CI, "posix-e2e")
-        assert not re.search(r"(?m)^    strategy:", _code(block)), (
-            "posix-e2e 分片了——先改文档里的决定"
+        code = _code(block)
+        assert "name: posix-e2e (${{ matrix.shard }}/3)" in code
+        assert re.search(
+            r"(?m)^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3\]",
+            code,
         )
-        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", _code(block))
+        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
         assert len(e2e) == 1, e2e
-        assert _project_flags(e2e[0], "posix-e2e") <= set(_playwright_projects())
+        # _project_flags 只解析 --project 参数；先分离 --shard，避免把 matrix 表达式当作 project。
+        project_args, shard_args = e2e[0].split(" --shard=", 1)
+        assert _project_flags(project_args, "posix-e2e") == {"chromium", "chromium-en"}
+        assert shard_args.strip() == "${{ matrix.shard }}/3"
+        assert "--shard=${{ matrix.shard }}/3" in e2e[0]
+        assert "playwright test --list --reporter=json" in code
+        assert "--expected-list" in code and "e2e-planned.json" in code
+        # 一份无 --shard 的所有 POSIX project 清单必须先于本 shard 的计划。
+        assert "e2e-planned-all.json" in code
+        assert "--all-planned-list" in code
+        assert code.index("e2e-planned-all.json") < code.index("e2e-planned.json")
+        assert "posix-e2e-report-${{ matrix.shard }}" in code
+        gate = _job(CI, "ci-integration-gate")
+        assert "posix-e2e" in _needs_of(gate) and "posix-e2e" in _required_of(gate)
 
 
 # ============================================================ package 冒烟的实例隔离（CI03b）
@@ -1976,6 +2047,15 @@ class TestBuildReuseAndCaches:
         "posix-e2e",
         "cache-seed",
     }
+    #: 第一类（下载 bytes）的第三种：Tauri 在 Linux 上的系统依赖的 .deb（Ubuntu 镜像偶发极慢，
+    #: 实测约 7% 吃满 job 的 20 分钟）。只缓存 .deb 本身；命中也是脚本里 apt 装本地文件，
+    #: 装不上就退回网络路径，缓存不是信任来源。key 逐项见 TestTauriAptCache。
+    APT_PATH = "${{ runner.temp }}/tauri-apt-debs/*.deb"
+    APT_KEY = (
+        "tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-"
+        "${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}"
+    )
+    APT_JOBS = {"desktop-shell", "cache-seed"}
     CPYTHON_CACHE = {
         ("windows-exe-smoke", "build/runtime-cache", CPYTHON_KEY),
         ("macos-app-smoke", "build/runtime-cache", CPYTHON_KEY),
@@ -1993,15 +2073,17 @@ class TestBuildReuseAndCaches:
             found.add((job_id, w["path"], w["key"]))
             steps = _steps(_job(CI, job_id))
             me = next(i for i, s in enumerate(steps) if s == step)
-            command = (
-                "scripts/fetch_fonts.py"
-                if w["path"] == self.FONT_PATH
-                else "scripts/build_worker_runtime.py"
-            )
+            command = {
+                self.FONT_PATH: "scripts/fetch_fonts.py",
+                self.APT_PATH: "scripts/ci/install_tauri_linux_deps.sh",
+            }.get(w["path"], "scripts/build_worker_runtime.py")
             use = [i for i, s in enumerate(steps) if command in s and "run:" in s]
             assert len(use) == 1 and me < use[0], f"{job_id}：缓存恢复步不在 {command} 之前"
         fonts = {(job, self.FONT_PATH, self.FONT_KEY) for job in self.FONT_JOBS}
-        assert found == self.CPYTHON_CACHE | fonts, f"actions/cache 的清单变了：{sorted(found)}"
+        apt = {(job, self.APT_PATH, self.APT_KEY) for job in self.APT_JOBS}
+        assert found == self.CPYTHON_CACHE | fonts | apt, (
+            f"actions/cache 的清单变了：{sorted(found)}"
+        )
         for _job_id, path, key in self.CPYTHON_CACHE:
             for dim in (
                 "${{ runner.os }}",
@@ -2019,6 +2101,51 @@ class TestBuildReuseAndCaches:
                 "ms-playwright",
             ):
                 assert bad not in path, (path, bad)
+
+    #: 除 ci.yml（上面有逐条枚举）外，哪些 workflow 允许出现任何形式的缓存；其余一律不许。
+    #: 新增缓存要先回 docs/rules/ci/build-reuse-and-caches.md 归类，再来改这里。
+    CACHE_PATTERN = re.compile(
+        r"actions/cache|Swatinem/rust-cache|(?m:^\s*cache(-dependency-path)?:)|Dir::Cache|PIP_CACHE"
+    )
+    CACHING_WORKFLOWS = {
+        "ci.yml",
+        "desktop-tauri.yml",
+        "nightly.yml",
+        "performance-agent.yml",
+        "release.yml",
+    }
+
+    def test_no_workflow_outside_the_enumeration_introduces_a_cache(self):
+        """缓存是枚举：ci.yml 另有逐条看护；其余 workflow 里出现缓存的文件集合是闭集，
+        研究 S0 workflow 尤其不许有（APT `.deb`、pip、setup-* 的 `cache:` 都不在批准的四类里）。"""
+        found = {
+            path.name
+            for path in WF.glob("*.yml")
+            if self.CACHE_PATTERN.search(
+                "\n".join(
+                    line
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                    if not line.lstrip().startswith("#")
+                )
+            )
+        }
+        assert found == self.CACHING_WORKFLOWS, sorted(found ^ self.CACHING_WORKFLOWS)
+        research = (WF / "compat-research-s0.yml").read_text(encoding="utf-8")
+        assert not self.CACHE_PATTERN.search(research)
+
+    def test_research_artifact_is_the_whole_staged_run_validated_before_upload(self):
+        """guardian.json 引用 evidence/ 下全部文件（json / jsonl / svg / png / pdf …）：上传集合不得按扩展名
+        过滤，且上传前要在即将上传的那份拷贝上跑 `validate`。"""
+        text = (WF / "compat-research-s0.yml").read_text(encoding="utf-8")
+        steps = re.split(r"(?m)^      - ", text.split("  baseline:", 1)[1])
+        upload = next(s for s in steps if "actions/upload-artifact" in s)
+        stage = next(s for s in steps if s.startswith("name: Stage the artifact"))
+        assert "path: ${{ runner.temp }}/s0-artifact" in upload
+        assert not re.search(r"\*\.(png|pdf|json|jsonl|svg)", upload), upload
+        assert 'stage="$RUNNER_TEMP/s0-artifact"' in stage
+        assert 'compat_guardian.py validate "${reports[0]}"' in stage
+        assert 'cp -R "$RUNNER_TEMP/research-s0" "$stage/research-s0"' in stage
+        assert steps.index(stage) < steps.index(upload)
 
     #: setup-node 的 pnpm 缓存：开了的 job 必须按 web/pnpm-lock.yaml 取 key；`package` 四条腿没开
     #: （CI02 决定不加：合并组上每个候选 ref 都冷，加了只是多四份 57 MiB 的 save——文档 §4；
@@ -2634,26 +2761,199 @@ class TestCacheSeed:
         )
 
     def test_the_linux_only_tauri_prerequisite_is_gated_like_the_consumer(self):
-        """desktop-shell 的 Linux 腿要先 apt 装 WebKit/GTK 才编得过；种子的对应步骤条件是
-        「src-tauri 且 Linux」，包名与消费者那一步逐字相同（枯了两处的其中一处就是白种）。"""
+        """desktop-shell 的 Linux 腿要先装 WebKit/GTK 才编得过；种子的对应步骤条件是
+        「src-tauri 且 Linux」，三步（识别镜像 / 缓存 .deb / 安装）与消费者逐字相同，只有 `if:` 不同
+        （枯了两处的其中一处就是白种）。包列表只有一份（TestTauriAptCache）。"""
         seed = _steps(_job(CI, self.SEED))
-        apt = [st for st in seed if "apt-get install" in st]
-        assert len(apt) == 1, "种子里应恰好一步 apt"
+        apt = [st for st in seed if "install_tauri_linux_deps.sh" in st]
+        assert len(apt) == 1, "种子里应恰好一步装 Tauri 系统依赖"
         assert re.search(
             r"(?m)^\s*if: matrix\.workspace == 'src-tauri' && runner\.os == 'Linux'$", apt[0]
         ), apt[0]
         assert "Linux" in _RUNNER_OS_LABEL and _RUNNER_OS_LABEL["Linux"] in {
             leg["os"] for leg in self._legs() if leg["workspace"] == "src-tauri"
         }, "没有一条 src-tauri 的 Linux 种子腿，这一步永远不执行"
-        consumer = [st for st in _steps(_job(CI, "desktop-shell")) if "apt-get install" in st]
+        consumer = [
+            st for st in _steps(_job(CI, "desktop-shell")) if "install_tauri_linux_deps.sh" in st
+        ]
         assert len(consumer) == 1
 
-        def pkgs(step: str) -> list[str]:
-            m = re.search(r"apt-get install[^\n]*\\\n((?:.*\\\n)*.*)$", step, re.M)
-            assert m, step
-            return sorted(re.sub(r"\\\n", " ", m.group(1)).split())
 
-        assert pkgs(apt[0]) == pkgs(consumer[0]), (pkgs(apt[0]), pkgs(consumer[0]))
+class TestTauriAptCache:
+    """Tauri 在 Linux 上的系统依赖不再依赖 Ubuntu 镜像的现场速度（实测 10-20 以来 57 次：中位 0.6 分钟，
+    约 12% 慢到 7–16 分钟，约 7% 吃满 20 分钟被取消，快速检查聚合门判红）。"""
+
+    SCRIPT = ROOT / "scripts" / "ci" / "install_tauri_linux_deps.sh"
+    PACKAGES = ROOT / "scripts" / "ci" / "tauri-linux-apt-packages.txt"
+
+    @staticmethod
+    def _site_steps(job_id: str) -> list[str]:
+        steps = _steps(_job(CI, job_id))
+        first = next(i for i, st in enumerate(steps) if "识别 runner 镜像" in _step_name(st))
+        return steps[first : first + 3]
+
+    @classmethod
+    def _without_if(cls, step: str) -> str:
+        return re.sub(r"(?m)^\s*if: .*\n", "", step)
+
+    def test_both_sites_are_the_same_three_steps_modulo_if(self):
+        desk = self._site_steps("desktop-shell")
+        seed = self._site_steps("cache-seed")
+        assert [_step_name(s) for s in desk] == [
+            "装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像",
+            "缓存 Tauri 系统依赖的 .deb 下载",
+            "装 Tauri 在 Linux 上的系统依赖",
+        ]
+        assert [self._without_if(s) for s in desk] == [self._without_if(s) for s in seed]
+        assert {_if_of_step(s) for s in desk} == {"runner.os == 'Linux'"}
+        assert {_if_of_step(s) for s in seed} == {
+            "matrix.workspace == 'src-tauri' && runner.os == 'Linux'"
+        }
+
+    def test_key_pins_image_and_package_list_and_falls_back_within_the_same_image_os(self):
+        cache = self._site_steps("desktop-shell")[1]
+        w = _with_block(cache)
+        assert w["key"] == TestBuildReuseAndCaches.APT_KEY
+        assert w["path"] == TestBuildReuseAndCaches.APT_PATH
+        # restore-keys 只回落到同一 ImageOS（APT_IMAGE_KEY 里 ImageOS 在前，版本在后）
+        assert w["restore-keys"] == "tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-"
+        ident = self._site_steps("desktop-shell")[0]
+        assert 'APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"' in ident
+
+    def test_install_step_is_bounded_and_told_whether_the_cache_hit(self):
+        install = self._site_steps("desktop-shell")[2]
+        assert re.search(r"(?m)^\s*timeout-minutes: 12$", install), install
+        assert "APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}" in install
+        assert not re.search(r"(?m)^\s*continue-on-error:", install)
+        assert "apt-get" not in install, "apt 只在脚本里（限时 / 重试 / 换镜像都在那里）"
+
+    def test_no_workflow_still_runs_a_bare_apt_get_update_for_tauri(self):
+        assert "libwebkit2gtk" not in CI, "包列表只在 scripts/ci/tauri-linux-apt-packages.txt"
+        pkgs = self.PACKAGES.read_text(encoding="utf-8").split()
+        assert len(pkgs) == len(set(pkgs)) and "libwebkit2gtk-4.1-dev" in pkgs
+
+    def test_script_has_retries_timeouts_and_a_mirror_fallback(self):
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        for needle in (
+            "Acquire::Retries=3",
+            "Acquire::http::Timeout=30",
+            "--download-only",
+            "--no-download",
+            "archive.ubuntu.com",
+            "mirrors.edge.kernel.org",
+            "attempt_seconds=",
+            "remaining=",
+        ):
+            assert needle in text, needle
+        assert text.index("APT_CACHE_HIT") < text.index('apt-get "${apt_opts[@]}" update'), (
+            "命中路径要排在 apt-get update 之前"
+        )
+
+    def test_script_paths_with_stubbed_apt(self, tmp_path):
+        """用桩 sudo / apt-get / timeout 跑真脚本：命中走本地不 update；未命中第一镜像超时后换镜像成功；
+        全部超时则非零退出；剪枝只留版本 == 已装版本的 .deb。"""
+        import shutil
+        import subprocess
+
+        if os.name == "nt":
+            pytest.skip("bash 脚本只在 Linux runner 上跑")
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        log = tmp_path / "calls.log"
+        etc = tmp_path / "apt-sources"
+        etc.mkdir()
+        (etc / "ubuntu.sources").write_text("URIs: http://azure.archive.ubuntu.com/ubuntu/\n")
+
+        def stub(name: str, body: str) -> None:
+            f = bindir / name
+            f.write_text("#!/usr/bin/env bash\n" + body)
+            f.chmod(0o755)
+
+        stub(
+            "sudo",
+            'echo "sudo $*" >> "$LOG"\n'
+            'if [ "$1" = find ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\nexec "$@"',
+        )
+        stub("timeout", 'echo "timeout $1" >> "$LOG"; shift; exec "$@"')
+        stub(
+            "apt-get",
+            'echo "apt-get $*" >> "$LOG"\n'
+            'case "$*" in *" update"*) sleep "${UPDATE_SLEEP:-0}"; [ "${FAIL_UPDATE:-0}" = 1 ] && exit 100 ;; esac\n'
+            'case "$*" in *--download-only*) touch "$DEB_DIR/new_1_amd64.deb" ;; esac\n'
+            "exit ${APT_RC:-0}",
+        )
+        stub(
+            "dpkg-deb",
+            'n="$(basename "$2" .deb)"\n'
+            'case "$3" in Package) echo "${n%%_*}" ;; Version) echo "$n" | cut -d_ -f2 ;; esac',
+        )
+        stub("dpkg-query", 'echo -n "${INSTALLED_VERSION:-1}"')
+        # BSD sed（本机 macOS）的 `-i` 要带后缀参数；Linux runner 上用真 sed，这里只做这一处适配。
+        stub(
+            "sed",
+            'if "$REAL_SED" --version >/dev/null 2>&1; then exec "$REAL_SED" "$@"; fi\n'
+            '[ "$1" = -i ] && shift && exec "$REAL_SED" -i "" "$@"\nexec "$REAL_SED" "$@"',
+        )
+        deb_dir = tmp_path / "debs"
+        deb_dir.mkdir()
+        (deb_dir / "old_0_amd64.deb").touch()
+
+        def run(**env):
+            e = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "LOG": str(log),
+                "DEB_DIR": str(deb_dir),
+                "APT_ETC": str(etc),
+                "REAL_SED": shutil.which("sed") or "sed",
+                **env,
+            }
+            log.write_text("")
+            return subprocess.run(
+                ["bash", str(self.SCRIPT), str(deb_dir)],
+                env=e,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+        hit = run(APT_CACHE_HIT="true")
+        assert hit.returncode == 0, hit.stderr
+        calls = log.read_text()
+        assert "--no-download" in calls and not [
+            ln for ln in calls.splitlines() if ln.endswith(" update")
+        ]
+
+        # 未命中：update 一直失败 → 三个镜像各试一次，最后非零；源文件被改写到最后一个镜像
+        bad = run(APT_CACHE_HIT="false", FAIL_UPDATE="1")
+        assert bad.returncode != 0
+        assert (
+            sum(
+                ln.startswith("apt-get ") and ln.endswith(" update")
+                for ln in log.read_text().splitlines()
+            )
+            == 3
+        )
+        hosts = {
+            urlsplit(word).hostname
+            for ln in (etc / "ubuntu.sources").read_text().splitlines()
+            if ln.startswith("URIs:")
+            for word in ln.split()[1:]
+        }
+        assert hosts == {"mirrors.edge.kernel.org"}
+
+        # 预算共享：update 吃掉大半预算，download 的 timeout 只拿剩余
+        slow = run(APT_CACHE_HIT="false", UPDATE_SLEEP="2", TAURI_APT_ATTEMPT_SECONDS="4")
+        assert slow.returncode == 0, slow.stderr
+        budgets = [
+            int(ln.split()[1]) for ln in log.read_text().splitlines() if ln.startswith("timeout ")
+        ]
+        assert budgets[0] == 4 and budgets[1] < 4, budgets
+
+        # 未命中且成功：已装版本是 1，old_0 被剪掉、new_1 留下
+        ok = run(APT_CACHE_HIT="false", INSTALLED_VERSION="1")
+        assert ok.returncode == 0, ok.stderr
+        assert sorted(p.name for p in deb_dir.glob("*.deb")) == ["new_1_amd64.deb"]
 
 
 # ============================================================ runner 信任区（CI04）
@@ -2672,17 +2972,35 @@ _BUILTIN_SELF_HOSTED_LABELS = frozenset(
     {"self-hosted", "linux", "windows", "macos", "x64", "arm64", "arm"}
 )
 
-#: 「PR 事件」——payload 由不可信的一方决定内容的三种触发。`merge_group` 也算：
-#: 队列候选是「最新 main + 前序 PR + 当前 PR」的组合提交，PR 里的 workflow 文件
-#: 一样会随之被执行。
-_UNTRUSTED_EVENTS = frozenset({"pull_request", "pull_request_target", "merge_group"})
+#: 「不可信事件」包括 PR / merge_group 和 review / comment 载荷：
+#: issue_comment 虽在默认分支运行，其用户评论仍不可信，也可能带有更高权限。
+#: PR / merge_group 的 workflow 代码本身也可能来自尚未受信的提交。
+_UNTRUSTED_EVENTS = frozenset(
+    {
+        "pull_request",
+        "pull_request_target",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "issue_comment",
+        "merge_group",
+    }
+)
 
-#: 本仓库 workflow 用到的触发事件的闭集。写成正面枚举而不是「不许出现
-#: pull_request_target」：否定式会被自己的注释咬到，而闭集在**任何**新事件进来时都红，
-#: 逼着写的人到这里登记一次——`pull_request_target` / `issue_comment` /
-#: `workflow_run` 这几种「带着更高权限跑不可信输入」的事件，就是靠这一下被拦住的。
+#: 本仓库已审查过的事件闭集。引入新事件必须评估 payload、runner、权限与 checkout；
+#: `pull_request_target` / `workflow_run` 仍明确不在闭集中。
+#: 审查与评论事件仅供 review-budget.yml 只读观察，见本类专门的闭集契约。
 _KNOWN_EVENTS = frozenset(
-    {"push", "pull_request", "merge_group", "schedule", "workflow_dispatch", "workflow_call"}
+    {
+        "push",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "issue_comment",
+        "merge_group",
+        "schedule",
+        "workflow_dispatch",
+        "workflow_call",
+    }
 )
 
 _ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
@@ -2771,6 +3089,15 @@ def _runs_on_atoms(job_block: str, where: str) -> set[str]:
         return atoms
     if value == "${{ matrix.os }}":
         return _matrix_os_values(job_block)
+    if value.startswith("${{ fromJSON(") and value.endswith(") }}"):
+        # 唯一的合法形状：`_lab-qualification.yml` 按档位选实验室 runner——表达式里的每个
+        # 字面量 JSON 数组都是一个可能的去处，取并集（不猜表达式的真假，两边都算可达）。
+        arrays = re.findall(r"'(\[[^\]']*\])'", value)
+        assert len(arrays) == 2, f"{where}: fromJSON 的 runs-on 应恰有两个字面量数组：{value!r}"
+        atoms = set()
+        for arr in arrays:
+            atoms |= {v.strip().strip('"') for v in arr[1:-1].split(",") if v.strip()}
+        return atoms
     if value.startswith("[") and value.endswith("]"):
         return {v.strip().strip("\"'") for v in value[1:-1].split(",") if v.strip()}
     assert re.fullmatch(r"[\w.-]+", value), f"{where}: runs-on 的写法认不出：{value!r}"
@@ -2846,7 +3173,7 @@ class TestRunnerTrustZones:
       用到的自托管标签集合，多一个「预留」标签也红——预留标签是下一个人「顺手用一下」
       的入口。
 
-    四条判据一律正面形式（集合 ⊆ 枚举 / 集合 == 集合），不写「不许出现 xxx」。
+    五条判据一律正面形式（集合 ⊆ 枚举 / 集合 == 集合），不写「不许出现 xxx」。
     """
 
     @staticmethod
@@ -2854,7 +3181,7 @@ class TestRunnerTrustZones:
         return _workflow_texts()
 
     def test_untrusted_events_reach_only_hosted_runners(self):
-        """监听 pull_request / pull_request_target / merge_group 的每个 workflow，其**全部** job
+        """监听 _UNTRUSTED_EVENTS 的每个 workflow，其**全部** job
         （含矩阵展开、含经可复用 workflow 转到的）的 `runs-on` ⊆ 托管 runner 枚举。"""
         texts = self._texts()
         listening = {n for n, t in texts.items() if _events_of(t) & _UNTRUSTED_EVENTS}
@@ -2868,6 +3195,23 @@ class TestRunnerTrustZones:
                 f"{name} 监听 {sorted(_events_of(texts[name]) & _UNTRUSTED_EVENTS)}，"
                 f"却有 job 会派到 {sorted(stray)}——不可信代码将跑在常驻真机上"
             )
+
+    def test_review_comment_webhooks_are_read_only_main_audit_only(self):
+        """把已登记的高风险 webhook 限定到一个可信 checkout 的 hosted 只读审计。"""
+        review_events = {"issue_comment", "pull_request_review", "pull_request_review_comment"}
+        assert review_events <= _KNOWN_EVENTS
+        assert review_events <= _UNTRUSTED_EVENTS
+        texts = self._texts()
+        listeners = {name for name, body in texts.items() if _events_of(body) & review_events}
+        assert listeners == {"review-budget.yml"}, (
+            f"审查和评论事件只许审计 workflow 监听：{sorted(listeners)}"
+        )
+        advisory = _code(texts["review-budget.yml"])
+        assert _runners_of_workflow("review-budget.yml", texts) == {"ubuntu-latest"}
+        assert "permissions:\n  contents: read\n  pull-requests: read\n  issues: read" in advisory
+        assert "ref: ${{ github.event.repository.default_branch }}" in advisory
+        assert "persist-credentials: false" in advisory
+        assert "github.event.issue.pull_request" in advisory
 
     def test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers(self):
         """`tavotto-lab` 只出现在 `_lab-qualification.yml`（只可 `workflow_call`）。
@@ -2912,6 +3256,22 @@ class TestRunnerTrustZones:
                 "它通向实验室 runner，只许维护者才能造成的事件"
             )
 
+    def test_only_the_release_mode_selects_the_spot_runner(self):
+        """`tavotto-lab-spot`（ci-infra 按需开的竞价机）只给 `mode == release`：表达式的真支是竞价机、
+        假支是常驻 VM，条件**只**是 `inputs.mode == 'release'`。写反（release 落在常驻 VM、
+        日常档落在一台可能根本没开的竞价机上）时，日常 lab 会永远排队。"""
+        block = _code(_jobs_of(self._texts()["_lab-qualification.yml"])["qualify"])
+        m = re.search(
+            r"(?m)^    runs-on: \$\{\{ fromJSON\(inputs\.mode == 'release' && "
+            r"'(\[[^']*\])' \|\| '(\[[^']*\])'\) \}\}\s*$",
+            block,
+        )
+        assert m, "qualify 的 runs-on 不再是「release 用竞价机、其余用常驻 VM」的 fromJSON 表达式"
+        import json
+
+        assert json.loads(m.group(1)) == ["self-hosted", "linux", "x64", "tavotto-lab-spot"]
+        assert json.loads(m.group(2)) == ["self-hosted", "linux", "x64", "tavotto-lab"]
+
     def test_every_workflow_event_is_in_the_known_closed_set(self):
         """每个 workflow 的事件 ⊆ 闭集，且闭集里的每个事件今天都真的有人用（不是一张宽过头的表）。
         `pull_request_target` 不在闭集里——03 §3「不因本计划改用 pull_request_target」。"""
@@ -2941,7 +3301,7 @@ class TestRunnerTrustZones:
             for a in used - _HOSTED_RUNNERS - _BUILTIN_SELF_HOSTED_LABELS
             if not a.startswith("group:")
         }
-        assert "tavotto-lab" in custom, (
+        assert {"tavotto-lab", "tavotto-lab-spot"} <= custom, (
             f"实验室标签不在用到的集合里：{sorted(used)}——判据量错了对象"
         )
         declared = _actionlint_custom_labels()
@@ -3072,6 +3432,11 @@ class TestApprovedFontArchiveCaches:
                 for job, step in _uses_steps("actions/cache", text)
                 if _with_block(step).get("path") != "build/runtime-cache"
             ]
+            caches = [
+                (job, step)
+                for job, step in caches
+                if _with_block(step).get("path") != TestBuildReuseAndCaches.APT_PATH
+            ]
             assert len(caches) == len(jobs) and {job for job, _ in caches} == jobs
             for job, step in caches:
                 assert _with_block(step) == {
@@ -3135,3 +3500,86 @@ class TestApprovedFontArchiveCaches:
             for path in tmp_path.glob(TestBuildReuseAndCaches.FONT_PATH)
         }
         assert cached == {f"build/fonts-cache/{name}" for name in archives}
+
+
+class TestCLAServiceContracts:
+    """The actual private-service HTTP/SQL tests run once on the existing fast lane."""
+
+    def test_service_suite_is_in_required_backend_fast_lane(self):
+        job = _job(CI, "backend-fast")
+        assert "backend-fast" in _needs_of(_job(CI, "ci-fast-gate"))
+        assert "backend-fast" in _required_of(_job(CI, "ci-fast-gate"))
+        assert "github.event_name == 'pull_request' || github.event_name == 'merge_group'" in job
+        assert 'python: ["3.10", "3.13", "3.14"]' in job
+        assert "shard: [1, 2, 3, 4, 5, 6]" in job
+        marker = "      - name: CLA service contract tests (isolated)\n"
+        assert job.count(marker) == 1
+        step = job.split(marker, 1)[1].split("      - ", 1)[0]
+        assert "if: matrix.python == '3.13' && matrix.shard == 1" in step
+        assert "continue-on-error" not in step
+        assert "secrets." not in step
+        assert "permissions:" not in job  # Inherits workflow contents: read only.
+        assert "timeout-minutes: 5" in step
+        assert 'python -m venv "$CLA_TEST_ENV"' in step
+        assert 'CLA_TEST_ENV="$RUNNER_TEMP/cla-service-tests"' in step
+        assert "-m pip --isolated install" in step
+        assert "--index-url https://pypi.org/simple --only-binary=:all:" in step
+        assert "-r services/cla/requirements-core.txt" in step
+        assert '"$CLA_TEST_ENV/bin/python" services/cla/tests/run_ci.py' in step
+
+    def test_service_runner_has_no_empty_or_skipped_success(self):
+        import ast
+
+        runner = ROOT / "services/cla/tests/run_ci.py"
+        tree = ast.parse(runner.read_text())
+        # Execute the same small runner in a subprocess for its negative contracts;
+        # the positive full-suite run is the workflow step above.
+        import subprocess
+
+        program = """
+import importlib.util, unittest
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('cla_runner', 'services/cla/tests/run_ci.py')
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+versions = {'cryptography': '50.0.0', 'cffi': '2.1.1', 'pycparser': '3.0'}
+with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=unittest.TestSuite()):
+    try:
+        m.main()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('empty suite passed')
+with patch.object(m, 'version', side_effect=RuntimeError('dependency absent')):
+    try:
+        m.main()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('missing dependency passed')
+class Skipped(unittest.TestCase):
+    @unittest.skip('synthetic anti-skip probe')
+    def test_probe(self):
+        pass
+suite = unittest.TestSuite(Skipped('test_probe') for _ in range(m.MIN_TESTS))
+with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=suite):
+    assert m.main() == 1, 'skipped security suite passed'
+class ExpectedFailure(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_probe(self):
+        self.fail('synthetic anti-xfail probe')
+suite = unittest.TestSuite(ExpectedFailure('test_probe') for _ in range(m.MIN_TESTS))
+with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=suite):
+    assert m.main() == 1, 'expected-failure security suite passed'
+"""
+        assert any(
+            isinstance(node, ast.FunctionDef) and node.name == "main" for node in ast.walk(tree)
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr

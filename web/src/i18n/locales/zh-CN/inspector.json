@@ -33,17 +33,18 @@
     "createLayoutTip": "把选区变成{{kind}}布局，替换素材后自动重排",
     "dissolve": "解散布局",
     "dissolveTitle": "解除布局与成组，位置不变",
-    "distributeToolbar": "分布",
     "distributeNeed": "需 {{count}} 个以上",
+    "distributeToolbar": "分布",
+    "foldSpacingGroup": "间距、成组、排成行 / 列 / 网格",
+    "foldStyle": "复制 / 粘贴样式",
     "group": "成组",
     "hdist": "水平等距分布（≥3 个对象）",
+    "layerValue": "第 {{n}} 层 / 共 {{total}}",
     "layout": "布局",
     "layoutCol": "列",
     "layoutGrid": "网格",
     "layoutGroup": "布局组",
     "layoutRow": "行",
-    "foldSpacingGroup": "间距、成组、排成行 / 列 / 网格",
-    "foldStyle": "复制 / 粘贴样式",
     "pasteStyle": "粘贴样式",
     "pasteStyleEmpty": "还没有复制过样式",
     "pasteStyleTip": "粘贴到选区里的{{kind}}",
@@ -84,10 +85,10 @@
     "background": "背景",
     "bgColor": "背景色",
     "clearAll": "全部清除",
-    "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
+    "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
     "grid": "网格",
     "gridSize": "网格间距",
-    "gridSummary": "网格 {{size}} mm",
+    "gridSummary": "网格 {{size}} mm",
     "guideCount_other": "{{count}} 条",
     "guideHorizontal": "水平",
     "guideVertical": "垂直",
@@ -96,13 +97,13 @@
     "guidesNone": "无",
     "lock": "锁定",
     "margin": "页边距",
-    "marginSummary": "页边距 {{margin}} mm",
+    "marginSummary": "页边距 {{margin}} mm",
     "objects": "对象",
     "pageSize": "页面尺寸",
     "presetGroup": "页面预设",
     "presets": {
       "double": {
-        "hint": "150 mm，通栏",
+        "hint": "{{w}} mm，按当前出版规范的双栏宽",
         "label": "双栏"
       },
       "full": {
@@ -110,7 +111,7 @@
         "label": "整页"
       },
       "single": {
-        "hint": "85 mm，多数期刊单栏宽",
+        "hint": "{{w}} mm，按当前出版规范的单栏宽",
         "label": "单栏"
       },
       "square": {
@@ -135,7 +136,7 @@
     "transparent": "透明",
     "transparentBg": "透明背景",
     "viewAids": "辅助显示",
-    "sizeMeta": "{{w}} × {{h}} mm",
+    "sizeMeta": "{{w}} × {{h}} mm",
     "preset": "预设",
     "presetCustom": "自定义",
     "size": "尺寸",
@@ -143,7 +144,7 @@
     "portrait": "竖向",
     "landscape": "横向",
     "export": "导出",
-    "exportSummary": "{{formats}} · {{dpi}} ppi"
+    "exportSummary": "{{formats}} · {{dpi}} ppi"
   },
   "closePanel": "关闭右侧面板",
   "control": {
@@ -153,15 +154,19 @@
     "hatch": {
       "back": "反斜线",
       "backDense": "密反斜线",
+      "backDenser": "更密反斜线",
       "circles": "圆圈",
       "cross": "十字",
       "crossDense": "密十字",
+      "crossDenser": "更密十字",
       "diagonal": "交叉",
       "diagonalDense": "密交叉",
+      "diagonalDenser": "更密交叉",
       "dots": "点",
       "dotsDense": "密点",
       "forward": "斜线",
       "forwardDense": "密斜线",
+      "forwardDenser": "更密斜线",
       "horizontal": "横线",
       "largeCircles": "大圆圈",
       "none": "无",
@@ -255,8 +260,9 @@
     "clickToEdit": "点击图内元素开始编辑",
     "editElement": "修改图内元素",
     "editProp": "修改{{label}}",
-    "figureSize": "整图 {{w}} × {{h}} mm",
+    "figureSize": "整图 {{w}} × {{h}} mm",
     "foldBackground": "背景和其他",
+    "foldBboxDetail": "背景细项",
     "foldCoords": "坐标轴、翻转、长宽比",
     "foldCount_other": "{{count}} 项",
     "foldGrid": "网格线",
@@ -272,6 +278,7 @@
     "foldTickPlacement": "刻度放在哪",
     "groupFrame": "边框",
     "groupTicksGrid": "刻度与网格",
+    "hatchFollowEdge": "跟随边框",
     "hiddenElements_other": "已隐藏元素（{{count}}）",
     "hint": {
       "scatterSize": "pt² 为面积而非直径。数值翻倍时，点径约为原来的 1.4 倍。"
@@ -343,6 +350,8 @@
     "selectScalePartnerShort": "选中",
     "groupRangeTransform": "范围与变换",
     "sizeHead": "子图尺寸",
+    "patchSizeHead": "图框尺寸",
+    "patchSizeHint": "调整图框大小，文字和连线位置保持不变。",
     "groupLine": "线条",
     "groupMarker": "数据点",
     "relatedTicksAll": "编辑整个 {{label}}…",
@@ -689,15 +698,15 @@
     "nativeMixed": "多个原始尺寸",
     "nativeSize": "原始尺寸",
     "nativeSizeTip": "回到素材本身的 mm 尺寸",
-    "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm",
+    "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm",
     "nativeTipMulti": "素材自身尺寸",
     "noAssetMatch": "没有匹配的素材",
     "opacity": "不透明度",
     "opaque": "不透明",
     "opacityMixed": "多个值",
     "overrideCount_other": "{{count}} 项图内修改",
-    "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
-    "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
+    "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
+    "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
     "replace": "替换素材",
     "replacePicture": "换一张图",
     "rotateFlipOpacity": "旋转、翻转、透明度",
@@ -719,7 +728,7 @@
     "cropRow": "取景",
     "fitRow": "适配",
     "frameLegacyTitle": "与脚本保存的原图大小不同",
-    "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
+    "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
     "frameLegacyAdopt": "改用原图的图幅",
     "frameLegacyAdoptBlocked": "这张图裁剪后留下的部分完全在原图的图幅之外，改用后什么都不剩，所以不能切换。先调整或重置裁剪再试。"
   },
@@ -783,6 +792,8 @@
     "handlelength": "示意线长度",
     "handletextpad": "线与文字间距",
     "hatch": "纹理",
+    "hatch_linewidth": "纹理线宽",
+    "hatchcolor": "纹理颜色",
     "interpolation": "插值",
     "invert_x": "反转 X 轴",
     "invert_y": "反转 Y 轴",
@@ -823,6 +834,7 @@
     "rotation": "旋转",
     "size": "点大小",
     "size_mm": "图幅",
+    "size_frac": "图框尺寸",
     "spine_bottom": "下边框",
     "spine_bottom_color": "下边框颜色",
     "spine_bottom_linewidth": "下边框线宽",
@@ -886,7 +898,7 @@
       "linewidth": "描边线宽"
     }
   },
-  "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
+  "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
   "role": {
     "arrow_patch": "箭头",
     "axes": "子图",
@@ -967,7 +979,8 @@
   },
   "tab": {
     "canvas": "画布",
-    "properties": "属性"
+    "properties": "属性",
+    "timeline": "时间线"
   },
   "tabsLabel": "右侧面板模式",
   "text": {
@@ -1000,8 +1013,8 @@
     "italic": "斜体（仅拉丁字形）",
     "lineHeight": "行距",
     "matchAction": "对齐",
-    "matchHint": "图内正文显示约 {{eff}} pt",
-    "matchTitle": "标注字号是页面绝对值。「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}} pt 正文约显示为 {{eff}} pt；用这个值可与正文一样大。",
+    "matchHint": "图内正文显示约 {{eff}} pt",
+    "matchTitle": "标注字号是页面绝对值。「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}} pt 正文约显示为 {{eff}} pt；用这个值可与正文一样大。",
     "newlineTitle": "在光标处插入换行（画布内编辑可用 {{alt}} / {{mod}}）",
     "padding": "内边距",
     "placeholder": "输入文字…",
@@ -1026,6 +1039,10 @@
     "upper": "全部大写"
   },
   "textBar": {
+    "cjkFallback": "中文字体",
+    "cjkFallbackAuto": "自动",
+    "cjkFallbackShadowed": "请改选不含中文字符的英文字体。",
+    "latinFont": "英文字体",
     "alignCenter": "居中",
     "alignLeft": "左对齐",
     "alignRight": "右对齐",
@@ -1059,6 +1076,7 @@
     "align": "对齐",
     "color": "颜色",
     "font": "字体",
+    "fontFromGeneric": "来自脚本里的「{{generic}}」字体设置",
     "fontMissingHint": "这台电脑没装这个字体，图上用的是别的字体。",
     "fontMissingTag": "（未安装）",
     "size": "字号"
@@ -1096,7 +1114,7 @@
   },
   "transform": {
     "rotation": "旋转",
-    "summary": "X {{x}} · Y {{y}} mm",
+    "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "文字高度随内容",
     "title": "位置与尺寸"
   },
@@ -1203,13 +1221,31 @@
     "relinkAction": "恢复链接",
     "entryActions": "“{{label}}”的操作"
   },
-  "identity": {
-    "problems_other": "{{count}} 个问题"
-  },
   "docSummary": {
     "title": "本排版",
-    "size": "{{w}} × {{h}} mm",
+    "size": "{{w}} × {{h}} mm",
+    "details": "详情",
     "annotations_other": "{{count}} 处文字与标注",
     "canvasSettings": "画布设置"
+  },
+  "richText": {
+    "bold": "粗体（选中的字）",
+    "boldTitle": "粗体：作用于选中的字（{{key}}）",
+    "italic": "斜体（选中的字）",
+    "italicTitle": "斜体：作用于选中的字（{{key}}）",
+    "sup": "上标",
+    "supTitle": "上标：作用于选中的字（{{key}}）",
+    "sub": "下标",
+    "subTitle": "下标：作用于选中的字（{{key}}）",
+    "newline": "插入换行",
+    "newlineTitle": "在光标处插入换行（{{alt}} / {{mod}}）",
+    "modeLatex": "LaTeX 源码",
+    "modeToLatexTitle": "切到 LaTeX 源码（专业用户可直接粘贴、改公式）",
+    "modeToRichTitle": "切回所见即所得",
+    "errorBrace": "第 {{at}} 个字符：花括号没有配对，改正后才能切回所见即所得",
+    "errorDollar": "第 {{at}} 个字符：$ 没有配对，改正后才能切回所见即所得",
+    "modeShort": "TeX",
+    "preview": "公式预览",
+    "previewNoRuntime": "没有可用的排版环境"
   }
 }

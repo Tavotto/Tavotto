@@ -30,12 +30,14 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pymupdf
 import pytest
 
 from support.pipedrain import StderrDrain
+from support.previewkit import publish_fixture
 from tavotto import app as m
 from tavotto.engine import (
     ai_agents,
@@ -54,6 +56,17 @@ def client():
     yield m.app.test_client()
     m.reset_projects()
     project_watch.stop()
+
+
+def test_missing_posix_stdlib_on_windows_does_not_recommend_changing_python(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pool, "os", SimpleNamespace(name="nt"))
+    err = pool._worker_error(
+        "脚本执行失败", "script_error", "ModuleNotFoundError: No module named 'pwd'"
+    )
+    assert err.install_route == "unsupported_platform"
+    assert pool.should_try_project_env(err) is False
 
 
 def _figs(tmp_path, name="figs"):
@@ -90,7 +103,7 @@ def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
     out = tmp_path / "_replay_out"
     out.mkdir(exist_ok=True)
     man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
-    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+    publish_fixture(out, "Fig1", man)
 
     class FakeWorker:
         script_name, entry = "fig1.py", "main"
@@ -1447,7 +1460,9 @@ def _spawn_sites() -> list[tuple[str, ast.Call]]:
 #: 判据按**常量名**判（`value.rsplit(".", 1)[-1]`），不按整串：模块别名各处
 #: 不同（`runtime.` / `engine_runtime.` / 裸名），把别名也钉进闭集只会让这条
 #: 用例在下一次改 import 时假红。
-_ALLOWED_CREATIONFLAGS = {"CREATE_NO_WINDOW", "INHERIT_CONSOLE"}
+#: * `CREATE_NEW_CONSOLE` —— **要让用户看见并操作的新控制台**（官方登录按钮在 Windows 上
+#:   为 `claude auth login` 开的窗口）；全仓库只许 `ai_bridge.py` 一处，见下面的钉子。
+_ALLOWED_CREATIONFLAGS = {"CREATE_NO_WINDOW", "INHERIT_CONSOLE", "CREATE_NEW_CONSOLE"}
 #: 只认**具名常量**（可带模块前缀）。字面量 `0`、`A | B` 这类表达式一律拒——
 #: 那是绕过声明的写法。
 _CREATIONFLAGS_SHAPE = re.compile(r"^(?:\w+\.)?[A-Z_]+$")
@@ -1469,7 +1484,7 @@ def test_every_backend_subprocess_declares_its_console_ownership():
     它买到的是**可读性与可审查性**——下一个人在一个 GUI 路径里看到
     `INHERIT_CONSOLE` 会知道那不对，而看到一个空白的 kwargs 不会。
     """
-    checked, console_owned = [], []
+    checked, console_owned, visible_console = [], [], []
     for where, call in _spawn_sites():
         kwargs = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
         assert "creationflags" in kwargs, (
@@ -1487,11 +1502,15 @@ def test_every_backend_subprocess_declares_its_console_ownership():
         checked.append(where)
         if value.endswith("INHERIT_CONSOLE"):
             console_owned.append(where)
+        if value.endswith("CREATE_NEW_CONSOLE"):
+            visible_console.append(where)
     # 一个都没扫到 = 匹配逻辑坏了，别让空断言冒充通过
     assert len(checked) >= 10, f"只扫到 {checked}，AST 匹配逻辑可能失效了"
     # **CLI 拥有的那一类只有一处**：`tavotto run` 起用户的 Python。多出来一处
     # 就要有人解释为什么——这不是可以顺手复制的写法。
     assert [w.split(":")[0] for w in console_owned] == ["runcli.py"], console_owned
+    # **用户可见的新控制台同样只有一处**：官方登录按钮的 Windows 终端（ai_bridge）。
+    assert [w.split(":")[0] for w in visible_console] == ["ai_bridge.py"], visible_console
 
 
 def test_the_user_python_is_never_detached_from_the_terminal():
@@ -3249,7 +3268,7 @@ def test_preview_svg_is_written_without_newline_translation():
 
     # 第二侧：确实是用 `newline=""` 打开的（光"传了个文件对象"不够，
     # 传一个默认模式打开的照样翻译）
-    assert 'open(svg_path, "w", encoding="utf-8", newline="")' in src, (
+    assert 'open(svg_part, "w", encoding="utf-8", newline="")' in src, (
         'figsession 写预览 SVG 必须显式 `newline=""`——默认的 universal '
         "newlines 会在 Windows 上把 `\\n` 翻成 `\\r\\n`"
     )
@@ -3711,3 +3730,288 @@ def test_scan_redirect_metadata_preserves_nonredirect_cloud_placeholders(
     assert scanbudget.is_redirect(metadata) is expected
     if tag == 0x9000001A:
         assert scanbudget.is_placeholder(metadata)
+
+
+@pytest.mark.parametrize("shim", [r"C:\科研工具\Node 环境\pnpm.CMD", "/opt/homebrew/bin/pnpm"])
+@pytest.mark.parametrize("override", [None, r"D:\用户环境\python.exe"])
+def test_perf_agent_resolves_cli_shim_and_passes_its_backend_python(
+    tmp_path, monkeypatch, shim, override
+):
+    """判构造的真实 argv/env；不把 Linux mock 冒充 Windows 真机执行。"""
+    from test_perf_agent import A, report
+
+    current_python = r"C:\科研工具\Python 环境\python.exe"
+    monkeypatch.setattr(shutil, "which", lambda name: shim if name == "pnpm" else None)
+    monkeypatch.setattr(sys, "executable", current_python)
+    if override is None:
+        monkeypatch.delenv("TAVOTTO_PYTHON", raising=False)
+    else:
+        monkeypatch.setenv("TAVOTTO_PYTHON", override)
+    output = tmp_path / "run.json"
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append((argv, kwargs["env"]))
+        if len(calls) == 1:
+            Path(kwargs["env"]["TAVOTTO_PERF_AGENT_OUTPUT"]).write_text(json.dumps(report()))
+        elif len(calls) == 2:
+            Path(kwargs["env"]["TAVOTTO_PERF_REPORT_OUT"]).write_text("{}")
+        else:
+            Path(argv[argv.index("--json") + 1]).write_text("[]")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", execute)
+    assert A.main(["run", "--out", str(output), "--include-drag"]) == 0
+    assert len(calls) == 3
+    for argv, env in calls[:2]:
+        assert argv[:4] == [shim, "exec", "playwright", "test"]
+        assert env["TAVOTTO_PYTHON"] == (override or current_python)
+    assert calls[2][0][0] == current_python
+
+
+def test_perf_probe_finds_the_app_bundle_plist_with_windows_separators(monkeypatch):
+    """#1001 合并组 Windows 腿：按 "/Contents/MacOS/" 字符串切路径，反斜杠下版本恒为 None。"""
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    monkeypatch.syspath_prepend(scripts)
+    import perf_macos_window as mod
+
+    exe = PureWindowsPath("C:\\x\\Tavotto.app\\Contents\\MacOS\\Tavotto")
+    assert mod.info_plist_for_executable(exe) == PureWindowsPath(
+        "C:\\x\\Tavotto.app\\Contents\\Info.plist"
+    )
+
+
+def test_matplotlib_svg_with_crlf_line_endings_is_accepted_but_custom_dtds_still_fail(tmp_path):
+    """#1230 Windows 腿：matplotlib 在 Windows 以文本模式写 SVG，声明里的换行是 CRLF；
+    原先只认 LF 的固定声明失配，整份 SVG 素材被 `svg_dtd_forbidden` 误拒。"""
+    from tavotto import svgasset
+    from tavotto.rendercore import svgcheck
+
+    body = b'<svg xmlns="http://www.w3.org/2000/svg" width="96" height="48" viewBox="0 0 96 48"><path d="M0 0L96 48"/></svg>'
+    prolog = b'<?xml version="1.0" encoding="utf-8" standalone="no"?>\r\n'
+    stock = svgcheck._MATPLOTLIB_DOCTYPE.replace(b"\n", b"\r\n")
+    source = tmp_path / "F.svg"
+    source.write_bytes(prolog + stock + b"\r\n" + body)
+    data, facts = svgasset.read(source)
+    assert b"DOCTYPE" not in data and facts["w_pt"] == 72
+    # 换行不同不等于放宽：别的声明、被改过一个字的声明、带内部子集的声明仍然拒绝
+    for dtd in (
+        b'<!DOCTYPE svg SYSTEM "https://example.org/evil.dtd">',
+        stock.replace(b"1.1//EN", b"1.0//EN"),
+        stock[:-1] + b' [<!ENTITY x "y">]>',
+    ):
+        source.write_bytes(prolog + dtd + b"\r\n" + body)
+        with pytest.raises(svgasset.UnsupportedSVG):
+            svgasset.read(source)
+
+
+def test_nonadmin_windows_cannot_symlink_fixtures_skip_only_on_privilege_error_and_aliases_use_hardlinks(
+    tmp_path,
+):
+    """Windows Lab（非管理员）上 `os.symlink` 抛 WinError 1314，hosted windows-latest 是管理员所以 CI 看不到。
+    夹具 helper 的契约：只有 1314 才 skip；别的 OSError 原样抛（不把真故障吞成 skip）；
+    只需要「第二个目录项」的场景用硬链接，不依赖特权。"""
+    from support import linkkit
+
+    class _NoPrivilege(OSError):
+        winerror = 1314
+
+    target = tmp_path / "t.txt"
+    target.write_text("x")
+    real = os.symlink
+    try:
+        os.symlink = lambda *a, **k: (_ for _ in ()).throw(_NoPrivilege("1314"))
+        with pytest.raises(pytest.skip.Exception):
+            linkkit.symlink_or_skip(target, tmp_path / "l1")
+        os.symlink = lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, "denied"))
+        with pytest.raises(PermissionError):
+            linkkit.symlink_or_skip(target, tmp_path / "l2")
+    finally:
+        os.symlink = real
+    linkkit.hardlink(target, tmp_path / "h")
+    assert os.path.samefile(target, tmp_path / "h")
+    # 两个用例不得再直接造符号链接（回到只在管理员账户下能跑）
+    import inspect
+
+    import test_capture_saved_facts_identity as ident
+    import test_layout_recovery_backend as layout
+
+    twin = inspect.getsource(
+        ident.TestUnicodeNormalization.test_two_symlinks_are_two_entries_not_normalization
+    )
+    assert "os.symlink" not in twin
+    assert "symlink_to" not in inspect.getsource(layout.test_a15_bad_files_do_not_block_the_listing)
+
+
+# ---------------------------------------------------------------------------------------------
+# 非管理员 Windows 上 `taskkill /T /F` 不可靠：scripts/ci 里结束进程树只许走 proctree
+# ---------------------------------------------------------------------------------------------
+_CI_DIR = Path(__file__).resolve().parents[1] / "scripts" / "ci"
+
+
+def _proctree_calls(path: Path) -> set[str]:
+    """`proctree.<name>(…)` 在这个文件里被调用的名字（AST，不是子串）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        n.func.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "proctree"
+    }
+
+
+def test_ci_scripts_never_spawn_taskkill_and_use_one_process_tree_implementation():
+    """主语：scripts/ci 里每个**构造 argv 的字面量**（不是 docstring）。
+
+    hosted windows-latest 是管理员账户，`taskkill /T /F` 在那里表现正常；非管理员（Windows Lab、
+    用户机器）上它既慢又枚举不全（agent_verify 的超时 30 s > 用例的 20 s 上限、package_smoke
+    的 worker 残留）。三处调用方必须共用 `proctree`，不再各自裸调 taskkill。"""
+    offenders = []
+    for path in sorted(_CI_DIR.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, (ast.List, ast.Tuple))
+                and node.elts
+                and isinstance(node.elts[0], ast.Constant)
+                and isinstance(node.elts[0].value, str)
+                and node.elts[0].value.lower().startswith("taskkill")
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, f"scripts/ci 里还有裸 taskkill argv：{offenders}"
+
+    assert {"kill_tree", "spawn"} <= _proctree_calls(_CI_DIR / "agent_verify.py")
+    assert {"kill_tree", "tree_gone"} <= _proctree_calls(_CI_DIR / "package_smoke.py")
+    assert "terminate_pid" in _proctree_calls(_CI_DIR / "cleanup.py")
+
+
+def test_proctree_kills_a_live_tree_including_grandchild(tmp_path):
+    """行为：根进程还活着时，`kill_tree` 收得到整棵树（含孙进程）。判据是孙进程的 pid **不存在**，不是「发过信号」。"""
+    sys.path.insert(0, str(_CI_DIR))
+    try:
+        import proctree
+    finally:
+        sys.path.remove(str(_CI_DIR))
+    pid_file = tmp_path / "grandchild.pid"
+    child = (
+        "import subprocess, sys, time\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+        "time.sleep(600)\n"
+    )
+    kwargs = {"start_new_session": True} if os.name != "nt" else {}
+    proc = proctree.spawn(
+        [sys.executable, "-c", child],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **kwargs,
+    )
+    grandchild = None
+    try:
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        grandchild = int(pid_file.read_text(encoding="utf-8"))
+        assert proctree.is_alive(grandchild)
+        assert proctree.kill_tree(proc) is not None
+        proc.wait(timeout=20)
+        assert proctree.tree_gone(proc, 20)
+        deadline = time.monotonic() + 20
+        while proctree.is_alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proctree.is_alive(grandchild), "孙进程成了孤儿"
+    finally:
+        if grandchild is not None and proctree.is_alive(grandchild):
+            proctree.terminate_pid(grandchild)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="Job Object 语义：POSIX 的进程组随根进程被回收后无从寻址"
+)
+def test_proctree_job_reaches_a_descendant_whose_parents_are_all_gone(tmp_path):
+    """行为：根进程与中间进程都**已退出**、叶子仍在时，`kill_tree` 靠 Job Object 仍收得到叶子。
+    叶子的父进程（中间进程）已死，进程快照回退顺着父子链从根往下找不到它——只有 Job 路径能过。"""
+    sys.path.insert(0, str(_CI_DIR))
+    try:
+        import proctree
+    finally:
+        sys.path.remove(str(_CI_DIR))
+    pid_file = tmp_path / "leaf.pid"
+    mid = (
+        "import subprocess, sys\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+    )
+    root = f"import subprocess, sys\nsubprocess.Popen([sys.executable, '-c', {mid!r}]).wait()\n"
+    proc = proctree.spawn(
+        [sys.executable, "-c", root],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    leaf = None
+    try:
+        proc.wait(timeout=30)  # 根与中间进程都已退出
+        leaf = int(pid_file.read_text(encoding="utf-8"))
+        assert proc.tavotto_job is not None, "进程没放进 Job，这条用例没有意义"
+        assert proctree.is_alive(leaf), "前提：叶子必须在根进程退出后仍然活着"
+        assert proctree.kill_tree(proc) == "job"
+        assert proctree.tree_gone(proc, 20)
+        deadline = time.monotonic() + 20
+        while proctree.is_alive(leaf) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proctree.is_alive(leaf), "叶子成了孤儿"
+    finally:
+        if leaf is not None and proctree.is_alive(leaf):
+            proctree.terminate_pid(leaf)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+# --- 真窗口用例（tests/desktop_windows/）随产品改版失效的两处前提 -------------------------
+# 真窗口用例只在 nightly / Windows Lab 里跑，普通 CI 看不到它们过期（10-21 起一直红、没人发现）。
+# 这里在普通 CI 上钉住两处前提：用例引用的选择器必须仍在前端源码里，且用例不再拿「放大
+# 取景前量到的尺寸」去比「取景改变之后量到的尺寸」。
+
+_DESKTOP_WINDOW_TESTS = Path(__file__).parent / "desktop_windows"
+_WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
+
+
+def test_desktop_window_picker_test_leaves_the_tutorial_welcome_first():
+    """全新配置目录的第一屏是新手教程欢迎页（`NativeTutorial`：`aria-modal` 的整屏 fixed 层，
+    底下的主页 inert 且被盖住），用户必须先点「打开工作区」才点得到主页的「导入我的脚本」。
+    真窗口用例若直接点主页按钮就是 `element click intercepted`——点不到不是用例的毛病，
+    是用户也点不到，所以用例要走用户走的那条路。"""
+    exit_selector = "data-tutorial-open-workspace"
+    welcome = (_WEB_SRC / "components" / "onboarding" / "TutorialWelcome.tsx").read_text(
+        encoding="utf-8"
+    )
+    shell = (_WEB_SRC / "components" / "onboarding" / "NativeTutorial.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert exit_selector in welcome, "欢迎页的出口选择器改了：真窗口用例要跟着改"
+    assert 'aria-modal="true"' in shell and "fixed inset-0" in shell, (
+        "教程层不再整屏盖住主页：这条前提（以及用例里先离开欢迎页）可以重新评估"
+    )
+    picker = (_DESKTOP_WINDOW_TESTS / "test_file_picker.py").read_text(encoding="utf-8")
+    click_home = picker.index("d.click(d.find(IMPORT_BUTTON[variant]))")
+    assert exit_selector in picker[:click_home], (
+        "test_file_picker 在点主页按钮之前没有先离开教程欢迎页（全新配置目录的第一屏）"
+    )
+
+
+def test_desktop_window_paste_test_compares_sizes_within_one_view():
+    """粘贴第二个对象会让画布从单图编辑切到多图排版并重新取景（#1292），屏幕上的 px 尺度随之变。
+    用例若拿粘贴前量的 `original` 去比粘贴后量的对象，就把取景缩放当成了「粘贴没读系统剪贴板」。
+    正确的量法：粘贴之后在同一个取景里量原对象与新对象，比它们的比值。"""
+    src = (_DESKTOP_WINDOW_TESTS / "test_clipboard.py").read_text(encoding="utf-8")
+    body = src[src.index("def test_paste_reads_what_another_app_put_there") :]
+    tail = body[body.index("assert len(new) == 1") :]
+    assert "original[" not in tail, "粘贴后的尺寸不能和粘贴前量的原对象比：取景已经变了"
+    assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"

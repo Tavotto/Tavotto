@@ -706,13 +706,13 @@ describe('快速编辑里的剪贴板组', () => {
     expect(item('duplicate')).not.toBeNull()
   })
 
-  it('快速编辑里：只剩复制，没有粘贴与创建副本', async () => {
+  it('单图编辑里：复制 / 粘贴 / 创建副本照常在（2026-10-21 放开：粘出图 = 第二张，进排版）', async () => {
     useWorkspaceStore.getState().enterFastEdit('p1')
     await openOn('p1')
     expect(menu()).not.toBeNull()
     expect(item('copy')).not.toBeNull()
-    expect(item('paste')).toBeNull()
-    expect(item('duplicate')).toBeNull()
+    expect(item('paste')).not.toBeNull()
+    expect(item('duplicate')).not.toBeNull()
   })
 })
 
@@ -1252,7 +1252,7 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
     await openElement()
     const dlg = document.querySelector('[role="dialog"]')!
     expect(dlg).not.toBeNull()
-    expect(dlg.querySelector('textarea')).not.toBeNull()
+    expect(dlg.querySelector('[data-rich-text]')).not.toBeNull()
     expect(document.querySelector('[data-quick-item="reset-element"]')?.textContent).toContain('1')
     await click(document.querySelector<HTMLElement>('[data-quick-item="reset-element"]'))
     expect(byId<PanelObject>('p1').overrides).toEqual([])
@@ -1268,15 +1268,23 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
       portal.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     })
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    // 关闭后弹层带 closed 保活播 pop-out（usePresence 的 exit 一档），播完才卸载
+    const gone = async () => {
+      expect(document.querySelector('[role="dialog"]')?.getAttribute('data-state')).toBe('closed')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 160))
+      })
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+    }
     await act(async () => {
       document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await gone()
     await openElement()
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await gone()
   })
 })
 
@@ -1344,5 +1352,55 @@ describe('「把这些修改用到同脚本的其他图…」', () => {
     // 只列兄弟图，不含它自己
     const targets = [...document.querySelectorAll<HTMLElement>('[data-sync-target]')].map((e) => e.dataset.syncTarget)
     expect(targets).toEqual(['Fig2.pdf'])
+  })
+})
+
+describe('快捷编辑里的公式字体跟正文（Codex #1496）', () => {
+  beforeEach(async () => {
+    await seed([panel('p1')])
+    const p = byId<PanelObject>('p1')
+    const { seedExactRender } = await import('@/test/renderFixtures')
+    seedExactRender(p, {
+      stem: 'Fig1',
+      size_mm: [40, 30],
+      elements: [
+        {
+          gid: 'axes_0.title',
+          role: 'title',
+          label: '标题',
+          group: 'axes',
+          bbox: [0.1, 0.1, 0.5, 0.2],
+          editable: [
+            { prop: 'text', type: 'text', value: 'Hi' },
+            { prop: 'fontfamily', type: 'enum', value: 'serif', options: ['serif', 'sans-serif'] },
+            { prop: 'visible', type: 'bool', value: true },
+          ],
+        },
+      ],
+    } as never)
+    await mount()
+  })
+
+  it('选中一字点斜体：字体族与文字一条历史，撤销一次两者都退', async () => {
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.title' }, 50, 50)
+    })
+    const { richViewOf } = await import('@/components/ui/RichTextField')
+    const { TextSelection } = await import('prosemirror-state')
+    const box = document.querySelector<HTMLElement>('[role="dialog"] [data-rich-text]')!
+    const view = richViewOf(box)!
+    await act(async () => {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, 1)))
+    })
+    const before = past().length
+    await click(document.querySelector<HTMLElement>('[role="dialog"] [data-rich-action="italic"]'))
+    const ov = byId<PanelObject>('p1').overrides
+    expect(ov).toContainEqual({ gid: 'axes_0.title', prop: 'fontfamily', value: 'serif' })
+    expect(ov.find((o) => o.prop === 'text')?.value).toBe('$\\mathit{H}$i')
+    expect(past().length).toBe(before + 1)
+    await act(async () => {
+      useDocumentStore.getState().undo()
+    })
+    expect(byId<PanelObject>('p1').overrides).toEqual([])
   })
 })

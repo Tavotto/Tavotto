@@ -40,7 +40,7 @@ SCOPE_ORIGINAL = "original"
 SCOPE_CANVAS = "canvas"
 SCOPES = (SCOPE_ORIGINAL, SCOPE_CANVAS)
 
-#: 输出格式。`pdf` / `eps` 是矢量载体，`png` / `tiff` 是位图载体。
+#: 输出格式。`pdf` / `eps` / `svg` 是矢量载体，`png` / `tiff` 是位图载体。
 #: **不许在这里加一个当前管线给不出真矢量的格式**（共享规则 §8：不得伪称矢量）。
 #:
 #: 顺序是结果的一部分（`outputs[]` 与界面上的清单逐项对上），所以新格式
@@ -57,16 +57,13 @@ FORMAT_PNG = "png"
 FORMAT_SVG = "svg"
 FORMAT_EPS = "eps"
 FORMAT_TIFF = "tiff"
-FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_EPS, FORMAT_TIFF)
+FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_EPS, FORMAT_TIFF, FORMAT_SVG)
 
-#: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）额外认的格式。
+#: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）保留既有顺序。
 #:
-#: `svg` **不在 `FORMATS` 里**，理由不是"svg 不够矢量"——matplotlib 序列化出来的
-#: SVG 与它的 PDF 同源，是真矢量——而是画布合成走 RenderCore（PDF / PNG / TIFF），那条路**给不出**
-#: SVG。把它放进全局枚举，导出面板就会摆出一个合成管线兑现不了的选项。
-#: 所以「这次认哪几种格式」是**消费点自己带的参数**
-#: （`normalize(allowed_formats=…)`），而规则（清洗、扩展名、去重、PPI 语义、
-#: 顺序）仍然只有这一份。
+#: SVG（X03）追加进统一导出格式；支持的画布节点由 RenderCore 写出，原图由
+#: worker 直接序列化。无法安全转换的来源逐项报错，不静默栅格化。
+#: 两条入口认同一个集合，但此处 SVG 原先就在第三位，不能改变插件已有的输出顺序。
 ENGINE_FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_SVG, FORMAT_EPS, FORMAT_TIFF)
 
 #: 哪些格式是位图 —— 「PPI 只在位图输出时有意义」这句话的唯一判据。
@@ -151,6 +148,7 @@ ERROR_CODES = (
     "bad_overrides",
     "name_exhausted",
     "bad_inspection",
+    "bad_merge",
 )
 
 
@@ -291,6 +289,33 @@ class OriginalSource:
     ignored: tuple[str, ...] = ()
     source_policy: str | None = None
     expected_source: dict | None = None
+    figure_snapshot: dict | None = None
+    #: 来源驱动采用（ADR 0139 §五）：用户确认时那份重画的字节摘要；带真实编辑的请求必须带它
+    confirmed_reconstruction_sha256: str | None = None
+
+
+#: 多页 PDF 一次最多合几页。上限不是审美：每页各走一次单页导出，几百页的作业是在卡住 worker。
+MERGE_PAGES_MAX = 200
+
+
+@dataclass(frozen=True)
+class MergePdf:
+    """把若干张图合成**一个多页 PDF**（#1370，PdfPages 导出）。
+
+    `pages` 按页序给出每一页的来源（与 `original` 同一个形状，各带自己的 overrides / 快照引用），
+    页序由请求定、后端不改：前端按 `pdf_pages.page_stems` 的顺序传。同一张图出现多次 = 这一页按页序重复放
+    （不做快照、只提示：重复的页取同一份单页导出）。只在 `scope=original` 且格式恰为 `pdf` 时合法；
+    此时请求的 `original` 就是第一页的来源（调用方不传 `original`）。
+    """
+
+    pages: tuple[OriginalSource, ...]
+
+    def to_payload(self) -> dict:
+        """回执里写明页数与页序（figure_id 按页序）。"""
+        return {
+            "page_count": len(self.pages),
+            "figure_ids": [p.figure_id for p in self.pages],
+        }
 
 
 @dataclass(frozen=True)
@@ -326,6 +351,8 @@ class ExportRequest:
     legacy_naming: bool = False
     #: 产物检查政策（U08）。缺省 standard；老客户端没有这一段。
     inspection: InspectionPolicy = field(default_factory=InspectionPolicy)
+    #: 合成一个多页 PDF（#1370）；`None` = 现有的单图导出。
+    merge_pdf: MergePdf | None = None
 
     @property
     def has_raster(self) -> bool:
@@ -351,6 +378,7 @@ class ExportRequest:
             "document_revision": self.document_revision,
             "figure_id": self.original.figure_id if self.original else None,
             "inspection": self.inspection.to_payload(),
+            **({"merge_pdf": self.merge_pdf.to_payload()} if self.merge_pdf is not None else {}),
             **(
                 {"expected_source": self.original.expected_source}
                 if self.original and self.original.expected_source is not None
@@ -359,6 +387,16 @@ class ExportRequest:
             **(
                 {"source_policy": self.original.source_policy}
                 if self.original and self.original.source_policy is not None
+                else {}
+            ),
+            **(
+                {"confirmed_reconstruction_sha256": (self.original.confirmed_reconstruction_sha256)}
+                if self.original and self.original.confirmed_reconstruction_sha256 is not None
+                else {}
+            ),
+            **(
+                {"figure_snapshot": self.original.figure_snapshot}
+                if self.original and self.original.figure_snapshot is not None
                 else {}
             ),
         }
@@ -438,7 +476,16 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 if req.original.source_policy is not None
                 else {}
             ),
+            **(
+                {"confirmed_reconstruction_sha256": (req.original.confirmed_reconstruction_sha256)}
+                if req.original.confirmed_reconstruction_sha256 is not None
+                else {}
+            ),
         }
+    if req.merge_pdf is not None:
+        semantic["merge_pdf"] = [
+            {"figure_id": p.figure_id, "overrides": p.overrides} for p in req.merge_pdf.pages
+        ]
     canon = json.dumps(
         {
             "render_plan_version": RENDER_PLAN_VERSION,
@@ -541,6 +588,65 @@ def _source_basis(source, patches=()):
         ) from exc
 
 
+def _figure_snapshot(source):
+    if "figure_snapshot" not in source:
+        return None
+    from .svgstore import validate_reference
+
+    try:
+        return validate_reference(source["figure_snapshot"])
+    except ValueError as exc:
+        raise ExportRequestError("bad_request", "Invalid Figure snapshot reference", {}) from exc
+
+
+def _original_source(source: Any) -> OriginalSource:
+    """`original` 段（以及多页 PDF 里每一页的来源）→ `OriginalSource`。**一份解析，两处用**。"""
+    if not isinstance(source, dict):
+        raise ExportRequestError("missing_original", "按原图导出缺少 original 段", {})
+    figure_id = str(source.get("figure_id") or "")
+    if not figure_id:
+        raise ExportRequestError("missing_figure", "按原图导出没有说是哪一张图", {})
+    overrides = source.get("overrides") or []
+    if not isinstance(overrides, list):
+        raise ExportRequestError("bad_overrides", "overrides 必须是一个列表", {})
+    return OriginalSource(
+        figure_id=figure_id,
+        source_policy=source.get("source_policy"),
+        expected_source=_source_basis(source, overrides),
+        figure_snapshot=_figure_snapshot(source),
+        confirmed_reconstruction_sha256=source.get("confirmed_reconstruction_sha256"),
+        overrides=[o for o in overrides if isinstance(o, dict)],
+        w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
+        h_mm=float(source["h_mm"]) if source.get("h_mm") else None,
+        px_w=int(source["px_w"]) if source.get("px_w") else None,
+        px_h=int(source["px_h"]) if source.get("px_h") else None,
+        source_kind=str(source.get("source_kind") or "unknown"),
+        ignored=tuple(str(x) for x in (source.get("ignored") or [])),
+    )
+
+
+def _merge_pdf(spec: dict, formats: tuple[str, ...]) -> MergePdf | None:
+    """`merge_pdf: {pages: [<original 段>, …]}` → `MergePdf`；没有这个键 = `None`。
+
+    不合法的组合一律 `bad_merge`（在碰磁盘之前）：格式不是恰好 `pdf`（SVG / PNG 没有「多页」，
+    混在一起会让同一个文件名对应两种东西）、同时带了 `original`（第一页的来源只有 `pages[0]` 一处）、
+    页数为 0 或超过 `MERGE_PAGES_MAX`。页内的错误沿用 `original` 的码（`missing_figure` / `bad_overrides` …）。
+    """
+    raw = spec.get("merge_pdf")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("pages"), list):
+        raise ExportRequestError("bad_merge", "merge_pdf 必须是 {pages: [...]}", {})
+    if formats != (FORMAT_PDF,):
+        raise ExportRequestError("bad_merge", "多页 PDF 只能和 pdf 格式一起导出", {})
+    if spec.get("original") is not None:
+        raise ExportRequestError("bad_merge", "多页 PDF 的第一页来源只能在 pages 里给", {})
+    pages = raw["pages"]
+    if not pages or len(pages) > MERGE_PAGES_MAX:
+        raise ExportRequestError("bad_merge", f"多页 PDF 的页数要在 1–{MERGE_PAGES_MAX} 之间", {})
+    return MergePdf(pages=tuple(_original_source(p) for p in pages))
+
+
 def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> ExportRequest:
     """任意 JSON → `ExportRequest`。**缺省值只有这一处**。
 
@@ -608,8 +714,10 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     else:
         raise ExportRequestError("bad_inspection", "inspection 必须是一个对象", {"value": ""})
 
-    canvas = original = None
+    canvas = original = merge_pdf = None
     if scope == SCOPE_CANVAS:
+        if spec.get("merge_pdf") is not None:
+            raise ExportRequestError("bad_merge", "多页 PDF 只能按原图导出", {})
         source = spec.get("canvas") if isinstance(spec.get("canvas"), dict) else spec
         objects = source.get("objects")
         if objects is None:  # 更老的契约：items[] + texts[]（文字恒在最上）
@@ -621,33 +729,18 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         for obj in objects:
             if isinstance(obj, dict):
                 _source_basis(obj, obj.get("overrides"))
+                _figure_snapshot(obj)
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
             objects=[o for o in objects if isinstance(o, dict)],
         )
     else:
-        source = spec.get("original")
-        if not isinstance(source, dict):
-            raise ExportRequestError("missing_original", "按原图导出缺少 original 段", {})
-        figure_id = str(source.get("figure_id") or "")
-        if not figure_id:
-            raise ExportRequestError("missing_figure", "按原图导出没有说是哪一张图", {})
-        overrides = source.get("overrides") or []
-        if not isinstance(overrides, list):
-            raise ExportRequestError("bad_overrides", "overrides 必须是一个列表", {})
-        original = OriginalSource(
-            figure_id=figure_id,
-            source_policy=source.get("source_policy"),
-            expected_source=_source_basis(source, overrides),
-            overrides=[o for o in overrides if isinstance(o, dict)],
-            w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
-            h_mm=float(source["h_mm"]) if source.get("h_mm") else None,
-            px_w=int(source["px_w"]) if source.get("px_w") else None,
-            px_h=int(source["px_h"]) if source.get("px_h") else None,
-            source_kind=str(source.get("source_kind") or "unknown"),
-            ignored=tuple(str(x) for x in (source.get("ignored") or [])),
-        )
+        merge_pdf = _merge_pdf(spec, formats)
+        if merge_pdf is not None:
+            original = merge_pdf.pages[0]
+        else:
+            original = _original_source(spec.get("original"))
 
     return ExportRequest(
         scope=scope,
@@ -659,6 +752,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         validation_policy=policy,
         acknowledged=acknowledged,
         include_report=bool(spec.get("include_style_check_report") or spec.get("proof")),
+        merge_pdf=merge_pdf,
         document_id=str(spec["document_id"]) if spec.get("document_id") else None,
         document_revision=(
             str(spec["document_revision"]) if spec.get("document_revision") else None

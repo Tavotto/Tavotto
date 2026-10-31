@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-02
+Last updated: 2026-10-26
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -11,15 +11,18 @@ export destinations are used when the user chooses them.
 
 Network activity includes update checks and user-approved update downloads,
 package lookups and downloads for environment preparation or dependency
-installation, the optional AI assistant the user invokes, and — only after
-an explicit opt-in — usage statistics. The sections below distinguish these
-operations; local rendering does not mean that every feature is offline.
+installation, the optional AI assistant the user invokes, — only after
+an explicit opt-in — usage statistics, and — only when the user confirms each
+send — a redacted diagnostics bundle or a letter written through *Contact the maker*. The sections below distinguish these operations; local rendering does
+not mean that every feature is offline.
 
 ## Data Tavotto does not upload
 
 Tavotto does not upload figure files, source scripts, project files, layouts,
 exports, or the contents of a user's scientific data to the Tavotto project or to
-any service operated by the maintainers.
+any service operated by the maintainers. The one thing a user can choose to send
+is a redacted diagnostics bundle, which contains none of those and is never sent
+automatically — see [Diagnostics bundle](#diagnostics-bundle).
 
 This holds for the anonymous usage statistics too. The event schema physically
 cannot carry any of the following, on the client and again at the server:
@@ -59,6 +62,19 @@ has no in-app switch to disable those checks. The browser preference and Python
 backend environment variable do not control this desktop channel. The desktop
 updater downloads the signed installer when the user accepts an update.
 
+The desktop updater has two sources: GitHub Releases and a mirror operated by the
+Tavotto maintainers at `dl.tavotto.cn` (mainland China). If the system time zone is
+in mainland China or the system or interface language is Simplified Chinese
+(mainland), it asks the mirror first and GitHub second; otherwise GitHub first and the
+mirror second. The first source that answers decides: it is asked once per check, and
+the other one is contacted only when the first cannot answer, or when a download from
+it fails after you pressed *Download and install* (then the installer is fetched again
+from the other source). Either source sees what any HTTPS request reveals (IP address,
+time, the updater's user agent) and nothing else: no identifier, no telemetry, no
+project content. Which source the installer came from does not affect trust — the
+installer's signature is always verified with the public key built into the app, and
+an installer that fails verification is not installed.
+
 ## Package lookup and environment preparation
 
 When the user requests a package lookup, Tavotto runs `pip index versions` against
@@ -80,11 +96,29 @@ does not mean that every desktop startup downloads that runtime.
 
 ## Optional AI assistant
 
-The optional assistant is invoked only by the user. Tavotto passes the request to
-a Codex or Claude command-line tool selected on the user's machine. That tool may
-have its own network, account and privacy behavior; it is not a background upload
-performed by Tavotto. Users should review the policy of the selected tool before
-using it with sensitive material.
+The optional assistant is invoked only by the user, and only with an AI the user
+has connected in the "Connect an AI" dialog. Tavotto never relays these
+requests through its own servers; the request goes from the user's machine to the
+AI the user chose, in one of two ways:
+
+* **Subscription sign-in (ChatGPT or Claude).** Tavotto passes the request to the
+  Codex or Claude command-line tool installed on the user's machine, which talks to
+  its own service under its own account and privacy terms.
+* **API key or account sign-in (DeepSeek, Kimi, Zhipu GLM, MiniMax, Alibaba Bailian,
+  OpenAI, Anthropic, a custom address and others).** The request is sent to that
+  provider's API address. When a Codex or Claude command-line tool is installed, it
+  may carry the call with the user's key handed to it; otherwise Tavotto's built-in
+  agent sends it directly. Either way the destination is the provider's API address
+  the user connected, and the key is not sent anywhere else. Plain `http` addresses
+  are accepted only on the local machine or a private network.
+
+What is sent is the user's instruction plus whatever the assistant reads from the
+project to do the job, which can include the script and files in the project folder.
+Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
+Tavotto does not upload"). The AI service, or the command-line tool in the first
+case, has its own network, account and privacy behavior and is not a background
+upload performed by Tavotto. Users should review the policy of the selected service
+before using it with sensitive material.
 
 ## Optional anonymous usage statistics
 
@@ -119,8 +153,9 @@ explicitly opts in**, either in the one-time first-run prompt or under
   this is pseudonymous rather than anonymised, and the sections below describe
   exactly what that pseudonym is attached to.
 * **What is sent.** Broad product events (application started, a figure opened
-  for editing, an edit committed, a canvas created, a preflight run finished, an
-  export succeeded, the assistant started, an update installed; since consent
+  for editing, an edit committed, a canvas created, a preflight run finished, how an
+  export ended (done, partly done, failed or cancelled — with which formats were
+  requested (PDF, PNG, EPS, TIFF, SVG), never a file name or error text), the assistant started, an update installed; since consent
   version 2 also: a project refresh completed and which entry point triggered it,
   the readiness view opened and from where, which tutorial step was completed,
   which kind of multi-selection arrange button was used, how a save / recovery /
@@ -129,10 +164,27 @@ explicitly opts in**, either in the one-time first-run prompt or under
   how Tavotto was installed (desktop/pipx/pip/source/unknown). Every value is a
   fixed enumeration or a bucketed count; the full list is in
   [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md).
+* **Export outcome (consent version 3).** The `export_result` event reports how an
+  accepted export ended: done, partly done, failed or cancelled, which formats were
+  requested (PDF, PNG, EPS, TIFF, SVG), how many image files were written, at which coarse stage it stopped and a
+  coarse error class. No file name, path, error text or figure content is included.
+* **MCP tool calls (consent version 3).** When an AI agent (Codex, Claude Code or another
+  host) calls a Tavotto MCP tool, the `mcp_tool_call` event reports which tool, whether it
+  succeeded, a coarse error class, a duration bucket, whether the host was Codex, Claude or
+  something else, and whether the result was trimmed. The tool's arguments and results —
+  paths, script names, figure text, prompts — are never included. The MCP server uses the
+  consent saved by the desktop app and never asks on its own; if you have not agreed there,
+  it sends nothing.
 * **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
   consent version was raised: consent given for version 1 stopped being sufficient
   at that moment, no event is transmitted until the user is asked again, and the
   existing identifier is kept.
+* **Consent version 3 (2026-10-16).** Three things were added at once, so the consent
+  version was raised a single time: the export outcome event and the MCP tool-call event
+  above, and the optional error summary described under [Diagnostics bundle](#diagnostics-bundle). Consent given
+  for version 2 stopped being sufficient at that moment: no event is transmitted until
+  the user is asked again, the existing identifier is kept, and anyone who had declined
+  is not asked again.
 * **How to turn it off.** The toggle under *Settings → Privacy, diagnostics &
   About* takes effect immediately; already-queued events are dropped. Setting
   `TAVOTTO_NO_TELEMETRY=1` disables transmission entirely regardless of the saved
@@ -185,18 +237,279 @@ missing. Computing it never leaves the machine and never runs the user's code:
 
 ## Diagnostics bundle
 
-The diagnostics bundle (*Settings → Privacy, diagnostics & About → Export
-diagnostics*) is created locally and shared only if the user chooses to send it.
-Secrets and the user's home directory are redacted, and the anonymous telemetry
-identifier is redacted as well, so pasting a bundle into a public issue does not
-link that issue to the anonymous analytics records. Whether telemetry is on or
-off is included — that is useful for troubleshooting and is not sensitive.
+**Export (always available).** The diagnostics bundle (*Settings → Privacy,
+diagnostics & About → Export diagnostics*) is created locally and shared only if
+the user chooses to send it. It is the strictly redacted form: secrets and the user's home directory are redacted,
+and the anonymous telemetry identifier is redacted as well, so pasting a bundle
+into a public issue does not link that issue to the anonymous analytics records.
+Whether telemetry is on or off is included — that is useful for troubleshooting
+and is not sensitive. Redaction is automatic and is not a guarantee that nothing
+identifying remains; inspect the file before sharing it publicly.
+
+**Send problem report (offered by default, sends only when you confirm).** The
+same page, and the failure cards that suggest it, offer *Send problem report*,
+which uploads a diagnostics bundle to a service operated by the Tavotto
+maintainers (`tavotto.cn`) and stores it on Tencent Cloud COS (Shanghai).
+Offering the option uploads nothing; sending does:
+
+* **Only on your confirmation, every time.** Nothing is uploaded until you open the
+  dialog, read what will be sent, and press *Send*. The choice is not remembered:
+  there is no automatic, background, crash-triggered or scheduled sending, and a
+  cancelled, closed or failed send is never resumed on its own — after a restart
+  nothing is retried. Telemetry consent is a separate decision and does not imply
+  this one (nor the reverse). Pressing *Send* does not consent to any future automatic
+  reporting.
+* **Optional error summary (only if anonymous statistics are on, consent version 3).**
+  If, at the moment you press *Send*, anonymous usage statistics are enabled under the
+  current consent version and `TAVOTTO_NO_TELEMETRY` is not set, the send request also
+  carries a small summary of the most recent failed export or environment repair: the
+  internal component and operation, a fixed internal error code, and a snapshot of that
+  consent. It contains no message text, path, file name, script content, note, contact
+  detail or anonymous telemetry identifier. If enabled on the server side (off by
+  default), the diagnostics service may turn it into one error-tracking event at
+  PostHog under a random one-time reference that is unrelated to the telemetry
+  identifier. Turning statistics off stops summaries for later sends; a summary that was
+  already submitted is not guaranteed to be withdrawn. Without statistics consent only
+  the bundle itself is sent.
+* **You see what you send.** The dialog lists the kinds of content in the bundle, each
+  file with its size, and lets you save the exact file that would be uploaded and read
+  it first. Figures, project files and data files are not part of the bundle.
+* **What the sent bundle contains (more than the export).** So that maintainers can
+  diagnose in depth, the *sent* bundle (not the exported one, which is unchanged) adds
+  a set of extra files (`detail-…` / `optional-…`): error messages with full stack traces (engine, render process,
+  interface console), the last part of the application, desktop-shell (sidecar) and
+  render-process logs as written, the session state files (and a list of any corrupted
+  copies), the most recent backend requests (HTTP method, route pattern, status code,
+  duration and error code only — no request bodies, query strings or arguments), the
+  style edits of the figure being edited, the render environment (Python and matplotlib
+  versions, installed packages, non-default matplotlib settings, missing fonts), recent
+  render/export/test-run records, desktop-shell and install facts (app, Tauri and
+  WebView versions, OS version, CPU architecture, Rosetta, install method, update result
+  and whether the mirror or GitHub was used when known), storage facts (free disk space,
+  writability, whether the project is in a cloud-sync folder, the Windows long-path
+  setting), recent interface `console.error` / `console.warn` messages, display facts
+  (pixel ratio, window and screen size, language, theme) and network facts (whether a
+  proxy is configured, with credentials removed; whether `tavotto.cn` and `github.com`
+  resolve to a TUN-rewritten `198.18.0.0/15` address — preparing the bundle performs
+  these two name lookups with the system resolver, with a 2-second limit, and makes no
+  connection; time zone). Project folder names, file names and text inside
+  figures are **not** removed from these files. Your home directory is written as `~`,
+  your system user name as `<user>`, and credentials, cookies, nonces, API keys,
+  tokens and proxy passwords are removed from every one of them.
+* **Three extras, off by default and never remembered.** The dialog has three
+  checkboxes that start unticked every time it opens: *script source* (the scripts
+  registered in the open project, the scripts of recent test runs and of recent "generate editable
+  version" conversions — including R and MATLAB scripts — and the unadopted candidate script such
+  a conversion left in Tavotto's local cache, attached as they are — **secret removal in scripts is best
+  effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
+  without it the bundle contains no script source at all, including the source lines normally
+  printed inside tracebacks), *system crash
+  reports* (Tavotto, sidecar and render-Python crash reports from the last 7 days:
+  macOS reports and Windows WER reports are redacted text, but Windows crash dumps
+  (`.dmp`) are snapshots of the program's memory that may contain the contents and
+  paths of files that were open and **cannot be redacted** — they are attached as they
+  are, whole files only, newest first, within a size share) and *contents of corrupted session copies* (otherwise only their
+  names and sizes). Changing a checkbox rebuilds the bundle.
+* **A limit of automatic redaction.** Passwords or tokens that appear in logs without anything
+  that marks them as secrets cannot be recognised automatically. Before sending you can
+  expand the dialog to see the list of files, or save the exact bundle to your computer and read it.
+* **Size limit.** The upload limit is 64 MiB (it was 10 MiB before 2026-10-13). When the bundle is larger, content is
+  cut in a fixed order — the three extras first, then the default categories from the
+  last — and the dialog and the bundle's manifest say what was cut. The core files are
+  never cut; if they alone are too large the bundle is not uploaded and you can save it.
+* **What is transmitted.** The bundle itself, plus: the problem type you choose,
+  an optional free-text note you may type (up to 1000 characters; please do not
+  put names, email addresses, paths or data in it — it is sent as typed), the
+  Tavotto version, operating-system family, CPU architecture, install method,
+  bundle format version, and the file's size and SHA-256. A random request ID is
+  generated for each send; it is not the telemetry identifier and is not derived
+  from any machine information. The telemetry identifier is never sent.
+* **Where it goes.** Your computer's Tavotto process sends the bundle directly to a
+  private storage bucket (Tencent Cloud COS, mainland China) using a short-lived
+  permission that the receiving service issues for that single file; the file does
+  not pass through the Tavotto server. Like any network request, the receiving
+  service and the storage provider see your IP address in the connection. The
+  receiving service itself uses the address only, transiently and salted-and-hashed,
+  to rate-limit requests. Its requests arrive through the `tavotto.cn` web server,
+  which writes the same access log as for the website (address shortened as
+  described in *The tavotto.cn website* below, no query string, no request body,
+  kept 30 days). The storage provider's own handling follows its terms.
+* **How to turn it off.** Set the environment variable `TAVOTTO_NO_DIAG_UPLOAD=1`
+  (or `TAVOTTO_DIAG_UPLOAD=0`) for the Tavotto process; the option then disappears
+  from every screen and the local endpoints that serve it do not exist. Exporting
+  a bundle to a file stays available. The destination is built in; a misconfigured
+  `TAVOTTO_DIAG_ENDPOINT` turns the feature off rather than falling back to it.
+* **A local exit marker (never uploaded).** The desktop app keeps a tiny file,
+  `session-state.json`, in its configuration folder. It holds only the app version,
+  the start time, whether the last session ended normally (`running` / `clean`) and,
+  if the rendering engine stopped unexpectedly, which of three kinds of stop it was
+  (killed by a signal, non-zero exit, zero exit). It contains no project, path, script
+  name, user identifier or error text; it is not part of any diagnostics bundle, is
+  never uploaded and is not telemetry. It is read once at start-up so that, after an
+  abnormal exit, the app can offer *Send problem report* — which still sends only if
+  you open the dialog and press *Send*. Deleting the file only means one fewer prompt.
+* **Rate limits.** The receiving service limits each address to a few reports per
+  hour and caps the total accepted per day; a send that hits a limit fails with a
+  message and can be retried later.
+* **Remote instances.** If you are connected to a remote Tavotto instance, the
+  engine that builds and uploads the bundle is the one on the remote machine, so
+  the upload leaves that machine, not yours (the dialog on your screen only
+  controls it). The bundle then describes the remote machine.
+* **Report ID.** When the send succeeds you get a report ID (`TVD-…`) to quote in a
+  GitHub issue or chat so the maintainers can find your report. It is the only
+  handle to the report; the bundle is not tied to any account or to your telemetry
+  identifier.
+* **Retention and access.** The current server design keeps a report for 30 days
+  and then deletes it; the retention period is a server setting and this document
+  is updated if it changes. Reports are not publicly readable; only maintainers
+  with administrative access to the service can read or download them.
+* **Deletion.** Reports are deleted automatically after 30 days. To have a report
+  removed earlier, open an issue on the public issue tracker quoting the report ID
+  (without attaching anything else) and a maintainer will delete it.
+* **Failure.** If you are offline, the service is unavailable or the bundle is
+  larger than the limit (64 MiB by default), nothing is cut down or retried behind
+  your back: you can export the bundle and keep or send it yourself.
+
+## Contacting the maker
+
+*Contact the maker* (top-right of the editor and of the home page) lets you write
+to the Tavotto maintainers from inside the app, without signing in and without
+setting up an email account. It sends **only when you press *Send***; offering
+the button, opening the window and keeping a draft upload nothing, and a
+cancelled, closed or failed send is never resumed on its own.
+
+* **What is sent.** The subject (optional) and message you wrote; the app
+  version, operating system, CPU architecture, how Tavotto was installed and your
+  interface language; the attachments you chose (images, PDF, Word, Excel or
+  PowerPoint files, at most 5 and 20 MiB in total — only what you added, never
+  anything from your projects on its own); the reply email address *only if you
+  typed one*; and, *only if you tick Attach diagnostic info*, a redacted
+  diagnostics bundle sent through the same *Send problem report* flow described
+  above (you see what it contains first, and only its report number travels with
+  the letter).
+* **Who receives it.** A service operated by the Tavotto maintainers on
+  `tavotto.cn` (mainland China; attachments are stored on Tencent Cloud COS,
+  Shanghai). Outside mainland China the app tries `api.tavotto.com` first, a
+  relay that only forwards the request to `tavotto.cn` and stores and logs
+  nothing; inside mainland China it tries `tavotto.cn` first. If one does not
+  answer, the other is used. No other host is ever contacted.
+* **What it is used for.** Reading your letter and replying to it. The reply
+  email address is used only to send you the reply. It is not linked to usage
+  statistics (the letter carries no telemetry identifier and no usage event is
+  recorded for it), is not shared, and is not used for anything else.
+* **Replies inside Tavotto.** Whether or not you gave an email address, the
+  maker's reply can be fetched by the app: after sending, the app stores the
+  letter's number and a secret reply token in its data folder (readable by your
+  user only, where the platform supports it) and asks the service for replies
+  when it starts and every 6 hours — and only while such a record exists. The
+  reply email address is not kept in that record; it is remembered, if at all,
+  only in the app's local interface storage and can be forgotten from the
+  window.
+* **What stays on your computer (second phase).** Besides the number and the
+  reply token, the app keeps a local copy of **the subject and message you
+  wrote and the *names* of the files you attached** (not the files themselves, and
+  not your reply email address) so *My letters* can show your letter next to the
+  maker's reply. It is deleted together with the record: when you remove the
+  letter in the app, or after 365 days. If a reply contains images, the app
+  downloads them from the same service (same hosts, same reply token, only while
+  the record exists) and stores them in its data folder (readable by your user
+  only, where the platform supports it); they are deleted with the record too.
+  **Opening a reply makes no network request**: the reply is shown from the local
+  copy in a sandboxed frame that cannot run scripts or connect anywhere, and its
+  images are read from disk. Clicking a link in a reply opens it in your default
+  browser, as any link would.
+* **No email program is involved.** The app never opens your mail program and
+  contains no mail links; if sending fails it only offers *Copy content* and
+  *Copy address* (`feedback@tavotto.com`) so you can decide how to send it.
+* **Retention and deletion.** Letters, replies and attachments are deleted from
+  the server after 365 days, and the app's local record is deleted after the same
+  period. To have a letter deleted earlier, email `feedback@tavotto.com` quoting
+  its number (`TVM-…`).
+* **Switch.** `TAVOTTO_NO_CONTACT=1` removes the feature (no button, no network).
 
 ## Local service
 
 The desktop application uses a local service bound to `127.0.0.1` for the user
 interface and rendering bridge. It is not intended to expose the user's projects
 to other computers.
+
+## The tavotto.cn website
+
+The Chinese-language website <https://tavotto.cn/> (also reached through
+`www.tavotto.cn`) is a static site run by the project maintainer. Its pages load
+no analytics or tracking scripts and set or read no cookies. The same server also
+receives *Send problem report* uploads from the desktop app (three API paths under
+`/v1/reports/`); those requests are logged the same way.
+
+To see how many people visit and where they come from, the website's server keeps
+an access log. Each entry keeps only: the time; the visitor's IP address with the
+last part removed (IPv4 keeps the first three octets, IPv6 keeps the first 48
+bits); the request method; the host name; the page path without anything after
+`?`; the HTTP status code; the number of bytes sent; the referring page, also
+without anything after `?`; and the browser's User-Agent string. Full IP
+addresses, cookies, `Authorization`, query strings, TLS details and any request
+headers other than the referring page and User-Agent listed above are not
+recorded.
+
+The log stays on the website's server, is readable only by the maintainer, is
+deleted after 30 days and is not included in backups or shared with third
+parties. A daily report built from it contains only aggregate figures (page
+views, approximate unique visitors, popular pages, referrers, browsers and
+operating systems, status codes, daily trends and, when enabled, country or
+region) and covers at most the last 30 days.
+
+This section covers the website only. The Tavotto application does not contact
+the website; the download mirror `dl.tavotto.cn` used for update checks is a
+separate host and is described under "Update checks" above.
+
+## Supporting the project on tavotto.com
+
+Payments made through the support page <https://www.tavotto.com/support/> are
+made on Ko-fi or 爱发电 (afdian.com), under their own privacy policies; the
+website never sees card or account details. A Ko-fi payment is paid out directly
+to the maintainer's PayPal or Stripe account, so PayPal (the payer's name and
+email address) or Stripe (name, email address and part of the billing address)
+shows those details to the maintainer as the payment recipient, under PayPal's
+or Stripe's own policies. 爱发电 likewise shows the maintainer the supporter's
+爱发电 account and order. What follows is what the website itself receives and
+keeps.
+
+When a Ko-fi payment completes, Ko-fi notifies the website. The website sends
+one thank-you mail to the supporter's email address in that notification
+(through the website's mail provider) with a link for choosing how to appear on
+the supporters wall. The notification also carries the supporter's Ko-fi display
+name; it is only checked to recognise Ko-fi's own test notification and is then
+discarded, and the message is never kept.
+
+What is kept, for each payment: the Ko-fi transaction id, the month and time,
+whether it was a one-off payment or a membership (and the tier name), and the
+amount and currency. For each supporter: their email address and the list of
+their payments with the totals. The address and the amounts are kept so that
+payments from the same person can add up to an avatar on the wall, so that a
+membership can be shown while it is paid up, and so that the maintainer can
+later contact supporters about supporter benefits, such as a discount on a
+future Pro edition. They are never shown on the website and never shared with
+anyone, except that the address is handed to the website's mail provider to
+deliver these mails and both are held by its database provider. Only if the
+supporter fills in the form are the display name and optional avatar they
+chose kept. A name or avatar appears on the page only after the supporter
+submitted it and the maintainer approved it; a supporter who stays anonymous is
+counted but never named.
+
+爱发电 sends no email address. When it reports an order, the website looks the
+order up through 爱发电's API to confirm it was paid, and keeps the order number,
+the month and time, the amount, and whether it allows an avatar; the supporter's
+爱发电 user id is kept only as a keyed hash, under which the website also keeps
+the list of that person's orders and their total. To appear on the wall, the
+supporter enters an order number on the support page and gets the same form;
+the rest is as for Ko-fi above. Registering asks for an email address, next to
+the order number (or on the form itself when the support page opened it
+directly): it receives a thank-you mail carrying the same form link (at most
+one per order), and a mail when their orders first add up to an avatar, and it
+is kept with their orders for the purposes above.
+
+To change or remove an entry, or to have your email address and payment
+records deleted, write to <hello@tavotto.com>.
 
 ## Changes and contact
 

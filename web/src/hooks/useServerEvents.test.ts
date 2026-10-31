@@ -12,6 +12,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchPanels: vi.fn(),
+  engineRender: vi.fn(),
+  // 渲染 hook 的用例要拿到它交给 SSE 订阅的两个回调（事件 / 重连）；其余用例直接驱动 `handleServerEvent`
+  subscribeEvents: vi.fn(() => () => {}),
   refreshProject: vi.fn().mockResolvedValue({}),
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
   fetchRegistry: vi.fn().mockResolvedValue({
@@ -27,6 +30,7 @@ import {
   fetchPanels,
   fetchRuntimeAssets,
   refreshProject,
+  engineRender,
   type PanelInfo,
   type ServerEvent,
 } from '@/lib/api'
@@ -48,7 +52,12 @@ import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/ren
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { handleServerEvent } from './useServerEvents'
+import { literal } from '@/i18n'
+import { useDepRepairStore } from '@/store/depRepairStore'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { subscribeEvents } from '@/lib/api'
+import { handleServerEvent, reconcileInstalls, resetProjectErrorSeq, useServerEvents } from './useServerEvents'
 
 const mockPanels = vi.mocked(fetchPanels)
 const mockRefresh = vi.mocked(refreshProject)
@@ -204,6 +213,76 @@ describe('panel.file_changed', () => {
     expect(statusKey()).toBe('status.scriptChanged')
     await tick()
     expect(mockPanels).toHaveBeenCalledTimes(1)
+  })
+
+  describe('同脚本里两张图写同 stem 的不同文件（#1251）', () => {
+    describe('事件直接带 files（不依赖素材清单）', () => {
+      const seedTwo = () => {
+        seed([
+          panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' }),
+          panelObj('yi', 'panel.pdf', { script: 'f.py' }),
+        ])
+        useRenderStore.setState({ tracked: {} })
+        mockPanels.mockResolvedValue(panels([]))
+      }
+      const tracked = () => Object.keys(useRenderStore.getState().tracked).sort()
+      const fire = (extra: Record<string, unknown>) =>
+        handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], ...extra } as never))
+
+      it('byId 为空也能精确标乙、不标甲：fileId 直接对 files', () => {
+        seedTwo()
+        expect(useAssetStore.getState().byId).toEqual({})
+        fire({ stems: ['panel-2'], files: ['panel.pdf'] })
+        expect(tracked()).toEqual(['panel.pdf'])
+      })
+
+      it('files 只有甲时只标甲，即使乙的文件名 stem 也是 panel', () => {
+        seedTwo()
+        fire({ stems: ['panel'], files: ['panel.png'] })
+        expect(tracked()).toEqual(['panel.png'])
+      })
+
+      it('文档里只剩被矢量版让位隐藏的 PNG 面板：files 含它，照样标 stale（素材盘点不再列它也一样）', () => {
+        seed([panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' })])
+        useRenderStore.setState({ tracked: {} })
+        mockPanels.mockResolvedValue(panels([info('panel.pdf', { script: 'f.py' })])) // 清单里只有 pdf
+        fire({ stems: ['panel'], files: ['panel.pdf', 'panel.png'] })
+        expect(tracked()).toEqual(['panel.png'])
+      })
+
+      it('老事件没有 files：行为不变，按文件名 stem', () => {
+        seedTwo()
+        fire({ stems: ['panel'] })
+        expect(tracked()).toEqual(['panel.pdf', 'panel.png'])
+      })
+
+      it('files 是空数组 = 后端算出「没有文件」：什么都不标（不退回按 stem 猜）', () => {
+        seedTwo()
+        fire({ stems: ['panel'], files: [] })
+        expect(tracked()).toEqual([])
+      })
+
+      it('没有任何跨事件状态：A 项目的事件不会影响之后 B 项目的面板', () => {
+        seedTwo()
+        fire({ stems: ['panel-2'], files: ['panel.pdf'] })
+        project = 'p2'
+        seed([panelObj('b1', 'panel.pdf', { script: 'g.py' })])
+        useRenderStore.setState({ tracked: {} })
+        // 之后一次无关的刷新（assets.changed）不会拿 A 的旧事件去标 B 的面板
+        handleServerEvent(
+          ev({ kind: 'assets.changed', pj: 'p2', ids: [], added: [], removed: [], changed: [] }),
+        )
+        expect(tracked()).toEqual([])
+      })
+    })
+
+    it('老后端（事件没有 files、面板清单没有 stem）：仍按文件名 stem，行为不变', () => {
+      seed([panelObj('o1', 'Fig1.pdf', { script: 'f.py' })])
+      useRenderStore.setState({ tracked: {} })
+      mockPanels.mockResolvedValue(panels([]))
+      handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems: ['Fig1'] }))
+      expect(Object.keys(useRenderStore.getState().tracked)).toEqual(['Fig1.pdf'])
+    })
   })
 
   it('设置里的改写备份跟着重读：状态是按磁盘现算的，挂着旧的「恢复原脚本」点下去是整份覆盖', () => {
@@ -419,6 +498,53 @@ describe('project.error', () => {
 })
 
 describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
+  it('准备阶段先记文件级进度，started 保留起点，终局清除且不污染其它项目', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    try {
+      handleServerEvent(ev({ kind: 'render.preparing', pj: 'other', id: 'Fig1.pdf' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
+      handleServerEvent(ev({ kind: 'render.preparing', pj: 'p1', id: 'Fig1.pdf' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toMatchObject({ phase: 'preparing', startedAt: 1000 })
+      now.mockReturnValue(16000)
+      handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true, cost: 'medium' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toMatchObject({ phase: 'rendering', startedAt: 1000, cold: true })
+      handleServerEvent(ev({ kind: 'render.done', pj: 'p1', id: 'Fig1.pdf' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
+      handleServerEvent(ev({ kind: 'render.preparing', pj: 'p1', id: 'Fig1.pdf' }))
+      handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'Fig1.pdf', error: 'unavailable' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('render.progress 续上看门狗租约；别的项目的同名文件不续（#1207）', async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      vi.mocked(engineRender).mockImplementation((_id, _p, opts) => {
+        signal = opts?.signal
+        return new Promise(() => {})
+      })
+      useRenderStore.getState().clear()
+      void useRenderStore.getState().render('Fig1.pdf', [])
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      handleServerEvent(ev({ kind: 'render.progress', pj: 'other', id: 'Fig1.pdf' }))
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(signal?.aborted).toBe(true) // 别的项目的进度没续上，默认 5 分钟窗口到点
+
+      useRenderStore.getState().clear()
+      void useRenderStore.getState().render('Fig1.pdf', [])
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      handleServerEvent(ev({ kind: 'render.progress', pj: 'p1', id: 'Fig1.pdf' }))
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(signal?.aborted).toBe(false)
+    } finally {
+      useRenderStore.getState().clear()
+      vi.useRealTimers()
+    }
+  })
+
   it('冷启动「正在构建…」是 progress，随后的「渲染完成」是 done', () => {
     handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true }))
     expect(statusKey()).toBe('status.building')
@@ -705,6 +831,52 @@ describe('AI 修改之后（ADR 0041）', () => {
     expect(statusKey()).toBe('status.aiNoChange')
   })
 
+  it('ai.task 只改本标签页持有、还没收尾的会话的 task.phase（没有 task 就由事件建立）', () => {
+    useAiStore.setState({
+      sessions: [
+        { id: 's1', status: 'running', entries: [], task: { task_type: 'figure_edit', outcome: null } },
+        { id: 's2', status: 'running', entries: [] },
+        { id: 's3', status: 'done', entries: [], finalized: true, task: { task_type: 'figure_edit', outcome: 'completed' } },
+      ] as never,
+    })
+    for (const sid of ['s1', 's2', 's3', 'nope']) {
+      handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: sid, task_type: 'figure_edit', phase: 'correcting' }))
+    }
+    const byId = Object.fromEntries(useAiStore.getState().sessions.map((s) => [s.id, s.task?.phase]))
+    expect(byId).toEqual({ s1: 'correcting', s2: 'correcting', s3: undefined })
+    // 收尾的 ai.done 带回的 task（后端已去掉 phase）整体替换
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py',
+        task: { task_type: 'figure_edit', outcome: 'completed', corrections: 1 },
+      }),
+    )
+    const s1 = useAiStore.getState().sessions.find((s) => s.id === 's1')!
+    expect(s1.task).toEqual({ task_type: 'figure_edit', outcome: 'completed', corrections: 1 })
+  })
+
+  it('新发起的会话（本地没有 task）收到 ai.task 后有 correcting 阶段，收尾的 ai.done 不带 phase 就消失', () => {
+    // 与 aiStore.accept 的 fresh 分支同形：没有 task 字段
+    useAiStore.setState({
+      sessions: [
+        {
+          id: 'fresh1', project: 'p1', agent: 'claude', agentLabel: 'Claude', prompt: 'x', script: 'fig1.py',
+          panelId: null, fileId: 'f1', entries: [], status: 'running', changed: false, diff: '', startedAt: 1,
+        },
+      ] as never,
+    })
+    expect(useAiStore.getState().sessions[0].task).toBeUndefined()
+    handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: 'fresh1', task_type: 'figure_edit', phase: 'correcting' }))
+    expect(useAiStore.getState().sessions[0].task).toEqual({ task_type: 'figure_edit', outcome: null, phase: 'correcting' })
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 'fresh1', status: 'done', changed: true, diff: '+x', script: 'fig1.py',
+        task: { task_type: 'figure_edit', outcome: 'completed', corrections: 1 },
+      }),
+    )
+    expect(useAiStore.getState().sessions[0].task?.phase).toBeUndefined()
+  })
+
   it('老后端没有 refresh 字段：行为不变', () => {
     handleServerEvent(
       ev({ kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py' }),
@@ -779,5 +951,131 @@ describe('engine.environment_adopted', () => {
     handleServerEvent({ kind: 'engine.environment_adopted', pj: 'p1', id: 'x', source: 'conda', label: 'lab', python_version: '3.12.4' })
     expect(useEnvStore.getState().adoptedEnvironment).toMatchObject({ source: 'conda', label: 'lab', python_version: '3.12.4' })
     useEnvStore.getState().dismissAdoptedEnvironment()
+  })
+})
+
+describe('reconcileInstalls（SSE 重连 / 页面恢复）', () => {
+  it('依赖作业总是对账；引擎 bootstrap 只在还显示「安装中」时才刷环境', () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined)
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    useDepRepairStore.setState({ reconcile })
+    useEnvStore.setState({ refresh, installing: false })
+    reconcileInstalls()
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(refresh).not.toHaveBeenCalled()
+    useEnvStore.setState({ installing: true })
+    reconcileInstalls()
+    expect(refresh).toHaveBeenCalledTimes(1)
+    useEnvStore.setState({ installing: false })
+  })
+})
+
+describe('project.error 的撤销', () => {
+  beforeEach(() => {
+    mockPanels.mockResolvedValue(panels([]))
+  })
+  it('后台刷新失败挂常驻提示（有主人）；registry.changed / assets.changed 说明恢复了就撤', () => {
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    expect(useUiStore.getState().statusOwner).toBe('project.error:p1')
+    handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
+    expect(useUiStore.getState().status).toBeNull()
+
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    handleServerEvent(
+      ev({ kind: 'assets.changed', pj: 'p1', ids: [], added: [], removed: [], changed: [] }),
+    )
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('刷新恢复但没有语义差异（不发 registry.changed）：project.error 带 recovered 也撤', () => {
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('seq：恢复之后迟到的旧错误（seq 更小）不把 toast 顶回来；重连清零后新进程的 seq 从头计也认', () => {
+    resetProjectErrorSeq()
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 4 }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 6 }))
+    expect(useUiStore.getState().status).toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 5 })) // 迟到
+    expect(useUiStore.getState().status).toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 7 })) // 更新的错误照常
+    expect(useUiStore.getState().status).not.toBeNull()
+    resetProjectErrorSeq() // SSE 重连（后端可能重启，seq 从头计）
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 }))
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('对照：recovered 不顶出新的错误 toast，也撤不掉别的主人的', () => {
+    useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().statusOwner).toBe('render.failed:p1:x')
+    useUiStore.getState().setStatus(null)
+  })
+
+  it('对照：别的主人的 toast 不被恢复事件撤掉', () => {
+    useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
+    handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    useUiStore.getState().setStatus(null)
+  })
+})
+
+describe('useServerEvents 的 SSE 重连回调', () => {
+  it('重连清零 project.error 的 seq：已见 seq=5 之后，新进程从头计的 recovered(seq=1) 仍能撤掉 toast', async () => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    mockPanels.mockResolvedValue({ figures_dir: '/f', panels: [] } as never)
+    const sub = vi.mocked(subscribeEvents)
+    sub.mockClear()
+    const Probe = () => {
+      useServerEvents()
+      return null
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    await act(async () => { root.render(createElement(Probe)) })
+    const call = sub.mock.calls.at(-1)!
+    const onEvent = call[0]
+    const onOpen = call[1]!
+    resetProjectErrorSeq()
+    useUiStore.getState().setStatus(null)
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 5 })))
+    expect(useUiStore.getState().status).not.toBeNull()
+    // 对照：没重连时 seq=1 是迟到的旧事件，撤不掉
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
+    expect(useUiStore.getState().status).not.toBeNull()
+    await act(async () => { onOpen() }) // SSE 重连（后端可能重启，seq 从头计）
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
+    expect(useUiStore.getState().status).toBeNull()
+    await act(async () => { root.unmount() })
+  })
+})
+
+describe('PNG 采用被拒的说明不被后端原句顶掉（ADR 0139 PR1）', () => {
+  const seedPanel = () =>
+    useDocumentStore.getState().commit(literal('seed'), (d) => {
+      d.objects.push({
+        id: 'pp', type: 'panel', fileId: 'plot.png', fileKind: 'raster', script: 'f.py', figureFrame: 1,
+        nativeW: 50, nativeH: 40, x: 0, y: 0, w: 50, h: 40, overrides: [],
+      } as PanelObject)
+    })
+  it('同一张图的 render.failed 在采用失败说明还挂着时让位；别的图 / 没有说明时照常报', () => {
+    seedPanel()
+    useUiStore.getState().setStatus(literal('原因 + 出路'), 'info', { owner: 'png.admit:pp' })
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'plot.png', error: '后端原句' }))
+    expect(useUiStore.getState().statusOwner).toBe('png.admit:pp')
+    expect(useUiStore.getState().statusTone).toBe('info')
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'other.png', error: '后端原句' }))
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'plot.png', error: '后端原句' }))
+    expect(statusKey()).toBe('status.renderFailedWithError')
   })
 })

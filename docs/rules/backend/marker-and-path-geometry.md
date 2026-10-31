@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_manifest_marker_shape.py`、`test_manifest_geometry.py`、`test_series_shape_geometry.py`、`test_manifest_vector_text_metrics.py`、`test_preview_layout_geometry.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 90
+改到: `_marker_field` / `marker_current` / `marker_original`、`engine/pathgeom.py`、`manifest.vector_text_metrics`
+主题: 标记形状事实与路径几何 → `marker-and-path-geometry.md`
+必守要点: 形状是只读派生事实不是取值；geometry 不进文档；超过 `MAX_MARKERS` 整组退回 bbox
+-->
 
 - **标记形状是只读事实，不是取值（2026-09-06，UI/UX 审计 T16 补做）**：
   marker 一族的 enum 字段（曲线 / 散点 / 茎叶 markerline / 图例示意标记）带一个
@@ -153,3 +162,26 @@
   新 bucket 待解码、旧请求晚到、同 rev 的 worker 重建都不能混用。MCP 旧引擎缺少此
   能力时保留位图显示并给升级提示，不伪造 PNG 几何。看护 `tests/test_preview_png_geometry.py`
   的实际 PNG 像素、30 组布局 / bucket / frame、位移与还原，以及前端的图片加载用例。
+
+- **被裁剪的 Patch 选中框只罩画出来的那部分（2026-10）**：柱子从 y=0 画起而 `ylim` 下限为正
+  （或负值柱被 `ylim` 截断）时，`get_window_extent` 是未裁剪的整根柱，`bbox`（选中框 / 命中
+  参考框）会伸出子图甚至图幅。`manifest._fold_into_clip` 把 Patch（柱、色块、多边形）与柱形
+  系列成员的 bbox 折进 `_clip_extents`（与 `clip_bbox`、`geometry.clip` 同一个裁剪判据，
+  `clip_on=False` 不裁）。整个元素落在裁剪框外时**不折**，bbox 仍指到数据位置（元素树仍可选，
+  命中由 `geometry.clip` 挡住）。曲线 / 散点 / 集合刻意不折（扁平线垫宽、预检负对照靠未裁剪口径）。
+  **系列并集不并入完全在外的成员**：`_fold_into_clip` 回 `(bb, folded, outside)`，柱形系列
+  的并集 bbox 跳过 `outside` 的成员（子柱自己的 bbox 仍是数据位置）；全部成员都在外才退回
+  数据位置并集。超过 `MAX_MARKERS` 的系列没有 geometry，前端只用这个并集，故同样收窄。
+  看护 `tests/test_manifest_geometry.py` 的 `ClipBarFig` 四条与 `ClipSeriesFig` / `ClipOverCapFig` 三条。
+  **不拆「变换参考框」字段**：Patch 的拖动参考是 `anchor` 增量（`resizable` 只给子图 / 网格 /
+  色条，Patch 无缩放手柄），bbox 只被选中框 / 命中 / 吸附 / 对齐消费，它们要的正是看得见的部分。
+  副作用：把 Patch 拖到子图边上时 bbox 尺寸会随裁剪收窄——`tests/test_geometry_reference.py`
+  GEO-01 对 Patch 改为「bbox = 平移后的框 ∩ 子图框（完全在外则不折）」，其余元素仍要求尺寸不变。
+- geometry 带两项**绘制事实**（命中分层的输入，ADR 0086 修订）：`paint_order` = 该元素在真实 draw 顺序里
+  的序号（`pathgeom.paint_ranks`：Figure / Axes 的 `get_children()` 按 zorder 稳定升序递归，与
+  matplotlib draw 同一规则；主语是 manifest 测量那一刻的 `fig` 对象，不是 zorder 字面值也不是登记序；
+  伪元素取成员里最晚画的，且仅当成员 rank 区间内没有非成员 artist 夹着（否则不给，次序未知；`pathgeom.paint_order_of`）；端点箭头与按 bbox 命中的墨迹类（text / title / axis_label / legend / legend_text）把次序写在元素级 `paint_order`（`paint_ranks` 让叶子的全部后代继承叶子的次序：legend_text 即所属图例、axis_label 即所属 Axis、注解箭头即所属 Annotation——`Annotation.get_children()` 不含 `arrow_patch`，在那里显式补上；拿不到不写，前端据此只让次序已知的进描边层）；3D 子轴内容不给）；`fill_alpha` = 填充此刻的有效不透明度（读
+  `get_facecolor()` 的 alpha——matplotlib 的 `set_alpha` 是**替换**不是相乘，实测 fc alpha .5 + alpha .8
+  画出来是 .8；逐元素色与成员取最小，根本没填充的成员不计，填充了但 alpha=0 的成员计为 0；全无填充则不给该字段）。盖章在 `manifest._measure_manifest` 所有
+  geometry 分支之后统一做（`pathgeom.stamp_paint`）。严格同源：`web/src/lib/api.ts` 的 `ElementGeometry`、
+  `web/src/lib/pathGeom.ts` 的 `OPAQUE_FILL_ALPHA`。看护 `tests/test_paint_facts_geometry.py`。

@@ -12,7 +12,7 @@ import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
-export type RightTab = 'properties' | 'assistant' | 'canvas'
+export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
@@ -38,6 +38,8 @@ export interface IssueHover {
 }
 
 export type MainDialog = 'export' | 'settings' | 'styles'
+/** 准备引导卡的呈现（T13b）：展开 / 角标 / 收起 */
+export type GuideCardMode = 'card' | 'pill' | 'closed'
 
 /**
  * 这个主对话框此刻是不是被栈里更靠上的那个盖着。**判据只看栈**：直接
@@ -62,6 +64,7 @@ const LS_KEY = UI_PREFS_KEY
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360
+export const LEFT_DEFAULT = 300
 /**
  * 右栏 320–480px（默认 360）。296–320 的旧宽度装不下「可见标签 + 控件」的
  * 检查器排版——字体/字号只能挤成无标签的一行（见 docs/ux/INSPECTOR_REDESIGN.md
@@ -141,7 +144,7 @@ const DEFAULTS: Persisted = {
   prefsVersion: PREFS_VERSION,
   // 素材抽屉 + 右栏都开着：属性栏是编辑过程持续要看的，让它常驻
   leftOpen: true,
-  leftWidth: 300,
+  leftWidth: LEFT_DEFAULT,
   rightWidth: RIGHT_DEFAULT,
   leftPinned: false,
   rightPinned: true,
@@ -204,6 +207,8 @@ function readPersisted(): Persisted {
     }
     state = { ...state, prefsVersion: PREFS_VERSION }
   }
+  // 时间线页签依赖「打开了哪份排版」，是会话态：刷新后不带着它启动（落回属性页）
+  if (state.rightTab === 'timeline') state = { ...state, rightTab: 'properties' }
   // 版本号相同也要收进合法区间：手工改过 localStorage / 未来回滚都不该让
   // 界面拿到一个画不出来的宽度
   state = {
@@ -241,6 +246,12 @@ function readPersisted(): Persisted {
  */
 export type StatusTone = 'info' | 'progress' | 'done' | 'error'
 
+/** toast 上的一个动作：标签是描述符（跟着语言走），`run` 由挂提示的那一处给 */
+export interface StatusAction {
+  label: UiMessage
+  run: () => void
+}
+
 export interface ConfirmRequest {
   title: UiMessage
   body: UiMessage
@@ -277,6 +288,12 @@ interface UiState extends Persisted {
    * （`clearStatusOwnedBy`），别的图、别的类别的提示碰不到它。
    */
   statusOwner: string | null
+  /**
+   * 这条 toast 的一个动作（可选，`setStatus` 的 `action`）：通知轨里的「查看」。带动作的 toast 是要用户回头处理的
+   * 一句话（导出关窗后失败 / 等你决定），所以**不自己消失**，和错误一样挂到用户点 × 或主人撤掉。
+   * 例外：声明了 `dismissMs` 的（导出全部成功的「已导出 … · 在文件夹中显示」）带动作也到点自己走，悬停 / 聚焦时暂停。
+   */
+  statusAction: StatusAction | null
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -301,6 +318,13 @@ interface UiState extends Persisted {
    * 静静地显示同样长的时间）。
    */
   issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
+  /**
+   * 定位还**欠着**的那个属性字段（`lib/issueFocus.focusField` 写、找到落点或放弃时清）。
+   *
+   * 属性页据此把字段所在的「更多」/ 摘要行打开（`inspector/useLocateReveal`）：收起的折里不挂控件，
+   * 落点根本不在 DOM 里。`gid` 为 null = 画布对象的属性页。
+   */
+  fieldLocate: { gid: string | null; prop: string; token: number } | null
   /**
    * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
    * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
@@ -351,8 +375,6 @@ interface UiState extends Persisted {
   tool: Tool
   exportOpen: boolean
   layoutOpen: boolean
-  /** 布局版本时间线抽屉 */
-  versionsOpen: boolean
   /** 论文样式弹窗 */
   stylesOpen: boolean
   /**
@@ -377,17 +399,20 @@ interface UiState extends Persisted {
    */
   registryOpen: boolean
   /**
-   * 「项目检查」条的详情是否展开（T02，导入即扫描）。**只是呈现**：业务事实在 `projectScanStore`
-   * 里读后端的扫描快照；关掉 / 收起它不取消扫描（取消扫描是 `projectScanStore.cancel`，另一个动作）。
-   * 这是它**唯一**的开关；不进持久化（每次打开项目从收起开始）。
+   * 准备引导卡（T13b，画布右下的浮动卡）此刻怎么呈现：`card` 展开、`pill` 缩成角标、`closed` 收起。**只是呈现**：
+   * 扫描事实在 `projectScanStore`，会话、订阅与报告在 `projectPreparationStore`；缩成角标 / 收起都不取消任何后台工作
+   * （取消是会话的 `cancel` 动作）。收起时等作答的 input 由原对话框接着展示；缩成角标时脚本一发问卡就自动展开。
+   * 「每个项目自动弹一次」的标记在 `lib/guideCardSeen.ts`（本机，按项目）。这是它**唯一**的开关；不进持久化。
    */
-  scanPanelOpen: boolean
+  guideCard: GuideCardMode
   /**
    * 「渲染环境」对话框：`EngineEnvironmentCard` 的独立出口。脚本区「可能需要原环境」
    * 那一组的「选择渲染环境」直接开它，不把用户扔进设置页去找那张卡（卡在设置里
    * 住在「诊断」页、环境正常时还折叠在技术详情里）。这是它**唯一**的开关。
    */
   engineEnvOpen: boolean
+  /** 打开「渲染环境」弹窗时直接展开「使用其他 Python 环境」（缺依赖装不了时的主按钮）；弹窗关上即清 */
+  engineEnvPick: boolean
   /** 快捷键帮助 */
   shortcutHelpOpen: boolean
   /** 设置面板 */
@@ -438,15 +463,30 @@ interface UiState extends Persisted {
   setStatus: (
     msg: UiMessage | null,
     tone?: StatusTone,
-    opts?: { passive?: boolean; owner?: string },
+    opts?: {
+      passive?: boolean
+      owner?: string
+      action?: StatusAction
+      /**
+       * 带动作却仍自己走的那种（导出成功的「已导出 … · 在文件夹中显示」）：给了它就按这个毫秒数收起，
+       * 指针停在上面 / 焦点在它的按钮上照样不走表（`statusDismissTimer`）。错误语气不受它影响，仍常驻。
+       */
+      dismissMs?: number
+    },
   ) => void
   /**
    * 撤掉**这个主人**挂上的 toast；此刻挂着的不是它的（换成了别的图 / 别的类别的提示、或已被关掉）
    * 就什么都不做。主人是 `setStatus` 的 `owner`，由挂提示的那一处自己定（如 `renderFailureOwner`）。
    */
   clearStatusOwnedBy: (owner: string) => void
+  /**
+   * 撤掉主人以 `prefix` 开头的 toast（换项目时：`render.failed:` / `project.error:` 这些说的都是**旧项目**的事，
+   * 没人会再撤它们——事件按 pj 过滤，新项目收不到旧项目的 `render.done`）。
+   */
+  clearStatusOwnedByPrefix: (prefix: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setFieldLocate: (v: { gid: string | null; prop: string } | null) => void
   setIssueHover: (v: IssueHover | null) => void
   /** 比对后再清：此刻的 `issueHover` 还是 `v` 这个对象（同一身份）才撤，别的行写下的不动 */
   releaseIssueHover: (v: IssueHover) => void
@@ -478,12 +518,12 @@ interface UiState extends Persisted {
   ) => void
   /** 弹窗预填的名字（⌘S 写回撞上冲突时是绑定的那个文件名）；null = 用排版名 */
   layoutName: string | null
-  setVersionsOpen: (v: boolean) => void
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
-  setScanPanelOpen: (v: boolean) => void
+  setGuideCard: (v: GuideCardMode) => void
   setEngineEnvOpen: (v: boolean) => void
+  openEngineEnvPicker: () => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
    * 从导出面板深链进来时**不要先关导出面板**：设置压在它上面（`dialogStack`），
@@ -516,7 +556,10 @@ function persist(state: UiState) {
 }
 
 /** 普通状态自己走的时长；错误保留到用户关闭 */
-export const STATUS_AUTO_DISMISS_MS = 4500
+export const STATUS_AUTO_DISMISS_MS = 4000
+
+/** 导出成功胶囊（带「在文件夹中显示」）的停留时长：比普通状态长，给用户伸手点的时间；悬停 / 聚焦时暂停 */
+export const EXPORT_DONE_DISMISS_MS = 6000
 
 /**
  * 状态的自动收起计时器：指针停在 toast 上、焦点在它的按钮上、页面不可见时都不走表
@@ -549,12 +592,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusTone: 'info',
   statusPassive: false,
   statusOwner: null,
+  statusAction: null,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
+  fieldLocate: null,
   issueHover: null,
   problemPins: false,
   problemFilter: null,
@@ -567,13 +612,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   tool: 'select',
   exportOpen: false,
   layoutOpen: false,
-  versionsOpen: false,
   stylesOpen: false,
   stylesPresetId: null,
   dialogStack: [],
   registryOpen: false,
-  scanPanelOpen: false,
+  guideCard: 'closed',
   engineEnvOpen: false,
+  engineEnvPick: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
@@ -727,12 +772,13 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusTone,
       statusPassive: passive,
       statusOwner: status ? (opts?.owner ?? null) : null,
+      statusAction: status ? (opts?.action ?? null) : null,
     })
     statusDismissTimer.cancel()
-    // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
-    if (status && statusTone !== 'error') {
-      statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
-        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null }),
+    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）——带动作但声明了 `dismissMs` 的例外
+    if (status && statusTone !== 'error' && (!opts?.action || opts.dismissMs)) {
+      statusDismissTimer.start(opts?.dismissMs ?? STATUS_AUTO_DISMISS_MS, () =>
+        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null }),
       )
     }
   },
@@ -740,7 +786,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   clearStatusOwnedBy: (owner) => {
     if (!get().status || get().statusOwner !== owner) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
+  },
+
+  clearStatusOwnedByPrefix: (prefix) => {
+    const owner = get().statusOwner
+    if (!get().status || owner === null || !owner.startsWith(prefix)) return
+    statusDismissTimer.cancel()
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
   },
 
   // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人
@@ -753,6 +806,8 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? { ...v, token: (s.issueHighlight?.token ?? 0) + 1 }
         : null,
     })),
+  setFieldLocate: (v) =>
+    set((s) => ({ fieldLocate: v ? { ...v, token: (s.fieldLocate?.token ?? 0) + 1 } : null })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
   // 用户显式换范围 / 换切法：退回总览、放下游标。现场键里本来就有这两项，这里再清一次
   // 是为了**换回来时**不复活上一次点进的那张卡片（那是用户已经离开的地方）
@@ -833,7 +888,6 @@ export const useUiStore = create<UiState>((set, get) => ({
       layoutConflict: layoutOpen ? (opts?.conflict ?? null) : null,
       layoutName: layoutOpen ? (opts?.name ?? null) : null,
     }),
-  setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
   setStylesOpen: (stylesOpen, opts = undefined) =>
     set((s) => ({
       stylesOpen,
@@ -843,8 +897,9 @@ export const useUiStore = create<UiState>((set, get) => ({
         : popDialog(s.dialogStack, 'styles'),
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
-  setScanPanelOpen: (scanPanelOpen) => set({ scanPanelOpen }),
-  setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
+  setGuideCard: (guideCard) => set({ guideCard }),
+  setEngineEnvOpen: (engineEnvOpen) => set(engineEnvOpen ? { engineEnvOpen } : { engineEnvOpen, engineEnvPick: false }),
+  openEngineEnvPicker: () => set({ engineEnvOpen: true, engineEnvPick: true }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
     set((s) => ({
@@ -875,3 +930,7 @@ export function askConfirm(
     useUiStore.getState().setConfirm({ ...req, resolve })
   })
 }
+
+/** 排版时间线此刻是否在右栏里亮着（ADR 0101 2026-10-21 修订：它是右栏的一个页签，不再是浮卡） */
+export const isTimelineOpen = (s: Pick<UiState, 'rightOpen' | 'rightTab'>): boolean =>
+  s.rightOpen && s.rightTab === 'timeline'

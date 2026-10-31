@@ -30,6 +30,8 @@ export function CopyButton({
   className,
   variant = 'ghost',
   appearance = 'text',
+  feedback = 'button',
+  onCopied,
 }: {
   /** 要复制的文本；函数形式用于「点的那一刻才生成」 */
   text: string | (() => string)
@@ -39,6 +41,9 @@ export function CopyButton({
   variant?: ButtonProps['variant']
   /** text：带「复制」二字；icon：只有图标的 28×28 小钮（值旁边的那种） */
   appearance?: 'text' | 'icon'
+  /** button：钮自己说「已复制」两秒（默认，设置页）；toast：钮不变，复制成功后调 `onCopied` 由调用方在通知轨说一句 */
+  feedback?: 'button' | 'toast'
+  onCopied?: () => void
 }) {
   const [done, setDone] = useState(false)
   const timer = useRef<number | undefined>(undefined)
@@ -47,6 +52,10 @@ export function CopyButton({
     const value = typeof text === 'function' ? text() : text
     try {
       await navigator.clipboard.writeText(value)
+      if (feedback === 'toast') {
+        onCopied?.()
+        return
+      }
       setDone(true)
       window.clearTimeout(timer.current)
       timer.current = window.setTimeout(() => setDone(false), 2000)

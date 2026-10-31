@@ -91,26 +91,45 @@ def fake_pool(monkeypatch):
         "build_calls": 0,
         "force_cancel": [],
         "gate": threading.Event(),
+        "build_entered": threading.Event(),
         "error": None,
         "worker_factory": None,
     }
     box["gate"].set()  # 默认不阻塞
 
-    def build_owned(script, root, entry, **_kw):
+    def build_owned(script, root, entry, **kw):
         """替身按 pool 的合同回 `(worker, resp, created)`：所有权由这里**原子**给出，
-        默认「第一次调用创建、之后复用」——与真 pool 的 `get()` 同形。"""
+        默认「第一次调用创建、之后复用」——与真 pool 的 `get()` 同形。
+
+        `announce`（T09）：像真 pool 一样在执行之前把 `(worker, created)` 报给 `on_acquired`；被
+        `force_cancel(expected_worker=…)` 关掉时，卡在 build 里的这一次以 WorkerError 回来（真 worker 被杀即如此）。"""
         box["build_calls"] += 1
         ordinal = box["build_calls"]  # 进门那一刻的序号：所有权在「建会话那一下」就定了
-        box["gate"].wait(timeout=30)
-        if box["error"] is not None:
-            raise box["error"]
         factory = box["worker_factory"] or (lambda: _FakeWorker(Path(root)))
         created = ordinal == 1 if box["created"] is None else box["created"]
+        worker = factory()
+        if box["announce"] and kw.get("on_acquired") is not None:
+            kw["on_acquired"](worker, created)
+        box["build_entered"].set()
+        box["gate"].wait(timeout=30)
+        if box["killed"].is_set():
+            raise engine_pool.WorkerError("worker 被关掉", code="worker_crashed")
+        if box["error"] is not None:
+            raise box["error"]
         make_resp = box["build_resp"] or _build_resp
-        return factory(), make_resp(), created
+        return worker, make_resp(), created
+
+    def force_cancel(script, root, **kw):
+        box["force_cancel"].append((script, root))
+        if kw.get("expected_worker") is not None:
+            box["killed"].set()
+            box["gate"].set()  # 被杀的 build 当场返回
+        return True  # 真 pool：池里找到并关掉了（回 False = 已离池，调用方自己硬杀）
 
     box["created"] = None
     box["build_resp"] = None
+    box["announce"] = False
+    box["killed"] = threading.Event()
     monkeypatch.setattr(engine_pool, "build_owned", build_owned)
     monkeypatch.setattr(engine_pool, "same_python", lambda a, b: True)
     monkeypatch.setattr(
@@ -119,11 +138,7 @@ def fake_pool(monkeypatch):
         lambda root=None, **kw: ("/envs/fake/bin/python", "system"),
     )
     monkeypatch.setattr(engine_pool, "peek", lambda script, root: box["peek"])
-    monkeypatch.setattr(
-        engine_pool,
-        "force_cancel",
-        lambda script, root, **kwargs: box["force_cancel"].append((script, root)) or True,
-    )
+    monkeypatch.setattr(engine_pool, "force_cancel", force_cancel)
     monkeypatch.setattr(engine_pool, "control_plane_of", lambda w: "python_pool")
     return box
 
@@ -338,6 +353,8 @@ def test_cancel_during_build_kills_only_a_session_this_plan_created(client, tmp_
     fake_pool["gate"].clear()  # build 卡住
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     plan_id = resp.get_json()["plan"]["plan_id"]
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     deadline = time.time() + 5
     while (
         client.get(f"/api/engine/preparation/{plan_id}").get_json()["result"]["status"] != "running"
@@ -370,7 +387,8 @@ def test_cancel_never_touches_a_session_that_belongs_to_someone_else(client, tmp
     fake_pool["gate"].clear()
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     plan_id = resp.get_json()["plan"]["plan_id"]
-    time.sleep(0.05)
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     assert client.post(f"/api/engine/preparation/{plan_id}/cancel").get_json()["cancelling"] is True
     fake_pool["gate"].set()
     body = _wait(client, plan_id)
@@ -504,6 +522,80 @@ def test_a_retry_under_a_different_interpreter_is_stale_even_when_the_grant_did_
     assert result.error["reason"] == preparation.STALE_ENVIRONMENT
     assert result.error["executed"] is True
     assert result.receipt is None
+
+
+def _plan_requiring_input(monkeypatch):
+    """替身：就地重算出的计划多了一条 `required_input`（目标解释器上另一个静态依赖缺，要先授权依赖准备）。"""
+    import dataclasses
+
+    from tavotto.engine import deprepair
+
+    real = preparation.plan_for
+    needed = {"code": deprepair.ERROR_PREPARATION_REQUIRED, "message": "x"}
+
+    def fake(**kw):
+        return dataclasses.replace(real(**kw), required_input=dict(needed))
+
+    monkeypatch.setattr(preparation, "plan_for", fake)
+    return needed
+
+
+def test_a_retry_whose_absorbed_replan_needs_input_ends_needs_input_and_does_not_run_again(
+    tmp_path, fake_pool, monkeypatch
+):
+    """Codex #1294 P2：缺包后自动接手了用户自己的 Python，吸收派生授权后的重算计划要用户先答一件事
+    （依赖准备）——第二次执行不能跑（用户代码与副作用不能在「需要输入」的计划下发生），结局是 needs_input。"""
+    from tavotto.engine import workdir
+
+    svc = preparation.PreparationService()
+    root = _project(tmp_path, "p")
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    svc.register(plan)
+    ran = []
+
+    def runner(pl, before_retry=None):
+        ran.append("first")
+        monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+        needed = _plan_requiring_input(monkeypatch)
+        runner.needed = needed
+        before_retry()
+        ran.append("second")
+        raise AssertionError("重算计划要用户先答，还在重跑")
+
+    svc.start(plan.plan_id, runner=runner)
+    assert svc.wait(plan.plan_id, 30)
+    entry_plan, result = svc.get(plan.plan_id, "pj")
+    assert ran == ["first"]
+    assert result.status == preparation.STATUS_NEEDS_INPUT, result.error
+    assert result.required_input == runner.needed
+    assert result.receipt is None and result.error is None
+
+
+def test_auto_adoption_whose_absorbed_replan_needs_input_does_not_run(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """同一判据的另一处消费者：起会话之前吸收（`_replan_in_place`）得到的计划要用户先答 → needs_input，一次都不 build。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    _adopt_during_run(monkeypatch, root)
+    needed = _plan_requiring_input(monkeypatch)
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT, body["result"]
+    assert body["result"]["required_input"]["code"] == needed["code"]
+    assert fake_pool["build_calls"] == 0
 
 
 # ---------------------------------------------------------------- 项目绑定（FO-008）
@@ -812,7 +904,7 @@ def test_the_first_open_projection_branches_carry_no_machine_paths(
     )
     monkeypatch.setattr(
         engine_pool,
-        "invalidated_decision",
+        "consume_invalidated",
         lambda r: {"python": str(outside), "reason": "missing", "trigger": "first_open"},
     )
     body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
@@ -1088,6 +1180,8 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
     解释器回（还是旧的就缺包 + 候选表，换过了就什么都不缺）；门、决定、快照、过期检查都是真的。"""
     from tavotto.engine import deprepair, projectenv, userenvs
 
+    # ADR 0114：静默采用收进兼容开关；本用例测的是这条路径上「决定先于快照」的顺序（Codex #522 P1）
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
     deprepair.reset_state()
     root = _project(tmp_path, "p")
     _open(client, root)
@@ -1143,6 +1237,8 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
         return offer, envs
 
     monkeypatch.setattr(deprepair, "_preparation_offer", door)
+    # 自动采用在租约内对选中的候选现量一次（#980 r4254586851）；`lab` 是假解释器，替身说「此刻仍满足」
+    monkeypatch.setattr(userenvs, "evaluate", lambda cands, needed, unknown, **kw: [dict(entry)])
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     assert resp.status_code == 202, resp.get_json()
     plan = resp.get_json()["plan"]
@@ -1155,3 +1251,112 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
     assert result["status"] == preparation.STATUS_READY
     assert fake_pool["build_calls"] == 1
     assert str(lab) not in json.dumps(body), "公开投影不带用户环境的路径"
+
+
+# ---- 自动采用用户自己的 Python 带来的派生授权：就地吸收（ADR 0107 §二修订，2026-10-22 用户裁决）----
+
+
+def _grant(decided=False, implied=None, mode=None, at=None):
+    return {
+        "cwd_write": {"granted": mode is not None, "granted_at": at, "mode": mode},
+        "decided": decided,
+        "implied_by": implied,
+    }
+
+
+def test_implied_grant_absorbable_only_for_undecided_to_user_interpreter_default(
+    tmp_path, monkeypatch
+):
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+    undecided = _grant()
+    derived = _grant(implied="user_interpreter", mode="project")
+    assert workdir.grant_for(str(root)) == derived
+    assert preparation.implied_grant_absorbable(str(root), undecided, derived)
+    # 反例：用户显式授权过 / 计划时已派生 / 计划时决定过沙盒 → 不是「从未表态」，不吸收
+    for old in (
+        _grant(decided=True, mode="project", at=1.0),
+        _grant(decided=True),
+        _grant(implied="user_interpreter", mode="project"),
+    ):
+        assert not preparation.implied_grant_absorbable(str(root), old, derived)
+    # 反例：新授权不是派生默认（比如项目根、或带了点头时刻）→ 不吸收
+    for new in (
+        _grant(decided=True, mode="project_root", at=2.0),
+        _grant(implied="user_interpreter", mode="project_root"),
+        _grant(mode="project", at=3.0),
+        undecided,
+    ):
+        assert not preparation.implied_grant_absorbable(str(root), undecided, new)
+    # 反例：这期间有人设了工作目录 → 即使 new 恰好长得像派生，也不吸收
+    workdir.set_mode(str(root), "sandbox")
+    assert not preparation.implied_grant_absorbable(str(root), undecided, derived)
+
+
+def _adopt_during_run(monkeypatch, root, *, explicit: str | None = None):
+    """替身：执行线程里的「检测并采用」把项目切成用户自己的 Python（探针变真）；`explicit` 给了就是
+    『采用的同时用户（别的会话）也设了这一档』——授权变化不再只是派生默认。"""
+    from tavotto.engine import deprepair, workdir
+
+    state = {"adopted": False}
+
+    def decide(project_root, script, **_k):
+        if not state["adopted"]:
+            state["adopted"] = True
+            monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+            if explicit is not None:
+                workdir.set_mode(str(root), explicit)
+            return engine_pool.EnvironmentDecision(adopted={"path": "x"})
+        return engine_pool.EnvironmentDecision(adopted=None)
+
+    monkeypatch.setattr(deprepair, "decide_environment_pinned", decide)
+    return state
+
+
+def test_auto_adoption_absorbs_the_implied_grant_and_runs_on(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    assert plan["grant"]["cwd_write"]["granted"] is False and plan["grant"]["implied_by"] is None
+    state = _adopt_during_run(monkeypatch, root)
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert state["adopted"]
+    assert body["result"]["status"] == preparation.STATUS_READY, body["result"]
+    assert fake_pool["build_calls"] == 1
+    # 计划里的授权被更新为派生授权（与手动点同一个环境得到的一字不差），不是用户点头的授权
+    grant = body["plan"]["grant"]
+    assert grant == _grant(implied="user_interpreter", mode="project")
+    assert grant["cwd_write"]["granted_at"] is None
+    # 审计：trace 的 check 阶段记着这次吸收
+    facts = [
+        e.get("facts", {})
+        for e in body["result"]["trace"]["events"]
+        if e["phase"] == "check" and "grant_absorbed" in e.get("facts", {})
+    ]
+    assert facts == [{"grant_absorbed": "user_interpreter", "grant_mode": "project"}]
+
+
+def test_auto_adoption_does_not_absorb_a_grant_the_user_also_set(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """负对照：采用的同时用户设了授权（别的会话 / 改了设置）→ 授权变化不再只是派生默认，照旧 grant_changed。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    _adopt_during_run(monkeypatch, root, explicit="project_root")
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_ERROR
+    assert body["result"]["error"]["reason"] == preparation.STALE_GRANT
+    assert fake_pool["build_calls"] == 0

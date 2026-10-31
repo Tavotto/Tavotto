@@ -14,6 +14,8 @@ import { emptyProject, type TextObject } from '@/types/document'
 import { DEFAULT_ASSET_FILTERS, useAssetBrowseStore } from './assetBrowseStore'
 import { useDocumentStore } from './documentStore'
 import { useProjectStore } from './projectStore'
+import { useEnvStore } from './envStore'
+import { useProjectPreparationStore } from './projectPreparationStore'
 
 /**
  * 后端重启后 PROJECTS 清空（或项目被别处关掉），而本标签页 sessionStorage 里
@@ -211,5 +213,40 @@ describe('换项目清掉素材库的浏览状态', () => {
     expect(useAssetBrowseStore.getState().query).toBe('')
     expect(useAssetBrowseStore.getState().filters).toEqual(DEFAULT_ASSET_FILTERS)
     await tick()
+  })
+})
+
+describe('换项目：旧项目的准备会话在环境重置之前就丢掉', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    reply = okShapes
+    calls.length = 0
+    useProjectStore.setState({ phase: 'open', project: { open: true, id: 'p_old' }, recent: [], opened: [] })
+    setCurrentProjectId('p_old')
+  })
+  afterEach(() => {
+    useProjectPreparationStore.getState().clear()
+    setCurrentProjectId(null)
+  })
+
+  it('环境重置触发的订阅看不到旧条目：切项目不向离开的项目发任何 recheck（补审 #914 r4236701621）', async () => {
+    const act = vi.fn(async () => {})
+    useEnvStore.setState({
+      env: { project: { python: '/old/venv/bin/python', consent: 'confirmed', workdir: { mode: 'sandbox', decided: true } } },
+    } as never)
+    useProjectPreparationStore.setState({
+      act,
+      entries: {
+        'script:plot.py': {
+          key: 'script:plot.py',
+          pending: null,
+          report: { actions: [{ id: 'a', kind: 'recheck' }] },
+        },
+      },
+    } as never)
+    await useProjectStore.getState().open('/figs/new')
+    await tick()
+    expect(act).not.toHaveBeenCalled()
+    expect(useProjectPreparationStore.getState().entries).toEqual({})
   })
 })

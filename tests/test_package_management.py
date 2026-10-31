@@ -32,6 +32,7 @@ from support.dependency_repair import (
     wait_for,
 )
 from tavotto.engine import (
+    bootstrap,
     deprepair,
     envlease,
     managedenv,
@@ -45,8 +46,10 @@ pytest_plugins = ("support.dependency_repair",)
 def _clean(clean_state):
     """本文件每条用例前后都清一遍模块级状态。"""
     deprepair._jobs.clear()
+    deprepair._active_jobs.clear()
     yield
     deprepair._jobs.clear()
+    deprepair._active_jobs.clear()
 
 
 # --------------------------------------------------------------- 夹具
@@ -334,11 +337,151 @@ def test_install_without_an_environment_plans_to_create_one(tmp_path, no_pip, mo
     assert job.creates_environment is True and job.python == ""
 
 
-def test_install_without_a_base_python_is_refused(tmp_path, no_pip, monkeypatch):
+def test_package_jobs_and_active_dependency_jobs_are_separate_registries(
+    tmp_path, no_pip, monkeypatch
+):
+    """Codex r4217232866：包管理的 `_jobs`（PackageJob）与在途依赖作业登记（`_active_jobs`，元数据字典）曾共用
+    一个名字——已有 PackageJob 时 `installing()` / `unless_installing()` 对它 `.get` → AttributeError → 500；
+    反过来 `create_package_job` 对字典读 `.expires_at`。两种作业并存时，两边的读写都不能碰对方。"""
+    monkeypatch.setattr(deprepair, "base_python", lambda: sys.executable)
+    project = tmp_path
+    pj = deprepair.create_package_job(project, deprepair.OP_INSTALL, "lmfit")
+    assert deprepair.get_package_job(pj.job_id) is pj
+    # 已有包作业时，「这个项目上有没有安装在跑」只看依赖作业：没有 → False，且不抛
+    assert deprepair.installing(project) is False
+    assert deprepair.unless_installing(project, lambda: "ok") == "ok"
+    # 再认领一个依赖作业：登记在 `_active_jobs`，`installing` 见到它；包作业表不被污染
+    assert deprepair._claim(
+        "jp-coexist", project_id=managedenv.project_fingerprint(str(project)), digest="d"
+    )
+    try:
+        assert deprepair.installing(project) is True
+        with pytest.raises(envlease.EnvironmentBusy):
+            deprepair.unless_installing(project, lambda: None)
+        assert "jp-coexist" not in deprepair._jobs and pj.job_id not in deprepair._active_jobs
+        # 依赖作业在途时再建 / 查包作业：清理过期项读的是 PackageJob，不会撞上字典
+        other = deprepair.create_package_job(project, deprepair.OP_INSTALL, "mylab")
+        assert deprepair.get_package_job(other.job_id) is other
+        assert deprepair.get_package_job(pj.job_id) is pj
+    finally:
+        deprepair._release("jp-coexist")
+    assert deprepair.installing(project) is False
+    assert deprepair.get_package_job(pj.job_id) is pj  # 释放依赖作业不动包作业
+
+
+def test_install_without_a_base_python_and_without_private_python_is_refused(
+    tmp_path, no_pip, monkeypatch
+):
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
     monkeypatch.setattr(deprepair, "base_python", lambda: None)
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.create_package_job(tmp_path, deprepair.OP_INSTALL, "lmfit")
     assert err.value.code == deprepair.ERROR_MANAGED_UNAVAILABLE
+
+
+# ---- 没有合格基础解释器：不叫用户去装 Python，说清原因，探测期间不闪 ----
+def _no_system_python(monkeypatch, tmp_path, *, seen: tuple[str, ...] = ()):
+    """发现链末端没有合格者；`seen` 里的版本是“探得到、但 accept 会按版本区间拒掉”的候选。"""
+
+    def _find(accept=None):
+        for v in seen:
+            if accept is not None:
+                accept(f"/x/python{v}", v)
+        return None
+
+    monkeypatch.setattr(bootstrap, "find_base_python", _find)
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    deprepair.reset_state()
+    assert deprepair.base_python() is None  # 同步探完并写回缓存
+
+
+def test_without_a_base_python_the_capability_offers_private_python_instead_of_asking_to_install(
+    tmp_path, no_pip, monkeypatch
+):
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
+    _no_system_python(monkeypatch, tmp_path)
+    cap = deprepair.list_managed_packages(tmp_path)["capability"]
+    assert cap["available"] is True and cap["reason"] == ""
+    assert cap["private_python"]["required"] is True and cap["private_python"]["download_bytes"] > 0
+    assert "rejected_python" not in cap
+    # 首装计划同样带上（授权绑在计划上）
+    job = deprepair.create_package_job(tmp_path, deprepair.OP_INSTALL, "lmfit")
+    assert job.private_python == cap["private_python"]
+    assert job.to_payload()["private_python"] == cap["private_python"]
+
+
+def test_a_too_new_python_is_rejected_with_its_version_and_the_supported_range(
+    tmp_path, no_pip, monkeypatch
+):
+    """真实用户（TVD-ZG0Y）：装了 3.15.2 被拒，界面却只说“请安装 3.10 以上”。"""
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")  # 连私有 Python 也不提供：看手动文案的事实
+    _no_system_python(monkeypatch, tmp_path, seen=("3.15.2",))
+    cap = deprepair.list_managed_packages(tmp_path)["capability"]
+    assert cap == {
+        "available": False,
+        "reason": "managed_env_unavailable",
+        "rejected_python": {
+            "version": "3.15.2",
+            "direction": "newer",
+            "min": "3.10",
+            "max": "3.14",
+        },
+    }
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
+    both = deprepair.list_managed_packages(tmp_path)["capability"]
+    assert both["available"] is True and both["rejected_python"]["version"] == "3.15.2"
+    assert both["private_python"]["required"] is True
+
+
+def test_a_too_old_python_is_reported_as_older(tmp_path, no_pip, monkeypatch):
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
+    _no_system_python(monkeypatch, tmp_path, seen=("3.8.10",))
+    rej = deprepair.list_managed_packages(tmp_path)["capability"]["rejected_python"]
+    assert (rej["version"], rej["direction"]) == ("3.8.10", "older")
+
+
+def test_a_supported_python_leaves_no_rejection_behind(tmp_path, no_pip, monkeypatch):
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        bootstrap,
+        "find_base_python",
+        lambda accept=None: (
+            (accept("/x/p3.15", "3.15.1"), accept("/x/p3.13", "3.13.5"))[1] and "/x/p3.13"
+        ),
+    )
+    deprepair.reset_state()
+    assert deprepair.base_python() == "/x/p3.13"
+    assert managedenv.rejected_python_versions() == ()
+    assert deprepair.list_managed_packages(tmp_path)["capability"] == {
+        "available": True,
+        "reason": "",
+    }
+
+
+def test_while_the_base_python_is_still_being_probed_the_capability_says_checking_not_unavailable(
+    tmp_path, no_pip, monkeypatch
+):
+    """探测期间不闪：后台还在探（三态 None）时回 `checking`（可用、无原因），探完结论只变一次。"""
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(deprepair, "_warm_base_python", lambda: None)  # 后台探测“还没出结果”
+    deprepair.reset_state()
+    first = deprepair.list_managed_packages(tmp_path)["capability"]
+    assert first == {"available": True, "reason": "", "checking": True}
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda accept=None: None)
+    assert deprepair.base_python() is None  # 探完
+    final = deprepair.list_managed_packages(tmp_path)["capability"]
+    assert "checking" not in final and final["private_python"]["required"] is True
+
+
+def test_an_existing_environment_is_never_reported_as_checking(tmp_path, no_pip, monkeypatch):
+    monkeypatch.setattr(deprepair, "_warm_base_python", lambda: None)
+    deprepair.reset_state()
+    _fake_ready_env(tmp_path)
+    monkeypatch.setattr(deprepair, "inventory", lambda p: dict(_INV))
+    monkeypatch.setattr(deprepair, "custom_package_index", lambda p: False)
+    cap = deprepair.list_managed_packages(tmp_path)["capability"]
+    assert "checking" not in cap
 
 
 def test_low_disk_stops_at_plan_time(tmp_path, no_pip, monkeypatch):
@@ -610,6 +753,15 @@ def test_install_update_uninstall_end_to_end(tmp_path, wheelhouse, offline_manag
     assert python, "受管环境该建出来了"
     assert _in_venv(python, f"import {FIXTURE_IMPORT}; print({FIXTURE_IMPORT}.VALUE)") == "42"
     assert rec["result"]["version"] == "1.0"
+    # 首装 = 建第一代：回执带 generation，来源是用户指定
+    (receipt,) = rec["result"]["providers"]
+    assert receipt["distribution"] == FIXTURE_DIST and receipt["version"] == "1.0"
+    assert receipt["source"] == "user_specified"
+    assert (
+        receipt["generation"]
+        == managedenv.active_generation(project)
+        == rec["result"]["generation"]
+    )
     ledger = managedenv.installed_entry(project, FIXTURE_DIST)
     assert ledger and ledger["reason"] == managedenv.REASON_USER_REQUESTED
     with pytest.raises(subprocess.CalledProcessError):
@@ -626,10 +778,18 @@ def test_install_update_uninstall_end_to_end(tmp_path, wheelhouse, offline_manag
     # ---- update（wheelhouse 里没有更新的版本 → pip 说 already satisfied，幂等）----
     rec = run(deprepair.OP_UPDATE, FIXTURE_DIST)
     assert rec["result"]["version"] == "1.0"
+    (receipt,) = rec["result"]["providers"]  # 原地升：没有新代，generation 如实为空
+    assert (receipt["distribution"], receipt["version"], receipt["source"]) == (
+        FIXTURE_DIST,
+        "1.0",
+        "user_specified",
+    )
+    assert receipt["generation"] == ""
 
     # ---- uninstall ----
     rec = run(deprepair.OP_UNINSTALL, FIXTURE_DIST)
     assert rec["result"]["op"] == deprepair.OP_UNINSTALL
+    assert "providers" not in rec["result"]  # 卸载没有装入的 provider
     out = subprocess.run(
         [python, "-c", f"import {FIXTURE_IMPORT}"], capture_output=True, text=True, encoding="utf-8"
     )

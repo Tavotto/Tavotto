@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import { Bot } from '@/components/ui/icons'
-import { cn } from '@/lib/utils'
+import { IconFrame } from './IconFrame'
 import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
@@ -42,24 +42,20 @@ const GLYPHS: Record<string, Glyph> = {
 export function AgentIcon({
   iconKey,
   size = 36,
+  glyphSize = ICON_SIZE.lg,
   className,
 }: {
   iconKey: string
   /** 外框边长（列表 36、详情 40） */
   size?: number
+  /** 图形本身的边长（默认 lg；菜单 / 胶囊里的小图标传 sm） */
+  glyphSize?: number
   className?: string
 }) {
   const Glyph = GLYPHS[iconKey] ?? Bot
   return (
-    <span
-      aria-hidden
-      style={{ width: size, height: size }}
-      className={cn(
-        'flex shrink-0 items-center justify-center text-ink-2',
-        className,
-      )}
-    >
-      <Glyph size={ICON_SIZE.lg} />
-    </span>
+    <IconFrame size={size} className={className}>
+      <Glyph size={glyphSize} />
+    </IconFrame>
   )
 }

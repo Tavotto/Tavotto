@@ -222,8 +222,12 @@ interface NumberFieldProps {
   /** 拖动改数时把连续修改合并成一条撤销记录 */
   onScrubStart?: () => void
   onScrubEnd?: () => void
+  /** 只预览的几何控件在系统取消 / Esc / 卸载时丢弃本轮；缺省仍正常收尾已有事务。 */
+  onScrubCancel?: () => void
   /** 中性的稳定定位属性（data-inspector-prop）——测试与引导用，不进业务逻辑 */
   dataProp?: string
+  /** Esc 还原框内文字并失焦之后通知上层（框自己已 stopPropagation，外层的键盘监听收不到）。缺省无事发生 */
+  onEscape?: () => void
 }
 
 /**
@@ -251,7 +255,9 @@ export function NumberField({
   ariaLabel,
   onScrubStart,
   onScrubEnd,
+  onScrubCancel,
   dataProp,
+  onEscape,
 }: NumberFieldProps) {
   const unitText = typeof unit === 'string' && unit ? unit : ''
   const derivedLabel =
@@ -267,6 +273,8 @@ export function NumberField({
   // Enter / Esc 自己决定提交与否，随后的 blur 不能再提交一次：
   // 重复提交会让每次输入多压一条撤销记录，Esc 也会变成「还原后又写回去」
   const skipBlurSubmit = useRef(false)
+  const cancelScrub = useRef<(() => void) | null>(null)
+  useEffect(() => () => cancelScrub.current?.(), [])
 
   const display = mixed
     ? ''
@@ -315,11 +323,13 @@ export function NumberField({
   const startScrub = (e: React.PointerEvent) => {
     if (disabled) return
     e.preventDefault()
+    cancelScrub.current?.()
     const startX = e.clientX
     const startVal = value
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
     let moved = false
+    let done = false
 
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
@@ -329,15 +339,36 @@ export function NumberField({
       const mult = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1
       onChange(clampVal(startVal + dx * step * mult))
     }
-    const up = () => {
-      target.releasePointerCapture(e.pointerId)
+    const finish = (cancelled: boolean) => {
+      if (done) return
+      done = true
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      if (moved) onScrubEnd?.()
-      else inputRef.current?.select()
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('lostpointercapture', cancel)
+      window.removeEventListener('keydown', keydown, true)
+      cancelScrub.current = null
+      // lostpointercapture 在调用前可能已经释放了捕获；不让它把取消出口变成异常。
+      if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId)
+      if (moved) {
+        if (cancelled && onScrubCancel) onScrubCancel()
+        else onScrubEnd?.()
+      } else if (!cancelled) inputRef.current?.select()
     }
+    const up = () => finish(false)
+    const cancel = () => finish(true)
+    const keydown = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape' || !onScrubCancel) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      cancel()
+    }
+    cancelScrub.current = cancel
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('lostpointercapture', cancel)
+    window.addEventListener('keydown', keydown, true)
   }
 
   return (
@@ -361,6 +392,7 @@ export function NumberField({
         // `min-w-5` 保留单字符标记（X / Y / W）的 20px 对齐宽度；
         // `whitespace-nowrap` 保证两字及以上的标签横排、不被折成上下两行。
         <span
+          data-number-scrub
           onPointerDown={startScrub}
           className="flex h-full min-w-5 shrink-0 cursor-ew-resize items-center justify-center whitespace-nowrap text-xs text-ink-3 select-none"
         >
@@ -385,6 +417,7 @@ export function NumberField({
       >
         {prefix != null && prefixInside && (
           <span
+            data-number-scrub
             onPointerDown={startScrub}
             className="type-number flex h-full min-w-5 shrink-0 cursor-ew-resize select-none items-center justify-center whitespace-nowrap pl-1.5 text-ink-3"
           >
@@ -422,6 +455,7 @@ export function NumberField({
               setText(display)
               skipBlurSubmit.current = true
               ;(e.target as HTMLInputElement).blur()
+              onEscape?.()
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault()
               // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
@@ -441,7 +475,7 @@ export function NumberField({
             fill || half ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
-            unit != null ? 'pr-1 text-right' : 'text-center',
+            unit != null ? 'pr-0.5 text-right' : 'text-center',
           )}
         />
         {unit != null && (
@@ -560,6 +594,9 @@ export function ColorField({
           // 只剩色块时取色盘是**透明盖在色块上的真控件**；带面板时盖着的是面板触发钮。
           // 两种都在这一层画焦点环（overflow-hidden 只裁子元素，不吃这一层自己的 outline）
           'relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
+          // 坐在胶囊（浮动工具条，祖先带 data-capsule）里是一枚与控件同高的圆：胶囊左端是半圆，28 的圆在 p-1 里与它同心
+          // （2026-10-13 用户：「左侧的颜色可以改成圆形了」；输入框同一条规则在 fieldBox）
+          'in-data-capsule:size-7 in-data-capsule:rounded-full',
           disabled ? 'cursor-not-allowed' : 'hover:border-border-strong',
         )}
       >

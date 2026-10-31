@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-current-fullscreen"
+description = "Enables the current_fullscreen command without any pre-configured scope."
+commands.allow = ["current_fullscreen"]
+
+[[permission]]
+identifier = "deny-current-fullscreen"
+description = "Denies the current_fullscreen command without any pre-configured scope."
+commands.deny = ["current_fullscreen"]

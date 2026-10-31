@@ -227,6 +227,9 @@ class FileResource:
     sha256: str
     origin: str  # execution | static
     semantic_identity: str
+    svg_sha256: str | None = (
+        None  # verified same-Figure companion, never an arbitrary PDF conversion
+    )
 
 
 Resource = Union[FontResource, FileResource]
@@ -268,6 +271,9 @@ class GlyphRun:
     #: 这一段的**逻辑文字**与 cluster 原文拼出来的不一致时（合成上下标：画的是 `5`，
     #: 用户写的是 `⁵`），这里放用户的原文；写入器包 ActualText。None = 一致。
     actual_text: str | None = None
+    #: 不画、只进文本层（PDF 文字渲染模式 3；SVG / 位图不画）。标注公式的源码用它：公式本身是
+    #: 填充轮廓，文本层里在同一位置放这段看不见的字，阅读器里选中 / 复制拿到 LaTeX（ADR 0152 §七）。
+    invisible: bool = False
 
     @property
     def cluster_text(self) -> str:
@@ -370,7 +376,7 @@ OPERATIONS = (
     "imported_page",
     "flip",
 )
-CAP_FORMATS = ("pdf", "png", "tiff", "eps")
+CAP_FORMATS = ("pdf", "png", "tiff", "eps", "svg")
 CAP_SCOPES = ("canvas", "original")
 
 
@@ -425,6 +431,12 @@ CAPABILITIES: dict[str, dict[str, Capability]] = {
         "U07 render child：与 PNG 同一个 RasterBuffer（ADR 0046 / 0066）",
         OPERATIONS,
     ),
+    "svg": {
+        **_caps(CAP_NATIVE, "Native paths, outlined shaped text and embedded images", OPERATIONS),
+        "imported_page": Capability(
+            CAP_UNSUPPORTED, "A static PDF requires a verified same-Figure SVG representation"
+        ),
+    },
     "eps": _caps(
         CAP_UNSUPPORTED,
         "没有 PostScript 写入器；EPS 只有 worker 的 matplotlib 写得出（ADR 0046）",
@@ -490,6 +502,14 @@ def unsupported_for(page: Page, fmt: str) -> list[dict]:
     for node, _path in walk(page):
         for op in operations_of(node):
             cap = table[op]
+            if fmt == "svg" and op == "imported_page":
+                resource = page.resources.get(node.resource)
+                if (
+                    isinstance(resource, FileResource)
+                    and resource.svg_sha256
+                    and node.page_index == 0
+                ):
+                    continue
             if cap.level != CAP_UNSUPPORTED:
                 continue
             key = (op, getattr(node, "object_id", ""))
@@ -641,6 +661,8 @@ def _text(node: ShapedText, page: Page, path: str) -> None:
                 raise IRError("bad_glyph", f"cluster 原文必须是字符串: {g.text!r}", rp)
         if run.actual_text is not None and not isinstance(run.actual_text, str):
             raise IRError("bad_glyph", f"actual_text 必须是字符串或 None: {run.actual_text!r}", rp)
+        if not isinstance(run.invisible, bool):
+            raise IRError("bad_glyph", f"invisible 必须是布尔值: {run.invisible!r}", rp)
 
 
 def _placement(

@@ -11,7 +11,7 @@ Agent，以及用户自己在终端里敲的那一行。协议版本 **v1**（`p
 
 ```
 tavotto open <产物|脚本|目录> [--json] [--no-launch] [--desktop|--browser] [--port N]
-                              [--no-probe] [--stem <名字>]
+                              [--no-probe] [--stem <名字>] [--render-wait SECONDS]
 tavotto run  [--project P] [--quiet] [--status-file F] -- <python> <脚本|-m 模块> [参数…]
 tavotto doctor [--json] [--write-manifest|--remove-manifest]
 ```
@@ -22,6 +22,13 @@ tavotto doctor [--json] [--write-manifest|--remove-manifest]
 * `--json` —— 输出一行机器可读 JSON。**成功和失败都有**，失败那行带稳定的 `code`。
 * `--no-probe` —— `.py` 目标静态解不出产出时**不**试运行（只按现有登记打开）。
 * `--stem <名字>` —— 脚本产出多张图时显式选哪张（只对 `.py` 目标有效）。
+* `--origin-json FILE` —— **仅记录模式**（加性，`protocol` 仍为 1；ADR 0139 PR3 第一片）：读 FILE 里
+  插件在**真的跑了脚本**之后收集的来源事实，按产物 PNG 的字节 sha256 写进 `data_dir()/origin/`，
+  输出 `{"ok": true, "origin": {"recorded": N, "skipped": M}}`；不登记、不唤起、不执行。
+  记不进去也退出 0（只是线索）；老 CLI 不认识这个参数（argparse 退出 2），插件当作没记。
+  记录只做展示：不进 exact / needs_confirmation 的判定，不用来换解释器。
+* `--render-wait SECONDS` —— 唤起后最多等多久，看界面对目标图的那一次渲染有没有结论
+  （默认 20；0 = 不等；`--no-launch` 下无意义）。见下文「交接三态」。
 
 `tavotto run` 是**另一条命令、另一套语义**（Beta，ADR 0021）：它不"交接一张
 已经画好的图"，而是**用你自己的 Python 跑你自己的脚本**，Tavotto 接管那个
@@ -117,6 +124,53 @@ macOS 上**不再直接 exec 包内二进制**：GUI 进程会继承调用方的
 最准）→ 安装清单里核实过的 `desktop` → 惯例位置。少了中间两条，发现链找得到
 CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却看不到窗口。
 
+### 来源记录（ADR 0139 PR3，加性）
+
+插件 `handoff.py` 只在**这次真的跑了脚本**（输出 `ran: true`）时，让跑脚本的那个 Python 进程在退出时
+把「我用的环境」写进旁路 JSON（`PYTHONPATH` 前置一个临时 `sitecustomize`，先链回用户自己的；脚本、argv、cwd、
+stdout 不变），再把其中白名单字段和**这次真的重写了的 PNG**（跑前跑后 mtime/size 快照之差）交给
+`tavotto open --origin-json`。字段（闭集）：python_version、matplotlib_version、backend、figure_dpi
+（= 脚本进程退出时刻 `rcParams["figure.dpi"]` 的值）。**不记**savefig 的 dpi / bbox_inches 等——逐次
+`savefig(...)` 的实参探针看不到，记 rc 值会误导。**不记**解释器绝对路径、argv、环境变量。插件输出多一个
+`origin: {"recorded": N}`（或 `{"recorded": 0, "reason": ...}`）。产物没重跑、脚本失败、脚本没导入
+matplotlib 一律不写（诚实缺失）；用户在终端里直接跑出来的图没有记录。第一片只记录与展示；保存瞬间
+证据、按记录选解释器是后续，需单独 ADR 与用户授权。
+
+### 交接三态：`launch.render`（加性字段，`protocol` 仍为 1）
+
+`ok: true` 的含义**没有变**：CLI 层 = 解析、登记、唤起成功且（桌面模式）进程活着；插件层 =
+`parameterizable === true`。**两层都不含「图已渲染」**（#961：交接早已返回 `ok: true`，sidecar
+却因缺引擎文件渲染失败）。要知道渲染结果，读 `launch.render`：
+
+```json
+"launch": {"mode": "desktop", …, "render": {"status": "ok", "verified": true, "waited_ms": 2310,
+           "stem": "Fig1_removal_rate", "registry_match": true, "manifest_elements": 42}}
+```
+
+| `render.status` | 含义 | 附带字段 |
+| --- | --- | --- |
+| `ok` | 界面对目标 stem 的那次渲染成功了 | `verified`、`stem`、`registry_match`、`manifest_elements` |
+| `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`、选中原件核对不上的 `artifact_source_unavailable`…；不合规的串落成 `render_failed`） |
+| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` / `already_displayed` |
+
+`verified` 为 true 当且仅当：渲染成功 ∧ 结论里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空
+（判据唯一在 `engine/handoffreceipt.py::summarize`，调用方不要自己再判一遍）。`waited_ms` 是实际等了多久。
+
+确认信号怎么来的：实例在 `/api/engine/render` 收尾时把结论记进进程内的有界结论表；CLI 唤起**之前**取 `since`
+（留 2 秒回拨余量），唤起后有界轮询 `GET /api/handoff/render-status?project=&stem=&since=`，拿到 `since` 之后该项目 + stem
+的**第一份**结论即返回。端点**经认证**（Host / Origin 照旧）：凭据是浏览器模式的完整 secret（`port-<端口>.json`），或桌面
+sidecar 发布的**只读、只对这一个端点有效**的 token（`<数据目录>/session/handoff-status-<端口>.json`，0600）。
+**CLI 不往磁盘写任何东西**；只记录界面本来就会做的那次渲染，不为验证执行用户脚本（信任锚与会话凭据文件同一个论证，
+见 ADR 0131 第六节「实现」与 ADR 0008 修订）。找不到任何凭据 / 连不上实例 / 被拒落成 `unverified/channel_unavailable`；
+连上了但到点没有结论（实例在跑但没有给出结论）落成 `unverified/timeout`；
+目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`；登记结果已是不可参数化（`registry.parameterizable === false`，界面不会为它发起引擎渲染）时**不等待**，直接 `unverified/not_renderable`。
+
+**重复交接已显示着的同一张图（2026-10-18，#1154）**：前端只选中、不再渲染，所以结论表里没有 `since` 之后的新结论，
+CLI 过去会白等满 `--render-wait`（默认 20 秒）再报 `unverified/timeout`。现在前端命中已显示的面板时会经**会话认证**的
+`POST /api/handoff/display-ack` 回一条确认：上一次渲染成功就按当前时间记一条同形状的 `ok`（`verified` 仍只由 `summarize` 判）；
+失败记 `failed` + 稳定码；显示着的内容不是这一版的精确渲染（过期等）则记 `unverified/already_displayed`——实例明确应答了、
+但没有可凭的渲染结论，**不是失败，也不是 verified**。老前端不发确认时与从前一样等到超时。这个写入口 scoped 只读 token **不能**用。
+
 ### `tavotto open --json` 失败时
 
 ```json
@@ -134,7 +188,8 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `registry_write_failed` | 图库目录不可写 | 提示用户改目录权限，或把图放到可写的目录 |
 | `project_unreadable` | 图库目录读不了 | 同上 |
 | `desktop_missing` | 给了 `--desktop` 但没装桌面版 | 去装，或去掉 `--desktop` |
-| `launch_failed` | 界面在、但起不起来 / **起来就崩**（权限、杀软、可执行位丢了、SIGABRT） | 报给用户，**别当成「没装」**；随附 `app` / `exit_code` / `signal` / `log_path` / `retryable` |
+| `launch_failed` | 界面在、但起不起来 / **起来就崩**（权限、杀软、可执行位丢了、SIGABRT）；或桌面应用**已在运行**、转发这次交接的进程却卡住不退（随附 `reason: "forward_stuck"`，CLI 已结束该进程，**不再算「已唤起」**） | 报给用户，**别当成「没装」**；随附 `app` / `exit_code` / `signal` / `log_path` / `retryable`；`forward_stuck` 时多半是环境挡住了进程间转发，在沙箱外重跑同一条命令 |
+| `sandboxed_launch` | 当前进程在**受限沙箱**里（Windows：受限令牌（`IsTokenRestricted`）或 AppContainer，如 Windows 版 Codex 的默认沙箱），桌面应用在这里起不来、也转发不到已开着的窗口——CLI **不拉进程**就返回 | **在沙箱外重跑同一条命令**（Windows 版 Codex：申请 `sandbox_permissions: "require_escalated"` 并写一句理由），不要让用户手动打开 Tavotto；随附 `sandbox`（`restricted_token` / `app_container`）/ `app` / `log_path` / `retryable: true` |
 | `launch_timeout` | 唤起后进程在限期内没有出现 | 让用户看 `log_path`；`retryable: true`，可重试一次 |
 | `remote_open_failed` | 已在运行的实例打不开这个项目 | 把 `error` 转达给用户 |
 | `bad_launch_mode` | `--desktop` 与 `--browser` 同时给了 | 修调用 |
@@ -146,6 +201,7 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `runtime_asset_failed` | 捕获到了图却没能登记成可打开的素材 | 报给用户（罕见；带 `stems`） |
 | `multiple_stem_conflict` | 产出的图名已被别的脚本登记 | 让用户在注册表里手工裁决归属 |
 | `native_run_required` | 缺依赖（extra 带 `module` 与原始 `probe_code`）——safe 档修不了「项目要自己的环境」 | 引导换渲染环境；native 运行（`tavotto run`）是后续版本 |
+| `import_folder_unreadable` | 脚本加载的项目外文件夹当前账户读不了（ADR 0153；extra 带 `folder`、`probe_code`，有 `module` 时也带） | 在 Tavotto 界面里按提示安装缺少的依赖，或开放该文件夹的读取权限 |
 | `probe_in_progress` | 同一脚本已有一次试运行在进行中（素材库/另一个调用方） | `retryable: true`，稍后重试 |
 
 ### `tavotto doctor --json`
@@ -308,6 +364,20 @@ Tavotto --open <项目目录> [--stem <名字> | --pick-script <脚本相对路�
 等于让对面多猜一次，而 SKILL.md 里教 Codex 的恰恰是按 `error_code` 分支。
 
 成功时 `tavotto: {"source": ..., "cmd": ...}` 说明是从哪条腿找到的 CLI。
+
+**交接三态（加性，退出码与 `ok` 不变）**——payload 顶层另有三个字段，把「交接了」与「图画出来了」拆开说：
+
+| 字段 | 取值 |
+| --- | --- |
+| `launch_success` | `true` = CLI 报成功且唤起了界面；`null` = 没唤起（`--no-launch`）；`false` = 没走到唤起（路径错、脚本失败、没有 Tavotto、`tavotto open` 失败） |
+| `render_success` | `true` = 界面对目标图的那次渲染成功；`false` = 界面**明确报了渲染失败**（`render.code` 是稳定码）；`null` = **不知道**（没等到结论、老 CLI、没唤起）——`null` 不是失败 |
+| `verified_success` | 仅当 CLI 的 `launch.render.verified === true` 才为 `true`；其余一律 `false` |
+
+外加 `render`：CLI 的 `launch.render` 原样透传。**新插件读老 CLI**（没有 `launch.render`）：补成
+`{"status": "unverified", "reason": "cli_without_render_signal"}`，`render_success: null`、`verified_success: false`。
+**老插件读新 CLI**：多出的字段被忽略，行为与从前一致。#961 的形状是 `launch_success: true`、
+`render_success: false`、`render.code: "engine_files_incomplete"`——而退出码仍是 0（不改 `ok` 的公开语义），
+所以**调用方必须读这三个字段，别只看退出码**。
 
 ---
 

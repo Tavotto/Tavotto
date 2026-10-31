@@ -1,5 +1,5 @@
 /**
- * 文档冲突条的三个出口（2026-10-07 审计 P0）。
+ * 文档冲突的三个出口（2026-10-07 审计 P0；2026-10 设计审计第二轮起只在顶栏文档芯片的说明块里，`ConflictActions`）。
  *
  * 此前「重新加载 / 覆盖 / 另存为」三颗同形同重的 ghost 钮，「覆盖」一下就把另一个窗口存的
  * 较新版本（或外部改过的文件）换掉，和安全的「重新加载」（先留恢复副本再读盘）一样轻。钉三件事：
@@ -20,7 +20,7 @@ vi.mock('@/store/documentStore', async (importOriginal) => ({
   reloadFromDisk: vi.fn(async () => undefined),
 }))
 
-import { DocumentBanner } from '@/components/DocumentBanner'
+import { ConflictActions } from '@/components/DocumentBanner'
 import { overwriteDisk, reloadFromDisk, useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -68,7 +68,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  act(() => root.render(<DocumentBanner />))
+  act(() => root.render(<ConflictActions />))
 })
 
 afterEach(async () => {
@@ -78,14 +78,13 @@ afterEach(async () => {
   useDocumentStore.setState({ saveState: 'saved', saveIssue: null })
 })
 
-describe('文档冲突条', () => {
-  it('分轻重：重新加载是主按钮，另存为是次按钮，覆盖收在 ⋯ 里；冲突条是 urgent', async () => {
-    expect(container.querySelector('[data-doc-banner]')!.getAttribute('data-doc-banner')).toBe('urgent')
+describe('文档冲突的三个出口', () => {
+  it('分轻重：重新加载是主按钮，另存为是次按钮，覆盖收在 ⋯ 里', async () => {
     expect(action('reload').dataset.variant, '主按钮').toBe('primary')
     expect(action('save-as').dataset.variant).toBe('secondary')
     expect(
       container.querySelector('[data-doc-conflict-action="overwrite"]'),
-      '覆盖不与安全出口并排：条上看不到它',
+      '覆盖不与安全出口并排：⋯ 外看不到它',
     ).toBeNull()
     const item = await overwrite()
     expect(item, '⋯ 里才有').not.toBeNull()
@@ -130,10 +129,5 @@ describe('文档冲突条', () => {
     act(() => useDocumentStore.setState({ saveState: 'saved', saveIssue: null }))
     await answer(true)
     expect(overwriteDisk).not.toHaveBeenCalled()
-  })
-
-  it('保存失败条也是 urgent', () => {
-    act(() => useDocumentStore.setState({ saveState: 'save_error', saveIssue: null }))
-    expect(container.querySelector('[data-doc-banner]')!.getAttribute('data-doc-banner')).toBe('urgent')
   })
 })

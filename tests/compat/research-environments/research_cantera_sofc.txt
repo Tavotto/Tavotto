@@ -1,0 +1,2 @@
+# S0 additional scientific prerequisites; render-critical pins come from runtime-lock.json.
+cantera==3.2.0

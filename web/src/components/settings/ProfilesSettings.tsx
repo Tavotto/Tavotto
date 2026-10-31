@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, Download, Ellipsis, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from '@/components/ui/icons'
+import { Copy, Download, Ellipsis, Plus, RotateCcw, Trash2, Upload, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from '../ui/Badge'
 import { msg, t as translate } from '@/i18n'
@@ -673,7 +673,7 @@ export function ProfilesSettings({
                   </Button>
                 )}
                 {!editable && (
-                  <Button variant="ghost" size="sm" onClick={duplicate} loading={busy}>
+                  <Button variant="ghost" size="sm" onClick={duplicate} loading={busy} data-profile-duplicate>
                     <Copy size={ICON_SIZE.sm} aria-hidden />
                     {st('duplicateToEdit')}
                   </Button>
@@ -692,7 +692,7 @@ export function ProfilesSettings({
            还没加载完时什么都不画——那不是空，是"还不知道"。 */
         loaded && (
           <EmptyState
-            icon={FileSliders}
+            art="sheet"
             title={st('empty')}
             action={{ label: st('import'), onClick: () => fileRef.current?.click() }}
           />

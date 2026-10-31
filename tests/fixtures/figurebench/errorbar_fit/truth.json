@@ -1,0 +1,31 @@
+{
+  "fixture": "errorbar_fit",
+  "stem": "errorbar_fit",
+  "size_in": [
+    3.5,
+    2.6
+  ],
+  "series": [],
+  "errorbar_points": [
+    {
+      "axes": 0,
+      "index": 0,
+      "x": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0
+      ],
+      "y": [
+        2.2,
+        4.1,
+        6.3,
+        7.9,
+        10.2,
+        14.8
+      ]
+    }
+  ]
+}

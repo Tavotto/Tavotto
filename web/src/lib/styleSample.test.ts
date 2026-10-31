@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { cssFamilyOf, fitSampleGeometry, sampleFitScale, SAMPLE_DEFAULTS, styleSampleGeometry } from './styleSample'
+import {
+  cssFamilyOf,
+  fitSampleGeometry,
+  sampleFitScale,
+  sampleLayout,
+  sampleSeriesPoints,
+  SAMPLE_DEFAULTS,
+  SAMPLE_SERIES,
+  styleSampleGeometry,
+} from './styleSample'
 
 describe('styleSampleGeometry（审计 T42：样式页的示例图从样式内容现算）', () => {
   it('每个角色的字号落到示例里自己那一笔；没设的角色是示例默认，不跟「其余文字」（应用时不会跟着变）', () => {
@@ -233,4 +242,43 @@ describe('示例图用原值画字重 / 字形（与引擎拿到的同一个值�
     expect(styleSampleGeometry({ element: { title: { weight: 'normal' } } }).faces.title.weight).toBeNull()
     expect(styleSampleGeometry({ element: { title: { weight: 'wide' } } }).faces.title.weight).toBeNull()
   })
+})
+
+describe('sampleLayout：图例不压曲线（2026-10 设计审计第二轮）', () => {
+  // 主语：示例 SVG 里图例那两笔（色样线 + 文字，`extents` 末两项）的外框，与两条数据折线在**同一横向范围内**的竖向关系。
+  // 曲线都从左下升到右上；图例在右下角时，图例横跨的每一处两条曲线都必须在它上方、还隔着半个线宽
+  const cases: [string, Record<string, unknown> | null][] = [
+    ['默认', null],
+    ['图例大字号', { element: { legend: { fontsize: 14 } } }],
+    ['刻度朝里且长', { element: { ticks: { direction: 'in', length: 8 } } }],
+    ['粗线', { element: { line: { linewidth: 3 } } }],
+    // Codex #946：两个上限同时取到——14 pt 图例 + 朝里 20 pt 刻度
+    ['图例大字号且刻度朝里最长', { element: { legend: { fontsize: 14 }, ticks: { direction: 'in', length: 20 } } }],
+    ['图例大字号且刻度朝里最长、粗线', { element: { legend: { fontsize: 14 }, ticks: { direction: 'in', length: 20, width: 3 }, line: { linewidth: 3 } } }],
+    // Codex #946 第二条：粗体 14 pt 图例 + 10 pt 刻度宽 + 7…10 pt 数据线——右下角两处都放不下
+    ...[7, 10].map((lw): [string, Record<string, unknown>] => [
+      `粗体大图例、最宽刻度、${lw} pt 数据线`,
+      { element: { legend: { fontsize: 14 }, legend_text: { weight: 'bold' }, ticks: { width: 10 }, line: { linewidth: lw } } },
+    ]),
+  ]
+  for (const [name, data] of cases) {
+    it(name, () => {
+      const g = fitSampleGeometry(styleSampleGeometry(data as never))
+      const lay = sampleLayout(g)
+      const [line, text] = lay.extents.slice(-2)
+      const x0 = Math.min(line.x0, text.x0)
+      const x1 = Math.max(line.x1, text.x1)
+      const top = Math.min(line.y0, text.y0)
+      for (const fn of SAMPLE_SERIES) {
+        const pts = sampleSeriesPoints(lay.box, lay.bottom, fn)
+        for (let i = 1; i < pts.length; i += 1) {
+          const [ax, ay] = pts[i - 1]
+          const [bx, by] = pts[i]
+          if (bx < x0 || ax > x1) continue
+          // 折线段在图例横向范围内的最低点（SVG 里 y 越大越低）
+          expect(Math.max(ay, by) + g.lineWidthPt / 2, `${name}: 曲线在 x≈${bx.toFixed(0)} 压到图例`).toBeLessThan(top)
+        }
+      }
+    })
+  }
 })

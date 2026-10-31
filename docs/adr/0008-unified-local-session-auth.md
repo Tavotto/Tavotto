@@ -86,3 +86,20 @@ pytest 的 `test_client` 天然无状态即旁路，行为与从前零差异。
 桌面 sidecar 的端口**不再每次都变**：优先绑壳记住的端口（被占时本次退回系统分配）。认证边界一个字不改——Host /
 Origin 仍只认 `127.0.0.1:<实际端口>` 一种写法（`state.port` 取自真正 bind 上的 socket），端口可猜与否本来就不影响
 攻击面（见上文「与审计最低验收标准的对照」）。浏览器模式的 5089 顺延不变。
+
+## 修订（2026-10-16，[ADR 0131](0131-agent-verification-entry.md) 第六节，交接三态）
+
+桌面 sidecar 现在会发布一份**范围受限、只读**的交接状态凭据：`<data_dir>/session/handoff-status-<端口>.json`（目录 0700、
+文件 0600、原子写，`{port, pid, token, scope: "handoff_render_status", created}`，退出删除、启动清陈旧）。上文「桌面模式的差异」
+里的前两条**原决定不变**：nonce 仍只经 stdin 交接、**不写**会话凭据（没有 secret / nonce 上盘），`/api/session/relaunch` 在桌面仍回 404。
+放宽的只有一件事：磁盘上多了一枚 `SessionState.status_token`——256 位随机、与 nonce / 会话 token / api secret 都无关，
+guard 只在「`GET /api/handoff/render-status`」上认它，换不到 nonce / cookie，带去任何其它端点都是拒绝。用途仅是让 `tavotto open`
+查「某项目某 stem 最近一次渲染成败」。威胁模型与上文同一个论证（能读该目录的同用户进程本来就能读用户的任何文件；
+网页读不到；Host / Origin 钉死），泄露的后果仅是看到那一条渲染结论。浏览器模式不变（已有完整凭据文件）。
+
+## 修订（2026-10-18，[ADR 0131](0131-agent-verification-entry.md) 第六节修订，#1154）
+
+上一条修订的 scoped token 边界**一个字不放宽**：它仍只对 `GET /api/handoff/render-status` 有效。新增的显示确认写入口
+`POST /api/handoff/display-ack`（重复交接已显示的图时由前端回当前渲染状态）走会话 cookie / 完整 secret，
+带 scoped token 去访问是 401（`tests/test_handoff_render_receipt.py::test_ack_rejects_the_scoped_status_token_and_missing_credentials`）。
+写入量受 `LEDGER` 的 128 条 / 10 分钟上限约束，确认不绕过它。

@@ -1,0 +1,44 @@
+{
+  "fixture": "script_only_first_run",
+  "entry": "tools/spectrum.py",
+  "data_file": "data/values.csv",
+  "x": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "y": [
+    1.0,
+    3.0,
+    2.0,
+    5.0,
+    4.0
+  ],
+  "reads_relative_to": "cwd",
+  "works_only_when_cwd_is": "project root",
+  "required_arguments": [
+    "--scale",
+    "--label"
+  ],
+  "menu_by_scale": {
+    "below_2": [
+      "raw",
+      "smooth"
+    ],
+    "from_2": [
+      "raw",
+      "smooth",
+      "log"
+    ]
+  },
+  "expected_output": "spectrum.pdf",
+  "exec_log": "../t11_exec_log.jsonl",
+  "initial_files": [
+    "data/values.csv",
+    "requirements.txt",
+    "tools/spectrum.py"
+  ],
+  "note": "truth.json 本身不随夹具复制进待测项目（用例复制时排除）；待测项目起点 = initial_files，无图、无注册表。"
+}

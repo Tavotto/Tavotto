@@ -25,6 +25,8 @@ const DEFAULT_MAX_QUEUE: usize = 32;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 /// 优雅关停等 EOF 的兜底。
 const DEFAULT_CLOSE_TIMEOUT_MS: u64 = 5_000;
+/// 会话交出去到收到第一条请求之间的租约兜底（Flask 在 hello 里给真值，对齐 `pool.ACQUIRE_LEASE`）。
+const DEFAULT_ACQUIRE_LEASE_MS: u64 = 30_000;
 
 /// op → worker 协议 v1 的命令名，以及这条 op 是否可被同 stem 的新请求顶掉。
 ///
@@ -48,6 +50,7 @@ pub struct Supervisor {
     seq: AtomicU64,
     max_sessions: usize,
     max_queue: usize,
+    acquire_lease: Duration,
     /// 收到 `shutdown` 后置位，主循环据此退出。
     pub stopping: bool,
 }
@@ -61,6 +64,7 @@ impl Supervisor {
             seq: AtomicU64::new(0),
             max_sessions: DEFAULT_MAX_SESSIONS,
             max_queue: DEFAULT_MAX_QUEUE,
+            acquire_lease: Duration::from_millis(DEFAULT_ACQUIRE_LEASE_MS),
             stopping: false,
         }
     }
@@ -68,6 +72,15 @@ impl Supervisor {
     /// 分派一条请求。回 `Some(resp)` 表示当场就有结论；回 `None` 表示已经排进
     /// 某条会话的队列，响应稍后由会话线程从同一个通道发出。
     pub fn dispatch(&mut self, req: Request) -> Option<Response> {
+        let response = self.route(req);
+        // 超出上限而当时没有可淘汰的（都在忙 / 租约内）时，欠着的淘汰在这里补上：
+        // 每条请求处理完都再看一眼。会话线程跑完活不回主循环，所以补淘汰最晚
+        // 发生在下一条请求到来时——多留的只是一个空闲进程的内存。
+        self.evict_if_needed(None);
+        response
+    }
+
+    fn route(&mut self, req: Request) -> Option<Response> {
         match req.op.as_str() {
             "hello" => Some(self.hello(&req)),
             "ping" if req.session_id.is_none() => Some(Response::ok(
@@ -100,6 +113,9 @@ impl Supervisor {
         if let Some(n) = req.payload_u64("max_queue") {
             self.max_queue = (n as usize).max(1);
         }
+        if let Some(n) = req.payload_u64("acquire_lease_ms") {
+            self.acquire_lease = Duration::from_millis(n);
+        }
         Response::ok(
             &req.request_id,
             json!({
@@ -108,12 +124,13 @@ impl Supervisor {
                 "pid": std::process::id(),
                 "max_sessions": self.max_sessions,
                 "max_queue": self.max_queue,
+                "acquire_lease_ms": self.acquire_lease.as_millis() as u64,
                 "capabilities": [
                     "queue_merge_latest",   // per (会话, stem) 的 render 只留最新一条
                     "cancel_kill",          // 在飞的取消 = 杀进程（没有协作中断）
                     "generation_fencing",   // 上一代的迟到响应一律丢弃
                     "patch_hash",           // canonical_patch_hash 由 workerd 算
-                    "lru_evict",            // 超出上限按最久未用淘汰（kill，不等锁）
+                    "lru_evict",            // 超出上限按最久未用淘汰闲着的（kill，不等锁；忙的不杀）
                 ],
             }),
         )
@@ -159,6 +176,7 @@ impl Supervisor {
             spec,
             self.out.clone(),
             self.max_queue,
+            self.acquire_lease,
             req.request_id.clone(),
         ) {
             Ok(session) => session,
@@ -171,18 +189,20 @@ impl Supervisor {
         };
         self.by_hash.insert(hash, id.clone());
         self.sessions.insert(id.clone(), session);
-        self.evict_if_needed(&id);
+        self.evict_if_needed(Some(&id));
         None // 响应（含 spawn/握手的成败）由会话线程发
     }
 
-    /// 超出上限就淘汰最久未用的一条。**淘汰 = kill**：正在渲染也照杀，
-    /// 绝不等它把手上的活跑完（等锁正是 Python 池里那条把界面拖住的路径）。
-    fn evict_if_needed(&mut self, protect: &str) {
+    /// 超出上限就淘汰最久未用的一条**闲着的**。淘汰 = kill，不等锁（等锁正是
+    /// Python 池里那条把界面拖住的路径）；但在飞 / 排着活 / 租约内的会话不挑——
+    /// 杀了它，调用方等到的是一条莫名其妙的 `session_dead`（多张图同时冷启动时
+    /// 稳定撞上一张）。全都不能淘汰就暂时超出上限，由 `dispatch` 之后补淘汰。
+    fn evict_if_needed(&mut self, protect: Option<&str>) {
         while self.sessions.len() > self.max_sessions {
             let victim = self
                 .sessions
                 .values()
-                .filter(|s| s.id != protect)
+                .filter(|s| Some(s.id.as_str()) != protect && s.evictable())
                 .min_by_key(|s| s.last_used())
                 .map(|s| s.id.clone());
             let Some(victim) = victim else { break };

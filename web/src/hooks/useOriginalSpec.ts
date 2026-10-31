@@ -28,7 +28,9 @@ function useSpecSignals() {
   const byKey = useRenderStore((s) => s.byKey)
   const assets = useAssetStore((s) => s.byId)
   const runtime = useRuntimeAssetStore((s) => s.assets)
-  return [objects, canvases, byKey, assets, runtime] as const
+  // runtime 图的原图口径还读 `byId[id].registered`（`ensure()` 在面板渲染 / 对话框挂载后才回来）：不订阅就不会刷新
+  const runtimeStatus = useRuntimeAssetStore((s) => s.byId)
+  return [objects, canvases, byKey, assets, runtime, runtimeStatus] as const
 }
 
 /** 这张图的原图规格；文档与清单都不认识它时为 `null` */

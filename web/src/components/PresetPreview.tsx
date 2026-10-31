@@ -54,7 +54,7 @@ export function PresetPreview({
           style={{ left: mmToWorld(PAD_MM - bounds.x), top: mmToWorld(PAD_MM - bounds.y) }}
         >
           {objs.map((o) => (
-            <ObjectView key={o.id} obj={o} />
+            <ObjectView key={o.id} obj={o} preview />
           ))}
         </div>
       </div>

@@ -2,6 +2,16 @@
 
 > 原文出自 `.github/AGENTS.md`「发布链」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_release_workflow_contract.py`、`tests/test_update_chain_gates.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false、读一次 `lab/release` status；插件清单由 `build` 生成、不进 `desktop-tauri.yml`；先发代理再发客户端
+
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 140
+改到: `release.yml` / `release-publish.yml`、`codex-plugin.json`、`latest.json`、遥测代理部署
+主题: 发布链 → `release-chain.md`
+必守要点: 第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false；插件清单由 `build` 生成；先发代理再发客户端
+-->
 
 - **两段链（F.2，2026-09-16 起）**：实验室 runner 注册在私有仓库 `Tavotto/ci-infra`，
   公开仓库不能等私有仓库（本仓库禁止轮询：lab 的排队时间没有上界），所以发布链在 lab
@@ -42,3 +52,9 @@
   `release.yml` 的 `publish=false` 演练——打 tag 前必须先跑。
 - 遥测部署顺序：先发代理 → 验 PostHog 收得到 → 配采集器 → 再发客户端
   （反过来新事件被静默 400 而且全绿）。发行量采集器失败必须让 workflow 红。
+- **不带版本号的安装包别名**（README「下载最新版」直链 `releases/latest/download/<固定名>`）：
+  `release-publish.yml::github_release` 在挂载前，按产物清单的 role 把三份安装包 cp 成
+  `Tavotto-macOS.dmg` / `Tavotto-macOS-Intel.dmg` / `Tavotto-Windows-Setup.exe`，放 `assets/alias/`，
+  由 `files` 的 `assets/alias/*` 额外挂上。**带版本号的原件、清单、updater 资产不动**；别名**不进
+  `dist/`、不进 `artifact-manifest.json`**，只把哈希行追加进 `SHA256SUMS.txt`。看护：
+  `tests/test_release_workflow_contract.py` 里 `*unversioned_aliases*` 与 `*alias_step_copies*`。

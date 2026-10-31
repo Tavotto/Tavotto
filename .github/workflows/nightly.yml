@@ -43,6 +43,19 @@ jobs:
   # 真的在量**（那批 Windows 更新包就是 deflate 的坏产物）。下一个正式版本
   # 发布后它会转绿。发布前看到红灯，请不要来「修」这个门禁。
   # ────────────────────────────────────────────────────────────────
+  # 合并队列参数的线上对拍（只读）：线上 merge_queue 规则 == 仓库副本，且三个必需 Gate
+  # 各自沿 needs 的最长累计上限（含 Gate 自身）≤ 线上等待上限 − 30。用公开的 rules/branches 端点，
+  # `contents: read` 的 GITHUB_TOKEN 就够（不碰 rulesets 管理端点）。
+  merge-queue-live-check:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: verify-live（只读）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/merge_queue_ruleset.py verify-live --repo "${{ github.repository }}"
+
   updater-consumer-fidelity:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
@@ -170,6 +183,7 @@ jobs:
           python -m pytest -q \
             tests/test_invariants_engine.py \
             tests/test_artist_families.py \
+            tests/test_hatch_editing.py \
             tests/test_legend_binding.py
 
       - name: CompatBench
@@ -237,6 +251,10 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      - name: 构建画布产物进包
+        # tavotto.spec 只收与本次源码一致的 codex-plugin/mcp/widget/canvas.html（不进库，ADR 0043）
+        run: python scripts/build_mcp_widget.py
+
       # tavotto.spec 从 workerd/target/release/ 取 Rust supervisor，取不到直接
       # 失败（桌面产物必须自带它）
       - uses: dtolnay/rust-toolchain@stable
@@ -248,7 +266,18 @@ jobs:
             workerd
             src-tauri
       - name: 构建 Rust supervisor（tavotto-workerd）
-        run: cargo build --release --manifest-path workerd/Cargo.toml
+        # STRIP=none 与 desktop-tauri.yml 的 Windows 腿同形：MSVC 上 strip=true 会让 .pdb 不产出
+        # （Cargo.toml 的 release 档为 macOS 写的是 strip=true + split-debuginfo=packed）。
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --release --manifest-path workerd/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "cargo build 失败（$LASTEXITCODE）" }
+          # 符号另存是发行链的承诺（docs/RELEASING.md「调试符号」）；发行链只在发版时跑，
+          # 所以 PDB 能不能产出在这里先验一次
+          $pdb = "workerd\target\release\tavotto_workerd.pdb"
+          if (-not (Test-Path $pdb) -or (Get-Item $pdb).Length -le 0) { throw "缺 $pdb（或为空）" }
 
       - name: 缓存 CPython embeddable 下载
         uses: actions/cache@v4
@@ -329,9 +358,15 @@ jobs:
           # Rust supervisor 都必须被自动找到并真的用上——回退到 Python 池
           # 功能全在、只是慢、零报错，不断言就永远发现不了。
           # 这里**不设 TAVOTTO_WORKERD**：要验的正是自动发现。
+          # conda 腿例外：需要 Conda 激活的解释器按设计只走 Python 渲染池
+          # （workerd 的 spawn 规格不带激活增量，pool.py 会回退并打一条 WARNING，渲染本身成功），
+          # 所以这一腿断言 conda-fallback：二进制在（selected=workerd）、会话只有 python；
+          # 不能用 python——打包产物里 selected 恒为 workerd，python 期望会先在 selected 上红。
+          # 其余腿仍断言 workerd。
+          $plane = if ("${{ matrix.python }}" -eq "conda") { "conda-fallback" } else { "workerd" }
           python scripts/smoke_app.py --exe dist\Tavotto\Tavotto.exe `
             --figures "$dst" --expect-source $expect `
-            --expect-control-plane workerd
+            --expect-control-plane $plane
 
       - name: 无 Python：确认整套内置科学栈都能用
         # 装完即用是产品承诺的全部内容。这里不只看「起得来」，而是逐个 import
@@ -374,6 +409,9 @@ jobs:
       # nightly 慢三倍。
       - name: Tauri 打包（NSIS 安装器）
         if: matrix.python == 'none'
+        env:
+          # 与 desktop-tauri.yml 的 Windows 腿同形（见上面 workerd 那步的说明）
+          CARGO_PROFILE_RELEASE_STRIP: none
         # CLI 版本钉死 2.11.4：src-tauri/windows/installer.nsi 是按这个版本的
         # 上游模板打的品牌补丁，模板与打包器必须同源（tests/test_nsis_template.py
         # 看护四处版本一致）。前端 / workerd / sidecar 前面几步已经出好，
@@ -395,6 +433,21 @@ jobs:
             "$PWD\no-updater.json", '{"bundle":{"createUpdaterArtifacts":false}}')
           pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis --config "$PWD\no-updater.json"
           if ($LASTEXITCODE -ne 0) { throw "tauri build 失败（$LASTEXITCODE）" }
+          $pdb = "src-tauri\target\release\tavotto_desktop.pdb"
+          if (-not (Test-Path $pdb) -or (Get-Item $pdb).Length -le 0) { throw "缺 $pdb（或为空）" }
+
+      # 壳自写的小型转储（src-tauri/src/crash_dump.rs）。PR 级 CI 没有 Windows 上的 cargo test
+      # （desktop-shell 只有 ubuntu + macos），所以「真崩一次、.dmp 真落盘」只在这里验：
+      # a_real_access_violation_leaves_a_minidump 起一个子进程触发 access violation，
+      # 断言 %TEMP% 下留下 Tavotto.exe.<pid>.dmp 且是 MDMP 格式。src-tauri 的 target 在上一步
+      # 已有缓存，这里只多编一遍 test 档。
+      - name: 壳崩溃转储（真实 access violation → .dmp）
+        if: matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --manifest-path src-tauri\Cargo.toml crash_dump -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "crash_dump 测试失败（$LASTEXITCODE）" }
 
       # 仓库模板只是原料：真正喂给 makensis 的是 Tauri 把 {{...}} 展开后的
       # 那份中间脚本。installMode / license / startMenuFolder / 语言表都是

@@ -18,9 +18,10 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test, writeRuntimeNamedProject } from './fixtures'
-import { lowContrastNodes } from './contrast'
+import { expect, ONBOARDING_FLOW_VERSION, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
+import { indistinctFieldBoxes, lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
+import { chooseTheme, openGeneralSettings } from './theme'
 
 /**
  * **axe 的 `incomplete` 不是「通过」，是「axe 查不了」**（issue #130）。
@@ -136,12 +137,42 @@ interface AxeReport {
   incomplete: { id: string; impact: string | null | undefined; nodes: ScannedNode[] }[]
 }
 
+/**
+ * 等到界面真的静止再量：文档里不剩任何**会结束**的动画 / 过渡（无限循环的转圈不算，
+ * 它不改颜色的稳态）。只关 reduced-motion 不够——它只缩短**之后**才起的过渡，
+ * 切主题 / 开对话框时已经在跑的颜色过渡（duration-fast）照走原来的时长；慢 runner
+ * （Windows WebKit）上 axe 就量到「一半浅色前景、一半深色底」的插值色
+ * （例：#1b1b18 压在 #161615 上，对比度 1.04）。
+ * 循环到两轮之间没有新的动画冒出来才算静止（一批结束可能触发下一批）。
+ */
+export async function waitForStillUi(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const finite = (a: Animation) => {
+      const end = a.effect?.getComputedTiming().endTime
+      return typeof end === 'number' && Number.isFinite(end)
+    }
+    for (let round = 0; round < 20; round++) {
+      const running = document.getAnimations().filter((a) => a.playState !== 'finished' && finite(a))
+      if (!running.length) {
+        // 再让两帧：刚好在这一帧起的过渡要等样式重算后才进 getAnimations
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+        if (!document.getAnimations().some((a) => a.playState !== 'finished' && finite(a))) return
+        continue
+      }
+      await Promise.all(running.map((a) => a.finished.catch(() => undefined)))
+    }
+    throw new Error('界面 20 轮之后仍有未结束的动画 / 过渡')
+  })
+}
+
 /** 扫描一次，拿回 critical/serious 违规与**全部** incomplete（含每个节点的 target）。
  *  扫描前把动效关掉：对话框/抽屉的进出场动画进行到一半时，axe 对
  *  颜色对比的取样会撞上过渡态，产出不可复现的假阳性；应用本来就支持
- *  prefers-reduced-motion，这也是它的一次真实行使。 */
+ *  prefers-reduced-motion，这也是它的一次真实行使。已经在跑的过渡不受它影响，
+ *  所以还要 `waitForStillUi` 等它们走完。 */
 async function axeReport(page: Page): Promise<AxeReport> {
   await page.emulateMedia({ reducedMotion: 'reduce' })
+  await waitForStillUi(page)
   const results = await new AxeBuilder({ page }).analyze()
   return {
     violations: results.violations
@@ -218,11 +249,14 @@ test('项目选择器：axe 无违规、无未定性的「查不了」、自算�
 
 test('主页老手版：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
   // 走完了教程的人（onboarding 那一格 = completed）
-  await page.addInitScript(() =>
-    window.localStorage.setItem(
-      'tavotto.onboarding',
-      JSON.stringify({ schemaVersion: 1, flowVersion: 2, status: 'completed', completedSteps: [], skippedSteps: [] }),
-    ),
+  // 浏览器侧序列化不带 Node 变量：版本号以实参传进去
+  await page.addInitScript(
+    (flowVersion) =>
+      window.localStorage.setItem(
+        'tavotto.onboarding',
+        JSON.stringify({ schemaVersion: 1, flowVersion, status: 'completed', completedSteps: [], skippedSteps: [] }),
+      ),
+    ONBOARDING_FLOW_VERSION,
   )
   const a = await app({ noProject: true })
   await page.goto(a.baseURL)
@@ -235,16 +269,66 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   app,
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  // 等面板真的渲染出来再扫，扫到一半加载的骨架屏没有意义
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  await waitForFigureEdit(page)
+  // 快速编辑会切到元素树；把素材栏打开并选中卡片，确实覆盖选中底色上的元数据。
+  const assets = page.locator('[data-rail="assets"]')
+  if ((await assets.getAttribute('aria-expanded')) !== 'true') await assets.click()
+  const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
+  await card.click()
+  await expect(card).toHaveAttribute('aria-selected', 'true')
   // 素材卡上的角标是「覆盖层下的文字」，axe 算不出背景色；标题层级它也判不了。
   // 两条都不按规则 id 放行——各自带一遍真核对。
   await expectAccessible(page, {
     allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+  // 可编辑框的底不许和所在的面分不出（抽屉里的框坐在灰桌面上，靠 field 重定向成白面）
+  expect(await indistinctFieldBoxes(page), '有输入框的底对所在的面不足 1.1:1').toEqual([])
+  // hover 态也量一次：抽屉搜索框 hover 时底换成 field-hover-desk，对桌面同样不许低于 1.1:1
+  await page.locator('[data-left-drawer] input').first().hover()
+  await page.waitForTimeout(300) // 底色过渡（duration-fast）走完
+  expect(await indistinctFieldBoxes(page), 'hover 中的输入框底对所在的面不足 1.1:1').toEqual([])
+})
+
+/**
+ * 暗色主题下的可访问性（2026-10-07 暗色主题，宪法第二十八节）：此前整个 a11y 门禁只跑浅色，
+ * 暗色值表（index.css 末尾）只有 vitest 级的 token 配对（tokenContrast.test）看护，真页面上的
+ * 叠色 / 透明度 / 选中底从没在暗色里量过。这两条在稳定态扫：axeReport 先关动效，进出场动画不会让取样撞上过渡态。
+ */
+const darkApplied = async (page: Page) => {
+  // 切主题 / 开对话框后颜色还在过渡：先等静止，否则下面量到的是插值色
+  await waitForStillUi(page)
+  expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark')
+  // 不是「扫了个浅色页」：body 的计算底色确实是暗色桌面（#161615），否则这两条是恒真的
+  expect(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(22, 22, 21)')
+}
+
+test('暗色主题 · 主页：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
+  // 偏好在本机（tavotto.ui.theme），挂载之前就落到 <html>——与用户选了深色再启动同一条路
+  await page.addInitScript(() => window.localStorage.setItem('tavotto.ui', JSON.stringify({ theme: 'dark' })))
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  await expect(page.locator('[data-onboarding-anchor="tutorial-entry"]')).toBeEnabled()
+  await darkApplied(page)
+  await expectAccessible(page, { allow: [contrastCoveredByOurOwnRuler] })
+})
+
+test('暗色主题 · 打开的设置对话框：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await expect(page.locator('[data-page-sheet]')).toBeVisible({ timeout: 30_000 })
+  // 走设置里的外观分段控件切（用户真实路径），对话框开着就扫——对话框本体、遮罩、分段控件选中态都在暗色里
+  const { dialog, group } = await openGeneralSettings(page)
+  await chooseTheme(group, page, 'dark')
+  await expect(dialog).toBeVisible()
+  await darkApplied(page)
+  await expectAccessible(page, {
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })
 })
 
@@ -252,8 +336,7 @@ test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  await waitForFigureEdit(page)
 
   const inspector = page.locator('[data-inspector-panel]')
   await expect(inspector).toHaveCount(1)
@@ -319,15 +402,13 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  await waitForFigureEdit(page)
 
   // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
-  // 一条是 en-US；这里量的正是无障碍名本身，所以不走 fixtures 的 `openElementsTab`）。
-  // 按 aria-expanded 判态、不在才点：盲点击会在收起动画里把刚打开的面板关掉。
+  // 一条是 en-US；这里量的正是无障碍名本身，所以给 fixtures 的 `openElementsTab` 传自己的定位器；
+  // 它按 aria-expanded 判态、不在才点，被自动切换关掉时重读重点，#991）。
   const nav = page.getByRole('navigation').getByRole('button', { name: /图内元素|Figure elements/ })
-  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
-  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+  await openElementsTab(page, nav)
   // 树在引擎首次渲染完之前是空的，先等它有内容
   const items = page.getByRole('treeitem')
   await expect(items.first()).toBeVisible({ timeout: 60_000 })
@@ -361,8 +442,9 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   }
 
   // 先证明这一屏真的有那个正文框，否则 `label` 规则对它 inapplicable、判据恒真
-  await expect(inspector.locator('textarea')).toHaveCount(1)
-  const controls = await inspector.locator('input, textarea, [role="switch"]').count()
+  // 正文框是所见即所得文字框（ADR 0152，role=textbox 的 contenteditable）
+  await expect(inspector.locator('[data-rich-text]')).toHaveCount(1)
+  const controls = await inspector.locator('input, textarea, [role="textbox"], [role="switch"]').count()
   expect(controls, '属性页签里一个控件都没有，这一遍扫描是恒真的').toBeGreaterThan(3)
 
   const named = await new AxeBuilder({ page })
@@ -389,6 +471,8 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  // 预览 PNG 先于快速编辑到达；等工作流和精确图都就绪，导出才默认这张原图。
+  await waitForFigureEdit(page)
 
   const exportButton = page.getByRole('button', { name: /导出|Export/ }).first()
   await exportButton.focus()
@@ -408,6 +492,27 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   // 它 portal 到 `<body>` 末尾、背景整片 aria-hidden 之后）——axe 判不了它在文档
   // 里的层级位置，就丢进 incomplete；判不判得了随扫描那一刻的可见性而变，所以
   // 时红时绿。工作台/问题面板那两条用例早就声明了它，这里补齐。
+  await expectAccessible(page, {
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+
+  // 单图编辑：固定按原图，没有「输出范围」；EPS 可用。再回到多图排版（默认整版）扫一遍，
+  // 覆盖「禁用控件 + 淡色标签 + 左栏缩略图条」的整项语义。
+  await expect(dialog.locator('[data-onboarding-anchor="export-scope"]')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  // 进多图排版的路：把第二张图加到画布（素材卡上的「＋」），页面 `[data-page-sheet]` 出现即为排版
+  const rail = page.locator('[data-rail="assets"]')
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  const second = page.locator('li[data-card="Fig2_yield.pdf"]')
+  await second.hover()
+  await second.locator('[data-card-add]').click()
+  await expect(page.locator('[data-page-sheet]')).toBeVisible({ timeout: 30_000 })
+  await exportButton.focus()
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('[data-onboarding-anchor="export-scope"]')).toHaveCount(1)
+  await expect(dialog.locator('[data-export-formats] input').nth(2)).toBeDisabled()
   await expectAccessible(page, {
     allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })
@@ -508,10 +613,13 @@ test('素材卡的状态角标不引入嵌套交互（axe nested-interactive）'
     nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
   }))).toEqual([])
 
-  // 「查看接入状态」必须键盘到得了：它不在 option 里，所以 Tab 出列表就能落上去
-  await expect(
-    page.getByRole('button', { name: /查看接入状态|Project readiness/ }).first(),
-  ).toBeVisible()
+  // 「查看接入状态」必须键盘到得了：素材卡没有页脚之后它在卡片菜单里（不嵌在 option 里），
+  // 选中的卡上按 Shift+F10 打开菜单就能落到这一项
+  await card.focus()
+  await page.keyboard.press('Shift+F10')
+  const entry = page.getByRole('menuitem', { name: /查看接入状态|Project readiness/ })
+  await expect(entry).toBeVisible()
+  await expect(entry).toBeEnabled()
 })
 
 test('问题面板：axe 无违规、行内的「修复」不是「定位」的子节点', async ({

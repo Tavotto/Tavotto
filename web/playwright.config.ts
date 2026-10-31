@@ -13,6 +13,9 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // Agent 专用长时间性能基准由 playwright.perf.config.ts 启动，常规黄金路径不运行它。
+  // exec-trace-perf.spec.ts 是墙钟性能预算，与 perf-agent 一样只经 playwright.perf.config.ts（performance-agent workflow）跑
+  testIgnore: ['perf-agent.spec.ts', 'exec-trace-perf.spec.ts'],
   // 每个用例都要起一次后端（含冷启动的 matplotlib 会话），给足时间
   timeout: 180_000,
   expect: { timeout: 15_000 },
@@ -40,9 +43,9 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      // error-recovery-en 自带 en-US locale、由 chromium-en 跑：
+      // error-recovery-en / preparation-card-en 自带 en-US locale、由 chromium-en 跑：
       // 基础 project 再跑一遍就是同一份内容双倍的串行启动与渲染等待
-      testIgnore: ['error-recovery-en.spec.ts'],
+      testIgnore: ['error-recovery-en.spec.ts', 'preparation-card-en.spec.ts', 'perf-agent.spec.ts', 'exec-trace-perf.spec.ts'],
     },
     // WebKit 是 macOS 桌面壳（WKWebView）与 Safari 用户的引擎（审计 P1-03）：
     // 只跑黄金路径与可访问性——全量跑三遍只是把门禁拉长三倍，而剩下那些
@@ -59,7 +62,10 @@ export default defineConfig({
       // tests/test_merge_queue_workflows.py::TestPlaywrightShards 对拍，加 / 删 / 改名
       // 一个 project 就要回去改那张 matrix）。
       testMatch: [
+        // Delayed renders exercise pointer routing and resize status in WKWebView as well as Chromium.
+        'drag-sync.spec.ts',
         'golden-paths.spec.ts',
+        'dark-draft-arrow.spec.ts',
         'a11y.spec.ts',
         'keyboard-golden-path.spec.ts',
         'twin-axes-pick.spec.ts',
@@ -76,10 +82,20 @@ export default defineConfig({
         // 排版时间线（ADR 0101）：节点缩略图在浏览器里用 canvas 合成——WKWebView 编不出
         // webp（退回 png）、画 SVG 会不会 taint 画布，只有这个引擎答得了
         'layout-timeline.spec.ts',
+        // 位图加载期间旧图仍须显示：macOS 桌面壳使用 WebKit。
+        'render-swap-continuity.spec.ts',
         // 时间线行的真实双击（前导 click 序列）与显式钮：WebKit 的事件序列要亲自量
         'timeline-row-actions.spec.ts',
         // 顶栏窄宽度下两两不重叠：量的是字宽，WebKit 的字体度量与 chromium 不同
         'topbar-narrow.spec.ts',
+        // 树行键位与分栏手柄（UI 2.0 PR7）：Esc 回滚 / 双击复位靠 pointer capture 与 WebKit 的事件序列，
+        // 选中加粗的字宽锁量的是 WKWebView 自己的字体度量
+        'tree-list-refine.spec.ts',
+        // 三步原生新手教程（ADR 0136）：卡片 / SVG 图例的指针拖动与 pointer capture、外部文件拖放的拒收
+        // 都是引擎相关的事件序列，用户的 macOS 桌面壳就是这个引擎
+        'tutorial.spec.ts',
+        // 主页最近项目卡超长路径：旧 WebKit（Safari 17）里 button 的 flex-col 不拉伸子项致卡片溢出，只有这个引擎量得出
+        'home-recent-card-layout.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
@@ -89,11 +105,39 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], locale: 'en-US' },
       // inspector-overflow：英文标签更长，撑破的多半是它——两种语言各量一遍
       testMatch: [
+        // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
+        'ai-draft.spec.ts',
+        // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
+        'ai-restore.spec.ts',
+        // 执行记录（ADR 0151 PR3）：Waterfall 的标签 / 指标 / 图例是中英两套，英文更长；定位走 data-*，两种语言各走一遍
+        'exec-trace.spec.ts',
+        // 执行器与模型两级选择器：家族 / 型号显示名是后端给的，其余文案中英两套，定位走 data-*
+        'ai-model-picker.spec.ts',
         'a11y.spec.ts',
+        // 拖页面边（渐进式画布改版 裁决 5）：标注是中英两套文案（宽 / W），定位走 data-*，两种语言各走一遍
+        'page-edge-resize.spec.ts',
+        // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
+        'notice-no-push.spec.ts',
         'error-recovery-en.spec.ts',
+        // 树与列表精修（UI 2.0 PR7）：英文标签更长（截断 / 字宽锁最容易出事），选择器全是稳定 data-*，两种语言各量一遍
+        'tree-list-refine.spec.ts',
+        // 准备引导卡（T13b）：英文文案同样一句话、一个主按钮，可达名与布局在英文下照样成立
+        'preparation-card-en.spec.ts',
+        // 改图助手输入框：英文胶囊 / 菜单说明更长，量弹层盒子在两种语言下都不被裁
+        'ai-composer.spec.ts',
         'inspector-overflow.spec.ts',
+        // 导出检查的计数芯片与逐条清单（2026-10-16 精修 03）：语言无关写法，英文标签更长，两种语言各量一遍
+        'export-checks.spec.ts',
         // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
         'sync-overrides.spec.ts',
+        // 导出对象头的「示意」标注与透明背景棋盘格（PR3）：英文标注更长，撑破对象头的话先在这里红
+        'export-preview.spec.ts',
+        // 导出位置行（b3 反馈）：英文「Change…」更长、路径从左省略；语言无关写法，两种语言各走一遍
+        'export-location.spec.ts',
+        // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
+        'inspector-assets.spec.ts',
+        // 新手黄金路径（渐进式编辑 P06）：只认 data-* 锚点与落盘产物，不认显示文案——两种语言各走一遍
+        'newcomer-golden-path.spec.ts',
       ],
     },
   ],

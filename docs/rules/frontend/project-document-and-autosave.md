@@ -2,6 +2,17 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/artifactValidation.test.ts`、`store/documentStore.test.ts`、`store/panelSourceSync.test.ts`、`hooks/useEngineSync.test.ts`、`lib/projectDocs.test.ts`、`store/projectDocOwnership.test.ts`、`e2e/cross-tab-paste.spec.ts`、`lib/autosave/diskWriter.test.ts`、`lib/timelineCheckpoint.test.ts`、`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`store/recovery.acceptance.test.ts`、`lib/recoveryCandidates.test.ts`
+> `web/AGENTS.md`「改到」压缩前原文（2026-10-23）：`lib/session.ts`、`types/document.ts`、`documentStore` 的 `loadSeq` / `derivedSeq` / `registerTxnFinalizer`、`lib/autosave/diskWriter.ts`、`panelSourceSync.ts`、`assetStore`、`lib/projectDocs.ts`、`lib/docOwnership.ts`、恢复门与判决 `store/documentRestore.ts`、找回入口 `LayoutRecover` / `lib/recoveryCandidates.ts`、排版时间线（`lib/timelineCheckpoint.ts` / `VersionDialog.tsx`）
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：schema 3 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门、新写入口必须看门（ADR 0120）
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 200
+改到: `lib/session.ts`、`types/document.ts`、`documentStore`、`lib/autosave/`、`assetStore`、`lib/projectDocs.ts`、`store/documentRestore.ts`、排版时间线（完整清单见细则）
+主题: 项目、文档模型与自动保存 → `project-document-and-autosave.md`
+必守要点: schema 3 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门（ADR 0120）
+-->
 
 - 前端把 pj 存 **sessionStorage**（`lib/session.ts`，按标签页隔离，「不同
   标签页开不同图库」就是靠它）；`?pj=` 出现在地址栏时认下并立刻抹掉。
@@ -92,7 +103,7 @@
   「清除失效修改」把身份对不上的也算进去（`isStaleIdentityOverride`，与引擎同一条判据）。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
-  （写盘成功即清、读取按 updatedAt 取新）。兜底副本在桌面版能不能「下次启动恢复」取决于
+  （成功仅清同一快照，#646；内容不同的副本保留待裁决，忽略更新时间与键序，旧格式比较迁移前原稿）。桌面兜底恢复取决于
   origin 稳定（ADR 0108：壳记端口；端口被占的那次仍读不到）。失败发
   `tavotto:autosave-error` 事件 → 常驻错误 toast。**怎样安全地落到磁盘上**——按文档
   排队、串行 PUT、乐观并发基线（updatedAt）与外部修改基线（内容 hash 三档 + 缺席）、
@@ -107,6 +118,11 @@
   （`target=project`，基线是**绑定里的修订号**：这份工作副本基于项目文件的哪一版，刷新后照样成立，
   与只活一个窗口的 `lib/layoutRevision.ts` 不是同一个量）；开着项目没绑定 → 弹 `saveToProject`
   命名框（预填**排版名** `projectMeta.name`，不是画布名）；没开项目 → 只存本机、说「存在本机」。
+  保存键在捕获阶段认领，富文本框不能吞掉；保存前先让聚焦的富文本框冲刷组字中的内容，
+  再经手势收尾提交画布就地文字，最后取保存快照（系统菜单的闸门之前也先冲刷）。
+  **富文本框带着焦点被卸载**（点画布空白取消选择 / 退出就地编辑，浏览器的 blur 来不及触发）时，
+  `RichTextField` 的卸载清理补一次 `onBlur`（冲刷待写内容）：宿主在 `onFocus` 开的 `history.editText` 事务因此一定被收掉，
+  不会悬着并进下一个离散动作（QA-WIN-14 / QA-WIN-28；看护 `RichTextField.unmount.test.tsx`、`TextView.test.tsx`）。
   本机那一份 `conflict` 时不写项目文件。绑定只认当前项目（`bindingForProject`），别的项目的
   绑定不抹掉。**自动保存仍只写本机**；绑定里的 `dirty` 是项目文件那根轴，只跟用户编辑（与
   `saveState` 推 `dirty` 同一处，外加改排版名），派生同步不置位，不进关闭保护。409 `external_change`
@@ -123,7 +139,46 @@
   绑定以本会话内存为准（`lib/projectFile.ts` 的会话层），localStorage 只是刷新后还认得的尽力而为副本——
   保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
-- **启动恢复不覆盖已经装好的文档（2026-09-26）**：工作台挂载时 `restoreSession()` 读
+- **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
+  尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
+  只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。
+  同 runtime asset 的新捕获只覆盖 descriptor；每次明确观察到的 original artifact 另按精确 source 累计，复用 `capturedFigureSources` 的路径规范化，不扩大配置图的 stem 匹配。
+  已接受但未消费的 A 项目事实跨 A → B → A 暂留，B 文档不得消费；恢复重试 / 等待超过 readiness 超时也不丢。
+  真正 ready 且正文安装完成后，才用恢复文档的全部画布与历史重算静态同 stem / 不同格式的来源，退役旧引用并走正常 dirty / 自动保存。
+  `supersedeRestore` 先宣布 ready 后安装正文，因此在稳定微任务点核对 gate 的 docId；`installingUnderToken` 不算恢复完成。
+  首次真实恢复消费后即删除，不永久重放到用户之后主动打开的历史文档。临时登记随应用生命周期释放；不以静默容量淘汰丢失执行事实。
+  native 图放置的旧回调仍守其原项目代际，不能因保留执行事实而在另一个项目插图；执行事实只登记一次。
+- **启动恢复判决（2026-10-11，ADR 0120，替代下面 2026-09-26 那条的前两道判断）**：「项目 ready」与「文档 ready」分开。
+  documentStore 的恢复门（`restoring` / `needs_user` / `ready`，带 `gen` + `pj` 令牌）是**唯一**的「文档准备好了没有」：
+  - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒（状态条节流说一句），
+    `flushAutosave` 回 `'skipped'`，`switchDocument(…, { placeholder: true })` 不写 currentDoc / docIndex / 归属；remember-last 订阅、
+    时间线自动节点与关键时刻都看门。**新增一个文档写入口必须同时看门**（看护 `store/restoreGate.test.ts` 的入口遍历）。
+  - **离开旧文档的冲刷在设门之前**（`resetForNewProject` 第一步），DiskWriter 已排的旧文档写入不清。
+  - 只有持当前令牌的安装能在门关着时写（`installRestoredDocument`）；没有令牌的普通 `switchDocument` = 显式意图 = **取代**（gen+1），
+    旧恢复晚到的结果没有提交权。教程 `prepareDocument` 返回 `Promise<boolean>`，以返回值 + 门被取代双重确认，resolve 不等于装好。
+  - 冷启动（`restoreSession`）、Picker（`adoptSteps`）、重试走同一个 `store/documentRestore.resolveProjectDocument`；线索（`captureClues`：全局
+    currentDoc、内存 id、skip-restore 的一次性决定）在任何 reset 之前捕获。`restoreSession` 不再按 `currentDoc === documentId` 短路，
+    门已对当前项目落定就回落定结果；同项目在路上的恢复（StrictMode 第二轮）加入它。
+  - 候选与读取结果见 `lib/projectDocs.planRestore`（只读）与 `documentStore.probeDocument`（零副作用）/ `acceptProbe`（选中且仍有提交权
+    才记修订号、基线、挪恢复副本、推回磁盘）。`readAutosaveDoc` = 两者组合，只给显式打开用。读不到（`unavailable`）≠ 没有（`missing`）≠
+    坏（`invalid`）≠ 太新；暂态先有界重试原目标，首选明确失败 → `needs_user`，只列只读验证过的其他候选，**不悄悄换旧稿**；
+    纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。**读不到不自动退回本机**：会话端点重试后仍不可用、或正文读失败（非 404）→ `needs_user`，本机线索 / 本机副本只作用户明确选择的候选；只有确认的 404 才自动按本机恢复。每条安装路径都经 `installChecked`：读到的正文 revision 与指针 / 扫描 / 提供候选时记下的不同，或指针曾明确缺席而正文出现 → 先问 `/owner`，只有 owners+verified 且 revision 对得上才装；备选探测不能用新 revision 抹掉缺席证据。C1 校正的本机归属须在安排本机副本首次写盘之前完成。判决表全文在 `documentRestore.ts` 文件头与 ADR 0120 §二。
+    恢复期间排队的用户加图 / 粘贴操作跨同项目的「重试」保留，直到成功落定执行一次；显式新建、打开其他文档与切项目仍取代它。加图返回 `null` 时 UI 不报「已添加」、不关闭接入中心。
+  - `needs_user` 的出口在顶栏文档状态芯片（`restore` issue，`components/RestoreIssueBody.tsx`）：一句话 + 一个主按钮（重试 / 打开另一份 /
+    继续新建），其余折叠；`lastDocumentIssue` 只是 `restoreIssue.ref` 的薄适配。保存成功（`saved → clean`）不清恢复问题；保存元数据
+    失败（autosave 回 `metadata:"failed"`）是另一件事 `restoreMetaIssue`，与 `saveState` 正交。
+  - 外部交接：`queueNative()` 不等文档；落图 / Figure 选择器先 `whenDocumentReady(pj)`，被取代 → 不落、超时 120 s → `deferred`。
+  - 看护：`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`lib/openRequestRestore.test.ts`、`components/topBarRestore.test.tsx`、
+    `store/recovery.acceptance.test.ts`（审计夹具转成的正确行为验收，在 `e090923b4` 上必红）。
+- **保存成功驱动 last（2026-10-11，ADR 0120 §三）**：后端 last 只指向有有效正文的槽位，没正文的打开意图只记 `pending`、正文首次落盘时在同一
+  文档锁里晋升。前端 `DiskWriterPorts.onWritten(id, savedAt, { pj, metadata })` 的 pj 取**排队那一刻**的值；`afterWriteOk` 的 UI 一半仍按
+  `isCurrentDoc` 守，元数据一半无论当前与否都经 `onDocumentPersisted` 交给 `projectDocs.notifyDocumentPersisted`（缓存意图 == 这份且上次推送
+  pending / 失败才重推，不被同值去重挡住）。`loadProjectDocument` 不再在验证正文之前把本机引用推成后端 last（迁移在 `confirmRestored` 里、接受之后）。
+  C1：本机索引说别的项目、后端 `/owner` 回 `owners` 证据且 `verified` → 可纠正本机索引；只有 assets / versions → 不翻案；问不到 → 不认领。
+- **找回本机排版（2026-10-11，ADR 0120 §六 / ADR 0108 §四）**：「打开排版」对话框的 `components/LayoutRecover.tsx`（逻辑在 `lib/recoveryCandidates.ts`）
+  两组：本项目的（原 id 打开）、折叠的归属待确认（默认**恢复副本**：固定目标 id、确认时重比 revision、经 `actions.openDocumentAs` + 正常保存链建立归属，
+  源槽位与源归属不动，取消零写入）。不为列表运行脚本、不编缩略图。看护 `lib/recoveryCandidates.test.ts`、`components/LayoutDialog.recover.test.tsx`。
+- **启动恢复不覆盖已经装好的文档（2026-09-26；前两道判断已被上面「启动恢复判决」替代，保护本身由恢复门兑现）**：工作台挂载时 `restoreSession()` 读
   「当前项目的 last（后端）→ `tavotto.currentDoc`」那一份（2026-09-29 起，见下条「会话状态以后端为准」）——但教程 / 切项目的 `prepareDocument` 往往**挂载前**就把它装好了，
   这时再读盘整份替换，读到的是用户第一次编辑还没落盘时的旧一版（慢机器上教程一打开就拖，拖动被盖回去，
   windows-exe-smoke 撞到过）。两道判断：`documentId` 已经是它就不读盘（本机 `currentDoc` 就指着内存里这份时
@@ -183,7 +238,7 @@
     这个项目没记过）/ `undefined`（404：playground、嵌入画布、旧后端，或此刻不可达）。**「不知道」不折成
     「没记过」**：`undefined` 时退回本机的旧逻辑。`tavotto.projectDoc.<pj>` 只当缓存；后端 `null` 而本机有
     = 同一个 origin 升级上来的旧记录，拿它当迁移源并推一份上去。
-  - 取哪一份：`restoreSession` = `loadProjectDocument(pj)`（当前项目的 last：后端 → 本机按项目的缓存）→ 旧的
+  - 取哪一份（**2026-10-11 起由 `planRestore` 的候选计划替代**：后端 `unavailable` 不再折成「本机旧逻辑」而是先重试，旧端点 404 才走兼容；见上「启动恢复判决」）：`restoreSession` = `loadProjectDocument(pj)`（当前项目的 last：后端 → 本机按项目的缓存）→ 旧的
     `tavotto.currentDoc`（**只在确知属于当前项目时**：本机索引记着，或后端给得出证据）；`adoptNow` = `loadProjectDocument(pj)`。
     `lastDocumentIssue` / 顶栏文档状态芯片机制不变。
   - **一个项目的排版不许漏进另一个项目（2026-10-01，#715 Windows 真机验收 P1）**：稳定端口之后先后打开的项目共用
@@ -247,15 +302,24 @@
   挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
   新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
-  两个恢复入口（预览页脚、抽屉选中行内联条）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、
+  两个恢复入口（预览页脚、时间线行上弹出的对比小卡片）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、
   让模态预览以 `busy` 开着——遮罩挡画布、预览与抽屉都关不掉，「恢复前」在存时不许再编辑（Codex #831）。
-  内联入口的模态预览在**取正文之前**就以「加载中」开起来（不是正文回来才开）；另记编辑标记（`past` / `future` / `txn` / 激活画布），
+  卡片入口的模态预览在**取正文之前**就以「加载中」开起来（不是正文回来才开）；另记编辑标记（`past` / `future` / `txn` / 激活画布），
   正文回来时变了就放弃恢复（不写、不打「恢复前」），取不回来就把「加载中」预览收回。
   预览是 `timelineStore.preview` 上的模态对话框（`TimelinePreviewDialog`，默认焦点在对话框容器上、回车不触发恢复；
-  页脚只有「恢复到这里」，关闭是右上角 ×——ADR 0101 2026-10-07 修订），抽屉一行一颗 ⋯（`ui/RowMenu`）+ 选中行的「预览 · 恢复到这里」，
+  页脚只有「恢复到这里」，关闭是右上角 ×——ADR 0101 2026-10-07 修订），抽屉一行一颗 ⋯（`ui/RowMenu`）；单击行弹出锚定的对比小卡片（`CompareCard`：那一刻 | 当前并排 + 一句摘要 + 「恢复到这里」；悬停不冒按钮；卡片角上「放大查看」才开模态预览——ADR 0101 2026-10-23 修订），
   不进 documentStore、换项目时 `clear()`；「存为命名节点」只有 `saveNamedNode()` 一份（抽屉里「给现在存个名字…」
   点开展开输入；⌥⌘S / 命令面板在工作面板顶部就地弹 `NamedNodeQuickBox`、不开抽屉，顶栏没有书签钮）。自动间隔 15 s 停顿 / 2 分钟，e2e 只经
   `window.__TAVOTTO_TIMELINE_TIMING__` 注入，产品默认值不动。
+  **入口形态（ADR 0101 2026-10-21 修订）**：时间线是右栏第四个页签（`RightTab 'timeline'`），不再有盖在画布上的浮板；
+  打开只有 `actions.openTimeline()`、「亮着」只有 `uiStore.isTimelineOpen`，`TimelinePanel` 挂载即打开；页签是会话态不持久化。
+  预览里的位图取档 / 文字字号按显示宽 × DPR（`snapshotBucket`），不许写死档位（看护 `components/layoutSnapshotSharpness.test.tsx`）。
+  时间线的范围：多画布时「这张画布 / 全部画布」（按节点的 `canvasId`）；当前是单图编辑（或图内编辑某张图）且有别的图的版本时「这张图 / 全部」
+  （按后端读时派生的 `figures` = 那一版画布上面板的 `fileId`，不落盘；ADR 0101 2026-10-24 修订）。打开第二个脚本的图必须落在自己的画布上
+  （`enterEdit` 把描述符交给 `openFastEdit`，不先 `addRuntimePanelToCanvas`；仅「重建为可编辑版」`host.beside` 例外），看护 `store/enterEditCanvas.test.ts`。
+  时间线行内动作的 e2e 看护 `e2e/timeline-row-actions.spec.ts`；整条时间线 e2e 看护 `e2e/layout-timeline.spec.ts`。
+  存盘与帧迁移的补充看护：`lib/figureFrame.test.ts`、`e2e/savefig-frame-migration.spec.ts`、`e2e/save-to-project.spec.ts`、`e2e/cross-tab-paste.spec.ts`。
+  文档与会话的补充看护：`store/layoutSession.restart.test.ts`、`e2e/layout-session.spec.ts`、`e2e/layout-project-isolation.spec.ts`、`store/projectSave.test.ts`、`lib/overrideIdentity.test.ts`、`store/layoutAutoReflow.test.ts`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -280,3 +344,29 @@
 已带 guard 的记录不再过 legacy FRAME 自动迁移。畸形/未知/不匹配 guard 原样保存并拒绝，
 不能把它删掉来获得 legacy 退路。完整重置/确认换素材才按既有丢弃语义原子移除 guard。
 看护：`store/artifactEntry.test.ts`、`lib/artifactValidation.test.ts`、`lib/artifactApi.test.ts`。
+
+### 来源驱动采用的并列 guard（ADR 0139 PR2）
+
+`sourceBackedFigure`（`{version, policy: 'script-backed-figure-v1', sourceId, bytesSha256, sizeBytes, status:
+'exact'|'reconstructed', reconstructionSha256, confirmedAt?}`）是 `artifactValidation` 的**并列且互斥**字段，
+不复用它的形状或字段名；判据同在 `lib/artifactValidation.ts`。**「这块面板处于哪种选中上下文」只有一个出处**
+`adoptionOf()`（`strict` / `source` / `none` / `invalid`），其余一律经它派生（`isAdoptedPanel` / `adoptionGuardOf` /
+`refuseArtifactOperation` / `artifactRequestFields` / `clearAdoption`）——不再各处写
+`Object.hasOwn(panel, 'artifactValidation')`。未知键 / 畸形 / 版本不对 / 两种 guard 并存都是 `invalid`，不当 legacy。
+- 严格策略先试；仅当它因 `artist_profile` / `source_mismatch` 被拒、且 `GET /api/experiments` 说开关开着，才用来源驱动策略再准入
+  一次。`exact` 直接一次提交；`needs_confirmation` 先开对照确认（`SourceBackedReviewDialog`），**取消什么都不写**，确认才
+  提交 `reconstructed` + `confirmedAt`。采用 / 确认各是一次提交，只写 FRAME、nativeW/H、guard，不改页面 x/y/w/h/crop。
+- 零编辑（只有结构性 `figure.frame`）= 磁盘原像素：显示与原图导出都不出引擎图，重开 / 脚本变更 / 邻居补渲染不跑脚本
+  （`isSourceBackedZeroEdit`）。有真实编辑 = 整图重渲染，请求带 `confirmed_reconstruction_sha256`（缺失 409
+  `confirmation_required`，不等 409 `reconstruction_changed`）。
+- `reconstruction_changed`：编辑与 guard 原样保留、不自动换基，一句话 + 「重新对照确认」；确认后一次提交更新摘要。
+看护：`lib/sourceBackedFigure.test.ts`、`store/sourceBackedAdoption.test.ts`、`canvas/sourceBackedPreview.test.tsx`、
+`components/SourceBackedReviewDialog.test.tsx`、`e2e/guarded-png-activation.spec.ts`。
+
+## 没有写入权限的项目（2026-10-30）
+
+打开 `project.writable === false` 的项目时，`ReadOnlyProjectPrompt` 问**一次**：一句话 + 「另存为…」（主）+「继续只读打开」（次）。
+另存为 = 选文件夹（桌面壳原生选择器，浏览器版 `DirBrowser`）→ `saveProjectAs` → `projectStore.open(副本)`；
+「继续只读打开」写 `settings.readonly_save_as_declined`（按项目路径，持久）；Esc 只是本次会话不再问、不写记忆
+（`lib/readOnlyPromptMemory`）。界面不判权限，事实只认后端的 `writable`；教程项目不问。
+看护：`components/ReadOnlyProjectPrompt.test.tsx`。

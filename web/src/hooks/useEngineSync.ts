@@ -1,4 +1,4 @@
-import { artifactValidationIssue, artifactEntryPending, artifactEditIntentChanged } from '@/lib/artifactValidation'
+import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, artifactEditIntentChanged, isAdoptedPanel, isSourceBackedZeroEdit } from '@/lib/artifactValidation'
 /**
  * 引擎渲染的**订阅与生命周期装配**。调度（防抖 / 立即 / 占位 / 定稿）在
  * `store/renderScheduler.ts`，「只带基线、还没动过」的判据在 `lib/bakedBaseline.ts`；
@@ -19,6 +19,9 @@ import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
+import { currentVisibleRectMm } from '@/store/viewportStore'
+import { useWorkspaceStore, type WorkspaceMode } from '@/store/workspaceStore'
+import { panelRotation } from '@/types/document'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
@@ -32,6 +35,8 @@ import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document
  * 分键（renderKeyOf），两个副本各有各的条目，互不覆盖——真正的多变体支持，
  * 去重只剩「完全相同的两个副本共用一次渲染」这一条。
  */
+const NO_NEIGHBOURS: ReadonlySet<string> = new Set()
+
 export function renderTargets(
   objects: readonly CanvasObject[],
   editingId: string | null,
@@ -46,6 +51,13 @@ export function renderTargets(
    * runtime 面板照旧（重开文档绝不自动执行脚本）。
    */
   styleBound = false,
+  /**
+   * 跨图对齐的邻居（ADR 0128 §二，`crossFigureNeighbours` 算出的面板 id）：进图内编辑时，
+   * 视口里看得见的别的图也要有权威 manifest，否则跨图候选一条线都出不了。与 `styleBound` 同一个
+   * 理由与同一条纪律：「只带基线、还没动过」的非 runtime 面板也渲染一次；runtime 面板照旧
+   * （重开文档绝不自动执行脚本）。谁算邻居由调用方按当前状态给，这里保持纯函数。
+   */
+  neighbours: ReadonlySet<string> = NO_NEIGHBOURS,
 ): PanelObject[] {
   const seen = new Set<string>()
   const targets: PanelObject[] = []
@@ -56,6 +68,16 @@ export function renderTargets(
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
     // 才 build 并重放。tracked（脚本变更）对 runtime 只表达 stale 提示，
     // 不构成自动重跑的理由。
+    // 未采用的 PNG 源图（#1145）：邻居（`crossFigureNeighbours` 已剔）与 tracked 这两条「顺手补渲染」只能发
+    // 无 source_policy 的 patches=[]，让脚本重跑出一张没对过字节的图；它的唯一合法首渲染是 admitPngEntry
+    // 的带策略采用请求（进编辑才走）。**styleBound 例外，照旧渲染**（Codex #1179 r4313254705）：
+    // 绑定画布上 admitPngEntry 因「挂着样式 / 有样式债」拒绝进入，采用请求永远发不出；而样式债只有
+    // 这张图拿到 manifest 才能由 `alignNewFigures` 结清——这次渲染是它唯一的 manifest 来源。后端对缺
+    // policy 的 PNG 渲染只标 `source_unverified`、不拒绝（旧请求语义不变），所以这条路本来合法。
+    const unadopted = !isAdoptedPanel(o) && isUnadoptedPngSource(o)
+    // 来源驱动采用且零编辑（ADR 0139 §五.1）：显示的是磁盘原像素，重开文档 / 脚本变更 / 邻居补渲染都不去跑脚本；
+    // 只有正在编辑它（需要几何权威）才渲染。有真实编辑的面板照常渲染（与别的带 override 的面板一致）。
+    if (isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
     const wants =
       o.fileKind === 'runtime'
         ? o.id === editingId || latest[o.fileId] != null
@@ -64,7 +86,7 @@ export function renderTargets(
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
           styleBound ||
-          !!tracked[o.fileId] ||
+          (!unadopted && (neighbours.has(o.id) || !!tracked[o.fileId])) ||
           (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
     if (!wants) continue
     const key = renderKeyOf(o)
@@ -73,6 +95,41 @@ export function renderTargets(
     targets.push(o)
   }
   return targets
+}
+
+/**
+ * 进图内编辑时需要补渲染的「跨图邻居」（ADR 0128 §二）：排版模式（快速编辑里别的图让开了，
+ * 不跨图）、有正在编辑的面板，别的面板满足——当前视口里看得见（与跨图候选同一个判据：外框与
+ * `visibleRectMm` 相交，视口尺寸未知不剔）、未隐藏、非 runtime、`cost !== 'heavy'`、未旋转未翻转、
+ * 有脚本。**不订阅视口**：平移 / 缩放不触发补渲染，邻居在进编辑（`elementPanelId` 变化）与
+ * 文档变化时按当时的视口算一次；之后才平移进视口的图，下次进编辑才补。
+ */
+export function crossFigureNeighbours(
+  objects: readonly CanvasObject[],
+  editingId: string | null,
+  mode: WorkspaceMode,
+  visible: { x: number; y: number; w: number; h: number } | null,
+): Set<string> {
+  const ids = new Set<string>()
+  if (!editingId || mode === 'fast_edit') return ids
+  for (const o of objects) {
+    if (o.type !== 'panel' || o.id === editingId || o.hidden || !o.script) continue
+    if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
+    // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
+    // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
+    if (!isAdoptedPanel(o) && isUnadoptedPngSource(o)) continue
+    if (panelRotation(o) || o.flipH || o.flipV) continue
+    if (
+      visible &&
+      (o.x >= visible.x + visible.w ||
+        o.x + o.w <= visible.x ||
+        o.y >= visible.y + visible.h ||
+        o.y + o.h <= visible.y)
+    )
+      continue
+    ids.add(o.id)
+  }
+  return ids
 }
 
 /** 文档里现存（含其它画布）的全部面板变体键——prune 的保留名单 */
@@ -102,7 +159,21 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
   const assets = useAssetStore.getState().byId
   const style = useDocumentStore.getState().doc.style
   const styleBound = !!style && !style.detached
-  for (const panel of renderTargets(objects, editingId, store.tracked, store.latest, assets, styleBound)) {
+  const neighbours = crossFigureNeighbours(
+    objects,
+    editingId,
+    useWorkspaceStore.getState().mode,
+    currentVisibleRectMm(),
+  )
+  for (const panel of renderTargets(
+    objects,
+    editingId,
+    store.tracked,
+    store.latest,
+    assets,
+    styleBound,
+    neighbours,
+  )) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
     // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、

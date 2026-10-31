@@ -1,0 +1,155 @@
+{
+  "review": "Independent prefix read-session reverse review",
+  "created_utc": "2026-10-19T04:04:37.401346+00:00",
+  "repository": "Tavotto/Tavotto",
+  "base_sha": "6f309ec896e0a4a786cc2775e79e76210abe480a",
+  "reviewed_state": "uncommitted runtime implementation; exact per-file source hashes pin the tested state",
+  "source_sha256": {
+    "src/native/github.ts": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "src/native/service.ts": "2b5092cdef2f9999ea7f6cc9a84be5a52e62a9116363cae92ab0d0f49f3712bc",
+    "src/native/merge-prefix.ts": "b8b9b598ac999bb3f0270f5699086d9d425757cc8a20a1cb9503c4768625f895",
+    "src/native/config.ts": "6cd260a20d14453f2b1d4f690b915038d144e331d088c9d8454c973af4d251c6",
+    "src/native/worker.ts": "f7bb2c43933eb135f29cc1be162a64dc44a013ad1246dd5651d850a8246fcb31",
+    "src/native/store.ts": "a6c8eccd380c059dfa58dfde43404b0f04be68262c41d0ce296c4b2441fa9b23",
+    "src/native/budget.ts": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "src/native/delegation.ts": "06010c9961b0036726f2a69e422f8ece0cb0ee223f1c7d36b231ae04964f547e",
+    "src/core/identity.ts": "e664243f4485e76ff185db834853fde7ab5ba682689620464df6ca7bbe49cdcf",
+    "src/core/crypto.ts": "17baac97c94bd6f5c892bf013dc876711b52c1538ab6b1f11a3b1d704cd4242e",
+    "src/core/proof.ts": "9775610725f0550110e9691fc2c63dd0df581952c0bae16452592c583f42b8d5",
+    "src/core/types.ts": "e17c6bdd86d9c6dbd99d0e7cfd1e68f2b336f69351751b1cdd8a83b7c7dab92b",
+    "src/core/policy.ts": "c399ff69da0a36c7ac3a2299a61b1b2a9136b5d7110792e32efb4af738d96d2e",
+    "src/core/store.ts": "9d142e35e903f2d822f7fa9947a36f42e309ae7c14620cda6a092b189dd75403",
+    "src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "src/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "src/ci/consumer.ts": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+    "src/ci/wait.ts": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "scripts/ci-candidate.mjs": "86f27446ed18b4a181dff2db488c414c1bc85b36165863d4fac29ac7875d8e01",
+    "tests/delegation-fixture.mjs": "8f142a2f31a125fec60008d8e91cfbfeab51d2c8b07802bfd487774e77fd033d",
+    "tests/independent-oauth-db.mjs": "14e1882935a149240dd33694e2e8524a5749ee614af92925edfddd8c9946f004"
+  },
+  "frozen_review_files_sha256": {
+    "tests/independent-prefix-read-session.test.mjs": "9b1fcca7a97425d3f6270d30b488cfefad273bde96502a3cea2c02bc5efb7cba",
+    "tests/independent-prefix-read-session-fixture.mjs": "e695a481a782d988436cc8784b9120dd787dbcd68c561c988036856714876640",
+    "tests/independent-prefix-read-session-mutation-cases.json": "d099a6922e1383d52186840a7483390b3a00ae50e1f872d9890a22bab1e51664"
+  },
+  "reviewer_workspace_writes": [
+    "tests/independent-prefix-read-session.test.mjs",
+    "tests/independent-prefix-read-session-fixture.mjs",
+    "tests/independent-prefix-read-session-mutation-cases.json"
+  ],
+  "runtime_or_other_test_writes_by_reviewer": false,
+  "commands": [
+    {
+      "command": "node --test tests/independent-prefix-read-session.test.mjs",
+      "cwd": "/workspace/Tavotto-cla-prefix-read-session/services/cla-cloudflare",
+      "stage": "initial independent suite",
+      "exit_code": 0,
+      "tests": 37,
+      "pass": 37,
+      "log": "/tmp/cla-prefix-read-session-independent/first-tests.log"
+    },
+    {
+      "command": "node --test tests/independent-prefix-read-session.test.mjs",
+      "cwd": "/workspace/Tavotto-cla-prefix-read-session/services/cla-cloudflare",
+      "stage": "final frozen suite with stronger source-cache/clock/positive assertion probes; same count",
+      "exit_code": 0,
+      "tests": 37,
+      "pass": 37,
+      "log": "/tmp/cla-prefix-read-session-independent/final-tests.log"
+    },
+    {
+      "command": "python build-cases.py",
+      "cwd": "/tmp/cla-prefix-read-session-independent",
+      "exit_code": 0,
+      "unique_cases": 21
+    },
+    {
+      "command": "python run-mutants.py",
+      "cwd": "/tmp/cla-prefix-read-session-independent",
+      "exit_code": 0,
+      "mutants": 21,
+      "selected_exit_codes": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "actual_assertion_errors": 21,
+      "log": "/tmp/cla-prefix-read-session-independent/mutations-run.log",
+      "results": "/tmp/cla-prefix-read-session-independent/mutations.json"
+    }
+  ],
+  "actual_measured_cost": {
+    "P2_no_remote_identity": 28,
+    "P3_no_remote_identity": 34,
+    "P4": "rejected at exactly35 external requests; no assessment or writes",
+    "P2_one_remote_coauthor_per_binding": 32,
+    "installation_checks_P2_with_identity": 4,
+    "token_posts_per_session": 1,
+    "source_content_reads_per_session": 3,
+    "ordinary_disabled_optimization_P2": 32,
+    "ordinary_same_instance_PR_path": "fresh token exchange and policy/body reads retained"
+  },
+  "time_tests": [
+    "Actual token expiry checked before second I/O",
+    "Frozen wall clock still reaches one fixed monotonic deadline",
+    "Mint POST transit already spent3 seconds of a3-second token; no metadata I/O occurs",
+    "Fractional expiry rounds downward conservatively",
+    "Wall and monotonic rollback rejected at callback completion",
+    "Final SQL result cannot hide later token expiry or changed provider context"
+  ],
+  "isolation_tests": [
+    "Captured provider/exemptions/repository/key/budget/tick context",
+    "Installation paused before second snapshot and before identity lookup",
+    "Second user read is fresh and mismatched ID rejects",
+    "Callback catches semantic/partial-content failures but session remains poisoned",
+    "Concurrent reads reject; in-flight read cannot escape callback return",
+    "Reader after finally cannot restart I/O or token mint",
+    "New callback cannot inherit prior token or content",
+    "Cached policy is inaccessible via returned first snapshot",
+    "Second stable source B cannot reuse source A cache",
+    "Narrow scope response rejects extra merge_queues permission",
+    "Only frozen snapshot/resolveLogin methods exposed; no token or generic reader"
+  ],
+  "findings": [],
+  "surviving_mutants": 0,
+  "harness_test_failures": 0,
+  "tool_setup_error": {
+    "action": "Attempted to reuse the prior task temporary runner as a template",
+    "target": "/tmp/cla-merge-prefix-independent/run-mutants.py",
+    "outcome": "FileNotFoundError; prior /tmp artifact had been cleared between task dates. The follow-on python run reported it could not open the not-yet-created new runner and exited 2.",
+    "executed_tests": false,
+    "runtime_changes": false,
+    "resolution": "Wrote run-mutants.py afresh under the current evidence directory; all 21 isolated mutations then actually executed and harness exited 0.",
+    "original_error_provenance": "Recorded from actual tool response; first bootstrap error output was not retained as a separate raw log before the final run overwrote mutations-run.log."
+  },
+  "limits": [
+    "Only in-memory synthetic SQLite and in-process GitHub transport; no real external HTTP, Worker fetch, credentials or deployment",
+    "RSA/Ed25519 keys, signatures, grants and token responses are synthetic test data, never real authority",
+    "Native group publication/journal/recovery/authority/CI remains outside this readonly session slice",
+    "No new permission or GraphQL schema was introduced or verified live",
+    "No previous denied dynamic successful publication across proof expiry scenario was executed or renamed; only readonly expiry rejection tests ran",
+    "Parent combined full-suite, migration, typecheck/build and CI results are not independently re-certified here"
+  ],
+  "evidence_frozen": true,
+  "remaining_review_blockers": [],
+  "report": "/tmp/cla-prefix-read-session-independent/review.md",
+  "report_sha256": "5c1e0dc477f54dbbcc733c49533f3961f33484e31809daa71bfbfb2ea5d1c667"
+}

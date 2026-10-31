@@ -27,6 +27,9 @@ native_sessions   有 tavotto run 会话在用（在这里记）
 mutating          正在装包（在这里记）
 ```
 
+另有一种**保留型**租约（`acquire_retain`，AI 修复的 `change_python` 用）：只让受管环境的旧代不被 `retire_unused`
+清掉，**不是状态**——不挡 `mutating()`、不挡 native 会话（native 租约才挡换代 / 装包）。
+
 `safe_workers` 不在本模块存表：那是 `pool._workers` 的事实，重复存一份就是
 第二个权威。本模块只回答"能不能开始改这个环境"和"能不能在这个环境上起
 native 会话"，前者由 pool 在进入 mutating 时自己收掉 worker。
@@ -37,6 +40,8 @@ native 会话"，前者由 pool 在进入 mutating 时自己收掉 worker。
 |---|---|---|
 | 正在装包 | 起 native 会话 / 起 safe worker | `environment_mutating` |
 | 有活跃 native 会话 | 装包 | `environment_in_use_by_native_session` |
+| 正在采用（`inspecting`：体检 + 提交决定） | 装包 | `environment_mutating`（采用不挡 native 会话与 worker） |
+| 正在装包 | 采用 | `environment_mutating` |
 
 **有 native 会话时不自动杀它**：那个进程是用户的，里面可能有跑了两小时的
 计算。装依赖是一件可以等的事，杀掉用户的脚本不是。
@@ -68,6 +73,12 @@ _lock = threading.Lock()
 _mutating: dict[str, str] = {}
 #: env_key -> {session_id}
 _native: dict[str, set[str]] = {}
+#: env_key -> 正在对它做「采用前体检 + 提交决定」的人数（`inspecting()`）。体检量的是这个环境此刻的样子，
+#: 装包在这个窗口里改它，体检结论就是半截的——所以安装（`mutating`）要等这些人走完。
+_inspecting: dict[str, int] = {}
+#: env_key -> {owner}。**保留型**占用（AI 修复的 `change_python` 用）：只表示「这一代先别被 `retire_unused` 清掉」，
+#: 不是 native 会话——`mutating()` 不因它拒绝（换代事务照常拿独占锁），`deprepair._generation_in_use` 认它。
+_retained: dict[str, set[str]] = {}
 
 
 class EnvironmentBusy(RuntimeError):
@@ -126,6 +137,7 @@ def snapshot() -> dict:
         return {
             "mutating": sorted(_mutating),
             "native": {k: sorted(v) for k, v in _native.items() if v},
+            "retained": {k: sorted(v) for k, v in _retained.items() if v},
         }
 
 
@@ -164,6 +176,29 @@ def release_native(python: str, session_id: str) -> None:
             _native.pop(key, None)
 
 
+def acquire_retain(python: str, owner: str) -> None:
+    """保留型租约：让这个解释器所在的受管环境那一代不被 `managedenv.retire_unused` 清理，直到 `release_retain`。
+    与 native 租约的区别：**不挡** `mutating()`（换代 / 装包照常），也不挡 native 会话；不会失败。"""
+    with _lock:
+        _retained.setdefault(env_key_of(python), set()).add(owner)
+
+
+def release_retain(python: str, owner: str) -> None:
+    key = env_key_of(python)
+    with _lock:
+        alive = _retained.get(key)
+        if not alive:
+            return
+        alive.discard(owner)
+        if not alive:
+            _retained.pop(key, None)
+
+
+def retained_on(python: str) -> list[str]:
+    with _lock:
+        return sorted(_retained.get(env_key_of(python), ()))
+
+
 @contextlib.contextmanager
 def native_lease(python: str, session_id: str):
     """`acquire_native` + 保证释放。拿不到时**不进入 `try`**——那样 finally
@@ -194,6 +229,11 @@ def mutating(key: str, python: str = ""):
             raise EnvironmentBusy(
                 f"这个环境上已经有一个安装在进行中: {busy[0]}", code=ENVIRONMENT_MUTATING
             )
+        checking = [k for k in keys if _inspecting.get(k)]
+        if checking:
+            raise EnvironmentBusy(
+                "这个环境正在被检查或采用，请稍候再试。", code=ENVIRONMENT_MUTATING
+            )
         held = [k for k in keys if _native.get(k)]
         if held:
             raise EnvironmentBusy(
@@ -213,6 +253,33 @@ def mutating(key: str, python: str = ""):
             # 之后对这个环境的任何操作都被判成"正在安装"。
             for k in [k for k, owner in _mutating.items() if owner == key]:
                 _mutating.pop(k, None)
+
+
+@contextlib.contextmanager
+def inspecting(python: str):
+    """采用一个候选环境期间（体检 → 提交决定）占住它：与 `mutating()` 互斥，两种先后各自只有一个结局。
+
+    以前采用只在体检**之后**问一次 `is_mutating`：另一个项目已经在往这个解释器里装包时，体检量到的是装到一半的
+    环境；装包在这一问之后才开始，则这里一点也看不见——项目于是按过期的体检结论被钉上，或决定已经落盘、随后
+    开图才失败（Codex 评 #915 补审 P2）。现在：装包在跑 -> 这里抛 `EnvironmentBusy(environment_mutating)`，
+    不体检；先拿到这里 -> 装包被 `mutating()` 拒、让用户等采用结束。**不**挡 native 会话与 safe worker
+    （采用不改环境，只读它），也不挡别的采用（计数）。"""
+    key = env_key_of(python)
+    with _lock:
+        if key in _mutating:
+            raise EnvironmentBusy(
+                "这个环境正在安装依赖，请等它结束再采用。", code=ENVIRONMENT_MUTATING
+            )
+        _inspecting[key] = _inspecting.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        with _lock:
+            left = _inspecting.get(key, 0) - 1
+            if left > 0:
+                _inspecting[key] = left
+            else:
+                _inspecting.pop(key, None)
 
 
 def unless_mutating(action):
@@ -249,3 +316,5 @@ def reset_for_tests() -> None:
     with _lock:
         _mutating.clear()
         _native.clear()
+        _retained.clear()
+        _inspecting.clear()

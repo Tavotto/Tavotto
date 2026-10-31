@@ -2,6 +2,17 @@
 
 > 原文出自 `.github/AGENTS.md`「验证链（按层）」（2026-09-18 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scripts/ci/compat_matrix.py`、`tests/test_equivalence_matrix.py`、`tests/test_invariants_engine.py`、`tests/test_e2e_leg_topology.py`、`tests/test_desktop_window_harness_scope.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：CompatBench 与 acceptance 问的不是同一个问题、corpus 不许合并；未声明的失败一律 `product_bug`、Tier 1 不许有；四路等价性与五条不变式三者不能互相替代；冒烟必须 `--expect-source bundled` / `--expect-control-plane workerd`；改性能前先在 `docs/perf-baseline.md` 指出一个数字；真窗口用例只在 nightly「无 Python」档真跑、缺前提即红、不注入全局输入，驱动不到的格写进盲点表
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*`；改性能先指出基线数字
+
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 120
+改到: `tests/compat/`、`tests/test_equivalence_matrix.py`、`tests/test_invariants_engine.py`、`scripts/smoke_app.py`、`nightly.yml`、`scripts/bench_render.py`、`tests/desktop_windows/`
+主题: 验证链（按层）→ `verification-chain.md`
+必守要点: CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*`
+-->
 
 - **Matplotlib CompatBench**（`tests/compat/` + `scripts/ci/compat_matrix.py`，
   完整说明 `docs/ci/matplotlib-compatibility.md`）：与 `tests/acceptance/`
@@ -88,7 +99,7 @@
   | 8 | 真 WebView 拖动与 undo/redo | `test_drag_undo.py`：CDP 指针拖动、⌃Z 逐像素回原位、⌃⇧Z 回拖后 | 触控板 / 高 DPI 缩放下的指针换算 |
   | 9 | 关掉再开恢复 | `test_restart_restore.py`：`WM_CLOSE` → 无参重开；必绿（#718 稳定端口合入后转绿，#751 去掉了 xfail），同源 `location.reload()` 对照为绿；关掉项目 F 再打开新项目 G（同一个 origin），G 不出现 F 的排版、G 的目录里没有它的副本（#715 验收 P1） | — |
   | 12 | 强杀后恢复 | 同上，`TerminateProcess` 壳、断言子进程跟着退；必绿（同上） | 「改动还没落盘就被杀」那一刻的崩溃副本：时序抢不稳，没有稳定的被测状态 |
-  | 13 | 菜单 / 快捷键 / 焦点 | `test_menu_keyboard_focus.py`：真菜单栏上加速键逐条在位；菜单撤销 / 重做、⌃D 在输入框里让位、「设置」开关后焦点；纯键盘 Tab 到素材卡 → 放图 → 撤销 / 重做（#37 真机那一段） | 加速键表的**查表**（真按键 → 哪条命令）要真按键；这里投的是查表之后那条 `WM_COMMAND`，菜单栏上的加速键文字是它的镜像。#37 的完整键盘闭环仍在 `keyboard-golden-path.spec.ts`（chromium 与 WebView2 同引擎） |
+  | 13 | 菜单 / 快捷键 / 焦点 | `test_menu_keyboard_focus.py`：菜单栏已藏起来（`GetMenu` 为空）、顶栏「菜单」按钮弹出的菜单上加速键逐条在位；菜单撤销 / 重做、⌃D 在输入框里让位、「设置」开关后焦点；纯键盘 Tab 到素材卡 → 放图 → 撤销 / 重做（#37 真机那一段） | 加速键表的**查表**（真按键 → 哪条命令）要真按键；这里投的是查表之后那条 `WM_COMMAND`，弹出菜单上的加速键文字是它的镜像（muda 的 `hpopupmenu` 与 `hmenu` 同一份项与 id）。#37 的完整键盘闭环仍在 `keyboard-golden-path.spec.ts`（chromium 与 WebView2 同引擎） |
 
   **macOS**：WKWebView 没有 WebDriver，**整张表都不覆盖**（包括 9 / 12 / 13）——壳里没有对外的
   自动化入口，AppleScript / System Events 只能发全局按键（落进用户前台的别的应用，禁用）。

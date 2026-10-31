@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from support.previewkit import preview_file
 from tavotto.engine import pool as engine_pool, runtimeasset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "ci"))
@@ -129,7 +130,7 @@ def test_native_run_route_goes_through_the_product_control_plane(tmp_path, monke
     cache = pathlib.Path(config.data_dir()) / "cache" / "native"
     sessions = [d for d in cache.glob("*") if d.is_dir() and re.fullmatch(r"[0-9a-f]{32}", d.name)]
     assert sessions, f"没有 native 会话产物目录（{cache}）——它绕过了产品控制面？"
-    assert any((d / "show.svg").is_file() for d in sessions), (
+    assert any(preview_file(d, "show", ".svg").is_file() for d in sessions), (
         f"会话目录里没有这次跑出来的预览: {[sorted(p.name for p in d.iterdir()) for d in sessions]}"
     )
 

@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「设置外壳与包管理（2026-09-02，ADR 0038）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`SettingsDialog.test.tsx`、`settings/PackagesSettings.test.tsx`、`settings/PackagesSearch.test.tsx`、`store/projectSwitchPackages.test.ts`、`updateStates.test.tsx`、`SettingsTelemetry.test.tsx`、`e2e/settings-shell.spec.ts`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 140
+改到: `SettingsDialog`、`settings/*`、`store/packageStore.ts`、`store/updateStore.ts`、遥测同意控件
+主题: 设置外壳与包管理 → `settings-shell-and-packages.md`
+必守要点: 外壳尺寸是合同；`run` 只在 `PackagesSettings` 里被调；查找只在点「在 PyPI 查找」时出网
+-->
 
 完整版在 `docs/adr/0038-settings-shell-agents-packages.md`，改动前先读。
 
@@ -18,6 +27,12 @@
   `CodingAgentsSection.test` 守着；没装 / 装坏时副行说一句为什么）：详情里的版本号经 `agentVersionLabel`
   只取数字，抽不出就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
   用 `settings/CopyButton` 给复制。**一级页面上不许出现路径、内部包名、解释段、卡片外框。**
+* **「连接 AI」是改图助手页的主入口**（后端给了 `vendors` / `connections` 时）：厂商同级列表（国内 / 海外，中文界面国内在前）、
+  连接弹窗 `ConnectAiDialog`（`store/connectAiStore` 唯一开关，所有入口走 `requestConnectAi()`；老后端没有这两个字段 → 退回打开设置页）。
+  Codex / Claude Code 的清单、详情、诊断整体收进页底「高级」（`data-connect-advanced`，`<details>`；旧 e2e 先展开它）。
+  厂商名走 `label_key`，彩色标志走 `logo`（`BrandLogo`：无底直接画，单色标志 currentColor 跟随 text-ink，数据在 `brandLogoData.ts`，来源见 `THIRD_PARTY_NOTICES.md`），
+  不在前端硬编码厂商 id。锚点：`data-connect-vendor` / `-action` / `-key-form` / `-more` / `-other` / `-group`、`data-ai-connect-more`。
+  看护：`settings/connectAi/connectAi.test.tsx`、`ai/connectionPicker.test.tsx`、`store/aiFixStore.test.ts`。
 * **编码 Agent 的 e2e 锚点是稳定 `data-*`，不是小标题上那句话**（2026-09-07，#299 posix-e2e
   真红）：审计 T44 把两个小节按用户目标改了名（「在 A 中使用 B / 在 B 中使用 A」→「配置改图
   助手 / 连接外部工具」），`e2e/coding-agents.spec.ts` 里两条认文案的用例当场找不到元素。
@@ -123,8 +138,10 @@
   「{时间} 检查时没有发现新版本」），判据认 `data-update-verdict`，不认那两句散文。桌面通道的
   时间戳 `desktopCheckedAtMs` **只在检查成功时**写。下载进度只显示壳真给的数，拿不到就走不确定
   态、绝不编百分比。细进度条只有 `ui/ProgressBar` 一份（更新弹窗 / 更新页 / 修复下载 / 包作业）：
-  轨道 `border` 档（放在 `surface-2` 面板里也看得见）、不确定态是 `animate-sweep`，不是呼吸块。
-  包作业（`JobPanel`）是安装组里紧跟安装框的一行、在包表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）；
+  轨道 `border` 档（放在 `surface-2` 面板里也看得见）、不确定态是排线慢速流动（`.progress-track`），不是呼吸块。
+  包作业（`JobPanel`）是安装组里紧跟安装框的一行、在用户包列表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）；
+  用户包与内置包都是**条目行**、不是表格（2026-10 设计审计第二轮）：「已安装」不出胶囊，只有缺失 / 版本已变化等才出一枚 `StatusPill`，
+  「只读」只在内置包折叠行的摘要里说一次；列表锚点是 `[role="list"][aria-label]` 下的 `data-package-row` / `data-package-name` / `data-package-state`；
   每个用户包一颗 ghost「升级」+ ⋯（卸载是危险项，先确认），「重建环境…」在环境行的 ⋯ 里、先确认。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
   失败走 500、原因在响应体的 `log` 里而 `error` 是空的，得自己取出来。五态覆盖在
   `components/settings/updateStates.test.tsx` + `store/updateStore.test.ts`。

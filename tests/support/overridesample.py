@@ -126,6 +126,12 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
     "stroke_width": (("stroke_enabled", True), ("stroke_color", "#ff00ff")),
     # 花纹画在**边色**上；线宽 / 线型同样要先有一条看得见的边
     "hatch": (("edgecolor", "#ff00ff"), ("linewidth", 1.0)),
+    # 花纹的线宽要先有花纹才有东西可加粗（3.10 起才有这条字段）
+    "hatch_linewidth": (("hatch", "/"),),
+    # 花纹色同理（3.11 起才有这条字段）：没有花纹就没有东西可染
+    "hatchcolor": (("hatch", "/"),),
+    # 边色要先有一条看得见的边：`linewidth=0` 的集合（3D 曲面的常见写法）上它是画不出来的
+    "edgecolor": (("linewidth", 1.0),),
     "linewidth": (("edgecolor", "#ff00ff"),),
     "linestyle": (("edgecolor", "#ff00ff"), ("linewidth", 1.5)),
     "facecolor": (("fill", True),),

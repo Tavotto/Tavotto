@@ -1,0 +1,80 @@
+{
+  "schema": "tavotto-guardian-family/1",
+  "id": "G2-same-path-multi-figure",
+  "title": "Several figures saved to the same path: Tavotto keeps the first, disk keeps the last",
+  "affected_script_shapes": [
+    "a script that creates more than one figure (loop or repeated calls) and saves each to the same file name"
+  ],
+  "root_cause": "The savefig registry is first-wins per stem, while `python script.py` leaves the LAST figure on disk, so Tavotto edits a different figure than the one the script produced (GAP-REPORT G2; engine/figsession.py first-wins). Silent wrong result, no error.",
+  "category": "figure_capture",
+  "signature": {
+    "behavior_kind": "same_path_content_mismatch",
+    "call_site": [
+      "loop:figure",
+      "loop:savefig"
+    ],
+    "tavotto_error": null
+  },
+  "repro": {
+    "script": "tests/compat_guardian/families/G2-same-path-multi-figure/repro.py",
+    "sha256": "3a6f8f898355a278e299f31b13957fa1e7db41a84b2a2664279fd10d17989c3b",
+    "entry": "main",
+    "derived_from": {
+      "parent": {
+        "suite": "compat_engine",
+        "case": "shape_oo_savefig"
+      },
+      "chain": [
+        "same_path_loop"
+      ],
+      "seed": 42
+    },
+    "minimized_by": "compat_guardian.py minimize",
+    "before": {
+      "statements": 13,
+      "lines": 13,
+      "bytes": 485,
+      "files": 1
+    },
+    "after": {
+      "statements": 7,
+      "lines": 7,
+      "bytes": 245,
+      "files": 1
+    },
+    "reproducibility": {
+      "confirmed": 3,
+      "total": 3
+    },
+    "runs": 30
+  },
+  "key_regression_tests": [
+    "tests/test_compat_explore.py::RealDiscovery::test_g2_same_path_in_a_loop_no_longer_differs_after_the_fix",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g2_minimal_repro_is_fixed",
+    "tests/test_capture_same_path_last_writer.py",
+    "tests/bridge/test_bridge_same_path_last_writer.py"
+  ],
+  "environments": {
+    "verified": [
+      {
+        "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+        "python": "3.13.11",
+        "matplotlib": "3.11.2",
+        "route": "Safe engine path via the product discovery chain",
+        "revision": "main at 573943bd5 plus CG-03"
+      }
+    ],
+    "unverified": [
+      "Linux",
+      "Windows",
+      "the desktop (Native) route",
+      "other matplotlib / Python versions",
+      "a real user session through the UI"
+    ]
+  },
+  "recurrence": "16 of 100 candidates in the CG-02 run (seed 42)",
+  "in_corpus": false,
+  "fix_pr": 1141,
+  "promoted": false,
+  "issues": []
+}

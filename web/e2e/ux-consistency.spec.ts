@@ -1,4 +1,4 @@
-import { expect, test, type RunningApp } from './fixtures'
+import { expect, openElementsTab, test, type RunningApp } from './fixtures'
 import { horizontalOffenders } from './overflow'
 import type { Page } from '@playwright/test'
 
@@ -26,13 +26,9 @@ async function openFigure(page: Page, a: RunningApp) {
 
 /** 打开左侧元素树并展开全部分组（分组头点行即展开，元素行点行首小三角） */
 async function openTree(page: Page) {
-  // **轨道按钮是开关，不是「打开」。** Prompt 09 起双击素材卡直接进快速编辑，
-  // 左栏本来就停在「图内元素」上（实测 `aria-expanded=true`、6 个 treeitem）；
-  // 再点一次是**关掉它**，后面每一条断言都会在「找不到 treeitem」上超时。
-  // 所以先看它开着没有——已经开着就什么都不做。
-  if (!(await page.locator('[role="treeitem"]').count())) {
-    await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
-  }
+  // **轨道按钮是开关，不是「打开」**，且进快速编辑后左栏会自动切到「图内元素」
+  // （时序不定，#991）：走 fixtures 的幂等 helper，它在被自动切换关掉时会重读重点。
+  await openElementsTab(page)
   await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
   for (let i = 0; i < 20; i++) {
     const rows = page.locator('[role="treeitem"][aria-expanded="false"]')
@@ -96,7 +92,7 @@ test('流程 A：图标题 + X/Y 轴标题一起改字体 / 字号 / 加粗，�
   await expect(bold).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 })
 
   // --- 字体：选一个新字体 ---
-  await panel.getByRole('combobox', { name: '字体' }).click()
+  await panel.getByRole('combobox', { name: '英文字体' }).click()
   await page.getByRole('option', { name: /无衬线|sans/i }).first().click()
   await page.waitForTimeout(600)
 
@@ -377,11 +373,11 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await dialog.getByRole('navigation').getByRole('button', { name: '帮助与诊断', exact: true }).click()
   const diag = dialog.getByRole('button', { name: '给开发者' })
   await expect(diag).toHaveAttribute('aria-expanded', 'false')
+  // Wait for diagnostic data before testing either collapsed or expanded visibility.
+  await expect(dialog.locator('[data-diagnostics-summary]')).toBeVisible({ timeout: 30_000 })
   const firstScreen = await dialog.innerText()
   expect(firstScreen).not.toMatch(absolutePath)
   await diag.click()
   await expect(diag).toHaveAttribute('aria-expanded', 'true')
-  await page.waitForTimeout(500)
-  const expanded = await dialog.innerText()
-  expect(expanded).toMatch(absolutePath)
+  await expect.poll(() => dialog.innerText(), { timeout: 30_000 }).toMatch(absolutePath)
 })

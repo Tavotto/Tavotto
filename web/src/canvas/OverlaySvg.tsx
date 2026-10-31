@@ -6,9 +6,10 @@ import { geomPathD, translateGeom } from '@/lib/pathGeom'
 import { PATH_HIT_SHAPES, shapeOutline } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
+import { patchBoundsOf } from '@/lib/patchResize'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
-import { useInteractionStore } from '@/store/interactionStore'
+import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
 import {
   discardPanelPreview,
   previewPanelIds,
@@ -36,13 +37,14 @@ import {
   startEndpointDrag,
   startGroupResize,
   startLegendScale,
+  startPatchResize,
   startGuideDrag,
   startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
-import { IssueOverlay } from './IssueOverlay'
+import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -138,6 +140,7 @@ export function OverlaySvg() {
   const draft = useInteractionStore((s) => s.draft)
   const snapXs = useInteractionStore((s) => s.snapXs)
   const snapYs = useInteractionStore((s) => s.snapYs)
+  const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const hoverId = useInteractionStore((s) => s.hoverId)
   const pendingGuide = useInteractionStore((s) => s.pendingGuide)
   const dragKind = useInteractionStore((s) => s.kind)
@@ -158,7 +161,9 @@ export function OverlaySvg() {
     }
   }, [objects, linePanelIds])
 
-  const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
+  // 拖图边改图幅松手后、新图落定之前：该面板只留虚线占位，选区轮廓与缩放手柄一并压住（旧 w/h 的手柄不可见也不可点）
+  const pendingFrameId = useInteractionStore((s) => s.figureFramePending?.id)
+  const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden && o.id !== pendingFrameId)
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
   // 联合框只说「选了这一片」，说不出「以谁为基准」
   const primaryId = selectedIds.at(-1) ?? null
@@ -241,6 +246,17 @@ export function OverlaySvg() {
         (() => {
           const target = objects.find((o) => o.id === issueHighlight.objectId)
           if (!target) return null
+          // 问题落在图内某个元素上：闪那个元素，不闪整张图（`IssueElementHighlight`）
+          if (target.type === 'panel' && issueHighlight.gid) {
+            return (
+              <IssueElementHighlight
+                key={issueHighlight.token}
+                panel={target}
+                gid={issueHighlight.gid}
+                t={t}
+              />
+            )
+          }
           const box = toScreen(target, t)
           return (
             <rect
@@ -255,7 +271,8 @@ export function OverlaySvg() {
               stroke={SEL}
               strokeWidth={2}
               style={DASH}
-              className="motion-safe:animate-attention"
+              // 舞台灯（`IssueSpotlight`）的光圈锚点：动效开着时不画出来；reduced motion 下照旧显示
+              className="motion-safe:invisible"
             />
           )
         })()}
@@ -337,6 +354,10 @@ export function OverlaySvg() {
         />
       ))}
 
+      {/* 吸附反馈（ADR 0128 §四）：自身所属框虚线 + 吸上的那条边加粗；目标在别的图时对方元素也虚线框出 */}
+      {/* 图内编辑态的反馈画在 ElementBoxes 里（选中框之上、手柄之下，否则同坐标的选中实线会盖住虚线框） */}
+      {!elementPanel && snapFeedback.map((f, i) => <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />)}
+
       {/* 框选：实线框 + 极淡的底（它不是选中，是「正在圈」的范围；虚线只给暂定的东西） */}
       {marquee && (
         <rect
@@ -376,9 +397,8 @@ export function OverlaySvg() {
 }
 
 /**
- * 箭头 / 直线的拖画预览：直接按新对象的最终样式画（默认色 + 1pt 线宽 +
- * 箭头帽），几何与 ArrowView 同一套（帽长 4×线宽、帽半宽 1.7×线宽、
- * 实心三角端线段回缩 0.75×帽长）——预览即成品。
+ * 箭头 / 直线的拖画预览：中心保持新对象的颜色与几何，外加仅在拖画期间出现的
+ * 选区色描边，使它在纸外的深色画布上也可见。描边不进入文档。
  */
 function DraftLinePreview({
   draft,
@@ -403,8 +423,29 @@ function DraftLinePreview({
   const trim = isArrow ? headLen * 0.75 : 0
   const p2 = { x: b.x - ux * trim, y: b.y - uy * trim }
   return (
-    <g>
+    <g data-draft-line-preview>
       <line
+        data-draft-outline="line"
+        x1={a.x}
+        y1={a.y}
+        x2={p2.x}
+        y2={p2.y}
+        stroke={SEL}
+        strokeWidth={sw + 3}
+        strokeLinecap="round"
+      />
+      {isArrow && len > headLen && (
+        <polygon
+          data-draft-outline="head"
+          points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
+          fill={SEL}
+          stroke={SEL}
+          strokeWidth={3}
+          strokeLinejoin="round"
+        />
+      )}
+      <line
+        data-draft-content="line"
         x1={a.x}
         y1={a.y}
         x2={p2.x}
@@ -415,6 +456,7 @@ function DraftLinePreview({
       />
       {isArrow && len > headLen && (
         <polygon
+          data-draft-content="head"
           points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
           fill={color}
         />
@@ -784,6 +826,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
+  const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -791,6 +834,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const full = panelFullRect(panel)
   const toBox = (r: Rect4) =>
     toScreen({ x: full.x + r[0] * full.w, y: full.y + r[1] * full.h, w: r[2] * full.w, h: r[3] * full.h }, t)
+  const toDraggedBox = (gid: string, r: Rect4) => toBox([
+    r[0] + (gidDrag?.gid === gid ? gidDrag.dfx : 0),
+    r[1] + (gidDrag?.gid === gid ? gidDrag.dfy : 0),
+    r[2], r[3],
+  ])
   /**
    * 元素的框一律画在它的几何落点上：位图没有自己的几何属性，
    * 拖它动的是宿主子图，框也就该是宿主子图的 bbox（与单选时一致）。
@@ -799,13 +847,15 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
     const el = manifest.elements.find((e) => e.gid === gid)
     if (!el || el.gid === 'figure') return null
     const target = geomTarget(manifest, el)
-    const [bx, by, bw, bh] = preview?.boxes[target.gid] ?? target.bbox
+    const box = preview?.boxes[target.gid] ?? target.bbox
     const dx = gidDrag?.gid === target.gid ? gidDrag.dfx : 0
     const dy = gidDrag?.gid === target.gid ? gidDrag.dfy : 0
     // 真实路径跟着同一个乐观位移走——只挪框不挪路径的话，拖动中框与轮廓
     // 会分家（松手权威渲染回来才对上，中间那一段全是错的）
-    const geom = target.geometry ? translateGeom(target.geometry, dx, dy) : null
-    return { key: target.gid, target, geom, box: toBox([bx + dx, by + dy, bw, bh]) }
+    // 改框大小时真实圆角仍由引擎重建：目标矩形接管描示，不把旧路径留在新手柄里面。
+    const resizingPatch = preview?.resizingGid === target.gid
+    const geom = target.geometry && !resizingPatch ? translateGeom(target.geometry, dx, dy) : null
+    return { key: target.gid, target, geom, box: toDraggedBox(target.gid, box) }
   }
 
   // 所有选中元素画同一种框；位图与宿主子图落在同一个几何目标上，只画一次
@@ -845,6 +895,12 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
       : null
   // 单选子图仍是它自己的八个手柄
   const axesBox = !groupBox && primary?.target.resizable ? primary.box : null
+  const patchBounds = !groupBox && selectedGids.length === 1 && primary
+    ? patchBoundsOf(primary.target)
+    : null
+  const patchBox = patchBounds && primary
+    ? toDraggedBox(primary.key, preview?.boxes[primary.key] ?? patchBounds)
+    : null
   // 单选图例 → 四个角手柄，整体缩放（对角不动，见 startLegendScale）
   const legendBox =
     !groupBox &&
@@ -943,6 +999,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           ),
         )}
 
+        {/* 吸附反馈：在选中框之上、手柄之下 */}
+        {snapFeedback.map((f, i) => (
+          <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />
+        ))}
+
         {memberBoxes.map((r) => (
           <rect
             key={`member-${r.key}`}
@@ -1006,6 +1067,25 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               onPointerDown={guarded((e) => startAxesDrag(e, panel, primary.target, layout, dir))}
             />
           ))}
+
+        {patchBox && primary && (
+          <EdgeStrips
+            box={patchBox}
+            dirs={ALL_DIRS}
+            cursor={handleCursor}
+            onPointerDown={(e, dir) => guarded((ev) => startPatchResize(ev, panel, primary.target, layout, dir))(e)}
+          />
+        )}
+        {patchBox && primary && ALL_DIRS.map((dir) => (
+          <Handle
+            key={dir}
+            box={patchBox}
+            dir={dir}
+            cursor={handleCursor(dir)}
+            data-patch-resize={dir}
+            onPointerDown={guarded((e) => startPatchResize(e, panel, primary.target, layout, dir))}
+          />
+        ))}
 
         {legendBox &&
           primary &&
@@ -1086,6 +1166,7 @@ function Handle({
   onPointerDown,
   cursor,
   'data-legend-scale': legendScale,
+  'data-patch-resize': patchResize,
 }: {
   box: Box
   dir: ResizeDir
@@ -1093,11 +1174,12 @@ function Handle({
   /** 画面上的光标（翻转 / 旋转面板上与 `dir` 不同，见 ElementBoxes 的 `handleCursor`） */
   cursor: string
   'data-legend-scale'?: string
+  'data-patch-resize'?: string
 }) {
   return (
     <HandleMark
       at={handlePos(box, dir)}
-      hook={{ 'data-element-handle': dir, 'data-legend-scale': legendScale }}
+      hook={{ 'data-element-handle': dir, 'data-legend-scale': legendScale, 'data-patch-resize': patchResize }}
       cursor={cursor}
       onPointerDown={onPointerDown}
     />
@@ -1192,6 +1274,33 @@ function EdgeStrips({
         />
       ))}
     </>
+  )
+}
+
+/**
+ * 吸附反馈：线宽恒为屏幕像素（与吸附线同一换算，不随画布倍率变）。自身只画那条加粗边（跨度取 `self`，不贯穿整页）、不框自己，只用虚线框出对方；
+ * 虚线只用 `--sel-dash` 那一种（吸附是拖动中的暂定状态）。
+ */
+function SnapFeedbackMark({ f, t }: { f: SnapFeedback; t: ViewTransform }) {
+  const self = toScreen(f.self, t)
+  const edge =
+    f.axis === 'x'
+      ? { x1: mmToViewX(f.v, t) + 0.5, y1: self.y, x2: mmToViewX(f.v, t) + 0.5, y2: self.y + self.h }
+      : { x1: self.x, y1: mmToViewY(f.v, t) + 0.5, x2: self.x + self.w, y2: mmToViewY(f.v, t) + 0.5 }
+  return (
+    <g data-snap-feedback={f.axis} style={{ pointerEvents: 'none' }}>
+      {f.target && (
+        <rect
+          data-snap-target
+          {...rectAttrs(toScreen(f.target, t))}
+          fill="none"
+          stroke={SEL}
+          strokeWidth={1}
+          style={DASH}
+        />
+      )}
+      <line data-snap-self-edge {...edge} stroke={SEL} strokeWidth={2} style={{ shapeRendering: 'crispEdges' }} />
+    </g>
   )
 }
 

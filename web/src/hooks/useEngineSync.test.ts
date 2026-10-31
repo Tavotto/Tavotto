@@ -2,7 +2,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { renderTargets, syncEngine, useEngineSync } from './useEngineSync'
+import { crossFigureNeighbours, renderTargets, syncEngine, useEngineSync } from './useEngineSync'
 import { flushRender, requestRender } from '@/store/renderScheduler'
 import { seedExactRender } from '@/test/renderFixtures'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -1321,5 +1321,131 @@ describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放�
     await undo()
     expect(panelScale(current())).toBeCloseTo(1, 6)
     expect(nativeOf(current())).toEqual([40, 30])
+  })
+})
+
+describe('跨图邻居补渲染（ADR 0128 §二）', () => {
+  const objs = () => [panel('a', 'Fig1.pdf', 0), panel('b', 'Fig2.pdf', 0)] as CanvasObject[]
+  const VIEW = { x: -100, y: -100, w: 400, h: 400 }
+  const ids = (o: CanvasObject[], mode: 'layout' | 'fast_edit' = 'layout', v = VIEW as typeof VIEW | null, edit: string | null = 'a') =>
+    [...crossFigureNeighbours(o, edit, mode, v)]
+  const withB = (extra: Partial<PanelObject>): CanvasObject[] => [
+    panel('a', 'Fig1.pdf', 0),
+    { ...panel('b', 'Fig2.pdf', 0), ...extra } as PanelObject,
+  ]
+
+  it('进编辑后，视口里看得见的别的图是邻居，renderTargets 把它纳入（只带基线也渲染）', () => {
+    const o = objs()
+    expect(ids(o)).toEqual(['b'])
+    const t = renderTargets(o, 'a', {}, {}, {}, false, crossFigureNeighbours(o, 'a', 'layout', VIEW))
+    expect(t.map((x) => x.id)).toEqual(['a', 'b'])
+  })
+
+  it('不纳入：没进编辑 / 快速编辑 / 隐藏 / runtime / heavy / 无脚本 / 旋转 / 翻转 / 视口外', () => {
+    expect(ids(objs(), 'layout', VIEW, null)).toEqual([])
+    expect(ids(objs(), 'fast_edit')).toEqual([])
+    for (const extra of [
+      { hidden: true },
+      { fileKind: 'runtime' },
+      { cost: 'heavy' },
+      { script: null },
+      { rotation: 90 },
+      { flipH: true },
+      { flipV: true },
+      { x: 1000 },
+    ] as Partial<PanelObject>[])
+      expect(ids(withB(extra)), JSON.stringify(extra)).toEqual([])
+  })
+
+  it('视口尺寸未知（null）不剔；视口外才剔', () => {
+    expect(ids(withB({ x: 1000 }), 'layout', null)).toEqual(['b'])
+  })
+
+  it('runtime 邻居即使被传进来也照旧不自动渲染（重开文档绝不自动执行脚本）', () => {
+    const o = withB({ fileKind: 'runtime' })
+    expect(renderTargets(o, 'a', {}, {}, {}, false, new Set(['b'])).map((x) => x.id)).toEqual(['a'])
+  })
+
+  it('未进编辑时（不传邻居）与以前逐位一致：只带基线的面板不渲染', () => {
+    expect(renderTargets(objs(), null, {})).toEqual([])
+    expect(renderTargets(objs(), 'a', {}).map((x) => x.id)).toEqual(['a'])
+  })
+
+  describe('PNG 源图邻居：未采用的不补渲染（补渲染只能发无 source_policy 的 patches=[]）', () => {
+    const guard = { version: 1, requiredFrame: 'figsize', sourceId: 'same.png', bytesSha256: 'a'.repeat(64), sizeBytes: 9 } as const
+    const png = (id: string, extra: Partial<PanelObject> = {}) =>
+      ({ ...panel(id, 'same.png', 0), fileKind: 'raster', ...extra }) as PanelObject
+    const sameFile = (b: Partial<PanelObject> = {}): CanvasObject[] =>
+      [png('a', { artifactValidation: guard, overrides: [{ gid: 'figure', prop: 'frame', value: 'figsize' }] as PanelObject['overrides'] }), png('b', b)]
+
+    it('未采用（无 artifactValidation、无 override）的 PNG 不是邻居；采用过的 / 有 override 的照旧', () => {
+      expect(ids(sameFile())).toEqual([])
+      expect(ids(sameFile({ artifactValidation: guard }))).toEqual(['b'])
+      expect(ids(sameFile({ overrides: [{ gid: 'g', prop: 'color', value: '#000' }] as PanelObject['overrides'] }))).toEqual(['b'])
+    })
+
+    it('syncEngine：A 被采用后进编辑，未采用的同源 B 不会发出无策略渲染', async () => {
+      const { useWorkspaceStore } = await import('@/store/workspaceStore')
+      useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+      useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, viewW: 900, viewH: 700 })
+      const renders: unknown[] = []
+      useRenderStore.setState({ render: async (...args) => { renders.push(args) } })
+      syncEngine(sameFile(), 'a')
+      expect(renders).toHaveLength(1)
+      expect(renders[0]).toMatchObject(['same.png', [{ gid: 'figure', prop: 'frame', value: 'figsize' }], undefined, 'immediate', expect.anything(), guard])
+    })
+  })
+
+  describe('未采用 PNG 源图：tracked 路径不发无策略渲染；style-bound 画布照旧渲染（#1145，Codex #1179 r4313254705）', () => {
+    const guard = { version: 1, requiredFrame: 'figsize', sourceId: 'same.png', bytesSha256: 'a'.repeat(64), sizeBytes: 9 } as const
+    const png = (extra: Partial<PanelObject> = {}) =>
+      ({ ...panel('p', 'same.png', 0), fileKind: 'raster', ...extra }) as PanelObject
+    const edited = [{ gid: 'g', prop: 'color', value: '#000' }] as PanelObject['overrides']
+
+    it('styleBound：未采用的照旧渲染（它是结清样式债的唯一 manifest 来源）；采用过的 / 有 override 的 / 普通 PDF 面板同样入选', () => {
+      expect(renderTargets([png()], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([png({ artifactValidation: guard })], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([png({ overrides: edited })], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([panel('a', 'Fig1.pdf', 0)], null, {}, {}, {}, true)).toHaveLength(1)
+    })
+
+    it('tracked（脚本已变）：未采用的不渲染；采用过的照旧', () => {
+      expect(renderTargets([png()], null, { 'same.png': true })).toEqual([])
+      expect(renderTargets([png({ artifactValidation: guard })], null, { 'same.png': true })).toHaveLength(1)
+    })
+
+    it('进编辑的那张照旧入选（采用请求由 admitPngEntry 自己发）', () => {
+      expect(renderTargets([png()], 'p', {})).toHaveLength(1)
+    })
+
+    it('syncEngine：tracked 时未采用 PNG 不发任何渲染；style-bound 画布上发一次（无 policy 的 patches=[]）', () => {
+      useRenderStore.getState().markStale(['same.png'])
+      syncEngine([png()], null)
+      expect(calls).toEqual([])
+      const before = useDocumentStore.getState().doc
+      try {
+        useDocumentStore.setState({ doc: { ...before, style: { id: 's', detached: false } } as unknown as FigureDocument })
+        syncEngine([png()], null)
+        expect(calls).toHaveLength(1)
+      } finally {
+        useDocumentStore.setState({ doc: before })
+      }
+    })
+  })
+
+  it('syncEngine：进编辑时发出邻居的渲染；快速编辑不发', async () => {
+    const { useWorkspaceStore } = await import('@/store/workspaceStore')
+    for (const [mode, expected] of [
+      ['layout', ['Fig1.pdf', 'Fig2.pdf']],
+      ['fast_edit', ['Fig1.pdf']],
+    ] as const) {
+      calls.length = 0
+      useRenderStore.getState().clear()
+      useWorkspaceStore.setState({ mode, activePanelId: mode === 'fast_edit' ? 'a' : null })
+      useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, viewW: 900, viewH: 700 })
+      syncEngine(objs(), 'a')
+      expect(calls.map((c) => c.fileId).sort()).toEqual([...expected])
+    }
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   })
 })

@@ -48,7 +48,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import config, databinding, execspec, figcapture
+from . import config, databinding, execspec, figcapture, projectenv
 
 SETTINGS_KEY = "workdir"
 
@@ -337,6 +337,82 @@ def decision_for(figures_dir: str | Path, script: str) -> dict:
         "evidence": ev,
         "confirmation": confirmation_payload(script, ev) if needs else None,
     }
+
+
+def probe_hint(figures_dir: str | Path, script: str, observed, *, kinds=None) -> dict | None:
+    """沙盒 cwd 下**运行时**落空的相对探路调用（worker 的 `ProbeMisses`）→ 「在脚本目录里运行」的引导载荷，没有回 None。
+
+    ADR 0084 的运行时证据：首开的静态探测（`databinding.probe_literals`）只认写在调用里的字符串常量；
+    模式是参数（`def read_parts(pattern): glob.glob(pattern)`）时静态认不出来，脚本在沙盒里 `glob` 回空、
+    继续往下跑，最后死在下游（`x and y must be the same size`），诊断卡上看不出是输入没找到。这里拿 worker
+    记下的**那几串相对目标**，按脚本目录再判一次——判法就是首开用的那把尺子（`databinding._probe_hit`：项目外
+    不看、glob 自己走并有预算）；至少一条在脚本目录里找得到才返回，载荷与首开同形
+    （`confirmation_payload`，`reason = script_dir_evidence`，推荐 `project`），多一个 `source = "runtime"`。
+
+    **只诊断，不改结果、不自动切换**（ADR 0047 / 0084 原样）：这份载荷挂在错误的 `workdir_hint` 上，不是
+    `confirmation`——后者是「起会话之前要先答」的门，所有入口见到它都会停下。项目已经在脚本目录 / 项目根里
+    运行（模式不是沙盒）时回 None：那时 cwd 就是脚本目录，落空说明不了什么。
+    """
+    if not isinstance(observed, list) or not observed:
+        return None
+    root = Path(figures_dir)
+    if mode_for(root) != MODE_SANDBOX:
+        return None
+    script_path = root / figcapture.normalize_relative_script(script)
+    real = projectenv.contained_path(root, script_path)
+    if real is None:
+        return None
+    parent = Path(real).parent
+    known = {"glob", "dir", "path"}
+    found: list[str] = []
+    budget = [databinding.MAX_GLOB_SCAN]
+    for item in observed[: figcapture.MAX_PROBE_MISSES]:
+        if not isinstance(item, dict) or item.get("kind") not in known:
+            continue
+        if kinds is not None and item["kind"] not in kinds:
+            continue  # 调用方只认其中几种（build 成功时只认 glob）
+        target = item.get("target")
+        if not isinstance(target, str) or not target or len(target) > 512:
+            continue
+        probe = {
+            "kind": item["kind"],
+            "target": target,
+            "recursive": bool(item.get("recursive")),
+            "hidden": bool(item.get("hidden")),
+        }
+        try:
+            hit = databinding._probe_hit(parent, probe, root, budget)
+        except OSError:
+            continue
+        if hit == "found" and target not in found:
+            found.append(target)
+    if not found:
+        return None
+    evidence = {
+        "reads": [],
+        "outputs": [],
+        "candidates": {
+            databinding.CANDIDATE_SCRIPT_PARENT: {
+                "found": {},
+                "missing": [],
+                "outside": [],
+                "probes": {"found": list(found), "missing": [], "outside": [], "unjudged": []},
+            },
+            databinding.CANDIDATE_PROJECT_ROOT: {
+                "found": {},
+                "missing": [],
+                "outside": [],
+                "probes": {"found": [], "missing": [], "outside": [], "unjudged": []},
+            },
+        },
+        "probes": list(found),
+        "same_dir": False,
+        "verdict": databinding.VERDICT_SCRIPT_PARENT,
+        "conflicts": [],
+    }
+    payload = confirmation_payload(script, evidence)
+    payload["source"] = "runtime"
+    return payload
 
 
 def resolve_mode(figures_dir: str | Path, script: str) -> str:

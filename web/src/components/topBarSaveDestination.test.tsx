@@ -4,7 +4,13 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/store/actions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/actions')>()),
+  runManualSave: vi.fn(async () => {}),
+}))
+import { runManualSave } from '@/store/actions'
 import { literal } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type TextObject } from '@/types/document'
@@ -68,6 +74,7 @@ afterEach(async () => {
   document.body.innerHTML = ''
   setCurrentProjectId(null)
   useProjectStore.setState({ project: null })
+  vi.mocked(runManualSave).mockClear()
 })
 
 describe('保存去向', () => {
@@ -120,5 +127,45 @@ describe('保存去向', () => {
     await render()
     expect(label().dataset.saveDestination).toBe('local')
     expect(dot()).toBeNull()
+  })
+})
+
+describe('保存芯片是按钮：点击 = ⌘S（2026-10-22）', () => {
+  const button = () => host.querySelector<HTMLButtonElement>('[data-save-button]')!
+
+  it('开着项目但没绑定：字说「未存进项目」，点击走 runManualSave（那里弹「存进项目」）', async () => {
+    setCurrentProjectId('p1')
+    useProjectStore.setState({ project: { open: true, id: 'p1' } })
+    await render()
+    expect(saveText().textContent).toBe('未存进项目')
+    expect(button().getAttribute('aria-disabled')).toBeNull()
+    await act(async () => button().click())
+    expect(runManualSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('没开项目：字说「已存在本机」，点击照样走 runManualSave', async () => {
+    await render()
+    await act(async () => button().click())
+    expect(runManualSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('绑定且最新：aria-disabled，点击无副作用', async () => {
+    setCurrentProjectId('p1')
+    useProjectStore.setState({ project: { open: true, id: 'p1' } })
+    setProjectFile({ projectId: 'p1', name: 'A', file: 'tavottofile/A.json', revision: 'r', dirty: false })
+    await render()
+    expect(button().getAttribute('aria-disabled')).toBe('true')
+    await act(async () => button().click())
+    expect(runManualSave).not.toHaveBeenCalled()
+  })
+
+  it('绑定且有改动：可点，点击写回项目文件', async () => {
+    setCurrentProjectId('p1')
+    useProjectStore.setState({ project: { open: true, id: 'p1' } })
+    setProjectFile({ projectId: 'p1', name: 'A', file: 'tavottofile/A.json', revision: 'r', dirty: true })
+    await render()
+    expect(saveText().textContent).toBe('未存进项目')
+    await act(async () => button().click())
+    expect(runManualSave).toHaveBeenCalledTimes(1)
   })
 })

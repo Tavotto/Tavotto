@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「统一检查与问题定位（2026-08-31，ADR 0030）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/validation.test.ts`、`lib/issueFocus.test.ts`、`lib/issueFix.test.ts`、`lib/problemList.test.ts`、`lib/subplotParts.test.ts`、`store/validationStore.test.ts`、`tests/test_preflight.py`、`hooks/useServerEvents.test.ts`、`store/statusPassive.test.ts`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 70
+改到: `lib/validation.ts`、`store/validationStore.ts`、`lib/issueFocus.ts`、`lib/problemList.ts`、`lib/subplotParts.ts`、导出对话框的摘要、`uiStore` 的 status 主人 / `useServerEvents` 的 `render.failed`↔`render.done` toast
+主题: 统一检查与问题定位 → `validation-and-problem-navigation.md`
+必守要点: 摘要只由 `summaryFor()` 组装；定位只有 `focusObject()` 一处；失败 toast 挂主人，同项目同文件渲染成功才撤
+-->
 
 完整版在 `docs/adr/0030-validation-and-problem-navigation.md`，改动前先读。
 **「这份项目有什么问题」只有一条链**：
@@ -20,6 +29,15 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。**画布摆放类
   规则**（目录里 `placement: true`：`out-of-page` / `outside-margin` / `overlap`，
   判的是对象在画布页面上的摆法）按原图也不算（`appliesToOriginal()`，QA FLAG-B1）；
+  **原图范围裁的不是画布那份结果**（2026-10-19）：画布那份的字号乘了画布缩放、位图 PPI 按摆放宽度算，
+  而原图导出不带那次缩放（ADR 0028）——160 mm 的图缩到 80 mm 摆着，9 pt 会被说成 4.5 pt 的阻断。
+  原图范围是**同一个求值器**对原图口径输入的一次求值：`preflight.buildOriginalSpec()`（页面 = 图幅、
+  margin 0、面板铺满、scale 1，与后端 MCP 入口 `spec_from_manifest()` 同口径）→
+  `validation.validateOriginal()` → `validationStore.originalValidationFor()`，摘要与报告再经上面
+  那一刀（`summaryFor({ objectId })` / `rawIssuesForObject()`）；图幅取 `useOriginalSpec` 那一份
+  （摘要与报告的 `page_mm` 同一个数）。对话框只调 store、不自己求值；看护 `lib/validation.test.ts`
+  「原图范围检查的是原图那份产物」与 `ExportDialog.test.tsx`「画布上缩小摆放的图」。问题面板仍按画布那份列
+  （它说的是「这页上的图」），按原图导出时两边的数可以不同；
   原图范围的报告 `page_mm` = 图幅、`objects` 只有那张图（`buildProofPayload` 的
   `settings.original` 直接交那张图本身）。原图范围的检查**按那张图所在的画布**裁
   （`findFigurePanel()` 的 `canvasId`），它不一定在当前画布上；**规范也从那张画布的绑定
@@ -30,9 +48,9 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   那一次，而 `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）；
   不重挑的话，按原图导出的样式检查报告会把别的面板的测量值记到选中的那张图
   头上（目标自己 7 pt，报告里写成 4 pt）。
-  它**不列第二套清单**（ADR 0031 §四），只有一个例外：**阻断项逐条列出**
-  （最多 5 条，无筛选无修复，每条一个「定位」入口，紧挨着知情确认框——用户
-  在点头之前得看见自己在为什么点头）；其余等级只给数量 + 「查看问题」，
+  它**不列第二套清单**（ADR 0031 §四）：2026-10-21 起连原来「阻断项逐条列出」的那个例外也去掉了——导出永远可点、不加警告句，
+  检查区只有计数芯片与问题面板入口；
+  数量摘要是计数芯片（`ui/CountChip`，颜色只在圆点上；点芯片带着这一档与导出目标去问题面板）；其余等级只给数量 + 「查看问题」，
   完整清单、筛选与修复都在左侧问题面板。「定位」与「查看问题」关掉对话框时
   把用户填的东西留在组件里（`parked`），再点导出原样回来。
 * **主对话框栈**（`uiStore.dialogStack`，审计 T35）：导出 → 设置 → 论文样式
@@ -42,7 +60,10 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   样式 id 打开样式对话框（`stylesPresetId`），也不关设置。
 * **`ready` / `failed` 不许压扁成「没问题」**：`total === 0` 单独看不足以说
   「检查通过」。打开导出对话框时**当场同步跑一遍**，就是为了不让那 250ms 防抖
-  窗口里说出一句假话。
+  窗口里说出一句假话。**查完且 0 条时也不说「检查通过」**（2026-10-19）：导出对话框的结论行
+  （`data-export-check-ok`）说「按「规范名」未发现问题 · 范围」，下面一行小字说覆盖到哪
+  （`data-export-check-coverage`：只查识别出的文字、线条与版面，识别不出的内容如嵌入的图像不在其中）——
+  「没查出」不等于「合规」，规范名的取法与问题面板的证据句（`NoneEvidence`）同一做法。
 * **逐条命中**（`PreflightOccurrence`）是 TS 侧的展开层，**不进跨语言合同**：
   golden vectors 比的仍是聚合投影。看护用例盯着两者一致（命中的 objectId /
   gid 并起来必须与聚合项逐字相等）。每条命中带着自己那次的 `worse`（量化排名，
@@ -53,7 +74,14 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   选中 → 视口 → 高亮 → Inspector → 属性字段，失败回**闭集原因**
   （`canvas_missing` / `object_deleted` / `not_editable` / `document_not_loaded`），
   绝不静默不动。属性字段的落点是 `data-prop`（稳定机器标识），**不是
-  aria-label**——那是本地化文案，换语言就选不中。
+  aria-label**——那是本地化文案，换语言就选不中。**落点要认主人**（2026-10-23 用户反馈）：锚点自己的
+  `data-gid` 或外层图内属性页的 `data-inspector-gid` 必须等于目标 gid（画布对象 = 不属于任何图内元素）——
+  同名字段到处都有，从图例跳到图例标题时旧页还挂着，按第一个匹配取会落到上一个元素的「字号」上，新页挂上后
+  焦点又被「内容」框抢走。找不到就把请求挂在 `uiStore.fieldLocate`、逐帧重试（≤30 帧）：字段收在「更多」/
+  摘要行里时属性页据此打开那一折（`inspector/useLocateReveal`，收起的折不挂控件）；落到了那一行亮一下
+  （`[data-locate-flash]`，sel 内环 + 淡底，与画布同一个 `--animate-attention`），画布上那一下闪在问题带 gid 时
+  描**那个图内元素**（`IssueOverlay.IssueElementHighlight`，与悬停轮廓同一份换算），不是整张图；两处都亮
+  `HIGHLIGHT_MS`（2700）。同时放一段**舞台灯**（`canvas/IssueSpotlight`，2026-10-23 用户提出）：参照 iMessage「聚光灯」——一道光柱从离目标最近的画布角斜射过来，画布整体暗下去、轻微失焦，目标落在一层光圈里（外缘一圈很淡的光晕），整段一秒；只有一层暗幕，光圈与光柱是同一张遮罩里的受光区（暗幕变薄，不叠白），不画描边（动效开着时高亮框只当光圈锚点、不可见）；光圈读覆盖层里那个高亮框的屏幕外接框（不另算几何，视口平移中每帧跟着），挂在选框覆盖层之下，reduced motion 下不放。看护 `lib/issueFocus.test.ts`、`components/inspector/locateField.test.tsx`、`canvas/issueSpotlight.test.tsx`。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
   「技术详情」里。它是行尾 88px **尾随格**里的 ⓘ（`data-issue-tech-toggle`），点开是一个 popover
@@ -61,8 +89,8 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   画「当前 → 要求」（`data-issue-values`），指到 / 聚焦 / 是当前行时**同一格**换成「修复」+ ⓘ——
   **悬停只改透明度，绝不改 display，行高与列宽永不随悬停变**（`problemPanel.test` 钉着）。
   吸顶组头、游标条与页脚的底色读 `LeftPanel` 按模式设的 `--drawer-bg`（停靠 = bg、覆盖式 = surface），不写死白底。
-* **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
-  所以"提到正好 8 pt"不算修好）、不动科研数据（色图 / 裁剪 / 重排一律不自动）。
+* **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（目标是能通过的最小 0.5 档；
+  绝对下限 2026-10-26 起含等号，ADR 0029 §6b）、不动科研数据（色图 / 裁剪 / 重排一律不自动）。
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
   一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
 * **修复按「修的是谁」分两路，一类对象只有一个计划器（ADR 0080）**：
@@ -89,6 +117,10 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   （修好依赖后自动重渲染成功，红色「无法渲染」不再挂着）——前提是**这个文件没有一个变体还坏着 / 还在渲染**
   （「坏着」只认画布上还有面板指着的变体，`recent` 里为撤销留着的旧变体不算；同文件不同覆盖的面板各自成败；SSE 的 done 与变体自己的响应谁先到不定，两处各问一次，响应那一处在在途槽位松开之后问）；此刻挂着的是
   别的图 / 别的类别的提示就不动。
+  **切项目撤旧项目的 toast**：`resetForNewProject` 按主人前缀撤 `render.failed:` / `project.error:` / `export.result`
+  （`clearStatusOwnedByPrefix`）——撤销事件按 pj 过滤、新项目收不到旧项目的，不撤就一直指着旧项目的文件。`project.error`
+  挂 `projectErrorOwner(pj)`，同项目后台刷新恢复（`registry.changed` / `assets.changed`）时撤。带 `action` 的 toast（`setStatus` 的
+  `action: { label, run }`，通知轨上的「查看」）不自己消失，其余语气规则不变。看护：`store/projectSwitchToasts.test.ts`、`hooks/useServerEvents.test.ts`。
   **toast 的语气**（`uiStore.StatusTone`，2026-10-07 审计 P0）：`info`（缺省，Info 图标）/ `progress`
   （进行中，转圈）/ `done`（做成了，✓）/ `error`。只有 `error` 改变行为（常驻、assertive），其余三档只换
   图标；**每个调用点都显式给出语气**（做成了 `done`、正在… `progress`、中性 / 没做成 `info`、出错 `error`），
@@ -114,7 +146,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `useDisplayedExactManifest` + `geomTarget` + `panelFullRect`，再套面板内容的显示变换 `lib/panelTransform.panelTransformSvg(panelContentTransform())`——先翻转、再旋转，与 `PanelView` 的 CSS 同一份权威，只转不翻会在翻转过的图上描到镜像位置；解不出来才退回整张图，Codex #832；看护 `canvas/issueHoverDisplay.test.tsx`：真实 PanelView + OverlaySvg + ProblemPanel，130%，翻转 / 翻转 + 旋转逐一比对）——行 / 卡片只经 `problemTree.useIssueHover()` 写它（指针进出与键盘焦点 / 失焦都算，分桶钮与对象行同一条路，Codex #832），撤一律**比对后再清**
   （`releaseIssueHover`：对象身份即主人，被别的行顶掉的不动）；行被修好 / 筛掉 / 换文档卸载时不发
   pointerleave / blur，卸载时再撤一次，不靠面板卸载那一道（Codex #832）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（屏幕空间：按 `visualBounds` 的外接框放、整组不随对象旋转，项数永远正着，Codex #832；让开 ne 缩放手柄；底色与项数字色成对取 `canvas/issuePinColors.PIN_COLORS`，`tokenContrast.test` 逐对量 ≥4.5:1——warn 用 `warn-content` 底，锚点 #b07400 衬白字只有 3.9:1，Codex #832），
-  点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
+  点它 = `openProblemAt`）。摘要条（32px）只有等级开关（`ui/CountChip`：颜色只在 6px 圆点上，数字与文字是中性墨色）与一颗 ghost 动作「全部修复 N」（不是填色主按钮，UI 2.0 第二轮 03）；
   正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
   带证据（按哪套规范、查了几张图、`validationStore.checkedAt`——「刚刚 / N 分钟前」由证据自己按整分钟走表刷新，不等别的重渲染，Codex #832；规范按**每张装着图的画布各自的绑定**说，与
   `collectCanvases()` 同一份判据——几张画布绑了不同规范时说「按 N 套规范（A、B）」，不拿当前画布那一套冒充全部，Codex #832）。

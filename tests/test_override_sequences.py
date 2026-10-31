@@ -184,6 +184,33 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
             [_p("axes_0.patches_0", "hatch", "/")],
         ],
     ),
+    (
+        # lab 放宽种子 InvCont-s18：图例句柄颜色跟着柱子 facecolor 走。热态里句柄第一次被采样
+        # 是在第二轮，那时第一轮的 facecolor 已经把它的读数改成 #123456，`value_original` 记成了
+        # 联动后的值；重放从脚本原样起步，记的是 #1f77b4。修法：Figure 还是原样的那一轮整图读一份
+        # 字段（`FigState.pristine_fields`），之后各轮第一次采样都从那里取。
+        "seq18-bar-facecolor-then-legend-handle-color",
+        "InvCont",
+        [
+            [_p("axes_0.barseries_1.bar_0", "facecolor", "#123456")],
+            [
+                _p("axes_0.barseries_1.bar_0", "facecolor", "#123456"),
+                _p(_T1, "handle_color", "#ff0000"),
+            ],
+        ],
+    ),
+    (
+        # lab 放宽种子 InvCont-s29：同一族，花纹颜色跟着 edgecolor 走。
+        "seq29-bar-edgecolor-then-hatchcolor",
+        "InvCont",
+        [
+            [_p("axes_0.barseries_1", "edgecolor", "#123456")],
+            [
+                _p("axes_0.barseries_1", "edgecolor", "#123456"),
+                _p("axes_0.barseries_1", "hatchcolor", "#ff0000"),
+            ],
+        ],
+    ),
 ]
 
 
@@ -554,3 +581,95 @@ def test_fixed_regressions(hot, replay, library, case_id, stem, steps):
         f"像素{'不同' if seen.pixel else '相同'}）\n{_describe(steps)}"
     )
     _check_final_against_fresh(hot, library, stem, steps[-1], case_id)
+
+
+# ---------------------------------------------------------------------------
+# #874：花纹色在 rc_context 里建的图——alpha / fill 往返必须回到脚本原样
+# ---------------------------------------------------------------------------
+# 3.11 起 `set_alpha` / `set_fill` 把「未设」模式的花纹色按**此刻**的 rcParams 重解析：脚本在
+# `rc_context` 里设过 `hatch.color`，创建时的 red / `'edge'` / 半透明 RGBA 被环境值盖掉，撤销回不
+# 去（≤3.10 是 `set_fill(True)` 回不去 `_hatch_color`）。热态编辑那一刻与重放一致，分叉只在撤销
+# 之后——所以判据三件：每一步 HOT == REPLAY（manifest + 像素），撤空后像素 == 全新 worker 只见 `[]`，
+# 且 == 编辑前的脚本原样。随机序列的图不含 rc_context，撞不到它，所以固定序列另列。
+from support import rc_hatch_figure as rc  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def rc_library(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("rc-hatch-figures")
+    (figs / rc.SCRIPT_NAME).write_text(rc.LIBRARY, encoding="utf-8")
+    return figs
+
+
+def _rc_worker(figs):
+    w = pool.one_shot(rc.SCRIPT_NAME, str(figs), rc.ENTRY)
+    w.ensure_built()
+    return w
+
+
+def _rc_steps(gid: str, props: tuple[str, ...]) -> list[list[dict]]:
+    a = lambda v: _p(gid, "alpha", v)  # noqa: E731
+    f = lambda v: _p(gid, "fill", v)  # noqa: E731
+    steps = [[a(0.4)], [a(0.7)], []] if "alpha" in props else []
+    if "fill" in props:
+        steps += [[f(False)], [f(False), a(0.5)], [a(0.5)], [f(False)], []]
+    return steps
+
+
+@pytest.mark.parametrize("name", list(rc.TARGETS))
+def test_rc_context_hatch_alpha_and_fill_round_trips_restore_the_script_look(rc_library, name):
+    gid, props = rc.TARGETS[name]
+    steps = _rc_steps(gid, props)
+    hot, replay, fresh = _rc_worker(rc_library), _rc_worker(rc_library), _rc_worker(rc_library)
+    try:
+        base_png = _png(hot, rc.STEM, [], f"rc-{name}-base")
+        seen = _diverges_hot_vs_replay(hot, replay, rc.STEM, steps, f"rc-{name}")
+        assert seen is None, (
+            f"{name}：第 {seen.step} 步热态 ≠ 重放（manifest {seen.manifest} 像素 {seen.pixel}）"
+        )
+        # 序列最后一步是 []：热态已撤空
+        hot_png = _png(hot, rc.STEM, [], f"rc-{name}-hot-end")
+        fresh_png = _png(fresh, rc.STEM, [], f"rc-{name}-fresh")
+        assert hot_png == fresh_png, f"{name}：撤空后热态 ≠ 只见 [] 的全新 worker"
+        assert hot_png == base_png, f"{name}：撤空后没有回到脚本原样（花纹色被环境值重解析）"
+    finally:
+        for w in (hot, replay, fresh):
+            pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# #956：同一缺陷的另三个消费方——文本背景框 / 图例框 / 线集合的 alpha 往返
+# ---------------------------------------------------------------------------
+# 与上面同一把尺，夹具是 `rc_hatch_text_legend_figure`（一张图里五类各在不同的 `hatch.color` 下创建）。
+from support import rc_hatch_text_legend_figure as rctl  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def rctl_library(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("rc-hatch-tl-figures")
+    (figs / rctl.SCRIPT_NAME).write_text(rctl.LIBRARY, encoding="utf-8")
+    return figs
+
+
+@pytest.mark.parametrize("name", list(rctl.TARGETS))
+def test_rc_context_hatch_text_legend_alpha_round_trip_restores_the_script_look(rctl_library, name):
+    gid, prop = rctl.TARGETS[name]
+    steps = [[_p(gid, prop, 0.4)], [_p(gid, prop, 0.7)], []]
+    hot, replay, fresh = (
+        pool.one_shot(rctl.SCRIPT_NAME, str(rctl_library), rctl.ENTRY) for _ in range(3)
+    )
+    for w in (hot, replay, fresh):
+        w.ensure_built()
+    try:
+        base_png = _png(hot, rctl.STEM, [], f"rctl-{name}-base")
+        seen = _diverges_hot_vs_replay(hot, replay, rctl.STEM, steps, f"rctl-{name}")
+        assert seen is None, (
+            f"{name}：第 {seen.step} 步热态 ≠ 重放（manifest {seen.manifest} 像素 {seen.pixel}）"
+        )
+        hot_png = _png(hot, rctl.STEM, [], f"rctl-{name}-hot-end")
+        fresh_png = _png(fresh, rctl.STEM, [], f"rctl-{name}-fresh")
+        assert hot_png == fresh_png, f"{name}：撤空后热态 ≠ 只见 [] 的全新 worker"
+        assert hot_png == base_png, f"{name}：撤空后没有回到脚本原样（花纹色被环境值重解析）"
+    finally:
+        for w in (hot, replay, fresh):
+            pool.discard(w)

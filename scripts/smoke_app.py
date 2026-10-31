@@ -390,6 +390,17 @@ def _check_control_plane(base: str, expect: str | None) -> None:
     print(f"✓ 渲染控制面: selected={selected} sessions={sessions}")
     if not expect:
         return
+    if expect == "conda-fallback":
+        # 需要 Conda 激活的解释器，workerd 按设计不接（spawn 规格不带激活增量）：
+        # 二进制照常在（selected 仍是 workerd），但这次渲染必须落在 Python 池上。
+        # 这是「预期内的回退」，与 workerd 起不来的「静默回退」是两回事。
+        if selected != "workerd":
+            raise SmokeError(
+                f"conda-fallback 要求产物自带 workerd（selected=workerd），实际是 {selected}"
+            )
+        if "python" not in sessions or "workerd" in sessions:
+            raise SmokeError(f"需要 Conda 激活的解释器应只走 Python 渲染池，实际会话是 {sessions}")
+        return
     if selected != expect:
         raise SmokeError(
             f"渲染控制面应为 {expect}，实际是 {selected}（产物里没打进 tavotto-workerd？）"
@@ -399,6 +410,91 @@ def _check_control_plane(base: str, expect: str | None) -> None:
             f"二进制在，但刚才那次渲染走的是 {sessions}——workerd 起不来，"
             "已静默回退到 Python 渲染池（看数据目录 cache/workerd.log）"
         )
+
+
+#: `tavotto-cli mcp` 必须答出来的工具（「接入 AI 编辑器」写进宿主配置的就是这条命令）。只点名两个：
+#: 全集归 `tavotto_mcp.server.HANDLERS`，这里不抄第二份，只证明冻结产物里服务端真的起来了、不是降级 server。
+FROZEN_MCP_REQUIRED_TOOLS = ("tavotto_health", "tavotto_open_figure")
+
+
+def frozen_cli_for(exe: str) -> Path:
+    """GUI exe 同目录的 `tavotto-cli`，**绝对路径**：CI 传的是相对路径（`dist/Tavotto/Tavotto`），而握手子进程的
+    cwd 是示例项目——相对路径会去那下面找（Codex #1451 P1）。"""
+    p = Path(exe).resolve()
+    return p.with_name("tavotto-cli" + p.suffix)
+
+
+def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
+    """冻结产物的 `tavotto-cli mcp`：握手、列工具、调一次 tavotto_health（冻结态缺模块只有这样才露出来）。"""
+    msgs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "smoke-app", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "tavotto_health", "arguments": {}},
+        },
+    ]
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TAVOTTO_", "MM_"))}
+    env.update(
+        TAVOTTO_DATA_DIR=str(workdir / "mcp-data"),
+        TAVOTTO_CONFIG_DIR=str(workdir / "mcp-config"),
+        TAVOTTO_MCP_ROOTS=str(project),
+        TAVOTTO_NO_TELEMETRY="1",
+    )
+    proc = subprocess.run(
+        [str(cli), "mcp"],
+        input="".join(json.dumps(m) + "\n" for m in msgs),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        cwd=str(project),
+        timeout=300,
+    )
+    try:
+        out = {
+            m.get("id"): m for m in (json.loads(x) for x in proc.stdout.splitlines() if x.strip())
+        }
+    except ValueError as exc:
+        raise SystemExit(f"::error::tavotto-cli mcp 的 stdout 不是纯 JSON-RPC: {exc}") from exc
+    tools = {t.get("name") for t in ((out.get(2) or {}).get("result") or {}).get("tools", [])}
+    missing = [t for t in FROZEN_MCP_REQUIRED_TOOLS if t not in tools]
+    health = (out.get(3) or {}).get("result") or {}
+    if proc.returncode != 0 or missing or not health or health.get("isError"):
+        raise SystemExit(
+            f"::error::tavotto-cli mcp 不可用（退出码 {proc.returncode}，缺工具 {missing}，"
+            f"health={json.dumps(health, ensure_ascii=False)[:300]}）: {proc.stderr.strip()[-600:]}"
+        )
+    canvas = health_canvas(health)
+    if not canvas.get("available"):
+        # 画布随包（tavotto.spec 收进 widget/）：缺了宿主里就没有内嵌画布，工具照常——正因为不报错才要在这里拦
+        raise SystemExit(f"::error::tavotto-cli mcp 的画布不可用: {canvas.get('reason') or canvas}")
+    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，画布随包")
+
+
+def health_canvas(result: dict) -> dict:
+    """`tavotto_health` 的 tools/call 结果里的 `canvas` 一节（结构化内容优先，退回第一段文本里的 JSON）。"""
+    data = result.get("structuredContent")
+    if not isinstance(data, dict):
+        try:
+            data = json.loads((result.get("content") or [{}])[0].get("text") or "{}")
+        except (ValueError, AttributeError, IndexError):
+            data = {}
+    canvas = data.get("canvas") if isinstance(data, dict) else None
+    return canvas if isinstance(canvas, dict) else {}
 
 
 def run_smoke(
@@ -693,9 +789,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--expect-control-plane",
         default=None,
-        choices=["workerd", "python"],
+        choices=["workerd", "python", "conda-fallback"],
         help="断言渲染控制面（workerd = Rust supervisor）。"
-        "桌面产物用 workerd：回退是静默的，不断言就发现不了",
+        "桌面产物用 workerd：回退是静默的，不断言就发现不了。"
+        "conda-fallback：产物自带 workerd（selected=workerd），但需要 Conda 激活的"
+        "解释器按设计只走 Python 池（sessions 有 python、无 workerd）",
     )
     ap.add_argument(
         "--expect-runtime",
@@ -720,6 +818,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"找不到可执行文件: {args.exe}", file=sys.stderr)
         return 2
 
+    if args.exe:
+        # 先单独验一次「冻结产物里 ssl 能加载」（#1051）：不然 app 在 import 阶段就崩，下面只会看到一句
+        # 「受控退出失败」，真因（DLL 不配套）被埋在 traceback 里。
+        try:
+            probe = subprocess.run(
+                [args.exe, "--ssl-selftest"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"::error::ssl 自检没能运行: {exc}", file=sys.stderr)
+            return 1
+        if probe.returncode != 0:
+            print(
+                f"::error::冻结产物 ssl 自检失败（退出码 {probe.returncode}）: "
+                f"{(probe.stderr or probe.stdout or '').strip()[-600:]}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"· ssl 自检通过: {(probe.stdout or '').strip()}")
+
     figures = Path(args.figures).resolve()
     if not figures.is_dir():
         print(f"示例项目目录不存在: {figures}", file=sys.stderr)
@@ -734,6 +856,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         workdir = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     print(f"· 隔离用户目录: {workdir}")
+    if args.exe:
+        cli = frozen_cli_for(args.exe)
+        if not cli.is_file():
+            print(f"::error::冻结产物里没有 {cli.name}", file=sys.stderr)
+            return 1
+        check_frozen_mcp(cli, figures, workdir)
     try:
         run_smoke(
             launch,

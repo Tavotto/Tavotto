@@ -408,3 +408,51 @@ def test_export_panel_rotation_is_css_clockwise(client, tmp_path, monkeypatch):
             "BR": lum(62.5, 37.5),
         }
         assert min(q, key=q.get) == dark_q, (rot, opacity, q)
+
+
+# ---------------- 标注里的公式（ADR 0152 PR 4）----------------------------------
+
+
+def _mathtext_ready():
+    import importlib.util
+
+    if importlib.util.find_spec("matplotlib") is None:
+        pytest.skip("测试解释器没有 matplotlib：公式排版子进程无从起（not_run）")
+
+
+def test_export_latex_math_is_drawn_as_vector_outlines(client, tmp_path, monkeypatch):
+    """`k = $x^2$`：公式画成填充轮廓（不是文字、不是位图），周围的字照常是文字层。"""
+    _mathtext_ready()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    doc = _export(
+        client,
+        tmp_path,
+        {"stem": "t", "objects": [_text_obj("k = $x^2$ end", text_format="latex")]},
+    )
+    page = doc[0]
+    text = page.get_text()
+    assert "k =" in text and "end" in text
+    # 文本层里公式处是它的 LaTeX 源码（ActualText，ADR 0152 §七；MuPDF 会在 `$` 旁多带空白，故去空白比）
+    assert "k=$x^2$end" in "".join(text.split())
+    filled = [d for d in page.get_drawings() if d.get("fill") is not None]
+    assert filled, "公式应当是填充的矢量轮廓"
+
+
+def test_export_unrenderable_math_keeps_source_and_warns(client, tmp_path, monkeypatch):
+    _mathtext_ready()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    resp = client.post(
+        "/api/export",
+        json={
+            "page_w_mm": 100,
+            "page_h_mm": 50,
+            "formats": ["pdf"],
+            "stem": "t",
+            "objects": [_text_obj("k $\\badcmd{x}$", text_format="latex")],
+        },
+    )
+    body = resp.get_json()
+    assert resp.status_code == 200, body
+    assert any("math_unrenderable" in w for w in body.get("warnings", [])), body.get("warnings")
+    out = Path(body["export_dir"]) / body["files"][0]["name"]
+    assert "$\\badcmd{x}$" in pymupdf.open(stream=out.read_bytes(), filetype="pdf")[0].get_text()

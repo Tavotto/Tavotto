@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { currentLocale, t as translate } from '@/i18n'
 import { fetchBuildVersion, type TelemetrySettings } from '@/lib/api'
-import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
+import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL, supportPageUrl } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
+import { useContactStore } from '@/store/contactStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
+import { buttonClass } from '../ui/buttonClass'
+import { ICON_SIZE } from '../ui/Icon'
+import { ExternalLink, Heart } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
@@ -23,7 +28,7 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * （before/zh-1440-settings-about.png）。
  *
  * 现在这一页是三块（导航 id 仍是 `about`，不动 schema；2026-09-30 并进了「更新」）：
- *   1. 产品与版本（页首：标志 + 名字 + 版本 + 许可）；
+ *   1. 产品与版本（页首：标志 + 名字 + 版本 + 许可；右侧一颗「支持 Tavotto」，去官网的支持页）；
  *   2. 更新（`UpdateSettings`：自动检查 / 检查更新 / 有新版本时一条 accent Notice + 32px 主按钮）；
  *   3. 隐私与数据——**最短摘要常驻**，逐条数据清单进默认折叠的
  *      「会发送哪些数据」（审计 T49；此前那两段清单在小问号里，且已经与
@@ -63,31 +68,48 @@ export function PrivacyAboutSettings() {
 
 function ProductBlock({ version }: { version?: string }) {
   return (
-    <div className="flex items-center gap-4">
-      {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
-      <BrandMark size={54} />
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <p className="type-title">
-          {PRODUCT_NAME}
-          {version && <span className="ml-1.5 font-mono text-sm font-normal text-ink-2">v{version}</span>}
-        </p>
-        <p className="type-caption">{st('about.tagline')}</p>
-        <p className="type-meta">
-          {st('about.licenseBefore')}{' '}
-          <a
-            href={REPO_URL}
-            target="_blank"
-            rel="noreferrer"
-            // 正文句子里的链接必须**不靠颜色**也能认出来（axe
-            // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
-            // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
-            className="text-ink-2 underline underline-offset-2 hover:text-ink"
-          >
-            {st('about.source')}
-          </a>
-          {st('about.licenseAfter')}
-        </p>
+    // 窄宽度（约 350px 或高缩放）下按钮折到产品块下面一行，而不是把产品文字挤到被裁掉：
+    // 标志 + 文字是一组、基准宽 18rem，放不下按钮时整组占满一行
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3" data-settings-anchor="about.support">
+      <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-4" data-about-product>
+        {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
+        <BrandMark size={54} />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p className="type-title">
+            {PRODUCT_NAME}
+            {version && <span className="ml-1.5 font-mono text-sm font-normal text-ink-2">v{version}</span>}
+          </p>
+          <p className="type-caption">{st('about.tagline')}</p>
+          <p className="type-meta">
+            {st('about.licenseBefore')}{' '}
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              // 正文句子里的链接必须**不靠颜色**也能认出来（axe
+              // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
+              // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
+              className="text-ink-2 underline underline-offset-2 hover:text-ink"
+            >
+              {st('about.source')}
+            </a>
+            {st('about.licenseAfter')}
+          </p>
+        </div>
       </div>
+      {/* 只是一条去官网的链接：点了才出网，由系统浏览器打开；页内不嵌任何捐赠服务 */}
+      <a
+        href={supportPageUrl(currentLocale())}
+        target="_blank"
+        rel="noreferrer"
+        data-about-support
+        className={buttonClass({ variant: 'secondary', size: 'md', className: 'ml-auto shrink-0' })}
+      >
+        {/* 红色实心爱心（用户要求 2026-10-22）：危险色 token，深浅两套主题各自有值；纯装饰，字已说全 */}
+        <Heart size={ICON_SIZE.xs} filled className="text-danger" data-about-support-heart aria-hidden />
+        {st('about.support', { product: PRODUCT_NAME })}
+        <ExternalLink size={ICON_SIZE.xs} aria-hidden />
+      </a>
     </div>
   )
 }
@@ -190,6 +212,9 @@ function consentStatus(settings: TelemetrySettings | null): string | undefined {
  * 的匿名身份，而我们确实靠它算留存。
  */
 function TelemetryDataDisclosure() {
+  // 「发送问题反馈」只在维护者打开时才存在；存在时这页的网络摘要要多说一句（ADR 0118）。默认关闭 = 不多说。
+  const diagSend = useDiagSendStore((s) => s.capability !== null)
+  const contact = useContactStore((s) => s.capability !== null)
   useTranslation('dialogs')
   return (
     <DiagnosticDisclosure variant="row" data-privacy-disclosure title={st('about.telemetry.detailsTitle')}>
@@ -209,12 +234,19 @@ function TelemetryDataDisclosure() {
           </li>
         ))}
       </ul>
+      <p data-telemetry-error-summary className="type-caption">
+        {st('about.telemetry.errorSummary')}
+      </p>
       <p className="type-caption">
         <strong className="font-medium text-ink">{st('about.telemetry.neverLabel')}</strong>
         {st('about.telemetry.never')}
       </p>
       {/* 「本机优先」这条完整承诺 */}
-      <p data-privacy-network-summary className="type-caption">{st('about.privacy')}</p>
+      <p data-privacy-network-summary className="type-caption">
+        {st('about.privacy')}
+        {diagSend && ` ${st('about.privacySend')}`}
+        {contact && ` ${st('about.privacyContact')}`}
+      </p>
     </DiagnosticDisclosure>
   )
 }

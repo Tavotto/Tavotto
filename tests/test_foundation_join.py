@@ -328,6 +328,7 @@ def test_fo32_existing_env_open_edit_replay_export_through_the_new_rendercore(tm
     evidence: list[str] = []
     env = {"TAVOTTO_RENDER_BACKEND": "rendercore"}
     with fa.running_app(proj, tmp_path / "work", env_overrides=env) as app:
+        app.adopt_project_environment()  # ADR 0114：首开不再静默采用项目 venv；用户点「使用」才是「用户的环境」
         panel = _panel(app, "figure_h5.pdf")
         assert panel["script"].replace("\\", "/") == "scripts/figure_h5.py"
         # ① 歧义：两处同名 measure.h5 内容不同 → 问一次，不推荐、不猜；选择前不发布图
@@ -456,6 +457,7 @@ def test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so(tmp_path):
     with fa.running_app(
         proj, tmp_path / "work", env_overrides={"TAVOTTO_RENDER_BACKEND": "rendercore"}
     ) as app:
+        app.adopt_project_environment()  # ADR 0114：用户采用了项目 venv（首开不再静默采用）
         panel = _panel(app, "figure_h5.pdf")
         state = app.prepare(panel["id"])
         assert state["result"]["status"] == "needs_input"
@@ -626,7 +628,10 @@ class TestManagedEnvJoin:
         resp = client.post("/api/engine/dependencies/plan", json={"script": script})
         assert resp.status_code == 200, resp.get_json()
         plan = resp.get_json()["plan"]
-        resp = client.post("/api/engine/dependencies/prepare", json={"plan_id": plan["plan_id"]})
+        resp = client.post(
+            "/api/engine/dependencies/prepare",
+            json={"plan_id": plan["plan_id"], "impact_digest": plan["impact_digest"]},
+        )
         assert resp.status_code == 200, resp.get_json()
         deadline = time.time() + timeout
         while True:

@@ -1,4 +1,4 @@
-import { t as translate } from '@/i18n'
+import { currentLocale, t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 
 /**
@@ -39,6 +39,8 @@ export interface SettingsEntry {
    * 点了结果不会落空。
    */
   anchors?: readonly string[]
+  /** 只在这个条件成立时才可搜（页面上那一行本来就只在某些条件下渲染，缺省 = 总是） */
+  when?: () => boolean
 }
 
 /** 一条结果在页面上要找的锚点（按顺序） */
@@ -86,14 +88,18 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   // ---- Python 库 ----
   { id: 'packages.env', section: 'packages', label: () => st('packages.envTitle', { product: PRODUCT_NAME }), anchors: ['packages.env', 'packages.install'] },
   { id: 'packages.install', section: 'packages', label: () => st('packages.userTitle'), keywords: () => st('search.kw.packages') },
+  { id: 'packages.autoInstall', section: 'packages', label: () => st('packages.autoInstall.title') },
   { id: 'packages.builtin', section: 'packages', label: () => st('packages.builtinTitle') },
   // ---- 帮助与诊断 ----
   { id: 'diagnostics.health', section: 'diagnostics', label: () => st('diagnostics.healthTitle') },
   { id: 'diagnostics.report', section: 'diagnostics', label: () => st('diagnostics.reportTitle'), keywords: () => st('search.kw.diagnostics') },
+  // 「联系维护者」只在中文界面显示（判据与 `useWeComContactVisible` 同一个：界面语言），搜索也只在中文界面登记
+  { id: 'diagnostics.contact', section: 'diagnostics', label: () => st('diagnostics.send.contact.row'), keywords: () => st('search.kw.contact'), when: () => currentLocale() === 'zh-CN' },
   { id: 'diagnostics.perf', section: 'diagnostics', label: () => st('diagnostics.perfRow'), anchors: ['diagnostics.perf', 'diagnostics.dev'] },
   // ---- 关于与更新 ----
   { id: 'about.updates', section: 'about', label: () => st('update.check'), keywords: () => st('search.kw.updates') },
   { id: 'about.telemetry', section: 'about', label: () => st('about.telemetry.title'), keywords: () => st('search.kw.telemetry') },
+  { id: 'about.support', section: 'about', label: () => st('about.support', { product: PRODUCT_NAME }), keywords: () => st('search.kw.support') },
 ]
 
 /** 归一：小写、去掉首尾空白；中英文都按子串比 */
@@ -126,6 +132,7 @@ export function searchSettings(
     // （「导出 分辨率」）时才借分区名凑齐
     const entries = SETTINGS_REGISTRY.filter((e) => {
       if (e.section !== section) return false
+      if (e.when && !e.when()) return false
       const row = `${norm(e.label())} ${norm(e.keywords?.() ?? '')}`
       return all(row) || (!sectionHit && all(`${name} ${row}`))
     })

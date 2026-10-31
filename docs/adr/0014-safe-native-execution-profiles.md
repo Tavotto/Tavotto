@@ -122,6 +122,7 @@ Session 7 比较后定稿）。约束：
   第一次对某个（项目 × 解释器）组合仍在桌面上确认一次（可勾"记住"）。
 - **UI**：native 运行入口必须有一次显式确认，写明解释器路径、cwd、
   "拥有你当前用户的全部权限"；每项目记住选择（可撤销），不做全局默认。
+  > **被 [0127](0127-execution-policy-and-unified-retry-guard.md) 修订（用户 2026-10-14 裁决）**：桌面用户**主动发起**的运行里，safe 被自己的守卫拦下后的 native 回退**不弹此确认**——授权来自用户的运行动作 + 项目执行策略（缺省 `compatible`，可设 `safe_only` 撤回），范围限于该项目 × 该脚本 × safe 当时的解释器，诊断可见。CLI 与 MCP 的确认合同不变。
 - **MCP**：**模型给的路径/命令不是授权**（沿 ADR 0009 的 fail-closed
   纪律）。native run 经 MCP 必须走 elicitation 且默认 false；拒绝/超时
   一律不执行。v1 甚至可以不给 MCP native 工具——Session 7 裁决。
@@ -134,6 +135,8 @@ Session 7 比较后定稿）。约束：
   "用用户自己的（任意版本的）环境"；
 - 架构原则 2：Figure 留在创建它的进程里，跨进程只走控制命令 + manifest +
   SVG/PNG/PDF——现有 worker 协议已经是这个形状，native 只是换了 spawn 方式。
+- 本节防的是 Figure **跨进程**。唯一登记的例外是 safe worker 在**本进程内存**里为「存后又改过的图」拍的保存瞬间快照（ADR 0139 §九）：
+  字节不写盘、不进 IPC、不进 worker 协议，门禁按类/函数登记并用 AST 断言字节流向（`tests/bridge/test_bridge_thread_model.py`）。
 
 ### 7. 为什么 v1 只支持 Python invocation
 

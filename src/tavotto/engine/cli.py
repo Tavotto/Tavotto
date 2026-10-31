@@ -20,7 +20,7 @@ import json
 import sys
 
 #: 认得的子命令。放在这里是为了让「它是不是子命令」这个判断只有一处。
-COMMANDS = ("open", "run", "doctor", "codex")
+COMMANDS = ("open", "run", "doctor", "codex", "fix-mcp", "agent-run", "mcp", "hosts")
 
 
 def use_utf8_streams() -> None:
@@ -70,6 +70,29 @@ def dispatch(argv: list[str]) -> int | None:
         from . import codexinstall
 
         return codexinstall.cli(argv[1:])
+    if argv[0] == "fix-mcp":
+        # ADR 0149 D3：AI 修复会话里 Codex / Claude Code 拉起的 stdio MCP 服务（纯翻译，工具在应用进程里执行）。
+        # stdout 归协议独占，所以不走上面的 `use_utf8_streams` 之外的任何输出。
+        from . import fixmcp
+
+        return fixmcp.cli(argv[1:])
+    if argv[0] == "agent-run":
+        # ADR 0147 第二阶段：改图助手的内置执行器子进程（= `python -m tavotto.engine.agent_runner`；冻结产物里没有 `-m`，
+        # 所以同一个入口也挂在这里）。纯标准库；stdout 归事件流独占，提示词走 stdin，密钥只读环境变量。
+        from .agent_runner import __main__ as agent_runner_main
+
+        return agent_runner_main.main(argv[1:])
+    if argv[0] == "hosts":
+        # 「接入 AI 编辑器」的唯一安装器：设置里的「接入」按钮 spawn 它（与 `codex` 同一思路，ADR 0012）
+        from . import hostconnect
+
+        return hostconnect.cli(argv[1:])
+    if argv[0] == "mcp":
+        # 「接入 AI 编辑器」（用户 2026-10-27）：宿主配置里写 `tavotto-cli mcp`，桌面版在进程内跑插件那一份
+        # MCP 服务端，只装桌面版的用户不必再装 Python / pipx。stdout 归协议独占（见 mcpserve）。
+        from . import mcpserve
+
+        return mcpserve.cli(argv[1:])
     return doctor(argv[1:])
 
 

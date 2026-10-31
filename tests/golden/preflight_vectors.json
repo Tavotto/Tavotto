@@ -255,6 +255,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -370,7 +389,7 @@
           {
            "prop": "fontsize",
            "type": "number",
-           "value": 8.2
+           "value": 8.0
           }
          ]
         },
@@ -394,7 +413,7 @@
           {
            "prop": "fontsize",
            "type": "number",
-           "value": 8.0
+           "value": 7.9
           }
          ]
         },
@@ -537,6 +556,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -570,7 +608,7 @@
      "message": {
       "key": "fontBelowFloor",
       "params": {
-       "effective": "8.00",
+       "effective": "7.90",
        "floor": "8"
       }
      },
@@ -581,7 +619,7 @@
       "axes_0.yticks"
      ],
      "detail": {
-      "effective_pt": 8.0,
+      "effective_pt": 7.9,
       "floor_pt": 8.0
      }
     }
@@ -841,6 +879,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -886,7 +943,7 @@
       "axes_0.yticks",
       "axes_0.xlabel",
       "axes_0.ylabel",
-      "axes_0.legend"
+      "axes_0.legend.texts_0"
      ],
      "detail": {
       "effective_pt": 7.2,
@@ -1270,7 +1327,7 @@
           {
            "prop": "fontsize",
            "type": "number",
-           "value": 8.0
+           "value": 9.0
           }
          ]
         },
@@ -1331,6 +1388,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 8.0
+          }
+         ]
         }
        ]
       },
@@ -1358,27 +1434,6 @@
     ]
    },
    "expected": [
-    {
-     "id": "font-below-absolute-floor",
-     "severity": "error",
-     "message": {
-      "key": "fontBelowFloor",
-      "params": {
-       "effective": "8.00",
-       "floor": "8"
-      }
-     },
-     "object_ids": [
-      "p1"
-     ],
-     "gids": [
-      "axes_0.legend"
-     ],
-     "detail": {
-      "effective_pt": 8.0,
-      "floor_pt": 8.0
-     }
-    },
     {
      "id": "spines-not-enclosed",
      "severity": "warn",
@@ -1712,6 +1767,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -1964,6 +2038,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -2220,6 +2313,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -2255,6 +2367,34 @@
       "rect_mm": [
        2,
        2,
+       10,
+       5
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-noise",
+      "text": "(a)",
+      "size_pt": 7.9996,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       2,
+       12,
+       10,
+       5
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-short",
+      "text": "(a)",
+      "size_pt": 7.98,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       2,
+       22,
        10,
        5
       ],
@@ -2316,6 +2456,28 @@
        5
       ],
       "hidden": false
+     },
+     {
+      "id": "t-noise",
+      "type": "text",
+      "rect_mm": [
+       2,
+       12,
+       10,
+       5
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-short",
+      "type": "text",
+      "rect_mm": [
+       2,
+       22,
+       10,
+       5
+      ],
+      "hidden": false
      }
     ]
    },
@@ -2334,14 +2496,14 @@
       "p1",
       "p2",
       "t-small",
-      "t-floor"
+      "t-short"
      ],
      "gids": [
       "axes_0.xticks",
       "axes_0.yticks",
       "axes_0.xlabel",
       "axes_0.ylabel",
-      "axes_0.legend"
+      "axes_0.legend.texts_0"
      ],
      "detail": {
       "effective_pt": 6.75,
@@ -2416,7 +2578,9 @@
      "object_ids": [
       "p1",
       "t-small",
-      "t-floor"
+      "t-floor",
+      "t-noise",
+      "t-short"
      ],
      "gids": [],
      "detail": {}
@@ -2702,6 +2866,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -3011,6 +3194,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -3291,6 +3493,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -3600,6 +3821,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -3902,6 +4142,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -4185,6 +4444,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -4489,6 +4767,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -4812,6 +5109,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -5138,6 +5454,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -5440,6 +5775,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -6533,6 +6887,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -6877,6 +7250,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         },
@@ -7241,6 +7633,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -7561,6 +7972,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         },
@@ -7889,6 +8319,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -8243,6 +8692,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -8313,6 +8781,478 @@
      "detail": {
       "family": "monospace"
      }
+    }
+   ]
+  },
+  {
+   "name": "canvas-text-math-unrenderable",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [
+     {
+      "id": "t-bad",
+      "text": "$\\notacommand{x}$ and $\\alpha$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false,
+      "text_format": "latex",
+      "math_errors": [
+       {
+        "src": "\\notacommand{x}",
+        "why": "unknown symbol"
+       }
+      ]
+     },
+     {
+      "id": "t-ok",
+      "text": "$\\alpha$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false,
+      "text_format": "latex",
+      "math_errors": []
+     },
+     {
+      "id": "t-hidden",
+      "text": "$\\bad$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": true,
+      "text_format": "latex",
+      "math_errors": [
+       {
+        "src": "\\bad",
+        "why": "x"
+       }
+      ]
+     },
+     {
+      "id": "t-two",
+      "text": "$a_$ $\\frac{1}$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false,
+      "text_format": "latex",
+      "math_errors": [
+       {
+        "src": "a_",
+        "why": "Expected end of text\nline two"
+       },
+       {
+        "src": "\\frac{1}",
+        "why": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+       }
+      ]
+     }
+    ],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-bad",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-ok",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-hidden",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": true
+     },
+     {
+      "id": "t-two",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "math-unrenderable",
+     "severity": "warn",
+     "message": {
+      "key": "textMathUnrenderable",
+      "params": {
+       "count": "2",
+       "src": "$a_$",
+       "why": "Expected end of text line two"
+      }
+     },
+     "object_ids": [
+      "t-bad",
+      "t-two"
+     ],
+     "gids": [],
+     "detail": {
+      "formulas": [
+       {
+        "src": "a_",
+        "why": "Expected end of text line two"
+       },
+       {
+        "src": "\\frac{1}",
+        "why": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+       }
+      ]
+     }
+    },
+    {
+     "id": "hidden",
+     "severity": "warn",
+     "message": {
+      "key": "hidden",
+      "params": {}
+     },
+     "object_ids": [
+      "t-hidden"
+     ],
+     "gids": [],
+     "detail": {}
     }
    ]
   },
@@ -8568,6 +9508,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -8900,6 +9859,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -9206,6 +10184,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -9523,6 +10520,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         }
@@ -9854,6 +10870,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         },
@@ -10225,6 +11260,25 @@
            "prop": "label",
            "type": "number",
            "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
           }
          ]
         },
@@ -10759,6 +11813,25 @@
            "value": "Sample B"
           }
          ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
         }
        ]
       },
@@ -11065,6 +12138,25 @@
          ]
         },
         {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
          "gid": "axes_0.scatter_0",
          "role": "scatter",
          "label": "axes_0.scatter_0",
@@ -11274,6 +12366,2220 @@
       "overflow_mm": 28.88,
       "side": "top"
      }
+    }
+   ]
+  },
+  {
+   "name": "legend-title-small-reported-once-on-title",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "title_fontsize",
+           "type": "number",
+           "value": 4.5
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.title",
+         "role": "legend_text",
+         "label": "axes_0.legend.title",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 4.5
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "font-below-absolute-floor",
+     "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "4.50",
+       "floor": "8"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.title"
+     ],
+     "detail": {
+      "effective_pt": 4.5,
+      "floor_pt": 8.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-entries-fixed-container-setter-silent",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 7.0
+          },
+          {
+           "prop": "title_fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.title",
+         "role": "legend_text",
+         "label": "axes_0.legend.title",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 8.5
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "legend-font-size-measures-visible-entries",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "title_fontsize",
+           "type": "number",
+           "value": null
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 5.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 11.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_2",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_2",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 4.0
+          },
+          {
+           "prop": "visible",
+           "type": "bool",
+           "value": false
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "font-below-absolute-floor",
+     "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "5.00",
+       "floor": "8"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_0"
+     ],
+     "detail": {
+      "effective_pt": 5.0,
+      "floor_pt": 8.0
+     }
+    },
+    {
+     "id": "legend-font-size",
+     "severity": "warn",
+     "message": {
+      "key": "legendFontSize",
+      "params": {
+       "effective": "5.00",
+       "min": "8",
+       "max": "9"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend"
+     ],
+     "detail": {
+      "effective_pt": 5.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "hidden-legend-reports-nothing",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 5.0
+          },
+          {
+           "prop": "title_fontsize",
+           "type": "number",
+           "value": 4.5
+          },
+          {
+           "prop": "visible",
+           "type": "number",
+           "value": false
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.title",
+         "role": "legend_text",
+         "label": "axes_0.legend.title",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 4.5
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Arial"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 5.0
+          },
+          {
+           "prop": "handle_linewidth",
+           "type": "number",
+           "value": 1.234
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "colorbar-ticks-reported-once",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_1.colorbar",
+         "role": "colorbar",
+         "label": "axes_1.colorbar",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "tick_fontsize",
+           "type": "number",
+           "value": 5.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_1.yticks",
+         "role": "ticks",
+         "label": "axes_1.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 5.0
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "font-below-absolute-floor",
+     "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "5.00",
+       "floor": "8"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_1.yticks"
+     ],
+     "detail": {
+      "effective_pt": 5.0,
+      "floor_pt": 8.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "bar-series-container-linewidth-not-measured",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_1.barseries_0",
+         "role": "bar_series",
+         "label": "axes_1.barseries_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 0.3
+          }
+         ]
+        },
+        {
+         "gid": "axes_1.barseries_0.bar_0",
+         "role": "bar",
+         "label": "axes_1.barseries_0.bar_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 0.3
+          }
+         ]
+        },
+        {
+         "gid": "axes_1.barseries_0.bar_1",
+         "role": "bar",
+         "label": "axes_1.barseries_0.bar_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 0.3
+          }
+         ]
+        },
+        {
+         "gid": "axes_1.barseries_0.bar_2",
+         "role": "bar",
+         "label": "axes_1.barseries_0.bar_2",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 0.3
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "line-width-off-preset",
+     "severity": "warn",
+     "message": {
+      "key": "lineWidthOffPreset",
+      "params": {
+       "effective": "0.30",
+       "presets": "0.5/0.75/1/1.5"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_1.barseries_0.bar_0",
+      "axes_1.barseries_0.bar_1",
+      "axes_1.barseries_0.bar_2"
+     ],
+     "detail": {
+      "effective_pt": 0.3
+     }
+    },
+    {
+     "id": "bar-without-errorbar",
+     "severity": "suggestion",
+     "message": {
+      "key": "barWithoutErrorbar",
+      "params": {}
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_1"
+     ],
+     "detail": {}
     }
    ]
   }

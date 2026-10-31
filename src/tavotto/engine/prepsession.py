@@ -11,8 +11,9 @@
   过期）· `attempt_id`（= 一次执行的 `PreparationPlan.plan_id`）；
 * **纯派生的 phase**（`derive`）：只吃「检查 / 尝试 / 失效 / 是否在等输入」这几件已观察到的事实，吐出
   phase + outcome + 是否可执行；`unknown` 不当通过；前端只保存这份投影，不另算；
-* **后端生成的动作**（`run` / `cancel` / `recheck`）：不透明 id，绑定会话、`config_revision`、检查那一刻的
-  计划与影响摘要；确认前一行用户代码不跑；
+* **后端生成的动作**（`run` / `cancel` / `recheck` / `prepare_dependencies`）：不透明 id，绑定会话、
+  `config_revision`、检查那一刻的计划与影响摘要；确认前一行用户代码不跑、一个包不装（T06：依赖安装的授权绑定
+  `deprepair.impact_digest`——安装集合 / 目标环境与代 / 写入范围变了就是另一份授权，进度与文案变了不是）；
 * **check-use 窗口**：「比对修订 → 核计划是否失效 → 认领动作 → 提交给 provider」在会话锁内一次完成，
   重复点击 / 两个标签页认领的是同一次尝试，不重复起 worker。
 
@@ -20,19 +21,44 @@
 捕获之后怎么登记，全是 app 在调用点注入的回调。会话只存在内存里——应用重启后 GET 一个旧会话 id 得到
 `preparation_session_not_found`（`params.reason = unknown_or_restarted`，客户端重新创建检查会话，
 由当时的真实状态重新判定），**不自动重跑**。
+
+**一次运行意图（P05b，ADR 0124）**是本模块里唯一允许「用户没有再点一次 Run」就推进到首次执行的东西：它只由用户
+明确的 `run_when_ready`（「打开并运行」）动作创建，绑定会话 / 脚本 / 运行配置 / `config_revision` 与一份有界的
+安装授权合同（`InstallGrant`），只推进**用户代码第一次执行之前**的步骤，执行一次即用尽；取消、外部变化、授权扩大、
+预算用尽都是吸收态（后到的 done / ready 复活不了它）。GET、刷新、SSE 重放、组件挂载、收到 done 都不创建意图。
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import hmac
 import json
 import logging
+import secrets
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Callable
 
-from . import preparation, registry
+from . import (
+    depplan,
+    deprepair,
+    dialogscan,
+    execpolicy,
+    execspec,
+    fixrouter,
+    nativesession,
+    pool,
+    preparation,
+    pyversionfix,
+    rasterhint,
+    registry,
+    scriptargs,
+    sourcelang,
+    taskdiag,
+)
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -41,8 +67,8 @@ SESSION_VERSION = 1
 
 # ---------------------------------------------------------------- 词汇（闭集）
 
-#: phase 词汇沿用附件：这一阶段产生 scanning 之外的全部（`scanning` 留给 T02 的有界扫描，
-#: `preparing_environment` 留给 T06 的联合安装；词汇先收进来，保证前端只面对一份闭集）。
+#: phase 词汇沿用附件（`scanning` 由 T02 的有界扫描产生，`preparing_environment` 由 T06 的依赖安装产生；
+#: 词汇先收进来，保证前端只面对一份闭集）。
 PHASE_SCANNING = "scanning"
 PHASE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 PHASE_PREPARING_ENVIRONMENT = "preparing_environment"
@@ -80,6 +106,8 @@ OUTCOME_STATIC = "static_source"  # 没有脚本，只有静态原件
 OUTCOME_NEEDS_INPUT = "needs_input"  # 旧协议终局 needs_input 的投影
 OUTCOME_STALE = "stale"  # 检查那一刻的世界变了
 OUTCOME_UNKNOWN = "unknown"  # 有检查项判不出来，或尝试的记录已经过期
+#: 脚本跑到一半发现缺包（运行时才知道的那类）：这次执行已经发生，补齐之后是**新的一次尝试**，不是从异常点继续
+OUTCOME_NEEDS_DEPENDENCIES = "needs_dependencies"
 OUTCOME_KINDS = (
     OUTCOME_PENDING,
     OUTCOME_RUNNING,
@@ -92,6 +120,7 @@ OUTCOME_KINDS = (
     OUTCOME_NEEDS_INPUT,
     OUTCOME_STALE,
     OUTCOME_UNKNOWN,
+    OUTCOME_NEEDS_DEPENDENCIES,
 )
 
 CHECK_OK = "ok"
@@ -103,7 +132,23 @@ CHECK_STATUSES = (CHECK_OK, CHECK_UNKNOWN, CHECK_NEEDS_ACTION, CHECK_BLOCKED)
 ACTION_RUN = "run"
 ACTION_CANCEL = "cancel"
 ACTION_RECHECK = "recheck"
-ACTION_KINDS = (ACTION_RUN, ACTION_CANCEL, ACTION_RECHECK)
+#: 授权一次依赖准备（T06）：认领 = 用户确认了动作上说清的影响（`impact`），后端按 `impact_digest` 核对后起作业
+ACTION_PREPARE = "prepare_dependencies"
+#: 「打开并运行」（P05b）：用户明确授权一次有界的持续意图——把用户代码**首次执行之前**的准备（授权范围内的受管安装、
+#: 必要的目录 / 环境回答之后的重核）连续推进，然后执行恰一次。认领它必须回显 `InstallGrant` 的摘要。
+ACTION_ARM = "run_when_ready"
+#: 浏览器模式的显式确认（ADR 0127 修订 2026-10-30，#1500）：safe 被自己的守卫拦下、而这次运行不是桌面窗口发起的（没有静默回退）
+#: 之后，失败卡上的「允许并运行」。认领 = **用户在页面上点了一次**，授权**这一次**以 native 重跑。只有同时满足两件服务端核得到的事
+#: 才生效：请求靠**会话 cookie** 认证（本机凭据头不算）、请求回显的 `confirm_token` 对得上服务端为那次失败尝试签发的那一枚。
+ACTION_CONFIRM_NATIVE = "confirm_native_run"
+ACTION_KINDS = (
+    ACTION_RUN,
+    ACTION_CANCEL,
+    ACTION_RECHECK,
+    ACTION_PREPARE,
+    ACTION_ARM,
+    ACTION_CONFIRM_NATIVE,
+)
 
 # 稳定错误码（协议契约：code 不许改，文案随便改）
 ERROR_NOT_FOUND = "preparation_session_not_found"
@@ -111,7 +156,46 @@ ERROR_ACTION_UNKNOWN = "preparation_action_unknown"
 ERROR_REVISION_CHANGED = "preparation_config_revision_changed"
 ERROR_NOT_RUNNABLE = "preparation_not_runnable"
 ERROR_SESSIONS_FULL = "preparation_sessions_full"
+#: 用户确认的影响与此刻要执行的不是同一份（集合 / 目标 / 环境代 / 写入范围变了）：零副作用，带新的影响
+ERROR_IMPACT_CHANGED = "preparation_impact_changed"
+#: 会改用户自己环境的动作必须回显它看到的 `impact_digest`（不能只靠"点了一下"）
+ERROR_IMPACT_UNCONFIRMED = "preparation_impact_unconfirmed"
 ERROR_BAD_REQUEST = "bad_request"
+#: 显式要 native 的动作 / 会话不是桌面窗口发起的（ADR 0127 D1：native 的授权边界是桌面用户）。路由选的 native 在同一来源判据下
+#: 静默降 safe（路由只是偏好）；显式 native 是客户端明确的要求，换语义会误导，所以拒绝
+ERROR_NATIVE_REQUIRES_DESKTOP = "native_requires_desktop"
+#: 确认「允许并运行」的请求不是页面（会话 cookie）发来的——本机凭据头、MCP、CLI、AI 修复工具链都过不了这一关
+ERROR_CONFIRM_REQUIRES_PAGE = "native_confirm_requires_page"
+#: 确认 token 缺失 / 对不上 / 已用过：零副作用
+ERROR_CONFIRM_INVALID = "native_confirm_invalid"
+#: 同一脚本在本项目里已有另一个在等的运行意图（别的运行配置）：两条意图并存会让合计多跑一次，要显式 `transfer_from`
+ERROR_INTENT_CONFLICT = "preparation_run_intent_conflict"
+#: 想转移的旧意图不在「还没认领任何执行」的状态（已执行 / 在执行 / 已取消 / 已撤销 / 不存在）：零副作用
+ERROR_INTENT_NOT_TRANSFERABLE = "preparation_run_intent_not_transferable"
+
+#: 持续意图的状态（吸收态一旦进入不再回到 active）
+INTENT_ACTIVE = "active"
+INTENT_LAUNCHED = (
+    "launched"  # 首次执行已被认领：意图用尽，之后的一切（缺包、失败、再跑）都要用户另行决定
+)
+INTENT_CANCELLED = "cancelled"  # 用户取消
+INTENT_REVOKED = (
+    "revoked"  # 外部变化 / 授权不够 / 预算用尽 / 依赖失败 / 认领被拒……（reason 是闭集码）
+)
+INTENT_TRANSFERRED = "transferred"  # 未执行的意图受控转移给了另一个运行配置的会话
+INTENT_STATUSES = (
+    INTENT_ACTIVE,
+    INTENT_LAUNCHED,
+    INTENT_CANCELLED,
+    INTENT_REVOKED,
+    INTENT_TRANSFERRED,
+)
+#: 意图的有界预算：墙钟（含等用户回答、等安装）与认领步数（一次安装 + 一次执行）
+RUN_INTENT_TTL_S = 60 * 60
+RUN_INTENT_MAX_STEPS = 2
+_MAX_INTENT_LEDGER = 16
+#: 依赖准备完成后会话自己为重新检查置的失效理由：它是本意图批准的安装造成的，不是外部变化
+_INTERNAL_STALE = frozenset({"dependencies_prepared"})
 
 #: 「跑完了但没有图」的两个 code（`pool.NO_FIGURES_CODE` / `_SILENT_CODE` 的值；这里不 import pool 的常量
 #: 名，闭集字面量由 `tests/test_preparation_session.py` 钉着与 pool 一致）。
@@ -119,12 +203,33 @@ _NO_FIGURE_CODES = frozenset({"no_figures_captured", "no_figures_captured_silent
 #: 旧协议终局 `needs_input` 里 `required_input.code` → phase。
 _WORKDIR_CODE = "workdir_confirmation_required"
 _DEPENDENCY_CODE = "dependency_preparation_required"
+#: 脚本跑到一半才发现缺包（`PreparationResult.error.code`）
+_RUNTIME_MISSING_CODE = "missing_dependency"
+#: 全局显式解释器压着项目级决定：为项目装的环境不会被用（`deprepair.ERROR_INTERPRETER_PINNED`）
+_PINNED_CODE = "dependency_interpreter_pinned"
+#: 受管环境里别的作用域装进去的版本与本作用域的声明互斥（`depplan.BLOCK_SCOPE_CONFLICT`）
+_SCOPE_CONFLICT_CODE = "dependency_scope_conflict"
+#: 环境检查项的 needs_action code（T05）：项目有自己的环境线索，用户还没选
+_ENVIRONMENT_CODE = "environment_choice_required"
+#: 参数（T07）：脚本里有 argparse 的字面量声明——给一份表单建议。**不是**待答项：识别不全 / 静态看缺必填都照样
+#: 能运行（argv 的权威是 token；真 parser 说缺参时是既有的 `script_needs_arguments`）
+_ARGUMENTS_CODE = "script_arguments_available"
+#: 上一次尝试读不到数据（ADR 0106 的 `missing_input` 载荷）：回答走既有 `/api/engine/input-remap`，答完 `recheck`
+_MISSING_INPUT_CODE = "missing_input"
+#: 沙盒里落空的探路调用、脚本目录里找得到（#1254）：不阻塞的提示，载荷与首开确认框同形，前端复用 `WorkdirChooseButton`
+_WORKDIR_HINT_CODE = "workdir_hint"
+#: 脚本源码里有弹窗选文件 / 询问的写法（`dialogscan`）：不阻塞的提示，运行照样可用
+_GUI_DIALOG_CODE = "script_uses_gui_dialog"
 
 #: 数量 / 生命周期预算。活跃的（有没跑完 / 没登记完的尝试）永远不被这里回收。
 MAX_SESSIONS = 64
 IDLE_TTL_S = 30 * 60
 #: 每个会话保留多少个已认领的动作 id（重复点击要找得到当初认领的尝试）。
 _MAX_CONSUMED_ACTIONS = 32
+#: 每个会话保留多少次依赖准备尝试（报告只读最近一次；更早的只是历史）。
+_MAX_DEP_ATTEMPTS = 16
+#: 依赖装好之后等环境租约放掉再重新检查的上限（秒）；超了照样检查（租约只影响 `plan_for` 读到的瞬时状态）。
+_REPLAN_WAIT_S = 30.0
 
 
 class SessionError(Exception):
@@ -140,6 +245,14 @@ class SessionError(Exception):
 # ---------------------------------------------------------------- 检查（纯函数，吃计划）
 
 
+def _finalize_failure_code(fin: dict) -> str:
+    """finalizer 失败的稳定码：嵌套 `error.code`（`register_probed` 原样形状）优先，其次顶层 `code`
+    （`_finalize_script_attempt` 展平后的形状），都没有才是 `registration_failed`。"""
+    err = fin.get("error")
+    nested = err.get("code") if isinstance(err, dict) else None
+    return str(nested or fin.get("code") or "registration_failed")
+
+
 def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
     out = {"id": check_id, "status": status}
     if code:
@@ -147,6 +260,35 @@ def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
     if detail:
         out["detail"] = detail
     return out
+
+
+def origin_facts(offer: dict | None) -> dict:
+    """依赖检查项带的**来源事实**（Import Origin Resolver PR4）：联合计划里「没有可信安装名」的那些 import（`origins`）
+    的计数与原因——`{"origins": {"count": n, "by_reason": {原因码: 个数}[, "confirmable": m]}}`；没有就是空字典（检查项的形状与以前一字不差）。
+
+    只带计数与闭集原因码（`depplan.ORIGIN_REASONS`）：不出包名、不出路径、不出源码——名字在计划载荷里，展示归前端
+    （PR6），诊断白名单另算。来源事实**不改检查项的状态**：它们不让计划不完整（不新增 `blocked` 理由），只说明
+    「这几个 import 装不了 / 不该猜」。"""
+    plan_ = (offer or {}).get("plan") or {}
+    rows = plan_.get("origins") or ()
+    # 脚本会改 `sys.path`、表外名字先跑一次再说（`depplan.JointPlan.deferred_unverified`）：只列 import 名，留痕给诊断
+    deferred = [str(n) for n in plan_.get("deferred_unverified") or () if str(n).isidentifier()]
+    by_reason: dict[str, int] = {}
+    confirmable = 0
+    for row in rows:
+        reason = str(row.get("reason") or "")
+        if reason in depplan.ORIGIN_REASONS:
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+            if row.get("suggested_distribution"):
+                confirmable += 1
+    if not by_reason:
+        return {"deferred_unverified": deferred} if deferred else {}
+    origins = {"count": sum(by_reason.values()), "by_reason": dict(sorted(by_reason.items()))}
+    if confirmable:
+        # 其中带预填（`suggested_distribution`）、可以由用户指定包名的个数（PR6）：界面据此区分「需要确认」与「尚无法确定」，
+        # 不必为了一个计数再取一遍整份计划。没有就不出这个键（检查项的形状与以前一字不差）
+        origins["confirmable"] = confirmable
+    return {"origins": origins, **({"deferred_unverified": deferred} if deferred else {})}
 
 
 def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
@@ -158,8 +300,16 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
     env = plan.environment or {}
     env_error = env.get("error")
     checks: list[dict] = [_check("target", CHECK_OK)]
-    if env_error:
+    decision = ((env.get("recommendation") or {}).get("decision")) or {}
+    if env_error and env.get("project_check_pending"):
+        # 没有默认解释器，但项目自带的环境等用户点「运行」才体检（Codex #820 r4233563595）：不先报"没有 Python"
+        checks.append(_check("environment", CHECK_OK, deferred="project_environment"))
+    elif env_error:
         checks.append(_check("environment", CHECK_BLOCKED, str(env_error.get("code") or "")))
+    elif decision.get("needs_decision"):
+        # T05：项目里有自己的环境线索而用户还没决定用哪个——这不是机器的决定。建议在 requirements 里，
+        # 回答走既有的采用端点（`PATCH /api/engine/environment`）或选回内置，答完 `recheck`
+        checks.append(_check("environment", CHECK_NEEDS_ACTION, _ENVIRONMENT_CODE))
     elif plan.interpreter:
         checks.append(_check("environment", CHECK_OK, source=str(env.get("source") or "")))
     else:
@@ -173,27 +323,100 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
         checks.append(_check("workdir", CHECK_OK, decided=bool(decision.get("decided"))))
     required_code = str((plan.required_input or {}).get("code") or "")
     offer = plan.dependency_preparation
-    if required_code == _DEPENDENCY_CODE:
-        checks.append(_check("dependencies", CHECK_NEEDS_ACTION, _DEPENDENCY_CODE))
+    facts = origin_facts(offer)  # 来源事实（PR4）：只加 detail，不改状态
+    pinned = (offer or {}).get("pinned")
+    if pinned and ((offer.get("plan") or {}).get("status")) == "ready":
+        # E05：全局显式解释器压着，缺的包装进别的环境也不会被用——不假装"依赖没问题"，也不提供授权动作；
+        # 说清是谁锁的（来源与变量名），解开它才是出路
+        checks.append(
+            _check(
+                "dependencies",
+                CHECK_BLOCKED,
+                _PINNED_CODE,
+                pinned={"source": pinned.get("source"), "variable": pinned.get("variable")},
+                **facts,
+            )
+        )
+    elif required_code == _DEPENDENCY_CODE:
+        # T06：要用户授权的是一份有摘要的影响（集合 / 目标环境与代 / 写入范围），摘要不透明、不含路径
+        digest = str((plan.required_input or {}).get("impact_digest") or "")
+        checks.append(
+            _check(
+                "dependencies",
+                CHECK_NEEDS_ACTION,
+                _DEPENDENCY_CODE,
+                **({"impact_digest": digest} if digest else {}),
+                **facts,
+            )
+        )
+    elif (offer or {}).get("project_check_pending"):
+        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment", **facts))
     elif offer is None:
         # 工作目录要先答 / 环境走不通时依赖没有被评估——如实 unknown，不虚构已满足
         checks.append(_check("dependencies", CHECK_UNKNOWN))
     elif ((offer.get("plan") or {}).get("status")) == "blocked":
-        checks.append(_check("dependencies", CHECK_BLOCKED, "dependency_blocked"))
+        reasons = [str(b.get("code") or "") for b in (offer["plan"].get("blocked") or ())]
+        # 作用域互斥（D04）单列一个码：它有用户能走的出路（换成本作用域 / 子目录独立成项目），其余 blocked 没有
+        code = _SCOPE_CONFLICT_CODE if _SCOPE_CONFLICT_CODE in reasons else "dependency_blocked"
+        checks.append(_check("dependencies", CHECK_BLOCKED, code, reasons=reasons[:8], **facts))
     else:
-        checks.append(_check("dependencies", CHECK_OK))
+        checks.append(_check("dependencies", CHECK_OK, **facts))
     checks.append(
         _check("data", CHECK_OK) if plan.binding is not None else _check("data", CHECK_UNKNOWN)
     )
+    schema = arguments_schema(plan)
+    if schema is not None:
+        # T07：只有 argparse 的字面量证据时才出现；永远 ok——参数表单是建议，不是执行门槛
+        checks.append(_check("arguments", CHECK_OK, **scriptargs.summary(schema)))
     return checks
 
 
-def requirements_of(plan: preparation.PreparationPlan, checks: list[dict]) -> list[dict]:
+def arguments_schema(plan: preparation.PreparationPlan) -> dict | None:
+    """计划里那份脚本的静态参数 schema（`scriptargs.analyze_file`，只读源码、按 mtime 缓存）；没有 argparse 证据 → None。"""
+    if plan.script is None or plan.target != TARGET_SCRIPT:
+        return None
+    schema = scriptargs.analyze_file(Path(plan.project_root) / plan.script)
+    if schema["status"] not in (scriptargs.STATUS_COMPLETE, scriptargs.STATUS_PARTIAL):
+        return None
+    return schema
+
+
+def gui_dialogs(plan: preparation.PreparationPlan) -> dict | None:
+    """计划里那份脚本的弹窗写法（`dialogscan.analyze_file`，只读源码、按 mtime 缓存）；没有 → None。"""
+    if plan.script is None or plan.target != TARGET_SCRIPT:
+        return None
+    found = dialogscan.analyze_file(Path(plan.project_root) / plan.script)
+    return found if found["status"] == "found" else None
+
+
+def requirements_of(
+    plan: preparation.PreparationPlan,
+    checks: list[dict],
+    *,
+    runtime_missing: dict | None = None,
+    missing_input: dict | None = None,
+    workdir_hint: dict | None = None,
+) -> list[dict]:
     """要用户先答的事（`needs_action` 的检查项）。载荷原样是既有的 `required_input`——回答走既有端点，
-    答完 `recheck`；会话不复制那两条回答协议。"""
+    答完 `recheck`；会话不复制那两条回答协议。
+
+    `runtime_missing`（T06）：上一次尝试跑到一半发现缺包时的差异计划（`_observe_missing` 算出）——不是检查项，
+    是**那次执行已经发生之后**多出来的一件要授权的事；补齐之后要新的一次尝试。"""
     out = []
     for c in checks:
         if c["status"] != CHECK_NEEDS_ACTION:
+            continue
+        if c["id"] == "environment":
+            # T05：载荷是只读的环境建议（候选 id + 环境代 + 证据标签）；回答绑定候选身份与环境代，
+            # 过期的回答由采用端点的 `expected_generation` 拒绝
+            out.append(
+                {
+                    "id": c["id"],
+                    "kind": "environment_choice",
+                    "code": c.get("code", ""),
+                    "payload": dict((plan.environment or {}).get("recommendation") or {}),
+                }
+            )
             continue
         out.append(
             {
@@ -201,6 +424,129 @@ def requirements_of(plan: preparation.PreparationPlan, checks: list[dict]) -> li
                 "kind": "workdir_choice" if c["id"] == "workdir" else "dependency_authorization",
                 "code": c.get("code", ""),
                 "payload": dict(plan.required_input) if plan.required_input else None,
+            }
+        )
+    deps = next((c for c in checks if c["id"] == "dependencies"), None)
+    if (
+        deps is not None
+        and deps["status"] == CHECK_BLOCKED
+        and deps.get("code") == _SCOPE_CONFLICT_CODE
+    ):
+        # D04：不硬合并——把冲突项（谁装的哪个版本 / 本作用域要什么）和两条出路交给用户；"换成本作用域"有它自己
+        # 的影响摘要（动作 `prepare_dependencies` 引用），"子目录独立成项目"在会话之外（开那个子目录）
+        offer = plan.dependency_preparation or {}
+        blocked = next(
+            (
+                b
+                for b in ((offer.get("plan") or {}).get("blocked") or ())
+                if b.get("code") == _SCOPE_CONFLICT_CODE
+            ),
+            {},
+        )
+        switch = offer.get("scope_switch") or {}
+        out.append(
+            {
+                "id": "dependencies",
+                "kind": "dependency_scope_choice",
+                "code": _SCOPE_CONFLICT_CODE,
+                "payload": {
+                    "conflicts": list(blocked.get("conflicts") or ()),
+                    "options": list(blocked.get("options") or ()),
+                    "switch": (
+                        {
+                            "impact_digest": switch.get("impact_digest"),
+                            "requirements": list(switch.get("requirements") or ()),
+                            "drops": list(switch.get("drops") or ()),
+                            "changes": list(switch.get("changes") or ()),
+                        }
+                        if switch
+                        else None
+                    ),
+                },
+            }
+        )
+    if deps is not None and deps["status"] == CHECK_BLOCKED and deps.get("code") == _PINNED_CODE:
+        out.append(
+            {
+                "id": "dependencies",
+                "kind": "dependency_pinned",
+                "code": _PINNED_CODE,
+                "payload": dict((deps.get("detail") or {}).get("pinned") or {}),
+            }
+        )
+    if runtime_missing is not None:
+        out.append(
+            {
+                "id": "dependencies",
+                "kind": "dependency_authorization",
+                "origin": "runtime_missing",
+                "code": _RUNTIME_MISSING_CODE,
+                "payload": dict(runtime_missing),
+            }
+        )
+    if missing_input is not None:
+        # T07：上一次尝试读不到数据——载荷就是既有指认对话框那份（ADR 0106）；用户亲手指认、同名不同内容不就近猜。
+        # 不阻塞再次运行（用户也可能自己把文件放回去），答完 `recheck` 换修订
+        out.append(
+            {
+                "id": "data",
+                "kind": "input_location",
+                "origin": "last_attempt",
+                "code": _MISSING_INPUT_CODE,
+                "blocking": False,
+                "payload": dict(missing_input),
+            }
+        )
+    if workdir_hint is not None:
+        # #1254：上一次尝试在沙盒 cwd 下 glob / listdir / exists / C++ 读取器落空，同一个相对目标在脚本目录里找得到。
+        # 不阻塞、不改任何 phase；回答走既有 `PATCH /api/engine/workdir`（前端复用首开的确认框）
+        out.append(
+            {
+                "id": "data",
+                "kind": "workdir_hint",
+                "origin": "last_attempt",
+                "code": _WORKDIR_HINT_CODE,
+                "blocking": False,
+                "payload": dict(workdir_hint),
+            }
+        )
+    if any(c["id"] == "arguments" for c in checks):
+        schema = arguments_schema(plan)
+        if schema is not None:
+            out.append(
+                {
+                    "id": "arguments",
+                    "kind": "script_arguments",
+                    "code": _ARGUMENTS_CODE,
+                    "blocking": False,
+                    "payload": {
+                        # 计划那一刻 worker 的 Python 版本（项目记住的事实；没有 = 前端取较窄的负数规则）
+                        "schema": {
+                            **schema,
+                            "python_version": (plan.environment or {}).get("python_version")
+                            or None,
+                        },
+                        # 这次检查用的配置：只有个数与本机引用（参数值不进报告）；表单写回的是前端草稿里的 token
+                        "argv_count": len(plan.run.argv) if plan.run is not None else 0,
+                        "run_config": plan.run.config_id if plan.run is not None else None,
+                    },
+                }
+            )
+    dialogs = gui_dialogs(plan)
+    if dialogs is not None:
+        # 脚本会弹窗：无界面 worker 里弹不出来（且每次编辑都重跑）。**只是提示**——不阻塞运行、不改任何 phase；
+        # 出路是用户把路径 / 答案直接写进脚本，界面不替他改
+        out.append(
+            {
+                "id": "interaction",
+                "kind": "gui_dialog",
+                "code": _GUI_DIALOG_CODE,
+                "blocking": False,
+                "payload": {
+                    "calls": dialogs["calls"],
+                    "kinds": dialogs["kinds"],
+                    "truncated": dialogs["truncated"],
+                },
             }
         )
     return out
@@ -221,10 +567,37 @@ def derive(facts: dict) -> dict:
         attempt        None | {status, error, required_input_code, finalized, finalize,
                                captured_count, cancel_requested}（`status` 是 `PreparationResult.status`）
         awaiting_input 这次尝试的脚本此刻有没有在等一个 `input()` 的回答
+        dependency     None | {running, state, code, joined, reason}（T06）：比最近一次执行尝试更晚的那次
+                       依赖准备；`running` 含「装完了、正在按新环境重新检查」
+        python_change  None | {running}：版本不合、正在自动另建合适版本的受管环境（`pyversionfix`）
 
     纯函数、不读时钟、不读 provider：黄金向量 `tests/golden/preparation_session_vectors.json`
     逐条钉它的输出。provider 的状态保留原权威——这里只**投影**，不另造一份可运行判据。
     """
+    dep = facts.get("dependency")
+    if dep is not None:
+        if dep["running"]:
+            reason = "joined_existing" if dep.get("joined") else str(dep.get("reason") or "")
+            return _result(PHASE_PREPARING_ENVIRONMENT, OUTCOME_RUNNING, reason=reason)
+        if dep["state"] == deprepair.STATE_CANCELLED:
+            return _result(
+                PHASE_AWAITING_CONFIRMATION,
+                OUTCOME_CANCELLED,
+                code=str(dep.get("code") or ""),
+                reason="dependency_preparation",
+            )
+        if dep["state"] == deprepair.STATE_FAILED:
+            return _result(
+                PHASE_ACTION_REQUIRED,
+                OUTCOME_FAILED,
+                code=str(dep.get("code") or "") or "dependency_install_failed",
+                reason="dependency_preparation",
+            )
+    change = facts.get("python_change")
+    if change is not None and change["running"]:
+        # 版本不合：正在另建一个合适版本的受管环境（ADR 0114 修订 2026-10-23）。这次尝试已经失败、收尾还没做完，
+        # 但用户看到的不是「失败」而是「正在换成 Python x」
+        return _result(PHASE_PREPARING_ENVIRONMENT, OUTCOME_RUNNING, reason="python_change")
     attempt = facts.get("attempt")
     if attempt is None or (facts.get("stale") and not attempt_running(attempt)):
         # 没有（当前修订的）尝试，或检查那一刻的世界已经变了而没有尝试在跑：phase 由检查 / 失效决定，
@@ -261,6 +634,17 @@ def derive(facts: dict) -> dict:
                 finished=False,
                 captured=False,
             )
+        if code == _RUNTIME_MISSING_CODE and attempt.get("missing_installable"):
+            # 这次执行已经发生（脚本跑到缺包那一行）：事实保留，补齐之后是新的一次尝试——phase 回到等授权，
+            # outcome 如实说「需要依赖」，不叫"继续"
+            return _result(
+                PHASE_AWAITING_CONFIRMATION,
+                OUTCOME_NEEDS_DEPENDENCIES,
+                code=code,
+                reason="rerun_required",
+                finished=True,
+                captured=False,
+            )
         if code in _NO_FIGURE_CODES:
             # 脚本跑完了，只是没有可编辑的图：执行完成 ≠ 首图成功
             return _result(
@@ -280,24 +664,42 @@ def derive(facts: dict) -> dict:
         return _result(
             PHASE_PARTIAL,
             OUTCOME_FAILED,
-            code=str(finalize.get("code") or "registration_failed"),
+            code=_finalize_failure_code(finalize),
             finished=True,
             captured=True,
         )
     if facts.get("target_kind") == TARGET_SCRIPT and int(attempt.get("captured_count") or 0) == 0:
         return _result(PHASE_PARTIAL, OUTCOME_NO_FIGURE, finished=True, captured=False)
+    if failed_figures_of(finalize):
+        # 逐图隔离：捕获到了一部分图、另一些图预览捕获失败。保留成功的图（outcome 仍是 succeeded，captured 照给），
+        # 但不能叫 `completed`——那等于告诉用户「全拿到了」，少的那张图在报告里不可见
+        return _result(PHASE_PARTIAL, OUTCOME_SUCCEEDED, finished=True, captured=True)
     return _result(PHASE_COMPLETED, OUTCOME_SUCCEEDED, finished=True, captured=True)
 
 
+def failed_figures_of(finalize: object) -> list[dict]:
+    """登记收口里带出的逐图失败（`_finalize_script_attempt` 的 `failed_figures`）→ 只留 `{stem, code}`（稳定码，不带原因文字 /
+    路径）。没有失败 = 空表；`partial` 的判据只有这一处，phase 投影与报告字段读同一份。"""
+    if not isinstance(finalize, dict) or finalize.get("registered") is False:
+        return []
+    out: list[dict] = []
+    for f in finalize.get("failed_figures") or ():
+        if isinstance(f, dict) and f.get("stem"):
+            out.append({"stem": str(f["stem"]), "code": str(f.get("code") or "")})
+    return out
+
+
 def attempt_running(attempt: dict) -> bool:
-    """Wait for recovery finalization, except a cancelled consumer immediately stops waiting."""
-    if attempt["status"] == preparation.STATUS_CANCELLED:
-        # A shared worker can keep building for another consumer. Its cancelled
-        # waiter is already terminal and must not wait for that worker's callback.
-        return False
+    """这次尝试是否还在进行：provider 没到终局，或到了终局但执行线程的收尾（登记 / 缺包差异计划）还没做完。
+
+    与 `SessionService._has_active_attempt` 同一判据（T11）：`error` 在收尾之前也算进行中——
+    `missing_dependency` 要等 `_observe_missing` 算出差异计划才说得清是「补包后重跑」还是「认不出包名」，
+    先投影成 `failed` 会给出一个没有待办、随后又被改写的终局。取消落地即终局（T09：不等执行线程）。"""
     if attempt["status"] in (preparation.STATUS_PENDING, preparation.STATUS_RUNNING):
         return True
-    return attempt["status"] in preparation.TERMINAL and not attempt.get("finalized")
+    if attempt["status"] == preparation.STATUS_CANCELLED:
+        return False
+    return not attempt.get("finalized")
 
 
 def _derive_before_attempt(facts: dict) -> dict:
@@ -367,6 +769,75 @@ class _Action:
     #: run：被哪次尝试认领（None = 还没人认领）；cancel：它要取消的那次尝试
     attempt_id: str | None = None
     impact: dict = dataclasses.field(default_factory=dict)
+    #: prepare_dependencies：用户看到的影响摘要（认领时按它核对）/ 运行时缺包的模块名 / 目标类型（私有，不对外）
+    impact_digest: str = ""
+    impact_core: dict = dataclasses.field(
+        default_factory=dict
+    )  # `deprepair.impact_of` 原样（不含动作层的标志）
+    module: str = ""
+    target_kind: str = ""
+    scope_policy: str = ""
+    #: confirm_native_run：服务端为「那一次」失败尝试签发的一次性确认 token（私有；只经页面 cookie 认证的报告读得到）与它绑定的尝试
+    confirm_token: str = ""
+    bound_attempt: str = ""
+
+
+@dataclasses.dataclass
+class _DepAttempt:
+    """一次依赖准备尝试（会话拥有或认领了别人在跑的同一份作业）。provider 状态仍在 `deprepair`（进度记录），
+    这里只记「这个会话认领了哪份作业、确认的是哪份影响、终局是什么」。"""
+
+    plan_id: str
+    action_id: str
+    config_revision: int
+    created_at: float
+    impact: dict
+    impact_digest: str
+    module: str = ""
+    #: 认领的是别人先起的同一份作业：本会话不拥有它，不提供取消（只退役自己拥有的工作）
+    joined: bool = False
+    finished: dict | None = None
+    #: 终态（成功）之后，按新环境重新检查的那一步是否做完
+    absorbed: bool = False
+    #: 上一次通知过的（状态, 阶段）：pip 每一行输出都会来一个进度事件，只有阶段变了才值得提示"重新读报告"
+    last_notified: tuple = ()
+
+
+@dataclasses.dataclass
+class _PyChange:
+    """一次「版本不合自动换 Python」（`pyversionfix`）：会话里至多一份进行中的；终局保留到本次运行结束，报告据此说
+    「换成了 Python 3.12」。进度字段只有闭集阶段与字节数，没有路径。"""
+
+    plan: pyversionfix.PythonChangePlan
+    state: str = "running"  # running | done | failed | cancelled
+    stage: str = ""
+    done: int = 0
+    total: int = 0
+    code: str = ""
+    #: 会话上的 `python_change_cancel`（规划之前就挂好，用户点取消时置上）；`pyversionfix.apply_python_change` 轮询它
+    cancel: threading.Event = dataclasses.field(default_factory=threading.Event, repr=False)
+
+    def public(self) -> dict:
+        return {
+            **self.plan.public(),
+            "state": self.state,
+            "stage": self.stage,
+            "done": self.done,
+            "total": self.total,
+            "code": self.code,
+        }
+
+
+@dataclasses.dataclass
+class _Observation:
+    """`SessionService._observe_locked` 的结果（私有）：给 `report` 与意图的推进共用。"""
+
+    found: tuple | None
+    checks: list[dict]
+    derived: dict
+    attempt_fact: dict | None
+    facts: dict
+    missing: dict | None
 
 
 @dataclasses.dataclass
@@ -378,6 +849,136 @@ class _Attempt:
     #: 执行线程是否已经把「执行之后的登记」做完（脚本目标要登记 / 物化才算图可被编辑请求找到）
     finalized: bool = False
     finalize: dict | None = None
+    #: 这次执行以 `missing_dependency` 收场时的差异计划（`_observe_missing`）：模块名 / 能否在会话里授权 /
+    #: 影响摘要。None = 不是这类终局
+    missing: dict | None = None
+    #: 这次尝试的执行语义（V2，ADR 0127）：一次运行里第二次尝试可以是 native 回退
+    profile: str = execspec.PROFILE_SAFE
+    #: 这次运行开始（认领）那一刻项目的关闭代次（`nativesession.REGISTRY.project_epoch`）。回退的最后一刻与此刻比：
+    #: 关闭再重开会升代次，关闭之前开始的运行不得在重开后的项目里起 native 进程（#1022 的代次合同延伸到回退）
+    epoch: int | None = None
+    #: 这是 safe 下「换入口」重跑时：被换掉的那次尝试（`blocked`）的 attempt_id 与它的稳定码。换入口失败时，
+    #: 后续 native 回退 / 确认卡 / 失败卡都按**原来的 blocked 原因**走，不被换入口自己的新错误顶替（Codex #1504 P2）
+    entry_origin: str = ""
+    entry_origin_code: str = ""
+    #: 换入口那次**失败收场**后落定：等于 `entry_origin_code`（账本里它自己的码照实保留）；空 = 不适用
+    cause_override: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class InstallGrant:
+    """「打开并运行」授权的**安装范围**（typed 合同，不是一次次伪造的确认）。
+
+    只覆盖：Tavotto 自己的受管环境（新一代，原子回滚）、由项目自己的声明算出的联合计划、不改用户自己的环境、
+    不丢 / 不改账上别的作用域装进去的包、不含未经可信来源核实的用户指定包、数量有上限、整个意图至多一次安装。
+    超出任何一条就是**真实的新增影响**，必须由用户再看一次（重新「打开并运行」）。摘要由合同本身算出——
+    调用方回显它，等于确认了这些边界；每次安装认领时仍照常核对 `deprepair` 的实际影响摘要（`ACTION_PREPARE` 的老检查
+    一条没删）。"""
+
+    version: int = 1
+    max_packages: int = 16
+    max_installs: int = 1
+
+    def contract(self) -> dict:
+        return {
+            "grant_version": self.version,
+            "target_kind": deprepair.TARGET_MANAGED,
+            "scope": deprepair.SCOPE_MANAGED_GENERATION,
+            "rollback": deprepair.ROLLBACK_GENERATION_ATOMIC,
+            "modifies_user_environment": False,
+            "installs_from": "project_declarations",
+            "user_specified_packages": False,
+            "drops_or_changes_existing": False,
+            "max_packages": self.max_packages,
+            "max_installs": self.max_installs,
+        }
+
+    def digest(self) -> str:
+        return deprepair.impact_digest(self.contract())
+
+    def refusal(self, impact: dict, scope_policy: str, installs_so_far: int) -> str:
+        """这份实际影响是不是超出了授权：回理由码（闭集）；空串 = 在授权之内。"""
+        if installs_so_far >= self.max_installs:
+            return "install_budget"
+        if scope_policy:
+            return "scope_policy"
+        if impact.get("target_kind") != deprepair.TARGET_MANAGED:
+            return "target_kind"
+        if impact.get("scope") != deprepair.SCOPE_MANAGED_GENERATION or impact.get(
+            "modifies_user_environment"
+        ):
+            return "user_environment"
+        if impact.get("rollback") != deprepair.ROLLBACK_GENERATION_ATOMIC:
+            return "no_rollback"
+        if impact.get("drops") or impact.get("changes"):
+            return "drops_or_changes"
+        if impact.get("user_specified"):
+            return "user_specified"
+        if len(impact.get("installs") or ()) > self.max_packages:
+            return "package_count"
+        return ""
+
+
+GRANT = InstallGrant()
+
+
+@dataclasses.dataclass
+class RunIntent:
+    """一次有界的持续运行意图（ADR 0124）。内存里、随会话；应用重启即消失（不猜、不重跑）。
+
+    绑定：项目 + 会话 + 脚本 + 运行配置引用 + `config_revision`（预期的变化才跟着前进）。认领闭包（`launch` /
+    `finalize` / `prepare`）是创建它的那次请求里 app 注入的——意图终结时放手。"""
+
+    intent_id: str
+    session_id: str
+    project_id: str
+    script: str
+    run_config: str | None
+    config_revision: int
+    created_at: float
+    deadline: float
+    grant: InstallGrant
+    status: str = INTENT_ACTIVE
+    reason: str = ""
+    ended_at: float | None = None
+    steps: int = 0
+    #: 本意图认领过的安装：`{"digest", "installs"}`（至多 `grant.max_installs` 个）；再要装就是没有进展 / 影响扩大
+    installs: list[dict] = dataclasses.field(default_factory=list)
+    #: 本意图认领的依赖作业 id：只有它们的终局算「本意图批准的预期变化」
+    owned_deps: set[str] = dataclasses.field(default_factory=set)
+    #: 本意图批准的安装已经装好、尚未被一次重新检查吸收（吸收时预期变化的范围包含环境 / 依赖）
+    dep_done_pending: bool = False
+    waiting_on: str = ""
+    launched_attempt: str | None = None
+    #: 本意图名下的真实执行尝试（plan_id，有界）：首次执行之后若按执行证据回退（ADR 0127），第二次尝试也记在这里。
+    #: 回退**不是**意图步数：`steps` 仍是「安装 + 首次执行」
+    attempts: list[str] = dataclasses.field(default_factory=list)
+    transferred_to: str | None = None
+    lineage: list[str] = dataclasses.field(default_factory=list)
+    ledger: list[dict] = dataclasses.field(default_factory=list)
+    launch: Callable | None = dataclasses.field(default=None, repr=False)
+    finalize: Callable | None = dataclasses.field(default=None, repr=False)
+    prepare: Callable | None = dataclasses.field(default=None, repr=False)
+    #: 创建这个意图的动作是否来自桌面窗口（服务端验证过，ADR 0127）；意图之后自动推进的执行沿用它
+    desktop: bool = False
+
+    def note(self, kind: str, ref: str, at: float) -> None:
+        self.ledger.append({"kind": kind, "ref": ref, "at": at})
+        del self.ledger[:-_MAX_INTENT_LEDGER]
+
+    def public(self) -> dict:
+        return {
+            "id": self.intent_id,
+            "status": self.status,
+            "reason": self.reason,
+            "waiting_on": self.waiting_on if self.status == INTENT_ACTIVE else "",
+            "steps": self.steps,
+            "max_steps": RUN_INTENT_MAX_STEPS,
+            "expires_at": self.deadline,
+            "attempt_id": self.launched_attempt,
+            "attempts": len(self.attempts),
+            "transferred": bool(self.lineage),
+        }
 
 
 @dataclasses.dataclass
@@ -393,9 +994,36 @@ class Session:
     config_revision: int = 1
     observation_seq: int = 0
     attempts: list[_Attempt] = dataclasses.field(default_factory=list)
+    dep_attempts: list[_DepAttempt] = dataclasses.field(default_factory=list)
+    #: 上一次依赖准备之后，按新环境重新算出的差额（`deprepair.impact_delta`）：只在同一个会话里呈现
+    dependency_delta: dict | None = None
     actions: dict[str, _Action] = dataclasses.field(default_factory=dict)
     stale: dict | None = None
     signature: tuple = ()
+    #: 「跑完没出图」的原因提示缓存（`rasterhint.detect`）：按尝试 id 记，一次尝试只读一遍源码
+    no_figure_hint: dict = dataclasses.field(default_factory=dict)
+    #: 最近一次报告里智能修复路由给出的 remedy（ADR 0148）：只给诊断包「修复经过」读，不参与任何判断。
+    #: 连同它是为哪次尝试算的（`last_remedy_attempt`）一起记；`fix_journeys` 只在两者对得上当前尝试时才读，
+    #: 所以后来的重跑 / 成功 / 取消不会把上一次失败的 remedy 带进「最后一次」
+    last_remedy: dict | None = None
+    last_remedy_attempt: str = ""
+    #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
+    intent: RunIntent | None = None
+    #: 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：原因码 · 与上次相比变了什么 · 结局
+    ledger: execpolicy.AttemptLedger = dataclasses.field(default_factory=execpolicy.AttemptLedger)
+    #: 用户在本次运行里点过取消：之后到的失败不再触发任何额外执行（回退也不）
+    cancel_requested: bool = False
+    #: 最近一次自动换 Python 版本（`pyversionfix`）；None = 没发生过
+    python_change: _PyChange | None = None
+    #: 已经在 safe 下换过入口的那次运行（`ledger.run`）：每次运行至多换一次入口（ADR 0127 修订 2026-10-30）
+    entry_retry_run: int = 0
+    #: 已经自动换过版本的那次运行（`ledger.run`）：每次运行至多换一次，防循环
+    python_change_run: int = 0
+    #: 本次运行的「换 Python」取消事件：**会话建立 / 每次新运行时就挂好**，早于规划（规划要探测系统解释器，可能很慢）。
+    #: 取消处理器总能 set 它，不用等 `python_change` 出现；`_PyChange.cancel` 就是同一个对象（ADR 0114 §七）
+    python_change_cancel: threading.Event = dataclasses.field(
+        default_factory=threading.Event, repr=False
+    )
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -419,11 +1047,26 @@ def target_key(target: dict) -> str:
     if target["kind"] == TARGET_SCRIPT:
         # T03：同一脚本、不同 argv 是不同的执行意图——各有各的会话（互斥键含运行配置引用，不含 argv 原文）
         run = target.get("run")
-        return f"script:{target['script']}" + (f"~{run.config_id}" if run is not None else "")
-    return f"asset:{target['asset_id']}"
+        key = f"script:{target['script']}" + (f"~{run.config_id}" if run is not None else "")
+    else:
+        key = f"asset:{target['asset_id']}"
+    # P06：执行语义是执行意图的一部分——同一目标（脚本或素材）按 safe 检查过，不能让 native 请求拿到那份
+    # safe 计划。非 safe 加**前缀**（不是后缀）：素材 id 是不透明的、本身可能以任何串结尾，后缀会撞上别的
+    # safe key；原 key 恒以 `script:` / `asset:` 开头，`<执行语义>|` 前缀的 key 因此不可能等于任何 safe key。
+    # safe 的 key 与此前逐字节相同（现有会话与用例不失效）
+    execution = target.get("execution") or execspec.PROFILE_SAFE
+    # `auto`（V2 PR2）是「让路由挑」，与显式 safe / native 各有各的会话（否则显式 safe 会复用路由选了 native
+    # 的会话）；它同样走前缀，省略 / safe 的 key 仍与 main 逐字节相同
+    if execution == execspec.PROFILE_SAFE:
+        return key
+    return f"{execution}|{key}"
 
 
 def _fingerprint(plan: preparation.PreparationPlan) -> str:
+    return json.dumps(_fingerprint_parts(plan), sort_keys=True, default=str)
+
+
+def _fingerprint_parts(plan: preparation.PreparationPlan) -> dict:
     """语义修订的判据（私有，含解释器路径，**不**对外）：目标、解释器、工作目录档、授权、数据绑定、
     门的结论变了才算「执行意图变了」。进度 / 文案 / 时间戳不在里面——它们只动 `observation_seq`。
     T03 起 argv / 运行配置也加进来。"""
@@ -436,13 +1079,23 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "asset": plan.asset_id,
         "stem": plan.stem,
         "interpreter": plan.interpreter,
+        # T05：同一路径上被重建的环境是另一代；「需要用户先选环境」也是执行意图的一部分
+        "env_generation": (plan.environment or {}).get("generation"),
+        "env_needs_decision": bool(
+            (((plan.environment or {}).get("recommendation") or {}).get("decision") or {}).get(
+                "needs_decision"
+            )
+        ),
         "cwd_mode": decision.get("mode"),
         "cwd_decided": decision.get("decided"),
         "grant": plan.grant,
         "binding": (plan.binding or {}).get("revision"),
+        # T07：数据改指表的代次（ADR 0106）：用户指认了数据位置，同一个目标的执行意图就变了（新修订，旧失败不再是当前的）
+        "input_remap": plan.input_remap_generation,
         "required": (plan.required_input or {}).get("code"),
         # T03：运行配置引用（不透明 id，换任何一个 token 都是新引用）——不放 argv 原文
         "run": plan.run.config_id if plan.run is not None else None,
+        **({} if plan.execution == execspec.PROFILE_SAFE else {"execution": plan.execution}),
         "env_error": ((plan.environment or {}).get("error") or {}).get("code"),
         # JointPlan owns the installation identity and source-input fingerprint.
         # Declarations remain relevant when the dependency gate is not evaluated.
@@ -452,8 +1105,115 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         },
         "dependency_intents": plan.dependency_intents,
         "dependency_conflicts": plan.dependency_conflicts,
+        # T06：要装的集合 / 目标环境与代 / 写入范围变了，先前的确认就不覆盖它（摘要不含进度与文案）
+        "deps_impact": (plan.dependency_preparation or {}).get("impact_digest"),
+        "deps_switch": ((plan.dependency_preparation or {}).get("scope_switch") or {}).get(
+            "impact_digest"
+        ),
     }
-    return json.dumps(payload, sort_keys=True, default=str)
+    return payload
+
+
+# ---------------------------------------------------------------- 持续意图：预期变化 vs 外部变化
+# `_fingerprint_parts` 的键按「谁能让它合法地变」分组。意图期间的修订变化只有两类来源被批准：
+#   * 本意图批准的安装完成 → 目标环境 / 依赖结论变（`_ENV_PARTS | _DEP_PARTS`）；
+#   * 本意图正在等的用户回答被答了（工作目录 / 环境选择）→ 对应的键变；依赖在那之前**没被评估过**时，评估出结论
+#     本身也是预期（先问目录再看依赖）。已经评估过的依赖结论变了（别处改了 requirements 等）就不是。
+# 其余任何键（脚本 / 运行配置 / 授权 / 数据绑定 / 改指表……）变了、或脚本字节变了，都是外部变化：撤销意图。
+_ENV_PARTS = frozenset({"interpreter", "env_generation", "env_needs_decision", "env_error"})
+_DEP_PARTS = frozenset(
+    {
+        "deps",
+        "dependency_intents",
+        "dependency_conflicts",
+        "deps_impact",
+        "deps_switch",
+        "required",
+    }
+)
+_WORKDIR_PARTS = frozenset({"cwd_mode", "cwd_decided", "grant", "binding", "required"})
+
+
+def classify_transition(
+    old: preparation.PreparationPlan,
+    new: preparation.PreparationPlan,
+    *,
+    stale: dict | None,
+    dep_done: bool,
+) -> str:
+    """意图期间的一次修订变化是不是预期的。回 `""`（预期，意图跟着前进）或撤销理由码（外部变化）。
+
+    纯函数：只比较两份计划的指纹分量与脚本字节修订，吃「本意图批准的安装是否刚完成」与「会话失效理由」。"""
+    if stale is not None and str(stale.get("reason") or "") not in _INTERNAL_STALE:
+        return "external_change"
+    if old.script_revision != new.script_revision:
+        return "source_changed"
+    before, after = _fingerprint_parts(old), _fingerprint_parts(new)
+    changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+    allowed: set[str] = set()
+    if dep_done:
+        allowed |= _ENV_PARTS | _DEP_PARTS
+    answering = {
+        c["id"] for c in checks_of(old) if c["status"] == CHECK_NEEDS_ACTION
+    }  # 旧计划里正等着用户回答的那些项
+    evaluated_before = old.dependency_preparation is not None
+    if "workdir" in answering:
+        allowed |= _WORKDIR_PARTS
+        if not evaluated_before:
+            allowed |= _DEP_PARTS
+    if "environment" in answering:
+        allowed |= _ENV_PARTS
+        if not evaluated_before:
+            allowed |= _DEP_PARTS
+    return "external_change" if changed - allowed else ""
+
+
+def spec_key_of(plan: preparation.PreparationPlan) -> execpolicy.SpecKey:
+    """一份计划的执行身份（执行语义 · 解释器摘要 · 启动上下文摘要）：账本与闸门只比较它，不碰路径 / argv 原文。"""
+    return execpolicy.SpecKey(
+        profile=plan.execution,
+        interpreter=execpolicy.digest(plan.interpreter),
+        launch=execpolicy.digest(
+            plan.entry,
+            plan.run.config_id if plan.run is not None else None,
+            json.dumps(plan.launch_context or {}, sort_keys=True, default=str),
+        ),
+    )
+
+
+#: 换入口那次「入口不对」一类的脚本级失败码：脚本代码真的跑过、因为入口选得不对而坏（函数单独调用缺全局变量 / 没出图）。
+#: 只有这些才让原来的 blocked 原因继续作数；过期 / 取消 / 超时 / 缺依赖 / 要用户先答的门 / 没执行的失败都不在内，
+#: 按它们自己的码收场（不回退、不出确认卡）。这是「换入口失败覆盖原因」的唯一判据，`_done` 算一次、落在 `cause_override`，
+#: `_native_confirm_offered` / `_claim_confirm_native` / `_shown_attempt` 都只读那一个字段。
+_WRONG_ENTRY_CODES = frozenset(
+    {pool.SCRIPT_ERROR_CODE, pool.NO_FIGURES_CODE, pool.NO_FIGURES_SILENT_CODE}
+)
+
+
+def _wrong_entry_failure(result: preparation.PreparationResult) -> bool:
+    """换入口那次是不是「真的执行了用户代码、以入口不对的脚本级失败收场」。"""
+    if result.status != preparation.STATUS_ERROR or not result.error:
+        return False
+    if result.error.get("executed") is False:
+        return False
+    return str(result.error.get("code") or "") in _WRONG_ENTRY_CODES
+
+
+def _outcome_of(result: preparation.PreparationResult, fin: dict | None) -> tuple[str, str]:
+    """一次尝试的终局 → `(账本结局, 稳定码)`。只用已有的稳定码。"""
+    status = result.status
+    code = str((result.error or {}).get("code") or "")
+    if status == preparation.STATUS_CANCELLED:
+        return execpolicy.OUTCOME_CANCELLED, "cancelled"
+    if status == preparation.STATUS_READY:
+        if isinstance(fin, dict) and fin.get("registered") is False:
+            return execpolicy.OUTCOME_FAILED, _finalize_failure_code(fin)
+        return execpolicy.OUTCOME_SUCCEEDED, ""
+    if status == preparation.STATUS_ERROR:
+        if execpolicy.may_fall_back(code):
+            return execpolicy.OUTCOME_BLOCKED, code
+        return execpolicy.OUTCOME_FAILED, code
+    return execpolicy.OUTCOME_FAILED, code
 
 
 class SessionService:
@@ -472,11 +1232,37 @@ class SessionService:
         self._ttl = idle_ttl_s
         self._clock = clock
         self._lock = threading.Lock()
+        #: 创建运行意图的临界区（项目 + 脚本粒度的冲突检查与赋值）；只在会话锁之内取，取着它时不再取任何会话锁
+        self._arm_lock = threading.Lock()
         self._by_id: dict[str, Session] = {}
         self._by_key: dict[tuple[str, str], Session] = {}
         #: app 注入：`notifier({"session_id", "project_id", "target", "config_revision"})`（只是「重新读报告」的提示）。
         #: 在会话锁**之外**调；它抛出的异常只记日志。
         self.notifier: Callable[[dict], None] | None = None
+        #: app 注入：「本机有没有可用的 AI」（`ai_bridge.capabilities()` 里有 `usable` 的 agent）。没注入 = 当作没连——
+        #: 智能修复路由（`fixrouter`，ADR 0148）只用它在 `ai_fix` / `connect_ai` 之间选，不在引擎里探测本机
+        self.ai_connected: Callable[[], bool] | None = None
+        self._prep.project_cancel_listeners.append(self._on_project_cancel)
+
+    def _on_project_cancel(
+        self, project_id: str, script: str | None = None, keep: str | None = None
+    ) -> None:
+        """`PreparationService.cancel_project` 的监听：范围内的会话落取消标记，之后到的 blocked 不再回退 native。
+        范围 = 项目（关闭）或项目内同一脚本（重跑让位）；重跑只让**比 `keep` 更早登记**的尝试让位（与 `cancel_project`
+        取消的计划同一批）——会话最新一次尝试就是 `keep` 自己（回退的 native 尝试启动时的调用）或比它更新（另一个窗口刚发起的
+        重跑）的，都不标。只赋一个布尔，不取会话锁（调用方可能持着别的锁）。"""
+        older = self._prep.older_than(keep) if keep else None
+        with self._lock:
+            mine = [
+                s
+                for s in self._by_id.values()
+                if s.project_id == project_id
+                and (script is None or s.plan.script == script)
+                and (older is None or (s.attempts and s.attempts[-1].attempt_id in older))
+            ]
+        for sess in mine:
+            sess.cancel_requested = True
+            sess.python_change_cancel.set()
 
     # ---- 检查（不执行任何用户代码）----
     def check(
@@ -495,18 +1281,7 @@ class SessionService:
             existing = self._by_key.get(key)
             if existing is not None and self._active(existing):
                 return existing, False
-        plan = preparation.plan_for(
-            project_id=project_id,
-            project_root=project_root,
-            asset_id=target.get("asset_id") or "",
-            stem=target.get("stem") or "",
-            script=target.get("script"),
-            entry=target.get("entry"),
-            original_artifact=target.get("original_artifact"),
-            original_path=target.get("original_path"),
-            target=target["kind"],
-            **({"run": target["run"]} if target.get("run") is not None else {}),
-        )
+        plan = self._plan_of(project_id, project_root, target)
         fingerprint = _fingerprint(plan)
         now = self._clock()
         created = False
@@ -531,19 +1306,38 @@ class SessionService:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
                 if sess.stale or fingerprint != sess.fingerprint:
+                    old_plan, old_stale = sess.plan, sess.stale
                     sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
                     sess.config_revision += 1
                     sess.stale = None
+                    self._follow_intent(sess, old_plan, old_stale)
                     # 旧修订的动作全部作废（已认领的留着：重复点击要找得到当初的尝试）
                     sess.actions = {
                         k: v
                         for k, v in sess.actions.items()
-                        if v.kind == ACTION_RUN and v.attempt_id
+                        if v.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and v.attempt_id
                     }
         self._notify(sess)
         return sess, created
+
+    @staticmethod
+    def _plan_of(project_id: str, project_root: str, target: dict) -> preparation.PreparationPlan:
+        return preparation.plan_for(
+            project_id=project_id,
+            project_root=project_root,
+            asset_id=target.get("asset_id") or "",
+            stem=target.get("stem") or "",
+            script=target.get("script"),
+            entry=target.get("entry"),
+            original_artifact=target.get("original_artifact"),
+            original_path=target.get("original_path"),
+            target=target["kind"],
+            # 省略 = safe（与 main 相同）；`auto` 由 HTTP 入口在请求省略执行语义时显式带进脚本目标（V2 PR2，ADR 0133）
+            execution=target.get("execution") or execspec.PROFILE_SAFE,
+            **({"run": target["run"]} if target.get("run") is not None else {}),
+        )
 
     # ---- 动作 ----
     def act(
@@ -556,6 +1350,12 @@ class SessionService:
         launch: Callable[[preparation.PreparationPlan, Callable], None],
         finalize: Callable[[preparation.PreparationPlan, preparation.PreparationResult], dict]
         | None = None,
+        impact_digest: str | None = None,
+        prepare: Callable[..., dict] | None = None,
+        transfer_from: str | None = None,
+        desktop_initiated: bool = False,
+        page_confirmed: bool = False,
+        confirm_token: str | None = None,
     ) -> tuple[Session, bool, str]:
         """认领一个动作。回 `(会话, claimed, 动作 kind)`：`claimed=False` = 这个动作早已被认领（重复点击 / 另一个
         标签页），返回的是当初那次尝试，**没有任何新副作用**。
@@ -563,12 +1363,46 @@ class SessionService:
         `launch(plan, on_done)`：app 注入的「把这份计划交给执行线程」——绑项目、挂 `pool.build_owned`
         runner、把 `on_done` 传给 `PreparationService.start`。`finalize(plan, result)`：脚本目标执行成功之后
         的登记 / 物化（在项目绑定里、执行线程上调；回 `{"registered": bool, "code"?}`）。
+
+        `prepare_dependencies`（T06）：`impact_digest` 是用户看到的影响摘要的回显（会改用户自己环境的动作**必须**
+        带；别的动作带了也要对得上）；`prepare(...)` 是 app 注入的「按已确认的摘要起依赖作业」
+        （`deprepair.start_confirmed` + SSE 转发），回 `{plan_id, started, joined, progress}`。
+
+        `run_when_ready`（P05b）：创建一次有界的运行意图——同样要回显授权合同的摘要；`launch` / `finalize` /
+        `prepare` 会被意图保管，用来在之后（安装完成、用户答完目录）无请求上下文地继续**这一次**首次执行。
+        `desktop_initiated`（ADR 0127）：调用方（app）**服务端验证过**的事实——这次动作来自桌面窗口，而不是浏览器 / 本机凭据
+        的 API 客户端 / 无认证入口。只有它为真，这次运行里 safe 被拦下后才可能回退 native；默认 False（fail closed）。
+        `run_when_ready` 在创建意图时记下它，之后自动推进的执行沿用。
+        `page_confirmed` / `confirm_token`（只对 `confirm_native_run` 有意义，ADR 0127 修订 2026-10-30）：前者是调用方（app）
+        **服务端验证过**的事实——这个请求靠会话 cookie 认证（不是本机凭据头）；后者是请求回显的、服务端为那次失败尝试签发的
+        一次性 token。两者缺一不可；别的动作忽略它们。
+        `transfer_from`（只许跟 `run_when_ready` 一起给）：另一个运行配置（argv 换了）的旧会话 id——把它**还没认领
+        任何执行**的意图原子地转移过来；旧意图及其未认领动作当场退役，已认领的一切保留。
         """
         sess = self.session(session_id, project_id)
+        old: Session | None = None
+        if transfer_from is not None:
+            peek = sess.actions.get(action_id)
+            if not isinstance(transfer_from, str) or (peek is not None and peek.kind != ACTION_ARM):
+                raise SessionError(
+                    ERROR_BAD_REQUEST,
+                    "transfer_from 只能跟 run_when_ready 一起给",
+                    400,
+                    {"field": "transfer_from"},
+                )
+            old = self.session(transfer_from, project_id)
         recheck = False
         claimed = False
+        arming = False
         kind = ""
-        with sess.lock:
+        late: tuple[_DepAttempt, dict] | None = None
+        # 转移要同时持有新旧两个会话的锁：按 session_id 排序取，两条路径不会反向等待
+        with contextlib.ExitStack() as locks:
+            for held in sorted(
+                {id(x): x for x in (sess, old) if x is not None}.values(),
+                key=lambda x: x.session_id,
+            ):
+                locks.enter_context(held.lock)
             sess.touched_at = self._clock()
             action = sess.actions.get(action_id)
             if action is None:
@@ -596,14 +1430,71 @@ class SessionService:
             if action.kind == ACTION_RUN:
                 if action.attempt_id is not None:
                     return sess, False, action.kind  # 幂等认领：同一个动作 → 同一次尝试
-                claimed = self._claim_run(sess, action, launch=launch, finalize=finalize)
+                claimed = self._claim_run(
+                    sess, action, launch=launch, finalize=finalize, desktop=desktop_initiated
+                )
+            elif action.kind == ACTION_PREPARE:
+                if action.attempt_id is not None:
+                    return sess, False, action.kind  # 幂等认领：同一个动作 → 同一份依赖作业
+                claimed, late = self._claim_prepare(sess, action, impact_digest, prepare)
+            elif action.kind == ACTION_ARM:
+                if action.attempt_id is not None:
+                    return sess, False, action.kind  # 幂等认领：同一个动作 → 同一个意图
+                self._claim_arm(
+                    sess,
+                    action,
+                    impact_digest,
+                    old,
+                    launch=launch,
+                    finalize=finalize,
+                    prepare=prepare,
+                    desktop=desktop_initiated,
+                )
+                claimed = arming = True
+            elif action.kind == ACTION_CONFIRM_NATIVE:
+                if action.attempt_id is not None:
+                    return (
+                        sess,
+                        False,
+                        action.kind,
+                    )  # 幂等认领：同一个确认 → 同一次 native 尝试，没有新副作用
+                claimed = self._claim_confirm_native(
+                    sess,
+                    action,
+                    page_confirmed=page_confirmed,
+                    token=confirm_token,
+                    launch=launch,
+                    finalize=finalize,
+                )
             elif action.kind == ACTION_CANCEL:
-                # 只退役**这次会话拥有的**工作；共享 worker / 别人起的会话的所有权判断在
-                # `PreparationService.cancel` 与 `pool.build_owned` 的 created 里，这里不重判
-                self._prep.cancel(action.attempt_id or "", project_id)
+                # 取消先撤销持续意图（吸收态：之后到的 done / ready 复活不了它），再只退役**这次会话拥有的**工作；
+                # 共享 worker / 别人起的会话的所有权判断在 `PreparationService.cancel` 与 `pool.build_owned` 的
+                # created 里，这里不重判
+                self._revoke_intent(sess, INTENT_CANCELLED, "user_cancelled")
+                if action.attempt_id in {d.plan_id for d in sess.dep_attempts}:
+                    deprepair.cancel_status(action.attempt_id or "")
+                elif action.attempt_id:
+                    # 取消之后不再有任何额外执行（ADR 0127）：标记先于取消落下，回退的最后一刻核对它；
+                    # 回退可能已经把第二次尝试接上了，取消要落在**最新**的那次上，不是动作当初指着的那次
+                    sess.cancel_requested = True
+                    # 规划（探测系统解释器）期间 `python_change` 还不存在：事件在会话上，总能置上
+                    sess.python_change_cancel.set()  # 另建环境：停在能停的地方（代事务提交点之前）
+                    for aid in dict.fromkeys(
+                        [action.attempt_id]
+                        + (
+                            [sess.attempts[-1].attempt_id]
+                            if sess.attempts
+                            and action.attempt_id in {a.attempt_id for a in sess.attempts}
+                            else []
+                        )
+                    ):
+                        self._prep.cancel(aid, project_id)
                 claimed = True
             else:  # ACTION_RECHECK：规划有副作用面（解释器体检），不在会话锁里做
                 recheck = True
+        if late is not None:
+            # 认领到的原作业在我们挂上监听之前已经到了终态：终局补一次
+            self._dependency_event(sess, late[0], late[1])
         if recheck:
             self.check(
                 project_id=sess.project_id,
@@ -614,9 +1505,355 @@ class SessionService:
             claimed = True
         else:
             self._notify(sess)
+        if arming or recheck:
+            # 只推进**已有**的意图（recheck 本身不创建意图）；它是否还成立由 `_advance` 内部核
+            self.advance(sess)
         return sess, claimed, kind
 
-    def _claim_run(self, sess: Session, action: _Action, *, launch, finalize) -> bool:
+    def _claim_prepare(
+        self, sess: Session, action: _Action, echoed: str | None, prepare
+    ) -> tuple[bool, tuple[_DepAttempt, dict] | None]:
+        """会话锁内：核对修订（调用方已做）→ 核对回显的影响摘要 → 失效检查 → 认领动作 → 交给 `deprepair`。
+        比较—消费—提交副作用之间没有无保护窗口；重复点击 / 另一个标签页走 `act` 里的幂等分支，不会到这里。"""
+        # 任何会装包的动作（受管 / 项目 venv / 私有 Python / 用户自己的环境……）都必须由**调用方**回显它看到的
+        # 影响摘要；服务端持有的 `action.impact_digest` 只用来比对，绝不替调用方填进执行器（Codex r4218802478）
+        if not isinstance(echoed, str) or not echoed:
+            raise SessionError(
+                ERROR_IMPACT_UNCONFIRMED,
+                "执行依赖准备需要带上你看到的影响摘要（impact_digest）才能确认",
+                400,
+                {"field": "impact_digest"},
+            )
+        if echoed != action.impact_digest:
+            # 调用方看到的不是这个动作现在的影响（读了旧报告）：动作本身仍有效，不标失效；把现在的影响交回去
+            raise self._impact_changed(
+                sess,
+                {"impact": action.impact_core, "impact_digest": action.impact_digest},
+                stale=False,
+            )
+        if self._has_active_attempt(sess):
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
+        if prepare is None:
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话不能起依赖准备", 409)
+        stale = preparation.stale_reason(sess.plan, source=False)
+        if stale is not None:
+            sess.stale = {"reason": stale[0]}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+            raise SessionError(
+                preparation.ERROR_PLAN_STALE,
+                "检查之后环境 / 授权 / 数据变了，请重新检查",
+                409,
+                {"reason": stale[0], "executed": False},
+            )
+        attempt = _DepAttempt(
+            plan_id="",
+            action_id=action.id,
+            config_revision=sess.config_revision,
+            created_at=self._clock(),
+            impact=dict(action.impact_core),
+            impact_digest=action.impact_digest,
+            module=action.module,
+        )
+        try:
+            got = prepare(
+                project_root=sess.project_root,
+                script=sess.plan.script,
+                digest=echoed,
+                target_kind=action.target_kind,
+                module=action.module,
+                scope_policy=action.scope_policy,
+                on_event=lambda snap: self._dependency_event(sess, attempt, snap),
+            )
+        except deprepair.RepairError as exc:
+            if exc.code == deprepair.ERROR_IMPACT_CHANGED:
+                raise self._impact_changed(sess, exc.extra) from exc
+            # 其余（轮次用完 / 被固定 / 忙 / 计划不可执行…）如实带稳定码，什么都没执行
+            raise SessionError(exc.code, str(exc), 409, {"executed": False}) from exc
+        except (deprepair.pool.WorkerError, deprepair.privatepython.ProvisionError) as exc:
+            # 解释器解析不出来（显式选择失效）/ 私有 Python 磁盘不足：带它们自己的稳定码，不当 500
+            raise SessionError(
+                str(getattr(exc, "code", "") or "dependency_target_unavailable"),
+                str(exc),
+                409,
+                {"executed": False},
+            ) from exc
+        plan_id = str(got.get("plan_id") or "")
+        if not plan_id:
+            # 同一份摘要的作业在我们比较之后、认领之前结束了：世界已经变了，重新检查再来
+            sess.stale = {"reason": "dependency_job_ended"}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+            raise SessionError(
+                preparation.ERROR_PLAN_STALE,
+                "刚才的依赖准备已经结束，请重新检查",
+                409,
+                {"reason": "dependency_job_ended", "executed": False},
+            )
+        attempt.plan_id = plan_id
+        attempt.joined = not bool(got.get("started"))
+        sess.dep_attempts.append(attempt)
+        del sess.dep_attempts[:-_MAX_DEP_ATTEMPTS]
+        action.attempt_id = plan_id
+        sess.dependency_delta = None
+        snap = got.get("progress") or {}
+        late = (
+            (attempt, snap)
+            if attempt.joined and snap.get("state") in deprepair.TERMINAL_STATES
+            else None
+        )
+        return bool(got.get("started")), late
+
+    def _impact_changed(self, sess: Session, extra: dict, *, stale: bool = True) -> SessionError:
+        """用户确认的影响与此刻要执行的不是同一份，零副作用。`stale`：世界在确认之后变了（现算的计划对不上）——
+        会话标失效、旧动作作废、等重新检查；否则只是调用方手里的摘要旧了，动作原样可用。"""
+        if stale:
+            sess.stale = {"reason": "dependency_impact_changed"}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+        params: dict = {"executed": False, "reason": "dependency_impact_changed"}
+        if isinstance(extra.get("impact"), dict):
+            params["impact"] = extra["impact"]
+        if extra.get("impact_digest"):
+            params["impact_digest"] = extra["impact_digest"]
+        return SessionError(
+            ERROR_IMPACT_CHANGED,
+            "要安装的内容 / 目标环境在你确认之后变了，请重新查看再确认",
+            409,
+            params,
+        )
+
+    # ---- 依赖作业的进度 / 终局 ----
+    def _dependency_event(self, sess: Session, attempt: _DepAttempt, snap: dict) -> None:
+        """`deprepair` 的进度事件（在安装线程上调）。非终态只提示「该重新读报告了」；终态记下终局，成功的
+        按新环境重新检查（只重算差额，仍在这个会话里）。"""
+        state = snap.get("state")
+        if state not in deprepair.TERMINAL_STATES:
+            marker = (state, snap.get("stage"))
+            if marker != attempt.last_notified:
+                attempt.last_notified = marker
+                self._notify(sess)
+            return
+        with sess.lock:
+            if attempt.finished is not None:
+                return  # 终局只记一次（监听者与补发可能各来一次）
+            attempt.finished = {
+                "state": state,
+                "code": str(snap.get("code") or ""),
+                "retryable": snap.get("retryable"),
+                "committed": bool(snap.get("committed")),
+            }
+            intent = self._intent_live(sess)
+            if intent is not None and attempt.plan_id in intent.owned_deps:
+                if state == deprepair.STATE_DONE:
+                    # 本意图批准的安装装好了：之后那次重新检查带来的环境 / 依赖变化是预期的
+                    intent.dep_done_pending = True
+                    intent.note("dependency_done", attempt.plan_id, self._clock())
+                else:
+                    # 失败 / 取消：意图终结，不自己重装（没有进展不循环）；用户在报告里看到失败，再决定
+                    self._revoke_intent(sess, INTENT_REVOKED, f"dependency_{state}")
+        if state == deprepair.STATE_DONE:
+            threading.Thread(
+                target=self._replan_after_dependency,
+                args=(sess, attempt),
+                daemon=True,
+                name="tavotto-prepsession-replan",
+            ).start()
+        else:
+            with sess.lock:
+                attempt.absorbed = True
+            self._notify(sess)
+
+    def _replan_after_dependency(self, sess: Session, attempt: _DepAttempt) -> None:
+        """依赖装好了：环境变了，按新环境重新检查——只重算差额（装好的不再出现），仍在同一个会话 / 同一份
+        报告里呈现。等作业把环境租约放掉再量（`plan_for` 要读这个环境）。"""
+        deadline = time.monotonic() + _REPLAN_WAIT_S
+        while deprepair.is_running(attempt.plan_id) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        try:
+            with sess.lock:
+                sess.stale = {"reason": "dependencies_prepared"}
+            self.check(
+                project_id=sess.project_id, project_root=sess.project_root, target=sess.target
+            )
+            with sess.lock:
+                offer = sess.plan.dependency_preparation or {}
+                sess.dependency_delta = {
+                    "origin": "runtime_missing" if attempt.module else "joint",
+                    "previous_impact_digest": attempt.impact_digest,
+                    "current_impact_digest": str(offer.get("impact_digest") or ""),
+                    **deprepair.impact_delta(attempt.impact, offer.get("impact")),
+                    # 前一次尝试发生过的事实不改写；补齐之后要新的一次尝试（不是"从异常点继续"）
+                    "rerun_required": bool(attempt.module),
+                }
+        except Exception:  # noqa: BLE001 — 重新检查失败时保持失效标记：用户看到 recheck，而不是静默通过
+            LOG.exception("依赖准备后的重新检查失败")
+        finally:
+            with sess.lock:
+                attempt.absorbed = True
+            self._notify(sess)
+            # 意图批准的安装装好并已重新检查：再推进一步（别的安装完成没有意图就什么都不做）
+            self.advance(sess)
+
+    def _observe_missing(self, sess: Session, plan, result) -> dict | None:
+        """一次执行以 `missing_dependency` 收场：算出差异计划（要装什么 / 装到哪 / 影响摘要）并记在那次尝试上。
+        不起解释器（`deprepair.offer` 只读）；能不能在会话里授权看受管目标是否可用、包名是否可信解析。回 None =
+        不是这类终局。"""
+        err = result.error or {}
+        if result.status != preparation.STATUS_ERROR or err.get("code") != _RUNTIME_MISSING_CODE:
+            return None
+        module = str(err.get("module") or "")
+        info: dict = {"module": module, "installable": False}
+        if not module:
+            return info
+        route = str(err.get("install_route") or "")
+        if pool.install_offer_blocked(route):
+            # 标准库缺了：不查可信解析；平台不支持时换环境也无效，保留池层给出的去向。
+            info["code"] = "stdlib_module_missing"
+            info["route"] = route
+            return info
+        try:
+            offer = deprepair.offer(sess.project_root, plan.script, module)
+            managed = next(
+                (
+                    t
+                    for t in offer.get("targets") or ()
+                    if t.get("kind") == deprepair.TARGET_MANAGED and t.get("available") is not False
+                ),
+                None,
+            )
+            if offer.get("code") or managed is None or not offer.get("requirement"):
+                info["code"] = str(offer.get("code") or "dependency_unresolved")
+                info["route"] = pool.INSTALL_ROUTE_UNRESOLVABLE
+                return info
+            preview = deprepair.preview_impact(
+                sess.project_root, plan.script, module, target_kind=deprepair.TARGET_MANAGED
+            )
+        except Exception as exc:  # noqa: BLE001 — 预览失败 = 不能在会话里授权，如实带码
+            info["code"] = str(getattr(exc, "code", "") or "dependency_unresolved")
+            return info
+        info.update(
+            installable=True,
+            requirement=dict(offer["requirement"]),
+            rounds_remaining=int(offer.get("rounds_remaining") or 0),
+            impact=preview["impact"],
+            impact_digest=preview["impact_digest"],
+        )
+        return info
+
+    def _native_confirm_offered(self, sess: Session) -> bool:
+        """此刻该不该在失败卡上给「允许并运行」。只读判据，报告与认领共用：
+
+        * 最近一次尝试是 safe、脚本目标，已收尾，以 `blocked`（safe 自己的守卫）收场；
+        * 账本记的「没回退」理由**恰是** `not_desktop_initiated`——桌面来源的 safe_only / 开关 / 取消等否决不在此列；
+        * 把「这一步已经由用户确认」代入 `decide_fallback`，其余闸门（开关 / 策略 / 账本）全部放行——
+          所以「只用安全运行」、运维开关、本次运行已经回退过一次，都不给按钮。"""
+        if not sess.attempts or sess.stale or sess.cancel_requested:
+            return False
+        last = sess.attempts[-1]
+        if not last.finalized or self._has_active_attempt(sess):
+            return False
+        cur = sess.ledger.current()
+        rec = cur[-1] if cur else None
+        if (
+            rec is None
+            or rec.attempt_id != last.attempt_id
+            or rec.spec.profile != execspec.PROFILE_SAFE
+            # 换入口那次失败时按原来的 blocked 原因算（`cause_override`），不看它自己的新错误码
+            or (rec.outcome != execpolicy.OUTCOME_BLOCKED and not last.cause_override)
+            or rec.declined != execpolicy.REASON_NOT_DESKTOP
+            or sess.plan.target != TARGET_SCRIPT
+        ):
+            return False
+        return bool(
+            execpolicy.decide_fallback(
+                mode=execpolicy.mode_for(sess.project_root),
+                enabled=execpolicy.fallback_enabled(),
+                ledger=sess.ledger,
+                cause_code=last.cause_override or rec.code,
+                nxt=execpolicy.SpecKey(execpolicy.PROFILE_NATIVE, rec.spec.interpreter, ""),
+                user_confirmed=True,
+            )
+        )
+
+    def _claim_confirm_native(
+        self,
+        sess: Session,
+        action: _Action,
+        *,
+        page_confirmed: bool,
+        token: str | None,
+        launch,
+        finalize,
+    ) -> bool:
+        """会话锁内：用户在失败卡上确认「这一次用 native 重跑」（ADR 0127 修订 2026-10-30）。
+
+        顺序即防线：来源（只认页面 cookie）→ token（绑定那次失败尝试、常量时间比较、验证过一次就废，成败都不再可用）→
+        状态（失败尝试仍是最新、闸门仍放行）→ 与桌面回退**同一套**规划与最后一刻复核（`_plan_fallback` / `_start_fallback`，
+        同一本账，一次运行至多一次）。任何一环不过都是零执行。"""
+        if not page_confirmed:
+            raise SessionError(
+                ERROR_CONFIRM_REQUIRES_PAGE, "这个确认只能在页面上由用户点击完成", 403
+            )
+        expected = action.confirm_token
+        if not expected or not isinstance(token, str) or not hmac.compare_digest(expected, token):
+            raise SessionError(ERROR_CONFIRM_INVALID, "确认已失效，请重新查看再确认", 403)
+        action.confirm_token = ""  # 用过即废：无论后面成不成都不能再拿这一枚试
+        last = sess.attempts[-1] if sess.attempts else None
+        if last is None or last.attempt_id != action.bound_attempt:
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_CONFIRM_INVALID, "确认已失效，请重新查看再确认", 403)
+        if self._has_active_attempt(sess):
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
+        if not self._native_confirm_offered(sess):
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
+        found = self._prep.get(last.attempt_id, sess.project_id)
+        if found is None:
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
+        done_plan, done_result = found
+        code = last.cause_override or str(sess.ledger.current()[-1].code)
+        fallback = self._plan_fallback(
+            sess,
+            last,
+            done_plan,
+            done_result,
+            code,
+            desktop=False,
+            confirmed=True,
+            entry=self._origin_entry(sess, last),
+        )
+        if fallback is None:
+            sess.actions.pop(action.id, None)
+            raise SessionError(
+                ERROR_NOT_RUNNABLE,
+                "现在不能这样运行",
+                409,
+                {"reason": sess.ledger.current()[-1].declined, "executed": False},
+            )
+        self._start_fallback(
+            sess,
+            last,
+            fallback,
+            code,
+            launch=launch,
+            finalize=finalize,
+            desktop=False,
+            confirmed=True,
+        )
+        if sess.attempts[-1] is last:
+            sess.actions.pop(action.id, None)
+            raise SessionError(
+                ERROR_NOT_RUNNABLE,
+                "现在不能这样运行",
+                409,
+                {"reason": sess.ledger.current()[-1].declined, "executed": False},
+            )
+        action.attempt_id = sess.attempts[-1].attempt_id
+        return True
+
+    def _claim_run(
+        self, sess: Session, action: _Action, *, launch, finalize, desktop: bool = False
+    ) -> bool:
         """会话锁内：核对 → 失效检查 → 认领 → 提交给 provider。四步之间没有无保护窗口。"""
         if self._has_active_attempt(sess):
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
@@ -635,15 +1872,99 @@ class SessionService:
                 409,
                 {"reason": stale[0], "executed": False},
             )
+        base = sess.plan
+        if base.execution == execspec.PROFILE_NATIVE and not base.route and not desktop:
+            # 显式 native（无路由决定）与路由 native 同一道来源闸门：非桌面来源拿不到 native。拒绝而不降级——一行用户代码都不跑
+            raise SessionError(
+                ERROR_NATIVE_REQUIRES_DESKTOP,
+                "native 执行只能由桌面窗口发起",
+                403,
+            )
+        if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
+            # 路由（ADR 0133）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
+            # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
+            safe = self._plan_of(
+                sess.project_id,
+                sess.project_root,
+                {**sess.target, "execution": execspec.PROFILE_SAFE},
+            )
+            base = dataclasses.replace(
+                safe,
+                route={
+                    **base.route,
+                    "execution": execspec.PROFILE_SAFE,
+                    "declined": execpolicy.REASON_NOT_DESKTOP,
+                },
+            )
+            # 会话的计划跟上（不加修订，同「点运行时采用了项目环境」）：报告里的 route 如实说这次没走 native
+            sess.plan = base
+            sess.fingerprint = _fingerprint(base)
         plan = dataclasses.replace(
-            sess.plan, plan_id=f"prep-{uuid.uuid4().hex}", created_at=self._clock()
+            base, plan_id=f"prep-{uuid.uuid4().hex}", created_at=self._clock()
         )
+        sess.dependency_delta = None  # 新的一次尝试：上一次依赖准备留下的差额已经被这次执行消费
         attempt = _Attempt(
             attempt_id=plan.plan_id,
             action_id=action.id,
             config_revision=sess.config_revision,
             created_at=self._clock(),
+            profile=plan.execution,
+            epoch=nativesession.REGISTRY.project_epoch(sess.project_root),
         )
+        # 新的一次用户发起的运行：回退预算与取消标记都从头算（ADR 0127）
+        sess.ledger.begin_run()
+        sess.cancel_requested = False
+        sess.python_change_cancel = threading.Event()  # 新的一次运行用新事件：上次的取消不带过来
+        sess.ledger.record(plan.plan_id, spec_key_of(plan))
+        done = self._done_callback(sess, attempt, launch=launch, finalize=finalize, desktop=desktop)
+
+        # A new action after a settled attempt is an explicit rerun. The provider
+        # retires the old build only after its cancellation and stale-plan checks.
+        self._prep.register(plan, force_rebuild=bool(sess.attempts))
+        sess.attempts.append(attempt)
+        action.attempt_id = plan.plan_id
+        entry = self._prep.get(plan.plan_id, sess.project_id)
+        if entry is not None and entry[1].status == preparation.STATUS_PENDING:
+            try:
+                if plan.execution == execspec.PROFILE_NATIVE:
+                    # 直达 native（路由 / 显式）与回退同一套最后一刻复核：native runner 启动时无条件让位该脚本的桌面 native 会话
+                    # 并占用项目——已有更新的同脚本计划登记（被取代），或运行开始后项目关闭又重开（代次对不上），都不起进程
+                    if self._prep.superseded(plan.plan_id):
+                        raise SessionError(
+                            ERROR_NOT_RUNNABLE,
+                            "已有更新的同脚本运行，这一次不再启动",
+                            409,
+                            {"reason": execpolicy.REASON_SUPERSEDED, "executed": False},
+                        )
+                    if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+                        raise SessionError(
+                            ERROR_NOT_RUNNABLE,
+                            "项目已关闭并重新打开，这一次不再启动",
+                            409,
+                            {"reason": execpolicy.REASON_PROJECT_REOPENED, "executed": False},
+                        )
+                launch(plan, done)
+            except Exception:
+                # 没交出去：撤回认领，动作仍可再用
+                sess.attempts.remove(attempt)
+                sess.ledger.discard(plan.plan_id)
+                action.attempt_id = None
+                if plan.execution == execspec.PROFILE_NATIVE:
+                    self._prep.cancel_plan(plan.plan_id)  # 已登记的待执行计划不留成孤儿
+                raise
+        else:
+            # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
+            attempt.finalized = True
+        # 首次执行已被认领（自动或手点都一样）：运行意图用尽，之后不会再有自动的第二次
+        self._consume_intent(sess, plan.plan_id)
+        return True
+
+    def _done_callback(
+        self, sess: Session, attempt: _Attempt, *, launch, finalize, desktop: bool = False
+    ):
+        """一次执行尝试的收尾回调（执行线程上、项目绑定里调）：登记捕获 → 缺包差异计划 → 在同一把锁里落地终局；
+        safe 尝试若以 `blocked` 收场且策略允许，**在同一把锁里**接上第二次尝试（native，ADR 0127），这样读者
+        不会看到「第一次已结束、第二次还没开始」的中间态。"""
 
         def _done(done_plan, done_result) -> None:
             fin = None
@@ -657,59 +1978,873 @@ class SessionService:
                 except Exception:  # noqa: BLE001 — 线程里不许静默死掉，如实记
                     LOG.exception("登记捕获结果失败 %s", done_plan.script)
                     fin = {"registered": False, "code": "registration_failed"}
+                if isinstance(fin, dict) and fin.get("registered") is False:
+                    # 任务诊断在 `_finish` 时已按「执行成功」冻成 ready；构建后的登记失败是终局之后的事，
+                    # 补记成失败 + 稳定码，否则 recent_runs / 单次诊断都会把它读成 ready
+                    taskdiag.STORE.amend_post_terminal_failure(
+                        done_plan.project_id,
+                        taskdiag.KIND_PREPARATION,
+                        done_plan.plan_id,
+                        _finalize_failure_code(fin),
+                    )
+            missing = None
+            try:
+                missing = self._observe_missing(sess, done_plan, done_result)
+            except Exception:  # noqa: BLE001 — 差异计划算不出来不能影响这次尝试的终局
+                LOG.exception("缺包差异计划失败 %s", done_plan.script)
+            # 点「运行」时体检了项目自带的环境，跑不了这个脚本：回到常规的「需要安装」。新计划在锁外先算好，再和"尝试收尾"
+            # 在**同一把锁里**一起落地——读者不会看到"尝试已结束、报告却还是旧的『可运行』"的中间态（否则用户能对着同一个
+            # 跑不了的环境再点一次运行）
+            refresh = None
+            if (
+                (sess.plan.dependency_preparation or {}).get("project_check_pending")
+                and done_result.status == preparation.STATUS_NEEDS_INPUT
+                and (done_result.required_input or {}).get("code") == _DEPENDENCY_CODE
+            ):
+                try:
+                    refresh = self._plan_of(sess.project_id, sess.project_root, sess.target)
+                except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
+                    LOG.exception("运行后重新检查失败 %s", done_plan.script)
+            outcome, code = _outcome_of(done_result, fin)
+            fallback = None
+            entry_retry = None
+            # 换入口那次失败（不论它自己的码是什么）：回退的判断按原来的 blocked 原因、用原来被拦的入口
+            cause = code
+            origin_entry = None
+            override = bool(attempt.entry_origin) and _wrong_entry_failure(done_result)
+            if override:
+                cause = attempt.entry_origin_code
+                origin_entry = self._origin_entry(sess, attempt)
+            try:
+                # 先在 safe 下换一个静态可解析的出图入口再跑一次；换入口也被拦才走 native 回退 / 确认卡
+                entry_retry = self._plan_entry_retry(sess, attempt, done_plan, done_result, code)
+                if entry_retry is None:
+                    fallback = self._plan_fallback(
+                        sess, attempt, done_plan, done_result, cause, desktop, entry=origin_entry
+                    )
+            except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
+                LOG.exception("执行回退的判断失败 %s", done_plan.script)
+            # 版本不合（ADR 0114 修订 2026-10-23）：不问，直接另建合适版本的受管环境并重跑一次。调用点只有这一处——
+            # 将来 fixrouter 的 `remedy.kind == 'change_python'` 也从这里接（`_plan_python_change` 换个入口即可）
+            rerun = None
+            try:
+                with sess.lock:
+                    change_cancel = (
+                        sess.python_change_cancel
+                    )  # 规划之前取定：探测期间的取消也落在它上
+                change = self._plan_python_change(sess, done_plan, done_result, desktop)
+                if change is not None:
+                    rerun = self._change_python_and_replan(
+                        sess, attempt, change, done_plan, change_cancel
+                    )
+            except Exception:  # noqa: BLE001 — 换版本出错不能改写这次尝试已经发生的终局
+                LOG.exception("自动换 Python 版本失败 %s", done_plan.script)
+            # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
             with sess.lock:
+                sess.ledger.close(attempt.attempt_id, outcome, code)
+                if done_plan.interpreter != sess.plan.interpreter:
+                    # 点「运行」时采用了项目环境，执行线程就地重算了计划：会话的计划跟上（不加修订——这次尝试的结局
+                    # 仍属于当前修订），之后的检查 / 再次运行读到的是已采用的环境
+                    sess.plan = done_plan
+                    sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
+                attempt.missing = missing
+                if override:
+                    attempt.cause_override = cause  # 账本里 `close` 记的仍是它自己的码
+                if entry_retry is not None:
+                    self._start_fallback(
+                        sess,
+                        attempt,
+                        entry_retry,
+                        code,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                        entry_change=True,
+                    )
+                if fallback is not None:
+                    self._start_fallback(
+                        sess,
+                        attempt,
+                        fallback,
+                        cause,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                    )
+                if rerun is not None:
+                    self._start_python_rerun(
+                        sess,
+                        attempt,
+                        rerun,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                    )
                 attempt.finalized = True
+                if refresh is not None:
+                    sess.plan = refresh
+                    sess.fingerprint = _fingerprint(refresh)
+                    sess.config_revision += 1
+                    sess.stale = None
+                    sess.actions = {
+                        k: v
+                        for k, v in sess.actions.items()
+                        if v.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and v.attempt_id
+                    }
             self._notify(sess)
 
-        # A new action after a settled attempt is an explicit rerun. The provider
-        # retires the old build only after its cancellation and stale-plan checks.
-        self._prep.register(plan, force_rebuild=bool(sess.attempts))
-        sess.attempts.append(attempt)
-        action.attempt_id = plan.plan_id
-        entry = self._prep.get(plan.plan_id, sess.project_id)
-        if entry is not None and entry[1].status == preparation.STATUS_PENDING:
-            try:
-                launch(plan, _done)
-            except Exception:
-                # 没交出去：撤回认领，动作仍可再用
-                sess.attempts.remove(attempt)
-                action.attempt_id = None
-                raise
+        return _done
+
+    # ---- 执行回退（V2，ADR 0127）----
+    def _decline(self, sess: Session, attempt: _Attempt, reason: str) -> None:
+        """记下「这次本可回退但没有」的理由（闭集，诊断读）。"""
+        sess.ledger.decline(attempt.attempt_id, reason)
+
+    def _plan_fallback(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        done_plan,
+        done_result,
+        code: str,
+        desktop: bool = False,
+        confirmed: bool = False,
+        entry: str | None = None,
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """锁外：safe 尝试以 `code` 收场后，要不要接一次 native。回 `(native 计划, 它的执行身份)`；不回退回 None。
+        `entry`：换入口失败后回退时，native 用**原来被拦的那个入口**（不是换过的函数入口）。
+
+        只有 `blocked` 类原因才会走到重新规划（便宜的否决先做）；规划只读，不执行用户代码。"""
+        if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR or not execpolicy.may_fall_back(code):
+            return None
+        safe_key = spec_key_of(done_plan)
+        provisional = execpolicy.SpecKey(execpolicy.PROFILE_NATIVE, safe_key.interpreter, "")
+        decision = execpolicy.decide_fallback(
+            mode=execpolicy.mode_for(sess.project_root),
+            enabled=execpolicy.fallback_enabled(),
+            ledger=sess.ledger,
+            cause_code=code,
+            nxt=provisional,
+            cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
+            desktop_initiated=desktop,
+            user_confirmed=confirmed,
+        )
+        if not decision:
+            self._decline(sess, attempt, decision.reason)
+            return None
+        try:
+            target = {**sess.target, "execution": execspec.PROFILE_NATIVE}
+            if entry:
+                target["entry"] = entry
+            nplan = self._plan_of(sess.project_id, sess.project_root, target)
+        except Exception:  # noqa: BLE001 — 规划失败 = 这次不回退，原结局保留
+            LOG.exception("native 回退计划失败 %s", done_plan.script)
+            self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
+            return None
+        if nplan.native_spec is None or nplan.script != done_plan.script:
+            self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
+            return None
+        if nplan.interpreter != done_plan.interpreter:
+            # 沿用 safe 当时解出的那个解释器（D3 / ADR 0021 §14.1）：换了就不是「同一个环境里换执行语义」
+            self._decline(sess, attempt, execpolicy.REASON_INTERPRETER_CHANGED)
+            return None
+        if nplan.script_revision != done_plan.script_revision:
+            self._decline(sess, attempt, execpolicy.REASON_STALE)
+            return None
+        if nplan.required_input or any(c["status"] != CHECK_OK for c in checks_of(nplan)):
+            self._decline(sess, attempt, execpolicy.REASON_NOT_RUNNABLE)
+            return None
+        if preparation.stale_reason(nplan) is not None:
+            self._decline(sess, attempt, execpolicy.REASON_STALE)
+            return None
+        key = spec_key_of(nplan)
+        again = execpolicy.decide_fallback(
+            mode=execpolicy.mode_for(sess.project_root),
+            enabled=execpolicy.fallback_enabled(),
+            ledger=sess.ledger,
+            cause_code=code,
+            nxt=key,
+            cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
+            desktop_initiated=desktop,
+            user_confirmed=confirmed,
+        )
+        if not again:
+            self._decline(sess, attempt, again.reason)
+            return None
+        changed = execpolicy.changed_between(safe_key, key)
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause=code,
+            retry_changed=changed,
+        )
+        return nplan, key
+
+    def _origin_entry(self, sess: Session, attempt: _Attempt) -> str | None:
+        """换入口那次尝试所替换的、原来被拦的入口；不是换入口的尝试回 None。"""
+        if not attempt.entry_origin:
+            return None
+        found = self._prep.get(attempt.entry_origin, sess.project_id)
+        return found[0].entry if found is not None else None
+
+    def _plan_entry_retry(
+        self, sess: Session, attempt: _Attempt, done_plan, done_result, code: str
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """锁外：safe 尝试以 `blocked` 收场后，先**留在 safe** 里换一个入口再跑一次（ADR 0127 修订 2026-10-30）。
+
+        被拦的操作可能只在某个入口函数里（`main()` 里 `savefig` 又读回），而另一个只建图的出图函数在 safe 下就能出图——
+        旧的素材栏探测（`probe.entry_candidates` / `entry_retry_allowed`）早有这一步，准备会话补上。候选与「值不值得换」
+        的判据只复用 probe 那一份；**只取静态能解析出的出图函数**（`static_only`，不盲试），去掉已试过的，取第一个；
+        每次运行至多换一次，与 native 回退共用 `RetryGuard` 账本和总次数上限。"""
+        if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR or not execpolicy.may_fall_back(code):
+            return None
+        if sess.entry_retry_run == sess.ledger.run or sess.cancel_requested:
+            return None
+        if done_result.cancel_requested_at is not None or not done_plan.script:
+            return None
+        from . import probe  # 延迟：probe 依赖面大，只在需要换入口时才拉
+
+        if not probe.entry_retry_allowed(pool.WorkerError(code, code=code)):
+            return None
+        tried = {done_plan.entry}
+        for rec in sess.ledger.current():  # 只算本次运行已经试过的入口
+            found = self._prep.get(rec.attempt_id, sess.project_id)
+            if found is not None:
+                tried.add(found[0].entry)
+        try:
+            cands = [
+                e
+                for e in probe.entry_candidates(
+                    sess.project_root, done_plan.script, static_only=True
+                )
+                # 只取函数入口：`__main__`（INLINE_ENTRY）会把顶层代码整段重跑，换过去多半还是同一个拦截，白用掉唯一一次换入口
+                if e not in tried and e != registry.INLINE_ENTRY
+            ]
+        except Exception:  # noqa: BLE001 — 候选算不出来 = 不换，走原分支
+            LOG.exception("换入口候选失败 %s", done_plan.script)
+            return None
+        if not cands:
+            return None
+        try:
+            nplan = self._plan_of(
+                sess.project_id, sess.project_root, {**sess.target, "entry": cands[0]}
+            )
+        except Exception:  # noqa: BLE001
+            LOG.exception("换入口计划失败 %s", done_plan.script)
+            return None
+        if (
+            nplan.execution != execspec.PROFILE_SAFE
+            or nplan.script != done_plan.script
+            or nplan.interpreter != done_plan.interpreter
+            or nplan.script_revision != done_plan.script_revision
+            or nplan.required_input
+            or any(c["status"] != CHECK_OK for c in checks_of(nplan))
+            or preparation.stale_reason(nplan) is not None
+        ):
+            return None
+        key = spec_key_of(nplan)
+        if not execpolicy.RetryGuard.admit(sess.ledger, key, code):
+            return None
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause=code,
+            retry_changed=execpolicy.changed_between(spec_key_of(done_plan), key),
+        )
+        return nplan, key
+
+    def _start_fallback(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        fallback,
+        code: str,
+        *,
+        launch,
+        finalize,
+        desktop: bool = False,
+        confirmed: bool = False,
+        entry_change: bool = False,
+    ) -> None:
+        """会话锁内：把 native 回退（`entry_change=True` 时是 safe 下换入口的重跑，同一套最后一刻复核）作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
+        （锁外规划期间用户可能点了取消）；任何一项不成立就保持原结局，一行用户代码都不再跑。"""
+        nplan, key = fallback
+        if sess.attempts[-1] is not attempt:
+            return  # 会话已经往前走了（重新检查换了修订 / 别的尝试）：不接
+        if sess.cancel_requested:
+            self._decline(sess, attempt, execpolicy.REASON_CANCELLED)
+            return
+        intent = sess.intent
+        if intent is not None and intent.status == INTENT_CANCELLED:
+            self._decline(sess, attempt, execpolicy.REASON_CANCELLED)
+            return
+        if self._prep.superseded(attempt.attempt_id):
+            # 两个桌面运行交错：已有更新的同脚本计划登记。native runner 启动时无条件让位（结束该脚本的桌面 native 会话），
+            # 现在接上就会结束新一次的运行——与取消标记同一把锁、同一时刻的最后复核（Codex #1028 r4268196418）
+            self._decline(sess, attempt, execpolicy.REASON_SUPERSEDED)
+            return
+        if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+            self._decline(sess, attempt, execpolicy.REASON_PROJECT_REOPENED)
+            return
+        if entry_change:
+            # 留在 safe：不受「只用安全运行」/ 运维回退开关 / 来源约束（没换执行语义），只过通用闸门（含总次数上限）
+            decision = execpolicy.RetryGuard.admit(sess.ledger, key, code)
+            if decision and sess.entry_retry_run == sess.ledger.run:
+                decision = execpolicy.Decision(False, execpolicy.REASON_NO_NEW_ROOT_CAUSE)
         else:
-            # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
-            attempt.finalized = True
+            decision = execpolicy.decide_fallback(
+                mode=execpolicy.mode_for(sess.project_root),
+                enabled=execpolicy.fallback_enabled(),
+                ledger=sess.ledger,
+                cause_code=code,
+                nxt=key,
+                cancelled=False,
+                desktop_initiated=desktop,
+                user_confirmed=confirmed,
+            )
+        if not decision:
+            self._decline(sess, attempt, decision.reason)
+            return
+        second = _Attempt(
+            attempt_id=nplan.plan_id,
+            action_id=attempt.action_id,
+            config_revision=sess.config_revision,
+            created_at=self._clock(),
+            profile=nplan.execution,
+            epoch=attempt.epoch,
+            entry_origin=attempt.attempt_id if entry_change else "",
+            entry_origin_code=code if entry_change else "",
+        )
+        sess.ledger.record(nplan.plan_id, key, cause=code)
+        self._prep.register(nplan, project_epoch=attempt.epoch)
+        if sess.cancel_requested or self._prep.superseded(
+            attempt.attempt_id, ignoring={nplan.plan_id}
+        ):
+            # 上面的复核到这次登记之间，另一个窗口登记了更新的重跑：回退计划拿到的序号比它大，native runner 启动时会
+            # 把它当「更早」的结束掉（Codex #1028 r4273826766）。登记之后再核一次身份：登记在前的更新重跑这里一定看得见，
+            # 登记在后的由它自己的 `cancel_project(keep=)` 取消本回退计划
+            self._prep.cancel(nplan.plan_id, sess.project_id)
+            sess.ledger.discard(nplan.plan_id)
+            self._decline(
+                sess,
+                attempt,
+                execpolicy.REASON_CANCELLED
+                if sess.cancel_requested
+                else execpolicy.REASON_SUPERSEDED,
+            )
+            return
+        sess.attempts.append(second)
+        done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
+        if entry_change:
+            sess.entry_retry_run = sess.ledger.run
+        found = self._prep.get(nplan.plan_id, sess.project_id)
+        try:
+            if found is None or found[1].status != preparation.STATUS_PENDING:
+                raise RuntimeError("native 回退计划没有进入待执行")
+            launch(nplan, done)
+        except Exception:  # noqa: BLE001 — 没交出去：撤回第二次尝试，原结局保留
+            LOG.exception("native 回退没能交给执行线程 %s", nplan.script)
+            sess.attempts.remove(second)
+            sess.ledger.discard(nplan.plan_id)
+            self._decline(sess, attempt, execpolicy.REASON_LAUNCH_FAILED)
+            return
+        if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
+            sess.intent.attempts.append(nplan.plan_id)
+            sess.intent.note("fallback", nplan.plan_id, self._clock())
+        sess.dependency_delta = None
+
+    # ---- 版本不合：自动换 Python（ADR 0114 修订 2026-10-23）----
+    def _plan_python_change(
+        self, sess: Session, done_plan, done_result, desktop: bool
+    ) -> "pyversionfix.PythonChangePlan | None":
+        """锁外、只读：这次失败是不是「版本不合」且推得出要换成哪个版本。每次运行至多一次；非桌面窗口发起的运行
+        不换（改磁盘上的环境是桌面用户的授权边界，同 native 的来源闸门）；用户已取消不换。"""
+        if not desktop or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR:
+            return None
+        if sess.cancel_requested or done_result.cancel_requested_at is not None:
+            return None
+        if sess.python_change_run == sess.ledger.run:
+            return None
+        adoption = (done_plan.environment or {}).get("adoption") or {}
+        failure = pyversionfix.failure_from_report(
+            script=str(done_plan.script or ""),
+            error=done_result.error,
+            not_used=adoption.get("not_used"),
+        )
+        if failure is None:
+            return None
+        return pyversionfix.plan_python_change(failure, sess.project_root)
+
+    def _change_python_and_replan(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        change,
+        done_plan,
+        cancel: threading.Event | None = None,
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """执行线程上、锁外：把会话标成「正在换版本」（这次尝试保持未收尾，phase = preparing_environment）→ 阻塞执行
+        `pyversionfix.apply_python_change`（进度写回会话并通知）→ 成功就按新环境重新规划，回 `(新计划, 它的执行身份)`；
+        失败 / 取消 / 重新规划不可用回 None（原失败结局保留，一行用户代码都不再跑）。"""
+        cancel = cancel if cancel is not None else sess.python_change_cancel
+        state = _PyChange(plan=change, cancel=cancel)
+        with sess.lock:
+            sess.python_change = state
+            sess.python_change_run = sess.ledger.run
+            sess.ledger.note_python_change(
+                from_version=change.from_version,
+                to_version=change.to_version,
+                base=change.base,
+                download_bytes=change.download_bytes,
+                outcome=execpolicy.OUTCOME_PENDING,
+            )
+        self._notify(sess)
+
+        def progress(snap: dict) -> None:
+            with sess.lock:
+                state.stage = str(snap.get("stage") or "")
+                state.done = int(snap.get("done") or 0)
+                state.total = int(snap.get("total") or 0)
+            self._notify(sess)
+
+        try:
+            if cancel.is_set() or sess.cancel_requested:
+                # 规划（探测）期间用户点了停止：一个字节都不下、不建环境，结局记成取消
+                result = {"ok": False, "code": pyversionfix.ERROR_CANCELLED}
+            else:
+                result = pyversionfix.apply_python_change(change, progress, cancel)
+        except Exception:  # noqa: BLE001 — 换版本的事务不许让执行线程静默死掉
+            LOG.exception("自动换 Python 版本异常 %s", done_plan.script)
+            result = {"ok": False, "code": pyversionfix.ERROR_FAILED}
+        ok = bool(result.get("ok"))
+        code = str(result.get("code") or "")
+        cancelled = state.cancel.is_set() or code == pyversionfix.ERROR_CANCELLED
+        with sess.lock:
+            state.state = "done" if ok else ("cancelled" if cancelled else "failed")
+            state.code = code
+            sess.ledger.note_python_change(
+                from_version=change.from_version,
+                to_version=change.to_version,
+                base=change.base,
+                download_bytes=change.download_bytes,
+                outcome=(
+                    execpolicy.OUTCOME_SUCCEEDED
+                    if ok
+                    else (execpolicy.OUTCOME_CANCELLED if cancelled else execpolicy.OUTCOME_FAILED)
+                ),
+                code=code,
+            )
+        if not ok:
+            return None
+        try:
+            nplan = self._plan_of(sess.project_id, sess.project_root, sess.target)
+        except Exception:  # noqa: BLE001 — 规划失败 = 这次不重跑，原结局保留
+            LOG.exception("换 Python 之后重新规划失败 %s", done_plan.script)
+            return None
+        if nplan.script != done_plan.script or nplan.script_revision != done_plan.script_revision:
+            return None
+        if nplan.required_input or any(c["status"] != CHECK_OK for c in checks_of(nplan)):
+            return None
+        if preparation.stale_reason(nplan) is not None:
+            return None
+        key = spec_key_of(nplan)
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause="python_changed",
+            retry_changed=(execpolicy.CHANGED_INTERPRETER,),
+        )
+        return nplan, key
+
+    def _start_python_rerun(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        rerun,
+        *,
+        launch,
+        finalize,
+        desktop: bool = False,
+    ) -> None:
+        """会话锁内：换完 Python 之后把重跑作为**同一会话的下一个 attempt** 交出去，最后一刻的复核（取消 / 取代 / 项目
+        重开）与 `_start_fallback` 同一套——任何一项不成立就保持原结局，一行用户代码都不再跑。"""
+        nplan, key = rerun
+        if sess.attempts[-1] is not attempt or sess.cancel_requested:
+            return
+        intent = sess.intent
+        if intent is not None and intent.status == INTENT_CANCELLED:
+            return
+        if self._prep.superseded(attempt.attempt_id):
+            return
+        if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+            return
+        second = _Attempt(
+            attempt_id=nplan.plan_id,
+            action_id=attempt.action_id,
+            config_revision=sess.config_revision,
+            created_at=self._clock(),
+            profile=nplan.execution,
+            epoch=attempt.epoch,
+        )
+        sess.ledger.record(nplan.plan_id, key, cause="python_changed")
+        self._prep.register(nplan, project_epoch=attempt.epoch)
+        sess.plan = (
+            nplan  # 会话的计划跟上（不加修订，同"点运行时采用了项目环境"）：报告里的环境是换后的
+        )
+        sess.fingerprint = _fingerprint(nplan)
+        sess.attempts.append(second)
+        done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
+        found = self._prep.get(nplan.plan_id, sess.project_id)
+        try:
+            if found is None or found[1].status != preparation.STATUS_PENDING:
+                raise RuntimeError("换 Python 之后的重跑没有进入待执行")
+            launch(nplan, done)
+        except Exception:  # noqa: BLE001 — 没交出去：撤回这次尝试，原结局保留
+            LOG.exception("换 Python 之后的重跑没能交给执行线程 %s", nplan.script)
+            sess.attempts.remove(second)
+            sess.ledger.discard(nplan.plan_id)
+            return
+        if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
+            sess.intent.attempts.append(nplan.plan_id)
+            sess.intent.note("python_changed", nplan.plan_id, self._clock())
+        sess.dependency_delta = None
+
+    # ---- 持续运行意图（P05b，ADR 0124）----
+    def _intent_live(self, sess: Session, *, expire: bool = True) -> RunIntent | None:
+        """会话锁内：当前仍然 active 的意图（超出墙钟预算的当场撤销）；没有 = None。"""
+        intent = sess.intent
+        if intent is None or intent.status != INTENT_ACTIVE:
+            return None
+        if expire and self._clock() >= intent.deadline:
+            self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
+            return None
+        return intent
+
+    def _revoke_intent(self, sess: Session, status: str, reason: str) -> bool:
+        """会话锁内：把 active 意图终结成吸收态，并放手认领闭包。回是不是真的撤销了一个 active 意图。"""
+        intent = sess.intent
+        if intent is None or intent.status != INTENT_ACTIVE:
+            return False
+        intent.status = status
+        intent.reason = reason
+        intent.ended_at = self._clock()
+        intent.launch = intent.finalize = intent.prepare = None
+        intent.note(status, reason, intent.ended_at)
+        # 未认领的执行 / 依赖 / 再次授权动作：它们是为这条意图摆出来的，意图没了就不留（下次读报告按现状补发）
         return True
 
+    def _consume_intent(self, sess: Session, attempt_id: str) -> None:
+        """会话锁内：首次执行被认领（无论自动还是用户手点 Run）——意图用尽。手点也用尽：同一会话里不能既手动跑一次又被自动再跑。"""
+        intent = self._intent_live(sess, expire=False)
+        if intent is None:
+            return
+        intent.status = INTENT_LAUNCHED
+        intent.launched_attempt = attempt_id
+        intent.steps += 1
+        intent.ended_at = self._clock()
+        intent.launch = intent.finalize = intent.prepare = None
+        intent.attempts.append(attempt_id)
+        intent.note("launch", attempt_id, intent.ended_at)
+
+    def _follow_intent(
+        self, sess: Session, old_plan: preparation.PreparationPlan, old_stale: dict | None
+    ) -> None:
+        """`check()` 换了修订之后（会话锁内，`sess.plan` 已是新计划）：预期的变化让意图跟着前进到新修订，
+        外部变化撤销它——撤销是终局，后到的 ready / done 复活不了。"""
+        intent = self._intent_live(sess)
+        if intent is None:
+            return
+        reason = classify_transition(
+            old_plan, sess.plan, stale=old_stale, dep_done=intent.dep_done_pending
+        )
+        if reason:
+            self._revoke_intent(sess, INTENT_REVOKED, reason)
+            return
+        intent.config_revision = sess.config_revision
+        intent.dep_done_pending = False
+
+    def _claim_arm(
+        self,
+        sess: Session,
+        action: _Action,
+        echoed: str | None,
+        old: Session | None,
+        *,
+        launch,
+        finalize,
+        prepare,
+        desktop: bool = False,
+    ) -> None:
+        """会话锁内（转移时新旧两把锁都在）：核对授权摘要 → 核会话可武装 → 冲突 / 转移 → 创建意图。
+        什么都不执行；失败一律零副作用。"""
+        if not isinstance(echoed, str) or not echoed:
+            raise SessionError(
+                ERROR_IMPACT_UNCONFIRMED,
+                "「打开并运行」需要带上你看到的授权摘要（impact_digest）才能确认",
+                400,
+                {"field": "impact_digest"},
+            )
+        if echoed != action.impact_digest:
+            raise self._impact_changed(
+                sess, {"impact_digest": action.impact_digest, "impact": action.impact}, stale=False
+            )
+        if sess.plan.script is None or sess.plan.target != TARGET_SCRIPT:
+            raise SessionError(ERROR_NOT_RUNNABLE, "只有脚本目标可以「打开并运行」", 409)
+        if self._has_active_attempt(sess) or self._intent_live(sess) is not None:
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试或意图在进行", 409)
+        stale = preparation.stale_reason(sess.plan)
+        if stale is not None:
+            sess.stale = {"reason": stale[0]}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+            raise SessionError(
+                preparation.ERROR_PLAN_STALE,
+                "检查之后环境 / 授权 / 数据变了，请重新检查",
+                409,
+                {"reason": stale[0], "executed": False},
+            )
+        # 冲突检查与意图赋值必须在同一个临界区：两个标签页对同一脚本、不同运行配置并发武装时，各自只持有自己会话的锁，
+        # 都能通过检查（Codex r4254020393）。所有意图都只在这把锁里创建，转移路径同守这条不变量
+        with self._arm_lock:
+            now = self._clock()
+            steps, deadline, lineage = 0, now + RUN_INTENT_TTL_S, []
+            if old is not None:
+                oi = self._transferable(sess, old)
+                # 原子转移：旧意图终局 + 未认领动作当场退役；已认领的 session / claim / attempt / receipt / provider 事实原样保留。
+                # 预算沿用（转移不是续命），血统记下来
+                oi.status = INTENT_TRANSFERRED
+                oi.reason = "run_configuration_changed"
+                oi.transferred_to = sess.session_id
+                oi.ended_at = now
+                oi.launch = oi.finalize = oi.prepare = None
+                oi.note("transfer", sess.session_id, now)
+                old.actions = {k: v for k, v in old.actions.items() if v.attempt_id}
+                steps, deadline, lineage = (
+                    oi.steps,
+                    min(deadline, oi.deadline),
+                    [*oi.lineage, oi.intent_id],
+                )
+            else:
+                self._reject_conflict(sess)
+            run = getattr(sess.plan, "run", None)
+            intent = RunIntent(
+                intent_id=f"intent-{uuid.uuid4().hex}",
+                session_id=sess.session_id,
+                project_id=sess.project_id,
+                script=str(sess.plan.script),
+                run_config=run.config_id if run is not None else None,
+                config_revision=sess.config_revision,
+                created_at=now,
+                deadline=deadline,
+                grant=GRANT,
+                steps=steps,
+                lineage=lineage,
+                launch=launch,
+                finalize=finalize,
+                prepare=prepare,
+                desktop=desktop,
+            )
+            intent.note("arm", action.id, now)
+            sess.intent = intent
+            action.attempt_id = intent.intent_id
+
+    def _transferable(self, sess: Session, old: Session) -> RunIntent:
+        """旧会话的意图能不能转移到 `sess`：同项目同脚本、运行配置不同、意图仍 active 且**没有认领任何执行**。"""
+
+        def refuse(reason: str) -> SessionError:
+            return SessionError(
+                ERROR_INTENT_NOT_TRANSFERABLE,
+                "旧的运行意图不能转移（它已经执行过 / 在执行 / 已取消 / 已失效）",
+                409,
+                {"reason": reason, "executed": False},
+            )
+
+        if old is sess or old.project_id != sess.project_id or old.plan.script != sess.plan.script:
+            raise refuse("different_target")
+        if target_key(old.target) == target_key(sess.target):
+            raise refuse("same_run_configuration")
+        oi = self._intent_live(old)
+        if oi is None:
+            raise refuse("no_active_intent")
+        if oi.launched_attempt is not None or self._exec_active(old):
+            raise refuse("already_claimed")
+        return oi
+
+    def _reject_conflict(self, sess: Session) -> None:
+        """同项目同脚本已有别的运行配置的 active 意图：并存会让合计多跑一次，必须显式转移（或先取消）。"""
+        with self._lock:
+            others = [
+                s
+                for s in self._by_id.values()
+                if s is not sess
+                and s.project_id == sess.project_id
+                and s.plan.script == sess.plan.script
+            ]
+        for other in others:
+            held = other.intent
+            if held is not None and held.status == INTENT_ACTIVE and self._clock() < held.deadline:
+                raise SessionError(
+                    ERROR_INTENT_CONFLICT,
+                    "这个脚本已经有另一份运行配置的「打开并运行」在等；换参数请转移它，或先取消",
+                    409,
+                    # 旧意图所在的会话 id：前端状态丢了（刷新 / 切项目）也能据此转移，不会被隐形的旧意图堵到过期
+                    {"executed": False, "session_id": other.session_id},
+                )
+
+    def advance(self, sess: Session) -> None:
+        """推进**已有**的运行意图一步（没有意图什么都不做——它不创建意图）。由明确的驱动者调：创建意图的认领、
+        意图自己批准的安装终局之后的重新检查、用户答完目录 / 环境之后的 `recheck`。GET / 刷新 / SSE 不调它。"""
+        with sess.lock:
+            late = self._advance_locked(sess)
+        if late is not None:
+            self._dependency_event(sess, late[0], late[1])
+        self._notify(sess)
+
+    def _advance_locked(self, sess: Session) -> tuple[_DepAttempt, dict] | None:
+        intent = self._intent_live(sess)
+        if intent is None:
+            return None
+        if intent.config_revision != sess.config_revision:
+            self._revoke_intent(sess, INTENT_REVOKED, "revision_changed")
+            return None
+        if self._has_active_attempt(sess):
+            return None  # 安装 / 执行在途：它的终局自己会再来推进
+        if sess.stale:
+            self._revoke_intent(sess, INTENT_REVOKED, str(sess.stale.get("reason") or "stale"))
+            return None
+        self._note_source_change(sess)
+        if sess.stale:
+            self._revoke_intent(sess, INTENT_REVOKED, str(sess.stale.get("reason") or "stale"))
+            return None
+        ob = self._observe_locked(sess)
+        checks = ob.checks
+        by_id = {c["id"]: c for c in checks}
+        if ob.missing is not None or (
+            ob.attempt_fact is not None
+            and ob.attempt_fact["status"] != preparation.STATUS_CANCELLED
+        ):
+            # 当前修订已经有过一次执行：意图只管首次执行之前，不为补包 / 换环境 / 进编辑悄悄再来一次
+            self._revoke_intent(sess, INTENT_REVOKED, "already_executed")
+            return None
+        blocked = next((c for c in checks if c["status"] == CHECK_BLOCKED), None)
+        if blocked is not None:
+            self._revoke_intent(sess, INTENT_REVOKED, "blocked")
+            return None
+        waiting = next((c for c in checks if c["status"] != CHECK_OK), None)
+        intent.waiting_on = waiting["id"] if waiting is not None else ""
+        deps = by_id.get("dependencies")
+        others_ok = all(c["status"] == CHECK_OK for c in checks if c["id"] != "dependencies")
+        if deps is not None and deps["status"] == CHECK_NEEDS_ACTION and others_ok:
+            offer = self._prepare_offer(sess, checks, None)
+            if offer is None:
+                self._revoke_intent(sess, INTENT_REVOKED, "dependency_unavailable")
+                return None
+            installs = set(offer["impact"].get("installs") or ())
+            if intent.installs:
+                approved = set().union(*(set(i["installs"]) for i in intent.installs))
+                self._revoke_intent(
+                    sess,
+                    INTENT_REVOKED,
+                    "impact_expanded" if not installs <= approved else "no_progress",
+                )
+                return None
+            refusal = intent.grant.refusal(
+                offer["impact"], offer["scope_policy"], len(intent.installs)
+            )
+            if refusal:
+                self._revoke_intent(sess, INTENT_REVOKED, f"grant_exceeded:{refusal}")
+                return None
+            if intent.steps >= RUN_INTENT_MAX_STEPS:
+                self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
+                return None
+            action = next(
+                (
+                    a
+                    for a in sess.actions.values()
+                    if a.kind == ACTION_PREPARE
+                    and self._open(a)
+                    and a.impact_digest == offer["impact_digest"]
+                ),
+                None,
+            )
+            if action is None:
+                return None  # 不应发生：_observe_locked 刚补发过；等下一次驱动
+            try:
+                _started, late = self._claim_prepare(
+                    sess, action, action.impact_digest, intent.prepare
+                )
+            except SessionError as exc:
+                self._revoke_intent(sess, INTENT_REVOKED, f"claim_refused:{exc.code}")
+                return None
+            except Exception:  # noqa: BLE001 — 起安装失败：意图终结，不循环
+                LOG.exception("运行意图起依赖准备失败 %s", sess.plan.script)
+                self._revoke_intent(sess, INTENT_REVOKED, "dependency_start_failed")
+                return None
+            intent.installs.append({"digest": offer["impact_digest"], "installs": sorted(installs)})
+            intent.owned_deps.add(action.attempt_id or "")
+            if _started:
+                # 加入别人已经起的作业（含转移前旧意图已计过数的那一份）不再扣一步（Codex r4254020397）
+                intent.steps += 1
+            intent.note("prepare", action.attempt_id or "", self._clock())
+            return late
+        if waiting is not None:
+            return None  # 在等用户答（目录 / 环境）或判不出（unknown 不当通过）：不推进也不撤销
+        action = next(
+            (a for a in sess.actions.values() if a.kind == ACTION_RUN and self._open(a)), None
+        )
+        if action is None:
+            return None
+        if intent.steps >= RUN_INTENT_MAX_STEPS:
+            self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
+            return None
+        try:
+            self._claim_run(
+                sess,
+                action,
+                launch=intent.launch,
+                finalize=intent.finalize,
+                desktop=intent.desktop,
+            )
+        except SessionError as exc:
+            self._revoke_intent(sess, INTENT_REVOKED, f"claim_refused:{exc.code}")
+        except Exception:  # noqa: BLE001 — 没交出去（`_claim_run` 已撤回认领）：意图终结，不重试
+            LOG.exception("运行意图起执行失败 %s", sess.plan.script)
+            self._revoke_intent(sess, INTENT_REVOKED, "launch_failed")
+        return None
+
     # ---- 报告 ----
-    def report(self, sess: Session, *, awaiting_input: bool = False) -> dict:
+    def report(
+        self,
+        sess: Session,
+        *,
+        awaiting_input: bool = False,
+        runtime_input: dict | None = None,
+        expose_confirm: bool = False,
+    ) -> dict:
         """会话的投影：目标 / 修订 / 观察序号 / phase / outcome / checks / requirements / actions / provider
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
             sess.touched_at = self._clock()
-            found = self._current_attempt(sess)
-            checks = checks_of(sess.plan)
-            # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
-            # （它仍在 provider 引用与历史里）
-            current_rev = (
-                bool(sess.attempts) and sess.attempts[-1].config_revision == sess.config_revision
-            )
-            attempt_fact, attempt_gone = (
-                self._attempt_fact(sess, found) if current_rev else (None, False)
-            )
-            facts = {
-                "target_kind": sess.plan.target,
-                "has_script": sess.plan.script is not None,
-                "checks": checks,
-                "stale": sess.stale,
-                "attempt": attempt_fact,
-                "awaiting_input": bool(awaiting_input) and attempt_fact is not None,
-            }
-            derived = derive(facts)
-            if attempt_gone:
-                # 尝试的记录已被 provider 清掉（内存里的 TTL）：如实说不知道，不猜它成没成
-                derived = _result(PHASE_ACTION_REQUIRED, OUTCOME_UNKNOWN, code="attempt_expired")
-            self._sync_actions(sess, derived, checks, attempt_active=self._is_running(attempt_fact))
+            self._intent_live(
+                sess
+            )  # 墙钟预算到了就当场撤销（只读报告也不能让过期的意图继续显示 active）
+            self._note_source_change(sess)
+            ob = self._observe_locked(sess, awaiting_input=awaiting_input)
+            found, checks, derived = ob.found, ob.checks, ob.derived
+            attempt_fact, facts, missing = ob.attempt_fact, ob.facts, ob.missing
+            dep_progress = self._dependency_progress(sess)
             signature = (
                 derived["phase"],
                 derived["outcome"].get("kind"),
@@ -718,11 +2853,31 @@ class SessionService:
                 (attempt_fact or {}).get("finalized"),
                 bool(facts["awaiting_input"]),
                 found[1].trace.current_phase if found else None,
+                (dep_progress or {}).get("state"),
+                (dep_progress or {}).get("stage"),
+                (sess.intent.status, sess.intent.reason, sess.intent.waiting_on)
+                if sess.intent is not None
+                else None,
+                # 换 Python 版本的阶段与下载进度（按 5% 分桶：不让每个下载块都推进一次序号）
+                (
+                    sess.python_change.state,
+                    sess.python_change.stage,
+                    (sess.python_change.done * 20 // sess.python_change.total)
+                    if sess.python_change.total
+                    else 0,
+                )
+                if sess.python_change is not None
+                else None,
             )
             if signature != sess.signature:
                 sess.signature = signature
                 sess.observation_seq += 1
             plan, result = found if found else (None, None)
+            no_figure_hint = (
+                self._no_figure_hint(sess, plan, result)
+                if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
+                else None
+            )
             return {
                 "session_version": SESSION_VERSION,
                 "session_id": sess.session_id,
@@ -737,18 +2892,348 @@ class SessionService:
                     "figure_captured": derived["figure_captured"],
                 },
                 "checks": checks,
-                "requirements": requirements_of(sess.plan, checks),
+                "requirements": requirements_of(
+                    sess.plan,
+                    checks,
+                    runtime_missing=self._public_missing(missing or self._unresolved_missing(sess)),
+                    missing_input=(
+                        result.missing_input
+                        if result is not None
+                        and attempt_fact is not None
+                        and result.status == preparation.STATUS_ERROR
+                        else None
+                    ),
+                    workdir_hint=(
+                        result.workdir_hint
+                        if result is not None and attempt_fact is not None
+                        else None
+                    ),
+                ),
                 "actions": [
-                    self._action_payload(a) for a in sess.actions.values() if self._open(a)
+                    self._action_payload(a)
+                    for a in sess.actions.values()
+                    if self._open(a) and (expose_confirm or a.kind != ACTION_CONFIRM_NATIVE)
                 ],
                 "provider": {
                     "plan_id": sess.plan.plan_id,
                     "attempt_id": plan.plan_id if plan else None,
                     "attempts": len(sess.attempts),
+                    # T06：依赖作业的 provider 引用（进度仍读 `GET /api/engine/dependency/state?plan_id=`）
+                    "dependency": dep_progress,
                 },
+                # 环境（ADR 0114 §六）：只是一个可展示的事实——用的是哪一类、谁定的、这次检查有没有自动换；不要求用户动作
+                "environment": dict((sess.plan.environment or {}).get("adoption") or {}) or None,
+                # 上一次依赖准备之后按新环境重新算出的差额；None = 没有
+                "dependency_delta": dict(sess.dependency_delta) if sess.dependency_delta else None,
+                # 正在等的那一问（T08）：`inputbroker.Pending.public()`——id / 序号 / 读取方式 / 要不要掩码，
+                # 没有提示与答案。回答走既有 `/api/script_input/answer`，与原对话框是同一个请求
+                "runtime_input": (
+                    dict(runtime_input)
+                    if runtime_input is not None
+                    and derived["phase"] == PHASE_AWAITING_RUNTIME_INPUT
+                    else None
+                ),
+                # T09：这次尝试真正捕获到的图（与 `/api/registry/probe` 响应里同一份公开描述符：项目相对路径、
+                # 运行配置只是不透明引用）。「进入编辑」直接用它——不按图名再找一遍、不为换界面再跑一次脚本。
+                # 只在这次尝试成功（捕获到且登记好）时给；跑完但没有图 / 失败 / 登记不上时是空表
+                "captured": (
+                    [
+                        dict(d)
+                        for d in ((result.captured or {}).get("descriptors") or ())
+                        if isinstance(d, dict)
+                    ]
+                    if result is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
+                # T09b：这次（无参数）运行把哪些此前登记在这个脚本名下的图名替换掉了（T03 已知缺口：注册表按脚本整条替换）。
+                # 只是图名（与 `captured[].stem` 同一口径，项目相对的公开名字），不含参数；界面据此给「用原参数再运行」的提示
+                "unlinked_stems": (
+                    list((attempt_fact.get("finalize") or {}).get("unlinked_stems") or [])
+                    if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
+                # 跑完没出图时的原因（`rasterhint`）：脚本自己把图片写成了文件（Pillow / OpenCV …），不是 Matplotlib 图。
+                # 只是提示——不改 outcome / facts；None = 不适用或判不出（老后端没有这个键）
+                "no_figure_hint": no_figure_hint,
+                # 智能修复路由（ADR 0148）：失败 / 没出图 / 走不通时按失败类型选的唯一修法（`fixrouter.REMEDY_KINDS`）。
+                # 新增字段，None = 不适用（没失败 / 还在跑）；旧前端读不到也不坏
+                "remedy": self._remedy(sess, derived, plan, result, missing, no_figure_hint),
+                # 部分捕获：这次成功的尝试里预览捕获失败的图（`{stem, code}`，稳定码）。phase 是 `partial` 而 outcome 仍是
+                # `succeeded`（成功那几张照常在 `captured` 里）；全部成功 / 全部失败时是空表
+                "failed_figures": (
+                    failed_figures_of(attempt_fact.get("finalize"))
+                    if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
+                # 运行意图（P05b）：None = 从没有过；终结后保留，说明是怎么结束的（reason 是闭集码，不带路径与参数）
+                "intent": sess.intent.public() if sess.intent is not None else None,
+                # 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：执行语义 · 原因码 · 与上次相比变了什么 · 结局。
+                # 只有摘要与闭集码，没有路径 / argv / 环境值
+                "attempt_history": sess.ledger.history(),
+                # 版本不合时自动换 Python（ADR 0114 修订 2026-10-23）：换成了什么 / 基础来源 / 下载字节 / 进度 / 结局；
+                # None = 这个会话里没发生过。没有路径
+                "python_change": (
+                    sess.python_change.public() if sess.python_change is not None else None
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
+
+    def _observe_locked(self, sess: Session, *, awaiting_input: bool = False) -> "_Observation":
+        """会话锁内：读出此刻的事实 → 派生 phase → 补齐 / 撤掉未认领动作。`report` 与意图的推进共用这一份，
+        所以意图看到的世界与用户在报告里看到的是同一个。"""
+        found = self._shown_attempt(sess, self._current_attempt(sess))
+        checks = checks_of(sess.plan)
+        # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
+        # （它仍在 provider 引用与历史里）
+        current_rev = (
+            bool(sess.attempts) and sess.attempts[-1].config_revision == sess.config_revision
+        )
+        attempt_fact, attempt_gone = (
+            self._attempt_fact(sess, found) if current_rev else (None, False)
+        )
+        dep_fact = self._dependency_fact(sess)
+        if attempt_fact is not None and sess.attempts:
+            attempt_fact["missing_installable"] = bool(
+                (sess.attempts[-1].missing or {}).get("installable")
+            )
+        facts = {
+            "target_kind": sess.plan.target,
+            "has_script": sess.plan.script is not None,
+            "checks": checks,
+            "stale": sess.stale,
+            "attempt": attempt_fact,
+            "awaiting_input": bool(awaiting_input) and attempt_fact is not None,
+            "dependency": dep_fact,
+            "python_change": (
+                {"running": True}
+                if sess.python_change is not None and sess.python_change.state == "running"
+                else None
+            ),
+        }
+        derived = derive(facts)
+        if attempt_gone:
+            # 尝试的记录已被 provider 清掉（内存里的 TTL）：如实说不知道，不猜它成没成
+            derived = _result(PHASE_ACTION_REQUIRED, OUTCOME_UNKNOWN, code="attempt_expired")
+        missing = self._pending_missing(sess) if attempt_fact is not None else None
+        self._sync_actions(
+            sess,
+            derived,
+            checks,
+            attempt_active=self._is_running(attempt_fact),
+            dependency_busy=dep_fact is not None and dep_fact["running"],
+            missing=missing,
+            attempt_fact=attempt_fact,
+        )
+        return _Observation(found, checks, derived, attempt_fact, facts, missing)
+
+    def _note_source_change(self, sess: Session) -> None:
+        """脚本在检查之后被改了：披露过的影响（`script_writes` / 参数个数……）不再是真的。没有尝试在进行时，
+        提前把会话标失效、撤掉未认领的动作（等 `recheck` 重新披露）；认领时 `preparation.stale_reason` 仍会
+        再核一次（这里只是不再把过期的 `run` 摆给用户看）。"""
+        plan = sess.plan
+        if sess.stale or plan.script_revision is None or self._has_active_attempt(sess):
+            return
+        if sess.attempts and sess.attempts[-1].config_revision == sess.config_revision:
+            return  # 这一修订已经跑过：之后的源码改动（如写回）不回头改写它的结局；下一次 `run` 认领时仍会核
+        now = preparation._script_revision(plan.project_root, plan.script) or ""
+        # 只在披露得出的东西（schema 摘要）变了时提前撤：与依赖无关的字节改动不撤销已给出的授权（C03/C05），
+        # 但认领 `run` 时字节也核（执行的就是那份字节）
+        if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
+            sess.stale = {"reason": preparation.STALE_SOURCE}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+
+    def _remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
+        """失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`（会话锁内，只读：不起进程、不探测）。"""
+        remedy = self._choose_remedy(sess, derived, plan, result, missing, no_figure_hint)
+        # 随当前尝试一起记（含「没有 remedy」）：诊断包只读与当前尝试对得上的那一份
+        sess.last_remedy = remedy
+        sess.last_remedy_attempt = sess.attempts[-1].attempt_id if sess.attempts else ""
+        return remedy
+
+    def _choose_remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
+        outcome = derived["outcome"]
+        # needs_dependencies：运行期才发现缺包（动态 import），同样是「走不通」，且正是 `install_packages` 的主场
+        if outcome.get("kind") not in (
+            OUTCOME_FAILED,
+            OUTCOME_NO_FIGURE,
+            OUTCOME_BLOCKED,
+            OUTCOME_NEEDS_DEPENDENCIES,
+        ):
+            return None
+        if derived["phase"] in (PHASE_RUNNING, PHASE_AWAITING_RUNTIME_INPUT):
+            return None
+        code = str(
+            outcome.get("code") or ((result.error or {}).get("code") if result else "") or ""
+        )
+        if not code and outcome.get("kind") == OUTCOME_NO_FIGURE:
+            code = "no_figure"
+        env = sess.plan.environment or {}
+        packages: tuple[str, ...] = ()
+        installable = bool(missing and missing.get("installable"))
+        if installable:
+            # `missing["requirement"]` 是 `depresolve` 的需求载荷（dict：distribution / requirement / …），不是字符串
+            req = missing.get("requirement")
+            if isinstance(req, dict):
+                name = str(req.get("distribution") or "") or fixrouter.dist_name(
+                    str(req.get("requirement") or "")
+                )
+            else:
+                name = fixrouter.dist_name(str(req or ""))
+            packages = (name,) if name else ()
+        auto_ok = False
+        if packages:
+            auto_ok = self._auto_install_allowed(
+                sess.plan.interpreter, str(env.get("source") or "")
+            )
+        connected = False
+        probe = self.ai_connected
+        if probe is not None:
+            try:
+                connected = bool(probe())
+            except Exception:  # noqa: BLE001 — 探测失败当作没连：只影响 ai_fix / connect_ai 二选一
+                LOG.exception("判断 AI 是否已连接失败")
+        run_start = None
+        cur = sess.ledger.current()
+        if cur:
+            run_start = next(
+                (a.created_at for a in sess.attempts if a.attempt_id == cur[0].attempt_id), None
+            )
+        installed = run_start is not None and any(
+            d.created_at >= run_start
+            and d.finished is not None
+            and d.finished.get("state") == deprepair.STATE_DONE
+            for d in sess.dep_attempts
+        )
+        script = sess.plan.script or ""
+        history = tuple(sess.ledger.history())
+        # 本可回退却没回退（账本记了理由：不是桌面发起的运行 / 用户只要 safe / 取消了…）：不能再标「静默换成原样运行」
+        declined = any(r.get("declined") for r in history[-1:])
+        ctx = fixrouter.Ctx(
+            ai_connected=connected,
+            native_allowed=(
+                execpolicy.fallback_enabled()
+                and execpolicy.mode_for(sess.project_root) != execpolicy.MODE_SAFE_ONLY
+                and not declined
+            ),
+            confirm_native=self._native_confirm_offered(sess),
+            missing_installable=installable,
+            packages=packages,
+            auto_install_allowed=auto_ok,
+            python_from=str(env.get("python_version") or ""),
+            no_figure_hint=no_figure_hint,
+            source_language=sourcelang.extension_hint(script) if script else None,
+            history=history,
+            installed_this_run=installed,
+        )
+        return fixrouter.choose(code, ctx)
+
+    def fix_journeys(self, project_id: str) -> list[dict]:
+        """诊断包「修复经过」（ADR 0148）：这个项目每个有过执行尝试的会话——走过哪些修法（账本 + 路由）、各自的结局码、
+        最后一次的报错原文。只读；原文里的路径 / 密钥形状由诊断包的统一脱敏（`diagdetail.Scrubber`）处理，这里不自己抹。"""
+        with self._lock:
+            mine = [s for s in self._by_id.values() if s.project_id == project_id]
+        out: list[dict] = []
+        for sess in mine:
+            with sess.lock:
+                history = sess.ledger.history()
+                if not history:
+                    continue
+                found = self._current_attempt(sess)
+                err = (found[1].error or {}) if found else {}
+                out.append(
+                    {
+                        "script": sess.plan.script or "",
+                        "tried": list(
+                            fixrouter.tried_in_run(fixrouter.Ctx(history=tuple(history)))
+                        ),
+                        "remedy": (
+                            dict(sess.last_remedy)
+                            if sess.last_remedy
+                            and found is not None
+                            and sess.last_remedy_attempt == found[0].plan_id
+                            else None
+                        ),
+                        "attempts": [
+                            {
+                                k: r.get(k)
+                                for k in (
+                                    "run",
+                                    "seq",
+                                    "profile",
+                                    "changed",
+                                    "cause",
+                                    "outcome",
+                                    "code",
+                                )
+                            }
+                            for r in history
+                        ],
+                        "last_error": {
+                            "code": str(err.get("code") or ""),
+                            "message": str(err.get("message") or "")[:4000],
+                        }
+                        if err
+                        else None,
+                    }
+                )
+        return out
+
+    @staticmethod
+    def _auto_install_allowed(interpreter: str, source: str) -> bool:
+        """环境允许不问就装：自动安装开关开着，且环境是 Tavotto 自管的（项目 venv / 受管）或用户已按环境同意过
+        （`convertdeps` 的「每环境问一次」口径，不另写一份）。读不出来一律当不允许。"""
+        if not interpreter:
+            return False
+        try:
+            from . import convertdeps  # 延迟：见 fixrouter
+
+            if not convertdeps.enabled():
+                return False
+            env = convertdeps.describe_env(interpreter, source)
+            return env["kind"] in convertdeps.DIRECT_KINDS or convertdeps.has_consent(env["key"])
+        except Exception:  # noqa: BLE001
+            LOG.exception("判断环境是否允许直接装包失败")
+            return False
+
+    @staticmethod
+    def _no_figure_hint(
+        sess: Session, attempt_plan: preparation.PreparationPlan, result=None
+    ) -> dict | None:
+        """读一次脚本源码（含有界跟进的本地模块）判 `rasterhint`；按尝试 id 缓存，读不了就是 None。"""
+        key = attempt_plan.plan_id
+        if key not in sess.no_figure_hint:
+            script = sess.plan.script
+            cwd_mode = (attempt_plan.workdir_decision or {}).get("mode")
+            sess.no_figure_hint[key] = (
+                rasterhint.detect(
+                    sess.project_root,
+                    script,
+                    cwd_mode,
+                    run_started_at=attempt_plan.created_at,
+                    sandbox_dir=((getattr(result, "captured", None) or {}).get("sandbox") or None),
+                )
+                if script
+                else None
+            )
+        hint = sess.no_figure_hint[key]
+        return dict(hint) if hint else None
 
     def get(self, session_id: str, project_id: str) -> Session | None:
         with self._lock:
@@ -767,10 +3252,129 @@ class SessionService:
             )
         return sess
 
+    def _shown_attempt(self, sess: Session, found):
+        """报告给用户看的那次尝试：换入口那次失败收场（`cause_override` 落定）时，用户看到的是原来被拦的那次
+        （「这个脚本要真的把文件写到磁盘上才能跑完」+「允许并运行」），不是换入口自己的新错误；
+        那次失败如实留在账本与执行记录里。"""
+        if found is None or not sess.attempts:
+            return found
+        last = sess.attempts[-1]
+        if not (last.entry_origin and last.cause_override and last.finalized):
+            return found
+        origin = self._prep.get(last.entry_origin, sess.project_id)
+        return origin if origin is not None else found
+
     def _current_attempt(self, sess: Session):
         if not sess.attempts:
             return None
         return self._prep.get(sess.attempts[-1].attempt_id, sess.project_id)
+
+    def _dependency_fact(self, sess: Session) -> dict | None:
+        """给 `derive` 的依赖准备事实：只认比最近一次执行尝试更晚的那次依赖作业；装好并已重新检查的不再出现
+        （新环境的检查项自己说话），失败 / 取消的只在同一修订里保留。"""
+        if not sess.dep_attempts:
+            return None
+        dep = sess.dep_attempts[-1]
+        if sess.attempts and dep.created_at < sess.attempts[-1].created_at:
+            return None
+        fin = dep.finished
+        if fin is None:
+            return {"running": True, "state": "running", "code": "", "joined": dep.joined}
+        if fin["state"] == deprepair.STATE_DONE:
+            if dep.absorbed:
+                return None
+            return {
+                "running": True,
+                "state": fin["state"],
+                "code": "",
+                "joined": dep.joined,
+                "reason": "rechecking",
+            }
+        if dep.config_revision != sess.config_revision:
+            return None
+        return {
+            "running": False,
+            "state": fin["state"],
+            "code": fin["code"],
+            "joined": dep.joined,
+        }
+
+    @staticmethod
+    def _dependency_progress(sess: Session) -> dict | None:
+        """当前依赖作业的 provider 引用 + 此刻的进度快照里的闭集字段（不含日志与路径）。"""
+        if not sess.dep_attempts:
+            return None
+        dep = sess.dep_attempts[-1]
+        rec = deprepair.progress(dep.plan_id)
+        return {
+            "plan_id": dep.plan_id,
+            "joined": dep.joined,
+            "origin": "runtime_missing" if dep.module else "joint",
+            "state": (dep.finished or {}).get("state") or rec.get("state") or "idle",
+            "stage": rec.get("stage"),
+            "code": (dep.finished or {}).get("code") or rec.get("code") or "",
+            "committed": bool(rec.get("committed")),
+            "impact_digest": dep.impact_digest,
+        }
+
+    def _missing_info(self, sess: Session) -> dict | None:
+        """当前修订的最近一次尝试以缺包收场时的差异计划信息（不论能不能在会话里授权）。"""
+        if not sess.attempts:
+            return None
+        last = sess.attempts[-1]
+        if last.config_revision != sess.config_revision or not last.finalized:
+            return None
+        return last.missing
+
+    def _unresolved_missing(self, sess: Session) -> dict | None:
+        info = self._missing_info(sess)
+        return info if info is not None and not info.get("installable") else None
+
+    def _pending_missing(self, sess: Session) -> dict | None:
+        """当前修订的最近一次执行尝试以缺包收场、且能在会话里授权补齐时的差异计划。"""
+        if not sess.attempts:
+            return None
+        last = sess.attempts[-1]
+        if last.config_revision != sess.config_revision or not last.finalized:
+            return None
+        if not last.missing or not last.missing.get("installable"):
+            return None
+        # 补齐之后（依赖作业成功并重新检查）修订会变；同一修订里已经有更晚的依赖作业在跑 / 刚装好也不再提议
+        if sess.dep_attempts and sess.dep_attempts[-1].created_at >= last.created_at:
+            dep = sess.dep_attempts[-1]
+            if dep.finished is None or dep.finished["state"] == deprepair.STATE_DONE:
+                return None
+        return last.missing
+
+    @staticmethod
+    def _public_missing(missing: dict | None) -> dict | None:
+        if missing is None:
+            return None
+        if not missing.get("installable"):
+            # unknown：认不出该装哪个包——绝不拿 import 名去装；给用户可执行的出路（指定包名 / 换环境，走既有端点）
+            return {
+                "module": missing["module"],
+                "installable": False,
+                # 前端消费池层的去向；平台不支持时不给指定包名 / 换 Python 这两条无效出路。
+                "route": missing.get("route") or pool.INSTALL_ROUTE_UNRESOLVABLE,
+                "code": missing.get("code", ""),
+                "options": (
+                    []
+                    if missing.get("route") == pool.INSTALL_ROUTE_PLATFORM
+                    else ["specify_package", "choose_environment"]
+                ),
+                "rerun_required": True,
+            }
+        return {
+            "module": missing["module"],
+            "installable": True,
+            "requirement": missing.get("requirement"),
+            "rounds_remaining": missing.get("rounds_remaining"),
+            "impact": missing.get("impact"),
+            "impact_digest": missing.get("impact_digest"),
+            # 这次执行已经发生；补齐之后是新的一次尝试
+            "rerun_required": True,
+        }
 
     def _attempt_fact(self, sess: Session, found) -> tuple[dict | None, bool]:
         """最近一次尝试的事实（给 `derive`）。回 `(fact | None, 记录已过期)`。"""
@@ -799,17 +3403,45 @@ class SessionService:
     def _is_running(attempt_fact: dict | None) -> bool:
         return attempt_fact is not None and attempt_running(attempt_fact)
 
+    @staticmethod
+    def _dep_running(sess: Session) -> _DepAttempt | None:
+        """正在进行的依赖作业（还没有终局）。重新检查（装好之后）不算：那一步要能替换计划。"""
+        if sess.dep_attempts and sess.dep_attempts[-1].finished is None:
+            return sess.dep_attempts[-1]
+        return None
+
     def _has_active_attempt(self, sess: Session) -> bool:
+        if self._dep_running(sess) is not None:
+            return True
+        return self._exec_active(sess)
+
+    def _exec_active(self, sess: Session) -> bool:
+        """有没有**用户代码的执行**尝试在进行（不含依赖作业）。"""
         found = self._current_attempt(sess)
         if found is None:
             return False
         result = found[1]
         if result.status not in preparation.TERMINAL:
             return True
+        if result.status == preparation.STATUS_CANCELLED:
+            # 取消已经落地（T09：共享会话的等待者被放手时，执行线程可能还卡在别人的会话上）——不等它收尾，
+            # 用户可以马上重新检查 / 再跑一次
+            return False
         return not sess.attempts[-1].finalized
 
     def _active(self, sess: Session) -> bool:
         return self._has_active_attempt(sess)
+
+    def _retained(self, sess: Session) -> bool:
+        """回收时要留着的会话：有尝试在进行，或有 active 的运行意图（只读，持 `_lock` 时被调；意图自己的墙钟预算会让它终结）。"""
+        intent = sess.intent
+        if (
+            intent is not None
+            and intent.status == INTENT_ACTIVE
+            and self._clock() < intent.deadline
+        ):
+            return True
+        return self._active(sess)
 
     def _runnable(self, sess: Session) -> bool:
         if sess.stale or sess.plan.script is None:
@@ -817,22 +3449,64 @@ class SessionService:
         return all(c["status"] == CHECK_OK for c in checks_of(sess.plan))
 
     def _sync_actions(
-        self, sess: Session, derived: dict, checks: list[dict], *, attempt_active: bool
+        self,
+        sess: Session,
+        derived: dict,
+        checks: list[dict],
+        *,
+        attempt_active: bool,
+        dependency_busy: bool = False,
+        missing: dict | None = None,
+        attempt_fact: dict | None = None,
     ) -> None:
-        """补齐 / 撤掉当前该有的**未认领**动作：`run`（可运行且没有尝试在进行）、`cancel`（有尝试在进行）、
-        `recheck`（没有尝试在进行）。已有的未认领动作保持原 id，所以反复读报告不会让用户手里的 id 失效。"""
+        """补齐 / 撤掉当前该有的**未认领**动作：`run`（可运行且没有尝试在进行）、`cancel`（有自己拥有的尝试 / 依赖
+        作业在进行）、`recheck`（没有尝试在进行）、`prepare_dependencies`（有可授权的依赖影响且没有尝试在进行）。
+        已有的未认领动作保持原 id，所以反复读报告不会让用户手里的 id 失效。
+
+        运行时缺包（`missing`）还没补齐时不提供 `run`：同一份配置再跑一遍只会撞同一个缺包，补齐之后才有新的
+        一次尝试。"""
         runnable = (
             not attempt_active
+            and not dependency_busy
             and not sess.stale
             and sess.plan.script is not None
             and all(c["status"] == CHECK_OK for c in checks)
+            and missing is None
+        )
+        dep = self._dep_running(sess)
+        current: str | None = None
+        if dep is not None:
+            # 认领了别人先起的同一份作业不拥有它：不提供取消（只退役自己拥有的工作）
+            current = None if dep.joined else dep.plan_id
+        elif attempt_active and sess.attempts:
+            current = sess.attempts[-1].attempt_id
+        prep = (
+            None
+            if (attempt_active or dependency_busy or sess.stale)
+            else self._prepare_offer(sess, checks, missing)
+        )
+        intent_live = self._intent_live(sess, expire=False) is not None
+        # 「打开并运行」：脚本目标、没有尝试 / 依赖在进行、没有走不通的检查项、没有已发生的执行（当前修订里除了被取消的）、
+        # 没有运行时缺包待办、没有在等的意图——已经执行过之后的再来一次是用户明确的 `run`，不是意图
+        armable = (
+            not attempt_active
+            and not dependency_busy
+            and not sess.stale
+            and sess.plan.script is not None
+            and sess.plan.target == TARGET_SCRIPT
+            and missing is None
+            and not intent_live
+            and all(c["status"] != CHECK_BLOCKED for c in checks)
+            and (attempt_fact is None or attempt_fact.get("status") == preparation.STATUS_CANCELLED)
         )
         want: dict[str, bool] = {
             ACTION_RUN: runnable,
-            ACTION_CANCEL: attempt_active,
-            ACTION_RECHECK: not attempt_active,
+            ACTION_CANCEL: current is not None or intent_live,
+            ACTION_RECHECK: not attempt_active and not dependency_busy,
+            ACTION_PREPARE: prep is not None,
+            ACTION_ARM: armable,
+            ACTION_CONFIRM_NATIVE: self._native_confirm_offered(sess),
         }
-        current = sess.attempts[-1].attempt_id if sess.attempts else None
         for kind, wanted in want.items():
             open_ones = [a for a in sess.actions.values() if a.kind == kind and self._open(a)]
             if kind == ACTION_CANCEL:
@@ -841,6 +3515,19 @@ class SessionService:
                     if a.attempt_id != current:
                         sess.actions.pop(a.id, None)
                 open_ones = [a for a in open_ones if a.attempt_id == current]
+            if kind == ACTION_CONFIRM_NATIVE:
+                # 确认绑那一次失败尝试：尝试换了（重跑 / 重新检查），旧的确认连同它的 token 一起作废
+                last_id = sess.attempts[-1].attempt_id if sess.attempts else ""
+                for a in open_ones:
+                    if a.bound_attempt != last_id:
+                        sess.actions.pop(a.id, None)
+                open_ones = [a for a in open_ones if a.bound_attempt == last_id]
+            if kind == ACTION_PREPARE and prep is not None:
+                # 影响摘要变了：旧的未认领动作不再是用户看到的那一份，作废重发（认领时本也会被拒）
+                for a in open_ones:
+                    if a.impact_digest != prep["impact_digest"]:
+                        sess.actions.pop(a.id, None)
+                open_ones = [a for a in open_ones if a.impact_digest == prep["impact_digest"]]
             if not wanted:
                 for a in open_ones:
                     sess.actions.pop(a.id, None)
@@ -850,12 +3537,91 @@ class SessionService:
                     kind=kind,
                     config_revision=sess.config_revision,
                     attempt_id=current if kind == ACTION_CANCEL else None,
-                    impact=self._impact(sess, kind),
+                    impact=self._prepare_impact(prep)
+                    if kind == ACTION_PREPARE and prep is not None
+                    else self._impact(sess, kind),
                 )
+                if kind == ACTION_ARM:
+                    action.impact_digest = GRANT.digest()
+                if kind == ACTION_CONFIRM_NATIVE:
+                    # 服务端为这一次失败尝试签发的一次性 token：不可猜、不落盘、不进诊断，只随页面 cookie 认证的报告交出
+                    action.confirm_token = secrets.token_urlsafe(32)
+                    action.bound_attempt = sess.attempts[-1].attempt_id
+                if kind == ACTION_PREPARE and prep is not None:
+                    action.impact_digest = prep["impact_digest"]
+                    action.impact_core = dict(prep["impact"])
+                    action.module = prep["module"]
+                    action.target_kind = prep["target_kind"]
+                    action.scope_policy = prep.get("scope_policy", "")
                 sess.actions[action.id] = action
-        consumed = [a for a in sess.actions.values() if a.kind == ACTION_RUN and a.attempt_id]
+        consumed = [
+            a
+            for a in sess.actions.values()
+            if a.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM, ACTION_CONFIRM_NATIVE)
+            and a.attempt_id
+        ]
         for stale_action in consumed[:-_MAX_CONSUMED_ACTIONS]:
             sess.actions.pop(stale_action.id, None)
+
+    @staticmethod
+    def _prepare_offer(sess: Session, checks: list[dict], missing: dict | None) -> dict | None:
+        """此刻有没有可授权的依赖影响：静态的（检查项 `dependencies` 要授权、环境没有更前面的事要答）或运行时
+        缺包的差异计划。回 `{impact, impact_digest, module, target_kind}`；没有回 None。"""
+        if missing is not None:
+            if not missing.get("impact_digest"):
+                return None
+            return {
+                "impact": missing["impact"],
+                "impact_digest": missing["impact_digest"],
+                "module": missing["module"],
+                "target_kind": deprepair.TARGET_MANAGED,
+                "scope_policy": "",
+            }
+        by_id = {c["id"]: c for c in checks}
+        deps = by_id.get("dependencies")
+        if deps is None:
+            return None
+        # 环境 / 工作目录 / 数据有更前面的问题（要答、被卡、判不出）：目标环境还没定，装什么装到哪都不是定数
+        if any(c["status"] != CHECK_OK for c in checks if c["id"] != "dependencies"):
+            return None
+        offer = sess.plan.dependency_preparation or {}
+        if deps["status"] == CHECK_BLOCKED and deps.get("code") == _SCOPE_CONFLICT_CODE:
+            # 作用域互斥：唯一能在会话里授权的出路是"换成本作用域"，它有自己更大的影响摘要
+            switch = offer.get("scope_switch") or {}
+            if not switch.get("impact") or not switch.get("impact_digest"):
+                return None
+            return {
+                "impact": switch["impact"],
+                "impact_digest": str(switch["impact_digest"]),
+                "module": "",
+                "target_kind": deprepair.TARGET_MANAGED,
+                "scope_policy": deprepair.SCOPE_POLICY_SWITCH,
+            }
+        if deps["status"] != CHECK_NEEDS_ACTION:
+            return None
+        impact, digest = offer.get("impact"), str(offer.get("impact_digest") or "")
+        if not impact or not digest:
+            return None
+        return {
+            "impact": impact,
+            "impact_digest": digest,
+            "module": "",
+            "target_kind": str(offer.get("target_kind") or ""),
+            "scope_policy": "",
+        }
+
+    @staticmethod
+    def _prepare_impact(prep: dict) -> dict:
+        """动作上的影响：授权摘要原样 + 动作层的标志（不跑用户脚本、会装包、会改环境），再带上摘要本身。"""
+        impact = prep["impact"]
+        return {
+            **impact,
+            "impact_digest": prep["impact_digest"],
+            "executes_user_script": False,
+            "installs_packages": True,
+            "changes_environment": True,
+            "writes_to_project": [],
+        }
 
     @staticmethod
     def _open(action: _Action) -> bool:
@@ -864,7 +3630,17 @@ class SessionService:
 
     @staticmethod
     def _impact(sess: Session, kind: str) -> dict:
-        if kind == ACTION_RUN:
+        if kind == ACTION_ARM:
+            # 在 `run` 的影响之上：可能在授权范围内装包（只进 Tavotto 自己的受管环境）。授权合同原样摆在 `run_intent`，
+            # 它的摘要就是认领时要回显的 `impact_digest`
+            return {
+                **SessionService._impact(sess, ACTION_RUN),
+                "installs_packages": True,
+                "changes_environment": True,
+                "run_intent": GRANT.contract(),
+                "impact_digest": GRANT.digest(),
+            }
+        if kind in (ACTION_RUN, ACTION_CONFIRM_NATIVE):
             return {
                 "executes_user_script": True,
                 "installs_packages": False,
@@ -879,6 +3655,7 @@ class SessionService:
                 "writes_to_project": (
                     [registry.REGISTRY_NAME] if sess.plan.target == TARGET_SCRIPT else []
                 ),
+                **SessionService._script_writes(sess.plan),
             }
         return {
             "executes_user_script": False,
@@ -888,12 +3665,29 @@ class SessionService:
         }
 
     @staticmethod
+    def _script_writes(plan: preparation.PreparationPlan) -> dict:
+        """T07（P03）：脚本自己声明了输出文件参数（`FileType('w')` 一类）时，说清这些相对路径会落在哪个工作目录档。
+        只给个数与档位，不给参数名 / 路径；Tavotto 从不替用户加 overwrite / force 一类开关。"""
+        schema = arguments_schema(plan)
+        outputs = scriptargs.summary(schema)["output_files"] if schema is not None else 0
+        if not outputs:
+            return {}
+        mode = str((plan.workdir_decision or {}).get("mode") or "")
+        return {"script_writes": {"declared_output_arguments": outputs, "cwd_mode": mode}}
+
+    @staticmethod
     def _action_payload(action: _Action) -> dict:
         return {
             "id": action.id,
             "kind": action.kind,
             "config_revision": action.config_revision,
             "impact": dict(action.impact),
+            # 确认 token 只在这一份载荷里出现，且只对页面 cookie 认证的读者交出（`report(expose_confirm=True)`）
+            **(
+                {"confirm_token": action.confirm_token}
+                if action.kind == ACTION_CONFIRM_NATIVE
+                else {}
+            ),
         }
 
     def _notify(self, sess: Session) -> None:
@@ -920,7 +3714,7 @@ class SessionService:
         if len(self._by_id) < self._max:
             return
         idle = sorted(
-            (s for s in self._by_id.values() if not self._active(s)), key=lambda s: s.touched_at
+            (s for s in self._by_id.values() if not self._retained(s)), key=lambda s: s.touched_at
         )
         if not idle:
             raise SessionError(
@@ -936,7 +3730,7 @@ class SessionService:
         cutoff = self._clock() - self._ttl
         with self._lock:
             for sess in list(self._by_id.values()):
-                if sess.touched_at < cutoff and not self._active(sess):
+                if sess.touched_at < cutoff and not self._retained(sess):
                     self._drop(sess)
 
     def reset_for_tests(self) -> None:

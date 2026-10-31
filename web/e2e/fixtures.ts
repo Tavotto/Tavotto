@@ -1,4 +1,4 @@
-import { test as base, expect, type Page } from '@playwright/test'
+import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
@@ -17,11 +17,15 @@ const REPO = path.resolve(import.meta.dirname, '..', '..')
  * 本地跑之前记得 `python scripts/build_frontend.py`：包内 `src/tavotto/web/`
  * 优先于 `web/dist`，只跑 `pnpm build` 的话测的还是上一次的界面。
  */
-function launchCommand(): { cmd: string; args: string[] } {
+function launchCommand(offline = false): { cmd: string; args: string[] } {
   const exe = process.env.TAVOTTO_EXE
-  if (exe) return { cmd: exe, args: [] }
+  // 离线入口是 Python 脚本：打包产物（.exe）没有它，调用方必须自己 skip（见 import-origin.spec.ts）
+  if (exe && !offline) return { cmd: exe, args: [] }
   const py = process.env.TAVOTTO_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
-  return { cmd: py, args: ['-m', 'tavotto'] }
+  return {
+    cmd: py,
+    args: offline ? [path.join(REPO, 'tests', 'support', 'e2e_offline_app.py')] : ['-m', 'tavotto'],
+  }
 }
 
 export async function freePort(): Promise<number> {
@@ -44,6 +48,11 @@ export interface AppOptions {
   env?: Record<string, string>
   /** 指定端口（测端口冲突时用） */
   port?: number
+  /**
+   * 用 `tests/support/e2e_offline_app.py` 起（`python -m tavotto` 的同一个入口，只多套了「受管环境能在离线机器上建出来」
+   * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
+   */
+  offline?: boolean
 }
 
 export interface RunningApp {
@@ -75,7 +84,7 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
   }
 
   const port = opts.port ?? (await freePort())
-  const { cmd, args } = launchCommand()
+  const { cmd, args } = launchCommand(opts.offline)
   const proc = spawn(
     cmd,
     [...args, '--port', String(port), '--no-browser',
@@ -94,6 +103,11 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         // 同意态是 unset，首启询问框会盖在画布上，之后每一次点击都点在
         // 遮罩上；② 就算它不挡路，CI 也绝不该产生真实的产品事件。
         TAVOTTO_NO_TELEMETRY: '1',
+        // 「发送问题反馈」发行版默认开启、内置端点是生产（ADR 0118）。e2e 绝不连生产：默认硬关；
+        // 要测它的用例（diagnostics-send.spec.ts）显式传 '0' + 回环端点。
+        TAVOTTO_NO_DIAG_UPLOAD: '1',
+        // 「联系作者」（ADR 0145）同理：线路是内置的两个生产主机，e2e 默认硬关；要测它的用例（contact.spec.ts）显式传 '0' + 回环端点。
+        TAVOTTO_NO_CONTACT: '1',
         HOME: home,
         USERPROFILE: home,
         APPDATA: path.join(workdir, 'AppData', 'Roaming'),
@@ -141,7 +155,15 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
       }
       await new Promise((r) => setTimeout(r, 800))
       if (proc.exitCode === null) proc.kill('SIGKILL')
-      rmSync(workdir, { recursive: true, force: true })
+      // 等进程真的退出再删目录（Windows 上子进程握着 sandbox 目录会 EBUSY）；删不掉只重试，不抛出去盖住主失败
+      for (let i = 0; i < 60 && proc.exitCode === null && proc.signalCode === null; i++) {
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      try {
+        rmSync(workdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      } catch (e) {
+        console.warn(`清理 ${workdir} 失败（已忽略，避免盖住主失败）：${String(e)}`)
+      }
     },
   }
 }
@@ -188,8 +210,38 @@ export function writeRuntimeNamedProject(dir: string): void {
                 JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
 }
 
+/**
+ * 新手教程的欢迎页（ADR 0136）在「新手态、欢迎页没出现过、停在主页」时会自己盖上来——
+ * `noProject` 启动的用例每一条都是这个形状。默认替它们记成「欢迎页已经出现过」（只在
+ * `tavotto.onboarding` 那一格还不存在时写，用例自己摆的、应用后来写的都不覆盖），
+ * 测欢迎页 / 教程的用例 `test.use({ firstRunWelcome: true })` 要回真实的首次启动。
+ */
+/**
+ * 当前教程纪元，必须等于 `web/src/store/onboardingStore.ts` 的 `ONBOARDING_FLOW_VERSION`
+ * （e2e 的 Node 侧不引应用源码；`src/lib/onboarding/e2eFlowVersion.test.ts` 看护两者相等）。
+ * 低于它的预置状态会被迁回新手态——要测旧版迁移的用例才写旧值。
+ */
+export const ONBOARDING_FLOW_VERSION = 4
+
+const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: ONBOARDING_FLOW_VERSION, status: 'not_started', welcomeSeenAt: 1 })
+
 /** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
-export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }>({
+export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp>; firstRunWelcome: boolean }>({
+  firstRunWelcome: [false, { option: true }],
+  page: async ({ page, firstRunWelcome }, provide) => {
+    if (!firstRunWelcome) {
+      await page.addInitScript((blob) => {
+        try {
+          if (window.localStorage.getItem('tavotto.onboarding') === null) {
+            window.localStorage.setItem('tavotto.onboarding', blob)
+          }
+        } catch {
+          /* about:blank 之类没有 localStorage 的页面 */
+        }
+      }, WELCOME_SEEN)
+    }
+    await provide(page)
+  },
   // 第二个参数是 Playwright 的「交出去再收回来」回调。名字不叫 use 是因为
   // lint 会把 `use(...)` 当成 React Hook 调用（它是位置参数，随便起名）。
   // 第一参必须写成对象解构（哪怕不取任何内置 fixture）——Playwright 靠这个
@@ -219,6 +271,65 @@ export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }
 
 export { expect }
 
+/** 舞台先挂载占位文档；只有恢复门 ready 才能开始编辑（ADR 0120）。 */
+export async function waitForDocumentReady(page: Page): Promise<void> {
+  const stage = page.locator('[data-canvas-stage]')
+  await expect(stage).toHaveCount(1, { timeout: 60_000 })
+  await expect(stage).toHaveAttribute('data-document-state', 'ready', { timeout: 60_000 })
+}
+
+/** 素材预览 PNG 可早于快速编辑与引擎正文到达，不能拿它当图内编辑已就绪。 */
+export async function waitForFigureEdit(page: Page): Promise<void> {
+  await waitForDocumentReady(page)
+  await expect(page.locator('[data-workspace-context-bar]'))
+    .toHaveAttribute('data-workspace-mode', 'fast_edit', { timeout: 60_000 })
+  await expect(page.locator('[data-canvas-stage] [data-display="exact"]'))
+    .toHaveCount(1, { timeout: 60_000 })
+}
+
+/**
+ * 单图编辑 → 多图排版：把素材库里另一张图加到画布（画布上有两张图才是排版，没有「回排版」按钮）。
+ *
+ * 模式由激活画布上的图数推出（`workflows-and-original-spec.md`）：只有一张图是单图编辑，第二张进来切成多图排版。
+ * 聚焦素材卡按 Shift+Enter（「添加到画布」），等页面纸（`[data-page-sheet]`，单图编辑里不画页面）出现。
+ * 调用前画布上已有一张图（刚 `dblclick` 打开过另一张）；`cardId` 默认 `Fig2_correlation.pdf`。
+ */
+export async function addSecondFigure(page: Page, cardId = 'Fig2_correlation.pdf'): Promise<void> {
+  const card = page.locator(`[data-card="${cardId}"]`)
+  // 整段放进重试：每一轮都按当时的样子重新对一遍侧栏（窄屏抽屉的遮罩与收起动画、进图内编辑后左栏换成元素树、
+  // 列表反复重挂卡片，都会让某一步落空；Windows 上两条 flaky 就是这样——遮罩正在收起时被摘掉、抽屉被我们点关后卡片不在）。
+  // 已在画布上的图再按 Shift+Enter 只是聚焦它，所以重试安全
+  await expect(async () => {
+    // 窄屏下侧栏是盖在画布上的抽屉，开着时有一层遮罩盖住左轨：只认还开着的遮罩，点遮罩左上角（右侧抽屉盖不到）
+    const scrim = page.locator('[data-scrim="true"][data-state="open"]')
+    if (await scrim.count()) await scrim.first().click({ position: { x: 4, y: 4 }, timeout: 3_000 })
+    // 素材库要先开（rail 是 toggle，已开着再点是收起，按 aria-expanded 判）
+    const rail = page.locator('[data-rail="assets"]')
+    if ((await rail.getAttribute('aria-expanded', { timeout: 3_000 })) !== 'true') await rail.click({ timeout: 3_000 })
+    // 素材卡聚焦后 Shift+Enter = 「添加到画布」（与卡上悬停出现的 `[data-card-add]` 同一个动作）。不用悬停点那颗钮：
+    // 渲染刚回来时素材列表会反复重挂卡片（元素一直「不稳定 / 被摘掉」），悬停要等稳定会一直等；聚焦不需要稳定
+    await card.focus({ timeout: 3_000 })
+    await page.keyboard.press('Shift+Enter')
+    await expect(page.locator('[data-page-sheet]')).toHaveCount(1, { timeout: 4_000 })
+  }).toPass({ timeout: 90_000 })
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
+}
+
+/**
+ * 刷新后（工作区把图恢复在画布上、没选中）点一下画布上唯一的图选中它。
+ *
+ * 点**画布对象容器** `[data-object-id]`，不要点里面的 `<img>`：预览刷新时同一个容器里新旧两张 `<img>` 会短暂叠放，
+ * 叠放顺序（z 序）与 DOM 顺序不一致——`getByRole('img').first()` / `.last()` 都可能选中被盖住的那张，点击一直卡在
+ * 「<img> intercepts pointer events」（负载高时 30 s 超时，ai-draft / ai-restore 反复出现）。容器的中心点由命中测试落到
+ * 最上面那张图上，那张图是它的后代，Playwright 认作命中自己。取景补间（`data-view-tweening`）期间图在动，先等它落定。
+ */
+export async function selectCanvasFigure(page: Page): Promise<void> {
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
+  const figure = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(figure).toHaveCount(1, { timeout: 30_000 })
+  await figure.click({ timeout: 30_000 })
+}
+
 /**
  * 幂等地打开左栏「图内元素」。rail 按钮是 **toggle**（对已激活 tab 再点
  * 一次 = 收起），而 `enterElementEdit` 在 wide 布局下会自动把左栏切到
@@ -227,12 +338,26 @@ export { expect }
  * 关闭（CI #453 的 900s 挂死，两轮同形状）。按 `aria-expanded` 判态，
  * 不在才点，点完等状态坐实。按稳定钩子 `data-rail` 找按钮（无障碍名是本地化文案，
  * en-US 腿里对不上），并断言恰有一个。
+ *
+ * **「读 → 点」不是原子的**（#991）：自动切换发生在读之后、点击之前，这一下点击就
+ * 是把刚开的面板关掉。慢机 / 打包版上这个窗口足够宽——本机无节流也量到过
+ * （READ false @377ms → 自动切到元素树 @401ms → CLICK @470ms → 收起 @481ms）。
+ * 所以整段「读 + 点 + 坐实」放进 `toPass` 重试：被关掉时下一轮读到 false 再点一次。
+ * 这样重试不会掩盖真缺陷：自动切换是一次性的（只在 `leftTab !== 'elements'` 时触发，
+ * 我们点开后就是 no-op），一次重试之内不会再被它翻回去；点击真的打不开时每一轮都
+ * 失败，`toPass` 照样超时变红。
+ *
+ * `nav` 默认按 `data-rail` 找；量无障碍名的用例（a11y）传自己的定位器。
  */
-export async function openElementsTab(page: Page): Promise<void> {
-  const nav = page.locator('[data-rail="elements"]')
+export async function openElementsTab(
+  page: Page,
+  nav: Locator = page.locator('[data-rail="elements"]'),
+): Promise<void> {
   await expect(nav).toHaveCount(1)
-  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
-  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+  await expect(async () => {
+    if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+    await expect(nav).toHaveAttribute('aria-expanded', 'true', { timeout: 3_000 })
+  }).toPass({ timeout: 30_000 })
 }
 
 /**

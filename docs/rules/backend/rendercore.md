@@ -4,18 +4,30 @@
 > （RenderCore 是唯一渲染后端，PyMuPDF 退役）；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_rendercore_*.py` 及导出核验 / 身份 / 退役扫描等九份，全名单见细则末节
+> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`rendercore/`（`ir` / `geometry` / `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` 纯模型；`hbshaper` / `pdfwriter` / `svgwriter` / `rasterio` / `renderchild` / `renderhost` / `preview` / `job` / `facade` / `inspector` native 适配与入口；`identity` 四身份）、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 `dependencies`（五个 native 包，U10 起）
+> `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0070 / 0071 / 0072 / 0077） → `rendercore.md`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 330
+改到: `rendercore/`、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 native 依赖（模块分层见细则）
+主题: RenderCore → `rendercore.md`
+必守要点: 纯模型只许标准库、整包零 `import pymupdf`；`facade.py` 是契约的唯一实现；离开本机的只有 `inspector.public_projection()`
+-->
 
 - **分层是硬边界**（`tests/support/importgraph.py` 的 `rendercore_model` / `rendercore_native`
   两层 + 层规则，`tests/test_rendercore_model.py` 钉外部名字）：纯模型（`ir` / `geometry` /
-  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster`）**只许标准库**与仓库里
+  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` / `svgcheck`）**只许标准库**与仓库里
   同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow）只在 native 适配层
-  （`hbshaper` / `pdfwriter` / `rasterio`）的函数 / 类里 import，PDFium **只在 `renderchild.child_main()` 里**（父进程
+  （`hbshaper` / `pdfwriter` / `svgwriter` / `rasterio`）的函数 / 类里 import，PDFium **只在 `renderchild.child_main()` 里**（父进程
   import `renderchild` / `renderhost` / `preview` 不拉起任何候选包，`tests/test_rendercore_model.py` 钉着）；**整包零 `import pymupdf`**
   （U10 起整个应用闭包都是，`scripts/ci/retirement_scan.py` 看护），也没有边进 `pdfbackend` / worker 侧，反方向同样不许
   （契约层认识实现是反方向）。往纯模型里加一个第三方 import 的正确做法是把那段挪进适配层，不是给守卫开口子。
 - **IR 就是 PDF 空间**：pt、左下原点、y 向上；矩阵行向量与 `cm` 同形；`Group` 先 `transform`
   再 `clip` 再 children；paint order = 列表顺序、hidden 不进 IR、**绝不按 id 排序**。画布毫米 /
-  顶原点 → IR 的换算**只在 `plan.compile_page()`**，写入器原样落笔、不再翻 y。测试里的几何期望
+  顶原点 → IR 的换算**只在 `plan.compile_page()`**，PDF 写入器原样落笔、不再翻 y；SVG 只在页外层适配
+  输出载体的 y 向下坐标，不重新解释画布毫米或对象位置。测试里的几何期望
   **手算**，不调 `plan` 的换算函数反推（RC-095：写入 / 读取不同源）。
 - **`ir.validate()` 是写入器的门**：NaN / Inf / 非正尺寸 / 不可逆矩阵 / 越界 alpha / 悬空资源 /
   不合闭集的 fill rule / cap / join，全部在进写入器之前以 `IRError(code)` 拒绝；`IR_ERROR_CODES`
@@ -28,7 +40,8 @@
 - **文字只有一条路**：`typography` 用同一份 shaped plan 量宽与落笔（RC-030）；分层只剩
   primary / cjk / missing——**没有 fallback 脸**，画不出的字进问题系统（`CompiledPage.problems`
   的 `glyph_missing`），不暗中回退系统脸；合成上下标（`⁵` → 上标 `5`）的用户原文随
-  `GlyphRun.actual_text` 进 IR，写入器据此包 ActualText（RC-036）。换行 / 对齐 / 行高 / 上下标 /
+  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓。
+  换行 / 对齐 / 行高 / 上下标 /
   下划线的用户合同逐句来自旧 `_draw_text`，改这些先改前端 TextView 那一侧的同一语义。
 - **源产物冻结一次、核两次**：`sources.StaticSourceResolver` 只认「磁盘原件 + 无 override」，
   不跑脚本（RC-019）；带 override / runtime 素材抛 `source_needs_execution`（U08 接 worker + 回执，
@@ -66,7 +79,7 @@
   `_place_panel` 与前端 `PanelView`（`rotate(r) scale(±1, ±1)`）。PDF 源与位图源走同一个函数，只是可见框不同；
   `plan._panel_node` 把面板旋转四舍五入到 90 的倍数（PDF 与位图同一条）。测试里的落点期望**手算**（`tests/test_rendercore_placement.py`
   的矩阵、`test_rendercore_compose.py` 自己的归一化公式），不调 `placement` 反推。
-- **外来页是 Form XObject，不重画、不退位图**（ADR 0065）：qpdf `as_form_xobject(handle_transformations=True)` +
+- **PDF 输出的外来页是 Form XObject，不重画、不退位图**（ADR 0065）：qpdf `as_form_xobject(handle_transformations=True)` +
   `copy_foreign`，源页的页盒 / `/Rotate` / `/UserUnit` 全折进 form 的 /Matrix，写入器只看 `placement.visible_box()`
   ——**不再自己转、自己乘**（RC-039：恰好一次）；资源随 form 各自一份，同名 /F1 / /X1 互不相干（RC-043），同一 (资源 key, 页)
   只搬一次（按字节身份去重，绝不按名字）。面板 opacity < 1 是**透明组**（组内 alpha 从 1 起算，RC-041），镜像是 `cm` 里的
@@ -80,6 +93,26 @@
   像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，ADR 0066）。
 - **写入器再核一次字节身份**：`files`（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）交进来的每份字节按 sha256
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
+- **SVG 写入是同一 IR 的另一载体（X03）**：`svgwriter.write_svg` 支持 Path / Group / clip / Image /
+  ShapedText，物理尺寸用 pt、viewBox 与页同尺寸；页面外层只翻一次 y，组矩阵与 paint order 原样保留。
+  **文字默认保留为 `<text>`（ADR 0144，`text_policy=text`）**：每个 shaped run 一个 `<text>`，真实 Unicode（来自 cluster 原文）、
+  批准脸真实族名 + 回退链（唯一出处 `svgfonts.py`）、**每个 run 只一个起点 `x`**（逐字形 x 会被 Word「转换为形状」打散）、`xml:space=preserve`；还原不出可靠 Unicode 的 run
+  （无 cluster 原文 / `.notdef` / 字体不覆盖 / 私用区 / 控制符）**逐 run 退回轮廓**并计 `text_fallback_runs`，不让整份失败。
+  `text_policy=outlines` 保留为 `write_svg(..., text_policy="outlines")` 的内部退路：字形由批准脸的 fontTools 轮廓按已有
+  gid / advance / offset / rise 落笔，不重新 shaping、不找系统字体。两种策略都不伪称字体嵌入（`embedded=false`）。零宽 PDF hairline 无等价 SVG
+  表达时结构化拒绝。图片经既有解码与预算，PNG / JPEG 内嵌、TIFF 转 PNG，保原像素网格与 straight alpha。
+  ImportedPage 的 SVG 能力是**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
+  写入器再次核 canonical 源与 companion 的字节 hash；只有第一张源页，opaque PDF 明确拒绝、不解析成猜测的路径、
+  不自动栅格。导入 SVG 的 viewBox 归一到源可见框后复用 `placement.place()`，crop / rotation / flip 顺序不另写一份。
+  每个实例前缀化所有 ID 与内部引用，CSS 选择器限定在该实例内，组 opacity 不分摊给 children。
+  导入伴随件里的 `<text>` 在 text 策略下原样保留（`imported_text_elements`），outlines 策略下仍以 `svg_source_text_not_outlined` 拒收。
+  配对生成、`require_built` 与持久化约束分别在 `export-pipeline.md` / `layout-versions-and-documents.md`。
+- **SVG 安全与检查共用一处（X03）**：纯标准库 `svgcheck.parse_svg` 是导入和 `inspector` 的有界 XML / CSS 闸，
+  拒绝 DTD / entities / 脚本 / 事件 / 外链 / 远程字体、危险 CSS，以及重复、悬空、循环资源引用；内嵌图片也受预算。
+  只在可信 worker 生成边界、hash 冻结前允许移除精确匹配的 Matplotlib 惰性 DOCTYPE；任意导入文件不借这条放行。
+  `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
+  轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
+  看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。
 - **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe / size /
   render / inspect 四种 op 都经 `RenderHost`（只要可见尺寸的调用走 `size`：`FPDF_GetPageSizeByIndexF` 不加载页、不解析内容流，
   与 `probe` 的尺寸逐项相同）（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
@@ -125,7 +158,7 @@
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
   且 `error.params.unsupported` 带操作与理由，写入器的 `WriterError` 与 child 的 `RenderChildError` 也落到这一档；
   编译期事实（缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 / U07 里 `app.py` 不 import 它。
-- **facade 接线（U08 接入、U10 起是唯一实现即默认，ADR 0067 / 0072）**：`rendercore/facade.py` 是 pdfbackend 契约的实现（19 项同签名 +
+- **facade 接线（U08 接入、U10 起是唯一实现即默认，ADR 0067 / 0072）**：`rendercore/facade.py` 是 pdfbackend 契约的实现（20 项同签名 +
   Canvas 面适配器；对拍表在模块头），由契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 选中；
   进程级共享三样：字体注册表 `facade.provider()`、render child `facade.host()`（= `renderhost.shared()`）、
   预览缓存 `facade.preview_cache()`。产品导出路（`app._export_produce`）的 `scope=canvas` 走
@@ -163,7 +196,7 @@
 - **默认就是它（U10，ADR 0072）**：`pdfbackend.BACKEND_DEFAULT = rendercore`、`BACKENDS` 闭集只有这一项；
   旧实现模块 `pymupdf_backend`（`pdfbackend/` 下）已删除，`TAVOTTO_RENDER_BACKEND=pymupdf` 是 `backend_retired` 错误不是回退。
   前端读的覆盖表就是这里的表；产品包（wheel artifacts / PyInstaller `resources/` datas + `collect_dynamic_libs("pypdfium2_raw")`
-  + `collect_all("pikepdf")`，冻结入口 `packaging/entry.py` 先分派 `--render-child`）带全部依赖与字体；facade 19 项
+  + `collect_all("pikepdf")`，冻结入口 `packaging/entry.py` 先分派 `--render-child`）带全部依赖与字体；facade 20 项
   的终态记在 `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。旧默认字体（Times-Roman 等 base-14）
   到 Liberation 的布局政策在 ADR 0073：位置 / 内容 / 框尺寸保持、advance 相同、基线按批准量变、旧项目不重排。
 
@@ -191,7 +224,7 @@
 - 预览缓存键 = 内容身份 + 后端 build + 字体政策 + 像素参数，异常不给空白图
 - 派生值按文件指纹复用、不当身份
 - PDFium PNG 按平台分基线
-- `facade.py` 是契约的唯一实现、U10 起即默认（19 项同签名，ADR 0072），`TAVOTTO_RENDER_BACKEND=pymupdf` 报 `backend_retired`、不静默回退
+- `facade.py` 是契约的唯一实现、U10 起即默认（20 项同签名，ADR 0072），`TAVOTTO_RENDER_BACKEND=pymupdf` 报 `backend_retired`、不静默回退
 - 「不可用」只经 `UNAVAILABLE_ERRORS` / `pdfbackend.is_backend_unavailable` 暴露
 - 执行侧源经 `ExecutionSourceResolver` 附回执、`origin=execution` 必核
 - 覆盖表 / 向量与退役前旧表（`evidence/u10/*.pymupdf.json`）的差异是闭集
@@ -216,3 +249,14 @@
   `gen_canvas_coverage.py --write`、`gen_glyph_plan_vectors.py --write`（差异逐条对着 ADR 0060 §1 / 0073 解释，不盲目 --write）；
   改了 evidence 的输入就重生成 `scripts/dev/u06_evidence.py --out docs/implementation/tavotto-foundation/evidence/u06` /
   `scripts/dev/u07_evidence.py --out …/evidence/u07`（PNG 是 macOS arm64 基线，其它平台看 `foundation-u06-rendercore.yml` 的工件）。
+- SVG 定向验证：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`、
+  `tests/test_svgstore.py`、`tests/test_export_svg.py`。写入器的 Chromium / Inkscape 两条独立渲染检查都明确记
+  passed 或 not-run；缺包、字体、浏览器或运行条件不能算已验证。手算几何与 canonical PDF 对拍，不要求跨载体
+  抗锯齿逐像素相同；安全输入、裁剪 / 翻转 / 透明组、资源隔离、字形 offset 和 hash 门禁要做反证。
+  真实 Office 验证另记应用与系统版本，不能由 XML 合法或独立 renderer 成功替代。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 纯模型只许标准库、整包零 `import pymupdf`；`facade.py` 是契约的唯一实现；离开本机的只有 `inspector.public_projection()`

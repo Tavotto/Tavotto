@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import goldenVectors from '../../../tests/golden/preflight_vectors.json'
 import { loadProfile } from './profile'
-import { buildProofPayload, buildSpec, runSpec, type PreflightSpec } from './preflight'
+import { buildOriginalSpec, buildProofPayload, buildSpec, runSpec, type PreflightSpec } from './preflight'
 import {
   appliesToOriginal,
   canvasInput,
@@ -23,6 +23,7 @@ import {
   rawIssuesForObject,
   summaryFor,
   validateCanvas,
+  validateOriginal,
   validateProject,
 } from './validation'
 import type { CanvasData, FigureDocument, PanelObject } from '@/types/document'
@@ -207,6 +208,35 @@ describe('一次交上来多个对象时逐个入账', () => {
   })
 })
 
+describe('单图编辑没有页面：画布摆放类规则不判', () => {
+  const big = () => panel({ id: 'big', nativeW: 177.8, nativeH: 100, w: 177.8, h: 100 })
+  const placement = ['out-of-page', 'outside-margin', 'overlap']
+
+  it('一张图比文档页面大：没有 out-of-page / outside-margin（issues 与 raw 都没有）', () => {
+    const p = big()
+    const doc = { ...docWith([p]), page: { w: 150, h: 100, margin: 5 } }
+    const r = runOne(doc, renderFor(p, manifestWith([])))
+    for (const code of placement) {
+      expect(r.issues.some((i) => i.ruleCode === code)).toBe(false)
+      expect(r.raw.some((i) => i.id === code)).toBe(false)
+    }
+  })
+
+  it('同样的图加上第二张（排版）：越界照常报', () => {
+    const p = big()
+    const q = panel({ id: 'q', x: 0, y: 0 })
+    const doc = { ...docWith([p, q]), page: { w: 150, h: 100 } }
+    const r = runOne(doc, renderFor(p, manifestWith([])))
+    expect(r.issues.filter((i) => i.ruleCode === 'out-of-page').map((i) => i.objectRef.objectId)).toContain('big')
+  })
+
+  it('隐藏的图也计一张：仍是单图编辑，不判摆放', () => {
+    const p = { ...big(), hidden: true }
+    const doc = { ...docWith([p]), page: { w: 150, h: 100 } }
+    expect(runOne(doc, renderFor(p, manifestWith([]))).issues.some((i) => i.ruleCode === 'out-of-page')).toBe(false)
+  })
+})
+
 describe('画布维度（改造前缺的那一维）', () => {
   it('每条问题都说得出自己在哪张画布上', () => {
     const p = panel()
@@ -349,8 +379,8 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     doc.page = { w: 80, h: 40 } // 页面比例一条 warn（页面级，objectId 为 null）
     const render = {
       byKey: {
-        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
-        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
       },
       latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
     }
@@ -361,7 +391,7 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
       render,
     ).issues
     expect(all.some((i) => i.objectRef.objectId === null), '夹具里得有一条页面级问题').toBe(true)
-    // 8pt 同时撞两条字号规则（默认规范两档同值，ADR 0029）：每张图各 n 条阻断
+    // 7.5pt 低于绝对下限（默认规范两档同值时只报下面那条，ADR 0029）：每张图各 n 条阻断
     const perPanel = all.filter((i) => i.severity === 'error' && i.objectRef.objectId === 'p1').length
     expect(perPanel).toBeGreaterThan(0)
 
@@ -398,8 +428,8 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     doc.page = { w: 80, h: 40 }
     const render = {
       byKey: {
-        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
-        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
       },
       latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
     }
@@ -564,10 +594,16 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
     },
   ]
 
+  // 单图编辑（画布上恰好一张图）不判摆放类规则：夹具再放一张隐藏的图，让它是排版、几何上不占位
+  const inLayout = (d: FigureDocument): FigureDocument => {
+    d.objects.push(panel({ id: 'pad', hidden: true }))
+    return d
+  }
+
   for (const { rule, build } of fixtures) {
     it(`${rule}：画布范围照报，原图范围（摘要与报告那份投影）都不算`, () => {
       const p1 = panel()
-      const result = runOne(build(), renderFor(p1, clean()))
+      const result = runOne(inLayout(build()), renderFor(p1, clean()))
       // 前提：画布范围下这条规则确实落在 p1 头上
       const canvasSummary = summaryFor(result.issues, { canvasId: 'c1', ready: true, failed: false })
       expect(
@@ -602,7 +638,7 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
 
   it('out-of-page 在原图范围下不再是阻断：摘要里没有它带来的 error', () => {
     const p1 = panel()
-    const d = fixtures[0].build()
+    const d = inLayout(fixtures[0].build())
     const result = runOne(d, renderFor(p1, manifestWith([
       { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 9 },
     ])))
@@ -642,6 +678,99 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
     }
     expect(canvas.page_mm).toEqual({ w: 150, h: 100, margin: 3 })
     expect(canvas.objects).toHaveLength(2)
+  })
+})
+
+describe('原图范围检查的是原图那份产物，不是图在画布上的摆法（ADR 0028）', () => {
+  /** 一张按原图口径导出的图：图幅即 manifest 的 size_mm（与 originalSpec 第 ① 档同源） */
+  const sized = (wMm: number, hMm: number, pt: number) => ({
+    ...manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt }]),
+    size_mm: [wMm, hMm] as [number, number],
+  })
+  const input = (doc: FigureDocument) => ({ canvasId: 'c1', canvasName: '画布 1', doc, profile })
+  const original = (doc: FigureDocument, render: ReturnType<typeof renderFor>, w: number, h: number) =>
+    validateOriginal(input(doc), 'doc-1', assets, render, { objectId: 'p1', widthMm: w, heightMm: h, formats: ['pdf'] })
+  const fontRules = (codes: string[]) => codes.filter((c) => c.startsWith('font-'))
+
+  it('160 mm 的图缩到 80 mm 摆着：画布范围照报小字，原图范围不报（导出的文件里字号没变）', () => {
+    // 9 pt 而不是 8 pt：绝对下限不含等号（`eff <= floor`），8 pt 在两种口径下都会被报
+    const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
+    const doc = docWith([p1])
+    const render = renderFor(p1, sized(160, 120, 9))
+    const canvas = summaryFor(runOne(doc, render).issues, { canvasId: 'c1', ready: true, failed: false })
+    // 前提：画布上读者量到的是 4.5 pt，这一条必须真的命中，否则下面的「不报」恒成立
+    expect(canvas.issues.map((i) => i.ruleCode)).toContain('font-below-absolute-floor')
+
+    const result = original(doc, render, 160, 120)!
+    const summary = summaryFor(result.issues, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(fontRules(summary.issues.map((i) => i.ruleCode))).toEqual([])
+    expect(fontRules(rawIssuesForObject(result.raw, 'p1').map((i) => i.id))).toEqual([])
+  })
+
+  it('反过来：6 pt 的图放大两倍摆着，画布范围放行，原图范围仍报 6 pt（不许假放行）', () => {
+    const p1 = panel({ nativeW: 80, nativeH: 60, w: 160, h: 120 })
+    const doc = docWith([p1])
+    doc.page = { w: 170, h: 130 }
+    const render = renderFor(p1, sized(80, 60, 6))
+    const canvas = summaryFor(runOne(doc, render).issues, { canvasId: 'c1', ready: true, failed: false })
+    expect(fontRules(canvas.issues.map((i) => i.ruleCode))).not.toContain('font-below-absolute-floor')
+
+    const result = original(doc, render, 80, 60)!
+    const raw = rawIssuesForObject(result.raw, 'p1')
+    const floor = raw.find((i) => i.id === 'font-below-absolute-floor')
+    expect(floor, '原图里 6 pt 低于下限').toBeDefined()
+    // 报告里记的是原图那份的数字，不是乘过画布缩放的 12 pt
+    expect(floor!.detail.effective_pt).toBe(6)
+  })
+
+  it('位图 PPI 按图幅算：画布上放大摆着报 PPI 不足，原图范围不报', () => {
+    // 945 px / 80 mm ≈ 300 ppi；摆成 160 mm 只剩 150 ppi
+    const p1 = panel({ fileKind: 'raster', pxW: 945, nativeW: 80, nativeH: 60, w: 160, h: 120 })
+    const doc = docWith([p1])
+    doc.page = { w: 170, h: 130 }
+    const render = renderFor(p1, null)
+    const canvas = runOne(doc, render)
+    expect(canvas.raw.map((i) => i.id)).toContain('raster-dpi')
+
+    const result = original(doc, render, 80, 60)!
+    expect(rawIssuesForObject(result.raw, 'p1').map((i) => i.id)).not.toContain('raster-dpi')
+    // 位图里的文字仍是「无法核验」，不因换了口径就变成通过
+    expect(rawIssuesForObject(result.raw, 'p1').map((i) => i.id)).toContain('raster-text-not-verifiable')
+  })
+
+  it('页面级问题照旧不算：原图口径的页面就是图幅，图幅宽与规范宽的比较不在这一版', () => {
+    const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
+    const doc = docWith([p1])
+    const result = original(doc, renderFor(p1, sized(160, 120, 9)), 160, 120)!
+    // 前提：原图口径的页面 160 mm 不是规范宽，求值器确实报了 page-width
+    expect(result.raw.map((i) => i.id)).toContain('page-width')
+    const summary = summaryFor(result.issues, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(summary.issues.map((i) => i.ruleCode)).not.toContain('page-width')
+    expect(rawIssuesForObject(result.raw, 'p1').map((i) => i.id)).not.toContain('page-width')
+  })
+
+  it('同一个求值器、只换输入：结果与 runSpec(buildOriginalSpec(...)) 逐字相等', () => {
+    const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
+    const doc = docWith([p1])
+    const render = renderFor(p1, sized(160, 120, 6))
+    const spec = buildOriginalSpec(p1, assets, render, { widthMm: 160, heightMm: 120 }, ['pdf'])
+    expect(spec.page).toEqual({ w_mm: 160, h_mm: 120, margin_mm: 0 })
+    expect(spec.panels).toHaveLength(1)
+    expect(spec.panels[0].scale).toBe(1)
+    expect(spec.panels[0].rect_mm).toEqual([0, 0, 160, 120])
+    expect(original(doc, render, 160, 120)!.raw).toEqual(runSpec(spec, profile))
+  })
+
+  it('目标不在这张画布上回 null，不发明一张图', () => {
+    const doc = docWith([panel()])
+    expect(
+      validateOriginal(input(doc), 'doc-1', assets, renderFor(panel(), null), {
+        objectId: 'nope',
+        widthMm: 80,
+        heightMm: 60,
+        formats: ['pdf'],
+      }),
+    ).toBeNull()
   })
 })
 

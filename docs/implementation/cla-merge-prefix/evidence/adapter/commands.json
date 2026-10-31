@@ -1,0 +1,39 @@
+[
+  {
+    "command": [
+      "node",
+      "--test",
+      "tests/merge-prefix.test.mjs"
+    ],
+    "cwd": "/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare",
+    "exit": 0,
+    "log": "final-tests.raw.log"
+  },
+  {
+    "command": [
+      "node",
+      "/tmp/cla-merge-prefix-adapter/run-mutations.mjs"
+    ],
+    "exit": 0,
+    "log": "mutations-run.raw.log",
+    "mutants": 16,
+    "selected_exit": 1,
+    "actual_AssertionError": true
+  },
+  {
+    "command": [
+      "node",
+      "/tmp/cla-merge-prefix-adapter/accounting.mjs"
+    ],
+    "exit": 0,
+    "log": "accounting.raw.log"
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/cla-merge-prefix-adapter/query-reuse.py"
+    ],
+    "exit": 0,
+    "log": "query-reuse.raw.log"
+  }
+]

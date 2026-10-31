@@ -352,3 +352,33 @@ describe('主对话框栈（审计 T35）', () => {
     expect(s().exportOpen).toBe(true)
   })
 })
+
+describe('排版时间线是右栏的一个页签（ADR 0101 2026-10-21 修订）', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('openTimeline 切到「时间线」页签并展开右栏；再 toggle 回属性页；选中对象也回属性页', async () => {
+    await freshStore()
+    const { useUiStore: store, isTimelineOpen } = await import('./uiStore')
+    const { openTimeline, toggleTimeline } = await import('./actions')
+    store.setState({ rightOpen: false, rightTab: 'properties' })
+    expect(isTimelineOpen(store.getState())).toBe(false)
+    openTimeline()
+    expect(store.getState().rightTab).toBe('timeline')
+    expect(store.getState().rightOpen).toBe(true)
+    expect(isTimelineOpen(store.getState())).toBe(true)
+    toggleTimeline()
+    expect(store.getState().rightTab).toBe('properties')
+    expect(isTimelineOpen(store.getState())).toBe(false)
+    openTimeline()
+    store.getState().autoShowProperties()
+    expect(store.getState().rightTab).toBe('properties')
+  })
+
+  it('刷新后不带着「时间线」页签启动（它依赖打开的排版，是会话态）', async () => {
+    localStorage.setItem(LS_KEY, JSON.stringify({ prefsVersion: 2, rightOpen: true, rightTab: 'timeline' }))
+    const s = await freshStore()
+    expect(s.rightTab).toBe('properties')
+  })
+})

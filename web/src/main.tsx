@@ -1,9 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { installConsoleCapture } from './diagnostics/detail'
+import { installUnexpectedErrorCapture } from './lib/unexpectedErrors'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { WindowControls } from './components/WindowControls'
 import { IconProvider } from './components/ui/Icon'
-import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
+import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale, windowChrome } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
 import { applyTheme } from './lib/theme'
 import { useUiStore } from './store/uiStore'
@@ -11,6 +14,10 @@ import './index.css'
 
 // i18n 必须在挂载 React **之前**就位：下面那个「桌面会话建立失败」的页面
 // 根本走不到 React，它也得有翻译。
+// 「发送问题反馈」的 console 环（ADR 0118 修订）：越早装越好，启动期的报错也要进环。只写内存。
+installConsoleCapture()
+// 意外错误卡的来源（订阅上面那一份 window 监听 + 引擎 500 出口）；卡片只在「发送问题反馈」开着时才会出现
+installUnexpectedErrorCapture()
 initI18n()
 document.documentElement.lang = currentLocale()
 
@@ -30,6 +37,20 @@ i18n.on('languageChanged', (lng) => void setDesktopMenuLocale(lng, true))
 
 const rootEl = document.getElementById('root')!
 
+// Windows 无框窗口（窗框 menu-button）右上角的窗口按钮：单独一个根——会话失败页 / 崩溃页取代
+// #root 里的整棵树时，最小化 / 关闭也得还在
+if (windowChrome() === 'menu-button') {
+  const controlsEl = document.createElement('div')
+  document.body.append(controlsEl)
+  createRoot(controlsEl).render(
+    <StrictMode>
+      <IconProvider>
+        <WindowControls />
+      </IconProvider>
+    </StrictMode>,
+  )
+}
+
 // 桌面模式先换会话（fragment nonce → HttpOnly cookie）再挂载：store 一挂载就会
 // 发 API，会话没建立时全是 401。浏览器模式下 bootstrap 立即返回 skipped。
 void bootstrapDesktopSession().then((r) => {
@@ -40,6 +61,8 @@ void bootstrapDesktopSession().then((r) => {
     // 与崩溃页同一副——panel 圆角、对话框投影、17 / 600 标题、13 正文、一颗主按钮「重新加载」
     const div = document.createElement('div')
     div.setAttribute('data-boot-failure', '')
+    // 桌面主窗口没有可拖的系统标题栏（窗框 overlay / menu-button）：这一页取代了整棵树，空白处得是拖动区，否则窗口拖不动（Codex #994）
+    for (const [k, v] of Object.entries(dragRegionProps('self'))) div.setAttribute(k, v)
     div.setAttribute(
       'style',
       'display:flex;height:100%;align-items:center;justify-content:center;padding:16px;' +
@@ -75,7 +98,7 @@ void bootstrapDesktopSession().then((r) => {
   }
   createRoot(rootEl).render(
     <StrictMode>
-      <ErrorBoundary>
+      <ErrorBoundary diagnostics>
         {/* 图标默认档在根上给（Icon.tsx）：不写 size 的图标拿到 14px / 1.75 描边 */}
         <IconProvider>
           <App />

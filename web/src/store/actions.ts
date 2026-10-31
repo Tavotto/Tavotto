@@ -1,16 +1,23 @@
-import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
+import '@/store/figureSnapshotInvalidation'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
+import { classifyArtifactFailure, classifyArtifactReason, isDefiniteRefusal, sourceBackedEligible, type ArtifactFailure } from '@/lib/artifactReason'
+import { registerReconstructionNotifier, registerSourceBackedReviewRunner, runSourceBackedReview, sourceReviewOwner, useSourceBackedReview } from '@/store/sourceBackedReview'
+import { pngAdmitOwner, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
 import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
+import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
@@ -24,6 +31,9 @@ import { captureTelemetry } from '@/lib/telemetry'
 import {
   engineInvalidate,
   engineRender,
+  enginePreviewPngSnapshot,
+  fetchScriptBackedEnabled,
+  panelSrc,
   engineErrorMsg,
   EngineError,
   type CapturedFigureDescriptor,
@@ -65,15 +75,15 @@ import {
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
-import { finishActiveGesture } from './gestureCoordinator'
+import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
+import { aliasClearPlan } from '@/lib/aliasOverrides'
+import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { askConfirm, useUiStore, type StatusTone } from './uiStore'
+import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
@@ -86,6 +96,7 @@ import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -391,11 +402,8 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 }
 
 export function deleteSelected() {
-  // 快速编辑里只删得到这一屏画着的那张图：选区里可能还挂着看不见的版面对象（进快编之前留下的、
-  // 图层面板点的），删掉它们 = 用户看不见的东西从版上消失（Codex #833）。删那张图本身照旧——
-  // 看得见、可撤销，对象没了快速编辑随之退出（`usePruneSelection` 的 `usable`）
-  const fe = fastEditPanelOf(useWorkspaceStore.getState())
-  const ids = useSelectionStore.getState().ids.filter((id) => fe === null || id === fe)
+  // 单图编辑与排版同一口径（2026-10-21）：这一屏画着这张画布上的全部对象，选区里的都看得见，删的就是选区
+  const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -419,10 +427,8 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
-  // 快速编辑这一屏只画正在编辑的那张图：副本落在版面上、换掉选区，用户什么都看不见（Codex #833）。
-  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里，判据只在这一处（与粘贴的
-  // `clipboard.consumePayload` 同一个 `fastEditPanelOf`）
-  if (fastEditPanelOf(useWorkspaceStore.getState())) return
+  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里。单图编辑里也允许（2026-10-21）：副本是一张图 =
+  // 第二张图，画布变两张，模式订阅切到多图排版；副本是标注就留在单图编辑
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，
@@ -518,18 +524,15 @@ export function revealObjects(ids: string[]) {
 export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
 
 /**
- * 「全选」此刻收进来的 id：排版里是整版看得见、没锁的对象；**快速编辑里只有正在编辑的那张图**（它也得
- * 过 `isSelectAllTarget`，否则什么都不选）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
+ * 「全选」此刻收进来的 id：这张画布上看得见、没锁的对象（单图编辑与排版同一口径，2026-10-21 取消「快编只收那张图」）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
-export function selectAllIds(objects: readonly CanvasObject[], fastEditPanel: string | null): string[] {
-  return objects
-    .filter((o) => isSelectAllTarget(o) && (fastEditPanel === null || o.id === fastEditPanel))
-    .map((o) => o.id)
+export function selectAllIds(objects: readonly CanvasObject[]): string[] {
+  return objects.filter(isSelectAllTarget).map((o) => o.id)
 }
 
 export function selectAll() {
-  select(selectAllIds(doc().objects, fastEditPanelOf(useWorkspaceStore.getState())))
+  select(selectAllIds(doc().objects))
 }
 
 /* ------------------------------- 文档切换 --------------------------------- */
@@ -550,8 +553,7 @@ const confirmLoss = () =>
 function afterSwitch(): void {
   useSelectionStore.getState().clear()
   useUiStore.getState().setElementPanel(null)
-  const page = useDocumentStore.getState().doc.page
-  useViewportStore.getState().fit(page.w, page.h)
+  fitStageNow()
 }
 
 /**
@@ -569,6 +571,7 @@ function afterSwitch(): void {
  * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
  */
 export async function runManualSave(): Promise<void> {
+  finishFocusedRichText()
   finishActiveGesture()
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
@@ -605,10 +608,20 @@ export async function runManualSave(): Promise<void> {
   // 顶栏的状态会继续往下走，这里不再多说一句话。
 }
 
-/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H、命令面板共用；ADR 0101） */
+/** 打开排版时间线 = 右栏切到「时间线」页签（顶栏、排版菜单、命令面板共用；ADR 0101 2026-10-21 修订） */
+export function openTimeline(): void {
+  useUiStore.getState().setRightTab('timeline')
+}
+
+/** 收起时间线 = 右栏回到属性页（右栏本身不关） */
+export function closeTimeline(): void {
+  useUiStore.getState().setRightTab('properties')
+}
+
+/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H 共用；ADR 0101） */
 export function toggleTimeline(): void {
-  const ui = useUiStore.getState()
-  ui.setVersionsOpen(!ui.versionsOpen)
+  if (isTimelineOpen(useUiStore.getState())) closeTimeline()
+  else openTimeline()
 }
 
 /**
@@ -646,6 +659,24 @@ export async function openLayoutDocument(
   return true
 }
 
+/**
+ * 以给定的 documentId 打开一份已读到的文档（找回副本等用）：带丢失确认的 `switchDocument` + 清选区 / 重新取景 +
+ * 说一句。返回是否真的换过去了。
+ */
+export async function openDocumentAs(
+  pd: ProjectDocument,
+  id: string,
+  opts: { stillCurrent?: () => boolean; beforeInstall?: () => Promise<boolean> } = {},
+): Promise<boolean> {
+  // 丢失确认与安装前归属复核都可能等待：调用方入口取的上下文要在等待之后再核，
+  // 不再是同一个项目 / 排版就不装（Codex #936：A 的排版装进 B 并按 B 的名义自动保存）。
+  const guardedConfirm = async () => (await confirmLoss()) && (opts.stillCurrent?.() ?? true)
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm, { beforeInstall: opts.beforeInstall }))) return false
+  afterSwitch()
+  status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
+  return true
+}
+
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
 export async function openRecentDocument(id: string): Promise<void> {
   const { doc: pd, notice } = await readAutosaveDoc(id)
@@ -663,11 +694,45 @@ export async function openRecentDocument(id: string): Promise<void> {
 
 /* --------------------------------- 页面 ----------------------------------- */
 
-export function setPageSize(w: number, h: number) {
-  commit(hist('setPageSize'), (d) => {
-    d.page.w = clamp(w, 10, 1000)
-    d.page.h = clamp(h, 10, 1000)
+export { PAGE_MM_MAX, PAGE_MM_MIN }
+
+/**
+ * 改页面尺寸的**唯一写法**（食谱）：属性栏的预设 / 宽高 / 横竖交换（`setPageSize`）与画布上拖页面四条边
+ * （`startPageEdgeResize`，在手势事务里反复调它）都经这里，夹取规则只有一份。
+ *
+ * `shift` 是页面原点的平移（mm，页面坐标系里新原点相对旧原点的位置取反）：拖左 / 上边时页面向左 / 上长出去，
+ * 原点跟着挪，所有对象与参考线的页面坐标反向补偿同样的量，图在屏幕上就纹丝不动。不给 = 原点不动
+ * （属性栏改尺寸的既有行为）。`base` 给了就按它的绝对位置写（拖动每一帧从手势开始时的位置现算，
+ * 不累加——夹取 / 吸附改变位移时不会漂）。
+ */
+export interface PageSizeBase {
+  objects: Map<string, { x: number; y: number }>
+  guides: number[]
+}
+
+export function applyPageSize(
+  d: FigureDocument,
+  w: number,
+  h: number,
+  shift?: { x: number; y: number; base: PageSizeBase },
+) {
+  d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
+  d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
+  if (!shift) return
+  for (const o of d.objects) {
+    const b = shift.base.objects.get(o.id)
+    if (!b) continue
+    o.x = b.x + shift.x
+    o.y = b.y + shift.y
+  }
+  d.guides.forEach((g, i) => {
+    const b = shift.base.guides[i]
+    if (b != null) g.pos = b + (g.axis === 'x' ? shift.x : shift.y)
   })
+}
+
+export function setPageSize(w: number, h: number) {
+  commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
 }
 
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */
@@ -898,7 +963,14 @@ export function setOverride(
   const current = findObject(panelId)
   if (current?.type === 'panel') {
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
-    if (i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)) return
+    // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
+    if (
+      i >= 0 &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      !pendingAliasClears(current, [{ gid, prop }]).length
+    ) {
+      return
+    }
   }
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
@@ -909,6 +981,29 @@ export function setOverride(
   if (panel?.type === 'panel') requestRender(panel, immediate)
   // 本地信号只带属性名（matplotlib 的 prop，不是用户内容），不带 gid 与值
   emitActivity({ kind: 'element.property_changed', prop })
+}
+
+/**
+ * 改图幅（`figure.size_mm` override，与属性栏「图幅」W / H 同一条 override）并可选地挪面板的 x / y：
+ * **一条历史、一次渲染**。画布上拖图的四条边（`figureEdgeDrag`）松手时调用：拖左 / 上边时对侧边要不动，
+ * 渲染回来之后 `useEngineSync` 按缩放比不变静默校正 w / h（锚点 = 左上角，所以 x / y 要在这里先挪好）。
+ */
+export function setFigureFrame(
+  panelId: string,
+  sizeMm: [number, number],
+  pos?: { x: number; y: number },
+) {
+  finishActiveGesture()
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('size_mm') }), (o) => {
+    upsertOverrides(o, [{ gid: 'figure', prop: 'size_mm', value: sizeMm }])
+    if (pos) {
+      o.x = pos.x
+      o.y = pos.y
+    }
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'size_mm' })
 }
 
 /**
@@ -1013,7 +1108,7 @@ export function clearOverrides(
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
   const hit = targets.filter((t) =>
-    !(panel.artifactValidation && t.gid === 'figure' && t.prop === 'frame') &&
+    !(isAdoptedPanel(panel) && t.gid === 'figure' && t.prop === 'frame') &&
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
   if (!hit.length) return
@@ -1156,12 +1251,12 @@ export function resolveArtifactBackground(panelId: string, key: string, transpar
 export function resetOverrides(panelId: string) {
   finishActiveGesture()
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || (!panel.overrides.length && !Object.hasOwn(panel, 'artifactValidation'))) return
+  if (panel?.type !== 'panel' || (!panel.overrides.length && !isAdoptedPanel(panel))) return
   updateObject<PanelObject>(panelId, hist('resetOverrides'), (o) => {
     o.overrides = []
-    delete o.artifactValidation
+    clearAdoption(o)
   })
-  if (Object.hasOwn(panel, 'artifactValidation')) {
+  if (isAdoptedPanel(panel)) {
     useUiStore.getState().setElementPanel(null)
     status(note('overridesCleared'), 'done')
     return
@@ -1185,7 +1280,7 @@ export function resetOverrides(panelId: string) {
  */
 export async function resetOverridesConfirmed(panelId: string): Promise<boolean> {
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || (!panel.overrides.length && !Object.hasOwn(panel, 'artifactValidation'))) return false
+  if (panel?.type !== 'panel' || (!panel.overrides.length && !isAdoptedPanel(panel))) return false
   const baked = isJustBakedBaseline(panel)
   const ok = await askConfirm({
     title: msg('confirm.resetOverridesTitle', undefined, 'workspace'),
@@ -1235,8 +1330,9 @@ async function settledRender(key: string): Promise<void> {
  * 它是用户明确触发的一次脚本执行（00_SHARED_RULES §4 允许的形态），做的事与
  * 「脚本文件变了」那条路**逐字相同**：后端 `pool.invalidate`（同一个原语）+
  * 前端 `markStale`（清掉该文件全部变体的权威，画布留着上一张不闪白）+ 一次
- * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**——文档一个字节
- * 不动，所以它**不进历史**（撤销撤的是编辑，不是一次重画）。
+ * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**，
+ * **不进历史**（撤销撤的是编辑，不是一次重画）。成功重跑退役源的旧快照引用，
+ * 这项变化须自动保存，并将已绑定的项目排版标为有未保存改动。
  *
  * 同一文件的多个实例共享一条会话：会话作废对它们一视同仁，其余实例由
  * `useEngineSync` 的跟踪位（`markStale` 置的）按各自 overrides 重画。
@@ -1253,11 +1349,13 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
+  const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
   if (!engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
+      if (!owner.still()) return 'skipped'
       status(
         note('rebuildFailed', { error: err instanceof Error ? err.message : String(err) }),
         'error',
@@ -1266,18 +1364,80 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
     }
   }
   // 等后端这一趟的时间里面板可能被删了：以此刻文档里的那份为准
+  if (!owner.still()) return 'skipped'
   const fresh = findObject(panelId)
-  if (fresh?.type !== 'panel') return 'skipped'
+  if (fresh?.type !== 'panel' || fresh.fileId !== fileId) return 'skipped'
   const store = useRenderStore.getState()
   store.markStale([fileId])
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
+  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
-  if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
+  const succeeded = useRenderStore.getState().get(key).status === 'ready'
+  // renderStore consumes trusted execution evidence even for failed/zero-output runs.
+  // Render readiness and cache invalidation alone do not prove that user code executed.
+  if (!owner.still()) return 'skipped'
+  if (!succeeded) return 'failed'
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')
   return invalidated ? 'rebuilt' : 'rerendered'
+}
+
+/**
+ * 色阶组整组换色的写入口（用户裁决 2026-10-18，ADR 0135 修订）：色阶组里任一成员（图元 / 色条）
+ * 改 cmap = 整组改。引擎对文档里同组的多条 cmap override 是**文档序靠后的赢**；而 `upsertOverrides`
+ * 原地改值、不挪位置，用户先改色条、再改曲面、回头又改色条时，色条那条仍排在前面，新选的色图会被
+ * 曲面那条盖掉。所以写这一条的**同一次 commit** 里把同组其它成员上的 cmap override 清掉——文档里
+ * 始终只有一条，谁赢与顺序无关。同组 = `colormapAliasGids`（调用方传入）。
+ */
+export function setColormapOverride(
+  panelId: string,
+  gid: string,
+  value: unknown,
+  aliasGids: string[],
+  immediate: boolean | RenderPolicy = false,
+) {
+  const current = findObject(panelId)
+  if (current?.type === 'panel') {
+    const drop = aliasGids.filter((g) => g !== gid)
+    const i = effectiveOverrideIndex(current.overrides, gid, 'cmap')
+    const sameValue = i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)
+    const others = current.overrides.some((p) => p.prop === 'cmap' && drop.includes(p.gid))
+    if (sameValue && !others) return
+  }
+  setColormapOverrides(
+    panelId,
+    hist('setProp', { prop: propLabel('cmap') }),
+    [{ gid, value, aliasGids }],
+    immediate,
+  )
+}
+
+/**
+ * `setColormapOverride` 的多元素版（多选批量改 cmap，#1159 评审）：每个被写的元素各自清掉**它所在
+ * 色阶组**里其它成员的 cmap override，再 upsert 新值——全部进同一次 commit（一条撤销、一次渲染）。
+ * 不清的话，组里一个没被选中的成员若在文档里排在后面，重放时会把被选中那条盖回旧色图。
+ * 被写的 gid 自己不会被清（多选里同组的两个成员都要留下各自的新值）。
+ */
+export function setColormapOverrides(
+  panelId: string,
+  label: UiMessage,
+  entries: { gid: string; value: unknown; aliasGids: string[] }[],
+  render: boolean | RenderPolicy = false,
+) {
+  if (!entries.length) return
+  const written = new Set(entries.map((e) => e.gid))
+  const drop = new Set(entries.flatMap((e) => e.aliasGids).filter((g) => !written.has(g)))
+  updateObject<PanelObject>(panelId, label, (o) => {
+    o.overrides = o.overrides.filter((p) => !(p.prop === 'cmap' && drop.has(p.gid)))
+    upsertOverrides(
+      o,
+      entries.map((e) => ({ gid: e.gid, prop: 'cmap', value: e.value })),
+    )
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, render)
+  emitActivity({ kind: 'element.property_changed', prop: 'cmap' })
 }
 
 /**
@@ -1288,15 +1448,30 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
  * 「改回同一个值」也会触发一次完全没必要的重渲染，撤销栈里还多一条看不出
  * 差别的历史。issue #131 里对齐一次能挪好几条，键churn 尤其明显。
  */
+function pendingAliasClears(panel: PanelObject, patches: { gid: string; prop: string }[]) {
+  return aliasClearPlan(panel.overrides, structuralPanelManifest(useRenderStore.getState(), panel), patches)
+}
+
 function upsertOverrides(
   panel: PanelObject,
   patches: { gid: string; prop: string; value: unknown }[],
+  preserveFontFallback = true,
 ) {
+  // 一个量只留一个 override 地址：同一次写入里把另一个地址上的旧 override 清掉（`lib/aliasOverrides.ts`）。
+  // 事实来自引擎 manifest 的 `alias_covers`；拿不到 manifest / 旧引擎没发 = 什么都不清，行为同从前
+  const clears = pendingAliasClears(panel, patches)
+  if (clears.length) {
+    panel.overrides = panel.overrides.filter((o) => !clears.some((c) => c.gid === o.gid && c.prop === o.prop))
+  }
   for (const p of patches) {
     // 改生效的那条（重复条目时是最后一条，引擎 last-wins）；改第一条会被后面的遮住
     const i = effectiveOverrideIndex(panel.overrides, p.gid, p.prop)
-    if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p }
-    else panel.overrides.push(p)
+    const prior = i >= 0 ? panel.overrides[i].value : undefined
+    const value = preserveFontFallback && p.prop === 'fontfamily' && typeof p.value === 'string' && figureFontChoice(prior)
+      ? changeFigureFont(prior, 'primary', p.value)
+      : p.value
+    if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p, value }
+    else panel.overrides.push({ ...p, value })
   }
 }
 
@@ -1338,6 +1513,31 @@ export function setOverrides(
   for (const prop of new Set(patches.map((p) => p.prop))) {
     emitActivity({ kind: 'element.property_changed', prop })
   }
+}
+
+/** Update one component of a figure's font choice in a single undo step. */
+export function setFigureFontChoice(
+  panelId: string,
+  gids: string[],
+  part: 'primary' | 'fallback',
+  next: string | null,
+  label: UiMessage,
+) {
+  if (!gids.length) return
+  updateObject<PanelObject>(panelId, label, (panel) => {
+    const patches: { gid: string; prop: string; value: unknown }[] = []
+    for (const gid of gids) {
+      const existing = effectiveOverride(panel.overrides, gid, 'fontfamily')?.value
+      const value = changeFigureFont(existing, part, next)
+      if (value === null) {
+        panel.overrides = panel.overrides.filter((o) => !(o.gid === gid && o.prop === 'fontfamily'))
+      } else patches.push({ gid, prop: 'fontfamily', value })
+    }
+    upsertOverrides(panel, patches, false)
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'fontfamily' })
 }
 
 /**
@@ -1407,6 +1607,74 @@ export function seedBakedOverrides(panelId: string): number {
   return baked.length
 }
 
+const isArtifactFailure = (error: unknown): boolean =>
+  error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable')
+
+/**
+ * PNG 采用失败的**唯一出口**（ADR 0139 PR1）。脚本真故障（`script_error` / `worker_timeout` / 渲染失败……）
+ * 不是「采用被拒」，保持原来的错误 toast；采用被拒按 `classifyArtifactFailure` 分类：
+ * - 明确拒绝（permanent / source_mismatch）：一句话 + 至多一个主按钮「重建为可编辑图」（有脚本时），`info` 色调——
+ *   这不是意外错误；带 action 的 toast 常驻到用户处理；
+ * - 可重试（retry）：一句话 + 「再试一次」，只有这一类才出现「再试」；
+ * - 已采用面板的保存数据冲突 / 等用户选的背景：原文案原规则，`error` 色调，不加按钮。
+ * toast 挂 `png.admit:<panelId>` 主人：采用成功 / 面板删除 / 切项目时撤掉。提醒只走浮动 toast，不往页面加横条。
+ */
+function reportAdmissionFailure(panel: PanelObject, error: unknown): void {
+  if (!isArtifactFailure(error)) {
+    status(engineErrorMsg(error), 'error')
+    return
+  }
+  showAdmissionFailure(panel, classifyArtifactFailure(error))
+}
+
+function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): void {
+  const ui = useUiStore.getState()
+  const owner = pngAdmitOwner(panel.id)
+  const message = msg(failure.messageKey, undefined, 'errors')
+  if (failure.recoverability === 'retry') {
+    ui.setStatus(message, 'error', {
+      owner,
+      action: {
+        label: msg('artifact.retryAdmission', undefined, 'errors'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(owner)
+          void enterElementEdit(panel.id)
+        },
+      },
+    })
+  } else if (isDefiniteRefusal(failure.recoverability)) {
+    // `not_untouched` 是本地前置判定（已有编辑 / 写回基线），不是采用能力问题：重画一张新图不是它的出路
+    const rebuild = panel.script && failure.reason !== 'not_untouched'
+    ui.setStatus(message, 'info', {
+      owner,
+      ...(rebuild
+        ? {
+            action: {
+              label: msg('artifact.rebuildEditable', undefined, 'errors'),
+              // 只发意图：执行者由 `pngRebuild` 登记（直接 import 会让重建链路经 workspace 回到本模块成环）
+              run: () => runPngRebuild(panel.id),
+            },
+          }
+        : {}),
+    })
+  } else if (failure.recoverability === 'needs_review') {
+    // 来源驱动面板的确认失效：编辑保留、不自动换基，出路只有「重新对照确认」
+    const reviewOwner = sourceReviewOwner(panel.id)
+    ui.setStatus(message, 'info', {
+      owner: reviewOwner,
+      action: {
+        label: msg('artifact.reviewReconstruction', undefined, 'errors'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(reviewOwner)
+          void reviewSourceBackedPanel(panel.id)
+        },
+      },
+    })
+  } else {
+    status(message, 'error')
+  }
+}
+
 /**
  * 进入图内编辑的统一入口：先补基线再进编辑态，避免双击回到脚本原始状态。
  *
@@ -1440,27 +1708,89 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
         !(useAssetStore.getState().byId[panel.fileId]?.baked_overrides?.length) && !engineTransport()
     }
     if (!current()) return false
+    const adopted = isAdoptedPanel(panel)
     const fields = artifactRequestFields(panel)
-    if (!panel.artifactValidation && (!eligible() || panel.overrides.length)) {
+    if (!adopted && (!eligible() || panel.overrides.length)) {
       throw new ArtifactValidationError('not_untouched')
     }
     if (engineTransport()) throw new ArtifactValidationError('unsupported_render_state')
-    const res = await engineRender(panel.fileId, [],
-      panel.artifactValidation ? fields : { source_policy: FIGSIZE_SOURCE_POLICY })
+    // 严格策略（精确）永远先试；只有它被拒、且原因是「像素证据拿不到」时才转来源驱动（ADR 0139 §四）
+    let strictRefusal: unknown = null
+    let res: Awaited<ReturnType<typeof engineRender>>
+    if (adopted) {
+      res = await engineRender(panel.fileId, [], fields)
+    } else {
+      try {
+        res = await engineRender(panel.fileId, [], { source_policy: FIGSIZE_SOURCE_POLICY })
+      } catch (refusal) {
+        if (!(refusal instanceof EngineError) || refusal.code !== 'artifact_source_unavailable' ||
+            !sourceBackedEligible(classifyArtifactFailure(refusal).reason)) throw refusal
+        strictRefusal = refusal
+        // 开关关着（默认）：不尝试新策略，原样走 PR1 的失败出路
+        if (!(await fetchScriptBackedEnabled())) throw refusal
+        if (!current()) return false
+        try {
+          // 开关刚被关掉的竞态：后端在执行任何东西之前就回 `policy_disabled`，同样当作没有这条路
+          res = await engineRender(panel.fileId, [], { source_policy: SCRIPT_BACKED_SOURCE_POLICY })
+        } catch (second) {
+          if (classifyArtifactFailure(second).reason === 'policy_disabled') throw refusal
+          throw second
+        }
+      }
+    }
     if (!current()) return false
-    if (!panel.artifactValidation && !eligible()) return false
-    const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+    if (!adopted && !eligible()) return false
     const [w, h] = res.manifest.size_mm
     if (![w, h].every(n => Number.isFinite(n) && n > 0)) throw new ArtifactValidationError('unsupported_response')
-    if (!panel.artifactValidation) {
-      commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
-        const p = d.objects.find(o => o.id === panel.id) as PanelObject
-        p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
-        p.artifactValidation = guard
-        p.nativeW = w
-        p.nativeH = h
-      })
+    const guardNow = adoptionGuardOf(panel)
+    if (strictRefusal || (guardNow && 'policy' in guardNow)) {
+      const verdict = verdictFromResponse(res.source_backed)
+      const source = verifiedSource(res.artifact_source, panel.fileId, SCRIPT_BACKED_SOURCE_POLICY, guardNow ?? undefined)
+      if (!adopted) {
+        let confirmedAt: string | undefined
+        let shownVerdict = verdict
+        if (verdict.status === 'needs_confirmation') {
+          // 差异要用户亲眼对照过才算数；取消 = 什么都不写，回到 PR1 的失败出路
+          const review = await reviewReconstruction({ mode: 'adopt', panel, fileId: panel.fileId, source, verdict, still: current })
+          if (!review.confirmed) {
+            if (current()) reportAdmissionFailure(panel, strictRefusal)
+            return false
+          }
+          confirmedAt = new Date().toISOString()
+          shownVerdict = review.verdict // 写的是用户亲眼看到的那一份，不是第一次 render 的
+        }
+        const guard = sourceBackedGuard(source, shownVerdict, confirmedAt)
+        commit(msg(confirmedAt ? 'artifact.adoptReconstructed' : 'artifact.adoptFrame', undefined, 'errors'), d => {
+          const p = d.objects.find(o => o.id === panel.id) as PanelObject
+          p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+          p.sourceBackedFigure = guard
+          p.nativeW = w
+          p.nativeH = h
+        })
+      } else {
+        // 重开 / 再次进入：重画摘要若与确认过的不同，确认作废——不自动换基，重新对照
+        const settled = await settleReconstruction(panel, source, verdict, current)
+        if (settled === 'cancelled') {
+          if (current()) notifyReconstructionPanel(panel.fileId, guardNow as SourceBackedFigure, 'reconstruction_changed')
+          return false
+        }
+        if (settled === 'stale') return false
+      }
+    } else {
+      const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+      if (!adopted) {
+        commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
+          const p = d.objects.find(o => o.id === panel.id) as PanelObject
+          p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+          p.artifactValidation = guard
+          p.nativeW = w
+          p.nativeH = h
+        })
+      }
     }
+    // 采用成功：这张图之前被拒的 toast 与会话记忆都不再成立
+    useUiStore.getState().clearStatusOwnedBy(pngAdmitOwner(panel.id))
+    usePngAdmissionMemory.getState().forget(panel.fileId)
     return finishElementEntry(panel.id, leftTab)
   } catch (error) {
     if (current() && error instanceof EngineError &&
@@ -1486,16 +1816,180 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
       if (error.missingInput) env.requestMissingInput(error.missingInput, pj)
       return false
     }
-    if (ownsRenderContext() && panel.artifactValidation &&
+    const adoptedGuard = adoptionGuardOf(panel)
+    if (ownsRenderContext() && adoptedGuard &&
         (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
-      rejectArtifactRenders(panel.fileId, panel.artifactValidation, error, renderKeyOf(panel))
+      rejectArtifactRenders(panel.fileId, adoptedGuard, error, renderKeyOf(panel))
     }
-    if (current()) status(engineErrorMsg(error), 'error')
+    if (ownsRenderContext() && !isAdoptedPanel(panel) && error instanceof EngineError &&
+        error.code === 'artifact_source_unavailable') {
+      // 后端明确拒绝（脚本已经为此跑过一遍）：记下，同一张 PNG 再点「进入编辑」不再重跑
+      usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
+    }
+    if (current()) reportAdmissionFailure(panel, error)
     return false
   } finally {
     if (artifactEntryCurrent(attempt) && !awaitingEnvironment) cancelArtifactEntry()
   }
 }
+
+/* ------------------------- 来源驱动采用：对照确认 -------------------------- */
+
+const REVIEW_BUCKET = 1600
+
+interface ReviewArgs {
+  mode: 'adopt' | 'changed'
+  panel: PanelObject
+  fileId: string
+  source: { bytesSha256: string; sizeBytes: number }
+  verdict: SourceBackedVerdict
+  /** 取到图之后、打开对话框之前再核一次：发起时的上下文还在不在 */
+  still: () => boolean
+}
+
+/**
+ * 打开「对照确认」：左原 PNG（磁盘原像素）、右重画。返回用户是否确认。
+ * 任何一步失败（取不到重画图、上下文已变）都按「没确认」处理——**不写任何东西**。
+ */
+async function reviewReconstruction(a: ReviewArgs): Promise<{ confirmed: boolean; verdict: SourceBackedVerdict }> {
+  const no = { confirmed: false, verdict: a.verdict }
+  let reconstructionSrc: string
+  let shown: SourceBackedVerdict
+  try {
+    const snap = await enginePreviewPngSnapshot(a.fileId, [], REVIEW_BUCKET, undefined, {
+      source_policy: SCRIPT_BACKED_SOURCE_POLICY,
+      expected_source: { bytes_sha256: a.source.bytesSha256, size_bytes: a.source.sizeBytes },
+    })
+    reconstructionSrc = snap.url
+    // 确认绑定的是**显示给用户的这一份**：摘要 / 状态 / 度量都取这次响应的，不沿用第一次 render 的
+    shown = verdictFromResponse(snap.sourceBacked)
+  } catch {
+    if (a.still()) status(msg('artifact.rebuildFailed', undefined, 'errors'), 'error')
+    return no
+  }
+  if (!a.still()) return no
+  const originalSrc = panelSrc(a.fileId, 'raster', REVIEW_BUCKET, useAssetStore.getState().byId[a.fileId]?.mtime)
+  if (!originalSrc) return no
+  const confirmed = await useSourceBackedReview.getState().ask({
+    mode: a.mode, panelId: a.panel.id, fileId: a.fileId, verdict: shown, originalSrc, reconstructionSrc,
+  })
+  return { confirmed, verdict: shown }
+}
+
+type Settled = 'unchanged' | 'updated' | 'cancelled' | 'stale'
+
+/**
+ * 已采用的来源驱动面板重新核对重画摘要（进入编辑 / 「重新对照确认」）：
+ * - 与确认过的相同：什么都不做；
+ * - 都是 `exact`（逐像素等于原件，字节摘要因元数据不同而变）：无可对照的差异，静默更新摘要；
+ * - 其余：确认作废，**不自动换基**——打开对照，确认才更新 guard（一次提交，编辑原样保留），取消什么都不写。
+ */
+async function settleReconstruction(
+  panel: PanelObject,
+  source: { sourceId: string; bytesSha256: string; sizeBytes: number },
+  verdict: SourceBackedVerdict,
+  still: () => boolean,
+): Promise<Settled> {
+  const old = panel.sourceBackedFigure
+  if (!old) return 'stale'
+  if (old.reconstructionSha256 === verdict.reconstructionSha256) return 'unchanged'
+  let confirmedAt: string | undefined
+  if (!(old.status === 'exact' && verdict.status === 'exact')) {
+    const review = await reviewReconstruction({ mode: 'changed', panel, fileId: panel.fileId, source, verdict, still })
+    if (!review.confirmed) return still() ? 'cancelled' : 'stale'
+    confirmedAt = new Date().toISOString()
+    verdict = review.verdict // 确认绑定显示给用户的那一份
+  }
+  if (!still()) return 'stale'
+  const guard = sourceBackedGuard(source, verdict, confirmedAt)
+  commit(msg(confirmedAt ? 'artifact.adoptReconstructed' : 'artifact.refreshReconstruction', undefined, 'errors'), d => {
+    const p = d.objects.find(o => o.id === panel.id) as PanelObject
+    p.sourceBackedFigure = guard
+  })
+  useUiStore.getState().clearStatusOwnedBy(sourceReviewOwner(panel.id))
+  return 'updated'
+}
+
+/**
+ * 「重新对照确认」（渲染被 `reconstruction_changed` 拒绝后的唯一出路）：零编辑重画一次拿到新摘要，
+ * 走同一个对照；确认后更新 guard 并重发渲染。编辑始终保留。
+ */
+export async function reviewSourceBackedPanel(panelId: string): Promise<boolean> {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || adoptionOf(panel).kind !== 'source' || artifactValidationIssue(panel)) return false
+  finishActiveGesture()
+  const initial = useDocumentStore.getState()
+  const epoch = renderEpoch()
+  const pj = currentProjectId()
+  const snapshot = JSON.stringify(panel)
+  const still = () => {
+    const now = useDocumentStore.getState()
+    return renderEpoch() === epoch && currentProjectId() === pj && now.documentId === initial.documentId &&
+      now.loadSeq === initial.loadSeq && now.activeCanvasId === initial.activeCanvasId && !now.txn &&
+      JSON.stringify(findObject(panelId)) === snapshot
+  }
+  try {
+    // 零编辑的重画只为拿摘要与差异度量：patches [] 不需要确认摘要，也不会带着编辑跑
+    const res = await engineRender(panel.fileId, [], artifactRequestFields({ ...panel, overrides: [structuredClone(LEGACY_FRAME_OVERRIDE)] }))
+    if (!still()) return false
+    const guard = panel.sourceBackedFigure!
+    const source = verifiedSource(res.artifact_source, panel.fileId, SCRIPT_BACKED_SOURCE_POLICY, guard)
+    const verdict = verdictFromResponse(res.source_backed)
+    // 点到的实例若摘要已经是最新的（同一 PNG 的另一个实例已重新确认过），真正过期的是同源的另一个实例：对准它
+    let target = panel
+    if (guard.reconstructionSha256 === verdict.reconstructionSha256) {
+      const st = useDocumentStore.getState()
+      for (const objects of [st.doc.objects, ...st.canvases.map((c) => c.objects)]) {
+        const stale = objects.find((o): o is PanelObject => o.type === 'panel' && o.id !== panelId && o.fileId === panel.fileId &&
+          o.sourceBackedFigure?.bytesSha256 === guard.bytesSha256 && !artifactValidationIssue(o) &&
+          o.sourceBackedFigure.reconstructionSha256 !== verdict.reconstructionSha256)
+        if (stale) { target = stale; break }
+      }
+    }
+    const settled = await settleReconstruction(target, source, verdict, still)
+    if (settled === 'updated') {
+      const fresh = findObject(target.id)
+      if (fresh?.type === 'panel') requestRender(fresh, true)
+    }
+    return settled === 'updated' || settled === 'unchanged'
+  } catch (error) {
+    if (still()) reportAdmissionFailure(panel, error)
+    return false
+  }
+}
+registerSourceBackedReviewRunner(reviewSourceBackedPanel)
+
+/**
+ * 确认失效的一句话 + 「重新对照确认」：命中的是同一文件、同一份来源身份的来源驱动面板。
+ * 渲染被拒（`renderStore.rejectArtifactRenders`）经 `sourceBackedReview` 登记的通道来到这里。
+ */
+function notifyReconstructionPanel(fileId: string, guard: AdoptionGuard, reason: unknown): void {
+  if (!('policy' in guard)) return
+  const failure = classifyArtifactReason(reason)
+  if (failure.recoverability !== 'needs_review') return
+  const s = useDocumentStore.getState()
+  for (const objects of [s.doc.objects, ...s.canvases.map((c) => c.objects)]) {
+    // 失败的那份 guard 对得上的实例优先（渲染路径带的就是它自己的 guard）；导出一类整批失败时退到同源的任一实例，
+    // 真正过期的那个由「重新对照确认」比对当前重画后再选（见 reviewSourceBackedPanel）
+    const same = objects.filter((o) => o.type === 'panel' && o.fileId === fileId && o.sourceBackedFigure?.bytesSha256 === guard.bytesSha256)
+    const hit = same.find((o) => o.type === 'panel' && o.sourceBackedFigure?.reconstructionSha256 === guard.reconstructionSha256) ?? same[0]
+    if (!hit) continue
+    if (hit?.type !== 'panel') continue
+    const owner = sourceReviewOwner(hit.id)
+    useUiStore.getState().setStatus(msg(failure.messageKey, undefined, 'errors'), 'info', {
+      owner,
+      action: {
+        label: msg('artifact.reviewReconstruction', undefined, 'errors'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(owner)
+          runSourceBackedReview(hit.id)
+        },
+      },
+    })
+    return
+  }
+}
+registerReconstructionNotifier(notifyReconstructionPanel)
 
 export function enterElementEdit(
   panelId: string,
@@ -1510,9 +2004,16 @@ export function enterElementEdit(
     return false
   }
   // Existing edited/baked PNG panels keep their established legacy semantics.
-  const sourceEntry = Object.hasOwn(panel, 'artifactValidation') ||
-    (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && !!panel.script && panel.overrides.length === 0)
-  if (sourceEntry) return admitPngEntry(panel, leftTab)
+  const sourceEntry = isAdoptedPanel(panel) || isUnadoptedPngSource(panel)
+  if (sourceEntry) {
+    // 这张 PNG 本次会话里已被后端明确拒绝过：同一句话 + 同一出路，不再重跑脚本
+    const refused = isAdoptedPanel(panel) ? null : pngRefusalOf(panel.fileId)
+    if (refused) {
+      showAdmissionFailure(panel, refused.failure)
+      return false
+    }
+    return admitPngEntry(panel, leftTab)
+  }
   const entered = finishElementEntry(panelId, leftTab)
   if (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && panel.overrides.length) {
     status(engineErrorMsg(new ArtifactValidationError('not_untouched')), 'info')
@@ -1523,10 +2024,10 @@ export function enterElementEdit(
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = panel.artifactValidation ? 0 : seedBakedOverrides(panelId)
+  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
-  if (panel.artifactValidation) {
+  if (isAdoptedPanel(panel)) {
     const owner = useDocumentStore.getState()
     const epoch = renderEpoch()
     const pj = currentProjectId()
@@ -2397,7 +2898,7 @@ export function adoptScriptFrame(panelId: string): boolean {
     const o = d.objects.find((x) => x.id === panelId)
     if (o?.type !== 'panel') return
     o.overrides = patch.overrides
-    delete o.artifactValidation
+    clearAdoption(o)
     o.x = patch.x
     o.y = patch.y
     o.w = patch.w
@@ -2439,7 +2940,7 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     useUiStore.getState().setElementPanel(null)
   }
   updateObject<PanelObject>(panelId, hist('replaceAsset', { name: info.name }), (o) => {
-    delete o.artifactValidation
+    clearAdoption(o)
     o.fileId = info.id
     o.fileKind = info.kind
     o.nativeW = info.native_w_mm

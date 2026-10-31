@@ -89,11 +89,17 @@ try:
 finally:
     sys.dont_write_bytecode = _dont_write_bytecode
 
-#: 第一阶段只装纯标准库的那两个（捕获策略 + patch 规范化）。**绝不在这里装
+#: 与 safe worker 同一个装配点（ADR 0153）：用户脚本往 `sys.path` 里塞了当前账户读不了的项目外目录时，
+#: 换下一个位置继续找。native 的契约本来是「与 `python fig.py` 一致」，这是有意偏离，只在读不了时生效；
+#: 不写 stderr（那是用户的终端），记录随回执的 `runtime.import_skips` 回去。
+bridgeboot.install_unreadable_import_skipper()
+_PATH_BASELINE = list(sys.path)
+
+#: 第一阶段只装纯标准库（捕获策略 + patch 规范化 + 执行事实）。**绝不在这里装
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
-_PHASE1 = ("figcapture", "patchspec")
+_PHASE1 = ("figcapture", "patchspec", "executionfact")
 #: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
 #: import 过了；外加只被它们平铺 import 到的纯标准库模块。
 #:
@@ -114,6 +120,7 @@ _PHASE2 = (
     "previewbudget",
     "preview_complexity",
     "preview_hybrid",
+    "teedraw",
     "figsession",
     "wireproto",
 )
@@ -128,19 +135,43 @@ _CAPTURE_SOURCE: dict = {}
 _CAPTURE_SAVEFIG: dict = {}
 #: stem -> 与 `_CAPTURE_SAVEFIG[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
 _CAPTURE_EXTRAS: dict = {}
+#: stem -> {files: 目标文件键 -> 最近写它的 Figure 弱引用, log: 影子日志}（`figcapture.note_savefig_writer`，同一路径最后写入者胜）
+_CAPTURE_WRITERS: dict = {}
+#: 已被会话接走（屏障处同步过）的 stem：之后不再换图，规则同 `states` / `failures`
+_CAPTURE_LOCKED: set = set()
 _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
+#: 「先写临时文件再改名」的 savefig（#1124）：认领它的 stem -> 待确认的提升
+#: `{"tmp": 绝对路径, "final": 绝对路径, "stem": 最终 stem, "digest": 写完那一刻的内容摘要,
+#: "tmp_id": 临时文件写完那一刻的 (st_dev, st_ino)}`——最终文件必须还是这同一个 inode 才算它成了产物
+_TEMP_SAVES: dict = {}
+#: 已确认提升的 stem：旧 stem（`final.png`）-> 新 stem（`final`）。同一张图之后再按临时文件 + 改名保存
+#: 一次（多个 `show()` 之间反复原子保存），`savefig_stem` 又算出旧 stem，要并回已提升的捕获而不是新开一个
+_PROMOTED: dict = {}
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
+#: 写进 `PdfPages` 的 Figure 账（`figcapture.PdfPagesLedger`，与 safe worker 同一个类）。一个 runner 进程只跑一个脚本
+_PDF_PAGES = figcapture.PdfPagesLedger()
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
 #: 当成用户脚本的一次 savefig，凭空多出一个 stem。
 _CAPTURING = True
 _REAL_SAVEFIG = None
 _REAL_SHOW = None
+#: 桌面拥有的运行的输入观察（`figcapture.InputObserver`，`--observe-inputs`；#1047）：与 safe worker 同一个观察器、同一份
+#: 报告形状，脚本结束那一刻定格（`BridgeRun.freeze_inputs`）。钩子要在引擎自己读文件时暂停它，所以放模块级
+_INPUTS = None
+#: `_digests_of` 里「这条 path 没了」的哨兵（与 sha256 = None 区分）
+_GONE = object()
 
 
 # ---------------------------------------------------------------------------
 # 钩子
 # ---------------------------------------------------------------------------
+def _engine_reads():
+    """引擎自己读文件的那一段（savefig 簿记算产物摘要、屏障里出预览 / 导出）：输入观察不记账——那不是脚本的输入，
+    记进去的话脚本自己写出的产物会冒充「数据依据」。没装观察器时什么都不做。"""
+    return _INPUTS.paused() if _INPUTS is not None else contextlib.nullcontext()
+
+
 @contextlib.contextmanager
 def _no_capture():
     """引擎自己出图的那一段：透传照旧，但不记进捕获表。"""
@@ -169,17 +200,21 @@ def _install_savefig_hook(mfigure) -> None:
 
     def _patched_savefig(self, fname, *args, **kwargs):
         observation = None
+        stem = None
+        call = None
         if _CAPTURING:
-            stem = figcapture.savefig_stem(fname)
-            call = figcapture.savefig_call(fname, kwargs)
-            observation = _SAVEFIG_OBSERVATIONS.record(
-                self,
-                fname,
-                stem,
-                call,
-                explicit_format=kwargs.get("format") is not None,
-                backend=kwargs.get("backend"),
-            )
+            with _engine_reads():
+                stem = figcapture.savefig_stem(fname)
+                stem = _resolve_promoted(stem, self)
+                call = figcapture.savefig_call(fname, kwargs)
+                observation = _SAVEFIG_OBSERVATIONS.record(
+                    self,
+                    fname,
+                    stem,
+                    call,
+                    explicit_format=kwargs.get("format") is not None,
+                    backend=kwargs.get("backend"),
+                )
             if stem and stem not in _CAPTURE:
                 _CAPTURE[stem] = self
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
@@ -188,17 +223,141 @@ def _install_savefig_hook(mfigure) -> None:
                 # stem 存了盘：它从此是显式存过盘的图（来源升级为 savefig，调用照记）。只在
                 # native 发生——safe worker 与浏览器的 pyplot 兜底在脚本跑完之后才收
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
-            if figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, stem, self, call):
-                _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
         try:
             result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
         except BaseException:
-            _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
+            with _engine_reads():
+                _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
             raise
-        _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
+        with _engine_reads():
+            _savefig_bookkeeping(self, fname, kwargs, stem, call, observation)
         return result
 
+    def _savefig_bookkeeping(self, fname, kwargs, stem, call, observation) -> None:
+        _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
+        # 写入者 / 调用记账只在这次真写盘成功之后：失败的保存磁盘上没动，不能让它顶掉别人
+        if _CAPTURING and stem:
+            # 簿记尽力而为：失败只是不记账，不改变用户 savefig 的结果（同 #1126 r4305538684）
+            try:
+                figcapture.note_savefig_writer(
+                    _CAPTURE_WRITERS,
+                    _CAPTURE,
+                    _CAPTURE_SOURCE,
+                    _CAPTURE_SAVEFIG,
+                    _CAPTURE_EXTRAS,
+                    stem,
+                    self,
+                    figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+                    call,
+                    kwargs.get("bbox_extra_artists"),
+                    locked=stem in _CAPTURE_LOCKED,
+                )
+                figcapture.mark_saved(self)
+            except Exception:  # noqa: BLE001
+                pass
+        if _CAPTURING and figcapture.is_pdf_pages(fname):
+            # 写进 PdfPages 的一页（真写成功之后才记）；尽力而为，失败不改变用户 savefig 的结果
+            try:
+                _PDF_PAGES.note(fname, self)
+            except Exception:  # noqa: BLE001
+                pass
+        if _CAPTURING:
+            # 簿记尽力而为，失败只是不提升，不改变用户 savefig 的结果（Codex #1126 r4305538684）
+            try:
+                _note_temp_save(self, fname, stem)
+            except Exception:
+                pass
+
     mfigure.Figure.savefig = _patched_savefig
+
+
+def _digest(path: str) -> str | None:
+    # 分块读（`figcapture.hash_file`）：未压缩 TIFF 之类的大产物不整份进内存（Codex #1126 r4295028879）
+    try:
+        return figcapture.hash_file(path)[0]
+    except OSError:
+        return None
+
+
+def _file_identity(path: str):
+    """文件身份 `(st_dev, st_ino)`；读不到或文件系统给不出 inode（`st_ino == 0`）记 None。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if not st.st_ino:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _resolve_promoted(stem, fig):
+    """旧 stem 已被提升、且提升后的捕获就是这张图：并回新 stem（别的图存同名临时文件不走别名）。"""
+    new = _PROMOTED.get(stem) if stem else None
+    if new is not None and _CAPTURE.get(new) is fig:
+        return new
+    return stem
+
+
+def _note_temp_save(fig, fname, stem=None) -> None:
+    """`savefig("final.png.tmp")` 真的写完了：记下它认领的 stem、写完那一刻的内容摘要与临时文件的 inode 身份，等脚本结束时
+    确认它成了 `final.png` 才把 stem 改成 `final`（`_promote_temp_saves`）。
+
+    `stem` 是调用方解析过别名的 stem；已经是提升后的 stem（`final`）就不再登记。"""
+    target = figcapture.temp_save_target(fname)
+    if target is None:
+        return
+    if stem is None:
+        stem = _resolve_promoted(figcapture.savefig_stem(fname), fig)
+    if not stem or stem in _PROMOTED.values():
+        return
+    if _CAPTURE.get(stem) is not fig:
+        return
+    tmp = os.path.abspath(os.fsdecode(fname))
+    final = os.path.join(os.path.dirname(tmp), target[0])
+    _TEMP_SAVES[stem] = {
+        "tmp": tmp,
+        "final": final,
+        "stem": target[1],
+        "digest": _digest(tmp),
+        "tmp_id": _file_identity(tmp),
+    }
+
+
+def _promote_temp_saves(published=()) -> None:
+    """脚本结束：确认过的「临时文件 → 产物」提升把 stem 从 `final.png` 改成 `final`（#1124）。
+
+    确认的判据是「临时文件这个文件本身成了最终文件」：临时文件已不在、最终文件存在且与 savefig 时的临时文件
+    是同一个 `(dev, ino)`（只有 rename / replace / 同盘 move / 硬链接做得到），并且内容仍是这次写的字节
+    （改名后又被原地改写会改摘要）。`os.replace` / `os.rename` / `Path.replace` / 同盘 `shutil.move` /
+    硬链接后删除都满足；跳过改名而磁盘上躺着旧 `final.png`（Codex #1126 P1）、改名后被别的内容覆盖、
+    旧文件被 `os.utime` 改了时间再删临时文件（Codex #1126 r4305517904）、复制后删除（复制产生的是另一份
+    文件）、跨盘 move 都不满足。确认不了因果就保守地保留临时 stem：原件按 `final.png` 找不到，只是不能
+    写回，不会关联错文件。不在用户进程里替换 `os.replace` 之类去「观察改名」：那改的是用户代码的运行环境。
+
+    另外两条：最终 stem 没被别的图占用；已经在屏障上交给界面的 stem（`published`）不改——界面与会话已按
+    旧名索引了它。改名保持捕获顺序。"""
+    for old, t in list(_TEMP_SAVES.items()):
+        new = t["stem"]
+        if os.path.exists(t["tmp"]) or not os.path.isfile(t["final"]):
+            continue
+        if t["digest"] is None or _digest(t["final"]) != t["digest"]:
+            continue
+        if t["tmp_id"] is None or _file_identity(t["final"]) != t["tmp_id"]:
+            continue
+        if old not in _CAPTURE or new in _CAPTURE or old in published:
+            continue
+        _PROMOTED[old] = new
+        for table in (
+            _CAPTURE,
+            _CAPTURE_SOURCE,
+            _CAPTURE_SAVEFIG,
+            _CAPTURE_EXTRAS,
+            _CAPTURE_WRITERS,
+        ):
+            if old in table:
+                items = [(new if k == old else k, v) for k, v in table.items()]
+                table.clear()
+                table.update(items)
 
 
 def _install_show_hook(plt, barrier) -> None:
@@ -244,6 +403,12 @@ def collect_pyplot(plt) -> None:
     前端按 stem 索引一切。
     """
     global _DROPPED
+    # show 屏障也是「交给用户看」的时刻：写了文件却没认领的图先补进来（与脚本结束处同一个函数，已认领的跳过）
+    figcapture.adopt_displaced_writers(
+        _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
+    )
+    figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
+    adopt_pdf_pages()
     stems, dropped = figcapture.collect_pyplot_figures(_CAPTURE, _SCRIPT_STEM[0], plt)
     for stem in stems:
         _CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
@@ -257,6 +422,12 @@ def collect_pyplot(plt) -> None:
         )
 
 
+def adopt_pdf_pages() -> None:
+    """写进 `PdfPages` 的图补进捕获表（与 safe worker 同一个函数、同一个位置：先于 pyplot 兜底）。
+    不依赖脚本有没有 import pyplot（纯 OO 脚本也能用 PdfPages），所以脚本结束处在 pyplot 判断之外也调一次；重复调用无害。"""
+    figcapture.adopt_pdf_pages(_CAPTURE, _CAPTURE_SOURCE, _PDF_PAGES, _SCRIPT_STEM[0])
+
+
 #: 兜底 stem 的基名（`<脚本名>`、`<脚本名>-2`…）。列表包一层是因为钩子闭包
 #: 在解析目标之前就装好了。
 _SCRIPT_STEM = ["figure"]
@@ -265,7 +436,7 @@ _SCRIPT_STEM = ["figure"]
 # ---------------------------------------------------------------------------
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
-def run_script(target: str, argv: list) -> None:
+def run_script(target: str, argv: list, on_start=None) -> None:
     """等价于 `python <target> <argv…>`。
 
     **不用 `runpy.run_path`**：它把 `__file__` 设成传进去的原串、把
@@ -304,6 +475,8 @@ def run_script(target: str, argv: list) -> None:
     main_mod.__cached__ = None
     main_mod.__doc__ = None
     sys.modules["__main__"] = main_mod
+    if on_start is not None:
+        on_start(abspath)
     exec(code, main_mod.__dict__)
 
 
@@ -334,7 +507,7 @@ def resolve_module_origin(target: str) -> str:
     return getattr(spec, "origin", "") or ""
 
 
-def run_module(target: str, argv: list, on_origin=None) -> None:
+def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
@@ -351,6 +524,17 @@ def run_module(target: str, argv: list, on_origin=None) -> None:
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, os.getcwd())
+    if on_start is not None:
+        # These are run_module(alter_sys=True)'s own two operations, split at
+        # the compiled-code boundary. A missing/invalid target must not report
+        # target execution. Resolving it may already import parent packages:
+        # those side effects are NOT evidence that this target's code ran.
+        _, spec, code = runpy._get_module_details(target)  # noqa: SLF001
+        if on_origin is not None:
+            on_origin(spec.origin or "")
+        on_start(spec.origin or "")
+        runpy._run_module_code(code, None, "__main__", spec)  # noqa: SLF001
+        return
     if on_origin is not None:
         on_origin(resolve_module_origin(target))
     runpy.run_module(target, run_name="__main__", alter_sys=True)
@@ -492,6 +676,196 @@ def _json_default(o):
 
 
 # ---------------------------------------------------------------------------
+# 桌面拥有的进程里的输入桥（P07，ADR 0126）
+# ---------------------------------------------------------------------------
+#: 与 `nativesession.INPUT_REQUEST_EVENT` / `INPUT_REPLY_KEY` 严格同源（改一处必须改两处）。
+INPUT_REQUEST_EVENT = "input_request"
+INPUT_REPLY_KEY = "input_reply"
+#: 提示词随提问交给桌面的上限（字符）；更长的截断，不影响脚本自己拿到的任何东西
+_PROMPT_LIMIT = 1000
+
+
+class InputBridge:
+    """脚本的 `input / sys.stdin.readline|read / getpass` → 控制通道上的一问一答。
+
+    只在桌面拥有的进程里装（`--input-bridge`）：终端拥有的 native 继续用真 stdin。**阻塞读就在
+    提问的这个（主）线程上**，不起后台线程；答复回来这一行 `input()` 就返回，**同一个进程、同一批
+    对象、同一个调用栈**往下走。口令（`getpass`）的答复只经这条通道、只存在于本函数的局部变量里，
+    不写盘、不打日志。
+    """
+
+    def __init__(self, run: "BridgeRun"):
+        self.run = run
+        self.count = 0
+        #: `sys.stdin.read*` / `readline` 的未消费缓冲（一次回答可能含多行）
+        self.buffer = ""
+        self.eof = False
+
+    def take_buffered_line(self) -> str | None:
+        """`input()` 先吃缓冲：缓冲里有完整一行就取走；流已到尽头而缓冲里还有没换行的尾巴，也当一行取走。
+        什么都没有（或还差半行、流没到尽头）返回 None，由调用方发起提问。"""
+        if "\n" in self.buffer:
+            head, _nl, rest = self.buffer.partition("\n")
+            self.buffer = rest
+            return head.rstrip("\r")
+        if self.buffer and self.eof:
+            tail, self.buffer = self.buffer, ""
+            return tail.rstrip("\r")
+        return None
+
+    def ask(self, kind: str, prompt: str = "") -> str | None:
+        """发一次提问并等答复。返回答复文本；`None` = EOF（用户选了「没有输入」/ 通道已断）。"""
+        # stdin 家族（input / readline / read）共用一个「流已到尽头」：EOF 之后与关闭的 stdin 一样不再提问。
+        # getpass 在真终端上读的是 /dev/tty 而不是 stdin，所以不受它影响，也不让它变成「到尽头」
+        sticky = kind != "getpass"
+        if sticky and self.eof:
+            return None
+        control = self.run.control
+        if control is None or control.gone:
+            if sticky:
+                self.eof = True
+            return None
+        self.count += 1
+        request_id = f"in-{os.getpid()}-{self.count}"
+        control.event(
+            INPUT_REQUEST_EVENT,
+            request_id=request_id,
+            kind=kind,
+            prompt=str(prompt)[:_PROMPT_LIMIT],
+            ordinal=self.count,
+        )
+        while True:
+            line = control.readline()
+            if not line:  # 父进程走了：与关闭的 stdin 同一个结论
+                self.run.control = None
+                if sticky:
+                    self.eof = True
+                return None
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            reply = msg.get(INPUT_REPLY_KEY) if isinstance(msg, dict) else None
+            if not isinstance(reply, dict) or reply.get("request_id") != request_id:
+                continue  # 不是给这次提问的（桌面不会这样发；忽略，不猜）
+            text = reply.get("text")
+            if reply.get("eof") or not isinstance(text, str):
+                if sticky:
+                    self.eof = True
+                return None
+            return text
+
+
+class _BridgeStdin(io.TextIOBase):
+    """替掉 `sys.stdin`：读操作变成提问。语义对齐真文件：`readline` 含换行、EOF 回空串。"""
+
+    def __init__(self, bridge: InputBridge):
+        super().__init__()
+        self._bridge = bridge
+
+    @property
+    def encoding(self):  # noqa: D102
+        return "utf-8"
+
+    def readable(self):  # noqa: D102
+        return True
+
+    def isatty(self):  # noqa: D102
+        return False
+
+    def fileno(self):  # noqa: D102
+        raise io.UnsupportedOperation("fileno")
+
+    def _fill(self, kind: str) -> bool:
+        """问一次，把答复放进缓冲。返回 False = EOF。"""
+        b = self._bridge
+        text = b.ask(kind)
+        if text is None:
+            return False
+        if kind == "readline" and not text.endswith("\n"):
+            text += "\n"
+        b.buffer += text
+        if kind == "read":
+            b.eof = True  # 「读到 EOF」的一次回答就是全部内容
+        return True
+
+    def readline(self, size=-1):  # noqa: D102
+        b = self._bridge
+        if size is not None and size == 0:
+            return ""  # 与真文件一致：0 长度读不消费、不阻塞——也就不是一次提问
+        while "\n" not in b.buffer and (size is None or size < 0 or len(b.buffer) < size):
+            if not self._fill("readline"):
+                break
+        head, nl, rest = b.buffer.partition("\n")
+        line = head + nl
+        if size is not None and 0 <= size < len(line):
+            line, rest = line[:size], line[size:] + rest
+        b.buffer = rest
+        return line
+
+    def read(self, size=-1):  # noqa: D102
+        b = self._bridge
+        if size is None or size < 0:
+            while self._fill("read"):
+                pass
+            out, b.buffer = b.buffer, ""
+            return out
+        while len(b.buffer) < size:
+            if not self._fill("read"):
+                break
+        out, b.buffer = b.buffer[:size], b.buffer[size:]
+        return out
+
+    def readlines(self, hint=-1):  # noqa: D102
+        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度达到 hint 就停（读够即止，不再提问）
+        out = []
+        total = 0
+        while True:
+            line = self.readline()
+            if not line:
+                return out
+            out.append(line)
+            total += len(line)
+            if hint is not None and hint > 0 and total >= hint:
+                return out
+
+
+def _install_input_bridge(run: "BridgeRun") -> None:
+    """装 `input` / `sys.stdin` / `getpass`。在用户脚本之前、控制通道握手之后。"""
+    import getpass  # noqa: PLC0415 — 纯标准库；只有开了输入桥才要
+
+    bridge = InputBridge(run)
+
+    def _input(prompt=""):
+        text = "" if prompt is None else str(prompt)
+        if text:
+            # 与 CPython 的 `input` 一致：非终端 stdin 时提示写到 stdout 并 flush
+            with contextlib.suppress(Exception):
+                sys.stdout.write(text)
+                sys.stdout.flush()
+        # 先消费有界读剩在缓冲里的数据（与真 stdin 一致：缓冲里已有的行不再问）
+        buffered = bridge.take_buffered_line()
+        if buffered is not None:
+            return buffered
+        answer = bridge.ask("input", text)
+        if answer is None:
+            raise EOFError("EOF when reading a line")
+        return answer.split("\n", 1)[0].rstrip("\r")
+
+    def _getpass(prompt="Password: ", stream=None):
+        answer = bridge.ask("getpass", "" if prompt is None else str(prompt))
+        if answer is None:
+            raise EOFError("EOF when reading a line")
+        return answer.split("\n", 1)[0].rstrip("\r")
+
+    _input.__name__ = "input"
+    _getpass.__name__ = "getpass"
+    builtins.input = _input
+    getpass.getpass = _getpass
+    sys.stdin = _BridgeStdin(bridge)
+
+
+# ---------------------------------------------------------------------------
 # 会话
 # ---------------------------------------------------------------------------
 class BridgeRun:
@@ -531,6 +905,44 @@ class BridgeRun:
         #: （`except BaseException:` / `except SystemExit:` / 一个 `finally`
         #: 里再 return），那时"终止"就变成了一次静默的普通退出。
         self.terminated = False
+        self.execution_id: str | None = None
+        self.execution_script: str | None = None
+        #: 脚本结束那一刻定格的输入观察（`figcapture.InputObserver.report()`，#1047）；没观察 / 脚本还没跑完 = None。
+        #: `show()` 屏障上脚本还没跑完，之后还可能再读——那时的观察不是这次运行的全部输入，不报
+        self.inputs_report: dict | None = None
+        #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
+        #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
+        self._input_digests: dict[str, str | None] = {}
+
+    def execution_started(self, origin: str) -> None:
+        """Report the compiled target's actual exec boundary once, without argv.
+
+        External/loader-only module origins have no canonical project owner;
+        retain the execution fact but do not invent a basename-based identity.
+        """
+        if self.execution_id is not None:
+            return
+        self.execution_id = _PKG.executionfact.new_id()
+        script = None
+        if origin and os.path.isabs(origin):
+            root = os.path.abspath(self.args.project_root or os.getcwd())
+            source = os.path.abspath(origin)
+            try:
+                if (
+                    os.path.commonpath((root, source)) == root
+                    and os.path.commonpath((os.path.realpath(root), os.path.realpath(source)))
+                    == os.path.realpath(root)
+                    and source != root
+                ):
+                    # Keep the same project-relative alias as descriptors and
+                    # ExecutionSpec; realpath is a containment check, not a new
+                    # script identity which would differ across safe/native.
+                    script = os.path.relpath(source, root).replace("\\", "/")
+            except ValueError:  # Different Windows volumes have no project-relative identity.
+                pass
+        self.execution_script = script
+        if self.control is not None:
+            self.control.event("execution_started", execution_id=self.execution_id, script=script)
 
     # ---- 第二阶段装载 ----
     def _ensure_engine(self):
@@ -567,9 +979,13 @@ class BridgeRun:
         for stem, calls in _CAPTURE_SAVEFIG.items():
             self.session.savefig_calls[stem] = None if calls is None else list(calls)
             self.session.savefig_extras[stem] = list(_CAPTURE_EXTRAS.get(stem, []))
+        _CAPTURE_LOCKED.update(_CAPTURE)
 
     def _ensure_session(self):
         self._ensure_engine()
+        # 进屏障、把 stem 交给界面之前先提升一遍：改名之后紧接着 `plt.show()` 的脚本，界面拿到的就是 `final`
+        # 而不是之后再也改不动的 `final.png`（#1124，Codex #1126 r4295028867）
+        _promote_temp_saves(self.session.capture if self.session is not None else ())
         if self.session is not None:
             self._sync_captures()
             self.session.instrument_all()
@@ -615,7 +1031,20 @@ class BridgeRun:
                         )
                     run._barrier_released = True
                     run.released = True
-                    return {"released": True}
+                    if run.execution_id is None:
+                        # A module's parent-package import may show a Figure
+                        # before target compilation. Its release is not proof
+                        # that the requested target has begun executing.
+                        return {"released": True}
+                    # This response is itself trusted evidence of release.
+                    # Detach can close the controller before the later event
+                    # arrives, so both channels carry the SAME execution fact.
+                    run.execution_id = _PKG.executionfact.new_id()
+                    return {
+                        "released": True,
+                        "execution_id": run.execution_id,
+                        "script": run.execution_script,
+                    }
                 if cmd == "terminate":
                     run.terminated = True
                     run.released = True
@@ -625,6 +1054,9 @@ class BridgeRun:
                 raise wireproto.ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
         self.session = _NativeSession(self.args.out_dir, self.args.preview_dpi)
+        # 保存观察账本在 runner 里是模块级的（钩子拿不到实例）；会话要靠它按 Figure 身份认领「这次运行
+        # 成功 save 的原产物」（P08a 只读降级），所以把同一份挂过去
+        self.session.savefig_observations = _SAVEFIG_OBSERVATIONS
         self._sync_captures()
         self.session.instrument_all()
         self.handler = _NativeHandler(self.session)
@@ -634,8 +1066,15 @@ class BridgeRun:
     def build_result(self) -> dict:
         self._ensure_session()
         _resolve_module_source(self.args)
-        out = self.session.stems_summary(_DROPPED)
+        out = self.session.stems_summary(_DROPPED, _PDF_PAGES.summary(_SAVEFIG_OBSERVATIONS))
         out["savefig_observations"] = _SAVEFIG_OBSERVATIONS.report()
+        # 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明，不由一个总成功数代替
+        facts = self.session.figure_facts(_SAVEFIG_OBSERVATIONS)
+        out["figure_facts"] = facts
+        out["capture_summary"] = {
+            "live": sum(1 for f in facts if f["state"] == "live"),
+            "failed": sum(1 for f in facts if f["state"] == "failed"),
+        }
         out["descriptors"] = self.session.descriptors(
             script=self.args.rel_target,
             entry=self.args.entry,
@@ -644,10 +1083,15 @@ class BridgeRun:
             # native 不谈「原始产物」：passthrough savefig 写到哪由用户脚本
             # 决定，那不是 Tavotto 管的图库。写回原件在 native v1 一律不提供。
             project_root=None,
+            run_config=self.args.run_config,
         )
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
-        out["runtime"] = _PKG.figsession.runtime_report()
+        out["runtime"] = _PKG.figsession.runtime_report(import_skips=bridgeboot.skip_events())
+        if self.inputs_report is not None:
+            # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
+            # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
+            out["observed_inputs"] = self.inputs_report
         if self.script_error:
             out["script_error"] = self.script_error
         return out
@@ -695,22 +1139,36 @@ class BridgeRun:
         manifest = _PKG.manifest
         overrides = _PKG.overrides
         self.rebase_warnings = {}
-        for stem, state in self.session.states.items():
+        # 每个屏障重新判一次 rcParams 的回退尾巴：脚本在两个屏障之间可能开了 usetex（撤回尾巴）
+        # 或关了它（补回）。幂等，只动我们自己追加的那一份
+        overrides.ensure_rcparams_fallback(list(self.session.capture.values()))
+        for stem, state in list(self.session.states.items()):
             if stem not in self._known_stems:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
                 # 出过预览，baseline 就是此刻。再来一遍纯属重复渲染。
                 continue
-            # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
-            # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
-            # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
-            # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
-            self.session.establish_frame(stem, state.fig)
-            manifest.instrument(state)
-            patches = self.saved_patches.get(stem) or []
-            warnings = overrides.apply(state, patches) if patches else []
-            if warnings:
-                self.rebase_warnings[stem] = list(warnings)
-            self.session.render(stem)
+            try:
+                # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
+                # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
+                # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
+                # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
+                self.session.establish_frame(stem, state.fig)
+                # 字体回退尾巴（ADR 0045）：屏障之间脚本可能往这张图加了默认族的文字；有 TeX
+                # 文字的图不补 rcParams，只有逐 Text 这一步兜得住它们。幂等
+                overrides.ensure_figure_fallback(state.fig)
+                manifest.instrument(state)
+                patches = self.saved_patches.get(stem) or []
+                warnings = overrides.apply(state, patches) if patches else []
+                if warnings:
+                    self.rebase_warnings[stem] = list(warnings)
+                staged = self.session._stage_preview(stem)  # noqa: SLF001 — 渲染段；发布段在 try 之外
+            except Exception as exc:  # noqa: BLE001 — 脚本在两个屏障之间把这张图改坏了：只隔离这一张
+                # 异常逃出去会打断用户脚本（在 `show()` 里抛），再在 script_end 重复一次。和新捕获同一套逐图隔离
+                self.rebase_warnings.pop(stem, None)
+                self.session.isolate_live_failure(stem, exc)  # 存储类错误在里头原样上抛
+                continue
+            # 发布段（账本 / 产物目录）出错是会话级的，不隔离，照新捕获路径的口径上抛
+            self.session._publish_staged(stem, staged)  # noqa: SLF001
 
     def release_barrier(self, reason: str) -> list:
         """**任何**离开屏障的路径都要经过这里（ADR 0021 §8.1）。
@@ -733,6 +1191,9 @@ class BridgeRun:
             return []
         overrides = _PKG.overrides
         owed: list = []
+        # 失败图（P08a）：它的预览没出来，但 Figure 可能已经被 instrument 动过——同样要核对恢复，
+        # 恢复不了就和健康图一样不许放行
+        owed.extend(self.session.failed_restore_owed())
         for stem, state in self.session.states.items():
             snapshot = self.session.snapshot(stem)
             if snapshot:
@@ -750,13 +1211,25 @@ class BridgeRun:
                 continue
             if state.unrestored:
                 owed.append(stem)
-        self._known_stems = set(self.session.states)
+        # 在 rebase 里被隔离的已知图：保留"已知"身份和已存的 patch——脚本修好后下个屏障它回来时要按已知图
+        # 重放这些编辑，而不是当新图丢掉（Codex #978）
+        self._known_stems = set(self.session.states) | {
+            s for s in self._known_stems if s in self.session.failures
+        }
         self._had_barrier = True
+        # 脚本接着跑：失败过的图下一个屏障再试一次（可能已被脚本改好）
+        self.session.allow_retry_failed()
+        if not owed:
+            # 字体回退尾巴（ADR 0045）也是我们注入的状态：放行前撤回，脚本接着跑时 rcParams 是它自己
+            # 的值；下一个屏障 `rebase()` 按当时有没有 TeX 文字重新判定。没放行成（owed）就留着
+            overrides.restore_rcparams_fallback()
         return owed
 
     def resume_editing(self) -> None:
         """放行被拒之后回到编辑态：把刚存下的列表重放回去（与 `rebase()` 的重放同一个 apply）。"""
         overrides = _PKG.overrides
+        # 放行被拒前 `release_barrier` 可能已撤回尾巴：回到编辑态补回（有 TeX 文字则照旧不补）
+        overrides.ensure_rcparams_fallback(list(self.session.capture.values()))
         for stem, state in self.session.states.items():
             try:
                 overrides.apply(state, self.saved_patches.get(stem) or [])
@@ -764,7 +1237,67 @@ class BridgeRun:
                 print(f"[tavotto] 回到编辑态时重放 {stem} 出错: {exc}", file=sys.stderr)
 
     # ---- 屏障 ----
+    @staticmethod
+    def _digests_of(report: dict) -> dict[str, str | None]:
+        return {
+            e["path"]: e.get("sha256")
+            for key in ("files", "local_modules")
+            for e in report.get(key) or []
+            if isinstance(e, dict) and "path" in e
+        }
+
+    def _snapshot_inputs(self) -> None:
+        """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份）。"""
+        observer = _INPUTS
+        if observer is None:
+            return
+        try:
+            with observer.paused():
+                report = observer.report(
+                    local_modules=figcapture.observed_local_modules(
+                        self.args.project_root, sys.modules, exclude_dir=_HERE
+                    )
+                )
+            for path, sha in self._digests_of(report).items():
+                self._input_digests.setdefault(path, sha)
+        except Exception:  # noqa: BLE001 — 观察器绝不影响脚本
+            pass
+
+    def freeze_inputs(self) -> None:
+        """脚本跑完：输入观察定格（与 safe worker 在 build 那一刻定格同一口径：观察到的数据文件 + `sys.modules` 里
+        项目内的本地模块，各带 sha256），然后卸掉观察器——之后再没有用户代码要看，引擎自己的读不该记账。
+
+        屏障期间依据变了就不报观察（Codex #1180 P2）：脚本停在 `show()` 屏障上时用户改了 helper / 数据，进程执行的
+        是旧内容，这里哈希到的却是新字节——把从没执行过的内容记成依据，下次重开会误判沿用 native。
+        所以进屏障时记过的每条摘要，最终那份里缺了或不同 → `inputs_report = None`，记录保持不沿用。"""
+        global _INPUTS
+        observer = _INPUTS
+        if observer is None:
+            return
+        try:
+            with observer.paused():
+                self.inputs_report = observer.report(
+                    local_modules=figcapture.observed_local_modules(
+                        self.args.project_root, sys.modules, exclude_dir=_HERE
+                    )
+                )
+            final = self._digests_of(self.inputs_report)
+            if any(final.get(path, _GONE) != sha for path, sha in self._input_digests.items()):
+                self.inputs_report = None
+        except Exception:  # noqa: BLE001 — 观察器绝不影响脚本：算不出就是「没观察」
+            self.inputs_report = None
+        finally:
+            observer.uninstall()
+            _INPUTS = None
+
     def barrier(self, reason: str) -> None:
+        """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。"""
+        if reason != "script_end":  # script_end 在 freeze 之后，观察器已卸
+            self._snapshot_inputs()
+        with _engine_reads():
+            self._barrier(reason)
+
+    def _barrier(self, reason: str) -> None:
         """在**拥有 Figure 的这个线程**上服务控制循环，直到 continue/shutdown。
 
         没有控制通道时（`--report` 形态、对拍夹具）立刻返回——那时本来就
@@ -785,6 +1318,10 @@ class BridgeRun:
             "barrier",
             reason=reason,
             stems=list(self.session.states),
+            failed_stems=list(self.session.failures) or None,
+            # 逐图事实随每个 barrier 一起带过去：桌面侧不必为了拿它再发一次 build，
+            # 也就不会在第二个 barrier 之后还拿着第一个 barrier 的旧事实
+            figure_facts=self.session.figure_facts(_SAVEFIG_OBSERVATIONS),
             script_error=self.script_error,
             rebase_warnings=self.rebase_warnings or None,
         )
@@ -830,7 +1367,17 @@ class BridgeRun:
             raise SystemExit(TERMINATE_EXIT)
         if self.control is None:
             return
-        self.control.event("released", reason=reason)
+        # Reuse the fact already returned by successful continue. A failed
+        # continue stays inside the barrier and never reaches this boundary.
+        self.control.event(
+            "released",
+            reason=reason,
+            **(
+                {"execution_id": self.execution_id, "script": self.execution_script}
+                if self.execution_id is not None
+                else {}
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -846,6 +1393,13 @@ def _parse_args(argv: list):
     ap.add_argument("--control-port", type=int, default=0)
     ap.add_argument("--report", default="")
     ap.add_argument("--project-root", default="")
+    ap.add_argument(
+        "--run-config", default=""
+    )  # 桌面拥有的启动：运行配置的不透明引用（与 safe 同名同义）
+    # 桌面拥有的启动：脚本的 input / stdin 读取 / getpass 变成控制通道上的提问（P07）；终端拥有的不带
+    ap.add_argument("--input-bridge", action="store_true")
+    # 桌面拥有的启动：观察脚本读了哪些项目内文件、import 了哪些本地模块（与 safe 同口径，#1047）；终端拥有的不带
+    ap.add_argument("--observe-inputs", action="store_true")
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -883,7 +1437,32 @@ def _derive_target_facts(args) -> None:
     args.rel_target = rel.replace("\\", "/")
 
 
+def _unreadable_folder_extra(exc: BaseException, args) -> dict:
+    """脚本失败是不是「它加进 `sys.path` 的项目外目录读不了」（ADR 0153）：是则 `{"unreadable_folder": {"folder": 名}}`。
+    判据在 `bridgeboot.unreadable_folder_fact`（与 safe worker 同一份）；任何意外都当没有，绝不盖掉原来的脚本错误。"""
+    try:
+        import sysconfig
+
+        roots = [args.project_root or os.getcwd(), os.path.dirname(args.source_path or "")]
+        interp = [
+            sys.prefix,
+            sys.base_prefix,
+            sys.exec_prefix,
+            *(
+                sysconfig.get_paths().get(k, "")
+                for k in ("stdlib", "platstdlib", "purelib", "platlib")
+            ),
+        ]
+        fact, private = bridgeboot.unreadable_folder_facts(
+            exc, _PATH_BASELINE, [r for r in roots if r], [p for p in interp if p]
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
+
+
 def main(argv: list | None = None) -> int:
+    global _INPUTS
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     if not args.out_dir:
         # **不往用户 home 里放一个 dotdir**。产物目录归 Tavotto 管
@@ -897,25 +1476,36 @@ def main(argv: list | None = None) -> int:
     _derive_target_facts(args)
     run = BridgeRun(args)
 
+    callbacks = {
+        "matplotlib.figure": _install_savefig_hook,
+        "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
+    }
+    if args.observe_inputs and args.project_root:
+        # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
+        _INPUTS = figcapture.InputObserver(args.project_root)
+        _INPUTS.install()
+        callbacks["numpy.lib._datasource"] = _INPUTS.observe_numpy_datasource
     # 钩子：**自己不 import matplotlib**，只在用户 import 到的那一刻挂上去。
-    hook = bridgeboot.PostImportHook(
-        {
-            "matplotlib.figure": _install_savefig_hook,
-            "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
-        }
-    )
+    hook = bridgeboot.PostImportHook(callbacks)
     hook.install()
 
     token = _take_token()
     if args.control_port:
         run.control = Control(args.control_host, args.control_port, token)
+        if args.input_bridge:
+            _install_input_bridge(run)
 
     exit_code = 0
     try:
         if args.target_kind == "script":
-            run_script(args.target, args.user_argv)
+            run_script(args.target, args.user_argv, on_start=run.execution_started)
         else:
-            run_module(args.target, args.user_argv, on_origin=_set_module_source(args))
+            run_module(
+                args.target,
+                args.user_argv,
+                on_origin=_set_module_source(args),
+                on_start=run.execution_started,
+            )
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except BaseException as exc:  # noqa: BLE001 — 脚本炸了也要把已有的图交出去
@@ -924,10 +1514,13 @@ def main(argv: list | None = None) -> int:
             "code": "script_error",
             "message": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
+            # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
+            **_unreadable_folder_extra(exc, args),
         }
         traceback.print_exc()
     finally:
         hook.uninstall()
+    run.freeze_inputs()
 
     if run.terminated:
         # **确定的退出码**，不管用户脚本对 SystemExit 做了什么。
@@ -938,20 +1531,38 @@ def main(argv: list | None = None) -> int:
 
     _resolve_module_source(args)
 
+    _promote_temp_saves(run.session.capture if run.session is not None else ())
+
+    # 写了文件却因 stem 被别的图持有而没认领的图：与 safe worker 同一时机（脚本跑完、pyplot 兜底之前）、
+    # 同一个函数；不依赖脚本有没有 import pyplot（纯 OO 脚本同样会写同一 stem）
+    figcapture.adopt_displaced_writers(
+        _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
+    )
+    figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
+    adopt_pdf_pages()
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
         collect_pyplot(plt)
 
-    if args.report:
-        _write_report(run, args, exit_code)
-
     if run.control is not None and _CAPTURE:
         try:
             run.barrier("script_end")
-        except SystemExit:
-            pass
+        except SystemExit as exc:
+            # 最后一道屏障上的 terminate 与 `show` 屏障同一规则：退出码是确定的
+            # `TERMINATE_EXIT`。上面那次判据在屏障**之前**，赶不上这一次，所以在
+            # 这里补（P01b / EX10）。`shutdown`（client）不是终止，码维持脚本自己的。
+            if run.terminated or exc.code == TERMINATE_EXIT:
+                exit_code = TERMINATE_EXIT
+
+    # 报告在最终码定下之后写：它的 `exit_code` 与进程真实退出码是同一个数
+    if args.report:
+        _write_report(run, args, exit_code)
+
     if run.control is not None:
-        run.control.event("exit", code=exit_code, figures=len(_CAPTURE))
+        # 与 `tavotto run` 的 status-file 同一判据：按预览发布账本数，不按捕获到的 Figure 数——
+        # 预览没发布成的图不算「完成」，桌面卡片与终端不得一个说 2、一个说 1（P01b，EX12，Codex #958）
+        figures = len(figcapture.published_preview_stems(args.out_dir)) if args.out_dir else 0
+        run.control.event("exit", code=exit_code, figures=figures)
         run.control.close()
     return exit_code
 
@@ -1020,6 +1631,7 @@ def _write_report(run, args, exit_code: int) -> None:
         "rel_target": args.rel_target,
         "figures": [{"stem": s, "capture_source": _CAPTURE_SOURCE[s]} for s in _CAPTURE],
         "dropped_figures": _DROPPED,
+        "pdf_pages": _PDF_PAGES.summary(_SAVEFIG_OBSERVATIONS),
         "savefig_observations": _SAVEFIG_OBSERVATIONS.report(),
         "script_error": run.script_error,
         "engine_dir_was_on_sys_path": _ENGINE_DIR_WAS_ON_PATH,
@@ -1034,6 +1646,8 @@ def _write_report(run, args, exit_code: int) -> None:
         },
         "matplotlib_backend": _backend_name(),
         "tavotto_importable": _tavotto_importable(),
+        # `--observe-inputs` 时脚本结束那一刻定格的输入观察（与 build 响应的 `observed_inputs` 同一份，#1047）
+        "observed_inputs": run.inputs_report,
     }
     with open(args.report, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=1, sort_keys=True)

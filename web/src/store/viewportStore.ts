@@ -94,6 +94,14 @@ interface ViewportState {
    * 画布的，下一次侧栏开合就按别的画布的取景框把还原出来的视口重算掉。
    */
   setView: (view: ViewTarget) => void
+  /**
+   * 手势开始前把视口**定住**并取一份完整快照：在飞的补间直接落到它的终点（不留半路帧），再记
+   * `{zoom, pan, fitted, lastFit}` 四项。拖页面边这类会临时脱离适应模式的手势用它，取消时整体还原
+   * （只还原 pan 会留下后来的 zoom，却把结果标成 fitted——视口声称代表 `lastFit` 但对不上）。
+   */
+  freezeView: () => ViewSnapshot
+  /** 把 `freezeView` 的快照四项原样整体还原（停补间、不退出 / 不触发取景）。 */
+  restoreFrozenView: (snap: ViewSnapshot) => void
 }
 
 /** 适应模式的一块非页面取景框（mm）与留白（px） */
@@ -103,6 +111,11 @@ export interface FitFrame {
   w: number
   h: number
   padding: number
+}
+
+export interface ViewSnapshot extends ViewTarget {
+  fitted: boolean
+  lastFit: FitRecord | null
 }
 
 /** 视口的一个落点：补间与瞬时设置共用同一种描述 */
@@ -185,8 +198,8 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
  * 最近一次要求适配的取景框；舞台尺寸变了、仍在适应模式时按它重算。`page` = 这块
  * 就是页面（`fit` / `fitAnimated`），否则是调用方给的矩形（`fitRect*`）。
  */
-let lastFit: { x: number; y: number; pageW: number; pageH: number; padding: number; page: boolean } | null =
-  null
+type FitRecord = { x: number; y: number; pageW: number; pageH: number; padding: number; page: boolean }
+let lastFit: FitRecord | null = null
 
 /**
  * 用户自己动过视口 = 退出适应模式：之后舞台尺寸再变也不重算。
@@ -235,6 +248,13 @@ function fitTweened(set: Setter, get: Getter, frame: NonNullable<typeof lastFit>
  * `padding / 2` = 36px，页面底 16px 压在工具条下面、点击被截走）。工具条隐藏时为 0，回到对称留白。
  */
 export const TOOLBAR_FIT_CLEARANCE = 60
+
+/**
+ * 单图编辑里再多让出的一行通知高度（一条 toast 的 36 + 间距 + 余量）。单图编辑的取景放大到铺满舞台，图的下边会压进
+ * 底部通知轨：「已为编辑新建了一张画布」是常驻的，首次进入还会叠上「改动会保存到当前排版」与「渲染完成」两条，
+ * 三条叠起来盖住贴着图下沿的 X 轴标题——点不中。多让一行后图下沿落在三条叠起来的顶边之上（CI 截图量得 522 对 551）。
+ */
+export const NOTICE_FIT_ROOM = 46
 
 /** 按取景框算落点；调用方保证视口已量到尺寸。`bottomClear`：底部要让出的高度（px），只抬高下边距 */
 function fitTarget(
@@ -390,6 +410,29 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
     animateTo(set, get, { zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
   },
 
+  freezeView: () => {
+    if (animTarget) {
+      const t = animTarget
+      stopAnim()
+      set({ zoom: t.zoom, panX: t.panX, panY: t.panY, readoutZoom: t.zoom, readoutRolls: false })
+    }
+    const s = get()
+    return { zoom: s.zoom, panX: s.panX, panY: s.panY, fitted: s.fitted, lastFit }
+  },
+
+  restoreFrozenView: (snap) => {
+    stopAnim()
+    lastFit = snap.lastFit
+    set({
+      zoom: snap.zoom,
+      panX: snap.panX,
+      panY: snap.panY,
+      fitted: snap.fitted,
+      readoutZoom: snap.zoom,
+      readoutRolls: false,
+    })
+  },
+
   setView: ({ zoom, panX, panY }) => {
     stopAnim()
     leaveFitMode(set, get)
@@ -426,6 +469,32 @@ export function clientToMm(clientX: number, clientY: number, t = getTransform())
     x: worldToMm((clientX - t.originX - t.panX) / t.zoom),
     y: worldToMm((clientY - t.originY - t.panY) / t.zoom),
   }
+}
+
+/**
+ * 视口此刻在页面 mm 里的可见矩形（纯函数，由 transform 与视口尺寸算出）。
+ * 视口尺寸未知（还没上报，0 × 0）回 null = 「不知道」，调用方别拿它当「什么都看不见」。
+ */
+export function visibleRectMm(
+  t: Pick<ViewTransform, 'zoom' | 'panX' | 'panY'>,
+  viewW: number,
+  viewH: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (!(viewW > 0) || !(viewH > 0) || !(t.zoom > 0)) return null
+  const x0 = worldToMm((0 - t.panX) / t.zoom)
+  const y0 = worldToMm((0 - t.panY) / t.zoom)
+  return {
+    x: x0,
+    y: y0,
+    w: worldToMm(viewW / t.zoom),
+    h: worldToMm(viewH / t.zoom),
+  }
+}
+
+/** 此刻的视口可见矩形（mm） */
+export const currentVisibleRectMm = () => {
+  const { viewW, viewH } = useViewportStore.getState()
+  return visibleRectMm(getTransform(), viewW, viewH)
 }
 
 /** 屏幕 6px 的吸附容差换算成当前缩放下的 mm */

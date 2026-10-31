@@ -38,26 +38,39 @@
     "minutes": "{{m}}m {{s}}s",
     "seconds": "{{value}}s"
   },
+  "effortDesc": {
+    "high": "Multi-step edits and layouts that need thought",
+    "low": "Simple tweaks, done in seconds",
+    "max": "Most thorough; noticeably more time and quota",
+    "medium": "Balances speed and quality",
+    "minimal": "Only the most direct change; fastest",
+    "xhigh": "Goes deeper than High; more time and quota",
+    "ultra": "Beyond Extra high; the most time and quota"
+  },
   "effortLabel": {
     "high": "High",
     "low": "Low",
     "max": "Max",
     "medium": "Medium",
     "minimal": "Minimal",
-    "xhigh": "Extra high"
+    "xhigh": "Extra high",
+    "ultra": "Ultra"
   },
   "history": {
     "allStatuses": "All statuses",
-    "changedSuffix": " · changed",
     "close": "Close task history",
     "count_one": "{{count}} task",
     "count_other": "{{count}} tasks",
     "delete": "Delete this record",
-    "effort": "Reasoning effort: {{effort}}",
+    "effortTitle": "Reasoning",
     "empty": "No assistant tasks yet",
     "filterAria": "Filter by status",
+    "model": "Model",
+    "modelDefault": "CLI default",
+    "moreInfo": "Details",
     "next": "Next",
     "noMatch": "No matching task",
+    "openTrace": "View execution record",
     "pin": "Pin this record",
     "pinTip": "Pin: exempt from retention cleanup",
     "prev": "Previous",
@@ -66,11 +79,20 @@
     "reverted": "Reverted. The script is back to how it was.",
     "searchAria": "Search task history",
     "searchPlaceholder": "Search tasks…",
-    "snapshotAvailable": "Snapshot available",
-    "snapshotCleared": "Snapshot cleaned up",
+    "snapshot": "Snapshot",
+    "snapshotAvailableShort": "Can revert",
+    "snapshotClearedShort": "Cleared",
+    "state": {
+      "changed": "Changed",
+      "unchanged": "No change"
+    },
     "title": "Task history",
     "unpin": "Unpin",
-    "unpinTip": "Unpin: cleaned up with the retention policy"
+    "unpinTip": "Unpin: cleaned up with the retention policy",
+    "via": {
+      "endpoint": "API endpoint",
+      "cli": "Local CLI"
+    }
   },
   "markdown": {
     "image": "[image: {{alt}}]",
@@ -82,28 +104,77 @@
     "expand": "Show more",
     "resend": "Send again"
   },
+  "sessionError": {
+    "agent_auth": "The model credential is invalid or expired.",
+    "agent_quota": "The model service is out of quota or rate limited. Try again later.",
+    "agent_network": "Couldn’t reach the model service.",
+    "agent_html_response": "The connection address opens a web page, not an API.",
+    "agent_refused": "The model declined this edit.",
+    "agent_budget": "This edit hit its usage limit and stopped.",
+    "agent_output_truncated": "The model hit its reply limit before finishing.",
+    "agent_max_turns": "This edit took too many steps and stopped.",
+    "agent_tool_error_loop": "The AI kept failing and stopped.",
+    "agent_internal": "Something went wrong while the AI was running.",
+    "agent_exit_nonzero": "Something went wrong while the AI was running.",
+    "timeout": "This edit timed out and stopped."
+  },
+  "notice": {
+    "checkConnection": "Check connection",
+    "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
+    "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",
+    "taskRejected": "The edit didn’t pass the pre-write checks and wasn’t written to your project.",
+    "unmetHeading": "Checks not met",
+    "dataFigurePartial": "Some rows aren’t numbers, so they weren’t drawn. The script was created, but the result isn’t fully verified.",
+    "dataFigureNeedsInput": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction.",
+    "dataFigureNeedsInputExample": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction, for example “plot {{y}} against {{x}}”.",
+    "dataFigureFailedWritten": "The new script was written to the project, but the plotted data doesn’t match the CSV. If it’s wrong, you can delete this new script.",
+    "dataFigureUnconfirmed": "No result came back; the figure may already exist. Check the result first instead of submitting again.",
+    "dataFigureReconcile": "Check result",
+    "legendLabel": "The legend also says “{{from}}”. Change it to “{{to}}” too?",
+    "legendLabelApply": "Change it too"
+  },
   "panel": {
     "abort": "Stop",
+    "finishing": "Finishing the previous change…",
     "agentModel": "Agent and model",
     "agentNote": "Edits the script directly; a snapshot is taken before each run, so changes can be reverted.",
+    "checkResult": "Check result",
+    "checkUnreachable": "Can’t reach the backend right now. Try again shortly.",
     "cli": "CLI: {{version}}",
     "cliPath": "Path: {{path}}",
+    "draftNotSaved": "Couldn’t save your draft first, so nothing was sent. Check the connection and retry.",
+    "draftChangedWhileSending": "The text changed while it was being sent, so nothing was sent. Check it and send again.",
+    "draftRestored": "Restored your unsent draft",
+    "draftReplaced": "Draft replaced by a change from another window",
+    "draftStalled": "Draft not saved to the local project yet — retrying",
+    "draftTooLong": "This instruction is too long (over {{limit}} KB). Shorten it to send.",
+    "editAndResend": "Edit and resend",
     "effort": "Reasoning effort",
+    "effortDefault": "Default",
     "effortPill": "Reasoning {{effort}}",
     "effortRaw": "Raw effort: {{value}}",
     "emptyHint": "The assistant edits the script directly; every change can be reverted.",
     "emptyTitle": "How should this figure change?",
     "inputAria": "Describe how to change this figure",
+    "ledgerFailed": "Couldn’t save a record of this request, so it wasn’t sent. Check the connection and retry.",
+    "ledgerUnreadable": "Can’t check this figure’s pending requests right now, so sending is paused.",
     "noCli": "No figure assistant available.",
     "noPanelTitle": "Select an editable figure",
     "none": "—",
+    "notReceivedBody": "You can send it again; it won’t run twice.",
+    "notReceivedTitle": "The backend never received this request",
     "openAiSettings": "Open Figure assistant settings",
     "placeholder": "e.g. move the legend to the upper left",
+    "draftLoading": "Loading draft…",
     "placeholderNoPanel": "Select an editable figure first",
     "probing": "Detecting local CLIs…",
     "processSteps_one": "{{count}} step",
     "processSteps_other": "{{count}} steps",
+    "resendSame": "Send again",
     "retry": "Retry",
+    "retryChangedBody": "The last task failed, but it may have edited the script. Running it again will edit the current content once more. Retry anyway?",
+    "retryChangedConfirm": "Retry anyway",
+    "retryChangedTitle": "The script may already be changed",
     "revert": "Revert this change",
     "runningHere": "A task for this script is already running",
     "scopeTitle": "Scope",
@@ -112,10 +183,17 @@
     "send": "Send ({{key}})",
     "sendAria": "Send",
     "sendFailed": "Couldn’t send",
+    "sendFailedReason": "Assistant service error",
     "stepRan": "Ran",
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",
-    "techDetails": "Technical details"
+    "unconfirmedBody": "This request may already be running. Check the result first.",
+    "unconfirmedGoneBody": "The figure that sent this is no longer on the canvas. You can still check the result.",
+    "unconfirmedTitle": "Sent, not yet confirmed",
+    "connectAi": "Connect AI",
+    "noAi": "No AI connected yet.",
+    "connectMore": "Connect more AI…",
+    "aiModel": "AI & model"
   },
   "process": {
     "thought": "Thought for {{duration}}",
@@ -129,15 +207,35 @@
   "session": {
     "doneChanged": "Changes written to the script.",
     "doneNoChange": "Finished; the script is unchanged",
+    "restoredNote": "Reconnected to a task that is still running. Earlier output isn’t shown; the result appears when it finishes.",
     "reverted": "Reverted. The script is back to its previous state.",
     "revertedStatus": "Reverted the assistant’s change. Rebuilding the figure…",
-    "running": "Editing the script…"
+    "running": "Editing the script…",
+    "taskFailedChanged": "Edited, but the checks didn’t pass",
+    "taskPartial": "Edited; some checks couldn’t be completed",
+    "taskRejected": "The edit didn’t pass the pre-write checks; your project is unchanged",
+    "taskVerified": "Edited; the data checks out unchanged",
+    "correcting": "The first attempt didn’t pass the pre-write checks; fixing it automatically…",
+    "taskVerifiedCorrected_one": "Changed after one automatic fix; data checks match",
+    "taskVerifiedCorrected_other": "Changed after {{count}} automatic fixes; data checks match",
+    "dataFigureRunning": "Reading the data and drawing…",
+    "dataFigureDone": "Created script {{script}}",
+    "dataFigurePartial": "Created script {{script}}; some rows weren’t drawn",
+    "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use",
+    "dataFigureFailedWritten": "Created {{script}}, but verification failed",
+    "dataFigureUnconfirmed": "Result unconfirmed"
   },
   "status": {
+    "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
     "aiChanged": "The assistant edited the script; re-rendering the figure…",
     "aiChangedRefreshFailed": "The assistant edited the script, but the project couldn’t refresh: {{reason}}. Your edit is saved, and Tavotto will retry automatically.",
     "aiFailed": "The assistant failed",
     "aiNoChange": "The assistant finished; the script is unchanged",
+    "aiSuperseded": "This instruction was replaced by the rewritten one and will not run.",
+    "aiTaskFailedChanged": "The assistant edited the script, but the checks didn’t pass. You can revert it.",
+    "aiTaskPartial": "The assistant edited the script; some checks couldn’t be completed",
+    "aiTaskRejected": "The assistant’s edit didn’t pass the checks; your project is unchanged",
+    "aiTaskVerified": "The assistant edited the script and the data checks out; re-rendering…",
     "aiTimeout": "The assistant timed out",
     "cancelled": "Cancelled",
     "done": "Done",
@@ -147,5 +245,246 @@
     "running": "Running",
     "timeout": "Timed out"
   },
-  "tabLabel": "Assistant"
+  "tabLabel": "Assistant",
+  "dataFigure": {
+    "open": "Plot from data",
+    "title": "Plot from data",
+    "empty": "There are no CSV data files in this project",
+    "loadFailed": "Couldn’t load the data file list",
+    "truncated": "Too many files; only the first part is listed",
+    "fileLabel": "Data file",
+    "filePlaceholder": "Choose a CSV file",
+    "instructionLabel": "What to plot",
+    "instructionPlaceholder": "For example: plot y against x",
+    "generate": "Generate",
+    "cancel": "Cancel",
+    "unconfirmedHint": "The last result isn’t confirmed yet. Check it in the conversation first."
+  },
+  "trace": {
+    "ui": {
+      "title": "Trace",
+      "treeLabel": "Steps",
+      "steps": "Steps",
+      "unknown": "—",
+      "search": {
+        "placeholder": "Search steps",
+        "label": "Search steps"
+      },
+      "metric": {
+        "duration": "Duration",
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "modelCalls": "Model calls",
+        "toolCalls": "Tool calls",
+        "errors": "Errors",
+        "atLeast": "≥{{count}}"
+      },
+      "legend": {
+        "model": "Model call",
+        "tool": "Tool / phase",
+        "wait": "Waiting",
+        "handoff": "Handoff",
+        "failed": "Failed",
+        "point": "Moment only",
+        "unmeasured": "Not measured"
+      },
+      "playback": {
+        "play": "Play",
+        "pause": "Pause",
+        "replay": "Replay",
+        "scrub": "Replay position",
+        "speedLabel": "Replay speed",
+        "speed": {
+          "auto": "Auto",
+          "realtime": "1×",
+          "fast": "10×"
+        },
+        "speedTip": {
+          "auto": "Compress to a few seconds",
+          "realtime": "Real time",
+          "fast": "10× speed"
+        }
+      },
+      "empty": {
+        "title": "No matching steps",
+        "body": "Nothing in this trace matches “{{query}}”"
+      },
+      "toggle": {
+        "expand": "Expand {{name}}",
+        "collapse": "Collapse {{name}}"
+      },
+      "details": "Details for {{name}}",
+      "close": "Close",
+      "badge": {
+        "firstFailure": "First failure",
+        "slowest": "Slowest",
+        "attempt": "Attempt {{n}}"
+      },
+      "status": {
+        "running": "Running",
+        "ok": "Done",
+        "error": "Failed",
+        "cancelled": "Cancelled",
+        "unknown": "Unknown"
+      },
+      "field": {
+        "duration": "Duration",
+        "started": "Started",
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "tokensIn": "Tokens in",
+        "tokensOut": "Tokens out",
+        "steps": "Steps",
+        "attempt": "Attempt"
+      },
+      "note": {
+        "reported": "Duration reported by another process",
+        "point": "Only the moment was recorded, not a duration",
+        "unmeasured": "This interval was not measured"
+      },
+      "stepCount_one": "{{count}} step",
+      "stepCount_other": "{{count}} steps",
+      "startOffset": "+{{value}}",
+      "tick": {
+        "seconds": "{{value}}s",
+        "minutes": "{{value}}m"
+      },
+      "resize": "Resize the step column"
+    },
+    "state": {
+      "toggle": "Execution trace",
+      "loading": "Reading the execution record…",
+      "error": "Couldn't read the execution record",
+      "retry": "Retry",
+      "not_found": "No execution record for this task (it may be past the retention period)",
+      "disabled": "Execution tracing is turned off",
+      "unsupported": "This execution record is from an incompatible version and can't be shown",
+      "truncated_one": "The record was too long; {{count}} entry in the middle was omitted",
+      "truncated_other": "The record was too long; {{count}} entries in the middle were omitted",
+      "interrupted": "The record stopped before the task ended (the app quit or crashed); what happened afterwards is unknown",
+      "incomplete": "The record is incomplete",
+      "stale": "Couldn't load the final state; below is how the record looked before the task ended",
+      "export": "Export diagnostics",
+      "exported": "Saved to your downloads (local only, nothing was uploaded)",
+      "close": "Close"
+    },
+    "operation": {
+      "ai_task": "AI task",
+      "fix_session": "Smart fix",
+      "preparation": "Run script",
+      "export": "Export"
+    },
+    "span": {
+      "task": "Task",
+      "accept": "Request accepted",
+      "plan": "Plan",
+      "execute": "Execute",
+      "agent_run": "Agent run",
+      "model_request": "Model request",
+      "tool_call": "Tool call",
+      "user_wait": "Waiting for you",
+      "env_install": "Install environment",
+      "env_resolve": "Choose environment",
+      "dependency_diagnosis": "Dependency check",
+      "script_run": "Run script",
+      "render": "Render",
+      "receipt": "Receipt",
+      "validate": "Pre-commit check",
+      "correct": "Auto-correction",
+      "commit": "Write file",
+      "refresh": "Refresh project",
+      "verify": "Post-commit check",
+      "settle": "Wrap up",
+      "export": "Export"
+    },
+    "stage": {
+      "plan": "Plan",
+      "check": "Check plan",
+      "spawn": "Start process",
+      "execute": "Run script",
+      "receipt": "Receipt",
+      "prepare": "Prepare",
+      "source": "Get source",
+      "compile": "Compile",
+      "compose": "Compose",
+      "raster": "Rasterize",
+      "inspect": "Inspect output",
+      "publish": "Write files",
+      "report": "Report"
+    },
+    "agent": {
+      "codex": "Codex",
+      "claude": "Claude Code",
+      "builtin": "Built-in agent"
+    },
+    "execution": {
+      "safe": "Safe mode",
+      "native": "Native mode"
+    },
+    "approvedBy": {
+      "policy": "Automatic by policy",
+      "user": "You approved",
+      "blocked": "Blocked",
+      "denied": "You declined",
+      "timeout": "No answer (timed out)"
+    },
+    "outcome": {
+      "completed": "Completed",
+      "partial": "Partly completed",
+      "needs_input": "Needs your input",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "interrupted": "Interrupted",
+      "fixed": "Fixed",
+      "not_fixed": "Not fixed",
+      "convert": "Handed to Make editable version",
+      "ready": "Ready",
+      "error": "Error",
+      "static_source_available": "Static original only",
+      "done": "Done",
+      "conflict": "File name taken; waiting for you"
+    },
+    "refresh": {
+      "pending": "Not refreshed yet",
+      "ok": "Refreshed",
+      "failed": "Refresh failed",
+      "skipped": "No refresh needed",
+      "not_wired": "Refresh not connected"
+    },
+    "timing": {
+      "reported": "Duration reported by the child process",
+      "point": "Only the moment was recorded, not an interval",
+      "unmeasured": "The interval wasn't measured"
+    },
+    "fact": {
+      "errorCode": "Error code",
+      "attempt": "Attempt",
+      "timing": "Timing",
+      "visibility": "Visibility",
+      "opaque": "Internal steps aren't observable; only the outer run is recorded",
+      "agent": "Agent",
+      "tool": "Tool",
+      "model": "Model",
+      "execution": "Execution",
+      "approvedBy": "Confirmation",
+      "agentExit": "Agent exit",
+      "exitOk": "Exited normally",
+      "exitFailed": "Exited with an error",
+      "outcome": "Task outcome",
+      "changed": "File changed",
+      "yes": "Yes",
+      "no": "No",
+      "refresh": "Project refresh",
+      "usage": "Usage",
+      "usageEstimated": "Estimated (the service didn't report it)",
+      "cost": "Cost",
+      "costEstimated": "Estimated from the price table ({{version}}), not a bill",
+      "firstFailure": "First step that failed"
+    }
+  },
+  "dependency": {
+    "waiting": "Waiting for your dependency decision",
+    "missing": "Validation needs {{names}}. After installation, the edit will be checked again and applied.",
+    "installing": "Preparing dependencies, then checking the edit again…"
+  }
 }

@@ -59,12 +59,17 @@ def startup(monkeypatch):
     # `REAL_CLAIM`
     monkeypatch.setattr(appmod.localserver, "claim", lambda host, port: calls.append("claim"))
     monkeypatch.setattr(appmod.localserver, "serve_browser", _serve_stub(calls))
-    monkeypatch.setattr(appmod.desktop_mode, "run", lambda app: calls.append("desktop_run") or 0)
+    monkeypatch.setattr(
+        appmod.desktop_mode, "run", lambda app, hello=None: calls.append("desktop_run") or 0
+    )
+    monkeypatch.setattr(
+        appmod.desktop_mode, "read_hello", lambda: {}
+    )  # pytest 的 stdin 不是壳的管道
     return calls
 
 
 def _serve_stub(calls: list[str], on_serve=None):
-    def serve(app, host, port, listener=None):
+    def serve(app, host, port, listener=None, announce=None):
         calls.append("serve_browser")
         try:
             if on_serve is not None:
@@ -123,7 +128,7 @@ def test_desktop_sidecar_warms_the_backend_before_it_serves(startup, monkeypatch
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_desktop_final_renderer_cleanup_preserves_exit_or_exception(startup, monkeypatch, failure):
-    def run(app):
+    def run(app, hello=None):
         if failure:
             raise RuntimeError("sidecar failed")
         return 2
@@ -143,7 +148,7 @@ def test_desktop_final_cleanup_failure_is_reported(startup, monkeypatch, exit_co
     def fail():
         raise OSError("injected renderer cleanup failure")
 
-    monkeypatch.setattr(appmod.desktop_mode, "run", lambda app: exit_code)
+    monkeypatch.setattr(appmod.desktop_mode, "run", lambda app, hello=None: exit_code)
     monkeypatch.setattr(renderhost, "shutdown_shared_for_exit", fail)
     with pytest.raises(OSError, match="injected renderer cleanup failure") as exc:
         run_main(monkeypatch, "--desktop-sidecar")
@@ -245,3 +250,73 @@ def test_a_tavotto_that_takes_the_port_right_after_the_probe_is_reused(
     out = capsys.readouterr().out
     assert f"Tavotto 已在 http://127.0.0.1:{port}/ 运行" in out and "#dnonce=tok650" in out
     assert startup == [], f"输了抢端口的实例不该有任何启动副作用: {startup}"
+
+
+# ---------------------------------------------------------------------------
+# 安全启动（TVD-DT76）：握手超时后的「重新启动」不恢复上次项目
+# ---------------------------------------------------------------------------
+def _desktop_with_hello(startup, monkeypatch, hello, *argv):
+    monkeypatch.setattr(appmod.desktop_mode, "read_hello", lambda: hello)
+    seen: list = []
+    monkeypatch.setattr(appmod.desktop_mode, "run", lambda app, hello=None: seen.append(hello) or 0)
+    with pytest.raises(SystemExit):
+        run_main(monkeypatch, "--desktop-sidecar", *argv)
+    return seen
+
+
+def test_a_safe_start_hello_skips_restoring_the_last_project(startup, monkeypatch):
+    restored: list[str] = []
+    monkeypatch.setattr(
+        appmod,
+        "open_project",
+        lambda p, *a, **k: restored.append(p) or {"figures_dir": p, "scripts": 0},
+    )
+    seen = _desktop_with_hello(startup, monkeypatch, {"nonce": "n", "safe_start": True})
+    assert restored == [], "安全启动不该打开最近项目"
+    assert seen == [{"nonce": "n", "safe_start": True}], "hello 要原样交给 run，首行只读一次"
+
+
+@pytest.mark.parametrize("hello", [{"nonce": "n"}, {"nonce": "n", "safe_start": 1}, {}, None])
+def test_a_normal_start_still_restores_the_last_project(startup, monkeypatch, hello):
+    restored: list[str] = []
+    monkeypatch.setattr(
+        appmod,
+        "open_project",
+        lambda p, *a, **k: restored.append(p) or {"figures_dir": p, "scripts": 0},
+    )
+    _desktop_with_hello(startup, monkeypatch, hello)
+    assert restored == ["/nonexistent/figs"]
+
+
+def test_safe_start_does_not_override_an_explicit_figures_argument(startup, monkeypatch):
+    restored: list[str] = []
+    monkeypatch.setattr(
+        appmod,
+        "open_project",
+        lambda p, *a, **k: restored.append(p) or {"figures_dir": p, "scripts": 0},
+    )
+    _desktop_with_hello(startup, monkeypatch, {"nonce": "n", "safe_start": True}, "--figures", "/x")
+    assert restored == ["/x"]
+
+
+def test_safe_start_does_not_touch_the_last_project_setting(startup, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        appmod.engine_config, "last_project", lambda: calls.append("read") or "/nonexistent/figs"
+    )
+    for name in ("set_last_project", "add_recent", "remember_project"):
+        if hasattr(appmod.engine_config, name):
+            monkeypatch.setattr(appmod.engine_config, name, lambda *a, **k: calls.append(name))
+    _desktop_with_hello(startup, monkeypatch, {"nonce": "n", "safe_start": True})
+    assert calls == [], "安全启动既不读也不改 last_project"
+
+
+def test_startup_phases_are_marked_in_order_for_the_sidecar_only(startup, monkeypatch):
+    marks: list[str] = []
+    monkeypatch.setattr(appmod.engine_startupphase, "mark", marks.append)
+    _desktop_with_hello(startup, monkeypatch, {"nonce": "n"})
+    assert marks == ["imports_done", "housekeeping", "pdf_backend", "project_open"]
+    marks.clear()
+    monkeypatch.setattr(appmod, "resolve_port", lambda preferred, tries=20: preferred)
+    run_main(monkeypatch, "--port", "5999", "--no-browser", "--insecure-no-auth")
+    assert marks == [], "浏览器模式不写阶段标记"

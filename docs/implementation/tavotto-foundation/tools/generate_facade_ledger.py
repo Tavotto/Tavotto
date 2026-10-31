@@ -33,7 +33,7 @@ def render(ledger: dict) -> str:
         "# pdfbackend facade 迁移清单（生成物）",
         "",
         f"真值在 `{JSON_NAME}`（`tools/generate_facade_ledger.py` 派生本文件，手改无效）。",
-        f"采样 SHA `{ledger['source_sha']}`（{ledger['generated_on']}）；facade `{ledger['facade_module']}`，"
+        f"采样 SHA `{ledger['source_sha']}`（{ledger['generated_on']}，仅为首次采样的历史标记；本清单不记行号，调用点按 文件 + 符号 定位）；facade `{ledger['facade_module']}`，"
         f"实现 `{ledger['implementation_module']}`。",
         "",
         "## 类别",
@@ -50,16 +50,17 @@ def render(ledger: dict) -> str:
         "",
         f"## `__all__` 的 {len(ledger['exports'])} 个导出项",
         "",
-        "| 导出项 | 类别 | 状态 | 产品调用方（file:line · 函数） | 现有测试（类） | 已知缺陷 | 迁移判据 |",
+        "| 导出项 | 类别 | 状态 | 产品调用方（文件 · 符号） | 现有测试（文件 · 符号（类）） | 已知缺陷 | 迁移判据 |",
         "|---|---|---|---|---|---|---|",
     ]
     for e in ledger["exports"]:
         callers = (
-            "<br>".join(f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in e["callers"])
+            "<br>".join(f"`{c['file']}` · `{c['symbol']}`" for c in e["callers"])
             or "（无产品调用方）"
         )
         tests = (
-            "<br>".join(f"`{t['file']}:{t['line']}` ({t['class']})" for t in e["tests"]) or "（无）"
+            "<br>".join(f"`{t['file']}` · `{t['symbol']}` ({t['class']})" for t in e["tests"])
+            or "（无）"
         )
         issues = "<br>".join(e.get("known_issues", [])) or "—"
         lines.append(
@@ -103,7 +104,7 @@ def render(ledger: dict) -> str:
         "|---|---|---|---|",
     ]
     for m in cm["methods"]:
-        callers = "<br>".join(f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in m["callers"])
+        callers = "<br>".join(f"`{c['file']}` · `{c['symbol']}`" for c in m["callers"])
         lines.append(f"| `{m['name']}` | `{m['signature']}` | {callers} | {cell(m['role'])} |")
     lines += ["", f"迁移判据：{cm['migration_criterion']}"]
     if cm.get("migration_evidence"):

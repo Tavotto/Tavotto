@@ -2,8 +2,8 @@
  * 属性栏 / 画布栏重做（2026-10-07 设计审计 §9.2 / §9.3 / §9.4 P2）的行为契约：
  *   1. 行网格：恢复钮住在常驻的状态槽里（出现 / 消失不改控件那一格的内容）；修改点全部 = 实心、部分 = 空心环；
  *   2. ColorField 在属性栏里带可编辑 hex（回车提交、非法值退回）与取色面板（文档颜色），浮动栏不带；
- *   3. 身份头：「n 个问题 ›」直达问题面板（`openProblemAt`）；锁定状态胶囊点了就解锁；路径行常驻（两行固定）；
- *   4. 页签顺序 属性 | 画布 | 助手；没有选中时属性页是文档摘要卡，「画布设置 ›」切到画布页。
+ *   3. 身份头：没有问题胶囊（入口只在左栏「问题」）；锁定状态胶囊点了就解锁；路径行常驻（两行固定）；
+ *   4. 页签顺序 属性 | 画布 | 时间线 | 助手；没有选中时属性页是文档摘要卡，「画布设置 ›」切到画布页。
  * 选择器只认 data-*。
  */
 import { act } from 'react'
@@ -216,21 +216,9 @@ describe('ColorField：属性栏里的 hex 与取色面板', () => {
 })
 
 describe('身份头与右栏', () => {
-  it('「n 个问题 ›」只数这一选择的错误 / 警告，点它走 openProblemAt（错误优先）', async () => {
-    await seed([textObj], ['t1'])
-    const warn = issue('warn', 't1')
-    const err = issue('error', 't1')
-    useValidationStore.setState({ issues: [warn, issue('suggestion', 't1'), issue('error', 'other'), err] })
-    await render(<Inspector />)
-    const chip = q<HTMLButtonElement>('[data-identity-problems]')!
-    expect(chip.getAttribute('data-identity-problems')).toBe('2')
-    await act(async () => chip.click())
-    expect(openProblemAt).toHaveBeenCalledTimes(1)
-    expect(openProblemAt.mock.calls[0][0]).toBe(err)
-  })
-
-  it('没有问题时没有这颗胶囊；路径行常驻（两行固定）', async () => {
+  it('有错误 / 警告时头部也没有问题胶囊；路径行常驻（两行固定）', async () => {
     await seed([{ ...textObj, locked: false } as CanvasObject], ['t1'])
+    useValidationStore.setState({ issues: [issue('error', 't1')] })
     await render(<Inspector />)
     expect(q('[data-identity-problems]')).toBeNull()
     expect(q('header[data-identity] [data-identity-path]')).not.toBeNull()
@@ -244,11 +232,20 @@ describe('身份头与右栏', () => {
     expect(q('[data-state-chip="locked"]')).toBeNull()
   })
 
-  it('页签顺序：属性 | 画布 | 助手', async () => {
+  it('页签顺序：属性 | 画布 | 时间线 | 助手', async () => {
     await seed([textObj], ['t1'])
     await render(<Inspector />)
     const tabs = [...document.querySelectorAll('[data-inspector-tab]')].map((t) => t.getAttribute('data-inspector-tab'))
-    expect(tabs).toEqual(['properties', 'canvas', 'assistant'])
+    expect(tabs).toEqual(['properties', 'canvas', 'timeline', 'assistant'])
+  })
+
+  it('「时间线」页签：内容是时间线面板，不再有独立浮卡', async () => {
+    await seed([textObj], [])
+    useUiStore.setState({ rightTab: 'timeline' })
+    await render(<Inspector />)
+    expect(q('[data-inspector-panel] [data-timeline-panel]')).not.toBeNull()
+    expect(document.querySelector('[data-timeline-drawer]')).toBeNull()
+    expect(q('[data-inspector-tab="timeline"]')!.getAttribute('aria-selected')).toBe('true')
   })
 
   it('没有选中：属性页是文档摘要卡，「画布设置 ›」切到画布页', async () => {
@@ -256,7 +253,28 @@ describe('身份头与右栏', () => {
     await render(<Inspector />)
     const card = q('[data-document-summary]')!
     expect(card).not.toBeNull()
+    // 页面预览 + 标题 + 一行事实；「详情」默认不显现（悬停 / 聚焦才出），展开才有起步提示
+    expect(card.querySelector('[data-document-summary-preview]')).not.toBeNull()
+    expect(card.querySelector('[data-document-summary-detail]')).toBeNull()
+    expect(card.textContent).toContain('0 张图')
+    await act(async () => q<HTMLButtonElement>('[data-document-summary-details]')!.click())
+    expect(card.querySelector('[data-document-summary-detail]')).not.toBeNull()
     await act(async () => q<HTMLButtonElement>('[data-document-summary-canvas]')!.click())
     expect(useUiStore.getState().rightTab).toBe('canvas')
+  })
+
+  it('页面预览只画图与纸的交集：出界的图不被整块挪进纸里，完全在纸外的不画（Codex #1471 P2）', async () => {
+    const panel = (id: string, x: number, y: number, w: number, h: number) =>
+      ({ id, type: 'panel', fileId: `${id}.pdf`, x, y, w, h, overrides: [], locked: false }) as unknown as CanvasObject
+    // 纸 100 × 80：A 从 x = −20 起宽 40（纸上只占 0–20）；B 完全在纸外
+    await seed([panel('A', -20, 10, 40, 20), panel('B', 120, 10, 10, 10)], [])
+    await render(<Inspector />)
+    const slots = [...document.querySelectorAll<HTMLElement>('[data-document-summary-slot]')]
+    expect(slots).toHaveLength(1)
+    const pc = (v: string) => parseFloat(v)
+    expect(pc(slots[0]!.style.left)).toBe(0)
+    expect(pc(slots[0]!.style.width)).toBe(20)
+    expect(pc(slots[0]!.style.top)).toBe(12.5)
+    expect(pc(slots[0]!.style.height)).toBe(25)
   })
 })

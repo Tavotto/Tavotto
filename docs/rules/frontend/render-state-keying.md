@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「渲染态：按「文件 + 变体」分键（2026-08-18，Phase F）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/artifactEntry.test.ts`、`canvas/artifactPreview.test.tsx`、`store/renderStore.test.ts`、`store/renderScheduler.test.ts`、`lib/bakedBaseline.test.ts`、`hooks/useEngineSync.test.ts`、`canvas/panelPreviewMode.test.tsx`、`components/left/elementTreeRerender.test.tsx`、`tests/test_engine_variants.py`、`tests/test_paths_and_baked.py`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 20
+改到: `store/renderStore.ts`、`store/renderScheduler.ts`、`lib/bakedBaseline.ts`、`hooks/useEngineSync.ts`
+主题: 渲染态：按「文件 + 变体」分键 → `render-state-keying.md`
+必守要点: 键唯一出处 `renderKeyOf`；调度只住 `renderScheduler`；`latest` 退路只能看不能写
+-->
 
 键 = `fileId + ' ' + JSON.stringify(overrides)`，唯一出处
 `renderStore.renderKeyOf(panel)`；消费方一律 `usePanelRender/usePanelManifest`

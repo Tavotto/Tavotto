@@ -1,6 +1,7 @@
 """Automatic environment hints must not touch UNC or device paths before execution."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,11 @@ def test_local_vscode_hint_and_symlinked_interpreter_remain_candidates(tmp_path)
         alias.symlink_to(python)
     except OSError:
         pytest.skip("symlinks unavailable")
-    assert userenvs._is_python_file(str(alias))
+    if os.name == "nt":
+        # Windows 规则：符号链接解释器按设计被拒（walker 对任何重定向都不探目标）；正例只在 POSIX 成立
+        assert not userenvs._is_python_file(str(alias))
+    else:
+        assert userenvs._is_python_file(str(alias))
 
 
 def test_project_scan_never_stats_a_network_interpreter_hint(tmp_path, monkeypatch):
@@ -71,6 +76,8 @@ def test_project_scan_never_stats_a_network_interpreter_hint(tmp_path, monkeypat
     )
     monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [])
     monkeypatch.setattr(userenvs, "_pyenv_pythons", lambda *a, **k: [])
+    # T05：导入即扫描会并入「已被明确问过」的登录 shell 答案（进程级缓存）；同进程里别的用例问过真 shell 就会漏进来
+    monkeypatch.setattr(userenvs, "_login_shell_cache", {})
     real_is_file = Path.is_file
 
     def is_file(path):

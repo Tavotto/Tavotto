@@ -1,10 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { cancelProbe, probeScript, type CapturedFigureDescriptor, type ProbeResult } from '@/lib/api'
+import { ApiError, cancelProbe, probeScript, type CapturedFigureDescriptor, type FigureSnapshotInvalidation, type ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
+import { formatMessage } from '@/i18n'
+import { resetPdfPagesNotices } from '@/lib/pdfPagesNotice'
+import { useUiStore } from './uiStore'
 import { useEnvStore } from './envStore'
+import { useScriptArgvStore } from './scriptArgvStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
-import { isBusyPhase, isGatePhase, needsNative, useScriptRunStore } from './scriptRunStore'
+import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
+import {
+  isBusyPhase,
+  isGatePhase,
+  needsNative,
+  runConfigsInOrder,
+  useScriptRunStore,
+  whenScriptIdle,
+} from './scriptRunStore'
+
+// These tests cover entry admission; replay deduplication belongs to the snapshot coordinator.
+vi.mock('./figureSnapshotInvalidation', () => ({}))
+const acceptedExecution = vi.fn()
 
 vi.mock('@/lib/api', () => ({
   // scriptRunStore 直接用的三样
@@ -84,10 +100,109 @@ const flush = () => new Promise((r) => setTimeout(r, 0))
 const state = (script = 'fig.py') => useScriptRunStore.getState().byScript[script]
 
 beforeEach(() => {
+  setCurrentProjectId(null)
   useScriptRunStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
   mockProbe.mockReset()
   mockCancel.mockClear()
+  acceptedExecution.mockClear()
+  registerFigureExecutionConsumer(acceptedExecution)
+})
+
+const executionFact = (over: Partial<FigureSnapshotInvalidation> = {}): FigureSnapshotInvalidation => ({
+  scope: 'owner',
+  script: 'fig.py',
+  run_config: null,
+  source_ids: ['runtime:fig.py#previous'],
+  execution_id: 'probe-execution-1',
+  ...over,
+})
+
+describe('explicit probe admits only trusted actual-execution facts', () => {
+  it('forwards the backend owner and old source identities using the initiating project', async () => {
+    setCurrentProjectId('probe-project')
+    const running = deferredProbe()
+    const run = useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    const fact = executionFact()
+    running.resolve({ ...ok([desc('a'), desc('b')]), figure_snapshot_invalidation: fact })
+    await run
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'probe-project')
+    setCurrentProjectId(null)
+  })
+
+  it('successful captured descriptors alone never imply that user code actually ran', async () => {
+    mockProbe.mockResolvedValueOnce(ok([desc('a'), desc('b')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it.each(['script_probe_failed', 'execution_cancelled', 'execution_timeout', 'script_no_figure'])(
+    'admits actual-start evidence even when execution ends with %s', async (code) => {
+      const fact = executionFact()
+      mockProbe.mockResolvedValueOnce({ ...failed(code), figure_snapshot_invalidation: fact })
+      await useScriptRunStore.getState().run('fig.py')
+      expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+    },
+  )
+
+  it.each(['script_probe_failed', 'execution_cancelled', 'execution_timeout', 'script_no_figure'])(
+    'preserves snapshots when %s has no actual-execution fact', async (code) => {
+      mockProbe.mockResolvedValueOnce(failed(code))
+      await useScriptRunStore.getState().run('fig.py')
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    },
+  )
+
+  it('an empty successful capture still forwards the owner fact', async () => {
+    const fact = executionFact({ source_ids: [] })
+    mockProbe.mockResolvedValueOnce({ ...ok([]), figure_snapshot_invalidation: fact })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+  })
+
+  it('an HTTP failure after execution forwards the fact from its error envelope', async () => {
+    const fact = executionFact()
+    mockProbe.mockRejectedValueOnce(new ApiError('script failed', 500, {
+      code: 'script_probe_failed', figure_snapshot_invalidation: fact,
+    }))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+    expect(state().phase).toBe('failed')
+  })
+
+  it('a before-start rejection has no fact to retire saved snapshots', async () => {
+    mockProbe.mockRejectedValueOnce(new ApiError('environment busy', 409, { code: 'environment_mutating' }))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('keeps an exact named run configuration from the backend fact', async () => {
+    const fact = executionFact({ run_config: 'config-2', source_ids: ['runtime:fig.py#previous@config-2'] })
+    mockProbe.mockResolvedValueOnce({ ...ok([]), figure_snapshot_invalidation: fact })
+    await useScriptRunStore.getState().run('fig.py', 'config-2')
+    expect(mockProbe).toHaveBeenCalledWith('fig.py', undefined, { run_config: 'config-2' })
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+  })
+
+  it('missing owner configuration is not guessed as the default run', async () => {
+    const fact = { ...executionFact(), run_config: undefined } as unknown as FigureSnapshotInvalidation
+    mockProbe.mockResolvedValueOnce({ ...ok([desc('a')]), figure_snapshot_invalidation: fact })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('does not accept a fact after a project A → B → A round trip while the response was pending', async () => {
+    setCurrentProjectId('probe-project')
+    const running = deferredProbe()
+    const run = useScriptRunStore.getState().run('fig.py')
+    setCurrentProjectId('other-project')
+    setCurrentProjectId('probe-project')
+    running.resolve({ ...ok([desc('a')]), figure_snapshot_invalidation: executionFact() })
+    await run
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    setCurrentProjectId(null)
+  })
 })
 
 describe('scriptRunStore 状态机', () => {
@@ -96,6 +211,18 @@ describe('scriptRunStore 状态机', () => {
     await useScriptRunStore.getState().run('fig.py')
     expect(state().phase).toBe('captured_one')
     expect(state().descriptors).toHaveLength(1)
+  })
+
+  it('#1254：跑通有图但带 workdir_hint → 通知轨一条提醒（同渲染入口）；没有就不出现', async () => {
+    const hint = { kind: 'workdir', script: 'fig.py', probes: ['data/*.txt'], source: 'runtime' }
+    mockProbe.mockResolvedValue({ ...ok([desc('fig')]), workdir_hint: hint as never })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('captured_one')
+    expect(useUiStore.getState().statusOwner).toMatch(/^workdir\.hint:/)
+    useUiStore.getState().setStatus(null)
+    mockProbe.mockResolvedValue(ok([desc('fig')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().status).toBeNull()
   })
 
   it('T04：失败带上那一次的诊断引用，下一次成功把它清掉（旧失败的引用不挂在新结果上）', async () => {
@@ -118,6 +245,33 @@ describe('scriptRunStore 状态机', () => {
     expect(state().phase).toBe('captured_many')
     expect(state().descriptors.map((d) => d.stem)).toEqual(['a', 'b', 'c'])
     expect(state().droppedFigures).toBe(2)
+  })
+
+  it('写进多页 PDF 的图：通知轨一条胶囊（一句话、无按钮），同一份证据只提醒一次（#1370）', async () => {
+    const pdf_pages = [{ name: 'all_samples.pdf', pages: 3, captured: 3, stems: ['a', 'a-2', 'a-3'] }]
+    useUiStore.getState().setStatus(null)
+    mockProbe.mockResolvedValue({ ...ok([desc('a'), desc('a-2'), desc('a-3')]), pdf_pages })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().statusOwner).toMatch(/^pdfpages\.notice:/)
+    expect(useUiStore.getState().statusAction ?? null).toBeNull()
+    const first = useUiStore.getState().status
+    expect(first && formatMessage(first)).toContain('all_samples.pdf')
+    // 导出对话框「合成一个多页 PDF」读这份摘要（#1370）；再跑一次没有 PdfPages 就清空，不留旧的
+    expect(state().pdfPages).toEqual(pdf_pages)
+    expect(state().pdfPagesRunConfig).toBe('') // 无参数运行；带参数的那次记它的配置引用
+    // 重跑出同样的结果：不再重发
+    useUiStore.getState().setStatus(null)
+    mockProbe.mockResolvedValue({ ...ok([desc('a'), desc('a-2'), desc('a-3')]), pdf_pages })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().status).toBeNull()
+    // 之后不再写多页 PDF：撤掉它的提醒
+    resetPdfPagesNotices()
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().statusOwner).toMatch(/^pdfpages\.notice:/)
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().status).toBeNull()
+    expect(state().pdfPages).toEqual([])
   })
 
   it('错误码 → 相位映射（missing_dependency / timeout / no_figure / cancelled / failed）', async () => {
@@ -392,5 +546,182 @@ describe('试运行途中改了指认（ADR 0106 §五）', () => {
     await useScriptRunStore.getState().run('fig.py')
     await vi.waitFor(() => expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one'))
     expect(mockProbe).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r4221258376）', () => {
+  const confirmation = {
+    kind: 'workdir',
+    code: 'workdir_confirmation_required',
+    script: 'fig.py',
+    reason: 'script_dir_evidence',
+    recommended: 'project',
+    options: [],
+    conflicts: [],
+    reads: [],
+  }
+  const gate = (): ProbeResult => ({
+    ...failed('workdir_confirmation_required'),
+    error: { code: 'workdir_confirmation_required', message: 'x', confirmation } as ProbeResult['error'],
+  })
+  const configsOf = () => mockProbe.mock.calls.map((c) => (c[2] as { run_config?: string } | undefined)?.run_config)
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    setCurrentProjectId('p1')
+  })
+
+  it('A/B 排队 → 关门 → C 排队 → 解门：A、B、C 各跑一次，不丢旧批', async () => {
+    mockProbe.mockResolvedValueOnce(gate()).mockResolvedValueOnce(gate()).mockResolvedValue(ok([desc('a')]))
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b']) // A 撞门，A/B 挂起
+    expect(configsOf()).toEqual(['rc_a'])
+    // 关掉门（不 reset）后又保存另一批答案：C 也撞门
+    await runConfigsInOrder('fig.py', ['rc_c'])
+    expect(configsOf()).toEqual(['rc_a', 'rc_c'])
+    // 同一配置再排一次不重复
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a'])
+    expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('needs_workdir')
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b', 'rc_c']))
+  })
+
+  it('答案批次与 Registry 同时等门：解门后依次执行，Registry 不在批内空档抢跑（无 probe_in_progress）', async () => {
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b'])
+    mockProbe.mockReset()
+    let inFlight = 0
+    let maxInFlight = 0
+    const releases: Array<() => void> = []
+    mockProbe.mockImplementation(() => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      return new Promise((resolve) =>
+        releases.push(() => {
+          inFlight--
+          resolve(ok([desc('a')]))
+        }),
+      )
+    })
+    const registryRuns: string[] = []
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    // rerunGated 返回的同一刻脚本已被认领：A 在飞，等空闲的一方（whenScriptIdle）等着
+    void whenScriptIdle('fig.py').then(() => {
+      registryRuns.push('registry')
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      inFlight--
+    })
+    expect(configsOf()).toEqual(['rc_a'])
+    await flush()
+    expect(registryRuns).toEqual([])
+    releases[0]()
+    await flush()
+    // 批内两份之间的空档里 Registry 也不能进
+    expect(configsOf()).toEqual(['rc_a', 'rc_b'])
+    expect(registryRuns).toEqual([])
+    releases[1]()
+    await flush()
+    expect(registryRuns).toEqual(['registry'])
+    expect(maxInFlight).toBe(1)
+  })
+
+  it('等认领时切项目：第二批不在新项目里执行（r4221391273）', async () => {
+    let release: () => void = () => {}
+    mockProbe.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(ok([desc('a')])))))
+    const first = runConfigsInOrder('fig.py', ['rc_a'])
+    await flush()
+    const second = runConfigsInOrder('fig.py', ['rc_b']) // 等第一批释放认领
+    await flush()
+    useScriptRunStore.getState().clear() // 切到项目 B
+    setCurrentProjectId('p2')
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    release()
+    await first
+    expect(await second).toEqual([])
+    await flush()
+    expect(configsOf()).toEqual(['rc_a'])
+  })
+
+  it('A 门后排队、C 跑完替换可见行、再解门：A 及后续仍被重跑（r4221391291）', async () => {
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b']) // A 撞门，A/B 排队
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    await useScriptRunStore.getState().run('fig.py', 'rc_c') // C 没撞门，替换了可见行
+    expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one')
+    mockProbe.mockClear()
+    useScriptRunStore.getState().rerunGated('needs_workdir') // 项目级：不指定脚本
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b']))
+  })
+
+  it('草稿运行撞门后解门：用原草稿重跑，不退成无参数配置（r4221496552）', async () => {
+    useScriptArgvStore.getState().addToken('fig.py', '--label')
+    mockProbe.mockResolvedValueOnce(gate())
+    await useScriptRunStore.getState().run('fig.py') // 草稿模式：runConfig 为 undefined
+    const first = mockProbe.mock.calls[0][2]
+    expect(first).toBeDefined()
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(mockProbe).toHaveBeenCalledTimes(2))
+    expect(mockProbe.mock.calls[1][2]).toEqual(first)
+    expect(mockProbe.mock.calls[1][2]).not.toHaveProperty('run_config')
+  })
+
+  it('草稿运行撞门后又有显式配置排队：解门时草稿与排队配置各自保持原模式（r4221496552）', async () => {
+    useScriptArgvStore.getState().addToken('fig.py', '--label')
+    mockProbe.mockResolvedValueOnce(gate()).mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a']) // 排队 rc_a
+    await useScriptRunStore.getState().run('fig.py') // 草稿运行也撞门（可见行是草稿）
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(mockProbe).toHaveBeenCalledTimes(2))
+    expect(mockProbe.mock.calls[0][2]).toEqual({ run_config: 'rc_a' })
+    expect(mockProbe.mock.calls[1][2]).not.toHaveProperty('run_config')
+    expect(mockProbe.mock.calls[1][2]).toBeDefined()
+  })
+
+  it('认领按项目代际隔离：A 的长批不拖住 B 的同名脚本，A 释放也不删 B 的认领（r4221496560）', async () => {
+    const releases: Array<() => void> = []
+    mockProbe.mockImplementation(
+      () => new Promise((resolve) => releases.push(() => resolve(ok([desc('a')])))),
+    )
+    const a = runConfigsInOrder('fig.py', ['rc_a'])
+    await flush()
+    useScriptRunStore.getState().clear() // 切到 B
+    setCurrentProjectId('p2')
+    const b = runConfigsInOrder('fig.py', ['rc_b'])
+    await flush()
+    expect(configsOf()).toEqual(['rc_a', 'rc_b']) // B 立即开跑，不等 A
+    releases[0]() // A 收尾、释放自己那一代的认领
+    await a
+    await flush()
+    // B 的认领还在：B 里的第二批要排在 B 的第一批后面
+    const b2 = runConfigsInOrder('fig.py', ['rc_b2'])
+    await flush()
+    expect(configsOf()).toEqual(['rc_a', 'rc_b'])
+    releases[1]()
+    await b
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b', 'rc_b2']))
+    releases[2]()
+    await b2
+  })
+
+  it('门后续跑：A 失败、B 成功时仍提示 A 重跑失败（r4221584209）', async () => {
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b']) // A 撞门，A/B 排队
+    mockProbe.mockReset()
+    mockProbe.mockResolvedValueOnce(failed('script_error')).mockResolvedValue(ok([desc('a')]))
+    useUiStore.getState().setStatus(null)
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b']))
+    await vi.waitFor(() => expect(useUiStore.getState().status).not.toBeNull())
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one') // 可见行是成功的 B
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('rc_a')
   })
 })

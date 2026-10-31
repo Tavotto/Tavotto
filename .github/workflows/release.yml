@@ -77,6 +77,12 @@ on:
           open blocker。有 blocker 而不签字，发布链在 trust 就停下。
         required: false
         default: ""
+      ack_diag_contract:
+        description: >-
+          诊断包条目门禁的显式签字（写原因）：线上诊断服务取不到，或不认识本版客户端
+          会写的条目时才填；两侧一致时必须留空。见 scripts/ci/diag_contract.py。
+        required: false
+        default: ""
 
 # 默认只读。真正要写的两个 job（github_release 建 Release、pypi 走 OIDC）
 # 已各自在 job 级声明了自己那份权限——build 只是造产物，不该继承仓库默认的
@@ -248,6 +254,25 @@ jobs:
               echo "> 但**不建 Release、不发 PyPI**。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 诊断包条目门禁：客户端会写的条目，线上诊断服务都认识 ──
+      # 条目表在两个仓库各一份（ENTRY_KINDS ↔ infra KNOWN_BUNDLE_FILES），漂了每个反馈包都被打
+      # unknown_entry（TVD-MYV0、TVD-E03P 各一次）。比的是待发布 SHA 的客户端源码 × 此刻线上部署的服务，
+      # 所以「infra 改了没部署」也拦得住。判定在 scripts/ci/diag_contract.py；取不到线上的表同样不放行，
+      # 除非 dispatch 的 ack_diag_contract 写了原因。演练也过这道门。
+      - name: 诊断包条目门禁（线上诊断服务认识本版的每个条目）
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          ACK: ${{ inputs.ack_diag_contract }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          git show "$SHA:src/tavotto/engine/diagsend.py" > "$RUNNER_TEMP/diagsend.py"
+          URL="$(python3 scripts/ci/diag_contract.py --client "$RUNNER_TEMP/diagsend.py" --print-url)"
+          curl -fsS --retry 3 --retry-all-errors --max-time 20 "$URL" > "$RUNNER_TEMP/diag-contract.json" \
+            || : > "$RUNNER_TEMP/diag-contract.json"
+          python3 scripts/ci/diag_contract.py --client "$RUNNER_TEMP/diagsend.py" \
+            --contract "$RUNNER_TEMP/diag-contract.json" --ack "${ACK:-}" --event "$EVENT"
 
   build:
     needs: trust

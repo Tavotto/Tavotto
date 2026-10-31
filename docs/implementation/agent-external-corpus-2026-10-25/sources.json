@@ -1,0 +1,293 @@
+{
+  "scope": "Fixed external conversion corpus. Native reference outputs and evaluation criteria were kept outside model inputs.",
+  "cases": [
+    {
+      "id": "matlab_airy_surface",
+      "language": "matlab",
+      "repo": "scivision/python-matlab-examples",
+      "commit": "b785b3e6f79621cc8e71de48b4310298b142712e",
+      "source_path": "PlotExamples/test_airy_disc_kernel.m",
+      "source_url": "https://github.com/scivision/python-matlab-examples/blob/b785b3e6f79621cc8e71de48b4310298b142712e/PlotExamples/test_airy_disc_kernel.m",
+      "source_blob_sha": "4421871ebfa604ff0ea89476a8c01806b2262fd2",
+      "case_sha256": "dba08fd36ddb8263ffe30307e787120a95362259b0650b738413b30ae48b6e0f",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "MIT"
+    },
+    {
+      "id": "matlab_bounded_nan",
+      "language": "matlab",
+      "repo": "kakearney/boundedline-pkg",
+      "commit": "1e5a7067098ad7ce32887e2ff7bd673bce2f0eae",
+      "source_path": "README.m",
+      "source_url": "https://github.com/kakearney/boundedline-pkg/blob/1e5a7067098ad7ce32887e2ff7bd673bce2f0eae/README.m",
+      "source_blob_sha": "1666634182f966795aa3b3aabbb9a833cedd5c11",
+      "case_sha256": "e7a6ada5f2823992bd42345938d14f7452c8deec7f12114375ef42ce7c860565",
+      "selection": {
+        "type": "verbatim_contiguous_excerpt",
+        "start_line": 160,
+        "end_line": 221
+      },
+      "license": "MIT; Inpaint_nans BSD-2-Clause"
+    },
+    {
+      "id": "matlab_bounded_syntax",
+      "language": "matlab",
+      "repo": "kakearney/boundedline-pkg",
+      "commit": "1e5a7067098ad7ce32887e2ff7bd673bce2f0eae",
+      "source_path": "README.m",
+      "source_url": "https://github.com/kakearney/boundedline-pkg/blob/1e5a7067098ad7ce32887e2ff7bd673bce2f0eae/README.m",
+      "source_blob_sha": "1666634182f966795aa3b3aabbb9a833cedd5c11",
+      "case_sha256": "c5d1d6252fcad6ea5be6ebd484baab9d0bf0a64c8196aa09fd46aabd37a3d4a7",
+      "selection": {
+        "type": "verbatim_contiguous_excerpt",
+        "start_line": 95,
+        "end_line": 144
+      },
+      "license": "MIT; Inpaint_nans BSD-2-Clause"
+    },
+    {
+      "id": "matlab_contour_over_image",
+      "language": "matlab",
+      "repo": "scivision/python-matlab-examples",
+      "commit": "b785b3e6f79621cc8e71de48b4310298b142712e",
+      "source_path": "PlotContour/contourOverImage.m",
+      "source_url": "https://github.com/scivision/python-matlab-examples/blob/b785b3e6f79621cc8e71de48b4310298b142712e/PlotContour/contourOverImage.m",
+      "source_blob_sha": "9f23dfae9224b409360a97505a43cce16a5981f2",
+      "case_sha256": "febedc1b3c6267035701273e2b40bb10d87efb19820e445f10520869f30fa725",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "MIT"
+    },
+    {
+      "id": "matlab_multi_colormap",
+      "language": "matlab",
+      "repo": "scivision/python-matlab-examples",
+      "commit": "b785b3e6f79621cc8e71de48b4310298b142712e",
+      "source_path": "PlotExamples/R2014bAxesMultiColormap.m",
+      "source_url": "https://github.com/scivision/python-matlab-examples/blob/b785b3e6f79621cc8e71de48b4310298b142712e/PlotExamples/R2014bAxesMultiColormap.m",
+      "source_blob_sha": "840e0faf124a7a5d377518e9bed5317d0b6f1c9c",
+      "case_sha256": "39e50c8481fe683e8eb72d30deb19806765679f5aedf959d8090b91f9825c86c",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "MIT"
+    },
+    {
+      "id": "matlab_shaded_errorbar",
+      "language": "matlab",
+      "repo": "raacampbell/shadedErrorBar",
+      "commit": "aa6d9197bc7a7f0f2ce0f8cce23344eeef8e1def",
+      "source_path": "demo_shadedErrorBar.m",
+      "source_url": "https://github.com/raacampbell/shadedErrorBar/blob/aa6d9197bc7a7f0f2ce0f8cce23344eeef8e1def/demo_shadedErrorBar.m",
+      "source_blob_sha": "549bc7aa110ddf827fd59dd4fd1bebd326ffbbf3",
+      "case_sha256": "112ab23bce47337b0ffd338fb077e36ffa293a62a7c3fa799ae40fda9d7b1c79",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "LGPL-3.0"
+    },
+    {
+      "id": "pillow_book_pieslice",
+      "language": "python",
+      "repo": "driscollis/image_processing_with_python",
+      "commit": "d0b6a32c893e0c0ed9c9638bbf1632d950adabf8",
+      "source_path": "08_drawing/draw_pieslice.py",
+      "source_url": "https://github.com/driscollis/image_processing_with_python/blob/d0b6a32c893e0c0ed9c9638bbf1632d950adabf8/08_drawing/draw_pieslice.py",
+      "source_blob_sha": "bb8e431244ad94454720ed59d729542d819cd92a",
+      "license": "No repository code license found; local evaluation only; Gidole font OFL-1.1"
+    },
+    {
+      "id": "pillow_book_polygon",
+      "language": "python",
+      "repo": "driscollis/image_processing_with_python",
+      "commit": "d0b6a32c893e0c0ed9c9638bbf1632d950adabf8",
+      "source_path": "08_drawing/draw_polygon.py",
+      "source_blob_sha": "60cb9f6316edb316815b37341916d44f1afad139",
+      "license": "No repository license found; internal evaluation only, do not redistribute as an open corpus",
+      "source_url": "https://github.com/driscollis/image_processing_with_python/blob/d0b6a32c893e0c0ed9c9638bbf1632d950adabf8/08_drawing/draw_polygon.py"
+    },
+    {
+      "id": "pillow_book_text_opacity",
+      "language": "python",
+      "repo": "driscollis/image_processing_with_python",
+      "commit": "d0b6a32c893e0c0ed9c9638bbf1632d950adabf8",
+      "source_path": "09_drawing_text/text_opacity.py",
+      "source_url": "https://github.com/driscollis/image_processing_with_python/blob/d0b6a32c893e0c0ed9c9638bbf1632d950adabf8/09_drawing_text/text_opacity.py",
+      "source_blob_sha": "5db75523477ef1eaeb3f11273c930a115b30c054",
+      "license": "No repository code license found; local evaluation only; Gidole font OFL-1.1"
+    },
+    {
+      "id": "pillow_circular_thumbnail",
+      "language": "python",
+      "repo": "shaunakv1/python_pillow_circular_thumbnail",
+      "commit": "21d75668303bbf6dd29e20844ab5966d5a8c40e3",
+      "source_path": "circular_thumbnail.py",
+      "source_url": "https://github.com/shaunakv1/python_pillow_circular_thumbnail/blob/21d75668303bbf6dd29e20844ab5966d5a8c40e3/circular_thumbnail.py",
+      "source_blob_sha": "608956cae4ed01cdd34f25054b397e334b9fca08",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_nkmk_absolute_font",
+      "language": "python",
+      "repo": "nkmk/python-snippets",
+      "commit": "387c5c5566e7616565b29faf8af5ab8af4f7eb33",
+      "source_path": "notebook/pillow_image_draw.py",
+      "source_url": "https://github.com/nkmk/python-snippets/blob/387c5c5566e7616565b29faf8af5ab8af4f7eb33/notebook/pillow_image_draw.py",
+      "source_blob_sha": "0022884678e214eaa54b31716c46ab4f87129df8",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_nkmk_composite",
+      "language": "python",
+      "repo": "nkmk/python-snippets",
+      "commit": "387c5c5566e7616565b29faf8af5ab8af4f7eb33",
+      "source_path": "notebook/pillow_composite.py",
+      "source_url": "https://github.com/nkmk/python-snippets/blob/387c5c5566e7616565b29faf8af5ab8af4f7eb33/notebook/pillow_composite.py",
+      "source_blob_sha": "4a0a14b74a646966a85dd8cb054088bedb640a9b",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_nkmk_paste",
+      "language": "python",
+      "repo": "nkmk/python-snippets",
+      "commit": "387c5c5566e7616565b29faf8af5ab8af4f7eb33",
+      "source_path": "notebook/pillow_paste.py",
+      "source_url": "https://github.com/nkmk/python-snippets/blob/387c5c5566e7616565b29faf8af5ab8af4f7eb33/notebook/pillow_paste.py",
+      "source_blob_sha": "e1b5263d269e2c0c23ab781889efab31a3243a5c",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_nkmk_putalpha",
+      "language": "python",
+      "repo": "nkmk/python-snippets",
+      "commit": "387c5c5566e7616565b29faf8af5ab8af4f7eb33",
+      "source_path": "notebook/pillow_putalpha.py",
+      "source_url": "https://github.com/nkmk/python-snippets/blob/387c5c5566e7616565b29faf8af5ab8af4f7eb33/notebook/pillow_putalpha.py",
+      "source_blob_sha": "1bbc139d9574cf1d81c737fb1b97999a53db9101",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_nkmk_rotate",
+      "language": "python",
+      "repo": "nkmk/python-snippets",
+      "commit": "387c5c5566e7616565b29faf8af5ab8af4f7eb33",
+      "source_path": "notebook/pillow_rotate.py",
+      "source_url": "https://github.com/nkmk/python-snippets/blob/387c5c5566e7616565b29faf8af5ab8af4f7eb33/notebook/pillow_rotate.py",
+      "source_blob_sha": "96950fe4cbc4bd7a61ff83f0f9e281dc70ae5f4d",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_nkmk_shapes",
+      "language": "python",
+      "repo": "nkmk/python-snippets",
+      "commit": "387c5c5566e7616565b29faf8af5ab8af4f7eb33",
+      "source_path": "notebook/pillow_imagedraw.py",
+      "source_url": "https://github.com/nkmk/python-snippets/blob/387c5c5566e7616565b29faf8af5ab8af4f7eb33/notebook/pillow_imagedraw.py",
+      "source_blob_sha": "062acdf3d6ad935318847f3d7518f68eca82a7b8",
+      "license": "MIT"
+    },
+    {
+      "id": "pillow_official_anchors",
+      "language": "python",
+      "repo": "python-pillow/Pillow",
+      "commit": "923a595a2466414c019c1318cc634d84c167e9ad",
+      "source_path": "docs/example/anchors.py",
+      "source_url": "https://github.com/python-pillow/Pillow/blob/923a595a2466414c019c1318cc634d84c167e9ad/docs/example/anchors.py",
+      "source_blob_sha": "2ee11103f1a7db2705f8b10b69e23776741cf32b",
+      "license": "MIT-CMU; Noto font OFL-1.1"
+    },
+    {
+      "id": "r_base_plotmath",
+      "language": "r",
+      "repo": "wch/r-source",
+      "commit": "780021752eb83a71e2198019acf069ba8741103b",
+      "source_path": "src/library/graphics/demo/plotmath.R",
+      "source_url": "https://github.com/wch/r-source/blob/780021752eb83a71e2198019acf069ba8741103b/src/library/graphics/demo/plotmath.R",
+      "source_blob_sha": "1c6a7d76486c0ccd3314e25d174871b4565ccd14",
+      "case_sha256": "cc04e55226cbee7a5f9f14f13b5b9b0493a87fa6945fe0f9c2b786c626352ad0",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "id": "r_base_sinc",
+      "language": "r",
+      "repo": "wch/r-source",
+      "commit": "780021752eb83a71e2198019acf069ba8741103b",
+      "source_path": "src/library/graphics/demo/persp.R",
+      "source_url": "https://github.com/wch/r-source/blob/780021752eb83a71e2198019acf069ba8741103b/src/library/graphics/demo/persp.R",
+      "source_blob_sha": "0c7295e890008d7783b5d67eeb6e519385cd49cb",
+      "case_sha256": "033cddc33ee148c20fb1bfeafcd4c050c8d550f64259d7ca74ee5f6b01082c5b",
+      "selection": {
+        "type": "verbatim_contiguous_excerpt",
+        "start_line": 1,
+        "end_line": 34
+      },
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "id": "r_gallery_bar",
+      "language": "r",
+      "repo": "holtzy/R-graph-gallery",
+      "commit": "8be6801aa6643931cedb22283dfa69e305c8bf79",
+      "source_path": "218-basic-barplots-with-ggplot2.Rmd",
+      "source_url": "https://github.com/holtzy/R-graph-gallery/blob/8be6801aa6643931cedb22283dfa69e305c8bf79/218-basic-barplots-with-ggplot2.Rmd",
+      "source_blob_sha": "d494c53df216822cc4aab9ca9b940138199dc9df",
+      "case_sha256": "132674108628b31277393ffbbaa583835bd11b2903d552976b336d8933d89f4c",
+      "selection": {
+        "type": "verbatim_contiguous_excerpt",
+        "start_line": 53,
+        "end_line": 64
+      },
+      "license": "MIT"
+    },
+    {
+      "id": "r_gallery_percent_stack",
+      "language": "r",
+      "repo": "holtzy/R-graph-gallery",
+      "commit": "8be6801aa6643931cedb22283dfa69e305c8bf79",
+      "source_path": "48-grouped-barplot-with-ggplot2.Rmd",
+      "source_url": "https://github.com/holtzy/R-graph-gallery/blob/8be6801aa6643931cedb22283dfa69e305c8bf79/48-grouped-barplot-with-ggplot2.Rmd",
+      "source_blob_sha": "1c801f6feb2b16f7077a9164ddd9cd32a4199ee7",
+      "case_sha256": "0e9a3d6b71b09e2b6077327a37b6021c762bbf484261bbc2898c61f41e0e45d0",
+      "selection": {
+        "type": "verbatim_contiguous_excerpt",
+        "start_line": 182,
+        "end_line": 194
+      },
+      "license": "MIT"
+    },
+    {
+      "id": "r_lattice_intervals",
+      "language": "r",
+      "repo": "cran/lattice",
+      "commit": "8db58c3794662213381472f2e235daedaa227bbc",
+      "source_path": "demo/intervals.R",
+      "source_url": "https://github.com/cran/lattice/blob/8db58c3794662213381472f2e235daedaa227bbc/demo/intervals.R",
+      "source_blob_sha": "4a655ff579e595ae63996cad117cd584d3f7bfda",
+      "case_sha256": "6993886ee37ea1782b35c11dd14dc367e7b0c66569132931a58f62e0d4a7dd26",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "id": "r_lattice_labels",
+      "language": "r",
+      "repo": "cran/lattice",
+      "commit": "8db58c3794662213381472f2e235daedaa227bbc",
+      "source_path": "demo/labels.R",
+      "source_url": "https://github.com/cran/lattice/blob/8db58c3794662213381472f2e235daedaa227bbc/demo/labels.R",
+      "source_blob_sha": "01486b3f370f7d601116a61ff32c0641e9d29acc",
+      "case_sha256": "abe73b1865c4ddf9e045cd8cffeedcd35414adb5dd40e989ec8accbf7b015292",
+      "selection": {
+        "type": "whole_file"
+      },
+      "license": "GPL-2.0-or-later"
+    }
+  ]
+}

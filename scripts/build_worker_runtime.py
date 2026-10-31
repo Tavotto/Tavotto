@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import hashlib
 import json
 import os
@@ -316,6 +317,107 @@ def check_runtime_dir(
     return info
 
 
+def runtime_source_dir(repo_root: Path) -> Path:
+    """这次打包收的是哪一份 runtime：`TAVOTTO_RUNTIME_SRC` 覆盖，否则仓库根的 `runtime/`。
+
+    packaging/tavotto.spec（收进包）与 scripts/build_desktop.py（打包后逐字节核对）共用这一处——
+    两边各解析一次的话，覆盖了却核对了另一份，闸就空转了。相对路径的覆盖一律锚定到 `repo_root`
+    （而不是调用方此刻的 cwd）：PyInstaller 子进程在仓库根下跑，核对那一侧在哪儿起都得指向同一份。
+    """
+    override = os.environ.get("TAVOTTO_RUNTIME_SRC")
+    if not override:
+        return Path(repo_root) / "runtime"
+    p = Path(override)
+    return p if p.is_absolute() else Path(repo_root) / p
+
+
+def diff_collected_runtime(src: Path, dst: Path) -> list[str]:
+    """打包后的 runtime（`dst`）与构建时冒烟过的那一份（`src`）逐字节比，返回不一致的相对路径。
+
+    判据的主语是**发出去的字节**：spec 那一侧写对了不算数，要看 PyInstaller 真产出了什么——
+    哪天打包器又在别处改判 / 改写 / 重签，这里以「某个文件字节变了」直接报出来。
+    目标里**多出来**的文件同样算不一致（成员也要相同，不只是已有文件的字节）。
+
+    盲点：这里只看 `dst` 这棵树；runtime 的依赖被复制到它**外面**（`_internal/` 顶层）这一种，
+    由 spec 里的 `runtime_toc_problems()` 按 TOC 的来源路径拦。
+
+    符号链接三种落地形态都按内容判：保留为链接 → 目标字符串相同；拍平成文件（Tree / Tauri）→
+    与链接解析到的源文件逐字节相同；指向目录的链接被拍平成目录 → 下面每个文件逐字节比、也计入成员。
+    """
+    src, dst = Path(src), Path(dst)
+    bad: set[str] = set()
+    files: dict[str, str] = {}  # 相对路径 → 源文件（经链接解析后读的就是它的字节）
+    links: dict[str, str] = {}  # 相对路径 → 源链接的目标字符串
+    # followlinks=True：按「拍平之后」的样子枚举——与 Tree 跟随目录链接的行为一致
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=True):
+        for name in dirnames + filenames:
+            s = os.path.join(dirpath, name)
+            rel = os.path.relpath(s, src)
+            if os.path.islink(s):
+                links[rel] = os.readlink(s)
+            if name in filenames and os.path.isfile(s):
+                files[rel] = s
+    for rel, target in links.items():
+        d = os.path.join(dst, rel)
+        if not os.path.lexists(d):
+            bad.add(f"{rel}（缺）")
+        elif os.path.islink(d) and os.readlink(d) != target:
+            bad.add(f"{rel}（链接目标不同）")
+    for rel, s in files.items():
+        d = os.path.join(dst, rel)
+        if not os.path.isfile(d):
+            bad.add(f"{rel}（缺）")
+        elif not filecmp.cmp(s, d, shallow=False):
+            bad.add(f"{rel}（字节不同）")
+    for dirpath, dirnames, filenames in os.walk(dst):
+        for name in dirnames + filenames:
+            d = os.path.join(dirpath, name)
+            rel = os.path.relpath(d, dst)
+            if os.path.islink(d):
+                if rel not in links:
+                    bad.add(f"{rel}（多出）")
+            elif name in filenames and rel not in files:
+                bad.add(f"{rel}（多出）")
+    return sorted(bad)
+
+
+def _is_under(path: str, root: str, pathmod=os.path) -> bool:
+    """`path` 是否在 `root` 之下（含相等）。不同盘符（Windows runner：仓库在 D:，打包 Python 在 C:）
+    时 `commonpath` 抛 ValueError——那当然不在 root 之下，不能让它把整个 spec 打崩。大小写不必另外
+    normcase：`commonpath` 按平台规则比较，返回的是第一个参数（root）的原样拼写。"""
+    try:
+        return pathmod.commonpath([root, path]) == root
+    except ValueError:
+        return False
+
+
+def runtime_toc_problems(toc, runtime_root: Path, prefix: str = "runtime") -> list[str]:
+    """PyInstaller 的 TOC 里，来源在 runtime 下的条目只许原样落进 `<prefix>/`、typecode=DATA。
+
+    packaging/tavotto.spec 在 Analysis 之后、COLLECT 之前对 `a.binaries + a.datas` 跑它。主语是
+    **TOC 条目的来源路径**：被依赖分析复制到 `_internal/` 顶层的 openblas / gfortran / tcl 副本，
+    来源正是 runtime 里的 `.dylibs/` 等（v0.18.0 macOS ≈ 48 MB），它们的落点在 `diff_collected_runtime()`
+    比对的那棵树外面、按名字又与冻结层自己的同名库（libcrypto 等）分不开，按来源判才分得开。
+    """
+    root = os.path.realpath(runtime_root)
+    bad: list[str] = []
+    for entry in toc:
+        dest, src, typecode = entry[0], entry[1], entry[2]
+        if typecode == "SYMLINK" or not src:
+            continue
+        real = os.path.realpath(src)
+        if not _is_under(real, root):
+            continue
+        parts = Path(dest).parts
+        if not parts or parts[0] != prefix:
+            bad.append(
+                f"{dest} ← {os.path.relpath(real, root)}（runtime 的文件落到了 {prefix}/ 外面）"
+            )
+        elif typecode != "DATA":
+            bad.append(f"{dest}（typecode={typecode}，会被改写）")
+    return sorted(bad)
+
+
 def pth_lines(stdlib_zip: str) -> list[str]:
     """embeddable 的 `._pth` 内容（**仅 Windows**）。
 
@@ -405,6 +507,52 @@ def prune_aliases(out: Path, target: dict) -> tuple[int, int]:
             f"✓ 剪掉 {removed} 个解释器别名，打包后省下 "
             f"{freed / 1024 / 1024:.0f} MiB（Tauri 会把符号链接拍平成真副本）"
         )
+    return removed, freed
+
+
+def prune_unreferenced_libpython(out: Path, target: dict) -> tuple[int, int]:
+    """剪掉 macOS runtime 里**没有任何 Mach-O 链接它**的 `lib/libpython3*.dylib`（#1074，≈ 17 MiB）。
+
+    pbs 的 `bin/python3.13` 是静态链接的解释器，macOS 上扩展模块又用 `-undefined dynamic_lookup`，
+    不链接 libpython——这份共享库只给「把 Python 嵌进别的程序」用，内置 runtime 只跑 worker 与
+    用户脚本，用不到它（受管环境的 base 是私有 Python 归档，ADR 0111，不是这份）。
+
+    判据是**引用**不是名字：扫 runtime 里每个 Mach-O 的加载命令，只要有一个链接了任一
+    `libpython3*.dylib`（含别名链接的名字），就一个都不剪。加载命令看不见 dlopen / ctypes——
+    那个盲点由紧随其后的 import + 真绘图冒烟兜底（剪完再验，与 `prune_aliases` 同一顺序）。
+    """
+    if target["kind"] != KIND_MACOS:
+        return 0, 0
+    from codesign_macos import dylib_dependencies  # 同在 scripts/；Mach-O 解析只有这一处
+
+    lib = out / "lib"
+    candidates = sorted(lib.glob("libpython3*.dylib")) if lib.is_dir() else []
+    if not candidates:
+        return 0, 0
+    names = {p.name for p in candidates}
+    users: list[str] = []
+    for root, _dirs, files in os.walk(out):
+        for fname in files:
+            p = Path(root) / fname
+            if p.is_symlink() or (p.parent == lib and fname in names):
+                continue
+            deps = dylib_dependencies(p)
+            if deps and names & {d.rsplit("/", 1)[-1] for d in deps}:
+                users.append(str(p.relative_to(out)))
+    if users:
+        log(f"! libpython 被 {len(users)} 个 Mach-O 链接（如 {users[0]}）——保留不动")
+        return 0, 0
+    removed = freed = 0
+    # 先删链接再删实体：反过来的话中途失败会留下悬空链接
+    for p in sorted(candidates, key=lambda q: not q.is_symlink()):
+        try:
+            if not p.is_symlink():
+                freed += p.stat().st_size
+            p.unlink()
+            removed += 1
+        except OSError as exc:
+            log(f"! 删不掉 {p}: {exc}")
+    log(f"✓ 剪掉没人链接的 libpython（{removed} 个文件），省下 {freed / 1024 / 1024:.0f} MiB")
     return removed, freed
 
 
@@ -1121,6 +1269,8 @@ def build(
     # 别名也要在冒烟**之前**剪掉——剪完的这份才是用户拿到的布局，
     # 冒烟要验的正是它（剪完再验，而不是验完再剪）
     aliases, alias_bytes = prune_aliases(out, target) if do_prune else (0, 0)
+    # 没人链接的 libpython（#1074）同理：剪完再冒烟，验的就是用户拿到的那份
+    libpy, _ = prune_unreferenced_libpython(out, target) if do_prune else (0, 0)
     compiled = precompile(out, target)
 
     smoke, versions = smoke_imports(out, target, lock.get("top_level") or [])
@@ -1141,6 +1291,7 @@ def build(
     info = manifest_dict(lock, name, target, build_id, built_at, lock_sha, smoke)
     info["build"]["pruned_dirs"] = pruned
     info["build"]["pruned_aliases"] = aliases
+    info["build"]["pruned_libpython"] = libpy
     info["build"]["precompiled"] = compiled
     info["build"]["interpreter"] = str(interpreter(out, target).relative_to(out))
     if versions:

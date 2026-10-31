@@ -2,201 +2,84 @@
  * Regenerates the README screenshots from a real, running Tavotto.
  *
  * Nothing here is staged or retouched: it boots the app against a throwaway
- * user directory, arranges `examples/figures/` on the canvas through the same
- * controls a user would use, and screenshots what comes out. If a shot in the
- * README looks impossible, this file is the thing to run to check.
+ * user directory (see lib.mjs), arranges `examples/figures/` on the canvas
+ * through the same controls a user would use, and screenshots what comes out.
+ * If a shot in the README looks impossible, this file is the thing to run.
  *
  * Usage, from anywhere in the repository:
  *
- *     node assets/readme/capture.mjs                    # → assets/readme/*.png (en-US)
- *     node assets/readme/capture.mjs zh-CN              # → assets/readme/*.zh.png
+ *     node assets/readme/capture.mjs                        # every scene, en-US → assets/readme/*.png
+ *     node assets/readme/capture.mjs zh-CN                  # → assets/readme/*.zh.png
+ *     node assets/readme/capture.mjs en-US layout,timeline  # only the named scenes
  *     TAVOTTO_PYTHON=/path/to/python node assets/readme/capture.mjs
  *
- * Requires: `pnpm install` + `npx playwright install chromium` in `web/`, and a
- * Python with the package installed (`pip install -e ".[worker]"`). Run
- * `python scripts/build_frontend.py` first — the packaged `src/tavotto/web/`
- * wins over `web/dist`, so otherwise you photograph the previous interface.
- *
- * The interface language is forced, not inherited, so each README shows the
- * interface its readers will actually get. Every string this script clicks on is
- * therefore looked up in STRINGS below rather than hard-coded — keep it in step
- * with web/src/i18n/locales/.
+ * Scenes: run-script, connect-ai, layout, timeline, preflight, canvas-edit.
+ * Shots are 2880 × 1800 (1440 × 900 at 2×); dialog shots are cropped to the dialog.
+ * The walkthrough is a separate script: record-demo.mjs.
  */
-import { spawn } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-
-const REPO = path.resolve(import.meta.dirname, '..', '..')
-// Playwright lives in web/node_modules; anchor the resolution there so this
-// script runs from any directory rather than only from `web/`.
-const { chromium } = createRequire(path.join(REPO, 'web', 'package.json'))('@playwright/test')
-const OUT = path.join(REPO, 'assets', 'readme')
-const PY = process.env.TAVOTTO_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
+import { OUT, STRINGS, boot, driver } from './lib.mjs'
 
 const LOCALE = process.argv[2] ?? 'en-US'
+const ONLY = (process.argv[3] ?? 'all').split(',')
+const wants = (scene) => ONLY.includes('all') || ONLY.includes(scene)
 /** Suffix on the file names, so the two sets sit side by side. */
 const SUFFIX = LOCALE === 'en-US' ? '' : '.' + LOCALE.split('-')[0]
 
-const STRINGS = {
-  'en-US': {
-    assets: 'Assets', figureElements: 'Figure elements', properties: 'Properties',
-    canvas: 'Canvas', fitCanvas: 'Fit canvas', pin: 'Pin sidebar',
-    panelLabels: 'Add panel labels', editElements: 'Edit figure elements',
-    export: 'Export', building: /Building/, preflight: /Preflight/,
-    searchPanels: 'Search figures', searchElements: 'Search figure elements',
-    /** The numeric fields' accessible names, `<axis> (mm)`. */
-    mm: (axis) => `${axis} (mm)`,
-  },
-  'zh-CN': {
-    assets: '素材', figureElements: '图内元素', properties: '属性',
-    canvas: '画布', fitCanvas: '适应画布', pin: '钉住侧栏',
-    panelLabels: '添加序号标签', editElements: '编辑图内元素',
-    export: '导出', building: /正在构建|构建中/, preflight: /预检/,
-    searchPanels: '搜索图', searchElements: '搜索图内元素',
-    mm: (axis) => `${axis} (mm)`,
-  },
-}
 const S = STRINGS[LOCALE]
 if (!S) throw new Error(`no string table for ${LOCALE}; add one`)
 
 /**
- * Viewport of the photographed window. 1.5× keeps the text crisp at the width
- * GitHub actually renders a README image at, without a multi-megabyte PNG.
+ * run-script · the ▶ next to a linked script in the asset library, on a fresh
+ * project, a few seconds into the run: the Prepare · Run · Edit card and the
+ * script's row saying it is running. (Its own app: once the run lands, the
+ * figure opens for editing and the canvas is no longer the one the other
+ * scenes need.)
  */
-const VIEW = { width: 1440, height: 800 }
-const SCALE = 1.5
-
-const freePort = () =>
-  new Promise((res, rej) => {
-    const s = net.createServer()
-    s.once('error', rej)
-    s.listen(0, '127.0.0.1', () => {
-      const p = s.address().port
-      s.close(() => res(p))
-    })
-  })
-
-async function boot() {
-  const workdir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-readme-'))
-  const home = path.join(workdir, 'home')
-  const dataDir = path.join(workdir, 'data')
-  const figures = path.join(workdir, 'figures')
-  mkdirSync(home, { recursive: true })
-  mkdirSync(dataDir, { recursive: true })
-  cpSync(path.join(REPO, 'examples', 'figures'), figures, { recursive: true })
-
-  const port = await freePort()
-  const proc = spawn(
-    PY,
-    ['-m', 'tavotto', '--port', String(port), '--no-browser', '--figures', figures],
-    {
-      env: {
-        ...process.env,
-        TAVOTTO_DATA_DIR: dataDir,
-        TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
-        TAVOTTO_ALLOW_SHUTDOWN: '1',
-        // A throwaway profile is asked for telemetry consent on first run; the
-        // hard switch keeps the consent dialog off a screenshot of the editor.
-        TAVOTTO_NO_TELEMETRY: '1',
-        HOME: home,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-  const logs = []
-  proc.stdout.on('data', (b) => logs.push(String(b)))
-  proc.stderr.on('data', (b) => logs.push(String(b)))
-
-  const baseURL = `http://127.0.0.1:${port}`
-  for (let i = 0; i < 240; i++) {
-    if (proc.exitCode !== null) throw new Error(`app exited early\n${logs.join('')}`)
-    try {
-      const r = await fetch(`${baseURL}/api/version`)
-      if (r.ok) break
-    } catch {
-      /* still starting */
+async function runScriptScene() {
+  const fresh = await boot(LOCALE)
+  const p = fresh.page
+  const d = driver(p, S)
+  try {
+    await d.pause(3500)
+    await d.renameLayout()
+    await p.locator('li:has-text("fig1_kinetic") button').first().click()
+    // The run ends by opening the produced figure for editing; step back out to the canvas,
+    // where it now sits, with the asset library showing the script as "Captured 1 figure".
+    await p.getByRole('button', { name: S.leaveEditing }).first().waitFor({ timeout: 120_000 })
+    await d.pause(1500)
+    await p.keyboard.press('Escape')
+    await d.pause(2500)
+    await d.ensureAssets()
+    // Wider asset column and properties column, so script names and "Original 73.5 × 57.8" are whole.
+    const drag = async (sel, dx) => {
+      const hb = await p.locator(sel).boundingBox()
+      await p.mouse.move(hb.x + hb.width / 2, hb.y + 300)
+      await p.mouse.down()
+      await p.mouse.move(hb.x + hb.width / 2 + dx, hb.y + 300, { steps: 10 })
+      await p.mouse.up()
+      await d.pause(500)
     }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-
-  // The app admits a browser only through the credentialed link it prints
-  // (session authentication, ADR 0008): a bare `/` renders "This page has no
-  // Tavotto session". The link is on stdout as `* 打开 http://…/#dnonce=…`, so
-  // wait for it rather than for `/api/version` alone.
-  let entry = null
-  for (let i = 0; i < 40 && !entry; i++) {
-    entry = logs.join('').match(/(http:\/\/127\.0\.0\.1:\d+\/#dnonce=[^\s]+)/)?.[1] ?? null
-    if (!entry) await new Promise((r) => setTimeout(r, 250))
-  }
-  if (!entry) throw new Error(`the app never printed its credentialed link\n${logs.join('')}`)
-
-  const browser = await chromium.launch()
-  const ctx = await browser.newContext({ viewport: VIEW, deviceScaleFactor: SCALE, locale: LOCALE })
-  await ctx.addInitScript((l) => window.localStorage.setItem('tavotto.locale', l), LOCALE)
-  const page = await ctx.newPage()
-  await page.goto(entry)
-
-  return {
-    page,
-    logs,
-    async close() {
-      await browser.close()
-      await fetch(`${baseURL}/api/shutdown`, { method: 'POST' }).catch(() => {})
-      await new Promise((r) => setTimeout(r, 800))
-      if (proc.exitCode === null) proc.kill('SIGKILL')
-      rmSync(workdir, { recursive: true, force: true })
-    },
+    await drag('[data-resize-handle="left-drawer"]', 140)
+    await drag('[data-resize-handle="inspector"]', -100)
+    await d.quickSave()
+    await p.mouse.move(1000, 1000)
+    await p.mouse.move(1900, 1100) // off the canvas, so nothing is hovered
+    await p.evaluate(() => document.activeElement?.blur())
+    await d.pause(30_000) // let the toasts expire
+    const file = `run-script${SUFFIX}.png`
+    await p.screenshot({ path: path.join(OUT, file) })
+    console.log('→', path.join('assets/readme', file))
+  } finally {
+    await fresh.close()
   }
 }
+if (wants('run-script')) await runScriptScene()
 
-/* ------------------------------------------------------------------ */
-
-const app = await boot()
+const app = await boot(LOCALE)
 const { page } = app
-
-/** The numeric fields are labelled `X (mm)` … `H (mm)` (2026-09 inspector). */
-const field = (label) => page.getByLabel(S.mm(label), { exact: true }).first()
-
-async function setField(label, value) {
-  const el = field(label)
-  await el.click()
-  await el.fill(String(value))
-  await el.press('Enter')
-  await page.waitForTimeout(300)
-}
-
-/**
- * Left drawers are toggles: clicking the rail button of the drawer that is
- * already open closes it. Open by what the drawer actually shows, never by
- * clicking the button and hoping.
- */
-async function ensureDrawer(railButton, tell) {
-  if (await tell.isVisible().catch(() => false)) return
-  await page.getByRole('button', { name: railButton, exact: true }).click()
-  await tell.waitFor({ state: 'visible', timeout: 15_000 })
-  await page.waitForTimeout(500)
-}
-
-const ensureAssets = () => ensureDrawer(S.assets, page.getByLabel(S.searchPanels).first())
-const ensureFigureElements = () =>
-  ensureDrawer(S.figureElements, page.getByLabel(S.searchElements).first())
-
-async function addPanel(name, { x, y, w }) {
-  await ensureAssets()
-  // The card is a listbox option: Enter opens the figure for editing,
-  // Shift+Enter adds it to the canvas (AssetBrowser.tsx, `CARD_KEYSHORTCUTS`).
-  await page.locator(`li[data-card="${name}"]`).focus()
-  await page.keyboard.press('Shift+Enter')
-  await page.waitForTimeout(2500)
-  await page.getByRole('tab', { name: S.properties }).click()
-  await page.waitForTimeout(400)
-  await setField('W', w) // width first: height follows through the aspect link
-  await setField('X', x)
-  await setField('Y', y)
-}
+const { pause, setField, selectPanel, quickSave, buildLayout } = driver(page, S)
 
 async function shot(name, clip) {
   const file = `${name}${SUFFIX}.png`
@@ -204,82 +87,118 @@ async function shot(name, clip) {
   console.log('→', path.join('assets/readme', file))
 }
 
+/** The dialog's box, padded, for a cropped shot of a dialog. */
+async function dialogClip(pad = 14) {
+  const bb = await page.getByRole('dialog').boundingBox()
+  return { x: bb.x - pad, y: bb.y - pad, width: bb.width + 2 * pad, height: bb.height + 2 * pad }
+}
+
+async function nameMoment(text) {
+  await page.getByRole('button', { name: S.nameNow }).click()
+  await pause(400)
+  await page.keyboard.type(text)
+  await page.keyboard.press('Enter')
+  await pause(1200)
+}
+
 try {
-  await page.waitForTimeout(2500)
+  await buildLayout()
 
-  // A double-column page at 4:3 — one of the profile's accepted shapes — with
-  // the three panels close to the size their scripts drew them at.
-  await page.getByRole('tab', { name: S.canvas }).click()
-  await page.waitForTimeout(700)
-  await setField('W', 150)
-  await setField('H', 112.5)
+  // ── connect-ai · the assistant tab and the "Connect an AI" dialog ──
+  if (wants('connect-ai')) {
+    await page.getByRole('tab', { name: S.assistant }).click()
+    await pause(600)
+    await page.getByRole('button', { name: S.connectAi }).click()
+    await pause(1800)
+    await shot('connect-ai', await dialogClip(0))
+    await page.keyboard.press('Escape')
+    await pause(600)
+  }
 
-  // Every panel at the size its PDF was drawn (scale 100%), which is what
-  // the README's caption says the page does. (An earlier take placed (a)
-  // at 80 mm to keep its x-axis label inside the edit-mode frame; that put
-  // it at 109% and lifted its 7.33 pt text to exactly 8.00 pt, which the
-  // preflight still fails — "exactly equal doesn't pass" — but reads as a
-  // puzzle in a screenshot. The crop is the product's, photographed as is.)
-  await addPanel('Fig1_kinetics.pdf', { x: 8, y: 8, w: 73.3 })
-  await addPanel('Fig2_correlation.pdf', { x: 85, y: 8, w: 57 })
-  await addPanel('Fig2_yield.pdf', { x: 85, y: 62, w: 57 })
+  // ── layout · the page with panel (a) selected and its size in mm ──
+  if (wants('layout')) {
+    await selectPanel(0)
+    await pause(800)
+    await shot('layout')
+    await page.keyboard.press('Escape')
+    await pause(500)
+  }
 
-  await page.getByRole('button', { name: S.panelLabels }).click()
-  await page.waitForTimeout(1200)
-  await page.keyboard.press('Escape')
-  await page.waitForTimeout(400)
+  // ── timeline · named moments on the right-hand tab ──
+  if (wants('timeline')) {
+    await page.getByRole('tab', { name: S.timeline }).click()
+    await pause(800)
+    await nameMoment(S.moments[0])
+    // The bottom row narrowed to 52 mm each, still centred on the page.
+    await selectPanel(1)
+    await setField('W', 52)
+    await setField('X', 21)
+    await selectPanel(2)
+    await setField('W', 52)
+    await setField('X', 77)
+    await pause(800)
+    await quickSave()
+    await page.getByRole('tab', { name: S.timeline }).click()
+    await pause(500)
+    await nameMoment(S.moments[1])
+    await page.keyboard.press('Escape')
+    await page.getByRole('tab', { name: S.timeline }).click()
+    await pause(4500) // the "saved as named point" toast
+    await shot('timeline')
+  }
 
-  // ── 1 · the page, with one panel selected and its physical size on show ──
-  await ensureAssets()
-  // The drawer auto-hides the moment the canvas is clicked; pin it first.
-  await page.getByRole('button', { name: S.pin }).click().catch(() => {})
-  await page.waitForTimeout(400)
-  await page.getByRole('button', { name: S.fitCanvas }).click()
-  await page.waitForTimeout(900)
-  await page.locator('[data-canvas-stage]').click({ position: { x: 300, y: 220 } })
-  await page.waitForTimeout(4000) // let the "panel labels added" toast expire
-  await shot('layout')
+  // ── preflight · the checks block of the export dialog, in a real state ──
+  if (wants('preflight')) {
+    // Panel (a) drawn at 58 mm (79 % of its script's size): its tick text lands
+    // below what the default spec accepts — a finding to review, not a wall of
+    // red, and not a staged all-clear either.
+    await selectPanel(0)
+    await setField('W', 58)
+    await setField('X', 46)
+    await pause(800)
+    await quickSave()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: S.export, exact: true }).first().click()
+    await pause(4500)
+    console.log('export dialog:\n  ' + (await page.getByRole('dialog').innerText()).split('\n').join('\n  '))
+    await shot('preflight', await dialogClip(0))
+    await page.keyboard.press('Escape')
+    await pause(600)
+  }
 
-  // ── 2 · inside a figure: element tree, canvas, properties of the title ──
-  // Two buttons carry this name once a panel is selected: the inspector's and
-  // the quick-edit bar's. Either works; the inspector's is the first in DOM.
-  await page.getByRole('button', { name: S.editElements }).first().click()
-  await page
-    .getByText(S.building)
-    .first()
-    .waitFor({ state: 'detached', timeout: 300_000 })
-    .catch(() => {})
-  await page.waitForTimeout(2500)
-  await ensureFigureElements()
-  await page.getByRole('button', { name: S.fitCanvas }).click()
-  await page.waitForTimeout(900)
-  // The tree opens with its groups expanded, and every row carries the
-  // element's gid in `data-el` — language-neutral, so the title is addressed
-  // by what it is rather than by what this locale calls it.
-  await page.locator('li[role="treeitem"][data-el="axes_0.title"]').click()
-  await page.waitForTimeout(1500)
-  await shot('workbench')
-
-  // ── 3 · the publication preflight that runs before every export ──
-  await page.keyboard.press('Escape')
-  await page.waitForTimeout(800)
-  await page.getByRole('button', { name: S.export, exact: true }).click()
-  await page.waitForTimeout(4000)
-  // Since the 2026-09 export dialog the checks are a block of the dialog
-  // itself — the counts by severity, the first findings with their values, the
-  // written confirmation a blocking finding demands — so the shot is the
-  // dialog, not a list cropped out of it. What it found is logged so the
-  // README's caption can be checked against the run.
-  const dialog = page.getByRole('dialog')
-  console.log('export dialog:\n  ' + (await dialog.innerText()).split('\n').join('\n  '))
-  const bb = await dialog.boundingBox()
-  await shot('preflight', bb
-    ? { x: bb.x - 12, y: bb.y - 12, width: bb.width + 24, height: bb.height + 24 }
-    : undefined)
+  // ── canvas-edit · inside a figure: the element tree, one line selected ──
+  if (wants('canvas-edit')) {
+    await selectPanel(0)
+    await page.getByRole('button', { name: S.editElements }).first().click()
+    await page.getByText(S.building).first().waitFor({ state: 'detached', timeout: 300_000 }).catch(() => {})
+    await pause(2500)
+    const tell = page.getByLabel(S.searchElements).first()
+    if (!(await tell.isVisible().catch(() => false))) {
+      await page.getByRole('button', { name: S.figureElements, exact: true }).click()
+      await tell.waitFor({ state: 'visible', timeout: 15_000 })
+    }
+    // Fit the page, then zoom in two notches around its centre (ctrl + wheel, as a pinch would):
+    // the whole page stays in view, centred, with (a) large and nothing under the floating toolbar.
+    await page.getByText(S.fitShort, { exact: true }).last().click()
+    await pause(900)
+    const st = await page.locator('[data-canvas-stage]').boundingBox()
+    await page.mouse.move(st.x + st.width / 2, st.y + st.height / 2 - 40)
+    await page.keyboard.down('Control')
+    for (let i = 0; i < 2; i++) { await page.mouse.wheel(0, -120); await pause(150) }
+    await page.keyboard.up('Control')
+    await pause(1200)
+    await page.locator('li[role="treeitem"]', { hasText: /Title|标题/ }).first().click()
+    await quickSave()
+    await pause(4500) // the "created a canvas for editing" toast
+    await shot('canvas-edit')
+    await page.keyboard.press('Escape')
+    await pause(1200)
+  }
 } catch (e) {
   console.error('capture failed:', e.message)
-  await page.screenshot({ path: path.join(os.tmpdir(), 'tavotto-capture-failure.png') })
-  console.error('last frame: ' + path.join(os.tmpdir(), 'tavotto-capture-failure.png'))
+  const fail = path.join(os.tmpdir(), 'tavotto-capture-failure.png')
+  await page.screenshot({ path: fail })
+  console.error('last frame: ' + fail)
   console.error(app.logs.join('').slice(-3000))
   process.exitCode = 1
 }

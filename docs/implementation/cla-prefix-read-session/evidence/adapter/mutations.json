@@ -1,0 +1,272 @@
+[
+  {
+    "name": "prefix read session read-token POST is shared",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ actual\\ P2\\ costs\\ 28\\ with\\ all\\ dynamic\\ facts\\ fresh",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-01.raw.log",
+    "sha256": "d43a809aa1841f7033e8a297c818a199dc5074f619059a2a078d0ce69dfd0e63",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "1141b713e131ca4e5f58bd8f747f7b112fe123ce783730acbdd29a7d8a75035c"
+  },
+  {
+    "name": "prefix read session pinned three content reads are shared",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 34\\ with\\ all\\ dynamic\\ facts\\ fresh",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-02.raw.log",
+    "sha256": "36aa38b9bfb8b12804b96c8c301075107055716a4dc0cdd61d109ce541852efe",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "17a80b7e3dd12efd92e9327c050b63865795900f1d907d69a2dcc5ce7fa06f90"
+  },
+  {
+    "name": "prefix read session cached token cannot bypass fresh installation check",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ fresh\\ installation\\ rejects\\ suspended_at\\ at\\ second\\ identity",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-03.raw.log",
+    "sha256": "9a7f2ded786873a528cf4579f8904634e1226aeffef5f1fc1bd64d5937406570",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "71168c229cfee949d642ac1498e866eb6c58d7c55983d42c60e4d44f1fba5311"
+  },
+  {
+    "name": "prefix read session identity GET stays fresh",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ second\\ coauthor\\ lookup\\ detects\\ changed\\ numeric\\ identity",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-04.raw.log",
+    "sha256": "1d2f722f2df9254b49ba92140ce5fe57c46907c49ccf89ca2601fadcc73a536b",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "672d36b7fbc3297a4c1de8a71a539e1da99588bf25b5db2e34dfdb2921f3e4cf"
+  },
+  {
+    "name": "prefix read session metadata stays fresh",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ second\\ metadata\\ response\\ is\\ actually\\ checked",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-05.raw.log",
+    "sha256": "4a4796c8f49fbbced3d47a025e28bd1860b7d95a2953594601aecfd5f94497a1",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "c37c99f010c5a8f5ab930c4615369de58143370463d4aff5cf6b3c7906349cf0"
+  },
+  {
+    "name": "prefix read session new main tip refuses immediately",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ fresh\\ main\\ read3\\ rejects\\ changed\\ tip\\ despite\\ identical\\ legal\\ bytes",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-06.raw.log",
+    "sha256": "16510355734bcb860d2899f6a621c63f9826b32bf24b137db1aafd2b02a7f238",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "c3582182401de50f22b7b60bda684b1484cfa77ced9a28e6a9f3bb9a6e3b6da6"
+  },
+  {
+    "name": "prefix read session fourth queue read still binds current state",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ fourth\\ queue\\ read\\ rejects\\ a\\ change\\ after\\ second\\ PR\\ enumeration",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-07.raw.log",
+    "sha256": "3dab364ea2cd230c6337e5a03949132b998804db732e2a0713b6037e2dd2dfc1",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "d6c56d944c19be3fa6c4364675a69bdaff2cae57cd82be333f70d07ecf7c919e"
+  },
+  {
+    "name": "prefix read session second full snapshot remains mandatory",
+    "file": "src/native/service.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 34\\ with\\ all\\ dynamic\\ facts\\ fresh",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-08.raw.log",
+    "sha256": "142398be1b02c604531723b6fa488e459141128f5a3c204dcaab0caed95a2faa",
+    "sourceSHA256": "2b5092cdef2f9999ea7f6cc9a84be5a52e62a9116363cae92ab0d0f49f3712bc",
+    "mutatedSHA256": "49629637bb12f3f28dfa6c03e0e8fd72e892f3e18df8da55559e0913948ef730"
+  },
+  {
+    "name": "prefix read session all commit pages remain mandatory",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ commit\\ page101\\ is\\ read\\ anew\\ in\\ each\\ snapshot\\ and\\ costs30",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-09.raw.log",
+    "sha256": "4fa1f372d38f4ffcf6aa8dca81f8d097931845a6343f35a9eedf07ff616686fb",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "0c839beec4a0de6bc7a99641aad6eedb1039dee0e171f3e38f766a8daef0f2e9"
+  },
+  {
+    "name": "prefix read session disabled flag keeps old runtime",
+    "file": "src/native/service.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ false\\ retains\\ exact\\ previous32\\ call\\ behavior",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-10.raw.log",
+    "sha256": "eaa35d3b86f7c8f214402c504c9ab2cb43f0cfd82f27e7480695385ec37d9b43",
+    "sourceSHA256": "2b5092cdef2f9999ea7f6cc9a84be5a52e62a9116363cae92ab0d0f49f3712bc",
+    "mutatedSHA256": "b1613996002789a00a7a5d7e9278d7a1be123107efd22d0e73dda5b1cfeccb9e"
+  },
+  {
+    "name": "prefix read session config flag remains boolean",
+    "file": "src/native/config.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ config\\ rejects\\ nonboolean\\ \"true\"",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-11.raw.log",
+    "sha256": "00f0534661ac8449e65523ca4ef0707a04866d8822f9f72e7b26e4fe77000e54",
+    "sourceSHA256": "6cd260a20d14453f2b1d4f690b915038d144e331d088c9d8454c973af4d251c6",
+    "mutatedSHA256": "226ddd0404f4b79eaf9111ce922d07846e2725b27754982c60046f0dc150a4e1"
+  },
+  {
+    "name": "prefix read session explicit Worker opt-in",
+    "file": "src/native/worker.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ Worker\\ enables\\ only\\ exact\\ explicit\\ environment\\ flag",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-12.raw.log",
+    "sha256": "7828bea53719158dcfc93fa571a6789af78977e81ba21e1b7e423fb4455ade13",
+    "sourceSHA256": "f7bb2c43933eb135f29cc1be162a64dc44a013ad1246dd5651d850a8246fcb31",
+    "mutatedSHA256": "f8bcb4e6f6b74d9fb3afc19102478eaa4d870a2db71618625bb4392ea5a834b1"
+  },
+  {
+    "name": "prefix read session external budget never resets",
+    "file": "src/native/github.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ existing\\ invocation\\ charge7\\ is\\ preserved\\ through\\ both\\ snapshots",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-13.raw.log",
+    "sha256": "b39dfeb668f1c8ca802e351a810a3fcc27b5b6f0521eaba9b53cb90725dc0598",
+    "sourceSHA256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "mutatedSHA256": "6c82927bf958166409feb02bd84ba479bc7146eccb956aa61a1d30d83f2918f4"
+  },
+  {
+    "name": "prefix read session 35 work cap remains unchanged",
+    "file": "src/native/budget.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ P4\\ refuses\\ at\\ unchanged35\\ external\\ cap\\ with\\ no\\ result\\ or\\ write",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-14.raw.log",
+    "sha256": "3bbacf01ae65a0bb72eb6730961d2bb4f0c1ed34db6e85fb9c413e712fbc5f5c",
+    "sourceSHA256": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "mutatedSHA256": "53163f0775b7352919d70786738c800c2aa273c0c47cae1aa01b848b18608be4"
+  },
+  {
+    "name": "prefix read session every contributor retains real qualification reads",
+    "file": "src/native/service.ts",
+    "locations": 1,
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "--test",
+      "--test-name-pattern=prefix\\ read\\ session\\ two\\ personally\\ completed\\ contributors\\ cost28\\ external\\ and7\\ SQL",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "exit": 1,
+    "assertionError": true,
+    "selected": true,
+    "log": "mutation-15.raw.log",
+    "sha256": "520f9f65e35628b23543f6f1448bca0b960172b2b243aa92306e062fcebb3e26",
+    "sourceSHA256": "2b5092cdef2f9999ea7f6cc9a84be5a52e62a9116363cae92ab0d0f49f3712bc",
+    "mutatedSHA256": "5b8ce78470c3e520f38d8a34549306f57ef9bdbaf6c4924c237ac2344305e132"
+  }
+]

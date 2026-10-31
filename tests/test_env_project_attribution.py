@@ -174,7 +174,9 @@ def test_a_rejected_rebuild_request_leaves_the_project_state_alone(client, proje
     """#634 评审 P1：先校验 / 占用 id，再清项目的计划 / 跳过 / 轮次。被拒的请求（格式不对、id 已被占用、
     旧固定 id 正在跑）一个字节的状态都不动；对照：真起重建时照旧清。"""
     m.open_project(str(project))
-    monkeypatch.setattr(deprepair, "_rebuild_guarded", lambda project, on_event, progress_id: None)
+    monkeypatch.setattr(
+        deprepair, "_rebuild_guarded", lambda project, on_event, progress_id, *seen: None
+    )
     deprepair.skip_preparation(project, "figure.py")
     assert deprepair.preparation_skipped(project, "figure.py")  # 尺子是活的：状态确实在
     url = "/api/engine/environment/managed/rebuild"
@@ -200,7 +202,7 @@ def test_the_endpoint_echoes_the_id_and_refuses_a_bad_one(client, project, monke
     monkeypatch.setattr(
         deprepair,
         "_rebuild_guarded",
-        lambda project, on_event, progress_id: started.append(progress_id),
+        lambda project, on_event, progress_id, *seen: started.append(progress_id),
     )
 
     class _SyncThread:
@@ -246,3 +248,92 @@ def test_the_rebuild_id_format_is_the_golden_pair():
     for raw in [r for r in GOLDEN["reject"] if r]:
         with pytest.raises(deprepair.RepairError):
             deprepair.claim_rebuild_progress_id(raw)
+
+
+# ------------------------------------------------------------------ 授权绑定用户看到的来源与下载量（ADR 0111 §一）
+
+
+def _offer(origin: str, size: int) -> dict:
+    return {
+        "id": "py-3.12-x",
+        "origin": origin,
+        "download_bytes": size,
+        "cached": origin != "download",
+    }
+
+
+def test_a_rebuild_confirmed_on_a_cached_offer_is_refused_when_it_turned_into_a_download(
+    client, project, monkeypatch
+):
+    """用户看到的是 `cached`、0 字节；点击前缓存被清，重算出的是 `download` 且 id 不变——不能当已授权，
+    409 `repair_plan_stale`，零请求（线程不起、状态不动）。对照：来源未变照常起。"""
+    m.open_project(str(project))
+    monkeypatch.setattr(deprepair, "base_python", lambda: None)
+    current = {"v": _offer("cached", 0)}
+    monkeypatch.setattr(
+        deprepair.privatepython, "offer_payload", lambda *a, **k: dict(current["v"])
+    )
+    started: list = []
+    monkeypatch.setattr(deprepair, "_rebuild_guarded", lambda *args: started.append(args))
+
+    class _SyncThread:
+        def __init__(self, target, daemon, name):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr(deprepair.threading, "Thread", _SyncThread)
+    url = "/api/engine/environment/managed/rebuild"
+    seen = {
+        "private_python_id": "py-3.12-x",
+        "private_python_origin": "cached",
+        "private_python_download_bytes": 0,
+    }
+    ok = client.post(url, json={"progress_id": "a" * 32, **seen})
+    assert ok.status_code == 200 and len(started) == 1, "来源没变：照常"
+    current["v"] = _offer("download", 29_000_000)  # 缓存归档被清
+    stale = client.post(url, json={"progress_id": "b" * 32, **seen})
+    assert stale.status_code == 409
+    assert stale.get_json()["code"] == deprepair.ERROR_PLAN_STALE
+    assert len(started) == 1, "被拒的请求一个线程都不起"
+    assert deprepair.progress("b" * 32).get("state") == "idle", "id 也没被占"
+    # 只改下载量（来源同为 download）也算变了
+    current["v"] = _offer("download", 30_000_000)
+    seen_dl = {
+        **seen,
+        "private_python_origin": "download",
+        "private_python_download_bytes": 29_000_000,
+    }
+    assert client.post(url, json={"progress_id": "c" * 32, **seen_dl}).status_code == 409
+    # 老前端只回 id：没回显来源 / 下载量 = 没确认过
+    assert (
+        client.post(
+            url, json={"progress_id": "d" * 32, "private_python_id": "py-3.12-x"}
+        ).status_code
+        == 409
+    )
+
+
+def test_rebuild_managed_itself_refuses_a_changed_offer_without_any_request(tmp_path, monkeypatch):
+    """线程里那一道（端点预检之外的第二道）：来源变了 = `repair_plan_stale`，不进 `_run_generation`。"""
+    monkeypatch.setattr(deprepair, "base_python", lambda: None)
+    monkeypatch.setattr(
+        deprepair.privatepython, "offer_payload", lambda *a, **k: _offer("download", 5)
+    )
+    ran: list = []
+    monkeypatch.setattr(
+        deprepair, "_run_generation", lambda job, ev: ran.append(job) or {"ok": True}
+    )
+    with pytest.raises(deprepair.RepairError) as exc:
+        deprepair.rebuild_managed(
+            Path(tmp_path),
+            private_python_id="py-3.12-x",
+            seen_origin="cached",
+            seen_download_bytes=0,
+        )
+    assert exc.value.code == deprepair.ERROR_PLAN_STALE and ran == []
+    deprepair.rebuild_managed(
+        Path(tmp_path), private_python_id="py-3.12-x", seen_origin="download", seen_download_bytes=5
+    )
+    assert ran and ran[0].provision_private is True

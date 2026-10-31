@@ -28,6 +28,7 @@ from __future__ import annotations
 import collections
 import sys
 import traceback
+from pathlib import Path
 
 import figcapture
 import patchspec
@@ -91,6 +92,23 @@ class ProtocolError(Exception):
         self.retryable = retryable
         self.traceback_text = traceback_text
         self.extra = extra or {}
+
+
+def fatal_error_of(exc: BaseException) -> "ProtocolError | None":
+    """异常自带协议码（`protocol_code`，目前只有 `preview_poisoned`）→ 不重试的 `ProtocolError`。
+
+    这类错误意味着执行侧的磁盘产物对读方不可信：不能被归成 `internal`（会被 supervisor
+    重启后重试）或 `script_error`，父进程要凭这个码判死会话。
+    """
+    code = getattr(exc, "protocol_code", None)
+    if not isinstance(code, str) or not code:
+        return None
+    return ProtocolError(
+        code,
+        str(exc) or exc.__class__.__name__,
+        retryable=False,
+        traceback_text=traceback.format_exc(),
+    )
 
 
 def int_arg(payload: dict, key: str, default: int) -> int:
@@ -243,6 +261,10 @@ class V1Handler:
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
             raise ProtocolError("bad_request", "payload.patches 必须是数组")
+        require_built = payload.get("require_built", False) if cmd == "export" else False
+        snapshot_only = payload.get("snapshot_only", False) if cmd == "export" else False
+        if not isinstance(require_built, bool) or not isinstance(snapshot_only, bool):
+            raise ProtocolError("bad_request", "require_built 与 snapshot_only 必须是布尔值")
 
         # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
         timings: dict[str, float] = {}
@@ -261,7 +283,14 @@ class V1Handler:
                 )
             except figcapture.ArtifactContextError as exc:
                 raise ProtocolError(exc.code, str(exc), extra={"reason": exc.reason}) from exc
-        self.ensure_built(timings)
+        if cmd == "export" and (require_built or snapshot_only):
+            if not getattr(self, "built", True) or req.get("stem") not in self.session.states:
+                raise ProtocolError(
+                    "svg_source_unavailable",
+                    "An already built Figure session is required for SVG capture.",
+                )
+        else:
+            self.ensure_built(timings)
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
         if cmd not in V1_COMMANDS:
@@ -273,9 +302,23 @@ class V1Handler:
         if cmd in STEM_COMMANDS:
             if not isinstance(stem, str) or not stem:
                 raise ProtocolError("bad_request", "stem 必须是非空字符串")
+            failure = fig.failures.get(stem)
+            if stem not in fig.states and failure is not None:
+                # 这张图被逐图隔离了：说原因，不要说"stem 不存在"（Codex #978）
+                raise ProtocolError(
+                    failure["code"],
+                    f"stem {stem} 的预览没能捕获: {failure['message']}",
+                    extra={"known": sorted(fig.states), "failed": True},
+                )
             if stem not in fig.states:
                 raise ProtocolError(
-                    "unknown_stem", f"stem 不存在: {stem}", extra={"known": sorted(fig.states)}
+                    "unknown_stem",
+                    f"stem 不存在: {stem}",
+                    # 沙盒里落空的探路调用（#1254）：「没出图」的错误带上，父进程判脚本目录里找不找得到
+                    extra={
+                        "known": sorted(fig.states),
+                        **getattr(self, "probe_miss_facts", lambda: {})(),
+                    },
                 )
 
         # 参数校验全部先做完再进渲染：混在下面那个 try 里的话，matplotlib 自己
@@ -285,6 +328,34 @@ class V1Handler:
             path = payload.get("path")
             if not isinstance(path, str) or not path:
                 raise ProtocolError("bad_request", "payload.path 必须是非空字符串")
+            svg_path = payload.get("svg_path")
+            svg_fonttype = svg_text_path = None
+            if snapshot_only and svg_path is None:
+                raise ProtocolError("bad_request", "snapshot_only 需要 SVG companion 路径")
+            if svg_path is not None:
+                if not isinstance(svg_path, str) or not svg_path:
+                    raise ProtocolError("bad_request", "payload.svg_path 必须是非空字符串")
+                if str(payload.get("format", "pdf")).lower() != "pdf":
+                    raise ProtocolError("bad_request", "payload.svg_path 只支持 PDF 导出")
+                if Path(svg_path).resolve() == Path(path).resolve():
+                    raise ProtocolError("bad_request", "PDF 与 SVG 导出路径必须不同")
+            # 加字段协议（ADR 0144）：旧 worker 不认这两个键、静默忽略，应答里就没有 `svg_text` /
+            # 不是文字写法——调用方据此（与文件里有没有 <text>）如实回退为轮廓。
+            svg_fonttype = payload.get("svg_fonttype")
+            if svg_fonttype is not None and svg_fonttype not in ("path", "none"):
+                raise ProtocolError("bad_request", "payload.svg_fonttype 只能是 path 或 none")
+            if svg_fonttype == "none" and str(payload.get("format", "pdf")).lower() != "svg":
+                raise ProtocolError("bad_request", "payload.svg_fonttype 只用于 SVG 导出")
+            svg_text_path = payload.get("svg_text_path")
+            if svg_text_path is not None:
+                if not isinstance(svg_text_path, str) or not svg_text_path or svg_path is None:
+                    raise ProtocolError(
+                        "bad_request", "payload.svg_text_path 必须是非空字符串，且要带 svg_path"
+                    )
+                if snapshot_only:
+                    raise ProtocolError("bad_request", "snapshot_only 不写保留文字的变体")
+                if len({Path(p).resolve() for p in (svg_text_path, svg_path, path)}) != 3:
+                    raise ProtocolError("bad_request", "PDF、SVG 与保留文字 SVG 的路径必须互不相同")
         width = int_arg(payload, "width", 800 if cmd == "render_png" else 400)
         dpi = int_arg(payload, "dpi", 600)
         # 可选：这一次预览 SVG 用的 dpi（缺省 = 会话的 preview_dpi）。
@@ -320,13 +391,28 @@ class V1Handler:
                 )
             elif cmd == "export":
                 result = fig.do_export(
-                    stem, patches, payload["path"], str(payload.get("format", "pdf")), dpi, timings
+                    stem,
+                    patches,
+                    payload["path"],
+                    str(payload.get("format", "pdf")),
+                    dpi,
+                    timings,
+                    **({"svg_path": svg_path} if svg_path is not None else {}),
+                    **({"snapshot_only": True} if snapshot_only else {}),
+                    **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                    **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
                 )
         except ProtocolError:
             raise
         except figcapture.ArtifactContextError as exc:
             raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
+        except figcapture.ExportRasterTooLarge as exc:
+            # 调用方的请求太大，重试多少次都一样：不重试，也不是 internal
+            raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
         except Exception as exc:  # noqa: BLE001
+            fatal = fatal_error_of(exc)
+            if fatal is not None:
+                raise fatal from exc
             # 我们也不知道为什么——supervisor 重启后重试一次是合理的
             raise ProtocolError(
                 "internal",

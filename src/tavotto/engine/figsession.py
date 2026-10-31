@@ -40,8 +40,12 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 
 from __future__ import annotations
 
+import abc
 import base64
+import functools
+import hashlib
 import importlib.metadata
+import inspect
 import io
 import json
 import math
@@ -50,21 +54,30 @@ import platform
 import sys
 import threading
 import time
+import types
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import matplotlib
-from matplotlib import _tight_bbox, artist as martist, figure as mfigure, ticker, transforms
+from matplotlib import (
+    _tight_bbox,
+    artist as martist,
+    backend_bases,
+    figure as mfigure,
+    ticker,
+    transforms,
+)
 from matplotlib.axes import Axes
-from matplotlib.axis import XAxis, XTick, YAxis, YTick
+from matplotlib.axis import Axis, XAxis, XTick, YAxis, YTick
 from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.layout_engine import PlaceHolderLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
-from matplotlib.scale import LinearScale
+from matplotlib.scale import FuncTransform, LinearScale
 from matplotlib.spines import Spine
-from matplotlib.text import Text
+from matplotlib.text import Annotation, Text
 from matplotlib.ticker import ScalarFormatter
 
 import figcapture
@@ -73,12 +86,22 @@ import overrides as overrides_mod
 import pathgeom
 import preview_hybrid
 import previewbudget
+import teedraw
 from axestraversal import ordered_axes
 
 
 class ArtifactSourceUnavailable(figcapture.ArtifactContextError):
     def __init__(self, reason):
         super().__init__(reason, "The selected file cannot be verified against the current figure.")
+
+
+_MPL_MODULES = ("matplotlib.", "mpl_toolkits.")
+
+
+class SvgSnapshotUnavailable(RuntimeError):
+    """Automatic SVG capture cannot safely serialize this live figure."""
+
+    protocol_code = "svg_source_unavailable"
 
 
 _ARTIST_METHODS = (
@@ -200,7 +223,88 @@ def _standard_stale_callback(callback):
     )
 
 
+def _pixel_artist_profile(art) -> bool:
+    """像素档（精确策略）：类型必须在 `_ARTIFACT_ARTISTS` 白名单里，且绘制方法与导入时快照一致。
+
+    返回 True = 「类型不在白名单、但它是 matplotlib 本体的类型且没有覆写绘制方法」：这一项**只是**
+    像素证据拿不到（Legend / Collection / Annotation …）。调用方把整张图的其余安全条件都查完，
+    **只有它是唯一的拒绝原因时**才报 `artist_profile`（来源驱动策略可以接手）；同一张图上
+    还有任何真正的不安全状态，报的仍是 `unsupported_render_state`。用户自己的类型是真的不安全，
+    当场 `unsupported_render_state`。"""
+    names = _ARTIST_METHODS
+    methods = _ARTIFACT_ARTISTS.get(type(art))
+    if methods is None:
+        _edit_artist_profile(art)  # 非 matplotlib 本体 / 有覆写：当场 unsupported_render_state
+        return True
+    if any(name in vars(art) for name in names) or methods != tuple(
+        getattr(type(art), name, None) for name in names
+    ):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    return False
+
+
+def _matplotlib_source_file(function):
+    """方法的真实定义文件是否在 matplotlib 包内（`__module__` 可以伪造，`co_filename` 不行）。"""
+    function = inspect.unwrap(function) if callable(function) else function
+    code = getattr(function, "__code__", None)
+    package = os.path.dirname(os.path.abspath(matplotlib.__file__))
+    return code is not None and os.path.abspath(code.co_filename).startswith(package + os.sep)
+
+
+def _edit_artist_profile(art) -> bool:
+    """编辑档（来源驱动策略）：去掉「类型必须在白名单」，判据改为「类型来自 matplotlib 本体，
+    实例与类（含被 monkeypatch 的）都没有覆写绘制方法」。其余安全条件由调用方统一保留。"""
+    cls = type(art)
+    if not cls.__module__.startswith("matplotlib."):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    for name in _ARTIST_METHODS:
+        if name in vars(art):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        defined = next((c for c in cls.__mro__ if name in vars(c)), None)
+        if (
+            defined is None
+            or not defined.__module__.startswith("matplotlib.")
+            or not _matplotlib_source_file(vars(defined)[name])
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+    # 白名单类型没有、而放开类型后才出现的用户代码入口（集合的偏移变换、标注的坐标回调、
+    # 色阶映射的 norm / cmap）：与白名单档对 transform / formatter 的要求同一口径。
+    offset = getattr(art, "get_offset_transform", None)
+    if offset is not None and not _static_transform(offset()):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    if isinstance(art, Annotation):
+        pending = [art.xycoords, art.get_anncoords()]
+        while pending:
+            coord = pending.pop()
+            if isinstance(coord, tuple):
+                pending.extend(coord)
+            elif isinstance(coord, transforms.Transform):
+                if not _static_transform(coord):
+                    raise ArtifactSourceUnavailable("unsupported_render_state")
+            elif not isinstance(coord, str):
+                raise ArtifactSourceUnavailable("unsupported_render_state")
+    if hasattr(art, "norm") and hasattr(art, "cmap"):
+        norm, cmap = art.norm, art.cmap
+        if (
+            type(norm).__module__ != "matplotlib.colors"
+            or type(norm).__name__ == "FuncNorm"
+            or type(cmap).__module__ != "matplotlib.colors"
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+    return False
+
+
 def _require_static_artifact_figure(fig):
+    """像素档：精确策略（`selected-figsize-v1` / `selected-artifact-v1`）专用。"""
+    _require_artifact_figure(fig, _pixel_artist_profile)
+
+
+def _require_editable_artifact_figure(fig):
+    """编辑档：来源驱动策略（`script-backed-figure-v1`）专用，ADR 0139 §三。"""
+    _require_artifact_figure(fig, _edit_artist_profile)
+
+
+def _require_artifact_figure(fig, artist_profile):
     if type(fig) is not Figure or not _standard_methods(
         fig.canvas, _STATIC_CANVASES, _CANVAS_METHODS
     ):
@@ -236,20 +340,13 @@ def _require_static_artifact_figure(fig):
                     isinstance(item, ScalarFormatter) and item.get_useLocale()
                 ):
                     raise ArtifactSourceUnavailable("unsupported_render_state")
-    pending, seen = [fig], set()
+    pending, seen, outside_profile = [fig], set(), False
     while pending:
         art = pending.pop()
         if id(art) in seen:
             continue
         seen.add(id(art))
-        names = _ARTIST_METHODS
-        methods = _ARTIFACT_ARTISTS.get(type(art))
-        if (
-            methods is None
-            or any(name in vars(art) for name in names)
-            or methods != tuple(getattr(type(art), name, None) for name in names)
-        ):
-            raise ArtifactSourceUnavailable("unsupported_render_state")
+        outside_profile |= artist_profile(art)
         if art.get_agg_filter() is not None or art.get_path_effects():
             raise ArtifactSourceUnavailable("unsupported_render_state")
         if not _standard_stale_callback(art.stale_callback) or art._callbacks.callbacks:
@@ -266,6 +363,8 @@ def _require_static_artifact_figure(fig):
         if isinstance(art, Text) and (art.get_usetex() or art.get_fontproperties().get_file()):
             raise ArtifactSourceUnavailable("unsupported_render_state")
         pending.extend(art.get_children())
+    if outside_profile:
+        raise ArtifactSourceUnavailable("artist_profile")
 
 
 def _materialize_artifact_background(fig, options):
@@ -342,7 +441,13 @@ REPORT_ORIGIN_BUILD = "build"
 REPORT_ORIGINS = (REPORT_ORIGIN_BUILD,)
 
 
-def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = None) -> dict:
+def runtime_report(
+    *,
+    origin: str = REPORT_ORIGIN_BUILD,
+    inputs: dict | None = None,
+    fidelity: dict | None = None,
+    import_skips: list | None = None,
+) -> dict:
     """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
 
     每个字段都是**这个进程此刻**量到的：`sys.executable` / `sys.prefix` /
@@ -355,6 +460,14 @@ def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = N
     U09（ADR 0070）再加三样：`report_origin`（这份事实从哪来）、`pid`（哪个进程量的——父进程拿它与自己
     起的那个子进程对，体检 / 探针的结果冒充不了 build 回执）、`inputs`（`figcapture.InputObserver.report()`：
     已观察的数据文件与本地模块，`observation=partial` 如实写着没看到的通道）。
+
+    `fidelity`（V2 PR3a，`figcapture.BlockedFileOps.summary()`）：safe 守卫造成的语义偏差证据——`level`
+    （`deviated` / `suspect` / `none_observed`）、拦下的操作类别与次数、弱信号计数；全是闭集枚举，没有路径。
+    native 进程没有这本账，不报。
+
+    `import_skips`（ADR 0153）：`bridgeboot` 的查找器跳过的「找到了但读不了」的 import 位置，每条
+    `{module, entry, error}`；`entry` 是机器路径，只在私有回执里出现（`receipt.import_skips` 投影成模块名）。
+    safe 与 native 同一份；没发生过就是空表。
     """
     if origin not in REPORT_ORIGINS:
         raise ValueError(f"report origin 非法: {origin!r}")
@@ -386,6 +499,8 @@ def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = N
         # 控制面核 pid 时两个都要看（receipt.accept_runtime）
         "ppid": os.getppid(),
         "inputs": dict(inputs) if isinstance(inputs, dict) else None,
+        "fidelity": dict(fidelity) if isinstance(fidelity, dict) else None,
+        "import_skips": [dict(e) for e in (import_skips or []) if isinstance(e, dict)],
     }
 
 
@@ -421,16 +536,40 @@ def _json_default(o):
 EXPORT_FONTTYPE = 42
 
 
-def export_font_context(fmt: str):
-    """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。
+#: SVG 文字的两种写法：`path` = 自包含字形路径（画布预览、#1185 等价证人的基准字节、默认）；
+#: `none` = 留成 `<text>`（只用于「按原图导出」的成品，ADR 0144）。两份字节各管各的，绝不互相替代。
+SVG_FONTTYPES = ("path", "none")
+
+
+def svg_rc(svg_fonttype: str) -> dict:
+    """SVG 导出的 rc：常规二次绘制（`export_font_context`）与单次绘制的 SVG 目标（`teedraw`）读同一份。"""
+    assert svg_fonttype in SVG_FONTTYPES, svg_fonttype
+    return {"svg.fonttype": svg_fonttype, "svg.image_inline": True}
+
+
+def _text_sink(path: Path):
+    """`teedraw` 的 SVG 目标落盘：按 UTF-8 / 不转换换行写（与二次绘制里 `open(..., newline="")` 同字节）。"""
+
+    def write(text: str) -> None:
+        with path.open("w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+
+    return write
+
+
+def export_font_context(fmt: str, svg_fonttype: str = "path"):
+    """临时导出字体策略：PDF / PS / EPS 嵌入字体，SVG 默认用自包含字形路径。
 
     EPS 走 matplotlib 的 PostScript 后端：**它不支持透明度**（半透明元素按不透明
     画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0046。"""
     import contextlib
 
-    if str(fmt).lower() not in ("pdf", "ps", "eps"):
+    fmt = str(fmt).lower()
+    if fmt == "svg":
+        assert svg_fonttype in SVG_FONTTYPES, svg_fonttype
+        return matplotlib.rc_context(svg_rc(svg_fonttype))
+    if fmt not in ("pdf", "ps", "eps"):
         return contextlib.nullcontext()
-    import matplotlib
 
     return matplotlib.rc_context({"pdf.fonttype": EXPORT_FONTTYPE, "ps.fonttype": EXPORT_FONTTYPE})
 
@@ -442,11 +581,518 @@ def export_font_context(fmt: str):
 TIFF_PIL_KWARGS = {"compression": "tiff_adobe_deflate"}
 
 
+def _export_raster_px(fig, dpi: int, kwargs: dict) -> tuple[int, int]:
+    """`savefig(dpi=dpi, **kwargs)` **最终**写出的那块 Agg 栅格的 (宽, 高) 像素——只量，不为它分配内存。
+
+    尺寸来源与 `print_figure` 一致：`bbox_inches`（引擎给的 frame，否则脚本设的 `savefig.bbox`
+    rcParam）是 Bbox 时用它的英寸尺寸；是 `"tight"` 时先照 `print_figure` 的做法在导出 dpi 下走一遍
+    不出图的 draw（布局引擎、刻度、文字在这一遍里定位），再取 `get_tightbbox` 加 `savefig.pad_inches`；
+    都没有就是 figsize。乘 dpi 后与 RendererAgg 一样取整（截断）。
+    tight 的 draw 本身要分配「名义画布」（figsize×dpi）的 renderer，所以调用方必须先核过名义画布
+    （见 `_check_export_raster_budget`）；量不出来（异常）就让它抛——`savefig` 自己会在同一处抛同一个错，
+    不拿猜出来的上界放行。
+    """
+    bbox = kwargs.get("bbox_inches", matplotlib.rcParams["savefig.bbox"])
+    if isinstance(bbox, str):
+        if bbox != "tight":
+            raise ValueError(f"unsupported savefig.bbox {bbox!r}")
+        # 文字度量随 dpi 变（字体 hinting）：与 `print_figure` 一样，在**导出 dpi** 下量
+        prior_dpi = fig.dpi
+        fig.dpi = dpi
+        try:
+            fig.draw_without_rendering()
+            tight = fig.get_tightbbox()
+        finally:
+            fig.dpi = prior_dpi
+        # `savefig.pad_inches` 的 rc 值只能是数（"layout" 只在 savefig 关键字里合法，而 do_export 不传它）
+        pad = float(kwargs.get("pad_inches", matplotlib.rcParams["savefig.pad_inches"]))
+        width_in, height_in = tight.padded(pad, pad).size
+    elif bbox is not None:
+        width_in, height_in = bbox.size
+    else:
+        width_in, height_in = fig.get_size_inches()
+    return int(width_in * dpi), int(height_in * dpi)
+
+
+def _check_export_raster_budget(fig, fmt: str, dpi: int, kwargs: dict) -> None:
+    """位图导出的像素预算：`savefig` 要分配的每一块栅格都得在预算内，超了就 `ExportRasterTooLarge`。
+
+    要分配的栅格有两块：
+
+    * **最终栅格**（`_export_raster_px`：bbox_inches 生效后的真实尺寸）；
+    * **名义画布**（figsize×dpi）——只在 `print_figure` 要先走一遍 draw 时才会分配：有布局引擎
+      （constrained / tight_layout），或 `bbox_inches="tight"`。frame 裁切且没有布局引擎时它不存在，
+      不能按它拒掉本来分配得下的导出。
+
+    先核名义画布（便宜、不 draw），再量最终栅格——量 tight 要 draw，draw 才会分配名义画布。
+    """
+    if str(fmt).lower() not in figcapture.RASTER_EXPORT_FORMATS:
+        return
+    bbox = kwargs.get("bbox_inches", matplotlib.rcParams["savefig.bbox"])
+    if bbox == "tight" or fig.get_layout_engine() is not None:
+        width_in, height_in = fig.get_size_inches()
+        figcapture.check_export_raster(fmt, int(width_in * dpi), int(height_in * dpi))
+    figcapture.check_export_raster(fmt, *_export_raster_px(fig, dpi, kwargs))
+
+
 def export_format_kwargs(fmt: str) -> dict:
     """`savefig` 按格式额外要带的参数。只有 TIFF 需要（压缩方式）。"""
     if str(fmt).lower() in ("tif", "tiff"):
         return {"pil_kwargs": dict(TIFF_PIL_KWARGS)}
     return {}
+
+
+def _svg_pair_standard_method(method) -> bool:
+    if isinstance(method, functools.partial):
+        return _svg_pair_standard_method(method.func)
+    module = getattr(method, "__module__", "")
+    if module.startswith(("matplotlib.", "mpl_toolkits.")):
+        return True
+    # Owned wrappers only group/place the underlying artist. Inspect their captured
+    # native method as well, so wrapping a user's custom draw never certifies it.
+    wrappers = {
+        (manifest_mod.__name__, "_svg_group.<locals>.draw"): "native",
+        (
+            overrides_mod.__name__,
+            "_install_patch_resize_draw_hook.<locals>.resized_draw",
+        ): "native_draw",
+    }
+    freevar = wrappers.get((module, getattr(method, "__qualname__", "")))
+    if freevar is None:
+        return False
+    captured = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))
+    cell = captured.get(freevar)
+    return cell is not None and _svg_pair_standard_method(cell.cell_contents)
+
+
+def _svg_pair_standard_transform(transform, seen) -> bool:
+    pending = [transform]
+    while pending:
+        item = pending.pop()
+        if item is None or id(item) in seen:
+            continue
+        seen.add(id(item))
+        if not type(item).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+            return False
+        if isinstance(item, FuncTransform) and not all(
+            _svg_pair_standard_method(func) for func in (item._forward, item._inverse)
+        ):
+            return False
+        for name in _TRANSFORM_METHODS:
+            method = getattr(item, name, None)
+            if method is not None and not _svg_pair_standard_method(method):
+                return False
+        pending.extend(v for v in vars(item).values() if isinstance(v, transforms.TransformNode))
+    return True
+
+
+def _svg_pair_native_canvas_method(method) -> bool:
+    if isinstance(method, (functools.partial, functools.partialmethod)):
+        return not method.keywords and _svg_pair_native_canvas_method(method.func)
+    method = getattr(method, "__func__", method)
+    code = getattr(method, "__code__", None)
+    if code is None:
+        return _svg_pair_standard_method(method)
+    if code is contextmanager(lambda: None).__code__:
+        # contextmanager copies the decorated function's module. Its actual closure,
+        # unlike arbitrary __wrapped__ metadata, tells us what this native helper calls.
+        captured = dict(zip(code.co_freevars, method.__closure__ or ()))
+        cell = captured.get("func")
+        return cell is not None and _svg_pair_native_canvas_method(cell.cell_contents)
+    namespace = method.__globals__
+    module_name = namespace.get("__name__", "")
+    module = sys.modules.get(module_name)
+    # wraps(native) only copies metadata; its code and globals still belong to the user.
+    # Module-relative filenames also work for bytecode/frozen installations, where the
+    # original build root and the module's installed absolute path need not coincide.
+    source = code.co_filename.replace("\\", "/")
+    relative = module_name.replace(".", "/")
+    return (
+        (module_name in ("matplotlib", "mpl_toolkits") or module_name.startswith(_MPL_MODULES))
+        and module is not None
+        and namespace is vars(module)
+        and (
+            ("/" + source).endswith("/" + relative + ".py")
+            or ("/" + source).endswith("/" + relative + "/__init__.py")
+        )
+    )
+
+
+def _svg_pair_native_savefig(method) -> bool:
+    return (
+        getattr(method, "__module__", None) == mfigure.__name__
+        and getattr(method, "__qualname__", None) == "Figure.savefig"
+        and getattr(method, "__globals__", None) is vars(mfigure)
+        and _svg_pair_native_canvas_method(method)
+    )
+
+
+def _svg_pair_standard_savefig(fig) -> bool:
+    if "savefig" in vars(fig):
+        return False
+    method = inspect.getattr_static(fig, "savefig", None)
+    method = getattr(method, "__func__", method)
+    if _svg_pair_native_savefig(method):
+        return True
+    # Both execution entries keep their capture wrapper installed during real_output.
+    # Trust only those owned implementations, and still verify their actual delegate.
+    wrappers = {
+        "_patched_savefig": "worker.py",
+        "_install_savefig_hook.<locals>._patched_savefig": "bridge_runner.py",
+    }
+    source = wrappers.get(getattr(method, "__qualname__", None))
+    code = getattr(method, "__code__", None)
+    return (
+        source is not None
+        and code is not None
+        and Path(code.co_filename).resolve() == Path(__file__).with_name(source).resolve()
+        and _svg_pair_native_savefig(method.__globals__.get("_REAL_SAVEFIG"))
+    )
+
+
+def _svg_pair_standard_canvas(canvas, *, canvas_class=False) -> bool:
+    cls = canvas if canvas_class else type(canvas)
+    if not isinstance(cls, type) or not cls.__module__.startswith("matplotlib."):
+        return False
+    names = (*_CANVAS_METHODS, "_switch_canvas_and_return_print_method", "print_pdf", "print_svg")
+    if canvas_class:
+        names = (*names, "__new__", "__init__")
+    elif any(name in vars(canvas) for name in names):
+        # Even wraps(native) is a custom instance hook; its copied module is not evidence.
+        return False
+    return all(
+        method is None
+        or (canvas_class and name == "__new__" and method is object.__new__)
+        or _svg_pair_native_canvas_method(method)
+        for name in names
+        for method in (inspect.getattr_static(canvas, name, None),)
+    )
+
+
+def _svg_pair_canvas_blocker(canvas) -> str | None:
+    if not _svg_pair_standard_canvas(canvas):
+        return "SVG pairing is unavailable for custom canvas drawing or printing implementations."
+    for fmt in ("pdf", "svg"):
+        if inspect.getattr_static(canvas, f"print_{fmt}", None) is not None:
+            continue
+        # Match Matplotlib's actual serializer selection without constructing a canvas
+        # or importing a user-registered backend during automatic snapshot eligibility.
+        registered = backend_bases._default_backends.get(fmt)
+        if isinstance(registered, str) and not registered.startswith("matplotlib.backends."):
+            return "SVG pairing is unavailable for custom export backends."
+        target = backend_bases.get_registered_canvas_class(fmt)
+        if not _svg_pair_standard_canvas(target, canvas_class=True):
+            return "SVG pairing is unavailable for custom export backends."
+    return None
+
+
+def _svg_pair_env_blocker(fig) -> str | None:
+    """The one draw must go through Matplotlib's own `print_pdf`: custom savefig / canvas / backends can't be teed.
+
+    Part of every pairing blocker. In the single-draw path (`teedraw`, ADR 0150) value-only user callbacks no longer
+    matter because PDF and SVG come out of the same draw; renderer-visible ones are still checked by `_svg_pair_blocker`.
+    """
+    if not _svg_pair_standard_savefig(fig):
+        return "SVG pairing is unavailable for custom Figure saving methods."
+    return _svg_pair_canvas_blocker(fig.canvas)
+
+
+#: 这些模块的可调用对象自己不会去跑用户代码（C 实现 / 标准库包装）；用户回调要靠 `__wrapped__` / 闭包才进得去，下面逐层核
+_PASSIVE_CALLABLE_MODULES = ("builtins", "functools", "numpy")
+#: 类对象当属性值时，这些标准库基类不会去跑用户代码
+_PASSIVE_CLASS_MODULES = (
+    "builtins",
+    "collections",
+    "collections.abc",
+    "abc",
+    "typing",
+    "enum",
+    "numbers",
+)
+
+
+_C_CALLABLES = (
+    types.BuiltinFunctionType,
+    types.MethodWrapperType,
+    types.MethodDescriptorType,
+    types.WrapperDescriptorType,
+)
+
+
+def _svg_pair_owned_c_callable(method) -> bool:
+    """C 实现的可调用（builtin 函数 / C 的 bound method / 方法描述符）：只有它**属于 matplotlib / numpy 自己的对象**才放行。
+
+    `deque.popleft`、`list.pop`、`dict.get` 之类绑在用户（或内建）对象上的，一调用就改用户状态：阻断。
+    """
+    if isinstance(method, (types.MethodDescriptorType, types.WrapperDescriptorType)):
+        owner = getattr(method, "__objclass__", None)
+        return isinstance(owner, type) and owner.__module__.startswith((*_MPL_MODULES, "numpy."))
+    owner = getattr(method, "__self__", None)
+    if owner is None or isinstance(owner, types.ModuleType):
+        return False
+    name = getattr(method, "__name__", None)
+    return (
+        type(owner).__module__.startswith((*_MPL_MODULES, "numpy."))
+        and name is not None
+        and getattr(type(owner), name, None) is not None  # 名字确实是它类型自己的方法
+    )
+
+
+def _svg_pair_owned(method, depth=0, cache=None) -> bool:
+    """这个可调用对象**确实是 matplotlib / mpl_toolkits 自己定义的**（或 Tavotto 已核过闭包的包装）。只读，不调用。
+
+    判据是代码出处（`__code__` 的文件与模块 globals 对得上），不是 `__module__`：`functools.wraps(native)` 会把
+    `__module__` 抄成 matplotlib 的，用户的包装函数就能冒充。
+    """
+    if depth > 6:
+        return False
+    if isinstance(method, type):
+        # 类对象一旦被当成属性值（`artist.get_children = SomeClass`），调用它就会跑 `__new__` / `__init__` / `__call__`：
+        # 整条 MRO 与类字典里的可调用都要是 matplotlib / numpy / 内建自己的
+        return _svg_pair_class_blocker(method, {} if cache is None else cache, extra=True) is None
+    if isinstance(method, (functools.partial, functools.partialmethod)):
+        return _svg_pair_owned(method.func, depth + 1, cache)
+    if isinstance(method, _C_CALLABLES):
+        return _svg_pair_owned_c_callable(method)
+    method = getattr(method, "__func__", method)
+    if getattr(method, "__code__", None) is not None:
+        if _svg_pair_native_canvas_method(method):
+            return True
+        # numpy 自己的纯 Python 函数（如 3D 集合的 `_zsortfunc = np.average`）：模块 globals 与文件都对得上
+        name = method.__globals__.get("__name__", "")
+        module = sys.modules.get(name)
+        if (
+            (name == "numpy" or name.startswith("numpy."))
+            and module is not None
+            and method.__globals__ is vars(module)
+            and "/numpy/" in method.__code__.co_filename.replace("\\", "/")
+        ):
+            return True
+        # Tavotto 自己装的 `FigureBase.colorbar` 观察包装（`figcapture.install_colorbar_capture`）：`@wraps` 会把
+        # `__module__` / `__qualname__` 抄成 matplotlib 的，所以按代码出处认，并核它闭包里的原方法
+        if (
+            method.__globals__ is vars(figcapture)
+            and method.__code__.co_name == "colorbar"
+            and "original" in method.__code__.co_freevars
+        ):
+            cells = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))
+            return _svg_pair_owned(cells["original"].cell_contents, depth + 1, cache)
+        # Tavotto
+        return _svg_pair_standard_method(method) and getattr(method, "__module__", "") in (
+            manifest_mod.__name__,
+            overrides_mod.__name__,
+        )
+    kind = type(method)
+    wrapped = getattr(method, "__wrapped__", None)
+    if wrapped is not None:  # lru_cache 之类的 C 包装：核被包的函数
+        return _svg_pair_owned(wrapped, depth + 1, cache)
+    if kind.__module__.startswith(_MPL_MODULES):
+        return True  # matplotlib 自己的可调用对象（如 `_process_plot_var_args`）
+    return kind.__module__ in _PASSIVE_CALLABLE_MODULES and getattr(method, "__module__", None) in (
+        None,
+        "builtins",
+        "functools",
+        "numpy",
+    )
+
+
+def _svg_pair_callable_parts(value) -> list:
+    """类 / 实例上的一个属性值会跑的函数；纯数据回 `[]`。"""
+    if isinstance(value, (staticmethod, classmethod)):
+        value = value.__func__
+    if isinstance(value, property):
+        return [f for f in (value.fget, value.fset, value.fdel) if f is not None]
+    if isinstance(value, type):
+        return [
+            value
+        ]  # 类对象是可调用的（实例化会跑用户的 `__new__` / `__init__`）：不能当数据放过
+    if isinstance(
+        value,
+        (types.FunctionType, types.MethodType, functools.partial, functools.partialmethod),
+    ):
+        return [value]
+    return [value] if callable(value) else []
+
+
+def _svg_pair_class_blocker(cls, cache: dict, *, extra: bool = False) -> str | None:
+    """这个类的整条 MRO 都是 matplotlib 的，且类上所有可调用属性都没被换成用户的（含对 matplotlib 类的全局 monkeypatch）。
+
+    `extra=True`（类对象当属性值时）另外接受 numpy 与内建类（`dict` / `float` 之类）：它们不会去跑用户代码。
+    """
+    key = (cls, extra)
+    if key in cache:
+        return cache[key]
+    cache[key] = None  # 自引用的类（类字典里又引用自己）不递归
+    allowed = (*_MPL_MODULES, "numpy.") if extra else _MPL_MODULES
+    result = None
+    for klass in cls.__mro__:
+        if klass is object:
+            continue
+        module = klass.__module__
+        if extra and module in _PASSIVE_CLASS_MODULES:
+            continue  # 标准库基类（`Sequence` / `dict` / `Enum`……）：不扫它们的类字典
+        if not module.startswith(allowed):
+            result = f"custom class {klass.__qualname__}"
+            break
+        if type(klass) not in (type, abc.ABCMeta) and not type(klass).__module__.startswith(
+            allowed
+        ):
+            result = f"custom metaclass of {klass.__qualname__}"
+            break
+        for name, value in vars(klass).items():
+            if (
+                name == "savefig"
+            ):  # Figure.savefig 由 `_svg_pair_standard_savefig` 专门核（采集钩子的包装）
+                continue
+            if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
+                result = f"custom {klass.__qualname__}.{name}"
+                break
+        if result is not None:
+            break
+    cache[key] = result
+    return result
+
+
+def _is_list_remove(value) -> bool:
+    """封闭例外表（三档 matplotlib 常规图实测，实例字典里的 builtin / C bound method 只有这一种）：`artist._remove_method = <list>.remove`。"""
+    return (
+        isinstance(value, types.BuiltinFunctionType)
+        and getattr(value, "__name__", None) == "remove"
+        and isinstance(getattr(value, "__self__", None), list)
+    )
+
+
+def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
+    """一个 artist 的类与实例两层：任何可调用属性都必须是 matplotlib 自己的（白名单）。只读，不调用。
+
+    能看到 renderer 的方法（draw / get_window_extent / get_tightbbox / get_children / 滤镜 / 注解坐标 / axes locator……）
+    不用逐个列：只要被用户换过（实例上的 monkeypatch 或自定义子类），这里都会拦住。
+    """
+    why = _svg_pair_class_blocker(type(artist), cache)
+    if why is not None:
+        return why
+    for name, value in (getattr(artist, "__dict__", None) or {}).items():
+        if name == "_remove_method" and _is_list_remove(value):
+            continue  # matplotlib 自己放进实例字典的唯一 C bound method（`Artist.remove` 时才调用，绘制不调用）
+        if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
+            return f"custom instance attribute {type(artist).__qualname__}.{name}"
+    # path effect 对象不是可调用属性，但它们的 draw_path 拿着 renderer：按类核
+    for effect in getattr(artist, "_path_effects", None) or ():
+        why = _svg_pair_class_blocker(type(effect), cache)
+        if why is not None:
+            return f"custom path effect ({why})"
+    return None
+
+
+def _svg_pair_value_blocker(artist, seen_transforms, *, tick_slots: bool) -> str | None:
+    """用户的 transform / scale 函数与 Transform 子类。**两种口径都要核**：renderer 拿到的是 transform 对象并**自己求值**
+    （PDF 与每个 SVG 各求一遍），有状态的 `transform_path` 会让几何各不相同——它们不是「已算好的值」。
+
+    `tick_slots=True`（二次绘制口径）再核刻度 formatter / locator：二次绘制里它们会在两遍里各算一次。
+    单次绘制下它们在 `Axis.draw` 阶段只算一次、产出 Text / 数值后才进 renderer，所以是唯一的值槽例外。
+    """
+    cls = type(artist)
+    if not all(
+        _svg_pair_standard_transform(transform, seen_transforms)
+        for transform in (
+            cls.get_transform(artist),
+            cls.get_clip_box(artist),
+            cls.get_clip_path(artist),
+        )
+    ):
+        return "SVG pairing is unavailable for user transform callbacks."
+    if isinstance(artist, Axis):
+        scale = artist._scale
+        if not type(scale).__module__.startswith(_MPL_MODULES) or not (
+            _svg_pair_standard_method(scale.get_transform)
+            and _svg_pair_standard_transform(type(scale).get_transform(scale), seen_transforms)
+        ):
+            return "SVG pairing is unavailable for user scale callbacks."
+        if not tick_slots:
+            return None
+        for component in (
+            cls.get_major_formatter(artist),
+            cls.get_minor_formatter(artist),
+            cls.get_major_locator(artist),
+            cls.get_minor_locator(artist),
+        ):
+            if not type(component).__module__.startswith(_MPL_MODULES):
+                return "SVG pairing is unavailable for custom tick formatters or locators."
+            if not _svg_pair_standard_method(component.__call__):
+                return "SVG pairing is unavailable for custom tick drawing methods."
+            if isinstance(component, ticker.FuncFormatter) and not _svg_pair_standard_method(
+                component.func
+            ):
+                return "SVG pairing is unavailable for user tick-formatting callbacks."
+    return None
+
+
+def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
+    """Can PDF and SVG be certified as the same Figure?  Read-only: nothing here calls user code.
+
+    **Whitelist, not blacklist.**  Every artist in the figure (figure, axes, axis, text, collections, …) must have its
+    class chain and every callable attribute — on the class *and* on the instance — defined by matplotlib /
+    mpl_toolkits themselves (`_svg_pair_artist_blocker`).  Anything else (an instance-level monkeypatch, a user
+    subclass, a user `agg_filter` / axes locator / annotation-coordinate callable, a custom path effect, …) blocks:
+    those can see the renderer, can run once per renderer the tee forwards to, or can differ between two passes.
+    `draw_event` handlers block for the same reason.
+
+    Transforms and scales are checked in **both** modes (`_svg_pair_value_blocker`): a renderer receives the transform
+    *object* and evaluates it itself (PDF and every SVG each once), so a stateful `transform_path` would give each
+    output different geometry.
+
+    The one closed exception is the *tick slots*: an Axis' formatter and locator (including a `FuncFormatter`'s user
+    function or a Formatter / Locator subclass).  In a single draw they run once, in `Axis.draw`, and only their
+    output (Text / numbers) reaches the renderer.
+
+    * Single draw (`single_draw=True`, `teedraw`, ADR 0150): whitelist + transform / scale; tick slots allowed.
+    * Two-pass (the legacy pairing, and the #1185 witness which is an independent savefig): tick slots may differ
+      between two draws, so they are checked as well.
+    """
+    env_blocker = _svg_pair_env_blocker(fig)
+    if env_blocker is not None:
+        return env_blocker
+    if fig.canvas.callbacks.callbacks.get("draw_event"):
+        return "SVG pairing is unavailable for figures with draw-event callbacks."
+    pending, seen, seen_transforms, cache = [fig], set(), set(), {}
+    while pending:
+        artist = pending.pop()
+        if id(artist) in seen:
+            continue
+        seen.add(id(artist))
+        why = _svg_pair_artist_blocker(artist, cache)
+        if why is not None:
+            return f"SVG pairing is unavailable for custom code in the figure ({why})."
+        why = _svg_pair_value_blocker(artist, seen_transforms, tick_slots=not single_draw)
+        if why is not None:
+            return why
+        # `get_children` is Matplotlib's own here (checked above), so walking with it runs no user code
+        # 经**类**上 matplotlib 自己的函数取子节点，不经实例属性：实例字典里的任何东西（含 C 的 bound method）都不会被调用
+        pending.extend(type(artist).get_children(artist))
+    return None
+
+
+#: 一代预览发布时在完成记录里声明的能力：SVG 与 manifest 都完整落盘（`preview`），且图在本会话里是活对象、
+#: 能改能导出（`live_edit`）。只读原件（`original_readonly`）不在这里——它是另一个事实，见 `figure_facts`。
+PREVIEW_CAPABILITIES = ("preview", "live_edit")
+
+
+#: `failures[stem]["code"]`：这张图的预览没能捕获出来（画不出 / 写不出），其它图不受影响。
+PREVIEW_CAPTURE_FAILED = "preview_capture_failed"
+
+
+class PreviewInvalidated(RuntimeError):
+    """发布中途失败且还原上一版也失败：该 stem 的预览已作废（读者看到「无预览」，不是成功）。"""
+
+
+class PreviewPoisoned(PreviewInvalidated):
+    """还原、删除 / 改名、失效标记**三道都落空**：磁盘上的错配对读方无法在磁盘层面隐藏。
+
+    致命：`protocol_code` 让 `wireproto.respond` 回 `preview_poisoned`（非 retryable），
+    app 侧据此判死这条会话并把 `out_dir` 记进读方进程的作废表（`figcapture.poison_preview_dir`）。
+    """
+
+    protocol_code = figcapture.PREVIEW_POISONED_CODE
 
 
 class LiveFigureSession:
@@ -469,6 +1115,8 @@ class LiveFigureSession:
         #: 存过盘但参数没观察到）。只记不用：渲染与几何一概不读它（tight 图幅的决定之前）。
         self.savefig_calls: dict[str, list | None] = {}
         self.savefig_observations = figcapture.SavefigObservations()
+        #: 保存瞬间快照账（ADR 0139 §九）：开关关掉时不拍
+        self._save_moments = self._new_save_moments()
         self.artifact_source = None
         self._artifact_background_hidden = False
         self.artifact_probe = None
@@ -477,6 +1125,10 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
+        #: stem -> {files: 目标文件键 -> 最近写它的 Figure（弱引用）, log: 影子日志}，见 `figcapture.note_savefig_writer`
+        self.savefig_writers: dict[str, dict] = {}
+        #: 补认领的 stem -> 它写文件时用的 stem（`panel-2` -> `panel`），见 `figcapture.adopt_displaced_writers`
+        self.savefig_file_stem: dict[str, str] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
         self.passthrough_figures: set[int] = set()
@@ -486,6 +1138,17 @@ class LiveFigureSession:
         #: stem -> FigState（`instrument()` 之后才有）
         self.states: dict[str, overrides_mod.FigState] = {}
         self._manifest_cache: dict[str, dict] = {}
+        #: stem -> 这张图**没能进入可编辑会话**的事实（P08a 逐图隔离）。只记这张图自己的失败；
+        #: 其它图照常 instrument / 发布。键不在 `states` 里：它不是活图，没有预览。
+        self.failures: dict[str, dict] = {}
+        #: 失败那张图失败时手里的 `FigState`（若已建出来）。它可能已经动过 Figure，屏障离开时要和健康图
+        #: 一样核对「恢复成脚本原样」——还原不了就不许放行（见 `failed_restore_owed`）。
+        self._failed_states: dict[str, object] = {}
+        #: 失败过的图只在**下一次离开屏障之后**才重试：同一个屏障里 build / barrier / 报告会各调一次
+        #: `instrument_all`，每次都重画一张必败的图只会重复付费、重复刷屏。
+        self._retry_failed = False
+        #: stem -> 它被捕获进活会话那一刻（epoch 秒）。与磁盘原件的 `saved_at` 是两个独立的时间事实。
+        self.live_captured_at: dict[str, float] = {}
         #: 拥有这些 Figure 的线程。见模块头「线程归属」。
         self.owner_thread = threading.get_ident()
 
@@ -500,6 +1163,24 @@ class LiveFigureSession:
             )
 
     # ---------------- 捕获表 ----------------
+    def original_artifact(self, project_root: str, stem: str) -> str | None:
+        """这张 savefig 图**自己**写的原件：按它写文件时的 stem（补认领的 `panel-2` 写的是 `panel.*`）、只认它
+        存过的格式（`figcapture.find_original_artifact(formats=…)`）。"""
+        return figcapture.find_original_artifact(
+            project_root,
+            self.savefig_file_stem.get(stem, stem),
+            formats=figcapture.saved_formats(self.savefig_calls.get(stem)),
+        )
+
+    def artifacts_of(self, project_root: str, stem: str) -> list[str]:
+        """这张 savefig 图写过的**所有**文件（#1251）：判据与 `original_artifact` 同源（它写文件时的 stem、
+        只认它存过的格式），只是不止取首个——`panel.pdf` 与 `panel.svg` 都是它的。"""
+        return figcapture.find_artifacts(
+            project_root,
+            self.savefig_file_stem.get(stem, stem),
+            formats=figcapture.saved_formats(self.savefig_calls.get(stem)),
+        )
+
     def add_figure(self, stem: str, fig, source: str) -> bool:
         """把一张 Figure 记进捕获表。已有同名 stem 时**不覆盖**，返回 False。
 
@@ -514,17 +1195,114 @@ class LiveFigureSession:
         self.capture_source[stem] = source
         return True
 
-    def note_savefig(self, stem: str, fig, call: dict | None, extra_artists=None) -> None:
-        """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。"""
-        if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
-            self.savefig_extras.setdefault(stem, []).append(extra_artists)
+    def note_savefig(
+        self,
+        stem: str,
+        fig,
+        call: dict | None,
+        extra_artists=None,
+        target: str | None = None,
+        verify=None,
+        observation=None,
+    ) -> None:
+        """记一次**成功的** savefig 调用（规则在 `figcapture.note_savefig_writer`）。
+
+        同一路径换了写入者的规则唯一实现在 `figcapture.note_savefig_writer`（三条入口同源）。
+        """
+        figcapture.note_savefig_writer(
+            self.savefig_writers,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+            stem,
+            fig,
+            target,
+            call,
+            extra_artists,
+            locked=stem in self.states or stem in self.failures,
+            verify=verify,
+        )
+        figcapture.mark_saved(fig)
+        if self._save_moments is not None:
+            row = self.savefig_observations.observation(observation)
+            self._save_moments.take(fig, row["occurrence"] if row else None, extra_artists)
+            # 不在这里清脏标记：拍摄期间若有任何改动，`take` 作废快照、标记留真，最终如实报 `modified_after_save`
+
+    @staticmethod
+    def _new_save_moments():
+        return figcapture.SaveMomentLedger() if figcapture.save_moment_enabled() else None
+
+    def begin_save_moments(self) -> None:
+        """一次脚本执行开始：换一份**新**快照账（旧账先释放）。账的生命周期绑「一次执行」，不绑会话——
+        pool 会在同一个 worker 里重跑脚本（instrument / 发布阶段临时失败后重试），重跑必须有账可记。"""
+        self.release_save_moments()
+        self._save_moments = self._new_save_moments()
+
+    def release_save_moments(self) -> None:
+        """采用或放弃之后释放快照字节（账对象留着、已清空；下一次执行由 `begin_save_moments` 换新）。"""
+        if self._save_moments is not None:
+            self._save_moments.release()
+
+    def adopt_save_moments(self) -> dict[str, str]:
+        """存盘后又被脚本改过的 savefig 图：能还原保存那一刻的复制品，就让它顶替捕获表里的最终态 Figure（ADR 0139 §九）。
+
+        在 `note_modified_after_save` 与 pyplot 兜底**之后**、`prepare_artifact` / `instrument_all` **之前**调（兜底按身份去重，
+        先换会让原件被当成没认领的 pyplot 图又收一遍）。还原不了 = 原因进闭集 `SAVE_MOMENT_REASONS`，编辑基础仍是最终态。
+        结论记在捕获表里那张 Figure 上（`figcapture.SAVE_MOMENT`），manifest 读它；返回 stem -> 结论。"""
+        ledger = self._save_moments
+        if ledger is None:
+            return {}
+        if (
+            self.artifact_source is not None
+            and self.artifact_source.get("render_policy") != figcapture.SCRIPT_BACKED_POLICY
+        ):
+            # 精确策略（selected-figsize-v1）一字不动（ADR 0139 §二）：它的「存后改过就拒」是自己的闸门
+            self.release_save_moments()
+            return {}
+        outcome: dict[str, str] = {}
+        holders: dict[int, int] = {}
+        for fig in self.capture.values():
+            holders[id(fig)] = holders.get(id(fig), 0) + 1
+        for stem, fig in list(self.capture.items()):
+            if self.capture_source.get(stem) != figcapture.SOURCE_SAVEFIG:
+                continue
+            if not getattr(fig, figcapture.MODIFIED_AFTER_SAVE, False):
+                continue
+            selected = None
+            if self._artifact_save is not None and self._artifact_save[2] is fig:
+                selected = self._artifact_save[0]["occurrence"]
+            if holders[id(fig)] > 1:
+                restored, reason = None, "multi_stem"
+            else:
+                restored, reason = ledger.restore(fig, selected)
+            if restored is None:
+                setattr(fig, figcapture.SAVE_MOMENT, reason)
+                outcome[stem] = reason
+                continue
+            setattr(restored, figcapture.MODIFIED_AFTER_SAVE, True)
+            setattr(restored, figcapture.SAVE_MOMENT, figcapture.SAVE_MOMENT_RESTORED)
+            FigureCanvasAgg(restored)  # 复制品出来是裸 canvas；几何与渲染都按 Agg 量
+            self.capture[stem] = restored
+            if id(fig) in self.passthrough_figures:
+                self.passthrough_figures.add(id(restored))
+            if self._artifact_save is not None and self._artifact_save[2] is fig:
+                row, art_stem, _, extras = self._artifact_save
+                self._artifact_save = (row, art_stem, restored, extras)
+            outcome[stem] = figcapture.SAVE_MOMENT_RESTORED
+        self.release_save_moments()
+        return outcome
 
     def note_artifact(self, observation, stem, fig, extra_artists):
         if self.artifact_source is None:
             return
         row = self.savefig_observations.observation(observation)
-        if row is None or row["destination"]["scope"] not in ("project", "execution"):
-            return
+        if (
+            row is None
+            or "pdf_page" in row
+            or row["destination"]["scope"] not in ("project", "execution")
+        ):
+            return  # PdfPages 的一页不是这张图的 savefig，多页 PDF 也不是单图来源（#1370）
         destination = row["destination"]["path"]
         selected = self.artifact_source["source_id"]
         if destination != selected:
@@ -562,7 +1340,8 @@ class LiveFigureSession:
             or row["options"].get("format") != self.artifact_source["kind"]
         ):
             raise ArtifactSourceUnavailable("unsupported_render_state")
-        if self.artifact_source["render_policy"] == figcapture.SELECTED_FIGSIZE_POLICY and (
+        policy = self.artifact_source["render_policy"]
+        if policy in figcapture.FIGSIZE_FRAME_POLICIES and (
             self.artifact_source["kind"] != "png"
             or "bbox_inches" not in row["options"]
             or row["options"]["bbox_inches"] is not None
@@ -570,7 +1349,10 @@ class LiveFigureSession:
             raise ArtifactSourceUnavailable("unsupported_render_state")
         if extras is not None and (type(extras) is not tuple or len(extras)):
             raise ArtifactSourceUnavailable("unsupported_render_state")
-        _require_static_artifact_figure(fig)
+        if policy == figcapture.SCRIPT_BACKED_POLICY:
+            _require_editable_artifact_figure(fig)
+        else:
+            _require_static_artifact_figure(fig)
         self._artifact_background_hidden = _materialize_artifact_background(fig, row["options"])
         if type(fig.canvas) is FigureCanvasBase:
             # Matplotlib 3.11 close() detaches Agg; bind it without another draw.
@@ -652,7 +1434,7 @@ class LiveFigureSession:
             return
         artifact = None
         if self.frame_project_root is not None:
-            artifact = figcapture.find_original_artifact(self.frame_project_root, stem)
+            artifact = self.original_artifact(self.frame_project_root, stem)
         calls = self.savefig_calls.get(stem)
         call = figcapture.frame_call(calls, artifact)
         extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
@@ -674,15 +1456,34 @@ class LiveFigureSession:
                 file=sys.stderr,
             )
 
-    def instrument_all(self, *, suppressed_savefig: bool = False) -> None:
+    def instrument_all(
+        self, *, suppressed_savefig: bool = False, raise_if_none_live: bool = False
+    ) -> None:
         """给捕获表里还没有 FigState 的图建状态并出一次预览。
 
         可重入：native bridge 在每次 `plt.show()` 屏障处都会再调一次，
         只有新出现的图会被 instrument（已有的 FigState 带着用户的 override，
         重建等于把编辑丢掉）。
+
+        **逐图隔离**（P08a，EX04/EX12）：一张图在「建状态 / 出预览」里抛出的普通异常只属于这张图——
+        记进 `failures`、从会话里撤掉它（活对象仍留在捕获表里，原产物的事实照旧可查），其它图继续。
+        不是 `except: pass`：失败有明确的事实（`failures` / `figure_facts` / build 响应的
+        `failed_figures`），而且这张图已经动过的 Figure 状态要核对恢复。产物目录 / 账本的问题
+        （发布段失败）不属于任何一张图，照旧整批失败。选定产物上下文（`artifact_source`）
+        只认那一张图，没有「隔离」可言，照旧原样抛。
+
+        `raise_if_none_live=True`（safe worker）：一张活图都没留下、又有图失败时，把第一个失败原样抛出，
+        build 仍然是失败——那条入口没有「只剩静态原件」这一档。
         """
         self._own()
-        fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
+        retry = self._retry_failed
+        self._retry_failed = False
+        fresh = [
+            (stem, fig)
+            for stem, fig in self.capture.items()
+            if stem not in self.states and (retry or stem not in self.failures)
+        ]
+        first_error: BaseException | None = None
         if suppressed_savefig:
             pathgeom.stabilize_captured_tight_layouts(
                 dict(fresh), self.savefig_calls, self.passthrough_figures, ordered_axes=ordered_axes
@@ -697,22 +1498,171 @@ class LiveFigureSession:
             # 从模板 tick 拷字体、图例重建从旧文字拷字体）都不靠它，变异反证里
             # 拿掉它不会红——它兜的是「直接用默认 FontProperties 新建 Text」
             # 这条今天还不存在的路。
-            overrides_mod.ensure_rcparams_fallback()
+            overrides_mod.ensure_rcparams_fallback(self.capture.values())
             # 只有中文名的字体按真名补登记：override 里存的是真名，应用之前就得解析得到
             # （中日韩尾巴关掉时 `font_installed` 不会先被问到，这里不靠它顺带）
             overrides_mod.register_font_name_aliases()
         # 图幅（ADR 0098）在一切之前定：字体回退尾巴与 override 都不该改变「脚本存盘时
         # 裁成什么样」——原件是在它们之前存下的
+        framed = []
         for stem, fig in fresh:
-            self.establish_frame(stem, fig)
-        for stem, fig in fresh:
-            overrides_mod.ensure_figure_fallback(fig)
-            state = overrides_mod.FigState(fig)
-            manifest_mod.instrument(state)
-            self.states[stem] = state
-            self.render(stem)
+            try:
+                self.establish_frame(stem, fig)
+            except Exception as exc:  # noqa: BLE001 — 逐图隔离：见 `_isolate`
+                first_error = first_error or exc
+                self._isolate(stem, None, exc)
+                continue
+            framed.append((stem, fig))
+        try:
+            for stem, fig in framed:
+                state = None
+                try:
+                    overrides_mod.ensure_figure_fallback(fig)
+                    state = overrides_mod.FigState(fig)
+                    manifest_mod.instrument(state)
+                    self.states[stem] = state
+                    staged = self._stage_preview(stem)
+                except Exception as exc:  # noqa: BLE001 — 逐图隔离：见 `_isolate`
+                    self.states.pop(stem, None)
+                    first_error = first_error or exc
+                    self._isolate(stem, state, exc)
+                    continue
+                self._publish_staged(stem, staged)
+                self.failures.pop(stem, None)
+                self._failed_states.pop(stem, None)
+                self.live_captured_at[stem] = time.time()
+        except BaseException:
+            # 这一批新图里任何一张**发布**失败（例如 Windows 上账本瞬时被锁）：**整批**撤掉——pool 会复用这个 worker
+            # 重跑脚本，重跑画出的是新 Figure；留着同批里已发布的旧图，`add_figure` 会拒收它们的新图，再把失败那次执行
+            # 的旧图当成功结果；没出过预览的那张还会让 `stems_summary` 缺缓存 manifest、永久 KeyError（Codex #958）。
+            # 已在编辑的图不在 `fresh` 里，不受影响；同批已发布的磁盘产物会在重试时被新发布覆盖。
+            for stem, _fig in fresh:
+                self.states.pop(stem, None)
+                self._manifest_cache.pop(stem, None)
+                self.capture.pop(stem, None)
+                self.capture_source.pop(stem, None)
+                self.savefig_calls.pop(stem, None)
+                self.savefig_extras.pop(stem, None)
+                self.savefig_writers.pop(stem, None)
+                self.savefig_file_stem.pop(stem, None)
+                self.failures.pop(stem, None)
+                self._failed_states.pop(stem, None)
+                self.live_captured_at.pop(stem, None)
+            raise
+        if raise_if_none_live and first_error is not None and not self.states:
+            # 抛之前把这次隔离的捕获全部退役：worker 会被复用，留着失败 stem 的话重跑脚本画出的新 Figure 会被
+            # `add_figure` 拒收、`instrument_all` 又跳过旧失败，第二次 build 就成了「零活图的成功」（Codex #978）
+            for stem in list(self.failures):
+                self.retire_capture(stem)
+            raise first_error
 
-    def stems_summary(self, dropped_figures: int = 0) -> dict:
+    def isolate_live_failure(self, stem: str, exc: Exception) -> None:
+        """已经在编辑的图在后续重渲染（native 的 rebase）里失败：和新捕获同一套隔离。
+
+        撤出活会话、记失败事实、隐藏它此前的预览、核对恢复；不是 `except: pass`，其它图照常。
+        """
+        self._reraise_if_session_level(exc)
+        state = self.states.pop(stem, None)
+        self.live_captured_at.pop(stem, None)
+        self._isolate(stem, state, exc)
+
+    def _reraise_if_session_level(self, exc: BaseException) -> None:
+        """产物目录 / 账本的存储错误是会话级的，不是"这张图画不出来"：不隔离，原样上抛（Codex #978）。
+
+        否则账本读不出来、磁盘满这类错误会把每一张健康的图都逐张标成失败。
+        """
+        if isinstance(exc, figcapture.PreviewLedgerUnreadable):
+            raise exc
+        if isinstance(exc, OSError) and getattr(exc, "filename", None) is not None:
+            try:
+                Path(os.fspath(exc.filename)).resolve().relative_to(self.out_dir.resolve())
+            except (ValueError, OSError, TypeError):
+                return
+            raise exc
+
+    def retire_capture(self, stem: str) -> None:
+        """把 `stem` 从捕获表与失败记录里整个撤掉（不留任何残余）。"""
+        for table in (
+            self.states,
+            self._manifest_cache,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+            self.savefig_writers,
+            self.failures,
+            self._failed_states,
+            self.live_captured_at,
+        ):
+            table.pop(stem, None)
+
+    def _isolate(self, stem: str, state, exc: Exception) -> None:
+        """记下 `stem` 这张图的失败，并把它已经动过的 Figure 状态核对恢复。
+
+        选定产物上下文、线程归属这类**不属于单张图**的异常原样重抛，不当作「这张图坏了」。
+        """
+        if isinstance(exc, (WrongThread, figcapture.ArtifactContextError)) or (
+            self.artifact_source is not None
+        ):
+            raise exc
+        self._reraise_if_session_level(exc)
+        message = f"{type(exc).__name__}: {exc}"
+        if len(message) > 400:
+            message = message[:397] + "..."
+        self.failures[stem] = {"code": PREVIEW_CAPTURE_FAILED, "message": message}
+        self._manifest_cache.pop(stem, None)
+        self._hide_previous_preview(stem)
+        if state is not None:
+            self._failed_states[stem] = state
+            self._restore_failed(stem, state)
+        print(
+            f"[tavotto] 图 {stem!r} 没能进入可编辑会话，已隔离（其它图不受影响）: {message}",
+            file=sys.stderr,
+        )
+
+    def _hide_previous_preview(self, stem: str) -> None:
+        """这张图本次捕获已确认失败：读方不能再把它此前发布的那一版当成本次结果（Codex #978）。
+
+        与"发布写失败，旧预览保持完整"不同：那是没产出新版、旧版仍是同一份有效结果；这里对外就是
+        「失败 + 无预览」，与 `usable_preview_path` 的语义一致。摘掉账本指针；摘不掉退到失效标记
+        （下一次成功发布会撤掉它）；两者都落空读方失去保证，升级为致命。
+        """
+        try:
+            ledger = figcapture._load_preview_ledger(self.out_dir)
+        except figcapture.PreviewLedgerUnreadable:
+            ledger = False  # 读不出来 ≠ 没有指针：不知道有没有，按有处理（失败即关闭）
+        if ledger is None or (ledger and stem not in ledger["stems"]):
+            return
+        if ledger and figcapture._drop_ledger_stem(self.out_dir, stem):
+            return
+        if not figcapture.mark_preview_invalid(self.out_dir, stem):
+            raise PreviewPoisoned(
+                f"preview of {stem!r} failed this run and its previous preview could not be hidden"
+            )
+
+    @staticmethod
+    def _restore_failed(stem: str, state) -> bool:
+        """把失败图的 Figure 恢复成脚本原样；恢复不干净返回 False。"""
+        try:
+            overrides_mod.apply(state, [])
+        except Exception as exc:  # noqa: BLE001 — 还原不了要如实说，由屏障拒绝放行
+            print(f"[tavotto] 恢复失败图 {stem!r} 的脚本原样时出错: {exc}", file=sys.stderr)
+            return False
+        return not state.unrestored
+
+    def failed_restore_owed(self) -> list:
+        """失败图里**没能恢复成脚本原样**的 stem。非空 = 不许放行（与健康图同一条纪律，ADR 0021 §8.1）。"""
+        return [
+            stem
+            for stem, state in self._failed_states.items()
+            if not self._restore_failed(stem, state)
+        ]
+
+    def allow_retry_failed(self) -> None:
+        """离开屏障之后调用：脚本接着跑，失败过的图下一次 `instrument_all` 再试一次。"""
+        self._retry_failed = True
+
+    def stems_summary(self, dropped_figures: int = 0, pdf_pages: list | None = None) -> dict:
         """build 响应的 stems 表。
 
         `source` 回答的是「这张图有没有原始产物」——`pyplot` 的那些从没存过
@@ -729,6 +1679,58 @@ class LiveFigureSession:
         }
         if dropped_figures:
             out["dropped_figures"] = dropped_figures
+        if pdf_pages:
+            # 写进多页 PDF 而被逐页认领的图（`figcapture.PdfPagesLedger.summary`）；加字段，没有时一个字节都不多
+            out["pdf_pages"] = pdf_pages
+        if self.failures:
+            # 加字段，不升协议版本（ADR 0003 §1）：没有失败时一个字节都不多
+            out["failed_figures"] = [
+                {
+                    "stem": stem,
+                    "capture_source": self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG),
+                    **fact,
+                }
+                for stem, fact in self.failures.items()
+            ]
+        return out
+
+    def figure_facts(self, observations=None) -> list[dict]:
+        """每张捕获 Figure 的**实际完成事实**（P08a）：能力只按真正做完的工作声明。
+
+        * `state="live"`：本会话里的活对象，SVG / manifest / 完成记录同一代（`generation`）发布过——
+          能力 `preview` + `live_edit`；
+        * `state="failed"`：没能进入可编辑会话，`failure` 说明原因，**没有**预览、没有 `live_edit`；
+        * `original_readonly`：**这次运行里这个 Figure 对象**成功 save 出的、至今未被改动的原产物
+          （`saved_originals` 逐条带 `saved_at`）。来源是保存观察账本按 Figure 身份认领的记录——
+          不按 basename、不扫目录找替身。它与活图是两个独立的事实：Saved Stage 的磁盘原件与之后
+          Unsaved Final 的活对象不必相同，两边各有各的 `saved_at` / `live_captured_at`。
+        """
+        out = []
+        for stem, fig in self.capture.items():
+            if stem not in self.states and stem not in self.failures:
+                continue
+            originals = []
+            if observations is not None:
+                originals = [o for o in observations.saved_originals(fig) if o["intact"]]
+            caps: list[str] = []
+            fact = {
+                "stem": stem,
+                "capture_source": self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG),
+                "state": "live" if stem in self.states else "failed",
+                "generation": None,
+                "failure": self.failures.get(stem),
+                "live_captured_at": self.live_captured_at.get(stem),
+            }
+            if stem in self.states:
+                gen = figcapture.usable_preview_generation(self.out_dir, stem)
+                if gen is not None:
+                    fact["generation"] = gen[0]
+                    caps.extend(PREVIEW_CAPABILITIES)
+            if originals:
+                caps.append("original_readonly")
+            fact["capabilities"] = caps
+            fact["saved_originals"] = originals
+            out.append(fact)
         return out
 
     def descriptors(
@@ -751,9 +1753,10 @@ class LiveFigureSession:
         out = []
         for stem in self.states:  # 捕获顺序（dict 保序）
             source = self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG)
-            artifact = None
+            artifact, artifacts = None, []
             if source == figcapture.SOURCE_SAVEFIG and project_root is not None:
-                artifact = figcapture.find_original_artifact(project_root, stem)
+                artifact = self.original_artifact(project_root, stem)
+                artifacts = self.artifacts_of(project_root, stem)
             out.append(
                 figcapture.build_descriptor(
                     script=script,
@@ -766,6 +1769,7 @@ class LiveFigureSession:
                     original_artifact=artifact,
                     savefig_calls=figcapture.savefig_calls_of(self.savefig_calls, stem, source),
                     run_config=run_config,
+                    artifacts=artifacts,
                 ).to_payload()
             )
         return out
@@ -791,23 +1795,33 @@ class LiveFigureSession:
         （dpi 72→300 耗时与体积一模一样），含 imshow 的图上 200→100 能让
         savefig 从 ~29ms 降到 ~17ms、SVG 从 827KB 降到 196KB。
 
-        计时口径（`timings` 非空时填）：`manifest_ms` 是前置 `build_manifest`
-        （含布局 draw）与最终 SVG 几何的测量之和；后一次不再 draw / 排版。
+        计时口径（`timings` 非空时填）：`manifest_ms` 是前置布局准备
+        与最终 SVG 几何测量之和；后一次不再 draw / 排版。
         `preview_plan_ms` 是复杂度分析；`canvas_draw_ms` 是
         `savefig(svg)`（升档时是**两遍之和**——用户等的就是两遍）。**SVG
         序列化与 draw 在 matplotlib 里分不开**（`print_svg` 是「边画边写」的
         一趟），所以不单出 `svg_ms`，见 ADR 0003 §9。
 
         `preview` 是**出参**（与 `timings` 同一条纪律，ADR 0003 §1）：给一个
-        dict 就往里填这一版的表示法元数据。先按原样准备 manifest，再出预览；
+        dict 就往里填这一版的表示法元数据。先准备布局，再出预览；
         **rasterize 的临时状态还原后**，按最终 SVG 的 renderer / 坐标重测，不再
         排版。语义读取不落在临时表示法里，几何则与真正交出去的那张图同源。
         """
         self._own()
+        staged = self._stage_preview(stem, timings, preview_dpi, preview)
+        return self._publish_staged(stem, staged)
+
+    def _stage_preview(self, stem, timings=None, preview_dpi=None, preview=None):
+        """渲染阶段：把这一版的 SVG / manifest 写成**临时文件**，返回 `(man, svg_part, man_part, svg_bytes)`。
+
+        与发布（`_publish_staged`）分成两段是 P08a 逐图隔离的边界：这一段抛出的是「这张图画不出来」
+        （Agg-only 的 Artist、不支持的后端……），属于**这张图**的事实，`instrument_all` 把它隔离在这张图上；
+        发布段抛出的是产物目录 / 账本的问题，不属于任何一张图，照旧整批失败。
+        """
         state = self.states[stem]
         self.out_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        man = manifest_mod.build_manifest(state, stem)
+        manifest_mod.prepare_preview(state, timings=timings)
         t1 = time.perf_counter()
         # **传文件对象、且 `newline=""`，不许传路径。** matplotlib 拿到路径时走
         # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有
@@ -826,14 +1840,18 @@ class LiveFigureSession:
         # 抓到它的是 `test_v1_render_reports_the_preview_verdict` 在
         # `backend-platforms (windows-latest)` 上——PR 上那一格是 skipping，
         # 所以本机与 PR 全绿都是真的，它只在 merge_group 里发作。
-        svg_path = self.out_dir / f"{stem}.svg"
+        # **先写临时文件，成功了才发布**（P01b，EX12）：直接开正式 `<stem>.svg` 写，
+        # 画到一半抛了就留下半份 XML——既被当成「这张图完成了」，也覆盖了上一版
+        # 有效预览。临时名不以 `.svg` 结尾，任何按后缀找预览的人都看不到它。
+        svg_part = self.out_dir / f".{stem}.svg.part"
+        man_part = self.out_dir / f".{stem}.json.part"
         dpi = preview_dpi or self.preview_dpi
 
         def _save(_plan) -> int:
-            with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
+            with self.real_output(), open(svg_part, "w", encoding="utf-8", newline="") as fh:
                 state.fig.savefig(fh, format="svg", dpi=dpi, **pathgeom.output_kwargs(state.fig))
             try:
-                return svg_path.stat().st_size
+                return svg_part.stat().st_size
             except OSError:
                 # 刚写完它，这里读不到 size 说明磁盘 / 权限出了事。按 0 记会把
                 # 这一版说成「很小的矢量图」，接着 read_text 也一定会抛——不如
@@ -842,13 +1860,23 @@ class LiveFigureSession:
 
         # `preview_plan_ms` / `canvas_draw_ms` 由 `save_preview_svg` 自己填——
         # 只有它知道那两段各自从哪到哪（升档时 savefig 跑两遍）。
-        with manifest_mod.capture_preview_manifest(state, stem) as measured:
-            plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
-            # Rasterization has been restored before reading semantic fields.
-            t2 = time.perf_counter()
-            man = measured()
+        try:
+            with manifest_mod.capture_preview_manifest(state, stem) as measured:
+                plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
+                # Rasterization has been restored before reading semantic fields.
+                t2 = time.perf_counter()
+                man = measured()
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
         if timings is not None:
-            timings["manifest_ms"] = round((t1 - t0 + time.perf_counter() - t2) * 1000.0, 3)
+            # 保留 manifest_ms 的既有语义（准备 + 最终 SVG 几何，包括作用域退出）；
+            # 新键只增加诊断，不改变协议版本或图形/布局的任何流程。
+            final_geometry_ms = (time.perf_counter() - t2) * 1000.0
+            prepare_ms = (t1 - t0) * 1000.0
+            timings["manifest_prepare_ms"] = round(prepare_ms, 3)
+            timings["manifest_final_geometry_ms"] = round(final_geometry_ms, 3)
+            timings["manifest_ms"] = round(prepare_ms + final_geometry_ms, 3)
         if preview is not None:
             mode, reason = previewbudget.resolve_mode(
                 svg_bytes=svg_bytes,
@@ -866,11 +1894,45 @@ class LiveFigureSession:
                     estimated_nodes=plan.estimated_nodes,
                 )
             )
-        (self.out_dir / f"{stem}.json").write_text(
-            json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
-        )
+        try:
+            man_part.write_text(
+                json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
+            )
+            return man, svg_part, man_part, svg_part.stat().st_size
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
+
+    def _publish_staged(self, stem, staged) -> dict:
+        """发布段：SVG、manifest、完成记录同一代（`figcapture.publish_preview`），最后返回 manifest。
+
+        账本里的指针一次切换就是提交点；任何一步失败（含账本存在但读不出来）上一版预览与它的完成记录
+        原封不动，这里只清掉自己的临时件。
+        """
+        man, svg_part, man_part, svg_bytes = staged
+        try:
+            with self.real_output():
+                figcapture.publish_preview(
+                    self.out_dir,
+                    stem,
+                    svg_part,
+                    man_part,
+                    svg_bytes,
+                    capabilities=PREVIEW_CAPABILITIES,
+                )
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
         self._manifest_cache[stem] = man
         return man
+
+    @staticmethod
+    def _discard_parts(*parts: Path) -> None:
+        for part in parts:
+            try:
+                part.unlink()
+            except OSError:
+                pass
 
     def manifest(self, stem: str) -> dict:
         return self._manifest_cache[stem]
@@ -969,9 +2031,11 @@ class LiveFigureSession:
         if preview is not None:
             preview.update(verdict)
         if inline_svg and verdict["mode"] != previewbudget.MODE_RASTER:
-            # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
-            # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
-            result["svg"] = (self.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
+            # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与刚发布的那一代
+            # `<stem>.svg` 逐字节相同，排障时不必怀疑「是不是两份」
+            result["svg"] = Path(
+                figcapture.usable_preview_path(self.out_dir, stem, ".svg")
+            ).read_text(encoding="utf-8")
         return result
 
     def do_render_png(self, stem: str, width: int) -> dict:
@@ -1040,6 +2104,11 @@ class LiveFigureSession:
         fmt: str = "pdf",
         dpi: int = 600,
         timings: dict | None = None,
+        *,
+        svg_path: str | None = None,
+        snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         """全质量导出（供画布合成 / 按原图导出）。
 
@@ -1050,10 +2119,35 @@ class LiveFigureSession:
         会拿着错的 applied 表去做还原。
         """
         self._own()
+        if svg_fonttype is not None and svg_fonttype not in SVG_FONTTYPES:
+            raise ValueError(f"svg_fonttype must be one of {SVG_FONTTYPES}")
+        if svg_fonttype == "none" and str(fmt).lower() != "svg":
+            raise ValueError("svg_fonttype only applies to SVG exports")
+        if svg_text_path is not None:
+            if not isinstance(svg_text_path, str) or not svg_text_path or svg_path is None:
+                raise ValueError("svg_text_path needs a nonempty path and an SVG companion")
+            if snapshot_only:
+                raise ValueError("snapshot_only never writes the text variant")
+            if (
+                len({Path(svg_text_path).resolve(), Path(svg_path).resolve(), Path(path).resolve()})
+                != 3
+            ):
+                raise ValueError("PDF, SVG and text SVG export paths must be different")
+        if snapshot_only and svg_path is None:
+            raise ValueError("snapshot_only requires an SVG companion path")
+        if svg_path is not None:
+            if not isinstance(svg_path, str) or not svg_path:
+                raise ValueError("svg_path must be a nonempty string")
+            if str(fmt).lower() != "pdf":
+                raise ValueError("svg_path is only supported for PDF exports")
+            if Path(svg_path).resolve() == Path(path).resolve():
+                raise ValueError("PDF and SVG export paths must be different")
         self._require_background_choice(stem, patches)
         state = self.states[stem]
         prev = self.snapshot(stem)
         out = Path(path)
+        companion = Path(svg_path) if svg_path is not None else None
+        result = {"path": str(out)}
         # `try` 从 apply 之前起（见 do_preview_png 的同款说明）：apply 与
         # mkdir 都会抛——目标目录不可写、路径过长、Windows 上被占用——而它们
         # 恰恰是最需要还原的那两步。画布合成导出用的是**热会话**，一次没还原
@@ -1062,15 +2156,175 @@ class LiveFigureSession:
             t0 = time.perf_counter()
             warnings = overrides_mod.apply(state, patches)
             t1 = time.perf_counter()
+            # 像素预算：量即将分配的栅格，超了就在 mkdir / 任何写入之前抛（finally 照常还原 patches）。
+            # 放在 apply 之后，figsize / frame 类 patch 已经生效，量的是真实要画的尺寸。
+            _check_export_raster_budget(
+                state.fig,
+                fmt,
+                int(dpi),
+                {**export_format_kwargs(fmt), **pathgeom.output_kwargs(state.fig)},
+            )
             out.parent.mkdir(parents=True, exist_ok=True)
-            with self.real_output(), export_font_context(fmt):
-                state.fig.savefig(
-                    out,
-                    format=fmt,
-                    dpi=int(dpi),
-                    **export_format_kwargs(fmt),
-                    **pathgeom.output_kwargs(state.fig),
-                )
+            blocker = None
+            strict_blocker = None
+            single_draw = False
+            if companion is not None:
+                # ADR 0150：PDF 与 SVG 出自**同一次 draw**（`teedraw`），只算值的回调（刻度格式化 / 定位 / scale / transform）不再需要被证明是纯的；
+                # 能看到 renderer 的回调（draw_event、自定义 Artist.draw、path effect……）仍阻断；
+                # 自检不过才退回二次绘制 + 回调阻断，并把自检结论带进原因（进诊断）。
+                single_ok, single_why = teedraw.status()
+                single_draw = single_ok
+                try:
+                    blocker = _svg_pair_blocker(state.fig, single_draw=single_ok)
+                    # 完整（二次绘制口径）阻断另算一份交给调用方：#1185 的等价证人是独立 savefig，
+                    # 有用户回调（哪怕是只算值的）就不能拿它去绑磁盘素材
+                    strict_blocker = blocker if not single_ok else _svg_pair_blocker(state.fig)
+                except Exception as exc:  # noqa: BLE001 — a companion check cannot block the PDF
+                    blocker = f"SVG pairing state could not be verified: {type(exc).__name__}"
+                    strict_blocker = blocker
+                if blocker is not None and not single_ok:
+                    blocker = f"{blocker} (single-draw pairing unavailable: {single_why})"
+                if snapshot_only and blocker is not None:
+                    raise SvgSnapshotUnavailable(blocker)
+            tee_targets: list = []
+            tee_results: list = []
+            prep_error: OSError | None = None
+            if single_draw and blocker is None:
+                try:
+                    companion.parent.mkdir(parents=True, exist_ok=True)
+                    targets = [teedraw.SvgTarget(svg_rc("path"), _text_sink(companion))]
+                    if svg_text_path is not None:
+                        text_out = Path(svg_text_path)
+                        text_out.parent.mkdir(parents=True, exist_ok=True)
+                        targets.append(teedraw.SvgTarget(svg_rc("none"), _text_sink(text_out)))
+                    tee_targets = targets
+                except OSError as exc:  # 目录建不出来只是 SVG 这一项的失败，PDF 照常
+                    prep_error = exc
+            # 两份产物共用一次 override 应用和同一个 owner-thread 命令；不走编辑预览，
+            # 也不在两次独立请求之间重新应用 patches / 运行脚本。发布与失败清理由导出事务负责。
+            with self.real_output():
+                # Automatic capture witnesses the script's original output policy;
+                # forcing PDF Type 42 here would change a saved Type 3 source's pixels.
+                with (
+                    _NULL_CTX if snapshot_only else export_font_context(fmt, svg_fonttype or "path")
+                ):
+                    # Matplotlib opens SVG paths in text mode with platform newline
+                    # translation. Own the UTF-8 stream so Windows writes the same bytes.
+                    with (
+                        out.open("w", encoding="utf-8", newline="")
+                        if str(fmt).lower() == "svg"
+                        else nullcontext(out)
+                    ) as fh:
+                        with (
+                            teedraw.single_draw(state.fig, tee_targets)
+                            if tee_targets
+                            else nullcontext()
+                        ) as tee_session:
+                            state.fig.savefig(
+                                fh,
+                                format=fmt,
+                                dpi=int(dpi),
+                                **export_format_kwargs(fmt),
+                                **pathgeom.output_kwargs(state.fig),
+                            )
+                        if tee_session is not None:
+                            tee_results = tee_session.errors()
+            if companion is not None:
+                try:
+                    if blocker is not None:
+                        raise ValueError(blocker)
+                    if prep_error is not None:
+                        raise prep_error
+                    if tee_targets:
+                        if tee_results[0] is not None:
+                            raise ValueError(f"single-draw SVG failed: {tee_results[0]}")
+                        result["svg_pairing"] = "single_draw"
+                        if strict_blocker is not None:
+                            # 有用户回调（只算值的也算）：调用方不得拿独立 savefig 的证人去绑磁盘素材（#1185）
+                            result["svg_strict_blocker"] = strict_blocker
+                    else:
+                        result["svg_pairing"] = "two_pass"
+                    companion.parent.mkdir(parents=True, exist_ok=True)
+
+                    # The PDF draw has already established the layout. Re-running
+                    # tight/constrained layout with SVG font metrics would move axes
+                    # between the paired artifacts. Restore the script's engine after
+                    # this save, including failure; normal draw caches remain native.
+                    def layout_context():
+                        # 生成器式上下文只能进一次：写 path 基准与 text 成品各要一份新的
+                        return (
+                            state.fig._cm_set(layout_engine="none")
+                            if state.fig.get_layout_engine() is not None
+                            else _NULL_CTX
+                        )
+
+                    if not tee_targets:
+                        with (
+                            self.real_output(),
+                            export_font_context("svg"),
+                            layout_context(),
+                            companion.open("w", encoding="utf-8", newline="") as fh,
+                        ):
+                            state.fig.savefig(
+                                fh,
+                                format="svg",
+                                dpi=int(dpi),
+                                **pathgeom.output_kwargs(state.fig),
+                            )
+                    digest = hashlib.sha256()
+                    size_bytes = 0
+                    with companion.open("rb") as stream:
+                        for block in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(block)
+                            size_bytes += len(block)
+                    result["svg"] = {
+                        "path": str(companion),
+                        "sha256": digest.hexdigest(),
+                        "size_bytes": size_bytes,
+                    }
+                    if svg_text_path is not None:
+                        # 同一次命令、同一份布局（引擎已钉成 none）再写一份「保留文字」的 SVG：
+                        # 它是成品，不是等价证人——path 基准字节（上面那份）一字未动。失败只记 svg_text_error。
+                        try:
+                            text_out = Path(svg_text_path)
+                            text_out.parent.mkdir(parents=True, exist_ok=True)
+                            if tee_targets:
+                                if tee_results[1] is not None:
+                                    raise ValueError(str(tee_results[1]))
+                            else:
+                                with (
+                                    self.real_output(),
+                                    export_font_context("svg", "none"),
+                                    layout_context(),
+                                    text_out.open("w", encoding="utf-8", newline="") as fh,
+                                ):
+                                    state.fig.savefig(
+                                        fh,
+                                        format="svg",
+                                        dpi=int(dpi),
+                                        **pathgeom.output_kwargs(state.fig),
+                                    )
+                            raw = text_out.read_bytes()
+                            result["svg_text"] = {
+                                "path": str(text_out),
+                                "sha256": hashlib.sha256(raw).hexdigest(),
+                                "size_bytes": len(raw),
+                            }
+                        except Exception as exc:  # noqa: BLE001 — the text variant is optional
+                            Path(svg_text_path).unlink(missing_ok=True)
+                            result["svg_text_error"] = {
+                                "code": "svg_text_export_failed",
+                                "message": str(exc),
+                            }
+                except Exception as exc:  # noqa: BLE001 — companion failure must not discard the PDF
+                    result["svg_error"] = {"code": "svg_export_failed", "message": str(exc)}
+                    # No SVG acknowledgement means the export transaction must never publish
+                    # this path, including when its own eventual cleanup has to retry.
+                    if blocker is None:
+                        try:
+                            companion.unlink(missing_ok=True)
+                        except OSError:
+                            result["svg_error"]["cleanup_failed"] = True
             if timings is not None:
                 timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
                 # 还原那一次的耗时**不算进 export_ms**：它是状态中立这条纪律的
@@ -1080,7 +2334,7 @@ class LiveFigureSession:
             # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
             # 有没有写不进去的」，混进还原噪音会让写回自检误判。
             overrides_mod.apply(state, prev)
-        return {"path": str(out), "warnings": warnings}
+        return {**result, "warnings": warnings}
 
 
 class _NullCtx:

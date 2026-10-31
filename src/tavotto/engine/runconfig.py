@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -32,6 +33,8 @@ import time
 from pathlib import Path
 
 from . import atomicio, config, execspec
+
+LOG = logging.getLogger("tavotto.runconfig")
 
 ID_PREFIX = "rc_"
 #: `put` 生成的引用形状（`ID_PREFIX` + 12 位小写十六进制）。登记校验、`get` 与资产 id 后缀解析
@@ -105,6 +108,11 @@ class RunConfig:
     sensitive: bool
     source: str
     created_at: float
+
+    @property
+    def executable(self) -> bool:
+        """此刻还能按它运行：敏感配置的秘密值已不在（重启后）= 不能（`selection()` 会抛 `run_config_secret_missing`）。"""
+        return self.argv is not None
 
     def public(self) -> dict:
         """公开投影：**没有参数值**。给前端 / 计划 / 诊断用。"""
@@ -191,7 +199,7 @@ def _read(project_root: str | Path) -> dict:
     恢复由用户显式进行：修复或删除该登记文件后重试。"""
     found = _locate(project_root)
     if found is None:
-        return {"configs": {}, "defaults": {}}
+        return {"configs": {}, "defaults": {}, "launches": {}, "captures": {}}
     return _parse(found[1])
 
 
@@ -218,7 +226,83 @@ def _parse(raw: str) -> dict:
     configs, defaults = data.get("configs", {}), data.get("defaults", {})
     if not _schema_ok(configs, defaults):
         raise bad
-    return {"configs": configs, "defaults": defaults}
+    # P09：最近一次成功的启动上下文（见 `set_launch_record`）。可选字段，不升 FORMAT_VERSION；
+    # 形状不对的整份丢弃为空（它只是「可复用的证据」，坏了 = 没有证据 = 重新核验，不是危险默认）
+    launches = data.get("launches", {})
+    launches = (
+        {k: v for k, v in launches.items() if isinstance(k, str) and _launch_record_ok(v)}
+        if isinstance(launches, dict)
+        else {}
+    )
+    # Capture history is listing evidence, never an execution default. Missing or malformed
+    # history must retain legacy placeholders, not invent an argument-free absence.
+    captures = data.get("captures", {})
+    captures = (
+        {k: v for k, v in captures.items() if isinstance(k, str) and _capture_history_ok(v)}
+        if isinstance(captures, dict)
+        else {}
+    )
+    return {"configs": configs, "defaults": defaults, "launches": launches, "captures": captures}
+
+
+def _capture_history_ok(rec) -> bool:
+    if not isinstance(rec, dict) or not isinstance(rec.get("runs"), dict):
+        return False
+    discovered = rec.get("discovered", [])
+    if not isinstance(discovered, list) or not all(isinstance(s, str) for s in discovered):
+        return False
+    legacy = rec.get("legacy_stems")
+    if not isinstance(legacy, list) or not all(isinstance(s, str) for s in legacy):
+        return False
+    return all(
+        isinstance(cid, str)
+        and (not cid or ID_RE.fullmatch(cid))
+        and isinstance(stems, list)
+        and all(isinstance(s, str) for s in stems)
+        for cid, stems in rec["runs"].items()
+    )
+
+
+def _is_str(x) -> bool:
+    return isinstance(x, str)
+
+
+def _launch_record_ok(rec) -> bool:
+    """启动记录的深校验（形状与 `launchctx.build_record` 一一对应）。只是「可复用的证据」：任何字段类型不对 =
+    这一条丢掉（等于没有证据、重新核验），而不是留着让 `verify` 在某个嵌套字段上抛 AttributeError。"""
+    if not isinstance(rec, dict):
+        return False
+    interp, lau, src = rec.get("interpreter"), rec.get("launcher"), rec.get("source")
+    if not (isinstance(interp, dict) and isinstance(lau, dict) and isinstance(src, dict)):
+        return False
+    if not (_is_str(interp.get("path")) and _is_str(interp.get("source"))):
+        return False
+    if not _is_str(interp.get("generation")):
+        return False
+    if "project_decided" in interp and not isinstance(interp["project_decided"], bool):
+        return False
+    if not _is_str(lau.get("kind")):
+        return False
+    for key in ("conda_exe", "prefix"):
+        if key in lau and not _is_str(lau[key]):
+            return False
+    if not (_is_str(rec.get("env_state")) and _is_str(rec.get("cwd_mode"))):
+        return False
+    cid = rec.get("run_config")
+    if cid is not None and not (_is_str(cid) and ID_RE.fullmatch(cid)):
+        return False
+    if not isinstance(rec.get("run_sensitive", False), bool):
+        return False
+    if not _is_str(rec.get("binding_revision", "")):
+        return False
+    if "recorded_at" in rec and not _is_number(rec["recorded_at"]):
+        return False
+    if not _is_str(src.get("script_sha1")):
+        return False
+    basis = src.get("basis")
+    if not isinstance(basis, dict):
+        return False
+    return all(_is_str(k) and (v is None or _is_str(v)) for k, v in basis.items())
 
 
 def _is_number(x) -> bool:
@@ -265,7 +349,12 @@ def _schema_ok(configs, defaults) -> bool:
 def _write(project_root: str | Path, data: dict) -> None:
     path = store_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomicio.write_json(path, {"version": FORMAT_VERSION, **data})
+    out = {"version": FORMAT_VERSION, **data}
+    if not out.get("launches"):
+        out.pop("launches", None)  # 没有成功记录时文件字节与 P09 之前一致
+    if not out.get("captures"):
+        out.pop("captures", None)
+    atomicio.write_json(path, out)
 
 
 def _load(project_root: str | Path) -> dict[str, dict]:
@@ -374,9 +463,14 @@ def selection(project_root: str | Path, config_id: str, *, script: str | None = 
     return execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or (), sensitive=cfg.sensitive)
 
 
-def selection_for(project_root: str | Path, script: str, argv, *, sensitive: bool = False):
-    """用户这次给的 token → `RunSelection`（空 argv → None，旧行为）。登记 + 校验一次做完。"""
-    cfg = put(project_root, script, argv, sensitive=sensitive)
+def selection_for(
+    project_root: str | Path, script: str, argv, *, sensitive: bool = False, source: str = "user"
+):
+    """用户这次给的 token → `RunSelection`（空 argv → None，旧行为）。登记 + 校验一次做完。
+
+    `source` 只记「这份配置最初从哪个入口来」（`user` = 界面、`mcp` = Agent 经插件提交）：同一 (脚本, argv) 两个入口
+    得到**同一个**引用（T10：GUI 与 MCP 同一份执行意图），它不进身份、不进池键。"""
+    cfg = put(project_root, script, argv, sensitive=sensitive, source=source)
     return (
         None
         if cfg is None
@@ -397,10 +491,116 @@ def configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
     return sorted(out, key=lambda c: -c.created_at)
 
 
+def executable_configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
+    """`configs_of` 里**此刻真能运行**的那些：敏感值已不在的占位被滤掉（打开只会得到 `run_config_secret_missing`）。
+
+    给「这个脚本的 cache 算不算可直接编辑的证据」用（`probe.captured_stems`）。整份登记读不出 / 来自新版本时
+    `RunConfigError` **原样抛出**，不当空列表：素材清单（`configs_of`）此时整个报 `run_config_unreadable`，连无参数变体也打不开，
+    把「读不出」说成「没有配置」会让 cache 被当成可编辑证据（#819 r4232390785）。调用方必须区分这两种情形。"""
+    return [cfg for cfg in configs_of(project_root, script) if cfg.executable]
+
+
 def forget_secrets() -> None:
     """测试与"清除敏感值"用：模拟进程重启后敏感配置不在了。"""
     with _LOCK:
         _SECRETS.clear()
+
+
+# ---------------------------------------------------------------------------
+# Durable capture provenance (independent of preview cache eviction)
+# ---------------------------------------------------------------------------
+def record_discovered(project_root: str | Path, discoveries: dict[str, set[str]]) -> None:
+    """Remember newly published static candidates locally, never in the project registry."""
+    if not any(discoveries.values()):
+        return
+    try:
+        with _LOCK:
+            data = _read(project_root)
+            changed = False
+            for script, stems in discoveries.items():
+                if not stems:
+                    continue
+                old = data["captures"].get(script, {"runs": {}, "legacy_stems": []})
+                known = set().union(*old["runs"].values(), old["legacy_stems"])
+                discovered = set(old.get("discovered", [])) | (set(stems) - known)
+                if discovered and discovered != set(old.get("discovered", [])):
+                    data["captures"][script] = {**old, "discovered": sorted(discovered)}
+                    changed = True
+            if changed:
+                _write(project_root, data)
+    except (OSError, RunConfigError):
+        LOG.warning("discovery history could not be recorded", exc_info=True)
+
+
+def discovered_stems(project_root: str | Path, script: str) -> set[str]:
+    """Uncaptured static candidates with explicit local evidence; missing/bad history is unknown."""
+    try:
+        with _LOCK:
+            history = _read(project_root)["captures"].get(script, {})
+        return set(history.get("discovered", []))
+    except RunConfigError:
+        return set()
+
+
+def record_captures(
+    project_root: str | Path,
+    script: str,
+    stems,
+    config_id: str = "",
+    *,
+    registered_stems=None,
+) -> None:
+    """Union actual outputs by configuration; the empty reference means no argv.
+
+    Registration supplies prior stems whose origins are unknown, excluding explicitly
+    static-only discoveries. An unknown old stem stays legacy after a configured run.
+    Materialization also records captures (including document replays); without a
+    registration snapshot, previously untracked stems remain legacy. No argv is copied here.
+    """
+    observed = set(stems)
+    if not observed:
+        return
+    try:
+        with _LOCK:
+            data = _read(project_root)
+            histories = data["captures"]
+            old = histories.get(script, {"runs": {}, "legacy_stems": []})
+            runs = {cid: set(values) for cid, values in old["runs"].items()}
+            known = set().union(*runs.values())
+            legacy = set(old["legacy_stems"])
+            discovered = set(old.get("discovered", []))
+            unknown = observed - known - discovered
+            legacy.update(
+                unknown if registered_stems is None else unknown.intersection(registered_stems)
+            )
+            runs.setdefault(config_id, set()).update(observed)
+            updated = {
+                "runs": {cid: sorted(values) for cid, values in runs.items()},
+                "legacy_stems": sorted(legacy),
+            }
+            if remaining := discovered - observed:
+                updated["discovered"] = sorted(remaining)
+            if updated != old:
+                histories[script] = updated
+                _write(project_root, data)
+    except (OSError, RunConfigError):
+        # Match preview materialization: unavailable evidence does not undo a successful
+        # run or overwrite an unreadable store. Listing without history fails open.
+        LOG.warning("capture history could not be recorded", exc_info=True)
+
+
+def configured_only_stems(project_root: str | Path, script: str) -> set[str]:
+    """Stems known to have only configured captures; untracked legacy stems are unknown."""
+    with _LOCK:
+        history = _read(project_root)["captures"].get(script)
+    if history is None:
+        return set()
+    runs = history["runs"]
+    return (
+        {stem for cid, stems in runs.items() if cid for stem in stems}
+        - set(runs.get("", []))
+        - set(history["legacy_stems"])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -438,3 +638,96 @@ def default_selection(project_root: str | Path, script: str):
     if not isinstance(cid, str):
         return None
     return selection(project_root, cid, script=script)
+
+
+# ---------------------------------------------------------------------------
+# 最近一次成功的启动上下文（P09）
+# ---------------------------------------------------------------------------
+def set_launch_record(project_root: str | Path, script: str, record: dict | None) -> None:
+    """记下「这个脚本最近一次**成功**用的启动上下文」（`launchctx.build_record` 的产物；`None` = 清掉）。
+
+    与 `set_default` 同一份登记、同一把锁、同一套坏登记失败关闭的纪律——不另建成功数据库。记录里只有
+    结构化引用与摘要（解释器身份、启动方式引用、cwd 模式、运行配置**引用**、源码 / helper 摘要），
+    **没有 argv 值、没有环境变量、没有答案原文**。调用方只在一次执行真的成功之后调。"""
+    with _LOCK:
+        data = _read(project_root)
+        launches = data["launches"]
+        if record is None:
+            if script not in launches:
+                return
+            launches.pop(script)
+        else:
+            if launches.get(script) == record:
+                return
+            launches[script] = record
+        _write(project_root, data)
+
+
+def amend_launch_records(project_root: str | Path, amend) -> bool:
+    """在同一把锁里逐条改写启动记录：`amend(记录) -> 新记录 | None`（None = 这条不动）。回「有没有写」。
+
+    给「成功之后才补齐依据」的那一类（#1047：native 在 `show()` 屏障上成功收口，脚本跑完才有输入观察）：读改写在
+    锁内完成，期间另一次成功写进来的记录不会被旧值盖掉。坏登记照常抛 `RunConfigError`、文件不改。"""
+    with _LOCK:
+        data = _read(project_root)
+        launches = data["launches"]
+        changed = False
+        for script, rec in list(launches.items()):
+            if not isinstance(rec, dict):
+                continue
+            new = amend(dict(rec))
+            if new is not None and new != rec:
+                launches[script] = new
+                changed = True
+        if changed:
+            _write(project_root, data)
+    return changed
+
+
+def commit_success(
+    project_root: str | Path,
+    script: str,
+    record: dict | None,
+    *,
+    default_config_id: str | None = None,
+    update_default: bool = False,
+) -> None:
+    """一次成功执行的登记**事务**：磁盘面板默认配置（`set_default` 的语义）与启动上下文记录在**同一把锁、同一次写入**里落地。
+
+    分两次各自加锁会让两个不同 argv 的会话并发收尾时交错——默认指向 B、启动记录却是 A，下次不带 argv 打开就会按
+    A 的记录核验、按 B 的配置运行（或反过来）。`record=None` = 这次成功没有可核验的启动依据：**清掉**该脚本旧的启动记录
+    （旧记录 A 留着会让下次不带 argv 的打开悄悄跑 A，而不是最近成功的 B）。耗时的依据哈希由调用方在进事务之前算好。
+
+    坏登记的纪律同 `set_default`：无参数运行（`default_config_id is None`）不被坏登记阻断、也不动文件；带配置的运行
+    失败关闭（抛 `RunConfigError`，文件不改）。"""
+    with _LOCK:
+        try:
+            data = _read(project_root)
+        except RunConfigError:
+            if default_config_id is None:
+                return
+            raise
+        changed = False
+        if update_default:
+            defaults = data["defaults"]
+            if default_config_id is None:
+                changed |= defaults.pop(script, None) is not None
+            elif defaults.get(script) != default_config_id:
+                defaults[script] = default_config_id
+                changed = True
+        launches = data["launches"]
+        if record is None:
+            changed |= launches.pop(script, None) is not None
+        elif launches.get(script) != record:
+            launches[script] = record
+            changed = True
+        if changed:
+            _write(project_root, data)
+
+
+def launch_record(project_root: str | Path, script: str) -> dict | None:
+    """`set_launch_record` 记下的那份；没有 = None。登记读不出 / 来自新版本 → `RunConfigError` 原样抛
+    （调用方按「没有证据、重新核验」处理，但不改动文件）。"""
+    with _LOCK:
+        rec = _read(project_root)["launches"].get(script)
+    return dict(rec) if isinstance(rec, dict) else None

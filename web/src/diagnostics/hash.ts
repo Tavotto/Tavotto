@@ -96,6 +96,9 @@ export const versionHash = (v: unknown): string => tagged('ver', v)
 /** 画布对象 id（画布标注等） */
 export const objectHash = (v: unknown): string => tagged('obj', v)
 
+/** 意外错误的 message：只回答「是不是同一条错误」，原文不进 trace（`ui.unexpected_error`） */
+export const errorMessageHash = (v: unknown): string => tagged('err', v)
+
 /** null 进 null 出的变体 hash：调用点少一层三元表达式，也少一处漏 hash 的机会 */
 export const variantHashOrNull = (v: string | null | undefined): string | null =>
   v == null ? null : variantHash(v)

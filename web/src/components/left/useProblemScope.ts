@@ -57,10 +57,14 @@ export function useScopedProblems(): ScopedProblems {
   const choice = useUiStore((s) => s.problemScope)
   const figure = useCurrentFigure()
   const scope = effectiveScope(choice, figure.id)
-  const issues = useMemo(() => issuesInScope(all, scope, figure.id), [all, scope, figure.id])
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const issues = useMemo(
+    () => issuesInScope(all, scope, figure.id, activeCanvasId),
+    [all, scope, figure.id, activeCanvasId],
+  )
   const loadSeq = useDocumentStore((s) => s.loadSeq)
   const view = useUiStore((s) => s.problemView)
-  const context = problemContextKey({ loadSeq, scope, figureId: figure.id, view })
+  const context = problemContextKey({ loadSeq, scope, figureId: figure.id, canvasId: activeCanvasId, view })
   const stamped = useUiStore((s) => s.problemContext)
   const rawDrill = useUiStore((s) => s.problemDrill)
   const rawCursor = useUiStore((s) => s.problemCursor)

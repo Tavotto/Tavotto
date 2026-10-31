@@ -373,6 +373,50 @@ describe('打开接入中心的遥测（ADR 0041）', () => {
 })
 
 describe('换项目', () => {
+  it('A → B → A：A 第一次认领时发出的那次晚到，不落地、也不被当成「在途」复用（T09 项目代际）', async () => {
+    setCurrentProjectId('pj-a')
+    let releaseOld!: (r: ReadinessReport) => void
+    mockFetch.mockReturnValueOnce(
+      new Promise<ReadinessReport>((res) => {
+        releaseOld = res
+      }),
+    )
+    const old = useProjectReadinessStore.getState().load()
+    // 切到 B 再切回 A：项目 id 又对上了，但已经是另一代
+    useProjectReadinessStore.getState().clear()
+    setCurrentProjectId('pj-b')
+    useProjectReadinessStore.getState().clear()
+    setCurrentProjectId('pj-a')
+    mockFetch.mockResolvedValueOnce(report({ project_id: 'pj-a', fingerprint: 'fp-now' }))
+    const fresh = useProjectReadinessStore.getState().load()
+    expect(fresh).not.toBe(old) // 回到 A 的这次是新请求，不是 A 上一代的在途那份
+    await fresh
+    expect(useProjectReadinessStore.getState().report?.fingerprint).toBe('fp-now')
+    releaseOld(report({ project_id: 'pj-a', fingerprint: 'fp-stale' }))
+    await old
+    expect(useProjectReadinessStore.getState().report?.fingerprint).toBe('fp-now')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('A → B → A 且回到 A 之后还没有新请求：A 上一代晚到的那份同样不落地', async () => {
+    setCurrentProjectId('pj-a')
+    let releaseOld!: (r: ReadinessReport) => void
+    mockFetch.mockReturnValueOnce(
+      new Promise<ReadinessReport>((res) => {
+        releaseOld = res
+      }),
+    )
+    const old = useProjectReadinessStore.getState().load()
+    useProjectReadinessStore.getState().clear()
+    setCurrentProjectId('pj-b')
+    useProjectReadinessStore.getState().clear()
+    setCurrentProjectId('pj-a')
+    releaseOld(report({ project_id: 'pj-a', fingerprint: 'fp-stale' }))
+    await old
+    expect(useProjectReadinessStore.getState().report).toBeNull()
+    expect(useProjectReadinessStore.getState().loading).toBe(false)
+  })
+
   it('clear() 之后报告、错误、聚焦全没了', async () => {
     mockFetch.mockResolvedValue(report())
     await useProjectReadinessStore.getState().load()

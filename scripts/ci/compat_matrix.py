@@ -44,14 +44,17 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
 import time
 import traceback
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -88,7 +91,7 @@ FIDELITY_TOLERANCE = {
 }
 
 #: 导出文件的最小合理体积。低于它基本可以断定是个空壳。
-MIN_EXPORT_BYTES = {"pdf": 900, "png": 900}
+MIN_EXPORT_BYTES = {"pdf": 900, "png": 900, "svg": 64}
 
 
 class Skip(Exception):
@@ -108,15 +111,31 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
     project = workdir / "project"
     project.mkdir(parents=True, exist_ok=True)
 
+    # Recorded upstream launch preparation (empty output directories are not Git blobs).
+    for relative in case.get("project_directories", []):
+        directory = (project / relative).resolve()
+        if not directory.is_relative_to(project.resolve()):
+            raise ValueError("project directory must stay inside the materialized project")
+        directory.mkdir(parents=True, exist_ok=True)
+
     dest_rel = case.get("script_dest") or Path(case["script"]).name
     dest = project / dest_rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(CC.COMPAT_DIR / case["script"], dest)
+
+    def copy_source(relative, target):
+        if case.get("research_project_id"):
+            import compat_research_sources as sources
+
+            target.write_bytes(sources.source_bytes(case, "tests/compat/" + relative))
+        else:
+            shutil.copy2(CC.COMPAT_DIR / relative, target)
+
+    copy_source(case["script"], dest)
 
     for rel, src in (case.get("extra_files") or {}).items():
         target = project / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CC.COMPAT_DIR / src, target)
+        copy_source(src, target)
 
     for asset in case.get("assets") or []:
         # 素材放在**脚本自己的目录**旁边——`pd.read_csv("data.csv")` 的语义
@@ -129,7 +148,71 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
 # --------------------------------------------------------------------------
 # 阶段 1：发现（discover → probe → registry）
 # --------------------------------------------------------------------------
-def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
+#: Working directories the product can give a script (`execspec.CWD_PROJECT` = the script's directory,
+#: `execspec.CWD_PROJECT_ROOT` = the project root). Anything else is a product capability boundary.
+LAUNCH_CONTEXT_UNSUPPORTED = "launch_context_unsupported"
+
+
+def resolve_launch_context(project: Path, script_rel: str, case: dict) -> dict | None:
+    """Which working-directory mode the product leg runs in, and whether it differs from the registration.
+
+    A registered cwd that is the script directory or the project root maps onto the same product mode.
+    Any other directory cannot be expressed (the product has no arbitrary-cwd mode), so the leg runs the
+    way the product itself would: the script directory, the first-open default for a user interpreter
+    (ADR 0107 section 2) and what dragging the .py into Tavotto gives. The substitution is recorded, never
+    hidden. Returns None when nothing is registered.
+    """
+    launch = case.get("reference_invocation")
+    if launch is None:
+        return None
+    from tavotto.engine import execspec
+
+    root = project.resolve()
+    cwd = (root / launch["cwd"]).resolve()
+    if cwd == (root / script_rel).resolve().parent:
+        mode = execspec.CWD_PROJECT
+    elif cwd == root:
+        mode = execspec.CWD_PROJECT_ROOT
+    else:
+        return {
+            "registered_cwd": launch["cwd"],
+            "product_mode": execspec.CWD_PROJECT,
+            "substituted": True,
+        }
+    return {"registered_cwd": launch["cwd"], "product_mode": mode, "substituted": False}
+
+
+def registered_launch(project: Path, script_rel: str, case: dict, context: dict | None = None):
+    """Hand a registered `reference_invocation` to the product, as a user would.
+
+    argv becomes a product run configuration; cwd becomes the project's working-directory mode
+    (`resolve_launch_context`). Returns the `RunSelection` (None for no registration).
+    """
+    context = context or resolve_launch_context(project, script_rel, case)
+    if context is None:
+        return None
+    from tavotto.engine import runconfig, workdir
+
+    workdir.set_mode(project, context["product_mode"])
+    return runconfig.selection_for(project, script_rel, case["reference_invocation"]["argv"])
+
+
+def _attribute_substituted_launch(r: dict) -> None:
+    """A run in the substituted mode that failed is `launch_context_unsupported`, keeping the stage and error."""
+    context = r["detail"].get("launch_context")
+    if not (context and context.get("substituted")):
+        return
+    stage = next((name for name, ok in r["stages"].items() if ok is False), None)
+    if stage is None:
+        return
+    detail = r["detail"].get(stage)
+    if not isinstance(detail, dict):
+        detail = r["detail"][stage] = {}
+    detail["code"] = LAUNCH_CONTEXT_UNSUPPORTED
+    context["failed_stage"] = stage
+
+
+def stage_discover(project: Path, script_rel: str, case: dict, run=None) -> dict:
     """走产品自己的发现链，**不允许 runner 直接把 script/entry 塞给 worker**。
 
     用户的真实体验不是手写注册表。一个「本该能自动发现」的 case 只有靠清单
@@ -170,7 +253,7 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
         return {"ok": False, "detail": detail, "entry": None, "registry": reg}
 
     # 试运行探测：stem 只有运行期才知道时的那条路。
-    result = engine_probe.probe_and_register(project, script_rel)
+    result = engine_probe.probe_and_register(project, script_rel, run=run)
     detail["probe"] = {
         "entry": result.get("entry"),
         "tried": result.get("tried"),
@@ -192,10 +275,10 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
 # --------------------------------------------------------------------------
 # 阶段 2~8：真实 worker
 # --------------------------------------------------------------------------
-def _fresh_worker(script_rel: str, project: Path, entry: str):
+def _fresh_worker(script_rel: str, project: Path, entry: str, run=None):
     from tavotto.engine import pool
 
-    w = pool.one_shot(script_rel, str(project), entry)
+    w = pool.one_shot(script_rel, str(project), entry, run=run)
     w.ensure_built()
     return w
 
@@ -301,6 +384,46 @@ def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
         },
         "full_patches": applied,
     }
+
+
+def manifest_xy_digests(man: dict) -> list[str]:
+    """Sorted `data_fingerprint.parts.xy` digests of the opened figure (duplicates kept)."""
+    out = []
+    for el in man.get("elements", []):
+        fingerprint = el.get("data_fingerprint") or {}
+        part = (fingerprint.get("parts") or {}).get("xy")
+        if fingerprint.get("status") == "ok" and part:
+            out.append(part["sha256"])
+    return sorted(out)
+
+
+#: Roles whose curves live in a container or under other fingerprint parts (`points`, `xyz`).
+_LINE_CONTAINER_ROLES = ("errorbar", "stem_series")
+
+
+def manifest_incomparable_lines(man: dict) -> int:
+    """Line-related elements the plain `xy` comparison cannot cover (grouped / 3D / non-xy parts)."""
+    count = 0
+    for el in man.get("elements", []):
+        fingerprint = el.get("data_fingerprint") or {}
+        if el.get("role") in _LINE_CONTAINER_ROLES:
+            count += 1
+        elif (
+            el.get("role") == "line"
+            and fingerprint.get("status") == "ok"
+            and set(fingerprint.get("parts") or {}) != {"xy"}
+        ):
+            count += 1
+    return count
+
+
+def manifest_unobserved_lines(man: dict) -> int:
+    """Line elements whose fingerprint is `over_budget` / `unavailable` / missing: not observed."""
+    return sum(
+        1
+        for el in man.get("elements", [])
+        if el.get("role") == "line" and (el.get("data_fingerprint") or {}).get("status") != "ok"
+    )
 
 
 def _editable_snapshot(man: dict) -> dict:
@@ -421,7 +544,7 @@ def stage_export(worker, stem: str, out_dir: Path, formats: list[str]) -> dict:
 def _decode_check(path: Path, fmt: str) -> dict:
     """导出物必须真的打得开——「文件存在」证明不了它不是半个字节流。
 
-    读取器是 pypdfium2 / Pillow：U10（ADR 0072）起两者都在 Tavotto 的运行时闭包里，所以这条判据**不再有
+    读取器是 pypdfium2 / Pillow / 标准库 XML：U10（ADR 0072）起前两者都在 Tavotto 的运行时闭包里，所以这条判据**不再有
     「没装就跳过」的档**——那一档以前让它在没装 PyMuPDF 的机器上恒绿。
     """
     if fmt == "pdf":
@@ -440,6 +563,14 @@ def _decode_check(path: Path, fmt: str) -> dict:
             return {"ok": True, "pages": 1, "page_pt": [round(w, 2), round(h, 2)]}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"PDF 打不开：{exc}"}
+    if fmt == "svg":
+        try:
+            root = ET.parse(path).getroot()
+            if root.tag != "{http://www.w3.org/2000/svg}svg":
+                return {"ok": False, "error": "XML 根元素不是 SVG"}
+            return {"ok": True, "root": root.tag}
+        except (ET.ParseError, OSError) as exc:
+            return {"ok": False, "error": f"SVG 打不开：{exc}"}
     try:
         from PIL import Image
 
@@ -576,6 +707,79 @@ def _jsonable(v):
 #   看护 tests/test_compat_product_routes.py：把这里改回内部 probe，
 #   guard 当场红（app 端点会物化 runtime cache、CLI 会带 protocol 字段，
 #   内部调用两样都没有）。
+class ProductContractError(Exception):
+    """产品返回值不合契约（缺字段 / 类型不对 / 解析失败）——是产品的问题，不是 runner 的。
+
+    路由层（`_contract_guarded`）把它翻译成该路由的失败结果
+    （`malformed_product_response`），最终经 `_route_entry` 成为 product_bug；
+    harness 自己的故障（materialize、子进程起不来、我们代码的 bug）不走这条，
+    仍作为异常冒出去记 runner_error。
+    """
+
+    def __init__(self, route: str, field: str, expected: str, raw) -> None:
+        self.route, self.field, self.expected = route, field, expected
+        self.raw = repr(raw)[:300]
+        super().__init__(f"{route}: {field} 应为 {expected}")
+
+
+def _require(obj, key: str, kind, *, route: str, expected: str | None = None):
+    """从产品返回的 JSON 对象里取必需字段并校验类型；不合契约抛 ProductContractError。"""
+    want = expected or getattr(kind, "__name__", str(kind))
+    if not isinstance(obj, dict):
+        raise ProductContractError(route, "<body>", "object", obj)
+    if key not in obj or not isinstance(obj[key], kind) or obj[key] is None:
+        raise ProductContractError(route, key, want, obj.get(key, obj))
+    return obj[key]
+
+
+def _as_dict(obj, *, route: str, what: str) -> dict:
+    """产品返回的应是 JSON 对象；None → {}（沿用「空 body」旧语义），其余类型抛错。"""
+    if obj is None:
+        return {}
+    if not isinstance(obj, dict):
+        raise ProductContractError(route, what, "object", obj)
+    return obj
+
+
+def _isolated(fn, *args, **kwargs):
+    """共享探测的崩溃隔离：成功 → 原结果；harness 异常 → 「runner 崩溃」标记结果。
+
+    在 `_contract_guarded`（产品响应不合契约 → product_bug 失败结果）**外层**：
+    契约问题先被内层转成失败结果，这里只接真正的 harness 异常。
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:  # noqa: BLE001
+        return {
+            "ok": False,
+            "code": "route_runner_crashed",
+            "runner_crash": traceback.format_exc()[-2000:],
+        }
+
+
+def _is_crash(res) -> bool:
+    return isinstance(res, dict) and "runner_crash" in res
+
+
+def _contract_guarded(fn):
+    """路由 helper 装饰器：产品响应不合契约 → 该路由失败结果（product_bug），不冒成崩溃。"""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ProductContractError as exc:
+            return {
+                "ok": False,
+                "code": "malformed_product_response",
+                "via": exc.route,
+                "detail": {"field": exc.field, "expected": exc.expected, "raw": exc.raw},
+            }
+
+    return wrapper
+
+
+@_contract_guarded
 def route_probe_via_app(project: Path, script_rel: str) -> dict:
     """safe_probe 路由：产品的试运行端点（素材库「运行并发现图」按的它）。
 
@@ -588,10 +792,10 @@ def route_probe_via_app(project: Path, script_rel: str) -> dict:
     r = client.post("/api/projects/open", json={"path": str(project)})
     if r.status_code != 200:
         return {"ok": False, "code": "project_open_failed", "detail": {"status": r.status_code}}
-    pj = r.get_json()["id"]
+    pj = _require(r.get_json(), "id", str, route="POST /api/projects/open")
     # 项目留给 desktop_project 路由复用，由调用方（stage_product_routes）关闭
     r = client.post(f"/api/registry/probe?pj={pj}", json={"script": script_rel})
-    body = r.get_json() or {}
+    body = _as_dict(r.get_json(), route="POST /api/registry/probe", what="<body>")
     ok = r.status_code == 200 and bool(body.get("registered"))
     code = None
     if not ok:
@@ -611,6 +815,7 @@ def route_probe_via_app(project: Path, script_rel: str) -> dict:
     }
 
 
+@_contract_guarded
 def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[str]) -> dict:
     """desktop_project 路由：素材库两区读的端点（脚本可见 + 图区有条目）。
 
@@ -624,8 +829,12 @@ def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[s
     r = client.get(f"/api/registry?pj={pj}")
     if r.status_code != 200:
         return {"ok": False, "code": "registry_view_failed", "detail": {"status": r.status_code}}
-    view = r.get_json() or {}
-    listed = {e.get("script") for e in view.get("all_scripts") or []}
+    reg = "GET /api/registry"
+    view = _as_dict(r.get_json(), route=reg, what="<body>")
+    scripts = view.get("all_scripts") or []
+    if not isinstance(scripts, list) or not all(isinstance(e, dict) for e in scripts):
+        raise ProductContractError(reg, "all_scripts", "list of object", scripts)
+    listed = {e.get("script") for e in scripts}
     if script_rel not in listed:
         return {
             "ok": False,
@@ -634,7 +843,11 @@ def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[s
             "detail": {"all_scripts": sorted(listed)[:20]},
         }
     r = client.get(f"/api/runtime/assets?pj={pj}")
-    assets = {a["stem"]: a for a in (r.get_json() or {}).get("assets") or []}
+    rt = "GET /api/runtime/assets"
+    listing = _as_dict(r.get_json(), route=rt, what="<body>").get("assets") or []
+    if not isinstance(listing, list):
+        raise ProductContractError(rt, "assets", "list", listing)
+    assets = {_require(a, "stem", str, route=rt): a for a in listing}
     missing = [s for s in stems if s not in assets]
     uncached = [s for s in stems if s in assets and not assets[s].get("descriptor")]
     ok = r.status_code == 200 and not missing and not uncached
@@ -646,6 +859,7 @@ def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[s
     }
 
 
+@_contract_guarded
 def route_cli_open(
     project: Path, script_rel: str, *, stem: str | None = None, timeout: int = 900
 ) -> dict:
@@ -692,6 +906,8 @@ def route_cli_open(
         payload = json.loads(lines[-1]) if lines else {}
     except ValueError:
         payload = {}
+    if payload and not isinstance(payload, dict):
+        raise ProductContractError("python -m tavotto open --json", "<stdout>", "object", payload)
     if not payload:
         return {
             "ok": False,
@@ -913,38 +1129,63 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
         return
     stems = [ca["stem"] for ca in group]
     workdir = Path(tempfile.mkdtemp(prefix="compat-routes-", dir=str(root)))
+    # 每个共享探测各自隔离：harness 异常只让依赖它的路由记「runner 崩溃」，
+    # 不从这里冒出去整组改判，也不会让已观察到的产品失败丢失（Codex #1178）。
+    close_crash: str | None = None
     try:
         # ── app 侧（safe_probe + desktop_project）：一个全新项目 ──
-        app_project, script_rel, _entry = materialize(group, workdir / "app")
-        probe_res = route_probe_via_app(app_project, script_rel)
-        desktop_res = None
-        pj = probe_res.pop("pj", None)
-        try:
-            if probe_res["ok"] and pj:
-                desktop_res = route_desktop_project(app_project, script_rel, pj, stems)
-        finally:
-            if pj:
-                tavotto_app.close_project(pj)
+        app_mat = _isolated(materialize, group, workdir / "app")
+        pj = None
+        if _is_crash(app_mat):
+            probe_res = desktop_res = app_mat
+        else:
+            app_project, script_rel, _entry = app_mat
+            probe_res = _isolated(route_probe_via_app, app_project, script_rel)
+            desktop_res = None
+            pj = probe_res.pop("pj", None)
+            try:
+                if probe_res["ok"] and pj:
+                    desktop_res = _isolated(
+                        route_desktop_project, app_project, script_rel, pj, stems
+                    )
+            finally:
+                if pj:
+                    # 收尾崩溃只记为崩溃事实，不抹掉上面已得到的路由结论
+                    try:
+                        tavotto_app.close_project(pj)
+                    except Exception:  # noqa: BLE001
+                        close_crash = traceback.format_exc()[-2000:]
 
         # ── CLI 侧：另一个全新项目（CLI 自己 probe，子进程） ──
-        cli_project, cli_script, _ = materialize(group, workdir / "cli")
-        cli_bare = route_cli_open(cli_project, cli_script)
+        cli_selected = None
+        cli_mat = _isolated(materialize, group, workdir / "cli")
+        if _is_crash(cli_mat):
+            cli_bare = cli_mat
+        else:
+            cli_project, cli_script, _ = cli_mat
+            cli_bare = _isolated(route_cli_open, cli_project, cli_script)
         # native 侧再要一个全新项目：`tavotto run` 会**透传** savefig（native
         # 的 passthrough 语义），跟别的路由共用一个目录会让那些文件混进
         # safe 侧的判据里。
-        native_project, native_script, _ = materialize(group, workdir / "native")
-        native_res = None
-        cli_selected = None
+        native_mat = _isolated(materialize, group, workdir / "native")
+        native_res = native_mat if _is_crash(native_mat) else None
+        if native_res is None:
+            native_project, native_script, _ = native_mat
         # 「多 Figure」看的是**脚本产出几张图**，不是组里有几个 case：
         # shape_loop_figures 一个 case 循环存三张，同样走多图契约
         multi = len(group) > 1 or int(group[0].get("expected_figures") or 1) > 1
-        if multi:
+        if multi and not _is_crash(cli_mat):
             # 多 Figure：裸调必须显式拒绝（不静默选第一张），--stem 必须选中
-            cli_selected = route_cli_open(cli_project, cli_script, stem=group[-1]["stem"])
+            cli_selected = _isolated(
+                route_cli_open, cli_project, cli_script, stem=group[-1]["stem"]
+            )
 
         for ca in group:
             declared = ca.get("product_routes") or {}
+            # 逐条持久化：同一个 dict 对象挂上 results，每条路由算完立刻可见；
+            # 后一条路由抛错时前面已观察到的结果（含产品失败）不会丢（Codex #1178）
             routes: dict = {}
+            results[ca["id"]]["routes"] = routes
             for name, want in declared.items():
                 if want == "not_implemented":
                     routes[name] = {"status": "not_implemented"}
@@ -964,10 +1205,17 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                     }
                     routes[name] = _route_entry(res, ca)
                 elif name == "cli_open":
-                    routes[name] = _route_cli_verdict(ca, group, cli_bare, cli_selected)
+                    crash = next((x for x in (cli_bare, cli_selected) if _is_crash(x)), None)
+                    routes[name] = (
+                        _route_entry(crash, ca)
+                        if crash
+                        else _route_cli_verdict(ca, group, cli_bare, cli_selected)
+                    )
                 elif name == "native_run":
                     if native_res is None:
-                        native_res = route_native_run(native_project, native_script, stems)
+                        native_res = _isolated(
+                            route_native_run, native_project, native_script, stems
+                        )
                     routes[name] = _route_entry(native_res, ca)
                 elif name == "browser_playground":
                     br = results[ca["id"]].get("browser")
@@ -985,13 +1233,25 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                             },
                             ca,
                         )
-            results[ca["id"]]["routes"] = routes
+            if close_crash and declared:
+                routes["runner_error"] = _route_entry(
+                    {"runner_crash": "close_project: " + close_crash}, ca
+                )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _route_entry(res: dict, case: dict) -> dict:
     """路由结果 → 报告条目。失败必须带 stage/code/classification/reason。"""
+    if _is_crash(res):
+        return {
+            "status": "fail",
+            "code": "route_runner_crashed",
+            "classification": CC.RUNNER_ERROR,
+            "reason": f"路由 runner 崩溃（case {case['id']}）",
+            "follow_up": "读 detail 里的 traceback，修 runner 后重跑",
+            "detail": res["runner_crash"],
+        }
     if res.get("ok"):
         return {"status": "pass", "via": res.get("via"), "detail": res.get("detail")}
     return {
@@ -1026,7 +1286,22 @@ def _route_cli_verdict(case: dict, group: list[dict], bare: dict, selected: dict
         )
     # 多 Figure：机器调用（--no-launch）不许静默选第一张
     payload = bare.get("payload") or {}
-    figures = [f.get("stem") for f in payload.get("figures") or []]
+    raw_figures = payload.get("figures") or []
+    if not isinstance(raw_figures, list) or not all(isinstance(f, dict) for f in raw_figures):
+        return _route_entry(
+            {
+                "ok": False,
+                "code": "malformed_product_response",
+                "via": bare.get("via"),
+                "detail": {
+                    "field": "figures",
+                    "expected": "list of object",
+                    "raw": repr(raw_figures)[:300],
+                },
+            },
+            case,
+        )
+    figures = [f.get("stem") for f in raw_figures]
     refused = (
         not bare.get("ok")
         and bare.get("code") == "multiple_figures_found"
@@ -1050,7 +1325,7 @@ def _route_cli_verdict(case: dict, group: list[dict], bare: dict, selected: dict
 
 
 # --------------------------------------------------------------------------
-# 分类：把阶段结果折成六选一
+# 分类：把阶段结果折成六选一（外加一个只在一次运行里出现的 `runner_error`）
 # --------------------------------------------------------------------------
 def classify(
     case: dict, stages: dict, skipped: dict, routes: dict | None = None
@@ -1069,17 +1344,38 @@ def classify(
     declared_reason = str(case.get("reason", "")).strip()
     expected = case.get("expected", {})
 
-    failed_routes = [
-        n for n, e in (routes or {}).items() if isinstance(e, dict) and e.get("status") == "fail"
+    failed_entries = {
+        n: e for n, e in (routes or {}).items() if isinstance(e, dict) and e.get("status") == "fail"
+    }
+    # 路由 runner 自己崩了：没有裁决，不是产品路由没走通（#1133）。
+    # 但只有「没有独立观察到的产品失败」时才整体判 runner_error：引擎阶段
+    # 已经红了（或别的路由真失败）时，崩溃不能把这条真回归抹掉。
+    crashed_routes = [
+        n for n, e in failed_entries.items() if e.get("classification") == CC.RUNNER_ERROR
     ]
+    failed_routes = [n for n in failed_entries if n not in crashed_routes]
+    crash_note = (
+        f"；路由 runner 崩溃（基础设施故障，另行处理）：{crashed_routes}" if crashed_routes else ""
+    )
     if failed_routes:
-        return ("product_bug", declared_reason or "", f"产品路由未通过：{failed_routes}")
+        return (
+            "product_bug",
+            declared_reason or "",
+            f"产品路由未通过：{failed_routes}{crash_note}",
+        )
 
     failed = [s for s in CC.STAGES if s in stages and not stages[s] and expected.get(s, True)]
     # 期望里写着 false 的阶段失败了 —— 那是**声明过的**边界，不是缺陷。
     by_design = [
         s for s in CC.STAGES if s in stages and not stages[s] and not expected.get(s, True)
     ]
+
+    if crashed_routes and not failed:
+        return (
+            CC.RUNNER_ERROR,
+            "路由 runner 崩溃（基础设施故障，不是产品缺陷）",
+            f"{crashed_routes}",
+        )
 
     if not failed:
         if by_design or declared != "full_support":
@@ -1105,10 +1401,33 @@ def classify(
     # `sci_sns_bar` 的 replay 分歧被这一档吸收掉，而真实原因是 corpus 自己
     # 用了 bootstrap 置信区间（随机）——两件事都该被看见。
     if declared == "environment_dependency" and not stages.get("execute", True):
-        return declared, declared_reason, f"未通过：{failed}（依赖缺失）"
+        return declared, declared_reason, f"未通过：{failed}（依赖缺失）{crash_note}"
     if declared == "invalid_fixture":
-        return declared, declared_reason, f"未通过：{failed}"
-    return "product_bug", declared_reason or "", f"未通过：{failed}"
+        return declared, declared_reason, f"未通过：{failed}{crash_note}"
+    return "product_bug", declared_reason or "", f"未通过：{failed}{crash_note}"
+
+
+def _runner_error_detail(r: dict) -> str:
+    """崩溃详情：统一判据在 compat_corpus.runner_error_detail。"""
+    return CC.runner_error_detail(r)
+
+
+def runner_crash_result(case: dict, tb: str) -> dict:
+    """runner 自己崩了 → 这个 case 没有裁决，**不是**产品缺陷（#1133）。
+
+    基础设施故障记成 product_bug 会污染基线与趋势，还会让门禁把它当
+    「新出现的产品缺陷」去判；但也不能悄悄吞掉——它以独立分类
+    `runner_error` 出现在报告、汇总与门禁告警里（只告警、不致红）。
+    """
+    r = _blank(case)
+    # 不写任何 stage：崩溃发生在产生阶段结果之前，discover 没有真的跑过，
+    # 记 False 会被 funnel 当成一次失败的产品发现（拉低 Discovery 成功率）。
+    r["detail"]["runner_error"] = tb[-2000:]
+    r["classification"] = CC.RUNNER_ERROR
+    r["stage"] = "discover"
+    r["reason"] = "runner 在这个 case 上崩溃（基础设施故障，不是产品缺陷）"
+    r["follow_up"] = "读 detail.runner_error 里的 traceback，修 runner 后重跑"
+    return r
 
 
 def product_bug_stage(stages: dict, expected: dict) -> str:
@@ -1151,7 +1470,12 @@ def run_group(
     hot = fresh = None
     try:
         # ── 发现 ────────────────────────────────────────────────
-        disc = stage_discover(project, script_rel, lead)
+        context = resolve_launch_context(project, script_rel, lead)
+        run = registered_launch(project, script_rel, lead, context)
+        if context is not None:
+            for ca in group:
+                results[ca["id"]]["detail"]["launch_context"] = dict(context)
+        disc = stage_discover(project, script_rel, lead, run=run)
         entry = disc["entry"] or declared_entry
         for ca in group:
             r = results[ca["id"]]
@@ -1162,7 +1486,7 @@ def run_group(
 
         # ── 执行 + 捕获 ──────────────────────────────────────────
         try:
-            hot = _fresh_worker(script_rel, project, entry)
+            hot = _fresh_worker(script_rel, project, entry, run=run)
             built = hot.ensure_built()
             stems = built.get("stems") or {}
             # 计时**只记录、不设阈值**：性能回归归 scripts/ci/benchmark.py。
@@ -1223,6 +1547,9 @@ def run_group(
                 "warnings": opened.get("warnings") or [],
                 "size_mm": base_man.get("size_mm"),
                 "render_ms": ot.get("total_ms"),
+                "line_xy": manifest_xy_digests(base_man),
+                "line_xy_unobserved": manifest_unobserved_lines(base_man),
+                "line_xy_incomparable": manifest_incomparable_lines(base_man),
             }
             if not r["stages"]["open"]:
                 continue
@@ -1273,7 +1600,7 @@ def run_group(
 
             if patches:
                 if fresh is None:
-                    fresh = _fresh_worker(script_rel, project, entry)
+                    fresh = _fresh_worker(script_rel, project, entry, run=run)
                 try:
                     rep = stage_replay(hot, fresh, stem, patches)
                     r["stages"]["replay"] = rep["ok"]
@@ -1299,7 +1626,7 @@ def run_group(
             ).get("restore_warnings"):
                 r["dirty"] = True
                 pool.discard(hot)
-                hot = _fresh_worker(script_rel, project, entry)
+                hot = _fresh_worker(script_rel, project, entry, run=run)
 
         # ── artist 普查（纯诊断，不参与 pass/fail）─────────────
         census = run_driver(
@@ -1355,16 +1682,30 @@ def run_group(
             tb = traceback.format_exc()
             for ca in group:
                 if ca.get("product_routes"):
-                    results[ca["id"]]["routes"] = {
-                        "runner_error": {
-                            "status": "fail",
-                            "code": "route_runner_crashed",
-                            "classification": "product_bug",
-                            "reason": "路由 runner 崩溃",
-                            "follow_up": "读 detail 里的 traceback",
-                            "detail": tb[-2000:],
-                        }
+                    # stage_product_routes 逐条把路由结果写进 results；
+                    # 「声明的路由名全部已在 results 里」= 该 case 的路由检查
+                    # 已完整做完，崩溃发生在之后别的 case 上，不能改判成
+                    # runner_error。中途崩溃的 case 键不全，算未完成：保留已有
+                    # 条目并追加崩溃条目。
+                    done = results[ca["id"]].get("routes")
+                    if isinstance(done, dict) and set(ca["product_routes"]) <= set(done):
+                        continue
+                    # 合并而非替换：较早已存下的路由结果（可能含独立观察到的
+                    # 产品失败）必须保留，只追加崩溃条目（Codex #1178）。
+                    existing = results[ca["id"]].get("routes")
+                    merged = dict(existing) if isinstance(existing, dict) else {}
+                    merged["runner_error"] = {
+                        "status": "fail",
+                        "code": "route_runner_crashed",
+                        "classification": CC.RUNNER_ERROR,
+                        "reason": "路由 runner 崩溃",
+                        "follow_up": "读 detail 里的 traceback",
+                        "detail": tb[-2000:],
                     }
+                    results[ca["id"]]["routes"] = merged
+    except Exception:  # noqa: BLE001
+        # run_group 自己崩了：保留 results 里已记录的部分结果，不整条替换。
+        return _finish(results, group, t0, crash_tb=traceback.format_exc())
     finally:
         for w in (hot, fresh):
             if w is not None:
@@ -1498,26 +1839,52 @@ def _blank(case: dict) -> dict:
     }
 
 
-def _finish(results: dict, group: list[dict], t0: float) -> dict:
+def _finish(results: dict, group: list[dict], t0: float, crash_tb: str | None = None) -> dict:
+    """折叠分类。`crash_tb` 非空 = run_group 中途崩了：保留已记录的阶段/路由结果，
+    崩溃作为事实附加（`detail.runner_error`），分类走与路由崩溃**同一套优先级**
+    （classify 里的 crashed_routes 分支）：有独立观察到的产品失败 → 仍是缺陷，
+    否则 runner_error。一个阶段结果都没有的 case 整条记 runner_error。"""
     ms = round((time.perf_counter() - t0) * 1000, 1)
     for case in group:
         r = results[case["id"]]
+        routes = r.get("routes")
+        if crash_tb is not None:
+            if not r["stages"] and not r["skipped"] and not routes:
+                results[case["id"]] = r = runner_crash_result(case, crash_tb)
+                r["duration_ms"] = ms
+                continue
+            r["detail"].setdefault("runner_error", crash_tb[-2000:])
+            # 只喂给 classify 的合成崩溃条目，不写回 r["routes"]
+            routes = {
+                **(routes or {}),
+                "runner_error": {
+                    "status": "fail",
+                    "code": "run_group_crashed",
+                    "classification": CC.RUNNER_ERROR,
+                },
+            }
         r["duration_ms"] = ms
-        cls, reason, detail = classify(case, r["stages"], r["skipped"], r.get("routes"))
+        cls, reason, detail = classify(case, r["stages"], r["skipped"], routes)
         r["classification"] = cls
         r["reason"] = reason
         r["detail_note"] = detail
+        if cls == CC.RUNNER_ERROR and crash_tb is not None:
+            r["stage"] = ""
+            r["follow_up"] = "读 detail.runner_error 里的 traceback，修 runner 后重跑"
         if cls == "product_bug":
             stage = product_bug_stage(r["stages"], case.get("expected", {}))
             if not stage:
                 bad_routes = [
                     n
                     for n, e in (r.get("routes") or {}).items()
-                    if isinstance(e, dict) and e.get("status") == "fail"
+                    if isinstance(e, dict)
+                    and e.get("status") == "fail"
+                    and e.get("classification") != CC.RUNNER_ERROR
                 ]
                 stage = f"route:{bad_routes[0]}" if bad_routes else ""
             r["stage"] = stage
             r["follow_up"] = str(case.get("follow_up", "")).strip()
+            _attribute_substituted_launch(r)
     return results
 
 
@@ -1581,6 +1948,61 @@ def artist_census(results: dict) -> list[dict]:
     return rows
 
 
+def v2_observation(cases: list[dict], results: dict) -> dict:
+    """Compatibility-first Execution V2 基线指标（只观测，不设门禁，不进 baseline.json）。
+
+    口径诚实：CompatBench 的 execute 走 `pool.one_shot`，**不经准备会话**——所以「首次有效出图」是引擎层口径
+    （execute+capture+open 全过），「真实执行次数」「回退率」「干预次数」在这一层没有定义，字段留 null 并写明原因，
+    不是 0。会话层的同名指标在 `tests/support/compatbench_v2.py` 的场景基线里（独立结果文件）。"""
+
+    def quantile(values: list[float], q: int) -> float | None:
+        vals = sorted(values)
+        if not vals:
+            return None
+        if len(vals) == 1:
+            return vals[0]
+        return statistics.quantiles(vals, n=100, method="inclusive")[q - 1]
+
+    ran = [c for c in cases if "execute" in results[c["id"]]["stages"]]
+    first_figure = [
+        c
+        for c in ran
+        if all(results[c["id"]]["stages"].get(st) for st in ("execute", "capture", "open"))
+    ]
+    # `_finish()` 把整组（同一脚本的所有 stem）的 wall-clock 抄给组内每个 case：按被量的单位（组）去重，
+    # 否则多 stem 脚本在分位数里按 stem 数重复投票
+    groups = {
+        (c.get("script"), c.get("entry"), float(results[c["id"]].get("duration_ms", 0)))
+        for c in cases
+    }
+    durations = [g[2] for g in groups]
+    return {
+        "layer": "engine_one_shot",
+        "first_valid_figure": {
+            "passed": len(first_figure),
+            "total": len(ran),
+            "rate": round(len(first_figure) / len(ran), 4) if ran else None,
+            "definition": "execute、capture、open 三级都通过（引擎层，不经准备会话）",
+        },
+        "case_duration_ms": {
+            "unit": "script_group",
+            "groups": len(groups),
+            "p50": quantile(durations, 50),
+            "p95": quantile(durations, 95),
+        },
+        "exec_count": None,
+        "fallback_rate": None,
+        "intervention_count": None,
+        "e2e_first_figure_ms_p50_p95": None,
+        "unobserved": {
+            "exec_count": "未观测：one_shot 不写脚本自己的执行日志；会话层真实执行次数见 compatbench_v2",
+            "fallback_rate": "未观测：main 没有回退概念",
+            "intervention_count": "未观测：产品内没有干预计数器",
+            "e2e_first_figure_ms_p50_p95": "未观测：没有端到端（点击到可编辑图）计时，case 级 duration_ms 仅含引擎阶段",
+        },
+    }
+
+
 def build_report(
     cases: list[dict], results: dict, target: dict, target_name: str, mode: str
 ) -> dict:
@@ -1596,6 +2018,17 @@ def build_report(
             "detail": results[cid].get("detail_note", ""),
         }
         for cid in by_cls.get("product_bug", [])
+    ]
+    # 按崩溃事实收集，不看最终分类：阶段/别的路由已失败 + 路由 runner 崩溃时
+    # 分类仍是 product_bug，但基础设施故障不能因此从汇总里消失。
+    runner_errors = [
+        {
+            "id": c["id"],
+            "classification": results[c["id"]]["classification"],
+            "detail": _runner_error_detail(results[c["id"]])[-400:],
+        }
+        for c in cases
+        if CC.has_runner_crash(results[c["id"]])
     ]
     parity = [
         {"id": cid, **(results[cid]["browser"] or {})}
@@ -1635,6 +2068,8 @@ def build_report(
             "funnel": funnel(cases, results),
             "classification": {k: len(v) for k, v in sorted(by_cls.items())},
             "product_bugs": bugs,
+            # runner 自身崩溃：不算产品缺陷，但必须逐条可见（静默 = 空门禁）。
+            "runner_errors": runner_errors,
             "worker_crashes": sum(
                 1
                 for c in cases
@@ -1658,6 +2093,7 @@ def build_report(
             # 顺序跟着 dict 的插入序走，报告就不再可 diff。
             for cid in sorted(results, key=lambda c: (-results[c].get("duration_ms", 0), c))[:10]
         ],
+        "v2_observation": v2_observation(cases, results),
         "artist_census": artist_census(results),
         "browser_parity": parity,
         # 产品路由（Session 6）：路由 × 状态计数 + 失败明细
@@ -1681,7 +2117,7 @@ def render_summary(report: dict) -> str:
         rate = "—" if row["rate"] is None else f"{row['rate'] * 100:.1f}%"
         out.append(f"| {row['label']} | {row['passed']} | {row['total']} | {rate} |")
     out.append("\n| Classification | Cases |\n|---|---:|")
-    for cls in CC.CLASSIFICATIONS:
+    for cls in CC.RESULT_CLASSIFICATIONS:
         n = s["classification"].get(cls, 0)
         if n:
             out.append(f"| {cls} | {n} |")
@@ -1691,6 +2127,15 @@ def render_summary(report: dict) -> str:
             out.append(f"- `{b['id']}` — {b['stage'] or '?'} （tier {b['tier']}）{b['detail']}")
     else:
         out.append("\n**Product bugs: 0**\n")
+    if s.get("runner_errors"):
+        out.append(
+            "\n### Runner errors（基础设施故障，崩溃本身不计入产品缺陷；"
+            "最终分类为 product_bug 的 case 另有独立产品失败，仍按产品缺陷计）\n"
+        )
+        for e in s["runner_errors"]:
+            out.append(
+                f"- `{e['id']}`（最终分类 {e.get('classification', '?')}）— runner 崩溃，见报告 JSON 的 detail.runner_error（run_group 崩溃）或 routes.runner_error.detail（路由 runner 崩溃）"
+            )
     census = report["artist_census"][:10]
     if census:
         out.append("\n### Top unrecognized / partially recognized artists\n")
@@ -1751,9 +2196,13 @@ GATES = {
 
 
 def evaluate_gate(
-    gate: str, cases: list[dict], results: dict, baseline: dict | None
+    gate: str,
+    cases: list[dict],
+    results: dict,
+    baseline: dict | None,
+    warnings: list[str] | None = None,
 ) -> tuple[bool, list[str]]:
-    """门禁判定。返回 (通过?, 失败理由)。
+    """门禁判定。返回 (通过?, 失败理由)；只告警不致红的理由追加进 `warnings`（传了的话）。
 
     分三条，每条都对应一种「benchmark 会退化成摆设」的方式：
 
@@ -1802,6 +2251,24 @@ def evaluate_gate(
     if bugs and not spec["allow_baseline_bugs"]:
         fails.append(f"{gate} 档不接受任何 product_bug（含基线里已知的）：{bugs}")
 
+    # runner 自身崩溃：不是产品缺陷（上面不算），这些 case 没有裁决。维护者裁决
+    # （#1178）：门禁只告警、不致红——基础设施故障不该挡住产品改动；但必须可见
+    # （告警 + 报告里的 Runner errors 一节），不能静默（#1133）。
+    # 按最终分类拆两类：纯 runner_error 没有裁决；混合 case 另有独立产品失败，
+    # 最终分类是 product_bug，不能再说它「没有裁决 / 非产品回归」。
+    crashed = [c["id"] for c in cases if CC.has_runner_crash(results[c["id"]])]
+    pure = [i for i in crashed if results[i]["classification"] == CC.RUNNER_ERROR]
+    mixed = [i for i in crashed if results[i]["classification"] != CC.RUNNER_ERROR]
+    if warnings is not None:
+        if pure:
+            warnings.append(
+                f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{pure}"
+            )
+        if mixed:
+            warnings.append(
+                f"runner 在这些 case 上也崩溃了（已另有产品失败裁决，按 product_bug 处理）：{mixed}"
+            )
+
     # 桌面/浏览器语义分叉：任何档位一律红（见 docstring 第 4 条）
     parity_bad = [
         c["id"] for c in cases if (results[c["id"]].get("browser") or {}).get("ok") is False
@@ -1830,6 +2297,8 @@ def evaluate_gate(
         for c in cases:
             was = baseline.get("cases", {}).get(c["id"], {}).get("classification")
             now = results[c["id"]]["classification"]
+            if now == CC.RUNNER_ERROR:
+                continue  # 已在上面按基础设施故障单独报，不是分类退步
             if was and rank.get(now, 99) > rank.get(was, 99):
                 fails.append(f"{c['id']} 比基线退步：{was} → {now}")
     return (not fails), fails
@@ -2120,14 +2589,7 @@ def main(argv: list[str] | None = None) -> int:
                 # runner 自己崩了也要如实记账，绝不让整轮消失。
                 tb = traceback.format_exc()
                 for ca in group:
-                    r = _blank(ca)
-                    r["stages"]["discover"] = False
-                    r["detail"]["runner_error"] = tb[-2000:]
-                    r["classification"] = "product_bug"
-                    r["stage"] = "discover"
-                    r["reason"] = "runner 在这个 case 上崩溃"
-                    r["follow_up"] = "读 detail.runner_error 里的 traceback"
-                    results[ca["id"]] = r
+                    results[ca["id"]] = runner_crash_result(ca, tb)
             for ca in group:
                 r = results[ca["id"]]
                 mark = {
@@ -2137,6 +2599,7 @@ def main(argv: list[str] | None = None) -> int:
                     "environment_dependency": "🌤",
                     "product_bug": "❌",
                     "invalid_fixture": "🛠",
+                    CC.RUNNER_ERROR: "💥",
                 }.get(r["classification"], "?")
                 print(
                     f"    {mark} {ca['id']:<38} {r['classification']}"
@@ -2193,7 +2656,10 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
     )
 
-    ok, fails = evaluate_gate(args.gate, cases, results, baseline)
+    gate_warnings: list[str] = []
+    ok, fails = evaluate_gate(args.gate, cases, results, baseline, gate_warnings)
+    for w in gate_warnings:
+        print(f"::warning::{w}", file=sys.stderr)
     if delta["new"]:
         print(
             f"\n基线里没有这些 case（新加的？先跑一次 --update-baseline）：{delta['new']}",

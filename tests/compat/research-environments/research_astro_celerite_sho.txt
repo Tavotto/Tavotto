@@ -1,0 +1,2 @@
+# S0 additional scientific prerequisites; render-critical pins come from runtime-lock.json.
+celerite @ git+https://github.com/dfm/celerite.git@11d42b67ad97e175c98b31e2d66eee1ff49c10ac

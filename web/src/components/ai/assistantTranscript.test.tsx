@@ -15,8 +15,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { aiRevert, fetchAiHistory } from '@/lib/api'
+import { ApiError, aiRevert, fetchAiHistory } from '@/lib/api'
 import { t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { STREAM_WORD_CLASS } from '@/lib/streamMarkdown'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
@@ -27,8 +28,21 @@ import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { AssistantPanel } from './AiPanel'
 import { COPIED_MS } from './CopyAction'
+import { createDraftBackend } from '@/test/aiDraftBackend'
+import { setCurrentProjectId } from '@/lib/session'
 import { Markdown } from './Markdown'
 import { formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
+
+const refreshProjectNow = vi.hoisted(() => vi.fn(async () => {}))
+const requestCheckConnection = vi.hoisted(() => vi.fn())
+vi.mock('@/store/connectAiStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/connectAiStore')>()),
+  requestCheckConnection,
+}))
+vi.mock('@/store/liveSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/liveSync')>()),
+  refreshProjectNow,
+}))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -36,7 +50,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchAiHistory: vi.fn(async () => ({ sessions: [], total: 0 })),
 }))
 
-globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+// 草稿 / 账本存后端（ADR 0132）：助手面板挂载会对账一次，账本读成功才放开发送——这里换成同语义的替身后端
+const draftBackend = createDraftBackend()
+globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+  draftBackend.handle(String(url), init) ?? new Response('{}', { status: 200 })) as typeof fetch
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 declare global {
   // eslint-disable-next-line no-var
@@ -87,12 +104,16 @@ const DIFF = [
   '',
 ].join('\n')
 
-let root: Root
+let root: Root | undefined
 let host: HTMLDivElement
 const start = vi.fn(async () => {})
 const writeText = vi.fn(async () => {})
 
 async function mount(sessions: AiSession[]) {
+  if (root) {
+    await act(async () => root?.unmount())
+    root = undefined
+  }
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_assistant_transcript')
   useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panel()] } }) as never)
   useSelectionStore.setState({ ids: ['p1'] } as never)
@@ -100,14 +121,16 @@ async function mount(sessions: AiSession[]) {
   useAiStore.setState({ sessions, start } as never)
   host = document.createElement('div')
   document.body.appendChild(host)
-  root = createRoot(host)
+  const mountedRoot = createRoot(host)
+  root = mountedRoot
   await act(async () => {
-    root.render(
+    mountedRoot.render(
       <TooltipProvider>
         <AssistantPanel />
       </TooltipProvider>,
     )
   })
+  for (let i = 0; i < 20; i++) await act(async () => Promise.resolve()) // 账本对账
 }
 
 const q = <T extends Element = HTMLElement>(sel: string) => host.querySelector<T>(sel)
@@ -116,6 +139,7 @@ const qa = <T extends Element = HTMLElement>(sel: string) => Array.from(host.que
 const realStart = useAiStore.getState().start
 beforeEach(() => {
   localStorage.clear()
+  setCurrentProjectId('pa')
   document.body.innerHTML = ''
   start.mockReset()
   start.mockImplementation(async () => {})
@@ -133,6 +157,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => root?.unmount())
+  root = undefined
   useAiStore.setState({ start: realStart } as never)
   vi.useRealTimers()
 })
@@ -324,6 +349,57 @@ describe('发送失败（§6.7）', () => {
     expect(q('[data-ai-error="send"]')).toBeNull()
   })
 
+  it('一句话「没有发出去 · 原因」+「重试」：HTTP 状态 / 稳定码 / 诊断引用折在「详情」里，不再只显示 HTTP 500', async () => {
+    start.mockImplementationOnce(async () => {
+      throw new ApiError('HTTP 500', 500, { code: 'upstream_timeout' }, 'ref-3f9a')
+    })
+    await mount([])
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, '加粗线条')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => q<HTMLButtonElement>('[data-ai-send]')!.click())
+    const notice = q('[data-ai-error="send"]')!
+    // 正文：一句话，原因是通用原因（后端只给了裸状态码），状态码不在正文里
+    expect(notice.textContent).toContain(`${ai('panel.sendFailed')} · ${ai('panel.sendFailedReason')}`)
+    expect(notice.textContent).not.toContain('HTTP 500')
+    // 一个主动作：重试
+    expect(notice.querySelectorAll('[data-ai-retry]')).toHaveLength(1)
+    // 详情默认折叠；展开才见状态 / 稳定码 / 诊断引用
+    expect(notice.querySelector('[data-notice-detail]')).toBeNull()
+    await act(async () => notice.querySelector<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    const detail = notice.querySelector('[data-notice-detail]')!.textContent!
+    expect(detail).toContain('HTTP 500')
+    expect(detail).toContain('upstream_timeout')
+    expect(detail).toContain('ref ref-3f9a')
+  })
+
+  it('图的文件找不到了（ai_panel_file_missing）：一句话 + 主按钮「刷新项目」，不给只会再 404 的「重试」', async () => {
+    start.mockImplementationOnce(async () => {
+      throw new ApiError('HTTP 404', 404, { code: 'ai_panel_file_missing', params: {} })
+    })
+    await mount([])
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, '加粗线条')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => q<HTMLButtonElement>('[data-ai-send]')!.click())
+    const notice = q('[data-ai-error="send"]')!
+    expect(notice.textContent).toContain(t('backend.ai_panel_file_missing', { ns: 'errors' }))
+    expect(notice.textContent).not.toContain('HTTP 404')
+    expect(notice.querySelector('[data-ai-retry]')).toBeNull()
+    const refresh = notice.querySelector<HTMLButtonElement>('[data-ai-refresh-project]')!
+    expect(refresh.textContent).toBe(t('topbar.refreshProject', { ns: 'workspace' }))
+    await act(async () => refresh.click())
+    expect(refreshProjectNow).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(q('[data-ai-error="send"]')).toBeNull()
+  })
+
   it('发送失败钉在那一张图上：换到别的图就不摆它的重试，回来照常重试原处（Codex #827 P1）', async () => {
     start.mockImplementationOnce(async () => {
       throw new Error('boom')
@@ -352,6 +428,19 @@ describe('发送失败（§6.7）', () => {
 })
 
 describe('会话失败的重试', () => {
+  it('连接地址打开的是网页（agent_html_response）：一句话 + 主按钮「检查连接」，不给只会再失败的重试', async () => {
+    requestCheckConnection.mockClear()
+    await mount([session({ status: 'failed', error: 'agent_html_response' })])
+    const notice = q('[data-ai-error="session"]')!
+    expect(notice.textContent).toContain(ai('sessionError.agent_html_response'))
+    expect(notice.textContent).not.toContain(ai('notice.taskRejected'))
+    expect(notice.querySelector('[data-ai-retry]')).toBeNull()
+    const btn = notice.querySelector<HTMLButtonElement>('[data-ai-check-connection]')!
+    expect(btn.textContent).toBe(ai('notice.checkConnection'))
+    await act(async () => btn.click())
+    expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+  })
+
   it('兄弟面板（同一脚本的另一张图）发起的失败轮次：看得到，但不给重试（Codex #827 P1）', async () => {
     await mount([session({ status: 'failed', error: 'boom', panelId: 'p-sibling' })])
     expect(q('[data-ai-error="session"]')).not.toBeNull()
@@ -367,6 +456,301 @@ describe('会话失败的重试', () => {
     expect(call.scope).toBe('element')
     expect(call.gid).toBe('g7')
     expect(call.label).toBe('图例')
+  })
+})
+
+describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
+  const status = () => q('[data-ai-status]')!.textContent
+  const unmet = [
+    { constraint_id: 'data.unchanged', reason_code: 'data_changed' },
+    { constraint_id: 'axis.range', reason_code: 'out_of_range' },
+  ]
+  const task = (outcome: NonNullable<AiSession['task']>['outcome'], withUnmet = false): AiSession['task'] => ({
+    task_type: 'edit_figure',
+    outcome,
+    ...(withUnmet ? { unmet } : {}),
+  })
+  const openDetail = async () => {
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    return q('[data-notice-detail]')!.textContent ?? ''
+  }
+
+  it('无 task 的 done / failed：状态行与卡片与改动前逐字一致', async () => {
+    await mount([
+      session({ id: 'a', changed: true, diff: DIFF }),
+      session({ id: 'b', changed: false }),
+      session({ id: 'c', status: 'failed', error: 'boom' }),
+    ])
+    const rows = qa('[data-ai-status]').map((e) => e.textContent)
+    expect(rows).toEqual([ai('session.doneChanged'), ai('session.doneNoChange'), t('status.failed', { ns: 'ai' })])
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+    expect(qa('[data-ai-error="session"]')).toHaveLength(1)
+    expect(q('[data-ai-error="session"]')!.dataset.notice).toBe('danger')
+  })
+
+  it('completed + changed：状态行说「数据核对一致」，不出结局卡', async () => {
+    await mount([session({ changed: true, diff: DIFF, task: task('completed') })])
+    expect(status()).toBe(ai('session.taskVerified'))
+    expect(q('[data-ai-task-outcome]')).toBeNull()
+    expect(q('[data-ai-error="session"]')).toBeNull()
+  })
+
+  const withTask = (outcome: NonNullable<AiSession['task']>['outcome']) =>
+    task(outcome) as NonNullable<AiSession['task']>
+
+  it('自动修正过：completed 的状态行带上修正次数；没修正（0 / 老后端没有字段）照旧', async () => {
+    await mount([
+      session({ id: 'a', changed: true, diff: DIFF, task: { ...withTask('completed'), corrections: 1 } }),
+      session({ id: 'b', changed: true, diff: DIFF, task: { ...withTask('completed'), corrections: 0 } }),
+      session({ id: 'c', changed: true, diff: DIFF, task: task('completed') }),
+    ])
+    expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual([
+      ai('session.taskVerifiedCorrected', { count: 1 }),
+      ai('session.taskVerified'),
+      ai('session.taskVerified'),
+    ])
+  })
+
+  it('正在自动修正：运行中的状态行换成「正在自动修正」；没有阶段时仍是「正在修改脚本」', async () => {
+    await mount([
+      session({ id: 'a', status: 'running', task: { ...withTask(null), phase: 'correcting' } }),
+      session({ id: 'b', status: 'running', task: task(null) }),
+    ])
+    expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual([
+      ai('session.correcting'),
+      ai('session.running'),
+    ])
+  })
+
+  it('partial：warn 卡（不是 danger 失败卡）+ 状态行 + 详情列出 unmet id', async () => {
+    await mount([session({ changed: true, diff: DIFF, task: task('partial', true) })])
+    expect(status()).toBe(ai('session.taskPartial'))
+    const card = q('[data-ai-task-outcome="partial"]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.taskPartial'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(qa('[data-notice="danger"]')).toHaveLength(0)
+    const detail = await openDetail()
+    expect(detail.startsWith(`${ai('notice.unmetHeading')}\ndata.unchanged\naxis.range`)).toBe(true)
+  })
+
+  it('done + partial 即使带着 error 文本也不进 danger 失败卡', async () => {
+    await mount([session({ changed: true, diff: DIFF, error: 'stale', task: task('partial') })])
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-task-outcome="partial"]')!.dataset.notice).toBe('warn')
+  })
+
+  it('failed + changed：danger 卡、无重试按钮（回滚在 diff 卡上），详情列出 unmet id', async () => {
+    await mount([session({ changed: true, diff: DIFF, task: task('failed', true) })])
+    expect(status()).toBe(ai('session.taskFailedChanged'))
+    const card = q('[data-ai-task-outcome="failed"]')!
+    expect(card.dataset.notice).toBe('danger')
+    expect(card.textContent).toContain(ai('notice.taskFailedChanged'))
+    expect(card.querySelector('button:not([data-notice-detail-toggle])')).toBeNull()
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-diff]')).not.toBeNull()
+    expect(await openDetail()).toContain('data.unchanged')
+  })
+
+  it('status failed + outcome failed + 未改动：正文是 taskRejected，错误码与 unmet 进详情，仍可重试', async () => {
+    await mount([session({ status: 'failed', changed: false, error: 'plan_rejected', task: task('failed', true) })])
+    expect(status()).toBe(ai('session.taskRejected'))
+    const card = q('[data-ai-error="session"]')!
+    expect(card.dataset.aiTaskOutcome).toBe('failed')
+    expect(card.textContent).toContain(ai('notice.taskRejected'))
+    expect(card.querySelector('[data-ai-retry]')).not.toBeNull()
+    const detail = await openDetail()
+    expect(detail).toContain('plan_rejected')
+    expect(detail).toContain('axis.range')
+  })
+
+  it('AI 这一侧没跑成（agent_network）+ outcome failed：说具体原因，不说「没通过写回前检查」；原始码只在详情，仍可重试', async () => {
+    await mount([session({ status: 'failed', changed: false, error: 'agent_network', task: task('failed', true) })])
+    expect(status()).toBe(ai('status.failed'))
+    const card = q('[data-ai-error="session"]')!
+    expect(card.textContent).toContain(ai('sessionError.agent_network'))
+    expect(card.textContent).not.toContain(ai('notice.taskRejected'))
+    expect(card.textContent).not.toContain('agent_network')
+    expect(card.dataset.aiTaskOutcome).toBeUndefined()
+    expect(card.querySelector('[data-ai-retry]')).not.toBeNull()
+    expect(await openDetail()).toContain('agent_network')
+  })
+
+  it('凭据无效（agent_auth）：主按钮「检查连接」；不认识的 agent_* / executor_error:* 落到通用的「AI 运行出错」', async () => {
+    requestCheckConnection.mockClear()
+    await mount([
+      session({ id: 'a', status: 'failed', changed: false, error: 'agent_auth', task: task('failed') }),
+    ])
+    const card = q('[data-ai-error="session"]')!
+    expect(card.textContent).toContain(ai('sessionError.agent_auth'))
+    expect(card.querySelector('[data-ai-retry]')).toBeNull()
+    await act(async () => card.querySelector<HTMLButtonElement>('[data-ai-check-connection]')!.click())
+    expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+    for (const error of ['agent_something_new', 'executor_error:KeyError']) {
+      await mount([session({ id: 'b', status: 'failed', changed: false, error, task: task('failed') })])
+      const c = q('[data-ai-error="session"]')!
+      expect(c.textContent).toContain(ai('sessionError.agent_internal'))
+      expect(c.textContent).not.toContain(error)
+    }
+  })
+
+  it('completed + 没改动：有意说「已完成，脚本没有变化」，不说「核对一致」（没写回就没有渲染层核对）', async () => {
+    await mount([session({ status: 'done', changed: false, task: task('completed') })])
+    expect(status()).toBe(ai('session.doneNoChange'))
+    expect(status()).not.toBe(ai('session.taskVerified'))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+  })
+
+  it('未知 / null / needs_input 结局：原逻辑不变', async () => {
+    await mount([
+      session({ id: 'a', changed: true, diff: DIFF, task: task(null) }),
+      session({ id: 'b', changed: true, diff: DIFF, task: task('needs_input') }),
+      session({ id: 'c', changed: true, diff: DIFF, task: task('weird' as never) }),
+    ])
+    expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual(Array(3).fill(ai('session.doneChanged')))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+  })
+})
+
+describe('从数据出图的一轮（TAF Phase 5c）', () => {
+  const dataSession = (over: Partial<AiSession> = {}): AiSession =>
+    session({
+      id: 'df-1',
+      agent: 'tavotto',
+      agentLabel: 'Tavotto',
+      prompt: '画 y 随 x 的变化',
+      script: '',
+      panelId: null,
+      fileId: null,
+      target: 'data/standard.csv',
+      task: { task_type: 'data_to_figure', outcome: 'completed', unmet: [], script: 'data/standard.py' },
+      ...over,
+    })
+  const status = () => q('[data-ai-status]')!.textContent
+  const meta = () => q('[data-ai-turn-meta]')!.textContent ?? ''
+
+  it('进行中：状态行是「正在读取数据并出图」，执行者是品牌名', async () => {
+    await mount([
+      dataSession({ status: 'running', finishedAt: undefined, task: { task_type: 'data_to_figure', outcome: null } }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureRunning'))
+    expect(meta()).toContain(PRODUCT_NAME)
+    expect(q('[data-ai-user]')!.textContent).toContain('画 y 随 x 的变化')
+  })
+
+  it('completed：状态行带脚本名，没有卡、没有 diff', async () => {
+    await mount([dataSession({ changed: true })])
+    expect(status()).toBe(ai('session.dataFigureDone', { script: 'data/standard.py' }))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-diff]')).toBeNull()
+  })
+
+  it('partial：warn 卡（一句话）+ 详情列 unmet id，不是 danger', async () => {
+    await mount([
+      dataSession({
+        changed: true,
+        task: {
+          task_type: 'data_to_figure',
+          outcome: 'partial',
+          script: 'data/standard.py',
+          unmet: [{ constraint_id: 'data.rows', reason_code: 'non_numeric' }],
+        },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigurePartial', { script: 'data/standard.py' }))
+    const card = q('[data-ai-task-outcome="partial"]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigurePartial'))
+    expect(qa('[data-notice="danger"]')).toHaveLength(0)
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-detail]')!.textContent).toContain('data.rows')
+  })
+
+  it('needs_input：warn 卡教用户点名 x 和 y 列，有 preview 时给出例子', async () => {
+    await mount([
+      dataSession({
+        task: { task_type: 'data_to_figure', outcome: 'needs_input', unmet: [], preview: { x: '温度', y: ['压力'] } },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureNeedsInput'))
+    const card = q('[data-ai-task-outcome="needs_input"]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigureNeedsInputExample', { x: '温度', y: '压力' }))
+    expect(q('[data-ai-diff]')).toBeNull()
+  })
+
+  it('needs_input 没有 preview：只教点名，不带例子', async () => {
+    await mount([dataSession({ task: { task_type: 'data_to_figure', outcome: 'needs_input', unmet: [] } })])
+    expect(q('[data-ai-task-outcome="needs_input"]')!.textContent).toContain(ai('notice.dataFigureNeedsInput'))
+  })
+
+  it('failed：现有失败卡，正文就是 error；没有「写回前检查」的措辞，也没有重试', async () => {
+    await mount([
+      dataSession({
+        status: 'failed',
+        error: '数据文件不存在',
+        task: { task_type: 'data_to_figure', outcome: 'failed', unmet: [] },
+      }),
+    ])
+    const card = q('[data-ai-error="session"]')!
+    expect(card.textContent).toContain('数据文件不存在')
+    expect(card.textContent).not.toContain(ai('notice.taskRejected'))
+    expect(card.querySelector('[data-ai-retry]')).toBeNull()
+    expect(status()).toBe(ai('status.failed'))
+  })
+
+  it('failed 但文件已写（task.script 在）：状态行说已生成，danger 卡说清楚，不出重试', async () => {
+    await mount([
+      dataSession({
+        status: 'done',
+        changed: true,
+        error: '核对没通过',
+        task: {
+          task_type: 'data_to_figure',
+          outcome: 'failed',
+          script: 'data/standard.py',
+          unmet: [{ constraint_id: 'data.voltage_mV', reason_code: 'data_mismatch' }],
+        },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureFailedWritten', { script: 'data/standard.py' }))
+    const card = q('[data-ai-task-outcome="failed"]')!
+    expect(card.dataset.notice).toBe('danger')
+    expect(card.textContent).toContain(ai('notice.dataFigureFailedWritten'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-retry]')).toBeNull()
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-detail]')!.textContent).toContain('data.voltage_mV')
+  })
+
+  it('结果不确定：warn 卡 + 「查询结果」；点它调 reconcileDataFigure；不是失败卡', async () => {
+    const reconcile = vi.fn(async () => {})
+    useAiStore.setState({ reconcileDataFigure: reconcile } as never)
+    await mount([
+      dataSession({
+        status: 'failed',
+        unconfirmed: true,
+        requestId: 'rid-1',
+        task: { task_type: 'data_to_figure', outcome: null, unmet: [] },
+      }),
+    ])
+    useAiStore.setState({ reconcileDataFigure: reconcile } as never)
+    const card = q('[data-ai-data-figure-unconfirmed]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigureUnconfirmed'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-retry]')).toBeNull()
+    expect(status()).toBe(ai('session.dataFigureUnconfirmed'))
+    await act(async () => q('[data-ai-data-figure-reconcile]')!.click())
+    expect(reconcile).toHaveBeenCalledWith('df-1')
+  })
+
+  it('没有选中任何图时，这一轮照样显示在对话里（它不属于任何面板）', async () => {
+    await mount([dataSession({ changed: true })])
+    await act(async () => useSelectionStore.setState({ ids: [] } as never))
+    expect(q('[data-ai-transcript]')).not.toBeNull()
+    expect(qa('[data-ai-session]')).toHaveLength(1)
   })
 })
 

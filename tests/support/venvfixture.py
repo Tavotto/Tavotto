@@ -15,6 +15,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 #: 遮蔽用的替身。真实用户的 venv 里就是**没有** Tavotto，`import tavotto`
@@ -213,10 +214,28 @@ def inherit_host_site(venv: Path, python: str, facts: dict | None = None) -> Pat
     if not dirs:
         return None
     site = site_packages(venv)
-    # **路径写在 .py 里，.pth 只留一行 ASCII 的 import。** 两个文件各自解决
+    pth = site / _HOST_SITE_PTH
+    if all(d.isascii() for d in dirs):
+        # 全是 ASCII 路径：直接写成路径行。`site` 对 ASCII 的读法在每个版本 / locale 下都一致（编码问题只对非 ASCII 存在），
+        # 而且产品的依赖计划把 `.pth` 里的 `import` 行当「没建模的钩子」（`distmeta.uncovered_paths`，#925）——夹具这一行
+        # `import _tavotto_fixture_host_site` 会让每个用这个夹具的真 venv 都被判成「名字层看不全」，凡是要在它里面准备依赖的
+        # 端到端用例都走不到「缺什么就装什么」。路径行指向的是目标解释器报告并读过的层，算已跟进。
+        # 标准库目录（含 lib-dynload）不写：venv 与宿主同一个解释器，这些本来就在它的 `sys.path` 上；产品的事实探针也有意不把它们
+        # 当「额外路径层」报，写进来的路径行就成了「指向没读过的目录」。
+        keep = [
+            d
+            for d in dirs
+            if os.path.basename(d.rstrip("/\\")).lower() not in ("lib-dynload", "dlls")
+            and not os.path.isfile(os.path.join(d, "os.py"))
+            and not os.path.isfile(os.path.join(d, "python.exe"))  # Windows 的解释器安装根目录
+            and os.path.normcase(os.path.normpath(d))
+            not in {os.path.normcase(os.path.normpath(p)) for p in (sys.base_prefix, sys.prefix)}
+        ]
+        pth.write_text("".join(f"{d}\n" for d in keep), encoding="ascii")
+        return pth
+    # **含非 ASCII 的路径：路径写在 .py 里，.pth 只留一行 ASCII 的 import。** 两个文件各自解决
     # 一件事，理由见 `_pth_line()` / `_loader_source()`。
     (site / f"{_HOST_SITE_MODULE}.py").write_text(_loader_source(dirs), encoding="utf-8")
-    pth = site / _HOST_SITE_PTH
     pth.write_text(_pth_line(), encoding="ascii")
     return pth
 

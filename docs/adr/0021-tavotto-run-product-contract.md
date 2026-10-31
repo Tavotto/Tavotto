@@ -701,6 +701,8 @@ Tavotto / `sitecustomize` / 第二套 manifest·override·export / 静默
 safe→native 或 native→safe fallback / native 模式自动 pip install /
 源码写回 / 原始产物写回 / 未经同意决定就扩遥测事件表 / 宣称 Stable。
 
+> **被 [0127](0127-execution-policy-and-unified-retry-guard.md) 修订（2026-10-14）**：上表中的「静默 safe→native 或 native→safe fallback」改为——静默**反向**（native→safe）与**非桌面用户发起**的回退仍不做；桌面用户主动运行下，按执行证据（safe 自己的守卫拦下关键文件操作）、单向、至多一次、有明确原因、诊断留历史的 safe→native 回退除外。CLI / MCP 不适用。§9.1（面板路由由 `execution_profile` 决定，native 面板无活路由绝不静默回 safe）不变：回退发生在执行层，完成后该 asset 的 `execution_profile` 即为 native。
+
 ### 14.1 native 会话**不许**自动切到项目 `.venv`
 
 ADR 0018 的「缺依赖就接手项目自己的 `.venv`」是 safe 档的解药，在 native 档

@@ -12,6 +12,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 「在 Finder 中显示」走桌面壳的 IPC；只有那组用例把 `__TAURI_INTERNALS__` 装上
+const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchReadiness: vi.fn(),
@@ -21,10 +25,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   probeScript: vi.fn(),
   scanRegistry: vi.fn(),
   writeRegistryEntry: vi.fn(),
+  createPreparationSession: vi.fn(),
 }))
 
 import {
   ApiError,
+  createPreparationSession,
   WORKDIR_CONFIRMATION_CODE,
   fetchPanels,
   fetchReadiness,
@@ -49,8 +55,13 @@ import {
   useProjectReadinessStore,
 } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
+import { useProjectStore } from '@/store/projectStore'
+import type { ProjectStatus } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { useScriptArgvStore } from '@/store/scriptArgvStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { PREPARATION_PANEL_KEY } from '@/lib/preparationFlag'
 import { setCurrentProjectId } from '@/lib/session'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 
@@ -69,6 +80,13 @@ const mockPanels = vi.mocked(fetchPanels)
 const mockProbe = vi.mocked(probeScript)
 const mockScan = vi.mocked(scanRegistry)
 const mockWrite = vi.mocked(writeRegistryEntry)
+const mockCreateSession = vi.mocked(createPreparationSession)
+/** 本地开关关闭（`'off'`）：接入中心委派素材库那台状态机（`scriptRunStore`）——旧路径 */
+const legacyPath = () => localStorage.setItem(PREPARATION_PANEL_KEY, 'off')
+const settle = () =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+  })
 
 const P = (over: Partial<ReadinessPanel>): ReadinessPanel => ({
   id: 'Fig.pdf',
@@ -229,8 +247,11 @@ beforeEach(() => {
   mockProbe.mockResolvedValue({
     script: 'dyn.py', entry: 'main', stems: ['Mystery'], descriptors: [], error: null, tried: [],
   })
+  mockCreateSession.mockReturnValue(new Promise(() => {}))
   resetReadinessBookkeeping()
   resetAssetLoadBookkeeping()
+  useScriptRunStore.getState().clear()
+  useProjectPreparationStore.getState().clear()
   useProjectReadinessStore.getState().clear()
   useAssetStore.setState({ panels: [], byId: {}, loaded: true, loading: false, error: null })
   useUiStore.setState({ registryOpen: false, status: null })
@@ -242,7 +263,7 @@ afterEach(async () => {
 })
 
 describe('六个状态', () => {
-  it('每一张图都有状态名与一句自然话，一个都不缺', async () => {
+  it('每一张图都有自己的一行；异常项行内标状态名，可编辑的不重复（分组名与顶部芯片已经说了）', async () => {
     await open(reportOf(SIX))
     const expected: [string, string][] = [
       ['Ok.pdf', '可编辑'],
@@ -255,7 +276,12 @@ describe('六个状态', () => {
     for (const [id, label] of expected) {
       const row = rowOf(id)
       expect(row, `${id} 没有自己的一行`).toBeTruthy()
-      expect(row!.textContent).toContain(label)
+      if (label === '可编辑') {
+        expect(row!.textContent, '可编辑的行不再画「可编辑」').not.toContain('可编辑')
+        expect(row!.textContent).toContain('ok.py')
+      } else {
+        expect(row!.textContent).toContain(label)
+      }
     }
   })
 
@@ -269,15 +295,24 @@ describe('六个状态', () => {
     }
   })
 
-  it('顶部给出总计 / 可编辑 / 待连接 / 仅排版四个数', async () => {
+  it('顶部一行计数芯片：可编辑 / 待连接 / 仅排版；0 的档不画；只有待连接带色点', async () => {
     await open(reportOf(SIX))
-    const strip = dialog().querySelector('dl')!.textContent ?? ''
-    expect(strip).toContain('总计')
-    expect(strip).toContain('可编辑')
-    expect(strip).toContain('待连接')
-    expect(strip).toContain('仅版面')
+    const strip = dialog().querySelector('[data-registry-summary]')!
+    const chip = (k: string) => strip.querySelector<HTMLElement>(`[data-registry-summary-chip="${k}"]`)
+    expect(chip('editable')!.textContent).toBe('1 可编辑')
     // 待连接 = auto_linkable + needs_probe + conflict + source_missing = 4
-    expect(strip.replace(/\s/g, '')).toContain('待连接4')
+    expect(chip('pending')!.textContent).toBe('4 待连接')
+    expect(chip('layoutOnly')!.textContent).toBe('1 仅版面')
+    expect(strip.textContent).not.toContain('总计')
+    expect(chip('pending')!.getAttribute('data-count-chip')).toBe('warn')
+    expect(chip('editable')!.getAttribute('data-count-chip')).toBe('quiet')
+  })
+
+  it('摘要芯片里 0 的档不画', async () => {
+    await open(reportOf([P({ id: 'Photo.png', stem: 'Photo' }), P({ id: 'Auto.pdf', stem: 'Auto', status: 'auto_linkable', reason_code: 'static_unique_candidate', candidates: ['auto.py'], can_probe: true, details: { candidate_scope: 'panel' } })]))
+    const strip = dialog().querySelector('[data-registry-summary]')!
+    expect(strip.querySelector('[data-registry-summary-chip="pending"]')).not.toBeNull()
+    expect(strip.querySelector('[data-registry-summary-chip="editable"]'), '没有可编辑的图就没有这颗芯片').toBeNull()
   })
 
   it('layout_only 不画成错误：没有 alert，也不说"失败"', async () => {
@@ -329,17 +364,52 @@ describe('绝不替用户决定', () => {
     expect(mockProbe).not.toHaveBeenCalled()
   })
 
-  it('试运行只有点了才跑，而且点之前先说清它会运行脚本', async () => {
+  it('试运行只有点了才跑，而且点之前先说清它会运行脚本；默认打开准备面板（T09b），本组件一个执行请求都不发', async () => {
+    useScriptArgvStore.getState().setTokens('dyn.py', ['--n', '3'])
     await open(reportOf(SIX))
     const row = rowOf('Mystery.pdf')!
     expect(row.textContent).toContain('Tavotto 会运行这个脚本')
-    expect(mockProbe).not.toHaveBeenCalled()
+    expect(mockCreateSession).not.toHaveBeenCalled()
     await clickIn(row, '试运行并连接')
-    expect(mockProbe).toHaveBeenCalledWith('dyn.py')
+    // 对话框让开、同一个准备面板打开：只读检查，参数草稿此刻冻结进会话
+    expect(useUiStore.getState().registryOpen).toBe(false)
+    expect(useUiStore.getState().guideCard).toBe('card')
+    expect(mockCreateSession).toHaveBeenCalledTimes(1)
+    expect(mockCreateSession.mock.calls[0][0]).toEqual({ script: 'dyn.py', argv: ['--n', '3'], argv_sensitive: false })
+    expect(mockProbe, '接入中心不该再自己跑试运行').not.toHaveBeenCalled()
+    useScriptArgvStore.getState().clear()
+  })
+
+  it('开关关闭：委派素材库那台状态机，参数草稿照样带上（T03：off 之后不退化成空 argv）', async () => {
+    legacyPath()
+    useScriptArgvStore.getState().setTokens('dyn.py', ['--n', '3'])
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(mockCreateSession).not.toHaveBeenCalled()
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+    expect(mockProbe).toHaveBeenCalledWith('dyn.py', undefined, { argv: ['--n', '3'], sensitive: false })
+    // 状态记在素材库那台状态机里：同一个脚本只有一份运行状态
+    expect(useScriptRunStore.getState().byScript['dyn.py']?.phase).toBe('captured_one')
+    expect(rowOf('Mystery.pdf')!.textContent).toContain('已连接 Mystery')
+    useScriptArgvStore.getState().clear()
+  })
+
+  it('开关关闭：无参数运行替换掉的旧图名在那一行说清怎么恢复（T09b）', async () => {
+    legacyPath()
+    mockProbe.mockResolvedValue({
+      script: 'dyn.py', entry: 'main', stems: ['Mystery'], descriptors: [], error: null, tried: [],
+      unlinked_stems: ['Mystery_scaled'],
+    })
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(rowOf('Mystery.pdf')!.textContent).toContain('此前带其他参数生成的 Mystery_scaled 已不再关联，用原参数再运行一次即可恢复')
   })
 
   it('试运行撞上起会话之前的依赖门：弹同一个授权框（载荷交给 envStore），不报「试运行失败」', async () => {
     // Windows 真机验收（main 493a1310）：门的载荷在试运行这条路上被当成失败吞掉，授权框从不弹出
+    legacyPath()
     setCurrentProjectId('p1')
     useEnvStore.setState({ dependencyPreparation: null })
     const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
@@ -349,19 +419,17 @@ describe('绝不替用户决定', () => {
     })
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
+    await settle()
     expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(offer)
     expect(dialog().textContent).not.toContain('试运行失败')
-    // 门有了答案（授权准备成功）：这一行自动重跑，不要用户再点一次（#740 Codex P2）
+    // 门有了答案（授权准备成功）：重跑的是**那一台**状态机里停在门上的那一行，一次
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never)
     await act(async () => {
       useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(mockProbe, '门放行之后那一行没有重跑').toHaveBeenCalledWith('dyn.py')
+    expect(mockProbe, '门放行之后那一行没有重跑').toHaveBeenCalledTimes(1)
     // 别的脚本的答案不重跑这一行
     mockProbe.mockClear()
     await act(async () => {
@@ -374,6 +442,7 @@ describe('绝不替用户决定', () => {
   })
 
   it('门以非 2xx 回来（请求直接抛 409）：同样交给授权框，不报「试运行失败」（#740 Codex P2）', async () => {
+    legacyPath()
     setCurrentProjectId('p1')
     useEnvStore.setState({ dependencyPreparation: null })
     const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
@@ -382,16 +451,15 @@ describe('绝不替用户决定', () => {
     )
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
+    await settle()
     expect(useEnvStore.getState().dependencyPreparation, '抛出来的门没交给 envStore').toEqual(offer)
     expect(dialog().textContent).not.toContain('试运行失败')
     useEnvStore.setState({ dependencyPreparation: null })
     setCurrentProjectId(null)
   })
 
-  it('门放行时素材库那一行也在重跑同一个脚本：接入中心等它跑完再跑，不并发撞 probe_in_progress（#740 Codex P2）', async () => {
+  it('接入中心与素材库是同一台状态机：门放行只重跑一次，在跑时再点不并发（#740 那组补丁的结构性替代）', async () => {
+    legacyPath()
     setCurrentProjectId('p1')
     const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
     mockProbe.mockResolvedValue({
@@ -400,13 +468,8 @@ describe('绝不替用户决定', () => {
     })
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    // 素材库那一行同样停在这道门上
-    useScriptRunStore.setState((st) => ({
-      byScript: { ...st.byScript, 'dyn.py': { ...(st.byScript['dyn.py'] ?? {}), phase: 'needs_preparation', gen: 1 } as never },
-    }))
+    await settle()
+    expect(useScriptRunStore.getState().byScript['dyn.py']?.phase).toBe('needs_preparation')
     mockProbe.mockClear()
     let finish!: () => void
     const held = new Promise<void>((r) => (finish = r))
@@ -415,7 +478,7 @@ describe('绝不替用户决定', () => {
     mockProbe.mockImplementation(async () => {
       inFlight += 1
       maxInFlight = Math.max(maxInFlight, inFlight)
-      if (mockProbe.mock.calls.length === 1) await held
+      await held
       inFlight -= 1
       return { script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never
     })
@@ -423,87 +486,24 @@ describe('绝不替用户决定', () => {
       useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(mockProbe, '素材库那一次还没跑完，接入中心就又发了一次').toHaveBeenCalledTimes(1)
+    // 素材库那一行 = 接入中心这一行：再点一次（或另一处再触发）是同一台状态机里的 busy，不发第二个请求
+    await act(async () => {
+      void useScriptRunStore.getState().run('dyn.py')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(mockProbe).toHaveBeenCalledTimes(1)
     await act(async () => {
       finish()
       await new Promise((r) => setTimeout(r, 10))
     })
-    expect(mockProbe).toHaveBeenCalledTimes(2)
+    expect(mockProbe).toHaveBeenCalledTimes(1)
     expect(maxInFlight).toBe(1)
     useEnvStore.setState({ dependencyPreparation: null })
-    useScriptRunStore.getState().clear()
     setCurrentProjectId(null)
   })
 
-  it('等素材库那一次跑完的途中换了项目：不去重跑新项目里的同名脚本（#740 Codex P2）', async () => {
-    setCurrentProjectId('p1')
-    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
-    mockProbe.mockResolvedValue({
-      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
-      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
-    })
-    await open(reportOf(SIX))
-    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    useScriptRunStore.setState((st) => ({
-      byScript: { ...st.byScript, 'dyn.py': { ...(st.byScript['dyn.py'] ?? {}), phase: 'needs_preparation', gen: 1 } as never },
-    }))
-    mockProbe.mockClear()
-    let finish!: () => void
-    const held = new Promise<void>((r) => (finish = r))
-    mockProbe.mockImplementation(async () => {
-      await held
-      return { script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never
-    })
-    await act(async () => {
-      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    expect(mockProbe).toHaveBeenCalledTimes(1) // 素材库那一次
-    // 换到 B：换代清掉素材库的记账，等待随之 resolve
-    await act(async () => {
-      setCurrentProjectId('p2')
-      useScriptRunStore.getState().clear()
-      finish()
-      await new Promise((r) => setTimeout(r, 10))
-    })
-    expect(mockProbe, 'A 的放行在 B 里重跑了同名脚本').toHaveBeenCalledTimes(1)
-    useEnvStore.setState({ dependencyPreparation: null })
-    setCurrentProjectId(null)
-  })
-
-  it('A → B → A：上一代记下的待重跑在这一代不被放行（#740 Codex P2）', async () => {
-    setCurrentProjectId('p1')
-    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
-    mockProbe.mockResolvedValue({
-      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
-      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
-    })
-    await open(reportOf(SIX))
-    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    // 换到 p2 再回 p1：项目 id 相同、代际已变（projectStore 每次换代都清 scriptRunStore）
-    await act(async () => {
-      setCurrentProjectId('p2')
-      useScriptRunStore.getState().clear()
-      setCurrentProjectId('p1')
-      useScriptRunStore.getState().clear()
-    })
-    mockProbe.mockClear()
-    await act(async () => {
-      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
-      await new Promise((r) => setTimeout(r, 10))
-    })
-    expect(mockProbe, '上一代的待重跑在这一代被放行了').not.toHaveBeenCalled()
-    useEnvStore.setState({ dependencyPreparation: null })
-    setCurrentProjectId(null)
-  })
-
-  it('别的脚本的授权框开着时撞上的门：行上留着再打开的按钮，不停在「还差一步」上（#740 Codex P2）', async () => {
+  it('A → B → A：上一代停在门上的那一行随换代清空，这一代的放行不重跑它，也不留再打开的按钮（#740 Codex P2）', async () => {
+    legacyPath()
     setCurrentProjectId('p1')
     const other = { code: 'dependency_preparation_required', script: 'other.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
     const offer = { ...other, script: 'dyn.py' }
@@ -514,15 +514,13 @@ describe('绝不替用户决定', () => {
     })
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
+    await settle()
+    // 别的脚本的授权框开着时撞上的门：那一份作答完关掉之后，这一行能把自己的那份再打开
     expect(useEnvStore.getState().dependencyPreparation, '前提：开着的是别的脚本那一份').toEqual(other)
-    // 那一份作答完关掉之后，这一行能把自己的那份再打开
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
     await clickIn(rowOf('Mystery.pdf')!, '准备依赖…')
     expect(useEnvStore.getState().dependencyPreparation, '行上没有再打开的入口').toEqual(offer)
-    // 对话框开着换过项目（A → B → A）：上一代的载荷不再给再打开的按钮（#740 Codex P2）
+    // 换到 p2 再回 p1：项目 id 相同、代际已变（projectStore 每次换代都清 scriptRunStore）
     await act(async () => {
       useEnvStore.setState({ dependencyPreparation: null })
       setCurrentProjectId('p2')
@@ -534,6 +532,12 @@ describe('绝不替用户决定', () => {
       b.textContent?.includes('准备依赖…'),
     )
     expect(stale, '换过项目之后还留着上一代的「准备依赖…」').toBeUndefined()
+    mockProbe.mockClear()
+    await act(async () => {
+      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(mockProbe, '上一代的待重跑在这一代被放行了').not.toHaveBeenCalled()
     setCurrentProjectId(null)
   })
 
@@ -969,7 +973,7 @@ describe('可编辑图的动作层级', () => {
     expect(firstLevelButtons('Ok.pdf')[0]).toBe('添加到画布')
   })
 
-  it('「重新试运行」还在：收进行尾的 ⋯ 菜单，点了跑的是既有的试运行端点', async () => {
+  it('「重新试运行」还在：收进行尾的 ⋯ 菜单；默认打开准备面板，开关关闭时跑既有的试运行端点', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Ok.pdf')!
     // 第一层不再有它——一张已经好了的图不该看起来还有事要做
@@ -981,6 +985,20 @@ describe('可编辑图的动作层级', () => {
     expect(reprobe, '排障动作不该被删掉').toBeTruthy()
     await act(async () => {
       reprobe!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(mockCreateSession.mock.calls.map((c) => c[0])).toEqual([{ script: 'ok.py', reuse_last_success: true }])
+    expect(mockProbe).not.toHaveBeenCalled()
+    // 开关关闭：同一个菜单项走素材库那台状态机
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+    legacyPath()
+    await open(reportOf(SIX))
+    const again = [...(await openMore(rowOf('Ok.pdf')!)).querySelectorAll('[role="menuitem"]')].find((m) =>
+      m.textContent?.includes('重新试运行'),
+    )
+    await act(async () => {
+      again!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
     expect(mockProbe).toHaveBeenCalledWith('ok.py')
@@ -1094,6 +1112,7 @@ describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动
   })
 
   it('A 里试运行过、对话框开着换到 B：高级段与试运行结果都是 B 的，没有 A 的「添加到画布」', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
     setCurrentProjectId('p1')
     mockProbe.mockResolvedValue(PROBED_A)
     await open(reportOf(SIX))
@@ -1108,6 +1127,7 @@ describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动
   })
 
   it('A 里试运行 → 关 → 退场动画没放完就换到 B 并重新打开：重取 B 的视图，没有 A 的描述符与「添加到画布」', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
     simulateExitAnimation()
     setCurrentProjectId('p1')
     mockProbe.mockResolvedValue(PROBED_A)
@@ -1145,6 +1165,7 @@ describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动
   })
 
   it('同一个项目里关掉、退场动画没放完又打开：也是新的一次打开——重取视图，上一次的试运行结果不带过来', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
     simulateExitAnimation()
     setCurrentProjectId('p1')
     mockProbe.mockResolvedValue(PROBED_A)
@@ -1156,10 +1177,14 @@ describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动
     const fetches = mockRegistry.mock.calls.length
     await reopen()
     expect(mockRegistry.mock.calls.length, '重新打开没有重取注册表视图').toBeGreaterThan(fetches)
-    expect(addButtons(), '上一次打开的试运行结果被带进了这一次').toHaveLength(0)
+    // T09b 起试运行状态归素材库那台状态机（`scriptRunStore`，按项目代际清空），不再是本对话框的局部状态：
+    // 同一个项目里重新打开，同一个脚本只有一份运行状态——结果仍在，且不是上一次正文的残留（上面已重取视图）。
+    // 跨项目的不带过来由上面几条（换到 B）钉住
+    expect(addButtons().length, '同项目里重开：运行状态应仍是那台状态机里的那一份').toBeGreaterThan(0)
   })
 
   it('A 的试运行在飞时换到 B（对话框开着）：迟到的结果不落进 B 的对话框', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
     setCurrentProjectId('p1')
     let finish!: (v: Awaited<ReturnType<typeof probeScript>>) => void
     mockProbe.mockReturnValueOnce(new Promise((r) => (finish = r)))
@@ -1191,5 +1216,90 @@ describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动
     expect(dialog().textContent).toContain('b_only.py')
     expect(addButtons(), 'A 迟到的描述符落进了 B').toHaveLength(0)
     expect(showsA()).toBe(false)
+  })
+})
+
+describe('脚本删了、图还在：在文件管理器中显示（用户反馈 2026-10-24）', () => {
+  const w = window as unknown as Record<string, unknown>
+  const asset = (id: string) => ({
+    id, name: id.replace(/\.pdf$/, ''), folder: '.', kind: 'pdf' as const,
+    native_w_mm: 80, native_h_mm: 60, mtime: 1,
+  })
+  const withAssets = (...ids: string[]) =>
+    useAssetStore.setState({
+      panels: [], byId: Object.fromEntries(ids.map((id) => [id, asset(id)])), loaded: true,
+    })
+
+  beforeEach(() => {
+    w.__TAURI_INTERNALS__ = {}
+    tauriInvoke.mockReset()
+    tauriInvoke.mockResolvedValue(undefined)
+    useProjectStore.setState({ project: { figures_dir: '/p' } as ProjectStatus })
+  })
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    useProjectStore.setState({ project: null })
+  })
+
+  it('主按钮从「重新扫描」换成在文件管理器中显示', async () => {
+    withAssets('Gone.pdf')
+    await open(reportOf(SIX))
+    const row = rowOf('Gone.pdf')!
+    expect(buttonsIn(row)).toContain('在文件管理器中显示')
+    // 扫多少次都还是这一档：行里不再摆它（对话框顶部那颗照旧在）
+    expect(buttonsIn(row)).not.toContain('重新扫描')
+    await clickIn(row, '在文件管理器中显示')
+    // 选中，不删：Tavotto 自己不碰用户的文件
+    expect(tauriInvoke).toHaveBeenCalledWith('reveal_export', { dir: '/p', name: 'Gone.pdf' })
+    expect(tauriInvoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('子文件夹里的图：目录拼到它所在的那一层，文件名不带分隔符（壳只收纯文件名）', async () => {
+    const sub = P({
+      id: 'figs/Gone.pdf', stem: 'Gone', status: 'source_missing',
+      reason_code: 'registered_script_missing', script: 'gone.py',
+    })
+    withAssets('figs/Gone.pdf')
+    await open(reportOf([sub]))
+    await clickIn(rowOf('figs/Gone.pdf'), '在文件管理器中显示')
+    expect(tauriInvoke).toHaveBeenCalledWith('reveal_export', { dir: '/p/figs', name: 'Gone.pdf' })
+  })
+
+  it('其余状态收在 ⋯ 里', async () => {
+    withAssets('Ok.pdf')
+    await open(reportOf(SIX))
+    const menu = await openMore(rowOf('Ok.pdf')!)
+    expect(menu.textContent).toContain('在文件管理器中显示')
+  })
+
+  it('打不开就把完整路径说出来，不静默', async () => {
+    tauriInvoke.mockRejectedValueOnce(new Error('denied'))
+    withAssets('Gone.pdf')
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Gone.pdf'), '在文件管理器中显示')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const ui = useUiStore.getState()
+    expect(ui.statusTone).toBe('error')
+    expect(JSON.stringify(ui.status)).toContain('/p/Gone.pdf')
+  })
+
+  it('素材清单里没有它（文件此刻不在）：不摆，回落到重新扫描', async () => {
+    withAssets()
+    await open(reportOf(SIX))
+    const row = rowOf('Gone.pdf')!
+    expect(buttonsIn(row)).toContain('重新扫描')
+    expect(buttonsIn(row)).not.toContain('在文件管理器中显示')
+  })
+
+  it('浏览器模式没有文件管理器：不摆入口', async () => {
+    delete w.__TAURI_INTERNALS__
+    withAssets('Gone.pdf', 'Ok.pdf')
+    await open(reportOf(SIX))
+    const row = rowOf('Gone.pdf')!
+    expect(buttonsIn(row)).toContain('重新扫描')
+    const menu = await openMore(rowOf('Ok.pdf')!)
+    expect(menu.textContent).not.toContain('文件管理器')
   })
 })

@@ -2,6 +2,17 @@
 
 > 原文出自 `web/AGENTS.md`「接入状态与左侧外壳（2026-08-29，Prompt 08）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/projectReadinessStore.test.ts`、`store/projectScanStore.test.ts`、`RegistryDialog.test.tsx`、`topBarAnchors.test.tsx`、`WorkdirConfirmDialog.test.tsx`、`WorkdirRow.test.tsx`、`DependencyPrepareDialog.test.tsx`、`store/envAdvice.test.ts`、`notificationRail.test.tsx`、`canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts`、`components/left/elementTreeRerender.test.tsx`、`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`lib/importOrigin.test.ts`、`lib/importOrigin.structure.test.ts`、`components/ImportOriginDialog.test.tsx`、`tests/test_import_origin_ui_facts.py`、`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`inspector/colorScalePanels.test.tsx`
+> `web/AGENTS.md`「改到」压缩前原文（2026-10-23）：`lib/readinessText.ts`、`store/projectReadinessStore.ts`、`store/projectScanStore.ts`、`PreparationCard` / `projectPreparationStore`、`RegistryDialog`、左栏偏好、左栏样式面板 `components/left/StylePanel.tsx` / `store/styleBinding.ts` / `store/styleWork.ts` / `lib/stylePanelModel.ts`、`ElementTree` 的行、`WorkdirConfirmDialog` / `WorkdirRow`、`envStore.setWorkdirMode`、`DependencyPrepareDialog` / `depRepairStore.prepare` / `adoptUserEnvironment`、`envStore.checkEnvironment` / `adoptCandidate`、`lib/userEnvironmentText.ts`、通知轨「已改用你的环境」、`lib/importOrigin.ts` / `ImportOriginDialog` / `OriginDetails` / `depRepairStore.openOrigin·bindOrigin·confirmOrigin`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：句子只有 `statusLabel()` / `reasonText()`；界面不执行动作、冲突不预选；元素归属只读声明；自动让位绝不写回偏好；来源未定的 import 前端零解析，确认页标「未经核实」
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 240
+改到: `lib/readinessText.ts`、项目接入 / 扫描 / 准备 store、左栏（偏好、样式面板、`ElementTree`）、工作目录与依赖准备对话框、`lib/importOrigin.ts`（完整清单见细则）
+主题: 接入状态与左侧外壳 → `readiness-and-left-shell.md`
+必守要点: 句子只有 `statusLabel()` / `reasonText()`；界面不执行动作；自动让位绝不写回偏好；来源未定的 import 前端零解析
+-->
 
 「这张图能不能编辑」的**事实**只有后端 `engine/readiness.py` 一个出处
 （六个 status + 十个 reason code 的闭集，ADR 0027）。前端只翻译不判断——
@@ -10,8 +21,8 @@
 - **句子与「待连接」只有一份实现**：`lib/readinessText.ts` 的 `statusLabel()`
   （读 `status`）、`reasonText()`（读 **`reason_code`**，不读 `status`），
   以及 `PENDING_STATUSES` / `pendingCount(summary)` / `allEditable(summary)`
-  ——横幅与接入中心顶部说的是同一个数，各展开写一遍的话，多一个状态时总有
-  一处会漏掉。`allEditable` 那一档两处表现不同但**判据同一个**：横幅整条不说话
+  ——顶栏的项目锚点（`TopBar.ProjectStatusPill`，2026-10 设计审计第二轮起取代工作面板里的那条横幅）与接入中心顶部说的是同一个数，
+  各展开写一遍的话，多一个状态时总有一处会漏掉。`allEditable` 那一档两处表现不同但**判据同一个**：项目锚点不出现
   （`bannerReport` 回 null），接入中心把四个计数换成一句「N 张图都可以编辑」
   （审计 T10：正常项目不该长得像故障排查页）。这一档里**可编辑的图不再逐张
   重复同一句解释**（那句话对每一张一模一样），第一层也只留「添加到画布」——
@@ -38,6 +49,11 @@
   先说「Tavotto 将运行这个脚本」）、手工关联走 `PUT /api/registry`（键是
   **`ReadinessPanel.stem`**，不是文件名）、重扫走 `/api/registry/scan`；
   每次成功之后只调一次统一刷新，不手拼状态。冲突**一个候选都不预选**。
+- **图不删，只「在 Finder 中显示」**（用户反馈 2026-10-24：脚本删了、图还在，接入状态里没有出口）：
+  `source_missing` 那一档的主按钮是它（重扫扫多少次都还是这一档，重扫留在对话框顶部），其余状态收在 ⋯ 里，不另加说明行；
+  走 `lib/desktop.revealProjectFile` → 壳的 `reveal_export`（目录 + 纯文件名，只 reveal 不 open，不加 ACL）。
+  删不删由用户在文件管理器里做，删掉后 watcher → 统一刷新，那一行自己消失。只在桌面壳且素材清单里有这一项时摆出，
+  浏览器模式回落到重扫；失败把完整路径说出口。看护：`RegistryDialog.test.tsx` 那组「脚本删了、图还在」。
 - **`role="option"` 里不许再嵌可 Tab 的控件**：状态角标是 `<span>`，
   「查看接入状态」那个真按钮住在 listbox 外面的说明条里。
 - **侧栏的「偏好」与「此刻开着没开」是两件事**（`uiStore` 的模块级
@@ -56,7 +72,15 @@
   换项目 `resetProject` 清掉。设置里 `WorkdirRow` 是同一份决定的三档 `Segmented`（切到两个真实目录
   各自确认一次，切回沙盒不确认；老服务端只报两档时第三档不摆）。**三档与选项的文案键写成字面量**
   （`OPTION_LABEL` / `MODE_LABEL` 表），模板拼出来的键死键门禁看不见。MCP 那一面是同一份决定：
-  `tavotto_open_figure(workdir=…)`。
+  `tavotto_open_figure(workdir=…)`。**运行时引导（#1254，ADR 0084 §三）**：沙盒里 glob / listdir / exists / C++ 读取器落空、
+  同一个相对目标在脚本目录里找得到时，错误体带 `workdir_hint`（与确认框同形，**不是** `confirmation`、码不变）；
+  `EngineError.workdirHint` → `PanelRender.workdirHint` → 错误块，素材库走 `run.error.workdir_hint`（`WorkdirHintRecovery`），
+  **不论错误码**都给既有的 `WorkdirChooseButton`（同一个确认框，不新造组件和文案）；`WORKDIR_CODES` 的老行为不变。
+  **成功但图是空的**：成功渲染 / 试运行带 `workdir_hint` 时 `lib/workdirHintNotice.noticeWorkdirHint` 往通知轨挂一条胶囊（`uiStore.setStatus`，
+  一句话 + 「选择运行目录…」；owner 前缀 `workdir.hint:`，换项目撤掉）——不是横条；同面板同证据只提醒一次，`decided` 后不提醒，之后不再带 hint 就撤。
+  **准备卡片（默认主流程）**：报告里有 `requirements[kind=workdir_hint]` 且已跑过（`outcome.kind !== 'pending'`）时，`SessionCard` 的 slot 多一个
+  `WorkdirChooseButton`（同一个确认框、同一套按 `decided` / `source` 选句的逻辑），不改一句话与主按钮。
+  看护 `components/workdirHint.test.tsx`、`store/workdirHintSuccess.test.tsx`、`components/PreparationCard.test.tsx`。
 - **跑前的那一次授权（U04，ADR 0061 §六）**：渲染以 `dependency_preparation_required` 回来时同样不是
   错误块，是缺一次授权——`renderStore` 把 `EngineError.dependencyPreparation`（整份联合计划 + 可选目标）
   交给 `depRepairStore.requestPreparation`（动态 import，避免 store 环），`DependencyPrepareDialog` 列出
@@ -85,7 +109,30 @@
   （来源 → 文案键的字面量表）。后端在门里**已经自动改用**时不弹框，SSE `engine.environment_adopted`
   进 `envStore.adoptedEnvironment`，通知轨（与「刚为编辑加入本文档」同一档）说一句并给「改回」=
   `revertAdoptedEnvironment()`（`setProjectPython(null)` → 后端 `remember_default`，所有在用的面板
-  `markStale`，不只是失败的）。
+  `markStale`，不只是失败的）。**ADR 0114 §六（2026-10-06）起默认的检测模式下这条 SSE 又会发**（准备 / 运行时
+  自动检测采用了能跑的那一个）；确认模式（`TAVOTTO_ENV_ADOPTION=confirm`）下不发：候选里没检查过的（`checked === false`，`ok` / `satisfies` 为 null，
+  含 `project_venv` 来源）单列成「还没检查」的单选，选中后主按钮是「检查并使用」，仍是同一个 `adoptUserEnvironment`
+  ——后端现场体检、装齐才采用，不冒充装齐也不冒充没装齐；「没有装齐的环境」那句只在没有未检查的候选时才说。
+- **环境建议（ADR 0114）**：`project.recommendation` / `project.consent` 是后端 `envadvice.recommend()` 的原样投影，
+  `envStore` 只保存与转发（`checkEnvironment` = 明确的检查动作、`adoptCandidate` = 在建议上点「使用」，带候选 id 与看到建议那一刻
+  的环境代 `expected_generation`），**不自写「能不能跑」的判据**；`EngineEnvironmentCard` 的 `EnvironmentAdviceRow` 只在
+  `decision.needs_decision` 时问一句 + 一个主按钮，全局解释器压着（`locked_by`）时只说原因不给按钮。看护
+  `store/envAdvice.test.ts`、`components/EngineEnvironmentCard.test.tsx`、`e2e/environment-advice.spec.ts`。
+- **来源未定的 import（Import Origin PR6，ADR 0114 / 0115）**：联合计划里没有可信安装名的 import 在界面上有五种展示态——已就绪 / 发现更合适的环境 /
+  可以自动修复 / 需要确认 / 尚无法确定——**全部由后端事实派生**（`plan.origins[]`、`checks_of.dependencies.detail.origins`、覆盖度 `detail`、
+  进度终态 `dist_reasons`），前端没有一行解析逻辑（`lib/importOrigin.structure.test.ts` 钉着：没有名单 / 映射 / 对 import 名的切分与正则）。
+  五种名字只是已有状态的命名（`originViewOfCard` / `originViewOfOffer`，落在 `data-origin-view`）：准备卡新增 `origin_confirm`（`checks_of` 的
+  `confirmable > 0`，主按钮「确认包名」）与 `origin_unknown`（有来源事实、没有预填，主按钮是报告里的运行，改口「仍然运行」）两态，**有来源事实的
+  `ready_to_run` 不再说「可以运行了」**；每个态默认只露**一句话 + 至多一个主按钮**，每个原因码 / 覆盖度码 / 核验原因码的人话（`prep.origin.*`，闭集三张字面量表）
+  只进默认折叠的「详情」。
+  **确认包名**（`ImportOriginDialog`，`depRepairStore.openOrigin / bindOrigin / confirmOrigin`）：输入框**只给**后端带了 `suggested_distribution` 的条目
+  （初始值 = 预填，原样；别的来源未定的 import 后端会以 `dependency_install_not_allowed` 拒收，所以只在详情里解释）；主按钮「核对包名」=
+  `createJointDependencyPlan({ script, user_specified })`，一次授权（所有输入框一份计划一个摘要），不逐包弹窗；**确认页那一句必须说清「用户指定、
+  未经可信来源核实」**（读 `plan.impact.user_specified[].trust`，读不到披露就置灰不让继续），「确认并安装」把**这份计划自己的** `impact_digest`
+  原样交给 `/prepare`；`package_requirement_invalid` / `dependency_install_not_allowed` 各一句人话。草稿 / 绑定的计划 / 载荷都是项目代际内的状态：
+  `clear()`（换项目）、关框、新载荷都丢；绑定回来时已换项目的响应整个丢弃（`projectEpoch` + `busy` 单飞，没有第二套判据）。
+  看护 `lib/importOrigin.test.ts`、`lib/importOrigin.structure.test.ts`、`components/ImportOriginDialog.test.tsx`、`components/PreparationCard.test.tsx`（五态矩阵）、
+  `components/DependencyPrepareDialog.test.tsx`（unknown 区读 `origins`、备选提示、核验失败）、`tests/test_import_origin_ui_facts.py`。
 - **元素树的行只在自己显示的东西变了时重画（2026-09-24，松手卡顿剖析）**：
   `ElementTree` 的 `ElementRow` / `ClusterRow` 是 `React.memo`，props 全是这一行显示与
   交互实际用到的值（`gid` / `label` / `role` / 行名 `name` / `canHide` / `readonly` /
@@ -116,9 +163,9 @@
   看护：`components/left/elementTreeGroups.test.tsx`、`inspector/groupInspector.test.tsx`、
   `roles/hierarchy.test.ts`、`inspector/colorScalePanels.test.tsx`、`e2e/shared-colorbar-group.spec.ts`。
 - **左栏「项目」抽屉（2026-09-24；轨名 2026-10-07 起与短名同为「项目」）**：切项目的列表**只有一份**，住在
-  `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。**行只有一种**：`ProjectPickerRow.ProjectRow`，
-  抽屉用 `density="drawer"`（44px）、Project Picker「全部项目」用 `density="page"`（52px + 文件夹记号），两处同一份菜单
-  （`ui/RowMenu`：⋯ / 右键 / ⇧F10）、同一套键位（一列一个 Tab 停靠点 `left/rovingList`——每次渲染后归一，子组件自己展开挂出的新行（Picker 的失效组）由它对整列子树的 MutationObserver 再归一一次，Codex #832；↑↓ / Home / End 走行，Enter 打开，
+  `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。**抽屉的行**：`ProjectPickerRow.ProjectRow`（44px；Project Picker「全部项目」自 2026-10-28 起不再用它——那一屏是手帐索引页，行是 `ProjectIndexRow`，
+  「•」· 名字 · 虚点引线 · 短日期，单击 / 聚焦选中、双击 / Enter 打开，打开 / 在 Finder 中显示 / 从列表移除都在右栏详情卡里）。抽屉的行有菜单
+  （`ui/RowMenu`：⋯ / 右键 / ⇧F10）、两处同一套键位（一列一个 Tab 停靠点 `left/rovingList`——每次渲染后归一，子组件自己展开挂出的新行（Picker 的失效组）由它对整列子树的 MutationObserver 再归一一次，Codex #832；↑↓ / Home / End 走行，Enter 打开，
   收藏行 ⌥↑ / ⌥↓ 与菜单的上移 / 下移、拖动同一个按路径的 move，拖动时画 `dropLineClass` 落点线）。当前项目是顶上一张
   `Card appearance="subtle"`，**不再在收藏区重复**（此前被收藏时一屏画两次选中）；卡不可聚焦，它的 ⋯ 常驻 Tab 顺序
   （`RowMenu tabbable`）。目录已不在的行「打开」是 `aria-disabled`（不是 `disabled`）：仍是漫游列表的一站，⋯（移除 / 收藏）
@@ -186,41 +233,131 @@
   字重 / 字形照原值画（`light` → 200、`600`、`oblique`，与 `planStyle` 交给引擎的同一个值），归一只给开关与字宽估算。
   字号超出示例预算时几何里**所有**长度（字号、线宽、边框、刻度长度 / 线宽）乘同一个系数（`fitSampleGeometry`），
   版面与画框再按缩后的几何现算（`sampleLayout`），比例与应用后一致。
+  图例在框内右下角（2026-10 设计审计第二轮）：两条曲线（`SAMPLE_SERIES`，组件与用例共用 `sampleSeriesPoints`）都从左下升到右上，
+  此前放在右上角的图例线正好压在快的那条曲线上；`lib/styleSample.test.ts` 按图例外框与折线的竖向关系量它。
+  候选按序取第一个不碰曲线的（按画出来的折线段与线宽算）：框内右下、跨过朝里刻度时让刻度长 → 同一处不让刻度
+  （14 pt 图例 + 朝里 20 pt 刻度；压刻度只是框边一小截，压曲线读不出数据）→ 框外右侧、底边对齐（粗体 14 pt
+  图例 + 7…10 pt 数据线时框内放不下；曲线横向不出框，这一处总是干净的）。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`、
   `components/settings/profilesSettings.test.tsx`、`lib/styleSample.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、
-  `components/ProjectReadinessBanner.test.tsx`、
+  `components/topBarAnchors.test.tsx`、
   `components/left/AssetBrowser.readiness.test.tsx`、
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、
   `canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts` 的两个左栏
   describe；e2e `a11y.spec.ts` 的接入状态两条 + `golden-paths.spec.ts`。
 
-## 导入即扫描的准备条（T02，`store/projectScanStore.ts` / `lib/projectScanText.ts` / `components/ProjectScanBar.tsx`）
+## 导入即扫描（T02，`store/projectScanStore.ts` / `lib/projectScanText.ts`；呈现在 T13b 的引导卡）
 
 后端规则全文在 `docs/rules/backend/registry-discovery-and-probe.md`「导入即扫描」。前端只做三件事：取回快照、翻译、
-记住「条被关掉了」。
+决定引导卡要不要露出来。**T13b 起没有顶部检查条**（用户硬性要求：页面不下移）——扫描结果只由画布右下的引导卡呈现
+（见下一节「准备引导卡」）。
 
 - **接在统一认领与启动恢复上**：`projectStore.adoptOpenedProject`（打开 / 切换 / 教程换画布都走它）认领完成后、
   `init()` 发现项目还开着时，各调一次 `projectScanStore.start()`（后端单飞 + 新鲜复用，重复认领便宜）。**不 await、不阻塞**
-  认领——静态素材此刻已经可以排版；教程副本不扫。不要只在某个 picker 按钮上接。
-- **事实在后端**：phase / outcome / 目标选择 / 每项检查的状态都读快照，前端没有第二份「有没有脚本 / 能不能运行」的判据；
-  环境与依赖永远显示成「未核验」。句子只在 `lib/projectScanText.ts`（按 outcome / 账本 code / role 查，不从计数里推结论）。
-  运行中只说「已发现 N 个脚本、M 张图」，**没有百分比**。
-- **要不要出现也在那一处**（`scanBarVisible`）：完整扫描且没有要注意的事（静态项目、脚本都已连接、空项目）不出现；
-  有目标 / 要选 / 看不全 / 失败 / 取消一定出现；运行中的更快于 `SLOW_SCAN_MS` 的不闪一下；用户从命令面板「显示项目检查结果」
-  主动重新打开时照常显示。
-- **三个不同的动作**：「关闭」只隐藏这一轮（`dismissedScanId`，下一轮新 `scan_id` 自然再提示）；「取消检查」只打取消扫描的
-  端点；切项目 `clear()` 换代并停轮询（后端那笔账在项目关闭时才收）。没有一个会碰执行 / 安装 / worker。
+  认领——静态素材此刻已经可以排版；教程副本不扫。不要只在某个 picker 按钮上接。准备会话跑出结果后（`onCompleted`）
+  再 `start({force:true, reason:'refresh'})` 一次（零执行），快照随结果更新。
+- **事实在后端**：phase / outcome / 目标选择 / 每项检查的状态都读快照，前端没有第二份「有没有脚本 / 能不能运行」的判据。
+  句子只在 `lib/projectScanText.ts`（按 outcome / 账本 code / role 查，不从计数里推结论）。运行中**没有百分比**。
+  环境线索不再显示（T13b：用哪一套由程序在准备时决定，ADR 0114 §六）。
+- **要不要露出来也在那一处**（`scanCard`）：`discover` / `choose`（有待准备的绘图脚本，卡片）、`scanning`（慢于 `SLOW_SCAN_MS`，
+  只出角标）、`stuck`（没看全 / 失败 / 取消，角标，点开一句话 +「重新检查」）、`quiet`（静态项目、脚本都已连接、空项目——只在用户
+  从命令面板「显示项目检查结果」时出现，`forced`）、`null`（什么都不露）。
+- **几个不同的动作**：「稍后」/「—」缩成角标、×收起（都只改呈现，`uiStore.guideCard`）；「取消检查」只打取消扫描的端点；
+  切项目 `clear()` 换代并停轮询（后端那笔账在项目关闭时才收）。没有一个会碰执行 / 安装 / worker。
+- **补拉失败不停轮询**：扫描还在 `running` 时一次 GET 失败（网络抖 / 5xx）按 1.5 / 3 / 6 / 10 s 退避续排，下一次读到快照即清零；
+  连续五次都失败才置 `pollLost`，`scanCard` 把它读成 `stuck`（角标「没能读到检查进度」+「重新检查」），不再永远转「检查中」。
+  终局快照上的失败不续排；`clear()` 换代后旧项目失败的补拉不再续排。不新增业务状态枚举（`pollLost` 只是前端读不到进度的事实）。
+- **同一目标再次打开**（卡开着时点素材库 ▶）：动作在飞（`pending` 是动作种类）时不再 `check`、不抹 `pending`——防连点的闸不能被一次重开打开。
+- **safe → native 静默回退成功**（ADR 0127 D1，默认句子与主按钮不变）：只在详情折叠里补一行（`data-prep-native-fallback`），
+  判据是后端账本 `attempt_history`（本次 run 最后一次尝试是 native 且相对上次换了 `profile`）+ 这次捕获的图 `execution_profile === 'native'`；
+  「改动不会写回脚本」读描述符自己的 `can_writeback_source`，前端不推。老后端没有账本就不说。`nativeFallbackNote()` 唯一出处在 `lib/preparationText.ts`。
+- **进度条只有一个实现**：引导卡的不定态进度是 `ui/ProgressBar`（`pct=null`）；断线 / 引擎已停（`offline`）**不画条**（没有东西在推进）。
 - **迟到响应**：请求序号只认最后发出的、发请求那一刻的项目 id、`clear()` 换代、同一 `scan_id` 内 `observation_seq` 不许倒退；
   POST 回包是「此刻谁在跑」的最新事实，不比序号。后端 404（`project_scan_not_started`）= 丢掉旧快照等下一次 `start()`。
-- **教程与焦点**：开合用 `uiStore.scanPanelOpen`（不进持久化）；教程进行中 / 当前是教程副本时条不出现；条是状态条不是对话框——
-  不抢焦点，不另起全局「已完成」开关，`onboardingStore` 的语义不被共用。
-- 「试运行」是**既有**的素材库动作（`scriptRunStore.run`，用户显式点击才执行）；T09 让它改走准备会话。
-- 看护：`store/projectScanStore.test.ts`、`lib/projectScanText.test.ts`、`components/ProjectScanBar.test.tsx`、
-  `store/projectSwitchScan.test.ts`；真浏览器 + 真后端：`e2e/project-scan.spec.ts`（只有脚本的项目出现真实报告且脚本零执行、
-  静态项目无条、目录读不动出 partial、教程独占）。
+- 看护：`store/projectScanStore.test.ts`、`lib/projectScanText.test.ts`、`store/projectSwitchScan.test.ts`、
+  `components/preparationEntries.test.tsx`「引导卡：扫描发现绘图脚本」；真浏览器 + 真后端：`e2e/project-scan.spec.ts`（只有脚本的
+  项目自动弹卡、页面不下移、脚本零执行且没建会话、每个项目只自动弹一次；静态项目无卡；目录读不动出角标；教程独占）。
+
+## 准备引导卡（T09 / T13b，ADR 0116：`store/projectPreparationStore.ts` / `lib/preparationText.ts` / `components/PreparationCard.tsx`）
+
+后端会话合同全文在 `docs/rules/backend/preparation-and-receipts.md`「准备会话」。前端只做四件事：保存报告投影、冻结参数快照、订阅 / 补拉、
+翻译成一句话 + 一个主按钮。T13b 把 T09 的准备面板（贴在检查条下、挤占布局）换成画布工作面板右下的**一张浮动卡**（设计稿 v2）：
+不占布局、页面不下移，宽 400，浮动工具条上方。
+
+- **三种呈现，一个开关**：`uiStore.guideCard`（`card` / `pill` / `closed`，不进持久化）。「稍后」「—」「放到后台」缩成角标；
+  角标或卡上的 × 才收起。缩成角标时只有**脚本发问**才自动展开（跑完、出错只改角标）；收起时等作答的 input 由原对话框接着问
+  （同一问只有一个展示面，`scriptInputStore.claimPresentation('prep-card')`）。**进入编辑之后卡片自动收起、不留角标**。
+- **每个项目只自动弹一次**（`lib/guideCardSeen.ts`，本机 localStorage 按后端 `project_id` 记）：扫描给出 `discover` / `choose`
+  时弹；**弹出时不建会话**——建会话 = 检查 = 检测候选（会起解释器），扫描阶段零执行；用户点「打开并运行」才 `open()`。
+- **入口 = 明确的「打开并运行」**（V2 PR4，ADR 0124 / 0127）：卡上「打开并运行」（原「开始准备」）、素材库脚本行 ▶、接入中心逐行「试运行并连接 /
+  重新试运行」（T09b：接入中心先让开）都是 `projectPreparationStore.open(scriptTarget(script, { reuse: true }), { run: true })`（同时把卡展开）：
+  打开 = 后端只读检查；检查完**只有这条路径**代用户认领报告里后端生成的 `run_when_ready`（`armIfReady`：报告有这个动作、且 `prepView` 算出来卡片会说「可以运行了」
+  （`state === 'ready'`）、没有沿用到上次的参数；授权合同摘要由 `act` 回显）——此后准备、运行、（后端会话内的 safe→native 静默回退）、进入编辑一次点完。
+  目标已有**已结束**的会话（completed / partial / action_required / cancelled：后端复用它，报告只有 `run`、没有 `run_when_ready`）时，同一入口在同样的门槛下认领 `run`——门槛 = `prepView` 说卡片可以直接再跑（结果卡，或主按钮本身就是 `run`）；有要用户先答的事（参数 / 目录 / 依赖 / 数据 / 环境 / 弹窗提醒）仍停在卡上；动作成功后才武装，旧结果不触发自动进入，只认新一轮跑完。
+  有要用户先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（该先看见装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话，都**停在各自的卡上**，
+  由用户点那张卡的主按钮（有 `run_when_ready` 时它同样是「打开并运行」，认领即授权）。刷新 / 重连 / 重建会话 / `recheckIdle` / 普通 `open()` 都不认领；一个试运行请求都不发；**前端永远不发 `execution`**（回退是后端同一会话里的第二个 attempt，`scriptTarget` 不带它）；
+  参数草稿在这一刻取拷贝（`scriptTarget`），之后再改草稿不动这份会话——草稿与会话冻结的不同（`draftDiffers`）时卡片说「参数已填好」、
+  主按钮「继续」（按新参数重新检查）。本地开关 `lib/preparationFlag.ts`（`localStorage['tavotto.preparationPanel']`，默认开，`'off'` 时
+  「开始准备」/ ▶ / 接入中心回到**同一台**旧状态机 `scriptRunStore.run`；接入中心委派它、读它的状态显示那一行；参数草稿照样经
+  `probeWithDraft` 带上，保留一版）。渲染路上的门与完整 PNG 准入**不走**会话：它们是编辑已知图的执行器（合同 §A），对话框是
+  `pool._new_worker` 两道门的薄展示适配器，答完续上的是被挡住的那次渲染 / 准入（ADR 0116 §二）。同一份依赖需求两个展示面的下游效果只有
+  一种：授权框 / 修复卡装完或明确跳过 → 空闲会话 `recheckIdle`；会话里的依赖作业装完 → `renderStore.retryEnvironmentFailures()`。
+- **按钮只来自报告**：`lib/preparationText.prepView` 按 phase / outcome / requirement kind 查标题（一句话、不带句号），主按钮只来自
+  报告里后端生成的 `actions` 与 `requirements`——有 `run_when_ready` 就是「打开并运行」（取代「运行」；缺组件且只进 Tavotto 自己环境的「安装」也由它取代，
+  装完自动接着运行；要改用户自己环境的安装不在授权合同里，仍是逐次确认的「安装」），没有它（老后端；已经执行过一次之后的再来一次也只有 `run`）才回到「运行」。
+  `TAVOTTO_EXECUTION_FALLBACK=0` 只关后端的静默回退，不影响这个按钮；有 `prepare_dependencies` 才有「安装」（回显 `impact_digest`）。前端没有新开关。环境不让用户选（ADR 0114 §六）：「用的是哪一套」只在详情一行人话（报告 `environment.kind`），界面不出现
+  环境 / 解释器 / venv 字样；`environment_choice` 只在确认模式出现。**必填参数没填齐时任何卡都不说「可以运行」**：参数 schema 是报告里
+  `script_arguments` 待办的载荷，草稿缺几个必填项由 `lib/scriptArgsForm.missingRequired` 读出来（`ctx.missingArgs`），这时换成参数卡
+  （只摆必填项；其余参数、原样 token、粘贴命令在折叠里）、主按钮置灰。参数块在可以运行 / 出错 / 没出图 / 画好的卡上以折叠摆着，按同一个
+  React key 留在原位——改参数时输入框不重建、焦点不丢。一句话 + 至多一个主按钮，其余在默认不展开的「详情」；看护
+  `PreparationCard.test.tsx` 的「每一种状态 × 每一种语种」（`visibleSentenceCount` / `visiblePrimaryButtons`）。
+- **脚本会弹窗**（`gui_dialog` 待办，后端静态识别，不阻塞）：`ready_to_run` 且报告带它时，标题换成一句「脚本会弹窗选文件 / 询问，
+  这里弹不出来，请把文件路径 / 答案写进脚本」（`state = gui_dialog`），主按钮仍是报告里的 `run`，文案「仍然运行」；怎么改（路径写进脚本、
+  数据放项目里用相对路径）与哪几行、哪个调用在默认收起的详情里。报告没有 `run` 动作就没有按钮；叠栈里没有「让助手改脚本」的现成入口，
+  不为它另造。必填参数没填齐时仍让位给参数卡。看护 `PreparationCard.test.tsx`「脚本会弹窗」。
+- **运行目录在卡里选**：推荐项（后端 `recommended`）预选，「换一个」才展开其余；歧义时全部摆出、不预选、选中前按钮置灰。确认 =
+  `envStore.setWorkdirMode(mode, {confirmed:true})`（与原对话框同一次 PATCH），会话随 `envStore` 订阅只读地 `recheck`，**不运行**；
+  按钮说「用项目根目录」之类，不说「运行」（原对话框同改为「用这个目录」）。缺数据仍交 `envStore.requestMissingInput`；
+  确认模式下的环境候选用 `envStore.adoptCandidate`。作答后**绝不认领 `run`**。
+- **自动进入编辑 + 只开一个标签页**（V2 PR4）：认领过「打开并运行」的条目带 `armed` 记号（只是这个窗口里的用户意图记号，不是后端事实）；会话
+  `completed` 且恰好捕获一张图时由 `store/prepEnterEdit.enterEdit` 自动进入编辑（与卡片上「进入编辑」是同一份实现）；**只在用户正看着这张卡时**（聚焦且展开）——
+  放到后台（角标）/ 收起 / 切去看别的卡之后他可能正在编辑别的图，不抢工作区，角标上仍有「进入编辑」；多张图要用户挑、这次替换掉了旧图名（`unlinked_stems`，恢复提示要看见）、
+  失败 / 取消 / 没出图撤掉记号不进入——撤销即**退役**这次意图：`armed`、`wantsRun`、`armMaybe` 一并清，之后同一会话里普通的「重试」不再被恢复逻辑重新武装，要用户再点「打开并运行」。回退产生新的 `attempt_id` 不撤记号（中途 `safe_file_operation_blocked` 且账本还没记「为什么没回退」时可能紧接着就是回退）。面板身份是资产 id，
+  回退后仍是同一块面板；桌面拥有的 native 会话不再被 `nativeSessionStore` 自动 build / 放置（见 `tavotto-run-desktop-side.md`）。argv 换了且旧会话里意图仍
+  `active`：下一次认领带 `transfer_from`（旧会话 id），被拒（不可转移）就不再带；前端状态丢了（刷新 / 切项目）而服务端 409 `preparation_run_intent_conflict` 时，用它带回的 `params.session_id` 转移、只重试一次。
+  **状态以后端报告为准恢复**：认领响应丢了（连接失败，`armMaybe`）或页面刷新后同一入口重新打开，只要报告里意图仍在（`active` / `launched`）且会话没跑完，就恢复「自动进入编辑」（`accept`）；报告里仍有 `run_when_ready` 动作 = 没收到，记号清掉。回退文案（`fellBack`）只看当前尝试所在的 `run`。
+- **safe 被拦、后端没有回退**（`file_ops_blocked`，ADR 0127）：自动回退存在时这张卡不会出现；只剩后端明确没回退（项目设为只用安全运行 / 运维关了回退 / 老后端）时
+  才出现，一句话按账本里的闭集理由 `declined` 说原因（`policy_safe_only` / `fallback_disabled`，其余用原来的一句），**没有主按钮**。换成原样运行之后又出错：
+  一句话「安全运行不能照常执行，改用原样运行后又出错了」+ 再试一次；`attempt_history`（执行语义 · 结局 · 没换的闭集理由，无路径 / argv）在默认折叠的详情「运行记录」里。
+- **沿用上次成功的参数**（#982）：明确的打开动作带 `reuse_last_success`（`scriptTarget(script, { reuse: true })`，草稿有参数时用户给的赢；目标构造点仍只有
+  `scriptTarget`，`recheckIdle` / 草稿变化不发请求，「继续 / 再试一次」重新打开沿用同一个标志，所以不翻转）。后端核验解释器 / 环境 / 脚本 / helper / 数据全部仍成立才沿用；
+  沿用了几个只说个数（`report.target.argv_count`，值不回前端），在「可以运行」卡的参数行说「沿用上次成功的 N 个参数」并给一个文字钮「不沿用」（重新按无参数检查，不替用户运行，
+  不占主按钮）；沿用了参数时「打开并运行」不代认领，让用户先看见这个数。
+- **三种关停**：收起 / 角标 = `uiStore.guideCard`（订阅照旧）；切项目 = `clear()` 换代、停轮询、零请求（后端一样不取消），卡片收起；
+  停止 = 会话的 `cancel` 动作（按 owner，当场）——运行 / 安装中它是文字按钮，主按钮是「放到后台」。
+- **连接不是执行**：取报告带看门狗（`REQUEST_TIMEOUT_MS`），超时 / 断网只把 `connection` 标 `lost`、退避补拉，phase 原样、不标失败、
+  动作失败不重发；SSE `preparation.session` 与事件流重连只触发补拉；404 `unknown_or_restarted` → 重建只读检查（`restarted`），不运行。
+  迟到响应：项目代际 + 发请求那一刻的 pj + 同一会话修订 / 观察序号只许前进 + 重建后不被旧会话 id 的回包换回去。
+- **结果分层**：`facts.execution_finished` / `facts.figure_captured` 读后端（详情里分开说）；`first_edit_ready` 是渲染态观察。
+  「进入编辑」用报告的 `captured` 走 `openFastEdit`（清单还没有这张图时先 `addRuntimePanelToCanvas` 描述符），多张图开
+  `ProbeResultsDialog` 逐张加。跑完没图：「跑完了，没有出图」+「知道了」，原因在详情。失败：「运行出错了」+「再试一次」，详情第一行是
+  **错误原文**（`result.error.params.error`，其次 `message`；traceback 只取最后一帧），下面是 `TaskDiagnostic`（`preparation` / `dependency`）。
+  无参数运行替换掉的旧图名（`unlinked_stems`，T09b）在「画好了」卡的详情里说清怎么恢复。
+- **重新提问的原因分开说**（ADR 0099 §十）：`ScriptInputForm.suggestionText` 按 `recheck` 选句子——`legacy_answer`（这台电脑上没有当时的记录）
+  不说成「输出变了」；`config_changed` 说参数变了；其余说输出变了。
+- 看护：`store/projectPreparationStore.test.ts`、`components/PreparationCard.test.tsx`、`components/preparationEntries.test.tsx`、`store/openAndRun.test.ts`、`lib/preparationApi.test.ts`、
+  `components/ScriptInputDialog.test.tsx`、`store/projectReadinessStore.test.ts`（A → B → A）、`components/EngineEnvironmentCard.test.tsx`；
+  真浏览器 + 真后端：`e2e/preparation-card.spec.ts`（只有脚本与数据的项目：页面不下移、卡自动弹出且不建会话 → 选目录 → 改参数 → 答 input →
+  进入编辑后卡片收起，执行恰好一次；收起卡片换展示面、放到后台、HTTP 断开、应用重启、明确停止）、`e2e/first-run-qualification.spec.ts`
+  （必填参数未填时「继续」置灰、进入编辑后取景与元素树可点）、`e2e/registry-center-preparation.spec.ts`（接入中心 → 同一张卡、点下去不执行、
+  无参数重跑的可恢复提示；开关关闭时委派旧状态机、零会话请求）、`RegistryDialog.test.tsx`。旧路径的 e2e（`asset-library` /
+  `dependency-one-click` / `missing-input*` / `script-input`）在开关关闭下跑。
+
+- **浏览器模式被拦下的确认卡（ADR 0127 修订 2026-10-30，#1500）**：报告里有后端发的 `confirm_native_run` 动作时，`file_ops_blocked` 换成 `file_ops_confirm`：一句话「这个脚本要真的把文件写到磁盘上才能跑完」+ 唯一主按钮「允许并运行」（认领该动作，并把动作上的一次性 `confirm_token` 原样回显；token 只随页面 cookie 认证的报告来，前端不造不存）。remedy 是 `switch_native{silent:false}`，所以不摆 AI 次按钮；文案不出现 safe / native / 执行器 / 沙盒。没有该动作（只用安全运行 / 开关关）仍是原来的无按钮句子。看护 `PreparationCard.test.tsx`「浏览器模式：被拦下后给一次确认」。
+- **准备卡的智能修复（ADR 0148 提议）**：`prepView` 只读报告的 `remedy`（`lib/fixRemedy.ts`，与后端 `fixrouter` 同源对）画主按钮；每张失败卡（`switch_native` 静默 / 运行中 / 教程层激活除外）都有显眼的次按钮「使用你的 AI 来修复」（Sparkles 图标 + 蓝色描边走语义 token，每次失败都出，不因 `ai_fix_available === false` 隐藏）。点它：没连 AI 开设置 AI 页、连好自动接着修（`store/aiFixStore.ts`）；已连调 `POST /api/ai/fix`，`ai_fix_unavailable` 落成「AI 暂时还不会修」+「发送」（反馈卡，0118 规矩不变）。界面只说「AI」，不出现「执行器」「CLI」「agent」。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

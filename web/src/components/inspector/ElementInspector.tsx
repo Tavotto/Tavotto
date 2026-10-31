@@ -1,6 +1,5 @@
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import { EditableFigureIcon } from '../ui/semanticIcons'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -61,8 +60,11 @@ import {
   detachLegendEntry,
   disableTextEffect,
   setLegendPlacement,
+  setColormapOverride,
+  setColormapOverrides,
   setOverride,
   setOverrides,
+  setFigureFontChoice,
   unhideElement,
 } from '@/store/actions'
 import { readAxesTickModel, type SidePlan } from '@/lib/tickSides'
@@ -95,10 +97,10 @@ import {
 import type { PanelObject } from '@/types/document'
 import {
   engineLabel,
-  fontFamilyOptionLabel,
   groupLabel,
   groupRank,
   optionLabel,
+  fontFamilyOptionLabel,
   propLabel,
   roleName,
   unsupportedOf,
@@ -110,9 +112,9 @@ import { INSPECTOR_CONTROL_X, INSPECTOR_HALF, INSPECTOR_LABEL_W } from './layout
 import { OriginalFileActions } from './OriginalFileActions'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
-import { Details, Summary } from '../ui/Details'
 import { Notice } from '../ui/Notice'
-import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
+import { ColorField, NumberField, TextInput } from '../ui/Input'
+import { RichTextField } from '../ui/RichTextField'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -136,6 +138,7 @@ import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/Colo
 import { ProjectionPicker } from './controls/ProjectionPicker'
 import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
 import { EffectToggle } from './controls/EffectToggle'
+import { FOLLOW_EDGE, HatchColorField, hasFollowEdge, hatchColorReading } from './controls/HatchColorField'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
 import { LegendPositionPicker } from './controls/LegendPositionPicker'
@@ -166,10 +169,13 @@ import { useElementWriter } from './elementWrite'
 import { TypographyControls } from './controls/TypographyControls'
 import { isTextLikeSelection } from './textStyleModel'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
-import { fontStackOf } from './controls/fontStack'
+import { fontFamilySelectModel } from './controls/fontFamilySelect'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
-import { TextActionRow } from './TextActions'
+import { useLocateReveal } from './useLocateReveal'
+import { TextCaseMenu } from './TextActions'
+import { figureTextCodec } from '@/lib/richEditor'
+import { figureMathFamily, mathFontFollow } from '@/lib/figureMathFont'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
@@ -186,6 +192,10 @@ import {
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figureFontChoice, figurePrimaryValue } from '@/lib/figureFontChoice'
+import { patchBoundsOf } from '@/lib/patchResize'
+import { PatchSizeControls } from './PatchSizeControls'
+import { useRenderProgress } from '@/hooks/useRenderProgress'
 
 /** 本文件的文案都在 inspector:element.* 下 */
 const el = (key: string, values?: Record<string, unknown>) =>
@@ -193,11 +203,31 @@ const el = (key: string, values?: Record<string, unknown>) =>
 const elMsg = (key: string, values?: Record<string, unknown>) =>
   msg(`element.${key}`, values, 'inspector')
 
+function ElementBuildMessage({ fileId, rendering }: { fileId: string; rendering: boolean }) {
+  const progress = useRenderProgress(fileId, rendering, el('building'))
+  return <p
+    data-element-building={progress.active || undefined}
+    data-render-progress={progress.active ? progress.phase : undefined}
+    className="text-xs text-ink-3"
+  >
+    <span className={cn(progress.active && 'text-shimmer')}>
+      {progress.active ? progress.text : el('waiting')}
+    </span>
+  </p>
+}
+
 /**
  * 图内元素编辑器。**能力**完全由 manifest.editable 决定；**版面**由展示注册表
  * 决定（presentation/registry）：primary 永远展开，「更多」是唯一的中频折叠区
  * （展开状态按角色持久化），「源文件与高级」收纳写回/历史/诊断与低频字段。
  */
+/** Enter / Esc 提交图内文字：失焦即结束编辑事务（与画布文字同一契约） */
+const blurActive = () => {
+  const ae = document.activeElement
+  if (ae instanceof HTMLElement) ae.blur()
+  return true
+}
+
 export function ElementInspector({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
@@ -241,7 +271,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
    * 那份要是上一版的，改尺寸/居中/填数就是把旧几何写成新的。
    * 这条与多选那条分开写：多选走对齐工具条，单选走普通表单，两边的收法不同。
    */
-  const singleGeomSyncing = !exactManifest && !!picked?.resizable
+  const patchSizeAvailable = !!element && !!patchBoundsOf(element)
+  const singleGeomSyncing = !exactManifest && (!!picked?.resizable || patchSizeAvailable)
   // 多选 → 出对齐工具条，替代单元素表单。位图会归并到宿主子图，
   // 归并后只剩一个几何目标时就没什么可对齐的，仍走单元素表单。
   // 画布标注加进来后与元素同框排版（元素写 override，标注改画布位置）。
@@ -318,6 +349,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             ]
           : [],
   )
+  // 形状尺寸由 W/H mm 控件承接，原始 figure 分数不再重复出现在通用列表里。
+  if (patchSizeAvailable) consumedBySideDiagram.add('size_frac')
   const buckets =
     element && element.editable.length
       ? presentFields(
@@ -371,7 +404,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
               script={render.dependencyRepair.script}
             />
           ) : (
-            <MissingDependencyCard module={render.module} projectEnv={render.projectEnv ?? undefined} />
+            <MissingDependencyCard module={render.module} projectEnv={render.projectEnv ?? undefined} installRoute={render.installRoute} />
           )}
         </Section>
       ) : ENVIRONMENT_CODES.includes(render?.code as (typeof ENVIRONMENT_CODES)[number]) ? (
@@ -387,6 +420,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             confirmation={render.confirmation}
             dependencyPreparation={render.dependencyPreparation}
             missingInput={render.missingInput}
+            workdirHint={render.workdirHint}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -407,6 +441,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         <AlignSection panel={panel} items={alignGroup ?? []} syncing={syncing} />
       )}
       {alignGroup || syncing || batch || styleBatch ? null : (
+      /* `data-inspector-gid`：这一页属于哪个元素。定位（`issueFocus.focusField`）认锚点的主人——
+         从一个元素跳到另一个时旧页还挂着，同名字段（都叫 `fontsize`）不认主人就会落到上一个元素上 */
+      <div className="contents" data-inspector-gid={element?.gid}>
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {/* 色条与它上色的图像共用一份色阶（审计 T22 / T23）：关系说出口，
@@ -414,11 +451,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         {manifest && element && <ColorScaleLink manifest={manifest} element={element} />}
         {!manifest ? (
           // 正在构建是「进行中的字」：text-shimmer（宪法第七节的加载方言之一），等待态是静止的 ink-3
-          <p data-element-building={render?.status === 'rendering' || undefined} className="text-xs text-ink-3">
-            <span className={cn(render?.status === 'rendering' && 'text-shimmer')}>
-              {el(render?.status === 'rendering' ? 'building' : 'waiting')}
-            </span>
-          </p>
+          <ElementBuildMessage fileId={panel.fileId} rendering={render?.status === 'rendering'} />
         ) : !element?.editable.length || !buckets ? (
           <>
             <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
@@ -451,7 +484,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             warnings={render?.warnings ?? []}
             buckets={buckets}
             primaryExtra={
-              element?.role === 'axes' && sideHost ? (
+              patchSizeAvailable && exactManifest ? (
+                <PatchSizeControls key={element.gid} panel={panel} element={element} />
+              ) : element?.role === 'axes' && sideHost ? (
                 /* 子图页四段：几何（子图尺寸 / 居中）→ 范围与坐标变换 → 刻度与网格 → 边框
                    （审计 T12：范围、比例、边框三类任务互不混杂；2026-09-13 审计 B53：
                    改尺寸是最常用的几何操作，放首屏，不再排在整页刻度设置之后） */
@@ -519,6 +554,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('alignSyncing')}</p>
         )}
       </Section>
+      </div>
       )}
 
       <HiddenElements panel={panel} manifest={manifest} />
@@ -637,7 +673,7 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
     setOpen(false)
   }
   return <>
-    <EmptyState icon={EditableFigureIcon} title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
+    <EmptyState art="select" title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
       action={{ label: t('artifact.chooseBackground', { ns: 'errors' }), onClick: () => setOpen(true) }} />
     <Dialog open={open} onOpenChange={setOpen} anchor="artifact-background" size="sm"
       title={t('artifact.chooseBackground', { ns: 'errors' })} description={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
@@ -650,13 +686,14 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
   </>
 }
 
-function ErrorBlock({
+export function ErrorBlock({
   error,
   traceback,
   code,
   confirmation,
   dependencyPreparation,
   missingInput,
+  workdirHint,
   onRetry,
 }: {
   error: UiMessage
@@ -665,13 +702,27 @@ function ErrorBlock({
   confirmation?: WorkdirConfirmation | null
   dependencyPreparation?: DependencyPreparationOffer | null
   missingInput?: MissingInputOffer | null
+  workdirHint?: WorkdirConfirmation | null
   onRetry?: () => void
 }) {
   return (
     <Section>
-      <Notice tone="danger" data-render-error>
+      {/* 一行中性提示：一句话 + 至多一个动作（重试）；完整 traceback 在「详情」里（折叠、可复制） */}
+      <Notice
+        tone="danger"
+        data-render-error
+        detail={traceback || null}
+        action={
+          onRetry && (
+            <Button size="sm" onClick={onRetry}>
+              <RotateCcw size={ICON_SIZE.xs} />
+              {el('retryRender')}
+            </Button>
+          )
+        }
+      >
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
-        <p>{formatMessage(error)}</p>
+        <p className="text-ink">{formatMessage(error)}</p>
         {/* 「先选运行目录」（U03）：确认框被「稍后」关掉之后从这里再开；
             「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
         {code === WORKDIR_CONFIRMATION_CODE ? (
@@ -683,24 +734,9 @@ function ErrorBlock({
         )}
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
-        <div className="mt-0.5 flex items-center gap-2">
-          <p className="text-xs">{el('keptPrevious')}</p>
-          {onRetry && (
-            <Button variant="danger" size="sm" className="-my-1" onClick={onRetry}>
-              <RotateCcw size={ICON_SIZE.xs} />
-              {el('retryRender')}
-            </Button>
-          )}
-        </div>
-        {traceback && (
-          // 折叠只有三种写法（SummaryRow / GroupToggle / Details）：技术细节是原生 details
-          <Details className="mt-1">
-            <Summary className="h-6 text-xs">{el('traceback')}</Summary>
-            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-1.5 font-mono text-xs leading-relaxed text-ink-2">
-              {traceback}
-            </pre>
-          </Details>
-        )}
+        {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}
+        {code !== WORKDIR_CONFIRMATION_CODE && <WorkdirChooseButton confirmation={workdirHint ?? null} />}
+        <p className="text-xs">{el('keptPrevious')}</p>
       </Notice>
     </Section>
   )
@@ -862,7 +898,9 @@ function PairRow({
     panel.overrides.some((o) => o.gid === element.gid && o.prop === prop)
   const byProp = (prop: string) => (a.prop === prop ? a : b)
   const cell = (field: EditableField, prefix: string) => {
-    const label = propLabel(field.prop, element.role)
+    const label = field.prop === 'fontfamily' && field.font_fallback_selection
+    ? translate('textBar.latinFont', { ns: 'inspector' })
+    : propLabel(field.prop, element.role)
     return (
       <div key={field.prop} data-prop={field.prop} className={cn('flex min-w-0 items-center', INSPECTOR_HALF)}>
         <NumberField
@@ -1043,6 +1081,7 @@ function FieldList({
       const f = element.editable.find((x) => x.prop === prop)
       return f ? currentValue(panel, element.gid, f) : undefined
     },
+    isOverridden: (prop) => panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
   }
 
   const rows = (fields: PresentedField[], heads?: Map<string, string>) => {
@@ -1085,6 +1124,18 @@ function FieldList({
     if (last && last[0] === pf.field.group) last[1].push(pf)
     else restGroups.push([pf.field.group, [pf]])
   }
+
+  // 定位要找的字段收在「更多」/ 某一折里：先把那一折打开，落点才进得了 DOM（`useLocateReveal`）
+  useLocateReveal(element.gid, buckets.more.map((pf) => pf.field.prop), moreOpen, () => setMoreOpen(role, true))
+  const foldProps = buckets.folds.flatMap((f) => f.fields.map((pf) => pf.field.prop))
+  const locate = useUiStore((s) => s.fieldLocate)
+  const locateFold = buckets.folds.find((f) => f.fields.some((pf) => pf.field.prop === locate?.prop))
+  useLocateReveal(
+    element.gid,
+    foldProps,
+    !locateFold || (foldOpen[`${role}:${locateFold.spec.id}`] ?? false),
+    () => locateFold && setFoldOpen(`${role}:${locateFold.spec.id}`, true),
+  )
 
   const modifiedInMore = buckets.more.filter((pf) =>
     panel.overrides.some((o) => o.gid === element.gid && o.prop === pf.field.prop),
@@ -1288,6 +1339,12 @@ function AxesRangeCard({
   const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  useLocateReveal(
+    element.gid,
+    [...scale.map((f) => f.prop), ...invert, ...(aspect ? ['aspect'] : [])],
+    foldOpen['axes:coords'] ?? false,
+    () => setFoldOpen('axes:coords', true),
+  )
   if (!range.length && !scale.length && !invert.length && !aspect) return null
   // 右边只写当前值：X 轴的缩放方式 · 纵横比（反转了就说「反转」）
   const coordsValue = [
@@ -1471,6 +1528,15 @@ function TickPage({
     )
   }
   const foldOf = (id: string) => buckets.folds.find((f) => f.spec.id === id)
+  // 定位要找的字段收在某一折里：打开那一折（与 `FieldList` 同一个钩子）
+  const locate = useUiStore((s) => s.fieldLocate)
+  const locateFold = buckets.folds.find((f) => f.fields.some((pf) => pf.field.prop === locate?.prop))
+  useLocateReveal(
+    element.gid,
+    buckets.folds.flatMap((f) => f.fields.map((pf) => pf.field.prop)),
+    !locateFold || (foldOpen[`ticks:${locateFold.spec.id}`] ?? false),
+    () => locateFold && setFoldOpen(`ticks:${locateFold.spec.id}`, true),
+  )
   const minorFields = foldFields('minor')
   // 小刻度：开关 + 长 / 宽在卡里（`TickMinorBlock`），方式 / 间距 / 格式是认领来的字段。
   // 引擎一条次刻度能力都没发（Z 轴）时整行不出现——计数为 0 的节不显示
@@ -1562,7 +1628,7 @@ const FOLD_LABEL: Record<string, string> = {
  * 逐个填才有意义的属性不进批量表单：文字内容、系列名称，以及位置尺寸
  * （几何走上面的对齐工具条，批量写同一个 bbox 会把元素叠在一起）。
  */
-const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm'])
+const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm', 'size_frac'])
 const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum'])
 
 /** 选中元素都有、且类型与选项一致的字段——以第一个元素的顺序和分组为准 */
@@ -1776,12 +1842,26 @@ function BatchFieldRow({
     }
     // 只要有一个成员没预览成功就照旧走后端：宁可多渲染一次，
     // 也不能让画布上一部分元素显示新值、另一部分停在旧值
-    setOverrides(
-      panel.id,
-      elMsg('batchEdit', { label }),
-      elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
-      previewed ? 'none' : immediate,
-    )
+    if (field.prop === 'cmap') {
+      // 色阶组整组换色：每个被写的元素清掉它所在组里其它成员的 cmap override（同一次 commit）
+      setColormapOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({
+          gid: item.gid,
+          value: v,
+          aliasGids: colormapAliasGids(batchManifest, item),
+        })),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
+        previewed ? 'none' : immediate,
+      )
+    }
     gesture.touch()
   }
 
@@ -1828,6 +1908,41 @@ function BatchFieldRow({
           />
         )
       case 'color':
+        // 带「跟随边框」的颜色（纹理颜色）：每个成员各读各的，全体都跟随才算跟随
+        if (hasFollowEdge(field)) {
+          const reads = elements.map((item) => {
+            const own = item.editable.find((f) => f.prop === field.prop) ?? field
+            return hatchColorReading(
+              currentValue(panel, item.gid, own),
+              own,
+              panel.overrides.some((o) => o.gid === item.gid && o.prop === field.prop),
+            )
+          })
+          return (
+            <HatchColorField
+              ariaLabel={label}
+              // 色号混不混按**显示的**色号算：都写着 `edge` 的成员边色不同，原始值相同却显示不同色（Codex #972 r4251281733）
+              mixed={reads.some((r) => r.hex !== reads[0].hex)}
+              hex={reads[0].hex}
+              follows={
+                reads.every((r) => r.follows) ? true : reads.some((r) => r.follows) ? 'mixed' : false
+              }
+              onColor={(v) => write(v, true)}
+              onFollow={(follow) => {
+                if (follow) return writeOnce(FOLLOW_EDGE)
+                // 固定成**各自**此刻显示的色号（边色不同的成员不被压成同一个色）
+                setOverrides(
+                  panel.id,
+                  elMsg('batchEdit', { label }),
+                  elements.map((item, i) => ({ gid: item.gid, prop: field.prop, value: reads[i].hex })),
+                  true,
+                )
+                gesture.end()
+              }}
+              onGestureEnd={gesture.end}
+            />
+          )
+        }
         // 不一致时色块自己说「多个值」（`ColorField mixed`）：不画任何一个颜色，
         // value 只当取色盘的起点（第一个成员的真色）
         return (
@@ -1918,20 +2033,21 @@ function BatchFieldRow({
                   batchManifest?.font_family_names,
                 )
                 const fontOpts = merged?.options ?? opts
+                const fm = fontFamilySelectModel({
+                  value: mixed ? '' : String(first ?? ''),
+                  options: fontOpts,
+                  labels: merged?.option_labels,
+                  faces: merged?.option_faces,
+                  onChange: writeOnce,
+                })
                 return (
                   <Select
                     className="min-w-0 flex-1"
-                    value={mixed ? '' : String(first ?? '')}
+                    value={fm.value}
                     placeholder={el('mixedValues')}
-                    onChange={(x) => writeOnce(x)}
-                    options={fontOpts.map((o) => ({
-                      value: o,
-                      label: (
-                        <span style={{ fontFamily: fontStackOf(o) }}>
-                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
-                        </span>
-                      ),
-                    }))}
+                    onChange={fm.onChange}
+                    options={fm.options}
+                    title={fm.title}
                     ariaLabel={label}
                   />
                 )
@@ -1977,7 +2093,12 @@ function BatchFieldRow({
                 clearOverrides(
                   panel.id,
                   elMsg('resetProp', { label }),
-                  overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
+                  field.prop === 'cmap'
+                    ? // 色阶组：与色图选择器的「恢复到脚本」同一口径，整组清
+                      elements
+                        .flatMap((item) => colormapAliasGids(batchManifest, item))
+                        .map((gid) => ({ gid, prop: field.prop }))
+                    : overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
                 )
               }
             />
@@ -1993,7 +2114,7 @@ function BatchFieldRow({
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   const ov = effectiveOverride(panel.overrides, gid, field.prop)
-  return ov ? ov.value : field.value
+  return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
 }
 
 /**
@@ -2047,9 +2168,8 @@ function FieldRow({
   const rowManifest = usePanelRender(panel)?.manifest
   const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
   const gidRef = useRef<string>('')
-  const taRef = useRef<HTMLTextAreaElement | null>(null)
   const autoFocus = useCallback(
-    (el: HTMLInputElement | HTMLTextAreaElement | null) => {
+    (el: { focus(): void; select(): void } | null) => {
       // 只在切到新元素的那一次抢焦点，后续重渲染不打断用户
       if (!el || gidRef.current === element.gid) return
       gidRef.current = element.gid
@@ -2092,6 +2212,15 @@ function FieldRow({
   const resettable = !(element.gid === 'figure' && field.prop === 'transparent' &&
     backgroundOriginal !== undefined && value === backgroundOriginal)
   const resetOwned = () => {
+    // 色阶组整组换色：回到脚本原样也要整组清——同组别的成员（例如多选时一起写过的那个）还留着
+    // cmap override 的话，它会立刻把改过的色图广播回来，重置看起来没生效（#1159 评审）
+    if (field.prop === 'cmap') {
+      return clearOverrides(
+        panel.id,
+        elMsg('resetProp', { label }),
+        colormapAliasGids(rowManifest, element).map((gid) => ({ gid, prop: 'cmap' })),
+      )
+    }
     if (ownedProps.length === 1) return clearOverride(panel.id, element.gid, field.prop)
     clearOverrides(
       panel.id,
@@ -2126,7 +2255,18 @@ function FieldRow({
     const v = lens.toScript(field.prop, pageValue)
     if (previewable && !gesture.isOpen()) gesture.start()
     const previewed = previewable && previewStyle(element.gid, element.role, field.prop, v)
-    setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    if (field.prop === 'cmap') {
+      // 色阶组任一成员改 cmap = 整组改：同一次 commit 清掉同组其它成员的 cmap override（文档里只留一条）
+      setColormapOverride(
+        panel.id,
+        element.gid,
+        v,
+        colormapAliasGids(rowManifest, element),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    }
     gesture.touch()
   }
 
@@ -2284,31 +2424,41 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
-    case 'font':
-      // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
-      {
-        const merged = withMachineFamilies(
-          field,
-          rowManifest?.font_families,
-          rowManifest?.font_family_names,
-        )
-        const fontOpts = merged?.options ?? enumOptions
-        return wrap(
+    case 'font': {
+      const merged = withMachineFamilies(field, rowManifest?.font_families, rowManifest?.font_family_names)
+      const fontOpts = merged?.options ?? enumOptions
+      const selection = figureFontChoice(effectiveOverride(panel.overrides, element.gid, 'fontfamily')?.value)
+      const latinOnly = new Set(rowManifest?.font_latin_only_families ?? [])
+      const allowedOptions = selection ? fontOpts.filter((o) => latinOnly.has(o) || o === enumValue) : fontOpts
+      const fm = fontFamilySelectModel({
+        value: enumValue,
+        options: allowedOptions,
+        labels: merged?.option_labels,
+        faces: merged?.option_faces,
+        onChange: (v) => {
+          if (selection && !latinOnly.has(v)) return
+          setFigureFontChoice(panel.id, [element.gid], 'primary', v, elMsg('editProp', { label }))
+        },
+      })
+      const fallbackNames = selection && !fontOpts.includes(selection.fallback) ? [selection.fallback, ...fontOpts] : fontOpts
+      return <>
+        {field.font_fallback_selection && <Row label={translate('textBar.cjkFallback', { ns: 'inspector' })} labelWidth={LABEL_W}>
           <Select
-            value={enumValue}
-            onChange={(v) => writeOnce(v)}
-            options={fontOpts.map((o) => ({
-              value: o,
-              label: (
-                <span style={{ fontFamily: fontStackOf(o) }}>
-                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
-                </span>
-              ),
-            }))}
-            ariaLabel={label}
-          />,
-        )
-      }
+            ariaLabel={translate('textBar.cjkFallback', { ns: 'inspector' })}
+            value={selection?.fallback ?? '__auto__'}
+            onChange={(v) => setFigureFontChoice(panel.id, [element.gid], 'fallback', v === '__auto__' ? null : v, elMsg('editProp', { label: translate('textBar.cjkFallback', { ns: 'inspector' }) }))}
+            options={[
+              { value: '__auto__', label: translate('textBar.cjkFallbackAuto', { ns: 'inspector' }) },
+              ...fallbackNames.map((v) => ({ value: v, label: fontFamilyOptionLabel(v, merged?.option_labels, fallbackNames) })),
+            ]}
+          />
+          {selection && !latinOnly.has(enumValue) && <Tip label={<span className="block max-w-40 whitespace-normal">{translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}</span>} side="left">
+            <button type="button" className="shrink-0 text-xs text-ink-3" aria-label={translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}>ⓘ</button>
+          </Tip>}
+        </Row>}
+        {wrap(<Select value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title} ariaLabel={label} />)}
+      </>
+    }
     case 'aspect':
       // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。
       // 自定义档是两行（分段控件 + 数字框），标签对齐第一行，不悬在两行中间
@@ -2361,47 +2511,32 @@ function FieldRow({
       const text = String(value ?? '')
       return wrap(
         <>
-          {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
-          <div className="flex w-full min-w-0 flex-col gap-1">
-            <TextArea
-              // 名字 = 标签列那句可见文字，同一个表达式（axe `label`，见 TextArea 的注释）
-              aria-label={label}
-              // 选中带文字的元素就直接可以打字，不用再点一次输入框
-              ref={(el) => {
-                taRef.current = el
-                autoFocus(el)
-              }}
-              maxRows={4}
-              value={text}
-              onFocus={beginTxn}
-              onBlur={endTxn}
-              onChange={(e) => write(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation()
-                if (e.key === 'Escape') {
-                  e.currentTarget.blur()
-                } else if (e.key === 'Enter') {
-                  // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行
-                  e.preventDefault()
-                  if (e.altKey || e.metaKey || e.ctrlKey) {
-                    const ta = e.currentTarget
-                    const a = ta.selectionStart ?? text.length
-                    const b = ta.selectionEnd ?? text.length
-                    write(text.slice(0, a) + '\n' + text.slice(b))
-                    requestAnimationFrame(() => {
-                      ta.focus()
-                      ta.setSelectionRange(a + 1, a + 1)
-                    })
-                  } else e.currentTarget.blur()
-                }
-              }}
-            />
-            <TextActionRow
-              text={text}
-              taRef={taRef}
-              onChange={(next, immediate) => write(next, immediate)}
-            />
-          </div>
+          {/* 所见即所得（ADR 0152）：粗斜体 / 上下标在框里直接显示，存储仍是 mathtext 字符串 */}
+          <RichTextField
+            // 名字 = 标签列那句可见文字，同一个表达式（axe `label`）
+            aria-label={label}
+            // 选中带文字的元素就直接可以打字，不用再点一次输入框
+            ref={autoFocus}
+            maxRows={4}
+            value={text}
+            codec={figureTextCodec}
+            // 公式块按图上画它的那张脸排（含这次编辑会让公式跟正文的情形）；源码模式下方出预览条
+            mathFamily={figureMathFamily(panel, element, text)}
+            sizePx={13}
+            onFocus={beginTxn}
+            onBlur={endTxn}
+            onChange={(next) => {
+              // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）
+              const follow = mathFontFollow(panel, element, next)
+              if (follow) setOverride(panel.id, element.gid, 'fontfamily', follow, false)
+              write(next)
+            }}
+            // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行；Esc 也是提交
+            onEnter={blurActive}
+            onEscape={blurActive}
+            testId="figure-text-content"
+            extra={<TextCaseMenu text={text} onChange={(next) => write(next, true)} />}
+          />
         </>,
         // 标签与多行输入框顶对齐（2026-09-11 用户反馈）：居中会让「内容」悬在框的半腰
         'start',
@@ -2435,6 +2570,19 @@ function FieldRow({
       )
 
     case 'color':
+      if (hasFollowEdge(field)) {
+        const read = hatchColorReading(value, field, overridden)
+        return wrap(
+          <HatchColorField
+            ariaLabel={label}
+            hex={read.hex}
+            follows={read.follows}
+            onColor={(v) => write(v, true)}
+            onFollow={(follow) => writeOnce(follow ? FOLLOW_EDGE : read.hex)}
+            onGestureEnd={gesture.end}
+          />,
+        )
+      }
       return wrap(
         <>
           {/* 取色是**连续**动作：系统取色盘拖着走会发一串 change。开一轮事务，
@@ -3021,16 +3169,16 @@ function UnsupportedNote({ role }: { role: string }) {
   if (!info) return null
   return (
     /* 说明条只有一种皮：`ui/Notice`；入口是 ghost、不撑满（打磨 E10） */
-    <Notice className="mt-2" title={info.title}>
-      <p className="text-ink-2">{info.reason}</p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2.5 mt-0.5"
-        onClick={() => useUiStore.getState().setRightTab('assistant')}
-      >
-        {el('useAssistant')}
-      </Button>
+    <Notice
+      className="mt-2"
+      title={info.title}
+      action={
+        <Button size="sm" onClick={() => useUiStore.getState().setRightTab('assistant')}>
+          {el('useAssistant')}
+        </Button>
+      }
+    >
+      {info.reason}
     </Notice>
   )
 }

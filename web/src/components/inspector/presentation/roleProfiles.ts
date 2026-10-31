@@ -25,6 +25,15 @@ const HAS_MARKER = (read: (prop: string) => unknown): boolean => {
 /** 填充开着（`fill`）才有意义的从属字段共用这一条 */
 const FILLED = (read: (prop: string) => unknown): boolean => read('fill') !== false
 
+/**
+ * 有花纹（`hatch` 非空）才有意义的从属字段共用这一条：花纹线宽在没有花纹时
+ * 没有东西可染、可加粗。`hatch` 是脚本里的开集字符串（`''` / `'/o'`…），只认空与否
+ */
+const HAS_HATCH = (read: (prop: string) => unknown): boolean => {
+  const h = read('hatch')
+  return h !== undefined && h !== null && String(h) !== '' && String(h).toLowerCase() !== 'none'
+}
+
 /** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
 const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
 
@@ -38,7 +47,13 @@ const TEXT_PROFILE: RoleProfile = {
   primary: [
     'text', 'fontfamily', 'fontsize', 'weight', 'style', 'color', 'ha',
     'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
-    'bbox_linewidth', 'bbox_pad', 'bbox_rounded',
+  ],
+  // 背景的细项（边框线宽 / 内边距 / 圆角）是低频调参：收成一行摘要，背景开关与
+  // 颜色 / 不透明度 / 边框颜色仍在首屏（上面那条 2026-09-11 的反馈只要求这几项）。
+  // 认领先于分桶、可见性仍由 `visibleWhen`（背景开关）先判：背景关着不出现；
+  // 用户改过的字段永远可见，但此刻在收起的行里——行的右值报「n 项已修改」
+  folds: [
+    { id: 'bboxDetail', labelKey: 'foldBboxDetail', props: ['bbox_linewidth', 'bbox_pad', 'bbox_rounded'] },
   ],
   more: [
     'va', 'rotation', 'linespacing', 'alpha',
@@ -71,9 +86,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   // 最可能要改的正是它的线型 / 线宽 / 标记。图例标题没有条目字段，模板里
   // 点名的属性 manifest 没给就自动跳过。
   legend_text: {
+    // 链接开关紧跟文字样式、排在背景之前：它决定下面示意线样式出不出现，
+    // 不该被六条背景参数压到最下面
     primary: [
-      ...TEXT_PROFILE.primary,
+      ...TEXT_PROFILE.primary.slice(0, TEXT_PROFILE.primary.indexOf('bbox_visible')),
       'binding',
+      ...TEXT_PROFILE.primary.slice(TEXT_PROFILE.primary.indexOf('bbox_visible')),
       'handle_color',
       'handle_linestyle',
       'handle_linewidth',
@@ -81,6 +99,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       'handle_markersize',
     ],
     more: [...(TEXT_PROFILE.more ?? [])],
+    folds: TEXT_PROFILE.folds,
     visibleWhen: {
       ...TEXT_EFFECT_VISIBILITY,
       // 示意线的样式只在**断开链接后**出现（审计 T18）：链接中它由图中对象
@@ -135,23 +154,37 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
     more: ['label', 'visible'],
   },
+  // 纹理三项（图案 · 颜色 · 线宽）挨在一起；颜色与线宽只在有花纹时出现。
+  // 线宽（matplotlib 3.10+）、颜色（3.11+）是引擎按真实 setter 发的字段：旧版本没有这一行，
+  // 版面里点名而没有字段的 prop 本来就不画（#874）
   bar_series: {
-    primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
+    primary: [
+      'label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha',
+    ],
     more: ['bar_width', 'visible'],
+    visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
   },
   bar: {
-    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
+    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha'],
     more: ['visible'],
+    visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
   },
   patch: {
-    primary: ['facecolor', 'fill', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    primary: [
+      'size_frac',
+      'facecolor', 'fill', 'hatch', 'hatchcolor', 'hatch_linewidth',
+      'edgecolor', 'linewidth', 'linestyle', 'alpha',
+    ],
     more: ['visible'],
     visibleWhen: {
-      // 「填充」关着时填充色与纹理画了也不显形——这是 `fill` 这个开关的定义
-      // （见 engine/manifest.py `_patch_fields` 的实测：fill 关着时 facecolor
-      // 一个像素都不出）。与画布图形的「添加填充」是同一种操作模型。
+      // 「填充」关着时只有填充色画了不显形（见 engine/manifest.py `_patch_fields`
+      // 的实测：fill 关着时 facecolor 一个像素都不出）。纹理不受 `fill` 管：
+      // matplotlib 3.11 实测 `Rectangle(fill=False, hatch='//')` 照样画出纹理
+      // （无边框 5638 个非背景像素，对照无纹理 0）。所以 hatch 不按 FILLED 门控，
+      // 否则用户没法给未填充的形状加纹理；线宽只看有没有花纹。
       facecolor: FILLED,
-      hatch: FILLED,
+      hatchcolor: HAS_HATCH,
+      hatch_linewidth: HAS_HATCH,
     },
   },
   errorbar: {

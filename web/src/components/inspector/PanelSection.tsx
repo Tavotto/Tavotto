@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useTranslation } from 'react-i18next'
+import { useRenderProgress } from '@/hooks/useRenderProgress'
 import {
   Crop,
   FlipHorizontal2,
@@ -10,13 +11,12 @@ import {
   Minimize2,
   Pencil,
   Ratio,
-  Replace,
   RotateCcw,
   Scaling,
   Unlink2,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { useExactPanelManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
+import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { formatQuantity } from '@/i18n/format'
@@ -45,7 +45,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { overrideCounts } from '@/lib/overrideCounts'
-import type { PanelObject, PanelRotation } from '@/types/document'
+import { isVectorFileKind, type PanelObject, type PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
   panelFullSize,
@@ -56,7 +56,7 @@ import { Dialog } from '../ui/Dialog'
 import { Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { NumberField, TextInput } from '../ui/Input'
-import { Notice } from '../ui/Notice'
+import { Notice, NoticeReveal } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { INSPECTOR_LABEL_W } from './layout'
@@ -111,20 +111,30 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
 export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
-  if (panel.script || !cap || cap.status === 'editable') return null
+  const show = !panel.script && !!cap && cap.status !== 'editable'
   return (
-    /* 说明条只有一种皮：`ui/Notice`（2026-10-07 设计审计 §9.2：此前属性栏里四种提示框皮肤） */
-    <Notice data-capability-note className="mx-3 mb-1.5" title={statusLabel(cap.status)}>
-      <p className="text-ink-2">{reasonText(cap)}</p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2.5 mt-0.5"
-        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
-      >
-        {translate('readiness.openCenter', { ns: 'workspace' })}
-      </Button>
-    </Notice>
+    // 能力是异步到的：事后才出现的说明条不硬插，包 NoticeReveal（下面的控件顺着滑下去，不瞬间跳一格）
+    <NoticeReveal open={show}>
+      {cap && (
+        /* 说明条只有一种皮：`ui/Notice`（2026-10-07 设计审计 §9.2：此前属性栏里四种提示框皮肤）；
+           一句话（标题）+ 次要灰字（原因）+ 一个入口 */
+        <Notice
+          data-capability-note
+          className="mx-3 mb-1.5"
+          title={statusLabel(cap.status)}
+          // 一行 +「详情 ›」：状态一句话在行上，原因折进详情
+          detail={reasonText(cap)}
+          action={
+            <Button
+              size="sm"
+              onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
+            >
+              {translate('readiness.openCenter', { ns: 'workspace' })}
+            </Button>
+          }
+        />
+      )}
+    </NoticeReveal>
   )
 }
 
@@ -132,42 +142,49 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
  * 升级前放上排版的 tight 图（ADR 0098 §三，用户 2026-09-26 选 C）：它保持着升级前按 figsize 的
  * 样子，这里说一句为什么与脚本保存的原图不同，并给一键切换（内容在排版上不动、外框变）。
  * 判据与换算都在 `lib/figureFrame`，依据是这张面板精确的 manifest——没有就不出现。
+ * manifest 是异步到的，所以包 NoticeReveal：它长出来时下面的控件顺着滑下去，不瞬间跳。
  */
 export function PanelFrameNote({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const blockedId = useId()
   const manifest = useExactPanelManifest(panel)
   const frame = frameSwitchAvailable(panel, manifest)
-  if (!frame) return null
   // 旧裁剪与新图幅不相交：换过去什么都不剩，不给切换，说清为什么（判据只在 `frameSwitchPatch`）
-  const blocked = !frameSwitchPatch(panel, frame)
+  const blocked = frame ? !frameSwitchPatch(panel, frame) : false
   return (
-    <Notice data-frame-note className="mx-3 mb-1.5" title={pn('frameLegacyTitle')}>
-      <p className="text-ink-2">
-        {pn('frameLegacyBody', {
-          w: round1(frame.savefig_mm[2]),
-          h: round1(frame.savefig_mm[3]),
-        })}
-      </p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2.5 mt-0.5"
-        data-frame-adopt
-        disabled={blocked}
-        aria-describedby={blocked ? blockedId : undefined}
-        onClick={() => {
-          adoptScriptFrame(panel.id)
-        }}
-      >
-        {pn('frameLegacyAdopt')}
-      </Button>
-      {blocked && (
-        <p id={blockedId} data-frame-adopt-blocked className="text-ink-2">
-          {pn('frameLegacyAdoptBlocked')}
-        </p>
+    <NoticeReveal open={!!frame}>
+      {frame && (
+        <Notice
+          data-frame-note
+          className="mx-3 mb-1.5"
+          title={pn('frameLegacyTitle')}
+          // 一行 +「详情 ›」：为什么与脚本保存的原图不同折进详情；换不过去的原因必须常显（按钮 aria-describedby 指它）
+          detail={pn('frameLegacyBody', {
+            w: round1(frame.savefig_mm[2]),
+            h: round1(frame.savefig_mm[3]),
+          })}
+          action={
+            <Button
+              size="sm"
+              data-frame-adopt
+              disabled={blocked}
+              aria-describedby={blocked ? blockedId : undefined}
+              onClick={() => {
+                adoptScriptFrame(panel.id)
+              }}
+            >
+              {pn('frameLegacyAdopt')}
+            </Button>
+          }
+        >
+          {blocked && (
+            <span id={blockedId} data-frame-adopt-blocked className="block">
+              {pn('frameLegacyAdoptBlocked')}
+            </span>
+          )}
+        </Notice>
       )}
-    </Notice>
+    </NoticeReveal>
   )
 }
 
@@ -332,8 +349,6 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
   useTranslation('inspector')
   const open = useInspectorPrefs((s) => s.moreOpen['panel'] ?? false)
   const setOpen = useInspectorPrefs((s) => s.setMoreOpen)
-  const one = objs.length === 1 ? objs[0] : null
-  const [replacing, setReplacing] = useState(false)
   const ids = objs.map((o) => o.id)
   const rot = sharedPanel(objs, panelRotation)
   const opacity = sharedPanel(objs, (o) => Math.round((o.opacity ?? 1) * 100))
@@ -350,10 +365,6 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
     opacity === undefined ? pn('opacityMixed') : opacity < 100 ? `${opacity}%` : pn('opaque'),
     flipped ? pn('flipped') : null,
   ].filter(Boolean)
-  const replaceKey = 'panel:replace'
-  const replaceOpen = useInspectorPrefs((s) => s.foldOpen[replaceKey] ?? false)
-  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
-
   return (
     <>
       <SummaryRow
@@ -439,21 +450,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         </div>
       </SummaryRow>
 
-      {/* 替换素材单独一行（设计稿 A1「换一张图」）：设置行里的一个动作，不是整行 CTA */}
-      <SummaryRow
-        data-fold="replace"
-        open={replaceOpen}
-        onToggle={() => setFoldOpen(replaceKey, !replaceOpen)}
-        label={pn('replacePicture')}
-      >
-        <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>
-          <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
-            <Replace size={ICON_SIZE.sm} className="text-ink-2" />
-            {pn('replaceAction')}
-          </Button>
-        </Row>
-      </SummaryRow>
-      {one && <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />}
+      {/* 「换一张图」是动作不是设置：移进标题行的 ⋯ 菜单（IdentityHeader，2026-10-16 UI 2.0 §07） */}
     </>
   )
 }
@@ -540,9 +537,9 @@ interface Quality {
   bad: boolean
 }
 
-function qualityOf(o: PanelObject): Quality {
+export function qualityOf(o: PanelObject): Quality {
   const fullW = panelFullSize(o).w
-  if (o.fileKind === 'pdf') {
+  if (isVectorFileKind(o.fileKind)) {
     const pt = effectivePt(fullW, o.nativeW)
     const bad = pt < 6
     return {
@@ -599,7 +596,7 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
 /*  替换素材                                                                   */
 /* -------------------------------------------------------------------------- */
 
-function ReplaceAssetDialog({
+export function ReplaceAssetDialog({
   panel,
   open,
   onOpenChange,
@@ -699,15 +696,21 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   const render = usePanelRender(panel)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
   // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
-  const buildingFile = useRenderStore((s) => s.building[panel.fileId])
-  const building = render?.status === 'rendering' || !!buildingFile
-  const cold = !!buildingFile?.cold
+  const engineProgress = useRenderProgress(panel.fileId, render?.status === 'rendering', pn('building'))
+  const { active: building, cold } = engineProgress
   // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
   // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
   const overrides = overrideCounts(panel.overrides, null).figure
+  /** 三条提示各自此刻的文案（可见时 title 与正文同源；不可见的也要写真实译文，保住换行足迹） */
+  const engineMessageText = (kind: 'cold' | 'building' | 'stale') =>
+    kind === 'stale'
+      ? pn('staleScript')
+      : building && (kind === 'cold' ? cold : !cold) && !editing
+        ? engineProgress.text
+        : pn(kind === 'cold' ? 'coldBuilding' : 'building')
 
   return (
-    <Section>
+    <Section className="pb-4">
       <div className="flex items-center gap-1.5">
         {/*
           进图内编辑是导航动作，**不能**绑渲染状态：进去本来就不依赖上一次渲染
@@ -754,7 +757,11 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
           脚本已变三条叠在同一格里，同一时刻只显示一条（构建中优先——它正在把「脚本已变」刷新掉），
           隐藏只改可见性：足迹常驻、按最长那条译文定高，首次渲染在 pointerdown / up 之间完成时
           不会把翻转 / 数值框等控件上移（原生 click 随之丢失） */}
-      <div data-panel-engine-status className="mt-1.5 grid">
+      {/* 足迹为 0（2026-10-16）：三条提示叠在按钮下方、浮在节的下内边距里，不再给「改图里的内容」按钮下面留一条
+          常驻的死空白（原先 mt-1.5 + 20px ≈ 26px）；仍然只改可见性、不插拔节点，所以首次渲染完成时控件不挪位 */}
+      {/* 一行、超出截断（完整文案在 title）：窄栏 / 英文 / 更长的构建时长文案折成两行会盖到下一节（Codex #1110 P2）。
+          这一节的下内边距放到 16，那一行（2 + 12）整个落在它里面，不越过下一节的顶边 */}
+      <div data-panel-engine-status className="relative grid h-0 grid-cols-[minmax(0,1fr)]">
         {(['cold', 'building', 'stale'] as const).map((kind) => {
           const progress = !editing && building
           const shown = kind === 'stale' ? !!render?.stale && !progress : progress && (kind === 'cold' ? cold : !cold)
@@ -763,9 +770,11 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
               key={kind}
               data-panel-engine-message={kind}
               data-panel-engine-progress={kind === 'stale' ? undefined : true}
+              data-render-progress={shown && kind !== 'stale' ? engineProgress.phase : undefined}
               aria-hidden={!shown}
+              title={shown ? engineMessageText(kind) : undefined}
               className={cn(
-                'col-start-1 row-start-1 flex min-h-5 items-center gap-1.5 text-xs',
+                'col-start-1 row-start-1 mt-0.5 block h-3 truncate text-xs leading-3',
                 kind === 'stale' ? 'text-danger-content' : 'text-ink-2',
                 !shown && 'invisible',
               )}
@@ -774,7 +783,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
                 pn('staleScript')
               ) : (
                 // 「进行中」的字是 text-shimmer（宪法第七节的加载方言之一），不配呼吸点
-                <span className="text-shimmer">{pn(kind === 'cold' ? 'coldBuilding' : 'building')}</span>
+                <span className="text-shimmer">{engineMessageText(kind)}</span>
               )}
             </p>
           )
@@ -801,11 +810,21 @@ export function SourceSection({
   const overrides = panel?.overrides.length ?? 0
   const runtime = panel?.fileKind === 'runtime'
   if (!panel?.script && !objs.length) return null
+  // 收起时右边写当前值：脚本文件名（mono、ink-3；被截断时 title 给完整路径）——「属性 = 值」的一张表，
+  // 不再是一行光秃秃的 ›（2026-10-16 UI 2.0 §07）
+  const script = panel ? (panel.source?.script ?? panel.script ?? '') : ''
   return (
     <SummaryRow
       label={pn('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen('panel', !open)}
+      value={
+        script ? (
+          <span data-source-script title={script} className="font-mono text-xs">
+            {script.split(/[\\/]/).pop()}
+          </span>
+        ) : undefined
+      }
     >
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
       {panel?.script && !runtime && (

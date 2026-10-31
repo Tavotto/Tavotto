@@ -69,7 +69,34 @@
 7. Codex 不可用（额度用完、服务掉线）时 required checks 照常，不会卡住 PR；中高档 PR 等额度
    恢复补那一次评审，或由维护者人眼审过后在正文写明「未经 Codex 评审」。
 
+## 第三路径审查与分档（2026-10-20 起）
+
+方案形状触发第三路径审查（禁用 / 置灰能力、让用户二选一、降保真换性能、错误降警告、只改文档、
+再加特例……清单与流程见 `docs/rules/repo/third-path-review.md`）的 PR，正文要有
+`## Third-Path Review` 一节（模板里有）。它**不改分档**：风险档仍按上表的改动性质定，Codex 次数仍按
+预算；审查记录是给维护者与评审看的，不是额外一轮评审的理由。
+
+- 中 / 高档 PR 的审查包里，维护者先看这一节：结论是不是 `necessary_tradeoff` 却没有证据、是不是把
+  `temporary_mitigation` 写成了根本解决。
+- 结论是 `temporary_mitigation` / `promising_unverified` 的 PR 只能 `Refs #N`，不得用关闭关键字——
+  否则合并即关掉根 issue。推前自检：`python scripts/dev/third_path_review.py --pr <N>`（只判结构，
+  判不了审查质量，所以不是必需检查）。
+
 ## 为什么不做成自动门禁
 
 分层依据（「逐字搬家」「边界清楚」）是语义判断，写成规则只会得到一个能被措辞绕过的
 检查；把它放在正文第一段，让审查人一眼看到作者的归类和理由，错了就改归类。
+
+## Review Budget Controller（2026-10-17，P0：只读观察）
+
+新增的 scripts/ci/review_budget.py 与 .github/workflows/review-budget.yml 只做
+**风险下限评估、Codex 审查回执/额度错误识别、重复请求提示和 JSON 证据留存**。
+完整机制、证据边界与 Codex 网页操作清单见 docs/ci/review-budget.md。
+
+它**不自动请求** Code Review / Security Review，不写 PR 评论，不是 required check，
+也不改变本页的「中档一次 / 高档一次加最多一次定向复核」规则。审查回执不等于
+零未解决问题，审查额度用尽不等于通过，纯 rebase 不会被自动证明为已审。
+路径风险下限不能被作者贴的 risk:low 降低；风险冲突必须由维护者确认。
+
+**账户侧 Codex 自动审查是否已关闭尚未通过 GitHub 验证**，需要维护者在 Codex
+网页的普通审查和安全审查设置分别核实；提交这个 PR 不会修改这些设置。

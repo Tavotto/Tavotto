@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   fetchRuntimeAssets,
   fetchRuntimeStatus,
+  removeRuntimeAsset,
   type RuntimeAssetInfo,
   type RuntimeStaleStatus,
 } from '@/lib/api'
@@ -23,7 +24,8 @@ import { isRuntimePanel } from '@/types/document'
 export interface RuntimeAssetState {
   status: RuntimeStaleStatus
   cached: boolean
-  registered: boolean
+  /** 后端注册表认不认这张图。`null` = 未知（失效后 / 还没问过）：**未知 ≠ 假**，不得据此判「源文件不可用」 */
+  registered: boolean | null
   /** 上一次这张图是怎么产生的（`native` = 用户自己的 Python，ADR 0021 §9）。
    *  老后端不给这个字段 → `safe`：**未知不等于 native**，把未知当 native 会让
    *  一个普通面板挂上「会话已结束」的角标。 */
@@ -43,6 +45,8 @@ interface RuntimeAssetStore {
   previewNonce: Record<string, number>
   /** 重取清单（只读端点，绝不触发脚本执行）；幂等去重 */
   loadAssets: () => Promise<void>
+  /** 「从素材中移除」孤儿 runtime 素材（后端摘登记 + 删 cache），成功后重取清单；失败抛 ApiError */
+  removeAsset: (id: string, usedIds: string[]) => Promise<void>
   bumpPreview: (ids: string[]) => void
   /** 查询一次该面板的状态（幂等；非 runtime 面板与在途请求直接跳过） */
   ensure: (panel: PanelObject) => void
@@ -59,6 +63,13 @@ let assetsInflight: Promise<void> | null = null
  *  Zustand reset 长——A 项目的响应落进 B 项目的清单就是靠这个挡的
  *  （与 scriptRunStore 的 epoch 同一条纪律）。 */
 let epoch = 0
+/** 逐 id 的代次：`invalidate()` / `markFresh()` 加一；在飞的 `ensure()` 响应回来发现代次变了就丢弃，旧答案不得覆盖新状态 */
+const generation = new Map<string, number>()
+const genOf = (id: string) => generation.get(id) ?? 0
+const bump = (id: string) => {
+  generation.set(id, genOf(id) + 1)
+  inflight.delete(id) // 下一次 ensure() 要能重新发请求
+}
 
 export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   byId: {},
@@ -89,6 +100,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     return assetsInflight
   },
 
+  removeAsset: async (id, usedIds) => {
+    const started = epoch
+    await removeRuntimeAsset(id, usedIds)
+    if (epoch !== started) return
+    await get().loadAssets()
+  },
+
   bumpPreview: (ids) =>
     set((s) => {
       const previewNonce = { ...s.previewNonce }
@@ -102,6 +120,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     if (get().byId[id]?.checked || inflight.has(id)) return
     inflight.add(id)
     const started = epoch
+    const gen = genOf(id)
     const source = panel.source
       ? {
           script: panel.source.script,
@@ -111,7 +130,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       : undefined
     void fetchRuntimeStatus(id, source)
       .then((st) => {
-        if (epoch !== started) return // 切过项目：旧项目的判定作废
+        if (epoch !== started || genOf(id) !== gen) return // 切过项目 / 期间失效或刷新过：旧答案作废
         set((s) => ({
           byId: {
             ...s.byId,
@@ -126,37 +145,44 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
         }))
       })
       .catch(() => {
-        if (epoch !== started) return
-        // 查询失败（未登记 404 / 网络）：按「需要重跑、没有缓存」处理——
-        // 面板显示占位与提示，绝不猜成新鲜
+        if (epoch !== started || genOf(id) !== gen) return
+        // 查询失败（网络 / 5xx / 非 2xx）：按「需要重跑、没有缓存」处理——面板显示占位与提示，绝不猜成新鲜；
+        // 但**注册状态是未知（null），不是「不认」**：只有后端成功响应且明确 registered:false 才是 false。
+        // 把传输失败存成 false，单图导出会被静默降级到画布（低保真）——前端预测失败不得静默换口径。
         set((s) => ({
           byId: {
             ...s.byId,
             [id]: {
               status: 'needs_rerun',
               cached: false,
-              registered: false,
+              registered: null,
               profile: 'safe',
               checked: true,
             },
           },
         }))
       })
-      .finally(() => inflight.delete(id))
+      .finally(() => {
+        if (genOf(id) === gen) inflight.delete(id) // 代次变了：marker 已被 bump 清掉，别误删新请求的
+      })
   },
 
-  markFresh: (fileId) =>
+  markFresh: (fileId) => {
+    bump(fileId)
     set((s) => ({
       byId: {
         ...s.byId,
         [fileId]: {
-          ...(s.byId[fileId] ?? { registered: true, checked: true, profile: 'safe' as const }),
+          ...(s.byId[fileId] ?? { checked: true, profile: 'safe' as const }),
           status: 'fresh',
           cached: true,
+          // 刚渲染出权威图 = 脚本刚跑过、注册表认它：不保留可能是旧的 false
+          registered: true,
           checked: true,
         },
       },
-    })),
+    }))
+  },
 
   markRerunFailed: (fileId) =>
     set((s) => {
@@ -170,8 +196,10 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       const byId = { ...s.byId }
       let changed = false
       for (const id of fileIds) {
+        bump(id)
         if (byId[id]) {
-          byId[id] = { ...byId[id], checked: false }
+          // 脚本 / 注册表变了：注册状态一并作废成「未知」，不留旧的 false（重跑注册后它就是错的）
+          byId[id] = { ...byId[id], checked: false, registered: null }
           changed = true
         }
       }
@@ -183,6 +211,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     epoch += 1
     assetsInflight = null
     inflight.clear()
+    generation.clear()
     set({ byId: {}, assets: null, assetsLoading: false, assetsError: null, previewNonce: {} })
   },
 }))

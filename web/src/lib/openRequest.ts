@@ -18,15 +18,23 @@
  *  3. **找不到就说找不到**：绝不退而求其次选中别的面板——用户要的是那一张。
  */
 import { msg } from '@/i18n'
+import { currentProjectId } from '@/lib/session'
+import { whenDocumentReady } from '@/store/documentStore'
 import { findFigurePanel, openFastEdit } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
+import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
-import { backendErrorText } from '@/lib/api'
+import { backendErrorText, postHandoffDisplayAck } from '@/lib/api'
+import type { HandoffDisplayAck } from '@/lib/api'
 import type { PanelInfo, RuntimeAssetInfo } from '@/lib/api'
+import { panelStemOf } from '@/lib/panelStem'
+
+// 「这个磁盘文件属于哪张图」的判据只在 `lib/panelStem.ts`；这里转出给老的 import 路径
+export { panelStemOf, panelStemOfFileId, stemOf } from '@/lib/panelStem'
 
 export interface OpenRequest {
   /** 图库目录绝对路径；桌面事件才有，URL 形态下项目由后端认领 */
@@ -52,20 +60,15 @@ export type OpenOutcome =
   | 'project-only'     // 只交接了项目，没指定面板
   | 'native-pending'   // `tavotto run` 的确认已排队，没有别的面板要落
   | 'missing'          // 项目里找不到这个 stem
+  | 'deferred'         // 上次的排版没恢复好 / 项目已切换：这张图没有放进文档（图仍在素材库里）
   | 'no-project'       // 没有项目可落
   | 'failed'
 
-/** 素材 id 是图库相对路径（可能带子目录）；stem = 去目录去扩展名。 */
-export function stemOf(fileId: string): string {
-  const base = fileId.split(/[/\\]/).pop() ?? fileId
-  const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(0, dot) : base
-}
-
 function findByStem(panels: PanelInfo[], stem: string): PanelInfo | undefined {
-  // 同 stem 的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
-  // 它才是能进图内编辑、能导出真矢量的那一份。
-  const hits = panels.filter((p) => stemOf(p.id) === stem)
+  // 同一张图的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
+  // 它才是能进图内编辑、能导出真矢量的那一份。「同一张图」按 `panelStemOf`——同脚本里另一张图写的
+  // `panel.pdf`（stem `panel-2`）不是 `?open=panel` 要的那张。
+  const hits = panels.filter((p) => panelStemOf(p) === stem)
   return hits.find((p) => p.kind === 'pdf') ?? hits[0]
 }
 
@@ -100,6 +103,26 @@ export function readOpenRequestFromUrl(): OpenRequest | null {
 }
 
 /**
+ * 地址栏 `?open=` 的交接**整个页面生命周期只认一次**。读 URL 有副作用（认下就抹掉），所以不能放在组件渲染里读：
+ * StrictMode 的双渲染会把第一次读到的丢掉（第二次 URL 已经被抹）。这里在 effect 里认领，用模块级记号——
+ * 双挂载 / 项目切换后 `phase` 再次变化都不会重放，也不会丢。**不按脚本名去重**：合法的第二次交接走
+ * `tavotto:open` 事件，各自独立（落图本身对「文档里已有这张图」幂等，重复的同一张只会聚焦）。
+ */
+let urlClaim: OpenRequest | null | undefined
+
+export function claimUrlOpenRequest(): OpenRequest | null {
+  if (urlClaim === undefined) urlClaim = readOpenRequestFromUrl()
+  const req = urlClaim
+  urlClaim = null
+  return req
+}
+
+/** 仅给用例：忘掉「已经认领过」（真实的页面重载是模块重新求值） */
+export function resetUrlOpenRequestClaimForTests(): void {
+  urlClaim = undefined
+}
+
+/**
  * 交接落地：打开这张图（进快速编辑工作区）。
  *
  * **不再自己拼「有就选中、没有就 addPanel」**——那份判据在
@@ -109,7 +132,39 @@ export function readOpenRequestFromUrl(): OpenRequest | null {
  */
 function landFigure(fileId: string): OpenOutcome {
   const existed = findFigurePanel(fileId) != null
-  return openFastEdit(fileId) === 'missing' ? 'missing' : existed ? 'selected' : 'placed'
+  const outcome = openFastEdit(fileId)
+  if (outcome === 'deferred' || outcome === 'blocked') return 'deferred'
+  return outcome === 'missing' ? 'missing' : existed ? 'selected' : 'placed'
+}
+
+/**
+ * 重复交接命中已显示的面板（只选中、不会触发 `/api/engine/render`）：把这张图**此刻的渲染状态**回给后端，
+ * 否则 CLI 在结论表里等不到 `since` 之后的新结论，白等满预算再报 `unverified/timeout`（#1154）。
+ *
+ *   * 正在渲染 / 还没渲染过：不发——那次渲染自己会记结论，别抢在它前面下一个「未验证」；
+ *   * 渲染失败：`failed` + 稳定 code；**但 `stale` 的错误不发**——`markStale` 故意保留 `status: 'error'` 直到替换渲染开始，
+ *     那是上一版的结论；后端只取 since 之后的第一条，抢发一个旧失败就把随后修好的成功渲染挡死；
+ *   * 这一版的精确渲染（`exactPanelRender`，与 overrides 对得上、没过期）：`ok` + manifest 元素数；
+ *   * 其余（有渲染但过期 / 不是这一版）：`displayed`，后端记 `unverified/already_displayed`。
+ * `verified` 与 `registry_match` 都不在这里判：后端自己查注册表、`summarize` 是唯一判据。
+ */
+function ackRepeatHandoff(fileId: string): void {
+  const found = findFigurePanel(fileId)
+  if (!found) return
+  const state = useRenderStore.getState()
+  const own = state.byKey[renderKeyOf(found.panel)]
+  if (!own || own.status === 'rendering' || own.status === 'idle') return
+  let ack: HandoffDisplayAck
+  if (own.status === 'error') {
+    if (own.stale) return
+    ack = { id: fileId, status: 'failed', code: own.code || 'render_failed' }
+  } else {
+    const exact = exactPanelRender(state, found.panel)
+    ack = exact?.manifest
+      ? { id: fileId, status: 'ok', manifest_elements: exact.manifest.elements.length }
+      : { id: fileId, status: 'displayed' }
+  }
+  void postHandoffDisplayAck(ack)
 }
 
 /** 执行一次交接。返回值给测试与调用方看，用户看到的是选中的面板或一条 toast。 */
@@ -135,12 +190,35 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     if (native) void useNativeSessionStore.getState().receive(native)
   }
 
+  /**
+   * 落图 / 打开 Figure 选择器 / runtime 落地之前，先等「这个项目的文档」恢复落定。
+   *
+   * **只有这一步等文档**：native 接收 / 确认（`queueNative`）、素材重扫、runtime 清单都是只读或与文档无关，
+   * 不等——否则一次文档恢复卡住会把终端会话的确认堵到 attach 超时。落图却必须等：恢复在路上时往占位文档
+   * 加图，要么被门拒掉，要么（旧设计）抢走初始空白、让旧文档的恢复让位，交接的图成了没有原 overrides 的新面板。
+   * 终局只有三种：`ready` 继续落；项目被切走 / 恢复被取代 → 不落、说一句；等了很久用户仍没处理 → 说一句，图在素材库里。
+   */
+  let targetPj = currentProjectId()
+  const documentSettled = async (): Promise<boolean> => {
+    // 等的是**这次交接要落进的那个项目**（打开项目那一步之后定下的），不是等到的那一刻碰巧是哪个：
+    // 等的途中用户切走了，应当拿 superseded，而不是转头去等新项目的文档
+    const verdict = await whenDocumentReady(targetPj)
+    if (verdict === 'ready') return true
+    ui.setStatus(
+      msg(verdict === 'timeout' ? 'handoff.restoreTimeout' : 'handoff.superseded', undefined, 'project'),
+      'error',
+    )
+    return false
+  }
+
   try {
     const proj = useProjectStore.getState()
     const current = proj.project?.figures_dir
     if (req.project && (!current || norm(current) !== norm(req.project))) {
       // 换项目：projectStore.open 里已经先冲刷了当前文档的自动保存
       await proj.open(req.project)
+      // 打开的就是这次交接要落进的项目；同项目的交接在函数入口记下的就是它
+      targetPj = currentProjectId()
     } else if (proj.phase !== 'open') {
       queueNative()
       ui.setStatus(msg('handoff.noProject', undefined, 'project'), 'error')
@@ -162,6 +240,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   // **绝不静默选第一张**——选择信息（脚本）由 CLI 带进来，挑哪张归用户。
   if (pick) {
     await useRuntimeAssetStore.getState().loadAssets()
+    if (!(await documentSettled())) return 'deferred'
     useFigurePickerStore.getState().open(pick)
     return 'picker'
   }
@@ -179,11 +258,14 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     return 'project-only'
   }
 
-  const info = findByStem(useAssetStore.getState().panels, stem)
   // runtime 清单永远查一次（只读端点，不触发执行）：pyplot 捕获的图
   // **从来没有原件**，磁盘上同名文件只是旧样本——那种碰撞下 runtime
   // 素材优先，否则交接打开的是陈旧文件（Codex 评审 P1）。
   await useRuntimeAssetStore.getState().loadAssets()
+  // 下面要看文档里有没有这张图（`findFigurePanel`）并落图：先等恢复落定
+  if (!(await documentSettled())) return 'deferred'
+  // 等的这段路上素材清单可能刷新过：落图的判断用此刻的
+  const info = findByStem(useAssetStore.getState().panels, stem)
   const asset: RuntimeAssetInfo | undefined = (
     useRuntimeAssetStore.getState().assets ?? []
   ).find((a) => a.stem === stem)
@@ -210,6 +292,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
       msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: asset.stem }, 'project'),
       'done',
     )
+    if (landed === 'selected') ackRepeatHandoff(asset.id)
     return landed
   }
 
@@ -224,5 +307,6 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: info.name }, 'project'),
     'done',
   )
+  if (landed === 'selected') ackRepeatHandoff(info.id)
   return landed
 }

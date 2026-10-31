@@ -16,6 +16,7 @@ import {
   hideElement,
   setLegendPlacement,
   setOverride,
+  setOverrides,
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -25,15 +26,21 @@ import type { PanelObject } from '@/types/document'
 import { propLabel } from '@/components/inspector/roles/registry'
 import { ObjectContextMenu } from './ObjectContextMenu'
 import { useQuickEdit } from './quickEditStore'
-import { TextActionRow } from '@/components/inspector/TextActions'
+import { TextCaseMenu } from '@/components/inspector/TextActions'
+import { RichTextField, richViewOf } from '@/components/ui/RichTextField'
+import { figureTextCodec } from '@/lib/richEditor'
+import { figureMathFamily, mathFontFollow } from '@/lib/figureMathFont'
+import { TextSelection } from 'prosemirror-state'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
 import { MenuButton } from '@/components/ui/Menu'
-import { NumberField, TextArea } from '@/components/ui/Input'
+import { NumberField } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figurePrimaryValue } from '@/lib/figureFontChoice'
 import { BOTTOM_SAFE } from './context-bar/position'
 import { trapTab } from '@/lib/focusTrap'
+import { usePresence } from '@/lib/motion'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -52,6 +59,23 @@ import { trapTab } from '@/lib/focusTrap'
  */
 
 const MARGIN = 8
+
+/** 退场保活期间在根上吞掉输入类事件（捕获阶段先于子控件的 onChange / onKeyDown / onClick） */
+const swallow = (e: { stopPropagation: () => void; preventDefault: () => void }) => {
+  e.stopPropagation()
+  e.preventDefault()
+}
+const SWALLOW = {
+  onChangeCapture: swallow,
+  onInputCapture: swallow,
+  onBeforeInputCapture: swallow,
+  onKeyDownCapture: swallow,
+  onKeyUpCapture: swallow,
+  onPasteCapture: swallow,
+  onCutCapture: swallow,
+  onClickCapture: swallow,
+  onPointerDownCapture: swallow,
+}
 
 /** 快捷编辑的文案（workspace:quickEdit.*） */
 const qe = (key: string, values?: Record<string, unknown>) =>
@@ -74,10 +98,20 @@ export function QuickEdit() {
     }
   }, [target, close])
 
-  if (!target) return null
-  if (target.kind === 'object') return <ObjectContextMenu id={target.id} at={at} close={close} />
-  return <ElementPopover target={target} at={at} close={close} />
+  // 图内元素的弹层是自己写的条件渲染，没有 Radix 的 Presence：用 usePresence 保活 exit 那一档，
+  // 让 pop-out 播完再卸载（对象右键菜单是 Radix 菜单，自带退场）。退场期间弹层读的是**最后一个**元素目标
+  const elementTarget = target?.kind === 'element' ? target : null
+  const [last, setLast] = useState<{ target: ElementTarget; at: { x: number; y: number } } | null>(null)
+  if (elementTarget && (last?.target !== elementTarget || last.at !== at)) setLast({ target: elementTarget, at })
+  const { mounted, state } = usePresence(elementTarget !== null)
+
+  if (target?.kind === 'object') return <ObjectContextMenu id={target.id} at={at} close={close} />
+  const shown = elementTarget ?? (mounted ? last?.target : null)
+  if (!shown) return null
+  return <ElementPopover target={shown} at={elementTarget ? at : (last?.at ?? at)} state={state} close={close} />
 }
+
+type ElementTarget = { kind: 'element'; panelId: string; gid: string; focusText?: boolean }
 
 /* -------------------------------------------------------------------------- */
 /*  图内元素的弹层外壳                                                          */
@@ -86,15 +120,19 @@ export function QuickEdit() {
 function ElementPopover({
   target,
   at,
+  state,
   close,
 }: {
-  target: { kind: 'element'; panelId: string; gid: string; focusText?: boolean }
+  target: ElementTarget
   at: { x: number; y: number }
+  /** closed = 正在退场（pop-out 播放中）：不再接键盘 / 指针，也不吃点击 */
+  state: 'open' | 'closed'
   close: () => void
 }) {
   useTranslation('workspace')
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState(at)
+  const opener = useRef<HTMLElement | null>(null)
 
   // 量出实际尺寸再贴边，避免弹层被视口切掉
   useLayoutEffect(() => {
@@ -105,18 +143,37 @@ function ElementPopover({
       x: Math.max(MARGIN, Math.min(at.x, window.innerWidth - w - MARGIN)),
       y: Math.max(MARGIN, Math.min(at.y, window.innerHeight - BOTTOM_SAFE - h - MARGIN)),
     })
+    // 记下打开前的焦点：退场开始时还给它（没有就让焦点落回 body，全局快捷键照常）
+    if (!opener.current) {
+      const prev = document.activeElement
+      if (prev instanceof HTMLElement && prev !== document.body && !el?.contains(prev)) opener.current = prev
+    }
     // 双击文字进来的直接聚焦内容框（全选便于整段替换）；
     // 其余情况焦点给容器，Tab 才能走到弹层里的控件
-    const ta = target.focusText ? el?.querySelector('textarea') : null
-    if (ta) {
-      ta.focus({ preventScroll: true })
-      ta.select()
+    const box = target.focusText ? el?.querySelector<HTMLElement>('[data-rich-text]') : null
+    if (box) {
+      box.focus({ preventScroll: true })
+      const view = richViewOf(box)
+      if (view) view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, view.state.doc.content.size)))
     } else {
       el?.focus({ preventScroll: true })
     }
   }, [target, at])
 
+  // 退场开始的同一帧：焦点离开保活的子树（还给打开者，没有就失焦回 body），否则 textarea 仍握着焦点，
+  // 退场那 90ms 里的键入会继续写 override、吞掉全局快捷键（Codex #1101 P2）
+  useLayoutEffect(() => {
+    if (state !== 'closed') return
+    const root = ref.current
+    const active = document.activeElement
+    if (!root || !(active instanceof HTMLElement) || !root.contains(active)) return
+    const back = opener.current
+    if (back?.isConnected) back.focus({ preventScroll: true })
+    else active.blur()
+  }, [state])
+
   useEffect(() => {
+    if (state === 'closed') return
     // Esc 走捕获阶段：全局快捷键里的 Esc 另有职责（退编辑态），这里要先接住
     const onKey = (e: KeyboardEvent) => {
       // 焦点陷阱（2026-10-07 设计审计 §10.1）：Tab 在弹层里转圈，不掉回画布 / 页面后面那一串控件——
@@ -144,7 +201,7 @@ function ElementPopover({
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('pointerdown', onDown, true)
     }
-  }, [close])
+  }, [close, state])
 
   return createPortal(
     <div
@@ -153,12 +210,18 @@ function ElementPopover({
       // 含输入控件，按对话框宣告更诚实（纯菜单那份在 ObjectContextMenu）
       role="dialog"
       aria-label={qe('aria')}
+      data-quick-popover
+      data-state={state}
+      aria-hidden={state === 'closed' || undefined}
+      // 退场中整棵保活子树 inert（不可聚焦、不收指针 / 键盘），再用捕获层兜底：退场期间任何输入 / 点击都不进子控件
+      inert={state === 'closed'}
+      {...(state === 'closed' ? SWALLOW : undefined)}
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
         'fixed z-dialog w-[268px] rounded-lg bg-surface p-1',
         // 12px：与菜单项同档（M2）。此前整块 11，而里面的数字框是 12
-        'text-sm text-ink shadow-pop animate-pop-in',
+        'text-sm text-ink shadow-pop data-[state=open]:animate-pop-in data-[state=closed]:pointer-events-none data-[state=closed]:animate-pop-out',
       )}
     >
       <ElementQuick target={target} close={close} />
@@ -253,7 +316,8 @@ function ElementQuick({
   /** 当前值：用户改过的 override 优先于渲染时的初值 */
   const read = (prop: string, from: ManifestElement = el) => {
     const ov = effectiveOverride(panel.overrides, from.gid, prop)
-    return lens.toPage(prop, ov ? ov.value : from.editable.find((f) => f.prop === prop)?.value)
+    const original = from.editable.find((f) => f.prop === prop)?.value
+    return lens.toPage(prop, ov ? prop === 'fontfamily' ? figurePrimaryValue(ov.value, original) : ov.value : original)
   }
   const field = (prop: string, from: ManifestElement = el): EditableField | undefined =>
     lens.field(from.editable.find((f) => f.prop === prop))
@@ -287,7 +351,29 @@ function ElementQuick({
     <>
       <Head>{engineLabel(el.label)}</Head>
 
-      {field('text') && <TextContentRow read={read} write={write} close={close} />}
+      {field('text') && (
+        <TextContentRow
+          read={read}
+          mathFamily={figureMathFamily(panel, el, String(read('text') ?? ''))}
+          write={(prop, value, immediate) => {
+            // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）。
+            // 两条 override **一次 commit**：快捷编辑没有聚焦事务，分两次写会是两条历史，
+            // 撤销一次只退掉文字、字体族留着（Codex #1496）
+            const follow = prop === 'text' ? mathFontFollow(panel, el, String(value)) : null
+            if (!follow) return write(prop, value, immediate)
+            setOverrides(
+              panel.id,
+              msg('history.setProp', { prop: propLabel('text') }, 'workspace'),
+              [
+                { gid: el.gid, prop: 'fontfamily', value: follow },
+                { gid: el.gid, prop, value: lens.toScript(prop, value) },
+              ],
+              immediate,
+            )
+          }}
+          close={close}
+        />
+      )}
       {hasTextStyleBar(el) && (
         <div className="px-1.5 py-1">
           <TextStyleBar panel={panel} element={el} />
@@ -322,53 +408,35 @@ function ElementQuick({
  */
 function TextContentRow({
   read,
+  mathFamily,
   write,
   close,
 }: {
   read: (prop: string) => unknown
+  /** 公式块与源码预览按它排（`figureMathFamily`：图上画公式的那张脸） */
+  mathFamily: string
   write: (prop: string, value: unknown, immediate?: boolean) => void
   close: () => void
 }) {
   const text = String(read('text') ?? '')
-  const taRef = useRef<HTMLTextAreaElement | null>(null)
-
-  const insertNewline = () => {
-    const ta = taRef.current
-    const s = ta?.selectionStart ?? text.length
-    const t = ta?.selectionEnd ?? text.length
-    write('text', text.slice(0, s) + '\n' + text.slice(t), false)
-    requestAnimationFrame(() => {
-      const el = taRef.current
-      if (el) {
-        el.focus()
-        el.setSelectionRange(s + 1, s + 1)
-      }
-    })
-  }
-
   return (
-    <div className="flex flex-col gap-1 px-1.5 py-0.5">
-      <TextArea
-        ref={taRef}
+    <div className="px-1.5 py-0.5">
+      {/* 与属性页同一份所见即所得文字框（ADR 0152）：粗斜体 / 上下标 / 换行 / 大小写行为一字不差 */}
+      <RichTextField
         // 与属性页那格同一个名字：都是 `text` 这条属性的显示名
         aria-label={propLabel('text')}
         maxRows={3}
         value={text}
-        onChange={(e) => write('text', e.target.value, false)}
-        onKeyDown={(e) => {
-          e.stopPropagation()
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            if (e.altKey || e.metaKey || e.ctrlKey) insertNewline()
-            else close()
-          }
+        codec={figureTextCodec}
+        mathFamily={mathFamily}
+        sizePx={13}
+        onChange={(next) => write('text', next, false)}
+        onEnter={() => {
+          close()
+          return true
         }}
-      />
-      {/* 换行 / 上下标 / 大小写：与属性页同一份组件，行为一字不差 */}
-      <TextActionRow
-        text={text}
-        taRef={taRef}
-        onChange={(next, immediate) => write('text', next, immediate)}
+        testId="quick-edit-text"
+        extra={<TextCaseMenu text={text} onChange={(next) => write('text', next, true)} />}
       />
     </div>
   )
