@@ -1,6 +1,6 @@
 # ADR 0154：脚本自带的私有依赖文件夹是为别的 Python 版本装的——一键「跳过这个文件夹」
 
-日期：2026-10-31 · 状态：**Proposed**（反馈包 TVD-ZCR4，0.19.2 Windows；落地需维护者确认）
+日期：2026-10-31 · 状态：**Accepted**（2026-10-31 维护者确认；反馈包 TVD-ZCR4，0.19.2 Windows）
 相关：[0153 跳过读不了的 import 位置](0153-skip-unreadable-import-locations.md)（同一类「脚本自己塞进 `sys.path` 的目录」）、
 [0014 safe / native 执行档](0014-safe-native-execution-profiles.md)、[0149 修复工具箱](0149-fix-toolbox.md)；
 规则全文 `docs/rules/backend/execution-entries.md`「跳过外来 ABI 的私有依赖文件夹」。
