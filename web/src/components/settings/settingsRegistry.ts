@@ -62,7 +62,6 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   { id: 'general.leftPinned', section: 'general', label: () => st('sidebars.leftPinned') },
   { id: 'general.rightPinned', section: 'general', label: () => st('sidebars.rightPinned') },
   { id: 'general.dragCompanions', section: 'general', label: () => st('canvas.dragCompanions') },
-  { id: 'general.canvas', section: 'general', label: () => st('canvas.more'), keywords: () => st('search.kw.canvas') },
   { id: 'general.tutorial', section: 'general', label: () => st('tutorial.label'), keywords: () => st('search.kw.tutorial') },
   // ---- 项目 ----
   { id: 'project.current', section: 'project', label: () => st('project.current') },

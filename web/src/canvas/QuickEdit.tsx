@@ -234,10 +234,10 @@ function ElementPopover({
 /*  版式基元                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** 组头：与 `ui/Menu` 的 `MenuLabel` / `MenuHeading` 同一个形（12 / 400 / ink-3） */
+/** 组头：与 `ui/Menu` 的 `MenuLabel` / `MenuHeading` 同一个形（11 / 500 / ink-2） */
 function Head({ children }: { children: ReactNode }) {
   return (
-    <div className="truncate px-2 py-1 text-ink-3" title={String(children)}>
+    <div className="truncate px-2 py-1 text-xs font-medium text-ink-2" title={String(children)}>
       {children}
     </div>
   )

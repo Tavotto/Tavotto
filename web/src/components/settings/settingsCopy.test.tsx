@@ -273,13 +273,9 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
     )
   })
 
-  it('「画布设置」直接到右栏的画布页', async () => {
-    useUiStore.setState({ rightTab: 'properties' })
+  it('通用页不再有「打开画布设置」一行（画布属性在右栏「画布」页）', async () => {
     await open('general')
-    await act(async () => {
-      byText(st('canvas.openCanvasSettings'))!.click()
-    })
-    expect(useUiStore.getState().rightTab).toBe('canvas')
+    expect(document.querySelector('[data-settings-anchor="general.canvas"]')).toBeNull()
   })
 })
 
