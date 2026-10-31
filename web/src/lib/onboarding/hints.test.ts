@@ -139,6 +139,27 @@ describe('触发', () => {
     })
     expect(current()).toBe('problem_found')
   })
+
+  it('只有文档级问题（没有可定位的对象，如空画布）：不弹；之后出现落在对象上的第一个问题才弹', () => {
+    const issue = (objectId: string | null) =>
+      ({
+        issueId: `i_${objectId}`,
+        ruleCode: 'r',
+        severity: 'warn',
+        context: 'document',
+        objectRef: { documentId: 'd_hints', canvasId: 'c', objectId, gid: null },
+        subject: { kind: 'object' },
+        propertyPath: null,
+        message: literal('x'),
+        technicalDetails: {},
+        fixKind: 'none',
+      }) as never
+    useValidationStore.setState({ ready: true, issues: [] })
+    useValidationStore.setState({ ready: true, issues: [issue(null)] })
+    expect(current()).toBeNull()
+    useValidationStore.setState({ ready: true, issues: [issue(null), issue('a')] })
+    expect(current()).toBe('problem_found')
+  })
 })
 
 /** 第二张图把单图编辑切成多图排版（`startWorkspaceModeSync` 发的那一枪）；原来的 `returnToLayout` 回排版会重新选中那张图，这里照做 */

@@ -281,7 +281,9 @@ function useArrivalOrder() {
 export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'alert' | null } = {}) {
   const railRef = useRef<HTMLDivElement>(null)
   // 每次渲染后量一次在场通知（退场中的不算）最上面那条的顶边，浮动胶囊据此避让（见 `noticeRailStore`）
-  // 有模态对话框开着：通知移进 body 的 toast 层压在对话框上面（见 `dialogLayerStore`），不再是画布列里的那一条轨
+  // 有模态对话框开着：通知移进 body 的 toast 层压在对话框上面（见 `dialogLayerStore`），不再是画布列里的那一条轨。
+  // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
+  // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
   const overModal = useDialogLayerStore((s) => s.open > 0)
   useEffect(() => {
     const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
@@ -326,10 +328,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
   const addedPresence = usePresence(justAdded, DURATION.fast)
-  // 「移除」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
-  // 别的了）。名字用「移除」不用「撤销」：顶栏已有一颗「撤销」，同名两颗读屏与用例都分不清
+  // 「撤销」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
+  // 别的了）。用户 2026-10-31 拍板写「撤销」（行为与顶栏撤销同一条栈，按钮在提示条里、靠 data 钩子认）
   const addedDepth = useWorkspaceStore((s) => s.addedForEditDepth)
   const historyDepth = useDocumentStore((s) => s.past.length)
+  const canvasName = useDocumentStore((s) => s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? '')
   const canRemoveAdded = justAdded && historyDepth === addedDepth
 
   /**
@@ -431,14 +434,14 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const toasts = (
     <>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
-      {addedPresence.mounted && (
+      {!overModal && addedPresence.mounted && (
         <Toast
           order={addedOrder}
           tone="info"
           state={addedPresence.state}
           data-fast-edit-added-note=""
           icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
-          text={t('fastEdit.addedForEdit')}
+          text={t('fastEdit.addedForEdit', { name: canvasName })}
           action={canRemoveAdded ? { label: t('fastEdit.removeAdded'), onClick: () => runUndoRedo(false) } : undefined}
         />
       )}
@@ -489,7 +492,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           }}
         />
       )}
-      {contactPresence.mounted && (
+      {!overModal && contactPresence.mounted && (
         <Toast
           order={contactOrder}
           tone="info"
@@ -505,7 +508,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           closeLabel={translate('contact.capsuleClose', { ns: 'dialogs' })}
         />
       )}
-      {hintPresence.mounted && hint && (
+      {!overModal && hintPresence.mounted && hint && (
         <Toast
           key={hintToken}
           order={hintOrder}
