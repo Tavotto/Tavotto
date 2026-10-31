@@ -45,6 +45,10 @@ In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
 
+## AI edits that failed instantly now leave a reason in the diagnostic bundle
+
+When an AI edit or conversion ended in failure, the session log only said "status=failed", so a run that failed within a tenth of a second (or a conversion that finished without producing the new script) could not be explained from a diagnostic bundle. The end-of-session log line now also records the exit code, the built-in runner's closed failure reason, whether the runner exited without reporting one, and which verification checks were unmet. Only fixed codes are written, never paths, prompts or keys.
+
 ## "Rebuild as editable figure" stays on the current canvas (#1545)
 
 Rebuilding a PNG as an editable figure could jump to another canvas and open an older, already-edited figure from the same script with the same file name, while reporting that the figure had been redrawn. The rebuilt figure is now added next to the PNG on the canvas you started from, and the success message only appears when that happens.
