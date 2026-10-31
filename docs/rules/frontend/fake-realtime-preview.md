@@ -21,6 +21,10 @@ SVG DOM 里，rAF 合并成一帧，**不 commit、不进历史、不发后端**
 previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElementPreview`
 （一条历史 + 一次权威渲染）→ 权威 SVG 换上来时 `reattachPreview` 收工。
 
+连续拖同一个刚提交的单元素时，权威尚未到达的后续手势只暂存相对位移并在预览平面显示；
+权威到达并挂载后按当前身份、几何与吸附重算，每个完成的手势单独提交。撤销、取消、
+项目 / 文档变更或渲染失败不能让没有依据的预览留在画布；异步提交也不能并入另一条手势。
+
 * **临时 transform 必须写成 `translate(…) <原始 transform>`，永远从 base 现算**
   ——旧实现直接 `setAttribute('transform', 'translate(…)')` 把 matplotlib 自己的
   变换整个盖掉（`<image>` 的 `scale(1 -1) translate(…)` 就是这么没的），

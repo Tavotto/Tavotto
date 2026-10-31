@@ -1795,15 +1795,15 @@ class LiveFigureSession:
         （dpi 72→300 耗时与体积一模一样），含 imshow 的图上 200→100 能让
         savefig 从 ~29ms 降到 ~17ms、SVG 从 827KB 降到 196KB。
 
-        计时口径（`timings` 非空时填）：`manifest_ms` 是前置 `build_manifest`
-        （含布局 draw）与最终 SVG 几何的测量之和；后一次不再 draw / 排版。
+        计时口径（`timings` 非空时填）：`manifest_ms` 是前置布局准备
+        与最终 SVG 几何测量之和；后一次不再 draw / 排版。
         `preview_plan_ms` 是复杂度分析；`canvas_draw_ms` 是
         `savefig(svg)`（升档时是**两遍之和**——用户等的就是两遍）。**SVG
         序列化与 draw 在 matplotlib 里分不开**（`print_svg` 是「边画边写」的
         一趟），所以不单出 `svg_ms`，见 ADR 0003 §9。
 
         `preview` 是**出参**（与 `timings` 同一条纪律，ADR 0003 §1）：给一个
-        dict 就往里填这一版的表示法元数据。先按原样准备 manifest，再出预览；
+        dict 就往里填这一版的表示法元数据。先准备布局，再出预览；
         **rasterize 的临时状态还原后**，按最终 SVG 的 renderer / 坐标重测，不再
         排版。语义读取不落在临时表示法里，几何则与真正交出去的那张图同源。
         """
@@ -1821,7 +1821,7 @@ class LiveFigureSession:
         state = self.states[stem]
         self.out_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        man = manifest_mod.build_manifest(state, stem, timings=timings)
+        manifest_mod.prepare_preview(state, timings=timings)
         t1 = time.perf_counter()
         # **传文件对象、且 `newline=""`，不许传路径。** matplotlib 拿到路径时走
         # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有

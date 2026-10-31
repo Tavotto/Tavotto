@@ -1,10 +1,12 @@
-import { expect, test } from './fixtures'
+import { expect, test, waitForDocumentReady } from './fixtures'
 
 test('深色工作区拖画箭头：临时轮廓可见，落笔保留文档颜色', async ({ app, page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const a = await app()
   await page.goto(a.baseURL)
   await expect(page.locator('[data-page-sheet]')).toBeVisible({ timeout: 30_000 })
+  // 纸张可见时仍可能在恢复占位文档；恢复门打开后才开始画。
+  await waitForDocumentReady(page)
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
   await page.keyboard.press('a')
 

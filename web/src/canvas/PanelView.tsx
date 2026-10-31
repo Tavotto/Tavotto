@@ -2,7 +2,7 @@ import { adoptionGuardOf, artifactRequestFields, artifactValidationIssue, Artifa
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
-import { formatMessage, t as translate } from '@/i18n'
+import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPngSnapshot, EngineError, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
@@ -75,7 +75,9 @@ import {
   pickElement,
   explainBlockedGroupDrag,
   startElementGroupMove,
+  startDeferredInFigureDrag,
   startInFigureDrag,
+  resumeDeferredInFigureDrag,
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
@@ -323,6 +325,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     const st = useRenderStore.getState()
     const cur = activeRenderKey(st, obj)
     reattachPreview(panelId, cur)
+    resumeDeferredInFigureDrag(panelId)
     // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
     perfRenderPainted(cur)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -354,8 +357,6 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   return (
     <div
       className="absolute inset-0 overflow-hidden"
-      // 拖图边改图幅松手后、新图回来之前：旧图收起（按旧尺寸画在新位置上会错位），虚线框占位在 `FigureEdgeHandles`
-      style={figureFramePending ? { opacity: 0 } : undefined}
       // 此刻画布挂的是哪一版、是不是这一版自己的精确图。
       // exact = 图与文档同源；fallback = 暂时挂着上一张（几何交互已停摆）。
       // key 过短 hash：变体键里带文件名与 overrides 原文，不落进 DOM。
@@ -364,7 +365,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     >
       <div
         className="absolute overflow-hidden"
-        style={contentStyle}
+        // 只收起旧图，角标必须留在外面：尺寸渲染失败也要能看见错误。
+        style={figureFramePending ? { ...contentStyle, opacity: 0, pointerEvents: 'none' } : contentStyle}
       >
         {showSvg ? (
           <div
@@ -407,7 +409,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} contentStyle={contentStyle} />}
       </div>
 
-      <RenderStatusBadge obj={obj} approx={approxPreview} retainedAfterFailure={imageLoadFailed} />
+      <RenderStatusBadge obj={obj} approx={approxPreview} framePending={figureFramePending} retainedAfterFailure={imageLoadFailed} />
     </div>
   )
 }
@@ -663,8 +665,8 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
  * **命中必须打在几何权威上**（issue #131）。命中不是只读的：命中完就是拖动、
  * 就是整组平移、就是框选出一个待对齐的选区——全都以那份 bbox 起算。退回来的
  * 上一版 manifest 会让「点到的」和「看到的」是两个元素，拖出来的位移也以旧
- * 锚点起算。权威没就位时这一层整个停摆（不 hover、不命中、不框选），画布
- * 照常显示上一张图，属性页给出「正在同步」的说明。
+ * 锚点起算。权威没就位时不 hover、不按旧清单命中或框选；刚拖过的同一元素
+ * 可以继续收相对位移意图，等当前权威到达才重算并提交。
  */
 function ElementHitLayer({
   obj,
@@ -904,14 +906,22 @@ function ElementHitLayer({
     if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
   })
 
-  // 权威没就位：留着这一层占位（布局不跳），但不接任何指针事件。
-  // 选区不动——等精确 manifest 回来，框会自己回到正确位置。
+  // 权威没就位：绝不透传到整图。已选元素的连续拖动只记意图，落笔等精确几何。
   if (!manifest) {
     return (
       <div
-        className="pointer-events-none absolute"
+        className="absolute"
         style={{ ...layout, cursor: 'progress' }}
         data-authority="syncing"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          e.stopPropagation()
+          if (!startDeferredInFigureDrag(e, obj, layout)) {
+            useUiStore.getState().setStatus(msg('stylePanel.waitingRender', undefined, 'workspace'), 'progress')
+          }
+        }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
+        onDoubleClick={(e) => e.stopPropagation()}
       />
     )
   }
@@ -1222,7 +1232,7 @@ function useElapsed(on: boolean, ms: number): boolean {
   return on && elapsed
 }
 
-function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }: { obj: PanelObject; approx?: boolean; retainedAfterFailure?: boolean }) {
+function RenderStatusBadge({ obj, approx = false, framePending = false, retainedAfterFailure = false }: { obj: PanelObject; approx?: boolean; framePending?: boolean; retainedAfterFailure?: boolean }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
   // 「这一份变体正在渲染」才是变体级的
@@ -1264,6 +1274,13 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
   const slowBusy = useElapsed(quietBusy, BUSY_BADGE_DELAY_MS)
   const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
+    const failure: BadgeInfo | null = render?.status === 'error'
+      ? { tone: 'error', cold: false, text: badge('error'),
+          hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
+      : null
+    if (framePending && failure) return failure
+    // 图幅占位没有画面，不能像普通重绘一样等 700ms 才解释空白。
+    if (framePending) return { tone: 'busy', cold: false, text: badge('rendering') }
     if (quietBusy && !slowBusy) return null
     if (render?.status === 'rendering' || building) {
       return {
@@ -1278,10 +1295,7 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
         ),
       }
     }
-    if (render?.status === 'error') {
-      return { tone: 'error', cold: false, text: badge('error'),
-        hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
-    }
+    if (failure) return failure
     // **阻塞性的压过信息性的。** native 的两句说的是「现在不能编辑」，而
     // `stale`（脚本已更新）/ runtime 的 stale 语义说的是「内容可能不是最新」
     // ——后者不妨碍用户动手，前者妨碍。把 `stale` 排在前面的表现是：native
@@ -1337,7 +1351,7 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
       }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
@@ -1347,9 +1361,16 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
   const { mounted, state } = usePresence(!!info, DURATION.exit)
   const shown = info ?? last.current
 
-  if (!mounted || !shown) return null
+  const live = (
+    <span data-panel-render-live aria-live="polite" className="sr-only">
+      {info?.tone === 'busy' || info?.tone === 'error' ? info.text : ''}
+    </span>
+  )
+  if (!mounted || !shown) return live
 
   return (
+    <>
+    {live}
     <div
       data-state={state}
       className={cn(
@@ -1410,5 +1431,6 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
         )}
       </span>
     </div>
+    </>
   )
 }

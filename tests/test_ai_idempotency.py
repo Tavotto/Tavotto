@@ -1329,7 +1329,7 @@ def test_failed_cleanup_after_a_pre_spawn_error_is_unresolved_not_a_definite_rej
 def test_a_rejection_whose_cleanup_fails_is_unresolved_too(client, tmp_path, cli, monkeypatch):
     """正常返回的拒绝（409 busy）也一样：清理失败就不能说成明确拒绝。"""
     state, _ = cli
-    state["delay"] = 1.0
+    state["hold"] = True
     _open(client, _project(tmp_path))
     monkeypatch.setattr(m, "sse_publish", lambda *a: None)
     assert _post(client, rid="rid-first-00000009").status_code == 200
@@ -1344,6 +1344,7 @@ def test_a_rejection_whose_cleanup_fails_is_unresolved_too(client, tmp_path, cli
     assert r.status_code == 503 and r.get_json()["code"] == "ai_request_unresolved"
     monkeypatch.setattr(ai_history, "drop_rejected_pending", real_drop)
     assert RID in _pending_rids(client)
+    state["release"]()
     _wait_idle()
 
 

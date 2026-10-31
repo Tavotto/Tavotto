@@ -15,7 +15,7 @@
   预览平面（`svgPreviewStore`）只改 DOM、不 commit、不进历史、不发后端。
 - **旧 SVG 可以显示，旧 manifest 不得作为几何写操作的权威输入**（ADR 0017）：
   读 bbox / anchor / position / geometry 之后要写文档的一律走 `exactPanelRender`
-  一族；权威缺席时命中层停摆、不清选区、入口置灰。
+  一族；权威缺席时不拿旧清单命中或写几何、不清选区；同一元素的后续拖动可暂存意图，权威到达后重算。
 - **撤销防线**：`txnUpdate` 无事务时丢弃更新，绝不静默直写 doc；一切撤销入口走
   `runUndoRedo`；离散动作执行前先 `gestureCoordinator.finishActiveGesture()`，不经 keydown / 指针的
   入口（系统菜单、原生剪贴板事件）一律走 `runDiscreteAction` 闸门（先判让位、不让位才收）。
