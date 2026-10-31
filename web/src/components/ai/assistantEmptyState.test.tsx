@@ -23,6 +23,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { AssistantPanel } from './AiPanel'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -155,6 +156,30 @@ describe('没选中对象时的目标（UI 审计 C5）', () => {
     expect(qa('[data-ai-pick-panel]').map((b) => b.textContent)).toEqual(['Fig1', 'Fig2'])
     await act(async () => qa('[data-ai-pick-panel]')[1].click())
     expect(useSelectionStore.getState().ids).toEqual(['p2'])
+  })
+
+  it('选图器的选择不把右栏从助手页签切走，目标是被点的那张；之后点画布选中仍切到属性', async () => {
+    await mount({ withPanel: false, extra: [panel(), second()] })
+    function Routing() {
+      useSelectionRouting()
+      return null
+    }
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <Routing />
+          <AssistantPanel />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => useUiStore.getState().setRightTab('assistant'))
+    await act(async () => qa('[data-ai-pick-panel]')[1].click())
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+    expect(useUiStore.getState().rightTab).toBe('assistant')
+    expect(q('[data-ai-target]')!.textContent).toContain('Fig2')
+    // 其它来源（画布点选）的选择行为不变：切到属性
+    await act(async () => useSelectionStore.getState().set(['p1']))
+    expect(useUiStore.getState().rightTab).toBe('properties')
   })
 
   it('选中了别的东西（非面板）时不回退到那张图', async () => {

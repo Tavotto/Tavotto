@@ -118,6 +118,38 @@ describe('结构', () => {
   })
 })
 
+describe('键盘跨画布漫游', () => {
+  const press = async (el: Element, key: string) => {
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+  }
+  const layerKeys = () => [...host.querySelectorAll<HTMLElement>('[data-layer]')].map((r) => r.dataset.layer!)
+
+  it('画布行 ↓ 进对象行；首行 ↑ 回所属画布行；末行 ↓ 去下一张画布行；根层对象 ← 回画布行', async () => {
+    await mount(<OutlineTree />)
+    const [first, second] = canvasRows()
+    first.focus()
+    await press(first, 'ArrowDown')
+    const keys = layerKeys()
+    expect(document.activeElement).toBe(layerRow(keys[0]))
+    await press(document.activeElement!, 'ArrowUp')
+    expect(document.activeElement).toBe(first)
+    // 末行 ↓ 去下一张画布行
+    layerRow(keys.at(-1)!)!.focus()
+    await press(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(second)
+    // 根层对象 ← 回所属画布行
+    layerRow(keys.at(-1)!)!.focus()
+    await press(document.activeElement!, 'ArrowLeft')
+    expect(document.activeElement).toBe(first)
+    // 中间行的 ↑ ↓ 仍在树内
+    layerRow(keys[0])!.focus()
+    await press(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(layerRow(keys[1]))
+  })
+})
+
 describe('选中两边同步', () => {
   it('画布上选中一张图 → 大纲里那一行亮；点大纲里的行 → 选区跟着变', async () => {
     await mount(<OutlineTree />)

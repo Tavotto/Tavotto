@@ -111,6 +111,11 @@ export function OutlineTree() {
                 <LayerTree
                   embedded
                   baseDepth={LAYER_BASE}
+                  onEdge={(edge) => {
+                    if (edge === 'down') {
+                      if (rows[i + 1]) focusCanvasRow(rows[i + 1].id)
+                    } else focusCanvasRow(c.id)
+                  }}
                 />
               )}
             </Fragment>

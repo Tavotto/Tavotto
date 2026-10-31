@@ -56,6 +56,7 @@ import { requestConnectAi } from '@/store/connectAiStore'
 import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
+import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
 import { DataFigureForm } from './DataFigureForm'
@@ -292,7 +293,10 @@ function NoPanelState() {
             key={p.id}
             type="button"
             data-ai-pick-panel={p.id}
-            onClick={() => useSelectionStore.getState().set([p.id])}
+            onClick={() => {
+              holdAssistantTabForNextSelection()
+              useSelectionStore.getState().set([p.id])
+            }}
             className={cn(
               'flex min-h-8 items-center rounded-md bg-surface px-3 py-1.5 text-left text-base text-ink-2',
               'inset-ring inset-ring-border outline-none transition-colors duration-fast',

@@ -15,6 +15,18 @@ import { useViewportStore } from '@/store/viewportStore'
  *   指针离开抽屉后再按原规则让位。
  * - 覆盖式属性栏（< 1280 没固定，`isRightOverlay`）：点画布空白处 / Esc 收回；只收此刻的开合，不写偏好。
  */
+// 助手空态的选图器：用户正在助手页签里挑「要改哪张图」，这次选择不该把页签切走。
+// 一次性意图 + 短时效（选择没变就不会走路由，意图不能留到之后的画布点选上）。
+let assistantPickAt = 0
+export function holdAssistantTabForNextSelection(): void {
+  assistantPickAt = Date.now()
+}
+function consumeAssistantPick(): boolean {
+  const held = Date.now() - assistantPickAt < 1000
+  assistantPickAt = 0
+  return held
+}
+
 export function useSelectionRouting() {
   const hasSelection = useSelectionStore((s) => s.ids.length > 0)
   const inElement = useUiStore((s) => s.elementPanelId != null)
@@ -169,6 +181,7 @@ export function useSelectionRouting() {
       return
     }
     yieldPending.current = false
+    if (consumeAssistantPick() && ui.rightOpen && ui.rightTab === 'assistant') return
     ui.autoShowProperties()
   }, [active, primaryId, primaryGid, canvasPress, interactionEnd])
 }

@@ -78,9 +78,12 @@ type TreeRow =
 export function LayerTree({
   embedded = false,
   baseDepth = 0,
+  onEdge,
 }: {
   embedded?: boolean
   baseDepth?: number
+  /** 嵌入时树到边界的键：首行 ↑ / 末行 ↓ / 根层行 ← 交给外层（大纲回画布行、去下一张画布） */
+  onEdge?: (edge: 'up' | 'down' | 'parent') => void
 } = {}) {
   useTranslation('workspace')
   const objects = useDocumentStore((s) => s.doc.objects)
@@ -182,7 +185,24 @@ export function LayerTree({
       ),
       rows.findIndex((r) => keyOf(r) === from),
     )
-    if (!action) return false
+    if (!action) {
+      if (key === 'ArrowLeft' && onEdge) {
+        onEdge('parent')
+        return true
+      }
+      return false
+    }
+    if (onEdge && action.type === 'focus') {
+      const at = rows.findIndex((r) => keyOf(r) === from)
+      if (key === 'ArrowUp' && at === 0) {
+        onEdge('up')
+        return true
+      }
+      if (key === 'ArrowDown' && at === rows.length - 1) {
+        onEdge('down')
+        return true
+      }
+    }
     if (action.type === 'focus') focusRow(keyOf(rows[action.index]))
     else if (from.startsWith('g:')) {
       const gid = from.slice(2)
