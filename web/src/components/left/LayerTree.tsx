@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -72,17 +72,15 @@ type TreeRow =
 
 /**
  * `embedded`（2026-10 审计 A3）：坐在「大纲」里、挂在当前画布那一行下面——不自己滚动（外层滚），
- * 行整体缩进 `baseDepth` 层；`renderAfter` 让大纲在某一张图的行后面接上它的图内元素。
+ * 行整体缩进 `baseDepth` 层；
  * 缺省是独立一棵树（`data-tree="layers"` 与键位、拖放全部不变）。
  */
 export function LayerTree({
   embedded = false,
   baseDepth = 0,
-  renderAfter,
 }: {
   embedded?: boolean
   baseDepth?: number
-  renderAfter?: (obj: CanvasObject) => ReactNode
 } = {}) {
   useTranslation('workspace')
   const objects = useDocumentStore((s) => s.doc.objects)
@@ -232,7 +230,7 @@ export function LayerTree({
         const selected = selectedIds.includes(o.id)
         const hint = dropHint?.id === o.id ? dropHint.pos : null
         const zi = flatIds.indexOf(o.id)
-        const row = (
+        return (
           <LayerRow
             key={o.id}
             obj={o}
@@ -249,15 +247,6 @@ export function LayerTree({
             onNavKey={(k) => navKey(o.id, k)}
             onReorder={(d) => reorder(o.id, d)}
           />
-        )
-        const after = renderAfter?.(o)
-        return after ? (
-          <Fragment key={o.id}>
-            {row}
-            {after}
-          </Fragment>
-        ) : (
-          row
         )
       }
 

@@ -7,11 +7,16 @@ import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
+import { useDocumentStore } from '@/store/documentStore'
+import { usePanelDisplayManifest } from '@/store/renderStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, isLeftPinned, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
 import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
+import { DrawerCount } from './DrawerCount'
 import { DrawerSlotsContext } from './drawerSlots'
+import { ElementTree } from './ElementTree'
 import { OutlineTree } from './OutlineTree'
 import { ProblemPanel } from './ProblemPanel'
 import { StylePanel } from './StylePanel'
@@ -35,6 +40,7 @@ export function LeftPanel({
   const width = useUiStore((s) => s.leftWidth)
   const pinned = useUiStore(isLeftPinned)
   const wide = useUiStore((s) => s.layout === 'wide')
+  const objectCount = useDocumentStore((s) => s.doc.objects.length)
   // 标题行的两个槽（`DrawerHeader`）：节点进 state，抽屉在下一帧把自己的动作 portal 进来
   const [metaSlot, setMetaSlot] = useState<HTMLElement | null>(null)
   const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null)
@@ -74,6 +80,10 @@ export function LeftPanel({
           「图 3」分区标题还小一号，层级倒挂（左栏审计 L01） */}
       <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
         <h2 className="type-section shrink-0">{t(`rail.${tab}`)}</h2>
+        {tab === 'outline' && objectCount > 0 && (
+          <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
+        )}
+        {tab === 'elements' && <ElementCount />}
         {/* meta 槽：抽屉自己的计数 / 范围（问题面板的「当前图 13 ▾」胶囊，审计 §9.4：范围并入标题行） */}
         <span ref={setMetaSlot} data-drawer-meta className="flex min-w-0 items-center gap-1.5 empty:hidden" />
         <span className="flex-1" />
@@ -97,6 +107,8 @@ export function LeftPanel({
         <WorkspaceList />
       ) : tab === 'assets' ? (
         <AssetBrowser />
+      ) : tab === 'elements' ? (
+        <ElementTree />
       ) : tab === 'style' ? (
         <StylePanel />
       ) : tab === 'problems' ? (
@@ -109,6 +121,22 @@ export function LeftPanel({
       <WidthHandle />
     </aside>
   )
+}
+
+/** 元素计数进标题：树里不再重复统计行 */
+function ElementCount() {
+  const { t } = useTranslation('workspace')
+  const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const selectedIds = useSelectionStore((s) => s.ids)
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const byId = (id: string | null) => {
+    const o = id ? objects.find((x) => x.id === id) : undefined
+    return o?.type === 'panel' && o.script ? o : null
+  }
+  const panel = byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
+  const n = usePanelDisplayManifest(panel)?.elements.length ?? 0
+  if (!n) return null
+  return <DrawerCount value={n - 1} label={t('elementTree.count', { count: n - 1 })} />
 }
 
 /** 右边缘的拖拽把手：卡片网格的列宽由它决定，所以宽度值得可调且记住 */

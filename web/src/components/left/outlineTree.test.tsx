@@ -1,23 +1,21 @@
 /**
  * 大纲（2026-10 界面审计 A3）：画布 → 图 → 图内元素，一棵树。
  *
- * 钉四件事：
+ * 钉几件事：
  * 1. 结构：顶层是全部画布，只有当前画布展开（里面是图层树）；点别的画布 = 打开它；
  * 2. 同步：点大纲里的图行与点画布上的图是同一份选区（`selectionStore`），谁改了另一边都跟着；
- * 3. 图内元素挂在被选中的可编辑图的行**下面**，层级比图再深一层；选中别的图它就换位置；
- * 4. 左轨只有 5 项 + 设置，没有点开是弹窗的「状态」。
+ * 3. 图内元素不在大纲里（独立的「图内」抽屉）；
+ * 4. 左轨 6 项 + 设置，没有点开是弹窗的「状态」。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import type { Manifest } from '@/lib/api'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { LeftRail } from './LeftRail'
 import { OutlineTree } from './OutlineTree'
@@ -44,25 +42,6 @@ const panel = (id: string, fileId: string, script?: string): PanelObject =>
     h: 60,
     script,
   }) as PanelObject
-
-const el = (gid: string, role: string, label: string) => ({
-  gid,
-  role,
-  label,
-  bbox: [0.1, 0.1, 0.2, 0.2],
-  draggable: true,
-  editable: [{ prop: 'visible', type: 'bool', value: true }],
-})
-const manifest = (): Manifest =>
-  ({
-    stem: 'Fig1',
-    size_mm: [80, 60],
-    elements: [
-      el('figure', 'figure', '整张图'),
-      el('axes_0', 'axes', '子图 1'),
-      el('axes_0.title', 'title', '标题'),
-    ],
-  }) as unknown as Manifest
 
 let host: HTMLDivElement
 let root: Root
@@ -95,7 +74,6 @@ beforeEach(async () => {
   useAssetStore.setState({
     byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 }, 'Fig2.pdf': { id: 'Fig2.pdf', mtime: 1 } },
   } as never)
-  seedExactRender(useDocumentStore.getState().doc.objects[0] as PanelObject, manifest())
   useSelectionStore.getState().clear()
 })
 
@@ -153,29 +131,18 @@ describe('选中两边同步', () => {
   })
 })
 
-describe('图内元素挂在选中的可编辑图下面', () => {
-  it('选中可编辑的图：元素树出现在它那一行后面，比图再深一层', async () => {
+describe('图内元素不挂在大纲里', () => {
+  it('选中可编辑的图：大纲里没有元素树（图内元素是左轨独立的「图内」抽屉）', async () => {
     await mount(<OutlineTree />)
-    expect(host.querySelector('[data-tree="elements"]')).toBeNull()
     await act(async () => useSelectionStore.getState().set(['p1']))
-    const tree = host.querySelector('[data-tree="elements"]')!
-    expect(tree).not.toBeNull()
-    // 紧跟在 p1 的行之后（同一层 ul 里的下一项）
-    expect(layerRow('p1')!.nextElementSibling?.contains(tree)).toBe(true)
-    expect(levelOf(host.querySelector('[data-el="axes_0"]'))).toBeGreaterThan(levelOf(layerRow('p1')))
-  })
-
-  it('选中不可编辑的图：没有元素树', async () => {
-    await mount(<OutlineTree />)
-    await act(async () => useSelectionStore.getState().set(['p2']))
     expect(host.querySelector('[data-tree="elements"]')).toBeNull()
   })
 })
 
 describe('左轨', () => {
-  it('5 项 + 设置：没有「画布 / 图层 / 图内 / 状态」，也没有点开是弹窗的状态入口', async () => {
+  it('6 项 + 设置：画布与图层合成「大纲」，「图内」独立，没有点开是弹窗的状态入口', async () => {
     await mount(<LeftRail />)
     const rails = [...host.querySelectorAll<HTMLElement>('[data-rail]')].map((b) => b.dataset.rail)
-    expect(rails).toEqual(['workspace', 'assets', 'outline', 'style', 'problems', 'settings'])
+    expect(rails).toEqual(['workspace', 'assets', 'outline', 'elements', 'style', 'problems', 'settings'])
   })
 })

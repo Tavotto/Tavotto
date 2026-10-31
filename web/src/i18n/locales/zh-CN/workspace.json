@@ -357,6 +357,7 @@
     "showObjects": "显示 {{count}} 个对象"
   },
   "layerTree": {
+    "count_other": "{{count}} 个对象",
     "collapseGroup": "折叠组",
     "emptyTitle": "画布上还没有对象",
     "expandGroup": "展开组",
@@ -490,6 +491,7 @@
     "problemsCount_other": "问题 · {{count}}",
     "settings": "设置",
     "short": {
+      "elements": "图内",
       "outline": "大纲",
       "assets": "素材",
       "problems": "问题",

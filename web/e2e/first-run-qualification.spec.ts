@@ -290,7 +290,7 @@ test(
     await expect(card(page)).toHaveCount(0, { timeout: 120_000 })
     await expect(pill(page)).toHaveCount(0)
     await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
-    await expectHittable(page.locator('[data-rail="outline"]'), '左栏「元素」轨道')
+    await expectHittable(page.locator('[data-rail="elements"]'), '左栏「元素」轨道')
     await expectHittable(page.locator('[data-work-panel]'), '编辑区')
     await expectPageNotShifted(page)
     const framing = await page.evaluate(() => {

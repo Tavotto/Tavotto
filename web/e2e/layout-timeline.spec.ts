@@ -312,7 +312,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   const leftOpen = page.locator('[data-rail][aria-expanded="true"]')
   const inspectorClose = page.locator('[data-inspector-close]')
   // 只开左栏：收起属性栏
-  if ((await leftOpen.count()) === 0) await (await only(page.locator('[data-rail="outline"]'))).click()
+  if ((await leftOpen.count()) === 0) await (await only(page.locator('[data-rail="elements"]'))).click()
   await expect(leftOpen.first()).toBeVisible()
   if ((await inspectorClose.count()) > 0) await inspectorClose.click()
   await expect(inspectorClose).toHaveCount(0)

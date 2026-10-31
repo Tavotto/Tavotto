@@ -61,16 +61,15 @@ order: 240
   本机偏好**。写反了的表现是"把窗口拖窄一次，常驻左栏就再也回不来了"，
   而用户从没关过它。判据只求值一次（`autoShowProperties` 的 `assetsYield`），
   写状态与写偏好共用它。
-- **左轨 5 项 + 设置，「大纲」是一棵树**（2026-10 界面审计 A3 / A2）：`LeftTab` 只有 `workspace | assets | outline | style | problems`
-  （旧本机偏好里的 `canvases | layers | elements` 在 `readPersisted` 落到 `outline`）。`OutlineTree` = 画布（顶层，当前画布展开）→
-  `LayerTree embedded`（图与标注）→ 被选中 / 正在编辑的可编辑图后面接 `ElementTree chrome="nested"`；目标图的判据只有
-  `useElementTargetPanel`。三棵子树的 `data-tree` 钩子（`layers` / `elements`）、`data-layer` / `data-el` 行钩子不变，
-  画布行是 `data-canvas-row`；选中同步靠它们读写同一份 `selectionStore` / `uiStore.selectedGids`，大纲自己不记第二份。
-  项目接入状态不再占左轨：素材抽屉顶部 `ReadinessRow`（`[data-asset-readiness]`）说同一个数（`allEditable` / `pendingCount`），
-  点它开接入中心；更多菜单与命令面板里的「项目接入状态」照旧。入口收敛（A2）：时间线只在右栏页签（顶栏时钟钮、排版菜单项删，⇧⌘H 与命令面板不动）；
-  画布设置只在右栏「画布」页签；更多菜单不再放「论文样式…」（命令面板 `styles` 保留）；导出对话框的规范行不再有「编辑」；
-  设置 › 帮助与诊断的「发送问题反馈」在联系作者开着时打开顶栏同一个对话框（企业微信在那里面）；教程胶囊（`useTutorialChipVisible`）
-  在时更多菜单不放教程项。看护 `components/left/outlineTree.test.tsx`、`e2e/narrow-window-layout.spec.ts`。
+- **左轨 6 项 + 设置，「大纲」是画布 + 图层一棵树，「图内」仍是独立抽屉**（2026-10 界面审计 A3 / A2，用户验收后裁定）：
+  `LeftTab` 是 `workspace | assets | outline | elements | style | problems`（旧本机偏好里的 `canvases | layers` 在 `readPersisted` 落到 `outline`）。
+  `OutlineTree` = 画布（顶层，当前画布展开）→ `LayerTree embedded`（图与标注）；图内元素树不挂进大纲，进图内编辑时宽屏自动打开「图内」页签
+  （`finishElementEntry`）。`data-tree="layers"` / `data-layer` / `data-el` 钩子不变，画布行是 `data-canvas-row`；选中同步靠它们读写同一份
+  `selectionStore`，大纲不记第二份。项目接入状态不占左轨，也不在素材抽屉里放横栏（用户裁定去掉）：入口是「更多 › 文件 › 项目接入状态」与命令面板。
+  入口收敛（A2）：时间线只在右栏页签（顶栏时钟钮、排版菜单项删，⇧⌘H 与命令面板不动）；画布设置只在右栏「画布」页签；更多菜单不再放「论文样式…」
+  （命令面板 `styles` 保留；设置 ›「样式」页保留）；导出对话框的规范行不再有「编辑」；设置 › 帮助与诊断的「发送问题反馈」在联系作者开着时打开顶栏
+  同一个对话框（企业微信在那里面）；教程胶囊（`useTutorialChipVisible`）在时更多菜单不放教程项。看护 `components/left/outlineTree.test.tsx`、
+  `e2e/narrow-window-layout.spec.ts`。
 - **钉住是三态，属性栏 < 1280 默认是覆盖层**（2026-10 UI 审计 B4 / G1）：`leftPinned` / `rightPinned` 是
   `boolean | null`，`null` = 用户没表过态；判据只有 `uiStore` 的 `isLeftPinned`（仅 wide 成立，未表态 ≥1280 默认固定）/
   `isRightPinned`（未表态仅 wide 固定）/ `isRightOverlay`（narrow 一律是；medium 只在没固定时是）——设置页开关、面板头图钉、

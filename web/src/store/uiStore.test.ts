@@ -394,15 +394,15 @@ describe('左栏页签迁移（2026-10 审计 A3）', () => {
     localStorage.clear()
   })
 
-  it.each(['canvases', 'layers', 'elements'])('本机偏好里的旧页签 %s 落到「大纲」', async (old) => {
+  it.each(['canvases', 'layers'])('本机偏好里的旧页签 %s 落到「大纲」', async (old) => {
     localStorage.setItem(LS_KEY, JSON.stringify({ leftTab: old }))
     const s = await freshStore()
     expect(s.leftTab).toBe('outline')
   })
 
-  it('其余页签原样保留', async () => {
-    localStorage.setItem(LS_KEY, JSON.stringify({ leftTab: 'style' }))
+  it.each(['style', 'elements'])('其余页签 %s 原样保留（图内仍是独立页签）', async (tab) => {
+    localStorage.setItem(LS_KEY, JSON.stringify({ leftTab: tab }))
     const s = await freshStore()
-    expect(s.leftTab).toBe('style')
+    expect(s.leftTab).toBe(tab)
   })
 })

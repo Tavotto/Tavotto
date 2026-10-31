@@ -369,6 +369,8 @@
     "showObjects": "Show {{count}} objects"
   },
   "layerTree": {
+    "count_one": "{{count}} object",
+    "count_other": "{{count}} objects",
     "collapseGroup": "Collapse group",
     "emptyTitle": "No objects on the canvas yet",
     "expandGroup": "Expand group",
@@ -509,6 +511,7 @@
     "problemsCount_other": "Problems · {{count}}",
     "settings": "Settings",
     "short": {
+      "elements": "Elements",
       "outline": "Outline",
       "assets": "Assets",
       "problems": "Issues",

@@ -1,6 +1,7 @@
 import { Fragment, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
+import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
@@ -22,10 +23,11 @@ import { Tip } from '../ui/Tooltip'
  * 图标是 `ListChecks`（检查清单），不再与「警告」同形（审计 §9.4）。
  */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
-  // 工作区（项目一级）排最上：项目 → 素材 → 大纲（画布 → 图 → 图内元素一棵树，2026-10 审计 A3）
+  // 工作区（项目一级）排最上：项目 → 素材 → 大纲（画布 → 图一棵树，2026-10 审计 A3）→ 图内（图内元素，独立抽屉，进图内编辑时自动打开）
   { id: 'workspace', icon: Folder },
   { id: 'assets', icon: Images },
   { id: 'outline', icon: LayoutList },
+  { id: 'elements', icon: EditableFigureIcon },
   { id: 'style', icon: Paintbrush },
   { id: 'problems', icon: ListChecks },
 ]
