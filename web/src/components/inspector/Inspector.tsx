@@ -378,16 +378,16 @@ function DocumentSummary() {
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
             className={cn(
-              'shrink-0 rounded-xs text-sm text-ink-3 outline-none transition-opacity duration-fast hover:text-ink focus-visible:focus-ring',
+              'shrink-0 rounded-xs type-caption outline-none transition-opacity duration-fast hover:text-ink focus-visible:focus-ring',
               open ? 'opacity-100' : 'opacity-0 focus-visible:opacity-100 group-focus-within/doc:opacity-100 group-hover/doc:opacity-100',
             )}
           >
             {t('docSummary.details')}
           </button>
         </div>
-        <p className="mt-0.5 truncate px-0.5 text-sm tabular-nums text-ink-3">{meta}</p>
+        <p className="mt-0.5 truncate px-0.5 type-caption tabular-nums">{meta}</p>
         {open && (
-          <div data-document-summary-detail className="mt-2 px-0.5 text-sm text-ink-3">
+          <div data-document-summary-detail className="mt-2 px-0.5 type-caption">
             {extra.length > 0 && <p className="tabular-nums">{extra.join(' · ')}</p>}
             <p className={extra.length > 0 ? 'mt-1' : undefined}>{t('emptyHint')}</p>
           </div>

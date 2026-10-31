@@ -40,4 +40,6 @@ export const INSPECTOR_LABEL_COL = 'w-[var(--insp-label,88px)]'
 export const INSPECTOR_CONTAINER = cn(
   '@container [--insp-label:clamp(96px,28cqi,120px)]',
   '[--text-sm:var(--text-base)] [--text-sm--line-height:var(--text-base--line-height)]',
+  // 说明文字（type-caption）与 ink-3 元信息不跟着变：钉回 12px
+  '[--caption-size:12px]',
 )
