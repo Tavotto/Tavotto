@@ -91,8 +91,9 @@ const EYE = 'M2.5 12c2.4-4.4 5.6-6.5 9.5-6.5s7.1 2.1 9.5 6.5c-2.4 4.4-5.6 6.5-9.
 const BULB = 'M9.5 16.5c-2.5-1.3-4-3.6-4-6.5a6.5 6.5 0 0 1 13 0c0 2.9-1.5 5.2-4 6.5'
 const BULB_BASE = 'M9.5 16.5v1.5a2.5 2.5 0 0 0 2.5 2.5a2.5 2.5 0 0 0 2.5-2.5v-1.5'
 const FOLDER = 'M3.5 7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5v8.5A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z'
-const FOLDER_BACK = 'M3.5 10V7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5V10'
-const FOLDER_FRONT = 'M3.5 10h17v7.5A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z'
+// 打开的文件夹（FolderOpen 同一份）：后片 + 朝观众倒下的前片
+const FOLDER_OPEN_BACK = 'M3.5 11V7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5V11'
+const FOLDER_OPEN_FRONT = 'M2.9 11h17.3a1.5 1.5 0 0 1 1.4 2l-2 5.5A2 2 0 0 1 17.7 20H5.3a2 2 0 0 1-1.9-1.5L2.9 11z'
 const HEX = poly(regular(12, 12, 9.3, 6, -90), 2.4)
 // 八角（平边朝上，边心距 9 与 RING 同外沿）
 const OCT = poly(regular(12, 12, 9 / Math.cos(Math.PI / 8), 8, -67.5), 2.5)
@@ -239,11 +240,12 @@ export const ICON_DEFS = {
   FlipVertical2: { s: [poly([[7, 3.5], [12, 8.5], [17, 3.5]], 0.9), poly([[7, 20.5], [12, 15.5], [17, 20.5]], 0.9), { d: 'M3.5 12h17', dash: '3 2.5' }] },
   HardDrive: { s: [rr(3, 6, 18, 12, 2.5), 'M3 12h18'], f: [dot(17, 15, 1.4)] },
   BookOpen: { s: ['M12 6.5c-1.6-1.7-4.4-2.2-8.5-2v14.5c4.1-.2 6.9.3 8.5 2 1.6-1.7 4.4-2.2 8.5-2V4.5c-4.1-.2-6.9.3-8.5 2z', 'M12 6.5V21'] },
-  // 静止仍是「整圈外形 + 一道横线」原样；后片（带标签）、前片、里面那张纸是只在动作里显形的 ghost：
-  // 悬停时原形隐去、前片绕底边朝观众翻开（ADR 0154，用户 10-31 定）
-  Folder: { s: [FOLDER, 'M3.5 10h17', { d: FOLDER_BACK, ghost: true }, { d: FOLDER_FRONT, ghost: true }, { d: 'M6.5 10V8.25h11V10', ghost: true }],
-    sel: { f: [FOLDER, { d: FOLDER_BACK + 'z', ghost: true }, { d: FOLDER_FRONT, ghost: true }], k: ['M3.5 10h17'] } },
-  FolderOpen: { s: ['M3.5 11V7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5V11', 'M2.9 11h17.3a1.5 1.5 0 0 1 1.4 2l-2 5.5A2 2 0 0 1 17.7 20H5.3a2 2 0 0 1-1.9-1.5L2.9 11z'] },
+  // 静止仍是「整圈外形 + 一道横线」原样；悬停时换成打开的文件夹（与 FolderOpen 同形，ghost，只在动作里显形）、
+  // 前片落下露出里面一张纸，再合上（ADR 0154，用户 10-31：朝观众打开；压扁前片的版本在 16px 上看着像破了）
+  Folder: { s: [FOLDER, 'M3.5 10h17', { d: FOLDER_OPEN_BACK, ghost: true }, { d: FOLDER_OPEN_FRONT, ghost: true }, { d: 'M6.5 11V8.25h11V11', ghost: true }],
+    sel: { f: [FOLDER, { d: FOLDER_OPEN_BACK + 'z', ghost: true }, { d: FOLDER_OPEN_FRONT, ghost: true }],
+      k: ['M3.5 10h17', { d: 'M2.9 11h17.3', ghost: true }] } },
+  FolderOpen: { s: [FOLDER_OPEN_BACK, FOLDER_OPEN_FRONT] },
   FolderPlus: { s: [FOLDER, 'M12 10.5v6', 'M9 13.5h6'] },
   // 主页 = 项目列表（顶栏左上角「回到项目列表」）：屋形外框 + 一扇门，两个元素
   House: { s: [poly([[4, 10], [12, 3.5], [20, 10], [20, 20], [4, 20]], 2.5), 'M9.5 20v-4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V20'] },

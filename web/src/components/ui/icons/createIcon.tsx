@@ -84,7 +84,17 @@ function solidPath(p: IconPathSpec, i: number, r?: Role) {
 function cutPath(p: IconPathSpec, i: number, r?: Role) {
   const o = spec(p)
   if (o.w === 0) return <path key={`k${i}`} d={o.d} fill="#000" stroke="none" {...motionAttrs(r)} />
-  return <path key={`k${i}`} d={o.d} fill={o.solid ? '#000' : 'none'} stroke="#000" strokeWidth={o.w} {...motionAttrs(r)} />
+  return (
+    <path
+      key={`k${i}`}
+      d={o.d}
+      fill={o.solid ? '#000' : 'none'}
+      stroke="#000"
+      strokeWidth={o.w}
+      strokeOpacity={o.ghost ? 0 : undefined}
+      {...motionAttrs(r)}
+    />
+  )
 }
 function overPath(p: IconPathSpec, i: number, r?: Role) {
   const o = spec(p)
