@@ -162,6 +162,14 @@ export function TimelinePanel() {
   // 「这张画布 / 全部画布」：每张画布各有自己的时间线（打开一张图 = 它自己的画布，ADR 0028），
   // 来回编辑不同脚本的图时彼此不混。归属只认节点自己记的 `canvasId`（R-03）；多于一张画布才分
   const [scope, setScope] = useState<'current' | 'all'>('current')
+  // 恢复把当前这张图换掉了：切到「全部图」，刚存下的「恢复前」（被换掉的那张）就在眼前
+  const revealAll = useTimelineStore((s) => s.revealAll)
+  const seenReveal = useRef(revealAll)
+  useEffect(() => {
+    if (revealAll === seenReveal.current) return
+    seenReveal.current = revealAll
+    setScope('all')
+  }, [revealAll])
   // 用户正在编辑的输入按上下文记账（Codex #679）：换了项目 / 排版，旧排版的草稿与
   // 改名框当场不再显示——提交发生在切换之后，`afterAwait` 管不到，而交上去的名字会在
   // 新排版里建出一个名不副实的命名节点。在 render 里按 ctx 派生，不等晚一帧的 effect
@@ -1118,7 +1126,28 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
   // 当前画布的名字取活文档的（`canvases` 里那一条要等下次切画布才同步改名）
   const here = s.doc.name
   const target = resolveRestoreTarget(meta, s)
-  if (target.kind === 'same') return true
+  // 单图编辑没有「画布」这回事（beta 0.19.3b3 反馈）：此刻画布上只有一张图、这一版也只有一张图时按「图」说
+  const current = soleFigure(s.doc)
+  const verFigures = meta.figures ?? []
+  const verFigure = verFigures.length === 1 ? figureLabel(verFigures[0]) : null
+  if (target.kind === 'same') {
+    // 同一张画布上先后放过几张图：这一版是别的图 → 恢复会把当前这张换掉，先说一声
+    if (current && verFigures.length && !verFigures.includes(current.fileId)) {
+      return askTimelineConfirm({
+        title: msg('versions.restoreReplaceFigureTitle', { name: verFigure ?? (versionDisplayName(meta) || formatTime(meta.ts)) }, 'dialogs'),
+        body: msg('versions.restoreReplaceFigureBody', { to: objectLabel(current), undo: modKey('Z') }, 'dialogs'),
+        confirmLabel: msg('actions.continue', undefined, 'common'),
+      })
+    }
+    return true
+  }
+  if (target.kind === 'other' && current && verFigure) {
+    return askTimelineConfirm({
+      title: msg('versions.restoreOtherFigureTitle', { name: verFigure }, 'dialogs'),
+      body: msg('versions.restoreOtherFigureBody', { from: verFigure, to: objectLabel(current) }, 'dialogs'),
+      confirmLabel: msg('actions.continue', undefined, 'common'),
+    })
+  }
   if (target.kind === 'other') {
     return askTimelineConfirm({
       title: msg('versions.restoreOtherCanvasTitle', { name: target.name }, 'dialogs'),
@@ -1172,6 +1201,8 @@ export async function restoreNode(
   // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
   const target = resolveRestoreTarget(meta, useDocumentStore.getState())
   if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
+  // 写进的是被覆盖的这张画布：它上面的图换了（不是切去别的画布），「恢复前」就属于被换掉的那张图
+  const figureBefore = target.kind === 'other' ? null : (soleFigure(useDocumentStore.getState().doc)?.fileId ?? null)
   const hashBefore = documentDigest(useDocumentStore.getState().doc)
   recordDiagnosticEvent({
     type: 'layout_version.restore.request',
@@ -1211,10 +1242,24 @@ export async function restoreNode(
     future_count: useDocumentStore.getState().future.length,
   })
   useTimelineStore.getState().setPreview(null)
+  if (figureBefore && soleFigure(useDocumentStore.getState().doc)?.fileId !== figureBefore) {
+    useTimelineStore.setState((st) => ({ revealAll: st.revealAll + 1 }))
+  }
   useUiStore
     .getState()
     .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'), 'done')
   return true
+}
+
+/** 画布上只有一张（可见的）图时就是它（单图编辑）；否则 null */
+function soleFigure(doc: FigureDocument): PanelObject | null {
+  const panels = doc.objects.filter((o): o is PanelObject => o.type === 'panel' && !o.hidden)
+  return panels.length === 1 ? panels[0] : null
+}
+
+/** 版本里记的图（`figures` 是 fileId）显示成什么：与画布上的图同一个说法（去目录、去扩展名） */
+function figureLabel(fileId: string): string {
+  return fileId.split('/').pop()?.replace(/\.[^.]+$/, '') || fileId
 }
 
 /**

@@ -45,7 +45,7 @@ import {
   type LayoutVersionMeta,
   type TimelineBudget,
 } from '@/lib/api'
-import { TimelinePanel, TimelinePreviewDialog } from '@/components/VersionDialog'
+import { restoreNode, TimelinePanel, TimelinePreviewDialog } from '@/components/VersionDialog'
 import { startNamedNode } from '@/store/actions'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
@@ -2130,6 +2130,69 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     await mount(list())
     expect($('[data-timeline-scope]')).toBeNull()
     expect(nodeIds()).toHaveLength(5)
+  })
+
+  // 恢复别的图（用户 2026-10-31 问：当前这张会不会丢、新旧图会不会混）
+  const docWith = (fileId: string): FigureDocument => ({
+    ...snapshot(),
+    objects: [
+      { id: `p_${fileId}`, type: 'panel', fileId, fileKind: 'pdf', name: fileId, x: 0, y: 0, w: 40, h: 30, rotation: 0, opacity: 1, overrides: [] },
+    ] as never,
+  })
+  const confirmText = () => {
+    const c = useUiStore.getState().confirm
+    return c ? `${formatMessage(c.title)}｜${formatMessage(c.body)}` : null
+  }
+
+  it('同一张画布上的另一张图：先问一句会把当前这张换掉；恢复后范围切到「全部图」，「恢复前」看得见', async () => {
+    await withFigures('a')
+    await mount(list())
+    expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('current')
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(meta({ id: 'vB', figures: ['b'] }), docWith('b'))
+    })
+    await flush()
+    expect(confirmText()).toContain('换成图「b」')
+    expect(confirmText()).toContain('当前的图「a」会先存成「恢复前」')
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(await done).toBe(true)
+    await flush()
+    // 「恢复前」先存下了（被换掉的 a），画布上换成了 b
+    expect(mockCreate).toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc.objects.map((o) => (o as { fileId?: string }).fileId)).toEqual(['b'])
+    expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('all')
+  })
+
+  it('同一张图的版本：不多问，照旧直接恢复', async () => {
+    // 前面用例答过的确认框还挂在 store 上（这里没挂真的确认对话框替它收）：先清掉，只看这一次问没问
+    await act(async () => useUiStore.getState().setConfirm(null))
+    await withFigures('a')
+    await mount(list())
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(meta({ id: 'vA1', figures: ['a'] }), docWith('a'))
+    })
+    expect(await done).toBe(true)
+    expect(confirmText()).toBeNull()
+    expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('current')
+  })
+
+  it('另一张画布上的图（单图编辑）：按「图」说，不说「画布」；继续则切过去写、当前这张不动', async () => {
+    await twoCanvases()
+    await withFigures('a')
+    await mount(list())
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(meta({ id: 'vB', figures: ['b'], canvasId: 'c_two', canvasName: 'Fig 2' }), docWith('b'))
+    })
+    await flush()
+    expect(confirmText()).toContain('恢复图「b」')
+    expect(confirmText()).toContain('不动当前这张图「a」')
+    expect(confirmText()).not.toContain('画布')
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(await done).toBe(true)
+    expect(useDocumentStore.getState().activeCanvasId).toBe('c_two')
   })
 
   it('这张图还没有节点：只说一句，不加解释', async () => {
