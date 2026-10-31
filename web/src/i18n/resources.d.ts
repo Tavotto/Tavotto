@@ -2277,6 +2277,7 @@ export default interface Resources {
             "detail_state": "会话状态文件（含损坏副本清单）",
             "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
             "environment": "运行环境与版本信息（用户名、路径已脱敏）",
+            "exec_traces": "最近几次任务的执行步骤与耗时（只有阶段、状态与错误码，不含提示词、脚本、文件名、路径）",
             "log": "应用日志（只留事件类型与数字，不含报错原文、脚本名、路径）",
             "manifest": "包的版本说明",
             "other": "其他诊断文件",

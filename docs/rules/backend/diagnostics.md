@@ -436,6 +436,7 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 - **采集失败不让备包失败**：每类包在 try 里，失败变成该类的一份 `{"collection_error": …}`。测试进程里渲染环境子进程与 DNS 默认被 `tests/conftest.py` 的 autouse 桩换掉（真探测的用例自己取回原函数）。
 - **ZIP 形状由 infra 诊断服务的 ZIP 检查决定**（文字出处，不写跨仓库路径）：条目名匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`（**无目录 / 斜杠**）、整包 ≤ 32 条、单条目 `file_size > 1024 且 > 200 × compress_size` 被拒、单条目解压后 ≤ 128 MiB、总解压后 ≤ 256 MiB、`manifest.json` ≤ 64 KiB（所以 manifest 里只列顶层条目，内层清单放内层 zip 的 `index.json`）。
   常量在 `diagsend.ZIP_RULES`，出包后 `diagdetail.ratio_safe`（压缩比超限的条目改存 STORED）+ `diagsend.zip_problem`（同判据自检，`inspect_bundle` 里不合规 = `bundle_invalid` 内部错误，不发送）。`diagsend.ENTRY_KINDS` 只收精确的扁平名；`MAX_BUNDLE_ENTRIES` = 32。
+  **新增顶层条目 = 同时改三处**：`ENTRY_KINDS`（+ 两份 `settings.diagnostics.send.kind.*` 文案）、infra 诊断服务的已知文件名表（漏了每个包都被打 `unknown_entry`：TVD-MYV0 漏 `detail-*`，TVD-E03P 漏 `exec-traces.json`）。`tests/test_diag_send.py::…::test_every_top_level_entry_the_writers_can_emit_is_registered` 按 AST 收源码里写得出的全部条目名，不靠某一份包碰巧带了哪些（按条件才写的文件真包往返看不见）。
 - 看护：`tests/test_diag_send_detail.py`（每类在且非空、家目录 / 用户名 / 秘密金丝雀全文 0、源码金丝雀、选项默认 false 不记忆、截断顺序与 64 MiB 上限、ZIP 规则（最大配置 ≤ 32 条且名字合规、重复日志不触发压缩比、自检）、导出路径无 detail 且忽略 detail 载荷、请求环不含查询串 / 请求体、探针失败降级、`sanitize_detail` 限界）。
 
 ## 联系作者（ADR 0145；1.0 纪律下待维护者豁免的新能力）

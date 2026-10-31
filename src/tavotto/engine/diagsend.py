@@ -111,6 +111,8 @@ ENTRY_KINDS = {
     "task-diagnostics.json": "task",
     "manifest.json": "manifest",
     "README.txt": "readme",
+    # 执行追踪（bundle schema 9，ADR 0151 PR4）：项目里有追踪才有这个文件
+    "exec-traces.json": "exec_traces",
     # ---- 发送包独有的内容（ADR 0118 修订 2026-10-13）。条目名一律**扁平**（服务端 ZIP 检查不许目录 / 斜杠），
     # 多文件的类别各打成一个内层 zip ----
     "detail-errors.json": "detail_errors",

@@ -1415,6 +1415,7 @@
           "ui_state": "Interface state snapshot (no figure text or file names; includes tutorial progress: status, step ids, which hint types were seen)",
           "ui_trace": "Recent interface action trace (action types only)",
           "task": "Classification of recent failed tasks",
+          "exec_traces": "Steps and timings of recent tasks (stages, statuses and error codes only; no prompts, scripts, file names or paths)",
           "manifest": "Bundle version notes",
           "readme": "Readme inside the bundle",
           "other": "Other diagnostic files",
