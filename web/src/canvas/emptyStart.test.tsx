@@ -136,14 +136,31 @@ describe('空画布的起步提示', () => {
     expect(document.body.textContent).not.toContain(sg('emptyHintNoAssets'))
   })
 
-  it('有图时说明是「从素材库选一张」', async () => {
-    useAssetStore.setState({
-      panels: [asset('a.pdf')],
-      byId: { 'a.pdf': asset('a.pdf') },
-      loaded: true,
+  it('有图时直接摆选图卡（最多 4 张），点一下放上画布；没有「添加图」按钮', async () => {
+    const mk = (id: string, status?: 'editable' | 'layout_only'): PanelInfo => ({
+      ...asset(id),
+      ...(status
+        ? {
+            capability: {
+              status,
+              reason_code: status === 'editable' ? 'registered_source' : 'no_source_candidate',
+              script: null,
+              candidates: [],
+              can_probe: false,
+              can_manual_link: false,
+            },
+          }
+        : {}),
     })
+    const list = ['a.pdf', 'b.pdf', 'c.pdf', 'd.pdf', 'e.pdf'].map((id, i) => mk(id, i === 1 ? 'layout_only' : 'editable'))
+    useAssetStore.setState({ panels: list, byId: Object.fromEntries(list.map((p) => [p.id, p])), loaded: true })
     await mount(<CanvasStage />)
-    expect(document.body.textContent).toContain(sg('emptyHint'))
+    expect(document.querySelectorAll('[data-pick-card]')).toHaveLength(4)
+    expect(byText(sg('addFigure'))).toHaveLength(0)
+    expect(document.body.textContent).toContain(sg('pickTitle'))
+    // 不可改图内的卡才说「只能整体移动、缩放、裁剪」；可改的卡不画假的元素框
+    expect(document.body.textContent?.split(sg('pickLayoutOnly')).length).toBe(2)
+    expect(document.querySelectorAll('[data-pick-el]')).toHaveLength(0)
   })
 })
 
