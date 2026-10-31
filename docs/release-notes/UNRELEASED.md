@@ -60,6 +60,11 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 - The scope filter and the "Named" toggle are now one row. When a single figure is open the scope reads "This figure / All figures"; in a multi-figure layout it reads "This layout / All figures".
 - Restoring a version that would change which figures are on the canvas (swap one for another, one → a layout, a layout → one) now always asks first and says how many figures it will become. Restoring from the compare card shows only that question; the restore starts after Continue.
 
+## Timeline: unchanged reopen / leave / before-restore entries are no longer recorded
+
+- Opening a project, leaving it, or restoring a version used to add a timeline entry every time, even when nothing had changed — reopening a project a few times left a run of identical "Project opened" entries. These three now skip recording when the canvas is exactly the same as the latest entry. Exports, saves and write-backs are still recorded every time, and named versions always are.
+- Identical entries recorded by earlier versions are hidden from the timeline; nothing is deleted.
+
 ## AI repair can now see and run in the environment your project is using
 
 The repair assistant's environment list only showed external Python installs and left out the environment the project was actually running in (including Tavotto's built-in Python), so its "run the script to verify" step was refused with "select that environment first". The list now starts with the environment currently in use, marked as current, and verification runs in it.

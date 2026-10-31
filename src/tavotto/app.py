@@ -15654,6 +15654,11 @@ def _save_versions(doc_id: str, versions: list[dict], keep: dict | None = None) 
 #: 那样一个拼错的 moment 会在时间线上没有标记、还跟普通自动节点一起先被裁。
 VERSION_MOMENTS = engine_versionstore.MOMENTS
 
+#: 内容没变就不记的关键时刻（用户 2026-10-31 裁定）：打开 / 关闭 / 恢复前只说明「这时候长这样」，
+#: 与上一条相同时上一条就是它，不记也丢不了任何能恢复的东西。导出 / 保存 / 写回照记：
+#: 「投稿前导出过的那一版」这类标记即使内容没变也是用户要找的东西（ADR 0101）。
+_MOMENTS_SKIPPED_WHEN_UNCHANGED = frozenset({"open", "close", "before_restore"})
+
 #: 后端给未命名节点起的名字（`api_versions_create` 的 `strftime`）。只在读**旧**
 #: 条目时用：`named` 字段出现之前，手动存的那一版名字要么是用户敲的、要么是这个
 #: 时间串——用户敲过名字的旧节点认作命名节点，升级不让它们变得可以被裁。
@@ -16285,8 +16290,14 @@ def api_versions_list(doc_id):
     max_objects, max_text = _sketch_limits()
     out = []
     tl = _open_timeline(doc_id)
+    prev = None
     for v in tl.full_list():
         meta = _version_meta(v)
+        # 照今天的规则本不会记下的那条（2026-10-31 之前记下的打开 / 关闭 / 恢复前重复条）：
+        # 标出来让时间线不显示，数据原样留着、不删
+        if prev is not None and _skippable_when_unchanged(v) and _same_as(prev, v):
+            meta["unchanged"] = True
+        prev = v
         thumb = _version_thumb_path(doc_id, v.get("id"))
         if thumb is not None:
             meta["thumb"] = thumb.suffix[1:]
@@ -16382,25 +16393,37 @@ def api_versions_create(doc_id):
     with _versions_lock(doc_id):
         tl = _timeline_for_write(doc_id)
         ver["id"] = _fresh_version_id(tl.entries())
-        # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）。
-        # 关键时刻**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
-        # 它的标记正是用户要找的东西（ADR 0101）。
-        last = tl.last() if ver["auto"] and moment is None else None
-        if last is not None:
-            # 画布身份也参与去重判据：两张画布内容恰好相同（复制一张画布之后
-            # 很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，
-            # 于是那张画布在时间线上一个检查点都没有。
-            same_canvas = last.get("canvasId") == ver.get("canvasId")
-            if same_canvas and json.dumps(last.get("doc"), sort_keys=True) == json.dumps(
-                doc, sort_keys=True
-            ):
-                return jsonify({"skipped": True, "version": _version_meta(last)})
+        # 自动检查点与打开 / 关闭 / 恢复前若与最近一版内容相同则跳过（刷新 / 空转 / 反复开关
+        # 不该刷版本）。导出 / 保存 / 写回**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
+        # 它的标记正是用户要找的东西（ADR 0101；判据与列表的 `unchanged` 同一个 `_same_as`）。
+        last = tl.last() if _skippable_when_unchanged(ver) else None
+        if last is not None and _same_as(last, ver):
+            return jsonify({"skipped": True, "version": _version_meta(last)})
         if named:
             refusal = _named_budget_refusal(tl.named_bytes(extra=ver))
             if refusal is not None:
                 return refusal
         tl.append(ver)
     return jsonify({"version": _version_meta(ver)})
+
+
+def _skippable_when_unchanged(v: dict) -> bool:
+    """这一条与上一条内容相同时可以不记：普通自动检查点，或打开 / 关闭 / 恢复前。命名的永远记。"""
+    if not v.get("auto") or _is_named(v):
+        return False
+    moment = v.get("moment")
+    return moment is None or moment in _MOMENTS_SKIPPED_WHEN_UNCHANGED
+
+
+def _same_as(prev: dict, v: dict) -> bool:
+    """同一张画布、同一份内容。画布身份也参与判据：两张画布内容恰好相同（复制一张画布之后
+    很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，于是那张画布在时间线上
+    一个检查点都没有。"""
+    if prev.get("_damaged") or v.get("_damaged") or prev.get("doc") is None:
+        return False  # 读不出内容的一条不拿来比：不知道就不算相同
+    return prev.get("canvasId") == v.get("canvasId") and json.dumps(
+        prev.get("doc"), sort_keys=True
+    ) == json.dumps(v.get("doc"), sort_keys=True)
 
 
 @app.patch("/api/versions/<doc_id>/<vid>")
