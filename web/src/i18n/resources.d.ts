@@ -5743,14 +5743,14 @@ export default interface Resources {
     },
     "fastEdit": {
       "added": "{{name}} 已加入画布",
-      "addedForEdit": "已为编辑新建了一张画布",
-      "addedForEditLive": "已为编辑新建了一张画布，移除即撤销放进去的图。",
+      "addedForEdit": "已在新画布「{{name}}」里打开",
+      "addedForEditLive": "已在新画布「{{name}}」里打开，撤销即撤掉放进去的图。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
       "enteredLayout": "已进入多图排版",
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
-      "removeAdded": "移除"
+      "removeAdded": "撤销"
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",

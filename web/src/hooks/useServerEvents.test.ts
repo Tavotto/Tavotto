@@ -545,13 +545,12 @@ describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
     }
   })
 
-  it('冷启动「正在构建…」是 progress，随后的「渲染完成」是 done', () => {
+  it('冷启动「正在构建…」是 progress，随后渲染完成：不再说「渲染完成」，只收掉构建中', () => {
     handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true }))
     expect(statusKey()).toBe('status.building')
     expect(useUiStore.getState().statusTone).toBe('progress')
     handleServerEvent(ev({ kind: 'render.done', pj: 'p1', id: 'Fig1.pdf' }))
-    expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('done')
+    expect(useUiStore.getState().status).toBeNull()
   })
 })
 
@@ -637,12 +636,16 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
     expect(useUiStore.getState().statusTone).toBe('done')
   })
 
+  it('没有失败提示时渲染成功：什么都不说（成功是常态）', () => {
+    done('Fig_ok.pdf')
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
   it('用户已经关掉的不会被重新挂回来', () => {
     failed('Fig1.pdf')
     useUiStore.getState().setStatus(null)
     done('Fig1.pdf')
-    expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('done')
+    expect(useUiStore.getState().status, '没有可见的失败提示要替换：成功不用报').toBeNull()
   })
 })
 

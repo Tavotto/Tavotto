@@ -55,11 +55,16 @@ export const useHintStore = create<HintState>((set) => ({
 }))
 
 /**
- * 锚点此刻在不在：右栏是开着的（窄屏下它是抽屉，收起时整个卸载，页签条也就不在）。
+ * 锚点此刻在不在：右栏是开着的（窄屏下它是抽屉，收起时整个卸载，页签条也就不在），
+ * 且停的不是「画布」页——用户已经在这条提示指向的那一页上，它既自指（「可在『画布』页调整」+「打开画布页」）
+ * 又会盖住页签下面的身份头与「页面尺寸」标题（2026-10-31 UI 审计 B7）；切到画布页时已出的也随之收起。
  * 读 store 不读 DOM；不在就不出现、也**不记看过**（下一次主动回排版再来）。
  */
 export function anchorAvailable(kind: HintKind): boolean {
-  if (kind === 'layout_page_bounds') return useUiStore.getState().rightOpen
+  if (kind === 'layout_page_bounds') {
+    const ui = useUiStore.getState()
+    return ui.rightOpen && ui.rightTab !== 'canvas'
+  }
   return true
 }
 
@@ -109,8 +114,12 @@ export function startHintEngine(): () => void {
   if (stop) return stop
   const unsubActivity = onActivity(onSignal)
   // 「第一次发现问题」不是一个动作，是检查结果——盯 validation store
+  // 提示的内容是「问题可定位到对象和字段」，所以只认**能定位到对象**的问题：空画布上只有文档级问题
+  // （无对象可定位）时不弹，等第一个落在对象上的问题出现才说（2026-10-31 UI 审计 B6）
+  const locatable = (issues: { objectRef: { objectId: string | null } }[]) =>
+    issues.some((i) => i.objectRef.objectId !== null)
   const unsubValidation = useValidationStore.subscribe((s, prev) => {
-    if (s.ready && s.issues.length > 0 && prev.issues.length === 0) showHint('problem_found')
+    if (s.ready && locatable(s.issues) && !locatable(prev.issues)) showHint('problem_found')
   })
   // 锚点跟着走：右栏收起 / 被抽屉互斥收掉时，锚在它上面的提示一并收起（不留悬浮孤岛）
   const unsubUi = useUiStore.subscribe(() => {
