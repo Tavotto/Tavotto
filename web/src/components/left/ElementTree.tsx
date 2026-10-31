@@ -827,7 +827,9 @@ const ElementRow = memo(function ElementRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
-  const { prefix, name: rest } = splitTypePrefix(name)
+  const { prefix, name: restRaw } = splitTypePrefix(name)
+  // 类型词已经单独成了 ink-3 前缀，内容不再包中文弯引号（可达名 / title 仍用原串）
+  const rest = prefix ? restRaw.replace(/^[“"‘']/, '').replace(/[”"’']$/, '') : restRaw
 
   return (
     <li
