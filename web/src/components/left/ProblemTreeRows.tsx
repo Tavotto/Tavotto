@@ -33,6 +33,10 @@ const markClass = (s: Severity) =>
     ? 'box-border size-1.5 rounded-[1px] border-[1.5px] border-ink-3'
     : cn('size-1.5 rounded-full', s === 'error' ? 'bg-danger' : 'bg-warn')
 
+/** 组头的尾随格只放一个数字 / 「修复 N」，比对象行的窄，名字多得 48px */
+const GROUP_TRAIL_W = 'w-16'
+const GROUP_TRAIL_PAD = 'pr-[4.75rem]'
+
 /** 本组文案在 errors:problems.* 下 */
 const pr = (key: string, values?: Record<string, unknown>) =>
   translate(`problems.${key}`, { ns: 'errors', ...(values ?? {}) })
@@ -58,18 +62,20 @@ export function TrailCell({
   rest,
   action,
   height = 'h-7',
+  width = TRAIL_W,
 }: {
   hot: boolean
   bind: ReturnType<typeof useHot>['bind']
   rest: ReactNode
   action?: ReactNode
   height?: 'h-7' | 'h-8'
+  width?: string
 }) {
   return (
     <span
       {...bind}
       data-problem-trail
-      className={cn('absolute right-2 top-0 flex items-center justify-end', TRAIL_W, height)}
+      className={cn('absolute right-2 top-0 flex items-center justify-end', width, height)}
     >
       <span
         data-problem-trail-rest
@@ -163,7 +169,6 @@ export function GroupNode({
           type="button"
           {...bind}
           data-issue-group-toggle
-          title={target ? `${title} → ${target}` : title}
           onClick={onToggle}
           aria-expanded={open}
           aria-label={pr('groupAria', {
@@ -172,33 +177,44 @@ export function GroupNode({
             count: group.objects,
           })}
           style={treeIndent(depth)}
-          className={cn(listRowClass({ size: 'sm' }), TRAIL_PAD, 'w-[calc(100%-0.5rem)] text-left')}
+          className={cn(
+            listRowClass({ size: 'sm' }),
+            GROUP_TRAIL_PAD,
+            'h-auto min-h-7 w-[calc(100%-0.5rem)] items-start py-1 text-left',
+          )}
         >
-          <TreeChevron expanded={open} />
+          <span className="flex h-5 shrink-0 items-center">
+            <TreeChevron expanded={open} />
+          </span>
           {/* 等级记号：要改 / 留意 = 实心圆（danger / warn），建议 / 无法核验 = 空心方块（灰）；等级字在 title、可达名与下面的 sr-only 里 */}
-          <span aria-hidden title={severityLabel(group.severity)} className="flex w-4 shrink-0 justify-center">
+          <span aria-hidden title={severityLabel(group.severity)} className="flex h-5 w-4 shrink-0 items-center justify-center">
             <span data-issue-group-mark={isHollow(group.severity) ? 'hollow' : 'solid'} className={markClass(group.severity)} />
           </span>
-          <span className={cn('min-w-0 truncate font-medium', !target && 'flex-1')}>{title}</span>
-          {/* 要求整段保留（最多占六成行宽）、名字让位：要求恰恰是不能被截掉的那半 */}
-          {target && (
-            <span data-issue-group-target className="max-w-[60%] shrink-0 truncate font-normal tabular-nums text-ink-2">
-              <span aria-hidden className="text-ink-faint">
-                {'→ '}
-              </span>
-              {target}
-            </span>
-          )}
-          {target && <span aria-hidden className="flex-1" />}
+          {/* 标题优先：放得下一行就一行，放不下折成两行，绝不截断；「→ 要求」跟在标题后面，一行里放不下就整段换到下一行 */}
+          <span className="min-w-0 flex-1 break-words text-left leading-5">
+            <span className="font-medium">{title}</span>
+            {target && (
+              <>
+                {' '}
+                <span data-issue-group-target className="inline-block max-w-full whitespace-nowrap align-bottom font-normal tabular-nums text-ink-2">
+                  <span aria-hidden className="text-ink-faint">
+                    {'→ '}
+                  </span>
+                  {target}
+                </span>
+              </>
+            )}
+          </span>
         </button>
         <TrailCell
           hot={hot}
           bind={bind}
+          width={GROUP_TRAIL_W}
           rest={
-            /* 受影响对象数 + 等级字（等级不只靠颜色与形状，problemPanel.test 钉着） */
-            <span className={cn(rowMetaClass(), 'truncate')}>
-              {pr('groupObjects', { count: group.objects })}
-              <span className="sr-only">{` · ${severityLabel(group.severity)}`}</span>
+            /* 受影响对象数只写数字（「N 个对象」留给读屏）+ 等级字（等级不只靠颜色与形状，problemPanel.test 钉着） */
+            <span className={rowMetaClass()}>
+              <span aria-hidden>{group.objects}</span>
+              <span className="sr-only">{`${pr('groupObjects', { count: group.objects })} · ${severityLabel(group.severity)}`}</span>
             </span>
           }
           action={fixable.length > 0 ? <FixCountButton issues={fixable} /> : undefined}
@@ -327,7 +343,11 @@ export function IssueRow({
         bind={rowBind}
         rest={
           valueText ? (
-            <span data-issue-values className={cn(rowMetaClass(current), 'truncate font-mono')} title={valueText}>
+            <span
+              data-issue-values
+              className={cn(rowMetaClass(current), 'shrink-0 whitespace-nowrap')}
+              title={values.expectedAll && expected ? `${values.current} → ${values.expectedAll}` : valueText}
+            >
               {values.current}
               {expected && (
                 <>

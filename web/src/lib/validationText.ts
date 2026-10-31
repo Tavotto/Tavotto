@@ -78,6 +78,11 @@ export interface IssueValues {
    * （坐标轴标签格式「Surname, year」）。没有比较词的规则它就等于 `expected`。
    */
   expectedHead: string | null
+  /**
+   * 「要求」是一张档位表（线宽）时：行内 `expected` 只写**这一个对象会被修到的那一档**（就近取档），
+   * 整张表留在这里给 title / tooltip；其余规则没有这个字段。
+   */
+  expectedAll?: string
 }
 
 /**
@@ -133,8 +138,18 @@ export function issueValues(issue: ValidationIssue): IssueValues {
   const withUnit = (v: string | null) => (v == null ? null : formatQuantity(v, unit))
   const currentRaw = read(spec.current)
   const expectedRaw = read(spec.expected)
-  const expected = withUnit(expectedRaw)
+  let expected = withUnit(expectedRaw)
+  let expectedAll: string | undefined
+  if (issue.ruleCode === 'line-width-off-preset' && expectedRaw?.includes('/') && currentRaw != null) {
+    // 档位表（「0.5/0.75/1」）：行内只写就近的那一档，整张表给 tooltip
+    const cur = Number(currentRaw)
+    const steps = expectedRaw.split('/')
+    const near = steps.reduce((best, v) => (Math.abs(Number(v) - cur) < Math.abs(Number(best) - cur) ? v : best))
+    expectedAll = withUnit(expectedRaw) ?? undefined
+    expected = withUnit(near)
+  }
   return {
+    expectedAll,
     current: withUnit(currentRaw),
     expected:
       expected == null

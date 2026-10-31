@@ -27,6 +27,19 @@ const issue = (over: Partial<ValidationIssue> = {}): ValidationIssue => ({
 
 afterEach(() => setLocale('zh-CN'))
 
+describe('线宽档位表：行内只写就近的那一档', () => {
+  const lw = (effective: string, presets: string) =>
+    issue({ ruleCode: 'line-width-off-preset', message: { key: 'preflight.lineWidthOffPreset', ns: 'errors', values: { effective, presets } } })
+  it('0.30 pt 在 0.5/0.75/1 里就近是 0.5，整张表留给 tooltip', () => {
+    const v = issueValues(lw('0.30', '0.5/0.75/1'))
+    expect(v.expected).toBe('0.5 pt')
+    expect(v.expectedAll).toBe('0.5/0.75/1 pt')
+  })
+  it('每个对象各取各的档', () => {
+    expect(issueValues(lw('0.90', '0.5/0.75/1')).expected).toBe('1 pt')
+  })
+})
+
 describe('组头说一次的要求（sharedTarget）', () => {
   const at = (min: string) => issue({ message: { key: 'preflight.fontTooSmall', ns: 'errors', values: { effective: '7', min } } })
   it('同组每条的要求相同：返回那个要求（行内写法）', () => {
