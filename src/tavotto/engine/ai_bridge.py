@@ -42,10 +42,12 @@ from . import (
     cli_failure,
     config,
     exectrace,
+    logsafe,
     managedcli,
     projectenv,
     scriptlock,
 )
+from .agent_runner import loop as agent_loop
 from .agent_runner.tools import TOOL_NAMES as _RUNNER_TOOLS
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import (  # noqa: F401 — 重导出，历史调用方仍认这个名字
@@ -203,59 +205,78 @@ def _trace_runner_event(trace, parent, line: str, model, endpoint) -> None:
         pass
 
 
-_FACT_CODE = re.compile(r"[a-z0-9_.]{1,48}")
 _RUNNER_STDERR_CODE = re.compile(r"^agent_runner: ([a-z_]{1,32})(?: |$)", re.M)
 
-
-def _fact(value: object) -> str:
-    """闭集码才进日志：不符合 `[a-z0-9_.]{1,48}` 的（可能是自由文本 / 路径）一律写成 `other`。"""
-    text = str(value or "")
-    return text if _FACT_CODE.fullmatch(text) else "other"
+#: 「这一项没有事实」的占位。也要经 `logsafe.known` 放行，否则 `-` 在诊断包里会被哈希
+_NO_FACT = frozenset({"-"})
 
 
-def _stderr_facts(sid: str) -> str:
-    """内置执行器 stderr 的事实：只有字节数与 `agent_runner: <闭集词>` 的第一个词（诊断函数只写短码）。
+def _code(value: object, allowed) -> object:
+    """闭集码 → `logsafe.known` 明文；缺省 → `-`；集合外的值原样交回（诊断包里照样哈希，app.log 里是原值）。"""
+    if not value:
+        return logsafe.known("-", _NO_FACT)
+    return logsafe.known(value, allowed)
+
+
+def _codes(values: list, allowed) -> object:
+    """一组码：全在 `allowed` 里 → 明文；有一个不在 → 整组以逗号拼成普通字符串（诊断包里哈希）；空 → `-`。"""
+    if not values:
+        return logsafe.known("-", _NO_FACT)
+    shown = logsafe.known_each(values, allowed)
+    return shown if shown is not values else ",".join(str(v) for v in values)
+
+
+def _stderr_facts(sid: str) -> tuple[int | None, object]:
+    """内置执行器 stderr 的事实：字节数与 `agent_runner: <词>` 的第一个词（诊断函数只写短码）。
     有字节却没有短码 = 解释器级崩溃（traceback），其内容含路径，不进日志。"""
     try:
         data = (SNAP_DIR / f"{sid}.stderr.log").read_bytes()
     except OSError:
-        return ""
+        return None, _code("", _NO_FACT)
     if not data:
-        return ""
+        return None, _code("", _NO_FACT)
     text = data[-65536:].decode("utf-8", errors="replace")
     codes = []
     for code in _RUNNER_STDERR_CODE.findall(text):
         if code not in codes:
             codes.append(code)
-    return f" stderr_bytes={len(data)} stderr_codes={','.join(codes[:4]) or '-'}"
+    return len(data), _codes(codes[:4], agent_loop.STDERR_CODES)
 
 
-def _end_facts(sess: dict, proc, sid: str, builtin: bool) -> str:
-    """「AI 会话结束」那行日志的失败事实（只用闭集码，不带自由文本 / 路径 / 密钥）：
-    退出码、内置执行器的 `done.reason`（`runner`）与 `detail`、没有 `done` 事件就退出的标记、
-    校验未满足的约束 `约束:原因`（`unmet`）。"""
-    parts = []
+def _end_facts(sess: dict, proc, sid: str, builtin: bool) -> tuple:
+    """「AI 会话结束」那行日志的失败事实，**逐项**返回（日志模板是固定字面量，每项是独立参数）：
+    `(exit, runner, runner_detail, unmet, unmet_reasons, stderr_bytes, stderr_codes)`。
+
+    诊断包只明文放行数字与 `logsafe.known*` 过的值，所以码类事实都经源码里的闭集常量放行
+    （`agent_loop.DONE_REASONS` 同源的 `ai_agents.RUNNER_ERRORS` / `exectrace.RUNNER_DETAILS` /
+    `ai_tasks.UNMET_*` / `agent_loop.STDERR_CODES`）；集合外的值（自由文本 / 路径 / 新增未登记的码）
+    不会明文出门。缺省的字符串槽位是 `-`，数字槽位是 None。
+    `unmet` / `unmet_reasons` 按同样的顺序一一对应（`约束`、`原因`）。"""
+    from . import ai_tasks  # 惰性：与本模块其它处一致（ai_tasks 依赖面大，不在 import 期拉进来）
+
     code = getattr(proc, "returncode", None)
-    if isinstance(code, int):
-        parts.append(f"exit={code}")
+    runner = detail = None
     if builtin:
         runner = sess.get("runner_error")
         if runner:
-            parts.append(f"runner={_fact(runner)}")
-            if sess.get("runner_detail"):
-                parts.append(f"runner_detail={_fact(sess['runner_detail'])}")
+            detail = sess.get("runner_detail")
         elif isinstance(code, int) and code != 0 and sess.get("status") == "failed":
-            parts.append("runner=no_done_event")
-    unmet = (sess.get("task") or {}).get("unmet") or []
-    if unmet:
-        shown = [
-            f"{_fact(u.get('constraint_id'))}:{_fact(u.get('reason_code'))}"
-            for u in unmet[:6]
-            if isinstance(u, dict)
-        ]
-        parts.append("unmet=" + ",".join(shown))
-    text = (" " + " ".join(parts)) if parts else ""
-    return text + (_stderr_facts(sid) if builtin and sess.get("status") == "failed" else "")
+            runner = "no_done_event"
+    unmet = [u for u in ((sess.get("task") or {}).get("unmet") or [])[:6] if isinstance(u, dict)]
+    size, stderr_codes = (
+        _stderr_facts(sid)
+        if builtin and sess.get("status") == "failed"
+        else (None, _code("", _NO_FACT))
+    )
+    return (
+        code if isinstance(code, int) else None,
+        _code(runner, ai_agents.RUNNER_ERRORS),
+        _code(detail, exectrace.RUNNER_DETAILS),
+        _codes([str(u.get("constraint_id") or "") for u in unmet], ai_tasks.UNMET_CONSTRAINT_IDS),
+        _codes([str(u.get("reason_code") or "") for u in unmet], ai_tasks.UNMET_REASON_CODES),
+        size,
+        stderr_codes,
+    )
 
 
 def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
@@ -2065,13 +2086,14 @@ def run(
             else:
                 sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
             LOG.info(
-                "AI 会话结束: %s %s status=%s changed=%s refresh=%s%s",
+                "AI 会话结束: %s %s status=%s changed=%s refresh=%s exit=%s runner=%s runner_detail=%s "
+                "unmet=%s unmet_reasons=%s stderr_bytes=%s stderr_codes=%s",
                 agent,
                 script,
                 sess["status"],
                 sess["changed"],
                 sess["refresh"]["status"],
-                _end_facts(sess, sess.get("proc") or proc, sid, agent == ai_agents.BUILTIN_ID),
+                *_end_facts(sess, sess.get("proc") or proc, sid, agent == ai_agents.BUILTIN_ID),
             )
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
             _finish_session(sess, task_result=task["task_result"] if task else None)
