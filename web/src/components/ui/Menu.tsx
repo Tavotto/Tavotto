@@ -1,6 +1,7 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
+import { ShortcutText } from './Kbd'
 import { useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -246,7 +247,7 @@ export function MenuItem({
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
         {hint && <span className="truncate font-mono text-xs leading-4 text-ink-3">{hint}</span>}
       </span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </DM.Item>
   )
 }
@@ -400,7 +401,7 @@ export function MenuRadioItem({
         {description && <span className="text-xs leading-4 text-ink-3">{description}</span>}
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
       </span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </DM.RadioItem>
   )
 }
@@ -508,7 +509,7 @@ export function MenuButton({
     >
       {Icon && <Icon size={ICON_SIZE.sm} aria-hidden className={cn('shrink-0', danger ? 'text-danger' : 'text-ink-2')} />}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </button>
   )
 }
@@ -518,7 +519,7 @@ export function MenuButton({
  * 是这么排的）。此前是 type-section（12/500/ink）压在 11px 的项上，组头比项还重（2026-09-15 审计 A03）。
  * `MenuHeading` 是同一样式带截断的版本，给对象名 / 「已选 N 个」这类用户内容。
  */
-const LABEL_CLASS = 'px-2 py-1 text-sm text-ink-3'
+const LABEL_CLASS = 'px-2 py-1 text-xs font-medium text-ink-2'
 
 export const MenuLabel = ({ children }: { children: ReactNode }) => (
   <DM.Label className={LABEL_CLASS}>{children}</DM.Label>

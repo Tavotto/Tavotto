@@ -688,14 +688,14 @@ describe('空查询时的顺序（审计 T50）', () => {
 })
 
 describe('外观：图标与键帽（2026-10-01）', () => {
-  it('有快捷键的命令画成一颗整体键帽，图标只来自图标集（没有 emoji / 手写 svg）', () => {
+  it('快捷键是不加框的灰字（与菜单同一原语），每条命令都有来自图标集的图标', () => {
     mount()
     const exp = document.querySelector('[data-cmd-id="export"]')!
-    expect([...exp.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([keyOf('export')])
-    expect(exp.querySelector('svg'), '导出有图标').not.toBeNull()
-    // 没有合适图标的命令不硬凑：行仍在、图标槽留空对齐
-    const all = document.querySelector('[data-cmd-id="select-all"]')!
-    expect(all.querySelector('svg')).toBeNull()
+    expect(exp.querySelectorAll('kbd')).toHaveLength(0)
+    expect(exp.querySelector('[data-cmd-shortcut]')!.textContent).toBe(keyOf('export'))
+    for (const row of document.querySelectorAll('[data-cmd-id]')) {
+      expect(row.querySelector('svg'), `${row.getAttribute('data-cmd-id')} 有图标`).not.toBeNull()
+    }
   })
 })
 

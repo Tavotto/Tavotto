@@ -39,17 +39,12 @@ export function Kbd({
 export function KeyCaps({
   keys,
   className,
-  joined = false,
 }: {
   keys: string
   className?: string
-  /** 一组键位画成**一颗**键帽（`⌘A` 是一个胶囊，不拆成 ⌘ 与 A）：命令面板用，写法与菜单里的快捷键一致 */
-  joined?: boolean
 }) {
   const { t } = useTranslation('shortcuts')
   const groups = keyCaps(keys)
-  // 整体键帽直接写键位表里那一串（与菜单里的写法逐字一致），不按拆出来的键重新拼
-  const texts = keys.split(' / ').map((g) => g.trim())
   return (
     <span className={cn('inline-flex flex-wrap items-center justify-end gap-x-1 gap-y-1', className)}>
       {groups.map((caps, gi) => (
@@ -64,18 +59,29 @@ export function KeyCaps({
             </>
           )}
           <span className="inline-flex items-center gap-0.5">
-            {joined ? (
-              <Kbd size="md">{texts[gi]}</Kbd>
-            ) : (
-              caps.map((k, ki) => (
-                <Kbd key={ki} size="md">
-                  {k}
-                </Kbd>
-              ))
-            )}
+            {caps.map((k, ki) => (
+              <Kbd key={ki} size="md">
+                {k}
+              </Kbd>
+            ))}
           </span>
         </Fragment>
       ))}
+    </span>
+  )
+}
+
+/**
+ * 菜单项与命令面板右端的快捷键：不加框的 ink-3 灰字（`⌘K`、`?`），右对齐、等宽数字。
+ * 两处都经它渲染，行尾的右边缘因此落在同一条竖线上；速查表要看键位才用 `KeyCaps`。
+ */
+export function ShortcutText({
+  children,
+  ...rest
+}: { children: string } & Record<`data-${string}`, string | number | boolean | undefined>) {
+  return (
+    <span {...rest} className="shrink-0 text-right text-xs tabular-nums tracking-wide text-ink-3">
+      {children}
     </span>
   )
 }

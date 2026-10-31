@@ -632,7 +632,7 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 
 ### 原语层落下的规矩
 - **同一高度只有一种字号**：28px 的按钮（sm / md 只差内边距）、菜单项、页签、Select 项、命令面板行都是 12。11 只留给标签 / caption / meta。
-- **菜单分组标题比项淡一档**（12/400/ink-3），不再是 type-section；`MenuLabel` 与 `MenuHeading` 同一样式。
+- **菜单分组标题是小一号的半粗字**（11/500/ink-2；原 12/400/ink-3 已修订，见本行末），不再是 type-section；`MenuLabel` 与 `MenuHeading` 同一样式。**2026-10-31 修订（UI 审计 D2）**：组标题改 11 / 500 / ink-2——禁用项是 ink 40% 的灰，与 ink-3 的 12/400 组头撞成同一种浅灰，读起来像两行都不能点；改小一号、半粗、深一档后与禁用项分开。
 - **触发钮有打开态**：ghost / secondary 作为 Menu / Popover 触发器时 `data-[state=open]` 底色常驻（surface-active）。
 - **20px 行内小钮是 28 之外唯一的一档**（`Button size="icon-xs"` / `IconButton iconSize="xs"`）：标题行里的 ?、搜索框清除、通知 ×。
 - **Checkbox / Radio 16、Toggle 28×16 + shadow-thumb**；hover 只能加深。
