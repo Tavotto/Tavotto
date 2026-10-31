@@ -600,6 +600,86 @@ describe('单图退路裁白边：检查 / proof report / 请求吃同一份裁�
   })
 })
 
+describe('单图档带入画布上的标注（QA-WIN-20）', () => {
+  const textAt = (x: number, y: number, extra: Partial<CanvasObject> = {}): CanvasObject =>
+    ({
+      id: 't1',
+      type: 'text',
+      text: 'Label QA',
+      sizePt: 9,
+      x,
+      y,
+      w: 20,
+      h: 6,
+      ...extra,
+    }) as never
+
+  const openSingle = async () => {
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('图幅内的文字：仍是 scope=original，original.objects 带着它（坐标在原图图幅里）；预览画同一份合成页', async () => {
+    await setup(9, { w: 180, h: 120 })
+    useDocumentStore.getState().commit(literal('挪图并加字'), (d) => {
+      d.objects = [{ ...d.objects[0], x: 30, y: 20 }, textAt(40, 30)]
+    })
+    await openSingle()
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览画的是合成后的页面').toBeTruthy()
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toMatch(/80\s×\s60\smm/)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    expect(exportBodies[0].canvas).toBeUndefined()
+    const original = exportBodies[0].original as {
+      w_mm: number
+      h_mm: number
+      objects?: { type: string; x_mm: number; y_mm: number; text?: string }[]
+    }
+    expect([original.w_mm, original.h_mm], '页面 = 原图图幅').toEqual([80, 60])
+    expect(original.objects).toHaveLength(1)
+    expect(original.objects![0].text).toBe('Label QA')
+    expect([original.objects![0].x_mm, original.objects![0].y_mm], '文字坐标映射到原图坐标系').toEqual([10, 10])
+  })
+
+  it('图下面的标注：objects_below 带上图层次序；都在图上时没有这个键', async () => {
+    await setup(9, { w: 180, h: 120 })
+    useDocumentStore.getState().commit(literal('图下加字'), (d) => {
+      d.objects = [textAt(40, 30, { id: 'under' }), { ...d.objects[0], x: 30, y: 20 }, textAt(41, 31, { id: 'over' })]
+    })
+    await openSingle()
+    await click(button('开始导出')!)
+    const original = exportBodies[0].original as { objects: { text?: string }[]; objects_below?: number }
+    expect(original.objects).toHaveLength(2)
+    expect(original.objects_below).toBe(1)
+  })
+
+  it('没有标注时仍是纯原图请求（original 里没有 objects 键）', async () => {
+    await setup(9)
+    await openSingle()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+    expect(exportBodies[0].canvas).toBeUndefined()
+    expect('objects' in (exportBodies[0].original as object)).toBe(false)
+  })
+
+  it('隐藏的标注不带入', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('加隐藏字'), (d) => {
+      d.objects = [...d.objects, textAt(5, 5, { hidden: true })]
+    })
+    await openSingle()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+    expect('objects' in (exportBodies[0].original as object)).toBe(false)
+  })
+})
+
 describe('像素预览按范围算', () => {
   it('画布范围按页面尺寸；原图范围按那张图自己的（位图直接报源像素网格）', async () => {
     const page = { w: 180, h: 120 }

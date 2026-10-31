@@ -127,6 +127,7 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
+import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
@@ -463,10 +464,29 @@ export function ExportDialog() {
       : "canvas"
     : scopeState;
   const singleFallback = single && scope === "canvas";
+  /**
+   * 单图档、原图口径、画布上有可见标注（QA-WIN-20）：`lib/singleExportDoc` 把「图 + 标注」合成一份以原图图幅为页面的
+   * 文档。**预览画这份；请求里的 `original.objects` 取这份里的标注部分**——预览与文件同一个来源。后端用整版导出那条
+   * RenderCore 路径把标注画在原图上（PDF / SVG / PNG / TIFF / EPS 都带）。没有标注 = null，请求与从前逐字节相同。
+   */
+  const annotatedDoc = useMemo(
+    () =>
+      single && scope === "original" && availability.ok
+        ? singleAnnotatedDocument(doc, panel, availability.spec)
+        : null,
+    [single, scope, availability.ok, availability.spec, doc, panel],
+  );
+  const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
+  const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
-    () => (singleFallback ? cropToVisibleContent(doc.page, doc.objects) : null),
-    [singleFallback, doc.page, doc.objects],
+    () =>
+      annotatedDoc
+        ? { page: annotatedDoc.page, objects: annotatedDoc.objects }
+        : singleFallback
+          ? cropToVisibleContent(doc.page, doc.objects)
+          : null,
+    [annotatedDoc, singleFallback, doc.page, doc.objects],
   );
   /**
    * 这次导出的文档：单图退路 = 裁后的文档（只算一次），检查、proof report、请求、预览全吃它；
@@ -842,6 +862,8 @@ export function ExportDialog() {
       figureId,
       panel,
       spec: availability.spec,
+      annotations,
+      annotationsBelow: annotationsUnder,
       route,
       exportDir: exportDirNow,
       ...over,
@@ -1649,7 +1671,7 @@ export function ExportDialog() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
       <ExportPreviewPane
         single={single}
-        fallbackPage={singleFallback}
+        fallbackPage={singleFallback || annotatedDoc !== null}
         fallbackCrop={fallbackCrop}
         doc={doc}
         figures={single ? figures : canvasFigures}
