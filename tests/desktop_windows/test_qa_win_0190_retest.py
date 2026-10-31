@@ -449,10 +449,13 @@ def _export_once(d, name: str, formats: set[str]) -> Path:
         )
     except TimeoutError as e:
         shown = d.js(
-            f"const e = document.querySelector('{EXPORT_DIALOG}'); return e ? e.innerText : null"
+            "const q = s => document.querySelector('" + EXPORT_DIALOG + " ' + s);"
+            " const st = q('[data-export-status]');"
+            " return {status: st ? st.innerText : null, start: q('[data-export-start]') ? (q('[data-export-start]').disabled ? 'disabled' : 'enabled') : null,"
+            " cancel: !!q('[data-export-cancel]'), conflict: !!q('[data-export-conflict]'), failure: !!q('[data-export-failure]'),"
+            " progress: !!q('[data-export-progress]')}"
         )
-        tail = " | ".join((shown or "").split("\n")[-25:])[-260:]
-        raise AssertionError(f"对话框末尾：{tail}；{e}") from None
+        raise AssertionError(f"对话框状态：{shown!r}；{e}") from None
     d.chord(KEY_ESCAPE)
     d.wait_js(
         f"return !document.querySelector('{EXPORT_DIALOG}')", timeout=15, what="导出对话框关闭"
