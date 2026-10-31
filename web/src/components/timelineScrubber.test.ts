@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contentBox, unionBox } from './versionThumbCrop'
+import { contentBox, unionBox } from '@/lib/versionThumbBox'
 
 const page = { w: 150, h: 100 }
 

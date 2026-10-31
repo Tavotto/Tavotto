@@ -1457,6 +1457,11 @@ export interface LayoutVersionMeta {
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
   /**
+   * 这张缩略图拍的是页面的哪一块（mm）。新节点只拍内容区域（`lib/timelineThumb`），旁边记这块；
+   * 缺席 = 整页（旧节点）。后端校验过才发（`_version_thumb_box`）。
+   */
+  thumbBox?: { x: number; y: number; w: number; h: number }
+  /**
    * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
    * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
    */
@@ -1689,11 +1694,12 @@ export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' |
 export const putVersionThumb = (
   docId: string,
   vid: string,
-  thumb: { blob: Blob; type: string },
+  thumb: { blob: Blob; type: string; box?: { x: number; y: number; w: number; h: number } },
   pj?: string | null,
 ) =>
   jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
-    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb`,
+    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb` +
+      (thumb.box ? `?box=${[thumb.box.x, thumb.box.y, thumb.box.w, thumb.box.h].join(',')}` : ''),
     { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
     pj,
   )

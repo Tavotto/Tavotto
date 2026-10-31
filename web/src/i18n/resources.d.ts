@@ -3333,6 +3333,7 @@ export default interface Resources {
       "version_moment_invalid": "不认识的关键时刻：{{moment}}",
       "version_name_too_long": "节点名字最长 {{max}} 个字，这次没有保存。",
       "version_thumb_invalid": "节点缩略图格式不对或太大，没有保存。",
+      "version_thumb_write_failed": "节点缩略图没能保存，这一版先用草图代替。",
       "versions_unreadable": "无法读取版本历史，这次检查点没有写入。磁盘上的历史没有改动。",
       "workdir_confirmation_required": "要先选择脚本的运行目录",
       "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",

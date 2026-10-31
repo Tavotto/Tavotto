@@ -59,7 +59,8 @@ import {
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
 import { TimelineScrubber } from './TimelineScrubber'
-import { contentBox, CropFrame, unionBox } from './versionThumbCrop'
+import { CropFrame, thumbDisplayBox, VersionThumbImage } from './versionThumbCrop'
+import { contentBox, unionBox } from '@/lib/versionThumbBox'
 import { Badge } from './ui/Badge'
 import { Card } from './ui/Card'
 import { Notice } from './ui/Notice'
@@ -637,12 +638,12 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
   if (meta.thumb) {
     // 对准页面上有内容的那块（单图编辑没有「页面」，图偏在页面一角也该居中看，见 `contentBox`）
     const page = meta.sketch?.page ?? meta.page
-    const box = page && meta.sketch ? contentBox(page, meta.sketch.objects) : null
+    const box = page ? thumbDisplayBox(meta, page) : null
     if (page && box) {
       return (
         <CropFrame page={page} box={box} width={56} height={40} className="rounded-xs border border-border-strong">
           {() => (
-            <img src={versionThumbUrl(docId, meta)} alt="" data-timeline-thumb className="block size-full max-w-none" />
+            <VersionThumbImage docId={docId} meta={meta} page={page} data-timeline-thumb />
           )}
         </CropFrame>
       )
@@ -1008,7 +1009,7 @@ function CompareCard({
                 {placeholder && (
                   <span className="absolute inset-0 block bg-paper" data-timeline-card-placeholder>
                     {meta.thumb ? (
-                      <img src={versionThumbUrl(docId, meta)} alt="" className="block size-full max-w-none" />
+                      <VersionThumbImage docId={docId} meta={meta} page={momentPage} />
                     ) : (
                       meta.sketch && (
                         <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} className="size-full" />

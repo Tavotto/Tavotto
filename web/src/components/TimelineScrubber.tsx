@@ -7,7 +7,7 @@ import { formatDate, formatTime } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { CanvasThumb } from './CanvasThumb'
-import { contentBox, CropFrame } from './versionThumbCrop'
+import { CropFrame, thumbDisplayBox, VersionThumbImage } from './versionThumbCrop'
 
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -408,7 +408,7 @@ function PeekThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) 
   const page = meta.sketch?.page ?? meta.page
   const ratio = page && page.w > 0 && page.h > 0 ? `${page.w} / ${page.h}` : '4 / 3'
   if (meta.thumb && page && page.w > 0 && page.h > 0) {
-    const box = meta.sketch ? contentBox(page, meta.sketch.objects) : null
+    const box = thumbDisplayBox(meta, page)
     const b = box ?? { w: page.w, h: page.h }
     const fh = Math.max(PEEK_FRAME_MIN_H, Math.min(PEEK_FRAME_MAX_H, (PEEK_FRAME_W * b.h) / b.w))
     return (
@@ -420,7 +420,7 @@ function PeekThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) 
         className="rounded-xs border border-border-strong"
         data-timeline-scrubber-peek-crop={box ? '' : undefined}
       >
-        {() => <img src={versionThumbUrl(docId, meta)} alt="" className="block size-full max-w-none" />}
+        {() => <VersionThumbImage docId={docId} meta={meta} page={page} />}
       </CropFrame>
     )
   }
