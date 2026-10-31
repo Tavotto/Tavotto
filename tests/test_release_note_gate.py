@@ -100,6 +100,14 @@ class TestDecide:
         patch = "@@ -10,3 +10,0 @@\n-## Old\n-\n-text"
         assert run([f("src/tavotto/a.py"), f(UN, patch=patch)]) == "failure"
 
+    def test_retitling_an_existing_entry_fails(self):
+        patch = "@@ -5,1 +5,1 @@\n-## Fix plot lables\n+## Fix plot labels"
+        assert run([f("web/src/App.tsx"), f(UN, patch=patch)]) == "failure"
+
+    def test_new_entry_alongside_a_retitle_passes(self):
+        patch = "@@ -5,1 +5,4 @@\n-## Fix plot lables\n+## Fix plot labels\n+\n+## New entry"
+        assert run([f("web/src/App.tsx"), f(UN, patch=patch)]) == "success"
+
     def test_level3_heading_does_not_count(self):
         patch = "@@ -1,0 +2,1 @@\n+### sub"
         assert run([f("src/tavotto/a.py"), f(UN, patch=patch)]) == "failure"

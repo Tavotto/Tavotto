@@ -147,8 +147,15 @@ def _touched_paths(entry: dict) -> list[str]:
 
 
 def adds_section_heading(patch: str) -> bool:
-    """diff 里是否新增了至少一行 `## ` 二级标题（`###` 不算）。"""
-    return any(line.startswith("+## ") for line in patch.splitlines())
+    """diff 是否**净增**了 `## ` 二级标题（`###` 不算）：新增行数 > 删除行数。
+
+    只数 `+## ` 不够——改正一个已有标题（`-## Fix plot lables` / `+## Fix plot labels`）
+    也会出现一行 `+## `，但没有新条目。
+    """
+    lines = patch.splitlines()
+    added = sum(1 for line in lines if line.startswith("+## "))
+    removed = sum(1 for line in lines if line.startswith("-## "))
+    return added > removed
 
 
 def decide(

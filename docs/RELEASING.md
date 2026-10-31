@@ -377,7 +377,7 @@ manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然�
 用户可见路径（`src/tavotto/`、`web/src/`、`src-tauri/src/`、
 `src-tauri/tauri.conf.json`、`codex-plugin/`，测试文件与 `AGENTS.md` 不算）的 PR，
 必须在 `UNRELEASED.md` 里**新增至少一个 `## ` 段落**，否则这一格红——只改顶部
-注释、只删段落都不算。纯内部改动（重构、CI、仅内部文档、测试辅助）给 PR 打
+注释、只删段落、只改正已有标题都不算。纯内部改动（重构、CI、仅内部文档、测试辅助）给 PR 打
 **`no-release-note`** 标签豁免；dependabot 的 PR 默认豁免；发版 PR 自己（新增了
 `docs/release-notes/vX.Y.Z.md`）也直接通过。清单与规则的唯一出处是
 `scripts/ci/release_note_gate.py`，别在这里再抄一份。拿不准算不算用户可见，就写
