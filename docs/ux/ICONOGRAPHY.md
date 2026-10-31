@@ -89,6 +89,11 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 - 无障碍：没有 `aria-label` / `aria-labelledby` / 子元素时自动 `aria-hidden`；类名
   `icon icon-<kebab>`，用例按它认形状（`svg.icon-triangle-alert`）。
 - 折叠块：`ui/Details` 的 `Details` / `Summary`（原生 `<details>` 加图标集的箭头）。
+- 微动效（ADR 0156，2026-10-31）：46 枚图标登记在 `icons/motion.ts`（触发 · 时长 · 每条路径的角色），
+  关键帧在 `icons/motion.css`，播放端 `ui/iconMotion.ts`——点按钮播 `press`、指针进按钮播 `hover`，
+  状态图标只在调用方写 `playIn` 时于出现那一下播。一次性、播完回静止形、减少动态效果时不播；几何不改
+  （唯一例外：属性旋钮两段线反向画、加两条静止不画的延长线 `ghost`，静止逐像素同形，好让轨道跟着旋钮伸缩）。改有动作图标的路径条数要同步角色表，
+  `icons/motion.test.tsx` 守着两侧同源与条数。
 
 ### 门禁（`web/src/components/ui/iconography.test.tsx`，TypeScript AST）
 

@@ -9,6 +9,8 @@ import { ICON_DEFS } from './defs'
 export type { IconComponent, IconProps } from './createIcon'
 export { ICON_DEFS } from './defs'
 export type { IconDef, IconName } from './defs'
+export { ICON_MOTION } from './motion'
+export type { IconMotion, MotionTrigger } from './motion'
 
 export const LayoutGrid = createIcon('LayoutGrid', ICON_DEFS.LayoutGrid)
 export const Images = createIcon('Images', ICON_DEFS.Images)
