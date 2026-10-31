@@ -2947,6 +2947,7 @@ export default interface Resources {
       "scopeCanvas": "这张画布",
       "scopeFigure": "这张图",
       "scopeLabel": "显示哪张画布的节点",
+      "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开",
       "sideCurrent": "当前",
       "sideMoment": "那一刻",
       "summary": {

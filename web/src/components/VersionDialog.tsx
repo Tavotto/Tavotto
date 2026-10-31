@@ -4,6 +4,7 @@ import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/c
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
+import { Spinner } from '@/components/ui/Spinner'
 import {
   backendErrorText,
   deleteVersion,
@@ -57,6 +58,7 @@ import {
   THUMB_OBJECT_LIMIT,
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
+import { TimelineScrubber } from './TimelineScrubber'
 import { Badge } from './ui/Badge'
 import { Card } from './ui/Card'
 import { Notice } from './ui/Notice'
@@ -377,6 +379,37 @@ export function TimelinePanel() {
     () => groupTimeline(scoped, { namedOnly: filter === 'named', now: Date.now() }),
     [scoped, filter],
   )
+  // 竖线条与列表是同一组节点：列表新的在上，竖线条左旧右新
+  const strip = useMemo(() => groups.flatMap((g) => g.items).reverse(), [groups])
+  const summaryOf = useCallback(
+    (v: LayoutVersionMeta) =>
+      versionSummaryText(versionSummary(v, comparableEarlier(versions, versions.indexOf(v))))
+        .map(formatMessage)
+        .join(' · '),
+    [versions],
+  )
+  // 竖线条划过的那一版：列表滚到那一行并淡淡标出来；只是看，不开卡片、不取正文
+  const listRef = useRef<HTMLDivElement>(null)
+  const [peekId, setPeekId] = useState<string | null>(null)
+  const revealRow = useCallback((id: string) => {
+    const row = listRef.current?.querySelector(`[data-timeline-node="${CSS.escape(id)}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [])
+  const onScrubPeek = useCallback(
+    (id: string | null) => {
+      setPeekId(id)
+      if (id) revealRow(id)
+    },
+    [revealRow],
+  )
+  const onScrubPick = useCallback(
+    (id: string) => {
+      setPeekId(null)
+      revealRow(id)
+      setCard({ ctx, id })
+    },
+    [ctx, revealRow],
+  )
 
   return (
     <section
@@ -473,6 +506,16 @@ export function TimelinePanel() {
           />
         </div>
       )}
+      {loaded && strip.length > 1 && (
+        <TimelineScrubber
+          docId={docId}
+          versions={strip}
+          selectedId={selected}
+          summaryOf={summaryOf}
+          onPeek={onScrubPeek}
+          onPick={onScrubPick}
+        />
+      )}
       {budget?.namedOver && (
         // 命名节点超出字节上限：**不删**，照实说，请用户自己删（ADR 0101）
         <Notice tone="warn" role="alert" data-timeline-budget className="mx-3 mb-2">
@@ -491,7 +534,7 @@ export function TimelinePanel() {
         </Notice>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {!loaded ? (
           // 这个上下文的列表还没到（或第一次就失败了：错误在下面）——不是「没有节点」
           !loadError && (
@@ -520,6 +563,7 @@ export function TimelinePanel() {
                     meta={v}
                     all={versions}
                     selected={v.id === selected}
+                    peeking={v.id === peekId}
                     cardOpen={card?.ctx === ctx && card.id === v.id}
                     onCardOpenChange={(on) =>
                       setCard((c) => (on ? { ctx, id: v.id } : c?.ctx === ctx && c.id === v.id ? null : c))
@@ -614,6 +658,7 @@ function TimelineRow({
   meta: v,
   all,
   selected,
+  peeking = false,
   renaming,
   showCanvas,
   cardOpen,
@@ -630,6 +675,8 @@ function TimelineRow({
   meta: LayoutVersionMeta
   all: LayoutVersionMeta[]
   selected: boolean
+  /** 竖线条正划过这一版（只是看）：与悬停同一档底色 */
+  peeking?: boolean
   renaming: boolean
   showCanvas: boolean
   /** 对比小卡片开着：单击行弹出，Esc / 点外面 / 取消收起 */
@@ -704,7 +751,7 @@ function TimelineRow({
         {...menu.rowProps}
         className={cn(
           'group flex items-start gap-1 rounded-md pr-1.5',
-          selected ? 'bg-selected' : 'hover:bg-surface-hover',
+          selected ? 'bg-selected' : peeking ? 'bg-surface-hover' : 'hover:bg-surface-hover',
         )}
       >
         <Popover
@@ -893,6 +940,10 @@ function CompareCard({
   const [failed, setFailed] = useState<string | null>(null)
   const [approximate, setApproximate] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  // 「那一刻」按 overrides 的图还没出好：先垫拍节点时存好的缩略图，出好了再揭开
+  // （出好之前 `SnapshotPanel` 画的是磁盘素材，不是这一版的样子）
+  const [momentPending, setMomentPending] = useState(true)
+  const hasThumb = !!meta.thumb || !!meta.sketch
   useEffect(() => {
     let live = true
     fetchVersionDoc(docId, meta.id)
@@ -904,19 +955,45 @@ function CompareCard({
   }, [docId, meta.id])
   // 浮层 p-2 + 灰底 p-2 + 两格间距
   const half = (CARD_W - 16 - 16 - 12) / 2
-  const frame = (d: FigureDocument, caption: string, which: 'moment' | 'current') => (
-    <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
-      <div className="relative" style={{ width: cardFrameWidth(d.page, half, CARD_FRAME_MAX_H) }} data-timeline-card-box>
-        <LayoutSnapshot
-          doc={d}
-          renderOverrides
-          displayWidth={cardFrameWidth(d.page, half, CARD_FRAME_MAX_H)}
-          onApproximate={which === 'moment' ? setApproximate : undefined}
-        />
-      </div>
-      <figcaption className="type-caption">{caption}</figcaption>
-    </figure>
-  )
+  const frame = (d: FigureDocument | null, caption: string, which: 'moment' | 'current') => {
+    const page = d?.page ?? meta.sketch?.page ?? meta.page ?? currentDoc.page
+    const width = cardFrameWidth(page, half, CARD_FRAME_MAX_H)
+    const placeholder = which === 'moment' && hasThumb && (!d || momentPending)
+    return (
+      <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
+        <div className="relative" style={{ width }} data-timeline-card-box>
+          {d ? (
+            <LayoutSnapshot
+              doc={d}
+              renderOverrides
+              displayWidth={width}
+              onApproximate={which === 'moment' ? setApproximate : undefined}
+              onPending={which === 'moment' ? setMomentPending : undefined}
+            />
+          ) : (
+            <div className="w-full rounded-xs border border-border bg-paper" style={{ aspectRatio: `${page.w} / ${page.h}` }} />
+          )}
+          {placeholder && (
+            <div className="absolute inset-0" data-timeline-card-placeholder>
+              {meta.thumb ? (
+                <img
+                  src={versionThumbUrl(docId, meta)}
+                  alt=""
+                  className="size-full rounded-xs border border-border bg-paper object-contain"
+                />
+              ) : (
+                meta.sketch && (
+                  <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} className="size-full" />
+                )
+              )}
+              <Spinner size={ICON_SIZE.xs} className="absolute bottom-1 right-1 text-ink-3" />
+            </div>
+          )}
+        </div>
+        <figcaption className="type-caption">{caption}</figcaption>
+      </figure>
+    )
+  }
   return (
     <div className="flex flex-col gap-2" data-timeline-card={meta.id}>
       <div className="relative flex min-h-24 items-start justify-between gap-3 rounded-md bg-canvas p-2">
@@ -924,7 +1001,7 @@ function CompareCard({
           <p className="p-2 text-sm text-danger" data-timeline-card-error>
             {failed}
           </p>
-        ) : doc ? (
+        ) : doc || hasThumb ? (
           <>
             {frame(doc, vd('sideMoment'), 'moment')}
             {frame(currentDoc, vd('sideCurrent'), 'current')}
@@ -1435,6 +1512,7 @@ export function LayoutSnapshot({
   outline = false,
   renderOverrides = false,
   onApproximate,
+  onPending,
   displayWidth,
 }: {
   doc: FigureDocument
@@ -1453,8 +1531,25 @@ export function LayoutSnapshot({
   renderOverrides?: boolean
   /** 有面板的图内修改渲染不出来 —— 调用方据此标注「近似预览」 */
   onApproximate?: (approximate: boolean) => void
+  /** 还有面板按 overrides 的图没出好（`renderOverrides` 时才有意义） */
+  onPending?: (pending: boolean) => void
 }) {
   const assets = useAssetStore((s) => s.byId)
+  const loadingPanels = useRef(new Set<string>())
+  const onLoading = useCallback(
+    (id: string, loading: boolean) => {
+      const set = loadingPanels.current
+      const had = set.size > 0
+      if (loading) set.add(id)
+      else set.delete(id)
+      if (had !== set.size > 0) onPending?.(set.size > 0)
+    },
+    [onPending],
+  )
+  // 子面板的 effect 先于这里跑：一张要出图的面板都没有时，这里报一次「已就绪」
+  useEffect(() => {
+    onPending?.(loadingPanels.current.size > 0)
+  }, [doc, onPending])
   const { w: pw, h: ph } = doc.page
   return (
     <div
@@ -1493,6 +1588,7 @@ export function LayoutSnapshot({
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
                 onApproximate={onApproximate}
+                onLoading={onPending ? onLoading : undefined}
                 bucket={
                   displayWidth ? snapshotBucket(o.w, pw, displayWidth, window.devicePixelRatio || 1) : 200
                 }
@@ -1539,6 +1635,7 @@ function SnapshotPanel({
   mtime,
   renderOverrides,
   onApproximate,
+  onLoading,
   bucket,
 }: {
   panel: PanelObject
@@ -1546,20 +1643,30 @@ function SnapshotPanel({
   mtime?: number
   renderOverrides: boolean
   onApproximate?: (approximate: boolean) => void
+  /** 这张面板按 overrides 的图还在出（出好之前画的是磁盘素材，不是这一版的样子） */
+  onLoading?: (id: string, loading: boolean) => void
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
+  const wantsVariant = renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
     bucket,
-    renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel)),
+    wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)
   }, [variant.approximate, renderOverrides, onApproximate])
+  // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
+  const pending = wantsVariant && !variant.url && !variant.approximate
+  useEffect(() => {
+    if (!onLoading) return
+    onLoading(panel.id, pending)
+    return () => onLoading(panel.id, false)
+  }, [panel.id, pending, onLoading])
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
