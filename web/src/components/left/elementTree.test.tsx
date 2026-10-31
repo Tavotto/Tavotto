@@ -218,17 +218,6 @@ describe('文案与计数', () => {
   })
 })
 
-describe('结构列表的计数也带单位（T07）', () => {
-  it('对象数说的是「对象」，与元素数不会看混', async () => {
-    useUiStore.setState({ leftTab: 'outline' })
-    await mount()
-    expect(heading()).toContain(t('layerTree.count', { ns: 'workspace', count: 1 }))
-    expect(t('layerTree.count', { ns: 'workspace', count: 1 })).not.toBe(
-      t('elementTree.count', { ns: 'workspace', count: 1 }),
-    )
-  })
-})
-
 /**
  * 键盘可连续浏览父子层级（审计 T08 验收后半句）。树是 `role="tree"` +
  * `role="treeitem"`，焦点靠 roving tabindex 走，不靠 Tab 一格一格穿。

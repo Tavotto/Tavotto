@@ -357,7 +357,6 @@
     "showObjects": "显示 {{count}} 个对象"
   },
   "layerTree": {
-    "count_other": "{{count}} 个对象",
     "collapseGroup": "折叠组",
     "emptyTitle": "画布上还没有对象",
     "expandGroup": "展开组",

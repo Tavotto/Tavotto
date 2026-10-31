@@ -40,7 +40,6 @@ export function LeftPanel({
   const width = useUiStore((s) => s.leftWidth)
   const pinned = useUiStore(isLeftPinned)
   const wide = useUiStore((s) => s.layout === 'wide')
-  const objectCount = useDocumentStore((s) => s.doc.objects.length)
   // 标题行的两个槽（`DrawerHeader`）：节点进 state，抽屉在下一帧把自己的动作 portal 进来
   const [metaSlot, setMetaSlot] = useState<HTMLElement | null>(null)
   const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null)
@@ -80,9 +79,6 @@ export function LeftPanel({
           「图 3」分区标题还小一号，层级倒挂（左栏审计 L01） */}
       <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
         <h2 className="type-section shrink-0">{t(`rail.${tab}`)}</h2>
-        {tab === 'outline' && objectCount > 0 && (
-          <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
-        )}
         {tab === 'elements' && <ElementCount />}
         {/* meta 槽：抽屉自己的计数 / 范围（问题面板的「当前图 13 ▾」胶囊，审计 §9.4：范围并入标题行） */}
         <span ref={setMetaSlot} data-drawer-meta className="flex min-w-0 items-center gap-1.5 empty:hidden" />
