@@ -660,7 +660,7 @@ describe('对话框开着时素材没了', () => {
 describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () => {
   it('有 error 时导出照样可点，没有确认勾选框也没有警告句；未处理的项自动写进样式检查报告', async () => {
     await setup(7.5) // 7.5pt = 撞绝对下限 → error
-    expect(text()).toContain('阻断')
+    expect(text()).toContain('要改')
 
     // 知情确认框整个删掉了；导出永远可点
     expect(confirmBox(), '确认勾选框已删除').toBeNull()
@@ -668,7 +668,7 @@ describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () =
     expect(text(), '不出现任何警告句').not.toContain('投稿可能被退回')
     expect(document.body.querySelector('[data-export-fix]')).toBeNull()
     expect(document.body.querySelector('[data-export-hint]')).toBeNull()
-    expect(errorHint()?.textContent).toBe('1 阻断')
+    expect(errorHint()?.textContent).toBe('1 项要改')
 
     await click(button('开始导出')!)
 
@@ -734,7 +734,7 @@ describe('未处理的项随每次导出自动记录', () => {
       runValidation()
       await new Promise<void>((r) => setTimeout(r, 0))
     })
-    expect(errorHint()?.textContent).toMatch(/^[2-9] 阻断/)
+    expect(errorHint()?.textContent).toMatch(/^[2-9] 项要改/)
     await click(button('再次导出')!)
     expect(exportBodies).toHaveLength(3)
     const second = exportBodies[2].style_check_report as { checks: unknown[]; forced: boolean }
@@ -1416,7 +1416,7 @@ describe('检查摘要只给数量，完整清单在问题面板', () => {
   it('摘要里有计数与入口，不列第二套清单', async () => {
     // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn
     await setup(9, { w: 80, h: 40 }, 40)
-    expect(text()).toContain('1 警告')
+    expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')   // 明细归问题面板
     const open = button('在问题面板中查看')!
     await click(open)
@@ -2008,8 +2008,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
 
     await click(radios()[1])
-    expect(text()).toMatch(/\d+ 阻断/)
-    expect(text()).toContain('1 警告')
+    expect(text()).toMatch(/\d+ 项要改/)
+    expect(text()).toContain('1 项留意')
     expect(text()).toContain('查整个画布「')
     expect(errorHint(), '画布范围有阻断：计数芯片').toBeTruthy()
   })
@@ -2054,8 +2054,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
         .issues.filter((i) => i.severity === 'error' && i.objectRef.objectId === id).length
     expect(errorsOn('p1')).toBeGreaterThan(0)
     expect(errorsOn('p2'), '夹具里另一张图也得有阻断项，否则这条什么都没证明').toBeGreaterThan(0)
-    expect(text()).toContain(`${errorsOn('p1')} 阻断`)
-    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 阻断`)
+    expect(text()).toContain(`${errorsOn('p1')} 项要改`)
+    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 项要改`)
     expect(errorHint(), '计数芯片在，但不拦导出').toBeTruthy()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
@@ -2109,7 +2109,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     expect(document.body.querySelector('[data-export-target]')!.textContent).toContain('Fig9')
     expect(checkScope()).toBe('「Fig9」不在画布上，这次导出不做规范检查')
     expect(document.body.querySelector('[data-export-check-ok]')).toBeNull()
-    expect(text()).not.toMatch(/\d+ 阻断/)
+    expect(text()).not.toMatch(/\d+ 项要改/)
     // 没查成：不拦导出、也没有警告句，仍记进报告的 checkFailed 档
     expect(document.body.querySelector('[data-export-hint]')).toBeNull()
     expect(errorHint()).toBeNull()
@@ -2132,7 +2132,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     // 素材库里没上画布的 Fig9 不在缩略图条里
     expect(figureOptions().map((o) => o.textContent)).toEqual(['Fig1'])
     expect(checkScope()).not.toContain('不在画布上')
-    expect(text()).toMatch(/\d+ 阻断/)
+    expect(text()).toMatch(/\d+ 项要改/)
     expect(errorHint(), '画布阻断项照常给计数芯片，但不拦').toBeTruthy()
   })
 })
@@ -2158,7 +2158,7 @@ describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
   })
 
-  it('计数芯片来自真实检查结果：阻断 / 警告带色点，建议与无法核验永远是灰；点芯片带着这一档去问题面板', async () => {
+  it('计数芯片来自真实检查结果：要改 / 留意带色点，建议与无法核验永远是灰；点芯片带着这一档去问题面板', async () => {
     await stage({
       panels: [panel],
       renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) },
@@ -2176,16 +2176,16 @@ describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
       return m
     }, {})
     const chip = (tone: string) => document.body.querySelector<HTMLElement>(`[data-count-chip="${tone}"]`)
-    expect(chip('danger')!.textContent).toBe(`${counts.error} 阻断`)
-    expect(chip('warn')!.textContent).toBe(`${counts.warn} 警告`)
+    expect(chip('danger')!.textContent).toBe(`${counts.error} 项要改`)
+    expect(chip('warn')!.textContent).toBe(`${counts.warn} 项留意`)
     // 建议 / 无法核验只会出现在 quiet 档（有才出现），数字与检查结果一致
     for (const el of document.body.querySelectorAll<HTMLElement>('[data-count-chip="quiet"]')) {
       const n = Number(el.textContent!.match(/\d+/)![0])
       expect([counts.suggestion, counts.not_verifiable]).toContain(n)
     }
     expect(document.body.querySelectorAll('[data-count-chip="danger"]')).toHaveLength(1)
-    // 每颗芯片的档由它的名字决定：只有「阻断」是 danger、「警告」是 warn，其余（建议 / 无法核验）一律 quiet
-    const toneOf: Record<string, string> = { 阻断: 'danger', 警告: 'warn', 建议: 'quiet', 无法核验: 'quiet' }
+    // 每颗芯片的档由它的名字决定：只有「项要改」是 danger、「项留意」是 warn，其余（建议 / 无法核验）一律 quiet
+    const toneOf: Record<string, string> = { 项要改: 'danger', 项留意: 'warn', 条建议: 'quiet', 项无法核验: 'quiet' }
     const all = [...document.body.querySelectorAll<HTMLElement>('[data-count-chip]')]
     expect(all.length).toBeGreaterThanOrEqual(2)
     for (const el of all) {
@@ -2307,7 +2307,7 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
   }
   const danger = () => document.body.querySelector<HTMLElement>('[data-count-chip="danger"]')
 
-  it('点「阻断」芯片：面板的当前图 = 导出的那张，范围「当前图」，筛选只留阻断', async () => {
+  it('点「要改」芯片：面板的当前图 = 导出的那张，范围「当前图」，筛选只留阻断', async () => {
     await twoWithErrorOnP2()
     expect(danger(), 'p2 有阻断项，应有芯片').not.toBeNull()
     await click(danger()!)
@@ -2324,7 +2324,7 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
     await mountDialogs()
     await openDialog()
     const active = useDocumentStore.getState().activeCanvasId
-    expect(text()).toMatch(/\d+ 阻断/)
+    expect(text()).toMatch(/\d+ 项要改/)
     // 另一张画布上也有一条阻断项（克隆 A 的一条、换画布 id）：整份排版里是两张画布的问题
     await act(async () => {
       const cur = useValidationStore.getState().issues

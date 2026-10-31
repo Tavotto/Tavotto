@@ -63,7 +63,7 @@ test('导出检查：计数芯片只在圆点上有色，没有逐条阻断清�
   const danger = dialog.locator('[data-count-chip="danger"]')
   await expect(danger).toHaveCount(1, { timeout: 60_000 })
   const lang = await page.locator('html').getAttribute('lang')
-  await expect(danger).toContainText(lang === 'en-US' ? 'Blocking' : '阻断')
+  await expect(danger).toContainText(lang === 'en-US' ? 'to fix' : '项要改')
   const n = Number((await danger.textContent())!.match(/\d+/)![0])
   expect(n, '两个子图各一条字号阻断').toBeGreaterThanOrEqual(2)
 
