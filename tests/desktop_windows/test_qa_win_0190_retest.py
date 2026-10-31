@@ -453,16 +453,16 @@ def _export_once(d, name: str, formats: set[str]) -> Path:
     return export_dir
 
 
-def _pdf_text_and_render(path: Path, dpi: int = 100):
-    try:
-        import pymupdf
-    except ImportError:  # 旧名
-        import fitz as pymupdf
-    doc = pymupdf.open(str(path))
+def _pdf_text_and_render(path: Path, scale: float = 1.4):
+    """第一页的文字与渲染（pypdfium2：产品自己的硬依赖，Lab venv 一定有）。"""
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(path))
     try:
         page = doc[0]
-        pix = page.get_pixmap(dpi=dpi)
-        return page.get_text(), pix.width, pix.height, bytes(pix.samples)
+        text = page.get_textpage().get_text_range()
+        img = page.render(scale=scale).to_pil().convert("RGB")
+        return text, img.width, img.height, img.tobytes()
     finally:
         doc.close()
 
