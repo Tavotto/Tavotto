@@ -260,19 +260,30 @@ function rowLabel(el: ManifestElement): string {
  * `chrome`：`drawer`（缺省，坐在 `LeftPanel` 里：标题行在上面，搜索行只留下边距）/ `bare`（别处借用，
  * 如 playground 的侧栏：上面没有标题行，搜索行四周自己留边）。2026-10-07 设计审计 §10.3。
  */
-export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' } = {}) {
+/** 目标面板：正在图内编辑的优先，其次画布上选中的可参数化面板。元素树自己与「大纲」挂载点共用这一个判据 */
+export function useElementTargetPanel(): PanelObject | null {
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedIds = useSelectionStore((s) => s.ids)
   const objects = useDocumentStore((s) => s.doc.objects)
-
-  // 目标面板：正在图内编辑的优先，其次画布上选中的 可参数化面板
-  const panel = useMemo(() => {
+  return useMemo(() => {
     const byId = (id: string | null) => {
       const o = id ? objects.find((x) => x.id === id) : undefined
       return o?.type === 'panel' && o.script ? o : null
     }
     return byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
   }, [objects, elementPanelId, selectedIds])
+}
+
+export function ElementTree({
+  chrome = 'drawer',
+  baseDepth = 0,
+}: {
+  /** `nested`：坐在「大纲」里某一张图的行下面（审计 A3）——不自己滚动，行缩进 `baseDepth` 层 */
+  chrome?: 'drawer' | 'bare' | 'nested'
+  baseDepth?: number
+} = {}) {
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const panel = useElementTargetPanel()
 
   const manifest = usePanelDisplayManifest(panel)
   const render = usePanelRender(panel)
@@ -318,7 +329,7 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
     return <UnbuiltTree panel={panel} rendering={rendering} />
   }
 
-  return <TreeView key={panel.id} panel={panel} manifest={manifest} chrome={chrome} />
+  return <TreeView key={panel.id} panel={panel} manifest={manifest} chrome={chrome} baseDepth={baseDepth} />
 }
 
 /** 计时只更新空态叶子；已经有元素的树不订阅进度或每秒重画。 */
@@ -359,10 +370,12 @@ function TreeView({
   panel,
   manifest,
   chrome,
+  baseDepth,
 }: {
   panel: PanelObject
   manifest: Manifest
-  chrome: 'drawer' | 'bare'
+  chrome: 'drawer' | 'bare' | 'nested'
+  baseDepth: number
 }) {
   useTranslation('workspace')
   const selectedGids = useUiStore((s) => s.selectedGids)
@@ -530,7 +543,7 @@ function TreeView({
                 label={et(node.cluster.labelKey)}
                 icon={clusterIcon(node.cluster.key)}
                 count={node.children.length}
-                depth={depth}
+                depth={depth + baseDepth}
                 pos={pos}
                 size={size}
                 expanded={isOpen(node, key)}
@@ -556,7 +569,7 @@ function TreeView({
                 readonly={false}
                 hidden={false}
                 locked={false}
-                depth={depth}
+                depth={depth + baseDepth}
                 pos={pos}
                 size={size}
                 selected={selectedGids.includes(g.gid)}
@@ -584,7 +597,7 @@ function TreeView({
               readonly={el.editable.length === 0}
               hidden={hiddenGids.has(el.gid) || isElementHidden(el)}
               locked={lockedGids.has(el.gid)}
-              depth={depth}
+              depth={depth + baseDepth}
               pos={pos}
               size={size}
               selected={selectedGids.includes(el.gid)}
@@ -627,11 +640,14 @@ function TreeView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className={chrome === 'nested' ? undefined : 'flex min-h-0 flex-1 flex-col'}>
       {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
           不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
       {(showSearch || isolated || manifest.modified_after_save) && (
-      <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
+      <div
+        className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : chrome === 'nested' ? 'py-1 pr-2' : 'px-3 pb-2')}
+        style={chrome === 'nested' ? { paddingLeft: treeIndent(baseDepth).paddingLeft + 20 } : undefined}
+      >
         {showSearch && (
         <SearchInput
           value={query}
@@ -681,7 +697,7 @@ function TreeView({
         data-tree="elements"
         aria-label={et('listLabel')}
         aria-multiselectable
-        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+        className={chrome === 'nested' ? undefined : 'min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1'}
       >
         {rows.length === 0 && (
           <li>

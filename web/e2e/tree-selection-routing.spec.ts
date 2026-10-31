@@ -30,7 +30,7 @@ const line = 'axes_0.lines_0'
 const scatter = 'axes_0.scatter_0'
 const title = 'axes_0.title'
 const row = (page: Page, gid: string) => page.locator(`[data-el="${gid}"]`)
-const rail = (page: Page) => page.locator('[data-rail="elements"]')
+const rail = (page: Page) => page.locator('[data-rail="outline"]')
 
 async function openTree(page: Page) {
   if (await rail(page).getAttribute('aria-expanded') !== 'true') {

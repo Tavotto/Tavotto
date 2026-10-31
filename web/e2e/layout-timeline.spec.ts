@@ -250,9 +250,9 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await placeFigureAndBack(page)
   await addText(page, '甲版标注', 420, 240)
 
-  // ── 顶栏时钟钮打开时间线；等第一个自动节点 ──────────────────────────
-  const clock = await only(page.locator('[data-timeline-button]'))
-  await clock.click()
+  // ── 右栏「时间线」页签打开时间线（顶栏时钟钮已并入，审计 A2）；等第一个自动节点 ──
+  await expect(page.locator('[data-timeline-button]')).toHaveCount(0)
+  await (await only(page.locator('[data-inspector-tab="timeline"]'))).click()
   const drawer = await only(page.locator('[data-timeline-panel]'))
   await expect(drawer).toBeVisible()
   const nodes = drawer.locator('[data-timeline-node]')
@@ -260,7 +260,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(drawer.locator('[data-timeline-kind="auto"]')).not.toHaveCount(0)
 
   // ── ⌥⌘S 命名「投稿前」：就地小框，不打开抽屉 ──────────────────────
-  await clock.click() // 先收起抽屉：命名不该依赖它先开着
+  await (await only(page.locator('[data-inspector-tab="properties"]'))).click() // 先收起时间线：命名不该依赖它先开着
   await expect(drawer).toHaveCount(0)
   await page.keyboard.press('ControlOrMeta+Alt+S')
   const quick = await only(page.locator('[data-timeline-quick-name-input]'))
@@ -312,7 +312,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   const leftOpen = page.locator('[data-rail][aria-expanded="true"]')
   const inspectorClose = page.locator('[data-inspector-close]')
   // 只开左栏：收起属性栏
-  if ((await leftOpen.count()) === 0) await (await only(page.locator('[data-rail="elements"]'))).click()
+  if ((await leftOpen.count()) === 0) await (await only(page.locator('[data-rail="outline"]'))).click()
   await expect(leftOpen.first()).toBeVisible()
   if ((await inspectorClose.count()) > 0) await inspectorClose.click()
   await expect(inspectorClose).toHaveCount(0)
@@ -325,7 +325,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(leftOpen).toHaveCount(0)
   await expectCentered()
   // 抽屉里的按钮照旧：点开展开，Esc 只收输入
-  await clock.click()
+  await page.locator('[data-inspector-tab="timeline"]').click()
   await expect(drawer).toBeVisible()
   await (await only(drawer.locator('[data-timeline-name-open]'))).click()
   const again = await only(drawer.locator('[data-timeline-name-input]'))
@@ -368,7 +368,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-named-view.png') })
 
   // ── 继续改：再加一段文字 ───────────────────────────────────────────
-  await clock.click() // 收起抽屉，腾出画布
+  await page.locator('[data-inspector-tab="properties"]').click() // 收起时间线，腾出画布
   await expect(drawer).toHaveCount(0)
   await addText(page, '乙版标注', 420, 320)
   await expect(canvasText(page, '甲版标注')).toBeVisible()

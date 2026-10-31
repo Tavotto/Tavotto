@@ -276,7 +276,7 @@ test(
   const pickFigure = page.getByRole('button', { name: '选中一张可编辑的图' })
   const tree = page.locator('[role="tree"]')
   if (!(await pickFigure.isVisible()) && !(await tree.isVisible())) {
-    await page.locator('[data-rail="elements"]').click()
+    await page.locator('[data-rail="outline"]').click()
   }
   if (await pickFigure.isVisible()) await pickFigure.click()
   await expect(tree).toBeVisible({ timeout: 30_000 })

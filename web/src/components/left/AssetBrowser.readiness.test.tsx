@@ -23,7 +23,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   }),
 }))
 
-import type { PanelCapability, PanelInfo, ReadinessStatus } from '@/lib/api'
+import type { PanelCapability, PanelInfo, ReadinessReport, ReadinessStatus, ReadinessSummary } from '@/lib/api'
 import { AssetBrowser } from '@/components/left/AssetBrowser'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
@@ -261,5 +261,53 @@ describe('卡片与页脚（2026-10-07 设计审计 §5 / §10.3）', () => {
     const action = cardOf('A.pdf').querySelector<HTMLElement>('[data-card-add]')!
     expect(action.className).toContain('cursor-default')
     expect(cardOf('A.pdf').className).toContain('cursor-grab')
+  })
+})
+
+describe('素材抽屉顶部的接入状态一行（2026-10 审计 A3：原左轨「状态」弹窗入口并进这里）', () => {
+  const report = (summary: Partial<ReadinessSummary>) =>
+    ({
+      project_id: 'pj',
+      fingerprint: 'fp',
+      generated_at: 0,
+      summary: { total: 0, editable: 0, layout_only: 0, auto_linkable: 0, needs_probe: 0, conflict: 0, source_missing: 0, ...summary },
+      panels: [],
+      conflicts: null,
+      project: { writable: true, registry_valid: true, scan_ok: true, can_rescan: true },
+      issues: [],
+    }) as ReadinessReport
+  const row = () => host.querySelector<HTMLElement>('[data-asset-readiness]')
+
+  it('全都可编辑：一句话「N 张图已就绪」，点它打开接入中心', async () => {
+    useProjectReadinessStore.setState({ report: report({ total: 3, editable: 3 }) })
+    await mount([panel('A.pdf', { script: 'a.py', capability: cap('editable') })])
+    expect(row()?.dataset.assetReadiness).toBe('ok')
+    expect(row()?.textContent).toContain('3 张图已就绪')
+    await act(async () => row()!.click())
+    expect(useUiStore.getState().registryOpen).toBe(true)
+  })
+
+  it('有待连接的：说「N 张待连接」，不是已就绪', async () => {
+    useProjectReadinessStore.setState({ report: report({ total: 3, editable: 1, auto_linkable: 2 }) })
+    await mount([panel('A.pdf')])
+    expect(row()?.dataset.assetReadiness).toBe('pending')
+    expect(row()?.textContent).toContain('2 张待连接')
+  })
+
+  it('只有仅版面的：说「N 张仅版面」，不当警告', async () => {
+    useProjectReadinessStore.setState({ report: report({ total: 2, editable: 1, layout_only: 1 }) })
+    await mount([panel('A.pdf')])
+    expect(row()?.dataset.assetReadiness).toBe('layout-only')
+    expect(row()?.textContent).toContain('1 张仅版面')
+  })
+
+  it('报告没到、或项目里没有图：不出现', async () => {
+    await mount([panel('A.pdf')])
+    expect(row()).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    useProjectReadinessStore.setState({ report: report({ total: 0 }) })
+    await mount([])
+    expect(row()).toBeNull()
   })
 })

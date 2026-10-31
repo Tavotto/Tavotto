@@ -19,7 +19,7 @@ import { literal, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { TREE_INDENT } from '@/components/ui/TreeRow'
 import type { Manifest } from '@/lib/api'
-import { LeftPanel } from './LeftPanel'
+import { ElementTree } from './ElementTree'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -146,7 +146,7 @@ async function mount(m: Manifest) {
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <LeftPanel />
+        <ElementTree />
       </TooltipProvider>,
     )
   })
@@ -178,7 +178,7 @@ const directChildren = (key: string) => subtreeOf(key).filter((g) => depthOf(g) 
 beforeEach(async () => {
   document.body.innerHTML = ''
   localStorage.clear()
-  useUiStore.setState({ leftTab: 'elements', selectedGids: [] })
+  useUiStore.setState({ leftTab: 'outline', selectedGids: [] })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_eltree_groups')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.objects = [panel as CanvasObject]

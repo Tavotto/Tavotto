@@ -34,7 +34,7 @@ beforeEach(() => {
   useProjectStore.setState({ phase: 'open', project: { open: true, id: 'p_progress' } })
   useAssetStore.setState({ byId: {}, panels: [], loaded: true })
   useSelectionStore.getState().set([panel.id])
-  useUiStore.setState({ selectedGids: [], elementPanelId: panel.id, leftTab: 'elements' })
+  useUiStore.setState({ selectedGids: [], elementPanelId: panel.id, leftTab: 'outline' })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)

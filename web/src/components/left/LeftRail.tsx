@@ -1,19 +1,8 @@
 import { Fragment, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  ClipboardList,
-  Folder,
-  Images,
-  Layers,
-  LayoutGrid,
-  ListChecks,
-  Paintbrush,
-  Settings,
-} from '@/components/ui/icons'
+import { Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
-import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { Tip } from '../ui/Tooltip'
@@ -24,6 +13,8 @@ import { Tip } from '../ui/Tooltip'
  * 「样式」（2026-09-24）排在「问题」前面：先看这张图长什么样，再看哪里不合规——
  * 两者互相跳转（样式里不合规的那一格直达问题清单里的那一条）。
  *
+ * 「状态」（项目接入状态）不再占轨道：它是一个点开是弹窗的项，并进素材抽屉顶部的一行（审计 A3）。
+ *
  * 「问题」（Prompt 11）**常驻**：它在没有问题时也要在——「一个问题都没有」
  * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。图标上的小点
  * 只在有**阻断项**时出现（2026-09-28 起不再挂红底数字；2026-10-07 起点是 danger 色——
@@ -31,12 +22,10 @@ import { Tip } from '../ui/Tooltip'
  * 图标是 `ListChecks`（检查清单），不再与「警告」同形（审计 §9.4）。
  */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
-  // 工作区（项目一级）排最上：范围从外到内——项目 → 画布 → 素材 → 图层 → 图内
+  // 工作区（项目一级）排最上：项目 → 素材 → 大纲（画布 → 图 → 图内元素一棵树，2026-10 审计 A3）
   { id: 'workspace', icon: Folder },
-  { id: 'canvases', icon: LayoutGrid },
   { id: 'assets', icon: Images },
-  { id: 'layers', icon: Layers },
-  { id: 'elements', icon: EditableFigureIcon },
+  { id: 'outline', icon: LayoutList },
   { id: 'style', icon: Paintbrush },
   { id: 'problems', icon: ListChecks },
 ]
@@ -55,7 +44,7 @@ const RAIL_IDLE = 'text-ink-2 hover:bg-surface-hover hover:text-ink'
 /** 选中：白底 + 1px border 轮廓（outline，几何不变）——不靠投影 */
 const RAIL_ACTIVE = 'bg-surface text-ink outline-1 -outline-offset-1 outline-border'
 
-/** 窗口窄于 `RAIL_ICON_ONLY` 时轨钮只留图标：1093×614 这类窗口里省出的竖向空间给 7 个入口 + 两个底部入口 */
+/** 窗口窄于 `RAIL_ICON_ONLY` 时轨钮只留图标：1093×614 这类窗口里省出的竖向空间给 5 个入口 + 设置 */
 function subscribeWidth(cb: () => void) {
   window.addEventListener('resize', cb)
   return () => window.removeEventListener('resize', cb)
@@ -143,35 +132,15 @@ export function LeftRail() {
         )
       })}
 
-      {/* 项目级入口与上面四个上下文分组：它开的是对话框不是抽屉，所以不进
-          ITEMS，也不参与「再点一次收起」那套语义。
-          **`data-rail` 照给**：这两颗在循环外单独写，2026-09-07 之前漏了这个属性，
-          于是三个 spec 只能退回按 `aria-label` 的中文文案找它们（#299 那一族的
-          同一个赌注在三处各下了一次）。id 与 rail 文案键的末段对齐。
-          （这里不写成完整的翻译调用形态：i18n 检查是按字面量扫的，注释里出现
-          一个带通配的 key 会被当成真的用到了，构建当场红。） */}
-      {/* 分区之间只靠留白（`mt-auto` 把这两颗推到底），不画分隔线（左栏审计 L17） */}
-      <Tip label={t('rail.readiness')} side="right">
-        <button
-          data-rail="readiness"
-          onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
-          aria-label={t('rail.readiness')}
-          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
-        >
-          <ClipboardList size={ICON_SIZE.md} />
-          {!iconOnly && (
-            <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
-              {t('rail.short.readiness')}
-            </span>
-          )}
-        </button>
-      </Tip>
+      {/* 设置开的是对话框不是抽屉，所以不进 ITEMS，也不参与「再点一次收起」那套语义。
+          `data-rail` 照给：e2e 与焦点救援按它找，不退回按 `aria-label` 的中文文案。
+          分区之间只靠留白（`mt-auto` 把它推到底），不画分隔线（左栏审计 L17） */}
       <Tip label={t('rail.settings')} side="right">
         <button
           data-rail="settings"
           onClick={() => useUiStore.getState().setSettingsOpen(true)}
           aria-label={t('rail.settings')}
-          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE)}
+          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
         >
           <Settings size={ICON_SIZE.md} />
           {!iconOnly && (
