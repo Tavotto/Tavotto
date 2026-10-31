@@ -939,8 +939,8 @@
       "warn": "Warning"
     },
     "severityLabel": "Issue severity",
-    "showRest_one": "Show {{count}} more",
-    "showRest_other": "Show {{count}} more",
+    "showRest_one": "{{count}} more",
+    "showRest_other": "{{count}} more",
     "subjectArrow": "Arrow",
     "subjectElement": "Figure element",
     "subjectObject": "Object",

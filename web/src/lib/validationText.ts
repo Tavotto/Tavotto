@@ -147,6 +147,20 @@ export function issueValues(issue: ValidationIssue): IssueValues {
 }
 
 /**
+ * 一组命中是否共用同一个要求（「线宽 → 0.75 pt」「≥ 8 pt」）。是：返回那个要求（行内写法），组头说一次，
+ * 对象行只剩当前值；否（要求因对象而异，或有的规则根本没有要求）：返回 null，每行各说各的「当前 → 要求」。
+ */
+export function sharedTarget(issues: readonly ValidationIssue[]): string | null {
+  let target: string | null = null
+  for (const issue of issues) {
+    const head = issueValues(issue).expectedHead
+    if (head == null || (target != null && head !== target)) return null
+    target = head
+  }
+  return target
+}
+
+/**
  * 「要求」那半句用哪个说法（审计 T41）。
  *
  * 边界的包含性**只有一个出处**：上面那张 `VALUES` 表里的 `cmp`，它照抄两侧

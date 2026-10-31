@@ -3930,7 +3930,7 @@ export default interface Resources {
         "warn": "警告"
       },
       "severityLabel": "问题严重程度",
-      "showRest_other": "显示其余 {{count}} 项",
+      "showRest_other": "还有 {{count}} 个",
       "subjectArrow": "箭头",
       "subjectElement": "图内元素",
       "subjectObject": "对象",
