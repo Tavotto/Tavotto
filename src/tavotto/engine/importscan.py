@@ -573,6 +573,11 @@ def _is_absolute_component(text: str) -> bool:
     return text.startswith(("/", "\\")) or bool(re.match(r"[A-Za-z]:", text))
 
 
+#: 能按名字动态改写模块命名空间的内置调用：出现任何一个，`_dir_consts` 整份不推断
+_NAMESPACE_WRITERS = frozenset(
+    {"globals", "vars", "locals", "exec", "eval", "setattr", "__import__"}
+)
+
 #: 模块层「只绑定一次」的名字 → (绑定行号, 值表达式)；`_dir_consts` 产出，`_dir_value` 只拿它解析目录表达式里的名字
 _DirConsts = dict[str, tuple[int, ast.expr]]
 
@@ -581,7 +586,7 @@ def _dir_consts(tree: ast.AST) -> _DirConsts:
     """`ROOT = Path(__file__).resolve().parent` 这类**模块层无条件**、整份文件里**只绑定这一次**的名字（反馈包 TVD-705N）。
 
     保守判：任何作用域里同名的再绑定（赋值 / 增量赋值 / for / with / except / import / def / class / match / del）都算一次，
-    出现 `global` / `nonlocal` 声明直接不认；只认 `tree.body` 顶层的单目标 `Name = <值>`（含带注解的）。值认不认得出
+    出现 `global` / `nonlocal` 声明直接不认；有星号导入或 `globals()` / `exec` 等动态改写（`_NAMESPACE_WRITERS`）整份不推断；只认 `tree.body` 顶层的单目标 `Name = <值>`（含带注解的）。值认不认得出
     由 `_dir_value` 在用到时再判。"""
     counts: dict[str, int] = {}
     banned: set[str] = set()
@@ -594,7 +599,15 @@ def _dir_consts(tree: ast.AST) -> _DirConsts:
             bump(node.id)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for a in node.names:
+                if a.name == "*":
+                    return {}  # 星号导入能悄悄改写任何名字（Codex #1582 P2）：整份不推断
                 bump(a.asname or a.name.split(".")[0])
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _NAMESPACE_WRITERS
+        ):
+            return {}  # `globals()[...] =` / `exec(...)` 之类按名字动态改写命名空间：同上
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bump(node.name)
         elif isinstance(node, ast.ExceptHandler) and node.name:

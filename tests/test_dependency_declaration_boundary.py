@@ -427,6 +427,10 @@ class TestLiteralDirThroughModuleName:
             "{call}\nROOT = Path(__file__).parent",
             "ROOT = Path(os.getcwd())\n{call}",
             "ROOT = Path(__file__).parent\nROOT /= 'x'\n{call}",
+            # 星号导入 / 动态命名空间改写能悄悄换掉 ROOT（Codex #1582 P2）
+            "ROOT = Path(__file__).parent\nfrom settings import *\n{call}",
+            "ROOT = Path(__file__).parent\nglobals()['ROOT'] = Path('/elsewhere')\n{call}",
+            'ROOT = Path(__file__).parent\nexec("ROOT = 1")\n{call}',
         ],
     )
     def test_rebound_or_non_literal_binding_ignored(self, tmp_path, body):
