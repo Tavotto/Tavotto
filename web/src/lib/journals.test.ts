@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
 import shipped from '@journals'
 import {
+  ADVISORY_PATHS,
   BUMPED_SEVERITY,
   COVERAGES,
   EXACT_ONLY_PATHS,
@@ -26,7 +27,13 @@ import {
   loadCatalog,
   validateCatalog,
 } from './journals'
-import { listProfiles, loadProfile, validateSpecShape } from './profile'
+import {
+  ADVISORY_ROLES,
+  derivePageColumns,
+  listProfiles,
+  loadProfile,
+  validateSpecShape,
+} from './profile'
 import { runSpec } from './preflight'
 
 interface Op {
@@ -45,6 +52,7 @@ const V = vectors as unknown as {
     override: unknown
     sources: unknown
     merged_fields: Record<string, unknown>
+    page_columns: unknown
   }>
   unknown_journal_code: string
   invalid: Array<{ name: string; code: string; ops: Op[] }>
@@ -115,6 +123,10 @@ describe('golden 向量（与 Python 同一份）', () => {
       bumped_severity: BUMPED_SEVERITY,
       kind_overrides: KIND_OVERRIDES,
       qualifier_direction: QUALIFIER_DIRECTION,
+      advisory_paths: ADVISORY_PATHS,
+      advisory_qualifiers: ['recommended', 'typical'],
+      advisory_check: 'font-size-recommended',
+      advisory_roles: [...ADVISORY_ROLES],
       error_codes: [...JOURNAL_ERROR_CODES],
     })
   })
@@ -130,6 +142,7 @@ describe('golden 向量（与 Python 同一份）', () => {
       expect(journalOverride(c.journal_id, cat)).toEqual(c.override)
       expect(journalSources(c.journal_id, cat)).toEqual(c.sources)
       const merged = journalProfile(c.journal_id, cat) as unknown as Record<string, unknown>
+      expect(derivePageColumns(merged as never)).toEqual(c.page_columns)
       for (const [path, want] of Object.entries(c.merged_fields)) {
         let node: unknown = merged
         for (const part of path.split('.')) node = (node as Record<string, unknown>)[part]
@@ -210,10 +223,34 @@ describe('折叠语义', () => {
       expect(over).not.toHaveProperty(gone)
     }
     const src = journalSources('fx-zeta', cat)
-    expect(src.min_effective_font_size_pt.affects).toBe('info')
+    expect(src.min_effective_font_size_pt.affects).toBe('advice')
     expect(src['font_family.latin_accepted'].affects).toBe('info')
     expect(src.max_font_size_pt.affects).toBe('info')
     expect(src.min_raster_dpi.affects).toBe('preflight')
+  })
+
+  it('期刊自有栏位：page_columns 为准，widths_mm 由 exact 栏位派生；没写则由 widths_mm 派生', () => {
+    const cat = fixture()
+    const three = journalOverride('fx-cols-inherit', cat)
+    expect(three.widths_mm).toEqual({ single: 57, double: 184 })
+    expect(three.page_columns?.map((c) => c.id)).toEqual(['col1', 'col2', 'col3'])
+    expect(journalOverride('fx-cols', cat).widths_mm).toEqual({ single: 90, double: null })
+    expect(derivePageColumns(loadProfile('lab-publication-v1')).map((c) => c.id)).toEqual([
+      'single',
+      'double',
+    ])
+    expect(derivePageColumns(loadProfile(JOURNAL_BASE_PROFILE_ID))).toEqual([])
+  })
+
+  it('建议性提示带期刊名与原话，不变成硬下限', () => {
+    const cat = fixture()
+    const over = journalOverride('fx-adv', cat)
+    expect(over).not.toHaveProperty('min_effective_font_size_pt')
+    const roles = Object.fromEntries((over.advisories ?? []).map((a) => [a.role, a]))
+    expect(roles.body_min.journal).toBe('Fixture Advice Press')
+    expect(roles.body_min.quote).toContain('FIXTURE 7 pt')
+    expect(roles.script_min.value_pt).toBe(6)
+    expect(journalProfile('fx-adv', cat).min_effective_font_size_pt).toBe(0)
   })
 
   it('栏宽 null 在 TS 求值器里同样表示没规定', () => {

@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from tavotto.engine import journals  # noqa: E402
+from tavotto.engine import journals, profiles  # noqa: E402
 
 OUT = ROOT / "tests" / "golden" / "journal_vectors.json"
 
@@ -101,6 +101,72 @@ def fixture_catalog() -> dict:
                 },
             },
             "fx-bare": {"label": "Fixture Bare"},
+            # 期刊自有栏位（Science 式 1 / 2 / 3 栏），不硬套单栏 / 双栏
+            "fx-cols": {
+                "label": "Fixture Columns Press",
+                "sources": {
+                    "s11": {
+                        "url": "https://example.invalid/fx-cols/figures",
+                        "kind": "html",
+                        "retrieved": "2000-04-04",
+                    }
+                },
+                "rules": {
+                    "widths_mm.single": {
+                        "value": 999,
+                        "src": "s11",
+                        "quote": "FIXTURE ignored: page_columns wins",
+                    },
+                    "page_columns": {
+                        "value": [
+                            {
+                                "id": "col1",
+                                "label": {"zh": "1 栏", "en": "1 column"},
+                                "width_mm": 57,
+                                "qualifier": "exact",
+                            },
+                            {
+                                "id": "col2",
+                                "label": {"zh": "2 栏", "en": "2 columns"},
+                                "width_mm": 121,
+                            },
+                            {
+                                "id": "col3",
+                                "label": {"zh": "3 栏", "en": "3 columns"},
+                                "width_mm": 184,
+                                "qualifier": "exact",
+                            },
+                        ],
+                        "src": "s11",
+                        "quote": "FIXTURE usually 5.7 cm, 12.1 cm or 18.4 cm",
+                    },
+                },
+            },
+            # 建议性提示：正文 7 pt（recommended）+ 上下标 6 pt，不是判据
+            "fx-adv-press": {
+                "label": "Fixture Advice Press",
+                "sources": {
+                    "s12": {
+                        "url": "https://example.invalid/fx-adv/sizing",
+                        "kind": "html",
+                        "retrieved": "2000-05-05",
+                    }
+                },
+                "rules": {
+                    "min_effective_font_size_pt": {
+                        "value": 7,
+                        "src": "s12",
+                        "quote": "FIXTURE 7 pt for normal text",
+                        "qualifier": "recommended",
+                    },
+                    "min_script_font_size_pt": {
+                        "value": 6,
+                        "src": "s12",
+                        "quote": "FIXTURE no smaller than 6 pt for subscripts",
+                        "qualifier": "min",
+                    },
+                },
+            },
         },
         "journals": {
             "fx-alpha": {
@@ -186,6 +252,58 @@ def fixture_catalog() -> dict:
                         "qualifier": "max",
                     },
                     "min_raster_dpi": {"value": 450, "src": "s7", "quote": "FIXTURE 450 dpi"},
+                },
+            },
+            "fx-cols": {
+                "label": "Fixture Columns",
+                "publisher": "fx-cols",
+                "sources": {
+                    "s13": {
+                        "url": "https://example.invalid/fx-cols/one",
+                        "kind": "html",
+                        "retrieved": "2000-06-06",
+                    }
+                },
+                "rules": {
+                    # 只有一档 exact + 一档 typical：double 为 null，typical 不参与判据
+                    "page_columns": {
+                        "value": [
+                            {
+                                "id": "narrow",
+                                "label": {"zh": "窄栏", "en": "Narrow"},
+                                "width_mm": 90,
+                            },
+                            {
+                                "id": "wide",
+                                "label": {"zh": "宽栏", "en": "Wide"},
+                                "width_mm": 150,
+                                "qualifier": "typical",
+                            },
+                        ],
+                        "src": "s13",
+                        "quote": "FIXTURE 9 cm; wide typically 15 cm",
+                    }
+                },
+            },
+            "fx-cols-inherit": {"label": "Fixture Columns Inherit", "publisher": "fx-cols"},
+            "fx-adv": {"label": "Fixture Advice", "publisher": "fx-adv-press"},
+            "fx-adv-own": {
+                "label": "Fixture Advice Own",
+                "publisher": "fx-bare",
+                "sources": {
+                    "s14": {
+                        "url": "https://example.invalid/fx-adv-own/sizing",
+                        "kind": "html",
+                        "retrieved": "2000-07-07",
+                    }
+                },
+                "rules": {
+                    "min_effective_font_size_pt": {
+                        "value": 5,
+                        "src": "s14",
+                        "quote": "FIXTURE about 7 pt, not smaller than 5",
+                        "qualifier": "typical",
+                    }
                 },
             },
             "fx-epsilon": {
@@ -340,6 +458,47 @@ def invalid_cases() -> list[dict]:
             "journal_source_invalid",
             _set([*_PUB, "sources", "s1", "journal"], "fx-alpha"),
         ),
+        (
+            "page-columns-duplicate-id",
+            "journal_merge_invalid",
+            _set(
+                ["journals", "fx-cols", "rules", "page_columns", "value", 1, "id"],
+                "narrow",
+            ),
+        ),
+        (
+            "page-columns-width-out-of-range",
+            "journal_merge_invalid",
+            _set(["publishers", "fx-cols", "rules", "page_columns", "value", 0, "width_mm"], 5),
+        ),
+        (
+            "page-columns-label-missing-en",
+            "journal_merge_invalid",
+            _del(["publishers", "fx-cols", "rules", "page_columns", "value", 0, "label", "en"]),
+        ),
+        (
+            "page-columns-bad-column-qualifier",
+            "journal_merge_invalid",
+            _set(
+                ["publishers", "fx-cols", "rules", "page_columns", "value", 0, "qualifier"],
+                "about",
+            ),
+        ),
+        (
+            "page-columns-rule-not-exact",
+            "journal_rule_qualifier_invalid",
+            _set(["publishers", "fx-cols", "rules", "page_columns", "qualifier"], "typical"),
+        ),
+        (
+            "script-font-value-type",
+            "journal_rule_value_type",
+            _set(["publishers", "fx-adv-press", "rules", "min_script_font_size_pt", "value"], "6"),
+        ),
+        (
+            "script-font-value-not-positive",
+            "journal_merge_invalid",
+            _set(["publishers", "fx-adv-press", "rules", "min_script_font_size_pt", "value"], 0),
+        ),
         ("catalog-rev-missing", "journal_catalog_schema", _del(["catalog_rev"])),
         ("catalog-rev-zero", "journal_catalog_schema", _set(["catalog_rev"], 0)),
         (
@@ -483,6 +642,7 @@ def build() -> dict:
                 "override": override,
                 "sources": sources,
                 "merged_fields": fields,
+                "page_columns": profiles.derive_page_columns(merged),
             }
         )
     return {
@@ -498,6 +658,10 @@ def build() -> dict:
             "bumped_severity": journals.BUMPED_SEVERITY,
             "kind_overrides": journals.KIND_OVERRIDES,
             "qualifier_direction": journals.QUALIFIER_DIRECTION,
+            "advisory_paths": journals.ADVISORY_PATHS,
+            "advisory_qualifiers": list(journals.ADVISORY_QUALIFIERS),
+            "advisory_check": journals.ADVISORY_CHECK,
+            "advisory_roles": list(profiles.ADVISORY_ROLES),
             "error_codes": list(journals.ERROR_CODES),
         },
         "catalog_rev": journals.catalog_rev(cat),

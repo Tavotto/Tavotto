@@ -95,6 +95,8 @@ order: 260
   来源 `coverage`（`single_journal_sample` 不得被出版社 rules 引用）；`journal_sources()` 返回 `rule_scope` + `source_scope` + `overrides` + `affects`。期刊填了值的检查按 `SEVERITY_BUMP` 从 suggestion 抬到 warn（只抬不降、显式优先）。
   闭集常量（`INFO_IDS` / `QUALIFIERS` / `STAGES` / `COVERAGES` / `EXACT_ONLY_PATHS` / `SEVERITY_BUMP` / `KIND_OVERRIDES` / 错误码）两侧逐项相同，随 golden 向量的 `constants` 一起比。
   链接安全：url/archive_url `https://`、anchor `#:~:text=`、retrieved ISO 日期；别名撞名 NFKC+小写。
+- **栏位与建议**（ADR 0154 §3b）：下游读栏位只读 `derive_page_columns`/`derivePageColumns`（`page_columns`，没写由 `widths_mm` 派生单栏 / 双栏）；`page-width` 命中任一 exact 栏位即过。
+  `recommended`/`typical` 的字号与 `min_script_font_size_pt` 折成 `advisories`，只产生 suggestion 级 `font-size-recommended`（带期刊名与原话），不是判据；`affects` 为 `advice`。两侧同源，向量见 `journal_vectors.json` 与 `preflight_vectors.json`（`journal-columns-*` / `journal-advice-*`）。
 - **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
   项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。
 

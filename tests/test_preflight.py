@@ -111,7 +111,12 @@ def test_every_check_id_has_a_registered_severity():
     """检查项忘了登记等级 = 用户以为它通过了。兜底是 warn，但不许靠兜底过日子。"""
     ids = _all_check_ids()
     p = profiles.load("lab-publication-v1")
-    missing = sorted(i for i in ids if i not in p["severity"])
+    # 只有从期刊库折叠出 `advisories` 的 profile 才会触发的检查（ADR 0154）：登记在期刊底
+    # journal-base-v1 上，不往 lab/free-form 里加——加了它们的内容就变了，已定稿项目会被提示「有新版」。
+    advisory_only = {"font-size-recommended"}
+    base = profiles.load("journal-base-v1")
+    assert all(base["severity"].get(i) == "suggestion" for i in advisory_only)
+    missing = sorted(i for i in ids - advisory_only if i not in p["severity"])
     assert not missing, f"这些检查项没在 lab-publication-v1 的 severity 表里登记: {missing}"
 
 

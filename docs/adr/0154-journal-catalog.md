@@ -71,6 +71,16 @@
   求值器不看 qualifier，所以「约 7 pt」「推荐 Helvetica」不能被钉成硬判据。不折的规则仍须 `src` / `quote`，出处卡照常显示。
 * **来源 `journal` 字段**：出版社 sources 里 `single_journal_sample` 的来源必须写明所属期刊 `journal`（且该期刊属于这个出版社），只有那一本期刊的 rules 能引用，别的期刊引用报 `journal_source_coverage`；`journal` 只能写在 `single_journal_sample` 来源上。
 * **类型检查补全**：底里为 null 的字段也检查类型（`KIND_OVERRIDES`：栏宽 number，`axis_policy.tick_direction / label_format / label_format_regex` string，`legend_policy.frame` boolean）。URL / anchor 用整串匹配（Python `fullmatch`，TS 无 m 标志的 `$`），尾部换行被拒。
+* **期刊自有栏位 `page_columns`（用户 2026-10-31 裁决）**：profile 与期刊 rules 可写有序数组 `[{id, label:{zh,en}, width_mm, qualifier}]`（`id` 唯一，宽度在 `PAGE_MM_MIN–MAX` 即 10–1000 mm 内，`qualifier` 同规则闭集），
+  用户切到 Science 时画布预设显示它自己的「2 栏 121 mm / 3 栏 184 mm」，不硬套单栏 / 双栏。下游**只读这一种形状**（`derive_page_columns` / `derivePageColumns`）：写了 `page_columns` 就用它，没写由 `widths_mm` 派生
+  「单栏 / 双栏」两档（label 走现有词表）。期刊写了 `page_columns` 时以它为准，折叠把 `widths_mm.single/double` 由 **exact** 栏位派生（最窄 = single、最宽 = double，只有一档时 double 为 null），保持现有求值器与 `columnOf` 兼容；
+  规则本身（`page_columns` 这条）qualifier 只收 exact，栏位各自带 qualifier，只有 exact 栏位参与判据。预检 `page-width`：页宽命中任一 exact 栏位即通过，提示列出全部栏位（带 label）。
+  画布 `pageColumns` / `resolvePageColumns` 已返回这一形状（id 为 string），属性栏预设按 label 显示；**切期刊时页宽跟着换的画布联动留给选择器 PR**。
+* **建议性提示（用户 2026-10-31 裁决）**：qualifier 为 `recommended` / `typical` 的字号数值不当硬判据，但要提示。新增规则路径 `min_script_font_size_pt`（上下标最小字号）与检查 id `font-size-recommended`（**suggestion** 级，只有从期刊折叠出 `advisories` 的 profile 才会出现）。
+  这两类规则（`min_script_font_size_pt` 任何 qualifier；`min_effective_font_size_pt` 的 recommended / typical）**不折进字段**，而折成 `advisories: [{check, role: body_min|script_min, value_pt, qualifier, journal, quote}]`（`journal` 是声明它的出版社 / 期刊名，`quote` 是原话）；
+  `journal_sources()` 里它们的 `affects` 是 `advice`。**求值器分不出上下标**，所以只进提示不进判据：有效字号低于正文建议值（没有就按上下标值）的文字都给一条提示，文案如「Elsevier 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号（原文：…）」。
+  `min` / `exact` 的正文最小字号仍是硬下限，照旧折进 `min_effective_font_size_pt`。
+* **科学通报「字高 7 pt」**按用户裁决按**字号**计（该条规则的 `derivation` 写「字高按字号计」，`mark` 保留原话「字高统一为7 pt」），数据进 PR 3。
 * **字段映射约定**（采集脚本与人工核对遵守）：期刊「最小字号」→ `min_effective_font_size_pt`（`absolute_min_font_size_pt` 保持 0，不另设）；「最大字号」→ `max_font_size_pt`；
   `min_raster_dpi` 取各图类里**最低**的一档（照片 / 半色调档，避免对线条图位图误报），按图类的值进 `info.dpi_by_kind`；预检分不出位图的图类，暂不承诺按图类判；
   **空数组 = 明确不限**（如 `line_widths_pt: []`），与「没写」（键不出现）不同；`font_family.latin_accepted` 只收真实字体名，「sans-serif」之类泛称进 `info.font_names_raw`；

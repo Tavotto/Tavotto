@@ -210,6 +210,7 @@
         "tolerance_mm": 0.5,
         "allow_custom": true
       },
+      "page_columns": [],
       "allowed_aspect_ratios": [],
       "aspect_tolerance": 0.04,
       "font_family": {
@@ -221,6 +222,8 @@
       "default_font_size_pt": 9.0,
       "min_effective_font_size_pt": 0.0,
       "absolute_min_font_size_pt": 0.0,
+      "min_script_font_size_pt": null,
+      "advisories": [],
       "max_font_size_pt": 72.0,
       "min_raster_dpi": 300,
       "preferred_formats": {
@@ -287,7 +290,8 @@
         "stale-render": "warn",
         "text-over-axes": "warn",
         "text-overlap": "warn",
-        "unapplied-override": "warn"
+        "unapplied-override": "warn",
+        "font-size-recommended": "suggestion"
       }
     }
   }

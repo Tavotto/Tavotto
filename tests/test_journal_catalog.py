@@ -187,13 +187,56 @@ def test_only_exact_or_direction_matching_rules_fold_into_the_override():
     for gone in ("min_effective_font_size_pt", "max_font_size_pt", "font_family"):
         assert gone not in over, gone
     src = journals.journal_sources("fx-zeta", cat)
-    for path in ("min_effective_font_size_pt", "font_family.latin_accepted", "max_font_size_pt"):
+    assert src["min_effective_font_size_pt"]["affects"] == "advice"  # typical → 只生成建议性提示
+    for path in ("font_family.latin_accepted", "max_font_size_pt"):
         assert src[path]["affects"] == "info", path
     assert src["min_raster_dpi"]["affects"] == "preflight"
     merged = journals.journal_profile("fx-zeta", cat)
     assert merged["min_effective_font_size_pt"] == 0  # typical 5 pt 没变成硬下限
     assert merged["font_family"]["latin_accepted"] == []
     assert merged["max_font_size_pt"] == 72
+
+
+def test_page_columns_win_and_derive_single_and_double():
+    """期刊自有栏位：page_columns 为准，widths_mm 由 exact 栏位派生（最窄 single、最宽 double）。"""
+    cat = _fixture()
+    over = journals.journal_override("fx-cols-inherit", cat)  # 出版社写了三档，期刊继承
+    assert over["widths_mm"] == {"single": 57, "double": 184}  # 121 栏在中间，不占 single/double
+    assert [c["id"] for c in over["page_columns"]] == ["col1", "col2", "col3"]
+    prof = journals.journal_profile("fx-cols-inherit", cat)
+    assert [c["width_mm"] for c in profiles.derive_page_columns(prof)] == [57, 121, 184]
+    assert prof["severity"]["page-width"] == "warn"  # 写了栏位 → 抬升
+
+
+def test_page_columns_one_exact_one_typical():
+    """期刊自己的 page_columns 盖过出版社的；只有一档 exact（另一档 typical 不参与判据）时 double 为 null，
+    出版社那条 widths_mm.single=999 被 page_columns 盖掉。"""
+    over = journals.journal_override("fx-cols", _fixture())
+    assert over["widths_mm"] == {"single": 90, "double": None}
+    assert [c["id"] for c in over["page_columns"]] == ["narrow", "wide"]
+
+
+def test_default_page_columns_are_derived_from_widths():
+    cols = profiles.derive_page_columns(profiles.load("lab-publication-v1"))
+    assert [(c["id"], c["label"]["zh"]) for c in cols] == [("single", "单栏"), ("double", "双栏")]
+    assert profiles.derive_page_columns(profiles.load(journals.BASE_PROFILE_ID)) == []
+
+
+def test_advisories_carry_journal_name_and_quote_but_never_become_a_floor():
+    cat = _fixture()
+    over = journals.journal_override("fx-adv", cat)
+    assert "min_effective_font_size_pt" not in over and "min_script_font_size_pt" not in over
+    roles = {a["role"]: a for a in over["advisories"]}
+    assert roles["body_min"]["value_pt"] == 7 and roles["script_min"]["value_pt"] == 6
+    assert roles["body_min"]["journal"] == "Fixture Advice Press"  # 出版社声明 → 出版社名
+    assert "FIXTURE 7 pt" in roles["body_min"]["quote"]
+    own = journals.journal_override("fx-adv-own", cat)["advisories"]
+    assert [a["journal"] for a in own] == ["Fixture Advice Own"]  # 期刊自己声明 → 期刊名
+    src = journals.journal_sources("fx-adv", cat)
+    assert {
+        src[p]["affects"] for p in ("min_effective_font_size_pt", "min_script_font_size_pt")
+    } == {"advice"}
+    assert journals.journal_profile("fx-adv", cat)["min_effective_font_size_pt"] == 0
 
 
 def test_unset_removes_the_publisher_rule_for_that_journal_only():
@@ -270,8 +313,12 @@ def test_env_override_points_at_another_catalog(tmp_path, monkeypatch):
     other.write_text(json.dumps(_fixture()), encoding="utf-8")
     monkeypatch.setenv(journals.JOURNALS_ENV, str(other))
     assert [j["journal_id"] for j in journals.list_journals()] == [
+        "fx-adv",
+        "fx-adv-own",
         "fx-alpha",
         "fx-beta",
+        "fx-cols",
+        "fx-cols-inherit",
         "fx-delta",
         "fx-epsilon",
         "fx-gamma",

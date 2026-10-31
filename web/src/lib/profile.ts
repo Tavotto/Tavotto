@@ -10,6 +10,7 @@
  * 这里只做：类型、取用、journal 覆盖合并、等级查询。检查逻辑在 `preflight.ts`。
  */
 import doc from '@profiles'
+import { PAGE_MM_MAX, PAGE_MM_MIN } from './pageRange'
 
 export type Severity = 'error' | 'warn' | 'not_verifiable' | 'suggestion'
 
@@ -35,6 +36,30 @@ export const FALLBACK_MIN_FONT_SIZE_PT = 8.0
 /** 字号下限判据的数值容差（pt），含等号：`eff >= floor - tol` 通过。同源对：engine/profiles.py `FONT_FLOOR_TOL_PT`。 */
 export const FONT_FLOOR_TOL_PT = 0.005
 
+/** 规则限定词闭集（期刊库与栏位 `page_columns[].qualifier` 共用）。同源对：`profiles.py` 的 `QUALIFIERS`。 */
+export const QUALIFIERS = ['exact', 'max', 'min', 'typical', 'range', 'recommended'] as const
+/** 建议性提示的检查 id / 角色闭集。同源对：`profiles.py` 的 `ADVISORY_CHECKS` / `ADVISORY_ROLES`。 */
+export const ADVISORY_CHECKS = ['font-size-recommended'] as const
+export const ADVISORY_ROLES = ['body_min', 'script_min'] as const
+
+/** 期刊自有栏位（有序）。 */
+export interface PageColumnSpec {
+  id: string
+  label: { zh: string; en: string }
+  width_mm: number
+  qualifier?: (typeof QUALIFIERS)[number]
+}
+
+/** 建议性提示（期刊库折叠生成；只产生 suggestion 级提示，不是判据）。 */
+export interface Advisory {
+  check: (typeof ADVISORY_CHECKS)[number]
+  role: (typeof ADVISORY_ROLES)[number]
+  value_pt: number
+  qualifier?: string
+  journal: string
+  quote: string
+}
+
 export interface AspectRatio {
   id: string
   w: number
@@ -55,6 +80,8 @@ export interface PublicationProfile {
     tolerance_mm: number
     allow_custom: boolean
   }
+  /** 期刊自有栏位；缺省 / 空 = 由 widths_mm 派生单栏 / 双栏（见 `derivePageColumns`） */
+  page_columns?: PageColumnSpec[]
   allowed_aspect_ratios: AspectRatio[]
   aspect_tolerance: number
   font_family: { latin: string; latin_accepted: string[]; latin_substitutes_flagged: string[] }
@@ -63,6 +90,9 @@ export interface PublicationProfile {
   min_effective_font_size_pt: number
   absolute_min_font_size_pt: number
   max_font_size_pt: number
+  /** 上下标最小字号：求值器分不出上下标，只进建议性提示，不进判据 */
+  min_script_font_size_pt?: number | null
+  advisories?: Advisory[]
   min_raster_dpi: number
   preferred_formats: {
     vector: string[]
@@ -110,6 +140,8 @@ export interface JournalOverride {
   min_raster_dpi?: number
   allowed_aspect_ratios?: AspectRatio[]
   line_widths_pt?: number[]
+  page_columns?: PageColumnSpec[]
+  advisories?: Advisory[]
 }
 
 interface ProfileDocument {
@@ -230,6 +262,70 @@ export function columnOf(
   return null
 }
 
+/**
+ * 下游读栏位的**唯一形状**：写了 `page_columns` 就用它，否则由 `widths_mm` 派生
+ * 「单栏 / 双栏」两档（没规定的那档不出现）。同源对：`profiles.py` 的 `derive_page_columns`。
+ */
+export function derivePageColumns(profile: Partial<PublicationProfile>): PageColumnSpec[] {
+  const cols = profile.page_columns
+  if (Array.isArray(cols) && cols.length) return cols.filter((c) => isPlainObject(c))
+  const widths = (profile.widths_mm ?? {}) as Record<string, unknown>
+  const out: PageColumnSpec[] = []
+  for (const [id, zh, en] of [
+    ['single', '单栏', 'Single column'],
+    ['double', '双栏', 'Double column'],
+  ] as const) {
+    const w = widths[id]
+    if (isNumber(w)) out.push({ id, label: { zh, en }, width_mm: w, qualifier: 'exact' })
+  }
+  return out
+}
+
+function validatePageColumns(cols: unknown): string | null {
+  if (cols == null) return null
+  if (!Array.isArray(cols)) return 'page_columns 必须是数组'
+  const seen = new Set<string>()
+  for (const [i, c] of cols.entries()) {
+    const w = `page_columns[${i}]`
+    if (!isPlainObject(c)) return `${w} 必须是对象`
+    if (typeof c.id !== 'string' || !c.id.trim() || seen.has(c.id)) return `${w}.id 必须是非空且不重复的字符串`
+    seen.add(c.id)
+    const label = c.label
+    if (
+      !isPlainObject(label) ||
+      !['zh', 'en'].every((k) => typeof label[k] === 'string' && (label[k] as string).trim())
+    ) {
+      return `${w}.label 必须是 {zh, en} 两个非空字符串`
+    }
+    if (!isNumber(c.width_mm) || c.width_mm < PAGE_MM_MIN || c.width_mm > PAGE_MM_MAX) {
+      return `${w}.width_mm 必须在 ${PAGE_MM_MIN}–${PAGE_MM_MAX} mm 内`
+    }
+    const q = 'qualifier' in c ? c.qualifier : 'exact'
+    if (!(QUALIFIERS as readonly unknown[]).includes(q)) return `${w}.qualifier 不在闭集里`
+  }
+  return null
+}
+
+function validateAdvisories(adv: unknown): string | null {
+  if (adv == null) return null
+  if (!Array.isArray(adv)) return 'advisories 必须是数组'
+  for (const [i, a] of adv.entries()) {
+    const w = `advisories[${i}]`
+    if (!isPlainObject(a)) return `${w} 必须是对象`
+    if (
+      !(ADVISORY_CHECKS as readonly unknown[]).includes(a.check) ||
+      !(ADVISORY_ROLES as readonly unknown[]).includes(a.role)
+    ) {
+      return `${w}.check / role 不在闭集里`
+    }
+    if (!isNumber(a.value_pt) || a.value_pt <= 0) return `${w}.value_pt 必须是正数`
+    for (const k of ['journal', 'quote']) {
+      if (typeof a[k] !== 'string' || !(a[k] as string).trim()) return `${w}.${k} 必须是非空字符串`
+    }
+  }
+  return null
+}
+
 const OBJECT_KEYS = [
   'widths_mm',
   'font_family',
@@ -301,6 +397,8 @@ export function validateSpecShape(profile: unknown): string | null {
   for (const [k, v] of Object.entries(p.severity as Record<string, unknown>)) {
     if (!SEVERITIES.includes(v as Severity)) return `severity[${k}] 不是合法等级`
   }
+  const colErr = validatePageColumns(p.page_columns) ?? validateAdvisories(p.advisories)
+  if (colErr) return colErr
   const widths = p.widths_mm as Record<string, unknown>
   for (const k of ['single', 'double']) {
     if (widths[k] == null) continue // null = 没规定；同源对 profiles.py `_validate`

@@ -43,7 +43,7 @@ SOURCE_KINDS = ("html", "pdf")
 #: 来源的覆盖面：出版社通用页 / 期刊专属页 / 只是某一本期刊的样页（后者不得挂出版社 rules）
 COVERAGES = ("publisher_general", "journal_specific", "single_journal_sample")
 #: 限定词：原文是「恰好 / 最大 / 最小 / 通常 / 区间 / 推荐」。非 exact 的值不会被当成精确判据
-QUALIFIERS = ("exact", "max", "min", "typical", "range", "recommended")
+QUALIFIERS = profiles_mod.QUALIFIERS
 #: 适用阶段：初投 / 录用后生产稿 / 不分
 STAGES = ("submission", "production", "any")
 #: 求值器按「等于」判的路径只收 exact（`max` / `typical` / `range` 的宽度进 info，评估器扩展另起 PR）
@@ -52,6 +52,7 @@ EXACT_ONLY_PATHS = (
     "widths_mm.double",
     "allowed_aspect_ratios",
     "line_widths_pt",
+    "page_columns",
 )
 #: 展示项闭集（`info.<id>`）：值类型自由，不进预检。加新 id = 改这里 + TS 同名常量 + ADR
 INFO_IDS = (
@@ -100,12 +101,24 @@ SEVERITY_BUMP = {
     "legend_policy.min_font_size_pt": "legend-font-size",
     "legend_policy.max_font_size_pt": "legend-font-size",
     "text_weight_policy": "text-weight-policy",
+    "page_columns": "page-width",
 }
+#: 不折进 override 字段、只生成建议性提示（`advisories`，suggestion 级，不是判据）的规则路径 → 角色。
+#: `min_script_font_size_pt`（上下标最小字号）求值器分不出上下标，所以**只进提示不进判据**；
+#: `min_effective_font_size_pt` 的 `recommended` / `typical` 值同理（正文最小字号的说明）。
+#: 严格同源对：`journals.ts` 的 `ADVISORY_PATHS`。
+ADVISORY_PATHS = {
+    "min_script_font_size_pt": "script_min",
+    "min_effective_font_size_pt": "body_min",
+}
+ADVISORY_QUALIFIERS = ("recommended", "typical")
+ADVISORY_CHECK = "font-size-recommended"
 BUMPED_SEVERITY = "warn"
 #: 底里值是 null 的字段，类型本来无从比；这几个得是数（栏宽 null = 没规定，写了就是毫米数）
 KIND_OVERRIDES = {
     "widths_mm.single": "number",
     "widths_mm.double": "number",
+    "min_script_font_size_pt": "number",
     "axis_policy.tick_direction": "string",
     "axis_policy.label_format": "string",
     "axis_policy.label_format_regex": "string",
@@ -125,7 +138,7 @@ QUALIFIER_DIRECTION = {
 }
 
 #: 规则键里不许覆盖的身份字段（profile 自己的身份 / 展示字段，不是规则）
-_NOT_RULES = frozenset({"profile_id", "version", "label", "source", "listed"})
+_NOT_RULES = frozenset({"profile_id", "version", "label", "source", "listed", "advisories"})
 
 _URL_RE = re.compile(r"^https://[^\x00-\x20\x7f]+$")
 _ANCHOR_RE = re.compile(r"^#:~:text=[^\x00-\x20\x7f]+$")
@@ -242,6 +255,17 @@ def _base() -> dict:
 
 def _is_info(path: str) -> bool:
     return path.startswith(INFO_PREFIX)
+
+
+def _advisory_role(path: str, rule: dict) -> str | None:
+    """这条规则是不是「只生成建议性提示」：上下标最小字号一律是；正文最小字号只有
+    `recommended` / `typical` 才是（`min` / `exact` 仍是硬下限）。"""
+    role = ADVISORY_PATHS.get(path)
+    if role == "script_min":
+        return role
+    if role == "body_min" and rule.get("qualifier", "exact") in ADVISORY_QUALIFIERS:
+        return role
+    return None
 
 
 def _folds(path: str, rule: dict) -> bool:
@@ -528,14 +552,54 @@ def load_catalog(catalog: dict | None = None) -> dict:
 
 
 def _override_of(catalog: dict, journal_id: str) -> dict:
-    """折成嵌套覆盖；再按 `SEVERITY_BUMP` 把期刊填了值的检查从 suggestion 抬到 warn。"""
+    """折成嵌套覆盖；再按 `SEVERITY_BUMP` 把期刊填了值的检查从 suggestion 抬到 warn。
+
+    写了 `page_columns` 时以它为准：`widths_mm.single/double` 由它的 exact 栏位派生
+    （最窄 = single、最宽 = double，只有一档时 double 为 null），保持现有求值器与
+    `columnOf` 兼容。建议性提示（`advisories`）带期刊名与原话。
+    """
     out: dict = {}
     folded: list[str] = []
+    advisories: list[dict] = []
+    journal = catalog["journals"][journal_id]
+    pub = catalog["publishers"][journal["publisher"]]
     for path, eff in _effective_rules(catalog, journal_id).items():
-        if _is_info(path) or eff["unset"] or not _folds(path, eff["rule"]):
+        if _is_info(path) or eff["unset"]:
             continue
-        _fold(path, eff["rule"]["value"], out)
+        rule = eff["rule"]
+        role = _advisory_role(path, rule)
+        if role:
+            owner = pub if eff["rule_scope"] == "publisher" else journal
+            advisories.append(
+                {
+                    "check": ADVISORY_CHECK,
+                    "role": role,
+                    "value_pt": copy.deepcopy(rule["value"]),
+                    "qualifier": rule.get("qualifier", "exact"),
+                    "journal": owner["label"],
+                    "quote": rule["quote"],
+                }
+            )
+            continue
+        if not _folds(path, rule):
+            continue
+        _fold(path, rule["value"], out)
         folded.append(path)
+    if "page_columns" in out:
+        # 元素形状不对时这里不抛：交给折叠后的整体校验报 journal_merge_invalid
+        exact = sorted(
+            c["width_mm"]
+            for c in out["page_columns"]
+            if isinstance(c, dict)
+            and c.get("qualifier", "exact") == "exact"
+            and _is_number(c.get("width_mm"))
+        )
+        out["widths_mm"] = {
+            "single": exact[0] if exact else None,
+            "double": exact[-1] if len(exact) > 1 else None,
+        }
+    if advisories:
+        out["advisories"] = advisories
     base_sev = _base().get("severity") or {}
     for path in folded:
         check = SEVERITY_BUMP.get(path)
@@ -603,6 +667,17 @@ def source_link(source: dict, anchor: str | None) -> str:
     return url
 
 
+def _affects(path: str, eff: dict) -> str:
+    """`preflight`（折进 override 的判据）/ `advice`（只生成 suggestion 级提示）/ `info`（仅供参考）。"""
+    if _is_info(path):
+        return "info"
+    if eff["unset"]:
+        return "preflight"
+    if _advisory_role(path, eff["rule"]):
+        return "advice"
+    return "preflight" if _folds(path, eff["rule"]) else "info"
+
+
 def _field_source(eff: dict, path: str) -> dict:
     rule, src = eff["rule"], eff["src"]
     page = src.get("page")
@@ -619,9 +694,7 @@ def _field_source(eff: dict, path: str) -> dict:
         "rule_scope": eff["rule_scope"],
         "source_scope": eff["source_scope"],
         "coverage": eff["coverage"],
-        "affects": (
-            "info" if _is_info(path) or not (eff["unset"] or _folds(path, rule)) else "preflight"
-        ),
+        "affects": _affects(path, eff),
         "url": src["url"],
         "link": source_link(src, rule.get("anchor")),
         "anchor": rule.get("anchor", ""),

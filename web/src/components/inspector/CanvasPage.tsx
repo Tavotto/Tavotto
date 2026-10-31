@@ -8,7 +8,7 @@ import { formatMm, UNIT_GAP } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
-import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
+import { columnName, resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -40,12 +40,19 @@ interface PagePreset {
   id: string
   w: number
   h: number
+  /** 期刊自有栏位的显示名（单栏 / 双栏 / 方形等走词表，不带它） */
+  label?: string
 }
 
-function pagePresets([single, double]: PageColumn[]): PagePreset[] {
+/** 栏位预设：第一档矮一点（60），其余 100——高度只是常见起点，不是规范字段 */
+function pagePresets(columns: PageColumn[]): PagePreset[] {
   return [
-    { id: 'single', w: single.w, h: 60 },
-    { id: 'double', w: double.w, h: 100 },
+    ...columns.map((c, i) => ({
+      id: c.id,
+      w: c.w,
+      h: i === 0 ? 60 : 100,
+      ...(c.id === 'single' || c.id === 'double' ? {} : { label: columnName(c) }),
+    })),
     { id: 'full', w: 180, h: 240 },
     { id: 'square', w: 100, h: 100 },
   ]
@@ -187,11 +194,13 @@ export function CanvasPage() {
               options={[
                 ...PRESETS.map((p) => ({
                   value: p.id,
-                  hint: cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
+                  hint: p.label
+                    ? `${Math.round(p.w * 10) / 10} mm`
+                    : cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
                   label: (
                     <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
                       <PageThumb w={p.w} h={p.h} />
-                      <span className="truncate">{cv(`presets.${p.id}.label`)}</span>
+                      <span className="truncate">{p.label ?? cv(`presets.${p.id}.label`)}</span>
                     </span>
                   ),
                 })),

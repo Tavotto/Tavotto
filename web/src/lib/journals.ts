@@ -13,6 +13,8 @@
 import catalogDoc from '@journals'
 import {
   DEEP_KEYS,
+  QUALIFIERS,
+  type Advisory,
   loadProfile,
   mergeJournalInto,
   validateSpecShape,
@@ -25,7 +27,7 @@ export const JOURNAL_BASE_PROFILE_ID = 'journal-base-v1'
 const SCHEMA = 1
 const SOURCE_KINDS = ['html', 'pdf']
 export const COVERAGES = ['publisher_general', 'journal_specific', 'single_journal_sample'] as const
-export const QUALIFIERS = ['exact', 'max', 'min', 'typical', 'range', 'recommended'] as const
+export { QUALIFIERS }
 export const STAGES = ['submission', 'production', 'any'] as const
 /** 求值器按「等于」判的路径只收 exact */
 export const EXACT_ONLY_PATHS = [
@@ -33,6 +35,7 @@ export const EXACT_ONLY_PATHS = [
   'widths_mm.double',
   'allowed_aspect_ratios',
   'line_widths_pt',
+  'page_columns',
 ] as const
 /** 展示项闭集（`info.<id>`）。同源对：`journals.py` 的 `INFO_IDS`。 */
 export const INFO_IDS = [
@@ -78,10 +81,23 @@ export const SEVERITY_BUMP: Record<string, string> = {
   'legend_policy.min_font_size_pt': 'legend-font-size',
   'legend_policy.max_font_size_pt': 'legend-font-size',
   text_weight_policy: 'text-weight-policy',
+  page_columns: 'page-width',
 }
+/**
+ * 不折进 override 字段、只生成建议性提示（`advisories`，suggestion 级，不是判据）的规则路径 → 角色。
+ * 上下标最小字号求值器分不出上下标，只进提示不进判据；正文最小字号的 recommended / typical 同理。
+ * 同源对：`journals.py` 的 `ADVISORY_PATHS`。
+ */
+export const ADVISORY_PATHS: Record<string, 'body_min' | 'script_min'> = {
+  min_script_font_size_pt: 'script_min',
+  min_effective_font_size_pt: 'body_min',
+}
+const ADVISORY_QUALIFIERS = ['recommended', 'typical']
+const ADVISORY_CHECK = 'font-size-recommended'
 export const BUMPED_SEVERITY = 'warn'
 /** 底里值是 null 的字段类型本来无从比；这几个得是数。同源对：`journals.py` 的 `KIND_OVERRIDES`。 */
 export const KIND_OVERRIDES: Record<string, string> = {
+  min_script_font_size_pt: 'number',
   'widths_mm.single': 'number',
   'widths_mm.double': 'number',
   'axis_policy.tick_direction': 'string',
@@ -101,6 +117,12 @@ export const QUALIFIER_DIRECTION: Record<string, string> = {
   max_font_size_pt: 'max',
   'legend_policy.max_font_size_pt': 'max',
 }
+function advisoryRole(path: string, rule: JournalRule): 'body_min' | 'script_min' | null {
+  const role = ADVISORY_PATHS[path]
+  if (role === 'script_min') return role
+  if (role === 'body_min' && ADVISORY_QUALIFIERS.includes(rule.qualifier ?? 'exact')) return role
+  return null
+}
 function folds(path: string, rule: JournalRule): boolean {
   const q = rule.qualifier ?? 'exact'
   return q === 'exact' || q === QUALIFIER_DIRECTION[path]
@@ -108,7 +130,7 @@ function folds(path: string, rule: JournalRule): boolean {
 /** 同源对：`profiles.py` 的 `DEFAULT_SEVERITY` 与 `profile.ts` 的同名常量 */
 const DEFAULT_SEVERITY = 'warn'
 /** 规则键里不许覆盖的身份 / 展示字段 */
-const NOT_RULES = ['profile_id', 'version', 'label', 'source', 'listed']
+const NOT_RULES = ['profile_id', 'version', 'label', 'source', 'listed', 'advisories']
 
 // eslint-disable-next-line no-control-regex
 const URL_RE = /^https:\/\/[^\x00-\x20\x7f]+$/ // 无 m 标志：$ 只匹配串尾
@@ -220,7 +242,7 @@ export interface JournalFieldSource {
   rule_scope: 'publisher' | 'journal'
   source_scope: 'publisher' | 'journal'
   coverage: Coverage
-  affects: 'preflight' | 'info'
+  affects: 'preflight' | 'advice' | 'info'
   url: string
   link: string
   anchor: string
@@ -468,15 +490,51 @@ function fold(path: string, value: unknown, into: Obj): void {
   node[parts[parts.length - 1]] = structuredClone(value)
 }
 
-/** 折成嵌套覆盖，再按 `SEVERITY_BUMP` 把期刊填了值的检查从 suggestion 抬到 warn。 */
+/**
+ * 折成嵌套覆盖，再按 `SEVERITY_BUMP` 把期刊填了值的检查从 suggestion 抬到 warn。
+ * 写了 `page_columns` 时以它为准：`widths_mm.single/double` 由 exact 栏位派生（最窄 = single、
+ * 最宽 = double，只有一档时 double 为 null）。建议性提示 `advisories` 带期刊名与原话。
+ */
 function overrideOf(cat: JournalCatalog, journalId: string): JournalOverride {
   const out: Obj = {}
   const folded: string[] = []
+  const advisories: Advisory[] = []
+  const journal = cat.journals[journalId]
+  const pub = cat.publishers[journal.publisher]
   for (const [path, eff] of effectiveRules(cat, journalId)) {
-    if (isInfo(path) || eff.unset || !folds(path, eff.rule)) continue
+    if (isInfo(path) || eff.unset) continue
+    const role = advisoryRole(path, eff.rule)
+    if (role) {
+      const owner = eff.ruleScope === 'publisher' ? pub : journal
+      advisories.push({
+        check: ADVISORY_CHECK,
+        role,
+        value_pt: structuredClone(eff.rule.value) as number,
+        qualifier: eff.rule.qualifier ?? 'exact',
+        journal: owner.label,
+        quote: eff.rule.quote,
+      })
+      continue
+    }
+    if (!folds(path, eff.rule)) continue
     fold(path, eff.rule.value, out)
     folded.push(path)
   }
+  if (has(out, 'page_columns')) {
+    // 元素形状不对时这里不抛：交给折叠后的整体校验报 journal_merge_invalid
+    const exact = (Array.isArray(out.page_columns) ? out.page_columns : [])
+      .filter(
+        (c): c is { width_mm: number; qualifier?: string } =>
+          isObj(c) && (c.qualifier ?? 'exact') === 'exact' && isNum(c.width_mm),
+      )
+      .map((c) => c.width_mm)
+      .sort((a, b) => a - b)
+    out.widths_mm = {
+      single: exact.length ? exact[0] : null,
+      double: exact.length > 1 ? exact[exact.length - 1] : null,
+    }
+  }
+  if (advisories.length) out.advisories = advisories
   const baseSev = (baseProfile().severity ?? {}) as Record<string, string>
   for (const path of folded) {
     const check = SEVERITY_BUMP[path]
@@ -608,6 +666,13 @@ export function sourceLink(source: JournalSource, anchor?: string | null): strin
   return source.url
 }
 
+function affectsOf(path: string, eff: EffectiveRule): 'preflight' | 'advice' | 'info' {
+  if (isInfo(path)) return 'info'
+  if (eff.unset) return 'preflight'
+  if (advisoryRole(path, eff.rule)) return 'advice'
+  return folds(path, eff.rule) ? 'preflight' : 'info'
+}
+
 function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource, 'overrides'> {
   const { rule, src } = eff
   return {
@@ -623,7 +688,7 @@ function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource,
     rule_scope: eff.ruleScope,
     source_scope: eff.sourceScope,
     coverage: eff.coverage,
-    affects: isInfo(path) || !(eff.unset || folds(path, rule)) ? 'info' : 'preflight',
+    affects: affectsOf(path, eff),
     url: src.url,
     link: sourceLink(src, rule.anchor),
     anchor: rule.anchor ?? '',

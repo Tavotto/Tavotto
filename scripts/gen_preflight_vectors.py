@@ -358,6 +358,82 @@ def cases() -> list[dict]:
         }
     )
 
+    # 9h. 期刊自有栏位（Science 式 1 / 2 / 3 栏）：页宽命中任一 exact 栏位即通过，不套单栏 / 双栏
+    def _col(cid: str, zh: str, en: str, w: float, qualifier: str = "exact") -> dict:
+        return {"id": cid, "label": {"zh": zh, "en": en}, "width_mm": w, "qualifier": qualifier}
+
+    sci = {
+        "page_columns": [
+            _col("col1", "1 栏", "1 column", 57.0),
+            _col("col2", "2 栏", "2 columns", 121.0),
+            _col("col3", "3 栏", "3 columns", 184.0),
+        ],
+        "widths_mm": {"single": 57.0, "double": 184.0},
+    }
+    for name, width in (("journal-columns-middle-hit", 121.0), ("journal-columns-miss", 100.0)):
+        out.append(
+            {
+                "name": name,
+                "profile_id": "journal-base-v1",
+                "journal": sci,
+                "spec": _spec(
+                    [_panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, width, 80.0])],
+                    page=(width, 80.0),
+                ),
+            }
+        )
+    # 只写了一档 exact（另一档 typical 不参与判据）：120mm 要报，提示只列 exact 那一档
+    out.append(
+        {
+            "name": "journal-columns-one-exact-one-typical",
+            "profile_id": "journal-base-v1",
+            "journal": {
+                "page_columns": [
+                    _col("narrow", "窄栏", "Narrow", 90.0),
+                    _col("wide", "宽栏", "Wide", 150.0, "typical"),
+                ],
+                "widths_mm": {"single": 90.0, "double": None},
+            },
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, 150.0, 80.0])],
+                page=(150.0, 80.0),
+            ),
+        }
+    )
+
+    # 9i. 期刊「说明」的字号建议 -> suggestion（带期刊名与原话），不是判据；底的字号下限为 0
+    def _adv(role: str, value: float, quote: str) -> dict:
+        return {
+            "check": "font-size-recommended",
+            "role": role,
+            "value_pt": value,
+            "qualifier": "recommended",
+            "journal": "Elsevier",
+            "quote": quote,
+        }
+
+    body = _adv("body_min", 7.0, "7 pt for normal text")
+    script = _adv(
+        "script_min", 6.0, "no smaller than 6 pt for subscript and superscript characters"
+    )
+    m65 = _clean_manifest()
+    m65["elements"][1]["editable"][1]["value"] = 6.5  # xticks fontsize
+    m55 = _clean_manifest()
+    m55["elements"][1]["editable"][1]["value"] = 5.5
+    for name, adv, manifest in (
+        ("journal-advice-body-and-script", [body, script], m65),
+        ("journal-advice-script-only", [script], m55),
+        ("journal-advice-satisfied", [body, script], _clean_manifest()),
+    ):
+        out.append(
+            {
+                "name": name,
+                "profile_id": "journal-base-v1",
+                "journal": {"advisories": adv},
+                "spec": _spec([_panel("p1", manifest=manifest)]),
+            }
+        )
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()
