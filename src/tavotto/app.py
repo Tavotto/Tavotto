@@ -16293,6 +16293,7 @@ def api_versions_list(doc_id):
             box = _version_thumb_box(doc_id, v.get("id"))
             if box is not None:
                 meta["thumbBox"] = box
+        if max_objects > 0:
             sketch = _version_sketch(v, max_objects, max_text)
             # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
             # 什么都没有」是两件事，前者该显示占位、后者该显示一张空白页。
