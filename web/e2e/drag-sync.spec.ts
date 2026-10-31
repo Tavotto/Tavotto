@@ -48,6 +48,17 @@ async function drag(page: Page, x: number, y: number, dx: number, dy: number) {
   await page.mouse.up()
 }
 
+/**
+ * 预览位移经 rAF 合帧上屏：`mouse.move` 返回时最后几次 pointermove 的位移可能还没画出来。
+ * 在按住鼠标的状态下读位置之前，先等图例真的走到该去的地方（相对起点 expectedDx），
+ * 否则读到的是「还没画完」的中间值（CI 上的 30 / 19 就是这么来的）。
+ */
+async function legendMovedBy(page: Page, fromX: number, expectedDx: number) {
+  await expect.poll(async () => Math.abs((await box(page, 'axes_0.legend')).x - (fromX + expectedDx)), { timeout: 5_000 })
+    .toBeLessThan(2)
+  return box(page, 'axes_0.legend')
+}
+
 async function nextExact(page: Page, previous: string | null) {
   const display = page.locator('[data-display]')
   await expect.poll(async () =>
@@ -127,12 +138,12 @@ test('a held drag survives the previous SVG arriving', async ({ app, page }) => 
   const start = await box(page, 'axes_0.legend')
   await drag(page, start.x + start.width * 0.3, start.y + start.height * 0.5, -35, 0)
   await expect.poll(() => held.length).toBe(1)
-  const legend1 = await box(page, 'axes_0.legend')
+  const legend1 = await legendMovedBy(page, start.x, -35)
   const x = legend1.x + legend1.width * 0.3, y = legend1.y + legend1.height * 0.5
   await page.mouse.move(x, y)
   await page.mouse.down()
   await page.mouse.move(x - 30, y, { steps: 8 })
-  const preview = await box(page, 'axes_0.legend')
+  const preview = await legendMovedBy(page, legend1.x, -30)
   await held.shift()!.continue()
   await expect(page.locator('[data-authority]')).toHaveAttribute('data-authority', 'ready', { timeout: 90_000 })
   await expect.poll(async () => Math.abs((await box(page, 'axes_0.legend')).x - preview.x), { timeout: 5_000 })
