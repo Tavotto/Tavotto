@@ -515,7 +515,7 @@
       },
       "sub-labels": {
         "keywords": "label abc subfigure panel letters",
-        "label": "Add (a)(b)(c) labels"
+        "label": "Add panel labels (a)(b)(c)"
       },
       "ungroup": {
         "keywords": "ungroup split separate",
@@ -1364,8 +1364,6 @@
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
       "dragCompanions": "When moving axes, move their title and legend too",
-      "more": "Canvas settings",
-      "openCanvasSettings": "Open canvas settings",
       "diagramOn": "Diagram: the title and legend move with the axes.",
       "diagramOff": "Diagram: only the axes move; the title and legend stay behind"
     },
@@ -1576,7 +1574,7 @@
     },
     "general": {
       "language": "Language",
-      "layout": "Interface looks off?",
+      "layout": "Reset interface layout",
       "layoutReset": "Interface layout reset to defaults",
       "resetLayout": "Reset to default",
       "groupLanguage": "Appearance, language and layout",
@@ -1585,7 +1583,7 @@
       "groupLearning": "Learning",
       "layoutDesc": "Panel widths, open panels and canvas preferences go back to their defaults right away",
       "theme": "Appearance",
-      "themeDesc": "Canvas pages and figures keep their print colours",
+      "themeDesc": "In dark mode the canvas paper stays white, matching the export",
       "themeSystem": "System",
       "themeLight": "Light",
       "themeDark": "Dark"
@@ -1869,7 +1867,6 @@
         "language": "language locale chinese english",
         "layout": "layout reset restore panel width interface",
         "shortcuts": "keyboard shortcuts hotkeys cheat sheet",
-        "canvas": "canvas grid snap rulers guides",
         "tutorial": "tutorial onboarding hints tips",
         "scripts": "scripts sources registry",
         "python": "python interpreter environment conda venv",
@@ -2265,24 +2262,18 @@
       "count": "{{n}} / {{total}}",
       "skip": "Skip tutorial",
       "back": "Back",
+      "backToWelcome": "Back to welcome",
+      "waitImport": "Drop the script to continue",
+      "waitLegend": "Drag the legend to continue",
+      "waitTitle": "Enlarge the title to continue",
       "next": "Next",
       "finish": "Finish",
       "externalFile": "This is the sample tutorial. You can import your own scripts when you’re done."
     },
     "welcome": {
       "title": "Edit right on the figure",
-      "smile": ":)",
       "subtitle": "Import a plotting script, then click and drag to adjust what’s in the figure.",
-      "featuresLabel": "Figure elements you can adjust directly",
-      "feature": {
-        "legend": "Legends",
-        "axes": "Axes",
-        "colorbar": "Colorbars",
-        "text": "Text",
-        "align": "Alignment",
-        "layout": "Layout",
-        "more": "More"
-      },
+      "features": "Legends, axes, colorbars, text, alignment and layout can all be edited directly",
       "demoLabel": "From a plotting script to a figure you can edit directly",
       "codeLabel": "Excerpt of the sample script {{name}}",
       "figureLabel": "The reaction-kinetics figure this script draws: its title, legend and layout can be adjusted directly",

@@ -62,7 +62,7 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { BuildMismatchChip } from './BuildMismatchChip'
-import { TutorialChip } from './onboarding/TutorialChip'
+import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
@@ -916,6 +916,8 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
   const hasUpdate = !!update?.update_available || !!desktopUpdate
   const latest = desktopUpdate?.version ?? update?.latest
   const tutorialKind = useOnboardingStore((s) => tutorialEntry(s.status))
+  // 顶栏「新手教程」胶囊还在时，菜单里不重复列这一项（同一个判据）
+  const chipVisible = useTutorialChipVisible()
   return (
     <Menu
       width={196}
@@ -939,8 +941,6 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         </Button>
       }
     >
-      {writeBackItem}
-      <MenuSeparator />
       {hasUpdate && (
         <>
           <MenuItem onSelect={() => ui().setSettingsOpen(true, 'about')}>
@@ -952,12 +952,10 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
           <MenuSeparator />
         </>
       )}
-      {/* 分隔线只在真分组之间画（2026-09-15 打磨 T5）：
-          〔论文样式 · 画布设置〕｜〔刷新项目 · 项目接入状态〕｜〔命令面板 · 快捷键帮助 · 教程〕
-          ——七项此前被四条线切成 1/1/2/3 四组，线比组多 */}
-      <MenuItem onSelect={() => ui().setStylesOpen(true)}>{t('topbar.paperStyles')}</MenuItem>
-      <MenuItem onSelect={() => ui().setRightTab('canvas')}>{t('topbar.canvasSettings')}</MenuItem>
-      <MenuSeparator />
+      {/* 按用户目的分三组、各带小标题（2026-10 UI 审计 D2）：文件｜视图｜帮助。
+          「论文样式 · 画布设置」入口收敛是后续工作，这里只归组、不删能力 */}
+      <MenuLabel>{t('topbar.moreGroup.file')}</MenuLabel>
+      {writeBackItem}
       {/* 与命令面板同一批 helper：刷新走统一刷新端点，接入状态走 readiness store */}
       <MenuItem onSelect={() => void refreshProjectNow()}>{t('topbar.refreshProject')}</MenuItem>
       <MenuItem
@@ -966,6 +964,11 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t('topbar.readiness')}
       </MenuItem>
       <MenuSeparator />
+      <MenuLabel>{t('topbar.moreGroup.view')}</MenuLabel>
+      <MenuItem onSelect={() => ui().setStylesOpen(true)}>{t('topbar.paperStyles')}</MenuItem>
+      <MenuItem onSelect={() => ui().setRightTab('canvas')}>{t('topbar.canvasSettings')}</MenuItem>
+      <MenuSeparator />
+      <MenuLabel>{t('topbar.moreGroup.help')}</MenuLabel>
       <MenuItem onSelect={() => usePalette.getState().setOpen(true)} shortcut={keyOf('palette')}>
         {t('topbar.commandPalette')}
       </MenuItem>
@@ -973,9 +976,11 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t('topbar.shortcutHelp')}
       </MenuItem>
       {/* 开始 / 继续 / 重新开始教程：文案与动作都来自 lib/onboarding/tutorial，不在这里判状态 */}
-      <MenuItem onSelect={() => void runTutorialEntry('help')} data-onboarding-anchor="help-tutorial">
-        {t(`topbar.tutorial.${tutorialKind}`)}
-      </MenuItem>
+      {!chipVisible && (
+        <MenuItem onSelect={() => void runTutorialEntry('help')} data-onboarding-anchor="help-tutorial">
+          {t(`topbar.tutorial.${tutorialKind}`)}
+        </MenuItem>
+      )}
     </Menu>
   )
 }

@@ -1038,13 +1038,17 @@ export default interface Resources {
       },
       "shell": {
         "back": "返回上一步",
+        "backToWelcome": "返回欢迎页",
         "count": "{{n}} / {{total}}",
         "externalFile": "当前为示例教程，完成后可以导入自己的脚本。",
         "finish": "完成教程",
         "label": "{{product}} 新手教程",
         "next": "下一步",
         "progress": "教程进度：第 {{n}} 步，共 {{total}} 步",
-        "skip": "跳过教程"
+        "skip": "跳过教程",
+        "waitImport": "拖入脚本后继续",
+        "waitLegend": "拖动图例后继续",
+        "waitTitle": "调大标题字号后继续"
       },
       "title": {
         "controlTip": "点 + 或输入更大的字号",
@@ -1069,19 +1073,9 @@ export default interface Resources {
         },
         "codeLabel": "示例脚本 {{name}}（节选）",
         "demoLabel": "从绘图脚本到可以直接调整的科研图",
-        "feature": {
-          "align": "对齐",
-          "axes": "坐标轴",
-          "colorbar": "色条",
-          "layout": "整体布局",
-          "legend": "图例",
-          "more": "更多",
-          "text": "文字"
-        },
-        "featuresLabel": "可以直接调整的图表元素",
+        "features": "图例、坐标轴、色条、文字、对齐、整体布局都能直接改",
         "figureLabel": "这份脚本画出的反应动力学图：标题、图例和位置都可以直接调整",
         "openWorkspace": "直接进入工作台",
-        "smile": ":)",
         "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
         "title": "直接在图上改"
       }
@@ -1198,7 +1192,7 @@ export default interface Resources {
         },
         "sub-labels": {
           "keywords": "label abc xhbq xuhao",
-          "label": "添加 (a)(b)(c) 标签"
+          "label": "添加序号 (a)(b)(c)"
         },
         "tutorial-reset": {
           "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
@@ -2083,9 +2077,7 @@ export default interface Resources {
         "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
         "diagramOff": "示意：只移动子图，标题与图例留在原地",
         "diagramOn": "示意：拖动子图时，标题与图例随之移动",
-        "dragCompanions": "移动子图时，同步移动标题和图例",
-        "more": "画布设置",
-        "openCanvasSettings": "打开画布设置"
+        "dragCompanions": "移动子图时，同步移动标题和图例"
       },
       "connectAi": {
         "advanced": "高级",
@@ -2364,13 +2356,13 @@ export default interface Resources {
         "groupLearning": "学习",
         "groupSidebars": "侧栏",
         "language": "界面语言",
-        "layout": "界面乱了？",
+        "layout": "重置界面布局",
         "layoutDesc": "侧栏宽度、开合与画布偏好回到默认，当场生效",
         "layoutReset": "界面布局已恢复默认",
         "resetLayout": "恢复默认",
         "theme": "外观",
         "themeDark": "深色",
-        "themeDesc": "画布上的页面与图保持印刷时的颜色",
+        "themeDesc": "深色模式下画布纸面仍为白色，与导出一致",
         "themeLight": "浅色",
         "themeSystem": "跟随系统"
       },
@@ -2610,7 +2602,6 @@ export default interface Resources {
         "clear": "清除搜索",
         "kw": {
           "agents": "助手 codex claude agent 默认",
-          "canvas": "画布 网格 吸附 标尺 参考线",
           "contact": "企业微信 微信 联系我们 联系维护者 反馈",
           "diagnostics": "诊断 报告 日志 导出 问题",
           "formats": "格式 pdf png svg tiff eps",
@@ -6915,6 +6906,11 @@ export default interface Resources {
       "issueLastDoc": "上次的排版没打开",
       "issueTooNew": "排版版本较新",
       "more": "更多",
+      "moreGroup": {
+        "file": "文件",
+        "help": "帮助",
+        "view": "视图"
+      },
       "moreWithUpdate": "更多（有新版本）",
       "newBlankDocument": "新建空白排版",
       "noOtherDocuments": "暂无其他排版",

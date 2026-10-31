@@ -894,6 +894,11 @@
     "importPackage": "Import project package…",
     "insertShape": "Insert shape",
     "more": "More",
+    "moreGroup": {
+      "file": "File",
+      "help": "Help",
+      "view": "View"
+    },
     "moreWithUpdate": "More (update available)",
     "newBlankDocument": "New blank layout",
     "noOtherDocuments": "No other layouts",
