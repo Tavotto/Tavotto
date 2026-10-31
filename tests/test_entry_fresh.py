@@ -236,3 +236,11 @@ class TestRewrittenScriptEndToEnd:
             )
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
+
+
+def test_reconcile_is_a_noop_without_a_current_project(client):
+    """没有当前项目（或指名的项目已关闭）时，运行前的入口纠偏什么都不做、也不抛。"""
+    m.reset_projects()
+    assert m._reconcile_registered_entry("图片.py") is False
+    with m.app.test_request_context("/", headers={"X-Tavotto-Project": "gone"}):
+        assert m._reconcile_registered_entry("图片.py") is False

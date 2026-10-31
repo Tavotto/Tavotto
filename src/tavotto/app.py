@@ -524,7 +524,12 @@ def _reconcile_registered_entry(script: str) -> bool:
     **判据与改写只在 `engine/entryfresh`**；这里是 app 层唯一的接线：
     所有「用登记的 entry 去取 worker / 开准备会话」的入口（磁盘面板、runtime 素材、准备目标、AI 修复）都经它。
     判不出 / 写不了 = 当没有变化，维持原行为（运行期由 `script_entry_missing` 说话）。"""
-    ctx = current_ctx()
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return False  # 没有当前项目（指名的项目已关闭）：不纠偏，调用方的原行为不变
+    if ctx is None:
+        return False
     try:
         changed = engine_entryfresh.reconcile(ctx.path, script)
     except Exception:  # noqa: BLE001 —— 运行前的纠偏不许让请求失败
