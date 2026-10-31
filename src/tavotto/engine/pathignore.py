@@ -134,6 +134,17 @@ def ignore_folder(project, path) -> dict:
     return state(project)
 
 
+def remember(project, path, on_changed=None) -> dict:
+    """**唯一的「记住」入口**：令牌端点（`POST /api/engine/path-ignore`）与 AI 修复的 `ignore_import_folder` 工具都调它。
+
+    `ignore_folder` 写名单；名单真的变了才调 `on_changed()`（应用侧传「关掉这个项目的会话」：`--ignore-paths` 是 spawn 时交的）。"""
+    before = paths_for(project)
+    state = ignore_folder(project, path)
+    if on_changed is not None and paths_for(project) != before:
+        on_changed()
+    return state
+
+
 def forget(project, path=None) -> dict:
     """撤销：给了 `path` 只去掉它，否则整个清空（回到「没有决定」）。"""
     if path is None:
@@ -168,6 +179,22 @@ def _purge(now: float) -> None:
         del _RECORDS[next(iter(_RECORDS))]
 
 
+#: 项目 → 最近一次登记的 (路径, 时刻)。AI 修复的工具据此知道「失败的是哪个文件夹」，而不让模型自己报路径。
+_LATEST: dict[str, tuple[str, float]] = {}
+#: `_LATEST` 的有效期（秒）：一次 AI 修复会话的上限远小于它；过期不再认。
+LATEST_TTL = 3600.0
+
+
+def latest_path(project, *, now: float | None = None) -> str | None:
+    """`project` 最近一次「外来 ABI 文件夹」失败登记的目录（绝对路径，只在后端用）；没有 / 过期回 None。"""
+    if not project:
+        return None
+    t = time.monotonic() if now is None else now
+    with _LOCK:
+        latest = _LATEST.get(_key(project))
+    return latest[0] if latest is not None and t - latest[1] <= LATEST_TTL else None
+
+
 def issue(project, path, *, now: float | None = None) -> str | None:
     """失败那一刻登记 (项目, 目录)：回不透明令牌；缺项目 / 路径回 `None`（不出按钮）。同一 (项目, 目录) 换新令牌。"""
     if not project or not isinstance(path, str) or not path or not os.path.isabs(path):
@@ -182,6 +209,7 @@ def issue(project, path, *, now: float | None = None) -> str | None:
         ]:
             del _RECORDS[old]
         _RECORDS[token] = _Record(project_key, os.path.abspath(path), t + TOKEN_TTL)
+        _LATEST[project_key] = (os.path.abspath(path), t)
         _purge(t)
     return token
 
@@ -206,3 +234,4 @@ def reset() -> None:
     """清空令牌（测试之间）。"""
     with _LOCK:
         _RECORDS.clear()
+        _LATEST.clear()

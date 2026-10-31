@@ -53,7 +53,7 @@ AI 修复会话两轮都去 `change_python` 要 3.12（私有 Python 锁里只�
 ### B. AI 修复不再走错方向
 
 修复会话的运行报告带同一条失败码与事实；系统提示 3h：导入来自脚本自己插进 `sys.path` 的私有目录且 ABI 不符时**不要换 Python 版本**，
-用 `ignore_import_folder` 工具（`tavotto` 档，走与令牌端点相同的 `app.remember_ignored_import_folder`）；`pyversionfix` 的失败码闭集不含新码，
+用 `ignore_import_folder` 工具（`tavotto` 档，走与令牌端点相同的 `pathignore.remember`）；`pyversionfix` 的失败码闭集不含新码，
 不会因它尝试换版本。
 
 ## 否决的备选

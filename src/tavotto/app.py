@@ -10108,6 +10108,8 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
         "application_runner": run,
         "application_check": check,
         "on_workdir_changed": cwd_changed,
+        # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）
+        "on_ignored_paths_changed": cwd_changed,
     }
 
 
@@ -10501,18 +10503,6 @@ _PATH_IGNORE_STATUS = {
 }
 
 
-def remember_ignored_import_folder(root: str, path: str) -> dict:
-    """记住「这个项目别让脚本去 `path` 这个目录 import」并关掉这个项目的会话（`--ignore-paths` 是 spawn 时交给 worker 的）。
-
-    令牌端点与 AI 修复的 `ignore_import_folder` 工具共用这一处（ADR 0154），没有第二份逻辑。已经记过的不重复关会话。"""
-    before = engine_pathignore.paths_for(root)
-    state = engine_pathignore.ignore_folder(root, path)
-    if engine_pathignore.paths_for(root) != before:
-        engine_pool.shutdown_all(root)
-        LOG.info("项目的导入忽略目录: %d 个（%s）", len(state["paths"]), root)
-    return state
-
-
 @app.post("/api/engine/path-ignore")
 def api_engine_path_ignore():
     """「跳过这个文件夹」（ADR 0154）：只收失败卡上的不透明令牌，不收路径。
@@ -10526,7 +10516,9 @@ def api_engine_path_ignore():
         if not _page_authenticated():
             raise engine_pathignore.IgnoreError(engine_pathignore.ERROR_REJECTED)
         path = engine_pathignore.path_of_token(token, root)
-        state = remember_ignored_import_folder(root, path)
+        state = engine_pathignore.remember(
+            root, path, on_changed=lambda: engine_pool.shutdown_all(root)
+        )
         engine_pathignore.consume_token(token)
     except engine_pathignore.IgnoreError as exc:
         return jsonify(
@@ -11087,6 +11079,8 @@ def _native_preparation_runner(pl, before_retry=None):
         raise engine_pool.WorkerError(
             "这份计划没有桌面拥有的启动身份", code=engine_runcodes.DESKTOP_RUN_LAUNCH_INVALID
         )
+    # 「跳过这个文件夹」的名单取起进程的这一刻的（ADR 0154）：失败卡上点了按钮之后沿用同一份计划重跑，计划里冻结的那份可能是旧的
+    spec = dataclasses.replace(spec, ignored_paths=engine_pathignore.paths_for(pl.project_root))
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)

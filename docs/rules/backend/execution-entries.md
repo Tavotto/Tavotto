@@ -120,7 +120,7 @@ order: 180
   `pool.foreign_abi_error` → 稳定码 `import_folder_abi_mismatch`（先于缺依赖与读不了判）；路径只在私有键，换成 `pathignore` 令牌就地丢弃。
 - **补救**：名单存项目设置 `ignored_import_paths`（`engine/pathignore`，唯一出处；项目根与祖先永不收）；`ExecutionSpec.ignored_paths` → `--ignore-paths`（`worker_argv` / `bridge_argv` 同一个参数，
   三条 spawn 路径从 `pathignore.paths_for` 取，进 argv 所以会话身份随之变）；`bridgeboot.IgnoredImportPaths` 装在读不了查找器 / `PathFinder` 之前，只管顶层导入，**只对名单里的目录生效**，
-  用户的同名模块照旧赢，`sys.path` 不动。改名单 = `app.remember_ignored_import_folder`（令牌端点 `POST /api/engine/path-ignore` 与 AI 修复的 `ignore_import_folder` 工具共用）+ 关这个项目的会话。
+  用户的同名模块照旧赢，`sys.path` 不动。改名单 = `pathignore.remember`（令牌端点 `POST /api/engine/path-ignore` 与 AI 修复的 `ignore_import_folder` 工具共用）+ 关这个项目的会话。
 - 看护 `tests/test_foreign_abi_path.py`（识别的误判面、过滤器、名单与令牌、argv 同源、两条真入口端到端；变异：不装过滤器端到端必须红）。
 
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）

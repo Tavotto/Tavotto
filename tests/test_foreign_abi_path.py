@@ -587,3 +587,46 @@ def test_native_bridge_end_to_end_names_the_folder_then_succeeds_with_the_flag(t
     finally:
         if saved is not None:
             os.environ["PYTHONPATH"] = saved
+
+
+# --------------------------------------------------------------------------- 桌面拥有的 native 重跑：起进程那一刻取名单
+@needs_worker
+def test_a_native_rerun_takes_the_list_at_launch_not_the_one_frozen_in_the_plan(
+    tmp_path, monkeypatch
+):
+    """失败卡上点了按钮后沿用同一份计划重跑：计划里冻结的 `native_spec` 可能是点按钮之前建的，名单要在起进程的这一刻现取。"""
+    from tavotto import app as m
+    from tavotto.engine import desktopproc, preparation, runcodes
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("import matplotlib\n")
+    vendor = proj / "vendor"
+    vendor.mkdir()
+    plan = preparation.plan_for(
+        project_id="p",
+        project_root=str(proj),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        execution="native",
+    )
+    assert plan.native_spec.ignored_paths == ()  # 点按钮之前建的计划里没有
+    seen = []
+
+    def fake_start(launch):
+        seen.append(launch.spec.ignored_paths)
+        raise runcodes.RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID)
+
+    monkeypatch.setattr(desktopproc, "start", fake_start)
+    try:
+        pathignore.ignore_folder(proj, str(vendor))
+        with pytest.raises(engine_pool.WorkerError):
+            m._native_preparation_runner(plan)
+        assert seen == [(str(vendor),)]
+    finally:
+        pathignore.forget(proj)
+        pathignore.reset()
