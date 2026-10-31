@@ -2047,3 +2047,27 @@ def test_a_job_that_configures_global_credentials_keeps_no_local_copy():
                     f"{wf.path.name}/{job}: checkout 还留着本地凭据，发布器会发两份 Authorization"
                 )
     assert seen == 2, f"配全局凭据的 job 数 {seen} != 2"
+
+
+def test_the_diag_contract_gate_runs_on_the_resolved_sha_for_every_trigger():
+    """诊断包条目门禁（`scripts/ci/diag_contract.py`）：在第一段 `trust`、resolve 之后、对两条触发路径都跑，
+    读的是待发布 SHA 的客户端源码。按**整个步骤块**判（Codex #1544 P1：在步骤名处切文本，`- if: false` 写在
+    `name:` 前面会被切掉，判据假绿）。"""
+    wf = _wf(RELEASE)
+    assert "ack_diag_contract:" in wf.text.split("\njobs:")[0], (
+        "workflow_dispatch 少了 ack_diag_contract 输入"
+    )
+    steps = wf.steps("trust")
+    gates = [i for i, s in enumerate(steps) if "scripts/ci/diag_contract.py" in s]
+    assert len(gates) == 1, f"trust 里诊断包条目门禁应恰有一步，实际 {len(gates)}"
+    resolve = [i for i, s in enumerate(steps) if _Workflow.field(s, "id") == "resolve"]
+    assert resolve and resolve[0] < gates[0], "门禁要在 resolve 之后（用它解析出的 SHA）"
+    gate = steps[gates[0]]
+    for key in ("if", "continue-on-error"):
+        assert _Workflow.field(gate, key) is None, f"门禁步骤带了 {key}:——某条触发路径会无声绕过它"
+    assert re.search(r"^\s+SHA:\s*\$\{\{\s*steps\.resolve\.outputs\.sha\s*\}\}\s*$", gate, re.M)
+    assert re.search(r"^\s+ACK:\s*\$\{\{\s*inputs\.ack_diag_contract\s*\}\}\s*$", gate, re.M)
+    run = gate.split("run:", 1)[1]
+    assert 'git show "$SHA:src/tavotto/engine/diagsend.py"' in run
+    last = [ln for ln in run.splitlines() if ln.strip()][-1]
+    assert '--ack "${ACK:-}"' in last and "||" not in last, "判定那一行的退出码必须原样决定这一步"
