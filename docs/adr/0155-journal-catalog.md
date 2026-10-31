@@ -1,4 +1,4 @@
-# ADR 0154：内置期刊标准库——期刊 = 覆盖 + 出处，未规定的项不补
+# ADR 0155：内置期刊标准库——期刊 = 覆盖 + 出处，未规定的项不补
 
 日期：2026-10-31 · 状态：**Accepted（PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；选择器与出处卡、真实数据、出处巡检另起 PR）**。
 相关：[0006 版本化出版规范](0006-codex-mcp-app-and-publication-profile.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；

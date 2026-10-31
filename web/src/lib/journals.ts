@@ -1,5 +1,5 @@
 /**
- * 内置期刊标准库（TypeScript 侧）—— 期刊 = 覆盖 + 出处（ADR 0154）。
+ * 内置期刊标准库（TypeScript 侧）—— 期刊 = 覆盖 + 出处（ADR 0155）。
  *
  * 数据来自 `@journals` 别名指向的 `src/tavotto/profiles/journals.json`，与 Python 的
  * `engine/journals.py` 读的是**同一个文件**；加载 / 校验 / 折叠是它的同名同义实现

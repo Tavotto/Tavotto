@@ -306,7 +306,7 @@ def merge_journal(base: dict, journal: dict) -> dict:
 def list_profiles() -> list[dict]:
     """全部可用 profile 的摘要（界面下拉用）。
 
-    `listed: false` 的 profile（如期刊底 `journal-base-v1`，ADR 0154）只是别的东西的
+    `listed: false` 的 profile（如期刊底 `journal-base-v1`，ADR 0155）只是别的东西的
     底，不是一份可选规范——不进列表，但 `load()` 照常取得到。
     严格同源对：`web/src/lib/profile.ts` 的 `listProfiles()`。
     """

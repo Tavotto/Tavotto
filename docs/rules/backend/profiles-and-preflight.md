@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0154）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -76,7 +76,7 @@ order: 260
 - 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
   MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
 
-## 内置期刊标准库（ADR 0154）
+## 内置期刊标准库（ADR 0155）
 
 - **期刊 = 对中性底 `journal-base-v1` 的一份覆盖 + 每条规则的原文出处**，数据唯一权威是
   `src/tavotto/profiles/journals.json`（与 `publication.json` 同目录，随 wheel / PyInstaller `profiles/` 分发）。
@@ -91,11 +91,11 @@ order: 260
 - **加载即校验，没出处的数值进不了库**：每条 rule 要有 `value`、`src`（在可见 sources 里）、非空 `quote`（只存一两句短摘录，不存整页）；键路径必须是
   merge 能精确落到的 `journal-base-v1` 字段（深合并子对象写 `<子对象>.<键>`，其余顶层单段，身份 / 展示字段不可覆盖）；`value` 类型须与底一致；
   折叠后整份过 `validate_spec`（TS `profile.validateSpecShape` 是 `_validate` 的镜像，严格同源对，同一批向量看护）。出版社 rules 先、期刊 rules 后覆盖。
-- **schema 扩展位**（全文 ADR 0154 §3b）：顶层 `catalog_rev`；`info.<闭集 id>` 展示项（同样强制 src/quote，不折进 override）；规则的 `qualifier` / `value_alt` / `stage` / `mark` / `derivation` / `unset`；
+- **schema 扩展位**（全文 ADR 0155 §3b）：顶层 `catalog_rev`；`info.<闭集 id>` 展示项（同样强制 src/quote，不折进 override）；规则的 `qualifier` / `value_alt` / `stage` / `mark` / `derivation` / `unset`；
   来源 `coverage`（`single_journal_sample` 不得被出版社 rules 引用）；`journal_sources()` 返回 `rule_scope` + `source_scope` + `overrides` + `affects`。期刊填了值的检查按 `SEVERITY_BUMP` 从 suggestion 抬到 warn（只抬不降、显式优先）。
   闭集常量（`INFO_IDS` / `QUALIFIERS` / `STAGES` / `COVERAGES` / `EXACT_ONLY_PATHS` / `SEVERITY_BUMP` / `KIND_OVERRIDES` / 错误码）两侧逐项相同，随 golden 向量的 `constants` 一起比。
   链接安全：url/archive_url `https://`、anchor `#:~:text=`、retrieved ISO 日期；别名撞名 NFKC+小写。
-- **栏位与建议**（ADR 0154 §3b）：下游读栏位只读 `derive_page_columns`/`derivePageColumns`（`page_columns`，没写由 `widths_mm` 派生单栏 / 双栏）；`page-width` 命中任一 exact 栏位即过。
+- **栏位与建议**（ADR 0155 §3b）：下游读栏位只读 `derive_page_columns`/`derivePageColumns`（`page_columns`，没写由 `widths_mm` 派生单栏 / 双栏）；`page-width` 命中任一 exact 栏位即过。
   `recommended`/`typical` 的字号与 `min_script_font_size_pt` 折成 `advisories`，只产生 suggestion 级 `font-size-recommended`（带期刊名与原话），不是判据；`affects` 为 `advice`。两侧同源，向量见 `journal_vectors.json` 与 `preflight_vectors.json`（`journal-columns-*` / `journal-advice-*`）。
 - **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
   项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。

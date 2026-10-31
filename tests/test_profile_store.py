@@ -49,7 +49,7 @@ def test_builtin_specs_come_from_the_canonical_json(data_dir):
 
 
 def test_hidden_journal_base_is_resolvable_but_not_listed(client):
-    """`journal-base-v1`（listed:false）不进清单，但按 id 取规范必须取得到（ADR 0154）。
+    """`journal-base-v1`（listed:false）不进清单，但按 id 取规范必须取得到（ADR 0155）。
 
     回归：`resolve_spec` 曾用「可列出」判内置，隐藏的底被当成用户自建 → 404，
     选了期刊后预检 / 导出 / MCP 全部失败。

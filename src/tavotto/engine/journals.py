@@ -1,4 +1,4 @@
-"""内置期刊标准库 —— 期刊 = 覆盖 + 出处（ADR 0154）。
+"""内置期刊标准库 —— 期刊 = 覆盖 + 出处（ADR 0155）。
 
 数据的唯一权威是 `src/tavotto/profiles/journals.json`（随 wheel 分发）；TypeScript 侧
 `web/src/lib/journals.ts` 经 `@journals` 别名读**同一个文件**，并实现同名同义的加载 /

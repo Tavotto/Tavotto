@@ -333,7 +333,7 @@ def cases() -> list[dict]:
     )
 
     # 9f. 期刊底 journal-base-v1：栏宽是 null（没规定），任何页宽都不报 page-width
-    #     ——不是拿占位数字去比（ADR 0154）。
+    #     ——不是拿占位数字去比（ADR 0155）。
     out.append(
         {
             "name": "journal-base-null-widths-no-page-width",
