@@ -25,6 +25,7 @@ import {
   backendErrorText,
   fetchDependencyOffer,
   isNativeTerminal,
+  ignoreImportFolder,
   repairImportFolder,
   type GuiDialogPayload,
   type PreparationAttempt,
@@ -674,6 +675,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.send')
     case 'repair_folder':
       return pt('btn.repairFolder')
+    case 'skip_folder':
+      return pt('btn.skipFolder')
   }
 }
 
@@ -683,9 +686,18 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
  * 重跑沿用卡上「再试一次」同一个动作；挂起期间换了项目就什么都不做。
  */
 async function repairFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, () => repairImportFolder(token))
+}
+
+/** 「跳过这个文件夹」（ADR 0154）并重跑一次：只把令牌交给后端，之后与「修复权限」同一个重跑动作 */
+async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, () => ignoreImportFolder(token))
+}
+
+async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<unknown>): Promise<string | null> {
   const guard = captureProjectEpoch()
   try {
-    await repairImportFolder(token)
+    await decide()
   } catch (e) {
     return guard.still() ? backendErrorText(e) : null
   }
@@ -805,6 +817,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return null
       case 'repair_folder':
         return repairFolderAndRerun(entry, p.token)
+      case 'skip_folder':
+        return skipFolderAndRerun(entry, p.token)
     }
   }
 }

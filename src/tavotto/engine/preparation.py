@@ -73,6 +73,7 @@ from . import (
     launchctx,
     launcher,
     nativesession,
+    pathignore,
     pool,
     projectenv,
     receipt,
@@ -564,6 +565,8 @@ def plan_for(
             stdin=execspec.STDIN_BRIDGE,
             # 无缓冲：stdout 管道对 Python 默认块缓冲，不设的话界面看不到实时输出（ADR 0125 残余）
             env={"PYTHONUNBUFFERED": "1"},
+            # ADR 0154：用户选了「跳过这个文件夹」的目录，native bridge 的顶层导入不再去那里找
+            ignored_paths=pathignore.paths_for(root),
             **execspec.run_kwargs(run),
         )
         native_spec = spec

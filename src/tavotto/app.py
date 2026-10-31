@@ -129,6 +129,7 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
+    pathignore as engine_pathignore,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -779,6 +780,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         engine_pool.ARGUMENTS_ERROR_CODE,
         *engine_texdiag.ERROR_CODES,
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
+        engine_pool.IMPORT_FOLDER_ABI_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -9984,6 +9986,15 @@ def _fix_session_env(sess) -> dict:
         prefix = Path(py).parent.parent
         if prefix.is_dir():
             out["env_prefixes"] = [prefix]
+        # 当前在用的环境（含内置 runtime）要让 `list_environments` 列得出来，否则 AI 只能在外部 Python 里选，
+        # 而应用验证只认会话选中的那一个（TVD-QMJV）
+        source = (getattr(sess.plan, "environment", None) or {}).get("source")
+        bundled = source == "bundled"
+        out["current_environment"] = {
+            "python": py,
+            "source": source if isinstance(source, str) else "",
+            "label": "Tavotto built-in Python" if bundled else Path(py).parent.parent.name,
+        }
     return out
 
 
@@ -10106,6 +10117,8 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
         "application_runner": run,
         "application_check": check,
         "on_workdir_changed": cwd_changed,
+        # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）
+        "on_ignored_paths_changed": cwd_changed,
     }
 
 
@@ -10490,6 +10503,37 @@ def api_engine_folder_repair():
             {"error": f"修复权限未完成: {exc.code}", "code": exc.code, "params": {}}
         ), _FOLDER_REPAIR_STATUS.get(exc.code, 500)
     return jsonify({"ok": True, **result})
+
+
+#: 「跳过这个文件夹」接口的 HTTP 状态：令牌失效 410，被拒的目标 403
+_PATH_IGNORE_STATUS = {
+    engine_pathignore.ERROR_TOKEN_INVALID: 410,
+    engine_pathignore.ERROR_REJECTED: 403,
+}
+
+
+@app.post("/api/engine/path-ignore")
+def api_engine_path_ignore():
+    """「跳过这个文件夹」（ADR 0154）：只收失败卡上的不透明令牌，不收路径。
+
+    要「用户在页面上点了」（`_page_authenticated`，fail closed：MCP / CLI 的本机凭据头不算）；令牌绑项目、
+    一次性、会过期。成功 `{ok: true, path_ignore: {paths}}`，调用方随后重跑脚本。"""
+    root = str(require_project())
+    body = request.get_json(silent=True) or {}
+    token = body.get("token") if isinstance(body, dict) else None
+    try:
+        if not _page_authenticated():
+            raise engine_pathignore.IgnoreError(engine_pathignore.ERROR_REJECTED)
+        path = engine_pathignore.path_of_token(token, root)
+        state = engine_pathignore.remember(
+            root, path, on_changed=lambda: engine_pool.shutdown_all(root)
+        )
+        engine_pathignore.consume_token(token)
+    except engine_pathignore.IgnoreError as exc:
+        return jsonify(
+            {"error": f"跳过文件夹未完成: {exc.code}", "code": exc.code, "params": {}}
+        ), _PATH_IGNORE_STATUS.get(exc.code, 500)
+    return jsonify({"ok": True, "path_ignore": state})
 
 
 def _input_remap_error(exc):
@@ -11044,6 +11088,8 @@ def _native_preparation_runner(pl, before_retry=None):
         raise engine_pool.WorkerError(
             "这份计划没有桌面拥有的启动身份", code=engine_runcodes.DESKTOP_RUN_LAUNCH_INVALID
         )
+    # 「跳过这个文件夹」的名单取起进程的这一刻的（ADR 0154）：失败卡上点了按钮之后沿用同一份计划重跑，计划里冻结的那份可能是旧的
+    spec = dataclasses.replace(spec, ignored_paths=engine_pathignore.paths_for(pl.project_root))
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
@@ -11079,6 +11125,14 @@ def _native_preparation_runner(pl, before_retry=None):
             native_project = str(require_project())
         except NoProjectError:
             native_project = ""
+        foreign = engine_pool.foreign_abi_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+            project=native_project,
+        )
+        if foreign is not None:
+            raise foreign
         unreadable = engine_pool.unreadable_folder_error(
             str(error.get("message") or "脚本运行出错"),
             str(error.get("traceback") or ""),

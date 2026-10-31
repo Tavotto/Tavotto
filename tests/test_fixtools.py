@@ -756,6 +756,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "rollback",
         # 数据找不到时把 AI 找到的文件接上（细节见 tests/test_fixtools_link.py）
         "link_data_file",
+        # 脚本自带的私有依赖文件夹为别的 Python 版本装的：跳过它（ADR 0154，细节见 tests/test_fixtools_importpath.py）
+        "ignore_import_folder",
         # #1374：任意命令，两档（细节见 tests/test_fixtools_command.py）
         "run_command",
         # D2b 的「问与报」组（细节见 tests/test_fixasks.py）
@@ -794,6 +796,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "switch_workdir",
         "select_environment",
         "link_data_file",
+        "ignore_import_folder",
         "run_command",
     }
 
@@ -1697,3 +1700,54 @@ def test_list_environments_default_includes_project_venv(box, monkeypatch):
     got = observe._environment_entries(ctx)
     assert [e["source"] for e in got] == ["project_venv", "conda"]
     assert os.path.normcase(got[0]["python"]) == os.path.normcase(str(venv_py))
+
+
+def test_list_environments_lists_the_session_environment_including_the_bundled_runtime(
+    box, monkeypatch
+):
+    """TVD-QMJV：当前用的是内置 runtime 时，AI 只看得到外部 Python，`try_run` 又只认会话选中的环境，验证无从做起。
+    判据的主语：`list_environments` 返回里是否有**标 current 的一行**，以及 `try_run` 拿这个 id 交给应用验证的解释器。"""
+    from tavotto.engine import userenvs
+    from tavotto.engine.fixtools import observe
+
+    bundled = put(box.tmp / "app" / "runtime" / "python", "")
+    other = {"python": sys.executable, "source": "conda", "label": "base"}
+    monkeypatch.setattr(userenvs, "discover", lambda *a, **k: [other])
+    seen = []
+
+    def runner(python, timeout, cancel, approve):
+        seen.append(python)
+        return {"code": "application_not_runnable", "report": {}}
+
+    ctx = make_ctx(
+        box,
+        script_path=put(box.proj / "fig.py", "print(1)\n"),
+        current_environment={
+            "python": str(bundled),
+            "source": "bundled",
+            "label": "Tavotto built-in Python",
+        },
+        application_runner=runner,
+    )
+    assert [e.get("source") for e in observe._environment_entries(ctx)] == ["bundled", "conda"]
+    r = call(ctx, "list_environments", {})
+    rows = json.loads(r.content.split("\n[")[0])
+    assert rows[0]["source"] == "bundled" and rows[0]["current"] is True
+    assert "current" not in rows[1]
+    assert str(bundled) not in r.content  # 路径只在 ctx.environments 里，不进返回
+    call(ctx, "try_run", {"env": rows[0]["id"], "mode": "script"})
+    assert seen == [str(bundled)]
+
+
+def test_the_app_hands_the_plans_interpreter_to_the_fix_context(tmp_path):
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+
+    py = tmp_path / "rt" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    plan = SimpleNamespace(interpreter=str(py), environment={"source": "bundled"})
+    out = appmod._fix_session_env(SimpleNamespace(plan=plan))
+    assert out["current_environment"]["python"] == str(py)
+    assert out["current_environment"]["source"] == "bundled"
+    FixContext.for_fix_session("s1", tmp_path, **out)  # 字段名必须是 FixContext 认的

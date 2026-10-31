@@ -880,7 +880,7 @@ def test_builtin_command_puts_the_key_in_the_environment_only(world):
 
 
 def test_builtin_key_env_name_is_the_one_the_runner_reads():
-    from tavotto.engine.agent_runner import __main__ as runner
+    from tavotto.engine.agent_runner import runner_cli as runner
 
     assert ai_agents.BUILTIN_KEY_ENV == runner.ENV_API_KEY
 

@@ -244,7 +244,11 @@ def _error_from_worker(
         out = _err(exc.code, str(exc))
         out["dependency_preparation"] = dependency
         return out
-    if exc.code in (*texdiag.ERROR_CODES, pool.IMPORT_FOLDER_UNREADABLE_CODE):
+    if exc.code in (
+        *texdiag.ERROR_CODES,
+        pool.IMPORT_FOLDER_UNREADABLE_CODE,
+        pool.IMPORT_FOLDER_ABI_CODE,
+    ):
         # TeX / 项目外文件夹读不了（ADR 0153） 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
         # （`pool.recovery_params`）——素材库这条入口不能退化成一句「试运行失败」，更不能落成缺 Python 包
         return _err(
@@ -512,7 +516,18 @@ def _probe(
             # 就开新的会拿到旧会话——它的 `build` 命中「已建好」直接回缓存，脚本一行没重跑，`input()` 不再被问、
             # 自动回填的轻提示也就不会出（Windows 打包产物上 `script-input.spec` 的红）。关停未确认 =
             # WorkerError，当作这次试运行失败如实报，不假装重跑过。
-            pool.invalidate(script, figures_dir, run, only_run=True, force=True, **roots_ctx)
+            # `spare_unbuilt`：同键上另一个调用方（准备会话 / 渲染路）刚取到、还没跑完第一次 build 的会话不是
+            # 「旧会话」——杀了它，对方的第一条请求就报 `unknown_session`（TVD-QMJV：首次建字体缓存时 spawn 慢，
+            # 试运行在池锁上排队，放行那一刻把准备会话刚起好的会话关了）。这里改为共享它的那次 build。
+            pool.invalidate(
+                script,
+                figures_dir,
+                run,
+                only_run=True,
+                force=True,
+                spare_unbuilt=True,
+                **roots_ctx,
+            )
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——

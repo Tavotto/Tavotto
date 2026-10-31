@@ -42,6 +42,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
   requestAiFix: vi.fn(),
   repairImportFolder: vi.fn(),
+  ignoreImportFolder: vi.fn(),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -64,6 +65,7 @@ import {
   refreshProject,
   probeScript,
   repairImportFolder,
+  ignoreImportFolder,
   type CapturedFigureDescriptor,
   type PreparationAction,
   type PreparationAttempt,
@@ -3086,6 +3088,75 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       await openWith(report({ ...STATES.fileOpsBlocked, remedy: { kind: 'switch_native', silent: false } }))
       expect(panel().dataset.prepState).toBe('file_ops_blocked')
       expect(primary()).toBeNull()
+    })
+  })
+
+  describe('脚本自带的私有依赖文件夹是为别的 Python 版本装的：跳过这个文件夹（ADR 0154，TVD-ZCR4）', () => {
+    const foreignAbi = (params: Record<string, string> = { folder: '.kegg_python', abi: '3.12', current: '3.14', ignore_token: 'it-1' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'import_folder_abi_mismatch' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'import_folder_abi_mismatch', message: 'x', params } },
+      })
+
+    beforeEach(() => {
+      vi.mocked(ignoreImportFolder).mockReset()
+      mockAct.mockClear()
+    })
+
+    it('一句话点名文件夹和两个版本 + 一个主按钮「跳过这个文件夹重跑」，不堆说明', async () => {
+      await mount()
+      await openWith(foreignAbi())
+      expect(panel().dataset.prepState).toBe('folder_abi')
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('脚本自带的“.kegg_python”文件夹是为 Python 3.12 装的，和当前环境（Python 3.14）不兼容')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('skip_folder')
+      expect(primary()?.textContent).toBe('跳过这个文件夹重跑')
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+      // 换 Python 版本救不了：不摆「使用你的 AI 来修复」
+      expect(panel().querySelector('[data-prep-ai-fix]')).toBeNull()
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(foreignAbi())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toContain('.kegg_python')
+      expect(primary()?.textContent).toBe('Skip this folder and rerun')
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('没有令牌（没打开项目 / 老后端）：保持原来的通用失败卡，不画「跳过这个文件夹」', async () => {
+      await mount()
+      await openWith(foreignAbi({ folder: '.kegg_python', abi: '3.12', current: '3.14' }))
+      expect(panel().dataset.prepState).toBe('failed')
+      expect(primary()?.textContent).toBe('再试一次')
+      expect(panel().textContent).not.toContain('跳过这个文件夹')
+    })
+
+    it('点一次：只把令牌交给后端；成功后沿用「再试一次」同一个动作重跑一次', async () => {
+      await mount()
+      await openWith(foreignAbi())
+      vi.mocked(ignoreImportFolder).mockResolvedValueOnce({ ok: true, path_ignore: { paths: ['.kegg_python'] } })
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+      await act(async () => primary()!.click())
+      expect(vi.mocked(ignoreImportFolder).mock.calls).toEqual([['it-1']])
+      expect(mockAct).toHaveBeenCalledTimes(1)
+      expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+    })
+
+    it('令牌失效：如实一句话说明，不重跑，按钮留着', async () => {
+      await mount()
+      await openWith(foreignAbi())
+      vi.mocked(ignoreImportFolder).mockRejectedValueOnce(new ApiError('x', 410, { code: 'path_ignore_token_invalid', params: {} }))
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个请求已经失效，请重新运行一次脚本。')
+      expect(mockAct).not.toHaveBeenCalled()
+      expect(primary()?.textContent).toBe('跳过这个文件夹重跑')
     })
   })
 

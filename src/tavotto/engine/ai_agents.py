@@ -1240,7 +1240,7 @@ class ClaudeAgent(AgentDefinition):
 #: 内置执行器的 id。**不是用户可选的「执行器」**：界面只讲「连接」，它只经 connections 的 `route` 体现。
 BUILTIN_ID = "builtin"
 
-#: 内置执行器的密钥环境变量名（与 `agent_runner.__main__.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
+#: 内置执行器的密钥环境变量名（与 `agent_runner.runner_cli.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
 BUILTIN_KEY_ENV = "TAVOTTO_AGENT_API_KEY"
 
 

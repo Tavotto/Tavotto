@@ -432,6 +432,7 @@ def spec_for(
     target_kind: str = execspec.TARGET_SCRIPT,
     cwd: str = "",
     project_root: str = "",
+    ignored_paths: tuple[str, ...] = (),
 ) -> execspec.ExecutionSpec:
     """把一次调用化成 native ExecutionSpec（默认值只写在这里）。
 
@@ -453,4 +454,5 @@ def spec_for(
         project_root=project_root,
         target_kind=target_kind,
         argv=argv,
+        ignored_paths=ignored_paths,
     )

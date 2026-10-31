@@ -39,6 +39,7 @@ from . import (
     launcher as launcher_mod,
     logsafe,
     patchspec,
+    pathignore,
     projectenv,
     rootenv,
     runtime,
@@ -745,6 +746,14 @@ def recovery_params(exc: "WorkerError") -> dict:
     if exc.code in texdiag.ERROR_CODES:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
+    if exc.code == IMPORT_FOLDER_ABI_CODE:
+        # 显示名（相对项目的路径或目录名，不是绝对路径）+ 目录里扩展的 ABI 与当前解释器的版本；`ignore_token` 是不透明的
+        # 服务端令牌（`pathignore`），前端凭它请求「跳过这个文件夹」，它不是路径、也推不出路径
+        fact = extra["foreign_abi_folder"]
+        params = {k: str(fact[k]) for k in ("folder", "abi", "current")}
+        if fact.get("ignore_token"):
+            params["ignore_token"] = str(fact["ignore_token"])
+        return params
     if exc.code == IMPORT_FOLDER_UNREADABLE_CODE:
         # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）。`repair_token` 是不透明的服务端令牌
         # （`folderrepair`，仅 Windows 才有），前端凭它请求「修复权限」；它不是路径、也推不出路径
@@ -1341,6 +1350,49 @@ def _unreadable_install_done(project, python, module: str) -> bool:
         ) in _UNREADABLE_INSTALLED
 
 
+def _short_text(value, limit: int) -> str | None:
+    """事实里的短文本：非空、不超长、没有控制字符 / 反斜杠（路径里的 `/` 允许：项目相对的显示名）。"""
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > limit
+        or any(ord(c) < 32 or c == "\\" for c in value)
+    ):
+        return None
+    return value
+
+
+def foreign_abi_error(
+    message: str, traceback_text: str, extra=None, *, project=""
+) -> "WorkerError | None":
+    """worker / bridge 报来的结构化事实 `foreign_abi_folder` → 错误；没有或畸形回 None（ADR 0154）。
+
+    脚本加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的，把环境里本来完好的同名包盖住了。
+    换 Python 版本救不了、装包也救不了（环境里那份是好的）：失败卡只说这一句事实，主按钮是「跳过这个文件夹」。
+    完整路径只在私有键 `foreign_abi_folder_private`，在这里换成服务端令牌（`pathignore.issue`）就地丢弃——
+    路径不进 `err.extra`（诊断 / 投影 / 遥测读得到的那一份）。原始消息与 traceback 原样保留。"""
+    given = extra.get("foreign_abi_folder") if isinstance(extra, dict) else None
+    if not isinstance(given, dict):
+        return None
+    folder = _short_text(given.get("folder"), 120)
+    abi = _short_text(given.get("abi"), 24)
+    current = _short_text(given.get("current"), 12)
+    if not (folder and abi and current):
+        return None
+    fact = {"folder": folder, "abi": abi, "current": current}
+    module = given.get("module")
+    if isinstance(module, str) and projectenv.valid_module_name(module):
+        fact["module"] = module
+    private = extra.get("foreign_abi_folder_private")
+    if isinstance(private, dict):
+        token = pathignore.issue(project, private.get("path"))
+        if token:
+            fact["ignore_token"] = token
+    err = WorkerError(message, traceback_text, code=IMPORT_FOLDER_ABI_CODE)
+    err.extra = {"foreign_abi_folder": fact}
+    return err
+
+
 def unreadable_folder_error(
     message: str, traceback_text: str, extra=None, *, project="", python=""
 ) -> "WorkerError | None":
@@ -1913,6 +1965,9 @@ ENGINE_FILES_INCOMPLETE_CODE = "engine_files_incomplete"
 #: 脚本加进 `sys.path` 的项目外文件夹当前账户读不了，而 import 查找器跳过之后仍然失败（ADR 0153）。
 #: 换环境 / 重装依赖都无效：失败卡只说这一句事实，AI 修复也带同一条事实。
 IMPORT_FOLDER_UNREADABLE_CODE = "import_folder_unreadable"
+#: 脚本加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的、盖住了环境里完好的同名包（ADR 0154）。
+#: 换 Python 版本 / 装包都无效：让那个目录对这个项目不生效（`pathignore`），脚本与目录都不动。
+IMPORT_FOLDER_ABI_CODE = "import_folder_abi_mismatch"
 
 #: 显式为**这个项目**挑的解释器失效时的稳定 code（U03，FO15 / FO16）。与
 #: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
@@ -1928,6 +1983,7 @@ ERROR_CODES = (
     PROJECT_PYTHON_UNUSABLE_CODE,
     ENGINE_FILES_INCOMPLETE_CODE,
     IMPORT_FOLDER_UNREADABLE_CODE,
+    IMPORT_FOLDER_ABI_CODE,
     WRITE_OUTSIDE_ROOTS_CODE,
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）：写回事务的 PNG 目标走到这里
     figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
@@ -2653,6 +2709,8 @@ class EngineWorker:
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
             write_roots=self.write_roots,
+            # ADR 0154：用户选了「跳过这个文件夹」的目录，三条 spawn 路径同一个出处（`pathignore.paths_for`）
+            ignored_paths=pathignore.paths_for(figures_dir),
             **execspec.run_kwargs(run),
         )
         LOG.info(
@@ -2923,6 +2981,16 @@ class EngineWorker:
         if tex is not None:
             tex.script_name = self.script_name
             return tex
+        foreign = foreign_abi_error(
+            msg,
+            tb,
+            err if isinstance(err, dict) else None,
+            project=getattr(self, "figures_dir", ""),
+        )
+        if foreign is not None:
+            foreign.script_name = self.script_name
+            foreign.python_source = getattr(self, "python_source", "") or ""
+            return foreign
         unreadable = unreadable_folder_error(
             msg,
             tb,
@@ -3371,6 +3439,7 @@ def _spawn_spec(
     input_remap=None,
     run=None,
     write_roots=None,
+    ignored_paths=None,
 ) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
@@ -3392,6 +3461,8 @@ def _spawn_spec(
         # 会话自己那份（与它的代次同一刻取）；不给才现取——重开会话不许换成另一代的表
         input_remap=inputremap.rules_for(figures_dir) if input_remap is None else list(input_remap),
         write_roots=write_roots,
+        # 会话自己那份（与 input_remap 同纪律：重开会话不许换成另一份名单）；不给才现取
+        ignored_paths=pathignore.paths_for(figures_dir) if ignored_paths is None else ignored_paths,
         **execspec.run_kwargs(run),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
@@ -3431,6 +3502,9 @@ def _worker_error(
     tex = _tex_error(message, traceback_text, extra)
     if tex is not None:
         return tex
+    foreign = foreign_abi_error(message, traceback_text, extra, project=project)
+    if foreign is not None:
+        return foreign
     unreadable = unreadable_folder_error(
         message, traceback_text, extra, project=project, python=python
     )
@@ -3575,6 +3649,7 @@ class WorkerdWorker:
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
             write_roots=self.write_roots,
+            ignored_paths=pathignore.paths_for(figures_dir),
             **execspec.run_kwargs(run),
         )
         self._session_id = ""
@@ -3595,6 +3670,7 @@ class WorkerdWorker:
             input_remap=self.spec.input_remap,
             run=self.run,
             write_roots=self.write_roots,
+            ignored_paths=self.spec.ignored_paths,
         )
 
     def _open(self) -> None:
@@ -5317,6 +5393,7 @@ def invalidate(
     *,
     only_run: bool = False,
     force: bool = False,
+    spare_unbuilt: bool = False,
     targets: tuple[WorkerTarget, ...] | None = None,
     preserve: tuple[WorkerTarget, ...] = (),
     write_roots=None,
@@ -5334,6 +5411,11 @@ def invalidate(
     another acquisition can reuse workerd's spawn hash. An unconfirmed supervisor
     close refuses the rerun and retains its handle for a later retirement retry.
 
+    `spare_unbuilt=True`（试运行用）：**还没跑完第一次 build 的活会话不退役**——它是另一个调用方刚取到
+    （或正在 build）的会话，还没有任何「旧结果」可言；此刻杀掉，对方的第一条请求就会撞上 `unknown_session`
+    （首次运行字体缓存要现建、worker 起得慢时，这个窗口长达十来秒，且调用方是持池锁排队后才进到这里的）。
+    调用方随后经 `get()` 拿到同一条会话，等它那次 build 的结果（`owned is False` 的共享会话规则）。
+    已 build 完的、build 失败的、已死的仍照常退役——那才是「重跑」要换掉的东西。
     """
     with _lock:
         if figures_dir is None:
@@ -5360,6 +5442,8 @@ def invalidate(
                 for key in keys
                 if not any(_target_matches(target, key, _workers[key]) for target in preserve)
             ]
+        if spare_unbuilt:
+            keys = [key for key in keys if not _awaiting_first_build(_workers[key])]
         if force:
             for key in keys:
                 worker = _workers[key]
@@ -5382,6 +5466,17 @@ def invalidate(
         _remember_retirements(victims)
     for key, worker in victims:
         threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True).start()
+
+
+def _awaiting_first_build(worker) -> bool:
+    """活着、还没有任何一次 build 完成（含正在 build）：它的主人是取到它的那个调用方，不是「旧会话」。"""
+    return (
+        worker.alive()
+        and getattr(worker, "built", True) is False
+        and getattr(worker, "build_failed", False) is False
+        and not is_fenced(worker)
+        and getattr(worker, "_closing", False) is not True
+    )
 
 
 def invalidate_project(

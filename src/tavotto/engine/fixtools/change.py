@@ -313,6 +313,17 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     ):
         return err("bad_arguments", "`version` must look like `3.12` or `3.12.4`, or be left out.")
     version = version.strip() if isinstance(version, str) else None
+    report = ctx.report() if ctx.report else None
+    failing = (
+        ((report or {}).get("result") or {}).get("error") if isinstance(report, dict) else None
+    )
+    if isinstance(failing, dict) and failing.get("code") == "import_folder_abi_mismatch":
+        # 失败是脚本自带的私有依赖文件夹为别的 Python 版本装的（ADR 0154）：换 Python 版本救不了，那个目录永远是为别的版本装的
+        return err(
+            "python_change_not_applicable",
+            "The failure is a folder the script itself puts on its import path that was installed for a different "
+            "Python version, so changing Python cannot fix it. Use ignore_import_folder instead.",
+        )
     bad = _snapshot_or_error(ctx, "change_python")
     if bad is not None:
         return bad
