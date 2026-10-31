@@ -2944,7 +2944,7 @@ export default interface Resources {
       "save": "存为命名节点",
       "saved": "已把现在存为命名节点「{{name}}」",
       "scopeAll": "全部画布",
-      "scopeAllFigures": "全部",
+      "scopeAllFigures": "全部图",
       "scopeCanvas": "这张画布",
       "scopeFigure": "这张图",
       "scopeLabel": "显示哪张画布的节点",

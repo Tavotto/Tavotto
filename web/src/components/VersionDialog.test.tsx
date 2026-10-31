@@ -697,7 +697,8 @@ describe('按天分组、类型标记、只看命名', () => {
       meta({ id: 'a', ts: NOW - 2000 }),
       meta({ id: 'n', ts: NOW - 1000, kind: 'named', named: true, auto: false, name: '投稿前' }),
     ])
-    await act(async () => $<HTMLButtonElement>('[data-timeline-filter] [data-value="named"]')!.click())
+    // 「命名」是一颗开关（beta 0.19.3b3 起与范围并成一行）
+    await act(async () => $<HTMLButtonElement>('[data-timeline-filter="all"]')!.click())
     expect([...document.querySelectorAll('[data-timeline-node]')].map((n) => n.getAttribute('data-timeline-node'))).toEqual(['n'])
     expect(days()).toEqual(['今天'])
   })
@@ -1995,8 +1996,16 @@ const twoCanvases = async () => {
     })
   })
 }
-const showAllCanvases = () =>
-  act(async () => $<HTMLElement>('[data-timeline-scope] [data-value="all"]')!.click())
+/** 范围是一颗文字下拉（beta 0.19.3b3 起）：先按下触发器打开菜单，再选「全部…」那一项 */
+async function pickScope(value: 'current' | 'all') {
+  await act(async () => {
+    $<HTMLElement>('[data-timeline-scope]')!.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }),
+    )
+  })
+  await act(async () => $<HTMLElement>(`[data-timeline-scope-option="${value}"]`)!.click())
+}
+const showAllCanvases = () => pickScope('all')
 
 describe('每张画布各有自己的时间线（beta 0.19.0b3 反馈：不同脚本的版本别混在一条里）', () => {
   const mixed = () => [
@@ -2090,7 +2099,7 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     meta({ id: 'vAB', ts: NOW - 180_000, figures: ['a', 'b'] }),
     meta({ id: 'vOld', ts: NOW - 240_000 }), // 没有 figures：不知道有哪些图
   ]
-  const showAll = () => act(async () => $<HTMLElement>('[data-timeline-scope] [data-value="all"]')!.click())
+  const showAll = () => pickScope('all')
 
   it('单图编辑：默认只显示含当前这张图的节点；开关写「这张图 / 全部」，切到全部才都在', async () => {
     await withFigures('a')

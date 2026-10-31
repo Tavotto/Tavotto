@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
+import { Bookmark, ChevronDown, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -69,7 +69,7 @@ import { useRowMenu } from './ui/useRowMenu'
 import { Button, IconButton } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { TextInput } from './ui/Input'
-import { MenuItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
 import { focusOrigin } from './ui/focusOrigin'
 import { Segmented } from './ui/Segmented'
@@ -480,34 +480,51 @@ export function TimelinePanel() {
         )}
       </div>
       {naming && <p className="type-caption shrink-0 px-3 pb-2">{vd('nameHint')}</p>}
-      <div className="flex shrink-0 px-3 pb-1.5">
-        <Segmented
-          value={filter}
-          onChange={setFilter}
-          ariaLabel={vd('filterLabel')}
-          data-timeline-filter
-          className="w-full"
-          items={[
-            { value: 'all', label: vd('filterAll') },
-            { value: 'named', label: vd('filterNamed') },
-          ]}
-        />
+      {/* 范围与筛选并成一行（beta 0.19.3b3 反馈：两排整宽分段、两个「全部」难看又看混）：
+          左边范围是一颗文字下拉（只在有得分时出现），右边「命名」是一颗开关 */}
+      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1">
+        {scopeKind && (
+          <Menu
+            align="start"
+            width={160}
+            trigger={
+              <Button variant="ghost" size="sm" data-timeline-scope={scope}>
+                {vd(
+                  scope === 'current'
+                    ? scopeKind === 'figure'
+                      ? 'scopeFigure'
+                      : 'scopeCanvas'
+                    : scopeKind === 'figure'
+                      ? 'scopeAllFigures'
+                      : 'scopeAll',
+                )}
+                <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
+              </Button>
+            }
+          >
+            <MenuRadioGroup value={scope} onValueChange={(v) => setScope(v === 'all' ? 'all' : 'current')}>
+              <MenuRadioItem value="current" data-timeline-scope-option="current">
+                {vd(scopeKind === 'figure' ? 'scopeFigure' : 'scopeCanvas')}
+              </MenuRadioItem>
+              <MenuRadioItem value="all" data-timeline-scope-option="all">
+                {vd(scopeKind === 'figure' ? 'scopeAllFigures' : 'scopeAll')}
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </Menu>
+        )}
+        <span className="flex-1" />
+        <Button
+          variant="ghost"
+          size="sm"
+          active={filter === 'named'}
+          aria-pressed={filter === 'named'}
+          data-timeline-filter={filter}
+          onClick={() => setFilter((f) => (f === 'named' ? 'all' : 'named'))}
+        >
+          <Bookmark size={ICON_SIZE.sm} filled={filter === 'named'} />
+          {vd('filterNamed')}
+        </Button>
       </div>
-      {scopeKind && (
-        <div className="flex shrink-0 px-3 pb-1.5">
-          <Segmented
-            value={scope}
-            onChange={setScope}
-            ariaLabel={vd('scopeLabel')}
-            data-timeline-scope
-            className="w-full"
-            items={[
-              { value: 'current', label: vd(scopeKind === 'figure' ? 'scopeFigure' : 'scopeCanvas') },
-              { value: 'all', label: vd(scopeKind === 'figure' ? 'scopeAllFigures' : 'scopeAll') },
-            ]}
-          />
-        </div>
-      )}
       {loaded && strip.length > 1 && (
         <TimelineScrubber
           docId={docId}

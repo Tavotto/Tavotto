@@ -2192,7 +2192,7 @@
     "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
     "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
     "scopeFigure": "这张图",
-    "scopeAllFigures": "全部",
+    "scopeAllFigures": "全部图",
     "noneHereFigure": "这张图还没有节点",
     "scopeLabel": "显示哪张画布的节点",
     "scopeCanvas": "这张画布",
