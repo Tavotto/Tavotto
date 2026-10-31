@@ -55,6 +55,7 @@ import {
 } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useRuntimePreview } from '@/hooks/useRuntimePreview'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
@@ -215,6 +216,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
       : null
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
   const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
+  const previewNonce = useRuntimeAssetStore((s) => (runtime ? (s.previewNonce[obj.fileId] ?? 0) : 0))
   useEffect(() => {
     if (runtime) useRuntimeAssetStore.getState().ensure(obj)
     // ensure 幂等且只认 fileId/source；obj 每次 commit 都是新引用，不能进依赖
@@ -234,12 +236,18 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板只有 cache 里确有预览才给 URL（404 的碎图标比占位符糟）；
   // 未知形态（更新版本文档里的新 fileKind）fail closed：不发任何请求。
   const transport = engineTransport()
+  // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
+  // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
+  // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
+  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
     kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
-        : panelSrc(obj.fileId, kind, bucket, mtime)
+        : runtime
+          ? (runtimePreview.url ?? (runtimePreview.failed ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
+          : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
   // `/api/render` 在候选后端下会以 503 表达背压（child 队列满）；<img> 只看得到「失败」，
   // 有界重试同一地址（`lib/imgRetry`），blob / 磁盘原件失败不在此列
@@ -324,9 +332,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无
   // 提示地拿磁盘原图冒充当前视觉状态）。渲染中 / 失败由既有角标压过本条；
   // runtime 面板另有自己的 stale 语义角标，不在此重复。
+  // runtime 例外：挂的若是 cache 里**别的状态**的预览（变体被淘汰 / 旧 cache 配有 overrides / 取预览失败退回
+  // 「最近一次」），同样要说出来——否则就是 QA-WIN-21 的无提示旧图。
   const approxPreview =
     (!showSvg && imageLoadFailed) ||
-    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc)
+    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc) ||
+    (runtime && !transport && !showSvg && !(useEnginePng && enginePng) && !!fileSrc &&
+      runtimePreview.exact !== true)
 
   const figureFramePending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
   // The canvas feedback portal consumes this same transform/opacity chain.
