@@ -44,7 +44,7 @@ export function TutorialWelcome() {
           {t('onboarding.welcome.title')}
         </h1>
         <p className="type-heading font-normal text-ink-3">{t('onboarding.welcome.subtitle')}</p>
-        <p className="mt-4 text-lg text-ink-3">{t('onboarding.welcome.features')}</p>
+        <p data-welcome-features className="mt-4 text-lg text-ink-3">{t('onboarding.welcome.features')}</p>
 
         <div
           role="group"
