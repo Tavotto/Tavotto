@@ -6,6 +6,7 @@ import { installUnexpectedErrorCapture } from './lib/unexpectedErrors'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { WindowControls } from './components/WindowControls'
 import { IconProvider } from './components/ui/Icon'
+import { installIconMotion } from './components/ui/iconMotion'
 import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale, windowChrome } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
 import { applyTheme } from './lib/theme'
@@ -18,6 +19,8 @@ import './index.css'
 installConsoleCapture()
 // 意外错误卡的来源（订阅上面那一份 window 监听 + 引擎 500 出口）；卡片只在「发送问题反馈」开着时才会出现
 installUnexpectedErrorCapture()
+// 图标微动效（ADR 0154）：点按钮 / 指针进按钮时播按钮里那枚图标的动作，委托在 document 上只装一次
+installIconMotion()
 initI18n()
 document.documentElement.lang = currentLocale()
 

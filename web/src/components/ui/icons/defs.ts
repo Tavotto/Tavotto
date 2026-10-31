@@ -22,6 +22,8 @@ export interface IconPath {
   dash?: string
   /** 只在挖空 / 压线里用：这条按实心画 */
   solid?: boolean
+  /** 静止时不画（描边透明），只在微动效里显形的辅助线（ADR 0154） */
+  ghost?: boolean
 }
 export type IconPathSpec = string | IconPath
 export interface IconVariant {
@@ -162,7 +164,12 @@ export const ICON_DEFS = {
   Heart: { s: [HEART], sel: { f: [HEART] } },
   Pin: { s: [PIN_BODY, 'M12 14v6.5'], sel: { f: [PIN_BODY], s: ['M12 14v6.5'] } },
   MousePointerClick: { f: [CURSOR], s: ['M6 10.75H4.5', 'M10.5 6.25V4.75', 'M7 7.25L5.9 6.15'] },
-  SlidersHorizontal: { s: ['M3.5 7.5h8.75', 'M18.75 7.5h1.75', circ(15.5, 7.5, 2.25), 'M3.5 16.5h1.75', 'M11.75 16.5h8.75', circ(8.5, 16.5, 2.25)] },
+  // 旋钮右侧会缩短的两段从外端画起（同一条线反向画，静止逐像素同形）；会变长的两段静止就是原来那截，另有两条
+  // 只在动作里显形的延长线（ghost，静止不画）：悬停动作（ADR 0154）里旋钮滑到哪、线就接到哪
+  SlidersHorizontal: {
+    s: ['M3.5 7.5h8.75', 'M18.75 7.5h1.75', circ(15.5, 7.5, 2.25), 'M3.5 16.5h1.75', 'M20.5 16.5h-8.75', circ(8.5, 16.5, 2.25),
+      { d: 'M20.5 7.5h-8.25', ghost: true }, { d: 'M3.5 16.5h8.25', ghost: true }],
+  },
   X: { s: ['M6 6l12 12', 'M18 6L6 18'] },
   Check: { s: ['M5 12.5l4.5 4.5L19 7'] },
   Pencil: { s: [PENCIL, 'M14.6 5.5l3.9 3.9'] },

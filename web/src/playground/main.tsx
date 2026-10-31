@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { installIconMotion } from '@/components/ui/iconMotion'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { IconProvider } from '@/components/ui/Icon'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -7,6 +8,9 @@ import { initI18n, readStoredLocale, systemLocale, t as translate, urlLocale } f
 import { PRODUCT_NAME, RELEASES_LATEST_URL } from '@/lib/brand'
 import { PlaygroundApp } from './PlaygroundApp'
 import '@/index.css'
+
+// 图标微动效（ADR 0154）与桌面应用同一份委托
+installIconMotion()
 
 /**
  * 浏览器 playground 的入口（`/try`，产物由 scripts/build_browser_playground.py

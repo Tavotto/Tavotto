@@ -239,8 +239,8 @@ const STEPS = ['prepare', 'run', 'edit'] as const
 const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
   // 状态图标：颜色 + 实心孪生双重提示（空心环 + 细线记号四种长得太像）；busy 是全产品唯一的 Spinner
   busy: <Spinner size={ICON_SIZE.md} className="text-accent" />,
-  ok: <CircleCheck filled size={ICON_SIZE.md} className="shrink-0 text-ok" />,
-  bad: <CircleAlert filled size={ICON_SIZE.md} className="shrink-0 text-danger" />,
+  ok: <CircleCheck playIn filled size={ICON_SIZE.md} className="shrink-0 text-ok" />,
+  bad: <CircleAlert playIn filled size={ICON_SIZE.md} className="shrink-0 text-danger" />,
   mute: <CircleQuestionMark filled size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
 }
 
@@ -248,7 +248,7 @@ function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
   // 几个状态有自己更具体的记号（设计稿 v2）
   if (state === 'no_figure' || state === 'no_figure_raster') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
-  if (state === 'offline') return <Unplug size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
+  if (state === 'offline') return <Unplug playIn size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'restarted') return <RotateCcw size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'input_secret') return <KeyRound size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   return TONE_ICON[tone]
@@ -1415,9 +1415,9 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       case 'busy':
         return <Spinner size={ICON_SIZE.sm} className="text-accent" />
       case 'ok':
-        return <CircleCheck filled size={ICON_SIZE.sm} className="shrink-0 text-ok" />
+        return <CircleCheck playIn filled size={ICON_SIZE.sm} className="shrink-0 text-ok" />
       case 'bad':
-        return <CircleAlert filled size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+        return <CircleAlert playIn filled size={ICON_SIZE.sm} className="shrink-0 text-danger" />
       default:
         return <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
     }
