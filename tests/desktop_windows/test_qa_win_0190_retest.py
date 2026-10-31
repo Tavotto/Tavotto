@@ -443,9 +443,10 @@ def _export_once(d, name: str, formats: set[str]) -> Path:
     _click_start(d)
     try:
         d.wait_js(
-            f"return !!document.querySelector('{EXPORT_DIALOG} [data-export-result]')",
+            # 干净成功时没有结果块，只有脚部的「完成」；带说明的成功才有 [data-export-result]
+            f"return !!document.querySelector('{EXPORT_DIALOG} [data-export-result], {EXPORT_DIALOG} [data-export-finish]')",
             timeout=180,
-            what=f"导出 {name} 的结果区（[data-export-result]）",
+            what=f"导出 {name} 完成（[data-export-result] 或 [data-export-finish]）",
         )
     except TimeoutError as e:
         shown = d.js(
