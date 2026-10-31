@@ -112,6 +112,25 @@ describe('TextView 编辑提交（所见即所得就地编辑，ADR 0152）', ()
     expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '旧文字' })
   })
 
+  it('QA-WIN-28：打字后不按 Enter，点画布空白（编辑态被直接撤掉、不经失焦）也要提交', async () => {
+    useDocumentStore.getState().silent((d) => { d.objects.push(textObj({ text: '旧文字' })) })
+    render()
+    await act(async () => useUiStore.getState().setEditingText('t1'))
+    const view = richViewOf(editor())!
+    await act(async () => {
+      editor().focus()
+      view.dispatch(view.state.tr.insertText('新文字', 0, view.state.doc.content.size))
+    })
+    // CanvasStage.onPointerDown 点空白：先退出编辑态，浏览器随后才移焦——编辑器在 blur 之前就被卸载
+    await act(async () => {
+      useUiStore.getState().setEditingText(null)
+    })
+    render()
+    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '新文字', textFormat: 'latex' })
+    act(() => { useDocumentStore.getState().undo() })
+    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '旧文字' })
+  })
+
   it('打字后失焦：一条历史写回 LaTeX 子集，退出后正文只显示一遍', async () => {
     useDocumentStore.getState().silent((d) => {
       d.objects.push(textObj({ text: '' }))
