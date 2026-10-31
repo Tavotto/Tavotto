@@ -10,7 +10,8 @@ import { resolveDocumentSpec, type SpecBinding, type SpecCatalogEntry } from '@/
  * 摆一个夹完就对不上的预设，选了之后页面立刻变成「自定义」）时退回**内置默认规范**的那一档
  * （仍是 `publication.json`，不在这里写第二个数）。
  */
-const FALLBACK_WIDTHS = loadProfile(DEFAULT_PROFILE_ID).widths_mm
+// 默认规范（课题组）的栏宽必有；期刊底的 null 栏宽只出现在期刊绑定里，那时落到这里兜底。
+const FALLBACK_WIDTHS = loadProfile(DEFAULT_PROFILE_ID).widths_mm as { single: number; double: number }
 
 export type PageColumnId = 'single' | 'double'
 

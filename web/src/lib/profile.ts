@@ -48,7 +48,13 @@ export interface PublicationProfile {
   source?: string
   /** false = 只是别的东西的底（如期刊底 journal-base-v1），不进规范下拉；同源对 profiles.py `list_profiles` */
   listed?: boolean
-  widths_mm: { single: number; double: number; tolerance_mm: number; allow_custom: boolean }
+  /** single / double 为 null = 该规范没规定栏宽（如期刊底 journal-base-v1） */
+  widths_mm: {
+    single: number | null
+    double: number | null
+    tolerance_mm: number
+    allow_custom: boolean
+  }
   allowed_aspect_ratios: AspectRatio[]
   aspect_tolerance: number
   font_family: { latin: string; latin_accepted: string[]; latin_substitutes_flagged: string[] }
@@ -219,8 +225,8 @@ export function columnOf(
   widthMm: number,
 ): 'single' | 'double' | null {
   const { single, double, tolerance_mm: tol } = profile.widths_mm
-  if (Math.abs(widthMm - single) <= tol) return 'single'
-  if (Math.abs(widthMm - double) <= tol) return 'double'
+  if (single != null && Math.abs(widthMm - single) <= tol) return 'single'
+  if (double != null && Math.abs(widthMm - double) <= tol) return 'double'
   return null
 }
 
@@ -297,7 +303,8 @@ export function validateSpecShape(profile: unknown): string | null {
   }
   const widths = p.widths_mm as Record<string, unknown>
   for (const k of ['single', 'double']) {
-    if (!isNumber(widths[k]) || (widths[k] as number) <= 0) return `widths_mm.${k} 必须是正数`
+    if (widths[k] == null) continue // null = 没规定；同源对 profiles.py `_validate`
+    if (!isNumber(widths[k]) || (widths[k] as number) <= 0) return `widths_mm.${k} 必须是正数或 null`
   }
   return null
 }

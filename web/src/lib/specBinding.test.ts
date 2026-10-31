@@ -12,6 +12,7 @@ import { DEFAULT_PROFILE_ID, loadProfile } from './profile'
 import {
   bindingFor,
   builtinCatalog,
+  isHiddenBuiltin,
   resolveDocumentSpec,
   sameRules,
   type SpecCatalogEntry,
@@ -125,6 +126,41 @@ describe('期刊覆盖', () => {
     const entry = builtin()
     const binding = bindingFor(entry, { journal: { widths_mm: { double: 178 } } })
     expect(resolveDocumentSpec(binding, [entry]).updateAvailable).toBe(false)
+  })
+})
+
+describe('隐藏的内置底（journal-base-v1，listed:false）', () => {
+  const BASE = 'journal-base-v1'
+
+  it('不进内置清单（与后端 list_profiles / builtins 同判据），但认得出是隐藏内置底', () => {
+    expect(builtinCatalog().map((e) => e.id)).not.toContain(BASE)
+    expect(isHiddenBuiltin(BASE)).toBe(true)
+    expect(isHiddenBuiltin(DEFAULT_PROFILE_ID)).toBe(false)
+    expect(isHiddenBuiltin('早就删了')).toBe(false)
+    expect(isHiddenBuiltin(undefined)).toBe(false)
+  })
+
+  it('绑到它不报 globalMissing（后端清单里本来就没有它）', () => {
+    const base = loadProfile(BASE)
+    const journal = { widths_mm: { double: 170 } }
+    // 带快照、不跟随
+    const snap = resolveDocumentSpec(
+      { id: BASE, journal, snapshot: structuredClone(base) as unknown as Record<string, unknown>, snapshotVersion: base.version },
+      builtinCatalog(),
+    )
+    expect(snap.globalMissing).toBe(false)
+    expect(snap.updateAvailable).toBe(false)
+    expect(snap.profile.widths_mm.double).toBe(170)
+    expect(snap.profile.widths_mm.single).toBeNull()
+    // 只有 id（没有快照）：按底解析，仍然不是"被删了"
+    const bare = resolveDocumentSpec({ id: BASE, journal }, builtinCatalog())
+    expect(bare.globalMissing).toBe(false)
+    expect(bare.source).toBe('global')
+    expect(bare.profile.profile_id).toBe(BASE)
+  })
+
+  it('真被删的 id 仍然报 globalMissing（判据没放宽）', () => {
+    expect(resolveDocumentSpec({ id: '早就删了' }, builtinCatalog()).globalMissing).toBe(true)
   })
 })
 

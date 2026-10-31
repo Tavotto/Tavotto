@@ -48,6 +48,30 @@ def test_builtin_specs_come_from_the_canonical_json(data_dir):
     assert lab["data"] == profiles.load("lab-publication-v1")
 
 
+def test_hidden_journal_base_is_resolvable_but_not_listed(client):
+    """`journal-base-v1`（listed:false）不进清单，但按 id 取规范必须取得到（ADR 0154）。
+
+    回归：`resolve_spec` 曾用「可列出」判内置，隐藏的底被当成用户自建 → 404，
+    选了期刊后预检 / 导出 / MCP 全部失败。
+    """
+    base_id = "journal-base-v1"
+    assert base_id not in [r["id"] for r in store.builtins(store.KIND_SPEC)]
+    assert base_id not in [r["id"] for r in store.list_profiles(store.KIND_SPEC)]
+    listed = client.get("/api/profiles/spec").get_json()["profiles"]
+    assert base_id not in [r["id"] for r in listed]
+
+    plain = store.resolve_spec(base_id)
+    assert plain["profile_id"] == base_id
+    over = {"widths_mm": {"double": 170.0}, "severity": {"page-width": "warn"}}
+    spec = store.resolve_spec(base_id, journal=over)
+    assert spec["widths_mm"]["double"] == 170.0 and spec["widths_mm"]["single"] is None
+    assert spec["derived_from"] == base_id
+    # 坏覆盖仍是 profile_bad_journal，不被说成「没有这个规范」
+    with pytest.raises(store.ProfileStoreError) as exc:
+        store.resolve_spec(base_id, journal={"widths_mm": {"double": -1}})
+    assert exc.value.code == "profile_bad_journal"
+
+
 def test_builtin_style_is_derived_from_the_default_spec(data_dir, tmp_path, monkeypatch):
     """内置样式是**从规范派生的**，不是第二份数字。
 

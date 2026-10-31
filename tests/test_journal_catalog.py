@@ -77,7 +77,17 @@ def test_base_profile_is_neutral_and_hidden_from_the_spec_list():
     assert base["min_effective_font_size_pt"] == 0 and base["absolute_min_font_size_pt"] == 0
     assert base["line_widths_pt"] == [] and base["text_weight_policy"] == {}
     assert base["axis_policy"]["tick_direction"] is None and base["legend_policy"]["frame"] is None
+    # 栏宽没规定就是 null，不放占位数字冒充事实
+    assert base["widths_mm"]["single"] is None and base["widths_mm"]["double"] is None
     assert base["severity"]["page-width"] == "suggestion"
+    # severity 表补齐全部检查 id（默认 warn = DEFAULT_SEVERITY，行为不变），期刊才能对每个检查写规则
+    lab = profiles.load("lab-publication-v1")
+    assert set(lab["severity"]) <= set(base["severity"])
+    for check in set(base["severity"]) - set(
+        k for k, v in base["severity"].items() if v == "suggestion"
+    ):
+        assert base["severity"][check] in ("warn", "error")
+    assert base["severity"]["raster-dpi"] == profiles.DEFAULT_SEVERITY
     assert base["severity"]["element-outside-figure"] == "error"
     # 不在规范下拉里，但 load() 取得到（期刊覆盖要叠在它上面）
     assert base.get("listed") is False
@@ -132,9 +142,86 @@ def test_journal_rules_override_publisher_rules_and_inherit_the_rest():
     over = journals.journal_override("fx-beta", cat)
     assert over["widths_mm"] == {"single": 85, "double": 180}  # double 被期刊改写，single 继承
     src = journals.journal_sources("fx-beta", cat)
-    assert src["widths_mm.double"]["scope"] == "journal"
-    assert "widths_mm.single" not in src or src["widths_mm.single"]["scope"] == "publisher"
-    assert journals.journal_sources("fx-alpha", cat)["widths_mm.double"]["scope"] == "publisher"
+    dbl = src["widths_mm.double"]
+    assert (dbl["rule_scope"], dbl["source_scope"]) == ("journal", "journal")
+    assert dbl["overrides"]["value"] == 175 and dbl["overrides"]["rule_scope"] == "publisher"
+    assert src["widths_mm.single"]["rule_scope"] == "publisher"
+    assert src["widths_mm.single"]["overrides"] is None
+    alpha = journals.journal_sources("fx-alpha", cat)["widths_mm.double"]
+    assert (alpha["rule_scope"], alpha["source_scope"]) == ("publisher", "publisher")
+
+
+def test_rule_scope_and_source_scope_are_different_things():
+    """期刊自己的规则引用出版社的出处：值是期刊声明的，出处挂在出版社上。"""
+    font = journals.journal_sources("fx-beta", _fixture())["min_effective_font_size_pt"]
+    assert (font["rule_scope"], font["source_scope"]) == ("journal", "publisher")
+    assert font["coverage"] == "publisher_general" and font["qualifier"] == "min"
+
+
+def test_single_journal_sample_source_cannot_back_publisher_rules():
+    cat = _fixture()
+    sources = journals.journal_sources("fx-beta", cat)
+    assert sources["widths_mm.double"]["coverage"] == "single_journal_sample"
+    cat["publishers"]["fx-press"]["sources"]["s1"]["coverage"] = "single_journal_sample"
+    assert _code_of(cat) == "journal_source_coverage"
+
+
+def test_info_rules_are_shown_but_never_folded_into_the_override():
+    cat = _fixture()
+    over = journals.journal_override("fx-beta", cat)
+    assert "info" not in over and "max_height_mm" not in over
+    src = journals.journal_sources("fx-beta", cat)
+    assert src["info.max_height_mm"]["affects"] == "info"
+    assert src["info.one_half_mm"]["value_alt"] == 136
+    assert src["widths_mm.single"]["affects"] == "preflight"
+    mark = src["info.max_height_mm"]
+    assert mark["mark"] in mark["quote"] and mark["derivation"]
+
+
+def test_unset_removes_the_publisher_rule_for_that_journal_only():
+    cat = _fixture()
+    assert "min_raster_dpi" in journals.journal_override("fx-alpha", cat)
+    assert "min_raster_dpi" not in journals.journal_override("fx-epsilon", cat)
+    entry = journals.journal_sources("fx-epsilon", cat)["min_raster_dpi"]
+    assert entry["unset"] is True and entry["value"] is None
+    assert entry["overrides"]["value"] == 600 and entry["quote"]
+    # 底的 300 兜底原样在，没被出版社那条 600 污染
+    assert journals.journal_profile("fx-epsilon", cat)["min_raster_dpi"] == 300
+
+
+def test_severity_rises_with_the_rules_the_journal_filled_in():
+    cat = _fixture()
+    base = profiles.load(journals.BASE_PROFILE_ID)
+    assert base["severity"]["line-width-off-preset"] == "suggestion"
+    alpha = journals.journal_profile("fx-alpha", cat)
+    assert alpha["severity"]["line-width-off-preset"] == "warn"  # 期刊写了线宽档 → 抬到 warn
+    assert alpha["severity"]["page-width"] == "error"  # 期刊显式写了的以它为准，不被抬升覆盖
+    beta = journals.journal_profile("fx-beta", cat)
+    assert beta["severity"]["font-family-substituted"] == "warn"
+    assert beta["severity"]["tick-direction"] == "suggestion"  # 没写的检查不动
+    # 只抬不降：底里已经是 warn / error 的不变
+    assert beta["severity"]["font-too-small"] == base["severity"]["font-too-small"]
+    assert beta["severity"]["element-outside-figure"] == "error"
+    delta = journals.journal_profile("fx-delta", cat)
+    assert delta["severity"] == base["severity"]
+
+
+def test_null_widths_mean_unspecified_in_the_evaluator():
+    """期刊只写了双栏宽：单栏是 null，提示里不出现编造的数字。"""
+    spec = {
+        "page": {"w_mm": 120.0, "h_mm": 80.0},
+        "panels": [],
+        "texts": [],
+        "objects": [],
+    }
+    from tavotto.engine import preflight
+
+    plain = journals.journal_profile("fx-delta", _fixture())
+    assert "page-width" not in {i["id"] for i in preflight.run(spec, plain)}
+    both = profiles.load(journals.BASE_PROFILE_ID, {"widths_mm": {"double": 170.0}})
+    issue = next(i for i in preflight.run(spec, both) if i["id"] == "page-width")
+    assert issue["message"]["params"]["want"] == "170"  # 只列期刊写了的那一栏
+    assert issue["detail"]["single_mm"] is None
 
 
 def test_unspecified_items_are_not_filled_in():
@@ -168,6 +255,7 @@ def test_env_override_points_at_another_catalog(tmp_path, monkeypatch):
         "fx-alpha",
         "fx-beta",
         "fx-delta",
+        "fx-epsilon",
         "fx-gamma",
     ]
 

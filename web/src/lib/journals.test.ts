@@ -1,14 +1,23 @@
 /**
  * 内置期刊标准库（TS 侧）。与 Python 的 `tests/test_journal_catalog.py` 跑**同一份**
- * `tests/golden/journal_vectors.json`（夹具期刊，非真实数据）。
+ * `tests/golden/journal_vectors.json`（夹具期刊，非真实数据；向量里连闭集常量一起比）。
  */
 import { describe, expect, it } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
 import shipped from '@journals'
 import {
+  BUMPED_SEVERITY,
+  COVERAGES,
+  EXACT_ONLY_PATHS,
+  INFO_IDS,
   JOURNAL_BASE_PROFILE_ID,
   JOURNAL_ERROR_CODES,
   JournalCatalogError,
+  KIND_OVERRIDES,
+  QUALIFIERS,
+  SEVERITY_BUMP,
+  STAGES,
+  catalogRev,
   journalOverride,
   journalProfile,
   journalSources,
@@ -17,6 +26,7 @@ import {
   validateCatalog,
 } from './journals'
 import { listProfiles, loadProfile, validateSpecShape } from './profile'
+import { runSpec } from './preflight'
 
 interface Op {
   path: string[]
@@ -25,8 +35,10 @@ interface Op {
 }
 const V = vectors as unknown as {
   catalog: unknown
+  catalog_rev: number
   list: unknown
   base_profile_id: string
+  constants: Record<string, unknown>
   cases: Array<{
     journal_id: string
     override: unknown
@@ -65,6 +77,7 @@ function codeOf(fn: () => unknown): string {
 describe('随包的期刊库', () => {
   it('PR 1 是合法的空库', () => {
     expect(loadCatalog().schema).toBe(1)
+    expect(catalogRev()).toBeGreaterThanOrEqual(1)
     expect(Object.keys((shipped as { publishers: object }).publishers)).toEqual([])
     expect(Object.keys((shipped as { journals: object }).journals)).toEqual([])
     expect(listJournals()).toEqual([])
@@ -81,13 +94,32 @@ describe('随包的期刊库', () => {
     expect(base.cjk_fallback.required).toBe(false)
     expect(base.min_effective_font_size_pt).toBe(0)
     expect(base.absolute_min_font_size_pt).toBe(0)
+    expect(base.widths_mm.single).toBeNull()
+    expect(base.widths_mm.double).toBeNull()
     expect(validateSpecShape(base)).toBeNull()
+    const lab = loadProfile('lab-publication-v1')
+    for (const k of Object.keys(lab.severity)) expect(base.severity).toHaveProperty(k)
   })
 })
 
 describe('golden 向量（与 Python 同一份）', () => {
-  it('列表', () => {
+  it('闭集常量与 Python 逐项相同', () => {
+    expect(V.constants).toEqual({
+      info_ids: [...INFO_IDS],
+      qualifiers: [...QUALIFIERS],
+      stages: [...STAGES],
+      coverages: [...COVERAGES],
+      exact_only_paths: [...EXACT_ONLY_PATHS],
+      severity_bump: SEVERITY_BUMP,
+      bumped_severity: BUMPED_SEVERITY,
+      kind_overrides: KIND_OVERRIDES,
+      error_codes: [...JOURNAL_ERROR_CODES],
+    })
+  })
+
+  it('列表与 catalog_rev', () => {
     expect(listJournals(fixture())).toEqual(V.list)
+    expect(catalogRev(fixture())).toBe(V.catalog_rev)
   })
 
   for (const c of V.cases) {
@@ -135,25 +167,54 @@ describe('折叠语义', () => {
     })
   })
 
-  it('期刊 rules 覆盖出版社 rules，其余继承；出处范围随之', () => {
+  it('期刊 rules 覆盖出版社 rules：两种归属与被覆盖的原值', () => {
     const cat = fixture()
-    expect(journalOverride('fx-beta', cat)).toMatchObject({ widths_mm: { single: 85, double: 180 } })
-    expect(journalSources('fx-beta', cat)['widths_mm.double'].scope).toBe('journal')
-    expect(journalSources('fx-alpha', cat)['widths_mm.double'].scope).toBe('publisher')
+    const dbl = journalSources('fx-beta', cat)['widths_mm.double']
+    expect([dbl.rule_scope, dbl.source_scope]).toEqual(['journal', 'journal'])
+    expect(dbl.overrides?.value).toBe(175)
+    const font = journalSources('fx-beta', cat).min_effective_font_size_pt
+    expect([font.rule_scope, font.source_scope]).toEqual(['journal', 'publisher'])
+    expect(journalSources('fx-beta', cat)['widths_mm.single'].overrides).toBeNull()
   })
 
-  it('只写了 latin_accepted 时 latin 不被补，且不拿课题组规范填坐标轴', () => {
-    const p = journalProfile('fx-beta', fixture())
-    const lab = loadProfile('lab-publication-v1')
-    expect(p.font_family.latin).toBe('')
-    expect(p.axis_policy).not.toEqual(lab.axis_policy)
-    expect(p.derived_from).toBe(JOURNAL_BASE_PROFILE_ID)
+  it('info 项只展示不折叠；unset 只对该刊撤掉出版社那条', () => {
+    const cat = fixture()
+    expect(journalSources('fx-beta', cat)['info.one_half_mm'].affects).toBe('info')
+    expect(journalOverride('fx-beta', cat)).not.toHaveProperty('info')
+    expect(journalOverride('fx-alpha', cat)).toHaveProperty('min_raster_dpi')
+    expect(journalOverride('fx-epsilon', cat)).not.toHaveProperty('min_raster_dpi')
+    expect(journalSources('fx-epsilon', cat).min_raster_dpi.unset).toBe(true)
+    expect(journalProfile('fx-epsilon', cat).min_raster_dpi).toBe(300)
   })
 
-  it('链接形态：html 锚 / pdf 页 / 裸 url', () => {
+  it('严重度随规则抬升：写了的检查 suggestion→warn，显式写的优先，只抬不降', () => {
+    const cat = fixture()
+    const base = loadProfile(JOURNAL_BASE_PROFILE_ID)
+    const alpha = journalProfile('fx-alpha', cat)
+    expect(alpha.severity['line-width-off-preset']).toBe('warn')
+    expect(alpha.severity['page-width']).toBe('error')
+    const beta = journalProfile('fx-beta', cat)
+    expect(beta.severity['font-family-substituted']).toBe('warn')
+    expect(beta.severity['tick-direction']).toBe('suggestion')
+    expect(beta.severity['font-too-small']).toBe(base.severity['font-too-small'])
+  })
+
+  it('栏宽 null 在 TS 求值器里同样表示没规定', () => {
+    const spec = {
+      page: { w_mm: 123, h_mm: 80 },
+      panels: [],
+      texts: [],
+      objects: [],
+    } as unknown as Parameters<typeof runSpec>[0]
+    const plain = journalProfile('fx-delta', fixture())
+    expect(runSpec(spec, plain).map((i) => i.id)).not.toContain('page-width')
+  })
+
+  it('page 为 12.0 与 12 同义，链接形态：html 锚 / pdf 页 / 裸 url', () => {
     const s = journalSources('fx-alpha', fixture())
     expect(s['widths_mm.single'].link.endsWith('/artwork#:~:text=FIXTURE%20single')).toBe(true)
     expect(s.min_raster_dpi.link.endsWith('/guide.pdf#page=12')).toBe(true)
+    expect(s.min_raster_dpi.page).toBe(12)
     expect(s['widths_mm.double'].link).toBe(s['widths_mm.double'].url)
   })
 })

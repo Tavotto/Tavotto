@@ -193,8 +193,12 @@ def _validate(profile: dict, pid: str) -> None:
             raise ProfileError(f"profile {pid} 的 severity[{key}] 不是合法等级: {value!r}")
     widths = profile["widths_mm"]
     for key in ("single", "double"):
-        if not _is_number(widths.get(key)) or widths[key] <= 0:
-            raise ProfileError(f"profile {pid} 的 widths_mm.{key} 必须是正数")
+        # null = 这份规范没规定该栏宽（期刊底 journal-base-v1 就是这样：不拿占位数字
+        # 冒充规定）；写了就必须是正数。严格同源对：profile.ts `validateSpecShape`。
+        if widths.get(key) is None:
+            continue
+        if not _is_number(widths[key]) or widths[key] <= 0:
+            raise ProfileError(f"profile {pid} 的 widths_mm.{key} 必须是正数或 null")
 
 
 def validate_spec(profile: object, pid: str | None = None) -> dict:
@@ -240,6 +244,15 @@ def list_profiles() -> list[dict]:
             }
         )
     return sorted(out, key=lambda p: p["profile_id"] != doc.get("default_profile"))
+
+
+def all_profile_ids() -> list[str]:
+    """**可解析**的内置 profile id（含 `listed:false` 的底，如 `journal-base-v1`）。
+
+    「可列出」（`list_profiles`，给下拉用）与「可解析」是两件事：隐藏的底不进下拉，
+    但按 id 取规范（预检 / 导出 / MCP 走 `profilestore.resolve_spec`）必须取得到。
+    """
+    return list(_load_document()["profiles"])
 
 
 def default_profile_id() -> str:

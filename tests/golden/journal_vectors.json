@@ -1,8 +1,103 @@
 {
  "comment": "期刊库 golden 向量：由 scripts/gen_journal_vectors.py --write 生成，pytest 与 vitest 各跑一遍。夹具期刊，非真实数据。",
  "base_profile_id": "journal-base-v1",
+ "constants": {
+  "info_ids": [
+   "one_half_mm",
+   "max_height_mm",
+   "width_range_mm",
+   "width_range_single_mm",
+   "width_range_double_mm",
+   "width_single_mm",
+   "width_double_mm",
+   "min_width_mm",
+   "min_line_width_pt",
+   "dpi_by_kind",
+   "dpi_photo",
+   "dpi_halftone",
+   "dpi_combination",
+   "color_mode",
+   "formats_raw",
+   "formats_images_raw",
+   "font_names_raw",
+   "text_height_mm",
+   "panel_label"
+  ],
+  "qualifiers": [
+   "exact",
+   "max",
+   "min",
+   "typical",
+   "range",
+   "recommended"
+  ],
+  "stages": [
+   "submission",
+   "production",
+   "any"
+  ],
+  "coverages": [
+   "publisher_general",
+   "journal_specific",
+   "single_journal_sample"
+  ],
+  "exact_only_paths": [
+   "widths_mm.single",
+   "widths_mm.double",
+   "allowed_aspect_ratios",
+   "line_widths_pt"
+  ],
+  "severity_bump": {
+   "widths_mm.single": "page-width",
+   "widths_mm.double": "page-width",
+   "allowed_aspect_ratios": "page-aspect",
+   "min_effective_font_size_pt": "font-too-small",
+   "absolute_min_font_size_pt": "font-below-absolute-floor",
+   "max_font_size_pt": "font-too-large",
+   "min_raster_dpi": "raster-dpi",
+   "line_widths_pt": "line-width-off-preset",
+   "font_family.latin_accepted": "font-family-substituted",
+   "cjk_fallback.required": "cjk-fallback-missing",
+   "axis_policy.tick_direction": "tick-direction",
+   "axis_policy.enclosed_spines": "spines-not-enclosed",
+   "axis_policy.label_format": "axis-label-format",
+   "axis_policy.label_format_regex": "axis-label-format",
+   "axis_policy.max_tick_labels": "tick-label-count",
+   "legend_policy.frame": "legend-frame",
+   "legend_policy.min_font_size_pt": "legend-font-size",
+   "legend_policy.max_font_size_pt": "legend-font-size",
+   "text_weight_policy": "text-weight-policy"
+  },
+  "bumped_severity": "warn",
+  "kind_overrides": {
+   "widths_mm.single": "number",
+   "widths_mm.double": "number"
+  },
+  "error_codes": [
+   "journal_catalog_schema",
+   "journal_source_invalid",
+   "journal_source_coverage",
+   "journal_publisher_unknown",
+   "journal_alias_conflict",
+   "journal_rule_value_missing",
+   "journal_rule_src_missing",
+   "journal_rule_src_unknown",
+   "journal_rule_quote_empty",
+   "journal_rule_anchor_invalid",
+   "journal_rule_path_unknown",
+   "journal_rule_value_type",
+   "journal_rule_qualifier_invalid",
+   "journal_rule_stage_invalid",
+   "journal_rule_mark_invalid",
+   "journal_rule_unset_invalid",
+   "journal_merge_invalid",
+   "journal_unknown"
+  ]
+ },
+ "catalog_rev": 1,
  "catalog": {
   "schema": 1,
+  "catalog_rev": 1,
   "publishers": {
    "fx-press": {
     "label": "Fixture Press",
@@ -17,7 +112,7 @@
       "url": "https://example.invalid/fx-press/guide.pdf",
       "kind": "pdf",
       "retrieved": "2000-01-01",
-      "page": 12
+      "page": 12.0
      }
     },
     "rules": {
@@ -35,7 +130,9 @@
      "min_raster_dpi": {
       "value": 600,
       "src": "s2",
-      "quote": "FIXTURE 600 dpi"
+      "quote": "FIXTURE at least 600 dpi",
+      "qualifier": "min",
+      "stage": "submission"
      },
      "line_widths_pt": {
       "value": [
@@ -49,6 +146,14 @@
       "value": "error",
       "src": "s1",
       "quote": "FIXTURE width is mandatory"
+     },
+     "info.max_height_mm": {
+      "value": 230,
+      "src": "s1",
+      "quote": "FIXTURE height must not exceed 23 cm",
+      "qualifier": "max",
+      "mark": "23 cm",
+      "derivation": "23 cm -> 230 mm"
      }
     }
    },
@@ -62,7 +167,8 @@
     "publisher": "fx-press",
     "issn": "0000-0000",
     "aliases": [
-     "FxA"
+     "FxA",
+     "İstanbul Alpha"
     ]
    },
    "fx-beta": {
@@ -72,26 +178,31 @@
      "s9": {
       "url": "https://example.invalid/fx-beta/author",
       "kind": "html",
-      "retrieved": "2000-02-02"
+      "retrieved": "2000-02-02",
+      "coverage": "single_journal_sample"
      }
     },
     "rules": {
      "widths_mm.double": {
       "value": 180,
       "src": "s9",
-      "quote": "FIXTURE beta double 180"
+      "quote": "FIXTURE beta double 18 cm",
+      "mark": "18 cm",
+      "derivation": "18 cm -> 180 mm"
      },
      "min_effective_font_size_pt": {
       "value": 7,
       "src": "s1",
-      "quote": "FIXTURE 7 pt minimum"
+      "quote": "FIXTURE 7 pt minimum",
+      "qualifier": "min"
      },
      "preferred_formats.export_default": {
       "value": [
        "tiff"
       ],
       "src": "s9",
-      "quote": "FIXTURE tiff only"
+      "quote": "FIXTURE tiff only",
+      "stage": "production"
      },
      "font_family.latin_accepted": {
       "value": [
@@ -99,7 +210,15 @@
        "Helvetica"
       ],
       "src": "s9",
-      "quote": "FIXTURE Arial or Helvetica"
+      "quote": "FIXTURE Arial or Helvetica",
+      "qualifier": "recommended"
+     },
+     "info.one_half_mm": {
+      "value": 120,
+      "value_alt": 136,
+      "src": "s9",
+      "quote": "FIXTURE 1.5 columns 120 mm or 136 mm",
+      "qualifier": "typical"
      }
     }
    },
@@ -110,6 +229,17 @@
    "fx-delta": {
     "label": "Fixture Delta",
     "publisher": "fx-bare"
+   },
+   "fx-epsilon": {
+    "label": "Fixture Epsilon",
+    "publisher": "fx-press",
+    "rules": {
+     "min_raster_dpi": {
+      "unset": true,
+      "src": "s1",
+      "quote": "FIXTURE epsilon is exempt from the dpi rule"
+     }
+    }
    }
   }
  },
@@ -121,7 +251,8 @@
    "publisher_label": "Fixture Press",
    "issn": "0000-0000",
    "aliases": [
-    "FxA"
+    "FxA",
+    "İstanbul Alpha"
    ]
   },
   {
@@ -137,6 +268,14 @@
    "label": "Fixture Delta",
    "publisher": "fx-bare",
    "publisher_label": "Fixture Bare",
+   "issn": "",
+   "aliases": []
+  },
+  {
+   "journal_id": "fx-epsilon",
+   "label": "Fixture Epsilon",
+   "publisher": "fx-press",
+   "publisher_label": "Fixture Press",
    "issn": "",
    "aliases": []
   },
@@ -163,88 +302,163 @@
      1.0
     ],
     "severity": {
-     "page-width": "error"
+     "page-width": "error",
+     "line-width-off-preset": "warn"
     }
    },
    "sources": {
+    "info.max_height_mm": {
+     "value": 230,
+     "value_alt": null,
+     "qualifier": "max",
+     "stage": "any",
+     "mark": "23 cm",
+     "derivation": "23 cm -> 230 mm",
+     "unset": false,
+     "quote": "FIXTURE height must not exceed 23 cm",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "info",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    },
     "line_widths_pt": {
      "value": [
       0.5,
       1.0
      ],
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/guide.pdf",
      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
      "anchor": "",
      "kind": "pdf",
      "page": 12,
      "retrieved": "2000-01-01",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "min_raster_dpi": {
      "value": 600,
-     "quote": "FIXTURE 600 dpi",
+     "value_alt": null,
+     "qualifier": "min",
+     "stage": "submission",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE at least 600 dpi",
      "src": "s2",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/guide.pdf",
      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
      "anchor": "",
      "kind": "pdf",
      "page": 12,
      "retrieved": "2000-01-01",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "severity.page-width": {
      "value": "error",
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     },
     "widths_mm.double": {
      "value": 175,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE double column 175",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     },
     "widths_mm.single": {
      "value": 85,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork#:~:text=FIXTURE%20single",
      "anchor": "#:~:text=FIXTURE%20single",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     }
    },
    "merged_fields": {
+    "widths_mm.single": 85,
+    "widths_mm.double": 175,
+    "min_raster_dpi": 600,
     "line_widths_pt": [
      0.5,
      1.0
     ],
-    "min_raster_dpi": 600,
     "severity.page-width": "error",
-    "widths_mm.double": 175,
-    "widths_mm.single": 85
+    "severity.line-width-off-preset": "warn"
    }
   },
   {
@@ -260,7 +474,9 @@
      1.0
     ],
     "severity": {
-     "page-width": "error"
+     "page-width": "error",
+     "line-width-off-preset": "warn",
+     "font-family-substituted": "warn"
     },
     "min_effective_font_size_pt": 7,
     "preferred_formats": {
@@ -281,131 +497,280 @@
       "Arial",
       "Helvetica"
      ],
+     "value_alt": null,
+     "qualifier": "recommended",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE Arial or Helvetica",
      "src": "s9",
-     "scope": "journal",
+     "rule_scope": "journal",
+     "source_scope": "journal",
+     "coverage": "single_journal_sample",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-beta/author",
      "link": "https://example.invalid/fx-beta/author",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-02-02",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
+    },
+    "info.max_height_mm": {
+     "value": 230,
+     "value_alt": null,
+     "qualifier": "max",
+     "stage": "any",
+     "mark": "23 cm",
+     "derivation": "23 cm -> 230 mm",
+     "unset": false,
+     "quote": "FIXTURE height must not exceed 23 cm",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "info",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    },
+    "info.one_half_mm": {
+     "value": 120,
+     "value_alt": 136,
+     "qualifier": "typical",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE 1.5 columns 120 mm or 136 mm",
+     "src": "s9",
+     "rule_scope": "journal",
+     "source_scope": "journal",
+     "coverage": "single_journal_sample",
+     "affects": "info",
+     "url": "https://example.invalid/fx-beta/author",
+     "link": "https://example.invalid/fx-beta/author",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-02-02",
+     "archive_url": "",
+     "overrides": null
     },
     "line_widths_pt": {
      "value": [
       0.5,
       1.0
      ],
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/guide.pdf",
      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
      "anchor": "",
      "kind": "pdf",
      "page": 12,
      "retrieved": "2000-01-01",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "min_effective_font_size_pt": {
      "value": 7,
+     "value_alt": null,
+     "qualifier": "min",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE 7 pt minimum",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "journal",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     },
     "min_raster_dpi": {
      "value": 600,
-     "quote": "FIXTURE 600 dpi",
+     "value_alt": null,
+     "qualifier": "min",
+     "stage": "submission",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE at least 600 dpi",
      "src": "s2",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/guide.pdf",
      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
      "anchor": "",
      "kind": "pdf",
      "page": 12,
      "retrieved": "2000-01-01",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "preferred_formats.export_default": {
      "value": [
       "tiff"
      ],
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "production",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE tiff only",
      "src": "s9",
-     "scope": "journal",
+     "rule_scope": "journal",
+     "source_scope": "journal",
+     "coverage": "single_journal_sample",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-beta/author",
      "link": "https://example.invalid/fx-beta/author",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-02-02",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "severity.page-width": {
      "value": "error",
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     },
     "widths_mm.double": {
      "value": 180,
-     "quote": "FIXTURE beta double 180",
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "18 cm",
+     "derivation": "18 cm -> 180 mm",
+     "unset": false,
+     "quote": "FIXTURE beta double 18 cm",
      "src": "s9",
-     "scope": "journal",
+     "rule_scope": "journal",
+     "source_scope": "journal",
+     "coverage": "single_journal_sample",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-beta/author",
      "link": "https://example.invalid/fx-beta/author",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-02-02",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": {
+      "value": 175,
+      "value_alt": null,
+      "qualifier": "exact",
+      "stage": "any",
+      "mark": "",
+      "derivation": "",
+      "unset": false,
+      "quote": "FIXTURE double column 175",
+      "src": "s1",
+      "rule_scope": "publisher",
+      "source_scope": "publisher",
+      "coverage": "publisher_general",
+      "affects": "preflight",
+      "url": "https://example.invalid/fx-press/artwork",
+      "link": "https://example.invalid/fx-press/artwork",
+      "anchor": "",
+      "kind": "html",
+      "page": null,
+      "retrieved": "2000-01-01",
+      "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     }
     },
     "widths_mm.single": {
      "value": 85,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork#:~:text=FIXTURE%20single",
      "anchor": "#:~:text=FIXTURE%20single",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     }
    },
    "merged_fields": {
-    "font_family.latin_accepted": [
-     "Arial",
-     "Helvetica"
-    ],
+    "widths_mm.single": 85,
+    "widths_mm.double": 180,
+    "min_raster_dpi": 600,
     "line_widths_pt": [
      0.5,
      1.0
     ],
+    "severity.page-width": "error",
+    "severity.line-width-off-preset": "warn",
+    "severity.font-family-substituted": "warn",
     "min_effective_font_size_pt": 7,
-    "min_raster_dpi": 600,
     "preferred_formats.export_default": [
      "tiff"
     ],
-    "severity.page-width": "error",
-    "widths_mm.double": 180,
-    "widths_mm.single": 85
+    "font_family.latin_accepted": [
+     "Arial",
+     "Helvetica"
+    ]
    }
   },
   {
@@ -413,6 +778,197 @@
    "override": {},
    "sources": {},
    "merged_fields": {}
+  },
+  {
+   "journal_id": "fx-epsilon",
+   "override": {
+    "widths_mm": {
+     "single": 85,
+     "double": 175
+    },
+    "line_widths_pt": [
+     0.5,
+     1.0
+    ],
+    "severity": {
+     "page-width": "error",
+     "line-width-off-preset": "warn"
+    }
+   },
+   "sources": {
+    "info.max_height_mm": {
+     "value": 230,
+     "value_alt": null,
+     "qualifier": "max",
+     "stage": "any",
+     "mark": "23 cm",
+     "derivation": "23 cm -> 230 mm",
+     "unset": false,
+     "quote": "FIXTURE height must not exceed 23 cm",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "info",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    },
+    "line_widths_pt": {
+     "value": [
+      0.5,
+      1.0
+     ],
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE lines",
+     "src": "s2",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
+     "url": "https://example.invalid/fx-press/guide.pdf",
+     "link": "https://example.invalid/fx-press/guide.pdf#page=12",
+     "anchor": "",
+     "kind": "pdf",
+     "page": 12,
+     "retrieved": "2000-01-01",
+     "archive_url": "",
+     "overrides": null
+    },
+    "min_raster_dpi": {
+     "value": null,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": true,
+     "quote": "FIXTURE epsilon is exempt from the dpi rule",
+     "src": "s1",
+     "rule_scope": "journal",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": {
+      "value": 600,
+      "value_alt": null,
+      "qualifier": "min",
+      "stage": "submission",
+      "mark": "",
+      "derivation": "",
+      "unset": false,
+      "quote": "FIXTURE at least 600 dpi",
+      "src": "s2",
+      "rule_scope": "publisher",
+      "source_scope": "publisher",
+      "coverage": "publisher_general",
+      "affects": "preflight",
+      "url": "https://example.invalid/fx-press/guide.pdf",
+      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
+      "anchor": "",
+      "kind": "pdf",
+      "page": 12,
+      "retrieved": "2000-01-01",
+      "archive_url": ""
+     }
+    },
+    "severity.page-width": {
+     "value": "error",
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE width is mandatory",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    },
+    "widths_mm.double": {
+     "value": 175,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE double column 175",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    },
+    "widths_mm.single": {
+     "value": 85,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE single column 85",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork#:~:text=FIXTURE%20single",
+     "anchor": "#:~:text=FIXTURE%20single",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    }
+   },
+   "merged_fields": {
+    "widths_mm.single": 85,
+    "widths_mm.double": 175,
+    "line_widths_pt": [
+     0.5,
+     1.0
+    ],
+    "severity.page-width": "error",
+    "severity.line-width-off-preset": "warn"
+   }
   },
   {
    "journal_id": "fx-gamma",
@@ -427,88 +983,163 @@
      1.0
     ],
     "severity": {
-     "page-width": "error"
+     "page-width": "error",
+     "line-width-off-preset": "warn"
     }
    },
    "sources": {
+    "info.max_height_mm": {
+     "value": 230,
+     "value_alt": null,
+     "qualifier": "max",
+     "stage": "any",
+     "mark": "23 cm",
+     "derivation": "23 cm -> 230 mm",
+     "unset": false,
+     "quote": "FIXTURE height must not exceed 23 cm",
+     "src": "s1",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "info",
+     "url": "https://example.invalid/fx-press/artwork",
+     "link": "https://example.invalid/fx-press/artwork",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-01-01",
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
+    },
     "line_widths_pt": {
      "value": [
       0.5,
       1.0
      ],
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/guide.pdf",
      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
      "anchor": "",
      "kind": "pdf",
      "page": 12,
      "retrieved": "2000-01-01",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "min_raster_dpi": {
      "value": 600,
-     "quote": "FIXTURE 600 dpi",
+     "value_alt": null,
+     "qualifier": "min",
+     "stage": "submission",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE at least 600 dpi",
      "src": "s2",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/guide.pdf",
      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
      "anchor": "",
      "kind": "pdf",
      "page": 12,
      "retrieved": "2000-01-01",
-     "archive_url": ""
+     "archive_url": "",
+     "overrides": null
     },
     "severity.page-width": {
      "value": "error",
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     },
     "widths_mm.double": {
      "value": 175,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE double column 175",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork",
      "anchor": "",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     },
     "widths_mm.single": {
      "value": 85,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
-     "scope": "publisher",
+     "rule_scope": "publisher",
+     "source_scope": "publisher",
+     "coverage": "publisher_general",
+     "affects": "preflight",
      "url": "https://example.invalid/fx-press/artwork",
      "link": "https://example.invalid/fx-press/artwork#:~:text=FIXTURE%20single",
      "anchor": "#:~:text=FIXTURE%20single",
      "kind": "html",
      "page": null,
      "retrieved": "2000-01-01",
-     "archive_url": "https://example.invalid/archive/fx-press/artwork"
+     "archive_url": "https://example.invalid/archive/fx-press/artwork",
+     "overrides": null
     }
    },
    "merged_fields": {
+    "widths_mm.single": 85,
+    "widths_mm.double": 175,
+    "min_raster_dpi": 600,
     "line_widths_pt": [
      0.5,
      1.0
     ],
-    "min_raster_dpi": 600,
     "severity.page-width": "error",
-    "widths_mm.double": 175,
-    "widths_mm.single": 85
+    "severity.line-width-off-preset": "warn"
    }
   }
  ],
@@ -880,6 +1511,456 @@
      "value": [
       "thin"
      ]
+    }
+   ]
+  },
+  {
+   "name": "catalog-rev-missing",
+   "code": "journal_catalog_schema",
+   "ops": [
+    {
+     "path": [
+      "catalog_rev"
+     ],
+     "delete": true
+    }
+   ]
+  },
+  {
+   "name": "catalog-rev-zero",
+   "code": "journal_catalog_schema",
+   "ops": [
+    {
+     "path": [
+      "catalog_rev"
+     ],
+     "value": 0
+    }
+   ]
+  },
+  {
+   "name": "source-url-http",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s1",
+      "url"
+     ],
+     "value": "http://example.invalid/a"
+    }
+   ]
+  },
+  {
+   "name": "source-url-javascript",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s1",
+      "url"
+     ],
+     "value": "javascript:alert(1)"
+    }
+   ]
+  },
+  {
+   "name": "source-retrieved-not-a-date",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s1",
+      "retrieved"
+     ],
+     "value": "yesterday"
+    }
+   ]
+  },
+  {
+   "name": "source-retrieved-impossible-date",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s1",
+      "retrieved"
+     ],
+     "value": "2000-02-30"
+    }
+   ]
+  },
+  {
+   "name": "source-archive-url-not-https",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s1",
+      "archive_url"
+     ],
+     "value": "ftp://example.invalid/x"
+    }
+   ]
+  },
+  {
+   "name": "source-coverage-bad-enum",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s1",
+      "coverage"
+     ],
+     "value": "everything"
+    }
+   ]
+  },
+  {
+   "name": "source-page-fraction",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s2",
+      "page"
+     ],
+     "value": 1.5
+    }
+   ]
+  },
+  {
+   "name": "source-page-zero",
+   "code": "journal_source_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s2",
+      "page"
+     ],
+     "value": 0
+    }
+   ]
+  },
+  {
+   "name": "single-sample-source-on-publisher-rules",
+   "code": "journal_source_coverage",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "sources",
+      "s2",
+      "coverage"
+     ],
+     "value": "single_journal_sample"
+    }
+   ]
+  },
+  {
+   "name": "publisher-not-a-string",
+   "code": "journal_publisher_unknown",
+   "ops": [
+    {
+     "path": [
+      "journals",
+      "fx-alpha",
+      "publisher"
+     ],
+     "value": [
+      "fx-press"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "alias-conflict-after-nfkc",
+   "code": "journal_alias_conflict",
+   "ops": [
+    {
+     "path": [
+      "journals",
+      "fx-beta",
+      "aliases"
+     ],
+     "value": [
+      "ＦＸＡ"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "alias-conflict-non-ascii-case",
+   "code": "journal_alias_conflict",
+   "ops": [
+    {
+     "path": [
+      "journals",
+      "fx-beta",
+      "aliases"
+     ],
+     "value": [
+      "i̇stanbul alpha"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "rule-anchor-not-text-fragment",
+   "code": "journal_rule_anchor_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "anchor"
+     ],
+     "value": "#foo"
+    }
+   ]
+  },
+  {
+   "name": "rule-qualifier-bad-enum",
+   "code": "journal_rule_qualifier_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "qualifier"
+     ],
+     "value": "about"
+    }
+   ]
+  },
+  {
+   "name": "rule-qualifier-not-exact-on-width",
+   "code": "journal_rule_qualifier_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "qualifier"
+     ],
+     "value": "max"
+    }
+   ]
+  },
+  {
+   "name": "rule-stage-bad-enum",
+   "code": "journal_rule_stage_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "stage"
+     ],
+     "value": "later"
+    }
+   ]
+  },
+  {
+   "name": "rule-mark-not-in-quote",
+   "code": "journal_rule_mark_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "mark"
+     ],
+     "value": "86 mm"
+    }
+   ]
+  },
+  {
+   "name": "rule-derivation-blank",
+   "code": "journal_rule_mark_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "derivation"
+     ],
+     "value": " "
+    }
+   ]
+  },
+  {
+   "name": "rule-value-alt-wrong-type",
+   "code": "journal_rule_value_type",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "value_alt"
+     ],
+     "value": "x"
+    }
+   ]
+  },
+  {
+   "name": "unset-on-publisher-rule",
+   "code": "journal_rule_unset_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "min_raster_dpi"
+     ],
+     "value": {
+      "unset": true,
+      "src": "s1",
+      "quote": "q"
+     }
+    }
+   ]
+  },
+  {
+   "name": "unset-with-value",
+   "code": "journal_rule_unset_invalid",
+   "ops": [
+    {
+     "path": [
+      "journals",
+      "fx-epsilon",
+      "rules",
+      "min_raster_dpi",
+      "value"
+     ],
+     "value": 300
+    }
+   ]
+  },
+  {
+   "name": "unset-without-publisher-rule",
+   "code": "journal_rule_unset_invalid",
+   "ops": [
+    {
+     "path": [
+      "journals",
+      "fx-epsilon",
+      "rules"
+     ],
+     "value": {
+      "min_effective_font_size_pt": {
+       "unset": true,
+       "src": "s1",
+       "quote": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "unset-not-true",
+   "code": "journal_rule_unset_invalid",
+   "ops": [
+    {
+     "path": [
+      "journals",
+      "fx-epsilon",
+      "rules",
+      "min_raster_dpi",
+      "unset"
+     ],
+     "value": false
+    }
+   ]
+  },
+  {
+   "name": "info-id-unknown",
+   "code": "journal_rule_path_unknown",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "info.nonsense"
+     ],
+     "value": {
+      "value": 1,
+      "src": "s1",
+      "quote": "q"
+     }
+    }
+   ]
+  },
+  {
+   "name": "info-without-quote",
+   "code": "journal_rule_quote_empty",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "info.max_height_mm",
+      "quote"
+     ],
+     "value": ""
+    }
+   ]
+  },
+  {
+   "name": "info-value-null",
+   "code": "journal_rule_value_missing",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "info.max_height_mm",
+      "value"
+     ],
+     "value": null
     }
    ]
   }

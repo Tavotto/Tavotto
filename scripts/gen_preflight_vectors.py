@@ -332,6 +332,32 @@ def cases() -> list[dict]:
         }
     )
 
+    # 9f. 期刊底 journal-base-v1：栏宽是 null（没规定），任何页宽都不报 page-width
+    #     ——不是拿占位数字去比（ADR 0154）。
+    out.append(
+        {
+            "name": "journal-base-null-widths-no-page-width",
+            "profile_id": "journal-base-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, 123.0, 80.0])],
+                page=(123.0, 80.0),
+            ),
+        }
+    )
+
+    # 9g. 同一底，期刊只写了双栏宽 170：123mm 要报，且只列出写了的那一栏
+    out.append(
+        {
+            "name": "journal-base-only-double-width",
+            "profile_id": "journal-base-v1",
+            "journal": {"widths_mm": {"double": 170.0}},
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, 123.0, 80.0])],
+                page=(123.0, 80.0),
+            ),
+        }
+    )
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()

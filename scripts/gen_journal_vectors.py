@@ -31,9 +31,15 @@ OUT = ROOT / "tests" / "golden" / "journal_vectors.json"
 
 
 def fixture_catalog() -> dict:
-    """夹具期刊库：一个出版社、三本虚构期刊，覆盖「继承 / 期刊覆盖出版社 / 期刊自带出处 / 出版社与期刊都无规则」。"""
+    """夹具期刊库：两个出版社、五本虚构期刊。
+
+    覆盖：继承 / 期刊覆盖出版社 / 期刊自带出处 / 期刊引用出版社出处 / 出版社与期刊都无规则 /
+    info 展示项 / 限定词与阶段 / mark+derivation / 期刊 unset 出版社的一条 / 严重度抬升
+    （含显式 severity 优先）/ 非 ASCII 别名。
+    """
     return {
         "schema": 1,
+        "catalog_rev": 1,
         "publishers": {
             "fx-press": {
                 "label": "Fixture Press",
@@ -48,7 +54,7 @@ def fixture_catalog() -> dict:
                         "url": "https://example.invalid/fx-press/guide.pdf",
                         "kind": "pdf",
                         "retrieved": "2000-01-01",
-                        "page": 12,
+                        "page": 12.0,
                     },
                 },
                 "rules": {
@@ -63,12 +69,26 @@ def fixture_catalog() -> dict:
                         "src": "s1",
                         "quote": "FIXTURE double column 175",
                     },
-                    "min_raster_dpi": {"value": 600, "src": "s2", "quote": "FIXTURE 600 dpi"},
+                    "min_raster_dpi": {
+                        "value": 600,
+                        "src": "s2",
+                        "quote": "FIXTURE at least 600 dpi",
+                        "qualifier": "min",
+                        "stage": "submission",
+                    },
                     "line_widths_pt": {"value": [0.5, 1.0], "src": "s2", "quote": "FIXTURE lines"},
                     "severity.page-width": {
                         "value": "error",
                         "src": "s1",
                         "quote": "FIXTURE width is mandatory",
+                    },
+                    "info.max_height_mm": {
+                        "value": 230,
+                        "src": "s1",
+                        "quote": "FIXTURE height must not exceed 23 cm",
+                        "qualifier": "max",
+                        "mark": "23 cm",
+                        "derivation": "23 cm -> 230 mm",
                     },
                 },
             },
@@ -79,7 +99,7 @@ def fixture_catalog() -> dict:
                 "label": "Fixture Alpha",
                 "publisher": "fx-press",
                 "issn": "0000-0000",
-                "aliases": ["FxA"],
+                "aliases": ["FxA", "\u0130stanbul Alpha"],
             },
             "fx-beta": {
                 "label": "Fixture Beta",
@@ -89,33 +109,57 @@ def fixture_catalog() -> dict:
                         "url": "https://example.invalid/fx-beta/author",
                         "kind": "html",
                         "retrieved": "2000-02-02",
+                        "coverage": "single_journal_sample",
                     }
                 },
                 "rules": {
                     "widths_mm.double": {
                         "value": 180,
                         "src": "s9",
-                        "quote": "FIXTURE beta double 180",
+                        "quote": "FIXTURE beta double 18 cm",
+                        "mark": "18 cm",
+                        "derivation": "18 cm -> 180 mm",
                     },
                     "min_effective_font_size_pt": {
                         "value": 7,
                         "src": "s1",
                         "quote": "FIXTURE 7 pt minimum",
+                        "qualifier": "min",
                     },
                     "preferred_formats.export_default": {
                         "value": ["tiff"],
                         "src": "s9",
                         "quote": "FIXTURE tiff only",
+                        "stage": "production",
                     },
                     "font_family.latin_accepted": {
                         "value": ["Arial", "Helvetica"],
                         "src": "s9",
                         "quote": "FIXTURE Arial or Helvetica",
+                        "qualifier": "recommended",
+                    },
+                    "info.one_half_mm": {
+                        "value": 120,
+                        "value_alt": 136,
+                        "src": "s9",
+                        "quote": "FIXTURE 1.5 columns 120 mm or 136 mm",
+                        "qualifier": "typical",
                     },
                 },
             },
             "fx-gamma": {"label": "Fixture Gamma", "publisher": "fx-press"},
             "fx-delta": {"label": "Fixture Delta", "publisher": "fx-bare"},
+            "fx-epsilon": {
+                "label": "Fixture Epsilon",
+                "publisher": "fx-press",
+                "rules": {
+                    "min_raster_dpi": {
+                        "unset": True,
+                        "src": "s1",
+                        "quote": "FIXTURE epsilon is exempt from the dpi rule",
+                    }
+                },
+            },
         },
     }
 
@@ -219,8 +263,128 @@ def invalid_cases() -> list[dict]:
             "journal_merge_invalid",
             _set([*_PUB, "rules", "line_widths_pt", "value"], ["thin"]),
         ),
+        ("catalog-rev-missing", "journal_catalog_schema", _del(["catalog_rev"])),
+        ("catalog-rev-zero", "journal_catalog_schema", _set(["catalog_rev"], 0)),
+        (
+            "source-url-http",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "url"], "http://example.invalid/a"),
+        ),
+        (
+            "source-url-javascript",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "url"], "javascript:alert(1)"),
+        ),
+        (
+            "source-retrieved-not-a-date",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "retrieved"], "yesterday"),
+        ),
+        (
+            "source-retrieved-impossible-date",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "retrieved"], "2000-02-30"),
+        ),
+        (
+            "source-archive-url-not-https",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "archive_url"], "ftp://example.invalid/x"),
+        ),
+        (
+            "source-coverage-bad-enum",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "coverage"], "everything"),
+        ),
+        (
+            "source-page-fraction",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s2", "page"], 1.5),
+        ),
+        ("source-page-zero", "journal_source_invalid", _set([*_PUB, "sources", "s2", "page"], 0)),
+        (
+            "single-sample-source-on-publisher-rules",
+            "journal_source_coverage",
+            _set([*_PUB, "sources", "s2", "coverage"], "single_journal_sample"),
+        ),
+        (
+            "publisher-not-a-string",
+            "journal_publisher_unknown",
+            _set(["journals", "fx-alpha", "publisher"], ["fx-press"]),
+        ),
+        (
+            "alias-conflict-after-nfkc",
+            "journal_alias_conflict",
+            _set(["journals", "fx-beta", "aliases"], ["\uff26\uff38\uff21"]),
+        ),
+        (
+            "alias-conflict-non-ascii-case",
+            "journal_alias_conflict",
+            _set(["journals", "fx-beta", "aliases"], ["i\u0307stanbul alpha"]),
+        ),
+        (
+            "rule-anchor-not-text-fragment",
+            "journal_rule_anchor_invalid",
+            _set([*_W1, "anchor"], "#foo"),
+        ),
+        (
+            "rule-qualifier-bad-enum",
+            "journal_rule_qualifier_invalid",
+            _set([*_W1, "qualifier"], "about"),
+        ),
+        (
+            "rule-qualifier-not-exact-on-width",
+            "journal_rule_qualifier_invalid",
+            _set([*_W1, "qualifier"], "max"),
+        ),
+        ("rule-stage-bad-enum", "journal_rule_stage_invalid", _set([*_W1, "stage"], "later")),
+        ("rule-mark-not-in-quote", "journal_rule_mark_invalid", _set([*_W1, "mark"], "86 mm")),
+        ("rule-derivation-blank", "journal_rule_mark_invalid", _set([*_W1, "derivation"], " ")),
+        ("rule-value-alt-wrong-type", "journal_rule_value_type", _set([*_W1, "value_alt"], "x")),
+        (
+            "unset-on-publisher-rule",
+            "journal_rule_unset_invalid",
+            _set([*_PUB, "rules", "min_raster_dpi"], {"unset": True, "src": "s1", "quote": "q"}),
+        ),
+        (
+            "unset-with-value",
+            "journal_rule_unset_invalid",
+            _set(["journals", "fx-epsilon", "rules", "min_raster_dpi", "value"], 300),
+        ),
+        (
+            "unset-without-publisher-rule",
+            "journal_rule_unset_invalid",
+            _set(
+                ["journals", "fx-epsilon", "rules"],
+                {"min_effective_font_size_pt": {"unset": True, "src": "s1", "quote": "q"}},
+            ),
+        ),
+        (
+            "unset-not-true",
+            "journal_rule_unset_invalid",
+            _set(["journals", "fx-epsilon", "rules", "min_raster_dpi", "unset"], False),
+        ),
+        ("info-id-unknown", "journal_rule_path_unknown", _new_rule("info.nonsense", 1)),
+        (
+            "info-without-quote",
+            "journal_rule_quote_empty",
+            _set([*_PUB, "rules", "info.max_height_mm", "quote"], ""),
+        ),
+        (
+            "info-value-null",
+            "journal_rule_value_missing",
+            _set([*_PUB, "rules", "info.max_height_mm", "value"], None),
+        ),
     ]
     return [{"name": n, "code": code, "ops": ops} for n, code, ops in cases]
+
+
+def _flatten(d: dict, prefix: str = "") -> list[str]:
+    """嵌套覆盖的叶子路径（列表 / 标量是叶子）。"""
+    out: list[str] = []
+    for k, v in d.items():
+        path = f"{prefix}{k}"
+        out += _flatten(v, path + ".") if isinstance(v, dict) else [path]
+    return out
 
 
 def build() -> dict:
@@ -231,7 +395,7 @@ def build() -> dict:
         sources = journals.journal_sources(jid, cat)
         merged = journals.journal_profile(jid, cat)
         fields = {}
-        for path in sources:
+        for path in _flatten(override):
             node = merged
             for part in path.split("."):
                 node = node[part]
@@ -247,6 +411,18 @@ def build() -> dict:
     return {
         "comment": "期刊库 golden 向量：由 scripts/gen_journal_vectors.py --write 生成，pytest 与 vitest 各跑一遍。夹具期刊，非真实数据。",
         "base_profile_id": journals.BASE_PROFILE_ID,
+        "constants": {
+            "info_ids": list(journals.INFO_IDS),
+            "qualifiers": list(journals.QUALIFIERS),
+            "stages": list(journals.STAGES),
+            "coverages": list(journals.COVERAGES),
+            "exact_only_paths": list(journals.EXACT_ONLY_PATHS),
+            "severity_bump": journals.SEVERITY_BUMP,
+            "bumped_severity": journals.BUMPED_SEVERITY,
+            "kind_overrides": journals.KIND_OVERRIDES,
+            "error_codes": list(journals.ERROR_CODES),
+        },
+        "catalog_rev": journals.catalog_rev(cat),
         "catalog": cat,
         "list": journals.list_journals(cat),
         "cases": cases,

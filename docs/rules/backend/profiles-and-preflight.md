@@ -87,10 +87,14 @@ order: 260
   失败码闭集 `ERROR_CODES` ↔ `JOURNAL_ERROR_CODES` 逐字相同，每个校验码至少一条失败向量。
 - **期刊没写的项不补**：覆盖叠在 `journal-base-v1`（无宽高比限制、不限定拉丁字体、不要求 CJK、字号下限 0、线宽预设 / 坐标轴 / 图例策略全空，
   只留越界 error、缺字形 warn、DPI 300、字号上限 72 的安全兜底）上，**绝不叠在 `lab-publication-v1` 上**，也不拿任何别的规范去填空。
-  `journal-base-v1` 带 `"listed": false`：`list_profiles()` / `listProfiles()` 过滤它（不进规范下拉与 `profilestore` 内置记录），`load()` 照取。
+  `journal-base-v1` 带 `"listed": false`：`list_profiles()` / `listProfiles()` / `builtinCatalog()` 过滤它（不进规范下拉与 `profilestore` 内置记录），但**可解析**：`load()`、`profilestore.resolve_spec()`（判内置用 `profiles.all_profile_ids()`，**不许**用 `builtins()`/`list_profiles()`）照取，前端 `resolveDocumentSpec` 对它不报 `globalMissing`（`specBinding.isHiddenBuiltin`）。栏宽 `widths_mm.single/double` 为 null = 没规定（`_validate` 两侧放宽为「正数或 null」）。
 - **加载即校验，没出处的数值进不了库**：每条 rule 要有 `value`、`src`（在可见 sources 里）、非空 `quote`（只存一两句短摘录，不存整页）；键路径必须是
   merge 能精确落到的 `journal-base-v1` 字段（深合并子对象写 `<子对象>.<键>`，其余顶层单段，身份 / 展示字段不可覆盖）；`value` 类型须与底一致；
   折叠后整份过 `validate_spec`（TS `profile.validateSpecShape` 是 `_validate` 的镜像，严格同源对，同一批向量看护）。出版社 rules 先、期刊 rules 后覆盖。
+- **schema 扩展位**（全文 ADR 0154 §3b）：顶层 `catalog_rev`；`info.<闭集 id>` 展示项（同样强制 src/quote，不折进 override）；规则的 `qualifier` / `value_alt` / `stage` / `mark` / `derivation` / `unset`；
+  来源 `coverage`（`single_journal_sample` 不得被出版社 rules 引用）；`journal_sources()` 返回 `rule_scope` + `source_scope` + `overrides` + `affects`。期刊填了值的检查按 `SEVERITY_BUMP` 从 suggestion 抬到 warn（只抬不降、显式优先）。
+  闭集常量（`INFO_IDS` / `QUALIFIERS` / `STAGES` / `COVERAGES` / `EXACT_ONLY_PATHS` / `SEVERITY_BUMP` / `KIND_OVERRIDES` / 错误码）两侧逐项相同，随 golden 向量的 `constants` 一起比。
+  链接安全：url/archive_url `https://`、anchor `#:~:text=`、retrieved ISO 日期；别名撞名 NFKC+小写。
 - **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
   项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。
 

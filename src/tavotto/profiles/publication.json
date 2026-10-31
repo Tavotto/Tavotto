@@ -203,10 +203,10 @@
       "version": "1.0.0",
       "label": "期刊底（期刊未规定的项一律不判）",
       "listed": false,
-      "source": "期刊标准库的中性底（ADR 0154）：期刊覆盖叠在它上面，而不是叠在课题组规范上——期刊没写的项就是没写，不拿别家的规矩去补。因此：不限定宽高比（allowed_aspect_ratios 为空）；不限定拉丁字体（latin 为空、latin_accepted 为空即不判）；不要求中日韩回退（required=false）；字号下限为 0（不设下限，同 absolute_min_font_size_pt=0 的既有用法）；线宽预设为空；坐标轴/图例策略全为 null（不判）；字重策略为空；页宽的 80/150 mm 只是 widths_mm 必须是正数的占位，其检查项 page-width 降为 suggestion。只保留安全兜底：越界 element-outside-figure=error、缺字形 glyph-missing / 公式排不出 math-unrenderable=warn、栅格 DPI 下限 300、字号上限 72 pt（取值思路同 free-form-v1，但字号下限与字体限定比它更松）。不在规范列表单独展示（listed=false）：它只是期刊覆盖的底，不是一份可选规范。",
+      "source": "期刊标准库的中性底（ADR 0154）：期刊覆盖叠在它上面，而不是叠在课题组规范上——期刊没写的项就是没写，不拿别家的规矩去补。因此：不限定宽高比（allowed_aspect_ratios 为空）；不限定拉丁字体（latin 为空、latin_accepted 为空即不判）；不要求中日韩回退（required=false）；字号下限为 0（不设下限，同 absolute_min_font_size_pt=0 的既有用法）；线宽预设为空；坐标轴/图例策略全为 null（不判）；字重策略为空；栏宽 widths_mm.single/double 为 null（没规定就是没规定，不放占位数字冒充事实）；page-width / page-aspect 等规范类检查平时降为 suggestion，期刊写了对应项后由期刊库按固定映射抬到 warn（ADR 0154）。severity 表补齐全部检查 id（默认 warn，与 DEFAULT_SEVERITY 一致），期刊才能对每个检查写规则。只保留安全兜底：越界 element-outside-figure=error、缺字形 glyph-missing / 公式排不出 math-unrenderable=warn、栅格 DPI 下限 300、字号上限 72 pt（取值思路同 free-form-v1，但字号下限与字体限定比它更松）。不在规范列表单独展示（listed=false）：它只是期刊覆盖的底，不是一份可选规范。",
       "widths_mm": {
-        "single": 80.0,
-        "double": 150.0,
+        "single": null,
+        "double": null,
         "tolerance_mm": 0.5,
         "allow_custom": true
       },
@@ -268,7 +268,26 @@
         "axis-label-format": "suggestion",
         "tick-label-count": "suggestion",
         "text-weight-policy": "suggestion",
-        "palette-semantic": "suggestion"
+        "palette-semantic": "suggestion",
+        "bar-without-errorbar": "warn",
+        "discouraged-colormap": "warn",
+        "fit-without-ci": "warn",
+        "font-too-large": "warn",
+        "hidden": "warn",
+        "legend-font-size": "warn",
+        "legend-over-data": "warn",
+        "missing-asset": "warn",
+        "out-of-page": "warn",
+        "outside-margin": "warn",
+        "overlap": "warn",
+        "panel-text-not-verifiable": "warn",
+        "raster-dpi": "warn",
+        "raster-text-not-verifiable": "warn",
+        "render-error": "warn",
+        "stale-render": "warn",
+        "text-over-axes": "warn",
+        "text-overlap": "warn",
+        "unapplied-override": "warn"
       }
     }
   }

@@ -3,11 +3,12 @@
  *
  * 数据来自 `@journals` 别名指向的 `src/tavotto/profiles/journals.json`，与 Python 的
  * `engine/journals.py` 读的是**同一个文件**；加载 / 校验 / 折叠是它的同名同义实现
- * （严格同源对），靠 `tests/golden/journal_vectors.json` 对齐，pytest 与 vitest 各跑一遍。
- * 失败码闭集 `JOURNAL_ERROR_CODES` 与 Python 的 `ERROR_CODES` 逐字相同。
+ * （严格同源对），靠 `tests/golden/journal_vectors.json` 对齐，pytest 与 vitest 各跑一遍
+ * （向量里连同各闭集常量一起比）。
  *
- * 期刊只记它自己写了的项：规则键是 `journal-base-v1` 里的字段路径，折成 `JournalOverride`
- * 后走 `mergeJournalInto`——求值器一行不改。期刊没写的项不补（界面标「该期刊未规定」）。
+ * 两类规则共用一层外壳：键是 `journal-base-v1` 字段路径的折成 `JournalOverride` 进预检；
+ * 键是 `info.<id>` 的只是展示项（同样强制 src / quote），不折进 override。
+ * 期刊没写的项不补（界面标「该期刊未规定」）。
  */
 import catalogDoc from '@journals'
 import {
@@ -23,20 +24,95 @@ import {
 export const JOURNAL_BASE_PROFILE_ID = 'journal-base-v1'
 const SCHEMA = 1
 const SOURCE_KINDS = ['html', 'pdf']
+export const COVERAGES = ['publisher_general', 'journal_specific', 'single_journal_sample'] as const
+export const QUALIFIERS = ['exact', 'max', 'min', 'typical', 'range', 'recommended'] as const
+export const STAGES = ['submission', 'production', 'any'] as const
+/** 求值器按「等于」判的路径只收 exact */
+export const EXACT_ONLY_PATHS = [
+  'widths_mm.single',
+  'widths_mm.double',
+  'allowed_aspect_ratios',
+  'line_widths_pt',
+] as const
+/** 展示项闭集（`info.<id>`）。同源对：`journals.py` 的 `INFO_IDS`。 */
+export const INFO_IDS = [
+  'one_half_mm',
+  'max_height_mm',
+  'width_range_mm',
+  'width_range_single_mm',
+  'width_range_double_mm',
+  'width_single_mm',
+  'width_double_mm',
+  'min_width_mm',
+  'min_line_width_pt',
+  'dpi_by_kind',
+  'dpi_photo',
+  'dpi_halftone',
+  'dpi_combination',
+  'color_mode',
+  'formats_raw',
+  'formats_images_raw',
+  'font_names_raw',
+  'text_height_mm',
+  'panel_label',
+] as const
+const INFO_PREFIX = 'info.'
+/** 规则键 → 它启用的检查项（期刊填了值、底里是 suggestion 就抬到 warn）。同源对：`SEVERITY_BUMP`。 */
+export const SEVERITY_BUMP: Record<string, string> = {
+  'widths_mm.single': 'page-width',
+  'widths_mm.double': 'page-width',
+  allowed_aspect_ratios: 'page-aspect',
+  min_effective_font_size_pt: 'font-too-small',
+  absolute_min_font_size_pt: 'font-below-absolute-floor',
+  max_font_size_pt: 'font-too-large',
+  min_raster_dpi: 'raster-dpi',
+  line_widths_pt: 'line-width-off-preset',
+  'font_family.latin_accepted': 'font-family-substituted',
+  'cjk_fallback.required': 'cjk-fallback-missing',
+  'axis_policy.tick_direction': 'tick-direction',
+  'axis_policy.enclosed_spines': 'spines-not-enclosed',
+  'axis_policy.label_format': 'axis-label-format',
+  'axis_policy.label_format_regex': 'axis-label-format',
+  'axis_policy.max_tick_labels': 'tick-label-count',
+  'legend_policy.frame': 'legend-frame',
+  'legend_policy.min_font_size_pt': 'legend-font-size',
+  'legend_policy.max_font_size_pt': 'legend-font-size',
+  text_weight_policy: 'text-weight-policy',
+}
+export const BUMPED_SEVERITY = 'warn'
+/** 底里值是 null 的字段类型本来无从比；这几个得是数。同源对：`journals.py` 的 `KIND_OVERRIDES`。 */
+export const KIND_OVERRIDES: Record<string, string> = {
+  'widths_mm.single': 'number',
+  'widths_mm.double': 'number',
+}
+/** 同源对：`profiles.py` 的 `DEFAULT_SEVERITY` 与 `profile.ts` 的同名常量 */
+const DEFAULT_SEVERITY = 'warn'
 /** 规则键里不许覆盖的身份 / 展示字段 */
 const NOT_RULES = ['profile_id', 'version', 'label', 'source', 'listed']
+
+// eslint-disable-next-line no-control-regex
+const URL_RE = /^https:\/\/[^\x00-\x20\x7f]+$/
+// eslint-disable-next-line no-control-regex
+const ANCHOR_RE = /^#:~:text=[^\x00-\x20\x7f]+$/
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 
 export const JOURNAL_ERROR_CODES = [
   'journal_catalog_schema',
   'journal_source_invalid',
+  'journal_source_coverage',
   'journal_publisher_unknown',
   'journal_alias_conflict',
   'journal_rule_value_missing',
   'journal_rule_src_missing',
   'journal_rule_src_unknown',
   'journal_rule_quote_empty',
+  'journal_rule_anchor_invalid',
   'journal_rule_path_unknown',
   'journal_rule_value_type',
+  'journal_rule_qualifier_invalid',
+  'journal_rule_stage_invalid',
+  'journal_rule_mark_invalid',
+  'journal_rule_unset_invalid',
   'journal_merge_invalid',
   'journal_unknown',
 ] as const
@@ -51,19 +127,30 @@ export class JournalCatalogError extends Error {
   }
 }
 
+export type Qualifier = (typeof QUALIFIERS)[number]
+export type Stage = (typeof STAGES)[number]
+export type Coverage = (typeof COVERAGES)[number]
+
 export interface JournalSource {
   url: string
   kind: 'html' | 'pdf'
   retrieved: string
+  coverage?: Coverage
   archive_url?: string
   page?: number
 }
 
 export interface JournalRule {
-  value: unknown
+  value?: unknown
+  value_alt?: unknown
   src: string
   quote: string
   anchor?: string
+  qualifier?: Qualifier
+  stage?: Stage
+  mark?: string
+  derivation?: string
+  unset?: true
 }
 
 export interface JournalEntry {
@@ -83,6 +170,7 @@ export interface PublisherEntry {
 
 export interface JournalCatalog {
   schema: number
+  catalog_rev: number
   publishers: Record<string, PublisherEntry>
   journals: Record<string, JournalEntry>
 }
@@ -99,9 +187,18 @@ export interface JournalSummary {
 /** 一条生效字段的出处（出处卡与 proof report 用）。同形：`journals.py` 的 `journal_sources`。 */
 export interface JournalFieldSource {
   value: unknown
+  value_alt: unknown
+  qualifier: Qualifier
+  stage: Stage
+  mark: string
+  derivation: string
+  unset: boolean
   quote: string
   src: string
-  scope: 'publisher' | 'journal'
+  rule_scope: 'publisher' | 'journal'
+  source_scope: 'publisher' | 'journal'
+  coverage: Coverage
+  affects: 'preflight' | 'info'
   url: string
   link: string
   anchor: string
@@ -109,12 +206,18 @@ export interface JournalFieldSource {
   page: number | null
   retrieved: string
   archive_url: string
+  /** 期刊改写了出版社的值时，出版社原条目；否则 null */
+  overrides: Omit<JournalFieldSource, 'overrides'> | null
 }
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 const nonBlank = (v: unknown): v is string => typeof v === 'string' && v.trim() !== ''
 const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isIntValued = (v: unknown): v is number => isNum(v) && Number.isInteger(v)
+const inList = (list: readonly string[], v: unknown) => typeof v === 'string' && list.includes(v)
+const isInfo = (path: string) => path.startsWith(INFO_PREFIX)
 
 function kindOf(v: unknown): string {
   if (v === null || v === undefined) return 'null'
@@ -129,6 +232,20 @@ const fail = (code: JournalErrorCode, msg: string): never => {
   throw new JournalCatalogError(code, msg)
 }
 
+/** 撞名比较的归一：NFKC 后小写。同源对：`journals.py` 的 `_alias_key`。 */
+export function aliasKey(name: string): string {
+  return name.normalize('NFKC').trim().toLowerCase()
+}
+
+function isIsoDate(v: unknown): boolean {
+  if (typeof v !== 'string') return false
+  const m = DATE_RE.exec(v)
+  if (!m) return false
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const dt = new Date(Date.UTC(y, mo - 1, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d
+}
+
 function baseProfile(): PublicationProfile {
   const base = loadProfile(JOURNAL_BASE_PROFILE_ID)
   if (base.profile_id !== JOURNAL_BASE_PROFILE_ID) {
@@ -140,6 +257,12 @@ function baseProfile(): PublicationProfile {
 function checkPath(path: unknown, base: Obj, where: string): string[] {
   if (typeof path !== 'string' || !path) {
     return fail('journal_rule_path_unknown', `${where}: 规则键必须是非空字符串`)
+  }
+  if (isInfo(path)) {
+    if (!inList(INFO_IDS, path.slice(INFO_PREFIX.length))) {
+      fail('journal_rule_path_unknown', `${where}: ${path} 不在 info 闭集里`)
+    }
+    return [path]
   }
   const parts = path.split('.')
   const top = parts[0]
@@ -163,18 +286,23 @@ function checkSources(sources: unknown, where: string): Record<string, JournalSo
   for (const [sid, raw] of Object.entries(sources)) {
     const w = `${where}.sources.${sid}`
     if (!isObj(raw)) return fail('journal_source_invalid', `${w}: 必须是对象`)
-    if (!nonBlank(raw.url) || raw.url.includes('#')) {
-      fail('journal_source_invalid', `${w}: url 必须非空且不带 #`)
+    if (typeof raw.url !== 'string' || !URL_RE.test(raw.url) || raw.url.includes('#')) {
+      fail('journal_source_invalid', `${w}: url 必须是不带 # 的 https:// 链接`)
     }
-    if (!SOURCE_KINDS.includes(raw.kind as string)) {
+    if (!inList(SOURCE_KINDS, raw.kind)) {
       fail('journal_source_invalid', `${w}: kind 必须是 ${SOURCE_KINDS.join('|')}`)
     }
-    if (!nonBlank(raw.retrieved)) fail('journal_source_invalid', `${w}: 缺 retrieved`)
-    if (has(raw, 'archive_url') && !nonBlank(raw.archive_url)) {
-      fail('journal_source_invalid', `${w}: archive_url 不能为空串`)
+    if (!isIsoDate(raw.retrieved)) {
+      fail('journal_source_invalid', `${w}: retrieved 必须是 ISO 日期 YYYY-MM-DD`)
+    }
+    if (has(raw, 'archive_url') && !(typeof raw.archive_url === 'string' && URL_RE.test(raw.archive_url))) {
+      fail('journal_source_invalid', `${w}: archive_url 必须是 https:// 链接`)
+    }
+    if (has(raw, 'coverage') && !inList(COVERAGES, raw.coverage)) {
+      fail('journal_source_invalid', `${w}: coverage 必须是 ${COVERAGES.join('|')}`)
     }
     const page = raw.page
-    if (page != null && !(typeof page === 'number' && Number.isInteger(page) && page >= 1)) {
+    if (page != null && !(isIntValued(page) && page >= 1)) {
       fail('journal_source_invalid', `${w}: page 必须是正整数`)
     }
   }
@@ -186,14 +314,29 @@ function checkRules(
   visible: Record<string, JournalSource>,
   base: Obj,
   where: string,
+  publisherScope: boolean,
+  publisherRules: Record<string, JournalRule> = {},
 ): Record<string, JournalRule> {
   if (rules == null) return {}
   if (!isObj(rules)) return fail('journal_catalog_schema', `${where}: rules 必须是对象`)
   for (const [path, raw] of Object.entries(rules)) {
     const w = `${where}.rules[${path}]`
     const parts = checkPath(path, base, w)
+    const info = isInfo(path)
     if (!isObj(raw)) return fail('journal_catalog_schema', `${w}: 规则必须是对象`)
-    if (raw.value === null || raw.value === undefined) {
+    const unset = raw.unset
+    if (has(raw, 'unset') && unset !== true) {
+      fail('journal_rule_unset_invalid', `${w}: unset 只能是 true`)
+    }
+    if (unset) {
+      if (publisherScope) fail('journal_rule_unset_invalid', `${w}: 出版社规则不能 unset`)
+      if ((raw.value !== null && raw.value !== undefined) || has(raw, 'value_alt')) {
+        fail('journal_rule_unset_invalid', `${w}: unset 的规则不能带 value`)
+      }
+      if (!has(publisherRules, path)) {
+        fail('journal_rule_unset_invalid', `${w}: 出版社没有 ${path} 这条可 unset`)
+      }
+    } else if (raw.value === null || raw.value === undefined) {
       fail('journal_rule_value_missing', `${w}: 缺 value`)
     }
     if (!nonBlank(raw.src)) fail('journal_rule_src_missing', `${w}: 缺 src`)
@@ -201,14 +344,39 @@ function checkRules(
       fail('journal_rule_src_unknown', `${w}: src=${String(raw.src)} 不在 sources 里`)
     }
     if (!nonBlank(raw.quote)) fail('journal_rule_quote_empty', `${w}: quote 不能为空`)
-    if (has(raw, 'anchor') && !nonBlank(raw.anchor)) {
-      fail('journal_catalog_schema', `${w}: anchor 不能为空串`)
+    if (has(raw, 'anchor') && !(typeof raw.anchor === 'string' && ANCHOR_RE.test(raw.anchor))) {
+      fail('journal_rule_anchor_invalid', `${w}: anchor 必须以 #:~:text= 开头`)
     }
+    const qualifier = has(raw, 'qualifier') ? raw.qualifier : 'exact'
+    if (
+      !inList(QUALIFIERS, qualifier) ||
+      ((EXACT_ONLY_PATHS as readonly string[]).includes(path) && qualifier !== 'exact')
+    ) {
+      fail('journal_rule_qualifier_invalid', `${w}: qualifier=${String(qualifier)} 不允许`)
+    }
+    if (has(raw, 'stage') && !inList(STAGES, raw.stage)) {
+      fail('journal_rule_stage_invalid', `${w}: stage 必须是 ${STAGES.join('|')}`)
+    }
+    if (has(raw, 'mark') && !(nonBlank(raw.mark) && (raw.quote as string).includes(raw.mark))) {
+      fail('journal_rule_mark_invalid', `${w}: mark 必须是 quote 里的一段原文`)
+    }
+    if (has(raw, 'derivation') && !nonBlank(raw.derivation)) {
+      fail('journal_rule_mark_invalid', `${w}: derivation 不能为空串`)
+    }
+    if (publisherScope) {
+      const src = visible[raw.src as string]
+      if ((src.coverage ?? 'publisher_general') === 'single_journal_sample') {
+        fail('journal_source_coverage', `${w}: single_journal_sample 的来源不能挂在出版社 rules 上`)
+      }
+    }
+    if (info || unset) continue
     let leaf: unknown = base
     for (const p of parts) leaf = (leaf as Obj)[p]
-    const want = kindOf(leaf)
-    if (want !== 'null' && kindOf(raw.value) !== want) {
-      fail('journal_rule_value_type', `${w}: value 应为 ${want}，实际 ${kindOf(raw.value)}`)
+    const want = KIND_OVERRIDES[path] ?? kindOf(leaf)
+    for (const key of ['value', 'value_alt']) {
+      if (has(raw, key) && want !== 'null' && kindOf(raw[key]) !== want) {
+        fail('journal_rule_value_type', `${w}: ${key} 应为 ${want}，实际 ${kindOf(raw[key])}`)
+      }
     }
   }
   return rules as Record<string, JournalRule>
@@ -218,28 +386,39 @@ interface EffectiveRule {
   rule: JournalRule
   src: JournalSource
   sid: string
-  scope: 'publisher' | 'journal'
+  ruleScope: 'publisher' | 'journal'
+  sourceScope: 'publisher' | 'journal'
+  coverage: Coverage
+  unset: boolean
+  overrides: EffectiveRule | null
 }
 
-/** 出版社 rules 先、期刊 rules 后覆盖；每条附上它解析到的 source 与来源范围。 */
+/** 出版社 rules 先、期刊 rules 后覆盖；每条附上 source、两种归属与被覆盖的出版社原值。 */
 function effectiveRules(cat: JournalCatalog, journalId: string): Map<string, EffectiveRule> {
   const journal = cat.journals[journalId]
   const pub = cat.publishers[journal.publisher]
   const out = new Map<string, EffectiveRule>()
-  const layers: Array<['publisher' | 'journal', PublisherEntry | JournalEntry, Record<string, JournalSource>]> = [
-    ['publisher', pub, {}],
-    ['journal', journal, pub.sources ?? {}],
+  const layers: Array<
+    ['publisher' | 'journal', PublisherEntry | JournalEntry, Record<string, JournalSource>, Coverage]
+  > = [
+    ['publisher', pub, {}, 'publisher_general'],
+    ['journal', journal, pub.sources ?? {}, 'journal_specific'],
   ]
-  for (const [scope, owner, fallback] of layers) {
+  for (const [scope, owner, fallback, defaultCov] of layers) {
     const own = owner.sources ?? {}
     for (const [path, rule] of Object.entries(owner.rules ?? {})) {
       const sid = rule.src
       const inOwn = has(own, sid)
+      const src = inOwn ? own[sid] : fallback[sid]
       out.set(path, {
         rule,
-        src: inOwn ? own[sid] : fallback[sid],
+        src,
         sid,
-        scope: inOwn ? scope : 'publisher',
+        ruleScope: scope,
+        sourceScope: inOwn ? scope : 'publisher',
+        coverage: src.coverage ?? (inOwn ? defaultCov : 'publisher_general'),
+        unset: rule.unset === true,
+        overrides: out.get(path) ?? null,
       })
     }
   }
@@ -256,9 +435,25 @@ function fold(path: string, value: unknown, into: Obj): void {
   node[parts[parts.length - 1]] = structuredClone(value)
 }
 
+/** 折成嵌套覆盖，再按 `SEVERITY_BUMP` 把期刊填了值的检查从 suggestion 抬到 warn。 */
 function overrideOf(cat: JournalCatalog, journalId: string): JournalOverride {
   const out: Obj = {}
-  for (const [path, eff] of effectiveRules(cat, journalId)) fold(path, eff.rule.value, out)
+  const folded: string[] = []
+  for (const [path, eff] of effectiveRules(cat, journalId)) {
+    if (isInfo(path) || eff.unset) continue
+    fold(path, eff.rule.value, out)
+    folded.push(path)
+  }
+  const baseSev = (baseProfile().severity ?? {}) as Record<string, string>
+  for (const path of folded) {
+    const check = SEVERITY_BUMP[path]
+    if (check === undefined) continue
+    const sev = (out.severity ?? {}) as Record<string, string>
+    if (has(sev, check)) continue
+    if ((baseSev[check] ?? DEFAULT_SEVERITY) === 'suggestion') {
+      out.severity = { ...sev, [check]: BUMPED_SEVERITY }
+    }
+  }
   return out as JournalOverride
 }
 
@@ -268,6 +463,9 @@ export function validateCatalog(catalog: unknown): JournalCatalog {
     fail('journal_catalog_schema', `期刊库 schema 必须是 ${SCHEMA}`)
   }
   const cat = catalog as unknown as JournalCatalog
+  if (!isIntValued(cat.catalog_rev) || cat.catalog_rev < 1) {
+    fail('journal_catalog_schema', 'catalog_rev 必须是正整数')
+  }
   if (!isObj(cat.publishers) || !isObj(cat.journals)) {
     fail('journal_catalog_schema', '期刊库缺 publishers / journals 对象')
   }
@@ -276,7 +474,7 @@ export function validateCatalog(catalog: unknown): JournalCatalog {
     const w = `publisher ${pid}`
     if (!isObj(pub) || !nonBlank(pub.label)) fail('journal_catalog_schema', `${w}: 缺 label`)
     const sources = checkSources(pub.sources, w)
-    checkRules(pub.rules, sources, base, w)
+    checkRules(pub.rules, sources, base, w, true)
   }
   const seen = new Map<string, string>()
   for (const [jid, jr] of Object.entries(cat.journals)) {
@@ -290,7 +488,7 @@ export function validateCatalog(catalog: unknown): JournalCatalog {
       fail('journal_catalog_schema', `${w}: aliases 必须是非空字符串数组`)
     }
     for (const name of [jid, ...aliases]) {
-      const key = name.trim().toLowerCase()
+      const key = aliasKey(name)
       const prev = seen.get(key)
       if (prev !== undefined && prev !== jid) {
         fail('journal_alias_conflict', `${w}: ${name} 与 ${prev} 撞名`)
@@ -299,8 +497,8 @@ export function validateCatalog(catalog: unknown): JournalCatalog {
     }
     if (has(jr, 'issn') && !nonBlank(jr.issn)) fail('journal_catalog_schema', `${w}: issn 不能为空串`)
     const own = checkSources(jr.sources, w)
-    const pubSources = cat.publishers[jr.publisher].sources ?? {}
-    checkRules(jr.rules, { ...pubSources, ...own }, base, w)
+    const pub = cat.publishers[jr.publisher]
+    checkRules(jr.rules, { ...(pub.sources ?? {}), ...own }, base, w, false, pub.rules ?? {})
   }
   for (const jid of Object.keys(cat.journals)) {
     const override = overrideOf(cat, jid)
@@ -322,6 +520,11 @@ function requireJournal(cat: JournalCatalog, journalId: string): void {
   }
 }
 
+/** 库版本号（正整数）；绑定里存它，「有新版可同步」才有得比。 */
+export function catalogRev(catalog?: unknown): number {
+  return loadCatalog(catalog).catalog_rev
+}
+
 /** 全部期刊的摘要（选择器用），按 journal_id 排序（与 Python 同序）。 */
 export function listJournals(catalog?: unknown): JournalSummary[] {
   const cat = loadCatalog(catalog)
@@ -340,7 +543,7 @@ export function listJournals(catalog?: unknown): JournalSummary[] {
     })
 }
 
-/** 某本期刊折成嵌套的 `JournalOverride`；期刊没写的项不出现。 */
+/** 某本期刊折成嵌套的 `JournalOverride`；期刊没写的项不出现，`info.*` 与被 unset 的项不折进来。 */
 export function journalOverride(journalId: string, catalog?: unknown): JournalOverride {
   const cat = loadCatalog(catalog)
   requireJournal(cat, journalId)
@@ -355,8 +558,34 @@ export function journalProfile(journalId: string, catalog?: unknown): Publicatio
 /** 「打开原网页」的链接：html 用 text fragment 锚，pdf 用 `#page=N`，否则裸 url。同源对：`source_link`。 */
 export function sourceLink(source: JournalSource, anchor?: string | null): string {
   if (anchor) return source.url + anchor
-  if (source.kind === 'pdf' && source.page) return `${source.url}#page=${source.page}`
+  if (source.kind === 'pdf' && source.page) return `${source.url}#page=${Math.trunc(source.page)}`
   return source.url
+}
+
+function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource, 'overrides'> {
+  const { rule, src } = eff
+  return {
+    value: structuredClone(rule.value ?? null),
+    value_alt: structuredClone(rule.value_alt ?? null),
+    qualifier: rule.qualifier ?? 'exact',
+    stage: rule.stage ?? 'any',
+    mark: rule.mark ?? '',
+    derivation: rule.derivation ?? '',
+    unset: eff.unset,
+    quote: rule.quote,
+    src: eff.sid,
+    rule_scope: eff.ruleScope,
+    source_scope: eff.sourceScope,
+    coverage: eff.coverage,
+    affects: isInfo(path) ? 'info' : 'preflight',
+    url: src.url,
+    link: sourceLink(src, rule.anchor),
+    anchor: rule.anchor ?? '',
+    kind: src.kind,
+    page: src.page == null ? null : Math.trunc(src.page),
+    retrieved: src.retrieved,
+    archive_url: src.archive_url ?? '',
+  }
 }
 
 /** 每条生效字段 → 出处，按路径排序。同形：`journals.py` 的 `journal_sources`。 */
@@ -368,19 +597,10 @@ export function journalSources(
   requireJournal(cat, journalId)
   const out: Record<string, JournalFieldSource> = {}
   const entries = [...effectiveRules(cat, journalId)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  for (const [path, { rule, src, sid, scope }] of entries) {
+  for (const [path, eff] of entries) {
     out[path] = {
-      value: structuredClone(rule.value),
-      quote: rule.quote,
-      src: sid,
-      scope,
-      url: src.url,
-      link: sourceLink(src, rule.anchor),
-      anchor: rule.anchor ?? '',
-      kind: src.kind,
-      page: src.page ?? null,
-      retrieved: src.retrieved,
-      archive_url: src.archive_url ?? '',
+      ...fieldSource(eff, path),
+      overrides: eff.overrides ? fieldSource(eff.overrides, path) : null,
     }
   }
   return out
