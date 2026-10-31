@@ -34,7 +34,11 @@ STRIP = "package/vendor/t/"
 
 def _tar(members: list[tuple[str, bytes | None, dict]]) -> bytes:
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+    # gzip 头的 mtime 默认取当前时间：同一份内容跨秒打两次字节就不同，锁里的哈希会对不上
+    with (
+        gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
         for name, data, extra in members:
             info = tarfile.TarInfo(name)
             for k, v in extra.items():
