@@ -193,7 +193,7 @@ function Dots({ current }: { current: number }) {
   return (
     <span aria-hidden="true" className="inline-flex items-center gap-3">
       {REAL_STEP_IDS.map((id, i) => (
-        <i key={id} className={cn('block h-2 w-2 rounded-full', i === current ? 'bg-ink' : 'bg-selected')} />
+        <i key={id} data-tutorial-progress-dot className={cn('block h-2 w-2 rounded-full', i === current ? 'bg-ink' : 'bg-selected')} />
       ))}
     </span>
   )

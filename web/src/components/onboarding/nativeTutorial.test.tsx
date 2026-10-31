@@ -365,7 +365,7 @@ describe('第一步：拖入示例脚本', () => {
     // 禁用时钮上写还要做什么；进度只在顶部一处（底部不再有第二排圆点）
     expect(q('[data-tutorial-next]')!.textContent).toContain('拖入脚本后继续')
     expect(q('[data-tutorial-back]')!.textContent).toContain('返回欢迎页')
-    expect(document.querySelectorAll('[data-tutorial-view="steps"] i.rounded-full')).toHaveLength(3)
+    expect(document.querySelectorAll('[data-tutorial-view="steps"] [data-tutorial-progress-dot]')).toHaveLength(3)
     const card = q('[data-tutorial-file-card]')!
     await pointer(card, 'pointerdown', 100, 100)
     await pointer(card, 'pointermove', 400, 420)
