@@ -119,6 +119,9 @@ pub struct FailureInfo {
     pub install_files: Option<InstallFiles>,
     /// 只在 launch 阶段 spawn 失败时有值（[`SPAWN_ERRORS`] 之一）；其余为 `None`。
     pub spawn_error: Option<&'static str>,
+    /// 只在握手超时（`sidecar_timeout`）时有值：sidecar 卡在启动的哪一步（[`crate::sidecar::startup_phase`] 的
+    /// 闭集阶段名，或 `none` = 本次启动没留下任何标记）；其余为 `None`。
+    pub startup_phase: Option<&'static str>,
 }
 
 impl FailureInfo {
@@ -129,6 +132,7 @@ impl FailureInfo {
             exit_code: None,
             install_files: None,
             spawn_error: None,
+            startup_phase: None,
         }
     }
 
@@ -139,6 +143,11 @@ impl FailureInfo {
 
     pub fn with_spawn_error(mut self, kind: &'static str) -> Self {
         self.spawn_error = Some(kind);
+        self
+    }
+
+    pub fn with_startup_phase(mut self, phase: &'static str) -> Self {
+        self.startup_phase = Some(phase);
         self
     }
 }
@@ -223,6 +232,13 @@ pub const REINSTALL_DENY_NOT_APPLICABLE: &str = "reinstall_not_applicable";
 
 pub fn reinstall_applies(code: &str) -> bool {
     code == code::SIDECAR_NOT_FOUND || code == code::SIDECAR_SPAWN_FAILED
+}
+
+/// 「重新启动」要走安全启动（这一次不恢复上次项目，TVD-DT76）的失败码。判据只有这一个出处，页面不自己猜。
+/// 目前只有握手超时：sidecar 起来了却没在 60 秒内写 ready，最常见的原因是恢复上次项目时卡在挂住的系统调用
+/// （离线网络盘、OneDrive 按需下载、超大目录），重启再恢复同一个项目就是死路。别的失败码和项目无关。
+pub fn safe_start_applies(code: &str) -> bool {
+    code == code::SIDECAR_TIMEOUT
 }
 
 /// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码满足 [`reinstall_applies`]。
@@ -324,6 +340,13 @@ pub async fn rescue_retry(
     if state.retrying.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    // 握手超时后的「重新启动」：给下一次启动留一次性标记，让它不恢复上次项目（sidecar/safe_start.rs）。
+    // 在收 sidecar 之前做、且只在第一次点击（上面的幂等闸之后）做；写不进去就照常重启
+    if state.failure().is_some_and(|f| safe_start_applies(f.code)) {
+        let config_dir = app.path().app_config_dir().ok();
+        let marker = crate::sidecar::safe_start::path(config_dir.as_deref());
+        crate::sidecar::safe_start::arm(marker.as_deref(), crate::sidecar::safe_start::now_secs());
+    }
     let worker = app.clone();
     // 收 sidecar 最长等 10 s，不占 async 运行时线程
     let _ = tauri::async_runtime::spawn_blocking(move || {
@@ -413,6 +436,7 @@ fn ensure_prepared(app: &tauri::AppHandle, state: &RescueState) -> Prepared {
         exit_code: info.exit_code,
         install_files: info.install_files,
         spawn_error: info.spawn_error,
+        startup_phase: info.startup_phase,
         created_at: now_iso(),
     });
     *slot = Some(p.clone());
@@ -638,6 +662,34 @@ mod tests {
     }
 
     #[test]
+    fn only_a_handshake_timeout_restarts_into_safe_start() {
+        for c in CODES {
+            assert_eq!(safe_start_applies(c), *c == "sidecar_timeout", "{c}");
+        }
+        assert!(!safe_start_applies(""));
+        // 与「重新安装」互不相交：安全启动和重装是两种不同的出路
+        assert!(CODES
+            .iter()
+            .all(|c| !(safe_start_applies(c) && reinstall_applies(c))));
+    }
+
+    #[test]
+    fn the_retry_command_arms_the_safe_start_marker_exactly_once_before_restarting() {
+        let src = prod(include_str!("rescue.rs"));
+        let retry = command_body(src, "rescue_retry");
+        assert_eq!(retry.matches("safe_start::arm(").count(), 1);
+        assert!(
+            retry.contains("safe_start_applies(f.code)"),
+            "判据只有 safe_start_applies 一个出处"
+        );
+        let at = retry.find("safe_start::arm(").unwrap();
+        // 在幂等闸之后（重复点击不重复写）、在收 sidecar 与重启之前
+        assert!(retry.find("retrying.swap").unwrap() < at);
+        assert!(at < retry.find("shutdown_sidecar").unwrap());
+        assert!(at < retry.find(".restart()").unwrap());
+    }
+
+    #[test]
     fn the_entered_flag_only_ever_goes_one_way() {
         let s = RescueState::default();
         assert!(!s.entered());
@@ -660,6 +712,7 @@ mod tests {
             exit_code: None,
             install_files: None,
             spawn_error: None,
+            startup_phase: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }));
         s.set_failure(FailureInfo::new("launch", "sidecar_spawn_failed"));

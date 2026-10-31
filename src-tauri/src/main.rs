@@ -1471,6 +1471,13 @@ fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
 
     let project = open.as_ref().map(|o| o.project.as_str());
     let config_dir = app.path().app_config_dir().ok();
+    // 握手超时后救援页「重新启动」留下的一次性标记：读到即删，这一次启动不恢复上次项目（sidecar/safe_start.rs）。
+    // 只有进程首次启动读（`first`）；引擎崩溃后的 `restart_engine` 不是那条路径
+    let safe = first
+        && sidecar::safe_start::take(
+            sidecar::safe_start::path(config_dir.as_deref()).as_deref(),
+            sidecar::safe_start::now_secs(),
+        );
     let result = sidecar::Sidecar::start(
         resource_dir,
         &log_dir,
@@ -1478,6 +1485,7 @@ fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
         project,
         config_dir.as_deref(),
         menu_locale,
+        safe,
     );
     let Some(win) = app.get_webview_window("main") else {
         if let Ok((sc, _)) = result {

@@ -95,6 +95,12 @@ def main() -> None:
     base = getattr(sys, "_MEIPASS", None)
     if base and base not in sys.path:
         sys.path.insert(0, base)
+    # 桌面 sidecar 的启动阶段标记（TVD-DT76）：解释器跑到这里就记一笔，早于 Flask / RenderCore 的 import。
+    # 壳握手超时后据此分辨「解释器根本没起来（杀软在扫 / 拦）」与「起来了、卡在后面某一步」。
+    from tavotto.engine import startupphase
+
+    if startupphase.enabled():
+        startupphase.mark("interpreter")
     # **render child 最先分派**（U10，ADR 0072）：父进程用同一个 exe 加 `--render-child` 起 PDFium 子进程
     # （冻结产物里没有 `-m`），它在 stdin / stdout 上说行分隔 JSON——**不能**先走 `_redirect_streams`
     # （那会把 GUI exe 的管道改道进 app.log，父进程永远收不到响应），也不能进 Flask。

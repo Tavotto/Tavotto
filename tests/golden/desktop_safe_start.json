@@ -1,0 +1,8 @@
+{
+  "_comment": "桌面壳 → sidecar 的 stdin 首行 JSON 里「安全启动」字段（TVD-DT76）：握手超时后用户在救援页点「重新启动」，这一次启动不恢复上次项目。严格同源对：生产方 src-tauri/src/sidecar/safe_start.rs（hello_field_is_the_golden_pair）与消费方 src/tavotto/desktop.py（tests/test_desktop_sidecar.py::test_safe_start_field_is_the_golden_pair）各读这份，不读对方源码。accepted = 消费方必须当作「安全启动」的值；ignored = 必须当没有的值。once_file = 壳在 app_config_dir 里留给下一次启动的一次性标记文件名（只有壳读写，Python 不碰）。",
+  "field": "safe_start",
+  "once_file": "safe-start-once",
+  "once_max_age_seconds": 600,
+  "accepted": [true],
+  "ignored": [false, 1, 0, "true", "1", null, [true], {"safe_start": true}]
+}

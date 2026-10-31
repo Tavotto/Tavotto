@@ -449,7 +449,7 @@ fn allowed_hits() -> Vec<Hit> {
         // Windows 上给 Command 加 CREATE_NO_WINDOW
         h(
             "sidecar.rs",
-            "start",
+            "start_with",
             "use std::os::windows::process::CommandExt",
         ),
         h(

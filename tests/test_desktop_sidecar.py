@@ -322,8 +322,46 @@ def test_preferred_port_field_is_the_golden_pair():
         assert nonce == "n"  # 非法的建议端口只被忽略，不连累凭据
 
 
+GOLDEN_SAFE_START = Path(__file__).parent / "golden" / "desktop_safe_start.json"
+
+
+def test_safe_start_field_is_the_golden_pair():
+    """stdin 字段与生产方（`src-tauri/src/sidecar/safe_start.rs`）的严格同源对：两侧各读 golden。"""
+    golden = json.loads(GOLDEN_SAFE_START.read_text(encoding="utf-8"))
+    assert desktop.SAFE_START_FIELD == golden["field"]
+    for value in golden["accepted"]:
+        assert desktop.parse_safe_start(value) is True, value
+    for value in golden["ignored"]:
+        assert desktop.parse_safe_start(value) is False, value
+    assert desktop.parse_safe_start(None) is False  # 缺席
+
+
+def test_read_hello_consumes_the_first_line_once_and_run_reuses_it():
+    line = json.dumps({"nonce": "n", "parent_pid": 7, "preferred_port": 24680, "safe_start": True})
+    stream = io.StringIO(line + "\nsecond line\n")
+    hello = desktop.read_hello(stdin=stream, environ={})
+    assert hello["safe_start"] is True
+    # 已读掉的 hello 交给 read_launch_credentials：不再碰 stream（第二行原封不动）
+    nonce, ppid, port, _ = desktop.read_launch_credentials(stdin=stream, environ={}, hello=hello)
+    assert (nonce, ppid, port) == ("n", 7, 24680)
+    assert stream.readline() == "second line\n"
+
+
+def test_read_hello_does_not_read_when_a_debug_nonce_is_in_the_environment():
+    stream = io.StringIO('{"nonce": "x"}\n')
+    assert desktop.read_hello(stdin=stream, environ={"TAVOTTO_DESKTOP_NONCE": "dbg"}) is None
+    assert stream.read() == '{"nonce": "x"}\n'
+
+
+def test_read_hello_on_a_bad_first_line_is_an_empty_hello_not_a_second_read():
+    stream = io.StringIO("not json\n")
+    assert desktop.read_hello(stdin=stream, environ={}) == {}
+
+
 # ---- 真进程：两次启动落在同一端口（含服务端 TIME_WAIT）--------------------------
-def _spawn_sidecar(tmp: Path, preferred_port: int | None) -> tuple[subprocess.Popen, Path]:
+def _spawn_sidecar(
+    tmp: Path, preferred_port: int | None, *, safe_start: bool = False
+) -> tuple[subprocess.Popen, Path]:
     """按壳的协议起一个真 `--desktop-sidecar` 进程（stdin 首行 JSON；数据 / 配置目录隔离）。"""
     tmp.mkdir(parents=True, exist_ok=True)
     handshake = tmp / "handshake.json"
@@ -352,6 +390,8 @@ def _spawn_sidecar(tmp: Path, preferred_port: int | None) -> tuple[subprocess.Po
     hello: dict = {"nonce": NONCE, "parent_pid": os.getpid()}
     if preferred_port is not None:
         hello[desktop.PREFERRED_PORT_FIELD] = preferred_port
+    if safe_start:
+        hello[desktop.SAFE_START_FIELD] = True
     assert proc.stdin is not None
     proc.stdin.write(json.dumps(hello).encode() + b"\n")
     proc.stdin.flush()
@@ -813,3 +853,32 @@ def test_browser_mode_untouched():
     # bootstrap 端点在非桌面模式下不存在（404），不暴露任何桌面语义
     resp = client.post(desktop.BOOTSTRAP_PATH, json={"nonce": "x"})
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize("safe_start", [False, True])
+def test_real_sidecar_marks_phases_and_a_safe_start_skips_the_last_project(
+    tmp_path, monkeypatch, safe_start
+):
+    """真进程：六个启动阶段标记按序落进日志（`interpreter` 由冻结入口写，源码形态没有）；
+    带 `safe_start` 的 hello 不恢复最近项目，普通启动恢复（TVD-DT76）。"""
+    from tavotto.engine import config as engine_config, startupphase
+
+    tmp = tmp_path / "run"
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp / "config"))
+    engine_config.touch_recent(str(project))
+    proc, hs_path = _spawn_sidecar(tmp, None, safe_start=safe_start)
+    try:
+        assert _await_handshake(proc, hs_path)["ready"] is True
+    finally:
+        _stop_via_stdin_eof(proc)
+    log = (tmp / "sidecar.log").read_text(encoding="utf-8", errors="replace")
+    marks = [
+        ln[len(startupphase.MARKER_PREFIX) :]
+        for ln in log.splitlines()
+        if ln.startswith(startupphase.MARKER_PREFIX)
+    ]
+    assert marks == [p for p in startupphase.PHASES if p != "interpreter"]
+    assert ("尚未选择项目" in log) == safe_start
+    assert (str(project) in log) == (not safe_start)
