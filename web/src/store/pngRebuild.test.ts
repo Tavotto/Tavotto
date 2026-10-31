@@ -4,8 +4,10 @@ import type { CapturedFigureDescriptor, ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
+import { createCanvasAndActivate, activateCanvas } from './canvasSession'
 import { useFigurePickerStore } from './figurePickerStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
+import { useSelectionStore } from './selectionStore'
 import { useScriptRunStore } from './scriptRunStore'
 import { useUiStore } from './uiStore'
 import { useWorkspaceStore } from './workspace'
@@ -80,6 +82,25 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     expect(useUiStore.getState().status).toEqual({ key: 'artifact.rebuilt', ns: 'errors' })
     expect(useUiStore.getState().statusTone).toBe('done')
     expect(probe).toHaveBeenCalledTimes(1)
+  })
+  it('QA-WIN-22：同 asset id 的旧面板在另一张画布上：新面板落在发起重建的画布、PNG 旁边，不跳画布、不动旧面板', async () => {
+    const home = S().activeCanvasId
+    const other = createCanvasAndActivate('新排版')
+    const old: PanelObject = {
+      ...pngPanel(), id: 'old', fileId: 'runtime:fig.py#same', fileKind: 'runtime', name: 'same',
+      overrides: [{ target: 'title', prop: 'text', value: 'Third QA' }] as unknown as PanelObject['overrides'],
+    }
+    S().commit(literal('seed'), (d) => { d.objects.push(old) })
+    activateCanvas(home)
+    useDocumentStore.setState({ past: [], future: [] })
+    const oldBefore = structuredClone(S().canvases.find((c) => c.id === other)!.objects)
+    probe.mockResolvedValue(ok([desc('same')]))
+    expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
+    expect(S().activeCanvasId).toBe(home)
+    expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same'])
+    expect(panels()[1].id).not.toBe('old')
+    expect(useSelectionStore.getState().ids).toEqual([panels()[1].id])
+    expect(S().canvases.find((c) => c.id === other)!.objects).toEqual(oldBefore)
   })
   it('never defaults to the first figure: no unique script+stem match hands over to the Figure picker', async () => {
     probe.mockResolvedValue(ok([desc('other'), desc('another')]))
