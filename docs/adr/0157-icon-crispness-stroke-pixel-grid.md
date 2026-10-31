@@ -1,7 +1,7 @@
 # ADR 0157：图标描边 1.5 + 吸到像素网格，小图标统一 16px
 
 日期：2026-10-31 · 状态：**Accepted**（用户 2026-10-31 在清晰度演示页上选定「描边 1.5 + 对齐像素」，14px 档选「小图标统一改 16px」）
-相关：[0052 自绘图标集](0052-in-house-icon-set.md)、[0154 图标微动效](0156-icon-micro-motion.md)；`docs/ux/ICONOGRAPHY.md` 尺寸阶梯与描边两节。
+相关：[0052 自绘图标集](0052-in-house-icon-set.md)、[0156 图标微动效](0156-icon-micro-motion.md)；`docs/ux/ICONOGRAPHY.md` 尺寸阶梯与描边两节。
 
 ## 动机
 
