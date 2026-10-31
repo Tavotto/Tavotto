@@ -26,17 +26,27 @@ const INTERACTIVE = [
 
 const isDisabled = (el: Element) => el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true'
 
-/** 归属于 `host` 本身（而不是它里面另一颗按钮）的、按 `on` 触发的图标 */
-function iconsOf(host: Element, on: MotionTrigger) {
-  return Array.from(host.querySelectorAll(`svg[data-motion="${on}"]`)).filter(
-    (svg) => svg.parentElement?.closest(INTERACTIVE) === host,
-  )
+/** 归属于 `host` 本身（而不是它里面另一颗按钮）的图标；给了 `on` 就只要按它触发的 */
+function iconsOf(host: Element, on?: MotionTrigger) {
+  const sel = on ? `svg[data-motion="${on}"]` : 'svg.icon'
+  return Array.from(host.querySelectorAll(sel)).filter((svg) => svg.parentElement?.closest(INTERACTIVE) === host)
+}
+
+/**
+ * 通用轻点：按钮里没有自己「点一下」动作的图标，点的时候整枚轻按一下再弹回（`motion.css` 的 `[data-tap]`），
+ * 免得一颗按钮点了毫无反应。
+ */
+export function tapIcon(svg: Element) {
+  if (reducedMotion()) return
+  svg.removeAttribute('data-tap')
+  void (svg as SVGElement).getBoundingClientRect()
+  svg.setAttribute('data-tap', '')
 }
 
 let installed = false
 
 /**
- * 全局只装一次（`main.tsx`）：点按钮播 `press`、指针进按钮播 `hover`。
+ * 全局只装一次（`main.tsx`）：点按钮播 `press`（没有点按动作的图标轻点一下）、指针进按钮播 `hover`。
  * 委托在 document 上而不是每枚图标各挂监听——图标集被三百多处用，99% 的时刻没人在点它们。
  */
 export function installIconMotion(doc: Document = document) {
@@ -47,7 +57,11 @@ export function installIconMotion(doc: Document = document) {
     if (!host || isDisabled(host)) return
     // 等这次点击引起的重渲染落地：按钮里若换了图标，播的是换上的那枚
     requestAnimationFrame(() => {
-      if (host.isConnected) iconsOf(host, 'press').forEach(playIcon)
+      if (!host.isConnected) return
+      for (const svg of iconsOf(host)) {
+        if (svg.getAttribute('data-motion') === 'press') playIcon(svg)
+        else tapIcon(svg)
+      }
     })
   })
   doc.addEventListener('pointerover', (e) => {

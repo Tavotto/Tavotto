@@ -199,6 +199,72 @@
 .icon-arrow-right[data-play] [data-m] { animation: icon-pass var(--icon-ms) cubic-bezier(0.5, 0, 0.3, 1); }
 @keyframes icon-pass { 0% { transform: none; opacity: 1; } 45% { transform: translateX(7px); opacity: 0; } 46% { transform: translateX(-7px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 
+/* ───────── 新一批：左轨 / 顶栏 / 画布工具胶囊（2026-10-31 第三轮） ───────── */
+.icon-folder[data-play] [data-m='p'] { animation: icon-flap var(--icon-ms) var(--icon-spring); }
+@keyframes icon-flap { 0%, 100% { transform: none; } 40% { transform: translateY(-1.8px); } }
+
+.icon-square-mouse-pointer[data-play] [data-m='p'] { animation: icon-poke var(--icon-ms) var(--icon-spring); }
+.icon-square-mouse-pointer[data-play] [data-m='q'] { animation: icon-squish var(--icon-ms) var(--icon-spring); }
+@keyframes icon-poke { 0% { transform: none; } 35% { transform: translate(2px, 2px); } 65% { transform: translate(-0.6px, -0.6px); } 100% { transform: none; } }
+
+.icon-paintbrush [data-m] { transform-origin: 19px 5px; }
+.icon-paintbrush[data-play] [data-m] { animation: icon-paint var(--icon-ms) ease-in-out; }
+@keyframes icon-paint { 0%, 100% { transform: none; } 30% { transform: rotate(-12deg); } 65% { transform: rotate(8deg); } }
+
+.icon-list-checks[data-play] [data-m='d'] { animation: icon-draw calc(var(--icon-ms) * 0.55) ease-out both; }
+.icon-list-checks[data-play] [data-m='e'] { animation: icon-draw calc(var(--icon-ms) * 0.55) ease-out calc(var(--icon-ms) * 0.45) both; }
+
+.icon-clipboard-list[data-play] [data-m='p'] { animation: icon-lift-half var(--icon-ms) var(--icon-spring); }
+.icon-clipboard-list[data-play] [data-m='d'] { animation: icon-draw calc(var(--icon-ms) * 0.6) ease-out calc(var(--icon-ms) * 0.2) both; }
+
+.icon-mail [data-m='p'] { transform-origin: 12px 8px; }
+.icon-mail[data-play] [data-m='p'] { animation: icon-envelope var(--icon-ms) var(--icon-spring); }
+@keyframes icon-envelope { 0%, 100% { transform: none; } 40% { transform: scaleY(-0.6); } }
+
+.icon-hard-drive[data-play] [data-m='p'] { animation: icon-blink-dot var(--icon-ms) ease-in-out; }
+@keyframes icon-blink-dot { 0%, 100% { opacity: 1; } 25% { opacity: 0.15; } 50% { opacity: 1; } 75% { opacity: 0.15; } }
+
+.icon-lightbulb [data-m] { transform-origin: 12px 20px; }
+.icon-lightbulb[data-play] [data-m] { animation: icon-rock var(--icon-ms) ease-in-out; }
+@keyframes icon-rock { 0%, 100% { transform: none; } 20% { transform: rotate(-9deg); } 45% { transform: rotate(7deg); } 70% { transform: rotate(-3deg); } }
+
+.icon-mouse-pointer-click [data-m='t'] { transform-box: fill-box; transform-origin: center; }
+.icon-mouse-pointer-click[data-play] [data-m='p'] { animation: icon-click var(--icon-ms) var(--icon-spring); }
+.icon-mouse-pointer-click[data-play] [data-m='t'] { animation: icon-ray var(--icon-ms) var(--icon-spring) calc(var(--icon-ms) * 0.25 + var(--k) * 50ms) both; }
+@keyframes icon-click { 0%, 100% { transform: none; } 30% { transform: translate(-1px, -1px); } }
+@keyframes icon-ray { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: none; } }
+
+.icon-type [data-m='p'] { transform-box: fill-box; transform-origin: center; }
+.icon-type[data-play] [data-m='p'] { animation: icon-bar-out var(--icon-ms) var(--icon-spring) both; }
+.icon-type[data-play] [data-m='d'] { animation: icon-draw calc(var(--icon-ms) * 0.6) ease-out calc(var(--icon-ms) * 0.3) both; }
+@keyframes icon-bar-out { from { transform: scaleX(0.3); } to { transform: none; } }
+
+.icon-arrow-up-right[data-play] [data-m] { animation: icon-pass-diag var(--icon-ms) cubic-bezier(0.5, 0, 0.3, 1); }
+@keyframes icon-pass-diag { 0% { transform: none; opacity: 1; } 45% { transform: translate(5px, -5px); opacity: 0; } 46% { transform: translate(-5px, 5px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+
+.icon-square[data-play] [data-m] { animation: icon-quarter var(--icon-ms) cubic-bezier(0.3, 1.4, 0.5, 1); }
+
+.icon-circle[data-play] [data-m] { animation: icon-jelly var(--icon-ms) ease-out; }
+@keyframes icon-jelly { 0%, 100% { transform: none; } 30% { transform: scale(1.12, 0.88); } 60% { transform: scale(0.95, 1.05); } }
+
+.icon-slash[data-play] [data-m='d'] { animation: icon-draw var(--icon-ms) cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+.icon-shapes[data-play] [data-m='p'] { animation: icon-nudge-tl var(--icon-ms) var(--icon-spring); }
+.icon-shapes[data-play] [data-m='q'] { animation: icon-nudge-br var(--icon-ms) var(--icon-spring); }
+@keyframes icon-nudge-tl { 0%, 100% { transform: none; } 40% { transform: translate(-1.2px, -1.2px); } }
+@keyframes icon-nudge-br { 0%, 100% { transform: none; } 40% { transform: translate(1.2px, 1.2px); } }
+
+.icon-tags [data-m] { transform-origin: 8px 8px; }
+.icon-tags[data-play] [data-m] { animation: icon-swing var(--icon-ms) ease-in-out; }
+@keyframes icon-swing { 0%, 100% { transform: none; } 30% { transform: rotate(-14deg); } 65% { transform: rotate(8deg); } }
+
+/* ───────── 通用轻点 ─────────
+   按钮里没有自己「点一下」动作的图标（没登记的、或登记的是悬停 / 出现），点的时候整枚轻轻按下再弹回，
+   免得一颗按钮点了毫无反应。只动 svg 本身，不碰路径。 */
+.icon[data-tap] { animation: icon-tap 260ms var(--icon-tap-ease, cubic-bezier(0.3, 1.5, 0.5, 1)); }
+@keyframes icon-tap { 0% { transform: none; } 35% { transform: scale(0.84); } 100% { transform: none; } }
+
 @media (prefers-reduced-motion: reduce) {
   .icon[data-play] [data-m] { animation: none !important; }
+  .icon[data-tap] { animation: none !important; }
 }

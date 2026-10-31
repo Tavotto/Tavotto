@@ -19,9 +19,9 @@ import {
   ICON_DEFS,
   ICON_MOTION,
   LayoutGrid,
+  Ruler,
   SlidersHorizontal,
   Sparkles,
-  Type,
   X,
   type IconDef,
 } from './index'
@@ -87,7 +87,9 @@ describe('登记表 ↔ 关键帧同源', () => {
   })
 
   it('减少动态效果时一律不播', () => {
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*{\s*\.icon\[data-play\] \[data-m\] { animation: none !important; }/)
+    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
+    expect(reduced).toContain('.icon[data-play] [data-m] { animation: none !important; }')
+    expect(reduced).toContain('.icon[data-tap] { animation: none !important; }')
   })
 })
 
@@ -109,14 +111,14 @@ describe('渲染', () => {
     render(
       <>
         <Download />
-        <Type />
+        <Ruler />
       </>,
     )
     const dl = host.querySelector('svg.icon-download')!
     expect(dl.getAttribute('data-motion')).toBe('press')
     expect((dl as SVGElement).style.getPropertyValue('--icon-ms')).toBe('520ms')
     expect([...dl.querySelectorAll('path')].map((p) => p.getAttribute('data-m'))).toEqual(['q', 'p', 'p'])
-    const ty = host.querySelector('svg.icon-type')!
+    const ty = host.querySelector('svg.icon-ruler')!
     expect(ty.hasAttribute('data-motion')).toBe(false)
     expect(ty.querySelector('[data-m]')).toBeNull()
   })
@@ -175,6 +177,24 @@ describe('委托', () => {
     host.remove()
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('按钮里没有点按动作的图标点的时候轻点一下（悬停图标、没登记的图标都算）', () => {
+    act(() =>
+      root.render(
+        <button type="button">
+          <Ruler data-plain />
+          <LayoutGrid data-hover />
+          <Download data-press />
+        </button>,
+      ),
+    )
+    act(() => host.querySelector('button')!.click())
+    flushFrame()
+    expect(host.querySelector('[data-plain]')!.hasAttribute('data-tap')).toBe(true)
+    expect(host.querySelector('[data-hover]')!.hasAttribute('data-tap')).toBe(true)
+    expect(host.querySelector('[data-press]')!.hasAttribute('data-tap')).toBe(false)
+    expect(host.querySelector('[data-press]')!.hasAttribute('data-play')).toBe(true)
   })
 
   it('点按钮播按钮里的 press 图标，不播里面另一颗按钮的', () => {
