@@ -11,7 +11,7 @@
 * 运算：`||`、`&&`、`!`、`==`、`!=`、括号；
 * 字面量：`'单引号字符串'`（`''` 转义）、整数 / 小数、`true` / `false` / `null`；
 * 函数：只有 `contains(search, item)`；
-* 上下文路径：`a.b.c`、对象过滤 `a.*.name`（GitHub 的 `.*` 对数组逐项取字段）。
+* 上下文路径（根只有 `github`，调用方显式传 `needs=` 时再加 `needs`）：`a.b.c`、对象过滤 `a.*.name`（GitHub 的 `.*` 对数组逐项取字段）。
 
 语义按 GitHub 文档「Evaluate expressions in workflows and actions」：
 
@@ -259,7 +259,7 @@ def truthy(value: Any) -> bool:
     return True
 
 
-def evaluate(expression: str, github: dict[str, Any]) -> Any:
+def evaluate(expression: str, github: dict[str, Any], needs: dict[str, Any] | None = None) -> Any:
     """对着一份合成的 `github` 上下文求值**一段**表达式；返回 GitHub 会得到的**值**（不是布尔）。
 
     `if:` 的取舍用 `truthy(evaluate(...))`；带多段插值的字符串（concurrency 的 `group:`）
@@ -268,7 +268,10 @@ def evaluate(expression: str, github: dict[str, Any]) -> Any:
     src = _strip_wrapper(expression)
     if not src:
         raise UnsupportedExpression("空表达式")
-    return _Parser(_tokenize(src), {"github": github}, src).parse()
+    ctx: dict[str, Any] = {"github": github}
+    if needs is not None:  # `needs` 上下文只在调用方显式给出时存在——没给而表达式读它，照旧当场抛
+        ctx["needs"] = needs
+    return _Parser(_tokenize(src), ctx, src).parse()
 
 
 def _to_string(value: Any) -> str:

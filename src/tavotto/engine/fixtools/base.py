@@ -54,6 +54,8 @@ class FixContext:
     report: Callable[[], dict | None] | None = None
     #: 候选环境清单 `() -> [evaluate() 结果形状的 entry]`；None = 用 `userenvs.discover(project_root)`
     environment_source: Callable[[], list[dict]] | None = None
+    #: 准备会话此刻在用的环境 `{"python", "source", "label"}`（含内置 runtime）；`list_environments` 把它排第一并标 `current`
+    current_environment: dict | None = None
     #: 日志来源 → 文件路径；缺省 app = `data_dir()/cache/app.log`
     log_paths: dict[str, Path] = field(default_factory=dict)
     #: 被诊断的脚本（仅 diagnostic try_run 复制它去跑）

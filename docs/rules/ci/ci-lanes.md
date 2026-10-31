@@ -35,6 +35,23 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 四条 workflow 的顶层 env 钉 `TAVOTTO_NO_TELEMETRY=1`——**CI 绝不产生真实的
 产品事件**（细节见 `src/tavotto/AGENTS.md` 的遥测一节）。
 
+**docs-only 快车道（`docs-scope` job，2026-10-31）。** 只改 `docs/release-notes/**.md`（**不含**
+`UNRELEASED.md`：`test_claude_plugin.py` / `test_dsh_bundle.py` 读它；只此一条，不扩到整个
+`docs/`）的 PR 与队列候选不再跑 invariants / backend-fast / frontend / plugin-candidate / workerd /
+desktop-shell / compat-smoke 和五个重型资格；python-lint / cla-check / release-note-gate / `docs-scope`
+照跑，`docs-scope` 在 docs-only 时另跑 `tests/test_docs_references.py`（发行说明相对链接）。
+**Gate 怎么有据地接受这些 skipped**（CI01 §4 ① 说的「前置 filter + 短路会让 Gate 判红」的解法）：
+`docs-scope` 本身在 fast gate 的 `--required` 里（失败 / skipped = 红）；只有它 `success` 且输出
+`docs_only == "true"` 时，两个 Gate 才带 `--classifier docs-scope --docs-only-skippable <写死的名单>`，
+`aggregate_gate.py` 再从 `toJSON(needs)` 里核一遍 result 与 outputs（调用方的布尔值不算证据）。
+integration gate 把 `docs-scope` 放进 needs 但不进 `--required`：非 docs-only 时先从 needs JSON 里剔掉，
+参数与引入前逐字相同。分类依据：PR 用 `pulls/{n}/files`（条数与 `changed_files` 对账，改名连旧路径一起算），
+merge_group 用 `merge_group.base_sha` → `head_sha` 的 `git diff --no-renames`，队列里任一 PR 改了别的就不是
+docs-only。判定器与分类器都取默认分支。**bootstrap**：引入本机制的 PR 合入前，默认分支上是旧判定器——
+`docs_only` 恒 false 时两个 Gate 的调用与旧版逐字相同，不会判红；docs-only 的 run 在旧判定器下按
+fail-closed 红（不是假绿）。看护：`tests/test_docs_scope.py`、`tests/test_docs_only_fast_lane.py`
+（含冻结的旧判定器 `tests/fixtures/ci_gate/`）、`tests/test_aggregate_gate.py::TestDocsOnlyFastLane`。
+
 **PR 级 CI 只对 base 是 main 的 PR 触发**（2026-09-21 用户拍板）：监听 `pull_request`
 的四个 workflow（`ci.yml` / `codeql.yml` / `pr-conflict-domains.yml` / `private-python-targets.yml`）
 都带 `on.pull_request.branches: [main]`（U05 那份在 `paths` 之外再加，两者是 AND）。叠栈 PR（base 是上一层分支，`docs/ci/parallel-prs.md`
