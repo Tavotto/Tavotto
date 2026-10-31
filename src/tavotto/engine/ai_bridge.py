@@ -39,6 +39,7 @@ from . import (
     ai_history,
     ai_oauth,
     ai_providers,
+    cli_failure,
     config,
     exectrace,
     managedcli,
@@ -213,8 +214,20 @@ def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
             trace.end_span(
                 span,
                 exectrace.STATUS_FAILED,
-                error_code="agent_exit_nonzero",
-                attributes={"exit_ok": False},
+                error_code=sess.get("runner_error") or "agent_exit_nonzero",
+                attributes={
+                    "exit_ok": False,
+                    **(
+                        {"runner_detail": sess["runner_detail"]}
+                        if sess.get("runner_detail")
+                        else {}
+                    ),
+                    **(
+                        {"failure_category": sess["failure_category"]}
+                        if sess.get("failure_category")
+                        else {}
+                    ),
+                },
             )
     except Exception:  # noqa: BLE001
         pass
@@ -273,7 +286,7 @@ def _release_cand(cand) -> None:
 
     if isinstance(cand, ai_convert.ConvertCandidate):
         ai_convert.release(cand)
-    else:
+    elif getattr(cand, "hold", None) is None and not cand.extras.get("resume_sid"):
         _remove_cand(cand)
 
 
@@ -1574,12 +1587,16 @@ def run(
         elif taf:
             # TAF：Agent 在候选工作区里改副本，过了提交前检查才写回（`ai_figure_edit` 模块说明）。候选建不起来就整条
             # 拒绝（还没 spawn、没登记），不静默退回原地修改——开关打开时用户要的就是隔离
-            from . import ai_figure_edit
+            from . import ai_convert, ai_figure_edit
 
             try:
                 ai_figure_edit.ensure_registered()
                 cand = ai_figure_edit.create_candidate(sid, script_path, Path(figures_dir), script)
                 cand.extras.update(task_hooks or {})
+                # Bridge owns the dependency between conversion validation and
+                # figure editing; the adapter itself must not import conversion.
+                cand.extras["dependency_validation"] = ai_convert.run_validation
+                cand.extras["dependency_installed_stopped"] = ai_convert.DEPS_INSTALLED_STOPPED
                 # 目标范围（`figureverify.changes_outside_target`）：缺省按整张图（没选中东西 = 没有可核的范围）
                 _ctx = context or {}
                 cand.extras["target"] = {
@@ -1790,7 +1807,7 @@ def run(
         LOG.exception("入内存后检查取消意图失败（session %s）", sid)
     emit = on_event or (lambda *_: None)
 
-    log_state = {"log": stderr_log}
+    log_state = {"log": stderr_log, "start": 0}
     convert_checks = 0
 
     def _answer_check() -> None:
@@ -1831,6 +1848,8 @@ def run(
     def _consume():
         st: dict = {}
         sess.pop("runner_error", None)
+        sess.pop("runner_detail", None)
+        sess.pop("failure_category", None)
         proc = sess["proc"]
         complete = threading.Event()
         agent_runs[0] += 1
@@ -1871,10 +1890,22 @@ def run(
             _await_exit(sess)
             if agent == ai_agents.BUILTIN_ID and st.get("runner_error"):
                 sess["runner_error"] = st["runner_error"]
+                sess["runner_detail"] = st.get("runner_detail")
         finally:
             complete.set()
             timer.cancel()
             log_state["log"].close()
+            if agent != ai_agents.BUILTIN_ID and proc.returncode:
+                try:
+                    with (SNAP_DIR / f"{sid}.stderr.log").open(
+                        encoding="utf-8", errors="replace"
+                    ) as err:
+                        err.seek(0, os.SEEK_END)
+                        end = err.tell()
+                        err.seek(max(log_state["start"], end - 65536))
+                        sess["failure_category"] = cli_failure.consume(err)
+                except (OSError, ValueError):
+                    sess["failure_category"] = "other"
             _trace_agent_exit(trace, run_span, sess, proc)
 
     def _respawn(note: str) -> None:
@@ -1909,6 +1940,7 @@ def run(
             "AI 任务修正命令: %s", " ".join("<prompt>" if part == again else part for part in cmd2)
         )
         log_state["log"] = open(SNAP_DIR / f"{sid}.stderr.log", "ab", buffering=0)
+        log_state["start"] = log_state["log"].tell()
         sess["exited"].clear()
         try:
             sess["proc"] = _popen(
@@ -1935,9 +1967,26 @@ def run(
                 task = _drive_task(sess, task_run, cand, _consume, on_changed, script, _respawn)
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
-            _record_after(sess, script_path.read_bytes())
-            new_text = script_path.read_text(encoding="utf-8", errors="replace")
-            old_text = snap.read_text(encoding="utf-8", errors="replace")
+            dependency_edit = (
+                task is not None
+                and cand is not None
+                and (
+                    cand.extras.get("missing_dependency_check")
+                    or cand.extras.get("dependency_validated_sha256")
+                )
+            )
+            if dependency_edit:
+                # During dependency planning another process may edit the
+                # project. Only bytes this task committed belong to the AI.
+                result_bytes = cand.new_bytes if cand.committed else cand.base_bytes
+                assert result_bytes is not None
+                _record_after(sess, result_bytes)
+                new_text = result_bytes.decode("utf-8", errors="replace")
+                old_text = cand.base_bytes.decode("utf-8", errors="replace")
+            else:
+                _record_after(sess, script_path.read_bytes())
+                new_text = script_path.read_text(encoding="utf-8", errors="replace")
+                old_text = snap.read_text(encoding="utf-8", errors="replace")
             sess["changed"] = new_text != old_text
             sess["diff"] = "".join(
                 difflib.unified_diff(
@@ -2104,11 +2153,295 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, re
             consume()
 
 
+def discard_held_figure_edit(sid: str, project: str) -> None:
+    from . import ai_figure_edit
+
+    with _REQUEST_LOCK:
+        sess = SESSIONS.get(sid)
+        cand = ((sess or {}).get("taf") or {}).get("cand")
+        if (
+            sess is None
+            or sess.get("project") != str(Path(project).resolve())
+            or not isinstance(cand, ai_figure_edit.Candidate)
+            or not isinstance(cand.hold, dict)
+            or cand.extras.get("resume_sid")
+        ):
+            raise AgentError("ai_candidate_unavailable")
+        cand.hold = None
+        _remove_cand(cand)
+
+
+def resume_figure_edit(
+    sid: str, project: str, confirmed_impact: str, *, resolve, on_changed, on_event
+) -> str:
+    """Continue a held edit without running the model again.
+
+    A fresh history row reserves the script across processes, and the usual
+    task gate owns cancellation, verification, commit and the final snapshot.
+    """
+    from . import ai_convert, ai_figure_edit, ai_tasks
+
+    project = str(Path(project).resolve())
+    prior = SESSIONS.get(sid)
+    cand = ((prior or {}).get("taf") or {}).get("cand")
+    if (
+        prior is None
+        or prior.get("project") != project
+        or not isinstance(cand, ai_figure_edit.Candidate)
+    ):
+        raise AgentError("ai_candidate_unavailable")
+    # Same order as run(): the script lock precedes _REQUEST_LOCK.
+    with script_guard(cand.script_path), _REQUEST_LOCK:
+        if SESSIONS.get(sid) is not prior or not prior.get("final"):
+            raise AgentError("ai_candidate_unavailable")
+        previous = cand.extras.get("resume_refs", {}).get(sid)
+        if previous:
+            return previous
+        if not isinstance(cand.hold, dict) or cand.extras.get("resume_sid"):
+            raise AgentError("ai_candidate_unavailable")
+        observed = cand.extras.get("missing_dependency_check") or {}
+        precheck = ai_figure_edit.ADAPTER._precommit(cand)
+        if (
+            not cand.target.is_file()
+            or cand.target.is_symlink()
+            or _sha256(cand.target.read_bytes()) != observed.get("sha256")
+            or cand.script_path.read_bytes() != cand.base_bytes
+            or not ai_tasks.precommit_admits(precheck)
+        ):
+            raise AgentError("ai_candidate_changed")
+        busy = busy_session(cand.script_path)
+        if busy:
+            raise AgentError("ai_script_busy", {"script": cand.script_rel, "session": busy})
+        new_sid = uuid.uuid4().hex[:12]
+        SNAP_DIR.mkdir(parents=True, exist_ok=True)
+        snap = SNAP_DIR / f"{new_sid}__{cand.script_path.name}"
+        snap.write_bytes(cand.base_bytes)
+        side = SNAP_DIR / f"{new_sid}.json"
+        side.write_text(
+            json.dumps(
+                {
+                    "id": new_sid,
+                    "agent": prior["agent"],
+                    "script": cand.script_rel,
+                    "script_path": str(cand.script_path),
+                    "project": project,
+                    "snapshot": str(snap),
+                    # A failed or interrupted resume must not revert a later
+                    # user edit; until commit the only known version is base.
+                    "after_sha256": cand.base_sha256,
+                    "prompt": prior.get("prompt") or "",
+                    "started": time.time(),
+                    "model": prior.get("model"),
+                    "effort": prior.get("effort"),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        envelope = replace(prior["taf"]["run"].envelope, client_request_id=None)
+        registered = False
+        try:
+            context = prior.get("context") or {}
+            ensure_owner_loop()
+            ai_history.record_start(
+                {
+                    "id": new_sid,
+                    "project": project,
+                    "canvas": context.get("canvas"),
+                    "panel": context.get("stem"),
+                    "element": context.get("gid"),
+                    "scope": context.get("scope"),
+                    "target": context.get("target"),
+                    "provider": prior["agent"],
+                    "script": cand.script_rel,
+                    "prompt": prior.get("prompt") or "",
+                    "model": prior.get("model"),
+                    "effort": prior.get("effort"),
+                    "snapshot_path": str(snap),
+                    "task_type": ai_figure_edit.TASK_TYPE,
+                    "parent_task_id": sid,
+                    "envelope": envelope.to_dict(include_intent=False),
+                }
+            )
+            registered = True
+            task_run = ai_tasks.begin_registered(new_sid, envelope)
+        except BaseException:
+            if registered:
+                ai_history.record_end(new_sid, "failed", error="resume_start_failed")
+            _drop_attempt_files(new_sid, snap)
+            raise
+        trace = exectrace.begin("ai_task", task_ref=new_sid, scope=exectrace.scope_for(project))
+        task_run.trace = trace
+        sess = {
+            "id": new_sid,
+            "agent": prior["agent"],
+            "model": prior.get("model"),
+            "effort": prior.get("effort"),
+            "context": prior.get("context"),
+            "script": cand.script_rel,
+            "prompt": prior.get("prompt") or "",
+            "script_path": str(cand.script_path),
+            "project": project,
+            "status": "running",
+            "transcript": [],
+            "diff": "",
+            "changed": False,
+            "refresh": {"status": "pending"},
+            "snapshot": str(snap),
+            "after_sha256": cand.base_sha256,
+            "started": time.time(),
+            "final": False,
+            "exited": threading.Event(),
+            "trace": trace,
+            "taf": {"cand": cand, "run": task_run},
+            "task": {"task_type": ai_figure_edit.TASK_TYPE, "outcome": None},
+        }
+        SESSIONS[new_sid] = sess
+        cand.extras["resume_sid"] = new_sid
+        cand.extras.setdefault("resume_refs", {})[sid] = new_sid
+
+    # A different process may have accepted cancellation during registration.
+    # Consume it before the new task can reach its commit gate.
+    try:
+        _execute_cancel_intent(new_sid)
+    except Exception:  # noqa: BLE001 - the owner loop will retry the intent
+        LOG.exception("续跑启动时检查取消意图失败（session %s）", new_sid)
+
+    def wait_for_dependencies():
+        old_card = cand.hold or {}
+        expected_sha = (cand.extras.get("missing_dependency_check") or {}).get("sha256")
+        cand.hold = None
+        cand.extras["cancel"] = task_run.cancel_event
+        cand.extras["runtime_modules"] = list(old_card.get("runtime_modules") or ())
+        cand.extras["deps"] = lambda root, rel, cancel, **kw: resolve(
+            root, rel, confirmed_impact=confirmed_impact, cancel=cancel, **kw
+        )
+        try:
+            result = ai_convert.run_validation(cand, cand.extras["runner"])
+        finally:
+            cand.extras.pop("deps", None)
+        if task_run.cancelled():
+            if result.get("status") == ai_convert.DEPS_INSTALLED_STOPPED:
+                # The environment changed before cancellation won. Preserve
+                # the candidate and let the user explicitly continue.
+                cand.hold = {**old_card, "notice": "dependency_installed_late"}
+                raise ai_tasks.NeedsInput(
+                    "", reason_code="dependency_decision", data=dict(cand.hold)
+                )
+            return
+        if cand.hold is not None:
+            raise ai_tasks.NeedsInput("", reason_code="dependency_decision", data=dict(cand.hold))
+        if result.get("status") != "ok":
+            raise ai_tasks.TaskError(str(result.get("code") or "candidate_validation_failed"))
+        if (
+            getattr(cand.extras["runner"], "requires_source_identity", False)
+            and result.get("source_sha256") != expected_sha
+        ):
+            raise ai_tasks.TaskError("candidate_changed_since_validation")
+        if cand.target.is_symlink() or _sha256(cand.target.read_bytes()) != expected_sha:
+            raise ai_tasks.TaskError("candidate_changed_since_validation")
+        checked, _ = ai_figure_edit.agent_check(cand, lambda *_: result)
+        if not checked or cand.new_bytes is None or _sha256(cand.new_bytes) != expected_sha:
+            raise ai_tasks.TaskError("candidate_validation_failed")
+        cand.extras["dependency_validated_sha256"] = expected_sha
+
+    executor = ai_figure_edit.BridgeExecutor(
+        sess["agent"],
+        cand,
+        wait=wait_for_dependencies,
+        refresh=lambda: refresh_outcome(on_changed, cand.script_rel, True),
+    )
+
+    def pump():
+        try:
+            task = ai_tasks.drive_registered(task_run, executor)
+            if cand.committed:
+                # The committed candidate is the version this task wrote;
+                # rereading here could attribute a later external edit to AI.
+                current = cand.new_bytes
+                assert current is not None
+                _record_after(sess, current)
+                old = cand.base_bytes.decode("utf-8", errors="replace")
+                new = current.decode("utf-8", errors="replace")
+                sess["changed"] = old != new
+                sess["diff"] = "".join(
+                    difflib.unified_diff(
+                        old.splitlines(keepends=True),
+                        new.splitlines(keepends=True),
+                        fromfile=f"{cand.script_rel} (修改前)",
+                        tofile=f"{cand.script_rel} (修改后)",
+                        n=3,
+                    )
+                )
+            if (
+                task["outcome"] == "needs_input"
+                and (cand.hold or {}).get("notice") == "dependency_installed_late"
+            ):
+                sess["status"] = (
+                    "running"  # the completed install takes precedence over the late stop
+                )
+            _settle_task(sess, task)
+            sess["refresh"] = cand.refresh or {"status": REFRESH_SKIPPED}
+            with _REQUEST_LOCK:
+                if cand.extras.get("resume_sid") == new_sid:
+                    cand.extras.pop("resume_sid", None)
+            _finish_session(sess, task_result=task["task_result"])
+            on_event(
+                "ai.done",
+                {
+                    "session": new_sid,
+                    "status": sess["status"],
+                    "changed": sess["changed"],
+                    "diff": sess["diff"],
+                    "script": cand.script_rel,
+                    "refresh": sess["refresh"],
+                    "task": dict(sess["task"]),
+                    "rev": sess.get("rev"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            if not sess.get("final"):
+                # The write may already have committed; never report it as
+                # unchanged merely because a later notification failed.
+                sess.update(
+                    status="done" if cand.committed else "failed",
+                    changed=bool(cand.committed),
+                    refresh=cand.refresh or {"status": REFRESH_SKIPPED},
+                )
+                _finish_session(sess, error=type(exc).__name__)
+        finally:
+            with _REQUEST_LOCK:
+                if cand.extras.get("resume_sid") == new_sid:
+                    cand.extras.pop("resume_sid", None)
+                _release_cand(cand)
+                sess["exited"].set()
+
+    try:
+        threading.Thread(target=pump, name=f"ai-resume-{new_sid}", daemon=True).start()
+    except BaseException:
+        ai_tasks.discard_registered(new_sid)
+        with _REQUEST_LOCK:
+            cand.extras.pop("resume_sid", None)
+            cand.extras.get("resume_refs", {}).pop(sid, None)
+            sess.update(
+                status="failed", changed=False, diff="", refresh={"status": REFRESH_SKIPPED}
+            )
+            _finish_session(sess, error="resume_start_failed")
+            sess["exited"].set()
+        raise
+    return new_sid
+
+
 def _settle_task(sess: dict, task: dict) -> None:
     """按任务结局定会话 status，并把结局摘要挂到会话上（`ai.done.task` / 详情的 `task`）。
 
     已提交 → `done`（结局可能是 partial / failed：脚本确实改了，回滚入口照旧）；没提交时取消 / 超时 / 失败各归其位。
     取消一旦被接受就不会提交（`ai_tasks.cancel` 与进入提交同一把门），所以不会出现「cancelled 却已改」。"""
+    if (
+        task["outcome"] == "needs_input"
+        and (sess["taf"]["cand"].hold or {}).get("notice") == "dependency_installed_late"
+    ):
+        sess["status"] = "running"  # completed installation wins over the late stop
     if sess["taf"]["cand"].committed:
         sess["status"] = "done"
     elif sess["status"] == "running":

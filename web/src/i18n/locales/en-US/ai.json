@@ -481,5 +481,10 @@
       "costEstimated": "Estimated from the price table ({{version}}), not a bill",
       "firstFailure": "First step that failed"
     }
+  },
+  "dependency": {
+    "waiting": "Waiting for your dependency decision",
+    "missing": "Validation needs {{names}}. After installation, the edit will be checked again and applied.",
+    "installing": "Preparing dependencies, then checking the edit again…"
   }
 }

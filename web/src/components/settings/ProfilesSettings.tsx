@@ -673,7 +673,7 @@ export function ProfilesSettings({
                   </Button>
                 )}
                 {!editable && (
-                  <Button variant="ghost" size="sm" onClick={duplicate} loading={busy}>
+                  <Button variant="ghost" size="sm" onClick={duplicate} loading={busy} data-profile-duplicate>
                     <Copy size={ICON_SIZE.sm} aria-hidden />
                     {st('duplicateToEdit')}
                   </Button>

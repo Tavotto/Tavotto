@@ -109,6 +109,22 @@ def test_a_failing_agent_is_attributed_to_its_run_not_to_a_later_phase(env):
     assert snap["status"] == "failed" and _root(snap)["attributes"]["changed"] is False
 
 
+def test_cli_stderr_category_is_recorded_without_its_content(env):
+    from tavotto.engine import exectrace_diag
+
+    env["code"] = (
+        "import sys; sys.stderr.write('invalid_api_key PRIVATE_CANARY /secret/path'); sys.exit(1)"
+    )
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    snap = _snap(sess["trace"])
+    run = _spans(snap, "agent_run")[0]
+    assert run["attributes"]["failure_category"] == "auth"
+    exported = json.dumps(exectrace_diag.document(snap))
+    assert "PRIVATE_CANARY" not in exported and "/secret/path" not in exported
+    assert snap["first_failure"]["name"] == "agent_run"
+
+
 def test_cancel_freezes_the_trace_and_late_writes_do_not_pollute_it(env):
     env["code"] = "time.sleep(30)"
     sid, _ = _run(env)

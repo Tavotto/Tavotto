@@ -1045,6 +1045,9 @@ describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4
       const send = (d as any).settings.diagnostics.send
       expect(send.sentence, lang).toContain(phrase)
       expect(send.sentenceExtras, lang).toContain(phrase)
+      const packages = lang === 'zh-CN' ? 'Python 包名及版本' : 'Python package names and versions'
+      expect(send.sentence, lang).toContain(packages)
+      expect(send.sentenceExtras, lang).toContain(packages)
       expect(send.notIncluded, lang).toContain(
         lang === 'zh-CN' ? '脚本打印出的内容' : 'output printed by your script',
       )

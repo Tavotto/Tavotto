@@ -52,6 +52,7 @@ from pathlib import Path
 from . import (
     depplan,
     depresolve,
+    envdiag,
     envlease,
     execspec,
     importscan,
@@ -1530,7 +1531,9 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
         )
-        outcome = _run_generation_locked(job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(req.distribution), "")
@@ -3810,7 +3813,9 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             provision_private=job.private_python is not None,
             private_plan=job.private_python,
         )
-        outcome = _run_generation_locked(gen_job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            gen_job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(job.distribution), "")
@@ -5071,6 +5076,8 @@ class _GenerationJob:
     user_specified: tuple[dict, ...] = ()
     #: 运行时观察到缺了的顶层模块名（`JointRepairPlan.extra_imports`）：替身重算时再交给 `depplan.plan`。
     extra_imports: tuple[str, ...] = ()
+    #: Diagnostic observations only; never consulted by the environment transaction.
+    diagnostic: dict = dataclasses.field(default_factory=dict, compare=False, repr=False)
 
 
 def generation_requirements(
@@ -5132,20 +5139,62 @@ def _note_unreadable_installs(project: str, record, python: str = "") -> None:
             pool.note_unreadable_install(project, name, python)
 
 
+def _observe_generation(job: _GenerationJob, run) -> dict:
+    """Record terminal facts once, including for callers that already hold the lease."""
+    project = job.project
+    facts = job.diagnostic
+    facts["started_at"] = time.time()
+    recorded = False
+
+    def record_terminal(outcome: str, code: str | None = None) -> None:
+        nonlocal recorded
+        if recorded:
+            return
+        recorded = True
+        facts.update(outcome=outcome, error_code=code, finished_at=time.time())
+        with _lock:
+            source = (_progress.get(job.progress_id) or {}).get("pypi_source")
+        facts["source"] = {PIP_SOURCE_USER: "custom", PIP_SOURCE_MIRROR: "mirror"}.get(
+            source, source
+        )
+        envdiag.record_job(project, facts)
+
+    emit = job.emit
+
+    def emit_observed(state, **kwargs):
+        if state in (STATE_DONE, STATE_CANCELLED, STATE_FAILED):
+            record_terminal(state, kwargs.get("code"))
+        return emit(state, **kwargs)
+
+    job = dataclasses.replace(job, emit=emit_observed)
+    try:
+        result = run(job)
+        record_terminal("done" if result.get("ok") else result.get("state", "unknown"))
+        return result
+    except Exception as exc:
+        record_terminal("failed", getattr(exc, "code", None))
+        raise
+    finally:
+        record_terminal("unknown")
+
+
 def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
     project = job.project
     key = _env_key(TARGET_MANAGED, "", project)
     active_python = managedenv.python_of(project) or ""
-    try:
-        # 锁：合成 key（序列化同一项目的两次换代）+ active 那一代的解释器（挡住包管理的原地
-        # 作业同时改它——两者的账要一致）。**不收掉旧代上的 worker**（`shutdown=False`）：
-        # 旧代目录不动，它们跑完自然作废；native 会话同理不杀（有就拒绝开始）。
-        with pool.mutating_environment(key, active_python, shutdown=False):
-            if job.refuse_pinned:
-                _refuse_if_pinned()
-            return _run_generation_locked(job, cancel_ev, key)
-    except pool.EnvironmentBusy as exc:
-        raise _busy_error(exc) from exc
+
+    def under_lease(observed):
+        try:
+            # Existing callers of _run_generation_locked already hold this
+            # lease; only the top-level generation path acquires it here.
+            with pool.mutating_environment(key, active_python, shutdown=False):
+                if observed.refuse_pinned:
+                    _refuse_if_pinned()
+                return _run_generation_locked(observed, cancel_ev, key)
+        except pool.EnvironmentBusy as exc:
+            raise _busy_error(exc) from exc
+
+    return _observe_generation(job, under_lease)
 
 
 def _require_record_sources(record) -> None:
@@ -5182,6 +5231,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     requirements = generation_requirements(
         project, job.delta, hash_mode=job.require_hashes, replace=job.replace_ledger
     )
+    job.diagnostic["requested"] = [_name_of(req) for req in requirements]
     identity = job.identity or depplan._digest(
         {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
     )
@@ -5259,13 +5309,17 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             result={"generation": generation, "activated": False},
         )
     if code:
+        job.diagnostic["pip_error_type"] = code
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
+        not_found = _not_found_extra(code, out, job.record, job.project, job.script)
+        if isinstance(not_found.get("not_found"), dict):
+            job.diagnostic["failed"] = [not_found["not_found"].get("name")]
         raise RepairError(
             code,
             _sanitize(out)[-800:],
-            **_not_found_extra(code, out, job.record, job.project, job.script),
+            **not_found,
         )
     if job.attempted:
         # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
@@ -5329,7 +5383,20 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
-    installed = _versions_of(python, [r["distribution"] for r in job.record])
+    inv = inventory(python)
+    installed = {
+        name: str(inv[name].get("version") or "")
+        for rec in job.record
+        if inv
+        and (name := depresolve.normalize_distribution(str(rec["distribution"]))) in inv
+        and inv[name]
+    }
+    if inv is not None:
+        job.diagnostic["installed"] = [
+            {"name": name, "version": str(info.get("version") or "")}
+            for name, info in inv.items()
+            if isinstance(info, dict)
+        ]
     scope = scope_of(job.script) if job.script else ""
 
     def ledger_fields(rec: dict) -> dict:
@@ -5355,6 +5422,11 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             if job.replace_ledger
             else None,
         )
+        job.diagnostic.update(
+            committed=True,
+            activated_at=time.time(),
+            generation=projectenv.environment_generation(python),
+        )
     except OSError as exc:
         # 清单没落盘 = 没切：撤回「已提交」，这一代按 incomplete 记（尽力而为），如实报失败
         with _lock:
@@ -5379,6 +5451,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         trigger=TRIGGER_DEPENDENCY_REPAIR,
         health=health if health.get("ok") else None,
     )
+    job.diagnostic["adopted_at"] = time.time()
     pool.note_project_python_ok(python)
     pool.reset_worker_python()
     if job.script:

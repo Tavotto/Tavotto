@@ -304,6 +304,8 @@ USER_VISIBLE_CODES = {
     "ai_revert_conflict": {"script"},
     # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
     "ai_script_busy": {"script"},
+    "ai_candidate_changed": set(),
+    "ai_candidate_unavailable": set(),
     "ai_request_not_found": set(),
     # 转换会话从不改原脚本：没有可回滚的东西（ADR 0143）
     "ai_revert_not_applicable": set(),

@@ -95,6 +95,7 @@ from .engine import (
     documents as engine_documents,
     enginesession as engine_enginesession,
     envadvice as engine_envadvice,
+    envdiag as engine_envdiag,
     envlease as engine_envlease,
     epsfile as engine_epsfile,
     execspec as engine_execspec,
@@ -3997,6 +3998,7 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str, selection=None) -
         "runner": _convert_runner(
             ctx, script, with_manifests=True, entry=entry, selection=selection
         ),
+        "dependency_plan": engine_convertdeps.ensure,
         "check_before": check_before,
     }
 
@@ -4884,6 +4886,7 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        status["managed_environment_jobs"] = engine_envdiag.recent(ctx.path)
         # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
         # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
         status["recent_runs"] = engine_taskdiag.run_summary(engine_taskdiag.STORE, ctx.id)
@@ -7417,6 +7420,23 @@ def _origin_display(worker, context):
     }
 
 
+# Worker codes produced by a script/build attempt, rather than admission,
+# queue or process-start failures. Unknown codes stay unobserved.
+_OBSERVED_RENDER_ERRORS = frozenset(
+    {
+        "missing_dependency",
+        "script_error",
+        "missing_input",
+        "script_exited",
+        "script_needs_arguments",
+        "script_needs_input",
+        "script_input_timeout",
+        "output_folder_read_only",
+        "safe_file_operation_blocked",
+    }
+)
+
+
 def _engine_attempt(
     rel_id: str,
     worker,
@@ -7426,6 +7446,7 @@ def _engine_attempt(
     safe_only: bool = False,
     artifact_source=None,
     progress_pj: str | None = None,
+    observe_worker=None,
 ):
     """Run on the admitted source; a dependency retry carries the identical context.
 
@@ -7433,6 +7454,14 @@ def _engine_attempt(
     build 进度监听：带 artifact_source 的冷渲染，build 恰恰发生在 `_admit_artifact` 里。
     换环境重试拿到的新 worker 在下一轮循环里重新登记。其它调用方没有 SSE 关联键，不传。
     """
+
+    def observe(wk):
+        if observe_worker is not None:
+            try:
+                observe_worker(wk)
+            except Exception as exc:  # noqa: BLE001 - diagnostics must never change rendering
+                LOG.warning("环境诊断记录失败: %s", type(exc).__name__)
+
     for attempt in range(2):
         try:
             with (
@@ -7443,11 +7472,21 @@ def _engine_attempt(
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)
             _assert_artifact_current(artifact_source)
+            observe(worker)
             execution = _svg_execution_result(worker)
             if isinstance(result, dict):
                 result.update(execution)
             return worker, stem, result
         except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
+            # These worker outcomes identify an attempted script/build, even
+            # when a cold build failed before override returned. A stale
+            # artifact or a superseded queue entry does not establish that.
+            if (
+                observe_worker is not None
+                and isinstance(exc, engine_pool.WorkerError)
+                and exc.code in _OBSERVED_RENDER_ERRORS
+            ):
+                observe(worker)
             fact = _svg_execution_result(worker)
             if isinstance(exc, engine_pool.WorkerError):
                 exc.extra.update(fact)
@@ -7774,6 +7813,13 @@ def api_engine_render():
     try:
         # 冷启动的第一次 build 就发生在这里（lazy 语义：打开面板不预跑脚本）。
         # 内置环境缺依赖时自动改用项目自己的 .venv 重试一次（ADR 0018）。
+        def observe_render_worker(wk):
+            engine_envdiag.record_render(
+                current_ctx().path,
+                getattr(wk, "python_source", ""),
+                getattr(wk, "python_generation", ""),
+            )
+
         worker, stem, resp = _engine_attempt(
             rel_id,
             worker,
@@ -7783,6 +7829,7 @@ def api_engine_render():
             ),
             artifact_source=artifact_source,
             progress_pj=pj,
+            observe_worker=observe_render_worker,
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
@@ -13090,6 +13137,7 @@ def _convert_runner(
                 "dropped_figures": result.get("dropped_figures", 0),
             }
             if with_manifests and worker is not None:
+                out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)
                 mans = {}
                 for stem in stems:
                     try:
@@ -13120,6 +13168,7 @@ def _convert_runner(
         return engine_pool.force_cancel(rel, figures_dir, **run_kw, **roots_kw)
 
     runner.force_cancel = force_cancel  # type: ignore[attr-defined]
+    runner.requires_source_identity = with_manifests  # type: ignore[attr-defined]
 
     def with_images(figures_dir, rel, write_roots):
         return runner(figures_dir, rel, write_roots, with_images=True)
@@ -13793,6 +13842,50 @@ def api_ai_revert(sid):
         return jsonify(
             {"error": str(exc), "code": "ai_revert_failed", "params": {"reason": str(exc)}}
         ), 400
+
+
+@app.post("/api/ai/sessions/<sid>/dependencies")
+def api_ai_edit_dependencies(sid):
+    """Resume a held edit after explicit dependency authorization."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    action = body.get("action")
+    if action == "install" and isinstance(body.get("impact_digest"), str) and body["impact_digest"]:
+        resolver = engine_convertdeps.resolve
+        impact = body["impact_digest"]
+    elif action == "replan":
+
+        def resolver(project, rel, *, confirmed_impact, cancel, **kwargs):
+            return engine_convertdeps.ensure(project, rel, cancel, **kwargs)
+
+        impact = ""
+    else:
+        abort(400)
+    ctx = current_ctx()
+    try:
+        resumed = engine_ai.resume_figure_edit(
+            sid,
+            str(ctx.path),
+            impact,
+            resolve=resolver,
+            on_changed=lambda script: _after_ai_change(ctx, script),
+            on_event=lambda event, data: sse_publish(event, {**data, "pj": ctx.id}),
+        )
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+    except engine_ai_history.ScriptBusy as exc:
+        return _agent_error(engine_ai.AgentError("ai_script_busy", {"script": exc.script}))
+    return jsonify({"session": resumed}), 202
+
+
+@app.post("/api/ai/sessions/<sid>/dependencies/discard")
+def api_ai_edit_dependencies_discard(sid):
+    try:
+        engine_ai.discard_held_figure_edit(sid, str(require_project()))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+    return jsonify({"ok": True})
 
 
 @app.post("/api/ai/sessions/<sid>/cancel")

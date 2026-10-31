@@ -141,6 +141,24 @@ _VOCABULARIES: dict[str, set[str]] = {
     "pricing_version": set(),
     "currency": {"USD"},
     "refresh": set(),
+    "failure_category": {"auth", "network", "not_installed", "bad_config", "crash", "other"},
+    "runner_detail": {
+        "no_key",
+        "no_model",
+        "bad_prompt",
+        "bad_args",
+        "bad_target",
+        "bad_output",
+        "bad_base_url",
+        "base_url_scheme",
+        "http_401",
+        "http_403",
+        "http_402",
+        "http_429",
+        "tls_cert",
+        "bad_response",
+        "output_truncated",
+    },
 }
 
 #: attributes 白名单：键 → 类型（`count` 非负整数 / `ms` 非负毫秒 / `flag` 布尔 / `enum:<词表>` / `codes` 检查码列表）。
@@ -166,6 +184,8 @@ ATTRIBUTES: dict[str, str] = {
     "refresh": "enum:refresh",
     "checks_failed": "count",
     "unmet_checks": "codes",
+    "failure_category": "enum:failure_category",
+    "runner_detail": "enum:runner_detail",
 }
 
 # ---------------------------------------------------------------- 上限

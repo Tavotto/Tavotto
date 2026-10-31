@@ -14,6 +14,7 @@ import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
 import { CopyAction } from './CopyAction'
 import { DiffView } from './DiffView'
+import { EditDependencyNotice } from './EditDependencyNotice'
 import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
@@ -43,6 +44,7 @@ function statusText(s: AiSession): string {
   // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
   // 「已完成，脚本没有变化」就是这个结局的准确翻译；没写回就没有渲染层核对，说「数据核对一致」反而是假话
   const outcome = s.task?.outcome
+  if (outcome === 'needs_input' && s.task?.unmet?.some((item) => item.reason_code === 'dependency_decision')) return ai('dependency.waiting')
   if (s.status === 'done' && s.changed) {
     if (outcome === 'completed') {
       const n = s.task?.corrections ?? 0
@@ -112,6 +114,9 @@ export function Turn({
 
   // 任务结局卡（TAF）：只翻译 `task.outcome`。done+partial 是 warn，done+failed+changed 是 danger（回滚用 DiffView 上的按钮）
   const outcome = session.task?.outcome
+  const dependencyCard = session.task?.task_type === 'figure_edit' && outcome === 'needs_input'
+    ? session.task.unmet?.find((item) => item.reason_code === 'dependency_decision')?.data
+    : undefined
   const dataFigureTurn = session.task?.task_type === DATA_FIGURE_TASK
   const outcomeCard: 'partial' | 'failed' | null = dataFigureTurn
     ? null
@@ -200,6 +205,8 @@ export function Turn({
               : ai('notice.dataFigureNeedsInput')}
         </Notice>
       )}
+
+      {dependencyCard && <EditDependencyNotice session={session} card={dependencyCard} />}
 
       {outcomeCard && (
         <Notice

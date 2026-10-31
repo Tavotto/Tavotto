@@ -859,6 +859,7 @@ function UndoRedo() {
           size="icon"
           disabled={!canUndo}
           onClick={runUndo}
+          data-history-action="undo"
           aria-label={t('workspace:topbar.undo')}
         >
           <Undo2 size={ICON_SIZE.md} />
@@ -876,6 +877,7 @@ function UndoRedo() {
           size="icon"
           disabled={!canRedo}
           onClick={runRedo}
+          data-history-action="redo"
           aria-label={t('workspace:topbar.redo')}
         >
           <Redo2 size={ICON_SIZE.md} />

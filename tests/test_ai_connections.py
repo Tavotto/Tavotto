@@ -1186,6 +1186,14 @@ def test_builtin_bad_key_fails_cleanly_and_leaves_the_project_alone(chain):
     assert (chain["figs"] / "fig1.py").read_text(encoding="utf-8") == SCRIPT
     assert any("密钥无效" in d["text"] for n, d in events if n == "ai.delta")
     assert ai_history.get(sid)["outcome"] == "failed"
+    from tavotto.engine import exectrace_diag
+
+    snap = sess["trace"].snapshot()
+    run = next(span for span in snap["spans"] if span["name"] == "agent_run")
+    assert run["error_code"] == "agent_auth"
+    assert run["attributes"]["runner_detail"] == "http_401"
+    assert snap["first_failure"]["name"] == "agent_run"
+    assert KEY not in json.dumps(exectrace_diag.document(snap))
 
 
 def test_builtin_cancel_stops_the_subprocess_and_frees_the_script(chain):
@@ -2317,3 +2325,83 @@ def test_builtin_edit_check_without_a_render_hook_still_runs_the_l1_checks(edit_
     _wait(sid)
     got = json.dumps(json.loads(server.bodies[3])["messages"][-1]["content"])
     assert "check passed" in got and "rendering is not available" in got, got
+
+
+def test_builtin_missing_dependency_holds_candidate_until_install_and_recheck(edit_check_chain):
+    box = edit_check_chain
+    gateway = box["serve"](
+        [READ_TURN, _edit("e1", '"old"', '"new"'), _tool_turn("c1", "check", {}), END_TURN]
+    )
+    original_runner = box["hooks"]["runner"]
+    installed = [False]
+    card = {
+        "kind": "ask_once",
+        "packages": ["openpyxl"],
+        "outside_list": [],
+        "env": {"kind": "builtin", "name": ""},
+        "action": "install_managed",
+        "impact_digest": "impact",
+        "runtime_modules": ["openpyxl"],
+    }
+
+    def runner(*args):
+        if not installed[0]:
+            return {
+                "error": {"code": "missing_dependency", "module": "openpyxl", "message": "missing"}
+            }
+        return original_runner(*args)
+
+    box["hooks"]["runner"] = runner
+    box["hooks"]["dependency_plan"] = lambda *_a, **_kw: {"status": "hold", "card": card}
+    sid, _ = _edit_check_run(box)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "needs_input"
+    assert sess["task"]["unmet"][0]["data"] == card
+    assert (box["figs"] / "fig1.py").read_text() == SCRIPT
+    assert len(gateway.requests) == 4
+
+    def resolve(*_a, confirmed_impact, **_kw):
+        assert confirmed_impact == "impact"
+        installed[0] = True
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    resumed = ai_bridge.resume_figure_edit(
+        sid,
+        str(box["figs"]),
+        "impact",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[resumed]["exited"].wait(30)
+    assert ai_bridge.SESSIONS[resumed]["changed"] is True
+    assert '"new"' in (box["figs"] / "fig1.py").read_text()
+    assert len(gateway.requests) == 4, "安装后续跑不能再次请求模型"
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_edit_dependency_planning_does_not_attribute_external_edit(edit_check_chain, newline):
+    box = edit_check_chain
+    (box["figs"] / "fig1.py").write_bytes(SCRIPT.replace("\n", newline).encode("utf-8"))
+    box["serve"](
+        [READ_TURN, _edit("e1", '"old"', '"new"'), _tool_turn("c1", "check", {}), END_TURN]
+    )
+    box["hooks"]["runner"] = lambda *_: {
+        "error": {"code": "missing_dependency", "module": "openpyxl", "message": "missing"}
+    }
+    later = SCRIPT.replace('"old"', '"external"').replace("\n", newline)
+
+    def plan(*_a, **_kw):
+        (box["figs"] / "fig1.py").write_bytes(later.encode("utf-8"))
+        return {"status": "hold", "card": {"kind": "ask_once", "packages": ["openpyxl"]}}
+
+    box["hooks"]["dependency_plan"] = plan
+    sid, _ = _edit_check_run(box)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "needs_input"
+    assert sess["changed"] is False and sess["diff"] == ""
+    assert (box["figs"] / "fig1.py").read_bytes().decode("utf-8") == later
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.revert(sid)
+    assert exc.value.code == "ai_revert_conflict"
+    assert (box["figs"] / "fig1.py").read_bytes().decode("utf-8") == later

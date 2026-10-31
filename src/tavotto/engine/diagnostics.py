@@ -88,7 +88,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 归因摘要），出门前经 `exectrace_diag` 的独立白名单投影；report.json 形状没变，读不认识的文件的人忽略它即可。
 #: 10 = report.json 新增顶层 `ai_probe`（AI 候选链探测摘要）与每个 agent 的 `readiness` / `readiness_detail` /
 #: `broken_path`（托管 Codex 安装 PR）；旧读法忽略这些键即可，但换形必升号。
-BUNDLE_SCHEMA_VERSION = 10
+#: 11 = project.managed_environment_jobs: requested and observed installed package names and
+#: versions, job outcomes and environment generation observations (user-authorized disclosure).
+BUNDLE_SCHEMA_VERSION = 11
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -357,6 +359,15 @@ def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict
             for r in (records if isinstance(records, list) else [])
             if isinstance(r, dict)
         ]
+    if "managed_environment_jobs" in out:
+        from . import envdiag
+
+        rows = out.get("managed_environment_jobs")
+        out["managed_environment_jobs"] = [
+            envdiag._project(row)
+            for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict)
+        ][:16]
     return out
 
 
@@ -1844,6 +1855,8 @@ def _readme(
         "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
         "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
+        "  （report.json 的 project.managed_environment_jobs 段：受管环境安装和重建请求的 Python 包名、\n"
+        "  实际观察到的已安装包名和版本、结果及环境代；不含路径、包源网址、凭据或 pip 原始输出）\n"
         + extra_zh
         + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
@@ -1865,6 +1878,9 @@ def _readme(
         "  hashed script name, which kind of Python was rendering, the version and verdict of\n"
         "  every other Python that was checked, and whether each one-click fix was available;\n"
         "  paths are hashed segment by segment)\n"
+        "  (report.json, project.managed_environment_jobs: requested Python package names, observed installed\n"
+        "  package names and versions, outcomes and environment generations; no paths, index URLs,\n"
+        "  credentials or raw pip output)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"

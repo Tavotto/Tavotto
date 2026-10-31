@@ -42,6 +42,11 @@ export default interface Resources {
       "truncated": "文件太多，只列出前一部分",
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
+    "dependency": {
+      "installing": "正在准备依赖，完成后会重新检查…",
+      "missing": "校验时缺少 {{names}}；安装后会重新检查并应用修改。",
+      "waiting": "等你决定安装缺少的依赖"
+    },
     "diff": {
       "copyPatch": "复制补丁",
       "edited": "已修改",
@@ -578,7 +583,7 @@ export default interface Resources {
         "prepare_failed": "诊断包没准备好。",
         "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
       },
-      "diagHint": "日志里可能有脚本打印出的内容；不含你的脚本和数据文件。",
+      "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
       "diagKindsTitle": "包含",
       "diagLabel": "附上诊断信息",
       "diagPreparing": "正在准备诊断包…",
@@ -2312,8 +2317,8 @@ export default interface Resources {
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
-          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。",
-          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），并附带你勾选的：{{items}}。",
+          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），以及受管环境安装的 Python 包名及版本，不附带你的脚本文件和数据文件。",
+          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），以及受管环境安装的 Python 包名及版本，并附带你勾选的：{{items}}。",
           "sentenceItem": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
@@ -3004,6 +3009,8 @@ export default interface Resources {
       "ai_agent_not_usable": "{{agent}} 暂时不可用。在「改图助手」里查看状态。",
       "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
       "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
+      "ai_candidate_changed": "脚本或待提交的修改在检查后发生了变化。请重新发送改图指令。",
+      "ai_candidate_unavailable": "这次待提交的修改已不可用。请重新发送改图指令。",
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
       "ai_endpoint_needs_login": "“{{endpoint}}”的账号登录已失效。到设置里重新登录。",
@@ -5112,9 +5119,13 @@ export default interface Resources {
       "background": "背景",
       "bold": "加粗",
       "boldWeight": "字重 · {{value}}",
+      "cjkFallback": "中文字体",
+      "cjkFallbackAuto": "自动",
+      "cjkFallbackShadowed": "请改选不含中文字符的英文字体。",
       "color": "文字颜色",
       "italic": "斜体",
       "italicStyle": "字形 · {{value}}",
+      "latinFont": "英文字体",
       "layout": "文字样式与层级",
       "prop": {
         "alpha": "不透明度",

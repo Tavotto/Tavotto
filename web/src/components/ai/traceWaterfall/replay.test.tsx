@@ -91,6 +91,8 @@ describe('回放的视图变换（纯函数）', () => {
     // 有区间却没结束的行：终点是无穷，永远在变
     const open = { ...late.span, end: undefined }
     expect(rowUnchangedBetween({ ...late, span: open }, 20, 21)).toBe(false)
+    const unknown = { ...open, timing: 'unmeasured' as const }
+    expect(rowUnchangedBetween({ ...late, span: unknown }, 20, 21)).toBe(false)
   })
 })
 
@@ -168,6 +170,25 @@ describe('回放中的 Waterfall', () => {
     expect(q('[data-trace-metric="duration"] dd')!.getAttribute('data-value')).toBe('10s')
     show(final, 10)
     expect(q('[data-trace-now]')).toBeNull()
+  })
+
+  it('回放切换到完整结果时，未结束和未知结束的行仍更新；重播时结局重新隐藏', () => {
+    const items = [
+      span({ id: 'unfinished', name: 'Unfinished', kind: 'tool', start: 0, status: 'error' }),
+      span({ id: 'unknown', name: 'Unknown', kind: 'tool', start: 0, timing: 'unmeasured' }),
+    ]
+    const complete: WaterfallModel = { spans: items, duration: 10, running: false }
+    const playing: WaterfallModel = { ...complete, replay: true }
+    show(playing, 5)
+    expect(q('[data-trace-row][data-trace-span-id="unfinished"]')!.getAttribute('data-running')).toBe('true')
+    expect(q('[data-trace-row][data-trace-span-id="unknown"] [data-trace-bar]')!.getAttribute('data-trace-end')).toBe('5')
+    show(complete, 10)
+    expect(q('[data-trace-row][data-trace-span-id="unfinished"]')!.getAttribute('data-running')).toBeNull()
+    expect(q('[data-trace-row][data-trace-span-id="unfinished"]')!.getAttribute('data-status')).toBe('error')
+    expect(q('[data-trace-row][data-trace-span-id="unknown"] [data-trace-bar]')!.getAttribute('data-trace-end')).toBe('10')
+    show(playing, 5)
+    expect(q('[data-trace-row][data-trace-span-id="unfinished"]')!.getAttribute('data-status')).toBe('none')
+    expect(q('[data-trace-row][data-trace-span-id="unknown"] [data-trace-bar]')!.getAttribute('data-trace-end')).toBe('5')
   })
 
   it('折叠箭头只在有「已出现」的子步骤时画', () => {

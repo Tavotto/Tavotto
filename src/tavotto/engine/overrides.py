@@ -221,7 +221,12 @@ class FigState:
         """
         handler = HANDLERS.get((_cls_key(artist), prop))
         if handler is not None:
-            handler[1](artist, value)
+            if prop == "fontfamily" and isinstance(value, dict):
+                gid = next((g for g, item in self.index.items() if item is artist), None)
+                original = self.originals.get((gid, prop)) if gid is not None else None
+                _apply_family_selection(artist, value, original or handler[0](artist))
+            else:
+                handler[1](artist, value)
 
 
 #: 目标身份的方案前缀（ADR 0083）。`l1` = 脚本给这个对象起的 label 的摘要。
@@ -1283,6 +1288,50 @@ def _set_ticks_fontfamily(ts: "TickSet", v) -> None:
         return
     for t in ts.labels:
         t.set_math_fontfamily("custom")
+
+
+def _apply_family_selection(artist, value: dict, original) -> None:
+    """Apply an optional preferred fallback against the original family chain.
+
+    The original is captured before any override so hot edits and a fresh replay
+    always resolve the same chain. Keep every existing family in its order.
+    """
+    if set(value) != {"primary", "fallback"}:
+        raise ValueError("invalid font family selection")
+    primary, fallback = value["primary"], value["fallback"]
+    if isinstance(primary, list) and primary and all(isinstance(f, str) for f in primary):
+        # Existing list-valued overrides historically use their first entry.
+        # Retain the list in the document so returning to auto restores it.
+        primary = primary[0]
+    if primary is not None and (not isinstance(primary, str) or not primary):
+        raise ValueError("invalid primary font family")
+    if not isinstance(fallback, str) or not fallback:
+        raise ValueError("invalid fallback font family")
+    families, math = original
+    labels = artist.labels if isinstance(artist, TickSet) else [artist]
+    if any(t.get_usetex() or t.get_fontproperties().get_file() is not None for t in labels):
+        raise ValueError("font fallback is unavailable for TeX or a locked font file")
+    chain = list(families)
+    if not chain:
+        chain = list(mpl.rcParams["font.family"])
+    if primary is not None:
+        chain[0] = primary
+    if font_installed(fallback) and fallback not in chain[:1]:
+        chain = [chain[0], fallback, *(f for f in chain[1:] if f != fallback)]
+    if isinstance(artist, TickSet):
+        artist.tick_params(labelfontfamily=chain)
+        if primary is not None and _apply_mathtext_custom_set(primary):
+            for label in artist.labels:
+                label.set_math_fontfamily("custom")
+        elif primary is None:
+            for label in artist.labels:
+                label.set_math_fontfamily(math)
+    else:
+        artist.set_fontfamily(chain)
+        if primary is not None and _apply_mathtext_custom_set(primary):
+            artist.set_math_fontfamily("custom")
+        elif primary is None:
+            artist.set_math_fontfamily(math)
 
 
 def _restore_ticks_fontfamily(ts: "TickSet", orig) -> None:
@@ -5862,7 +5911,9 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
                             state.alias_seeded.add(nkey)
                         except Exception:  # noqa: BLE001 — 采不到就退回旧行为
                             pass
-                if getattr(setter, "_needs_state", False):
+                if prop == "fontfamily" and isinstance(value, dict):
+                    _apply_family_selection(artist, value, state.originals[key])
+                elif getattr(setter, "_needs_state", False):
                     setter(artist, value, state)
                 else:
                     setter(artist, value)

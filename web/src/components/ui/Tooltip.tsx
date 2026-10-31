@@ -21,6 +21,7 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
       <RT.Trigger asChild>{children}</RT.Trigger>
       <RT.Portal>
         <RT.Content
+          data-tooltip
           side={side}
           sideOffset={6}
           className={cn(
@@ -34,7 +35,8 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
             'data-[state=delayed-open]:animate-pop-in',
             // instant-open = 连续划过同组按钮时的即时切换：再播一次进场会闪，只淡入
             'data-[state=instant-open]:animate-fade-in',
-            'data-[state=closed]:animate-fade-out',
+            // 关闭后立即卸载 Radix 的事件层：退场动画会让它继续截获 Escape，
+            // 使刚获得焦点的编辑器收不到这一下键。
           )}
         >
           <span>{label}</span>

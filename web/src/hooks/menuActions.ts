@@ -5,7 +5,7 @@ import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actio
 import { alignSelectedPanelElements, type AlignBlocked } from '@/store/alignAction'
 import { groupBlockedMessage, type GroupBlockReason } from '@/lib/elementGeom'
 import { alignRefFor } from '@/store/arrangeStore'
-import { runDiscreteAction, type DiscreteScope } from '@/store/gestureCoordinator'
+import { finishFocusedRichText, runDiscreteAction, type DiscreteScope } from '@/store/gestureCoordinator'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -90,6 +90,7 @@ const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set(['menu-open-project', 'm
  */
 export function runMenuAction(action: MenuAction) {
   if (!PICKER_ACTIONS.has(action) && useProjectStore.getState().phase !== 'open') return
+  if (action === 'menu-save' || action === 'menu-save-layout') finishFocusedRichText()
   runDiscreteAction(
     MENU_SCOPE[action],
     document.activeElement,

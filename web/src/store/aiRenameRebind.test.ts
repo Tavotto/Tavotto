@@ -6,7 +6,7 @@
  * 反向改回。两个方向都幂等：只改身份恰好等于起点的条目。
  */
 import { enablePatches } from 'immer'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { literal } from '@/i18n'
 import { handleServerEvent } from '@/hooks/useServerEvents'
@@ -18,7 +18,8 @@ import {
 } from '@/lib/overrideIdentity'
 import { emptyProject, type PanelObject, type PanelOverride } from '@/types/document'
 import { rebindRenamedIdentities } from './aiRenameRebind'
-import { useAiStore } from './aiStore'
+import { adoptDependencyResume, useAiStore } from './aiStore'
+import { useUiStore } from './uiStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 
@@ -219,6 +220,45 @@ describe('接线：ai.done 前向改写 / 撤销回应反向改写', () => {
 
   beforeEach(async () => {
     await load([panel('p1', 'Fig1.pdf', EDITS())])
+  })
+
+  it('dependency resume snapshot settles once through the normal identity and refresh path', async () => {
+    const old = { ...session('old'), status: 'done' as const, finalized: true }
+    useAiStore.setState({ sessions: [old] })
+    const historyBefore = useDocumentStore.getState().past.length
+    // The event can win the race before the HTTP response names this session.
+    done('resumed', { refresh: { status: 'failed', code: 'project_closed' } })
+    expect(ids(active()[0])).toEqual([OLD, OLD, OTHER, null, OTHER])
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      final: true, status: 'done', changed: true, diff: '@@ d', transcript: [],
+      refresh: { status: 'failed', code: 'project_closed' },
+      task: { task_type: 'figure_edit', outcome: 'completed', renamed: [RENAME] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    try {
+      expect(adoptDependencyResume('old', 'resumed', 'rb-a', useAiStore.getState().generation)).toBe(true)
+      await vi.waitFor(() => expect(useAiStore.getState().sessions[0].finalized).toBe(true))
+      expect(ids(active()[0])).toEqual([NEW, NEW, OTHER, null, OTHER])
+      expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+      expect(useDocumentStore.getState().past.length).toBe(historyBefore + 1)
+      done('resumed')
+      expect(useDocumentStore.getState().past.length).toBe(historyBefore + 1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('keeps an already reconciled resume without a duplicate completion', () => {
+    useAiStore.setState({ sessions: [
+      { ...session('old'), status: 'done', finalized: true }, session('resumed'),
+    ] })
+    const historyBefore = useDocumentStore.getState().past.length
+    done('resumed')
+    expect(ids(active()[0])).toEqual([NEW, NEW, OTHER, null, OTHER])
+    expect(adoptDependencyResume('old', 'resumed', 'rb-a', useAiStore.getState().generation)).toBe(true)
+    expect(useAiStore.getState().sessions).toHaveLength(1)
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 'resumed', finalized: true, panelId: 'p1' })
+    done('resumed')
+    expect(useDocumentStore.getState().past.length).toBe(historyBefore + 1)
   })
 
   it('ai.done（done + changed + task.renamed）：画布编辑改到新身份，一条历史', () => {

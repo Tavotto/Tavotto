@@ -214,6 +214,8 @@ class Candidate:
     new_bytes: bytes | None = None
     committed: bool = False
     refresh: dict | None = None
+    installed: list[str] = field(default_factory=list)
+    hold: dict | None = None
     extras: dict = field(default_factory=dict)
 
     @property
@@ -349,7 +351,101 @@ class FigureEditAdapter:
         return ai_tasks.Plan(steps=("execute",))
 
     def verify(self, stage: str, run, cand: Candidate) -> list[CheckResult]:
-        return self._precommit(cand) if stage == "precommit" else self._postcommit(run, cand)
+        if stage != "precommit":
+            return self._postcommit(run, cand)
+        checks = self._precommit(cand)
+        if not ai_tasks.precommit_admits(checks):
+            return checks
+        validated_sha = cand.extras.get("dependency_validated_sha256")
+        if validated_sha and (cand.new_bytes is None or _sha256(cand.new_bytes) != validated_sha):
+            checks.append(
+                _check(
+                    "candidate.render",
+                    "precommit",
+                    "integrity",
+                    FAILED,
+                    "candidate_changed_since_validation",
+                )
+            )
+            return checks
+        digest = _sha256(cand.new_bytes) if cand.new_bytes is not None else None
+        failure = (cand.extras.get("missing_dependency_checks") or {}).get(digest)
+        if isinstance(failure, dict):
+            # The current candidate may return to an earlier checked version.
+            cand.extras["missing_dependency_check"] = failure
+            hook = cand.extras.get("dependency_plan")
+            runner = cand.extras.get("runner")
+            validate = cand.extras.get("dependency_validation")
+            if (
+                hook is not None
+                and runner is not None
+                and validate is not None
+                and failure.get("module")
+            ):
+                cand.extras["deps"] = hook
+                cand.extras["runtime_modules"] = [failure["module"]]
+                cand.extras["cancel"] = getattr(run, "cancel_event", None)
+                try:
+                    result = validate(cand, runner)
+                finally:
+                    cand.extras.pop("deps", None)
+                stopped = cand.extras.get("dependency_installed_stopped")
+                if stopped is not None and result.get("status") == stopped:
+                    # Installation committed before cancellation; keep the exact
+                    # candidate until the user explicitly resumes validation.
+                    cand.hold = {
+                        "notice": "dependency_installed_late",
+                        "packages": list(cand.installed),
+                        "runtime_modules": [failure["module"]],
+                    }
+                if result.get("status") == "ok":
+                    if (
+                        getattr(runner, "requires_source_identity", False)
+                        and result.get("source_sha256") != failure["sha256"]
+                    ):
+                        checks.append(
+                            _check(
+                                "candidate.render",
+                                "precommit",
+                                "integrity",
+                                FAILED,
+                                "candidate_changed_since_validation",
+                            )
+                        )
+                        return checks
+                    checked, _ = agent_check(cand, lambda *_: result)
+                    if (
+                        not checked
+                        or cand.new_bytes is None
+                        or _sha256(cand.new_bytes) != failure["sha256"]
+                    ):
+                        checks.append(
+                            _check(
+                                "candidate.render",
+                                "precommit",
+                                "integrity",
+                                FAILED,
+                                "candidate_validation_failed",
+                            )
+                        )
+                        return checks
+                    cand.extras["dependency_validated_sha256"] = failure["sha256"]
+                    return checks
+            checks.append(
+                _check("candidate.render", "precommit", "integrity", FAILED, "missing_dependency")
+            )
+        return checks
+
+    def hold(self, cand: Candidate):
+        if cand.hold is None:
+            return None
+        return ai_tasks.NeedsInput("", reason_code="dependency_decision", data=dict(cand.hold))
+
+    def settle_hold_on_cancel(self, cand: Candidate) -> bool:
+        if (cand.hold or {}).get("notice") == "dependency_installed_late":
+            return True
+        cand.hold = None
+        return False
 
     def _precommit(self, cand: Candidate) -> list[CheckResult]:
         st = "precommit"
@@ -624,6 +720,14 @@ class BridgeExecutor:
     def commit(self, run, cand: Candidate) -> None:
         if cand.new_bytes is None or cand.new_bytes == cand.base_bytes:
             return  # 没改动：不写文件、不刷新（与旧路径 changed=False 相同）
+        failure = (cand.extras.get("missing_dependency_checks") or {}).get(_sha256(cand.new_bytes))
+        if isinstance(failure, dict):
+            # Even if a verifier itself raised, a known failing candidate may
+            # not reach the irreversible write without successful revalidation.
+            raise TaskError("missing_dependency", "candidate")
+        validated_sha = cand.extras.get("dependency_validated_sha256")
+        if validated_sha and _sha256(cand.new_bytes) != validated_sha:
+            raise TaskError("candidate_changed_since_validation")
         with scriptlock.script_guard(cand.script_path):
             try:
                 now = cand.script_path.read_bytes()
@@ -648,7 +752,8 @@ class BridgeExecutor:
         cand.refresh = self._refresh()
 
     def discard(self, run, cand: Candidate) -> None:
-        remove_candidate(cand.dir)
+        if cand.hold is None:
+            remove_candidate(cand.dir)
 
 
 def _call_hook(hook):
@@ -1013,6 +1118,18 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
         return False, "check failed: the edited script ran but no Matplotlib figure was captured."
     if status == "error":
         code = str(res.get("code") or "")
+        if code == "missing_dependency" and cand.new_bytes is not None:
+            try:
+                same = not cand.target.is_symlink() and cand.target.read_bytes() == cand.new_bytes
+            except OSError:
+                same = False
+            if same:
+                failure = {
+                    "sha256": _sha256(cand.new_bytes),
+                    "module": res.get("module") if isinstance(res.get("module"), str) else "",
+                }
+                cand.extras.setdefault("missing_dependency_checks", {})[failure["sha256"]] = failure
+                cand.extras["missing_dependency_check"] = failure
         # 生产 runner 经探测把写入绊线折成 script_probe_failed，底层码在 `cause`
         if tripped_write_roots(code, res.get("cause")):
             notes.append(
@@ -1041,6 +1158,23 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
             return False, "check failed: " + " ".join(bad)[:1400]
         notes.append("data unchanged")
         text_note = ". " + text_changes_note(after, baseline)
+    # A full successful check supersedes only evidence for the exact bytes it
+    # validated. A later failed check or a different candidate cannot erase it.
+    if cand.new_bytes is not None:
+        digest = _sha256(cand.new_bytes)
+        failures = cand.extras.get("missing_dependency_checks") or {}
+        if status == "ok" and digest in failures:
+            try:
+                same = not cand.target.is_symlink() and cand.target.read_bytes() == cand.new_bytes
+            except OSError:
+                same = False
+            if getattr(runner, "requires_source_identity", False):
+                same = same and res.get("source_sha256") == digest
+            if not same:
+                return False, "check failed: candidate changed during validation."
+            failures.pop(digest, None)
+            if (cand.extras.get("missing_dependency_check") or {}).get("sha256") == digest:
+                cand.extras.pop("missing_dependency_check", None)
     return True, f"check passed: {len(stems)} figure(s) rendered; " + "; ".join(notes) + text_note
 
 

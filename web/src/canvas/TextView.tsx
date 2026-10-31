@@ -19,6 +19,7 @@ import { RichTextField } from '@/components/ui/RichTextField'
 import { MM_PER_PT } from '@/lib/units'
 import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
 import { useDocumentStore } from '@/store/documentStore'
+import { registerGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
@@ -110,6 +111,18 @@ export function TextView({
     if (ae instanceof HTMLElement && ref.current?.contains(ae)) ae.blur()
     return true
   }
+  const commitRef = useRef(commitText)
+  commitRef.current = commitText
+  useLayoutEffect(() => {
+    if (!editing || preview) return
+    // 保存等离散动作先收当前编辑。失焦会先冲掉输入法未提交的内容，
+    // 再由同一个 onBlur 出口写进文档；焦点已离开时仍提交待写内容。
+    return registerGesture(() => {
+      const ae = document.activeElement
+      if (ae instanceof HTMLElement && ref.current?.contains(ae)) ae.blur()
+      else commitRef.current()
+    })
+  }, [editing, preview])
 
   return (
     <div

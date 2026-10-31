@@ -1,6 +1,13 @@
 # ADR 0138：Tavotto AI Foundation（TAF）——在现有 AI 桥上长出任务基座，而不是另起一套
 
 日期：2026-10-19 · 状态：**Accepted**（2026-10-20 维护者接受；Phase 0 立项，Phase 1 起逐阶段取得资格，各阶段仍按 `07-pr-roadmap.md` 的入口 / 退出标准）
+
+## 修订（2026-10-31）：已知缺依赖的改图候选
+
+内置执行器 check 已经观察到缺依赖时，将失败绑定到该候选字节；同一候选不能以 partial 提交。
+复用依赖授权卡与受管环境事务，用户确认后续跑同一候选，按 worker 实际执行的源码摘要复核，通过后才走原有写回链。
+续跑是单独登记的 AI 任务，以现有历史库的脚本占用与 Task Core 取消门禁保护并发；不再次请求模型。
+此修订解决发现的独立产品问题，不断言它是 TVD-V31P 中四次秒失败的根因。
 相关：[0015 Agent 注册表](0015-coding-agent-registry-and-settings.md)、[0014 safe / native](0014-safe-native-execution-profiles.md)、
 [0049 写回像素门](0049-write-back-pixel-verification.md)、[0068 ArtifactInspector](0068-artifact-inspector-and-manifest.md)、
 [0080 出版规范修复事务](0080-spec-fix-transaction.md)、[0083 override 目标身份](0083-override-target-identity.md)、

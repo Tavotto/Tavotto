@@ -14,6 +14,7 @@ import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
 import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
+import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
@@ -74,7 +75,7 @@ import {
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
-import { finishActiveGesture } from './gestureCoordinator'
+import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
@@ -570,6 +571,7 @@ function afterSwitch(): void {
  * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
  */
 export async function runManualSave(): Promise<void> {
+  finishFocusedRichText()
   finishActiveGesture()
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
@@ -1453,6 +1455,7 @@ function pendingAliasClears(panel: PanelObject, patches: { gid: string; prop: st
 function upsertOverrides(
   panel: PanelObject,
   patches: { gid: string; prop: string; value: unknown }[],
+  preserveFontFallback = true,
 ) {
   // 一个量只留一个 override 地址：同一次写入里把另一个地址上的旧 override 清掉（`lib/aliasOverrides.ts`）。
   // 事实来自引擎 manifest 的 `alias_covers`；拿不到 manifest / 旧引擎没发 = 什么都不清，行为同从前
@@ -1463,8 +1466,12 @@ function upsertOverrides(
   for (const p of patches) {
     // 改生效的那条（重复条目时是最后一条，引擎 last-wins）；改第一条会被后面的遮住
     const i = effectiveOverrideIndex(panel.overrides, p.gid, p.prop)
-    if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p }
-    else panel.overrides.push(p)
+    const prior = i >= 0 ? panel.overrides[i].value : undefined
+    const value = preserveFontFallback && p.prop === 'fontfamily' && typeof p.value === 'string' && figureFontChoice(prior)
+      ? changeFigureFont(prior, 'primary', p.value)
+      : p.value
+    if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p, value }
+    else panel.overrides.push({ ...p, value })
   }
 }
 
@@ -1506,6 +1513,31 @@ export function setOverrides(
   for (const prop of new Set(patches.map((p) => p.prop))) {
     emitActivity({ kind: 'element.property_changed', prop })
   }
+}
+
+/** Update one component of a figure's font choice in a single undo step. */
+export function setFigureFontChoice(
+  panelId: string,
+  gids: string[],
+  part: 'primary' | 'fallback',
+  next: string | null,
+  label: UiMessage,
+) {
+  if (!gids.length) return
+  updateObject<PanelObject>(panelId, label, (panel) => {
+    const patches: { gid: string; prop: string; value: unknown }[] = []
+    for (const gid of gids) {
+      const existing = effectiveOverride(panel.overrides, gid, 'fontfamily')?.value
+      const value = changeFigureFont(existing, part, next)
+      if (value === null) {
+        panel.overrides = panel.overrides.filter((o) => !(o.gid === gid && o.prop === 'fontfamily'))
+      } else patches.push({ gid, prop: 'fontfamily', value })
+    }
+    upsertOverrides(panel, patches, false)
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'fontfamily' })
 }
 
 /**
