@@ -918,6 +918,8 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
 
 #: worker 侧 `worker.MISSING_INPUT` 的镜像（Flask 进程不 import worker.py）。
 MISSING_INPUT_CODE = "missing_input"
+#: worker 侧 `worker.SCRIPT_ENTRY_MISSING` 的镜像：登记的入口函数在脚本里已经不存在（TVD-CHR5）。
+SCRIPT_ENTRY_MISSING_CODE = "script_entry_missing"
 #: worker 侧 `worker.SCRIPT_EXITED` 的镜像：脚本自己 `sys.exit(...)`——最常见的是先 `exists()` 判空
 #: 再退出（「找不到数据」），与「跑完没出图」一样只挂静态那部分（ADR 0106 §一.3）。
 SCRIPT_EXITED_CODE = "script_exited"
@@ -1978,6 +1980,7 @@ PROJECT_PYTHON_UNUSABLE_CODE = "project_python_unusable"
 OUTPUT_FOLDER_READ_ONLY_CODE = "output_folder_read_only"
 #: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
 ERROR_CODES = (
+    SCRIPT_ENTRY_MISSING_CODE,
     OUTPUT_FOLDER_READ_ONLY_CODE,
     EXPLICIT_UNUSABLE_CODE,
     PROJECT_PYTHON_UNUSABLE_CODE,

@@ -46,6 +46,7 @@ from . import (
     depplan,
     deprepair,
     dialogscan,
+    entryfresh,
     execpolicy,
     execspec,
     fixrouter,
@@ -1324,13 +1325,21 @@ class SessionService:
 
     @staticmethod
     def _plan_of(project_id: str, project_root: str, target: dict) -> preparation.PreparationPlan:
+        entry = target.get("entry")
+        if target.get("kind") == TARGET_SCRIPT and target.get("script") and entry:
+            # 会话的目标在脚本被改写之前就定了入口：登记的入口已不在脚本里时，规划用纠正后的（判据与改写只在 entryfresh）
+            fixed = entryfresh.effective_entry(project_root, str(target["script"]), entry)
+            if fixed != entry:
+                # 纠正要跨重新规划留住：会话的 target 还记着被删的旧入口，下一次 recheck 拿它去对注册表
+                # （已是新入口）就认不出「登记的那个」而原样放回旧名。target_key 不含 entry，原地改不换会话
+                target["entry"] = entry = fixed
         return preparation.plan_for(
             project_id=project_id,
             project_root=project_root,
             asset_id=target.get("asset_id") or "",
             stem=target.get("stem") or "",
             script=target.get("script"),
-            entry=target.get("entry"),
+            entry=entry,
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],

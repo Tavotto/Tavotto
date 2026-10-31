@@ -750,6 +750,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "install_packages",
         "switch_execution",
         "switch_workdir",
+        # TVD-CHR5：脚本被改写后登记的入口过时（细节见 tests/test_entry_fresh.py）
+        "fix_entry",
         "change_python",
         "select_environment",
         "convert_script",

@@ -267,6 +267,40 @@ def switch_workdir(ctx: FixContext, args: dict) -> ToolResult:
     )
 
 
+# --------------------------------------------------------------------------- fix_entry
+def fix_entry(ctx: FixContext, args: dict) -> ToolResult:
+    """脚本被改写、注册表里登记的入口函数已经不在：按现有入口候选重判，只改注册表里这一条的 `entry`（TVD-CHR5）。
+
+    **不新造逻辑**：判据与改写都是 `entryfresh.reconcile`（运行前的自动校验、刷新项目同一条）。不改用户的脚本；
+    注册表是 Tavotto 在图库里的登记，且这次改写就是不带 AI 时每次运行前本来会做的那一步，所以不弹确认卡、不打快照
+    （快照只覆盖项目设置与环境；再次调用本工具会按脚本此刻的内容重判，幂等）。"""
+    from .. import entryfresh
+
+    script = _script_rel(ctx)
+    if not script:
+        return err(
+            "no_script", "There is no script under repair, so there is no entry to re-detect."
+        )
+    try:
+        changed = entryfresh.reconcile(ctx.project_root, script)
+    except Exception:  # noqa: BLE001 - 写不了注册表也要说清
+        return err("registry_not_saved", "The project registry could not be updated.")
+    if not changed:
+        return ok(
+            "The registered entry still exists in the script (or could not be judged), so nothing was changed.",
+            "no change",
+        )
+    ctx.verification = None
+    if ctx.on_registry_changed is not None:
+        ctx.on_registry_changed(script)
+    return _done(
+        ctx,
+        f"The script no longer has its registered entry function. The registry now runs it as "
+        f"`{changed[script]}`. Verify it with try_run.",
+        "entry updated",
+    )
+
+
 # --------------------------------------------------------------------------- change_python
 def _script_rel(ctx: FixContext) -> str:
     """被诊断脚本的项目相对路径（执行器据此读脚本声明的 `requires-python`）；没有脚本回空串。"""
@@ -541,6 +575,16 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
         switch_workdir,
         tier="tavotto",
         waits_for_user=True,
+    ),
+    FixTool(
+        "fix_entry",
+        "Use when the run report has `entry_stale` (or the error code is `script_entry_missing`): the script was "
+        "rewritten and the function Tavotto registered as its entry no longer exists. Re-detects the entry from the "
+        "script as it is now and updates that one field in the project registry (stems, cost and notes are untouched). "
+        "Never edits the script. Then try_run to check.",
+        obj({}),
+        fix_entry,
+        tier="tavotto",
     ),
     FixTool(
         "change_python",
