@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { contentBox, unionBox } from '@/lib/versionThumbBox'
+import { restCenters } from './TimelineScrubber'
 
 const page = { w: 150, h: 100 }
 
@@ -41,5 +42,22 @@ describe('对比卡片两格共用的框（unionBox）', () => {
     expect(unionBox({ x: 10, y: 10, w: 20, h: 20 }, { x: 40, y: 5, w: 10, h: 10 })).toEqual({ x: 10, y: 5, w: 40, h: 25 })
     expect(unionBox(null, { x: 40, y: 5, w: 10, h: 10 })).toBeNull()
     expect(unionBox({ x: 40, y: 5, w: 10, h: 10 }, null)).toBeNull()
+  })
+})
+
+describe('收起时竖线中心（restCenters）', () => {
+  it('跨很多天也保持从左到右递增（Codex：80 个节点跨 40 天、296px 时中心倒序）', () => {
+    const starts = Array.from({ length: 80 }, (_, i) => i > 0 && i % 2 === 0)
+    const { xs } = restCenters(296, starts)
+    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThan(xs[i - 1])
+    expect(xs[0]).toBeGreaterThanOrEqual(0)
+    expect(xs[xs.length - 1]).toBeLessThanOrEqual(296)
+  })
+
+  it('天数少时日缝照旧是 8px', () => {
+    const { xs, gap } = restCenters(296, [false, false, true, false])
+    expect(gap).toBe(8)
+    expect(xs[0]).toBe(8)
+    expect(xs[3]).toBeCloseTo(288)
   })
 })

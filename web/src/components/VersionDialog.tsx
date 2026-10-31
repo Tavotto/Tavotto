@@ -44,7 +44,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
-import { useVariantPng } from '@/hooks/useVariantPng'
+import { useVariantPng, variantNeedsRender } from '@/hooks/useVariantPng'
 import { MM_PER_PT, pickBucket } from '@/lib/units'
 import {
   documentDigest,
@@ -1823,7 +1823,8 @@ function SnapshotPanel({
     if (renderOverrides) onApproximate?.(variant.approximate)
   }, [variant.approximate, renderOverrides, onApproximate])
   // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
-  const pending = wantsVariant && !variant.url && !variant.approximate
+  // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
+  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel)) && !variant.url && !variant.approximate
   useEffect(() => {
     if (!onLoading) return
     onLoading(panel.id, pending)

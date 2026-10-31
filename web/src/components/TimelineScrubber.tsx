@@ -25,6 +25,25 @@ const SPREAD = 2.2
 /** 一根只有一两像素宽时的粘性：指针离开当前节点超过这么多个节点才换 */
 const STICKY = 0.65
 
+/**
+ * 收起时每根竖线的中心 x：两端留 PAD，换天处多留一道日缝。跨的天数多时日缝合计不超过
+ * 可用宽度的三成——否则间距为负、中心倒序，指针换算会指到邻居、有的节点点不到。
+ */
+export function restCenters(W: number, dayStarts: boolean[]): { xs: number[]; gaps: number; gap: number } {
+  const n = dayStarts.length
+  const gaps = dayStarts.filter(Boolean).length
+  const gap = gaps ? Math.min(DAY_GAP, (Math.max(0, W - PAD * 2) * 0.3) / gaps) : DAY_GAP
+  const slot = n > 1 ? (W - PAD * 2 - gaps * gap) / (n - 1) : 0
+  const xs: number[] = []
+  let x = n > 1 ? PAD : W / 2
+  for (let i = 0; i < n; i++) {
+    if (dayStarts[i]) x += gap
+    xs.push(x)
+    x += slot
+  }
+  return { xs, gaps, gap }
+}
+
 const label = (v: LayoutVersionMeta) => versionDisplayName(v) || formatTime(v.ts)
 const dayKey = (ts: number) => new Date(ts).toDateString()
 /** 竖线的颜色档：选中的（卡片开着的那一版）> 命名节点 > 其余 */
@@ -97,21 +116,12 @@ export function TimelineScrubber({
   const rest = useCallback(() => {
     const vs = live.current.versions
     const W = zoneRef.current?.clientWidth ?? 0
-    const gaps = vs.reduce((k, _, i) => k + (dayStart(vs, i) ? 1 : 0), 0)
-    const slot = vs.length > 1 ? (W - PAD * 2 - gaps * DAY_GAP) / (vs.length - 1) : 0
-    const xs: number[] = []
-    let x = vs.length > 1 ? PAD : W / 2
-    for (let i = 0; i < vs.length; i++) {
-      if (dayStart(vs, i)) x += DAY_GAP
-      xs.push(x)
-      x += slot
-    }
-    return { W, xs, gaps }
+    return { W, ...restCenters(W, vs.map((_, i) => dayStart(vs, i))) }
   }, [])
 
   const targets = useCallback((): { boxes: Box[]; trackH: number } => {
     const { versions: vs, selectedIdx: sel } = live.current
-    const { W, xs, gaps } = rest()
+    const { W, xs, gaps, gap } = rest()
     const h = hover.current
     if (!h.on) {
       return {
@@ -136,12 +146,12 @@ export function TimelineScrubber({
     // 总宽不变：标签占它自己那么宽，其余按比例分剩下的
     const fixed = sz[a].slot
     const want = sz.reduce((k, b) => k + b.slot, 0)
-    const k = Math.max(0.2, (W - PAD * 2 - gaps * DAY_GAP - fixed) / Math.max(1, want - fixed))
+    const k = Math.max(0.2, (W - PAD * 2 - gaps * gap - fixed) / Math.max(1, want - fixed))
     const slot = (i: number) => (i === a ? fixed : sz[i].slot * k)
     const boxes: Box[] = []
     let x = PAD + (a === 0 ? fixed / 2 : 0)
     for (let i = 0; i < vs.length; i++) {
-      if (i > 0) x += (slot(i - 1) + slot(i)) / 2 + (dayStart(vs, i) ? DAY_GAP : 0)
+      if (i > 0) x += (slot(i - 1) + slot(i)) / 2 + (dayStart(vs, i) ? gap : 0)
       boxes.push({ x, w: sz[i].w, h: sz[i].h, o: sz[i].o, c: sz[i].c })
     }
     // 整条平移，让标签尽量落在指针下，但不出条
