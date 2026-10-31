@@ -342,6 +342,108 @@ class TestLiteralSysPathRoots:
         assert importscan._MAX_LITERAL_ROOTS == 8
 
 
+class TestLiteralDirThroughModuleName:
+    """反馈包 TVD-705N：`ROOT = Path(__file__).resolve().parent` 再 `sys.path.insert(0, str(ROOT / "source"))`。
+    名字在模块层无条件地只绑定一次、值本身就是字面量目录时，按那个值认；`source/` 缺了是本地模块缺失，不预填包名。"""
+
+    SCRIPT = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "ROOT = Path(__file__).resolve().parent\n"
+        "sys.path.insert(0, str(ROOT / 'source'))\n"
+        "import config as c\n"
+        "from yard_map import YardMap\n"
+    )
+
+    def test_present_dir_modules_are_local(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "gen.py", self.SCRIPT)
+        _write(proj, "source/config.py", "X = 1\n")
+        _write(proj, "source/yard_map.py", "class YardMap: ...\n")
+        scan = importscan.scan(proj, "gen.py")
+        assert any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        for name in ("config", "yard_map"):
+            cls = next(c for c in scan.classes if c.module == name)
+            assert cls.bucket == importscan.BUCKET_LOCAL
+
+    def test_missing_dir_after_runtime_failure_is_local_module_missing(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "gen.py", self.SCRIPT)
+        plan = depplan.plan(
+            proj,
+            "gen.py",
+            facts=_facts(),
+            target_kind=MANAGED,
+            extra_imports=("config", "yard_map"),
+        )
+        origins = {o["import_name"]: o for o in plan.origins}
+        assert origins["config"]["local_module_missing"] == {"search_dirs": ["source"]}
+        assert origins["yard_map"]["local_module_missing"] == {"search_dirs": ["source"]}
+        assert all("suggested_distribution" not in o for o in plan.origins)
+        assert plan.requirements == ()
+        with pytest.raises(depplan.UserSpecifiedRejected):
+            depplan.plan(
+                proj,
+                "gen.py",
+                facts=_facts(),
+                target_kind=MANAGED,
+                extra_imports=("config",),
+                user_specified={"config": "config"},
+            )
+
+    @pytest.mark.parametrize(
+        "binding",
+        [
+            "ROOT = Path(__file__).parent",
+            "ROOT = os.path.dirname(os.path.abspath(__file__))",
+            "HERE = Path(__file__).resolve().parent\nROOT = HERE",
+        ],
+    )
+    def test_binding_forms_recognized(self, tmp_path, binding):
+        proj = tmp_path / "p"
+        _write(proj, "source/mymod.py", "x = 1\n")
+        _write(
+            proj,
+            "a.py",
+            "import os, sys\nfrom pathlib import Path\n"
+            + binding
+            + "\nsys.path.append(os.path.join(ROOT, 'source'))\nimport mymod\n",
+        )
+        scan = importscan.scan(proj, "a.py")
+        assert (
+            next(c for c in scan.classes if c.module == "mymod").bucket == importscan.BUCKET_LOCAL
+        )
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            # 绑定两次（任何一处再绑定都不认，含函数体里的 global）
+            "ROOT = Path(__file__).parent\nROOT = Path('/elsewhere')\n{call}",
+            "ROOT = Path(__file__).parent\ndef f():\n    global ROOT\n    ROOT = 1\n{call}",
+            "ROOT = Path(__file__).parent\nfor ROOT in []:\n    pass\n{call}",
+            "ROOT = Path(__file__).parent\nimport x as ROOT\n{call}",
+            # 条件绑定、绑定在调用之后、值不是字面量目录
+            "if FLAG:\n    ROOT = Path(__file__).parent\n{call}",
+            "{call}\nROOT = Path(__file__).parent",
+            "ROOT = Path(os.getcwd())\n{call}",
+            "ROOT = Path(__file__).parent\nROOT /= 'x'\n{call}",
+        ],
+    )
+    def test_rebound_or_non_literal_binding_ignored(self, tmp_path, body):
+        proj = tmp_path / "p"
+        _write(proj, "source/mymod.py", "x = 1\n")
+        call = "sys.path.append(str(ROOT / 'source'))"
+        _write(
+            proj,
+            "a.py",
+            "import os, sys\nfrom pathlib import Path\nFLAG = 1\n"
+            + body.format(call=call)
+            + "\nimport mymod\n",
+        )
+        scan = importscan.scan(proj, "a.py")
+        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+
+
 class TestNotFoundNamed:
     def test_parses_name_and_source_file(self, tmp_path):
         proj = tmp_path / "p"

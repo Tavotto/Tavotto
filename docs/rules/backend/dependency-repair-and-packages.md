@@ -732,7 +732,9 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   目录里找不到的 import（`origins[].local_module_missing`）、没有可信安装名的表外名（只有预填，用户确认才成 `user_specified`）。前两类不预填，
   `user_specified` 对它们抛 `UserSpecifiedRejected(NOT_APPLICABLE)`。
 - **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内；
-  新增标签 `sys_path_literal`（证据码同名）。
+  新增标签 `sys_path_literal`（证据码同名）。表达式里的名字只在一种情形下按值认（`_dir_consts`，TVD-705N）：模块层顶层无条件的单目标
+  赋值、整份文件里同名只绑定这一次（任何作用域的再绑定 / `global` / `nonlocal` 都不认）、绑定在 `sys.path` 那一行之前，且值本身也是这些形状
+  （`ROOT = Path(__file__).resolve().parent` → `str(ROOT / "source")`）；其余变量照旧不认。
 - **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
   不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
 - 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。
