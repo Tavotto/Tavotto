@@ -641,6 +641,24 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
     expect(useUiStore.getState().status).toBeNull()
   })
 
+  it('渲染完成只收被动的冷启动「正在构建…」，用户触发的 progress（problems.fixing / 带主人的重建）不被清', () => {
+    const ui = useUiStore.getState()
+    ui.setStatus({ key: 'problems.fixing', ns: 'errors' }, 'progress')
+    done('Fig_ok.pdf')
+    expect(statusKey(), '非被动 progress 仍在').toBe('problems.fixing')
+
+    ui.setStatus({ key: 'artifact.rebuilding', ns: 'workspace' }, 'progress', { owner: 'artifact.rebuild:x' })
+    done('Fig_ok.pdf')
+    expect(statusKey(), '带主人的 progress 仍在').toBe('artifact.rebuilding')
+
+    ui.setStatus(null)
+    ui.setStatus({ key: 'status.building', ns: 'workspace', values: { name: 'Fig_ok', hint: '' } }, 'progress', {
+      passive: true,
+    })
+    done('Fig_ok.pdf')
+    expect(useUiStore.getState().status, '被动的冷启动提示被收掉').toBeNull()
+  })
+
   it('用户已经关掉的不会被重新挂回来', () => {
     failed('Fig1.pdf')
     useUiStore.getState().setStatus(null)

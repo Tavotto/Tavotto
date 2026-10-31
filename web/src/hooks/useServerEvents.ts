@@ -149,7 +149,12 @@ export function handleServerEvent(ev: ServerEvent) {
         setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'done', {
           passive: true,
         })
-      } else if (useUiStore.getState().statusTone === 'progress') {
+      } else if (
+        useUiStore.getState().statusTone === 'progress' &&
+        useUiStore.getState().statusPassive &&
+        useUiStore.getState().statusOwner === null
+      ) {
+        // 只收被动的（冷启动「正在构建…」）；用户触发的 progress（problems.fixing、artifact.rebuilding）不是渲染的
         setStatus(null)
       }
       break
