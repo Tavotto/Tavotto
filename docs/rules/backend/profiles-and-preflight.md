@@ -2,14 +2,14 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0154）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 260
-改到: `profiles/publication.json`、`engine/profiles.py`、`preflight.py`、`profilestore.py`
-主题: 出版规范 profile 与预检 → `profiles-and-preflight.md`
-必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐
+改到: `profiles/publication.json`、`profiles/journals.json`、`engine/profiles.py`、`engine/journals.py`、`preflight.py`、`profilestore.py`
+主题: 出版规范 profile 与预检、内置期刊库 → `profiles-and-preflight.md`
+必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐；期刊 = 对 journal-base-v1 的覆盖 + 逐条出处，未规定不补
 -->
 
 - **规则的唯一权威文件是 `src/tavotto/profiles/publication.json`**（随 wheel 分发）。
@@ -75,6 +75,24 @@ order: 260
   `_read_user()` 对「读不懂」与「一条都没有」回的是同一个空清单。
 - 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
   MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
+
+## 内置期刊标准库（ADR 0154）
+
+- **期刊 = 对中性底 `journal-base-v1` 的一份覆盖 + 每条规则的原文出处**，数据唯一权威是
+  `src/tavotto/profiles/journals.json`（与 `publication.json` 同目录，随 wheel / PyInstaller `profiles/` 分发）。
+  Python `engine/journals.py`（`list_journals` / `journal_override` / `journal_profile` / `journal_sources`）
+  与 TS `web/src/lib/journals.ts`（同名 camelCase，经 **`@journals` 别名**读同一个 JSON，
+  `vite.config.ts` / `vitest.config.ts` / `vite.mcp.config.ts` / `vite.playground.config.ts` / `tsconfig.app.json` 各配一次）
+  是**严格同源对**，看护 `tests/golden/journal_vectors.json`（`scripts/gen_journal_vectors.py --write`；pytest 与 vitest 各跑一遍）。
+  失败码闭集 `ERROR_CODES` ↔ `JOURNAL_ERROR_CODES` 逐字相同，每个校验码至少一条失败向量。
+- **期刊没写的项不补**：覆盖叠在 `journal-base-v1`（无宽高比限制、不限定拉丁字体、不要求 CJK、字号下限 0、线宽预设 / 坐标轴 / 图例策略全空，
+  只留越界 error、缺字形 warn、DPI 300、字号上限 72 的安全兜底）上，**绝不叠在 `lab-publication-v1` 上**，也不拿任何别的规范去填空。
+  `journal-base-v1` 带 `"listed": false`：`list_profiles()` / `listProfiles()` 过滤它（不进规范下拉与 `profilestore` 内置记录），`load()` 照取。
+- **加载即校验，没出处的数值进不了库**：每条 rule 要有 `value`、`src`（在可见 sources 里）、非空 `quote`（只存一两句短摘录，不存整页）；键路径必须是
+  merge 能精确落到的 `journal-base-v1` 字段（深合并子对象写 `<子对象>.<键>`，其余顶层单段，身份 / 展示字段不可覆盖）；`value` 类型须与底一致；
+  折叠后整份过 `validate_spec`（TS `profile.validateSpecShape` 是 `_validate` 的镜像，严格同源对，同一批向量看护）。出版社 rules 先、期刊 rules 后覆盖。
+- **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
+  项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

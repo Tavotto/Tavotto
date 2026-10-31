@@ -16,6 +16,9 @@ export default defineConfig({
       '@profiles': fileURLToPath(
         new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
+      '@journals': fileURLToPath(
+        new URL('../src/tavotto/profiles/journals.json', import.meta.url),
+      ),
       // 画布文字的字形覆盖表（生成物，唯一产生者
       // `scripts/gen_canvas_coverage.py`）。浏览器里没有字体引擎，「这个字
       // 导出后是不是方框」只能靠它回答——同 `@profiles`，整份 import 进

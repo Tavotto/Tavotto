@@ -197,6 +197,79 @@
         "text-weight-policy": "suggestion",
         "palette-semantic": "suggestion"
       }
+    },
+    "journal-base-v1": {
+      "profile_id": "journal-base-v1",
+      "version": "1.0.0",
+      "label": "期刊底（期刊未规定的项一律不判）",
+      "listed": false,
+      "source": "期刊标准库的中性底（ADR 0154）：期刊覆盖叠在它上面，而不是叠在课题组规范上——期刊没写的项就是没写，不拿别家的规矩去补。因此：不限定宽高比（allowed_aspect_ratios 为空）；不限定拉丁字体（latin 为空、latin_accepted 为空即不判）；不要求中日韩回退（required=false）；字号下限为 0（不设下限，同 absolute_min_font_size_pt=0 的既有用法）；线宽预设为空；坐标轴/图例策略全为 null（不判）；字重策略为空；页宽的 80/150 mm 只是 widths_mm 必须是正数的占位，其检查项 page-width 降为 suggestion。只保留安全兜底：越界 element-outside-figure=error、缺字形 glyph-missing / 公式排不出 math-unrenderable=warn、栅格 DPI 下限 300、字号上限 72 pt（取值思路同 free-form-v1，但字号下限与字体限定比它更松）。不在规范列表单独展示（listed=false）：它只是期刊覆盖的底，不是一份可选规范。",
+      "widths_mm": {
+        "single": 80.0,
+        "double": 150.0,
+        "tolerance_mm": 0.5,
+        "allow_custom": true
+      },
+      "allowed_aspect_ratios": [],
+      "aspect_tolerance": 0.04,
+      "font_family": {
+        "latin": "",
+        "latin_accepted": [],
+        "latin_substitutes_flagged": []
+      },
+      "cjk_fallback": { "required": false, "preferred": [], "accepted": [] },
+      "default_font_size_pt": 9.0,
+      "min_effective_font_size_pt": 0.0,
+      "absolute_min_font_size_pt": 0.0,
+      "max_font_size_pt": 72.0,
+      "min_raster_dpi": 300,
+      "preferred_formats": {
+        "vector": ["pdf", "svg"],
+        "raster": ["png", "tif", "tiff", "jpg"],
+        "export_default": ["pdf", "png"],
+        "export_dpi_default": 600
+      },
+      "line_widths_pt": [],
+      "line_width_tolerance_pt": 0.08,
+      "axis_policy": {
+        "tick_direction": null,
+        "enclosed_spines": false,
+        "minor_ticks": "any",
+        "label_format": null,
+        "label_format_regex": null,
+        "frame_linewidth_pt": [],
+        "max_tick_labels": 0
+      },
+      "legend_policy": { "frame": null, "min_font_size_pt": 0.0, "max_font_size_pt": 72.0 },
+      "palette_policy": {
+        "recommended": "",
+        "url": "",
+        "by_semantic": {},
+        "discouraged_colormaps": [],
+        "auto_recolor": false
+      },
+      "text_weight_policy": {},
+      "severity": {
+        "page-width": "suggestion",
+        "page-aspect": "suggestion",
+        "font-too-small": "warn",
+        "font-below-absolute-floor": "warn",
+        "legend-frame": "suggestion",
+        "tick-direction": "suggestion",
+        "spines-not-enclosed": "suggestion",
+        "line-width-off-preset": "suggestion",
+        "font-family-substituted": "suggestion",
+        "cjk-fallback-missing": "suggestion",
+        "glyph-missing": "warn",
+        "glyph-substituted": "suggestion",
+        "math-unrenderable": "warn",
+        "element-outside-figure": "error",
+        "palette-line-markers": "suggestion",
+        "axis-label-format": "suggestion",
+        "tick-label-count": "suggestion",
+        "text-weight-policy": "suggestion",
+        "palette-semantic": "suggestion"
+      }
     }
   }
 }

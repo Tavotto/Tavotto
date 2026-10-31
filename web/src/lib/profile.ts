@@ -46,6 +46,8 @@ export interface PublicationProfile {
   version: string
   label: string
   source?: string
+  /** false = 只是别的东西的底（如期刊底 journal-base-v1），不进规范下拉；同源对 profiles.py `list_profiles` */
+  listed?: boolean
   widths_mm: { single: number; double: number; tolerance_mm: number; allow_custom: boolean }
   allowed_aspect_ratios: AspectRatio[]
   aspect_tolerance: number
@@ -113,7 +115,7 @@ interface ProfileDocument {
 const DOC = doc as unknown as ProfileDocument
 
 /** journal 覆盖里允许深合并的子对象（其余键整体替换）。与 Python 侧同源。 */
-const DEEP_KEYS = [
+export const DEEP_KEYS = [
   'widths_mm',
   'legend_policy',
   'axis_policy',
@@ -135,6 +137,7 @@ export interface ProfileSummary {
 /** 界面下拉用的摘要，默认 profile 排在最前。 */
 export function listProfiles(): ProfileSummary[] {
   return Object.values(DOC.profiles)
+    .filter((p) => p.listed !== false)
     .map((p) => ({
       profile_id: p.profile_id,
       version: p.version,
@@ -218,5 +221,83 @@ export function columnOf(
   const { single, double, tolerance_mm: tol } = profile.widths_mm
   if (Math.abs(widthMm - single) <= tol) return 'single'
   if (Math.abs(widthMm - double) <= tol) return 'double'
+  return null
+}
+
+const OBJECT_KEYS = [
+  'widths_mm',
+  'font_family',
+  'cjk_fallback',
+  'axis_policy',
+  'legend_policy',
+  'palette_policy',
+  'severity',
+  'preferred_formats',
+] as const
+const NUMBER_KEYS = [
+  'default_font_size_pt',
+  'min_effective_font_size_pt',
+  'absolute_min_font_size_pt',
+  'min_raster_dpi',
+] as const
+const REQUIRED_KEYS = [
+  'profile_id',
+  'version',
+  'widths_mm',
+  'allowed_aspect_ratios',
+  'font_family',
+  'cjk_fallback',
+  'default_font_size_pt',
+  'min_effective_font_size_pt',
+  'absolute_min_font_size_pt',
+  'min_raster_dpi',
+  'preferred_formats',
+  'line_widths_pt',
+  'axis_policy',
+  'legend_policy',
+  'palette_policy',
+  'severity',
+] as const
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/**
+ * 一份规范的**形状**是否合法；合法返回 null，否则返回第一条原因。
+ *
+ * 严格同源对：`src/tavotto/engine/profiles.py` 的 `_validate` / `validate_spec`（判据逐条
+ * 对应，不比措辞）。期刊库折叠后的整体校验（`journals.ts`）用它；看护是
+ * `tests/golden/journal_vectors.json` 里的 `journal_merge_invalid` 向量，两侧各跑一遍。
+ */
+export function validateSpecShape(profile: unknown): string | null {
+  if (!isPlainObject(profile)) return '规范必须是对象'
+  const p = profile
+  const missing = REQUIRED_KEYS.filter((k) => !(k in p))
+  if (missing.length) return `缺少字段: ${missing.join(', ')}`
+  for (const k of OBJECT_KEYS) if (!isPlainObject(p[k])) return `${k} 必须是对象`
+  for (const k of NUMBER_KEYS) if (!isNumber(p[k])) return `${k} 必须是数字`
+  for (const k of ['allowed_aspect_ratios', 'line_widths_pt'] as const) {
+    if (!Array.isArray(p[k])) return `${k} 必须是数组`
+  }
+  if (!(p.line_widths_pt as unknown[]).every(isNumber)) return 'line_widths_pt 必须全是数字'
+  const fmts = p.preferred_formats as Record<string, unknown>
+  for (const k of ['vector', 'raster', 'export_default']) {
+    const v = fmts[k]
+    if (v == null) continue
+    if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) {
+      return `preferred_formats.${k} 必须是字符串数组`
+    }
+  }
+  if (fmts.export_dpi_default != null && !isNumber(fmts.export_dpi_default)) {
+    return 'preferred_formats.export_dpi_default 必须是数字'
+  }
+  for (const [k, v] of Object.entries(p.severity as Record<string, unknown>)) {
+    if (!SEVERITIES.includes(v as Severity)) return `severity[${k}] 不是合法等级`
+  }
+  const widths = p.widths_mm as Record<string, unknown>
+  for (const k of ['single', 'double']) {
+    if (!isNumber(widths[k]) || (widths[k] as number) <= 0) return `widths_mm.${k} 必须是正数`
+  }
   return null
 }

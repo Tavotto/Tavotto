@@ -67,7 +67,7 @@ TS + Tailwind v4）。
 | `security.py`、`session_client.py`、任何新端点 | 会话认证（ADR 0008） → `session-auth.md` | 旁路只有三个；用户可控的路径碰文件系统 / 子进程前只经 `app.safe_resolve` / `projectenv.contained_path` |
 | `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*` | 编码 Agent 桥 → `ai-agent-bridge.md` | 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml |
 | `richtext.py` | 文字：行内上下标与大小写 → `richtext.md` | ↔ `web/src/lib/richText.ts` 严格同源（三常量 + parse） |
-| `profiles/publication.json`、`engine/profiles.py`、`preflight.py`、`profilestore.py` | 出版规范 profile 与预检 → `profiles-and-preflight.md` | 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐 |
+| `profiles/publication.json`、`profiles/journals.json`、`engine/profiles.py`、`engine/journals.py`、`preflight.py`、`profilestore.py` | 出版规范 profile 与预检、内置期刊库 → `profiles-and-preflight.md` | 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐；期刊 = 对 journal-base-v1 的覆盖 + 逐条出处，未规定不补 |
 | `engine/telemetry.py`、`EVENTS`、`services/telemetry_proxy/`、`collect_distribution_metrics.py` | 匿名用量统计 → `telemetry.md` | 不引入任何分析 SDK；`capture()` 永不抛不阻塞；范围扩大升 `CONSENT_VERSION`；HTTPS 只经 `tlstrust` |
 | `engine/diagnostics.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*` | 诊断包与任务绑定诊断 → `diagnostics.md` | 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认） |
 | `engine/scriptbackup.py`、`scriptedit.py`、`scriptlock.py`、`/api/script-edit/*`、`/api/script-backups*`、AI 回滚 | 改用户脚本：经确认的改写、备份与复原（ADR 0110 / 0094） → `script-edits.md` | 只有用户在界面看过 diff、勾选确认才写；两处备份落盘才替换；「判一次再写」整段持 `scriptlock.script_guard` |
