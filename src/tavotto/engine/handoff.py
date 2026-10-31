@@ -52,6 +52,7 @@ from . import (
     figcapture as engine_figcapture,
     handoffreceipt as engine_receipt,
     locate as engine_locate,
+    msixbreakaway,
     registry as engine_registry,
     session_client,
 )
@@ -713,6 +714,14 @@ def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen):
     else:
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP：控制台关了也不带走窗口
         kwargs["creationflags"] = 0x00000008 | 0x00000200
+        # 从 MSIX 宿主（Codex 桌面版）一路继承下来的包身份会把我们的 %LOCALAPPDATA% 新文件重定向进
+        # 包私有区（#1574）：Windows 上一律经 msixbreakaway 的 0x01 策略创建，整棵子树落在包外。
+        # 只在用默认 Popen 时走（注入的 spawn 是测试桩 / 调用方自己的约定）；返回 None = 不可用或
+        # 失败，退回下面的 Popen，行为与从前一致。
+        if spawn is subprocess.Popen:
+            proc = msixbreakaway.spawn_detached(argv, creationflags=kwargs["creationflags"])
+            if proc is not None:
+                return proc
     return spawn(argv, **kwargs)
 
 

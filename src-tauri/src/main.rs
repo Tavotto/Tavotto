@@ -16,6 +16,7 @@ mod exit_marker;
 #[cfg(target_os = "macos")]
 mod fullscreen_observer;
 mod i18n;
+mod msix_breakaway;
 #[cfg(target_os = "macos")]
 mod native_drop;
 #[cfg(test)]
@@ -1951,6 +1952,8 @@ async fn desktop_update_install(
 fn main() {
     // 最先：越早装，启动早期的崩溃越有转储可收（仅 Windows 生效，见 crash_dump.rs）
     crash_dump::install();
+    // 带 MSIX 包身份（从 Codex 桌面版等拉起）就脱离包重新拉起自己后退出——在建任何窗口 / 写任何配置之前（#1574）
+    msix_breakaway::relaunch_outside_package_if_needed();
     let state = AppState {
         sidecar: Mutex::new(None),
         port: Arc::new(Mutex::new(None)),

@@ -98,6 +98,16 @@ order: 310
   看护同在 `tests/test_desktop_launch.py`。
   sidecar 日志路径由 `handoff.sidecar_log_path()` 按 `brand.DESKTOP_BUNDLE_ID`
   推导（与 tauri 的 app_log_dir 同源）。看护 `tests/test_desktop_launch.py`。
+- **Windows 拉起桌面版一律带「脱离包」策略（#1574）**：Codex 桌面版是 MSIX 包，从它继承包身份的进程在
+  `%LOCALAPPDATA%` 下新建的文件会被重定向进 `Packages\<pfn>\LocalCache`（最近项目 / 设置 / 受管环境各一套）。
+  实测只有 `CreateProcessW` + `STARTUPINFOEX` + `PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY`（0x00020012）=
+  `BREAKAWAY_ENABLE_PROCESS_TREE`（0x01）能脱离，且整棵子树在包外；`subprocess` / `cmd /c start` / `Start-Process` 都不行。
+  所以 `_spawn_detached`（桌面 argv 与 browser-new 的唯一 spawn 入口）在 Windows 上先经
+  `engine/msixbreakaway.py::spawn_detached`（**唯一实现**，`tests/test_msix_breakaway.py` 扫源码钉住）；
+  返回 None（非 Windows / API 不可用 / 任一步失败）才退回原来的 `Popen`，注入的 `spawn`（测试桩）不走它。
+  兜底在 Rust 壳（`src-tauri/src/msix_breakaway.rs`，同一契约的镜像）：壳启动时带包身份就用同一策略重新拉起自己后退出，
+  环境变量 `TAVOTTO_MSIX_BREAKAWAY` 防循环并把结果（`relaunched` / `still_packaged` / `failed`）交给诊断包。
+  已写进包私有区的数据不迁移（另议）。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
