@@ -318,7 +318,7 @@ export function useKeyboard() {
           if (ui.selectedGids.length) ui.setSelectedGid(null)
           else {
             // 选区退完，下一下 Esc 退出整个图内编辑（单图编辑里同样：画布上只有这一张图，没有「排版」可回，
-            // 退出后仍是单图编辑）；与上下文栏那颗出口按钮同一件事
+            // 退出后仍是单图编辑）；与状态条那颗出口按钮同一件事
             const pid = ui.elementPanelId
             ui.setElementPanel(null)
             useSelectionStore.getState().set([pid])

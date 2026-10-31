@@ -732,7 +732,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
             enterElementEdit(panel.id)
             // 这颗按钮随属性页切换整个被卸载，焦点会摔到 body——键盘用户
             // 失去落点（WebKit 里顺序导航就此失灵，issue #37 实测）。把焦点
-            // 交给编辑态里语义对应的「返回画布」按钮（上下文栏，唯一的退出入口）。
+            // 交给编辑态里语义对应的「返回画布」按钮（画布状态条，唯一的退出入口）。
             requestAnimationFrame(() => {
               document.querySelector<HTMLElement>('[data-exit-element-edit]')?.focus()
             })

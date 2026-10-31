@@ -4115,6 +4115,8 @@ export default interface Resources {
       "guidesLockedSuffix": " · 已锁定",
       "guidesNone": "无",
       "landscape": "横向",
+      "layoutPage": "多图排版页面",
+      "layoutPageNote": "加第二张图后生效",
       "lock": "锁定",
       "margin": "页边距",
       "marginSummary": "页边距 {{margin}} mm",
@@ -4148,6 +4150,8 @@ export default interface Resources {
       "safeAreaOff": "关闭",
       "safeAreaTip": "只是画布上的参考框，不裁剪也不影响导出",
       "show": "显示",
+      "singleEdit": "单图编辑",
+      "singleNote": "按原图尺寸，不缩放",
       "size": "尺寸",
       "sizeMeta": "{{w}} × {{h}} mm",
       "snap": "自动对齐",
@@ -6745,6 +6749,16 @@ export default interface Resources {
       "rulerUnitTitle": "标尺单位：毫米",
       "textPlaceholder": "输入文字",
       "tryTutorial": "试用示例"
+    },
+    "stageStrip": {
+      "count": "{{n}} 张图",
+      "empty": "空画布",
+      "exportAtOriginal": "按原图尺寸 {{w}} × {{h}} mm 导出",
+      "label": "画布状态",
+      "multi": "多图排版",
+      "page": "页面 {{w}} × {{h}} mm",
+      "selected": "已选 {{n}} 张：{{names}}",
+      "single": "单图编辑"
     },
     "status": {
       "alignAllLocked": "选中的对象都已锁定，先解锁再排列",

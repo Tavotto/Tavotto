@@ -119,7 +119,7 @@ order: 210
   `hooks/useKeyboardFastEdit.test.tsx`。
 - **单图编辑没有「回排版」出口；图内编辑的出口至多一颗按钮，Esc 与它同一个动作（2026-10-21，取代 Prompt Pack P01 的
   「快编出口 return / forward 两种来源」）**：单图编辑 = 画布上恰好一张图（`workspaceStore.settleMode` 推出，见
-  `workflows-and-original-spec.md`），没有排版可回——第二张图进来自然切成多图排版。`WorkspaceContextBar` 只在**图内编辑**
+  `workflows-and-original-spec.md`），没有排版可回——第二张图进来自然切成多图排版。画布页签下面的 `CanvasStatusStrip` 只在**图内编辑**
   时摆一颗 `[data-context-back]`（`data-exit-element-edit`）：单图编辑里叫「退出图内编辑」、多图排版里叫「返回画布」，
   动作相同（`setElementPanel(null)` + 选中该面板），Esc 的最外层与它同一个动作；单图编辑且不在图内编辑时没有出口按钮、
   没有 `to-layout` 教程锚点；Esc 最外层清选区（单图编辑里标注可选了）。`fastEditFromLayout` /
@@ -127,6 +127,18 @@ order: 210
   图内编辑 / 裁剪 / 非选择工具；输入框与对话框聚焦时（`inEditableTarget`）不抢。不要再往单图编辑里加「添加到画布」——
   `openFastEdit` 已把图放进文档。`App` 的画布标签行在单图编辑里隐藏，**但该文档还有别的画布时留着**（模式按画布各自判，
   隐藏了就切不走）。
+- **画布状态条 `components/CanvasStatusStrip`（2026-10-31，UI 审计 B2 / B3 / A1，取代浮在画布上的 `WorkspaceContextBar`）**：
+  画布页签下面一条 28px 的常驻灰条（`App` 里 `CanvasTabs` 与 `CanvasStage` 之间，单图编辑隐藏页签行时它仍在；固定高度、不是弹出的横条，
+  画布不被它推动）。左：面包屑，**只跟当前焦点走**——没选中停在画布名；选中一张延伸到「序号 + 图名」（`(b) Fig2_yield`，序号按
+  `readingOrder`、与 `actions.addSubLabels` 同口径，只有一张图时不带）；多选写「已选 N 张：(a) (c)」；图内编辑再延伸到元素
+  （「整张图」/ 元素名），每一段（除最后一段）点了回到那一层；界面不出现「坐标区」，元素树里的「子图 N」保持原样。右：状态——
+  空画布 / 单图编辑 / 多图排版 + 页面尺寸与预设（`inspector/pagePreset` 与画布页同一份清单）+ 图数；单图编辑说「按原图尺寸 W × H mm 导出」
+  （`useOriginalSpec`，占位值 / 旧规格 / 假定密度的位图不说尺寸）；单图编辑进不了图内编辑时这里说原因并给「连接源脚本」。
+  图内编辑时左端的箭头钮是**唯一出口**（B3 方案 A：图名与「退出图内编辑」胶囊不再浮在图上盖住标题与控制点），右端写 Esc。
+  稳定锚点 `data-workspace-context-bar`（现在**始终存在**，用 `data-workspace-mode` 判模式）/ `data-context-back` /
+  `data-exit-element-edit` / `data-context-object` 不变。单图编辑的右栏「画布」页同步改：头部讲「单图编辑 + 导出尺寸」，
+  页面尺寸降成「多图排版页面」摘要行（点开仍能改）。看护 `components/canvasStatusStrip.test.tsx`、
+  `components/inspector/canvasPage.test.tsx`、`canvas/fastEditStage.test.tsx`、`e2e/nav-audit.spec.ts`。
 - **单图编辑与排版同一口径（2026-10-21，取代 Codex #833「快速编辑里只认正在编辑的那张图」整组不变量）**：单图编辑的舞台画这张画布上的
   全部对象（`CanvasLayers` 不再有 `only`），所以选区里的东西都看得见，不再有「看不见的版面对象被误删 / 误取景」的前提。
   **全选**只有 `store/actions.selectAll` → `selectAllIds` 一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它），收看得见且没锁的对象；

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
+import { CanvasStatusStrip } from '@/components/CanvasStatusStrip'
 import { CanvasTabs } from '@/components/CanvasTabs'
 import { CanvasToolbar } from '@/components/CanvasToolbar'
 import { ZoomControls } from '@/components/ZoomControls'
@@ -290,10 +291,13 @@ function Workspace() {
                   项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
                   没有任何东西会在这里插进一行把画布往下推 */}
               {showTabs && <CanvasTabs />}
+              {/* 画布状态条（UI 审计 B2 / B3 / A1）：常驻固定高度，说当前状态 + 面包屑 + 图内编辑的出口；
+                  不是弹出的横条，画布不会因它出现 / 消失被推动 */}
+              <CanvasStatusStrip />
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
                 {/* 画布视口的浮层按角位摆（2026-10-07 设计审计 §10.1）：四个角各 12px 内距、每角一个堆叠容器。
-                    底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；
+                    底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；画布页签下面是常驻的画布状态条（`CanvasStatusStrip`，不浮在画布上）；
                     右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针。
                     此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
                 <CanvasToolbar />
