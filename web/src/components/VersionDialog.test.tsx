@@ -1800,11 +1800,13 @@ describe('对比小卡片（Codex #1349）', () => {
     await openCard('a1')
     const boxes = [...document.querySelectorAll<HTMLElement>('[data-timeline-card-box]')]
     expect(boxes).toHaveLength(2)
-    const [moment, current] = boxes.map((b) => parseFloat(b.style.width))
-    // 那一刻是 10 × 1000：按自己的比例缩，高 = 宽 × 100 ≤ 190；当前是 150 × 100，不借用历史的比例
-    expect(moment * 100).toBeLessThanOrEqual(190 + 1e-6)
-    expect(current).toBe(148)
-    expect(current / 1.5).toBeLessThanOrEqual(190)
+    // 两格对准各自页面上有内容的那块（页面尺寸不同 → 各裁各的，不借用对方的框）：
+    // 量的是每一格**实际画出来**的外框——都不超过半宽、不超过最大高度
+    const frames = boxes.map((b) => b.firstElementChild as HTMLElement)
+    for (const f of frames) {
+      expect(parseFloat(f.style.width)).toBeLessThanOrEqual(148 + 1e-6)
+      expect(parseFloat(f.style.height)).toBeLessThanOrEqual(190 + 1e-6)
+    }
   })
 })
 

@@ -7,6 +7,7 @@ import { formatDate, formatTime } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { CanvasThumb } from './CanvasThumb'
+import { contentBox, CropFrame } from './versionThumbCrop'
 
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -402,69 +403,25 @@ const PEEK_FRAME_W = PEEK_W - 16
 const PEEK_FRAME_MIN_H = 96
 const PEEK_FRAME_MAX_H = 168
 
-/**
- * 页面上有东西的那块（mm，夹在页面内、四周留一点白）。存好的缩略图拍的是整页，
- * 图只占页面一角时缩成一小块；浮卡要回答的是「那一版长什么样」，所以对准内容放大。
- * 内容本来就差不多占满页面、或者草图里没有对象时不裁（null）。
- */
-export function contentBox(
-  page: { w: number; h: number },
-  objects: readonly { x: number; y: number; w: number; h: number; hidden?: boolean }[],
-): { x: number; y: number; w: number; h: number } | null {
-  const shown = objects.filter((o) => !o.hidden && o.w > 0 && o.h > 0)
-  if (!shown.length || !(page.w > 0) || !(page.h > 0)) return null
-  const x0 = Math.max(0, Math.min(...shown.map((o) => o.x)))
-  const y0 = Math.max(0, Math.min(...shown.map((o) => o.y)))
-  const x1 = Math.min(page.w, Math.max(...shown.map((o) => o.x + o.w)))
-  const y1 = Math.min(page.h, Math.max(...shown.map((o) => o.y + o.h)))
-  if (x1 <= x0 || y1 <= y0) return null
-  const pad = Math.min(page.w, page.h) * 0.03
-  const box = {
-    x: Math.max(0, x0 - pad),
-    y: Math.max(0, y0 - pad),
-    w: Math.min(page.w, x1 + pad) - Math.max(0, x0 - pad),
-    h: Math.min(page.h, y1 + pad) - Math.max(0, y0 - pad),
-  }
-  return box.w * box.h > page.w * page.h * 0.8 ? null : box
-}
-
 /** 浮卡里的大一号缩略图：同一张存好的位图，对准页面上有内容的那块；没有位图画草图；都没有留占位 */
 function PeekThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
   const page = meta.sketch?.page ?? meta.page
   const ratio = page && page.w > 0 && page.h > 0 ? `${page.w} / ${page.h}` : '4 / 3'
-  if (meta.thumb) {
-    const box = page && meta.sketch ? contentBox(page, meta.sketch.objects) : null
-    if (page && box) {
-      const fw = PEEK_FRAME_W
-      const fh = Math.max(PEEK_FRAME_MIN_H, Math.min(PEEK_FRAME_MAX_H, (fw * box.h) / box.w))
-      const k = Math.min(fw / box.w, fh / box.h)
-      return (
-        <span
-          className="relative block overflow-hidden rounded-xs border border-border-strong bg-paper"
-          style={{ width: fw, height: fh }}
-          data-timeline-scrubber-peek-crop
-        >
-          <img
-            src={versionThumbUrl(docId, meta)}
-            alt=""
-            className="absolute max-w-none"
-            style={{
-              width: page.w * k,
-              height: page.h * k,
-              left: fw / 2 - (box.x + box.w / 2) * k,
-              top: fh / 2 - (box.y + box.h / 2) * k,
-            }}
-          />
-        </span>
-      )
-    }
+  if (meta.thumb && page && page.w > 0 && page.h > 0) {
+    const box = meta.sketch ? contentBox(page, meta.sketch.objects) : null
+    const b = box ?? { w: page.w, h: page.h }
+    const fh = Math.max(PEEK_FRAME_MIN_H, Math.min(PEEK_FRAME_MAX_H, (PEEK_FRAME_W * b.h) / b.w))
     return (
-      <img
-        src={versionThumbUrl(docId, meta)}
-        alt=""
-        className="w-full rounded-xs border border-border-strong bg-paper object-contain"
-        style={{ aspectRatio: ratio }}
-      />
+      <CropFrame
+        page={page}
+        box={box}
+        width={PEEK_FRAME_W}
+        height={fh}
+        className="rounded-xs border border-border-strong"
+        data-timeline-scrubber-peek-crop={box ? '' : undefined}
+      >
+        {() => <img src={versionThumbUrl(docId, meta)} alt="" className="block size-full max-w-none" />}
+      </CropFrame>
     )
   }
   if (meta.sketch) {

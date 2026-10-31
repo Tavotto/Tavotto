@@ -59,6 +59,7 @@ import {
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
 import { TimelineScrubber } from './TimelineScrubber'
+import { contentBox, CropFrame, unionBox } from './versionThumbCrop'
 import { Badge } from './ui/Badge'
 import { Card } from './ui/Card'
 import { Notice } from './ui/Notice'
@@ -634,6 +635,18 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
   // 位图缩略图 = 拍节点那一刻带 overrides 的样子；旧节点 / 拍图失败的退回草图
   // （画的是当前磁盘素材，回答「哪一版」）；连草图都画不出来留同尺寸占位
   if (meta.thumb) {
+    // 对准页面上有内容的那块（单图编辑没有「页面」，图偏在页面一角也该居中看，见 `contentBox`）
+    const page = meta.sketch?.page ?? meta.page
+    const box = page && meta.sketch ? contentBox(page, meta.sketch.objects) : null
+    if (page && box) {
+      return (
+        <CropFrame page={page} box={box} width={56} height={40} className="rounded-xs border border-border-strong">
+          {() => (
+            <img src={versionThumbUrl(docId, meta)} alt="" data-timeline-thumb className="block size-full max-w-none" />
+          )}
+        </CropFrame>
+      )
+    }
     return (
       <img
         src={versionThumbUrl(docId, meta)}
@@ -955,40 +968,58 @@ function CompareCard({
   }, [docId, meta.id])
   // 浮层 p-2 + 灰底 p-2 + 两格间距
   const half = (CARD_W - 16 - 16 - 12) / 2
+  // 两格都对准内容。页面一样大时用**同一个框**（两边内容的并集），位置变了要看得出来；
+  // 页面尺寸变过就各裁各的，各按自己的比例（Codex #1349）
+  const momentPage = doc?.page ?? meta.sketch?.page ?? meta.page ?? currentDoc.page
+  const momentObjects = doc?.objects ?? meta.sketch?.objects
+  const momentBox = momentObjects ? contentBox(momentPage, momentObjects) : null
+  const currentBox = contentBox(currentDoc.page, currentDoc.objects)
+  const samePage = momentPage.w === currentDoc.page.w && momentPage.h === currentDoc.page.h
+  const shared = samePage ? unionBox(momentBox, currentBox) : null
   const frame = (d: FigureDocument | null, caption: string, which: 'moment' | 'current') => {
-    const page = d?.page ?? meta.sketch?.page ?? meta.page ?? currentDoc.page
-    const width = cardFrameWidth(page, half, CARD_FRAME_MAX_H)
+    const page = which === 'moment' ? momentPage : currentDoc.page
+    const cropBox = samePage ? shared : which === 'moment' ? momentBox : currentBox
+    const b = cropBox ?? page
+    const width = cardFrameWidth(b, half, CARD_FRAME_MAX_H)
     const placeholder = which === 'moment' && hasThumb && (!d || momentPending)
     return (
       <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
         <div className="relative" style={{ width }} data-timeline-card-box>
-          {d ? (
-            <LayoutSnapshot
-              doc={d}
-              renderOverrides
-              displayWidth={width}
-              onApproximate={which === 'moment' ? setApproximate : undefined}
-              onPending={which === 'moment' ? setMomentPending : undefined}
-            />
-          ) : (
-            <div className="w-full rounded-xs border border-border bg-paper" style={{ aspectRatio: `${page.w} / ${page.h}` }} />
-          )}
-          {placeholder && (
-            <div className="absolute inset-0" data-timeline-card-placeholder>
-              {meta.thumb ? (
-                <img
-                  src={versionThumbUrl(docId, meta)}
-                  alt=""
-                  className="size-full rounded-xs border border-border bg-paper object-contain"
-                />
-              ) : (
-                meta.sketch && (
-                  <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} className="size-full" />
-                )
-              )}
-              <Spinner size={ICON_SIZE.xs} className="absolute bottom-1 right-1 text-ink-3" />
-            </div>
-          )}
+          <CropFrame
+            page={page}
+            box={cropBox}
+            width={width}
+            height={(width * b.h) / b.w}
+            className="rounded-xs border border-border"
+          >
+            {(pageWidth) => (
+              <>
+                {d ? (
+                  <LayoutSnapshot
+                    doc={d}
+                    renderOverrides
+                    displayWidth={pageWidth}
+                    onApproximate={which === 'moment' ? setApproximate : undefined}
+                    onPending={which === 'moment' ? setMomentPending : undefined}
+                  />
+                ) : (
+                  <span className="block size-full bg-paper" />
+                )}
+                {placeholder && (
+                  <span className="absolute inset-0 block bg-paper" data-timeline-card-placeholder>
+                    {meta.thumb ? (
+                      <img src={versionThumbUrl(docId, meta)} alt="" className="block size-full max-w-none" />
+                    ) : (
+                      meta.sketch && (
+                        <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} className="size-full" />
+                      )
+                    )}
+                  </span>
+                )}
+              </>
+            )}
+          </CropFrame>
+          {placeholder && <Spinner size={ICON_SIZE.xs} className="absolute bottom-1 right-1 text-ink-3" />}
         </div>
         <figcaption className="type-caption">{caption}</figcaption>
       </figure>

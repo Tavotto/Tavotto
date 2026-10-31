@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contentBox } from './TimelineScrubber'
+import { contentBox, unionBox } from './versionThumbCrop'
 
 const page = { w: 150, h: 100 }
 
@@ -33,5 +33,13 @@ describe('浮卡缩略图对准页面上有内容的那块（contentBox）', () 
     expect(box!.x).toBeLessThan(10)
     expect(box!.x + box!.w).toBeGreaterThan(80)
     expect(box!.y + box!.h).toBeGreaterThan(50)
+  })
+})
+
+describe('对比卡片两格共用的框（unionBox）', () => {
+  it('取并集；任一边不裁就都不裁', () => {
+    expect(unionBox({ x: 10, y: 10, w: 20, h: 20 }, { x: 40, y: 5, w: 10, h: 10 })).toEqual({ x: 10, y: 5, w: 40, h: 25 })
+    expect(unionBox(null, { x: 40, y: 5, w: 10, h: 10 })).toBeNull()
+    expect(unionBox({ x: 40, y: 5, w: 10, h: 10 }, null)).toBeNull()
   })
 })
