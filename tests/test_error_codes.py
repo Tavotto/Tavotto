@@ -460,6 +460,7 @@ USER_VISIBLE_CODES = {
     "eps_needs_script": {"figure"},
     "eps_source_unverified": {"figure"},
     "eps_needs_live_figure": {"figure"},
+    "eps_annotations_need_converter": set(),
     "export_basis_mismatch": {"format"},
     "svg_source_unsupported": {"id"},
     "svg_figure_unavailable": {"figure"},

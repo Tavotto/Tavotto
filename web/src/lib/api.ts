@@ -1926,6 +1926,11 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   source_kind?: string
   /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
   ignored?: string[]
+  /**
+   * 画布上的标注（text / arrow / shape，QA-WIN-20）：坐标已换算到原图图幅（图左上角为原点、mm），后端用整版导出
+   * 那条合成路径画在原图上。缺省 / 空 = 纯原图导出（载荷与从前逐字节相同）；非空时 `w_mm` / `h_mm` 必填。
+   */
+  objects?: ExportObject[]
 }
 
 export interface ExportRequest {

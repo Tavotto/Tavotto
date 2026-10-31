@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { type CanvasObject, type FigureDocument, type PanelObject } from '@/types/document'
-import { singleAnnotatedDocument } from './singleExportDoc'
+import { annotationsOf, singleAnnotatedDocument } from './singleExportDoc'
 import type { OriginalOutputSpec } from './originalSpec'
 
 const panel: PanelObject = {
@@ -68,8 +68,14 @@ describe('singleAnnotatedDocument（QA-WIN-20）', () => {
     expect([out.objects[1].x, out.objects[1].y]).toEqual([170, 130])
   })
 
-  it('规格是占位值（fallback）时按画布上图的完整显示尺寸', () => {
+  it('没有规格：不合成（没有图幅就没有页面）；占位规格照样按请求里的图幅', () => {
+    expect(singleAnnotatedDocument(docOf([panel, text()]), panel, null)).toBeNull()
     const out = singleAnnotatedDocument(docOf([panel, text()]), panel, spec(10, 10, true))!
-    expect([out.page.w, out.page.h]).toEqual([80, 60])
+    expect([out.page.w, out.page.h]).toEqual([10, 10])
+  })
+
+  it('annotationsOf：只取可见的非面板对象', () => {
+    const out = singleAnnotatedDocument(docOf([panel, text(), text({ id: 't2', hidden: true })]), panel, spec())!
+    expect(annotationsOf(out).map((o) => o.id)).toEqual(['t1'])
   })
 })

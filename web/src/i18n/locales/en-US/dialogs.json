@@ -202,8 +202,7 @@
     "epsUnavailable": {
       "canvas_scope": "EPS only supports exporting a single figure: export from single-figure editing, or choose “Each figure separately”.",
       "figure_not_ready": "EPS isn’t available for this figure yet: it has to be redrawn by its script. Run the figure’s script first, then export again.",
-      "no_script": "This figure has no script to re-run. EPS can only come from the script.",
-      "with_annotations": "EPS isn’t available while the figure carries canvas annotations: they are composed onto the figure, and EPS can only come straight from the script. Remove the annotations to export EPS."
+      "no_script": "This figure has no script to re-run. EPS can only come from the script."
     },
     "exported": "Exported: {{files}}",
     "filenameError": {

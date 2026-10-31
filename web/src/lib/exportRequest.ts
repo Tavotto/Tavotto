@@ -31,7 +31,7 @@ import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
-import type { FigureDocument, PanelObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
@@ -164,7 +164,6 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  *
  * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
  * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画；
- * * `with_annotations`：单图档带着画布上的标注导出（标注由画布合成画上去，没有 PostScript 写入器）；
  * * `figure_not_ready`：单图档（没有范围选择）里这张图此刻按原图导不出（还没运行过 / 源文件不在），
  *   于是静默按画布导，而画布没有 EPS——此时再说「选每张图单独导出」是指向一个不存在的选项，改说「先运行这张图」。
  *
@@ -176,7 +175,7 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
  * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
  */
-export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'figure_not_ready' | 'with_annotations'
+export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'figure_not_ready'
 
 export function epsAvailability(
   scope: ExportScope,
@@ -185,12 +184,9 @@ export function epsAvailability(
   route?: ExportRoute | null,
   /** 单图档（没有范围选择）：画布范围只可能是「原图口径不可用」的静默退路 */
   single = false,
-  /** 单图档带着画布标注合成导出（`lib/singleExportDoc`）：走画布合成，给不出 EPS */
-  annotated = false,
 ): { ok: boolean; reason: EpsBlockReason } {
   if (scope !== 'original') {
     if (!single) return { ok: false, reason: 'canvas_scope' }
-    if (annotated) return { ok: false, reason: 'with_annotations' }
     // 单图档静默退到画布：先说「这张图没有脚本」（静态文件 / 原文件已删），只有 runtime 图才说「先运行它」
     if (!figureId || (!figureId.startsWith('runtime:') && !useAssetStore.getState().byId[figureId]?.script)) {
       return { ok: false, reason: 'no_script' }
@@ -227,6 +223,8 @@ export interface ExportRequestInput {
   mergePages?: readonly { figureId: string; panel: PanelObject | null; spec: OriginalOutputSpec | null }[]
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
+  /** 单图带标注（QA-WIN-20）：已换算到原图图幅的标注对象（`lib/singleExportDoc.annotationsOf`）；进 `original.objects` */
+  annotations?: readonly CanvasObject[]
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
@@ -311,6 +309,8 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       request.merge_pdf = { pages: input.mergePages.map((p) => sourceOf(p.figureId, p.panel, p.spec)) }
     } else {
       request.original = sourceOf(input.figureId ?? '', input.panel ?? null, input.spec ?? null)
+      const objects = input.annotations?.length ? toExportObjects([...input.annotations]) : []
+      if (objects.length) request.original.objects = objects
     }
   }
   if (input.report) request.style_check_report = input.report

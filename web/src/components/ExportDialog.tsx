@@ -126,7 +126,7 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
-import { singleAnnotatedDocument } from "@/lib/singleExportDoc";
+import { singleAnnotatedDocument, annotationsOf } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
@@ -454,25 +454,25 @@ export function ExportDialog() {
     if (!open) setCanvasAccepted(false);
   }, [open, figureId]);
   // 明确「不认」的 runtime 图：留在原图口径（按钮灰、给 note），用户显式点「改按画布导出」才退到画布；其余不可用情形照旧静默退画布
-  const baseScope: ExportScope = single
+  const scope: ExportScope = single
     ? availability.ok || (runtimeRefused && !canvasAccepted)
       ? "original"
       : "canvas"
     : scopeState;
+  const singleFallback = single && scope === "canvas";
   /**
-   * 单图档、原图口径可用、画布上有可见标注：把「图 + 标注」合成一份以原图图幅为页面的文档，走整版导出那条
-   * 画布合成路径（`lib/singleExportDoc`，QA-WIN-20）；预览与请求吃同一份。没有标注 = null，请求照旧是纯原图。
+   * 单图档、原图口径、画布上有可见标注（QA-WIN-20）：`lib/singleExportDoc` 把「图 + 标注」合成一份以原图图幅为页面的
+   * 文档。**预览画这份；请求里的 `original.objects` 取这份里的标注部分**——预览与文件同一个来源。后端用整版导出那条
+   * RenderCore 路径把标注画在原图上（PDF / SVG / PNG / TIFF / EPS 都带）。没有标注 = null，请求与从前逐字节相同。
    */
   const annotatedDoc = useMemo(
     () =>
-      single && baseScope === "original" && availability.ok
+      single && scope === "original" && availability.ok
         ? singleAnnotatedDocument(doc, panel, availability.spec)
         : null,
-    [single, baseScope, availability.ok, availability.spec, doc, panel],
+    [single, scope, availability.ok, availability.spec, doc, panel],
   );
-  const singleAnnotated = annotatedDoc !== null;
-  const scope: ExportScope = singleAnnotated ? "canvas" : baseScope;
-  const singleFallback = single && scope === "canvas" && !singleAnnotated;
+  const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
     () =>
@@ -488,8 +488,8 @@ export function ExportDialog() {
    * 其余情形就是 `doc` 本身。不另设「裁切开关」——两份判据会分叉。
    */
   const exportDoc = useMemo(
-    () => annotatedDoc ?? (singleFallback ? croppedDocument(doc) : doc),
-    [annotatedDoc, singleFallback, doc],
+    () => (singleFallback ? croppedDocument(doc) : doc),
+    [singleFallback, doc],
   );
   const exportPage = exportDoc.page;
   /**
@@ -735,9 +735,9 @@ export function ExportDialog() {
   const uncheckedOffCanvas = scope === "original" && !!figureId && !panel;
   /** 单图退路：检查吃裁后的文档（与交付物同一份），不吃整页的画布结果 */
   const cropped = useMemo(
-    () => (singleFallback || singleAnnotated ? croppedValidationFor(checkCanvasId, exportDoc) : null),
+    () => (singleFallback ? croppedValidationFor(checkCanvasId, exportDoc) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [singleFallback, singleAnnotated, checkCanvasId, exportDoc, validationIssues],
+    [singleFallback, checkCanvasId, exportDoc, validationIssues],
   );
   const summary = useMemo(
     () =>
@@ -835,9 +835,9 @@ export function ExportDialog() {
     [scope, route, formats],
   );
   const eps = useMemo(
-    () => epsAvailability(scope, figureId, route, single, singleAnnotated),
+    () => epsAvailability(scope, figureId, route, single),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets, route, single, singleAnnotated],
+    [scope, figureId, assets, runtimeAssets, route, single],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -857,6 +857,7 @@ export function ExportDialog() {
       figureId,
       panel,
       spec: availability.spec,
+      annotations,
       route,
       ...over,
     };
@@ -1636,7 +1637,7 @@ export function ExportDialog() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
       <ExportPreviewPane
         single={single}
-        fallbackPage={singleFallback || singleAnnotated}
+        fallbackPage={singleFallback || annotatedDoc !== null}
         fallbackCrop={fallbackCrop}
         doc={doc}
         figures={single ? figures : canvasFigures}

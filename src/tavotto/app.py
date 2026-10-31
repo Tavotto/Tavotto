@@ -128,6 +128,7 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
+    pdfeps as engine_pdfeps,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -2320,6 +2321,97 @@ def _original_svg_result(path, artifact, receipt):
     )
 
 
+def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    """`scope=original` 且带画布标注（QA-WIN-20）：图 + 标注由**整版导出那条 RenderCore 合成路径**画。
+
+    构造一份「页面 = 原图图幅、面板在 (0,0)、再叠标注」的画布请求，交给 `_export_produce_rendercore`——标注怎么画
+    只有那一份实现。坐标由前端换算到原图图幅，图幅之外的部分被页面裁掉。PDF / SVG / PNG / TIFF 直接出自这份合成；
+    位图源的 ppi 取「页面像素数 = 源像素网格」，尺寸与不带标注的原图导出一致。
+    EPS：RenderCore 没有 PostScript 写入器，由**同一份带标注 PDF** 经 `engine/pdfeps` 转真矢量 EPS；
+    转换器不可用时这一项逐项失败（`eps_annotations_need_converter`），其余格式照常交付，不静默丢标注。
+    """
+    import dataclasses
+
+    req = job.request
+    src = req.original
+    panel = {
+        "type": "panel",
+        "id": src.figure_id,
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": src.w_mm,
+        "h_mm": src.h_mm,
+        **({"overrides": src.overrides} if src.overrides else {}),
+        **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
+        **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
+        **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
+        **(
+            {"confirmed_reconstruction_sha256": src.confirmed_reconstruction_sha256}
+            if src.confirmed_reconstruction_sha256 is not None
+            else {}
+        ),
+    }
+    canvas = engine_exportreq.CanvasSource(
+        page_w_mm=float(src.w_mm), page_h_mm=float(src.h_mm), objects=[panel, *src.objects]
+    )
+    ppi = req.ppi
+    if src.source_kind == "raster" and src.px_w:
+        # 位图源保持源像素网格：页面 w_mm 对应 px_w 个像素 → 有效 dpi = px_w / (w_mm / 25.4)
+        ppi = float(src.px_w) * 25.4 / float(src.w_mm)
+    wants_eps = engine_exportreq.FORMAT_EPS in req.formats
+    formats = tuple(f for f in req.formats if f != engine_exportreq.FORMAT_EPS)
+    produced: list = []
+    dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
+    if formats:
+        canvas_req = dataclasses.replace(
+            req,
+            scope=engine_exportreq.SCOPE_CANVAS,
+            formats=formats,
+            ppi=ppi,
+            canvas=canvas,
+            original=None,
+        )
+        produced = _export_produce_rendercore(_PageJob(job, canvas_req), tmp_dir, **dir_arg)
+    if wants_eps:
+        produced.append(_produce_annotated_eps(job, req, canvas, tmp_dir, dir_arg))
+    return produced
+
+
+def _produce_annotated_eps(job, req, canvas, tmp_dir: Path, dir_arg: dict):
+    """带标注的 EPS：RenderCore 出带标注 PDF → `engine_pdfeps.pdf_to_eps`；转换器不可用就逐项失败。"""
+    import dataclasses
+
+    fmt = engine_exportreq.FORMAT_EPS
+    if not engine_pdfeps.available():
+        return engine_exportjob.Produced(format=fmt, error_code="eps_annotations_need_converter")
+    sub = tmp_dir / "eps_src"
+    sub.mkdir(parents=True, exist_ok=True)
+    pdf_req = dataclasses.replace(
+        req,
+        scope=engine_exportreq.SCOPE_CANVAS,
+        formats=(engine_exportreq.FORMAT_PDF,),
+        ppi=None,
+        canvas=canvas,
+        original=None,
+    )
+    (pdf_item,) = _export_produce_rendercore(_PageJob(job, pdf_req), sub, **dir_arg)
+    if pdf_item.tmp_path is None:
+        return engine_exportjob.Produced(
+            format=fmt, error_code=pdf_item.error_code, error_params=pdf_item.error_params
+        )
+    out = tmp_dir / "out.eps"
+    if not engine_pdfeps.pdf_to_eps(pdf_item.tmp_path, out):
+        return engine_exportjob.Produced(format=fmt, error_code="eps_annotations_need_converter")
+    bbox = engine_epsfile.bounding_box_pt(out)
+    return engine_exportjob.Produced(
+        format=fmt,
+        tmp_path=out,
+        width_mm=round(bbox[0] * 25.4 / 72.0, 3) if bbox else None,
+        height_mm=round(bbox[1] * 25.4 / 72.0, 3) if bbox else None,
+        vector=True,
+    )
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -2332,6 +2424,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if src.objects:
+        return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides

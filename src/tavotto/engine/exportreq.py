@@ -292,6 +292,10 @@ class OriginalSource:
     figure_snapshot: dict | None = None
     #: 来源驱动采用（ADR 0139 §五）：用户确认时那份重画的字节摘要；带真实编辑的请求必须带它
     confirmed_reconstruction_sha256: str | None = None
+    #: 画布上的标注（text / arrow / shape，QA-WIN-20）：**坐标已由前端换算到原图图幅**（图左上角为原点、mm），
+    #: 且只含可见对象；图幅之外的部分由页面裁掉。为空 = 纯原图导出（请求与输出与从前逐字节相同）。
+    #: 不带 x/y/w/h 之外的版面字段——页面就是图幅（`w_mm` × `h_mm`，非空时必填）。
+    objects: tuple[dict, ...] = ()
 
 
 #: 多页 PDF 一次最多合几页。上限不是审美：每页各走一次单页导出，几百页的作业是在卡住 worker。
@@ -466,6 +470,7 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             "px_w": req.original.px_w,
             "px_h": req.original.px_h,
             "source_kind": req.original.source_kind,
+            **({"objects": list(req.original.objects)} if req.original.objects else {}),
             **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
@@ -599,6 +604,28 @@ def _figure_snapshot(source):
         raise ExportRequestError("bad_request", "Invalid Figure snapshot reference", {}) from exc
 
 
+#: `original.objects` 里允许的类型：标注。面板不许（图自己就是 `figure_id`；第二张图是整版的事）。
+ORIGINAL_OBJECT_TYPES = ("text", "arrow", "shape")
+
+
+def _original_objects(source: dict) -> tuple[dict, ...]:
+    raw = source.get("objects")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ExportRequestError("bad_objects", "original.objects 必须是一个列表", {})
+    objects = []
+    for obj in raw:
+        if not isinstance(obj, dict) or obj.get("type") not in ORIGINAL_OBJECT_TYPES:
+            raise ExportRequestError(
+                "bad_objects", "original.objects 只能是 text / arrow / shape 标注", {}
+            )
+        objects.append(obj)
+    if objects and not (source.get("w_mm") and source.get("h_mm")):
+        raise ExportRequestError("bad_objects", "带标注的原图导出必须给出原图图幅 w_mm / h_mm", {})
+    return tuple(objects)
+
+
 def _original_source(source: Any) -> OriginalSource:
     """`original` 段（以及多页 PDF 里每一页的来源）→ `OriginalSource`。**一份解析，两处用**。"""
     if not isinstance(source, dict):
@@ -609,7 +636,9 @@ def _original_source(source: Any) -> OriginalSource:
     overrides = source.get("overrides") or []
     if not isinstance(overrides, list):
         raise ExportRequestError("bad_overrides", "overrides 必须是一个列表", {})
+    objects = _original_objects(source)
     return OriginalSource(
+        objects=objects,
         figure_id=figure_id,
         source_policy=source.get("source_policy"),
         expected_source=_source_basis(source, overrides),

@@ -52,6 +52,13 @@ order: 210
     没有脚本的图报 `eps_needs_script`（有脚本但没有活 Figure 另报 `eps_needs_live_figure`），其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
     也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
+    **原图导出带画布标注（QA-WIN-20，2026-10-31）**：`original.objects`（`OriginalSource.objects`，仅 text / arrow / shape，坐标已由前端换算到原图图幅、
+    图幅外由页面裁掉；非空时 `w_mm` / `h_mm` 必填，否则 `bad_objects`）。非空时 `app._export_produce_original_annotated` 构造「页面 = 图幅、面板在 (0,0) + 标注」的
+    画布请求交给 `_export_produce_rendercore`——标注绘制只有 RenderCore 一份。PDF / SVG / PNG / TIFF 直接出自这份合成（SVG 能力与整版一致：同一个源整版给不出 SVG 时这里给同一个稳定码）；
+    位图源取有效 ppi = `px_w` × 25.4 / `w_mm`，页面像素数 = 源像素网格（尺寸一致，不保证逐像素）。**EPS**：同一份带标注 PDF 交 `engine/pdfeps.pdf_to_eps`
+    （Ghostscript `eps2write`，参数固定 `-q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=eps2write`；只认环境变量 `TAVOTTO_GHOSTSCRIPT` 与捆绑的 `resources/ghostscript/bin/gs`，不搜 PATH），
+    转换器不可用时这一项逐项失败 `eps_annotations_need_converter`，其余格式照常交付，**不静默丢标注**。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
+    看护 `tests/test_export_original_annotations.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
     `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字**默认保留为 `<text>`**（ADR 0144，取代 X03 起的「一律转轮廓」；
