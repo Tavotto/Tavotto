@@ -917,8 +917,11 @@ describe('文件名的跨平台校验', () => {
 })
 
 describe('撞名确认只对触发它的输出目标有效（QA-WIN-18）', () => {
-  const nameInput = () =>
-    [...document.body.querySelectorAll('input')].find((i) => i.type !== 'checkbox') as HTMLInputElement
+  const nameInput = () => {
+    const all = document.body.querySelectorAll<HTMLInputElement>('input[data-export-filename]')
+    expect(all, '文件名输入框是单例').toHaveLength(1)
+    return all[0]
+  }
   const typeName = async (v: string) =>
     act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput(), v)

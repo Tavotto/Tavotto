@@ -1736,6 +1736,7 @@ export function ExportDialog() {
               <FormRow label={<label htmlFor="export-filename">{ex("filenameLabel")}</label>}>
                 <TextInput
                   id="export-filename"
+                  data-export-filename
                   value={filename}
                   onChange={(e) => {
                     setFilenameTouched(true);
