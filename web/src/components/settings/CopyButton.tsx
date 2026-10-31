@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from '@/components/ui/icons'
+import { playIcon } from '@/components/ui/iconMotion'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -48,6 +49,11 @@ export function CopyButton({
   const [done, setDone] = useState(false)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
+  // 勾一直挂着（与复制图标叠在同一格淡换），所以「已复制」那一刻手动播它一笔画出来（ADR 0156）
+  const checkRef = useRef<SVGSVGElement>(null)
+  useEffect(() => {
+    if (done && checkRef.current) playIcon(checkRef.current)
+  }, [done])
   const copy = async () => {
     const value = typeof text === 'function' ? text() : text
     try {
@@ -85,6 +91,7 @@ export function CopyButton({
             )}
           />
           <Check
+            ref={checkRef}
             size={ICON_SIZE.sm}
             aria-hidden
             className={cn(
@@ -119,7 +126,7 @@ export function CopyButton({
           className={cn('col-start-1 row-start-1 inline-flex items-center gap-1 transition-opacity duration-fast', !done && 'opacity-0')}
           aria-hidden={!done || undefined}
         >
-          <Check size={ICON_SIZE.sm} aria-hidden />
+          <Check ref={checkRef} size={ICON_SIZE.sm} aria-hidden />
           <span>{st('copied')}</span>
         </span>
       </span>

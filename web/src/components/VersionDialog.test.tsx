@@ -45,7 +45,7 @@ import {
   type LayoutVersionMeta,
   type TimelineBudget,
 } from '@/lib/api'
-import { TimelinePanel, TimelinePreviewDialog } from '@/components/VersionDialog'
+import { restoreNode, TimelinePanel, TimelinePreviewDialog } from '@/components/VersionDialog'
 import { startNamedNode } from '@/store/actions'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
@@ -697,7 +697,8 @@ describe('按天分组、类型标记、只看命名', () => {
       meta({ id: 'a', ts: NOW - 2000 }),
       meta({ id: 'n', ts: NOW - 1000, kind: 'named', named: true, auto: false, name: '投稿前' }),
     ])
-    await act(async () => $<HTMLButtonElement>('[data-timeline-filter] [data-value="named"]')!.click())
+    // 「命名」是一颗开关（beta 0.19.3b3 起与范围并成一行）
+    await act(async () => $<HTMLButtonElement>('[data-timeline-filter="all"]')!.click())
     expect([...document.querySelectorAll('[data-timeline-node]')].map((n) => n.getAttribute('data-timeline-node'))).toEqual(['n'])
     expect(days()).toEqual(['今天'])
   })
@@ -1800,11 +1801,13 @@ describe('对比小卡片（Codex #1349）', () => {
     await openCard('a1')
     const boxes = [...document.querySelectorAll<HTMLElement>('[data-timeline-card-box]')]
     expect(boxes).toHaveLength(2)
-    const [moment, current] = boxes.map((b) => parseFloat(b.style.width))
-    // 那一刻是 10 × 1000：按自己的比例缩，高 = 宽 × 100 ≤ 190；当前是 150 × 100，不借用历史的比例
-    expect(moment * 100).toBeLessThanOrEqual(190 + 1e-6)
-    expect(current).toBe(148)
-    expect(current / 1.5).toBeLessThanOrEqual(190)
+    // 两格对准各自页面上有内容的那块（页面尺寸不同 → 各裁各的，不借用对方的框）：
+    // 量的是每一格**实际画出来**的外框——都不超过半宽、不超过最大高度
+    const frames = boxes.map((b) => b.firstElementChild as HTMLElement)
+    for (const f of frames) {
+      expect(parseFloat(f.style.width)).toBeLessThanOrEqual(148 + 1e-6)
+      expect(parseFloat(f.style.height)).toBeLessThanOrEqual(190 + 1e-6)
+    }
   })
 })
 
@@ -1993,8 +1996,16 @@ const twoCanvases = async () => {
     })
   })
 }
-const showAllCanvases = () =>
-  act(async () => $<HTMLElement>('[data-timeline-scope] [data-value="all"]')!.click())
+/** 范围是一颗文字下拉（beta 0.19.3b3 起）：先按下触发器打开菜单，再选「全部…」那一项 */
+async function pickScope(value: 'current' | 'all') {
+  await act(async () => {
+    $<HTMLElement>('[data-timeline-scope]')!.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }),
+    )
+  })
+  await act(async () => $<HTMLElement>(`[data-timeline-scope-option="${value}"]`)!.click())
+}
+const showAllCanvases = () => pickScope('all')
 
 describe('每张画布各有自己的时间线（beta 0.19.0b3 反馈：不同脚本的版本别混在一条里）', () => {
   const mixed = () => [
@@ -2088,7 +2099,7 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     meta({ id: 'vAB', ts: NOW - 180_000, figures: ['a', 'b'] }),
     meta({ id: 'vOld', ts: NOW - 240_000 }), // 没有 figures：不知道有哪些图
   ]
-  const showAll = () => act(async () => $<HTMLElement>('[data-timeline-scope] [data-value="all"]')!.click())
+  const showAll = () => pickScope('all')
 
   it('单图编辑：默认只显示含当前这张图的节点；开关写「这张图 / 全部」，切到全部才都在', async () => {
     await withFigures('a')
@@ -2114,11 +2125,169 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     expect(nodeIds()).toEqual(['x1', 'x0'])
   })
 
-  it('多图排版（没有「当前这张图」）：不出这个开关，显示排版级的全部节点', async () => {
+  it('多图排版（没有「当前这张图」，beta 0.19.3b3 反馈）：开关写「这个排版 / 全部图」，默认只显示排版的版本', async () => {
     await withFigures('a', 'b')
     await mount(list())
-    expect($('[data-timeline-scope]')).toBeNull()
+    expect($('[data-timeline-scope]')!.textContent).toContain('这个排版')
+    expect(nodeIds()).toEqual(['vAB'])
+    await showAll()
     expect(nodeIds()).toHaveLength(5)
+  })
+
+  it('排版里只有排版的版本：不出开关、不过滤', async () => {
+    await withFigures('a', 'b')
+    await mount([meta({ id: 'l1', ts: NOW, figures: ['a', 'b'] }), meta({ id: 'l0', ts: NOW - 60_000, figures: ['b', 'c'] })])
+    expect($('[data-timeline-scope]')).toBeNull()
+    expect(nodeIds()).toEqual(['l1', 'l0'])
+  })
+
+  // 恢复别的图（用户 2026-10-31 问：当前这张会不会丢、新旧图会不会混）
+  const docWith = (fileId: string): FigureDocument => ({
+    ...snapshot(),
+    objects: [
+      { id: `p_${fileId}`, type: 'panel', fileId, fileKind: 'pdf', name: fileId, x: 0, y: 0, w: 40, h: 30, rotation: 0, opacity: 1, overrides: [] },
+    ] as never,
+  })
+  const confirmText = () => {
+    const c = useUiStore.getState().confirm
+    return c ? `${formatMessage(c.title)}｜${formatMessage(c.body)}` : null
+  }
+
+  it('同一张画布上的另一张图：先问一句会把当前这张换掉；恢复后范围切到「全部图」，「恢复前」看得见', async () => {
+    await withFigures('a')
+    await mount(list())
+    expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('current')
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(meta({ id: 'vB', figures: ['b'] }), docWith('b'))
+    })
+    await flush()
+    expect(confirmText()).toContain('换成图「b」')
+    expect(confirmText()).toContain('当前的图「a」会先存成「恢复前」')
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(await done).toBe(true)
+    await flush()
+    // 「恢复前」先存下了（被换掉的 a），画布上换成了 b
+    expect(mockCreate).toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc.objects.map((o) => (o as { fileId?: string }).fileId)).toEqual(['b'])
+    expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('all')
+  })
+
+  const docWithMany = (...fileIds: string[]): FigureDocument => ({
+    ...snapshot(),
+    objects: fileIds.map((fileId, i) => ({
+      id: `p_${fileId}`, type: 'panel', fileId, fileKind: 'pdf', name: fileId, x: i * 40, y: 0, w: 40, h: 30, rotation: 0, opacity: 1, overrides: [],
+    })) as never,
+  })
+  const startRestore = async (m: LayoutVersionMeta, d: FigureDocument) => {
+    await act(async () => useUiStore.getState().setConfirm(null))
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(m, d)
+    })
+    await flush()
+    // 包一层：async 函数直接 return 一个 Promise 会被一路等到恢复结束（而恢复在等确认框）
+    return { done }
+  }
+
+  // 用户 2026-10-31 实测：一张 → 四张的排版、四张 → 一张都没弹窗，页面闪一下就变了
+  it('一张图恢复成多张图的排版（版本里也有当前这张）：照样先问，说清会变成几张图', async () => {
+    await withFigures('a')
+    await mount(list())
+    const { done } = await startRestore(meta({ id: 'vL', figures: ['a', 'b', 'c', 'd'] }), docWithMany('a', 'b', 'c', 'd'))
+    expect(confirmText()).toContain('恢复成 4 张图的排版')
+    expect(confirmText()).toContain('a、b、c 等')
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(await done).toBe(true)
+  })
+
+  it('多张图的排版恢复成其中一张：也先问', async () => {
+    await withFigures('a', 'b')
+    await mount(list())
+    const { done } = await startRestore(meta({ id: 'vA1', figures: ['a'] }), docWith('a'))
+    expect(confirmText()).toContain('换成图「a」')
+    expect(confirmText()).toContain('现在的 2 张图')
+    await act(async () => useUiStore.getState().confirm!.resolve(false))
+    expect(await done).toBe(false)
+    // 取消了：画布上还是那两张
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(2)
+  })
+
+  it('运行脚本出来的图按图名说，不说 runtime: 前缀与脚本名', async () => {
+    await withFigures('a')
+    await mount(list())
+    await startRestore(meta({ id: 'vR', figures: ['runtime:fig11_xps.py#Fig11_xps_chemistry'] }), docWith('runtime:fig11_xps.py#Fig11_xps_chemistry'))
+    expect(confirmText()).toContain('换成图「Fig11_xps_chemistry」')
+    expect(confirmText()).not.toContain('runtime')
+    await act(async () => useUiStore.getState().confirm!.resolve(false))
+  })
+
+  // 用户 2026-10-31 实测：卡片上点「恢复到这里」，锁用的模态预览先开、确认框叠在它上面，两层弹窗卡住
+  it('卡片上的恢复要换图：只弹确认框，不先开模态预览；继续后才上锁取正文、写进去', async () => {
+    await act(async () => useUiStore.getState().setConfirm(null))
+    await withFigures('a')
+    await mount(list())
+    mockDoc.mockResolvedValue({ doc: docWithMany('a', 'b') } as never)
+    await openCard('vAB')
+    const fetchesBefore = mockDoc.mock.calls.length
+    await act(async () => cardRestoreBtn()!.click())
+    await flush()
+    expect(confirmText()).toContain('恢复成 2 张图的排版')
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+    expect(mockDoc.mock.calls.length).toBe(fetchesBefore)
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    await flush()
+    await flush()
+    expect(useDocumentStore.getState().doc.objects.map((o) => (o as { fileId?: string }).fileId)).toEqual(['a', 'b'])
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+  })
+
+  it('卡片上的恢复点了取消：什么都不动，也不开预览', async () => {
+    await act(async () => useUiStore.getState().setConfirm(null))
+    await withFigures('a')
+    await mount(list())
+    mockDoc.mockResolvedValue({ doc: docWithMany('a', 'b') } as never)
+    await openCard('vAB')
+    const creates = mockCreate.mock.calls.length
+    await act(async () => cardRestoreBtn()!.click())
+    await flush()
+    await act(async () => useUiStore.getState().confirm!.resolve(false))
+    await flush()
+    expect(mockCreate.mock.calls.length).toBe(creates)
+    expect(useDocumentStore.getState().doc.objects.map((o) => (o as { fileId?: string }).fileId)).toEqual(['a'])
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+  })
+
+  it('同一张图的版本：不多问，照旧直接恢复', async () => {
+    // 前面用例答过的确认框还挂在 store 上（这里没挂真的确认对话框替它收）：先清掉，只看这一次问没问
+    await act(async () => useUiStore.getState().setConfirm(null))
+    await withFigures('a')
+    await mount(list())
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(meta({ id: 'vA1', figures: ['a'] }), docWith('a'))
+    })
+    expect(await done).toBe(true)
+    expect(confirmText()).toBeNull()
+    expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('current')
+  })
+
+  it('另一张画布上的图（单图编辑）：按「图」说，不说「画布」；继续则切过去写、当前这张不动', async () => {
+    await twoCanvases()
+    await withFigures('a')
+    await mount(list())
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(meta({ id: 'vB', figures: ['b'], canvasId: 'c_two', canvasName: 'Fig 2' }), docWith('b'))
+    })
+    await flush()
+    expect(confirmText()).toContain('恢复图「b」')
+    expect(confirmText()).toContain('不动当前这张图「a」')
+    expect(confirmText()).not.toContain('画布')
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(await done).toBe(true)
+    expect(useDocumentStore.getState().activeCanvasId).toBe('c_two')
   })
 
   it('这张图还没有节点：只说一句，不加解释', async () => {

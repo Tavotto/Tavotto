@@ -684,3 +684,86 @@ def test_key_moments_are_the_same_closed_set_on_both_sides():
     front = ast.literal_eval(hit.group(1))
     assert len(front) == len(set(front))
     assert set(front) == set(m.VERSION_MOMENTS)
+
+
+# ------------------------------------------- 缩略图只拍内容区域（`?box=`，beta 0.19.3b4 反馈）
+
+
+def test_a_cropped_thumbnail_records_its_box_and_the_list_reports_it(client):
+    v = _create(client, auto=True)
+    r = client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=70.5,20,80,45.25",
+        data=b"png",
+        content_type="image/png",
+    )
+    assert r.status_code == 200
+    got = _list(client)["versions"][0]
+    assert got["thumb"] == "png"
+    assert got["thumbBox"] == {"x": 70.5, "y": 20.0, "w": 80.0, "h": 45.25}
+
+
+def test_a_whole_page_thumbnail_drops_the_old_box(client):
+    """重拍成整页图（不带 box）：旧框必须一起走，不然整页图会按旧框裁。"""
+    v = _create(client, auto=True)
+    client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+    )
+    client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"webp", content_type="image/webp")
+    got = _list(client)["versions"][0]
+    assert got["thumb"] == "webp" and "thumbBox" not in got
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [f"{v['id']}.webp"]
+
+
+@pytest.mark.parametrize(
+    "box",
+    ["1,2,3", "1,2,3,0", "1,2,-3,4", "a,b,c,d", "nan,1,2,3", "1,2,inf,4", "1,2,3,4,5", "1,2,3,1e9"],
+)
+def test_bad_thumbnail_boxes_are_refused_and_nothing_is_written(client, box):
+    v = _create(client, auto=True)
+    r = client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box={box}", data=b"png", content_type="image/png"
+    )
+    assert r.status_code == 400 and r.get_json()["code"] == "version_thumb_invalid"
+    assert not _thumbs_dir().exists() or not any(_thumbs_dir().iterdir())
+
+
+def test_the_box_goes_with_its_node(client):
+    v = _create(client, auto=True)
+    keep = _create(client, auto=True)
+    for x in (v, keep):
+        client.put(
+            f"/api/versions/d1/{x['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+        )
+    assert client.delete(f"/api/versions/d1/{v['id']}").status_code == 200
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [
+        f"{keep['id']}.box",
+        f"{keep['id']}.png",
+    ]
+
+
+def test_an_unreadable_box_file_falls_back_to_whole_page(client):
+    v = _create(client, auto=True)
+    client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+    )
+    (_thumbs_dir() / f"{v['id']}.box").write_text("{not json", encoding="utf-8")
+    got = _list(client)["versions"][0]
+    assert got["thumb"] == "png" and "thumbBox" not in got
+
+
+def test_when_the_box_cannot_be_written_the_new_image_is_withdrawn(client, monkeypatch):
+    """图写上了、框写不上：宁可没有缩略图，也不让局部图按整页摆。"""
+    v = _create(client, auto=True)
+    real = m.engine_atomicio.write_bytes
+
+    def flaky(path, data, *a, **kw):
+        if str(path).endswith(".box"):
+            raise OSError("disk full")
+        return real(path, data, *a, **kw)
+
+    monkeypatch.setattr(m.engine_atomicio, "write_bytes", flaky)
+    r = client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+    )
+    assert r.status_code == 500 and r.get_json()["code"] == "version_thumb_write_failed"
+    assert "thumb" not in _list(client)["versions"][0]

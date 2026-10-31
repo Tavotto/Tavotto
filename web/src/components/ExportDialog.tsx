@@ -2941,7 +2941,7 @@ function InspectionLine({
         data-inspection="verified"
         className="flex items-center gap-1 text-sm text-ok-content"
       >
-        <CircleCheck size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+        <CircleCheck playIn size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
         {ex("inspection.verified")}
       </p>
     );
