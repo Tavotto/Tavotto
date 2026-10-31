@@ -460,7 +460,7 @@ USER_VISIBLE_CODES = {
     "eps_needs_script": {"figure"},
     "eps_source_unverified": {"figure"},
     "eps_needs_live_figure": {"figure"},
-    "eps_annotations_need_converter": set(),
+    "eps_annotations_unsupported": {"operation"},
     "export_basis_mismatch": {"format"},
     "svg_source_unsupported": {"id"},
     "svg_figure_unavailable": {"figure"},
@@ -706,7 +706,7 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}}
+DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
 
 
 def _error_blocks(text: str):

@@ -55,9 +55,11 @@ order: 210
     **原图导出带画布标注（QA-WIN-20，2026-10-31）**：`original.objects`（`OriginalSource.objects`，仅 text / arrow / shape，坐标已由前端换算到原图图幅、
     图幅外由页面裁掉；非空时 `w_mm` / `h_mm` 必填，否则 `bad_objects`）。非空时 `app._export_produce_original_annotated` 构造「页面 = 图幅、面板在 (0,0) + 标注」的
     画布请求交给 `_export_produce_rendercore`——标注绘制只有 RenderCore 一份。PDF / SVG / PNG / TIFF 直接出自这份合成（SVG 能力与整版一致：同一个源整版给不出 SVG 时这里给同一个稳定码）；
-    位图源取有效 ppi = `px_w` × 25.4 / `w_mm`，页面像素数 = 源像素网格（尺寸一致，不保证逐像素）。**EPS**：同一份带标注 PDF 交 `engine/pdfeps.pdf_to_eps`
-    （Ghostscript `eps2write`，参数固定 `-q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=eps2write`；只认环境变量 `TAVOTTO_GHOSTSCRIPT` 与捆绑的 `resources/ghostscript/bin/gs`，不搜 PATH），
-    转换器不可用时这一项逐项失败 `eps_annotations_need_converter`，其余格式照常交付，**不静默丢标注**。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
+    位图源取有效 ppi = `px_w` × 25.4 / `w_mm`，页面像素数 = 源像素网格（尺寸一致，不保证逐像素）。**EPS**（自写叠加，ADR 0046 补记；**不用 Ghostscript / 任何外部程序**）：
+    worker 的 matplotlib 照旧出原图 EPS，`engine/epsoverlay.compose` 把它按 EPSF 嵌入惯例（保存状态 + `/showpage {} def` + `%%BeginDocument`…`%%EndDocument` 原样嵌入 + 恢复）
+    放进外层 EPS（BoundingBox = 图幅），再叠 `rendercore/epswriter.overlay_ps` 把 `plan.compile_page` 为同一组标注编出的 IR 写成的 PostScript 运算符（路径 / 填充 / 描边 / 线型 / 裁剪 / 变换；
+    文字是批准字体的字形轮廓路径）。PostScript 没有透明：标注含 alpha<1、透明组、位图、外来页时这一项逐项失败 `eps_annotations_unsupported`（params `operation`），
+    其余格式照常交付，**不静默丢标注**；原图 EPS 本身给不出（没有脚本等）沿用 `eps_needs_script` 等原码。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
     看护 `tests/test_export_original_annotations.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；

@@ -84,8 +84,8 @@ ERROR_CODES = (
     # 作业汇总处发现基准身份对不上 → `export_basis_mismatch`。都是逐项失败，其余格式照常交付
     "eps_source_unverified",
     "eps_needs_live_figure",
-    # 带画布标注的原图导出要 EPS：RenderCore 出带标注 PDF 后交 Ghostscript 转；转换器不可用时只这一项失败
-    "eps_annotations_need_converter",
+    # 带画布标注的原图导出要 EPS：标注含 PostScript 表达不了的东西（alpha<1 等）时只这一项失败
+    "eps_annotations_unsupported",
     "export_basis_mismatch",
     "svg_source_unsupported",
     # 脚本现画的图没有同一次运行产出的 SVG 表示（脚本里有自定义绘制 / 刻度回调等，worker 不给配对）：只这一项失败

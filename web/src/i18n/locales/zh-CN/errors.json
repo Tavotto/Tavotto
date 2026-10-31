@@ -103,7 +103,7 @@
     "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
     "eps_source_unverified": "{{figure}} 的 EPS 无法确认与这份 SVG 文件是同一张图（脚本可能已改动，或还没运行过），所以没有导出。要 EPS，请先运行这张图的脚本再导出；SVG 已按原文件导出。",
     "eps_needs_live_figure": "要导出 {{figure}} 的 EPS，请先在画布上打开并运行这张图。其余格式已照常导出。",
-    "eps_annotations_need_converter": "这张图带着画布上的标注，导出 EPS 需要 EPS 转换组件，而它此刻不可用，所以这一项没有导出（标注不会被悄悄丢掉）。其余格式已照常导出。",
+    "eps_annotations_unsupported": "这张图的标注里有半透明等 EPS 画不出的效果（EPS 不支持透明），所以这一项没有导出，标注不会被悄悄丢掉。想要 EPS，请先把标注改成不透明。其余格式已照常导出。",
     "export_basis_mismatch": "{{format}} 与同批其他格式不是出自同一份来源，为避免交出不一致的文件，这一项没有导出。其余格式已照常导出。",
     "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",
     "execution_cancelled": "试运行已中断。",

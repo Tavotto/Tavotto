@@ -50,7 +50,7 @@ _REQUEST_CODES = frozenset(
         "eps_needs_script",
         "eps_source_unverified",
         "eps_needs_live_figure",
-        "eps_annotations_need_converter",
+        "eps_annotations_unsupported",
         "export_basis_mismatch",
         "eps_not_for_canvas",
         "svg_figure_unavailable",

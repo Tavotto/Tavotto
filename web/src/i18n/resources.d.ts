@@ -3094,7 +3094,7 @@ export default interface Resources {
       "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
       "environment_mutating": "该 Python 环境正在安装依赖，请稍候再试。",
       "environment_save_failed": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
-      "eps_annotations_need_converter": "这张图带着画布上的标注，导出 EPS 需要 EPS 转换组件，而它此刻不可用，所以这一项没有导出（标注不会被悄悄丢掉）。其余格式已照常导出。",
+      "eps_annotations_unsupported": "这张图的标注里有半透明等 EPS 画不出的效果（EPS 不支持透明），所以这一项没有导出，标注不会被悄悄丢掉。想要 EPS，请先把标注改成不透明。其余格式已照常导出。",
       "eps_needs_live_figure": "要导出 {{figure}} 的 EPS，请先在画布上打开并运行这张图。其余格式已照常导出。",
       "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
       "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",

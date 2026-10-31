@@ -124,8 +124,8 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     原图口径可用且画布上有**可见**标注（非面板对象）时，`lib/singleExportDoc.singleAnnotatedDocument` 把「图 + 标注」合成一份**页面 = 原图图幅**的文档
     （面板落 (0,0)、不套用画布缩放 / 裁剪 / 旋转 / 翻转 / 透明度；标注 x/y/w/h 以图内容原点平移、按 图幅 / 画布显示尺寸 缩放，字号 / 线宽不缩）。
     **预览画这份；请求仍是 `scope=original`，`original.objects` 取这份里的标注（`annotationsOf`）**——同一个来源，后端用整版导出那条 RenderCore 合成路径画
-    （没有第二套标注绘制，细则见 `docs/rules/backend/export-pipeline.md`）。图幅之外的标注被页面裁掉，不扩大页面。**所有格式照常可选**：EPS 在后端经 Ghostscript 转换，
-    转换器不可用时该项逐项失败 `eps_annotations_need_converter`（不在前端禁用）。没有可见标注时请求与从前逐字节相同。
+    （没有第二套标注绘制，细则见 `docs/rules/backend/export-pipeline.md`）。图幅之外的标注被页面裁掉，不扩大页面。**所有格式照常可选**：EPS 在后端把原图 EPS 嵌进外层 EPS 再叠标注 PostScript，
+    标注含半透明等 PS 画不出的效果时该项逐项失败 `eps_annotations_unsupported`（不在前端禁用）。没有可见标注时请求与从前逐字节相同。
     看护 `lib/singleExportDoc.test.ts`、`ExportDialog.test.tsx`「单图档带入画布上的标注」、`tests/test_export_original_annotations.py`。
   * **单图档原图口径不可用时静默改按画布导**（这张图没有磁盘原件，如脚本现跑出来后重开、素材清单里还没有它）：内部 canvas scope，界面上不出现范围选择、不报错，导出区域按**可见对象的并集包围盒**裁掉页面白边（`lib/exportCrop.cropToVisibleContent`，经 `croppedDocument` 得到一份裁后文档，检查 / proof report / 请求 / 预览都吃这同一份（页面 = 包围盒、对象平移；包围盒含描边半宽与箭头头部外扩，与 RenderCore `geometry.py` 同源）；只改导出输入，不改文档、不进撤销，协议不变），左栏预览与 mm 尺寸显示裁后的区域（`fallbackPage`），文件名仍是这张图的名字。多图整版 / 每张图 / 原图口径不裁。
   * **多图**：左栏顶部缩略图条「整版 / 每张图」，有检查提示（除建议级以外的问题所指的对象）的缩略图带橙点；右栏「导出内容」

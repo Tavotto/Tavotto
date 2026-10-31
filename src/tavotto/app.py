@@ -98,6 +98,7 @@ from .engine import (
     envdiag as engine_envdiag,
     envlease as engine_envlease,
     epsfile as engine_epsfile,
+    epsoverlay as engine_epsoverlay,
     execspec as engine_execspec,
     exectrace as engine_exectrace,
     exectrace_diag as engine_exectrace_diag,
@@ -128,7 +129,6 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
-    pdfeps as engine_pdfeps,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -2327,8 +2327,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     构造一份「页面 = 原图图幅、面板在 (0,0)、再叠标注」的画布请求，交给 `_export_produce_rendercore`——标注怎么画
     只有那一份实现。坐标由前端换算到原图图幅，图幅之外的部分被页面裁掉。PDF / SVG / PNG / TIFF 直接出自这份合成；
     位图源的 ppi 取「页面像素数 = 源像素网格」，尺寸与不带标注的原图导出一致。
-    EPS：RenderCore 没有 PostScript 写入器，由**同一份带标注 PDF** 经 `engine/pdfeps` 转真矢量 EPS；
-    转换器不可用时这一项逐项失败（`eps_annotations_need_converter`），其余格式照常交付，不静默丢标注。
+    EPS：RenderCore 没有完整的 PostScript 写入器，由 `_produce_annotated_eps` 把 worker 的原图 EPS 嵌进外层 EPS 再叠同一份标注 IR；
+    PostScript 表达不了的标注（alpha<1 等）这一项逐项失败（`eps_annotations_unsupported`），其余格式照常交付，不静默丢标注。
     """
     import dataclasses
 
@@ -2373,35 +2373,72 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         )
         produced = _export_produce_rendercore(_PageJob(job, canvas_req), tmp_dir, **dir_arg)
     if wants_eps:
-        produced.append(_produce_annotated_eps(job, req, canvas, tmp_dir, dir_arg))
+        produced.append(_produce_annotated_eps(job, req, canvas, tmp_dir, artifact_sources))
     return produced
 
 
-def _produce_annotated_eps(job, req, canvas, tmp_dir: Path, dir_arg: dict):
-    """带标注的 EPS：RenderCore 出带标注 PDF → `engine_pdfeps.pdf_to_eps`；转换器不可用就逐项失败。"""
-    import dataclasses
+def _produce_annotated_eps(job, req, canvas, tmp_dir: Path, artifact_sources=None):
+    """带标注的 EPS（自写叠加，ADR 0046 补记）：worker 的 matplotlib 照旧出原图 EPS，再由 `engine/epsoverlay`
+    把它原样嵌进外层 EPS，叠上 RenderCore 为**同一组标注**编出的 IR（`rendercore/epswriter` 写成 PostScript 运算符）。
+    PostScript 没有透明：标注含 alpha<1 / 位图等 PS 表达不了的东西时，这一项逐项失败（`eps_annotations_unsupported`），
+    其余格式照常交付，不静默丢标注。"""
+    from .rendercore import epswriter, facade as rc_facade, plan as rc_plan
 
+    src = req.original
     fmt = engine_exportreq.FORMAT_EPS
-    if not engine_pdfeps.available():
-        return engine_exportjob.Produced(format=fmt, error_code="eps_annotations_need_converter")
-    sub = tmp_dir / "eps_src"
-    sub.mkdir(parents=True, exist_ok=True)
-    pdf_req = dataclasses.replace(
-        req,
-        scope=engine_exportreq.SCOPE_CANVAS,
-        formats=(engine_exportreq.FORMAT_PDF,),
-        ppi=None,
-        canvas=canvas,
-        original=None,
-    )
-    (pdf_item,) = _export_produce_rendercore(_PageJob(job, pdf_req), sub, **dir_arg)
-    if pdf_item.tmp_path is None:
-        return engine_exportjob.Produced(
-            format=fmt, error_code=pdf_item.error_code, error_params=pdf_item.error_params
+    dpi = req.ppi or engine_exportreq.PPI_DEFAULT
+    source_ctx = (artifact_sources or {}).get(src.figure_id)
+    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+        inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
+    else:
+        inner = _produce_original_eps(
+            job,
+            src,
+            dpi,
+            tmp_dir,
+            artifact_source=source_ctx,
+            **({"existing_only": True} if engine_exportreq.FORMAT_SVG in req.formats else {}),
         )
-    out = tmp_dir / "out.eps"
-    if not engine_pdfeps.pdf_to_eps(pdf_item.tmp_path, out):
-        return engine_exportjob.Produced(format=fmt, error_code="eps_annotations_need_converter")
+    if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
+        return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
+    objects = list(src.objects)
+    math = engine_mathtypeset.layouts_for(objects, _mathtext_project())
+    provider = rc_facade.provider()
+
+    class _NoPanels:
+        def resolve(self, obj):  # 标注里没有面板；到这里说明请求被篡改
+            raise engine_exportreq.ExportRequestError("bad_objects", "标注里不能有面板", {})
+
+    compiled = rc_plan.compile_page(
+        float(src.w_mm),
+        float(src.h_mm),
+        objects,
+        sources=_NoPanels(),
+        faces=provider,
+        background=None,
+        math=math,
+    )
+    for p in compiled.problems:
+        msg = f"{p['object_id']}: {p['code']} {''.join(p.get('chars', []))}".rstrip()
+        if msg not in job.warnings:
+            job.warnings.append(msg)
+    try:
+        overlay, _facts = epswriter.overlay_ps(compiled.page, provider)
+    except epswriter.UnsupportedCapability as exc:
+        return engine_exportjob.Produced(
+            format=fmt,
+            error_code="eps_annotations_unsupported",
+            error_params={"operation": exc.operation, "object_id": exc.params.get("object_id", "")},
+        )
+    out = tmp_dir / "out_annotated.eps"
+    out.write_bytes(
+        engine_epsoverlay.compose(
+            Path(inner.tmp_path).read_bytes(),
+            overlay,
+            compiled.page.width_pt,
+            compiled.page.height_pt,
+        )
+    )
     bbox = engine_epsfile.bounding_box_pt(out)
     return engine_exportjob.Produced(
         format=fmt,
