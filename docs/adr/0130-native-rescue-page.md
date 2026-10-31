@@ -54,6 +54,14 @@ ACL 之外 Rust 端再查一道（`rescue::decide`）：窗口 label 必须是 `
 新进程从零开始，不可能有双 sidecar、孤儿 worker、旧 nonce、旧端口页面；重复点击由 `retrying` 旗标幂等。
 `Sidecar::start` 顺带修了一处泄漏：stdin 句柄拿不到时没有 kill 已 spawn 的子进程。
 
+**握手超时后的「重新启动」走安全启动（TVD-DT76 增补）**：sidecar 在写 ready 之前要同步恢复上次项目（`open_registry` / 静态扫描 / 素材扫描 / 起 watcher），
+挂住的系统调用（离线网络盘、OneDrive 按需下载、超大目录）不受扫描预算限制；恢复同一个项目的重启永远同一个结果。失败码满足 `rescue::safe_start_applies`
+（判据只有这一个出处，目前只有 `sidecar_timeout`）时，`rescue_retry` 在收 sidecar 之前（幂等闸之后，只第一次点击）往 `app_config_dir()` 写一个**一次性标记文件**
+`safe-start-once`（内容 = 写入的 Unix 秒）；下一次启动 `boot_engine` 的首次启动路径 `safe_start::take` 读到即删，过期（>10 分钟）或损坏的也删但不生效，
+并在 stdin 首行 hello 里加 `"safe_start": true`。Python 侧 `app.main` 在恢复项目**之前**经 `desktop.read_hello` 读掉首行（再原样交给 `desktop.run`，首行只读一次），
+`safe_start` 时跳过 `engine_config.last_project()`——`--figures` 显式参数不受影响，直接进项目选择页。
+选一次性文件而不是内存标志，是因为重新尝试是整个应用重启，内存带不过去；标记不改「最近项目」、不写 `last_project`、读到即删，不会误留状态。页面文案与按钮不变，只有按钮行为变。
+
 ### 五、shell 最小报告（`src/shell_report.rs`）
 
 * **内容**：`manifest.json`（`source=shell`、`partial=true`、`schema_version` 与引擎 `BUNDLE_SCHEMA_VERSION` 同值）+ `report.json`
@@ -61,7 +69,10 @@ ACL 之外 Rust 端再查一道（`rescue::decide`）：窗口 label 必须是 `
   不在闭集里的值写 `unknown`——**自由文本没有任何路径进包**。locate 阶段失败时 `failure.install_files` 记 `sidecar_dir` / `internal_dir` / `exe` 三个布尔值
   （资源目录拿不到整体为 `null`），区分「exe 被隔离」与「安装不完整」；非 locate 失败为 `null`。launch 阶段 spawn 失败时 `failure.spawn_error`
   记系统错误的类别（闭集 `rescue::SPAWN_ERRORS`：`access_denied` / `virus_detected` / `blocked_by_policy` / `bad_executable` / `file_in_use` / `not_found` / `other`，
-  由 `rescue::spawn_error_kind` 按平台错误号归类；不记错误号以外的任何原文），其余为 `null`。error.html 的 `msg` / `log` 只显示、不进任何 invoke 参数；
+  由 `rescue::spawn_error_kind` 按平台错误号归类；不记错误号以外的任何原文），其余为 `null`。握手超时时 `failure.startup_phase` 记 sidecar 卡在启动的哪一步（闭集 `sidecar::startup_phase::PHASES`：
+  `interpreter` / `imports_done` / `housekeeping` / `pdf_backend` / `project_open` / `serving`，加 `none` = 本次启动没留下任何标记，多半是解释器根本没跑起来、杀软在扫 / 拦）：
+  sidecar 往 fd 2（= `sidecar.log`）写独占一行的 `TAVOTTO_STARTUP_PHASE=<阶段>`，壳 spawn 前记下日志长度，超时后只读**本次新增**的末尾至多 64 KiB、取最后一个合法标记；
+  其余失败码为 `null`，闭集外的值归 `none`。error.html 的 `msg` / `log` 只显示、不进任何 invoke 参数；
   不读项目目录、不依赖 Python；stderr、日志路径、nonce、token、环境变量、堆栈都不在。
 * **协议**：与引擎 `diagsend.py` 同一套外层协议——`init`（`client_request_id` = 每次新生成的 UUIDv4）→ multipart 上传（字段按服务端顺序、文件字段最后）→ `complete`
   （丢响应 / `in_progress` / `upload_missing` 有界重试）→ 回执 `TVD-…`；失败码归并同一张表；上传地址只认 `https://<桶>-<appid>.cos.<区域>.myqcloud.com/`；

@@ -109,7 +109,7 @@ def patched_environ(etc, monkeypatch):
 def test_desktop_run_applies_it_before_anything_else(patched_environ, monkeypatch):
     for k in ("TAVOTTO_DESKTOP_NONCE", "TAVOTTO_DESKTOP_HANDSHAKE"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setattr(desktop, "read_launch_credentials", lambda: (None, None, None, None))
+    monkeypatch.setattr(desktop, "read_launch_credentials", lambda **_: (None, None, None, None))
     assert desktop.run(object()) == 2  # 无凭据拒绝启动——但 PATH 已先补好
     assert os.environ["PATH"].split(SEP)[-1] == patched_environ
 

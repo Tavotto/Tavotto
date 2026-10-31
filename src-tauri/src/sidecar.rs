@@ -10,6 +10,8 @@
 //!   origin（进而 localStorage）跨重启稳定；记忆策略在 [`port_memory`]（ADR 0108）。
 
 mod port_memory;
+pub mod safe_start;
+pub mod startup_phase;
 
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -49,6 +51,11 @@ impl StartError {
 
     fn with_spawn_error(mut self, kind: &'static str) -> Self {
         self.info = self.info.with_spawn_error(kind);
+        self
+    }
+
+    fn with_startup_phase(mut self, phase: &'static str) -> Self {
+        self.info = self.info.with_startup_phase(phase);
         self
     }
 
@@ -283,6 +290,32 @@ impl Sidecar {
         config_dir: Option<&Path>,
         // 起不来时这些话会显示在 error.html 上，得说用户选的那门语言
         locale: crate::i18n::Locale,
+        // 安全启动（握手超时后的「重新启动」，[`safe_start`]）：hello 里带 `safe_start`，这次不恢复上次项目
+        safe: bool,
+    ) -> Result<(Sidecar, u16), StartError> {
+        Self::start_with(
+            resource_dir,
+            log_dir,
+            nonce,
+            project,
+            config_dir,
+            locale,
+            safe,
+            HANDSHAKE_TIMEOUT,
+        )
+    }
+
+    /// [`Sidecar::start`] 的本体；握手超时可注入，测试不必真等 60 秒。
+    #[allow(clippy::too_many_arguments)]
+    fn start_with(
+        resource_dir: Option<PathBuf>,
+        log_dir: &Path,
+        nonce: &str,
+        project: Option<&str>,
+        config_dir: Option<&Path>,
+        locale: crate::i18n::Locale,
+        safe: bool,
+        handshake_timeout: Duration,
     ) -> Result<(Sidecar, u16), StartError> {
         use crate::rescue::{code, stage};
         let m = crate::i18n::text(locale);
@@ -318,6 +351,8 @@ impl Sidecar {
                     ),
                 )
             })?;
+        // 本次启动的日志从这里开始：超时后只在这之后新增的部分里找启动阶段标记（上一次启动留下的不算）
+        let log_start = startup_phase::log_len(&log_path);
         let log_err = log_out.try_clone().map_err(|e| {
             StartError::new(
                 stage::LAUNCH,
@@ -392,9 +427,12 @@ impl Sidecar {
             "parent_pid": std::process::id(),
         });
         hello[port_memory::HELLO_FIELD] = serde_json::json!(preferred);
+        if safe {
+            hello[safe_start::HELLO_FIELD] = serde_json::json!(true);
+        }
         send_hello(&mut child, &mut stdin, &format!("{hello}\n"), &log_path, m)?;
 
-        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+        let deadline = Instant::now() + handshake_timeout;
         let port = loop {
             if let Ok(text) = std::fs::read_to_string(&handshake) {
                 if let Ok(hs) = serde_json::from_str::<Handshake>(&text) {
@@ -429,7 +467,9 @@ impl Sidecar {
                     stage::HANDSHAKE,
                     code::SIDECAR_TIMEOUT,
                     m.sidecar_timeout,
-                ));
+                )
+                // 卡在启动的哪一步：闭集值，不含日志原文（TVD-DT76）
+                .with_startup_phase(startup_phase::from_log(&log_path, log_start)));
             }
             std::thread::sleep(Duration::from_millis(100));
         };
@@ -597,6 +637,7 @@ mod tests {
             None,
             None,
             crate::i18n::DEFAULT_LOCALE,
+            false,
         ) {
             Ok(_) => panic!("must not start"),
             Err(e) => e,
@@ -763,6 +804,90 @@ mod tests {
         );
         // 没有执行权限 = EACCES：报告里记闭集类别，不记原文
         assert_eq!(e.info.spawn_error, Some("access_denied"));
+    }
+
+    /// 起一个会在握手前卡住的假 sidecar：读完 hello 后把它回显到 stderr（= 日志）、写若干阶段标记，然后睡着。
+    #[cfg(unix)]
+    fn start_hanging(res: &Path, logs: &Path, safe: bool, script_body: &str) -> StartError {
+        bundled(
+            res,
+            format!("#!/bin/sh\nIFS= read -r hello\n{script_body}\nsleep 30\n").as_bytes(),
+        );
+        match Sidecar::start_with(
+            Some(res.to_path_buf()),
+            logs,
+            "n",
+            None,
+            None,
+            crate::i18n::DEFAULT_LOCALE,
+            safe,
+            Duration::from_millis(800),
+        ) {
+            Ok(_) => panic!("must not start"),
+            Err(e) => e,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_handshake_timeout_records_the_last_startup_phase_of_this_launch_only() {
+        let res = scratch("res");
+        let logs = scratch("logs");
+        // 上一次启动留在日志里的标记不算本次
+        std::fs::write(
+            logs.join("sidecar.log"),
+            "TAVOTTO_STARTUP_PHASE=serving\nold run\n",
+        )
+        .unwrap();
+        let e = start_hanging(
+            &res,
+            &logs,
+            false,
+            "echo TAVOTTO_STARTUP_PHASE=interpreter >&2\necho TAVOTTO_STARTUP_PHASE=housekeeping >&2\necho 'free text /home/u/secret' >&2\necho TAVOTTO_STARTUP_PHASE=bogus >&2",
+        );
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.startup_phase),
+            ("handshake", "sidecar_timeout", Some("housekeeping"))
+        );
+        let facts = serde_json::to_string(&e.info).unwrap();
+        assert!(
+            !facts.contains("secret"),
+            "no log text in the structured facts"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_handshake_timeout_without_any_marker_in_this_launch_is_none() {
+        let res = scratch("res");
+        let logs = scratch("logs");
+        std::fs::write(logs.join("sidecar.log"), "TAVOTTO_STARTUP_PHASE=serving\n").unwrap();
+        let e = start_hanging(&res, &logs, false, "true");
+        assert_eq!(e.info.code, "sidecar_timeout");
+        assert_eq!(e.info.startup_phase, Some("none"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_safe_start_puts_the_field_in_the_hello_line() {
+        for (safe, want) in [(true, true), (false, false)] {
+            let res = scratch("res");
+            let logs = scratch("logs");
+            // 把收到的 hello 原样回显进日志
+            start_hanging(&res, &logs, safe, "echo \"HELLO:$hello\" >&2");
+            let log = std::fs::read_to_string(logs.join("sidecar.log")).unwrap();
+            let line = log
+                .lines()
+                .find(|l| l.starts_with("HELLO:"))
+                .expect("hello echoed");
+            let hello: serde_json::Value = serde_json::from_str(&line["HELLO:".len()..]).unwrap();
+            let expected = serde_json::json!(true);
+            assert_eq!(
+                hello.get(safe_start::HELLO_FIELD),
+                want.then_some(&expected)
+            );
+            assert_eq!(hello["nonce"], "n", "credentials are still sent");
+        }
     }
 
     #[test]

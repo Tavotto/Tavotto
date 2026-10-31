@@ -157,6 +157,7 @@ from .engine import (
     shadowscript as engine_shadowscript,
     sourcelang as engine_sourcelang,
     specfix as engine_specfix,
+    startupphase as engine_startupphase,
     svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
@@ -16484,6 +16485,12 @@ def main():
         "仅供开发调试（vite dev proxy / 手工 curl），生产环境不要用",
     )
     args = ap.parse_args()
+    if args.desktop_sidecar:
+        engine_startupphase.mark("imports_done")
+    # 壳的 hello（stdin 首行）要在恢复项目之前看一眼：超时后「重新启动」带 safe_start，这一次不恢复上次项目
+    # （TVD-DT76）。读到的字典原样交给 desktop_mode.run，首行只读这一次。
+    hello = desktop_mode.read_hello() if args.desktop_sidecar else None
+    safe_start = desktop_mode.parse_safe_start((hello or {}).get(desktop_mode.SAFE_START_FIELD))
 
     setup_logging()
     # 安装清单刷成「这套 Tavotto 现在在这儿」。安装器只写得了装的那一刻，
@@ -16544,6 +16551,8 @@ def main():
             webbrowser.open(url)
             return
 
+    if args.desktop_sidecar:
+        engine_startupphase.mark("housekeeping")
     threading.Thread(
         target=prune_render_cache, daemon=True, name="mm-cache-prune"
     ).start()  # 启动清一次历史存量
@@ -16572,6 +16581,8 @@ def main():
     engine_exectrace.recover_on_startup()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
+    if args.desktop_sidecar:
+        engine_startupphase.mark("pdf_backend")
     LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))
     if not args.desktop_sidecar:
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
@@ -16581,7 +16592,10 @@ def main():
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
     # Project Picker 接手，进程不再直接退出。
     where = "窗口" if args.desktop_sidecar else "浏览器"
-    candidate = args.figures or engine_config.last_project()
+    if args.desktop_sidecar:
+        engine_startupphase.mark("project_open")
+    # 安全启动（上次握手超时后的「重新启动」）：不恢复上次项目，直接进项目选择页；`--figures` 显式参数照常
+    candidate = args.figures or (None if safe_start else engine_config.last_project())
     if candidate:
         try:
             st = open_project(candidate)
@@ -16607,7 +16621,7 @@ def main():
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
         try:
-            sys.exit(desktop_mode.run(app))
+            sys.exit(desktop_mode.run(app, hello=hello))
         finally:
             from .rendercore import renderhost as rc_renderhost
 
