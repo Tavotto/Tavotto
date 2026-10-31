@@ -1,0 +1,37 @@
+import { describe, expect, it } from 'vitest'
+import { contentBox } from './TimelineScrubber'
+
+const page = { w: 150, h: 100 }
+
+describe('浮卡缩略图对准页面上有内容的那块（contentBox）', () => {
+  it('图只占页面右上一角（beta 0.19.3b2 反馈）：裁到那一块并留一点白', () => {
+    const box = contentBox(page, [{ x: 77.7, y: 23.6, w: 74, h: 38.8 }])
+    expect(box).not.toBeNull()
+    // 伸出页面右边的部分不算：缩略图只拍到页面为止
+    expect(box!.x + box!.w).toBeLessThanOrEqual(150)
+    expect(box!.x).toBeLessThan(77.7)
+    expect(box!.x).toBeGreaterThan(70)
+    expect(box!.y).toBeLessThan(23.6)
+    expect(box!.y + box!.h).toBeGreaterThan(23.6 + 38.8)
+  })
+
+  it('内容差不多占满页面：不裁', () => {
+    expect(contentBox(page, [{ x: 2, y: 2, w: 146, h: 96 }])).toBeNull()
+  })
+
+  it('没有对象、只有隐藏对象、对象全在页面外：不裁', () => {
+    expect(contentBox(page, [])).toBeNull()
+    expect(contentBox(page, [{ x: 10, y: 10, w: 20, h: 20, hidden: true }])).toBeNull()
+    expect(contentBox(page, [{ x: 200, y: 10, w: 20, h: 20 }])).toBeNull()
+  })
+
+  it('多个对象取并集', () => {
+    const box = contentBox(page, [
+      { x: 10, y: 10, w: 20, h: 10 },
+      { x: 60, y: 40, w: 20, h: 10 },
+    ])
+    expect(box!.x).toBeLessThan(10)
+    expect(box!.x + box!.w).toBeGreaterThan(80)
+    expect(box!.y + box!.h).toBeGreaterThan(50)
+  })
+})
