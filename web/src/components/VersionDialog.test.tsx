@@ -2164,6 +2164,55 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     expect($('[data-timeline-scope]')!.getAttribute('data-timeline-scope')).toBe('all')
   })
 
+  const docWithMany = (...fileIds: string[]): FigureDocument => ({
+    ...snapshot(),
+    objects: fileIds.map((fileId, i) => ({
+      id: `p_${fileId}`, type: 'panel', fileId, fileKind: 'pdf', name: fileId, x: i * 40, y: 0, w: 40, h: 30, rotation: 0, opacity: 1, overrides: [],
+    })) as never,
+  })
+  const startRestore = async (m: LayoutVersionMeta, d: FigureDocument) => {
+    await act(async () => useUiStore.getState().setConfirm(null))
+    let done!: Promise<boolean>
+    await act(async () => {
+      done = restoreNode(m, d)
+    })
+    await flush()
+    // 包一层：async 函数直接 return 一个 Promise 会被一路等到恢复结束（而恢复在等确认框）
+    return { done }
+  }
+
+  // 用户 2026-10-31 实测：一张 → 四张的排版、四张 → 一张都没弹窗，页面闪一下就变了
+  it('一张图恢复成多张图的排版（版本里也有当前这张）：照样先问，说清会变成几张图', async () => {
+    await withFigures('a')
+    await mount(list())
+    const { done } = await startRestore(meta({ id: 'vL', figures: ['a', 'b', 'c', 'd'] }), docWithMany('a', 'b', 'c', 'd'))
+    expect(confirmText()).toContain('恢复成 4 张图的排版')
+    expect(confirmText()).toContain('a、b、c 等')
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(await done).toBe(true)
+  })
+
+  it('多张图的排版恢复成其中一张：也先问', async () => {
+    await withFigures('a', 'b')
+    await mount(list())
+    const { done } = await startRestore(meta({ id: 'vA1', figures: ['a'] }), docWith('a'))
+    expect(confirmText()).toContain('换成图「a」')
+    expect(confirmText()).toContain('现在的 2 张图')
+    await act(async () => useUiStore.getState().confirm!.resolve(false))
+    expect(await done).toBe(false)
+    // 取消了：画布上还是那两张
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(2)
+  })
+
+  it('运行脚本出来的图按图名说，不说 runtime: 前缀与脚本名', async () => {
+    await withFigures('a')
+    await mount(list())
+    await startRestore(meta({ id: 'vR', figures: ['runtime:fig11_xps.py#Fig11_xps_chemistry'] }), docWith('runtime:fig11_xps.py#Fig11_xps_chemistry'))
+    expect(confirmText()).toContain('换成图「Fig11_xps_chemistry」')
+    expect(confirmText()).not.toContain('runtime')
+    await act(async () => useUiStore.getState().confirm!.resolve(false))
+  })
+
   it('同一张图的版本：不多问，照旧直接恢复', async () => {
     // 前面用例答过的确认框还挂在 store 上（这里没挂真的确认对话框替它收）：先清掉，只看这一次问没问
     await act(async () => useUiStore.getState().setConfirm(null))

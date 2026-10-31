@@ -36,6 +36,7 @@ import {
 import { groupTimeline, versionKind, type TimelineGroup } from '@/lib/timelineGroups'
 import { saveNamedNode, takeCheckpoint } from '@/lib/timelineCheckpoint'
 import { formatMessage, msg, t as translate } from '@/i18n'
+import type { UiMessage } from '@/i18n/message'
 import { formatDate, formatTime } from '@/i18n/format'
 import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -1131,13 +1132,35 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
   const verFigures = meta.figures ?? []
   const verFigure = verFigures.length === 1 ? figureLabel(verFigures[0]) : null
   if (target.kind === 'same') {
-    // 同一张画布上先后放过几张图：这一版是别的图 → 恢复会把当前这张换掉，先说一声
-    if (current && verFigures.length && !verFigures.includes(current.fileId)) {
-      return askTimelineConfirm({
-        title: msg('versions.restoreReplaceFigureTitle', { name: verFigure ?? (versionDisplayName(meta) || formatTime(meta.ts)) }, 'dialogs'),
-        body: msg('versions.restoreReplaceFigureBody', { to: objectLabel(current), undo: modKey('Z') }, 'dialogs'),
-        confirmLabel: msg('actions.continue', undefined, 'common'),
-      })
+    // 恢复会让画布上的图变了（换了、多了、少了——含单图编辑 ↔ 排版）：先说一声。
+    // 只比「哪几张图」，不比图内修改：同一组图的旧版本照旧直接恢复（beta 0.19.3b3 反馈：
+    // 原先只在「一张换一张」时问，一张变四张的排版直接闪过去、右栏也跟着变了样）
+    const now = figuresOf(s.doc)
+    if (verFigures.length && !sameFigures(now, verFigures)) {
+      const undo = modKey('Z')
+      const ask = (title: UiMessage, body: UiMessage) =>
+        askTimelineConfirm({ title, body, confirmLabel: msg('actions.continue', undefined, 'common') })
+      if (verFigures.length > 1) {
+        const names = verFigures.slice(0, 3).map(figureLabel).join('、')
+        return ask(
+          msg('versions.restoreLayoutTitle', { n: verFigures.length }, 'dialogs'),
+          msg(
+            verFigures.length > 3 ? 'versions.restoreLayoutBodyMore' : 'versions.restoreLayoutBody',
+            { n: verFigures.length, names, undo },
+            'dialogs',
+          ),
+        )
+      }
+      if (current) {
+        return ask(
+          msg('versions.restoreReplaceFigureTitle', { name: verFigure }, 'dialogs'),
+          msg('versions.restoreReplaceFigureBody', { to: objectLabel(current), undo }, 'dialogs'),
+        )
+      }
+      return ask(
+        msg('versions.restoreReplaceFigureTitle', { name: verFigure }, 'dialogs'),
+        msg('versions.restoreReplaceFiguresBody', { m: now.length, undo }, 'dialogs'),
+      )
     }
     return true
   }
@@ -1202,7 +1225,7 @@ export async function restoreNode(
   const target = resolveRestoreTarget(meta, useDocumentStore.getState())
   if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
   // 写进的是被覆盖的这张画布：它上面的图换了（不是切去别的画布），「恢复前」就属于被换掉的那张图
-  const figureBefore = target.kind === 'other' ? null : (soleFigure(useDocumentStore.getState().doc)?.fileId ?? null)
+  const figuresBefore = target.kind === 'other' ? null : figuresOf(useDocumentStore.getState().doc)
   const hashBefore = documentDigest(useDocumentStore.getState().doc)
   recordDiagnosticEvent({
     type: 'layout_version.restore.request',
@@ -1242,7 +1265,7 @@ export async function restoreNode(
     future_count: useDocumentStore.getState().future.length,
   })
   useTimelineStore.getState().setPreview(null)
-  if (figureBefore && soleFigure(useDocumentStore.getState().doc)?.fileId !== figureBefore) {
+  if (figuresBefore && !sameFigures(figuresBefore, figuresOf(useDocumentStore.getState().doc))) {
     useTimelineStore.setState((st) => ({ revealAll: st.revealAll + 1 }))
   }
   useUiStore
@@ -1251,15 +1274,31 @@ export async function restoreNode(
   return true
 }
 
-/** 画布上只有一张（可见的）图时就是它（单图编辑）；否则 null */
+/**
+ * 画布上有哪几张图（面板的 fileId，去重、保持顺序）。与后端 `_version_figures` 同一把尺子：
+ * 隐藏的图也算在场（单图编辑 / 排版的模式判据同样计入）。
+ */
+function figuresOf(doc: FigureDocument): string[] {
+  return [...new Set(doc.objects.filter((o): o is PanelObject => o.type === 'panel').map((o) => o.fileId))]
+}
+
+function sameFigures(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x))
+}
+
+/** 画布上只有一张图时就是它（单图编辑）；否则 null */
 function soleFigure(doc: FigureDocument): PanelObject | null {
-  const panels = doc.objects.filter((o): o is PanelObject => o.type === 'panel' && !o.hidden)
+  const panels = doc.objects.filter((o): o is PanelObject => o.type === 'panel')
   return panels.length === 1 ? panels[0] : null
 }
 
-/** 版本里记的图（`figures` 是 fileId）显示成什么：与画布上的图同一个说法（去目录、去扩展名） */
+/**
+ * 版本里记的图（`figures` 是 fileId）显示成什么：与画布上的图同一个说法（去目录、去扩展名）。
+ * 运行脚本出来的图是 `runtime:<脚本>#<图名>`，说的是 `#` 后面那个图名。
+ */
 function figureLabel(fileId: string): string {
-  return fileId.split('/').pop()?.replace(/\.[^.]+$/, '') || fileId
+  const id = fileId.startsWith('runtime:') && fileId.includes('#') ? fileId.slice(fileId.lastIndexOf('#') + 1) : fileId
+  return id.split('/').pop()?.replace(/\.[^.]+$/, '') || id
 }
 
 /**
