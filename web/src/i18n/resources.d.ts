@@ -6742,16 +6742,6 @@ export default interface Resources {
       "textPlaceholder": "输入文字",
       "tryTutorial": "试用示例"
     },
-    "stageStrip": {
-      "count": "{{n}} 张图",
-      "empty": "空画布",
-      "exportAtOriginal": "按原图尺寸 {{w}} × {{h}} mm 导出",
-      "label": "画布状态",
-      "multi": "多图排版",
-      "page": "页面 {{w}} × {{h}} mm",
-      "selected": "已选 {{n}} 张：{{names}}",
-      "single": "单图编辑"
-    },
     "status": {
       "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
       "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",

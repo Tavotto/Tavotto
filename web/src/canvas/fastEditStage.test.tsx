@@ -14,7 +14,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasStage } from './CanvasStage'
-import { CanvasStatusStrip } from '@/components/CanvasStatusStrip'
 import { NotificationRail } from '@/components/StatusBar'
 import { literal } from '@/i18n'
 import { DURATION } from '@/lib/motion'
@@ -57,8 +56,6 @@ const mount = () =>
   act(() => {
     root.render(
       <TooltipProvider>
-        {/* 状态条在画布页签下面、舞台外（App 里的位置）：一起挂，「这一屏不打印编出来的尺寸」也问到它 */}
-        <CanvasStatusStrip />
         <CanvasStage />
       </TooltipProvider>,
     )
@@ -280,7 +277,7 @@ describe('「刚为编辑加入本文档」的说明', () => {
    *
    * **主路径 = 排版模式下点素材卡的「编辑原图」，那张图还不在文档里**：
    * `openFastEdit` 同时建面板 + 切模式。这条路径上区必须**早就在**了——所以它
-   * 挂在常驻的 `CanvasStage` 上，不在上下文条（画布状态条 `CanvasStatusStrip`）里——后者
+   * 挂在常驻的 `CanvasStage` 上，不在上下文条（`WorkspaceContextBar`）里——后者
    * 正是这一刻才挂上的，区跟它一起插进来的话就是「带着内容整个插入」，等于没做。
    *
    * 不用「回排版再进来」那种往返来钉：上下文条往返一次必然重挂，那条路径上的

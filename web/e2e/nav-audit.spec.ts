@@ -175,9 +175,7 @@ test('T01：一条上下文栏、一个出口，第二张图进来 / 退出图�
   const world = page.locator('[data-world-transform]')
   // 单图 → 多图：第二张图进来取景「页面 ∪ 所有图」，页面纸整张落在舞台里
   await addSecondFigure(page)
-  // 状态条常驻（UI 审计 B2）：多图排版里它还在，只是没有出口按钮
-  await expect(bar).toHaveAttribute('data-workspace-mode', 'layout')
-  await expect(page.locator('[data-context-back]')).toHaveCount(0)
+  await expect(bar).toHaveCount(0)
   const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
   const stage2 = (await page.locator('[data-canvas-stage]').boundingBox())!
   expect(sheet.x).toBeGreaterThanOrEqual(stage2.x - 1)
@@ -199,12 +197,12 @@ test('T01：一条上下文栏、一个出口，第二张图进来 / 退出图�
   // （回排版时焦点救援把左栏交给了「结构」，先切回素材，`lib/focusRescue.ts`）
   await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
   await page.getByText('Fig1_kinetics.pdf').dblclick()
-  await expect(page.locator('[data-context-back]')).toHaveCount(1)
+  await expect(bar).toHaveCount(1)
   await page.waitForTimeout(400)
   // 打开一张已在画布上的图会把它滚进视野（revealRect，被平移出去的图当然要回来）；退出图内编辑则一个像素都不许动
   const editing = await world.evaluate((e) => getComputedStyle(e).transform)
   await page.locator('[data-context-back]').click()
-  await expect(page.locator('[data-context-back]')).toHaveCount(0)
+  await expect(bar).toHaveCount(0)
   await page.waitForTimeout(400)
   expect(await world.evaluate((e) => getComputedStyle(e).transform)).toBe(editing)
 })
@@ -256,5 +254,5 @@ test('P01：图内编辑单按钮 + Esc 退出，三个宽度都放得下', asyn
     if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-layout-${w}.png` })
   }
   await back.click()
-  await expect(back).toHaveCount(0)
+  await expect(bar).toHaveCount(0)
 })

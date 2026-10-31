@@ -702,16 +702,6 @@
     "rulerUnitTitle": "Ruler unit: millimetres",
     "textPlaceholder": "Type text"
   },
-  "stageStrip": {
-    "count": "{{n}} figures",
-    "empty": "Empty canvas",
-    "exportAtOriginal": "Exports at original size {{w}} × {{h}} mm",
-    "label": "Canvas status",
-    "multi": "Multi-figure layout",
-    "page": "Page {{w}} × {{h}} mm",
-    "selected": "{{n}} selected: {{names}}",
-    "single": "Single-figure editing"
-  },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",
     "emptyAction": "Choose from layers",

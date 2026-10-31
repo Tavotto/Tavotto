@@ -1,0 +1,199 @@
+import { useTranslation } from 'react-i18next'
+import { ArrowLeft } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { t as translate } from '@/i18n'
+import { Button } from '@/components/ui/Button'
+import { cn } from '@/lib/utils'
+import { Kbd } from '@/components/ui/Kbd'
+import { Sep } from './context-bar/shared'
+import { untruncatedLabel } from '@/components/inspector/identityCrumbs'
+import { engineLabel, roleName } from '@/components/inspector/roles/registry'
+import { reasonText, statusLabel } from '@/lib/readinessText'
+import { useAssetStore } from '@/store/assetStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { usePanelDisplayManifest } from '@/store/renderStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
+import type { PanelObject } from '@/types/document'
+
+/**
+ * 工作区上下文栏（审计 T01 / P01）：**「我在改哪一层」只说一遍，出口至多一颗按钮**。
+ *
+ * ```text
+ * ← 返回画布   Fig2_correlation  /  Y 轴刻度       多图排版 + 图内编辑（退出图内编辑）
+ * ← 退出图内编辑  Fig1_kinetics  /  整张图           单图编辑 + 图内编辑（退出图内编辑）
+ * Fig1_kinetics                                     单图编辑，没在图内编辑（没有出口：没有排版可回）
+ * ```
+ *
+ * 单图编辑由「画布上恰好一张图」推出（`workspaceStore.settleMode`），不是用户进来的一个模式：没有
+ * 「回排版」这一步——第二张图进来自然就是多图排版。出口按钮因此只剩「退出图内编辑」（Esc 同一个动作），
+ * 两种模式里做的是同一件事：退出图内编辑并选中该面板。面包屑从大到小：图 / 当前对象；
+ * 模式不画成标签，机器读取走 `data-workspace-mode`。
+ *
+ * **说什么话不在这里判**：状态标签与那句原因取自 `lib/readinessText.ts`，对象名过
+ * `engineLabel`。这里只排版。原图规格**不在这条上说**——它属于导出对话框。
+ */
+export function WorkspaceContextBar() {
+  const { t } = useTranslation('workspace')
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const activePanelId = useWorkspaceStore((s) => s.activePanelId)
+  const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const selectedGids = useUiStore((s) => s.selectedGids)
+  // <1024 的覆盖式侧栏压在画布上：浮条按剩下的宽度居中，别让「添加到画布」与 Esc 出口
+  // 被右栏盖住（2026-09-14 审计 A9；停靠布局下侧栏不在画布区里，不用让）
+  // 左抽屉绝对定位在轨道右侧，画布列从轨道右缘起：抽屉盖住画布的宽度就是 leftWidth
+  const overlayLeft = useUiStore((s) => (s.layout === 'narrow' && s.leftOpen ? s.leftWidth : 0))
+  const overlayRight = useUiStore((s) => (s.layout === 'narrow' && s.rightOpen ? s.rightWidth : 0))
+  const panelId = fastEdit ? activePanelId : elementPanelId
+  const panel = useDocumentStore((s) => {
+    const o = s.doc.objects.find((x) => x.id === panelId)
+    return o?.type === 'panel' ? (o as PanelObject) : null
+  })
+  // capability 缺席 = 这一轮还不知道，什么都不说（不补默认值）
+  const capability = useAssetStore((s) =>
+    panel && fastEdit ? s.byId[panel.fileId]?.capability : undefined,
+  )
+  const editingHere = !!panel && elementPanelId === panel.id
+  const manifest = usePanelDisplayManifest(editingHere ? panel : null)
+  if (!panel) return null
+
+  const name = panel.name ?? panel.fileId
+  const editable = !!panel.script
+  const gid = editingHere ? selectedGids.at(-1) : undefined
+  const element = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
+  // 图内编辑里没选元素时，当前对象就是「整张图」（右栏头部也这么写）：面包屑
+  // 只剩图名的话，「现在改的是图内还是排版」这一层就没了（2026-09-13 审计 B43）
+  const objectCrumb = !editingHere
+    ? null
+    : selectedGids.length > 1
+      ? translate('elementsSelected', { ns: 'inspector', count: selectedGids.length })
+      : selectedGids.length === 0
+        ? roleName('figure')
+        : element
+          ? engineLabel(untruncatedLabel(element.label, fullTextOf(element)))
+          : null
+
+  /**
+   * 唯一的出口：退出图内编辑并选中该面板——属性页落在面板上，「写回原始文件」就在手边。
+   * 与 `useKeyboard` 里 Esc 的最后一层同一件事。单图编辑里没在图内编辑就没有出口（没有排版可回）
+   */
+  const back = () => {
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([panel.id])
+  }
+
+  return (
+    <div
+      // 顶边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）
+      className="pointer-events-none absolute inset-x-0 top-3 z-drawer flex justify-center px-1"
+      style={overlayLeft || overlayRight ? { paddingLeft: overlayLeft + 4, paddingRight: overlayRight + 4 } : undefined}
+    >
+      {/* 宽度按内容量：`w-max` = 内容的 max-content，面包屑因此拿到自然宽度、
+          完整显示，不会被 flex 压出省略号。**别再写死宽度**——写死 42rem 时浮条
+          比窄画布还宽，居中后两端被裁掉，看起来同样是「显示不全」。真的宽于画布
+          由 max-w-full 收回，此时才轮到面包屑 truncate 兜底（全名仍在 title 里）*/}
+      <nav
+        aria-label={t('stage.contextBarLabel')}
+        data-workspace-context-bar
+        data-workspace-mode={fastEdit ? 'fast_edit' : 'layout'}
+        // 与选区浮动栏（`ContextBar`）同一副骨架：p-1 → 36 高、gap 4、12px 字
+        // （2026-09-15 打磨 F1 / F2）。此前是 px-2 py-1.5 → 40 高、gap 8、分隔线 14，
+        // 同一块画布上两条浮条两种壳
+        // 浮动外观三档（2026-10-07 设计审计 §10.1）：只有一行时是单行浮动条 = 胶囊；带「进不了图内编辑」那第二行时
+        // 是多行浮动面板 = 圆角 12
+        className={cn(
+          'pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 bg-surface p-1 text-sm text-ink shadow-pop',
+          fastEdit && !editable ? 'rounded-lg' : 'rounded-full',
+        )}
+      >
+        {/* 单行：出口按钮 + 面包屑。浮条按内容量宽，这一行默认正好装下，
+            面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。出口
+            按钮 shrink-0 + nowrap，不参与压缩——挤压等于叠字 */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {/* `flex-auto`（基准 = 内容宽）而不是 `flex-1`：基准为 0 的一项永远「装得下」，行不会折。
+              面包屑是唯一可伸缩项，出口钮不参与压缩 */}
+          {/* 左右对称：左端是 px-3 的出口钮（文字离浮条边 4+12），右端面包屑同样留 pe-3；
+              没有出口钮时（单图编辑、没在图内编辑）左端也补 ps-3。`min-w-0` + 面包屑 truncate，
+              名字被截断时右侧留白仍在 */}
+          <div
+            className={cn(
+              'flex min-w-0 flex-auto items-center gap-1 pe-3',
+              !(editingHere || !fastEdit) && 'ps-3',
+            )}
+          >
+            {/* `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
+                图内编辑」，属性页的「编辑图内元素」按钮进编辑后把焦点交到这里。单图编辑且不在图内编辑时没有它 */}
+            {(editingHere || !fastEdit) && (
+              <>
+                <Button
+                  size="md"
+                  variant="ghost"
+                  className="shrink-0 whitespace-nowrap"
+                  data-context-back
+                  data-exit-element-edit={editingHere ? '' : undefined}
+                  title={t('stage.exitTitle')}
+                  onClick={back}
+                >
+                  <ArrowLeft size={ICON_SIZE.sm} />
+                  {fastEdit ? t('stage.exitElementEdit') : t('stage.backToCanvas')}
+                  {/* 键位提示只有一种：`ui/Kbd`（宪法第十三节）。此前是钮内一段手写 mono */}
+                  {editingHere && <Kbd>{translate('keycap.esc')}</Kbd>}
+                </Button>
+                <Sep />
+              </>
+            )}
+            <ol
+              aria-label={t('stage.crumbsLabel')}
+              className="type-body flex min-w-0 flex-1 items-center gap-1"
+            >
+              <li className="min-w-0 truncate font-medium text-ink" title={name}>
+                {name}
+              </li>
+              {objectCrumb && (
+                <>
+                  <li aria-hidden className="shrink-0 text-ink-faint">
+                    /
+                  </li>
+                  <li
+                    className="min-w-0 truncate text-ink-2"
+                    data-context-object
+                    title={objectCrumb}
+                  >
+                    {objectCrumb}
+                  </li>
+                </>
+              )}
+            </ol>
+          </div>
+        </div>
+
+        {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}
+        {fastEdit && !editable && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-0.5 text-ink-2">
+            <span className="min-w-0 flex-1 basis-40 truncate">
+              {capability
+                ? `${statusLabel(capability.status)} · ${reasonText(capability)}`
+                : t('fastEdit.layoutOnly')}
+            </span>
+            <Button
+              size="md"
+              variant="ghost"
+              className="ms-auto shrink-0 whitespace-nowrap"
+              onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'quickedit')}
+            >
+              {t('fastEdit.connectSource')}
+            </Button>
+          </div>
+        )}
+      </nav>
+    </div>
+  )
+}
+
+/** 名字里被引擎截到 18 字的那段用户文字的全文：文字元素的 `text`、系列的 `label`（与右栏头部同一判据） */
+function fullTextOf(el: { editable: { prop: string; value: unknown }[] }): string | undefined {
+  const v = el.editable.find((f) => f.prop === 'text' || f.prop === 'label')?.value
+  return typeof v === 'string' ? v : undefined
+}

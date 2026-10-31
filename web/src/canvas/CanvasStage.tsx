@@ -18,6 +18,7 @@ import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
 import { applyStageFit, fitStage, stageFitFrame } from '@/store/zoomToSelection'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
+import { WorkspaceContextBar } from './WorkspaceContextBar'
 import { IssueSpotlight } from './IssueSpotlight'
 import { OverlaySvg } from './OverlaySvg'
 import { MeasureChip } from './MeasureChip'
@@ -48,7 +49,7 @@ export function CanvasStage() {
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   const layoutMode = useWorkspaceStore((s) => s.mode === 'layout')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
-  // 「这一次把图加进了文档」——只用来播报，可见那一行在通知轨
+  // 「这一次把图加进了文档」——只用来播报，可见那一行在 WorkspaceContextBar
   const addedForEdit = useWorkspaceStore(
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
@@ -328,6 +329,9 @@ export function CanvasStage() {
       <div role="status" data-fast-edit-live className="sr-only">
         {addedForEdit ? t('fastEdit.addedForEditLive', { name: canvasName }) : ''}
       </div>
+
+      {/* 「我在改哪一层」只说一遍：快速编辑与图内编辑共用这一条（审计 T01） */}
+      <WorkspaceContextBar />
 
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
