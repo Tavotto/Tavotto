@@ -153,7 +153,7 @@ describe('断点：1366×768 左右栏可共存', () => {
       await freshStore()
       const store = (await import('./uiStore')).useUiStore
       expect(store.getState().layout).toBe('medium')
-      store.getState().setLeftTab('elements')
+      store.getState().setLeftTab('outline')
       expect(store.getState().leftOpen).toBe(true)
       expect(store.getState().rightOpen).toBe(false)
       store.getState().setRightTab('properties')
@@ -386,5 +386,23 @@ describe('排版时间线是右栏的一个页签（ADR 0101 2026-10-21 修订�
     localStorage.setItem(LS_KEY, JSON.stringify({ prefsVersion: 2, rightOpen: true, rightTab: 'timeline' }))
     const s = await freshStore()
     expect(s.rightTab).toBe('properties')
+  })
+})
+
+describe('左栏页签迁移（2026-10 审计 A3）', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it.each(['canvases', 'layers', 'elements'])('本机偏好里的旧页签 %s 落到「大纲」', async (old) => {
+    localStorage.setItem(LS_KEY, JSON.stringify({ leftTab: old }))
+    const s = await freshStore()
+    expect(s.leftTab).toBe('outline')
+  })
+
+  it('其余页签原样保留', async () => {
+    localStorage.setItem(LS_KEY, JSON.stringify({ leftTab: 'style' }))
+    const s = await freshStore()
+    expect(s.leftTab).toBe('style')
   })
 })

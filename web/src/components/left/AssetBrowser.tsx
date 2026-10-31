@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import {
   ChevronRight,
+  CircleCheck,
   Info,
   ListFilter,
   Pencil,
@@ -32,7 +33,7 @@ import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
 import { startForeignConvert } from '@/lib/foreignEntry'
-import { PENDING_STATUSES, reasonText, statusLabel } from '@/lib/readinessText'
+import { PENDING_STATUSES, allEditable, pendingCount, reasonText, statusLabel } from '@/lib/readinessText'
 import {
   DEFAULT_ASSET_FILTERS,
   useAssetBrowseStore,
@@ -145,6 +146,44 @@ const editabilityLabel = (v: AssetEditabilityFilter) =>
           ? 'editabilityPending'
           : 'editabilityAll',
   )
+
+/**
+ * 项目接入状态的一行（2026-10 界面审计 A3）：原来是左轨上一颗点开是弹窗的「状态」，现在收在素材抽屉顶部——
+ * 它说的本来就是「这些素材能不能编辑」。句子沿用已有的三句（全都可编辑 / 待连接 / 仅版面），判据同顶栏项目锚点与
+ * 接入中心（`lib/readinessText`）；点它打开接入中心。报告没到、空项目时不出现。
+ */
+function ReadinessRow() {
+  useTranslation('workspace')
+  const report = useProjectReadinessStore((s) => s.report)
+  if (!report || report.summary.total <= 0) return null
+  const s = report.summary
+  const pending = pendingCount(s)
+  const ok = allEditable(s)
+  const text = ok
+    ? translate('readiness.allEditable', { ns: 'dialogs', count: s.total })
+    : pending > 0
+      ? translate('readiness.pillPending', { ns: 'workspace', count: pending })
+      : translate('readiness.pillLayoutOnly', { ns: 'workspace', count: s.layout_only })
+  return (
+    <div className="px-3 pb-2">
+      <button
+        type="button"
+        data-asset-readiness={ok ? 'ok' : pending > 0 ? 'pending' : 'layout-only'}
+        title={translate('readiness.openCenter', { ns: 'workspace' })}
+        onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
+        className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded-sm bg-surface-hover px-2 text-left text-xs text-ink-2 outline-none transition-colors hover:text-ink focus-visible:focus-ring"
+      >
+        {pending > 0 ? (
+          <TriangleAlert size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-warn-content" />
+        ) : (
+          <CircleCheck size={ICON_SIZE.xs} aria-hidden className="shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate tabular-nums">{text}</span>
+        <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+      </button>
+    </div>
+  )
+}
 
 export function AssetBrowser() {
   const panels = useAssetStore((s) => s.panels)
@@ -446,6 +485,7 @@ export function AssetBrowser() {
           <RefreshCw size={ICON_SIZE.md} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
         </IconButton>
       </DrawerHeaderActions>
+      <ReadinessRow />
       <div className="flex flex-col gap-1.5 px-3 pb-2">
         {/* 条目少于 6 个时不显示搜索框（有搜索词时保留）。这个框同时过滤图、用不了的文件和下面的脚本区，
             所以阈值按三者合计算——图少脚本多的项目里它是长脚本列表唯一的搜索入口（Codex #1110 P2） */}

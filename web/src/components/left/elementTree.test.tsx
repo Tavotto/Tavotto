@@ -15,7 +15,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal, setLocale, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { LeftPanel } from './LeftPanel'
+import { ElementTree } from './ElementTree'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -101,7 +101,7 @@ async function mount() {
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <LeftPanel />
+        <ElementTree />
       </TooltipProvider>,
     )
   })
@@ -112,7 +112,6 @@ async function mount() {
 const liveRows = () => [...host.querySelectorAll('[data-el]')].filter((n) => !n.closest('[inert]'))
 const rowGids = () => liveRows().map((n) => (n as HTMLElement).dataset.el)
 const search = () => host.querySelector('input') as HTMLInputElement
-const heading = () => host.querySelector('h2')?.parentElement?.textContent ?? ''
 
 async function type(v: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -136,7 +135,7 @@ async function seed() {
 beforeEach(async () => {
   document.body.innerHTML = ''
   localStorage.clear()
-  useUiStore.setState({ leftTab: 'elements', selectedGids: [] })
+  useUiStore.setState({ leftTab: 'outline', selectedGids: [] })
   await seed()
 })
 
@@ -208,24 +207,6 @@ describe('文案与计数', () => {
     const row = host.querySelector('[data-el="axes_0.xlabel"]')!
     expect(row.textContent).toContain('Reaction time (min)')
     expect(row.textContent).not.toContain('(mi…')
-  })
-
-  it('标题上的计数带单位', async () => {
-    await mount()
-    // manifest 有 10 条，figure 那条不算
-    expect(heading()).toContain(t('elementTree.count', { ns: 'workspace', count: 9 }))
-    expect(heading()).not.toMatch(/\s9\s*$/)
-  })
-})
-
-describe('结构列表的计数也带单位（T07）', () => {
-  it('对象数说的是「对象」，与元素数不会看混', async () => {
-    useUiStore.setState({ leftTab: 'layers' })
-    await mount()
-    expect(heading()).toContain(t('layerTree.count', { ns: 'workspace', count: 1 }))
-    expect(t('layerTree.count', { ns: 'workspace', count: 1 })).not.toBe(
-      t('elementTree.count', { ns: 'workspace', count: 1 }),
-    )
   })
 })
 

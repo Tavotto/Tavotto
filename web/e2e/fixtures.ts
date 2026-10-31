@@ -343,7 +343,7 @@ export async function selectCanvasFigure(page: Page): Promise<void> {
  * 是把刚开的面板关掉。慢机 / 打包版上这个窗口足够宽——本机无节流也量到过
  * （READ false @377ms → 自动切到元素树 @401ms → CLICK @470ms → 收起 @481ms）。
  * 所以整段「读 + 点 + 坐实」放进 `toPass` 重试：被关掉时下一轮读到 false 再点一次。
- * 这样重试不会掩盖真缺陷：自动切换是一次性的（只在 `leftTab !== 'elements'` 时触发，
+ * 这样重试不会掩盖真缺陷：自动切换是一次性的（只在 `leftTab !== 'outline'` 时触发，
  * 我们点开后就是 no-op），一次重试之内不会再被它翻回去；点击真的打不开时每一轮都
  * 失败，`toPass` 照样超时变红。
  *
@@ -351,7 +351,7 @@ export async function selectCanvasFigure(page: Page): Promise<void> {
  */
 export async function openElementsTab(
   page: Page,
-  nav: Locator = page.locator('[data-rail="elements"]'),
+  nav: Locator = page.locator('[data-rail="outline"]'),
 ): Promise<void> {
   await expect(nav).toHaveCount(1)
   await expect(async () => {

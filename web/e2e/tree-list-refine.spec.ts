@@ -143,7 +143,7 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
 
   // G5：图层树的列间距与元素树相同
   const gapElement = await rows(page).first().evaluate((el) => getComputedStyle(el).columnGap)
-  await page.locator('[data-rail="layers"]').click()
+  await page.locator('[data-rail="outline"]').click()
   const layerRows = page.locator('[data-tree="layers"] [data-layer]')
   await expect(page.locator('[data-tree="layers"]')).toHaveCount(1)
   await expect(layerRows.first()).toBeVisible()

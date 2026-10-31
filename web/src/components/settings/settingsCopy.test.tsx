@@ -272,15 +272,6 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
       st('canvas.diagramOff'),
     )
   })
-
-  it('「画布设置」直接到右栏的画布页', async () => {
-    useUiStore.setState({ rightTab: 'properties' })
-    await open('general')
-    await act(async () => {
-      byText(st('canvas.openCanvasSettings'))!.click()
-    })
-    expect(useUiStore.getState().rightTab).toBe('canvas')
-  })
 })
 
 /* --------------------------------- T40 项目 -------------------------------- */

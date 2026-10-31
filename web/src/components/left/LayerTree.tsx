@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -70,7 +70,20 @@ type TreeRow =
   | { kind: 'object'; obj: CanvasObject; depth: 0 | 1; pos: number; size: number }
   | { kind: 'group'; gid: string; members: CanvasObject[]; pos: number; size: number }
 
-export function LayerTree() {
+/**
+ * `embedded`（2026-10 审计 A3）：坐在「大纲」里、挂在当前画布那一行下面——不自己滚动（外层滚），
+ * 行整体缩进 `baseDepth` 层；`renderAfter` 让大纲在某一张图的行后面接上它的图内元素。
+ * 缺省是独立一棵树（`data-tree="layers"` 与键位、拖放全部不变）。
+ */
+export function LayerTree({
+  embedded = false,
+  baseDepth = 0,
+  renderAfter,
+}: {
+  embedded?: boolean
+  baseDepth?: number
+  renderAfter?: (obj: CanvasObject) => ReactNode
+} = {}) {
   useTranslation('workspace')
   const objects = useDocumentStore((s) => s.doc.objects)
   const layoutGroups = useDocumentStore((s) => s.doc.layoutGroups)
@@ -121,7 +134,8 @@ export function LayerTree() {
   // 侧栏不再各配一颗按钮
   if (!zOrder.length) {
     // 画布空时工作台的起步动作只有画布中央的「添加图」：抽屉空态是纯占位，不配按钮 / 链接（审计 T03）
-    return <EmptyLine>{lt('emptyTitle')}</EmptyLine>
+    const empty = <EmptyLine>{lt('emptyTitle')}</EmptyLine>
+    return embedded ? <li role="none">{empty}</li> : empty
   }
 
   // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
@@ -207,6 +221,7 @@ export function LayerTree() {
               pos={r.pos}
               size={r.size}
               tabbable={focusKey === `g:${r.gid}`}
+              baseDepth={baseDepth}
               allSelected={r.members.every((m) => selectedIds.includes(m.id))}
               onToggle={() => setCollapsed((s) => ({ ...s, [r.gid]: !s[r.gid] }))}
               onNavKey={(k) => navKey(`g:${r.gid}`, k)}
@@ -217,11 +232,11 @@ export function LayerTree() {
         const selected = selectedIds.includes(o.id)
         const hint = dropHint?.id === o.id ? dropHint.pos : null
         const zi = flatIds.indexOf(o.id)
-        return (
+        const row = (
           <LayerRow
             key={o.id}
             obj={o}
-            depth={r.depth}
+            depth={r.depth + baseDepth}
             pos={r.pos}
             size={r.size}
             selected={selected}
@@ -234,6 +249,15 @@ export function LayerTree() {
             onNavKey={(k) => navKey(o.id, k)}
             onReorder={(d) => reorder(o.id, d)}
           />
+        )
+        const after = renderAfter?.(o)
+        return after ? (
+          <Fragment key={o.id}>
+            {row}
+            {after}
+          </Fragment>
+        ) : (
+          row
         )
       }
 
@@ -257,22 +281,23 @@ export function LayerTree() {
     return out
   }
 
-  return (
+  const list = (
     <ul
       ref={listRef}
-      role="tree"
+      role={embedded ? 'group' : 'tree'}
       data-tree="layers"
       onKeyDownCapture={markTreeDriven}
       onPointerDownCapture={markTreeDriven}
       aria-label={lt('listLabel')}
-      aria-multiselectable
-      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+      aria-multiselectable={embedded ? undefined : true}
+      className={embedded ? undefined : 'min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1'}
       onDragLeave={() => setDropHint(null)}
       onDrop={() => setDropHint(null)}
     >
       {renderTree()}
     </ul>
   )
+  return embedded ? <li role="none">{list}</li> : list
 }
 
 /** 组标题行：点击选中整组；箭头折叠 / 展开；显示布局约束徽标 */
@@ -284,6 +309,7 @@ function GroupRow({
   pos,
   size,
   tabbable,
+  baseDepth,
   allSelected,
   onToggle,
   onNavKey,
@@ -295,6 +321,7 @@ function GroupRow({
   pos: number
   size: number
   tabbable: boolean
+  baseDepth: number
   allSelected: boolean
   onToggle: () => void
   /** 树键位：true = 已处理 */
@@ -308,7 +335,7 @@ function GroupRow({
       role="treeitem"
       aria-selected={allSelected}
       aria-expanded={!collapsed}
-      aria-level={1}
+      aria-level={1 + baseDepth}
       aria-posinset={pos}
       aria-setsize={size}
       aria-label={
@@ -337,7 +364,7 @@ function GroupRow({
           selectAllMembers()
         }
       }}
-      style={treeIndent(0)}
+      style={treeIndent(baseDepth)}
       className={cn(listRowClass({ tree: true, group: true, selected: allSelected }), 'pr-2')}
     >
       <TreeChevron
@@ -356,7 +383,7 @@ function GroupRow({
 
 interface RowProps {
   obj: CanvasObject
-  depth?: 0 | 1
+  depth?: number
   pos: number
   size: number
   selected: boolean

@@ -138,7 +138,7 @@ beforeEach(async () => {
   document.body.innerHTML = ''
   localStorage.clear()
   useRenderStore.getState().clear()
-  useUiStore.setState({ leftTab: 'elements', selectedGids: [] })
+  useUiStore.setState({ leftTab: 'outline', selectedGids: [] })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_eltree_rerender')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.objects = [structuredClone(panel) as CanvasObject]

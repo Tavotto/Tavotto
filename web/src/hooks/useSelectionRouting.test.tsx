@@ -3,8 +3,7 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { trackPointer } from '@/canvas/interactions'
-import { ElementTree } from '@/components/left/ElementTree'
-import { LayerTree } from '@/components/left/LayerTree'
+import { OutlineTree } from '@/components/left/OutlineTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
@@ -55,7 +54,7 @@ function Harness() {
     {leftOpen && <aside data-left-drawer>
       {tab === 'assets'
         ? <button data-asset onPointerDown={() => useSelectionStore.getState().set([panel.id])} />
-        : tab === 'layers' ? <LayerTree /> : <ElementTree />}
+        : tab === 'outline' ? <OutlineTree /> : null}
       <button data-explicit onClick={() => useUiStore.getState().setRightTab('properties')} />
     </aside>}
     <div data-canvas-stage><span data-canvas-hit onPointerDown={() => {
@@ -93,7 +92,7 @@ beforeEach(async () => {
   useSelectionStore.getState().clear()
   useInteractionStore.getState().end()
   useViewportStore.setState({ spaceDown: false })
-  useUiStore.setState({ layout: 'medium', leftOpen: true, leftTab: 'layers',
+  useUiStore.setState({ layout: 'medium', leftOpen: true, leftTab: 'outline',
     rightOpen: false, rightTab: 'properties', rightPinned: false,
     elementPanelId: null, selectedGids: [], tool: 'select' })
   host = document.createElement('div')
@@ -125,7 +124,7 @@ function openElements(layout: WorkspaceLayout = 'medium') {
     useSelectionStore.getState().set([panel.id])
     useUiStore.getState().setLayout(layout)
   })
-  act(() => useUiStore.getState().setLeftTab('elements'))
+  act(() => useUiStore.getState().setLeftTab('outline'))
   node('[data-outside]').focus()
 }
 function expectTreeSelection(gids: string[]) {
@@ -305,7 +304,7 @@ describe('selection routing keeps the active drawer workflow', () => {
       useUiStore.getState().setElementPanel(panel.id)
       useUiStore.getState().setSelectedGid(gids[0])
     })
-    act(() => useUiStore.getState().setLeftTab('elements'))
+    act(() => useUiStore.getState().setLeftTab('outline'))
     act(() => node(treeRow(gids[0])).focus())
     pointer('[data-canvas-hit]')
     expect(useUiStore.getState().selectedGids).toEqual([gids[0]])

@@ -238,8 +238,6 @@
     "preflightCoverage": "只查识别出的文字、线条与版面；图里没被识别的内容（如嵌入的图像）不在检查之内",
     "preflightOk": "按「{{spec}}」未发现问题",
     "profileAria": "出版规范",
-    "profileEdit": "编辑",
-    "profileEditAria": "编辑规范",
     "profileLabel": "规范",
     "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
     "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",
@@ -1350,8 +1348,6 @@
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
       "dragCompanions": "移动子图时，同步移动标题和图例",
-      "more": "画布设置",
-      "openCanvasSettings": "打开画布设置",
       "diagramOn": "示意：拖动子图时，标题与图例随之移动",
       "diagramOff": "示意：只移动子图，标题与图例留在原地"
     },
