@@ -373,6 +373,21 @@ manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然�
 #215 修好标注旋转的导出方向后，存量文档里手工补偿过角度的用户需要一句
 提示，那句话只留在 PR 正文里，于是一版都没有发出去（issue #244）。
 
+**发行说明闸（`release-note-gate`，经 `CI fast gate` 参与合并资格）。** 改了
+用户可见路径（`src/tavotto/`、`web/src/`、`src-tauri/src/`、
+`src-tauri/tauri.conf.json`、`codex-plugin/`，测试文件与 `AGENTS.md` 不算）的 PR，
+必须在 `UNRELEASED.md` 里**新增至少一个 `## ` 段落**，否则这一格红——只改顶部
+注释、只删段落都不算。纯内部改动（重构、CI、仅内部文档、测试辅助）给 PR 打
+**`no-release-note`** 标签豁免；dependabot 的 PR 默认豁免；发版 PR 自己（新增了
+`docs/release-notes/vX.Y.Z.md`）也直接通过。清单与规则的唯一出处是
+`scripts/ci/release_note_gate.py`，别在这里再抄一份。拿不准算不算用户可见，就写
+条目——多一段说明的代价远小于发版当天回头补。
+
+**发版截止点。** 发版指令要定一个截止点（某个 main 提交）：它之前合入的 PR 归本
+版，**之后合入的 PR 一律归下一版**，发行说明不再追补。发版当天发现漏写条目，
+不开补条目的 PR 去赶本版（纯文档 PR 也要跑满整条 CI 加合并队列，v0.19.2 补两个
+花了约 3 小时）；该条目随下一版的 `UNRELEASED.md` 走。
+
 ## Codex 插件：Release 上的 zip 与发行分支 `plugin-stable`（ADR 0043）
 
 插件（`codex-plugin/`）随 Tavotto 一起发，但**画布不再从源码 checkout 里拿**：release.yml 的
