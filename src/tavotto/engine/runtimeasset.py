@@ -18,9 +18,18 @@ ADR 0013 的引擎侧落地（Compatibility Bridge Session 4）。三件事的�
 ## cache 布局与原子性
 
     <data_dir>/cache/runtime/<slug>/
-        preview.svg      最近一次成功 build/渲染的预览（显示占位用）
-        metadata.json    schema、asset_id、描述符、脚本 sha256、
-                         generated_by: "Tavotto"
+        preview.svg      最近一次成功 build/渲染的预览（显示占位用；**只是「最近一次」，
+                         不是任何特定文档状态的预览**）
+        preview-<h>.svg  按 overrides 内容寻址的变体（`<h>` = patch_hash 的十六进制前 24 位），
+                         至多 `MAX_VARIANTS` 份，最旧的先淘汰
+        metadata.json    schema、asset_id、描述符、脚本 sha256、变体表 `variants`
+                         （有序对 [patch_hash, 文件名]，旧→新）、generated_by: "Tavotto"
+
+**显示缓存按状态内容寻址（QA-WIN-21）。** 前端撤销回一个它自己已经画过的变体时不会再发渲染
+请求（`useEngineSync`：`lastPatches === want` 就跳过），「最近一次渲染」于是停在撤销前的
+状态上；重开文档 / 导出预览读它就看到撤销前的图，而文件里存的、导出的都是撤销后的。
+读端因此必须带着 overrides 来问：命中变体才是「这个状态的预览」，没命中就**如实说不是**
+（`variant_path` 回 None），由前端标「近似预览」，绝不拿最近一次冒充。
 
 slug = sha256(规范化项目路径 | asset_id) 截断——只用于目录名去字符集，
 身份仍是 (项目, asset_id)。**metadata.json 永远最后写**（两个文件都
@@ -50,7 +59,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config, documents, figcapture, inputremap, runconfig
+from . import config, documents, figcapture, inputremap, patchspec, runconfig
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -189,8 +198,59 @@ def script_sha256(project_root: str | Path, script: str) -> str | None:
     return hashlib.sha256(data).hexdigest()
 
 
-def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) -> Path | None:
+#: 每个 asset 至多留几份按状态寻址的预览变体（撤销 / 重做在这么多个近期状态之间来回时都命中）。
+MAX_VARIANTS = 16
+
+
+def _variant_name(patch_hash: str) -> str:
+    """patch_hash（`sha256:<hex>`）→ 变体文件名。只取十六进制、截断，文件名在 Windows 上合法。"""
+    digest = patch_hash.split(":")[-1]
+    if not digest or not all(ch in "0123456789abcdef" for ch in digest):
+        raise ValueError(f"bad patch hash: {patch_hash!r}")
+    return f"preview-{digest[:24]}.svg"
+
+
+def _variant_table(meta: object) -> list[tuple[str, str]]:
+    """metadata 里的变体表（旧→新）：`[[patch_hash, 文件名], …]`。
+
+    存成**有序对列表**而不是字典：metadata 以 `sort_keys=True` 落盘，字典的插入序（= 新旧序）
+    会被按键排序洗掉，「最旧的先淘汰」就成了按哈希字典序淘汰。
+    """
+    table = meta.get("variants") if isinstance(meta, dict) else None
+    if not isinstance(table, list):
+        return []
+    return [
+        (str(item[0]), item[1])
+        for item in table
+        if isinstance(item, list) and len(item) == 2 and isinstance(item[1], str)
+    ]
+
+
+def _read_variants(target: Path) -> dict[str, str]:
+    """现有 metadata 里仍在磁盘上的变体（patch_hash → 文件名，旧→新）；读不出 / 坏了 → 空（变体是可重建的派生物）。"""
+    try:
+        meta = json.loads((target / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        h: name
+        for h, name in _variant_table(meta)
+        if name.startswith("preview-") and (target / name).is_file()
+    }
+
+
+def materialize(
+    project_root: str | Path,
+    descriptor: dict,
+    svg_source: Path,
+    *,
+    patch_hash: str | None = None,
+) -> Path | None:
     """把一张捕获 Figure 的预览物化进 cache；返回 cache 目录（失败 None）。
+
+    `patch_hash`：这份 SVG 是按哪组 overrides 画的（`patchspec.patch_hash`）。给了就**另存一份
+    按它寻址的变体**并记进变体表——`preview.svg` 仍是「最近一次」；不给 = 调用方说不清这份 SVG
+    属于哪个状态（变体表原样保留，不凭空添一条）。
 
     `descriptor` 是 CapturedFigureDescriptor 的 payload（worker/probe 响应
     原样）；`svg_source` 是 worker out 目录里该 stem 的预览 SVG。写入顺序
@@ -213,7 +273,18 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
             )
         target = cache_dir(project_root, asset_id)
         target.mkdir(parents=True, exist_ok=True)
-        _atomic_write(target / "preview.svg", svg_source.read_bytes())
+        data = svg_source.read_bytes()
+        _atomic_write(target / "preview.svg", data)
+        variants = _read_variants(target)
+        if patch_hash:
+            name = _variant_name(patch_hash)
+            _atomic_write(target / name, data)
+            variants.pop(patch_hash, None)  # 重新插到队尾 = 最新
+            variants[patch_hash] = name
+            for old in list(variants)[: max(0, len(variants) - MAX_VARIANTS)]:
+                dead = variants.pop(old)
+                if dead not in variants.values():
+                    (target / dead).unlink(missing_ok=True)
         meta = {
             "schema": CACHE_SCHEMA,
             # 这是 Tavotto 生成的派生物，不是用户原件——检视工具与人都
@@ -226,6 +297,7 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
             # 物化那一刻的改指表（ADR 0106）：之后增 / 换 / 删规则，这张图读的可能是旧位置的数据
             "input_remap": inputremap.fingerprint(project_root),
             "preview": "preview.svg",
+            "variants": [[h, name] for h, name in variants.items()],
         }
         _atomic_write(
             target / "metadata.json",
@@ -261,6 +333,42 @@ def preview_path(project_root: str | Path, asset_id: str) -> Path | None:
     if meta is None:
         return None
     return cache_dir(project_root, asset_id) / meta["preview"]
+
+
+def variant_path(project_root: str | Path, asset_id: str, patch_hash: str) -> Path | None:
+    """按 overrides 内容寻址的预览变体；没有这个状态的预览（从没画过 / 已淘汰 / 旧 cache）→ None。
+
+    这是「这个文档状态的预览」的**唯一**判据：`preview_path`（最近一次）不回答这个问题。
+    """
+    meta = load_metadata(project_root, asset_id)
+    if meta is None:
+        return None
+    name = dict(_variant_table(meta)).get(patch_hash)
+    if name != _variant_name(patch_hash):
+        return None
+    path = cache_dir(project_root, asset_id) / name
+    return path if path.is_file() else None
+
+
+def preview_for_state(
+    project_root: str | Path, asset_id: str, patch_hash: str
+) -> tuple[Path | None, bool]:
+    """(预览文件, 它是不是这个状态的预览)。cache 不存在 → `(None, False)`。
+
+    命中变体 = `(变体, True)`。没命中 = 退到「最近一次」并**如实报 False**，调用方必须标近似。
+    唯一的信任例外：**没有变体表的旧 cache**（本机制之前物化的）+ 请求的是脚本原样（空 overrides）——
+    旧 cache 的 `preview.svg` 绝大多数就是首次运行的原样，也是升级前这条路一直在显示的东西；
+    旧 cache + 有 overrides 说不清它是哪个状态，不信。
+    """
+    meta = load_metadata(project_root, asset_id)
+    if meta is None:
+        return None, False
+    hit = variant_path(project_root, asset_id, patch_hash)
+    if hit is not None:
+        return hit, True
+    latest = cache_dir(project_root, asset_id) / meta["preview"]
+    legacy = "variants" not in meta
+    return latest, legacy and patch_hash == patchspec.patch_hash([])
 
 
 def drop_cache(project_root: str | Path, asset_id: str) -> None:

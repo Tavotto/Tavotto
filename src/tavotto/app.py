@@ -6466,6 +6466,54 @@ def api_runtime_preview():
     return resp
 
 
+@app.post("/api/runtime/preview")
+def api_runtime_preview_for_state():
+    """**这个文档状态**的预览 SVG（重开文档的首帧占位 / 导出预览的退路）。
+
+    请求体 `{id, patches}`，`patches` 是面板此刻的 overrides。GET 版给的是「最近一次渲染」，
+    不是任何特定状态的预览——前端撤销回一个它自己已有的变体时不会再发渲染请求，「最近一次」
+    就停在撤销前（QA-WIN-21）。这里按 patches 的内容哈希取变体：
+
+    * 命中 → 200，`X-Tavotto-Preview-Exact: 1`，就是这个状态画出来的那份；
+    * 没命中但有「最近一次」→ 200，`X-Tavotto-Preview-Exact: 0`：**画面不是这个状态**，
+      调用方必须标「近似预览」，不得当成当前状态的图（变体被淘汰、旧 cache 配有 overrides 的状态
+      都落这里；判据全在 `runtimeasset.preview_for_state`）；
+    * cache 不存在 → 404 `runtime_cache_missing`，与 GET 同一语义。
+
+    只读，绝不执行脚本。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True) or {}
+    rel_id = str(body.get("id") or "")
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return jsonify(
+            {
+                "error": f"不是 runtime 素材 id: {rel_id}",
+                "code": "runtime_asset_unknown",
+                "params": {"id": rel_id},
+            }
+        ), 400
+    patches = body.get("patches", [])
+    if not isinstance(patches, list):
+        return jsonify({"error": "patches 必须是数组", "code": "invalid_patches"}), 400
+    digest = _variant_hash(patches)
+    if digest is None:
+        return jsonify({"error": "patches 不合法", "code": "invalid_patches"}), 400
+    path, exact = engine_runtimeasset.preview_for_state(ctx.path, rel_id, digest)
+    if path is None:
+        return jsonify(
+            {
+                "error": "该运行时素材尚未物化预览（重新运行后生成）",
+                "code": "runtime_cache_missing",
+                "params": {"id": rel_id},
+            }
+        ), 404
+    resp = send_file(path, mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Tavotto-Preview-Exact"] = "1" if exact else "0"
+    return resp
+
+
 @app.post("/api/runtime/remove")
 def api_runtime_remove():
     """素材库「从素材中移除」：脚本已不在磁盘上的 runtime 素材，摘掉它的登记与物化 cache。
@@ -7030,6 +7078,16 @@ def _note_native_inputs(session) -> None:
         LOG.info("native 记录补依据失败: %s", session.session_id, exc_info=True)
 
 
+def _variant_hash(patches) -> str | None:
+    """预览变体的寻址键：patches 的内容哈希；`None`（说不清是哪个状态）或脏数据 → None（不记变体）。"""
+    if patches is None:
+        return None
+    try:
+        return engine_patchspec.patch_hash(patches)
+    except (TypeError, ValueError):
+        return None
+
+
 def _materialize_native(session, skip=()) -> None:
     """把 native 会话这一轮的预览物化进 runtime cache（**last known preview**）。
 
@@ -7045,7 +7103,9 @@ def _materialize_native(session, skip=()) -> None:
         if not stem or stem in skip:
             continue
         _capture_svg_snapshot(session, desc)
-        engine_runtimeasset.materialize(root, desc, session.svg_path(stem))
+        engine_runtimeasset.materialize(
+            root, desc, session.svg_path(stem), patch_hash=_variant_hash([])
+        )
 
 
 def _materialize_runtime(
@@ -7056,8 +7116,14 @@ def _materialize_runtime(
     remap_generation: int | None,
     run=None,
     pinned=None,
+    patches_by_stem: dict | None = None,
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
+
+    `patches_by_stem`：这次物化的 SVG 是按哪组 overrides 画的（stem → patches）。**None = 一次 build，
+    每张图都是脚本原样（空 patches）**；给了字典（渲染端点：只有被渲染的那张图带着 patches）就只给
+    字典里的 stem 记「这个状态的预览」变体，别的 stem 的 SVG 属于哪个状态说不清，不记（QA-WIN-21：
+    预览缓存按状态内容寻址，读端才能分辨「这个状态的预览」与「最近一次」）。
 
     SVG 从热 worker 的 out 目录拿——build 阶段本来就写好了，这里只是复制，
     **绝不触发第二次执行**（probe 的 execution-count 纪律，Session 3 约束）。
@@ -7094,7 +7160,13 @@ def _materialize_runtime(
                 # The capture helper is generation-aware: even an edit's first
                 # build freezes the base once; subsequent gestures never recapture.
                 _capture_svg_snapshot(worker, desc)
-                engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
+                state = [] if patches_by_stem is None else patches_by_stem.get(stem)
+                engine_runtimeasset.materialize(
+                    root,
+                    desc,
+                    worker.svg_path(stem),
+                    patch_hash=_variant_hash(state),
+                )
     except engine_inputremap.RemapChanged as exc:
         LOG.info("runtime 物化作废（%s）: %s", exc, script)
 
@@ -7901,6 +7973,8 @@ def api_engine_render():
             worker.last_build_descriptors,
             remap_generation=getattr(worker, "remap_generation", None),
             run=getattr(worker, "run", None),
+            # 这张 SVG 是按请求里的 patches 画的：按它的内容记一份变体（读端按状态取，不取「最近一次」）
+            patches_by_stem={stem: body.get("patches", [])},
         )
     out = {
         "rev": worker.rev,

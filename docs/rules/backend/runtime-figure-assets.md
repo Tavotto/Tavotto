@@ -33,6 +33,18 @@ order: 140
     对象级编辑 / 显式刷新 / 导出才 build 并重放 overrides。前端的门在
     `useEngineSync.renderTargets` 的 runtime 分支（editing 或本会话
     latest 才入队；tracked 不构成 runtime 自动重跑理由）。
+  * **显示缓存按状态内容寻址，不是「最近一次」（QA-WIN-21，2026-10-31）**：撤销回前端自己已画过的变体时
+    `useEngineSync` 不再发渲染请求，`preview.svg`（最近一次渲染）停在撤销前——重开文档的冷画布与导出预览
+    读它就显示撤销前的图，而文件和导出是撤销后的。`materialize(..., patch_hash=)` 另存
+    `preview-<h>.svg` 变体（`MAX_VARIANTS` 份、旧先淘汰，变体表在 metadata 里是**有序对列表**——
+    `sort_keys` 会洗掉字典的新旧序）；渲染端点只给被渲染的那个 stem 记变体（其余 stem 的 SVG 属于
+    哪个状态说不清，不记）。读端 `POST /api/runtime/preview {id, patches}` →
+    `runtimeasset.preview_for_state`：命中 `X-Tavotto-Preview-Exact: 1`，没命中退到最近一次并报 `0`，
+    调用方必须标「近似预览」；没有变体表的旧 cache 只对空 overrides 沿用旧行为。GET 版仍是「最近一次」
+    （素材库缩略图等不带 overrides 的消费者）。前端消费者 `hooks/useRuntimePreview`：画布冷预览
+    （`PanelView`）、整版导出预览（`CanvasThumb` 的 `EditedThumbImage`）、单图导出预览
+    （`useFigureThumbSource`）。看护 `tests/test_runtime_asset.py::TestPreviewByState*`、
+    `web/src/canvas/runtimeColdPreview.test.tsx`。
   * **stale 只是提示**：`stale_status` 比脚本 sha256 + 注册表 entry（六档
     `fresh/possibly_stale/missing_source/missing_environment/needs_rerun/
     rerun_failed`，最后一档 producer 在前端）；数据依赖不追踪，文案说

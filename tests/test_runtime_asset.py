@@ -31,6 +31,7 @@ from tavotto import app as m
 from tavotto.engine import (
     discover,
     figcapture,
+    patchspec,
     pool as engine_pool,
     project_watch as engine_watch,
     registry as engine_registry,
@@ -265,6 +266,105 @@ class TestCache:
         removed = runtimeasset.prune_cache(max_bytes=0, keep=0)
         assert removed >= 1
         assert runtimeasset.load_metadata(figs, desc["asset_id"]) is None
+
+
+# ===========================================================================
+# 二·补、预览缓存按状态内容寻址（QA-WIN-21）
+# ===========================================================================
+class TestPreviewByState:
+    """撤销回前端已画过的变体时不会再发渲染请求，「最近一次渲染」停在撤销前；
+    读端必须按 overrides 的内容取，命中才是「这个状态的预览」，没命中如实说不是。"""
+
+    @staticmethod
+    def _svg(tmp_path, name, body):
+        p = tmp_path / name
+        p.write_text(f"<svg>{body}</svg>", encoding="utf-8")
+        return p
+
+    def test_variant_survives_a_later_render_of_another_state(self, figs, tmp_path):
+        """核心：先画 R、再画 L（最近一次 = L）——问 R 拿到的必须还是 R 那份，且标 exact。"""
+        write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        r_hash, l_hash = (
+            patchspec.patch_hash([{"gid": "g", "prop": "loc", "value": "R"}]),
+            (patchspec.patch_hash([{"gid": "g", "prop": "loc", "value": "L"}])),
+        )
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "r.svg", "R"), patch_hash=r_hash)
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "l.svg", "L"), patch_hash=l_hash)
+        aid = desc["asset_id"]
+        # 「最近一次」就是 L——这正是旧读端在撤销回 R 之后会显示的东西
+        assert runtimeasset.preview_path(figs, aid).read_text(encoding="utf-8") == "<svg>L</svg>"
+        path, exact = runtimeasset.preview_for_state(figs, aid, r_hash)
+        assert exact is True and path.read_text(encoding="utf-8") == "<svg>R</svg>"
+        path, exact = runtimeasset.preview_for_state(figs, aid, l_hash)
+        assert exact is True and path.read_text(encoding="utf-8") == "<svg>L</svg>"
+
+    def test_unknown_state_is_reported_as_not_exact(self, figs, tmp_path):
+        write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        runtimeasset.materialize(
+            figs,
+            desc,
+            self._svg(tmp_path, "l.svg", "L"),
+            patch_hash=patchspec.patch_hash([{"gid": "g", "prop": "p", "value": 1}]),
+        )
+        other = patchspec.patch_hash([{"gid": "g", "prop": "p", "value": 2}])
+        path, exact = runtimeasset.preview_for_state(figs, desc["asset_id"], other)
+        assert exact is False and path is not None  # 退到最近一次，但如实说「不是这个状态」
+        assert runtimeasset.variant_path(figs, desc["asset_id"], other) is None
+
+    def test_legacy_cache_is_trusted_only_for_the_script_original_state(self, figs, tmp_path):
+        """没有变体表的旧 cache（本机制之前物化的）：空 overrides 沿用旧行为；有 overrides 说不清，不信。"""
+        write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "b.svg", "B"))
+        aid = desc["asset_id"]
+        meta_file = runtimeasset.cache_dir(figs, aid) / "metadata.json"
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        del meta["variants"]  # 本机制之前物化的 metadata 没有这个字段
+        meta_file.write_text(json.dumps(meta), encoding="utf-8")
+        assert runtimeasset.preview_for_state(figs, aid, patchspec.patch_hash([]))[1] is True
+        edited = patchspec.patch_hash([{"gid": "g", "prop": "p", "value": 1}])
+        assert runtimeasset.preview_for_state(figs, aid, edited)[1] is False
+
+    def test_new_cache_never_trusts_latest_for_the_base_state(self, figs, tmp_path):
+        """新 cache（有变体表）里最近一次是编辑过的状态：问脚本原样不能拿它冒充。"""
+        write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        edited = patchspec.patch_hash([{"gid": "g", "prop": "p", "value": 1}])
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "e.svg", "E"), patch_hash=edited)
+        path, exact = runtimeasset.preview_for_state(
+            figs, desc["asset_id"], patchspec.patch_hash([])
+        )
+        assert exact is False
+
+    def test_variants_are_bounded_and_oldest_goes_first(self, figs, tmp_path):
+        write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        hashes = [
+            patchspec.patch_hash([{"gid": "g", "prop": "p", "value": i}])
+            for i in range(runtimeasset.MAX_VARIANTS + 3)
+        ]
+        for i, h in enumerate(hashes):
+            runtimeasset.materialize(
+                figs, desc, self._svg(tmp_path, f"{i}.svg", str(i)), patch_hash=h
+            )
+        aid = desc["asset_id"]
+        assert runtimeasset.variant_path(figs, aid, hashes[0]) is None
+        assert runtimeasset.variant_path(figs, aid, hashes[2]) is None
+        assert runtimeasset.variant_path(figs, aid, hashes[3]) is not None
+        assert runtimeasset.variant_path(figs, aid, hashes[-1]) is not None
+        files = list(runtimeasset.cache_dir(figs, aid).glob("preview-*.svg"))
+        assert len(files) == runtimeasset.MAX_VARIANTS  # 淘汰的变体文件也删了，不留孤儿
+
+    def test_rematerialize_without_a_hash_keeps_the_variant_table(self, figs, tmp_path):
+        """其他 stem / 说不清状态的物化不能把已有变体表洗掉。"""
+        write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        h = patchspec.patch_hash([{"gid": "g", "prop": "p", "value": 1}])
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "a.svg", "A"), patch_hash=h)
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "b.svg", "B"))
+        assert runtimeasset.variant_path(figs, desc["asset_id"], h) is not None
 
 
 # ===========================================================================
@@ -763,5 +863,83 @@ class TestRuntimeProductApi:
 
             st = client.post("/api/runtime/status", json={"id": asset_id}).get_json()
             assert st["execution_profile"] == "native", st
+        finally:
+            engine_pool.shutdown_all(str(figs), wait=True)
+
+
+TWO_AXES_LEGEND = """\
+import matplotlib.pyplot as plt
+
+fig, (a, b) = plt.subplots(1, 2, figsize=(8, 3))
+a.plot([0, 1], [0, 1], label="rise")
+a.plot([0, 1], [1, 0], label="fall")
+a.legend()
+b.plot([0, 1], [0, 1])
+plt.show()
+"""
+
+_LEG = "axes_0.legend"
+LEGEND_RIGHT = [
+    {"gid": _LEG, "prop": "loc", "value": "center left"},
+    {"gid": _LEG, "prop": "loc_anchor", "value": [1.02, 0.5]},
+]
+LEGEND_LEFT = [
+    {"gid": _LEG, "prop": "loc", "value": "center right"},
+    {"gid": _LEG, "prop": "loc_anchor", "value": [-0.02, 0.5]},
+]
+
+
+@needs_worker
+class TestPreviewByStateEndToEnd:
+    """QA-WIN-21 的后端半边，真 worker：右 → 左（两次渲染）之后，「撤销回右」前端不发渲染请求，
+    读端按右的 overrides 问，必须拿到右那份（exact），而不是最近一次渲染的左。"""
+
+    def test_undone_state_reads_its_own_preview_not_the_latest_render(self, client, tmp_path):
+        figs = _make_project(tmp_path)
+        write(figs, "two.py", TWO_AXES_LEGEND)
+        client.post("/api/projects/open", json={"path": str(figs)})
+        try:
+            probe = client.post("/api/registry/probe", json={"script": "two.py"}).get_json()
+            assert probe["registered"] is True
+            asset_id = probe["descriptors"][0]["asset_id"]
+
+            def render(patches):
+                r = client.post(
+                    "/api/engine/render",
+                    json={"id": asset_id, "patches": patches, "inline_svg": True},
+                )
+                assert r.status_code == 200, r.data
+                return r.get_json()["svg"]
+
+            base_svg = render([])
+            right_svg = render(LEGEND_RIGHT)
+            left_svg = render(LEGEND_LEFT)
+            assert (
+                len({base_svg, right_svg, left_svg}) == 3
+            )  # 三个状态画出来互不相同，下面的比较才有意义
+
+            # 旧读端（GET）= 最近一次渲染 = 左：撤销回右之后冷画布 / 导出预览看到的就是它
+            latest = client.get("/api/runtime/preview", query_string={"id": asset_id})
+            assert latest.data.decode("utf-8") == left_svg
+
+            def by_state(patches):
+                r = client.post("/api/runtime/preview", json={"id": asset_id, "patches": patches})
+                assert r.status_code == 200
+                return r.data.decode("utf-8"), r.headers["X-Tavotto-Preview-Exact"]
+
+            assert by_state(LEGEND_RIGHT) == (right_svg, "1")
+            assert by_state(LEGEND_LEFT) == (left_svg, "1")
+            assert by_state([]) == (base_svg, "1")  # probe 物化的脚本原样也还在
+            # 从没画过的状态：如实说不是（退到最近一次，exact = 0），不假装命中
+            body, exact = by_state([{"gid": _LEG, "prop": "loc", "value": "upper left"}])
+            assert exact == "0" and body == left_svg
+
+            # 与 GET 一样：不是 runtime id 400、cache 不存在 404
+            assert (
+                client.post(
+                    "/api/runtime/preview", json={"id": "p1.pdf", "patches": []}
+                ).status_code
+                == 400
+            )
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
