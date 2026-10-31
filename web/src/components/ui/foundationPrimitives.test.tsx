@@ -262,10 +262,14 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
     for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\brounded-md\b/)
     expect(listRowClass({ selected: true })).toMatch(/\bbg-selected\b.*\bfont-semibold\b|\bfont-semibold\b.*\bbg-selected\b/)
     expect(listRowClass()).not.toMatch(/font-semibold/)
-    // 结构侧栏变体：圆角 6；叶子 ink-2、分组头 500 + ink、选中 600 + ink
+    // 结构侧栏变体：圆角 6；叶子正文墨色 ink、分组头次要色 ink-2 且不加粗、选中 600 + ink
     expect(listRowClass({ tree: true })).toMatch(/\brounded-sm\b/)
-    expect(listRowClass({ tree: true })).toMatch(/\btext-ink-2\b/)
-    expect(listRowClass({ tree: true, group: true })).toMatch(/\bfont-medium\b.*\btext-ink\b|\btext-ink\b.*\bfont-medium\b/)
+    expect(listRowClass({ tree: true })).toMatch(/\btext-ink\b/)
+    expect(listRowClass({ tree: true })).not.toMatch(/text-ink-2/)
+    expect(listRowClass({ tree: true, group: true })).toMatch(/\btext-ink-2\b/)
+    expect(listRowClass({ tree: true, group: true })).not.toMatch(/font-medium/)
+    // 行里的名字一律 13
+    for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\btext-base\b/)
     expect(listRowClass({ tree: true, selected: true })).toMatch(/\bfont-semibold\b/)
     expect(listRowClass({ tree: true, selected: true })).not.toMatch(/text-ink-2/)
     expect(listRowClass()).toMatch(/\brounded-md\b/)

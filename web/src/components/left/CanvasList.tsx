@@ -249,9 +249,9 @@ function CanvasRow({
           aria-label={cl('openCanvas', { name: canvas.name })}
           aria-current={active || undefined}
         >
-          {/* 画布名是主文字：12 / ink（选中时行自己加粗），与树行 / 卡名同一档（L02 / L32）；
+          {/* 画布名是主文字：13 / ink（选中时行自己加粗），与树行 / 卡名同一档（L02 / L32）；
               元数据 11 / ink-3，选中时不跟着行加粗 */}
-          <span className="block truncate text-sm text-ink">{canvas.name}</span>
+          <span className="block truncate text-base text-ink">{canvas.name}</span>
           <span className={cn('block', rowMetaClass(active))}>
             {cl('meta', {
               w: canvas.page.w,
