@@ -15,7 +15,6 @@ import {
   type IconComponent,
 } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
   backendErrorMsg,
@@ -65,6 +64,7 @@ import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
+import { MiddleEllipsis } from '../ui/MiddleEllipsis'
 import { DrawerHeaderActions } from './DrawerHeader'
 import { ScriptLibrary } from './ScriptLibrary'
 
@@ -1006,7 +1006,7 @@ function AssetCard({
           <span
             data-card-status={cap.status}
             title={reasonText(cap)}
-            className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-full bg-thumb px-1.5 type-meta text-ink-2 shadow-thumb"
+            className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-full bg-thumb px-1.5 type-meta text-paper-ink-2 shadow-thumb"
           >
             {statusLabel(cap.status)}
           </span>
@@ -1021,18 +1021,6 @@ function AssetCard({
       <CardMeta
         name={name}
         selected={selected}
-        marker={
-          panel.script ? (
-            <span
-              role="img"
-              aria-label={ab('scriptBadgeTitle')}
-              className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
-              title={ab('scriptBadgeTitle')}
-            >
-              <EditableFigureIcon size={ICON_SIZE.xs} />
-            </span>
-          ) : undefined
-        }
         parts={[
           formatOf(panel),
           translate('measure.cmSize', {
@@ -1295,7 +1283,7 @@ function CardMeta({
       <p className="flex items-center gap-1 text-sm">
         <span className={cn('min-w-0 flex-1', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
           {/* 截断时保留扩展名和结尾几位（Fig2_corr…ation.pdf）：用户靠结尾的编号与扩展名区分文件 */}
-          <TruncateMiddle text={name} tail={nameTail(name)} />
+          <MiddleEllipsis text={name} tail={nameTail(name)} />
         </span>
         {marker}
       </p>

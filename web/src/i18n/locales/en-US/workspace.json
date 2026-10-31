@@ -697,7 +697,6 @@
     "emptyHint": "Pick a figure from the asset library and add it to the canvas.",
     "emptyHintNoAssets": "Put PDF/PNG files or plotting scripts in the project folder, and they’ll show up in the asset library.",
     "emptyTitle": "The canvas is empty",
-    "pickEditable": "Editable inside",
     "pickLayoutOnly": "Can only be moved, scaled and cropped as a whole",
     "pickNote": "Click to place it, or drag one in from the assets on the left",
     "pickTitle": "Put a figure on this canvas",

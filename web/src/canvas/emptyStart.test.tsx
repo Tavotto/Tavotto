@@ -15,6 +15,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasStage } from '@/canvas/CanvasStage'
+import { pickColumns, pickRows } from '@/canvas/EmptyPickCards'
 import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { t } from '@/i18n'
@@ -155,12 +156,29 @@ describe('空画布的起步提示', () => {
     const list = ['a.pdf', 'b.pdf', 'c.pdf', 'd.pdf', 'e.pdf'].map((id, i) => mk(id, i === 1 ? 'layout_only' : 'editable'))
     useAssetStore.setState({ panels: list, byId: Object.fromEntries(list.map((p) => [p.id, p])), loaded: true })
     await mount(<CanvasStage />)
-    expect(document.querySelectorAll('[data-pick-card]')).toHaveLength(4)
+    // 面板整块落在纸面内：摆几张按纸面大小定（jsdom 里纸面小，只摆得下前两张），绝不超过 4
+    expect(document.querySelectorAll('[data-pick-card]').length).toBeGreaterThanOrEqual(2)
+    expect(document.querySelectorAll('[data-pick-card]').length).toBeLessThanOrEqual(4)
     expect(byText(sg('addFigure'))).toHaveLength(0)
     expect(document.body.textContent).toContain(sg('pickTitle'))
-    // 不可改图内的卡才说「只能整体移动、缩放、裁剪」；可改的卡不画假的元素框
-    expect(document.body.textContent?.split(sg('pickLayoutOnly')).length).toBe(2)
+    // 只有不可改图内的卡打状态标签；悬停在它上面时，下方说明那一行换成「只能整体移动、缩放、裁剪」（卡不加行）
+    expect(document.querySelectorAll('[data-card-status]')).toHaveLength(1)
+    expect(document.body.textContent).not.toContain(sg('pickLayoutOnly'))
+    await act(async () => {
+      document.querySelector('[data-pick-card="b.pdf"]')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+    expect(document.querySelector('[data-empty-pick-note]')!.textContent).toBe(sg('pickLayoutOnly'))
     expect(document.querySelectorAll('[data-pick-el]')).toHaveLength(0)
+  })
+})
+
+describe('选图卡的版面', () => {
+  it('纸面够宽 4 张一排，窄了两列再一列；纸面矮就只摆放得下的行', () => {
+    expect(pickColumns(700, 4)).toBe(4)
+    expect(pickColumns(480, 4)).toBe(2)
+    expect(pickColumns(200, 4)).toBe(1)
+    expect(pickRows(317)).toBe(1)
+    expect(pickRows(600)).toBe(3)
   })
 })
 
