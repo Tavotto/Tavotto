@@ -306,7 +306,8 @@ describe('普通界面不出现内部标识', () => {
     expect(text()).toContain('6.00 pt')
     // 行内只留要求本身：「显示已四舍五入」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
     const values = container.querySelector<HTMLElement>('[data-issue-values]')!
-    expect(values.className, '值用等宽数字').toContain('font-mono')
+    expect(values.className, '值用等宽数字').toContain('tabular-nums')
+    expect(values.className, '数值列永不截断').not.toContain('truncate')
   })
 
   it('组头只有一颗 6px 圆点带色，图标与数字不染红 / 琥珀；等级字留给读屏', async () => {
