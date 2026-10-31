@@ -2229,8 +2229,7 @@ function ExportPreviewPane({
   const { fade } = useScrollFade(strip, "x");
   const fitted = stageRatio !== null && stageRatio > 0 && Number.isFinite(stageRatio);
   return (
-    // 直角：容器不给圆角（overflow-hidden 会把图的四角裁圆），图本身也不带圆角
-    // 整列都是预览区：灰底面板从上到下铺满本列，图在里面按比例 contain、不留边距（上下或左右顶满）
+    // 预览框：画布灰（bg-canvas）+ md 圆角 + 12px 内边距，纸面（白）在里面按图幅比例 contain；缩略卡一排与尺寸标签都在框外
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
      <div className="md:sticky md:top-0">
       {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；放不下横向滚动 + 两端渐隐 */}
@@ -2276,7 +2275,7 @@ function ExportPreviewPane({
         )}
       <div
         className={cn(
-          "flex flex-col overflow-hidden bg-surface-2",
+          "flex flex-col overflow-hidden rounded-md bg-canvas p-3",
           !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
         )}
       >
