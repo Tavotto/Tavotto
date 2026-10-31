@@ -942,6 +942,65 @@ describe('导出默认值以后端为准（#715 PR-B）', () => {
   })
 })
 
+describe('「高级」默认展开跟着打开那一刻的有效设置', () => {
+  const advanced = () => document.body.querySelector('[data-export-advanced]') as HTMLDetailsElement
+  const closeThenOpen = async () => {
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('先以关闭状态挂载，之后才水合出 strict=true：打开时「高级」是展开的', async () => {
+    await setup(20) // 无阻断项；本机缓存空：strict=false
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '600', formats: ['pdf'], withProof: false, strictInspection: true },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(advanced().open).toBe(true)
+  })
+
+  it('用户本次手动折叠 / 展开后，重渲染不覆盖；关上再开重新按有效设置', async () => {
+    await setup(20)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '600', formats: ['pdf'], withProof: false, strictInspection: true },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(advanced().open).toBe(true)
+    await act(async () => {
+      advanced().open = false
+      advanced().dispatchEvent(new Event('toggle'))
+    })
+    // 无关重渲染（改文件名）不把它重新展开
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改页面'), (d) => {
+        d.page = { w: 81, h: 60 }
+      })
+    })
+    expect(advanced().open).toBe(false)
+    await closeThenOpen()
+    expect(advanced().open).toBe(true)
+  })
+})
+
 describe('导出默认值：对话框开着时取回的后端值', () => {
   it('开着时不当面换掉；关上之后重读，再打开用取回的值', async () => {
     await setup(9) // 开着，缓存空：600
@@ -2544,6 +2603,35 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     await click(originalRadio())
     expect(text()).toContain('80 × 60 mm')
+  })
+
+  it('预览标签的图名被量宽截断成省略号时，标签的可访问名字仍含完整图名', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} })
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      font: '',
+      measureText: (t: string) => ({ width: t.length * 100 }),
+    } as never)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(50)
+    try {
+      await setupTwo({ select: [] })
+      const tab = figureOptions()[0]
+      // 读屏名字 = 没被 aria-hidden 的文字：可见段（带省略号）被隐藏，完整图名在 sr-only 里
+      const name = (el: Element): string =>
+        [...el.childNodes]
+          .map((n) =>
+            n.nodeType === 3
+              ? (n.textContent ?? '')
+              : (n as Element).getAttribute('aria-hidden') === 'true'
+                ? ''
+                : name(n as Element),
+          )
+          .join('')
+      expect(tab.textContent).toContain('…')
+      expect(name(tab)).toContain('Fig1')
+      expect(name(tab)).not.toContain('…')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('什么都没选、项目里有两张图：缩略图条永远在；切到「每张图单独导出」不用先选一张，点哪张只换预览 / 检查摘要', async () => {

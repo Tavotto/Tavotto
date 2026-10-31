@@ -37,7 +37,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -796,9 +795,16 @@ export function ExportDialog() {
     errors.length > 0 || notVerifiable.length > 0 || summary.failed;
   // 有未处理项就**必须**留档：它是「导出时未处理的项」唯一的落点，用户关掉报告开关也不能让它消失
   const reportRequired = hasUnhandled;
-  const [advancedOpen, setAdvancedOpen] = useState(
-    () => readExportDefaults().strictInspection || hasUnhandled,
-  );
+  /**
+   * 「高级」折叠区：用户本次打开后的手动选择（null = 没动过，跟着当下有效设置走）。
+   * 对话框常驻挂载，初值在后端默认值水合 / 校验完成之前就定了，所以**不存「默认值」**，
+   * 每次渲染按 `strict || hasUnhandled` 现算；关上对话框就忘掉用户的选择。
+   */
+  const [advancedUser, setAdvancedUser] = useState<boolean | null>(null);
+  const advancedOpen = advancedUser ?? (strict || hasUnhandled);
+  useEffect(() => {
+    if (!open) setAdvancedUser(null);
+  }, [open]);
   const reportOn = withReport || reportRequired;
 
   /**
@@ -1995,7 +2001,11 @@ export function ExportDialog() {
               data-export-advanced
               className="text-ink"
               open={advancedOpen}
-              onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+              onToggle={(e) => {
+                // 程序改 open 属性也会触发 toggle：与当下有效值相同的不是用户操作，不记
+                const next = e.currentTarget.open;
+                if (next !== advancedOpen) setAdvancedUser(next);
+              }}
             >
               <Summary className="min-h-7 text-sm text-ink-2 hover:text-ink">
                 <span>{ex("advancedLabel")}</span>
@@ -2325,50 +2335,6 @@ function ExportPreviewPane({
   );
 }
 
-/**
- * 中间省略（保留结尾）：按真实字宽量出「头部 + … + 尾部」刚好放下的头长，省略号两侧不留空隙
- * （CSS 的 text-overflow 会在被截掉的半个字处留下空隙：`Fig2_c… ation`）。
- * 量不了（无 canvas / 没有宽度）时退回 `TruncateMiddle`。
- */
-function MiddleEllipsis({ text, tail, className }: { text: string; tail: number; className?: string }) {
-  const box = useRef<HTMLSpanElement>(null);
-  const [shown, setShown] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const fit = () => {
-      const width = el.clientWidth;
-      const ctx = document.createElement("canvas").getContext?.("2d") ?? null;
-      if (!ctx || width <= 0) return setShown(null);
-      const cs = getComputedStyle(el);
-      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-      if (ctx.measureText(text).width <= width) return setShown(text);
-      const t = text.slice(-tail);
-      let lo = 0;
-      let hi = Math.max(0, text.length - tail);
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (ctx.measureText(text.slice(0, mid) + "…" + t).width <= width) lo = mid;
-        else hi = mid - 1;
-      }
-      setShown(text.slice(0, lo) + "…" + t);
-    };
-    fit();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text, tail, className]);
-  if (shown === null && typeof ResizeObserver === "undefined") {
-    return <TruncateMiddle text={text} tail={tail} className={className} />;
-  }
-  return (
-    <span ref={box} className={cn("block overflow-hidden whitespace-pre", className)}>
-      {shown ?? text}
-    </span>
-  );
-}
-
 function PreviewTab({
   id,
   label,
@@ -2405,9 +2371,10 @@ function PreviewTab({
       <span className="flex h-12 w-full items-center justify-center overflow-hidden rounded-xs bg-paper">
         {children}
       </span>
-      <MiddleEllipsis
+      <TruncateMiddle
         text={label}
         tail={5}
+        measure
         className={cn("px-0.5 text-xs", selected ? "font-medium text-ink" : "text-ink-2")}
       />
       {flagged && (
