@@ -32,6 +32,10 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      - name: 构建画布产物进包
+        # 与 nightly 同一步：tavotto.spec 只收与本次源码一致的 codex-plugin/mcp/widget/canvas.html（不进库，ADR 0043）
+        run: python scripts/build_mcp_widget.py
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
