@@ -104,6 +104,7 @@ import {
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
+  exportTargetKey,
   type ExportFormat,
   type ExportScope,
   type ExportRequestInput,
@@ -143,6 +144,7 @@ import {
   requestBatchCancel,
   prepareExport,
   runExport,
+  resetExportState,
   useExportStore,
   type ExportBatch,
 } from "@/store/exportStore";
@@ -1173,10 +1175,27 @@ export function ExportDialog() {
     lastRecorded.current = storeJob;
     recordBatchJob(storeJob);
   }, [batch, running, storeJob, startError]);
+  /** 单张撞名确认挂着，而表单里的输出目标已不是触发撞名的那一个 */
+  const conflictTargetChanged = (): boolean => {
+    if (batch || storeJob?.status !== "conflict") return false;
+    const last = useExportStore.getState().lastInput;
+    return !!last && exportTargetKey(last) !== exportTargetKey(inputOf());
+  };
+  // 目标一变就收回撞名确认（回到未确认态，需重新「开始导出」重新检测），确认框与实际覆盖对象才不会分叉
+  const targetKeyNow = exportTargetKey(inputOf());
+  useEffect(() => {
+    if (conflictTargetChanged()) resetExportState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKeyNow]);
   /** 撞名后的「覆盖 / 另存一份」：一批里重发的是这一张**冻结的**输入，不读活的表单 */
   const restart = (overwrite: OverwritePolicy) => {
     // 位置写入在飞时覆盖 / 另存一份也不许发：会按旧目录写（批的分支直接 runExport，不经 canStart）
     if (locationUpdating) return;
+    // 单张：确认问的是上一次的输出目标；表单目标已改（QA-WIN-18）就作废确认，绝不按新目标覆盖
+    if (!batch && conflictTargetChanged()) {
+      resetExportState();
+      return;
+    }
     if (batch && !batch.done && batch.phase === "send") {
       const cur = batch.prepared[batch.index];
       if (!cur) return;

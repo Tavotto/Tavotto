@@ -915,6 +915,53 @@ describe('文件名的跨平台校验', () => {
   })
 })
 
+describe('撞名确认只对触发它的输出目标有效（QA-WIN-18）', () => {
+  const nameInput = () =>
+    [...document.body.querySelectorAll('input')].find((i) => i.type !== 'checkbox') as HTMLInputElement
+  const typeName = async (v: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput(), v)
+      nameInput().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('确认态下把文件名改成另一个：确认作废，点不到「覆盖」，不会按新名字覆盖', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].filename).toBe('A')
+    expect(button('覆盖')).toBeTruthy()
+
+    await typeName('B')
+    expect(button('覆盖'), '目标变了：旧的覆盖确认必须撤掉').toBeFalsy()
+    expect(button('开始导出')).toBeTruthy()
+    expect(exportBodies.filter((b) => b.overwrite === 'replace')).toHaveLength(0)
+  })
+
+  it('改回触发撞名的名字也不复活旧确认；重新开始导出重新检测', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    await typeName('B')
+    await typeName('A')
+    expect(button('覆盖')).toBeFalsy()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].overwrite).toBe('ask')
+  })
+
+  it('只改会随「覆盖」取最新的东西（报告等）不作废确认；「覆盖」带的仍是同一个文件名', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    await click(button('覆盖')!)
+    expect(exportBodies[1]).toMatchObject({ filename: 'A', overwrite: 'replace' })
+  })
+})
+
 describe('撞名之后「覆盖」带着的未处理项与第一次一致', () => {
   it('撞名之后点「覆盖」：同一批阻断项照样自动记录，不会因为没有确认状态而丢', async () => {
     jobStatus = 'conflict'

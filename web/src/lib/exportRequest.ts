@@ -319,6 +319,23 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   return { request, names: formats.map((f) => `${filename}.${f}`), revision }
 }
 
+/**
+ * 这次导出会写到哪些文件的身份（范围 / 对象 / 文件名主干 / 格式），QA-WIN-18。
+ * 撞名确认问的是「这几个文件已存在，覆盖吗」——之后表单里任何一项变了，那句确认就不再是在问现在这次导出，
+ * 「覆盖」也就不许发。只量会改变输出目标的字段，不量画布内容 / 报告（那些随「覆盖」取最新）。
+ */
+export function exportTargetKey(input: ExportRequestInput): string {
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
+  const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
+  return JSON.stringify([
+    input.documentId,
+    input.scope,
+    input.scope === 'original' ? (input.mergePages?.map((p) => p.figureId) ?? input.figureId ?? null) : null,
+    stripOutputExtension(input.filename, formats),
+    formats,
+  ])
+}
+
 function clampPpi(ppi: number): number {
   if (!Number.isFinite(ppi)) return PPI_DEFAULT
   return Math.min(PPI_MAX, Math.max(PPI_MIN, Math.round(ppi)))
