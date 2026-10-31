@@ -2019,6 +2019,11 @@ interface FigureThumbSource {
   src: string | null;
   /** 图幅宽高比（读不到时 4:3） */
   ratio: number;
+  /**
+   * `src` 是不是磁盘原图那条 `figureThumbSrc`：只有它能按舞台放大换档。按 overrides 现出的变体 /
+   * runtime 按状态取的预览换档会退回「最近一次渲染」，撤销后显示撤销前（QA-WIN-21）
+   */
+  plain: boolean;
 }
 
 /**
@@ -2065,10 +2070,11 @@ function useFigureThumbSource(
         ? runtimePreview.url
         : null
       : figureThumbSrc(figure, bucket));
+  const plain = !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
-  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio };
+  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio, plain };
 }
 
 const NO_OVERRIDES: PanelObject["overrides"] = [];
@@ -2330,6 +2336,7 @@ function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
 /**
  * 大预览：放进缩放舞台，按真实图幅比例（`ratio` 优先，其次素材自报 / 渲染清单里的比例）contain 铺满。
  * 位图放大时按舞台给的 `px` 换更高档的 `/api/render`（沿用 `figureThumbSrc`，不新起接口）；
+ * 只对磁盘原图那条换档：按 overrides 出的变体 / runtime 按状态取的预览原样挂，换档会退回「最近一次渲染」；
  * 引擎 SVG / 矢量源是矢量，放大本来就清晰。
  */
 function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: number | undefined }) {
@@ -2346,7 +2353,7 @@ function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: n
             />
           );
         }
-        const src = px ? figureThumbSrc(figure, px) : source.src;
+        const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
         if (src) {
           return (
             <RetryImg
