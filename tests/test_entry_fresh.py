@@ -244,3 +244,36 @@ def test_reconcile_is_a_noop_without_a_current_project(client):
     assert m._reconcile_registered_entry("图片.py") is False
     with m.app.test_request_context("/", headers={"X-Tavotto-Project": "gone"}):
         assert m._reconcile_registered_entry("图片.py") is False
+
+
+@pytest.mark.parametrize(
+    "dynamic",
+    [
+        "globals()['plot_fig5'] = lambda: None\n",
+        "globals().update(plot_fig5=lambda: None)\n",
+        "vars()['plot_fig5'] = lambda: None\n",
+        "exec('def plot_fig5(): pass')\n",
+        "import sys\nsetattr(sys.modules[__name__], 'plot_fig5', lambda: None)\n",
+        "import sys\nsys.modules[__name__].__dict__['plot_fig5'] = lambda: None\n",
+        "def _install():\n    globals()['plot_fig5'] = lambda: None\n\n\n_install()\n",
+    ],
+)
+def test_dynamic_namespace_writes_are_undecidable_so_not_stale(tmp_path, dynamic):
+    assert _stale(tmp_path, TOP_LEVEL_SCRIPT + dynamic, "plot_fig5") is False
+    figs = _project(tmp_path, TOP_LEVEL_SCRIPT + dynamic)
+    assert entryfresh.reconcile(figs) == {}
+    assert _reg(figs)["图片.py"]["entry"] == "plot_fig5"
+
+
+def test_replanning_keeps_the_corrected_entry(tmp_path, monkeypatch):
+    """第一次 recheck 纠正后，会话 target 记住新入口；第二次规划（如依赖准备之后）仍是新入口。"""
+    figs = _project(tmp_path, TOP_LEVEL_SCRIPT)
+    seen = []
+    monkeypatch.setattr(
+        prepsession.preparation, "plan_for", lambda **kw: seen.append(kw["entry"]) or object()
+    )
+    target = {"kind": "script", "script": "图片.py", "entry": "plot_fig5"}
+    prepsession.SessionService._plan_of("p", str(figs), target)
+    prepsession.SessionService._plan_of("p", str(figs), target)
+    assert seen == ["__main__", "__main__"]
+    assert target["entry"] == "__main__"

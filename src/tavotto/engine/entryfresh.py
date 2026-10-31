@@ -90,8 +90,26 @@ class _TopLevelNames(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+#: 出现即说不准：这些调用 / 属性可以在运行时往模块命名空间里装名字（`globals()['render'] = …`、`globals().update`、
+#: `vars()[…]`、`exec` / `eval`、`setattr(sys.modules[__name__], …)`、`__dict__` 写入）。整份源码里出现就算
+#: （函数体里写、顶层调用它也生效），宁可不改写也不把「运行时才有的入口」当成已删除。
+_DYNAMIC_NAMES = frozenset({"globals", "vars", "locals", "exec", "eval", "setattr", "compile"})
+_DYNAMIC_ATTRS = frozenset({"__dict__", "modules"})
+
+
+def _writes_namespace_dynamically(tree: ast.Module) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in _DYNAMIC_NAMES:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _DYNAMIC_ATTRS:
+            return True
+    return False
+
+
 def top_level_names(tree: ast.Module) -> set[str] | None:
     """顶层名字集合；说不准（`import *` / 模块级 `__getattr__`）回 None。"""
+    if _writes_namespace_dynamically(tree):
+        return None
     visitor = _TopLevelNames()
     for stmt in tree.body:
         visitor.visit(stmt)

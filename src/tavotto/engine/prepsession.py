@@ -1328,7 +1328,11 @@ class SessionService:
         entry = target.get("entry")
         if target.get("kind") == TARGET_SCRIPT and target.get("script") and entry:
             # 会话的目标在脚本被改写之前就定了入口：登记的入口已不在脚本里时，规划用纠正后的（判据与改写只在 entryfresh）
-            entry = entryfresh.effective_entry(project_root, str(target["script"]), entry)
+            fixed = entryfresh.effective_entry(project_root, str(target["script"]), entry)
+            if fixed != entry:
+                # 纠正要跨重新规划留住：会话的 target 还记着被删的旧入口，下一次 recheck 拿它去对注册表
+                # （已是新入口）就认不出「登记的那个」而原样放回旧名。target_key 不含 entry，原地改不换会话
+                target["entry"] = entry = fixed
         return preparation.plan_for(
             project_id=project_id,
             project_root=project_root,
