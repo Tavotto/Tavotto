@@ -390,6 +390,36 @@ def test_main_from_junit_runs_writes_median_table(tmp_path, capsys):
     assert "median" in doc["unit"]
 
 
+def test_max_of_tables_takes_the_larger_value_and_keeps_one_sided_files():
+    a = {"tests/test_a.py": 1.0, "tests/test_only_a.py": 7.0}
+    b = {"tests/test_a.py": 9.5, "tests/test_only_b.py": 2.0}
+    assert shard.max_of_tables([a, b]) == {
+        "tests/test_a.py": 9.5,
+        "tests/test_only_a.py": 7.0,
+        "tests/test_only_b.py": 2.0,
+    }
+
+
+def test_max_of_tables_refuses_no_tables():
+    with pytest.raises(shard.ShardError, match="一张表都没有"):
+        shard.max_of_tables([])
+
+
+def test_main_max_of_merges_tables_per_file(tmp_path, capsys):
+    paths = []
+    for name, w in (("a", {"tests/test_x.py": 3.0}), ("b", {"tests/test_x.py": 8.0})):
+        p = tmp_path / f"{name}.json"
+        p.write_text(
+            json.dumps({"source": "s", "measured": "m", "unit": "u", "weights": w}),
+            encoding="utf-8",
+        )
+        paths.append(str(p))
+    assert shard.main(["--max-of", *paths, "--source", "s", "--measured", "m"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["weights"] == {"tests/test_x.py": 8.0}
+    assert "max" in doc["unit"]
+
+
 def test_main_from_junit_runs_refuses_a_run_without_junit(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(shard.ShardError, match="没有 junit.xml"):
