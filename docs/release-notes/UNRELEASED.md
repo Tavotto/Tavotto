@@ -17,13 +17,13 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
-## Larger Chinese text in the properties panel, clearer element tree, adaptive style panel
-
-The properties panel text goes from 12 to 13 px and its label column is wider. In the element tree the actual content rows read darker than the group rows (the old black/grey colouring is kept, with group names bold) and stray curly quotes around names are gone. The style panel adapts to the panel width, the Problems panel lists items in the same row style, an empty canvas offers cards to pick a figure to edit, and asset cards and script rows are clearer. (#1552)
-
 ## Single-figure export now includes canvas annotations (#1551)
 
 When the canvas held a single figure, text, arrows and shapes you added on the canvas were missing from both the export preview and the exported files. They are now drawn into PDF, PNG, TIFF, SVG and EPS, clipped to the figure frame, with their stacking relative to the figure preserved (annotations moved below the figure in the layer tree stay below it). The export still follows the original-figure rules: PNG / TIFF keep the source image's pixel size and DPI, and exports without annotations are byte-for-byte unchanged. EPS keeps matplotlib's original EPS and lays the annotations over it as vector outlines; if an annotation uses transparency, which EPS cannot express, only the EPS item fails with a stated reason and the other formats are delivered.
+
+## Larger Chinese text in the properties panel, clearer element tree, adaptive style panel
+
+The properties panel text goes from 12 to 13 px and its label column is wider. In the element tree the actual content rows read darker than the group rows (the old black/grey colouring is kept, with group names bold) and stray curly quotes around names are gone. The style panel adapts to the panel width, the Problems panel lists items in the same row style, an empty canvas offers cards to pick a figure to edit, and asset cards and script rows are clearer. (#1552)
 
 ## Scripts that load a private package folder built for another Python version
 
@@ -36,6 +36,10 @@ If an export stopped at the "file already exists" confirmation and you then chan
 ## Cold canvas and export preview show the state you saved after an undo (#1547)
 
 For script-run figures, undoing an edit (for example moving a legend back) and then saving could make the reopened canvas and the export preview show the state from before the undo, until you entered figure editing. The exported files were already correct. Cached previews are now looked up by the figure's current edits and are discarded when the script or its input data change. Projects saved by earlier versions may show the existing "approximate preview" badge on such figures until they are rendered once.
+
+## "Connect with an API key" AI never ran in the desktop app
+
+In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect a provider with an API key (instead of a Codex / Claude Code subscription) failed about a tenth of a second after every request, without contacting the provider. The installer was missing the module that starts it. Connections through Codex or Claude Code were not affected. This is fixed, and the desktop smoke test now starts the built-in AI from the installed app.
 
 ## Text typed on the canvas is no longer lost when clicking empty space (#1546)
 

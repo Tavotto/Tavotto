@@ -2158,7 +2158,7 @@ class TestReviewRound11:
         import logging
 
         from tavotto.engine import tlstrust
-        from tavotto.engine.agent_runner import __main__ as runner_main
+        from tavotto.engine.agent_runner import runner_cli as runner_main
 
         script = tmp_path / "demo.json"
         script.write_text(json.dumps({"turns": [{"text": "done"}]}), encoding="utf-8")
@@ -2479,7 +2479,7 @@ def test_cli_long_conversion_request_stays_within_total_deadline(
 ):
     import logging
 
-    from tavotto.engine.agent_runner import __main__ as runner_main
+    from tavotto.engine.agent_runner import runner_cli as runner_main
 
     (tmp_path / "plot.py").write_text("print(1)\n")
     prompt = tmp_path / "prompt.txt"
