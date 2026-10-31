@@ -8,7 +8,7 @@
 
 | job | 做什么 |
 |---|---|
-| `trust` | ref → 精确 SHA，验证它**可达于 origin/main**（发布只接受已合并进受保护 main 的提交），从源码读出版本号并与 tag 核对，release:blocker 签字；之后所有 job 只认它输出的 SHA |
+| `trust` | ref → 精确 SHA，验证它**可达于 origin/main**（发布只接受已合并进受保护 main 的提交），从源码读出版本号并与 tag 核对，release:blocker 签字；**诊断包条目门禁**（`scripts/ci/diag_contract.py`：该 SHA 的 `diagsend.ENTRY_KINDS` 每个条目，线上诊断服务 `GET https://tavotto.cn/v1/reports/contract` 都认识；取不到或不认识就停，除非 dispatch 的 `ack_diag_contract` 写明原因——主仓库加了包内文件，先合 infra 白名单并部署再发版）；之后所有 job 只认它输出的 SHA |
 | `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 → Codex 插件 → **产出这条腿的产物清单** |
 | `desktop` | `workflow_call` 调 `desktop-tauri.yml`：Windows NSIS + macOS 签名公证 dmg，各自**产出自己那条腿的产物清单** |
 | `dispatch_lab` | `gh workflow run lab-qualification.yml -R Tavotto/ci-infra`（`mode=release`、`use_prebuilt_dist=true`、`source_run_id=<本 run>`、`publish`、`ack_open_blockers`）：实验室 runner 上的 exact-artifact 发行资格验证由 ci-infra 执行，结论以 commit status `lab/release` 回到 SHA 上——**这一关不过，第二段不会开始** |
