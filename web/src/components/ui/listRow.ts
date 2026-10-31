@@ -2,11 +2,15 @@ import { cn } from '@/lib/utils'
 
 export type ListRowSize = 'sm' | 'md' | 'lg'
 
-/** 三档行高：sm 28（树行 / 紧凑列表）· md 44（两行：名字 + meta）· lg 52（带缩略图的行） */
+/**
+ * 三档行高：sm 28（树行 / 紧凑列表）· md 44（两行：名字 + meta）· lg 52（带缩略图的行）。
+ * 行里的名字一律 13（`text-base`，2026-10-31 UI 审计「读得清」：用户扫读的中文不再是 11 / 12）；
+ * 计数 / 路径 / 时间走 `rowMetaClass`（11）。
+ */
 const SIZE: Record<ListRowSize, string> = {
-  sm: 'h-7 text-xs',
-  md: 'min-h-11 py-1.5 text-sm',
-  lg: 'min-h-13 py-1.5 text-sm',
+  sm: 'h-7 text-base',
+  md: 'min-h-11 py-1.5 text-base',
+  lg: 'min-h-13 py-1.5 text-base',
 }
 
 /**
@@ -36,7 +40,7 @@ export function listRowClass({
   dragging?: boolean
   /**
    * 结构侧栏（元素树 / 图层树）变体（2026-10-16 UI 2.0 第二轮 04）：圆角 6；叶子 ink-2、
-   * 分组头（`group`）500 + ink，选中仍是 selected 底 + 600 + ink。hover / 选中底沿用同一档 token。
+   * 分组头（`group`）500 + ink（2026-10-31 用户验收：保留旧版黑灰配色），选中仍是 selected 底 + 600 + ink。hover / 选中底沿用同一档 token。
    */
   tree?: boolean
   /** 树变体里的分组头（带子节点的行） */
