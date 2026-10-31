@@ -33,6 +33,10 @@ If an export stopped at the "file already exists" confirmation and you then chan
 
 For script-run figures, undoing an edit (for example moving a legend back) and then saving could make the reopened canvas and the export preview show the state from before the undo, until you entered figure editing. The exported files were already correct. Cached previews are now looked up by the figure's current edits and are discarded when the script or its input data change. Projects saved by earlier versions may show the existing "approximate preview" badge on such figures until they are rendered once.
 
+## Export dialog is shorter and easier to scan; Contact dialog is tidier
+
+The export dialog now shows only the figure name and size under the title; a sub-millimetre difference from the original file is tucked into an info icon instead of a second line. The save location reads "project / relative path" instead of being cut off from the left. "Strict verification" and "Style check report" moved into a collapsed "Advanced" section (it opens by itself when either one is on). The preview no longer leaves large grey bands above and below, and only figures with something that needs changing get a red dot. In the Contact dialog, "Your message" comes first, the WeCom link is a quiet line under the title, and attachments use an "Add screenshot/file" button (dragging files in still works). (#1555)
+
 ## "Connect with an API key" AI never ran in the desktop app
 
 In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect a provider with an API key (instead of a Codex / Claude Code subscription) failed about a tenth of a second after every request, without contacting the provider. The installer was missing the module that starts it. Connections through Codex or Claude Code were not affected. This is fixed, and the desktop smoke test now starts the built-in AI from the installed app.

@@ -14,8 +14,7 @@
     "bodyLabel": "Your message",
     "bodyPlaceholder": "Problems you ran into, features you want, anything confusing - write it here.",
     "bodyCount": "{{count}} / {{max}}",
-    "attachLabel": "Attachments (optional)",
-    "attachPick": "Add attachment",
+    "attachPick": "Add screenshot / file",
     "attachRemove": "Remove {{name}}",
     "fileError": {
       "type": "Only images, PDF, Word, Excel and PowerPoint are supported.",
@@ -140,6 +139,9 @@
     "capsuleOpen": "View",
     "capsuleClose": "Dismiss the reply notice",
     "wecom": "WeCom",
+    "wecomLead": "Or ",
+    "wecomLink": "add us on WeCom",
+    "wecomTail": " to chat directly",
     "wecomScan": "Scan with WeChat"
   },
   "draftGuard": {
@@ -166,7 +168,7 @@
     "previewFit": "Fit to view",
     "previewTabs": "Preview",
     "previewWhole": "Whole page",
-    "previewFlagged": "Has check notes",
+    "previewFlagged": "Has items to fix",
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "batchNames": "Each figure keeps its own name",
@@ -280,6 +282,7 @@
     "transparent": "Transparent background (PNG / TIFF only)",
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
     "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:",
+    "advancedLabel": "Advanced",
     "strictToggle": "Strict file check",
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
