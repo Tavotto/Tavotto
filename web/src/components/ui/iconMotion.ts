@@ -1,5 +1,5 @@
 /**
- * 图标微动效的播放端（ADR 0154）：动作的登记在 `icons/motion.ts`、关键帧在 `icons/motion.css`，
+ * 图标微动效的播放端（ADR 0156）：动作的登记在 `icons/motion.ts`、关键帧在 `icons/motion.css`，
  * 这里只管「什么时候播」——点按钮播 `press`、指针进按钮播 `hover`、`playIcon` 手动重播。
  * 不放进 `icons/`：那里只出图标组件（`iconography.test` 的别名门禁）。
  */

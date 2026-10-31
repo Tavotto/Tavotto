@@ -266,7 +266,7 @@ opacity + ≤4px 位移 + scale 0.97~1；没有缩放炫技、漂浮。`prefers-
 Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，抓不到「没写」；`motion.test`
 守着默认档与 token 同源。
 
-**图标微动效是登记豁免**（ADR 0154，用户 2026-10-31 在演示页逐个看过、46 个全要）：界面图标（只限 `components/ui/icons`
+**图标微动效是登记豁免**（ADR 0156，用户 2026-10-31 在演示页逐个看过、46 个全要）：界面图标（只限 `components/ui/icons`
 的图标集，品牌标与画布不在内）可以有超出上面三条形态的动作——整枚转 90° / 360°、格子缩到 0.6、斜线一笔画出——时长 300–720ms
 写在 `icons/motion.ts` 的登记表里而不是 token。前提：一次性（只有原来的 `Spinner` 循环）、播完回静止形、跟着用户动作走
 （点按钮 / 指针进按钮 / 调用方显式 `playIn` 的状态出现），`prefers-reduced-motion` 下不播。按钮里没有自己点按动作的图标，点的时候整枚轻按一下（缩到 0.84 弹回，260ms）。关键帧只在 `icons/motion.css`，

@@ -11,7 +11,7 @@ import { McpProviders } from './McpProviders'
 import { installMcpTransport, seedSession, type OpenFigureResult } from './session'
 import '@/index.css'
 
-// 图标微动效（ADR 0154）与桌面应用同一份委托
+// 图标微动效（ADR 0156）与桌面应用同一份委托
 installIconMotion()
 
 /**

@@ -49,7 +49,7 @@ export function CopyButton({
   const [done, setDone] = useState(false)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
-  // 勾一直挂着（与复制图标叠在同一格淡换），所以「已复制」那一刻手动播它一笔画出来（ADR 0154）
+  // 勾一直挂着（与复制图标叠在同一格淡换），所以「已复制」那一刻手动播它一笔画出来（ADR 0156）
   const checkRef = useRef<SVGSVGElement>(null)
   useEffect(() => {
     if (done && checkRef.current) playIcon(checkRef.current)

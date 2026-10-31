@@ -24,7 +24,7 @@ import { ICON_MOTION, motionRoles, type IconMotion, type MotionRole } from './mo
  * - 无障碍与 lucide 一致：没有 `aria-label` / `aria-labelledby` / 子元素时自动
  *   `aria-hidden`，图标是装饰，名字由旁边的文字或按钮的可达名给。
  * - 类名 `icon icon-<kebab-name>`，用例按它认形状（`svg.icon-triangle-alert`）。
- * - 微动效（ADR 0154）：`motion.ts` 里登记了的图标带 `data-motion=<触发>`、各路径带 `data-m=<角色>`，
+ * - 微动效（ADR 0156）：`motion.ts` 里登记了的图标带 `data-motion=<触发>`、各路径带 `data-m=<角色>`，
  *   关键帧在 `motion.css`；`playIn` = 挂载时播一次（状态图标刚出现的那一下）。
  */
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
@@ -136,7 +136,7 @@ export function createIcon(name: string, def: IconDef): IconComponent {
         strokeLinecap="round"
         strokeLinejoin="round"
         className={cn('icon', shapeClass, defaults.className, className)}
-        // 图标集出的图标都带这个标记：微动效的委托按它认图标（ADR 0154），不认 class
+        // 图标集出的图标都带这个标记：微动效的委托按它认图标（ADR 0156），不认 class
         data-icon=""
         {...(hasA11y ? {} : { 'aria-hidden': true })}
         {...(roles && motion
