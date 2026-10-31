@@ -200,12 +200,19 @@
 @keyframes icon-pass { 0% { transform: none; opacity: 1; } 45% { transform: translateX(7px); opacity: 0; } 46% { transform: translateX(-7px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 
 /* ───────── 新一批：左轨 / 顶栏 / 画布工具胶囊（2026-10-31 第三轮） ───────── */
-/* 第三轮初版幅度太小（翻盖 1.8、光标 2、只重画小勾），真机上看着像没动：放到与排版 / 设置同一量级 */
-.icon-folder [data-m='q'] { transform-origin: 12px 20px; }
-.icon-folder[data-play] [data-m='p'] { animation: icon-flap var(--icon-ms) var(--icon-spring); }
-.icon-folder[data-play] [data-m='q'] { animation: icon-folder-open var(--icon-ms) var(--icon-spring); }
-@keyframes icon-flap { 0%, 100% { transform: none; } 40% { transform: translateY(-4px) scaleX(0.9); } 75% { transform: translateY(0.6px); } }
-@keyframes icon-folder-open { 0%, 100% { transform: none; } 40% { transform: scale(1.08, 0.88); } 75% { transform: scale(0.98, 1.03); } }
+/* 第三轮初版幅度太小（翻盖 1.8、光标 2、只重画小勾），真机上看着像没动：放到与排版 / 设置同一量级。
+   文件夹（用户 10-31 定）：前片绕底边朝观众翻开——看上去上沿往下落、因为离人更近而略宽；后片不动，翻开时露出里面一张纸 */
+/* r = 静止原形（播放期间隐去）、u = 后片、p = 前片，后两者是 ghost，播放期间显形；首尾两帧仍是原形，静止逐像素不变 */
+.icon-folder [data-m='p'], .icon-folder [data-m='x'] { transform-origin: 12px 20px; }
+.icon-folder[data-play] [data-m='x'] { animation: icon-folder-front var(--icon-ms) cubic-bezier(0.4, 0, 0.2, 1); }
+.icon-folder[data-play] [data-m='r'] { animation: icon-swap-out var(--icon-ms) linear; }
+.icon-folder[data-play] [data-m='u'] { animation: icon-swap-in var(--icon-ms) linear; }
+.icon-folder[data-play] [data-m='p'] { animation: icon-folder-front var(--icon-ms) cubic-bezier(0.4, 0, 0.2, 1), icon-swap-in var(--icon-ms) linear; }
+@keyframes icon-swap-out { 0%, 100% { opacity: 1; } 1%, 99% { opacity: 0; } }
+@keyframes icon-swap-in { 0%, 100% { stroke-opacity: 0; fill-opacity: 0; } 1%, 99% { stroke-opacity: 1; fill-opacity: 1; } }
+.icon-folder[data-play] [data-m='q'] { animation: icon-folder-sheet var(--icon-ms) ease-out; }
+@keyframes icon-folder-front { 0%, 100% { transform: none; } 35%, 55% { transform: scale(1.12, 0.4); } 82% { transform: scale(0.98, 1.05); } }
+@keyframes icon-folder-sheet { 0%, 100% { stroke-opacity: 0; transform: translateY(1.5px); } 30%, 60% { stroke-opacity: 1; transform: none; } 80% { stroke-opacity: 0; } }
 
 .icon-square-mouse-pointer[data-play] [data-m='p'] { animation: icon-poke var(--icon-ms) var(--icon-spring); }
 .icon-square-mouse-pointer[data-play] [data-m='q'] { animation: icon-squish var(--icon-ms) var(--icon-spring); }
