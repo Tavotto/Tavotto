@@ -187,7 +187,19 @@ def two_pkgs(tmp_path, clean_sys_path):
 
 @pytest.fixture
 def finder():
+    """装一个独立的过滤器实例（不碰进程级单例）。
+
+    同一个 pytest 进程里别的用例可能 import 过 `worker.py` / `bridge_runner.py`（它们按文件装的那份 `bridgeboot` 在模块层
+    装了自己的「读不了」查找器，排在 `PathFinder` 之前）；真实进程里只有一份 `bridgeboot`，所以这里先把别人的同类查找器按位置
+    摘下来，结束再原位放回——否则它们先于我们的实例用未过滤的 `sys.path` 找到模块，事件也记在别人账上。"""
     made = []
+    others = [
+        (i, f)
+        for i, f in enumerate(sys.meta_path)
+        if type(f).__name__ in ("UnreadableImportSkipper", "IgnoredImportPaths")
+    ]
+    for _, f in reversed(others):
+        sys.meta_path.remove(f)
 
     def _make(paths, on_ignore=None):
         f = bridgeboot.IgnoredImportPaths(paths, on_ignore)
@@ -199,6 +211,8 @@ def finder():
     for f in made:
         if f in sys.meta_path:
             sys.meta_path.remove(f)
+    for i, f in others:
+        sys.meta_path.insert(i, f)
 
 
 def _fresh(name: str):
