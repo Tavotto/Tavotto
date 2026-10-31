@@ -6734,7 +6734,6 @@ export default interface Resources {
       "emptyTitle": "画布是空的",
       "exitElementEdit": "退出图内编辑",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
-      "pickEditable": "可改图内",
       "pickLayoutOnly": "只能整体移动、缩放、裁剪",
       "pickNote": "点一下放上去，或从左侧素材拖入",
       "pickTitle": "把图放到这张画布上",

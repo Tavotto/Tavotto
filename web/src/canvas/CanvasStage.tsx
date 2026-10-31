@@ -530,20 +530,7 @@ function EmptyHint() {
       >
         {/* 项目里有图：直接摆选图卡（B5）。卡片是界面面（surface），不跟纸上的墨走 */}
         {showCards ? (
-          <>
-            <EmptyPickCards panels={panels} />
-            {!inTutorial && (
-              <div className="flex justify-center pb-1">
-                <button
-                  type="button"
-                  onClick={() => void runTutorialEntry('canvas')}
-                  className="rounded-sm text-sm text-ink-3 underline-offset-2 outline-none hover:text-ink-2 hover:underline focus-visible:focus-ring"
-                >
-                  {sg('tryTutorial')}
-                </button>
-              </div>
-            )}
-          </>
+          <EmptyPickCards panels={panels} paperW={mmToWorld(page.w) * zoom} paperH={mmToWorld(page.h) * zoom} />
         ) : (
         <EmptyState
           art="canvas"

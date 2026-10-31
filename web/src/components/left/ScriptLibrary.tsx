@@ -402,7 +402,7 @@ function ScriptRow({
             !busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink',
             // 同一颗钮（焦点不丢）：陈述句状态下常态不可见，悬停 / 键盘聚焦才在原位换成文字「运行」
             plain &&
-              'absolute right-1 w-auto px-2.5 text-sm opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100',
+              'absolute right-8 w-auto px-2.5 text-sm opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100',
           )}
         >
           {busy ? <Square size={ICON_SIZE.sm} /> : plain ? sc('runShort') : <Play size={ICON_SIZE.sm} />}
