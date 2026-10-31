@@ -33,6 +33,16 @@
   多出来的那个说明有人往 Gate 的 `needs` 加了 job 却没同步 `--required`，
   静默放过它就是在 Gate 上开洞。
 
+* `--classifier JOB --docs-only-skippable A,B,...`（docs-only 快车道，
+  `scripts/ci/docs_scope.py`）：**只有**分类 job 自己 `success` **且**它的
+  输出 `docs_only == "true"`（取自 `needs[JOB].outputs`，即 `toJSON(needs)`
+  里本来就带的证据，不是调用方另外声明的布尔值）时，`A,B,...` 这些 required
+  job 才允许 `skipped`；它们不是 skipped 就仍须 success。分类 job 失败 / 被跳过
+  / 没输出 / 输出不是字面 `true`，一律回到上面的严格规则。`A,B,...` 必须是
+  required 的子集且不含分类 job 自己；其余 required（lint / CLA / 发行说明闸）
+  照常必须 success。docs-only 通过时 status 仍是 `success`，reason 是
+  `docs_only_fast_path`，summary 会列出被豁免跳过的 job。
+
 退出码：0 = success 或 deferred；1 = Gate 失败；2 = 配置 / 输入错误
 （同样让 Gate 红——判定器自己坏了不能算通过）。
 
@@ -66,6 +76,10 @@ class ConfigError(Exception):
 
 
 def parse_needs(raw: str) -> dict[str, str]:
+    return parse_needs_full(raw)[0]
+
+
+def parse_needs_full(raw: str) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     """把 `toJSON(needs)` 的输出解析成 {job_id: result}。
 
     形状必须严格：不是 dict、条目缺 `result`，都按配置错误抛——一个安静地
@@ -78,11 +92,15 @@ def parse_needs(raw: str) -> dict[str, str]:
     if not isinstance(data, dict):
         raise ConfigError(f"needs JSON 不是对象：{type(data).__name__}")
     out: dict[str, str] = {}
+    outputs: dict[str, dict[str, str]] = {}
     for job, entry in data.items():
         if not isinstance(entry, dict) or "result" not in entry:
             raise ConfigError(f"needs['{job}'] 里没有 result 字段")
         out[job] = str(entry["result"])
-    return out
+        raw_outputs = entry.get("outputs")
+        if isinstance(raw_outputs, dict):
+            outputs[job] = {str(k): str(v) for k, v in raw_outputs.items()}
+    return out, outputs
 
 
 def decide(
@@ -94,6 +112,9 @@ def decide(
     require_heavy: bool = False,
     allow_deferred: bool = False,
     full_ci: bool = False,
+    outputs: dict[str, dict[str, str]] | None = None,
+    classifier: str | None = None,
+    docs_only_skippable: list[str] | None = None,
 ) -> dict:
     """核心判定。返回 {"status": "success"|"failure"|"deferred", ...}。
 
@@ -116,10 +137,27 @@ def decide(
     if allow_deferred and full_ci:
         raise ConfigError("full-ci PR 不允许 deferred——标签的意义就是在 PR 上提前跑全套")
 
+    skippable = list(docs_only_skippable or [])
+    if skippable and not classifier:
+        raise ConfigError("--docs-only-skippable 必须同时给 --classifier")
+    if classifier and not skippable:
+        raise ConfigError("--classifier 必须同时给 --docs-only-skippable")
+    if classifier and classifier in skippable:
+        raise ConfigError("分类 job 自己不能出现在可跳过集合里——它是这条豁免的证据")
+    not_required = [j for j in skippable if j not in required]
+    if not_required:
+        raise ConfigError(f"--docs-only-skippable 里有不在 required 的 job：{not_required}")
+
     # ---- 闭集校验：缺一个、多一个都是失败 ----
     problems: list[str] = []
     missing = [j for j in required if j not in results]
-    unexpected = sorted(set(results) - set(required))
+    #: 分类 job 本身可以出现在 needs 里而不在 required 里（integration gate 就是这样），
+    #: 但出现了就必须 success——它是豁免的证据，证据自己坏了不能当没看见。
+    allowed_extra = {classifier} if classifier and classifier not in required else set()
+    unexpected = sorted(set(results) - set(required) - allowed_extra)
+    for j in sorted(allowed_extra & set(results)):
+        if results[j] != "success":
+            problems.append(f"classifier: `{j}` 的结论是 `{results[j]}`，不是 success")
     for j in missing:
         problems.append(f"missing: required job `{j}` 不在 needs 里")
     for j in unexpected:
@@ -139,6 +177,28 @@ def decide(
 
     if problems:
         return {**base, "status": "failure", "reason": "contract_violation", "problems": problems}
+
+    docs_only = bool(
+        classifier
+        and results.get(classifier) == "success"
+        and (outputs or {}).get(classifier, {}).get("docs_only") == "true"
+    )
+    if docs_only:
+        bad = [
+            f"{j}: {results[j]}"
+            for j in required
+            if results[j] != "success" and not (results[j] == "skipped" and j in skippable)
+        ]
+        if bad:
+            return {**base, "status": "failure", "reason": "upstream_not_success", "problems": bad}
+        skipped = [j for j in skippable if results[j] == "skipped"]
+        return {
+            **base,
+            "status": "success",
+            "reason": "docs_only_fast_path",
+            "docs_only_skipped": skipped,
+            "problems": [],
+        }
 
     req_results = [results[j] for j in required]
 
@@ -166,6 +226,13 @@ def render_summary(verdict: dict, required: list[str]) -> str:
     lines += ["| job | result |", "|---|---|"]
     for j in sorted(verdict["jobs"]):
         lines.append(f"| `{j}` | {verdict['jobs'][j]} |")
+    if verdict.get("docs_only_skipped"):
+        lines += [
+            "",
+            "docs-only 快车道：本次只改了 `docs/release-notes/`（分类 job 已核对），",
+            "下列重型 job 按设计被跳过："
+            + "、".join(f"`{j}`" for j in verdict["docs_only_skipped"]),
+        ]
     if verdict.get("problems"):
         lines += ["", "问题："] + [f"- {p}" for p in verdict["problems"]]
     return "\n".join(lines) + "\n"
@@ -198,11 +265,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="PR 带 full-ci 标签——与 --allow-deferred 互斥，脚本会复核",
     )
+    ap.add_argument(
+        "--classifier",
+        help="docs-only 分类 job 的 id；其 success 且 outputs.docs_only == 'true' 是跳过豁免的唯一证据",
+    )
+    ap.add_argument(
+        "--docs-only-skippable",
+        default="",
+        help="逗号分隔：docs-only 证据成立时允许 skipped 的 required job（须 ⊆ required）",
+    )
     args = ap.parse_args(argv)
 
     required = [s.strip() for s in args.required.split(",") if s.strip()]
     try:
-        results = parse_needs(args.needs_json)
+        results, outputs = parse_needs_full(args.needs_json)
         verdict = decide(
             args.mode,
             args.event,
@@ -211,6 +287,11 @@ def main(argv: list[str] | None = None) -> int:
             require_heavy=args.require_heavy,
             allow_deferred=args.allow_deferred,
             full_ci=args.full_ci,
+            outputs=outputs,
+            classifier=args.classifier,
+            docs_only_skippable=[
+                s.strip() for s in args.docs_only_skippable.split(",") if s.strip()
+            ],
         )
     except ConfigError as exc:
         verdict = {
