@@ -168,7 +168,6 @@ import {
   runValidation,
   useValidationStore,
 } from "@/store/validationStore";
-import { severityLabel } from "@/lib/validationText";
 import { Button, IconButton } from "./ui/Button";
 import { Details, Summary } from "./ui/Details";
 import { FormRow } from "./FormRow";
@@ -2672,12 +2671,11 @@ function CheckRow({
   // 阻断项由下方的清单逐条列出，完整清单归左侧问题面板（§四）——数量这一行不能省：
   // 只有警告时没有它，用户看到的就是一片空白，既不知道有警告、也没有去问题面板的路。
   // 颜色只在圆点上：要改 = danger、留意 = warn，建议 / 无法核验永远是灰。点芯片 = 带着这一档去问题面板。
-  // 等级名与问题面板同一份（`severityLabel`：阻断 / 警告 / 无法核验 / 建议），计数 = `summaryFor()` 的 counts，不另起判据
-  const CHIPS: { sev: Severity; tone: CountTone }[] = [
-    { sev: "error", tone: "danger" },
-    { sev: "warn", tone: "warn" },
-    { sev: "not_verifiable", tone: "quiet" },
-    { sev: "suggestion", tone: "quiet" },
+  const CHIPS: { sev: Severity; tone: CountTone; key: string }[] = [
+    { sev: "error", tone: "danger", key: "chipError" },
+    { sev: "warn", tone: "warn", key: "chipWarn" },
+    { sev: "not_verifiable", tone: "quiet", key: "chipNotVerifiable" },
+    { sev: "suggestion", tone: "quiet", key: "chipSuggestion" },
   ];
   return (
     <div className="flex items-center justify-between gap-3">
@@ -2688,7 +2686,7 @@ function CheckRow({
             key={c.sev}
             tone={c.tone}
             count={summary.counts[c.sev]}
-            label={severityLabel(c.sev)}
+            label={ex(c.key, { count: summary.counts[c.sev] })}
             onClick={() => onOpenPanel({ severities: [c.sev] })}
           />
         ))}
