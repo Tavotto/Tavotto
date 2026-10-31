@@ -50,12 +50,12 @@ const spec = (p: IconPathSpec): IconPath => (typeof p === 'string' ? { d: p } : 
 
 type Role = { role: MotionRole | null; k: number } | undefined
 
-// 动作角色贴在路径上：`d`（一笔画出）要 pathLength=1 才能按比例走描边进度，`t`（依次动）带错开下标
+// 动作角色贴在路径上：`d` / `e`（一笔画出）要 pathLength=1 才能按比例走描边进度，`t`（依次动）带错开下标
 function motionAttrs(r: Role) {
   if (!r?.role) return {}
   return {
     'data-m': r.role,
-    ...(r.role === 'd' ? { pathLength: 1 } : {}),
+    ...(r.role === 'd' || r.role === 'e' ? { pathLength: 1 } : {}),
     ...(r.role === 't' ? { style: { '--k': r.k } as CSSProperties } : {}),
   }
 }

@@ -10,7 +10,7 @@
  * - `a`：整枚一起动（不写 `parts` 时每条路径都是 `a`）
  * - `p` / `q` / `r`（不够用再有 `u` `v` `w` `x`）：同一枚图标里分开动的几组（各图标自己在 CSS 里定义含义）
  * - `t`：依次动的一排（格子、散点、柱子、三点），按出现顺序带 `--k` 下标错开
- * - `d`：一笔画出来（`pathLength=1` + 描边进度）
+ * - `d`：一笔画出来（`pathLength=1` + 描边进度）；`e` 是晚半拍的第二笔
  *
  * 触发（`on`）：
  * - `press`：所在按钮被点一下（点击后的下一帧播，所以按钮里换了图标——复制 → 勾、
@@ -26,7 +26,7 @@
 import type { IconName, IconVariant } from './defs'
 
 export type MotionTrigger = 'press' | 'hover' | 'enter'
-export type MotionRole = 'a' | 'p' | 'q' | 'r' | 'u' | 'v' | 'w' | 'x' | 't' | 'd'
+export type MotionRole = 'a' | 'p' | 'q' | 'r' | 'u' | 'v' | 'w' | 'x' | 't' | 'd' | 'e'
 export type MotionParts = Partial<Record<keyof IconVariant, (MotionRole | null)[]>>
 
 export interface IconMotion {
@@ -76,6 +76,25 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   Unplug: { on: 'enter', ms: 520, parts: { s: ['p', 'p', 'p', 'q', 'q'] } },
 
   // ───────── 悬停播 ─────────
+  // 左轨（选中的那颗是实心孪生，所以都写 sel）
+  Folder: { on: 'hover', ms: 440, parts: { s: [null, 'p'] }, sel: { f: [null], k: ['p'] } },
+  SquareMousePointer: { on: 'hover', ms: 480, parts: { s: ['q'], f: ['p'] }, sel: { f: ['q'], k: ['p'], o: ['p'] } },
+  Paintbrush: { on: 'hover', ms: 560, sel: 'all' },
+  ListChecks: { on: 'hover', ms: 520, parts: { s: ['d', 'e', null, null] }, sel: { f: [null, null], k: ['d', 'e'], s: [null, null] } },
+  ClipboardList: { on: 'hover', ms: 520, parts: { s: [null, 'p', 'd'] }, sel: { f: [null, 'p'], k: ['d'] } },
+  // 顶栏 / 状态
+  Mail: { on: 'hover', ms: 520, parts: { s: [null, 'p'] } },
+  HardDrive: { on: 'hover', ms: 520, parts: { s: [null, null], f: ['p'] } },
+  Lightbulb: { on: 'hover', ms: 620, sel: 'all' },
+  // 画布底部工具胶囊
+  MousePointerClick: { on: 'hover', ms: 480, parts: { f: ['p'], s: ['t', 't', 't'] } },
+  Type: { on: 'hover', ms: 460, parts: { s: ['p', 'd'] } },
+  ArrowUpRight: { on: 'hover', ms: 480 },
+  Square: { on: 'hover', ms: 460, sel: 'all' },
+  Circle: { on: 'hover', ms: 520, sel: 'all' },
+  Slash: { on: 'hover', ms: 380, parts: { s: ['d'] } },
+  Shapes: { on: 'hover', ms: 460, parts: { s: ['p', 'q'] } },
+  Tags: { on: 'hover', ms: 560, sel: 'all' },
   LayoutGrid: { on: 'hover', ms: 420, parts: { s: ['t', 't', 't', 't'] }, sel: { f: ['t', 't', 't', 't'] } },
   Layers: { on: 'hover', ms: 480, parts: { s: ['p', 'q', null] }, sel: { f: ['p'], s: ['q', null] } },
   Settings: { on: 'hover', ms: 520, parts: { s: ['p', null] }, sel: { f: ['p'], k: [null] } },
