@@ -16,6 +16,11 @@
 //! 系统认 / 宿主另有限制），置 `still_packaged`、不再重试、照常启动；`CreateProcessW` 失败置 `failed`、
 //! 照常启动。这个值会被 sidecar 继承，诊断包的 `system.msix_breakaway` 如实报出（闭集三值）。
 //!
+//! 启动结局可观察：替身起来后本进程**不立刻 `exit(0)`**，而是最多等 [`HANDOFF_WAIT_MS`]：替身在窗口内退出就
+//! 原样透传它的退出码（崩溃 = 非零，单实例转发完成 = 0），仍活着则以 0 退出。这样 Python 启动器
+//! （`handoff._launch_desktop_via_spawn`，观察窗口 `LAUNCH_CRASH_WINDOW`）看到的仍是「这个进程」的结局：
+//! 替身崩了报 launch_failed，而不是把任何 0 退出都当成转发完成。
+//!
 //! 与 Python 侧 `engine/msixbreakaway.py` 是同一份契约的两种语言实现（常量、策略值一致）。
 
 #![cfg_attr(not(windows), allow(dead_code))]
@@ -33,6 +38,19 @@ pub const FAILED: &str = "failed";
 pub const ATTR_DESKTOP_APP_POLICY: usize = 0x0002_0012;
 /// `PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_ENABLE_PROCESS_TREE`
 pub const BREAKAWAY_ENABLE_PROCESS_TREE: u32 = 0x01;
+
+/// 替身起来后本进程最多等多久（毫秒）。必须大于启动器的观察窗口（`handoff.LAUNCH_CRASH_WINDOW` = 6s，
+/// `tests/test_msix_breakaway.py` 对拍），否则窗口内替身崩溃看不到。
+pub const HANDOFF_WAIT_MS: u32 = 8000;
+
+/// 本进程该以什么退出码结束：`replacement_exit` 是等待期内替身的退出码（`None` = 等到期替身还活着）。
+/// 替身还活着 = 启动成功，0；替身已退出就原样透传（崩溃非零；转发给已在跑的实例后正常退出为 0）。
+pub fn handoff_exit_code(replacement_exit: Option<u32>) -> i32 {
+    match replacement_exit {
+        None => 0,
+        Some(code) => code as i32,
+    }
+}
 
 /// 启动时该做什么。
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -97,6 +115,7 @@ pub fn command_line(exe: &str, args: &[String]) -> String {
 
 /// 壳启动最早期调用（崩溃过滤器之后、Tauri 建 Builder 之前）：带包身份就脱离包重新拉起自己并退出进程。
 /// 非 Windows 是空函数。任何失败都只是「照常启动」，绝不拦死启动。
+/// 替身拉起成功后等它至多 [`HANDOFF_WAIT_MS`] 并透传其退出码（见模块文档）。
 #[cfg(not(windows))]
 pub fn relaunch_outside_package_if_needed() {}
 
@@ -110,7 +129,7 @@ pub fn relaunch_outside_package_if_needed() {
             // 先置标记再拉起：新进程继承它；拉起失败再改成 failed。
             std::env::set_var(GUARD_ENV, RELAUNCHED);
             match spawn_self_outside_package() {
-                Ok(()) => std::process::exit(0),
+                Ok(replacement_exit) => std::process::exit(handoff_exit_code(replacement_exit)),
                 Err(_) => std::env::set_var(GUARD_ENV, FAILED),
             }
         }
@@ -129,14 +148,15 @@ fn has_package_identity() -> bool {
 }
 
 #[cfg(windows)]
-fn spawn_self_outside_package() -> Result<(), String> {
+fn spawn_self_outside_package() -> Result<Option<u32>, String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
-        CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-        UpdateProcThreadAttribute, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROCESS_INFORMATION, STARTUPINFOEXW,
+        CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+        InitializeProcThreadAttributeList, UpdateProcThreadAttribute, WaitForSingleObject,
+        EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+        STARTUPINFOEXW,
     };
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -196,12 +216,21 @@ fn spawn_self_outside_package() -> Result<(), String> {
             )
         }
         .map_err(|e| e.to_string())?;
-        // SAFETY: 两个句柄刚由 CreateProcessW 交给我们。
-        unsafe {
+        // 等替身至多 HANDOFF_WAIT_MS：期间退出就取它的退出码，否则 None（还活着 = 启动成功）。
+        // SAFETY: 两个句柄刚由 CreateProcessW 交给我们，等完才关；code 是本栈上的有效 u32。
+        let replacement_exit = unsafe {
             let _ = CloseHandle(pi.hThread);
+            let exited = WaitForSingleObject(pi.hProcess, HANDOFF_WAIT_MS) == WAIT_OBJECT_0;
+            let mut code = 0u32;
+            let got = exited && GetExitCodeProcess(pi.hProcess, &mut code).is_ok();
             let _ = CloseHandle(pi.hProcess);
-        }
-        Ok(())
+            if got {
+                Some(code)
+            } else {
+                None
+            }
+        };
+        Ok(replacement_exit)
     })();
     // SAFETY: list 已初始化。
     unsafe { DeleteProcThreadAttributeList(list) };
@@ -257,17 +286,111 @@ mod tests {
         );
     }
 
+    #[test]
+    fn handoff_exit_code_passes_the_replacements_fate_through() {
+        assert_eq!(handoff_exit_code(None), 0, "替身还活着 = 启动成功");
+        assert_eq!(
+            handoff_exit_code(Some(0)),
+            0,
+            "转发给已在跑的实例后正常退出"
+        );
+        assert_eq!(handoff_exit_code(Some(1)), 1);
+        // 崩溃类 NTSTATUS（0xC0000005）按位透传，不能被截成 0
+        assert_ne!(handoff_exit_code(Some(0xC000_0005)), 0);
+    }
+
+    /// 本进程的等待必须长于启动器的观察窗口，否则窗口内的替身崩溃观察不到。
+    #[test]
+    fn handoff_wait_outlasts_the_launchers_observation_window() {
+        let py = include_str!("../../src/tavotto/engine/handoff.py");
+        let line = py
+            .lines()
+            .find(|l| l.starts_with("LAUNCH_CRASH_WINDOW ="))
+            .expect("handoff.py 里找不到 LAUNCH_CRASH_WINDOW");
+        let secs: f64 = line.split('=').nth(1).unwrap().trim().parse().unwrap();
+        assert!(f64::from(HANDOFF_WAIT_MS) / 1000.0 > secs, "{secs}");
+    }
+
+    // ---- main() 里「脱包在崩溃过滤器之后、Tauri Builder 之前」的结构看护（AST，不按子串）----
+
+    /// 顶层语句里「可执行调用」的路径（如 `msix_breakaway::relaunch_outside_package_if_needed`）。
+    struct CallPaths(Vec<String>);
+
+    impl<'ast> syn::visit::Visit<'ast> for CallPaths {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(p) = &*call.func {
+                let segs: Vec<String> = p
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
+                self.0.push(segs.join("::"));
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+
+    /// 解析源码，取 `fn main` 的顶层语句，返回三者所在的顶层语句序号并校验顺序。
+    /// 注释被解析器丢掉、字符串字面量不是调用，所以注释掉调用必然失败。
+    fn check_main_order(src: &str) -> Result<(), String> {
+        use syn::visit::Visit;
+        let file = syn::parse_file(src).map_err(|e| e.to_string())?;
+        let main = file
+            .items
+            .iter()
+            .find_map(|i| match i {
+                syn::Item::Fn(f) if f.sig.ident == "main" => Some(f),
+                _ => None,
+            })
+            .ok_or("找不到 fn main")?;
+        let position = |want: &str| -> Option<usize> {
+            main.block.stmts.iter().position(|stmt| {
+                let mut c = CallPaths(Vec::new());
+                c.visit_stmt(stmt);
+                c.0.iter().any(|p| p == want)
+            })
+        };
+        let crash = position("crash_dump::install").ok_or("main 没有调用 crash_dump::install")?;
+        let relaunch = position("msix_breakaway::relaunch_outside_package_if_needed")
+            .ok_or("main 没有调用 msix_breakaway::relaunch_outside_package_if_needed")?;
+        let builder = position("tauri::Builder::default").ok_or("main 没有 Tauri Builder")?;
+        if crash < relaunch && relaunch < builder {
+            Ok(())
+        } else {
+            Err(format!(
+                "顺序不对：crash={crash} relaunch={relaunch} builder={builder}"
+            ))
+        }
+    }
+
     /// 兜底必须发生在 Tauri Builder 之前（单实例插件之前），且在崩溃过滤器之后。
     #[test]
     fn main_relaunches_after_the_crash_filter_and_before_the_builder() {
-        let src = include_str!("main.rs").replace("\r\n", "\n");
-        let at = src.find("\nfn main() {\n").expect("找不到 fn main");
-        let body = &src[at..];
-        let crash = body.find("crash_dump::install();").unwrap();
-        let relaunch = body
-            .find("msix_breakaway::relaunch_outside_package_if_needed();")
-            .expect("main 要调用兜底");
-        let builder = body.find("tauri::Builder::default()").unwrap();
-        assert!(crash < relaunch && relaunch < builder);
+        let src = include_str!("main.rs");
+        check_main_order(src).unwrap();
+    }
+
+    /// 自测：看护本身不能被注释 / 字符串 / 调换顺序骗过。
+    #[test]
+    fn main_order_check_rejects_commented_out_or_reordered_calls() {
+        let src = include_str!("main.rs");
+        let call = "msix_breakaway::relaunch_outside_package_if_needed();";
+        assert!(src.contains(call), "main.rs 里的调用写法变了，同步这个自测");
+
+        let line_commented = src.replace(call, &format!("// {call}"));
+        assert!(check_main_order(&line_commented).is_err(), "行注释");
+        let block_commented = src.replace(call, &format!("/* {call} */"));
+        assert!(check_main_order(&block_commented).is_err(), "块注释");
+        let in_string = src.replace(call, &format!("let _doc = \"{call}\";"));
+        assert!(check_main_order(&in_string).is_err(), "字符串字面量");
+
+        // 调换顺序：调用挪到崩溃过滤器之前
+        let moved = src.replace(call, "").replacen(
+            "crash_dump::install();",
+            &format!("{call}\n    crash_dump::install();"),
+            1,
+        );
+        assert!(check_main_order(&moved).is_err(), "先于崩溃过滤器");
     }
 }

@@ -47,6 +47,12 @@ GUARD_ENV = "TAVOTTO_MSIX_BREAKAWAY"
 #: 标记的闭集取值（壳写入）；其它值一律当「没有」。
 GUARD_VALUES = ("relaunched", "still_packaged", "failed")
 
+#: CLI 自我重启（`relaunch_cli`）的防循环标记：重启出来的 CLI 进程带着它，仍有包身份也不再重启。
+#: 与 Rust 壳的 `GUARD_ENV` 分开——壳的取值会进诊断包，CLI 这一跳不应污染它。
+CLI_GUARD_ENV = "TAVOTTO_MSIX_CLI_RELAUNCH"
+
+STD_HANDLES = (-10, -11, -12)  # STD_INPUT_HANDLE / STD_OUTPUT_HANDLE / STD_ERROR_HANDLE
+
 ERROR_INSUFFICIENT_BUFFER = 122
 APPMODEL_ERROR_NO_PACKAGE = 15700
 
@@ -213,6 +219,7 @@ def spawn_detached(
     cwd: str | None = None,
     kernel32: Any = None,
     open_nul=None,
+    inherit_stdio: bool = False,
 ) -> "BreakawayProcess | None":
     """Windows：`CreateProcessW` + `STARTUPINFOEX` + `DESKTOP_APP_POLICY=0x01` 拉起 `argv`。
 
@@ -221,6 +228,9 @@ def spawn_detached(
     被继承（不把父进程别的可继承句柄漏给子进程）；`creationflags` 原样并上
     `EXTENDED_STARTUPINFO_PRESENT`。非 Windows、API 不可用或任何一步失败回 `None`——调用方
     退回 `subprocess.Popen`（文件不存在这类真错误由那条路按原样抛）。
+
+    `inherit_stdio=True`（CLI 自我重启用）：标准流改为继承本进程的 stdin/stdout/stderr（管道、文件、
+    控制台都行），无效的那一路才退回 NUL；同样只有这些句柄经 HANDLE_LIST 被继承。
     """
     if kernel32 is None and not _is_windows():
         return None
@@ -285,7 +295,29 @@ def spawn_detached(
             attr_list = None
             return None
 
-        handles = (vp * 1)(nul_handle)
+        std_in = std_out = std_err = nul_handle
+        listed = [nul_handle]
+        if inherit_stdio:
+            k.GetStdHandle.argtypes = [ctypes.c_int32]
+            k.GetStdHandle.restype = ctypes.c_void_p
+            k.SetHandleInformation.argtypes = [ctypes.c_void_p, u32, u32]
+            k.SetHandleInformation.restype = ctypes.c_int
+            picked = []
+            for which in STD_HANDLES:
+                h = k.GetStdHandle(which)
+                # 无效 / 没有的那一路退回 NUL；能标成可继承才算数
+                if (
+                    h
+                    and h != ctypes.c_void_p(-1).value
+                    and k.SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
+                ):
+                    picked.append(h)
+                else:
+                    picked.append(nul_handle)
+            std_in, std_out, std_err = picked
+            # HANDLE_LIST 里的重复句柄会被系统拒绝：去重（保序）
+            listed = list(dict.fromkeys(picked))
+        handles = (vp * len(listed))(*listed)
         if not k.UpdateProcThreadAttribute(
             attr_list,
             0,
@@ -311,9 +343,9 @@ def spawn_detached(
         si = st.STARTUPINFOEXW()
         si.StartupInfo.cb = ctypes.sizeof(st.STARTUPINFOEXW)
         si.StartupInfo.dwFlags = STARTF_USESTDHANDLES
-        si.StartupInfo.hStdInput = nul_handle
-        si.StartupInfo.hStdOutput = nul_handle
-        si.StartupInfo.hStdError = nul_handle
+        si.StartupInfo.hStdInput = std_in
+        si.StartupInfo.hStdOutput = std_out
+        si.StartupInfo.hStdError = std_err
         si.lpAttributeList = attr_list
         pi = st.PROCESS_INFORMATION()
 
@@ -378,3 +410,52 @@ def _open_nul_inheritable(k: Any):
         return h
 
     return _open
+
+
+def relaunch_cli(
+    cli_args: list[str],
+    *,
+    environ: "dict | None" = None,
+    kernel32: Any = None,
+    identity: "bool | None" = None,
+    frozen: "bool | None" = None,
+    executable: "str | None" = None,
+) -> "int | None":
+    """CLI 入口自救（`tavotto open` 等）：本进程带 MSIX 包身份就脱离包重新拉起同一条命令，
+    继承 stdio、等它结束、返回它的退出码；调用方直接 `return` 这个码即可。
+
+    为什么要整条命令重启而不是只重启桌面版：CLI 在拉起桌面版**之前**就会在本进程里落盘
+    （`open script.py` 没有实例时的本地 safe probe 把图物化进 `data_dir()/cache/runtime`），
+    带着包身份它们会被重定向进宿主的私有区，脱包后的桌面读真实目录就找不到（#1574 评审）。
+    所以脱包必须发生在这一切之前。
+
+    返回 `None` = 没有重启（没有包身份 / 已经重启过 / 非 Windows / 拉起失败），调用方照旧往下走；
+    失败时 `environ` 里的防循环标记会还原，原路径行为与从前一致。
+    """
+    env = os.environ if environ is None else environ
+    if env.get(CLI_GUARD_ENV):
+        return None
+    if identity is None:
+        identity = has_package_identity(kernel32=kernel32)
+    if not identity:
+        return None
+    if frozen is None:
+        import sys
+
+        frozen = bool(getattr(sys, "frozen", False))
+    if executable is None:
+        import sys
+
+        executable = sys.executable
+    # 冻结产物的入口认子命令；pip / pipx 形态用 `python -m tavotto`
+    argv = [executable, *cli_args] if frozen else [executable, "-m", "tavotto", *cli_args]
+    env[CLI_GUARD_ENV] = "1"  # 子进程继承；必须在创建之前置位
+    proc = spawn_detached(argv, creationflags=0, kernel32=kernel32, inherit_stdio=True)
+    if proc is None:
+        env.pop(CLI_GUARD_ENV, None)
+        return None
+    try:
+        return int(proc.wait())
+    except KeyboardInterrupt:
+        proc.terminate()
+        return 130

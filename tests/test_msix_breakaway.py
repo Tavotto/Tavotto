@@ -295,6 +295,137 @@ def test_only_handoff_creates_desktop_processes_with_the_policy():
     assert hits == ["msixbreakaway.py"], hits
 
 
+# ---------------------------- CLI 自我重启（#1574 评审 P1：脱包要在落盘探测之前）----------------------------
+class StdioKernel32(FakeKernel32):
+    """带标准流的替身：stdin/stdout/stderr 各是不同的句柄，可指定哪一路无效。"""
+
+    STD = {-10: 0x51, -11: 0x52, -12: 0x53}
+
+    def __init__(self, *a, bad_std=(), **kw):
+        super().__init__(*a, **kw)
+        self.bad_std = set(bad_std)
+        self.marked: list[int] = []
+        self.GetStdHandle = _Fn(self._get_std)
+        self.GetCurrentPackageFullName = _Fn(lambda length, buf: 122)  # 有包身份
+        self.SetHandleInformation = _Fn(self._set_info)
+
+    def _get_std(self, which):
+        return None if which in self.bad_std else self.STD[which]
+
+    def _set_info(self, h, mask, flags):
+        assert (mask, flags) == (1, 1)
+        self.marked.append(h)
+        return 1
+
+
+def test_spawn_with_inherit_stdio_passes_the_callers_streams_and_lists_each_once():
+    k = StdioKernel32()
+    assert mb.spawn_detached(["x.exe"], creationflags=0, kernel32=k, inherit_stdio=True)
+    assert k.create_args["std"] == (0x51, 0x52, 0x53)
+    assert {0x51, 0x52, 0x53} <= set(k.marked)  # 三路都标成可继承
+    listed = ctypes.c_void_p * 3
+    got = list(listed.from_buffer_copy(k.attrs[0x00020002]))
+    assert got == [0x51, 0x52, 0x53]  # 白名单只含标准流，无重复
+
+
+def test_inherit_stdio_falls_back_to_nul_per_invalid_stream_and_dedupes():
+    k = StdioKernel32(bad_std={-10})
+    assert mb.spawn_detached(["x.exe"], creationflags=0, kernel32=k, inherit_stdio=True)
+    assert k.create_args["std"] == (k.NUL, 0x52, 0x53)
+    got = list((ctypes.c_void_p * 3).from_buffer_copy(k.attrs[0x00020002]))
+    assert got == [k.NUL, 0x52, 0x53]
+    # 三路共用同一个句柄（管道 2>&1）：白名单里只出现一次
+    k2 = StdioKernel32()
+    k2.STD = {-10: 0x51, -11: 0x52, -12: 0x52}
+    assert mb.spawn_detached(["x.exe"], creationflags=0, kernel32=k2, inherit_stdio=True)
+    assert list((ctypes.c_void_p * 2).from_buffer_copy(k2.attrs[0x00020002])) == [0x51, 0x52]
+
+
+def test_relaunch_cli_reruns_the_command_outside_the_package_and_returns_its_exit_code():
+    k = StdioKernel32(exit_code=7)
+    env: dict = {}
+    rc = mb.relaunch_cli(
+        ["open", "D:\\a b\\s.py", "--json"],
+        environ=env,
+        kernel32=k,
+        frozen=False,
+        executable="C:\\Py\\python.exe",
+    )
+    assert rc == 7  # 子进程的退出码原样透传
+    a = k.create_args
+    assert a["cmdline"] == subprocess.list2cmdline(
+        ["C:\\Py\\python.exe", "-m", "tavotto", "open", "D:\\a b\\s.py", "--json"]
+    )
+    assert _ptr_u32(k.attrs[0x00020012]) == 0x01  # 脱离策略
+    assert a["flags"] == 0x00080000 and a["std"] == (0x51, 0x52, 0x53)  # 不 DETACHED，继承 stdio
+    assert env[mb.CLI_GUARD_ENV]  # 防循环标记在创建前已置位（子进程继承）
+
+
+def test_relaunch_cli_frozen_entry_takes_the_subcommand_directly():
+    k = StdioKernel32(exit_code=0)
+    mb.relaunch_cli(
+        ["open", "x.py"], environ={}, kernel32=k, frozen=True, executable="C:\\T\\tavotto-cli.exe"
+    )
+    assert k.create_args["cmdline"] == "C:\\T\\tavotto-cli.exe open x.py"
+
+
+def test_relaunch_cli_does_nothing_without_identity_or_after_a_relaunch():
+    k = StdioKernel32()
+    k.GetCurrentPackageFullName = _Fn(lambda length, buf: 15700)  # 无包身份
+    assert mb.relaunch_cli(["open", "x"], environ={}, kernel32=k) is None
+    assert k.create_args is None
+    k2 = StdioKernel32()
+    # 重启过一次、仍带包身份：绝不再重启（无限重启防线）
+    assert mb.relaunch_cli(["open", "x"], environ={mb.CLI_GUARD_ENV: "1"}, kernel32=k2) is None
+    assert k2.create_args is None
+
+
+@pytest.mark.parametrize("fail_at", ["nul", "create", "attr0x20012"])
+def test_relaunch_cli_failure_runs_the_original_path_and_clears_the_marker(fail_at):
+    k = StdioKernel32(fail_at=fail_at)
+    env: dict = {}
+    assert mb.relaunch_cli(["open", "x"], environ=env, kernel32=k) is None
+    assert mb.CLI_GUARD_ENV not in env
+
+
+def test_cli_relaunches_before_any_probe_or_registration(monkeypatch):
+    """顺序（Codex P1）：脱包重启发生在任何落盘动作（含 open_target 里的本地 probe）之前；
+    重启成功时本进程什么都不做，直接返回子进程的退出码。"""
+    order: list[str] = []
+
+    def fake_relaunch(args):
+        order.append("relaunch")
+        return 9
+
+    def boom(*a, **k):  # pragma: no cover
+        order.append("open_target")
+        raise AssertionError("脱包重启成功后本进程不该再处理")
+
+    monkeypatch.setattr(handoff.msixbreakaway, "relaunch_cli", fake_relaunch)
+    monkeypatch.setattr(handoff, "open_target", boom)
+    assert handoff.cli(["s.py", "--json"]) == 9
+    assert order == ["relaunch"]
+
+
+def test_cli_runs_normally_when_not_relaunched(monkeypatch, capsys):
+    order: list[str] = []
+
+    def fake_relaunch(args):
+        order.append("relaunch")
+        assert args == ["open", "s.py", "--no-launch"]  # 原样转发整条命令
+        return None
+
+    def fake_open(raw, **kw):
+        order.append("open_target")
+        return {"ok": True}
+
+    monkeypatch.setattr(handoff.msixbreakaway, "relaunch_cli", fake_relaunch)
+    monkeypatch.setattr(handoff, "open_target", fake_open)
+    monkeypatch.setattr(handoff, "_report", lambda r: None)
+    assert handoff.cli(["s.py", "--no-launch"]) == 0
+    assert order == ["relaunch", "open_target"]
+
+
 # ---------------------------- 与 Rust 壳的同源对 ----------------------------
 def test_rust_shell_mirrors_the_python_constants():
     rs = (REPO / "src-tauri" / "src" / "msix_breakaway.rs").read_text(encoding="utf-8")
@@ -304,6 +435,9 @@ def test_rust_shell_mirrors_the_python_constants():
     assert mb.PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY == 0x0002_0012
     assert "ATTR_DESKTOP_APP_POLICY: usize = 0x0002_0012" in rs
     assert "BREAKAWAY_ENABLE_PROCESS_TREE: u32 = 0x01" in rs
+    # 壳替身起来后至多等多久再退出：必须长于启动器的观察窗口，窗口内的替身崩溃才观察得到
+    wait_ms = int(re.search(r"HANDOFF_WAIT_MS: u32 = (\d+);", rs).group(1))
+    assert wait_ms / 1000 > handoff.LAUNCH_CRASH_WINDOW
 
 
 # ---------------------------- 诊断事实 ----------------------------
@@ -322,3 +456,25 @@ def test_report_package_facts_never_carry_names(monkeypatch):
     report = diagnostics.build_report()
     assert report["system"]["msix_breakaway"] == "none"
     assert "OpenAI" not in str(report["system"])
+
+
+def test_launcher_reports_a_crashed_shell_replacement_as_launch_failed():
+    """壳现在透传替身的退出码：替身崩溃 = 壳以非零退出 = 启动器如实报 launch_failed，
+    不再把「壳立刻 exit(0)」当转发完成。"""
+
+    class Proc:
+        pid = 1
+
+        def poll(self):
+            return 0xC0000005
+
+    with pytest.raises(handoff.HandoffError) as ei:
+        handoff._launch_desktop_via_spawn(
+            "Tavotto.exe",
+            handoff.Target("D:\\p", None),
+            spawn=lambda *a, **k: Proc(),
+            pids_of=lambda app: set(),
+            clock=iter(range(100)).__next__,
+            sleep=lambda s: None,
+        )
+    assert ei.value.code == "launch_failed"

@@ -1586,6 +1586,11 @@ def _record_origin_cli(args) -> int:
 
 def cli(argv: list[str]) -> int:
     """`tavotto open` 的入口。返回退出码。"""
+    # 带 MSIX 包身份（Codex 桌面版等宿主里拉起）时，先脱包整条命令重跑一遍：本地 safe probe 等落盘动作
+    # 发生在拉起桌面版之前，带着包身份它们会被重定向进宿主私有区（#1574）。必须在任何落盘之前。
+    relaunched = msixbreakaway.relaunch_cli(["open", *argv])
+    if relaunched is not None:
+        return relaunched
     ap = argparse.ArgumentParser(
         prog="tavotto open", description="把一张图 / 一个脚本 / 一个图库目录交给 Tavotto 打开"
     )

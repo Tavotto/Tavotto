@@ -107,6 +107,10 @@ order: 310
   返回 None（非 Windows / API 不可用 / 任一步失败）才退回原来的 `Popen`，注入的 `spawn`（测试桩）不走它。
   兜底在 Rust 壳（`src-tauri/src/msix_breakaway.rs`，同一契约的镜像）：壳启动时带包身份就用同一策略重新拉起自己后退出，
   环境变量 `TAVOTTO_MSIX_BREAKAWAY` 防循环并把结果（`relaunched` / `still_packaged` / `failed`）交给诊断包。
+  **CLI 一侧同理**：`handoff.cli` 开头先 `msixbreakaway.relaunch_cli(["open", *argv])`——带包身份就脱包整条命令重跑
+  （继承 stdio、等待并透传退出码；env `TAVOTTO_MSIX_CLI_RELAUNCH` 防循环，重启失败清标记走原路径），因为本地 safe probe 等
+  落盘发生在拉起桌面版之前。壳替身起来后**不立刻 exit(0)**：最多等 `HANDOFF_WAIT_MS`（> 启动器观察窗口）并透传替身退出码，
+  启动器才能把替身崩溃报成 launch_failed。壳的「脱包在崩溃过滤器之后、Builder 之前」看护是 syn AST（带注释掉调用的自测）。
   已写进包私有区的数据不迁移（另议）。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
