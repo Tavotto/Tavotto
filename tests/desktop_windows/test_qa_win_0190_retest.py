@@ -441,11 +441,17 @@ def _export_once(d, name: str, formats: set[str]) -> Path:
     _set_formats(d, formats)
     replace_input_text(d, f"{EXPORT_DIALOG} [data-export-filename]", name)
     _click_start(d)
-    d.wait_js(
-        f"return !!document.querySelector('{EXPORT_DIALOG} [data-export-result]')",
-        timeout=180,
-        what=f"导出 {name} 的结果区（[data-export-result]）",
-    )
+    try:
+        d.wait_js(
+            f"return !!document.querySelector('{EXPORT_DIALOG} [data-export-result]')",
+            timeout=180,
+            what=f"导出 {name} 的结果区（[data-export-result]）",
+        )
+    except TimeoutError as e:
+        shown = d.js(
+            f"const e = document.querySelector('{EXPORT_DIALOG}'); return e ? e.innerText.slice(0, 1500) : null"
+        )
+        raise AssertionError(f"{e}；对话框此刻的文字：{shown!r}") from None
     d.chord(KEY_ESCAPE)
     d.wait_js(
         f"return !document.querySelector('{EXPORT_DIALOG}')", timeout=15, what="导出对话框关闭"
