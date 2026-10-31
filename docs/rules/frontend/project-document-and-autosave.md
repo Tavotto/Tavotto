@@ -120,6 +120,9 @@ order: 200
   命名框（预填**排版名** `projectMeta.name`，不是画布名）；没开项目 → 只存本机、说「存在本机」。
   保存键在捕获阶段认领，富文本框不能吞掉；保存前先让聚焦的富文本框冲刷组字中的内容，
   再经手势收尾提交画布就地文字，最后取保存快照（系统菜单的闸门之前也先冲刷）。
+  **富文本框带着焦点被卸载**（点画布空白取消选择 / 退出就地编辑，浏览器的 blur 来不及触发）时，
+  `RichTextField` 的卸载清理补一次 `onBlur`（冲刷待写内容）：宿主在 `onFocus` 开的 `history.editText` 事务因此一定被收掉，
+  不会悬着并进下一个离散动作（QA-WIN-14 / QA-WIN-28；看护 `RichTextField.unmount.test.tsx`、`TextView.test.tsx`）。
   本机那一份 `conflict` 时不写项目文件。绑定只认当前项目（`bindingForProject`），别的项目的
   绑定不抹掉。**自动保存仍只写本机**；绑定里的 `dirty` 是项目文件那根轴，只跟用户编辑（与
   `saveState` 推 `dirty` 同一处，外加改排版名），派生同步不置位，不进关闭保护。409 `external_change`
