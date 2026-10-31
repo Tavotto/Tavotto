@@ -17,6 +17,9 @@ name: CI
 #                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
 #                   全部快线 + 全部重型资格在它上面真实跑一遍，
 #                   三个 Gate 全绿才允许合入 main。
+#   docs-only       只改 docs/release-notes/**.md（不含 UNRELEASED.md）的 PR / 队列候选：
+#                   `docs-scope` 分类 job 输出 docs_only，七个快线与五个重型 job skipped，
+#                   Gate 凭分类 job 的 success + 输出放行（见 docs-scope 段与 aggregate_gate.py）。
 #   push main       轻量落地审计（main-landing-audit）：结构契约 + 受管生成物
 #                   一致性 + 落地信息。**不重复打包、不重复真产物冒烟**——
 #                   合进来的树就是 merge_group 上刚验过的那棵（squash 由队列
@@ -506,6 +509,105 @@ jobs:
           python3 -I "$TRUSTED/scripts/ci/release_note_gate.py" "${ARGS[@]}"
 
   # ────────────────────────────────────────────────────────────────
+  # docs-only 快车道的分类 job：这次改动是不是**只**碰了 docs/release-notes/ 下的发行说明
+  # （不含 UNRELEASED.md——有测试读它）。判据与理由在 scripts/ci/docs_scope.py，
+  # 看护在 tests/test_docs_scope.py 与 tests/test_merge_queue_workflows.py::TestDocsOnlyFastLane。
+  #
+  # 为什么存在：发版当天补发行说明的纯文档 PR 以前要跑满整条 CI 加合并队列（v0.19.2
+  # 两个，约 3 小时）。现在 invariants / backend-fast / frontend / plugin-candidate /
+  # workerd / desktop-shell / compat-smoke 和五个重型资格在 `docs_only=true` 时 skipped；
+  # python-lint / cla-check / release-note-gate / 本 job 照跑。
+  #
+  # **为什么 Gate 不会把这些 skipped 判红**（CI01 §4 ① 说的「前置 filter + 短路会让 Gate
+  # 判红」在这里的解法）：两个 Gate 仍以闭集判定，`docs-scope` 本身在 fast gate 的
+  # --required 里（失败 / 被跳过 = Gate 红）；只有它 `success` **且** 输出 docs_only == "true"
+  # 时，Gate 才用 `--classifier docs-scope --docs-only-skippable …` 放行那份**写死的**重型
+  # 名单的 skipped（证据取自 toJSON(needs)，判定器仍取自默认分支，见 aggregate_gate.py）。
+  # 其余任何情形（false / 空 / 分类失败）参数根本不传，Gate 仍是旧的严格规则。
+  #
+  # * PR：文件列表取法与 release-note-gate 同源（pulls/{n}/files，条数与 changed_files 对账）；
+  # * merge_group：`merge_group.base_sha` → `head_sha` 的 git diff（--no-renames，改名拆成
+  #   删旧 + 加新两条）。队列里多个 PR 组合出的候选，任一文件在范围外就不是 docs-only。
+  # * docs_only=true 时本 job 再跑 tests/test_docs_references.py（发行说明里的相对链接
+  #   要指得到，backend 里原本替它兜这一条）；这一步红 = 本 job 红 = Gate 红。
+  # * 分类脚本取自默认分支（PR 不能改写审判自己的尺子）；默认分支上还没有它时
+  #   （bootstrap 空窗）才用本 revision 的那份并 notice。
+  # ────────────────────────────────────────────────────────────────
+  docs-scope:
+    name: Docs-only scope
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # merge_group 要 base_sha 与 head_sha 两端的树（取字符串 '0'：数字 0 在表达式里是假值，`&& 0 || 1` 会得到 1）；blob:none 只取提交与树（diff --name-status 不需要内容）
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '1' }}
+          filter: blob:none
+          persist-credentials: false
+      - name: 取默认分支上的可信分类器
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/trusted-docs-scope"
+          mkdir -p "$TRUSTED"
+          if gh api "repos/$REPO/contents/scripts/ci/docs_scope.py?ref=$REF" \
+               --jq .content 2>/dev/null | base64 -d > "$TRUSTED/docs_scope.py" \
+             && [ -s "$TRUSTED/docs_scope.py" ]; then
+            echo "分类器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 docs_scope.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/docs_scope.py "$TRUSTED/docs_scope.py"
+          fi
+          echo "TRUSTED=$TRUSTED" >> "$GITHUB_ENV"
+      - name: 收集这个 PR 的改动文件
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr-files.json"
+          want=$(gh api "repos/$REPO/pulls/$PR" --jq .changed_files)
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
+            --jq '[.[] | {filename, status, previous_filename}]' > "$out"
+          test -s "$out"
+          echo "DS_EXPECTED_FILES=$want" >> "$GITHUB_ENV"
+      - name: 校验 docs-only 范围（分类）
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          ARGS=(--event "$EVENT")
+          if [ "$EVENT" = "pull_request" ]; then
+            ARGS+=(--files-json "$RUNNER_TEMP/pr-files.json" --expected-files "$DS_EXPECTED_FILES")
+          else
+            ARGS+=(--base-sha "$BASE_SHA" --head-sha "$HEAD_SHA")
+          fi
+          python3 -I "$TRUSTED/docs_scope.py" "${ARGS[@]}"
+      - name: 校验 发行说明里的相对链接（docs-only 的最小说明检查）
+        if: steps.classify.outputs.docs_only == 'true'
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest -q tests/test_docs_references.py
+
+  # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
   # + 与它同一族的 artist family / patchspec / preflight 契约）。
   #
@@ -523,7 +625,8 @@ jobs:
     # 快线只在 PR 与 merge_group 上跑：push main 的树就是 merge_group 上
     # 刚验过的那棵，main 侧只留 main-landing-audit 与非门禁的 cache-seed
     # （见文件抬头的分工表）。
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     runs-on: ubuntu-24.04
     # 30 而不是 20：语料加了三张 3D 图（ADR 0135）后「结构性不变式」一步在 ubuntu
     # runner 上 12–19 分钟，20 分钟的整 job 上限会把后面的 U01 harness 砍成 cancelled
@@ -656,7 +759,8 @@ jobs:
   #   * 回退：去掉 `shard` 轴 + 命令里去掉 `--shard …`（钩子留着无害，不带参数时不动
   #     collection）。
   backend-fast:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     strategy:
       fail-fast: false
       # 写成轴（GitHub 对 `include` 里的条目不做笛卡尔积，所以 shard 不能塞进 include）。
@@ -793,9 +897,11 @@ jobs:
   # 合同测试与基线解析器都按「一个 job 一个 N」写。公开仓库 + Enterprise，并发不是约束。
   backend-platforms:
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     strategy:
       fail-fast: false
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
@@ -890,7 +996,8 @@ jobs:
   # 单跑一台 Linux：兼容性是引擎语义，没有平台分支；跨平台由 backend 矩阵盖。
   # ────────────────────────────────────────────────────────────────
   compat-smoke:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     timeout-minutes: 20  # 实测 2.4 分钟；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-24.04
     steps:
@@ -940,7 +1047,8 @@ jobs:
           if-no-files-found: warn
 
   frontend:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     # 实测中位 4.2 分钟（CI00 的 29 个合并组，CI_BASELINE.md §12；合入后三个合并组
     # 166–276s）；没有上限的 job 会堵死合并队列
     timeout-minutes: 20
@@ -1049,8 +1157,8 @@ jobs:
   # 它经 `CI fast gate` 参与合并资格（needs 与 --required 闭集都有它）：红了 Gate 就红。
   # ────────────────────────────────────────────────────────────────
   plugin-candidate:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    needs: [frontend]
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope, frontend]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -1165,7 +1273,8 @@ jobs:
   #
   # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
   workerd:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     timeout-minutes: 25  # 实测 1.2 分钟（cargo 三件 0.3 + 装科学栈 + 12 条 workerd 等价用例 0.9，#409 首跑）；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-24.04
     defaults:
@@ -1275,7 +1384,8 @@ jobs:
   # `cargo fmt` 不吃 cfg（rustfmt 解析整个文件），所以它本来就两支都看得见；
   # 真正需要第二条腿的是 clippy 与 cargo test。
   desktop-shell:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     # 本机（macOS）冷编译 37 秒；CI 上 2.3–4.7 分钟（合并组永远冷：三个合并组 141–280s），
     # 同一 PR 第二次 run 命中 rust-cache 时 41s（CI05_COMPARISON.md §4.6）。上限是防挂死、不是性能预算
     timeout-minutes: 20
@@ -1368,10 +1478,11 @@ jobs:
     #   tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies 钉住这两条决定；
     #   回退 = 把四行 needs 改回 `[backend-fast, frontend]`，别的什么都不用动。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    needs: [frontend]
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope, frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -1544,11 +1655,12 @@ jobs:
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [docs-scope, frontend]
     # **Playwright 分到三台机器**（CI03c，2026-09-16 按 project 分两片；2026-10-19 chromium 再拆一刀成三片，见下）。这条腿是 CI01 删边之后
     # 合并资格里第二长的一条（CI00：Playwright 步 1124s 中位，其中 chromium 89 条 505s、
     # webkit 23 条 267s、chromium-en 16 条 111s）。按 project 切而不是按文件切或 `--shard`：
@@ -2030,11 +2142,12 @@ jobs:
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [docs-scope, frontend]
     runs-on: macos-latest        # 只有 Apple Silicon 一档；Intel 在发行链的 desktop-tauri 上构建（ADR 0076）
     timeout-minutes: 60
     steps:
@@ -2244,11 +2357,12 @@ jobs:
     # `full-ci` 标签的 PR）上跑，PR 快线不受影响。显式按事件分支，不写
     # `!= 'pull_request'` 那种过宽的否定条件。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [docs-scope, frontend]
     # #768：三台独立 GitHub 托管 Runner 通过 Playwright 原生 --shard 划分测试。
     # Gate 原有 posix-e2e id 不变；任一矩阵副本失败整个 needs 都失败。
     strategy:
@@ -2376,7 +2490,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, release-note-gate, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
+    needs: [python-lint, cla-check, release-note-gate, docs-scope, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2407,19 +2521,32 @@ jobs:
       - name: 聚合判定
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
         # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
         # 双保险挡住 stdlib 遮蔽注入
+        #
+        # docs-only 快车道：分类 job 说 docs_only=true 时才多传两个参数（名单写死在这里，
+        # 由 tests/test_merge_queue_workflows.py::TestDocsOnlyFastLane 钉成「required 去掉
+        # 四个照跑的 job」）。判定器会用 needs 里分类 job 的 result 与 outputs **再核一遍**，
+        # 这里的 shell 变量只决定「传不传参数」——不传就是旧的严格规则，所以也不依赖
+        # 默认分支上的判定器已经认识这两个参数（bootstrap 空窗：docs_only 恒 false）。
         run: |
+          EXTRA=()
+          if [ "$DOCS_ONLY" = "true" ]; then
+            EXTRA=(--classifier docs-scope
+                   --docs-only-skippable invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke)
+          fi
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,release-note-gate,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
-            --needs-json "$NEEDS_JSON"
+            --required python-lint,cla-check,release-note-gate,docs-scope,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
+            --needs-json "$NEEDS_JSON" \
+            ${EXTRA[@]+"${EXTRA[@]}"}
 
   ci-integration-gate:
     name: CI integration gate
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
+    needs: [docs-scope, backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2460,6 +2587,15 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GATE_EVENT: ${{ github.event_name }}
           GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
+          DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
+          DOCS_SCOPE_RESULT: ${{ needs.docs-scope.result }}
+        # **docs-only 快车道**（`docs-scope` 在这个 Gate 的 needs 里，但不在 required 闭集里）：
+        #   * docs_only=true：多传 `--classifier docs-scope --docs-only-skippable <五个重型>`，
+        #     判定器核对分类 job 的 success + 输出后才放行 skipped（merge_group 上同样生效）；
+        #   * 分类 job success 且 docs_only!=true（绝大多数 run，含引入本机制的 PR 自己）：
+        #     把它从 needs JSON 里剔掉，参数与引入前**逐字相同**——默认分支上的判定器还是旧版
+        #     时（bootstrap 空窗）不会因为多出一个 needs 条目把正常 PR 判成 contract_violation；
+        #   * 分类 job 没 success：不剔，闭集里多出一个条目 → 判定器判失败（fast gate 也红）。
         run: |
           set -euo pipefail
           FLAGS="--allow-deferred"
@@ -2468,13 +2604,21 @@ jobs:
           elif [ "$GATE_FULL_CI" = "true" ]; then
             FLAGS="--require-heavy --full-ci"
           fi
+          EXTRA=()
+          if [ "$DOCS_ONLY" = "true" ]; then
+            EXTRA=(--classifier docs-scope
+                   --docs-only-skippable backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e)
+          elif [ "$DOCS_SCOPE_RESULT" = "success" ]; then
+            NEEDS_JSON=$(printf '%s' "$NEEDS_JSON" | jq -c 'del(.["docs-scope"])')
+          fi
           # shellcheck disable=SC2086
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode integration \
             --event "$GATE_EVENT" \
             $FLAGS \
             --required backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e \
-            --needs-json "$NEEDS_JSON"
+            --needs-json "$NEEDS_JSON" \
+            ${EXTRA[@]+"${EXTRA[@]}"}
 
   # ────────────────────────────────────────────────────────────────
   # main 落地审计——push main 上两个 job 里产出结论的那一个（另一个是下面的

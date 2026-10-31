@@ -385,8 +385,14 @@ manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然�
 
 **发版截止点。** 发版指令要定一个截止点（某个 main 提交）：它之前合入的 PR 归本
 版，**之后合入的 PR 一律归下一版**，发行说明不再追补。发版当天发现漏写条目，
-不开补条目的 PR 去赶本版（纯文档 PR 也要跑满整条 CI 加合并队列，v0.19.2 补两个
-花了约 3 小时）；该条目随下一版的 `UNRELEASED.md` 走。
+不开补条目的 PR 去赶本版（v0.19.2 补两个纯文档 PR，每个跑满整条 CI 加合并队列，
+约 3 小时）；该条目随下一版的 `UNRELEASED.md` 走。
+
+**docs-only 快车道。** 只改 `docs/release-notes/` 下 `vX.Y.Z.md` 这类已发出的发行说明
+（**不含** `UNRELEASED.md`——有测试读它）的 PR，CI 只跑 python-lint / cla-check / 发行说明闸 /
+`docs-scope` 分类（含发行说明相对链接检查），backend / frontend / 打包 / 冒烟都 skipped，
+PR 与合并队列两个阶段都生效；队列里同组有别的 PR 改了别的文件就不算。判据与理由见
+`scripts/ci/docs_scope.py` 和 `docs/rules/ci/ci-lanes.md`。这不改变上面的截止点约定。
 
 ## Codex 插件：Release 上的 zip 与发行分支 `plugin-stable`（ADR 0043）
 
