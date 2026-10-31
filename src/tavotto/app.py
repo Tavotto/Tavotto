@@ -15771,6 +15771,44 @@ def _version_thumb_path(doc_id: str, vid: object) -> Path | None:
     return max(found, key=lambda t: t[0])[1]
 
 
+#: 缩略图拍的是页面的哪一块（mm）。整页的图没有这个文件；只拍内容区域的图旁边放一份
+#: `<vid>.box`（JSON `{x, y, w, h}`）。与图同目录、同 stem，`_sweep_version_thumbs` 一并清。
+_VERSION_THUMB_BOX_EXT = "box"
+#: 裁切框坐标的合理上限（mm）：页面再大也到不了这里，只挡误传
+_VERSION_THUMB_BOX_LIMIT = 100_000.0
+
+
+def _parse_thumb_box(raw: object) -> dict | None:
+    """`x,y,w,h`（mm，有限数、宽高为正）→ dict；不合法 → None。"""
+    if not isinstance(raw, str):
+        return None
+    parts = raw.split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        x, y, w, h = (float(p) for p in parts)
+    except ValueError:
+        return None
+    vals = (x, y, w, h)
+    if not all(math.isfinite(v) and abs(v) <= _VERSION_THUMB_BOX_LIMIT for v in vals):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def _version_thumb_box(doc_id: str, vid: str) -> dict | None:
+    """这张缩略图拍的那一块；没有（整页图、旧节点）或读不出来 = None（照整页处理）。"""
+    p = _version_thumbs_dir(doc_id) / f"{vid}.{_VERSION_THUMB_BOX_EXT}"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _parse_thumb_box(",".join(str(data.get(k)) for k in ("x", "y", "w", "h")))
+
+
 def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
     """删掉**不属于任何留下来的节点**的缩略图（裁剪 / 删除之后）。
 
@@ -16252,6 +16290,9 @@ def api_versions_list(doc_id):
         thumb = _version_thumb_path(doc_id, v.get("id"))
         if thumb is not None:
             meta["thumb"] = thumb.suffix[1:]
+            box = _version_thumb_box(doc_id, v.get("id"))
+            if box is not None:
+                meta["thumbBox"] = box
         if max_objects > 0:
             sketch = _version_sketch(v, max_objects, max_text)
             # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
@@ -16455,6 +16496,11 @@ def api_versions_thumb_put(doc_id, vid):
         return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
     if not _VERSION_ID_RE.match(vid):
         abort(404)
+    # 只拍了页面的一块时带 `?box=x,y,w,h`（mm）；不带 = 整页
+    raw_box = request.args.get("box")
+    box = _parse_thumb_box(raw_box) if raw_box is not None else None
+    if raw_box is not None and box is None:
+        return jsonify({"error": "缩略图的裁切框不合法", "code": "version_thumb_invalid"}), 400
     with _versions_lock(doc_id):
         ids = {v.get("id") for v in _open_timeline(doc_id).entries()}
         if vid not in ids:
@@ -16467,6 +16513,21 @@ def api_versions_thumb_put(doc_id, vid):
         # 写成之后删旧图是尽力清理：删不掉只记日志、不算失败——两张同时在时
         # `_version_thumb_path` 取较新的那张，刚写上的新图胜出。
         engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
+        # 裁切框紧跟着图：图与框必须说的是同一张。框写不上 / 旧框删不掉时把刚写的图也撤掉——
+        # 宁可这一版没有缩略图（退回草图），也不让一张局部图按整页摆、或整页图按旧框裁
+        box_path = d / f"{vid}.{_VERSION_THUMB_BOX_EXT}"
+        try:
+            if box is not None:
+                engine_atomicio.write_bytes(box_path, json.dumps(box).encode("utf-8"))
+            else:
+                box_path.unlink(missing_ok=True)
+        except OSError as exc:
+            LOG.warning("版本缩略图的裁切框写不上，撤掉这张图: %s: %s", d, exc)
+            try:
+                (d / f"{vid}.{ext}").unlink()
+            except OSError:
+                pass
+            return jsonify({"error": "缩略图写不上", "code": "version_thumb_write_failed"}), 500
         for other in _VERSION_THUMB_TYPES.values():
             if other != ext:
                 try:

@@ -9,7 +9,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearVariantPngCache, useVariantPng } from './useVariantPng'
+import { clearVariantPngCache, useVariantPng, variantNeedsRender } from './useVariantPng'
 import { setCurrentProjectId } from '@/lib/session'
 
 declare global {
@@ -146,4 +146,14 @@ describe('失败：退回磁盘图，但必须标成近似', () => {
     expect(last.url).toBeNull()
     expect(last.approximate).toBe(true)
   })
+})
+
+describe('variantNeedsRender：哪些版本永远不出引擎图（快照据此判断「还在出」）', () => {
+  const frame = { gid: 'figure', prop: 'frame', value: [0, 0, 1, 1] }
+  const edit = { gid: 'ax0', prop: 'title', value: 'x' }
+  const guard = { policy: 'script_backed' } as never
+  it('没有 override 不出', () => expect(variantNeedsRender([], guard)).toBe(false))
+  it('来源驱动面板只有结构性 FRAME 不出（磁盘原像素即是）', () => expect(variantNeedsRender([frame], guard)).toBe(false))
+  it('来源驱动面板有真实编辑要出', () => expect(variantNeedsRender([frame, edit], guard)).toBe(true))
+  it('普通面板只要有 override 就出', () => expect(variantNeedsRender([frame], undefined)).toBe(true))
 })
