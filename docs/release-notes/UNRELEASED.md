@@ -29,6 +29,10 @@ If a script puts its own `pip install --target` folder at the front of `sys.path
 
 If an export stopped at the "file already exists" confirmation and you then changed the file name, format, scope or export folder, clicking Overwrite replaced a different existing file than the one the confirmation listed. Changing any of these now cancels the confirmation and the export starts over with a fresh conflict check. Batch exports behave the same way when the export folder changes.
 
+## A rewritten script no longer fails with a missing entry function
+
+When a project was opened while a script still had a plotting function, Tavotto registered that function as the script's entry. If you later rewrote the script to draw at the top level (no function at all), every run failed with `AttributeError: module has no attribute ...` and the AI repair could not change the entry. Before a registered script runs, Tavotto now checks the registered entry against the script as it is now; when the function is gone it re-detects the entry (usually running the whole script) and updates only the `entry` field of that registry line. If an entry still cannot be found, the card says so with its own code (`script_entry_missing`), and the AI repair has a `fix_entry` tool that does the same re-detection.
+
 ## Cold canvas and export preview show the state you saved after an undo (#1547)
 
 For script-run figures, undoing an edit (for example moving a legend back) and then saving could make the reopened canvas and the export preview show the state from before the undo, until you entered figure editing. The exported files were already correct. Cached previews are now looked up by the figure's current edits and are discarded when the script or its input data change. Projects saved by earlier versions may show the existing "approximate preview" badge on such figures until they are rendered once.

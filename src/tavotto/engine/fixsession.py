@@ -99,12 +99,15 @@ unless you know one is needed), then install_packages for anything still missing
 change_python returned, then try_run to check, then finish with outcome `fixed`. Only if that path fails call \
 prepare_diagnostics and finish with `not_fixed`.
 3c. ARBITRARY COMMANDS. Prefer the dedicated tools: install_packages, change_python, select_environment, \
-switch_execution, switch_workdir, convert_script. Only when none of them can do it, use run_command. By default it runs in a \
+switch_execution, switch_workdir, fix_entry, convert_script. Only when none of them can do it, use run_command. By default it runs in a \
 protective sandbox (the project is read-only for it; it can write only to its own scratch folder, this project's \
 Python environment and pip/conda caches; it has network access). Only if the command must write somewhere else, \
 call it again with `outside_sandbox: true` and a one-sentence `reason` in plain words: the user is asked in a \
 separate, prominent card and may say no. Never ask for it first, and never to avoid a sandbox refusal you could \
 work around.
+3c2. STALE ENTRY. If the report has `entry_stale` (or the error code is `script_entry_missing`): the script was rewritten \
+and the function Tavotto registered as its entry no longer exists. Call fix_entry (it re-detects the entry and updates \
+only the registry), then try_run. Never edit the script.
 3d. THE SCRIPT RUNS BUT DRAWS WITH ANOTHER LIBRARY. If the script itself runs but its figure is drawn with Pillow, \
 OpenCV, imageio, scikit-image, plotly or ROOT (so Tavotto cannot edit it), call convert_script, then finish with \
 outcome `convert`. Do not install matplotlib or change the environment for this.

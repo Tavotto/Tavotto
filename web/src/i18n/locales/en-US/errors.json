@@ -246,6 +246,7 @@
     "tex_compile_failed": "LaTeX failed to compile the text in this figure: {{line}}. This error comes from TeX itself; check the text or the preamble (text.latex.preamble).",
     "tex_failed": "The LaTeX typesetting step (text.usetex) failed, and the output does not say why: {{error}}",
     "script_exited": "The script ended early by calling sys.exit() ({{error}}). Tavotto needs the figures the script leaves in memory when it finishes: remove that exit, or exit only on error.",
+    "script_entry_missing": "This script was rewritten, and the entry function it was registered with no longer exists.",
     "safe_file_operation_blocked": "The script changed project files or read back a figure it just saved, and safe mode doesn't really change files, so what it read would differ from running it directly and no figure was made; this kind of script has to run on real files (“tavotto run” in a terminal does).",
     "script_needs_arguments": "The script requires command-line arguments, but Tavotto runs scripts without any (sys.argv holds only the script itself), so argument parsing exited. Give those arguments defaults, or run “tavotto run -- python script.py args…” in a terminal so Tavotto follows your own command. Expand the output to see which arguments it wants.",
     "script_rejected_arguments": "The script’s own argument parser rejected the {{argv_count}} arguments you gave. Check that they match what the script expects (Tavotto passed them exactly as entered). Expand the output to see its message.",

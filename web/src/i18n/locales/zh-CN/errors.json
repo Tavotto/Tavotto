@@ -246,6 +246,7 @@
     "tex_compile_failed": "LaTeX 编译这张图里的文字时出错：{{line}}。这是 TeX 自己报的错，请检查文字或导言区（text.latex.preamble）。",
     "tex_failed": "LaTeX 排版（text.usetex）这一步失败了，原因无法从输出中判断：{{error}}",
     "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
+    "script_entry_missing": "这个脚本被改写过，登记的入口函数已经不在了。",
     "safe_file_operation_blocked": "脚本改了项目里的文件或读了刚存的图，而安全运行不会真改文件、读到的会和直接运行不同，所以这次没有出图；这类脚本需要按真实文件运行（终端里的「tavotto run」就是这样跑的）。",
     "script_needs_arguments": "脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本自己），参数解析于是退出了。给这些参数写默认值，或在终端里用「tavotto run -- python 脚本.py 参数…」让 Tavotto 跟着你自己的命令跑。展开输出看它要哪些参数。",
     "script_rejected_arguments": "脚本自己的参数解析器拒绝了你给的 {{argv_count}} 个参数。请检查它们是否符合脚本的要求（Tavotto 按你填的内容原样传入，没有改动）。展开输出看它的报错。",

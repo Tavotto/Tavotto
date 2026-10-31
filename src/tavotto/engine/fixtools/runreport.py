@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
 from .base import FixContext, err, ok, shadow_note
@@ -51,6 +52,31 @@ def _plain_text(v) -> str:
     return str(v)
 
 
+def _stale_entry_fact(plan: object, error: object, ctx: FixContext) -> dict | None:
+    """这次运行用的登记入口在脚本当前源码里已经不存在（脚本被改写过，TVD-CHR5）：`{registered, suggested, fix}`。
+
+    判据只在 `entryfresh.diagnose`（运行前校验与 `fix_entry` 同一份）；读不到脚本 / 判不出 = None。
+    worker 已经以 `script_entry_missing` 收场时也带上，即便这里重判不出建议。"""
+    entry = plan.get("entry") if isinstance(plan, dict) else None
+    script = ""
+    if ctx.script_path is not None:
+        try:
+            script = Path(ctx.script_path).relative_to(ctx.project_root).as_posix()
+        except ValueError:
+            script = ""
+    if not script or not isinstance(entry, str):
+        return None
+    try:
+        from .. import entryfresh
+
+        found = entryfresh.diagnose(ctx.project_root, script, entry)
+    except Exception:  # noqa: BLE001 - 事实是锦上添花，判不出不能让报告失败
+        return None
+    if found is None:
+        return None
+    return {**found, "fix": "call fix_entry, then try_run"}
+
+
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
@@ -79,6 +105,9 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     elif error:
         picked["error"] = _precis(error)
     plan = report.get("plan") or {}
+    stale = _stale_entry_fact(plan, error, ctx)
+    if stale:
+        picked["entry_stale"] = stale
     if isinstance(plan, dict):
         if plan.get("launch_context"):
             picked["launch_context"] = _precis(plan["launch_context"])
