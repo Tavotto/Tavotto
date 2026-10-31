@@ -14,6 +14,7 @@ import {
   JOURNAL_ERROR_CODES,
   JournalCatalogError,
   KIND_OVERRIDES,
+  QUALIFIER_DIRECTION,
   QUALIFIERS,
   SEVERITY_BUMP,
   STAGES,
@@ -113,6 +114,7 @@ describe('golden 向量（与 Python 同一份）', () => {
       severity_bump: SEVERITY_BUMP,
       bumped_severity: BUMPED_SEVERITY,
       kind_overrides: KIND_OVERRIDES,
+      qualifier_direction: QUALIFIER_DIRECTION,
       error_codes: [...JOURNAL_ERROR_CODES],
     })
   })
@@ -197,6 +199,21 @@ describe('折叠语义', () => {
     expect(beta.severity['font-family-substituted']).toBe('warn')
     expect(beta.severity['tick-direction']).toBe('suggestion')
     expect(beta.severity['font-too-small']).toBe(base.severity['font-too-small'])
+  })
+
+  it('限定词折叠：typical / recommended / 方向不符的不进 override，exact 与方向相符的 min/max 才折', () => {
+    const cat = fixture()
+    const over = journalOverride('fx-zeta', cat)
+    expect(over.legend_policy).toEqual({ max_font_size_pt: 9 })
+    expect(over.min_raster_dpi).toBe(450)
+    for (const gone of ['min_effective_font_size_pt', 'max_font_size_pt', 'font_family']) {
+      expect(over).not.toHaveProperty(gone)
+    }
+    const src = journalSources('fx-zeta', cat)
+    expect(src.min_effective_font_size_pt.affects).toBe('info')
+    expect(src['font_family.latin_accepted'].affects).toBe('info')
+    expect(src.max_font_size_pt.affects).toBe('info')
+    expect(src.min_raster_dpi.affects).toBe('preflight')
   })
 
   it('栏宽 null 在 TS 求值器里同样表示没规定', () => {

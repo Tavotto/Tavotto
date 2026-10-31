@@ -56,6 +56,14 @@ def fixture_catalog() -> dict:
                         "retrieved": "2000-01-01",
                         "page": 12.0,
                     },
+                    # 只属于 fx-zeta 的单刊样页：别的期刊引用它是错
+                    "s7": {
+                        "url": "https://example.invalid/fx-press/zeta-sample",
+                        "kind": "html",
+                        "retrieved": "2000-03-03",
+                        "coverage": "single_journal_sample",
+                        "journal": "fx-zeta",
+                    },
                 },
                 "rules": {
                     "widths_mm.single": {
@@ -136,7 +144,6 @@ def fixture_catalog() -> dict:
                         "value": ["Arial", "Helvetica"],
                         "src": "s9",
                         "quote": "FIXTURE Arial or Helvetica",
-                        "qualifier": "recommended",
                     },
                     "info.one_half_mm": {
                         "value": 120,
@@ -149,6 +156,38 @@ def fixture_catalog() -> dict:
             },
             "fx-gamma": {"label": "Fixture Gamma", "publisher": "fx-press"},
             "fx-delta": {"label": "Fixture Delta", "publisher": "fx-bare"},
+            # 限定词折叠：typical / recommended / 方向不符的不折进 override，exact 与方向相符的 min/max 才折
+            "fx-zeta": {
+                "label": "Fixture Zeta",
+                "publisher": "fx-press",
+                "rules": {
+                    "min_effective_font_size_pt": {
+                        "value": 5,
+                        "src": "s7",
+                        "quote": "FIXTURE about 7 pt, not smaller than 5",
+                        "qualifier": "typical",
+                    },
+                    "font_family.latin_accepted": {
+                        "value": ["Arial"],
+                        "src": "s7",
+                        "quote": "FIXTURE preferably Arial",
+                        "qualifier": "recommended",
+                    },
+                    "max_font_size_pt": {
+                        "value": 5,
+                        "src": "s7",
+                        "quote": "FIXTURE at least 5 pt",
+                        "qualifier": "min",
+                    },
+                    "legend_policy.max_font_size_pt": {
+                        "value": 9,
+                        "src": "s7",
+                        "quote": "FIXTURE at most 9 pt",
+                        "qualifier": "max",
+                    },
+                    "min_raster_dpi": {"value": 450, "src": "s7", "quote": "FIXTURE 450 dpi"},
+                },
+            },
             "fx-epsilon": {
                 "label": "Fixture Epsilon",
                 "publisher": "fx-press",
@@ -262,6 +301,44 @@ def invalid_cases() -> list[dict]:
             "merge-line-widths-not-numbers",
             "journal_merge_invalid",
             _set([*_PUB, "rules", "line_widths_pt", "value"], ["thin"]),
+        ),
+        (
+            "source-url-trailing-newline",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "url"], "https://example.invalid/a\n"),
+        ),
+        (
+            "rule-anchor-trailing-newline",
+            "journal_rule_anchor_invalid",
+            _set([*_W1, "anchor"], "#:~:text=abc\n"),
+        ),
+        (
+            "value-type-on-null-base-field",
+            "journal_rule_value_type",
+            _new_rule("axis_policy.tick_direction", 5),
+        ),
+        (
+            "other-journal-cites-a-single-sample-source",
+            "journal_source_coverage",
+            _set(
+                ["journals", "fx-alpha", "rules"],
+                {"min_raster_dpi": {"value": 300, "src": "s7", "quote": "q"}},
+            ),
+        ),
+        (
+            "single-sample-source-owned-by-other-publishers-journal",
+            "journal_source_coverage",
+            _set([*_PUB, "sources", "s7", "journal"], "fx-delta"),
+        ),
+        (
+            "single-sample-publisher-source-without-journal",
+            "journal_source_coverage",
+            _del([*_PUB, "sources", "s7", "journal"]),
+        ),
+        (
+            "journal-field-on-a-general-source",
+            "journal_source_invalid",
+            _set([*_PUB, "sources", "s1", "journal"], "fx-alpha"),
         ),
         ("catalog-rev-missing", "journal_catalog_schema", _del(["catalog_rev"])),
         ("catalog-rev-zero", "journal_catalog_schema", _set(["catalog_rev"], 0)),
@@ -420,6 +497,7 @@ def build() -> dict:
             "severity_bump": journals.SEVERITY_BUMP,
             "bumped_severity": journals.BUMPED_SEVERITY,
             "kind_overrides": journals.KIND_OVERRIDES,
+            "qualifier_direction": journals.QUALIFIER_DIRECTION,
             "error_codes": list(journals.ERROR_CODES),
         },
         "catalog_rev": journals.catalog_rev(cat),

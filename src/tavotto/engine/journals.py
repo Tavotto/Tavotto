@@ -103,7 +103,26 @@ SEVERITY_BUMP = {
 }
 BUMPED_SEVERITY = "warn"
 #: 底里值是 null 的字段，类型本来无从比；这几个得是数（栏宽 null = 没规定，写了就是毫米数）
-KIND_OVERRIDES = {"widths_mm.single": "number", "widths_mm.double": "number"}
+KIND_OVERRIDES = {
+    "widths_mm.single": "number",
+    "widths_mm.double": "number",
+    "axis_policy.tick_direction": "string",
+    "axis_policy.label_format": "string",
+    "axis_policy.label_format_regex": "string",
+    "legend_policy.frame": "boolean",
+}
+#: 预检路径上，方向相符的 min / max 才算硬判据（下限类字段配 min、上限类配 max）。
+#: 折叠规则：qualifier 为 exact，或等于该路径的方向，才折进 override；其余（typical /
+#: recommended / range / 方向不符 / 没有方向的路径上的 min、max）只留在 `journal_sources`
+#: （`affects: "info"`）。严格同源对：`journals.ts` 的 `QUALIFIER_DIRECTION`。
+QUALIFIER_DIRECTION = {
+    "min_effective_font_size_pt": "min",
+    "absolute_min_font_size_pt": "min",
+    "min_raster_dpi": "min",
+    "legend_policy.min_font_size_pt": "min",
+    "max_font_size_pt": "max",
+    "legend_policy.max_font_size_pt": "max",
+}
 
 #: 规则键里不许覆盖的身份字段（profile 自己的身份 / 展示字段，不是规则）
 _NOT_RULES = frozenset({"profile_id", "version", "label", "source", "listed"})
@@ -225,6 +244,12 @@ def _is_info(path: str) -> bool:
     return path.startswith(INFO_PREFIX)
 
 
+def _folds(path: str, rule: dict) -> bool:
+    """这条规则折不折进 override：exact，或方向相符的 min / max（见 `QUALIFIER_DIRECTION`）。"""
+    qualifier = rule.get("qualifier", "exact")
+    return qualifier == "exact" or qualifier == QUALIFIER_DIRECTION.get(path)
+
+
 def _check_path(path: object, base: dict, where: str) -> list[str]:
     """规则键路径：`info.<闭集 id>`，或 `journal-base-v1` 里存在、且 merge 能精确落到的字段。
 
@@ -275,14 +300,14 @@ def _check_sources(sources: object, where: str) -> dict:
         if not isinstance(src, dict):
             raise _fail("journal_source_invalid", f"{w}: 必须是对象")
         url = src.get("url")
-        if not isinstance(url, str) or not _URL_RE.match(url) or "#" in url:
+        if not isinstance(url, str) or not _URL_RE.fullmatch(url) or "#" in url:
             raise _fail("journal_source_invalid", f"{w}: url 必须是不带 # 的 https:// 链接")
         if src.get("kind") not in SOURCE_KINDS:
             raise _fail("journal_source_invalid", f"{w}: kind 必须是 {'|'.join(SOURCE_KINDS)}")
         if not _is_iso_date(src.get("retrieved")):
             raise _fail("journal_source_invalid", f"{w}: retrieved 必须是 ISO 日期 YYYY-MM-DD")
         if "archive_url" in src and (
-            not isinstance(src["archive_url"], str) or not _URL_RE.match(src["archive_url"])
+            not isinstance(src["archive_url"], str) or not _URL_RE.fullmatch(src["archive_url"])
         ):
             raise _fail("journal_source_invalid", f"{w}: archive_url 必须是 https:// 链接")
         if "coverage" in src and src["coverage"] not in COVERAGES:
@@ -290,6 +315,12 @@ def _check_sources(sources: object, where: str) -> dict:
         page = src.get("page")
         if page is not None and not (_is_int_valued(page) and page >= 1):
             raise _fail("journal_source_invalid", f"{w}: page 必须是正整数")
+        if "journal" in src and (
+            src.get("coverage") != "single_journal_sample" or not _non_blank(src["journal"])
+        ):
+            raise _fail(
+                "journal_source_invalid", f"{w}: journal 只能写在 single_journal_sample 来源上"
+            )
     return sources
 
 
@@ -305,6 +336,7 @@ def _check_rules(
     *,
     publisher_scope: bool,
     publisher_rules: dict | None = None,
+    journal_id: str | None = None,
 ) -> dict:
     if rules is None:
         return {}
@@ -336,7 +368,7 @@ def _check_rules(
         if not _non_blank(rule.get("quote")):
             raise _fail("journal_rule_quote_empty", f"{w}: quote（原文摘录）不能为空")
         if "anchor" in rule and not (
-            isinstance(rule["anchor"], str) and _ANCHOR_RE.match(rule["anchor"])
+            isinstance(rule["anchor"], str) and _ANCHOR_RE.fullmatch(rule["anchor"])
         ):
             raise _fail("journal_rule_anchor_invalid", f"{w}: anchor 必须以 #:~:text= 开头")
         qualifier = rule.get("qualifier", "exact")
@@ -354,6 +386,12 @@ def _check_rules(
             raise _fail(
                 "journal_source_coverage",
                 f"{w}: single_journal_sample 的来源不能挂在出版社 rules 上",
+            )
+        owner_journal = visible_sources[src].get("journal")
+        if owner_journal is not None and owner_journal != journal_id:
+            raise _fail(
+                "journal_source_coverage",
+                f"{w}: 来源 {src} 只属于期刊 {owner_journal}，别的期刊不能引用",
             )
         if info or unset:
             continue
@@ -429,6 +467,17 @@ def validate_catalog(catalog: object) -> dict:
             raise _fail("journal_catalog_schema", f"{w}: 缺 label")
         sources = _check_sources(pub.get("sources"), w)
         _check_rules(pub.get("rules"), sources, base, w, publisher_scope=True)
+    for pid, pub in publishers.items():
+        for sid, src in (pub.get("sources") or {}).items():
+            if src.get("coverage") != "single_journal_sample":
+                continue
+            owner = src.get("journal")
+            jr = journals.get(owner) if isinstance(owner, str) else None
+            if not isinstance(jr, dict) or jr.get("publisher") != pid:
+                raise _fail(
+                    "journal_source_coverage",
+                    f"publisher {pid}.sources.{sid}: single_journal_sample 的来源要写明所属期刊 journal",
+                )
     seen: dict[str, str] = {}
     for jid, jr in journals.items():
         w = f"journal {jid}"
@@ -457,6 +506,7 @@ def validate_catalog(catalog: object) -> dict:
             w,
             publisher_scope=False,
             publisher_rules=pub.get("rules") or {},
+            journal_id=jid,
         )
     for jid in journals:
         override = _override_of(catalog, jid)
@@ -482,7 +532,7 @@ def _override_of(catalog: dict, journal_id: str) -> dict:
     out: dict = {}
     folded: list[str] = []
     for path, eff in _effective_rules(catalog, journal_id).items():
-        if _is_info(path) or eff["unset"]:
+        if _is_info(path) or eff["unset"] or not _folds(path, eff["rule"]):
             continue
         _fold(path, eff["rule"]["value"], out)
         folded.append(path)
@@ -569,7 +619,9 @@ def _field_source(eff: dict, path: str) -> dict:
         "rule_scope": eff["rule_scope"],
         "source_scope": eff["source_scope"],
         "coverage": eff["coverage"],
-        "affects": "info" if _is_info(path) else "preflight",
+        "affects": (
+            "info" if _is_info(path) or not (eff["unset"] or _folds(path, rule)) else "preflight"
+        ),
         "url": src["url"],
         "link": source_link(src, rule.get("anchor")),
         "anchor": rule.get("anchor", ""),

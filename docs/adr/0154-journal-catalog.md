@@ -3,6 +3,7 @@
 日期：2026-10-31 · 状态：**Accepted（PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；选择器与出处卡、真实数据、出处巡检另起 PR）**。
 相关：[0006 版本化出版规范](0006-codex-mcp-app-and-publication-profile.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；
 规则全文 `docs/rules/backend/profiles-and-preflight.md`「内置期刊标准库」。
+**1.0 豁免已由维护者 2026-10-31 登记（`docs/1.0-release-readiness.md` §1.8）。**
 
 ## 动机
 
@@ -65,6 +66,11 @@
 * **严重度随规则抬升**：期刊填了值的检查，按固定映射 `SEVERITY_BUMP`（`widths_mm.*→page-width`、`allowed_aspect_ratios→page-aspect`、`min_effective_font_size_pt→font-too-small`、`max_font_size_pt→font-too-large`、`min_raster_dpi→raster-dpi`、
   `line_widths_pt→line-width-off-preset`、`font_family.latin_accepted→font-family-substituted`、`axis_policy.* / legend_policy.* / text_weight_policy / cjk_fallback.required` 对应各检查）把 `severity.<检查>` 从 `suggestion` 提到 `warn`；
   **只抬不降，期刊显式写了 `severity.<检查>` 的以它为准**，抬升结果写进 `journal_override()`（自带、可审计）。否则「按该期刊预检」在页宽 / 比例 / 线宽上永远只是建议。
+* **折叠规则（qualifier 决定进不进预检）**：预检路径上只有 `exact`，以及**方向相符**的 `min`（下限类字段：`min_effective_font_size_pt`、`absolute_min_font_size_pt`、`min_raster_dpi`、`legend_policy.min_font_size_pt`）/ `max`（上限类字段：`max_font_size_pt`、`legend_policy.max_font_size_pt`）才折进 override
+  （`QUALIFIER_DIRECTION`，两侧同表）；`typical` / `recommended` / `range`、方向不符的 `min`/`max`、没有方向的路径上的 `min`/`max` 一律**不折**，只留在 `journal_sources()`（`affects: "info"`）。
+  求值器不看 qualifier，所以「约 7 pt」「推荐 Helvetica」不能被钉成硬判据。不折的规则仍须 `src` / `quote`，出处卡照常显示。
+* **来源 `journal` 字段**：出版社 sources 里 `single_journal_sample` 的来源必须写明所属期刊 `journal`（且该期刊属于这个出版社），只有那一本期刊的 rules 能引用，别的期刊引用报 `journal_source_coverage`；`journal` 只能写在 `single_journal_sample` 来源上。
+* **类型检查补全**：底里为 null 的字段也检查类型（`KIND_OVERRIDES`：栏宽 number，`axis_policy.tick_direction / label_format / label_format_regex` string，`legend_policy.frame` boolean）。URL / anchor 用整串匹配（Python `fullmatch`，TS 无 m 标志的 `$`），尾部换行被拒。
 * **字段映射约定**（采集脚本与人工核对遵守）：期刊「最小字号」→ `min_effective_font_size_pt`（`absolute_min_font_size_pt` 保持 0，不另设）；「最大字号」→ `max_font_size_pt`；
   `min_raster_dpi` 取各图类里**最低**的一档（照片 / 半色调档，避免对线条图位图误报），按图类的值进 `info.dpi_by_kind`；预检分不出位图的图类，暂不承诺按图类判；
   **空数组 = 明确不限**（如 `line_widths_pt: []`），与「没写」（键不出现）不同；`font_family.latin_accepted` 只收真实字体名，「sans-serif」之类泛称进 `info.font_names_raw`；
@@ -76,7 +82,7 @@
 ### 4. 项目快照机制原样适用
 
 文档里仍是 `{id, journal?, snapshot?, …}`（ADR 0029）：选期刊 = 绑定 `journal-base-v1` 并写入折叠出的 `journal` 覆盖（**存覆盖，不只存期刊 id**——只存 id 会让库更新悄悄改掉已定稿项目的结论，也让没有期刊库的 MCP / Python 侧无法复现），规则全文快照照旧；另存 `journalRef: {id, catalogRev, retrieved}` 与生效字段出处的精简版（value / quote / link / retrieved / 两种 scope，几 KB），用户手改了覆盖则 `journalRef` 失效、界面改说「自定义」。期刊标准更新不会悄悄改掉已定稿项目的结论，
-「有新版可同步」的判据仍是内容不等、由用户确认。本 PR 不改 `specBinding.ts`。
+「有新版可同步」的判据仍是内容不等、由用户确认。本 PR 对 `specBinding.ts` 只改了清单与解析（`builtinCatalog` 过滤 `listed:false`、`isHiddenBuiltin`、`resolveDocumentSpec` 对隐藏底不报 `globalMissing`）；绑定的**写入**逻辑（存 `journal` / `journalRef`）不改，留给选择器 PR。
 
 ### 5. 不做的事
 
@@ -87,4 +93,4 @@
 
 * 加一本期刊 = 在 `journals.json` 里加一条，求值器、预检、proof report 都不用动。
 * 两个实现靠 `tests/golden/journal_vectors.json`（`scripts/gen_journal_vectors.py`）对齐；每个校验失败码至少有一条向量。
-* 1.0 收敛纪律：这是用户 2026-10-31 提出并确认范围的新能力，是否登记 `docs/1.0-release-readiness.md` 的豁免由维护者决定（本 PR 未登记）。
+* 1.0 收敛纪律：用户 2026-10-31 裁决立项并给豁免，已登记在 `docs/1.0-release-readiness.md` §1.8；不选期刊时行为不变。

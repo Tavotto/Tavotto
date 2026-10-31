@@ -84,6 +84,26 @@ export const BUMPED_SEVERITY = 'warn'
 export const KIND_OVERRIDES: Record<string, string> = {
   'widths_mm.single': 'number',
   'widths_mm.double': 'number',
+  'axis_policy.tick_direction': 'string',
+  'axis_policy.label_format': 'string',
+  'axis_policy.label_format_regex': 'string',
+  'legend_policy.frame': 'boolean',
+}
+/**
+ * 折叠规则：qualifier 为 exact，或等于该路径的方向，才折进 override；其余只留在
+ * `journalSources`（`affects: 'info'`）。同源对：`journals.py` 的 `QUALIFIER_DIRECTION`。
+ */
+export const QUALIFIER_DIRECTION: Record<string, string> = {
+  min_effective_font_size_pt: 'min',
+  absolute_min_font_size_pt: 'min',
+  min_raster_dpi: 'min',
+  'legend_policy.min_font_size_pt': 'min',
+  max_font_size_pt: 'max',
+  'legend_policy.max_font_size_pt': 'max',
+}
+function folds(path: string, rule: JournalRule): boolean {
+  const q = rule.qualifier ?? 'exact'
+  return q === 'exact' || q === QUALIFIER_DIRECTION[path]
 }
 /** 同源对：`profiles.py` 的 `DEFAULT_SEVERITY` 与 `profile.ts` 的同名常量 */
 const DEFAULT_SEVERITY = 'warn'
@@ -91,7 +111,7 @@ const DEFAULT_SEVERITY = 'warn'
 const NOT_RULES = ['profile_id', 'version', 'label', 'source', 'listed']
 
 // eslint-disable-next-line no-control-regex
-const URL_RE = /^https:\/\/[^\x00-\x20\x7f]+$/
+const URL_RE = /^https:\/\/[^\x00-\x20\x7f]+$/ // 无 m 标志：$ 只匹配串尾
 // eslint-disable-next-line no-control-regex
 const ANCHOR_RE = /^#:~:text=[^\x00-\x20\x7f]+$/
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -138,6 +158,8 @@ export interface JournalSource {
   coverage?: Coverage
   archive_url?: string
   page?: number
+  /** single_journal_sample 的出版社来源：只属于这一本期刊 */
+  journal?: string
 }
 
 export interface JournalRule {
@@ -305,6 +327,12 @@ function checkSources(sources: unknown, where: string): Record<string, JournalSo
     if (page != null && !(isIntValued(page) && page >= 1)) {
       fail('journal_source_invalid', `${w}: page 必须是正整数`)
     }
+    if (
+      has(raw, 'journal') &&
+      (raw.coverage !== 'single_journal_sample' || !nonBlank(raw.journal))
+    ) {
+      fail('journal_source_invalid', `${w}: journal 只能写在 single_journal_sample 来源上`)
+    }
   }
   return sources as Record<string, JournalSource>
 }
@@ -316,6 +344,7 @@ function checkRules(
   where: string,
   publisherScope: boolean,
   publisherRules: Record<string, JournalRule> = {},
+  journalId: string | null = null,
 ): Record<string, JournalRule> {
   if (rules == null) return {}
   if (!isObj(rules)) return fail('journal_catalog_schema', `${where}: rules 必须是对象`)
@@ -368,6 +397,10 @@ function checkRules(
       if ((src.coverage ?? 'publisher_general') === 'single_journal_sample') {
         fail('journal_source_coverage', `${w}: single_journal_sample 的来源不能挂在出版社 rules 上`)
       }
+    }
+    const ownerJournal = visible[raw.src as string].journal
+    if (ownerJournal !== undefined && ownerJournal !== journalId) {
+      fail('journal_source_coverage', `${w}: 来源 ${String(raw.src)} 只属于期刊 ${ownerJournal}`)
     }
     if (info || unset) continue
     let leaf: unknown = base
@@ -440,7 +473,7 @@ function overrideOf(cat: JournalCatalog, journalId: string): JournalOverride {
   const out: Obj = {}
   const folded: string[] = []
   for (const [path, eff] of effectiveRules(cat, journalId)) {
-    if (isInfo(path) || eff.unset) continue
+    if (isInfo(path) || eff.unset || !folds(path, eff.rule)) continue
     fold(path, eff.rule.value, out)
     folded.push(path)
   }
@@ -476,6 +509,19 @@ export function validateCatalog(catalog: unknown): JournalCatalog {
     const sources = checkSources(pub.sources, w)
     checkRules(pub.rules, sources, base, w, true)
   }
+  for (const [pid, pub] of Object.entries(cat.publishers)) {
+    for (const [sid, src] of Object.entries(pub.sources ?? {})) {
+      if (src.coverage !== 'single_journal_sample') continue
+      const owner = src.journal
+      const jr = typeof owner === 'string' && has(cat.journals, owner) ? cat.journals[owner] : null
+      if (!isObj(jr) || jr.publisher !== pid) {
+        fail(
+          'journal_source_coverage',
+          `publisher ${pid}.sources.${sid}: single_journal_sample 的来源要写明所属期刊 journal`,
+        )
+      }
+    }
+  }
   const seen = new Map<string, string>()
   for (const [jid, jr] of Object.entries(cat.journals)) {
     const w = `journal ${jid}`
@@ -498,7 +544,7 @@ export function validateCatalog(catalog: unknown): JournalCatalog {
     if (has(jr, 'issn') && !nonBlank(jr.issn)) fail('journal_catalog_schema', `${w}: issn 不能为空串`)
     const own = checkSources(jr.sources, w)
     const pub = cat.publishers[jr.publisher]
-    checkRules(jr.rules, { ...(pub.sources ?? {}), ...own }, base, w, false, pub.rules ?? {})
+    checkRules(jr.rules, { ...(pub.sources ?? {}), ...own }, base, w, false, pub.rules ?? {}, jid)
   }
   for (const jid of Object.keys(cat.journals)) {
     const override = overrideOf(cat, jid)
@@ -577,7 +623,7 @@ function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource,
     rule_scope: eff.ruleScope,
     source_scope: eff.sourceScope,
     coverage: eff.coverage,
-    affects: isInfo(path) ? 'info' : 'preflight',
+    affects: isInfo(path) || !(eff.unset || folds(path, rule)) ? 'info' : 'preflight',
     url: src.url,
     link: sourceLink(src, rule.anchor),
     anchor: rule.anchor ?? '',

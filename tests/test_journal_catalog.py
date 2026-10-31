@@ -178,6 +178,24 @@ def test_info_rules_are_shown_but_never_folded_into_the_override():
     assert mark["mark"] in mark["quote"] and mark["derivation"]
 
 
+def test_only_exact_or_direction_matching_rules_fold_into_the_override():
+    """typical / recommended / 方向不符的 min、max 只留在出处里（affects=info），不进预检。"""
+    cat = _fixture()
+    over = journals.journal_override("fx-zeta", cat)
+    assert over["legend_policy"] == {"max_font_size_pt": 9}  # max 配上限字段：折
+    assert over["min_raster_dpi"] == 450  # exact：折（盖过出版社的 600）
+    for gone in ("min_effective_font_size_pt", "max_font_size_pt", "font_family"):
+        assert gone not in over, gone
+    src = journals.journal_sources("fx-zeta", cat)
+    for path in ("min_effective_font_size_pt", "font_family.latin_accepted", "max_font_size_pt"):
+        assert src[path]["affects"] == "info", path
+    assert src["min_raster_dpi"]["affects"] == "preflight"
+    merged = journals.journal_profile("fx-zeta", cat)
+    assert merged["min_effective_font_size_pt"] == 0  # typical 5 pt 没变成硬下限
+    assert merged["font_family"]["latin_accepted"] == []
+    assert merged["max_font_size_pt"] == 72
+
+
 def test_unset_removes_the_publisher_rule_for_that_journal_only():
     cat = _fixture()
     assert "min_raster_dpi" in journals.journal_override("fx-alpha", cat)
@@ -257,6 +275,7 @@ def test_env_override_points_at_another_catalog(tmp_path, monkeypatch):
         "fx-delta",
         "fx-epsilon",
         "fx-gamma",
+        "fx-zeta",
     ]
 
 
