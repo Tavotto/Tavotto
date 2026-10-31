@@ -200,22 +200,35 @@
 @keyframes icon-pass { 0% { transform: none; opacity: 1; } 45% { transform: translateX(7px); opacity: 0; } 46% { transform: translateX(-7px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 
 /* ───────── 新一批：左轨 / 顶栏 / 画布工具胶囊（2026-10-31 第三轮） ───────── */
+/* 第三轮初版幅度太小（翻盖 1.8、光标 2、只重画小勾），真机上看着像没动：放到与排版 / 设置同一量级 */
+.icon-folder [data-m='q'] { transform-origin: 12px 20px; }
 .icon-folder[data-play] [data-m='p'] { animation: icon-flap var(--icon-ms) var(--icon-spring); }
-@keyframes icon-flap { 0%, 100% { transform: none; } 40% { transform: translateY(-1.8px); } }
+.icon-folder[data-play] [data-m='q'] { animation: icon-folder-open var(--icon-ms) var(--icon-spring); }
+@keyframes icon-flap { 0%, 100% { transform: none; } 40% { transform: translateY(-4px) scaleX(0.9); } 75% { transform: translateY(0.6px); } }
+@keyframes icon-folder-open { 0%, 100% { transform: none; } 40% { transform: scale(1.08, 0.88); } 75% { transform: scale(0.98, 1.03); } }
 
 .icon-square-mouse-pointer[data-play] [data-m='p'] { animation: icon-poke var(--icon-ms) var(--icon-spring); }
 .icon-square-mouse-pointer[data-play] [data-m='q'] { animation: icon-squish var(--icon-ms) var(--icon-spring); }
-@keyframes icon-poke { 0% { transform: none; } 35% { transform: translate(2px, 2px); } 65% { transform: translate(-0.6px, -0.6px); } 100% { transform: none; } }
+@keyframes icon-poke { 0% { transform: none; } 35% { transform: translate(-4px, -4px); } 70% { transform: translate(0.8px, 0.8px); } 100% { transform: none; } }
 
 .icon-paintbrush [data-m] { transform-origin: 19px 5px; }
 .icon-paintbrush[data-play] [data-m] { animation: icon-paint var(--icon-ms) ease-in-out; }
-@keyframes icon-paint { 0%, 100% { transform: none; } 30% { transform: rotate(-12deg); } 65% { transform: rotate(8deg); } }
+@keyframes icon-paint { 0%, 100% { transform: none; } 25% { transform: rotate(-22deg); } 55% { transform: rotate(14deg); } 80% { transform: rotate(-5deg); } }
 
+.icon-list-checks [data-m='t'] { transform-box: fill-box; transform-origin: left center; }
+.icon-list-checks [data-m='q'] { transform-box: fill-box; transform-origin: center; }
+.icon-list-checks[data-play] [data-m='t'] { animation: icon-line-grow calc(var(--icon-ms) * 0.6) var(--icon-spring) calc(var(--icon-ms) * 0.2 + var(--k) * 90ms) both; }
+.icon-list-checks[data-play] [data-m='q'] { animation: icon-ring var(--icon-ms) var(--icon-spring); }
+@keyframes icon-line-grow { from { transform: scaleX(0.25); } to { transform: none; } }
 .icon-list-checks[data-play] [data-m='d'] { animation: icon-draw calc(var(--icon-ms) * 0.55) ease-out both; }
 .icon-list-checks[data-play] [data-m='e'] { animation: icon-draw calc(var(--icon-ms) * 0.55) ease-out calc(var(--icon-ms) * 0.45) both; }
 
-.icon-clipboard-list[data-play] [data-m='p'] { animation: icon-lift-half var(--icon-ms) var(--icon-spring); }
-.icon-clipboard-list[data-play] [data-m='d'] { animation: icon-draw calc(var(--icon-ms) * 0.6) ease-out calc(var(--icon-ms) * 0.2) both; }
+.icon-clipboard-list [data-m] { transform-origin: 12px 21px; }
+.icon-clipboard-list[data-play] [data-m='p'] { animation: icon-clip var(--icon-ms) var(--icon-spring); }
+.icon-clipboard-list[data-play] [data-m='q'] { animation: icon-board var(--icon-ms) var(--icon-spring); }
+@keyframes icon-clip { 0%, 100% { transform: none; } 35% { transform: rotate(-8deg) translateY(-1.5px); } 70% { transform: rotate(3deg) translateY(0.4px); } }
+@keyframes icon-board { 0%, 100% { transform: none; } 35% { transform: rotate(-8deg); } 70% { transform: rotate(3deg); } }
+.icon-clipboard-list[data-play] [data-m='d'] { animation: icon-draw calc(var(--icon-ms) * 0.6) ease-out calc(var(--icon-ms) * 0.2) both, icon-board var(--icon-ms) var(--icon-spring); }
 
 .icon-mail [data-m='p'] { transform-origin: 12px 8px; }
 .icon-mail[data-play] [data-m='p'] { animation: icon-envelope var(--icon-ms) var(--icon-spring); }

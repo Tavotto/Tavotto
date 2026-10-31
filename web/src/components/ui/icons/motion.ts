@@ -77,11 +77,11 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
 
   // ───────── 悬停播 ─────────
   // 左轨（选中的那颗是实心孪生，所以都写 sel）
-  Folder: { on: 'hover', ms: 440, parts: { s: [null, 'p'] }, sel: { f: [null], k: ['p'] } },
+  Folder: { on: 'hover', ms: 520, parts: { s: ['q', 'p'] }, sel: { f: ['q'], k: ['p'] } },
   SquareMousePointer: { on: 'hover', ms: 480, parts: { s: ['q'], f: ['p'] }, sel: { f: ['q'], k: ['p'], o: ['p'] } },
-  Paintbrush: { on: 'hover', ms: 560, sel: 'all' },
-  ListChecks: { on: 'hover', ms: 520, parts: { s: ['d', 'e', null, null] }, sel: { f: [null, null], k: ['d', 'e'], s: [null, null] } },
-  ClipboardList: { on: 'hover', ms: 520, parts: { s: [null, 'p', 'd'] }, sel: { f: [null, 'p'], k: ['d'] } },
+  Paintbrush: { on: 'hover', ms: 600, sel: 'all' },
+  ListChecks: { on: 'hover', ms: 560, parts: { s: ['d', 'e', 't', 't'] }, sel: { f: ['q', 'q'], k: ['d', 'e'], s: ['t', 't'] } },
+  ClipboardList: { on: 'hover', ms: 560, parts: { s: ['q', 'p', 'd'] }, sel: { f: ['q', 'p'], k: ['d'] } },
   // 顶栏 / 状态
   Mail: { on: 'hover', ms: 520, parts: { s: [null, 'p'] } },
   HardDrive: { on: 'hover', ms: 520, parts: { s: [null, null], f: ['p'] } },
