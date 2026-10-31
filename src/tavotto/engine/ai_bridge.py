@@ -203,6 +203,61 @@ def _trace_runner_event(trace, parent, line: str, model, endpoint) -> None:
         pass
 
 
+_FACT_CODE = re.compile(r"[a-z0-9_.]{1,48}")
+_RUNNER_STDERR_CODE = re.compile(r"^agent_runner: ([a-z_]{1,32})(?: |$)", re.M)
+
+
+def _fact(value: object) -> str:
+    """闭集码才进日志：不符合 `[a-z0-9_.]{1,48}` 的（可能是自由文本 / 路径）一律写成 `other`。"""
+    text = str(value or "")
+    return text if _FACT_CODE.fullmatch(text) else "other"
+
+
+def _stderr_facts(sid: str) -> str:
+    """内置执行器 stderr 的事实：只有字节数与 `agent_runner: <闭集词>` 的第一个词（诊断函数只写短码）。
+    有字节却没有短码 = 解释器级崩溃（traceback），其内容含路径，不进日志。"""
+    try:
+        data = (SNAP_DIR / f"{sid}.stderr.log").read_bytes()
+    except OSError:
+        return ""
+    if not data:
+        return ""
+    text = data[-65536:].decode("utf-8", errors="replace")
+    codes = []
+    for code in _RUNNER_STDERR_CODE.findall(text):
+        if code not in codes:
+            codes.append(code)
+    return f" stderr_bytes={len(data)} stderr_codes={','.join(codes[:4]) or '-'}"
+
+
+def _end_facts(sess: dict, proc, sid: str, builtin: bool) -> str:
+    """「AI 会话结束」那行日志的失败事实（只用闭集码，不带自由文本 / 路径 / 密钥）：
+    退出码、内置执行器的 `done.reason`（`runner`）与 `detail`、没有 `done` 事件就退出的标记、
+    校验未满足的约束 `约束:原因`（`unmet`）。"""
+    parts = []
+    code = getattr(proc, "returncode", None)
+    if isinstance(code, int):
+        parts.append(f"exit={code}")
+    if builtin:
+        runner = sess.get("runner_error")
+        if runner:
+            parts.append(f"runner={_fact(runner)}")
+            if sess.get("runner_detail"):
+                parts.append(f"runner_detail={_fact(sess['runner_detail'])}")
+        elif isinstance(code, int) and code != 0 and sess.get("status") == "failed":
+            parts.append("runner=no_done_event")
+    unmet = (sess.get("task") or {}).get("unmet") or []
+    if unmet:
+        shown = [
+            f"{_fact(u.get('constraint_id'))}:{_fact(u.get('reason_code'))}"
+            for u in unmet[:6]
+            if isinstance(u, dict)
+        ]
+        parts.append("unmet=" + ",".join(shown))
+    text = (" " + " ".join(parts)) if parts else ""
+    return text + (_stderr_facts(sid) if builtin and sess.get("status") == "failed" else "")
+
+
 def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
     try:
         status = sess.get("status")
@@ -2010,12 +2065,13 @@ def run(
             else:
                 sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
             LOG.info(
-                "AI 会话结束: %s %s status=%s changed=%s refresh=%s",
+                "AI 会话结束: %s %s status=%s changed=%s refresh=%s%s",
                 agent,
                 script,
                 sess["status"],
                 sess["changed"],
                 sess["refresh"]["status"],
+                _end_facts(sess, sess.get("proc") or proc, sid, agent == ai_agents.BUILTIN_ID),
             )
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
             _finish_session(sess, task_result=task["task_result"] if task else None)
