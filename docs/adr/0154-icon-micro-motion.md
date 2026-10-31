@@ -38,8 +38,11 @@
 
 用户：命令面板里的图标也要一致、清晰且有动画。面板用到的 30 个图标里补了 11 个此前没有动作的（布局横排 / 竖排、书签、快捷键帮助、
 打开 / 存为排版、适应画布、图层轮换、元素列表、标尺、缩放到选中）。面板的行多半是键盘 ↑↓ 走过去的，点了就执行并关面板，
-悬停 / 点按两种触发都看不见，所以播放端加一条：**列表项变成高亮**（`[role=option|menuitem|tab]` 的 `aria-selected` 变 true，
-键盘或指针都算）时，它的图标不分触发方式播一次（document 上一个 MutationObserver，只看这一个属性）。
+悬停 / 点按两种触发都看不见，所以播放端加一条：**列表项变成高亮**（既有的 data-* 状态钩子亮起：Radix 菜单 / 下拉项的 `data-highlighted`、命令面板行的 `data-active`，
+键盘或指针都算）时，它的图标不分触发方式播一次（document 上一个 MutationObserver，只看这两个属性）。
+
+**选择器只认标签与 data-*（Codex #1548 P1）**：宿主是 `button` / `a[href]` / `[data-icon-host]`，图标认 createIcon 贴的 `svg[data-icon]`；
+不认 role / class（`web/AGENTS.md`）。通用轻点因此也碰不到 `Spinner`（Codex P2：运行中的转圈点了展开钮会停转）。
 
 ### 边界
 

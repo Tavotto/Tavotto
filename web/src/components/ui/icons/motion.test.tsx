@@ -26,6 +26,7 @@ import {
   type IconDef,
 } from './index'
 import { _resetIconMotionForTest, installIconMotion } from '../iconMotion'
+import { Spinner } from '../Spinner'
 
 // 直接读源文件：vitest 默认 css: false，任何 CSS import（含 ?raw）都是空串（同 lib/motion.test）
 const CSS_PATH = ['src/components/ui/icons/motion.css', 'web/src/components/ui/icons/motion.css']
@@ -200,7 +201,7 @@ describe('委托', () => {
   it('点按钮播按钮里的 press 图标，不播里面另一颗按钮的', () => {
     act(() =>
       root.render(
-        <div role="button" data-outer>
+        <div data-icon-host data-outer>
           <Download data-a />
           <button type="button">
             <Download data-b />
@@ -250,11 +251,11 @@ describe('委托', () => {
     expect(grid.hasAttribute('data-play')).toBe(false)
   })
 
-  it('列表项被高亮（命令面板 ↑↓）时播它的图标，不分触发方式；取消高亮不播', async () => {
+  it('列表项被高亮（data-active / data-highlighted 亮起，命令面板 ↑↓）时播它的图标，不分触发方式；熄灭不播', async () => {
     act(() =>
       root.render(
-        <ul role="listbox">
-          <li role="option" aria-selected="false" data-row>
+        <ul>
+          <li data-row>
             <Download data-press />
             <LayoutGrid data-hover />
           </li>
@@ -263,17 +264,55 @@ describe('委托', () => {
     )
     const row = host.querySelector('[data-row]')!
     await act(async () => {
-      row.setAttribute('aria-selected', 'true')
+      row.setAttribute('data-active', 'true')
       await Promise.resolve()
     })
     expect(host.querySelector('[data-press]')!.hasAttribute('data-play')).toBe(true)
     expect(host.querySelector('[data-hover]')!.hasAttribute('data-play')).toBe(true)
     host.querySelectorAll('svg').forEach((s) => s.removeAttribute('data-play'))
     await act(async () => {
-      row.setAttribute('aria-selected', 'false')
+      row.removeAttribute('data-active')
       await Promise.resolve()
     })
     expect(host.querySelector('[data-press]')!.hasAttribute('data-play')).toBe(false)
+  })
+
+  it('菜单项（Radix 的 data-highlighted）亮起时播；值变了不重播', async () => {
+    act(() =>
+      root.render(
+        <div data-item>
+          <LayoutGrid data-hover />
+        </div>,
+      ),
+    )
+    const item = host.querySelector('[data-item]')!
+    await act(async () => {
+      item.setAttribute('data-highlighted', '')
+      await Promise.resolve()
+    })
+    const svg = host.querySelector('[data-hover]')!
+    expect(svg.hasAttribute('data-play')).toBe(true)
+    svg.removeAttribute('data-play')
+    await act(async () => {
+      item.setAttribute('data-highlighted', 'x')
+      await Promise.resolve()
+    })
+    expect(svg.hasAttribute('data-play')).toBe(false)
+  })
+
+  it('通用轻点不碰图标集之外的 svg（运行中的 Spinner 点了展开钮也照转，Codex #1548）', () => {
+    act(() =>
+      root.render(
+        <button type="button">
+          <Spinner data-spin />
+          <Bold data-plain />
+        </button>,
+      ),
+    )
+    act(() => host.querySelector('button')!.click())
+    flushFrame()
+    expect(host.querySelector('[data-spin]')!.hasAttribute('data-tap')).toBe(false)
+    expect(host.querySelector('[data-plain]')!.hasAttribute('data-tap')).toBe(true)
   })
 
   it('减少动态效果时不播', () => {

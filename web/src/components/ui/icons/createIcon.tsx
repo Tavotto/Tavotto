@@ -136,6 +136,8 @@ export function createIcon(name: string, def: IconDef): IconComponent {
         strokeLinecap="round"
         strokeLinejoin="round"
         className={cn('icon', shapeClass, defaults.className, className)}
+        // 图标集出的图标都带这个标记：微动效的委托按它认图标（ADR 0154），不认 class
+        data-icon=""
         {...(hasA11y ? {} : { 'aria-hidden': true })}
         {...(roles && motion
           ? {
