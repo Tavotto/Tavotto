@@ -2,7 +2,8 @@
  * 图标集的几何定义——全产品 147 个界面图标的唯一出处（ADR 0052；说明书
  * `docs/ux/ICONOGRAPHY.md`）。
  *
- * 画法：24 网格；一切线条都是 2 单位描边、圆头圆角；实心形状 = 同一条路径再填色；
+ * 画法：24 网格；一切线条都是 1.5 单位描边（2026-10-31 起，ADR 0157；此前 2）、圆头圆角；落在线上的点最后统一吸到
+ * 0.75 网格（`snapToPixelGrid`，16px 上 = 1 个物理像素）；实心形状 = 同一条路径再填色；
  * 闭合外形外角 ≥ 2.5、内角 ≥ 1；标点是直径 2.5 的纯填充圆；每个图标 ≤ 3 个可辨元素。
  * 规格是从 OpenAI 的 `@openai/apps-sdk-ui`（755 个图标）量出来再落到这个网格上的，
  * 图形本身都是自己画的。
@@ -118,7 +119,7 @@ const bar = (x: number, y: number, w: number, h: number) => rr(x, y, w, h, 1.5)
 
 const HEART = 'M12 20.2C6.6 16.4 3.8 13.1 3.8 9.6A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 8.2 2c0 3.5-2.8 6.8-8.2 10.6z'
 
-export const ICON_DEFS = {
+const RAW_DEFS = {
   // ───────── 左轨 ─────────
   LayoutGrid: { s: [rr(3, 3, 7, 7, 2), rr(14, 3, 7, 7, 2), rr(3, 14, 7, 7, 2), rr(14, 14, 7, 7, 2)],
     sel: { f: [rr(3, 3, 7, 7, 2), rr(14, 3, 7, 7, 2), rr(3, 14, 7, 7, 2), rr(14, 14, 7, 7, 2)] } },
@@ -127,7 +128,7 @@ export const ICON_DEFS = {
   Layers: { s: [poly([[12, 3], [20, 7], [12, 11], [4, 7]], 1.2), 'M4 13l8 4 8-4', 'M4 17l8 4 8-4'],
     sel: { f: [poly([[12, 3], [20, 7], [12, 11], [4, 7]], 1.2)], s: ['M4 13l8 4 8-4', 'M4 17l8 4 8-4'] } },
   SquareMousePointer: { s: ['M13.5 21H5.5A2.5 2.5 0 0 1 3 18.5v-13A2.5 2.5 0 0 1 5.5 3h13A2.5 2.5 0 0 1 21 5.5V13.5'], f: ['M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z'],
-    sel: { f: [rr(3, 3, 18, 18, 2.5)], k: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', w: 4 }], o: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', solid: true }] } },
+    sel: { f: [rr(3, 3, 18, 18, 2.5)], k: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', w: 3 }], o: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', solid: true }] } },
   TriangleAlert: { s: [TRI, 'M12 9.5v4'], f: [dot(12, 17.2)],
     sel: { f: [TRI], k: ['M12 9.5v4', dot(12, 17.2)] } },
   Settings: { s: [HEX, circ(12, 12, 2.75)],
@@ -204,7 +205,7 @@ export const ICON_DEFS = {
   Copy: { s: [CARD_BACK, CARD] },
   Trash2: { s: ['M4 7h16', 'M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7', 'M6 7l.8 11.7A2.5 2.5 0 0 0 9.3 21h5.4a2.5 2.5 0 0 0 2.5-2.3L18 7', 'M10 11v6', 'M14 11v6'] },
   Eye: { s: [EYE, circ(12, 12, 3.25)], sel: { f: [EYE], k: [{ d: circ(12, 12, 3.25), solid: true }] } },
-  EyeOff: { s: [EYE, circ(12, 12, 3.25)], k: [{ d: 'M4 4l16 16', w: 6 }], o: ['M4 4l16 16'] },
+  EyeOff: { s: [EYE, circ(12, 12, 3.25)], k: [{ d: 'M4 4l16 16', w: 4.5 }], o: ['M4 4l16 16'] },
   Lock: { s: ['M8 10.5V8a4 4 0 0 1 8 0v2.5', rr(4.5, 10.5, 15, 10, 2.5)], f: [dot(12, 15.5, 1.6)],
     sel: { s: ['M8 10.5V8a4 4 0 0 1 8 0v2.5'], f: [rr(4.5, 10.5, 15, 10, 2.5)], k: [dot(12, 15.5, 1.6)] } },
   LockOpen: { s: ['M8 10.5V8a4 4 0 0 1 7.9-.9', rr(4.5, 10.5, 15, 10, 2.5)], f: [dot(12, 15.5, 1.6)] },
@@ -254,7 +255,7 @@ export const ICON_DEFS = {
   FileCodeCorner: { s: [DOC, DOC_FOLD, 'M10 12l-2 2.5 2 2.5', 'M14 12l2 2.5-2 2.5'] },
   FileExclamationPoint: { s: [DOC, DOC_FOLD, 'M12 11v3.5'], f: [dot(12, 17.5)] },
   FileSliders: { s: [DOC, DOC_FOLD, 'M8.5 13.5h7', 'M8.5 17h7'], f: [dot(13.5, 13.5, 1.5), dot(10.5, 17, 1.5)] },
-  ImageOff: { s: [IMG_FRAME, MOUNTAIN], f: [dot(8, 9, 1.6)], k: [{ d: 'M4 4l16 16', w: 6 }], o: ['M4 4l16 16'] },
+  ImageOff: { s: [IMG_FRAME, MOUNTAIN], f: [dot(8, 9, 1.6)], k: [{ d: 'M4 4l16 16', w: 4.5 }], o: ['M4 4l16 16'] },
   Layers2: { s: [poly([[12, 5], [20, 9.5], [12, 14], [4, 9.5]], 1.2), 'M4 15.5l8 4.5 8-4.5'],
     sel: { f: [poly([[12, 5], [20, 9.5], [12, 14], [4, 9.5]], 1.2)], s: ['M4 15.5l8 4.5 8-4.5'] } },
   CornerDownLeft: { s: ['M19 4v7.5a2.5 2.5 0 0 1-2.5 2.5H5', 'M9 10l-4 4 4 4'] },
@@ -285,7 +286,7 @@ export const ICON_DEFS = {
   AlignVerticalDistributeCenter: { s: ['M3 7.5h18', 'M3 16.5h18'], f: [bar(6, 5.5, 12, 4), bar(8.5, 14.5, 7, 4)] },
 
   // ───────── 文字 ─────────
-  Bold: { s: [{ d: 'M7.5 4h5.5a3.5 3.5 0 0 1 0 7H7.5z', w: 2.75 }, { d: 'M7.5 11h6.5a4.25 4.25 0 0 1 0 8.5h-6.5z', w: 2.75 }] },
+  Bold: { s: [{ d: 'M7.5 4h5.5a3.5 3.5 0 0 1 0 7H7.5z', w: 2.1 }, { d: 'M7.5 11h6.5a4.25 4.25 0 0 1 0 8.5h-6.5z', w: 2.1 }] },
   Italic: { s: ['M13.5 4.5h5', 'M5.5 19.5h5', 'M14.5 4.5l-5 15'] },
   Underline: { s: ['M6.5 3.5v7a5.5 5.5 0 0 0 11 0v-7', 'M4.5 20.5h15'] },
   Superscript: { s: ['M4 7l7 8', 'M11 7l-7 8', TWO(15.5, 4.5)] },
@@ -321,5 +322,74 @@ export const ICON_DEFS = {
   Braces: { s: ['M8 3.5H7.5a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2H8', 'M16 3.5h.5a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2H16'] },
 
 } satisfies Record<string, IconDef>
+
+/**
+ * 像素对齐（ADR 0157，用户 2026-10-31 在清晰度演示页上选定「描边 1.5 + 对齐像素」）：每条路径里落在线上的点
+ * （M / L / H / V 的终点、曲线与圆弧的端点）吸到 0.75 的整数倍——16px 图标在 2 倍屏上 1 单位 = 4/3 物理像素，
+ * 0.75 单位 = 1 物理像素，描边 1.5 = 2 物理像素，中心线落在整像素上，两侧边缘也就落在整像素上，不再糊成灰边。
+ * 曲线的控制点跟着各自端点平移，圆弧半径不动。几何仍按上面的原值写，改图形照常改原值，吸附在这里统一做。
+ */
+const GRID = 0.75
+const snapV = (v: number) => Math.round(v / GRID) * GRID
+const ARGC: Record<string, number> = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 }
+
+export function snapPathToPixelGrid(d: string): string {
+  const toks = d.match(/[a-zA-Z]|-?(?:\d*\.\d+|\d+\.?)(?:e-?\d+)?/g) ?? []
+  const out: string[] = []
+  let i = 0
+  let cmd = ''
+  let x = 0, y = 0, sx = 0, sy = 0
+  let dx0 = 0, dy0 = 0 // 当前点被吸附挪了多少（下一段曲线的第一个控制点跟着它挪）
+  while (i < toks.length) {
+    if (/[a-zA-Z]/.test(toks[i])) cmd = toks[i++]
+    const C = cmd.toUpperCase()
+    const rel = cmd !== C
+    if (C === 'Z') { out.push('Z'); x = sx; y = sy; dx0 = snapV(x) - x; dy0 = snapV(y) - y; continue }
+    const a = toks.slice(i, i + ARGC[C.toLowerCase()]).map(Number)
+    i += ARGC[C.toLowerCase()]
+    const P = (ax: number, ay: number): [number, number] => (rel ? [x + ax, y + ay] : [ax, ay])
+    const end = (ex: number, ey: number) => { const qx = snapV(ex), qy = snapV(ey); const r = [qx - ex, qy - ey]; x = ex; y = ey; return { qx, qy, dx: r[0], dy: r[1] } }
+    if (C === 'M' || C === 'L' || C === 'T') {
+      const [ex, ey] = P(a[0], a[1]); const e = end(ex, ey)
+      out.push(`${C}${N(e.qx)} ${N(e.qy)}`)
+      if (C === 'M') { sx = ex; sy = ey; cmd = rel ? 'l' : 'L' }
+      dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'H' || C === 'V') {
+      const e = C === 'H' ? end(rel ? x + a[0] : a[0], y) : end(x, rel ? y + a[0] : a[0])
+      out.push(`L${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'C') {
+      const [c1x, c1y] = P(a[0], a[1]), [c2x, c2y] = P(a[2], a[3]), [ex, ey] = P(a[4], a[5])
+      const e = end(ex, ey)
+      out.push(`C${N(c1x + dx0)} ${N(c1y + dy0)} ${N(c2x + e.dx)} ${N(c2y + e.dy)} ${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'S' || C === 'Q') {
+      const [c2x, c2y] = P(a[0], a[1]), [ex, ey] = P(a[2], a[3])
+      const e = end(ex, ey)
+      out.push(`${C}${N(c2x + e.dx)} ${N(c2y + e.dy)} ${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'A') {
+      // 弦长变了半径不变，整圆（两段大弧）会鼓成柠檬形：半径按弦长的伸缩比例跟着缩放
+      const sx0 = x, sy0 = y, qsx = x + dx0, qsy = y + dy0
+      const [ex, ey] = P(a[5], a[6]); const e = end(ex, ey)
+      const before = Math.hypot(ex - sx0, ey - sy0), after = Math.hypot(e.qx - qsx, e.qy - qsy)
+      const k = before > 1e-6 ? after / before : 1
+      out.push(`A${N(a[0] * k)} ${N(a[1] * k)} ${a[2]} ${a[3]} ${a[4]} ${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    }
+  }
+  return out.join('')
+}
+
+const snapSpec = (p: IconPathSpec): IconPathSpec =>
+  typeof p === 'string' ? snapPathToPixelGrid(p) : { ...p, d: snapPathToPixelGrid(p.d) }
+const snapVariant = <V extends IconVariant>(v: V): V => {
+  const o = { ...v }
+  for (const k of ['s', 'f', 'k', 'o'] as const) if (v[k]) o[k] = v[k]!.map(snapSpec)
+  return o
+}
+
+export const ICON_DEFS = Object.fromEntries(
+  Object.entries(RAW_DEFS).map(([name, def]) => {
+    const d = def as IconDef
+    return [name, { ...snapVariant(d), ...(d.sel ? { sel: snapVariant(d.sel) } : {}) }]
+  }),
+) as { [K in keyof typeof RAW_DEFS]: IconDef }
 
 export type IconName = keyof typeof ICON_DEFS
