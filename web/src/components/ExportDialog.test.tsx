@@ -43,6 +43,7 @@ import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
@@ -912,6 +913,72 @@ describe('文件名的跨平台校验', () => {
     })
     await click(button('开始导出')!)
     expect(exportBodies[0].filename).toBe('Fig 1')
+  })
+})
+
+describe('撞名确认只对触发它的输出目标有效（QA-WIN-18）', () => {
+  const nameInput = () => {
+    const all = document.body.querySelectorAll<HTMLInputElement>('input[data-export-filename]')
+    expect(all, '文件名输入框是单例').toHaveLength(1)
+    return all[0]
+  }
+  const typeName = async (v: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput(), v)
+      nameInput().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('确认态下把文件名改成另一个：确认作废，点不到「覆盖」，不会按新名字覆盖', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].filename).toBe('A')
+    expect(button('覆盖')).toBeTruthy()
+
+    await typeName('B')
+    expect(button('覆盖'), '目标变了：旧的覆盖确认必须撤掉').toBeFalsy()
+    expect(button('开始导出')).toBeTruthy()
+    expect(exportBodies.filter((b) => b.overwrite === 'replace')).toHaveLength(0)
+  })
+
+  it('改回触发撞名的名字也不复活旧确认；重新开始导出重新检测', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    await typeName('B')
+    await typeName('A')
+    expect(button('覆盖')).toBeFalsy()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].overwrite).toBe('ask')
+  })
+
+  it('确认态下改了导出位置：确认作废，没有 replace 请求（目录是目标的一部分）', async () => {
+    jobStatus = 'conflict'
+    useProjectStore.setState({ project: { settings: {}, export_dir: '/out', backup_dir: '/b' } as never })
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    expect(button('覆盖')).toBeTruthy()
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    await act(async () => {
+      await applyProjectSettingsPatch({ export_dir: '/other/dir' })
+    })
+    expect(button('覆盖'), '目录变了：旧的覆盖确认必须撤掉').toBeFalsy()
+    expect(button('开始导出')).toBeTruthy()
+    expect(exportBodies.filter((b) => b.overwrite === 'replace')).toHaveLength(0)
+  })
+
+  it('只改会随「覆盖」取最新的东西（报告等）不作废确认；「覆盖」带的仍是同一个文件名', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    await click(button('覆盖')!)
+    expect(exportBodies[1]).toMatchObject({ filename: 'A', overwrite: 'replace' })
   })
 })
 
@@ -2711,8 +2778,9 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
   })
 
-  it('撞名停下后位置写入在飞：覆盖 / 另存一份都不发（会按旧目录写），落地后才放行', async () => {
+  it('撞名停下后位置写入在飞：覆盖 / 另存一份都不发；落地后确认作废（目录换了，确认框列的不再是会被覆盖的文件，QA-WIN-18）', async () => {
     jobStatusSeq = ['conflict', 'done', 'done']
+    useProjectStore.setState({ project: { settings: {}, export_dir: '/out', backup_dir: '/b' } as never })
     await setupTwo({ select: [] })
     await click(originalRadio())
     await start()
@@ -2730,10 +2798,8 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(exportBodies, '写入在飞：一个请求都不许发').toHaveLength(1)
     await act(async () => { release(); await done })
     settingsGate = null
-    expect(button('覆盖')!.hasAttribute('disabled')).toBe(false)
-    await click(button('覆盖')!)
-    await batchDone()
-    expect(exportBodies[1].overwrite).toBe('replace')
+    expect(button('覆盖'), '目录换了：旧确认作废，不再能按新目录覆盖').toBeFalsy()
+    expect(exportBodies, '作废后也没有任何 replace / rename 请求').toHaveLength(1)
   })
 
   it('撞名停下后位置写入在飞：Esc（安全答案 = 另存一份）也不发请求', async () => {

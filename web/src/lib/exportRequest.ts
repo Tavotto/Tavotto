@@ -225,6 +225,11 @@ export interface ExportRequestInput {
   spec?: OriginalOutputSpec | null
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
+  /**
+   * 此刻生效的导出目录（`project.export_dir`）。**不进载荷**（后端自己读项目设置），只参与 `exportTargetKey`：
+   * 撞名确认问的是「这个目录里的这几个文件」，目录换了确认就不再成立（QA-WIN-18）。
+   */
+  exportDir?: string | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   report?: Record<string, unknown>
   /**
@@ -317,6 +322,24 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   const revision = snapshotRevision(request)
   request.document_revision = revision
   return { request, names: formats.map((f) => `${filename}.${f}`), revision }
+}
+
+/**
+ * 这次导出会写到哪些文件的身份（范围 / 对象 / 文件名主干 / 格式 / 导出目录），QA-WIN-18。
+ * 撞名确认问的是「这几个文件已存在，覆盖吗」——之后表单里任何一项变了，那句确认就不再是在问现在这次导出，
+ * 「覆盖」也就不许发。只量会改变输出目标的字段，不量画布内容 / 报告（那些随「覆盖」取最新）。
+ */
+export function exportTargetKey(input: ExportRequestInput): string {
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
+  const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
+  return JSON.stringify([
+    input.documentId,
+    input.scope,
+    input.scope === 'original' ? (input.mergePages?.map((p) => p.figureId) ?? input.figureId ?? null) : null,
+    stripOutputExtension(input.filename, formats),
+    formats,
+    input.exportDir ?? null,
+  ])
 }
 
 function clampPpi(ppi: number): number {
