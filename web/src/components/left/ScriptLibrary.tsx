@@ -309,6 +309,8 @@ function ScriptRow({
   const run = useScriptRunStore((s) => s.byScript[entry.script])
   const prep = useProjectPreparationStore((s) => s.entries[`script:${entry.script}`])
   const busy = !!run && isBusyPhase(run.phase)
+  // 状态一句话只是陈述（已关联 N 张图 / 没跑过）时，悬停换成「运行」；有动作的状态句（查看结果、错误……）不换
+  const plain = rowStatusIsPlain(run, prep)
   const [resultsOpen, setResultsOpen] = useState(false)
   const hasAnswers = useScriptInputStore((s) => (s.answers?.[entry.script]?.length ?? 0) > 0)
   // T09（ADR 0116）：默认这颗钮打开准备面板（后端会话：检查 → 确认 → 运行 → 进入编辑），不直接执行；
@@ -346,11 +348,11 @@ function ScriptRow({
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
       <div {...menu.rowProps} className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
-        {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
+        {/* 脚本名是这一行的主文字：正常字体（不用等宽，2026-10-31 UI 审计 C6），字号跟正文走，
             与右侧 11px 的状态一句话差一个台阶（左栏审计 L02）。状态点与脚本名同属一个基线组
             （items-baseline）：点用 `vertical-align: middle`（= 基线上抬半个 x 高）对准小写字母
             的视觉中心，不靠 margin 凑，换字体 / 字号也跟着走 */}
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 font-mono text-sm">
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm">
           <StatusDot entry={entry} run={run} prep={prep} />
           <span className="min-w-0 flex-1 truncate text-ink" title={entry.script}>
             {entry.script}
@@ -361,6 +363,7 @@ function ScriptRow({
           stems={stems}
           run={run}
           prep={prep}
+          plain={plain}
           onViewResults={() => setResultsOpen(true)}
         />
         {/* 脚本 input() 记住的答案（ADR 0099）：只在这个脚本真有答案时出现，其余行一个像素不变 */}
@@ -395,9 +398,14 @@ function ScriptRow({
           disabled={!!run?.cancelRequested}
           data-script-run={entry.script}
           onClick={onRunOrCancel}
-          className={cn(!busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink')}
+          className={cn(
+            !busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink',
+            // 同一颗钮（焦点不丢）：陈述句状态下常态不可见，悬停 / 键盘聚焦才在原位换成文字「运行」
+            plain &&
+              'absolute right-1 w-auto px-2.5 text-sm opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100',
+          )}
         >
-          {busy ? <Square size={ICON_SIZE.sm} /> : <Play size={ICON_SIZE.sm} />}
+          {busy ? <Square size={ICON_SIZE.sm} /> : plain ? sc('runShort') : <Play size={ICON_SIZE.sm} />}
         </IconButton>
         <RowMenu state={menu} label={sc('rowActions', { script: entry.script })} width={200} data-script-menu={entry.script}>
           <MenuItem
@@ -593,6 +601,15 @@ function StatusDot({
   )
 }
 
+/** 状态一句话是不是纯陈述（与 `StatusLine` 的分支同序：准备 / 运行中 / 捕获结果 / 取消 / 错误都是有话要说或有动作的） */
+function rowStatusIsPlain(run: ScriptRunState | undefined, prep: PrepEntry | undefined): boolean {
+  const phase = run?.phase ?? 'idle'
+  if (isBusyPhase(phase)) return false
+  if (prepRowKey(prep)) return false
+  if (phase === 'captured_one' || phase === 'captured_many' || phase === 'cancelled') return false
+  return !run?.error
+}
+
 /**
  * 状态一句话（元数据档，靠右、单行截断）：不暴露内部术语，错误按稳定 code
  * 翻成当前语言。发现了图时那句话本身就是「查看捕获结果」的入口。
@@ -602,12 +619,15 @@ function StatusLine({
   stems,
   run,
   prep,
+  plain = false,
   onViewResults,
 }: {
   entry: ScriptInventoryEntry
   stems: string[]
   run: ScriptRunState | undefined
   prep?: PrepEntry
+  /** 陈述句状态（见 `rowStatusIsPlain`）：行悬停 / 聚焦时让位给「运行」 */
+  plain?: boolean
   onViewResults: () => void
 }) {
   useTranslation('workspace')
@@ -669,7 +689,10 @@ function StatusLine({
     <span
       aria-live="polite"
       title={title}
-      className="flex min-w-0 max-w-[55%] shrink items-center truncate type-meta"
+      className={cn(
+        'flex min-w-0 max-w-[55%] shrink items-center truncate type-meta',
+        plain && 'group-focus-within:invisible group-hover:invisible',
+      )}
     >
       {body}
     </span>
