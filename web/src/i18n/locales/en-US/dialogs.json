@@ -2236,7 +2236,8 @@
     "zoomOut": "Zoom out",
     "zoomFit": "Fit",
     "diffTitle": "Compared with the current canvas",
-    "quickNameTitle": "Save this moment as a named point"
+    "quickNameTitle": "Save this moment as a named point",
+    "scrubberLabel": "Version strip: ←/→ to step through, Enter to open"
   },
   "onboarding": {
     "hintsReset": "Contextual hints reset; each will show once more",
