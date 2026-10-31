@@ -134,7 +134,7 @@ test('图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做�
   })
 
   await page.goto(a.baseURL)
-  await page.getByText('Fig_geo.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig_geo.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await expect.poll(() => rendered.length, { timeout: 60_000 }).toBeGreaterThan(0)
   await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })

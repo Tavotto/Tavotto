@@ -583,6 +583,7 @@ export function AssetBrowser() {
             <ul
               role="listbox"
               aria-label={ab('listLabel')}
+              data-asset-list=""
               className="grid gap-2"
               style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
             >

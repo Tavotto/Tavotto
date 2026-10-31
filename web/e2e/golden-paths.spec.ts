@@ -72,7 +72,7 @@ test('直接粘贴路径打开项目（含中文与空格）', async ({ app, pag
   // 顶栏出现项目切换器，名字就是那个中文目录
   await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible()
   // 素材库里能看到面板
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
 })
 
 test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复', async ({ app, page }) => {
@@ -80,7 +80,7 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   await page.goto(a.baseURL)
 
   // 双击素材把面板放上画布
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
   // Prompt 09：双击 = 打开（单图编辑）。标注工具画的是**画布对象**，
   // 只在多图排版下有落点——画布上有第二张图才是排版（没有「回排版」按钮了）。
@@ -270,7 +270,7 @@ test('导出诊断包：能下载，且不含主目录、用户脚本的报错�
 test('导出 PDF 后文件真的落盘', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
 
   const resp = await page.request.post(`${a.baseURL}/api/export`, {
     data: {

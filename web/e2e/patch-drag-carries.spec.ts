@@ -115,7 +115,7 @@ const layerSize = (page: Page) =>
 
 async function openFlow(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  await page.getByText('Fig_flow.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig_flow.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1000)

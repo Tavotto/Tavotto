@@ -117,7 +117,7 @@ for (const L of LOCALES) {
       const a = await app()
       await page.goto(a.baseURL)
 
-      await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+      await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
       await expect(page.getByText(L.emptyCanvas)).toHaveCount(0)
 
       // 撤销按钮的无障碍名带上「撤销什么」——那句话来自历史标签，
@@ -172,7 +172,7 @@ test.describe('英文界面的排版', () => {
     await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeVisible({
       timeout: 30_000,
     })
-    await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+    await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
     await waitForFigureEdit(page)
     // 抽屉是宽度动画，动画途中量到的是中间帧——等它停下来再量，
     // 否则这条用例会按机器快慢随机红（问过一次 getAnimations 就够）

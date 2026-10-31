@@ -81,7 +81,7 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   })
   await page.goto(a.baseURL)
 
-  await page.getByText('Fig_twin.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig_twin.pdf').dblclick({ timeout: 30_000 })
   const svgWrap = page.locator('[data-element-svg]').first()
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
@@ -192,7 +192,7 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
 test('键盘轮换：bbox 中心不在曲线身上时也走得回来', async ({ app, page }) => {
   const a = await app({ figures: writeTwinProject() })
   await page.goto(a.baseURL)
-  await page.getByText('Fig_twin.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig_twin.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
 
