@@ -560,8 +560,7 @@ export default interface Resources {
     },
     "contact": {
       "addressCopied": "已复制 {{address}}",
-      "attachLabel": "附件（选填）",
-      "attachPick": "添加附件",
+      "attachPick": "添加截图/文件",
       "attachRemove": "移除 {{name}}",
       "bodyCount": "{{count}} / {{max}}",
       "bodyLabel": "想说的话",
@@ -691,7 +690,10 @@ export default interface Resources {
       "title": "联系作者",
       "unreadDot": "有新回信",
       "wecom": "企业微信",
+      "wecomLead": "也可以",
+      "wecomLink": "加企业微信",
       "wecomScan": "微信扫码添加",
+      "wecomTail": "直接聊",
       "write": "写信"
     },
     "draftGuard": {
@@ -705,6 +707,7 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
+      "advancedLabel": "高级",
       "batchNames": "每张图用各自的名字",
       "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
       "cancelExport": "取消导出",
@@ -720,10 +723,6 @@ export default interface Resources {
       "checkScopeFigureNamed": "仅查原图「{{name}}」",
       "checkScopeOffCanvas": "「{{name}}」不在画布上，这次导出不做规范检查",
       "checkingFigure": "正在确认这张图……",
-      "chipError_other": "项要改",
-      "chipNotVerifiable_other": "项无法核验",
-      "chipSuggestion_other": "条建议",
-      "chipWarn_other": "项留意",
       "conflict": "导出目录里已经有 {{files}}。",
       "conflictRename": "另存一份",
       "conflictReplace": "覆盖",
