@@ -25,9 +25,9 @@ test('导出预览角标：只有尺寸、没有「示意」说明，勾透明�
   test.setTimeout(180_000)
   const a = await app()
   const dialog = await openExport(page, a.baseURL)
-  // 左栏预览角上只有尺寸小标，不带「示意」之类的说明
+  // 预览区下方的说明行只有尺寸，不带「示意」之类的说明（尺寸行在预览区外，不压在图上）
   const stage = dialog.locator('[data-export-preview-stage]')
-  const note = stage.locator('[data-export-preview-size]')
+  const note = dialog.locator('[data-export-preview] [data-export-preview-size]')
   await expect(note).toBeVisible()
   await expect(dialog.locator('[data-export-thumb-note]')).toHaveCount(0)
   // 小标在对话框内、没有撑破它
