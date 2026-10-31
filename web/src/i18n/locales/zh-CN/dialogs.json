@@ -165,7 +165,7 @@
     "previewFit": "适合大小",
     "previewTabs": "预览",
     "previewWhole": "整版",
-    "previewFlagged": "有检查提示",
+    "previewFlagged": "有要改的项",
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",

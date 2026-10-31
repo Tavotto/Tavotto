@@ -816,7 +816,7 @@ export default interface Resources {
       "preflightFailedKept": "无法完成预检。下面的结论来自更早一次，可能已过时。",
       "preflightOk": "按「{{spec}}」未发现问题",
       "previewFit": "适合大小",
-      "previewFlagged": "有检查提示",
+      "previewFlagged": "有要改的项",
       "previewTabs": "预览",
       "previewWhole": "整版",
       "profileAria": "出版规范",

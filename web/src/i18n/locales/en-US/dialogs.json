@@ -168,7 +168,7 @@
     "previewFit": "Fit to view",
     "previewTabs": "Preview",
     "previewWhole": "Whole page",
-    "previewFlagged": "Has check notes",
+    "previewFlagged": "Has items to fix",
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "batchNames": "Each figure keeps its own name",

@@ -1325,16 +1325,16 @@ export function ExportDialog() {
     if (id !== "page" && scope === "original") pickFigure(id);
     else setPreviewId(id);
   };
-  /** 带检查提示的对象（缩略图上的橙点）：当前画布上除建议级以外的问题所指的对象 */
+  /** 缩略图上打红点的对象：当前画布上有「要改」级问题所指的对象。留意 / 建议 / 无法核验不打点——几乎每张图都有留意项，点全亮就分不出哪张该处理 */
   const flaggedObjectIds = useMemo(() => {
     const ids = new Set<string>();
     for (const i of validationIssues) {
-      if (i.severity === "suggestion") continue;
+      if (i.severity !== "error") continue;
       if (i.objectRef.objectId) ids.add(i.objectRef.objectId);
     }
     return ids;
   }, [validationIssues]);
-  const pageFlagged = flaggedObjectIds.size > 0 || errors.length > 0 || notVerifiable.length > 0;
+  const pageFlagged = flaggedObjectIds.size > 0 || errors.length > 0;
 
   /**
    * 导出终局报一次状态。**只在终局报一次**（作业 + 终态为键，重复快照不再报），不在每次进度推送上报。
@@ -2415,7 +2415,7 @@ function PreviewTab({
           data-export-flag
           role="img"
           aria-label={translate("export.previewFlagged", { ns: "dialogs" })}
-          className="absolute right-[6px] top-[6px] h-[7px] w-[7px] rounded-full bg-warn ring-[1.5px] ring-surface"
+          className="absolute right-[6px] top-[6px] h-[7px] w-[7px] rounded-full bg-danger ring-[1.5px] ring-surface"
         />
       )}
     </button>
