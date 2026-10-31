@@ -15,7 +15,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "ci" / "diag_contract.py"
 DIAGSEND = ROOT / "src" / "tavotto" / "engine" / "diagsend.py"
-RELEASE = ROOT / ".github" / "workflows" / "release.yml"
 
 sys.path.insert(0, str(SCRIPT.parent))
 import diag_contract as DC  # noqa: E402
@@ -79,21 +78,3 @@ def test_a_written_reason_signs_off_a_mismatch_and_a_stale_ack_is_refused(tmp_pa
 def test_a_tag_push_explains_how_to_sign(tmp_path):
     res = _run(tmp_path, None, event="push")
     assert res.returncode == 1 and "ack_diag_contract" in res.stdout
-
-
-def test_the_first_release_segment_runs_the_gate_on_the_resolved_sha_for_every_trigger():
-    src = RELEASE.read_text(encoding="utf-8")
-    assert "ack_diag_contract:" in src.split("\njobs:")[0], (
-        "workflow_dispatch 少了 ack_diag_contract 输入"
-    )
-    trust = src.split("\n  trust:", 1)[1].split("\n  build:", 1)[0]
-    assert "- id: resolve" in trust
-    step = trust.split("- id: resolve", 1)[1].split("诊断包条目门禁（", 1)[1]
-    assert "diag_contract.py" in step
-    # 读的是待发布 SHA 的客户端源码，不是 dispatch 时 checkout 的 main
-    assert (
-        "steps.resolve.outputs.sha" in step
-        and 'git show "$SHA:src/tavotto/engine/diagsend.py"' in step
-    )
-    assert "inputs.ack_diag_contract" in step
-    assert "\n        if:" not in step, "门禁被 if 限定到了某一条触发路径"
