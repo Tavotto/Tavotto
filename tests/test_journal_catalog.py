@@ -212,8 +212,10 @@ def test_page_columns_one_exact_one_typical():
     """期刊自己的 page_columns 盖过出版社的；只有一档 exact（另一档 typical 不参与判据）时 double 为 null，
     出版社那条 widths_mm.single=999 被 page_columns 盖掉。"""
     over = journals.journal_override("fx-cols", _fixture())
-    assert over["widths_mm"] == {"single": 90, "double": None}
+    # 期刊自己写的 tolerance_mm 不被派生冲掉
+    assert over["widths_mm"] == {"tolerance_mm": 2, "single": 90, "double": None}
     assert [c["id"] for c in over["page_columns"]] == ["narrow", "wide"]
+    assert journals.journal_profile("fx-cols", _fixture())["widths_mm"]["tolerance_mm"] == 2
 
 
 def test_default_page_columns_are_derived_from_widths():

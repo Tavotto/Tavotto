@@ -265,6 +265,12 @@ def fixture_catalog() -> dict:
                     }
                 },
                 "rules": {
+                    # 期刊自己写的容差：page_columns 派生 single / double 时不许把它冲掉
+                    "widths_mm.tolerance_mm": {
+                        "value": 2,
+                        "src": "s13",
+                        "quote": "FIXTURE within 2 mm",
+                    },
                     # 只有一档 exact + 一档 typical：double 为 null，typical 不参与判据
                     "page_columns": {
                         "value": [
@@ -282,7 +288,7 @@ def fixture_catalog() -> dict:
                         ],
                         "src": "s13",
                         "quote": "FIXTURE 9 cm; wide typically 15 cm",
-                    }
+                    },
                 },
             },
             "fx-cols-inherit": {"label": "Fixture Columns Inherit", "publisher": "fx-cols"},

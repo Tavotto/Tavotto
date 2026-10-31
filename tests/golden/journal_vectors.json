@@ -385,6 +385,11 @@
      }
     },
     "rules": {
+     "widths_mm.tolerance_mm": {
+      "value": 2,
+      "src": "s13",
+      "quote": "FIXTURE within 2 mm"
+     },
      "page_columns": {
       "value": [
        {
@@ -1210,6 +1215,7 @@
    "override": {
     "widths_mm": {
      "single": 90,
+     "tolerance_mm": 2,
      "double": null
     },
     "page_columns": [
@@ -1347,10 +1353,34 @@
      "retrieved": "2000-04-04",
      "archive_url": "",
      "overrides": null
+    },
+    "widths_mm.tolerance_mm": {
+     "value": 2,
+     "value_alt": null,
+     "qualifier": "exact",
+     "stage": "any",
+     "mark": "",
+     "derivation": "",
+     "unset": false,
+     "quote": "FIXTURE within 2 mm",
+     "src": "s13",
+     "rule_scope": "journal",
+     "source_scope": "journal",
+     "coverage": "journal_specific",
+     "affects": "preflight",
+     "url": "https://example.invalid/fx-cols/one",
+     "link": "https://example.invalid/fx-cols/one",
+     "anchor": "",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2000-06-06",
+     "archive_url": "",
+     "overrides": null
     }
    },
    "merged_fields": {
     "widths_mm.single": 90,
+    "widths_mm.tolerance_mm": 2,
     "widths_mm.double": null,
     "page_columns": [
      {

@@ -594,10 +594,10 @@ def _override_of(catalog: dict, journal_id: str) -> dict:
             and c.get("qualifier", "exact") == "exact"
             and _is_number(c.get("width_mm"))
         )
-        out["widths_mm"] = {
-            "single": exact[0] if exact else None,
-            "double": exact[-1] if len(exact) > 1 else None,
-        }
+        # 只改 single / double，期刊自己写的 tolerance_mm 等兄弟键原样保留
+        widths = out.setdefault("widths_mm", {})
+        widths["single"] = exact[0] if exact else None
+        widths["double"] = exact[-1] if len(exact) > 1 else None
     if advisories:
         out["advisories"] = advisories
     base_sev = _base().get("severity") or {}

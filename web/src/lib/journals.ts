@@ -529,10 +529,10 @@ function overrideOf(cat: JournalCatalog, journalId: string): JournalOverride {
       )
       .map((c) => c.width_mm)
       .sort((a, b) => a - b)
-    out.widths_mm = {
-      single: exact.length ? exact[0] : null,
-      double: exact.length > 1 ? exact[exact.length - 1] : null,
-    }
+    // 只改 single / double，期刊自己写的 tolerance_mm 等兄弟键原样保留
+    const widths = (isObj(out.widths_mm) ? out.widths_mm : (out.widths_mm = {})) as Obj
+    widths.single = exact.length ? exact[0] : null
+    widths.double = exact.length > 1 ? exact[exact.length - 1] : null
   }
   if (advisories.length) out.advisories = advisories
   const baseSev = (baseProfile().severity ?? {}) as Record<string, string>

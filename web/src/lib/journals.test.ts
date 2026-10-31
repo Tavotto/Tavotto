@@ -234,7 +234,11 @@ describe('折叠语义', () => {
     const three = journalOverride('fx-cols-inherit', cat)
     expect(three.widths_mm).toEqual({ single: 57, double: 184 })
     expect(three.page_columns?.map((c) => c.id)).toEqual(['col1', 'col2', 'col3'])
-    expect(journalOverride('fx-cols', cat).widths_mm).toEqual({ single: 90, double: null })
+    expect(journalOverride('fx-cols', cat).widths_mm).toEqual({
+      tolerance_mm: 2,
+      single: 90,
+      double: null,
+    })
     expect(derivePageColumns(loadProfile('lab-publication-v1')).map((c) => c.id)).toEqual([
       'single',
       'double',
