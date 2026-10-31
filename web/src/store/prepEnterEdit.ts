@@ -88,7 +88,11 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   const known = (useRuntimeAssetStore.getState().assets ?? []).some(
     (a) => a.id === d.asset_id && !!a.descriptor && JSON.stringify(a.descriptor) === fresh,
   )
-  const missing = !known && !findFigurePanel(d.asset_id)
+  // 「重建为可编辑版」（`beside`）只认**当前画布**：资产 id 是 `runtime:脚本#stem`，另一张画布上同 stem 的旧面板（可能已编辑过）
+  // 不是这次的重画结果——`openFastEdit` 的「换看那一张」会切过去复用它（QA-WIN-22）。当前画布上没有就加一个新的
+  const onActiveCanvas = () =>
+    useDocumentStore.getState().doc.objects.some((o) => o.type === 'panel' && o.fileId === d.asset_id)
+  const missing = host.beside ? !onActiveCanvas() : !known && !findFigurePanel(d.asset_id)
   // 默认是普通「打开」：描述符交给 `openFastEdit`，它按「换看那一张」的规则新建画布放它。先
   // `addRuntimePanelToCanvas` 会把第二个脚本的图加进**当前**画布，A、B 同在一张画布上（时间线分不开）。
   // 只有「重建为可编辑版」（`host.beside`）要把新面板摆在原 PNG 旁边，保留那条加图路径
