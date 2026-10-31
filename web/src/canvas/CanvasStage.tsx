@@ -53,6 +53,7 @@ export function CanvasStage() {
   const addedForEdit = useWorkspaceStore(
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
+  const canvasName = useDocumentStore((s) => s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? '')
   const showRulers = useUiStore((s) => s.showRulers) && !fastEdit
   const showGrid = useUiStore((s) => s.showGrid) && !fastEdit
   const gridSize = useUiStore((s) => s.gridSize)
@@ -326,7 +327,7 @@ export function CanvasStage() {
           了一件它并没有做的事。`CanvasStage` 两种模式下都常驻，区先在、内容后变，
           这条提示才真的会被读出来。可见的那一份是通知轨里带「撤销」的那条（`NotificationRail`，二审 D1）。 */}
       <div role="status" data-fast-edit-live className="sr-only">
-        {addedForEdit ? t('fastEdit.addedForEditLive') : ''}
+        {addedForEdit ? t('fastEdit.addedForEditLive', { name: canvasName }) : ''}
       </div>
 
       {/* 「我在改哪一层」只说一遍：快速编辑与图内编辑共用这一条（审计 T01） */}

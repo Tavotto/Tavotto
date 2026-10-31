@@ -52,3 +52,7 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 ## AI repair can now see and run in the environment your project is using
 
 The repair assistant's environment list only showed external Python installs and left out the environment the project was actually running in (including Tavotto's built-in Python), so its "run the script to verify" step was refused with "select that environment first". The list now starts with the environment currently in use, marked as current, and verification runs in it.
+
+## New figures no longer pile on top of each other; fewer pop-up hints
+
+A figure added without a drop position now always lands in free space: it is scaled down (to at most 40% smaller) to fit a gap, and only then offset, instead of landing almost exactly on top of the first one. Hints no longer float over the dark backdrop of the export, command palette or contact dialogs, and come back after the dialog closes. "Render finished" only appears when it replaces a visible failure message, the "Problems panel can locate objects" hint waits for the first problem that can actually be located, the canvas-size hint is skipped when the right panel is already on the Canvas page (and, while editing a single figure, that page now explains the export size), and the double-click hint no longer appears once you are editing inside a figure. After mouse use, pressing Enter or closing a menu no longer draws the thick blue keyboard focus ring. (#1557)

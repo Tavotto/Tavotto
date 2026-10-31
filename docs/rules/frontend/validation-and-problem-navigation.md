@@ -116,7 +116,8 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `renderFailureOwner(pj, 文件 id)`，同一项目同一文件随后的 `render.done` 经 `settleRenderFailureToast` 撤掉它
   （修好依赖后自动重渲染成功，红色「无法渲染」不再挂着）——前提是**这个文件没有一个变体还坏着 / 还在渲染**
   （「坏着」只认画布上还有面板指着的变体，`recent` 里为撤销留着的旧变体不算；同文件不同覆盖的面板各自成败；SSE 的 done 与变体自己的响应谁先到不定，两处各问一次，响应那一处在在途槽位松开之后问）；此刻挂着的是
-  别的图 / 别的类别的提示就不动。
+  别的图 / 别的类别的提示就不动。`settleRenderFailureToast` 返回「是否撤掉了一条可见的同主人失败提示」，**只有返回真时才说「渲染完成」**（替换那条红色提示）；
+  成功是常态，没有失败提示要替换时 `render.done` 什么都不说，只收掉冷启动那条被动的「正在构建…」。
   **切项目撤旧项目的 toast**：`resetForNewProject` 按主人前缀撤 `render.failed:` / `project.error:` / `export.result`
   （`clearStatusOwnedByPrefix`）——撤销事件按 pj 过滤、新项目收不到旧项目的，不撤就一直指着旧项目的文件。`project.error`
   挂 `projectErrorOwner(pj)`，同项目后台刷新恢复（`registry.changed` / `assets.changed`）时撤。带 `action` 的 toast（`setStatus` 的

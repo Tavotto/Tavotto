@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, type ReactNode } from 'react'
+import { useEffect, useReducer, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Numbers } from '@sfinterface/numbers'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -8,12 +8,14 @@ import { formatMm, UNIT_GAP } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
-import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspaceStore'
+import { useOriginalSpec } from '@/hooks/useOriginalSpec'
+import type { PanelObject } from '@/types/document'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
-import { toCatalog, useProfileStore } from '@/store/profileStore'
+import { useProfileStore } from '@/store/profileStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Row, Section, ROW_GRID_COLS } from '../ui/Field'
@@ -25,31 +27,7 @@ import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { INSPECTOR_LABEL_COL, INSPECTOR_LABEL_W } from './layout'
 import { MmField } from './MmField'
-
-/**
- * 页面尺寸预设。文案按 id 查 `inspector:canvas.presets.<id>`，这里只留尺寸。
- *
- * 「单栏 / 双栏」的**宽度不是这里的常量**：出版规范（`profiles/publication.json` 的
- * `widths_mm`）是唯一权威，预检 `page-width` 也读它，所以预设宽度由 `pagePresets()` 经 `lib/pageColumns`（拖页面边的栏宽吸附读同一份）从当前画布
- * 绑定的规范取（与 `validationStore.collectCanvases` 同一条 `resolveDocumentSpec` 路径）。
- * 绑定的规范缺 `widths_mm` / 值不在页面能取的范围（`PAGE_MM_MIN`–`PAGE_MM_MAX`，`setPageSize` 按它夹取——
- * 摆一个夹完就对不上的预设，选了之后页面立刻变成「自定义」）时退回**内置默认规范**的那一档（仍是 `publication.json`，
- * 不在这里写第二个数）；高度只是常见起点，不是规范字段。「整页」「正方形」不在规范里，保持常量。
- */
-interface PagePreset {
-  id: string
-  w: number
-  h: number
-}
-
-function pagePresets([single, double]: PageColumn[]): PagePreset[] {
-  return [
-    { id: 'single', w: single.w, h: 60 },
-    { id: 'double', w: double.w, h: 100 },
-    { id: 'full', w: 180, h: 240 },
-    { id: 'square', w: 100, h: 100 },
-  ]
-}
+import { usePagePresets } from './pagePreset'
 
 /** 下拉里「自定义」那一项的取值：尺寸对不上任何预设时它就是当前值 */
 const CUSTOM = 'custom'
@@ -100,6 +78,14 @@ export function CanvasPage() {
   const page = useDocumentStore((s) => s.doc.page)
   const name = useDocumentStore((s) => s.doc.name)
   const guides = useDocumentStore((s) => s.doc.guides)
+  // 单图编辑（画布上恰好一张图）按原图尺寸导出：页面尺寸这时不生效，这一页改讲「导出多大」（ADR 0028）
+  const singleId = useWorkspaceStore(fastEditPanelOf)
+  const singlePanel = useDocumentStore((s) => {
+    const o = singleId ? s.doc.objects.find((x) => x.id === singleId) : undefined
+    return o?.type === 'panel' ? (o as PanelObject) : null
+  })
+  const single = !!singlePanel
+  const exportSpec = useOriginalSpec(singlePanel?.fileId ?? null)
   const ui = useUiStore()
   const { i18n } = useTranslation('inspector')
   // 拖页面边时逐 mm 变化即时换（duration 0）；离散跳变（吸附 / ⌥）与属性栏的一步到位才滚
@@ -109,21 +95,21 @@ export function CanvasPage() {
     format: { useGrouping: false, minimumFractionDigits: 1, maximumFractionDigits: 1 },
     locale: i18n.language,
   } as const
-  // 预设宽度跟着当前画布绑定的规范走：订阅绑定与规范清单，换规范 / 同步新版后立刻跟随
-  const binding = useDocumentStore((s) => s.doc.profile)
-  const specs = useProfileStore((s) => s.specs)
+  // 预设宽度跟着当前画布绑定的规范走（`usePagePresets` 订阅绑定与规范清单，换规范 / 同步新版后立刻跟随）
+  const PRESETS = usePagePresets()
   // 跟随全局清单的绑定（`follow` / 只有 id 的旧绑定）要先有那份清单：没打开过样式 / 规范 / 导出界面时
   // store 里只有内置规范，自定义规范会被当成缺席、退到快照或默认规范（与 StylePanel 同一个做法）
   const specsLoaded = useProfileStore((s) => s.loaded)
   useEffect(() => {
     if (!specsLoaded) void useProfileStore.getState().load()
   }, [specsLoaded])
-  const columns = useMemo(
-    () => resolvePageColumns(binding, toCatalog(specs), specsLoaded).columns,
-    [binding, specs, specsLoaded],
-  )
-  const PRESETS = useMemo(() => pagePresets(columns), [columns])
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
+  const pageSummary = [
+    cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) }),
+    active && cv(`presets.${active.id}.label`),
+  ]
+    .filter(Boolean)
+    .join(' · ')
   // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
@@ -149,122 +135,154 @@ export function CanvasPage() {
   const exportDefaults = readExportDefaults()
   const exportFormatsText = exportDefaults.formats.map((f) => f.toUpperCase()).join(' · ')
 
+  const pageControls = (
+    <div className="flex flex-col gap-1.5">
+      <Row label={cv('preset')} labelWidth={LABEL_W}>
+        <Select
+          className="min-w-0 flex-1"
+          ariaLabel={cv('presetGroup')}
+          value={active?.id ?? CUSTOM}
+          onChange={(id) => {
+            const p = PRESETS.find((x) => x.id === id)
+            if (p) setPageSize(p.w, p.h)
+          }}
+          options={[
+            ...PRESETS.map((p) => ({
+              value: p.id,
+              hint: cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
+              label: (
+                <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
+                  <PageThumb w={p.w} h={p.h} />
+                  <span className="truncate">{cv(`presets.${p.id}.label`)}</span>
+                </span>
+              ),
+            })),
+            // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
+            // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
+            ...(active
+              ? []
+              : [
+                  {
+                    value: CUSTOM,
+                    label: (
+                      <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
+                        <PageThumb w={page.w} h={page.h} />
+                        <span className="truncate">{cv('presetCustom')}</span>
+                      </span>
+                    ),
+                  },
+                ]),
+          ]}
+        />
+      </Row>
+      {/* 宽、高两个半列 + 横竖交换坐在状态槽里（与属性页的恢复钮同一格） */}
+      <div data-page-size-row>
+        <Row
+          label={cv('size')}
+          labelWidth={LABEL_W}
+          status={
+            <IconButton label={cv('swap')} iconSize="xs" side="left" onClick={() => setPageSize(page.h, page.w)}>
+              <ArrowLeftRight size={ICON_SIZE.xs} />
+            </IconButton>
+          }
+        >
+          <div className="flex w-full min-w-0 items-center gap-1.5">
+            <span className="w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0">
+              <MmField
+                label="W"
+                historyLabel={hist('setPageW')}
+                min={10}
+                value={page.w}
+                onChange={(v) => setPageSize(v, page.h)}
+              />
+            </span>
+            <span className="w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0">
+              <MmField
+                label="H"
+                historyLabel={hist('setPageH')}
+                min={10}
+                value={page.h}
+                onChange={(v) => setPageSize(page.w, v)}
+              />
+            </span>
+          </div>
+        </Row>
+      </div>
+      <Row label={cv('orientation')} labelWidth={LABEL_W}>
+        <div data-page-orientation className="contents">
+          <Segmented
+            ariaLabel={cv('orientation')}
+            value={square ? null : portrait ? 'portrait' : 'landscape'}
+            // 方向是宽高的另一种说法：换方向 = 横竖交换。正方形没有方向：两档都不选、都禁用，
+            // 不摆一个看着能点却永远不变的控件（Codex #829 P2）
+            onChange={(v) => {
+              if (!square && (v === 'portrait') !== portrait) setPageSize(page.h, page.w)
+            }}
+            items={[
+              { value: 'portrait', label: cv('portrait'), disabled: square },
+              { value: 'landscape', label: cv('landscape'), disabled: square },
+            ]}
+          />
+        </div>
+      </Row>
+    </div>
+  )
+
   return (
     <>
       {/* 两行头：与属性页的身份头同一副骨架（路径 24 + 名字 32），右端是尺寸 meta */}
       <header data-identity data-canvas-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
         <p className="flex h-6 min-w-0 items-center gap-1.5 text-sm text-ink-3">
-          <span className="min-w-0 flex-1 truncate">{translate('tab.canvas', { ns: 'inspector' })}</span>
-          <span className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
-            {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}
-            <Numbers value={page.w} {...numbersProps} />
-            {' × '}
-            <Numbers value={page.h} {...numbersProps} suffix={UNIT_GAP + 'mm'} />
+          <span className="min-w-0 flex-1 truncate">
+            {single ? cv('singleEdit') : translate('tab.canvas', { ns: 'inspector' })}
           </span>
+          {single ? (
+            // 单图编辑：右端是导出尺寸（原图图幅），不是页面尺寸；规格还没解析出来就不写
+            exportSpec && (
+              <span data-single-export-size className="type-meta shrink-0">
+                {cv('sizeMeta', { w: formatMm(exportSpec.widthMm), h: formatMm(exportSpec.heightMm) })}
+              </span>
+            )
+          ) : (
+            <span className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
+              {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}
+              <Numbers value={page.w} {...numbersProps} />
+              {' × '}
+              <Numbers value={page.h} {...numbersProps} suffix={UNIT_GAP + 'mm'} />
+            </span>
+          )}
         </p>
         {/* 无框 16px 图标，槽高 32、名字块上下各 4px：第一行永远在 16 处（同 IdentityHeader） */}
         <div className="flex min-h-8 items-start gap-2">
           <IconSlot data-identity-icon className="h-8 w-4 text-ink-3">
             <LayoutGrid size={ICON_SIZE.md} aria-hidden />
           </IconSlot>
-          <h2 title={name} className="type-heading line-clamp-2 min-w-0 break-words py-1">
-            {name}
+          <h2 title={single ? (singlePanel!.name ?? singlePanel!.fileId) : name} className="type-heading line-clamp-2 min-w-0 break-words py-1">
+            {single ? (singlePanel!.name ?? singlePanel!.fileId) : name}
           </h2>
         </div>
       </header>
 
-      <Section title={cv('pageSize')}>
-        <div className="flex flex-col gap-1.5">
-          <Row label={cv('preset')} labelWidth={LABEL_W}>
-            <Select
-              className="min-w-0 flex-1"
-              ariaLabel={cv('presetGroup')}
-              value={active?.id ?? CUSTOM}
-              onChange={(id) => {
-                const p = PRESETS.find((x) => x.id === id)
-                if (p) setPageSize(p.w, p.h)
-              }}
-              options={[
-                ...PRESETS.map((p) => ({
-                  value: p.id,
-                  hint: cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
-                  label: (
-                    <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
-                      <PageThumb w={p.w} h={p.h} />
-                      <span className="truncate">{cv(`presets.${p.id}.label`)}</span>
-                    </span>
-                  ),
-                })),
-                // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
-                // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
-                ...(active
-                  ? []
-                  : [
-                      {
-                        value: CUSTOM,
-                        label: (
-                          <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
-                            <PageThumb w={page.w} h={page.h} />
-                            <span className="truncate">{cv('presetCustom')}</span>
-                          </span>
-                        ),
-                      },
-                    ]),
-              ]}
-            />
-          </Row>
-          {/* 宽、高两个半列 + 横竖交换坐在状态槽里（与属性页的恢复钮同一格） */}
-          <div data-page-size-row>
-            <Row
-              label={cv('size')}
-              labelWidth={LABEL_W}
-              status={
-                <IconButton label={cv('swap')} iconSize="xs" side="left" onClick={() => setPageSize(page.h, page.w)}>
-                  <ArrowLeftRight size={ICON_SIZE.xs} />
-                </IconButton>
-              }
-            >
-              <div className="flex w-full min-w-0 items-center gap-1.5">
-                <span className="w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0">
-                  <MmField
-                    label="W"
-                    historyLabel={hist('setPageW')}
-                    min={10}
-                    value={page.w}
-                    onChange={(v) => setPageSize(v, page.h)}
-                  />
-                </span>
-                <span className="w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0">
-                  <MmField
-                    label="H"
-                    historyLabel={hist('setPageH')}
-                    min={10}
-                    value={page.h}
-                    onChange={(v) => setPageSize(page.w, v)}
-                  />
-                </span>
-              </div>
-            </Row>
-          </div>
-          <Row label={cv('orientation')} labelWidth={LABEL_W}>
-            <div data-page-orientation className="contents">
-              <Segmented
-                ariaLabel={cv('orientation')}
-                value={square ? null : portrait ? 'portrait' : 'landscape'}
-                // 方向是宽高的另一种说法：换方向 = 横竖交换。正方形没有方向：两档都不选、都禁用，
-                // 不摆一个看着能点却永远不变的控件（Codex #829 P2）
-                onChange={(v) => {
-                  if (!square && (v === 'portrait') !== portrait) setPageSize(page.h, page.w)
-                }}
-                items={[
-                  { value: 'portrait', label: cv('portrait'), disabled: square },
-                  { value: 'landscape', label: cv('landscape'), disabled: square },
-                ]}
-              />
-            </div>
-          </Row>
-        </div>
-      </Section>
+      {single ? (
+        // 单图编辑按原图尺寸导出，页面尺寸这时不生效：降成一行摘要，点开仍能改（加第二张图后用得上）
+        <>
+          <p data-single-export-note className="type-caption mx-3 mb-1">
+            {cv('singleNote')}
+          </p>
+          <SummaryRow
+            label={cv('layoutPage')}
+            open={open('page')}
+            onToggle={() => toggle('page')}
+            data-fold="canvas-page"
+            value={pageSummary}
+          >
+            <p className="type-caption mb-1.5">{cv('layoutPageNote')}</p>
+            {pageControls}
+          </SummaryRow>
+        </>
+      ) : (
+        <Section title={cv('pageSize')}>{pageControls}</Section>
+      )}
 
       <SummaryRow
         label={cv('background')}

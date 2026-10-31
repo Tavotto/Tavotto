@@ -19,6 +19,8 @@ import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/store/actions'
 import { useProfileStore } from '@/store/profileStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
+import type { CanvasObject, PanelObject } from '@/types/document'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 declare global {
@@ -335,5 +337,61 @@ describe('CanvasPage 页面预设宽度读当前出版规范', () => {
     } finally {
       useProfileStore.setState({ load: real })
     }
+  })
+})
+
+/**
+ * UI 审计 B2：单图编辑按原图尺寸导出，页面尺寸这时不生效——画布页不再把 150 × 100 的版面当主角摆出来，
+ * 降成一行摘要（点开仍能改，加第二张图后用得上）。
+ */
+describe('单图编辑时的画布页', () => {
+  const panel = {
+    id: 'p1',
+    type: 'panel',
+    name: 'Fig1_kinetics',
+    fileId: 'Fig1_kinetics.pdf',
+    fileKind: 'pdf',
+    nativeW: 73.5,
+    nativeH: 57.8,
+    overrides: [],
+    x: 10,
+    y: 10,
+    w: 73.5,
+    h: 57.8,
+  } as PanelObject
+
+  const remount = () => {
+    act(() => root.unmount())
+    root = createRoot(container)
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <CanvasPage />
+        </TooltipProvider>,
+      ),
+    )
+  }
+
+  afterEach(() => useWorkspaceStore.getState().clear())
+
+  it('头部讲单图编辑与导出尺寸，页面尺寸收成一行摘要；点开才有预设与宽高', async () => {
+    act(() =>
+      useDocumentStore.getState().commit(literal('图'), (d) => {
+        d.objects = [panel as CanvasObject]
+      }),
+    )
+    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
+    remount()
+    expect(container.querySelector('[data-single-export-size]')?.textContent?.replace(/\s/g, ' ')).toContain('73.5 × 57.8 mm')
+    expect(container.querySelector('[data-single-export-note]')).not.toBeNull()
+    expect(container.querySelector('[data-page-size-row]'), '收起时没有宽高').toBeNull()
+    act(() => fold('canvas-page').click())
+    expect(container.querySelector('[data-page-size-row]')).not.toBeNull()
+  })
+
+  it('排版里照旧：页面尺寸是主角，没有摘要行', () => {
+    expect(container.querySelector('[data-single-export-note]')).toBeNull()
+    expect(container.querySelector('[data-page-size-row]')).not.toBeNull()
+    expect(container.querySelector('[data-fold="canvas-page"]')).toBeNull()
   })
 })
