@@ -30,12 +30,13 @@ export function pickRows(paperH: number): number {
   return Math.max(1, Math.floor((paperH - CHROME_H + GAP) / (CARD_H + GAP)))
 }
 
-/** 纸面放得下几列：4 张铺成一排放得下就一排，否则两列（再窄一列）；面板整块落在纸面内 */
+/** 纸面放得下几列：先尽量一排放下；一排放不下才折行，折行时每行张数均衡（4→2+2；3 张纸面只容两列时 2+1，末行居中） */
 export function pickColumns(paperW: number, count: number): number {
   const fit = (cols: number) => cols * CARD_W + (cols - 1) * GAP + PAD * 2 <= paperW
-  if (count >= 4 && fit(4)) return 4
-  if (count >= 2 && fit(2)) return 2
-  return 1
+  let maxFit = 1
+  while (maxFit < count && fit(maxFit + 1)) maxFit++
+  if (count <= maxFit) return Math.max(1, count)
+  return Math.ceil(count / Math.ceil(count / maxFit))
 }
 
 /**
@@ -56,7 +57,7 @@ export function EmptyPickCards({ panels, paperW, paperH }: { panels: PanelInfo[]
   return (
     <div data-empty-pick className="grid justify-items-center gap-2.5" style={{ padding: PAD }}>
       <h4 className="type-title">{pk('pickTitle')}</h4>
-      <div className="grid" style={{ gridTemplateColumns: `repeat(${cols}, ${CARD_W}px)`, gap: GAP }}>
+      <div className="flex flex-wrap justify-center" style={{ width: cols * CARD_W + (cols - 1) * GAP, gap: GAP }}>
         {shown.map((p, i) => (
           <PickCard
             key={p.id}

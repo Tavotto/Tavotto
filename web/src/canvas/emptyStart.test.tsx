@@ -176,6 +176,8 @@ describe('选图卡的版面', () => {
   it('纸面够宽 4 张一排，窄了两列再一列；纸面矮就只摆放得下的行', () => {
     expect(pickColumns(700, 4)).toBe(4)
     expect(pickColumns(480, 4)).toBe(2)
+    expect(pickColumns(860, 3)).toBe(3)
+    expect(pickColumns(400, 3)).toBe(2)
     expect(pickColumns(200, 4)).toBe(1)
     expect(pickRows(317)).toBe(1)
     expect(pickRows(600)).toBe(3)
