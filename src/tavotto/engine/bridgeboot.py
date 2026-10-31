@@ -760,6 +760,35 @@ def foreign_abi_facts(
     return {}, {}
 
 
+class _FilteredNamespacePath:
+    """命名空间包的 `__path__`：照旧随 `sys.path` 动态重算（委托原 `_NamespacePath`），每次读都去掉被忽略的目录。"""
+
+    def __init__(self, inner, ignored) -> None:
+        self._inner = inner
+        self._ignored = ignored
+
+    def _entries(self) -> list:
+        return [e for e in self._inner if not self._ignored(e)]
+
+    def __iter__(self):
+        return iter(self._entries())
+
+    def __getitem__(self, index):
+        return self._entries()[index]
+
+    def __len__(self) -> int:
+        return len(self._entries())
+
+    def __contains__(self, item) -> bool:
+        return item in self._entries()
+
+    def append(self, item) -> None:
+        self._inner.append(item)
+
+    def __repr__(self) -> str:
+        return f"_FilteredNamespacePath({self._entries()!r})"
+
+
 class IgnoredImportPaths:
     """`sys.meta_path` 上**紧挨 `PathFinder`（及读不了查找器）之前**的查找器：顶层导入时不去用户忽略的目录里找。
 
@@ -797,6 +826,13 @@ class IgnoredImportPaths:
         n = _norm(entry)
         return n is not None and n in self._forms
 
+    def _under_ignored(self, entry) -> bool:
+        """`entry` 是被忽略的目录本身或其下的子目录（命名空间包的 `__path__` 条目是 `<根>/<包名>`）。"""
+        n = _norm(entry)
+        if n is None:
+            return False
+        return any(n == f or n.startswith(f.rstrip(os.sep) + os.sep) for f in self._forms)
+
     def find_spec(self, fullname, path=None, target=None):
         if path is not None or not self._forms or getattr(self._local, "busy", False):
             return None
@@ -824,6 +860,11 @@ class IgnoredImportPaths:
         )
         if spec is None:
             raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+        locations = spec.submodule_search_locations
+        if locations is not None and not isinstance(locations, list):
+            # 命名空间包：`_NamespacePath` 在 `sys.path` 变化 / `invalidate_caches()` 后按**原始** `sys.path` 重算，
+            # 被忽略的目录会重新混进 `__path__`，子模块导入（path 不为 None）又绕过本查找器。包一层过滤（Codex #1564）
+            spec.submodule_search_locations = _FilteredNamespacePath(locations, self._under_ignored)
         return spec
 
     def _note(self, fullname: str, hits: list) -> None:

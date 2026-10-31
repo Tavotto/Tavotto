@@ -290,6 +290,32 @@ def test_a_name_only_the_ignored_directory_has_is_not_found(tmp_path, clean_sys_
     assert name not in sys.modules
 
 
+def test_namespace_package_stays_filtered_after_sys_path_changes(tmp_path, clean_sys_path, finder):
+    """Codex #1564：命名空间包的 `__path__` 随 `sys.path` 重算后，被忽略的目录不许重新混进来。"""
+    name = _name()
+    bad, good, extra = tmp_path / "bad", tmp_path / "good", tmp_path / "extra"
+    (bad / name).mkdir(parents=True)
+    (good / name).mkdir(parents=True)
+    extra.mkdir()
+    (bad / name / "only_bad.py").write_text("X = 'bad'\n")
+    (good / name / "ok.py").write_text("X = 'good'\n")
+    sys.path[:0] = [str(bad), str(good)]
+    finder([str(bad)])
+    importlib.invalidate_caches()
+    try:
+        ns = importlib.import_module(name)
+        assert [os.path.normcase(p) for p in ns.__path__] == [os.path.normcase(str(good / name))]
+        assert importlib.import_module(name + ".ok").X == "good"
+        sys.path.append(str(extra))  # 触发 `_NamespacePath` 重算
+        importlib.invalidate_caches()
+        assert os.path.normcase(str(bad / name)) not in [os.path.normcase(p) for p in ns.__path__]
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(name + ".only_bad")
+    finally:
+        for k in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
+            del sys.modules[k]
+
+
 def test_names_the_ignored_directory_does_not_have_take_the_normal_path(two_pkgs, finder):
     _name_, bad, _good = two_pkgs
     f = finder([str(bad)])
