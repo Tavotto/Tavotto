@@ -599,6 +599,83 @@ describe('单图退路裁白边：检查 / proof report / 请求吃同一份裁�
   })
 })
 
+describe('单图档带入画布上的标注（QA-WIN-20）', () => {
+  const textAt = (x: number, y: number, extra: Partial<CanvasObject> = {}): CanvasObject =>
+    ({
+      id: 't1',
+      type: 'text',
+      text: 'Label QA',
+      sizePt: 9,
+      x,
+      y,
+      w: 20,
+      h: 6,
+      ...extra,
+    }) as never
+
+  const openSingle = async () => {
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('图幅内的文字：导出请求带着它，坐标相对图左上角；页面 = 原图图幅；预览吃同一份', async () => {
+    await setup(9, { w: 180, h: 120 })
+    useDocumentStore.getState().commit(literal('挪图并加字'), (d) => {
+      d.objects = [{ ...d.objects[0], x: 30, y: 20 }, textAt(40, 30)]
+    })
+    await openSingle()
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览画的是合成后的页面').toBeTruthy()
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toMatch(/80\s×\s60\smm/)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    const canvas = exportBodies[0].canvas as {
+      page_w_mm: number
+      page_h_mm: number
+      objects: { type: string; x_mm: number; y_mm: number; text?: string }[]
+    }
+    expect([canvas.page_w_mm, canvas.page_h_mm], '页面 = 原图图幅').toEqual([80, 60])
+    const t = canvas.objects.find((o) => o.type === 'text')
+    expect(t?.text).toBe('Label QA')
+    expect([t?.x_mm, t?.y_mm], '文字坐标映射到原图坐标系').toEqual([10, 10])
+    const p = canvas.objects.find((o) => o.type === 'panel')!
+    expect([p.x_mm, p.y_mm]).toEqual([0, 0])
+  })
+
+  it('没有标注时仍是纯原图请求（scope=original，不带 canvas）', async () => {
+    await setup(9)
+    await openSingle()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+    expect(exportBodies[0].canvas).toBeUndefined()
+  })
+
+  it('带标注时 EPS 灰着并说原因（画布合成没有 PostScript 写入器）', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('加字'), (d) => {
+      d.objects = [...d.objects, textAt(5, 5)]
+    })
+    await openSingle()
+    const epsBox = formatBox('EPS')
+    expect(epsBox.disabled).toBe(true)
+    expect(epsBox.closest('label')!.title).toContain('标注')
+  })
+
+  it('隐藏的标注不带入', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('加隐藏字'), (d) => {
+      d.objects = [...d.objects, textAt(5, 5, { hidden: true })]
+    })
+    await openSingle()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+  })
+})
+
 describe('像素预览按范围算', () => {
   it('画布范围按页面尺寸；原图范围按那张图自己的（位图直接报源像素网格）', async () => {
     const page = { w: 180, h: 120 }

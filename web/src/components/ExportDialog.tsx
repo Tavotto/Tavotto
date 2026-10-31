@@ -126,6 +126,7 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
+import { singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
@@ -453,24 +454,42 @@ export function ExportDialog() {
     if (!open) setCanvasAccepted(false);
   }, [open, figureId]);
   // 明确「不认」的 runtime 图：留在原图口径（按钮灰、给 note），用户显式点「改按画布导出」才退到画布；其余不可用情形照旧静默退画布
-  const scope: ExportScope = single
+  const baseScope: ExportScope = single
     ? availability.ok || (runtimeRefused && !canvasAccepted)
       ? "original"
       : "canvas"
     : scopeState;
-  const singleFallback = single && scope === "canvas";
+  /**
+   * 单图档、原图口径可用、画布上有可见标注：把「图 + 标注」合成一份以原图图幅为页面的文档，走整版导出那条
+   * 画布合成路径（`lib/singleExportDoc`，QA-WIN-20）；预览与请求吃同一份。没有标注 = null，请求照旧是纯原图。
+   */
+  const annotatedDoc = useMemo(
+    () =>
+      single && baseScope === "original" && availability.ok
+        ? singleAnnotatedDocument(doc, panel, availability.spec)
+        : null,
+    [single, baseScope, availability.ok, availability.spec, doc, panel],
+  );
+  const singleAnnotated = annotatedDoc !== null;
+  const scope: ExportScope = singleAnnotated ? "canvas" : baseScope;
+  const singleFallback = single && scope === "canvas" && !singleAnnotated;
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
-    () => (singleFallback ? cropToVisibleContent(doc.page, doc.objects) : null),
-    [singleFallback, doc.page, doc.objects],
+    () =>
+      annotatedDoc
+        ? { page: annotatedDoc.page, objects: annotatedDoc.objects }
+        : singleFallback
+          ? cropToVisibleContent(doc.page, doc.objects)
+          : null,
+    [annotatedDoc, singleFallback, doc.page, doc.objects],
   );
   /**
    * 这次导出的文档：单图退路 = 裁后的文档（只算一次），检查、proof report、请求、预览全吃它；
    * 其余情形就是 `doc` 本身。不另设「裁切开关」——两份判据会分叉。
    */
   const exportDoc = useMemo(
-    () => (singleFallback ? croppedDocument(doc) : doc),
-    [singleFallback, doc],
+    () => annotatedDoc ?? (singleFallback ? croppedDocument(doc) : doc),
+    [annotatedDoc, singleFallback, doc],
   );
   const exportPage = exportDoc.page;
   /**
@@ -716,9 +735,9 @@ export function ExportDialog() {
   const uncheckedOffCanvas = scope === "original" && !!figureId && !panel;
   /** 单图退路：检查吃裁后的文档（与交付物同一份），不吃整页的画布结果 */
   const cropped = useMemo(
-    () => (singleFallback ? croppedValidationFor(checkCanvasId, exportDoc) : null),
+    () => (singleFallback || singleAnnotated ? croppedValidationFor(checkCanvasId, exportDoc) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [singleFallback, checkCanvasId, exportDoc, validationIssues],
+    [singleFallback, singleAnnotated, checkCanvasId, exportDoc, validationIssues],
   );
   const summary = useMemo(
     () =>
@@ -816,9 +835,9 @@ export function ExportDialog() {
     [scope, route, formats],
   );
   const eps = useMemo(
-    () => epsAvailability(scope, figureId, route, single),
+    () => epsAvailability(scope, figureId, route, single, singleAnnotated),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets, route, single],
+    [scope, figureId, assets, runtimeAssets, route, single, singleAnnotated],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -1617,7 +1636,7 @@ export function ExportDialog() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
       <ExportPreviewPane
         single={single}
-        fallbackPage={singleFallback}
+        fallbackPage={singleFallback || singleAnnotated}
         fallbackCrop={fallbackCrop}
         doc={doc}
         figures={single ? figures : canvasFigures}

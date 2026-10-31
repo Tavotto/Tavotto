@@ -120,6 +120,12 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     看护：`ExportDialog.test.tsx`「整版预览画的是改过的那张」。
   * **单图**：左栏是导出后的大预览（真实图幅比例 + mm 尺寸）；右栏**没有「输出范围」**，固定 `scope=original`
     （标注 / 序号照常带入），没有要导哪一张的清单。
+  * **单图带标注 = 合成后走画布路径**（2026-10-31，QA-WIN-20）：`scope=original` 的请求只有一张图自己，画布上的文字 / 箭头 / 形状进不去。
+    原图口径可用且画布上有**可见**标注（非面板对象）时，`lib/singleExportDoc.singleAnnotatedDocument` 把「图 + 标注」合成一份**页面 = 原图图幅**的文档
+    （面板落 (0,0)、不套用画布缩放 / 裁剪 / 旋转 / 翻转 / 透明度；标注 x/y/w/h 以图内容原点平移、按 图幅 / 画布显示尺寸 缩放，字号 / 线宽不缩），
+    对话框内部改发 `scope=canvas`（与「静默改按画布」同一条合成路径，RenderCore 画标注，**没有第二套标注绘制**），预览 / 检查 / proof report / 请求吃这同一份。
+    图幅之外的标注被页面裁掉，不扩大页面（与不带标注时的原图尺寸一致）。带标注时 EPS 不可用（画布合成没有 PostScript 写入器，原因 `with_annotations`）；
+    没有可见标注时请求与从前逐字节相同。看护 `lib/singleExportDoc.test.ts`、`ExportDialog.test.tsx`「单图档带入画布上的标注」、`tests/test_export_endpoint.py`。
   * **单图档原图口径不可用时静默改按画布导**（这张图没有磁盘原件，如脚本现跑出来后重开、素材清单里还没有它）：内部 canvas scope，界面上不出现范围选择、不报错，导出区域按**可见对象的并集包围盒**裁掉页面白边（`lib/exportCrop.cropToVisibleContent`，经 `croppedDocument` 得到一份裁后文档，检查 / proof report / 请求 / 预览都吃这同一份（页面 = 包围盒、对象平移；包围盒含描边半宽与箭头头部外扩，与 RenderCore `geometry.py` 同源）；只改导出输入，不改文档、不进撤销，协议不变），左栏预览与 mm 尺寸显示裁后的区域（`fallbackPage`），文件名仍是这张图的名字。多图整版 / 每张图 / 原图口径不裁。
   * **多图**：左栏顶部缩略图条「整版 / 每张图」，有检查提示（除建议级以外的问题所指的对象）的缩略图带橙点；右栏「导出内容」
     = 整版（`scope=canvas`，默认）/ 每张图单独导出（`scope=original`）。**点缩略图只换预览，不改导出内容**；仅在
