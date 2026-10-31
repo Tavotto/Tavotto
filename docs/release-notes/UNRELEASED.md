@@ -33,10 +33,6 @@ If a script puts its own `pip install --target` folder at the front of `sys.path
 
 If an export stopped at the "file already exists" confirmation and you then changed the file name, format, scope or export folder, clicking Overwrite replaced a different existing file than the one the confirmation listed. Changing any of these now cancels the confirmation and the export starts over with a fresh conflict check. Batch exports behave the same way when the export folder changes.
 
-## Large export preview of an edited figure no longer shows the pre-edit render
-
-In the export dialog, the large preview of a single figure that had edits applied (for example a script-run figure whose legend move was undone) could still show the last rendered image instead of the current edits, because enlarging the preview switched to a higher-resolution copy of the last render. The large preview now keeps the image rendered for the figure's current edits; only unedited figures switch to a sharper copy.
-
 ## Cold canvas and export preview show the state you saved after an undo (#1547)
 
 For script-run figures, undoing an edit (for example moving a legend back) and then saving could make the reopened canvas and the export preview show the state from before the undo, until you entered figure editing. The exported files were already correct. Cached previews are now looked up by the figure's current edits and are discarded when the script or its input data change. Projects saved by earlier versions may show the existing "approximate preview" badge on such figures until they are rendered once.
@@ -52,6 +48,10 @@ Typing into a text box on the canvas and then clicking empty canvas space, witho
 ## AI edits that failed instantly now leave a reason in the diagnostic bundle
 
 When an AI edit or conversion ended in failure, the session log only said "status=failed", so a run that failed within a tenth of a second (or a conversion that finished without producing the new script) could not be explained from a diagnostic bundle. The end-of-session log line now also records the exit code, the built-in runner's closed failure reason, whether the runner exited without reporting one, and which verification checks were unmet. Only fixed codes are written, never paths, prompts or keys.
+
+## Large export preview of an edited figure no longer shows the pre-edit render
+
+In the export dialog, the large preview of a single figure that had edits applied (for example a script-run figure whose legend move was undone) could still show the last rendered image instead of the current edits, because enlarging the preview switched to a higher-resolution copy of the last render. The large preview now keeps the image rendered for the figure's current edits; only unedited figures switch to a sharper copy.
 
 ## "Rebuild as editable figure" stays on the current canvas (#1545)
 
