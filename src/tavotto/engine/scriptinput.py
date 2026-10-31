@@ -347,6 +347,10 @@ class Channel:
         """问一次；回答案字符串，EOF 回 None；没人能答抛 `ScriptNeedsInput`。"""
         if self.closed:
             return None
+        # 脚本自己包过 stdout（`io.TextIOWrapper(sys.stdout.buffer, ...)`）时，编号清单还积在那层缓冲里；
+        # 发问前刷一次，尾巴与上下文摘要才看得到它（`input()` 不带提示时 `bridged_input` 不会替它刷）
+        with contextlib.suppress(Exception):
+            sys.stdout.flush()
         self.count += 1
         index = self.count
         # Private-run prompts retain a keyed identity without exposing argv in

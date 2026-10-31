@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 
 import pytest
 
@@ -126,3 +127,26 @@ def test_a_wrapper_around_the_buffer_does_not_close_it_when_collected():
     assert tail.detach() is tail.buffer
     tail.write("c\n")
     assert tail.tail().splitlines()[-1] == "c"
+
+
+def test_a_menu_buffered_in_a_script_wrapper_reaches_the_question(tmp_path, monkeypatch):
+    """`sys.stdout = TextIOWrapper(sys.stdout.buffer)` 后 print 菜单、`input()` 不带提示：菜单还在包装层缓冲里，
+    发问那一刻的尾巴与上下文摘要里也得有它（Codex #1541 P2）。"""
+    import json
+
+    tail = scriptinput.StdoutTail(io.StringIO())
+    wrapper = io.TextIOWrapper(tail.buffer, encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", wrapper)
+    wrapper.write("1. alpha\n2. beta\n")  # 没 flush
+    ch = scriptinput.Channel(tmp_path, "s.py", tail=tail)
+    (tmp_path / scriptinput.reply_name(1)).write_text(json.dumps({"answer": "1"}), "utf-8")
+    seen = {}
+    real = ch._write_request
+
+    def spy(index, payload):
+        seen.update(payload)
+        real(index, payload)
+
+    monkeypatch.setattr(ch, "_write_request", spy)
+    assert ch.ask("", "input") == "1"
+    assert "1. alpha" in seen["stdout_tail"] and "2. beta" in seen["stdout_tail"]
