@@ -169,6 +169,8 @@ import {
   useValidationStore,
 } from "@/store/validationStore";
 import { Button, IconButton } from "./ui/Button";
+import { TruncateMiddle } from "./ui/TruncateMiddle";
+import { scrollFadeStyle, useScrollFade } from "./ui/scrollFade";
 import { Details, Summary } from "./ui/Details";
 import { FormRow } from "./FormRow";
 import { Dialog } from "./ui/Dialog";
@@ -2222,23 +2224,22 @@ function ExportPreviewPane({
     : sizeMm && sizeMm[1] > 0
       ? sizeMm[0] / sizeMm[1]
       : null;
+  const strip = useRef<HTMLDivElement>(null);
+  const { fade } = useScrollFade(strip, "x");
   const fitted = stageRatio !== null && stageRatio > 0 && Number.isFinite(stageRatio);
   return (
     // 直角：容器不给圆角（overflow-hidden 会把图的四角裁圆），图本身也不带圆角
     // 整列都是预览区：灰底面板从上到下铺满本列，图在里面按比例 contain、不留边距（上下或左右顶满）
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
-      <div
-        className={cn(
-          "flex flex-col overflow-hidden bg-surface-2 md:sticky md:top-0",
-          !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
-        )}
-      >
+      {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；放不下横向滚动 + 两端渐隐 */}
         {!single && (
           <div
             role="tablist"
             aria-label={ex("previewTabs")}
             data-export-preview-tabs
-            className="flex max-w-full shrink-0 gap-2 overflow-x-auto p-2"
+            ref={strip}
+            style={scrollFadeStyle(fade, "x")}
+            className="-mx-1 flex max-w-full shrink-0 gap-2 overflow-x-auto p-1"
           >
             <PreviewTab
               id="page"
@@ -2269,6 +2270,12 @@ function ExportPreviewPane({
             ))}
           </div>
         )}
+      <div
+        className={cn(
+          "flex flex-col overflow-hidden bg-surface-2 md:sticky md:top-0",
+          !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
+        )}
+      >
         <div
           data-export-preview-stage
           className={cn("relative min-h-0", !fitted && "flex-1")}
@@ -2331,6 +2338,9 @@ function PreviewTab({
   onShow: (id: string) => void;
   children: ReactNode;
 }) {
+  // 一张独立的小卡：surface 白底 + 1px 发丝边 + md 8 圆角（= 内层缩略图 xs 4 + 内边距 4）。
+  // 不用 `ui/Card`：它是 lg 12 圆角的 div + shadow-card，几何对这么小的按钮卡太大，也不该投影——只用细边。
+  // 三态互不相同：选中 = accent 1.5px 外环 + 图名 ink 中粗；悬停 = 边框加深到 border-strong；键盘焦点 = 2px 焦点环（outline，随圆角）
   return (
     <button
       type="button"
@@ -2342,20 +2352,24 @@ function PreviewTab({
       data-flagged={flagged ? "" : undefined}
       onClick={() => onShow(id)}
       className={cn(
-        "relative flex w-[64px] shrink-0 flex-col items-center gap-1 rounded-md p-1 outline-none focus-visible:focus-ring",
-        selected ? "bg-selected ring-1 ring-inset ring-border" : "hover:bg-surface-hover",
+        "relative flex w-[88px] shrink-0 flex-col gap-1 rounded-md border bg-surface p-1 text-left outline-none focus-visible:focus-ring",
+        selected ? "border-transparent ring-[1.5px] ring-accent" : "border-border hover:border-border-strong",
       )}
     >
-      <span className="flex h-10 w-full items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
+      <span className="flex h-12 w-full items-center justify-center overflow-hidden rounded-xs bg-paper">
         {children}
       </span>
-      <span className="w-full truncate text-center text-xs text-ink-2">{label}</span>
+      <TruncateMiddle
+        text={label}
+        tail={5}
+        className={cn("px-0.5 text-xs", selected ? "font-medium text-ink" : "text-ink-2")}
+      />
       {flagged && (
         <span
           data-export-flag
           role="img"
           aria-label={translate("export.previewFlagged", { ns: "dialogs" })}
-          className="absolute right-1 top-1 h-2 w-2 rounded-full bg-warn"
+          className="absolute right-2 top-2 h-2 w-2 rounded-full bg-warn ring-2 ring-surface"
         />
       )}
     </button>
@@ -2364,7 +2378,7 @@ function PreviewTab({
 
 function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
   const source = useFigureThumbSource(figure, 160);
-  return <FigureThumbArt source={source} boxRatio={56 / 40} />;
+  return <FigureThumbArt source={source} boxRatio={80 / 48} />;
 }
 
 /**
