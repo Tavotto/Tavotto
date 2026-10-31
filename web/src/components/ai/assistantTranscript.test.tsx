@@ -104,12 +104,16 @@ const DIFF = [
   '',
 ].join('\n')
 
-let root: Root
+let root: Root | undefined
 let host: HTMLDivElement
 const start = vi.fn(async () => {})
 const writeText = vi.fn(async () => {})
 
 async function mount(sessions: AiSession[]) {
+  if (root) {
+    await act(async () => root?.unmount())
+    root = undefined
+  }
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_assistant_transcript')
   useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panel()] } }) as never)
   useSelectionStore.setState({ ids: ['p1'] } as never)
@@ -117,9 +121,10 @@ async function mount(sessions: AiSession[]) {
   useAiStore.setState({ sessions, start } as never)
   host = document.createElement('div')
   document.body.appendChild(host)
-  root = createRoot(host)
+  const mountedRoot = createRoot(host)
+  root = mountedRoot
   await act(async () => {
-    root.render(
+    mountedRoot.render(
       <TooltipProvider>
         <AssistantPanel />
       </TooltipProvider>,
@@ -152,6 +157,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => root?.unmount())
+  root = undefined
   useAiStore.setState({ start: realStart } as never)
   vi.useRealTimers()
 })
