@@ -9,6 +9,9 @@ export default defineConfig({
       '@profiles': fileURLToPath(
         new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
+      '@journals': fileURLToPath(
+        new URL('../src/tavotto/profiles/journals.json', import.meta.url),
+      ),
       // 与 vite.config.ts 同源：字形覆盖表的判据必须是同一份生成物
       '@glyphcoverage': fileURLToPath(
         new URL('../src/tavotto/pdfbackend/canvas_coverage.json', import.meta.url),

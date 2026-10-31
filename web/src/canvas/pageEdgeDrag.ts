@@ -1,6 +1,6 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { msg, t as translate, type UiMessage } from '@/i18n'
-import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
+import { msg, type UiMessage } from '@/i18n'
+import { columnName, resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { resizePageEdge, type PageEdge } from '@/lib/pageEdgeResize'
 import { applyPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -14,7 +14,7 @@ const HIST_LABEL: UiMessage = msg('history.setPageSize', undefined, 'workspace')
 
 /** 吸上某档栏宽时标注上写的名字：「规范名 栏名」（如「Nature 双栏」） */
 function columnLabel(specLabel: string, c: PageColumn): string {
-  const name = translate(`canvas.presets.${c.id}.label`, { ns: 'inspector' })
+  const name = columnName(c)
   return specLabel ? `${specLabel} ${name}` : name
 }
 

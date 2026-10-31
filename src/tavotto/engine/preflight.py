@@ -211,18 +211,34 @@ def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
     widths = profile.get("widths_mm") or {}
     tol = _num_or(widths.get("tolerance_mm"), 0.5)
     single, double = _num(widths.get("single")), _num(widths.get("double"))
-    matched = None
-    for name, target in (("single", single), ("double", double)):
-        if target is not None and abs(w - target) <= tol:
-            matched = name
-            break
-    if matched is None and (single is not None or double is not None):
-        want = "/".join(f"{v:g}" for v in (single, double) if v is not None)
+    # 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
+    # 只有 exact 的栏位参与判据（max / typical / range 的宽度不是「等于」）。
+    columns = [
+        c
+        for c in profiles_mod.derive_page_columns(profile)
+        if c.get("qualifier", "exact") == "exact" and _num(c.get("width_mm")) is not None
+    ]
+    matched = any(abs(w - float(c["width_mm"])) <= tol for c in columns)
+    if columns and not matched:
+        want = "/".join(f"{float(c['width_mm']):g}" for c in columns)
+        zh = " / ".join(f"{c['label']['zh']} {float(c['width_mm']):g}" for c in columns)
+        both = " / ".join(
+            f"{c['label']['zh']} ({c['label']['en']}) {float(c['width_mm']):g}" for c in columns
+        )
         sink.add(
             "page-width",
-            f"页面宽 {w:g}mm 不是规范里的单栏/双栏宽度（{want}mm）",
-            message=("pageWidth", {"actual": f"{w:g}", "want": want}),
-            detail={"page_w_mm": _r2(w), "single_mm": single, "double_mm": double, "column": None},
+            f"页面宽 {w:g}mm 不是规范里的栏宽（{zh} mm）",
+            message=(
+                "pageWidth",
+                {"actual": f"{w:g}", "want": want, "columns": both},
+            ),
+            detail={
+                "page_w_mm": _r2(w),
+                "single_mm": single,
+                "double_mm": double,
+                "column": None,
+                "columns": [{"id": c["id"], "width_mm": float(c["width_mm"])} for c in columns],
+            },
         )
 
     ratios = profile.get("allowed_aspect_ratios") or []
@@ -380,6 +396,63 @@ def _iter_font_elements(manifest: dict, hidden_legends: set[str]):
             yield el, size
 
 
+def _font_advice(profile: dict) -> tuple[dict | None, dict | None]:
+    """期刊说明的字号建议（`advisories`，只产生 suggestion 级提示，不是判据）。"""
+    body = script = None
+    for a in profile.get("advisories") or []:
+        if not isinstance(a, dict) or a.get("check") != "font-size-recommended":
+            continue
+        if a.get("role") == "body_min" and body is None:
+            body = a
+        elif a.get("role") == "script_min" and script is None:
+            script = a
+    return body, script
+
+
+def _advise_font(profile: dict, eff: float, sink: _Sink, ids: dict, detail_eff: float) -> None:
+    """有效字号低于期刊「说明」的最小字号时给 suggestion：带期刊名与原话。上下标求值器分不出，
+    所以按正文建议值（没有就按上下标值）统一提示。"""
+    body, script = _font_advice(profile)
+    lead = body or script
+    if lead is None:
+        return
+    thr = float(lead["value_pt"])
+    if not eff < thr - profiles_mod.FONT_FLOOR_TOL_PT:
+        return
+    journal = lead["journal"]
+    quote = " … ".join(a["quote"] for a in (body, script) if a)
+    if body and script:
+        key = "fontSizeAdvisedBoth"
+        text = (
+            f"{journal} 说明 {body['value_pt']:g} pt 为正文最小字号，"
+            f"{script['value_pt']:g} pt 为上下标最小字号"
+        )
+    elif body:
+        key = "fontSizeAdvisedBody"
+        text = f"{journal} 说明 {body['value_pt']:g} pt 为正文最小字号"
+    else:
+        key = "fontSizeAdvisedScript"
+        text = f"{journal} 说明 {script['value_pt']:g} pt 为上下标最小字号"
+    params = {
+        "journal": journal,
+        "body": f"{body['value_pt']:g}" if body else "",
+        "script": f"{script['value_pt']:g}" if script else "",
+        "quote": quote,
+    }
+    sink.add(
+        "font-size-recommended",
+        f"{text}（原文：{quote}）",
+        message=(key, params),
+        detail={
+            "effective_pt": _r2(detail_eff),
+            "body_min_pt": float(body["value_pt"]) if body else None,
+            "script_min_pt": float(script["value_pt"]) if script else None,
+        },
+        worse=-eff,
+        **ids,
+    )
+
+
 def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
     manifest = panel.get("manifest")
     if not isinstance(manifest, dict):
@@ -434,6 +507,7 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                 detail={"effective_pt": _r2(eff), "max_pt": biggest},
                 worse=eff,
             )
+        _advise_font(profile, eff, sink, {"object_ids": [pid], "gids": [gid]}, eff)
 
     for el in manifest.get("elements") or []:
         if not _is_drawn(el, hidden_legends):
@@ -934,6 +1008,7 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
                 detail={"effective_pt": _r2(size), "min_pt": strict},
                 worse=-size,
             )
+        _advise_font(profile, size, sink, {"object_ids": [tid]}, size)
         # 字体族：画布文字现在也能各设各的（不再是「全文档一个字体」），
         # 于是规范里那条族约束必须看得见它们——**新增一条能违反规则的路，
         # 就要同时把检查的范围扩到那条路上**，否则规范窄过了它想守的东西。

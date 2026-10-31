@@ -95,17 +95,34 @@ interface ProfileDoc {
   profiles: Record<string, PublicationProfile>
 }
 
-/** 内置规范的清单（没有后端时也拿得到——浏览器演练场 / MCP 内嵌画布都靠它）。 */
+const entryOf = (p: PublicationProfile): SpecCatalogEntry => ({
+  id: p.profile_id,
+  display_name: p.label,
+  name_key: `builtin.spec.${p.profile_id}`,
+  version: p.version,
+  built_in: true,
+  data: p as unknown as Record<string, unknown>,
+})
+
+/** 内置规范的清单（没有后端时也拿得到——浏览器演练场 / MCP 内嵌画布都靠它）。
+ *  `listed: false` 的底（如期刊底 journal-base-v1）不在清单里——与后端 `list_profiles` /
+ *  `builtins` 同判据；它们按 id 仍可解析（`isHiddenBuiltin`），见 `resolveDocumentSpec`。 */
 export function builtinCatalog(): SpecCatalogEntry[] {
   const d = doc as unknown as ProfileDoc
-  return Object.values(d.profiles).map((p) => ({
-    id: p.profile_id,
-    display_name: p.label,
-    name_key: `builtin.spec.${p.profile_id}`,
-    version: p.version,
-    built_in: true,
-    data: p as unknown as Record<string, unknown>,
-  }))
+  return Object.values(d.profiles)
+    .filter((p) => p.listed !== false)
+    .map(entryOf)
+}
+
+/** 是不是「可解析但不可列出」的内置底。同源对：后端 `profiles.all_profile_ids()` 对
+ *  `resolve_spec` 的分流。绑定到它不算「全局规范已被删除」。 */
+export function isHiddenBuiltin(id: string | null | undefined): boolean {
+  const d = doc as unknown as ProfileDoc
+  return !!id && d.profiles[id]?.listed === false
+}
+
+function hiddenBuiltinEntry(id: string): SpecCatalogEntry {
+  return entryOf((doc as unknown as ProfileDoc).profiles[id])
 }
 
 /** 快照 / 全局那份 + 期刊覆盖 → 可直接喂给预检的规范。
@@ -137,7 +154,10 @@ export function resolveDocumentSpec(
   catalog: SpecCatalogEntry[],
 ): ResolvedSpec {
   const journal = binding?.journal as JournalOverride | undefined
-  const global = binding?.id ? catalog.find((e) => e.id === binding.id) : undefined
+  const global = binding?.id
+    ? (catalog.find((e) => e.id === binding.id) ??
+      (isHiddenBuiltin(binding.id) ? hiddenBuiltinEntry(binding.id) : undefined))
+    : undefined
   const snapshot = binding?.snapshot
   const follow = binding?.follow === true
   const globalMissing = !!binding?.id && !global
