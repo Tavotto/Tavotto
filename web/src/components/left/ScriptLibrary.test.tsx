@@ -211,9 +211,9 @@ describe('脚本区列表', () => {
     expect(text).toContain('linked.py')
     expect(text).toContain('conftest.py')
     // 分组文案：尚未运行 vs 输出名称只能在运行后确定 vs 已关联数
-    expect(text).toContain('脚本尚未运行')
+    expect(text).toContain('没跑过')
     expect(text).toContain('输出名称只能在运行后确定')
-    expect(text).toContain('已关联 2 张图')
+    expect(text).toContain('2 张图')
   })
 
   it('没有常驻的安全导入说明（2026-09-15 打磨批次 G：说明与术语提示不常驻）', async () => {
@@ -474,7 +474,7 @@ describe('运行 / 取消 / 结果', () => {
     }
     const groups = [...host.querySelectorAll('section ul[aria-label]')].map((ul) => ({
       name: ul.getAttribute('aria-label'),
-      scripts: [...ul.querySelectorAll('li > div span.font-mono > span.truncate')].map((s) => s.getAttribute('title')),
+      scripts: [...ul.querySelectorAll('li > div span.items-baseline > span.truncate')].map((s) => s.getAttribute('title')),
     }))
     expect(groups[0]).toEqual({ name: '需要修复', scripts: ['a.py'] })
     expect(groups.find((g) => g.name === '可能需要原环境')?.scripts).toEqual(['b.py', 'c.py'])

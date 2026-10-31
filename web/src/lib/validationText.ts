@@ -78,6 +78,11 @@ export interface IssueValues {
    * （坐标轴标签格式「Surname, year」）。没有比较词的规则它就等于 `expected`。
    */
   expectedHead: string | null
+  /**
+   * 「要求」是一张档位表（线宽）时：行内 `expected` 只写**这一个对象会被修到的那一档**（就近取档），
+   * 整张表留在这里给 title / tooltip；其余规则没有这个字段。
+   */
+  expectedAll?: string
 }
 
 /**
@@ -133,8 +138,24 @@ export function issueValues(issue: ValidationIssue): IssueValues {
   const withUnit = (v: string | null) => (v == null ? null : formatQuantity(v, unit))
   const currentRaw = read(spec.current)
   const expectedRaw = read(spec.expected)
-  const expected = withUnit(expectedRaw)
+  let expected = withUnit(expectedRaw)
+  let expectedAll: string | undefined
+  if (issue.ruleCode === 'line-width-off-preset' && expectedRaw?.includes('/') && currentRaw != null) {
+    // 档位表（「0.5/0.75/1」）：行内只写修复会吸到的那一档（`specfix._plan_line_width`），整张表给 tooltip
+    // 与后端 `specfix._plan_line_width` 同一把尺：`min(presets, key=(|p − eff|, p))`——就近、等距取更细的一档。
+    // 但这里拿到的 `effective` 只有两位小数（预检的 `toFixed(2)`），离两档几乎等距时（差 < 0.011）
+    // 取哪档由被舍掉的那一位决定、前端算不准：这种行不猜，要求留空（行内只写当前值），整张表在 tooltip
+    const cur = Number(currentRaw)
+    const ranked = expectedRaw
+      .split('/')
+      .map((v) => ({ v, d: Math.abs(Number(v) - cur) }))
+      .sort((a, b) => a.d - b.d || Number(a.v) - Number(b.v))
+    const ambiguous = ranked.length > 1 && ranked[1].d - ranked[0].d < 0.011
+    expected = ambiguous ? null : withUnit(ranked[0].v)
+    expectedAll = withUnit(expectedRaw) ?? undefined
+  }
   return {
+    expectedAll,
     current: withUnit(currentRaw),
     expected:
       expected == null
@@ -144,6 +165,20 @@ export function issueValues(issue: ValidationIssue): IssueValues {
           : expected,
     expectedHead: expected == null ? null : spec.cmp ? pr(`cmp.${spec.cmp}`, { value: expected }) : expected,
   }
+}
+
+/**
+ * 一组命中是否共用同一个要求（「线宽 → 0.75 pt」「≥ 8 pt」）。是：返回那个要求（行内写法），组头说一次，
+ * 对象行只剩当前值；否（要求因对象而异，或有的规则根本没有要求）：返回 null，每行各说各的「当前 → 要求」。
+ */
+export function sharedTarget(issues: readonly ValidationIssue[]): string | null {
+  let target: string | null = null
+  for (const issue of issues) {
+    const head = issueValues(issue).expectedHead
+    if (head == null || (target != null && head !== target)) return null
+    target = head
+  }
+  return target
 }
 
 /**
