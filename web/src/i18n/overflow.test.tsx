@@ -68,6 +68,7 @@ const BUDGETS: Budget[] = [
   // 左侧 44px 图标轨道的抽屉名（图标下方 / tooltip 里）
   ['workspace', 'rail.assets', 16, '左侧轨道按钮'],
   ['workspace', 'rail.outline', 16, '左侧轨道按钮'],
+  ['workspace', 'rail.elements', 18, '左侧轨道按钮'],
   // 画布标签条：一排标签，每个都可关闭
   ['workspace', 'tabs.newCanvas', 18, '画布标签条上的新建'],
   ['workspace', 'tabs.allCanvases', 18, '画布标签条上的总览'],

@@ -1682,7 +1682,7 @@ function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): voi
  * 进来时传 `'keep'`——那份清单就是用户此刻的导航，切走它等于每定位一条都要
  * 重新打开问题面板（审计 T09）。
  */
-async function admitPngEntry(panel: PanelObject, leftTab: 'outline' | 'keep'): Promise<boolean> {
+async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): Promise<boolean> {
   finishActiveGesture()
   const initial = useDocumentStore.getState()
   let epoch = renderEpoch()
@@ -1993,7 +1993,7 @@ registerReconstructionNotifier(notifyReconstructionPanel)
 
 export function enterElementEdit(
   panelId: string,
-  { leftTab = 'outline' }: { leftTab?: 'outline' | 'keep' } = {},
+  { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
 ) {
   finishActiveGesture()
   const panel = findObject(panelId)
@@ -2021,7 +2021,7 @@ export function enterElementEdit(
   return entered
 }
 
-function finishElementEntry(panelId: string, leftTab: 'outline' | 'keep'): boolean {
+function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
   const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
@@ -2051,11 +2051,11 @@ function finishElementEntry(panelId: string, leftTab: 'outline' | 'keep'): boole
     })
   }
   // 三栏布局下左栏顺手切到元素树；窄断点不动（左右互斥，抢掉属性页得不偿失）
-  if (leftTab === 'outline' && ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'outline') {
-    ui.setLeftTab('outline')
+  if (leftTab === 'elements' && ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
+    ui.setLeftTab('elements')
   }
   // 焦点救援的接手者：左栏留在哪一页，就交给那一页的轨道入口
-  const rail = leftTab === 'keep' ? ui.leftTab : 'outline'
+  const rail = leftTab === 'keep' ? ui.leftTab : 'elements'
   if (seeded) status(note('bakedSeeded', { count: seeded }), 'info')
   // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
   // （本模块只许 import 叶子 `store/workspaceStore`，不许 import `store/workspace`：那边已经 import 本模块，别绕成环）
@@ -2063,7 +2063,7 @@ function finishElementEntry(panelId: string, leftTab: 'outline' | 'keep'): boole
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
   // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。
-  // 交给左轨的「大纲」入口——它一直在，而且正是键盘用户接下来要去的地方
+  // 交给左轨的「图内」入口——它一直在，而且正是键盘用户接下来要去的地方
   // （#37 要求的等价路径）。详见 `lib/focusRescue.ts` 的实测记录。
   rescueFocus(() => document.querySelector<HTMLElement>(`[data-rail="${rail}"]`))
   return true

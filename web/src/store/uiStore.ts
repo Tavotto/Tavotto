@@ -10,9 +10,9 @@ import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/l
 import { drillKey } from '@/lib/drillKey'
 import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
-export type LeftTab = 'workspace' | 'assets' | 'outline' | 'style' | 'problems'
-/** 2026-10 审计 A3：画布 / 图层 / 图内元素三页合成一棵「大纲」；旧版本机偏好里的三个旧页签名落到它上面 */
-const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers', 'elements']
+export type LeftTab = 'workspace' | 'assets' | 'outline' | 'elements' | 'style' | 'problems'
+/** 2026-10 审计 A3：画布 + 图层合成一棵「大纲」（图内元素仍是独立的「图内」页签）；旧版本机偏好里的 canvases / layers 落到它上面 */
+const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
 export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'

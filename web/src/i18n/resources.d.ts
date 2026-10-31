@@ -5865,6 +5865,7 @@ export default interface Resources {
     },
     "layerTree": {
       "collapseGroup": "折叠组",
+      "count_other": "{{count}} 个对象",
       "editableBadge": "可编辑",
       "editableState": "可编辑",
       "emptyTitle": "画布上还没有对象",
@@ -6517,6 +6518,7 @@ export default interface Resources {
       "settings": "设置",
       "short": {
         "assets": "素材",
+        "elements": "图内",
         "outline": "大纲",
         "problems": "问题",
         "settings": "设置",

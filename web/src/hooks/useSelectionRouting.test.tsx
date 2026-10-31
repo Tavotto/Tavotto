@@ -3,7 +3,8 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { trackPointer } from '@/canvas/interactions'
-import { OutlineTree } from '@/components/left/OutlineTree'
+import { ElementTree } from '@/components/left/ElementTree'
+import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
@@ -54,7 +55,7 @@ function Harness() {
     {leftOpen && <aside data-left-drawer>
       {tab === 'assets'
         ? <button data-asset onPointerDown={() => useSelectionStore.getState().set([panel.id])} />
-        : tab === 'outline' ? <OutlineTree /> : null}
+        : tab === 'outline' ? <LayerTree /> : <ElementTree />}
       <button data-explicit onClick={() => useUiStore.getState().setRightTab('properties')} />
     </aside>}
     <div data-canvas-stage><span data-canvas-hit onPointerDown={() => {
@@ -124,7 +125,7 @@ function openElements(layout: WorkspaceLayout = 'medium') {
     useSelectionStore.getState().set([panel.id])
     useUiStore.getState().setLayout(layout)
   })
-  act(() => useUiStore.getState().setLeftTab('outline'))
+  act(() => useUiStore.getState().setLeftTab('elements'))
   node('[data-outside]').focus()
 }
 function expectTreeSelection(gids: string[]) {
@@ -304,7 +305,7 @@ describe('selection routing keeps the active drawer workflow', () => {
       useUiStore.getState().setElementPanel(panel.id)
       useUiStore.getState().setSelectedGid(gids[0])
     })
-    act(() => useUiStore.getState().setLeftTab('outline'))
+    act(() => useUiStore.getState().setLeftTab('elements'))
     act(() => node(treeRow(gids[0])).focus())
     pointer('[data-canvas-hit]')
     expect(useUiStore.getState().selectedGids).toEqual([gids[0]])

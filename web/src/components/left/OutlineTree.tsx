@@ -17,28 +17,23 @@ import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
 import { DrawerHeaderActions } from './DrawerHeader'
-import { ElementTree, useElementTargetPanel } from './ElementTree'
 import { LayerTree } from './LayerTree'
 
 /**
- * 大纲（2026-10 界面审计 A3）：画布 → 图 → 图内元素，一棵树。
+ * 大纲（2026-10 界面审计 A3）：画布 → 图，一棵树。图内元素是左轨独立的「图内」抽屉（用户验收后裁定，与 main 一致）。
  *
  * 此前是左轨上三个并列的页签（画布 / 图层 / 图内），用户得先想「我要找的东西算哪一层」再去点对应页签。
- * 现在三层各自的内容一个字没变，只是挂在同一棵树上：
+ * 现在画布与图层挂在同一棵树上：顶层是项目里的全部画布（含没开成标签的）；当前画布展开，里面是 `LayerTree`（图与标注，含分组 / 锁定 / 隐藏）。
  *
- * - 顶层是项目里的全部画布（含没开成标签的）；当前画布展开，里面是 `LayerTree`（图与标注，含分组 / 锁定 / 隐藏）；
- * - 被选中（或正在图内编辑）的那张可编辑的图，行后面接着 `ElementTree`（图内元素，配色与键位不变）。
- *
- * 选中的同步不在这里做：三层的行都读写同一份 `selectionStore` / `uiStore.selectedGids`，
+ * 选中的同步不在这里做：两层的行都读写同一份 `selectionStore`，
  * 点大纲里的行与点画布上的图本来就是同一个动作。
- * 三棵子树各自保留原来的 `data-tree` 钩子（`layers` / `elements`），画布行保留 `data-canvas-*`。
+ * 图层子树保留原来的 `data-tree="layers"` 钩子，画布行保留 `data-canvas-*`。
  */
 const ol = (key: string, values?: Record<string, unknown>) =>
   translate(`canvasList.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-/** 画布层级：顶层 0；图 1；图内元素 2（组成员的图再深一层，由 `LayerTree` 自己加） */
+/** 画布层级：顶层 0；图 1（组成员的图再深一层，由 `LayerTree` 自己加） */
 const LAYER_BASE = 1
-const ELEMENT_BASE = 2
 
 export function OutlineTree() {
   useTranslation('workspace')
@@ -50,7 +45,6 @@ export function OutlineTree() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const dragFrom = useRef<number | null>(null)
   const listRef = useRef<HTMLUListElement>(null)
-  const targetPanel = useElementTargetPanel()
 
   // 激活画布的内容以 doc 为准（canvases 里是最后同步的快照）
   const rows = useMemo(
@@ -117,13 +111,6 @@ export function OutlineTree() {
                 <LayerTree
                   embedded
                   baseDepth={LAYER_BASE}
-                  renderAfter={(o) =>
-                    targetPanel && o.id === targetPanel.id ? (
-                      <li role="none">
-                        <ElementTree chrome="nested" baseDepth={ELEMENT_BASE + (o.groupId ? 1 : 0)} />
-                      </li>
-                    ) : null
-                  }
                 />
               )}
             </Fragment>
