@@ -496,7 +496,7 @@ describe('图标组件：默认档、选中态、无障碍', () => {
     await m.unmount()
   })
 
-  it('清晰度（ADR 0155）：描边 1.5、默认档 16，几何都落在 0.75 网格上（吸附后再吸一次不变）', () => {
+  it('清晰度（ADR 0157）：描边 1.5、默认档 16，几何都落在 0.75 网格上（吸附后再吸一次不变）', () => {
     expect(ICON_STROKE.regular).toBe(1.5)
     expect(ICON_SIZE.sm).toBe(16)
     const off: string[] = []
