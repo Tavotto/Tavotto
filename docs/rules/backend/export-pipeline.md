@@ -62,7 +62,7 @@ order: 210
     其余格式照常交付，**不静默丢标注**；原图 EPS 本身给不出（没有脚本等）沿用 `eps_needs_script` 等原码。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
     **单一来源 / 图层次序 / 横纵密度**（#1551 评审）：要 EPS 且不要 SVG 时（`exportroute.original_rerender`），有脚本的磁盘图在合成路径里也由 worker 现画（`_export_produce_rendercore(rerender_ids=…)`），PDF / PNG / TIFF 与 EPS 内层出自同一次运行，
     与无标注的 `_resolve_panel_source(rerender=True)` 同一判定；`original.objects_below` = `objects` 里前几个画在图下面（z 序保留；EPS 里写在嵌入段之前）；位图源横纵密度不同（逻辑 mm 宽高比 ≠ 像素宽高比）时，
-    PNG / TIFF 的合成页面按像素宽高比取、标注纵向换算，输出恰为 `px_w × px_h`（不重采样；PDF / SVG 仍按逻辑 mm）。
+    PNG / TIFF 先按逻辑图幅各向同性合成（ppi 取两轴中较大的密度，文字 / 行距 / 描边不被压扁），再由 `raster.resample_area`（纯标准库面积平均，RGBA 按预乘权重）整张缩到恰好 `px_w × px_h`，pHYs / TIFF 分辨率写源的 x / y 密度（`RasterBuffer.dpi_y`）；等密度位图不重采样；PDF / SVG 仍按逻辑 mm。
     看护 `tests/test_export_original_annotations.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；

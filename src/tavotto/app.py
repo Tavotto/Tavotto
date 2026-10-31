@@ -2375,7 +2375,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     if rerender_ids:
         dir_arg["rerender_ids"] = rerender_ids
 
-    def run(fmts, objects, w_mm, h_mm, ppi, sub):
+    def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
         # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
         work = tmp_dir / sub
         work.mkdir(parents=True, exist_ok=True)
@@ -2388,7 +2388,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
             canvas=canvas,
             original=None,
         )
-        return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg)
+        extra = {"raster_target": target} if target else {}
+        return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
 
     w_mm, h_mm = float(src.w_mm), float(src.h_mm)
     if vector_formats:
@@ -2397,21 +2398,20 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         )
     if raster_formats:
         ppi = req.ppi
-        objs, pnl, page_h = list(src.objects), panel, h_mm
+        target = None
         if src.source_kind == "raster" and src.px_w:
-            # 位图源保持源像素网格：页面 w_mm 对应 px_w 个像素 → 有效 dpi = px_w / (w_mm / 25.4)
-            ppi = float(src.px_w) * 25.4 / w_mm
-            if src.px_h and abs(src.px_h / src.px_w - h_mm / w_mm) > 0.005 * (h_mm / w_mm):
-                # 横纵密度不同（逻辑 mm 的宽高比 ≠ 像素的宽高比）：位图输出的页面按像素宽高比取，
-                # 标注的纵向位置 / 盒高按同一比例换算；不重采样，输出恰为 px_w × px_h
-                k = (src.px_h / src.px_w) * (w_mm / h_mm)
-                page_h = h_mm * k
-                pnl = {**panel, "h_mm": page_h}
-                objs = [
-                    {**o, "y_mm": float(o.get("y_mm", 0)) * k, "h_mm": float(o.get("h_mm", 0)) * k}
-                    for o in objs
-                ]
-        produced += run(raster_formats, stacked(objs, pnl), w_mm, page_h, ppi, "ann_ras")
+            dpi_x = float(src.px_w) * 25.4 / w_mm
+            ppi = dpi_x  # 页面 w_mm 对应 px_w 个像素
+            if src.px_h:
+                dpi_y = float(src.px_h) * 25.4 / h_mm
+                if abs(dpi_y - dpi_x) > 0.005 * dpi_x:
+                    # 横纵密度不同：先按逻辑图幅各向同性画对（取两轴中较大的密度，两轴都不小于源像素），
+                    # 再整张面积平均缩到恰好 px_w × px_h；元数据写源的 x / y 密度
+                    ppi = max(dpi_x, dpi_y)
+                    target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+        produced += run(
+            raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
+        )
     if wants_eps:
         produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
     return produced
@@ -2959,7 +2959,7 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
 
 
 def _export_produce_rendercore(
-    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset()
+    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
 ) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
@@ -3060,6 +3060,7 @@ def _export_produce_rendercore(
         provider=rc_facade.provider(),
         host=rc_facade.host(),
         math=math,
+        **({"raster_target": raster_target} if raster_target else {}),
     )
 
 

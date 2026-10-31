@@ -483,37 +483,76 @@ def test_objects_below_is_validated():
             exportreq._original_source({**base, "objects_below": bad})
 
 
-def test_unequal_axis_densities_keep_both_source_dimensions(env):
-    """300 × 150 px、300 × 150 dpi 的位图 = 25.4 × 25.4 mm：带标注导出的 PNG / TIFF 仍是 300 × 150。"""
-    client, figs = env
-    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 150), False)
+def _ink_box(path: Path):
+    """深色像素的包围盒（x0, y0, x1, y1），及位图宽高。"""
+    pix = pymupdf.Pixmap(str(path))
+    xs, ys = [], []
+    for y in range(pix.height):
+        for x in range(pix.width):
+            if pix.pixel(x, y)[0] < 128:
+                xs.append(x)
+                ys.append(y)
+    assert xs, "没有墨迹"
+    return (min(xs), min(ys), max(xs), max(ys)), (pix.width, pix.height)
+
+
+def _white_png(path: Path, w: int, h: int):
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, w, h), False)
     pix.set_rect(pix.irect, (255, 255, 255))
-    pix.save(figs / "wide.png")
-    spec = {
+    pix.save(path)
+
+
+def _raster_spec(fid: str, w: int, h: int, formats):
+    return {
         "scope": "original",
-        "filename": "W",
-        "formats": ["png", "tiff", "pdf"],
+        "filename": fid.split(".")[0],
+        "formats": formats,
         "original": {
-            "figure_id": "wide.png",
+            "figure_id": fid,
             "w_mm": 25.4,
             "h_mm": 25.4,
-            "px_w": 300,
-            "px_h": 150,
+            "px_w": w,
+            "px_h": h,
             "source_kind": "raster",
             "objects": [_label(2, 10)],
         },
     }
-    status, body = _post(client, spec)
+
+
+def test_unequal_axis_densities_draw_right_then_scale_to_source_pixels(env):
+    """300 × 150 px、25.4 × 25.4 mm（横纵密度 300 / 150 dpi）：先按逻辑图幅各向同性画对（文字不被压扁、基线不错位），
+    再整张缩到 300 × 150。标注墨迹的相对位置 / 相对高度与等密度（300 × 300）参照一致。"""
+    client, figs = env
+    _white_png(figs / "wide.png", 300, 150)
+    _white_png(figs / "square.png", 300, 300)
+    _, ref = _post(client, _raster_spec("square.png", 300, 300, ["png"]))
+    status, body = _post(client, _raster_spec("wide.png", 300, 150, ["png", "tiff", "pdf"]))
     assert status == 200, body
     for fmt in ("png", "tiff"):
         p = pymupdf.Pixmap(str(_path(body, fmt)))
         assert (p.width, p.height) == (300, 150), fmt
         assert _out(body, fmt)["dimensions"]["px"] == [300, 150]
-    # 标注（纵向位置按像素宽高比换算）确实画进了 PNG
-    ink = [
-        pymupdf.Pixmap(str(_path(body, "png"))).pixel(x, y)[0] < 128
-        for y in range(0, 150)
-        for x in range(0, 300)
-    ]
-    assert any(ink)
+    (rx0, ry0, rx1, ry1), (rw, rh) = _ink_box(_path(ref, "png"))
+    (x0, y0, x1, y1), (w, h) = _ink_box(_path(body, "png"))
+    # 横向与参照一致；纵向相对位置 / 相对高度也与参照一致（不是被换算成别的比例）
+    for got, want in (
+        (x0 / w, rx0 / rw),
+        (x1 / w, rx1 / rw),
+        (y0 / h, ry0 / rh),
+        (y1 / h, ry1 / rh),
+    ):
+        assert got == pytest.approx(want, abs=0.02), (got, want)
+    assert (y1 - y0) / h == pytest.approx((ry1 - ry0) / rh, abs=0.02)
     assert _pdf_text(_path(body, "pdf")).strip() == "Label QA"  # 逻辑 mm 的 PDF 不受影响
+
+
+def test_unequal_axis_densities_write_the_source_x_and_y_dpi(env):
+    import struct
+
+    client, figs = env
+    _white_png(figs / "wide.png", 300, 150)
+    _, body = _post(client, _raster_spec("wide.png", 300, 150, ["png"]))
+    data = _path(body, "png").read_bytes()
+    i = data.index(b"pHYs")
+    ppm_x, ppm_y, unit = struct.unpack(">IIB", data[i + 4 : i + 13])
+    assert unit == 1 and round(ppm_x * 0.0254) == 300 and round(ppm_y * 0.0254) == 150
