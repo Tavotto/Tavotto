@@ -756,6 +756,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "rollback",
         # 数据找不到时把 AI 找到的文件接上（细节见 tests/test_fixtools_link.py）
         "link_data_file",
+        # 脚本自带的私有依赖文件夹为别的 Python 版本装的：跳过它（ADR 0154，细节见 tests/test_fixtools_importpath.py）
+        "ignore_import_folder",
         # #1374：任意命令，两档（细节见 tests/test_fixtools_command.py）
         "run_command",
         # D2b 的「问与报」组（细节见 tests/test_fixasks.py）
@@ -794,6 +796,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "switch_workdir",
         "select_environment",
         "link_data_file",
+        "ignore_import_folder",
         "run_command",
     }
 

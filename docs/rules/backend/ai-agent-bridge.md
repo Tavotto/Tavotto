@@ -617,6 +617,17 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 - **诊断三缺口（覆盖率测量补）**：① 项目内同名包遮蔽——`engine/importshadow.py`（纯函数、只读文件系统）对 `No module named 'a.b'` / `cannot import name … (项目内路径)` 判「父包目录在脚本目录 / 项目根下、缺的子模块不在里面」（脚本目录在 `sys.path[0]`、先于已装的包；项目根被 worker 追加在末尾、排在 site-packages 之后，所以项目根里的同名包要 traceback 里有一帧落在它里面才算，`search_order=after_site`，装同名发行包能修）；`read_run_report` 与应用 `try_run` 共用 `runreport.project_run_report`，以当前错误为准、`project_package_shadow` 放最前，历史失败不覆盖当前判断；诊断副本 `try_run` / `try_import` 按自己的导入范围调用 `base.shadow_note`。`regular` 包装同名包不管用；无 `__init__.py` 或扩展包路径的 namespace 可由安装真包修复，提示词 3f 同此。② 安装失败只按安装器输出分类，并带脱敏后的 `ERROR:` 一两行（`detail`），由 `install_packages` 回给模型；不再另起 `pip index` 探测，以免忽略私有源设置并泄露包名。`dependency_not_found` 不断言包不存在，也可能仅没有当前 Python / 平台的可用版本；取消事件贯穿安装。③ `read_logs(worker)` 按 `diagnostics.owned_worker_logs(项目)` 取当前项目最近一份日志。看护 `tests/test_fixdiagnostics.py` / `tests/test_fixdiagnostics_report.py`。
 
+### `ignore_import_folder`：脚本自带的私有依赖文件夹为别的 Python 版本装的（`fixtools/importpath.py`，ADR 0154，2026-10-31）
+
+看护 `tests/test_fixtools_importpath.py`（工具 / 回滚 / 方向路由）、`tests/test_foreign_abi_path.py`（识别、过滤器、端到端）。
+
+- **失败码 `import_folder_abi_mismatch`**（报告 `error.code` / `params.folder|abi|current`）：换 Python 版本救不了——那个目录永远是为别的版本装的（TVD-ZCR4 里 AI 两轮 `change_python` 要 3.12 都是 `python_change_unavailable`）。
+  系统提示 3h 明令不换版本、不在它上面装包，改用本工具；`change_python` 在报告错误码是它时直接 `python_change_not_applicable`（不打快照、不建环境）；`pyversionfix.FAILURE_CODES` 不含它，`failure_from_report` / `required_span` 认不出。
+- **工具不收路径**：忽略哪个文件夹由失败那一刻 Tavotto 登记（`pathignore.latest_path`，随令牌签发），模型指认不了任意目录；没有登记 = `no_foreign_folder`，不打扰用户。
+- **一律问**（approve 卡 = 一句话 `summary` + 折叠 `details`，如实说明这是对「与终端里一致」的偏离、脚本与文件夹都不动、可撤销）。没有 `ctx.ask` / 非 yes = `needs_approval`，名单与快照都不写。
+- **同一条路径**：写入只经 `pathignore.remember`（失败卡主按钮的令牌端点调的也是它）；名单变了才调 `FixContext.on_ignored_paths_changed`（应用侧 = 收掉这个项目的会话，`--ignore-paths` 是 spawn 时交的）。
+  快照 `settings_keys()` 含 `ignored_import_paths`，回滚精确恢复（含「原来没有」），名单变了同样通知。
+
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
 - **五个工具都 `waits_for_user=True`**：`propose_fix`（`approve` 卡，详情列 `ctx.reads` 的 `~/…` 写法与「没读：敏感目录」）、`ask_user`（`choice` 卡，回选项 id；`other` / `skip` 是保留 id）、

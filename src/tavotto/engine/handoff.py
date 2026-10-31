@@ -428,6 +428,17 @@ def _probe_error(err) -> HandoffError:
             "在 Tavotto 界面里打开这张图并按提示安装缺少的依赖，或给这个账户开放该文件夹的读取权限"
         )
         return HandoffError(message, "import_folder_unreadable", **{**extra, "probe_code": code})
+    if code == "import_folder_abi_mismatch" and isinstance(folder, str) and folder:
+        # 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：说清是哪个文件夹，别落成「项目要它自己的环境」
+        extra.update(
+            {k: params[k] for k in ("abi", "current") if isinstance(params.get(k), str)},
+            folder=folder,
+        )
+        message = (
+            f"脚本自带的“{folder}”文件夹是为 Python {params.get('abi', '')} 装的，和当前环境不兼容。"
+            "在 Tavotto 界面里打开这张图并选“跳过这个文件夹重跑”即可，不需要换 Python"
+        )
+        return HandoffError(message, "import_folder_abi_mismatch", **{**extra, "probe_code": code})
     tb = err.get("traceback")
     if tb:
         extra["traceback"] = str(tb)[-2000:]

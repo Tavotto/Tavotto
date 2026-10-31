@@ -57,6 +57,8 @@ export type PrepPrimary =
   | { kind: 'feedback' }
   /** 项目外文件夹读不了（Windows，ADR 0153 修订）：「修复权限」。`token` 是后端一次性的不透明令牌，前端不持有路径 */
   | { kind: 'repair_folder'; token: string }
+  /** 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：「跳过这个文件夹重跑」。`token` 同上是不透明令牌 */
+  | { kind: 'skip_folder'; token: string }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -233,6 +235,7 @@ const FAILURE_STATES = new Set([
   'blocked',
   'file_ops_blocked',
   'folder_unreadable',
+  'folder_abi',
   'no_figure',
   'no_figure_raster',
   'not_registered',
@@ -254,7 +257,7 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
   const remedy = report && isRemedy(report.remedy) ? report.remedy : null
   if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
   // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
-  if (view.state === 'folder_unreadable') return { ...view, remedy, aiFix: false }
+  if (view.state === 'folder_unreadable' || view.state === 'folder_abi') return { ...view, remedy, aiFix: false }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
   if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
@@ -580,6 +583,15 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
         if (typeof token === 'string' && token) {
           const folder = String(report.result?.error?.params?.folder ?? '')
           return view('folder_unreadable', 'folderUnreadable', { script, folder }, { kind: 'repair_folder', token }, { tone: 'bad', step: 1 })
+        }
+      }
+      if (code === 'import_folder_abi_mismatch') {
+        // 有令牌 = 后端登记了这个文件夹：主按钮「跳过这个文件夹重跑」；没有令牌（没打开项目 / 老后端）保持通用失败卡
+        const params = report.result?.error?.params
+        const token = params?.ignore_token
+        if (typeof token === 'string' && token) {
+          const values = { script, folder: String(params?.folder ?? ''), abi: String(params?.abi ?? ''), current: String(params?.current ?? '') }
+          return view('folder_abi', 'folderAbi', values, { kind: 'skip_folder', token }, { tone: 'bad', step: 1 })
         }
       }
       // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次

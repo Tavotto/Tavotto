@@ -74,6 +74,10 @@ __all__ = [
     "skip_events",
     "unreadable_folder_fact",
     "unreadable_folder_facts",
+    "IgnoredImportPaths",
+    "install_ignored_import_paths",
+    "ignored_events",
+    "foreign_abi_facts",
     "drop_script_dir_from_sys_path",
     "load_engine_modules",
 ]
@@ -612,3 +616,307 @@ def unreadable_folder_facts(
         cur = cur.__cause__ or cur.__context__
         seen += 1
     return {}, {}
+
+
+# --------------------------------------------------------------------------- ADR 0154：外来 ABI 的私有依赖目录
+#
+# 脚本把一个 `pip install --target` 出来的目录插到 `sys.path` 最前，里面的编译扩展是为**别的** Python 小版本
+# 编的（`.cp312-win_amd64.pyd` 配 3.14 的解释器）。导入系统对这些文件视而不见，于是 `from . import _ext` 一类
+# 的导入就以 ImportError 收场，而环境里本来完好的同名包被那个目录盖住了。换 Python 版本救不了（那个目录
+# 永远是为别的版本编的）；让那个目录不生效才对。判据以文件系统事实为主（扩展文件名上的 ABI 标签），不解析报错文字。
+
+
+def _ext_abi_of(name: str) -> tuple[int, int] | None:
+    """编译扩展文件名上的 CPython ABI 标签 → (主, 次)；不是带版本标签的扩展、`abi3`、无标签的一律回 None。
+
+    `x.cp312-win_amd64.pyd` / `x.cpython-312-x86_64-linux-gnu.so` / `x.cpython-313t-darwin.so`（自由线程的 `t` 忽略）。"""
+    if not (name.endswith(".pyd") or name.endswith(".so")):
+        return None
+    parts = name.split(".")
+    if len(parts) < 3 or "abi3" in parts[1:]:
+        return None
+    tag = parts[1]
+    for prefix in ("cpython-", "cp"):
+        if tag.startswith(prefix):
+            digits = ""
+            for ch in tag[len(prefix) :]:
+                if not ch.isdigit():
+                    break
+                digits += ch
+            if len(digits) >= 2:
+                return int(digits[0]), int(digits[1:])
+            return None
+    return None
+
+
+def _foreign_abis_in(path: str, limit: int = 4000) -> list[str]:
+    """`path`（文件或目录，不跟随符号链接）里 ABI 标签与**当前解释器**不符的编译扩展 → 版本串（"3.12"）的有序去重表。
+
+    只认带 CPython 版本标签的文件名（`abi3` 与无标签的 `.so` / `.pyd` 当前解释器都接受，不算）；标签等于当前
+    小版本的不算。最多看 `limit` 个目录项，爆预算就用已看到的。"""
+    here = tuple(sys.version_info[:2])
+    found: set[tuple[int, int]] = set()
+
+    def consider(name: str) -> None:
+        tag = _ext_abi_of(name)
+        if tag is not None and tag != here:
+            found.add(tag)
+
+    seen = 0
+    if os.path.isfile(path):
+        consider(os.path.basename(path))
+    else:
+        for _root, dirs, files in os.walk(path):
+            seen += len(dirs) + len(files)
+            for f in files:
+                consider(f)
+            if seen > limit:
+                break
+    return [f"{a}.{b}" for a, b in sorted(found)]
+
+
+def foreign_abi_facts(
+    exc: BaseException,
+    interpreter_dirs=(),
+    protected_dirs=(),
+    project_roots=(),
+) -> tuple[dict, dict]:
+    """失败是不是「`sys.path` 上某个私有目录里的编译扩展是为别的 Python 小版本编的」：是则 `(公开事实, 私有事实)`。
+
+    判据（全部成立才算）：异常链里有 `ImportError`；链上的文件（`ImportError.path` 与各层 traceback 的文件，内层优先）
+    落在某个 `sys.path` 目录 D 下；D **不在**解释器自己的前缀 / 包目录之下（`interpreter_dirs`），也不是脚本所在目录、
+    项目根或它们的祖先（`protected_dirs`——那是用户自己的模块，忽略它们会让用户同名模块失效）；D 下该文件所属的
+    顶层包（或单文件扩展）里有 ABI 标签与当前解释器不符的编译扩展（`abi3` 与无标签的算兼容）。
+
+    公开事实 `{"folder": 显示名, "abi": "3.12", "current": "3.14", "module"?: 顶层模块名}`：显示名是相对项目根的
+    POSIX 路径（在项目里）或目录名（在项目外），不带绝对路径；私有事实 `{"path": D 的完整路径}` 只给父进程登记
+    「跳过这个文件夹」的服务端令牌（与 `unreadable_folder_facts` 的私有事实同一条纪律）。不成立两个都是 `{}`。"""
+    chain: list[BaseException] = []
+    cur, seen = exc, 0
+    while cur is not None and seen < 16:
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    if not any(isinstance(e, ImportError) for e in chain):
+        return {}, {}
+    files: list[str] = []
+    for e in chain:
+        path = getattr(e, "path", None) if isinstance(e, ImportError) else None
+        if isinstance(path, str) and path:
+            files.append(path)
+        frames = []
+        tb = e.__traceback__
+        while tb is not None:
+            frames.append(tb.tb_frame.f_code.co_filename)
+            tb = tb.tb_next
+        files.extend(reversed(frames))  # 内层帧优先
+    interp = [r for r in (_norm(p) for p in interpreter_dirs) if r]
+    protected = [r for r in (_norm(p) for p in protected_dirs) if r]
+    roots = [r for r in (_norm(p) for p in project_roots) if r]
+
+    def under(path: str, root: str) -> bool:
+        return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+    entries = []
+    for e in sys.path:
+        n = _norm(e)
+        if not n or any(under(n, r) for r in interp):
+            continue
+        if any(under(p, n) for p in protected):  # D 就是（或包着）脚本目录 / 项目根
+            continue
+        entries.append((e, n))
+    tried: set = set()
+    for f in files:
+        norm = _norm(f)
+        if not norm or not os.path.isabs(f):
+            continue
+        hits = [(e, n) for e, n in entries if under(norm, n) and norm != n]
+        if not hits:
+            continue
+        entry, base = max(hits, key=lambda h: len(h[1]))
+        rel = norm[len(base) :].lstrip(os.sep)
+        top = rel.split(os.sep)[0]
+        if not top or (entry, top) in tried:
+            continue
+        tried.add((entry, top))
+        abis = _foreign_abis_in(os.path.join(os.path.abspath(entry), top))
+        if not abis:
+            continue
+        absentry = os.path.abspath(entry)
+        shown = os.path.basename(absentry) or absentry
+        for r in roots:
+            if under(_norm(absentry) or "", r) and _norm(absentry) != r:
+                shown = os.path.relpath(absentry, r).replace(os.sep, "/")
+                break
+        fact = {
+            "folder": shown,
+            "abi": abis[0] if len(abis) == 1 else ",".join(abis[:3]),
+            "current": f"{sys.version_info[0]}.{sys.version_info[1]}",
+        }
+        module = _top_module(os.sep + top)
+        if module:
+            fact["module"] = module
+        return fact, {"path": absentry}
+    return {}, {}
+
+
+class _FilteredNamespacePath:
+    """命名空间包的 `__path__`：照旧随 `sys.path` 动态重算（委托原 `_NamespacePath`），每次读都去掉被忽略的目录。"""
+
+    def __init__(self, inner, ignored) -> None:
+        self._inner = inner
+        self._ignored = ignored
+
+    def _entries(self) -> list:
+        return [e for e in self._inner if not self._ignored(e)]
+
+    def __iter__(self):
+        return iter(self._entries())
+
+    def __getitem__(self, index):
+        return self._entries()[index]
+
+    def __len__(self) -> int:
+        return len(self._entries())
+
+    def __contains__(self, item) -> bool:
+        return item in self._entries()
+
+    def append(self, item) -> None:
+        self._inner.append(item)
+
+    def __repr__(self) -> str:
+        return f"_FilteredNamespacePath({self._entries()!r})"
+
+
+class IgnoredImportPaths:
+    """`sys.meta_path` 上**紧挨 `PathFinder`（及读不了查找器）之前**的查找器：顶层导入时不去用户忽略的目录里找。
+
+    名单是**按项目记住的用户决定**（`engine/pathignore`，经 `--ignore-paths` 交进来），只对名单里的目录生效；
+    子模块随包的 `__path__` 自然不进那个目录，所以只管顶层导入（`path is None`）。内置与冻结模块的优先级不变
+    （我们在它们之后）；用户的同名模块（脚本目录、项目根）不在名单里，照旧赢。
+
+    * 名单里的目录都不在 `sys.path` 上、或被忽略的目录里压根没有这个名字：返回 None，常规路径一字不变。
+    * 被忽略的目录里有这个名字：用**去掉这些目录**的 `sys.path` 副本找（用户的 `sys.path` 本身不动）；找到就用，
+      找不到就抛 `ModuleNotFoundError`（不能返回 None——后面的 `PathFinder` 会把被忽略的目录再翻一遍）。
+    * 每个 (模块, 目录) 记一条事件（`events`）并调 `on_ignore`。"""
+
+    def __init__(self, paths, on_ignore=None):
+        self._forms: set[str] = set()
+        self.events: list[dict] = []
+        self._seen: set = set()
+        self._on_ignore = on_ignore
+        self._local = threading.local()
+        self._installed = False
+        self.set_paths(paths)
+
+    def set_paths(self, paths) -> None:
+        forms: set[str] = set()
+        for p in paths or ():
+            n = _norm(p)
+            if n:
+                forms.add(n)
+                try:
+                    forms.add(os.path.normcase(os.path.realpath(p)))
+                except (OSError, ValueError):
+                    pass
+        self._forms = forms
+
+    def _ignored(self, entry) -> bool:
+        n = _norm(entry)
+        return n is not None and n in self._forms
+
+    def _under_ignored(self, entry) -> bool:
+        """`entry` 是被忽略的目录本身或其下的子目录（命名空间包的 `__path__` 条目是 `<根>/<包名>`）。"""
+        n = _norm(entry)
+        if n is None:
+            return False
+        return any(n == f or n.startswith(f.rstrip(os.sep) + os.sep) for f in self._forms)
+
+    def find_spec(self, fullname, path=None, target=None):
+        if path is not None or not self._forms or getattr(self._local, "busy", False):
+            return None
+        self._local.busy = True
+        try:
+            return self._find(fullname, target)
+        finally:
+            self._local.busy = False
+
+    def _find(self, fullname, target):
+        entries = list(sys.path)
+        hits = [e for e in entries if self._ignored(e)]
+        if not hits:
+            return None
+        pathfinder = importlib.machinery.PathFinder
+        if pathfinder.find_spec(fullname, hits, target) is None:
+            return None  # 被忽略的目录里没有它：常规路径的答案与过滤后的相同
+        self._note(fullname, hits)
+        rest = [e for e in entries if not self._ignored(e)]
+        skipper = _SKIPPER
+        spec = (
+            skipper._find(fullname, rest, target)
+            if skipper is not None
+            else pathfinder.find_spec(fullname, rest, target)
+        )
+        if spec is None:
+            raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+        locations = spec.submodule_search_locations
+        if locations is not None and not isinstance(locations, list):
+            # 命名空间包：`_NamespacePath` 在 `sys.path` 变化 / `invalidate_caches()` 后按**原始** `sys.path` 重算，
+            # 被忽略的目录会重新混进 `__path__`，子模块导入（path 不为 None）又绕过本查找器。包一层过滤（Codex #1564）
+            spec.submodule_search_locations = _FilteredNamespacePath(locations, self._under_ignored)
+        return spec
+
+    def _note(self, fullname: str, hits: list) -> None:
+        for entry in hits:
+            key = (fullname, _norm(entry))
+            if key in self._seen or len(self.events) >= SKIP_EVENT_LIMIT:
+                continue
+            self._seen.add(key)
+            event = {"module": fullname, "entry": entry, "error": "IgnoredByUser"}
+            self.events.append(event)
+            if self._on_ignore is not None:
+                try:
+                    self._on_ignore(event)
+                except Exception:  # noqa: BLE001 — 记录失败绝不影响 import
+                    pass
+
+    def install(self) -> bool:
+        """挂在读不了查找器（没有就是 `PathFinder`）之前；两者都不在 `meta_path` 里就不装，回 False。"""
+        if self._installed:
+            return True
+        anchors = [_SKIPPER, importlib.machinery.PathFinder]
+        for anchor in anchors:
+            if anchor is None:
+                continue
+            try:
+                index = sys.meta_path.index(anchor)
+            except ValueError:
+                continue
+            sys.meta_path.insert(index, self)
+            self._installed = True
+            return True
+        return False
+
+
+_IGNORED: IgnoredImportPaths | None = None
+
+
+def install_ignored_import_paths(paths, on_ignore=None) -> IgnoredImportPaths | None:
+    """safe worker 与 native bridge 的**同一个**装配点（ADR 0154）。名单为空且没装过就什么都不装（逐字节旧行为）；
+    装过之后重复调用只更新名单。"""
+    global _IGNORED
+    paths = [p for p in (paths or ()) if isinstance(p, str) and p]
+    if _IGNORED is None:
+        if not paths:
+            return None
+        _IGNORED = IgnoredImportPaths(paths, on_ignore)
+        _IGNORED.install()
+    else:
+        _IGNORED.set_paths(paths)
+    return _IGNORED
+
+
+def ignored_events() -> list[dict]:
+    """此刻为止被「跳过这个文件夹」挡掉的导入记录（没装 / 没发生都是空表）。"""
+    return list(_IGNORED.events) if _IGNORED is not None else []

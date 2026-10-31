@@ -273,6 +273,11 @@ def _log_import_skip(event: dict) -> None:
     print(f"[import-skip] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
 
 
+def _log_import_ignore(event: dict) -> None:
+    """用户忽略的目录挡掉了一次顶层导入时在 worker.log 留一行结构化记录（ADR 0154）；路径由诊断包统一脱敏。"""
+    print(f"[import-ignore] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
+
+
 #: 与 native bridge 同一个装配点（`bridgeboot.install_unreadable_import_skipper`）：用户脚本往 `sys.path` 里塞了
 #: 当前账户读不了的项目外目录时，换下一个位置继续找，而不是让整次 import 挂在 `PermissionError` 上。
 bridgeboot.install_unreadable_import_skipper(_log_import_skip)
@@ -1285,6 +1290,11 @@ class Worker(wireproto.V1Handler):
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
         #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
         self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
+        #: 用户在失败卡上选了「跳过这个文件夹」的目录（`--ignore-paths`，ADR 0154；父进程按项目给）：
+        #: 顶层导入不再去那里找。与 native bridge 同一个装配点；没有名单什么都不装。
+        bridgeboot.install_ignored_import_paths(
+            _parse_ignore_paths(getattr(args, "ignore_paths", None)), _log_import_ignore
+        )
         #: Only the opaque reference is on the command line. Values arrive over
         #: the private request pipe before the first execution, then stay frozen.
         self.script_argv: list[str] = []
@@ -2087,6 +2097,7 @@ class Worker(wireproto.V1Handler):
             # 在丢之前先把「顶层模块名」这一个安全事实带上，依赖修复 / 环境交接才不会丢
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
+            facts.update(self._foreign_abi_fact(exc))
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -2116,6 +2127,21 @@ class Worker(wireproto.V1Handler):
             (sys.prefix, sys.base_prefix, sys.exec_prefix, *_INTERPRETER_PACKAGE_DIRS),
         )
         return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
+
+    def _foreign_abi_fact(self, exc: BaseException) -> dict:
+        """失败是「脚本加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的」：`{"foreign_abi_folder": {...}}`。
+        判据在 `bridgeboot.foreign_abi_facts`（native 同一份）；完整路径只在私有键 `foreign_abi_folder_private`
+        （给父进程登记「跳过这个文件夹」的令牌，敏感运行的白名单不放行它）。任何意外都当没有。"""
+        try:
+            fact, private = bridgeboot.foreign_abi_facts(
+                exc,
+                (sys.prefix, sys.base_prefix, sys.exec_prefix, *_INTERPRETER_PACKAGE_DIRS),
+                (str(self.figures_dir), str(self.script.parent)),
+                (str(self.figures_dir),),
+            )
+        except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
+            return {}
+        return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
@@ -2236,6 +2262,17 @@ def _parse_write_roots(raw) -> list[str] | None:
     return roots
 
 
+def _parse_ignore_paths(raw) -> list[str]:
+    """`--ignore-paths` 的 JSON 数组；没给 / 坏了就当没有（只是不忽略任何目录，旧行为）。"""
+    if not raw:
+        return []
+    try:
+        paths = json.loads(raw)
+    except ValueError:
+        return []
+    return [p for p in paths if isinstance(p, str) and p] if isinstance(paths, list) else []
+
+
 def _parse_remap(raw) -> list[dict]:
     """`--input-remap` 的 JSON → 校验过的规则；坏了就当没有（渲染照跑，只是不改道）。"""
     if not raw:
@@ -2262,6 +2299,8 @@ def main() -> None:
     ap.add_argument("--run-config", default="")
     # #898：写入根绊线的授权根（JSON 数组）；只有 MCP 来源的运行才出现，没有它 = 不装（旧 argv 逐字节不变）
     ap.add_argument("--write-roots", default=None)
+    # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
+    ap.add_argument("--ignore-paths", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 
