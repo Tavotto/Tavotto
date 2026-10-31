@@ -40,14 +40,15 @@ _SESSION_SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
 def settings_keys() -> tuple[str, ...]:
-    """快照覆盖运行方式、环境选择、数据改指与工作目录四个项目设置。"""
-    from .. import execpolicy, inputremap, projectenv, workdir
+    """快照覆盖运行方式、环境选择、数据改指、工作目录与「跳过的导入文件夹」五个项目设置。"""
+    from .. import execpolicy, inputremap, pathignore, projectenv, workdir
 
     return (
         execpolicy.SETTINGS_KEY,
         projectenv.SETTINGS_KEY,
         inputremap.SETTINGS_KEY,
         workdir.SETTINGS_KEY,
+        pathignore.SETTINGS_KEY,
     )
 
 
@@ -195,7 +196,7 @@ def list_ids(ctx: FixContext) -> list[str]:
 
 # --------------------------------------------------------------------------- 回滚
 def _restore_settings(ctx: FixContext, saved: dict) -> bool:
-    from .. import config, inputremap, projectenv, workdir
+    from .. import config, inputremap, pathignore, projectenv, workdir
 
     # None = 清掉这个键；快照里没有的键（旧格式）不动
     patch = {
@@ -204,10 +205,19 @@ def _restore_settings(ctx: FixContext, saved: dict) -> bool:
         if k in saved and k != inputremap.SETTINGS_KEY
     }
     previous_workdir = workdir.mode_for(str(ctx.project_root))
+    previous_ignored = pathignore.paths_for(ctx.project_root)
     try:
         config.set_project_settings(str(ctx.project_root), patch)
     except OSError:
         return False
+    if (
+        pathignore.paths_for(ctx.project_root) != previous_ignored
+        and ctx.on_ignored_paths_changed is not None
+    ):
+        try:
+            ctx.on_ignored_paths_changed()  # 名单是 spawn 时交给 worker 的：回滚了，旧会话要收掉
+        except Exception:  # noqa: BLE001 - 通知失败不影响已恢复的设置
+            pass
     projectenv.reset_cache(ctx.project_root)  # 进程内缓存的「项目用哪个环境」也要跟着回去
     ctx.verification = None
     if (

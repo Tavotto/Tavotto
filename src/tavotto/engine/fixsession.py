@@ -139,6 +139,13 @@ install nothing. Never edit the script and never touch that folder or its permis
 fails for the same folder, say in one plain sentence which folder (its name is in the report) cannot be read, then \
 finish `not_fixed`. Do not tell the user to change permissions themselves: the application shows a "Repair \
 permissions" button on the result for exactly this case.
+3h. SCRIPT'S OWN FOLDER FOR ANOTHER PYTHON VERSION. If the report error code is `import_folder_abi_mismatch` (its params \
+name the folder and two Python versions: `abi` is what the folder was installed for, `current` is this environment): the script \
+puts a private dependency folder (typically made with `pip install --target`) first on its import path, and the compiled \
+packages inside were built for a different Python version, so they hide the working copies in the environment. DO NOT change \
+the Python version (change_python cannot help: that folder is always for another version) and do not install packages over it. \
+Call ignore_import_folder (it needs no path and asks the user itself), then try_run. If a package turns out to be missing \
+afterwards, install it into the managed environment as usual. Never edit the script and never touch that folder.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \

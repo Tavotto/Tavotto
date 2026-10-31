@@ -87,6 +87,9 @@ class FixContext:
     #: 数据改指表被 AI 修复改了 / 回滚了 `(新状态, "added"|"restored") -> None`：应用侧据此收掉这个项目的会话、取消在跑的试运行、
     #: 告诉开着这个项目的窗口（与数据失联弹窗的端点同一串）。None = 没有应用（测试 / 无界面），规则照写
     on_input_remap_changed: Callable[[dict, str], None] | None = None
+    #: 「跳过这个文件夹」的名单被 AI 修复改了 / 回滚了 `() -> None`（ADR 0154）：应用侧据此收掉这个项目的会话
+    #: （`--ignore-paths` 是 spawn 时交给 worker 的）。None = 没有应用（测试 / 无界面），名单照写
+    on_ignored_paths_changed: Callable[[], None] | None = None
     #: 环境 id → 叠加环境（`list_environments` 登记；`select_environment` 记住环境时要带上）
     environment_overlays: dict[str, dict] = field(default_factory=dict)
     #: 本次调用的元信息：`run_tool` 每次调用前清空，工具写 `approved_by`（"user"）与 `snapshot`（快照 id），审计读它

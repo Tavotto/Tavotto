@@ -1402,6 +1402,7 @@
           "select_environment": "正在切换环境",
           "convert_script": "正在生成可编辑版本",
           "link_data_file": "正在接入数据文件",
+          "ignore_import_folder": "正在跳过这个文件夹",
           "run_command": "正在运行命令…",
           "rollback": "正在撤销刚才的改动",
           "propose_fix": "正在准备修复方案",

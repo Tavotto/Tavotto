@@ -1468,6 +1468,7 @@
           "select_environment": "Switching environment",
           "convert_script": "Making an editable version",
           "link_data_file": "Connecting the data file",
+          "ignore_import_folder": "Skipping this folder",
           "run_command": "Running a command…",
           "rollback": "Undoing the last change",
           "propose_fix": "Preparing a fix",

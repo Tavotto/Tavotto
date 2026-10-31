@@ -5968,6 +5968,7 @@ export default interface Resources {
           "finish": "正在收尾",
           "generic": "AI 正在处理…",
           "grep_files": "正在搜索文件内容",
+          "ignore_import_folder": "正在跳过这个文件夹",
           "inspect_environment": "正在检查 Python 环境",
           "install_packages": "正在安装 {{detail}}",
           "link_data_file": "正在接入数据文件",
