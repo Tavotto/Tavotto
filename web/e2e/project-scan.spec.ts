@@ -206,8 +206,14 @@ test('教程进行中：教程层独占，引导卡不出现也不抢第二份�
   const a = await app()
   await page.setViewportSize({ width: 1400, height: 900 })
   await page.goto(a.baseURL)
-  await page.locator('[data-more-menu]').click()
-  await page.locator('[data-onboarding-anchor="help-tutorial"]').click()
+  // 新手态顶栏有「新手教程」胶囊，「更多」菜单里就不重复列这一项；胶囊不在才走菜单
+  const chip = page.locator('[data-tutorial-chip-open]')
+  if (await chip.isVisible()) {
+    await chip.click()
+  } else {
+    await page.locator('[data-more-menu]').click()
+    await page.locator('[data-onboarding-anchor="help-tutorial"]').click()
+  }
   const layer = page.locator('[data-native-tutorial]')
   await expect(layer).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('[data-tutorial-step]')).toHaveAttribute('data-tutorial-step', 'demo_import')

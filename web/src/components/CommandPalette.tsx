@@ -20,6 +20,7 @@ import {
   LayoutGrid,
   LayoutList,
   Lightbulb,
+  ListChecks,
   Paintbrush,
   Play,
   Plus,
@@ -37,7 +38,7 @@ import {
   Ungroup,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
-import { KeyCaps } from '@/components/ui/Kbd'
+import { ShortcutText } from '@/components/ui/Kbd'
 import { Dialog } from '@/components/ui/Dialog'
 import { scrollFadeStyle, useScrollFade } from '@/components/ui/scrollFade'
 import { StatusPill } from '@/components/ui/StatusPill'
@@ -233,8 +234,8 @@ const COMMANDS: Command[] = [
 ]
 
 /**
- * 命令前的图标：只从 `components/ui/icons` 里挑；没有合适图标的命令（全选、网格）不放，
- * 不新造。**只是外观**，命令清单与顺序仍由上面的 COMMANDS 与 `rankCommands` 决定。
+ * 命令前的图标：只从 `components/ui/icons` 里挑；每条命令都有图标（没有专门图标的取集内最接近的，
+ * 不新造）。**只是外观**，命令清单与顺序仍由上面的 COMMANDS 与 `rankCommands` 决定。
  */
 const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: string }>> = {
   'refresh-project': RefreshCw,
@@ -254,6 +255,7 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   'new-doc': Plus,
   'add-text': Type,
   'sub-labels': Tags,
+  'select-all': ListChecks,
   group: Group,
   ungroup: Ungroup,
   'layout-row': AlignHorizontalDistributeCenter,
@@ -264,6 +266,8 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   fit: Fullscreen,
   'zoom-selection': Scaling,
   rulers: Ruler,
+  // 图标集里没有专门的「网格」，取最接近的 LayoutGrid（与 layout-grid 同形）
+  grid: LayoutGrid,
   'canvas-settings': SlidersHorizontal,
   'left-assets': Images,
   'left-elements': LayoutList,
@@ -440,7 +444,7 @@ export function CommandPalette() {
                 key={`h:${section.section}`}
                 role="presentation"
                 data-palette-section={section.section}
-                // 组头与菜单的 `MenuLabel` 同一格：12 / 400 / ink-3（比项淡一档，审计 M3）
+                // 组头与菜单的 `MenuLabel` 同一格：11 / 500 / ink-2
                 className="px-3 pb-1 pt-2.5 text-sm text-ink-3"
               >
                 {sectionLabel(section.section)}
@@ -476,7 +480,7 @@ export function CommandPalette() {
                   <span data-cmd-label className="min-w-0 flex-1 truncate">
                     {c.label}
                   </span>
-                  {c.shortcut && <KeyCaps keys={c.shortcut} className="shrink-0 flex-nowrap" />}
+                  {c.shortcut && <ShortcutText data-cmd-shortcut="">{c.shortcut}</ShortcutText>}
                 </li>
               )
             }),

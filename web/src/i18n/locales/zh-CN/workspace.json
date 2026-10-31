@@ -852,6 +852,11 @@
     "importPackage": "导入项目包…",
     "insertShape": "插入形状",
     "more": "更多",
+    "moreGroup": {
+      "file": "文件",
+      "help": "帮助",
+      "view": "视图"
+    },
     "moreWithUpdate": "更多（有新版本）",
     "newBlankDocument": "新建空白排版",
     "noOtherDocuments": "暂无其他排版",
