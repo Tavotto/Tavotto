@@ -278,6 +278,47 @@
 .icon-tags[data-play] [data-m] { animation: icon-swing var(--icon-ms) ease-in-out; }
 @keyframes icon-swing { 0%, 100% { transform: none; } 30% { transform: rotate(-14deg); } 65% { transform: rotate(8deg); } }
 
+/* ───────── 命令面板补齐（10-31） ───────── */
+.icon-align-horizontal-distribute-center[data-play] [data-m='p'] { animation: icon-apart-l var(--icon-ms) var(--icon-spring); }
+.icon-align-horizontal-distribute-center[data-play] [data-m='q'] { animation: icon-apart-r var(--icon-ms) var(--icon-spring); }
+.icon-align-vertical-distribute-center[data-play] [data-m='p'] { animation: icon-apart-u var(--icon-ms) var(--icon-spring); }
+.icon-align-vertical-distribute-center[data-play] [data-m='q'] { animation: icon-apart-d var(--icon-ms) var(--icon-spring); }
+@keyframes icon-apart-u { 0% { transform: none; } 35% { transform: translateY(-1.8px); } 70% { transform: translateY(0.4px); } 100% { transform: none; } }
+@keyframes icon-apart-d { 0% { transform: none; } 35% { transform: translateY(1.8px); } 70% { transform: translateY(-0.4px); } 100% { transform: none; } }
+
+.icon-bookmark[data-play] [data-m] { animation: icon-pin-in var(--icon-ms) var(--icon-spring); }
+
+.icon-circle-question-mark [data-m] { transform-origin: 12px 13px; }
+.icon-circle-question-mark[data-play] [data-m] { animation: icon-ponder var(--icon-ms) ease-in-out; }
+@keyframes icon-ponder { 0%, 100% { transform: none; } 25% { transform: rotate(-16deg); } 55% { transform: rotate(10deg); } 80% { transform: rotate(-4deg); } }
+
+.icon-folder-open [data-m='p'] { transform-origin: 12px 20px; }
+.icon-folder-open[data-play] [data-m='p'] { animation: icon-folder-open-drop var(--icon-ms) var(--icon-spring); }
+@keyframes icon-folder-open-drop { 0% { transform: none; } 35% { transform: translateY(-1.5px) scaleY(1.12); } 70% { transform: scaleY(0.96); } 100% { transform: none; } }
+
+.icon-folder-plus [data-m='p'] { transform-origin: 12px 13.5px; }
+.icon-folder-plus[data-play] [data-m='p'] { animation: icon-quarter var(--icon-ms) cubic-bezier(0.3, 1.5, 0.5, 1); }
+
+.icon-fullscreen[data-play] [data-m='p'] { animation: icon-corner-tl var(--icon-ms) var(--icon-spring); }
+.icon-fullscreen[data-play] [data-m='q'] { animation: icon-out-tr var(--icon-ms) var(--icon-spring); }
+.icon-fullscreen[data-play] [data-m='r'] { animation: icon-corner-br var(--icon-ms) var(--icon-spring); }
+.icon-fullscreen[data-play] [data-m='u'] { animation: icon-out-bl var(--icon-ms) var(--icon-spring); }
+@keyframes icon-corner-tl { 0%, 100% { transform: none; } 40% { transform: translate(-2.2px, -2.2px); } }
+@keyframes icon-corner-br { 0%, 100% { transform: none; } 40% { transform: translate(2.2px, 2.2px); } }
+
+.icon-layers-2[data-play] [data-m='p'] { animation: icon-lift var(--icon-ms) var(--icon-spring); }
+
+.icon-layout-list [data-m='t'] { transform-box: fill-box; transform-origin: left center; }
+.icon-layout-list [data-m='q'] { transform-box: fill-box; transform-origin: center; }
+.icon-layout-list[data-play] [data-m='q'] { animation: icon-ring var(--icon-ms) var(--icon-spring); }
+.icon-layout-list[data-play] [data-m='t'] { animation: icon-line-grow calc(var(--icon-ms) * 0.6) var(--icon-spring) calc(var(--icon-ms) * 0.15 + var(--k) * 90ms) both; }
+
+.icon-ruler [data-m='t'] { transform-box: fill-box; transform-origin: center top; }
+.icon-ruler[data-play] [data-m='t'] { animation: icon-tick var(--icon-ms) var(--icon-spring) calc(var(--k) * 60ms) both; }
+@keyframes icon-tick { 0%, 100% { transform: none; } 40% { transform: scaleY(0.3); } }
+
+.icon-scaling[data-play] [data-m='p'] { animation: icon-out-tr var(--icon-ms) var(--icon-spring); }
+
 /* ───────── 通用轻点 ─────────
    按钮里没有自己「点一下」动作的图标（没登记的、或登记的是悬停 / 出现），点的时候整枚轻轻按下再弹回，
    免得一颗按钮点了毫无反应。只动 svg 本身，不碰路径。 */

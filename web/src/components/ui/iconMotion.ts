@@ -64,6 +64,16 @@ export function installIconMotion(doc: Document = document) {
       }
     })
   })
+  // 列表里被高亮的那一项（命令面板、下拉的 ↑↓ 或指针移过去）：它的图标不分触发方式播一次——
+  // 命令面板的行多半是键盘走过去的，点了就执行并关面板，悬停 / 点按两种触发都看不见
+  new MutationObserver((records) => {
+    for (const r of records) {
+      const el = r.target as Element
+      if (el.getAttribute('aria-selected') !== 'true' || r.oldValue === 'true') continue
+      if (!el.matches('[role="option"], [role="menuitem"], [role="tab"]')) continue
+      for (const svg of iconsOf(el)) if (svg.hasAttribute('data-motion')) playIcon(svg)
+    }
+  }).observe(doc.documentElement, { subtree: true, attributes: true, attributeFilter: ['aria-selected'], attributeOldValue: true })
   doc.addEventListener('pointerover', (e) => {
     if (e.pointerType === 'touch') return
     const host = (e.target as Element | null)?.closest?.(INTERACTIVE)

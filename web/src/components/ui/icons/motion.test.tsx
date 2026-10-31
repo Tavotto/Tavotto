@@ -19,7 +19,7 @@ import {
   ICON_DEFS,
   ICON_MOTION,
   LayoutGrid,
-  Ruler,
+  Bold,
   SlidersHorizontal,
   Sparkles,
   X,
@@ -111,14 +111,14 @@ describe('渲染', () => {
     render(
       <>
         <Download />
-        <Ruler />
+        <Bold />
       </>,
     )
     const dl = host.querySelector('svg.icon-download')!
     expect(dl.getAttribute('data-motion')).toBe('press')
     expect((dl as SVGElement).style.getPropertyValue('--icon-ms')).toBe('520ms')
     expect([...dl.querySelectorAll('path')].map((p) => p.getAttribute('data-m'))).toEqual(['q', 'p', 'p'])
-    const ty = host.querySelector('svg.icon-ruler')!
+    const ty = host.querySelector('svg.icon-bold')!
     expect(ty.hasAttribute('data-motion')).toBe(false)
     expect(ty.querySelector('[data-m]')).toBeNull()
   })
@@ -183,7 +183,7 @@ describe('委托', () => {
     act(() =>
       root.render(
         <button type="button">
-          <Ruler data-plain />
+          <Bold data-plain />
           <LayoutGrid data-hover />
           <Download data-press />
         </button>,
@@ -248,6 +248,32 @@ describe('委托', () => {
     grid.removeAttribute('data-play')
     act(() => over(grid, btn))
     expect(grid.hasAttribute('data-play')).toBe(false)
+  })
+
+  it('列表项被高亮（命令面板 ↑↓）时播它的图标，不分触发方式；取消高亮不播', async () => {
+    act(() =>
+      root.render(
+        <ul role="listbox">
+          <li role="option" aria-selected="false" data-row>
+            <Download data-press />
+            <LayoutGrid data-hover />
+          </li>
+        </ul>,
+      ),
+    )
+    const row = host.querySelector('[data-row]')!
+    await act(async () => {
+      row.setAttribute('aria-selected', 'true')
+      await Promise.resolve()
+    })
+    expect(host.querySelector('[data-press]')!.hasAttribute('data-play')).toBe(true)
+    expect(host.querySelector('[data-hover]')!.hasAttribute('data-play')).toBe(true)
+    host.querySelectorAll('svg').forEach((s) => s.removeAttribute('data-play'))
+    await act(async () => {
+      row.setAttribute('aria-selected', 'false')
+      await Promise.resolve()
+    })
+    expect(host.querySelector('[data-press]')!.hasAttribute('data-play')).toBe(false)
   })
 
   it('减少动态效果时不播', () => {
