@@ -841,6 +841,7 @@ export function ExportDialog() {
       panel,
       spec: availability.spec,
       route,
+      exportDir: exportDirNow,
       ...over,
     };
   }
@@ -855,6 +856,8 @@ export function ExportDialog() {
    */
   // 导出位置的写入还在飞：导出键灰着，免得写到旧目录
   const locationUpdating = useProjectSettingsPending();
+  // 此刻生效的导出目录：撞名确认的一部分（改了位置，旧确认列的文件就不在这里了）
+  const exportDirNow = useProjectStore((s) => s.project?.export_dir ?? null);
   const prepared = prepareExport(inputOf());
   const filenameIssue = prepared.filenameProblem;
   const names = prepared.names;

@@ -43,6 +43,7 @@ import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
@@ -950,6 +951,22 @@ describe('撞名确认只对触发它的输出目标有效（QA-WIN-18）', () =
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(2)
     expect(exportBodies[1].overwrite).toBe('ask')
+  })
+
+  it('确认态下改了导出位置：确认作废，没有 replace 请求（目录是目标的一部分）', async () => {
+    jobStatus = 'conflict'
+    useProjectStore.setState({ project: { settings: {}, export_dir: '/out', backup_dir: '/b' } as never })
+    await setup(9)
+    await typeName('A')
+    await click(button('开始导出')!)
+    expect(button('覆盖')).toBeTruthy()
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    await act(async () => {
+      await applyProjectSettingsPatch({ export_dir: '/other/dir' })
+    })
+    expect(button('覆盖'), '目录变了：旧的覆盖确认必须撤掉').toBeFalsy()
+    expect(button('开始导出')).toBeTruthy()
+    expect(exportBodies.filter((b) => b.overwrite === 'replace')).toHaveLength(0)
   })
 
   it('只改会随「覆盖」取最新的东西（报告等）不作废确认；「覆盖」带的仍是同一个文件名', async () => {
