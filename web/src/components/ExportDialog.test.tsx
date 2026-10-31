@@ -2346,17 +2346,15 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
   const dialogs = () => [...document.body.querySelectorAll('[role="dialog"]')] as HTMLElement[]
   const covered = (el: HTMLElement) => el.hasAttribute('data-covered')
 
-  it('「编辑规范」不关导出面板：设置压在上面，Esc 只退设置，回来时填过的东西与焦点都在', async () => {
+  it('设置压在导出之上不关导出面板：Esc 只退设置，回来时填过的东西都在（导出对话框里的「编辑规范」按钮已并入设置，审计 A2；栈规则不变）', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
     await mountDialogs(true)
     await openDialog()
     await typeFilename('mine')
     await click(radios()[1]) // 整版
 
-    const edit = document.body.querySelector('button[aria-label="编辑规范"]') as HTMLButtonElement
-    // 真浏览器里 mousedown 会先把焦点给按钮；jsdom 的 click() 不会，这里补上
-    edit.focus()
-    await click(edit)
+    // 压在导出之上打开设置的深链（命令面板 / 其它入口同一个 `setSettingsOpen`）
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'spec'))
     await act(async () => {})
 
     const s = useUiStore.getState()
@@ -2388,9 +2386,6 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
     expect(dialogs()).toHaveLength(1)
     expect(covered(dialogs()[0])).toBe(false)
     expect(filenameInput().value, '被盖住期间状态一个字没丢').toBe('mine')
-    expect(document.activeElement, '焦点回到打开子步骤的那颗按钮').toBe(
-      document.body.querySelector('button[aria-label="编辑规范"]'),
-    )
   })
 })
 

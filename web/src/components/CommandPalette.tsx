@@ -228,7 +228,7 @@ const COMMANDS: Command[] = [
   { id: 'canvas-settings', run: () => ui().setRightTab('canvas') },
   { id: 'left-assets', run: () => ui().setLeftTab('assets') },
   { id: 'left-elements', run: () => ui().setLeftTab('elements') },
-  { id: 'left-layers', run: () => ui().setLeftTab('layers') },
+  { id: 'left-layers', run: () => ui().setLeftTab('outline') },
   { id: 'shortcut-help', shortcut: keyOf('help'), run: () => ui().setShortcutHelpOpen(true) },
 ]
 

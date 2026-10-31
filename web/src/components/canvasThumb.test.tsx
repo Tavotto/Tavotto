@@ -1,21 +1,8 @@
 /**
- * 版本列表的缩略图与画布列表的缩略图是**同一份绘制组件**（fu-thumbs）。
+ * 缩略图 `CanvasThumb`：版本列表（`VersionDrawer`，喂列表端点发来的草图）与导出对话框用的是同一份绘制组件。
  *
- * 「复用」这件事光看 import 判不出来：谁都可以在版本抽屉里另画一份长得差不多
- * 的 SVG，代码评审也未必看得出来，而两份实现会各自演进到用户能看出差别为止。
- * 所以判据落在**产物**上——同样的内容，两处画出来的 DOM 逐字相同。
- *
- * **两侧必须是两条真实路径**，不能都直接 render 那个组件：那样的话对比的是
- * 同一份实现的两次调用，任何改动都同时改两边，diff 恒等为空，而空看起来就像
- * 「没有差别」。所以左边跑 `CanvasList`（喂内存里的 `CanvasObject`），右边跑
- * `VersionDrawer`（喂列表端点发来的草图），中间隔着组件挑选、页面尺寸传递、
- * 草图字段三件真会写错的事。
- *
- * 这条判据顺带把「草图带够了没有」钉住了：右边只有 type/x/y/w/h/fileId/
- * fileKind/text，左边是完整的文档对象——产物相同才说明草图没漏东西。
- *
- * 它**不覆盖**组件自己画得对不对（改了组件两边一起变）。那一档在
- * `left/canvasList.test.tsx` 与 `VersionDialog.test.tsx` 的内容判据里。
+ * 2026-10 审计 A3 起左栏的画布列表并进「大纲」，行里不再画缩略图，所以此前「画布列表 vs 版本列表
+ * DOM 逐字相同」那条对比随之失去一侧而撤掉；组件自己画得对不对在下面的用例与 `VersionDialog.test.tsx` 的内容判据里。
  */
 import { readFileSync } from 'node:fs'
 import { act } from 'react'
@@ -32,7 +19,6 @@ import { fetchVersionDoc, fetchTimeline, type LayoutVersionMeta } from '@/lib/ap
 import { literal } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { CanvasThumb } from '@/components/CanvasThumb'
-import { CanvasList } from '@/components/left/CanvasList'
 import { TimelinePanel } from '@/components/VersionDialog'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -151,14 +137,7 @@ afterEach(async () => {
   useUiStore.setState({ rightTab: 'properties' })
 })
 
-describe('两处缩略图是同一份组件', () => {
-  it('同样的内容，画布列表与版本列表画出来的 DOM 逐字相同', async () => {
-    const fromCanvas = (await render(<CanvasList />)).outerHTML
-    await teardown()
-    const fromVersion = (await render(<TimelineHost />)).outerHTML
-    expect(fromVersion).toBe(fromCanvas)
-  })
-
+describe('版本列表的缩略图', () => {
   it('面板挂的是素材库同一条预览链路（草图只带素材身份，URL 由组件拼）', async () => {
     const svg = await render(<TimelineHost />)
     const href = svg.querySelector('[data-thumb-panel]')?.getAttribute('href') ?? ''

@@ -41,6 +41,10 @@ In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
 
+## Left rail reorganised; narrow windows keep more room for the canvas
+
+The left rail is now Project / Assets / Outline / In-figure / Style / Problems / Settings, where Outline combines the canvas list and layers, and duplicate entries to the same places were removed along with the status bar above the asset drawer. On windows 1280 px wide or more the left panel is pinned by default, so adding figures no longer collapses the asset drawer (an explicit choice in Settings always wins; the drawer also stays open while the pointer is inside it). Below 1280 px the properties panel slides over the canvas on selection instead of taking space, and below 1180 px the rail shows icons only. With exactly one editable figure and nothing selected, the AI assistant targets it automatically; with several it lists their names to pick from. (#1554)
+
 ## "Rebuild as editable figure" stays on the current canvas (#1545)
 
 Rebuilding a PNG as an editable figure could jump to another canvas and open an older, already-edited figure from the same script with the same file name, while reporting that the figure had been redrawn. The rebuilt figure is now added next to the PNG on the canvas you started from, and the success message only appears when that happens.
