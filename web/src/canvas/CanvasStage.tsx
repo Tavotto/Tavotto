@@ -526,7 +526,11 @@ function EmptyHint() {
           （Codex #995）。深浅按页面的实际底色判，与纸上文字 / 选区同一个判据 `groundInkFor`（宪法第二十八节） */}
       <div
         {...(onLightPaper && !showCards ? { 'data-on-paper': '' } : {})}
-        className={cn('pointer-events-auto p-4', (!onLightPaper || showCards) && 'rounded-lg bg-surface')}
+        className={cn(
+          'pointer-events-auto p-4',
+          // 选图卡的底：明确的圆角 + 细边（纸上不留一块没有网格的无边界底）
+          showCards ? 'rounded-lg border border-border bg-surface' : !onLightPaper && 'rounded-lg bg-surface',
+        )}
       >
         {/* 项目里有图：直接摆选图卡（B5）。卡片是界面面（surface），不跟纸上的墨走 */}
         {showCards ? (
