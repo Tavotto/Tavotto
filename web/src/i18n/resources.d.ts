@@ -560,8 +560,7 @@ export default interface Resources {
     },
     "contact": {
       "addressCopied": "已复制 {{address}}",
-      "attachLabel": "附件（选填）",
-      "attachPick": "添加附件",
+      "attachPick": "添加截图/文件",
       "attachRemove": "移除 {{name}}",
       "bodyCount": "{{count}} / {{max}}",
       "bodyLabel": "想说的话",
@@ -691,7 +690,10 @@ export default interface Resources {
       "title": "联系作者",
       "unreadDot": "有新回信",
       "wecom": "企业微信",
+      "wecomLead": "也可以",
+      "wecomLink": "加企业微信",
       "wecomScan": "微信扫码添加",
+      "wecomTail": "直接聊",
       "write": "写信"
     },
     "draftGuard": {
@@ -705,6 +707,7 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
+      "advancedLabel": "高级",
       "batchNames": "每张图用各自的名字",
       "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
       "cancelExport": "取消导出",
@@ -813,7 +816,7 @@ export default interface Resources {
       "preflightFailedKept": "无法完成预检。下面的结论来自更早一次，可能已过时。",
       "preflightOk": "按「{{spec}}」未发现问题",
       "previewFit": "适合大小",
-      "previewFlagged": "有检查提示",
+      "previewFlagged": "有要改的项",
       "previewTabs": "预览",
       "previewWhole": "整版",
       "profileAria": "出版规范",

@@ -14,8 +14,7 @@
     "bodyLabel": "想说的话",
     "bodyPlaceholder": "遇到的问题、想要的功能、使用中的困惑，都可以写在这里。",
     "bodyCount": "{{count}} / {{max}}",
-    "attachLabel": "附件（选填）",
-    "attachPick": "添加附件",
+    "attachPick": "添加截图/文件",
     "attachRemove": "移除 {{name}}",
     "fileError": {
       "type": "只支持图片、PDF、Word、Excel、PowerPoint。",
@@ -140,6 +139,9 @@
     "capsuleOpen": "查看",
     "capsuleClose": "收起回信提醒",
     "wecom": "企业微信",
+    "wecomLead": "也可以",
+    "wecomLink": "加企业微信",
+    "wecomTail": "直接聊",
     "wecomScan": "微信扫码添加"
   },
   "draftGuard": {
@@ -163,7 +165,7 @@
     "previewFit": "适合大小",
     "previewTabs": "预览",
     "previewWhole": "整版",
-    "previewFlagged": "有检查提示",
+    "previewFlagged": "有要改的项",
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",
@@ -272,6 +274,7 @@
     "transparent": "透明背景（仅 PNG / TIFF）",
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
+    "advancedLabel": "高级",
     "strictToggle": "严格核验产物",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
