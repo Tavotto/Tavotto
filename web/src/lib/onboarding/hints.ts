@@ -68,12 +68,30 @@ export function anchorAvailable(kind: HintKind): boolean {
   return true
 }
 
+/**
+ * 「选中一张图」类提示（双击进图内编辑 / 只能排版）此刻还说得对吗：没进图内编辑、仍恰好选中一张面板、在多图排版里。
+ * 提示可能在通知轨里排队好几秒才露面（别的提示条占着位置），用户这期间已经按 Enter 进了图内编辑时，
+ * 「双击进入图内编辑」就是错的；显示前、露面前都再判一次。
+ */
+export function selectionHintApplicable(): boolean {
+  if (useUiStore.getState().elementPanelId) return false
+  if (useWorkspaceStore.getState().mode !== 'layout') return false
+  const sel = useSelectionStore.getState()
+  if (sel.ids.length !== 1) return false
+  const id = sel.primary()
+  return useDocumentStore.getState().doc.objects.some((x) => x.id === id && x.type === 'panel')
+}
+
+const isSelectionHint = (k: HintKind | null) => k === 'panel_editable' || k === 'panel_layout_only'
+
 /** 显示一条；已经看过 / 教程进行中 / 已经有一条在显示 / 锚点不在 → 不显示 */
 export function showHint(kind: HintKind): boolean {
   if (hintSeen(kind)) return false
   if (useOnboardingStore.getState().status === 'active') return false
   if (useHintStore.getState().current) return false
   if (!anchorAvailable(kind)) return false
+  // 不适用就不显示，也不记「看过」：下次第一次选中图时仍可提示
+  if (isSelectionHint(kind) && !selectionHintApplicable()) return false
   useOnboardingStore.getState().markHintSeen(kind)
   useHintStore.setState((s) => ({ current: kind, token: s.token + 1 }))
   hintDismissTimer.start(HINT_AUTO_DISMISS_MS, () => useHintStore.getState().dismiss())
@@ -126,7 +144,21 @@ export function startHintEngine(): () => void {
     const cur = useHintStore.getState().current
     if (cur && ANCHORED_HINTS.has(cur) && !anchorAvailable(cur)) useHintStore.getState().dismiss()
   })
+  // 已出（含排队未露面）的「选中图」提示，在图内编辑 / 选区变了之后就不对了：收起；
+  // 用户自己进过图内编辑 = 已经会了，记为看过
+  const recheckSelectionHint = () => {
+    if (isSelectionHint(useHintStore.getState().current) && !selectionHintApplicable()) useHintStore.getState().dismiss()
+  }
+  const unsubSelection = useSelectionStore.subscribe(recheckSelectionHint)
+  const unsubEdit = useUiStore.subscribe((s, prev) => {
+    if (s.elementPanelId && !prev.elementPanelId) {
+      useOnboardingStore.getState().markHintSeen('panel_editable')
+      recheckSelectionHint()
+    }
+  })
   stop = () => {
+    unsubSelection()
+    unsubEdit()
     unsubActivity()
     unsubValidation()
     unsubUi()
