@@ -138,6 +138,8 @@ test('左栏刷新失败：Notice 顺着滑出来（有过渡帧），终态位�
       const reveal = n.closest('[data-reveal]')!
       const anims = [reveal, ...Array.from(reveal.querySelectorAll('*'))]
         .flatMap((el) => el.getAnimations())
+        // 只量这次滑出的过渡：Notice 图标出现时那一下微动效（ADR 0154，比滑出长）不推挤布局，不算进时长
+        .filter((a) => !((a.effect as KeyframeEffect | null)?.target as Element | null)?.closest?.('svg[data-icon]'))
         .filter((a) => a.effect && (a.effect.getTiming().duration as number) > 0)
       anims.forEach((a) => a.pause())
       const dur = Math.max(0, ...anims.map((a) => a.effect!.getTiming().duration as number))
