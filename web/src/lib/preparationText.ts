@@ -219,6 +219,8 @@ const RASTER_LIBRARY_NAME: Record<string, string> = {
   skimage: 'scikit-image',
   plotly: 'Plotly',
   root: 'ROOT',
+  // 手写 SVG（不用画图库、自己拼 SVG 文本）：卡片读作「这张图是用 SVG 画的…」（ADR 0143 修订 2026-11-01）
+  svg: 'SVG',
 }
 
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])

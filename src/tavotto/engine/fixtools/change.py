@@ -610,7 +610,8 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
     ),
     FixTool(
         "convert_script",
-        "Use when the script runs but draws its figure with Pillow, OpenCV, imageio, scikit-image, plotly or ROOT "
+        "Use when the script runs but draws its figure with Pillow, OpenCV, imageio, scikit-image, plotly or ROOT, "
+        "or writes the SVG text itself without any plotting library (library `svg`) "
         '(so Tavotto cannot edit it). Writes nothing: it hands the script to Tavotto\'s own "make an editable version" '
         "flow, which the user reviews and accepts after this session; the original script is never changed. Then "
         "call finish with outcome `convert`. `target` is a .py path inside the project (default: the script being "

@@ -32,6 +32,11 @@
   第二种文件证据（路径运行时才定）：本次运行开始后项目素材盘点里新出现 / 被改写的文件（`_new_inventory_file`），
   给出时 hint 带项目相对路径 `path`。plotly（`write_image`）与 ROOT（`SaveAs` / `Print`）同样覆盖，另认 pdf / svg / eps；
   这两个库在动态 import 下仍可提示（ADR 0139 修订 2026-10-21）。
+* **手写 SVG（ADR 0143 修订 2026-11-01）**：不 import 任何画图库、源码里有 SVG 标记（字符串字面量含 `<svg`）且有往
+  `.svg`（或运行时才定的路径）写文本的调用（内置 `open` / `io.open` / `codecs.open` 的写模式、`.write_text` / `.write_bytes`）
+  → `library: "svg"`，`path: null`、`in_project: false`。没有文件证据也说：safe 档项目模式下这次写入本来就被守卫拦了，
+  磁盘上不会有文件；AST 两条同时成立 + 运行事实「没捕获到 Figure」才说。有 matplotlib 家族、有别的库在存图、动态 import、
+  看不全一律沉默。
 
 纯标准库；被 `prepsession` import（Flask 父进程 import 链）。
 """
@@ -59,7 +64,9 @@ LIB_IMAGEIO = "imageio"
 LIB_SKIMAGE = "skimage"
 LIB_PLOTLY = "plotly"
 LIB_ROOT = "root"
-LIBRARIES = (LIB_PILLOW, LIB_OPENCV, LIB_IMAGEIO, LIB_SKIMAGE, LIB_PLOTLY, LIB_ROOT)
+#: 不用任何画图库、自己拼 SVG 文本写成 `.svg` 的脚本（ADR 0143 修订 2026-11-01，反馈包 TVD-ZWV6）
+LIB_SVG = "svg"
+LIBRARIES = (LIB_PILLOW, LIB_OPENCV, LIB_IMAGEIO, LIB_SKIMAGE, LIB_PLOTLY, LIB_ROOT, LIB_SVG)
 
 #: 「对象方法」式保存：方法名 → (库, 文件里要 import 的顶层包, 接收者若是已 import 的模块则必须属于这些顶层包)。
 #: `write_html` 不在表里——它写的是网页不是图片；plotly 的 `write_image` 才算（svg / pdf 由扩展名判据排除）。
@@ -599,7 +606,7 @@ def detect(
     if scan.truncated or scan.problems:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
     saves: list[tuple[str, str | None]] = []
-    mpl_any = draw_strong = draw_weak = False
+    mpl_any = draw_strong = draw_weak = svg_markup = svg_write = False
     for rel in scan.files:
         text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
         if problem is not None or text is None:
@@ -614,6 +621,8 @@ def detect(
         mpl_any = mpl_any or fs.imports_mpl
         draw_strong = draw_strong or fs.pil_draw_strong
         draw_weak = draw_weak or fs.pil_draw_weak
+        svg_markup = svg_markup or _has_svg_markup(tree)
+        svg_write = svg_write or _writes_svg_text(fs)
         saves += fs.saves
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
     if mpl_any:
@@ -638,7 +647,76 @@ def detect(
     )  # 别的库也在存图：弱证据分不清是谁，不说
     if draw_strong or (draw_weak and not scan.dynamic and only_pillow_saves):
         return _pillow_drawn_hint()
+    # 手写 SVG：别的库都没在存图（`saves` 为空）、看得全（无动态 import）、SVG 标记与写 .svg 两条同时成立
+    if svg_markup and svg_write and not saves and not scan.dynamic and not draw_weak:
+        return _svg_hint()
     return None
+
+
+#: 手写 SVG 的写入入口：内置 `open`（没被 import 遮住）与这两个模块函数；模式实参必须是含 w / a / x 的字面量
+_OPEN_FUNCS = frozenset({"io.open", "codecs.open"})
+_WRITE_METHODS = frozenset({"write_text", "write_bytes"})
+_SVG_EXT = ".svg"
+
+
+def _target_ext(node: ast.expr | None) -> str | None:
+    """写入目标的字面量扩展名：字符串 / f-string 末段 / `Path(字面量)` / `目录 / "x.svg"` 的右侧；判不出 None（按「可能是」）。"""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _target_ext(node.right)
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        f = node.func
+        name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+        if name in ("Path", "PurePath", "PosixPath", "WindowsPath"):
+            return _target_ext(node.args[0])
+    return _literal_ext(node)
+
+
+def _svg_target(node: ast.expr | None) -> bool:
+    ext = _target_ext(node)
+    return ext is None or ext == _SVG_EXT
+
+
+def _writes_svg_text(fs: _FileScan) -> bool:
+    """这个文件里有没有一处「往 .svg（或判不出扩展名的路径）写文本」的调用。"""
+    for call in fs._save_calls:
+        func = call.func
+        builtin_open = isinstance(func, ast.Name) and func.id == "open" and "open" not in fs.bound
+        if builtin_open or fs._resolve(func) in _OPEN_FUNCS:
+            mode = call.args[1] if len(call.args) > 1 else None
+            for kw in call.keywords:
+                if kw.arg == "mode":
+                    mode = kw.value
+            path = (
+                call.args[0]
+                if call.args
+                else next((kw.value for kw in call.keywords if kw.arg == "file"), None)
+            )
+            if (
+                isinstance(mode, ast.Constant)
+                and isinstance(mode.value, str)
+                and set(mode.value) & {"w", "a", "x"}
+                and path is not None
+                and _svg_target(path)
+            ):
+                return True
+        elif isinstance(func, ast.Attribute) and func.attr in _WRITE_METHODS:
+            if not fs._receiver_is_foreign_module(func.value, frozenset()) and _svg_target(
+                func.value
+            ):
+                return True
+    return False
+
+
+def _has_svg_markup(tree: ast.AST) -> bool:
+    """源码里有含 `<svg` 的字符串字面量（含 f-string 的常量段）。"""
+    return any(
+        isinstance(n, ast.Constant) and isinstance(n.value, str) and "<svg" in n.value.lower()
+        for n in ast.walk(tree)
+    )
+
+
+def _svg_hint() -> dict:
+    return {"kind": "raster_script", "library": LIB_SVG, "in_project": False, "path": None}
 
 
 def _pillow_drawn_hint() -> dict:

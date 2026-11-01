@@ -650,6 +650,23 @@ def test_other_libraries_do_not_get_the_pillow_table(library):
     assert "Pillow → Matplotlib 对照" not in text and "TAVOTTO_NEEDS_INPUT" not in text
 
 
+def test_svg_library_appends_the_svg_to_matplotlib_table():
+    """手写 SVG 来源（ADR 0143 修订 2026-11-01，反馈包 TVD-ZWV6）：表在硬性要求之后、工作副本说明之前；Pillow 表不出现。"""
+    text = _convert_text("svg")
+    assert "SVG → Matplotlib 对照" in text and "Pillow → Matplotlib 对照" not in text
+    assert "ax.set_ylim(H, 0)" in text and "TAVOTTO_NEEDS_INPUT:" in text
+    assert (
+        text.index("硬性要求")
+        < text.index("SVG → Matplotlib 对照")
+        < text.index("注意：当前工作目录")
+    )
+
+
+@pytest.mark.parametrize("library", ["pillow", "opencv", "plotly", "root", None])
+def test_other_libraries_do_not_get_the_svg_table(library):
+    assert "SVG → Matplotlib 对照" not in _convert_text(library)
+
+
 @pytest.mark.parametrize("language", ["r", "matlab"])
 def test_foreign_sources_never_get_the_pillow_table(language):
     assert "Pillow → Matplotlib 对照" not in _convert_text("pillow", language)
