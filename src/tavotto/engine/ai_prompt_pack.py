@@ -313,6 +313,16 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset(),
         "4. 不要运行脚本（渲染与校验由外部系统负责）；不要修改工作目录里的其他任何文件，只写上面那一个新文件。",
     ),
+    # 写入失败就停（所有来源共用）；R / MATLAB 来源另有“不要找安装”一条（真模型复现 TVD-BCZ0：模型会满盘找 R、写入被拒时换位置写）
+    "rule_write_fail": (
+        frozenset(),
+        "如果写入目标文件失败（权限被拒等），直接说明失败原因并停止，不要换到别的位置写。",
+    ),
+    "rule_foreign_no_search": (
+        frozenset({"language"}),
+        "这台机器上不运行 {language}，不要查找 {language} 的安装或源码，不要做全盘 / 主目录范围的搜索；"
+        "只在当前工作目录和给出的原项目目录里读文件。",
+    ),
     # --- Pillow 来源（ADR 0143 修订，2026-10-23）：library == "pillow" 时在硬性要求后追加的对照表；别的库不出现
     "pillow_table": (
         frozenset(),
@@ -525,9 +535,15 @@ def convert_prompt(
             _renumbered(_convert_render("rule_matplotlib"), 2, 4),
             _renumbered(_convert_render("rule_size"), 3, 5),
             _renumbered(_convert_render("rule_scope"), 4, 6),
+            "7. " + _convert_render("rule_foreign_no_search", language=foreign),
+            "8. " + _convert_render("rule_write_fail"),
         ]
     else:
-        lines += [*convert_requirements(), _convert_render("rule_scope")]
+        lines += [
+            *convert_requirements(),
+            _convert_render("rule_scope"),
+            "5. " + _convert_render("rule_write_fail"),
+        ]
     if not foreign and (library or "").lower() == "pillow":
         lines += ["", _convert_render("pillow_table")]
     lines += ["", _convert_render("note", project_root=project_root)]

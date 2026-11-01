@@ -2079,6 +2079,35 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(adoptConvert).not.toHaveBeenCalled()
     })
 
+    it('写入被拒（agent_write_denied）：一句话 + 一个主按钮「重试」', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'candidate.target', reason_code: 'agent_write_denied' }] } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      expect(panel().dataset.convertPhase).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('AI 没能写入转换工作区，没有生成新脚本。')
+      expect(primary()?.textContent).toBe('重试')
+    })
+
+    it('进行中：后端给 writing_long 只换进度行文字，事件恢复后换回；没有新增横条或弹窗', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null, activity: 'writing_long' } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await act(async () => {
+        useConvertStore.setState((s) => ({ entries: { ...s.entries, 'plot.py': { ...s.entries['plot.py']!, activity: 'writing_long' } } }))
+      })
+      expect(panel().dataset.convertPhase).toBe('running')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在生成较长的文件…')
+      await act(async () => {
+        useConvertStore.setState((s) => ({ entries: { ...s.entries, 'plot.py': { ...s.entries['plot.py']!, activity: null } } }))
+      })
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在生成可编辑版本…')
+    })
+
     it('Python 转换缺少参考时也能显式补充文件再重试', async () => {
       await mount()
       useUiStore.setState({ guideCard: 'card' })

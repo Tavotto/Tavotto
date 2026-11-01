@@ -74,6 +74,8 @@ export interface ConvertEntry {
   stoppedLate?: boolean
   /** 这一轮开始的时刻（ms）；运行中的卡片据此显示「已用 X 分钟」 */
   startedAt?: number
+  /** 运行中后端给的活动提示（`writing_long`）：只换进度行的文字；没有 / 恢复 = null */
+  activity?: 'writing_long' | null
 }
 
 interface ConvertState {
@@ -497,7 +499,12 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           throw e
         }
         if (!guard.still()) return
-        if (!sess.final && sess.status === 'running') continue
+        if (!sess.final && sess.status === 'running') {
+          // 只换进度行的文字：事件流静默已久且模型在写长文件时后端给 `writing_long`，事件一来就回到 null
+          const activity = sess.task?.activity === 'writing_long' ? 'writing_long' : null
+          if ((cur.activity ?? null) !== activity) set1(script, { activity })
+          continue
+        }
         const wasStopping = !!get().entries[script]?.stopping
         if (sess.task?.outcome === 'completed' && sess.status === 'done') {
           let status: ConvertStatus

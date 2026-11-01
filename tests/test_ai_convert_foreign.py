@@ -1380,3 +1380,23 @@ def test_a_missing_dependency_without_a_named_module_is_not_folded(env):
     sess = _wait(sid)
     assert sess["task"]["outcome"] == "failed"
     assert calls == [()], "没点名模块：不二次决定"
+
+
+def test_convert_prompts_forbid_searching_for_the_runtime_and_stop_on_write_failure():
+    """真模型复现 TVD-BCZ0：模型会满盘找 R、写入被拒时换位置写。R / MATLAB 来源加“不查找运行环境”，所有来源加“写失败就停”。"""
+    kw = {"script": "fig.R", "target": "fig_matplotlib.py", "reference": None, "project_root": "/p"}
+    r = ai_prompt_pack.convert_prompt(source_language="r", **kw)
+    m = ai_prompt_pack.convert_prompt(source_language="matlab", **kw)
+    py = ai_prompt_pack.convert_prompt(library="root", **kw)
+    for text, name in ((r, "R"), (m, "MATLAB")):
+        assert (
+            f"这台机器上不运行 {name}，不要查找 {name} 的安装或源码，不要做全盘 / 主目录范围的搜索"
+            in text
+        )
+        assert "只在当前工作目录和给出的原项目目录里读文件" in text
+    assert "不运行 MATLAB" not in r and "不运行 R，" not in m
+    for text in (r, m, py):
+        assert (
+            "如果写入目标文件失败（权限被拒等），直接说明失败原因并停止，不要换到别的位置写" in text
+        )
+    assert "不要查找" not in py, "Python 来源没有 R / MATLAB 运行环境这回事"

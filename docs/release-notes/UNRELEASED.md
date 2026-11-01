@@ -93,6 +93,10 @@ When the AI itself could not run (no connection, a rejected key, the runner exit
 
 In the export dialog, the large preview of a single figure that had edits applied (for example a script-run figure whose legend move was undone) could still show the last rendered image instead of the current edits, because enlarging the preview switched to a higher-resolution copy of the last render. The large preview now keeps the image rendered for the figure's current edits; only unedited figures switch to a sharper copy.
 
+## Converting long R or MATLAB scripts no longer times out early, and a blocked write is reported as such
+
+Converting a long R or MATLAB script to an editable Matplotlib version could run out of time (the limit was a flat 15 minutes), or end with the generic "the assistant didn't write the new script" even though the AI's write into the conversion workspace had been refused. The conversion time limit now grows with the length of the script (up to 30 minutes), and a refused write is reported as "The AI couldn't write to the conversion workspace" with a Retry button. The AI is also told not to search the whole machine for an R or MATLAB installation, and to stop instead of writing somewhere else when a write fails. While the AI is silently writing a long file, the progress line says "Writing a long file…" instead of looking stuck.
+
 ## "Rebuild as editable figure" stays on the current canvas (#1545)
 
 Rebuilding a PNG as an editable figure could jump to another canvas and open an older, already-edited figure from the same script with the same file name, while reporting that the figure had been redrawn. The rebuilt figure is now added next to the PNG on the canvas you started from, and the success message only appears when that happens.

@@ -947,8 +947,15 @@ function convertFlow(
       }
       // 转换要几分钟：满一分钟起说「已用 X 分钟」（卡片每 30 秒重绘一次，见 `useConvertTick`）
       const minutes = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 60_000) : 0
+      const long = c.activity === 'writing_long'
       return {
-        title: minutes >= 1 ? pt('convert.runningElapsed', { minutes }) : pt('convert.running'),
+        title: long
+          ? minutes >= 1
+            ? pt('convert.writingLongElapsed', { minutes })
+            : pt('convert.writingLong')
+          : minutes >= 1
+            ? pt('convert.runningElapsed', { minutes })
+            : pt('convert.running'),
         slot: <Progress />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>

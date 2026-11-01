@@ -2078,6 +2078,8 @@ def run(
         run_facts = (
             None if agent == ai_agents.BUILTIN_ID else _run_facts(agent, agent_cwd, cand, script)
         )
+        # 进行中的累计器给会话详情判“长时间静默的生成”（`get()` → `task.activity`）；结束后摘掉
+        sess["cli_live"] = run_facts
 
         def expire():
             # A silent process (or one holding a partial line) never reaches a
@@ -2086,7 +2088,9 @@ def run(
                 sess["status"] = "timeout"
                 _terminate(sess)
 
-        timer = threading.Timer(max(0.0, TIMEOUT_S - (time.time() - sess["started"])), expire)
+        # 转换任务按源脚本规模放宽（`ai_convert.convert_timeout_s`，envelope_for 写进候选）；其它任务仍是基线
+        limit_s = TIMEOUT_S + int(getattr(cand, "extras", {}).get("timeout_extra_s") or 0)
+        timer = threading.Timer(max(0.0, limit_s - (time.time() - sess["started"])), expire)
         timer.daemon = True
         timer.start()
         silence = _SilenceWatch(sid, emit, complete)
@@ -2129,11 +2133,15 @@ def run(
                         sess["failure_category"] = cli_failure.consume(err)
                 except (OSError, ValueError):
                     sess["failure_category"] = "other"
+            sess.pop("cli_live", None)
             snapshot = None
             if run_facts is not None:
                 try:
                     snapshot = run_facts.snapshot(_is_relay(endpoint))
                     sess.setdefault("cli_runs", []).append(snapshot)
+                    if cand is not None and hasattr(cand, "extras"):
+                        # 写入被拒的失败码要读它（`ai_convert.write_denied`）：提交前检查在进程结束之后才跑
+                        cand.extras["run_facts"] = ai_agents.merge_run_facts(sess["cli_runs"])
                 except Exception:  # noqa: BLE001 —— 事实采集不影响会话
                     snapshot = None
             _trace_agent_exit(trace, run_span, sess, proc, snapshot)
@@ -2986,6 +2994,7 @@ SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
         "taf",
         "trace",
         "cli_runs",
+        "cli_live",
     }
 )
 
@@ -3016,6 +3025,24 @@ def _session_dto(raw: dict) -> dict:
     return out
 
 
+#: 事件流静默超过这么久、且模型此刻在生成（不是在等命令），转换进度行改说“正在生成较长的文件…”
+LONG_WRITE_IDLE_MS = 45_000
+
+
+def _live_activity(live: dict) -> str | None:
+    """进行中的转换会话此刻的活动（闭集：`writing_long` 或 None）。判据只用 `CliRunFacts` 的结构化事实
+    （`ai_agents.CliRunFacts.generating_silent`），不匹配任何自由文本；事件一来静默清零，下一次轮询自然恢复。"""
+    if live.get("kind") != "convert" or live.get("status") != "running":
+        return None
+    facts = live.get("cli_live")
+    try:
+        if facts is not None and facts.generating_silent(LONG_WRITE_IDLE_MS):
+            return "writing_long"
+    except Exception:  # noqa: BLE001 —— 判不出就当没有
+        pass
+    return None
+
+
 def get(sid: str) -> dict | None:
     sess = SESSIONS.get(sid)
     if sess is not None:
@@ -3024,6 +3051,9 @@ def get(sid: str) -> dict | None:
         live["revert_available"] = (
             bool(snap) and Path(snap).is_file() and live.get("kind") != "convert"
         )
+        activity = _live_activity(live)
+        if activity is not None and isinstance(live.get("task"), dict):
+            live["task"] = {**live["task"], "activity": activity}
         return _session_dto(live)
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）

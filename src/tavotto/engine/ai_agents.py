@@ -646,6 +646,27 @@ class CliRunFacts:
         elif itype == "error" and done:
             self.errors += 1
 
+    def generating_silent(self, idle_ms: int) -> bool:
+        """模型在生成 / 写一个大文件、事件流已静默 ≥ `idle_ms`？
+
+        判据全是结构化事实：收到过事件、没有未完成的命令（`commands_open == 0`：不是在等命令跑完）、
+        最后一个事件不是终止类（`turn.completed` / `turn.failed` / `error`），且最后一个 item 是模型自己的产出
+        或已跑完的命令（`reasoning` / `agent_message` / `file_change` / 已完成的 `command_execution`，下一步是模型在写），
+        或刚开了新一轮（`turn.started`）；MCP 调用 / 联网搜索可能正在外部执行，不算。"""
+        if self.events == 0 or self.commands_open > 0:
+            return False
+        if self.last_event in ("turn.completed", "turn.failed", "error"):
+            return False
+        producing = self.last_item in (
+            "reasoning",
+            "agent_message",
+            "file_change",
+            "command_execution",
+        ) or (self.last_event == "turn.started")
+        if not producing:
+            return False
+        return (self._clock() - self._last) * 1000 >= idle_ms
+
     def _target_state(self) -> tuple[bool, int | None]:
         """工作区里目标文件此刻的状态：(是普通文件且不是符号链接, 字节数)。只看工作区根下的目标名，不带路径出门。"""
         if not self._target or not self._root:
