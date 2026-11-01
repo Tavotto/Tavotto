@@ -4234,7 +4234,9 @@ def exit_controlled_by_argv(source: str, exit_lines) -> bool:
     检查之下）。任一行满足下面之一即成立：
     * 位于某个 `if` / `while` / 三元的**条件为真那一侧**之下，且条件里读了 `sys.argv`
       （`if len(sys.argv) < 11: raise SystemExit("Usage: …")`）；
-    * 位于某个 `except` 处理块之下，且对应的 `try` 主体里读了 `sys.argv`（`try: argv[1] except IndexError: exit(…)`）。
+    * 位于某个 `except` 处理块之下，该块只接 `IndexError` / `LookupError`（`argv[i]` 越界那一类），且对应的 `try`
+      主体里读了 `sys.argv`（`try: argv[1] except IndexError: exit(…)`）。裸 `except` / `Exception` / `OSError` 不算：
+      同一个 try 里读数据文件失败也会走进去，补参数修不好（Codex #1605 P2）。
     「读 `sys.argv`」只认解析得到标准库 `sys` 的写法：`import sys [as s]` 的 `s.argv`、`from sys import argv [as a]`；
     名字被用户自己赋值 / 定义 / 当参数时不算。不成立：`else` 侧（条件为假才走到，空 argv 下与参数的关系说不清）、
     条件不读 argv、无条件退出、语法错、没有行号。判不出一律 False——保留 `script_exited`，宁可不归因。"""
@@ -4291,6 +4293,26 @@ def exit_controlled_by_argv(source: str, exit_lines) -> bool:
     def contains(node, line: int) -> bool:
         return getattr(node, "lineno", 0) <= line <= getattr(node, "end_lineno", 0)
 
+    def catches_only_index_errors(handler) -> bool:
+        """`except IndexError` / `except LookupError` / 只由它们组成的元组：接的就是 `argv[i]` 越界。
+        裸 `except`、`Exception`、`OSError`… 也接住了与参数无关的错误（Codex #1605 P2：同一个 try 里还读了数据文件）。"""
+        typ = handler.type
+        elts = typ.elts if isinstance(typ, ast.Tuple) else [typ]
+        if not elts or any(e is None for e in elts):
+            return False
+
+        def name(e) -> str | None:
+            if isinstance(e, ast.Name):
+                return None if e.id in shadowed else e.id
+            if isinstance(e, ast.Attribute) and isinstance(e.value, ast.Name):
+                return e.attr if e.value.id == "builtins" else None
+            return None
+
+        # 元组里可以混别的「越界类」查找错误（KeyError 等同属 LookupError），但每一项都必须是这一族
+        return all(name(e) in ("IndexError", "LookupError", "KeyError") for e in elts) and any(
+            name(e) in ("IndexError", "LookupError") for e in elts
+        )
+
     def walk(node, line: int) -> bool:
         for child in ast.iter_child_nodes(node):
             if not contains(child, line):
@@ -4306,6 +4328,7 @@ def exit_controlled_by_argv(source: str, exit_lines) -> bool:
             if (
                 isinstance(node, try_nodes)
                 and child in node.handlers
+                and catches_only_index_errors(child)
                 and any(reads_argv(stmt) for stmt in node.body)
             ):
                 return True

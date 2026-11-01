@@ -699,6 +699,28 @@ def test_reading_argv_does_not_make_an_unrelated_exit_an_argument_problem(figs):
         ("sys = object()\nif len(sys.argv) < 2:\n    raise SystemExit(1)\n", [3], False),
         # 不成立：try 里不读 argv
         ("import sys\ntry:\n    a = int('x')\nexcept ValueError:\n    sys.exit(1)\n", [5], False),
+        # 不成立（Codex #1605 P2）：try 里读了 argv 开关、也读了数据，except 接的是文件错误——补参数修不好它，
+        # 判成缺参数还会抢掉「缺数据 → 指认文件」的出路
+        (
+            "import sys\ntry:\n    v = '--verbose' in sys.argv\n    open('data.csv')\n"
+            "except OSError:\n    sys.exit(1)\n",
+            [6],
+            False,
+        ),
+        # 只认 `argv[i]` 越界的那类：IndexError / LookupError（也可在元组里）
+        (
+            "import sys\ntry:\n    a = sys.argv[1]\nexcept LookupError:\n    sys.exit(1)\n",
+            [5],
+            True,
+        ),
+        (
+            "import sys\ntry:\n    a = sys.argv[1]\nexcept (IndexError, KeyError):\n    sys.exit(1)\n",
+            [5],
+            True,
+        ),
+        # 不成立：裸 except / Exception 也接住了别的错误
+        ("import sys\ntry:\n    a = sys.argv[1]\nexcept Exception:\n    sys.exit(1)\n", [5], False),
+        ("import sys\ntry:\n    a = sys.argv[1]\nexcept:\n    sys.exit(1)\n", [5], False),
         # 判不出：语法错 / 没有行号
         ("if (:\n", [1], False),
         ("import sys\nif len(sys.argv) < 3:\n    sys.exit('u')\n", [], False),

@@ -393,7 +393,9 @@ order: 50
 - **手写的参数检查也是 `script_needs_arguments`（TVD-VB36）**：不用解析库、自己数 `sys.argv` 不够就退出
   （`if len(sys.argv) < 11: raise SystemExit("Usage: …")`、`try: argv[1] except IndexError: exit(…)`）。判据只有
   `figcapture.exit_controlled_by_argv`（AST：任一用户脚本帧在「条件读 `sys.argv` 的 if / while 为真那一侧」或「try 主体读
-  `sys.argv` 的 except」之下；else 侧、条件不读 argv、`sys` 被顶替一律不算），不读 SystemExit 的文字；没有 `parse_kind`。
+  `sys.argv`、且只接 `IndexError` / `LookupError` 的 except」之下；else 侧、条件不读 argv、`sys` 被顶替、裸 except /
+  `Exception` / `OSError` 一律不算——同一个 try 里读数据失败不能变成「缺参数」，那会抢掉缺数据指认的出路），
+  不读 SystemExit 的文字；没有 `parse_kind`。
   以前它是 `script_exited`（「去掉那句 exit」），界面不给「运行参数」。看护：`tests/test_worker_exit_report.py`。
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
