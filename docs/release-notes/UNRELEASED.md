@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+
+## Legend font size in the properties panel now resizes the whole legend, like the floating toolbar
+
+Changing a legend's size in the properties panel used to change only the text of each entry: the legend box (padding, row spacing, swatch length) stayed at the old size, and the floating toolbar above the legend kept showing the old value (for example 10 pt in the panel, 8 pt on the toolbar). The panel now changes the legend's own font size, the same property the toolbar and corner-drag scaling change, so the whole legend scales and both places show the same number. In projects where an earlier version had set the entries' sizes from the panel, the size field shows mixed values until you type a size; **Reset** in that row now clears both the legend's size and the entries' sizes in one undo step.
 ## Tavotto launched from Codex Desktop (a Windows MSIX app) no longer keeps a separate copy of your data
 
 On Windows, when Tavotto was started from the Codex desktop app, recent projects, settings, managed environments and caches could end up in a private per-package folder (`%LOCALAPPDATA%\Packages\...\LocalCache`), so the app showed a different state than when started from the Start menu. Tavotto now starts itself outside that package environment, when the Codex plugin launches it (the `tavotto open` command now re-runs itself outside the package before probing a script or writing anything) and, as a fallback, when the app notices it was started inside one (the launcher now sees whether the replacement process actually came up, instead of treating the hand-over as success). Data that was already written into the package folder is not moved automatically. Diagnostic bundles now say whether the app was running with a package identity and whether its data folders are under `Packages`.

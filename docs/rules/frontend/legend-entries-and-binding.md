@@ -20,8 +20,9 @@ order: 100
   （判据与引擎 `effective_binding` 同一条——任一 `handle_*` override 在即
   custom，**不是**「值和源一不一样」）、「恢复跟随」的计划。
   `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与 `engine/overrides` 严格同源。
-* **图例卡**（`inspector/LegendCard.tsx`）承接 `fontsize`（Typography 批量作用
-  于全部项）与 `entry_order`（条目列表的上下移动；2026-10-07 起是 ⋯ 菜单 / ⌥↑⌥↓ / 拖动柄三个入口、
+* **图例卡**（`inspector/LegendCard.tsx`）承接 `fontsize`（2026-11-01 起：字号读写**图例整体**的
+  `fontsize`，与浮动栏 / 拖角缩放同一个属性，`inspector/legendTypography.ts`；字体 / 粗斜 / 颜色仍由 Typography
+  批量作用于全部项）与 `entry_order`（条目列表的上下移动；2026-10-07 起是 ⋯ 菜单 / ⌥↑⌥↓ / 拖动柄三个入口、
   同一个 `moveTo` 写一次 `entry_order`；整张列表一个 Tab 停靠点，⋯ 是 `RowMenu tabStop={false}`、
   键盘经 ⇧F10 / ContextMenu 键开菜单；拖动会话属于一个图例：条目列表按「面板 + 图例 gid」取 key，
   卸载或换图例都作废进行中的拖动、迟到的松手不写不进历史，Codex #829），通用列表让出这两条
