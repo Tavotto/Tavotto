@@ -81,6 +81,10 @@ In the export dialog, the large preview of a single figure that had edits applie
 
 Rebuilding a PNG as an editable figure could jump to another canvas and open an older, already-edited figure from the same script with the same file name, while reporting that the figure had been redrawn. The rebuilt figure is now added next to the PNG on the canvas you started from, and the success message only appears when that happens.
 
+## New figures no longer pile on top of each other; fewer pop-up hints
+
+A figure added without a drop position now always lands in free space: it is scaled down (to at most 40% smaller) to fit a gap, and only then offset, instead of landing almost exactly on top of the first one. Hints no longer float over the dark backdrop of the export, command palette or contact dialogs, and come back after the dialog closes. "Render finished" only appears when it replaces a visible failure message, the "Problems panel can locate objects" hint waits for the first problem that can actually be located, the canvas-size hint is skipped when the right panel is already on the Canvas page (and, while editing a single figure, that page now explains the export size), and the double-click hint no longer appears once you are editing inside a figure. After mouse use, pressing Enter or closing a menu no longer draws the thick blue keyboard focus ring. (#1557)
+
 ## First run on a fresh machine no longer fails with "session s-1 does not exist"
 
 When Tavotto ran a script for the very first time on a machine (matplotlib builds its font cache, so the render process takes about ten seconds to start) and a second try-run of the same script started meanwhile, for example from the AI repair button, the second one closed the session the first one had just opened. The first run then failed with "session s-1 does not exist (workerd may have restarted), please reopen" even though the script was fine. A try-run now shares a session that another run has just opened and not finished building yet, instead of closing it.

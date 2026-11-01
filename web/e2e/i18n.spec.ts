@@ -122,7 +122,8 @@ for (const L of LOCALES) {
 
       // 撤销按钮的无障碍名带上「撤销什么」——那句话来自历史标签，
       // 而历史标签存的是描述符，**不是**当时那门语言的字符串
-      const undo = page.getByRole('button', { name: new RegExp(L.undo) })
+      // 顶栏那颗：放图后的提示条里也有一颗「撤销」（撤回这次放置），按名字会命中两颗
+      const undo = page.locator('[data-history-action="undo"]')
       await expect(undo).toBeEnabled()
       await expect(undo).toHaveAttribute('aria-label', new RegExp(L.undo))
     })
