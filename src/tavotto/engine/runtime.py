@@ -744,6 +744,24 @@ def _owned_cache_root(python: str | os.PathLike | None) -> str | None:
     return None
 
 
+def pip_child_env(
+    python: str | os.PathLike | None, env: dict[str, str] | None
+) -> dict[str, str] | None:
+    """Tavotto 自管的 **pip 子进程**（装 / 卸 / 查找 / 包管理探测）的环境：在 `owned_env` / 激活之后再补
+    `PYTHONUTF8=1` 与 `PYTHONIOENCODING=utf-8`。我们按 UTF-8 解码 pip 的输出，而中文 Windows 上 Python 的
+    标准流默认是 cp936，不补就乱码（日志、错误分类都会受影响）。
+
+    **只能用在 pip 子进程上，不进 `owned_env`**：`owned_env` 同时是用户脚本 worker 的环境来源，UTF-8 模式会
+    改变脚本里 `open()` 的默认编码，等于改了用户脚本的行为。别人的环境（`is_owned_python` 为假，`env` 通常是
+    None = 原样继承）不动。"""
+    if env is None or not is_owned_python(python):
+        return env
+    out = dict(env)
+    out["PYTHONUTF8"] = "1"
+    out["PYTHONIOENCODING"] = "utf-8"
+    return out
+
+
 def is_owned_python(python: str | os.PathLike | None) -> bool:
     """这个解释器是不是 **Tavotto 自己建的**：数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录里的
     （受管环境各代、源码模式自建的 `worker-env/`、私有 Python），以及 Codex 插件自管运行时的 venv
