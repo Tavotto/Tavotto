@@ -990,6 +990,7 @@
       "repairFolder": "修复权限",
       "skipFolder": "跳过这个文件夹重跑",
       "useBuiltinPython": "改用 {{product}} 自带的 Python",
+      "switchPython": "改用 {{name}}",
       "clearReuse": "不沿用",
       "runAnyway": "仍然运行",
       "runAgain": "再运行",
