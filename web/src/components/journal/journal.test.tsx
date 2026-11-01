@@ -115,7 +115,7 @@ describe('出处卡', () => {
   it('没有快照：摘录排在白纸上，命中的数标 mark；底栏是结论 + 「期刊 · 域名 · 日期 · PDF」+ 打开原网页 ↗', async () => {
     await mount(<SourceButton journal="Fixture Press" entries={entries('fx-alpha', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
-    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 ppi')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 dpi')
     expect(q('[data-journal-quote]')?.className).toContain('bg-paper')
     const mark = q('[data-journal-quote] mark')
     expect(mark?.textContent).toBe('600')
@@ -151,7 +151,7 @@ describe('出处卡', () => {
     expect(img.getAttribute('width')).toBe('1080')
     expect(box!.querySelector('[aria-hidden]')).not.toBeNull() // 渐隐层
     expect(q('[data-journal-quote]')).toBeNull()
-    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 300 ppi')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 300 dpi')
     expect(q('[data-journal-meta]')?.textContent).toBe('Nature Energy · www.nature.com · 2026-10-31')
     expect(q('[data-journal-open]')).not.toBeNull()
   })

@@ -140,7 +140,7 @@ function unitOf(path: string): string {
   const last = path.split('.').at(-1) ?? ''
   if (/_mm$/.test(last)) return 'mm'
   if (/_pt$/.test(last)) return 'pt'
-  if (/dpi/.test(last)) return 'ppi'
+  if (/dpi/.test(last)) return 'dpi'
   return ''
 }
 
@@ -181,7 +181,7 @@ export function valueText(path: string, s: JournalFieldSource): string {
   return v == null ? '' : String(v)
 }
 
-/** 出处卡的结论（底栏第一行）：「字段 值」，如「位图分辨率 ≥ 300 ppi」。栏位的值自带名字，不再加字段名。 */
+/** 出处卡的结论（底栏第一行）：「字段 值」，如「位图分辨率 ≥ 300 dpi」。栏位的值自带名字，不再加字段名。 */
 export function cardConclusion(path: string, s: JournalFieldSource): string {
   const field = path === 'page_columns' ? '' : fieldLabel(path)
   return [field, valueText(path, s)].filter(Boolean).join(' ')

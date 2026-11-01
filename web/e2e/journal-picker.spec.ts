@@ -134,13 +134,13 @@ test(
     await shell.locator('[data-section="spec"]').click()
     await page.locator('[data-disclosure="row"] button', { hasText: '期刊要求' }).click()
     const row = page.locator('[data-journal-row="min_raster_dpi"]')
-    await expect(row).toContainText('300 ppi')
+    await expect(row).toContainText('300 dpi')
     await row.locator('[data-journal-source]').click()
 
     const card = page.locator('[data-journal-card]')
     await expect(card).toBeVisible()
     // 结论是底栏第一行（不再有单独的顶部标题句）
-    await expect(card.locator('[data-journal-sentence]')).toHaveText('位图分辨率 ≥ 300 ppi')
+    await expect(card.locator('[data-journal-sentence]')).toHaveText('位图分辨率 ≥ 300 dpi')
     const box = (await card.boundingBox())!
     const vp = page.viewportSize()!
     expect(box.x).toBeGreaterThanOrEqual(0)
