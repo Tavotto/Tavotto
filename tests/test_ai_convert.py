@@ -972,11 +972,47 @@ def test_envelope_budget_and_watchdog_extra_follow_the_script_size(env):
     assert envelope.budget.max_wall_s == 902 and small.extras["timeout_extra_s"] == 2
 
 
-def test_other_tasks_keep_the_baseline_wall_budget():
-    """改图等其它 AI 任务的信封不受转换放宽影响。"""
-    assert ai_tasks.Budget().max_wall_s == 900.0
-    src = Path(ai_bridge.__file__).read_text(encoding="utf-8")
-    assert "timeout_extra_s" in src  # 只从候选的 extras 取额外时限，没有候选（普通任务）= 0
+def test_watchdog_timer_uses_baseline_for_plain_tasks_and_scaled_limit_for_convert(
+    env, monkeypatch
+):
+    """行为测试：捕获看门狗 `threading.Timer` 实际建出来的时限。
+
+    普通（非转换）AI 任务 = TIMEOUT_S（900）；转换任务 = convert_timeout_s(行数)。
+    Timer 只记录时限并照常委托给真 Timer；容差只吸收起子进程的耗时（距两档时限差 600 s）。"""
+    intervals: list[float] = []
+    real_timer = threading.Timer
+
+    def recording_timer(interval, *args, **kwargs):
+        intervals.append(interval)
+        return real_timer(interval, *args, **kwargs)
+
+    monkeypatch.setattr(ai_bridge.threading, "Timer", recording_timer)
+    tol = 120.0
+
+    # 普通任务：不带 convert，候选没有 timeout_extra_s
+    sid = ai_bridge.run("codex", "fig.py", "改一下", str(env["figs"]))
+    _wait(sid)
+    assert len(intervals) == 1
+    assert ai_bridge.TIMEOUT_S - tol < intervals[0] <= ai_bridge.TIMEOUT_S == 900
+
+    # 转换任务：300 行源脚本 -> 1500 s
+    intervals.clear()
+    (env["figs"] / "fig.py").write_bytes(b"x = 1\n" * 300)
+    sid = _run(env)
+    _wait(sid)
+    assert len(intervals) == 1
+    want = ai_convert.convert_timeout_s(300)
+    assert want == 1500
+    assert want - tol < intervals[0] <= want
+
+    # 封顶：远超 450 行也只放到 1800 s
+    intervals.clear()
+    (env["figs"] / "fig.py").write_bytes(b"x = 1\n" * 5000)
+    sid = _run(env)
+    _wait(sid)
+    assert len(intervals) == 1
+    assert ai_convert.convert_timeout_s(5000) == 1800
+    assert 1800 - tol < intervals[0] <= 1800
 
 
 def test_live_activity_is_only_for_running_convert_sessions():
