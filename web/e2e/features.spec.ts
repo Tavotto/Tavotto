@@ -855,6 +855,8 @@ test(
     await addText.click()
     await expect(objects).toHaveCount(1)
     await expectInViewport(page, objects, '新建的画布文字')
+    // 先等命令面板退场完：退场途中焦点还在它的搜索框里，紧跟着的 Esc / ⌘E 落在输入框上，⌘E 被当成打字放过
+    await expect(addText).toHaveCount(0)
     await page.keyboard.press('Escape')
     await page.keyboard.press('ControlOrMeta+e')
 
