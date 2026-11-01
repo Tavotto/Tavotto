@@ -146,10 +146,11 @@ def test_a_target_written_by_a_shell_command_is_seen_on_disk(tmp_path):
             ),
         ],
     )
-    (cwd / "fig_matplotlib.py").write_text("import matplotlib\n", encoding="utf-8")
+    body = b"import matplotlib\n"  # 字节写入：Windows 上 write_text 会把 \n 换成 \r\n，字节数就对不上了
+    (cwd / "fig_matplotlib.py").write_bytes(body)
     snap = facts.snapshot(False)
     assert snap["file_changes"] == 0 and snap["target_touched"] is False
-    assert snap["target_on_disk"] is True and snap["target_bytes"] == len("import matplotlib\n")
+    assert snap["target_on_disk"] is True and snap["target_bytes"] == len(body)
 
 
 def test_target_state_ignores_symlinks_and_missing_files(tmp_path):
