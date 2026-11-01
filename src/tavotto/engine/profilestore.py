@@ -842,7 +842,13 @@ def resolve_spec(profile_id: str | None = None, journal: dict | None = None) -> 
     # **先按 id 分流，不靠捕获异常分流。** `load()` 抛 ProfileError 有两个成因
     # （id 不认识 / journal 覆盖不合法），吞掉它去查用户清单会把后者也说成
     # 「没有这个出版规范」——用户改了一个字段，收到的是一句指错方向的话。
-    if any(b["id"] == pid for b in builtins(KIND_SPEC)):
+    # 「是不是内置」问**可解析**（含 listed:false 的底，如 journal-base-v1），不是问
+    # 「可列出」——否则按期刊预检 / 导出时底 id 被当成用户自建，找不到就 404。
+    try:
+        resolvable = profiles_mod.all_profile_ids()
+    except profiles_mod.ProfileError:
+        resolvable = []
+    if pid in resolvable:
         try:
             return profiles_mod.load(pid, journal)
         except profiles_mod.ProfileError as exc:

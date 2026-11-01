@@ -560,8 +560,7 @@ export default interface Resources {
     },
     "contact": {
       "addressCopied": "已复制 {{address}}",
-      "attachLabel": "附件（选填）",
-      "attachPick": "添加附件",
+      "attachPick": "添加截图/文件",
       "attachRemove": "移除 {{name}}",
       "bodyCount": "{{count}} / {{max}}",
       "bodyLabel": "想说的话",
@@ -691,7 +690,10 @@ export default interface Resources {
       "title": "联系作者",
       "unreadDot": "有新回信",
       "wecom": "企业微信",
+      "wecomLead": "也可以",
+      "wecomLink": "加企业微信",
       "wecomScan": "微信扫码添加",
+      "wecomTail": "直接聊",
       "write": "写信"
     },
     "draftGuard": {
@@ -705,6 +707,7 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
+      "advancedLabel": "高级",
       "batchNames": "每张图用各自的名字",
       "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
       "cancelExport": "取消导出",
@@ -813,7 +816,7 @@ export default interface Resources {
       "preflightFailedKept": "无法完成预检。下面的结论来自更早一次，可能已过时。",
       "preflightOk": "按「{{spec}}」未发现问题",
       "previewFit": "适合大小",
-      "previewFlagged": "有检查提示",
+      "previewFlagged": "有要改的项",
       "previewTabs": "预览",
       "previewWhole": "整版",
       "profileAria": "出版规范",
@@ -1038,13 +1041,17 @@ export default interface Resources {
       },
       "shell": {
         "back": "返回上一步",
+        "backToWelcome": "返回欢迎页",
         "count": "{{n}} / {{total}}",
         "externalFile": "当前为示例教程，完成后可以导入自己的脚本。",
         "finish": "完成教程",
         "label": "{{product}} 新手教程",
         "next": "下一步",
         "progress": "教程进度：第 {{n}} 步，共 {{total}} 步",
-        "skip": "跳过教程"
+        "skip": "跳过教程",
+        "waitImport": "拖入脚本后继续",
+        "waitLegend": "拖动图例后继续",
+        "waitTitle": "调大标题字号后继续"
       },
       "title": {
         "controlTip": "点 + 或输入更大的字号",
@@ -1069,19 +1076,9 @@ export default interface Resources {
         },
         "codeLabel": "示例脚本 {{name}}（节选）",
         "demoLabel": "从绘图脚本到可以直接调整的科研图",
-        "feature": {
-          "align": "对齐",
-          "axes": "坐标轴",
-          "colorbar": "色条",
-          "layout": "整体布局",
-          "legend": "图例",
-          "more": "更多",
-          "text": "文字"
-        },
-        "featuresLabel": "可以直接调整的图表元素",
+        "features": "图例、坐标轴、色条、文字、对齐、整体布局都能直接改",
         "figureLabel": "这份脚本画出的反应动力学图：标题、图例和位置都可以直接调整",
         "openWorkspace": "直接进入工作台",
-        "smile": ":)",
         "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
         "title": "直接在图上改"
       }
@@ -1198,7 +1195,7 @@ export default interface Resources {
         },
         "sub-labels": {
           "keywords": "label abc xhbq xuhao",
-          "label": "添加 (a)(b)(c) 标签"
+          "label": "添加序号 (a)(b)(c)"
         },
         "tutorial-reset": {
           "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
@@ -2083,9 +2080,7 @@ export default interface Resources {
         "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
         "diagramOff": "示意：只移动子图，标题与图例留在原地",
         "diagramOn": "示意：拖动子图时，标题与图例随之移动",
-        "dragCompanions": "移动子图时，同步移动标题和图例",
-        "more": "画布设置",
-        "openCanvasSettings": "打开画布设置"
+        "dragCompanions": "移动子图时，同步移动标题和图例"
       },
       "connectAi": {
         "advanced": "高级",
@@ -2365,13 +2360,13 @@ export default interface Resources {
         "groupLearning": "学习",
         "groupSidebars": "侧栏",
         "language": "界面语言",
-        "layout": "界面乱了？",
+        "layout": "重置界面布局",
         "layoutDesc": "侧栏宽度、开合与画布偏好回到默认，当场生效",
         "layoutReset": "界面布局已恢复默认",
         "resetLayout": "恢复默认",
         "theme": "外观",
         "themeDark": "深色",
-        "themeDesc": "画布上的页面与图保持印刷时的颜色",
+        "themeDesc": "深色模式下画布纸面仍为白色，与导出一致",
         "themeLight": "浅色",
         "themeSystem": "跟随系统"
       },
@@ -2611,7 +2606,6 @@ export default interface Resources {
         "clear": "清除搜索",
         "kw": {
           "agents": "助手 codex claude agent 默认",
-          "canvas": "画布 网格 吸附 标尺 参考线",
           "contact": "企业微信 微信 联系我们 联系维护者 反馈",
           "diagnostics": "诊断 报告 日志 导出 问题",
           "formats": "格式 pdf png svg tiff eps",
@@ -2925,6 +2919,7 @@ export default interface Resources {
       "noneHere": "这张画布还没有节点",
       "noneHereFigure": "这张图还没有节点",
       "noneHereHint": "项目里另有 {{n}} 个节点（来自其他画布或来源未知），切到「全部画布」可以看到。",
+      "noneHereLayout": "这个排版还没有节点",
       "overlayHint": "底图 = 那一刻；描边 = 当前画布",
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewTitle": "预览：{{time}} {{name}}",
@@ -2934,20 +2929,30 @@ export default interface Resources {
       "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
       "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
       "restoreHistory": "恢复排版节点「{{name}}」",
+      "restoreLayoutBody": "画布上会换成这一版的 {{n}} 张图（{{names}}），现在的内容先存成「恢复前」，可以按 {{undo}} 撤销。",
+      "restoreLayoutBodyMore": "画布上会换成这一版的 {{n}} 张图（{{names}} 等），现在的内容先存成「恢复前」，可以按 {{undo}} 撤销。",
+      "restoreLayoutTitle": "恢复成 {{n}} 张图的排版？",
       "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
       "restoreMissingCanvasTitle": "原画布已不存在",
       "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
       "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
+      "restoreOtherFigureBody": "这一版属于图「{{from}}」。恢复会切到「{{from}}」，不动当前这张图「{{to}}」。",
+      "restoreOtherFigureTitle": "恢复图「{{name}}」？",
+      "restoreReplaceFigureBody": "当前的图「{{to}}」会先存成「恢复前」再被换掉，可以按 {{undo}} 撤销。",
+      "restoreReplaceFigureTitle": "换成图「{{name}}」？",
+      "restoreReplaceFiguresBody": "画布上现在的 {{m}} 张图会先存成「恢复前」，再换成这一张，可以按 {{undo}} 撤销。",
       "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
       "restoreUnknownCanvasTitle": "这个节点没有来源画布",
       "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
       "save": "存为命名节点",
       "saved": "已把现在存为命名节点「{{name}}」",
       "scopeAll": "全部画布",
-      "scopeAllFigures": "全部",
+      "scopeAllFigures": "全部图",
       "scopeCanvas": "这张画布",
       "scopeFigure": "这张图",
       "scopeLabel": "显示哪张画布的节点",
+      "scopeLayout": "这个排版",
+      "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开",
       "sideCurrent": "当前",
       "sideMoment": "那一刻",
       "summary": {
@@ -3270,6 +3275,7 @@ export default interface Resources {
       "script_edit_self_check_failed": "改写后的自检没有通过，脚本没有被修改。",
       "script_edit_token_invalid": "这次确认已失效，脚本没有被修改。请重新预览。",
       "script_edit_unreadable": "这份脚本的编码或语法读不准，Tavotto 不改它。",
+      "script_entry_missing": "这个脚本被改写过，登记的入口函数已经不在了。",
       "script_error": "脚本执行失败：{{error}}",
       "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
       "script_hardlinked": "脚本有另一个硬链接名字（{{script}}），替换会把两者断开，Tavotto 不改它。",
@@ -3332,6 +3338,7 @@ export default interface Resources {
       "version_moment_invalid": "不认识的关键时刻：{{moment}}",
       "version_name_too_long": "节点名字最长 {{max}} 个字，这次没有保存。",
       "version_thumb_invalid": "节点缩略图格式不对或太大，没有保存。",
+      "version_thumb_write_failed": "节点缩略图没能保存，这一版先用草图代替。",
       "versions_unreadable": "无法读取版本历史，这次检查点没有写入。磁盘上的历史没有改动。",
       "workdir_confirmation_required": "要先选择脚本的运行目录",
       "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
@@ -3784,6 +3791,9 @@ export default interface Resources {
       "fontBelowFloor": "图内文字的有效字号 {{effective}} pt 低于绝对下限 {{floor}} pt。",
       "fontFamilySubstituted": "图内文字用 {{family}}，规范要求 {{want}}。",
       "fontFamilySubstitutedKnown": "图内文字用 {{family}}，规范要求 {{want}}；该字体是常见替代品，说明目标字体未安装。",
+      "fontSizeAdvisedBody": "{{journal}} 说明 {{body}} pt 为正文最小字号（原文：{{quote}}）",
+      "fontSizeAdvisedBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号（原文：{{quote}}）",
+      "fontSizeAdvisedScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号（原文：{{quote}}）",
       "fontTooLarge": "图内文字的有效字号 {{effective}} pt 超过 {{max}} pt，已大于正文字号。",
       "fontTooSmall": "图内文字的最终有效字号 {{effective}} pt 低于规范下限 {{min}} pt",
       "frameWidthOffPreset": "外框线宽的有效值 {{effective}} pt 不在规范档位 {{presets}} pt 上。",
@@ -3800,7 +3810,7 @@ export default interface Resources {
       "outsideMargin": "对象越过了 {{margin}} mm 安全区页边距",
       "overlap": "图互相重叠，确认是有意的压盖再导出",
       "pageAspect": "页面比例 {{ratio}}（{{w}} × {{h}} mm）不在规范允许的 {{allowed}} 之内",
-      "pageWidth": "页面宽 {{actual}} mm 不是规范里的单栏/双栏宽度（{{want}} mm）",
+      "pageWidth": "页面宽 {{actual}} mm 不是规范里的栏宽（{{columns}} mm）",
       "paletteLineMarkers": "{{count}} 条曲线均无标记，黑白打印或色觉障碍读者难以区分。可添加标记或使用不同线型。",
       "paletteSemantic": "色谱 {{cmap}} 不在推荐色系里（按 sequential / diverging / categorical 语义选：{{url}}）。",
       "panelTextNotVerifiable": "这张矢量图还没有引擎 manifest（未渲染或非脚本产物），图内文字字号与字体无法自动核验。",
@@ -3953,6 +3963,7 @@ export default interface Resources {
         "fit-without-ci": "拟合曲线没有置信区间",
         "font-below-absolute-floor": "字号低于绝对下限",
         "font-family-substituted": "字体被替换",
+        "font-size-recommended": "字号低于期刊说明的建议值",
         "font-too-large": "字号偏大",
         "font-too-small": "字号偏小",
         "hidden": "对象已隐藏",
@@ -6930,6 +6941,11 @@ export default interface Resources {
       "issueLastDoc": "上次的排版没打开",
       "issueTooNew": "排版版本较新",
       "more": "更多",
+      "moreGroup": {
+        "file": "文件",
+        "help": "帮助",
+        "view": "视图"
+      },
       "moreWithUpdate": "更多（有新版本）",
       "newBlankDocument": "新建空白排版",
       "noOtherDocuments": "暂无其他排版",

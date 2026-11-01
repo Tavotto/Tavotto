@@ -775,6 +775,9 @@ SCRIPT_INPUT_TIMEOUT = "script_input_timeout"
 #: 脚本要读的文件不存在，且说得出是哪个（ADR 0106）：界面据此请用户指认，不是笼统的 script_error。
 MISSING_INPUT = "missing_input"
 SCRIPT_EXITED = "script_exited"
+#: 登记的入口函数在脚本里已经不存在（脚本被改写、注册表里的 `entry` 没跟上），且入口没有在运行前被纠正过
+#: （`engine/entryfresh` 才是纠正的唯一出处）。与脚本自己的 `AttributeError` 分开：这不是脚本的错。
+SCRIPT_ENTRY_MISSING = "script_entry_missing"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
@@ -1762,7 +1765,15 @@ class Worker(wireproto.V1Handler):
                             )
                         else:
                             module = importlib.import_module(self.script.stem)
-                    getattr(module, self.entry)()
+                    entry_fn = getattr(module, self.entry, None)
+                    if entry_fn is None:
+                        raise ProtocolError(
+                            SCRIPT_ENTRY_MISSING,
+                            f"脚本里没有登记的入口函数 {self.entry}（脚本可能被改写过），Tavotto 没有运行它。",
+                            retryable=False,
+                            extra={"entry": self.entry},
+                        )
+                    entry_fn()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
                     # 被拦下的操作之后观察到不同的世界而退出：原因是守卫，不是脚本自己想退（P01a）

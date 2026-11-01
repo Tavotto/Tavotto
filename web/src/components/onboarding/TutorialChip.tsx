@@ -13,11 +13,17 @@ import { useOnboardingStore } from '@/store/onboardingStore'
  * 点右边的 × 关掉。两者都记下 `welcomeSeenAt`，以后不再出现。**不进文档流**，只淡入（与 `BuildMismatchChip` 同款）；
  * 教程层开着时不画（底下 inert）。窄于 900 只留圆点（短语给读屏）。
  */
-export function TutorialChip() {
-  const { t } = useTranslation(['workspace', 'common'])
+/** 胶囊此刻是否在显示：顶栏「⋯」菜单据此不重复列「开始教程」（判据只此一处） */
+export function useTutorialChipVisible(): boolean {
   const pending = useOnboardingStore((s) => s.status === 'not_started' && s.welcomeSeenAt === null)
   const surface = useOnboardingStore((s) => s.surface)
-  if (!pending || surface !== 'none') return null
+  return pending && surface === 'none'
+}
+
+export function TutorialChip() {
+  const { t } = useTranslation(['workspace', 'common'])
+  const visible = useTutorialChipVisible()
+  if (!visible) return null
   const label = t('workspace:tutorialChip.label')
   return (
     <span

@@ -11,13 +11,14 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { backendErrorText } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
-import { abbreviateHome } from '@/lib/pathDisplay'
+import { abbreviateHome, dirTail } from '@/lib/pathDisplay'
 import { applyProjectSettingsPatch, useProjectSettingsPending } from '@/lib/projectSettingsPatch'
 import { t as translate } from '@/i18n'
 import { useProjectStore } from '@/store/projectStore'
 import { DirBrowser } from './DirBrowser'
 import { FormRow } from './FormRow'
 import { Button } from './ui/Button'
+import { TruncateMiddle } from './ui/TruncateMiddle'
 
 /** 目录的上一级（去掉末级）；根 / 盘符根 / 没有上一级时 undefined */
 export function parentDir(dir: string): string | undefined {
@@ -29,12 +30,33 @@ export function parentDir(dir: string): string | undefined {
   return /^[A-Za-z]:$/.test(parent) ? parent + dir[i] : parent
 }
 
+/**
+ * 位置的显示串：位于项目文件夹里 → `项目名 / 相对路径`（一眼认出是哪个项目，不再被长前缀从左挤掉）；
+ * 项目外（或没有项目信息）→ null，由调用方退化为「家目录缩成 ~ + 中间省略」。只用于显示，全路径在 title。
+ */
+export function projectRelativeLocation(
+  exportDir: string,
+  projectDir: string | null | undefined,
+  projectName: string | null | undefined,
+): string | null {
+  if (!projectDir) return null
+  const root = projectDir.replace(/[\\/]+$/, '')
+  if (!root || !exportDir.startsWith(root)) return null
+  const c = exportDir.charAt(root.length)
+  const rest = exportDir.slice(root.length).replace(/^[\\/]+/, '').replace(/[\\/]+$/, '')
+  if (exportDir.length > root.length && c !== '/' && c !== '\\') return null
+  const head = projectName || dirTail(root)
+  return rest ? `${head} / ${rest.replace(/\\/g, '/')}` : head
+}
+
 const ex = (key: string) => translate(`export.${key}`, { ns: 'dialogs' })
 
 export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) {
   useTranslation('dialogs')
   const exportDir = useProjectStore((s) => s.project?.export_dir ?? null)
   const homeDir = useProjectStore((s) => s.project?.home_dir ?? null)
+  const projectDir = useProjectStore((s) => s.project?.figures_dir ?? null)
+  const projectName = useProjectStore((s) => s.project?.name ?? null)
   // 写入没落地前位置还是旧的：说「正在更新…」，导出键由对话框同一个信号挡住（否则会写到旧目录）
   const updating = useProjectSettingsPending()
   const [browsing, setBrowsing] = useState(false)
@@ -56,18 +78,26 @@ export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) 
       setBrowsing(true)
     }
   }
+  const shown = exportDir
+    ? (projectRelativeLocation(exportDir, projectDir, projectName) ?? abbreviateHome(exportDir, homeDir))
+    : null
   return (
     <>
       <FormRow label={ex('locationLabel')}>
-        {/* dir=rtl：放不下时从左边省略、末尾两级（`…/项目/export`）始终在；两端的 U+200E 把路径钉在从左到右 */}
+        {/* 项目内：「项目名 / 相对路径」；项目外：~ 缩写后中间省略（头尾都在）；全路径在 title */}
         <span
           data-export-location
           data-updating={updating ? '' : undefined}
-          dir="rtl"
-          className="min-w-0 flex-1 truncate text-left text-sm text-ink-2"
+          className="min-w-0 flex-1 text-sm text-ink-2"
           title={exportDir ?? undefined}
         >
-          {updating ? ex('locationUpdating') : exportDir ? '‎' + abbreviateHome(exportDir, homeDir) + '‎' : ex('locationDefault')}
+          {updating ? (
+            <span className="block truncate">{ex('locationUpdating')}</span>
+          ) : exportDir ? (
+            <TruncateMiddle text={shown!} tail={18} />
+          ) : (
+            <span className="block truncate">{ex('locationDefault')}</span>
+          )}
         </span>
         <Button variant="ghost" size="sm" data-export-location-change disabled={disabled || updating} onClick={() => void change()}>
           {ex('locationChange')}

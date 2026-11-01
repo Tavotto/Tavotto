@@ -224,7 +224,7 @@ function ErrorBody({ text }: { text: string }) {
           )
         }}
       >
-        {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
+        {copied ? <Check playIn size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
       </Button>
     </div>
   )
@@ -236,11 +236,11 @@ function ErrorBody({ text }: { text: string }) {
  * 「正在构建…」也打勾。颜色除错误外都是 ink-3：图标只分语气，不抢字的戏；错误用 danger 锚点。
  */
 function StatusIcon({ tone }: { tone: StatusTone }) {
-  if (tone === 'error') return <CircleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden />
-  if (tone === 'done') return <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+  if (tone === 'error') return <CircleAlert playIn size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden />
+  if (tone === 'done') return <Check playIn size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
   if (tone === 'progress')
     return <Spinner size={ICON_SIZE.sm} className="text-ink-3" aria-hidden />
-  return <Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+  return <Info playIn size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
 }
 
 /**

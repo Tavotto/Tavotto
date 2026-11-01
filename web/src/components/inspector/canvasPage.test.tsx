@@ -153,7 +153,7 @@ describe('CanvasPage', () => {
       return found
     }
     // 单栏预设的宽度读规范（不在测试里写死数字）
-    const preset = { id: 'single', w: loadProfile(DEFAULT_PROFILE_ID).widths_mm.single, h: 60 }
+    const preset = { id: 'single', w: loadProfile(DEFAULT_PROFILE_ID).widths_mm.single as number, h: 60 }
     act(() => useDocumentStore.getState().commit(literal('预设尺寸'), (d) => {
       d.page.w = preset.w
       d.page.h = preset.h

@@ -94,6 +94,7 @@ from .engine import (
     discover as engine_discover,
     documents as engine_documents,
     enginesession as engine_enginesession,
+    entryfresh as engine_entryfresh,
     envadvice as engine_envadvice,
     envdiag as engine_envdiag,
     envlease as engine_envlease,
@@ -517,6 +518,39 @@ def safe_resolve(rel_id: str) -> Path:
     return p
 
 
+def _reconcile_registered_entry(script: str) -> bool:
+    """跑这个脚本之前，登记的入口对照一次当前源码（TVD-CHR5）；过时就换成重判结果并重载注册表。
+
+    **判据与改写只在 `engine/entryfresh`**；这里是 app 层唯一的接线：
+    所有「用登记的 entry 去取 worker / 开准备会话」的入口（磁盘面板、runtime 素材、准备目标、AI 修复）都经它。
+    判不出 / 写不了 = 当没有变化，维持原行为（运行期由 `script_entry_missing` 说话）。"""
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return False  # 没有当前项目（指名的项目已关闭）：不纠偏，调用方的原行为不变
+    if ctx is None:
+        return False
+    try:
+        changed = engine_entryfresh.reconcile(ctx.path, script)
+    except Exception:  # noqa: BLE001 —— 运行前的纠偏不许让请求失败
+        return False
+    if not changed:
+        return False
+    try:
+        refresh_project(ctx, reason="registry", allow_static_merge=False)
+    except engine_refresh.RefreshError:
+        return False
+    return True
+
+
+def _resolve_runtime_asset(asset_id: str) -> dict | None:
+    """`engine_runtimeasset.resolve` 在 app 层的唯一出处：解析到的脚本先过一次入口校验，纠正过就重新解析。"""
+    info = engine_runtimeasset.resolve(asset_id, current_registry())
+    if info is not None and _reconcile_registered_entry(str(info["script"])):
+        info = engine_runtimeasset.resolve(asset_id, current_registry())
+    return info
+
+
 def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     """磁盘素材文件（项目相对路径）→ `(stem, 注册表信息)`；注册表认不得它就是 `(文件名 stem, None)`。
 
@@ -527,6 +561,8 @@ def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     """
     reg = current_registry()
     info = reg.for_artifact(rel)
+    if info is not None and _reconcile_registered_entry(str(info["script"])):
+        info = reg.for_artifact(rel)  # 登记的入口刚被纠正过：用重载后的这一条
     # stem 由 `artifact_stem` 给（CLI 的 `handoff.resolve_target` 用同一个函数，交接回执两边的键因此一致）
     return reg.artifact_stem(rel), info
 
@@ -1405,7 +1441,7 @@ def _serialize_figure_with_worker(
         script = str(current_registry().for_stem(stem)["script"])
     elif engine_runtimeasset.is_runtime_id(rel_id):
         worker, stem = _engine_worker(rel_id)
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         script = str(info["script"]) if info else ""
     else:
         path = safe_resolve(rel_id)
@@ -1872,7 +1908,7 @@ def _svg_legacy_runtime_owner(root, source_id):
     """Positive old-runtime provenance for revocation only, never cold authority."""
     if not engine_runtimeasset.is_runtime_id(source_id):
         return None
-    info = engine_runtimeasset.resolve(source_id, current_registry())
+    info = _resolve_runtime_asset(source_id)
     if info is None:
         meta = engine_runtimeasset.load_metadata(root, source_id) or {}
         desc = meta.get("descriptor")
@@ -3740,7 +3776,7 @@ def api_package():
         # 副本——cache 是本机派生物不是原件，接收方跑一次脚本即可重建。
         # 它没有磁盘文件这件事是设计而非缺失，绝不进 missing 清单。
         if engine_runtimeasset.is_runtime_id(rel_id):
-            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            info = _resolve_runtime_asset(rel_id)
             entry = {"id": rel_id, "kind": "runtime"}
             if info is not None:
                 entry.update(script=info["script"], stem=info["stem"])
@@ -7712,6 +7748,7 @@ _OBSERVED_RENDER_ERRORS = frozenset(
         "script_error",
         "missing_input",
         "script_exited",
+        "script_entry_missing",
         "script_needs_arguments",
         "script_needs_input",
         "script_input_timeout",
@@ -7892,7 +7929,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
     if artifact_source is not None and engine_runtimeasset.is_runtime_id(rel_id):
         _refuse_artifact_policy(artifact_source["render_policy"])
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         # T03：这张图当初的运行配置（资产 id 里冻结的引用）——不是项目此刻的任何配置。本机没有就显式拒绝
@@ -7964,7 +8001,7 @@ def _handoff_target_stem(rel_id: str) -> str:
     """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板经 `Registry.artifact_stem`，CLI 的 `handoff.resolve_target` 同一个函数）。"""
     try:
         if engine_runtimeasset.is_runtime_id(rel_id):
-            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            info = _resolve_runtime_asset(rel_id)
             return info["stem"] if info else ""
     except Exception:  # noqa: BLE001 —— 结论表是旁路
         return ""
@@ -8596,7 +8633,7 @@ def api_engine_invalidate():
     rel_id = body.get("id", "")
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         if engine_enginesession.profile_of(root, rel_id) == engine_enginesession.PROFILE_NATIVE:
@@ -10113,12 +10150,21 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
         with bound_project(ctx):
             engine_pool.shutdown_all(str(ctx.path))
 
+    def registry_changed(_script):
+        # `fix_entry` 已把登记的入口写进注册表：重载 + 作废旧入口的 worker（唯一刷新入口）
+        with bound_project(ctx):
+            try:
+                refresh_project(ctx, reason="registry", allow_static_merge=False)
+            except engine_refresh.RefreshError:
+                pass
+
     return {
         "application_runner": run,
         "application_check": check,
         "on_workdir_changed": cwd_changed,
         # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）
         "on_ignored_paths_changed": cwd_changed,
+        "on_registry_changed": registry_changed,
     }
 
 
@@ -10997,7 +11043,7 @@ def _preparation_target(rel_id: str) -> dict:
     不到 404 + 稳定 code。
     """
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         run = engine_runtimeasset.run_selection(require_project(), info)
@@ -11434,6 +11480,7 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         )
     entry = body.get("entry")
     if entry is None:
+        _reconcile_registered_entry(script)
         registered = current_registry().entries().get(script) or {}
         entry = registered.get("entry") or engine_probe.entry_candidates(ctx.path, script)[0]
     elif not isinstance(entry, str) or not engine_registry.valid_entry(entry):
@@ -13248,7 +13295,7 @@ def _ai_run_impl():
     if engine_runtimeasset.is_runtime_id(panel_id):
         # runtime 面板（「运行脚本」捕获的图，ADR 0013）：fileId 是不透明的 asset id，不是磁盘路径——
         # 按注册表正向重算出 (script, stem)，之后与磁盘面板同一条路
-        info = engine_runtimeasset.resolve(panel_id, current_registry())
+        info = _resolve_runtime_asset(panel_id)
         if info is None:
             return _runtime_asset_unknown(panel_id)
         disk_stem = info["stem"]
@@ -15771,6 +15818,44 @@ def _version_thumb_path(doc_id: str, vid: object) -> Path | None:
     return max(found, key=lambda t: t[0])[1]
 
 
+#: 缩略图拍的是页面的哪一块（mm）。整页的图没有这个文件；只拍内容区域的图旁边放一份
+#: `<vid>.box`（JSON `{x, y, w, h}`）。与图同目录、同 stem，`_sweep_version_thumbs` 一并清。
+_VERSION_THUMB_BOX_EXT = "box"
+#: 裁切框坐标的合理上限（mm）：页面再大也到不了这里，只挡误传
+_VERSION_THUMB_BOX_LIMIT = 100_000.0
+
+
+def _parse_thumb_box(raw: object) -> dict | None:
+    """`x,y,w,h`（mm，有限数、宽高为正）→ dict；不合法 → None。"""
+    if not isinstance(raw, str):
+        return None
+    parts = raw.split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        x, y, w, h = (float(p) for p in parts)
+    except ValueError:
+        return None
+    vals = (x, y, w, h)
+    if not all(math.isfinite(v) and abs(v) <= _VERSION_THUMB_BOX_LIMIT for v in vals):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def _version_thumb_box(doc_id: str, vid: str) -> dict | None:
+    """这张缩略图拍的那一块；没有（整页图、旧节点）或读不出来 = None（照整页处理）。"""
+    p = _version_thumbs_dir(doc_id) / f"{vid}.{_VERSION_THUMB_BOX_EXT}"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _parse_thumb_box(",".join(str(data.get(k)) for k in ("x", "y", "w", "h")))
+
+
 def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
     """删掉**不属于任何留下来的节点**的缩略图（裁剪 / 删除之后）。
 
@@ -16252,6 +16337,9 @@ def api_versions_list(doc_id):
         thumb = _version_thumb_path(doc_id, v.get("id"))
         if thumb is not None:
             meta["thumb"] = thumb.suffix[1:]
+            box = _version_thumb_box(doc_id, v.get("id"))
+            if box is not None:
+                meta["thumbBox"] = box
         if max_objects > 0:
             sketch = _version_sketch(v, max_objects, max_text)
             # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
@@ -16455,6 +16543,11 @@ def api_versions_thumb_put(doc_id, vid):
         return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
     if not _VERSION_ID_RE.match(vid):
         abort(404)
+    # 只拍了页面的一块时带 `?box=x,y,w,h`（mm）；不带 = 整页
+    raw_box = request.args.get("box")
+    box = _parse_thumb_box(raw_box) if raw_box is not None else None
+    if raw_box is not None and box is None:
+        return jsonify({"error": "缩略图的裁切框不合法", "code": "version_thumb_invalid"}), 400
     with _versions_lock(doc_id):
         ids = {v.get("id") for v in _open_timeline(doc_id).entries()}
         if vid not in ids:
@@ -16467,6 +16560,21 @@ def api_versions_thumb_put(doc_id, vid):
         # 写成之后删旧图是尽力清理：删不掉只记日志、不算失败——两张同时在时
         # `_version_thumb_path` 取较新的那张，刚写上的新图胜出。
         engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
+        # 裁切框紧跟着图：图与框必须说的是同一张。框写不上 / 旧框删不掉时把刚写的图也撤掉——
+        # 宁可这一版没有缩略图（退回草图），也不让一张局部图按整页摆、或整页图按旧框裁
+        box_path = d / f"{vid}.{_VERSION_THUMB_BOX_EXT}"
+        try:
+            if box is not None:
+                engine_atomicio.write_bytes(box_path, json.dumps(box).encode("utf-8"))
+            else:
+                box_path.unlink(missing_ok=True)
+        except OSError as exc:
+            LOG.warning("版本缩略图的裁切框写不上，撤掉这张图: %s: %s", d, exc)
+            try:
+                (d / f"{vid}.{ext}").unlink()
+            except OSError:
+                pass
+            return jsonify({"error": "缩略图写不上", "code": "version_thumb_write_failed"}), 500
         for other in _VERSION_THUMB_TYPES.values():
             if other != ext:
                 try:

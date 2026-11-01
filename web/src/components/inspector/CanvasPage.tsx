@@ -106,7 +106,7 @@ export function CanvasPage() {
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
   const pageSummary = [
     cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) }),
-    active && cv(`presets.${active.id}.label`),
+    active && (active.label ?? cv(`presets.${active.id}.label`)),
   ]
     .filter(Boolean)
     .join(' · ')
@@ -149,11 +149,13 @@ export function CanvasPage() {
           options={[
             ...PRESETS.map((p) => ({
               value: p.id,
-              hint: cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
+              hint: p.label
+                    ? `${Math.round(p.w * 10) / 10} mm`
+                    : cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
               label: (
                 <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
                   <PageThumb w={p.w} h={p.h} />
-                  <span className="truncate">{cv(`presets.${p.id}.label`)}</span>
+                  <span className="truncate">{p.label ?? cv(`presets.${p.id}.label`)}</span>
                 </span>
               ),
             })),

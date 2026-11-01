@@ -31,7 +31,7 @@
 | 裁剪顺序 | 未命名的：普通自动 → 关键时刻 → 手动；最新一条不参与（原有性质） |
 | 自动间隔 | 停顿 15 s 且距上一个节点 ≥ **2 分钟**（原 5 分钟）；`VERSION_KEEP_AUTO` 40 → 60 |
 | 关键时刻 | 导出交付了文件、写回成功、⌘S 存完、打开项目、离开项目（回主页 / 切项目）、恢复前 |
-| 缩略图 | 前端拍节点那一刻用 canvas 合成（renderStore 里带 overrides 的 SVG + 文字 / 形状近似），240 px 长边，webp（WKWebView 退回 png）；单独存 `versions/thumbs/<排版 id>/<vid>.<ext>`，**不进时间线 JSON**；随节点删除 / 裁剪；没有的退回草图 |
+| 缩略图 | 前端拍节点那一刻用 canvas 合成（renderStore 里带 overrides 的 SVG + 文字 / 形状近似），只拍页面上有内容的那块、360 px 长边（2026-10-31 修订，见 §6），webp（WKWebView 退回 png）；单独存 `versions/thumbs/<排版 id>/<vid>.<ext>`，**不进时间线 JSON**；随节点删除 / 裁剪；没有的退回草图 |
 | 恢复 | 先存「恢复前」关键时刻节点（**存不下来就不恢复**），再一次 `commit`：⌘Z 一步退回；落点按节点的画布身份（R-03 四分支原样） |
 
 ## 1. 入口与快捷键
@@ -160,6 +160,13 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
   留下的孤儿图，下一次写入顺手清掉。
 - 真浏览器两条腿（chromium + webkit）都量过：缩略图挂得上，而且真的画进了面板（深色像素
   计数，不是白纸），`e2e/layout-timeline.spec.ts`。
+
+- **2026-10-31 修订：只拍内容区域。** 单图编辑没有「页面」，整页拍的图常常只占一角（beta 0.19.3b4 用户反馈）。
+  合成时按 `lib/versionThumbBox.contentBox`（可见对象并集、夹在页面内、留 3% 白；占满八成以上不裁）只拍那一块，
+  长边 360 px，编出来超过 240 KiB 就缩一档。拍的是哪一块（mm）随 PUT 带 `?box=x,y,w,h`，后端写在图旁的
+  `<vid>.box`（JSON；与图同 stem，`_sweep_version_thumbs` 一并清）；框写不上 / 旧框删不掉就撤掉刚写的图
+  （`version_thumb_write_failed`），不让局部图按整页摆。列表带回 `thumbBox`；缺席 = 整页（旧节点），显示时按草图现算同一个框。
+  列表行、竖线条浮卡、对比卡片都对准这块（`components/versionThumbCrop.tsx`）。
 
 ## 7. 与在飞 PR 的交叉点（本 PR 不改它们的分支）
 

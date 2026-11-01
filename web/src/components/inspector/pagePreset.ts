@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
+import { columnName, resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { useDocumentStore } from '@/store/documentStore'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 
@@ -17,12 +17,19 @@ export interface PagePreset {
   id: string
   w: number
   h: number
+  /** 期刊自有栏位的显示名（单栏 / 双栏 / 方形等走词表，不带它） */
+  label?: string
 }
 
-export function pagePresets([single, double]: PageColumn[]): PagePreset[] {
+/** 栏位预设：第一档矮一点（60），其余 100——高度只是常见起点，不是规范字段 */
+export function pagePresets(columns: PageColumn[]): PagePreset[] {
   return [
-    { id: 'single', w: single.w, h: 60 },
-    { id: 'double', w: double.w, h: 100 },
+    ...columns.map((c, i) => ({
+      id: c.id,
+      w: c.w,
+      h: i === 0 ? 60 : 100,
+      ...(c.id === 'single' || c.id === 'double' ? {} : { label: columnName(c) }),
+    })),
     { id: 'full', w: 180, h: 240 },
     { id: 'square', w: 100, h: 100 },
   ]
