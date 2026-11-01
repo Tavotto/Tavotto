@@ -760,6 +760,8 @@ export function selectJournal(journalId: string): void {
     follow: p0?.follow,
     prev,
   })
+  // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
+  if (pick.binding.journalPrev) pick.binding.journalPrev.setW = pick.pageW ?? d0.page.w
   commit(hist('setJournal'), (d) => {
     d.profile = pick.binding
     if (pick.pageW != null) applyPageSize(d, pick.pageW, d.page.h)
@@ -787,7 +789,8 @@ export function clearJournal(): void {
     if (prev?.profile) d.profile = structuredClone(prev.profile)
     else if (fallback) d.profile = bindingFor(fallback)
     else delete d.profile
-    if (prev) applyPageSize(d, prev.pageW, d.page.h)
+    // 用户在选期刊之后手改过页宽就保留他的值；没有 setW 的旧记录按原样退回
+    if (prev && (prev.setW === undefined || d.page.w === prev.setW)) applyPageSize(d, prev.pageW, d.page.h)
   })
   useUiStore.getState().setStatus(msg('journal.cleared', undefined, 'dialogs'), 'done')
 }

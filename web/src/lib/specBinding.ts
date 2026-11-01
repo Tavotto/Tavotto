@@ -49,6 +49,8 @@ export interface SpecBinding {
 export interface JournalPrev {
   profile: Omit<SpecBinding, 'journalPrev' | 'journalRef' | 'journalSources'> | null
   pageW: number
+  /** 选期刊那一刻期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回 pageW（用户手改过就保留） */
+  setW?: number
 }
 
 export interface JournalRef {

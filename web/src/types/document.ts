@@ -427,6 +427,7 @@ export interface DocumentProfile {
       follow?: boolean
     } | null
     pageW: number
+    setW?: number
   }
 }
 

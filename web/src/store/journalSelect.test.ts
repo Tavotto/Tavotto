@@ -134,6 +134,22 @@ describe('不按期刊', () => {
     expect(s().doc.page.w).toBe(121)
   })
 
+  it('选期刊之后用户手改过页宽：规范照退，页宽保留他的值；一步撤销', () => {
+    selectJournal('fx-cols-inherit') // 120 → 121
+    s().commit(literal('手改页宽'), (d) => {
+      d.page.w = 133
+    })
+    const depth = s().past.length
+    clearJournal()
+    expect(s().doc.profile?.id).toBe(DEFAULT_PROFILE_ID)
+    expect(s().doc.profile?.journalRef).toBeUndefined()
+    expect(s().doc.page.w).toBe(133)
+    expect(s().past.length).toBe(depth + 1)
+    s().undo()
+    expect(s().doc.profile?.journalRef?.id).toBe('fx-cols-inherit')
+    expect(s().doc.page.w).toBe(133)
+  })
+
   it('没按期刊选过时什么都不做（不进历史）', () => {
     const depth = s().past.length
     clearJournal()
