@@ -38,8 +38,27 @@ export function agentErrorKey(error: string | null | undefined): AgentErrorKey |
   if (error.startsWith('agent_') || error.startsWith('executor_error:')) return 'agent_internal'
   return null
 }
-/** 这几种重试也是同样结果，主按钮去改连接 */
-export const fixedByConnection = (key: AgentErrorKey | null) => key === 'agent_auth' || key === 'agent_html_response'
+/**
+ * 错误码 → 失败卡主按钮（闭集；与 `tests/golden/ai_error_action_vectors.json` 同源对，后端那侧是 `tests/test_ai_cli_error_classes.py`）。
+ * `check_connection`：重试也是同样结果（凭据无效 / 地址是网页 / 额度用完 / 连不上 / 归不了的 CLI 非零退出），主按钮去改连接；
+ * `retry`：换一次可能就好（超时、步数、预算……）。`Record<AgentErrorKey, …>` 让新增错误码时编译期强制补一行。
+ */
+export type AgentErrorAction = 'check_connection' | 'retry'
+export const AGENT_ERROR_ACTION: Record<AgentErrorKey, AgentErrorAction> = {
+  agent_auth: 'check_connection',
+  agent_html_response: 'check_connection',
+  agent_quota: 'check_connection',
+  agent_network: 'check_connection',
+  agent_exit_nonzero: 'check_connection',
+  agent_refused: 'retry',
+  agent_budget: 'retry',
+  agent_output_truncated: 'retry',
+  agent_max_turns: 'retry',
+  agent_tool_error_loop: 'retry',
+  agent_internal: 'retry',
+  timeout: 'retry',
+}
+export const fixedByConnection = (key: AgentErrorKey | null) => key != null && AGENT_ERROR_ACTION[key] === 'check_connection'
 
 /** 耗时：10s 以内带一位小数（0.2s / 1.8s），一分钟以内取整（18s），再长写成「2m 05s」 */
 export function formatDuration(ms: number): string {

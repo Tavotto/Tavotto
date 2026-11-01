@@ -260,7 +260,7 @@ export function Turn({
           }
           action={
             fixedByConnection(agentError) ? (
-              // 凭据无效 / 地址指到了网页（中转站少写 `/v1` 之类）：重试只会再失败一次，主按钮去改连接
+              // 凭据无效 / 地址指到了网页 / 额度用完 / 连不上 / 归不了的非零退出：重试只会再失败一次，主按钮去改连接（码表见 AGENT_ERROR_ACTION）
               <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
                 {ai('notice.checkConnection')}
               </Button>
