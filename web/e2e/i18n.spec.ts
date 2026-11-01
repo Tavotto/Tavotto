@@ -32,7 +32,7 @@ const LOCALES = [
     export: '导出',
     settings: '设置',
     language: '界面语言',
-    emptyCanvas: '画布是空的',
+    emptyCanvas: '把图放到这张画布上',
     text: '文字',
     undo: '撤销',
     /** 另一门语言的标志词，用来证明「没混着显示」 */
@@ -47,7 +47,7 @@ const LOCALES = [
     export: 'Export',
     settings: 'Settings',
     language: 'Language',
-    emptyCanvas: 'The canvas is empty',
+    emptyCanvas: 'Put a figure on this canvas',
     text: 'Text',
     undo: 'Undo',
     foreign: '选择项目',
@@ -86,7 +86,7 @@ for (const L of LOCALES) {
       const exportBtn = page.getByRole('button', { name: L.export, exact: true })
       await expect(exportBtn).toBeVisible({ timeout: 30_000 })
 
-      // 空画布的空状态
+      // 空画布的空状态：项目里有图时是选图卡（B5），标题是「把图放到这张画布上」
       await expect(page.getByText(L.emptyCanvas)).toBeVisible()
 
       // 设置：语言项就在「通用」里
@@ -117,7 +117,7 @@ for (const L of LOCALES) {
       const a = await app()
       await page.goto(a.baseURL)
 
-      await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+      await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
       await expect(page.getByText(L.emptyCanvas)).toHaveCount(0)
 
       // 撤销按钮的无障碍名带上「撤销什么」——那句话来自历史标签，
@@ -172,7 +172,7 @@ test.describe('英文界面的排版', () => {
     await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeVisible({
       timeout: 30_000,
     })
-    await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+    await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
     await waitForFigureEdit(page)
     // 抽屉是宽度动画，动画途中量到的是中间帧——等它停下来再量，
     // 否则这条用例会按机器快慢随机红（问过一次 getAnimations 就够）

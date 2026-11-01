@@ -272,7 +272,7 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   await page.setViewportSize({ width: 1440, height: 900 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   // 快速编辑会切到元素树；把素材栏打开并选中卡片，确实覆盖选中底色上的元数据。
   const assets = page.locator('[data-rail="assets"]')
@@ -335,7 +335,7 @@ test('暗色主题 · 打开的设置对话框：axe 无违规、无未定性的
 test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
 
   const inspector = page.locator('[data-inspector-panel]')
@@ -401,7 +401,7 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   // 门禁两条腿一直是绿的，因为它从没扫过这一屏。这条用例就是那个缺口。
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
 
   // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
@@ -470,7 +470,7 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
 }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   // 预览 PNG 先于快速编辑到达；等工作流和精确图都就绪，导出才默认这张原图。
   await waitForFigureEdit(page)
 
@@ -629,7 +629,7 @@ test('问题面板：axe 无违规、行内的「修复」不是「定位」的�
   const a = await app()
   await page.goto(a.baseURL)
   // 先把一张图放上画布——空画布上问题清单只有页面级那几条，行内动作量不到
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
     .toBeVisible({ timeout: 60_000 })
 

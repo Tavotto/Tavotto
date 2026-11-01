@@ -669,6 +669,18 @@ describe('按天分组、类型标记、只看命名', () => {
     ).toEqual(['t2', 't1', 'y', 'old'])
   })
 
+  it('内容没变的重复打开 / 关闭 / 恢复前（后端标 unchanged）不显示（用户 2026-10-31）', async () => {
+    await mount([
+      meta({ id: 'o1', ts: NOW - 4000, kind: 'moment', moment: 'open' }),
+      meta({ id: 'o2', ts: NOW - 3000, kind: 'moment', moment: 'open', unchanged: true }),
+      meta({ id: 'e', ts: NOW - 2000, kind: 'moment', moment: 'export' }),
+      meta({ id: 'c', ts: NOW - 1000, kind: 'moment', moment: 'close', unchanged: true }),
+    ])
+    expect(
+      [...document.querySelectorAll('[data-timeline-node]')].map((n) => n.getAttribute('data-timeline-node')),
+    ).toEqual(['e', 'o1'])
+  })
+
   it('每个节点带类型标记：命名 / 关键时刻（说是哪个时刻）/ 自动 / 手动', async () => {
     await mount([
       meta({ id: 'a', ts: NOW - 4000, kind: 'auto' }),

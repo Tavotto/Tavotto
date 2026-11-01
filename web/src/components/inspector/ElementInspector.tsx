@@ -1598,11 +1598,12 @@ function TickPage({
           状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路，放最后
           （设计稿 A5：写成一句话）。-ml-2 与「原始比例」「全部清除」那些 ghost 文字键同一写法：
           钮内文字与上面的分区头对齐；按钮字 12 之后英文整句在 320px 的 DejaVu Sans 下是
-          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内 */}
+          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内。中文主力字号提到 13px 之后
+          连这一点余量也没了：整句允许折成两行（h-auto + whitespace-normal），不截断、不撑破栏宽 */}
       <Button
         size="sm"
         data-tick-spines-link
-        className="-ml-2 w-fit text-ink-2"
+        className="-ml-2 h-auto min-h-7 w-fit max-w-full shrink whitespace-normal py-1 text-start text-ink-2"
         onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
       >
         {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}

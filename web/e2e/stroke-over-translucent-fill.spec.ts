@@ -70,7 +70,7 @@ function writeProject(): string {
 test('描边先于填充内部：半透明幕墙下的线可选，被不透明矩形盖住的线不抢', async ({ app, page }) => {
   const a = await app({ figures: writeProject() })
   await page.goto(a.baseURL)
-  await page.getByText('Fig_strokefill.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig_strokefill.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
 

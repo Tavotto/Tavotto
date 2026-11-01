@@ -447,10 +447,14 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 重开（启动时恢复上次的项目）：时间线里多一个「打开项目」节点 ──────────
   // Workspace 挂上、文档恢复完之后才打这个点；在 projectStore 里打的那一下发生在
   // 时间线开始跑之前，是空的（Codex #679 P2）
+  // 重开前先改一处：内容与上一个关键时刻相同的「打开」不记（#1575，用户 2026-10-31 拍板），
+  // 撤销后的内容正好等于第二次恢复前那一条
+  await addText(page, '丙版标注', 420, 400)
   await expect(await only(page.locator('[data-topbar] [data-save-state]'))).toBeVisible()
   await page.waitForTimeout(1500) // 让撤销之后那次自动保存落盘
   await page.reload()
   await expect(canvasText(page, '甲版标注')).toBeVisible({ timeout: 30_000 })
+  await expect(canvasText(page, '丙版标注')).toBeVisible()
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
   // 两个「打开」：第一次启动那一次（那时画布还是空的——关键时刻空画布也打，Codex #679）

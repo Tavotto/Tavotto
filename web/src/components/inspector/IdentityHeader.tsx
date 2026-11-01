@@ -77,7 +77,7 @@ function IdentityFrame({
   return (
     <header data-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
       {/* 路径行：p 是稳定结构（用例按 `header p` 找面包屑），一行 24 高 */}
-      <p data-identity-path className="flex h-6 min-w-0 items-center gap-1.5 text-sm text-ink-3">
+      <p data-identity-path className="flex h-6 min-w-0 items-center gap-1.5 type-caption">
         <span className="flex min-w-0 flex-1 items-center gap-1">{path}</span>
         {chips}
       </p>

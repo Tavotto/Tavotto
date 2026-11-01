@@ -264,8 +264,13 @@ export function TimelinePanel() {
         textChars: THUMB_TEXT_CHARS,
       })
       if (!fresh()) return
-      // 最新在上
-      setList({ ctx, versions: res.versions.slice().reverse(), budget: res.budget ?? null })
+      // 最新在上。照今天的规则本不会记下的重复条（内容没变的打开 / 关闭 / 恢复前，后端标 `unchanged`）
+      // 不显示：它和上一条一模一样，上一条就在列表里（用户 2026-10-31）；数据不删
+      setList({
+        ctx,
+        versions: res.versions.filter((v) => !v.unchanged).reverse(),
+        budget: res.budget ?? null,
+      })
       setLoadError(null) // 只清读列表那一槽：操作的错误不因为刷新成功而消失
     } catch (e) {
       // 旧请求的失败同样不落地：它说的是一份已经过期的列表

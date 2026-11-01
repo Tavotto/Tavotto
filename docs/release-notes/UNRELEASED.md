@@ -29,6 +29,10 @@ If a script stores its own folder in a variable and then adds a subfolder to `sy
 
 When the canvas held a single figure, text, arrows and shapes you added on the canvas were missing from both the export preview and the exported files. They are now drawn into PDF, PNG, TIFF, SVG and EPS, clipped to the figure frame, with their stacking relative to the figure preserved (annotations moved below the figure in the layer tree stay below it). The export still follows the original-figure rules: PNG / TIFF keep the source image's pixel size and DPI, and exports without annotations are byte-for-byte unchanged. EPS keeps matplotlib's original EPS and lays the annotations over it as vector outlines; if an annotation uses transparency, which EPS cannot express, only the EPS item fails with a stated reason and the other formats are delivered.
 
+## Larger Chinese text in the properties panel, clearer element tree, adaptive style panel
+
+The properties panel text goes from 12 to 13 px and its label column is wider. In the element tree the actual content rows read darker than the group rows (the old black/grey colouring is kept, with group names bold) and stray curly quotes around names are gone. The style panel adapts to the panel width, the Problems panel lists items in the same row style, an empty canvas offers cards to pick a figure to edit, and asset cards and script rows are clearer. (#1552)
+
 ## Scripts that load a private package folder built for another Python version
 
 If a script puts its own `pip install --target` folder at the front of `sys.path` (for example a `.kegg_python` folder whose matplotlib was built for Python 3.12) and Tavotto runs it with a different Python, the run used to fail with an `ImportError` and the fix assistant kept trying to switch Python versions. Tavotto now recognises this case and offers **Skip this folder and rerun**: for that project, imports no longer come from that folder. Your script and the folder are left untouched, and the fix assistant uses the same remedy instead of changing Python.
@@ -83,6 +87,11 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 - Thumbnails are now taken of the area that has content, not the whole page, and every thumbnail in the timeline (rows, hover card, compare card) is centred on that content. Versions saved by earlier builds are cropped from their sketch the same way.
 - The scope filter and the "Named" toggle are now one row. When a single figure is open the scope reads "This figure / All figures"; in a multi-figure layout it reads "This layout / All figures".
 - Restoring a version that would change which figures are on the canvas (swap one for another, one → a layout, a layout → one) now always asks first and says how many figures it will become. Restoring from the compare card shows only that question; the restore starts after Continue.
+
+## Timeline: unchanged reopen / leave / before-restore entries are no longer recorded
+
+- Opening a project, leaving it, or restoring a version used to add a timeline entry every time, even when nothing had changed — reopening a project a few times left a run of identical "Project opened" entries. These three now skip recording when the canvas is exactly the same as the latest entry and that entry is itself one of these key moments or a named version; after an ordinary auto-save they are still recorded, so "Before restore" can always be found. Exports, saves and write-backs are still recorded every time, and named versions always are.
+- Identical entries recorded by earlier versions are hidden from the timeline; nothing is deleted.
 
 ## AI repair can now see and run in the environment your project is using
 

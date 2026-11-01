@@ -15,7 +15,7 @@ import type { Page } from '@playwright/test'
 
 async function openFigure(page: Page, a: RunningApp) {
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
 }
 
@@ -196,7 +196,7 @@ test('T01：一条上下文栏、一个出口，第二张图进来 / 退出图�
   // 排版里再打开已在画布上的那张图进图内编辑（排版的子状态），再退出
   // （回排版时焦点救援把左栏交给了「结构」，先切回素材，`lib/focusRescue.ts`）
   await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
-  await page.getByText('Fig1_kinetics.pdf').dblclick()
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick()
   await expect(bar).toHaveCount(1)
   await page.waitForTimeout(400)
   // 打开一张已在画布上的图会把它滚进视野（revealRect，被平移出去的图当然要回来）；退出图内编辑则一个像素都不许动
@@ -245,7 +245,7 @@ test('P01：图内编辑单按钮 + Esc 退出，三个宽度都放得下', asyn
   await page.setViewportSize({ width: 1440, height: 800 })
   await addSecondFigure(page)
   await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
-  await page.getByText('Fig1_kinetics.pdf').dblclick()
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick()
   await expect(back).toHaveCount(1)
   await expect(bar).toHaveAttribute('data-workspace-mode', 'layout')
   for (const w of [1440, 1024, 900]) {
