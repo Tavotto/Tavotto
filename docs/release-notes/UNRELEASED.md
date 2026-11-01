@@ -140,3 +140,7 @@ Interface icons are drawn with a thinner stroke (1 px at 16 px) and every point 
 ## Scripts whose file name contains a dot now run
 
 A script with a dot in its file name (for example `4-51.slope_ratio.py` or `fig.v2.py`) that Tavotto runs through its entry function failed with `ModuleNotFoundError: No module named '4-51'`, because the file name was imported as a module path and the dot was read as a package separator. Such scripts now load from their file directly, the same way `python script.py` runs them; `__name__` inside the script is still the file name without `.py`.
+
+## Choosing a Python that can't write to Tavotto's cache is now refused up front
+
+When you pick a Python environment (in settings, or from the environment suggestions), Tavotto now also checks that it can create a folder in Tavotto's own data folder. Some environments can't — for example a virtual environment whose `python.exe` carries Windows' low-integrity label, which can read that folder but not create anything in it. Before, such an environment passed the check, and every run then failed before your script started. Now it is turned down when you choose it, with the same one-sentence reason, and the environment suggestions list says why it wasn't used. Tavotto's own built-in Python is not subject to this check.
