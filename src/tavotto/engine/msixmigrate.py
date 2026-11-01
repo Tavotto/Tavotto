@@ -496,25 +496,27 @@ def _run_once(budget_s: float) -> dict | None:
         srcs = sources()
         merged_any = False
         config_failed = 0
-        complete = True
+        # 两类「没做完」分开算：
+        # - walked=False：同步阶段预算到点、目录还没走完——每次都有进展（只补缺），不计次数，下次接着走；
+        # - 有失败 / 关键项被推迟（拷贝失败、config 合并失败、源库被占导致备份超时）——计次数，到 MAX_ATTEMPTS
+        #   就停止自动重试（保留失败计数进诊断），永久性问题不拖慢每次启动（Codex #1603 复核）
+        walked = True
         for roaming, local in srcs:
             changed, errored = _merge_config(roaming)
             merged_any = merged_any or changed
             config_failed += 1 if errored else 0
             if local is not None:
-                if not _copy_critical(local, tally):
-                    complete = False
+                _copy_critical(local, tally)  # 失败 / 推迟都记在 tally 里
                 if not _copy_eager(local, tally, deadline):
-                    complete = False
+                    walked = False
                     break
         prev = marker or {}
         failed_now = tally.failed + config_failed
         attempts = _count(prev.get("attempts"))
-        if failed_now or tally.deferred:
-            # 有失败 / 有项没做完（超时、源库被占）就不标 complete，下次启动重试；次数有上限，永久性问题不拖慢每次启动
+        problems = bool(failed_now or tally.deferred)
+        if problems:
             attempts += 1
-            if attempts < MAX_ATTEMPTS:
-                complete = False
+        complete = walked and (not problems or attempts >= MAX_ATTEMPTS)
         result = {
             "schema": SCHEMA,
             "complete": complete,

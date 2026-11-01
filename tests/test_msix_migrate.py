@@ -745,6 +745,33 @@ def test_sqlite_backup_does_not_block_on_exclusive_lock(world, monkeypatch):
     got.close()
 
 
+def test_a_permanently_locked_history_stops_retrying_after_max_attempts(world, monkeypatch):
+    """Codex #1603 复核：源库一直被独占事务占着时，备份每次都推迟——推迟也要计入次数，到上限就停止自动重试，
+    否则每次启动都要等一遍备份超时。"""
+    _r, local = world.pkg(PFN_A)
+    db = _make_history(local)
+    monkeypatch.setattr(msixmigrate, "CRITICAL_BUDGET_S", 0.2)
+    holder = sqlite3.connect(db, isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        outs = [msixmigrate.run_once() for _ in range(msixmigrate.MAX_ATTEMPTS)]
+        assert [o["attempts"] for o in outs] == list(range(1, msixmigrate.MAX_ATTEMPTS + 1))
+        assert [o["complete"] for o in outs] == [False] * (msixmigrate.MAX_ATTEMPTS - 1) + [True]
+        assert msixmigrate.run_once() is None  # 已标完成，之后的启动不再等
+    finally:
+        holder.close()
+
+
+def test_running_out_of_the_sync_budget_is_not_counted_as_an_attempt(world):
+    """预算到点、目录没走完不算失败（每次都有进展），不吃重试次数。"""
+    _r, local = world.pkg(PFN_A)
+    put(local / "origin" / "a.json", "A")
+    first = msixmigrate.run_once(budget_s=-1)
+    assert first["complete"] is False and first["attempts"] == 0
+    second = msixmigrate.run_once()
+    assert second["complete"] is True and second["attempts"] == 0
+
+
 def test_failure_is_retried_next_start_then_succeeds(world, monkeypatch):
     _r, local = world.pkg(PFN_A)
     put(local / "origin" / "a.json", "A")
