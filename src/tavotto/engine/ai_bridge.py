@@ -158,6 +158,46 @@ exectrace.register_vocabulary(
 )
 exectrace.register_vocabulary("tool", _RUNNER_TOOLS)
 exectrace.register_vocabulary("refresh", ("pending", "ok", "failed", "skipped", "not_wired"))
+exectrace.register_vocabulary("cli_event", ai_agents.CLI_EVENT_TYPES)
+exectrace.register_vocabulary("cli_item", ai_agents.CLI_ITEM_TYPES)
+exectrace.register_vocabulary("endpoint_kind", ai_agents.ENDPOINT_KINDS)
+
+#: `CliRunFacts.snapshot()` 的键 → `agent_run` span 的 attributes 键（登记在 `exectrace.ATTRIBUTES`）
+_CLI_FACT_ATTRS = {
+    **{
+        k: f"cli_{k}"
+        for k in (
+            "events",
+            "commands",
+            "commands_failed",
+            "commands_declined",
+            "commands_open",
+            "file_changes",
+            "file_changes_failed",
+            "files_inside",
+            "files_outside",
+            "reasoning",
+            "messages",
+            "errors",
+            "turns_failed",
+            "target_touched",
+            "first_event_ms",
+            "max_gap_ms",
+            "idle_end_ms",
+            "last_event",
+            "last_item",
+        )
+    },
+    "endpoint": "endpoint_kind",
+}
+
+
+def _cli_fact_attributes(facts: dict | None) -> dict:
+    """运行事实 → span attributes（`first_event_ms` 为 None = 一个事件都没收到，不写这一键）。"""
+    if not facts:
+        return {}
+    return {attr: facts[k] for k, attr in _CLI_FACT_ATTRS.items() if facts.get(k) is not None}
+
 
 #: 会话 status → 根 Trace 的终局（Agent 退出、文件变了、刷新、任务结局四件事分开记在根的 attributes 上）
 _TRACE_END = {
@@ -279,13 +319,57 @@ def _end_facts(sess: dict, proc, sid: str, builtin: bool) -> tuple:
     )
 
 
-def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
+def _is_relay(endpoint: dict | None) -> bool:
+    """这次会话是不是走第三方中转：记录里写了 base_url 才算（官方登录没有）。只返回布尔，不碰地址本身。"""
+    return bool(endpoint and str(endpoint.get("base_url") or "").strip())
+
+
+def _run_facts(agent: str, cwd: str, cand, script: str):
+    """该 Agent 的运行事实累计器（没有就 None）。目标名只取文件名，用于判「改到过目标文件」。"""
+    adapter = ai_agents.get_agent(agent)
+    if adapter is None:
+        return None
+    target = cand.target_name if cand is not None else Path(script).name
+    return adapter.run_facts(str(cwd or ""), target)
+
+
+def _cli_log_facts(sess: dict) -> tuple:
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 17 项）。
+    数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
+    没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
+    f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
+    if f is None:
+        dash = _code("", _NO_FACT)
+        return (None,) * 11 + (dash, dash, None, None, None, dash)
+    return (
+        f["events"],
+        f["commands"],
+        f["commands_failed"],
+        f["commands_declined"],
+        f["commands_open"],
+        f["file_changes"],
+        f["files_inside"],
+        f["files_outside"],
+        f["target_touched"],
+        f["errors"],
+        f["turns_failed"],
+        _code(f["last_event"], ai_agents.CLI_EVENT_TYPES),
+        _code(f["last_item"], ai_agents.CLI_ITEM_TYPES),
+        f["first_event_ms"],
+        f["max_gap_ms"],
+        f["idle_end_ms"],
+        _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
+    )
+
+
+def _trace_agent_exit(trace, span, sess: dict, proc, facts: dict | None = None) -> None:
     try:
         status = sess.get("status")
+        extra = _cli_fact_attributes(facts)
         if status in ("cancelled", "timeout"):
-            trace.end_span(span, status)
+            trace.end_span(span, status, attributes=extra or None)
         elif proc.returncode == 0:
-            trace.end_span(span, exectrace.STATUS_OK, attributes={"exit_ok": True})
+            trace.end_span(span, exectrace.STATUS_OK, attributes={"exit_ok": True, **extra})
         else:
             trace.end_span(
                 span,
@@ -293,6 +377,7 @@ def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
                 error_code=sess.get("runner_error") or "agent_exit_nonzero",
                 attributes={
                     "exit_ok": False,
+                    **extra,
                     **(
                         {"runner_detail": sess["runner_detail"]}
                         if sess.get("runner_detail")
@@ -1936,6 +2021,10 @@ def run(
             attempt=agent_runs[0],
             attributes={"agent": agent, "opaque": agent != ai_agents.BUILTIN_ID},
         )
+        # 第三方 CLI 的运行事实（只有数字 / 闭集码）：与 `_classify` 读同一条 stdout，进 agent_run span 与会话结束日志
+        run_facts = (
+            None if agent == ai_agents.BUILTIN_ID else _run_facts(agent, agent_cwd, cand, script)
+        )
 
         def expire():
             # A silent process (or one holding a partial line) never reaches a
@@ -1957,6 +2046,8 @@ def run(
                     continue
                 if agent == ai_agents.BUILTIN_ID:
                     _trace_runner_event(trace, run_span, line, model, endpoint)
+                elif run_facts is not None:
+                    run_facts.observe(line)
                 for kind, text in _classify(agent, line, st):
                     if not text:
                         continue
@@ -1982,7 +2073,14 @@ def run(
                         sess["failure_category"] = cli_failure.consume(err)
                 except (OSError, ValueError):
                     sess["failure_category"] = "other"
-            _trace_agent_exit(trace, run_span, sess, proc)
+            snapshot = None
+            if run_facts is not None:
+                try:
+                    snapshot = run_facts.snapshot(_is_relay(endpoint))
+                    sess.setdefault("cli_runs", []).append(snapshot)
+                except Exception:  # noqa: BLE001 —— 事实采集不影响会话
+                    snapshot = None
+            _trace_agent_exit(trace, run_span, sess, proc, snapshot)
 
     def _respawn(note: str) -> None:
         """TAF 有界修正：在同一个候选目录里、带着原提示词 + 修正指令再起一次 CLI（Phase 4，`ai_tasks._admit_correction`
@@ -2087,13 +2185,18 @@ def run(
                 sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
             LOG.info(
                 "AI 会话结束: %s %s status=%s changed=%s refresh=%s exit=%s runner=%s runner_detail=%s "
-                "unmet=%s unmet_reasons=%s stderr_bytes=%s stderr_codes=%s",
+                "unmet=%s unmet_reasons=%s stderr_bytes=%s stderr_codes=%s "
+                "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
+                "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s "
+                "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s",
                 agent,
                 script,
                 sess["status"],
                 sess["changed"],
                 sess["refresh"]["status"],
                 *_end_facts(sess, sess.get("proc") or proc, sid, agent == ai_agents.BUILTIN_ID),
+                *_cli_log_facts(sess),
             )
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
             _finish_session(sess, task_result=task["task_result"] if task else None)
@@ -2813,7 +2916,18 @@ SESSION_TERMINAL_FIELDS: tuple[str, ...] = (
 #: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
 #: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
 SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
-    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid", "taf", "trace"}
+    {
+        "proc",
+        "exited",
+        "script_path",
+        "snapshot",
+        "project",
+        "context",
+        "owner_pid",
+        "taf",
+        "trace",
+        "cli_runs",
+    }
 )
 
 

@@ -383,6 +383,18 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 会话元数据：sidecar 与 `meta.json` 记 `source_language`；`library` 在 r / matlab 时为 null；遥测不新增事件。看护：`tests/test_sourcelang.py`、
 `tests/test_ai_convert_foreign.py`、`tests/test_ai_convert_foreign_app.py`、`tests/test_convertdeps.py`。
 
+### Codex 运行事实（TVD-BCZ0，`ai_agents.CliRunFacts`）
+
+第三方 CLI 的内部步骤看不见（exec trace 的 `agent_run` 是 `opaque`），几分钟的会话判不了根因。`CodexAgent.run_facts()` 给出的
+`CliRunFacts` 在 `ai_bridge._consume` 里与 `_classify` 读**同一条** stdout 逐行累计，**只有数字 / 布尔 / 闭集码**：事件数、
+命令数 / 失败 / 被拒（`status=declined`）/ 起了没结束、文件改动数与工作区内外（`-C` 目录，只给计数，不给路径）、是否改到目标文件名、
+`error` / `turn.failed` 次数、最后事件与最后 item 类型（`CLI_EVENT_TYPES` / `CLI_ITEM_TYPES`，集合外归 `other`）、首个事件延迟 /
+最长无事件间隔 / 末尾空闲（毫秒）、接口是 `official` 还是 `relay`（只看 base_url 有没有，不带地址与标签）。判据只用事件里**结构化**字段，
+不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
+（登记在 `exectrace.ATTRIBUTES`，词表由 `ai_bridge` 用上述常量登记），与「AI 会话结束」日志（`_cli_log_facts`，多次进程用
+`merge_run_facts` 合并；码类经 `logsafe.known` 放行）。新增事实先加常量集合 / ATTRIBUTES，再由 `tests/test_codex_run_facts.py` 钉住。
+会话里的 `cli_runs` 是 `SESSION_INTERNAL_KEYS`，不进任何响应。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
