@@ -702,7 +702,7 @@ async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<stri
  * 清不掉（后端拒绝 / 断线）回那一句话、不重跑。重跑走「打开并运行」：环境一变旧报告的计划就过期了（envStore 订阅会让空闲会话
  * 重新检查），不能拿旧报告里的 `run` 去认领；「打开并运行」按新的检查结果在准备好时认领，与那次重新检查搭同一趟。
  */
-async function useBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project'): Promise<string | null> {
+async function switchToBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project'): Promise<string | null> {
   const guard = captureProjectEpoch()
   const env = useEnvStore.getState()
   const err = scope === 'global' ? await env.setPython(null) : await env.setProjectPython(null)
@@ -838,7 +838,7 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'skip_folder':
         return skipFolderAndRerun(entry, p.token)
       case 'use_builtin_python':
-        return useBuiltinPythonAndRerun(entry, p.scope)
+        return switchToBuiltinPythonAndRerun(entry, p.scope)
     }
   }
 }
