@@ -108,3 +108,7 @@ Icons in buttons, the left rail, the toolbar, menus and the command palette play
 ## Sharper, lighter interface icons
 
 Interface icons are drawn with a thinner stroke (1 px at 16 px) and every point is aligned to the screen's pixel grid, so edges no longer look soft or grey on Retina displays. Small icons next to text in buttons, menus and lists are now 16 px instead of 14 px.
+
+## Scripts whose file name contains a dot now run
+
+A script with a dot in its file name (for example `4-51.slope_ratio.py` or `fig.v2.py`) that Tavotto runs through its entry function failed with `ModuleNotFoundError: No module named '4-51'`, because the file name was imported as a module path and the dot was read as a package separator. Such scripts now load from their file directly, the same way `python script.py` runs them; `__name__` inside the script is still the file name without `.py`.
