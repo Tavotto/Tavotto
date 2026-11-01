@@ -360,7 +360,10 @@ def test_claude_parser_reads_tool_use_results_and_permission_denials():
     assert p(final) == [{"kind": "denied", "tool": "Edit"}]
 
 
-def test_claude_permission_denial_is_audited_and_shown_but_is_not_a_stall(box):
+def test_claude_permission_denial_is_audited_and_shown_but_is_not_a_stall(box, monkeypatch):
+    # 这条只钉「被拒本身不算卡住」（不被归成等审批 / 没送达）。文件级 STALL_IDLE=0.8 会让慢腿上
+    # 等审计 + sleep(0.5) 之后的**空闲**判定合法触发（reason=stalled，与被拒无关），macOS 慢腿上红过
+    monkeypatch.setattr(fixsession, "STALL_IDLE", 60.0)
     parse = ai_agents.ClaudeAgent().fix_event_parser()
     denial = json.dumps({"type": "result", "permission_denials": [{"tool_name": "Edit"}]})
     s, _ = start_session(box, sleeper(denial), parse=parse)
