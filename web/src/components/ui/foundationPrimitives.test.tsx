@@ -266,6 +266,8 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
     expect(listRowClass({ tree: true })).toMatch(/\brounded-sm\b/)
     expect(listRowClass({ tree: true })).toMatch(/\btext-ink-2\b/)
     expect(listRowClass({ tree: true, group: true })).toMatch(/\bfont-medium\b.*\btext-ink\b|\btext-ink\b.*\bfont-medium\b/)
+    // 行里的名字一律 13
+    for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\btext-base\b/)
     expect(listRowClass({ tree: true, selected: true })).toMatch(/\bfont-semibold\b/)
     expect(listRowClass({ tree: true, selected: true })).not.toMatch(/text-ink-2/)
     expect(listRowClass()).toMatch(/\brounded-md\b/)

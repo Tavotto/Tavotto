@@ -175,7 +175,7 @@ test('升级前的排版：原样打开 → 切到原图图幅内容不动 → �
 test('快速编辑：tight 存盘的 Fig1 的 X 轴标题完整、下半截点得中', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   const svg = page.locator('[data-element-svg] svg').first()
   await expect(svg).toBeVisible({ timeout: 120_000 })
   await page.waitForTimeout(1500)

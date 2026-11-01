@@ -19,7 +19,7 @@ const FOLD = 'button[aria-expanded="false"]:not([disabled]):not([aria-haspopup])
 test('标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
     .toBeVisible({ timeout: 60_000 })
 
