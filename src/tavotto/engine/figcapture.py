@@ -4227,6 +4227,98 @@ def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
         return False
 
 
+def exit_controlled_by_argv(source: str, exit_lines) -> bool:
+    """脚本的非零退出是不是**手写的参数检查**（TVD-VB36）。纯函数，只做 `ast.parse`，永不抛。
+
+    `exit_lines` 是回溯里每一个用户脚本帧的行号（抛出点、以及调用它的那几层：`usage()` 写在别处时，调用点才在
+    检查之下）。任一行满足下面之一即成立：
+    * 位于某个 `if` / `while` / 三元的**条件为真那一侧**之下，且条件里读了 `sys.argv`
+      （`if len(sys.argv) < 11: raise SystemExit("Usage: …")`）；
+    * 位于某个 `except` 处理块之下，且对应的 `try` 主体里读了 `sys.argv`（`try: argv[1] except IndexError: exit(…)`）。
+    「读 `sys.argv`」只认解析得到标准库 `sys` 的写法：`import sys [as s]` 的 `s.argv`、`from sys import argv [as a]`；
+    名字被用户自己赋值 / 定义 / 当参数时不算。不成立：`else` 侧（条件为假才走到，空 argv 下与参数的关系说不清）、
+    条件不读 argv、无条件退出、语法错、没有行号。判不出一律 False——保留 `script_exited`，宁可不归因。"""
+    if not isinstance(source, str):
+        return False
+    lines = [n for n in (exit_lines or ()) if isinstance(n, int)]
+    if not lines:
+        return False
+    try:
+        import ast  # noqa: PLC0415
+
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+    sys_names: set[str] = set()
+    argv_names: set[str] = set()
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for al in node.names:
+                if al.name == "sys":
+                    sys_names.add(al.asname or "sys")
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "sys":
+            for al in node.names:
+                if al.name == "argv":
+                    argv_names.add(al.asname or "argv")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+            if not isinstance(node, ast.ClassDef):
+                shadowed.update(a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadowed.add(node.id)
+    sys_names -= shadowed
+    argv_names -= shadowed
+    if not sys_names and not argv_names:
+        return False
+
+    def reads_argv(node) -> bool:
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Attribute)
+                and sub.attr == "argv"
+                and isinstance(sub.value, ast.Name)
+                and sub.value.id in sys_names
+            ):
+                return True
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load) and sub.id in argv_names:
+                return True
+        return False
+
+    try_nodes = tuple(t for t in (ast.Try, getattr(ast, "TryStar", None)) if t is not None)
+
+    def contains(node, line: int) -> bool:
+        return getattr(node, "lineno", 0) <= line <= getattr(node, "end_lineno", 0)
+
+    def walk(node, line: int) -> bool:
+        for child in ast.iter_child_nodes(node):
+            if not contains(child, line):
+                continue
+            if (
+                isinstance(node, (ast.If, ast.While))
+                and child in node.body
+                and reads_argv(node.test)
+            ):
+                return True
+            if isinstance(node, ast.IfExp) and child is node.body and reads_argv(node.test):
+                return True
+            if (
+                isinstance(node, try_nodes)
+                and child in node.handlers
+                and any(reads_argv(stmt) for stmt in node.body)
+            ):
+                return True
+            if walk(child, line):
+                return True
+        return False
+
+    try:
+        return any(walk(tree, line) for line in lines)
+    except RecursionError:
+        return False
+
+
 class BlockedFileOps:
     """safe worker 的守卫**确实拦下**了哪些关键文件操作，以及脚本随后有没有去看被它们影响的路径（P01a）。
 

@@ -968,7 +968,9 @@ def _argparse_failure_kind(exc: BaseException) -> str | None:
     return None
 
 
-def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError:
+def _script_exit_error(
+    exc: SystemExit, *, argv_count: int = 0, argv_check: bool = False
+) -> ProtocolError:
     """用户脚本以非零 `sys.exit` 结束 → 结构化错误（进程不退出）。
 
     `SystemExit` 不是 `Exception`：不接住的话它会穿过 `ensure_built`，落到主循环
@@ -981,7 +983,9 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     # 那一行，用户自己看得到。message 里只写 CPython 真正用的退出状态。
     status = _exit_status(exc.code)
     call = f"sys.exit({exc.code})" if isinstance(exc.code, int) else "sys.exit(<一段文字>)"
-    if _raised_by_cli_parser(exc):
+    # `argv_check`：脚本自己数 `sys.argv`、不够就退出（TVD-VB36，判据 `figcapture.exit_controlled_by_argv`）——
+    # 与解析库退出同一个答案：界面据此给「运行参数」。没有解析库，就没有 `parse_kind`
+    if _raised_by_cli_parser(exc) or argv_check:
         extra = {"exit_code": status}
         kind = _argparse_failure_kind(exc)
         if kind is not None:
@@ -1017,20 +1021,26 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     )
 
 
-def _script_frame_line(exc: BaseException, script) -> int | None:
-    """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
+def _script_frame_lines(exc: BaseException, script) -> list[int]:
+    """异常回溯里属于用户脚本文件的每一帧的行号，由外到内；读不到是空列表。"""
     try:
         want = os.path.normcase(os.path.realpath(str(script)))
-        line = None
+        lines: list[int] = []
         tb = exc.__traceback__
         while tb is not None:
             name = tb.tb_frame.f_code.co_filename
             if os.path.normcase(os.path.realpath(name)) == want:
-                line = tb.tb_lineno
+                lines.append(tb.tb_lineno)
             tb = tb.tb_next
-        return line
+        return lines
     except (OSError, ValueError):
-        return None
+        return []
+
+
+def _script_frame_line(exc: BaseException, script) -> int | None:
+    """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
+    lines = _script_frame_lines(exc, script)
+    return lines[-1] if lines else None
 
 
 def _blocked_operations_error(
@@ -1789,7 +1799,14 @@ class Worker(wireproto.V1Handler):
                         raise _blocked_operations_error(
                             ledger.material(), cause=exc, fidelity=ledger.summary()
                         ) from exc
-                    exit_error = _script_exit_error(exc, argv_count=len(self.script_argv))
+                    exit_error = _script_exit_error(
+                        exc,
+                        argv_count=len(self.script_argv),
+                        argv_check=not _raised_by_cli_parser(exc)
+                        and figcapture.exit_controlled_by_argv(
+                            script_source, _script_frame_lines(exc, self.script)
+                        ),
+                    )
                     exit_error.extra.update(self._probe_miss_facts())
                     raise exit_error from exc
             except scriptinput.ScriptNeedsInput as exc:
