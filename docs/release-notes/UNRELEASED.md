@@ -57,6 +57,10 @@ The top-bar "..." menu is split into File / View / Help groups with small headin
 
 Some Python environments (for example a virtual environment built from another app's bundled Python) can read Tavotto's cache folder but aren't allowed to create new folders in it. Every run then stopped within a second, before any of your script ran, yet the card said the script itself had failed and offered to have AI fix it. Tavotto now recognises this case: the card says in one sentence that this Python can't create folders in Tavotto's cache, and its button switches back to Tavotto's built-in Python and runs the script again. The setting it clears is the one that picked that Python (your global choice or this project's), and nothing in your scripts or your environment is changed.
 
+## Choosing a Python that can't write to Tavotto's cache is now refused up front
+
+When you pick a Python environment (in settings, or from the environment suggestions), Tavotto now also checks that it can create a folder in Tavotto's own data folder. Some environments can't — for example a virtual environment whose `python.exe` carries Windows' low-integrity label, which can read that folder but not create anything in it. Before, such an environment passed the check, and every run then failed before your script started. Now it is turned down when you choose it, with the same one-sentence reason, and the environment suggestions list says why it wasn't used. Tavotto's own built-in Python is not subject to this check.
+
 ## Overwrite confirmation always matches the file actually overwritten (#1549)
 
 If an export stopped at the "file already exists" confirmation and you then changed the file name, format, scope or export folder, clicking Overwrite replaced a different existing file than the one the confirmation listed. Changing any of these now cancels the confirmation and the export starts over with a fresh conflict check. Batch exports behave the same way when the export folder changes.

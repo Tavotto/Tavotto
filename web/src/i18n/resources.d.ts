@@ -3125,7 +3125,7 @@ export default interface Resources {
       "input_remap_requested_invalid": "说不清脚本要的是哪个路径，无法记住这个位置。",
       "input_remap_rule_unknown": "这条数据位置已经不在记录里了：{{source}}",
       "internal_error": "服务器内部错误：{{reason}}",
-      "interpreter_cache_denied": "这个 Python 环境没法在 {{product}} 的缓存里新建文件夹，脚本还没开始运行。改用 {{product}} 自带的 Python 就能运行。",
+      "interpreter_cache_denied": "这个 Python 环境没法在 {{product}} 的缓存里新建文件夹，{{product}} 用不了它。改用 {{product}} 自带的 Python 即可。",
       "interpreter_no_matplotlib": "无法从 {{path}} 导入 matplotlib",
       "interpreter_not_found": "找不到该文件：{{path}}",
       "interpreter_unsupported_python": "{{path}} 的 Python {{python_version}} 不在 Tavotto 当前支持的范围内。",
@@ -6291,6 +6291,7 @@ export default interface Resources {
       },
       "envNotUsed": {
         "activation_failed": "{{label}} 是 Conda 环境，但激活它时出错了，所以没用它。",
+        "cache_denied": "{{label}} 没法在 {{product}} 的缓存里新建文件夹，所以没用它。",
         "fallbackLabel": "这个环境",
         "import_failed": "{{label}} 里装了脚本要用的 {{names}}，但载入时出错了，所以没用它。",
         "import_failed_unnamed": "{{label}} 里装了脚本要用的包，但载入时出错了，所以没用它。",
