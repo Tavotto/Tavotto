@@ -346,10 +346,10 @@ describe('CanvasPage 页面预设宽度读当前出版规范', () => {
 
 describe('CanvasPage 页面预设跟着所选期刊（ADR 0155）', () => {
   const doc = () => useDocumentStore.getState().doc
-  const trigger = () => container.querySelector('[role="combobox"]')!
+  const trigger = () => container.querySelector('[data-page-preset-select] [data-select-trigger]')!
   const openOptions = async () => {
-    await act(async () => container.querySelector<HTMLElement>('[role="combobox"]')!.click())
-    return [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+    await act(async () => container.querySelector<HTMLElement>('[data-page-preset-select] [data-select-trigger]')!.click())
+    return [...document.body.querySelectorAll<HTMLElement>('[data-select-option]')]
   }
 
   beforeEach(() => {
@@ -392,7 +392,7 @@ describe('CanvasPage 页面预设跟着所选期刊（ADR 0155）', () => {
   it('宽度对不上期刊任何一栏：显示既有的「自定义」', () => {
     act(() => selectJournal('fx-cols-inherit'))
     act(() => useDocumentStore.getState().commit(literal('改宽'), (d) => void (d.page.w = 111)))
-    expect(container.querySelector('[role="combobox"] [data-page-preset="custom"]')).not.toBeNull()
+    expect(container.querySelector('[data-page-preset-select] [data-select-trigger] [data-page-preset="custom"]')).not.toBeNull()
   })
 
   it('期刊没规定栏宽：预设仍是课题组的单栏 / 双栏', async () => {

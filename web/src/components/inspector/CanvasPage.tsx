@@ -137,44 +137,47 @@ export function CanvasPage() {
   const pageControls = (
     <div className="flex flex-col gap-1.5">
       <Row label={cv('preset')} labelWidth={LABEL_W}>
-        <Select
-          className="min-w-0 flex-1"
-          ariaLabel={cv('presetGroup')}
-          value={active?.id ?? CUSTOM}
-          onChange={(id) => {
-            const p = PRESETS.find((x) => x.id === id)
-            if (p) setPageSize(p.w, p.h)
-          }}
-          options={[
-            ...PRESETS.map((p) => ({
-              value: p.id,
-              hint: p.label
-                    ? `${Math.round(p.w * 10) / 10} mm`
-                    : cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
-              label: (
-                <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
-                  <PageThumb w={p.w} h={p.h} />
-                  <span className="truncate">{p.label ?? cv(`presets.${p.id}.label`)}</span>
-                </span>
-              ),
-            })),
-            // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
-            // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
-            ...(active
-              ? []
-              : [
-                  {
-                    value: CUSTOM,
-                    label: (
-                      <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
-                        <PageThumb w={page.w} h={page.h} />
-                        <span className="truncate">{cv('presetCustom')}</span>
-                      </span>
-                    ),
-                  },
-                ]),
-          ]}
-        />
+        {/* 预设下拉的稳定锚点：触发器 `[data-page-preset-select] [data-select-trigger]`，选项 `[data-select-option=<预设 id>]` */}
+        <div data-page-preset-select className="flex min-w-0 flex-1">
+          <Select
+            className="min-w-0 flex-1"
+            ariaLabel={cv('presetGroup')}
+            value={active?.id ?? CUSTOM}
+            onChange={(id) => {
+              const p = PRESETS.find((x) => x.id === id)
+              if (p) setPageSize(p.w, p.h)
+            }}
+            options={[
+              ...PRESETS.map((p) => ({
+                value: p.id,
+                hint: p.label
+                      ? `${Math.round(p.w * 10) / 10} mm`
+                      : cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
+                label: (
+                  <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
+                    <PageThumb w={p.w} h={p.h} />
+                    <span className="truncate">{p.label ?? cv(`presets.${p.id}.label`)}</span>
+                  </span>
+                ),
+              })),
+              // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
+              // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
+              ...(active
+                ? []
+                : [
+                    {
+                      value: CUSTOM,
+                      label: (
+                        <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
+                          <PageThumb w={page.w} h={page.h} />
+                          <span className="truncate">{cv('presetCustom')}</span>
+                        </span>
+                      ),
+                    },
+                  ]),
+            ]}
+          />
+        </div>
       </Row>
       {/* 宽、高两个半列 + 横竖交换坐在状态槽里（与属性页的恢复钮同一格） */}
       <div data-page-size-row>
@@ -245,7 +248,7 @@ export function CanvasPage() {
               </span>
             )
           ) : (
-            <span className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
+            <span data-canvas-size-meta className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
               {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}
               <Numbers value={page.w} {...numbersProps} />
               {' × '}

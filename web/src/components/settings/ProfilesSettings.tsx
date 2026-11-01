@@ -511,7 +511,7 @@ export function ProfilesSettings({
               </SettingRow>
             )}
             {journalOn && doc.profile?.journalRef && (
-              <DiagnosticDisclosure variant="row" title={translate('journal.requirements', { ns: 'dialogs' })}>
+              <DiagnosticDisclosure variant="row" data-journal-disclosure title={translate('journal.requirements', { ns: 'dialogs' })}>
                 <JournalRequirements />
               </DiagnosticDisclosure>
             )}

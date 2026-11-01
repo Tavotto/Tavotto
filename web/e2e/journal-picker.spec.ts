@@ -47,7 +47,7 @@ test.beforeEach(async ({ page }) => {
 /** 属性栏「画布」页头里的页宽（mm）。读屏标签里是「W × H mm」；父级 `[data-canvas-identity]` 是稳定锚点。 */
 async function pageWidthMm(page: Page): Promise<number> {
   const label = await page
-    .locator('[data-canvas-identity] [role="img"]')
+    .locator('[data-canvas-identity] [data-canvas-size-meta]')
     .getAttribute('aria-label', { timeout: 15_000 })
   const m = /([\d.]+)\s*[×x]\s*[\d.]+/.exec(label ?? '')
   if (!m) throw new Error(`读不出页宽: ${label}`)
@@ -100,11 +100,11 @@ test(
     await expect.poll(() => pageWidthMm(page), { message: '页宽没有跟到所选期刊的栏宽' }).toBe(target)
 
     // 右侧画布页的页面预设：当前宽度对上期刊的哪一栏就显示哪一栏，下拉里是该期刊的栏宽（不是课题组的）
-    const current = page.locator('[data-page-preset]').first()
-    await expect(current).toHaveAttribute('data-page-preset', 'double')
-    await current.click()
-    await expect(page.getByRole('option', { name: /单栏/ })).toContainText('85 mm')
-    await expect(page.getByRole('option', { name: /双栏/ })).toContainText(`${target} mm`)
+    const trigger = page.locator('[data-page-preset-select] [data-select-trigger]')
+    await expect(trigger.locator('[data-page-preset]')).toHaveAttribute('data-page-preset', 'double')
+    await trigger.click()
+    await expect(page.locator('[data-select-option="single"]')).toContainText('85 mm')
+    await expect(page.locator('[data-select-option="double"]')).toContainText(`${target} mm`)
     await page.keyboard.press('Escape')
 
     // 一次撤销：页宽回来
@@ -119,9 +119,9 @@ test(
     await expect(shell).toBeVisible()
     await shell.locator('[data-section="spec"]').click()
     await page.locator('[data-journal-picker]').click()
-    const none = page.locator('[data-journal-list] > :first-child')
-    await expect(none).toHaveAttribute('data-journal-none', 'true')
-    await none.click()
+    // 「不按期刊」排在列表最上面（它是列表的第一个子节点）
+    expect(await page.locator('[data-journal-list]').evaluate((el) => el.firstElementChild?.hasAttribute('data-journal-none'))).toBe(true)
+    await page.locator('[data-journal-none]').click()
     await expect(page.locator('[data-journal-picker]')).toContainText('选择期刊')
     await expect(page.locator('[data-journal-requirements]')).toHaveCount(0)
     await closeSettings(page)
@@ -133,7 +133,7 @@ test(
     await page.locator('[data-rail="settings"]').click()
     await expect(shell).toBeVisible()
     await shell.locator('[data-section="spec"]').click()
-    await page.locator('[data-disclosure="row"] button', { hasText: '期刊要求' }).click()
+    await page.locator('[data-journal-disclosure] button[aria-expanded]').click()
     const row = page.locator('[data-journal-row="min_raster_dpi"]')
     await expect(row).toContainText('300 dpi')
     await row.locator('[data-journal-source]').click()
