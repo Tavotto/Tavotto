@@ -16295,7 +16295,12 @@ def api_versions_list(doc_id):
         meta = _version_meta(v)
         # 照今天的规则本不会记下的那条（2026-10-31 之前记下的打开 / 关闭 / 恢复前重复条）：
         # 标出来让时间线不显示，数据原样留着、不删
-        if prev is not None and _skippable_when_unchanged(v) and _same_as(prev, v):
+        if (
+            prev is not None
+            and _skippable_when_unchanged(v)
+            and _same_as(prev, v)
+            and _covers(prev, v)
+        ):
             meta["unchanged"] = True
         prev = v
         thumb = _version_thumb_path(doc_id, v.get("id"))
@@ -16397,7 +16402,7 @@ def api_versions_create(doc_id):
         # 不该刷版本）。导出 / 保存 / 写回**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
         # 它的标记正是用户要找的东西（ADR 0101；判据与列表的 `unchanged` 同一个 `_same_as`）。
         last = tl.last() if _skippable_when_unchanged(ver) else None
-        if last is not None and _same_as(last, ver):
+        if last is not None and _same_as(last, ver) and _covers(last, ver):
             return jsonify({"skipped": True, "version": _version_meta(last)})
         if named:
             refusal = _named_budget_refusal(tl.named_bytes(extra=ver))
@@ -16413,6 +16418,15 @@ def _skippable_when_unchanged(v: dict) -> bool:
         return False
     moment = v.get("moment")
     return moment is None or moment in _MOMENTS_SKIPPED_WHEN_UNCHANGED
+
+
+def _covers(prev: dict, v: dict) -> bool:
+    """内容相同的上一条能不能顶替这一条。打开 / 关闭 / 恢复前是关键时刻：在「命名」视图里
+    看得见、容量不够时比普通自动检查点后牺牲。上一条只是普通自动检查点时顶替不了——
+    「恢复前」就会只剩一条最先被清掉、命名视图里也找不到的自动节点，回不去恢复前。"""
+    if v.get("moment") is None:
+        return True
+    return _version_kind(prev) in ("named", "moment")
 
 
 def _same_as(prev: dict, v: dict) -> bool:

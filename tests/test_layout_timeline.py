@@ -134,7 +134,7 @@ def test_export_save_writeback_are_kept_even_when_nothing_changed(client):
 def test_open_close_before_restore_are_skipped_when_nothing_changed(client, moment):
     """用户 2026-10-31：反复打开项目、内容没变，时间线上一串一模一样的「打开项目」。"""
     doc = _doc("same")
-    first = _create(client, doc=doc, auto=True)
+    first = _create(client, doc=doc, auto=True, moment="open")
     again = client.post(
         "/api/versions/d1", json={"doc": doc, "auto": True, "moment": moment}
     ).get_json()
@@ -142,6 +142,27 @@ def test_open_close_before_restore_are_skipped_when_nothing_changed(client, mome
     # 内容变了照记
     _create(client, doc=_doc("changed"), auto=True, moment=moment)
     assert len(_list(client)["versions"]) == 2
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_unchanged_moment_after_a_named_node_is_skipped(client, moment):
+    doc = _doc("same")
+    _create(client, doc=doc, auto=False, name="投稿前", named=True)
+    again = client.post(
+        "/api/versions/d1", json={"doc": doc, "auto": True, "moment": moment}
+    ).get_json()
+    assert again.get("skipped") is True
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_unchanged_moment_after_a_plain_auto_checkpoint_is_still_recorded(client, moment):
+    """e2e（#1575 合并组）：改完停 300ms 记下普通自动检查点，紧接着恢复——「恢复前」与它
+    内容相同。普通自动检查点在「命名」视图里看不见、容量不够时最先牺牲，顶替不了「恢复前」。"""
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True)
+    _create(client, doc=doc, auto=True, moment=moment)
+    got = [(v["kind"], v.get("moment")) for v in _list(client)["versions"]]
+    assert got == [("auto", None), ("moment", moment)]
 
 
 def test_unchanged_moment_on_another_canvas_is_still_recorded(client):
@@ -170,7 +191,7 @@ def test_list_marks_old_unchanged_moments_but_keeps_them(client, monkeypatch):
     got = [(v.get("moment"), v.get("unchanged", False)) for v in _list(client)["versions"]]
     assert got == [
         (None, False),
-        ("open", True),
+        ("open", False),  # 上一条只是普通自动检查点：顶替不了
         ("open", True),
         ("export", False),
         ("close", True),

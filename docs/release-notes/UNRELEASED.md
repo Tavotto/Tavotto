@@ -62,7 +62,7 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 
 ## Timeline: unchanged reopen / leave / before-restore entries are no longer recorded
 
-- Opening a project, leaving it, or restoring a version used to add a timeline entry every time, even when nothing had changed — reopening a project a few times left a run of identical "Project opened" entries. These three now skip recording when the canvas is exactly the same as the latest entry. Exports, saves and write-backs are still recorded every time, and named versions always are.
+- Opening a project, leaving it, or restoring a version used to add a timeline entry every time, even when nothing had changed — reopening a project a few times left a run of identical "Project opened" entries. These three now skip recording when the canvas is exactly the same as the latest entry and that entry is itself one of these key moments or a named version; after an ordinary auto-save they are still recorded, so "Before restore" can always be found. Exports, saves and write-backs are still recorded every time, and named versions always are.
 - Identical entries recorded by earlier versions are hidden from the timeline; nothing is deleted.
 
 ## AI repair can now see and run in the environment your project is using
