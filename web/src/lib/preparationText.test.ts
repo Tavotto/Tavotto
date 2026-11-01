@@ -135,7 +135,7 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(install.aiFix).toBe(true)
 
     const python = view(
-      failed({ kind: 'change_python', from: '3.9.1', to: null }, {
+      failed({ kind: 'change_python', from: '3.9.1', to: null, env: null }, {
         phase: 'awaiting_confirmation',
         outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
         requirements: [{ id: 'd', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'mylab', installable: false } }],
@@ -156,6 +156,50 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(convert.state).toBe('no_figure_raster')
     expect(convert.primary).toMatchObject({ kind: 'convert' })
     expect(convert.aiFix).toBe(true)
+  })
+
+  describe('装不了的缺包不再以 AI 为主按钮（ADR 0148 修订 2026-11-01）', () => {
+    const missing = (remedy: unknown) =>
+      failed(remedy, { outcome: { kind: 'failed', code: 'missing_dependency' } })
+
+    it('choose_environment：主按钮「选择运行环境」，AI 退为次入口', () => {
+      const v = view(missing({ kind: 'choose_environment' }))
+      expect(v.state).toBe('failed')
+      expect(v.primary).toEqual({ kind: 'pick_environment' })
+      expect(v.aiFix).toBe(true)
+    })
+
+    it('没连 AI 也一样：主按钮不是「连接 AI」', () => {
+      const v = view(missing({ kind: 'choose_environment' }))
+      expect(v.primary?.kind).not.toBe('ai_fix')
+    })
+
+    it('其余确实适合 AI 的失败不变（脚本自身报错仍是 AI 主按钮）', () => {
+      expect(view(failed({ kind: 'ai_fix' })).primary).toEqual({ kind: 'ai_fix' })
+      expect(view(failed({ kind: 'connect_ai' })).primary).toEqual({ kind: 'ai_fix' })
+    })
+  })
+
+  describe('Python 版本不合：有满足的现成环境就一键改用，没有才进选择器', () => {
+    const versionFail = (remedy: unknown) =>
+      failed(remedy, { outcome: { kind: 'failed', code: 'project_env_unsupported_python' } })
+    const env = { id: 'e1', generation: 'g1', name: 'sci', version: '3.12.4' }
+
+    it('带 env：主按钮 switch_python（只是按钮，不自动切），AI 次入口仍在', () => {
+      const v = view(versionFail({ kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(v.primary).toEqual({ kind: 'switch_python', env })
+      expect(v.aiFix).toBe(true)
+    })
+
+    it('没有候选：主按钮是选择运行环境', () => {
+      const v = view(versionFail({ kind: 'change_python', from: '3.9.1', to: '3.12', env: null }))
+      expect(v.primary).toEqual({ kind: 'pick_environment' })
+    })
+
+    it('没有目标版本（to: null，如写不了缓存之外的无建议情形）不改主按钮', () => {
+      const v = view(versionFail({ kind: 'change_python', from: '3.14', to: null, env: null }))
+      expect(v.primary).toMatchObject({ kind: 'action', action: 'run' })
+    })
   })
 
   it('switch_native 是静默回退：不摆 AI 次按钮', () => {

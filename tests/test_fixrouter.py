@@ -41,21 +41,45 @@ def test_listed_package_in_an_allowed_environment_is_not_asked_but_everything_el
     assert ask(("scipy", "totally-unlisted-pkg"), True) is True  # 多个里有一个在名单外 -> 问
 
 
-def test_missing_dependency_that_cannot_be_installed_falls_through_to_ai():
-    assert choose("missing_dependency", Ctx(missing_installable=False, ai_connected=True)) == {
-        "kind": "ai_fix"
-    }
-    # 可装但认不出包名：不拿 import 名去装
-    assert choose("missing_dependency", Ctx(missing_installable=True, packages=()))["kind"] == (
-        "connect_ai"
+def test_missing_dependency_that_cannot_be_installed_points_at_an_environment_not_ai():
+    """装不了的缺包（私有库 / 本地模块 / conda-only）：主修法是确定的「选择运行环境」，不论 AI 连没连（ADR 0148 修订 2026-11-01）"""
+    for connected in (True, False):
+        ctx = Ctx(missing_installable=False, missing_named=True, ai_connected=connected)
+        assert choose("missing_dependency", ctx) == {"kind": "choose_environment"}
+    # 可装但认不出包名：不拿 import 名去装，同样指向选环境
+    got = choose(
+        "missing_dependency", Ctx(missing_installable=True, packages=(), missing_named=True)
     )
+    assert got == {"kind": "choose_environment"}
+    # 连缺的是什么都说不出：没有可指给用户的东西 -> 反馈
+    assert choose("missing_dependency", Ctx(ai_connected=True)) == {"kind": "feedback", "tried": []}
+
+
+def test_a_failed_install_is_not_rerouted_to_choose_environment():
+    """装过一次包还缺：这条规则只管「装不了」，装过之后的走法不变（仍落到 AI）"""
+    ctx = Ctx(missing_named=True, installed_this_run=True, ai_connected=True)
+    assert choose("missing_dependency", ctx) == {"kind": "ai_fix"}
+
+
+def test_non_dependency_failures_still_go_to_ai():
+    assert choose("script_error", Ctx(ai_connected=True, missing_named=True)) == {"kind": "ai_fix"}
+    assert choose("script_error", Ctx(missing_named=True)) == {"kind": "connect_ai"}
 
 
 @pytest.mark.parametrize("code", sorted(fixrouter.PYTHON_VERSION_CODES))
 def test_python_version_failures_route_to_change_python(code):
     got = choose(code, Ctx(python_from="3.9.1", python_to="3.12"))
-    assert got == {"kind": "change_python", "from": "3.9.1", "to": "3.12"}
+    assert got == {"kind": "change_python", "from": "3.9.1", "to": "3.12", "env": None}
     assert choose(code, Ctx(python_from="3.9.1"))["to"] is None
+
+
+@pytest.mark.parametrize("code", sorted(fixrouter.PYTHON_VERSION_CODES))
+def test_a_discovered_environment_rides_along_only_with_a_target_version(code):
+    env = {"id": "e1", "generation": "g", "name": "sci", "version": "3.12.4"}
+    got = choose(code, Ctx(python_from="3.9.1", python_to="3.12", python_env=env))
+    assert got["env"] == env
+    # 没有目标版本就不带环境：候选是按目标版本挑的，没有目标就没有依据
+    assert choose(code, Ctx(python_from="3.9.1", python_env=env))["env"] is None
 
 
 def test_python_version_codes_include_the_known_stable_codes():
@@ -152,6 +176,7 @@ def test_every_remedy_kind_is_reachable_and_in_the_closed_set():
         choose("missing_dependency", Ctx(missing_installable=True, packages=("scipy",)))["kind"],
         choose("root_python_mismatch", Ctx())["kind"],
         choose("x", Ctx(source_language="r"))["kind"],
+        choose("missing_dependency", Ctx(missing_named=True))["kind"],
         choose("x", Ctx(ai_connected=True))["kind"],
         choose("x", Ctx())["kind"],
         choose("x", Ctx(ai_rounds_exhausted=True))["kind"],

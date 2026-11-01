@@ -6084,6 +6084,7 @@ export default interface Resources {
         "send": "发送",
         "skipFolder": "跳过这个文件夹重跑",
         "stop": "停止运行",
+        "switchPython": "改用 {{name}}",
         "switchScope": "用本项目的版本",
         "useBuiltinPython": "改用 {{product}} 自带的 Python",
         "useIt": "用它",

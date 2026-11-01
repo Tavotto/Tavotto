@@ -68,7 +68,7 @@ def test_worker_that_cannot_create_its_cache_folder_gets_the_stable_code(project
 def test_router_sends_it_to_change_python_even_with_ai_connected():
     ctx = fixrouter.Ctx(ai_connected=True, python_from="3.12.14")
     remedy = fixrouter.choose(engine_pool.INTERPRETER_CACHE_DENIED_CODE, ctx)
-    assert remedy == {"kind": "change_python", "from": "3.12.14", "to": None}
+    assert remedy == {"kind": "change_python", "from": "3.12.14", "to": None, "env": None}
     # 已经换过一次解释器还是这样：不再重复同一种修法
     tried = fixrouter.Ctx(
         ai_connected=True, history=({"run": 1, "seq": 1, "changed": ["interpreter"]},)
