@@ -167,7 +167,8 @@ def test_low_integrity_python_can_read_and_reuse_but_not_create(tmp_path, low_py
 
 def test_control_same_base_python_without_the_label_creates_fine(tmp_path):
     got = _probe(bridgekit.USER_PYTHON, _medium_dir(tmp_path))
-    assert got["rid"] == MEDIUM_RID, got
+    # 不打标签就不是 Low：Lab 的非管理员账户是 Medium，GitHub 的 windows-latest 以管理员跑、是 High（0x3000）
+    assert got["rid"] >= MEDIUM_RID, got
     assert got["create"] == "ok", got
 
 
