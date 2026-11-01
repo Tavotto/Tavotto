@@ -17,10 +17,6 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
-## Clearer package download failures, and version lookup now falls back to the mirror (#1601)
-
-When installing a package fails because the network is unreachable, the card now says which case it is: "Neither the official index nor the mirror could be reached" (the mirror was tried automatically) or "The download source you configured can't be reached" (you set your own pip index, so Tavotto does not switch it). Looking up a package's versions in the package manager used to fail immediately when the official PyPI was unreachable; if you have not configured your own index, it now tries the same mirror once before giving up. On Windows, pip output from Tavotto's own environments is now read as UTF-8, so non-English system languages no longer garble the install log; your scripts' environment is unchanged.
-
 ## Tavotto launched from Codex Desktop (a Windows MSIX app) no longer keeps a separate copy of your data
 
 On Windows, when Tavotto was started from the Codex desktop app, recent projects, settings, managed environments and caches could end up in a private per-package folder (`%LOCALAPPDATA%\Packages\...\LocalCache`), so the app showed a different state than when started from the Start menu. Tavotto now starts itself outside that package environment, when the Codex plugin launches it (the `tavotto open` command now re-runs itself outside the package before probing a script or writing anything) and, as a fallback, when the app notices it was started inside one (the launcher now sees whether the replacement process actually came up, instead of treating the hand-over as success). Data that was already written into the package folder is not moved automatically. Diagnostic bundles now say whether the app was running with a package identity and whether its data folders are under `Packages`.
@@ -28,6 +24,10 @@ On Windows, when Tavotto was started from the Codex desktop app, recent projects
 ## Missing helper modules are no longer offered as packages to install
 
 If a script stores its own folder in a variable and then adds a subfolder to `sys.path` (for example `ROOT = Path(__file__).resolve().parent` followed by `sys.path.insert(0, str(ROOT / "source"))`), and that subfolder is missing from the project, Tavotto used to treat the script's own helper modules (such as `config`) as unknown packages and pre-filled a same-named PyPI package for you to install. These names are now reported as missing local modules from that folder: nothing is pre-filled and nothing is sent to pip. Put the missing files back into the folder the script expects and run again.
+
+## Clearer package download failures, and version lookup now falls back to the mirror (#1601)
+
+When installing a package fails because the network is unreachable, the card now says which case it is: "Neither the official index nor the mirror could be reached" (the mirror was tried automatically) or "The download source you configured can't be reached" (you set your own pip index, so Tavotto does not switch it). Looking up a package's versions in the package manager used to fail immediately when the official PyPI was unreachable; if you have not configured your own index, it now tries the same mirror once before giving up. On Windows, pip output from Tavotto's own environments is now read as UTF-8, so non-English system languages no longer garble the install log; your scripts' environment is unchanged.
 
 ## Single-figure export now includes canvas annotations (#1551)
 
