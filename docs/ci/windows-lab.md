@@ -225,6 +225,36 @@ python3 scripts/winlab/winlab.py test desktop-live --mode claude-desktop-native 
 
 建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` / `test desktop-live` 经 SSH stdin 交给那一次运行，Lab 不落盘（交互会话一侧经命名管道，`request.json` 里没有它）。
 
+### 转换真模型复现（convert-live）
+
+在 Lab 上用真模型跑 **Tavotto 真实的 R→Python 转换**（`POST /api/ai/convert`、`agent=codex`、真 `CodexAgent.build_command`、真 Codex CLI，
+推理走 DeepSeek 的 OpenAI 兼容 Responses 接口），复现反馈包里 Windows 上的 900 s 超时 / 正常退出却缺目标文件。费用提示：**每次转换都是一次真模型长任务**
+（单次上限 960 s，`all` 共 5 次，硬上限 8 次），用你给 Lab 单独建的限额 key；密钥规则同 `hosts-live`（经 stdin 到那一次运行的子进程环境，不落盘、不进 argv / 证据）。
+
+前提：
+
+1. `secret-init deepseek` 已录入默认那把 key（见上一节）。
+2. 管理员 `admin deploy-agent` 之后才生效——它把新任务 `convert-live` 与驱动 `convert_driver.py` 部署到 Lab（只在用户在场时由用户安排）。
+3. 被测提交要带 `scripts/winlab/fixtures/convert/`（`--ref` 会先 `prepare`）。
+
+```sh
+python3 scripts/winlab/winlab.py test convert-live --mode baseline  --ref HEAD   # 项目 a、e，英文路径
+python3 scripts/winlab/winlab.py test convert-live --mode cjk-path  --ref HEAD   # 项目路径含中文与空格、数据在 ..\data、source("..\\R\\utils.R")
+python3 scripts/winlab/winlab.py test convert-live --mode long-path --ref HEAD   # 候选工作区路径逼近 MAX_PATH（LongPathsEnabled=0）
+python3 scripts/winlab/winlab.py test convert-live --mode all       --ref HEAD   # 以上三组依次，共 5 次转换
+python3 scripts/winlab/winlab.py reports --id <run_id>
+```
+
+做法：CODEX_HOME 在 run 目录里（`work\codex-home`，只有 DeepSeek 供应商 + `env_key`，没有 key 本身）；R 项目与转换工作区在**另一棵树**
+`C:\TavottoLab\cw\<run_id>\`，任务结束整棵删掉，`shell_snapshots` 也删（模型曾 rg 到它把 key 发出去）。产品那一侧只做两处最小替换
+（绕过 `require_usable` / 第三方接口记录，密钥因此只在环境变量里），其余走产品原路径。
+
+报告字段：`result`（全部转换完成 passed；有失败 / 超时 failed；驱动没跑完 error）、`counts`（`runs` / `done` / `failed` / `timeout` / `driver_error` /
+`not_started` / `target_missing`）、`conversions[]`（每次：`case`、`outcome`、`elapsed_s`、产品的 `status` / `code` / `product_outcome`、
+`convert_state` / `convert_failure`、`cli_run_facts`（#1587 的 Codex 运行事实，所 prepare 的代码里有才有）、`workspace_files`、
+`workspace_path_len`、`usage`）、`usage_total`（所有 `turn.completed.usage` 之和）、`host`（Codex 版本、供应商、模型）。
+原始 Codex JSONL、提示词、argv（长文本只记长度）、产品日志、会话 JSON 在 `evidence\convert-live\<场景-项目>\`。
+
 ### 黄金快照
 
 腾讯云 CAM 子账号只授 `lighthouse:DescribeInstances` / `DescribeSnapshots` / `CreateInstanceSnapshot`

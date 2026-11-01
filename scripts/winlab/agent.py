@@ -62,6 +62,14 @@ SHARD_RE = re.compile(r"^([1-9][0-9]?)/([1-9][0-9]?)$")
 MAX_SELECTORS = 40
 #: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
 LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
+#: convert-live 的 --mode：转换场景的闭集（实现见 convert_plan）；all = 三组依次跑
+CONVERT_MODES = ("baseline", "cjk-path", "long-path", "all")
+#: 一次 convert-live 最多发起几次真实转换（每次都是一次真模型长任务，费用与时间的硬上限；测试核对 all 的计划不超过它）
+CONVERT_MAX_RUNS = 8
+#: 单次转换的轮询上限：产品对单次 AI 任务的上限是 900 s（ai_bridge.TIMEOUT_S），多等一分钟看收尾
+CONVERT_TIMEOUT_S = 960
+#: long-path：转换工作区的绝对路径目标长度（MAX_PATH=260；留出文件名的余量，让工作区里的文件落在 260 附近）
+CONVERT_LONG_WS_LEN = 236
 #: `desktop-hosts --mode`：桌面宿主 L2（固定版本见 DESKTOP_HOSTS）
 DESKTOP_HOST_IDS = ("vscode", "cursor", "trae-cn", "workbuddy", "zcode", "claude-desktop")
 #: `desktop-live --mode`：桌面宿主 + 其中的 AI 扩展，到 L3–L5（宿主 × 扩展的闭集见 DESKTOP_LIVE）
@@ -415,6 +423,27 @@ TASKS: dict[str, Task] = {
                 "Lab 在中国大陆：Anthropic / OpenAI 的真实模型调用按服务商地区政策不在这里做",
                 "只覆盖 CLI 宿主，不覆盖桌面版 / IDE / 插件安装路径",
                 "模型行为有随机性：一次通过不代表每次都会这样调用工具",
+            ),
+        ),
+        Task(
+            id="convert-live",
+            kind="convert-live",
+            summary="转换真模型复现：Tavotto 真实的 R→Python 转换（POST /api/ai/convert、真 Codex、DeepSeek）在 Windows 路径场景下的结果与耗时",
+            timeout_s=CONVERT_MAX_RUNS * (CONVERT_TIMEOUT_S + 120) + 1800,
+            needs_model_conf=True,
+            modes=CONVERT_MODES,
+            claim=(
+                "产品真实转换路径（引擎 + 候选工作区 + 真 CodexAgent.build_command + 真 Codex CLI）在 Lab（zh-CN、cp936、"
+                "非管理员、LongPathsEnabled=0、Defender 开）上，对内置的 R 项目夹具，逐次得到的转换结果、耗时、Codex 事件流、"
+                "工作区最终文件清单与 token 用量；超时与「正常退出却缺目标文件」按产品自己的判定如实记录"
+            ),
+            unverified=(
+                "模型不是产品默认的：Codex CLI 是真的，推理由 DeepSeek 的 OpenAI 兼容 Responses 接口提供，行为与官方模型不同",
+                "不经产品的连接配置界面：用 CODEX_HOME 的 env_key 引用密钥，绕过了 ai_providers 的第三方接口记录（为了密钥不落盘）",
+                "Codex CLI 用 npm 最新版（与 hosts-live 共用缓存前缀，不钉版本；报告写明版本）",
+                "用 Flask test client 调接口，不经桌面壳 / WebView / sidecar 进程边界",
+                "R 项目是内置的小夹具，不是用户的真实项目；Lab 没装 R，转换不运行 R（产品本来也不运行）",
+                "模型行为有随机性：一次不复现不代表没有问题；每次真实调用要花费用",
             ),
         ),
     )
@@ -1606,6 +1635,26 @@ def _toml_str(s: str) -> str:
     return json.dumps(s, ensure_ascii=False)
 
 
+def _codex_provider_lines(conf: dict) -> list[str]:
+    """Codex config.toml 的顶层键：模型 + 自定义供应商 + 只走 API（不走登录）。hosts-live 与 convert-live 共用。"""
+    return [
+        f"model = {_toml_str(conf.get('openai_model') or 'deepseek-flash')}",
+        'model_provider = "lab"',
+        'forced_login_method = "api"',
+    ]
+
+
+def _codex_provider_table(conf: dict) -> list[str]:
+    """供应商表：DeepSeek 的 OpenAI 兼容 Responses 接口，密钥只以 `env_key` 引用（配置里没有 key 本身）。"""
+    return [
+        "[model_providers.lab]",
+        'name = "lab"',
+        f"base_url = {_toml_str(conf.get('openai_base_url') or 'https://api.deepseek.com/')}",
+        'wire_api = "responses"',
+        'env_key = "WINLAB_MODEL_KEY"',
+    ]
+
+
 def _codex_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict:
     """Codex：隔离的 CODEX_HOME + 自定义供应商（DeepSeek 的 OpenAI 兼容 Responses 接口，env_key 取密钥，不走登录）。"""
     home = run_dir / "work" / "codex-home"
@@ -1613,17 +1662,11 @@ def _codex_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> di
     env_lines = ", ".join(f"{k} = {_toml_str(v)}" for k, v in mcp_env.items())
     toml = "\n".join(
         [
-            f"model = {_toml_str(conf.get('openai_model') or 'deepseek-flash')}",
-            'model_provider = "lab"',
-            'forced_login_method = "api"',
+            *_codex_provider_lines(conf),
             'approval_policy = "never"',
             'sandbox_mode = "workspace-write"',
             "",
-            "[model_providers.lab]",
-            'name = "lab"',
-            f"base_url = {_toml_str(conf.get('openai_base_url') or 'https://api.deepseek.com/')}",
-            'wire_api = "responses"',
-            'env_key = "WINLAB_MODEL_KEY"',
+            *_codex_provider_table(conf),
             "",
             "[mcp_servers.tavotto]",
             f"command = {_toml_str(mcp_cmd[0])}",
@@ -1836,17 +1879,8 @@ def _seed_live_project(py: Path, run_dir: Path, env: dict, ev: Path) -> tuple[Pa
     return proj, seed.get("exit_code") == 0
 
 
-def run_hosts_live_task(
-    lab: Lab, run_dir: Path, env: dict, model_conf: dict, host_id: str = "claude-code"
-) -> dict:
-    host = LIVE_HOSTS[host_id]
-    py = lab.venv_python()
-    if not py.exists():
-        return {
-            "result": "environment_unavailable",
-            "summary": "venv missing: run `winlab prepare` first",
-        }
-    ev = run_dir / "evidence" / "live"
+def ensure_live_host(lab: Lab, env: dict, host: LiveHost, ev: Path) -> tuple[Path, str | None]:
+    """宿主 CLI 用 npm 装进 Lab 自己的前缀（cache\\npm-global，与 hosts-live 共用；已装就复用）。→ (可执行文件, 版本或 None)。"""
     prefix = lab.cache / "npm-global"
     exe = prefix / host.bin
     if not exe.exists():
@@ -1866,7 +1900,21 @@ def run_hosts_live_task(
             ev / "npm-install",
             900,
         )
-    version = _tool_version([str(exe), "--version"]) if exe.exists() else None
+    return exe, (_tool_version([str(exe), "--version"]) if exe.exists() else None)
+
+
+def run_hosts_live_task(
+    lab: Lab, run_dir: Path, env: dict, model_conf: dict, host_id: str = "claude-code"
+) -> dict:
+    host = LIVE_HOSTS[host_id]
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    ev = run_dir / "evidence" / "live"
+    exe, version = ensure_live_host(lab, env, host, ev)
     if not version:
         return {
             "result": "failed",
@@ -1961,6 +2009,320 @@ def run_hosts_live_task(
             ],
         },
         "exit_codes": {"session_1": r1.get("exit_code"), "session_2": r2.get("exit_code")},
+    }
+
+
+# ----------------------------------------------------------------------------- convert-live
+#: 转换夹具（随仓库同步，`prepare` 后在 lab.repo 下）：a = 单脚本 + 同目录 data\；d / e = analysis\ + R\ + data\ 三层（e 是长脚本）
+CONVERT_FIXTURES = Path("scripts") / "winlab" / "fixtures" / "convert"
+CONVERT_FIXTURE_SCRIPTS = {
+    "a": "fig1.R",
+    "d": "analysis/02_Fig3_7_parasitoid_two_versions.R",
+    "e": "analysis/02_Fig3_22_parasitoid_two_versions.R",
+}
+#: 含中文与空格的项目路径（两层，像用户「论文图表\第 2 版 终稿」）
+CONVERT_CJK_PARTS = ("论文 图表 备份", "第 2 版 终稿")
+
+
+@dataclass(frozen=True)
+class ConvertCase:
+    scenario: str  # baseline | cjk-path | long-path
+    project: str  # CONVERT_FIXTURE_SCRIPTS 的键
+    backslash: bool = False  # 脚本里的相对路径写成 Windows 反斜杠（source("..\\R\\utils.R")）
+    cjk: bool = False  # 项目路径含中文与空格
+    long_ws: bool = False  # 转换工作区路径接近 MAX_PATH
+
+    @property
+    def key(self) -> str:
+        return f"{self.scenario}-{self.project}"
+
+
+def convert_plan(mode: str) -> list[ConvertCase]:
+    """--mode → 要发起的转换（闭集，总数 ≤ CONVERT_MAX_RUNS）。"""
+    baseline = [ConvertCase("baseline", "a"), ConvertCase("baseline", "e")]
+    cjk = [
+        ConvertCase("cjk-path", "d", backslash=True, cjk=True),
+        ConvertCase("cjk-path", "e", backslash=True, cjk=True),
+    ]
+    long_ = [ConvertCase("long-path", "a", long_ws=True)]
+    plan = {
+        "baseline": baseline,
+        "cjk-path": cjk,
+        "long-path": long_,
+        "all": baseline + cjk + long_,
+    }[mode]
+    assert len(plan) <= CONVERT_MAX_RUNS
+    return plan
+
+
+def _long(p: Path) -> Path:
+    r"""Windows 上给超过 MAX_PATH 的路径加 `\\?\` 前缀（LongPathsEnabled=0 时执行器自己的清理 / 抹密钥 / 列目录才不会漏）。"""
+    if os.name == "nt" and not str(p).startswith("\\\\?\\"):
+        return Path("\\\\?\\" + str(p))
+    return p
+
+
+_R_REL_PATH_RE = re.compile(r'"(\.\./[^"\n]+)"')
+
+
+def backslash_r_paths(text: str) -> str:
+    r"""R 脚本里的 `"../R/utils.R"` → `"..\\R\\utils.R"`（R 源码里写两个反斜杠）：用户在 Windows 上常这样写。"""
+    return _R_REL_PATH_RE.sub(lambda m: '"' + m.group(1).replace("/", "\\\\") + '"', text)
+
+
+def materialize_convert_case(
+    case: ConvertCase, fixtures: Path, base: Path
+) -> tuple[Path, str, Path]:
+    """把夹具放进 base\\ 下 → (项目根, 脚本的项目相对路径, 本次的数据目录 TAVOTTO_DATA_DIR)。
+    long-path 通过拉长数据目录（候选工作区在 data\\cache\\ai_convert\\<sid>）让工作区路径逼近 MAX_PATH。"""
+    root = base / Path(*CONVERT_CJK_PARTS) if case.cjk else base / "project"
+    shutil.copytree(fixtures / case.project, root)
+    rel = CONVERT_FIXTURE_SCRIPTS[case.project]
+    if case.backslash:
+        script = root / rel
+        script.write_text(
+            backslash_r_paths(script.read_text(encoding="utf-8")), encoding="utf-8", newline="\n"
+        )
+    data = base / "data"
+    if case.long_ws:
+        # 工作区 = data\cache\ai_convert\<12 位 sid>：用若干 ≤ 60 字符的目录段垫到目标长度
+        fixed = len(str(data / "cache" / "ai_convert")) + 1 + 12
+        pad = max(0, CONVERT_LONG_WS_LEN - fixed)
+        segs = []
+        while pad > 0:
+            n = min(60, pad - 1) if pad > 1 else 1
+            segs.append("d" * max(1, n))
+            pad -= len(segs[-1]) + 1
+        data = base / "data" / Path(*segs) if segs else data
+    return root, rel, data
+
+
+def trees_disjoint(a: Path, b: Path) -> bool:
+    """两棵目录树互不包含（CODEX_HOME 与 R 项目 / 转换工作区：模型曾 rg 到 CODEX_HOME\\shell_snapshots 把 key 发出去）。"""
+    na, nb = os.path.normcase(os.path.abspath(a)), os.path.normcase(os.path.abspath(b))
+    sep = os.sep
+    return not (na == nb or na.startswith(nb + sep) or nb.startswith(na + sep))
+
+
+def usage_from_jsonl(text: str) -> dict:
+    """Codex `--json` 事件流里所有 `turn.completed.usage` 的汇总（数值字段逐项相加）。"""
+    total: dict[str, int] = {}
+    turns = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict) or ev.get("type") != "turn.completed":
+            continue
+        turns += 1
+        usage = ev.get("usage")
+        if isinstance(usage, dict):
+            for k, v in usage.items():
+                if isinstance(v, int) and not isinstance(v, bool):
+                    total[k] = total.get(k, 0) + v
+    return {"turns": turns, **total}
+
+
+def _write_convert_codex_home(home: Path, conf: dict) -> None:
+    """convert-live 的 CODEX_HOME：DeepSeek 供应商 + env_key；不配 MCP / 沙箱 / 审批（这些由产品自己的命令行决定）。"""
+    home.mkdir(parents=True, exist_ok=True)
+    toml = "\n".join([*_codex_provider_lines(conf), "", *_codex_provider_table(conf), ""])
+    (home / "config.toml").write_text(toml, encoding="utf-8")
+
+
+def _convert_outcome(res: dict) -> str:
+    """一次转换的结论：done = 产品判定成功；timeout = 到点仍无结论；failed = 产品给了失败；driver_error = 驱动没跑完。"""
+    if res.get("driver_error") or not res:
+        return "driver_error"
+    if not res.get("session"):
+        return "not_started"
+    if not res.get("finished_in_time"):
+        return "timeout"
+    # 产品自己的任务结局词表（ai_tasks.OUTCOMES）：completed 才算转换完成；partial / needs_input / failed / … 都是未完成
+    return "done" if res.get("outcome") == "completed" else "failed"
+
+
+def run_convert_live_task(
+    lab: Lab, run_dir: Path, env: dict, model_conf: dict, mode: str = "baseline"
+) -> dict:
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    fixtures = lab.repo / CONVERT_FIXTURES
+    driver = Path(__file__).resolve().parent / "convert_driver.py"
+    if not fixtures.is_dir() or not driver.is_file():
+        return {
+            "result": "environment_unavailable",
+            "summary": "convert fixtures / driver missing: `prepare` a ref that has scripts/winlab/fixtures/convert and `admin deploy-agent`",
+        }
+    ev = run_dir / "evidence" / "convert-live"
+    ev.mkdir(parents=True, exist_ok=True)
+    host = LIVE_HOSTS["codex-cli"]
+    exe, version = ensure_live_host(lab, env, host, ev)
+    if not version:
+        return {"result": "failed", "summary": "codex CLI did not install or start"}
+    # CODEX_HOME 在 run 目录；R 项目与转换工作区在另一棵树（cache\convert-work\<run>：tavotto-lab 在 Lab 根下只能写
+    # runs\ / cache\ 等既有目录，不能新建顶层目录）——模型曾 rg 到 CODEX_HOME\shell_snapshots 把 key 发出去
+    codex_home = run_dir / "work" / "codex-home"
+    cw_base = lab.cache / "convert-work"
+    work_root = cw_base / run_dir.name
+    if not trees_disjoint(codex_home, work_root):
+        return {"result": "error", "summary": "CODEX_HOME and the project workspace share a tree"}
+    for stale in cw_base.glob("*") if cw_base.is_dir() else ():
+        if RUN_ID_RE.fullmatch(stale.name) and stale.name != run_dir.name:
+            with contextlib.suppress(OSError):
+                _rmtree_no_follow(_long(stale))
+    config_dir = run_dir / "work" / "tavotto-config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    _write_convert_codex_home(codex_home, model_conf)
+    key = model_conf["api_key"]
+    plan = convert_plan(mode)
+    conversions: list[dict] = []
+    usage_total: dict[str, int] = {}
+    try:
+        for i, case in enumerate(plan, 1):
+            base = work_root / f"{i}"
+            root, rel, data = materialize_convert_case(case, fixtures, base)
+            data.mkdir(parents=True, exist_ok=True)
+            cev = ev / case.key
+            cev.mkdir(parents=True, exist_ok=True)
+            result_file = cev / "result.json"
+            cenv = dict(env)
+            cenv.update(
+                {
+                    "PYTHONPATH": str(lab.repo / "src"),
+                    "MPLCONFIGDIR": str(run_dir / "work" / "mpl"),
+                    "TAVOTTO_CONFIG_DIR": str(config_dir),
+                    "TAVOTTO_DATA_DIR": str(data),
+                    "CODEX_HOME": str(codex_home),
+                    "WINLAB_MODEL_KEY": key,  # 只在这个子进程的环境里；不进 argv、文件、日志
+                    "PYTHONIOENCODING": "utf-8",
+                }
+            )
+            step = _run_logged(
+                [
+                    str(py),
+                    str(driver),
+                    "--project",
+                    str(root),
+                    "--script",
+                    rel,
+                    "--out",
+                    str(cev),
+                    "--result",
+                    str(result_file),
+                    "--timeout",
+                    str(CONVERT_TIMEOUT_S),
+                ],
+                lab.repo,
+                cenv,
+                cev / "driver",
+                CONVERT_TIMEOUT_S + 180,
+            )
+            res: dict = {}
+            with contextlib.suppress(OSError, ValueError):
+                res = json.loads(result_file.read_text(encoding="utf-8"))
+            jsonl = cev / "codex_stdout.jsonl"
+            usage = (
+                usage_from_jsonl(jsonl.read_text(encoding="utf-8", errors="replace"))
+                if jsonl.is_file()
+                else {}
+            )
+            for k, v in usage.items():
+                usage_total[k] = usage_total.get(k, 0) + v
+            facts = None
+            if (cev / "facts.json").is_file():
+                with contextlib.suppress(OSError, ValueError):
+                    facts = json.loads((cev / "facts.json").read_text(encoding="utf-8"))
+            conversions.append(
+                {
+                    "case": case.key,
+                    "scenario": case.scenario,
+                    "project": case.project,
+                    "script": rel,
+                    "project_path_len": len(str(root / rel)),
+                    "outcome": _convert_outcome(res),
+                    "elapsed_s": res.get("elapsed_s"),
+                    "status": res.get("status"),
+                    "code": res.get("code"),
+                    "product_outcome": res.get("outcome"),
+                    "convert_state": res.get("convert_state"),
+                    "convert_failure": res.get("convert_failure"),
+                    "start": res.get("start_body"),
+                    "driver_error": res.get("driver_error"),
+                    "driver_exit_code": step.get("exit_code"),
+                    "driver_timed_out": step.get("timed_out"),
+                    "cli_run_facts_available": res.get("cli_run_facts_available"),
+                    "cli_run_facts": facts,
+                    "workspace_path_len": res.get("workspace_path_len"),
+                    "workspace_files": [f.get("name") for f in res.get("workspace_files") or []],
+                    "workspace_max_file_path_len": max(
+                        (f.get("path_len", 0) for f in res.get("workspace_files") or []), default=0
+                    ),
+                    "listing_error": res.get("listing_error"),
+                    "usage": usage,
+                    "evidence": f"evidence/convert-live/{case.key}",
+                }
+            )
+    finally:
+        # 收尾：模型可能读到的地方先清（shell_snapshots 是 Codex 把 shell 环境快照落盘的地方），再抹一遍证据与工作树
+        snaps = codex_home / "shell_snapshots"
+        if snaps.is_dir():
+            with contextlib.suppress(OSError):
+                _rmtree_no_follow(snaps)
+        unscrubbed = (
+            _scrub(ev, key)
+            + _scrub(_long(work_root) if work_root.exists() else work_root, key)
+            + _scrub(codex_home, key)
+            + _scrub(config_dir, key)
+        )
+        if work_root.exists():
+            with contextlib.suppress(OSError):
+                _rmtree_no_follow(_long(work_root))
+    counts = {"runs": len(conversions)}
+    for o in ("done", "failed", "timeout", "not_started", "driver_error"):
+        counts[o] = sum(1 for c in conversions if c["outcome"] == o)
+    counts["target_missing"] = sum(
+        1
+        for c in conversions
+        if c["outcome"] == "done" and not any(str(n).endswith(".py") for n in c["workspace_files"])
+    )
+    if unscrubbed:
+        return {
+            "result": "error",
+            "summary": f"could not check {len(unscrubbed)} file(s) for the key: {unscrubbed[:3]}",
+            "counts": counts,
+        }
+    bad_driver = counts["driver_error"] + counts["not_started"]
+    result = (
+        "error" if bad_driver else ("passed" if counts["done"] == len(conversions) else "failed")
+    )
+    return {
+        "result": result,
+        "summary": f"{mode}: {counts['done']}/{len(conversions)} conversions done"
+        + "".join(
+            f"; {k}={counts[k]}"
+            for k in ("failed", "timeout", "driver_error", "not_started")
+            if counts[k]
+        ),
+        "mode": mode,
+        "host": {
+            "id": host.id,
+            "version": version,
+            "provider": model_conf.get("provider"),
+            "model": model_conf.get("openai_model") or "deepseek-flash",
+            "network": "direct",
+        },
+        "counts": counts,
+        "conversions": conversions,
+        "usage_total": usage_total,
     }
 
 
@@ -5833,6 +6195,10 @@ def _run_body(
     if task.kind == "hosts-live":
         return run_hosts_live_task(
             lab, run_dir, env, model_conf or {}, (pkg or {}).get("mode") or "claude-code"
+        )
+    if task.kind == "convert-live":
+        return run_convert_live_task(
+            lab, run_dir, env, model_conf or {}, (pkg or {}).get("mode") or "baseline"
         )
     if task.kind == "env-matrix":
         return run_env_matrix_task(lab, run_dir, env, (pkg or {}).get("package", ""))
