@@ -1,5 +1,5 @@
 {
-  "_comment": "AI 失败卡「错误码 → 主按钮」的前后端同源对。后端 tests/test_ai_cli_error_classes.py 用 Codex / Claude 适配器的 classify_event 逐条复算 cli_vectors，并要求 actions 的键覆盖 RUNNER_ERRORS 里会出现在失败卡上的码；前端 web/src/components/ai/transcriptModel.test.ts 要求 AGENT_ERROR_ACTION 与 actions 逐项相等。actions 的值：check_connection = 主按钮「检查连接」，retry = 主按钮「重试」。cli_vectors 的事件形状来自两个 CLI 的 JSON 事件流字段（Codex turn.failed 的 error 对象；Claude assistant.error / result.api_error_status），expect 为 null 表示归不了（保持 agent_exit_nonzero）。",
+  "_comment": "AI 失败卡「错误码 → 主按钮」的前后端同源对。后端 tests/test_ai_cli_error_classes.py 用 Codex / Claude 适配器的 classify_event 逐条复算 cli_vectors，并要求 actions 的键覆盖 RUNNER_ERRORS 里会出现在失败卡上的码；前端 web/src/components/ai/transcriptModel.test.ts 要求 AGENT_ERROR_ACTION 与 actions 逐项相等。actions 的值：check_connection = 主按钮「检查连接」，retry = 主按钮「重试」。cli_vectors 的事件形状取自真 CLI 抓取（Codex 0.163.0 的 turn.failed.error.message 以 `unexpected status <三位码>` 开头；Claude 2.1.316 的 assistant.error / result.api_error_status 在事件顶层），已脱敏，expect 为 null 表示归不了（保持 agent_exit_nonzero）。",
   "actions": {
     "agent_auth": "check_connection",
     "agent_html_response": "check_connection",
@@ -15,20 +15,200 @@
     "timeout": "retry"
   },
   "cli_vectors": [
-    {"name": "codex 401", "agent": "codex", "event": {"type": "turn.failed", "error": {"message": "x", "http_status_code": 401}}, "expect": "agent_auth"},
-    {"name": "codex 错误信息码 unauthorized", "agent": "codex", "event": {"type": "turn.failed", "error": {"message": "x", "codex_error_info": "unauthorized"}}, "expect": "agent_auth"},
-    {"name": "codex usage_limit_exceeded", "agent": "codex", "event": {"type": "turn.failed", "error": {"message": "x", "codex_error_info": "usage_limit_exceeded"}}, "expect": "agent_quota"},
-    {"name": "codex message 里是 JSON 错误体 429", "agent": "codex", "event": {"type": "turn.failed", "error": {"message": "{\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"slow down\"},\"status\":429}"}}, "expect": "agent_quota"},
-    {"name": "codex 连接失败（带状态的对象形式）", "agent": "codex", "event": {"type": "turn.failed", "error": {"message": "x", "codex_error_info": {"http_connection_failed": {"http_status_code": null}}}}, "expect": "agent_network"},
-    {"name": "codex 只有自由文本：不判", "agent": "codex", "event": {"type": "turn.failed", "error": {"message": "unexpected status 401 Unauthorized: invalid api key"}}, "expect": null},
-    {"name": "codex 瞬时 error 事件不判", "agent": "codex", "event": {"type": "error", "message": "Reconnecting... 1/5", "http_status_code": 401}, "expect": null},
-    {"name": "claude authentication_failed", "agent": "claude", "event": {"type": "assistant", "message": {"content": [{"type": "text", "text": "Invalid API key"}]}, "error": "authentication_failed"}, "expect": "agent_auth"},
-    {"name": "claude rate_limit", "agent": "claude", "event": {"type": "assistant", "message": {"content": []}, "error": "rate_limit"}, "expect": "agent_quota"},
-    {"name": "claude billing_error", "agent": "claude", "event": {"type": "assistant", "message": {"content": []}, "error": "billing_error"}, "expect": "agent_quota"},
-    {"name": "claude result 401", "agent": "claude", "event": {"type": "result", "subtype": "success", "is_error": true, "api_error_status": 401, "result": "Invalid API key"}, "expect": "agent_auth"},
-    {"name": "claude result 429", "agent": "claude", "event": {"type": "result", "is_error": true, "api_error_status": 429, "result": "x"}, "expect": "agent_quota"},
-    {"name": "claude result 503", "agent": "claude", "event": {"type": "result", "is_error": true, "api_error_status": 503, "result": "x"}, "expect": "agent_network"},
-    {"name": "claude 无结构化字段：不判", "agent": "claude", "event": {"type": "result", "is_error": true, "result": "rate limit exceeded please log in"}, "expect": null},
-    {"name": "claude invalid_request 不判", "agent": "claude", "event": {"type": "assistant", "message": {"content": []}, "error": "invalid_request"}, "expect": null}
+    {
+      "name": "codex 真机 0.163.0 401 的 turn.failed",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: CFRAY, request id: REQID"
+        }
+      },
+      "expect": "agent_auth"
+    },
+    {
+      "name": "codex 403",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "unexpected status 403 Forbidden: x"
+        }
+      },
+      "expect": "agent_auth"
+    },
+    {
+      "name": "codex 429",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "unexpected status 429 Too Many Requests: x"
+        }
+      },
+      "expect": "agent_quota"
+    },
+    {
+      "name": "codex 503",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "unexpected status 503 Service Unavailable: x"
+        }
+      },
+      "expect": "agent_network"
+    },
+    {
+      "name": "codex 500 不判",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "unexpected status 500 Internal Server Error: x"
+        }
+      },
+      "expect": null
+    },
+    {
+      "name": "codex 前缀不在开头：不判",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "Reconnecting... 5/5 (unexpected status 401 Unauthorized: x)"
+        }
+      },
+      "expect": null
+    },
+    {
+      "name": "codex 自由文本：不判",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "You've hit your usage limit"
+        }
+      },
+      "expect": null
+    },
+    {
+      "name": "codex 真机重连 error 事件不判（瞬时）",
+      "agent": "codex",
+      "event": {
+        "type": "error",
+        "message": "Reconnecting... 2/5 (unexpected status 401 Unauthorized: x)"
+      },
+      "expect": null
+    },
+    {
+      "name": "codex 真机最终 error 事件不判（以 turn.failed 为准）",
+      "agent": "codex",
+      "event": {
+        "type": "error",
+        "message": "unexpected status 401 Unauthorized: x"
+      },
+      "expect": null
+    },
+    {
+      "name": "claude 真机 2.1.316 401 的 assistant 事件",
+      "agent": "claude",
+      "event": {
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Invalid API key · Fix external API key"
+            }
+          ]
+        },
+        "error": "authentication_failed",
+        "api_error_status": 401
+      },
+      "expect": "agent_auth"
+    },
+    {
+      "name": "claude 真机 2.1.316 401 的 result 事件（subtype 仍是 success）",
+      "agent": "claude",
+      "event": {
+        "type": "result",
+        "subtype": "success",
+        "is_error": true,
+        "api_error_status": 401,
+        "terminal_reason": "api_error",
+        "result": "Invalid API key · Fix external API key"
+      },
+      "expect": "agent_auth"
+    },
+    {
+      "name": "claude rate_limit",
+      "agent": "claude",
+      "event": {
+        "type": "assistant",
+        "message": {
+          "content": []
+        },
+        "error": "rate_limit"
+      },
+      "expect": "agent_quota"
+    },
+    {
+      "name": "claude billing_error",
+      "agent": "claude",
+      "event": {
+        "type": "assistant",
+        "message": {
+          "content": []
+        },
+        "error": "billing_error"
+      },
+      "expect": "agent_quota"
+    },
+    {
+      "name": "claude result 429",
+      "agent": "claude",
+      "event": {
+        "type": "result",
+        "is_error": true,
+        "api_error_status": 429,
+        "result": "x"
+      },
+      "expect": "agent_quota"
+    },
+    {
+      "name": "claude result 503",
+      "agent": "claude",
+      "event": {
+        "type": "result",
+        "is_error": true,
+        "api_error_status": 503,
+        "result": "x"
+      },
+      "expect": "agent_network"
+    },
+    {
+      "name": "claude 无结构化字段：不判",
+      "agent": "claude",
+      "event": {
+        "type": "result",
+        "is_error": true,
+        "result": "rate limit exceeded please log in"
+      },
+      "expect": null
+    },
+    {
+      "name": "claude invalid_request 不判",
+      "agent": "claude",
+      "event": {
+        "type": "assistant",
+        "message": {
+          "content": []
+        },
+        "error": "invalid_request"
+      },
+      "expect": null
+    }
   ]
 }

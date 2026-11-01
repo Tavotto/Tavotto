@@ -870,28 +870,13 @@ class CodexAgent(AgentDefinition):
         return []
 
 
-# ---- Codex / Claude CLI 失败归类（只认结构化字段，绝不读模型自由文本）--------------------
-#: 归类用的闭集码表：键是 CLI 事件里的**错误码 / 类型字段值**（小写），值是 `RUNNER_ERRORS` 里的码。
+# ---- Codex / Claude CLI 失败归类（只认 CLI 自己的结构化字段 / 自拼前缀，绝不读模型自由文本）--------------------
+#: Claude `assistant.error` 的字段值 → `RUNNER_ERRORS` 里的码（真机抓到 authentication_failed；
+#: rate_limit / billing_error 是 Claude Code SDK 文档里同一字段的取值）。别的取值（invalid_request、unknown…）不判。
 _CLI_CODE_CLASS = {
-    # 认证
-    "unauthorized": "agent_auth",
     "authentication_failed": "agent_auth",
-    "authentication_error": "agent_auth",
-    "invalid_api_key": "agent_auth",
-    "permission_error": "agent_auth",
-    "token_expired": "agent_auth",
-    # 额度 / 限流
-    "usage_limit_exceeded": "agent_quota",
-    "usage_limit_reached": "agent_quota",
     "rate_limit": "agent_quota",
-    "rate_limit_error": "agent_quota",
-    "rate_limit_exceeded": "agent_quota",
-    "insufficient_quota": "agent_quota",
     "billing_error": "agent_quota",
-    # 连不上
-    "http_connection_failed": "agent_network",
-    "response_stream_connection_failed": "agent_network",
-    "connection_failed": "agent_network",
 }
 #: HTTP 状态 → 码。5xx 里只认「网关 / 上游不可达」三个，其余服务端错误不判
 _CLI_STATUS_CLASS = {
@@ -918,44 +903,18 @@ def _cli_class_from_fields(*values: object) -> str | None:
     return None
 
 
-def _structured_error_class(err: object) -> str | None:
-    """从一个错误对象（CLI 事件的 `error` 字段，或 `message` 里装着的 JSON 错误体）取结构化字段归类。
-    字段：`codex_error_info`（字符串或单键对象，键即类型）、`code` / `type` / `status` /
-    `status_code` / `http_status_code`；可嵌套一层 `error`。"""
-    if not isinstance(err, dict):
-        return None
-    info = err.get("codex_error_info")
-    infos: list[object] = [info]
-    if isinstance(info, dict):
-        infos = list(info.keys())
-        for v in info.values():
-            if isinstance(v, dict):
-                infos += [v.get("http_status_code"), v.get("status_code")]
-    hit = _cli_class_from_fields(
-        *infos,
-        err.get("code"),
-        err.get("type"),
-        err.get("status"),
-        err.get("status_code"),
-        err.get("http_status_code"),
-    )
-    return hit or _structured_error_class(err.get("error"))
+#: Codex 自己拼的错误前缀（CLI 的错误格式化，真机 0.163.0 抓到：`unexpected status 401 Unauthorized: …`），只取状态码
+_CODEX_STATUS_RE = re.compile(r"^unexpected status (\d{3})\b")
 
 
 def codex_failure_class(ev: dict) -> str | None:
-    """Codex `--json` 的 `turn.failed` 事件 → runner_error。只看 `error` 对象的结构化字段；
-    `error.message` 若本身是 JSON 错误体（API 原样回显）也只取它的码 / 状态字段，不读其中文字。"""
+    """Codex `--json` 的 `turn.failed` 事件 → runner_error。真 CLI 的 `error` 里只有 `message`，
+    没有结构化码字段；只认 `message` 开头 Codex 自己生成的 `unexpected status <三位状态码>`，按状态表归类，
+    其余格式一律不判。message 文本本身不保留。"""
     err = ev.get("error")
-    hit = _structured_error_class(err)
-    if hit or not isinstance(err, dict):
-        return hit
-    msg = err.get("message")
-    if isinstance(msg, str) and msg.lstrip().startswith("{"):
-        try:
-            return _structured_error_class(json.loads(msg))
-        except ValueError:
-            return None
-    return None
+    msg = err.get("message") if isinstance(err, dict) else None
+    m = _CODEX_STATUS_RE.match(msg) if isinstance(msg, str) else None
+    return _CLI_STATUS_CLASS.get(int(m.group(1))) if m else None
 
 
 def claude_failure_class(ev: dict) -> str | None:

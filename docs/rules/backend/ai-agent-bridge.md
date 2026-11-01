@@ -399,7 +399,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 ## CLI 失败归类（Codex / Claude，`ai_agents.codex_failure_class` / `claude_failure_class`）
 
 非零退出默认写 `agent_exit_nonzero`；适配器的 `classify_event` 只凭**结构化字段**把失败归到 `RUNNER_ERRORS` 里的 `agent_auth` / `agent_quota` / `agent_network`，写进 `state["runner_error"]`（`ai_bridge` 对所有 Agent 取它）。
-Codex 只认 `turn.failed.error` 的 `codex_error_info` / `code` / `type` / HTTP 状态（含 `message` 里装着的 JSON 错误体的同类字段）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
+Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpected status <三位码>`（真机 0.163.0 无结构化码字段；401/403 auth、429 quota、502/503/504 network）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
 **不匹配任何自由文本、不保留原文**；字段没有或不认识就不判。失败卡「错误码 → 主按钮」的闭集表是前端 `AGENT_ERROR_ACTION`，与 `tests/golden/ai_error_action_vectors.json` 前后端对拍（`tests/test_ai_cli_error_classes.py`、`transcriptModel.test.ts`）。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
