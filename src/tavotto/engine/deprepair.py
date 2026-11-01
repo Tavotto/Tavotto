@@ -2156,6 +2156,22 @@ def pip_install_options(python: str) -> dict | None:
     return parse_pip_options(out)
 
 
+#: 查找路径（`pip index versions`）专用的选项探测。**不是** `PIP_OPTIONS_PROBE` 的镜像：`pip index` 有自己的
+#: 命令名，pip 配置键是「命令名.选项名」（`[index] index-url = …` 只对它生效，`[global]` 对所有命令），
+#: 所以只问 install 会漏掉私有仓库配在 index 节的情形。装包路径继续用 install 那份。
+PIP_INDEX_OPTIONS_PROBE = PIP_OPTIONS_PROBE.replace(
+    'create_command("install")', 'create_command("index")'
+)
+
+
+def lookup_package_source(python: str, timeout: float = 30) -> bool | None:
+    """`pip index` 此刻生效的选项里有没有**用户自配的包源**（同 `options_name_a_user_source` 口径）。
+    探测失败 / 超时 / 太旧的 pip 回 None（= 问不出，查找不换源）。`timeout` 由调用方按剩余预算给。"""
+    rc, out = _run([str(python), "-c", PIP_INDEX_OPTIONS_PROBE], timeout)  # type: ignore[arg-type]
+    opts = parse_pip_options(out) if rc == 0 else None
+    return None if opts is None else options_name_a_user_source(opts)
+
+
 def user_package_source(python: str) -> bool | None:
     """这个环境的 pip 是不是配了**用户自己的包源**（`options_name_a_user_source`）。只回真假、不回地址。
     问不出来回 None——镜像回退把 None 当「配过」处理（宁可不换源）。环境变量与配置文件都由 pip 自己解析。"""
@@ -3454,6 +3470,8 @@ LOOKUP_TIMEOUT_S = 8
 #: 另有一份预算，整个查找以 `LOOKUP_TOTAL_S` 为总上限（官方 8 s + 问配置 ~1 s + 镜像最多 5 s）。
 LOOKUP_MIRROR_TIMEOUT_S = 5
 LOOKUP_TOTAL_S = 14
+#: 问 `pip index` 选项的探测超时上限（实际取它与剩余预算的较小者）。
+LOOKUP_SOURCE_PROBE_S = 30
 #: 版本表的上限。numpy 有 120 个版本，几百个是想得到的上界；截断只是防一个
 #: 畸形索引把响应撑爆，正常包一个版本都不会少。
 LOOKUP_MAX_VERSIONS = 300
@@ -3654,10 +3672,13 @@ def lookup_package(project: str | Path, name: str) -> dict:
     if timed_out or (rc != 0 and classify_lookup_failure(text) == ERROR_LOOKUP_OFFLINE):
         # 联网类失败：没自配源（与装包同一个判据 `mirror_retry_warranted`）就用镜像再查一次，总时长受 LOOKUP_TOTAL_S 约束
         first = ERROR_TIMEOUT if timed_out else ERROR_NETWORK
-        if mirror_retry_warranted(first, user_package_source(python)):
+        # 先看剩余预算：不够起镜像那次（< 1 s）就连探测都不做；探测超时 = min(原超时, 剩余 − 镜像最少 1 s)
+        remaining = LOOKUP_TOTAL_S - (time.monotonic() - started)
+        if remaining >= 2:
+            user_source = lookup_package_source(python, min(LOOKUP_SOURCE_PROBE_S, remaining - 1))
             remaining = LOOKUP_TOTAL_S - (time.monotonic() - started)
             budget = min(LOOKUP_MIRROR_TIMEOUT_S, remaining)
-            if budget >= 1:
+            if mirror_retry_warranted(first, user_source) and budget >= 1:
                 LOG.warning(
                     "包查找换源：官方 PyPI 没查到（%s），改用 %s 再查一次", first, PYPI_MIRROR_URL
                 )

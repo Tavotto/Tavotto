@@ -99,6 +99,7 @@ def _lookup_script(monkeypatch, results, user_source=False):
         return results[min(len(calls), len(results)) - 1]
 
     monkeypatch.setattr(deprepair, "_run_lookup", _fake)
+    monkeypatch.setattr(deprepair, "lookup_package_source", lambda python, timeout=30: user_source)
     monkeypatch.setattr(deprepair, "user_package_source", lambda python: user_source)
     return calls
 
@@ -150,6 +151,63 @@ def test_lookup_mirror_budget_is_bounded_by_the_total(env, monkeypatch):
     with pytest.raises(deprepair.RepairError):
         deprepair.lookup_package(env, "lmfit")
     assert len(calls) == 1, "总预算只剩不到 1 s：不起镜像那次"
+
+
+def _probe_json(index_url):
+    import json
+
+    return json.dumps(
+        {
+            "pip_version": "24",
+            "index_url": index_url,
+            "extra_index_urls": [],
+            "no_index": False,
+            "find_links": [],
+        }
+    )
+
+
+def test_lookup_honours_a_source_configured_only_for_the_index_command(env, monkeypatch):
+    """`[index] index-url = 私有仓库`：install 没配、`pip index` 实际生效选项配了——不许换去公共镜像。"""
+    calls: list = []
+
+    def _fake_lookup(argv, timeout=None):
+        calls.append(list(argv))
+        return (1, "", True)
+
+    def _fake_run(argv, timeout):
+        private = 'create_command("index")' in argv[2]
+        return 0, _probe_json(
+            "https://private.example/simple" if private else deprepair.PYPI_DEFAULT_INDEX
+        )
+
+    monkeypatch.setattr(deprepair, "_run_lookup", _fake_lookup)
+    monkeypatch.setattr(deprepair, "_run", _fake_run)
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.lookup_package(env, "lmfit")
+    assert err.value.code == deprepair.ERROR_LOOKUP_TIMEOUT and len(calls) == 1
+
+
+def test_lookup_source_probe_cannot_blow_the_total_budget(env, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(deprepair.time, "monotonic", lambda: clock[0])
+    calls: list = []
+
+    def _fake_lookup(argv, timeout=None):
+        calls.append(list(argv))
+        clock[0] += deprepair.LOOKUP_TIMEOUT_S
+        return (1, "", True)
+
+    def _slow_probe(argv, timeout):  # 阻塞到自己的超时才返回
+        clock[0] += timeout
+        return 1, f"超时（{timeout}s）"
+
+    monkeypatch.setattr(deprepair, "_run_lookup", _fake_lookup)
+    monkeypatch.setattr(deprepair, "_run", _slow_probe)
+    with pytest.raises(deprepair.RepairError):
+        deprepair.lookup_package(env, "lmfit")
+    assert clock[0] <= deprepair.LOOKUP_TOTAL_S, "整个 lookup 不超总预算"
+    assert len(calls) == 1, "探测超时 = 问不出：不起镜像"
 
 
 def test_index_url_only_accepts_the_builtin_mirror():

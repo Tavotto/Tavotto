@@ -243,7 +243,7 @@ order: 160
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
   包查找（`pip index versions`）：联网类失败（输出判为 offline 或超时）且 `mirror_retry_warranted(...)` 放行时，用同一个
   `PYPI_MIRROR_URL`（`pip_index_argv(..., index_url=)`，只认这一个值）再查一次；镜像那次另有预算
-  `LOOKUP_MIRROR_TIMEOUT_S`，整个查找受 `LOOKUP_TOTAL_S` 约束，余量不足 1 s 就不起。未找到 / 解析失败 / 用户自配源都不重查。
+  `LOOKUP_MIRROR_TIMEOUT_S`，整个查找受 `LOOKUP_TOTAL_S` 约束，余量不足 1 s 就不起。放行判据问的是 `pip index` 命令**自己**的生效选项（`lookup_package_source` / `PIP_INDEX_OPTIONS_PROBE`；`[index]` 节只对它生效，装包路径仍用 install 那份），探测超时 = min(`LOOKUP_SOURCE_PROBE_S`, 剩余预算 − 1 s)，剩余不足 2 s 连探测都不做，探测失败 / 超时 = 问不出 = 不换源。未找到 / 解析失败 / 用户自配源都不重查。
   看护 `tests/test_net_failure_split.py`。
 - **联网失败原因（`net_cause`）**：装包终态为 `dependency_network_unavailable` / `dependency_install_timeout` 时，
   `_emit` 按最后包源写闭集顶层字段 `net_cause`：`tuna` → `official_and_mirror`（官方和镜像都没连上），`user_config` →
