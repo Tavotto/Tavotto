@@ -249,6 +249,8 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
   })
 
   it('图钉：状态靠图形说，不靠常驻的灰块（S3）', async () => {
+    // 默认钉住只在 wide 成立（< 1280 默认不钉、属性栏是覆盖层）
+    useUiStore.setState({ layout: 'wide', rightPinned: null })
     await seed([panel], ['p1'])
     await mount()
     const pinOf = () => document.querySelector<HTMLButtonElement>('button[aria-pressed]')!

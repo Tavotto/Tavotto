@@ -14,7 +14,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
+import { isRightOverlay, useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import type { PanelObject } from '@/types/document'
 
@@ -45,7 +45,7 @@ export function WorkspaceContextBar() {
   // 被右栏盖住（2026-09-14 审计 A9；停靠布局下侧栏不在画布区里，不用让）
   // 左抽屉绝对定位在轨道右侧，画布列从轨道右缘起：抽屉盖住画布的宽度就是 leftWidth
   const overlayLeft = useUiStore((s) => (s.layout === 'narrow' && s.leftOpen ? s.leftWidth : 0))
-  const overlayRight = useUiStore((s) => (s.layout === 'narrow' && s.rightOpen ? s.rightWidth : 0))
+  const overlayRight = useUiStore((s) => (isRightOverlay(s) && s.rightOpen ? s.rightWidth : 0))
   const panelId = fastEdit ? activePanelId : elementPanelId
   const panel = useDocumentStore((s) => {
     const o = s.doc.objects.find((x) => x.id === panelId)

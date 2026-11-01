@@ -14,7 +14,7 @@ import {
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { THEME_PREFS, type ThemePref } from '@/lib/theme'
-import { useUiStore } from '@/store/uiStore'
+import { isRightPinned, useUiStore } from '@/store/uiStore'
 import { Ellipsis, Lightbulb, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
@@ -123,9 +123,10 @@ function LanguageAndLayout() {
 }
 
 function Sidebars() {
-  const leftPinned = useUiStore((s) => s.leftPinned)
-  const rightPinned = useUiStore((s) => s.rightPinned)
   const layout = useUiStore((s) => s.layout)
+  // 没表过态（null）时开关显示此刻的默认：≥1280 固定、更窄不固定；点一下才成为用户的显式值
+  const leftPinned = useUiStore((s) => s.leftPinned ?? s.layout === 'wide')
+  const rightPinned = useUiStore(isRightPinned)
   // 'wide' 两侧都能固定，没有限制可说；medium 互斥（开关照常可用）、narrow 是覆盖层（固定不成立，开关停用）。
   // 状态取自布局状态本身，不在这里第二次判窗口宽度
   const narrow = layout === 'narrow'
