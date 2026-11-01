@@ -76,9 +76,11 @@ export function resolvePageColumns(
   binding: SpecBinding | null | undefined,
   catalog: SpecCatalogEntry[],
   catalogLoaded: boolean,
-): { columns: PageColumn[]; specLabel: string; ready: boolean } {
+): { columns: PageColumn[]; specLabel: string; ready: boolean; journal: boolean } {
   const spec = resolveDocumentSpec(binding, catalog).profile
   const selfSufficient = !!binding?.snapshot && binding.follow !== true
   const ready = catalogLoaded || !binding?.id || selfSufficient
-  return { columns: pageColumnsOf(spec), specLabel: spec.label, ready }
+  // 按期刊选的、且该期刊自己写了栏位：预设显示期刊自己的栏名（期刊没规定栏宽 = false，仍是课题组预设）
+  const journal = !!binding?.journalRef && derivePageColumns(spec).some((c) => positive(c.width_mm, -1) > 0)
+  return { columns: pageColumnsOf(spec), specLabel: spec.label, ready, journal }
 }

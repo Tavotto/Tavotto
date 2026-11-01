@@ -145,7 +145,7 @@ test('升级前的排版：原样打开 → 切到原图图幅内容不动 → �
       JSON.stringify([p.x, p.y, p.w, p.h, p.nativeW, p.nativeH]) === JSON.stringify([20, 15, 80, 57.6, 80, 57.6]) &&
       JSON.stringify(p.overrides) === JSON.stringify([EDIT, { gid: 'figure', prop: 'frame', value: 'figsize' }])
   })
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect.poll(async () => (await panelRect(page)).width, { timeout: 30_000 }).toBeCloseTo(before.width, 0)
   const back = await panelRect(page)
   expect(Math.abs(back.x - before.x)).toBeLessThan(1)

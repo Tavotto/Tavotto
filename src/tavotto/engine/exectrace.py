@@ -164,6 +164,10 @@ _VOCABULARIES: dict[str, set[str]] = {
     "refresh": set(),
     "failure_category": {"auth", "network", "not_installed", "bad_config", "crash", "other"},
     "runner_detail": set(RUNNER_DETAILS),
+    # 第三方 CLI（Codex `--json`）一次进程的运行事实：词表由 `ai_bridge` 用 `ai_agents.CLI_*` 常量登记
+    "cli_event": set(),
+    "cli_item": set(),
+    "endpoint_kind": set(),
 }
 
 #: attributes 白名单：键 → 类型（`count` 非负整数 / `ms` 非负毫秒 / `flag` 布尔 / `enum:<词表>` / `codes` 检查码列表）。
@@ -191,6 +195,28 @@ ATTRIBUTES: dict[str, str] = {
     "unmet_checks": "codes",
     "failure_category": "enum:failure_category",
     "runner_detail": "enum:runner_detail",
+    "cli_events": "count",
+    "cli_commands": "count",
+    "cli_commands_failed": "count",
+    "cli_commands_declined": "count",
+    "cli_commands_open": "count",
+    "cli_file_changes": "count",
+    "cli_file_changes_failed": "count",
+    "cli_files_inside": "count",
+    "cli_files_outside": "count",
+    "cli_reasoning": "count",
+    "cli_messages": "count",
+    "cli_errors": "count",
+    "cli_turns_failed": "count",
+    "cli_target_touched": "flag",
+    "cli_target_on_disk": "flag",
+    "cli_target_bytes": "count",
+    "cli_first_event_ms": "ms",
+    "cli_max_gap_ms": "ms",
+    "cli_idle_end_ms": "ms",
+    "cli_last_event": "enum:cli_event",
+    "cli_last_item": "enum:cli_item",
+    "endpoint_kind": "enum:endpoint_kind",
 }
 
 # ---------------------------------------------------------------- 上限

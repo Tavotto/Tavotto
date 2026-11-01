@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -476,6 +477,278 @@ def _run_probe(argv: list[str], timeout: int = READINESS_TIMEOUT_S) -> tuple[int
 
 
 # ---------------------------------------------------------------------------
+# CLI 运行事实
+# ---------------------------------------------------------------------------
+#: Codex `--json` 事件类型的闭集（`CliRunFacts` 的 `last_event`；集合外一律归 `other`，没收到过任何事件是 `none`）。
+CLI_EVENT_TYPES = frozenset(
+    {
+        "none",
+        "thread.started",
+        "turn.started",
+        "turn.completed",
+        "turn.failed",
+        "item.started",
+        "item.updated",
+        "item.completed",
+        "error",
+        "other",
+    }
+)
+#: 事件里 item 类型的闭集（`last_item`；`local_shell_call` / `patch_apply` 归并到前两者）。
+CLI_ITEM_TYPES = frozenset(
+    {
+        "none",
+        "agent_message",
+        "reasoning",
+        "command_execution",
+        "file_change",
+        "mcp_tool_call",
+        "web_search",
+        "todo_list",
+        "error",
+        "other",
+    }
+)
+#: 这次会话用的接口：官方登录 / 第三方中转（不带标签、不带地址）。
+ENDPOINT_KINDS = frozenset({"official", "relay"})
+_ITEM_ALIASES = {"local_shell_call": "command_execution", "patch_apply": "file_change"}
+_WIN_LONG_PREFIX = "\\\\?\\"
+
+
+class CliRunFacts:
+    """一次 CLI 进程（Codex `--json`）的运行事实：只有**数字、布尔、闭集码**，没有命令文本 / 路径 / 提示词 / 模型输出。
+
+    由 `observe(line)` 在与 `classify_event` 同一条 stdout 解析路径上逐行累计；永不抛。判据只用事件里**结构化**的字段
+    （`type` / `item.type` / `item.status` / `item.exit_code` / `item.changes[].path`），不匹配任何自由文本。
+    文件改动是否在工作区（`-C`）内，只给 `inside` / `outside` 两个计数；是否改到目标文件名只给布尔。
+    **`target_touched` 只看得见 `file_change` 事件**：模型用 shell 命令（例如 `apply_patch` 当命令跑、重定向写文件）
+    写出的目标不出这类事件——所以结束时另记 `target_on_disk` / `target_bytes`（工作区里目标文件此刻在不在、多大），
+    判「到底写没写出来」以它为准（真模型复现 TVD-BCZ0 时见过 shell 写成而 `target_touched=False`）。
+    """
+
+    def __init__(self, cwd: str, target_name: str, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._started = clock()
+        self._last = self._started
+        self._root = self._real(cwd)
+        self._target = str(target_name or "")
+        self.events = 0
+        self.commands = 0
+        self.commands_failed = 0
+        self.commands_declined = 0
+        self.commands_open = 0
+        self.file_changes = 0
+        self.file_changes_failed = 0
+        self.files_inside = 0
+        self.files_outside = 0
+        self.target_touched = False
+        self.reasoning = 0
+        self.messages = 0
+        self.errors = 0
+        self.turns_failed = 0
+        self.last_event = "none"
+        self.last_item = "none"
+        self.first_event_ms: int | None = None
+        self.max_gap_ms = 0
+
+    @staticmethod
+    def _real(path: str) -> str:
+        text = str(path or "")
+        if text.startswith(_WIN_LONG_PREFIX):  # Windows 扩展长度前缀
+            text = text[len(_WIN_LONG_PREFIX) :]
+        try:
+            return os.path.normcase(os.path.realpath(text))
+        except (OSError, ValueError):
+            return os.path.normcase(os.path.normpath(text))
+
+    def _inside(self, path: str) -> bool:
+        """路径在工作区内？相对路径按工作区解析。"""
+        full = path if os.path.isabs(path) else os.path.join(self._root, path)
+        real = self._real(full)
+        return real == self._root or real.startswith(self._root.rstrip("\\/") + os.sep)
+
+    def _note_change_paths(self, item: dict) -> None:
+        changes = item.get("changes")
+        if isinstance(changes, dict):
+            paths = list(changes)
+        elif isinstance(changes, list):
+            paths = [c.get("path") for c in changes if isinstance(c, dict)]
+        else:
+            paths = []
+        for path in paths:
+            if not isinstance(path, str) or not path:
+                continue
+            if self._inside(path):
+                self.files_inside += 1
+            else:
+                self.files_outside += 1
+            if self._target and re.split(r"[\\/]", path)[-1] == self._target:
+                self.target_touched = True
+
+    def observe(self, line: str) -> None:
+        try:
+            self._observe(line)
+        except Exception:  # noqa: BLE001 —— 观察失败不影响会话
+            pass
+
+    def _observe(self, line: str) -> None:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            return  # 横幅等非 JSON 噪音不算事件
+        if not isinstance(ev, dict):
+            return
+        now = self._clock()
+        if self.events == 0:
+            self.first_event_ms = int(max(0.0, now - self._started) * 1000)
+        else:
+            self.max_gap_ms = max(self.max_gap_ms, int(max(0.0, now - self._last) * 1000))
+        self._last = now
+        self.events += 1
+        etype = ev.get("type")
+        known = isinstance(etype, str) and etype in CLI_EVENT_TYPES - {"none", "other"}
+        self.last_event = etype if known else "other"
+        if self.last_event == "error":
+            self.errors += 1
+        elif self.last_event == "turn.failed":
+            self.turns_failed += 1
+        item = ev.get("item")
+        if not isinstance(item, dict):
+            return
+        raw = item.get("type") or item.get("item_type")
+        itype = _ITEM_ALIASES.get(raw, raw) if isinstance(raw, str) else None
+        known = isinstance(itype, str) and itype in CLI_ITEM_TYPES - {"none", "other"}
+        self.last_item = itype if known else "other"
+        done = self.last_event == "item.completed"
+        status = item.get("status")
+        if itype == "command_execution":
+            if self.last_event == "item.started":
+                self.commands_open += 1
+            elif done:
+                self.commands_open = max(0, self.commands_open - 1)
+                self.commands += 1
+                code = item.get("exit_code")
+                if status == "declined":
+                    self.commands_declined += 1
+                elif status == "failed" or (
+                    isinstance(code, int) and not isinstance(code, bool) and code != 0
+                ):
+                    self.commands_failed += 1
+        elif itype == "file_change" and done:
+            self.file_changes += 1
+            if status == "failed":
+                self.file_changes_failed += 1
+            self._note_change_paths(item)
+        elif itype == "reasoning" and done:
+            self.reasoning += 1
+        elif itype == "agent_message" and done:
+            self.messages += 1
+        elif itype == "error" and done:
+            self.errors += 1
+
+    def generating_silent(self, idle_ms: int) -> bool:
+        """模型在生成 / 写一个大文件、事件流已静默 ≥ `idle_ms`？
+
+        判据全是结构化事实：收到过事件、没有未完成的命令（`commands_open == 0`：不是在等命令跑完）、
+        最后一个事件不是终止类（`turn.completed` / `turn.failed` / `error`），且最后一个 item 是模型自己的产出
+        或已跑完的命令（`reasoning` / `agent_message` / `file_change` / 已完成的 `command_execution`，下一步是模型在写），
+        或刚开了新一轮（`turn.started`）；MCP 调用 / 联网搜索可能正在外部执行，不算。"""
+        if self.events == 0 or self.commands_open > 0:
+            return False
+        if self.last_event in ("turn.completed", "turn.failed", "error"):
+            return False
+        producing = self.last_item in (
+            "reasoning",
+            "agent_message",
+            "file_change",
+            "command_execution",
+        ) or (self.last_event == "turn.started")
+        if not producing:
+            return False
+        return (self._clock() - self._last) * 1000 >= idle_ms
+
+    def _target_state(self) -> tuple[bool, int | None]:
+        """工作区里目标文件此刻的状态：(是普通文件且不是符号链接, 字节数)。只看工作区根下的目标名，不带路径出门。"""
+        if not self._target or not self._root:
+            return False, None
+        path = os.path.join(self._root, self._target)
+        try:
+            if os.path.islink(path) or not os.path.isfile(path):
+                return False, None
+            return True, int(os.path.getsize(path))
+        except OSError:
+            return False, None
+
+    def snapshot(self, relay: bool) -> dict:
+        """本次进程结束时的事实；`relay` = 这次用的是第三方中转而不是官方登录。"""
+        idle = int(max(0.0, self._clock() - self._last) * 1000)
+        on_disk, size = self._target_state()
+        return {
+            "events": self.events,
+            "commands": self.commands,
+            "commands_failed": self.commands_failed,
+            "commands_declined": self.commands_declined,
+            "commands_open": self.commands_open,
+            "file_changes": self.file_changes,
+            "file_changes_failed": self.file_changes_failed,
+            "files_inside": self.files_inside,
+            "files_outside": self.files_outside,
+            "target_touched": self.target_touched,
+            "target_on_disk": on_disk,
+            "target_bytes": size,
+            "reasoning": self.reasoning,
+            "messages": self.messages,
+            "errors": self.errors,
+            "turns_failed": self.turns_failed,
+            "last_event": self.last_event,
+            "last_item": self.last_item,
+            "first_event_ms": self.first_event_ms,
+            "max_gap_ms": self.max_gap_ms,
+            "idle_end_ms": idle,
+            "endpoint": "relay" if relay else "official",
+        }
+
+
+_SUM_FACTS = (
+    "events",
+    "commands",
+    "commands_failed",
+    "commands_declined",
+    "file_changes",
+    "file_changes_failed",
+    "files_inside",
+    "files_outside",
+    "reasoning",
+    "messages",
+    "errors",
+    "turns_failed",
+)
+
+
+def merge_run_facts(runs: list[dict]) -> dict | None:
+    """同一会话的多次 CLI 进程（首轮 + 修正轮）→ 一份：计数求和、间隔取最大、布尔取或；
+    「最后」类事实（最后事件 / 末尾空闲 / 未完成命令）取最后一次进程的。没有事实 → None。"""
+    if not runs:
+        return None
+    last = runs[-1]
+    out: dict = {k: sum(int(r.get(k) or 0) for r in runs) for k in _SUM_FACTS}
+    out["target_touched"] = any(bool(r.get("target_touched")) for r in runs)
+    out["max_gap_ms"] = max(int(r.get("max_gap_ms") or 0) for r in runs)
+    out["first_event_ms"] = runs[0].get("first_event_ms")
+    for k in (
+        "last_event",
+        "last_item",
+        "idle_end_ms",
+        "commands_open",
+        "endpoint",
+        "target_on_disk",
+        "target_bytes",
+    ):
+        out[k] = last.get(k)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 适配器
 # ---------------------------------------------------------------------------
 class AgentDefinition:
@@ -557,6 +830,24 @@ class AgentDefinition:
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         raise NotImplementedError
+
+    def run_facts(self, cwd: str, target_name: str) -> CliRunFacts | None:
+        """本次 CLI 进程的运行事实累计器（与 `classify_event` 读同一条 stdout）。**默认 None = 不累计**。"""
+        return None
+
+
+#: Windows 上 Codex 的沙盒级别（本次调用 `-c` 覆盖，绝不写用户的 `~/.codex/config.toml`）。Codex 0.164 在 Windows 默认
+#: 沙盒起不来：会话自述“只读沙箱、所有命令在启动时被策略拒绝”，0 条命令 / 0 个文件改动就正常退出（TVD-BCZ0，Lab run
+#: 20261101T084752Z-227df5）。`unelevated` = 受限令牌、不需要管理员；同环境加它后两次转换分别跑了 39 / 59 条命令并写出目标文件
+#: （Lab run 20261101T090337Z-e765ae）。`elevated` 要建沙盒用户，不采用。
+CODEX_WINDOWS_SANDBOX_ARGS = ["-c", 'windows.sandbox="unelevated"']
+
+
+def _codex_windows_sandbox_args(endpoint_args: list[str]) -> list[str]:
+    """Windows 才追加；`endpoint_args` 里已显式给了 `windows.sandbox` 就不重复、不覆盖。"""
+    if os.name != "nt" or any("windows.sandbox" in a for a in endpoint_args):
+        return []
+    return list(CODEX_WINDOWS_SANDBOX_ARGS)
 
 
 class CodexAgent(AgentDefinition):
@@ -757,6 +1048,7 @@ class CodexAgent(AgentDefinition):
             "workspace-write",
             "--skip-git-repo-check",
         ]
+        cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]
@@ -800,6 +1092,7 @@ class CodexAgent(AgentDefinition):
             "-c",
             'approval_policy="never"',
         ]
+        cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
         cmd += ctx.endpoint_args
         if ctx.endpoint_args:
             # Tavotto 已把 provider（-c model_provider…）和型号都显式给了：不再加载用户的 config.toml——
@@ -834,6 +1127,9 @@ class CodexAgent(AgentDefinition):
 
         return parse
 
+    def run_facts(self, cwd: str, target_name: str) -> CliRunFacts | None:
+        return CliRunFacts(cwd, target_name)
+
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:
             ev = json.loads(line)
@@ -864,8 +1160,69 @@ class CodexAgent(AgentDefinition):
         if itype in ("file_change", "patch_apply"):
             return [("action", "✎ 修改文件")]
         if etype in ("error", "turn.failed"):
+            if etype == "turn.failed" and (cls := codex_failure_class(ev)):
+                state["runner_error"] = cls
             return [("message", str(ev.get("error") or ev.get("message") or "出错"))]
         return []
+
+
+# ---- Codex / Claude CLI 失败归类（只认 CLI 自己的结构化字段 / 自拼前缀，绝不读模型自由文本）--------------------
+#: Claude `assistant.error` 的字段值 → `RUNNER_ERRORS` 里的码（真机抓到 authentication_failed；
+#: rate_limit / billing_error 是 Claude Code SDK 文档里同一字段的取值）。别的取值（invalid_request、unknown…）不判。
+_CLI_CODE_CLASS = {
+    "authentication_failed": "agent_auth",
+    "rate_limit": "agent_quota",
+    "billing_error": "agent_quota",
+}
+#: HTTP 状态 → 码。5xx 里只认「网关 / 上游不可达」三个，其余服务端错误不判
+_CLI_STATUS_CLASS = {
+    401: "agent_auth",
+    403: "agent_auth",
+    429: "agent_quota",
+    502: "agent_network",
+    503: "agent_network",
+    504: "agent_network",
+}
+
+
+def _cli_class_from_fields(*values: object) -> str | None:
+    """依次看每个值：字符串按码表，整数按状态表。认不得返回 None（不猜）。"""
+    for v in values:
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int) and v in _CLI_STATUS_CLASS:
+            return _CLI_STATUS_CLASS[v]
+        if isinstance(v, str):
+            hit = _CLI_CODE_CLASS.get(v.strip().lower())
+            if hit:
+                return hit
+    return None
+
+
+#: Codex 自己拼的错误前缀（CLI 的错误格式化，真机 0.163.0 抓到：`unexpected status 401 Unauthorized: …`），只取状态码
+_CODEX_STATUS_RE = re.compile(r"^unexpected status (\d{3})\b")
+
+
+def codex_failure_class(ev: dict) -> str | None:
+    """Codex `--json` 的 `turn.failed` 事件 → runner_error。真 CLI 的 `error` 里只有 `message`，
+    没有结构化码字段；只认 `message` 开头 Codex 自己生成的 `unexpected status <三位状态码>`，按状态表归类，
+    其余格式一律不判。message 文本本身不保留。"""
+    err = ev.get("error")
+    msg = err.get("message") if isinstance(err, dict) else None
+    m = _CODEX_STATUS_RE.match(msg) if isinstance(msg, str) else None
+    return _CLI_STATUS_CLASS.get(int(m.group(1))) if m else None
+
+
+def claude_failure_class(ev: dict) -> str | None:
+    """Claude Code `stream-json` 的失败事件 → runner_error：
+    `assistant` 事件的顶层 `error`（`authentication_failed` / `rate_limit` / `billing_error`…）与
+    `result` 事件的 `api_error_status`（HTTP 状态整数）。其余（含 `invalid_request` / `unknown`）不判。"""
+    t = ev.get("type")
+    if t == "assistant":
+        return _cli_class_from_fields(ev.get("error"))
+    if t == "result" and ev.get("is_error"):
+        return _cli_class_from_fields(ev.get("api_error_status"))
+    return None
 
 
 class ClaudeAgent(AgentDefinition):
@@ -1205,6 +1562,8 @@ class ClaudeAgent(AgentDefinition):
         except ValueError:
             return []
         t = str(ev.get("type", ""))
+        if t in ("assistant", "result") and (cls := claude_failure_class(ev)):
+            state["runner_error"] = cls
         if t == "stream_event":
             inner = ev.get("event") or {}
             if inner.get("type") == "content_block_delta":

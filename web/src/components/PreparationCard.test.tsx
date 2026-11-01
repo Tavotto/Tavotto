@@ -13,6 +13,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Remedy } from '@/lib/fixRemedy'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -1331,7 +1332,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
 
   it('跑完没图、但脚本自己用位图库写了图片：一句话说原因 + 一个主按钮去素材库，其余折叠在详情', async () => {
     await mount()
-    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 Pillow 画的，Tavotto 不能直接编辑它。')
@@ -1355,7 +1356,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     ['plotly', 'Plotly'],
   ] as const)('位图提示卡认得 %s 的库名，并带着输出文件路径', async (library, name) => {
     await mount()
-    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library, in_project: true, path: 'results/mass.pdf' } }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe(`这个脚本是用 ${name} 直接画成图片的，不是 Matplotlib 图`)
@@ -1363,7 +1364,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
 
   it('点「打开素材库」：刷新还没结束时 AssetBrowser 读的 loading 已为真，刷新结束后才取清单', async () => {
     await mount()
-    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
     let finish: () => void = () => {}
     const actual = await vi.importActual<typeof import('@/store/liveSync')>('@/store/liveSync')
     vi.mocked(refreshProjectNow).mockImplementationOnce(actual.refreshProjectNow)
@@ -1392,20 +1393,20 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     ['老后端没有 in_project', { kind: 'raster_script' as const, library: 'pillow' as const }],
   ])('位图提示但后端没确认图落在素材库范围内（%s）：原因句照说，主按钮只有「知道了」', async (_name, hint) => {
     await mount()
-    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 Pillow 画的，Tavotto 不能直接编辑它。')
     expect(primary()?.textContent).toBe('生成可编辑版本')
     expect(secondary()?.textContent).toBe('知道了')
     await act(async () => secondary()!.click())
-    expect(useUiStore.getState().leftTab).toBe('layers')
+    expect(useUiStore.getState().leftTab).toBe('outline')
     expect(useUiStore.getState().guideCard).toBe('closed')
   })
 
   it('Pillow 画图脚本、有输出文件（path 非空）：沿用「画成图片」句子、详情说图片文件可排版，仍有「打开素材库」次按钮', async () => {
     await mount()
-    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true, path: 'out.png' } }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
@@ -1420,7 +1421,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     ['path 缺省', { kind: 'raster_script' as const, library: 'pillow' as const, in_project: false }],
   ])('Pillow 画图脚本、找不到输出文件（%s）：说「Pillow 画的、不能直接编辑」，主按钮「生成可编辑版本」，次按钮只有「知道了」', async (_name, hint) => {
     await mount()
-    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 Pillow 画的，Tavotto 不能直接编辑它。')
@@ -2077,6 +2078,35 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       await act(async () => primary()!.click())
       expect(startConvert).toHaveBeenCalledTimes(2)
       expect(adoptConvert).not.toHaveBeenCalled()
+    })
+
+    it('写入被拒（agent_write_denied）：一句话 + 一个主按钮「重试」', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'candidate.target', reason_code: 'agent_write_denied' }] } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      expect(panel().dataset.convertPhase).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('AI 没能写入转换工作区，没有生成新脚本。')
+      expect(primary()?.textContent).toBe('重试')
+    })
+
+    it('进行中：后端给 writing_long 只换进度行文字，事件恢复后换回；没有新增横条或弹窗', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null, activity: 'writing_long' } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await act(async () => {
+        useConvertStore.setState((s) => ({ entries: { ...s.entries, 'plot.py': { ...s.entries['plot.py']!, activity: 'writing_long' } } }))
+      })
+      expect(panel().dataset.convertPhase).toBe('running')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在生成较长的文件…')
+      await act(async () => {
+        useConvertStore.setState((s) => ({ entries: { ...s.entries, 'plot.py': { ...s.entries['plot.py']!, activity: null } } }))
+      })
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在生成可编辑版本…')
     })
 
     it('Python 转换缺少参考时也能显式补充文件再重试', async () => {
@@ -3157,6 +3187,203 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个请求已经失效，请重新运行一次脚本。')
       expect(mockAct).not.toHaveBeenCalled()
       expect(primary()?.textContent).toBe('跳过这个文件夹重跑')
+    })
+  })
+
+  describe('解释器在 Tavotto 的缓存里建不了目录：一键改用自带的 Python（TVD-B6MR）', () => {
+    const denied = (params: Record<string, string> = { switch: 'global' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'interpreter_cache_denied' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'interpreter_cache_denied', message: 'x', params } },
+        remedy: { kind: 'change_python', from: '3.12.14', to: null, env: null },
+      })
+    const original = { setPython: useEnvStore.getState().setPython, setProjectPython: useEnvStore.getState().setProjectPython }
+    const setPython = vi.fn(async (_: string | null) => null as string | null)
+    const setProjectPython = vi.fn(async (_: string | null) => null as string | null)
+
+    beforeEach(() => {
+      setPython.mockClear()
+      setProjectPython.mockClear()
+      mockAct.mockClear()
+      useEnvStore.setState({ setPython, setProjectPython })
+    })
+    afterEach(() => useEnvStore.setState(original))
+
+    it('一句话 + 一个主按钮「改用 Tavotto 自带的 Python」，不摆 AI 修复', async () => {
+      await mount()
+      await openWith(denied())
+      expect(panel().dataset.prepState).toBe('cache_denied')
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('这个 Python 环境没法在 Tavotto 的缓存里新建文件夹，脚本没能运行')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('use_builtin_python')
+      expect(primary()?.textContent).toBe('改用 Tavotto 自带的 Python')
+      expect(panel().querySelector('[data-prep-ai-fix], [data-prep-primary="ai_fix"]')).toBeNull()
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(denied())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(primary()?.textContent).toBe('Use Tavotto’s built-in Python')
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('全局设置里指定的：点一次清全局选择，再「打开并运行」一次（不拿旧报告的 run 去认领）', async () => {
+      await mount()
+      await openWith(denied({ switch: 'global' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setPython.mock.calls).toEqual([[null]])
+      expect(setProjectPython).not.toHaveBeenCalled()
+      expect(mockCreate).toHaveBeenCalledTimes(2)
+      expect(mockAct.mock.calls.some((c) => (c[1] as { action_id?: string })?.action_id === 'act-run')).toBe(false)
+    })
+
+    it('为这个项目挑的：清项目这一层（改用默认链条），全局不动', async () => {
+      await mount()
+      await openWith(denied({ switch: 'project' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setProjectPython.mock.calls).toEqual([[null]])
+      expect(setPython).not.toHaveBeenCalled()
+    })
+
+    it('真实路径：setter 改了 envStore → 订阅触发的重新检查落定后，才按新报告认领运行（Codex #1595）', async () => {
+      const envBefore = useEnvStore.getState().env
+      useEnvStore.setState({ env: { ok: true, project: { open: true, python: '.venv/Scripts/python.exe' } } as never })
+      try {
+        await mount()
+        await openWith(denied({ switch: 'global' }))
+        let finishRecheck!: () => void
+        const recheckDone = new Promise<void>((r) => (finishRecheck = r))
+        mockAct.mockImplementation(async (_sid, body) => {
+          const id = (body as { action_id?: string }).action_id
+          if (id === 'act-recheck') {
+            await recheckDone
+            return { claimed: true, report: report({ ...STATES.readyArm, observation_seq: 2 }) }
+          }
+          return { claimed: true, report: report({ phase: 'running', observation_seq: 4, actions: [action('cancel')] }) }
+        })
+        mockCreate.mockResolvedValueOnce(report({ ...STATES.readyArm, observation_seq: 3 }))
+        // 真的 setter 会改 envStore 里项目的解释器：订阅随即让空闲会话 recheck（pending 置上）
+        setPython.mockImplementationOnce(async () => {
+          useEnvStore.setState({ env: { ok: true, project: { open: true, python: '' } } as never })
+          return null
+        })
+        let clicked!: Promise<void>
+        await act(async () => {
+          clicked = (async () => primary()!.click())()
+          await Promise.resolve()
+        })
+        const ids = () => mockAct.mock.calls.map((c) => (c[1] as { action_id?: string }).action_id)
+        expect(ids()).toEqual(['act-recheck'])
+        await act(async () => {
+          finishRecheck()
+          await clicked
+          await new Promise((r) => setTimeout(r, 0))
+        })
+        expect(ids()).toContain('act-run_when_ready')
+      } finally {
+        mockAct.mockReset()
+        useEnvStore.setState({ env: envBefore })
+      }
+    })
+
+    it('两层都选中它（both）：全局与项目都清', async () => {
+      await mount()
+      await openWith(denied({ switch: 'both' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setPython.mock.calls).toEqual([[null]])
+      expect(setProjectPython.mock.calls).toEqual([[null]])
+    })
+
+    it('清不掉：如实一句话，不重跑', async () => {
+      await mount()
+      await openWith(denied())
+      setPython.mockResolvedValueOnce('安装进行中，暂时不能改')
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('安装进行中，暂时不能改')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('失败的本来就是 Tavotto 自己的 Python（后端不给 switch）：同一句话，主按钮是再试一次', async () => {
+      await mount()
+      await openWith(denied({}))
+      expect(panel().dataset.prepState).toBe('cache_denied')
+      expect(primary()?.textContent).toBe('再试一次')
+      expect(panel().textContent).not.toContain('自带的 Python')
+    })
+  })
+
+  describe('装不了的缺包 / Python 版本不合：主按钮是确定动作，不是 AI（ADR 0148 修订 2026-11-01）', () => {
+    const failedWith = (code: string, remedy: Remedy) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code, message: 'x' } },
+        remedy,
+      })
+    const env = { id: 'e1', generation: 'g1', name: 'sci', version: '3.12.4' }
+    const original = { adoptCandidate: useEnvStore.getState().adoptCandidate }
+    const adoptCandidate = vi.fn(async (_c: unknown, _s?: string) => null as string | null)
+    beforeEach(() => {
+      adoptCandidate.mockClear()
+      mockAct.mockClear()
+      useEnvStore.setState({ adoptCandidate: adoptCandidate as never })
+    })
+    afterEach(() => useEnvStore.setState(original))
+
+    it('装不了的缺包：主按钮是选环境（换用我的 Python），AI 修复是次按钮', async () => {
+      await mount()
+      await openWith(failedWith('missing_dependency', { kind: 'choose_environment' }))
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+      expect(primary()?.textContent).toBe('换用我的 Python')
+      expect(panel().querySelector('[data-prep-primary="ai_fix"]')).toBeNull()
+      expect(panel().querySelector('[data-prep-ai-fix]')).not.toBeNull()
+    })
+
+    it('版本不合且有满足的现成环境：主按钮「改用 sci」，点一次采用它再「打开并运行」', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(primary()?.dataset.prepPrimary).toBe('switch_python')
+      expect(primary()?.textContent).toBe('改用 sci')
+      expect(adoptCandidate).not.toHaveBeenCalled() // 渲染出按钮不等于切：没点就什么都没动
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(adoptCandidate.mock.calls.map((c) => c[0])).toEqual([{ id: 'e1', generation: 'g1' }])
+      expect(mockCreate).toHaveBeenCalledTimes(2)
+    })
+
+    it('采用被后端拒绝：回那句原文、不重跑', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      adoptCandidate.mockResolvedValueOnce('这个环境刚被重建过')
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个环境刚被重建过')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('版本不合、没有候选：主按钮是选择运行环境', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env: null }))
+      expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+    })
+
+    it('英文界面没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(primary()?.textContent).toBe('Switch to sci')
     })
   })
 

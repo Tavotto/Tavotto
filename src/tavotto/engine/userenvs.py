@@ -1499,6 +1499,9 @@ REJECT_WORKER_CHAIN_FAILED = "worker_chain_failed"
 REJECT_ACTIVATION_FAILED = "activation_failed"
 REJECT_PROBE_TIMEOUT = "probe_timeout"
 REJECT_UNUSABLE = "unusable"  # 解释器起不来 / 体检进程崩溃
+REJECT_CACHE_DENIED = (
+    "cache_denied"  # 起得来，但在 Tavotto 的数据目录里建不了目录（每次运行都会失败，TVD-B6MR）
+)
 REJECT_NOT_CHECKED = "not_checked"  # 没量到（延后到运行时 / 项目说了算的候选运行前不起）
 REJECT_OUTRANKED = "outranked"  # 能跑，但有排序更靠前的被选用了
 #: 解释器健康、叠上了这个 ROOT，`import ROOT` 仍失败：ROOT 的二进制包只配一个 Python 小版本，多半就是版本对不上
@@ -1514,6 +1517,7 @@ REJECT_CODES = (
     REJECT_ACTIVATION_FAILED,
     REJECT_PROBE_TIMEOUT,
     REJECT_UNUSABLE,
+    REJECT_CACHE_DENIED,
     REJECT_NOT_CHECKED,
     REJECT_OUTRANKED,
     REJECT_ROOT_PYTHON_MISMATCH,
@@ -1528,6 +1532,7 @@ _HEALTH_CODE_TO_REJECT = {
     "project_env_worker_import_failed": REJECT_WORKER_CHAIN_FAILED,
     "conda_launcher_unavailable": REJECT_ACTIVATION_FAILED,
     "project_env_unusable": REJECT_UNUSABLE,
+    "interpreter_cache_denied": REJECT_CACHE_DENIED,
 }
 
 

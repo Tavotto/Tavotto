@@ -7,12 +7,15 @@
   用户发起的运行里静默回退；`silent: false` = 浏览器模式（ADR 0127 修订 2026-10-30，#1500）：失败卡给「允许并运行」，用户点一次才换，
   且此时**不路由进 AI 修复**（优先于 `ai_fix` / `connect_ai`）；
 * `install_packages`：装包仍走 `deprepair` / `convertdeps` 的既有授权（本模块只说装什么、要不要用户点）；
-* `change_python`：本版只产出 remedy（执行在后续 PR），前端此时走现有「选择运行环境」入口；
+* `change_python`：带 `env`（后端已发现、体检过、满足目标版本的现成环境，见 `Ctx.python_env`）时前端主按钮「改用 <环境名>」，
+  用户点一次才切（**永不自动切**，内置 runtime 也永不是目标）；没有候选（`env: None`）才走现有「选择运行环境」入口；
+* `choose_environment`：缺的包装不了（私有库 / 本地模块 / conda-only，或包名认不出）——主按钮是确定的「选择运行环境」
+  （让用户指向装了它的 Python），AI 退为次入口（ADR 0148 修订 2026-11-01）；
 * `convert_to_matplotlib`：复用现有「生成可编辑版本」（ADR 0143）；
 * `ai_fix` / `connect_ai`：AI 环境修复任务在后续 PR；
 * `feedback`：发送问题反馈（ADR 0118，每次确认、不记住）。
 
-顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → Python 版本类 → 转写 → 其余按「AI 连没连」。
+顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → 解释器写不了缓存 / Python 版本类 → 转写 → 其余按「AI 连没连」。
 **一次「运行」最多走 3 种修法**（读 `attempt_history`），第 4 次直接 `feedback`；同一种修法一次运行只走一回。
 
 纯标准库 + 常量：不起进程、不读磁盘。「AI 连没连」「环境允不允许直接装」由调用方（`prepsession`）量好放进 `Ctx`。
@@ -27,6 +30,7 @@ KIND_SWITCH_NATIVE = "switch_native"
 KIND_INSTALL_PACKAGES = "install_packages"
 KIND_CHANGE_PYTHON = "change_python"
 KIND_CONVERT = "convert_to_matplotlib"
+KIND_CHOOSE_ENV = "choose_environment"
 KIND_AI_FIX = "ai_fix"
 KIND_CONNECT_AI = "connect_ai"
 KIND_FEEDBACK = "feedback"
@@ -36,6 +40,7 @@ REMEDY_KINDS = (
     KIND_INSTALL_PACKAGES,
     KIND_CHANGE_PYTHON,
     KIND_CONVERT,
+    KIND_CHOOSE_ENV,
     KIND_AI_FIX,
     KIND_CONNECT_AI,
     KIND_FEEDBACK,
@@ -55,6 +60,10 @@ PYTHON_VERSION_CODES = frozenset(
         "unsupported_python_version",
     }
 )
+
+#: 解释器在 Tavotto 自己的缓存里建不了目录（`pool.INTERPRETER_CACHE_DENIED_CODE`，TVD-B6MR）：用户代码还没跑，
+#: 改脚本 / AI 修都没用——修法是换回 Tavotto 自带的 Python（`change_python`，`to` 不给具体版本）
+CODE_CACHE_DENIED = "interpreter_cache_denied"
 
 _DIST = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
@@ -80,6 +89,11 @@ class Ctx:
     #: 当前 Python 版本（可展示字符串）与可建议的目标版本（没有就 None）
     python_from: str = ""
     python_to: str | None = None
+    #: 满足 `python_to` 的、后端已发现且体检过的现成环境（`{"id", "generation", "name", "version"}`，无路径）；没有 = None。
+    #: 由调用方（`prepsession`）按 `userenvs.rank` 挑，且已排除内置 runtime、当前环境与被全局显式解释器锁住的情形
+    python_env: dict | None = None
+    #: 缺的包有没有被点名（`missing_dependency` 的模块名认得出）。认不出就没有可指给用户的东西 -> `feedback`
+    missing_named: bool = False
     #: `no_figure_hint`（`rasterhint.detect` 的结果）与来源语言（`sourcelang`：`r` / `matlab` / `python` / None）
     no_figure_hint: dict | None = None
     source_language: str | None = None
@@ -141,8 +155,20 @@ def choose(failure: str, ctx: Ctx) -> dict:
             "packages": list(ctx.packages),
             "ask": not (listed and ctx.auto_install_allowed),
         }
+    if code == CODE_MISSING_DEPENDENCY and KIND_INSTALL_PACKAGES not in tried:
+        # 走到这里 = 装不了（不在会话里可装 / 包名认不出）：AI 不能凭空变出私有库，确定的出路是指向装了它的 Python
+        if ctx.missing_named:
+            return {"kind": KIND_CHOOSE_ENV}
+        return {"kind": KIND_FEEDBACK, "tried": list(tried)}
+    if code == CODE_CACHE_DENIED and KIND_CHANGE_PYTHON not in tried:
+        return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": None, "env": None}
     if code in PYTHON_VERSION_CODES and KIND_CHANGE_PYTHON not in tried:
-        return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": ctx.python_to}
+        return {
+            "kind": KIND_CHANGE_PYTHON,
+            "from": ctx.python_from,
+            "to": ctx.python_to,
+            "env": ctx.python_env if ctx.python_to else None,
+        }
     hint = ctx.no_figure_hint or {}
     if KIND_CONVERT not in tried:
         if hint.get("kind") == "raster_script":

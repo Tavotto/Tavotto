@@ -18,6 +18,10 @@ import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
+import { pickJournal } from '@/lib/journalPick'
+import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
+import { DEFAULT_PROFILE_ID } from '@/lib/profile'
+import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
@@ -735,6 +739,65 @@ export function setPageSize(w: number, h: number) {
   commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
 }
 
+/**
+ * 选一本期刊（ADR 0155）：**一次提交**写绑定（中性底 + 该期刊的覆盖 + 出处）并把页宽跟到该期刊最近的一栏——
+ * 撤销一步全回去。期刊没规定栏宽就只写绑定，页宽不动。确认只用胶囊 toast（不推挤版面）。
+ */
+export function selectJournal(journalId: string): void {
+  const d0 = doc()
+  // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
+  const p0 = d0.profile
+  const prev: JournalPrev | undefined = p0?.journalRef
+    ? p0.journalPrev
+    : {
+        profile: p0
+          ? structuredClone({ id: p0.id, journal: p0.journal, snapshot: p0.snapshot, snapshotVersion: p0.snapshotVersion, follow: p0.follow })
+          : null,
+        pageW: d0.page.w,
+      }
+  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
+    pageW: d0.page.w,
+    follow: p0?.follow,
+    prev,
+  })
+  // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
+  // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
+  if (pick.binding.journalPrev) {
+    pick.binding.journalPrev.setW = pick.pageW ?? (p0?.journalRef ? (p0.journalPrev?.setW ?? d0.page.w) : d0.page.w)
+  }
+  commit(hist('setJournal'), (d) => {
+    d.profile = pick.binding
+    if (pick.pageW != null) applyPageSize(d, pick.pageW, d.page.h)
+  })
+  useUiStore
+    .getState()
+    .setStatus(
+      pick.pageW != null && pick.pageW !== d0.page.w
+        ? msg('journal.pickedWidth', { name: pick.label, w: pick.pageW }, 'dialogs')
+        : msg('journal.picked', { name: pick.label }, 'dialogs'),
+      'done',
+    )
+}
+
+/**
+ * 「不按期刊」：一次提交退回选期刊之前的规范与页宽（撤销一步回到期刊）。
+ * 没有记录（老项目 / 记录缺失）= 退回默认规范、页宽不动。没按期刊选过时什么都不做。
+ */
+export function clearJournal(): void {
+  const p = doc().profile
+  if (!p?.journalRef) return
+  const prev = p.journalPrev
+  const fallback = builtinEntryById(DEFAULT_PROFILE_ID)
+  commit(hist('clearJournal'), (d) => {
+    if (prev?.profile) d.profile = structuredClone(prev.profile)
+    else if (fallback) d.profile = bindingFor(fallback)
+    else delete d.profile
+    // 用户在选期刊之后手改过页宽就保留他的值；没有 setW 的旧记录按原样退回
+    if (prev && (prev.setW === undefined || d.page.w === prev.setW)) applyPageSize(d, prev.pageW, d.page.h)
+  })
+  useUiStore.getState().setStatus(msg('journal.cleared', undefined, 'dialogs'), 'done')
+}
+
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */
 export function setPageSetup(patch: Partial<FigureDocument['page']>, label: UiMessage) {
   commit(label, (d) => {
@@ -1171,6 +1234,20 @@ export function detachLegendEntry(panelId: string, element: ManifestElement) {
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 图例卡「字号」的恢复：图例整体的 `fontsize` 与每条图例项上的 `fontsize` 一起删，
+ * **一条撤销、一次渲染**。后者是旧版图例卡逐条写下的（那时卡片批量写的是图例项，
+ * 不是图例；见 `inspector/legendTypography.ts`）——只删图例那条的话，引擎重放时窄的
+ * 后应用（`overrides.ALIAS_GROUPS`），文字仍停在旧字号。
+ */
+export function clearLegendFontSize(panelId: string, legendGid: string, entryGids: readonly string[]) {
+  clearOverrides(
+    panelId,
+    hist('clearProp', { prop: propLabel('fontsize') }),
+    [legendGid, ...entryGids].map((gid) => ({ gid, prop: 'fontsize' })),
+  )
 }
 
 /**
@@ -2063,7 +2140,7 @@ function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): bool
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
   // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。
-  // 交给左轨的「图内元素」入口——它一直在，而且正是键盘用户接下来要去的地方
+  // 交给左轨的「图内」入口——它一直在，而且正是键盘用户接下来要去的地方
   // （#37 要求的等价路径）。详见 `lib/focusRescue.ts` 的实测记录。
   rescueFocus(() => document.querySelector<HTMLElement>(`[data-rail="${rail}"]`))
   return true

@@ -13,6 +13,7 @@ import sys
 import threading
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -863,3 +864,186 @@ def test_failed_kept_expires_after_the_retention_and_not_before(env):
     meta["failed_kept_at"] = 1.0
     (again.dir / ai_convert.META_NAME).write_text(json.dumps(meta), encoding="utf-8")
     assert ai_convert._candidate_file("cccccccccccc", _project(env)) is None
+
+
+# --------------------------------------------------------------------------- 写入被拒 / 时限 / 长时间静默（TVD-BCZ0）
+DENIED_EVENT = (
+    '{"type":"item.completed","item":{"type":"file_change","status":"failed","changes":[]}}'
+)
+DECLINED_EVENT = '{"type":"item.completed","item":{"type":"command_execution","status":"declined","exit_code":null}}'
+
+
+def _unmet_codes(sess) -> set[tuple[str, str]]:
+    return {(u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]}
+
+
+@pytest.mark.parametrize("event", [DENIED_EVENT, DECLINED_EVENT])
+def test_missing_target_with_denied_write_gets_its_own_closed_code(env, event):
+    """缺目标文件 + 本次运行事实显示写入被拒（文件改动失败 / 命令被拒绝）→ `agent_write_denied`，不是 `target_missing`。"""
+    env["code"] = f"print({event!r})"
+    sess = _wait(_run(env))
+    assert sess["task"]["outcome"] == "failed"
+    unmet = _unmet_codes(sess)
+    assert ("candidate.target", "agent_write_denied") in unmet
+    assert ("candidate.target", "target_missing") not in unmet
+    assert "agent_write_denied" in ai_tasks.UNMET_REASON_CODES
+    # 不可修正：再跑一轮同一个沙盒只会再被拒，不浪费一次 Agent 运行
+    assert len(env["cwd"]) == 1, env["cwd"]
+
+
+def test_plain_missing_target_keeps_the_old_code(env):
+    env["code"] = WRITE_NOTHING
+    sess = _wait(_run(env))
+    unmet = _unmet_codes(sess)
+    assert ("candidate.target", "target_missing") in unmet
+    assert ("candidate.target", "agent_write_denied") not in unmet
+
+
+def test_denied_write_facts_do_not_change_other_failures(env):
+    """写入被拒的事实只在“缺目标”时才换码：目标写出来了但语法错，仍是 `syntax_error`。"""
+    env["code"] = WRITE_SYNTAX + f"; print({DENIED_EVENT!r})"
+    sess = _wait(_run(env))
+    unmet = _unmet_codes(sess)
+    assert ("candidate.syntax", "syntax_error") in unmet
+    assert ("candidate.target", "agent_write_denied") not in unmet
+
+
+def test_write_denied_helper_reads_only_the_two_structured_counters():
+    cand = SimpleNamespace(extras={})
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {"file_changes_failed": 0, "commands_declined": 0}
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {"file_changes_failed": 1}
+    assert ai_convert.write_denied(cand) is True
+    cand.extras["run_facts"] = {"commands_declined": 2}
+    assert ai_convert.write_denied(cand) is True
+    cand.extras["run_facts"] = {"commands_failed": 5, "errors": 3}  # 命令失败 / 报错不算“被拒”
+    assert ai_convert.write_denied(cand) is False
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (0, 900),
+        (97, 900 + 2 * 97),
+        (391, 900 + 2 * 391),
+        (450, 1800),  # 到顶
+        (451, 1800),
+        (100000, 1800),
+        (-5, 900),  # 负数当 0
+    ],
+)
+def test_convert_timeout_grows_with_script_size_and_is_capped(lines, expected):
+    assert ai_convert.convert_timeout_s(lines) == expected
+
+
+def test_convert_timeout_never_drops_below_the_shared_baseline():
+    assert ai_convert.CONVERT_TIMEOUT_BASE_S == ai_bridge.TIMEOUT_S == 900
+    assert ai_convert.convert_timeout_s(0) == ai_tasks.Budget().max_wall_s
+
+
+def test_source_line_count():
+    assert ai_convert.source_line_count(b"") == 0
+    assert ai_convert.source_line_count(b"a") == 1
+    assert ai_convert.source_line_count(b"a\n") == 1
+    assert ai_convert.source_line_count(b"a\nb") == 2
+    assert ai_convert.source_line_count(b"a\r\nb\r\n") == 2
+
+
+def test_envelope_budget_and_watchdog_extra_follow_the_script_size(env):
+    cand = SimpleNamespace(
+        base_bytes=b"x = 1\n" * 300,
+        script_rel="fig.py",
+        base_sha256="0" * 64,
+        original_rel=None,
+        target_name="fig_matplotlib.py",
+        sid="s",
+        extras={},
+    )
+    envelope = ai_convert.envelope_for(
+        agent="codex", project_key="p", cand=cand, prompt="x", rid=None
+    )
+    assert envelope.budget.max_wall_s == 1500
+    assert cand.extras["timeout_extra_s"] == 600
+    small = SimpleNamespace(**{**cand.__dict__, "base_bytes": b"x = 1\n", "extras": {}})
+    envelope = ai_convert.envelope_for(
+        agent="codex", project_key="p", cand=small, prompt="x", rid=None
+    )
+    assert envelope.budget.max_wall_s == 902 and small.extras["timeout_extra_s"] == 2
+
+
+def test_watchdog_timer_uses_baseline_for_plain_tasks_and_scaled_limit_for_convert(
+    env, monkeypatch
+):
+    """行为测试：捕获看门狗 `threading.Timer` 实际建出来的时限。
+
+    普通（非转换）AI 任务 = TIMEOUT_S（900）；转换任务 = convert_timeout_s(行数)。
+    Timer 只记录时限并照常委托给真 Timer；容差只吸收起子进程的耗时（距两档时限差 600 s）。"""
+    intervals: list[float] = []
+    real_timer = threading.Timer
+
+    def recording_timer(interval, *args, **kwargs):
+        intervals.append(interval)
+        return real_timer(interval, *args, **kwargs)
+
+    monkeypatch.setattr(ai_bridge.threading, "Timer", recording_timer)
+    tol = 120.0
+
+    # 普通任务：不带 convert，候选没有 timeout_extra_s
+    sid = ai_bridge.run("codex", "fig.py", "改一下", str(env["figs"]))
+    _wait(sid)
+    assert len(intervals) == 1
+    assert ai_bridge.TIMEOUT_S - tol < intervals[0] <= ai_bridge.TIMEOUT_S == 900
+
+    # 转换任务：300 行源脚本 -> 1500 s
+    intervals.clear()
+    (env["figs"] / "fig.py").write_bytes(b"x = 1\n" * 300)
+    sid = _run(env)
+    _wait(sid)
+    assert len(intervals) == 1
+    want = ai_convert.convert_timeout_s(300)
+    assert want == 1500
+    assert want - tol < intervals[0] <= want
+
+    # 封顶：远超 450 行也只放到 1800 s
+    intervals.clear()
+    (env["figs"] / "fig.py").write_bytes(b"x = 1\n" * 5000)
+    sid = _run(env)
+    _wait(sid)
+    assert len(intervals) == 1
+    assert ai_convert.convert_timeout_s(5000) == 1800
+    assert 1800 - tol < intervals[0] <= 1800
+
+
+def test_live_activity_is_only_for_running_convert_sessions():
+    class Facts:
+        def __init__(self, silent):
+            self.silent = silent
+
+        def generating_silent(self, idle_ms):
+            assert idle_ms == ai_bridge.LONG_WRITE_IDLE_MS == 45_000
+            return self.silent
+
+    base = {"kind": "convert", "status": "running", "cli_live": Facts(True)}
+    assert ai_bridge._live_activity(base) == "writing_long"
+    assert ai_bridge._live_activity({**base, "cli_live": Facts(False)}) is None
+    assert ai_bridge._live_activity({**base, "kind": None}) is None
+    assert ai_bridge._live_activity({**base, "status": "done"}) is None
+    assert ai_bridge._live_activity({**base, "cli_live": None}) is None
+    assert "cli_live" in ai_bridge.SESSION_INTERNAL_KEYS
+
+
+def test_write_denied_covers_sandbox_that_never_started_but_not_real_work():
+    """沙盒起不来（TVD-BCZ0，Windows）：回合正常结束却 0 命令 0 写入 → 真；有命令没写入 / 回合没正常结束 / 没事件 → 假。"""
+    cand = SimpleNamespace(extras={})
+    base = {"events": 5, "last_event": "turn.completed", "commands": 0, "file_changes": 0}
+    cand.extras["run_facts"] = dict(base)
+    assert ai_convert.write_denied(cand) is True
+    cand.extras["run_facts"] = {**base, "commands": 3}  # 旧路径：跑过命令只是没写出目标
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {**base, "file_changes": 1}
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {**base, "last_event": "turn.failed"}
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {**base, "events": 0, "last_event": "none"}
+    assert ai_convert.write_denied(cand) is False

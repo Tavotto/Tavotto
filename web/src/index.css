@@ -48,6 +48,8 @@
      占位框的字）用的墨：纸不变，它也不变。 */
   --color-paper: #ffffff;
   --color-paper-ink: #1b1b18;
+  /* 纸上的荧光笔（出处卡摘录里命中的数）：浅黄，两套主题同值（纸不反相） */
+  --color-paper-highlight: #fff3a3;
   /* 纸上的二 / 三级墨（缩略图里的文字框 / 标注线、纸上的图形记号）：paper-ink 的 80% / 65%，合成到纸白上约等于浅色的
      ink-2 / ink-3。纸上不许用界面的 ink-2 / ink-3——它们在暗色里变浅，落在不变的白纸上只剩 1.8:1 / 2.8:1
      （foundation.test「纸上的东西用纸上的墨」+ tokenContrast.test 守着） */
@@ -966,6 +968,14 @@
 @utility focus-ring {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* 指针操作之后的程序化 focus 不画环（2026-10-31 UI 审计 D4，`lib/inputModality`）：WebKit 在鼠标点击之后，
+   经 Enter 进图内编辑 / 菜单关闭还焦点这类程序化 focus 仍会让 :focus-visible 成立。
+   `data-input-modality` 只在指针按下时是 pointer、Tab / 方向键时回到 keyboard；没有它（启动后无指针操作）一切照旧。
+   不用 `!important`：未分层的规则本来就压过 utilities 层。 */
+:root[data-input-modality='pointer'] :focus-visible {
+  outline: none;
 }
 
 /* 内凹焦点环：同一根 2px accent，但画在元素边框内侧（offset -2px）。给密排的列表 / 树行用——行左右各让 4px、

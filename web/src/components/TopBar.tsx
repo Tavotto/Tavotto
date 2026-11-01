@@ -21,8 +21,6 @@ import {
   openLayoutDocument,
   openRecentDocument,
   setDocumentName,
-  toggleTimeline,
-  openTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
@@ -51,10 +49,10 @@ import {
 } from '@/store/documentStore'
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { isTimelineOpen, useUiStore } from '@/store/uiStore'
+import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
-import { Button, IconButton } from './ui/Button'
+import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Popover } from './ui/Popover'
 import { TextInput } from './ui/Input'
@@ -119,7 +117,6 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
-        <TimelineButton />
       </div>
 
       {/* 撤销 / 重做挨着导出（2026-10-07 设计审计 §10.1 P2）：此前孤零零在顶栏正中，离它撤的东西（左边的文档）
@@ -544,7 +541,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
             PILL_TONE[tone],
           )}
         >
-          <Icon size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <Icon size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           <span data-save-text className="truncate max-[899px]:sr-only">
             {text}
           </span>
@@ -668,30 +665,6 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   return null
 }
 
-/**
- * 排版时间线的常驻入口（ADR 0101）：保存状态旁一颗时钟钮。
- *
- * 用户反馈「不知道有这个功能」——它此前只在排版菜单的第六项里。放在保存状态旁边，
- * 是因为两者回答的是同一件事的两半：「存到哪一步了」与「能回到哪一步」。
- * 抽屉开着时按下态（`aria-pressed`），再点一下收起。
- */
-function TimelineButton() {
-  const { t } = useTranslation('workspace')
-  const open = useUiStore(isTimelineOpen)
-  return (
-    <IconButton
-      label={t('topbar.timelineButton')}
-      shortcut={keyOf('timeline')}
-      aria-pressed={open}
-      data-timeline-button
-      className={cn('shrink-0', open && 'bg-selected')}
-      onClick={toggleTimeline}
-    >
-      <RotateCcwClock size={ICON_SIZE.md} className="text-ink-2" />
-    </IconButton>
-  )
-}
-
 export function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
@@ -790,9 +763,6 @@ export function DocumentMenu() {
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
-      </MenuItem>
-      <MenuItem onSelect={openTimeline} shortcut={keyOf('timeline')}>
-        {t('topbar.versionTimeline')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
@@ -905,8 +875,8 @@ function ExportButton() {
   )
 }
 
-/** 低频全局动作收进「更多」：样式 / 版本 / 画布设置 / 帮助 */
-function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
+/** 低频全局动作收进「更多」：刷新 / 接入状态 / 命令面板 / 帮助（样式与画布设置各有唯一的家：左栏「样式」、右栏「画布」页签，审计 A2） */
+export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
   const { t } = useTranslation('workspace')
   const ui = () => useUiStore.getState()
   // 打招呼的是启动时那个 UpdateNoticeDialog（「稍后」按版本记住）；这里只在
@@ -952,8 +922,8 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
           <MenuSeparator />
         </>
       )}
-      {/* 按用户目的分三组、各带小标题（2026-10 UI 审计 D2）：文件｜视图｜帮助。
-          「论文样式 · 画布设置」入口收敛是后续工作，这里只归组、不删能力 */}
+      {/* 按用户目的分两组、各带小标题（2026-10 UI 审计 D2）：文件｜帮助。
+          「论文样式 · 画布设置」已收敛到左栏「样式」与右栏「画布」页签（审计 A2），「视图」组随之没有了 */}
       <MenuLabel>{t('topbar.moreGroup.file')}</MenuLabel>
       {writeBackItem}
       {/* 与命令面板同一批 helper：刷新走统一刷新端点，接入状态走 readiness store */}
@@ -963,10 +933,6 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
       >
         {t('topbar.readiness')}
       </MenuItem>
-      <MenuSeparator />
-      <MenuLabel>{t('topbar.moreGroup.view')}</MenuLabel>
-      <MenuItem onSelect={() => ui().setStylesOpen(true)}>{t('topbar.paperStyles')}</MenuItem>
-      <MenuItem onSelect={() => ui().setRightTab('canvas')}>{t('topbar.canvasSettings')}</MenuItem>
       <MenuSeparator />
       <MenuLabel>{t('topbar.moreGroup.help')}</MenuLabel>
       <MenuItem onSelect={() => usePalette.getState().setOpen(true)} shortcut={keyOf('palette')}>
@@ -1027,7 +993,7 @@ export function ProjectStatusPill() {
             PILL_TONE[tone],
           )}
         >
-          <Images size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <Images size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           <span className="truncate max-[899px]:sr-only">{text}</span>
         </button>
       }

@@ -4040,3 +4040,26 @@ def test_msix_private_store_data_is_copied_back_without_overwriting(tmp_path, mo
     assert (real / "origin" / "a.json").read_text(encoding="utf-8") == "pkg"
     assert (real / "origin" / "b.json").read_text(encoding="utf-8") == "real"
     assert (pkg / "b.json").read_text(encoding="utf-8") == "pkg"
+
+
+def test_codex_on_windows_runs_with_unelevated_sandbox(monkeypatch):
+    """TVD-BCZ0：Windows 上 Codex 默认沙盒起不来（所有命令启动前被拒、0 命令 0 写入），
+    `-c windows.sandbox="unelevated"` 是 Lab 真机验证过的修法；转换与修复会话都要带。"""
+    from tavotto.engine import ai_agents
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+    codex = ai_agents.CodexAgent()
+    run = codex.build_command(ai_agents.RunContext(argv=["codex"], prompt="p", cwd="C:\\w")).argv
+    fix = codex.build_fix_command(
+        ai_agents.FixRunContext(
+            argv=["codex"],
+            prompt="p",
+            cwd="C:\\w",
+            mcp_command=["m", "fix-mcp"],
+            mcp_name="tavotto_fix",
+            token_env="T",
+            tool_timeout_s=10,
+        )
+    ).argv
+    for argv in (run, fix):
+        assert 'windows.sandbox="unelevated"' in argv

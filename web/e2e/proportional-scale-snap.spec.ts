@@ -89,7 +89,22 @@ async function addBoth(page: Page, baseURL: string) {
   // 两张图落在同一处：把后加的 B 拖到左下，A 的上半部分与东南角柄都露出来。
   // A 缩到 0.58 倍时它的 y 向锚点（25 / 39.5 / 54 与子图 29 / 37 / 44 mm）离页面线 50 与 B 的线（48.8 / 56 / 69 …）都在 4 mm 以上，
   // 只有 x 向那一对在容差（约 1.2 mm）里——否则「最近的一对」可能是 y 向的，结果不是这条用例要看的
-  const [, b] = await panels(page)
+  // 新图不再叠在旧图正上方（审计 B1：落在空位，必要时缩小）。这条用例的几何从「B 与 A 同位同大」出发：
+  // 用属性栏把 B 的 X / Y / W 设成 A 的值（锁比例，H 跟着走），回到原来的起点
+  const field = (n: string) => page.locator('[data-inspector-panel]').getByLabel(`${n} (mm)`, { exact: true })
+  const [a0, b0] = await panels(page)
+  await page.mouse.click(a0.x + a0.w / 2, a0.y + a0.h / 2)
+  const geo: Record<string, string> = {}
+  for (const n of ['X', 'Y', 'W']) geo[n] = await field(n).inputValue()
+  await page.mouse.click(b0.x + b0.w / 2, b0.y + b0.h / 2)
+  for (const n of ['W', 'X', 'Y']) {
+    await field(n).fill(geo[n])
+    await field(n).press('Enter')
+  }
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(500)
+  const [a, b] = await panels(page)
+  expect(Math.abs(b.x - a.x) + Math.abs(b.y - a.y) + Math.abs(b.w - a.w), 'B 没回到与 A 同位同大').toBeLessThan(2)
   const cx = b.x + b.w / 2
   const cy = b.y + b.h / 2
   await page.mouse.move(cx, cy)

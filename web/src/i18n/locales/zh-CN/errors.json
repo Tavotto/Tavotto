@@ -322,6 +322,7 @@
     "project_copy_dest_unwritable": "这个文件夹也没有写入权限，请换一个。",
     "project_copy_failed": "另存没有完成：{{reason}}",
     "output_folder_read_only": "因为 {{product}} 没有该文件夹的写入权限，因此某些输出文件未生成。",
+    "interpreter_cache_denied": "这个 Python 环境没法在 {{product}} 的缓存里新建文件夹，{{product}} 用不了它。改用 {{product}} 自带的 Python 即可。",
     "export_raster_too_large": "这张图按当前设置要生成 {{width}} × {{height}} 像素的位图，超过了上限（{{max_pixels}} 像素），为避免内存耗尽没有导出，原文件也没有改动。建议降低导出分辨率，或缩小图幅后再试；Tavotto 不会自动替你降低。",
     "script_input_stream_gone": "事件流已经断开，正在重新连接。",
     "script_input_transcript_failed": "脚本输入的执行记录读写失败，这次操作没有完成（答案和运行都没有改动），请稍后重试。",
@@ -659,6 +660,8 @@
     "repairPythonVerifying": "正在校验 Python…",
     "repairPythonLaunching": "正在试启动 Python…",
     "repairPythonPreparing": "正在准备 Python…",
+    "repairNetBoth": "官方源和镜像都没连上，检查网络后点重试。",
+    "repairNetUserSource": "你配置的下载源连不上，检查它或网络后点重试。",
     "repairErrorShort": {
       "dependency_already_attempted": "这个包刚装过一次仍不行，重启 {{product}} 后再试。",
       "dependency_already_present": "包已经在环境里，但渲染没用这个环境，在详情里换一个环境。",

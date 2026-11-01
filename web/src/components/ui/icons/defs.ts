@@ -8,6 +8,9 @@
  * 规格是从 OpenAI 的 `@openai/apps-sdk-ui`（755 个图标）量出来再落到这个网格上的，
  * 图形本身都是自己画的。
  *
+ * 状态记号（警告 / 提示 / 完成 / 出错 / 盾牌警告）默认就是实心底 + 挖空符号，没有线条版（2026-11-01 用户选定，
+ * ADR 0158）：「现在是什么状态」用实心，「点了会做什么」用线条。
+ *
  * 每个图标：s = 描边路径，f = 实心路径，k = 挖空（蒙版里画黑），o = 挖空后再压上去的
  * 线；sel = 选中态的实心孪生（f 实心外形 + k 挖出内部细节 + s 保留的线）。只有真正
  * 用作开关 / 激活态的图标才有 sel（`filled` 属性对没有 sel 的图标不起作用）。
@@ -98,7 +101,7 @@ const FOLDER_OPEN_FRONT = 'M2.9 11h17.3a1.5 1.5 0 0 1 1.4 2l-2 5.5A2 2 0 0 1 17.
 const HEX = poly(regular(12, 12, 9.3, 6, -90), 2.4)
 // 八角（平边朝上，边心距 9 与 RING 同外沿）
 const OCT = poly(regular(12, 12, 9 / Math.cos(Math.PI / 8), 8, -67.5), 2.5)
-const TWO = (x: number, y: number) => `M${x} ${y}a2 2 0 0 1 3.5 1.3c0 1.5-3.5 2.4-3.5 4.7h4`
+const TWO = (x: number, y: number) => `M${x} ${y + 1.75}a2.25 2.25 0 0 1 4.5 0c0 2-4.5 3.25-4.5 6h4.5`
 // 光学居中：指针 + 三道点击射线整体外接盒（含 2 单位描边）原先是 x 1.5–18.5 / y 1.5–18，中心 (10, 9.75)，
 // 离 24 网格中心 (12, 12) 偏左上约 2 单位——放进 32px 的墨色实心圆里（选中态）肉眼就是没居中。
 // 整组平移 (+2, +2.25) 把外接盒中心挪回 (12, 12)；射线与指针的相对位置不变。
@@ -129,8 +132,7 @@ const RAW_DEFS = {
     sel: { f: [poly([[12, 3], [20, 7], [12, 11], [4, 7]], 1.2)], s: ['M4 13l8 4 8-4', 'M4 17l8 4 8-4'] } },
   SquareMousePointer: { s: ['M13.5 21H5.5A2.5 2.5 0 0 1 3 18.5v-13A2.5 2.5 0 0 1 5.5 3h13A2.5 2.5 0 0 1 21 5.5V13.5'], f: ['M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z'],
     sel: { f: [rr(3, 3, 18, 18, 2.5)], k: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', w: 3 }], o: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', solid: true }] } },
-  TriangleAlert: { s: [TRI, 'M12 9.5v4'], f: [dot(12, 17.2)],
-    sel: { f: [TRI], k: ['M12 9.5v4', dot(12, 17.2)] } },
+  TriangleAlert: { f: [TRI], k: ['M12 9.5v4', dot(12, 17.2)] },
   Settings: { s: [HEX, circ(12, 12, 2.75)],
     sel: { f: [HEX], k: [{ d: circ(12, 12, 2.4), solid: true }] } },
   ClipboardList: { s: [CLIP_BOARD, CLIP, 'M8.5 13.5l2.4 2.4 4.6-5'],
@@ -181,12 +183,12 @@ const RAW_DEFS = {
     sel: { f: [rr(4, 8, 16, 11, 3), dot(12, 4, 1.4)], s: ['M12 8V5.5'], k: [dot(9, 13.5, 1.5), dot(15, 13.5, 1.5)] } },
 
   // ───────── 状态家族（同一个圆圈、同一套标点） ─────────
-  CircleAlert: { s: [RING, 'M12 8v4'], f: [dot(12, 16.5)], sel: { f: [RING_SOLID], k: ['M12 8v4', dot(12, 16.5)] } },
+  CircleAlert: { f: [RING_SOLID], k: ['M12 8v4', dot(12, 16.5)] },
   // 阻断（问题等级 error）：停车牌的八角，标点与 CircleAlert 同一套（2026-09-14 二审 C1 把阻断与警告分成两个形状）
   OctagonAlert: { s: [OCT, 'M12 8v4'], f: [dot(12, 16.5)] },
-  Info: { s: [RING, 'M12 11.5V16'], f: [dot(12, 8)], sel: { f: [RING_SOLID], k: ['M12 11.5V16', dot(12, 8)] } },
-  CircleCheck: { s: [RING, 'M8 12.5l3 3 5-6.5'], sel: { f: [RING_SOLID], k: ['M8 12.5l3 3 5-6.5'] } },
-  CircleX: { s: [RING, 'M9 9l6 6', 'M15 9l-6 6'], sel: { f: [RING_SOLID], k: ['M9 9l6 6', 'M15 9l-6 6'] } },
+  Info: { f: [RING_SOLID], k: ['M12 11.5V16', dot(12, 8)] },
+  CircleCheck: { f: [RING_SOLID], k: ['M8 12.5l3 3 5-6.5'] },
+  CircleX: { f: [RING_SOLID], k: ['M9 9l6 6', 'M15 9l-6 6'] },
   CircleQuestionMark: { s: [RING, 'M9.6 9.5a2.4 2.4 0 1 1 3.6 2.1c-.8.5-1.2 1-1.2 1.9v.3'], f: [dot(12, 16.8)],
     sel: { f: [RING_SOLID], k: ['M9.6 9.5a2.4 2.4 0 1 1 3.6 2.1c-.8.5-1.2 1-1.2 1.9v.3', dot(12, 16.8)] } },
   CircleMinus: { s: [RING, 'M8.5 12h7'], sel: { f: [RING_SOLID], k: ['M8.5 12h7'] } },
@@ -195,7 +197,7 @@ const RAW_DEFS = {
   Ban: { s: [RING, 'M5.7 5.7l12.6 12.6'] },
   LoaderCircle: { s: ['M21 12a9 9 0 1 1-2.64-6.36'] },
   Lightbulb: { s: [BULB, BULB_BASE], sel: { f: [BULB + 'z'], s: [BULB_BASE] } },
-  ShieldAlert: { s: [SHIELD, 'M12 8v4'], f: [dot(12, 15.8)], sel: { f: [SHIELD], k: ['M12 8v4', dot(12, 15.8)] } },
+  ShieldAlert: { f: [SHIELD], k: ['M12 8v4', dot(12, 15.8)] },
   ShieldCheck: { s: [SHIELD, 'M8.5 12l2.5 2.5 4.5-5'], sel: { f: [SHIELD], k: ['M8.5 12l2.5 2.5 4.5-5'] } },
   ShieldQuestionMark: { s: [SHIELD, 'M9.8 9.3a2.3 2.3 0 1 1 3.4 2c-.8.5-1.2 1-1.2 1.8v.2'], f: [dot(12, 16.2)],
     sel: { f: [SHIELD], k: ['M9.8 9.3a2.3 2.3 0 1 1 3.4 2c-.8.5-1.2 1-1.2 1.8v.2', dot(12, 16.2)] } },
@@ -289,9 +291,11 @@ const RAW_DEFS = {
   Bold: { s: [{ d: 'M7.5 4h5.5a3.5 3.5 0 0 1 0 7H7.5z', w: 2.1 }, { d: 'M7.5 11h6.5a4.25 4.25 0 0 1 0 8.5h-6.5z', w: 2.1 }] },
   Italic: { s: ['M13.5 4.5h5', 'M5.5 19.5h5', 'M14.5 4.5l-5 15'] },
   Underline: { s: ['M6.5 3.5v7a5.5 5.5 0 0 0 11 0v-7', 'M4.5 20.5h15'] },
-  Superscript: { s: ['M4 7l7 8', 'M11 7l-7 8', TWO(15.5, 4.5)] },
-  Subscript: { s: ['M4 5l7 8', 'M11 5l-7 8', TWO(15.5, 13.5)] },
-  CaseSensitive: { s: ['M3.5 15.5l3.5-9 3.5 9', 'M4.9 12h4.2', 'M20 15.5v-5.5a2.5 2.5 0 0 0-5 0', 'M20 12.5h-3a2 2 0 0 0 0 4h.5a2.5 2.5 0 0 0 2.5-2.5'] },
+  // 上下标：x 放大、2 改成更开的写法（2026-11-01 用户指出原来那版不好看）
+  Superscript: { s: ['M4 9l7.5 10', 'M11.5 9l-7.5 10', TWO(15, 3)] },
+  Subscript: { s: ['M4 5l7.5 10', 'M11.5 5l-7.5 10', TWO(15, 12.5)] },
+  // 大小写：A 与单层 a 同一条基线，a 是圆碗 + 右竖（原来的双层 a 在 16px 上读成 ə）
+  CaseSensitive: { s: ['M3 18l4.5-12 4.5 12', 'M4.75 14h5.5', circ(17.25, 15.25, 2.75), 'M20 12.5V18'] },
   TextAlignStart: { s: ['M4 6h16', 'M4 12h10', 'M4 18h14'] },
   TextAlignCenter: { s: ['M4 6h16', 'M7 12h10', 'M5 18h14'] },
   TextAlignEnd: { s: ['M4 6h16', 'M10 12h10', 'M6 18h14'] },
@@ -308,7 +312,9 @@ const RAW_DEFS = {
     sel: { s: ['M12 4v5', 'M12 15v5', 'M8.5 4h7', 'M8.5 20h7'], f: [dot(12, 12, 3.2)] } },
   WavesHorizontal: { s: ['M3 7.5c2-2 4-2 6 0s4 2 6 0 4-2 6 0', 'M3 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0', 'M3 16.5c2-2 4-2 6 0s4 2 6 0 4-2 6 0'] },
   Ruler: { s: [rr(3, 8, 18, 8, 2), 'M7 8v3.5', 'M11 8v5', 'M15 8v3.5', 'M19 8v5'] },
-  LayoutList: { f: [rr(3.5, 5, 5, 5, 1.2), rr(3.5, 14, 5, 5, 1.2)], s: ['M12 7.5h8.5', 'M12 16.5h8.5'] },
+  // 左轨「大纲」：选中态与 ListChecks 同一副骨架——左列两块放大成实心圆角块（与它的底块同尺寸），右列两道照旧
+  LayoutList: { f: [rr(3.5, 5, 5, 5, 1.2), rr(3.5, 14, 5, 5, 1.2)], s: ['M12 7.5h8.5', 'M12 16.5h8.5'],
+    sel: { f: [rr(2.5, 3.5, 8, 8, 2.5), rr(2.5, 12.5, 8, 8, 2.5)], s: ['M13.5 7.5h7', 'M13.5 16.5h7'] } },
   // 左轨「问题」（2026-10-07 设计审计 §9.4）：此前与警告同形（TriangleAlert），轨上一枚警告三角一直在余光里报警。
   // 与 LayoutList 同一副骨架（左列记号 + 右列两道），左列是两枚对勾——「检查清单」，不是「出事了」
   ListChecks: {
@@ -330,10 +336,10 @@ const RAW_DEFS = {
  * 曲线的控制点跟着各自端点平移，圆弧半径不动。几何仍按上面的原值写，改图形照常改原值，吸附在这里统一做。
  */
 const GRID = 0.75
-const snapV = (v: number) => Math.round(v / GRID) * GRID
 const ARGC: Record<string, number> = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 }
 
-export function snapPathToPixelGrid(d: string): string {
+export function snapPathToPixelGrid(d: string, grid = GRID, offset = 0): string {
+  const snapV = (v: number) => Math.round((v - offset) / grid) * grid + offset
   const toks = d.match(/[a-zA-Z]|-?(?:\d*\.\d+|\d+\.?)(?:e-?\d+)?/g) ?? []
   const out: string[] = []
   let i = 0
@@ -393,3 +399,30 @@ export const ICON_DEFS = Object.fromEntries(
 ) as { [K in keyof typeof RAW_DEFS]: IconDef }
 
 export type IconName = keyof typeof ICON_DEFS
+
+/**
+ * 12px 专用字形（ADR 0158，用户 2026-11-01 在小图标演示页上选定）：24 网格的图形缩到 12px 后线只剩 0.75px、
+ * 坐标落不到像素上，怎么吸附都糊。最常用的这几个小记号在 12 格上另画一份——为了与大图共用动作（角色、
+ * 变换原点、位移量都按 24 单位写），坐标仍写在 24 单位里，但只用偶数 = 12px 上的整像素：线 2 单位 = 1px，
+ * 线的中心落在奇数（半像素）上，横竖线两侧边缘都是整像素；能走横竖就不走斜线，斜线只用 45°。
+ * 状态记号在这里也是实心底 + 挖空，挖空的符号是整像素的矩形，上下两段之间至少留 1px。
+ *
+ * 路径条数和顺序与大图一一对应（`motion.ts` 的角色按下标套用）。没有小号字形的图标不该用 `ICON_SIZE.xs`，
+ * 门禁在 `iconography.test.tsx`。
+ */
+const SMALL_RING = circ(12, 12, 9)
+export const SMALL_DEFS: Partial<Record<IconName, IconDef>> = {
+  ChevronRight: { s: ['M9 5L16 12L9 19'] },
+  ChevronDown: { s: ['M5 9L12 16L19 9'] },
+  X: { s: ['M6 6L18 18', 'M18 6L6 18'] },
+  Check: { s: ['M5 13L10 18L19 7'] },
+  Plus: { s: ['M12 5V19', 'M5 12H19'] },
+  RotateCcw: { s: ['M5 13a7 7 0 1 0 2-6', 'M7 3V7H11'] },
+  Download: { s: ['M5 20H19', 'M12 4V15', 'M7 10L12 15L17 10'] },
+  ExternalLink: { s: ['M10 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V14', 'M14 5H19V10', 'M19 5L11 13'] },
+  Circle: { s: [SMALL_RING] },
+  Lock: { s: ['M8 11V8a4 4 0 0 1 8 0v3'], f: [{ d: 'M7 11H17a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V13a2 2 0 0 1 2-2Z', w: 0 }] },
+  TriangleAlert: { f: [{ d: 'M12 3.5L21 19H3Z', w: 2 }], k: [{ d: 'M11 8H13V13H11Z', w: 0 }, { d: 'M11 15H13V17H11Z', w: 0 }] },
+  Info: { f: [{ d: SMALL_RING, w: 0 }], k: [{ d: 'M11 10H13V17H11Z', w: 0 }, { d: 'M11 6H13V8H11Z', w: 0 }] },
+  CircleCheck: { f: [{ d: SMALL_RING, w: 0 }], k: ['M8 12.5L10.5 15L16 9.5'] },
+}

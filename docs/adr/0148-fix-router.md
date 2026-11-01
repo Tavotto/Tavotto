@@ -81,3 +81,26 @@ AI 环境修复任务本身（PR D）；`change_python` 的执行（PR B）；AI
 * 规则全文：`docs/rules/backend/preparation-and-receipts.md`、`docs/rules/frontend/readiness-and-left-shell.md` 各有一句指向本 ADR；看护
   `tests/test_fixrouter.py` / `tests/test_fixrouter_pair.py` / `tests/test_fixrouter_report.py`、`web/src/lib/preparationText.test.ts`、
   `web/src/components/PreparationCard.test.tsx`（「智能修复」一节）。
+
+## 修订 2026-11-01：装不了的缺包不再以 AI 为主按钮；Python 版本不合时一键改用现成环境（维护者裁决）
+
+1. **装不了的缺包**（`missing_dependency` 且 `missing_installable` 为假，或包名认不出——私有库 / 本地模块 / conda-only）：
+   主按钮不是「使用你的 AI 来修复」。AI 不能凭空变出一个私有库，确定的出路是让用户指向装了它的 Python。
+   * 新 remedy 种类 **`choose_environment`**（无字段；不带模块名，诊断包里的 `remedy` 因此不含用户的模块名）：主按钮是既有的
+     「选择运行环境」（`pick_environment`，文案「换用我的 Python」），AI 修复退为**次按钮**（`aiFix` 照常摆，每张失败卡都有 AI 次入口的规则不变）。
+     没连 AI 时同样不以「连接 AI」为主按钮。
+   * 缺的是什么都说不出（`Ctx.missing_named` 为假）：没有可指给用户的东西 -> `feedback`。
+   * 范围只有「装不了」这一支：装过一次包还缺、以及脚本自身报错等确实适合 AI 的失败，路由与主按钮**不变**。
+   * 路由顺序：缺依赖（可装 -> `install_packages`；装不了 -> `choose_environment` / `feedback`）仍在写不了缓存 / 版本类之前。
+2. **Python 版本不合**：`change_python` 多一个字段 **`env`**（`{id, generation, name, version}` 或 `null`，无路径），`to` 现在真的有值。
+   * 后端（`prepsession._python_switch_target`，失败那一刻只读）：目标范围取 `pyversionfix.required_span`，`to` = 范围内最高小版本；
+     候选取 `envadvice.recommend` 的公开投影里**体检确认健康**、版本落在范围内（含补丁位约束）、**不是内置 runtime**、不是当前环境的，
+     按 `userenvs.rank`（来源档位 → 官方验证 → Python 新）挑第一个。没量过（`unchecked`）的候选不冒充满足。全局显式解释器压着时
+     （采用会 409）不给 `env`。没有候选 `env: null`。
+   * 前端：有 `env` -> 主按钮「改用 <环境名>」，点一下走既有候选采用（`adoptCandidate`：后端现场再体检、环境代对不上就拒绝，原文回到卡上、不重跑），
+     成功再「打开并运行」（与 #1595 的清选择重跑同一个模式）；`env` 为 `null` 才进选择器。
+   * **用户显式选过的环境不碰**：按钮永远是用户点了才切，路由与渲染都不执行任何切换；另外 `prepsession._plan_python_change`
+     （版本不合时的自动另建受管环境）遇到用户显式挑过的项目环境（`projectenv` 授权来源 = confirmed、且不是默认链条）时让路，不再把
+     「记住的解释器」悄悄换掉——此时只剩失败卡上的按钮。内置 runtime 永远不是 `env` 的目标。
+   * `interpreter_cache_denied` 的 `change_python` 仍是 `to: null, env: null`（#1595 的「改用 Tavotto 自带的 Python」不变）。
+3. 同源对：种类闭集多 `choose_environment`、`change_python` 字段多 `env`；golden 向量与 `fixRemedy.ts` 的字段表同步，`PrepPrimary` 多 `switch_python`。
