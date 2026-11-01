@@ -876,6 +876,22 @@ describe('AI 修改之后（ADR 0041）', () => {
     expect(s1.task).toEqual({ task_type: 'figure_edit', outcome: 'completed', corrections: 1 })
   })
 
+  it('ai.stalled 只标本标签页持有、运行中的会话的静默秒数；stalled:false 复位', () => {
+    useAiStore.setState({
+      sessions: [
+        { id: 's1', status: 'running', entries: [] },
+        { id: 's3', status: 'done', entries: [], finalized: true },
+      ] as never,
+    })
+    for (const sid of ['s1', 's3', 'nope']) {
+      handleServerEvent(ev({ kind: 'ai.stalled', pj: 'p1', session: sid, stalled: true, idle_s: 120 }))
+    }
+    const stalled = () => Object.fromEntries(useAiStore.getState().sessions.map((s) => [s.id, s.stalledS]))
+    expect(stalled()).toEqual({ s1: 120, s3: undefined })
+    handleServerEvent(ev({ kind: 'ai.stalled', pj: 'p1', session: 's1', stalled: false, idle_s: 0 }))
+    expect(stalled()).toEqual({ s1: undefined, s3: undefined })
+  })
+
   it('新发起的会话（本地没有 task）收到 ai.task 后有 correcting 阶段，收尾的 ai.done 不带 phase 就消失', () => {
     // 与 aiStore.accept 的 fresh 分支同形：没有 task 字段
     useAiStore.setState({

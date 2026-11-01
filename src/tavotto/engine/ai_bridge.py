@@ -59,6 +59,10 @@ LOG = logging.getLogger("tavotto.ai")
 
 SNAP_DIR = config.data_dir() / "cache" / "ai_snapshots"
 TIMEOUT_S = 900  # 单次 AI 任务上限
+#: 无输出看门狗：CLI 这么久没吐任何一行 → 推 `ai.stalled` 让界面说「没有动静」并给取消 / 重试。**只提示，不杀进程**
+#: （慢慢思考的模型会被误杀）；总超时 `TIMEOUT_S` 不变。检查间隔 `STALL_POLL_S` 决定提示最迟晚到多久
+STALL_AFTER_S = 120
+STALL_POLL_S = 5.0
 SNAP_KEEP = 20  # 快照保留的最近会话数（超龄的 revert 入口早已不可见）
 SESSIONS: dict[str, dict] = {}
 
@@ -1415,6 +1419,51 @@ def fix_cli_command(
     return list(spec.argv), dict(spec.env)
 
 
+class _SilenceWatch:
+    """一次 CLI 进程的「无输出」看门狗（只观察，不碰进程）。`touch()` 在每读到 stdout 一行时调；后台线程每 `STALL_POLL_S` 看一次：
+    静默达 `STALL_AFTER_S` 发一次 `ai.stalled{stalled: true, idle_s}`，之后再有输出发一次 `{stalled: false}` 复位。
+    状态只放在这个对象里，不进会话字典（会话字典的字段会进响应）。`complete` 置位线程即退出。"""
+
+    def __init__(self, sid: str, emit, complete: threading.Event, clock=time.monotonic) -> None:
+        self._sid = sid
+        self._emit = emit
+        self._complete = complete
+        self._clock = clock
+        # 状态翻转与推送在同一把锁里：否则后台线程判定「卡住」后、推送前恰好来了输出，`stalled:false`
+        # 会先于 `stalled:true` 到前端，界面停在「没动静」
+        self._lock = threading.Lock()
+        self._last = clock()
+        self._stalled = False
+
+    def touch(self) -> None:
+        with self._lock:
+            self._last = self._clock()
+            if self._stalled:
+                self._stalled = False
+                self._publish({"stalled": False, "idle_s": 0})
+
+    def _publish(self, payload: dict) -> None:
+        try:
+            self._emit("ai.stalled", {"session": self._sid, **payload})
+        except Exception:  # noqa: BLE001 — 看门狗不能因事件通道出错而影响会话
+            LOG.exception("推送 ai.stalled 失败（session %s）", self._sid)
+
+    def check(self) -> None:
+        """看一次：静默达阈值且还没提示过就提示。后台线程每 `STALL_POLL_S` 调一次；测试直接调。"""
+        with self._lock:
+            idle = self._clock() - self._last
+            if idle >= STALL_AFTER_S and not self._stalled:
+                self._stalled = True
+                self._publish({"stalled": True, "idle_s": int(idle)})
+
+    def _run(self) -> None:
+        while not self._complete.wait(STALL_POLL_S):
+            self.check()
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True, name=f"ai-silence-{self._sid}").start()
+
+
 def _classify(agent_id: str, line: str, st: dict) -> list[tuple[str, str]]:
     """把 CLI 原始输出分类为事件列表。kind：
       delta    — 当前回答的流式增量（只走 SSE，不进 transcript）
@@ -1947,8 +1996,11 @@ def run(
         timer = threading.Timer(max(0.0, TIMEOUT_S - (time.time() - sess["started"])), expire)
         timer.daemon = True
         timer.start()
+        silence = _SilenceWatch(sid, emit, complete)
+        silence.start()
         try:
             for line in proc.stdout:
+                silence.touch()
                 line = line.rstrip("\n")
                 if not line.strip():
                     continue

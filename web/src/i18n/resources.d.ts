@@ -111,7 +111,8 @@ export default interface Resources {
       "via": {
         "cli": "本机 CLI",
         "endpoint": "API 接口"
-      }
+      },
+      "viewDiff": "查看差异"
     },
     "markdown": {
       "image": "[图片：{{alt}}]",
@@ -222,6 +223,7 @@ export default interface Resources {
       "reverted": "已回滚，脚本已恢复到修改前。",
       "revertedStatus": "已回滚助手的修改，正在重建图表…",
       "running": "正在修改脚本…",
+      "stalled": "AI 已经 {{seconds}} 秒没有动静",
       "taskFailedChanged": "已改，但核对没通过",
       "taskPartial": "已改，部分检查没能完成",
       "taskRejected": "修改没通过写回前检查，项目未改动",

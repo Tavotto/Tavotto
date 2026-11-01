@@ -747,3 +747,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
   统一加；版本只由锁控制）。就绪判定仍是 `claude auth status`（只取 `loggedIn`）。前端文案 `engine.managedCliError.*` 带 `{{product}}`，
   Codex / Claude Code 共用；订阅登录卡（`MethodList`）在 agent 没装时不置灰，点开走 `AgentStepAction`「安装并登录」。
   升版本：`python scripts/managed_cli_lock.py --update <版本> --cli claude`。
+
+### 无输出看门狗（`ai.stalled`）
+
+`ai_bridge._SilenceWatch`：每个 CLI 进程一个，只观察。stdout 静默达 `STALL_AFTER_S`（120）发一次 `ai.stalled{session, stalled: true, idle_s}`，再有输出发 `{stalled: false}` 复位；**不杀进程**（慢慢思考的模型会被误杀），总超时 `TIMEOUT_S` 不变。状态只在看门狗对象里、不进会话字典。前端 `aiStore.setStalled` 把它翻译成状态行「AI 已经 N 秒没有动静」+「取消 / 重试」（重试 = 取消、等收尾、再原样重发）。看护 `tests/test_ai_silence_watch.py`、`assistantStalled.test.tsx`。

@@ -86,12 +86,22 @@ describe('任务历史行', () => {
     await act(async () => q('[data-ai-history-details]', row)!.click())
     const card = document.querySelector('[data-ai-history-card="details"]')!
     expect(card.firstElementChild!.hasAttribute('data-ai-history-error')).toBe(true)
-    expect(card.textContent).toContain('找不到包 zz9')
+    // 认不出的错误串不原样露出，换成通用句
+    expect(card.textContent).not.toContain('找不到包 zz9')
+    expect(card.textContent).toContain('AI 这次运行出错了。')
     expect(card.textContent).toContain('fig1.py')
     expect(q('[data-ai-history-trace]', card as HTMLElement)).not.toBeNull()
     // 再点一次收起
     await act(async () => q('[data-ai-history-details]', row)!.click())
     expect(document.querySelector('[data-ai-history-card="details"]')).toBeNull()
+  })
+
+  it('失败原因是闭集码：详情卡显示翻译后的句子，不露原始码', async () => {
+    await mount([{ id: 'q', status: 'failed', changed: false, error: 'agent_quota' }])
+    await act(async () => q('[data-ai-history-details]')!.click())
+    const err = q('[data-ai-history-error]')!
+    expect(err.textContent).toBe('模型服务额度不足或正在限流，稍后再试。')
+    expect(err.textContent).not.toContain('agent_quota')
   })
 
   it('置顶 / 回滚 / 删除仍在行内（悬停或聚焦才显形，键盘够得着）', async () => {

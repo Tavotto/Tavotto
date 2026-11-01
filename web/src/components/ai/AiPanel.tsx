@@ -288,6 +288,8 @@ function AssistantPanelBody() {
   } = useAiDraft(panel)
   // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
   const sendInFlight = useRef(false)
+  const sendRef = useRef<(req?: SendRequest) => Promise<void>>(async () => {})
+  const retrySessionRef = useRef<(t: AiSession) => Promise<void>>(async () => {})
   const [error, setError] = useState<{
     text: string
     /** 读得懂的原因之外的技术细节（进「详情」折叠，`describeRequestFailure`） */
@@ -585,7 +587,24 @@ function AssistantPanelBody() {
       })
       if (!ok) return
     }
-    void send({ source: 'history', text: t.prompt, pinned: targetOf(t) })
+    // 经 ref 取**当前**的 send：重试编排（stalled → 取消 → 等收尾）会在会话仍在运行的那一帧保留闭包，
+    // 那一帧 `canSend` 为 false，旧 send 会在守卫处直接返回、只取消不重发
+    void sendRef.current({ source: 'history', text: t.prompt, pinned: targetOf(t) })
+  }
+
+  sendRef.current = send
+  retrySessionRef.current = retrySession
+
+  // 「AI 没有动静」的两个动作：取消 = 中止这一轮；重试 = 中止后等它真正收尾（脚本释放）再原样重发
+  const retryStalled = async (t: AiSession) => {
+    await useAiStore.getState().cancel(t.id)
+    const settled = () => useAiStore.getState().sessions.find((x) => x.id === t.id)?.finalized
+    for (let i = 0; i < 100 && !settled(); i++) await new Promise((r) => setTimeout(r, 100))
+    if (!settled()) return // 没等到收尾：不抢发（会撞 ai_script_busy），留在已取消，用户可手动再发
+    // 让出一拍：收尾事件触发的重渲染提交之后，sendRef / retrySessionRef 才指向「会话已收尾」那一帧
+    await new Promise((r) => setTimeout(r, 0))
+    // 原会话的项目 / 目标（targetOf）不变：取的是同一条会话，不是此刻选中的东西
+    void retrySessionRef.current(useAiStore.getState().sessions.find((x) => x.id === t.id) ?? t)
   }
 
   /**
@@ -658,6 +677,8 @@ function AssistantPanelBody() {
                   onRetry={(t) => void retrySession(t)}
                   canResend={canSend && !isDataFigureSession(s)}
                   canRetry={canSend && !isDataFigureSession(s) && s.panelId === panel?.id}
+                  onCancel={(t) => void useAiStore.getState().cancel(t.id)}
+                  onRetryStalled={isDataFigureSession(s) || s.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
                 />
               ))}
             </div>
