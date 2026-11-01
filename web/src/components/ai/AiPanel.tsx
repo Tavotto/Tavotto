@@ -588,6 +588,15 @@ function AssistantPanelBody() {
     void send({ source: 'history', text: t.prompt, pinned: targetOf(t) })
   }
 
+  // 「AI 没有动静」的两个动作：取消 = 中止这一轮；重试 = 中止后等它真正收尾（脚本释放）再原样重发
+  const retryStalled = async (t: AiSession) => {
+    await useAiStore.getState().cancel(t.id)
+    const settled = () => useAiStore.getState().sessions.find((x) => x.id === t.id)?.finalized
+    for (let i = 0; i < 100 && !settled(); i++) await new Promise((r) => setTimeout(r, 100))
+    if (!settled()) return // 没等到收尾：不抢发（会撞 ai_script_busy），留在已取消，用户可手动再发
+    void retrySession(useAiStore.getState().sessions.find((x) => x.id === t.id) ?? t)
+  }
+
   /**
    * 失败后的「重试」按失败时的**来源**走：来自输入框、且输入框自那以后没改过 → 仍按输入框发（重新取草稿快照、记戳，
    * 被接受后草稿才清得掉）；输入框已被改过 / 原本就来自历史会话 → 按失败的那段原文走 history 来源（不碰草稿，
@@ -658,6 +667,8 @@ function AssistantPanelBody() {
                   onRetry={(t) => void retrySession(t)}
                   canResend={canSend && !isDataFigureSession(s)}
                   canRetry={canSend && !isDataFigureSession(s) && s.panelId === panel?.id}
+                  onCancel={(t) => void useAiStore.getState().cancel(t.id)}
+                  onRetryStalled={isDataFigureSession(s) || s.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
                 />
               ))}
             </div>

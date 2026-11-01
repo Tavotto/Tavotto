@@ -39,6 +39,7 @@ const ai = (key: string, values?: Record<string, unknown>) => translate(key, { n
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
   if (s.task?.task_type === DATA_FIGURE_TASK) return dataFigureStatusText(s)
+  if (s.status === 'running' && s.stalledS != null) return ai('session.stalled', { seconds: s.stalledS })
   if (s.status === 'running') return ai(s.task?.phase === 'correcting' ? 'session.correcting' : 'session.running')
   // 带任务结局时只翻译 `task.outcome`（检查本身在后端）；其余组合与无 task 一律走原逻辑。
   // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
@@ -91,6 +92,8 @@ export function Turn({
   onRetry,
   canResend,
   canRetry,
+  onCancel,
+  onRetryStalled,
 }: {
   session: AiSession
   /** 把这条提示词按当前的作用范围再发一次（气泡上的「重新发送」：用户此刻的选择就是新的目标） */
@@ -100,6 +103,9 @@ export function Turn({
   canResend: boolean
   /** 只在发起这一轮的那张图上给「重试」：同一脚本的兄弟面板也看得到这一轮，但重试不能改到别的面板上（Codex #827 P1） */
   canRetry: boolean
+  /** 「AI 没有动静」时的两个动作（只在运行中且收到 `ai.stalled` 时出现）：取消这一轮 / 取消后原样重来；不给 = 不出按钮 */
+  onCancel?: (session: AiSession) => void
+  onRetryStalled?: (session: AiSession) => void
 }) {
   useTranslation('ai')
   const caps = useAiStore((s) => s.caps)
@@ -290,6 +296,20 @@ export function Turn({
           data-ai-status={session.status}
         />
         {total != null && !running && <span className="type-number shrink-0 text-ink-3">· {formatDuration(total)}</span>}
+        {running && session.stalledS != null && (
+          <span data-ai-stalled-actions className="ml-auto flex shrink-0 items-center gap-1">
+            {onCancel && (
+              <Button data-ai-stalled-cancel size="sm" onClick={() => onCancel(session)}>
+                {translate('actions.cancel')}
+              </Button>
+            )}
+            {onRetryStalled && (
+              <Button data-ai-stalled-retry size="sm" onClick={() => onRetryStalled(session)}>
+                {ai('panel.retry')}
+              </Button>
+            )}
+          </span>
+        )}
       </p>
     </div>
   )

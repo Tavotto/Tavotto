@@ -4519,6 +4519,15 @@ export type ServerEvent =
       task_type: string
       phase: 'correcting'
     } & ProjectScoped)
+  /** CLI 一段时间没有任何输出（`stalled: true`，`idle_s` = 已静默秒数）/ 又有输出了（`stalled: false`）；只提示，后端不杀进程；老后端不发 */
+  | ({
+      kind: 'ai.stalled'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stalled: boolean
+      idle_s: number
+    } & ProjectScoped)
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
@@ -4576,6 +4585,7 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.task',
+  'ai.stalled',
   'ai.done',
   'script.input_requested',
   'script.input_closed',
