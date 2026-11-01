@@ -123,6 +123,7 @@ from .engine import (
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
     mathtypeset as engine_mathtypeset,
+    msixmigrate as engine_msixmigrate,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
@@ -11722,6 +11723,8 @@ def _ai_connected() -> bool:
 
 
 engine_prepsession.SESSIONS.ai_connected = _ai_connected
+# 失败卡「撤销刚才的 AI 修改」（TVD-H1M5）：脚本此刻是不是改图助手刚改出来、还能原样撤销的那一版
+engine_prepsession.SESSIONS.ai_edit_lookup = engine_ai.revertible_edit
 
 
 def _dependency_event_sink(ctx: "ProjectCtx", extra=None):
@@ -12101,6 +12104,15 @@ def api_engine_environment_set():
                         "params": {"path": str(p)},
                     }
                 ), 400
+            if code == engine_projectenv.ERROR_CACHE_DENIED:
+                # 起得来，但在 Tavotto 的数据目录里建不了目录（TVD-B6MR）：存下它 = 之后每次运行都在用户代码之前失败
+                return jsonify(
+                    {
+                        "error": f"{p} 起出来的进程没法在 Tavotto 的缓存里新建文件夹",
+                        "code": engine_projectenv.ERROR_CACHE_DENIED,
+                        "params": {"path": str(p)},
+                    }
+                ), 400
             if code == engine_projectenv.ERROR_WORKER_IMPORT:
                 detail = str(health.get("error") or "")[:400]
                 return jsonify(
@@ -12362,6 +12374,8 @@ def _project_env_message(health: dict) -> str:
             "这个环境里能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来："
             f"{health.get('error', '')}"
         )
+    if code == engine_projectenv.ERROR_CACHE_DENIED:
+        return "这个环境的 Python 没法在 Tavotto 的缓存里新建文件夹，Tavotto 用不了它"
     return f"这个 Python 起不来：{health.get('detail', '')}"
 
 
@@ -16896,6 +16910,9 @@ def main():
     safe_start = desktop_mode.parse_safe_start((hello or {}).get(desktop_mode.SAFE_START_FIELD))
 
     setup_logging()
+    # 把 MSIX 宿主（Codex 桌面版等）私有区里的旧数据补回真实目录（#1574 善后，一次性、无界面、永不抛）。
+    # 必须早于任何读配置 / 恢复上次项目的动作；大目录（受管环境 / CLI）不在这里搬，用到时才搬。
+    engine_msixmigrate.run_once()
     # 安装清单刷成「这套 Tavotto 现在在这儿」。安装器只写得了装的那一刻，
     # 而用户会把 .app 拖到别处、会用免安装形态、macOS 压根没有安装后钩子——
     # 每次启动刷一遍，外部程序（Codex 插件）查到的就永远是最后真跑起来过的

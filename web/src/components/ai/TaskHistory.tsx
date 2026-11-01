@@ -275,7 +275,7 @@ function HistoryRow({
               )}
               <span aria-hidden className="text-ink-faint">·</span>
               <span className="shrink-0 tabular-nums">{timeOf(entry.started_ms)}</span>
-              {entry.pinned && <Pin data-ai-history-pinned aria-hidden size={ICON_SIZE.xs} filled className="shrink-0 text-accent" />}
+              {entry.pinned && <Pin data-ai-history-pinned aria-hidden size={ICON_SIZE.sm} filled className="shrink-0 text-accent" />}
               <Info
                 aria-hidden
                 size={ICON_SIZE.xs}
@@ -313,7 +313,7 @@ function HistoryRow({
           aria-pressed={entry.pinned}
           onClick={() => void pinAiHistory(entry.id, !entry.pinned, pj).then(() => stillMine() && onChanged())}
         >
-          <Pin size={ICON_SIZE.xs} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
+          <Pin size={ICON_SIZE.sm} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
         </IconButton>
         {entry.changed && entry.revert_available && (
           <IconButton
@@ -354,7 +354,7 @@ function HistoryRow({
           className="text-ink-3 hover:text-ink"
           onClick={() => void deleteAiHistory(entry.id, pj).then(() => stillMine() && onChanged())}
         >
-          <Trash2 size={ICON_SIZE.xs} />
+          <Trash2 size={ICON_SIZE.sm} />
         </IconButton>
       </div>
       <RevertConflictCard

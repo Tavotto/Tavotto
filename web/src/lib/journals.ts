@@ -136,6 +136,8 @@ const NOT_RULES = ['profile_id', 'version', 'label', 'source', 'listed', 'adviso
 const URL_RE = /^https:\/\/[^\x00-\x20\x7f]+$/ // 无 m 标志：$ 只匹配串尾
 // eslint-disable-next-line no-control-regex
 const ANCHOR_RE = /^#:~:text=[^\x00-\x20\x7f]+$/
+/** 快照图文件名：内容寻址，不许带路径或 URL。同源对：`journals.py` 的 `_SNAPSHOT_FILE_RE` */
+export const SNAPSHOT_FILE_RE = /^snapshots\/[0-9a-f]{64}\.webp$/
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 
 export const JOURNAL_ERROR_CODES = [
@@ -155,6 +157,7 @@ export const JOURNAL_ERROR_CODES = [
   'journal_rule_stage_invalid',
   'journal_rule_mark_invalid',
   'journal_rule_unset_invalid',
+  'journal_rule_snapshot_invalid',
   'journal_merge_invalid',
   'journal_unknown',
 ] as const
@@ -194,7 +197,15 @@ export interface JournalRule {
   stage?: Stage
   mark?: string
   derivation?: string
+  /** 原网页 / PDF 页高亮后的短截图（采集时渲染，内容寻址；ADR 0155 §6） */
+  snapshot?: JournalSnapshot
   unset?: true
+}
+
+export interface JournalSnapshot {
+  file: string
+  width: number
+  height: number
 }
 
 export interface JournalEntry {
@@ -236,6 +247,7 @@ export interface JournalFieldSource {
   stage: Stage
   mark: string
   derivation: string
+  snapshot: JournalSnapshot | null
   unset: boolean
   quote: string
   src: string
@@ -397,6 +409,24 @@ function checkRules(
     if (!nonBlank(raw.quote)) fail('journal_rule_quote_empty', `${w}: quote 不能为空`)
     if (has(raw, 'anchor') && !(typeof raw.anchor === 'string' && ANCHOR_RE.test(raw.anchor))) {
       fail('journal_rule_anchor_invalid', `${w}: anchor 必须以 #:~:text= 开头`)
+    }
+    if (has(raw, 'snapshot')) {
+      const sn = raw.snapshot
+      const ok =
+        isObj(sn) &&
+        Object.keys(sn).length === 3 &&
+        typeof sn.file === 'string' &&
+        SNAPSHOT_FILE_RE.test(sn.file) &&
+        isIntValued(sn.width) &&
+        sn.width > 0 &&
+        isIntValued(sn.height) &&
+        sn.height > 0
+      if (!ok) {
+        fail(
+          'journal_rule_snapshot_invalid',
+          `${w}: snapshot 必须是 {file: snapshots/<sha256>.webp, width, height}（宽高为正整数）`,
+        )
+      }
     }
     const qualifier = has(raw, 'qualifier') ? raw.qualifier : 'exact'
     if (
@@ -682,6 +712,7 @@ function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource,
     stage: rule.stage ?? 'any',
     mark: rule.mark ?? '',
     derivation: rule.derivation ?? '',
+    snapshot: rule.snapshot ? structuredClone(rule.snapshot) : null,
     unset: eff.unset,
     quote: rule.quote,
     src: eff.sid,

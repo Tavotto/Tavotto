@@ -19,6 +19,7 @@ const SENTENCE: Record<string, string> = {
   activation_failed: 'prep.envNotUsed.activation_failed',
   probe_timeout: 'prep.envNotUsed.probe_timeout',
   unusable: 'prep.envNotUsed.unusable',
+  cache_denied: 'prep.envNotUsed.cache_denied',
   not_checked: 'prep.envNotUsed.not_checked',
   outranked: 'prep.envNotUsed.outranked',
   root_python_mismatch: 'prep.envNotUsed.root_python_mismatch',

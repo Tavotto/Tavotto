@@ -1,5 +1,6 @@
 import { currentLocale, t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { journalCatalogUi } from '@/lib/journalUi'
 
 /**
  * 设置的**搜索注册表**（2026-10-07 设计审计 §9.1，学 OpenBitFun `settingsRegistry.ts`）：每个分区与分区里
@@ -75,6 +76,7 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   { id: 'style.library', section: 'style', label: () => pf('library.style') },
   { id: 'style.preview', section: 'style', label: () => pf('previewTitle'), anchors: ['style.preview', 'style.library'] },
   { id: 'spec.inUse', section: 'spec', label: () => pf('binding.current'), keywords: () => st('search.kw.spec') },
+  { id: 'spec.journal', section: 'spec', label: () => translate('journal.title', { ns: 'dialogs' }), anchors: ['spec.journal', 'spec.inUse'], when: journalCatalogUi },
   { id: 'spec.follow', section: 'spec', label: () => pf('follow'), anchors: ['spec.follow', 'spec.inUse'] },
   { id: 'spec.library', section: 'spec', label: () => pf('library.spec') },
   // ---- 导出 ----

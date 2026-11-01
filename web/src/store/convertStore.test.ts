@@ -129,6 +129,25 @@ describe('convertStore', () => {
     expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'failed', reason: 'agent_output_truncated' })
   })
 
+  it('进行中：会话的 task.activity=writing_long 落进条目，事件一来（没有 activity）恢复为 null；终态后不再带', async () => {
+    vi.mocked(startConvert).mockResolvedValue({ session: 'slow', script: 'plot.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null, activity: 'writing_long' } } as never)
+    const pending = start()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', activity: 'writing_long' })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null } } as never)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', activity: null })
+    // 后端若给了闭集外的值，按没有处理
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null, activity: 'whatever' } } as never)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']?.activity ?? null).toBeNull()
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'candidate.target', reason_code: 'agent_write_denied' }] } } as never)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await pending
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'failed', reason: 'agent_write_denied' })
+  })
+
   it('未决请求 id 按项目分作用域：B 的同名脚本成功不会冲掉 A 的未决 id', async () => {
     vi.mocked(startConvert).mockRejectedValueOnce(new Error('network down'))
     await start()

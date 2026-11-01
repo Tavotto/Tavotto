@@ -26,7 +26,7 @@ import type {
   WorkdirConfirmation,
 } from '@/lib/api'
 import { listJoin } from '@/i18n/format'
-import { isRemedy, type Remedy } from '@/lib/fixRemedy'
+import { isRemedy, type Remedy, type RemedyEnv } from '@/lib/fixRemedy'
 import { originFactsOf } from '@/lib/importOrigin'
 import type { PrepEntry } from '@/store/projectPreparationStore'
 
@@ -64,6 +64,13 @@ export type PrepPrimary =
    * `scope` 来自后端 `params.switch`——失败的解释器是在全局设置里指定的就清全局，为这个项目挑的就让项目改用默认链条，两层都选中它（`both`）就两层都清
    */
   | { kind: 'use_builtin_python'; scope: 'global' | 'project' | 'both' }
+  /**
+   * Python 版本不合、后端已发现一个满足的现成环境（`remedy.change_python.env`，ADR 0148 修订 2026-11-01）：「改用 <环境名>」并重跑一次。
+   * 只在用户点击时切；采用走既有的候选采用端点（现场再体检、环境代对不上会拒绝）
+   */
+  | { kind: 'switch_python'; env: RemedyEnv }
+  /** 脚本正是改图助手刚改出来、改前跑通过的那一版（remedy `revert_ai_edit`，TVD-H1M5）：「回滚 AI 的修改」并重跑。`session` = 那次 AI 会话 */
+  | { kind: 'revert_ai_edit'; session: string }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -252,6 +259,8 @@ const FAILURE_STATES = new Set([
  */
 const AI_SECONDARY_ONLY_STATES = new Set(['missing_data'])
 const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figure', 'not_registered'])
+/** Python 版本不合时主按钮换成「改用 <环境名>」/「选择运行环境」的卡（其余失败卡的主按钮照旧） */
+const PYTHON_FIX_STATES = new Set(['failed', 'blocked'])
 
 /**
  * 智能修复（ADR 0148）：在卡片之上读后端选好的 `report.remedy`，只翻译、不判定。
@@ -268,8 +277,32 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
   }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
-  if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
+  if (remedy?.kind === 'revert_ai_edit' && view.state === 'failed') {
+    // 脚本自己报错、而它正是 AI 刚改出来的那一版：一句话说清是在 AI 改过之后坏的，主按钮把那次修改退回去再跑一次。
+    // 「使用你的 AI 来修复」仍是次按钮（用户想保留那次修改、让 AI 接着改时走它）
+    out = {
+      ...out,
+      sentence: { key: 'aiEditBroke', values: view.sentence.values },
+      primary: { kind: 'revert_ai_edit', session: remedy.session },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+    }
+  } else if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
     out = { ...out, primary: { kind: 'ai_fix' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy?.kind === 'choose_environment' && AI_PRIMARY_STATES.has(view.state)) {
+    // 缺的包装不了（私有库 / 本地模块 / conda-only）：确定的出路是指向装了它的 Python；AI 只是次入口（`aiFix` 照常摆），
+    // 没连 AI 时也不以「连接 AI」为主按钮（ADR 0148 修订 2026-11-01）
+    out = { ...out, primary: { kind: 'pick_environment' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy?.kind === 'change_python' && remedy.to !== null && PYTHON_FIX_STATES.has(view.state)) {
+    // 版本不合：后端发现了满足的现成环境就一键「改用它」（用户点了才切），没有才进选择器
+    out = {
+      ...out,
+      primary: remedy.env ? { kind: 'switch_python', env: remedy.env } : { kind: 'pick_environment' },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+    }
   } else if (remedy?.kind === 'feedback') {
     out = {
       ...out,

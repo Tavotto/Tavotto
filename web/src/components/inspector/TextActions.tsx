@@ -61,7 +61,7 @@ export function TextCaseMenu({
           title={ta('caseTitle')}
           aria-label={ta('caseTitle')}
         >
-          <CaseSensitive size={ICON_SIZE.xs} />
+          <CaseSensitive size={ICON_SIZE.sm} />
         </Button>
       }
     >

@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config
+from . import config, msixmigrate
 from .procalive import pid_alive
 
 DB_PATH = config.data_dir() / "cache" / "ai_history.sqlite3"
@@ -324,6 +324,9 @@ def _needs_setup(con: sqlite3.Connection) -> bool:
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
+    if db_path is None and not path.exists():
+        # 新建之前先把 MSIX 私有区里的旧历史补回来：库一旦被新建，迁移的「只补缺」就永远跳过它（#1574 善后）
+        msixmigrate.adopt_sqlite("cache", "ai_history.sqlite3")
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, timeout=10)
     con.row_factory = sqlite3.Row
@@ -904,6 +907,24 @@ def list_sessions(
             [*args, limit, offset],
         ).fetchall()
     return {"total": total, "sessions": [_row_to_dict(r) for r in rows]}
+
+
+def latest_change_to(project: str, script: str, db_path: Path | None = None) -> dict | None:
+    """本项目里**最近一次改过这份脚本**的会话（`changed=1`，按开始时间取最新），只取轻量列；没有 = None。
+
+    不按状态筛：最近那次若已撤销（`reverted`）或没正常结束，调用方据此判「没有可撤销的 AI 修改」，
+    而不是退回去找更早的一次——更早那次之后脚本又被改过，撤它会丢掉后来的修改。只读，不改库。"""
+    with _connect(db_path) as con:
+        rows = con.execute(
+            "SELECT id, script, status, started_ms, ended_ms FROM sessions "
+            "WHERE project=? AND changed=1 AND script IS NOT NULL "
+            "ORDER BY started_ms DESC LIMIT 200",
+            (project,),
+        ).fetchall()
+    for r in rows:
+        if same_script(str(r["script"]), script):
+            return dict(r)
+    return None
 
 
 def recent_task_rows(

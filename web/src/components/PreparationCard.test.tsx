@@ -13,6 +13,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Remedy } from '@/lib/fixRemedy'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -43,6 +44,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   requestAiFix: vi.fn(),
   repairImportFolder: vi.fn(),
   ignoreImportFolder: vi.fn(),
+  aiRevert: vi.fn(),
+}))
+vi.mock('@/store/aiRenameRebind', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/aiRenameRebind')>()),
+  rebindRenamedIdentities: vi.fn(),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -56,6 +62,7 @@ vi.mock('@/store/workspace', async (importOriginal) => ({
 
 import {
   actOnPreparationSession,
+  aiRevert,
   ApiError,
   cancelNativeSession,
   createPreparationSession,
@@ -78,6 +85,7 @@ import { ForeignScriptCard, PreparationCard } from '@/components/PreparationCard
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { beginRestore, settleRestore, resetRestoreGateForTests, useDocumentStore } from '@/store/documentStore'
@@ -2079,6 +2087,35 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(adoptConvert).not.toHaveBeenCalled()
     })
 
+    it('写入被拒（agent_write_denied）：一句话 + 一个主按钮「重试」', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'candidate.target', reason_code: 'agent_write_denied' }] } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      expect(panel().dataset.convertPhase).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('AI 没能写入转换工作区，没有生成新脚本。')
+      expect(primary()?.textContent).toBe('重试')
+    })
+
+    it('进行中：后端给 writing_long 只换进度行文字，事件恢复后换回；没有新增横条或弹窗', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null, activity: 'writing_long' } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await act(async () => {
+        useConvertStore.setState((s) => ({ entries: { ...s.entries, 'plot.py': { ...s.entries['plot.py']!, activity: 'writing_long' } } }))
+      })
+      expect(panel().dataset.convertPhase).toBe('running')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在生成较长的文件…')
+      await act(async () => {
+        useConvertStore.setState((s) => ({ entries: { ...s.entries, 'plot.py': { ...s.entries['plot.py']!, activity: null } } }))
+      })
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在生成可编辑版本…')
+    })
+
     it('Python 转换缺少参考时也能显式补充文件再重试', async () => {
       await mount()
       useUiStore.setState({ guideCard: 'card' })
@@ -3168,7 +3205,7 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
         actions: [action('run'), action('recheck')],
         provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
         result: { status: 'error', error: { code: 'interpreter_cache_denied', message: 'x', params } },
-        remedy: { kind: 'change_python', from: '3.12.14', to: null },
+        remedy: { kind: 'change_python', from: '3.12.14', to: null, env: null },
       })
     const original = { setPython: useEnvStore.getState().setPython, setProjectPython: useEnvStore.getState().setProjectPython }
     const setPython = vi.fn(async (_: string | null) => null as string | null)
@@ -3289,6 +3326,145 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(panel().dataset.prepState).toBe('cache_denied')
       expect(primary()?.textContent).toBe('再试一次')
       expect(panel().textContent).not.toContain('自带的 Python')
+    })
+  })
+
+  describe('装不了的缺包 / Python 版本不合：主按钮是确定动作，不是 AI（ADR 0148 修订 2026-11-01）', () => {
+    const failedWith = (code: string, remedy: Remedy) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code, message: 'x' } },
+        remedy,
+      })
+    const env = { id: 'e1', generation: 'g1', name: 'sci', version: '3.12.4' }
+    const original = { adoptCandidate: useEnvStore.getState().adoptCandidate }
+    const adoptCandidate = vi.fn(async (_c: unknown, _s?: string) => null as string | null)
+    beforeEach(() => {
+      adoptCandidate.mockClear()
+      mockAct.mockClear()
+      useEnvStore.setState({ adoptCandidate: adoptCandidate as never })
+    })
+    afterEach(() => useEnvStore.setState(original))
+
+    it('装不了的缺包：主按钮是选环境（换用我的 Python），AI 修复是次按钮', async () => {
+      await mount()
+      await openWith(failedWith('missing_dependency', { kind: 'choose_environment' }))
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+      expect(primary()?.textContent).toBe('换用我的 Python')
+      expect(panel().querySelector('[data-prep-primary="ai_fix"]')).toBeNull()
+      expect(panel().querySelector('[data-prep-ai-fix]')).not.toBeNull()
+    })
+
+    it('版本不合且有满足的现成环境：主按钮「改用 sci」，点一次采用它再「打开并运行」', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(primary()?.dataset.prepPrimary).toBe('switch_python')
+      expect(primary()?.textContent).toBe('改用 sci')
+      expect(adoptCandidate).not.toHaveBeenCalled() // 渲染出按钮不等于切：没点就什么都没动
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(adoptCandidate.mock.calls.map((c) => c[0])).toEqual([{ id: 'e1', generation: 'g1' }])
+      expect(mockCreate).toHaveBeenCalledTimes(2)
+    })
+
+    it('采用被后端拒绝：回那句原文、不重跑', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      adoptCandidate.mockResolvedValueOnce('这个环境刚被重建过')
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个环境刚被重建过')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('版本不合、没有候选：主按钮是选择运行环境', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env: null }))
+      expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+    })
+
+    it('英文界面没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(primary()?.textContent).toBe('Switch to sci')
+    })
+  })
+
+  describe('AI 改过之后脚本自己报错：一键回滚那次修改再跑（TVD-H1M5）', () => {
+    const brokeByAi = () =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'script_error' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'script_error', message: 'ValueError: data under legend' } },
+        remedy: { kind: 'revert_ai_edit', session: 'ai-s1' },
+      })
+
+    beforeEach(() => {
+      vi.mocked(aiRevert).mockReset()
+      mockAct.mockClear()
+    })
+
+    it('一句话说清是在 AI 改过之后坏的 + 一个主按钮「回滚 AI 的修改」；AI 修复仍是次按钮', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      expect(panel().dataset.prepState).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toBe('AI 改过之后运行出错了')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('revert_ai_edit')
+      expect(primary()?.textContent).toBe('回滚 AI 的修改')
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+      expect(panel().querySelector('[data-prep-ai-fix]')).not.toBeNull()
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(brokeByAi())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe("The run failed after the AI's change")
+      expect(primary()?.textContent).toBe("Revert the AI's change")
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('点一次：回滚那一次 AI 会话 → 认领 recheck 换新计划 → 认领新修订的运行；不认领冻结着 AI 版本的旧 run（Codex #1608 P2）', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      vi.mocked(aiRevert).mockResolvedValueOnce({ ok: true, script: 'a.py' })
+      mockAct.mockResolvedValueOnce({
+        claimed: true,
+        report: report({ phase: 'ready_to_run', config_revision: 2, observation_seq: 2, actions: [action('run'), action('recheck'), action('run_when_ready')] }),
+      })
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', config_revision: 2, observation_seq: 3, actions: [action('cancel')] }) })
+      await act(async () => primary()!.click())
+      expect(vi.mocked(aiRevert).mock.calls.map((c) => c[0])).toEqual(['ai-s1'])
+      expect(mockAct.mock.calls.map((c) => (c[1] as { action_id: string }).action_id)).toEqual(['act-recheck', 'act-run_when_ready'])
+    })
+
+    it('助手面板没列着那次会话时直接回滚：改名映射照样改回旧名字，画布编辑不丢（Codex #1608 P1）', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      const renamed = [{ stem: 'Fig1', gid: 'axes_1.lines_1', from_identity: 'line:new', to_identity: 'line:old' }]
+      vi.mocked(aiRevert).mockResolvedValueOnce({ ok: true, script: 'a.py', renamed } as never)
+      vi.mocked(rebindRenamedIdentities).mockClear()
+      await act(async () => primary()!.click())
+      expect(vi.mocked(rebindRenamedIdentities)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(rebindRenamedIdentities).mock.calls[0][0]).toHaveLength(1)
+      expect(vi.mocked(rebindRenamedIdentities).mock.calls[0][1]).toBe('back')
+    })
+
+    it('脚本在那次修改之后又改过（回滚被拒）：如实一句话，不重跑，脚本不动', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      vi.mocked(aiRevert).mockRejectedValueOnce(new ApiError('x', 409, { code: 'ai_revert_conflict', params: { script: 'a.py' } }))
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('a.py')
+      expect(mockAct).not.toHaveBeenCalled()
     })
   })
 

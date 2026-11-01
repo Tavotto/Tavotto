@@ -68,7 +68,7 @@ def test_worker_that_cannot_create_its_cache_folder_gets_the_stable_code(project
 def test_router_sends_it_to_change_python_even_with_ai_connected():
     ctx = fixrouter.Ctx(ai_connected=True, python_from="3.12.14")
     remedy = fixrouter.choose(engine_pool.INTERPRETER_CACHE_DENIED_CODE, ctx)
-    assert remedy == {"kind": "change_python", "from": "3.12.14", "to": None}
+    assert remedy == {"kind": "change_python", "from": "3.12.14", "to": None, "env": None}
     # 已经换过一次解释器还是这样：不再重复同一种修法
     tried = fixrouter.Ctx(
         ai_connected=True, history=({"run": 1, "seq": 1, "changed": ["interpreter"]},)
@@ -131,3 +131,48 @@ def test_global_choice_that_is_also_the_project_choice_clears_both(tmp_path):
         )
     finally:
         projectenv.forget(root)
+
+
+# --------------------------------------------------------------------- 体检前置拦截（#1594）
+@_no_chmod
+@needs_worker
+@pytest.mark.parametrize("bundled", [False, True])
+def test_health_probe_refuses_an_interpreter_that_cannot_create_folders_in_the_data_dir(
+    tmp_path, monkeypatch, bundled
+):
+    """体检进程的 cwd 是 `<data_dir>/cache/probe/` 下的空目录（与会话缓存同一棵树）：在里面建不了目录
+    → 用户的解释器判 `interpreter_cache_denied`；Tavotto 自己的内置 runtime 不在这里判（会被当成安装不完整）。"""
+    from tavotto.engine import projectenv
+
+    scratch = tmp_path / "probe-scratch"
+    scratch.mkdir()
+    scratch.chmod(0o555)
+    monkeypatch.setattr(projectenv, "_probe_scratch_dir", lambda: str(scratch))
+    try:
+        health = projectenv._probe_environment(bridgekit.USER_PYTHON, bundled=bundled)
+    finally:
+        if scratch.exists():  # 体检收尾会删掉自己的 cwd
+            scratch.chmod(0o755)
+    assert health.get("cache_write") == "denied", health
+    if bundled:
+        assert health.get("code") != projectenv.ERROR_CACHE_DENIED, health
+    else:
+        assert health == {**health, "ok": False, "code": projectenv.ERROR_CACHE_DENIED}
+
+
+@needs_worker
+def test_health_probe_still_accepts_a_normal_interpreter():
+    from tavotto.engine import projectenv
+
+    health = projectenv._probe_environment(bridgekit.USER_PYTHON)
+    assert health.get("cache_write") == "ok", health
+    assert health.get("ok") is True, health
+
+
+def test_candidate_rejected_for_the_cache_gets_its_own_reason():
+    from tavotto.engine import userenvs
+
+    assert userenvs._HEALTH_CODE_TO_REJECT["interpreter_cache_denied"] == (
+        userenvs.REJECT_CACHE_DENIED
+    )
+    assert userenvs.REJECT_CACHE_DENIED in userenvs.REJECT_CODES

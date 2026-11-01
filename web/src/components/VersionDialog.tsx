@@ -851,7 +851,7 @@ function TimelineRow({
                   <span className={cn('shrink-0 text-sm tabular-nums text-ink', selected && 'font-medium')}>
                     {formatTime(v.ts)}
                   </span>
-                  {named && <Bookmark size={ICON_SIZE.xs} filled className="shrink-0 text-accent" aria-hidden />}
+                  {named && <Bookmark size={ICON_SIZE.sm} filled className="shrink-0 text-accent" aria-hidden />}
                   {/* 自动节点的名字由后端按时间生成，与这里的时间重复，所以只显示
                       **用户起的**名字（`versionDisplayName`）；命名节点的名字加重 */}
                   {!renaming && (

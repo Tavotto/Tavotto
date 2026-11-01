@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, interpreterpath, privatepython, runtime
+from . import config, interpreterpath, msixmigrate, privatepython, runtime
 
 LOG = logging.getLogger("tavotto.managedenv")
 
@@ -92,7 +92,51 @@ def project_fingerprint(project: str | Path) -> str:
 
 def env_dir(project: str | Path) -> Path:
     """`<data_dir>/environments/<项目指纹>/`。"""
-    return config.data_path(ENVIRONMENTS_DIRNAME, project_fingerprint(project))
+    fingerprint = project_fingerprint(project)
+    # 目录还不存在：看看 MSIX 宿主私有区里有没有同名的受管环境（#1574 之前写进去的），有就先搬回来；
+    # 搬不成 / 校验不过 = 当没有，照旧新建。逐个指纹在进程内只问一次。
+    msixmigrate.adopt_dir(ENVIRONMENTS_DIRNAME, fingerprint, validate=_adopted_env_ok)
+    return config.data_path(ENVIRONMENTS_DIRNAME, fingerprint)
+
+
+def _adopted_env_ok(candidate: Path) -> bool:
+    """从 MSIX 私有区搬来的受管环境完整吗（搬进正式位置之前核）：manifest 认得出、active 那一代的解释器在、
+    venv 的基础解释器（`pyvenv.cfg` 的 `home`）也在——基础解释器若是 Tavotto 自己的私有 Python 且还没搬，
+    先按需搬它。任何一条不满足 = 当没有环境（走原来的创建路径）。"""
+    try:
+        data = json.loads((candidate / MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if (
+        not isinstance(data, dict)
+        or data.get("schema") != SCHEMA
+        or not data.get("created_by_tavotto")
+    ):
+        return False
+    active = data.get("active")
+    if isinstance(active, str) and active and active != LEGACY_GENERATION:
+        try:
+            venv = candidate / ENVS_DIRNAME / _safe_generation(active)
+        except ValueError:
+            return False
+    else:
+        venv = candidate / VENV_DIRNAME
+    python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not python.is_file():
+        return False
+    try:
+        cfg_text = (venv / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    home = ""
+    for line in cfg_text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip().lower() == "home":
+            home = value.strip()
+            break
+    if not home:
+        return False
+    return msixmigrate.base_runtime_available(home)
 
 
 def venv_dir(project: str | Path, generation: str | None = None) -> Path:
