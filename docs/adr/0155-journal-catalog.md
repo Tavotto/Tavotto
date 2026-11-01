@@ -1,6 +1,6 @@
 # ADR 0155：内置期刊标准库——期刊 = 覆盖 + 出处，未规定的项不补
 
-日期：2026-10-31 · 状态：**Accepted（PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；选择器与出处卡、真实数据、出处巡检另起 PR）**。
+日期：2026-10-31 · 状态：**Accepted（PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；PR 2：选择器、出处卡、画布页宽跟栏；真实数据、出处巡检、远程目录另起 PR）**。
 相关：[0006 版本化出版规范](0006-codex-mcp-app-and-publication-profile.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；
 规则全文 `docs/rules/backend/profiles-and-preflight.md`「内置期刊标准库」。
 **1.0 豁免已由维护者 2026-10-31 登记（`docs/1.0-release-readiness.md` §1.8）。**
@@ -75,7 +75,7 @@
   用户切到 Science 时画布预设显示它自己的「2 栏 121 mm / 3 栏 184 mm」，不硬套单栏 / 双栏。下游**只读这一种形状**（`derive_page_columns` / `derivePageColumns`）：写了 `page_columns` 就用它，没写由 `widths_mm` 派生
   「单栏 / 双栏」两档（label 走现有词表）。期刊写了 `page_columns` 时以它为准，折叠把 `widths_mm.single/double` 由 **exact** 栏位派生（最窄 = single、最宽 = double，只有一档时 double 为 null），保持现有求值器与 `columnOf` 兼容；
   规则本身（`page_columns` 这条）qualifier 只收 exact，栏位各自带 qualifier，只有 exact 栏位参与判据。预检 `page-width`：页宽命中任一 exact 栏位即通过，提示列出全部栏位（带 label）。
-  画布 `pageColumns` / `resolvePageColumns` 已返回这一形状（id 为 string），属性栏预设按 label 显示；**切期刊时页宽跟着换的画布联动留给选择器 PR**。
+  画布 `pageColumns` / `resolvePageColumns` 已返回这一形状（id 为 string），属性栏预设按 label 显示；**切期刊时页宽跟着换的画布联动由选择器 PR 完成**（取离当前页宽最近的一栏；期刊没规定栏宽则页宽不动；与绑定同一次提交，撤销一步全回去）。
 * **建议性提示（用户 2026-10-31 裁决）**：qualifier 为 `recommended` / `typical` 的字号数值不当硬判据，但要提示。新增规则路径 `min_script_font_size_pt`（上下标最小字号）与检查 id `font-size-recommended`（**suggestion** 级，只有从期刊折叠出 `advisories` 的 profile 才会出现）。
   这两类规则（`min_script_font_size_pt` 任何 qualifier；`min_effective_font_size_pt` 的 recommended / typical）**不折进字段**，而折成 `advisories: [{check, role: body_min|script_min, value_pt, qualifier, journal, quote}]`（`journal` 是声明它的出版社 / 期刊名，`quote` 是原话）；
   `journal_sources()` 里它们的 `affects` 是 `advice`。**求值器分不出上下标**，所以只进提示不进判据：有效字号低于正文建议值（没有就按上下标值）的文字都给一条提示，文案如「Elsevier 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号（原文：…）」。
@@ -92,7 +92,7 @@
 ### 4. 项目快照机制原样适用
 
 文档里仍是 `{id, journal?, snapshot?, …}`（ADR 0029）：选期刊 = 绑定 `journal-base-v1` 并写入折叠出的 `journal` 覆盖（**存覆盖，不只存期刊 id**——只存 id 会让库更新悄悄改掉已定稿项目的结论，也让没有期刊库的 MCP / Python 侧无法复现），规则全文快照照旧；另存 `journalRef: {id, catalogRev, retrieved}` 与生效字段出处的精简版（value / quote / link / retrieved / 两种 scope，几 KB），用户手改了覆盖则 `journalRef` 失效、界面改说「自定义」。期刊标准更新不会悄悄改掉已定稿项目的结论，
-「有新版可同步」的判据仍是内容不等、由用户确认。本 PR 对 `specBinding.ts` 只改了清单与解析（`builtinCatalog` 过滤 `listed:false`、`isHiddenBuiltin`、`resolveDocumentSpec` 对隐藏底不报 `globalMissing`）；绑定的**写入**逻辑（存 `journal` / `journalRef`）不改，留给选择器 PR。
+「有新版可同步」的判据仍是内容不等、由用户确认。PR 1 对 `specBinding.ts` 只改了清单与解析（`builtinCatalog` 过滤 `listed:false`、`isHiddenBuiltin`、`resolveDocumentSpec` 对隐藏底不报 `globalMissing`）；绑定的**写入**由 PR 2 的 `actions.selectJournal` 完成（存 `journal` + `journalRef {id, catalogRev, retrieved, label}` + 精简出处 `journalSources`；`specBinding.journalCarry` 保证换成别的规范时期刊字段整套放下）。
 
 ### 4b. 数据分发：仓库只放种子，完整目录由服务端提供（用户 2026-10-31 裁决：期刊数据是公司资产，不进仓库）
 

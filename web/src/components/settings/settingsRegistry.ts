@@ -75,6 +75,7 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   { id: 'style.library', section: 'style', label: () => pf('library.style') },
   { id: 'style.preview', section: 'style', label: () => pf('previewTitle'), anchors: ['style.preview', 'style.library'] },
   { id: 'spec.inUse', section: 'spec', label: () => pf('binding.current'), keywords: () => st('search.kw.spec') },
+  { id: 'spec.journal', section: 'spec', label: () => translate('journal.title', { ns: 'dialogs' }), anchors: ['spec.journal', 'spec.inUse'] },
   { id: 'spec.follow', section: 'spec', label: () => pf('follow'), anchors: ['spec.follow', 'spec.inUse'] },
   { id: 'spec.library', section: 'spec', label: () => pf('library.spec') },
   // ---- 导出 ----

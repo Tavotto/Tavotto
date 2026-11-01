@@ -18,6 +18,8 @@ import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
+import { pickJournal } from '@/lib/journalPick'
+import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
@@ -733,6 +735,30 @@ export function applyPageSize(
 
 export function setPageSize(w: number, h: number) {
   commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
+}
+
+/**
+ * 选一本期刊（ADR 0155）：**一次提交**写绑定（中性底 + 该期刊的覆盖 + 出处）并把页宽跟到该期刊最近的一栏——
+ * 撤销一步全回去。期刊没规定栏宽就只写绑定，页宽不动。确认只用胶囊 toast（不推挤版面）。
+ */
+export function selectJournal(journalId: string): void {
+  const d0 = doc()
+  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
+    pageW: d0.page.w,
+    follow: d0.profile?.follow,
+  })
+  commit(hist('setJournal'), (d) => {
+    d.profile = pick.binding
+    if (pick.pageW != null) applyPageSize(d, pick.pageW, d.page.h)
+  })
+  useUiStore
+    .getState()
+    .setStatus(
+      pick.pageW != null && pick.pageW !== d0.page.w
+        ? msg('journal.pickedWidth', { name: pick.label, w: pick.pageW }, 'dialogs')
+        : msg('journal.picked', { name: pick.label }, 'dialogs'),
+      'done',
+    )
 }
 
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */

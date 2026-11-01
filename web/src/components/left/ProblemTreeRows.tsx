@@ -25,6 +25,8 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
+import { SourceButton } from '../journal/SourceButton'
+import { sourcesForCheck } from '@/lib/journalPick'
 
 /** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
 const isHollow = (s: Severity) => s === 'suggestion' || s === 'not_verifiable'
@@ -363,6 +365,7 @@ export function IssueRow({
         }
         action={
           <>
+            <IssueJournalSource issue={issue} />
             <FixButton issue={issue} variant="ghost" />
             <TechPopover issue={issue} open={techOpen} onOpenChange={setTechOpen} />
           </>
@@ -370,6 +373,18 @@ export function IssueRow({
       />
     </li>
   )
+}
+
+/**
+ * 这一条检查若来自所选期刊的某条规则（页宽 / 字号 / 分辨率……），尾随格里多一枚「出处」图标，点开就是出处卡。
+ * 项目没按期刊选过、或这个检查在该期刊里没有出处时什么都不画。
+ */
+export function IssueJournalSource({ issue }: { issue: ValidationIssue }) {
+  const ref = useDocumentStore((s) => s.doc.profile?.journalRef)
+  const sources = useDocumentStore((s) => s.doc.profile?.journalSources)
+  const entries = sourcesForCheck(issue.ruleCode, sources)
+  if (!ref || !entries.length) return null
+  return <SourceButton compact journal={ref.label} entries={entries} name={issueTitle(issue)} />
 }
 
 /**
