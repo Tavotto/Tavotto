@@ -662,6 +662,8 @@
     "repairPythonVerifying": "Verifying Python…",
     "repairPythonLaunching": "Test-starting Python…",
     "repairPythonPreparing": "Preparing Python…",
+    "repairNetBoth": "Neither the official index nor the mirror could be reached; check your connection, then click Retry.",
+    "repairNetUserSource": "The download source you configured can’t be reached; check it or your connection, then click Retry.",
     "repairErrorShort": {
       "dependency_already_attempted": "This package was already installed once without success; restart {{product}} and try again.",
       "dependency_already_present": "The package is already there, but rendering uses a different environment; switch environments under Details.",

@@ -659,6 +659,8 @@
     "repairPythonVerifying": "正在校验 Python…",
     "repairPythonLaunching": "正在试启动 Python…",
     "repairPythonPreparing": "正在准备 Python…",
+    "repairNetBoth": "官方源和镜像都没连上，检查网络后点重试。",
+    "repairNetUserSource": "你配置的下载源连不上，检查它或网络后点重试。",
     "repairErrorShort": {
       "dependency_already_attempted": "这个包刚装过一次仍不行，重启 {{product}} 后再试。",
       "dependency_already_present": "包已经在环境里，但渲染没用这个环境，在详情里换一个环境。",
