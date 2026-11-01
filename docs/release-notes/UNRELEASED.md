@@ -17,10 +17,6 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
-## When Codex or Claude Code fails on sign-in, quota or connection, the failure card now says so and offers "Check connection" (#1598)
-
-If a run through the Codex or Claude Code command line failed because you were signed out, hit a usage or rate limit, or the service could not be reached, the card only said that the AI run went wrong and its main button was "Retry", which could not succeed. Tavotto now recognises these three cases from the error codes the command line reports (never from the model's text) and shows the matching message. For these, and for other non-zero exits it cannot classify, the main button is now "Check connection". Failures that a retry can fix (timeouts, step or budget limits) still offer "Retry".
-
 ## Tavotto launched from Codex Desktop (a Windows MSIX app) no longer keeps a separate copy of your data
 
 On Windows, when Tavotto was started from the Codex desktop app, recent projects, settings, managed environments and caches could end up in a private per-package folder (`%LOCALAPPDATA%\Packages\...\LocalCache`), so the app showed a different state than when started from the Start menu. Tavotto now starts itself outside that package environment, when the Codex plugin launches it (the `tavotto open` command now re-runs itself outside the package before probing a script or writing anything) and, as a fallback, when the app notices it was started inside one (the launcher now sees whether the replacement process actually came up, instead of treating the hand-over as success). Data that was already written into the package folder is not moved automatically. Diagnostic bundles now say whether the app was running with a package identity and whether its data folders are under `Packages`.
@@ -68,6 +64,10 @@ In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect
 ## Text typed on the canvas is no longer lost when clicking empty space (#1546)
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
+
+## When Codex or Claude Code fails on sign-in, quota or connection, the failure card now says so and offers "Check connection" (#1598)
+
+If a run through the Codex or Claude Code command line failed because you were signed out, hit a usage or rate limit, or the service could not be reached, the card only said that the AI run went wrong and its main button was "Retry", which could not succeed. Tavotto now recognises these three cases from the error codes the command line reports (never from the model's text) and shows the matching message. For these, and for other non-zero exits it cannot classify, the main button is now "Check connection". Failures that a retry can fix (timeouts, step or budget limits) still offer "Retry".
 
 ## AI edits that failed instantly now leave a reason in the diagnostic bundle
 
