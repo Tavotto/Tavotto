@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { snapshotUrl, useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { BookOpen } from '@/components/ui/icons'
@@ -32,6 +33,37 @@ function Quote({ source }: { source: JournalFieldSource }) {
       )}
     </blockquote>
   )
+}
+
+/**
+ * 原网页高亮截图（采集时渲染、已裁成那一段；全宽、高度跟图、最高约 240px，更高在卡内滚）。
+ * 没有快照或图加载失败时由调用方退回摘录框——不显示任何错误态。
+ */
+function Snapshot({ source, onFail }: { source: JournalFieldSource; onFail: () => void }) {
+  const base = useJournalCatalogStore((s) => s.assetBase)
+  const snap = source.snapshot!
+  return (
+    <div
+      data-journal-snapshot
+      className="max-h-60 overflow-y-auto rounded-md border border-border"
+    >
+      <img
+        src={snapshotUrl(base, snap.file)}
+        width={snap.width}
+        height={snap.height}
+        alt={source.quote}
+        onError={onFail}
+        className="block h-auto w-full"
+      />
+    </div>
+  )
+}
+
+/** 一条出处的「证据」：快照图优先，没有或加载失败退回摘录框 */
+function Evidence({ source }: { source: JournalFieldSource }) {
+  const [failed, setFailed] = useState(false)
+  if (source.snapshot && !failed) return <Snapshot source={source} onFail={() => setFailed(true)} />
+  return <Quote source={source} />
 }
 
 /** 链接交给浏览器（桌面壳里是系统浏览器，与其余外链同一写法）；`link` 已带 text fragment / `#page=N` */
@@ -83,8 +115,7 @@ export function SourceCardBody({
       </p>
       {entries.map(([path, s]) => (
         <div key={path} data-journal-entry={path} className="flex flex-col gap-1.5">
-          <Quote source={s} />
-          {s.derivation && <p className="type-caption">{s.derivation}</p>}
+          <Evidence source={s} />
           <p data-journal-meta className="type-caption">
             {jt('card.meta', { host: sourceHost(s.url), date: s.retrieved })}
           </p>

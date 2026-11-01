@@ -11,7 +11,7 @@ import { listRowClass } from '../ui/listRow'
 import { cn } from '@/lib/utils'
 import { listJournals } from '@/lib/journals'
 import { groupByPublisher, searchJournals } from '@/lib/journalPick'
-import { selectJournal } from '@/store/actions'
+import { clearJournal, selectJournal } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 
@@ -80,8 +80,25 @@ export function JournalPicker() {
             role="listbox"
             aria-label={jt('listAria')}
             data-journal-list
-            className="flex max-h-72 flex-col overflow-y-auto"
+            className="flex flex-col"
           >
+            {!query && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={!ref}
+                data-journal-none
+                onClick={() => {
+                  clearJournal()
+                  setOpen(false)
+                }}
+                className={cn(listRowClass({ size: 'sm', selected: !ref }), 'w-[calc(100%-0.5rem)] px-2 text-left')}
+              >
+                <span className="min-w-0 flex-1 truncate">{jt('noJournal')}</span>
+              </button>
+            )}
+            {/* 「不按期刊」钉在最上面，列表在它下面自己滚：选中项再靠后也不会把它顶出视野 */}
+            <div className="flex max-h-64 flex-col overflow-y-auto">
             {groups.length === 0 && <EmptyLine data-journal-empty>{jt('noMatch')}</EmptyLine>}
             {groups.map((g) => (
               <div key={g.publisher} role="group" aria-label={g.label} data-journal-group={g.publisher}>
@@ -104,6 +121,7 @@ export function JournalPicker() {
                 })}
               </div>
             ))}
+            </div>
           </div>
         </div>
       )}

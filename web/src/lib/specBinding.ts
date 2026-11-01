@@ -41,6 +41,14 @@ export interface SpecBinding {
   journalRef?: JournalRef
   /** 生效字段出处的精简版（value / quote / link / retrieved / 两种 scope），出处卡离线也读得到它 */
   journalSources?: Record<string, JournalFieldSource>
+  /** 选期刊之前的规范绑定与页宽：「不按期刊」据此退回；没有 = 退回默认规范 */
+  journalPrev?: JournalPrev
+}
+
+/** 选期刊之前项目用的规范（`profile` 为 null = 那时没有绑定）与页宽（mm） */
+export interface JournalPrev {
+  profile: Omit<SpecBinding, 'journalPrev' | 'journalRef' | 'journalSources'> | null
+  pageW: number
 }
 
 export interface JournalRef {
@@ -242,6 +250,7 @@ export function bindingFor(
     journal?: Record<string, unknown>
     journalRef?: JournalRef
     journalSources?: Record<string, JournalFieldSource>
+    journalPrev?: JournalPrev
     follow?: boolean
   },
 ): SpecBinding {
@@ -252,6 +261,9 @@ export function bindingFor(
     ...(options?.journalRef ? { journalRef: structuredClone(options.journalRef) } : {}),
     ...(options?.journalRef && options.journalSources
       ? { journalSources: structuredClone(options.journalSources) }
+      : {}),
+    ...(options?.journalRef && options.journalPrev
+      ? { journalPrev: structuredClone(options.journalPrev) }
       : {}),
     snapshot: structuredClone(entry.data),
     ...(entry.version ? { snapshotVersion: entry.version } : {}),
@@ -267,12 +279,13 @@ export function bindingFor(
 export function journalCarry(
   profile: SpecBinding | null | undefined,
   nextId: string,
-): Pick<NonNullable<Parameters<typeof bindingFor>[1]>, 'journal' | 'journalRef' | 'journalSources'> {
+): Pick<NonNullable<Parameters<typeof bindingFor>[1]>, 'journal' | 'journalRef' | 'journalSources' | 'journalPrev'> {
   if (!profile) return {}
   if (profile.journalRef && nextId !== JOURNAL_BASE_PROFILE_ID) return {}
   return {
     journal: profile.journal,
     journalRef: profile.journalRef,
     journalSources: profile.journalSources,
+    journalPrev: profile.journalPrev,
   }
 }

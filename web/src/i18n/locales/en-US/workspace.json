@@ -347,6 +347,7 @@
     "setPageSize": "Change canvas size",
     "setProp": "Change {{prop}}",
     "setPublicationProfile": "Set publication profile",
+    "clearJournal": "Clear journal",
     "setJournal": "Set journal",
     "showObject": "Show object",
     "spacingX": "Set horizontal spacing",

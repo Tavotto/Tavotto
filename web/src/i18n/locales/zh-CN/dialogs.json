@@ -2435,6 +2435,8 @@
     "requirements": "期刊要求",
     "unspecified": "该期刊未规定",
     "unset": "本刊不适用",
+    "noJournal": "不按期刊",
+    "cleared": "已不按期刊检查",
     "yes": "是",
     "no": "否",
     "noLimit": "不限",

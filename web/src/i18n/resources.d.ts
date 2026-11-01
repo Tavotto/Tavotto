@@ -881,6 +881,7 @@ export default interface Resources {
         "open": "打开原网页",
         "sentence": "{{journal}}：{{text}}"
       },
+      "cleared": "已不按期刊检查",
       "current": "按「{{name}}」检查",
       "field": {
         "absolute_min_font_size_pt": "字号下限",
@@ -928,6 +929,7 @@ export default interface Resources {
       },
       "listAria": "期刊列表",
       "no": "否",
+      "noJournal": "不按期刊",
       "noLimit": "不限",
       "noMatch": "没有匹配的期刊",
       "none": "没有可选的期刊",
@@ -5870,6 +5872,7 @@ export default interface Resources {
       "bindStyle": "给当前画布套用样式「{{name}}」",
       "cancelCrop": "取消裁剪",
       "clearGuides": "清除参考线",
+      "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
       "createLayoutGroup": "创建{{kind}}",
       "deleteGuide": "删除参考线",

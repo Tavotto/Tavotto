@@ -341,6 +341,27 @@ def test_unreadable_or_garbled_file_is_a_schema_error(tmp_path, monkeypatch):
     assert exc.value.code == "journal_catalog_schema"
 
 
+def test_snapshot_fixture_is_content_addressed_webp():
+    """夹具快照图真实存在、文件名就是内容的 sha256（内容寻址），向量里的引用与之一致。"""
+    import hashlib
+
+    name = gen.SNAPSHOT_FILE
+    path = ROOT / "tests" / "fixtures" / "journal_snapshots" / name
+    data = path.read_bytes()
+    assert data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    assert name == f"snapshots/{hashlib.sha256(data).hexdigest()}.webp"
+
+
+def test_snapshot_exposed_in_sources_and_absent_means_none():
+    src = journals.journal_sources("fx-beta", _fixture())
+    assert src["widths_mm.double"]["snapshot"] == {
+        "file": gen.SNAPSHOT_FILE,
+        "width": 520,
+        "height": 150,
+    }
+    assert src["min_effective_font_size_pt"]["snapshot"] is None
+
+
 def test_errors_are_profile_errors():
     """调用方按 ProfileError 转 4xx 的既有路径不用改。"""
     assert issubclass(journals.JournalCatalogError, profiles.ProfileError)

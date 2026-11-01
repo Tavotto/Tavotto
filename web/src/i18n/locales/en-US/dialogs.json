@@ -2457,6 +2457,8 @@
     "requirements": "Journal requirements",
     "unspecified": "Not specified by the journal",
     "unset": "Does not apply to this journal",
+    "noJournal": "No journal",
+    "cleared": "No longer checking against a journal",
     "yes": "Yes",
     "no": "No",
     "noLimit": "No limit",

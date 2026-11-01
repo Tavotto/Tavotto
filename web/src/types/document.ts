@@ -417,6 +417,17 @@ export interface DocumentProfile {
   journalRef?: { id: string; catalogRev: number; retrieved: string; label: string }
   /** 生效字段出处的精简版（`lib/journals.JournalFieldSource`），出处卡离线也读得到 */
   journalSources?: Record<string, JournalFieldSource>
+  /** 选期刊之前的规范绑定与页宽（`specBinding.JournalPrev`）：「不按期刊」据此退回 */
+  journalPrev?: {
+    profile: {
+      id: string
+      journal?: Record<string, unknown>
+      snapshot?: Record<string, unknown>
+      snapshotVersion?: string
+      follow?: boolean
+    } | null
+    pageW: number
+  }
 }
 
 /**

@@ -86,6 +86,17 @@ describe('期刊选择器', () => {
     expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-beta')
   })
 
+  it('列表最上面是「不按期刊」：选了就退回之前的规范，是一次提交', async () => {
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    selectJournal('fx-beta')
+    const list = q('[data-journal-list]')!
+    expect(list.firstElementChild?.hasAttribute('data-journal-none')).toBe(true)
+    expect(list.firstElementChild?.textContent).toBe('不按期刊')
+    await click(q('[data-journal-none]'))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+  })
+
   it('目录为空：只有一行中性的话，没有搜索框，也没有解释', async () => {
     useJournalCatalogStore.setState({ catalog: loadCatalog() })
     await mount(<JournalPicker />)
@@ -112,6 +123,42 @@ describe('出处卡', () => {
     expect(open.getAttribute('href')).toBe('https://example.invalid/fx-press/guide.pdf#page=12')
     expect(open.getAttribute('target')).toBe('_blank')
     expect(open.getAttribute('rel')).toContain('noreferrer')
+  })
+
+  it('有快照：卡里是快照图（全宽、按资产根解析），不再画摘录框与换算行', async () => {
+    await mount(<SourceButton journal="Fixture Beta" entries={entries('fx-beta', 'widths_mm.double')} name="双栏" />)
+    await click(q('[data-journal-source]'))
+    const box = q('[data-journal-snapshot]')
+    expect(box).not.toBeNull()
+    const img = box!.querySelector('img') as HTMLImageElement
+    expect(img.getAttribute('src')).toMatch(/^\/journal-catalog\/snapshots\/[0-9a-f]{64}\.webp$/)
+    expect(img.getAttribute('width')).toBe('520')
+    expect(q('[data-journal-quote]')).toBeNull()
+    expect(document.body.textContent).not.toContain('18 cm -> 180 mm')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('Fixture Beta：双栏 180 mm')
+    expect(q('[data-journal-meta]')?.textContent).toContain('example.invalid')
+    expect(q('[data-journal-open]')).not.toBeNull()
+  })
+
+  it('资产根跟着目录走（远程目录给自己的根）', async () => {
+    useJournalCatalogStore.setState({ assetBase: 'https://assets.example.invalid/rev1/' })
+    await mount(<SourceButton journal="Fixture Beta" entries={entries('fx-beta', 'widths_mm.double')} name="双栏" />)
+    await click(q('[data-journal-source]'))
+    expect(q('[data-journal-snapshot] img')!.getAttribute('src')).toMatch(
+      /^https:\/\/assets\.example\.invalid\/rev1\/snapshots\/[0-9a-f]{64}\.webp$/,
+    )
+    useJournalCatalogStore.setState({ assetBase: '/journal-catalog/' })
+  })
+
+  it('图加载失败：退回摘录框（命中的数仍标 mark），不出错误态', async () => {
+    await mount(<SourceButton journal="Fixture Beta" entries={entries('fx-beta', 'widths_mm.double')} name="双栏" />)
+    await click(q('[data-journal-source]'))
+    await act(async () => {
+      q('[data-journal-snapshot] img')!.dispatchEvent(new Event('error'))
+    })
+    expect(q('[data-journal-snapshot]')).toBeNull()
+    expect(q('[data-journal-quote] mark')?.textContent).toBe('18 cm')
+    expect(document.body.textContent).not.toContain('18 cm -> 180 mm')
   })
 
   it('建议性字号：Elsevier 式一句话 + 两段原文', async () => {

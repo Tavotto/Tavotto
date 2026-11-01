@@ -25,7 +25,7 @@ import {
 } from './journals'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from './pageRange'
 import { derivePageColumns, type PageColumnSpec } from './profile'
-import { bindingFor, builtinEntryById, type JournalRef, type SpecBinding } from './specBinding'
+import { bindingFor, builtinEntryById, type JournalPrev, type JournalRef, type SpecBinding } from './specBinding'
 
 const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -110,7 +110,7 @@ function slimSources(src: Record<string, JournalFieldSource>): Record<string, Jo
 export function pickJournal(
   journalId: string,
   catalog: JournalCatalog,
-  ctx: { pageW: number; follow?: boolean },
+  ctx: { pageW: number; follow?: boolean; prev?: JournalPrev },
 ): JournalPick {
   const summary = listJournals(catalog).find((j) => j.journal_id === journalId)
   const sources = journalSources(journalId, catalog)
@@ -125,6 +125,7 @@ export function pickJournal(
     journal: journalOverride(journalId, catalog) as Record<string, unknown>,
     journalRef: ref,
     journalSources: slimSources(sources),
+    journalPrev: ctx.prev,
     follow: ctx.follow,
   })
   const pageW = nearestColumnWidth(derivePageColumns(journalProfile(journalId, catalog)), ctx.pageW)

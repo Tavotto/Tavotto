@@ -11,6 +11,15 @@ import { JournalCatalogError, loadCatalog, type JournalCatalog } from '@/lib/jou
 
 export const JOURNAL_CATALOG_CACHE_KEY = 'tavotto.journalCatalog'
 
+/**
+ * 「目录资产根」：快照图的 `file`（`snapshots/<sha256>.webp`）相对它解析。内置种子 = 随前端打进包里的
+ * 目录；远程目录由拉取它的 PR 给出那一版的资产根（ADR 0155 §6）。末尾带 `/`。
+ */
+export const BUNDLED_ASSET_BASE = '/journal-catalog/'
+
+/** 快照图的完整地址；`file` 已由目录校验保证是 `snapshots/<sha256>.webp`（不含路径与 URL）。 */
+export const snapshotUrl = (base: string, file: string): string => base + file
+
 function readCache(): JournalCatalog | null {
   try {
     const raw = window.localStorage.getItem(JOURNAL_CATALOG_CACHE_KEY)
@@ -23,13 +32,16 @@ function readCache(): JournalCatalog | null {
 interface JournalCatalogState {
   /** 生效的目录：缓存通过校验就是缓存，否则是内置种子 */
   catalog: JournalCatalog
-  /** 交一份新目录；校验失败返回错误，目录原样不动 */
-  setCatalog: (raw: unknown) => JournalCatalogError | null
+  /** 快照图的资产根（见 `BUNDLED_ASSET_BASE`） */
+  assetBase: string
+  /** 交一份新目录（可带它的资产根）；校验失败返回错误，目录原样不动 */
+  setCatalog: (raw: unknown, assetBase?: string) => JournalCatalogError | null
 }
 
 export const useJournalCatalogStore = create<JournalCatalogState>((set) => ({
   catalog: readCache() ?? loadCatalog(),
-  setCatalog: (raw) => {
+  assetBase: BUNDLED_ASSET_BASE,
+  setCatalog: (raw, assetBase = BUNDLED_ASSET_BASE) => {
     try {
       const catalog = loadCatalog(raw)
       try {
@@ -37,7 +49,7 @@ export const useJournalCatalogStore = create<JournalCatalogState>((set) => ({
       } catch {
         /* 存不下不影响本次使用 */
       }
-      set({ catalog })
+      set({ catalog, assetBase })
       return null
     } catch (e) {
       if (e instanceof JournalCatalogError) return e

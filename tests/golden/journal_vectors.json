@@ -118,6 +118,7 @@
    "journal_rule_stage_invalid",
    "journal_rule_mark_invalid",
    "journal_rule_unset_invalid",
+   "journal_rule_snapshot_invalid",
    "journal_merge_invalid",
    "journal_unknown"
   ]
@@ -188,7 +189,12 @@
       "quote": "FIXTURE height must not exceed 23 cm",
       "qualifier": "max",
       "mark": "23 cm",
-      "derivation": "23 cm -> 230 mm"
+      "derivation": "23 cm -> 230 mm",
+      "snapshot": {
+       "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+       "width": 520,
+       "height": 150
+      }
      }
     }
    },
@@ -296,7 +302,12 @@
       "src": "s9",
       "quote": "FIXTURE beta double 18 cm",
       "mark": "18 cm",
-      "derivation": "18 cm -> 180 mm"
+      "derivation": "18 cm -> 180 mm",
+      "snapshot": {
+       "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+       "width": 520,
+       "height": 150
+      }
      },
      "min_effective_font_size_pt": {
       "value": 7,
@@ -571,6 +582,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE 7 pt for normal text",
      "src": "s12",
@@ -594,6 +606,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE no smaller than 6 pt for subscripts",
      "src": "s12",
@@ -655,6 +668,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE about 7 pt, not smaller than 5",
      "src": "s14",
@@ -711,6 +725,11 @@
      "stage": "any",
      "mark": "23 cm",
      "derivation": "23 cm -> 230 mm",
+     "snapshot": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     },
      "unset": false,
      "quote": "FIXTURE height must not exceed 23 cm",
      "src": "s1",
@@ -737,6 +756,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
@@ -760,6 +780,7 @@
      "stage": "submission",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE at least 600 dpi",
      "src": "s2",
@@ -783,6 +804,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
@@ -806,6 +828,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE double column 175",
      "src": "s1",
@@ -829,6 +852,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
@@ -919,6 +943,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE Arial or Helvetica",
      "src": "s9",
@@ -942,6 +967,11 @@
      "stage": "any",
      "mark": "23 cm",
      "derivation": "23 cm -> 230 mm",
+     "snapshot": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     },
      "unset": false,
      "quote": "FIXTURE height must not exceed 23 cm",
      "src": "s1",
@@ -965,6 +995,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE 1.5 columns 120 mm or 136 mm",
      "src": "s9",
@@ -991,6 +1022,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
@@ -1014,6 +1046,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE 7 pt minimum",
      "src": "s1",
@@ -1037,6 +1070,7 @@
      "stage": "submission",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE at least 600 dpi",
      "src": "s2",
@@ -1062,6 +1096,7 @@
      "stage": "production",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE tiff only",
      "src": "s9",
@@ -1085,6 +1120,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
@@ -1108,6 +1144,11 @@
      "stage": "any",
      "mark": "18 cm",
      "derivation": "18 cm -> 180 mm",
+     "snapshot": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     },
      "unset": false,
      "quote": "FIXTURE beta double 18 cm",
      "src": "s9",
@@ -1129,6 +1170,7 @@
       "stage": "any",
       "mark": "",
       "derivation": "",
+      "snapshot": null,
       "unset": false,
       "quote": "FIXTURE double column 175",
       "src": "s1",
@@ -1152,6 +1194,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
@@ -1267,6 +1310,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE 9 cm; wide typically 15 cm",
      "src": "s13",
@@ -1315,6 +1359,7 @@
       "stage": "any",
       "mark": "",
       "derivation": "",
+      "snapshot": null,
       "unset": false,
       "quote": "FIXTURE usually 5.7 cm, 12.1 cm or 18.4 cm",
       "src": "s11",
@@ -1338,6 +1383,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE ignored: page_columns wins",
      "src": "s11",
@@ -1361,6 +1407,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE within 2 mm",
      "src": "s13",
@@ -1497,6 +1544,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE usually 5.7 cm, 12.1 cm or 18.4 cm",
      "src": "s11",
@@ -1520,6 +1568,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE ignored: page_columns wins",
      "src": "s11",
@@ -1630,6 +1679,11 @@
      "stage": "any",
      "mark": "23 cm",
      "derivation": "23 cm -> 230 mm",
+     "snapshot": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     },
      "unset": false,
      "quote": "FIXTURE height must not exceed 23 cm",
      "src": "s1",
@@ -1656,6 +1710,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
@@ -1679,6 +1734,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": true,
      "quote": "FIXTURE epsilon is exempt from the dpi rule",
      "src": "s1",
@@ -1700,6 +1756,7 @@
       "stage": "submission",
       "mark": "",
       "derivation": "",
+      "snapshot": null,
       "unset": false,
       "quote": "FIXTURE at least 600 dpi",
       "src": "s2",
@@ -1723,6 +1780,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
@@ -1746,6 +1804,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE double column 175",
      "src": "s1",
@@ -1769,6 +1828,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
@@ -1842,6 +1902,11 @@
      "stage": "any",
      "mark": "23 cm",
      "derivation": "23 cm -> 230 mm",
+     "snapshot": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     },
      "unset": false,
      "quote": "FIXTURE height must not exceed 23 cm",
      "src": "s1",
@@ -1868,6 +1933,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
@@ -1891,6 +1957,7 @@
      "stage": "submission",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE at least 600 dpi",
      "src": "s2",
@@ -1914,6 +1981,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
@@ -1937,6 +2005,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE double column 175",
      "src": "s1",
@@ -1960,6 +2029,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
@@ -2049,6 +2119,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE preferably Arial",
      "src": "s7",
@@ -2072,6 +2143,11 @@
      "stage": "any",
      "mark": "23 cm",
      "derivation": "23 cm -> 230 mm",
+     "snapshot": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     },
      "unset": false,
      "quote": "FIXTURE height must not exceed 23 cm",
      "src": "s1",
@@ -2095,6 +2171,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE at most 9 pt",
      "src": "s7",
@@ -2121,6 +2198,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE lines",
      "src": "s2",
@@ -2144,6 +2222,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE at least 5 pt",
      "src": "s7",
@@ -2167,6 +2246,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE about 7 pt, not smaller than 5",
      "src": "s7",
@@ -2190,6 +2270,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE 450 dpi",
      "src": "s7",
@@ -2211,6 +2292,7 @@
       "stage": "submission",
       "mark": "",
       "derivation": "",
+      "snapshot": null,
       "unset": false,
       "quote": "FIXTURE at least 600 dpi",
       "src": "s2",
@@ -2234,6 +2316,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE width is mandatory",
      "src": "s1",
@@ -2257,6 +2340,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE double column 175",
      "src": "s1",
@@ -2280,6 +2364,7 @@
      "stage": "any",
      "mark": "",
      "derivation": "",
+     "snapshot": null,
      "unset": false,
      "quote": "FIXTURE single column 85",
      "src": "s1",
@@ -3229,6 +3314,222 @@
       "stage"
      ],
      "value": "later"
+    }
+   ]
+  },
+  {
+   "name": "snapshot-file-with-path",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "../snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-file-url",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "https://example.invalid/a.webp",
+      "width": 520,
+      "height": 150
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-file-uppercase-hash",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/B884E3345464D614A90400B84E3EC3DF8CA6F820A9473DE261AE3CC7A63BCB4E.webp",
+      "width": 520,
+      "height": 150
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-file-not-webp",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.png",
+      "width": 520,
+      "height": 150
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-file-trailing-newline",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp\n",
+      "width": 520,
+      "height": 150
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-width-zero",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 0,
+      "height": 150
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-height-bool",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-missing-height",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-extra-key",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": 520,
+      "height": 150,
+      "url": "https://example.invalid/a.webp"
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot-not-object",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "widths_mm.single",
+      "snapshot"
+     ],
+     "value": "x"
+    }
+   ]
+  },
+  {
+   "name": "info-snapshot-invalid",
+   "code": "journal_rule_snapshot_invalid",
+   "ops": [
+    {
+     "path": [
+      "publishers",
+      "fx-press",
+      "rules",
+      "info.max_height_mm",
+      "snapshot"
+     ],
+     "value": {
+      "file": "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp",
+      "width": -1,
+      "height": 150
+     }
     }
    ]
   },

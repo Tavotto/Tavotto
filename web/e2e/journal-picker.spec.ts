@@ -20,7 +20,18 @@ const FIXTURE = JSON.parse(
 const COLUMNS = [85, 180]
 const nearest = (w: number) => COLUMNS.reduce((a, b) => (Math.abs(b - w) < Math.abs(a - w) ? b : a))
 
+/** 夹具快照图（假的「原网页」，内容寻址）：种子目录没有真实快照，这里按资产根的地址喂给页面 */
+const SNAP_DIR = path.resolve(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'journal_snapshots')
+
 test.beforeEach(async ({ page }) => {
+  await page.route('**/journal-catalog/snapshots/*.webp', (route) => {
+    const file = new URL(route.request().url()).pathname.split('/').pop()!
+    return route.fulfill({
+      status: 200,
+      contentType: 'image/webp',
+      body: readFileSync(path.join(SNAP_DIR, 'snapshots', file)),
+    })
+  })
   await page.addInitScript((catalog) => {
     try {
       localStorage.setItem('tavotto.journalCatalog', JSON.stringify(catalog))
@@ -52,7 +63,7 @@ async function closeSettings(page: Page) {
 }
 
 test(
-  '选期刊：页宽跟到该期刊的一栏、一次撤销全回去；出处卡标出命中的数并给出原网页链接',
+  '选期刊：页宽跟到该期刊的一栏、一次撤销全回去；出处卡给出原网页快照与链接；「不按期刊」退回之前的规范与页宽',
   { tag: '@feature:settings.journal-picker' },
   async ({ app, page }) => {
     const a = await app()
@@ -102,6 +113,21 @@ test(
     await page.keyboard.press('ControlOrMeta+Shift+z')
     await expect.poll(() => pageWidthMm(page)).toBe(target)
 
+    // ── 不按期刊：退回选期刊之前的规范与页宽，撤销一步回到期刊 ─────────────────
+    await page.locator('[data-rail="settings"]').click()
+    await expect(shell).toBeVisible()
+    await shell.locator('[data-section="spec"]').click()
+    await page.locator('[data-journal-picker]').click()
+    const none = page.locator('[data-journal-list] > :first-child')
+    await expect(none).toHaveAttribute('data-journal-none', 'true')
+    await none.click()
+    await expect(page.locator('[data-journal-picker]')).toContainText('选择期刊')
+    await expect(page.locator('[data-journal-requirements]')).toHaveCount(0)
+    await closeSettings(page)
+    await expect.poll(() => pageWidthMm(page), { message: '「不按期刊」没有把页宽退回去' }).toBe(before)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(() => pageWidthMm(page), { message: '撤销一步没有回到期刊' }).toBe(target)
+
     // ── 出处卡 ────────────────────────────────────────────────────────
     await page.locator('[data-rail="settings"]').click()
     await expect(shell).toBeVisible()
@@ -119,8 +145,12 @@ test(
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.x + box.width).toBeLessThanOrEqual(vp.width)
     expect(box.y + box.height).toBeLessThanOrEqual(vp.height)
-    // 原文摘录里命中的数被标出来
-    await expect(card.locator('[data-journal-quote] mark')).toHaveText('18 cm')
+    // 有快照：卡里是（高亮后裁好的）原网页快照图，真的加载出来了；不再画摘录框与换算行
+    const shot = card.locator('[data-journal-snapshot] img')
+    await expect(shot).toBeVisible()
+    await expect.poll(() => shot.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBe(520)
+    await expect(card.locator('[data-journal-quote]')).toHaveCount(0)
+    await expect(card).not.toContainText('->')
     // 打开原网页 / 来源域名与采集日期
     await expect(card.locator('[data-journal-meta]')).toContainText('example.invalid')
     const open = card.locator('[data-journal-open]')

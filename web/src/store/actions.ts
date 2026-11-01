@@ -19,6 +19,8 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { pickJournal } from '@/lib/journalPick'
+import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
+import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
@@ -743,9 +745,20 @@ export function setPageSize(w: number, h: number) {
  */
 export function selectJournal(journalId: string): void {
   const d0 = doc()
+  // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
+  const p0 = d0.profile
+  const prev: JournalPrev | undefined = p0?.journalRef
+    ? p0.journalPrev
+    : {
+        profile: p0
+          ? structuredClone({ id: p0.id, journal: p0.journal, snapshot: p0.snapshot, snapshotVersion: p0.snapshotVersion, follow: p0.follow })
+          : null,
+        pageW: d0.page.w,
+      }
   const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
     pageW: d0.page.w,
-    follow: d0.profile?.follow,
+    follow: p0?.follow,
+    prev,
   })
   commit(hist('setJournal'), (d) => {
     d.profile = pick.binding
@@ -759,6 +772,24 @@ export function selectJournal(journalId: string): void {
         : msg('journal.picked', { name: pick.label }, 'dialogs'),
       'done',
     )
+}
+
+/**
+ * 「不按期刊」：一次提交退回选期刊之前的规范与页宽（撤销一步回到期刊）。
+ * 没有记录（老项目 / 记录缺失）= 退回默认规范、页宽不动。没按期刊选过时什么都不做。
+ */
+export function clearJournal(): void {
+  const p = doc().profile
+  if (!p?.journalRef) return
+  const prev = p.journalPrev
+  const fallback = builtinEntryById(DEFAULT_PROFILE_ID)
+  commit(hist('clearJournal'), (d) => {
+    if (prev?.profile) d.profile = structuredClone(prev.profile)
+    else if (fallback) d.profile = bindingFor(fallback)
+    else delete d.profile
+    if (prev) applyPageSize(d, prev.pageW, d.page.h)
+  })
+  useUiStore.getState().setStatus(msg('journal.cleared', undefined, 'dialogs'), 'done')
 }
 
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */

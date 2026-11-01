@@ -42,7 +42,7 @@
 
 `engine/journals.py` 与 `web/src/lib/journals.ts` 同名同义（严格同源对），加载时校验：每条 rule 有 `value`、有 `src` 且 `src` 在可见 sources 里、`quote` 非空、
 键路径合法、`value` 的 JSON 类型与底里该字段一致，折叠后整份结果过 `validate_spec`（TS 侧 `validateSpecShape` 是 `_validate` 的镜像）。
-失败码闭集（18 个，见 `journals.ERROR_CODES`）：`journal_catalog_schema` / `journal_source_invalid` / `journal_source_coverage` / `journal_publisher_unknown` / `journal_alias_conflict` / `journal_rule_value_missing` /
+失败码闭集（19 个，见 `journals.ERROR_CODES`，含 §6 的 `journal_rule_snapshot_invalid`）：`journal_catalog_schema` / `journal_source_invalid` / `journal_source_coverage` / `journal_publisher_unknown` / `journal_alias_conflict` / `journal_rule_value_missing` /
 `journal_rule_src_missing` / `journal_rule_src_unknown` / `journal_rule_quote_empty` / `journal_rule_anchor_invalid` / `journal_rule_path_unknown` / `journal_rule_value_type` /
 `journal_rule_qualifier_invalid` / `journal_rule_stage_invalid` / `journal_rule_mark_invalid` / `journal_rule_unset_invalid` / `journal_merge_invalid` / `journal_unknown`。校验在加载处做，所以**一条没出处的数值进不了库**——这是对「严禁凭记忆写数值」的结构性看护。
 
@@ -110,6 +110,21 @@
 
 * 本 PR 的 `publishers` / `journals` **留空**，不含任何真实期刊数值或引文；golden 向量用测试夹具期刊（`fx-*`、`example.invalid`）。仓库内的种子数据按出版社分 PR，每条逐一人工核对，没核过的不进库；完整目录不进仓库（§4b）。
 * 不做继承链、不做期刊版本历史（出处的 `retrieved` 即快照时间）、不自动跟随网页变化（出处巡检脚本另起 PR，变了只开 issue、不自动改数值）。
+
+### 6. 出处快照图（PR 2 追加；用户 2026-11-01 裁决）
+
+* **每条规则（含 `info.*`）可选 `snapshot: {file, width, height}`**：采集流水线在采集时渲染的「原网页 / PDF 页高亮快照」——把引文那一段用**黄色荧光笔**标出，并**裁成那一段的短图**。
+  `file` 必须整串匹配 `^snapshots/[0-9a-f]{64}\.webp$`（内容寻址：文件名就是内容的 sha256；不许路径、不许 URL，Python `fullmatch` / TS 无 m 标志的 `$`），`width` / `height` 是正整数（`520.0` 与 `520` 同义，`true` 不算）；
+  三个键齐且只有这三个。失败码 `journal_rule_snapshot_invalid`（失败码闭集 19 个，两侧同名同义）。`journal_sources()` 每条带 `snapshot`（没有 = null）。
+* **只存短截图，从不存整页**（版权与包体积）；整页永远只在原网页 / 存档里。
+* **分发**：快照由采集流水线产出。**种子**把它随包分发（打进前端包的目录）；**远程目录**把它当作**该目录版本的资产**提供。
+* **解析**：客户端把 `file` 相对「目录资产根」解析——资产根由 `store/journalCatalogStore` 提供：种子 = 随包目录（`BUNDLED_ASSET_BASE`，`/journal-catalog/`），远程目录由拉取它的 PR 给出那一版的根（`setCatalog(raw, assetBase)`）。
+* **出处卡**：有快照 = 全宽快照图（高度跟图、最高约 240px、更高在卡内滚、细边框）；**没有快照或图加载失败 = 退回摘录框**（命中的数仍用 `<mark>`），不出错误态。换算说明（`derivation`）不在卡里显示。
+* 测试夹具快照图由 `scripts/gen_journal_snapshot_fixture.py` 生成（`tests/fixtures/journal_snapshots/snapshots/<sha256>.webp`，一张假的「原网页」，非任何真实页面）。
+
+### 7. 「不按期刊」（PR 2 追加）
+
+选期刊时绑定里记 `journalPrev {profile, pageW}`（选之前的规范绑定与页宽；从一本期刊换到另一本沿用最初那份）。选择器列表最上面的「不按期刊」一次提交退回它（撤销一步回到期刊）；没有记录就退回默认规范、页宽不动。不另设按钮。
 
 ## 后果
 
