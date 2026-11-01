@@ -45,6 +45,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ignoreImportFolder: vi.fn(),
   aiRevert: vi.fn(),
 }))
+vi.mock('@/store/aiRenameRebind', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/aiRenameRebind')>()),
+  rebindRenamedIdentities: vi.fn(),
+}))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
   refreshProjectNow: vi.fn(async () => {}),
@@ -80,6 +84,7 @@ import { ForeignScriptCard, PreparationCard } from '@/components/PreparationCard
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { beginRestore, settleRestore, resetRestoreGateForTests, useDocumentStore } from '@/store/documentStore'
@@ -3200,15 +3205,30 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
     })
 
-    it('点一次：回滚那一次 AI 会话，成功后沿用「再试一次」同一个动作重跑一次', async () => {
+    it('点一次：回滚那一次 AI 会话 → 认领 recheck 换新计划 → 认领新修订的运行；不认领冻结着 AI 版本的旧 run（Codex #1608 P2）', async () => {
       await mount()
       await openWith(brokeByAi())
       vi.mocked(aiRevert).mockResolvedValueOnce({ ok: true, script: 'a.py' })
-      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+      mockAct.mockResolvedValueOnce({
+        claimed: true,
+        report: report({ phase: 'ready_to_run', config_revision: 2, observation_seq: 2, actions: [action('run'), action('recheck'), action('run_when_ready')] }),
+      })
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', config_revision: 2, observation_seq: 3, actions: [action('cancel')] }) })
       await act(async () => primary()!.click())
       expect(vi.mocked(aiRevert).mock.calls.map((c) => c[0])).toEqual(['ai-s1'])
-      expect(mockAct).toHaveBeenCalledTimes(1)
-      expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+      expect(mockAct.mock.calls.map((c) => (c[1] as { action_id: string }).action_id)).toEqual(['act-recheck', 'act-run_when_ready'])
+    })
+
+    it('助手面板没列着那次会话时直接回滚：改名映射照样改回旧名字，画布编辑不丢（Codex #1608 P1）', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      const renamed = [{ stem: 'Fig1', gid: 'axes_1.lines_1', from_identity: 'line:new', to_identity: 'line:old' }]
+      vi.mocked(aiRevert).mockResolvedValueOnce({ ok: true, script: 'a.py', renamed } as never)
+      vi.mocked(rebindRenamedIdentities).mockClear()
+      await act(async () => primary()!.click())
+      expect(vi.mocked(rebindRenamedIdentities)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(rebindRenamedIdentities).mock.calls[0][0]).toHaveLength(1)
+      expect(vi.mocked(rebindRenamedIdentities).mock.calls[0][1]).toBe('back')
     })
 
     it('脚本在那次修改之后又改过（回滚被拒）：如实一句话，不重跑，脚本不动', async () => {

@@ -1312,8 +1312,17 @@ class SessionService:
         with sess.lock:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
-                if sess.stale or fingerprint != sess.fingerprint:
-                    old_plan, old_stale = sess.plan, sess.stale
+                # `recheck`（force）：计划按认领时的同一条判据已经不成立（典型：跑过一次之后脚本被改写——
+                # `_note_source_change` 对已跑过的修订不提前标失效），就当它失效换新计划；否则「重新检查」之后的
+                # `run` 仍冻结着旧源码修订，认领必然 `preparation_plan_stale`（TVD-H1M5 / Codex #1608）
+                forced = (
+                    preparation.stale_reason(sess.plan)
+                    if force and not sess.stale and fingerprint == sess.fingerprint
+                    else None
+                )
+                if sess.stale or forced is not None or fingerprint != sess.fingerprint:
+                    old_plan = sess.plan
+                    old_stale = sess.stale or ({"reason": forced[0]} if forced else None)
                     sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint

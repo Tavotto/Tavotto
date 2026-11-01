@@ -57,6 +57,10 @@ type Remedy =
    （`{session, succeeded_before}`）都交给修复助手（`fixtools/runreport.py` 的 `recent_ai_edit`）：那次反馈里助手不知道脚本刚被
    AI 改过，把「改前 native 成功、改后 safe 失败」读成运行方式差异，绕了一圈。只认脚本自己的错误：守卫拦截 / 缺包 / 版本类
    仍走各自更确定的出路；也不绕过脚本自带的检查（那是用户要的判据）。看护 `tests/test_ai_edit_revert_remedy.py`。
+   回滚之后的重跑是「`recheck` → 新修订的运行」：为此 `SessionService.check(force=True)`（`recheck`）在会话没标失效、指纹也没变时，
+   再按认领时的同一条判据（`preparation.stale_reason`）核一次计划，不成立就换新计划——之前「跑过一次 → 脚本被改写 → 重新检查」
+   保留旧计划，随后的 `run` 必然 `preparation_plan_stale`（指纹不含源码修订，`_note_source_change` 对已跑过的修订不提前标失效）。
+   直接回滚（助手面板没列着那次会话）同样经 `rebindRenamedIdentities` 把改名改回去（ADR 0083 §五）。
 
 **一次「运行」最多走 3 种修法**：读 `attempt_history` 里本次 run 的 `changed`（换了执行语义 = `switch_native`，换了解释器 =
 `change_python`）加本次 run 里装过包（`install_packages`），已满 3 种再失败就是 `feedback`；同一种修法一次运行只走一回。

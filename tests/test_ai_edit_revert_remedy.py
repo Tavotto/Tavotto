@@ -30,6 +30,7 @@ from test_preparation_session import (  # noqa: F401
     _act,
     _action,
     _create_ready,
+    _get,
     _settle,
     sessions,
 )
@@ -245,3 +246,43 @@ def test_the_fix_report_is_honest_when_it_did_not_run_before():
 def test_no_fact_without_a_session():
     assert _ai_edit_fact(None) is None
     assert _ai_edit_fact({}) is None
+
+
+# --------------------------------------------------------------------------- 回滚之后能真的再跑（Codex #1608 P2）
+def test_recheck_after_the_script_changed_post_failure_gives_a_runnable_new_plan(
+    client, tmp_path, fake_pool, sessions
+):
+    """主语：失败（这一修订已经跑过）之后脚本被改写（卡上的回滚就是这样），用户点的「重新检查」。
+
+    `_note_source_change` 对已跑过的修订不提前标失效；`recheck` 之前也只在「已标失效 / 指纹变了」时换计划，
+    而指纹不含源码修订——于是「回滚 → 重新检查 → 运行」的运行仍冻结着 AI 版本，认领必然 `preparation_plan_stale`。
+    `recheck` 现在按认领时的同一条判据（`preparation.stale_reason`）核一次，不成立就换新计划。"""
+    root, _pj, report = _create_ready(client, tmp_path)
+    sid = report["session_id"]
+    failed = _run(
+        client, sid, report, fake_pool, engine_pool.WorkerError("boom", code="script_error")
+    )
+    assert failed["outcome"]["kind"] == "failed"
+    (root / "fig.py").write_text((root / "fig.py").read_text() + "\n# restored\n")
+    now = _get(client, sid).get_json()
+    assert (
+        _act(client, sid, _action(now, "recheck")["id"], now["config_revision"]).status_code == 200
+    )
+    fresh = _get(client, sid).get_json()
+    assert fresh["config_revision"] == now["config_revision"] + 1
+    done = _run(client, sid, fresh, fake_pool)
+    assert done["phase"] == "completed"
+
+
+def test_recheck_without_any_change_keeps_the_same_plan(client, tmp_path, fake_pool, sessions):
+    """对照组：脚本没变时「重新检查」照旧保留计划与动作（不为一次无关的检查作废已给出的动作）。"""
+    _root, _pj, report = _create_ready(client, tmp_path)
+    sid = report["session_id"]
+    failed = _run(
+        client, sid, report, fake_pool, engine_pool.WorkerError("boom", code="script_error")
+    )
+    assert (
+        _act(client, sid, _action(failed, "recheck")["id"], failed["config_revision"]).status_code
+        == 200
+    )
+    assert _get(client, sid).get_json()["config_revision"] == failed["config_revision"]
