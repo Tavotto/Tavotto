@@ -121,7 +121,7 @@ export function SourceCardBody({
             className="inline-flex items-center gap-0.5 font-medium text-info-content hover:underline"
           >
             {jt('card.open')}
-            <ArrowUpRight size={ICON_SIZE.xs} aria-hidden />
+            <ArrowUpRight size={ICON_SIZE.sm} aria-hidden />
           </a>
           {lead.archive_url && (
             <a
