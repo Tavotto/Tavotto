@@ -57,6 +57,10 @@ If an export stopped at the "file already exists" confirmation and you then chan
 
 When a project was opened while a script still had a plotting function, Tavotto registered that function as the script's entry. If you later rewrote the script to draw at the top level (no function at all), every run failed with `AttributeError: module has no attribute ...` and the AI repair could not change the entry. Before a registered script runs, Tavotto now checks the registered entry against the script as it is now; when the function is gone it re-detects the entry (usually running the whole script) and updates only the `entry` field of that registry line. If an entry still cannot be found, the card says so with its own code (`script_entry_missing`), and the AI repair has a `fix_entry` tool that does the same re-detection.
 
+## When a package can't be installed or your Python is the wrong version, the card now offers a concrete fix (#1600)
+
+If a script needs a package Tavotto can't install for you (a private library, a local module, or something that only exists in a conda environment), the card's main button is now "Use my own Python" so you can point Tavotto at the environment that has it. "Fix with your AI" is still there as a secondary button. If the Python version doesn't fit and Tavotto already found a checked environment on your computer that does, the main button reads "Switch to <environment name>" and switches only when you click it. An environment you picked yourself for a project is no longer replaced automatically when a version problem shows up.
+
 ## Cold canvas and export preview show the state you saved after an undo (#1547)
 
 For script-run figures, undoing an edit (for example moving a legend back) and then saving could make the reopened canvas and the export preview show the state from before the undo, until you entered figure editing. The exported files were already correct. Cached previews are now looked up by the figure's current edits and are discarded when the script or its input data change. Projects saved by earlier versions may show the existing "approximate preview" badge on such figures until they are rendered once.
