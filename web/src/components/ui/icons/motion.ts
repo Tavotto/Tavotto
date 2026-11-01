@@ -104,7 +104,7 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   FolderPlus: { on: 'hover', ms: 480, parts: { s: [null, 'p', 'p'] } },
   Fullscreen: { on: 'hover', ms: 480, parts: { s: ['p', 'q', 'r', 'u', null] } },
   Layers2: { on: 'hover', ms: 480, parts: { s: ['p', null] }, sel: { f: ['p'], s: [null] } },
-  LayoutList: { on: 'hover', ms: 520, parts: { f: ['q', 'q'], s: ['t', 't'] } },
+  LayoutList: { on: 'hover', ms: 520, parts: { f: ['q', 'q'], s: ['t', 't'] }, sel: { f: ['q', 'q'], s: ['t', 't'] } },
   Ruler: { on: 'hover', ms: 480, parts: { s: [null, 't', 't', 't', 't'] } },
   Scaling: { on: 'hover', ms: 440, parts: { s: [null, 'p', 'p'] } },
   LayoutGrid: { on: 'hover', ms: 420, parts: { s: ['t', 't', 't', 't'] }, sel: { f: ['t', 't', 't', 't'] } },
