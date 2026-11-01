@@ -18,6 +18,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 -->
 
 
+## R and MATLAB conversions now produce figure-only Python candidates
+
+When converting an R or MATLAB plotting script, the generated Python candidate now keeps the data reads and calculations needed for its figures but leaves separate tables, logs and intermediate-file exports out. Validation blocks those non-figure writes before opening a file and asks the converter to remove them; the original R or MATLAB script remains untouched. Python-source conversions keep their existing output behavior.
+
 ## Legend font size in the properties panel now resizes the whole legend, like the floating toolbar
 
 Changing a legend's size in the properties panel used to change only the text of each entry: the legend box (padding, row spacing, swatch length) stayed at the old size, and the floating toolbar above the legend kept showing the old value (for example 10 pt in the panel, 8 pt on the toolbar). The panel now changes the legend's own font size, the same property the toolbar and corner-drag scaling change, so the whole legend scales and both places show the same number. In projects where an earlier version had set the entries' sizes from the panel, the size field shows mixed values until you type a size; **Reset** in that row now clears both the legend's size and the entries' sizes in one undo step.
