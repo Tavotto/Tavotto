@@ -1174,6 +1174,20 @@ export function detachLegendEntry(panelId: string, element: ManifestElement) {
 }
 
 /**
+ * 图例卡「字号」的恢复：图例整体的 `fontsize` 与每条图例项上的 `fontsize` 一起删，
+ * **一条撤销、一次渲染**。后者是旧版图例卡逐条写下的（那时卡片批量写的是图例项，
+ * 不是图例；见 `inspector/legendTypography.ts`）——只删图例那条的话，引擎重放时窄的
+ * 后应用（`overrides.ALIAS_GROUPS`），文字仍停在旧字号。
+ */
+export function clearLegendFontSize(panelId: string, legendGid: string, entryGids: readonly string[]) {
+  clearOverrides(
+    panelId,
+    hist('clearProp', { prop: propLabel('fontsize') }),
+    [legendGid, ...entryGids].map((gid) => ({ gid, prop: 'fontsize' })),
+  )
+}
+
+/**
  * 图例位置的一次点击（属性页 / 快捷编辑 / 画布浮动栏共用）：内 / 外两带写的
  * 是同一件事，落进**同一次 commit**——一条撤销、一次渲染。
  *
