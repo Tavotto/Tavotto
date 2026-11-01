@@ -4302,3 +4302,43 @@ def test_export_eps_and_tiff_are_real_matplotlib_files(worker):
     assert tags[282] == 200 and tags[283] == 200 and tags[296] == 2, "dpi 标签"
     # 第一条 strip 真的能用 zlib 解开（压缩方式说的是真话）
     assert zlib.decompress(raw[tags[273] : tags[273] + tags[279]])
+
+
+DOTTED_NAME_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+def main():
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.plot([0, 1], [1, 0])
+    ax.set_title(__name__)
+    fig.savefig("DottedFig.pdf")
+"""
+
+
+@pytest.mark.parametrize("name", ["4-51.example_slope_20261101.py", "fig.v2.final.py"])
+def test_build_dotted_script_filename(tmp_path, name):
+    """文件名里带点号（`4-51.名称.py` / `fig.v2.final.py`）的脚本照常导入出图（TVD-6ZMX）。
+
+    `importlib.import_module(stem)` 把点号当包分隔符，先去找名为 `4-51` 的包 → ModuleNotFoundError；
+    这类名字 `python 脚本.py` 跑得好好的，入口函数形态（entry != "__main__"）也必须能跑。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    script = figs / name
+    script.write_text(DOTTED_NAME_SCRIPT, encoding="utf-8")
+    proc = _spawn(script, figs, tmp_path)
+    try:
+        resp = _rpc(proc, {"cmd": "build"})
+        assert "DottedFig" in resp["stems"]
+        man = json.loads(preview_file(tmp_path / "out", "DottedFig", ".json").read_text("utf-8"))
+        titles = [
+            f["value"]
+            for el in man["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text"
+        ]
+        assert Path(name).stem in titles  # `__name__` 与无点号的入口脚本同一口径：就是 stem
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
