@@ -16,6 +16,7 @@ schema 里**：`load()` 用白名单字段校验，任何不认识的字段（�
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -318,6 +319,13 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset(),
         "如果写入目标文件失败（权限被拒等），直接说明失败原因并停止，不要换到别的位置写。",
     ),
+    # Windows：Codex 的命令在 cmd.exe 里执行，unelevated 沙盒里 PowerShell（pwsh.exe）起不来（0xC0000142）——
+    # Lab 真机 run 20261101T092304Z-9f26be 里约一半命令是模型写 Get-Content / Get-ChildItem 撞墙（TVD-BCZ0）
+    "rule_windows_shell": (
+        frozenset(),
+        "这台机器是 Windows：命令在 cmd.exe 里执行，PowerShell 在这里启动不了，不要用 Get-Content / Get-ChildItem 等 "
+        "PowerShell 命令；读文件用 type，列目录用 dir，搜文本用 findstr。",
+    ),
     "rule_foreign_no_search": (
         frozenset({"language"}),
         "这台机器上不运行 {language}，不要查找 {language} 的安装或源码，不要做全盘 / 主目录范围的搜索；"
@@ -501,6 +509,11 @@ def convert_requirements() -> list[str]:
     ]
 
 
+def _on_windows() -> bool:
+    """转换提示词按 Tavotto 所在平台加 Windows 一条（Codex 与 Tavotto 跑在同一台机器上）。测试可 monkeypatch。"""
+    return os.name == "nt"
+
+
 def convert_prompt(
     *,
     script: str,
@@ -538,12 +551,16 @@ def convert_prompt(
             "7. " + _convert_render("rule_foreign_no_search", language=foreign),
             "8. " + _convert_render("rule_write_fail"),
         ]
+        if _on_windows():
+            lines.append("9. " + _convert_render("rule_windows_shell"))
     else:
         lines += [
             *convert_requirements(),
             _convert_render("rule_scope"),
             "5. " + _convert_render("rule_write_fail"),
         ]
+        if _on_windows():
+            lines.append("6. " + _convert_render("rule_windows_shell"))
     if not foreign and (library or "").lower() == "pillow":
         lines += ["", _convert_render("pillow_table")]
     lines += ["", _convert_render("note", project_root=project_root)]
