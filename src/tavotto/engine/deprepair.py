@@ -2156,6 +2156,22 @@ def pip_install_options(python: str) -> dict | None:
     return parse_pip_options(out)
 
 
+#: 查找路径（`pip index versions`）专用的选项探测。**不是** `PIP_OPTIONS_PROBE` 的镜像：`pip index` 有自己的
+#: 命令名，pip 配置键是「命令名.选项名」（`[index] index-url = …` 只对它生效，`[global]` 对所有命令），
+#: 所以只问 install 会漏掉私有仓库配在 index 节的情形。装包路径继续用 install 那份。
+PIP_INDEX_OPTIONS_PROBE = PIP_OPTIONS_PROBE.replace(
+    'create_command("install")', 'create_command("index")'
+)
+
+
+def lookup_package_source(python: str, timeout: float = 30) -> bool | None:
+    """`pip index` 此刻生效的选项里有没有**用户自配的包源**（同 `options_name_a_user_source` 口径）。
+    探测失败 / 超时 / 太旧的 pip 回 None（= 问不出，查找不换源）。`timeout` 由调用方按剩余预算给。"""
+    rc, out = _run([str(python), "-c", PIP_INDEX_OPTIONS_PROBE], timeout)  # type: ignore[arg-type]
+    opts = parse_pip_options(out) if rc == 0 else None
+    return None if opts is None else options_name_a_user_source(opts)
+
+
 def user_package_source(python: str) -> bool | None:
     """这个环境的 pip 是不是配了**用户自己的包源**（`options_name_a_user_source`）。只回真假、不回地址。
     问不出来回 None——镜像回退把 None 当「配过」处理（宁可不换源）。环境变量与配置文件都由 pip 自己解析。"""
@@ -2250,6 +2266,27 @@ class _PipWatch:
             self.reason = PIP_STALLED
             self.detail = f"联网阶段 {now - self.last_line:.0f} s 没有进展"
         return self.reason
+
+
+#: 联网类失败的原因（进度记录顶层 `net_cause`，闭集；界面据此各说一句话，不解析文案）：
+#: `NET_CAUSE_BOTH` 官方源和镜像（`PYPI_MIRROR_URL`）都没连上；`NET_CAUSE_USER_SOURCE` 用户自配的包源连不上。
+#: 其余情况（问不出配置、镜像没起来）不带这个键，界面用通用的一句。
+NET_CAUSE_BOTH = "official_and_mirror"
+NET_CAUSE_USER_SOURCE = "user_source"
+NET_CAUSES = (NET_CAUSE_BOTH, NET_CAUSE_USER_SOURCE)
+
+
+def net_failure_cause(code: str, source: str | None) -> str:
+    """联网类失败（`ERROR_NETWORK` / `ERROR_TIMEOUT`）的原因 → `NET_CAUSES` 之一，说不清回空串。
+    判据主语是 `_run_pip_install` 记下的最后包源（`PIP_SOURCES`）：`user` = 用户自配的源连不上（没有换源）；
+    `tuna` = 官方源失败后镜像那一次也失败。不新增镜像、不改换源条件。"""
+    if code not in (ERROR_NETWORK, ERROR_TIMEOUT):
+        return ""
+    if source == PIP_SOURCE_USER:
+        return NET_CAUSE_USER_SOURCE
+    if source == PIP_SOURCE_MIRROR:
+        return NET_CAUSE_BOTH
+    return ""
 
 
 def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
@@ -2389,8 +2426,11 @@ def _run_pip(
         # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装。
         # 激活捕获可能要几十秒：用安装的剩余预算，捕获完**再查一次取消与期限**才起 pip——
         # 用户在激活期间点了取消，pip 一个字节都不许动环境
-        env = launcher.activate_env(
-            argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+        env = runtime.pip_child_env(
+            argv[0],
+            launcher.activate_env(
+                argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+            ),
         )
     except launcher.LauncherUnavailable as exc:
         return exc.code, str(exc)
@@ -2467,7 +2507,9 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     try:
         # 激活捕获与命令本身共用一个预算：慢的激活不能让 `pip --version` 这类短探测远超它自己的超时
         deadline = time.monotonic() + timeout
-        env = launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        env = runtime.pip_child_env(
+            argv[0], launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise launcher.LauncherUnavailable(
@@ -2750,6 +2792,10 @@ def _emit(
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if state == STATE_FAILED:
+            cause = net_failure_cause(code, rec.get("pypi_source"))
+            if cause:
+                rec["net_cause"] = cause
         if dist_reasons:
             # 装后核验没过的原因码（闭集，`DIST_REASONS`）：终态上带着，界面按原因分别说人话
             rec["dist_reasons"] = list(dist_reasons)
@@ -3419,6 +3465,13 @@ LOOKUP_PIP_RETRIES = 1
 #: 整个子进程的墙上时间预算。算术：pip 启动 ~0.3 s + 两次 socket 等待
 #: （3 s × (1 + 重试 1)）= 6.3 s，留一点余量给慢磁盘。
 LOOKUP_TIMEOUT_S = 8
+#: 官方源查不到（连不上 / 超时）且用户没自配源时，换 `PYPI_MIRROR_URL` 再查一次——与装包同一个镜像、同一个换源条件
+#: （`mirror_retry_warranted`）。官方那次可能已经用满 `LOOKUP_TIMEOUT_S`（被墙时典型就是超时），所以镜像这一次
+#: 另有一份预算，整个查找以 `LOOKUP_TOTAL_S` 为总上限（官方 8 s + 问配置 ~1 s + 镜像最多 5 s）。
+LOOKUP_MIRROR_TIMEOUT_S = 5
+LOOKUP_TOTAL_S = 14
+#: 问 `pip index` 选项的探测超时上限（实际取它与剩余预算的较小者）。
+LOOKUP_SOURCE_PROBE_S = 30
 #: 版本表的上限。numpy 有 120 个版本，几百个是想得到的上界；截断只是防一个
 #: 畸形索引把响应撑爆，正常包一个版本都不会少。
 LOOKUP_MAX_VERSIONS = 300
@@ -3469,7 +3522,7 @@ def argv_package_name(name: str) -> str:
     return "".join(out)
 
 
-def pip_index_argv(python: str, name: str) -> list[str]:
+def pip_index_argv(python: str, name: str, index_url: str | None = None) -> list[str]:
     """查找命令——**唯一出处**，测试逐字节钉住。
 
     * `-m pip`：绝不用 PATH 上的 `pip`（那个 pip 属于哪个解释器全看 PATH）；
@@ -3484,9 +3537,15 @@ def pip_index_argv(python: str, name: str) -> list[str]:
       （证明 `--` 被吃掉了、没当成第二个参数）；
     * 包名放**最后**，且由 `argv_package_name` 从常量字母表重拼出来。
 
+    * `index_url`：只有一个合法值 `PYPI_MIRROR_URL`（镜像回退那一次），别的值一律拒；缺省不带 `--index-url`，
+      pip 按用户 / 官方配置走。
+
     名字拼不出来时**抛异常，不返回一个凑合的 argv**：这个函数是 argv 的唯一
     出处，让它有能力回一个不合规的 argv 等于把上面那句保证作废。
     """
+    if index_url is not None and index_url != PYPI_MIRROR_URL:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "查找只允许换到内置的 PyPI 镜像")
+    mirror = ["--index-url", PYPI_MIRROR_URL] if index_url is not None else []
     return [
         str(python),
         "-m",
@@ -3499,12 +3558,13 @@ def pip_index_argv(python: str, name: str) -> list[str]:
         str(LOOKUP_PIP_RETRIES),
         "--timeout",
         str(LOOKUP_PIP_TIMEOUT_S),
+        *mirror,
         "--",
         argv_package_name(name),
     ]
 
 
-def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
+def _run_lookup(argv: list[str], timeout: float | None = None) -> tuple[int, str, bool]:
     """跑一次查找子进程 → `(退出码, 合并输出, 是不是超时)`。
 
     比 `_run()` 多回一个 `timed_out` 是有理由的：`_run` 把超时压成
@@ -3525,10 +3585,10 @@ def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=LOOKUP_TIMEOUT_S,
+            timeout=LOOKUP_TIMEOUT_S if timeout is None else timeout,
             stdin=subprocess.DEVNULL,
             # 查找只在受管环境上跑：pip 的 HTTP 缓存落回数据目录（`runtime.owned_env`）
-            env=runtime.owned_env(argv[0]) if argv else None,
+            env=runtime.pip_child_env(argv[0], runtime.owned_env(argv[0])) if argv else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
@@ -3607,7 +3667,24 @@ def lookup_package(project: str | Path, name: str) -> dict:
     if not python:
         raise RepairError(ERROR_LOOKUP_FAILED, "这台机器上没有可以用来查找的 Python")
 
+    started = time.monotonic()
     rc, text, timed_out = _run_lookup(pip_index_argv(python, canonical))
+    if timed_out or (rc != 0 and classify_lookup_failure(text) == ERROR_LOOKUP_OFFLINE):
+        # 联网类失败：没自配源（与装包同一个判据 `mirror_retry_warranted`）就用镜像再查一次，总时长受 LOOKUP_TOTAL_S 约束
+        first = ERROR_TIMEOUT if timed_out else ERROR_NETWORK
+        # 先看剩余预算：不够起镜像那次（< 1 s）就连探测都不做；探测超时 = min(原超时, 剩余 − 镜像最少 1 s)
+        remaining = LOOKUP_TOTAL_S - (time.monotonic() - started)
+        if remaining >= 2:
+            user_source = lookup_package_source(python, min(LOOKUP_SOURCE_PROBE_S, remaining - 1))
+            remaining = LOOKUP_TOTAL_S - (time.monotonic() - started)
+            budget = min(LOOKUP_MIRROR_TIMEOUT_S, remaining)
+            if mirror_retry_warranted(first, user_source) and budget >= 1:
+                LOG.warning(
+                    "包查找换源：官方 PyPI 没查到（%s），改用 %s 再查一次", first, PYPI_MIRROR_URL
+                )
+                rc, text, timed_out = _run_lookup(
+                    pip_index_argv(python, canonical, PYPI_MIRROR_URL), timeout=budget
+                )
     if timed_out:
         raise RepairError(ERROR_LOOKUP_TIMEOUT, "查找超时")
     if rc != 0:

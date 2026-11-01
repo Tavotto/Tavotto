@@ -25,6 +25,10 @@ On Windows, when Tavotto was started from the Codex desktop app, recent projects
 
 If a script stores its own folder in a variable and then adds a subfolder to `sys.path` (for example `ROOT = Path(__file__).resolve().parent` followed by `sys.path.insert(0, str(ROOT / "source"))`), and that subfolder is missing from the project, Tavotto used to treat the script's own helper modules (such as `config`) as unknown packages and pre-filled a same-named PyPI package for you to install. These names are now reported as missing local modules from that folder: nothing is pre-filled and nothing is sent to pip. Put the missing files back into the folder the script expects and run again.
 
+## Clearer package download failures, and version lookup now falls back to the mirror (#1601)
+
+When installing a package fails because the network is unreachable, the card now says which case it is: "Neither the official index nor the mirror could be reached" (the mirror was tried automatically) or "The download source you configured can't be reached" (you set your own pip index, so Tavotto does not switch it). Looking up a package's versions in the package manager used to fail immediately when the official PyPI was unreachable; if you have not configured your own index, it now tries the same mirror once before giving up. On Windows, pip output from Tavotto's own environments is now read as UTF-8, so non-English system languages no longer garble the install log; your scripts' environment is unchanged.
+
 ## Single-figure export now includes canvas annotations (#1551)
 
 When the canvas held a single figure, text, arrows and shapes you added on the canvas were missing from both the export preview and the exported files. They are now drawn into PDF, PNG, TIFF, SVG and EPS, clipped to the figure frame, with their stacking relative to the figure preserved (annotations moved below the figure in the layer tree stay below it). The export still follows the original-figure rules: PNG / TIFF keep the source image's pixel size and DPI, and exports without annotations are byte-for-byte unchanged. EPS keeps matplotlib's original EPS and lays the annotations over it as vector outlines; if an annotation uses transparency, which EPS cannot express, only the EPS item fails with a stated reason and the other formats are delivered.
@@ -40,6 +44,10 @@ If a script puts its own `pip install --target` folder at the front of `sys.path
 ## "More" menu is grouped, command palette and settings wording cleaned up
 
 The top-bar "..." menu is split into File / View / Help groups with small headings, and a disabled write-back item now explains why in its tooltip instead of a second line. The command palette shows an icon for every command and draws its shortcut as one plain grey key label, and "Add (a)(b)(c) labels" is renamed "Add (a)(b)(c) numbering". In Settings, "Interface looks off?" is now "Reset interface layout", the "Open canvas settings" row is gone, and the appearance note explains the canvas paper stays white in dark mode to match exports. The welcome page drops the smiley and its clickable-looking feature row, and the tutorial shows progress only at the top, labels the first step's back button "Back to welcome", and says what is left to do on a disabled "Next" (for example "Drag in the script to continue"). (#1556)
+
+## Scripts no longer fail as a "script error" when your Python can't write to Tavotto's cache
+
+Some Python environments (for example a virtual environment built from another app's bundled Python) can read Tavotto's cache folder but aren't allowed to create new folders in it. Every run then stopped within a second, before any of your script ran, yet the card said the script itself had failed and offered to have AI fix it. Tavotto now recognises this case: the card says in one sentence that this Python can't create folders in Tavotto's cache, and its button switches back to Tavotto's built-in Python and runs the script again. The setting it clears is the one that picked that Python (your global choice or this project's), and nothing in your scripts or your environment is changed.
 
 ## Overwrite confirmation always matches the file actually overwritten (#1549)
 
@@ -61,9 +69,17 @@ The export dialog now shows only the figure name and size under the title; a sub
 
 In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect a provider with an API key (instead of a Codex / Claude Code subscription) failed about a tenth of a second after every request, without contacting the provider. The installer was missing the module that starts it. Connections through Codex or Claude Code were not affected. This is fixed, and the desktop smoke test now starts the built-in AI from the installed app.
 
+## Left rail reorganised; narrow windows keep more room for the canvas
+
+The left rail is now Project / Assets / Outline / In-figure / Style / Problems / Settings, where Outline combines the canvas list and layers, and duplicate entries to the same places were removed along with the status bar above the asset drawer. On windows 1280 px wide or more the left panel is pinned by default, so adding figures no longer collapses the asset drawer (an explicit choice in Settings always wins; the drawer also stays open while the pointer is inside it). Below 1280 px the properties panel slides over the canvas on selection instead of taking space, and below 1180 px the rail shows icons only. With exactly one editable figure and nothing selected, the AI assistant targets it automatically; with several it lists their names to pick from. (#1554)
+
 ## Text typed on the canvas is no longer lost when clicking empty space (#1546)
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
+
+## When Codex or Claude Code fails on sign-in, quota or connection, the failure card now says so and offers "Check connection" (#1598)
+
+If a run through the Codex or Claude Code command line failed because you were signed out, hit a usage or rate limit, or the service could not be reached, the card only said that the AI run went wrong and its main button was "Retry", which could not succeed. Tavotto now recognises these three cases from the error codes the command line reports (never from the model's text) and shows the matching message. For these, and for other non-zero exits it cannot classify, the main button is now "Check connection". Failures that a retry can fix (timeouts, step or budget limits) still offer "Retry".
 
 ## AI edits that failed instantly now leave a reason in the diagnostic bundle
 
@@ -81,9 +97,17 @@ In the export dialog, the large preview of a single figure that had edits applie
 
 Rebuilding a PNG as an editable figure could jump to another canvas and open an older, already-edited figure from the same script with the same file name, while reporting that the figure had been redrawn. The rebuilt figure is now added next to the PNG on the canvas you started from, and the success message only appears when that happens.
 
+## New figures no longer pile on top of each other; fewer pop-up hints
+
+A figure added without a drop position now always lands in free space: it is scaled down (to at most 40% smaller) to fit a gap, and only then offset, instead of landing almost exactly on top of the first one. Hints no longer float over the dark backdrop of the export, command palette or contact dialogs, and come back after the dialog closes. "Render finished" only appears when it replaces a visible failure message, the "Problems panel can locate objects" hint waits for the first problem that can actually be located, the canvas-size hint is skipped when the right panel is already on the Canvas page (and, while editing a single figure, that page now explains the export size), and the double-click hint no longer appears once you are editing inside a figure. After mouse use, pressing Enter or closing a menu no longer draws the thick blue keyboard focus ring. (#1557)
+
 ## First run on a fresh machine no longer fails with "session s-1 does not exist"
 
 When Tavotto ran a script for the very first time on a machine (matplotlib builds its font cache, so the render process takes about ten seconds to start) and a second try-run of the same script started meanwhile, for example from the AI repair button, the second one closed the session the first one had just opened. The first run then failed with "session s-1 does not exist (workerd may have restarted), please reopen" even though the script was fine. A try-run now shares a session that another run has just opened and not finished building yet, instead of closing it.
+
+## The AI assistant tells you when it has gone quiet, and failed tasks in History no longer show raw error codes (#1599)
+
+If the connected AI tool prints nothing for 2 minutes, the assistant's status line now says "No activity from the AI for N s" and offers Cancel and Retry. Tavotto does not stop the task on its own, so a model that is just thinking slowly is not interrupted; the overall 15-minute limit is unchanged. In Task History, when a revert is refused because the script changed after the AI edit, the entry now offers "View changes" (the AI's diff) instead of only a message in the status bar. A failed task's details card now shows a plain sentence (for example "The model service quota is used up or rate-limited") instead of an internal code such as `agent_quota`.
 
 ## Timeline: version strip, content-centred thumbnails, safer restores
 

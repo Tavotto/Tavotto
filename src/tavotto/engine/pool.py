@@ -1978,10 +1978,14 @@ PROJECT_PYTHON_UNUSABLE_CODE = "project_python_unusable"
 #: 脚本想写的文件夹没有写入权限（只读项目 / 只读卷），因此某些输出文件没生成。worker 侧
 #: `worker.OUTPUT_FOLDER_READ_ONLY` 的镜像；出口是「另存一份到自己的文件夹」，换环境 / 改脚本都没用。
 OUTPUT_FOLDER_READ_ONLY_CODE = "output_folder_read_only"
+#: 这个解释器在 Tavotto 自己的会话缓存里建不了目录（用户代码之前就失败，TVD-B6MR）。worker 侧
+#: `worker.INTERPRETER_CACHE_DENIED` 的镜像；出口是换回 Tavotto 自带的 Python，改脚本 / 让 AI 修都没用。
+INTERPRETER_CACHE_DENIED_CODE = "interpreter_cache_denied"
 #: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
 ERROR_CODES = (
     SCRIPT_ENTRY_MISSING_CODE,
     OUTPUT_FOLDER_READ_ONLY_CODE,
+    INTERPRETER_CACHE_DENIED_CODE,
     EXPLICIT_UNUSABLE_CODE,
     PROJECT_PYTHON_UNUSABLE_CODE,
     ENGINE_FILES_INCOMPLETE_CODE,

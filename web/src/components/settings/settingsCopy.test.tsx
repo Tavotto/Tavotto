@@ -252,7 +252,7 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
     })
     const s = useUiStore.getState()
     expect(s.leftWidth).toBe(300)
-    expect(s.leftPinned).toBe(false)
+    expect(s.leftPinned).toBeNull() // 回到「没表过态」，不是写成关
     expect(s.gridSize).toBe(10)
     // 写回本机的也是默认值（此前只删掉存储里那一份，刷新之前的任何一次写入又会把旧值写回去）
     expect(JSON.parse(localStorage.getItem('tavotto.ui') ?? '{}').leftWidth).toBe(300)
