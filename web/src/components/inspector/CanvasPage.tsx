@@ -45,13 +45,14 @@ interface PagePreset {
 }
 
 /** 栏位预设：第一档矮一点（60），其余 100——高度只是常见起点，不是规范字段 */
-function pagePresets(columns: PageColumn[]): PagePreset[] {
+function pagePresets(columns: PageColumn[], journalH: number | null = null): PagePreset[] {
   return [
     ...columns.map((c, i) => ({
       id: c.id,
       w: c.w,
-      h: i === 0 ? 60 : 100,
-      ...(c.id === 'single' || c.id === 'double' ? {} : { label: columnName(c) }),
+      // 按期刊选的：选栏只改页宽，高度保持当前值
+      h: journalH ?? (i === 0 ? 60 : 100),
+      ...(journalH == null && (c.id === 'single' || c.id === 'double') ? {} : { label: columnName(c) }),
     })),
     { id: 'full', w: 180, h: 240 },
     { id: 'square', w: 100, h: 100 },
@@ -125,12 +126,19 @@ export function CanvasPage() {
   useEffect(() => {
     if (!specsLoaded) void useProfileStore.getState().load()
   }, [specsLoaded])
-  const columns = useMemo(
-    () => resolvePageColumns(binding, toCatalog(specs), specsLoaded).columns,
+  const resolvedCols = useMemo(
+    () => resolvePageColumns(binding, toCatalog(specs), specsLoaded),
     [binding, specs, specsLoaded],
   )
-  const PRESETS = useMemo(() => pagePresets(columns), [columns])
-  const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
+  const columns = resolvedCols.columns
+  const journalCols = resolvedCols.journal
+  const PRESETS = useMemo(() => pagePresets(columns, journalCols ? page.h : null), [columns, journalCols, page.h])
+  // 期刊的栏只看宽度（高度不是期刊规定的）；其余预设宽高都对上才算
+  const active = journalCols
+    ? (columns.some((c) => Math.abs(c.w - page.w) < 0.05)
+        ? PRESETS.find((p) => columns.some((c) => c.id === p.id) && Math.abs(p.w - page.w) < 0.05)
+        : PRESETS.find((p) => !columns.some((c) => c.id === p.id) && p.w === page.w && p.h === page.h))
+    : PRESETS.find((p) => p.w === page.w && p.h === page.h)
   // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)

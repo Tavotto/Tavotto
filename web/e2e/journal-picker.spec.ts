@@ -87,6 +87,14 @@ test(
     await closeSettings(page)
     await expect.poll(() => pageWidthMm(page), { message: '页宽没有跟到所选期刊的栏宽' }).toBe(target)
 
+    // 右侧画布页的页面预设：当前宽度对上期刊的哪一栏就显示哪一栏，下拉里是该期刊的栏宽（不是课题组的）
+    const current = page.locator('[data-page-preset]').first()
+    await expect(current).toHaveAttribute('data-page-preset', 'double')
+    await current.click()
+    await expect(page.getByRole('option', { name: /单栏/ })).toContainText('85 mm')
+    await expect(page.getByRole('option', { name: /双栏/ })).toContainText(`${target} mm`)
+    await page.keyboard.press('Escape')
+
     // 一次撤销：页宽回来
     await page.keyboard.press('ControlOrMeta+z')
     await expect.poll(() => pageWidthMm(page), { message: '撤销一步页宽没有回到原值' }).toBe(before)

@@ -19,6 +19,10 @@ import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/store/actions'
 import { useProfileStore } from '@/store/profileStore'
+import journalVectors from '../../../../tests/golden/journal_vectors.json'
+import { loadCatalog } from '@/lib/journals'
+import { selectJournal } from '@/store/actions'
+import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 declare global {
@@ -335,5 +339,64 @@ describe('CanvasPage 页面预设宽度读当前出版规范', () => {
     } finally {
       useProfileStore.setState({ load: real })
     }
+  })
+})
+
+describe('CanvasPage 页面预设跟着所选期刊（ADR 0155）', () => {
+  const doc = () => useDocumentStore.getState().doc
+  const trigger = () => container.querySelector('[role="combobox"]')!
+  const openOptions = async () => {
+    await act(async () => container.querySelector<HTMLElement>('[role="combobox"]')!.click())
+    return [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+  }
+
+  beforeEach(() => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog(journalVectors.catalog) })
+  })
+  afterEach(() => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+  })
+
+  it('期刊自有栏位：下拉里是它自己的栏名与宽度，当前宽度对上哪栏就显示哪栏的名字', async () => {
+    act(() => selectJournal('fx-cols-inherit')) // 栏位 57 / 121 / 184，页宽 150 → 121
+    expect(doc().page.w).toBe(121)
+    expect(trigger().textContent).toContain('2 栏')
+    const opts = await openOptions()
+    const text = opts.map((o) => o.textContent).join('|')
+    expect(text).toContain('1 栏')
+    expect(text).toContain('57 mm')
+    expect(text).toContain('2 栏')
+    expect(text).toContain('121 mm')
+    expect(text).not.toContain('单栏')
+  })
+
+  it('选一栏只改页宽（高度不动），是一步撤销', async () => {
+    act(() => selectJournal('fx-cols-inherit'))
+    const h = doc().page.h
+    const before = useDocumentStore.getState().past.length
+    const opts = await openOptions()
+    const col3 = opts.find((x) => x.querySelector('[data-page-preset="col3"]'))!
+    await act(async () => col3.click())
+    expect(doc().page.w).toBe(184)
+    expect(doc().page.h).toBe(h)
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+    act(() => {
+      useDocumentStore.getState().undo()
+    })
+    expect(doc().page.w).toBe(121)
+    expect(doc().page.h).toBe(h)
+  })
+
+  it('宽度对不上期刊任何一栏：显示既有的「自定义」', () => {
+    act(() => selectJournal('fx-cols-inherit'))
+    act(() => useDocumentStore.getState().commit(literal('改宽'), (d) => void (d.page.w = 111)))
+    expect(container.querySelector('[role="combobox"] [data-page-preset="custom"]')).not.toBeNull()
+  })
+
+  it('期刊没规定栏宽：预设仍是课题组的单栏 / 双栏', async () => {
+    act(() => selectJournal('fx-delta'))
+    const opts = await openOptions()
+    expect(opts.some((o) => o.querySelector('[data-page-preset="single"]'))).toBe(true)
+    expect(opts.some((o) => o.querySelector('[data-page-preset="double"]'))).toBe(true)
   })
 })
