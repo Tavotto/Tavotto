@@ -1237,6 +1237,8 @@
     "convert": {
       "running": "正在生成可编辑版本…",
       "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
+      "writingLong": "正在生成较长的文件…",
+      "writingLongElapsed": "正在生成较长的文件…（已用 {{minutes}} 分钟）",
       "ready": "新版本生成好了，对照一下再决定",
       "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
       "adopted": "已采用，正在打开新版本…",
@@ -1261,6 +1263,7 @@
         "agent_tool_error_loop": "转换工具反复报错，已停止。",
         "agent_internal": "转换执行器出错，可以审阅并发送私密问题报告。",
         "target_missing": "助手没有写出新脚本",
+        "agent_write_denied": "AI 没能写入转换工作区，没有生成新脚本。",
         "syntax_error": "生成的脚本有语法错误",
         "other_file_changed": "助手改动了不该动的文件，已丢弃",
         "project_files_changed": "校验运行改动了项目文件，已丢弃",

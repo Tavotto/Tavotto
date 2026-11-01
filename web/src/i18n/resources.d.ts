@@ -6245,6 +6245,7 @@ export default interface Resources {
           "agent_quota": "模型服务额度不足或正在限流。",
           "agent_refused": "模型拒绝了这次转换。",
           "agent_tool_error_loop": "转换工具反复报错，已停止。",
+          "agent_write_denied": "AI 没能写入转换工作区，没有生成新脚本。",
           "budget_exhausted": "尝试次数用完了",
           "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
           "convert_context_changed": "生成时使用的资源已改变，请重新生成。",
@@ -6286,7 +6287,9 @@ export default interface Resources {
         "running": "正在生成可编辑版本…",
         "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
         "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
-        "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用"
+        "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用",
+        "writingLong": "正在生成较长的文件…",
+        "writingLongElapsed": "正在生成较长的文件…（已用 {{minutes}} 分钟）"
       },
       "detail": {
         "args": "参数",

@@ -882,6 +882,29 @@ def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = N
     )
 
 
+def write_denied(cand: ConvertCandidate) -> bool:
+    """本次 Codex 运行事实是否显示“写入被拒”，两种形状：
+    1. 有文件改动失败（`file_changes_failed`）或命令被拒绝（`commands_declined`）；
+    2. 沙盒起不来、命令在启动前就被策略拒绝（TVD-BCZ0，Windows）：收到过事件、回合正常结束（`last_event == turn.completed`），
+       却 0 条命令、0 个文件改动——事件流里没有任何 command_execution，第 1 条抓不到。
+    事实由桥在每次 CLI 进程结束时合并（`ai_agents.merge_run_facts`）放进 `cand.extras["run_facts"]`；没有事实（内置执行器等）= False。
+    只在“目标文件缺失”时才拿来改失败码，不影响其它路径。"""
+    facts = cand.extras.get("run_facts")
+    if not isinstance(facts, dict):
+        return False
+    if (
+        int(facts.get("file_changes_failed") or 0) > 0
+        or int(facts.get("commands_declined") or 0) > 0
+    ):
+        return True
+    return (
+        int(facts.get("events") or 0) > 0
+        and facts.get("last_event") == "turn.completed"
+        and int(facts.get("commands") or 0) == 0
+        and int(facts.get("file_changes") or 0) == 0
+    )
+
+
 def _failure_check(result: dict, st: str) -> CheckResult:
     """校验运行没通过 → 一条 `render.capture` 检查（任务的提交前验证与续跑共用，原因码闭集只写这一处）。"""
     if result["status"] == "cancelled":
@@ -961,7 +984,8 @@ class ConvertAdapter:
         except OSError:
             cand.new_bytes = None
         if not cand.new_bytes or not cand.new_bytes.strip():
-            out.append(_check("candidate.target", st, "integrity", FAILED, "target_missing"))
+            reason = "agent_write_denied" if write_denied(cand) else "target_missing"
+            out.append(_check("candidate.target", st, "integrity", FAILED, reason))
             out += self._project_untouched(cand, st)
             return out
         out.append(_check("candidate.target", st, "integrity", VERIFIED))
@@ -1313,6 +1337,28 @@ def stage_installed(cand: ConvertCandidate) -> None:
     _write_hold_meta(cand, _hold_meta(cand, STATE_INSTALLED))
 
 
+#: 转换任务的总时限（秒）：基线与 `ai_bridge.TIMEOUT_S` / `ai_tasks.Budget.max_wall_s` 默认同值；
+#: 耗时随源脚本规模上升（真模型实测 97 行约 250 s、391 行约 360 s，慢中转还要乘几倍），
+#: 所以按行数线性放宽、封顶。只影响转换，改图等其它 AI 任务仍是基线。
+CONVERT_TIMEOUT_BASE_S = 900
+CONVERT_TIMEOUT_PER_LINE_S = 2
+CONVERT_TIMEOUT_MAX_S = 1800
+
+
+def convert_timeout_s(lines: int) -> int:
+    """转换任务总时限 = 基线 900 s + 每行 2 s，封顶 1800 s（约 450 行起到顶）。纯函数；负数 / 非数当 0 行。"""
+    try:
+        n = max(0, int(lines))
+    except (TypeError, ValueError):
+        n = 0
+    return min(CONVERT_TIMEOUT_MAX_S, CONVERT_TIMEOUT_BASE_S + CONVERT_TIMEOUT_PER_LINE_S * n)
+
+
+def source_line_count(data: bytes) -> int:
+    """源脚本行数（按 `\n` 计；末行无换行也算一行；空文件 0）。"""
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
 def envelope_for(
     *,
     agent: str,
@@ -1323,6 +1369,10 @@ def envelope_for(
     correction_round: bool = False,
 ) -> ai_tasks.TaskEnvelope:
     refs = [{"kind": "script", "path_rel": cand.script_rel, "sha256": cand.base_sha256}]
+    wall = convert_timeout_s(source_line_count(getattr(cand, "base_bytes", b"")))
+    # 桥的进程看门狗读这一项（基线 + 额外），任务核心的墙钟预算读下面的 max_wall_s：两处同一个数
+    if isinstance(getattr(cand, "extras", None), dict):
+        cand.extras["timeout_extra_s"] = wall - CONVERT_TIMEOUT_BASE_S
     if cand.original_rel:
         refs.append({"kind": "figure", "path_rel": cand.original_rel})
     return ai_tasks.TaskEnvelope.from_dict(
@@ -1340,9 +1390,19 @@ def envelope_for(
             # Agent ≤ 1 + 修正 ≤ 1；每轮提交前各跑一次校验。
             # 装依赖后续跑的那一次修正（`correction_round`）本身就是那“一次修正”：只有这一轮 Agent、这一次校验，不再修正
             "budget": (
-                {"max_agent_runs": 1, "max_corrections": 0, "max_renders": 1}
+                {
+                    "max_agent_runs": 1,
+                    "max_corrections": 0,
+                    "max_renders": 1,
+                    "max_wall_s": wall,
+                }
                 if correction_round
-                else {"max_agent_runs": 2, "max_corrections": 1, "max_renders": 3}
+                else {
+                    "max_agent_runs": 2,
+                    "max_corrections": 1,
+                    "max_renders": 3,
+                    "max_wall_s": wall,
+                }
             ),
         }
     )

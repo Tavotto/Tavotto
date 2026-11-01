@@ -66,6 +66,7 @@ UNMET_CONSTRAINT_IDS = frozenset(
 #: 结局 `unmet[].reason_code` 的闭集（同上；缺省时回落到 verdict，故含 `failed` / `unknown`）。
 UNMET_REASON_CODES = frozenset(
     {
+        "agent_write_denied",
         "budget_exhausted",
         "cancelled",
         "candidate_changed_since_validation",

@@ -459,3 +459,65 @@ def test_every_observed_event_kind_is_registered_in_the_vocabularies():
         assert word in exectrace.vocabulary("cli_item")
     assert ai_agents.ENDPOINT_KINDS <= exectrace.vocabulary("endpoint_kind")
     assert os.sep  # 避免 os 导入被误删（路径分隔符参与工作区判定）
+
+
+# --------------------------------------------------------------------------- 长时间静默的生成（转换进度行「正在生成较长的文件…」）
+def test_generating_silent_judged_by_structured_facts_only(tmp_path):
+    clock = Clock()
+    _, facts = _session(tmp_path, clock)
+    assert not facts.generating_silent(45_000), "没收到过任何事件"
+    _feed(
+        facts,
+        clock,
+        [
+            (1.0, _ev(type="thread.started", thread_id="t1")),
+            (0.1, _ev(type="turn.started")),
+            (0.5, _item("item.completed", id="i0", type="reasoning", text=CANARY_TEXT)),
+        ],
+    )
+    clock.t += 44.0
+    assert not facts.generating_silent(45_000), "静默还不够久"
+    clock.t += 2.0
+    assert facts.generating_silent(45_000)
+    # 事件一来就恢复
+    facts.observe(_item("item.completed", id="i1", type="agent_message", text="ok"))
+    assert not facts.generating_silent(45_000)
+
+
+def test_generating_silent_is_false_while_a_command_is_open_or_after_the_turn_ends(tmp_path):
+    clock = Clock()
+    _, facts = _session(tmp_path, clock)
+    _feed(
+        facts,
+        clock,
+        [
+            (0.1, _ev(type="turn.started")),
+            (0.1, _item("item.started", id="i1", type="command_execution", command=CANARY_CMD)),
+            (120.0, _ev(type="noop")),  # 未知事件类型归 other，但时间过去了
+        ],
+    )
+    # 最后一个事件是 other、命令仍在跑：不是在写
+    assert facts.commands_open == 1 and not facts.generating_silent(45_000)
+    facts.observe(
+        _item("item.completed", id="i1", type="command_execution", command=CANARY_CMD, exit_code=0)
+    )
+    clock.t += 60.0
+    assert facts.generating_silent(45_000), "命令跑完后模型在生成"
+    facts.observe(_ev(type="turn.completed"))
+    clock.t += 60.0
+    assert not facts.generating_silent(45_000), "回合已结束"
+
+
+def test_generating_silent_ignores_external_tool_calls(tmp_path):
+    clock = Clock()
+    _, facts = _session(tmp_path, clock)
+    _feed(
+        facts,
+        clock,
+        [
+            (0.1, _ev(type="turn.started")),
+            (0.1, _item("item.started", id="m", type="mcp_tool_call")),
+        ],
+    )
+    clock.t += 90.0
+    assert not facts.generating_silent(45_000)

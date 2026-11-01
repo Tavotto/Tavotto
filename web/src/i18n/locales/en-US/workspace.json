@@ -1300,6 +1300,8 @@
     "convert": {
       "running": "Making an editable version…",
       "runningElapsed": "Generating the editable version… ({{minutes}} min so far)",
+      "writingLong": "Writing a long file…",
+      "writingLongElapsed": "Writing a long file… ({{minutes}} min so far)",
       "ready": "The new version is ready. Compare, then decide",
       "stoppedLate": "The conversion had already finished; the stop came too late. Compare, and adopt it if you want it",
       "adopted": "Adopted. Opening the new version…",
@@ -1324,6 +1326,7 @@
         "agent_tool_error_loop": "The conversion stopped after repeated tool errors.",
         "agent_internal": "The conversion executor encountered an error. You can review and send a private report.",
         "target_missing": "The assistant didn’t write the new script",
+        "agent_write_denied": "The AI couldn’t write to the conversion workspace, so no new script was made.",
         "syntax_error": "The generated script has a syntax error",
         "other_file_changed": "The assistant changed files it shouldn’t have, so it was discarded",
         "project_files_changed": "The validation run changed project files, so it was discarded",

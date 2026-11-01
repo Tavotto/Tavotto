@@ -925,3 +925,44 @@ def test_real_cli_detection_smoke():
             continue
         assert res.version and res.source in ai_agents.SOURCES
         assert res.readiness.state in ("ready", "needs_auth", "unknown")
+
+
+# ---------------- Windows 上 Codex 的沙盒级别（TVD-BCZ0）-------------------------------
+_WIN_SANDBOX = 'windows.sandbox="unelevated"'
+
+
+def _codex_argvs(monkeypatch, name, endpoint_args=()):
+    monkeypatch.setattr(ai_agents.os, "name", name)
+    run = ai_agents.RunContext(
+        argv=["codex"], prompt="p", cwd="/w", endpoint_args=list(endpoint_args)
+    )
+    fix = ai_agents.FixRunContext(
+        argv=["codex"],
+        prompt="p",
+        cwd="/w",
+        mcp_command=["m", "fix-mcp"],
+        mcp_name="tavotto_fix",
+        token_env="TAVOTTO_FIX_TOKEN",
+        tool_timeout_s=10,
+        endpoint_args=list(endpoint_args),
+    )
+    codex = ai_agents.CodexAgent()
+    return codex.build_command(run).argv, codex.build_fix_command(fix).argv
+
+
+def test_codex_argv_pins_unelevated_windows_sandbox_on_windows(monkeypatch):
+    for argv in _codex_argvs(monkeypatch, "nt"):
+        assert argv.count(_WIN_SANDBOX) == 1
+        assert argv[argv.index(_WIN_SANDBOX) - 1] == "-c"
+
+
+def test_codex_argv_has_no_windows_sandbox_override_elsewhere(monkeypatch):
+    for argv in _codex_argvs(monkeypatch, "posix"):
+        assert not any("windows.sandbox" in a for a in argv)
+
+
+def test_codex_argv_does_not_override_explicit_windows_sandbox(monkeypatch):
+    explicit = ["-c", 'windows.sandbox="elevated"']
+    for argv in _codex_argvs(monkeypatch, "nt", explicit):
+        assert _WIN_SANDBOX not in argv
+        assert argv.count('windows.sandbox="elevated"') == 1

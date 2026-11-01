@@ -325,6 +325,9 @@ def test_silent_conversion_cli_times_out_without_waiting_for_a_stdout_line(
 ):
     _m, client, figs, state = project
     monkeypatch.setattr(ai_bridge, "TIMEOUT_S", 0.5)
+    # 转换时限按脚本行数放宽（每行 +2 s，见 ai_convert.convert_timeout_s）；这条只看「CLI 一直不出声也照样超时」，
+    # 关掉按行加时，否则时限 = 0.5 s + 2 s × 行数，Windows 上进程启动慢就会超过下面的等待（#1604 合并组 Windows 红）
+    monkeypatch.setattr(ai_convert, "CONVERT_TIMEOUT_PER_LINE_S", 0)
     state["code"] = f"import time; sys.stdout.write({output!r}); sys.stdout.flush(); time.sleep(30)"
     before = (figs / "fig.py").read_bytes()
     sid = _start(client).get_json()["session"]

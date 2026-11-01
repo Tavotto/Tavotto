@@ -4015,3 +4015,26 @@ def test_desktop_window_paste_test_compares_sizes_within_one_view():
     tail = body[body.index("assert len(new) == 1") :]
     assert "original[" not in tail, "粘贴后的尺寸不能和粘贴前量的原对象比：取景已经变了"
     assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"
+
+
+def test_codex_on_windows_runs_with_unelevated_sandbox(monkeypatch):
+    """TVD-BCZ0：Windows 上 Codex 默认沙盒起不来（所有命令启动前被拒、0 命令 0 写入），
+    `-c windows.sandbox="unelevated"` 是 Lab 真机验证过的修法；转换与修复会话都要带。"""
+    from tavotto.engine import ai_agents
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+    codex = ai_agents.CodexAgent()
+    run = codex.build_command(ai_agents.RunContext(argv=["codex"], prompt="p", cwd="C:\\w")).argv
+    fix = codex.build_fix_command(
+        ai_agents.FixRunContext(
+            argv=["codex"],
+            prompt="p",
+            cwd="C:\\w",
+            mcp_command=["m", "fix-mcp"],
+            mcp_name="tavotto_fix",
+            token_env="T",
+            tool_timeout_s=10,
+        )
+    ).argv
+    for argv in (run, fix):
+        assert 'windows.sandbox="unelevated"' in argv
