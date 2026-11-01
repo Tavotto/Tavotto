@@ -27,7 +27,7 @@ import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { INSPECTOR_LABEL_COL, INSPECTOR_LABEL_W } from './layout'
 import { MmField } from './MmField'
-import { usePagePresets } from './pagePreset'
+import { usePagePresetState } from './pagePreset'
 
 /** 下拉里「自定义」那一项的取值：尺寸对不上任何预设时它就是当前值 */
 const CUSTOM = 'custom'
@@ -96,14 +96,13 @@ export function CanvasPage() {
     locale: i18n.language,
   } as const
   // 预设宽度跟着当前画布绑定的规范走（`usePagePresets` 订阅绑定与规范清单，换规范 / 同步新版后立刻跟随）
-  const PRESETS = usePagePresets()
+  const { presets: PRESETS, active } = usePagePresetState()
   // 跟随全局清单的绑定（`follow` / 只有 id 的旧绑定）要先有那份清单：没打开过样式 / 规范 / 导出界面时
   // store 里只有内置规范，自定义规范会被当成缺席、退到快照或默认规范（与 StylePanel 同一个做法）
   const specsLoaded = useProfileStore((s) => s.loaded)
   useEffect(() => {
     if (!specsLoaded) void useProfileStore.getState().load()
   }, [specsLoaded])
-  const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
   const pageSummary = [
     cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) }),
     active && (active.label ?? cv(`presets.${active.id}.label`)),
@@ -138,44 +137,47 @@ export function CanvasPage() {
   const pageControls = (
     <div className="flex flex-col gap-1.5">
       <Row label={cv('preset')} labelWidth={LABEL_W}>
-        <Select
-          className="min-w-0 flex-1"
-          ariaLabel={cv('presetGroup')}
-          value={active?.id ?? CUSTOM}
-          onChange={(id) => {
-            const p = PRESETS.find((x) => x.id === id)
-            if (p) setPageSize(p.w, p.h)
-          }}
-          options={[
-            ...PRESETS.map((p) => ({
-              value: p.id,
-              hint: p.label
-                    ? `${Math.round(p.w * 10) / 10} mm`
-                    : cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
-              label: (
-                <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
-                  <PageThumb w={p.w} h={p.h} />
-                  <span className="truncate">{p.label ?? cv(`presets.${p.id}.label`)}</span>
-                </span>
-              ),
-            })),
-            // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
-            // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
-            ...(active
-              ? []
-              : [
-                  {
-                    value: CUSTOM,
-                    label: (
-                      <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
-                        <PageThumb w={page.w} h={page.h} />
-                        <span className="truncate">{cv('presetCustom')}</span>
-                      </span>
-                    ),
-                  },
-                ]),
-          ]}
-        />
+        {/* 预设下拉的稳定锚点：触发器 `[data-page-preset-select] [data-select-trigger]`，选项 `[data-select-option=<预设 id>]` */}
+        <div data-page-preset-select className="flex min-w-0 flex-1">
+          <Select
+            className="min-w-0 flex-1"
+            ariaLabel={cv('presetGroup')}
+            value={active?.id ?? CUSTOM}
+            onChange={(id) => {
+              const p = PRESETS.find((x) => x.id === id)
+              if (p) setPageSize(p.w, p.h)
+            }}
+            options={[
+              ...PRESETS.map((p) => ({
+                value: p.id,
+                hint: p.label
+                      ? `${Math.round(p.w * 10) / 10} mm`
+                      : cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
+                label: (
+                  <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
+                    <PageThumb w={p.w} h={p.h} />
+                    <span className="truncate">{p.label ?? cv(`presets.${p.id}.label`)}</span>
+                  </span>
+                ),
+              })),
+              // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
+              // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
+              ...(active
+                ? []
+                : [
+                    {
+                      value: CUSTOM,
+                      label: (
+                        <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
+                          <PageThumb w={page.w} h={page.h} />
+                          <span className="truncate">{cv('presetCustom')}</span>
+                        </span>
+                      ),
+                    },
+                  ]),
+            ]}
+          />
+        </div>
       </Row>
       {/* 宽、高两个半列 + 横竖交换坐在状态槽里（与属性页的恢复钮同一格） */}
       <div data-page-size-row>
@@ -246,7 +248,7 @@ export function CanvasPage() {
               </span>
             )
           ) : (
-            <span className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
+            <span data-canvas-size-meta className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
               {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}
               <Numbers value={page.w} {...numbersProps} />
               {' × '}

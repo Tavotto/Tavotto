@@ -11,7 +11,7 @@
     publishers{ pid: { label, sources{ sid: {url, kind, retrieved, coverage?, archive_url?, page?} },
                        rules{ "<profile 字段路径>" | "info.<id>": rule } } }
     journals  { jid: { label, publisher, issn?, aliases?, sources?, rules? } }
-    rule = {value, src, quote, anchor?, qualifier?, value_alt?, stage?, mark?, derivation?, unset?}
+    rule = {value, src, quote, anchor?, qualifier?, value_alt?, stage?, mark?, derivation?, snapshot?, unset?}
 
 **两类规则共用一层外壳**：键是 `journal-base-v1` 里的字段路径的，折成 `JournalOverride`
 进预检（求值器一行不改）；键是 `info.<id>`（闭集 `INFO_IDS`）的只是**展示项**，同样强制
@@ -143,6 +143,8 @@ _NOT_RULES = frozenset({"profile_id", "version", "label", "source", "listed", "a
 _URL_RE = re.compile(r"^https://[^\x00-\x20\x7f]+$")
 _ANCHOR_RE = re.compile(r"^#:~:text=[^\x00-\x20\x7f]+$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: 快照图的文件名：内容寻址（sha256），不许带路径或 URL。同源对：`journals.ts` 的 `SNAPSHOT_FILE_RE`
+_SNAPSHOT_FILE_RE = re.compile(r"^snapshots/[0-9a-f]{64}\.webp$")
 
 #: 失败码闭集。严格同源对：`web/src/lib/journals.ts` 的 `JOURNAL_ERROR_CODES`。
 ERROR_CODES = (
@@ -162,6 +164,7 @@ ERROR_CODES = (
     "journal_rule_stage_invalid",  # stage 不在闭集
     "journal_rule_mark_invalid",  # mark 不是 quote 的子串 / derivation 为空白
     "journal_rule_unset_invalid",  # unset 的用法不对（出版社上写、带 value、出版社没这条）
+    "journal_rule_snapshot_invalid",  # snapshot 不是 {file: snapshots/<sha256>.webp, width, height 正整数}
     "journal_merge_invalid",  # 折叠后的结果过不了 validate_spec
     "journal_unknown",  # journal_id 不在库里
 )
@@ -352,6 +355,29 @@ def _coverage_of(src: dict, default: str) -> str:
     return src.get("coverage", default)
 
 
+def _check_snapshot(snap: object, w: str) -> None:
+    """快照图描述：`{file, width, height}`，file 内容寻址、宽高正整数（bool 不算整数）。"""
+    ok = (
+        isinstance(snap, dict)
+        and set(snap) == {"file", "width", "height"}
+        and isinstance(snap["file"], str)
+        and _SNAPSHOT_FILE_RE.fullmatch(snap["file"]) is not None
+        and all(
+            (
+                (isinstance(snap[k], int) and not isinstance(snap[k], bool))
+                or (isinstance(snap[k], float) and snap[k].is_integer())
+            )
+            and snap[k] > 0
+            for k in ("width", "height")
+        )
+    )
+    if not ok:
+        raise _fail(
+            "journal_rule_snapshot_invalid",
+            f"{w}: snapshot 必须是 {{file: snapshots/<sha256>.webp, width, height}}（宽高为正整数）",
+        )
+
+
 def _check_rules(
     rules: object,
     visible_sources: dict,
@@ -404,6 +430,8 @@ def _check_rules(
             raise _fail("journal_rule_mark_invalid", f"{w}: mark 必须是 quote 里的一段原文")
         if "derivation" in rule and not _non_blank(rule["derivation"]):
             raise _fail("journal_rule_mark_invalid", f"{w}: derivation 不能为空串")
+        if "snapshot" in rule:
+            _check_snapshot(rule["snapshot"], w)
         if publisher_scope and _coverage_of(visible_sources[src], "publisher_general") == (
             "single_journal_sample"
         ):
@@ -688,6 +716,7 @@ def _field_source(eff: dict, path: str) -> dict:
         "stage": rule.get("stage", "any"),
         "mark": rule.get("mark", ""),
         "derivation": rule.get("derivation", ""),
+        "snapshot": copy.deepcopy(rule.get("snapshot")),
         "unset": eff["unset"],
         "quote": rule["quote"],
         "src": eff["sid"],

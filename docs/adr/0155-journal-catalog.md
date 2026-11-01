@@ -1,6 +1,6 @@
 # ADR 0155：内置期刊标准库——期刊 = 覆盖 + 出处，未规定的项不补
 
-日期：2026-10-31 · 状态：**Accepted（PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；选择器与出处卡、真实数据、出处巡检另起 PR）**。
+日期：2026-10-31 · 状态：**Accepted（PR 2 合入但入口默认关闭，数据就绪后再开（2026-11-01 用户决定）；PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；PR 2：选择器、出处卡、画布页宽跟栏；真实数据、出处巡检、远程目录另起 PR）**。
 相关：[0006 版本化出版规范](0006-codex-mcp-app-and-publication-profile.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；
 规则全文 `docs/rules/backend/profiles-and-preflight.md`「内置期刊标准库」。
 **1.0 豁免已由维护者 2026-10-31 登记（`docs/1.0-release-readiness.md` §1.8）。**
@@ -42,7 +42,7 @@
 
 `engine/journals.py` 与 `web/src/lib/journals.ts` 同名同义（严格同源对），加载时校验：每条 rule 有 `value`、有 `src` 且 `src` 在可见 sources 里、`quote` 非空、
 键路径合法、`value` 的 JSON 类型与底里该字段一致，折叠后整份结果过 `validate_spec`（TS 侧 `validateSpecShape` 是 `_validate` 的镜像）。
-失败码闭集（18 个，见 `journals.ERROR_CODES`）：`journal_catalog_schema` / `journal_source_invalid` / `journal_source_coverage` / `journal_publisher_unknown` / `journal_alias_conflict` / `journal_rule_value_missing` /
+失败码闭集（19 个，见 `journals.ERROR_CODES`，含 §6 的 `journal_rule_snapshot_invalid`）：`journal_catalog_schema` / `journal_source_invalid` / `journal_source_coverage` / `journal_publisher_unknown` / `journal_alias_conflict` / `journal_rule_value_missing` /
 `journal_rule_src_missing` / `journal_rule_src_unknown` / `journal_rule_quote_empty` / `journal_rule_anchor_invalid` / `journal_rule_path_unknown` / `journal_rule_value_type` /
 `journal_rule_qualifier_invalid` / `journal_rule_stage_invalid` / `journal_rule_mark_invalid` / `journal_rule_unset_invalid` / `journal_merge_invalid` / `journal_unknown`。校验在加载处做，所以**一条没出处的数值进不了库**——这是对「严禁凭记忆写数值」的结构性看护。
 
@@ -75,7 +75,7 @@
   用户切到 Science 时画布预设显示它自己的「2 栏 121 mm / 3 栏 184 mm」，不硬套单栏 / 双栏。下游**只读这一种形状**（`derive_page_columns` / `derivePageColumns`）：写了 `page_columns` 就用它，没写由 `widths_mm` 派生
   「单栏 / 双栏」两档（label 走现有词表）。期刊写了 `page_columns` 时以它为准，折叠把 `widths_mm.single/double` 由 **exact** 栏位派生（最窄 = single、最宽 = double，只有一档时 double 为 null），保持现有求值器与 `columnOf` 兼容；
   规则本身（`page_columns` 这条）qualifier 只收 exact，栏位各自带 qualifier，只有 exact 栏位参与判据。预检 `page-width`：页宽命中任一 exact 栏位即通过，提示列出全部栏位（带 label）。
-  画布 `pageColumns` / `resolvePageColumns` 已返回这一形状（id 为 string），属性栏预设按 label 显示；**切期刊时页宽跟着换的画布联动留给选择器 PR**。
+  画布 `pageColumns` / `resolvePageColumns` 已返回这一形状（id 为 string），属性栏预设按 label 显示；**切期刊时页宽跟着换的画布联动由选择器 PR 完成**（取离当前页宽最近的一栏；期刊没规定栏宽则页宽不动；与绑定同一次提交，撤销一步全回去）。
 * **建议性提示（用户 2026-10-31 裁决）**：qualifier 为 `recommended` / `typical` 的字号数值不当硬判据，但要提示。新增规则路径 `min_script_font_size_pt`（上下标最小字号）与检查 id `font-size-recommended`（**suggestion** 级，只有从期刊折叠出 `advisories` 的 profile 才会出现）。
   这两类规则（`min_script_font_size_pt` 任何 qualifier；`min_effective_font_size_pt` 的 recommended / typical）**不折进字段**，而折成 `advisories: [{check, role: body_min|script_min, value_pt, qualifier, journal, quote}]`（`journal` 是声明它的出版社 / 期刊名，`quote` 是原话）；
   `journal_sources()` 里它们的 `affects` 是 `advice`。**求值器分不出上下标**，所以只进提示不进判据：有效字号低于正文建议值（没有就按上下标值）的文字都给一条提示，文案如「Elsevier 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号（原文：…）」。
@@ -92,7 +92,7 @@
 ### 4. 项目快照机制原样适用
 
 文档里仍是 `{id, journal?, snapshot?, …}`（ADR 0029）：选期刊 = 绑定 `journal-base-v1` 并写入折叠出的 `journal` 覆盖（**存覆盖，不只存期刊 id**——只存 id 会让库更新悄悄改掉已定稿项目的结论，也让没有期刊库的 MCP / Python 侧无法复现），规则全文快照照旧；另存 `journalRef: {id, catalogRev, retrieved}` 与生效字段出处的精简版（value / quote / link / retrieved / 两种 scope，几 KB），用户手改了覆盖则 `journalRef` 失效、界面改说「自定义」。期刊标准更新不会悄悄改掉已定稿项目的结论，
-「有新版可同步」的判据仍是内容不等、由用户确认。本 PR 对 `specBinding.ts` 只改了清单与解析（`builtinCatalog` 过滤 `listed:false`、`isHiddenBuiltin`、`resolveDocumentSpec` 对隐藏底不报 `globalMissing`）；绑定的**写入**逻辑（存 `journal` / `journalRef`）不改，留给选择器 PR。
+「有新版可同步」的判据仍是内容不等、由用户确认。PR 1 对 `specBinding.ts` 只改了清单与解析（`builtinCatalog` 过滤 `listed:false`、`isHiddenBuiltin`、`resolveDocumentSpec` 对隐藏底不报 `globalMissing`）；绑定的**写入**由 PR 2 的 `actions.selectJournal` 完成（存 `journal` + `journalRef {id, catalogRev, retrieved, label}` + 精简出处 `journalSources`；`specBinding.journalCarry` 保证换成别的规范时期刊字段整套放下）。
 
 ### 4b. 数据分发：仓库只放种子，完整目录由服务端提供（用户 2026-10-31 裁决：期刊数据是公司资产，不进仓库）
 
@@ -110,6 +110,27 @@
 
 * 本 PR 的 `publishers` / `journals` **留空**，不含任何真实期刊数值或引文；golden 向量用测试夹具期刊（`fx-*`、`example.invalid`）。仓库内的种子数据按出版社分 PR，每条逐一人工核对，没核过的不进库；完整目录不进仓库（§4b）。
 * 不做继承链、不做期刊版本历史（出处的 `retrieved` 即快照时间）、不自动跟随网页变化（出处巡检脚本另起 PR，变了只开 issue、不自动改数值）。
+
+### 6. 出处快照图（PR 2 追加；用户 2026-11-01 裁决）
+
+* **每条规则（含 `info.*`）可选 `snapshot: {file, width, height}`**：采集流水线在采集时渲染的「原网页 / PDF 页高亮快照」——把引文那一段用**黄色荧光笔**标出，并**裁成那一段的短图**。
+  `file` 必须整串匹配 `^snapshots/[0-9a-f]{64}\.webp$`（内容寻址：文件名就是内容的 sha256；不许路径、不许 URL，Python `fullmatch` / TS 无 m 标志的 `$`），`width` / `height` 是正整数（`520.0` 与 `520` 同义，`true` 不算）；
+  三个键齐且只有这三个。失败码 `journal_rule_snapshot_invalid`（失败码闭集 19 个，两侧同名同义）。`journal_sources()` 每条带 `snapshot`（没有 = null）。
+* **只存短截图，从不存整页**（版权与包体积）；整页永远只在原网页 / 存档里。
+* **分发**：快照由采集流水线产出。**种子**把它随包分发（打进前端包的目录）；**远程目录**把它当作**该目录版本的资产**提供。
+* **解析**：客户端把 `file` 相对「目录资产根」解析——资产根由 `store/journalCatalogStore` 提供：种子 = 随包目录（`BUNDLED_ASSET_BASE`，`/journal-catalog/`），远程目录由拉取它的 PR 给出那一版的根（`setCatalog(raw, assetBase)`）。
+* **出处卡**：有快照 = 全宽快照图（高度跟图、最高约 240px、更高在卡内滚、细边框）；**没有快照或图加载失败 = 退回摘录框**（命中的数仍用 `<mark>`），不出错误态。换算说明（`derivation`）不在卡里显示。
+* 测试夹具快照图由 `scripts/gen_journal_snapshot_fixture.py` 生成（`tests/fixtures/journal_snapshots/snapshots/<sha256>.webp`，一张假的「原网页」，非任何真实页面）。
+
+### 8. 入口开关（PR 2 追加）
+
+**PR 2 合入但入口默认关闭，数据就绪后再开（2026-11-01 用户决定）**：`web/src/lib/journalUi.ts` 的常量 `JOURNAL_CATALOG_UI = false`（前端没有功能开关机制，功能登记表只有 active / removed，所以只加这一个常量）。关着时设置 › 期刊规范里的「期刊」行与「期刊要求」、问题面板行尾的「出处」图标、导出对话框里的期刊名、设置搜索里的 `spec.journal` 都不出现，界面与此 PR 之前相同；
+带期刊绑定的旧文档照旧按绑定预检，画布页预设的期刊栏名也照旧跟着绑定走（它们读文档里的绑定，不是入口）。打开 = 把常量改成 `true`；测试 / e2e 用开发期 localStorage 键 `tavotto.dev.journalCatalogUi = '1'`，生产界面没有任何入口能设它。
+关着期间不写发行说明（用户在这个版本里看不到它），打开那个 PR 补。
+
+### 7. 「不按期刊」（PR 2 追加）
+
+选期刊时绑定里记 `journalPrev {profile, pageW}`（选之前的规范绑定与页宽；从一本期刊换到另一本沿用最初那份）。选择器列表最上面的「不按期刊」一次提交退回它（撤销一步回到期刊）；没有记录就退回默认规范、页宽不动。不另设按钮。
 
 ## 后果
 

@@ -118,8 +118,10 @@ import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
+import { journalCatalogUi } from "@/lib/journalUi";
 import {
   bindingFor,
+  journalCarry,
   resolveDocumentSpec,
   type SpecCatalogEntry,
 } from "@/lib/specBinding";
@@ -574,6 +576,10 @@ export function ExportDialog() {
   /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
   const locale = useLocale();
   const checkSpecName = useMemo(() => {
+    // 按期刊选的绑定（中性底 + 期刊覆盖）：结论里说期刊名，不说「期刊底」
+    const journalName = (checkOnActive ? doc.profile : canvases.find((c) => c.id === checkCanvasId)?.profile)
+      ?.journalRef?.label;
+    if (journalName && journalCatalogUi()) return journalName;
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;
@@ -581,7 +587,7 @@ export function ExportDialog() {
     // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
     // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, specRecords, locale]);
+  }, [resolved, specRecords, locale, checkOnActive, doc.profile, canvases, checkCanvasId]);
   /** 别的画布上的规范在这里改不了（`applyProfile` 写的是当前画布）——说出原因，不静默改错画布 */
   const checkCanvasName = checkOnActive
     ? null
@@ -1035,7 +1041,7 @@ export function ExportDialog() {
       msg("history.setPublicationProfile", undefined, "workspace"),
       (d) => {
         d.profile = bindingFor(entry, {
-          journal: doc.profile?.journal,
+          ...journalCarry(doc.profile, entry.id),
           follow: doc.profile?.follow,
         });
       },
@@ -1050,7 +1056,7 @@ export function ExportDialog() {
       msg("history.syncPublicationProfile", undefined, "workspace"),
       (d) => {
         d.profile = bindingFor(entry, {
-          journal: doc.profile?.journal,
+          ...journalCarry(doc.profile, entry.id),
           follow: doc.profile?.follow,
         });
       },
