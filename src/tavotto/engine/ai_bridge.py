@@ -2107,6 +2107,8 @@ def run(
                     "script": script,
                     "refresh": sess["refresh"],
                     "rev": sess.get("rev"),
+                    # 失败码随终态一起推（TVD-VSNF）：前端只靠这条事件收尾，缺了它「AI 没跑起来」会被说成「没通过写回前检查」
+                    **({"error": sess["error"]} if sess.get("error") else {}),
                     **({"task": dict(sess["task"])} if task is not None else {}),
                 },
             )
@@ -2475,6 +2477,7 @@ def resume_figure_edit(
                     "refresh": sess["refresh"],
                     "task": dict(sess["task"]),
                     "rev": sess.get("rev"),
+                    **({"error": sess["error"]} if sess.get("error") else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001

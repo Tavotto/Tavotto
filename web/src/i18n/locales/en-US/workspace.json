@@ -255,9 +255,9 @@
   "fastEdit": {
     "added": "{{name}} added to the canvas",
     "enteredLayout": "Multi-figure layout",
-    "addedForEdit": "Created a canvas for editing",
-    "addedForEditLive": "Created a canvas for editing; Remove undoes adding the figure.",
-    "removeAdded": "Remove",
+    "addedForEdit": "Opened in new canvas \"{{name}}\"",
+    "addedForEditLive": "Opened in new canvas \"{{name}}\"; Undo takes the figure back out.",
+    "removeAdded": "Undo",
     "alreadyOnCanvas": "{{name}} is already on the canvas",
     "connectSource": "Link source script",
     "figureMissing": "{{name}} is not in this project",

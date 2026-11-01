@@ -1759,7 +1759,10 @@ class Worker(wireproto.V1Handler):
                         runpy.run_path(str(self.script), run_name="__main__")
                 else:
                     with _capture_entry_sha(self.script, entry_shas):
-                        if self.script_source != self.script:
+                        # 文件名带点号（`4-51.名称.py` / `fig.v2.py`，TVD-6ZMX）：`import_module` 会把点号当包分隔符
+                        # 先找 `4-51` 包 → ModuleNotFoundError，而 `python 脚本.py` 跑得好好的。按文件路径装，模块名仍是
+                        # stem（`__name__` 与无点号的入口脚本同一口径）；影子 loader 在 source == display 时就是原件。
+                        if self.script_source != self.script or "." in self.script.stem:
                             module = _import_shadow_entry(
                                 self.script, self.script_source, self.script.stem
                             )

@@ -44,6 +44,22 @@ test('教程：拖 Fig2 子图底边靠近 Fig1 底边，途经整图中线不�
   }
   await addCard('Fig1_kinetics.pdf', 1)
   await addCard('Fig2_correlation.pdf', 2)
+  // 新图不再叠在旧图正上方（审计 B1：落在空位，必要时缩小）。下面两次拖动从「两张同位同大」出发：
+  // 用属性栏把 Fig2 的 X / Y / W 设成 Fig1 的值（锁比例，H 跟着走），回到原来的起点
+  {
+    const field = (n: string) => page.locator('[data-inspector-panel]').getByLabel(`${n} (mm)`, { exact: true })
+    const a0 = (await objs.nth(0).boundingBox())!, b0 = (await objs.nth(1).boundingBox())!
+    await page.mouse.click(a0.x + a0.width / 2, a0.y + a0.height / 2)
+    const geo: Record<string, string> = {}
+    for (const n of ['X', 'Y', 'W']) geo[n] = await field(n).inputValue()
+    await page.mouse.click(b0.x + b0.width / 2, b0.y + b0.height / 2)
+    for (const n of ['W', 'X', 'Y']) {
+      await field(n).fill(geo[n])
+      await field(n).press('Enter')
+    }
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(500)
+  }
   const drag = async (i: number, dx: number, dy: number) => {
     const b = (await objs.nth(i).boundingBox())!
     const cx = b.x + b.width / 2, cy = b.y + b.height / 2

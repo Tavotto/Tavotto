@@ -71,8 +71,8 @@ test('流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、
   await page.waitForTimeout(800)
 
   // undo 两次（字号那轮是一条历史、颜色一条）→ 计数归零；redo 回到 2
-  await page.getByRole('button', { name: '撤销' }).click()
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
   await page.getByRole('button', { name: '重做' }).click()
   await page.getByRole('button', { name: '重做' }).click()

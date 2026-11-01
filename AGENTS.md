@@ -76,6 +76,14 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 - 改了字体 / 字形归属、`web/src` 或引擎四模块、新增 `sys.path` 源码根，以及完整验证链与指导文档
   门禁（`python scripts/dev/agents_budget.py --check`）：`docs/rules/repo/local-verification.md`。
 
+## 会话卫生（多会话 / 子代理并行时）
+
+- 主工作区常被并发会话切分支、HEAD ≠ origin/main：动手前 `git fetch && git status -sb`，分支工作
+  一律进独立 worktree；推送写明 refspec（`git push origin HEAD:<分支>`）。
+- 会话开始先核 `git config user.name` / `user.email`（身份错了全程零提示）；提交不加 Co-Authored-By 尾注。
+- vitest 大片 `localStorage is undefined` 先怀疑 Node 26：`NODE_OPTIONS=--no-experimental-webstorage` 重跑。
+- 结束进程只按自己启动的 PID 杀，禁用 `pkill -f` 这类按模式匹配的杀法。
+
 ## Review guidelines
 
 给 Codex 代码评审。每个 PR 通常只有**一次**完整评审（`docs/ci/pr-review-tiers.md`），一次报全。

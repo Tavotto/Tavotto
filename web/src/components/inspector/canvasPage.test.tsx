@@ -23,6 +23,8 @@ import journalVectors from '../../../../tests/golden/journal_vectors.json'
 import { loadCatalog } from '@/lib/journals'
 import { selectJournal } from '@/store/actions'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
+import type { CanvasObject, PanelObject } from '@/types/document'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 declare global {
@@ -398,5 +400,75 @@ describe('CanvasPage 页面预设跟着所选期刊（ADR 0155）', () => {
     const opts = await openOptions()
     expect(opts.some((o) => o.querySelector('[data-page-preset="single"]'))).toBe(true)
     expect(opts.some((o) => o.querySelector('[data-page-preset="double"]'))).toBe(true)
+  })
+})
+
+/**
+ * UI 审计 B2：单图编辑按原图尺寸导出，页面尺寸这时不生效——画布页不再把 150 × 100 的版面当主角摆出来，
+ * 降成一行摘要（点开仍能改，加第二张图后用得上）。
+ */
+describe('单图编辑时的画布页', () => {
+  const panel = {
+    id: 'p1',
+    type: 'panel',
+    name: 'Fig1_kinetics',
+    fileId: 'Fig1_kinetics.pdf',
+    fileKind: 'pdf',
+    nativeW: 73.5,
+    nativeH: 57.8,
+    overrides: [],
+    x: 10,
+    y: 10,
+    w: 73.5,
+    h: 57.8,
+  } as PanelObject
+
+  const remount = () => {
+    act(() => root.unmount())
+    root = createRoot(container)
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <CanvasPage />
+        </TooltipProvider>,
+      ),
+    )
+  }
+
+  afterEach(() => useWorkspaceStore.getState().clear())
+
+  it('头部讲单图编辑与导出尺寸，页面尺寸收成一行摘要；点开才有预设与宽高', async () => {
+    act(() =>
+      useDocumentStore.getState().commit(literal('图'), (d) => {
+        d.objects = [panel as CanvasObject]
+      }),
+    )
+    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
+    remount()
+    expect(container.querySelector('[data-single-export-size]')?.textContent?.replace(/\s/g, ' ')).toContain('73.5 × 57.8 mm')
+    expect(container.querySelector('[data-single-export-note]')).not.toBeNull()
+    expect(container.querySelector('[data-page-size-row]'), '收起时没有宽高').toBeNull()
+    act(() => fold('canvas-page').click())
+    expect(container.querySelector('[data-page-size-row]')).not.toBeNull()
+  })
+
+  it('按期刊选的项目：页面摘要与下拉选中项是同一个判据，显示该期刊的栏名（只看宽度）', () => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog(journalVectors.catalog) })
+    act(() =>
+      useDocumentStore.getState().commit(literal('图'), (d) => {
+        d.objects = [panel as CanvasObject]
+      }),
+    )
+    act(() => selectJournal('fx-cols-inherit')) // 页宽 → 121，高度不动
+    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
+    remount()
+    expect(fold('canvas-page').textContent).toContain('2 栏')
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+  })
+
+  it('排版里照旧：页面尺寸是主角，没有摘要行', () => {
+    expect(container.querySelector('[data-single-export-note]')).toBeNull()
+    expect(container.querySelector('[data-page-size-row]')).not.toBeNull()
+    expect(container.querySelector('[data-fold="canvas-page"]')).toBeNull()
   })
 })

@@ -970,6 +970,14 @@
   outline-offset: 2px;
 }
 
+/* 指针操作之后的程序化 focus 不画环（2026-10-31 UI 审计 D4，`lib/inputModality`）：WebKit 在鼠标点击之后，
+   经 Enter 进图内编辑 / 菜单关闭还焦点这类程序化 focus 仍会让 :focus-visible 成立。
+   `data-input-modality` 只在指针按下时是 pointer、Tab / 方向键时回到 keyboard；没有它（启动后无指针操作）一切照旧。
+   不用 `!important`：未分层的规则本来就压过 utilities 层。 */
+:root[data-input-modality='pointer'] :focus-visible {
+  outline: none;
+}
+
 /* 内凹焦点环：同一根 2px accent，但画在元素边框内侧（offset -2px）。给密排的列表 / 树行用——行左右各让 4px、
    上下贴着邻行，外扩的环会盖到邻行并触到抽屉边（2026-10 UI 审计 G1）。对 selected 底合成后仍 ≥3:1（tokenContrast.test）。 */
 @utility focus-ring-inset {
