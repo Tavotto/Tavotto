@@ -3627,6 +3627,8 @@ export default interface Resources {
       "repairManagedUnavailableHint": "需要 Python {{min}}–{{max}}；如果已经装过，可以在下面指定它。",
       "repairModifiesEnv": "会修改项目的 Python 环境。",
       "repairNeedsNetwork": "需要联网下载",
+      "repairNetBoth": "官方源和镜像都没连上，检查网络后点重试。",
+      "repairNetUserSource": "你配置的下载源连不上，检查它或网络后点重试。",
       "repairNotFoundNamed": "软件源里找不到 {{name}}。",
       "repairNotFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
       "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",

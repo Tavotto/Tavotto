@@ -241,7 +241,15 @@ order: 160
   「配过」）——才带 `--index-url PYPI_MIRROR_URL`（清华 TUNA，固定一个）**再跑一次**，不再换。日志一行写明、
   进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。联合准备（跑前准备弹窗那条路，原地 / 换代两种）与单包修复、包管理**同一个字段、同一层**（进度记录顶层），先记字段再写日志那句，带说明的第一个快照（`installing`）就已带着它。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
-  包查找（`pip index versions`）不在回退范围内。
+  包查找（`pip index versions`）：联网类失败（输出判为 offline 或超时）且 `mirror_retry_warranted(...)` 放行时，用同一个
+  `PYPI_MIRROR_URL`（`pip_index_argv(..., index_url=)`，只认这一个值）再查一次；镜像那次另有预算
+  `LOOKUP_MIRROR_TIMEOUT_S`，整个查找受 `LOOKUP_TOTAL_S` 约束，余量不足 1 s 就不起。放行判据问的是 `pip index` 命令**自己**的生效选项（`lookup_package_source` / `PIP_INDEX_OPTIONS_PROBE`；`[index]` 节只对它生效，装包路径仍用 install 那份），探测超时 = min(`LOOKUP_SOURCE_PROBE_S`, 剩余预算 − 1 s)，剩余不足 2 s 连探测都不做，探测失败 / 超时 = 问不出 = 不换源。未找到 / 解析失败 / 用户自配源都不重查。
+  看护 `tests/test_net_failure_split.py`。
+- **联网失败原因（`net_cause`）**：装包终态为 `dependency_network_unavailable` / `dependency_install_timeout` 时，
+  `_emit` 按最后包源写闭集顶层字段 `net_cause`：`tuna` → `official_and_mirror`（官方和镜像都没连上），`user_config` →
+  `user_source`（用户自配的源连不上，没有换源）；其余不带，界面用通用一句。界面 `repairShortMessage(code, notFound, netCause)`。
+- **自管 pip 子进程的 UTF-8**：`runtime.pip_child_env`（只在 `is_owned_python` 时补 `PYTHONUTF8=1` + `PYTHONIOENCODING=utf-8`）
+  用在 `_run_pip` / `_run` / `_run_lookup`。**不进 `owned_env`**——它同时是用户脚本 worker 的环境来源。
 - **慢 / 超时也换源、预算共用、结局进日志（ADR 0111 的 2026-09-29 修订；决策全文在 #744 带来的 ADR「自动测速选源」§二 / §三）**：`_run_pip_install`
   **开始之前**问一次 pip（`user_package_source`：在目标解释器里跑 `PIP_OPTIONS_PROBE`，让 pip 自己把 `pip install` 的
   选项解析一遍——配置文件覆盖顺序、`[install]` 压 `[global]`、`PIP_CONFIG_FILE`、`PIP_*` 都由 pip 按装包时的规则算，
