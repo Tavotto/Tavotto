@@ -61,21 +61,24 @@ export function JournalPicker() {
         </Button>
       }
     >
-      {all.length === 0 ? (
+      {all.length === 0 && !ref ? (
         <EmptyLine data-journal-empty>{jt('none')}</EmptyLine>
       ) : (
         <div className="flex flex-col gap-1.5">
-          <SearchInput
-            value={query}
-            onValueChange={setQuery}
-            placeholder={jt('search')}
-            aria-label={jt('searchAria')}
-            data-journal-search
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && first) choose(first.journal_id)
-            }}
-          />
+          {/* 目录不可用（空 / 还没取到）时搜索与列表都没东西可搜，但项目已按某本期刊检查的话「不按期刊」照样给：退路不依赖目录 */}
+          {all.length > 0 && (
+            <SearchInput
+              value={query}
+              onValueChange={setQuery}
+              placeholder={jt('search')}
+              aria-label={jt('searchAria')}
+              data-journal-search
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && first) choose(first.journal_id)
+              }}
+            />
+          )}
           <div
             role="listbox"
             aria-label={jt('listAria')}
@@ -99,28 +102,28 @@ export function JournalPicker() {
             )}
             {/* 「不按期刊」钉在最上面，列表在它下面自己滚：选中项再靠后也不会把它顶出视野 */}
             <div className="flex max-h-64 flex-col overflow-y-auto">
-            {groups.length === 0 && <EmptyLine data-journal-empty>{jt('noMatch')}</EmptyLine>}
-            {groups.map((g) => (
-              <div key={g.publisher} role="group" aria-label={g.label} data-journal-group={g.publisher}>
-                <p className="type-caption px-3 pb-0.5 pt-1.5">{g.label}</p>
-                {g.journals.map((j) => {
-                  const selected = ref?.id === j.journal_id
-                  return (
-                    <button
-                      key={j.journal_id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      data-journal-option={j.journal_id}
-                      onClick={() => choose(j.journal_id)}
-                      className={cn(listRowClass({ size: 'sm', selected }), 'w-[calc(100%-0.5rem)] px-2 text-left')}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{j.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
+              {all.length > 0 && groups.length === 0 && <EmptyLine data-journal-empty>{jt('noMatch')}</EmptyLine>}
+              {groups.map((g) => (
+                <div key={g.publisher} role="group" aria-label={g.label} data-journal-group={g.publisher}>
+                  <p className="type-caption px-3 pb-0.5 pt-1.5">{g.label}</p>
+                  {g.journals.map((j) => {
+                    const selected = ref?.id === j.journal_id
+                    return (
+                      <button
+                        key={j.journal_id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        data-journal-option={j.journal_id}
+                        onClick={() => choose(j.journal_id)}
+                        className={cn(listRowClass({ size: 'sm', selected }), 'w-[calc(100%-0.5rem)] px-2 text-left')}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{j.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
             </div>
           </div>
         </div>

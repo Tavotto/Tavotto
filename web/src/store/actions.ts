@@ -761,7 +761,10 @@ export function selectJournal(journalId: string): void {
     prev,
   })
   // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
-  if (pick.binding.journalPrev) pick.binding.journalPrev.setW = pick.pageW ?? d0.page.w
+  // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
+  if (pick.binding.journalPrev) {
+    pick.binding.journalPrev.setW = pick.pageW ?? (p0?.journalRef ? (p0.journalPrev?.setW ?? d0.page.w) : d0.page.w)
+  }
   commit(hist('setJournal'), (d) => {
     d.profile = pick.binding
     if (pick.pageW != null) applyPageSize(d, pick.pageW, d.page.h)

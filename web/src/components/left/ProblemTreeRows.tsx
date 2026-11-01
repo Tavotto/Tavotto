@@ -380,8 +380,13 @@ export function IssueRow({
  * 项目没按期刊选过、或这个检查在该期刊里没有出处时什么都不画。
  */
 export function IssueJournalSource({ issue }: { issue: ValidationIssue }) {
-  const ref = useDocumentStore((s) => s.doc.profile?.journalRef)
-  const sources = useDocumentStore((s) => s.doc.profile?.journalSources)
+  // 出处按**这条问题所在画布**的绑定读：问题面板可能列着几张画布的问题；活动画布读实时文档（`canvases[]` 那份要等切画布才回写）
+  const owner = issue.objectRef.canvasId
+  const binding = useDocumentStore((s) =>
+    owner === s.activeCanvasId ? s.doc.profile : s.canvases.find((c) => c.id === owner)?.profile,
+  )
+  const ref = binding?.journalRef
+  const sources = binding?.journalSources
   const entries = sourcesForCheck(issue.ruleCode, sources)
   if (!ref || !entries.length) return null
   return <SourceButton compact journal={ref.label} entries={entries} name={issueTitle(issue)} />

@@ -15,7 +15,8 @@ import { emptyProject } from '@/types/document'
 import { JournalPicker } from './JournalPicker'
 import { JournalRequirements } from './JournalRequirements'
 import { SourceButton } from './SourceButton'
-import { selectJournal } from '@/store/actions'
+import { clearJournal, selectJournal } from '@/store/actions'
+import { pickJournal } from '@/lib/journalPick'
 import { IssueJournalSource } from '../left/ProblemTreeRows'
 import type { ValidationIssue } from '@/lib/validation'
 
@@ -93,6 +94,18 @@ describe('期刊选择器', () => {
     const list = q('[data-journal-list]')!
     expect(list.firstElementChild?.hasAttribute('data-journal-none')).toBe(true)
     expect(list.firstElementChild?.textContent).toBe('不按期刊')
+    await click(q('[data-journal-none]'))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+  })
+
+  it('项目已按某本期刊检查、但本机目录是空的：仍给「不按期刊」，且不依赖目录', async () => {
+    selectJournal('fx-beta')
+    useJournalCatalogStore.setState({ catalog: loadCatalog() }) // 目录不可用
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    expect(q('[data-journal-none]')).not.toBeNull()
+    expect(q('[data-journal-search]')).toBeNull()
+    expect(document.body.querySelectorAll('[data-journal-option]')).toHaveLength(0)
     await click(q('[data-journal-none]'))
     expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
   })
@@ -221,13 +234,46 @@ describe('要求清单', () => {
 
 describe('预检结果行的出处', () => {
   const issue = (ruleCode: string) =>
-    ({ ruleCode, message: literal('x'), objectRef: { canvasId: 'c' } }) as unknown as ValidationIssue
+    ({ ruleCode, message: literal('x'), objectRef: { canvasId: useDocumentStore.getState().activeCanvasId } }) as unknown as ValidationIssue
 
   it('这条检查来自所选期刊的规则时行尾有出处钮，点开是同一张卡', async () => {
     selectJournal('fx-beta')
     await mount(<IssueJournalSource issue={issue('page-width')} />)
     await click(q('[data-journal-source]'))
     expect(q('[data-journal-sentence]')?.textContent).toContain('双栏 180 mm')
+  })
+
+  it('问题面板列着几张画布的问题：各读自己所在画布的期刊绑定；活动画布没绑期刊也不影响别的画布', async () => {
+    const issueOn = (canvasId: string) =>
+      ({ ruleCode: 'raster-dpi', message: literal('x'), objectRef: { canvasId } }) as unknown as ValidationIssue
+    const cat = loadCatalog(vectors.catalog)
+    const st = useDocumentStore.getState()
+    const a = st.activeCanvasId
+    selectJournal('fx-beta') // 活动画布 A：实时文档里按 fx-beta（300）
+    const profileOf = (id: string) => pickJournal(id, cat, { pageW: 100 }).binding
+    useDocumentStore.setState({
+      canvases: [
+        ...st.canvases,
+        { ...st.canvases[0], id: 'cB', name: 'B', profile: profileOf('fx-zeta') } as never,
+      ],
+    })
+    const dpiOf = async (canvasId: string) => {
+      await mount(<IssueJournalSource issue={issueOn(canvasId)} />)
+      const btn = q('[data-journal-source]')
+      if (!btn) return null
+      await click(btn)
+      const text = q('[data-journal-sentence]')?.textContent ?? null
+      await act(async () => {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      return text
+    }
+    expect(await dpiOf(a)).toBe('位图分辨率 ≥ 300 dpi')
+    expect(await dpiOf('cB')).toBe('位图分辨率 450 dpi')
+    // 活动画布 A 不按期刊：B 的出处钮仍在，A 自己没有
+    act(() => clearJournal())
+    expect(await dpiOf(a)).toBeNull()
+    expect(await dpiOf('cB')).toBe('位图分辨率 450 dpi')
   })
 
   it('没按期刊选过，或这条检查在该期刊里没有出处：什么都不画', async () => {

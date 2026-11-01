@@ -150,6 +150,18 @@ describe('不按期刊', () => {
     expect(s().doc.page.w).toBe(133)
   })
 
+  it('手改页宽后换到一本没规定栏宽的期刊：仍记着「期刊设的宽度」，「不按期刊」不把手改值当成期刊设的而退回', () => {
+    selectJournal('fx-cols-inherit') // 120 → 121
+    s().commit(literal('手改页宽'), (d) => {
+      d.page.w = 133
+    })
+    selectJournal('fx-delta') // 没规定栏宽：页宽不动
+    expect(s().doc.page.w).toBe(133)
+    clearJournal()
+    expect(s().doc.profile?.id).toBe(DEFAULT_PROFILE_ID)
+    expect(s().doc.page.w).toBe(133)
+  })
+
   it('没按期刊选过时什么都不做（不进历史）', () => {
     const depth = s().past.length
     clearJournal()
