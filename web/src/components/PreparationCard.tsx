@@ -677,6 +677,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.repairFolder')
     case 'skip_folder':
       return pt('btn.skipFolder')
+    case 'use_builtin_python':
+      return pt('btn.useBuiltinPython', { product: PRODUCT_NAME })
   }
 }
 
@@ -692,6 +694,22 @@ async function repairFolderAndRerun(entry: PrepEntry, token: string): Promise<st
 /** 「跳过这个文件夹」（ADR 0154）并重跑一次：只把令牌交给后端，之后与「修复权限」同一个重跑动作 */
 async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
   return folderDecisionAndRerun(entry, () => ignoreImportFolder(token))
+}
+
+/**
+ * 「改用自带的 Python」（`interpreter_cache_denied`，TVD-B6MR）并重跑一次：清掉失败解释器所在的那一层选择——全局设置里指定的
+ * 清全局（`setPython(null)`），为这个项目挑的让项目改用默认链条（`setProjectPython(null)`，后端 `remember_default`）。
+ * 清不掉（后端拒绝 / 断线）回那一句话、不重跑。重跑走「打开并运行」：环境一变旧报告的计划就过期了（envStore 订阅会让空闲会话
+ * 重新检查），不能拿旧报告里的 `run` 去认领；「打开并运行」按新的检查结果在准备好时认领，与那次重新检查搭同一趟。
+ */
+async function useBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project'): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const env = useEnvStore.getState()
+  const err = scope === 'global' ? await env.setPython(null) : await env.setProjectPython(null)
+  if (!guard.still()) return null
+  if (err) return err
+  await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
 }
 
 async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<unknown>): Promise<string | null> {
@@ -819,6 +837,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return repairFolderAndRerun(entry, p.token)
       case 'skip_folder':
         return skipFolderAndRerun(entry, p.token)
+      case 'use_builtin_python':
+        return useBuiltinPythonAndRerun(entry, p.scope)
     }
   }
 }

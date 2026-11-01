@@ -787,7 +787,27 @@ WRITE_OUTSIDE_ROOTS = writetripwire.CODE
 #: 脚本想写的文件夹没有写入权限（只读项目 / 只读卷），脚本因此没能写出它的输出文件。与父进程
 #: `pool.OUTPUT_FOLDER_READ_ONLY_CODE` 同值（本模块不 import 兄弟模块）。
 OUTPUT_FOLDER_READ_ONLY = "output_folder_read_only"
+#: 这个解释器在 Tavotto 自己的会话缓存（本会话的 `out_dir` / `sandbox` / 输入会合目录）里建不了目录：一行用户代码
+#: 都还没跑，不是脚本的问题，也不是项目文件夹的权限（TVD-B6MR：用别处带来的 Python 建的 venv，能读不能在
+#: `%LOCALAPPDATA%` 里新建）。与父进程 `pool.INTERPRETER_CACHE_DENIED_CODE` 同值；出口是换回 Tavotto 自带的 Python。
+INTERPRETER_CACHE_DENIED = "interpreter_cache_denied"
 _WRITE_DENIED_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
+
+
+def _prepare_cache_dir(make) -> None:
+    """build 开头、用户代码之前在本会话缓存里建目录；被系统拒绝（`PermissionError`）就报 `interpreter_cache_denied`。
+
+    主语是「这个 worker 进程、用户代码之前、Tavotto 自己的缓存目录」：此刻失败与脚本无关，归 `script_error` 会把人引去改脚本。
+    只认 `PermissionError`（Windows 的 WinError 5 / POSIX 的 EACCES、EPERM）；盘满之类别的 `OSError` 原样上抛。"""
+    try:
+        make()
+    except PermissionError as exc:
+        raise ProtocolError(
+            INTERPRETER_CACHE_DENIED,
+            f"这个 Python 没法在 Tavotto 的缓存里新建文件夹，脚本还没开始运行: {exc}",
+            retryable=False,
+            traceback_text=traceback.format_exc(),
+        ) from exc
 
 
 #: 脚本 build 期间**带写意图**的文件系统操作所碰的路径（原样字符串，与 `OSError.filename` 同一个写法）。
@@ -1482,8 +1502,8 @@ class Worker(wireproto.V1Handler):
         # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
         self.session.begin_save_moments()
         self.configure_run({})
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.sandbox.mkdir(parents=True, exist_ok=True)
+        _prepare_cache_dir(lambda: self.out_dir.mkdir(parents=True, exist_ok=True))
+        _prepare_cache_dir(lambda: self.sandbox.mkdir(parents=True, exist_ok=True))
         # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
         # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
         os.chdir(self.workdir or self.sandbox)
@@ -1698,7 +1718,7 @@ class Worker(wireproto.V1Handler):
             tail=stdout_tail,
             private_key=self._input_key,
         )
-        channel.reset()
+        _prepare_cache_dir(channel.reset)
         self._input_channel = channel
         scriptinput.install(channel)
 

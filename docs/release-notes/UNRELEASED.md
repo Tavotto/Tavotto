@@ -108,3 +108,7 @@ Icons in buttons, the left rail, the toolbar, menus and the command palette play
 ## Sharper, lighter interface icons
 
 Interface icons are drawn with a thinner stroke (1 px at 16 px) and every point is aligned to the screen's pixel grid, so edges no longer look soft or grey on Retina displays. Small icons next to text in buttons, menus and lists are now 16 px instead of 14 px.
+
+## Scripts no longer fail as a "script error" when your Python can't write to Tavotto's cache
+
+Some Python environments (for example a virtual environment built from another app's bundled Python) can read Tavotto's cache folder but aren't allowed to create new folders in it. Every run then stopped within a second, before any of your script ran, yet the card said the script itself had failed and offered to have AI fix it. Tavotto now recognises this case: the card says in one sentence that this Python can't create folders in Tavotto's cache, and its button switches back to Tavotto's built-in Python and runs the script again. The setting it clears is the one that picked that Python (your global choice or this project's), and nothing in your scripts or your environment is changed.

@@ -12,7 +12,7 @@
 * `ai_fix` / `connect_ai`：AI 环境修复任务在后续 PR；
 * `feedback`：发送问题反馈（ADR 0118，每次确认、不记住）。
 
-顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → Python 版本类 → 转写 → 其余按「AI 连没连」。
+顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → 解释器写不了缓存 / Python 版本类 → 转写 → 其余按「AI 连没连」。
 **一次「运行」最多走 3 种修法**（读 `attempt_history`），第 4 次直接 `feedback`；同一种修法一次运行只走一回。
 
 纯标准库 + 常量：不起进程、不读磁盘。「AI 连没连」「环境允不允许直接装」由调用方（`prepsession`）量好放进 `Ctx`。
@@ -55,6 +55,10 @@ PYTHON_VERSION_CODES = frozenset(
         "unsupported_python_version",
     }
 )
+
+#: 解释器在 Tavotto 自己的缓存里建不了目录（`pool.INTERPRETER_CACHE_DENIED_CODE`，TVD-B6MR）：用户代码还没跑，
+#: 改脚本 / AI 修都没用——修法是换回 Tavotto 自带的 Python（`change_python`，`to` 不给具体版本）
+CODE_CACHE_DENIED = "interpreter_cache_denied"
 
 _DIST = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
@@ -141,6 +145,8 @@ def choose(failure: str, ctx: Ctx) -> dict:
             "packages": list(ctx.packages),
             "ask": not (listed and ctx.auto_install_allowed),
         }
+    if code == CODE_CACHE_DENIED and KIND_CHANGE_PYTHON not in tried:
+        return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": None}
     if code in PYTHON_VERSION_CODES and KIND_CHANGE_PYTHON not in tried:
         return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": ctx.python_to}
     hint = ctx.no_figure_hint or {}

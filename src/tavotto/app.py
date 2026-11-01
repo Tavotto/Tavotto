@@ -7753,6 +7753,7 @@ _OBSERVED_RENDER_ERRORS = frozenset(
         "script_needs_input",
         "script_input_timeout",
         "output_folder_read_only",
+        "interpreter_cache_denied",
         "safe_file_operation_blocked",
     }
 )
