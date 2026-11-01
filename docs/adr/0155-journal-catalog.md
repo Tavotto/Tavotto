@@ -1,6 +1,6 @@
 # ADR 0155：内置期刊标准库——期刊 = 覆盖 + 出处，未规定的项不补
 
-日期：2026-10-31 · 状态：**Accepted（PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；PR 2：选择器、出处卡、画布页宽跟栏；真实数据、出处巡检、远程目录另起 PR）**。
+日期：2026-10-31 · 状态：**Accepted（PR 2 合入但入口默认关闭，数据就绪后再开（2026-11-01 用户决定）；PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；PR 2：选择器、出处卡、画布页宽跟栏；真实数据、出处巡检、远程目录另起 PR）**。
 相关：[0006 版本化出版规范](0006-codex-mcp-app-and-publication-profile.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；
 规则全文 `docs/rules/backend/profiles-and-preflight.md`「内置期刊标准库」。
 **1.0 豁免已由维护者 2026-10-31 登记（`docs/1.0-release-readiness.md` §1.8）。**
@@ -121,6 +121,12 @@
 * **解析**：客户端把 `file` 相对「目录资产根」解析——资产根由 `store/journalCatalogStore` 提供：种子 = 随包目录（`BUNDLED_ASSET_BASE`，`/journal-catalog/`），远程目录由拉取它的 PR 给出那一版的根（`setCatalog(raw, assetBase)`）。
 * **出处卡**：有快照 = 全宽快照图（高度跟图、最高约 240px、更高在卡内滚、细边框）；**没有快照或图加载失败 = 退回摘录框**（命中的数仍用 `<mark>`），不出错误态。换算说明（`derivation`）不在卡里显示。
 * 测试夹具快照图由 `scripts/gen_journal_snapshot_fixture.py` 生成（`tests/fixtures/journal_snapshots/snapshots/<sha256>.webp`，一张假的「原网页」，非任何真实页面）。
+
+### 8. 入口开关（PR 2 追加）
+
+**PR 2 合入但入口默认关闭，数据就绪后再开（2026-11-01 用户决定）**：`web/src/lib/journalUi.ts` 的常量 `JOURNAL_CATALOG_UI = false`（前端没有功能开关机制，功能登记表只有 active / removed，所以只加这一个常量）。关着时设置 › 期刊规范里的「期刊」行与「期刊要求」、问题面板行尾的「出处」图标、导出对话框里的期刊名、设置搜索里的 `spec.journal` 都不出现，界面与此 PR 之前相同；
+带期刊绑定的旧文档照旧按绑定预检，画布页预设的期刊栏名也照旧跟着绑定走（它们读文档里的绑定，不是入口）。打开 = 把常量改成 `true`；测试 / e2e 用开发期 localStorage 键 `tavotto.dev.journalCatalogUi = '1'`，生产界面没有任何入口能设它。
+关着期间不写发行说明（用户在这个版本里看不到它），打开那个 PR 补。
 
 ### 7. 「不按期刊」（PR 2 追加）
 

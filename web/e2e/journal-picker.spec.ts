@@ -35,6 +35,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript((catalog) => {
     try {
       localStorage.setItem('tavotto.journalCatalog', JSON.stringify(catalog))
+      localStorage.setItem('tavotto.dev.journalCatalogUi', '1')
       const saved = JSON.parse(localStorage.getItem('tavotto.ui') || '{}')
       localStorage.setItem('tavotto.ui', JSON.stringify({ ...saved, prefsVersion: 2, snapEnabled: false }))
     } catch {

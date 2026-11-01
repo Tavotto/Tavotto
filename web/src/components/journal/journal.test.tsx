@@ -17,6 +17,7 @@ import { JournalRequirements } from './JournalRequirements'
 import { SourceButton } from './SourceButton'
 import { clearJournal, selectJournal } from '@/store/actions'
 import { pickJournal } from '@/lib/journalPick'
+import { JOURNAL_UI_DEV_KEY } from '@/lib/journalUi'
 import { IssueJournalSource } from '../left/ProblemTreeRows'
 import type { ValidationIssue } from '@/lib/validation'
 
@@ -46,6 +47,7 @@ const q = (sel: string) => document.body.querySelector(sel)
 beforeEach(async () => {
   await setLocale('zh-CN')
   localStorage.clear()
+  localStorage.setItem(JOURNAL_UI_DEV_KEY, '1') // 期刊入口默认关；这里测的是入口后面的功能
   useJournalCatalogStore.setState({ catalog: loadCatalog(vectors.catalog) })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_journal_ui')
   host = document.createElement('div')

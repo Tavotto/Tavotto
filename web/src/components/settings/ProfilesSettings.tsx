@@ -30,6 +30,7 @@ import {
   profileWarningText,
 } from '@/lib/profileText'
 import { bindingFor, journalCarry, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
+import { journalCatalogUi } from '@/lib/journalUi'
 import { JournalPicker } from '../journal/JournalPicker'
 import { JournalRequirements } from '../journal/JournalRequirements'
 import { useDocumentStore } from '@/store/documentStore'
@@ -419,6 +420,8 @@ export function ProfilesSettings({
   }
 
   const boundId = doc.profile?.id
+  /** 期刊入口开关（`lib/journalUi`）：关着时设置页与此 PR 之前一样 */
+  const journalOn = journalCatalogUi()
 
   /**
    * 规范页顶部那一行：本项目按哪套检查、用的是快照还是全局。判据只有
@@ -478,7 +481,7 @@ export function ProfilesSettings({
         <FormSection title={st('binding.current')} data-spec-binding data-settings-anchor="spec.inUse">
           <FieldGroup>
             {/* 按期刊选的绑定：底是不列出的中性底，名字就是下面「期刊」那一行，不再另起一行说 id */}
-            {!doc.profile?.journalRef && (
+            {!(journalOn && doc.profile?.journalRef) && (
               <SettingRow
                 label={
                   boundRecord
@@ -502,10 +505,12 @@ export function ProfilesSettings({
                 )}
               </SettingRow>
             )}
-            <SettingRow label={translate('journal.title', { ns: 'dialogs' })} controlId="journal-picker" data-settings-anchor="spec.journal">
-              <JournalPicker />
-            </SettingRow>
-            {doc.profile?.journalRef && (
+            {journalOn && (
+              <SettingRow label={translate('journal.title', { ns: 'dialogs' })} controlId="journal-picker" data-settings-anchor="spec.journal">
+                <JournalPicker />
+              </SettingRow>
+            )}
+            {journalOn && doc.profile?.journalRef && (
               <DiagnosticDisclosure variant="row" title={translate('journal.requirements', { ns: 'dialogs' })}>
                 <JournalRequirements />
               </DiagnosticDisclosure>

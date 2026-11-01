@@ -119,6 +119,7 @@ import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
+import { journalCatalogUi } from "@/lib/journalUi";
 import {
   bindingFor,
   journalCarry,
@@ -579,7 +580,7 @@ export function ExportDialog() {
     // 按期刊选的绑定（中性底 + 期刊覆盖）：结论里说期刊名，不说「期刊底」
     const journalName = (checkOnActive ? doc.profile : canvases.find((c) => c.id === checkCanvasId)?.profile)
       ?.journalRef?.label;
-    if (journalName) return journalName;
+    if (journalName && journalCatalogUi()) return journalName;
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;

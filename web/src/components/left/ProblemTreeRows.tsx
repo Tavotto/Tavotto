@@ -27,6 +27,7 @@ import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 import { SourceButton } from '../journal/SourceButton'
 import { sourcesForCheck } from '@/lib/journalPick'
+import { journalCatalogUi } from '@/lib/journalUi'
 
 /** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
 const isHollow = (s: Severity) => s === 'suggestion' || s === 'not_verifiable'
@@ -388,7 +389,7 @@ export function IssueJournalSource({ issue }: { issue: ValidationIssue }) {
   const ref = binding?.journalRef
   const sources = binding?.journalSources
   const entries = sourcesForCheck(issue.ruleCode, sources)
-  if (!ref || !entries.length) return null
+  if (!journalCatalogUi() || !ref || !entries.length) return null
   return <SourceButton compact journal={ref.label} entries={entries} name={issueTitle(issue)} />
 }
 
