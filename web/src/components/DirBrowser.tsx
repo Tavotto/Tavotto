@@ -444,7 +444,7 @@ function Chip({
   // 胶囊 = 全站带字按钮那一族（Button secondary sm），不再是自画的 6px 圆角描边块
   return (
     <Button variant="secondary" size="sm" onClick={onGo} title={entry.path} data-dir-chip>
-      {icon && <HardDrive size={ICON_SIZE.xs} className="text-ink-3" />}
+      {icon && <HardDrive size={ICON_SIZE.sm} className="text-ink-3" />}
       {label ?? entry.name}
     </Button>
   )

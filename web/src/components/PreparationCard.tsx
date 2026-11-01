@@ -240,8 +240,8 @@ const STEPS = ['prepare', 'run', 'edit'] as const
 const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
   // 状态图标：颜色 + 实心孪生双重提示（空心环 + 细线记号四种长得太像）；busy 是全产品唯一的 Spinner
   busy: <Spinner size={ICON_SIZE.md} className="text-accent" />,
-  ok: <CircleCheck playIn filled size={ICON_SIZE.md} className="shrink-0 text-ok" />,
-  bad: <CircleAlert playIn filled size={ICON_SIZE.md} className="shrink-0 text-danger" />,
+  ok: <CircleCheck playIn size={ICON_SIZE.md} className="shrink-0 text-ok" />,
+  bad: <CircleAlert playIn size={ICON_SIZE.md} className="shrink-0 text-danger" />,
   mute: <CircleQuestionMark filled size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
 }
 
@@ -1477,9 +1477,9 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       case 'busy':
         return <Spinner size={ICON_SIZE.sm} className="text-accent" />
       case 'ok':
-        return <CircleCheck playIn filled size={ICON_SIZE.sm} className="shrink-0 text-ok" />
+        return <CircleCheck playIn size={ICON_SIZE.sm} className="shrink-0 text-ok" />
       case 'bad':
-        return <CircleAlert playIn filled size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+        return <CircleAlert playIn size={ICON_SIZE.sm} className="shrink-0 text-danger" />
       default:
         return <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
     }

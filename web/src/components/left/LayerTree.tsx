@@ -571,7 +571,7 @@ function LayerRow({
           className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
           title={lt('editableBadge')}
         >
-          <EditableFigureIcon size={ICON_SIZE.xs} aria-hidden />
+          <EditableFigureIcon size={ICON_SIZE.sm} aria-hidden />
         </span>
       )}
       {/* 「基准」是一个词不是取值代号：type-meta，不用等宽（左栏审计 L29） */}
@@ -586,7 +586,7 @@ function LayerRow({
         <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('lockedState')} />
       )}
       {obj.hidden && (
-        <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
+        <EyeOff size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
       )}
 
       {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}

@@ -291,7 +291,7 @@ function LegendEntryRow({
         onPointerDown={onDragStart}
         className="flex h-5 w-3 shrink-0 cursor-grab items-center justify-center text-ink-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
       >
-        <MoveVertical size={ICON_SIZE.xs} />
+        <MoveVertical size={ICON_SIZE.sm} />
       </span>
       <HandleSwatch panel={panel} entry={v} />
       <button

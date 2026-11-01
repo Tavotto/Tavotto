@@ -826,7 +826,7 @@ function IntegrityBadge({ integrity }: { integrity: SourceIntegrity }) {
         verdict === 'changed' ? 'text-danger' : 'text-ink-3',
       )}
     >
-      {verdict === 'changed' && <ShieldAlert size={ICON_SIZE.xs} aria-hidden />}
+      {verdict === 'changed' && <ShieldAlert size={ICON_SIZE.sm} aria-hidden />}
       · {label}
     </span>
   )
