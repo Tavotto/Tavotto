@@ -92,7 +92,8 @@
     "via": {
       "endpoint": "API endpoint",
       "cli": "Local CLI"
-    }
+    },
+    "viewDiff": "View changes"
   },
   "markdown": {
     "image": "[image: {{alt}}]",

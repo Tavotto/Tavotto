@@ -20,6 +20,7 @@ import { supported, toWaterfall } from '@/lib/execTrace'
 import { modelBrandKey } from '@/lib/modelVendor'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
+import { NoticeReveal, Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { buildTree, computeMetrics, formatCost, formatSeconds, formatTokens, hasInterval, leafType, walk } from './traceWaterfall/utils'
 import { agentErrorKey } from './transcriptModel'
@@ -360,5 +361,26 @@ function ModelCard({
         )}
       </dl>
     </div>
+  )
+}
+
+/** 回滚被「脚本之后又改过」拒绝时挂在这一条下面：一句话 + 一个「查看差异」（这次 AI 改了什么）。`text` 为空 = 不出现 */
+export function RevertConflictCard({ text, onView }: { text: string | null; onView: () => void }) {
+  const { t } = useTranslation('ai')
+  return (
+    <NoticeReveal open={!!text}>
+      <Notice
+        tone="warn"
+        data-ai-history-conflict
+        className="mt-1"
+        action={
+          <Button data-ai-history-conflict-diff size="sm" onClick={onView}>
+            {t('history.viewDiff')}
+          </Button>
+        }
+      >
+        {text}
+      </Notice>
+    </NoticeReveal>
   )
 }

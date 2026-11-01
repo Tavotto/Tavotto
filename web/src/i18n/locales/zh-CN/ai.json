@@ -90,7 +90,8 @@
     "via": {
       "endpoint": "API 接口",
       "cli": "本机 CLI"
-    }
+    },
+    "viewDiff": "查看差异"
   },
   "markdown": {
     "image": "[图片：{{alt}}]",

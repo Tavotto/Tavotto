@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRevert, ApiError, fetchAiHistory, type AiHistoryEntry } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useRevertDiffStore } from '@/store/revertDiffStore'
 import { useUiStore } from '@/store/uiStore'
 import { TaskHistory } from './AiPanel'
 
@@ -39,6 +40,7 @@ const entry = {
   pinned: false,
   started_ms: 1_756_000_000_000,
   script: 'fig1.py',
+  diff: '--- a/fig1.py\n+++ b/fig1.py\n@@ -1 +1 @@\n-a\n+b\n',
 } as unknown as AiHistoryEntry
 
 let root: Root
@@ -46,6 +48,7 @@ let host: HTMLDivElement
 
 beforeEach(async () => {
   useUiStore.getState().setStatus(null)
+  useRevertDiffStore.getState().close()
   vi.mocked(fetchAiHistory).mockResolvedValue({ sessions: [entry], total: 1 } as never)
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -79,7 +82,7 @@ const clickRevert = async () => {
 }
 
 describe('历史条目回滚：过期写入被拒时说出口', () => {
-  it('409 ai_revert_conflict → 状态轨上是冲突文案（error 档），不是「已回滚」', async () => {
+  it('409 ai_revert_conflict → 这一条下面出现冲突句 + 「查看差异」，点它打开这次修改的差异；状态轨不再重复', async () => {
     vi.mocked(aiRevert).mockRejectedValue(
       new ApiError('conflict', 409, {
         code: 'ai_revert_conflict',
@@ -87,10 +90,21 @@ describe('历史条目回滚：过期写入被拒时说出口', () => {
       }),
     )
     await clickRevert()
-    const ui = useUiStore.getState()
-    expect(ui.statusTone).toBe('error')
-    expect(ui.status?.key).toBe('backend.ai_revert_conflict')
-    expect(ui.status?.values).toEqual({ script: 'fig1.py' })
+    const card = document.querySelector('[data-ai-history-conflict]')
+    expect(card, '冲突后这一条下面没有出路卡').toBeTruthy()
+    expect(card!.textContent).toContain('fig1.py')
+    expect(useUiStore.getState().status).toBeNull()
+    const btn = card!.querySelector('button[data-ai-history-conflict-diff]') as HTMLButtonElement
+    expect(btn.textContent).toBe('查看差异')
+    await act(async () => btn.click())
+    expect(useRevertDiffStore.getState().target).toEqual({ diff: entry.diff, script: 'fig1.py' })
+  })
+
+  it('别的回滚失败仍走状态轨（error 档），不出现冲突卡', async () => {
+    vi.mocked(aiRevert).mockRejectedValue(new ApiError('boom', 500, { code: 'internal_error' }))
+    await clickRevert()
+    expect(document.querySelector('[data-ai-history-conflict]')).toBeNull()
+    expect(useUiStore.getState().statusTone).toBe('error')
   })
 
   it('对照：回滚成功时照旧报「已回滚」', async () => {

@@ -111,7 +111,8 @@ export default interface Resources {
       "via": {
         "cli": "本机 CLI",
         "endpoint": "API 接口"
-      }
+      },
+      "viewDiff": "查看差异"
     },
     "markdown": {
       "image": "[图片：{{alt}}]",
