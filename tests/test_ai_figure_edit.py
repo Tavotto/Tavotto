@@ -212,10 +212,14 @@ def test_unchanged_copy_commits_nothing(env):
 
 def test_nonzero_exit_discards_the_copy(env):
     env["code"] = EDIT + "; sys.exit(3)"
-    sid, _ = _run(env)
+    events: list = []
+    sid, _ = _run(env, events=events)
     sess = _wait(sid)
     assert sess["status"] == "failed" and _project_text(env) == SCRIPT
     assert ai_history.get(sid)["error"] == "agent_exit_nonzero"
+    # TVD-VSNF：实时事件也要带失败码——前端只靠 `ai.done` 收尾，缺了它就把「AI 没跑起来」说成「没通过写回前检查」
+    done = next(d for n, d in events if n == "ai.done")
+    assert done["error"] == "agent_exit_nonzero"
 
 
 def test_begin_registered_failure_closes_the_registered_row_and_spawns_nothing(env, monkeypatch):

@@ -69,6 +69,10 @@ Typing into a text box on the canvas and then clicking empty canvas space, witho
 
 When an AI edit or conversion ended in failure, the session log only said "status=failed", so a run that failed within a tenth of a second (or a conversion that finished without producing the new script) could not be explained from a diagnostic bundle. The end-of-session log line now also records the exit code, the built-in runner's closed failure reason, whether the runner exited without reporting one, and which verification checks were unmet. Only fixed codes are written, never paths, prompts or keys.
 
+## AI assistant no longer says "did not pass the pre-write check" when the AI never ran
+
+When the AI itself could not run (no connection, a rejected key, the runner exiting early), the assistant's turn said "The change did not pass the pre-write check and was not written to the project", as if the AI had produced an edit that was then rejected. The result sent to the window now carries the failure reason, so the turn names what actually went wrong. (#1592)
+
 ## Large export preview of an edited figure no longer shows the pre-edit render
 
 In the export dialog, the large preview of a single figure that had edits applied (for example a script-run figure whose legend move was undone) could still show the last rendered image instead of the current edits, because enlarging the preview switched to a higher-resolution copy of the last render. The large preview now keeps the image rendered for the figure's current edits; only unedited figures switch to a sharper copy.
