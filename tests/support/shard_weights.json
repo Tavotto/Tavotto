@@ -1,5 +1,5 @@
 {
- "source": "16 个 main 合并组（CI run 40917624595 40960298490 40998501111 41006576964 41023626699 41037643819 41064773134 41077901611 41087606033 41103481543 41114922728 41126369666 41134105220 41140946543 41148069705 41175769403）的 backend-platforms Windows 8 片 junit（16 次）与 backend-fast Ubuntu 6 片 junit（3.10/3.13/3.14 各 16 次，共 48 次）。两边各按文件累加 setup+call+teardown 后逐文件取中位，再逐文件取 Windows 与 Ubuntu 两张中位表的最大值：同一张表要同时喂 backend-fast（Ubuntu 6 片）和 backend-platforms（8 片），Windows 上 skip 的文件在 Windows 表里近似 0 而在 Ubuntu 上是重头，只按 Windows 算会让 backend-fast 最慢片系统性偏重",
+ "source": "16 个 main 合并组（CI run 40917624595 40960298490 40998501111 41006576964 41023626699 41037643819 41064773134 41077901611 41087606033 41103481543 41114922728 41126369666 41134105220 41140946543 41148069705 41175769403）的 backend-platforms Windows 8 片 junit（16 次）与 backend-fast Ubuntu 6 片 junit（3.10/3.13/3.14 各 16 次，共 48 次）。两边各按文件累加 setup+call+teardown 后逐文件取中位，再逐文件取 Windows 与 Ubuntu 两张中位表的最大值：同一张表要同时喂 backend-fast（Ubuntu 6 片）和 backend-platforms（8 片），Windows 上 skip 的文件在 Windows 表里近似 0 而在 Ubuntu 上是重头，只按 Windows 算会让 backend-fast 最慢片系统性偏重。2026-11-01 单项修订：tests/test_conda_launch_context.py 由 1587.25 改为 47.05——#1588 修掉了收尾每例白等 15 秒，取 #1588 合并组 CI run 41276551345 的 backend-fast Ubuntu 第 1 片 junit（3.10/3.13/3.14 = 43.64/62.48/47.05）的中位；Windows 上该文件整体 skip，取最大值仍是 Ubuntu 这一侧",
  "measured": "2026-10-29 17:03 – 2026-10-31 06:14 UTC，GitHub-hosted ubuntu-latest / windows-latest（3.13），merge_group 的 ci.yml，各 run 的 head 为当时的 main 合并组提交",
  "unit": "seconds (setup+call+teardown per testcase, summed per file; per-file max across lane tables)",
  "default_rule": "文件不在表里时取表中各值的第 75 百分位（nearest-rank）",
@@ -163,7 +163,7 @@
   "tests/test_compose_arrow.py": 0.11,
   "tests/test_compose_switched_shapes.py": 0.51,
   "tests/test_compose_text.py": 2.5,
-  "tests/test_conda_launch_context.py": 1587.25,
+  "tests/test_conda_launch_context.py": 47.05,
   "tests/test_conda_prefix_dll_path.py": 0.06,
   "tests/test_config_transaction.py": 4.33,
   "tests/test_conftest_data_dir.py": 0.61,
