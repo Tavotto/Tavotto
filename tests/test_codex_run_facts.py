@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+from support import linkkit
 from tavotto.engine import ai_agents, ai_bridge, diagnostics, exectrace
 
 ENGINE = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
@@ -159,7 +160,7 @@ def test_target_state_ignores_symlinks_and_missing_files(tmp_path):
     assert facts.snapshot(False)["target_on_disk"] is False
     real = tmp_path / "elsewhere.py"
     real.write_text("x", encoding="utf-8")
-    (cwd / "fig_matplotlib.py").symlink_to(real)
+    linkkit.symlink_or_skip(real, cwd / "fig_matplotlib.py")
     snap = facts.snapshot(False)
     assert snap["target_on_disk"] is False and snap["target_bytes"] is None
 
