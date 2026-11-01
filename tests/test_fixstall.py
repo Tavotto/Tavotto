@@ -360,7 +360,14 @@ def test_claude_parser_reads_tool_use_results_and_permission_denials():
     assert p(final) == [{"kind": "denied", "tool": "Edit"}]
 
 
-def test_claude_permission_denial_is_audited_and_shown_but_is_not_a_stall(box):
+def test_claude_permission_denial_is_audited_and_shown_but_is_not_a_stall(box, monkeypatch):
+    # 主语：「拒绝」这一事件**本身**不被当成卡住——不是在等审批（`STALL_APPROVAL`，下一个看门狗 tick 就会判）、
+    # 也不是工具没送达（`STALL_NOT_DELIVERED`，`DELIVER_WAIT`=0.6 s 后判）。sleeper 之后不再吐输出，
+    # 「空闲太久」（`STALL_IDLE`=0.8 s，从拒绝那一刻算）是**正当**的卡住，不是本条要排除的；慢腿上等审计行 + 0.5 s
+    # 就跨过它（main 组 run 41317771999 macOS 腿 `{'reason': 'stalled'}`）。本条把空闲阈值放远，观察窗口拉到 1 s
+    # （盖住 DELIVER_WAIT），两种误判照样各自看得见
+    monkeypatch.setattr(fixsession, "STALL_IDLE", 30.0)
+    monkeypatch.setattr(fixsession, "STALL_HARD", 60.0)
     parse = ai_agents.ClaudeAgent().fix_event_parser()
     denial = json.dumps({"type": "result", "permission_denials": [{"tool_name": "Edit"}]})
     s, _ = start_session(box, sleeper(denial), parse=parse)
@@ -369,7 +376,7 @@ def test_claude_permission_denial_is_audited_and_shown_but_is_not_a_stall(box):
     # 审计在 `_cli_event` 放锁**之后**才写：activity 先可见、审计行晚一拍落盘。等审计行出现再断言，
     # 不在两者之间抢（3.10 慢腿上连续两次 `'cli_permission_denied' in []`，#1595）
     wait_until(lambda: "cli_permission_denied" in codes(box, s))
-    time.sleep(0.5)
+    time.sleep(1.0)
     assert public(s)["stalled"] is None
     fixsession.SESSIONS.cancel(s.id, "pj")
 
