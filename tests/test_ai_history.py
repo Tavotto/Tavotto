@@ -1,5 +1,7 @@
 """AI 历史（SQLite）与 capabilities 探测、CLI 命令构造。"""
 
+import os
+
 import pytest
 
 from tavotto.engine import ai_agents, ai_bridge, ai_history
@@ -240,6 +242,8 @@ def test_cmd_is_equivalent_to_the_pre_registry_shape(monkeypatch):
         "--sandbox",
         "workspace-write",
         "--skip-git-repo-check",
+        # Windows 上 Codex 默认沙盒起不来，固定带 unelevated 覆盖（TVD-BCZ0，`ai_agents.CODEX_WINDOWS_SANDBOX_ARGS`）
+        *(ai_agents.CODEX_WINDOWS_SANDBOX_ARGS if os.name == "nt" else []),
         "PROMPT",
     ]
     cmd, _ = ai_bridge._cmd("claude", "PROMPT", "/figs")
