@@ -27,7 +27,7 @@
  * 11 = project.managed_environment_jobs（受管环境安装与换代事实）。
  * 与 `engine/diagnostics.py` 的同名常量是严格同源对。
  */
-export const BUNDLE_SCHEMA_VERSION = 12
+export const BUNDLE_SCHEMA_VERSION = 13
 /**
  * frontend-state.json 的 schema。
  *

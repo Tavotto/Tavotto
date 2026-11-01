@@ -4017,6 +4017,31 @@ def test_desktop_window_paste_test_compares_sizes_within_one_view():
     assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"
 
 
+def test_msix_private_store_data_is_copied_back_without_overwriting(tmp_path, monkeypatch):
+    """#1574 善后：0.20 之前从 MSIX 宿主（Codex 桌面版）拉起的 Tavotto，数据在
+    `%LOCALAPPDATA%\\Packages\\<包>\\LocalCache\\...`。脱包后真实目录里没有这些：
+    补回缺的、不覆盖已有的、原件不删。（真机的重定向行为只能在 Windows 上验。）"""
+    from tavotto.engine import msixmigrate
+
+    local = tmp_path / "Local"
+    pkg = local / "Packages" / "OpenAI.Codex_x" / "LocalCache" / "Local" / "Tavotto" / "origin"
+    pkg.mkdir(parents=True)
+    (pkg / "a.json").write_text("pkg", encoding="utf-8")
+    (pkg / "b.json").write_text("pkg", encoding="utf-8")
+    real = tmp_path / "data"
+    (real / "origin").mkdir(parents=True)
+    (real / "origin" / "b.json").write_text("real", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(real))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(msixmigrate, "_is_windows", lambda: True)
+    monkeypatch.setattr(msixmigrate.msixbreakaway, "has_package_identity", lambda **_k: False)
+    msixmigrate.run_once()
+    assert (real / "origin" / "a.json").read_text(encoding="utf-8") == "pkg"
+    assert (real / "origin" / "b.json").read_text(encoding="utf-8") == "real"
+    assert (pkg / "b.json").read_text(encoding="utf-8") == "pkg"
+
+
 def test_codex_on_windows_runs_with_unelevated_sandbox(monkeypatch):
     """TVD-BCZ0：Windows 上 Codex 默认沙盒起不来（所有命令启动前被拒、0 命令 0 写入），
     `-c windows.sandbox="unelevated"` 是 Lab 真机验证过的修法；转换与修复会话都要带。"""

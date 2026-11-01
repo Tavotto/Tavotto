@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config
+from . import config, msixmigrate
 from .procalive import pid_alive
 
 DB_PATH = config.data_dir() / "cache" / "ai_history.sqlite3"
@@ -324,6 +324,9 @@ def _needs_setup(con: sqlite3.Connection) -> bool:
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
+    if db_path is None and not path.exists():
+        # 新建之前先把 MSIX 私有区里的旧历史补回来：库一旦被新建，迁移的「只补缺」就永远跳过它（#1574 善后）
+        msixmigrate.adopt_sqlite("cache", "ai_history.sqlite3")
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, timeout=10)
     con.row_factory = sqlite3.Row

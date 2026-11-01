@@ -215,7 +215,7 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 12；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
+- report.json 换形必升 bundle schema（现 13；13 = `system.msix_data_migration`（MSIX 私有区旧数据补回结果，闭集 state + 计数，#1574 善后）；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry（层级执行追踪 `exectrace` 的本地有界存储是另一条数据、经维护者裁决的登记例外，诊断包今天不带它；要带走 PR4 另做导出投影并升 schema，见 `execution-trace.md` / ADR 0151）

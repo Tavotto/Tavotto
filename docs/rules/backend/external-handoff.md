@@ -111,7 +111,23 @@ order: 310
   （继承 stdio、等待并透传退出码；env `TAVOTTO_MSIX_CLI_RELAUNCH` 防循环，重启失败清标记走原路径），因为本地 safe probe 等
   落盘发生在拉起桌面版之前。壳替身起来后**不立刻 exit(0)**：最多等 `HANDOFF_WAIT_MS`（> 启动器观察窗口）并透传替身退出码，
   启动器才能把替身崩溃报成 launch_failed。壳的「脱包在崩溃过滤器之后、Builder 之前」看护是 syn AST（带注释掉调用的自测）。
-  已写进包私有区的数据不迁移（另议）。
+  已写进包私有区的数据由 `engine/msixmigrate.py` 补回（见下一条）。
+- **MSIX 私有区旧数据一次性补回（#1574 善后，用户拍板方案 B，界面零提示）**：`msixmigrate.run_once()` 在 sidecar（`app.main` 的
+  `setup_logging()` 之后）与 CLI（`handoff.cli` 的 `relaunch_cli` 之后）各调一次；**只在 Windows 且 `has_package_identity()` 为假时**迁
+  （带包身份时写也会被重定向）。源 = `%LOCALAPPDATA%\\Packages\\*\\LocalCache\\{Roaming,Local}\\Tavotto`，多个包按目录 mtime 新→旧，
+  后者只补前者没补到的。规则：**只补缺、从不覆盖、原件不删**，临时名 + 改名，失败只记计数。
+  搬：`EAGER_ITEMS` 白名单（`origin/`、`state/`、`ai/`、`source-backed/`、`script_backups/`、`runconfigs/`、`inputtranscripts/`、
+  `scriptanswer-contexts/`、`profiles/`、`layouts/`、`exports/`、联系信箱、`mcp-sessions/`、`cache/ai_snapshots`、`cache/fix_snapshots`）+
+  `cache/ai_history.sqlite3`（sqlite 备份接口取一致快照）；不搬：`cache/` 其余（engine / mathtext / runtime / probe / native / exec-trace /
+  日志）、`probe-results/`、`perf-reports/`、`session/`、`codex-marketplace/`、`tutorial/`、锁与 `.tmp`。新增数据目录条目时判断「可再生吗」，
+  不可再生就加进白名单。`config.json`：真实处没有就整份带过去；已有则经 `config.transaction()` 保守合并（最近 / 收藏并集真实在前、
+  `projects` 缺的条目、`ai.providers` 按 id 缺的记录、`ai.agents` 缺的、`ai` 其它缺的键），已有值不改，其它段（遥测同意等）不碰；
+  真实处文件读不出来就不碰。**大目录用到时才搬**：`managedenv.env_dir`（`environments/<指纹>`，校验 manifest + active 代解释器 +
+  `pyvenv.cfg` 的 home 在，home 在私有 Python 下则连带按需搬 `private-python/runtimes/<id>`）与 `managedcli.root_dir`（`cli/<名>/`，
+  指针 + 入口文件在）调 `msixmigrate.adopt_dir`；复制到临时名 → 逐文件大小核对 → 校验 → 原子改名，校验不过当没有、走原创建 / 下载。
+  幂等标记 `state/msix-migration-v1.json`（几个源 / 拷了 / 跳过 / 失败 / config 是否合并 / 按需搬了几个目录）；同步阶段 8 s 预算，超了不写
+  `complete`、下次接着补；跨进程锁 `state/msix-migration.lock`。诊断包 `system.msix_data_migration`（闭集 `state` + 数字，不带路径与包族名，
+  bundle schema 13）。看护 `tests/test_msix_migrate.py`、`tests/test_windows_regressions.py`。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；

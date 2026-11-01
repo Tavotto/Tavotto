@@ -123,6 +123,7 @@ from .engine import (
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
     mathtypeset as engine_mathtypeset,
+    msixmigrate as engine_msixmigrate,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
@@ -16909,6 +16910,9 @@ def main():
     safe_start = desktop_mode.parse_safe_start((hello or {}).get(desktop_mode.SAFE_START_FIELD))
 
     setup_logging()
+    # 把 MSIX 宿主（Codex 桌面版等）私有区里的旧数据补回真实目录（#1574 善后，一次性、无界面、永不抛）。
+    # 必须早于任何读配置 / 恢复上次项目的动作；大目录（受管环境 / CLI）不在这里搬，用到时才搬。
+    engine_msixmigrate.run_once()
     # 安装清单刷成「这套 Tavotto 现在在这儿」。安装器只写得了装的那一刻，
     # 而用户会把 .app 拖到别处、会用免安装形态、macOS 压根没有安装后钩子——
     # 每次启动刷一遍，外部程序（Codex 插件）查到的就永远是最后真跑起来过的
