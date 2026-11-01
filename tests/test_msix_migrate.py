@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -548,6 +549,7 @@ def test_diagnostic_facts_are_closed_numbers_without_paths_or_package_names(worl
         "copied",
         "skipped_existing",
         "failed",
+        "attempts",
         "config_merged",
         "adopted_dirs",
         "adopt_failed",
@@ -560,20 +562,216 @@ def test_diagnostic_facts_are_closed_numbers_without_paths_or_package_names(worl
 def test_report_json_carries_migration_facts(world, monkeypatch):
     from tavotto.engine import diagnostics
 
-    monkeypatch.setattr(msixmigrate, "diagnostic_facts", lambda: {"state": "done", "copied": 3})
-    src = Path(diagnostics.__file__).read_text(encoding="utf-8")
-    assert '"msix_data_migration": msixmigrate.diagnostic_facts()' in src
+    facts = {"state": "done", "copied": 3}
+    monkeypatch.setattr(msixmigrate, "diagnostic_facts", lambda: facts)
+    report = diagnostics.build_report()  # 真实的报告构建函数，不是看源码里有没有这串字
+    assert report["system"]["msix_data_migration"] == facts
 
 
-# ------------------------------------------------------------------ 入口挂载
-def test_entry_points_call_run_once_after_breakaway():
+# ------------------------------------------------------------------ 入口挂载（AST，不用子串）
+def _dotted(node: ast.expr) -> str:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _calls(src: str, func: str) -> list[tuple[int, int, str]]:
+    """函数 `func` 体内所有真实 Call 节点：(行, 列, 点分名)，按源码顺序。注释 / 字符串里的不算。"""
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == func)
+    out = [
+        (n.lineno, n.col_offset, _dotted(n.func))
+        for stmt in fn.body
+        for n in ast.walk(stmt)
+        if isinstance(n, ast.Call)
+    ]
+    return sorted(out)
+
+
+def _first(calls: list[tuple[int, int, str]], pred) -> tuple[int, int] | None:
+    return next(((ln, col) for ln, col, name in calls if pred(name)), None)
+
+
+def _is_run_once(name: str) -> bool:
+    return name in ("engine_msixmigrate.run_once", "msixmigrate.run_once")
+
+
+def app_main_problems(src: str) -> list[str]:
+    """`app.main()` 里 run_once 的挂载问题（空 = 合格）：必须真有调用、在 setup_logging() 之后、
+    在读上次项目 / 标记中断会话（建 ai_history 库）之前。"""
+    calls = _calls(src, "main")
+    run = _first(calls, _is_run_once)
+    if run is None:
+        return ["main() 里没有 run_once() 调用"]
+    problems = []
+    log = _first(calls, lambda n: n.rsplit(".", 1)[-1] == "setup_logging")
+    if log is None or not log < run:
+        problems.append("run_once() 必须在 setup_logging() 之后")
+    for late in ("last_project", "mark_interrupted_running"):
+        pos = _first(calls, lambda n, late=late: n.rsplit(".", 1)[-1] == late)
+        if pos is None:
+            problems.append(f"main() 里找不到 {late}()（判据失效）")
+        elif not run < pos:
+            problems.append(f"run_once() 必须在 {late}() 之前")
+    return problems
+
+
+def handoff_cli_problems(src: str) -> list[str]:
+    calls = _calls(src, "cli")
+    run = _first(calls, _is_run_once)
+    relaunch = _first(calls, lambda n: n.rsplit(".", 1)[-1] == "relaunch_cli")
+    if run is None:
+        return ["cli() 里没有 run_once() 调用"]
+    if relaunch is None or not relaunch < run:
+        return ["run_once() 必须在 relaunch_cli() 之后"]
+    return []
+
+
+def _src(rel: str) -> str:
     root = Path(__file__).resolve().parents[1] / "src" / "tavotto"
-    handoff = (root / "engine" / "handoff.py").read_text(encoding="utf-8")
-    cli_body = handoff[handoff.index("def cli(argv") :]
-    assert cli_body.index("relaunch_cli") < cli_body.index("msixmigrate.run_once()")
-    app = (root / "app.py").read_text(encoding="utf-8")
-    main_body = app[app.index("def main():") :]
-    assert main_body.index("setup_logging()") < main_body.index("engine_msixmigrate.run_once()")
+    return (root / rel).read_text(encoding="utf-8")
+
+
+def test_entry_points_call_run_once_after_breakaway():
+    assert app_main_problems(_src("app.py")) == []
+    assert handoff_cli_problems(_src("engine/handoff.py")) == []
+
+
+def test_entry_check_fails_when_call_commented_out_or_misplaced():
+    app = _src("app.py")
+    line = next(ln for ln in app.splitlines() if ln.strip() == "engine_msixmigrate.run_once()")
+    # 1. 注释掉调用：子串检查会放过，AST 不会
+    commented = app.replace(line, line.replace("engine_msixmigrate", "# engine_msixmigrate", 1), 1)
+    assert app_main_problems(commented)
+    # 2. 挪到 setup_logging() 之前
+    log = next(ln for ln in app.splitlines() if ln.strip() == "setup_logging()")
+    early = app.replace(line + "\n", "", 1).replace(log, line + "\n" + log, 1)
+    assert any("setup_logging" in p for p in app_main_problems(early))
+    # 3. 挪到读上次项目之后
+    anchor = next(ln for ln in app.splitlines() if "engine_config.last_project()" in ln)
+    late = app.replace(line + "\n", "", 1).replace(anchor, anchor + "\n" + line, 1)
+    assert any("last_project" in p for p in app_main_problems(late))
+    # 4. 只在字符串里提到
+    stringy = app.replace(line, '    _ = "engine_msixmigrate.run_once()"', 1)
+    assert app_main_problems(stringy)
+
+    ho = _src("engine/handoff.py")
+    hline = next(ln for ln in ho.splitlines() if ln.strip() == "msixmigrate.run_once()")
+    assert handoff_cli_problems(
+        ho.replace(hline, hline.replace("msixmigrate", "# msixmigrate", 1), 1)
+    )
+    rl = next(ln for ln in ho.splitlines() if "msixbreakaway.relaunch_cli(" in ln)
+    before = ho.replace(hline + "\n", "", 1).replace(rl, hline + "\n" + rl, 1)
+    assert handoff_cli_problems(before)
+
+
+# ------------------------------------------------------------------ 预算耗尽 / 历史库 / 超时 / 重试
+def _make_history(local: Path, value: int = 42) -> Path:
+    db = local / "cache" / "ai_history.sqlite3"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db)
+    con.execute("create table t(x)")
+    con.execute("insert into t values (?)", (value,))
+    con.commit()
+    con.close()
+    return db
+
+
+def test_history_migrated_first_even_when_sync_budget_exhausted(world):
+    _r, local = world.pkg(PFN_A)
+    _make_history(local)
+    put(local / "origin" / "a.json")
+    out = msixmigrate.run_once(budget_s=-1)  # 主预算立刻耗尽
+    assert out["complete"] is False
+    got = sqlite3.connect(world.data / "cache" / "ai_history.sqlite3")
+    assert got.execute("select x from t").fetchall() == [(42,)]  # 历史库排在最前、不吃主预算
+    got.close()
+
+
+def test_history_visible_after_startup_creates_db_and_second_migration(world, monkeypatch):
+    """复现 P1：库没迁成时启动早期的 mark_interrupted_running 新建了空库，之后旧历史也要能回来。"""
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _make_history(local, 7)
+    db = world.data / "cache" / "ai_history.sqlite3"
+    monkeypatch.setattr(ai_history, "DB_PATH", db)
+    # 第一次迁移里历史库没迁成（模拟被占 / 超时）
+    real = msixmigrate._copy_sqlite
+    monkeypatch.setattr(
+        msixmigrate,
+        "_copy_sqlite",
+        lambda s, d, t, dl: (setattr(t, "deferred", t.deferred + 1), False)[1],
+    )
+    first = msixmigrate.run_once(budget_s=-1)
+    assert first["complete"] is False and not db.exists()
+    # 启动继续：消费者初始化。此时迁移恢复可用，消费者建库前会先补迁
+    monkeypatch.setattr(msixmigrate, "_copy_sqlite", real)
+    msixmigrate._SQLITE_CHECKED.clear()
+    ai_history.mark_interrupted_running()
+    con = sqlite3.connect(db)
+    assert con.execute("select x from t").fetchall() == [(7,)]
+    con.close()
+    # 第二次启动的同步迁移也不会破坏它
+    msixmigrate.run_once()
+    con = sqlite3.connect(db)
+    assert con.execute("select x from t").fetchall() == [(7,)]
+    con.close()
+
+
+def test_sqlite_backup_does_not_block_on_exclusive_lock(world, monkeypatch):
+    _r, local = world.pkg(PFN_A)
+    db = _make_history(local)
+    monkeypatch.setattr(msixmigrate, "CRITICAL_BUDGET_S", 0.5)
+    holder = sqlite3.connect(db, isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        t0 = time.monotonic()
+        out = msixmigrate.run_once()
+        assert time.monotonic() - t0 < 5
+    finally:
+        holder.close()
+    assert out["complete"] is False and out["failed"] == 0
+    assert not (world.data / "cache" / "ai_history.sqlite3").exists()
+    assert not list((world.data / "cache").glob("*.tmp"))  # 半截临时文件已清
+    again = msixmigrate.run_once()  # 锁放开后下次接着补
+    assert again["complete"] is True
+    got = sqlite3.connect(world.data / "cache" / "ai_history.sqlite3")
+    assert got.execute("select x from t").fetchall() == [(42,)]
+    got.close()
+
+
+def test_failure_is_retried_next_start_then_succeeds(world, monkeypatch):
+    _r, local = world.pkg(PFN_A)
+    put(local / "origin" / "a.json", "A")
+    real_copy2 = shutil.copy2
+    monkeypatch.setattr(
+        msixmigrate.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("busy"))
+    )
+    first = msixmigrate.run_once()
+    assert first["failed"] == 1 and first["complete"] is False and first["attempts"] == 1
+    assert msixmigrate.diagnostic_facts()["state"] == "partial"
+    monkeypatch.setattr(msixmigrate.shutil, "copy2", real_copy2)
+    second = msixmigrate.run_once()
+    assert second["complete"] is True and second["failed"] == 0
+    assert (world.data / "origin" / "a.json").read_text() == "A"
+
+
+def test_permanent_failure_stops_retrying_after_max_attempts(world, monkeypatch):
+    _r, local = world.pkg(PFN_A)
+    put(local / "origin" / "a.json")
+    monkeypatch.setattr(
+        msixmigrate.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("never"))
+    )
+    outs = [msixmigrate.run_once() for _ in range(msixmigrate.MAX_ATTEMPTS)]
+    assert [o["complete"] for o in outs] == [False] * (msixmigrate.MAX_ATTEMPTS - 1) + [True]
+    facts = msixmigrate.diagnostic_facts()
+    assert facts["state"] == "done" and facts["failed"] == 1  # 失败计数留在诊断里
+    assert msixmigrate.run_once() is None
 
 
 def test_module_is_stdlib_only_for_flask_parent():

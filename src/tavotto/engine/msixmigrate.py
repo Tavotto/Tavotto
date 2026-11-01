@@ -52,6 +52,13 @@ LOCK_REL = ("state", "msix-migration.lock")
 TMP_SUFFIX = ".msix-mig.tmp"
 #: 同步阶段（启动早期）的时间预算；超了就停手、不写 complete，下次启动接着补
 SYNC_BUDGET_S = 8.0
+#: 「启动早期会被消费者新建替代文件」的项（SQLite 历史库）的独立时间上限：排在同步阶段最前、不吃上面那份预算，
+#: 但自己也有上限，绝不无限阻塞启动
+CRITICAL_BUDGET_S = 4.0
+#: 消费者（`ai_history._connect`）发现库不存在时现场补迁的上限
+ADOPT_SQLITE_BUDGET_S = 3.0
+#: 有失败（拷贝 / config 合并出错）时最多重试几次启动；超了就标 complete（永久性失败不再每次启动都扫），失败计数留在标记里
+MAX_ATTEMPTS = 3
 
 #: 启动早期同步迁的数据目录条目（相对 `data_dir()`，POSIX 写法）。**白名单**：不在这里的不搬。
 #: 用户产出 / 历史 / 项目相关状态都在这；可再生的缓存与运行态不在。
@@ -83,6 +90,11 @@ EXCLUDE_SUFFIXES = (".lock", ".tmp", ".part", "-wal", "-shm", "-journal")
 
 _ADOPT_LOCK = threading.RLock()  # 校验里可能再按需搬私有 Python（同线程重入）
 _ADOPT_CHECKED: set[str] = set()
+_SQLITE_CHECKED: set[str] = set()
+
+
+class _Deadline(Exception):
+    """SQLite 备份超过截止时间（内部信号，不外泄）。"""
 
 
 # --------------------------------------------------------------- 资格与源
@@ -178,6 +190,7 @@ def diagnostic_facts() -> dict:
         "copied": _count(data.get("copied")),
         "skipped_existing": _count(data.get("skipped_existing")),
         "failed": _count(data.get("failed")),
+        "attempts": _count(data.get("attempts")),
         "config_merged": data.get("config_merged") is True,
         "adopted_dirs": _count(data.get("adopted_dirs")),
         "adopt_failed": _count(data.get("adopt_failed")),
@@ -190,6 +203,7 @@ class _Tally:
         self.copied = 0
         self.skipped = 0
         self.failed = 0
+        self.deferred = 0  # 没做完、下次再试的项（超时 / 源库被占），不算失败
 
 
 def _excluded(name: str) -> bool:
@@ -221,36 +235,63 @@ def _copy_file(src: Path, dst: Path, tally: _Tally) -> None:
             tmp.unlink(missing_ok=True)
 
 
-def _copy_sqlite(src: Path, dst: Path, tally: _Tally) -> None:
-    """SQLite：用备份接口取一致快照（含 WAL 里未并入的部分）；打不开只读备份就退回字节拷贝主文件。"""
+def _backup_sqlite(src: Path, tmp: Path, deadline: float) -> None:
+    """用备份接口把 src 取成一致快照写到 tmp；分步 + 进度回调检查截止时间，到点抛 `_Deadline`。
+
+    源库被独占事务持有时，`backup()` 会在 BUSY 上睡眠重试——每次重试都会走进度回调，所以这里能按时中止。
+    """
+
+    def check(_status, _remaining, _total) -> None:
+        if time.monotonic() > deadline:
+            raise _Deadline
+
+    if time.monotonic() > deadline:
+        raise _Deadline
+    with contextlib.closing(sqlite3.connect(src.as_uri() + "?mode=ro", uri=True, timeout=0.2)) as s:
+        with contextlib.closing(sqlite3.connect(str(tmp))) as d:
+            try:
+                s.backup(d, pages=64, progress=check, sleep=0.05)
+            except sqlite3.Error:
+                if time.monotonic() > deadline:  # 超时附近的 BUSY / LOCKED 一并算「没做完」
+                    raise _Deadline from None
+                raise
+
+
+def _copy_sqlite(src: Path, dst: Path, tally: _Tally, deadline: float) -> bool:
+    """SQLite：用备份接口取一致快照（含 WAL 里未并入的部分）；打不开只读备份就退回字节拷贝主文件。
+
+    受 `deadline` 约束：到点中止、清掉半截临时文件、记为 deferred（下次再试），返回 False。
+    """
     try:
         if os.path.lexists(dst):
             tally.skipped += 1
-            return
+            return True
         dst.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         tally.failed += 1
-        return
+        return True
     tmp = dst.with_name(dst.name + f".{os.getpid()}{TMP_SUFFIX}")
     try:
         try:
-            with contextlib.closing(sqlite3.connect(src.as_uri() + "?mode=ro", uri=True)) as s:
-                with contextlib.closing(sqlite3.connect(str(tmp))) as d:
-                    s.backup(d)
+            _backup_sqlite(src, tmp, deadline)
         except sqlite3.Error:
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
             shutil.copy2(src, tmp)
         if os.path.lexists(dst):
             tally.skipped += 1
-            return
+            return True
         os.replace(tmp, dst)
         tally.copied += 1
+    except _Deadline:
+        tally.deferred += 1
+        return False
     except OSError:
         tally.failed += 1
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
+    return True
 
 
 def _copy_tree_missing(src_root: Path, dst_root: Path, tally: _Tally, deadline: float) -> bool:
@@ -270,6 +311,25 @@ def _copy_tree_missing(src_root: Path, dst_root: Path, tally: _Tally, deadline: 
     return True
 
 
+def _copy_critical(local: Path, tally: _Tally) -> bool:
+    """先于一切迁「启动早期会被新建」的库（`SQLITE_ITEMS`）。
+
+    `app.main()` 随后的 `ai_history.mark_interrupted_running()` 会在目标位置新建库；目标一旦存在，
+    补缺逻辑就永远跳过它——旧历史 / 草稿再也搬不回来。所以这些项排在最前，用独立的 `CRITICAL_BUDGET_S`，
+    不吃主预算；没迁成（超时 / 源库被占）时由消费者初始化前的 `adopt_sqlite()` 兜底再试。
+    返回 False = 有项没做完。
+    """
+    target = config.data_dir()
+    deadline = time.monotonic() + CRITICAL_BUDGET_S
+    done = True
+    for item in SQLITE_ITEMS:
+        src = local.joinpath(*item.split("/"))
+        if src.is_file() and not src.is_symlink():
+            if not _copy_sqlite(src, target.joinpath(*item.split("/")), tally, deadline):
+                done = False
+    return done
+
+
 def _copy_eager(local: Path, tally: _Tally, deadline: float) -> bool:
     target = config.data_dir()
     for item in EAGER_ITEMS:
@@ -282,13 +342,43 @@ def _copy_eager(local: Path, tally: _Tally, deadline: float) -> bool:
             if time.monotonic() > deadline:
                 return False
             _copy_file(src, dst, tally)
-    for item in SQLITE_ITEMS:
-        src = local.joinpath(*item.split("/"))
-        if src.is_file() and not src.is_symlink():
-            if time.monotonic() > deadline:
-                return False
-            _copy_sqlite(src, target.joinpath(*item.split("/")), tally)
     return True
+
+
+def adopt_sqlite(*parts: str, budget_s: float = ADOPT_SQLITE_BUDGET_S) -> bool:
+    """消费者（如 `ai_history._connect`）要**新建**库之前调用：真实处还没有就先从迁移源补一份。永不抛。
+
+    与同步阶段同一把跨进程锁（拿不到就算了，别阻塞）；每个进程每个目标只试一次。返回「这次搬成了」。
+    """
+    try:
+        return _adopt_sqlite(parts, budget_s)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _adopt_sqlite(parts: tuple[str, ...], budget_s: float) -> bool:
+    target = config.data_path(*parts)
+    key = os.path.normcase(str(target))
+    if key in _SQLITE_CHECKED or os.path.lexists(target) or not _eligible():
+        return False
+    _SQLITE_CHECKED.add(key)
+    fd = layoutsession.acquire_file_lock(config.data_path(*LOCK_REL), time.monotonic() + budget_s)
+    if fd is None:
+        return False
+    try:
+        if os.path.lexists(target):
+            return False
+        tally = _Tally()
+        deadline = time.monotonic() + budget_s
+        for _roaming, local in sources():
+            src = local.joinpath(*parts) if local is not None else None
+            if src is not None and src.is_file() and not src.is_symlink():
+                _copy_sqlite(src, target, tally, deadline)
+                if os.path.lexists(target):
+                    break
+        return tally.copied > 0
+    finally:
+        layoutsession.release_file_lock(fd)
 
 
 # --------------------------------------------------------------- config 合并
@@ -411,17 +501,28 @@ def _run_once(budget_s: float) -> dict | None:
             changed, errored = _merge_config(roaming)
             merged_any = merged_any or changed
             config_failed += 1 if errored else 0
-            if local is not None and not _copy_eager(local, tally, deadline):
-                complete = False
-                break
+            if local is not None:
+                if not _copy_critical(local, tally):
+                    complete = False
+                if not _copy_eager(local, tally, deadline):
+                    complete = False
+                    break
         prev = marker or {}
+        failed_now = tally.failed + config_failed
+        attempts = _count(prev.get("attempts"))
+        if failed_now or tally.deferred:
+            # 有失败 / 有项没做完（超时、源库被占）就不标 complete，下次启动重试；次数有上限，永久性问题不拖慢每次启动
+            attempts += 1
+            if attempts < MAX_ATTEMPTS:
+                complete = False
         result = {
             "schema": SCHEMA,
             "complete": complete,
             "sources": len(srcs),
             "copied": _count(prev.get("copied")) + tally.copied,
             "skipped_existing": tally.skipped,
-            "failed": tally.failed + config_failed,
+            "failed": failed_now,
+            "attempts": attempts,
             "config_merged": merged_any or prev.get("config_merged") is True,
             "adopted_dirs": _count(prev.get("adopted_dirs")),
             "adopt_failed": _count(prev.get("adopt_failed")),
