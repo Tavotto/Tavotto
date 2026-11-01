@@ -110,7 +110,7 @@ test('流程 A：图标题 + X/Y 轴标题一起改字体 / 字号 / 加粗，�
   }
 
   // --- 撤销：一次点击 = 一条历史 ---
-  const undo = page.getByRole('button', { name: '撤销' })
+  const undo = page.locator('[data-history-action="undo"]')
   const redo = page.getByRole('button', { name: '重做' })
   await undo.click() // 字体
   await undo.click() // 加粗
@@ -201,7 +201,7 @@ test('流程 B：选中子图即可设四边刻度、方向与次刻度，示意
   await page.waitForTimeout(2500)
 
   // --- 撤销 / 重做 ---
-  const undo = page.getByRole('button', { name: '撤销' })
+  const undo = page.locator('[data-history-action="undo"]')
   await undo.click()
   await expect(panel.locator('[data-tick-minor="bottom"]')).toHaveCount(0, { timeout: 15_000 })
   await page.getByRole('button', { name: '重做' }).click()
