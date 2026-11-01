@@ -91,14 +91,14 @@ const SPEC_FIELDS: NumField[] = [
   { path: 'widths_mm.single', labelKey: 'singleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
   { path: 'widths_mm.double', labelKey: 'doubleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
   { path: 'widths_mm.tolerance_mm', labelKey: 'widthTolerance', min: 0, max: 50, step: 0.1, unit: 'mm', group: 'page' },
-  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'ppi', group: 'raster', rule: 'raster-dpi' },
+  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'dpi', group: 'raster', rule: 'raster-dpi' },
   {
     path: 'preferred_formats.export_dpi_default',
     labelKey: 'exportDpi',
     min: 1,
     max: 4800,
     step: 50,
-    unit: 'ppi',
+    unit: 'dpi',
     group: 'raster',
   },
 ]
