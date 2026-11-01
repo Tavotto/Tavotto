@@ -87,7 +87,10 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   await addSecondFigure(page)
 
   // 文字工具加一段带上标的标注：就地编辑是所见即所得的（ADR 0152）——选中「-1」按 ⌘↑ 变上标，
-  // 验证它在画布上真的渲染成上标
+  // 验证它在画布上真的渲染成上标。先退掉选区：加完第二张图它是选中的，图上方的浮动栏（「改图里的内容」…）
+  // 在 13px 字号 + Windows 字体下正好盖住下面那个固定落点，点击落在浮动栏上就不会起文字框
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-context-bar]')).toHaveCount(0)
   await page.getByRole('button', { name: '文字' }).click()
   await page.locator('[data-canvas-stage]').click({ position: { x: 420, y: 240 } })
   await page.keyboard.type('cm-1')
