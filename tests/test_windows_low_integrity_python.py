@@ -86,7 +86,11 @@ def _tail(text: str, n: int = 260) -> str:
 def _label_low(path: Path, inherit: bool = False) -> None:
     level = "(OI)(CI)low" if inherit else "low"
     done = subprocess.run(
-        ["icacls", str(path), "/setintegritylevel", level], capture_output=True, text=True
+        ["icacls", str(path), "/setintegritylevel", level],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",  # 控制台代码页的输出只进断言消息，乱码无妨
     )
     assert done.returncode == 0, _tail(done.stdout + done.stderr)
 
@@ -110,6 +114,8 @@ def low_python(tmp_path_factory) -> str:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
         env=bridgekit.child_env(),
     ).stdout.strip()
@@ -135,6 +141,8 @@ def _probe(python: str, base: Path) -> dict:
         [python, "-c", PROBE, str(base)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=bridgekit.child_env(),
         timeout=120,
     )
