@@ -397,6 +397,32 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 **「改到目标文件名」（`target_touched`）只看得见 `file_change` 事件**：模型把 `apply_patch` 当 shell 命令跑、或用重定向写文件时事件流里只有 `command_execution`（真模型复现时见过写成了而 `target_touched=False`）。所以进程结束时另记工作区根下目标文件此刻`target_on_disk`（普通文件、不是符号链接）与 `target_bytes`；判「到底写没写出来」以这两项为准。
 
+### 转换任务的写入被拒 / 时限 / 长静默（TVD-BCZ0）
+
+- **提示词**：`ai_prompt_pack.convert_prompt` 对所有来源加 `rule_write_fail`（写目标文件失败就说明原因并停，不换位置写）；R / MATLAB 来源另加
+  `rule_foreign_no_search`（这台机器不运行 R / MATLAB，不查找安装或源码，不做全盘 / 主目录搜索，只读工作目录与原项目目录）。看护：
+  `tests/test_ai_convert_foreign.py::test_convert_prompts_forbid_searching_…`。
+- **失败码 `agent_write_denied`**（`ai_tasks.UNMET_REASON_CODES`）：提交前检查 `candidate.target` 判“目标缺失”时，若本次运行事实
+  （桥在每个 CLI 进程结束时把 `merge_run_facts(cli_runs)` 放进 `cand.extras["run_facts"]`）显示 `file_changes_failed > 0` 或
+  `commands_declined > 0`（`ai_convert.write_denied`），原因码是 `agent_write_denied`，否则仍是 `target_missing`。它**不可修正**
+  （`convert_fix_text` 不收它，不再起一轮 Agent）。前端 `convert.fail.agent_write_denied` 一句话 + 「重试」，文案走既有 `convert.fail.<reason>` 映射。
+  **第二种形状（Windows 沙盒起不来）**：命令在启动前就被策略拒绝，事件流里没有 `command_execution`，上面两个计数都是 0。
+  `write_denied` 另判：`events > 0` 且 `last_event == "turn.completed"` 且 `commands == 0` 且 `file_changes == 0`（有命令没写入仍是 `target_missing`）。
+- **Windows 上的 Codex 沙盒（TVD-BCZ0 根因）**：Codex 0.164.0 在 Windows 的默认沙盒起不来，模型自述“当前会话为只读沙箱，所有命令在启动时被策略拒绝”，
+  连 `pwd` 都不行，正常退出 → 转换判 `target_missing` 或回 `TAVOTTO_NEEDS_INPUT`（Lab run `20261101T084752Z-227df5`）。同环境只加
+  `-c windows.sandbox="unelevated"`（受限令牌，不需要管理员；`elevated` 要建沙盒用户，不采用）后两次转换分别跑了 39 / 59 条命令并写出目标文件
+  （Lab run `20261101T090337Z-e765ae`）。`CodexAgent.build_command` / `build_fix_command` 在 `os.name == "nt"` 时追加
+  `ai_agents.CODEX_WINDOWS_SANDBOX_ARGS`（本次调用级覆盖，**不写用户的 `~/.codex/config.toml`**）；`endpoint_args` 里已显式给了 `windows.sandbox`
+  就不重复。非 Windows 不变。看护：`tests/test_ai_agents.py::test_codex_argv_*`、`tests/test_windows_regressions.py::test_codex_on_windows_runs_with_unelevated_sandbox`。
+- **总时限**：`ai_convert.convert_timeout_s(lines) = min(1800, 900 + 2 × lines)`（`source_line_count` 数原脚本行数）。`envelope_for` 把它写进
+  `budget.max_wall_s`，并把 `timeout_extra_s = 时限 − 900` 记进候选 `extras`；桥的进程看门狗用 `TIMEOUT_S + timeout_extra_s`。没有候选的任务
+  （改图等）额外为 0，仍是 900 s。
+- **长静默进度**：进行中的 `CliRunFacts` 挂在会话 `cli_live`（`SESSION_INTERNAL_KEYS`，进程结束摘掉）。`ai_bridge.get()` 对 running 的转换会话在
+  `task.activity` 里给闭集值 `writing_long`，判据 `CliRunFacts.generating_silent(45 s)`：收到过事件、无未完成命令、最后事件不是
+  `turn.completed` / `turn.failed` / `error`、最后 item 是 reasoning / agent_message / file_change / 已完成的 command_execution（或刚 `turn.started`），
+  且静默 ≥ `LONG_WRITE_IDLE_MS`。只用结构化字段；事件一来静默清零，下一次轮询自然恢复。前端 `convertStore` 轮询时把它写进条目 `activity`，
+  进度行只换文字（`convert.writingLong`），不加横条 / 弹窗。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

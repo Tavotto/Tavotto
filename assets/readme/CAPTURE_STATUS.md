@@ -43,9 +43,8 @@ Capture environment: `main` @ `1e3db090e` (the interface after #1411), frontend 
 `lib.mjs` against a throwaway profile in the bundled Playwright Chromium, **1440 × 900 at 2×
 (2880 × 1800)**, `examples/figures/` as the project (folder shown as `kinetics-paper`), layout named
 "Kinetics study · Figure 2" / "反应动力学 · 图 2", interface language forced per set. Walkthrough:
-`record-demo.mjs` (2026-11-01: CDP screencast at 2× device pixels, cropped to figure (a), one action —
-the legend 8 → 9 pt on its own toolbar — with a white-dip loop seam, a pointer arrow added because the
-recorder draws none → `demo(.zh).webp`; needs ffmpeg and img2webp). Desktop window: `hero-window.mjs` — a debug build of
+`record-demo.mjs` (Playwright video, trimmed, a pointer dot added because the recorder draws none) →
+`demo-to-gif.sh` (1280 px wide, 12 fps). Desktop window: `hero-window.mjs` — a debug build of
 `src-tauri/` with a throwaway bundle identifier, sidecar pointed at the worktree engine
 (`TAVOTTO_SIDECAR_EXE`), captured with `screencapture -l <windowid> -o`; no key or mouse event is
 sent to any app (the page selects panel (a) itself through `hero-driver.js`, added to the built

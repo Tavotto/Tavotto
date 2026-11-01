@@ -47,18 +47,21 @@ from . import (
     deprepair,
     dialogscan,
     entryfresh,
+    envadvice,
     execpolicy,
     execspec,
     fixrouter,
     nativesession,
     pool,
     preparation,
+    projectenv,
     pyversionfix,
     rasterhint,
     registry,
     scriptargs,
     sourcelang,
     taskdiag,
+    userenvs,
 )
 from .preparation import TARGET_SCRIPT
 
@@ -231,6 +234,19 @@ _MAX_CONSUMED_ACTIONS = 32
 _MAX_DEP_ATTEMPTS = 16
 #: 依赖装好之后等环境租约放掉再重新检查的上限（秒）；超了照样检查（租约只影响 `plan_for` 读到的瞬时状态）。
 _REPLAN_WAIT_S = 30.0
+
+
+def _user_chose_project_env(root: str) -> bool:
+    """本项目的解释器是用户显式挑的某个环境（`projectenv` 记录的授权来源 = confirmed、且不是默认链条）。自动换版本不许碰它。"""
+    try:
+        record = projectenv.remembered_record(Path(root))
+        # 「改用默认链条」不是挑了某个环境（那一条没有可被覆盖的解释器），不算
+        if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+            return False
+        return projectenv.consent_of(record) == projectenv.CONSENT_CONFIRMED
+    except Exception:  # noqa: BLE001 — 读不出记录按「没有显式选择」处理会误伤用户的选择：保守按显式算
+        LOG.exception("读取项目环境记录失败")
+        return True
 
 
 class SessionError(Exception):
@@ -1008,6 +1024,10 @@ class Session:
     #: 所以后来的重跑 / 成功 / 取消不会把上一次失败的 remedy 带进「最后一次」
     last_remedy: dict | None = None
     last_remedy_attempt: str = ""
+    #: 可撤销的 AI 修改这一事实（`_ai_edit_fact`），连同它是按哪次尝试 + 脚本哪个签名算的（`last_ai_edit_key`）。
+    #: 报告每次轮询都要它：签名不变就不重查库、不重读脚本
+    last_ai_edit: dict | None = None
+    last_ai_edit_key: tuple | None = None
     #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
     intent: RunIntent | None = None
     #: 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：原因码 · 与上次相比变了什么 · 结局
@@ -1243,6 +1263,8 @@ class SessionService:
         #: app 注入：「本机有没有可用的 AI」（`ai_bridge.capabilities()` 里有 `usable` 的 agent）。没注入 = 当作没连——
         #: 智能修复路由（`fixrouter`，ADR 0148）只用它在 `ai_fix` / `connect_ai` 之间选，不在引擎里探测本机
         self.ai_connected: Callable[[], bool] | None = None
+        #: 可撤销的 AI 修改（`ai_bridge.revertible_edit(project_root, script)`），由 app 注入（同 `ai_connected`）；None = 不查
+        self.ai_edit_lookup: Callable[[str, str], dict | None] | None = None
         self._prep.project_cancel_listeners.append(self._on_project_cancel)
 
     def _on_project_cancel(
@@ -1306,8 +1328,17 @@ class SessionService:
         with sess.lock:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
-                if sess.stale or fingerprint != sess.fingerprint:
-                    old_plan, old_stale = sess.plan, sess.stale
+                # `recheck`（force）：计划按认领时的同一条判据已经不成立（典型：跑过一次之后脚本被改写——
+                # `_note_source_change` 对已跑过的修订不提前标失效），就当它失效换新计划；否则「重新检查」之后的
+                # `run` 仍冻结着旧源码修订，认领必然 `preparation_plan_stale`（TVD-H1M5 / Codex #1608）
+                forced = (
+                    preparation.stale_reason(sess.plan)
+                    if force and not sess.stale and fingerprint == sess.fingerprint
+                    else None
+                )
+                if sess.stale or forced is not None or fingerprint != sess.fingerprint:
+                    old_plan = sess.plan
+                    old_stale = sess.stale or ({"reason": forced[0]} if forced else None)
                     sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
@@ -2385,6 +2416,10 @@ class SessionService:
             return None
         if sess.python_change_run == sess.ledger.run:
             return None
+        if _user_chose_project_env(sess.project_root):
+            # 用户显式给本项目挑过环境：不替他换（自动换会把「记住的解释器」改成受管环境）。失败卡上的
+            # `change_python` 按钮仍在，由用户点了才切（ADR 0148 修订 2026-11-01）
+            return None
         adoption = (done_plan.environment or {}).get("adoption") or {}
         failure = pyversionfix.failure_from_report(
             script=str(done_plan.script or ""),
@@ -2967,6 +3002,9 @@ class SessionService:
                 # 智能修复路由（ADR 0148）：失败 / 没出图 / 走不通时按失败类型选的唯一修法（`fixrouter.REMEDY_KINDS`）。
                 # 新增字段，None = 不适用（没失败 / 还在跑）；旧前端读不到也不坏
                 "remedy": self._remedy(sess, derived, plan, result, missing, no_figure_hint),
+                # 可撤销的 AI 修改（TVD-H1M5）：脚本此刻正是改图助手刚改出来的那一版、还能原样撤销——`{session, succeeded_before}`。
+                # 只在失败类结局上算（随 remedy 一起）；给修复助手看的事实（`runreport`），界面只读 remedy。None = 不适用
+                "ai_edit": sess.last_ai_edit if sess.last_remedy is not None else None,
                 # 部分捕获：这次成功的尝试里预览捕获失败的图（`{stem, code}`，稳定码）。phase 是 `partial` 而 outcome 仍是
                 # `succeeded`（成功那几张照常在 `captured` 里）；全部成功 / 全部失败时是空表
                 "failed_figures": (
@@ -3132,8 +3170,10 @@ class SessionService:
         )
         script = sess.plan.script or ""
         history = tuple(sess.ledger.history())
+        ai_edit = self._ai_edit_fact(sess, history)
         # 本可回退却没回退（账本记了理由：不是桌面发起的运行 / 用户只要 safe / 取消了…）：不能再标「静默换成原样运行」
         declined = any(r.get("declined") for r in history[-1:])
+        python_to, python_env = self._python_switch_target(sess, code, result)
         ctx = fixrouter.Ctx(
             ai_connected=connected,
             native_allowed=(
@@ -3146,12 +3186,132 @@ class SessionService:
             packages=packages,
             auto_install_allowed=auto_ok,
             python_from=str(env.get("python_version") or ""),
+            python_to=python_to,
+            python_env=python_env,
+            missing_named=bool(
+                str(
+                    (missing or {}).get("module")
+                    or ((result.error or {}).get("module") if result else "")
+                    or ""
+                )
+            ),
             no_figure_hint=no_figure_hint,
             source_language=sourcelang.extension_hint(script) if script else None,
             history=history,
             installed_this_run=installed,
+            revertible_ai_edit=(
+                ai_edit["session"] if ai_edit and ai_edit.get("succeeded_before") else None
+            ),
         )
         return fixrouter.choose(code, ctx)
+
+    def _python_switch_target(
+        self, sess: Session, code: str, result
+    ) -> tuple[str | None, dict | None]:
+        """Python 版本类失败 -> `(目标版本主.次, 现成环境或 None)`（ADR 0148 修订 2026-11-01）。只读：范围来自
+        `pyversionfix.required_span`（读声明文件），候选来自 `envadvice.recommend`（落盘线索 + 已有体检结论，不起解释器）。
+
+        现成环境 = 体检**确认健康**、版本落在范围内、不是内置 runtime、不是当前环境的那一个，按 `userenvs.rank`（来源 → 官方
+        验证 → 版本新）挑第一个。全局显式解释器压着时（采用会 409）不给。算不出范围 / 没有候选 -> 目标版本照给、环境 None（前端走选择器）。"""
+        if code not in fixrouter.PYTHON_VERSION_CODES:
+            return None, None
+        try:
+            adoption = (sess.plan.environment or {}).get("adoption") or {}
+            failure = pyversionfix.failure_from_report(
+                script=str(sess.plan.script or ""),
+                error=result.error if result else None,
+                not_used=adoption.get("not_used"),
+            )
+            if failure is None:
+                return None, None
+            span = pyversionfix.required_span(failure, sess.project_root)
+            if span is None:
+                return None, None
+            minors = span.minors()
+            to = f"{minors[0][0]}.{minors[0][1]}"  # minors 由高到低
+            rec = envadvice.recommend(sess.project_root, sess.plan.script)
+            if (rec.get("decision") or {}).get("locked_by"):
+                return to, None
+            picked = []
+            for c in rec.get("candidates") or ():
+                health = c.get("health") or {}
+                version = str(health.get("python_version") or "")
+                parts = version.split(".")
+                if (
+                    c.get("id") in (envadvice.BUILTIN_ID, None)
+                    or c.get("current")
+                    or c.get("status") != envadvice.STATUS_HEALTHY
+                    or len(parts) < 2
+                    or not (parts[0].isdigit() and parts[1].isdigit())
+                    or (int(parts[0]), int(parts[1])) not in minors
+                    or not pyversionfix._full_version_ok(version, span.patch_spec())
+                ):
+                    continue
+                picked.append(
+                    (
+                        userenvs.rank(
+                            {
+                                "satisfies": True,
+                                "source": (c.get("sources") or [""])[0],
+                                "label": c.get("name") or "",
+                                "support": health.get("support"),
+                                "python_version": version,
+                            }
+                        ),
+                        c,
+                    )
+                )
+            if not picked:
+                return to, None
+            best = min(picked, key=lambda t: t[0])[1]
+            version = str(best["health"]["python_version"])
+            name = str(best.get("name") or best.get("python_relative") or "")
+            return ".".join(version.split(".")[:2]), {
+                "id": best["id"],
+                "generation": best["generation"],
+                "name": name or f"Python {'.'.join(version.split('.')[:2])}",
+                "version": version,
+            }
+        except Exception:  # noqa: BLE001 — 找不到现成环境只意味着回到「选择运行环境」，不能让路由本身失败
+            LOG.exception("挑选满足版本的现成环境失败")
+            return None, None
+
+    def _ai_edit_fact(self, sess: Session, history: tuple[dict, ...]) -> dict | None:
+        """这份脚本此刻是不是改图助手刚改出来、还能原样撤销的那一版（TVD-H1M5）——是就回
+        `{session, succeeded_before}`，`succeeded_before` = 那次修改开始之前，这个会话里有过跑通的尝试。
+
+        主语：此刻磁盘上的脚本（`ai_edit_lookup` 里按字节比对 AI 留下的版本）+ 本会话账本里成功尝试的创建时刻。
+        后端重启后账本是空的，`succeeded_before` 为 False——只少一个确定的建议，不会错给。按（当前尝试, 脚本签名）缓存：
+        报告轮询不反复查库读文件。查不了 / 出错一律 None。"""
+        lookup = self.ai_edit_lookup
+        script = sess.plan.script or ""
+        if lookup is None or not script:
+            return None
+        current = sess.attempts[-1].attempt_id if sess.attempts else ""
+        try:
+            st = (Path(sess.project_root) / script).stat()
+            sig: tuple = (current, script, st.st_size, st.st_mtime_ns)
+        except OSError:
+            sig = (current, script, None, None)
+        if sess.last_ai_edit_key == sig:
+            return sess.last_ai_edit
+        fact = None
+        try:
+            edit = lookup(str(sess.project_root), script)
+        except Exception:  # noqa: BLE001 — 只少一个建议，不该让失败卡出不来
+            LOG.exception("查可撤销的 AI 修改失败")
+            edit = None
+        if edit and edit.get("session"):
+            started = float(edit.get("started_ms") or 0) / 1000.0
+            ok_ids = {
+                r.get("attempt_id")
+                for r in history
+                if isinstance(r, dict) and r.get("outcome") == execpolicy.OUTCOME_SUCCEEDED
+            }
+            before = any(a.attempt_id in ok_ids and a.created_at < started for a in sess.attempts)
+            fact = {"session": str(edit["session"]), "succeeded_before": before}
+        sess.last_ai_edit, sess.last_ai_edit_key = fact, sig
+        return fact
 
     def fix_journeys(self, project_id: str) -> list[dict]:
         """诊断包「修复经过」（ADR 0148）：这个项目每个有过执行尝试的会话——走过哪些修法（账本 + 路由）、各自的结局码、

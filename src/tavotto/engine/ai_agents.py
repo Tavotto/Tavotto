@@ -646,6 +646,27 @@ class CliRunFacts:
         elif itype == "error" and done:
             self.errors += 1
 
+    def generating_silent(self, idle_ms: int) -> bool:
+        """模型在生成 / 写一个大文件、事件流已静默 ≥ `idle_ms`？
+
+        判据全是结构化事实：收到过事件、没有未完成的命令（`commands_open == 0`：不是在等命令跑完）、
+        最后一个事件不是终止类（`turn.completed` / `turn.failed` / `error`），且最后一个 item 是模型自己的产出
+        或已跑完的命令（`reasoning` / `agent_message` / `file_change` / 已完成的 `command_execution`，下一步是模型在写），
+        或刚开了新一轮（`turn.started`）；MCP 调用 / 联网搜索可能正在外部执行，不算。"""
+        if self.events == 0 or self.commands_open > 0:
+            return False
+        if self.last_event in ("turn.completed", "turn.failed", "error"):
+            return False
+        producing = self.last_item in (
+            "reasoning",
+            "agent_message",
+            "file_change",
+            "command_execution",
+        ) or (self.last_event == "turn.started")
+        if not producing:
+            return False
+        return (self._clock() - self._last) * 1000 >= idle_ms
+
     def _target_state(self) -> tuple[bool, int | None]:
         """工作区里目标文件此刻的状态：(是普通文件且不是符号链接, 字节数)。只看工作区根下的目标名，不带路径出门。"""
         if not self._target or not self._root:
@@ -813,6 +834,20 @@ class AgentDefinition:
     def run_facts(self, cwd: str, target_name: str) -> CliRunFacts | None:
         """本次 CLI 进程的运行事实累计器（与 `classify_event` 读同一条 stdout）。**默认 None = 不累计**。"""
         return None
+
+
+#: Windows 上 Codex 的沙盒级别（本次调用 `-c` 覆盖，绝不写用户的 `~/.codex/config.toml`）。Codex 0.164 在 Windows 默认
+#: 沙盒起不来：会话自述“只读沙箱、所有命令在启动时被策略拒绝”，0 条命令 / 0 个文件改动就正常退出（TVD-BCZ0，Lab run
+#: 20261101T084752Z-227df5）。`unelevated` = 受限令牌、不需要管理员；同环境加它后两次转换分别跑了 39 / 59 条命令并写出目标文件
+#: （Lab run 20261101T090337Z-e765ae）。`elevated` 要建沙盒用户，不采用。
+CODEX_WINDOWS_SANDBOX_ARGS = ["-c", 'windows.sandbox="unelevated"']
+
+
+def _codex_windows_sandbox_args(endpoint_args: list[str]) -> list[str]:
+    """Windows 才追加；`endpoint_args` 里已显式给了 `windows.sandbox` 就不重复、不覆盖。"""
+    if os.name != "nt" or any("windows.sandbox" in a for a in endpoint_args):
+        return []
+    return list(CODEX_WINDOWS_SANDBOX_ARGS)
 
 
 class CodexAgent(AgentDefinition):
@@ -1013,6 +1048,7 @@ class CodexAgent(AgentDefinition):
             "workspace-write",
             "--skip-git-repo-check",
         ]
+        cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]
@@ -1056,6 +1092,7 @@ class CodexAgent(AgentDefinition):
             "-c",
             'approval_policy="never"',
         ]
+        cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
         cmd += ctx.endpoint_args
         if ctx.endpoint_args:
             # Tavotto 已把 provider（-c model_provider…）和型号都显式给了：不再加载用户的 config.toml——

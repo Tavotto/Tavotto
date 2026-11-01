@@ -7,12 +7,18 @@
   用户发起的运行里静默回退；`silent: false` = 浏览器模式（ADR 0127 修订 2026-10-30，#1500）：失败卡给「允许并运行」，用户点一次才换，
   且此时**不路由进 AI 修复**（优先于 `ai_fix` / `connect_ai`）；
 * `install_packages`：装包仍走 `deprepair` / `convertdeps` 的既有授权（本模块只说装什么、要不要用户点）；
-* `change_python`：本版只产出 remedy（执行在后续 PR），前端此时走现有「选择运行环境」入口；
+* `change_python`：带 `env`（后端已发现、体检过、满足目标版本的现成环境，见 `Ctx.python_env`）时前端主按钮「改用 <环境名>」，
+  用户点一次才切（**永不自动切**，内置 runtime 也永不是目标）；没有候选（`env: None`）才走现有「选择运行环境」入口；
+* `choose_environment`：缺的包装不了（私有库 / 本地模块 / conda-only，或包名认不出）——主按钮是确定的「选择运行环境」
+  （让用户指向装了它的 Python），AI 退为次入口（ADR 0148 修订 2026-11-01）；
 * `convert_to_matplotlib`：复用现有「生成可编辑版本」（ADR 0143）；
 * `ai_fix` / `connect_ai`：AI 环境修复任务在后续 PR；
+* `revert_ai_edit`：脚本自己报错，而它正是改图助手刚改出来的那一版、改之前在这个会话里跑通过——撤销那次修改
+  （复用助手历史里的「撤销这次修改」，`ai_bridge.revert`；ADR 0148 修订 2026-11-01，TVD-H1M5）；
 * `feedback`：发送问题反馈（ADR 0118，每次确认、不记住）。
 
-顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → 解释器写不了缓存 / Python 版本类 → 转写 → 其余按「AI 连没连」。
+顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → 解释器写不了缓存 / Python 版本类 → 转写 → 撤销刚才的 AI 修改 →
+其余按「AI 连没连」。
 **一次「运行」最多走 3 种修法**（读 `attempt_history`），第 4 次直接 `feedback`；同一种修法一次运行只走一回。
 
 纯标准库 + 常量：不起进程、不读磁盘。「AI 连没连」「环境允不允许直接装」由调用方（`prepsession`）量好放进 `Ctx`。
@@ -27,18 +33,22 @@ KIND_SWITCH_NATIVE = "switch_native"
 KIND_INSTALL_PACKAGES = "install_packages"
 KIND_CHANGE_PYTHON = "change_python"
 KIND_CONVERT = "convert_to_matplotlib"
+KIND_CHOOSE_ENV = "choose_environment"
 KIND_AI_FIX = "ai_fix"
 KIND_CONNECT_AI = "connect_ai"
 KIND_FEEDBACK = "feedback"
+KIND_REVERT_AI_EDIT = "revert_ai_edit"
 #: remedy 的 `kind` 闭集（前端 `Remedy` 联合类型的同源对：`tests/test_fixrouter_pair.py`）
 REMEDY_KINDS = (
     KIND_SWITCH_NATIVE,
     KIND_INSTALL_PACKAGES,
     KIND_CHANGE_PYTHON,
     KIND_CONVERT,
+    KIND_CHOOSE_ENV,
     KIND_AI_FIX,
     KIND_CONNECT_AI,
     KIND_FEEDBACK,
+    KIND_REVERT_AI_EDIT,
 )
 #: 一次运行里最多走几种修法；已经走满再失败就直接 `feedback`
 MAX_REMEDIES_PER_RUN = 3
@@ -46,6 +56,8 @@ MAX_REMEDIES_PER_RUN = 3
 #: 字面量是有意的（同 `userenvs._HEALTH_CODE_TO_REJECT`）：它们是跨版本稳定的对外码，路由不为取常量依赖更多内部名字
 CODE_BLOCKED = "safe_file_operation_blocked"
 CODE_MISSING_DEPENDENCY = "missing_dependency"
+#: 脚本自己抛错收场（用户代码里的异常，不是 Tavotto 的守卫 / 环境）
+CODE_SCRIPT_ERROR = "script_error"
 #: Python 版本类失败码：项目环境的 Python 不在支持范围 / 叠加的 ROOT 与 Python 小版本对不上 / 运行配置的版本不被支持
 PYTHON_VERSION_CODES = frozenset(
     {
@@ -84,12 +96,20 @@ class Ctx:
     #: 当前 Python 版本（可展示字符串）与可建议的目标版本（没有就 None）
     python_from: str = ""
     python_to: str | None = None
+    #: 满足 `python_to` 的、后端已发现且体检过的现成环境（`{"id", "generation", "name", "version"}`，无路径）；没有 = None。
+    #: 由调用方（`prepsession`）按 `userenvs.rank` 挑，且已排除内置 runtime、当前环境与被全局显式解释器锁住的情形
+    python_env: dict | None = None
+    #: 缺的包有没有被点名（`missing_dependency` 的模块名认得出）。认不出就没有可指给用户的东西 -> `feedback`
+    missing_named: bool = False
     #: `no_figure_hint`（`rasterhint.detect` 的结果）与来源语言（`sourcelang`：`r` / `matlab` / `python` / None）
     no_figure_hint: dict | None = None
     source_language: str | None = None
     #: 账本 `attempt_history`（`AttemptLedger.history()`）与这次运行里已经装过包的事实
     history: tuple[dict, ...] = ()
     installed_this_run: bool = False
+    #: 可撤销的 AI 修改（`prepsession._ai_edit_fact`）：脚本此刻正是最近一次 AI 修改留下的那一版（能原样撤销），
+    #: 且那次修改之前它在这个会话里跑通过——是就放那次 AI 会话的 id，否则 None
+    revertible_ai_edit: str | None = None
 
 
 def tried_in_run(ctx: Ctx) -> tuple[str, ...]:
@@ -145,16 +165,28 @@ def choose(failure: str, ctx: Ctx) -> dict:
             "packages": list(ctx.packages),
             "ask": not (listed and ctx.auto_install_allowed),
         }
+    if code == CODE_MISSING_DEPENDENCY and KIND_INSTALL_PACKAGES not in tried:
+        # 走到这里 = 装不了（不在会话里可装 / 包名认不出）：AI 不能凭空变出私有库，确定的出路是指向装了它的 Python
+        if ctx.missing_named:
+            return {"kind": KIND_CHOOSE_ENV}
+        return {"kind": KIND_FEEDBACK, "tried": list(tried)}
     if code == CODE_CACHE_DENIED and KIND_CHANGE_PYTHON not in tried:
-        return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": None}
+        return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": None, "env": None}
     if code in PYTHON_VERSION_CODES and KIND_CHANGE_PYTHON not in tried:
-        return {"kind": KIND_CHANGE_PYTHON, "from": ctx.python_from, "to": ctx.python_to}
+        return {
+            "kind": KIND_CHANGE_PYTHON,
+            "from": ctx.python_from,
+            "to": ctx.python_to,
+            "env": ctx.python_env if ctx.python_to else None,
+        }
     hint = ctx.no_figure_hint or {}
     if KIND_CONVERT not in tried:
         if hint.get("kind") == "raster_script":
             return {"kind": KIND_CONVERT, "source": "python"}
         if ctx.source_language in ("r", "matlab"):
             return {"kind": KIND_CONVERT, "source": ctx.source_language}
+    if code == CODE_SCRIPT_ERROR and ctx.revertible_ai_edit:
+        return {"kind": KIND_REVERT_AI_EDIT, "session": ctx.revertible_ai_edit}
     if ctx.ai_rounds_exhausted:
         return {"kind": KIND_FEEDBACK, "tried": list(tried)}
     if ctx.ai_connected:

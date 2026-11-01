@@ -994,6 +994,22 @@
       ]
     },
     {
+      "id": "settings.journal-picker",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "选期刊：本项目按该期刊检查、页宽跟到它的一栏（一次撤销全回去），每个期刊值都能点开出处卡核对原文",
+        "en-US": "Pick a journal: the project is checked against it and the page width follows its column (one undo reverts both); every journal value opens a source card with the original wording"
+      },
+      "entry": "设置 → 期刊规范 → 期刊",
+      "e2e": [
+        {
+          "spec": "journal-picker.spec.ts",
+          "title": "选期刊：页宽跟到该期刊的一栏、一次撤销全回去；出处卡给出原网页快照与链接；「不按期刊」退回之前的规范与页宽"
+        }
+      ]
+    },
+    {
       "id": "settings.appearance",
       "status": "active",
       "platform": "both",

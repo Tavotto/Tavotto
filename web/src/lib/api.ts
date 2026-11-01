@@ -4030,6 +4030,8 @@ export interface AiTaskSummary {
   explain?: { message_key: string; params: Record<string, unknown> }
   /** 进行中的阶段：只在 Agent 正在自动修正上一版时为 `correcting`（有界修正，Phase 4）；终态没有 */
   phase?: 'correcting' | null
+  /** 转换进行中的活动（后端闭集）：`writing_long` = 事件流静默已久、模型在生成较长的文件；事件一来后端就不再给。其它任务没有 */
+  activity?: 'writing_long' | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
   /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
@@ -4179,7 +4181,7 @@ export function isDefiniteRunFailure(e: unknown): boolean {
   return typeof e.body?.code === 'string' && e.body.code !== ''
 }
 
-export const aiRevert = (sid: string, pj: string | null) =>
+export const aiRevert = (sid: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean; script: string; renamed?: IdentityRename[] }>(
     `/api/ai/sessions/${sid}/revert`,
     { method: 'POST' },

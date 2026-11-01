@@ -53,6 +53,7 @@ from . import (
     handoffreceipt as engine_receipt,
     locate as engine_locate,
     msixbreakaway,
+    msixmigrate,
     registry as engine_registry,
     session_client,
 )
@@ -1602,6 +1603,8 @@ def cli(argv: list[str]) -> int:
     relaunched = msixbreakaway.relaunch_cli(["open", *argv])
     if relaunched is not None:
         return relaunched
+    # 已脱离包身份（或本来就没有）：把包私有区里的旧数据补回真实目录，一次性、永不抛（#1574 善后）
+    msixmigrate.run_once()
     ap = argparse.ArgumentParser(
         prog="tavotto open", description="把一张图 / 一个脚本 / 一个图库目录交给 Tavotto 打开"
     )

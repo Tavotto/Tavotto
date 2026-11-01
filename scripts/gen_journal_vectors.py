@@ -97,6 +97,7 @@ def fixture_catalog() -> dict:
                         "qualifier": "max",
                         "mark": "23 cm",
                         "derivation": "23 cm -> 230 mm",
+                        "snapshot": {"file": SNAPSHOT_FILE, "width": 520, "height": 150},
                     },
                 },
             },
@@ -184,15 +185,31 @@ def fixture_catalog() -> dict:
                         "kind": "html",
                         "retrieved": "2000-02-02",
                         "coverage": "single_journal_sample",
-                    }
+                    },
+                    # 真实采集到的页面快照当夹具用（Nature Energy 作者指南的一句话）；仅测试数据，不进种子
+                    "s10": {
+                        "url": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting",
+                        "kind": "html",
+                        "retrieved": "2026-10-31",
+                    },
                 },
                 "rules": {
+                    "min_raster_dpi": {
+                        "value": 300,
+                        "src": "s10",
+                        "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi",
+                        "qualifier": "min",
+                        "mark": "300 dpi",
+                        "anchor": "#:~:text=minimum%20resolution%20of%20300%20dpi",
+                        "snapshot": {"file": NATURE_FILE, "width": 1080, "height": 408},
+                    },
                     "widths_mm.double": {
                         "value": 180,
                         "src": "s9",
                         "quote": "FIXTURE beta double 18 cm",
                         "mark": "18 cm",
                         "derivation": "18 cm -> 180 mm",
+                        "snapshot": {"file": SNAPSHOT_FILE, "width": 520, "height": 150},
                     },
                     "min_effective_font_size_pt": {
                         "value": 7,
@@ -343,7 +360,11 @@ def apply_ops(catalog: dict, ops: list[dict]) -> dict:
 
 
 _PUB = ["publishers", "fx-press"]
+#: 夹具快照图的文件名（`scripts/gen_journal_snapshot_fixture.py` 生成，内容寻址）
+SNAPSHOT_FILE = "snapshots/b884e3345464d614a90400b84e3ec3df8ca6f820a9473de261ae3cc7a63bcb4e.webp"
 _W1 = [*_PUB, "rules", "widths_mm.single"]
+NATURE_FILE = "snapshots/e3cefe9a0318f03739f98697ec7075ca9a82312f25b42bcbe4fb257a80c4d204.webp"
+_SNAP_OK = {"file": SNAPSHOT_FILE, "width": 520, "height": 150}
 
 
 def _set(path: list, value) -> list[dict]:
@@ -579,6 +600,65 @@ def invalid_cases() -> list[dict]:
             _set([*_W1, "qualifier"], "max"),
         ),
         ("rule-stage-bad-enum", "journal_rule_stage_invalid", _set([*_W1, "stage"], "later")),
+        (
+            "snapshot-file-with-path",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "file": "../" + SNAPSHOT_FILE}),
+        ),
+        (
+            "snapshot-file-url",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "file": "https://example.invalid/a.webp"}),
+        ),
+        (
+            "snapshot-file-uppercase-hash",
+            "journal_rule_snapshot_invalid",
+            _set(
+                [*_W1, "snapshot"],
+                {
+                    **_SNAP_OK,
+                    "file": SNAPSHOT_FILE.upper()
+                    .replace("SNAPSHOTS/", "snapshots/")
+                    .replace(".WEBP", ".webp"),
+                },
+            ),
+        ),
+        (
+            "snapshot-file-not-webp",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "file": SNAPSHOT_FILE[:-4] + "png"}),
+        ),
+        (
+            "snapshot-file-trailing-newline",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "file": SNAPSHOT_FILE + "\n"}),
+        ),
+        (
+            "snapshot-width-zero",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "width": 0}),
+        ),
+        (
+            "snapshot-height-bool",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "height": True}),
+        ),
+        (
+            "snapshot-missing-height",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {"file": SNAPSHOT_FILE, "width": 520}),
+        ),
+        (
+            "snapshot-extra-key",
+            "journal_rule_snapshot_invalid",
+            _set([*_W1, "snapshot"], {**_SNAP_OK, "url": "https://example.invalid/a.webp"}),
+        ),
+        ("snapshot-not-object", "journal_rule_snapshot_invalid", _set([*_W1, "snapshot"], "x")),
+        (
+            "info-snapshot-invalid",
+            "journal_rule_snapshot_invalid",
+            _set([*_PUB, "rules", "info.max_height_mm", "snapshot"], {**_SNAP_OK, "width": -1}),
+        ),
         ("rule-mark-not-in-quote", "journal_rule_mark_invalid", _set([*_W1, "mark"], "86 mm")),
         ("rule-derivation-blank", "journal_rule_mark_invalid", _set([*_W1, "derivation"], " ")),
         ("rule-value-alt-wrong-type", "journal_rule_value_type", _set([*_W1, "value_alt"], "x")),
