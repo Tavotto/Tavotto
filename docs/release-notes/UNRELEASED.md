@@ -17,7 +17,7 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
-## Clearer package download failures, and version lookup now falls back to the mirror (#TBD)
+## Clearer package download failures, and version lookup now falls back to the mirror (#1601)
 
 When installing a package fails because the network is unreachable, the card now says which case it is: "Neither the official index nor the mirror could be reached" (the mirror was tried automatically) or "The download source you configured can't be reached" (you set your own pip index, so Tavotto does not switch it). Looking up a package's versions in the package manager used to fail immediately when the official PyPI was unreachable; if you have not configured your own index, it now tries the same mirror once before giving up. On Windows, pip output from Tavotto's own environments is now read as UTF-8, so non-English system languages no longer garble the install log; your scripts' environment is unchanged.
 
