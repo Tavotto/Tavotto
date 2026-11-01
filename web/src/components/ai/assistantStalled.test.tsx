@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiCancel } from '@/lib/api'
 import { t } from '@/i18n'
+import { setCurrentProjectId } from '@/lib/session'
+import { createDraftBackend } from '@/test/aiDraftBackend'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
 import { useAiStore, type AiSession } from '@/store/aiStore'
@@ -121,5 +123,31 @@ describe('ai.stalled', () => {
     await mount([session({ status: 'done', finalized: true })])
     await act(async () => useAiStore.getState().setStalled('s1', 150))
     expect(useAiStore.getState().sessions[0].stalledS).toBeUndefined()
+  })
+
+  it('点重试：取消并收尾后，用当前的 send 重新发送一次，带原项目 / 目标', async () => {
+    // 账本要读成功（canSend 才为 true）：接上草稿后端 + 一个项目认领
+    const be = createDraftBackend()
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      be.handle(String(url), init) ?? new Response('{}')) as typeof fetch
+    setCurrentProjectId('pa')
+    await mount([session({ project: 'pa', gid: 'g7', scope: 'element', target: '图例' })])
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    const start = vi.fn(async () => 'accepted' as const)
+    useAiStore.setState({ start } as never)
+    await act(async () => useAiStore.getState().setStalled('s1', 120))
+    await act(async () => q('[data-ai-stalled-retry]')!.click())
+    expect(aiCancel).toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+    await act(async () => useAiStore.getState().finish({ session: 's1', status: 'cancelled', changed: false, diff: '' }))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250))
+    })
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: '把图例移到左上角', panelId: 'p1', gid: 'g7', scope: 'element', target: '图例' }),
+    )
   })
 })
