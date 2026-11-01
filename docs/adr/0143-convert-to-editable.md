@@ -15,6 +15,12 @@
 （不进 figure_edit 的 `V1` 模板闭集，Harness Lab 的候选 Pack 契约不变）：保留原脚本的数据读取与计算（ROOT / RooFit 拟合仍用 ROOT，
 只把绘图改成 Matplotlib；Pillow 热图用 imshow / pcolormesh 复现色标、格子标注、标题与脚注），图幅 / 字号对齐原图，不运行脚本。
 
+R / MATLAB 来源的交付范围是图表脚本本身：保留重现图形所需的数据读取、整理、统计与拟合，
+但独立的统计表、诊断表、Excel/CSV/TSV、日志和中间数据导出不属于交付物。它们不参与绘图时可以省略；
+作为图形输入的已有文件只能读取，不能在转换脚本中创建或覆盖。校验规则按来源划分：Python 来源继续改道；
+R / MATLAB 来源只授权候选目录，非图形项目写入会被拒绝并交给有界修正流程。
+原脚本保持不变。
+
 ### 二、权限边界
 
 1. **绝不修改用户的任何脚本**。原脚本字节在整条流程里不变（`tests/test_ai_convert.py::test_original_script_bytes_never_change_through_the_whole_flow`）；
@@ -35,8 +41,7 @@
    一轮有界修正）。候选以紧挨原脚本的**临时文件** `tavotto_convert_probe_<sid>.py`（后端 O_EXCL 建、跑完即删；worker 按模块名 import，
    不能用点开头的隐藏名）存在几秒，使相对路径数据读取与 cwd 判据与原脚本一致——Agent 没有写它的路径。存在期里文件监视器可能看见它，
    删除后登记不变。**校验运行的写入是隔离的（Codex #1277 P1）**：运行带 ADR 0141 的写入根绊线（`probe(write_roots=)` →
-   `pool.build` / `invalidate` / `force_cancel` 同一份根，池键多一段），根只有候选目录——候选把相对路径输出（`out.png` / `data.csv`）写进
-   项目目录时在写发生的那一刻以 `write_outside_roots` 失败，用户文件不被打开写；跑完的指纹复核只是兜底。绊线的盲区同 ADR 0141
+   `pool.build` / `invalidate` / `force_cancel` 同一份根，池键多一段）。校验规则按来源划分：Python 来源继续改道（写进项目的文件改道至候选暂存区）；R / MATLAB 来源只授权候选目录，非图形项目写入在打开文件前以 `write_outside_roots` 失败并触发单次修正提示。用户文件不被打开写；跑完的指纹复核只是兜底。绊线的盲区同 ADR 0141
    （C 层写、子进程、位于系统临时目录 / 用户缓存目录之下的项目）。
    内置执行器可用 ADR 0147 的 `check(final=true, summary=...)` 在同次真实校验通过后结束模型会话，省去纯收尾的下一次请求；
    这不是采用或父进程验证的替代品。Task Core 仍独立校验当前候选，失败仍不可采用，用户仍须对照确认。
@@ -355,12 +360,15 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
 回归：`tests/test_ai_convert_resume_correction.py`。
 
 
-## 修订（2026-10-30）：校验运行里写进项目的文件改道到候选暂存区，不再当失败
+## 修订（2026-10-30 至 2026-11-01）：校验写入边界与来源交付规则
 
-真模型端到端（R → matplotlib）：原脚本读 `data/fake_smd.xlsx`，并用由 xlsx 路径推出的绝对路径把 `data/eFigureS2_loveplot_absSMD_values.csv` 写在数据旁。
-校验运行的写入根只有候选目录，这次写入以 `write_outside_roots` 失败；Codex 为“让校验过”把 CSV 写入整段删掉、只在内存里建——采用之后新脚本不再产出原脚本产出的 CSV（项目目录明明可写）。静默的行为丢失。
+校验写入规则按来源明确划分：**Python 来源继续改道；R / MATLAB 来源只授权候选目录，非图形项目写入会被拒绝。**两种路径都不修改原脚本。
 
-裁决（用户批准）：**校验运行中，候选写进项目的文件被改道到候选自己的暂存区，不当失败**；Agent 没有理由为过校验而删输出写入，采用后的脚本照旧写它的输出。
+1. **Python 来源（继续改道）**：
+   在端到端转换中，Python 候选脚本若写出输出文件，校验运行中写进项目的文件会被改道到候选自己的暂存区（`<候选目录>/redirected/<相对项目根的路径>`），不判定为失败，避免 Agent 为通过校验而删掉原本正常的输出逻辑。采用后的脚本照旧写其输出。
+2. **R / MATLAB 来源（只授权候选目录，非图形写入拒绝）**：
+   R / MATLAB 转换的交付物是可编辑图表脚本，不是完整的统计报表流水线。保留图形所需的数据读取、整理、统计与拟合；独立的统计表、诊断表、CSV/TSV、日志和中间文件不迁移到候选 Python。作为图形输入的已有文件只读。
+   因此，R / MATLAB 候选校验只授权候选目录写入；非图形项目写入在打开文件前被绊线拒绝（以 `write_outside_roots` 失败），并由有界修正提示让 Agent 删除非图形输出。
 
 * **改道区**：`<候选目录>/redirected/<相对项目根的路径>`。`ai_convert.validation_roots(cand)` 是校验运行 `write_roots` 的唯一出处：`(候选目录, redirect-project:<项目>, redirect-dir:<改道区>)`。
   改道条目随 `write_roots` 现有通道走（spec / `--write-roots` argv / 池键 / 影子脚本键），不加新字段；MCP 来源的 `write_roots` 不含改道条目，行为逐字节不变。

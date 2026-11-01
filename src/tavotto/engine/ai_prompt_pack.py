@@ -361,7 +361,8 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset(),
         "1. 按原脚本的顺序逐步搬运：读数据 → 整理 / 筛选 / 分组 → 统计与拟合 → 绘图。数据文件沿用原脚本里的路径写法"
         "（相对路径照旧）；每一步用 Python 里最直接、可核对的对应物，不要“顺便优化”或改动计算的科学含义。"
-        "原脚本写出的数据 / CSV / 图片等输出文件（含写在数据文件旁的）原样保留，沿用同样的路径写法与文件名，不要删除，也不要改成只放内存——校验运行里这些写入会被自动改道到候选的暂存区，原项目文件不会被改动。"
+        "保留生成图形所需的数据读取、整理、统计与拟合；独立的表格、CSV/TSV、日志和中间数据导出不属于本次图表脚本交付，"
+        "若它们不参与绘图可以省略，不能为了复现这些附加输出而新增文件写入。若某个文件是绘图所必需的输入，只读取项目中已有的文件，不要先生成或覆盖它。"
         "先读提供的本地 helper 定义再转写；逐项核对默认参数、分位数定义、样本/总体方差、缺失值、"
         "筛选和汇总的先后次序、分类水平及图例顺序，不能假定同名函数默认等价。"
         "数学标注、求和上下限、坐标轴、透明度及二维/三维几何也保留原语义；"
@@ -425,6 +426,13 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "可请用户在原 MATLAB 图窗口中用 version('-release') 和 cmap=colormap(ax) 获取版本和实际 axes 色表，"
         "再用 writematrix(cmap,'colormap.csv') 导出；ax 必须是原图对应坐标轴，多 axes 分别导出，不能用全局默认值替代。",
     ),
+    "foreign_plot_scope": (
+        frozenset(),
+        "本次转换的交付范围是可编辑图表脚本：只生成重现图形所需的 Matplotlib 图和必要计算。"
+        "生成的 Python 候选中不要保留独立统计表、诊断表、Excel/CSV/TSV、日志或中间数据文件的写出；"
+        "不要在候选里调用 write.csv、write.table、writetable、writematrix、to_csv、to_excel 或同类函数来生成附加输出。"
+        "保留这些图形所需的数据读取与内存计算；已有图形输入只读取，不创建、不覆盖。",
+    ),
     "rule_foreign_needs_input": (
         frozenset(),
         "3. 缺少数据或计算语义必需的输入，或 Python 里没有可靠逐一对应的统计方法或函数"
@@ -445,6 +453,12 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
     "fix_run_failed": (
         frozenset({"target", "detail"}),
         "{target} 运行时出错：{detail}。修正它（数据读取沿用原脚本的写法）。",
+    ),
+    "fix_nonfigure_write": (
+        frozenset({"target"}),
+        "{target} 的图表校验拦截了一次非图形文件写出。保留生成图形所需的数据读取、整理和计算，"
+        "删除或禁用独立表格、CSV/TSV、日志和中间数据文件的写出及仅为这些输出创建的目录；"
+        "不要把写出改到其他目录。保留 Matplotlib 图形与 savefig 调用，然后重新 check。",
     ),
     "fix_target_missing": (
         frozenset({"target"}),
@@ -519,6 +533,7 @@ def convert_prompt(
     if foreign:
         lines += [
             _convert_render("acceptance"),
+            _convert_render("foreign_plot_scope"),
             _convert_render("rule_foreign_steps"),
             _convert_render(f"rule_foreign_mapping_{source_language}"),
             _convert_render("rule_foreign_needs_input"),
@@ -543,7 +558,12 @@ def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
     if key == ("render.capture", "no_matplotlib_figure"):
         return _convert_render("fix_no_figure", target=target)
     if key == ("render.capture", "run_failed"):
-        detail = (o.get("detail") or o.get("code") or "")[:300]
+        detail_text = str(o.get("detail") or "")
+        if o.get("source_language") in {"r", "matlab"} and (
+            o.get("code") == "write_outside_roots" or "Rejected write:" in detail_text
+        ):
+            return _convert_render("fix_nonfigure_write", target=target)
+        detail = (detail_text or o.get("code") or "")[:300]
         return _convert_render("fix_run_failed", target=target, detail=detail)
     if key == ("candidate.target", "target_missing"):
         return _convert_render("fix_target_missing", target=target)

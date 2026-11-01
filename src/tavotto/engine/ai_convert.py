@@ -545,9 +545,11 @@ def normalize_outputs(cand: ConvertCandidate) -> dict | None:
 def validation_roots(cand) -> tuple[str, ...]:
     """校验运行的 `write_roots`（唯一出处：登记键、探测、硬杀三处必须同一份）。
 
-    授权根只有候选目录；另带**改道条目**（`writetripwire.redirect_entries`）：候选写进**项目**的文件（`data.csv` 写在数据旁，
-    绝对路径或 chdir 后的相对路径）被 worker 换到 `<候选目录>/redirected/<项目相对路径>`——校验照样通过、用户项目零改动、
-    Agent 没有理由为了过校验而删掉原脚本的输出写入。项目外且不在白名单的写仍是 `write_outside_roots`。"""
+    R / MATLAB 来源的图表转换仅授权候选目录：独立表格等非图形写入触发 `write_outside_roots`，交给有界修正提示删除。
+    其他转换仍带**改道条目**（`writetripwire.redirect_entries`）：候选写进**项目**的文件会改道到候选暂存区，
+    以保留既有输出行为；项目外且不在白名单的写仍是 `write_outside_roots`。"""
+    if isinstance(cand, ConvertCandidate) and cand.source_language in sourcelang.FOREIGN:
+        return (str(cand.dir),)
     return (
         str(cand.dir),
         *writetripwire.redirect_entries(str(cand.project_root), str(cand.dir / REDIRECT_DIRNAME)),
@@ -618,10 +620,25 @@ def run_validation(
                 if isinstance(violation, dict) and violation
                 else ""
             )
+            message = WRITE_OUTSIDE_HINT + detail
+            if isinstance(cand, ConvertCandidate) and cand.source_language in sourcelang.FOREIGN:
+                message = (
+                    ai_prompt_pack.convert_fix_text(
+                        ("render.capture", "run_failed"),
+                        {
+                            "target": cand.target_name,
+                            "source_language": cand.source_language,
+                            "code": WRITE_OUTSIDE_ROOTS_CODE,
+                            "detail": message,
+                        },
+                    )
+                    or message
+                )
+                message += detail
             return {
                 "status": "error",
                 "code": WRITE_OUTSIDE_ROOTS_CODE,
-                "message": WRITE_OUTSIDE_HINT + detail,
+                "message": message,
             }
         return {
             "status": "error",
@@ -882,7 +899,9 @@ def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = N
     )
 
 
-def _failure_check(result: dict, st: str) -> CheckResult:
+def _failure_check(
+    result: dict, st: str, *, source_language: str = sourcelang.PYTHON
+) -> CheckResult:
     """校验运行没通过 → 一条 `render.capture` 检查（任务的提交前验证与续跑共用，原因码闭集只写这一处）。"""
     if result["status"] == "cancelled":
         return _check("render.capture", st, "goal", UNKNOWN, "cancelled")
@@ -911,6 +930,7 @@ def _failure_check(result: dict, st: str) -> CheckResult:
         "run_failed",
         code=code,
         detail=result.get("message") or "",
+        source_language=source_language,
     )
 
 
@@ -1075,7 +1095,7 @@ class ConvertAdapter:
             return [
                 _check("render.capture", st, "goal", VERIFIED, stems=result["stems"]),
             ]
-        return [_failure_check(result, st)]
+        return [_failure_check(result, st, source_language=cand.source_language)]
 
     def hold(self, cand: ConvertCandidate):
         """提交前验证之后的“停住”口（`ai_tasks._verify_precommit`）：校验运行前发现要用户先决定装包 / 换环境时，
@@ -1834,7 +1854,7 @@ def run_resume(
             }
             _drop_candidate_files(cdir, meta)
         else:
-            check = _failure_check(result, "precommit")
+            check = _failure_check(result, "precommit", source_language=cand.source_language)
             failure = _failure_of(check)
             if correct is not None:
                 corrected = _correct_once(
@@ -1925,7 +1945,9 @@ def _correct_once(
         failure = {"reason": PROJECT_CHANGED_REASON}
         _drop_candidate_files(cdir, meta)
     elif isinstance(validation, dict) and validation.get("status") != "ok":
-        failure = _failure_of(_failure_check(validation, "precommit"))
+        failure = _failure_of(
+            _failure_check(validation, "precommit", source_language=cand.source_language)
+        )
     else:
         failure = original_failure  # 修正后没走到校验运行（语法 / 目标缺失 / Agent 异常退出）：原因沿用修正前那条
     _set_state(cdir, meta, STATE_FAILED, failure=failure)

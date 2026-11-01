@@ -364,7 +364,9 @@ order: 240
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁
 同名位图（`ai_convert.sibling_original`），没有原图时 `comparison.reference=null`、`verification="unknown"`（界面说一句“请并排看一眼再采用”）。
-提示词是 `ai_prompt_pack` convert 一节的变体（逐步搬运 + R→Python / MATLAB→Python 对照表）。Python 里没有可靠对应时 Agent 首行写
+提示词是 `ai_prompt_pack` convert 一节的变体（逐步搬运 + R→Python / MATLAB→Python 对照表）。R / MATLAB 候选只交付图表脚本：
+保留图形所需的数据读取与计算，省略独立表格、诊断表、日志和中间数据写出；校验只允许候选目录写入，非图形写出在打开文件前拦截并交给有界修正。
+Python 来源的既有输出改道行为不变。Python 里没有可靠对应时 Agent 首行写
 `TAVOTTO_NEEDS_INPUT: <原因>` → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（完整导出指引清洗后限长 8,192 字，只进 `unmet[].detail`，
 不进日志 / 遥测）；已写出可运行草稿也不能覆盖明确报告的数据/计算语义缺口，不进入采用。纯视觉未知项独立验收，见 ADR 0143「流程验收与视觉验收分开」；无标记照旧检查候选。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 对所有来源注入 `task_hooks["deps"]`；`cancel` = `TaskRun.cancel_event`）
 走 `deprepair.joint_plan_for` → `create_joint_plan` → `prepare`（不新写 pip 路径；取消经 `deprepair.cancel_status` 传到安装）。**名单**：只装 `engine/autoinstall_dists.txt`

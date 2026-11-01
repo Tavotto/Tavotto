@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import sys
 import threading
@@ -95,7 +94,7 @@ def world(tmp_path, monkeypatch):
     script.write_text("plot(1)\n", encoding="utf-8")
     (root / "sub" / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
     cand = ai_convert.create_candidate(
-        "abcdef012345", script, root, "sub/fig.R", library=None, source_language="r"
+        "abcdef012345", script, root, "sub/fig.R", library=None, source_language="python"
     )
     cand.new_bytes = CANDIDATE.encode()
     cand.target.write_bytes(cand.new_bytes)
@@ -103,6 +102,60 @@ def world(tmp_path, monkeypatch):
     yield root, cand, runner
     pool.shutdown_all(figures_dir=str(root), wait=True)
     workdir.forget(root)
+
+
+@pytest.fixture
+def foreign_world(world):
+    world[1].source_language = "r"
+    return world
+
+
+def test_foreign_conversion_only_grants_the_candidate_write_root(foreign_world):
+    root, cand, _ = foreign_world
+    roots = ai_convert.validation_roots(cand)
+    assert roots == (str(cand.dir),)
+    assert not any(root_text.startswith("redirect-") for root_text in roots)
+
+
+def test_foreign_conversion_rejects_nonfigure_outputs_without_touching_the_project(foreign_world):
+    root, cand, runner = foreign_world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import csv\nimport matplotlib.pyplot as plt\n"
+        "with open('summary.csv', 'w', newline='') as f:\n"
+        "    csv.writer(f).writerow(['x', 1])\n"
+        "plt.plot([1, 2])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    before = ai_figure_edit.project_fingerprint(root)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "error" and result["code"] == "write_outside_roots", result
+    assert "非图形文件写出" in result["message"]
+    assert "Rejected write:" in result["message"]
+    assert (
+        ai_figure_edit.fingerprint_changes(before, ai_figure_edit.project_fingerprint(root)) == []
+    )
+    assert not (root / "sub" / "summary.csv").exists()
+    assert not (cand.dir / ai_convert.REDIRECT_DIRNAME / "sub" / "summary.csv").exists()
+
+
+def test_foreign_conversion_still_captures_figure_output(foreign_world):
+    root, cand, runner = foreign_world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import matplotlib.pyplot as plt\nplt.plot([1, 2], [2, 3])\nplt.savefig('figure.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert not (root / "sub" / "figure.png").exists()
+
+
+def test_python_conversion_keeps_project_output_redirection(world):
+    root, cand, _ = world
+    roots = ai_convert.validation_roots(cand)
+    assert len(roots) == 3
+    assert roots[0] == str(cand.dir)
 
 
 @pytest.mark.parametrize("mode", [workdir.MODE_SANDBOX, workdir.MODE_PROJECT])
@@ -649,20 +702,16 @@ def test_registration_is_scoped_and_isolated_per_write_roots(tmp_path):
     assert shadowscript.lookup(tmp_path / "p", "d/a.py", key) is None
 
 
-def test_dependency_survey_reads_the_shadow_candidate(world):
-    """依赖调研读的是候选字节：项目里没有这个文件，也不能让“缺包要先装”的步骤悄悄消失。"""
-    from tavotto.engine import convertdeps
+def test_dependency_scan_reads_the_shadow_candidate(foreign_world):
+    """依赖静态扫描读的是候选字节：项目里没有这个文件也不能漏掉候选 import。"""
+    from tavotto.engine import importscan
 
-    root, cand, _ = world
-    # 缺的包要选测试环境里一定没有的：release 档 lab 的验证环境装着 pandas，用它调研结论是「什么都不缺」。
-    # adjustText 是登记过的公开包（depresolve 名单），不在 Tavotto 与测试的依赖里——也是诊断包 TVD-ZG0Y 里缺的那个
-    if importlib.util.find_spec("adjustText") is not None:
-        pytest.skip("这个环境装了 adjustText，缺包调研无从发生")
+    root, cand, _ = foreign_world
     cand.target.write_bytes(b"import adjustText\nimport matplotlib\n")
     key = execspec.write_roots_key((str(cand.dir),))
     with shadowscript.shadow(root, "sub/fig_matplotlib.py", cand.target, key):
-        survey = convertdeps._survey(str(root), "sub/fig_matplotlib.py")
-    assert survey["verdict"] != "none" and "adjusttext" in survey.get("names", []), survey
+        scan = importscan.scan(root, "sub/fig_matplotlib.py")
+    assert {item.module for item in scan.needed} >= {"adjustText", "matplotlib"}, scan
 
 
 # --------------------------------------------------------------------------- 改图（figure_edit）候选同样走影子脚本

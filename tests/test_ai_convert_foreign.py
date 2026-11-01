@@ -157,12 +157,15 @@ def test_r_and_matlab_prompts_are_variants_of_the_same_section():
     for text in (r, m):
         assert "TAVOTTO_NEEDS_INPUT:" in text and "不会运行它" in text
         assert "fig_matplotlib.py" in text and "/p" in text, "目标与工作副本说明沿用同一份模板"
+        assert "独立统计表" in text and "不属于本次图表脚本交付" in text
+        assert "已有图形输入只读取，不创建、不覆盖" in text
     assert "geom_smooth" in r and "lowess" in r and "frac" in r and "statsmodels.formula" in r
     assert "read.csv" in r and "groupby" in r and "facet_wrap" in r
     assert "fitlm" in m and "polyfit" in m and "errorbar" in m and "readtable" in m
     assert "geom_smooth" not in m and "fitlm" not in r
     assert "TAVOTTO_NEEDS_INPUT" not in py, "Python 来源的提示词不带这套变体"
     assert "ROOT / RooFit" in py
+    assert "独立统计表" not in py, "Python 来源保持原有提示词范围"
 
 
 def test_prompt_variant_rejects_an_unknown_source_language():
@@ -170,6 +173,36 @@ def test_prompt_variant_rejects_an_unknown_source_language():
         ai_prompt_pack.convert_prompt(
             script="a", target="b", reference=None, project_root="/p", source_language="julia"
         )
+
+
+@pytest.mark.parametrize("language", ["r", "matlab"])
+def test_nonfigure_write_failure_gets_a_figure_only_correction(language):
+    text = ai_prompt_pack.convert_fix_text(
+        ("render.capture", "run_failed"),
+        {
+            "target": "fig_matplotlib.py",
+            "source_language": language,
+            "code": "write_outside_roots",
+            "detail": 'Rejected write: {"op":"open","path":"table.csv"}',
+        },
+    )
+    assert text is not None
+    assert "fig_matplotlib.py" in text and "非图形文件写出" in text
+    assert "保留生成图形所需的数据读取、整理和计算" in text
+
+
+def test_python_conversion_keeps_the_existing_write_error_correction():
+    text = ai_prompt_pack.convert_fix_text(
+        ("render.capture", "run_failed"),
+        {
+            "target": "fig_matplotlib.py",
+            "source_language": "python",
+            "code": "write_outside_roots",
+            "detail": "Rejected write: table.csv",
+        },
+    )
+    assert text is not None and "运行时出错" in text
+    assert "非图形文件写出" not in text
 
 
 # --------------------------------------------------------------------------- R 的整条流程
