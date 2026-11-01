@@ -883,15 +883,25 @@ def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = N
 
 
 def write_denied(cand: ConvertCandidate) -> bool:
-    """本次 Codex 运行事实是否显示“写入被拒”：有文件改动失败（`file_changes_failed`）或命令被拒绝（`commands_declined`）。
+    """本次 Codex 运行事实是否显示“写入被拒”，两种形状：
+    1. 有文件改动失败（`file_changes_failed`）或命令被拒绝（`commands_declined`）；
+    2. 沙盒起不来、命令在启动前就被策略拒绝（TVD-BCZ0，Windows）：收到过事件、回合正常结束（`last_event == turn.completed`），
+       却 0 条命令、0 个文件改动——事件流里没有任何 command_execution，第 1 条抓不到。
     事实由桥在每次 CLI 进程结束时合并（`ai_agents.merge_run_facts`）放进 `cand.extras["run_facts"]`；没有事实（内置执行器等）= False。
     只在“目标文件缺失”时才拿来改失败码，不影响其它路径。"""
     facts = cand.extras.get("run_facts")
     if not isinstance(facts, dict):
         return False
-    return (
+    if (
         int(facts.get("file_changes_failed") or 0) > 0
         or int(facts.get("commands_declined") or 0) > 0
+    ):
+        return True
+    return (
+        int(facts.get("events") or 0) > 0
+        and facts.get("last_event") == "turn.completed"
+        and int(facts.get("commands") or 0) == 0
+        and int(facts.get("file_changes") or 0) == 0
     )
 
 

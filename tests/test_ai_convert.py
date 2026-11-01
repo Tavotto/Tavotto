@@ -1031,3 +1031,19 @@ def test_live_activity_is_only_for_running_convert_sessions():
     assert ai_bridge._live_activity({**base, "status": "done"}) is None
     assert ai_bridge._live_activity({**base, "cli_live": None}) is None
     assert "cli_live" in ai_bridge.SESSION_INTERNAL_KEYS
+
+
+def test_write_denied_covers_sandbox_that_never_started_but_not_real_work():
+    """沙盒起不来（TVD-BCZ0，Windows）：回合正常结束却 0 命令 0 写入 → 真；有命令没写入 / 回合没正常结束 / 没事件 → 假。"""
+    cand = SimpleNamespace(extras={})
+    base = {"events": 5, "last_event": "turn.completed", "commands": 0, "file_changes": 0}
+    cand.extras["run_facts"] = dict(base)
+    assert ai_convert.write_denied(cand) is True
+    cand.extras["run_facts"] = {**base, "commands": 3}  # 旧路径：跑过命令只是没写出目标
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {**base, "file_changes": 1}
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {**base, "last_event": "turn.failed"}
+    assert ai_convert.write_denied(cand) is False
+    cand.extras["run_facts"] = {**base, "events": 0, "last_event": "none"}
+    assert ai_convert.write_denied(cand) is False
