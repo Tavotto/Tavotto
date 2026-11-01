@@ -17,6 +17,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+# Windows 上被捕获 / 重定向时 stdout/stderr 是 cp1252 / GBK，打印中文会 UnicodeEncodeError（同 build_frontend.py）
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tests" / "fixtures" / "journal_snapshots" / "snapshots"
 W, H = 520, 150
