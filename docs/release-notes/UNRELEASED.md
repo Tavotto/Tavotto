@@ -125,6 +125,10 @@ If the connected AI tool prints nothing for 2 minutes, the assistant's status li
 
 The repair assistant's environment list only showed external Python installs and left out the environment the project was actually running in (including Tavotto's built-in Python), so its "run the script to verify" step was refused with "select that environment first". The list now starts with the environment currently in use, marked as current, and verification runs in it.
 
+## Diagnostic bundles now explain slow or empty Codex conversions
+
+When a conversion or edit run through the Codex CLI took many minutes, timed out, was cancelled, or ended without producing the new script, the diagnostic bundle only showed that Codex had run and nothing about what it did. The bundle now records, for each Codex run, how many events it produced, how many commands it ran and how many failed or were declined, whether a command was still running at the end, how many files it changed and whether they were inside the working folder, whether it touched the target file, the last kind of event it reported, the longest silent gap, and whether it used the official login or a relay. Only counts, times and fixed labels are recorded, never commands, file paths, prompts or Codex's output.
+
 ## Figures removed by a run no longer come back in the project file
 
 When you ran a script again with different arguments and the run no longer produced a figure that the previous run had (for example `Extra_map` after dropping `--extra`), Tavotto correctly reported that figure as unlinked, but the project's script registry could quietly add it back a moment later. This happened when the project folder watcher noticed Tavotto's own registry write before the run had finished updating the project, mostly on slower Windows machines. The watcher now recognises that write as Tavotto's own, so the registry keeps exactly the figures the run reported.
