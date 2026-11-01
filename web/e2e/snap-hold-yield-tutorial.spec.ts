@@ -24,7 +24,9 @@ test('教程：拖 Fig2 子图底边靠近 Fig1 底边，途经整图中线不�
   const py = process.env.TAVOTTO_WORKER_PYTHON || 'python3'
   for (const s of ['fig1_kinetics', 'fig2_correlation']) execFileSync(py, ['-c', `import ${s}; ${s}.main()`], { cwd: dir, timeout: 120_000 })
   const a = await app({ figures: dir })
-  await page.setViewportSize({ width: 1600, height: 1000 })
+  // 宽 1900：≥1280 时左栏默认钉住、进图内编辑自动开「图内」抽屉（审计 B4 / A3），画布区比原来窄约 300px；
+  // 加宽视口让画布区回到原来的宽度、取景倍率与吸附阈值的像素尺度和这条用例写定时一致
+  await page.setViewportSize({ width: 1900, height: 1000 })
   await page.goto(a.baseURL)
   const mans: Record<string, any> = {}
   page.on('response', async (r) => {

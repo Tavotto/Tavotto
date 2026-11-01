@@ -24,7 +24,7 @@ test('1093×614：画布占视口 ≥ 60%、无横向溢出、左轨只留图标
   await page.setViewportSize({ width: 1093, height: 614 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   const stage = page.locator('[data-canvas-stage]')
   await expect(stage).toHaveCount(1, { timeout: 60_000 })
 
@@ -42,7 +42,7 @@ test('1093 宽：选中对象后属性栏盖在画布上、不挤窄舞台', asy
   await page.setViewportSize({ width: 1093, height: 614 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForDocumentReady(page)
   const stage = page.locator('[data-canvas-stage]')
   const before = (await stage.boundingBox())!.width

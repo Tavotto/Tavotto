@@ -53,7 +53,8 @@ for (const width of [600, 780, 920, 1024]) {
     // 书签钮已并入时间线抽屉（2026-10-01）：顶栏不再有它
     await expect(page.locator('[data-topbar] [data-timeline-name-button]')).toHaveCount(0)
     const m = await overlaps(page)
-    expect(m.count, JSON.stringify(m)).toBeGreaterThan(8)
+    // 量到的框数下限：时钟钮去掉后（审计 A2）顶栏剩 8 个，少于它说明有按钮没量到
+    expect(m.count, JSON.stringify(m)).toBeGreaterThanOrEqual(8)
     expect(m.hits, JSON.stringify(m)).toEqual([])
     expect(m.off, JSON.stringify(m)).toEqual([])
   })
