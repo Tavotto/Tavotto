@@ -25,7 +25,7 @@ function fakeFailingCodex(): { PATH: string; release: string } {
 
 async function openAssistant(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   await page.locator('[data-inspector-tab="assistant"]').click()
   await expect(page.locator('[data-ai-input]')).toBeEnabled({ timeout: 30_000 })

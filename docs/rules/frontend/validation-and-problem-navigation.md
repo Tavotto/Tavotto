@@ -82,6 +82,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   （`[data-locate-flash]`，sel 内环 + 淡底，与画布同一个 `--animate-attention`），画布上那一下闪在问题带 gid 时
   描**那个图内元素**（`IssueOverlay.IssueElementHighlight`，与悬停轮廓同一份换算），不是整张图；两处都亮
   `HIGHLIGHT_MS`（2700）。同时放一段**舞台灯**（`canvas/IssueSpotlight`，2026-10-23 用户提出）：参照 iMessage「聚光灯」——一道光柱从离目标最近的画布角斜射过来，画布整体暗下去、轻微失焦，目标落在一层光圈里（外缘一圈很淡的光晕），整段一秒；只有一层暗幕，光圈与光柱是同一张遮罩里的受光区（暗幕变薄，不叠白），不画描边（动效开着时高亮框只当光圈锚点、不可见）；光圈读覆盖层里那个高亮框的屏幕外接框（不另算几何，视口平移中每帧跟着），挂在选框覆盖层之下，reduced motion 下不放。看护 `lib/issueFocus.test.ts`、`components/inspector/locateField.test.tsx`、`canvas/issueSpotlight.test.tsx`。
+* **规则组头说一次要求**（2026-10-31 UI 审计 C4）：同组每条的要求相同（`validationText.sharedTarget()`）时，组头写「标题 → 要求」，对象行尾随格只留当前值；要求因对象而异（或没有要求）时每行各写「当前 → 要求」。每组默认最多露 3 行（`PREVIEW_ROWS`），其余收成「还有 N 个」。组头等级记号：要改 / 留意 = 实心圆（danger / warn），建议 / 无法核验 = 灰空心方块。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
   「技术详情」里。它是行尾 88px **尾随格**里的 ⓘ（`data-issue-tech-toggle`），点开是一个 popover

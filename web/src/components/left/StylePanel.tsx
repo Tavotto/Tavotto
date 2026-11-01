@@ -148,7 +148,7 @@ function StylePanelBody() {
         </p>
       )}
       {/* 「跟随样式」是滚动区里最后一节（可折叠），不再是钉在底部的约 150px 页脚（2026-10-07 设计审计 §10.3） */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div data-style-scroll className={cn('min-h-0 flex-1 overflow-y-auto', STYLE_CONTAINER)}>
         {manifest ? (
           <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} canQueueSize={render?.status !== 'error'} />
         ) : panel.script ? (
@@ -238,11 +238,11 @@ function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObj
 function StyleRow({ id, children }: { id: string; children: ReactNode }) {
   const label = ROW_LABEL[id]()
   return (
-    <div data-style-row={id} className={cn(STYLE_ROW_GRID, 'items-start py-0.5')}>
+    <div data-style-row={id} className={cn(STYLE_ROW_GRID, WIDE_COLS, NARROW_COLS, 'items-start py-0.5')}>
       <span className="h-7 truncate text-xs leading-7 text-ink-2" title={label}>
         {label}
       </span>
-      <div className="flex min-w-0 flex-col gap-1">{children}</div>
+      <div className={cn('flex min-w-0 flex-col gap-1', WIDE_FLATTEN)}>{children}</div>
     </div>
   )
 }
@@ -254,10 +254,30 @@ function StyleRow({ id, children }: { id: string; children: ReactNode }) {
  */
 const STYLE_ROW_GRID = 'grid grid-cols-[var(--insp-label,clamp(88px,28%,112px))_minmax(0,1fr)] gap-x-2'
 
+/**
+ * 样式面板按**侧栏自己的宽度**分三档（容器查询，不跟窗口；2026-10-31 UI 审计 C3）：
+ *
+ * * 宽（≥ 350px）：一行 `标签 | 字体 | 字号 | B | I`。线条行的数值框落在字号那一列，没有 B / I 的行那两格留空，各行等高；
+ * * 中：标签一列，字体一行、字号 + B I 在下一行，各行的字号框从控件列左缘起排，在同一条竖线上；
+ * * 窄（< 262px）：标签放到上面，控件占满一行宽。
+ *
+ * 宽档的阈值按真实列宽算：标签 4rem + 字体至少 ≈100 + 字号 5.5rem + B / I 各 1.75rem + 列间 4。
+ */
+const STYLE_CONTAINER = '@container'
+/* Tailwind 只认完整类名：阈值（宽 350 / 窄 262）写死在下面每个字面量里，不拼接 */
+/** 宽档里「控件列 / 控件行」不再是盒子，控件直接落在行网格的列上 */
+const WIDE_FLATTEN = '@min-[350px]:contents'
+/** 宽档的列：标签 | 字体 | 字号 | 粗 | 斜 */
+const WIDE_COLS = '@min-[350px]:grid-cols-[4rem_minmax(0,1fr)_5.5rem_1.75rem_1.75rem] @min-[350px]:gap-x-1'
+/** 窄档：标签在上，控件占满一行 */
+const NARROW_COLS = '@max-[262px]:grid-cols-1'
+/** 宽档里字体格所在的列（数值格的列写在 `VALUE_W` 里） */
+const WIDE_FAMILY_COL = '@min-[350px]:col-start-2'
+
 /** 控件列里的一行：高 28，控件从左缘起排 */
 function ControlLine({ line, children }: { line: string; children: ReactNode }) {
   return (
-    <div data-style-line={line} className="flex h-7 min-w-0 items-center gap-1">
+    <div data-style-line={line} className={cn('flex h-7 min-w-0 items-center gap-1', WIDE_FLATTEN)}>
       {children}
     </div>
   )
@@ -267,7 +287,7 @@ function ControlLine({ line, children }: { line: string; children: ReactNode }) 
  * 「值」那一格的宽度：字号 / 线宽的数字框与刻度方向的下拉**同一个宽**。放得下「多个值 pt」
  * 与英文的「Outward」；280 px 的最窄侧栏里「值 + 粗体 + 斜体」仍排得下一行。
  */
-const VALUE_W = 'w-[5.5rem] shrink-0'
+const VALUE_W = 'w-[5.5rem] shrink-0 @min-[350px]:col-start-3'
 
 /**
  * 一格的读数：图内那侧是 `ControlValue`（uniform / mixed / unavailable），画布标注那侧是
@@ -539,7 +559,7 @@ const FigureTextRow = memo(function FigureTextRow({
     <StyleRow id={id}>
       {familyField && (
         <ControlLine line={`${id}.family`}>
-          <div data-style-cell={`${id}.family`} className="flex min-w-0 flex-1">
+          <div data-style-cell={`${id}.family`} className={cn("flex min-w-0 flex-1", WIDE_FAMILY_COL)}>
             <FamilySelect
               label={sp('familyOf', { row: label })}
               value={pw.shown('fontfamily', family.valueOf('fontfamily'))}
@@ -659,7 +679,7 @@ function AnnotationRow({
   return (
     <StyleRow id="annotation">
       <ControlLine line="annotation.family">
-        <div data-style-cell="annotation.family" className="flex min-w-0 flex-1">
+        <div data-style-cell="annotation.family" className={cn("flex min-w-0 flex-1", WIDE_FAMILY_COL)}>
           <FamilySelect
             label={sp('familyOf', { row: label })}
             value={pw.shown('fontFamily', adapter.valueOf('fontFamily'))}

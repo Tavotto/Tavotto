@@ -15,6 +15,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasStage } from '@/canvas/CanvasStage'
+import { CARD_W, EmptyPickCards, pickColumns, pickRows } from '@/canvas/EmptyPickCards'
 import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { t } from '@/i18n'
@@ -136,14 +137,59 @@ describe('空画布的起步提示', () => {
     expect(document.body.textContent).not.toContain(sg('emptyHintNoAssets'))
   })
 
-  it('有图时说明是「从素材库选一张」', async () => {
-    useAssetStore.setState({
-      panels: [asset('a.pdf')],
-      byId: { 'a.pdf': asset('a.pdf') },
-      loaded: true,
+  it('有图时直接摆选图卡（最多 4 张），点一下放上画布；没有「添加图」按钮', async () => {
+    const mk = (id: string, status?: 'editable' | 'layout_only'): PanelInfo => ({
+      ...asset(id),
+      ...(status
+        ? {
+            capability: {
+              status,
+              reason_code: status === 'editable' ? 'registered_source' : 'no_source_candidate',
+              script: null,
+              candidates: [],
+              can_probe: false,
+              can_manual_link: false,
+            },
+          }
+        : {}),
     })
+    const list = ['a.pdf', 'b.pdf', 'c.pdf', 'd.pdf', 'e.pdf'].map((id, i) => mk(id, i === 1 ? 'layout_only' : 'editable'))
+    useAssetStore.setState({ panels: list, byId: Object.fromEntries(list.map((p) => [p.id, p])), loaded: true })
     await mount(<CanvasStage />)
-    expect(document.body.textContent).toContain(sg('emptyHint'))
+    // 面板整块落在纸面内：摆几张按纸面大小定（jsdom 里纸面小，只摆得下前两张），绝不超过 4
+    expect(document.querySelectorAll('[data-pick-card]').length).toBeGreaterThanOrEqual(2)
+    expect(document.querySelectorAll('[data-pick-card]').length).toBeLessThanOrEqual(4)
+    expect(byText(sg('addFigure'))).toHaveLength(0)
+    expect(document.body.textContent).toContain(sg('pickTitle'))
+    // 只有不可改图内的卡打状态标签；悬停在它上面时，下方说明那一行换成「只能整体移动、缩放、裁剪」（卡不加行）
+    expect(document.querySelectorAll('[data-card-status]')).toHaveLength(1)
+    expect(document.body.textContent).not.toContain(sg('pickLayoutOnly'))
+    await act(async () => {
+      document.querySelector('[data-pick-card="b.pdf"]')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+    expect(document.querySelector('[data-empty-pick-note]')!.textContent).toBe(sg('pickLayoutOnly'))
+    expect(document.querySelectorAll('[data-pick-el]')).toHaveLength(0)
+  })
+})
+
+describe('选图卡的版面', () => {
+  it('纸面够宽 4 张一排，窄了两列再一列；纸面矮就只摆放得下的行', () => {
+    expect(pickColumns(700, 4)).toBe(4)
+    expect(pickColumns(480, 4)).toBe(2)
+    expect(pickColumns(860, 3)).toBe(3)
+    expect(pickColumns(400, 3)).toBe(2)
+    expect(pickColumns(200, 4)).toBe(1)
+    expect(pickRows(317)).toBe(1)
+    expect(pickRows(600)).toBe(3)
+  })
+
+  it('每张卡的包装宽度就是版面计算用的卡宽，长文件名不把卡撑开', async () => {
+    const long = `${'a-very-long-figure-file-name-'.repeat(4)}.pdf`
+    const list = [asset(long), asset('b.pdf')]
+    await mount(<EmptyPickCards panels={list} paperW={700} paperH={600} />)
+    const slots = [...document.querySelectorAll<HTMLElement>('[data-pick-slot]')]
+    expect(slots).toHaveLength(2)
+    for (const el of slots) expect(el.style.width).toBe(`${CARD_W}px`)
   })
 })
 

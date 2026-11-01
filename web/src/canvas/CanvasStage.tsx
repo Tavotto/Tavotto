@@ -3,6 +3,7 @@ import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { EmptyPickCards } from './EmptyPickCards'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -496,9 +497,11 @@ function EmptyHint() {
   const viewH = useViewportStore((s) => s.viewH)
   const page = useDocumentStore((s) => s.doc.page)
   const assetsLoaded = useAssetStore((s) => s.loaded)
-  const hasAssets = useAssetStore((s) => s.panels.length > 0)
+  const panels = useAssetStore((s) => s.panels)
+  const hasAssets = panels.length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   if (!selectionEmpty) return null
+  const showCards = assetsLoaded && hasAssets
   const onLightPaper = groundInkFor(null, page) === 'paper-ink'
   // 锚在纸面**可见部分**的中心：侧栏一开、画布被挤到一边时提示跟着纸面走，
   // 而不是飘在灰色工作区中央；纸面比视野大时（放大 / 首次适配还没算对）落在
@@ -522,9 +525,17 @@ function EmptyHint() {
           卡片，白纸正中一块黑，很突兀）。用户把页面背景设成深色时纸上的墨压不住，退回一块主题面板底、字用界面墨
           （Codex #995）。深浅按页面的实际底色判，与纸上文字 / 选区同一个判据 `groundInkFor`（宪法第二十八节） */}
       <div
-        {...(onLightPaper ? { 'data-on-paper': '' } : {})}
-        className={cn('pointer-events-auto p-4', !onLightPaper && 'rounded-lg bg-surface')}
+        {...(onLightPaper && !showCards ? { 'data-on-paper': '' } : {})}
+        className={cn(
+          'pointer-events-auto p-4',
+          // 选图卡的底：明确的圆角 + 细边（纸上不留一块没有网格的无边界底）
+          showCards ? 'rounded-lg border border-border bg-surface' : !onLightPaper && 'rounded-lg bg-surface',
+        )}
       >
+        {/* 项目里有图：直接摆选图卡（B5）。卡片是界面面（surface），不跟纸上的墨走 */}
+        {showCards ? (
+          <EmptyPickCards panels={panels} paperW={mmToWorld(page.w) * zoom} paperH={mmToWorld(page.h) * zoom} />
+        ) : (
         <EmptyState
           art="canvas"
           title={sg('emptyTitle')}
@@ -537,6 +548,7 @@ function EmptyHint() {
               : { label: sg('tryTutorial'), onClick: () => void runTutorialEntry('canvas') }
           }
         />
+        )}
       </div>
     </div>
   )

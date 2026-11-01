@@ -160,7 +160,7 @@ export function CanvasPage() {
     <>
       {/* 两行头：与属性页的身份头同一副骨架（路径 24 + 名字 32），右端是尺寸 meta */}
       <header data-identity data-canvas-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
-        <p className="flex h-6 min-w-0 items-center gap-1.5 text-sm text-ink-3">
+        <p className="flex h-6 min-w-0 items-center gap-1.5 type-caption">
           <span className="min-w-0 flex-1 truncate">{translate('tab.canvas', { ns: 'inspector' })}</span>
           <span className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
             {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}

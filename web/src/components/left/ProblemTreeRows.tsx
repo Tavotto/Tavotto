@@ -16,6 +16,7 @@ import {
   issueTitle,
   issueValues,
   severityLabel,
+  sharedTarget,
   subjectName,
   technicalDetailLines,
 } from '@/lib/validationText'
@@ -25,13 +26,16 @@ import { Button, IconButton } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 
-/** 组头的 6px 圆点：只有「要改」「留意」带色，其余灰（与导出检查的计数芯片同一语言） */
-const DOT_BG: Record<Severity, string> = {
-  error: 'bg-danger',
-  warn: 'bg-warn',
-  not_verifiable: 'bg-ink-faint',
-  suggestion: 'bg-ink-faint',
-}
+/** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
+const isHollow = (s: Severity) => s === 'suggestion' || s === 'not_verifiable'
+const markClass = (s: Severity) =>
+  isHollow(s)
+    ? 'box-border size-1.5 rounded-xs border-[1.5px] border-ink-3'
+    : cn('size-1.5 rounded-full', s === 'error' ? 'bg-danger' : 'bg-warn')
+
+/** 组头的尾随格只放一个数字 / 「修复 N」，比对象行的窄，名字多得 48px */
+const GROUP_TRAIL_W = 'w-16'
+const GROUP_TRAIL_PAD = 'pr-[4.75rem]'
 
 /** 本组文案在 errors:problems.* 下 */
 const pr = (key: string, values?: Record<string, unknown>) =>
@@ -58,18 +62,20 @@ export function TrailCell({
   rest,
   action,
   height = 'h-7',
+  width = TRAIL_W,
 }: {
   hot: boolean
   bind: ReturnType<typeof useHot>['bind']
   rest: ReactNode
   action?: ReactNode
   height?: 'h-7' | 'h-8'
+  width?: string
 }) {
   return (
     <span
       {...bind}
       data-problem-trail
-      className={cn('absolute right-2 top-0 flex items-center justify-end', TRAIL_W, height)}
+      className={cn('absolute right-2 top-0 flex items-center justify-end', width, height)}
     >
       <span
         data-problem-trail-rest
@@ -142,6 +148,8 @@ export function GroupNode({
   onLocate: (issue: ValidationIssue) => void
 }) {
   const title = issueTitle(group.issues[0])
+  // 同组要求一致：组头说一次，对象行只剩当前值
+  const target = sharedTarget(group.issues)
   // 组的「修复 N」是用户点名这一组：建议档的组也照修（顶上的「全部修复」才不带建议档）
   const fixable = useBatchable(group.issues, activeCanvasId, { includeSuggestions: true })
   const { hot, bind } = useHot()
@@ -169,23 +177,44 @@ export function GroupNode({
             count: group.objects,
           })}
           style={treeIndent(depth)}
-          className={cn(listRowClass({ size: 'sm' }), TRAIL_PAD, 'w-[calc(100%-0.5rem)] text-left')}
+          className={cn(
+            listRowClass({ size: 'sm' }),
+            GROUP_TRAIL_PAD,
+            'h-auto min-h-7 w-[calc(100%-0.5rem)] items-start py-1 text-left',
+          )}
         >
-          <TreeChevron expanded={open} />
-          {/* 组头只有一颗 6px 圆点带色（要改 = danger、留意 = warn、其余灰）；形状与等级字在可达名与下面的 sr-only 里 */}
-          <span aria-hidden className="flex w-4 shrink-0 justify-center">
-            <span className={cn('size-1.5 rounded-full', DOT_BG[group.severity])} />
+          <span className="flex h-5 shrink-0 items-center">
+            <TreeChevron expanded={open} />
           </span>
-          <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+          {/* 等级记号：要改 / 留意 = 实心圆（danger / warn），建议 / 无法核验 = 空心方块（灰）；等级字在 title、可达名与下面的 sr-only 里 */}
+          <span aria-hidden title={severityLabel(group.severity)} className="flex h-5 w-4 shrink-0 items-center justify-center">
+            <span data-issue-group-mark={isHollow(group.severity) ? 'hollow' : 'solid'} className={markClass(group.severity)} />
+          </span>
+          {/* 标题优先：放得下一行就一行，放不下折成两行，绝不截断；「→ 要求」跟在标题后面，一行里放不下就整段换到下一行 */}
+          <span className="min-w-0 flex-1 break-words text-left leading-5">
+            <span className="font-medium">{title}</span>
+            {target && (
+              <>
+                {' '}
+                <span data-issue-group-target className="inline-block max-w-full whitespace-nowrap align-bottom font-normal tabular-nums text-ink-2">
+                  <span aria-hidden className="text-ink-faint">
+                    {'→ '}
+                  </span>
+                  {target}
+                </span>
+              </>
+            )}
+          </span>
         </button>
         <TrailCell
           hot={hot}
           bind={bind}
+          width={GROUP_TRAIL_W}
           rest={
-            /* 受影响对象数 + 等级字（等级不只靠颜色与形状，problemPanel.test 钉着） */
-            <span className={cn(rowMetaClass(), 'truncate')}>
-              {pr('groupObjects', { count: group.objects })}
-              <span className="sr-only">{` · ${severityLabel(group.severity)}`}</span>
+            /* 受影响对象数只写数字（「N 个对象」留给读屏）+ 等级字（等级不只靠颜色与形状，problemPanel.test 钉着） */
+            <span className={rowMetaClass()}>
+              <span aria-hidden>{group.objects}</span>
+              <span className="sr-only">{`${pr('groupObjects', { count: group.objects })} · ${severityLabel(group.severity)}`}</span>
             </span>
           }
           action={fixable.length > 0 ? <FixCountButton issues={fixable} /> : undefined}
@@ -199,6 +228,7 @@ export function GroupNode({
               issue={issue}
               depth={depth + 1}
               current={issue.issueId === currentId}
+              targetShared={target != null}
               onLocate={() => onLocate(issue)}
               activeCanvasId={activeCanvasId}
             />
@@ -234,12 +264,15 @@ export function IssueRow({
   issue,
   depth,
   current,
+  targetShared = false,
   onLocate,
   activeCanvasId,
 }: {
   issue: ValidationIssue
   depth: number
   current: boolean
+  /** 同组要求一致、已在组头说过：这一行只写当前值 */
+  targetShared?: boolean
   onLocate: () => void
   activeCanvasId: string
 }) {
@@ -275,9 +308,10 @@ export function IssueRow({
       point(false)
     },
   }
+  const expected = targetShared ? null : values.expected
   const valueText = values.current
-    ? values.expected
-      ? pr('valueArrow', { current: values.current, expected: values.expected })
+    ? expected
+      ? pr('valueArrow', { current: values.current, expected })
       : values.current
     : null
   return (
@@ -309,15 +343,19 @@ export function IssueRow({
         bind={rowBind}
         rest={
           valueText ? (
-            <span data-issue-values className={cn(rowMetaClass(current), 'truncate font-mono')} title={valueText}>
+            <span
+              data-issue-values
+              className={cn(rowMetaClass(current), 'min-w-0 truncate')}
+              title={values.expectedAll ? `${values.current} → ${values.expectedAll}` : valueText}
+            >
               {values.current}
-              {values.expected && (
+              {expected && (
                 <>
                   <span aria-hidden className="text-ink-faint">
                     {' → '}
                   </span>
                   {/* 行内只留要求本身（「≥ 8 pt」）；「显示已四舍五入」这类补一句的整句在 title / ⓘ 里 */}
-                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? values.expected}</span>
+                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? expected}</span>
                 </>
               )}
             </span>
