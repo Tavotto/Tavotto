@@ -48,6 +48,16 @@ type Remedy =
    **优先于** `ai_fix` / `connect_ai`（不把这类失败送进 AI 修复）。字段表不变（仍是 `silent`），只多一条 golden 向量；
    「给不给按钮」的事实由 `prepsession._native_confirm_offered` 量好放进 `Ctx.confirm_native`，路由本身不判来源。
 
+   **修订 2026-11-01（TVD-H1M5，维护者批准）**：第 4、5 条之间插一条——失败码是 `script_error`，且 `Ctx.revertible_ai_edit` 有值
+   → `{ kind: 'revert_ai_edit'; session }`（闭集多一种，字段 `session` = 那次 AI 会话 id）。事实由 `prepsession._ai_edit_fact` 量：
+   脚本此刻的字节正是**最近一次改过它的** AI 会话结束时留下的那一版（`ai_bridge.revertible_edit`，与回滚的 `_refuse_stale_revert`
+   同一条判据，所以卡上的回滚不会撞 `ai_revert_conflict`），**且**那次修改开始之前本会话账本里有跑通的尝试（后端重启后账本空，
+   不给——只少一个建议，不会错给）。失败卡：一句话「AI 改过之后运行出错了」+ 主按钮「回滚 AI 的修改」（与助手历史「回滚此次修改」
+   同一个端点，成功后沿用「再试一次」重跑），「使用你的 AI 来修复」仍是次按钮。不论给不给这个主按钮，报告的 `ai_edit`
+   （`{session, succeeded_before}`）都交给修复助手（`fixtools/runreport.py` 的 `recent_ai_edit`）：那次反馈里助手不知道脚本刚被
+   AI 改过，把「改前 native 成功、改后 safe 失败」读成运行方式差异，绕了一圈。只认脚本自己的错误：守卫拦截 / 缺包 / 版本类
+   仍走各自更确定的出路；也不绕过脚本自带的检查（那是用户要的判据）。看护 `tests/test_ai_edit_revert_remedy.py`。
+
 **一次「运行」最多走 3 种修法**：读 `attempt_history` 里本次 run 的 `changed`（换了执行语义 = `switch_native`，换了解释器 =
 `change_python`）加本次 run 里装过包（`install_packages`），已满 3 种再失败就是 `feedback`；同一种修法一次运行只走一回。
 

@@ -43,6 +43,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   requestAiFix: vi.fn(),
   repairImportFolder: vi.fn(),
   ignoreImportFolder: vi.fn(),
+  aiRevert: vi.fn(),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -56,6 +57,7 @@ vi.mock('@/store/workspace', async (importOriginal) => ({
 
 import {
   actOnPreparationSession,
+  aiRevert,
   ApiError,
   cancelNativeSession,
   createPreparationSession,
@@ -3157,6 +3159,65 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个请求已经失效，请重新运行一次脚本。')
       expect(mockAct).not.toHaveBeenCalled()
       expect(primary()?.textContent).toBe('跳过这个文件夹重跑')
+    })
+  })
+
+  describe('AI 改过之后脚本自己报错：一键回滚那次修改再跑（TVD-H1M5）', () => {
+    const brokeByAi = () =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'script_error' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'script_error', message: 'ValueError: data under legend' } },
+        remedy: { kind: 'revert_ai_edit', session: 'ai-s1' },
+      })
+
+    beforeEach(() => {
+      vi.mocked(aiRevert).mockReset()
+      mockAct.mockClear()
+    })
+
+    it('一句话说清是在 AI 改过之后坏的 + 一个主按钮「回滚 AI 的修改」；AI 修复仍是次按钮', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      expect(panel().dataset.prepState).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toBe('AI 改过之后运行出错了')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('revert_ai_edit')
+      expect(primary()?.textContent).toBe('回滚 AI 的修改')
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+      expect(panel().querySelector('[data-prep-ai-fix]')).not.toBeNull()
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(brokeByAi())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe("The run failed after the AI's change")
+      expect(primary()?.textContent).toBe("Revert the AI's change")
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('点一次：回滚那一次 AI 会话，成功后沿用「再试一次」同一个动作重跑一次', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      vi.mocked(aiRevert).mockResolvedValueOnce({ ok: true, script: 'a.py' })
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+      await act(async () => primary()!.click())
+      expect(vi.mocked(aiRevert).mock.calls.map((c) => c[0])).toEqual(['ai-s1'])
+      expect(mockAct).toHaveBeenCalledTimes(1)
+      expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+    })
+
+    it('脚本在那次修改之后又改过（回滚被拒）：如实一句话，不重跑，脚本不动', async () => {
+      await mount()
+      await openWith(brokeByAi())
+      vi.mocked(aiRevert).mockRejectedValueOnce(new ApiError('x', 409, { code: 'ai_revert_conflict', params: { script: 'a.py' } }))
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('a.py')
+      expect(mockAct).not.toHaveBeenCalled()
     })
   })
 

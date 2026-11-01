@@ -59,6 +59,8 @@ export type PrepPrimary =
   | { kind: 'repair_folder'; token: string }
   /** 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：「跳过这个文件夹重跑」。`token` 同上是不透明令牌 */
   | { kind: 'skip_folder'; token: string }
+  /** 脚本正是改图助手刚改出来、改前跑通过的那一版（remedy `revert_ai_edit`，TVD-H1M5）：「回滚 AI 的修改」并重跑。`session` = 那次 AI 会话 */
+  | { kind: 'revert_ai_edit'; session: string }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -260,7 +262,18 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
   if (view.state === 'folder_unreadable' || view.state === 'folder_abi') return { ...view, remedy, aiFix: false }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
-  if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
+  if (remedy?.kind === 'revert_ai_edit' && view.state === 'failed') {
+    // 脚本自己报错、而它正是 AI 刚改出来的那一版：一句话说清是在 AI 改过之后坏的，主按钮把那次修改退回去再跑一次。
+    // 「使用你的 AI 来修复」仍是次按钮（用户想保留那次修改、让 AI 接着改时走它）
+    out = {
+      ...out,
+      sentence: { key: 'aiEditBroke', values: view.sentence.values },
+      primary: { kind: 'revert_ai_edit', session: remedy.session },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+    }
+  } else if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
     out = { ...out, primary: { kind: 'ai_fix' }, secondary: null, primaryDisabled: false, ghost: 'later' }
   } else if (remedy?.kind === 'feedback') {
     out = {

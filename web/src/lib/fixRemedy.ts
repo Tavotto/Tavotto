@@ -14,6 +14,8 @@ export type Remedy =
   | { kind: 'ai_fix' }
   | { kind: 'connect_ai' }
   | { kind: 'feedback'; tried: string[] }
+  /** 脚本自己报错，而它正是改图助手刚改出来、改前跑通过的那一版：撤销那次修改（`session` = 那次 AI 会话 id，TVD-H1M5） */
+  | { kind: 'revert_ai_edit'; session: string }
 
 export type RemedyKind = Remedy['kind']
 
@@ -26,6 +28,7 @@ export const REMEDY_FIELDS = {
   ai_fix: [],
   connect_ai: [],
   feedback: ['tried'],
+  revert_ai_edit: ['session'],
 } as const satisfies Record<RemedyKind, readonly string[]>
 
 export const REMEDY_KINDS = Object.keys(REMEDY_FIELDS) as RemedyKind[]

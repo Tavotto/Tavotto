@@ -47,7 +47,7 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { aiRevert, convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -69,6 +69,7 @@ import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEn
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useAiFixStore } from '@/store/aiFixStore'
+import { useAiStore } from '@/store/aiStore'
 import { useConvertStore } from '@/store/convertStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
@@ -677,6 +678,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.repairFolder')
     case 'skip_folder':
       return pt('btn.skipFolder')
+    case 'revert_ai_edit':
+      return pt('btn.revertAiEdit')
   }
 }
 
@@ -692,6 +695,19 @@ async function repairFolderAndRerun(entry: PrepEntry, token: string): Promise<st
 /** 「跳过这个文件夹」（ADR 0154）并重跑一次：只把令牌交给后端，之后与「修复权限」同一个重跑动作 */
 async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
   return folderDecisionAndRerun(entry, () => ignoreImportFolder(token))
+}
+
+/**
+ * 「回滚 AI 的修改」（remedy `revert_ai_edit`，TVD-H1M5）并重跑一次：与助手历史里「回滚此次修改」同一个后端动作（`ai_bridge.revert`，
+ * 带版本：脚本之后又变过就 `ai_revert_conflict`，一个字节不动，那句话落在卡上）。助手面板这会儿列着那次会话就经 `aiStore.revert`
+ * （同步它的状态与改名映射）；没列着（面板没打开过）直接调同一个端点。之后与「修复权限」同一个重跑动作。
+ */
+async function revertAiEditAndRerun(entry: PrepEntry, session: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, async () => {
+    const ai = useAiStore.getState()
+    if (ai.sessions.some((x) => x.id === session)) await ai.revert(session)
+    else await aiRevert(session)
+  })
 }
 
 async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<unknown>): Promise<string | null> {
@@ -819,6 +835,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return repairFolderAndRerun(entry, p.token)
       case 'skip_folder':
         return skipFolderAndRerun(entry, p.token)
+      case 'revert_ai_edit':
+        return revertAiEditAndRerun(entry, p.session)
     }
   }
 }

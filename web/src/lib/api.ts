@@ -4179,7 +4179,7 @@ export function isDefiniteRunFailure(e: unknown): boolean {
   return typeof e.body?.code === 'string' && e.body.code !== ''
 }
 
-export const aiRevert = (sid: string, pj: string | null) =>
+export const aiRevert = (sid: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean; script: string; renamed?: IdentityRename[] }>(
     `/api/ai/sessions/${sid}/revert`,
     { method: 'POST' },

@@ -2767,6 +2767,41 @@ def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None
     raise AgentError("ai_revert_conflict", {"script": sess["script"]})
 
 
+def revertible_edit(project_root: str, script: str) -> dict | None:
+    """这份脚本此刻是不是「最近一次改过它的 AI 会话留下的那一版」，且那次修改能原样撤销（TVD-H1M5）。
+
+    是 → `{"session": 会话 id, "started_ms": 那次修改开始的时刻}`；否则 None。主语是**此刻磁盘上的这份脚本**：
+
+    * 最近一次改过它的会话（`ai_history.latest_change_to`）正常结束（`done`）——已撤销 / 中断 / 失败的不算，也不退回去找更早的；
+    * 不是转换会话（转换从不改原脚本，`revert` 对它是 `ai_revert_not_applicable`）；
+    * 快照还在，且记过会话结束版本（`after_sha256`），脚本字节此刻正好等于它——与 `_refuse_stale_revert` 同一条判据：
+      之后人工又改过、另一次修改又改过、没有记录（判不出），一律不算。这样失败卡上的「撤销」永远不会撞上 `ai_revert_conflict`。
+
+    只读：查一次库、读一次 sidecar、读一次脚本求摘要；任何一步读不出都回 None（只少一个建议，不影响失败卡的其余出路）。"""
+    key = str(Path(project_root).resolve())
+    row = ai_history.latest_change_to(key, script)
+    if row is None or row.get("status") != "done":
+        return None
+    sid = str(row["id"])
+    sess = SESSIONS.get(sid) or _load_sidecar(sid)
+    if not isinstance(sess, dict) or sess.get("kind") == "convert":
+        return None
+    expected = sess.get("after_sha256")
+    snap = sess.get("snapshot")
+    if not expected or not snap or not Path(snap).is_file():
+        return None
+    target = projectenv.contained_path(project_root, str(Path(project_root) / script))
+    if target is None:
+        return None
+    try:
+        current = Path(target).read_bytes()
+    except OSError:
+        return None
+    if _sha256(current) != expected:
+        return None
+    return {"session": sid, "started_ms": int(row.get("started_ms") or 0)}
+
+
 #: 会话详情（`GET /api/ai/sessions/<sid>`）对外给的字段——**显式白名单**，每个值都必须能 `json.dumps`。
 #: 内存里的会话 dict 带着不可序列化的内部对象（`proc` 子进程、`exited` 的 `threading.Event`），用黑名单排除会在下一次有人
 #: 往会话里加字段时再炸一次（曾经只排除了 `proc`，`exited` 让本进程正在运行的会话详情一律 500）。
