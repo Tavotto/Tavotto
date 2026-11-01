@@ -487,6 +487,8 @@ def test_attributes_and_vocabularies_are_closed_sets():
         "cli_errors",
         "cli_turns_failed",
         "cli_target_touched",
+        "cli_target_on_disk",
+        "cli_target_bytes",
         "cli_first_event_ms",
         "cli_max_gap_ms",
         "cli_idle_end_ms",

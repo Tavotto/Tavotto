@@ -130,6 +130,39 @@ def test_codex_facts_accumulate_from_real_shaped_jsonl(tmp_path):
         assert canary not in blob
 
 
+def test_a_target_written_by_a_shell_command_is_seen_on_disk(tmp_path):
+    """真模型复现（TVD-BCZ0）：模型把 `apply_patch` 当 shell 命令跑，事件流里只有 command_execution、
+    没有 file_change——`target_touched` 看不见，结束时的 `target_on_disk` / `target_bytes` 要看得见。"""
+    clock = Clock()
+    cwd, facts = _session(tmp_path, clock)
+    _feed(
+        facts,
+        clock,
+        [
+            (1.0, _item("item.started", type="command_execution", command="apply_patch <<EOF")),
+            (
+                2.0,
+                _item("item.completed", type="command_execution", exit_code=0, status="completed"),
+            ),
+        ],
+    )
+    (cwd / "fig_matplotlib.py").write_text("import matplotlib\n", encoding="utf-8")
+    snap = facts.snapshot(False)
+    assert snap["file_changes"] == 0 and snap["target_touched"] is False
+    assert snap["target_on_disk"] is True and snap["target_bytes"] == len("import matplotlib\n")
+
+
+def test_target_state_ignores_symlinks_and_missing_files(tmp_path):
+    clock = Clock()
+    cwd, facts = _session(tmp_path, clock)
+    assert facts.snapshot(False)["target_on_disk"] is False
+    real = tmp_path / "elsewhere.py"
+    real.write_text("x", encoding="utf-8")
+    (cwd / "fig_matplotlib.py").symlink_to(real)
+    snap = facts.snapshot(False)
+    assert snap["target_on_disk"] is False and snap["target_bytes"] is None
+
+
 def test_hung_command_and_aliases_and_declined_are_structural(tmp_path):
     clock = Clock()
     cwd, facts = _session(tmp_path, clock)
@@ -319,7 +352,10 @@ def test_bundle_log_shows_codes_and_numbers_in_clear(tmp_path):
     sess = {"status": "timeout", "cli_runs": [facts.snapshot(True)]}
     out = _exported(sess)
     assert "cli_events=2 cli_cmds=0 cli_cmds_failed=0 cli_cmds_declined=0 cli_cmds_open=1" in out
-    assert "cli_file_changes=1 cli_files_in=0 cli_files_out=1 cli_target_touched=False" in out
+    assert (
+        "cli_file_changes=1 cli_files_in=0 cli_files_out=1 cli_target_touched=False cli_target_on_disk=False cli_target_bytes=None"
+        in out
+    )
     assert "cli_last_event=item.completed cli_last_item=file_change" in out
     assert (
         "cli_first_event_ms=1000 cli_max_gap_ms=90000 cli_idle_end_ms=600000 endpoint=relay" in out
@@ -353,7 +389,7 @@ def test_free_text_in_a_code_slot_is_hashed(tmp_path):
     out = _exported(sess)
     assert "Alice" not in out and "alice" not in out and "Rscript" not in out
     assert "cli_last_event=str:" in out and "cli_last_item=str:" in out and "endpoint=str:" in out
-    assert CANARY_TEXT in str(ai_bridge._cli_log_facts(sess)[11]), "对照：本机完整日志里原值照写"
+    assert CANARY_TEXT in str(ai_bridge._cli_log_facts(sess)[13]), "对照：本机完整日志里原值照写"
 
 
 def test_log_formatter_renders_plain_closed_codes_locally_too(tmp_path):
@@ -362,7 +398,7 @@ def test_log_formatter_renders_plain_closed_codes_locally_too(tmp_path):
         "cli_runs": [ai_agents.CliRunFacts(str(tmp_path), "x.py").snapshot(False)],
     }
     local = [str(v) for v in ai_bridge._cli_log_facts(sess)]
-    assert local[11:13] == ["none", "none"] and local[16] == "official"
+    assert local[13:15] == ["none", "none"] and local[18] == "official"
 
 
 # ------------------------------------------------------------------ 防漂移

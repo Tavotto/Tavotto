@@ -209,6 +209,8 @@ ATTRIBUTES: dict[str, str] = {
     "cli_errors": "count",
     "cli_turns_failed": "count",
     "cli_target_touched": "flag",
+    "cli_target_on_disk": "flag",
+    "cli_target_bytes": "count",
     "cli_first_event_ms": "ms",
     "cli_max_gap_ms": "ms",
     "cli_idle_end_ms": "ms",

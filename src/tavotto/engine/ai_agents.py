@@ -521,6 +521,9 @@ class CliRunFacts:
     由 `observe(line)` 在与 `classify_event` 同一条 stdout 解析路径上逐行累计；永不抛。判据只用事件里**结构化**的字段
     （`type` / `item.type` / `item.status` / `item.exit_code` / `item.changes[].path`），不匹配任何自由文本。
     文件改动是否在工作区（`-C`）内，只给 `inside` / `outside` 两个计数；是否改到目标文件名只给布尔。
+    **`target_touched` 只看得见 `file_change` 事件**：模型用 shell 命令（例如 `apply_patch` 当命令跑、重定向写文件）
+    写出的目标不出这类事件——所以结束时另记 `target_on_disk` / `target_bytes`（工作区里目标文件此刻在不在、多大），
+    判「到底写没写出来」以它为准（真模型复现 TVD-BCZ0 时见过 shell 写成而 `target_touched=False`）。
     """
 
     def __init__(self, cwd: str, target_name: str, clock: Callable[[], float] = time.monotonic):
@@ -643,9 +646,22 @@ class CliRunFacts:
         elif itype == "error" and done:
             self.errors += 1
 
+    def _target_state(self) -> tuple[bool, int | None]:
+        """工作区里目标文件此刻的状态：(是普通文件且不是符号链接, 字节数)。只看工作区根下的目标名，不带路径出门。"""
+        if not self._target or not self._root:
+            return False, None
+        path = os.path.join(self._root, self._target)
+        try:
+            if os.path.islink(path) or not os.path.isfile(path):
+                return False, None
+            return True, int(os.path.getsize(path))
+        except OSError:
+            return False, None
+
     def snapshot(self, relay: bool) -> dict:
         """本次进程结束时的事实；`relay` = 这次用的是第三方中转而不是官方登录。"""
         idle = int(max(0.0, self._clock() - self._last) * 1000)
+        on_disk, size = self._target_state()
         return {
             "events": self.events,
             "commands": self.commands,
@@ -657,6 +673,8 @@ class CliRunFacts:
             "files_inside": self.files_inside,
             "files_outside": self.files_outside,
             "target_touched": self.target_touched,
+            "target_on_disk": on_disk,
+            "target_bytes": size,
             "reasoning": self.reasoning,
             "messages": self.messages,
             "errors": self.errors,
@@ -696,7 +714,15 @@ def merge_run_facts(runs: list[dict]) -> dict | None:
     out["target_touched"] = any(bool(r.get("target_touched")) for r in runs)
     out["max_gap_ms"] = max(int(r.get("max_gap_ms") or 0) for r in runs)
     out["first_event_ms"] = runs[0].get("first_event_ms")
-    for k in ("last_event", "last_item", "idle_end_ms", "commands_open", "endpoint"):
+    for k in (
+        "last_event",
+        "last_item",
+        "idle_end_ms",
+        "commands_open",
+        "endpoint",
+        "target_on_disk",
+        "target_bytes",
+    ):
         out[k] = last.get(k)
     return out
 

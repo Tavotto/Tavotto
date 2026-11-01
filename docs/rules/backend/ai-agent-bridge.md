@@ -395,6 +395,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 `merge_run_facts` 合并；码类经 `logsafe.known` 放行）。新增事实先加常量集合 / ATTRIBUTES，再由 `tests/test_codex_run_facts.py` 钉住。
 会话里的 `cli_runs` 是 `SESSION_INTERNAL_KEYS`，不进任何响应。
 
+**「改到目标文件名」（`target_touched`）只看得见 `file_change` 事件**：模型把 `apply_patch` 当 shell 命令跑、或用重定向写文件时事件流里只有 `command_execution`（真模型复现时见过写成了而 `target_touched=False`）。所以进程结束时另记工作区根下目标文件此刻`target_on_disk`（普通文件、不是符号链接）与 `target_bytes`；判「到底写没写出来」以这两项为准。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
