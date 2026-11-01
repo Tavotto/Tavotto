@@ -3507,7 +3507,7 @@ def test_long_path_case_pads_the_candidate_workspace_close_to_max_path(tmp_path)
 
 def test_codex_home_and_project_workspace_are_different_trees(tmp_path):
     assert A.trees_disjoint(
-        tmp_path / "runs" / "r1" / "work" / "codex-home", tmp_path / "cw" / "r1"
+        tmp_path / "runs" / "r1" / "work" / "codex-home", tmp_path / "cache" / "convert-work" / "r1"
     )
     assert not A.trees_disjoint(tmp_path / "a", tmp_path / "a" / "b")
     assert not A.trees_disjoint(tmp_path / "a" / "b", tmp_path / "a")
@@ -3625,7 +3625,7 @@ def test_convert_live_run_keeps_the_key_in_env_only_and_scrubs_everything(tmp_pa
         if f.is_file():
             assert key.encode() not in f.read_bytes(), f
     assert not (run_dir / "work" / "codex-home" / "shell_snapshots").exists()
-    assert not (lab.root / "cw" / run_dir.name).exists()
+    assert not (lab.cache / "convert-work" / run_dir.name).exists()
     assert "turn.completed" in (
         run_dir / "evidence" / "convert-live" / "baseline-a" / "codex_stdout.jsonl"
     ).read_text(encoding="utf-8")
