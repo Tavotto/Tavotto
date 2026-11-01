@@ -112,6 +112,16 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(t('prep.btn.aiFix', { ns: 'workspace' })).toBe('使用你的 AI 来修复')
   })
 
+  it('revert_ai_edit：一句话说是 AI 改过之后坏的 + 主按钮「回滚 AI 的修改」；AI 次按钮仍在（TVD-H1M5）', () => {
+    const v = view(failed({ kind: 'revert_ai_edit', session: 'ai-s1' }))
+    expect(v.state).toBe('failed')
+    expect(v.sentence.key).toBe('aiEditBroke')
+    expect(v.primary).toEqual({ kind: 'revert_ai_edit', session: 'ai-s1' })
+    expect(v.aiFix).toBe(true)
+    expect(t('prep.line.aiEditBroke', { ns: 'workspace' })).toBe('AI 改过之后运行出错了')
+    expect(t('prep.btn.revertAiEdit', { ns: 'workspace' })).toBe('回滚 AI 的修改')
+  })
+
   it('feedback：一句话 + 主按钮「发送」；AI 次按钮仍在（每次失败都出）', () => {
     const v = view(failed({ kind: 'feedback', tried: ['switch_native'] }))
     expect(v.state).toBe('feedback')

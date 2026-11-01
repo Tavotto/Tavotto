@@ -8,7 +8,8 @@
     "choose_environment",
     "ai_fix",
     "connect_ai",
-    "feedback"
+    "feedback",
+    "revert_ai_edit"
   ],
   "fields": {
     "switch_native": ["silent"],
@@ -18,7 +19,8 @@
     "choose_environment": [],
     "ai_fix": [],
     "connect_ai": [],
-    "feedback": ["tried"]
+    "feedback": ["tried"],
+    "revert_ai_edit": ["session"]
   },
   "vectors": [
     {
@@ -139,6 +141,30 @@
       "failure": "missing_dependency",
       "ctx": { "ai_connected": true },
       "remedy": { "kind": "feedback", "tried": [] }
+    },
+    {
+      "name": "script error on the AI's just-edited version that ran before the edit -> revert_ai_edit",
+      "failure": "script_error",
+      "ctx": { "ai_connected": true, "revertible_ai_edit": "s-ai-1" },
+      "remedy": { "kind": "revert_ai_edit", "session": "s-ai-1" }
+    },
+    {
+      "name": "no revertible AI edit -> ai_fix as before",
+      "failure": "script_error",
+      "ctx": { "ai_connected": true, "revertible_ai_edit": null },
+      "remedy": { "kind": "ai_fix" }
+    },
+    {
+      "name": "revertible AI edit but a package is missing -> install first",
+      "failure": "missing_dependency",
+      "ctx": { "ai_connected": true, "revertible_ai_edit": "s-ai-1", "missing_installable": true, "packages": ["scipy"] },
+      "remedy": { "kind": "install_packages", "packages": ["scipy"], "ask": true }
+    },
+    {
+      "name": "revertible AI edit but the safe guard blocked it -> silent native first",
+      "failure": "safe_file_operation_blocked",
+      "ctx": { "native_allowed": true, "revertible_ai_edit": "s-ai-1" },
+      "remedy": { "kind": "switch_native", "silent": true }
     }
   ]
 }

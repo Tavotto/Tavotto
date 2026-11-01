@@ -180,8 +180,23 @@ def test_every_remedy_kind_is_reachable_and_in_the_closed_set():
         choose("x", Ctx(ai_connected=True))["kind"],
         choose("x", Ctx())["kind"],
         choose("x", Ctx(ai_rounds_exhausted=True))["kind"],
+        choose("script_error", Ctx(revertible_ai_edit="s1"))["kind"],
     }
     assert seen == set(fixrouter.REMEDY_KINDS)
+
+
+def test_revert_ai_edit_only_for_the_scripts_own_error():
+    """TVD-H1M5：脚本自己报错、而它正是 AI 刚改出来且改前跑通过的那一版 → 撤销那次修改；
+    其他失败码不归给 AI 修改（守卫 / 缺包 / 版本 / 别的码都有自己更确定的出路），没有这条事实时行为照旧。"""
+    edit = Ctx(ai_connected=True, revertible_ai_edit="s1")
+    assert choose("script_error", edit) == {"kind": "revert_ai_edit", "session": "s1"}
+    assert choose("no_figure", edit)["kind"] == "ai_fix"
+    assert choose("script_exited", edit)["kind"] == "ai_fix"
+    assert choose("script_error", Ctx(ai_connected=True))["kind"] == "ai_fix"
+    # 轮数用完照样先给撤销：它不是又一轮 AI 修复，而是把 AI 的上一轮退回去
+    assert choose("script_error", Ctx(revertible_ai_edit="s1", ai_rounds_exhausted=True))[
+        "kind"
+    ] == ("revert_ai_edit")
 
 
 def test_dist_name_reads_the_distribution_from_a_requirement():

@@ -172,3 +172,7 @@ The smallest icons (expand and dropdown arrows, tab close buttons, warning and s
 ## Scripts whose file name contains a dot now run
 
 A script with a dot in its file name (for example `4-51.slope_ratio.py` or `fig.v2.py`) that Tavotto runs through its entry function failed with `ModuleNotFoundError: No module named '4-51'`, because the file name was imported as a module path and the dot was read as a package separator. Such scripts now load from their file directly, the same way `python script.py` runs them; `__name__` inside the script is still the file name without `.py`.
+
+## A run that breaks right after an AI edit offers to revert that edit
+
+If a script ran fine, you asked the AI assistant to change it, and the changed script then fails with its own error, the failure card now says the run failed after the AI's change and its main button is **Revert the AI's change**: it restores the script to the version before that edit (the same action as "Revert this change" in the assistant's history) and runs it again. The card only offers this when the script on disk is still exactly what the AI left and it ran successfully earlier in the same session; if you edited the script afterwards, nothing is overwritten. "Fix it with your AI" stays available as the second button, and the fix assistant now knows the script was just edited by the AI instead of guessing at run-mode or environment differences.

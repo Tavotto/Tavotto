@@ -1029,6 +1029,7 @@
       "failed": "The run failed",
       "feedback": "This script can't run for now — want to send it to us?",
       "aiUnavailable": "AI can't fix this one yet",
+      "aiEditBroke": "The run failed after the AI's change",
       "depsCancelled": "Install stopped",
       "attention": "One more thing to handle",
       "originConfirm_one": "{{count}} library needs a package name from you",
@@ -1076,6 +1077,7 @@
       "openAssets": "Open library",
       "aiFix": "Fix it with your AI",
       "send": "Send",
+      "revertAiEdit": "Revert the AI's change",
       "cancelScan": "Cancel check",
       "confirmOrigins": "Confirm packages"
     },

@@ -69,6 +69,8 @@ export type PrepPrimary =
    * 只在用户点击时切；采用走既有的候选采用端点（现场再体检、环境代对不上会拒绝）
    */
   | { kind: 'switch_python'; env: RemedyEnv }
+  /** 脚本正是改图助手刚改出来、改前跑通过的那一版（remedy `revert_ai_edit`，TVD-H1M5）：「回滚 AI 的修改」并重跑。`session` = 那次 AI 会话 */
+  | { kind: 'revert_ai_edit'; session: string }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -275,7 +277,18 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
   }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
-  if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
+  if (remedy?.kind === 'revert_ai_edit' && view.state === 'failed') {
+    // 脚本自己报错、而它正是 AI 刚改出来的那一版：一句话说清是在 AI 改过之后坏的，主按钮把那次修改退回去再跑一次。
+    // 「使用你的 AI 来修复」仍是次按钮（用户想保留那次修改、让 AI 接着改时走它）
+    out = {
+      ...out,
+      sentence: { key: 'aiEditBroke', values: view.sentence.values },
+      primary: { kind: 'revert_ai_edit', session: remedy.session },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+    }
+  } else if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
     out = { ...out, primary: { kind: 'ai_fix' }, secondary: null, primaryDisabled: false, ghost: 'later' }
   } else if (remedy?.kind === 'choose_environment' && AI_PRIMARY_STATES.has(view.state)) {
     // 缺的包装不了（私有库 / 本地模块 / conda-only）：确定的出路是指向装了它的 Python；AI 只是次入口（`aiFix` 照常摆），

@@ -11722,6 +11722,8 @@ def _ai_connected() -> bool:
 
 
 engine_prepsession.SESSIONS.ai_connected = _ai_connected
+# 失败卡「撤销刚才的 AI 修改」（TVD-H1M5）：脚本此刻是不是改图助手刚改出来、还能原样撤销的那一版
+engine_prepsession.SESSIONS.ai_edit_lookup = engine_ai.revertible_edit
 
 
 def _dependency_event_sink(ctx: "ProjectCtx", extra=None):

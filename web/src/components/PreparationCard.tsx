@@ -48,7 +48,8 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { aiRevert, convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { parseRenames } from '@/lib/overrideIdentity'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -70,6 +71,8 @@ import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEn
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useAiFixStore } from '@/store/aiFixStore'
+import { useAiStore } from '@/store/aiStore'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
 import { useConvertStore } from '@/store/convertStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
@@ -682,6 +685,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.useBuiltinPython', { product: PRODUCT_NAME })
     case 'switch_python':
       return pt('btn.switchPython', { name: p.env.name })
+    case 'revert_ai_edit':
+      return pt('btn.revertAiEdit')
   }
 }
 
@@ -757,6 +762,38 @@ async function switchToEnvAndRerun(entry: PrepEntry, env: RemedyEnv): Promise<st
   await actionSettled(entry.key)
   if (!guard.still()) return null
   await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
+}
+
+/**
+ * 「回滚 AI 的修改」（remedy `revert_ai_edit`，TVD-H1M5）并重跑一次：与助手历史里「回滚此次修改」同一个后端动作（`ai_bridge.revert`，
+ * 带版本：脚本之后又变过就 `ai_revert_conflict`，一个字节不动，那句话落在卡上）。助手面板这会儿列着那次会话就经 `aiStore.revert`
+ * （同步它的状态与改名映射）；没列着（换过项目再回来 / 面板没打开过）直接调同一个端点，改名映射照样经 `rebindRenamedIdentities`
+ * 改回旧名字——与助手历史的直接回滚同一处理（ADR 0083 §五），否则画布编辑的身份停在 AI 起的新名字上、被渲染拒掉。
+ *
+ * 重跑**不**认领失败报告里的旧 `run`：那份计划冻结的是 AI 改过的脚本版本（`script_revision`），回滚之后认领会被
+ * `preparation_plan_stale` 拒掉、什么都不跑。先认领 `recheck`（后端按回滚后的源码换新计划），再认领新修订的运行动作。
+ */
+async function revertAiEditAndRerun(entry: PrepEntry, session: string): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  try {
+    const ai = useAiStore.getState()
+    if (ai.sessions.some((x) => x.id === session)) await ai.revert(session)
+    else {
+      const res = await aiRevert(session)
+      if (guard.still()) rebindRenamedIdentities(parseRenames(res?.renamed), 'back')
+    }
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  if (!guard.still()) return null
+  const store = useProjectPreparationStore.getState()
+  await store.act(entry.key, 'recheck')
+  const fresh = useProjectPreparationStore.getState().entries[entry.key]?.report
+  if (!guard.still() || !fresh) return null
+  const can = (kind: 'run_when_ready' | 'run') => fresh.actions.some((a) => a.kind === kind)
+  const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
+  if (rerun) await store.act(entry.key, rerun)
   return null
 }
 
@@ -889,6 +926,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return switchToBuiltinPythonAndRerun(entry, p.scope)
       case 'switch_python':
         return switchToEnvAndRerun(entry, p.env)
+      case 'revert_ai_edit':
+        return revertAiEditAndRerun(entry, p.session)
     }
   }
 }

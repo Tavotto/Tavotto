@@ -6154,6 +6154,7 @@ export default interface Resources {
         "recheck": "重新检查",
         "repairFolder": "修复权限",
         "retry": "再试一次",
+        "revertAiEdit": "回滚 AI 的修改",
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
@@ -6403,6 +6404,7 @@ export default interface Resources {
         "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"
       },
       "line": {
+        "aiEditBroke": "AI 改过之后运行出错了",
         "aiUnavailable": "这个问题 AI 暂时还不会修",
         "argsMissing_other": "还差 {{count}} 个参数",
         "argsReady": "参数已填好",
