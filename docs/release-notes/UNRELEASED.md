@@ -85,6 +85,10 @@ Rebuilding a PNG as an editable figure could jump to another canvas and open an 
 
 When Tavotto ran a script for the very first time on a machine (matplotlib builds its font cache, so the render process takes about ten seconds to start) and a second try-run of the same script started meanwhile, for example from the AI repair button, the second one closed the session the first one had just opened. The first run then failed with "session s-1 does not exist (workerd may have restarted), please reopen" even though the script was fine. A try-run now shares a session that another run has just opened and not finished building yet, instead of closing it.
 
+## The AI assistant tells you when it has gone quiet, and failed tasks in History no longer show raw error codes (#1599)
+
+If the connected AI tool prints nothing for 2 minutes, the assistant's status line now says "No activity from the AI for N s" and offers Cancel and Retry. Tavotto does not stop the task on its own, so a model that is just thinking slowly is not interrupted; the overall 15-minute limit is unchanged. In Task History, when a revert is refused because the script changed after the AI edit, the entry now offers "View changes" (the AI's diff) instead of only a message in the status bar. A failed task's details card now shows a plain sentence (for example "The model service quota is used up or rate-limited") instead of an internal code such as `agent_quota`.
+
 ## Timeline: version strip, content-centred thumbnails, safer restores
 
 - The Timeline tab now has a strip of ticks at the top, one per saved version. Hovering shows that version's stored thumbnail (nothing is re-rendered, so it keeps up with the mouse); clicking opens the existing compare card. ←/→/Home/End and Enter work from the keyboard.
