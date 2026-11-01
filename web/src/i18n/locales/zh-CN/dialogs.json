@@ -14,8 +14,7 @@
     "bodyLabel": "想说的话",
     "bodyPlaceholder": "遇到的问题、想要的功能、使用中的困惑，都可以写在这里。",
     "bodyCount": "{{count}} / {{max}}",
-    "attachLabel": "附件（选填）",
-    "attachPick": "添加附件",
+    "attachPick": "添加截图/文件",
     "attachRemove": "移除 {{name}}",
     "fileError": {
       "type": "只支持图片、PDF、Word、Excel、PowerPoint。",
@@ -140,6 +139,9 @@
     "capsuleOpen": "查看",
     "capsuleClose": "收起回信提醒",
     "wecom": "企业微信",
+    "wecomLead": "也可以",
+    "wecomLink": "加企业微信",
+    "wecomTail": "直接聊",
     "wecomScan": "微信扫码添加"
   },
   "draftGuard": {
@@ -163,7 +165,7 @@
     "previewFit": "适合大小",
     "previewTabs": "预览",
     "previewWhole": "整版",
-    "previewFlagged": "有检查提示",
+    "previewFlagged": "有要改的项",
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",
@@ -270,6 +272,7 @@
     "transparent": "透明背景（仅 PNG / TIFF）",
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
+    "advancedLabel": "高级",
     "strictToggle": "严格核验产物",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
@@ -504,7 +507,7 @@
       },
       "sub-labels": {
         "keywords": "label abc xhbq xuhao",
-        "label": "添加 (a)(b)(c) 标签"
+        "label": "添加序号 (a)(b)(c)"
       },
       "ungroup": {
         "keywords": "ungroup qxcz",
@@ -1556,7 +1559,7 @@
     },
     "general": {
       "language": "界面语言",
-      "layout": "界面乱了？",
+      "layout": "重置界面布局",
       "layoutReset": "界面布局已恢复默认",
       "resetLayout": "恢复默认",
       "groupLanguage": "外观、语言与布局",
@@ -1565,7 +1568,7 @@
       "groupLearning": "学习",
       "layoutDesc": "侧栏宽度、开合与画布偏好回到默认，当场生效",
       "theme": "外观",
-      "themeDesc": "画布上的页面与图保持印刷时的颜色",
+      "themeDesc": "深色模式下画布纸面仍为白色，与导出一致",
       "themeSystem": "跟随系统",
       "themeLight": "浅色",
       "themeDark": "深色"
@@ -1848,7 +1851,6 @@
         "language": "语言 中文 英文 locale",
         "layout": "布局 重置 恢复 侧栏宽度 界面",
         "shortcuts": "快捷键 键盘 速查表",
-        "canvas": "画布 网格 吸附 标尺 参考线",
         "tutorial": "教程 新手 提示 引导",
         "scripts": "脚本 来源 注册",
         "python": "python 解释器 环境 conda venv",
@@ -2148,6 +2150,14 @@
     "restoreMissingCanvasTitle": "原画布已不存在",
     "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
     "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
+    "restoreReplaceFigureTitle": "换成图「{{name}}」？",
+    "restoreLayoutTitle": "恢复成 {{n}} 张图的排版？",
+    "restoreLayoutBody": "画布上会换成这一版的 {{n}} 张图（{{names}}），现在的内容先存成「恢复前」，可以按 {{undo}} 撤销。",
+    "restoreLayoutBodyMore": "画布上会换成这一版的 {{n}} 张图（{{names}} 等），现在的内容先存成「恢复前」，可以按 {{undo}} 撤销。",
+    "restoreReplaceFiguresBody": "画布上现在的 {{m}} 张图会先存成「恢复前」，再换成这一张，可以按 {{undo}} 撤销。",
+    "restoreReplaceFigureBody": "当前的图「{{to}}」会先存成「恢复前」再被换掉，可以按 {{undo}} 撤销。",
+    "restoreOtherFigureTitle": "恢复图「{{name}}」？",
+    "restoreOtherFigureBody": "这一版属于图「{{from}}」。恢复会切到「{{from}}」，不动当前这张图「{{to}}」。",
     "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreUnknownCanvasTitle": "这个节点没有来源画布",
     "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
@@ -2188,8 +2198,10 @@
     "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
     "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
     "scopeFigure": "这张图",
-    "scopeAllFigures": "全部",
+    "scopeAllFigures": "全部图",
+    "scopeLayout": "这个排版",
     "noneHereFigure": "这张图还没有节点",
+    "noneHereLayout": "这个排版还没有节点",
     "scopeLabel": "显示哪张画布的节点",
     "scopeCanvas": "这张画布",
     "scopeAll": "全部画布",
@@ -2210,7 +2222,8 @@
     "zoomOut": "缩小",
     "zoomFit": "适配",
     "diffTitle": "与当前画布相比",
-    "quickNameTitle": "把现在存为命名节点"
+    "quickNameTitle": "把现在存为命名节点",
+    "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开"
   },
   "onboarding": {
     "hintsReset": "情境提示已重置，会再各出现一次",
@@ -2239,24 +2252,18 @@
       "count": "{{n}} / {{total}}",
       "skip": "跳过教程",
       "back": "返回上一步",
+      "backToWelcome": "返回欢迎页",
+      "waitImport": "拖入脚本后继续",
+      "waitLegend": "拖动图例后继续",
+      "waitTitle": "调大标题字号后继续",
       "next": "下一步",
       "finish": "完成教程",
       "externalFile": "当前为示例教程，完成后可以导入自己的脚本。"
     },
     "welcome": {
       "title": "直接在图上改",
-      "smile": ":)",
       "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
-      "featuresLabel": "可以直接调整的图表元素",
-      "feature": {
-        "legend": "图例",
-        "axes": "坐标轴",
-        "colorbar": "色条",
-        "text": "文字",
-        "align": "对齐",
-        "layout": "整体布局",
-        "more": "更多"
-      },
+      "features": "图例、坐标轴、色条、文字、对齐、整体布局都能直接改",
       "demoLabel": "从绘图脚本到可以直接调整的科研图",
       "codeLabel": "示例脚本 {{name}}（节选）",
       "figureLabel": "这份脚本画出的反应动力学图：标题、图例和位置都可以直接调整",

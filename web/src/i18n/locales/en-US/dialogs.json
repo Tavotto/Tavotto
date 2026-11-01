@@ -14,8 +14,7 @@
     "bodyLabel": "Your message",
     "bodyPlaceholder": "Problems you ran into, features you want, anything confusing - write it here.",
     "bodyCount": "{{count}} / {{max}}",
-    "attachLabel": "Attachments (optional)",
-    "attachPick": "Add attachment",
+    "attachPick": "Add screenshot / file",
     "attachRemove": "Remove {{name}}",
     "fileError": {
       "type": "Only images, PDF, Word, Excel and PowerPoint are supported.",
@@ -140,6 +139,9 @@
     "capsuleOpen": "View",
     "capsuleClose": "Dismiss the reply notice",
     "wecom": "WeCom",
+    "wecomLead": "Or ",
+    "wecomLink": "add us on WeCom",
+    "wecomTail": " to chat directly",
     "wecomScan": "Scan with WeChat"
   },
   "draftGuard": {
@@ -166,7 +168,7 @@
     "previewFit": "Fit to view",
     "previewTabs": "Preview",
     "previewWhole": "Whole page",
-    "previewFlagged": "Has check notes",
+    "previewFlagged": "Has items to fix",
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "batchNames": "Each figure keeps its own name",
@@ -278,6 +280,7 @@
     "transparent": "Transparent background (PNG / TIFF only)",
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
     "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:",
+    "advancedLabel": "Advanced",
     "strictToggle": "Strict file check",
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
@@ -513,7 +516,7 @@
       },
       "sub-labels": {
         "keywords": "label abc subfigure panel letters",
-        "label": "Add (a)(b)(c) labels"
+        "label": "Add panel labels (a)(b)(c)"
       },
       "ungroup": {
         "keywords": "ungroup split separate",
@@ -1573,7 +1576,7 @@
     },
     "general": {
       "language": "Language",
-      "layout": "Interface looks off?",
+      "layout": "Reset interface layout",
       "layoutReset": "Interface layout reset to defaults",
       "resetLayout": "Reset to default",
       "groupLanguage": "Appearance, language and layout",
@@ -1582,7 +1585,7 @@
       "groupLearning": "Learning",
       "layoutDesc": "Panel widths, open panels and canvas preferences go back to their defaults right away",
       "theme": "Appearance",
-      "themeDesc": "Canvas pages and figures keep their print colours",
+      "themeDesc": "In dark mode the canvas paper stays white, matching the export",
       "themeSystem": "System",
       "themeLight": "Light",
       "themeDark": "Dark"
@@ -1866,7 +1869,6 @@
         "language": "language locale chinese english",
         "layout": "layout reset restore panel width interface",
         "shortcuts": "keyboard shortcuts hotkeys cheat sheet",
-        "canvas": "canvas grid snap rulers guides",
         "tutorial": "tutorial onboarding hints tips",
         "scripts": "scripts sources registry",
         "python": "python interpreter environment conda venv",
@@ -2167,6 +2169,14 @@
     "restoreMissingCanvasTitle": "Original canvas is gone",
     "restoreOtherCanvasBody": "This point was taken on canvas “{{from}}”; you’re on “{{to}}”. Restoring switches to “{{from}}” and writes there, leaving the current canvas alone.",
     "restoreOtherCanvasTitle": "Restore into canvas “{{name}}”?",
+    "restoreReplaceFigureTitle": "Switch to figure “{{name}}”?",
+    "restoreLayoutTitle": "Restore a layout of {{n}} figures?",
+    "restoreLayoutBody": "The canvas will show this version’s {{n}} figures ({{names}}); what’s there now is saved as a “before restore” point first. You can undo with {{undo}}.",
+    "restoreLayoutBodyMore": "The canvas will show this version’s {{n}} figures ({{names}}, …); what’s there now is saved as a “before restore” point first. You can undo with {{undo}}.",
+    "restoreReplaceFiguresBody": "The {{m}} figures on the canvas now are saved as a “before restore” point first, then replaced by this one. You can undo with {{undo}}.",
+    "restoreReplaceFigureBody": "The current figure “{{to}}” is saved as a “before restore” point first, then replaced. You can undo with {{undo}}.",
+    "restoreOtherFigureTitle": "Restore figure “{{name}}”?",
+    "restoreOtherFigureBody": "This version belongs to figure “{{from}}”. Restoring switches to “{{from}}” and leaves the current figure “{{to}}” untouched.",
     "restoreUnknownCanvasBody": "It was left by an older version and doesn’t record its canvas. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreUnknownCanvasTitle": "This point has no source canvas",
     "restored": "Restored to “{{name}}”. The layout before the restore was saved as a point, and {{undo}} undoes it.",
@@ -2210,8 +2220,10 @@
     "restoreFailed": "Couldn’t save the current layout first, so nothing was restored: {{error}}",
     "restoreAbortedEdited": "The layout changed while the point was loading, so nothing was restored. Your latest edit is kept.",
     "scopeFigure": "This figure",
-    "scopeAllFigures": "All",
+    "scopeAllFigures": "All figures",
+    "scopeLayout": "This layout",
     "noneHereFigure": "No versions for this figure yet",
+    "noneHereLayout": "No versions for this layout yet",
     "scopeLabel": "Whose versions to show",
     "scopeCanvas": "This canvas",
     "scopeAll": "All canvases",
@@ -2232,7 +2244,8 @@
     "zoomOut": "Zoom out",
     "zoomFit": "Fit",
     "diffTitle": "Compared with the current canvas",
-    "quickNameTitle": "Save this moment as a named point"
+    "quickNameTitle": "Save this moment as a named point",
+    "scrubberLabel": "Version strip: ←/→ to step through, Enter to open"
   },
   "onboarding": {
     "hintsReset": "Contextual hints reset; each will show once more",
@@ -2261,24 +2274,18 @@
       "count": "{{n}} / {{total}}",
       "skip": "Skip tutorial",
       "back": "Back",
+      "backToWelcome": "Back to welcome",
+      "waitImport": "Drop the script to continue",
+      "waitLegend": "Drag the legend to continue",
+      "waitTitle": "Enlarge the title to continue",
       "next": "Next",
       "finish": "Finish",
       "externalFile": "This is the sample tutorial. You can import your own scripts when you’re done."
     },
     "welcome": {
       "title": "Edit right on the figure",
-      "smile": ":)",
       "subtitle": "Import a plotting script, then click and drag to adjust what’s in the figure.",
-      "featuresLabel": "Figure elements you can adjust directly",
-      "feature": {
-        "legend": "Legends",
-        "axes": "Axes",
-        "colorbar": "Colorbars",
-        "text": "Text",
-        "align": "Alignment",
-        "layout": "Layout",
-        "more": "More"
-      },
+      "features": "Legends, axes, colorbars, text, alignment and layout can all be edited directly",
       "demoLabel": "From a plotting script to a figure you can edit directly",
       "codeLabel": "Excerpt of the sample script {{name}}",
       "figureLabel": "The reaction-kinetics figure this script draws: its title, legend and layout can be adjusted directly",

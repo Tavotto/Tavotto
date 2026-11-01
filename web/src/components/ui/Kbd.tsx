@@ -36,7 +36,13 @@ export function Kbd({
  * 一串键位画成一个个键帽（`⇧⌘S` → ⇧ ⌘ S；` / ` 隔开的「或」之间留一个斜杠）。
  * 命令面板与快捷键速查表共用；文本照旧是键位表里那一串，拆法在 `lib/keyCaps`。
  */
-export function KeyCaps({ keys, className }: { keys: string; className?: string }) {
+export function KeyCaps({
+  keys,
+  className,
+}: {
+  keys: string
+  className?: string
+}) {
   const { t } = useTranslation('shortcuts')
   const groups = keyCaps(keys)
   return (
@@ -61,6 +67,21 @@ export function KeyCaps({ keys, className }: { keys: string; className?: string 
           </span>
         </Fragment>
       ))}
+    </span>
+  )
+}
+
+/**
+ * 菜单项与命令面板右端的快捷键：不加框的 ink-3 灰字（`⌘K`、`?`），右对齐、等宽数字。
+ * 两处都经它渲染，行尾的右边缘因此落在同一条竖线上；速查表要看键位才用 `KeyCaps`。
+ */
+export function ShortcutText({
+  children,
+  ...rest
+}: { children: string } & Record<`data-${string}`, string | number | boolean | undefined>) {
+  return (
+    <span {...rest} className="shrink-0 text-right text-xs tabular-nums tracking-wide text-ink-3">
+      {children}
     </span>
   )
 }

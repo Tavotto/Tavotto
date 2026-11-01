@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「UI 视觉纪律」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
 
 <!-- agents-route
 sheet: web/AGENTS.md
@@ -127,7 +127,7 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 工作台结构：顶栏 44px（左=首页胶囊/文档名/状态芯片/时间线，右=撤销重做/导出/更多）；
 画布工具（选择 / 文字 / 标注 ▾ / 序号 | 适应）在画布底部居中的**浮动工具条**
 （`CanvasToolbar`，`data-canvas-toolbar`，只在排版模式出现、快速编辑时整条不在），缩放菜单在画布
-标签行最右（快速编辑没有标签行，悬在画布右上角），写回是「⋯」菜单第一项
+标签行最右（快速编辑没有标签行，悬在画布右上角），写回在「⋯」菜单「文件」组
 （`useWriteBackMenuEntry`，计数 n 在项右侧，属性栏「源文件」里那一颗不动）。工具条（12 内距 + 40 高）占掉画布
 底边约 64px：底部居中的 toast 列与左下 HUD 在它显示时抬到 `bottom-16`（`useCanvasToolbarVisible`
 一处判据），`fixed` 的选中浮动栏 / 右键快编落位时给窗口底边留 `BOTTOM_SAFE`
@@ -145,7 +145,7 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与
 lucide 时代相同），**任何第三方图标库都不许再 import**；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}`
-= 12 / 14 / 16 / 20，默认 sm，描边 2 按比例缩放，都由 `components/ui/Icon.tsx` 的
+= 12 / 16 / 16 / 20（2026-10-31 起 sm 由 14 改 16，ADR 0157），默认 sm，描边 1.5 按比例缩放、几何吸到 0.75 网格，都由 `components/ui/Icon.tsx` 的
 `IconProvider` 在三个根上给。写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写
 strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽略）；折叠 / 下拉箭头一律 xs；
 折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图、品牌标与图标集本体

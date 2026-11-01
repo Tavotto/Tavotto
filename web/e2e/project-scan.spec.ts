@@ -206,9 +206,9 @@ test('教程进行中：教程层独占，引导卡不出现也不抢第二份�
   const a = await app()
   await page.setViewportSize({ width: 1400, height: 900 })
   await page.goto(a.baseURL)
-  // 新手态顶栏有教程胶囊时菜单里不放同一个入口（审计 A2）：有胶囊点胶囊，没有再走「更多」
+  // 新手态顶栏有「新手教程」胶囊，「更多」菜单里就不重复列这一项；胶囊不在才走菜单
   const chip = page.locator('[data-tutorial-chip-open]')
-  if (await chip.count()) {
+  if (await chip.isVisible()) {
     await chip.click()
   } else {
     await page.locator('[data-more-menu]').click()

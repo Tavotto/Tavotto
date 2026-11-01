@@ -120,7 +120,8 @@ test('多张画布：时间线默认只显示当前画布自己的节点，切�
   await expect(drawer.locator('[data-timeline-node]')).toHaveCount(0)
   const shots = process.env.TAVOTTO_SHOTS
   if (shots) await page.screenshot({ path: `${shots}/timeline-scope-new-canvas.png` })
-  await (await only(scope.locator('[data-value="all"]'))).click()
+  await scope.click()
+  await (await only(page.locator('[data-timeline-scope-option="all"]'))).click()
   const node = await only(drawer.locator('[data-timeline-node]'))
   // 看全部时，每个节点说自己来自哪张画布
   await expect(node).toContainText('Figure 1')
@@ -173,7 +174,8 @@ test('单图编辑：先开图 A 存个节点、再开图 B 存个节点——�
   await expect(named.locator('[data-timeline-name]')).toHaveText('乙图版')
   const shots = process.env.TAVOTTO_SHOTS
   if (shots) await page.screenshot({ path: `${shots}/timeline-per-figure-current.png` })
-  await (await only(scope.locator('[data-value="all"]'))).click()
+  await scope.click()
+  await (await only(page.locator('[data-timeline-scope-option="all"]'))).click()
   await expect(named).toHaveCount(2)
   if (shots) await page.screenshot({ path: `${shots}/timeline-per-figure-all.png` })
 })

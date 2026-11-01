@@ -14,6 +14,7 @@ import { useOnboardingStore } from '@/store/onboardingStore'
  * 教程层开着时不画（底下 inert）。窄于 900 只留圆点（短语给读屏）。
  * 更多菜单里的教程入口与它**不同时出现**（2026-10 审计 A2）：胶囊在时菜单不放，胶囊消失后菜单里才有——判据就是 `useTutorialChipVisible`。
  */
+/** 胶囊此刻是否在显示：顶栏「⋯」菜单据此不重复列「开始教程」（判据只此一处） */
 export function useTutorialChipVisible(): boolean {
   const pending = useOnboardingStore((s) => s.status === 'not_started' && s.welcomeSeenAt === null)
   const surface = useOnboardingStore((s) => s.surface)

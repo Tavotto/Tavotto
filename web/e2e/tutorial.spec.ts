@@ -339,7 +339,7 @@ for (const size of [
       return {
         chips: chips.length,
         dots: dots.length,
-        toFeatures: Math.min(...chips.map((c) => c.top)) - r(view.querySelector('ul')!).bottom,
+        toFeatures: Math.min(...chips.map((c) => c.top)) - r(view.querySelector('[data-welcome-features]')!).bottom,
         toButton: r(view.querySelector('[data-tutorial-begin]')!).top - Math.max(...chips.map((c) => c.bottom)),
         dotsOnText: dots.filter((d) => texts.some((t) => hit(d, t))).length,
       }
@@ -422,7 +422,7 @@ test('欢迎页：标注气泡不压标签行 / 图里文字 / 卡片边界，�
         return {
           scroll: view.scrollHeight - view.clientHeight,
           card: r(card),
-          tags: r(view.querySelector('main ul')!),
+          tags: r(view.querySelector('[data-welcome-features]')!),
           title: r(title),
           begin: r(document.querySelector('[data-tutorial-begin]')!),
           logo: r(view.querySelector('main')!.firstElementChild!),

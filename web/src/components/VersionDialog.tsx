@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
+import { Bookmark, ChevronDown, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
+import { Spinner } from '@/components/ui/Spinner'
 import {
   backendErrorText,
   deleteVersion,
@@ -35,6 +36,7 @@ import {
 import { groupTimeline, versionKind, type TimelineGroup } from '@/lib/timelineGroups'
 import { saveNamedNode, takeCheckpoint } from '@/lib/timelineCheckpoint'
 import { formatMessage, msg, t as translate } from '@/i18n'
+import type { UiMessage } from '@/i18n/message'
 import { formatDate, formatTime } from '@/i18n/format'
 import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -42,7 +44,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
-import { useVariantPng } from '@/hooks/useVariantPng'
+import { useVariantPng, variantNeedsRender } from '@/hooks/useVariantPng'
 import { MM_PER_PT, pickBucket } from '@/lib/units'
 import {
   documentDigest,
@@ -57,6 +59,9 @@ import {
   THUMB_OBJECT_LIMIT,
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
+import { TimelineScrubber } from './TimelineScrubber'
+import { CropFrame, thumbDisplayBox, VersionThumbImage } from './versionThumbCrop'
+import { contentBox, unionBox } from '@/lib/versionThumbBox'
 import { Badge } from './ui/Badge'
 import { Card } from './ui/Card'
 import { Notice } from './ui/Notice'
@@ -65,7 +70,7 @@ import { useRowMenu } from './ui/useRowMenu'
 import { Button, IconButton } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { TextInput } from './ui/Input'
-import { MenuItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
 import { focusOrigin } from './ui/focusOrigin'
 import { Segmented } from './ui/Segmented'
@@ -86,6 +91,10 @@ import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 /** 本抽屉的文案在 dialogs:versions.* 下 */
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/** 范围下拉两档的说法：按「这张图 / 这个排版 / 这张画布」分 */
+const SCOPE_CURRENT = { figure: 'scopeFigure', layout: 'scopeLayout', canvas: 'scopeCanvas' } as const
+const SCOPE_ALL = { figure: 'scopeAllFigures', layout: 'scopeAllFigures', canvas: 'scopeAll' } as const
 
 export function TimelinePanel() {
   useTranslation(['dialogs', 'common'])
@@ -158,6 +167,14 @@ export function TimelinePanel() {
   // 「这张画布 / 全部画布」：每张画布各有自己的时间线（打开一张图 = 它自己的画布，ADR 0028），
   // 来回编辑不同脚本的图时彼此不混。归属只认节点自己记的 `canvasId`（R-03）；多于一张画布才分
   const [scope, setScope] = useState<'current' | 'all'>('current')
+  // 恢复把当前这张图换掉了：切到「全部图」，刚存下的「恢复前」（被换掉的那张）就在眼前
+  const revealAll = useTimelineStore((s) => s.revealAll)
+  const seenReveal = useRef(revealAll)
+  useEffect(() => {
+    if (revealAll === seenReveal.current) return
+    seenReveal.current = revealAll
+    setScope('all')
+  }, [revealAll])
   // 用户正在编辑的输入按上下文记账（Codex #679）：换了项目 / 排版，旧排版的草稿与
   // 改名框当场不再显示——提交发生在切换之后，`afterAwait` 管不到，而交上去的名字会在
   // 新排版里建出一个名不副实的命名节点。在 render 里按 ctx 派生，不等晚一帧的 effect
@@ -192,11 +209,30 @@ export function TimelinePanel() {
     if (panels.length === 1) return panels[0].fileId
     return panels.find((p) => p.id === elementPanelId)?.fileId ?? null
   }, [docObjects, elementPanelId])
-  // 只在确实有别的图的版本时出现；没有开关时一律不过滤
+  // 排版（画布上几张图、没在哪一张里编辑）：「这个排版」= 和它有共同图的排版版本，单图编辑的版本归「全部图」
+  // （beta 0.19.3b3 反馈：排版打开时范围下拉不见了，单图的版本和排版的混在一起）
+  const layoutFigures = useMemo(() => {
+    if (currentFigure != null) return null
+    const ids = [...new Set(docObjects.filter((o): o is PanelObject => o.type === 'panel').map((o) => o.fileId))]
+    return ids.length > 1 ? ids : null
+  }, [docObjects, currentFigure])
+  const inScope = useCallback(
+    (v: LayoutVersionMeta) =>
+      currentFigure != null
+        ? !!v.figures?.includes(currentFigure)
+        : !!layoutFigures && (v.figures?.length ?? 0) > 1 && v.figures!.some((f) => layoutFigures.includes(f)),
+    [currentFigure, layoutFigures],
+  )
+  // 只在确实有分得出去的版本时出现；没有开关时一律不过滤
   const figureScope =
-    currentFigure != null &&
-    versions.some((v) => !!v.figures?.length && !v.figures.includes(currentFigure))
-  const scopeKind: 'figure' | 'canvas' | null = figureScope ? 'figure' : multiCanvas ? 'canvas' : null
+    (currentFigure != null || layoutFigures != null) && versions.some((v) => !!v.figures?.length && !inScope(v))
+  const scopeKind: 'figure' | 'layout' | 'canvas' | null = figureScope
+    ? currentFigure != null
+      ? 'figure'
+      : 'layout'
+    : multiCanvas
+      ? 'canvas'
+      : null
   const scopeActive = scopeKind !== null && scope === 'current'
   // 单击行 = 在该行旁弹出对比小卡片（那一刻 vs 当前，一句话 + 一个主按钮「恢复到这里」）。
   // 卡片只读：不开模态、不占预览槽，所以双击的第二下仍落在这一行上（双击改名，Codex #679）。
@@ -350,11 +386,22 @@ export function TimelinePanel() {
       const cur = useTimelineStore.getState().preview
       if (cur?.docId === docId && cur.meta.id === meta.id) useTimelineStore.getState().setPreview(null)
     }
+    // 先问、问完再上锁开预览（beta 0.19.3b3 反馈：锁用的模态预览先开、确认框叠在上面，两层弹窗卡住）。
+    // 确认框本身是模态的，问的那段画布改不了；已有一次在飞就不问
+    if (useTimelineStore.getState().restoring === ctx) return
+    const ok = await confirmRestoreTarget(meta)
+    if (!afterAwait(ctx)(() => ok)) return
     try {
-      const done = await restoreUnderLock(ctx, docId, meta, async () => {
-        const v = await fetchVersionDoc(docId, meta.id)
-        return v.doc as FigureDocument
-      })
+      const done = await restoreUnderLock(
+        ctx,
+        docId,
+        meta,
+        async () => {
+          const v = await fetchVersionDoc(docId, meta.id)
+          return v.doc as FigureDocument
+        },
+        { confirmed: true },
+      )
       if (done === null) return
       if (!done) closeOurs()
     } catch (e) {
@@ -368,14 +415,45 @@ export function TimelinePanel() {
     () =>
       !scopeActive
         ? versions
-        : scopeKind === 'figure'
-          ? versions.filter((v) => !!currentFigure && !!v.figures?.includes(currentFigure))
-          : versions.filter((v) => v.canvasId === activeCanvasId),
-    [scopeActive, scopeKind, currentFigure, versions, activeCanvasId],
+        : scopeKind === 'canvas'
+          ? versions.filter((v) => v.canvasId === activeCanvasId)
+          : versions.filter(inScope),
+    [scopeActive, scopeKind, inScope, versions, activeCanvasId],
   )
   const groups = useMemo(
     () => groupTimeline(scoped, { namedOnly: filter === 'named', now: Date.now() }),
     [scoped, filter],
+  )
+  // 竖线条与列表是同一组节点：列表新的在上，竖线条左旧右新
+  const strip = useMemo(() => groups.flatMap((g) => g.items).reverse(), [groups])
+  const summaryOf = useCallback(
+    (v: LayoutVersionMeta) =>
+      versionSummaryText(versionSummary(v, comparableEarlier(versions, versions.indexOf(v))))
+        .map(formatMessage)
+        .join(' · '),
+    [versions],
+  )
+  // 竖线条划过的那一版：列表滚到那一行并淡淡标出来；只是看，不开卡片、不取正文
+  const listRef = useRef<HTMLDivElement>(null)
+  const [peekId, setPeekId] = useState<string | null>(null)
+  const revealRow = useCallback((id: string) => {
+    const row = listRef.current?.querySelector(`[data-timeline-node="${CSS.escape(id)}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [])
+  const onScrubPeek = useCallback(
+    (id: string | null) => {
+      setPeekId(id)
+      if (id) revealRow(id)
+    },
+    [revealRow],
+  )
+  const onScrubPick = useCallback(
+    (id: string) => {
+      setPeekId(null)
+      revealRow(id)
+      setCard({ ctx, id })
+    },
+    [ctx, revealRow],
   )
 
   return (
@@ -445,33 +523,52 @@ export function TimelinePanel() {
         )}
       </div>
       {naming && <p className="type-caption shrink-0 px-3 pb-2">{vd('nameHint')}</p>}
-      <div className="flex shrink-0 px-3 pb-1.5">
-        <Segmented
-          value={filter}
-          onChange={setFilter}
-          ariaLabel={vd('filterLabel')}
-          data-timeline-filter
-          className="w-full"
-          items={[
-            { value: 'all', label: vd('filterAll') },
-            { value: 'named', label: vd('filterNamed') },
-          ]}
-        />
+      {/* 范围与筛选并成一行（beta 0.19.3b3 反馈：两排整宽分段、两个「全部」难看又看混）：
+          左边范围是一颗文字下拉（只在有得分时出现），右边「命名」是一颗开关 */}
+      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1">
+        {scopeKind && (
+          <Menu
+            align="start"
+            width={160}
+            trigger={
+              <Button variant="ghost" size="sm" data-timeline-scope={scope}>
+                {vd(scope === 'current' ? SCOPE_CURRENT[scopeKind] : SCOPE_ALL[scopeKind])}
+                <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
+              </Button>
+            }
+          >
+            <MenuRadioGroup value={scope} onValueChange={(v) => setScope(v === 'all' ? 'all' : 'current')}>
+              <MenuRadioItem value="current" data-timeline-scope-option="current">
+                {vd(SCOPE_CURRENT[scopeKind])}
+              </MenuRadioItem>
+              <MenuRadioItem value="all" data-timeline-scope-option="all">
+                {vd(SCOPE_ALL[scopeKind])}
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </Menu>
+        )}
+        <span className="flex-1" />
+        <Button
+          variant="ghost"
+          size="sm"
+          active={filter === 'named'}
+          aria-pressed={filter === 'named'}
+          data-timeline-filter={filter}
+          onClick={() => setFilter((f) => (f === 'named' ? 'all' : 'named'))}
+        >
+          <Bookmark size={ICON_SIZE.sm} filled={filter === 'named'} />
+          {vd('filterNamed')}
+        </Button>
       </div>
-      {scopeKind && (
-        <div className="flex shrink-0 px-3 pb-1.5">
-          <Segmented
-            value={scope}
-            onChange={setScope}
-            ariaLabel={vd('scopeLabel')}
-            data-timeline-scope
-            className="w-full"
-            items={[
-              { value: 'current', label: vd(scopeKind === 'figure' ? 'scopeFigure' : 'scopeCanvas') },
-              { value: 'all', label: vd(scopeKind === 'figure' ? 'scopeAllFigures' : 'scopeAll') },
-            ]}
-          />
-        </div>
+      {loaded && strip.length > 1 && (
+        <TimelineScrubber
+          docId={docId}
+          versions={strip}
+          selectedId={selected}
+          summaryOf={summaryOf}
+          onPeek={onScrubPeek}
+          onPick={onScrubPick}
+        />
       )}
       {budget?.namedOver && (
         // 命名节点超出字节上限：**不删**，照实说，请用户自己删（ADR 0101）
@@ -491,7 +588,7 @@ export function TimelinePanel() {
         </Notice>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {!loaded ? (
           // 这个上下文的列表还没到（或第一次就失败了：错误在下面）——不是「没有节点」
           !loadError && (
@@ -504,8 +601,8 @@ export function TimelinePanel() {
         ) : scoped.length === 0 ? (
           <EmptyState
             art="versions"
-            title={vd(scopeKind === 'figure' ? 'noneHereFigure' : 'noneHere')}
-            hint={scopeKind === 'figure' ? undefined : vd('noneHereHint', { n: versions.length })}
+            title={vd(scopeKind === 'figure' ? 'noneHereFigure' : scopeKind === 'layout' ? 'noneHereLayout' : 'noneHere')}
+            hint={scopeKind === 'canvas' ? vd('noneHereHint', { n: versions.length }) : undefined}
           />
         ) : groups.length === 0 ? (
           <EmptyState art="versions" title={vd('noNamed')} />
@@ -520,6 +617,7 @@ export function TimelinePanel() {
                     meta={v}
                     all={versions}
                     selected={v.id === selected}
+                    peeking={v.id === peekId}
                     cardOpen={card?.ctx === ctx && card.id === v.id}
                     onCardOpenChange={(on) =>
                       setCard((c) => (on ? { ctx, id: v.id } : c?.ctx === ctx && c.id === v.id ? null : c))
@@ -590,6 +688,18 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
   // 位图缩略图 = 拍节点那一刻带 overrides 的样子；旧节点 / 拍图失败的退回草图
   // （画的是当前磁盘素材，回答「哪一版」）；连草图都画不出来留同尺寸占位
   if (meta.thumb) {
+    // 对准页面上有内容的那块（单图编辑没有「页面」，图偏在页面一角也该居中看，见 `contentBox`）
+    const page = meta.sketch?.page ?? meta.page
+    const box = page ? thumbDisplayBox(meta, page) : null
+    if (page && box) {
+      return (
+        <CropFrame page={page} box={box} width={56} height={40} className="rounded-xs border border-border-strong">
+          {() => (
+            <VersionThumbImage docId={docId} meta={meta} page={page} data-timeline-thumb />
+          )}
+        </CropFrame>
+      )
+    }
     return (
       <img
         src={versionThumbUrl(docId, meta)}
@@ -614,6 +724,7 @@ function TimelineRow({
   meta: v,
   all,
   selected,
+  peeking = false,
   renaming,
   showCanvas,
   cardOpen,
@@ -630,6 +741,8 @@ function TimelineRow({
   meta: LayoutVersionMeta
   all: LayoutVersionMeta[]
   selected: boolean
+  /** 竖线条正划过这一版（只是看）：与悬停同一档底色 */
+  peeking?: boolean
   renaming: boolean
   showCanvas: boolean
   /** 对比小卡片开着：单击行弹出，Esc / 点外面 / 取消收起 */
@@ -704,7 +817,7 @@ function TimelineRow({
         {...menu.rowProps}
         className={cn(
           'group flex items-start gap-1 rounded-md pr-1.5',
-          selected ? 'bg-selected' : 'hover:bg-surface-hover',
+          selected ? 'bg-selected' : peeking ? 'bg-surface-hover' : 'hover:bg-surface-hover',
         )}
       >
         <Popover
@@ -893,6 +1006,10 @@ function CompareCard({
   const [failed, setFailed] = useState<string | null>(null)
   const [approximate, setApproximate] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  // 「那一刻」按 overrides 的图还没出好：先垫拍节点时存好的缩略图，出好了再揭开
+  // （出好之前 `SnapshotPanel` 画的是磁盘素材，不是这一版的样子）
+  const [momentPending, setMomentPending] = useState(true)
+  const hasThumb = !!meta.thumb || !!meta.sketch
   useEffect(() => {
     let live = true
     fetchVersionDoc(docId, meta.id)
@@ -904,19 +1021,63 @@ function CompareCard({
   }, [docId, meta.id])
   // 浮层 p-2 + 灰底 p-2 + 两格间距
   const half = (CARD_W - 16 - 16 - 12) / 2
-  const frame = (d: FigureDocument, caption: string, which: 'moment' | 'current') => (
-    <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
-      <div className="relative" style={{ width: cardFrameWidth(d.page, half, CARD_FRAME_MAX_H) }} data-timeline-card-box>
-        <LayoutSnapshot
-          doc={d}
-          renderOverrides
-          displayWidth={cardFrameWidth(d.page, half, CARD_FRAME_MAX_H)}
-          onApproximate={which === 'moment' ? setApproximate : undefined}
-        />
-      </div>
-      <figcaption className="type-caption">{caption}</figcaption>
-    </figure>
-  )
+  // 两格都对准内容。页面一样大时用**同一个框**（两边内容的并集），位置变了要看得出来；
+  // 页面尺寸变过就各裁各的，各按自己的比例（Codex #1349）
+  const momentPage = doc?.page ?? meta.sketch?.page ?? meta.page ?? currentDoc.page
+  const momentObjects = doc?.objects ?? meta.sketch?.objects
+  const momentBox = momentObjects ? contentBox(momentPage, momentObjects) : null
+  const currentBox = contentBox(currentDoc.page, currentDoc.objects)
+  const samePage = momentPage.w === currentDoc.page.w && momentPage.h === currentDoc.page.h
+  const shared = samePage ? unionBox(momentBox, currentBox) : null
+  const frame = (d: FigureDocument | null, caption: string, which: 'moment' | 'current') => {
+    const page = which === 'moment' ? momentPage : currentDoc.page
+    const cropBox = samePage ? shared : which === 'moment' ? momentBox : currentBox
+    const b = cropBox ?? page
+    const width = cardFrameWidth(b, half, CARD_FRAME_MAX_H)
+    const placeholder = which === 'moment' && hasThumb && (!d || momentPending)
+    return (
+      <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
+        <div className="relative" style={{ width }} data-timeline-card-box>
+          <CropFrame
+            page={page}
+            box={cropBox}
+            width={width}
+            height={(width * b.h) / b.w}
+            className="rounded-xs border border-border"
+          >
+            {(pageWidth) => (
+              <>
+                {d ? (
+                  <LayoutSnapshot
+                    doc={d}
+                    renderOverrides
+                    displayWidth={pageWidth}
+                    onApproximate={which === 'moment' ? setApproximate : undefined}
+                    onPending={which === 'moment' ? setMomentPending : undefined}
+                  />
+                ) : (
+                  <span className="block size-full bg-paper" />
+                )}
+                {placeholder && (
+                  <span className="absolute inset-0 block bg-paper" data-timeline-card-placeholder>
+                    {meta.thumb ? (
+                      <VersionThumbImage docId={docId} meta={meta} page={momentPage} />
+                    ) : (
+                      meta.sketch && (
+                        <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} className="size-full" />
+                      )
+                    )}
+                  </span>
+                )}
+              </>
+            )}
+          </CropFrame>
+          {placeholder && <Spinner size={ICON_SIZE.xs} className="absolute bottom-1 right-1 text-ink-3" />}
+        </div>
+        <figcaption className="type-caption">{caption}</figcaption>
+      </figure>
+    )
+  }
   return (
     <div className="flex flex-col gap-2" data-timeline-card={meta.id}>
       <div className="relative flex min-h-24 items-start justify-between gap-3 rounded-md bg-canvas p-2">
@@ -924,7 +1085,7 @@ function CompareCard({
           <p className="p-2 text-sm text-danger" data-timeline-card-error>
             {failed}
           </p>
-        ) : doc ? (
+        ) : doc || hasThumb ? (
           <>
             {frame(doc, vd('sideMoment'), 'moment')}
             {frame(currentDoc, vd('sideCurrent'), 'current')}
@@ -992,7 +1153,50 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
   // 当前画布的名字取活文档的（`canvases` 里那一条要等下次切画布才同步改名）
   const here = s.doc.name
   const target = resolveRestoreTarget(meta, s)
-  if (target.kind === 'same') return true
+  // 单图编辑没有「画布」这回事（beta 0.19.3b3 反馈）：此刻画布上只有一张图、这一版也只有一张图时按「图」说
+  const current = soleFigure(s.doc)
+  const verFigures = meta.figures ?? []
+  const verFigure = verFigures.length === 1 ? figureLabel(verFigures[0]) : null
+  if (target.kind === 'same') {
+    // 恢复会让画布上的图变了（换了、多了、少了——含单图编辑 ↔ 排版）：先说一声。
+    // 只比「哪几张图」，不比图内修改：同一组图的旧版本照旧直接恢复（beta 0.19.3b3 反馈：
+    // 原先只在「一张换一张」时问，一张变四张的排版直接闪过去、右栏也跟着变了样）
+    const now = figuresOf(s.doc)
+    if (verFigures.length && !sameFigures(now, verFigures)) {
+      const undo = modKey('Z')
+      const ask = (title: UiMessage, body: UiMessage) =>
+        askTimelineConfirm({ title, body, confirmLabel: msg('actions.continue', undefined, 'common') })
+      if (verFigures.length > 1) {
+        const names = verFigures.slice(0, 3).map(figureLabel).join('、')
+        return ask(
+          msg('versions.restoreLayoutTitle', { n: verFigures.length }, 'dialogs'),
+          msg(
+            verFigures.length > 3 ? 'versions.restoreLayoutBodyMore' : 'versions.restoreLayoutBody',
+            { n: verFigures.length, names, undo },
+            'dialogs',
+          ),
+        )
+      }
+      if (current) {
+        return ask(
+          msg('versions.restoreReplaceFigureTitle', { name: verFigure }, 'dialogs'),
+          msg('versions.restoreReplaceFigureBody', { to: objectLabel(current), undo }, 'dialogs'),
+        )
+      }
+      return ask(
+        msg('versions.restoreReplaceFigureTitle', { name: verFigure }, 'dialogs'),
+        msg('versions.restoreReplaceFiguresBody', { m: now.length, undo }, 'dialogs'),
+      )
+    }
+    return true
+  }
+  if (target.kind === 'other' && current && verFigure) {
+    return askTimelineConfirm({
+      title: msg('versions.restoreOtherFigureTitle', { name: verFigure }, 'dialogs'),
+      body: msg('versions.restoreOtherFigureBody', { from: verFigure, to: objectLabel(current) }, 'dialogs'),
+      confirmLabel: msg('actions.continue', undefined, 'common'),
+    })
+  }
   if (target.kind === 'other') {
     return askTimelineConfirm({
       title: msg('versions.restoreOtherCanvasTitle', { name: target.name }, 'dialogs'),
@@ -1036,16 +1240,20 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
 export async function restoreNode(
   meta: LayoutVersionMeta,
   versionDoc: FigureDocument,
+  /** 调用方已经问过了（行 / 卡片入口在上锁开预览**之前**问，见 `restoreFromRow`） */
+  opts?: { confirmed?: boolean },
 ): Promise<boolean> {
   finishActiveGesture()
   // 确认框与「恢复前」节点之间都可能换了项目 / 排版：那时再写，A 的节点会被写进 B
   const after = afterAwait()
-  const confirmed = await confirmRestoreTarget(meta)
+  const confirmed = opts?.confirmed || (await confirmRestoreTarget(meta))
   if (!after(() => confirmed)) return false
   // 原画布还在 → 切过去再写（「恢复前」拍的因此是**即将被覆盖的那张**）；
   // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
   const target = resolveRestoreTarget(meta, useDocumentStore.getState())
   if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
+  // 写进的是被覆盖的这张画布：它上面的图换了（不是切去别的画布），「恢复前」就属于被换掉的那张图
+  const figuresBefore = target.kind === 'other' ? null : figuresOf(useDocumentStore.getState().doc)
   const hashBefore = documentDigest(useDocumentStore.getState().doc)
   recordDiagnosticEvent({
     type: 'layout_version.restore.request',
@@ -1085,10 +1293,40 @@ export async function restoreNode(
     future_count: useDocumentStore.getState().future.length,
   })
   useTimelineStore.getState().setPreview(null)
+  if (figuresBefore && !sameFigures(figuresBefore, figuresOf(useDocumentStore.getState().doc))) {
+    useTimelineStore.setState((st) => ({ revealAll: st.revealAll + 1 }))
+  }
   useUiStore
     .getState()
     .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'), 'done')
   return true
+}
+
+/**
+ * 画布上有哪几张图（面板的 fileId，去重、保持顺序）。与后端 `_version_figures` 同一把尺子：
+ * 隐藏的图也算在场（单图编辑 / 排版的模式判据同样计入）。
+ */
+function figuresOf(doc: FigureDocument): string[] {
+  return [...new Set(doc.objects.filter((o): o is PanelObject => o.type === 'panel').map((o) => o.fileId))]
+}
+
+function sameFigures(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x))
+}
+
+/** 画布上只有一张图时就是它（单图编辑）；否则 null */
+function soleFigure(doc: FigureDocument): PanelObject | null {
+  const panels = doc.objects.filter((o): o is PanelObject => o.type === 'panel')
+  return panels.length === 1 ? panels[0] : null
+}
+
+/**
+ * 版本里记的图（`figures` 是 fileId）显示成什么：与画布上的图同一个说法（去目录、去扩展名）。
+ * 运行脚本出来的图是 `runtime:<脚本>#<图名>`，说的是 `#` 后面那个图名。
+ */
+function figureLabel(fileId: string): string {
+  const id = fileId.startsWith('runtime:') && fileId.includes('#') ? fileId.slice(fileId.lastIndexOf('#') + 1) : fileId
+  return id.split('/').pop()?.replace(/\.[^.]+$/, '') || id
 }
 
 /**
@@ -1126,6 +1364,7 @@ async function restoreUnderLock(
   docId: string,
   meta: LayoutVersionMeta,
   doc: FigureDocument | (() => Promise<FigureDocument>),
+  opts?: { confirmed?: boolean },
 ): Promise<boolean | null> {
   const token = useTimelineStore.getState().beginRestore(ctx)
   if (token === null) return null
@@ -1151,7 +1390,7 @@ async function restoreUnderLock(
     if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) {
       tl.setPreview({ docId, meta, doc: body })
     }
-    return await restoreNode(meta, body)
+    return await restoreNode(meta, body, opts)
   } finally {
     useTimelineStore.getState().endRestore(token)
   }
@@ -1435,6 +1674,7 @@ export function LayoutSnapshot({
   outline = false,
   renderOverrides = false,
   onApproximate,
+  onPending,
   displayWidth,
 }: {
   doc: FigureDocument
@@ -1453,8 +1693,25 @@ export function LayoutSnapshot({
   renderOverrides?: boolean
   /** 有面板的图内修改渲染不出来 —— 调用方据此标注「近似预览」 */
   onApproximate?: (approximate: boolean) => void
+  /** 还有面板按 overrides 的图没出好（`renderOverrides` 时才有意义） */
+  onPending?: (pending: boolean) => void
 }) {
   const assets = useAssetStore((s) => s.byId)
+  const loadingPanels = useRef(new Set<string>())
+  const onLoading = useCallback(
+    (id: string, loading: boolean) => {
+      const set = loadingPanels.current
+      const had = set.size > 0
+      if (loading) set.add(id)
+      else set.delete(id)
+      if (had !== set.size > 0) onPending?.(set.size > 0)
+    },
+    [onPending],
+  )
+  // 子面板的 effect 先于这里跑：一张要出图的面板都没有时，这里报一次「已就绪」
+  useEffect(() => {
+    onPending?.(loadingPanels.current.size > 0)
+  }, [doc, onPending])
   const { w: pw, h: ph } = doc.page
   return (
     <div
@@ -1493,6 +1750,7 @@ export function LayoutSnapshot({
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
                 onApproximate={onApproximate}
+                onLoading={onPending ? onLoading : undefined}
                 bucket={
                   displayWidth ? snapshotBucket(o.w, pw, displayWidth, window.devicePixelRatio || 1) : 200
                 }
@@ -1539,6 +1797,7 @@ function SnapshotPanel({
   mtime,
   renderOverrides,
   onApproximate,
+  onLoading,
   bucket,
 }: {
   panel: PanelObject
@@ -1546,20 +1805,31 @@ function SnapshotPanel({
   mtime?: number
   renderOverrides: boolean
   onApproximate?: (approximate: boolean) => void
+  /** 这张面板按 overrides 的图还在出（出好之前画的是磁盘素材，不是这一版的样子） */
+  onLoading?: (id: string, loading: boolean) => void
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
+  const wantsVariant = renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
     bucket,
-    renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel)),
+    wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)
   }, [variant.approximate, renderOverrides, onApproximate])
+  // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
+  // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
+  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel)) && !variant.url && !variant.approximate
+  useEffect(() => {
+    if (!onLoading) return
+    onLoading(panel.id, pending)
+    return () => onLoading(panel.id, false)
+  }, [panel.id, pending, onLoading])
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标

@@ -302,6 +302,8 @@ order: 200
   挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
   新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
+  恢复别的图（2026-10-31）：同一张画布上，这一版的图与画布上此刻的图不是同一组（换了 / 多了 / 少了，含单图编辑 ↔ 排版；比 fileId 集合，与后端 `_version_figures` 同一把尺子）→ 先确认、说清会变成几张图；恢复后图变了 → 时间线范围切到「全部图」（`timelineStore.revealAll`）；
+  单图编辑时来自另一张画布的图，确认框按「图」说、不说「画布」。
   两个恢复入口（预览页脚、时间线行上弹出的对比小卡片）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、
   让模态预览以 `busy` 开着——遮罩挡画布、预览与抽屉都关不掉，「恢复前」在存时不许再编辑（Codex #831）。
   卡片入口的模态预览在**取正文之前**就以「加载中」开起来（不是正文回来才开）；另记编辑标记（`past` / `future` / `txn` / 激活画布），

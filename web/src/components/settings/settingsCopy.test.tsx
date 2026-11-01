@@ -272,6 +272,11 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
       st('canvas.diagramOff'),
     )
   })
+
+  it('通用页不再有「打开画布设置」一行（画布属性在右栏「画布」页）', async () => {
+    await open('general')
+    expect(document.querySelector('[data-settings-anchor="general.canvas"]')).toBeNull()
+  })
 })
 
 /* --------------------------------- T40 项目 -------------------------------- */

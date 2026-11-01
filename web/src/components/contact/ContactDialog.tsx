@@ -9,6 +9,7 @@ import { Button, IconButton } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
+import { dropZoneClass } from '../ui/dropZone'
 import { FieldGroup } from '../ui/FormSection'
 import { TextArea, TextInput } from '../ui/Input'
 import { Notice } from '../ui/Notice'
@@ -160,25 +161,33 @@ function YourLetter({ subject, body, names }: { subject: string; body: string; n
   )
 }
 
-/** 中文界面的轻量入口：页脚里的 ghost 小钮，点开一个小浮层，里面是企业微信二维码。 */
+/** 中文界面的轻量入口：标题下一行轻文字，「加企业微信」是链接式小钮，点开一个小浮层，里面是企业微信二维码。 */
 function WeComEntry() {
   return (
-    <Popover
-      side="top"
-      align="start"
-      width={196}
-      ariaLabel={cs('wecom')}
-      trigger={
-        <Button variant="ghost" size="lg" data-contact-wecom>
-          {cs('wecom')}
-        </Button>
-      }
-    >
-      <div className="flex flex-col items-center gap-2 p-1" data-contact-wecom-pop>
-        <WeComQrImage />
-        <span className="type-caption">{cs('wecomScan')}</span>
-      </div>
-    </Popover>
+    <p className="type-caption" data-contact-wecom-line>
+      {cs('wecomLead')}
+      <Popover
+        side="bottom"
+        align="start"
+        width={196}
+        ariaLabel={cs('wecom')}
+        trigger={
+          <button
+            type="button"
+            className="mx-0.5 rounded-xs text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring"
+            data-contact-wecom
+          >
+            {cs('wecomLink')}
+          </button>
+        }
+      >
+        <div className="flex flex-col items-center gap-2 p-1" data-contact-wecom-pop>
+          <WeComQrImage />
+          <span className="type-caption">{cs('wecomScan')}</span>
+        </div>
+      </Popover>
+      {cs('wecomTail')}
+    </p>
   )
 }
 
@@ -359,21 +368,6 @@ export function ContactDialog() {
       {...dropHandlers}
     >
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={subjectId} className="type-section">
-          {cs('subjectLabel')}
-        </label>
-        <TextInput
-          id={subjectId}
-          value={draft.subject}
-          maxLength={subjectMax}
-          placeholder={cs('subjectPlaceholder')}
-          disabled={!editable}
-          onChange={(e) => s.setDraft({ subject: e.target.value })}
-          data-contact-subject
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
         <label htmlFor={bodyId} className="type-section">
           {cs('bodyLabel')}
         </label>
@@ -397,56 +391,49 @@ export function ContactDialog() {
         )}
       </div>
 
-      <div className="flex flex-col gap-1.5" data-contact-attachments>
-        <span className="type-section">{cs('attachLabel')}</span>
-        <ul
-          data-contact-drop
-          data-dragging={dragging ? '' : undefined}
-          className="flex flex-wrap gap-2"
-          data-contact-file-list
-        >
-          {draft.files.map((f, i) => (
-            <AttachTile key={`${f.name}-${f.size}-${f.lastModified}`} file={f} disabled={!editable} onRemove={() => s.removeFile(i)} />
-          ))}
-          {draft.files.length < maxFiles && (
-            <li className="flex flex-col" style={{ width: TILE }}>
-              <button
-                type="button"
-                disabled={!editable}
-                onClick={() => fileInput.current?.click()}
-                aria-label={cs('attachPick')}
-                title={cs('attachPick')}
-                data-contact-pick
-                style={{ width: TILE, height: TILE }}
-                className={cn(
-                  'flex items-center justify-center rounded-md border border-dashed border-ink-3/50 text-ink-3',
-                  'transition-colors duration-fast hover:border-accent hover:bg-accent-subtle hover:text-accent',
-                  'focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40',
-                  dragging && 'border-accent bg-accent-subtle text-accent',
-                )}
-              >
-                <Plus size={ICON_SIZE.lg} />
-              </button>
-            </li>
-          )}
-        </ul>
+      <div className="flex flex-col gap-2" data-contact-attachments>
+        {draft.files.length > 0 && (
+          <ul data-contact-file-list className="flex flex-wrap gap-2">
+            {draft.files.map((f, i) => (
+              <AttachTile key={`${f.name}-${f.size}-${f.lastModified}`} file={f} disabled={!editable} onRemove={() => s.removeFile(i)} />
+            ))}
+          </ul>
+        )}
+        {draft.files.length < maxFiles && (
+          <div
+            data-contact-drop
+            data-dragging={dragging ? '' : undefined}
+            className={cn('flex rounded-md', dropZoneClass(dragging))}
+          >
+            <Button
+              variant="secondary"
+              size="md"
+              disabled={!editable}
+              onClick={() => fileInput.current?.click()}
+              data-contact-pick
+            >
+              <Plus size={ICON_SIZE.sm} />
+              {cs('attachPick')}
+            </Button>
+          </div>
+        )}
         {s.fileError && (
           <p className="type-caption text-danger-content" role="alert" data-contact-file-error={s.fileError}>
             {cs(`fileError.${s.fileError}`, { max: maxFiles, size: formatBytes(maxTotal) })}
           </p>
         )}
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            accept={(capability.extensions ?? []).join(',')}
-            onChange={(e) => {
-              s.addFiles([...(e.target.files ?? [])])
-              e.target.value = ''
-            }}
-            data-contact-file-input
-          />
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          accept={(capability.extensions ?? []).join(',')}
+          onChange={(e) => {
+            s.addFiles([...(e.target.files ?? [])])
+            e.target.value = ''
+          }}
+          data-contact-file-input
+        />
       </div>
 
       <FieldGroup>
@@ -495,6 +482,22 @@ export function ContactDialog() {
         </div>
       </FieldGroup>
 
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-contact-secondary>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={subjectId} className="type-section">
+          {cs('subjectLabel')}
+        </label>
+        <TextInput
+          id={subjectId}
+          value={draft.subject}
+          maxLength={subjectMax}
+          placeholder={cs('subjectPlaceholder')}
+          disabled={!editable}
+          onChange={(e) => s.setDraft({ subject: e.target.value })}
+          data-contact-subject
+        />
+      </div>
+
       <div className="flex flex-col gap-1.5">
         <label htmlFor={emailId} className="type-section">
           {cs('emailLabel')}
@@ -520,6 +523,7 @@ export function ContactDialog() {
             {cs('error.emailInvalid')}
           </p>
         )}
+      </div>
       </div>
     </div>
   )
@@ -601,24 +605,22 @@ export function ContactDialog() {
       onOpenChange={(o) => s.setOpen(o)}
       title={view === 'letters' ? cs('letters') : cs('title')}
       size="md"
+      description={wecom ? <WeComEntry /> : undefined}
       anchor="contact"
       blockDismiss={busy}
       onEscape={busy ? () => void s.cancel() : undefined}
       status={view === 'write' ? statusNode : null}
       footer={{
         start: (
-          <span className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="lg"
-              disabled={busy}
-              onClick={() => s.setView(view === 'write' ? 'letters' : 'write')}
-              data-contact-switch-view
-            >
-              {view === 'write' ? `${cs('letters')}${unreadBadge}` : cs('write')}
-            </Button>
-            {wecom && <WeComEntry />}
-          </span>
+          <Button
+            variant="ghost"
+            size="lg"
+            disabled={busy}
+            onClick={() => s.setView(view === 'write' ? 'letters' : 'write')}
+            data-contact-switch-view
+          >
+            {view === 'write' ? `${cs('letters')}${unreadBadge}` : cs('write')}
+          </Button>
         ),
         secondary: busy ? (
           <Button

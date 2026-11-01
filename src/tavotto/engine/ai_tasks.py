@@ -26,6 +26,104 @@ from . import ai_agents, ai_history, exectrace
 
 SCHEMA_VERSION = 1
 
+#: 结局 `unmet[].constraint_id` 的闭集（各检查适配器写出的稳定 id；`data.<gid>` 这类带用户元素名的动态 id 不在内）。
+#: 「AI 会话结束」日志经 `logsafe.known_each` 放行；集合外的值在诊断包里被哈希。`tests/test_ai_end_facts.py` 用 AST
+#: 看护检查适配器写出的字面量都在这里（新增检查 id / 原因码先加到这里）。
+UNMET_CONSTRAINT_IDS = frozenset(
+    {
+        "L3.no_new_layout_issues",
+        "budget.max_wall_s",
+        "budget.max_agent_runs",
+        "budget.max_renders",
+        "budget.max_corrections",
+        "candidate.editable",
+        "candidate.matplotlib",
+        "candidate.render",
+        "candidate.resources",
+        "candidate.stems",
+        "candidate.syntax",
+        "candidate.target",
+        "candidate.tree",
+        "commit.refresh",
+        "commit.registered",
+        "commit.staged",
+        "correction",
+        "data",
+        "goal.figure_created",
+        "goal.rows_plotted",
+        "intent",
+        "project.context",
+        "project.data",
+        "project.target",
+        "project.untouched",
+        "render.capture",
+        "render.figure",
+        "scope.outside_target",
+        "task",
+    }
+)
+
+#: 结局 `unmet[].reason_code` 的闭集（同上；缺省时回落到 verdict，故含 `failed` / `unknown`）。
+UNMET_REASON_CODES = frozenset(
+    {
+        "budget_exhausted",
+        "cancelled",
+        "candidate_changed_since_validation",
+        "candidate_over_budget",
+        "candidate_validation_failed",
+        "changes_outside_target",
+        "convert_context_changed",
+        "data_changed",
+        "data_mismatch",
+        "dependency_decision",
+        "dependency_install_failed",
+        "dependency_installed_late",
+        "label_swapped",
+        "missing_dependency",
+        "needs_input",
+        "new_layout_issues",
+        "no_baseline",
+        "no_change",
+        "no_data_elements",
+        "no_matplotlib_figure",
+        "no_matplotlib_import",
+        "no_new_failure",
+        "not_correctable",
+        "not_measured",
+        "not_observable",
+        "not_registered",
+        "not_run",
+        "not_staged",
+        "other_file_changed",
+        "project_files_changed",
+        "project_over_budget",
+        "raster_drawing",
+        "render_budget",
+        "render_failed",
+        "render_not_wired",
+        "rows_not_plotted",
+        "run_failed",
+        "series_missing",
+        "session_not_retired",
+        "stale_session",
+        "stem_not_rendered",
+        "stems_changed",
+        "stems_not_static",
+        "subject_removed",
+        "subject_renumbered",
+        "syntax_error",
+        "target_changed_in_project",
+        "target_exists",
+        "target_missing",
+        "timeout",
+        "transient_resource_path",
+        "verifier_error",
+        "whole_figure_target",
+        "failed",
+        "unknown",
+    }
+)
+
 #: 任务结局闭集（与验证四态分开）。`needs_input` 是终态：用户的回答是一个新任务（`parent_task_id`），
 #: 不让会话长时间挂着占用脚本
 OUTCOMES = ("completed", "partial", "needs_input", "failed", "cancelled", "interrupted")

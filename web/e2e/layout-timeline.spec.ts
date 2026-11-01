@@ -336,7 +336,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-name-collapsed.png') })
 
   // ── 「命名」视图里找得到它（抽屉一直开着）──────────────────────────
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="all"]'))).click()
   // 命名节点只有这一个；名字是用户起的，按名字核对的是数据，不是定位
   const named = await only(drawer.locator('[data-timeline-node][data-timeline-named]'))
   await expect(named.locator('[data-timeline-name]')).toHaveText('投稿前')
@@ -376,7 +376,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 预览「投稿前」：模态对话框，画布一个字都不动 ────────────────────
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="all"]'))).click()
   // 点一行弹出对比小卡片：左「那一刻」右「现在」自动并排；卡片角上的「放大查看」才开模态
   await (await only(named.locator('[data-timeline-row]'))).click()
   const card = await only(page.locator('[data-timeline-card]'))
@@ -420,7 +420,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(canvasText(page, '甲版标注')).toBeVisible()
 
   // ── 时间线里出现「恢复前」节点；用它恢复回来 ──────────────────────
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="all"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="named"]'))).click()
   const before = drawer.locator('[data-timeline-node]', {
     has: page.locator('[data-timeline-moment="before_restore"]'),
   })

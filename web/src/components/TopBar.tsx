@@ -886,7 +886,8 @@ export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
   const hasUpdate = !!update?.update_available || !!desktopUpdate
   const latest = desktopUpdate?.version ?? update?.latest
   const tutorialKind = useOnboardingStore((s) => tutorialEntry(s.status))
-  const tutorialChip = useTutorialChipVisible()
+  // 顶栏「新手教程」胶囊还在时，菜单里不重复列这一项（同一个判据）
+  const chipVisible = useTutorialChipVisible()
   return (
     <Menu
       width={196}
@@ -910,8 +911,6 @@ export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         </Button>
       }
     >
-      {writeBackItem}
-      <MenuSeparator />
       {hasUpdate && (
         <>
           <MenuItem onSelect={() => ui().setSettingsOpen(true, 'about')}>
@@ -923,8 +922,10 @@ export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
           <MenuSeparator />
         </>
       )}
-      {/* 分隔线只在真分组之间画（2026-09-15 打磨 T5）：
-          〔刷新项目 · 项目接入状态〕｜〔命令面板 · 快捷键帮助 · 教程〕 */}
+      {/* 按用户目的分两组、各带小标题（2026-10 UI 审计 D2）：文件｜帮助。
+          「论文样式 · 画布设置」已收敛到左栏「样式」与右栏「画布」页签（审计 A2），「视图」组随之没有了 */}
+      <MenuLabel>{t('topbar.moreGroup.file')}</MenuLabel>
+      {writeBackItem}
       {/* 与命令面板同一批 helper：刷新走统一刷新端点，接入状态走 readiness store */}
       <MenuItem onSelect={() => void refreshProjectNow()}>{t('topbar.refreshProject')}</MenuItem>
       <MenuItem
@@ -933,15 +934,15 @@ export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t('topbar.readiness')}
       </MenuItem>
       <MenuSeparator />
+      <MenuLabel>{t('topbar.moreGroup.help')}</MenuLabel>
       <MenuItem onSelect={() => usePalette.getState().setOpen(true)} shortcut={keyOf('palette')}>
         {t('topbar.commandPalette')}
       </MenuItem>
       <MenuItem onSelect={() => ui().setShortcutHelpOpen(true)} shortcut={keyOf('help')}>
         {t('topbar.shortcutHelp')}
       </MenuItem>
-      {/* 开始 / 继续 / 重新开始教程：文案与动作都来自 lib/onboarding/tutorial，不在这里判状态。
-          顶栏胶囊还在时这里不放（同一件事不同时有两个入口，审计 A2）；胶囊消失后才有 */}
-      {!tutorialChip && (
+      {/* 开始 / 继续 / 重新开始教程：文案与动作都来自 lib/onboarding/tutorial，不在这里判状态 */}
+      {!chipVisible && (
         <MenuItem onSelect={() => void runTutorialEntry('help')} data-onboarding-anchor="help-tutorial">
           {t(`topbar.tutorial.${tutorialKind}`)}
         </MenuItem>

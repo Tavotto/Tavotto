@@ -52,6 +52,8 @@ windows = { version = "0.61", features = [
     # crash_dump.rs：未处理异常过滤器 + MiniDumpWriteDump 写 .dmp
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    # msix_breakaway.rs：GetCurrentPackageFullName（MSIX 包身份检测，#1574）
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
     "Win32_System_Memory",

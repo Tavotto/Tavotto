@@ -1240,6 +1240,25 @@ class ClaudeAgent(AgentDefinition):
 #: 内置执行器的 id。**不是用户可选的「执行器」**：界面只讲「连接」，它只经 connections 的 `route` 体现。
 BUILTIN_ID = "builtin"
 
+#: 内置执行器失败时写进会话的 `runner_error` 闭集（`BuiltinAgent.classify_event` 产出：`agent_` + done.reason，
+#: 两个由 detail 细分的特例，以及 ai_bridge 在没收到 `done` 事件就退出时补的 `no_done_event`）。
+#: 「AI 会话结束」日志经 `logsafe.known` 放行；`tests/test_ai_end_facts.py` 看护与产出点不漂移。
+RUNNER_ERRORS = frozenset(
+    {
+        "agent_max_turns",
+        "agent_budget",
+        "agent_tool_error_loop",
+        "agent_auth",
+        "agent_quota",
+        "agent_refused",
+        "agent_network",
+        "agent_internal",
+        "agent_output_truncated",
+        "agent_html_response",
+        "no_done_event",
+    }
+)
+
 #: 内置执行器的密钥环境变量名（与 `agent_runner.runner_cli.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
 BUILTIN_KEY_ENV = "TAVOTTO_AGENT_API_KEY"
 
@@ -1341,7 +1360,7 @@ class BuiltinAgent(AgentDefinition):
                 detail = ev.get("detail")
                 from . import exectrace
 
-                if isinstance(detail, str) and detail in exectrace._VOCABULARIES["runner_detail"]:
+                if isinstance(detail, str) and detail in exectrace.RUNNER_DETAILS:
                     state["runner_detail"] = detail
             return [("message", self._FAILURES.get(str(ev["reason"]), "出错"))]
         return []
