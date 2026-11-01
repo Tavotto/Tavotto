@@ -1,4 +1,9 @@
 <p align="center">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.zh.png" width="100%"
+       alt="macOS 上的 Tavotto 桌面窗口，排版已保存到项目，已选中图 (a)，右栏显示它的位置、尺寸和缩放。">
+</p>
+
+<p align="center">
   <a href="https://github.com/Tavotto/Tavotto/blob/main/README.md">English</a> · <b>简体中文</b>
 </p>
 
@@ -17,8 +22,8 @@
 **AI 画好了你的科研图，Tavotto™ 把它改到能直接投稿。** Tavotto 是免费开源的科研绘图排版工具：AI 或你的 Python 脚本已经画好的图（目前支持 matplotlib），标题、图例、曲线和版面都在画布上改，还能按毫米拼成多图版面。脚本一行不动，每处改动单独保存；导出之前，再按期刊规范（字号下限、栏宽、dpi）检查一遍。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.zh.webp" width="100%"
-       alt="图内编辑的演示：在图 (a) 里选中图例，在图例上方的工具条把字号从 8 pt 改到 9 pt，matplotlib 随即把图重画，图例变大。">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.zh.gif" width="100%"
+       alt="图内编辑的演示：双击图 (a) 进入图内，选中图例，把字号从 8 pt 调到 10 pt，再拖动图例到新位置，图随即重画。">
 </p>
 
 <p align="center">
