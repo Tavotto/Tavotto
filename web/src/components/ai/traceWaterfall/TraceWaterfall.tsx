@@ -1054,7 +1054,7 @@ function Legend() {
         {t('trace.ui.legend.wait')}
       </li>
       <li className="flex items-center gap-1.5">
-        <ArrowRight size={ICON_SIZE.xs} aria-hidden />
+        <ArrowRight size={ICON_SIZE.sm} aria-hidden />
         {t('trace.ui.legend.handoff')}
       </li>
       <li className="flex items-center gap-1.5">

@@ -130,7 +130,7 @@ function StylePanelBody() {
         <EmptyState
           art="pencil"
           title={sp('emptyTitle')}
-          action={{ label: sp('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('layers') }}
+          action={{ label: sp('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('outline') }}
         />
         <ApplyStyle />
       </div>

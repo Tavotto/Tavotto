@@ -12,6 +12,7 @@ import { useOnboardingStore } from '@/store/onboardingStore'
  * `useAutoOpen` 不弹整页欢迎，这里给一颗安静的胶囊：点它进教程（与帮助菜单同一个入口 `runTutorialEntry`），
  * 点右边的 × 关掉。两者都记下 `welcomeSeenAt`，以后不再出现。**不进文档流**，只淡入（与 `BuildMismatchChip` 同款）；
  * 教程层开着时不画（底下 inert）。窄于 900 只留圆点（短语给读屏）。
+ * 更多菜单里的教程入口与它**不同时出现**（2026-10 审计 A2）：胶囊在时菜单不放，胶囊消失后菜单里才有——判据就是 `useTutorialChipVisible`。
  */
 /** 胶囊此刻是否在显示：顶栏「⋯」菜单据此不重复列「开始教程」（判据只此一处） */
 export function useTutorialChipVisible(): boolean {

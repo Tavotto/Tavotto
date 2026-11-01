@@ -366,7 +366,9 @@ def test_claude_permission_denial_is_audited_and_shown_but_is_not_a_stall(box):
     s, _ = start_session(box, sleeper(denial), parse=parse)
     wait_until(lambda: public(s)["activity"] is not None)
     assert (public(s)["activity"]["tool"], public(s)["activity"]["phase"]) == ("Edit", "denied")
-    assert "cli_permission_denied" in codes(box, s)
+    # 审计在 `_cli_event` 放锁**之后**才写：activity 先可见、审计行晚一拍落盘。等审计行出现再断言，
+    # 不在两者之间抢（3.10 慢腿上连续两次 `'cli_permission_denied' in []`，#1595）
+    wait_until(lambda: "cli_permission_denied" in codes(box, s))
     time.sleep(0.5)
     assert public(s)["stalled"] is None
     fixsession.SESSIONS.cancel(s.id, "pj")

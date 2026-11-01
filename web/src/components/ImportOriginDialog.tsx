@@ -77,7 +77,7 @@ export function ImportOriginDialog() {
       ? ot('distFailed')
       : ERROR_TEXT[code]
         ? ot(ERROR_TEXT[code])
-        : repairShortMessage(code, progress?.not_found)
+        : repairShortMessage(code, progress?.not_found, progress?.net_cause)
 
   const sentence =
     step === 'names'

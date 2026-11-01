@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+
+## Legend font size in the properties panel now resizes the whole legend, like the floating toolbar
+
+Changing a legend's size in the properties panel used to change only the text of each entry: the legend box (padding, row spacing, swatch length) stayed at the old size, and the floating toolbar above the legend kept showing the old value (for example 10 pt in the panel, 8 pt on the toolbar). The panel now changes the legend's own font size, the same property the toolbar and corner-drag scaling change, so the whole legend scales and both places show the same number. In projects where an earlier version had set the entries' sizes from the panel, the size field shows mixed values until you type a size; **Reset** in that row now clears both the legend's size and the entries' sizes in one undo step.
 ## Tavotto launched from Codex Desktop (a Windows MSIX app) no longer keeps a separate copy of your data
 
 On Windows, when Tavotto was started from the Codex desktop app, recent projects, settings, managed environments and caches could end up in a private per-package folder (`%LOCALAPPDATA%\Packages\...\LocalCache`), so the app showed a different state than when started from the Start menu. Tavotto now starts itself outside that package environment, when the Codex plugin launches it (the `tavotto open` command now re-runs itself outside the package before probing a script or writing anything) and, as a fallback, when the app notices it was started inside one (the launcher now sees whether the replacement process actually came up, instead of treating the hand-over as success). Data that was already written into the package folder is not moved automatically. Diagnostic bundles now say whether the app was running with a package identity and whether its data folders are under `Packages`.
@@ -24,6 +28,10 @@ On Windows, when Tavotto was started from the Codex desktop app, recent projects
 ## Missing helper modules are no longer offered as packages to install
 
 If a script stores its own folder in a variable and then adds a subfolder to `sys.path` (for example `ROOT = Path(__file__).resolve().parent` followed by `sys.path.insert(0, str(ROOT / "source"))`), and that subfolder is missing from the project, Tavotto used to treat the script's own helper modules (such as `config`) as unknown packages and pre-filled a same-named PyPI package for you to install. These names are now reported as missing local modules from that folder: nothing is pre-filled and nothing is sent to pip. Put the missing files back into the folder the script expects and run again.
+
+## Clearer package download failures, and version lookup now falls back to the mirror (#1601)
+
+When installing a package fails because the network is unreachable, the card now says which case it is: "Neither the official index nor the mirror could be reached" (the mirror was tried automatically) or "The download source you configured can't be reached" (you set your own pip index, so Tavotto does not switch it). Looking up a package's versions in the package manager used to fail immediately when the official PyPI was unreachable; if you have not configured your own index, it now tries the same mirror once before giving up. On Windows, pip output from Tavotto's own environments is now read as UTF-8, so non-English system languages no longer garble the install log; your scripts' environment is unchanged.
 
 ## Single-figure export now includes canvas annotations (#1551)
 
@@ -37,9 +45,17 @@ The properties panel text goes from 12 to 13 px and its label column is wider. I
 
 If a script puts its own `pip install --target` folder at the front of `sys.path` (for example a `.kegg_python` folder whose matplotlib was built for Python 3.12) and Tavotto runs it with a different Python, the run used to fail with an `ImportError` and the fix assistant kept trying to switch Python versions. Tavotto now recognises this case and offers **Skip this folder and rerun**: for that project, imports no longer come from that folder. Your script and the folder are left untouched, and the fix assistant uses the same remedy instead of changing Python.
 
+## Scripts that check their own command-line arguments now get the "Run arguments" editor
+
+A script that counts `sys.argv` itself and exits with a usage message when arguments are missing (for example `if len(sys.argv) < 11: raise SystemExit("Usage: …")`) used to be reported as "the script called sys.exit, remove that exit", with no way to supply the arguments, so the only option left was the fix assistant, which cannot set them either. Tavotto now treats it the same as an `argparse` script that is missing arguments: the failure details offer **Run arguments** and **Try again with these arguments**. Scripts that read `sys.argv` but exit for an unrelated reason are still reported as before.
+
 ## "More" menu is grouped, command palette and settings wording cleaned up
 
 The top-bar "..." menu is split into File / View / Help groups with small headings, and a disabled write-back item now explains why in its tooltip instead of a second line. The command palette shows an icon for every command and draws its shortcut as one plain grey key label, and "Add (a)(b)(c) labels" is renamed "Add (a)(b)(c) numbering". In Settings, "Interface looks off?" is now "Reset interface layout", the "Open canvas settings" row is gone, and the appearance note explains the canvas paper stays white in dark mode to match exports. The welcome page drops the smiley and its clickable-looking feature row, and the tutorial shows progress only at the top, labels the first step's back button "Back to welcome", and says what is left to do on a disabled "Next" (for example "Drag in the script to continue"). (#1556)
+
+## Scripts no longer fail as a "script error" when your Python can't write to Tavotto's cache
+
+Some Python environments (for example a virtual environment built from another app's bundled Python) can read Tavotto's cache folder but aren't allowed to create new folders in it. Every run then stopped within a second, before any of your script ran, yet the card said the script itself had failed and offered to have AI fix it. Tavotto now recognises this case: the card says in one sentence that this Python can't create folders in Tavotto's cache, and its button switches back to Tavotto's built-in Python and runs the script again. The setting it clears is the one that picked that Python (your global choice or this project's), and nothing in your scripts or your environment is changed.
 
 ## Overwrite confirmation always matches the file actually overwritten (#1549)
 
@@ -61,9 +77,17 @@ The export dialog now shows only the figure name and size under the title; a sub
 
 In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect a provider with an API key (instead of a Codex / Claude Code subscription) failed about a tenth of a second after every request, without contacting the provider. The installer was missing the module that starts it. Connections through Codex or Claude Code were not affected. This is fixed, and the desktop smoke test now starts the built-in AI from the installed app.
 
+## Left rail reorganised; narrow windows keep more room for the canvas
+
+The left rail is now Project / Assets / Outline / In-figure / Style / Problems / Settings, where Outline combines the canvas list and layers, and duplicate entries to the same places were removed along with the status bar above the asset drawer. On windows 1280 px wide or more the left panel is pinned by default, so adding figures no longer collapses the asset drawer (an explicit choice in Settings always wins; the drawer also stays open while the pointer is inside it). Below 1280 px the properties panel slides over the canvas on selection instead of taking space, and below 1180 px the rail shows icons only. With exactly one editable figure and nothing selected, the AI assistant targets it automatically; with several it lists their names to pick from. (#1554)
+
 ## Text typed on the canvas is no longer lost when clicking empty space (#1546)
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
+
+## When Codex or Claude Code fails on sign-in, quota or connection, the failure card now says so and offers "Check connection" (#1598)
+
+If a run through the Codex or Claude Code command line failed because you were signed out, hit a usage or rate limit, or the service could not be reached, the card only said that the AI run went wrong and its main button was "Retry", which could not succeed. Tavotto now recognises these three cases from the error codes the command line reports (never from the model's text) and shows the matching message. For these, and for other non-zero exits it cannot classify, the main button is now "Check connection". Failures that a retry can fix (timeouts, step or budget limits) still offer "Retry".
 
 ## AI edits that failed instantly now leave a reason in the diagnostic bundle
 
@@ -89,6 +113,10 @@ A figure added without a drop position now always lands in free space: it is sca
 
 When Tavotto ran a script for the very first time on a machine (matplotlib builds its font cache, so the render process takes about ten seconds to start) and a second try-run of the same script started meanwhile, for example from the AI repair button, the second one closed the session the first one had just opened. The first run then failed with "session s-1 does not exist (workerd may have restarted), please reopen" even though the script was fine. A try-run now shares a session that another run has just opened and not finished building yet, instead of closing it.
 
+## The AI assistant tells you when it has gone quiet, and failed tasks in History no longer show raw error codes (#1599)
+
+If the connected AI tool prints nothing for 2 minutes, the assistant's status line now says "No activity from the AI for N s" and offers Cancel and Retry. Tavotto does not stop the task on its own, so a model that is just thinking slowly is not interrupted; the overall 15-minute limit is unchanged. In Task History, when a revert is refused because the script changed after the AI edit, the entry now offers "View changes" (the AI's diff) instead of only a message in the status bar. A failed task's details card now shows a plain sentence (for example "The model service quota is used up or rate-limited") instead of an internal code such as `agent_quota`.
+
 ## Timeline: version strip, content-centred thumbnails, safer restores
 
 - The Timeline tab now has a strip of ticks at the top, one per saved version. Hovering shows that version's stored thumbnail (nothing is re-rendered, so it keeps up with the mouse); clicking opens the existing compare card. ←/→/Home/End and Enter work from the keyboard.
@@ -105,6 +133,10 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 
 The repair assistant's environment list only showed external Python installs and left out the environment the project was actually running in (including Tavotto's built-in Python), so its "run the script to verify" step was refused with "select that environment first". The list now starts with the environment currently in use, marked as current, and verification runs in it.
 
+## Diagnostic bundles now explain slow or empty Codex conversions
+
+When a conversion or edit run through the Codex CLI took many minutes, timed out, was cancelled, or ended without producing the new script, the diagnostic bundle only showed that Codex had run and nothing about what it did. The bundle now records, for each Codex run, how many events it produced, how many commands it ran and how many failed or were declined, whether a command was still running at the end, how many files it changed and whether they were inside the working folder, whether it touched the target file, the last kind of event it reported, the longest silent gap, and whether it used the official login or a relay. Only counts, times and fixed labels are recorded, never commands, file paths, prompts or Codex's output.
+
 ## Figures removed by a run no longer come back in the project file
 
 When you ran a script again with different arguments and the run no longer produced a figure that the previous run had (for example `Extra_map` after dropping `--extra`), Tavotto correctly reported that figure as unlinked, but the project's script registry could quietly add it back a moment later. This happened when the project folder watcher noticed Tavotto's own registry write before the run had finished updating the project, mostly on slower Windows machines. The watcher now recognises that write as Tavotto's own, so the registry keeps exactly the figures the run reported.
@@ -113,9 +145,17 @@ When you ran a script again with different arguments and the run no longer produ
 
 Icons in buttons, the left rail, the toolbar, menus and the command palette play a short one-shot motion when you hover, click or move the highlight to them with the keyboard (the export arrow drops into its tray, undo swings back, the folder opens, the layout grid tiles pulse…). Status icons in notices and toasts animate once when they appear, and copy buttons draw their check mark after copying. Every motion is under 0.75 s and returns to the static icon; nothing loops except the loading spinner. With the system's "Reduce motion" setting on, icons do not move.
 
+## The Outline rail icon now shows its selected state
+
+When Outline is the open drawer, its left-rail icon switches to the solid selected form like the other rail items, and still plays its small hover motion. (#1610)
+
 ## Sharper, lighter interface icons
 
 Interface icons are drawn with a thinner stroke (1 px at 16 px) and every point is aligned to the screen's pixel grid, so edges no longer look soft or grey on Retina displays. Small icons next to text in buttons, menus and lists are now 16 px instead of 14 px.
+
+## Crisp 12 px icons and solid status marks
+
+The smallest icons (expand and dropdown arrows, tab close buttons, warning and status marks in rows and badges) looked soft because they were the 24-grid icons shrunk to 12 px with a 0.75 px line. The most common ones are now drawn separately for 12 px on whole pixels with a 1 px line, so they stay sharp on both Retina and standard displays; other icons that were shown at 12 px now use the 16 px size. Status marks (warning, info, error, done) are now solid shapes with the symbol cut out at every size, so they read clearly next to line icons. The Aa, superscript and subscript icons in the text toolbar were redrawn.
 
 ## Scripts whose file name contains a dot now run
 

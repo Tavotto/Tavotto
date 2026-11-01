@@ -346,6 +346,11 @@ export function handleServerEvent(ev: ServerEvent) {
       useAiStore.getState().setTaskPhase(ev.session, ev.phase, ev.task_type)
       break
 
+    case 'ai.stalled':
+      // 「AI 没有动静」提示；不是本标签页持有的会话就什么都不做
+      useAiStore.getState().setStalled(ev.session, ev.stalled ? ev.idle_s : null)
+      break
+
     case 'ai.done': {
       const ai = useAiStore.getState()
       // **只对自己持有的会话起副作用**（提示、失败说明……）：老后端的 `ai.done` 不带 pj，上面那道

@@ -37,7 +37,8 @@ test(
       await expect(quick).toHaveCount(0)
     }
 
-    await (await only(page.locator('[data-timeline-button]'))).click()
+    // 时间线入口只在右栏「时间线」页签（审计 A2）：顶栏不再有时钟钮
+    await (await only(page.locator('[data-inspector-tab="timeline"]'))).click()
     const drawer = await only(page.locator('[data-timeline-panel]'))
     const nodes = drawer.locator('[data-timeline-node]')
     await expect.poll(() => nodes.count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(3)

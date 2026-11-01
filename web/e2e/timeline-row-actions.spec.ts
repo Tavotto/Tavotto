@@ -23,7 +23,7 @@ async function only(loc: Locator, timeout?: number): Promise<Locator> {
  * 画布一直空着，自动节点不拍（空画布不拍），行数稳定。
  */
 async function drawerWithOneNode(page: Page) {
-  await (await only(page.locator('[data-timeline-button]'), 30_000)).click()
+  await (await only(page.locator('[data-inspector-tab="timeline"]'), 30_000)).click()
   const drawer = await only(page.locator('[data-timeline-panel]'))
   const node = await only(drawer.locator('[data-timeline-node]'), 15_000)
   return { drawer, node }

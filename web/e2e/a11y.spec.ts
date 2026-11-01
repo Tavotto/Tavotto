@@ -18,7 +18,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, ONBOARDING_FLOW_VERSION, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
+import { expect, ONBOARDING_FLOW_VERSION, openElementsTab, openWorkspace, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
 import { indistinctFieldBoxes, lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
 import { chooseTheme, openGeneralSettings } from './theme'
@@ -540,12 +540,13 @@ test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢�
   const a = await app()
   await page.goto(a.baseURL)
 
-  // 从常驻轨道进（键盘打开——鼠标才能开的入口不算可达）。轨道是 <nav>，
-  // 这样不会跟横幅上那个同名按钮撞上。
-  const railButton = page
-    .getByRole('navigation')
-    .getByRole('button', { name: /项目接入状态|Project readiness/ })
+  // 键盘打开（鼠标才能开的入口不算可达）。左轨的「状态」项已撤（审计 A3）：入口是项目抽屉「当前」卡片的 ⋯ 菜单
+  await openWorkspace(page)
+  const railButton = page.locator('[data-workspace-section="current"] button[aria-haspopup]')
   await railButton.focus()
+  await page.keyboard.press('Enter')
+  const item = page.getByRole('menuitem', { name: /项目接入状态|Project readiness/ })
+  await item.focus()
   await page.keyboard.press('Enter')
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()

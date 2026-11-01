@@ -240,8 +240,6 @@
     "preflightCoverage": "只查识别出的文字、线条与版面；图里没被识别的内容（如嵌入的图像）不在检查之内",
     "preflightOk": "按「{{spec}}」未发现问题",
     "profileAria": "出版规范",
-    "profileEdit": "编辑",
-    "profileEditAria": "编辑规范",
     "profileLabel": "规范",
     "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
     "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",

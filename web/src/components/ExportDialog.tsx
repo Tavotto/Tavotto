@@ -49,7 +49,6 @@ import {
   FileExclamationPoint,
   ImageOff,
   Info,
-  Pencil,
   TriangleAlert,
   X,
 } from "@/components/ui/icons";
@@ -1942,17 +1941,6 @@ export function ExportDialog() {
                   /* 同一张表单里的下拉只有一种宽（全面打磨 D40） */
                   className="w-56"
                 />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={ex("profileEditAria")}
-                  onClick={() => {
-                    useUiStore.getState().setSettingsOpen(true, "spec");
-                  }}
-                >
-                  <Pencil size={ICON_SIZE.sm} aria-hidden />
-                  {ex("profileEdit")}
-                </Button>
               </FormRow>
               {/* 图在别的画布上：显示的是那张画布的规范，改它得先切过去（Codex 评审 #596 P1） */}
               {checkCanvasName !== null && (

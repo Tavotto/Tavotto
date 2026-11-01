@@ -68,11 +68,11 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   LockOpen: { on: 'press', ms: 380, parts: { s: ['p', null], f: [null] } },
 
   // ───────── 出现时播（调用方写 playIn） ─────────
-  CircleCheck: { on: 'enter', ms: 560, parts: { s: ['p', 'd'] }, sel: { f: ['p'], k: ['d'] } },
-  TriangleAlert: { on: 'enter', ms: 600, sel: 'all' },
-  CircleAlert: { on: 'enter', ms: 480, sel: 'all' },
-  CircleX: { on: 'enter', ms: 480, sel: 'all' },
-  Info: { on: 'enter', ms: 480, parts: { s: [null, 'd'], f: ['p'] }, sel: { f: [null], k: ['d', 'p'] } },
+  CircleCheck: { on: 'enter', ms: 560, parts: { f: ['p'], k: ['d'] } },
+  TriangleAlert: { on: 'enter', ms: 600 },
+  CircleAlert: { on: 'enter', ms: 480 },
+  CircleX: { on: 'enter', ms: 480 },
+  Info: { on: 'enter', ms: 480, parts: { f: [null], k: ['d', 'p'] } },
   Unplug: { on: 'enter', ms: 520, parts: { s: ['p', 'p', 'p', 'q', 'q'] } },
 
   // ───────── 悬停播 ─────────
@@ -104,7 +104,7 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   FolderPlus: { on: 'hover', ms: 480, parts: { s: [null, 'p', 'p'] } },
   Fullscreen: { on: 'hover', ms: 480, parts: { s: ['p', 'q', 'r', 'u', null] } },
   Layers2: { on: 'hover', ms: 480, parts: { s: ['p', null] }, sel: { f: ['p'], s: [null] } },
-  LayoutList: { on: 'hover', ms: 520, parts: { f: ['q', 'q'], s: ['t', 't'] } },
+  LayoutList: { on: 'hover', ms: 520, parts: { f: ['q', 'q'], s: ['t', 't'] }, sel: { f: ['q', 'q'], s: ['t', 't'] } },
   Ruler: { on: 'hover', ms: 480, parts: { s: [null, 't', 't', 't', 't'] } },
   Scaling: { on: 'hover', ms: 440, parts: { s: [null, 'p', 'p'] } },
   LayoutGrid: { on: 'hover', ms: 420, parts: { s: ['t', 't', 't', 't'] }, sel: { f: ['t', 't', 't', 't'] } },

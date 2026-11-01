@@ -322,6 +322,7 @@
     "project_copy_dest_unwritable": "Tavotto can’t write to this folder either. Pick another one.",
     "project_copy_failed": "The copy didn’t finish: {{reason}}",
     "output_folder_read_only": "Some output files weren’t created because {{product}} doesn’t have write permission for that folder.",
+    "interpreter_cache_denied": "This Python environment can’t create folders in {{product}}’s cache, so the script never started. Switch to {{product}}’s built-in Python to run it.",
     "export_raster_too_large": "At the current settings this figure would need a {{width}} × {{height}}-pixel bitmap, over the {{max_pixels}}-pixel limit. To avoid running out of memory nothing was exported, and your original files are unchanged. Try a lower export resolution or a smaller figure size; Tavotto does not lower it for you.",
     "script_input_stream_gone": "The event stream disconnected; reconnecting.",
     "script_input_transcript_failed": "The script-input run record could not be read or written, so this action did not complete (nothing was changed or run). Please try again.",
@@ -662,6 +663,8 @@
     "repairPythonVerifying": "Verifying Python…",
     "repairPythonLaunching": "Test-starting Python…",
     "repairPythonPreparing": "Preparing Python…",
+    "repairNetBoth": "Neither the official index nor the mirror could be reached; check your connection, then click Retry.",
+    "repairNetUserSource": "The download source you configured can’t be reached; check it or your connection, then click Retry.",
     "repairErrorShort": {
       "dependency_already_attempted": "This package was already installed once without success; restart {{product}} and try again.",
       "dependency_already_present": "The package is already there, but rendering uses a different environment; switch environments under Details.",

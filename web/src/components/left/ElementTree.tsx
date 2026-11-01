@@ -651,7 +651,7 @@ function TreeView({
             data-element-isolate
             className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
           >
-            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+            <Crosshair size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />
             <span className="min-w-0 truncate">{isolatedLabel}</span>
             <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
               <X size={ICON_SIZE.xs} />
@@ -918,7 +918,7 @@ const ElementRow = memo(function ElementRow({
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
       {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
-      {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
+      {hidden && <EyeOff size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
       {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}
       <span className="flex shrink-0" onPointerDown={(e) => e.stopPropagation()}>

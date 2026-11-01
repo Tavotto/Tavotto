@@ -516,7 +516,7 @@ function StatusMark({ status }: { status: ReadinessStatus }) {
   const { icon: Icon, tone } = STATUS_MARK[status]
   return (
     <span className="flex shrink-0 items-center gap-1">
-      <Icon size={ICON_SIZE.xs} className={tone} aria-hidden />
+      <Icon size={ICON_SIZE.sm} className={tone} aria-hidden />
       {statusLabel(status)}
     </span>
   )

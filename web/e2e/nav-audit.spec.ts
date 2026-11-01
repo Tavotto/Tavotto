@@ -51,6 +51,14 @@ async function clipped(page: Page, selector: string): Promise<string[]> {
   }, selector)
 }
 
+
+/** 切到素材抽屉；已经开着就不再点（点开着的那一项会把抽屉收起来） */
+async function openAssets(page: Page) {
+  const rail = page.locator('[data-rail="assets"]')
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  await expect(page.locator('[data-asset-list]')).toBeVisible()
+}
+
 test('T50：快捷键说明一条都没有被切掉，且搜索能收窄', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
@@ -102,9 +110,9 @@ test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) =
   await page.goto(a.baseURL)
   await waitForDocumentReady(page)
 
-  // 左轨「结构」旁边那一栏是画布列表：先切过去
-  await page.getByRole('navigation').getByRole('button', { name: '画布' }).click()
-  const list = page.getByRole('list', { name: '画布列表' })
+  // 画布列表在左轨「大纲」里（审计 A3：画布 + 图层合成一棵树）：先切过去
+  await page.locator('[data-rail="outline"]').click()
+  const list = page.locator('[data-tree="outline"]')
   await expect(list).toBeVisible()
 
   // 关闭按钮只在开着两个以上标签时出现（最后一个标签不给关）
@@ -114,8 +122,8 @@ test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) =
   await expect(tabs).toHaveCount(2)
 
   const long = '超长画布名'.repeat(12)
-  const row = list.locator('li').first()
-  await row.getByRole('button', { name: /^打开画布/ }).dblclick()
+  const row = list.locator('[data-canvas-row]').first()
+  await row.dblclick()
   await row.getByRole('textbox').fill(long)
   await row.getByRole('textbox').press('Enter')
 
@@ -127,13 +135,10 @@ test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) =
   // 菜单按钮整颗都还在行里
   expect(btnBox!.x + btnBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width + 1)
   expect(btnBox!.width).toBeGreaterThan(10)
-  // 缩略图也没被挤扁
-  const thumb = await row.locator('[data-canvas-thumb]').boundingBox()
-  expect(thumb!.width).toBeGreaterThan(40)
-  // 列表整体不横向溢出
+  // 大纲的画布行没有缩略图（用户 10-31 定稿）；列表整体不横向溢出
   expect(
     await page.evaluate(() => {
-      const ul = document.querySelector('ul[aria-label]') as HTMLElement
+      const ul = document.querySelector('[data-tree="outline"]') as HTMLElement
       return ul.scrollWidth > ul.clientWidth + 1
     }),
   ).toBe(false)
@@ -195,7 +200,7 @@ test('T01：一条上下文栏、一个出口，第二张图进来 / 退出图�
 
   // 排版里再打开已在画布上的那张图进图内编辑（排版的子状态），再退出
   // （回排版时焦点救援把左栏交给了「结构」，先切回素材，`lib/focusRescue.ts`）
-  await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
+  await openAssets(page)
   await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick()
   await expect(bar).toHaveCount(1)
   await page.waitForTimeout(400)
@@ -244,7 +249,7 @@ test('P01：图内编辑单按钮 + Esc 退出，三个宽度都放得下', asyn
   // 第二张图进来 = 多图排版；再从素材库打开已在画布上的图：排版里的图内编辑 → 「返回画布」
   await page.setViewportSize({ width: 1440, height: 800 })
   await addSecondFigure(page)
-  await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
+  await openAssets(page)
   await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick()
   await expect(back).toHaveCount(1)
   await expect(bar).toHaveAttribute('data-workspace-mode', 'layout')

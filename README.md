@@ -1,9 +1,4 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.png" width="100%"
-       alt="The Tavotto desktop window on macOS with the layout saved to the project, panel (a) selected, and its position, size and scale in the properties column.">
-</p>
-
-<p align="center">
   <b>English</b> · <a href="https://github.com/Tavotto/Tavotto/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 
@@ -22,8 +17,8 @@
 **AI drew your research figure. Tavotto™ makes it publication-ready.** Tavotto is a free, open-source tool for finishing scientific figures: it opens the figure that an AI assistant or your own Python script already drew (matplotlib today), and you change titles, legends, curves and the page layout on a canvas. The script stays untouched, every edit is saved separately, and before export the figure is checked against a publication profile (font floor, column width, dpi).
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.gif" width="100%"
-       alt="Walkthrough of editing inside a figure: double-click figure (a) to enter it, select the legend, raise its font size from 8 to 10 pt, then drag the legend to a new spot while the figure redraws.">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.webp" width="100%"
+       alt="Editing inside figure (a): select the legend and raise its size from 8 to 9 pt on the legend's own toolbar; matplotlib redraws the figure with the larger legend.">
 </p>
 
 <p align="center">

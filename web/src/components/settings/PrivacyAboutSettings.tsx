@@ -106,7 +106,7 @@ function ProductBlock({ version }: { version?: string }) {
         className={buttonClass({ variant: 'secondary', size: 'md', className: 'ml-auto shrink-0' })}
       >
         {/* 红色实心爱心（用户要求 2026-10-22）：危险色 token，深浅两套主题各自有值；纯装饰，字已说全 */}
-        <Heart size={ICON_SIZE.xs} filled className="text-danger" data-about-support-heart aria-hidden />
+        <Heart size={ICON_SIZE.sm} filled className="text-danger" data-about-support-heart aria-hidden />
         {st('about.support', { product: PRODUCT_NAME })}
         <ExternalLink size={ICON_SIZE.xs} aria-hidden />
       </a>

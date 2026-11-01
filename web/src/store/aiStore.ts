@@ -88,6 +88,8 @@ export interface AiSession {
    * 本地先标的 `cancelled` 不算——真正的结局（diff、changed）还要靠随后那条 `ai.done` 补上。
    */
   finalized?: boolean
+  /** `ai.stalled`：CLI 已静默这么多秒（只在 running 时有意义；又有输出 / 收尾即清）。只提示，进程没被杀 */
+  stalledS?: number
   /**
    * 查询接回时拿到的是**临时快照**（非 running / cancelled，却还不是终态：如另一个服务进程的 `interrupt_all()` 刚写了
    * `interrupted`、pump 还没收尾）。本地 status 按 `toStatus` 映射（interrupted → failed），这个标志让它照样留在
@@ -272,6 +274,8 @@ interface AiState {
   appendDelta: (sid: string, kind: AiDeltaKind, text: string, rid?: string) => void
   /** `ai.task`：任务进入新阶段（并入 `task.phase`；会话还没有 task 时由事件建立）；会话不在本标签页 / 已经收尾 → 不动 */
   setTaskPhase: (sid: string, phase: 'correcting', taskType: string) => void
+  /** `ai.stalled`：静默秒数；`null` = 又有输出了。会话不在本标签页 / 已经收尾 → 不动 */
+  setStalled: (sid: string, idleS: number | null) => void
   /** 回 `true` = 这是本标签页此刻持有的会话、且这是它的第一条 `ai.done`；`false` 时调用方不许再做任何副作用（#589） */
   finish: (p: DonePayload) => boolean
   /** 回 `false` = 这次撤销的结果被丢弃了（期间换过项目）：调用方不许再往别的 store 里写它的后果 */
@@ -868,7 +872,8 @@ export const useAiStore = create<AiState>((set, get) => ({
           if (streamingLast) entries[entries.length - 1] = { kind: 'message', text: streamingLast.text, at: streamingLast.at }
           entries.push({ kind, text, at: Date.now() })
         }
-        return { ...x, entries: entries.slice(-MAX_LINES) }
+        // 又有输出了：「没有动静」的提示即刻撤掉（后端的复位事件随后到，幂等）
+        return { ...x, entries: entries.slice(-MAX_LINES), stalledS: undefined }
       }),
     }))
   },
@@ -880,6 +885,14 @@ export const useAiStore = create<AiState>((set, get) => ({
           ? // 新发起的会话本地还没有 task（只有收尾 / 接回的快照才带）：由事件建立
             { ...x, task: { ...(x.task ?? { task_type: taskType, outcome: null }), phase } }
           : x,
+      ),
+    }))
+  },
+
+  setStalled: (sid, idleS) => {
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === sid && !x.finalized && x.status === 'running' ? { ...x, stalledS: idleS ?? undefined } : x,
       ),
     }))
   },

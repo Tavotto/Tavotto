@@ -248,8 +248,6 @@
     "preflightCoverage": "Covers recognised text, lines and layout only; anything not recognised (such as embedded images) isn’t checked",
     "preflightOk": "No problems found against {{spec}}",
     "profileAria": "Publication profile",
-    "profileEdit": "Edit",
-    "profileEditAria": "Edit publication profile",
     "profileLabel": "Profile",
     "profileMissing": "This spec isn’t on this computer. Checking against the default for now.",
     "profileMissingPinned": "This spec isn’t on this computer. Still checking against the copy saved in this project.",

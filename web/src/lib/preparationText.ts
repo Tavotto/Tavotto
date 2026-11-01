@@ -59,6 +59,11 @@ export type PrepPrimary =
   | { kind: 'repair_folder'; token: string }
   /** 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：「跳过这个文件夹重跑」。`token` 同上是不透明令牌 */
   | { kind: 'skip_folder'; token: string }
+  /**
+   * 解释器在 {{product}} 的缓存里建不了目录（`interpreter_cache_denied`，TVD-B6MR）：「改用自带的 Python」并重跑一次。
+   * `scope` 来自后端 `params.switch`——失败的解释器是在全局设置里指定的就清全局，为这个项目挑的就让项目改用默认链条，两层都选中它（`both`）就两层都清
+   */
+  | { kind: 'use_builtin_python'; scope: 'global' | 'project' | 'both' }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -257,7 +262,10 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
   const remedy = report && isRemedy(report.remedy) ? report.remedy : null
   if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
   // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
-  if (view.state === 'folder_unreadable' || view.state === 'folder_abi') return { ...view, remedy, aiFix: false }
+  // 解释器写不了 Tavotto 自己的缓存：用户代码一行没跑，改脚本没用——同样只留确定的那一颗主按钮，不摆 AI 入口
+  if (view.state === 'folder_unreadable' || view.state === 'folder_abi' || view.state === 'cache_denied') {
+    return { ...view, remedy, aiFix: false }
+  }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
   if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
@@ -576,6 +584,14 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           tone: 'bad',
           step: 1,
         })
+      }
+      if (code === 'interpreter_cache_denied') {
+        // 这个 Python 在 Tavotto 的缓存里建不了目录（脚本还没开始跑）：后端说得出该清哪一层选择就给「改用自带的 Python」，
+        // 说不出（失败的本来就是 Tavotto 自己的解释器）就只说这句事实 + 再试一次
+        const sw = report.result?.error?.params?.switch
+        const primary: PrepPrimary | null =
+          sw === 'global' || sw === 'project' || sw === 'both' ? { kind: 'use_builtin_python', scope: sw } : (runPrimary(report, 'retry') ?? fallback)
+        return view('cache_denied', 'cacheDenied', v, primary, { tone: 'bad', step: 1 })
       }
       if (code === 'import_folder_unreadable') {
         // 有令牌 = 后端认定这台机器上能一键修（只有 Windows 才发）：主按钮「修复权限」；没有令牌保持原来的通用失败卡

@@ -67,7 +67,16 @@ def test_a_normal_edit_records_accept_agent_phases_and_keeps_four_facts_apart(en
     agent = _spans(snap, "agent_run")
     assert len(agent) == 1 and agent[0]["status"] == "ok"
     # 第三方 CLI 内部看不见：只有外层区间，标 opaque，没有虚构的模型 / 工具 Span
-    assert agent[0]["attributes"] == {"agent": "codex", "opaque": True, "exit_ok": True}
+    attrs = agent[0]["attributes"]
+    assert {k: attrs[k] for k in ("agent", "opaque", "exit_ok")} == {
+        "agent": "codex",
+        "opaque": True,
+        "exit_ok": True,
+    }
+    # 运行事实（TVD-BCZ0）：只有计数 / 毫秒 / 闭集码，没有 Span 级别的虚构内容
+    # （这个假 Codex 不吐 JSONL 事件：0 个事件、最后事件 none）
+    assert attrs["endpoint_kind"] == "official" and attrs["cli_events"] == 0
+    assert attrs["cli_last_event"] == "none" and attrs["cli_target_touched"] is False
     assert not _spans(snap, "model_request") and not _spans(snap, "tool_call")
     # 落盘、带 scope；别的项目读不到
     scope = exectrace.scope_for(sess["project"])

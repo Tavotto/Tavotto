@@ -383,6 +383,20 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 会话元数据：sidecar 与 `meta.json` 记 `source_language`；`library` 在 r / matlab 时为 null；遥测不新增事件。看护：`tests/test_sourcelang.py`、
 `tests/test_ai_convert_foreign.py`、`tests/test_ai_convert_foreign_app.py`、`tests/test_convertdeps.py`。
 
+### Codex 运行事实（TVD-BCZ0，`ai_agents.CliRunFacts`）
+
+第三方 CLI 的内部步骤看不见（exec trace 的 `agent_run` 是 `opaque`），几分钟的会话判不了根因。`CodexAgent.run_facts()` 给出的
+`CliRunFacts` 在 `ai_bridge._consume` 里与 `_classify` 读**同一条** stdout 逐行累计，**只有数字 / 布尔 / 闭集码**：事件数、
+命令数 / 失败 / 被拒（`status=declined`）/ 起了没结束、文件改动数与工作区内外（`-C` 目录，只给计数，不给路径）、是否改到目标文件名、
+`error` / `turn.failed` 次数、最后事件与最后 item 类型（`CLI_EVENT_TYPES` / `CLI_ITEM_TYPES`，集合外归 `other`）、首个事件延迟 /
+最长无事件间隔 / 末尾空闲（毫秒）、接口是 `official` 还是 `relay`（只看 base_url 有没有，不带地址与标签）。判据只用事件里**结构化**字段，
+不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
+（登记在 `exectrace.ATTRIBUTES`，词表由 `ai_bridge` 用上述常量登记），与「AI 会话结束」日志（`_cli_log_facts`，多次进程用
+`merge_run_facts` 合并；码类经 `logsafe.known` 放行）。新增事实先加常量集合 / ATTRIBUTES，再由 `tests/test_codex_run_facts.py` 钉住。
+会话里的 `cli_runs` 是 `SESSION_INTERNAL_KEYS`，不进任何响应。
+
+**「改到目标文件名」（`target_touched`）只看得见 `file_change` 事件**：模型把 `apply_patch` 当 shell 命令跑、或用重定向写文件时事件流里只有 `command_execution`（真模型复现时见过写成了而 `target_touched=False`）。所以进程结束时另记工作区根下目标文件此刻`target_on_disk`（普通文件、不是符号链接）与 `target_bytes`；判「到底写没写出来」以这两项为准。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
@@ -395,6 +409,12 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - `path_override` 必须 realpath + 指向该 Agent
 - spawn 时注入、绝不改写用户的 settings / config.toml
 - 模型名不写进源码
+
+## CLI 失败归类（Codex / Claude，`ai_agents.codex_failure_class` / `claude_failure_class`）
+
+非零退出默认写 `agent_exit_nonzero`；适配器的 `classify_event` 只凭**结构化字段**把失败归到 `RUNNER_ERRORS` 里的 `agent_auth` / `agent_quota` / `agent_network`，写进 `state["runner_error"]`（`ai_bridge` 对所有 Agent 取它）。
+Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpected status <三位码>`（真机 0.163.0 无结构化码字段；401/403 auth、429 quota、502/503/504 network）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
+**不匹配任何自由文本、不保留原文**；字段没有或不认识就不判。失败卡「错误码 → 主按钮」的闭集表是前端 `AGENT_ERROR_ACTION`，与 `tests/golden/ai_error_action_vectors.json` 前后端对拍（`tests/test_ai_cli_error_classes.py`、`transcriptModel.test.ts`）。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
 
@@ -741,3 +761,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
   统一加；版本只由锁控制）。就绪判定仍是 `claude auth status`（只取 `loggedIn`）。前端文案 `engine.managedCliError.*` 带 `{{product}}`，
   Codex / Claude Code 共用；订阅登录卡（`MethodList`）在 agent 没装时不置灰，点开走 `AgentStepAction`「安装并登录」。
   升版本：`python scripts/managed_cli_lock.py --update <版本> --cli claude`。
+
+### 无输出看门狗（`ai.stalled`）
+
+`ai_bridge._SilenceWatch`：每个 CLI 进程一个，只观察。stdout 静默达 `STALL_AFTER_S`（120）发一次 `ai.stalled{session, stalled: true, idle_s}`，再有输出发 `{stalled: false}` 复位；**不杀进程**（慢慢思考的模型会被误杀），总超时 `TIMEOUT_S` 不变。状态只在看门狗对象里、不进会话字典。前端 `aiStore.setStalled` 把它翻译成状态行「AI 已经 N 秒没有动静」+「取消 / 重试」（重试 = 取消、等收尾、再原样重发）。看护 `tests/test_ai_silence_watch.py`、`assistantStalled.test.tsx`。

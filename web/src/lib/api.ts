@@ -4519,6 +4519,15 @@ export type ServerEvent =
       task_type: string
       phase: 'correcting'
     } & ProjectScoped)
+  /** CLI 一段时间没有任何输出（`stalled: true`，`idle_s` = 已静默秒数）/ 又有输出了（`stalled: false`）；只提示，后端不杀进程；老后端不发 */
+  | ({
+      kind: 'ai.stalled'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stalled: boolean
+      idle_s: number
+    } & ProjectScoped)
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
@@ -4576,6 +4585,7 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.task',
+  'ai.stalled',
   'ai.done',
   'script.input_requested',
   'script.input_closed',
@@ -5757,6 +5767,8 @@ export interface DependencyProgress {
   retryable?: boolean
   /** 连不上默认包源、这次改用了 PyPI 镜像：镜像地址（此后每个快照都带；没用镜像时没有这个键） */
   pypi_mirror?: string
+  /** 终态 failed 且 code 是联网类（下载失败 / 超时）时的原因：官方源和镜像都没连上 / 用户自配的源连不上；说不清时没有这个键 */
+  net_cause?: 'official_and_mirror' | 'user_source'
   /**
    * 终态 failed 且 `code = dependency_import_still_failed`、是装后「发行包与版本」核验没过时：原因码（`DIST_FAILURE_REASONS` 的子集，
    * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
@@ -7120,6 +7132,8 @@ export interface PreparationResultError {
     abi?: string
     current?: string
     ignore_token?: string
+    /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
+    switch?: 'global' | 'project' | 'both' | string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

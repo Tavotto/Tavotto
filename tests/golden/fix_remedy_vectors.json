@@ -98,6 +98,12 @@
         ]
       },
       "remedy": { "kind": "feedback", "tried": ["install_packages", "switch_native", "change_python"] }
+    },
+    {
+      "name": "interpreter can't create folders in Tavotto's cache -> change python, not AI (even with AI connected)",
+      "failure": "interpreter_cache_denied",
+      "ctx": { "ai_connected": true, "python_from": "3.12.14" },
+      "remedy": { "kind": "change_python", "from": "3.12.14", "to": null }
     }
   ]
 }
