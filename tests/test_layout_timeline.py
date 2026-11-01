@@ -114,14 +114,90 @@ def test_an_unknown_moment_is_refused_not_silently_downgraded(client):
     assert not _file().exists() and not versionfiles.store_root().exists()
 
 
-def test_key_moments_are_not_deduplicated_against_the_previous_node(client):
-    """导出成功那一刻内容没变也是一件发生过的事；普通自动检查点照旧去重。"""
+def test_export_save_writeback_are_kept_even_when_nothing_changed(client):
+    """导出 / 保存 / 写回那一刻内容没变也是一件发生过的事；普通自动检查点照旧去重。"""
     doc = _doc("same")
     _create(client, doc=doc, auto=True)
     again = client.post("/api/versions/d1", json={"doc": doc, "auto": True}).get_json()
     assert again.get("skipped") is True
-    _create(client, doc=doc, auto=True, moment="export")
-    assert [v["kind"] for v in _list(client)["versions"]] == ["auto", "moment"]
+    for moment in ("export", "save", "writeback"):
+        _create(client, doc=doc, auto=True, moment=moment)
+    assert [v.get("moment") for v in _list(client)["versions"]] == [
+        None,
+        "export",
+        "save",
+        "writeback",
+    ]
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_open_close_before_restore_are_skipped_when_nothing_changed(client, moment):
+    """用户 2026-10-31：反复打开项目、内容没变，时间线上一串一模一样的「打开项目」。"""
+    doc = _doc("same")
+    first = _create(client, doc=doc, auto=True, moment="open")
+    again = client.post(
+        "/api/versions/d1", json={"doc": doc, "auto": True, "moment": moment}
+    ).get_json()
+    assert again.get("skipped") is True and again["version"]["id"] == first["id"]
+    # 内容变了照记
+    _create(client, doc=_doc("changed"), auto=True, moment=moment)
+    assert len(_list(client)["versions"]) == 2
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_unchanged_moment_after_a_named_node_is_skipped(client, moment):
+    doc = _doc("same")
+    _create(client, doc=doc, auto=False, name="投稿前", named=True)
+    again = client.post(
+        "/api/versions/d1", json={"doc": doc, "auto": True, "moment": moment}
+    ).get_json()
+    assert again.get("skipped") is True
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_unchanged_moment_after_a_plain_auto_checkpoint_is_still_recorded(client, moment):
+    """e2e（#1575 合并组）：改完停 300ms 记下普通自动检查点，紧接着恢复——「恢复前」与它
+    内容相同。普通自动检查点在「命名」视图里看不见、容量不够时最先牺牲，顶替不了「恢复前」。"""
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True)
+    _create(client, doc=doc, auto=True, moment=moment)
+    got = [(v["kind"], v.get("moment")) for v in _list(client)["versions"]]
+    assert got == [("auto", None), ("moment", moment)]
+
+
+def test_unchanged_moment_on_another_canvas_is_still_recorded(client):
+    """两张画布内容恰好相同：另一张画布的「打开」不算重复。"""
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True, moment="open", canvasId="c_a")
+    _create(client, doc=doc, auto=True, moment="open", canvasId="c_b")
+    assert len(_list(client)["versions"]) == 2
+
+
+def test_named_node_is_never_skipped(client):
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True)
+    _create(client, doc=doc, auto=False, name="投稿前", named=True)
+    assert len(_list(client)["versions"]) == 2
+
+
+def test_list_marks_old_unchanged_moments_but_keeps_them(client, monkeypatch):
+    """规则之前记下的重复条：列表标 `unchanged`（界面不显示），数据原样留着。导出不标。"""
+    doc = _doc("same")
+    with monkeypatch.context() as mp:
+        mp.setattr(m, "_skippable_when_unchanged", lambda v: False)
+        for moment in (None, "open", "open", "export", "close", "before_restore"):
+            _create(client, doc=doc, auto=True, **({"moment": moment} if moment else {}))
+        _create(client, doc=_doc("changed"), auto=True, moment="open")
+    got = [(v.get("moment"), v.get("unchanged", False)) for v in _list(client)["versions"]]
+    assert got == [
+        (None, False),
+        ("open", False),  # 上一条只是普通自动检查点：顶替不了
+        ("open", True),
+        ("export", False),
+        ("close", True),
+        ("before_restore", True),
+        ("open", False),
+    ]
 
 
 @pytest.mark.parametrize(

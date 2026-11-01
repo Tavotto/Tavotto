@@ -17,7 +17,7 @@ async function openFigure(page: Page, a: RunningApp) {
   await page.goto(a.baseURL)
   // Prompt 09 起，双击素材卡 = 打开这张图（快速编辑工作区），**当场就在图内
   // 编辑态**——不再需要先「加入画布」再点一次「编辑图内元素」。
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
 }
 

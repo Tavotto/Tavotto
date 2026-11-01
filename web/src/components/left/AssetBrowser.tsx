@@ -15,7 +15,6 @@ import {
   type IconComponent,
 } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
   backendErrorMsg,
@@ -29,6 +28,7 @@ import {
 } from '@/lib/api'
 import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { formatCm } from '@/lib/units'
+import { formatOf, nameTail } from '@/lib/assetCardText'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
 import { startForeignConvert } from '@/lib/foreignEntry'
@@ -64,19 +64,12 @@ import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
+import { MiddleEllipsis } from '../ui/MiddleEllipsis'
 import { DrawerHeaderActions } from './DrawerHeader'
 import { ScriptLibrary } from './ScriptLibrary'
 
 /** 面板文件名（带扩展名）：同 stem 的 PDF / PNG 靠它区分 */
 const fileName = (id: string) => id.split('/').pop() ?? id
-/** 格式名（不翻译）。位图按扩展名说实话：以前一律写 PNG，JPEG / TIFF 素材也被叫成 PNG */
-const FORMAT_LABEL: Record<string, string> = { jpg: 'JPEG', jpeg: 'JPEG', tif: 'TIFF', tiff: 'TIFF' }
-const formatOf = (p: PanelInfo) => {
-  if (p.kind === 'pdf') return 'PDF'
-  const ext = extOf(p.id)
-  return FORMAT_LABEL[ext] ?? (ext.toUpperCase() || 'PNG')
-}
-
 type TypeFilter = AssetTypeFilter
 type SortKey = AssetSortKey
 
@@ -590,6 +583,7 @@ export function AssetBrowser() {
             <ul
               role="listbox"
               aria-label={ab('listLabel')}
+              data-asset-list=""
               className="grid gap-2"
               style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
             >
@@ -1007,6 +1001,17 @@ function AssetCard({
             键盘 / 读屏用户在 option 上按 Enter / Shift+Enter 走同一对动作，
             列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
         <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name })} onClick={onAdd} />
+
+        {/* 状态只在不正常时出现：可编辑是默认，不标；其余（仅版面 / 待连接…）在缩略图左下角打小标签 */}
+        {cap && cap.status !== 'editable' && (
+          <span
+            data-card-status={cap.status}
+            title={reasonText(cap)}
+            className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-full bg-thumb px-1.5 type-meta text-paper-ink-2 shadow-thumb"
+          >
+            {statusLabel(cap.status)}
+          </span>
+        )}
       </CardPreview>
 
       {/* 文字区：文件名一行、元数据一行。格式 / 尺寸 / 接入状态 / 使用次数都在
@@ -1017,27 +1022,12 @@ function AssetCard({
       <CardMeta
         name={name}
         selected={selected}
-        marker={
-          panel.script ? (
-            <span
-              role="img"
-              aria-label={ab('scriptBadgeTitle')}
-              className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
-              title={ab('scriptBadgeTitle')}
-            >
-              <EditableFigureIcon size={ICON_SIZE.xs} />
-            </span>
-          ) : undefined
-        }
         parts={[
           formatOf(panel),
           translate('measure.cmSize', {
             w: formatCm(panel.native_w_mm),
             h: formatCm(panel.native_h_mm),
           }),
-          cap && cap.status !== 'editable'
-            ? { text: statusLabel(cap.status), title: reasonText(cap) }
-            : null,
         ]}
         used={used}
       />
@@ -1292,8 +1282,9 @@ function CardMeta({
   return (
     <div className="flex flex-col px-1.5 py-1">
       <p className="flex items-center gap-1 text-sm">
-        <span className={cn('min-w-0 truncate', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
-          {name}
+        <span className={cn('min-w-0 flex-1', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
+          {/* 截断时保留扩展名和结尾几位（Fig2_corr…ation.pdf）：用户靠结尾的编号与扩展名区分文件 */}
+          <MiddleEllipsis text={name} tail={nameTail(name)} />
         </span>
         {marker}
       </p>

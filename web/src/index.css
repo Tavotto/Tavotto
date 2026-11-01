@@ -1193,7 +1193,8 @@
    说明与 meta 同一档颜色、靠字号分开） */
 @utility type-caption {
   text-autospace: normal;
-  font-size: var(--text-sm);
+  /* 属性栏把 --text-sm 映射到 13（components/inspector/layout.ts）；说明文字是辅助角色，留 12：该容器给 --caption-size 钉回 12px */
+  font-size: var(--caption-size, var(--text-sm));
   line-height: 1.5;
   color: var(--color-ink-3);
   text-wrap: pretty;
