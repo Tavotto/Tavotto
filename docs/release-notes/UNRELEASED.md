@@ -61,6 +61,8 @@ The export dialog now shows only the figure name and size under the title; a sub
 
 In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect a provider with an API key (instead of a Codex / Claude Code subscription) failed about a tenth of a second after every request, without contacting the provider. The installer was missing the module that starts it. Connections through Codex or Claude Code were not affected. This is fixed, and the desktop smoke test now starts the built-in AI from the installed app.
 
+The AI assistant also described these failures wrongly: when the AI itself could not run (no connection, rejected key, the runner exiting early), the turn said "The change did not pass the pre-write check", as if the AI had produced an edit that was then rejected. The live result now carries the failure reason, so the turn names what actually went wrong.
+
 ## Text typed on the canvas is no longer lost when clicking empty space (#1546)
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
