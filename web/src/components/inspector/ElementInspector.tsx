@@ -2653,7 +2653,7 @@ function FieldRow({
                   onClick={() => move(i, -1)}
                   aria-label={el('moveUp')}
                 >
-                  <MoveUp size={ICON_SIZE.xs} />
+                  <MoveUp size={ICON_SIZE.sm} />
                 </Button>
                 <Button
                   size="icon-sm"
@@ -2661,7 +2661,7 @@ function FieldRow({
                   onClick={() => move(i, 1)}
                   aria-label={el('moveDown')}
                 >
-                  <MoveDown size={ICON_SIZE.xs} />
+                  <MoveDown size={ICON_SIZE.sm} />
                 </Button>
               </li>
             ))}
@@ -2996,7 +2996,7 @@ function AxesSizeMm({
            来源入口回答「是哪一个」，联动的原理进那个按钮的悬停提示——提示挂在
            按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
         <div className="flex min-w-0 items-center gap-1.5">
-          <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+          <Link2 size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           <p className="min-w-0 flex-1 truncate type-section">
             {el('proxiedSizeHead', { label: engineLabel(element.label) })}
           </p>

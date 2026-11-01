@@ -37,7 +37,7 @@ import ts from 'typescript'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { ICON_SIZE, ICON_STROKE, IconProvider } from './Icon'
-import { ChevronRight, ICON_DEFS, TriangleAlert, Type, X, type IconDef } from './icons'
+import { Circle, ChevronRight, ICON_DEFS, SMALL_DEFS, TriangleAlert, Type, X, type IconDef } from './icons'
 import { snapPathToPixelGrid } from './icons/defs'
 
 const SOURCES = import.meta.glob('/src/**/*.{ts,tsx}', {
@@ -123,7 +123,7 @@ function stringsIn(n: ts.Node, out: string[] = []): string[] {
 const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon', 'VendorIcon', 'BrandLogo'])
 
 /** 图标集里不是图标、但允许引入的名字 */
-const NON_ICON_EXPORTS = new Set(['ICON_DEFS', 'IconComponent', 'IconProps', 'IconDef', 'IconName'])
+const NON_ICON_EXPORTS = new Set(['ICON_DEFS', 'SMALL_DEFS', 'IconComponent', 'IconProps', 'IconDef', 'IconName'])
 
 /** 第三方图标库：一个都不许出现在 import 里 */
 const FOREIGN_ICON_LIBS = new Set([
@@ -154,6 +154,7 @@ export interface Finding {
     | 'glyph'
     | 'native-summary'
     | 'icon-nudge'
+    | 'xs-no-small'
   line: number
   detail: string
 }
@@ -174,6 +175,7 @@ export function audit(path: string, src: string): Finding[] {
   const out: Finding[] = []
   const lineOf = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1
   const iconLocals = new Set<string>()
+  const importedName = new Map<string, string>()
 
   const visit = (n: ts.Node) => {
     if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
@@ -187,6 +189,7 @@ export function audit(path: string, src: string): Finding[] {
           for (const el of nb.elements) {
             const imported = (el.propertyName ?? el.name).text
             iconLocals.add(el.name.text)
+            importedName.set(el.name.text, imported)
             if (!(imported in ICON_DEFS) && !NON_ICON_EXPORTS.has(imported)) {
               out.push({ kind: 'alias-import', line: lineOf(el), detail: imported })
             }
@@ -228,6 +231,11 @@ export function audit(path: string, src: string): Finding[] {
           const isIcon = iconLocals.has(tag) || tag === 'Spinner'
           if (numeric || (isIcon && !/^ICON_SIZE(\.(xs|sm|md|lg)|\[.+\])$/.test(text))) {
             out.push({ kind: 'raw-size', line: lineOf(attr), detail: `<${tag} size=${text}>` })
+          }
+          // 12px 只给画了小号字形的图标（ADR 0158）：24 网格的图缩到 12px 线只剩 0.75px、落不到像素上
+          const imported = importedName.get(tag)
+          if (text === 'ICON_SIZE.xs' && imported && imported in ICON_DEFS && !(imported in SMALL_DEFS)) {
+            out.push({ kind: 'xs-no-small', line: lineOf(attr), detail: `<${tag} size=${text}>` })
           }
         }
         // 间接渲染（`icon: Icon`）的描边也不许手写数字：加粗只有 emphasis 一档
@@ -341,6 +349,13 @@ describe('图标只有一套：components/ui/icons + Icon.tsx 的阶梯', () => 
     expect(offenders('absolute-stroke'), '描边按比例缩放，没有 absoluteStrokeWidth 这回事').toEqual([])
   })
 
+  it('12px 只用画了小号字形的图标（SMALL_DEFS），其余用 16px', () => {
+    expect(
+      offenders('xs-no-small'),
+      '这些图标没有 12px 小号字形：改用 ICON_SIZE.sm，或者在 defs.ts 的 SMALL_DEFS 里给它画一份',
+    ).toEqual([])
+  })
+
   it('从图标集引入的都是图标集里有的名字（别名会让同一张图有两个名字）', () => {
     expect(offenders('alias-import')).toEqual([])
   })
@@ -408,6 +423,16 @@ describe('自检：判据认得出每一种违规（不是空门禁）', () => {
     expect(kinds('const a = <Button size="sm" />')).not.toContain('raw-size')
     // ui/ 内部的相对路径也算图标集
     expect(kinds("import { Check } from './icons'\nconst a = <Check size={13} />")).toContain('raw-size')
+  })
+
+  it('12px 没有小号字形', () => {
+    expect(kinds("import { Trash2 } from '@/components/ui/icons'\nconst a = <Trash2 size={ICON_SIZE.xs} />")).toContain(
+      'xs-no-small',
+    )
+    expect(kinds(head + 'const a = <Check size={ICON_SIZE.xs} />')).not.toContain('xs-no-small')
+    expect(kinds("import { Trash2 } from '@/components/ui/icons'\nconst a = <Trash2 size={ICON_SIZE.sm} />")).not.toContain(
+      'xs-no-small',
+    )
   })
 
   it('描边', () => {
@@ -530,27 +555,51 @@ describe('图标组件：默认档、选中态、无障碍', () => {
     await m.unmount()
   })
 
-  it('filled 渲染实心孪生（有 mask 挖空 + 填色路径）；没有孪生的图标忽略它', async () => {
+  it('filled 渲染实心孪生；没有孪生的图标忽略它', async () => {
     const m = await mount(
       <>
-        <TriangleAlert data-testid="outline" />
-        <TriangleAlert data-testid="filled" filled />
+        <Circle data-testid="outline" />
+        <Circle data-testid="filled" filled />
         <Type data-testid="type-filled" filled />
       </>,
     )
-    const outline = m.svg('outline')
-    const filled = m.svg('filled')
-    expect(outline.querySelector('mask')).toBeNull()
-    expect(outline.querySelectorAll('path[fill="currentColor"]').length, '描边态只有那颗点是填色的').toBe(1)
-    expect(filled.querySelector('mask'), '实心态用蒙版挖出叹号').not.toBeNull()
-    expect(filled.querySelectorAll('g[mask] path[fill="currentColor"]').length).toBeGreaterThan(0)
-    // 两个实心图标同页，蒙版 id 不能串
-    const m2 = await mount(<TriangleAlert data-testid="filled2" filled />)
-    expect(m2.svg('filled2').querySelector('mask')!.id).not.toBe(filled.querySelector('mask')!.id)
+    expect(m.svg('outline').querySelectorAll('path[fill="currentColor"]').length, '描边态没有填色').toBe(0)
+    expect(m.svg('filled').querySelectorAll('path[fill="currentColor"]').length).toBe(1)
     // Type 没有孪生：filled 与否渲染一样
     expect(m.svg('type-filled').querySelector('mask')).toBeNull()
     expect(m.svg('type-filled').querySelectorAll('path').length).toBe(2)
-    await m2.unmount()
+    await m.unmount()
+  })
+
+  it('状态记号默认就是实心底 + 蒙版挖空符号（ADR 0158），同页两个蒙版 id 不串', async () => {
+    const m = await mount(
+      <>
+        <TriangleAlert data-testid="a" />
+        <TriangleAlert data-testid="b" />
+      </>,
+    )
+    const a = m.svg('a')
+    expect(a.querySelector('mask'), '用蒙版挖出叹号').not.toBeNull()
+    expect(a.querySelectorAll('g[mask] path[fill="currentColor"]').length).toBeGreaterThan(0)
+    expect(a.querySelector('mask')!.id).not.toBe(m.svg('b').querySelector('mask')!.id)
+    await m.unmount()
+  })
+
+  it('12px 换画小号字形、线按 1px 画；16px 仍是 24 网格的大图', async () => {
+    const m = await mount(
+      <>
+        <X data-testid="xs" size={ICON_SIZE.xs} />
+        <X data-testid="sm" size={ICON_SIZE.sm} />
+        <Type data-testid="no-small" size={ICON_SIZE.xs} />
+      </>,
+    )
+    const ds = (id: string) => [...m.svg(id).querySelectorAll('path')].map((p) => p.getAttribute('d'))
+    expect(ds('xs')).toEqual(SMALL_DEFS.X!.s)
+    expect(m.svg('xs').getAttribute('stroke-width')).toBe('2')
+    expect(ds('sm')).toEqual(ICON_DEFS.X.s)
+    expect(m.svg('sm').getAttribute('stroke-width')).toBe(String(ICON_STROKE.regular))
+    // 没有小号的照旧画大图（门禁另外拦着不让这么用）
+    expect(ds('no-small')).toEqual(ICON_DEFS.Type.s)
     await m.unmount()
   })
 

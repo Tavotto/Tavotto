@@ -941,7 +941,7 @@ export function ProbeResultsDialog({
       </ul>
       {dropped > 0 && (
         <p className="mt-1.5 flex items-start gap-1 type-meta">
-          <IconSlot><Ban size={ICON_SIZE.xs} className="shrink-0" /></IconSlot>
+          <IconSlot><Ban size={ICON_SIZE.sm} className="shrink-0" /></IconSlot>
           {sc('dropped', { count: dropped })}
         </p>
       )}

@@ -544,7 +544,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
             PILL_TONE[tone],
           )}
         >
-          <Icon size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <Icon size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           <span data-save-text className="truncate max-[899px]:sr-only">
             {text}
           </span>
@@ -1027,7 +1027,7 @@ export function ProjectStatusPill() {
             PILL_TONE[tone],
           )}
         >
-          <Images size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <Images size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           <span className="truncate max-[899px]:sr-only">{text}</span>
         </button>
       }

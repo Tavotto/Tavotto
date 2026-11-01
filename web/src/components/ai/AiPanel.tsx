@@ -625,7 +625,7 @@ function AssistantPanelBody() {
             className="text-ink-2"
             onClick={() => setDataFormOpen((v) => !v)}
           >
-            <ChartLine size={ICON_SIZE.xs} aria-hidden />
+            <ChartLine size={ICON_SIZE.sm} aria-hidden />
             {ai('dataFigure.open')}
           </Button>
         )}
@@ -729,7 +729,7 @@ function AssistantPanelBody() {
                   className="h-[26px] shrink-0 bg-surface px-2.5 text-ink-2 inset-ring inset-ring-border hover:bg-surface-hover hover:text-ink"
                   onClick={() => fillPrompt(c.label)}
                 >
-                  <c.Icon size={ICON_SIZE.xs} aria-hidden className="text-ink-3" />
+                  <c.Icon size={ICON_SIZE.sm} aria-hidden className="text-ink-3" />
                   {c.label}
                 </Button>
               ))}
@@ -943,7 +943,7 @@ function SendStopGlyph({ stop, busy }: { stop: boolean; busy: boolean }) {
       <span className="grid place-items-center" aria-hidden>
         <ArrowUp size={ICON_SIZE.sm} className={cls(!stop)} />
         {/* 图标集里的 Square 填实：12px 的格里画出来约 9px 见方、圆角约 2px */}
-        <Square size={ICON_SIZE.xs} className={cn('fill-current', cls(stop))} />
+        <Square size={ICON_SIZE.sm} className={cn('fill-current', cls(stop))} />
       </span>
       {busy && (
         <span

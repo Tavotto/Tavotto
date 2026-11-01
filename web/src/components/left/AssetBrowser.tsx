@@ -1025,7 +1025,7 @@ function AssetCard({
               className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
               title={ab('scriptBadgeTitle')}
             >
-              <EditableFigureIcon size={ICON_SIZE.xs} />
+              <EditableFigureIcon size={ICON_SIZE.sm} />
             </span>
           ) : undefined
         }
@@ -1193,7 +1193,7 @@ function RuntimeAssetCard({
         selected={selected}
         marker={
           <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
-            <Zap size={ICON_SIZE.xs} />
+            <Zap size={ICON_SIZE.sm} />
           </span>
         }
         parts={[

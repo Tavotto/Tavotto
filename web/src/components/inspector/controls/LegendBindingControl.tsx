@@ -80,9 +80,9 @@ export function LegendBindingControl({
           >
             {/* 状态不只靠颜色：断开是另一个图形，旁边那句文字也换了 */}
             {linked ? (
-              <Link2 size={ICON_SIZE.xs} className="text-ink-2" aria-hidden />
+              <Link2 size={ICON_SIZE.sm} className="text-ink-2" aria-hidden />
             ) : (
-              <Unlink2 size={ICON_SIZE.xs} className="text-ink-3" aria-hidden />
+              <Unlink2 size={ICON_SIZE.sm} className="text-ink-3" aria-hidden />
             )}
           </Button>
         </Tip>
