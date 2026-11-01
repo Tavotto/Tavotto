@@ -145,6 +145,10 @@ When you ran a script again with different arguments and the run no longer produ
 
 Icons in buttons, the left rail, the toolbar, menus and the command palette play a short one-shot motion when you hover, click or move the highlight to them with the keyboard (the export arrow drops into its tray, undo swings back, the folder opens, the layout grid tiles pulse…). Status icons in notices and toasts animate once when they appear, and copy buttons draw their check mark after copying. Every motion is under 0.75 s and returns to the static icon; nothing loops except the loading spinner. With the system's "Reduce motion" setting on, icons do not move.
 
+## The Outline rail icon now shows its selected state
+
+When Outline is the open drawer, its left-rail icon switches to the solid selected form like the other rail items, and still plays its small hover motion. (#1610)
+
 ## Sharper, lighter interface icons
 
 Interface icons are drawn with a thinner stroke (1 px at 16 px) and every point is aligned to the screen's pixel grid, so edges no longer look soft or grey on Retina displays. Small icons next to text in buttons, menus and lists are now 16 px instead of 14 px.
