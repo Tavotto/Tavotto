@@ -864,8 +864,69 @@ class CodexAgent(AgentDefinition):
         if itype in ("file_change", "patch_apply"):
             return [("action", "✎ 修改文件")]
         if etype in ("error", "turn.failed"):
+            if etype == "turn.failed" and (cls := codex_failure_class(ev)):
+                state["runner_error"] = cls
             return [("message", str(ev.get("error") or ev.get("message") or "出错"))]
         return []
+
+
+# ---- Codex / Claude CLI 失败归类（只认 CLI 自己的结构化字段 / 自拼前缀，绝不读模型自由文本）--------------------
+#: Claude `assistant.error` 的字段值 → `RUNNER_ERRORS` 里的码（真机抓到 authentication_failed；
+#: rate_limit / billing_error 是 Claude Code SDK 文档里同一字段的取值）。别的取值（invalid_request、unknown…）不判。
+_CLI_CODE_CLASS = {
+    "authentication_failed": "agent_auth",
+    "rate_limit": "agent_quota",
+    "billing_error": "agent_quota",
+}
+#: HTTP 状态 → 码。5xx 里只认「网关 / 上游不可达」三个，其余服务端错误不判
+_CLI_STATUS_CLASS = {
+    401: "agent_auth",
+    403: "agent_auth",
+    429: "agent_quota",
+    502: "agent_network",
+    503: "agent_network",
+    504: "agent_network",
+}
+
+
+def _cli_class_from_fields(*values: object) -> str | None:
+    """依次看每个值：字符串按码表，整数按状态表。认不得返回 None（不猜）。"""
+    for v in values:
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int) and v in _CLI_STATUS_CLASS:
+            return _CLI_STATUS_CLASS[v]
+        if isinstance(v, str):
+            hit = _CLI_CODE_CLASS.get(v.strip().lower())
+            if hit:
+                return hit
+    return None
+
+
+#: Codex 自己拼的错误前缀（CLI 的错误格式化，真机 0.163.0 抓到：`unexpected status 401 Unauthorized: …`），只取状态码
+_CODEX_STATUS_RE = re.compile(r"^unexpected status (\d{3})\b")
+
+
+def codex_failure_class(ev: dict) -> str | None:
+    """Codex `--json` 的 `turn.failed` 事件 → runner_error。真 CLI 的 `error` 里只有 `message`，
+    没有结构化码字段；只认 `message` 开头 Codex 自己生成的 `unexpected status <三位状态码>`，按状态表归类，
+    其余格式一律不判。message 文本本身不保留。"""
+    err = ev.get("error")
+    msg = err.get("message") if isinstance(err, dict) else None
+    m = _CODEX_STATUS_RE.match(msg) if isinstance(msg, str) else None
+    return _CLI_STATUS_CLASS.get(int(m.group(1))) if m else None
+
+
+def claude_failure_class(ev: dict) -> str | None:
+    """Claude Code `stream-json` 的失败事件 → runner_error：
+    `assistant` 事件的顶层 `error`（`authentication_failed` / `rate_limit` / `billing_error`…）与
+    `result` 事件的 `api_error_status`（HTTP 状态整数）。其余（含 `invalid_request` / `unknown`）不判。"""
+    t = ev.get("type")
+    if t == "assistant":
+        return _cli_class_from_fields(ev.get("error"))
+    if t == "result" and ev.get("is_error"):
+        return _cli_class_from_fields(ev.get("api_error_status"))
+    return None
 
 
 class ClaudeAgent(AgentDefinition):
@@ -1205,6 +1266,8 @@ class ClaudeAgent(AgentDefinition):
         except ValueError:
             return []
         t = str(ev.get("type", ""))
+        if t in ("assistant", "result") and (cls := claude_failure_class(ev)):
+            state["runner_error"] = cls
         if t == "stream_event":
             inner = ev.get("event") or {}
             if inner.get("type") == "content_block_delta":

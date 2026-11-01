@@ -31,7 +31,7 @@ import { COPIED_MS } from './CopyAction'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import { setCurrentProjectId } from '@/lib/session'
 import { Markdown } from './Markdown'
-import { formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
+import { AGENT_ERROR_ACTION, formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
 
 const refreshProjectNow = vi.hoisted(() => vi.fn(async () => {}))
 const requestCheckConnection = vi.hoisted(() => vi.fn())
@@ -564,7 +564,7 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     expect(detail).toContain('axis.range')
   })
 
-  it('AI 这一侧没跑成（agent_network）+ outcome failed：说具体原因，不说「没通过写回前检查」；原始码只在详情，仍可重试', async () => {
+  it('AI 这一侧没跑成（agent_network）+ outcome failed：说具体原因，不说「没通过写回前检查」；原始码只在详情，主按钮「检查连接」', async () => {
     await mount([session({ status: 'failed', changed: false, error: 'agent_network', task: task('failed', true) })])
     expect(status()).toBe(ai('status.failed'))
     const card = q('[data-ai-error="session"]')!
@@ -572,7 +572,9 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     expect(card.textContent).not.toContain(ai('notice.taskRejected'))
     expect(card.textContent).not.toContain('agent_network')
     expect(card.dataset.aiTaskOutcome).toBeUndefined()
-    expect(card.querySelector('[data-ai-retry]')).not.toBeNull()
+    // 连不上：重试只会再失败，主按钮是「检查连接」（AGENT_ERROR_ACTION）
+    expect(card.querySelector('[data-ai-check-connection]')).not.toBeNull()
+    expect(card.querySelector('[data-ai-retry]')).toBeNull()
     expect(await openDetail()).toContain('agent_network')
   })
 
@@ -591,6 +593,22 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
       const c = q('[data-ai-error="session"]')!
       expect(c.textContent).toContain(ai('sessionError.agent_internal'))
       expect(c.textContent).not.toContain(error)
+    }
+  })
+
+  it('失败卡主按钮按错误码表走：每个码一条（检查连接 / 重试）', async () => {
+    for (const [error, action] of Object.entries(AGENT_ERROR_ACTION)) {
+      await mount([session({ id: 'e-' + error, status: 'failed', changed: false, error, task: task('failed') })])
+      const card = q('[data-ai-error="session"]')!
+      const check = card.querySelector('[data-ai-check-connection]')
+      const retry = card.querySelector('[data-ai-retry]')
+      if (action === 'check_connection') {
+        expect(check, error).not.toBeNull()
+        expect(retry, error).toBeNull()
+      } else {
+        expect(check, error).toBeNull()
+        expect(retry, error).not.toBeNull()
+      }
     }
   })
 

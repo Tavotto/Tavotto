@@ -65,6 +65,10 @@ In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
 
+## When Codex or Claude Code fails on sign-in, quota or connection, the failure card now says so and offers "Check connection" (#1598)
+
+If a run through the Codex or Claude Code command line failed because you were signed out, hit a usage or rate limit, or the service could not be reached, the card only said that the AI run went wrong and its main button was "Retry", which could not succeed. Tavotto now recognises these three cases from the error codes the command line reports (never from the model's text) and shows the matching message. For these, and for other non-zero exits it cannot classify, the main button is now "Check connection". Failures that a retry can fix (timeouts, step or budget limits) still offer "Retry".
+
 ## AI edits that failed instantly now leave a reason in the diagnostic bundle
 
 When an AI edit or conversion ended in failure, the session log only said "status=failed", so a run that failed within a tenth of a second (or a conversion that finished without producing the new script) could not be explained from a diagnostic bundle. The end-of-session log line now also records the exit code, the built-in runner's closed failure reason, whether the runner exited without reporting one, and which verification checks were unmet. Only fixed codes are written, never paths, prompts or keys.

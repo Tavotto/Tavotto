@@ -1964,7 +1964,7 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
-            if agent == ai_agents.BUILTIN_ID and st.get("runner_error"):
+            if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")
         finally:
