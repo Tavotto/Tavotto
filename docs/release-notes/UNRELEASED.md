@@ -61,8 +61,6 @@ The export dialog now shows only the figure name and size under the title; a sub
 
 In the 0.19.0–0.19.2 desktop installers, the built-in AI used when you connect a provider with an API key (instead of a Codex / Claude Code subscription) failed about a tenth of a second after every request, without contacting the provider. The installer was missing the module that starts it. Connections through Codex or Claude Code were not affected. This is fixed, and the desktop smoke test now starts the built-in AI from the installed app.
 
-The AI assistant also described these failures wrongly: when the AI itself could not run (no connection, rejected key, the runner exiting early), the turn said "The change did not pass the pre-write check", as if the AI had produced an edit that was then rejected. The live result now carries the failure reason, so the turn names what actually went wrong.
-
 ## Text typed on the canvas is no longer lost when clicking empty space (#1546)
 
 Typing into a text box on the canvas and then clicking empty canvas space, without pressing Enter, discarded the typed text. Typing in the inspector's text field and then clicking empty space left the edit open, so the next action (such as drawing an arrow) was merged into it and a single undo also reverted the text. The text is now committed whenever the editor closes, and the next action is undone on its own.
@@ -70,6 +68,10 @@ Typing into a text box on the canvas and then clicking empty canvas space, witho
 ## AI edits that failed instantly now leave a reason in the diagnostic bundle
 
 When an AI edit or conversion ended in failure, the session log only said "status=failed", so a run that failed within a tenth of a second (or a conversion that finished without producing the new script) could not be explained from a diagnostic bundle. The end-of-session log line now also records the exit code, the built-in runner's closed failure reason, whether the runner exited without reporting one, and which verification checks were unmet. Only fixed codes are written, never paths, prompts or keys.
+
+## AI assistant no longer says "did not pass the pre-write check" when the AI never ran
+
+When the AI itself could not run (no connection, a rejected key, the runner exiting early), the assistant's turn said "The change did not pass the pre-write check and was not written to the project", as if the AI had produced an edit that was then rejected. The result sent to the window now carries the failure reason, so the turn names what actually went wrong. (#1592)
 
 ## Large export preview of an edited figure no longer shows the pre-edit render
 
