@@ -697,19 +697,47 @@ async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<stri
 }
 
 /**
- * 「改用自带的 Python」（`interpreter_cache_denied`，TVD-B6MR）并重跑一次：清掉失败解释器所在的那一层选择——全局设置里指定的
- * 清全局（`setPython(null)`），为这个项目挑的让项目改用默认链条（`setProjectPython(null)`，后端 `remember_default`）。
- * 清不掉（后端拒绝 / 断线）回那一句话、不重跑。重跑走「打开并运行」：环境一变旧报告的计划就过期了（envStore 订阅会让空闲会话
- * 重新检查），不能拿旧报告里的 `run` 去认领；「打开并运行」按新的检查结果在准备好时认领，与那次重新检查搭同一趟。
+ * 「改用自带的 Python」（`interpreter_cache_denied`，TVD-B6MR）并重跑一次：清掉还会选中失败解释器的那几层选择——
+ * `global` 清全局（`setPython(null)`）；`project` 让项目改用默认链条（`setProjectPython(null)`，后端 `remember_default`）；
+ * `both`（全局指定的同时也是项目记住的那条，只清全局下一档还是它）两层都清。清不掉回那一句话、不重跑。
+ *
+ * 重跑走「打开并运行」，但要**等环境变化触发的那次重新检查落定**：envStore 一变，订阅就让空闲会话 `recheck`（`pending`
+ * 置上），此刻立刻 `open(run)` 会被「同目标有动作在飞」挡回、不认领（Codex #1595）。等它落定后 `open` 按新报告认领。
  */
-async function switchToBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project'): Promise<string | null> {
+async function switchToBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project' | 'both'): Promise<string | null> {
   const guard = captureProjectEpoch()
   const env = useEnvStore.getState()
-  const err = scope === 'global' ? await env.setPython(null) : await env.setProjectPython(null)
+  if (scope !== 'project') {
+    const err = await env.setPython(null)
+    if (!guard.still()) return null
+    if (err) return err
+  }
+  if (scope !== 'global') {
+    const err = await env.setProjectPython(null)
+    if (!guard.still()) return null
+    if (err) return err
+  }
+  await actionSettled(entry.key)
   if (!guard.still()) return null
-  if (err) return err
   await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
   return null
+}
+
+/** 等这条目上在飞的动作（环境变化触发的 `recheck` 之类）落定；条目没了 / 超时也放行（`open` 自己会再检查一次） */
+function actionSettled(key: string, timeoutMs = 30_000): Promise<void> {
+  const busy = () => !!useProjectPreparationStore.getState().entries[key]?.pending
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      unsub()
+      resolve()
+    }
+    const timer = setTimeout(done, timeoutMs)
+    const unsub = useProjectPreparationStore.subscribe(() => {
+      if (!busy()) done()
+    })
+  })
 }
 
 async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<unknown>): Promise<string | null> {

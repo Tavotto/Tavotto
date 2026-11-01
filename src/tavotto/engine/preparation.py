@@ -1197,7 +1197,11 @@ class PreparationService:
                 error, exc, sensitive=bool(plan.run is not None and plan.run.sensitive)
             )
             if error["code"] == pool.INTERPRETER_CACHE_DENIED_CODE:
-                switch = cache_denied_switch((plan.environment or {}).get("source", ""))
+                switch = cache_denied_switch(
+                    (plan.environment or {}).get("source", ""),
+                    project_root=plan.project_root,
+                    python=plan.interpreter,
+                )
                 if switch:
                     error.setdefault("params", {})["switch"] = switch
             # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
@@ -1734,9 +1738,24 @@ _CACHE_DENIED_SWITCH = {
 }
 
 
-def cache_denied_switch(source: str) -> str:
-    """失败解释器的来源 → `global` / `project` / `""`（不给一键换回）。"""
-    return _CACHE_DENIED_SWITCH.get(str(source or ""), "")
+def cache_denied_switch(source: str, *, project_root: str = "", python: str = "") -> str:
+    """失败解释器的来源 → `global` / `project` / `both` / `""`（不给一键换回）。
+
+    `both`：失败的那条是全局指定的、**同时**也是这个项目记住的解释器（项目早先采用过自己的 `.venv`，后来又在
+    全局设置里指定了同一路径）。只清全局的话 `pool.resolve_worker_python` 下一档就是项目记住的那条——还是它，
+    按钮等于没换（Codex #1595）。所以两层都清：全局清掉、项目改用默认链条。项目记住的是**别的**解释器时只清全局，
+    那是用户为这个项目的另一个决定，不替他抹掉；它若同样写不了缓存，下一次失败会给 `project`。"""
+    switch = _CACHE_DENIED_SWITCH.get(str(source or ""), "")
+    if switch == "global" and project_root and python:
+        record = projectenv.remembered_record(project_root)
+        remembered = (record or {}).get("path") if isinstance(record, dict) else None
+        if (
+            remembered
+            and record.get("mode") != projectenv.MODE_DEFAULT_CHAIN
+            and pool.same_python(str(remembered), python)
+        ):
+            return "both"
+    return switch
 
 
 def _attach_local_detail(error: dict, exc: BaseException, *, sensitive: bool) -> None:

@@ -3224,6 +3224,56 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(setPython).not.toHaveBeenCalled()
     })
 
+    it('真实路径：setter 改了 envStore → 订阅触发的重新检查落定后，才按新报告认领运行（Codex #1595）', async () => {
+      const envBefore = useEnvStore.getState().env
+      useEnvStore.setState({ env: { ok: true, project: { open: true, python: '.venv/Scripts/python.exe' } } as never })
+      try {
+        await mount()
+        await openWith(denied({ switch: 'global' }))
+        let finishRecheck!: () => void
+        const recheckDone = new Promise<void>((r) => (finishRecheck = r))
+        mockAct.mockImplementation(async (_sid, body) => {
+          const id = (body as { action_id?: string }).action_id
+          if (id === 'act-recheck') {
+            await recheckDone
+            return { claimed: true, report: report({ ...STATES.readyArm, observation_seq: 2 }) }
+          }
+          return { claimed: true, report: report({ phase: 'running', observation_seq: 4, actions: [action('cancel')] }) }
+        })
+        mockCreate.mockResolvedValueOnce(report({ ...STATES.readyArm, observation_seq: 3 }))
+        // 真的 setter 会改 envStore 里项目的解释器：订阅随即让空闲会话 recheck（pending 置上）
+        setPython.mockImplementationOnce(async () => {
+          useEnvStore.setState({ env: { ok: true, project: { open: true, python: '' } } as never })
+          return null
+        })
+        let clicked!: Promise<void>
+        await act(async () => {
+          clicked = (async () => primary()!.click())()
+          await Promise.resolve()
+        })
+        const ids = () => mockAct.mock.calls.map((c) => (c[1] as { action_id?: string }).action_id)
+        expect(ids()).toEqual(['act-recheck'])
+        await act(async () => {
+          finishRecheck()
+          await clicked
+          await new Promise((r) => setTimeout(r, 0))
+        })
+        expect(ids()).toContain('act-run_when_ready')
+      } finally {
+        mockAct.mockReset()
+        useEnvStore.setState({ env: envBefore })
+      }
+    })
+
+    it('两层都选中它（both）：全局与项目都清', async () => {
+      await mount()
+      await openWith(denied({ switch: 'both' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setPython.mock.calls).toEqual([[null]])
+      expect(setProjectPython.mock.calls).toEqual([[null]])
+    })
+
     it('清不掉：如实一句话，不重跑', async () => {
       await mount()
       await openWith(denied())

@@ -95,3 +95,39 @@ def test_router_sends_it_to_change_python_even_with_ai_connected():
 )
 def test_switch_scope_follows_where_the_failing_interpreter_was_chosen(source, switch):
     assert preparation.cache_denied_switch(source) == switch
+
+
+def test_global_choice_that_is_also_the_project_choice_clears_both(tmp_path):
+    """全局指定的那条同时也是项目记住的：只清全局，`resolve_worker_python` 下一档就回到它（Codex #1595）。"""
+    from tavotto.engine import projectenv
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    python = sys.executable
+    try:
+        projectenv.remember(root, python, automatic=False, trigger="user_selected")
+        assert (
+            preparation.cache_denied_switch(
+                engine_pool.SOURCE_CONFIGURED, project_root=str(root), python=python
+            )
+            == "both"
+        )
+        # 项目记住的是别的解释器：那是用户为这个项目的另一个决定，只清全局
+        other = tmp_path / "other-python"
+        other.write_text("")
+        assert (
+            preparation.cache_denied_switch(
+                engine_pool.SOURCE_CONFIGURED, project_root=str(root), python=str(other)
+            )
+            == "global"
+        )
+        # 项目已经明确用默认链条：清全局就够
+        projectenv.remember_default(root)
+        assert (
+            preparation.cache_denied_switch(
+                engine_pool.SOURCE_CONFIGURED, project_root=str(root), python=python
+            )
+            == "global"
+        )
+    finally:
+        projectenv.forget(root)

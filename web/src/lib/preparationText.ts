@@ -61,9 +61,9 @@ export type PrepPrimary =
   | { kind: 'skip_folder'; token: string }
   /**
    * 解释器在 {{product}} 的缓存里建不了目录（`interpreter_cache_denied`，TVD-B6MR）：「改用自带的 Python」并重跑一次。
-   * `scope` 来自后端 `params.switch`——失败的解释器是在全局设置里指定的就清全局，为这个项目挑的就让项目改用默认链条
+   * `scope` 来自后端 `params.switch`——失败的解释器是在全局设置里指定的就清全局，为这个项目挑的就让项目改用默认链条，两层都选中它（`both`）就两层都清
    */
-  | { kind: 'use_builtin_python'; scope: 'global' | 'project' }
+  | { kind: 'use_builtin_python'; scope: 'global' | 'project' | 'both' }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -590,7 +590,7 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
         // 说不出（失败的本来就是 Tavotto 自己的解释器）就只说这句事实 + 再试一次
         const sw = report.result?.error?.params?.switch
         const primary: PrepPrimary | null =
-          sw === 'global' || sw === 'project' ? { kind: 'use_builtin_python', scope: sw } : (runPrimary(report, 'retry') ?? fallback)
+          sw === 'global' || sw === 'project' || sw === 'both' ? { kind: 'use_builtin_python', scope: sw } : (runPrimary(report, 'retry') ?? fallback)
         return view('cache_denied', 'cacheDenied', v, primary, { tone: 'bad', step: 1 })
       }
       if (code === 'import_folder_unreadable') {
