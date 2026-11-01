@@ -91,8 +91,35 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   // 在 13px 字号 + Windows 字体下正好盖住下面那个固定落点，点击落在浮动栏上就不会起文字框
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-context-bar]')).toHaveCount(0)
-  await page.getByRole('button', { name: '文字' }).click()
-  await page.locator('[data-canvas-stage]').click({ position: { x: 420, y: 240 } })
+  // 文字工具按钮是开关（再点一次回到选择）：只在没按下时点，每次落点前都确认它是按下的
+  const textTool = page.getByRole('button', { name: '文字' })
+  const ensureTextTool = async () => {
+    if ((await textTool.getAttribute('aria-pressed')) !== 'true') await textTool.click()
+    await expect(textTool).toHaveAttribute('aria-pressed', 'true')
+  }
+  // 先确认文字框真的起来了再打字：落点被浮层（上下文栏、提示条……）盖住时点击不会起文字框，
+  // 之前要到后面「找不到 -1」才红，看不出是落点的问题（Windows 字体更宽、浮层更大，24h 红过 5 次）。
+  // 这条用例验的是上标渲染，不是「固定坐标」：被盖住就退掉换一个落点
+  const stage = page.locator('[data-canvas-stage]')
+  const editor = stage.locator('.ProseMirror')
+  let opened = false
+  for (const position of [
+    { x: 420, y: 240 },
+    { x: 420, y: 330 },
+    { x: 300, y: 380 },
+    { x: 560, y: 200 },
+  ]) {
+    await ensureTextTool()
+    await stage.click({ position })
+    opened = await editor
+      .first()
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (opened) break
+    await page.keyboard.press('Escape')
+  }
+  expect(opened, '文字工具在画布上四个落点都没起文字框（被浮层挡住？）').toBe(true)
   await page.keyboard.type('cm-1')
   await page.keyboard.press('Shift+ArrowLeft')
   await page.keyboard.press('Shift+ArrowLeft')
