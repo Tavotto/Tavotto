@@ -1424,20 +1424,23 @@ class _SilenceWatch:
     静默达 `STALL_AFTER_S` 发一次 `ai.stalled{stalled: true, idle_s}`，之后再有输出发一次 `{stalled: false}` 复位。
     状态只放在这个对象里，不进会话字典（会话字典的字段会进响应）。`complete` 置位线程即退出。"""
 
-    def __init__(self, sid: str, emit, complete: threading.Event) -> None:
+    def __init__(self, sid: str, emit, complete: threading.Event, clock=time.monotonic) -> None:
         self._sid = sid
         self._emit = emit
         self._complete = complete
+        self._clock = clock
+        # 状态翻转与推送在同一把锁里：否则后台线程判定「卡住」后、推送前恰好来了输出，`stalled:false`
+        # 会先于 `stalled:true` 到前端，界面停在「没动静」
         self._lock = threading.Lock()
-        self._last = time.monotonic()
+        self._last = clock()
         self._stalled = False
 
     def touch(self) -> None:
         with self._lock:
-            self._last = time.monotonic()
-            resumed, self._stalled = self._stalled, False
-        if resumed:
-            self._publish({"stalled": False, "idle_s": 0})
+            self._last = self._clock()
+            if self._stalled:
+                self._stalled = False
+                self._publish({"stalled": False, "idle_s": 0})
 
     def _publish(self, payload: dict) -> None:
         try:
@@ -1445,15 +1448,17 @@ class _SilenceWatch:
         except Exception:  # noqa: BLE001 — 看门狗不能因事件通道出错而影响会话
             LOG.exception("推送 ai.stalled 失败（session %s）", self._sid)
 
+    def check(self) -> None:
+        """看一次：静默达阈值且还没提示过就提示。后台线程每 `STALL_POLL_S` 调一次；测试直接调。"""
+        with self._lock:
+            idle = self._clock() - self._last
+            if idle >= STALL_AFTER_S and not self._stalled:
+                self._stalled = True
+                self._publish({"stalled": True, "idle_s": int(idle)})
+
     def _run(self) -> None:
         while not self._complete.wait(STALL_POLL_S):
-            with self._lock:
-                idle = time.monotonic() - self._last
-                fire = idle >= STALL_AFTER_S and not self._stalled
-                if fire:
-                    self._stalled = True
-            if fire:
-                self._publish({"stalled": True, "idle_s": int(idle)})
+            self.check()
 
     def start(self) -> None:
         threading.Thread(target=self._run, daemon=True, name=f"ai-silence-{self._sid}").start()
