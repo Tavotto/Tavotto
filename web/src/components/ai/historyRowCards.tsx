@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { buildTree, computeMetrics, formatCost, formatSeconds, formatTokens, hasInterval, leafType, walk } from './traceWaterfall/utils'
+import { agentErrorKey } from './transcriptModel'
 
 type Mode = 'closed' | 'hover' | 'pinned'
 
@@ -195,7 +196,7 @@ export function HistoryDetailsCard({
     <div data-ai-history-card="details" className="flex flex-col gap-3 p-1 text-sm text-ink-2">
       {failed && entry.error && (
         <p data-ai-history-error className="m-0 text-danger-content [overflow-wrap:anywhere] whitespace-pre-wrap">
-          {entry.error}
+          {t(`sessionError.${agentErrorKey(entry.error) ?? 'agent_internal'}`)}
         </p>
       )}
       <dl className="m-0 grid grid-cols-[3.25rem_1fr] gap-x-2 gap-y-1.5">
