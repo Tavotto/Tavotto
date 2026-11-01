@@ -421,7 +421,9 @@ def _make_managed_env(local: Path, project: Path, *, base_home: Path, python: bo
         ),
     )
     if python:
-        put(env / "venv" / "bin" / "python", "#!py")
+        # 与 `managedenv.venv_python` 同一布局：Windows 是 Scripts\python.exe，其它平台 bin/python
+        exe = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+        put(env / "venv" / exe[0] / exe[1], "#!py")
     put(env / "venv" / "pyvenv.cfg", f"home = {base_home}\nversion = 3.12.1\n")
     return env
 
