@@ -142,11 +142,21 @@ export function handleServerEvent(ev: ServerEvent) {
       render.noteBuilding(ev.id, null)
       // 同一张图先前那条「无法渲染」可能已经不成立了（修好依赖后自动重渲染成功）：这个文件没有
       // 一个变体还坏着 / 还在渲染时撤掉它。只认同一个主人——挂着的是别的图 / 别的类别的提示就不动
-      settleRenderFailureToast(ev.pj, ev.id)
-      // 被动通知：不顶掉用户刚触发的那句结果（「已修复 N 项」之类，见 uiStore.statusPassive）
-      setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'done', {
-        passive: true,
-      })
+      // 「渲染完成」只在替换了一条可见的同主人失败提示时才说（用户 2026-10-31：成功是常态，不用报）；
+      // 否则只收掉冷启动那条被动的「正在构建…」，免得它挂着
+      if (settleRenderFailureToast(ev.pj, ev.id)) {
+        // 被动通知：不顶掉用户刚触发的那句结果（「已修复 N 项」之类，见 uiStore.statusPassive）
+        setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'done', {
+          passive: true,
+        })
+      } else if (
+        useUiStore.getState().statusTone === 'progress' &&
+        useUiStore.getState().statusPassive &&
+        useUiStore.getState().statusOwner === null
+      ) {
+        // 只收被动的（冷启动「正在构建…」）；用户触发的 progress（problems.fixing、artifact.rebuilding）不是渲染的
+        setStatus(null)
+      }
       break
     case 'render.failed':
       render.noteBuilding(ev.id, null)

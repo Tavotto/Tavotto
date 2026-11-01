@@ -233,13 +233,15 @@ export const renderFailureOwner = (pj: string | null | undefined, id: string) =>
   `render.failed:${pj ?? ''}:${id}`
 
 /**
+ * 返回值：是否撤掉了一条可见的同主人失败提示。
+ *
  * 同一文件的「无法渲染」toast 只在**这个文件没有一个变体还坏着 / 还在渲染**时撤（Codex #710 P2）：
  * 两个面板引用同一文件、覆盖不同，各自的请求独立成败——一个变体画成了不说明另一个好了。
  * SSE 的 `render.done` 与这个变体自己的响应谁先到不定，所以两处各来问一次：先到的那次看见
  * 本变体还在 `rendering` 就不撤，后到的那次再撤。「坏着」只认画布上还有面板指着的变体（`liveKeys`），
  * `recent` 里为撤销留着的旧变体不算。
  */
-export function settleRenderFailureToast(pj: string | null | undefined, fileId: string) {
+export function settleRenderFailureToast(pj: string | null | undefined, fileId: string): boolean {
   const unsettled = Object.entries(useRenderStore.getState().byKey).some(
     ([key, r]) =>
       r.fileId === fileId &&
@@ -249,7 +251,13 @@ export function settleRenderFailureToast(pj: string | null | undefined, fileId: 
         // 它的 error 不该一直挡着（Codex #710 第三轮）。`liveKeys` 还没被同步填过时按「都算」保守处理
         (r.status === 'error' && (liveKeys.size === 0 || liveKeys.has(key)))),
   )
-  if (!unsettled) useUiStore.getState().clearStatusOwnedBy(renderFailureOwner(pj, fileId))
+  if (unsettled) return false
+  const ui = useUiStore.getState()
+  const owner = renderFailureOwner(pj, fileId)
+  // 返回「这一次撤掉了一条可见的同主人失败提示」——调用方据此决定要不要说「渲染完成」
+  const replaced = ui.status !== null && ui.statusOwner === owner
+  ui.clearStatusOwnedBy(owner)
+  return replaced
 }
 
 /** 诊断用：这次渲染是怎么被触发的。**与渲染行为无关**，只进 trace */

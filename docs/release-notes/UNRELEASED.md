@@ -69,6 +69,10 @@ Typing into a text box on the canvas and then clicking empty canvas space, witho
 
 When an AI edit or conversion ended in failure, the session log only said "status=failed", so a run that failed within a tenth of a second (or a conversion that finished without producing the new script) could not be explained from a diagnostic bundle. The end-of-session log line now also records the exit code, the built-in runner's closed failure reason, whether the runner exited without reporting one, and which verification checks were unmet. Only fixed codes are written, never paths, prompts or keys.
 
+## AI assistant no longer says "did not pass the pre-write check" when the AI never ran
+
+When the AI itself could not run (no connection, a rejected key, the runner exiting early), the assistant's turn said "The change did not pass the pre-write check and was not written to the project", as if the AI had produced an edit that was then rejected. The result sent to the window now carries the failure reason, so the turn names what actually went wrong. (#1592)
+
 ## Large export preview of an edited figure no longer shows the pre-edit render
 
 In the export dialog, the large preview of a single figure that had edits applied (for example a script-run figure whose legend move was undone) could still show the last rendered image instead of the current edits, because enlarging the preview switched to a higher-resolution copy of the last render. The large preview now keeps the image rendered for the figure's current edits; only unedited figures switch to a sharper copy.
@@ -76,6 +80,10 @@ In the export dialog, the large preview of a single figure that had edits applie
 ## "Rebuild as editable figure" stays on the current canvas (#1545)
 
 Rebuilding a PNG as an editable figure could jump to another canvas and open an older, already-edited figure from the same script with the same file name, while reporting that the figure had been redrawn. The rebuilt figure is now added next to the PNG on the canvas you started from, and the success message only appears when that happens.
+
+## New figures no longer pile on top of each other; fewer pop-up hints
+
+A figure added without a drop position now always lands in free space: it is scaled down (to at most 40% smaller) to fit a gap, and only then offset, instead of landing almost exactly on top of the first one. Hints no longer float over the dark backdrop of the export, command palette or contact dialogs, and come back after the dialog closes. "Render finished" only appears when it replaces a visible failure message, the "Problems panel can locate objects" hint waits for the first problem that can actually be located, the canvas-size hint is skipped when the right panel is already on the Canvas page (and, while editing a single figure, that page now explains the export size), and the double-click hint no longer appears once you are editing inside a figure. After mouse use, pressing Enter or closing a menu no longer draws the thick blue keyboard focus ring. (#1557)
 
 ## First run on a fresh machine no longer fails with "session s-1 does not exist"
 
@@ -112,3 +120,7 @@ Interface icons are drawn with a thinner stroke (1 px at 16 px) and every point 
 ## Crisp 12 px icons and solid status marks
 
 The smallest icons (expand and dropdown arrows, tab close buttons, warning and status marks in rows and badges) looked soft because they were the 24-grid icons shrunk to 12 px with a 0.75 px line. The most common ones are now drawn separately for 12 px on whole pixels with a 1 px line, so they stay sharp on both Retina and standard displays; other icons that were shown at 12 px now use the 16 px size. Status marks (warning, info, error, done) are now solid shapes with the symbol cut out at every size, so they read clearly next to line icons. The Aa, superscript and subscript icons in the text toolbar were redrawn.
+
+## Scripts whose file name contains a dot now run
+
+A script with a dot in its file name (for example `4-51.slope_ratio.py` or `fig.v2.py`) that Tavotto runs through its entry function failed with `ModuleNotFoundError: No module named '4-51'`, because the file name was imported as a module path and the dot was read as a package separator. Such scripts now load from their file directly, the same way `python script.py` runs them; `__name__` inside the script is still the file name without `.py`.

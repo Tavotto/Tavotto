@@ -221,6 +221,29 @@ describe('带动作的状态 toast（导出关窗后的结果等）', () => {
     expect(document.body.querySelector('body > [data-notification-rail]')).toBeNull()
   })
 
+  it('有模态对话框开着：背景性的提示（加入说明 / 操作提示）不浮在遮罩上，关掉后照常回来；状态结果仍压在上面', () => {
+    act(() => {
+      useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 })
+      showHint('multi_select')
+    })
+    tick(200)
+    expect(container.querySelector('[data-fast-edit-added-note]'), '没有模态：照常显示').not.toBeNull()
+    let off = () => {}
+    act(() => {
+      off = registerDialogOpen()
+    })
+    try {
+      tick(300)
+      expect(document.body.querySelector('[data-fast-edit-added-note]')).toBeNull()
+      expect(document.body.querySelector('[data-onboarding-hint]')).toBeNull()
+      act(() => useUiStore.getState().setStatus(literal('已导出 a.pdf'), 'done'))
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => off())
+      act(() => useWorkspaceStore.setState({ addedForEdit: null }))
+    }
+  })
+
   it('对照：不带动作的非错误 toast 照旧自己走', () => {
     act(() => useUiStore.getState().setStatus(literal('好了'), 'info'))
     tick(STATUS_AUTO_DISMISS_MS + 10)

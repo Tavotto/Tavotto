@@ -259,9 +259,9 @@ describe('「刚为编辑加入本文档」的说明', () => {
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     expect(note()).not.toBeNull()
-    // 动作叫「移除」不叫「撤销」：顶栏已有一颗「撤销」，同名两颗读屏与 e2e 都分不清
-    expect(note()!.textContent).toContain('移除')
-    expect(note()!.querySelector('button')?.textContent).toBe('移除')
+    // 写出新画布的名字；动作叫「撤销」（用户 2026-10-31 UI 审计 B6 拍板；行为不变：撤销放进去的图）
+    expect(note()!.textContent).toMatch(/已在新画布「.+」里打开/)
+    expect(note()!.querySelector('button')?.textContent).toBe('撤销')
 
     act(() => void addFigureToLayout('b.pdf'))
     act(() => openFastEdit('a.pdf'))
@@ -300,7 +300,7 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(live(), '是同一个节点被填上，不是新插进来一个').toBe(before)
   })
 
-  it('「移除」只在撤销正好撤的是加入这一步时给：之后又改了别的，钮收起、说明留着', async () => {
+  it('「撤销」只在撤销正好撤的是加入这一步时给：之后又改了别的，钮收起、说明留着', async () => {
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     expect(note()!.querySelector('button')).not.toBeNull()
@@ -310,7 +310,7 @@ describe('「刚为编辑加入本文档」的说明', () => {
       })
     })
     expect(note(), '说明句还在').not.toBeNull()
-    expect(note()!.querySelector('button'), '撤销栈已经不在加入那一刻，「移除」该收起').toBeNull()
+    expect(note()!.querySelector('button'), '撤销栈已经不在加入那一刻，「撤销」该收起').toBeNull()
   })
 
   /**
