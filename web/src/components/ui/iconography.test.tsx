@@ -38,6 +38,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 import { ICON_SIZE, ICON_STROKE, IconProvider } from './Icon'
 import { ChevronRight, ICON_DEFS, TriangleAlert, Type, X, type IconDef } from './icons'
+import { snapPathToPixelGrid } from './icons/defs'
 
 const SOURCES = import.meta.glob('/src/**/*.{ts,tsx}', {
   eager: true,
@@ -487,12 +488,31 @@ describe('图标组件：默认档、选中态、无障碍', () => {
     expect(plain.getAttribute('stroke-width')).toBe(String(ICON_STROKE.regular))
     expect(plain.getAttribute('class')).toContain('shrink-0')
     expect(plain.getAttribute('class')).toContain('icon-x')
-    // 描边按比例：改了尺寸，属性值不变（viewBox 24 里的 2，画到 16px 上自然是 1.33px）
+    // 描边按比例：改了尺寸，属性值不变（viewBox 24 里的 1.5，画到 16px 上正好 1px）
     const md = m.svg('md')
     expect(md.getAttribute('width')).toBe(String(ICON_SIZE.md))
     expect(md.getAttribute('stroke-width')).toBe(String(ICON_STROKE.regular))
     expect(md.getAttribute('class')).toContain('icon-chevron-right')
     await m.unmount()
+  })
+
+  it('清晰度（ADR 0157）：描边 1.5、默认档 16，几何都落在 0.75 网格上（吸附后再吸一次不变）', () => {
+    expect(ICON_STROKE.regular).toBe(1.5)
+    expect(ICON_SIZE.sm).toBe(16)
+    const off: string[] = []
+    for (const [name, def] of Object.entries(ICON_DEFS) as [string, IconDef][]) {
+      for (const v of [def, def.sel].filter(Boolean) as IconDef[]) {
+        for (const list of ['s', 'f', 'k', 'o'] as const) {
+          for (const p of v[list] ?? []) {
+            const d = typeof p === 'string' ? p : p.d
+            if (snapPathToPixelGrid(d) !== d) off.push(`${name}.${list}: ${d.slice(0, 40)}`)
+          }
+        }
+      }
+    }
+    expect(off).toEqual([])
+    // 反证：没吸附的原值会被抓出来
+    expect(snapPathToPixelGrid('M3.5 7.5h8.75')).not.toBe('M3.5 7.5h8.75')
   })
 
   it('没套 Provider 也是同一套默认档（图标集自己的默认就是阶梯）；Provider 只是根上改默认的地方', async () => {
