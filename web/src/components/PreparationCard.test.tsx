@@ -3160,6 +3160,138 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
     })
   })
 
+  describe('解释器在 Tavotto 的缓存里建不了目录：一键改用自带的 Python（TVD-B6MR）', () => {
+    const denied = (params: Record<string, string> = { switch: 'global' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'interpreter_cache_denied' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'interpreter_cache_denied', message: 'x', params } },
+        remedy: { kind: 'change_python', from: '3.12.14', to: null },
+      })
+    const original = { setPython: useEnvStore.getState().setPython, setProjectPython: useEnvStore.getState().setProjectPython }
+    const setPython = vi.fn(async (_: string | null) => null as string | null)
+    const setProjectPython = vi.fn(async (_: string | null) => null as string | null)
+
+    beforeEach(() => {
+      setPython.mockClear()
+      setProjectPython.mockClear()
+      mockAct.mockClear()
+      useEnvStore.setState({ setPython, setProjectPython })
+    })
+    afterEach(() => useEnvStore.setState(original))
+
+    it('一句话 + 一个主按钮「改用 Tavotto 自带的 Python」，不摆 AI 修复', async () => {
+      await mount()
+      await openWith(denied())
+      expect(panel().dataset.prepState).toBe('cache_denied')
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('这个 Python 环境没法在 Tavotto 的缓存里新建文件夹，脚本没能运行')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('use_builtin_python')
+      expect(primary()?.textContent).toBe('改用 Tavotto 自带的 Python')
+      expect(panel().querySelector('[data-prep-ai-fix], [data-prep-primary="ai_fix"]')).toBeNull()
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(denied())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(primary()?.textContent).toBe('Use Tavotto’s built-in Python')
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('全局设置里指定的：点一次清全局选择，再「打开并运行」一次（不拿旧报告的 run 去认领）', async () => {
+      await mount()
+      await openWith(denied({ switch: 'global' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setPython.mock.calls).toEqual([[null]])
+      expect(setProjectPython).not.toHaveBeenCalled()
+      expect(mockCreate).toHaveBeenCalledTimes(2)
+      expect(mockAct.mock.calls.some((c) => (c[1] as { action_id?: string })?.action_id === 'act-run')).toBe(false)
+    })
+
+    it('为这个项目挑的：清项目这一层（改用默认链条），全局不动', async () => {
+      await mount()
+      await openWith(denied({ switch: 'project' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setProjectPython.mock.calls).toEqual([[null]])
+      expect(setPython).not.toHaveBeenCalled()
+    })
+
+    it('真实路径：setter 改了 envStore → 订阅触发的重新检查落定后，才按新报告认领运行（Codex #1595）', async () => {
+      const envBefore = useEnvStore.getState().env
+      useEnvStore.setState({ env: { ok: true, project: { open: true, python: '.venv/Scripts/python.exe' } } as never })
+      try {
+        await mount()
+        await openWith(denied({ switch: 'global' }))
+        let finishRecheck!: () => void
+        const recheckDone = new Promise<void>((r) => (finishRecheck = r))
+        mockAct.mockImplementation(async (_sid, body) => {
+          const id = (body as { action_id?: string }).action_id
+          if (id === 'act-recheck') {
+            await recheckDone
+            return { claimed: true, report: report({ ...STATES.readyArm, observation_seq: 2 }) }
+          }
+          return { claimed: true, report: report({ phase: 'running', observation_seq: 4, actions: [action('cancel')] }) }
+        })
+        mockCreate.mockResolvedValueOnce(report({ ...STATES.readyArm, observation_seq: 3 }))
+        // 真的 setter 会改 envStore 里项目的解释器：订阅随即让空闲会话 recheck（pending 置上）
+        setPython.mockImplementationOnce(async () => {
+          useEnvStore.setState({ env: { ok: true, project: { open: true, python: '' } } as never })
+          return null
+        })
+        let clicked!: Promise<void>
+        await act(async () => {
+          clicked = (async () => primary()!.click())()
+          await Promise.resolve()
+        })
+        const ids = () => mockAct.mock.calls.map((c) => (c[1] as { action_id?: string }).action_id)
+        expect(ids()).toEqual(['act-recheck'])
+        await act(async () => {
+          finishRecheck()
+          await clicked
+          await new Promise((r) => setTimeout(r, 0))
+        })
+        expect(ids()).toContain('act-run_when_ready')
+      } finally {
+        mockAct.mockReset()
+        useEnvStore.setState({ env: envBefore })
+      }
+    })
+
+    it('两层都选中它（both）：全局与项目都清', async () => {
+      await mount()
+      await openWith(denied({ switch: 'both' }))
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(setPython.mock.calls).toEqual([[null]])
+      expect(setProjectPython.mock.calls).toEqual([[null]])
+    })
+
+    it('清不掉：如实一句话，不重跑', async () => {
+      await mount()
+      await openWith(denied())
+      setPython.mockResolvedValueOnce('安装进行中，暂时不能改')
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('安装进行中，暂时不能改')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('失败的本来就是 Tavotto 自己的 Python（后端不给 switch）：同一句话，主按钮是再试一次', async () => {
+      await mount()
+      await openWith(denied({}))
+      expect(panel().dataset.prepState).toBe('cache_denied')
+      expect(primary()?.textContent).toBe('再试一次')
+      expect(panel().textContent).not.toContain('自带的 Python')
+    })
+  })
+
   describe('项目外文件夹读不了：一键修复权限（Windows，ADR 0153 修订 2026-10-30）', () => {
     const unreadable = (params: Record<string, string> = { folder: '.work_sensor_plot_deps_20261030', repair_token: 'rt-1' }) =>
       report({

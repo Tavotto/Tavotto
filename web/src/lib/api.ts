@@ -7132,6 +7132,8 @@ export interface PreparationResultError {
     abi?: string
     current?: string
     ignore_token?: string
+    /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
+    switch?: 'global' | 'project' | 'both' | string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string
