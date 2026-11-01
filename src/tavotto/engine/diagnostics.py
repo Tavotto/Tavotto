@@ -43,6 +43,7 @@ from . import (
     diagnostics_frontend,
     logsafe,
     msixbreakaway,
+    msixmigrate,
     pool,
     projectenv,
     runtime,
@@ -93,7 +94,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: versions, job outcomes and environment generation observations (user-authorized disclosure).
 #: 12 = report.json 的 `system.has_package_identity`、`system.msix_breakaway`（闭集字符串）与 `paths.data_dir_under_packages` /
 #: `paths.config_dir_under_packages`（三个 bool，MSIX 宿主下数据被重定向的分诊，#1574；不带用户名与包名）。
-BUNDLE_SCHEMA_VERSION = 12
+#: 13 = report.json 的 `system.msix_data_migration`（#1574 善后：包私有区旧数据补回真实目录的结果，闭集 `state`
+#: none / partial / done + 几个计数与 `config_merged` 布尔；不带路径与包族名）。
+BUNDLE_SCHEMA_VERSION = 13
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1563,6 +1566,8 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "has_package_identity": msixbreakaway.has_package_identity(),
             # 桌面壳兜底（重新拉起到包外）的结果，闭集：none / relaunched / still_packaged / failed
             "msix_breakaway": msixbreakaway.shell_breakaway_outcome(),
+            # 包私有区旧数据补回真实目录的结果（闭集 state + 计数，不带路径与包族名）
+            "msix_data_migration": msixmigrate.diagnostic_facts(),
             "encoding": {
                 "stdout": getattr(sys.stdout, "encoding", None),
                 "filesystem": sys.getfilesystemencoding(),
