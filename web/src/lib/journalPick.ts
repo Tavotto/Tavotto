@@ -181,10 +181,10 @@ export function valueText(path: string, s: JournalFieldSource): string {
   return v == null ? '' : String(v)
 }
 
-/** 出处卡的一句话：「期刊：字段 值」。栏位的值自带名字，不再加字段名。建议性提示（advice）见 `adviceSentence`。 */
-export function cardSentence(journal: string, path: string, s: JournalFieldSource): string {
+/** 出处卡的结论（底栏第一行）：「字段 值」，如「位图分辨率 ≥ 300 ppi」。栏位的值自带名字，不再加字段名。 */
+export function cardConclusion(path: string, s: JournalFieldSource): string {
   const field = path === 'page_columns' ? '' : fieldLabel(path)
-  return jt('card.sentence', { journal, text: [field, valueText(path, s)].filter(Boolean).join(' ') })
+  return [field, valueText(path, s)].filter(Boolean).join(' ')
 }
 
 /** Elsevier 一类的建议性字号：「X 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号」。 */

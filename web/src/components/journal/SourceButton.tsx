@@ -1,16 +1,15 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { snapshotUrl, useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { BookOpen } from '@/components/ui/icons'
+import { ArrowUpRight, BookOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
-import { buttonClass } from '../ui/buttonClass'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
 import {
   adviceSentence,
-  cardSentence,
+  cardConclusion,
   highlightQuote,
   sourceHost,
 } from '@/lib/journalPick'
@@ -18,13 +17,16 @@ import {
 const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
-/** 引文：命中的数用 `<mark>` 标出（`highlightQuote`：数据给了 `mark` 就用它，不猜） */
+/**
+ * 摘录（没有快照时顶部的那一块）：排在白「纸」上（深色主题里纸也是白的），命中的数用 `<mark>` 标出，
+ * 荧光笔浅黄、字仍是正文墨色（`highlightQuote`：数据给了 `mark` 就用它，不猜）。
+ */
 function Quote({ source }: { source: JournalFieldSource }) {
   return (
-    <blockquote data-journal-quote className="rounded-md bg-surface-2 px-2 py-1.5 text-sm leading-5 text-ink-2">
+    <blockquote data-journal-quote className="bg-paper px-3.5 py-3 text-sm leading-5 text-paper-ink">
       {highlightQuote(source.quote, source).map((seg, i) =>
         seg.hit ? (
-          <mark key={i} className="rounded-xs bg-selected px-0.5 text-ink">
+          <mark key={i} className="rounded-xs bg-paper-highlight px-0.5 text-paper-ink">
             {seg.text}
           </mark>
         ) : (
@@ -36,17 +38,14 @@ function Quote({ source }: { source: JournalFieldSource }) {
 }
 
 /**
- * 原网页高亮截图（采集时渲染、已裁成那一段；全宽、高度跟图、最高约 240px，更高在卡内滚）。
- * 没有快照或图加载失败时由调用方退回摘录框——不显示任何错误态。
+ * 原网页高亮截图（采集时渲染、已裁成那一段）：满卡宽、贴顶贴边、无内框；最高约 210px，更高就裁；
+ * 底边 28px 渐隐到纸白。纸在深色主题里也是白的。加载失败由调用方退回摘录——不显示任何错误态。
  */
 function Snapshot({ source, onFail }: { source: JournalFieldSource; onFail: () => void }) {
   const base = useJournalCatalogStore((s) => s.assetBase)
   const snap = source.snapshot!
   return (
-    <div
-      data-journal-snapshot
-      className="max-h-60 overflow-y-auto rounded-md border border-border"
-    >
+    <div data-journal-snapshot className="relative max-h-[210px] overflow-hidden bg-paper">
       <img
         src={snapshotUrl(base, snap.file)}
         width={snap.width}
@@ -55,48 +54,27 @@ function Snapshot({ source, onFail }: { source: JournalFieldSource; onFail: () =
         onError={onFail}
         className="block h-auto w-full"
       />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-7"
+        style={{ backgroundImage: 'linear-gradient(to bottom, transparent, var(--color-paper))' }}
+      />
     </div>
   )
 }
 
-/** 一条出处的「证据」：快照图优先，没有或加载失败退回摘录框 */
+/** 一条出处的「证据」：快照图优先，没有或加载失败退回摘录 */
 function Evidence({ source }: { source: JournalFieldSource }) {
   const [failed, setFailed] = useState(false)
   if (source.snapshot && !failed) return <Snapshot source={source} onFail={() => setFailed(true)} />
   return <Quote source={source} />
 }
 
-/** 链接交给浏览器（桌面壳里是系统浏览器，与其余外链同一写法）；`link` 已带 text fragment / `#page=N` */
-function Links({ source }: { source: JournalFieldSource }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <a
-        href={source.link}
-        target="_blank"
-        rel="noreferrer"
-        data-journal-open
-        className={buttonClass({ variant: 'primary', size: 'sm' })}
-      >
-        {jt('card.open')}
-      </a>
-      {source.archive_url && (
-        <a
-          href={source.archive_url}
-          target="_blank"
-          rel="noreferrer"
-          data-journal-archive
-          className={buttonClass({ variant: 'secondary', size: 'sm' })}
-        >
-          {jt('card.archive')}
-        </a>
-      )}
-    </div>
-  )
-}
-
 /**
- * 出处卡的内容：一句话 + 原文摘录（命中的数加 `<mark>`）+ 来源域名与采集日期 + 打开原网页（主按钮）/ 查看存档。
- * 建议性字号（Elsevier 一类）那句话用 `adviceSentence`，其余用「期刊：字段 值」；多条出处各出一块引文。
+ * 出处卡（变体 C）：上面是原文证据（快照图或摘录，白纸出血到边），下面一条底栏——
+ * 左两行：结论（15 semibold）与「期刊 · 域名 · 采集日期[ · PDF]」（12 灰）；右：「打开原网页 ↗」强调色文字链接，有存档再加灰色「存档」。
+ * 链接交给浏览器（桌面壳里是系统浏览器）；`link` 已带 text fragment / `#page=N`。
+ * 建议性字号（Elsevier 一类）的结论用 `adviceSentence`；多条出处（单栏 + 双栏、正文 + 上下标）上面各出一块证据，底栏取第一条的来源。
  */
 export function SourceCardBody({
   journal,
@@ -106,22 +84,58 @@ export function SourceCardBody({
   entries: [string, JournalFieldSource][]
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
-  const sentence =
-    advice ?? entries.map(([path, s]) => cardSentence(journal, path, s)).join('；')
+  const conclusion = advice ?? entries.map(([path, s]) => cardConclusion(path, s)).join('；')
+  const lead = entries[0][1]
+  const metaParts = [journal, sourceHost(lead.url), lead.retrieved, lead.kind === 'pdf' ? 'PDF' : ''].filter(Boolean)
   return (
-    <div data-journal-card className="flex flex-col gap-2 p-1">
-      <p data-journal-sentence className="type-title">
-        {sentence}
-      </p>
+    <div data-journal-card className="flex flex-col">
       {entries.map(([path, s]) => (
-        <div key={path} data-journal-entry={path} className="flex flex-col gap-1.5">
+        <div key={path} data-journal-entry={path}>
           <Evidence source={s} />
-          <p data-journal-meta className="type-caption">
-            {jt('card.meta', { host: sourceHost(s.url), date: s.retrieved })}
-          </p>
-          <Links source={s} />
         </div>
       ))}
+      <div className="flex items-end justify-between gap-3 border-t border-border px-3.5 py-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p data-journal-sentence className="type-title">
+            {conclusion}
+          </p>
+          {/* 窄了只在「 · 」处换行（圆点留在行尾），日期 / 域名不被拦腰截断；读屏与测试看到的仍是一整句 */}
+          <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
+            {metaParts.map((part, i) => (
+              <Fragment key={i}>
+                {i > 0 && ' '}
+                <span className="whitespace-nowrap">
+                  {part}
+                  {i < metaParts.length - 1 && ' ·'}
+                </span>
+              </Fragment>
+            ))}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 pb-0.5 text-sm">
+          <a
+            href={lead.link}
+            target="_blank"
+            rel="noreferrer"
+            data-journal-open
+            className="inline-flex items-center gap-0.5 font-medium text-info-content hover:underline"
+          >
+            {jt('card.open')}
+            <ArrowUpRight size={ICON_SIZE.xs} aria-hidden />
+          </a>
+          {lead.archive_url && (
+            <a
+              href={lead.archive_url}
+              target="_blank"
+              rel="noreferrer"
+              data-journal-archive
+              className="text-ink-3 hover:text-ink-2 hover:underline"
+            >
+              {jt('card.archive')}
+            </a>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -150,7 +164,8 @@ export function SourceButton({
     <Popover
       open={open}
       onOpenChange={setOpen}
-      width={320}
+      width={360}
+      flush
       ariaLabel={jt('card.aria')}
       trigger={
         compact ? (

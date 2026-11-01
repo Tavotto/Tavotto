@@ -8,7 +8,7 @@ import { setLocale } from '@/i18n'
 import { journalProfile, journalSources, listJournals, loadCatalog, type JournalFieldSource } from './journals'
 import {
   adviceSentence,
-  cardSentence,
+  cardConclusion,
   groupByPublisher,
   highlightQuote,
   nearestColumnWidth,
@@ -91,11 +91,9 @@ describe('选择器搜索与分组', () => {
 describe('出处卡：一句话与高亮', () => {
   const src = (id: string, path: string) => journalSources(id, CAT)[path]
 
-  it('一句话是「期刊：字段 值」', () => {
+  it('结论是「字段 值」', () => {
     const s = src('fx-beta', 'widths_mm.double')
-    expect(cardSentence('Fixture Beta', 'widths_mm.double', s)).toBe(
-      `Fixture Beta：双栏 ${s.value} mm`,
-    )
+    expect(cardConclusion('widths_mm.double', s)).toBe(`双栏 ${s.value} mm`)
   })
 
   it('摘录里命中的数按数据里的 mark 标出；没给 mark 就按数值找，且 7 不会命中 17 或 7.5', () => {

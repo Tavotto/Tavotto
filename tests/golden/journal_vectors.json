@@ -294,9 +294,27 @@
       "kind": "html",
       "retrieved": "2000-02-02",
       "coverage": "single_journal_sample"
+     },
+     "s10": {
+      "url": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting",
+      "kind": "html",
+      "retrieved": "2026-10-31"
      }
     },
     "rules": {
+     "min_raster_dpi": {
+      "value": 300,
+      "src": "s10",
+      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi",
+      "qualifier": "min",
+      "mark": "300 dpi",
+      "anchor": "#:~:text=minimum%20resolution%20of%20300%20dpi",
+      "snapshot": {
+       "file": "snapshots/e3cefe9a0318f03739f98697ec7075ca9a82312f25b42bcbe4fb257a80c4d204.webp",
+       "width": 1080,
+       "height": 408
+      }
+     },
      "widths_mm.double": {
       "value": 180,
       "src": "s9",
@@ -909,7 +927,7 @@
      "single": 85,
      "double": 180
     },
-    "min_raster_dpi": 600,
+    "min_raster_dpi": 300,
     "line_widths_pt": [
      0.5,
      1.0
@@ -1064,28 +1082,54 @@
      "overrides": null
     },
     "min_raster_dpi": {
-     "value": 600,
+     "value": 300,
      "value_alt": null,
      "qualifier": "min",
-     "stage": "submission",
-     "mark": "",
+     "stage": "any",
+     "mark": "300 dpi",
      "derivation": "",
-     "snapshot": null,
+     "snapshot": {
+      "file": "snapshots/e3cefe9a0318f03739f98697ec7075ca9a82312f25b42bcbe4fb257a80c4d204.webp",
+      "width": 1080,
+      "height": 408
+     },
      "unset": false,
-     "quote": "FIXTURE at least 600 dpi",
-     "src": "s2",
-     "rule_scope": "publisher",
-     "source_scope": "publisher",
-     "coverage": "publisher_general",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi",
+     "src": "s10",
+     "rule_scope": "journal",
+     "source_scope": "journal",
+     "coverage": "journal_specific",
      "affects": "preflight",
-     "url": "https://example.invalid/fx-press/guide.pdf",
-     "link": "https://example.invalid/fx-press/guide.pdf#page=12",
-     "anchor": "",
-     "kind": "pdf",
-     "page": 12,
-     "retrieved": "2000-01-01",
+     "url": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting",
+     "link": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting#:~:text=minimum%20resolution%20of%20300%20dpi",
+     "anchor": "#:~:text=minimum%20resolution%20of%20300%20dpi",
+     "kind": "html",
+     "page": null,
+     "retrieved": "2026-10-31",
      "archive_url": "",
-     "overrides": null
+     "overrides": {
+      "value": 600,
+      "value_alt": null,
+      "qualifier": "min",
+      "stage": "submission",
+      "mark": "",
+      "derivation": "",
+      "snapshot": null,
+      "unset": false,
+      "quote": "FIXTURE at least 600 dpi",
+      "src": "s2",
+      "rule_scope": "publisher",
+      "source_scope": "publisher",
+      "coverage": "publisher_general",
+      "affects": "preflight",
+      "url": "https://example.invalid/fx-press/guide.pdf",
+      "link": "https://example.invalid/fx-press/guide.pdf#page=12",
+      "anchor": "",
+      "kind": "pdf",
+      "page": 12,
+      "retrieved": "2000-01-01",
+      "archive_url": ""
+     }
     },
     "preferred_formats.export_default": {
      "value": [
@@ -1215,7 +1259,7 @@
    "merged_fields": {
     "widths_mm.single": 85,
     "widths_mm.double": 180,
-    "min_raster_dpi": 600,
+    "min_raster_dpi": 300,
     "line_widths_pt": [
      0.5,
      1.0

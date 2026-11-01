@@ -133,13 +133,14 @@ test(
     await expect(shell).toBeVisible()
     await shell.locator('[data-section="spec"]').click()
     await page.locator('[data-disclosure="row"] button', { hasText: '期刊要求' }).click()
-    const row = page.locator('[data-journal-row="widths_mm.double"]')
-    await expect(row).toContainText('180 mm')
+    const row = page.locator('[data-journal-row="min_raster_dpi"]')
+    await expect(row).toContainText('300 ppi')
     await row.locator('[data-journal-source]').click()
 
     const card = page.locator('[data-journal-card]')
     await expect(card).toBeVisible()
-    await expect(card.locator('[data-journal-sentence]')).toHaveText('Fixture Beta：双栏 180 mm')
+    // 结论是底栏第一行（不再有单独的顶部标题句）
+    await expect(card.locator('[data-journal-sentence]')).toHaveText('位图分辨率 ≥ 300 ppi')
     const box = (await card.boundingBox())!
     const vp = page.viewportSize()!
     expect(box.x).toBeGreaterThanOrEqual(0)
@@ -148,13 +149,15 @@ test(
     // 有快照：卡里是（高亮后裁好的）原网页快照图，真的加载出来了；不再画摘录框与换算行
     const shot = card.locator('[data-journal-snapshot] img')
     await expect(shot).toBeVisible()
-    await expect.poll(() => shot.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBe(520)
+    await expect.poll(() => shot.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBe(1080)
     await expect(card.locator('[data-journal-quote]')).toHaveCount(0)
     await expect(card).not.toContainText('->')
     // 打开原网页 / 来源域名与采集日期
-    await expect(card.locator('[data-journal-meta]')).toContainText('example.invalid')
+    await expect(card.locator('[data-journal-meta]')).toHaveText('Fixture Beta · www.nature.com · 2026-10-31')
     const open = card.locator('[data-journal-open]')
-    expect(await open.getAttribute('href')).toMatch(/^https:\/\/example\.invalid\//)
+    expect(await open.getAttribute('href')).toBe(
+      'https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting#:~:text=minimum%20resolution%20of%20300%20dpi',
+    )
     expect(await open.getAttribute('target')).toBe('_blank')
   },
 )

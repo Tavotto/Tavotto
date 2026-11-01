@@ -875,11 +875,9 @@ export default interface Resources {
         "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
         "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
         "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
-        "archive": "查看存档",
+        "archive": "存档",
         "aria": "出处",
-        "meta": "{{host}} · {{date}}",
-        "open": "打开原网页",
-        "sentence": "{{journal}}：{{text}}"
+        "open": "打开原网页"
       },
       "cleared": "已不按期刊检查",
       "current": "按「{{name}}」检查",

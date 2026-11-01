@@ -112,37 +112,53 @@ describe('出处卡', () => {
   const entries = (id: string, path: string) =>
     [[path, journalSources(id, loadCatalog(vectors.catalog))[path]]] as [string, ReturnType<typeof journalSources>[string]][]
 
-  it('一句话 + 命中的数 <mark> + 域名与采集日期 + 打开原网页（带锚点 / 页码）+ 查看存档', async () => {
+  it('没有快照：摘录排在白纸上，命中的数标 mark；底栏是结论 + 「期刊 · 域名 · 日期 · PDF」+ 打开原网页 ↗', async () => {
     await mount(<SourceButton journal="Fixture Press" entries={entries('fx-alpha', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
-    expect(q('[data-journal-sentence]')?.textContent).toBe('Fixture Press：位图分辨率 ≥ 600 ppi')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 ppi')
+    expect(q('[data-journal-quote]')?.className).toContain('bg-paper')
     const mark = q('[data-journal-quote] mark')
     expect(mark?.textContent).toBe('600')
-    expect(q('[data-journal-meta]')?.textContent).toBe('example.invalid · 2000-01-01')
+    expect(mark?.className).toContain('bg-paper-highlight')
+    expect(q('[data-journal-meta]')?.textContent).toBe('Fixture Press · example.invalid · 2000-01-01 · PDF')
     const open = q('[data-journal-open]') as HTMLAnchorElement
     expect(open.getAttribute('href')).toBe('https://example.invalid/fx-press/guide.pdf#page=12')
     expect(open.getAttribute('target')).toBe('_blank')
     expect(open.getAttribute('rel')).toContain('noreferrer')
+    expect(open.querySelector('svg')).not.toBeNull()
+    // 不是实心按钮；没有存档就没有「存档」链接
+    expect(open.getAttribute('data-variant')).toBeNull()
+    expect(q('[data-journal-archive]')).toBeNull()
   })
 
-  it('有快照：卡里是快照图（全宽、按资产根解析），不再画摘录框与换算行', async () => {
-    await mount(<SourceButton journal="Fixture Beta" entries={entries('fx-beta', 'widths_mm.double')} name="双栏" />)
+  it('有存档：底栏右侧多一个灰色文字链接「存档」', async () => {
+    await mount(<SourceButton journal="Fixture Press" entries={entries('fx-beta', 'min_effective_font_size_pt')} name="最小字号" />)
+    await click(q('[data-journal-source]'))
+    const archive = q('[data-journal-archive]') as HTMLAnchorElement
+    expect(archive.textContent).toBe('存档')
+    expect(archive.getAttribute('href')).toMatch(/^https:\/\//)
+  })
+
+  it('有快照：满宽快照图（按资产根解析、最高 210px、底边渐隐），没有摘录框与换算行', async () => {
+    await mount(<SourceButton journal="Nature Energy" entries={entries('fx-beta', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
     const box = q('[data-journal-snapshot]')
     expect(box).not.toBeNull()
+    expect(box!.className).toContain('max-h-[210px]')
+    expect(box!.className).toContain('bg-paper')
     const img = box!.querySelector('img') as HTMLImageElement
     expect(img.getAttribute('src')).toMatch(/^\/journal-catalog\/snapshots\/[0-9a-f]{64}\.webp$/)
-    expect(img.getAttribute('width')).toBe('520')
+    expect(img.getAttribute('width')).toBe('1080')
+    expect(box!.querySelector('[aria-hidden]')).not.toBeNull() // 渐隐层
     expect(q('[data-journal-quote]')).toBeNull()
-    expect(document.body.textContent).not.toContain('18 cm -> 180 mm')
-    expect(q('[data-journal-sentence]')?.textContent).toBe('Fixture Beta：双栏 180 mm')
-    expect(q('[data-journal-meta]')?.textContent).toContain('example.invalid')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 300 ppi')
+    expect(q('[data-journal-meta]')?.textContent).toBe('Nature Energy · www.nature.com · 2026-10-31')
     expect(q('[data-journal-open]')).not.toBeNull()
   })
 
   it('资产根跟着目录走（远程目录给自己的根）', async () => {
     useJournalCatalogStore.setState({ assetBase: 'https://assets.example.invalid/rev1/' })
-    await mount(<SourceButton journal="Fixture Beta" entries={entries('fx-beta', 'widths_mm.double')} name="双栏" />)
+    await mount(<SourceButton journal="Nature Energy" entries={entries('fx-beta', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
     expect(q('[data-journal-snapshot] img')!.getAttribute('src')).toMatch(
       /^https:\/\/assets\.example\.invalid\/rev1\/snapshots\/[0-9a-f]{64}\.webp$/,
@@ -150,15 +166,14 @@ describe('出处卡', () => {
     useJournalCatalogStore.setState({ assetBase: '/journal-catalog/' })
   })
 
-  it('图加载失败：退回摘录框（命中的数仍标 mark），不出错误态', async () => {
-    await mount(<SourceButton journal="Fixture Beta" entries={entries('fx-beta', 'widths_mm.double')} name="双栏" />)
+  it('图加载失败：退回白纸摘录（命中的数仍标 mark），不出错误态', async () => {
+    await mount(<SourceButton journal="Nature Energy" entries={entries('fx-beta', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
     await act(async () => {
       q('[data-journal-snapshot] img')!.dispatchEvent(new Event('error'))
     })
     expect(q('[data-journal-snapshot]')).toBeNull()
-    expect(q('[data-journal-quote] mark')?.textContent).toBe('18 cm')
-    expect(document.body.textContent).not.toContain('18 cm -> 180 mm')
+    expect(q('[data-journal-quote] mark')?.textContent).toBe('300 dpi')
   })
 
   it('建议性字号：Elsevier 式一句话 + 两段原文', async () => {
@@ -176,6 +191,7 @@ describe('出处卡', () => {
     await click(q('[data-journal-source]'))
     expect(q('[data-journal-sentence]')?.textContent).toBe('Elsevier 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号')
     expect(document.body.querySelectorAll('[data-journal-entry]')).toHaveLength(2)
+    expect(document.body.querySelectorAll('[data-journal-sentence]')).toHaveLength(1)
   })
 
   it('没有出处的项不渲染按钮（期刊没规定就没有卡可开）', async () => {

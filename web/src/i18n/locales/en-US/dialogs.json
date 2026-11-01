@@ -2467,13 +2467,11 @@
     "picked": "Now checking against {{name}}",
     "pickedWidth": "Now checking against {{name}}; page width set to {{w}} mm",
     "card": {
-      "sentence": "{{journal}}: {{text}}",
       "adviceBoth": "{{journal}} states {{body}} pt as the minimum for body text and {{script}} pt for sub/superscripts",
       "adviceBody": "{{journal}} states {{body}} pt as the minimum for body text",
       "adviceScript": "{{journal}} states {{script}} pt as the minimum for sub/superscripts",
-      "meta": "{{host}} · {{date}}",
       "open": "Open original page",
-      "archive": "View archive",
+      "archive": "Archive",
       "aria": "Source"
     },
     "field": {

@@ -345,11 +345,11 @@ def test_snapshot_fixture_is_content_addressed_webp():
     """夹具快照图真实存在、文件名就是内容的 sha256（内容寻址），向量里的引用与之一致。"""
     import hashlib
 
-    name = gen.SNAPSHOT_FILE
-    path = ROOT / "tests" / "fixtures" / "journal_snapshots" / name
-    data = path.read_bytes()
-    assert data[:4] == b"RIFF" and data[8:12] == b"WEBP"
-    assert name == f"snapshots/{hashlib.sha256(data).hexdigest()}.webp"
+    for name in (gen.SNAPSHOT_FILE, gen.NATURE_FILE):
+        path = ROOT / "tests" / "fixtures" / "journal_snapshots" / name
+        data = path.read_bytes()
+        assert data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+        assert name == f"snapshots/{hashlib.sha256(data).hexdigest()}.webp"
 
 
 def test_snapshot_exposed_in_sources_and_absent_means_none():

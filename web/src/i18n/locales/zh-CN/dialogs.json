@@ -2445,13 +2445,11 @@
     "picked": "已按「{{name}}」检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
-      "sentence": "{{journal}}：{{text}}",
       "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
       "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
       "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
-      "meta": "{{host}} · {{date}}",
       "open": "打开原网页",
-      "archive": "查看存档",
+      "archive": "存档",
       "aria": "出处"
     },
     "field": {
