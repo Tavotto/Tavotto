@@ -738,3 +738,9 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 - **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
   不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
 - 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。
+
+## 缺包形态向量表（2026-11-01）
+
+「这个缺包怎么认」修过 #1418 / #1426 / #1494 / #1507 / #1564 / #1582 六轮，每轮冒新边界。这些形态现在收在一张闭集表
+`tests/golden/missing_package_shapes.json`（真实最小夹具 → 现有判定入口 → 期望结论），由 `tests/test_missing_package_shapes.py` 逐条驱动。
+**新的缺包工单必须先在这张表里加一条向量**（形态不在 `SHAPES` 里就先加形态），再改产品代码；修的是已有形态的新写法，也加一条同形态的向量。
