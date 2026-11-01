@@ -2168,12 +2168,14 @@ def run_convert_live_task(
     exe, version = ensure_live_host(lab, env, host, ev)
     if not version:
         return {"result": "failed", "summary": "codex CLI did not install or start"}
-    # CODEX_HOME 在 run 目录；R 项目与转换工作区在另一棵树（lab.root\cw\<run>）——模型曾 rg 到 CODEX_HOME\shell_snapshots 把 key 发出去
+    # CODEX_HOME 在 run 目录；R 项目与转换工作区在另一棵树（cache\convert-work\<run>：tavotto-lab 在 Lab 根下只能写
+    # runs\ / cache\ 等既有目录，不能新建顶层目录）——模型曾 rg 到 CODEX_HOME\shell_snapshots 把 key 发出去
     codex_home = run_dir / "work" / "codex-home"
-    work_root = lab.root / "cw" / run_dir.name
+    cw_base = lab.cache / "convert-work"
+    work_root = cw_base / run_dir.name
     if not trees_disjoint(codex_home, work_root):
         return {"result": "error", "summary": "CODEX_HOME and the project workspace share a tree"}
-    for stale in (lab.root / "cw").glob("*") if (lab.root / "cw").is_dir() else ():
+    for stale in cw_base.glob("*") if cw_base.is_dir() else ():
         if RUN_ID_RE.fullmatch(stale.name) and stale.name != run_dir.name:
             with contextlib.suppress(OSError):
                 _rmtree_no_follow(_long(stale))
