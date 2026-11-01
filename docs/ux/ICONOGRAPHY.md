@@ -52,7 +52,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 
 | 档 | px | 用途 |
 | --- | --- | --- |
-| `xs` | 12 | 折叠 / 下拉的箭头（一律 xs，它们是从属指示物）、徽标 / 角标里的小记号、11px 说明文字旁 |
+| `xs` | 12 | 折叠 / 下拉的箭头（一律 xs，它们是从属指示物）、徽标 / 角标里的小记号、11px 说明文字旁；**只给画了小号字形的 13 个图标**（ADR 0158，下文「小号字形」） |
 | `sm` | 16（默认；2026-10-31 前是 14） | 与 12–13px 界面文字并排：菜单项、带文字的按钮、检查器行首、树行状态标记、横幅提示 |
 | `md` | 16 | **只有图标**的按钮（28px 点击区）、顶栏工具、左侧图标轨道、对话框标题栏的关闭钮 |
 | `lg` | 20 | 空状态、引导卡片、对话框级别的强调图 |
@@ -71,6 +71,17 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 `iconography.test` 守着「吸附后的几何再吸一次不变」。个别挖口 / 加粗路径的宽度同比缩到 ¾
 （`EyeOff` / `ImageOff` 挖口 4.5、`SquareMousePointer` 选中挖口 3、`Bold` 2.1）。
 `ICON_STROKE.emphasis = 2` 只给一种场景：填色小方块里的对勾（复选框选中态）。
+
+### 小号字形（12px）与实心状态记号
+
+ADR 0158（2026-11-01 用户选定）：24 网格的图缩到 12px 线只剩 0.75px、怎么吸附都糊，所以 12px 不缩小大图，而是
+`defs.ts` 的 `SMALL_DEFS` 另画一份——ChevronRight / ChevronDown / X / Check / Plus / RotateCcw / Download / ExternalLink /
+Circle / Lock / TriangleAlert / Info / CircleCheck。坐标仍在 24 单位里（与大图共用动作），只用 12px 上的整像素：线 2 单位 = 1px、
+横竖线中心落半像素、斜线只用 45°，路径条数与顺序与大图一一对应。`createIcon` 在 `size <= ICON_SIZE.xs` 时自动换画。
+别的图标不用 12px，用 16px；`iconography.test` 拦着。
+
+**状态记号一律实心**：警告 / 提示 / 出错 / 完成 / 盾牌警告（TriangleAlert、Info、CircleAlert、CircleX、CircleCheck、ShieldAlert）
+默认就是实心底 + 挖空符号，没有线条版。「现在是什么状态」用实心，「点了会做什么」用线条。
 
 ### 画一个新图标
 

@@ -145,7 +145,7 @@ function StateChip({
         onClick={onClick}
         className="flex h-5 shrink-0 items-center gap-1 rounded-full bg-surface-hover px-1.5 text-xs text-ink-2 outline-none transition-colors hover:bg-surface-active hover:text-ink focus-visible:focus-ring"
       >
-        <Icon size={ICON_SIZE.xs} />
+        <Icon size={ICON_SIZE.sm} />
         {label}
       </button>
     </Tip>

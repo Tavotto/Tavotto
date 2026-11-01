@@ -184,7 +184,7 @@ export function CanvasPage() {
           labelWidth={LABEL_W}
           status={
             <IconButton label={cv('swap')} iconSize="xs" side="left" onClick={() => setPageSize(page.h, page.w)}>
-              <ArrowLeftRight size={ICON_SIZE.xs} />
+              <ArrowLeftRight size={ICON_SIZE.sm} />
             </IconButton>
           }
         >
@@ -433,7 +433,7 @@ export function CanvasPage() {
                       disabled={ui.guidesLocked}
                       onClick={() => removeGuide(i)}
                     >
-                      <Trash2 size={ICON_SIZE.xs} />
+                      <Trash2 size={ICON_SIZE.sm} />
                     </IconButton>
                   </li>
                 )

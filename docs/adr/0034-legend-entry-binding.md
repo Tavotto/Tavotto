@@ -296,3 +296,10 @@ manifest 发 `loc_anchor` 的条件是锚框能被这个模型表达出来。两
 > 看护：`tests/test_legend_fontsize_native.py`、`web/src/canvas/inFigureDrag.test.tsx`
 > 「拖图例的角 = 整体缩放」。
 
+> **2026-11-01 补记：图例卡的字号也走原生语义。** 上面那条修订改了引擎与拖角缩放，图例卡的
+> Typography 却仍批量写各图例项的字号——从属性页改字号时框不跟着重排（这条修订修的缺陷又回来了），
+> 画布浮动栏读图例整体的 `fontsize`，两处读数不一致（属性页 10 pt、浮动栏 8 pt，README 演示录屏
+> 时发现）。现在卡片的字号读写图例 `fontsize`（`inspector/legendTypography.ts`），写入时各项上的
+> 旧 `fontsize` 按 `alias_covers` 同一次 commit 清掉；「恢复」一次清图例与各项。字体 / 粗斜 /
+> 颜色仍批量作用于各项。看护：`web/src/components/inspector/legendCard.test.tsx`「图例卡的字号写图例整体」。
+

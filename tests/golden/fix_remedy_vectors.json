@@ -5,6 +5,7 @@
     "install_packages",
     "change_python",
     "convert_to_matplotlib",
+    "choose_environment",
     "ai_fix",
     "connect_ai",
     "feedback",
@@ -13,8 +14,9 @@
   "fields": {
     "switch_native": ["silent"],
     "install_packages": ["ask", "packages"],
-    "change_python": ["from", "to"],
+    "change_python": ["env", "from", "to"],
     "convert_to_matplotlib": ["source"],
+    "choose_environment": [],
     "ai_fix": [],
     "connect_ai": [],
     "feedback": ["tried"],
@@ -49,13 +51,13 @@
       "name": "python out of range -> change python",
       "failure": "project_env_unsupported_python",
       "ctx": { "python_from": "3.9.1", "python_to": "3.12" },
-      "remedy": { "kind": "change_python", "from": "3.9.1", "to": "3.12" }
+      "remedy": { "kind": "change_python", "from": "3.9.1", "to": "3.12", "env": null }
     },
     {
       "name": "python mismatch without a suggestion",
       "failure": "root_python_mismatch",
       "ctx": { "python_from": "3.14" },
-      "remedy": { "kind": "change_python", "from": "3.14", "to": null }
+      "remedy": { "kind": "change_python", "from": "3.14", "to": null, "env": null }
     },
     {
       "name": "raster script -> convert",
@@ -105,7 +107,40 @@
       "name": "interpreter can't create folders in Tavotto's cache -> change python, not AI (even with AI connected)",
       "failure": "interpreter_cache_denied",
       "ctx": { "ai_connected": true, "python_from": "3.12.14" },
-      "remedy": { "kind": "change_python", "from": "3.12.14", "to": null }
+      "remedy": { "kind": "change_python", "from": "3.12.14", "to": null, "env": null }
+    },
+    {
+      "name": "python out of range with a discovered environment that fits -> change python to that environment (the user clicks)",
+      "failure": "project_env_unsupported_python",
+      "ctx": {
+        "python_from": "3.9.1",
+        "python_to": "3.12",
+        "python_env": { "id": "env-1", "generation": "g1", "name": "sci", "version": "3.12.4" }
+      },
+      "remedy": {
+        "kind": "change_python",
+        "from": "3.9.1",
+        "to": "3.12",
+        "env": { "id": "env-1", "generation": "g1", "name": "sci", "version": "3.12.4" }
+      }
+    },
+    {
+      "name": "missing package that cannot be installed (private / local / conda-only) -> choose environment, not AI (even with AI connected)",
+      "failure": "missing_dependency",
+      "ctx": { "missing_installable": false, "missing_named": true, "ai_connected": true },
+      "remedy": { "kind": "choose_environment" }
+    },
+    {
+      "name": "missing package whose name is recognised but not installable here -> choose environment, no AI even when not connected",
+      "failure": "missing_dependency",
+      "ctx": { "missing_installable": true, "packages": [], "missing_named": true },
+      "remedy": { "kind": "choose_environment" }
+    },
+    {
+      "name": "missing dependency with no name to point the user at -> feedback",
+      "failure": "missing_dependency",
+      "ctx": { "ai_connected": true },
+      "remedy": { "kind": "feedback", "tried": [] }
     },
     {
       "name": "script error on the AI's just-edited version that ran before the edit -> revert_ai_edit",

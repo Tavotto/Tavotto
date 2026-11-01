@@ -40,6 +40,7 @@ import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
+import type { RemedyEnv } from '@/lib/fixRemedy'
 import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -243,8 +244,8 @@ const STEPS = ['prepare', 'run', 'edit'] as const
 const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
   // 状态图标：颜色 + 实心孪生双重提示（空心环 + 细线记号四种长得太像）；busy 是全产品唯一的 Spinner
   busy: <Spinner size={ICON_SIZE.md} className="text-accent" />,
-  ok: <CircleCheck playIn filled size={ICON_SIZE.md} className="shrink-0 text-ok" />,
-  bad: <CircleAlert playIn filled size={ICON_SIZE.md} className="shrink-0 text-danger" />,
+  ok: <CircleCheck playIn size={ICON_SIZE.md} className="shrink-0 text-ok" />,
+  bad: <CircleAlert playIn size={ICON_SIZE.md} className="shrink-0 text-danger" />,
   mute: <CircleQuestionMark filled size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
 }
 
@@ -682,6 +683,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.skipFolder')
     case 'use_builtin_python':
       return pt('btn.useBuiltinPython', { product: PRODUCT_NAME })
+    case 'switch_python':
+      return pt('btn.switchPython', { name: p.env.name })
     case 'revert_ai_edit':
       return pt('btn.revertAiEdit')
   }
@@ -743,6 +746,23 @@ function actionSettled(key: string, timeoutMs = 30_000): Promise<void> {
       if (!busy()) done()
     })
   })
+}
+
+/**
+ * 「改用 <环境名>」（Python 版本不合，后端挑的现成环境）并重跑一次：走既有的候选采用（`adoptCandidate`：后端现场再体检，
+ * 环境代对不上 / 被全局解释器压着就拒绝，原文如实回到卡上、不重跑），采用成功再「打开并运行」——与上面清选择那条同一个重跑模式。
+ * 只在用户点击时发生；用户之前显式挑的环境因此只会被用户自己的这一下换掉。
+ */
+async function switchToEnvAndRerun(entry: PrepEntry, env: RemedyEnv): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const err = await useEnvStore.getState().adoptCandidate({ id: env.id, generation: env.generation }, targetName(entry))
+  if (!guard.still()) return null
+  if (err) return err
+  // 采用会改 envStore，触发空闲会话的 recheck；先等它落定再 open（Codex #1595，同上面清选择那条）
+  await actionSettled(entry.key)
+  if (!guard.still()) return null
+  await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
 }
 
 /**
@@ -904,6 +924,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return skipFolderAndRerun(entry, p.token)
       case 'use_builtin_python':
         return switchToBuiltinPythonAndRerun(entry, p.scope)
+      case 'switch_python':
+        return switchToEnvAndRerun(entry, p.env)
       case 'revert_ai_edit':
         return revertAiEditAndRerun(entry, p.session)
     }
@@ -1516,9 +1538,9 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       case 'busy':
         return <Spinner size={ICON_SIZE.sm} className="text-accent" />
       case 'ok':
-        return <CircleCheck playIn filled size={ICON_SIZE.sm} className="shrink-0 text-ok" />
+        return <CircleCheck playIn size={ICON_SIZE.sm} className="shrink-0 text-ok" />
       case 'bad':
-        return <CircleAlert playIn filled size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+        return <CircleAlert playIn size={ICON_SIZE.sm} className="shrink-0 text-danger" />
       default:
         return <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
     }

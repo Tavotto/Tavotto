@@ -47,18 +47,21 @@ from . import (
     deprepair,
     dialogscan,
     entryfresh,
+    envadvice,
     execpolicy,
     execspec,
     fixrouter,
     nativesession,
     pool,
     preparation,
+    projectenv,
     pyversionfix,
     rasterhint,
     registry,
     scriptargs,
     sourcelang,
     taskdiag,
+    userenvs,
 )
 from .preparation import TARGET_SCRIPT
 
@@ -231,6 +234,19 @@ _MAX_CONSUMED_ACTIONS = 32
 _MAX_DEP_ATTEMPTS = 16
 #: 依赖装好之后等环境租约放掉再重新检查的上限（秒）；超了照样检查（租约只影响 `plan_for` 读到的瞬时状态）。
 _REPLAN_WAIT_S = 30.0
+
+
+def _user_chose_project_env(root: str) -> bool:
+    """本项目的解释器是用户显式挑的某个环境（`projectenv` 记录的授权来源 = confirmed、且不是默认链条）。自动换版本不许碰它。"""
+    try:
+        record = projectenv.remembered_record(Path(root))
+        # 「改用默认链条」不是挑了某个环境（那一条没有可被覆盖的解释器），不算
+        if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+            return False
+        return projectenv.consent_of(record) == projectenv.CONSENT_CONFIRMED
+    except Exception:  # noqa: BLE001 — 读不出记录按「没有显式选择」处理会误伤用户的选择：保守按显式算
+        LOG.exception("读取项目环境记录失败")
+        return True
 
 
 class SessionError(Exception):
@@ -2400,6 +2416,10 @@ class SessionService:
             return None
         if sess.python_change_run == sess.ledger.run:
             return None
+        if _user_chose_project_env(sess.project_root):
+            # 用户显式给本项目挑过环境：不替他换（自动换会把「记住的解释器」改成受管环境）。失败卡上的
+            # `change_python` 按钮仍在，由用户点了才切（ADR 0148 修订 2026-11-01）
+            return None
         adoption = (done_plan.environment or {}).get("adoption") or {}
         failure = pyversionfix.failure_from_report(
             script=str(done_plan.script or ""),
@@ -3153,6 +3173,7 @@ class SessionService:
         ai_edit = self._ai_edit_fact(sess, history)
         # 本可回退却没回退（账本记了理由：不是桌面发起的运行 / 用户只要 safe / 取消了…）：不能再标「静默换成原样运行」
         declined = any(r.get("declined") for r in history[-1:])
+        python_to, python_env = self._python_switch_target(sess, code, result)
         ctx = fixrouter.Ctx(
             ai_connected=connected,
             native_allowed=(
@@ -3165,6 +3186,15 @@ class SessionService:
             packages=packages,
             auto_install_allowed=auto_ok,
             python_from=str(env.get("python_version") or ""),
+            python_to=python_to,
+            python_env=python_env,
+            missing_named=bool(
+                str(
+                    (missing or {}).get("module")
+                    or ((result.error or {}).get("module") if result else "")
+                    or ""
+                )
+            ),
             no_figure_hint=no_figure_hint,
             source_language=sourcelang.extension_hint(script) if script else None,
             history=history,
@@ -3174,6 +3204,77 @@ class SessionService:
             ),
         )
         return fixrouter.choose(code, ctx)
+
+    def _python_switch_target(
+        self, sess: Session, code: str, result
+    ) -> tuple[str | None, dict | None]:
+        """Python 版本类失败 -> `(目标版本主.次, 现成环境或 None)`（ADR 0148 修订 2026-11-01）。只读：范围来自
+        `pyversionfix.required_span`（读声明文件），候选来自 `envadvice.recommend`（落盘线索 + 已有体检结论，不起解释器）。
+
+        现成环境 = 体检**确认健康**、版本落在范围内、不是内置 runtime、不是当前环境的那一个，按 `userenvs.rank`（来源 → 官方
+        验证 → 版本新）挑第一个。全局显式解释器压着时（采用会 409）不给。算不出范围 / 没有候选 -> 目标版本照给、环境 None（前端走选择器）。"""
+        if code not in fixrouter.PYTHON_VERSION_CODES:
+            return None, None
+        try:
+            adoption = (sess.plan.environment or {}).get("adoption") or {}
+            failure = pyversionfix.failure_from_report(
+                script=str(sess.plan.script or ""),
+                error=result.error if result else None,
+                not_used=adoption.get("not_used"),
+            )
+            if failure is None:
+                return None, None
+            span = pyversionfix.required_span(failure, sess.project_root)
+            if span is None:
+                return None, None
+            minors = span.minors()
+            to = f"{minors[0][0]}.{minors[0][1]}"  # minors 由高到低
+            rec = envadvice.recommend(sess.project_root, sess.plan.script)
+            if (rec.get("decision") or {}).get("locked_by"):
+                return to, None
+            picked = []
+            for c in rec.get("candidates") or ():
+                health = c.get("health") or {}
+                version = str(health.get("python_version") or "")
+                parts = version.split(".")
+                if (
+                    c.get("id") in (envadvice.BUILTIN_ID, None)
+                    or c.get("current")
+                    or c.get("status") != envadvice.STATUS_HEALTHY
+                    or len(parts) < 2
+                    or not (parts[0].isdigit() and parts[1].isdigit())
+                    or (int(parts[0]), int(parts[1])) not in minors
+                    or not pyversionfix._full_version_ok(version, span.patch_spec())
+                ):
+                    continue
+                picked.append(
+                    (
+                        userenvs.rank(
+                            {
+                                "satisfies": True,
+                                "source": (c.get("sources") or [""])[0],
+                                "label": c.get("name") or "",
+                                "support": health.get("support"),
+                                "python_version": version,
+                            }
+                        ),
+                        c,
+                    )
+                )
+            if not picked:
+                return to, None
+            best = min(picked, key=lambda t: t[0])[1]
+            version = str(best["health"]["python_version"])
+            name = str(best.get("name") or best.get("python_relative") or "")
+            return ".".join(version.split(".")[:2]), {
+                "id": best["id"],
+                "generation": best["generation"],
+                "name": name or f"Python {'.'.join(version.split('.')[:2])}",
+                "version": version,
+            }
+        except Exception:  # noqa: BLE001 — 找不到现成环境只意味着回到「选择运行环境」，不能让路由本身失败
+            LOG.exception("挑选满足版本的现成环境失败")
+            return None, None
 
     def _ai_edit_fact(self, sess: Session, history: tuple[dict, ...]) -> dict | None:
         """这份脚本此刻是不是改图助手刚改出来、还能原样撤销的那一版（TVD-H1M5）——是就回

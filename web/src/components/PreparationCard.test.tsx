@@ -13,6 +13,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Remedy } from '@/lib/fixRemedy'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -3175,7 +3176,7 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
         actions: [action('run'), action('recheck')],
         provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
         result: { status: 'error', error: { code: 'interpreter_cache_denied', message: 'x', params } },
-        remedy: { kind: 'change_python', from: '3.12.14', to: null },
+        remedy: { kind: 'change_python', from: '3.12.14', to: null, env: null },
       })
     const original = { setPython: useEnvStore.getState().setPython, setProjectPython: useEnvStore.getState().setProjectPython }
     const setPython = vi.fn(async (_: string | null) => null as string | null)
@@ -3296,6 +3297,71 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(panel().dataset.prepState).toBe('cache_denied')
       expect(primary()?.textContent).toBe('再试一次')
       expect(panel().textContent).not.toContain('自带的 Python')
+    })
+  })
+
+  describe('装不了的缺包 / Python 版本不合：主按钮是确定动作，不是 AI（ADR 0148 修订 2026-11-01）', () => {
+    const failedWith = (code: string, remedy: Remedy) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code, message: 'x' } },
+        remedy,
+      })
+    const env = { id: 'e1', generation: 'g1', name: 'sci', version: '3.12.4' }
+    const original = { adoptCandidate: useEnvStore.getState().adoptCandidate }
+    const adoptCandidate = vi.fn(async (_c: unknown, _s?: string) => null as string | null)
+    beforeEach(() => {
+      adoptCandidate.mockClear()
+      mockAct.mockClear()
+      useEnvStore.setState({ adoptCandidate: adoptCandidate as never })
+    })
+    afterEach(() => useEnvStore.setState(original))
+
+    it('装不了的缺包：主按钮是选环境（换用我的 Python），AI 修复是次按钮', async () => {
+      await mount()
+      await openWith(failedWith('missing_dependency', { kind: 'choose_environment' }))
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+      expect(primary()?.textContent).toBe('换用我的 Python')
+      expect(panel().querySelector('[data-prep-primary="ai_fix"]')).toBeNull()
+      expect(panel().querySelector('[data-prep-ai-fix]')).not.toBeNull()
+    })
+
+    it('版本不合且有满足的现成环境：主按钮「改用 sci」，点一次采用它再「打开并运行」', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(primary()?.dataset.prepPrimary).toBe('switch_python')
+      expect(primary()?.textContent).toBe('改用 sci')
+      expect(adoptCandidate).not.toHaveBeenCalled() // 渲染出按钮不等于切：没点就什么都没动
+      mockCreate.mockResolvedValueOnce(report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }))
+      await act(async () => primary()!.click())
+      expect(adoptCandidate.mock.calls.map((c) => c[0])).toEqual([{ id: 'e1', generation: 'g1' }])
+      expect(mockCreate).toHaveBeenCalledTimes(2)
+    })
+
+    it('采用被后端拒绝：回那句原文、不重跑', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      adoptCandidate.mockResolvedValueOnce('这个环境刚被重建过')
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个环境刚被重建过')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('版本不合、没有候选：主按钮是选择运行环境', async () => {
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env: null }))
+      expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+    })
+
+    it('英文界面没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(failedWith('project_env_unsupported_python', { kind: 'change_python', from: '3.9.1', to: '3.12', env }))
+      expect(primary()?.textContent).toBe('Switch to sci')
     })
   })
 

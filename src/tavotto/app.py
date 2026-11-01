@@ -12103,6 +12103,15 @@ def api_engine_environment_set():
                         "params": {"path": str(p)},
                     }
                 ), 400
+            if code == engine_projectenv.ERROR_CACHE_DENIED:
+                # 起得来，但在 Tavotto 的数据目录里建不了目录（TVD-B6MR）：存下它 = 之后每次运行都在用户代码之前失败
+                return jsonify(
+                    {
+                        "error": f"{p} 起出来的进程没法在 Tavotto 的缓存里新建文件夹",
+                        "code": engine_projectenv.ERROR_CACHE_DENIED,
+                        "params": {"path": str(p)},
+                    }
+                ), 400
             if code == engine_projectenv.ERROR_WORKER_IMPORT:
                 detail = str(health.get("error") or "")[:400]
                 return jsonify(
@@ -12364,6 +12373,8 @@ def _project_env_message(health: dict) -> str:
             "这个环境里能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来："
             f"{health.get('error', '')}"
         )
+    if code == engine_projectenv.ERROR_CACHE_DENIED:
+        return "这个环境的 Python 没法在 Tavotto 的缓存里新建文件夹，Tavotto 用不了它"
     return f"这个 Python 起不来：{health.get('detail', '')}"
 
 

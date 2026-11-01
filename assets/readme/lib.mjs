@@ -130,7 +130,9 @@ export async function boot(locale, recordVideoDir, opts = {}) {
   }
   if (!entry) throw new Error(`the app never printed its credentialed link\n${logs.join('')}`)
 
-  const browser = await chromium.launch()
+  // `opts.launch`：录 README 动图要 2 倍像素的屏幕流（`record-demo.mjs`）；headless shell 的
+  // screencast 只按 deviceScaleFactor 出 1 倍帧，得在启动参数里强制 2 倍
+  const browser = await chromium.launch(opts.launch ?? {})
   const ctx = await browser.newContext({
     viewport: VIEW,
     deviceScaleFactor: SCALE,

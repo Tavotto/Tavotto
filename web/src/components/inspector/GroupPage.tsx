@@ -101,7 +101,7 @@ export function GroupPage({
                   data-group-member={m.gid}
                   onClick={() => select(m.gid)}
                 >
-                  <Icon size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+                  <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-left">{engineLabel(m.label)}</span>
                   <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
                 </Button>

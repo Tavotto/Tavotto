@@ -588,3 +588,145 @@ def test_probe_passes_the_two_script_exit_codes_through_with_the_last_line():
 def test_on_windows_exit_code_one_is_not_called_a_crash():
     """退出码 1 在 Windows 上与我们自己的 kill 撞车：宁可少报一次崩溃。"""
     assert not pool.exited_on_its_own({"code": 1, "signal": None, "lingered": False})
+
+
+# ------------------------------------------------------------ 手写的参数检查（TVD-VB36）
+#: 反馈包 TVD-VB36 的形状：不用 argparse，自己数 `sys.argv`，不够就 `raise SystemExit("Usage: …")`。
+#: 以前它是 `script_exited`（「去掉那句 exit」），界面不给「运行参数」，用户只能去点 AI 修复，而修复工具设不了参数。
+MANUAL_USAGE = """\
+import sys
+import matplotlib.pyplot as plt
+
+if len(sys.argv) < 4:
+    raise SystemExit("Usage: script OUTDIR CE1 CE2")
+
+fig, ax = plt.subplots()
+ax.plot([1, 2], [3, 4])
+fig.savefig("Fig1.png")
+"""
+
+#: 检查写在 main() 里、退出写在 usage() 里：抛出点不在 if 之下，调用点在
+MANUAL_USAGE_HELPER = """\
+import sys
+import matplotlib.pyplot as plt
+
+def usage():
+    print("Usage: script OUTDIR CE1 CE2")
+    sys.exit(1)
+
+def main():
+    if len(sys.argv) != 4:
+        usage()
+    fig, ax = plt.subplots()
+    ax.plot([1, 2], [3, 4])
+    fig.savefig("Fig1.png")
+
+if __name__ == "__main__":
+    main()
+"""
+
+#: `try: sys.argv[1] except IndexError: sys.exit(…)`
+MANUAL_USAGE_TRY = """\
+from sys import argv, exit
+import matplotlib.pyplot as plt
+
+try:
+    outdir = argv[1]
+except IndexError:
+    exit("Usage: script OUTDIR")
+"""
+
+#: 读了 argv（一个开关），但退出与 argv 无关：仍是脚本自己 exit
+ARGV_FLAG_UNRELATED_EXIT = """\
+import sys
+import matplotlib.pyplot as plt
+
+debug = "--debug" in sys.argv
+fig, ax = plt.subplots()
+ax.plot([1, 2], [3, 4])
+fig.savefig("Fig1.png")
+if not debug:
+    sys.exit(3)
+"""
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "name, source",
+    [
+        ("usage.py", MANUAL_USAGE),
+        ("helper.py", MANUAL_USAGE_HELPER),
+        ("trial.py", MANUAL_USAGE_TRY),
+    ],
+)
+def test_a_hand_written_argv_check_that_exits_is_a_script_needing_arguments(figs, name, source):
+    (figs / name).write_text(source, encoding="utf-8")
+    with pytest.raises(pool.WorkerError) as err:
+        pool.build(name, str(figs), "__main__")
+    e = err.value
+    assert e.code == "script_needs_arguments", str(e)
+    assert "parse_kind" not in (e.extra or {}), "没有 argparse 的解析证据：不猜类别"
+    assert "Usage: script OUTDIR" in e.traceback_text  # 脚本自己写的用法在 traceback 区，用户看得到
+    assert "Usage" not in str(e), "SystemExit 的文字是用户的，不进 message"
+
+
+@needs_worker
+def test_reading_argv_does_not_make_an_unrelated_exit_an_argument_problem(figs):
+    (figs / "flag.py").write_text(ARGV_FLAG_UNRELATED_EXIT, encoding="utf-8")
+    with pytest.raises(pool.WorkerError) as err:
+        pool.build("flag.py", str(figs), "__main__")
+    assert err.value.code == "script_exited", str(err.value)
+
+
+@pytest.mark.parametrize(
+    "source, lines, expected",
+    [
+        # 抛出点在「条件读 argv」的 if 之下
+        ("import sys\nif len(sys.argv) < 3:\n    sys.exit('u')\n", [3], True),
+        ("import sys as s\nwhile len(s.argv) < 2:\n    raise SystemExit(1)\n", [3], True),
+        ("from sys import argv as av\nif not av[1:]:\n    raise SystemExit(1)\n", [3], True),
+        # 任一用户帧在 if 之下即可（usage() 的调用点）
+        ("import sys\ndef u():\n    sys.exit(1)\nif len(sys.argv) < 2:\n    u()\n", [5, 3], True),
+        # try 里读 argv、except 里退出
+        ("import sys\ntry:\n    a = sys.argv[1]\nexcept IndexError:\n    sys.exit(1)\n", [5], True),
+        # 不成立：退出在 else 侧（条件为假才走到；空 argv 下与参数的关系说不清）
+        ("import sys\nif '--x' in sys.argv:\n    pass\nelse:\n    sys.exit(1)\n", [5], False),
+        # 不成立：条件不读 argv
+        ("import os, sys\nif not os.path.exists('d.csv'):\n    sys.exit(1)\n", [3], False),
+        # 不成立：无条件退出
+        ("import sys\nx = sys.argv\nsys.exit(1)\n", [3], False),
+        # 不成立：`sys` 被用户自己的名字顶替
+        ("sys = object()\nif len(sys.argv) < 2:\n    raise SystemExit(1)\n", [3], False),
+        # 不成立：try 里不读 argv
+        ("import sys\ntry:\n    a = int('x')\nexcept ValueError:\n    sys.exit(1)\n", [5], False),
+        # 不成立（Codex #1605 P2）：try 里读了 argv 开关、也读了数据，except 接的是文件错误——补参数修不好它，
+        # 判成缺参数还会抢掉「缺数据 → 指认文件」的出路
+        (
+            "import sys\ntry:\n    v = '--verbose' in sys.argv\n    open('data.csv')\n"
+            "except OSError:\n    sys.exit(1)\n",
+            [6],
+            False,
+        ),
+        # 只认 `argv[i]` 越界的那类：IndexError / LookupError（也可在元组里）
+        (
+            "import sys\ntry:\n    a = sys.argv[1]\nexcept LookupError:\n    sys.exit(1)\n",
+            [5],
+            True,
+        ),
+        (
+            "import sys\ntry:\n    a = sys.argv[1]\nexcept (IndexError, KeyError):\n    sys.exit(1)\n",
+            [5],
+            True,
+        ),
+        # 不成立：裸 except / Exception 也接住了别的错误
+        ("import sys\ntry:\n    a = sys.argv[1]\nexcept Exception:\n    sys.exit(1)\n", [5], False),
+        ("import sys\ntry:\n    a = sys.argv[1]\nexcept:\n    sys.exit(1)\n", [5], False),
+        # 判不出：语法错 / 没有行号
+        ("if (:\n", [1], False),
+        ("import sys\nif len(sys.argv) < 3:\n    sys.exit('u')\n", [], False),
+    ],
+)
+def test_exit_controlled_by_argv(source, lines, expected):
+    from tavotto.engine import figcapture
+
+    assert figcapture.exit_controlled_by_argv(source, lines) is expected
