@@ -593,7 +593,7 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
             f"CLA 签名服务尚未启用（{prov.get('note') or 'provider.configured=false'}）"
             "——目前只有 .github/cla-policy.json 里点名豁免的账号、以及"
             "已与著作权人双签纸面协议（offline_signatures）的账号能通过。"
-            "想贡献请先开一个 issue 或写信 support@tavotto.com，维护者会走人工流程；"
+            "想贡献请先开一个 issue 或写信 contact@tavotto.com，维护者会走人工流程；"
             "启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md"
         )
     if reason == "provider_check_missing":

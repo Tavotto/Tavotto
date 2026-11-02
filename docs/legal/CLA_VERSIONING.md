@@ -106,7 +106,7 @@ answers "did this person sign?"; the repository answers "sign what, exactly?".
 
 While no provider is configured — which is the current state, deliberately —
 the only way to sign is the one the agreement itself names: the contributor
-signs the agreement text, sends it to <support@tavotto.com>, and the rights
+signs the agreement text, sends it privately to <contact@tavotto.com>, and the rights
 holder countersigns. **The executed copy (both signatures) is then the
 authoritative record**, held privately by the rights holder. It carries the
 contributor's postal address, so it never enters this repository.
