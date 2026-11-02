@@ -129,6 +129,7 @@
     "invalid_document": "Invalid layout (schema 2 or 3 required)",
     "invalid_entry": "Invalid entry function name: {{entry}}",
     "invalid_patches": "patches must be an array",
+    "invalid_purpose": "The render request has an invalid purpose: {{value}}. Refresh the page and try again.",
     "invalid_path": "Invalid path",
     "invalid_preview_dpi": "Invalid preview_dpi: {{value}}",
     "invalid_scale": "Invalid panel scale: {{value}}",

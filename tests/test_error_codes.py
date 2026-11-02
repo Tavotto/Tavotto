@@ -232,6 +232,7 @@ USER_VISIBLE_CODES = {
     # native 图（tavotto run）暂不支持自动修复：在任何渲染之前拒绝；产品名走 brand 常量
     "specfix_native_unsupported": {"product"},
     "invalid_patches": set(),
+    "invalid_purpose": {"value"},
     "invalid_width": {"value"},
     "invalid_preview_options": set(),
     "not_parameterizable": set(),
