@@ -396,3 +396,27 @@ def test_purpose_set_and_deferred_code_match_the_frontend():
     assert tuple(re.findall(r"'([a-z]+)'", union.group(1))) == pool.PURPOSES
     code = re.search(r"RENDER_DEFERRED_CODE = '([a-z_]+)'", ts)
     assert code is not None and code.group(1) == pool.BACKGROUND_DEFERRED
+
+
+def test_render_response_keeps_the_acquire_segment_timings(client, tmp_path, rig, monkeypatch):
+    """handler 拆成 `_api_engine_render_body` 之后，worker_get_ms 与池分段（#1637）仍在 timings 里。"""
+    _open_project(client, tmp_path)
+
+    class Hot(Worker):
+        built = True
+        rev = 1
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            return {"manifest": {"elements": []}, "warnings": [], "timings": {"canvas_draw_ms": 1.0}}
+
+    monkeypatch.setattr(pool, "_new_worker", lambda script, fd, entry, **kw: Hot(script, entry))
+    monkeypatch.setattr(
+        app_mod.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
+    resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert resp.status_code == 200
+    timings = resp.get_json()["timings"]
+    assert "worker_get_ms" in timings and timings["canvas_draw_ms"] == 1.0
+    assert set(pool.ACQUIRE_SEGMENTS) & set(timings), timings
