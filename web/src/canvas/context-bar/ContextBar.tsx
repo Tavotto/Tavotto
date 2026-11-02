@@ -16,6 +16,7 @@ import { useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
 import { CropBar } from './CropBar'
+import { LayoutGestureReadout } from './LayoutGestureBar'
 import { ElementQuickActions } from './ElementBar'
 import { ElementMultiBar, annotationsIn, elementMultiPlan, selectedElements } from './ElementMultiBar'
 import { elementHasQuick } from './elementQuick'
@@ -97,6 +98,7 @@ export function ContextBar() {
   const paletteOpen = usePalette((s) => s.open)
   const quickOpen = useQuickEdit((s) => s.target)
   const kind = useInteractionStore((s) => s.kind)
+  const layoutReadout = useInteractionStore((s) => s.layoutReadout)
   const objects = useDocumentStore((s) => s.doc.objects)
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
@@ -231,7 +233,16 @@ export function ContextBar() {
     tool === 'select' &&
     !dismissed
   // 拖动 / 缩放 / 框选 / 平移 / 参考线 / 绘制期间不出现；交互一结束、选区还在就回来
-  const visible = active && !dragging && kind === 'none'
+  // 例外（ADR 0161）：多图排版里面板的角缩放 / 边裁剪这两种手势，胶囊不藏，改为显示这一下拖动的含义
+  // （`interaction.layoutReadout`，手势算好、这里只读）。判据只认「读数在、且手势种类对得上」，
+  // 其余手势（移动、旋转、普通对象缩放、框选……）读数恒为 null，照旧拖动即藏
+  const layoutGesture =
+    mode === 'object' &&
+    obj?.type === 'panel' &&
+    layoutReadout != null &&
+    ((layoutReadout.kind === 'scale' && kind === 'resize') ||
+      (layoutReadout.kind === 'crop' && kind === 'crop'))
+  const visible = active && (layoutGesture || (!dragging && kind === 'none'))
 
   const insets = sidebarInsets({ layout, leftOpen, leftWidth, rightOpen, rightWidth })
   const freeWidth = freeWidthOf(window.innerWidth, insets)
@@ -453,7 +464,9 @@ export function ContextBar() {
       data-capsule
       onContextMenu={(e) => e.preventDefault()}
     >
-      {mode === 'crop' && cropping ? (
+      {layoutGesture && layoutReadout ? (
+        <LayoutGestureReadout readout={layoutReadout} />
+      ) : mode === 'crop' && cropping ? (
         <CropBar panelId={cropping.id} />
       ) : mode === 'element' && panel && gid ? (
         <>

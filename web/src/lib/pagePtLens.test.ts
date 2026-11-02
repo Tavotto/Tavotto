@@ -262,6 +262,9 @@ const ALLOW: Record<string, string[]> = {
   '/src/components/StyleDialog.tsx': ['panelScale'],
   // 规范修复事务（ADR 0080）：缩放比原样随请求交给后端去判，自己不换算任何页面 pt 值
   '/src/store/issueFixActions.ts': ['panelScale'],
+  // 排版里面板角缩放手势的状态句（ADR 0161）：只把 `panelScale` 原样 ×100 显示成缩放百分比，
+  // 图内文字 pt 走 `units.effectivePt`；不写任何页面 pt 值，也不换算 override
+  '/src/canvas/interactions.ts': ['panelScale'],
   // 写入器本身：按缩放比 memo 住换好的字段表（与 `lens.field` 同一个函数，不是第二份换算）
   '/src/components/inspector/textStyleAdapter.ts': ['pageField'],
   // 样式面板的纯计算模型：uniform 读数换成页面值，调的就是透镜底下那个 `toPageValue`（同一个函数）

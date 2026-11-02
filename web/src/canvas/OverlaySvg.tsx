@@ -39,9 +39,9 @@ import {
   startLegendScale,
   startPatchResize,
   startGuideDrag,
-  startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
+import { startPanelHandleDrag } from './panelEdgeCrop'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
@@ -321,7 +321,7 @@ export function OverlaySvg() {
             box={toScreen(single, t)}
             dirs={dirsFor(single)}
             cursor={(dir) => cursorFor(dir, objectRotation(single))}
-            onPointerDown={(e, dir) => startResizeDrag(e, single.id, dir)}
+            onPointerDown={(e, dir) => startPanelHandleDrag(e, single.id, dir)}
           />
           {dirsFor(single).map((dir) => (
             <HandleMark
@@ -329,7 +329,7 @@ export function OverlaySvg() {
               at={handlePos(toScreen(single, t), dir)}
               hook={{ 'data-handle': dir }}
               cursor={cursorFor(dir, objectRotation(single))}
-              onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
+              onPointerDown={(e) => startPanelHandleDrag(e, single.id, dir)}
             />
           ))}
           {isLinear(single) && <LinearEndpoints obj={single} t={t} />}

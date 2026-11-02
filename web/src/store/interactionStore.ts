@@ -28,6 +28,33 @@ export interface SnapFeedback {
   target?: Rect
 }
 
+/**
+ * 多图排版里面板角缩放 / 边裁剪这一下拖动的含义（ADR 0161）：胶囊（`ContextBar`）读它画状态句，
+ * **只翻译、不判断**——语气（`low`）与停靠状态（`state`）都由手势算好放进来。
+ * 只是画布叠加层的读数，不进文档；`end()` 清掉。
+ */
+export type LayoutReadout =
+  | {
+      kind: 'scale'
+      /** 面板缩放百分比（摆放宽度 / 原生宽度），起手 → 此刻 */
+      fromPct: number
+      toPct: number
+      /** 图内文字等效 pt；位图源没有 = null */
+      fromPt: number | null
+      toPt: number | null
+      /** 低于当前期刊 / 规范下限（读不到下限就是 false） */
+      low: boolean
+      /** 标注怎么办：`on` = 一起缩放（count 个）、否则不动 */
+      follow: { on: boolean; count: number }
+    }
+  | {
+      kind: 'crop'
+      side: 'l' | 'r' | 't' | 'b'
+      state: 'full' | 'trim' | 'tight' | 'blocked' | 'content'
+      /** 这条边此刻裁掉的宽度 / 高度（mm） */
+      mm: number
+    }
+
 const NO_FEEDBACK: SnapFeedback[] = []
 
 const sameRect = (a: Rect | undefined, b: Rect | undefined) =>
@@ -103,6 +130,9 @@ interface InteractionState {
     sizeMm: [number, number]
   } | null
 
+  /** 多图排版面板角缩放 / 边裁剪的状态句数据（拖动期间胶囊显示它） */
+  layoutReadout: LayoutReadout | null
+
   begin: (kind: DragKind) => void
   end: () => void
   setMarquee: (r: Rect | null) => void
@@ -119,6 +149,7 @@ interface InteractionState {
   setPageEdge: (p: InteractionState['pageEdge']) => void
   setFigureEdgeBox: (b: InteractionState['figureEdgeBox']) => void
   setFigureFramePending: (p: InteractionState['figureFramePending']) => void
+  setLayoutReadout: (r: LayoutReadout | null) => void
 }
 
 export const useInteractionStore = create<InteractionState>((set) => ({
@@ -138,6 +169,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   pendingGuide: null,
   pageEdge: null,
   figureEdgeBox: null,
+  layoutReadout: null,
   figureFramePending: null,
 
   // 一次拖动 = 性能探针的一个片段（ADR 0075）；没在录制时两个调用都是空转
@@ -157,6 +189,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       pendingGuide: null,
       pageEdge: null,
       figureEdgeBox: null,
+      layoutReadout: null,
       gidDrag: null,
       arrowPreview: null,
       elementPreview: null,
@@ -185,4 +218,5 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setPageEdge: (pageEdge) => set({ pageEdge }),
   setFigureEdgeBox: (figureEdgeBox) => set({ figureEdgeBox }),
   setFigureFramePending: (figureFramePending) => set({ figureFramePending }),
+  setLayoutReadout: (layoutReadout) => set({ layoutReadout }),
 }))
