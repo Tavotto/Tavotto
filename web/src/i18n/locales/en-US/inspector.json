@@ -150,7 +150,7 @@
     "portrait": "Portrait",
     "landscape": "Landscape",
     "export": "Export",
-    "exportSummary": "{{formats}} · {{dpi}} ppi"
+    "exportSummary": "{{formats}} · {{dpi}} dpi"
   },
   "closePanel": "Close right panel",
   "control": {

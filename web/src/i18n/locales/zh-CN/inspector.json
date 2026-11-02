@@ -148,7 +148,7 @@
     "portrait": "竖向",
     "landscape": "横向",
     "export": "导出",
-    "exportSummary": "{{formats}} · {{dpi}} ppi"
+    "exportSummary": "{{formats}} · {{dpi}} dpi"
   },
   "closePanel": "关闭右侧面板",
   "control": {

@@ -886,15 +886,15 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
             checks["image_ppi"] = NOT_APPLICABLE
         elif any(im.get("ppi") is None for im in observed["images"]):
             checks["image_ppi"] = UNKNOWN
-            notes.append("有位图的有效 ppi 算不出（内联图或退化 CTM）")
+            notes.append("有位图的有效 dpi 算不出（内联图或退化 CTM）")
         elif min_ppi is None:
             checks["image_ppi"] = UNKNOWN
-            notes.append("没有规范给出最低 ppi，位图密度只记录不判")
+            notes.append("没有规范给出最低 dpi，位图密度只记录不判")
         else:
             low = [im for im in images if min(im["ppi"]) + 1e-6 < min_ppi]
             checks["image_ppi"] = FAILED if low else VERIFIED
             if low:
-                notes.append(f"{len(low)} 张位图的有效 ppi 低于规范 {min_ppi}")
+                notes.append(f"{len(low)} 张位图的有效 dpi 低于规范 {min_ppi}")
     boxes = plan.get("object_boxes")
     if not boxes:
         checks["clipping"] = UNKNOWN
@@ -941,7 +941,7 @@ def _check_raster(observed: dict, plan: dict, profile: dict | None) -> tuple[dic
     else:
         checks["dpi_tag"] = VERIFIED if abs(float(dpi) - float(ppi)) <= DPI_TOL else FAILED
         if checks["dpi_tag"] == FAILED:
-            notes.append(f"文件声明的密度 {dpi} 与本次请求的 {ppi} ppi 不符")
+            notes.append(f"文件声明的密度 {dpi} 与本次请求的 {ppi} dpi 不符")
     min_ppi = (
         float(profile.get("min_raster_dpi")) if profile and profile.get("min_raster_dpi") else None
     )
@@ -959,11 +959,11 @@ def _check_raster(observed: dict, plan: dict, profile: dict | None) -> tuple[dic
     if min_ppi is None or effective is None:
         checks["raster_density"] = UNKNOWN
         if min_ppi is None:
-            notes.append("没有规范给出最低 ppi，密度只记录不判")
+            notes.append("没有规范给出最低 dpi，密度只记录不判")
     else:
         checks["raster_density"] = VERIFIED if effective + 1e-6 >= min_ppi else FAILED
         if checks["raster_density"] == FAILED:
-            notes.append(f"有效密度 {effective:.1f} ppi 低于规范 {min_ppi}")
+            notes.append(f"有效密度 {effective:.1f} dpi 低于规范 {min_ppi}")
     return checks, notes
 
 

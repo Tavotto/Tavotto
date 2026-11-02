@@ -523,7 +523,7 @@ export default interface Resources {
       "mm": "{{value}} mm",
       "mmPair": "{{a}}, {{b}} mm",
       "mmSize": "{{w}} × {{h}} mm",
-      "ppi": "{{value}} ppi",
+      "ppi": "{{value}} dpi",
       "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
@@ -4071,7 +4071,7 @@ export default interface Resources {
       },
       "unit": {
         "mm": "mm",
-        "ppi": "ppi",
+        "ppi": "dpi",
         "pt": "pt"
       },
       "valueArrow": "{{current}} → {{expected}}",
@@ -4192,7 +4192,7 @@ export default interface Resources {
       "clearAll": "全部清除",
       "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
       "export": "导出",
-      "exportSummary": "{{formats}} · {{dpi}} ppi",
+      "exportSummary": "{{formats}} · {{dpi}} dpi",
       "grid": "网格",
       "gridSize": "网格间距",
       "gridSummary": "网格 {{size}} mm",

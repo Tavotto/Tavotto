@@ -180,7 +180,7 @@ describe('CanvasPage', () => {
 
   it('导出摘要跟着取回的后端默认值重读：画布页先挂着、取回后不停在空缓存的 600 ppi（Codex #829）', async () => {
     const summary = () => container.querySelector('[data-canvas-export-summary]')!.textContent ?? ''
-    expect(summary()).toContain('600 ppi') // 前提：挂载时本机缓存是空的
+    expect(summary()).toContain('600 dpi') // 前提：挂载时本机缓存是空的
     const prev = globalThis.fetch
     globalThis.fetch = (async () =>
       new Response(
@@ -194,15 +194,15 @@ describe('CanvasPage', () => {
     } finally {
       globalThis.fetch = prev
     }
-    expect(summary()).toContain('TIFF · 1200 ppi')
+    expect(summary()).toContain('TIFF · 1200 dpi')
   })
 
   it.each([
     [['pdf'], 'PDF', false],
     [['pdf', 'eps'], 'PDF · EPS', false],
-    [['png'], 'PNG · 900 ppi', true],
-    [['pdf', 'png'], 'PDF · PNG · 900 ppi', true],
-  ])('导出摘要只在有位图格式时报 ppi：%j（Codex #829 P2，判据 hasRaster）', async (formats, text, raster) => {
+    [['png'], 'PNG · 900 dpi', true],
+    [['pdf', 'png'], 'PDF · PNG · 900 dpi', true],
+  ])('导出摘要只在有位图格式时报 dpi：%j（Codex #829 P2，判据 hasRaster）', async (formats, text, raster) => {
     const summary = () => container.querySelector('[data-canvas-export-summary]')!.textContent ?? ''
     const prev = globalThis.fetch
     globalThis.fetch = (async () =>
@@ -219,7 +219,7 @@ describe('CanvasPage', () => {
     }
     // 先验落点：取回的格式确实进了摘要
     expect(summary()).toContain(text)
-    expect(summary().includes('ppi')).toBe(raster)
+    expect(summary().includes('dpi')).toBe(raster)
   })
 
   it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
