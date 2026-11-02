@@ -777,9 +777,12 @@ class SendSession:
     reply_allowed: bool = field(default=True, repr=False)
     #: 服务端把带 `want_reply` 的 init 当请求形状错拒了（尚未升级的旧版）：本会话此后不再带它
     reply_refused: bool = False
-    #: 服务端随 init 给的关联来信 (report_id, message_id, reply_token)。**只在这里**，不进 public() / 日志；
+    #: 服务端随 init 给的关联来信 (report_id, message_id, reply_token, 发这一份时的附言快照)。**只在这里**，不进 public() / 日志；
     #: 带着 report_id 是为了对账换 id 后不把旧报告的令牌登记到新报告名下
-    reply: tuple[str, str, str] | None = field(default=None, repr=False)
+    reply: tuple[str, str, str, str] | None = field(default=None, repr=False)
+    #: init 重放 / 对账已确认这次发送其实早已送达：`_flow` 据此提前返回，**state 仍留在 sending**——
+    #: done 只在 `_settle` 里、关联来信登记完之后才与 `reply_inbox` 一起发布（状态轮询见到 done 就停，不能先于登记）
+    landed: bool = field(default=False, repr=False)
     #: 关联来信已登记进本机收件记录（落盘成功）——界面据此说「作者回复会出现在我的来信」
     reply_inbox: bool = False
 
@@ -1098,6 +1101,7 @@ def start(
         sess.summary = summary
         sess.want_reply = want_reply
         sess.reply_allowed = reply is True
+        sess.landed = False
         sess.state, sess.stage, sess.failure, sess.retry_after = "sending", "init", "", None
         sess.cancel_raced = False
         sess.touched = _clock()
@@ -1266,6 +1270,8 @@ def _settle(
             final, clear = ("cancelled" if user_cancel else "failed"), True
     else:
         raced = sess.cancel.is_set()  # 成功收尾，取消事件只是赶在了成功之后
+    # 登记先于发布 done：状态轮询一见到 done 就停，`reply_inbox` 必须与 done 同时可见
+    registered = _register_reply(sess, sess.report_id) if final == "done" else False
     with _LOCK:
         if clear:
             sess.server_open = False
@@ -1281,13 +1287,12 @@ def _settle(
             sess.state, sess.failure, sess.retry_after = "failed", code or "internal", retry_after
         else:
             sess.state, sess.failure = "done", ""
+            sess.reply_inbox = registered
             sess.cancel_raced = raced
             sess.bundle = None  # 发完了：释放内存里的包
             sess.token, sess.spec, sess.server_open = "", None, False
         if sess.discard_after:
             _discard_locked(sess)
-    if final == "done":
-        _register_reply(sess)
     _log({"done": "ok"}.get(final, final if final != "failed" else (code or "internal")), stage)
 
 
@@ -1298,7 +1303,7 @@ def _contact_enabled() -> bool:
     return contactsend.enabled()
 
 
-def _parse_reply(report_id: str, raw: object) -> tuple[str, str, str] | None:
+def _parse_reply(report_id: str, raw: object, note: str) -> tuple[str, str, str, str] | None:
     """服务端可选的 `reply`：id 不是 `TVM-…`、令牌不是 64 位小写 hex 就整个丢掉——只是没有回信通道，不让发送失败。"""
     from . import contactinbox
 
@@ -1311,38 +1316,33 @@ def _parse_reply(report_id: str, raw: object) -> tuple[str, str, str] | None:
         and isinstance(tok, str)
         and _TOKEN.match(tok)
     ):
-        return (report_id, mid, tok)
+        return (report_id, mid, tok, note)
     return None
 
 
-def _register_reply(sess: SendSession) -> None:
-    """报告确认送达后，把关联来信登记进「联系作者」的收件记录（轮询代码照旧）。联系作者关了（硬开关 / 无线路）不登记。
-    不在 `_LOCK` 里调用：落盘是文件 IO。登记幂等（同编号只补齐）。"""
+def _register_reply(sess: SendSession, report_id: str) -> bool:
+    """报告确认送达后，把关联来信登记进「联系作者」的收件记录（轮询代码照旧）；返回是否落盘成功。
+    联系作者关了（硬开关 / 无线路）或本次不要回信通道（`reply_allowed`）不登记。不在 `_LOCK` 里调用：落盘是文件 IO。
+    登记幂等（同编号只补齐）；附言用**发那一份报告时**的快照（`reply[3]`），不是此刻的 `sess.params`——
+    改附言重试后对账出「上一份其实已送达」时，登记的是上一份的附言。"""
     from . import contactinbox, contactsend
 
     with _LOCK:
-        reply, report_id, note = sess.reply, sess.report_id, (sess.params or ("", ""))[1]
+        reply, allowed = sess.reply, sess.reply_allowed
         target = resolve_target()
-    if (
-        not sess.reply_allowed
-        or reply is None
-        or reply[0] != report_id
-        or target is None
-        or not contactsend.enabled()
-    ):
-        return
-    ok = contactinbox.add(
+    if not allowed or reply is None or reply[0] != report_id or target is None:
+        return False
+    if not contactsend.enabled():
+        return False
+    return contactinbox.add(
         reply[1],
         reply[2],
         contactsend.route_label(target),
         delivered=True,
-        body=note,
+        body=reply[3],
         kind="report",
         report_id=report_id,
     )
-    if ok:
-        with _LOCK:
-            sess.reply_inbox = True
 
 
 def _flow(sess: SendSession, target: Target) -> None:
@@ -1353,12 +1353,12 @@ def _flow(sess: SendSession, target: Target) -> None:
     _check_cancel(sess)
     if sess.reconcile is not None:
         _reconcile_previous(sess, target)
-        if sess.state == "done":
+        if sess.landed:
             return
         _check_cancel(sess)
     if not sess.token:
         _init(sess, target, category, note, len(data))
-        if sess.state == "done":
+        if sess.landed:
             return
     if not sess.uploaded and sess.spec is not None:
         _check_cancel(sess)
@@ -1388,7 +1388,7 @@ def _reconcile_previous(sess: SendSession, target: Target) -> None:
         sess.report_id = old[0]
         sess.complete_sent = True
         if outcome == CANCEL_COMPLETE:
-            sess.state, sess.server_open = "done", False
+            sess.landed, sess.server_open = True, False
             return
     raise _Unknown
 
@@ -1448,13 +1448,13 @@ def _init(sess: SendSession, target: Target, category: str, note: str, size: int
         or not _REPORT_ID.match(report_id)
     ):
         raise _Failure("bad_response")
-    reply = _parse_reply(report_id, obj.get("reply"))
+    reply = _parse_reply(report_id, obj.get("reply"), note)
     if reply is not None:
         with _LOCK:
             sess.reply = reply
     if state == "complete":  # 幂等重放：这次发送早已成功（丢了 complete 的响应）
         with _LOCK:
-            sess.report_id, sess.state, sess.server_open = report_id, "done", False
+            sess.report_id, sess.landed, sess.server_open = report_id, True, False
         return
     token = obj.get("complete_token")
     if (
@@ -1615,7 +1615,8 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
 
     def run() -> None:
         outcome = _cancel_remote(snapshot, target)
-        raced_done = False
+        # 确认已送达：先登记关联来信，再在锁里发布 done + reply_inbox（轮询见到 done 就停）
+        registered = _register_reply(sess, report_id) if outcome == CANCEL_COMPLETE else False
         with _LOCK:
             if sess.dropped:
                 return  # 会话已被丢弃 / 替换：迟到的答复不碰任何现役会话
@@ -1625,7 +1626,7 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
                     sess.state, sess.stage, sess.failure = "done", "", ""
                     sess.cancel_raced = True
                     sess.bundle = None
-                    raced_done = True
+                    sess.reply_inbox = registered
             elif sess.state == "cancelling":
                 if outcome == CANCEL_UNKNOWN and complete_sent:
                     sess.report_id = report_id
@@ -1636,7 +1637,5 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
                     sess.state, sess.stage, sess.failure = "cancelled", "", ""
             if sess.discard_after:
                 _discard_locked(sess)
-        if raced_done:
-            _register_reply(sess)
 
     threading.Thread(target=run, name="tavotto-diag-cancel", daemon=True).start()

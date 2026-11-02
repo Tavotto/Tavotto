@@ -224,6 +224,7 @@ def test_unknown_reconciled_as_delivered_registers_the_old_reply(srv):
     assert len(srv.reports) == 1 and len(_inits(srv)) == 1
     (rec,) = _records()
     assert rec["report_id"] == first
+    assert rec["body"] == NOTE, "登记的是上一份报告当时的附言，不是改过的新附言"
     assert rec["message_id"] == srv.reports[first].reply["message_id"]
 
 
@@ -300,3 +301,53 @@ def test_api_passes_reply_false_through(monkeypatch):
     for body, want in (({"confirm": True, "reply": False}, False), ({"confirm": True}, True)):
         client.post("/api/diagnostics/send/x/send", json=body)
         assert seen["reply"] is want
+
+
+def test_done_is_published_only_after_the_inbox_registration_finished(srv, monkeypatch):
+    """状态轮询一见 done 就停：登记还没落盘时不许先发布 done（否则前端永远看不到 reply_inbox）。"""
+    import threading
+
+    srv.accepts_want_reply = True
+    entered, release = threading.Event(), threading.Event()
+    real_add = contactinbox.add
+
+    def slow_add(*a, **kw):
+        entered.set()
+        assert release.wait(15)
+        return real_add(*a, **kw)
+
+    monkeypatch.setattr(contactinbox, "add", slow_add)
+    pid = _send()
+    assert entered.wait(15)
+    during = diagsend.status(pid, scope=PJ)
+    assert during["state"] != "done", during
+    assert "reply_inbox" not in during
+    release.set()
+    st = _wait(pid, {"done"})
+    assert st["reply_inbox"] is True
+
+
+def test_replay_complete_also_waits_for_registration(srv, monkeypatch):
+    """init 回 complete 的重放分支同样不许提前 done。"""
+    import threading
+
+    srv.accepts_want_reply = True
+    srv.force("complete", Forced("drop_after"), times=diagsend.COMPLETE_ATTEMPTS)
+    pid = _send()
+    _wait(pid, {"failed"})
+    sess = diagsend._get(pid, PJ)
+    sess.token, sess.spec, sess.uploaded = "", None, True
+    entered, release = threading.Event(), threading.Event()
+    real_add = contactinbox.add
+
+    def slow_add(*a, **kw):
+        entered.set()
+        assert release.wait(15)
+        return real_add(*a, **kw)
+
+    monkeypatch.setattr(contactinbox, "add", slow_add)
+    diagsend.start(pid, confirmed=True, category="render_failure", note=NOTE, scope=PJ)
+    assert entered.wait(15)
+    assert diagsend.status(pid, scope=PJ)["state"] != "done"
+    release.set()
+    assert _wait(pid, {"done"})["reply_inbox"] is True
