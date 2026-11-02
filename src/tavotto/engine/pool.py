@@ -509,6 +509,13 @@ _lock = threading.Lock()
 ACQUIRE_SEGMENTS = (
     "resolve_python_ms",  # 解析项目该用的解释器（含构造函数里的那一次）
     "env_decide_ms",  # 首开环境决定 / 体检（ENVIRONMENT_DECIDERS）
+    # 下面五段是 `resolve_python_ms` / `env_decide_ms` 里面的**子段**（嵌套，不可与父段相加；并发探测时它们互相重叠），
+    # 只在真起了那个探测（缓存未命中）时才有键：拆首开那 1~2 秒花在哪个子进程上。
+    "probe_matplotlib_ms",  # 解释器体检 `import matplotlib`（`_has_matplotlib`）
+    "probe_facts_ms",  # 目标环境事实探测（`depplan.target_facts`）
+    "probe_base_python_ms",  # 基础解释器探测（`import venv`，`managedenv.base_python`）
+    "probe_login_shell_ms",  # 问用户登录 shell 的 python（macOS / Linux）
+    "probe_user_envs_ms",  # 用户环境发现整体（含 Conda / pyenv / Windows 注册表；登录 shell 命中预取缓存后只剩其余部分）
     "launcher_prewarm_ms",  # Conda 激活捕获（锁外）
     "watch_sync_ms",  # 新会话前的项目监视同步（COLD_ACQUIRE_OBSERVER）
     "retire_wait_ms",  # 等旧会话确认关闭
@@ -535,6 +542,61 @@ def _seg(name: str):
         yield
     finally:
         cur[name] = cur.get(name, 0.0) + (time.perf_counter() - t0) * 1000
+
+
+segment = _seg  # 给别的模块（deprepair）在自己的探测外面记子段用；不在 acquire 里什么都不做
+
+
+def _timed_probe(name: str):
+    """装饰器：函数每次被调用都把耗时记进子段 `name`（调用方保证只在真探测时才调它）。"""
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with _seg(name):
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return deco
+
+
+def run_probes_concurrently(*thunks):
+    """并发跑若干互不依赖的探测，回各自结果（按传入顺序）。**结果与异常和依次串行跑逐项对得上**：
+
+    * 全部跑完才返回 / 抛出；多个失败时抛**传入顺序里最靠前**的那个（串行时它先出，后面的根本不会跑）；
+    * 第一个探测在调用线程里跑，其余各起一条守护线程，并带上调用线程的取会话分段表（子段照常记）；
+    * 以下情况退回串行、不起任何线程：只有一个探测；池锁正被持着（不在持锁时起线程去等可能要它的东西）；
+      调用线程在 `launcher.no_capture()` 里（该标记是线程局部的，新线程继承不了）；
+    * 每个探测各自的超时预算不变，总耗时 ≈ 最长的那个而不是总和。
+    调用方负责只在「缓存未命中、真要探」时才调用：命中缓存的热路径一行都不多跑。"""
+    if len(thunks) < 2 or _lock.locked() or getattr(launcher_mod._no_capture, "on", False):
+        return tuple(t() for t in thunks)
+    cur = getattr(_TRACE, "cur", None)
+    results: list = [None] * len(thunks)
+    errors: list = [None] * len(thunks)
+
+    def run(i: int, inherit: bool) -> None:
+        if inherit:
+            _TRACE.cur = cur
+        try:
+            results[i] = thunks[i]()
+        except BaseException as exc:  # noqa: BLE001 — 原样带回调用线程按顺序抛
+            errors[i] = exc
+
+    threads = [
+        threading.Thread(target=run, args=(i, True), daemon=True, name="tavotto-probe")
+        for i in range(1, len(thunks))
+    ]
+    for t in threads:
+        t.start()
+    run(0, False)
+    for t in threads:
+        t.join()
+    for exc in errors:
+        if exc is not None:
+            raise exc
+    return tuple(results)
 
 
 @contextlib.contextmanager
@@ -1884,6 +1946,7 @@ def worker_env(python: str, source: str, *, base: dict | None = None) -> dict | 
 _HAS_MPL_BUDGET_S = 30.0
 
 
+@_timed_probe("probe_matplotlib_ms")
 def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """真去 import 一次。manifest 说装了不算数——DLL 缺失、被杀毒软件隔离了
     某个 .pyd，都是「文件在但 import 不了」。
