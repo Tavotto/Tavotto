@@ -65,7 +65,7 @@ order: 60
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
-- **会话池上限 = `pool.max_alive()`，不是常数（ADR 0159）**：`clamp(3, 可用内存×0.5÷500MiB, 8)`，读不到内存回 3，`TAVOTTO_MAX_ALIVE` 覆盖；
+- **会话池上限 = `pool.max_alive()`，不是常数（ADR 0159）**：`clamp(3, (可用内存 + 池内活会话×500MiB)×0.5÷500MiB, 8)`（池自己会话占的内存算回预算，否则上限随会话增多而自降、振荡），读不到内存回 3，下降不足 `MAX_ALIVE_HYSTERESIS`（2）沿用旧值，`TAVOTTO_MAX_ALIVE` 覆盖；淘汰只在 `acquire()` 且活会话数 > 上限时发生；
   淘汰、冷启动容量、未确认退役的拒绝线、发布账本**只问这一个函数**（`tests/test_pool_adaptive_cap.py` 用 AST 钉「别处不许读 `MAX_ALIVE`」；
   测试里 `pool.MAX_ALIVE` 是覆盖钩子，conftest 默认钉成 3）。读内存的 `engine/sysmem.py` 纯标准库，读不到一律下限，且不许在持 `_lock` 时调。
   取会话带闭集意图 `purpose`（`foreground` 缺省 / `neighbour`，`acquire_purpose()` 上下文，请求体可选字段）：`neighbour` 命中热会话不刷新 `last_used`；
