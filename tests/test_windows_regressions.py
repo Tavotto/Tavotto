@@ -4095,3 +4095,36 @@ def test_owned_pip_output_with_a_chinese_path_decodes_cleanly(tmp_path, monkeypa
     if locale.getpreferredencoding(False).replace("-", "").lower() != "utf8":
         raw = _pip_says(base, target)
         assert "中文目录" not in raw, "前提不成立：不补 UTF-8 也没乱码，这台机器上反证不了"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="260 字符限制只在 Windows 上存在")
+def test_convert_candidate_workspace_survives_paths_over_260_chars(tmp_path, monkeypatch):
+    """issue #1623：项目里数据文件的相对路径很深时，转换候选工作区（data_dir/cache/ai_convert/<sid>/project_context/…）
+    超过 260 字符也要建得出来（`LongPathsEnabled=0` 下曾 WinError 206 → internal_error）。"""
+    from tavotto.engine import ai_convert, convertcontext, longpath
+
+    monkeypatch.setattr(ai_convert, "CONVERT_DIR", tmp_path / "convert")
+    figs = tmp_path / "figs"
+    # 项目侧路径约 240 字符（普通 API 还能读），候选侧多出 convert/<sid>/project_context 约 30 字符 → 超 260
+    room = 240 - len(str(figs / "measurement.csv")) - 1
+    parts = []
+    while room > 0:
+        parts.append(("实验数据目录" * 10)[: min(60, room - 1)] or "d")
+        room -= len(parts[-1]) + 1
+    rel_dir = Path(*parts)
+    long_dir = longpath.long(figs / rel_dir)
+    long_dir.mkdir(parents=True)
+    (long_dir / "measurement.csv").write_bytes(b"x,y\n1,2\n")
+    script = figs / "fig.R"
+    script.write_bytes(f'd <- read.csv("{(rel_dir / "measurement.csv").as_posix()}")\n'.encode())
+    cand = ai_convert.create_candidate(
+        "0123456789ab", script, figs, "fig.R", library=None, source_language="r"
+    )
+    try:
+        assert len(str(cand.dir / convertcontext.DIRECTORY / rel_dir / "measurement.csv")) > 260
+        copied = longpath.long(cand.dir / convertcontext.DIRECTORY / rel_dir / "measurement.csv")
+        assert copied.read_bytes() == b"x,y\n1,2\n"
+        assert not str(cand.dir).startswith("\\\\?\\")  # 给 Codex 的路径保持普通形式
+    finally:
+        ai_convert.remove_dir(cand.dir)
+        assert not os.path.exists(longpath.extended(cand.dir))

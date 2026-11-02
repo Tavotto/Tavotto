@@ -28,3 +28,7 @@ A script that uses no plotting library and builds the SVG text itself (for examp
 ## Icon animations no longer overlap themselves
 
 Several interface icon animations had parts passing through each other while playing (the sheet in the folder icon poked out of the front panel, the two squares in the group icon merged, the envelope flap flipped through the top edge, the sun in the image icon crossed the mountain, the small sparkle touched the big one). Each animation now starts from the state before the action and ends at the resting icon without any parts crossing: lock drops its shackle in and unlock pops it out by the same distance, disconnect pulls the plug out of its socket, and distribute slides one block to even spacing. The disconnect, save and unlock icons were redrawn, and clicking "Disconnect" now plays the unplug motion.
+
+## Converting a script in a project with very long file paths no longer fails on Windows
+
+On Windows without long-path support, "Make editable version" for an R / MATLAB / Python script could fail straight away with a generic error when the project's data files sat in deeply nested or long-named folders: the working copy Tavotto prepares for the assistant went past the 260-character path limit. Tavotto now copes with long paths while preparing it. If a path still cannot be used, the card says a file path in the project is too long and the conversion did not start, instead of an unexplained error.

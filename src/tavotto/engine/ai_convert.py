@@ -46,6 +46,7 @@ from . import (
     convertoutputs,
     discover,
     execspec,
+    longpath,
     projectenv,
     rasterhint,
     registry,
@@ -261,7 +262,7 @@ def remove_dir(cdir: Path) -> None:
     """删候选目录；只删 `CONVERT_DIR` 直接子目录（防一个算错的路径把别处删掉）。"""
     try:
         if _under_convert_dir(cdir):
-            shutil.rmtree(Path(os.path.realpath(cdir)), ignore_errors=True)
+            shutil.rmtree(longpath.long(os.path.realpath(cdir)), ignore_errors=True)
     except OSError:
         pass
 
@@ -314,10 +315,13 @@ def create_candidate(
     cdir = CONVERT_DIR / _check_sid(sid)
     reference_name = None
     try:
-        cdir.mkdir(parents=True, exist_ok=False)
+        # Windows 上候选目录 + 项目相对路径可能超 260 字符：Tavotto 自己的文件操作走长路径形式，
+        # 交给 Codex 的 `-C` / 提示词里的 `cand.dir` 仍是普通形式
+        ldir = longpath.long(cdir)
+        ldir.mkdir(parents=True, exist_ok=False)
         base = script_path.read_bytes()
         # 候选目录在 Tavotto 数据目录里（不是项目）：这份是给 Agent 看的原脚本副本，不是用户脚本
-        reference_copy = cdir / Path(script_rel).name
+        reference_copy = ldir / Path(script_rel).name
         reference_copy.write_bytes(base)
         if (
             original_path is not None
@@ -326,9 +330,9 @@ def create_candidate(
             and original_path.suffix.lower() in _REFERENCE_EXT
             and original_path.stat().st_size <= REFERENCE_MAX_BYTES
         ):
-            (cdir / REFERENCE_DIR).mkdir()
+            (ldir / REFERENCE_DIR).mkdir()
             reference_name = original_path.name
-            (cdir / REFERENCE_DIR / reference_name).write_bytes(original_path.read_bytes())
+            (ldir / REFERENCE_DIR / reference_name).write_bytes(original_path.read_bytes())
         context = convertcontext.snapshot(
             project_root, script_rel, base, cdir, reference_files=reference_files
         )
@@ -351,8 +355,11 @@ def create_candidate(
                 project_root, exclude=_own_files(script_rel)
             ),
         )
-    except BaseException:
+    except BaseException as exc:
         remove_dir(cdir)
+        if longpath.is_too_long(exc):
+            # 长路径形式仍放不下（单段超长、超 32767 等）：给闭集失败码，不当 internal_error
+            raise ConvertError("workspace_path_too_long", 400) from exc
         raise
     return cand
 
@@ -373,7 +380,7 @@ def release(cand: ConvertCandidate) -> None:
 
 def clear_redirect_area(cand) -> bool:
     """清空候选的改道区（含只读文件：chmod u+w 后重试一次）。回 True = 已不存在。删不掉回 False，由调用方决定怎么办。"""
-    area = Path(cand.dir) / REDIRECT_DIRNAME
+    area = longpath.long(Path(cand.dir) / REDIRECT_DIRNAME)
     if not os.path.lexists(area):
         return True
     for attempt in range(2):
@@ -423,7 +430,7 @@ def keep_failed(cand: ConvertCandidate) -> bool:
     meta.pop("context", None)
     meta.pop("project_before", None)
     try:
-        atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
+        atomicio.write_bytes(longpath.long(cand.dir / META_NAME), atomicio.dumps_json(meta))
     except OSError:
         return False
     cand.kept_failed = True
@@ -1284,8 +1291,8 @@ def stage(cand: ConvertCandidate) -> None:
     }
     try:
         if cand.preview_svg:
-            (cand.dir / PREVIEW_NAME).write_text(cand.preview_svg, encoding="utf-8")
-        atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
+            longpath.long(cand.dir / PREVIEW_NAME).write_text(cand.preview_svg, encoding="utf-8")
+        atomicio.write_bytes(longpath.long(cand.dir / META_NAME), atomicio.dumps_json(meta))
     except OSError as exc:
         raise TaskError("stage_failed", type(exc).__name__) from exc
     cand.ready = True
@@ -1318,7 +1325,7 @@ def _hold_meta(cand: ConvertCandidate, state: str) -> dict:
 
 def _write_hold_meta(cand: ConvertCandidate, meta: dict) -> None:
     try:
-        atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
+        atomicio.write_bytes(longpath.long(cand.dir / META_NAME), atomicio.dumps_json(meta))
     except OSError as exc:
         raise TaskError("stage_failed", type(exc).__name__) from exc
 
@@ -1581,7 +1588,7 @@ def preview_svg(sid: str, project: str) -> bytes:
 
 
 def _write_meta(cdir: Path, meta: dict) -> None:
-    atomicio.write_bytes(cdir / META_NAME, atomicio.dumps_json(meta))
+    atomicio.write_bytes(longpath.long(cdir / META_NAME), atomicio.dumps_json(meta))
 
 
 def adopt(sid: str, project: str) -> dict:

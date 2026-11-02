@@ -3419,6 +3419,7 @@ export default interface Resources {
       "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
       "worker_build_timeout": "脚本未能运行完毕，工作进程已重启，请重试。判定超时的条件：20 分钟没有任何输出，或连续输出满 4 小时。展开输出查看停在哪一步；若脚本本身需要长时间静默计算，可在该阶段输出一行进度。",
       "worker_timeout": "渲染超时，工作进程已重启，请重试。若反复超时，请检查脚本本身能否运行完毕。",
+      "workspace_path_too_long": "项目里有文件路径太长，转换没能开始。",
       "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
       "write_back_foreign_file": "{{file}} 是这个脚本里另一张图保存的，写回不会覆盖它，原文件没有改动。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
