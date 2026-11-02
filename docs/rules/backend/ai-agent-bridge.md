@@ -344,6 +344,7 @@ order: 240
 写进项目只有 `ai_convert.adopt` → `scriptlock.create_script` → `atomicio.create_new_bytes`（O_EXCL，存在即失败，重名加序号，
 永不覆盖），采用前再核原脚本 sha256 与候选摘要。校验 = 在用户同一路由下 probe 一遍（紧挨原脚本的 `tavotto_convert_probe_<sid>.py`
 临时文件，后端建、跑完删），必须捕获到 Matplotlib 图。看护：`tests/test_ai_convert.py`、`tests/test_ai_convert_app.py`。
+候选工作区（含 `project_context/` 里按项目相对路径复制的文件）在 Windows 上可能超 260 字符：Tavotto 自己的 mkdir / 读写 / 遍历 / 删除一律经 `engine/longpath.py` 的 `long()`（`\\?\` 前缀，非 Windows 原样）；交给 Codex 的 `-C` 与提示词里的路径保持普通形式。仍放不下（`WinError 206` / `ENAMETOOLONG`）时 `create_candidate` 回闭集码 `workspace_path_too_long`（400，前端一句话 + 「关闭」），不是 `internal_error`。
 
 校验的写入绊线错误沿 `probe.error.params.worker_code` 传给转换层，不能被通用
 `script_probe_failed` 丢掉原因。转换层统一提示候选 / 临时目录的写入边界，删除仅为输出准备的
