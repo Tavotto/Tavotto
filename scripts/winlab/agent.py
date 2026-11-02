@@ -2247,6 +2247,9 @@ def run_convert_live_task(
                     # 只在这个子进程的环境里；不进 argv、文件、日志
                     key_env: key,
                     "PYTHONIOENCODING": "utf-8",
+                    # Lab 实验场景的显式旁路：驱动在这个隔离子进程里把 app 起在 127.0.0.1:<空闲端口>，
+                    # 不装载会话凭据；实例只绑回环、数据目录是一次性的，不对外提供服务
+                    "TAVOTTO_INSECURE_NO_AUTH": "1",
                 }
             )
             if official:
@@ -2308,6 +2311,9 @@ def run_convert_live_task(
                     "driver_timed_out": step.get("timed_out"),
                     "cli_run_facts_available": res.get("cli_run_facts_available"),
                     "cli_run_facts": facts,
+                    # #1628 的写入工具在转换会话里是否被调用且成功；所 prepare 的代码没有该事实就是 None
+                    "target_tool_ok": (facts or {}).get("target_tool_ok"),
+                    "server_port": res.get("server_port"),
                     "workspace_path_len": res.get("workspace_path_len"),
                     "workspace_files": [f.get("name") for f in res.get("workspace_files") or []],
                     "workspace_max_file_path_len": max(

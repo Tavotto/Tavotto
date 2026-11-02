@@ -247,7 +247,7 @@ python3 scripts/winlab/winlab.py reports --id <run_id>
 
 做法：CODEX_HOME 在 run 目录里（`work\codex-home`，只有 DeepSeek 供应商 + `env_key`，没有 key 本身）；R 项目与转换工作区在**另一棵树**
 `C:\TavottoLab\cw\<run_id>\`，任务结束整棵删掉，`shell_snapshots` 也删（模型曾 rg 到它把 key 发出去）。产品那一侧只做两处最小替换
-（绕过 `require_usable` / 第三方接口记录，密钥因此只在环境变量里），其余走产品原路径。
+（绕过 `require_usable` / 第三方接口记录，密钥因此只在环境变量里），其余走产品原路径。驱动在本进程里把同一个 app 起在 `127.0.0.1:<空闲端口>` 的真实回环服务上，所有 API 调用走真实 HTTP（方案 A 的写入工具回调 `POST /api/ai/convert/<sid>/target` 需要真实端口；报告里 `target_tool_ok` 即该工具是否被调用且成功，代码里没有该事实为 null）；该子进程环境显式设 `TAVOTTO_INSECURE_NO_AUTH=1`（仅 Lab 隔离实例、只绑 127.0.0.1）。
 
 报告字段：`result`（全部转换完成 passed；有失败 / 超时 failed；驱动没跑完 error）、`counts`（`runs` / `done` / `failed` / `timeout` / `driver_error` /
 `not_started` / `target_missing`）、`conversions[]`（每次：`case`、`outcome`、`elapsed_s`、产品的 `status` / `code` / `product_outcome`、

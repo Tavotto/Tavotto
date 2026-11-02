@@ -1,7 +1,8 @@
 """convert-live 的单次转换驱动（Windows Lab 上由 agent.py 起子进程运行；随 deploy-agent 一同部署）。
 
-用 Flask test client 调 Tavotto 真实的 `POST /api/ai/convert`（agent=codex、source_language=r），真 `CodexAgent.build_command`
-起真 Codex，等到会话结束，把结果写成 JSON。只有两处 monkeypatch，都不改产品行为：
+在本进程里用 werkzeug 把同一个 app 起在 127.0.0.1:<空闲端口>（后台线程），再经真实 HTTP 调 Tavotto 真实的
+`POST /api/ai/convert`（agent=codex、source_language=r）：请求的 SERVER_PORT 是真实端口，转换会话经 MCP 工具回调
+`POST /api/ai/convert/<sid>/target`（#1628 的写入工具）才连得上。真 `CodexAgent.build_command` 起真 Codex，等到会话结束，把结果写成 JSON。只有两处 monkeypatch，都不改产品行为：
 - `ai_bridge.require_usable` / `ai_providers.resolve` / `config.ai_settings`：让产品不去读用户的 Codex 登录态与第三方接口记录
   （密钥因此不进任何配置文件——它只在本进程的环境变量里，由 CODEX_HOME 里 config.toml 的 `env_key` 引用）。
 - 记录钩子：把 Codex 的 stdout 每行原样追加进 codex_stdout.jsonl，并在 `CliRunFacts`（#1587，所 prepare 的代码里有才取）出快照时落盘。
@@ -18,7 +19,10 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # Windows 上流被捕获 / 重定向时退回系统区域编码，中文报文会静默丢掉——两条流都钉成 UTF-8（见 scripts/build_frontend.py）
@@ -55,6 +59,41 @@ def list_workspace(ws: Path) -> list[dict]:
             if len(out) >= MAX_LISTED_FILES:
                 return out
     return sorted(out, key=lambda d: d["name"])
+
+
+class Api:
+    """对本进程里真实回环服务的最小 HTTP 客户端（urllib；非 2xx 也返回 JSON 体与状态码）。"""
+
+    def __init__(self, port: int) -> None:
+        self.base = f"http://127.0.0.1:{port}"
+
+    def call(self, method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            self.base + path,
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json"} if data is not None else {},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 固定 http://127.0.0.1
+                code, raw = resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            code, raw = exc.code, exc.read()
+        try:
+            body = json.loads(raw.decode("utf-8", errors="replace"))
+        except ValueError:
+            body = {}
+        return code, body if isinstance(body, dict) else {}
+
+
+def serve_app(flask_app):
+    """把 app 起在 127.0.0.1:<空闲端口>（端口交给内核分配，没有探测再绑定的竞态）；返回 (server, port)。"""
+    from werkzeug.serving import make_server
+
+    server = make_server("127.0.0.1", 0, flask_app, threaded=True)
+    threading.Thread(target=server.serve_forever, name="convert-driver-http", daemon=True).start()
+    return server, server.server_port
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -162,14 +201,21 @@ def run(ns, out: Path, result: dict) -> None:
     ai_bridge.ai_providers.resolve = lambda agent, eid: None
     config.ai_settings = lambda: {}
     m.open_project(ns.project)
-    client = m.app.test_client()
+    # 真实回环服务：之后所有 API 调用都走 HTTP（会话认证状态不装载——本进程只服务自己，见 agent.py 的旁路说明）
+    server, port = serve_app(m.app)
+    result["server_port"] = port
+    try:
+        drive(Api(port), ns, out, result, ai_convert)
+    finally:
+        server.shutdown()
 
+
+def drive(api: Api, ns, out: Path, result: dict, ai_convert) -> None:
     t0 = time.time()
-    r = client.post(
-        "/api/ai/convert", json={"script": ns.script, "source_language": "r", "agent": "codex"}
+    status, body = api.call(
+        "POST", "/api/ai/convert", {"script": ns.script, "source_language": "r", "agent": "codex"}
     )
-    body = r.get_json(silent=True) or {}
-    result["start_http"] = r.status_code
+    result["start_http"] = status
     result["start_body"] = {k: body.get(k) for k in ("session", "code", "error", "deduped")}
     sid = body.get("session")
     if not sid:
@@ -178,7 +224,7 @@ def run(ns, out: Path, result: dict) -> None:
     result["session"] = sid
     final = None
     while time.time() - t0 < ns.timeout:
-        g = client.get(f"/api/ai/sessions/{sid}").get_json(silent=True) or {}
+        g = api.call("GET", f"/api/ai/sessions/{sid}")[1]
         if g.get("final"):
             final = g
             break
@@ -193,7 +239,7 @@ def run(ns, out: Path, result: dict) -> None:
         (out / "session.json").write_text(
             json.dumps(final, ensure_ascii=False, indent=1, default=str), encoding="utf-8"
         )
-    st = client.get(f"/api/ai/convert/{sid}").get_json(silent=True) or {}
+    st = api.call("GET", f"/api/ai/convert/{sid}")[1]
     result["convert_state"] = st.get("state")
     result["convert_failure"] = st.get("failure")
     ws = ai_convert.CONVERT_DIR / sid

@@ -3626,6 +3626,8 @@ def test_convert_live_run_keeps_the_key_in_env_only_and_scrubs_everything(tmp_pa
     for call in seen:
         assert key not in " ".join(call["argv"])  # 密钥不进 argv
         assert call["env"]["WINLAB_MODEL_KEY"] == key  # 只进子进程环境
+        # Lab 隔离实例的显式认证旁路（test_ci_qualification 的三选一）
+        assert call["env"]["TAVOTTO_INSECURE_NO_AUTH"] == "1"
         # CODEX_HOME 与项目 / 工作区不同树
         assert A.trees_disjoint(
             Path(call["env"]["CODEX_HOME"]), Path(call["env"]["TAVOTTO_DATA_DIR"])
@@ -3831,3 +3833,34 @@ def test_openai_convert_run_sends_the_key_only_through_the_env_over_trojan(tmp_p
     assert not (run_dir / "work" / "codex-home" / "shell_snapshots").exists()
     assert not (lab.cache / "convert-work" / run_dir.name).exists()
     assert key not in json.dumps(rep, ensure_ascii=False)
+
+
+def test_convert_driver_serves_the_app_on_a_real_loopback_port_and_calls_it_over_http():
+    """方案 A 的写入工具回调要连真实端口：驱动起真服务，请求环境里的 SERVER_PORT 就是它；非 2xx 也带回 JSON 体。"""
+    flask = pytest.importorskip("flask")
+    sys.path.insert(0, str(WINLAB))
+    try:
+        import convert_driver as CD
+    finally:
+        sys.path.remove(str(WINLAB))
+    app = flask.Flask("fake")
+
+    @app.post("/echo")
+    def echo():
+        return flask.jsonify(
+            {"port": flask.request.environ.get("SERVER_PORT"), "got": flask.request.get_json()}
+        )
+
+    @app.get("/nope")
+    def nope():
+        return flask.jsonify({"code": "x"}), 409
+
+    server, port = CD.serve_app(app)
+    try:
+        assert port > 0 and server.server_address[0] == "127.0.0.1"
+        api = CD.Api(port)
+        assert api.call("POST", "/echo", {"a": 1}) == (200, {"port": str(port), "got": {"a": 1}})
+        assert api.call("GET", "/nope") == (409, {"code": "x"})
+        assert api.call("GET", "/missing")[0] == 404
+    finally:
+        server.shutdown()
