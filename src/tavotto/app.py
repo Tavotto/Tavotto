@@ -8118,7 +8118,8 @@ def api_engine_prewarm():
         (str(ctx.path), rel_id),
         work,
         alive=engine_pool.alive_count(),
-        cap=engine_pool.MAX_ALIVE - 1,
+        # 上限唯一出处 `max_alive()`（ADR 0159，按内存自适应）；它不能在持 `_lock` 时调——这里在锁外
+        cap=engine_pool.max_alive() - 1,
     )
     return jsonify({"status": status})
 

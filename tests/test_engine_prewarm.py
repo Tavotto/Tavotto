@@ -409,3 +409,25 @@ def test_prewarm_and_foreground_share_one_real_session(tmp_path):
         assert sorted(created for _, created in got) == [False, True]
     finally:
         pool.shutdown_all(str(proj), wait=True)
+
+
+def test_prewarm_cap_comes_from_max_alive_under_the_production_default(
+    client, tmp_path, monkeypatch
+):
+    """生产默认 `pool.MAX_ALIVE is None`（上限按内存自适应，唯一出处 `max_alive()`，ADR 0159）。
+    conftest 把钩子钉成 3，所以 `MAX_ALIVE - 1` 这种写法在测试里永远不炸、到用户手里就 TypeError——
+    这里显式回到生产默认，核预热按 `max_alive()` 给前台留位。"""
+    _open(client, tmp_path)
+    worker, gets = _FakeWorker(), []
+    _stub(monkeypatch, worker, gets)
+    monkeypatch.setattr(m.engine_pool, "MAX_ALIVE", None)
+    monkeypatch.setattr(m.engine_pool, "alive_count", lambda: 1)
+
+    monkeypatch.setattr(m.engine_pool, "max_alive", lambda: 2)  # 只剩一个空位：留给前台
+    assert _post(client)["status"] == prewarm.POOL_FULL
+    assert gets == []
+
+    monkeypatch.setattr(m.engine_pool, "max_alive", lambda: 4)
+    assert _post(client)["status"] == "started"
+    prewarm.PREWARM.join()
+    assert len(gets) == 1
