@@ -11,6 +11,8 @@ import re
 import subprocess
 import sys
 
+from .runtime import CREATE_NO_WINDOW
+
 
 def parse_meminfo(text: str) -> int | None:
     """`/proc/meminfo` 文本 → `MemAvailable` 字节；没有这一行（很老的内核）回 None。"""
@@ -59,7 +61,14 @@ def _windows() -> int | None:
 def _macos() -> int | None:
     # 绝对路径：桌面版 sidecar 的 PATH 可能很精简
     done = subprocess.run(
-        ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=2, check=False
+        ["/usr/bin/vm_stat"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=2,
+        check=False,
+        creationflags=CREATE_NO_WINDOW,  # GUI（后端）拥有的子进程；macOS 上为 0
     )
     return parse_vm_stat(done.stdout) if done.returncode == 0 else None
 
