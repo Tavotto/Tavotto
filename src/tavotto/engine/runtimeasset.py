@@ -699,6 +699,11 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
             # without that evidence retain their placeholder even beside a cached variant.
             if base_meta is not None or stem not in configured_only:
                 variants.insert(0, ("", asset_id))
+            elif stem in shown and not variants:
+                # 刚分开登记、带参数跑出来的图（ADR 0159）：那次执行不物化，缓存还没有——按记录过它的配置列占位，
+                # 不让它在素材栏里凭空消失；第一次打开时按登记图名、按那份配置重跑
+                for cid in runconfig.configs_capturing(project_root, script, stem):
+                    variants.append((cid, figcapture.runtime_asset_id(script, stem, cid)))
             for run_config, variant_id in variants:
                 meta = load_metadata(project_root, variant_id)
                 desc = (meta or {}).get("descriptor") or None

@@ -210,3 +210,36 @@ def test_runtime_asset_list_shows_the_raw_name_for_split_figures(tmp_path):
     rows = {r["stem"]: r for r in runtimeasset.list_assets(tmp_path, reg, worker_python=False)}
     assert rows["x@b"]["display_name"] == "x"
     assert "display_name" not in rows["x"]
+
+
+def test_split_figure_from_a_configured_run_stays_listed_without_a_cache(tmp_path):
+    """带参数跑出来、刚分开登记的图（那次执行不物化）：按记录过它的配置列占位，不在素材栏里凭空消失
+    （Codex #1650 r4445492584）。没分开的 configured-only 图照旧只列有缓存的变体。"""
+    from tavotto.engine import runconfig
+
+    reg = registry.Registry()
+    reg.load_data({"scripts": {"b.py": _entry(["x@b", "y"], stem_aliases={"x": "x@b"})}})
+    runconfig.record_captures(
+        tmp_path, "b.py", ["x@b", "y"], "rc_0123456789ab", registered_stems=[]
+    )
+    by_stem: dict = {}
+    for r in runtimeasset.list_assets(tmp_path, reg, worker_python=False):
+        by_stem.setdefault(r["stem"], []).append(r)
+    (row,) = by_stem["x@b"]
+    assert row["run_config"] == "rc_0123456789ab"
+    assert row["id"] == figcapture.runtime_asset_id("b.py", "x@b", "rc_0123456789ab")
+    assert row["cached"] is False and row["display_name"] == "x"
+    assert "y" not in by_stem
+
+
+def test_selected_original_save_follows_the_rename():
+    """选中原件的那次保存按原图名记着：改名后跟着换，`prepare_artifact` 才认得这张图（Codex #1650 r4445492570）。"""
+    fig = object()
+    renames: dict = {}
+    figcapture.apply_stem_aliases({"x": "x@b"}, {"x": fig}, {}, {}, {}, renames=renames)
+    assert renames == {"x": "x@b"}
+    save = ({"occurrence": 1}, "x", fig, ())
+    assert figcapture.renamed_artifact_save(save, renames) == ({"occurrence": 1}, "x@b", fig, ())
+    assert figcapture.renamed_artifact_save(None, renames) is None
+    other = ({}, "keep", fig, ())
+    assert figcapture.renamed_artifact_save(other, renames) is other

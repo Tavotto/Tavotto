@@ -1323,6 +1323,11 @@ class LiveFigureSession:
             extras = tuple(extra_artists) if type(extra_artists) in (list, tuple) else extra_artists
             self._artifact_save = (row, stem, fig, extras)
 
+    def rename_stems(self, renames: dict) -> None:
+        """收图后改名（ADR 0159，`figcapture.apply_stem_aliases`）的会话侧收尾：选中原件那次保存记下的是原图名，
+        跟着换成新名——否则 `prepare_artifact` 按旧名找不到这张图，报 `artifact_source_unavailable`。"""
+        self._artifact_save = figcapture.renamed_artifact_save(self._artifact_save, renames)
+
     def prepare_artifact(self):
         if self.artifact_source is None:
             return

@@ -1915,6 +1915,7 @@ class Worker(wireproto.V1Handler):
                 )
                 self.dropped_figures = dropped
         # 同名不同脚本、分开登记过的图（ADR 0159）：名字定下来之后、进编辑会话之前换成登记图名，三条入口同一个函数
+        renames: dict = {}
         figcapture.apply_stem_aliases(
             self.stem_aliases,
             self.session.capture,
@@ -1922,7 +1923,9 @@ class Worker(wireproto.V1Handler):
             self.session.savefig_calls,
             self.session.savefig_extras,
             self.session.savefig_file_stem,
+            renames=renames,
         )
+        self.session.rename_stems(renames)
 
         # 存盘后又被改过的图：能还原保存那一刻的 Figure 就用它当编辑基础（ADR 0139 §九）
         self.session.adopt_save_moments()

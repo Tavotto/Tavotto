@@ -3064,6 +3064,14 @@ def parse_stem_aliases(raw) -> dict[str, str]:
     return out
 
 
+def renamed_artifact_save(save, renames: dict):
+    """选中原件那次保存的记录 `(row, stem, fig, extras)` 跟着收图后的改名换 stem；没有记录 / 没改名原样返回。"""
+    if save is None or save[1] not in renames:
+        return save
+    row, stem, fig, extras = save
+    return (row, renames[stem], fig, extras)
+
+
 def apply_stem_aliases(
     aliases,
     capture: dict,
@@ -3071,8 +3079,10 @@ def apply_stem_aliases(
     calls: dict,
     extras: dict,
     file_stems: dict | None = None,
+    renames: dict | None = None,
 ) -> list[str]:
     """按登记的别名表把捕获表里的原图名换成登记图名（ADR 0159）；返回换过的登记图名（捕获顺序）。
+    `renames`（给了就填）记这次实际的 `{原图名: 新名}`——会话里别处按原图名记着的引用（选中原件的那次保存）跟着换。
 
     三条入口（safe worker、native bridge 的每个收图时刻）在 pyplot 兜底**之后**、图进入编辑会话**之前**各调一次，
     之后的一切（instrument、描述符、预览产物、编辑请求、runtime 身份）只见登记图名。`file_stems`（给了就填）记
@@ -3110,6 +3120,8 @@ def apply_stem_aliases(
             if file_stems is not None:
                 file_stems[name] = file_stems.get(stem, stem)
             renamed.append(name)
+        if renames is not None:
+            renames[stem] = target if name is None else name
         capture_source.pop(stem, None)
         calls.pop(stem, None)
         extras.pop(stem, None)
