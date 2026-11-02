@@ -87,7 +87,7 @@ def link_data_file(ctx: FixContext, args: dict) -> ToolResult:
         return err(
             "requested_unknown",
             "`requested` is not a path this script was found to be missing. Use the path from the run report "
-            "(read_run_report: `missing_input`, or `script_asks_for` of an existing data link) exactly as "
+            "(read_run_report: `missing_input`, or a `requested` string of an existing data link) exactly as "
             "written; Tavotto will not link a path it cannot tie to the script.",
         )
     requested = matched

@@ -713,9 +713,28 @@ def test_read_run_report_lists_the_active_data_links(box):
     ctx, data, wrong = _wrongly_linked(box)
     body = json.loads(call(ctx, "read_run_report", {}).content)
     links = body["data_links"]["links"]
-    assert links[0]["script_asks_for"] == "data/x.csv"
+    assert links[0]["requested"] == ["data/x.csv"]
     assert links[0]["reads_instead"].endswith("notes.txt")
     assert "link_data_file" in body["data_links"]["meaning"]
+
+
+def test_a_folder_link_reports_the_concrete_path_the_script_opens(box):
+    """Codex #1629：同名错文件推出的是 prefix 规则（`from` = "" / 目录前缀），不是脚本打开的那串；
+    `data_links` 给的 `requested` 必须是 `link_data_file` 认得的具体串，照着传就能改指。"""
+    from tavotto.engine import figcapture
+
+    ctx, script, data = _setup(box, report=lambda: {"outcome": "error"})
+    wrong = put(box.home / "Desktop" / "old" / "data" / "x.csv", "not data\n")
+    rule, _ = inputremap.link(box.proj, "data/x.csv", str(wrong), "file")
+    assert rule["kind"] == "prefix"
+    body = json.loads(call(ctx, "read_run_report", {}).content)
+    link = body["data_links"]["links"][0]
+    assert link["applies_to"] == (rule["from"] or "(any relative path)")
+    assert link["requested"] == ["data/x.csv"]
+    r = call(ctx, "link_data_file", _args(data, requested=link["requested"][0]))
+    assert not r.is_error, r.content
+    target = figcapture.remap_target(_rules(box), "data/x.csv")
+    assert os.path.normcase(os.path.normpath(target)) == os.path.normcase(str(data))
 
 
 def test_read_run_report_has_no_data_links_without_rules(box):
