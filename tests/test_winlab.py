@@ -3688,6 +3688,188 @@ def test_convert_driver_has_no_key_argument_and_is_importable_alone(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+# --------------------------------------------------------------------------- render-bench（渲染测量，只读）
+def test_render_bench_is_a_closed_set_task_without_model_or_network():
+    t = A.TASKS["render-bench"]
+    assert not t.needs_model_conf and t.networks == ("direct",) and not t.accepts_package
+    assert t.modes == A.RENDER_BENCH_MODES
+    for m in A.RENDER_BENCH_MODES:
+        assert A.validate_test_args(t, [], None, "direct", mode=m) is None
+    assert A.validate_test_args(
+        t, [], None, "direct", mode="C:\\Python313"
+    )  # 路径 / 解释器不是自由输入
+    assert A.validate_test_args(t, ["tests/test_x.py"], None, "direct")
+    assert t.claim and t.unverified and t.timeout_s == A.RENDER_BENCH_TIMEOUT_S
+
+
+def test_render_bench_modes_pick_interpreter_and_location_from_constants():
+    assert A.render_bench_plan("rotation") == {
+        "driver_mode": "rotation",
+        "store": False,
+        "drive": None,
+    }
+    assert A.render_bench_plan("all")["driver_mode"] == "all"
+    assert A.render_bench_plan("cold-store") == {
+        "driver_mode": "cold",
+        "store": True,
+        "drive": None,
+    }
+    assert A.render_bench_plan("cold-drive-p") == {
+        "driver_mode": "cold",
+        "store": False,
+        "drive": "P",
+    }
+    assert A.render_bench_plan("cold-store-drive-p") == {
+        "driver_mode": "cold",
+        "store": True,
+        "drive": "P",
+    }
+
+
+def test_perf_fixtures_directory_names_match_between_agent_and_admin_script():
+    """admin 脚本是 ASCII，中文目录名靠码点拼；agent 这边用真字符——两边必须是同一个目录。"""
+    parts = tuple("".join(chr(int(x, 16)) for x in cp.split(",")) for cp in W.PERF_DIR_CODEPOINTS)
+    assert parts == A.PERF_DIR_PARTS == ("科研 数据", "项目")
+    assert W.PERF_LETTER == A.PERF_DRIVE
+
+
+def test_perf_fixtures_admin_script_is_ascii_closed_and_scoped():
+    fill = W._fill_perf(W.PERF_FIXTURES_PS)
+    fill.encode("ascii")  # admin_ssh 要求 ASCII（5.1 按 ANSI 读无 BOM 文件）
+    assert not re.findall(r"__[A-Z0-9_]+__", fill)  # 占位符都替换完了
+    # 只授 tavotto-lab 修改权限，且只在这个目录上，不碰盘根
+    assert "FileSystemAccessRule('tavotto-lab', 'Modify'" in fill
+    assert fill.count("Set-Acl") == 1 and "Set-Acl -LiteralPath $dir" in fill
+    # 下载包先核散列再核 Authenticode 才装；不经代理
+    assert fill.index("sha256 mismatch") < fill.index("Add-AppxProvisionedPackage")
+    assert "Get-AuthenticodeSignature" in fill and "-SkipLicense" in fill
+    assert "proxy" not in fill.lower() and "7890" not in fill
+    # VHDX 在 C:\TavottoLab 下，不放系统目录；开机自动重新挂载
+    assert W.PERF_VHDX.startswith("C:\\TavottoLab\\perf\\")
+    assert "TavottoLab-PerfVhd" in fill and "-AtStartup" in fill
+    # 幂等：已有 VHDX / 已装包都不重建
+    assert "Test-Path $vhdx" in fill and "already provisioned" in fill
+    rm = W._fill_perf(W.PERF_REMOVE_PS)
+    rm.encode("ascii")
+    assert "Dismount-DiskImage" in rm and "Remove-AppxProvisionedPackage" in rm
+
+
+def test_pymanager_pin_and_fetch_rejects_a_wrong_download(tmp_path, monkeypatch):
+    assert re.fullmatch(r"[0-9a-f]{64}", W.PYMANAGER_SHA256)
+    assert W.PYMANAGER_URL.startswith("https://www.python.org/ftp/python/pymanager/")
+    import io
+    import urllib.request
+
+    used = {}
+
+    class FakeOpener:
+        def open(self, url, timeout=0):
+            used["url"] = url
+            return io.BytesIO(b"not the msix")
+
+    def fake_build_opener(*handlers):
+        used["handlers"] = handlers
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
+    dest = tmp_path / "x.msix"
+    with pytest.raises(RuntimeError):
+        W.fetch_pymanager(dest)
+    assert not dest.exists()  # 不符即删
+    # 显式不走环境里的代理
+    assert any(
+        isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in used["handlers"]
+    )
+
+
+def test_perf_fixtures_verb_is_registered_and_dispatches(monkeypatch):
+    calls = []
+    monkeypatch.setattr(W, "admin_perf_fixtures", lambda remove=False: calls.append(remove) or 0)
+    assert W.main(["admin", "perf-fixtures"]) == 0
+    assert W.main(["admin", "perf-fixtures", "--remove"]) == 0
+    assert calls == [False, True]
+
+
+def test_render_bench_modes_do_not_accept_free_paths():
+    t = A.TASKS["render-bench"]
+    for bad in ("P:\\", "cold-drive-d", "cold-drive-e", "python.exe"):
+        assert A.validate_test_args(t, [], None, "direct", mode=bad)
+
+
+def test_store_python_path_needs_the_alias_file(tmp_path):
+    env = {"LOCALAPPDATA": str(tmp_path)}
+    assert A.store_python_path(env) is None
+    alias = tmp_path / "Microsoft" / "WindowsApps" / "python.exe"
+    alias.parent.mkdir(parents=True)
+    alias.write_bytes(b"")
+    assert A.store_python_path(env) == alias
+
+
+def test_render_bench_driver_is_deployed_and_listed_in_help():
+    text = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert 'HERE / "render_bench_driver.py"' in text
+    assert (
+        "render-bench：rotation | cold | cold-store | cold-drive-p | cold-store-drive-p | all"
+        in text
+    )
+    assert "render-bench" in W.build_parser().parse_args(["test", "render-bench"]).task
+
+
+def test_render_bench_fixtures_are_six_minimal_numpy_matplotlib_scripts():
+    fx = ROOT / A.RENDER_BENCH_FIXTURES
+    scripts = sorted(fx.glob("*.py"))
+    assert len(scripts) == 6
+    reg = json.loads((fx / "tavotto_registry.json").read_text(encoding="utf-8"))["scripts"]
+    assert sorted(reg) == [p.name for p in scripts]
+    for p in scripts:
+        src = p.read_text(encoding="utf-8")
+        assert "import numpy" in src and "import matplotlib.pyplot" in src and "def main" in src
+        assert reg[p.name]["stems"] == [p.stem]
+    assert sum(p.stat().st_size for p in fx.rglob("*") if p.is_file()) < 20_000
+
+
+def test_render_bench_driver_statistics_and_timing_whitelist():
+    import render_bench_driver as R
+
+    assert R.pct([], 0.9) is None
+    assert R.pct([5.0], 0.9) == 5.0
+    assert R.pct([float(i) for i in range(1, 11)], 0.9) == 9.0  # 最近邻：真实出现过的一次耗时
+    assert R.pct([float(i) for i in range(1, 11)], 1.0) == 10.0
+    assert R.summarize([1.0, 2.0, 3.0])["median"] == 2.0
+    kept = R.numeric_timings(
+        {
+            "server_ms": 12.5,
+            "script_build_ms": 3,
+            "bad": "x",
+            "nan": float("nan"),
+            "neg": -1,
+            "flag": True,
+            "huge": 9e9,
+        }
+    )
+    assert kept == {"server_ms": 12.5, "script_build_ms": 3.0}
+    assert R.variant(None, 1) == []
+    assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 1)[0]["value"] == 8.5
+    assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 2)[0]["value"] == 7.5
+
+
+@pytest.mark.parametrize("n", [2, 3, 4, 6])
+def test_render_bench_rotation_changes_every_panel_value_on_every_visit(n):
+    """任何张数下，同一张面板相邻两次访问拿到的补丁值都不同——否则 `overrides.apply()` 跳过没变的值，
+    热基线量的是「没改」，各组不可比（Codex #1641 P2）。"""
+    import render_bench_driver as R
+
+    patch = {"gid": "g", "prop": "fontsize", "value": 8.0}
+    subset = [f"p{i}" for i in range(n)]
+    plan = R.rotation_plan(subset, 4)
+    assert len(plan) == 4 * n
+    last: dict = {}
+    for pid, visit in plan:
+        value = R.variant(patch, visit)[0]["value"]
+        assert last.get(pid) != value, (n, pid, visit)
+        last[pid] = value
+
+
 # --------------------------------------------------------------------------- convert-live 的地区政策看护
 def test_no_official_vendor_modes_or_providers_exist_for_convert_live_or_secret_init():
     """docs/rules/ci/windows-lab.md:122-124（地区政策）：Lab 在中国大陆，Anthropic / OpenAI 的真实模型调用保持 BLOCKED，
