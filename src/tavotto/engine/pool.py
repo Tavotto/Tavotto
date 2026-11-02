@@ -5282,8 +5282,12 @@ def _refuse_if_mutating(python: str) -> None:
 
 def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
     """池里这条会话此刻能不能直接复用（与 `acquire()` 锁内的重建判据同一组条件）。只是一次窥视：
-    复用的会话不需要重新决定环境；判错了（窥视之后它死了）`acquire()` 在锁内发现，出锁补上决定再来一遍。"""
-    with _lock:
+    复用的会话不需要重新决定环境；判错了（窥视之后它死了）`acquire()` 在锁内发现，出锁补上决定再来一遍。
+
+    走 `_pool_lock()`：别的线程正持锁起会话时，有环境决定器的取会话**先堵在这里**——不计进
+    `pool_wait_ms` 的话，等走到 `_acquire` 里那次计时的拿锁时争用早散了，分段显示约 0 而
+    `worker_get_ms` 很长（Codex #1637 P2）。不在 `acquire()` 里调时 `_seg` 什么都不做。"""
+    with _pool_lock():
         w = _workers.get(key)
         return (
             w is not None

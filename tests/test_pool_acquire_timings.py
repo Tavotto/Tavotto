@@ -179,3 +179,28 @@ def test_real_python_pool_cold_start_records_constructor_segments(tmp_path):
         assert set(pool.acquire_timings(mark, w2)) == HOT_ONLY
     finally:
         pool.shutdown_all(str(tmp_path), wait=True)
+
+
+def test_reuse_probe_wait_counts_as_pool_wait(monkeypatch):
+    """有环境决定器时取会话先在 `_reusable()` 窥视——别的线程正持池锁起会话，等待就发生在这里，
+    必须记进 `pool_wait_ms`（否则走到计时的那次拿锁时争用早散了，分段约 0；Codex #1637 P2）。"""
+    import time
+
+    monkeypatch.setattr(pool, "_lock", threading.Lock())
+    held = threading.Event()
+
+    def hold():
+        with pool._lock:
+            held.set()
+            time.sleep(0.25)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    held.wait(2)
+    segments: dict = {}
+    monkeypatch.setattr(pool._TRACE, "cur", segments, raising=False)
+    try:
+        pool._reusable(("no-such-project", "plot.py"), "main", "python")
+    finally:
+        holder.join(2)
+    assert segments.get("pool_wait_ms", 0) >= 150
