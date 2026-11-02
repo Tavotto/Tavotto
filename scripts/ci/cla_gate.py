@@ -20,6 +20,12 @@
   `docs/legal/cla-signatures.json` 里手工维护一份，那会和服务商的数据库
   变成两个权威，分叉之后没有任何机制说得清哪一份算数，因此已经删掉。
   「在 PR 里回一句 I agree 然后 grep 评论」那种东西不在这里，也不该有。
+* **唯一的例外是「服务商还不存在」的那段时间。** provider 未配置时，签署事实的
+  权威是著作权人私下保存的**双签纸面协议**（双方签字的执行副本）；
+  policy 的 `offline_signatures` 只是指向它的索引（账号、不可变账号 id、
+  协议与版本、两个签署日期），不含任何个人信息。**任何时刻只有一个权威**：
+  provider 一旦标成已配置，`offline_signatures` 必须为空（validate_policy
+  结构性地拒绝两者并存）——启用服务商时，线下签署人要先迁进服务商。
 
 判定规则（详见 `decide()`）：
 
@@ -28,15 +34,20 @@
   `aggregate_gate.py --mode fast` 把 skipped 一律当失败，这个 job 在
   merge_group 上被跳过会把整个 `CI fast gate` 卡死（tests/ 里有专门的用例钉它）。
 * `--event pull_request`：PR 里出现的每一个人类贡献者，要么在 policy 的豁免表
-  里被**点名**，要么由 provider 判定为已签。provider 未配置时（当前状态），
-  **没有任何人能被判成已签**——非豁免的人类一律阻断，并给出明确指引。
-  绝不因为「服务还没接上」就把外部贡献者当成签过。
+  里被**点名**，要么由 provider 判定为已签，要么在 `offline_signatures` 里有
+  一条**版本对得上、账号 id 对得上**的双签记录。除此之外没有任何人能被判成
+  已签——非豁免的人类一律阻断，并给出明确指引。绝不因为「服务还没接上」
+  就把外部贡献者当成签过。
 * 其他事件：配置错误 → 失败。没设计过的上下文不许静默变绿。
 
 fail-closed 的几处（每一处都是「宁可红」）：
 
 * 认不出 GitHub 账号的 co-author（邮箱不是 GitHub noreply 形态）→ 失败，
   让人来认领，而不是猜一个 login 或者当它不存在；
+* 线下签署按 login 找到条目后，还要**按不可变的 GitHub 账号 id 核身份**：
+  这个 PR 里该 login 名下观察到的每一个账号 id 都必须等于条目里的
+  `github_id`，且至少观察到一个——login 可以改名、被别人注册，id 不会；
+  签的版本 ≠ 当前协议版本 → 不算（新版本要新同意，见 CLA_VERSIONING.md）；
 * 豁免只按 login 精确匹配显式名单，**没有「名字像机器人就放行」这种规则**——
   `dependabot[bot]` 能过是因为它在表里写着，不是因为它带个 `[bot]` 后缀；
 * policy 里记的文档哈希与磁盘上的文档对不上 → 失败（改了 CLA 正文却没走
@@ -80,8 +91,22 @@ CO_AUTHOR_RE = re.compile(r"(?im)^\s*Co-authored-by:\s*(?P<name>.*?)\s*<(?P<emai
 #: `12345+login@users.noreply.github.com`。**只有这两种能可靠反解出账号**，
 #: 别的邮箱一律算认不出（见模块 docstring 的 fail-closed 一节）。
 NOREPLY_RE = re.compile(
-    r"(?i)^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)@users\.noreply\.github\.com$"
+    r"(?i)^(?:(?P<id>\d+)\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)@users\.noreply\.github\.com$"
 )
+
+#: `offline_signatures` 每一条必须有、且只能有的字段。**故意不收地址、姓名、
+#: 邮箱**：那些只在执行副本上，公开仓库里一个字都不放。
+OFFLINE_SIGNATURE_KEYS = (
+    "login",
+    "github_id",
+    "agreement",
+    "version",
+    "contributor_signed_on",
+    "countersigned_on",
+    "record",
+)
+
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 #: 草案后缀。带它的版本不可签署，因此也不允许把 provider 标成已配置。
 DRAFT_SUFFIX = "-draft"
@@ -210,6 +235,56 @@ def validate_policy(policy: dict) -> None:
                 "（只允许 rights_holder / bot）"
             )
     _validate_provider(policy)
+    _validate_offline_signatures(policy, seen)
+
+
+def _validate_offline_signatures(policy: dict, exempt_logins: set[str]) -> None:
+    """`offline_signatures`：服务商还不存在时，双签纸面协议的索引。
+
+    缺省等于空表。形状严格：字段闭集（多一个也不行——防有人顺手把姓名 /
+    地址补进公开仓库）、id 是正整数、日期是 ISO、协议键存在、联署不早于
+    贡献者签署、login 不与豁免重复。**provider 已配置时它必须为空**：
+    两份签署记录同时有效就是两个法律权威，这正是本仓库拒绝 signer 名单的理由。
+    """
+    entries = policy.get("offline_signatures", [])
+    if not isinstance(entries, list):
+        raise ConfigError("cla-policy.offline_signatures 必须是数组")
+    if entries and policy["provider"]["configured"]:
+        raise ConfigError(
+            "provider 已配置时 offline_signatures 必须为空——任何时刻签署事实只能有"
+            "一个权威。启用服务商前先把线下签署人迁进服务商，再清空这一节"
+            "（见 docs/legal/CLA_AUTOMATION_SETUP.md）"
+        )
+    seen: set[str] = set()
+    for i, sig in enumerate(entries):
+        where = f"cla-policy.offline_signatures[{i}]"
+        if not isinstance(sig, dict):
+            raise ConfigError(f"{where} 不是对象")
+        if set(sig) != set(OFFLINE_SIGNATURE_KEYS):
+            raise ConfigError(
+                f"{where} 的字段必须恰好是 {', '.join(OFFLINE_SIGNATURE_KEYS)}"
+                f"（多了 {sorted(set(sig) - set(OFFLINE_SIGNATURE_KEYS))}，"
+                f"缺了 {sorted(set(OFFLINE_SIGNATURE_KEYS) - set(sig))}）——"
+                "姓名、地址、邮箱只在执行副本上，不进公开仓库"
+            )
+        for key in ("login", "agreement", "version", "record"):
+            if not isinstance(sig[key], str) or not sig[key].strip():
+                raise ConfigError(f"{where}.{key} 必须是非空字符串")
+        if type(sig["github_id"]) is not int or sig["github_id"] <= 0:
+            raise ConfigError(f"{where}.github_id 必须是正整数（GitHub 不可变账号 id）")
+        if sig["agreement"] not in policy["agreements"]:
+            raise ConfigError(f"{where}.agreement=`{sig['agreement']}` 不是 agreements 里的协议")
+        for key in ("contributor_signed_on", "countersigned_on"):
+            if not isinstance(sig[key], str) or not DATE_RE.match(sig[key]):
+                raise ConfigError(f"{where}.{key} 必须是 YYYY-MM-DD")
+        if sig["countersigned_on"] < sig["contributor_signed_on"]:
+            raise ConfigError(f"{where}：联署日期早于贡献者签署日期")
+        login = sig["login"].lower()
+        if login in exempt_logins:
+            raise ConfigError(f"{where}：`{sig['login']}` 已在豁免表里，不能同时是线下签署人")
+        if login in seen:
+            raise ConfigError(f"cla-policy.offline_signatures 里 `{sig['login']}` 重复")
+        seen.add(login)
 
 
 def _validate_provider(policy: dict) -> None:
@@ -286,7 +361,7 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
     found: dict[str, dict] = {}
     unresolved: list[dict] = []
 
-    def add(login: str | None, source: str, detail: str = "") -> None:
+    def add(login: str | None, source: str, detail: str = "", account_id=None) -> None:
         if not login:
             return
         key = login.lower()
@@ -295,6 +370,12 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
             entry["sources"].append(source)
         if detail and detail not in entry.get("details", []):
             entry.setdefault("details", []).append(detail)
+        # 账号 id 是这个 login 名下**实际出现过**的不可变身份。线下签署按它核人：
+        # login 能改名、能被别人重新注册，id 不会。
+        if account_id is not None:
+            ids = entry.setdefault("ids", [])
+            if account_id not in ids:
+                ids.append(account_id)
 
     add(pr_author, "pr_author")
 
@@ -308,13 +389,13 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
         # GitHub 已经解析好的账号。null = 这个 commit 的邮箱没绑到任何账号。
         author = c.get("author")
         if isinstance(author, dict) and author.get("login"):
-            add(author["login"], "commit_author", sha)
+            add(author["login"], "commit_author", sha, _account_id(author.get("id")))
         else:
             meta = (c.get("commit") or {}).get("author") or {}
             email = str(meta.get("email", ""))
             m = NOREPLY_RE.match(email)
             if m:
-                add(m.group("login"), "commit_author", sha)
+                add(m.group("login"), "commit_author", sha, _account_id(m.group("id")))
             else:
                 unresolved.append(
                     {
@@ -330,7 +411,7 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
             email = m.group("email").strip()
             nm = NOREPLY_RE.match(email)
             if nm:
-                add(nm.group("login"), "co_author", sha)
+                add(nm.group("login"), "co_author", sha, _account_id(nm.group("id")))
             else:
                 unresolved.append(
                     {"kind": "co_author", "sha": sha, "name": m.group("name"), "email": email}
@@ -339,7 +420,17 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
     out = sorted(found.values(), key=lambda e: e["login"].lower())
     for e in out:
         e.setdefault("details", [])
+        e.setdefault("ids", [])
     return out, unresolved
+
+
+def _account_id(raw) -> int | None:
+    """API 给的整数 id，或 noreply 邮箱里的数字前缀。别的形状一律当没看到。"""
+    if type(raw) is int and raw > 0:
+        return raw
+    if isinstance(raw, str) and raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return None
 
 
 # ────────────────────────────────────────────────────────────── 判定
@@ -349,6 +440,38 @@ def _exemption_for(login: str, policy: dict) -> dict | None:
     for ex in policy["exemptions"]:
         if ex["login"].lower() == login.lower():
             return ex
+    return None
+
+
+def _offline_signature_for(login: str, policy: dict) -> dict | None:
+    for sig in policy.get("offline_signatures", []):
+        if sig["login"].lower() == login.lower():
+            return sig
+    return None
+
+
+def _offline_verdict(sig: dict, contributor: dict, policy: dict) -> str | None:
+    """线下双签能不能让这个人通过。返回 None = 通过，否则是不通过的原因。"""
+    current = policy["agreements"][sig["agreement"]]["version"]
+    if sig["version"] != current:
+        return (
+            f"`{sig['login']}` 线下签的是 {sig['agreement']} CLA {sig['version']}，"
+            f"当前版本是 {current}——新版本要新同意（docs/legal/CLA_VERSIONING.md），"
+            "请本人签当前版本后由维护者更新 offline_signatures"
+        )
+    ids = contributor.get("ids") or []
+    if not ids:
+        return (
+            f"`{sig['login']}` 有线下签署记录，但这个 PR 里没观察到它的 GitHub 账号 id，"
+            "无法确认是同一个账号（login 能改名、能被别人注册）——"
+            "需要至少一个由该账号署名的提交"
+        )
+    stray = [i for i in ids if i != sig["github_id"]]
+    if stray:
+        return (
+            f"`{sig['login']}` 名下出现了账号 id {stray}，与线下签署记录的 "
+            f"{sig['github_id']} 不符——同名不同人（改名或被重新注册），不算已签"
+        )
     return None
 
 
@@ -468,8 +591,9 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
     if reason == "provider_not_configured":
         return (
             f"CLA 签名服务尚未启用（{prov.get('note') or 'provider.configured=false'}）"
-            "——目前只有 .github/cla-policy.json 里点名豁免的账号能通过。"
-            "想贡献请先开一个 issue，维护者会走人工流程；"
+            "——目前只有 .github/cla-policy.json 里点名豁免的账号、以及"
+            "已与著作权人双签纸面协议（offline_signatures）的账号能通过。"
+            "想贡献请先开一个 issue 或写信 support@tavotto.com，维护者会走人工流程；"
             "启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md"
         )
     if reason == "provider_check_missing":
@@ -573,6 +697,33 @@ def decide(
                 }
             )
             continue
+        sig = _offline_signature_for(login, policy)
+        if sig is not None:
+            offline_problem = _offline_verdict(sig, c, policy)
+            if offline_problem is None:
+                rows.append(
+                    {
+                        "login": login,
+                        "verdict": "signed",
+                        "detail": (
+                            f"线下双签 {sig['agreement']} CLA {sig['version']}"
+                            f"（贡献者 {sig['contributor_signed_on']}，"
+                            f"联署 {sig['countersigned_on']}；账号 id {sig['github_id']}）"
+                        ),
+                        "sources": c["sources"],
+                    }
+                )
+                continue
+            rows.append(
+                {
+                    "login": login,
+                    "verdict": "missing",
+                    "detail": offline_problem,
+                    "sources": c["sources"],
+                }
+            )
+            problems.append(f"missing: `{login}` — {offline_problem}")
+            continue
         if "*" in signed:
             rows.append(
                 {
@@ -638,7 +789,8 @@ def render_summary(verdict: dict, policy: dict) -> str:
         )
         lines += [
             f"协议正文 [`{ind}`]({ind}) / [`{corp}`]({corp})；"
-            "签署事实的权威是签名服务商，仓库不保存 signer 名单——"
+            "签署事实的权威是签名服务商（服务商启用前是著作权人保存的双签纸面协议），"
+            "仓库不保存签署人的个人信息——"
             "见 [`docs/legal/CLA_AUTOMATION_SETUP.md`]"
             "(docs/legal/CLA_AUTOMATION_SETUP.md)。",
             "",

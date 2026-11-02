@@ -102,10 +102,30 @@ What the version and hash in `.github/cla-policy.json` are *for*, then, is to
 pin **which text** the provider is collecting signatures against. The provider
 answers "did this person sign?"; the repository answers "sign what, exactly?".
 
+### Before a provider exists: countersigned paper agreements
+
 While no provider is configured — which is the current state, deliberately —
-nobody can be recorded as having signed, and the gate blocks every non-exempt
-human contributor **with an explanation**. That is the correct behaviour: an
-unconfigured service is not consent, and silence is not a signature.
+the only way to sign is the one the agreement itself names: the contributor
+signs the agreement text, sends it to <support@tavotto.com>, and the rights
+holder countersigns. **The executed copy (both signatures) is then the
+authoritative record**, held privately by the rights holder. It carries the
+contributor's postal address, so it never enters this repository.
+
+`.github/cla-policy.json` → `offline_signatures` is only an **index** pointing at
+those executed copies: login, immutable GitHub account id, agreement, version,
+the two signing dates and a one-line note on where the record is kept — no
+name, address or email (the gate rejects any extra field). The gate qualifies a
+contributor from it only when the version still equals the current agreement
+version and every account id observed for that login in the pull request
+equals the recorded `github_id`.
+
+This does not reintroduce two authorities, because the two never coexist: the
+gate refuses a policy in which `provider.configured` is `true` and
+`offline_signatures` is non-empty. Activating a provider therefore includes
+moving the offline signers into it and emptying the index in the same change.
+
+Everyone else is still blocked **with an explanation**: an unconfigured service
+is not consent, and silence is not a signature.
 
 ## Rights transfer, if the holder ever changes
 

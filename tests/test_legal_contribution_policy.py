@@ -239,10 +239,12 @@ class TestAgreementVersionBinding:
             )
 
     def test_repository_stores_no_signature_records(self):
-        """**签署事实的权威只有一个：provider。**
+        """**签署事实的权威只有一个：provider（启用前是双签纸面协议）。**
 
         仓库里不许再出现手工维护的 signer 名单——它会和服务商的数据库变成
-        两个法律权威，分叉之后没有任何机制说得清哪一份算数。
+        两个法律权威，分叉之后没有任何机制说得清哪一份算数。服务商启用前的
+        `offline_signatures` 是指向私下保存的执行副本的索引，且与 provider
+        结构性互斥（见 TestOfflineSignatures），不是第二个权威。
         """
         stray = LEGAL / "cla-signatures.json"
         assert not stray.exists(), (
@@ -274,6 +276,9 @@ class TestAgreementVersionBinding:
         name, ag = next(iter(pol["agreements"].items()))
         assert not str(ag["version"]).endswith(gate.DRAFT_SUFFIX), "前提：仓库里的协议已定版"
         ag["version"] = f"{ag['version']}{gate.DRAFT_SUFFIX}"
+        # 线下签署与已配置的 provider 互斥（TestOfflineSignatures）——清空它，
+        # 才验得到草案这一条，而不是先撞上互斥那一条。
+        pol["offline_signatures"] = []
         pol["provider"] = {
             "configured": True,
             "name": "X",
@@ -957,3 +962,166 @@ class TestContributorCollection:
     def test_malformed_commits_payload_raises(self, gate):
         with pytest.raises(gate.ConfigError):
             gate.collect_contributors(None, {"not": "a list"})
+
+
+# ═════════════════════════════════════════════ 10. 线下双签（服务商启用前）
+class TestOfflineSignatures:
+    """服务商启用前，双签纸面协议是唯一签署途径；policy 只存它的索引。
+
+    主语：**这个 PR 里某个 login 名下实际出现的 GitHub 账号**，是不是与
+    著作权人双签过当前版本协议的那个账号。login 只是查找键，身份按不可变 id 核。
+    """
+
+    SIG = {
+        "login": "signer",
+        "github_id": 777,
+        "agreement": "individual",
+        "version": "1.0",
+        "contributor_signed_on": "2026-11-01",
+        "countersigned_on": "2026-11-02",
+        "record": "executed copy held privately by the rights holder",
+    }
+
+    def _policy(self, *, provider_on=False, sigs=None, ver="1.0"):
+        pol = TestGateDecisions()._policy(provider_on=provider_on)
+        pol["agreements"]["individual"]["version"] = ver
+        pol["offline_signatures"] = [dict(self.SIG)] if sigs is None else sigs
+        return pol
+
+    @staticmethod
+    def _who(login="signer", ids=(777,)):
+        return [{"login": login, "sources": ["pr_author", "commit_author"], "ids": list(ids)}]
+
+    def test_repository_entries_are_valid_and_carry_no_personal_data(self, gate, policy):
+        gate.validate_policy(policy)
+        for sig in policy.get("offline_signatures", []):
+            assert set(sig) == set(gate.OFFLINE_SIGNATURE_KEYS)
+            assert policy["agreements"][sig["agreement"]]["version"] == sig["version"]
+        if policy.get("offline_signatures"):
+            assert policy["provider"]["configured"] is False
+
+    def test_countersigned_signer_with_matching_id_passes_without_provider(self, gate):
+        v = gate.decide("pull_request", self._policy(), None, self._who())
+        assert v["status"] == "success", v
+        assert v["contributors"][0]["verdict"] == "signed"
+
+    def test_same_login_different_account_is_not_signed(self, gate):
+        """改名 / 被重新注册：login 对上了，人不是那个人。"""
+        v = gate.decide("pull_request", self._policy(), None, self._who(ids=(778,)))
+        assert v["status"] == "failure"
+        assert "778" in " ".join(v["problems"])
+
+    def test_one_stray_id_among_matching_ones_still_fails(self, gate):
+        v = gate.decide("pull_request", self._policy(), None, self._who(ids=(777, 778)))
+        assert v["status"] == "failure"
+
+    def test_no_observed_account_id_fails_closed(self, gate):
+        v = gate.decide("pull_request", self._policy(), None, self._who(ids=()))
+        assert v["status"] == "failure"
+        assert "账号 id" in " ".join(v["problems"])
+
+    def test_signature_on_an_older_version_does_not_qualify(self, gate):
+        v = gate.decide("pull_request", self._policy(ver="2.0"), None, self._who())
+        assert v["status"] == "failure"
+        assert "2.0" in " ".join(v["problems"])
+
+    def test_unlisted_contributor_is_still_blocked(self, gate):
+        v = gate.decide("pull_request", self._policy(), None, self._who(login="stranger"))
+        assert v["status"] == "failure"
+
+    def test_cannot_coexist_with_a_configured_provider(self, gate):
+        """两个权威不许并存——启用服务商前必须先迁移、清空。"""
+        with pytest.raises(gate.ConfigError, match="一个权威"):
+            gate.validate_policy(self._policy(provider_on=True))
+        gate.validate_policy(self._policy(provider_on=True, sigs=[]))
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda s: s.update(address="1 Main St"),
+            lambda s: s.update(name="Real Name"),
+            lambda s: s.pop("github_id"),
+            lambda s: s.update(github_id="777"),
+            lambda s: s.update(github_id=0),
+            lambda s: s.update(agreement="nonexistent"),
+            lambda s: s.update(contributor_signed_on="Nov 1"),
+            lambda s: s.update(countersigned_on="2026-10-31"),
+            lambda s: s.update(record=""),
+        ],
+    )
+    def test_malformed_entry_is_rejected(self, gate, mutate):
+        sig = dict(self.SIG)
+        mutate(sig)
+        with pytest.raises(gate.ConfigError):
+            gate.validate_policy(self._policy(sigs=[sig]))
+
+    def test_login_cannot_be_both_exempt_and_offline_signed(self, gate):
+        with pytest.raises(gate.ConfigError):
+            gate.validate_policy(self._policy(sigs=[dict(self.SIG, login="Owner")]))
+
+    def test_duplicate_entries_are_rejected(self, gate):
+        with pytest.raises(gate.ConfigError):
+            gate.validate_policy(self._policy(sigs=[dict(self.SIG), dict(self.SIG)]))
+
+    def test_collection_records_account_ids_from_api_and_noreply(self, gate):
+        commits = [
+            {
+                "sha": "a1",
+                "commit": {
+                    "author": {"name": "S", "email": "s@example.com"},
+                    "message": "x\n\nCo-authored-by: C <42+coa@users.noreply.github.com>",
+                },
+                "author": {"login": "signer", "id": 777},
+            },
+            {
+                "sha": "b2",
+                "commit": {
+                    "author": {"name": "S", "email": "9+signer@users.noreply.github.com"},
+                    "message": "y",
+                },
+                "author": None,
+            },
+        ]
+        found, unresolved = gate.collect_contributors("signer", commits)
+        by = {c["login"]: c for c in found}
+        assert unresolved == []
+        assert by["signer"]["ids"] == [777, 9]
+        assert by["coa"]["ids"] == [42]
+
+    def test_end_to_end_against_the_repository_policy(self, gate, policy, tmp_path):
+        """真 policy + 真 CLI：每个线下签署人凭自己的 id 能过，换个 id 就红。"""
+        for sig in policy.get("offline_signatures", []):
+            for account_id, want in ((sig["github_id"], 0), (sig["github_id"] + 1, 1)):
+                commits = tmp_path / f"c{account_id}.json"
+                commits.write_text(
+                    json.dumps(
+                        [
+                            {
+                                "sha": "0" * 40,
+                                "commit": {
+                                    "author": {"name": "x", "email": "x@example.com"},
+                                    "message": "m",
+                                },
+                                "author": {"login": sig["login"], "id": account_id},
+                            }
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                rc = gate.main(
+                    [
+                        "--event",
+                        "pull_request",
+                        "--policy",
+                        str(POLICY_PATH),
+                        "--repo-root",
+                        str(ROOT),
+                        "--pr-author",
+                        sig["login"],
+                        "--commits-json",
+                        str(commits),
+                        "--expected-commits",
+                        "1",
+                    ]
+                )
+                assert rc == want, (sig["login"], account_id)
