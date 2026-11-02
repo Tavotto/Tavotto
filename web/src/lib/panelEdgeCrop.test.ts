@@ -84,6 +84,34 @@ describe('planEdgeDepth', () => {
     expect(planEdgeDepth({ ...base, inkDepth: 0, want: 0.3, alt: true })).toEqual({ depth: 0.3, state: 'content' })
   })
 
+  it('#1647 P2-1：内容边缘离图边 ≤ 半径时，不按 ⌥ 也不能裁进内容（Codex 给的那组数）', () => {
+    const near = { depth0: 0, oppDepth: 0, inkDepth: 0.005, tol: 0.016, alt: false }
+    // want 0.018 落在 ink+tol 之内：旧实现闸不启动、直接返回 0.018 / content
+    expect(planEdgeDepth({ ...near, want: 0.018 })).toEqual({ depth: 0.005, state: 'tight' })
+    // 半径外：blocked，停在内容边缘
+    expect(planEdgeDepth({ ...near, want: 0.03 })).toEqual({ depth: 0.005, state: 'blocked' })
+    expect(planEdgeDepth({ ...near, want: 0.5 })).toEqual({ depth: 0.005, state: 'blocked' })
+  })
+
+  it('#1647 P2-1：两个停靠点重叠的一段，离谁近吸谁，且深度随指针单调不减、从不超过内容边缘', () => {
+    const near = { depth0: 0, oppDepth: 0, inkDepth: 0.005, tol: 0.016, alt: false }
+    expect(planEdgeDepth({ ...near, want: 0.002 })).toEqual({ depth: 0, state: 'full' })
+    expect(planEdgeDepth({ ...near, want: 0.0025 })).toEqual({ depth: 0, state: 'full' })
+    expect(planEdgeDepth({ ...near, want: 0.003 })).toEqual({ depth: 0.005, state: 'tight' })
+    let prev = -1
+    for (let w = -0.01; w <= 0.1; w += 0.0005) {
+      const r = planEdgeDepth({ ...near, want: w })
+      expect(r.depth).toBeGreaterThanOrEqual(prev - 1e-12)
+      expect(r.depth).toBeLessThanOrEqual(0.005 + 1e-12)
+      prev = r.depth
+    }
+  })
+
+  it('#1647 P2-1：⌥ 按住时可以越过（content），不变', () => {
+    const near = { depth0: 0, oppDepth: 0, inkDepth: 0.005, tol: 0.016, alt: true }
+    expect(planEdgeDepth({ ...near, want: 0.2 })).toEqual({ depth: 0.2, state: 'content' })
+  })
+
   it('给对边留最小边长（5%）', () => {
     const r = planEdgeDepth({ ...base, inkDepth: null, oppDepth: 0.5, want: 0.9 })
     expect(r.depth).toBeCloseTo(0.45, 12)

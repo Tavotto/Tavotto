@@ -71,7 +71,9 @@ export interface EdgePlan {
  * 停靠点规则（ADR 0161）：
  *  - 往外到「未裁剪」为止，靠近图边（半径内）吸到 0；
  *  - 往里靠近内容边缘（半径内）吸上去；
- *  - 起手时还没裁进内容的边，不按 ⌥ 越不过内容边缘（停在那里，状态 `blocked`）；
+ *  - 起手时还没裁进内容的边，不按 ⌥ 越不过内容边缘：越过半径外 = 停在那里（状态 `blocked`），
+ *    半径内 = 吸在边缘上；深度从不超过内容边缘；
+ *  - 图边与内容边缘都在半径内（内容紧贴图边）时，离谁近吸谁；
  *    起手就已经在内容里面的边（老项目 / 别处裁过）不设这道闸，免得一动就弹出去；
  *  - 不管怎样都给对边留 `MIN_CROP_FRAC`。
  */
@@ -79,16 +81,21 @@ export function planEdgeDepth(i: EdgePlanInput): EdgePlan {
   const maxD = Math.max(0, 1 - i.oppDepth - MIN_CROP_FRAC)
   const ink = i.inkDepth
   const barrier = ink != null && !i.alt && i.depth0 <= ink + EPS
+  // 闸：不按 ⌥ 时任何越过内容边缘的深度都到不了，与吸附半径无关（内容边缘离图边 ≤ tol 时也一样）
   if (barrier && i.want > ink + i.tol) {
     return { depth: Math.min(ink, maxD), state: 'blocked' }
   }
-  const d = Math.min(Math.max(i.want, 0), maxD)
-  // 图边（含内容紧贴图边的情形：两个位置重合，说图边）
-  if (d <= i.tol) return { depth: 0, state: 'full' }
-  if (ink != null && ink > i.tol && ink <= maxD && Math.abs(d - ink) <= i.tol) {
-    return { depth: ink, state: 'tight' }
+  const raw = Math.min(Math.max(i.want, 0), maxD)
+  const d = barrier ? Math.min(raw, ink) : raw
+  // 两个停靠点：图边(0) 与内容边缘；各自在半径内才吸，两者都在半径内（内容紧贴图边）时离谁近吸谁
+  const toEdge = d <= i.tol ? d : Infinity
+  const inkOk = ink != null && ink > 0 && ink <= maxD
+  const toInk = inkOk && Math.abs(d - ink) <= i.tol ? Math.abs(d - ink) : Infinity
+  if (toEdge === Infinity && toInk === Infinity) {
+    return { depth: d, state: ink != null && d > ink + EPS ? 'content' : 'trim' }
   }
-  return { depth: d, state: ink != null && d > ink + EPS ? 'content' : 'trim' }
+  if (toEdge <= toInk) return { depth: 0, state: 'full' }
+  return { depth: ink as number, state: 'tight' }
 }
 
 /** 把一条边设到某个深度，其余三边保持起手时的样子 */

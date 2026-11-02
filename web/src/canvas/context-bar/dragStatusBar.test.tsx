@@ -147,7 +147,7 @@ describe('拖动状态胶囊', () => {
     await begin('resize', scale())
     const el = statusEl()!
     expect(el.getAttribute('data-drag-tone')).toBe('normal')
-    expect(el.textContent).toBe('缩放 92% → 75% · 图内文字 7.4 → 6.0 pt· 标注 2 个一起缩放')
+    expect(el.textContent).toBe('缩放 92% → 75% · 图内最小字号 7.4 → 6.0 pt· 标注 2 个一起缩放')
     expect(bar()).toBeNull()
   })
 

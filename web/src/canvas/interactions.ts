@@ -90,10 +90,10 @@ import {
 } from '@/lib/scaleSnap'
 import { scaleDragStatus } from '@/lib/dragStatus'
 import { applyAnnotationScale, annotationsOver, captureOrigins } from '@/lib/annotationScale'
-import { panelScale } from '@/lib/preflight'
+import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
-import { clamp, effectivePt } from '@/lib/units'
+import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
@@ -138,7 +138,6 @@ import {
   lineEndpoints,
   objectRotation,
   panelAspectLocked,
-  panelFullSize,
   panelRotation,
   rotationSwaps,
   type ArrowObject,
@@ -393,7 +392,9 @@ function minEffectiveFontPt(): number | null {
 
 /**
  * 面板角缩放的状态句数据（`interaction.dragStatus`）：缩放 a% → b%、图内文字等效 pt、是否低于规范下限。
- * 缩放比 = `preflight.panelScale`、等效字号 = `units.effectivePt`（与属性页「等效字号」同一份算法，不另写一套）；
+ * 缩放比 = `preflight.panelScale`；图内文字 = 图里**真实画出来的最小字号**（`preflight.drawnMinFontPt`，
+ * 起手从 manifest 取一次）× 缩放比，下限判的也是它——与预检同一来源，不按固定 9 pt 估；
+ * 读不到 manifest / 图里没有文字就不报 pt（只说缩放百分比），也不判下限，不拿估计值冒充事实；
  * `box` 是此刻的包围盒，其余字段取 `panel` 起手时的样子。位图源（按 dpi 评质量）不报 pt。
  */
 function scaleReadout(
@@ -401,10 +402,11 @@ function scaleReadout(
   box: Rect,
   followOn: boolean,
   followCount: number,
+  minSrcPt: number | null,
 ) {
   const at = (r: { w: number; h: number }) => {
     const p = { ...panel, w: r.w, h: r.h } as PanelObject
-    const pt = panel.fileKind === 'raster' ? null : effectivePt(panelFullSize(p).w, p.nativeW)
+    const pt = panel.fileKind === 'raster' || minSrcPt == null ? null : scaledFontPt(minSrcPt, p)
     return { pct: Math.round(panelScale(p) * 100), pt }
   }
   const from = at(panel)
@@ -476,9 +478,13 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       : null
 
   interaction().begin('resize')
+  const minSrcPt =
+    layoutCorner && target.type === 'panel'
+      ? drawnMinFontPt(exactPanelManifest(useRenderStore.getState(), target))
+      : null
   if (layoutCorner) {
     interaction().setDragStatus(
-      scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length),
+      scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length, minSrcPt),
     )
   }
   store.beginTxn(hist('resizeObjects'))
@@ -580,6 +586,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
             placed,
             following,
             followOrigins.length,
+            minSrcPt,
           ),
         )
       }

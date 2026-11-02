@@ -11,7 +11,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useProfileStore } from '@/store/profileStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { UI_PREFS_KEY, useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -136,8 +136,26 @@ function dragCorner(to: [number, number], mods: { altKey?: boolean } = {}) {
   }
 }
 
+/** 给 pa 塞一份「这一版」的 manifest：图里画出来的文字字号（脚本 pt）逐个给 */
+function seedFonts(...sizes: number[]) {
+  const p = get<PanelObject>('pa')
+  const manifest = {
+    elements: sizes.map((v, i) => ({
+      gid: `axes_0.text_${i}`,
+      role: 'text',
+      editable: [{ prop: 'fontsize', value: v }],
+    })),
+  }
+  useRenderStore.setState({
+    byKey: {
+      [renderKeyOf(p)]: { manifest, lastPatches: JSON.stringify(p.overrides), stale: false },
+    },
+  } as never)
+}
+
 beforeEach(async () => {
   await setup()
+  seedFonts(9)
 })
 afterEach(() => {
   useInteractionStore.getState().end()
@@ -239,12 +257,12 @@ describe('连同标注', () => {
 })
 
 describe('缩放状态（interaction.dragStatus）', () => {
-  it('主句 = 缩放百分比 + 图内文字等效 pt（panelScale / effectivePt 同一份算法），后缀 = 标注数', () => {
+  it('主句 = 缩放百分比 + 图里真实最小字号 × 缩放比（panelScale / drawnMinFontPt，与预检同一来源），后缀 = 标注数', () => {
     const readout = dragCorner([-50, -37.5])
     const p = get<PanelObject>('pa')
     const s = p.w / 100
     expect(readout).toMatchObject({
-      main: `缩放 100% → ${Math.round(s * 100)}% · 图内文字 9.0 → ${(Math.round(9 * s * 10) / 10).toFixed(1)} pt`,
+      main: `缩放 100% → ${Math.round(s * 100)}% · 图内最小字号 9.0 → ${(Math.round(9 * s * 10) / 10).toFixed(1)} pt`,
       detail: '标注 3 个一起缩放',
     })
     // 胶囊贴着被拖面板此刻的框
@@ -258,6 +276,30 @@ describe('缩放状态（interaction.dragStatus）', () => {
     useProfileStore.setState({ loaded: true })
     // 默认规范的字号下限（8pt 左右）：缩到约 50% 后图内文字 ≈ 4.5pt，低于它
     expect(dragCorner([-50, -37.5])).toMatchObject({ tone: 'warn' })
+  })
+
+  it('#1647 P2-2：图里文字是 12 pt，缩到 75% 显示 9.0 pt、不告警（不再按固定 9 pt 估成 6.8）', () => {
+    seedFonts(12, 14)
+    useProfileStore.setState({ loaded: true })
+    const r = dragCorner([-25, -18.75])
+    expect(r!.main).toBe('缩放 100% → 75% · 图内最小字号 12.0 → 9.0 pt')
+    expect(r!.tone).toBe('normal')
+  })
+
+  it('#1647 P2-2：图里最小文字 6 pt，100% 起手就低于 8 pt 下限 → 告警', () => {
+    seedFonts(6, 10)
+    useProfileStore.setState({ loaded: true })
+    const r = dragCorner([0.01, 0.0075])
+    expect(r!.main).toMatch(/图内最小字号 6\.0 → 6\.0 pt$/)
+    expect(r!.tone).toBe('warn')
+  })
+
+  it('#1647 P2-2：读不到 manifest = 不报 pt、不判下限（不拿估计值冒充事实）', () => {
+    useRenderStore.setState({ byKey: {} } as never)
+    useProfileStore.setState({ loaded: true })
+    const r = dragCorner([-50, -37.5])
+    expect(r!.main).toMatch(/^缩放 100% → \d+%$/)
+    expect(r!.tone).toBe('normal')
   })
 
   it('放大不低于下限', () => {
