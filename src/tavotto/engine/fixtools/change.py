@@ -592,7 +592,9 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
         "when there is no usable environment (list_environments is empty, or none can run the script) or when the "
         "packages need another Python version. Does not touch the user's own Pythons. Takes a snapshot; the result "
         "gives the new environment id for install_packages / try_run. `version` is optional (for example `3.12`): "
-        "leave it out and Tavotto picks one that suits the script and the project.",
+        "leave it out and Tavotto picks one that suits the script and the project. If a dependency installation in this "
+        "project is still running, it first waits for it to finish; if that takes too long it returns `env_busy`, "
+        "which is retryable.",
         obj(
             {"version": {"type": "string", "description": "Optional, for example `3.12`."}},
         ),

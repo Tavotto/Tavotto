@@ -28,3 +28,7 @@ A script that uses no plotting library and builds the SVG text itself (for examp
 ## Icon animations no longer overlap themselves
 
 Several interface icon animations had parts passing through each other while playing (the sheet in the folder icon poked out of the front panel, the two squares in the group icon merged, the envelope flap flipped through the top edge, the sun in the image icon crossed the mountain, the small sparkle touched the big one). Each animation now starts from the state before the action and ends at the resting icon without any parts crossing: lock drops its shackle in and unlock pops it out by the same distance, disconnect pulls the plug out of its socket, and distribute slides one block to even spacing. The disconnect, save and unlock icons were redrawn, and clicking "Disconnect" now plays the unplug motion.
+
+## The fix assistant waits for a running install before switching Python
+
+When the in-app fix assistant tried to create a new Python environment while a package installation for the same project was still running, it failed immediately with "dependency install busy" and often gave up. It now waits (up to about two minutes) for the installation to finish and then continues; if the installation is still running after that, the assistant is told the problem is temporary and can try again instead of treating it as a dead end. A script that is still running in the environment is still reported as needing you to stop it first.

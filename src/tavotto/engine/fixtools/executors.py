@@ -82,7 +82,7 @@ def _default_python_changer(req: dict, cancel: threading.Event | None = None) ->
     基础解释器只有 `managedenv.base_pick` 一个挑选处；用户的环境一个字节不碰），建好后按现有联合计划补脚本要的依赖。
     `req = {"version": 可省, "project", "script"}`。`version` 省略 = 取脚本 / 项目声明的 `requires-python` 与 Tavotto 支持区间的交集；
     指定了就把范围钉成这个小版本。推不出 / 没有可供应的基础解释器 → `python_change_unavailable`。返回里 `python` 是新环境的解释器。"""
-    from .. import managedenv, pyversionfix
+    from .. import deprepair, managedenv, pyversionfix
 
     cancel = cancel or threading.Event()
     if not pyversionfix.auto_change_enabled():  # 运维开关（#1381）
@@ -112,7 +112,17 @@ def _default_python_changer(req: dict, cancel: threading.Event | None = None) ->
         }
     res = pyversionfix.apply_python_change(plan, None, cancel)
     if not res.get("ok"):
-        return {"ok": False, "code": str(res.get("code") or pyversionfix.ERROR_FAILED)[:60]}
+        code = str(res.get("code") or pyversionfix.ERROR_FAILED)[:60]
+        if code == deprepair.ERROR_BUSY:
+            # 与 `_default_installer` 同一口径（`env_busy`）；native 会话占用（另一个 code）要用户自己结束脚本，不在此列
+            return {
+                "ok": False,
+                "code": "env_busy",
+                "message": "Retryable: a dependency installation in this project's environment is still running, "
+                "and it did not finish within the wait. Nothing was changed. Wait a moment, then call "
+                "change_python again (or carry on with other steps and retry later).",
+            }
+        return {"ok": False, "code": code}
     python = managedenv.python_of(project)
     return {
         "ok": True,

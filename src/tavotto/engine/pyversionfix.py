@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -58,6 +59,9 @@ STAGE_VERIFYING = "verifying"
 ERROR_CANCELLED = "python_change_cancelled"
 ERROR_FAILED = "python_change_failed"
 ERROR_UNAVAILABLE = "python_change_unavailable"
+#: 这个项目的依赖安装 / 换代作业还在跑：换代前有界等它结束（TVD-22EY：单包修复持环境锁约 3 分钟，换 Python 立即撞忙）
+INSTALL_WAIT_SECONDS = 120.0
+INSTALL_WAIT_POLL = 0.5
 
 Minor = tuple[int, int]
 MinorRange = tuple[Minor, Minor]  # 半开 [lo, hi)
@@ -463,6 +467,10 @@ def apply_python_change(
     if cancel.is_set():
         return failed(ERROR_CANCELLED)
     note(STAGE_PREPARING)
+    if not _wait_for_installs(plan.project, cancel):
+        if cancel.is_set():
+            return failed(ERROR_CANCELLED)
+        return failed(deprepair.ERROR_BUSY)  # 等满仍在装：可重试的忙，交给调用方映射
     base = plan.base_python
     if plan.base == BASE_PRIVATE:
         try:
@@ -482,6 +490,20 @@ def apply_python_change(
     if cancel.is_set():
         return failed(ERROR_CANCELLED)
     return _build_generation(plan, base, note, cancel)
+
+
+def _wait_for_installs(project: str, cancel: threading.Event) -> bool:
+    """这个项目的受管环境此刻有依赖安装 / 换代在跑（`deprepair.installing`）时有界等它结束，响应取消。
+    回 True = 可以继续；False = 等满 `INSTALL_WAIT_SECONDS` 仍在装，或被取消（调用方看 `cancel` 区分）。"""
+    if not deprepair.installing(project):
+        return True
+    deadline = time.monotonic() + INSTALL_WAIT_SECONDS
+    while deprepair.installing(project):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or cancel.is_set():
+            return False
+        cancel.wait(min(INSTALL_WAIT_POLL, remaining))
+    return True
 
 
 def _run_prepare(plan_id: str, on_event, digest: str):
