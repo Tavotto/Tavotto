@@ -96,7 +96,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: `paths.config_dir_under_packages`（三个 bool，MSIX 宿主下数据被重定向的分诊，#1574；不带用户名与包名）。
 #: 13 = report.json 的 `system.msix_data_migration`（#1574 善后：包私有区旧数据补回真实目录的结果，闭集 `state`
 #: none / partial / done + 几个计数与 `config_merged` 布尔；不带路径与包族名）。
-BUNDLE_SCHEMA_VERSION = 13
+#: 14 = report.json 顶层 `render_pool`（渲染池健康摘要：上限 / 存活 / 累计淘汰与冷启动 / 最近几次冷启动的分段毫秒；
+#: `pool.health_snapshot()`，闭集字段，不带脚本名与路径，TVM-Y37X）。
+BUNDLE_SCHEMA_VERSION = 14
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1525,6 +1527,13 @@ def _fresh_ai_capabilities() -> tuple[dict, str]:
     return cached, ("stale" if cached else "timeout")
 
 
+def _render_pool_summary() -> dict:
+    try:
+        return pool.health_snapshot()
+    except Exception as exc:  # noqa: BLE001 — 摘要取不到不许让备包失败
+        return {"error": type(exc).__name__}
+
+
 def build_report(project: dict | None = None, port: int | None = None) -> dict:
     """结构化诊断报告（已脱敏）。project 由 app 层传入，避免这里反向依赖。"""
     from .. import __version__
@@ -1640,6 +1649,8 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "hard_disabled": telemetry.hard_disabled(),
         },
         "project": _project_section(project, roots),
+        # 渲染池健康摘要（内存计数器，闭集字段，无脚本名 / 路径）；导出包与发送包共用 report.json 这一处出口
+        "render_pool": _render_pool_summary(),
         "recent_errors": errors,
     }
     return _redact_obj(report, roots)
