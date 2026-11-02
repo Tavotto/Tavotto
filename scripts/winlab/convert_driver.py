@@ -30,8 +30,11 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-#: 产品对单次 AI 任务的上限是 900 s（ai_bridge.TIMEOUT_S）；多等一分钟看收尾
-DEFAULT_TIMEOUT_S = 960
+#: 轮询截止 = 产品按脚本行数给的转换时限（ai_convert.convert_timeout_s）+ 完成余量；
+#: 所 prepare 的代码没有这个函数就退回基线 900 s + 余量（与 agent.CONVERT_TIMEOUT_* 一致，测试核对）
+FALLBACK_BASE_S = 900
+MARGIN_S = 120
+DEFAULT_TIMEOUT_S = FALLBACK_BASE_S + MARGIN_S
 MAX_LISTED_FILES = 200
 
 
@@ -59,6 +62,16 @@ def list_workspace(ws: Path) -> list[dict]:
             if len(out) >= MAX_LISTED_FILES:
                 return out
     return sorted(out, key=lambda d: d["name"])
+
+
+def timeout_for(data: bytes, ai_convert) -> int:
+    """一份源脚本（字节）的轮询截止秒数：产品同一个公式 + 余量；缺函数时 900 + 余量。"""
+    fn = getattr(ai_convert, "convert_timeout_s", None)
+    if not callable(fn):
+        return FALLBACK_BASE_S + MARGIN_S
+    count = getattr(ai_convert, "source_line_count", None)
+    lines = count(data) if callable(count) else data.count(b"\n")
+    return int(fn(lines)) + MARGIN_S
 
 
 class Api:
@@ -98,12 +111,27 @@ def serve_app(flask_app):
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True)
-    ap.add_argument("--script", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--result", required=True)
-    ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
+    ap.add_argument("--project")
+    ap.add_argument("--script")
+    ap.add_argument("--out")
+    ap.add_argument("--result")
+    ap.add_argument("--timeout", type=int, default=None, help="缺省：按脚本行数由产品公式求")
+    ap.add_argument("--print-timeout", action="store_true", help="只打印这个脚本的时限（秒）后退出")
+    ap.add_argument("--script-file", help="--print-timeout 用：脚本的绝对路径")
     ns = ap.parse_args(argv)
+    if ns.print_timeout:
+        try:
+            from tavotto.engine import ai_convert as _ac
+        except ImportError:
+            _ac = None
+        data = Path(ns.script_file).read_bytes() if ns.script_file else b""
+        print(timeout_for(data, _ac) if _ac else DEFAULT_TIMEOUT_S)
+        sys.stdout.flush()
+        os._exit(0)
+    if not (ns.project and ns.script and ns.out and ns.result):
+        ap.error("--project --script --out --result are required")
+    if ns.timeout is None:
+        ns.timeout = DEFAULT_TIMEOUT_S
     out = Path(ns.out)
     out.mkdir(parents=True, exist_ok=True)
     result: dict = {"started": time.strftime("%Y-%m-%dT%H:%M:%S")}

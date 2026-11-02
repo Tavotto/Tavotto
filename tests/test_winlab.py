@@ -3431,20 +3431,8 @@ def test_page_shot_without_a_png_is_not_passed(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- convert-live（转换真模型复现）
 def test_convert_live_is_registered_as_a_closed_set_task_needing_the_secret():
     t = A.TASKS["convert-live"]
-    assert t.needs_model_conf and t.networks == ("direct", "trojan")
-    assert (
-        t.modes
-        == A.CONVERT_MODES
-        == (
-            "baseline",
-            "cjk-path",
-            "long-path",
-            "all",
-            "openai-baseline",
-            "openai-cjk-path",
-            "openai-all",
-        )
-    )
+    assert t.needs_model_conf and t.networks == ("direct",)
+    assert t.modes == A.CONVERT_MODES == ("baseline", "cjk-path", "long-path", "all")
     assert A.validate_test_args(t, [], None, "direct", mode="cjk-path") is None
     assert A.validate_test_args(t, [], None, "direct", mode="anything")
     assert A.validate_test_args(t, ["tests/test_x.py"], None, "direct")  # 不收 --tests
@@ -3454,8 +3442,7 @@ def test_convert_live_is_registered_as_a_closed_set_task_needing_the_secret():
 def test_convert_live_secret_comes_from_the_default_key_file_not_the_ondisk_one():
     assert "cjk-path" not in W.ONDISK_MODES and "cjk-path" not in W.ACCOUNT_MODEL_MODES
     for m in A.CONVERT_MODES:
-        if not m.startswith("openai-"):
-            assert W.model_conf_path(m) == W.MODEL_CONF_PATH
+        assert W.model_conf_path(m) == W.MODEL_CONF_PATH
 
 
 def test_convert_live_without_local_secret_file_stops_before_ssh(tmp_path, monkeypatch):
@@ -3701,138 +3688,95 @@ def test_convert_driver_has_no_key_argument_and_is_importable_alone(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
-# --------------------------------------------------------------------------- convert-live 的 OpenAI 官方模式
-def test_openai_modes_match_between_mac_and_lab_and_never_touch_the_lab_disk():
-    assert W.OPENAI_MODES == tuple(
-        m for m in A.CONVERT_MODES if m.startswith(A.CONVERT_OPENAI_PREFIX)
-    )
-    assert not set(W.OPENAI_MODES) & set(W.ONDISK_MODES)
-    for m in W.OPENAI_MODES:
-        assert W.model_conf_path(m) == W.MODEL_CONF_OPENAI_PATH != W.MODEL_CONF_PATH
-        assert A.convert_provider(m) == "openai"
-        assert [c.key for c in A.convert_plan(m)] == [
-            c.key for c in A.convert_plan(m.removeprefix("openai-"))
-        ]
-    assert A.convert_provider("baseline") == "deepseek"
+# --------------------------------------------------------------------------- convert-live 的地区政策看护
+def test_no_official_vendor_modes_or_providers_exist_for_convert_live_or_secret_init():
+    """docs/rules/ci/windows-lab.md:122-124（地区政策）：Lab 在中国大陆，Anthropic / OpenAI 的真实模型调用保持 BLOCKED，
+    经代理出口调用等于绕开服务商地区限制，授权也不改变——所以 convert-live 的 mode 闭集与 secret-init 的 provider
+    闭集里都不能出现官方厂商，convert-live 也不能走 trojan 出口。"""
+    banned = ("openai", "anthropic", "claude")
+    for m in A.CONVERT_MODES:
+        assert not any(v in m.lower() for v in banned), m
+    assert A.TASKS["convert-live"].networks == ("direct",)
+    assert not any(v in p.lower() for p in W.MODEL_PROVIDERS for v in banned)
+    parser = W.build_parser()
+    for v in banned:
+        with pytest.raises(SystemExit):
+            parser.parse_args(["secret-init", v])
+    for name in ("OPENAI_MODES", "MODEL_CONF_OPENAI_PATH"):
+        assert not hasattr(W, name)
+    for name in ("CONVERT_OPENAI_PREFIX", "CONVERT_OPENAI_NETWORK", "CODEX_OFFICIAL_KEY_ENV"):
+        assert not hasattr(A, name)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="winlab.py 是 Mac 端入口（POSIX 权限位）")
-def test_secret_init_openai_writes_its_own_0600_file_and_keys_must_differ(tmp_path, monkeypatch):
-    import getpass
-
-    monkeypatch.setattr(W, "MODEL_CONF_PATH", tmp_path / "model.json")
-    monkeypatch.setattr(W, "MODEL_CONF_ONDISK_PATH", tmp_path / "model-ondisk.json")
-    monkeypatch.setattr(W, "MODEL_CONF_OPENAI_PATH", tmp_path / "model-openai.json")
-    ds = "sk-" + "d" * 32
-    oa = "sk-proj-" + "o" * 32
-    keys = iter([ds, oa, ds, oa])
-    monkeypatch.setattr(getpass, "getpass", lambda prompt="": next(keys))
-    assert W.secret_init("deepseek") == 0
-    assert W.secret_init("openai") == 0
-    f = tmp_path / "model-openai.json"
-    assert (f.stat().st_mode & 0o777) == 0o600
-    d = json.loads(f.read_text(encoding="utf-8"))
-    assert d["provider"] == "openai" and d["api_key"] == oa and d["base_url"].startswith("https://")
-    assert json.loads((tmp_path / "model.json").read_text(encoding="utf-8"))["api_key"] == ds
-    assert W.secret_init("openai") == 2  # 填成与 deepseek 那把相同 → 拒收
-    assert W.secret_init("deepseek") == 2  # 后录 deepseek、填成 OpenAI 那把 → 拒收
-    assert W.secret_init("openai", ondisk=True) == 2  # OpenAI key 永不落 Lab 盘
-    assert "openai" in W.build_parser().parse_args(["secret-init", "openai"]).provider
+def _convert_driver():
+    sys.path.insert(0, str(WINLAB))
+    try:
+        import convert_driver as CD
+    finally:
+        sys.path.remove(str(WINLAB))
+    return CD
 
 
-@pytest.mark.skipif(os.name == "nt", reason="winlab.py 是 Mac 端入口（POSIX 权限位）")
-def test_load_model_secret_for_openai_modes_reads_the_openai_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(W, "MODEL_CONF_PATH", tmp_path / "model.json")
-    monkeypatch.setattr(W, "MODEL_CONF_ONDISK_PATH", tmp_path / "model-ondisk.json")
-    monkeypatch.setattr(W, "MODEL_CONF_OPENAI_PATH", tmp_path / "model-openai.json")
-    (tmp_path / "model.json").write_text(json.dumps({"api_key": "deepseek-key"}))
-    (tmp_path / "model.json").chmod(0o600)
-    assert W.load_model_secret("openai-baseline") is None  # 只有 deepseek 那份：不拿它凑数
-    (tmp_path / "model-openai.json").write_text(
-        json.dumps({"provider": "openai", "api_key": "oa-key"})
-    )
-    (tmp_path / "model-openai.json").chmod(0o600)
-    assert json.loads(W.load_model_secret("openai-cjk-path"))["api_key"] == "oa-key"
-    assert json.loads(W.load_model_secret("baseline"))["api_key"] == "deepseek-key"
-    # 手工改成与默认那把相同：不跑
-    (tmp_path / "model-openai.json").write_text(json.dumps({"api_key": "deepseek-key"}))
-    assert W.load_model_secret("openai-all") is None
+class _FakeConvert:
+    """假的 ai_convert：公式与产品同形（900 + 2/行，封顶 1800）。"""
+
+    @staticmethod
+    def convert_timeout_s(lines):
+        return min(1800, 900 + 2 * lines)
+
+    @staticmethod
+    def source_line_count(data):
+        return data.count(b"\n")
 
 
-def test_openai_mode_without_trojan_is_stopped_on_the_mac_before_ssh(monkeypatch):
-    monkeypatch.setattr(
-        W, "remote_json", lambda *a, **k: pytest.fail("must not reach the Lab over a direct egress")
-    )
-    monkeypatch.setattr(W, "load_model_secret", lambda m: pytest.fail("must not read the key"))
-    assert W.main(["test", "convert-live", "--mode", "openai-baseline"]) == 2
-    assert W.main(["test", "convert-live", "--mode", "openai-baseline", "--network", "direct"]) == 2
+def test_convert_driver_deadline_follows_the_product_formula_per_script():
+    CD = _convert_driver()
+    assert CD.MARGIN_S == A.CONVERT_TIMEOUT_MARGIN_S == 120
+    long_script = b"x\n" * 500  # 900 + 1000 = 1900 → 封顶 1800，再加余量
+    assert CD.timeout_for(long_script, _FakeConvert) == 1800 + 120 > 960
+    mid = b"x\n" * 97  # d 类项目：1094 s
+    assert CD.timeout_for(mid, _FakeConvert) == 900 + 194 + 120
+    assert CD.timeout_for(b"x\n" * 10, _FakeConvert) == 900 + 20 + 120  # 短脚本按公式
 
 
-def test_openai_mode_over_a_non_trojan_egress_is_environment_unavailable(tmp_path, monkeypatch):
-    lab, seen = _fake_convert_lab(tmp_path, monkeypatch, lambda argv, env: None)
-    run_dir = lab.runs / "20261102T000000Z-abcdef"
-    (run_dir / "evidence").mkdir(parents=True)
-    conf = {"api_key": "sk-proj-" + "k" * 30, "provider": "openai"}
-    for net in ("direct", "hysteria2"):
-        rep = A.run_convert_live_task(lab, run_dir, {}, conf, "openai-baseline", net)
-        assert rep["result"] == "environment_unavailable" and "trojan" in rep["summary"]
-    assert seen == []  # 一次也没起驱动
+def test_convert_driver_deadline_falls_back_to_900_plus_margin_without_the_product_function():
+    CD = _convert_driver()
+    import types
+
+    assert CD.timeout_for(b"x\n" * 500, types.SimpleNamespace()) == 900 + 120
+    assert CD.DEFAULT_TIMEOUT_S == A.CONVERT_TIMEOUT_FALLBACK_S + A.CONVERT_TIMEOUT_MARGIN_S
 
 
-def test_openai_codex_home_uses_the_official_provider_and_holds_no_key(tmp_path):
-    conf = {"api_key": "sk-proj-" + "x" * 30, "provider": "openai"}
-    A._write_convert_codex_home(tmp_path / "h", conf)
-    toml = (tmp_path / "h" / "config.toml").read_text(encoding="utf-8")
-    assert 'forced_login_method = "api"' in toml
-    assert conf["api_key"] not in toml
-    # 官方供应商：不写自定义供应商 / 地址 / 密钥变量名 / 模型名
-    assert not re.search(r"model_provider|model_providers|base_url|env_key|^model\b", toml, re.M)
-    A._write_convert_codex_home(tmp_path / "h2", {**conf, "model": "my-model"})
-    assert 'model = "my-model"' in (tmp_path / "h2" / "config.toml").read_text(encoding="utf-8")
-
-
-def test_openai_convert_run_sends_the_key_only_through_the_env_over_trojan(tmp_path, monkeypatch):
-    key = "sk-proj-" + "k" * 30
-
+def test_convert_case_timeout_is_passed_to_driver_and_outer_process(tmp_path, monkeypatch):
     def driver(argv, env):
-        out = Path(_argval(argv, "--out"))
-        (out / "codex_stdout.jsonl").write_text(f'{{"type": "x"}}\nleak {key}\n', encoding="utf-8")
-        (Path(env["CODEX_HOME"]) / "shell_snapshots").mkdir(parents=True, exist_ok=True)
-        (Path(env["CODEX_HOME"]) / "shell_snapshots" / "s.sh").write_text(key, encoding="utf-8")
         Path(_argval(argv, "--result")).write_text(
-            json.dumps(
-                {
-                    "session": "abc",
-                    "finished_in_time": True,
-                    "outcome": "completed",
-                    "workspace_files": [{"name": "f.py", "bytes": 1, "path_len": 9}],
-                }
-            ),
+            json.dumps({"session": "abc", "finished_in_time": True, "outcome": "completed"}),
             encoding="utf-8",
         )
 
-    lab, seen = _fake_convert_lab(tmp_path, monkeypatch, driver)
-    run_dir = lab.runs / "20261102T000001Z-abcdef"
+    lab, _ = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    monkeypatch.setattr(A, "convert_case_timeout_s", lambda py, script, src, env: 1682 + 120)
+    outer: list[int] = []
+    orig = A._run_logged
+
+    def spy(argv, cwd, env, prefix, timeout, stdin_data=None):
+        outer.append(timeout)
+        assert _argval(argv, "--timeout") == str(1682 + 120)
+        return orig(argv, cwd, env, prefix, timeout, stdin_data)
+
+    monkeypatch.setattr(A, "_run_logged", spy)
+    run_dir = lab.runs / "20261102T000000Z-abcdef"
     (run_dir / "evidence").mkdir(parents=True)
-    base = A.network_env("trojan", {"OPENAI_API_KEY": "stale", "WINLAB_MODEL_KEY": "stale"})
-    rep = A.run_convert_live_task(
-        lab, run_dir, base, {"api_key": key, "provider": "openai"}, "openai-baseline", "trojan"
-    )
+    rep = A.run_convert_live_task(lab, run_dir, {}, {"api_key": "sk-" + "k" * 30}, "baseline")
     assert rep["result"] == "passed"
-    assert rep["host"]["provider"] == "openai" and rep["host"]["network"] == "trojan"
-    assert rep["host"]["version"] == "codex-cli 9.9.9" and rep["host"]["model"] == "codex-default"
-    assert any("官方模型" in u for u in A.TASKS["convert-live"].unverified)
-    for call in seen:
-        assert key not in " ".join(call["argv"])
-        assert call["env"][A.CODEX_OFFICIAL_KEY_ENV] == key
-        assert "OPENAI_API_KEY" not in call["env"] and "WINLAB_MODEL_KEY" not in call["env"]
-        assert call["env"]["HTTPS_PROXY"].startswith("http://127.0.0.1:")  # 经 trojan 本地代理出网
-    for f in run_dir.rglob("*"):
-        if f.is_file():
-            assert key.encode() not in f.read_bytes(), f
-    assert not (run_dir / "work" / "codex-home" / "shell_snapshots").exists()
-    assert not (lab.cache / "convert-work" / run_dir.name).exists()
-    assert key not in json.dumps(rep, ensure_ascii=False)
+    assert outer and all(t == 1682 + 120 + 180 > 960 for t in outer)
+
+
+def test_convert_case_timeout_s_falls_back_when_the_driver_cannot_answer(tmp_path):
+    script = tmp_path / "s.R"
+    script.write_text("x\n", encoding="utf-8")
+    missing_python = tmp_path / "no-such-python"
+    assert A.convert_case_timeout_s(missing_python, script, tmp_path, {}) == 900 + 120
 
 
 def test_convert_driver_serves_the_app_on_a_real_loopback_port_and_calls_it_over_http():
