@@ -80,6 +80,8 @@ def _publish_fixture_wheel(python: str) -> None:
         ("yaml", "PyYAML"),
         ("bs4", "beautifulsoup4"),
         ("dateutil", "python-dateutil"),
+        ("fitz", "PyMuPDF"),
+        ("pymupdf", "PyMuPDF"),
     ],
 )
 def test_import_names_are_not_distribution_names(tmp_path, import_name, distribution):

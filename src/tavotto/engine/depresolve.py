@@ -86,6 +86,9 @@ CURATED: dict[str, str] = {
     "docx": "python-docx",
     "pptx": "python-pptx",
     "fitz": "PyMuPDF",
+    # PyMuPDF ≥1.24 官方推荐的写法；与包名只差大小写，不登记就会被 `suggest_distribution` 当成撞 curated
+    # 包名的保留名，连「指定安装包」的预填都没有（反馈包 TVD-MDBH）
+    "pymupdf": "PyMuPDF",
     "netCDF4": "netCDF4",
     "mpl_toolkits": "matplotlib",
     # 科研常见的「名字对不上」
