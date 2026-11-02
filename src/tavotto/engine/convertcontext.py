@@ -16,7 +16,7 @@ import re
 import stat
 from pathlib import Path
 
-from . import ai_figure_edit, importscan, scanbudget
+from . import ai_figure_edit, importscan, longpath, scanbudget
 from .fixtools import readscope
 
 DIRECTORY = "project_context"
@@ -304,7 +304,8 @@ def snapshot(
                 raise ValueError("convert_reference_invalid")
             manifest["omitted"].append({"path": rel, "reason": "context_budget"})
             continue
-        copy = destination / DIRECTORY / rel
+        # 数据目录 + 项目相对路径在 Windows 上可能超过 260 字符：只在 Tavotto 自己的写入处加长路径前缀
+        copy = longpath.long(destination / DIRECTORY / rel)
         copy.parent.mkdir(parents=True, exist_ok=True)
         copy.write_bytes(disclosed)
         manifest["files"].append(
@@ -321,7 +322,7 @@ def snapshot(
         scan(path, data, depth)
     if references >= MAX_REFERENCES:
         manifest["limitations"].append("Reference nomination budget reached.")
-    (destination / MANIFEST).write_text(
+    longpath.long(destination / MANIFEST).write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return manifest
@@ -346,8 +347,8 @@ def unchanged(root: Path, manifest: dict, *, snapshot_dir: Path | None = None) -
         if data is None or _sha(data) != row.get("sha256"):
             return False
         if snapshot_dir is not None:
-            copy_root = snapshot_dir / DIRECTORY
-            if _path(snapshot_dir, copy_root)[0] is None:
+            copy_root = longpath.long(snapshot_dir / DIRECTORY)
+            if _path(longpath.long(snapshot_dir), copy_root)[0] is None:
                 return False
             copy_scope = readscope.ReadScope(home=Path.home(), project_root=copy_root)
             data, _ = _read(copy_root, copy_root / row["path"], copy_scope)

@@ -31,6 +31,7 @@ from . import (
     config,
     discover,
     figureverify,
+    longpath,
     registry,
     scriptlock,
     syncnoise,
@@ -178,6 +179,7 @@ REDIRECT_DIRNAME = "redirected"
 def _tree(root: Path) -> dict[str, str] | None:
     """候选目录的 `{相对路径: sha256}`（不含根下的改道区）；文件数超限回 None。"""
     out: dict[str, str] = {}
+    root = longpath.long(root)  # Windows 上深目录超 260 字符也要走得通（相对路径结果不受前缀影响）
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         skip = {"__pycache__"} | ({REDIRECT_DIRNAME} if Path(dirpath) == root else set())
         dirnames[:] = sorted(d for d in dirnames if d not in skip)

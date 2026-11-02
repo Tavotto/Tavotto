@@ -155,6 +155,11 @@ Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①�
 同意后先打快照（项目设置新增 `input_remap` 键）再走与数据失联弹窗**同一个** `inputremap.link`（ADR 0106 修订）。`requested` 只认报告 `missing_input` 载荷与脚本源码里找不到的常量，且必须是改指救得回的读取；`chosen` 过 `ctx.scope`；脚本永不改。
 `try_run` 的守卫进程里装上同一份规则（`figcapture.install_input_remap`，按文件加载），否则接上的数据在试跑里验证不了。规则应用后通过 `FixContext.on_input_remap_changed` 通知应用（收会话、取消试运行、告诉窗口，与端点同一串）。
 
+**修订（2026-11-02，接错了也能改过来，TVD-6Z9R）**：用户在数据失联弹窗里指错了文件时，那串已被规则救回、不再「找不到」，重跑报的是解析错（没有 `missing_input` 载荷），
+`requested` 的两处出处都认不出它，AI 找到对的文件也只能 `requested_unknown`。`inputremap.known_requests` 加第三处出处：脚本里原位置找不到、靠现有规则才读得到的常量（分类照静态判据，探路 / glob 照样挡），
+与现有 `file` 规则的 `from`（用户此前亲手确认过的那串；拼出来的路径只剩它记得）；比对按 `remap_parts` 规范化（`inputremap.match_request`）。`read_run_report` 增 `data_links` 事实列出生效的规则，每条带 `link_data_file` 认得的具体 `requested` 串（`prefix` 规则的 `from` 是目录前缀或空串，不是脚本打开的那串，单列为 `applies_to`）。
+`inputremap.link`（弹窗与 AI 共用）在新推出的 `prefix` 规则会被同一串上的旧 `file` 规则盖住时收窄成 `file` 规则、替换旧的那条，否则重新指认白选。确认卡照旧一律弹；不改脚本、不放宽读取范围。
+
 
 实现备注：应用报告的有界投影由 `fixtools/runreport.py` 共用，观察工具与试运行工具各自消费，避免相互导入。
 
