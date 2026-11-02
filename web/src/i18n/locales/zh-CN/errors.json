@@ -130,6 +130,7 @@
     "invalid_document": "无效的排版（需要 schema 2 或 3）",
     "invalid_entry": "入口函数名非法：{{entry}}",
     "invalid_patches": "patches 需要是数组",
+    "invalid_purpose": "渲染请求的用途参数无效：{{value}}，请刷新页面后重试。",
     "invalid_path": "路径无效",
     "invalid_preview_dpi": "preview_dpi 无效：{{value}}",
     "invalid_scale": "面板缩放比无效：{{value}}",

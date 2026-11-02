@@ -3211,6 +3211,7 @@ export default interface Resources {
       "invalid_preview_options": "预览请求选项不正确，请重新加载页面后再试。",
       "invalid_profile": "没有收到完整的出版规范，无法按规范修复。",
       "invalid_progress_id": "重建请求的编号不对，请重试",
+      "invalid_purpose": "渲染请求的用途参数无效：{{value}}，请刷新页面后重试。",
       "invalid_scale": "面板缩放比无效：{{value}}",
       "invalid_width": "宽度应为整数：{{value}}",
       "layout_outside_project": "排版文件只能保存在当前项目的 tavottofile/ 文件夹里；那里指向了项目外（符号链接），这次没有写入。",

@@ -556,3 +556,53 @@ describe('项目代际（STATE-06）：clear() 之前发出的渲染，回包不
     expect(useRenderStore.getState().byKey[renderKeyOf(b)].status).toBe('error')
   })
 })
+
+describe('后台（neighbour）补渲染的意图与暂缓（会话池自适应上限）', () => {
+  it('前台请求不带 purpose 字段（老请求逐字节不变）；neighbour 才带', async () => {
+    engineRender.mockResolvedValue({ rev: 1, manifest: manifest('Fig1'), svg: '<svg/>' })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+    expect(engineRender.mock.calls[0][2]).not.toHaveProperty('purpose')
+    await useRenderStore.getState().render('Fig2.pdf', [], undefined, undefined, undefined, undefined, 'neighbour')
+    expect(engineRender.mock.calls[1][2]).toMatchObject({ purpose: 'neighbour' })
+  })
+
+  it('后端暂缓：不是失败——无错误块、状态回 idle、wantPatches 清掉并记下 deferredPatches', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { RENDER_DEFERRED_CODE } = await import('@/lib/renderPurpose')
+    engineRender.mockRejectedValue(new EngineError('池已满', '', RENDER_DEFERRED_CODE, ''))
+    const p = panel('a', 'Fig1.pdf')
+    useRenderStore.getState().patch(renderKeyOf(p), { fileId: 'Fig1.pdf', wantPatches: '[]' })
+    await useRenderStore.getState().render('Fig1.pdf', [], undefined, undefined, undefined, undefined, 'neighbour')
+    const entry = useRenderStore.getState().get(renderKeyOf(p))
+    expect(entry.status).toBe('idle')
+    expect(entry.error).toBeNull()
+    expect(entry.code).toBe('')
+    expect(entry.wantPatches).toBeNull()
+    expect(entry.deferredPatches).toBe('[]')
+  })
+
+  it('暂缓时有过一版：仍是 ready，旧画面（manifest / svg）原样保留', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { RENDER_DEFERRED_CODE } = await import('@/lib/renderPurpose')
+    const p = panel('a', 'Fig1.pdf')
+    engineRender.mockResolvedValueOnce({ rev: 1, manifest: manifest('Fig1'), svg: '<svg>old</svg>' })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+    engineRender.mockRejectedValueOnce(new EngineError('池已满', '', RENDER_DEFERRED_CODE, ''))
+    await useRenderStore.getState().render('Fig1.pdf', [], undefined, undefined, undefined, undefined, 'neighbour')
+    const entry = useRenderStore.getState().get(renderKeyOf(p))
+    expect(entry.status).toBe('ready')
+    expect(entry.svg).toContain('old')
+    expect(entry.manifest).not.toBeNull()
+  })
+
+  it('暂缓之后的成功渲染清掉 deferredPatches', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { RENDER_DEFERRED_CODE } = await import('@/lib/renderPurpose')
+    const p = panel('a', 'Fig1.pdf')
+    engineRender.mockRejectedValueOnce(new EngineError('池已满', '', RENDER_DEFERRED_CODE, ''))
+    await useRenderStore.getState().render('Fig1.pdf', [], undefined, undefined, undefined, undefined, 'neighbour')
+    engineRender.mockResolvedValueOnce({ rev: 1, manifest: manifest('Fig1'), svg: '<svg/>' })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+    expect(useRenderStore.getState().get(renderKeyOf(p)).deferredPatches).toBeNull()
+  })
+})
