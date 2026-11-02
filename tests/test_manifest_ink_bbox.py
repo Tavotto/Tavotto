@@ -139,8 +139,10 @@ def test_ink_bbox_matches_a_tight_bbox_measured_independently(plain, tmp_path):
     )
     assert out.returncode == 0, out.stdout + out.stderr
     want = json.loads(out.stdout.strip().splitlines()[-1])
-    # 字体度量在 Agg 与矢量 renderer 之间差零点几像素
-    assert _fig(plain)["ink_bbox"] == pytest.approx(want, abs=3e-3)
+    # 字体度量在 Agg 与矢量 renderer 之间差零点几像素；旧 matplotlib（CI 的 3.10 腿）上 x 轴标题下沿差得多一点：
+    # 实测 0.84054 对 0.84426（差 0.0037 ≈ 3 in 高图上 0.28 mm，#1646 CI）。5e-3 ≈ 0.4 mm：仍远小于「量成了别的框」
+    # （加了默认 0.1 in pad 的框差 0.025 / 0.033，轴框与图幅差 0.1 以上）
+    assert _fig(plain)["ink_bbox"] == pytest.approx(want, abs=5e-3)
 
 
 def test_ink_bbox_with_a_savefig_frame_is_relative_to_the_frame(framed):
