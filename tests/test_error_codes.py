@@ -318,6 +318,8 @@ USER_VISIBLE_CODES = {
     "ai_revert_not_applicable": set(),
     # 「生成可编辑版本」（ADR 0143）：总开关关着 / 采用与丢弃的稳定码
     "convert_disabled": set(),
+    # 转换代写工具（#1628）回调被拒：只给 MCP 子进程看，模型把它转述给用户（"Tavotto could not run this tool"）
+    "convert_tool_forbidden": set(),
     "convert_not_found": set(),
     "convert_not_ready": set(),
     "convert_source_changed": set(),
