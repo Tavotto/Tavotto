@@ -124,3 +124,19 @@ describe('singleAnnotatedDocument：画布留白（ADR 0161）', () => {
     expect(singleAnnotatedDocument(docOf([panel]), panel, spec(), { l: 0, t: 0, r: 0, b: 0 })).toBeNull()
   })
 })
+
+describe('singleAnnotatedDocument：留白与标注同比缩放一起生效（ADR 0161 × #1653）', () => {
+  it('图在画布上缩到一半、带留白：标注位置先按图幅比例映射再平移留白，字号按同一比例放大', () => {
+    const scaled = { ...panel, w: 40, h: 30 } // 画布上缩到一半，原图 80 × 60
+    const out = singleAnnotatedDocument(
+      docOf([scaled, text({ x: 40, y: 30, w: 10, h: 3 })]),
+      scaled,
+      spec(),
+      { l: 5, t: 2, r: 0, b: 0 },
+    )!
+    expect([out.page.w, out.page.h]).toEqual([85, 62])
+    const t = out.objects[1] as CanvasObject & { sizePt: number }
+    expect([t.x, t.y, t.w, t.h]).toEqual([25, 22, 20, 6])
+    expect(t.sizePt).toBe(18)
+  })
+})
