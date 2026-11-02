@@ -457,7 +457,7 @@ export function DiagnosticsSendDialog({
       )}
       {phase === 'done' && status?.report_id && (
         <>
-          <p className="min-w-0 text-xs leading-4 text-ok-content" role="status" title={ds('doneBody')}>
+          <p className="min-w-0 text-xs leading-4 text-ok-content" role="status">
             <span>{ds(status.cancel_raced ? 'doneAfterCancel' : 'doneTitle')} · {ds('reportId')} </span>
             <code data-diag-report-id className="font-mono text-ink">
               {status.report_id}
@@ -520,7 +520,7 @@ export function DiagnosticsSendDialog({
           ),
       }}
     >
-      <div className="flex flex-col gap-5" data-diag-send-body>
+      <div className="flex flex-col gap-4" data-diag-send-body>
         {/* 表单语言（2026-10-19，参照 OpenBitFun）：标签在字段上方、间距 6；提示与字数同一行（提示左、字数右）；
             框只给可编辑的控件；诊断包是一组（`FieldGroup`：3% 底、无边）里的一行可展开项，展开的内容与标题文字对齐缩进。
             如实说明要发什么的那一句是对话框副标题（常显）。 */}
@@ -565,7 +565,7 @@ export function DiagnosticsSendDialog({
             aria-label={ds('noteLabel')}
             placeholder={ds('notePlaceholder')}
             value={note}
-            rows={4}
+            rows={3}
             maxRows={8}
             maxLength={noteMax}
             disabled={!editable}
@@ -573,13 +573,7 @@ export function DiagnosticsSendDialog({
             data-diag-send-note
             className="px-3 py-2"
           />
-          <p className="flex items-start justify-between gap-4 type-caption">
-            <span>
-              {ds('noteAttached')}
-              {ds('noteHint')}
-            </span>
-            <span className="shrink-0 tabular-nums">{ds('noteCount', { count: note.length, max: noteMax })}</span>
-          </p>
+          <p className="type-caption text-right tabular-nums">{ds('noteCount', { count: note.length, max: noteMax })}</p>
         </div>
 
         <div className="flex flex-col gap-1.5" data-diag-send-category>
@@ -659,7 +653,6 @@ export function DiagnosticsSendDialog({
               </section>
 
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                {prepared && <span className="type-caption">{ds('size', { size: formatBytes(prepared.size) })}</span>}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -692,22 +685,25 @@ export function DiagnosticsSendDialog({
           </Details>
         </FieldGroup>
 
-        {/* 作者回复去哪看：联系作者开着时一直占位（不显示则 invisible），结果态才出现——页脚不跳位（#797 e2e 量按钮坐标） */}
-        {replyReserved && (
-          <p
-            className={cn('type-caption', !replyShown && 'invisible')}
-            aria-hidden={replyShown ? undefined : true}
-            data-diag-send-reply-inbox={replyShown ? 'active' : 'reserved'}
-          >
-            {ds('replyInbox')}
-          </p>
-        )}
-
-        {/* 结果出来后（成功 / 未知 / 失败）给一条直接找人的路；其余阶段占位不显示（按钮不跳位）；仅中文界面 */}
-        <WeComContactNote
-          active={phase === 'done' || phase === 'unknown' || phase === 'failed'}
-          withReportId={phase !== 'failed' && !!status?.report_id}
-        />
+        {/* 结果态底部只占一行（二选一，页脚不跳位 #797）：联系作者登记了回信 → 说作者回复在哪看；否则（仅中文）给企业微信一条直接找人的路。
+            两者叠在同一格里取较大高度；联系作者开着时回信提示一直占位 */}
+        <div className="grid">
+          {replyReserved && (
+            <p
+              className={cn('type-caption [grid-area:1/1]', !replyShown && 'invisible')}
+              aria-hidden={replyShown ? undefined : true}
+              data-diag-send-reply-inbox={replyShown ? 'active' : 'reserved'}
+            >
+              {ds('replyInbox')}
+            </p>
+          )}
+          <div className="[grid-area:1/1]">
+            <WeComContactNote
+              active={(phase === 'done' || phase === 'unknown' || phase === 'failed') && !replyShown}
+              withReportId={phase !== 'failed' && !!status?.report_id}
+            />
+          </div>
+        </div>
       </div>
     </Dialog>
   )

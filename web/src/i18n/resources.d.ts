@@ -2257,7 +2257,7 @@ export default interface Resources {
         "resultsTitle": "检查结果",
         "send": {
           "attachmentTitle": "附带诊断包",
-          "bestEffort": "脱敏是尽力而为，不保证绝对；发送前可以保存并查看这份包。",
+          "bestEffort": "脱敏尽力而为，不保证绝对；发送前可保存查看。",
           "cancelSending": "取消发送",
           "cancelled": "已取消，没有发送任何内容。",
           "cardButton": "发送问题反馈",
@@ -2286,22 +2286,21 @@ export default interface Resources {
           "details": "查看内容",
           "done": "完成",
           "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
-          "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
           "doneTitle": "已发送",
-          "errorSummaryNote": "若已同意匿名统计，会另附一条不含内容的错误摘要（出错的内部环节与固定错误码）。点发送不代表同意今后自动上报。",
+          "errorSummaryNote": "若已同意匿名统计，另附一条不含内容的错误摘要。",
           "extra": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告",
             "source": "脚本源码"
           },
           "extraHint": {
-            "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
-            "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
-            "source": "出错的脚本（即使它没在项目里登记；R / MATLAB 脚本也算，含「生成可编辑版本」时 AI 留下的候选脚本）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。"
+            "corrupt_sessions": "默认只有名字和大小；勾选附上内容。",
+            "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。",
+            "source": "原样附上脚本和依赖文件，密钥可能抹不干净，有密钥别勾。"
           },
           "extrasSelectAll": "全选",
           "extrasSelectNone": "全不选",
-          "extrasTitle": "额外内容（默认不发送）",
+          "extrasTitle": "额外内容",
           "failure": {
             "api_incompatible": "诊断服务的版本与这个 Tavotto 不兼容。请更新 Tavotto 后再试。",
             "bad_response": "诊断服务返回了无法识别的内容，没有发送。",
@@ -2360,12 +2359,10 @@ export default interface Resources {
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
-          "notIncluded": "默认不含：你的脚本文件、数据文件，也不含匿名统计用的标识。报错原文、日志里可能出现项目文件夹名、文件名和脚本打印出的内容。",
-          "noteAttached": "写在这里的会原样附上；",
+          "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
           "noteCount": "{{count}} / {{max}}",
-          "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
-          "notePlaceholder": "发生了什么？比如你点了什么、看到了什么。",
+          "notePlaceholder": "发生了什么？请不要填姓名、邮箱、路径或数据。",
           "open": "发送…",
           "optionsLost": "附加内容太大，这次没能附上。",
           "packageGone": "这份诊断包已经不在引擎里了（应用可能重启过）。请重新准备后再发送；也可以用设置里的「导出诊断包」保存到本地。",
@@ -2381,22 +2378,22 @@ export default interface Resources {
           "replyInbox": "作者回复会出现在「联系作者 › 我的来信」",
           "reportId": "报告编号",
           "reprepare": "重新准备",
-          "retention": "报告保存 {{days}} 天，只有 Tavotto 维护者能读取，与匿名统计的标识没有关联。",
+          "retention": "报告保存 {{days}} 天，仅维护者可读，与匿名统计标识无关。",
           "retry": "重试",
           "retryInHours_other": "请在约 {{count}} 小时后再试。",
           "retryInMinutes_other": "请在约 {{count}} 分钟后再试。",
           "row": "发送问题反馈",
-          "rowHint": "把诊断包发给 Tavotto 维护者。只有你在确认框里点「发送」之后才会上传。",
+          "rowHint": "把诊断包发给维护者；点「发送」后才会上传。",
           "save": "保存这份诊断包",
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
-          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），以及受管环境安装的 Python 包名及版本，不附带你的脚本文件和数据文件。",
-          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），以及受管环境安装的 Python 包名及版本，并附带你勾选的：{{items}}。",
+          "sentence": "发送报错详情、日志（可能含脚本打印的内容）和 Python 包版本；不含你的脚本和数据文件。",
+          "sentenceExtras": "发送报错详情、日志（可能含脚本打印的内容）和 Python 包版本，另附你勾选的：{{items}}。",
           "sentenceItem": {
-            "corrupt_sessions": "会话损坏副本的内容",
-            "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
-            "source": "脚本源码与依赖声明文件"
+            "corrupt_sessions": "损坏会话副本",
+            "crash_reports": "系统崩溃报告",
+            "source": "脚本源码"
           },
           "short": {
             "console": "控制台",
@@ -2415,7 +2412,6 @@ export default interface Resources {
             "state": "会话状态",
             "storage": "存储环境"
           },
-          "size": "大小 {{size}}",
           "title": "发送问题反馈",
           "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}（附加内容已尽量截短）。请保存到本地，再另行发给维护者。",
           "truncated": "体积超过上限，已按优先级截短：{{kinds}}。",

@@ -232,7 +232,7 @@ describe('先看再发', () => {
     expect(extras.querySelectorAll('input[type=checkbox]')).toHaveLength(3)
     expect(q('[data-diag-send-extras-all]')!.textContent).toBe(ds('extrasSelectAll'))
     expect(det.textContent).toContain(ds('bestEffort'))
-    expect(document.body.textContent).toContain(ds('noteAttached'))
+    expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.placeholder).toBe(ds('notePlaceholder'))
     // 错误摘要的披露只在折叠里（不新增可见段落）；不暗示同意今后自动上报
     expect(det.textContent).toContain(ds('errorSummaryNote'))
     expect(q('[data-diag-send-sentence]')!.textContent).not.toContain(ds('errorSummaryNote'))
@@ -254,9 +254,8 @@ describe('先看再发', () => {
     await mount()
     const kinds = Array.from(document.body.querySelectorAll('[data-diag-kind]')).map((e) => e.getAttribute('data-diag-kind'))
     expect(kinds).toEqual(['environment', 'log', 'manifest'])
-    expect(document.body.textContent).toContain(ds('size', { size: '20 KiB' }))
+    expect(q('[data-diag-send-size]')!.textContent).toContain('20 KiB')
     expect(document.body.textContent).toContain(ds('retention', { days: 30 }))
-    expect(document.body.textContent).toContain(ds('noteHint'))
     expect(document.body.textContent).toContain(ds('notIncluded'))
     expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.maxLength).toBe(1000)
   })
@@ -1080,8 +1079,8 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
 
 describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4）', () => {
   const sends = [
-    ['zh-CN', zhDialogs, '日志里可能有脚本打印出的内容'],
-    ['en-US', enDialogs, 'may contain output printed by your script'],
+    ['zh-CN', zhDialogs, '可能含脚本打印的内容'],
+    ['en-US', enDialogs, 'may include output printed by your script'],
   ] as const
 
   it('常显摘要句、带勾选项的摘要句、「默认不含」都提醒日志可能含脚本输出，且不再声称不含脚本源码', () => {
@@ -1089,7 +1088,7 @@ describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4
       const send = (d as any).settings.diagnostics.send
       expect(send.sentence, lang).toContain(phrase)
       expect(send.sentenceExtras, lang).toContain(phrase)
-      const packages = lang === 'zh-CN' ? 'Python 包名及版本' : 'Python package names and versions'
+      const packages = lang === 'zh-CN' ? 'Python 包版本' : 'Python package versions'
       expect(send.sentence, lang).toContain(packages)
       expect(send.sentenceExtras, lang).toContain(packages)
       expect(send.notIncluded, lang).toContain(
@@ -1103,7 +1102,7 @@ describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4
     await mount()
     const text = q('[data-diag-send-sentence]')!.textContent!
     expect(text).toContain(t('settings.diagnostics.send.sentence', { ns: 'dialogs' }))
-    expect(text).toMatch(/脚本打印出的内容|output printed by your script/)
+    expect(text).toMatch(/脚本打印的内容|output printed by your script/)
   })
 })
 
