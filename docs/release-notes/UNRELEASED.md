@@ -40,3 +40,7 @@ On Windows without long-path support, "Make editable version" for an R / MATLAB 
 ## Preparing the environment on Windows no longer fails once at random
 
 On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
+
+## The first click on a figure after opening a project no longer waits for a cold start
+
+On a slow disk or a Microsoft Store Python, the first render after opening a project could take 20 to 40 seconds, because the render session had to start (and the interpreter had to be checked) at that moment. Tavotto now starts the session for the first script-backed figure quietly in the background once the project has settled, and checks each interpreter once instead of once per task running at the same time. Nothing is run, drawn or written in the background, a failure is ignored, and your scripts and files are never touched.

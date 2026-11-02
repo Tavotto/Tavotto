@@ -271,3 +271,7 @@ marker 不含脚本、路径、argv 或输出，读写失败不阻止科学运�
 confirmed pre-send/排队取消/依赖门不撤旧代；unknown 的迟到结果不能污染更新执行。单次验证 `one_shot` 不替代当前图。
 safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变化的 worker generation 冒充同一次执行；公开语义身份不变。
 看护：`tests/test_execution_observation.py`、`tests/test_execution_receipt.py`、`tests/test_svg_execution_lifecycle.py`。
+- **后台预热与解释器体检单飞（2026-11-02，ADR 0159，TVD-ZWV6）**：`POST /api/engine/prewarm` 只经 `_engine_worker` **取会话**
+  （不 build / 不出图 / 不写盘 / 不发事件），节流与去重全在 `engine/prewarm.py`（每 (项目, 面板) 一次、同时一路、池里已活
+  `MAX_ALIVE-1` 条不预热、前台取会话时让路）；native 档不预热。同一解释器上同时的 `import matplotlib` 体检只跑一个
+  （`pool._has_matplotlib_once`，只共享成功结论）。看护 `tests/test_engine_prewarm.py`。
