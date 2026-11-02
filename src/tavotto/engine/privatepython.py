@@ -175,6 +175,38 @@ class _TooSlow(Exception):
         self.eta_s = eta_s
 
 
+#: `private_python_write_failed` 的失败步骤（闭集，进 detail / 日志明文；不含路径）。
+WRITE_STEPS = frozenset(
+    {
+        "mkdir",
+        "staging",
+        "archive_read",
+        "archive_write",
+        "archive_replace",
+        "snapshot",
+        "extract",
+        "commit_rename",
+        "unexpected",
+    }
+)
+#: 底层异常类型名（闭集明文；别的类型一律记 `OSError`）。
+_OS_ERROR_NAMES = frozenset(
+    {
+        "OSError",
+        "PermissionError",
+        "FileNotFoundError",
+        "FileExistsError",
+        "NotADirectoryError",
+        "IsADirectoryError",
+        "BlockingIOError",
+    }
+)
+#: Windows 共享冲突的有界重试（杀软 / 索引器短暂占着刚写完的目录或文件）：5 次尝试、指数退避、
+#: 总等待约 3 秒。等待不在 `_lock` 里；测试可改这个元组。
+SHARING_RETRY_DELAYS_S = (0.2, 0.4, 0.8, 1.6)
+_SHARING_WINERRORS = (5, 32)  # ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION
+
+
 class ProvisionError(RuntimeError):
     """带稳定 code 的供应失败；`deprepair` 原样转成 `RepairError`。"""
 
@@ -182,6 +214,60 @@ class ProvisionError(RuntimeError):
         super().__init__(message or code)
         self.code = code
         self.detail = detail
+
+
+def _write_failed(step: str, exc: BaseException, message: str) -> ProvisionError:
+    """`private_python_write_failed`，detail 带失败步骤与底层 errno / winerror / 异常类型（无路径）。"""
+    detail: dict = {
+        "step": step,
+        "exc_type": type(exc).__name__ if type(exc).__name__ in _OS_ERROR_NAMES else "OSError",
+    }
+    for key in ("winerror", "errno"):
+        value = getattr(exc, key, None)
+        if isinstance(value, int):
+            detail[key] = value
+    return ProvisionError(ERROR_WRITE_FAILED, message, **detail)
+
+
+def _is_sharing_conflict(exc: BaseException) -> bool:
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in _SHARING_WINERRORS
+
+
+def _replace_with_retry(src, dst, job: _Inflight, *, step: str, settled, commit=None) -> bool:
+    """`os.replace(src, dst)`；共享冲突有界重试。成功回 True；`settled()` 为真（别的进程已把目标放好）回 False；
+    其余抛 `_write_failed`。`commit` 给了就每次尝试都在 `_lock` 下先 `_check_abort`、成功后（含 settled）调用——
+    提交点与取消的判定仍在同一把锁里；退避等待在锁外，可被取消打断。"""
+    for attempt in range(len(SHARING_RETRY_DELAYS_S) + 1):
+        with _lock if commit is not None else threading.Lock():  # 无 commit 时不碰全局锁
+            if commit is not None:
+                _check_abort(job)
+            try:
+                os.replace(src, dst)
+            except OSError as exc:
+                err = exc
+                if settled():
+                    LOG.info("私有 Python 目标已由别的进程就位，复用")
+                    if commit is not None:
+                        commit()
+                    return False
+            else:
+                if commit is not None:
+                    commit()
+                return True
+        if not _is_sharing_conflict(err) or attempt >= len(SHARING_RETRY_DELAYS_S):
+            raise _write_failed(step, err, f"改名失败: {err}") from err
+        LOG.warning(
+            "私有 Python 改名被拒，稍后重试（步骤 %s，%s，winerror=%s，errno=%s，第 %d 次）",
+            logsafe.known(step, WRITE_STEPS),
+            logsafe.known(type(err).__name__, _OS_ERROR_NAMES),
+            getattr(err, "winerror", None),
+            getattr(err, "errno", None),
+            attempt + 1,
+        )
+        delay = SHARING_RETRY_DELAYS_S[attempt]
+        job.abort.wait(delay)  # 可被取消打断；之后下一轮 / 这里的 _check_abort 让取消生效
+        _check_abort(job)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 # --------------------------------------------------------------- 锁文件
@@ -782,14 +868,27 @@ def _run_inflight(job: _Inflight) -> None:
         job.error = exc
         # 失败进 app.log（稳定 code + 最后在用的来源主机）：2026-09-29 那台机器上失败只落在
         # environment.json，日志里一个字都没有
-        LOG.warning(
-            "私有 Python 供应失败：%s（来源 %s）",
-            logsafe.known(exc.code, ERROR_CODES),
-            _plain_host(job.source_host),
-        )
+        # write_failed 另带失败步骤与底层 winerror / errno / 异常类型（闭集 / 整数，无路径）
+        if exc.code == ERROR_WRITE_FAILED:
+            d = exc.detail
+            LOG.warning(
+                "私有 Python 供应失败：%s（来源 %s；步骤 %s，%s，winerror=%s，errno=%s）",
+                logsafe.known(exc.code, ERROR_CODES),
+                _plain_host(job.source_host),
+                logsafe.known(d.get("step", "-"), WRITE_STEPS),
+                logsafe.known(d.get("exc_type", "-"), _OS_ERROR_NAMES),
+                d.get("winerror", "-"),
+                d.get("errno", "-"),
+            )
+        else:
+            LOG.warning(
+                "私有 Python 供应失败：%s（来源 %s）",
+                logsafe.known(exc.code, ERROR_CODES),
+                _plain_host(job.source_host),
+            )
     except Exception as exc:  # noqa: BLE001 — 线程里不许漏异常：消费者要拿到一个 code
         LOG.exception("私有 Python 供应线程异常")
-        job.error = ProvisionError(ERROR_WRITE_FAILED, str(exc))
+        job.error = _write_failed("unexpected", exc, str(exc))
     finally:
         with _lock:
             if _inflight.get(job.source.id) is job:
@@ -826,7 +925,7 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
         runtimes.mkdir(parents=True, exist_ok=True)
         downloads_dir().mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise ProvisionError(ERROR_WRITE_FAILED, f"私有目录不可写: {exc}") from exc
+        raise _write_failed("mkdir", exc, f"私有目录不可写: {exc}") from exc
     _reap_orphans(runtimes)
     existing = python_of(source)
     if existing:
@@ -840,7 +939,7 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
     try:
         staging.mkdir(parents=True)
     except OSError as exc:
-        raise ProvisionError(ERROR_WRITE_FAILED, f"staging 目录不可建: {exc}") from exc
+        raise _write_failed("staging", exc, f"staging 目录不可建: {exc}") from exc
     try:
         _emit(job, STAGE_EXTRACTING, 0, source.size)
         if origin == ORIGIN_BUNDLED:
@@ -855,16 +954,16 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
         probe = _launch(python, source)
         # 提交点与「最后一个消费者放弃」在同一把锁下判：被接受的取消（abort 已置）绝不会发布，
         # 发布之后到来的取消对这份供应无效（`committed` 已置）——两者不会交错（Codex #464 P2）
-        with _lock:
-            _check_abort(job)
-            try:
-                os.replace(extracted, final)  # 提交点：同一文件系统内的 rename，要么在要么不在
-            except OSError as exc:
-                if final.exists():
-                    LOG.info("私有 Python %s 已由别的进程就位，复用", source.id)
-                else:
-                    raise ProvisionError(ERROR_WRITE_FAILED, f"最终目录改名失败: {exc}") from exc
-            job.committed.set()
+        # 提交点 = 同一文件系统内的 rename，要么在要么不在；Windows 共享冲突（杀软 / 索引器占着刚解完的
+        # 目录）有界重试，每次尝试都重新在锁内判 abort / final.exists()，退避等待不持锁
+        _replace_with_retry(
+            extracted,
+            final,
+            job,
+            step="commit_rename",
+            settled=final.exists,
+            commit=job.committed.set,
+        )
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     result = python_of(source)
@@ -915,7 +1014,7 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
                 return dest, ORIGIN_CACHED
             dest.unlink()  # 缓存里躺着一份对不上的：不是复用对象
     except OSError as exc:
-        raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存不可读: {exc}") from exc
+        raise _write_failed("archive_read", exc, f"归档缓存不可读: {exc}") from exc
     if required == ORIGIN_CACHED:
         # 计划说「有缓存、不联网」：缓存没了（或坏了）就是计划过期，不联网去补
         raise ProvisionError(ERROR_SOURCE_CHANGED, "计划时的归档缓存此刻不可用")
@@ -993,16 +1092,23 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
                     got=got,
                 )
             try:
-                os.replace(part, dest)
-            except OSError as exc:
-                part.unlink(missing_ok=True)
                 # Windows 上正式名被别的进程打开着（它刚把自己那份搬上去、正在解包）时 replace 会拒
                 # （共享冲突）：那一份的字节校验过才叫这个名字，hash 对得上就直接用它——两个进程同时供应
-                # 同一份，后到的复用而不是报 write_failed（#467 Windows 腿确定性红）
-                if _is_verified_archive(dest, source):
-                    LOG.info("归档 %s 已由别的进程落盘，复用", source.archive_name)
-                    return dest, ORIGIN_DOWNLOAD
-                raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
+                # 同一份，后到的复用而不是报 write_failed（#467 Windows 腿确定性红）；否则共享冲突有界重试
+                reused = not _replace_with_retry(
+                    part,
+                    dest,
+                    job,
+                    step="archive_replace",
+                    settled=lambda: _is_verified_archive(dest, source),
+                )
+            except BaseException:
+                part.unlink(missing_ok=True)
+                raise
+            if reused:
+                part.unlink(missing_ok=True)
+                LOG.info("归档 %s 已由别的进程落盘，复用", source.archive_name)
+                return dest, ORIGIN_DOWNLOAD
             LOG.info(
                 "私有 Python 归档下载完成：来源 %s（%s）",
                 _plain_host(host),
@@ -1077,7 +1183,7 @@ def _fetch(
     try:
         fh = part.open("wb")
     except OSError as exc:
-        raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存不可写: {exc}") from exc
+        raise _write_failed("archive_write", exc, f"归档缓存不可写: {exc}") from exc
     # 每次现建 opener 而不是模块级 `urlopen`：后者第一次调用时把 `ProxyHandler` 连同**当时**的
     # `HTTP(S)_PROXY` / `NO_PROXY` 缓存进全局 opener，之后环境变量再变它也不看——代理配置要在
     # 下载那一刻读（用例的死代理对照就是这样量的）。HTTPS 的上下文来自 `tlstrust`：平台原生校验
@@ -1095,7 +1201,7 @@ def _fetch(
             try:
                 fh.write(chunk)
             except OSError as exc:
-                raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存写入失败: {exc}") from exc
+                raise _write_failed("archive_write", exc, f"归档缓存写入失败: {exc}") from exc
             h.update(chunk)
             done += len(chunk)
             _emit(job, STAGE_DOWNLOADING, done, source.size)
@@ -1167,7 +1273,7 @@ def _extract_bundle(archive: Path, staging: Path, source: PythonSource) -> Path:
             snapshot.seek(0)
             return _extract(archive, staging, source, fileobj=snapshot)
     except OSError as exc:
-        raise ProvisionError(ERROR_WRITE_FAILED, "包内归档快照写入失败") from exc
+        raise _write_failed("snapshot", exc, "包内归档快照写入失败") from exc
 
 
 def _extract(archive: Path, staging: Path, source: PythonSource, *, fileobj=None) -> Path:
@@ -1186,7 +1292,7 @@ def _extract(archive: Path, staging: Path, source: PythonSource, *, fileobj=None
             except OSError as exc:
                 # 目标写不进（磁盘满 / 配额 / 权限变了）：归档本身没坏，是本机的事——报 write_failed，
                 # 用户的下一步是腾空间，不是重下（Codex #464 P2）
-                raise ProvisionError(ERROR_WRITE_FAILED, f"解包写入失败: {exc}") from exc
+                raise _write_failed("extract", exc, f"解包写入失败: {exc}") from exc
     except (tarfile.TarError, EOFError, ValueError) as exc:
         raise ProvisionError(ERROR_INVALID_ARCHIVE, f"归档解不开: {exc}") from exc
     except OSError as exc:

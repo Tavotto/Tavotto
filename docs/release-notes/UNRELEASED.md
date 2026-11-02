@@ -28,3 +28,7 @@ A script that uses no plotting library and builds the SVG text itself (for examp
 ## Icon animations no longer overlap themselves
 
 Several interface icon animations had parts passing through each other while playing (the sheet in the folder icon poked out of the front panel, the two squares in the group icon merged, the envelope flap flipped through the top edge, the sun in the image icon crossed the mountain, the small sparkle touched the big one). Each animation now starts from the state before the action and ends at the resting icon without any parts crossing: lock drops its shackle in and unlock pops it out by the same distance, disconnect pulls the plug out of its socket, and distribute slides one block to even spacing. The disconnect, save and unlock icons were redrawn, and clicking "Disconnect" now plays the unplug motion.
+
+## Preparing the environment on Windows no longer fails once at random
+
+On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
