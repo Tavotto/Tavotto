@@ -264,7 +264,7 @@ def test_ordinary_native_and_child_stdout_never_reach_the_protocol_pipe(worker_f
     worker = worker_factory(
         f"""import os, subprocess, sys
 os.write(1, b"native-{marker}\\n")
-subprocess.run([sys.executable, "-c", "print('已重绘 {marker}')"], check=True)
+subprocess.run([sys.executable, "-c", "print('redrawn {marker}')"], check=True)
 subprocess.run([sys.executable, "-c", "import os; os.write(1, b'raw-{marker}\\\\n')"], check=True)
 """,
         [],
@@ -273,7 +273,7 @@ subprocess.run([sys.executable, "-c", "import os; os.write(1, b'raw-{marker}\\\\
     assert worker.ensure_built()["ok"]
     time.sleep(0.1)
     log = worker.log_path.read_text(encoding="utf-8", errors="replace")
-    # 子进程按它自己的 stdio 编码写中文（Windows 中文区是 cp936），只认 ASCII 标记
+    # 子进程只打 ASCII：它往管道写中文用的是它自己的区域编码（cp1252 的 CI 机上直接 UnicodeEncodeError），与协议无关
     assert f"native-{marker}" in log and f"raw-{marker}" in log
     assert log.count(marker) == 3
 
