@@ -66,6 +66,23 @@ describe('planPadEdge', () => {
   const base = { pad0: ZERO_PAD, sizeMm: [80, 60] as const, columns: COLS, allowCrop: false }
   const inset = { l: 3, t: 2, r: 1.5, b: 2.5 }
 
+  it('往里的下限算上对边已有的负留白：80 mm、左边已裁 -60，右边往里到 -60 → 夹到画布宽 5 mm', () => {
+    const p = planPadEdge({
+      ...base,
+      sizeMm: [80, 60],
+      pad0: { l: -60, t: 0, r: 0, b: 0 },
+      edge: 'r',
+      deltaOut: -60,
+      inset: null,
+      allowCrop: true,
+    })
+    expect(p.value).toBe(-15)
+    expect(80 - 60 + p.value).toBe(5)
+    // 竖向同理
+    const q = planPadEdge({ ...base, pad0: { l: 0, t: 0, r: 0, b: -40 }, edge: 't', deltaOut: -90, inset: null, allowCrop: true })
+    expect(60 - 40 + q.value).toBe(5)
+  })
+
   it('往外拖 = 扩充画布', () => {
     const p = planPadEdge({ ...base, edge: 'r', deltaOut: 7.33, inset })
     expect(p.state).toBe('grow')
@@ -121,6 +138,38 @@ describe('planFigureCorner', () => {
     expect(p.snap?.id).toBe('single')
     expect(p.sizeMm[0]).toBe(81)
     expect(planFigureCorner({ ...common, corner: 'br', dx: 1.5, dy: 0, noSnap: true }).snap).toBeNull()
+  })
+  it('两侧都往里裁过：图幅缩小不会让画布宽小于 5 mm（80 mm、左右各 -20，缩到 30 → 夹到 45）', () => {
+    const cropped = { l: -20, t: 0, r: -20, b: 0 }
+    const p = planFigureCorner({
+      ...common,
+      pad: cropped,
+      box0: { x: 0, y: 0, w: 40, h: 60 },
+      corner: 'br',
+      dx: -50,
+      dy: 0,
+      noSnap: true,
+    })
+    expect(p.sizeMm[0]).toBe(45)
+    expect(p.box.w).toBeCloseTo(5)
+    expect(p.box.w).toBeGreaterThan(0)
+    // 等比：高跟着宽走
+    expect(p.sizeMm[1]).toBeCloseTo((60 * 45) / 80, 1)
+  })
+  it('高被上下留白顶住时（等比）宽跟着抬，取更严的那个', () => {
+    const p = planFigureCorner({
+      ...common,
+      pad: { l: 0, t: -20, r: 0, b: -20 },
+      box0: { x: 0, y: 0, w: 80, h: 20 },
+      corner: 'br',
+      dx: -70,
+      dy: 0,
+      noSnap: true,
+    })
+    // 画布高 = h - 40 ≥ 5 → h ≥ 45 → w ≥ 60
+    expect(p.sizeMm[1]).toBeGreaterThanOrEqual(45 - 1e-6)
+    expect(p.sizeMm[0]).toBeGreaterThanOrEqual(60 - 0.02)
+    expect(p.box.h).toBeGreaterThanOrEqual(5 - 0.05)
   })
   it('⇧ 自由比例：宽高各自跟指针', () => {
     const p = planFigureCorner({ ...common, corner: 'br', dx: 10, dy: -20, free: true, noSnap: true })

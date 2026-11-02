@@ -238,7 +238,8 @@ order: 210
   看护：`lib/pageEdgeResize.test.ts`、`canvas/pageEdgeResize.test.tsx`。
 - **单图编辑拖画布：边 = 留白、角 = 图幅（ADR 0161，2026-11-02；取代 2026-10-23 的「拖边改图幅」）**：命中区与尺寸标注仍是
   `PageEdgeResize.EdgeStrips` / `EdgeDimensions`（与拖页面边共用），贴在**画布框**上（面板 + 生效留白，`lib/framePad.frameCanvasOf`）；四个角柄 `CornerGrips`
-  与选区缩放手柄同画法。**边**（`canvas/frameDrag.startFramePadEdge`）改 `doc.framePad`（导出 mm，负值 = 裁进图幅）：图不动，整次一个事务一条历史「修改画布留白」；
+  与选区缩放手柄同画法。**单图编辑里那张图（`activePanelId`）被选中时 `OverlaySvg` 不画它的选区缩放手柄 / 边带**（只留轮廓）：这一层在 `FigureEdgeHandles` 之上，画了就会抢走指针、落到 `startResizeDrag` 的视觉缩放；角 / 边只剩画布框上这一组（精确 manifest 缺席时整组不挂，那时宁可没有手柄）。**边**（`canvas/frameDrag.startFramePadEdge`）改 `doc.framePad`（导出 mm，负值 = 裁进图幅）：图不动，整次一个事务一条历史「修改画布留白」；
+  往里裁的下限 = 让这一维的画布（图幅 + 对边此刻的留白 + 本边）至少剩 5 mm；拖角缩图幅同理（`planFigureCorner`：图幅 + 此刻生效的两侧留白 ≥ 5 mm，等比时宽高取更严的，紧凑边按此刻的内容边缘值算）。
   停靠点 `lib/framePad.planPadEdge`：图边（0）→ 内容边缘（manifest `figure.ink_bbox`，缺席 = 没有这一档）→ 越过要按住 ⌥；左右边还吸「画布宽 = 栏宽」。
   落在紧凑档的边记进 `doc.framePadTight`：图幅再变时按新的内容边缘重算（`effectiveFramePad`，不保留旧 mm）。**角**（`startFigureCornerResize`）= 等比改 `figure.size_mm`
   （⇧ 自由比例、⌥ 关吸附；吸附量的是**导出宽 = 图幅 + 左右留白**；对角不动）：拖动中不写文档、只放 `interaction.figureEdgeBox` 预览框，松手 `actions.setFigureFrame` 一次，

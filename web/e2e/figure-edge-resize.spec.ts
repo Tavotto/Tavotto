@@ -136,3 +136,23 @@ test('加第二张图进多图排版后，拖的是页面边而不是画布边',
   await expect(page.locator('[data-figure-corner]')).toHaveCount(0)
   await expect(page.locator('[data-page-edge]')).toHaveCount(4)
 })
+
+test('单图编辑里 Esc 退出图内编辑、选中整张图后拖右下角：改的是图幅（重新出图、等比），不是把图片拉伸', async ({ app, page }) => {
+  const a = await app()
+  await toFastEdit(page, a.baseURL)
+  // Esc 退出图内编辑，再点一下图选中整张
+  await page.keyboard.press('Escape')
+  const fb0 = (await figureBox(page))!
+  await page.mouse.click(fb0.x + fb0.width / 2, fb0.y + fb0.height / 2)
+  // 选区的缩放手柄不画：角 / 边只剩画布框上的那一组
+  await expect(page.locator('[data-handle]')).toHaveCount(0)
+  await expect(page.locator('[data-figure-corner]')).toHaveCount(4)
+  const p0 = (await paperBox(page))!
+  await dragHandle(page, '[data-figure-corner="br"]', 60, 0)
+  await expect.poll(async () => (await paperBox(page))?.width ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.width + 40)
+  const p1 = (await paperBox(page))!
+  expect(Math.abs(p1.width / p1.height - p0.width / p0.height)).toBeLessThan(0.03)
+  // 重新出图后图本身与画纸同框（没有被视觉拉伸出画纸）
+  const f1 = (await figureBox(page))!
+  expect(Math.abs(f1.width - p1.width)).toBeLessThan(2)
+})

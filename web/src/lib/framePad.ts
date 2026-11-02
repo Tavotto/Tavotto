@@ -134,7 +134,9 @@ export function planPadEdge(opts: {
     v = stop!
     state = 'blocked'
   }
-  const lo = -(dim - FRAME_MIN_VISIBLE_MM)
+  // 下限 = 这一维的画布至少剩 FRAME_MIN_VISIBLE_MM：图幅 + 对边此刻的留白 + 这条边的留白 ≥ 最小可见量
+  const opp = horizontal ? (edge === 'l' ? pad0.r : pad0.l) : edge === 't' ? pad0.b : pad0.t
+  const lo = -(dim + opp - FRAME_MIN_VISIBLE_MM)
   v = Math.min(FRAME_PAD_MAX_MM, Math.max(lo, v))
   const tight = state === 'tight' || state === 'blocked'
   return { value: tight ? v : round1(v), state, tight, snap: best?.kind === 'col' ? best.col! : null }
@@ -176,8 +178,12 @@ export function planFigureCorner(opts: {
   const ay = top ? box0.y + box0.h : box0.y
   const lim = (v: number) => Math.min(limits?.max ?? Infinity, Math.max(limits?.min ?? 1, v))
   const round2 = (v: number) => Math.round(v * 100) / 100
+  // `pad` 是此刻生效的留白（紧凑边已换成当前内容边缘；图幅变后它会随新内容边缘变，这里按此刻值约束）
   const padW = pad.l + pad.r
   const padH = pad.t + pad.b
+  // 图幅下限：除引擎的界外，还要让画布（图幅 + 两侧留白）至少剩 FRAME_MIN_VISIBLE_MM
+  const minW = FRAME_MIN_VISIBLE_MM - padW
+  const minH = FRAME_MIN_VISIBLE_MM - padH
   // 新的图幅宽（导出 mm）：画布宽变化 / k
   let w = sizeMm[0] + (left ? -dx : dx) / k
   let snap: PageColumn | null = null
@@ -192,8 +198,20 @@ export function planFigureCorner(opts: {
     }
     if (snap) w = snap.w - padW
   }
-  w = lim(round2(w))
-  const h = free ? lim(round2(sizeMm[1] + (top ? -dy : dy) / k)) : lim(round2((sizeMm[1] * w) / sizeMm[0]))
+  const limW = (v: number) => lim(Math.max(minW, v))
+  const limH = (v: number) => lim(Math.max(minH, v))
+  w = limW(round2(w))
+  let h: number
+  if (free) h = limH(round2(sizeMm[1] + (top ? -dy : dy) / k))
+  else {
+    h = round2((sizeMm[1] * w) / sizeMm[0])
+    // 等比：高被 minH 顶住时宽跟着抬（取更严的那个），宽高比不变
+    if (h < minH || h < (limits?.min ?? 1)) {
+      const hh = limH(h)
+      w = limW(round2((hh * sizeMm[0]) / sizeMm[1]))
+      h = limH(round2((sizeMm[1] * w) / sizeMm[0]))
+    } else h = limH(h)
+  }
   const bw = (w + padW) * k
   const bh = (h + padH) * k
   const box = { x: left ? ax - bw : ax, y: top ? ay - bh : ay, w: bw, h: bh }

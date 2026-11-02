@@ -14,6 +14,7 @@ import { cancelActivePointerGesture } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { getTransform, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { settleMode } from '@/store/workspaceStore'
@@ -356,6 +357,22 @@ describe('画布框：命中区、角柄、画纸、画外遮罩与胶囊', () =
     act(() => fire('pointerup', dx(10), 0))
     await act(async () => {})
     expect(document.querySelector('[data-drag-status]')).toBeNull()
+  })
+
+  it('选中整张图（退出图内编辑）：选区不画缩放手柄，画布框的角柄 / 边带是唯一的角 / 边（拖它们走图幅 / 留白，不是视觉缩放）', async () => {
+    act(() => useSelectionStore.getState().set(['a']))
+    await mount()
+    expect(useWorkspaceStore.getState().activePanelId).toBe('a')
+    expect(container.querySelector('[data-handle]')).toBeNull()
+    expect(container.querySelector('[data-edge-strip]')).toBeNull()
+    expect(container.querySelectorAll('[data-figure-corner]').length).toBe(4)
+    expect(container.querySelectorAll('[data-figure-edge]').length).toBe(4)
+    // 按角：写的是 size_mm，面板 w / h 不被视觉缩放
+    act(() => startFigureCornerResize(down(0, 0), 'br', 'a'))
+    fire('pointermove', dx(16), dx(3))
+    fire('pointerup', dx(16), dx(3))
+    expect(sizeOverride()).toEqual([96, 66])
+    expect(fig()).toMatchObject({ w: 80, h: 55 })
   })
 
   it('非选择工具时命中区与角柄让位', async () => {
