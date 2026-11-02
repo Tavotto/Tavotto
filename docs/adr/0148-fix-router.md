@@ -118,3 +118,10 @@ AI 环境修复任务本身（PR D）；`change_python` 的执行（PR B）；AI
      「记住的解释器」悄悄换掉——此时只剩失败卡上的按钮。内置 runtime 永远不是 `env` 的目标。
    * `interpreter_cache_denied` 的 `change_python` 仍是 `to: null, env: null`（#1595 的「改用 Tavotto 自带的 Python」不变）。
 3. 同源对：种类闭集多 `choose_environment`、`change_python` 字段多 `env`；golden 向量与 `fixRemedy.ts` 的字段表同步，`PrepPrimary` 多 `switch_python`。
+
+## 修订 2026-11-02：图名归属冲突不再路由进 AI（TVD-TZQ9，维护者裁决）
+
+`multiple_stem_conflict`（脚本跑完、图已捕获，只是图名已登记给另一份仍在磁盘上的脚本，`probe.register_probed`）排在全部规则
+之前直接 `feedback`（`tried` 照常带）：冲突不在脚本里，AI 修复（不许改用户脚本）、转写、换环境都改变不了它——原来落到第 5 条
+给 `ai_fix`，用户点两次都是空跑。闭集与字段表不变，只多一条 golden 向量；失败卡的错误文案（指向「项目接入状态」里的手工指认）不变。
+「同名不同目录的两份脚本自动分开登记」是另一件事，单独立 ADR。看护 `tests/test_fixrouter.py::test_stem_ownership_conflict_is_never_routed_to_ai`。
