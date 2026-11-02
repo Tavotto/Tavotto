@@ -304,7 +304,8 @@ def display_to_job_id(name: str, workflow_jobs: dict[str, dict]) -> str:
 # ---------------------------------------------------------------- step 分类
 
 _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("overhead", re.compile(r"^(Set up job|Complete job)$")),
+    # merge_group 快速失败收尾（只发一条取消请求）算 job 自身的开销，不是测试 / 构建时间。
+    ("overhead", re.compile(r"^(Set up job|Complete job)$|^merge_group 快速失败")),
     ("post", re.compile(r"^Post ")),
     ("checkout", re.compile(r"^Run actions/checkout@")),
     (
