@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import os
 from pathlib import Path
 
 import pytest
@@ -41,9 +42,16 @@ def test_extended_is_identity_off_windows():
     assert longpath.extended("/tmp/a/b", windows=False) == "/tmp/a/b"
 
 
-def test_long_returns_path_unchanged_on_this_platform(tmp_path):
-    assert longpath.long(tmp_path) == tmp_path
+def test_long_matches_extended_on_this_platform(tmp_path):
+    # Windows 上 long() 给绝对路径加 \\?\ 前缀；其它平台原样返回
+    got = longpath.long(tmp_path)
+    assert isinstance(got, Path)
     assert isinstance(longpath.long(str(tmp_path)), Path)
+    if os.name == "nt":
+        assert str(got) == longpath.extended(tmp_path)
+        assert str(got).startswith("\\\\?\\")
+    else:
+        assert got == tmp_path
 
 
 def test_is_too_long_recognises_winerror_206_and_enametoolong():
@@ -60,14 +68,20 @@ def test_is_too_long_recognises_winerror_206_and_enametoolong():
 def deep(tmp_path, monkeypatch):
     monkeypatch.setattr(ai_convert, "CONVERT_DIR", tmp_path / "convert")
     figs = tmp_path / "figs"
-    # 项目相对路径 > 260 字符（每段 < 255，POSIX 上本来就能建）
-    rel_dir = Path(*[("实验数据目录" + str(i)) * 6 for i in range(6)])
-    (figs / rel_dir).mkdir(parents=True)
-    data = figs / rel_dir / "measurement.csv"
-    data.write_bytes(b"x,y\n1,2\n")
+    # 项目侧路径约 240 字符（Windows 普通 API 还能读，项目侧长路径读取不在 #1623 范围），
+    # 候选侧多出 convert/<sid>/project_context 约 30 字符 → 超 260；夹具自己的建目录/写文件走 longpath.long
+    room = 240 - len(str(figs / "measurement.csv")) - 1
+    parts: list[str] = []
+    while room > 0:
+        parts.append(("实验数据目录" * 10)[: min(60, room - 1)] or "d")
+        room -= len(parts[-1]) + 1
+    rel_dir = Path(*parts)
+    long_dir = longpath.long(figs / rel_dir)
+    long_dir.mkdir(parents=True)
+    (long_dir / "measurement.csv").write_bytes(b"x,y\n1,2\n")
     script = figs / "fig.R"
     script.write_bytes(f'd <- read.csv("{(rel_dir / "measurement.csv").as_posix()}")\n'.encode())
-    assert len(str(rel_dir / "measurement.csv")) > 200
+    assert len(str(rel_dir / "measurement.csv")) > 50
     return figs, script, rel_dir
 
 
@@ -76,14 +90,14 @@ def test_candidate_workspace_copies_deep_project_relative_data(deep):
     cand = ai_convert.create_candidate(
         "0123456789ab", script, figs, "fig.R", library=None, source_language="r"
     )
-    copied = cand.dir / convertcontext.DIRECTORY / rel_dir / "measurement.csv"
+    copied = longpath.long(cand.dir / convertcontext.DIRECTORY / rel_dir / "measurement.csv")
     assert copied.read_bytes() == b"x,y\n1,2\n"
     assert ai_figure_edit._tree(cand.dir)  # 遍历深目录不抛
     assert convertcontext.unchanged(figs, cand.context, snapshot_dir=cand.dir)
     # 交给 Codex 的路径保持普通形式
     assert not str(cand.dir).startswith("\\\\?\\")
     ai_convert.remove_dir(cand.dir)
-    assert not cand.dir.exists()
+    assert not os.path.exists(longpath.extended(cand.dir))
 
 
 def test_candidate_file_operations_go_through_the_long_path_helper(deep, monkeypatch):
