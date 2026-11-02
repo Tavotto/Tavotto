@@ -566,16 +566,16 @@ export function ContactDialog() {
       <ul className="flex flex-col gap-3">
         {s.messages.map((m) => (
           <li key={m.message_id} className="flex flex-col gap-2 rounded-md bg-surface-hover px-3 py-2.5" data-contact-letter={m.message_id}>
-            <div className="flex items-center gap-x-2 text-sm">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
               {m.kind === 'report' && m.report_id ? (
                 <>
                   <span
-                    className="rounded-full bg-accent-subtle px-1.5 text-xs text-accent"
+                    className="shrink-0 whitespace-nowrap rounded-full bg-accent-subtle px-1.5 text-xs text-accent"
                     data-contact-letter-kind="report"
                   >
                     {cs('lettersReportTag')}
                   </span>
-                  <span className="font-mono text-xs text-ink" data-contact-letter-number data-contact-report-id={m.report_id}>
+                  <span className="whitespace-nowrap font-mono text-xs text-ink" data-contact-letter-number data-contact-report-id={m.report_id}>
                     {cs('lettersReportNumber', { id: m.report_id })}
                   </span>
                 </>
