@@ -24,6 +24,7 @@ import { useCapsWatch } from './connectAi/useCapsWatch'
 import { Details, Summary } from '../ui/Details'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
 import { HostsPanel } from './HostsPanel'
+import { ConvertSandboxRow } from './ConvertSandboxRow'
 import { isDesktop } from '@/lib/desktop'
 import { ag } from './agentState'
 
@@ -194,6 +195,8 @@ export function CodingAgentsSection() {
 
   const legacy = (
     <>
+      {/* Windows 才有的一个开关（后端不给该键就不渲染）；放在「高级」里，不进一级页面 */}
+      <ConvertSandboxRow />
       <FormSection title={ag('useInProduct')} action={rescanAction} data-settings-anchor="ai.agents">
         <FieldGroup data-agent-section="in-app">
           {error && (

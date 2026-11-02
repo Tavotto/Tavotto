@@ -32,3 +32,7 @@ Several interface icon animations had parts passing through each other while pla
 ## Converting scripts with the official OpenAI models in Codex now works on Windows
 
 On Windows, "Make editable version" with Codex signed in to an official OpenAI model could read your script and data and then stop with "the AI was not allowed to write the new file", because Codex's own file-writing tool fails inside its Windows sandbox. Tavotto now writes the new Matplotlib script itself on Codex's behalf (only that one file, inside Tavotto's own working folder), so the conversion goes through. Your original script and project folder are never touched.
+
+## Windows: optional setting to let the AI convert scripts without Codex's sandbox
+
+If "Make editable version" still stops with "the AI was not allowed to write the new file" on a Windows PC where Codex's sandbox cannot run at all, you can now turn on **Let the AI run without a sandbox when converting** (Settings > Figure assistant > Advanced; Windows only, off by default). With it on, Codex runs conversions without its own sandbox; other AI tasks are unaffected. The diagnostic bundle records whether it was on.

@@ -709,6 +709,13 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
 - **判定**：写入之后的校验 / 写回流程不变。`ai_convert.write_denied` 增第三种形状：`target_tool.calls > 0` 且没有一次成功 → 目标缺失时判 `agent_write_denied`（不可修正）。运行事实多一项 `target_tool_ok`（布尔，权威来源是 `convertwrite.ok`，不看事件；`merge_run_facts` 取或，没有该工具的会话是 None），
   登记进 `exectrace.ATTRIBUTES` 的 `cli_target_tool_ok` 与「AI 会话结束」日志的 `cli_target_tool_ok=`。
 - **看护**：`tests/test_convert_write_tool.py`（工具本体、令牌、HTTP guard、fixmcp 转换模式、argv 各平台、提示词、`agent_write_denied` 新形状、假 Codex 端到端）、`tests/test_windows_regressions.py::test_codex_convert_on_windows_has_unelevated_sandbox_and_tavotto_write_tool`。
+
+### Windows 转换「不受沙盒限制」开关（TVD-BCZ0 方案 B，叠在方案 A 上）
+
+- **语义**：设置里一个开关「转换时允许 AI 不受沙盒限制」（存 `config.json` 的 `ai.convert_unsandboxed_windows`，**默认关**，只认明确的 `True`；入口 `config.convert_unsandboxed_windows()` / `set_…`）。**只在 Windows 上显示与生效**：`/api/ai/capabilities` 只在 Windows 给 `convert_unsandboxed_windows` 这一键（前端据此决定显示），`PUT /api/ai/convert-unsandboxed` 非 Windows 返回 400。界面只有这一行开关，不加说明 / 警告横条（用户硬性要求）。
+- **argv 规则**：`ai_agents.codex_sandbox_policy(ctx)`——只有 (Windows ∧ `ctx.convert_task` ∧ `ctx.convert_unsandboxed`) 才是 `--sandbox danger-full-access` 且**不再带** `windows.sandbox` 覆盖；其余（改图 / 修复会话、非 Windows、开关关）与方案 A 逐字一致。「是否转换」与设置值由 `ai_bridge` 构造转换命令处（`cmd_kw`，含修正轮）**显式**写进 `RunContext`，适配器不读全局配置。方案 A 的代写 MCP 工具照旧注入。
+- **诊断**：闭集事实 `sandbox_mode`（`workspace_write` / `unelevated` / `unsandboxed`，`ai_agents.SANDBOX_MODES`），由**实际 argv** 反推（`sandbox_mode_of`），进「AI 会话结束」日志（`sandbox_mode=`，经 `logsafe.known` 明文）与 exectrace `agent_run` 的 `cli_sandbox_mode`。诊断包里据此看出用户开没开。
+- **看护**：`tests/test_convert_unsandboxed.py`（四种组合 argv、关时与方案 A 逐字一致、配置默认值与读写、诊断事实、API）、`tests/test_windows_regressions.py::test_codex_windows_convert_switch_picks_danger_full_access_or_unelevated`、`web/src/components/settings/ConvertSandboxRow.test.tsx`。
   **待 Windows Lab 用官方模型验证**：真 Codex 0.164 在 unelevated 沙盒里能否拉起 MCP 子进程（`tavotto-cli.exe`）并调用该工具（修复会话的 MCP 在 Windows 上同样依赖这一点）。
 
 ### D3：CLI 经 MCP 修复模式（`engine/fixmcp.py`、`fixsession.py` 的 CLI 分支、`ai_agents` 的 `build_fix_command`）

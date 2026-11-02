@@ -1937,6 +1937,7 @@ export default interface Resources {
           "stepsTitle": "安装步骤"
         },
         "codexIntegrationName": "{{product}} for Codex",
+        "convertUnsandboxed": "转换时允许 AI 不受沙盒限制",
         "defaultButton": "默认",
         "defaultLabel": "默认助手",
         "defaultNone": "没有可用的助手",

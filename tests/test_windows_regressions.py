@@ -4097,6 +4097,35 @@ def test_codex_convert_on_windows_has_unelevated_sandbox_and_tavotto_write_tool(
     assert 'mcp_servers.tavotto_convert.default_tools_approval_mode="approve"' in argv
 
 
+def test_codex_windows_convert_switch_picks_danger_full_access_or_unelevated(monkeypatch):
+    """TVD-BCZ0 方案 B：设置里的「转换时允许 AI 不受沙盒限制」打开时，Windows 转换 argv 是 `--sandbox danger-full-access`
+    （不再带 `windows.sandbox` 覆盖）；关闭（默认）时仍是 workspace-write + unelevated。改图 / 修复会话不受开关影响。"""
+    from tavotto.engine import ai_agents
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+
+    def argv(on):
+        return (
+            ai_agents.CodexAgent()
+            .build_command(
+                ai_agents.RunContext(
+                    argv=["codex"],
+                    prompt="p",
+                    cwd="C:\\w",
+                    convert_task=True,
+                    convert_unsandboxed=on,
+                )
+            )
+            .argv
+        )
+
+    on, off = argv(True), argv(False)
+    assert on[on.index("--sandbox") + 1] == "danger-full-access"
+    assert not any("windows.sandbox" in a for a in on)
+    assert off[off.index("--sandbox") + 1] == "workspace-write"
+    assert 'windows.sandbox="unelevated"' in off
+
+
 def _pip_says(env, target):
     """真起一个 pip 进程，让它在输出里报出带中文的路径；按 Tavotto 的口径（UTF-8、坏字节替换）解码。"""
     argv = [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", str(target)]
