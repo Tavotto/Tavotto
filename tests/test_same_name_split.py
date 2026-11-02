@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -165,8 +166,12 @@ def test_safe_and_native_specs_take_the_registry_aliases(tmp_path):
     assert json.loads(argv[i + 1]) == [["x", "x@b"]]
     assert spec.stable_payload()["stem_aliases"] == [["x", "x@b"]]
     assert execspec.spec_from_payload(spec.to_payload()).stem_aliases == spec.stem_aliases
+    # 桌面拥有的 native 要绝对解释器路径（Windows 上 `/py` 不算绝对）
     native = execspec.desktop_native_spec(
-        str(tmp_path / "b.py"), interpreter="/py", cwd=str(tmp_path), project_root=str(tmp_path)
+        str(tmp_path / "b.py"),
+        interpreter=sys.executable,
+        cwd=str(tmp_path),
+        project_root=str(tmp_path),
     )
     bargv = execspec.bridge_argv(native, runner_py="/r.py", out_dir="/o")
     assert json.loads(bargv[bargv.index("--stem-aliases") + 1]) == [["x", "x@b"]]
