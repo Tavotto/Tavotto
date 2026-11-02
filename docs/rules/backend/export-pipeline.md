@@ -64,6 +64,10 @@ order: 210
     与无标注的 `_resolve_panel_source(rerender=True)` 同一判定；`original.objects_below` = `objects` 里前几个画在图下面（z 序保留；EPS 里写在嵌入段之前）；位图源横纵密度不同（逻辑 mm 宽高比 ≠ 像素宽高比）时，
     PNG / TIFF 先按逻辑图幅各向同性合成（ppi 取两轴中较大的密度，文字 / 行距 / 描边不被压扁），再由 `raster.resample_area`（纯标准库面积平均，RGBA 按预乘权重）整张缩到恰好 `px_w × px_h`，pHYs / TIFF 分辨率写源的 x / y 密度（`RasterBuffer.dpi_y`）；等密度位图不重采样；PDF / SVG 仍按逻辑 mm。
     看护 `tests/test_export_original_annotations.py`。
+    **单图留白 `original.pad_mm`**（ADR 0161 §3）：`[l, t, r, b]` mm，可为负，缺席或全 0 = 解析为 `()`，请求 / 计划身份 / 输出与从前逐字节相同。非零时
+    （没有标注也）走 `_export_produce_original_annotated`：页面 = `w_mm + l + r` × `h_mm + t + b`（`OriginalSource.page_mm`），面板落在 `(l, t)`，`objects` 坐标以**页面**左上为原点；
+    位图源的有效 ppi 仍按**图幅**（源像素网格与图幅一一对应），横纵密度不同时 `raster_target` 取整个页面的像素数；EPS 经 `epsoverlay.compose(offset_pt=…, clip_page=True)` 把原图 EPS 嵌在 `(l, b)`、整页裁到 BoundingBox。
+    非零时 `w_mm` / `h_mm` 必填；四元组不合法或页面 ≤ 0 → `bad_pad`（碰磁盘之前拒绝，`web/src/i18n` errors 中英两份）。看护 `tests/test_export_original_pad.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
     `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字**默认保留为 `<text>`**（ADR 0144，取代 X03 起的「一律转轮廓」；
