@@ -1001,7 +1001,7 @@
     },
     "unit": {
       "mm": " mm",
-      "ppi": " ppi",
+      "ppi": " dpi",
       "pt": " pt"
     },
     "valueArrow": "{{current}} → {{expected}}",

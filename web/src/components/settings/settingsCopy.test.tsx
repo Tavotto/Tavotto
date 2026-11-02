@@ -413,11 +413,11 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     expect(bodyText()).not.toContain('DPI')
   })
 
-  it('单位是 ppi', async () => {
+  it('单位是 dpi', async () => {
     defaults({ dpi: '600' })
     await open('export')
-    expect(bodyText()).toContain('600 ppi')
-    expect(bodyText()).not.toContain('600 dpi')
+    expect(bodyText()).toContain('600 dpi')
+    expect(bodyText()).not.toContain('600 ppi')
   })
 
   it('格式旁不再标注类型（2026-09-11 设计包）：只有格式名', async () => {

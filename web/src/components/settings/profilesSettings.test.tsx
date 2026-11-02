@@ -569,7 +569,7 @@ describe('规范页把边界与快照摊开（审计 T41）', () => {
     await act(async () => head.click())
     expect(text()).toContain('快照')
     expect(text()).toContain('80 mm')
-    expect(text()).toContain('300 ppi') // 分辨率的单位统一写 ppi
+    expect(text()).toContain('300 dpi') // 分辨率的单位统一写 dpi
   })
 })
 
