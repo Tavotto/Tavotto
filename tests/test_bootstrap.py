@@ -613,3 +613,38 @@ def test_status_snapshots_after_slow_probing(monkeypatch, ok):
         monkeypatch.setattr(bootstrap, "find_base_python", finish)
     st = bootstrap.status()
     assert (st["state"], st["attempt"]) == ("done", 3)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Codex #826 P1：pip 重试时打的是不带 scheme 的请求目标
+        "WARNING: Retrying (Retry(total=4)) after connection broken by "
+        "'ReadTimeoutError()': /packages/pkg-1.0-py3-none-any.whl?signature=SECRETTOKEN",
+        "GET /simple/matplotlib/?X-Amz-Signature=SECRETTOKEN&X-Amz-Expires=60 HTTP/1.1",
+        "'/packages/pkg.whl?token=SECRETTOKEN'",
+        "pkg.whl?signature=SECRETTOKEN",
+        # 不带 `=` 的不透明令牌：只靠「路径后的查询串」那条规则
+        "connection broken by 'ReadTimeoutError()': /packages/pkg.whl?SECRETTOKEN",
+    ],
+)
+def test_path_only_request_targets_lose_their_query(raw):
+    """签名查询串不论有没有 scheme 都不能进进度日志。"""
+    out = bootstrap._sanitize(raw)
+    assert "SECRETTOKEN" not in out, out
+    assert "pkg" in out or "matplotlib" in out
+
+
+def test_timeout_excerpt_drops_signed_query_from_retry_warnings():
+    """超时摘录（这次 PR 才开始保留的那份）同样不带签名查询串。"""
+    retry = (
+        "WARNING: Retrying (Retry(total=0)) after connection broken by "
+        "'ConnectTimeoutError()': /packages/x.whl?signature=SECRETTOKEN\n"
+    )
+    out = bootstrap._excerpt(retry.encode())
+    assert "SECRETTOKEN" not in out
+    assert "/packages/x.whl" in out
+
+
+def test_question_marks_in_prose_survive():
+    assert bootstrap._sanitize("Proceed (y/n)? yes") == "Proceed (y/n)? yes"

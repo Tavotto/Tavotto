@@ -47,6 +47,11 @@ _URL_RE = re.compile(
     r"(?:\?[^\s#]*)?"
     r"(?:#[^\s]*)?"
 )
+#: 没有 scheme 的请求目标也会带签名查询串——pip 重试时打的是
+#: `Retrying (...) after connection broken by ...: /packages/x.whl?signature=TOKEN`。
+#: 两种形状都去掉查询串：含 `/` 的路径后面的 `?…`，以及任何紧贴在词后、带 `=` 的 `?k=v`。
+_PATH_QUERY_RE = re.compile(r"((?<!\S)[^\s?#]*/[^\s?#]*)\?[^\s#]+")
+_ATTACHED_QUERY_RE = re.compile(r"(?<=[^\s?])\?[^\s#=]*=[^\s#]*")
 
 _lock = threading.Lock()
 #: `attempt`：尝试身份，单调递增、进程内从 1 起（0 = 从没装过）。每开始一次**新**安装加一；`engine.bootstrap` 事件、
@@ -277,6 +282,8 @@ def _sanitize(text: str) -> str:
         for prefix in _data_dir_prefixes():
             text = text.replace(prefix, "<data>")
         text = _URL_RE.sub(r"\1\2\3", text)
+        text = _PATH_QUERY_RE.sub(r"\1", text)
+        text = _ATTACHED_QUERY_RE.sub("", text)
         return diagnostictext.redact_text(text)
     except Exception:  # noqa: BLE001 — 安装继续，但未脱敏正文与异常消息都不能出门
         return "[bootstrap] output omitted: redaction failed\n"
