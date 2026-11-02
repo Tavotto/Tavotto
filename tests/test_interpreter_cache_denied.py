@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +28,52 @@ _no_chmod = pytest.mark.skipif(
 needs_worker = pytest.mark.skipif(
     bridgekit.USER_PYTHON is None, reason="找不到装有 matplotlib 的解释器"
 )
+
+# ---------------------------------------------------------------- Windows 真机：ACL 拒写（TVD-B6MR 现场）
+_windows_only = pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows ACL；POSIX 走上面的 chmod 用例"
+)
+
+
+@contextlib.contextmanager
+def _deny_create_children(folder: Path):
+    """给当前用户在 `folder` 上加一条 deny ACE（新建子目录 AD + 新建文件 WD），复现现场的 `[WinError 5] 拒绝访问`；
+    退出时撤掉。只拦「在里面新建」，不拦读与列目录——与现场「已存在的目录照常可用」一致。
+
+    前提反证：加完 ACE 后本进程自己在里面建目录必须被拒；建得出来说明这台机器上 ACL 不生效（例如带备份特权的
+    管理员），这条用例证明不了什么，判红而不是跳过。"""
+    sid = (
+        subprocess.run(
+            ["whoami", "/user", "/fo", "csv", "/nh"],
+            capture_output=True,
+            encoding="utf-8",  # SID 全是 ASCII；门禁要求显式 UTF-8
+            errors="replace",
+            check=True,
+        )
+        .stdout.strip()
+        .split(",")[-1]
+        .strip('"')
+    )
+    subprocess.run(
+        ["icacls", str(folder), "/deny", f"*{sid}:(AD,WD)"], capture_output=True, check=True
+    )
+    try:
+        probe = folder / "acl-precondition"
+        try:
+            probe.mkdir()
+        except PermissionError:
+            pass
+        else:
+            probe.rmdir()
+            raise AssertionError(
+                "前提不成立：加了 deny ACE 仍能在里面建目录，这台机器上复现不了 WinError 5"
+            )
+        yield
+    finally:
+        subprocess.run(
+            ["icacls", str(folder), "/remove:d", f"*{sid}"], capture_output=True, check=False
+        )
+
 
 SCRIPT = """
 from pathlib import Path
@@ -176,3 +225,38 @@ def test_candidate_rejected_for_the_cache_gets_its_own_reason():
         userenvs.REJECT_CACHE_DENIED
     )
     assert userenvs.REJECT_CACHE_DENIED in userenvs.REJECT_CODES
+
+
+@_windows_only
+@needs_worker
+def test_windows_worker_denied_by_acl_gets_the_stable_code(project):
+    """TVD-B6MR 现场在真 Windows 上：`out` 已存在，在里面新建 `script-input` 撞 `[WinError 5]` →
+    `interpreter_cache_denied`，用户脚本一行没跑。POSIX 的 chmod 版本在 Windows 上跳过，这条补上。"""
+    out = engine_pool._worker_base(str(project), "fig.py") / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    with _deny_create_children(out):
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.build("fig.py", str(project), "__main__")
+    assert err.value.code == engine_pool.INTERPRETER_CACHE_DENIED_CODE, err.value.code
+    assert "PermissionError" in err.value.traceback_text
+    assert not (project / "ran.txt").exists()
+
+
+@_windows_only
+@needs_worker
+@pytest.mark.parametrize("bundled", [False, True])
+def test_windows_health_probe_refuses_an_interpreter_denied_by_acl(tmp_path, monkeypatch, bundled):
+    """体检前置拦截（#1594）在真 Windows 上：体检 cwd 里建不了目录 → 用户的解释器判 `interpreter_cache_denied`；
+    内置 runtime 不在这里判。"""
+    from tavotto.engine import projectenv
+
+    scratch = tmp_path / "probe-scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(projectenv, "_probe_scratch_dir", lambda: str(scratch))
+    with _deny_create_children(scratch):
+        health = projectenv._probe_environment(bridgekit.USER_PYTHON, bundled=bundled)
+    assert health.get("cache_write") == "denied", health
+    if bundled:
+        assert health.get("code") != projectenv.ERROR_CACHE_DENIED, health
+    else:
+        assert health == {**health, "ok": False, "code": projectenv.ERROR_CACHE_DENIED}
