@@ -4999,14 +4999,14 @@ def _acquire(
                 ):
                     # 叠加环境（ROOT）变了：同一个解释器路径，带不带 / 带哪个 ROOT 起的进程不是同一个环境
                     why = "叠加环境已变"
-                elif not _remap_current(w, figures_dir):
-                    # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
-                    # 可能在改动之后才登记进池——复用它就是拿旧映射画图
-                    why = "改指表已变"
                 elif not _aliases_current(w, figures_dir, script_name):
                     # 会话是按旧图名别名表起的（ADR 0159）：同名不同脚本刚被分开登记，这条会话里的图还叫原名，
                     # 编辑请求按登记图名找不到它——重起一条按新别名收图的
                     why = "图名别名已变"
+                elif not _remap_current(w, figures_dir):
+                    # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
+                    # 可能在改动之后才登记进池——复用它就是拿旧映射画图
+                    why = "改指表已变"
             if (w is None or why or getattr(w, "build_failed", False)) and not watcher_synced:
                 needs_watch_sync = True
                 continue

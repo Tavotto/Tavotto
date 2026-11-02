@@ -21,6 +21,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 
 When Tavotto sets up its own rendering environment (creating it, then installing matplotlib), everything written to the setup log is now redacted before it is kept: credentials and query strings in package-index URLs, personal paths and other secrets are removed, and the data folder appears as `<data>`. That log can end up in a feedback bundle, and previously pip's output went in verbatim. If a step fails, the log now ends with one line naming the step (environment, install or import check) and whether it timed out or exited with an error. A timed-out install keeps what pip printed before it was stopped, and a failed import check keeps its error. Nothing changes when setup succeeds. Thanks to @mvanhorn for this contribution (#807).
 
+## A copied script that saves figures with the same names now gets its own figures
+
+If you copied a script to rerun it on new data and it saves figures with the same file names as the original (for example into a different output folder), preparing the copy used to stop with "these figure names already belong to other scripts", and the only way out took the figures away from the original script. Tavotto now links the copy's figures separately, so both scripts' figures can be opened and edited on their own; the asset panel still shows the original file names. The first time you open the copy's figures, Tavotto runs it once more. Only when both scripts write the very same file in the project folder is it still reported as a clash. Your scripts are never changed.
+
 ## A figure-name clash no longer sends you to the AI fix
 
 When a script ran fine but the figures it saved have the same names as figures already linked to another script in the project, the card offered "Use your AI to fix it", and the assistant could not change anything, because the clash is not in the script. The card now offers sending feedback instead, and its message still says where to choose which script a figure belongs to. Your scripts are never changed.
@@ -64,7 +68,3 @@ When you send a problem report and *Contact the maker* is on, the app now also k
 ## Scripts that `import pymupdf` can install it in one click
 
 PyMuPDF's current documentation imports it as `import pymupdf` instead of the older `import fitz`. Tavotto only recognised the older name, so a script written the new way that ran in an environment without PyMuPDF got a "missing pymupdf" card with no install button, and the "Specify package…" box was not even filled in. Both names now lead to the same install of PyMuPDF into an environment Tavotto manages, exactly as `import fitz` already did. Your own Python environments are not changed unless you choose them.
-
-## A copied script that saves figures with the same names now gets its own figures
-
-If you copied a script to rerun it on new data and it saves figures with the same file names as the original (for example into a different output folder), preparing the copy used to stop with "these figure names already belong to other scripts", and the only way out took the figures away from the original script. Tavotto now links the copy's figures separately, so both scripts' figures can be opened and edited on their own; the asset panel still shows the original file names. The first time you open the copy's figures, Tavotto runs it once more. Only when both scripts write the very same file in the project folder is it still reported as a clash. Your scripts are never changed.
