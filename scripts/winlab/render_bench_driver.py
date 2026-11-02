@@ -242,6 +242,21 @@ def variant(patch: dict | None, i: int) -> list:
     return [{**patch, "value": round(patch["value"] + (0.5 if i % 2 else -0.5), 2)}]
 
 
+def rotation_plan(subset: list, rounds: int) -> list[tuple[str, int]]:
+    """轮转的请求序列：(面板, 这张面板自己第几次被访问)。
+
+    补丁值按**每张面板自己的访问次数**交替，而不是按全局请求序号：全局序号下 2/4/6 张时每张面板每轮
+    拿到同一个值，`overrides.apply()` 对没变的值跳过 setter，热基线量的是「没改」而 3 张时量的是
+    真修改，各组不可比（Codex #1641 P2）。"""
+    visits: dict = {}
+    plan = []
+    for _ in range(rounds):
+        for pid in subset:
+            visits[pid] = visits.get(pid, 0) + 1
+            plan.append((pid, visits[pid]))
+    return plan
+
+
 # ------------------------------- rotation -----------------------------------
 def run_rotation(args, plane: str, base_dir: Path) -> dict:
     out: dict = {"plane": plane, "sets": []}
@@ -251,7 +266,6 @@ def run_rotation(args, plane: str, base_dir: Path) -> dict:
         if len(ids) < max(args.sets):
             raise RuntimeError(f"only {len(ids)} panels, need {max(args.sets)}")
         patches: dict[str, dict | None] = {}
-        counter = 0
         for n in args.sets:
             subset = ids[:n]
             ev0 = be.count_log("LRU")
@@ -262,13 +276,11 @@ def run_rotation(args, plane: str, base_dir: Path) -> dict:
                 warm_cold += r["cold"]
             ev_warm = be.count_log("LRU")
             samples = []
-            for rnd in range(args.rounds):
-                for pid in subset:
-                    counter += 1
-                    r = be.render(pid, variant(patches.get(pid), counter))
-                    r.pop("_manifest", None)
-                    r["round"] = rnd
-                    samples.append(r)
+            for k, (pid, visit) in enumerate(rotation_plan(subset, args.rounds)):
+                r = be.render(pid, variant(patches.get(pid), visit))
+                r.pop("_manifest", None)
+                r["round"] = k // n
+                samples.append(r)
             ev1 = be.count_log("LRU")
             srv = [s["server_ms"] for s in samples if s["server_ms"] is not None]
             cold = [s for s in samples if s["cold"]]

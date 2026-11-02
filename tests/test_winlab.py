@@ -3853,6 +3853,23 @@ def test_render_bench_driver_statistics_and_timing_whitelist():
     assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 2)[0]["value"] == 7.5
 
 
+@pytest.mark.parametrize("n", [2, 3, 4, 6])
+def test_render_bench_rotation_changes_every_panel_value_on_every_visit(n):
+    """任何张数下，同一张面板相邻两次访问拿到的补丁值都不同——否则 `overrides.apply()` 跳过没变的值，
+    热基线量的是「没改」，各组不可比（Codex #1641 P2）。"""
+    import render_bench_driver as R
+
+    patch = {"gid": "g", "prop": "fontsize", "value": 8.0}
+    subset = [f"p{i}" for i in range(n)]
+    plan = R.rotation_plan(subset, 4)
+    assert len(plan) == 4 * n
+    last: dict = {}
+    for pid, visit in plan:
+        value = R.variant(patch, visit)[0]["value"]
+        assert last.get(pid) != value, (n, pid, visit)
+        last[pid] = value
+
+
 # --------------------------------------------------------------------------- convert-live 的地区政策看护
 def test_no_official_vendor_modes_or_providers_exist_for_convert_live_or_secret_init():
     """docs/rules/ci/windows-lab.md:122-124（地区政策）：Lab 在中国大陆，Anthropic / OpenAI 的真实模型调用保持 BLOCKED，
