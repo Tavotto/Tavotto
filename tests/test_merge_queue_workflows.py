@@ -3695,5 +3695,26 @@ class TestMergeGroupFailFast:
         assert _needs_of(g) - {"docs-scope"} == set(self.HEAVY) == _required_of(g)
         assert "if: ${{ always() &&" in g, "取消后 Gate 要靠 always() 继续跑并判红"
 
+    def test_integration_gate_reads_but_never_writes_actions(self):
+        """归因要读本 run 各 job 的步骤结论（actions: read）；Gate 不取消任何东西，不许 write。"""
+        g = _job(CI, "ci-integration-gate")
+        assert "    permissions:\n      contents: read\n      actions: read\n" in g
+        assert "actions: write" not in _code(g)
+        assert "actions:" not in _code(_job(CI, "ci-fast-gate"))
+
+    def test_attribution_step_is_merge_group_only_and_precedes_the_verdict(self):
+        g = _job(CI, "ci-integration-gate")
+        i = g.index("- name: 快速失败归因：读本 run 各 job 的失败步骤")
+        assert g.index("- name: 聚合判定") > i
+        step = g[i : g.index("- name:", i + 1)]
+        assert "if: ${{ github.event_name == 'merge_group' }}" in step
+        assert "|| : >" in step, "取不到就留空，不能让归因步骤把 Gate 打红"
+
+    def test_run_jobs_reach_the_trusted_judge_by_env_not_cli(self):
+        """判定器取自默认分支：新命令行参数在合入前会让旧判定器 argparse 报错（bootstrap）。"""
+        g = _job(CI, "ci-integration-gate")
+        assert "RUN_JOBS_FILE: ${{ github.event_name == 'merge_group' &&" in g
+        assert "--run-jobs" not in g
+
     def test_cancel_in_progress_is_still_pull_request_only(self):
         assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in CI

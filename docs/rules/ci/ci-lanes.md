@@ -98,8 +98,14 @@ workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercor
   同仓库 PR 的 full-ci run 里（permissions 不能按事件条件写），fork PR 的 token 本就只读；
 * 代价：同组里另外几条腿若也红，它们被取消、看不到——先看 Gate summary 的 `root_failures`，要全貌就重跑。
   取消后其余腿显示 cancelled 是**预期**（L-114 的「裸 cancelled 先核时长」只对没有任何 failure 的 cancelled 适用）；
-* 未验证、合入后观察：真实 merge_group 里「取消后 Gate 以 failure 完成」只能在合入后的第一个红组上看到。
-  生效判据：红组里 Gate 在红腿之后几分钟内（取消超时上限 5 分钟）出现 failure 结论、其余腿 cancelled；
-  若 Gate 没出结论（候选超时），回滚 = revert 本提交，Gate 与闭集本就没动。
+* **红腿自己也显示 cancelled**：`gh run cancel` 取消的是整个 run，红腿的 job 结论也被改成 cancelled，
+  needs 里看不出谁真红（2026-11-03 本 PR 进队的第一个红组实测：`backend-platforms (macos-latest, 6)` 的
+  pytest 红，job 却是 cancelled；Gate 在取消后约 2 分钟以 failure 完成，机制本身成立）。所以 integration
+  Gate 在 merge_group 上先读本 run 各 job 的**步骤**结论（步骤结论不受取消影响；Gate 为此有 `actions: read`、
+  没有 write），经 `RUN_JOBS_FILE` 环境变量交给判定器，`root_failures` 写「job 显示名 · 失败步骤」。走环境变量
+  而不是新参数：判定器取自默认分支，新参数在合入前会让旧判定器 argparse 报错。取不到就留空，不改变结论；
+* 生效判据（合入后核）：红组里 Gate 在红腿之后几分钟内出现 failure、summary 写出真红的「job · 步骤」、其余腿
+  cancelled；若 Gate 没出结论（候选超时），回滚 = revert 本提交，Gate 与闭集本就没动。
 看护：`TestMergeGroupFailFast`（最后一步、只在 merge_group、不含判定、只有五腿拿 `actions: write`、
-check 名与闭集不变、`cancel-in-progress` 仍只对 PR）、`TestMergeGroupFailFastAttribution`。
+check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actions、归因步骤只在 merge_group 且取不到不打红、
+归因经环境变量）、`TestMergeGroupFailFastAttribution`、`TestFailFastRootFromRunJobs`。

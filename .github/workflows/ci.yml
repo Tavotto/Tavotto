@@ -2644,8 +2644,23 @@ jobs:
     needs: [docs-scope, backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # actions: read 只为「快速失败归因」读本 run 各 job 的步骤结论；不给 write（Gate 不取消任何东西）。
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v5
+      # **快速失败归因**（只在 merge_group）：重腿的快速失败步骤取消的是整个 run，红腿自己的
+      # job 结论也成了 cancelled，needs 里看不出谁真红。步骤结论不受取消影响——这里把各 job 的
+      # 失败步骤取下来交给判定器写进 summary / verdict。只用于归因，取不到就留空，不改变结论。
+      - name: 快速失败归因：读本 run 各 job 的失败步骤
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --paginate --jq '.jobs[] | {name, failed_steps: [.steps[]? | select(.conclusion == "failure") | .name]} | tojson' \
+            > "$RUNNER_TEMP/run-jobs.ndjson" || : > "$RUNNER_TEMP/run-jobs.ndjson"
       # 与 fast gate 同一条纪律：判定器取默认分支（理由见上面那段注释）
       - name: 取默认分支上的可信判定器
         env:
@@ -2680,6 +2695,8 @@ jobs:
         # （merge_group payload 里没有它们；tests/test_merge_queue_workflows.py 钉住）。
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          # 归因输入经环境变量（判定器取自默认分支，新参数会让旧判定器报错；环境变量它只会忽略）
+          RUN_JOBS_FILE: ${{ github.event_name == 'merge_group' && format('{0}/run-jobs.ndjson', runner.temp) || '' }}
           GATE_EVENT: ${{ github.event_name }}
           GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
           DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
