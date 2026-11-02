@@ -1344,7 +1344,7 @@ class Worker(wireproto.V1Handler):
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
         #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
         self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
-        #: 图名别名表（`--stem-aliases`，ADR 0159；父进程按注册表给）：收图之后把原图名换成登记图名
+        #: 图名别名表（`--stem-aliases`，ADR 0162；父进程按注册表给）：收图之后把原图名换成登记图名
         try:
             self.stem_aliases = figcapture.parse_stem_aliases(getattr(args, "stem_aliases", None))
         except ValueError as exc:
@@ -1935,7 +1935,7 @@ class Worker(wireproto.V1Handler):
                     file=sys.stderr,
                 )
                 self.dropped_figures = dropped
-        # 同名不同脚本、分开登记过的图（ADR 0159）：名字定下来之后、进编辑会话之前换成登记图名，三条入口同一个函数
+        # 同名不同脚本、分开登记过的图（ADR 0162）：名字定下来之后、进编辑会话之前换成登记图名，三条入口同一个函数
         renames: dict = {}
         figcapture.apply_stem_aliases(
             self.stem_aliases,
@@ -2390,7 +2390,7 @@ def main() -> None:
     ap.add_argument("--write-roots", default=None)
     # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
     ap.add_argument("--ignore-paths", default=None)
-    # ADR 0159：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
+    # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)

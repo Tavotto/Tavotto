@@ -3618,7 +3618,7 @@ def _spawn_spec(
         write_roots=write_roots,
         # 会话自己那份（与 input_remap 同纪律：重开会话不许换成另一份名单）；不给才现取
         ignored_paths=pathignore.paths_for(figures_dir) if ignored_paths is None else ignored_paths,
-        # ADR 0159：会话自己那份别名表（重开会话不许换成另一份）；不给才从注册表现取
+        # ADR 0162：会话自己那份别名表（重开会话不许换成另一份）；不给才从注册表现取
         stem_aliases=stem_aliases,
         **execspec.run_kwargs(run),
     )
@@ -5000,7 +5000,7 @@ def _acquire(
                     # 叠加环境（ROOT）变了：同一个解释器路径，带不带 / 带哪个 ROOT 起的进程不是同一个环境
                     why = "叠加环境已变"
                 elif not _aliases_current(w, figures_dir, script_name):
-                    # 会话是按旧图名别名表起的（ADR 0159）：同名不同脚本刚被分开登记，这条会话里的图还叫原名，
+                    # 会话是按旧图名别名表起的（ADR 0162）：同名不同脚本刚被分开登记，这条会话里的图还叫原名，
                     # 编辑请求按登记图名找不到它——重起一条按新别名收图的
                     why = "图名别名已变"
                 elif not _remap_current(w, figures_dir):
@@ -5184,7 +5184,7 @@ def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
 
 
 def _aliases_current(worker, figures_dir, script_name: str) -> bool:
-    """会话起的时候带的图名别名表还是不是注册表此刻的（ADR 0159；没有 spec 的替身不拦）。"""
+    """会话起的时候带的图名别名表还是不是注册表此刻的（ADR 0162；没有 spec 的替身不拦）。"""
     spec = getattr(worker, "spec", None)
     if spec is None:
         return True

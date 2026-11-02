@@ -7476,11 +7476,11 @@ export interface RuntimeAssetInfo {
   descriptor: CapturedFigureDescriptor | null
   /** 按参数配置跑出的变体素材才有（本机不透明引用，不含参数值）；无参数的那张没有 */
   run_config?: string
-  /** 同名不同脚本、分开登记的图（ADR 0159）：脚本保存时的原图名，界面显示它；身份仍是 `stem` */
+  /** 同名不同脚本、分开登记的图（ADR 0162）：脚本保存时的原图名，界面显示它；身份仍是 `stem` */
   display_name?: string
 }
 
-/** 界面上显示的图名：分开登记的图显示原图名，其余就是 `stem`（ADR 0159） */
+/** 界面上显示的图名：分开登记的图显示原图名，其余就是 `stem`（ADR 0162） */
 export const runtimeAssetName = (asset: Pick<RuntimeAssetInfo, 'stem' | 'display_name'>): string =>
   asset.display_name || asset.stem
 

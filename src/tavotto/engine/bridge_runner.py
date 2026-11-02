@@ -432,7 +432,7 @@ def adopt_pdf_pages() -> None:
 #: 兜底 stem 的基名（`<脚本名>`、`<脚本名>-2`…）。列表包一层是因为钩子闭包
 #: 在解析目标之前就装好了。
 _SCRIPT_STEM = ["figure"]
-#: 图名别名表（`--stem-aliases`，ADR 0159）：收图之后把原图名换成登记图名；空 = 没有
+#: 图名别名表（`--stem-aliases`，ADR 0162）：收图之后把原图名换成登记图名；空 = 没有
 _STEM_ALIASES: dict = {}
 
 
@@ -1412,7 +1412,7 @@ def _parse_args(argv: list):
     ap.add_argument("--observe-inputs", action="store_true")
     # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
     ap.add_argument("--ignore-paths", default=None)
-    # ADR 0159：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
+    # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
     if "--" in argv:
         cut = argv.index("--")

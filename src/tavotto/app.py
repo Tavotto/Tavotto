@@ -6351,7 +6351,7 @@ def api_registry_probe():
             # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
             # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
             # 清单与预览，那时 cache 里得已经有东西。
-            # 刚分开登记的图（ADR 0159）：这次执行里还叫原名，不物化（第一次打开时按登记图名重跑）
+            # 刚分开登记的图（ADR 0162）：这次执行里还叫原名，不物化（第一次打开时按登记图名重跑）
             if not result.get("stem_aliases_added"):
                 _materialize_runtime(
                     script,
@@ -11662,7 +11662,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     run = getattr(plan, "run", None)
     native = None
     if registered.get("stem_aliases_added"):
-        # 这次刚分开登记的图（ADR 0159）：这次执行里的图还叫原名，物化出来就是登记表里没有的身份。不物化、
+        # 这次刚分开登记的图（ADR 0162）：这次执行里的图还叫原名，物化出来就是登记表里没有的身份。不物化、
         # 不沿用这条活会话（池按别名表判它过期），用户第一次打开时按登记图名重跑
         if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
             for sess in engine_nativesession.REGISTRY.list(str(ctx.path)):

@@ -821,7 +821,7 @@ class TestRegistryEffects:
         assert (figs / "tavotto_registry.json").read_bytes() == before
 
     def test_same_name_from_another_live_script_is_split_not_stolen(self, figs):
-        """产出的 stem 已被另一份**仍存在**的脚本登记、又证明不了是同一个文件（ADR 0159，TVD-TZQ9）：
+        """产出的 stem 已被另一份**仍存在**的脚本登记、又证明不了是同一个文件（ADR 0162，TVD-TZQ9）：
         原来那份一字不动，这份以 `原图名@脚本文件名` 分开登记，别名表写进注册表。"""
         write(figs, "a.py", 'print("owner")\n')
         (figs / "tavotto_registry.json").write_text(
@@ -933,7 +933,7 @@ class TestRegistryEffects:
         assert sorted(engine_probe.probe(figs, "plot_a.py")["stems"]) == ["preview", "sensitivity"]
 
     def test_a_hot_session_started_before_the_split_is_not_reused(self, figs):
-        """热会话是分开登记之前起的（图还叫原名）：别名表一变，池不许再把它交出去（ADR 0159，`pool._aliases_current`）。"""
+        """热会话是分开登记之前起的（图还叫原名）：别名表一变，池不许再把它交出去（ADR 0162，`pool._aliases_current`）。"""
         write(
             figs,
             "plot_b.py",

@@ -311,7 +311,7 @@ class ExecutionSpec:
     #: （`--ignore-paths`），所以 workerd 的 spawn 规格哈希天然随它变。机器相关路径，**不进 `stable_payload()`**。
     #: 空元组 = 没有决定，argv 逐字节不变（golden）。
     ignored_paths: tuple[str, ...] = ()
-    #: 这个脚本的图名别名表（ADR 0159，`registry.stem_aliases_for` 是唯一来源）：`((原图名, 登记图名), …)`。
+    #: 这个脚本的图名别名表（ADR 0162，`registry.stem_aliases_for` 是唯一来源）：`((原图名, 登记图名), …)`。
     #: 同名不同脚本时后登记的那份的图在收图之后改成登记图名。safe 与 native **同一个字段、同一个 argv 参数**
     #: （`--stem-aliases`），workerd 的 spawn 规格哈希随它变。它改变图的身份（runtime id 里的 stem），跨机器稳定，
     #: 非空时进 `stable_payload()`。空元组 = 没有别名，argv 与稳定身份逐字节不变（golden）。
@@ -468,7 +468,7 @@ class ExecutionSpec:
                 self.owner
             )  # 只有桌面拥有的才多这一键：terminal 的身份逐字节不变（golden）
         if self.stem_aliases:
-            # 图名别名改变图的身份（ADR 0159）：只有分开登记过的脚本才多这一键，其余逐字节不变（golden）
+            # 图名别名改变图的身份（ADR 0162）：只有分开登记过的脚本才多这一键，其余逐字节不变（golden）
             out["stem_aliases"] = [list(pair) for pair in self.stem_aliases]
         out["spec_version"] = SPEC_VERSION
         return out
@@ -635,7 +635,7 @@ def safe_spec(
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
-    `stem_aliases`（ADR 0159）：缺省 None = 从项目注册表取这个脚本的别名表；显式给（含空）就用给的。
+    `stem_aliases`（ADR 0162）：缺省 None = 从项目注册表取这个脚本的别名表；显式给（含空）就用给的。
 
     safe 的语义（与 ADR 0014 §2 逐条对应）：target 是项目内脚本、argv 只有
     脚本自身（`sys.argv[1:]` 缺省为空，由 worker 落实；T03 起用户可以给**精确的 token 列表**——
@@ -871,7 +871,7 @@ def bridge_argv(
             json.dumps(list(spec.ignored_paths), ensure_ascii=False, separators=(",", ":")),
         ]
     if spec.stem_aliases:
-        # ADR 0159：分开登记过的脚本才多两个 token——没有别名的命令行逐字节不变（golden）
+        # ADR 0162：分开登记过的脚本才多两个 token——没有别名的命令行逐字节不变（golden）
         out += ["--stem-aliases", _aliases_json(spec.stem_aliases)]
     out.append("--")
     out.extend(spec.argv)
@@ -944,7 +944,7 @@ def worker_argv(
             json.dumps(list(spec.ignored_paths), ensure_ascii=False, separators=(",", ":")),
         ]
     if spec.stem_aliases:
-        # ADR 0159：分开登记过的脚本才多两个 token——没有别名的 argv 逐字节不变（golden）
+        # ADR 0162：分开登记过的脚本才多两个 token——没有别名的 argv 逐字节不变（golden）
         out += ["--stem-aliases", _aliases_json(spec.stem_aliases)]
     return out
 

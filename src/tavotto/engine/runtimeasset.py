@@ -669,7 +669,7 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
     的目录**不列**——解析不到就渲染不了，列出来只是一个点不动的幽灵。
 
     每条：{id, script, stem, entry, status, cached, size_mm, capture_source,
-    descriptor}，分开登记的图另带 `display_name`（原图名，ADR 0159）。`descriptor` 是物化 cache 里那份 CapturedFigureDescriptor
+    descriptor}，分开登记的图另带 `display_name`（原图名，ADR 0162）。`descriptor` 是物化 cache 里那份 CapturedFigureDescriptor
     payload（没有 cache 时为 None——先跑一次才有尺寸与描述符，前端的
     「添加到画布」只对有描述符的开放）。
     """
@@ -678,7 +678,7 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
     out: list[dict] = []
     for script, info in sorted(registry.entries().items()):
         entry = info.get("entry", "main")
-        # 分开登记的图（ADR 0159）：界面显示脚本保存时的原图名，身份仍是登记图名
+        # 分开登记的图（ADR 0162）：界面显示脚本保存时的原图名，身份仍是登记图名
         shown = {dst: src for src, dst in (info.get("stem_aliases") or {}).items()}
         configured_only = runconfig.configured_only_stems(project_root, script)
         for stem in info.get("stems", ()):
@@ -700,7 +700,7 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
             if base_meta is not None or stem not in configured_only:
                 variants.insert(0, ("", asset_id))
             elif stem in shown and not variants:
-                # 刚分开登记、带参数跑出来的图（ADR 0159）：那次执行不物化，缓存还没有——按记录过它的配置列占位，
+                # 刚分开登记、带参数跑出来的图（ADR 0162）：那次执行不物化，缓存还没有——按记录过它的配置列占位，
                 # 不让它在素材栏里凭空消失；第一次打开时按登记图名、按那份配置重跑
                 for cid in runconfig.configs_capturing(project_root, script, stem):
                     variants.append((cid, figcapture.runtime_asset_id(script, stem, cid)))

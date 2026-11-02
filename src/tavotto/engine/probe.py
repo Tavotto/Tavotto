@@ -643,7 +643,7 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
 def _split_same_name(
     figures_dir: str | Path, script: str, conflicts: dict[str, str], result: dict, stems: list[str]
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """冲突图 → `({原图名: 登记图名}, 仍是冲突的 {图名: 归属脚本})`（ADR 0159）。
+    """冲突图 → `({原图名: 登记图名}, 仍是冲突的 {图名: 归属脚本})`（ADR 0162）。
 
     判据：这次执行写出的文件与原归属脚本登记的文件**有交集**（`artifacts`，同一个磁盘文件被两份脚本写）——
     证明了是同一个文件，仍报 `multiple_stem_conflict`；其余（不同文件夹、或者路径只在子文件夹里、注册表里
@@ -797,7 +797,7 @@ def register_probed(
     all_stems = sorted({*result["stems"], *failed_stems})
     conflicts = _live_stem_conflicts(figures_dir, script, all_stems)
     # 同名不同脚本（复制一份脚本换样本、输出到别的文件夹，TVD-TZQ9）：证明不了两份写的是同一个文件的，
-    # 后登记的这份以 `原图名@脚本文件名` 分开登记（ADR 0159）；只有证明了是同一个文件的仍是冲突
+    # 后登记的这份以 `原图名@脚本文件名` 分开登记（ADR 0162）；只有证明了是同一个文件的仍是冲突
     new_aliases, conflicts = _split_same_name(figures_dir, script, conflicts, result, all_stems)
     if new_aliases and not conflicts:
         result = _renamed_result(result, new_aliases)
@@ -891,7 +891,7 @@ def register_probed(
         **result,
         "registered": True,
         **({"unlinked_stems": unlinked} if unlinked else {}),
-        # 这次刚分开登记的图（ADR 0159）：这次执行里的图还叫原名——调用方不物化它的缓存、不沿用它的活会话，
+        # 这次刚分开登记的图（ADR 0162）：这次执行里的图还叫原名——调用方不物化它的缓存、不沿用它的活会话，
         # 用户第一次打开时按登记图名重跑（池的复用判定见 `pool._aliases_current`）
         **({"stem_aliases_added": dict(new_aliases)} if new_aliases else {}),
     }

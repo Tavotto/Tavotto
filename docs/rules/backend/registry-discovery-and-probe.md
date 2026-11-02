@@ -93,7 +93,7 @@ order: 130
     **失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
     登记时报 `multiple_stem_conflict` 而不是静默抢走（裁决走 PUT
     /api/registry 的手工路——那才是用户显式指认；归属脚本已不存在的死条目
-    照旧顺畅重登记）。**同名不同脚本（ADR 0159）**：证明不了两份写的是同一个文件（`artifacts` 无交集）时不报冲突，
+    照旧顺畅重登记）。**同名不同脚本（ADR 0162）**：证明不了两份写的是同一个文件（`artifacts` 无交集）时不报冲突，
     后登记的这份以 `原图名@脚本文件名` 分开登记、别名表 `stem_aliases` 写进它的条目；别名是执行身份
     （`ExecutionSpec.stem_aliases`，唯一来源 `registry.stem_aliases_for`），捕获层收图后改名（`figcapture.apply_stem_aliases`），
     首次分开那次执行不物化、不沿用活会话（`stem_aliases_added`，池 `_aliases_current` 判过期）。

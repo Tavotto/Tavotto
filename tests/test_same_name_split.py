@@ -1,4 +1,4 @@
-"""同名不同脚本的图分开登记（ADR 0159，TVD-TZQ9）：注册表别名表、捕获层改名、执行描述、池的复用判定、显示名。
+"""同名不同脚本的图分开登记（ADR 0162，TVD-TZQ9）：注册表别名表、捕获层改名、执行描述、池的复用判定、显示名。
 
 真跑两份脚本的端到端用例在 `test_script_probe.py::TestRegistryEffects`
 （`test_copied_script_saving_same_names_elsewhere_gets_its_own_figures`）；这里是各层的纯函数与契约。
