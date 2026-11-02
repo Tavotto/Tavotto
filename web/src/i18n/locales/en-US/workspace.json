@@ -1357,7 +1357,8 @@
         "start": "Make editable version",
         "adopt": "Use the new version",
         "discard": "Discard",
-        "retry": "Try again"
+        "retry": "Try again",
+        "allowUnsandboxedRetry": "Allow without sandbox and retry"
       },
       "deps": {
         "askOnce": "Install the missing packages into this environment ({{env}})?",

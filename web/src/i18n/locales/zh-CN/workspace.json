@@ -1294,7 +1294,8 @@
         "start": "生成可编辑版本",
         "adopt": "采用新版本",
         "discard": "放弃",
-        "retry": "重试"
+        "retry": "重试",
+        "allowUnsandboxedRetry": "允许不受沙盒限制并重试"
       },
       "deps": {
         "askOnce": "要给这个环境（{{env}}）装缺的包吗？",

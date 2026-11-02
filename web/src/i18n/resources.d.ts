@@ -6206,6 +6206,7 @@ export default interface Resources {
         "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
         "btn": {
           "adopt": "采用新版本",
+          "allowUnsandboxedRetry": "允许不受沙盒限制并重试",
           "discard": "放弃",
           "retry": "重试",
           "start": "生成可编辑版本"

@@ -48,7 +48,7 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { aiRevert, convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { aiRevert, convertOriginalUrl, convertPreviewUrl, effectiveAgent, setConvertUnsandboxedWindows } from '@/lib/api'
 import { parseRenames } from '@/lib/overrideIdentity'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -992,11 +992,45 @@ function useConvertTick(active: boolean): void {
   }, [active])
 }
 
+/**
+ * 方案 B 一键入口：先打开「转换时允许 AI 不受沙盒限制」，成功后用与「重试」相同的方式重新发起转换。
+ * PUT 失败 = 卡片不变、按钮恢复可点（不重试、不加横条）。
+ */
+function AllowUnsandboxedRetryButton({ onRetry }: { onRetry: () => void }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <Button
+      variant="primary"
+      size="md"
+      data-convert-allow-unsandboxed
+      data-prep-primary="convert_allow_unsandboxed"
+      loading={busy}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          await setConvertUnsandboxedWindows(true)
+        } catch {
+          setBusy(false)
+          return
+        }
+        setBusy(false)
+        await useAiStore.getState().loadCaps(false).catch(() => undefined) // 设置页里的开关随能力刷新显示为开
+        onRetry()
+      }}
+    >
+      {pt('convert.btn.allowUnsandboxedRetry')}
+    </Button>
+  )
+}
+
 /** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
   p: Extract<PrepPrimary, { kind: 'convert' }>,
   entry: PrepEntry | undefined,
+  /** 失败码 agent_write_denied + Windows 能力键在且为 false + 这次助手是 Codex：主按钮换成「允许不受沙盒限制并重试」 */
+  offerUnsandboxed = false,
 ): { title: string; slot?: ReactNode; primary?: ReactNode; ghost?: ReactNode } {
   const store = useConvertStore.getState()
   const retry = () => void store.start(p.script, p.library, p.path, p.language)
@@ -1116,7 +1150,9 @@ function convertFlow(
             {c.detail}
           </p>
         ) : undefined,
-        primary: needsInput ? (
+        primary: offerUnsandboxed && c.reason === 'agent_write_denied' ? (
+          <AllowUnsandboxedRetryButton onRetry={retry} />
+        ) : needsInput ? (
           <Button
             variant="primary"
             size="md"
@@ -1134,7 +1170,16 @@ function convertFlow(
             {pt('convert.btn.retry')}
           </Button>
         ),
-        ghost: needsInput ? undefined : <SendReportButton variant="ghost" size="md" />,
+        ghost: needsInput ? undefined : offerUnsandboxed && c.reason === 'agent_write_denied' ? (
+          <>
+            <Button variant="ghost" size="md" data-convert-retry className="text-ink-2" onClick={retry}>
+              {pt('convert.btn.retry')}
+            </Button>
+            <SendReportButton variant="ghost" size="md" />
+          </>
+        ) : (
+          <SendReportButton variant="ghost" size="md" />
+        ),
       }
     }
     case 'adopted':
@@ -1152,7 +1197,9 @@ function useConvertFlow(
 ): ReturnType<typeof convertFlow> | null {
   const [draft, setDraft] = useState<{ identity: unknown; text: string } | null>(null)
   useConvertTick(c?.phase === 'running')
-  const flow = c && p ? convertFlow(c, p, entry) : null
+  const sandboxOff = useAiStore((s) => s.caps?.convert_unsandboxed_windows === false)
+  const isCodex = useAiStore((s) => effectiveAgent(s.agent, s.caps) === 'codex')
+  const flow = c && p ? convertFlow(c, p, entry, sandboxOff && isCodex) : null
   if (!flow || !p || c?.phase !== 'failed' || !['needs_input', 'convert_reference_invalid'].includes(c.reason ?? '')) return flow
   const text = draft && draft.identity === identity ? draft.text : ''
   const files = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
