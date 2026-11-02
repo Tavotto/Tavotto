@@ -1665,7 +1665,17 @@ function WorkdirChoice({
  * 自动换 Python 版本时卡片里的那一行进度（ADR 0114 修订 2026-10-23）：下载那一段说字节数并画一根确定的进度条，其余阶段
  * 一句话 + 不定态的条。完成后不留（主句已经换成出图的句子），「换成了 Python x」在详情里。
  */
-const PYTHON_CHANGE_STAGES = new Set(['downloading', 'verifying', 'extracting', 'launching', 'preparing', 'creating', 'installing'])
+const PYTHON_CHANGE_STAGES = new Set([
+  'downloading',
+  'verifying',
+  'extracting',
+  'launching',
+  'preparing',
+  'creating',
+  'installing',
+  // 等这个项目上另一个依赖安装结束（pyversionfix.STAGE_WAITING，TVD-22EY）
+  'waiting',
+])
 
 function PythonChangeLine({ report }: { report: PreparationReport | null }) {
   useTranslation('workspace')
