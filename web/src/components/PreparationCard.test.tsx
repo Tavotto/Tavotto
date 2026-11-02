@@ -2153,6 +2153,20 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
         expect(primary()?.disabled).toBe(false)
       })
 
+      it('能力刷新让按钮被普通「重试」换掉（卸载）后，仍然只重试一次', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockResolvedValue({ convert_unsandboxed_windows: true })
+        useAiStore.setState({
+          loadCaps: vi.fn(async () => {
+            useAiStore.setState({ caps: mk('codex', true) })
+          }),
+        })
+        await act(async () => primary()!.click())
+        await settle()
+        expect(panel().querySelector('[data-convert-allow-unsandboxed]')).toBeNull()
+        expect(startConvert).toHaveBeenCalledTimes(2)
+      })
+
       it('PUT 期间切换项目：不再用新项目重试', async () => {
         await fail('agent_write_denied', mk('codex', false))
         let release!: (v: { convert_unsandboxed_windows: boolean }) => void

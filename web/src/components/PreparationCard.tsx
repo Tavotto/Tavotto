@@ -996,9 +996,10 @@ function useConvertTick(active: boolean): void {
  * 方案 B 一键入口：先打开「转换时允许 AI 不受沙盒限制」，成功后用与「重试」相同的方式重新发起转换。
  * PUT 失败 = 卡片不变、按钮恢复可点（不重试、不加横条）。
  */
-function AllowUnsandboxedRetryButton({ onRetry }: { onRetry: () => void }) {
+function AllowUnsandboxedRetryButton({ script, onRetry }: { script: string; onRetry: () => void }) {
   const [busy, setBusy] = useState(false)
   const alive = useRef(true)
+  // 开关打开后能力刷新会让本按钮被普通「重试」换掉（卸载），所以「还该不该重试」不能看挂载，只看项目 + 这次失败是否还是当前那一次
   useEffect(() => {
     alive.current = true
     return () => {
@@ -1014,7 +1015,11 @@ function AllowUnsandboxedRetryButton({ onRetry }: { onRetry: () => void }) {
       loading={busy}
       disabled={busy}
       onClick={async () => {
-        const guard = captureProjectEpoch() // 发起时的项目：重试按 start() 调用时的当前项目提交，切走后绝不能再发
+        const sessionOf = () => {
+          const e = useConvertStore.getState().entries[script]
+          return e?.phase === 'failed' ? e.session : undefined
+        }
+        const guard = captureProjectEpoch(sessionOf) // 发起时的项目：重试按 start() 调用时的当前项目提交，切走后绝不能再发
         setBusy(true)
         try {
           await setConvertUnsandboxedWindows(true)
@@ -1023,9 +1028,9 @@ function AllowUnsandboxedRetryButton({ onRetry }: { onRetry: () => void }) {
           return
         }
         if (alive.current) setBusy(false)
-        if (!guard.still() || !alive.current) return
+        if (!guard.still()) return
         await useAiStore.getState().loadCaps(false).catch(() => undefined) // 设置页里的开关随能力刷新显示为开
-        if (!guard.still() || !alive.current) return
+        if (!guard.still()) return
         onRetry()
       }}
     >
@@ -1161,7 +1166,7 @@ function convertFlow(
           </p>
         ) : undefined,
         primary: offerUnsandboxed && c.reason === 'agent_write_denied' ? (
-          <AllowUnsandboxedRetryButton onRetry={retry} />
+          <AllowUnsandboxedRetryButton script={p.script} onRetry={retry} />
         ) : needsInput ? (
           <Button
             variant="primary"
