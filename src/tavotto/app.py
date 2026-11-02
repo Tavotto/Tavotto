@@ -5349,6 +5349,7 @@ def api_diagnostics_send_start(pid: str):
             note=body.get("note"),
             gen=body.get("gen"),
             scope=_diag_send_scope(),
+            reply=body.get("reply") is not False,
         )
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)

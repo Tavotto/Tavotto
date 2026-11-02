@@ -252,3 +252,51 @@ def test_changing_the_switch_between_attempts_uses_a_new_request_id(srv, monkeyp
     assert re.match(r".+", inits[-1]["client_request_id"])
     assert inits[0]["client_request_id"] != inits[-1]["client_request_id"]
     assert "want_reply" not in inits[-1]
+
+
+def test_reply_false_neither_asks_nor_registers(srv):
+    """联系作者窗口随信附带的包（start(reply=False)）：不带 want_reply、不登记、public() 无 reply_inbox。"""
+    srv.accepts_want_reply = True
+    pid = diagsend.prepare(_bundle(), scope=PJ)["id"]
+    diagsend.start(pid, confirmed=True, category="other", note=None, scope=PJ, reply=False)
+    st = _wait(pid, {"done"})
+    assert "want_reply" not in _inits(srv)[0]
+    assert "reply_inbox" not in st and _records() == []
+    assert srv.reports[st["report_id"]].reply is None
+
+
+def test_reply_false_ignores_an_unrequested_reply_from_the_server(srv):
+    srv.accepts_want_reply = True
+    srv.reply_override = {"message_id": "TVM-ABCD-EFGH-JKMN-PQRS", "reply_token": "a" * 64}
+    pid = diagsend.prepare(_bundle(), scope=PJ)["id"]
+    diagsend.start(pid, confirmed=True, category="other", note=None, scope=PJ, reply=False)
+    st = _wait(pid, {"done"})
+    assert "reply_inbox" not in st and _records() == []
+
+
+def test_switching_reply_between_attempts_uses_a_new_request_id(srv):
+    srv.accepts_want_reply = True
+    srv.fail("init", 503, "unavailable")
+    pid = _send()
+    _wait(pid, {"failed"})
+    diagsend.start(pid, confirmed=True, category="render_failure", note=NOTE, scope=PJ, reply=False)
+    _wait(pid, {"done"})
+    inits = _inits(srv)
+    assert inits[0]["client_request_id"] != inits[-1]["client_request_id"]
+    assert "want_reply" not in inits[-1]
+
+
+def test_api_passes_reply_false_through(monkeypatch):
+    from tavotto import app as appmod
+
+    seen = {}
+
+    def fake(pid, **kw):
+        seen.update(kw)
+        return {"id": pid, "state": "sending"}
+
+    monkeypatch.setattr(appmod.engine_diagsend, "start", fake)
+    client = appmod.app.test_client()
+    for body, want in (({"confirm": True, "reply": False}, False), ({"confirm": True}, True)):
+        client.post("/api/diagnostics/send/x/send", json=body)
+        assert seen["reply"] is want

@@ -6392,7 +6392,11 @@ export async function fetchDiagSendBundle(id: string): Promise<Blob> {
 }
 
 /** **用户点了「发送」**：唯一会让引擎去连诊断服务的调用。 */
-export const startDiagSend = (id: string, body: { category: string; note: string; gen?: number }) =>
+/** `reply: false` = 这次不开回信通道（联系作者窗口随信附带的包：回信走那封信）；缺省 true。 */
+export const startDiagSend = (
+  id: string,
+  body: { category: string; note: string; gen?: number; reply?: boolean },
+) =>
   jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

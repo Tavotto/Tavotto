@@ -625,6 +625,8 @@ describe('附上诊断信息：prepare → 预览 → start → 带编号发信'
 
     expect(startDiagSend).toHaveBeenCalledTimes(1)
     expect(vi.mocked(startDiagSend).mock.calls[0][0]).toBe('pid-1')
+    // 随信附带的诊断包不另开关联来信：回信走这封信，「我的来信」里只有一条
+    expect(vi.mocked(startDiagSend).mock.calls[0][1]).toMatchObject({ reply: false })
     expect(sendContact).toHaveBeenCalledTimes(1)
     expect(vi.mocked(sendContact).mock.calls[0][0].report_id).toBe('TVD-AAAA-BBBB-CCCC-DDDD')
     expect(q('[data-contact-status="done"]')).not.toBeNull()

@@ -118,4 +118,5 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
   `body` 存用户给报告写的附言（可空），`subject` 为空。
 - **保存期。** `REPORT_NO_REPLY_DAYS = 30`：`kind=report` 且 `replies` 为空的记录 30 天后删（与服务端反馈包同期）；收到过回信的与来信一样 365 天。`_prune_locked` 一处判定，附图目录连带删照旧。
 - **界面。** 「我的来信」条目头部对 `kind=report` 显示「问题反馈」/ Report 标签 + 报告编号（代替 `TVM-` 编号），`YourLetter` 显示附言、没写显示「没有附言」。没有新入口、没有新提醒形态。
+- **随信附带的诊断包不另开关联来信**：联系作者窗口里勾「附上诊断信息」时，前端 `startDiagSend` 传 `reply: false`，`diagsend.start(reply=False)` 不带 `want_reply`、不登记、`reply_inbox` 不出现（计入 `client_request_id` 复用条件）；回信走那封信，「我的来信」里只有一条。
 - **隐私。** 发反馈包且联系作者开着时，本机多存一个只能取回作者回信的令牌与附言（0600，尽力而为），30 天没回信即删；`docs/privacy.md` 同步。开关不变：`TAVOTTO_NO_CONTACT=1` 时既不带 `want_reply` 也不登记。

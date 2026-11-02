@@ -212,7 +212,7 @@ export const useContactStore = create<ContactState>((set, get) => {
     // 诊断包上一趟已经传完（信发失败后重试）：直接带原编号去发信
     if (diagDone && diagDone.id === id) return diagDone.reportId
     try {
-      await startDiagSend(id, { category: 'other', note: '', gen: prepared?.gen })
+      await startDiagSend(id, { category: 'other', note: '', gen: prepared?.gen, reply: false })
     } catch (e) {
       if (runToken !== mine) return null
       const code = e instanceof ApiError ? String(e.body?.code ?? '').replace(/^diag_/, '') : ''

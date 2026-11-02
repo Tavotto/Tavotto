@@ -462,5 +462,6 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 - `diagsend._init` 在联系作者启用（`_contact_enabled()`，函数内延迟 import `contactsend`）时带 `want_reply: True`；旧服务端 `bad_request` 拒收 → 去字段、同 `client_request_id` 重发一次、本会话不再带（`reply_refused`，顺序在 `error_summary` 的保险之前）。`SendSession.want_reply` 参与 `client_request_id` 复用判定。
 - 响应的可选 `reply` 经 `_parse_reply` 校验（`contactinbox.MESSAGE_ID` + 64 位小写 hex）：不合规只丢回信，不改失败码闭集。令牌只在 `SendSession.reply`（`repr=False`，带所属 `report_id`），不进 `public()` / 日志 / 诊断包 / 遥测。
 - `_register_reply`（不在 `_LOCK` 里）在 `_settle` 收尾为 done、取消竞态确认已送达时登记 `contactinbox.add(kind="report", report_id=…, body=<附言>)`；成功落盘才让 `public()` 带 `reply_inbox: true`。`TAVOTTO_NO_CONTACT=1` 不带也不登记。
+- **随信附带的诊断包不另开关联来信，回信走那封信**：`diagsend.start(reply=False)`（`POST /api/diagnostics/send/<id>/send` 的 `reply: false`，缺省 true；联系作者窗口那条路径传 false）不带 `want_reply`、不登记、不出现 `reply_inbox`，并计入 `client_request_id` 复用条件（`SendSession.reply_allowed`）。
 - `contactinbox`：记录多 `kind` / `report_id`（`kind=report` 必填 `TVD-…`）；`kind=report` 且无回信 30 天（`REPORT_NO_REPLY_DAYS`）后删，有回信同来信 365 天；没有记录仍一次网络都不发。
 - 看护：`tests/test_diag_report_reply.py`（带 / 不带、旧服务端回退、坏形状、done / 重放 / 对账三路登记、开关关闭、令牌不外泄；模拟端 `diag_fakes.accepts_want_reply`）、`tests/test_contact_inbox_report.py`（kind 迁移、30 天 vs 365 天、字段）。

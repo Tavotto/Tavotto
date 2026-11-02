@@ -773,6 +773,8 @@ class SendSession:
     summary_refused: bool = False
     #: 最近一次「点发送」那一刻定的 `want_reply`（联系作者启用）：init 不可变提交的一部分，与 summary 同理决定能否复用 id
     want_reply: bool = field(default=False, repr=False)
+    #: 最近一次「点发送」是否允许回信通道（`start(reply=)`）：False 时即使服务端给了 `reply` 也不登记
+    reply_allowed: bool = field(default=True, repr=False)
     #: 服务端把带 `want_reply` 的 init 当请求形状错拒了（尚未升级的旧版）：本会话此后不再带它
     reply_refused: bool = False
     #: 服务端随 init 给的关联来信 (report_id, message_id, reply_token)。**只在这里**，不进 public() / 日志；
@@ -1028,12 +1030,16 @@ def start(
     note: object,
     gen: object = None,
     scope: str = "",
+    reply: bool = True,
 ) -> dict:
     """**用户点了「发送」**：开始 init → 上传 → complete。这是唯一会产生远程请求的入口。
 
     `confirmed` 必须是字面 `True`（界面的确认动作；缺省 / 其他任何值都不发）。已在发送中 → 回当前状态，
     不开第二条线程（双击）。失败 / 取消后的再次调用 = 用户又点了一次发送：同样的内容复用
-    `client_request_id`（幂等），内容变了或服务端会话已关则换新的。"""
+    `client_request_id`（幂等），内容变了或服务端会话已关则换新的。
+
+    `reply=False`：这次不要回信通道（联系作者窗口里「附上诊断信息」随信带的包——回信走那封信，不另开关联来信）：
+    不带 `want_reply`、不登记、`reply_inbox` 不出现；它与 `want_reply` 一样计入 `client_request_id` 复用条件。"""
     if confirmed is not True:
         raise SendError("not_confirmed", 400)
     target = resolve_target()
@@ -1060,7 +1066,7 @@ def start(
         params = (str(cat), text)
         # 最终点击的这一刻重新判一次同意：关掉统计后再点发送，就不会再带摘要（已提交的不撤回，这里只管之后）
         summary = None if sess.summary_refused else diagsummary.build(scope)
-        want_reply = not sess.reply_refused and _contact_enabled()
+        want_reply = reply is True and not sess.reply_refused and _contact_enabled()
         reuse = bool(
             sess.client_request_id
             and sess.params == params
@@ -1091,6 +1097,7 @@ def start(
         sess.params = params
         sess.summary = summary
         sess.want_reply = want_reply
+        sess.reply_allowed = reply is True
         sess.state, sess.stage, sess.failure, sess.retry_after = "sending", "init", "", None
         sess.cancel_raced = False
         sess.touched = _clock()
@@ -1316,7 +1323,13 @@ def _register_reply(sess: SendSession) -> None:
     with _LOCK:
         reply, report_id, note = sess.reply, sess.report_id, (sess.params or ("", ""))[1]
         target = resolve_target()
-    if reply is None or reply[0] != report_id or target is None or not contactsend.enabled():
+    if (
+        not sess.reply_allowed
+        or reply is None
+        or reply[0] != report_id
+        or target is None
+        or not contactsend.enabled()
+    ):
         return
     ok = contactinbox.add(
         reply[1],
