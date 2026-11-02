@@ -1,6 +1,7 @@
 """Real controller routes, isolated fake workers: byte authority before edits/publication."""
 
 import json
+import logging
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -256,7 +257,7 @@ def test_source_changed_during_render_is_not_published(api, monkeypatch):
 @pytest.mark.parametrize("selected", [False, True], ids=["legacy", "selected"])
 @pytest.mark.parametrize("operation", ["render", "preview_png", "export"])
 def test_superseded_request_preserves_shared_worker_and_error(
-    api, monkeypatch, selected, operation
+    api, monkeypatch, caplog, selected, operation
 ):
     policy = POLICY if selected else None
     assert render(api, "plot.png", source_policy=policy).status_code == 200
@@ -289,6 +290,10 @@ def test_superseded_request_preserves_shared_worker_and_error(
         )
         assert response.status_code == 500
         assert response.get_json()["code"] == "queue_superseded"
+    # 被顶替是常态不是故障：不许记成 ERROR 刷满诊断包的报错清单（TVD-MDBH）
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR
+    ]
     assert retired == []
     monkeypatch.setattr(worker, method, original)
     assert render(api, "plot.png", source_policy=policy).status_code == 200
