@@ -8,7 +8,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 280
-改到: `engine/diagnostics.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*`
+改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*`
 主题: 诊断包与任务绑定诊断 → `diagnostics.md`
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
