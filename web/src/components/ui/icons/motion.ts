@@ -54,18 +54,18 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   Sparkles: { on: 'press', ms: 640, parts: { s: ['p'], f: ['q'] }, sel: { f: ['p', 'q'] } },
   Plus: { on: 'press', ms: 420 },
   Pencil: { on: 'press', ms: 520 },
-  Save: { on: 'press', ms: 380, parts: { s: ['q', 'q', 'p'] } },
+  Save: { on: 'press', ms: 480, parts: { s: ['q', 'p', 'q'] } },
   ExternalLink: { on: 'press', ms: 420, parts: { s: [null, 'p', 'p'] } },
   Crop: { on: 'press', ms: 460, parts: { s: ['p', 'q'] } },
-  Group: { on: 'press', ms: 460, parts: { s: ['r'], f: ['p', 'q'] } },
+  Group: { on: 'press', ms: 460, parts: { s: ['r'], f: [null, null] } },
   Ungroup: { on: 'press', ms: 460, parts: { s: ['r', 'r'], f: ['p', 'q'] } },
   Maximize2: { on: 'press', ms: 440, parts: { s: ['p', 'p', 'q', 'q'] } },
   Pin: { on: 'press', ms: 460, sel: 'all' },
   Link2: { on: 'press', ms: 480, parts: { s: ['p', 'q', 'r'] } },
   Eye: { on: 'press', ms: 420, parts: { s: ['p', 'p'] }, sel: { f: ['p'], k: ['p'] } },
   EyeOff: { on: 'press', ms: 420, parts: { s: ['p', 'p'], k: ['d'], o: ['d'] } },
-  Lock: { on: 'press', ms: 380, parts: { s: ['p', null], f: [null] }, sel: { s: ['p'], f: [null], k: [null] } },
-  LockOpen: { on: 'press', ms: 380, parts: { s: ['p', null], f: [null] } },
+  Lock: { on: 'press', ms: 420, parts: { s: ['p', null] }, sel: { s: ['p'], f: [null], k: [null] } },
+  LockOpen: { on: 'press', ms: 420, parts: { s: ['p', null] } },
 
   // ───────── 出现时播（调用方写 playIn） ─────────
   CircleCheck: { on: 'enter', ms: 560, parts: { f: ['p'], k: ['d'] } },
@@ -73,7 +73,7 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   CircleAlert: { on: 'enter', ms: 480 },
   CircleX: { on: 'enter', ms: 480 },
   Info: { on: 'enter', ms: 480, parts: { f: [null], k: ['d', 'p'] } },
-  Unplug: { on: 'enter', ms: 520, parts: { s: ['p', 'p', 'p', 'q', 'q'] } },
+  Unplug: { on: 'press', ms: 640, parts: { s: ['p', 'p', 'p', 'p', null] } },
 
   // ───────── 悬停播 ─────────
   // 左轨（选中的那颗是实心孪生，所以都写 sel）
@@ -96,8 +96,8 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   Shapes: { on: 'hover', ms: 460, parts: { s: ['p', 'q'] } },
   Tags: { on: 'hover', ms: 560, sel: 'all' },
   // 命令面板里用到、此前没有动作的（10-31 用户：面板里的图标也要一致、有动画）
-  AlignHorizontalDistributeCenter: { on: 'hover', ms: 520, parts: { s: [null, null], f: ['p', 'q'] } },
-  AlignVerticalDistributeCenter: { on: 'hover', ms: 520, parts: { s: [null, null], f: ['p', 'q'] } },
+  AlignHorizontalDistributeCenter: { on: 'hover', ms: 560, parts: { s: [null, 'q'], f: [null, 'q'] } },
+  AlignVerticalDistributeCenter: { on: 'hover', ms: 560, parts: { s: [null, 'q'], f: [null, 'q'] } },
   Bookmark: { on: 'hover', ms: 480, sel: 'all' },
   CircleQuestionMark: { on: 'hover', ms: 560, parts: { s: [null, 'p'], f: ['p'] }, sel: { f: [null], k: ['p', 'p'] } },
   FolderOpen: { on: 'hover', ms: 520, parts: { s: [null, 'p'] } },
@@ -117,7 +117,7 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
   ChartColumn: { on: 'hover', ms: 380, parts: { s: [null], f: ['t', 't', 't'] } },
   RotateCcwClock: { on: 'hover', ms: 640, parts: { s: ['q', 'q', 'p'] } },
   Images: { on: 'hover', ms: 440, parts: { s: ['q', 'p', 'p'] }, sel: { s: ['q'], f: ['p'], k: ['p'] } },
-  Image: { on: 'hover', ms: 520, parts: { s: [null, 'q'], f: ['p'] } },
+  Image: { on: 'hover', ms: 520, parts: { s: [null, null], f: ['p'] } },
   Ellipsis: { on: 'hover', ms: 360, parts: { f: ['t', 't', 't'] } },
   Wrench: { on: 'hover', ms: 520 },
   X: { on: 'hover', ms: 360 },
