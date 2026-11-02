@@ -69,16 +69,23 @@ MAX_ALIVE_ENV = "TAVOTTO_MAX_ALIVE"
 MAX_ALIVE_ENV_LIMIT = 64
 #: 内存读数的缓存窗口（秒）：可用内存时刻在变，不必每次取会话都读（macOS 读一次是个子进程）。
 MAX_ALIVE_REFRESH = 60.0
+#: 自适应上限下降不足这个数时沿用旧值（迟滞，防止边界上反复抖动）。
+MAX_ALIVE_HYSTERESIS = 2
 #: 测试 / 临时覆盖钩子：给了整数就压过环境变量和自适应（`None` = 自适应）。产品代码不赋值。
 MAX_ALIVE: int | None = None
 _cap_cache: tuple[float, int] | None = None
 
 
-def cap_from_available(available: int | None) -> int:
-    """可用内存字节 → 会话上限。读不到（None / 非正数）一律回 `MIN_ALIVE`。"""
+def cap_from_available(available: int | None, alive: int = 0) -> int:
+    """可用内存字节 → 会话上限。读不到（None / 非正数）一律回 `MIN_ALIVE`。
+
+    **池自己的会话占着的那块内存要算回预算**：`available` 是扣掉它们之后的余量，不加回来的话，
+    会话越多 → available 越低 → 上限越小 → 淘汰 → 内存回来 → 上限又大 → 冷启动，自激振荡
+    （正是要消除的轮转）。预算 = available + alive × 估计值。"""
     if not isinstance(available, int) or available <= 0:
         return MIN_ALIVE
-    fit = int(available * MEMORY_SAFETY_FACTOR // SESSION_MEMORY_ESTIMATE)
+    budget = available + max(0, alive) * SESSION_MEMORY_ESTIMATE
+    fit = int(budget * MEMORY_SAFETY_FACTOR // SESSION_MEMORY_ESTIMATE)
     return max(MIN_ALIVE, min(MAX_ALIVE_CEILING, fit))
 
 
@@ -106,7 +113,16 @@ def max_alive() -> int:
     cached = _cap_cache
     if cached is not None and now - cached[0] < MAX_ALIVE_REFRESH:
         return cached[1]
-    cap = cap_from_available(sysmem.available_memory_bytes())
+    # 池里现存的活会话数：锁外近似读（`list()` 拷贝在 GIL 下是原子的；差一两个只让估计偏一点，不影响正确性）
+    try:
+        alive = sum(1 for w in list(_workers.values()) if w.alive())
+    except Exception:  # noqa: BLE001 - 近似值，读不到按 0
+        alive = 0
+    cap = cap_from_available(sysmem.available_memory_bytes(), alive)
+    # 迟滞：只掉 1 的下降不采纳（边界上的内存抖动不该收缩上限）；掉 2 以上才是真的内存吃紧。
+    # 淘汰本来就只发生在 `acquire`，且只在活会话数 > 上限时，所以上限回升从不杀热会话。
+    if cached is not None and cached[1] - MAX_ALIVE_HYSTERESIS < cap < cached[1]:
+        cap = cached[1]
     _cap_cache = (now, cap)
     return cap
 

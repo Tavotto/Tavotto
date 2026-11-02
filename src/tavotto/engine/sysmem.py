@@ -57,7 +57,10 @@ def _windows() -> int | None:
 
 
 def _macos() -> int | None:
-    done = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=2, check=False)
+    # 绝对路径：桌面版 sidecar 的 PATH 可能很精简
+    done = subprocess.run(
+        ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=2, check=False
+    )
     return parse_vm_stat(done.stdout) if done.returncode == 0 else None
 
 

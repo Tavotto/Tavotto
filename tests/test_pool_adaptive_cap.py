@@ -407,7 +407,11 @@ def test_render_response_keeps_the_acquire_segment_timings(client, tmp_path, rig
         rev = 1
 
         def override(self, stem, patches, preview_dpi=None, inline_svg=False):
-            return {"manifest": {"elements": []}, "warnings": [], "timings": {"canvas_draw_ms": 1.0}}
+            return {
+                "manifest": {"elements": []},
+                "warnings": [],
+                "timings": {"canvas_draw_ms": 1.0},
+            }
 
     monkeypatch.setattr(pool, "_new_worker", lambda script, fd, entry, **kw: Hot(script, entry))
     monkeypatch.setattr(
@@ -420,3 +424,73 @@ def test_render_response_keeps_the_acquire_segment_timings(client, tmp_path, rig
     timings = resp.get_json()["timings"]
     assert "worker_get_ms" in timings and timings["canvas_draw_ms"] == 1.0
     assert set(pool.ACQUIRE_SEGMENTS) & set(timings), timings
+
+
+# --------------------------- 上限不自激振荡 --------------------------------
+
+
+def _sessions(monkeypatch, n):
+    monkeypatch.setattr(pool, "_workers", {("k", i): Worker(f"s{i}.py") for i in range(n)})
+
+
+def test_cap_does_not_shrink_as_pool_sessions_use_memory(adaptive, monkeypatch):
+    """同一台机器：每多一个活会话，available 就少一个估计值；上限不许因此下降。"""
+    total_free = 8 * GIB  # 没有任何会话时的空闲内存
+    caps = []
+    for alive in range(0, 9):
+        _sessions(monkeypatch, alive)
+        monkeypatch.setattr(pool, "_cap_cache", None)
+        monkeypatch.setattr(
+            sysmem,
+            "available_memory_bytes",
+            lambda alive=alive: total_free - alive * pool.SESSION_MEMORY_ESTIMATE,
+        )
+        caps.append(pool.max_alive())
+    assert caps == [caps[0]] * len(caps)
+    assert caps[0] >= 6
+
+
+def test_cap_hysteresis_keeps_hot_sessions_at_the_boundary(rig, adaptive, monkeypatch):
+    """边界值附近内存来回抖动：已存活的热会话不被反复淘汰。"""
+    base = 4 * GIB + 100  # 刚好够 4 个
+    jitter = iter([0, -300 * 1024**2, 0, -300 * 1024**2, 0, 0])
+
+    def available():  # 会话占着内存：available = 空闲基数 − 活会话 × 估计值 ± 抖动
+        alive = sum(1 for w in pool._workers.values() if w.alive())
+        return base - alive * pool.SESSION_MEMORY_ESTIMATE + next(jitter)
+
+    monkeypatch.setattr(sysmem, "available_memory_bytes", available)
+
+    def expire():  # 让缓存窗口过期，下一次 max_alive() 重新读内存
+        monkeypatch.setattr(pool, "_cap_cache", (-1e9, pool._cap_cache[1]))
+
+    first = pool.max_alive()
+    assert first == 4
+    scripts = [f"s{i}.py" for i in range(first)]
+    _rotate(rig, scripts, rounds=1)
+    colds = len(rig.cold)
+    for _ in range(4):  # 抖动的读数（边界上下）：上限维持，轮流渲染零新增冷启动
+        expire()
+        assert pool.max_alive() == first
+        _rotate(rig, scripts, rounds=1)
+    assert len(rig.cold) == colds
+
+
+def test_cap_still_shrinks_on_real_memory_pressure(adaptive, monkeypatch):
+    monkeypatch.setattr(sysmem, "available_memory_bytes", lambda: 8 * GIB)
+    assert pool.max_alive() == 8
+    monkeypatch.setattr(pool, "_cap_cache", (-1e9, 8))
+    monkeypatch.setattr(sysmem, "available_memory_bytes", lambda: 2 * GIB)
+    assert pool.max_alive() == 3
+
+
+def test_vm_stat_uses_an_absolute_path(monkeypatch):
+    seen = []
+
+    class Done:
+        returncode = 0
+        stdout = "page size of 4096 bytes\nPages free: 1.\n"
+
+    monkeypatch.setattr(sysmem.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or Done())
+    assert sysmem._macos() == 4096
+    assert seen == [["/usr/bin/vm_stat"]]
