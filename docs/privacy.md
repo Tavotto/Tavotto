@@ -359,6 +359,14 @@ Offering the option uploads nothing; sending does:
   GitHub issue or chat so the maintainers can find your report. It is the only
   handle to the report; the bundle is not tied to any account or to your telemetry
   identifier.
+* **Replies to a report.** If *Contact the maker* is enabled, sending a report also
+  opens a linked letter on the server, and the app receives and stores in its data
+  folder (readable by your user only, where the platform supports it) a letter
+  number and a secret token that can only fetch the maker's reply, together with
+  the note you typed (if any). It is used by the same reply check described under
+  *Contacting the maker* and is deleted after 30 days if no reply has arrived (365
+  days once there is one) or when you remove it in *My letters*. With
+  `TAVOTTO_NO_CONTACT=1` nothing of this is requested or stored.
 * **Retention and access.** The current server design keeps a report for 30 days
   and then deletes it; the retention period is a server setting and this document
   is updated if it changes. Reports are not publicly readable; only maintainers

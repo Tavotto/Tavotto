@@ -109,3 +109,14 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
   - **附图目录删除失败由有界扫尾重新发现**：`rmtree` 不再 `ignore_errors`；失败只记日志（编号与异常类型），**不再记“待删队列”**（队列要截断，截断就会丢凭据；旧 JSON 里的 `pending_asset_deletes` 容忍并忽略）。磁盘本身就是凭据：每次 `_load_pruned_locked`（含 `poll_once`）列出 `contact_assets/`，名字合规却不属于现存记录的 `<mid>`、以及现存记录里已不存在的回信 `<mid>/<rid>`，每次最多尝试删 20 个（起点逐次轮转，持续失败的不会饿死其余）；名字不合规的不碰。`forget` 的返回与界面不变。
 
 未验证（NOT_RUN）：真实服务器的附图端点与 Worker 放行；Tauri 真机里 srcdoc iframe 内 `target=_blank` 是否确实交给系统浏览器（macOS WKWebView / Windows WebView2）；真实 nh3 输出里 `asset:` 之外的写法。
+
+## 修订（2026-11-02）：反馈包回信
+
+[ADR 0118](0118-diagnostics-send-report.md) 同日修订让单独发的反馈包（`TVD-…`）也有回信：服务端为新反馈包开一封「关联来信」（普通 `TVM-…`），`diagsend` 在报告送达后把它登记进本模块的收件记录，**回信轮询（`poll_once` / `start_poller`）一行不改**。本模块的改动只有存储与展示：
+
+- **记录多两个字段。** `kind`（`"letter"` | `"report"`，旧记录缺省 `letter`）与 `report_id`（`kind=report` 必填，`TVD-…` 正则校验；不合规的记录整条不收）。`contactinbox.add(…, kind=, report_id=)`；`public_messages()` 带 `kind` / `report_id`（仍无令牌）。
+  `body` 存用户给报告写的附言（可空），`subject` 为空。
+- **保存期。** `REPORT_NO_REPLY_DAYS = 30`：`kind=report` 且 `replies` 为空的记录 30 天后删（与服务端反馈包同期）；收到过回信的与来信一样 365 天。`_prune_locked` 一处判定，附图目录连带删照旧。
+- **界面。** 「我的来信」条目头部对 `kind=report` 显示「问题反馈」/ Report 标签 + 报告编号（代替 `TVM-` 编号），`YourLetter` 显示附言、没写显示「没有附言」。没有新入口、没有新提醒形态。
+- **随信附带的诊断包不另开关联来信**：联系作者窗口里勾「附上诊断信息」时，前端 `startDiagSend` 传 `reply: false`，`diagsend.start(reply=False)` 不带 `want_reply`、不登记、`reply_inbox` 不出现（计入 `client_request_id` 复用条件）；回信走那封信，「我的来信」里只有一条。
+- **隐私。** 发反馈包且联系作者开着时，本机多存一个只能取回作者回信的令牌与附言（0600，尽力而为），30 天没回信即删；`docs/privacy.md` 同步。开关不变：`TAVOTTO_NO_CONTACT=1` 时既不带 `want_reply` 也不登记。

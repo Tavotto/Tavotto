@@ -625,6 +625,8 @@ describe('附上诊断信息：prepare → 预览 → start → 带编号发信'
 
     expect(startDiagSend).toHaveBeenCalledTimes(1)
     expect(vi.mocked(startDiagSend).mock.calls[0][0]).toBe('pid-1')
+    // 随信附带的诊断包不另开关联来信：回信走这封信，「我的来信」里只有一条
+    expect(vi.mocked(startDiagSend).mock.calls[0][1]).toMatchObject({ reply: false })
     expect(sendContact).toHaveBeenCalledTimes(1)
     expect(vi.mocked(sendContact).mock.calls[0][0].report_id).toBe('TVD-AAAA-BBBB-CCCC-DDDD')
     expect(q('[data-contact-status="done"]')).not.toBeNull()
@@ -773,6 +775,40 @@ describe('未读回信：小圆点、通知轨胶囊、我的来信', () => {
     expect(q('[data-contact-letter-files]')!.textContent).toContain('shot.png')
     expect(q('[data-contact-letter-files]')!.textContent).toContain('日志.pdf')
     expect(q('[data-contact-letter-toggle]')).toBeNull() // 短正文不折叠
+  })
+
+  it('反馈包的关联来信：标签「问题反馈」+ 报告编号；有附言显示附言，没写显示「没有附言」；普通来信不带标签', async () => {
+    const RID = 'TVD-ABCD-EFGH-JKMN-PQRS'
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [
+        message({ kind: 'report', report_id: RID, body: '一直闪退', replies: [] }),
+        message({ message_id: 'TVM-0000-0000-0000-0001', kind: 'report', report_id: RID, replies: [] }),
+        message({ message_id: 'TVM-0000-0000-0000-0002', kind: 'letter', body: 'hello' }),
+      ],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    const tags = document.body.querySelectorAll('[data-contact-letter-kind="report"]')
+    expect(tags).toHaveLength(2)
+    expect(tags[0].textContent).toBe(t('dialogs:contact.lettersReportTag'))
+    expect(tags[0].textContent).toBe('问题反馈')
+    const first = q(`[data-contact-letter="${MSG}"]`)!
+    expect(first.querySelector('[data-contact-report-id]')!.textContent).toContain(RID)
+    expect(first.querySelector('[data-contact-letter-body]')!.textContent).toBe('一直闪退')
+    expect(first.querySelector('[data-contact-letter-no-note]')).toBeNull()
+    const second = q('[data-contact-letter="TVM-0000-0000-0000-0001"]')!
+    expect(second.querySelector('[data-contact-letter-no-note]')!.textContent).toBe('没有附言')
+    const letter = q('[data-contact-letter="TVM-0000-0000-0000-0002"]')!
+    expect(letter.querySelector('[data-contact-letter-kind]')).toBeNull()
+    expect(letter.querySelector('[data-contact-letter-no-note]')).toBeNull()
+  })
+
+  it('英文界面的标签与无附言文案', () => {
+    expect(enDialogs.contact.lettersReportTag).toBe('Report')
+    expect(enDialogs.contact.lettersNoNote).toBe('No note')
+    expect(zhDialogs.contact.lettersNoNote).toBe('没有附言')
   })
 
   it('长正文折叠成前 4 行，「展开」后全部显示、可再收起', async () => {
