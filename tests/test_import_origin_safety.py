@@ -266,6 +266,9 @@ _ALLOWED_ATTRS = {
         "SOURCE_PROJECT_DECLARED",
         "SOURCE_CURATED",
         "distribution_alternatives",
+        # 纯词法的「大文件夹」判断（abspath + 家目录推出的表，不碰文件系统）：项目外字面量 sys.path 根放宽读边界时
+        # 拒绝放宽到家目录 / 桌面 / 盘符根（TVD-22EY）
+        "is_broad_folder",
     },
     #: importscan 只**消费**调用方读好的索引（`Index` 类型 + `resolve_module` 纯函数）；读 site-packages 的
     #: `site_packages` / `build_index` / `index_environment` 不在白名单里——扫描自己不碰 site-packages。

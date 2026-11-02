@@ -5220,6 +5220,60 @@ def _build_manifest(state: FigState, stem: str, arm, *, timings: dict | None = N
         return result
 
 
+def _ink_bbox(fig, renderer, W: float, H: float) -> list[float] | None:
+    """图的内容边缘 `[x0, y0, x1, y1]`（ADR 0161 §2）：`fig.get_tightbbox(renderer)`——
+    matplotlib `bbox_inches="tight"` 用的同一个框，**不加 pad**——换成相对图幅的分数（y 向下，
+    与元素 `bbox` 同一套坐标）。
+
+    在 `in_frame` 里显示坐标原点与 `fig.bbox` 就是图幅 F（ADR 0098），所以除以 `W` / `H`
+    得到的就是相对对外那个图幅的分数；没有 frame 时就是相对 figsize。可以略伸出 [0, 1]
+    （内容被图幅切掉的部分），不钳。取不到（异常 / 空框 / 非有限数）回 None，字段不出现，不猜。
+    """
+    # 只量不改：`Axes.get_tightbbox` 对带 axes locator 的轴（寄生轴、inset 等）会 `apply_aspect(locator(...))`，
+    # 把它的 active position 改成 locator 此刻给的框——这一次「量」就成了一次写，后续 override / 布局读到的是被挪过的位置
+    # （#1646 CI：`test_a_persistent_tight_layout_no_longer_eats_edited_positions` 的寄生轴不再与宿主同框）。量完原样放回。
+    # 寄生轴（`host_subplot().twinx()`）不在 `fig.get_axes()` 里，挂在宿主的 `parasites`；inset 轴挂在 `child_axes`——一起记
+    axes, seen, stack = [], set(), list(fig.get_axes())
+    while stack:
+        ax = stack.pop()
+        if id(ax) in seen:
+            continue
+        seen.add(id(ax))
+        axes.append(ax)
+        stack.extend(getattr(ax, "parasites", None) or ())
+        stack.extend(getattr(ax, "child_axes", None) or ())
+    saved = []
+    for ax in axes:
+        try:
+            # 直接读内部的两个框：`get_position()` 没有 locator 时会先 `apply_aspect()`，寄生轴的 active 框当场被重置回
+            # 原始框——「记一下」本身就成了一次写
+            saved.append((ax, ax._originalPosition.frozen(), ax._position.frozen()))
+        except Exception:  # noqa: BLE001 - 用户的轴：什么都可能抛；取不到就不记，量照常
+            continue
+    try:
+        bb = fig.get_tightbbox(renderer)
+        dpi = float(fig.dpi)
+        x0, y0, x1, y1 = (
+            float(bb.x0) * dpi,
+            float(bb.y0) * dpi,
+            float(bb.x1) * dpi,
+            float(bb.y1) * dpi,
+        )
+    except Exception:  # noqa: BLE001 - 用户的图、用户的 artist：什么都可能抛
+        return None
+    finally:
+        for ax, orig, active in saved:
+            try:
+                ax._set_position(orig, which="original")
+                ax._set_position(active, which="active")
+            except Exception:  # noqa: BLE001 - 放不回就算了，至少不让 manifest 失败
+                pass
+    vals = [x0 / W, 1.0 - y1 / H, x1 / W, 1.0 - y0 / H]
+    if not all(math.isfinite(v) for v in vals) or vals[2] <= vals[0] or vals[3] <= vals[1]:
+        return None
+    return [round(v, 5) for v in vals]
+
+
 def _measure_manifest(
     state: FigState, stem: str, arm, fig, renderer, min_hit=_MIN_HIT_PX, vector_metrics=True
 ) -> dict:
@@ -5421,6 +5475,9 @@ def _measure_manifest(
                 entry["geom_gid"] = host_gid
         if el["role"] == "figure":
             entry["bbox"] = [0.0, 0.0, 1.0, 1.0]
+            ink = _ink_bbox(fig, renderer, W, H)
+            if ink is not None:
+                entry["ink_bbox"] = ink
         elif el["role"] == "ticklabel":
             t = artist.live()
             if t is None or not t.get_text():

@@ -14,7 +14,8 @@
   editable install——源码开发只留给明确说「我要贡献/开发 Tavotto」的人。
 - 用户明确要求修改 Tavotto：根据改动目录读取**最近的**子目录 `AGENTS.md`
   （索引见文末），它是那一层的速查表，每一行指向 `docs/rules/` 里的细则与
-  `docs/adr/` 里的架构决策——动手前先读对应的那几份。
+  `docs/adr/` 里的架构决策——动手前先读对应的那几份。再读错题本
+  `docs/rules/repo/lessons.md` 里本层那一节（犯过的错与做对的事，每日复盘写入，别直接改）。
 
 ## 不可破坏的跨仓库不变量
 
@@ -108,5 +109,5 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `packaging/` | `packaging/AGENTS.md` → `docs/rules/packaging/` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
-| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、不变量展开、本地验证 |
+| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、不变量展开、本地验证、错题本 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |

@@ -1,4 +1,5 @@
 import { classifyArtifactFailure } from '@/lib/artifactReason'
+import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
@@ -1967,6 +1968,12 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   objects?: ExportObject[]
   /** `objects` 里前几个画在图的下面（图层树里放在图之下的标注）；缺省 0 = 都在图上 */
   objects_below?: number
+  /**
+   * 单图留白（ADR 0161 §3）：`[左, 上, 右, 下]`，mm，可为负（负值 = 裁进图幅）。缺席或全 0 = 与从前逐字节相同。
+   * 非零时后端走带标注的合成路径（没有标注也走）：页面 = `w_mm + 左 + 右` × `h_mm + 上 + 下`，面板落在 `(左, 上)`，
+   * `objects` 的坐标以**页面**左上为原点；非零时 `w_mm` / `h_mm` 必填；页面不再为正则 `bad_pad`。
+   */
+  pad_mm?: [number, number, number, number]
 }
 
 export interface ExportRequest {
@@ -2513,6 +2520,14 @@ export interface ManifestElement {
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
   /**
+   * 只有 `gid === 'figure'` 的元素有（ADR 0161 §2）：图的内容边缘 `[x0, y0, x1, y1]`（**两个角点**，不是 `bbox` 的 `[x, y, w, h]`）——
+   * `fig.get_tightbbox(renderer)`，即 matplotlib `bbox_inches="tight"` 用的同一个框，**不含 pad**；换成相对
+   * manifest 对外报的图幅（有 savefig frame 时是 frame，ADR 0098，否则 figsize）的分数，y 向下，与 `bbox` 同一套坐标。
+   * 可以略伸出 [0, 1]（内容被图幅切掉的那部分）。**缺席**（旧后端 / 引擎量不出）= 没有「紧凑」停靠点，不猜。
+   * 产生者只有 `engine/manifest._ink_bbox()`；前端读它只经 `exactPanelManifest`（ADR 0017）。
+   */
+  ink_bbox?: [number, number, number, number]
+  /**
    * matplotlib 会在这个框处把这个元素切掉，框外一笔都不画（figure 分数、
    * y 向下，与 `bbox` 同一套坐标）。**缺席 = 不裁 / 裁不掉任何东西。**
    *
@@ -2910,6 +2925,12 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
    * 四分之三传输；纯矢量图上一分钱都不值（docs/perf-baseline.md）。
    */
   previewDpi?: number
+  /**
+   * 这次渲染的意图（后端闭集，缺省 = foreground）。`neighbour` = 同步器「顺手补渲染」视口里别的图
+   * （跨图对齐，ADR 0128）：后端不为它刷新 LRU、需要冷启动而会话池已满时回 409
+   * `background_render_deferred`（见 `lib/renderPurpose`），**不是失败**。
+   */
+  purpose?: RenderPurpose
 }
 
 /**
@@ -2968,6 +2989,7 @@ export async function engineRender(
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
+      ...(opts.purpose && opts.purpose !== 'foreground' ? { purpose: opts.purpose } : {}),
     }),
     signal: opts.signal,
   }))
@@ -6359,6 +6381,8 @@ export interface DiagSendStatus {
   report_id?: string
   /** 用户取消时报告其实已送达（引擎收到 409 already_complete）：按成功展示，如实说明 */
   cancel_raced?: boolean
+  /** 随报告开的关联来信已登记进本机「我的来信」（作者的回复会出现在那里）；没有就不带 */
+  reply_inbox?: boolean
   /** 失败码（引擎 `diagsend.FAILURES` 的键） */
   code?: string
   retryable?: boolean
@@ -6406,7 +6430,11 @@ export async function fetchDiagSendBundle(id: string): Promise<Blob> {
 }
 
 /** **用户点了「发送」**：唯一会让引擎去连诊断服务的调用。 */
-export const startDiagSend = (id: string, body: { category: string; note: string; gen?: number }) =>
+/** `reply: false` = 这次不开回信通道（联系作者窗口随信附带的包：回信走那封信）；缺省 true。 */
+export const startDiagSend = (
+  id: string,
+  body: { category: string; note: string; gen?: number; reply?: boolean },
+) =>
   jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -6483,6 +6511,9 @@ export interface ContactMessage {
   message_id: string
   sent_at: number
   route: 'cn' | 'global'
+  /** `report` = 发送「问题反馈」时随报告开的关联来信（带 `report_id`）；旧引擎不带 = 普通来信 */
+  kind?: 'letter' | 'report'
+  report_id?: string
   state: 'new' | 'replied' | 'closed'
   unread: number
   /** 用户自己写的主题 / 正文 / 附件文件名（本机存的那一份；旧记录没有就是空） */

@@ -1358,7 +1358,8 @@
         "launching": "正在启动 Python…",
         "preparing": "正在准备…",
         "creating": "正在创建新的运行环境…",
-        "installing": "正在安装所需的包…"
+        "installing": "正在安装所需的包…",
+        "waiting": "正在等另一个安装完成…"
       }
     },
     "aiFix": {

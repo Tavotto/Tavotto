@@ -1,6 +1,6 @@
 """Worker 池（Flask 父进程侧，纯标准库——.venv 里没有 matplotlib）。
 
-每个 (项目, 脚本) 一个常驻子进程；LRU 淘汰，超出 MAX_ALIVE 的最久未用者关停。
+每个 (项目, 脚本) 一个常驻子进程；LRU 淘汰，超出 max_alive() 的最久未用者关停。
 
 **池键必须带项目路径**：多个标签页可以各自打开不同的图库，两个项目里
 同名的 fig1.py 是两个完全不同的脚本，只按脚本名索引会把 A 项目的会话
@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import ast
+import collections
 import contextlib
+import contextvars
 import functools
 import hashlib
 import json
@@ -44,6 +46,7 @@ from . import (
     rootenv,
     runtime,
     scanbudget,
+    sysmem,
     texdiag,
     workdir,
 )
@@ -52,7 +55,115 @@ LOG = logging.getLogger("tavotto.engine")
 
 ENGINE_CACHE = config.data_dir() / "cache" / "engine"
 WORKER_PY = Path(__file__).resolve().parent / "worker.py"
-MAX_ALIVE = 3  # 同时存活的 worker 会话数（每个都端着整套 Figure 的内存）
+#: 同时存活的 worker 会话数（每个都端着整套 Figure 的内存）**不再是写死的数**，而是 `max_alive()`
+#: 按本机可用内存算出的 [`MIN_ALIVE`, `MAX_ALIVE_CEILING`]（ADR 0159）：写死 3 时，4~6 张图轮流渲染
+#: 是 LRU 的最坏情形——每一次都冷启动（实测热渲染约 105ms，冷启动约 1.6s，Windows 上可达 20–40s）。
+MIN_ALIVE = 3
+MAX_ALIVE_CEILING = 8
+#: 每个会话的保守内存估计（matplotlib + numpy + 一整套 Figure）。取不到实测 RSS 时用它；宁可高估。
+SESSION_MEMORY_ESTIMATE = 500 * 1024 * 1024
+#: 只拿可用内存的这一部分给会话池，剩下的留给用户的其它程序和脚本自己的峰值。
+MEMORY_SAFETY_FACTOR = 0.5
+#: 整数环境变量覆盖（Lab 压测 / 排障）；非整数一律忽略，夹到 [1, `MAX_ALIVE_ENV_LIMIT`]。
+MAX_ALIVE_ENV = "TAVOTTO_MAX_ALIVE"
+MAX_ALIVE_ENV_LIMIT = 64
+#: 内存读数的缓存窗口（秒）：可用内存时刻在变，不必每次取会话都读（macOS 读一次是个子进程）。
+MAX_ALIVE_REFRESH = 60.0
+#: 自适应上限下降不足这个数时沿用旧值（迟滞，防止边界上反复抖动）。
+MAX_ALIVE_HYSTERESIS = 2
+#: 测试 / 临时覆盖钩子：给了整数就压过环境变量和自适应（`None` = 自适应）。产品代码不赋值。
+MAX_ALIVE: int | None = None
+_cap_cache: tuple[float, int] | None = None
+
+
+def cap_from_available(available: int | None, alive: int = 0) -> int:
+    """可用内存字节 → 会话上限。读不到（None / 非正数）一律回 `MIN_ALIVE`。
+
+    **池自己的会话占着的那块内存要算回预算**：`available` 是扣掉它们之后的余量，不加回来的话，
+    会话越多 → available 越低 → 上限越小 → 淘汰 → 内存回来 → 上限又大 → 冷启动，自激振荡
+    （正是要消除的轮转）。预算 = available + alive × 估计值。"""
+    if not isinstance(available, int) or available <= 0:
+        return MIN_ALIVE
+    budget = available + max(0, alive) * SESSION_MEMORY_ESTIMATE
+    fit = int(budget * MEMORY_SAFETY_FACTOR // SESSION_MEMORY_ESTIMATE)
+    return max(MIN_ALIVE, min(MAX_ALIVE_CEILING, fit))
+
+
+def _env_cap() -> int | None:
+    raw = os.environ.get(MAX_ALIVE_ENV, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return max(1, min(MAX_ALIVE_ENV_LIMIT, value))
+
+
+def max_alive() -> int:
+    """worker 会话数上限的**唯一出处**（淘汰、冷启动容量、发布账本都问它）。
+
+    优先级：`MAX_ALIVE` 钩子 > 环境变量 `TAVOTTO_MAX_ALIVE` > 按可用内存自适应（缓存 `MAX_ALIVE_REFRESH` 秒）。
+    **不要在持 `_lock` 时调**：macOS 上读内存是一个带超时的子进程。"""
+    global _cap_cache
+    if MAX_ALIVE is not None:
+        return int(MAX_ALIVE)
+    env = _env_cap()
+    if env is not None:
+        return env
+    now = time.monotonic()
+    cached = _cap_cache
+    if cached is not None and now - cached[0] < MAX_ALIVE_REFRESH:
+        return cached[1]
+    # 池里现存的活会话数：锁外近似读（`list()` 拷贝在 GIL 下是原子的；差一两个只让估计偏一点，不影响正确性）
+    try:
+        alive = sum(1 for w in list(_workers.values()) if w.alive())
+    except Exception:  # noqa: BLE001 - 近似值，读不到按 0
+        alive = 0
+    cap = cap_from_available(sysmem.available_memory_bytes(), alive)
+    # 迟滞：只掉 1 的下降不采纳（边界上的内存抖动不该收缩上限）；掉 2 以上才是真的内存吃紧。
+    # 淘汰本来就只发生在 `acquire`，且只在活会话数 > 上限时，所以上限回升从不杀热会话。
+    if cached is not None and cached[1] - MAX_ALIVE_HYSTERESIS < cap < cached[1]:
+        cap = cached[1]
+    _cap_cache = (now, cap)
+    return cap
+
+
+#: 取会话的**意图**（闭集；缺省 foreground = 老请求、老前端）。`neighbour` = 前端「顺手补渲染」视口里别的图
+#: （跨图对齐，ADR 0128）：不刷新 LRU 时间、需要冷启动而池已满时不挤掉别人（`BACKGROUND_DEFERRED`）。
+PURPOSE_FOREGROUND = "foreground"
+PURPOSE_NEIGHBOUR = "neighbour"
+PURPOSES = (PURPOSE_FOREGROUND, PURPOSE_NEIGHBOUR)
+#: 后台补渲染这次没做（冷启动会淘汰别的会话）。**不是失败**：调用方保留旧画面、不报错。
+BACKGROUND_DEFERRED = "background_render_deferred"
+_purpose: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "tavotto_acquire_purpose", default=PURPOSE_FOREGROUND
+)
+
+
+def _note_dispatch(worker) -> None:
+    """请求真正发给 worker 的那一刻刷新 LRU 时间——**后台（neighbour）意图不刷新**。
+
+    只在 `acquire()` 里跳过不够：随后的 `override` 经 `_request_observed` / `_call_observed` 发出时
+    会无条件写 `last_used`，后台补渲染照样把前台会话刷成最新。两条控制面都走这一个函数，读的是同一个 ContextVar。"""
+    if current_purpose() == PURPOSE_FOREGROUND:
+        worker.last_used = time.time()
+
+
+@contextlib.contextmanager
+def acquire_purpose(purpose: str):
+    """在这个上下文里的 `acquire()` 按 `purpose` 取会话（线程 / 请求局部）。未知取值抛 ValueError。"""
+    if purpose not in PURPOSES:
+        raise ValueError(f"unknown acquire purpose: {purpose!r}")
+    token = _purpose.set(purpose)
+    try:
+        yield
+    finally:
+        _purpose.reset(token)
+
+
+def current_purpose() -> str:
+    return _purpose.get()
+
+
 #: 取到会话（`acquire`）到它第一次真正拿到 `w.lock` 发请求之间的**租约**（秒）。
 #: 租约期内的会话不被 LRU 淘汰：调用方已经拿着它的引用，淘汰线程的 `shutdown()` 与
 #: 调用方的请求在 `w.lock` 上竞争，淘汰一赢，调用方读到的就是「自己以退出码 0 结束了」
@@ -499,6 +610,140 @@ def _worker_base(figures_dir, script_name, artifact_source=None, run=None, write
 #: 一次写回的干净重放正跑到一半，目录可能被后台清理线程整个删掉。
 _oneshot_bases: set[str] = set()
 _lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# 取会话分段计时 + 渲染池健康摘要（TVM-Y37X：`worker_get_ms` 混了一堆事，分不出 28 秒卡在哪）
+# ---------------------------------------------------------------------------
+#: 取会话各子段的**闭集**字段名（毫秒）。只有进过那一段才有键：热路径只会出现 `resolve_python_ms` /
+#: `pool_wait_ms`，其余都是冷启动才有的段。`app` 把它们加进渲染响应的 `timings`（`worker_get_ms` 原样不变）。
+ACQUIRE_SEGMENTS = (
+    "resolve_python_ms",  # 解析项目该用的解释器（含构造函数里的那一次）
+    "env_decide_ms",  # 首开环境决定 / 体检（ENVIRONMENT_DECIDERS）
+    "launcher_prewarm_ms",  # Conda 激活捕获（锁外）
+    "watch_sync_ms",  # 新会话前的项目监视同步（COLD_ACQUIRE_OBSERVER）
+    "retire_wait_ms",  # 等旧会话确认关闭
+    "pool_wait_ms",  # 等池锁（别的线程可能正持着它在起会话）
+    "spawn_gate_ms",  # 起会话前的工作目录门 / 依赖门
+    "env_probe_ms",  # environment_generation / env_state_of / context_key
+    "fingerprint_ms",  # 脚本指纹 + 改指表快照
+    "spawn_ms",  # Python 池：子进程 Popen（含 Conda 激活环境拼装）
+    "handshake_ms",  # workerd：open_session 握手（解释器冷启动 + import）
+    "evict_ms",  # LRU 淘汰段
+)
+_TRACE = threading.local()
+
+
+@contextlib.contextmanager
+def _seg(name: str):
+    """把这一段的耗时累进本线程当前 `acquire()` 的分段表；不在 `acquire` 里（one_shot、测试直接构造）什么都不做。"""
+    cur = getattr(_TRACE, "cur", None)
+    if cur is None:
+        yield
+        return
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        cur[name] = cur.get(name, 0.0) + (time.perf_counter() - t0) * 1000
+
+
+@contextlib.contextmanager
+def _pool_lock():
+    """`with _lock:` 加「等锁」计时。"""
+    with _seg("pool_wait_ms"):
+        _lock.acquire()
+    try:
+        yield
+    finally:
+        _lock.release()
+
+
+#: 会话重建原因（`acquire` 的 `why`）→ 诊断里的稳定码；不在表里的一律 `other`，不让自由字符串出门。
+_REBUILD_REASON_CODES = {
+    "已死": "dead",
+    "入口已变": "entry_changed",
+    "渲染解释器已变": "interpreter_changed",
+    "环境代已变": "env_generation_changed",
+    "改指表已变": "remap_changed",
+    "叠加环境已变": "overlay_changed",
+}
+COLD_START_RING = 8
+_health_lock = threading.Lock()
+_health = {"created": 0, "evicted": 0, "seq": 0}
+_cold_starts: collections.deque = collections.deque(maxlen=COLD_START_RING)
+
+
+def _record_health(*, created: bool, evicted: int, cause: str, segments: dict) -> None:
+    if not created and not evicted:
+        return
+    with _health_lock:
+        _health["evicted"] += evicted
+        if created:
+            _health["created"] += 1
+            _health["seq"] += 1
+            _cold_starts.append(
+                {
+                    "seq": _health["seq"],
+                    "at": time.time(),
+                    "cause": cause,
+                    "timings": {
+                        k: round(segments[k], 1) for k in ACQUIRE_SEGMENTS if k in segments
+                    },
+                }
+            )
+
+
+def acquire_mark() -> int:
+    """本线程已完成的 `acquire()` 次数；渲染入口取会话前取一次，之后据此判断「这次取会话是不是真经过池」。"""
+    return getattr(_TRACE, "count", 0)
+
+
+def acquire_timings(mark: int, worker) -> dict:
+    """`mark` 之后本线程最近一次 `acquire()` 的分段毫秒（闭集字段，保留一位小数）。
+
+    没经过池（原生会话、测试替身）或最近一次取到的不是 `worker` → 空字典，绝不把上一次的段算到这次头上。"""
+    last = getattr(_last_acquired, "result", None)
+    if getattr(_TRACE, "count", 0) == mark or last is None or last[0] is not worker:
+        return {}
+    segs = getattr(_TRACE, "last", None) or {}
+    return {k: round(segs[k], 1) for k in ACQUIRE_SEGMENTS if k in segs}
+
+
+def health_snapshot() -> dict:
+    """渲染池健康摘要（内存里的计数器 + 最近 `COLD_START_RING` 次冷启动的分段；不含脚本名 / 路径，不写盘）。
+
+    池锁被别的线程占着（正在起会话）时不等它：`alive` 记 None、`lock_busy` 记 True——这本身就是证据。"""
+    got = _lock.acquire(timeout=0.5)
+    if got:
+        try:
+            alive = sum(1 for w in _workers.values() if w.alive())
+            pending = sum(map(len, _pending_retirements.values()))
+        finally:
+            _lock.release()
+    else:
+        alive = pending = None
+    now = time.time()
+    with _health_lock:
+        recent = [
+            {
+                "seq": c["seq"],
+                "age_s": max(0, int(now - c["at"])),
+                "cause": c["cause"],
+                "timings": dict(c["timings"]),
+            }
+            for c in _cold_starts
+        ]
+        created, evicted = _health["created"], _health["evicted"]
+    return {
+        "max_alive": max_alive(),  # 锁外取（macOS 读内存是子进程）
+        "alive": alive,
+        "pending_retirements": pending,
+        "lock_busy": not got,
+        "sessions_created": created,
+        "lru_evictions": evicted,
+        "recent_cold_starts": recent,
+    }
+
 
 #: 空 patch 列表的规范哈希（`last_patch_hash` 的初值：刚 build 完的 figure
 #: 就是「一条 override 都没应用」的状态）。
@@ -2696,7 +2941,8 @@ class EngineWorker:
             )
         )
         # spawn 那一刻脚本文件的内容指纹（写回前的「脚本变更防线」比对基准）
-        self.script_sha1 = script_sha1(figures_dir, script_name)
+        with _seg("fingerprint_ms"):
+            self.script_sha1 = script_sha1(figures_dir, script_name)
         #: 这条会话上最后一次 `override()` 的规范 patch 哈希（build 之后是空列表）。
         #: 写回时据此判断「热态手里的这份 manifest 是不是同一组 patches 出的」。
         self.last_patch_hash = ""
@@ -2725,16 +2971,18 @@ class EngineWorker:
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
-        python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
+        with _seg("resolve_python_ms"):
+            python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
         #: 启动方式（P09）：解释器路径的纯函数。None = 直接启动；`CondaLauncher` = 用 Conda 激活后的环境变量启动（仍是直接子进程）
         self.launcher = launcher_mod.launcher_for_interpreter(python)
         #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
-        self.python_generation = projectenv.environment_generation(python)
-        #: 起会话那一刻的 Conda 环境版本（成功记录用起会话时的值，不用收口时的）
-        self.env_state = launcher_mod.env_state_of(python)
-        #: 起会话那一刻的完整启动上下文（直接启动 / Conda 激活 + conda + prefix + 环境版本）：钉下的决定与它比
-        self.launch_context = launcher_mod.context_key(python)
+        with _seg("env_probe_ms"):
+            self.python_generation = projectenv.environment_generation(python)
+            #: 起会话那一刻的 Conda 环境版本（成功记录用起会话时的值，不用收口时的）
+            self.env_state = launcher_mod.env_state_of(python)
+            #: 起会话那一刻的完整启动上下文（直接启动 / Conda 激活 + conda + prefix + 环境版本）：钉下的决定与它比
+            self.launch_context = launcher_mod.context_key(python)
         #: 随解释器记着的叠加环境（ROOT，`rootenv`）：钉下的决定带着它就只认它，否则读项目记录。
         #: 起进程时叠在 Conda 激活之后；会话复用前核对（`acquire` 的"叠加环境已变"）
         self.env_overlay = _overlay_for(figures_dir, python, pinned)
@@ -2751,7 +2999,8 @@ class EngineWorker:
         # 别的解释器只在启动期 `-B`，worker 装好项目字节码守卫后放开（`runtime.worker_args`，#736）。
         args = runtime.worker_args(bundled=bundled)
         # 改指表的代次与规则同一刻取（ADR 0106 §五）：代次跟着会话走，落地前核对、复用前核对
-        self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
+        with _seg("fingerprint_ms"):
+            self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 执行语义收进唯一模型（ADR 0014 §0）：argv 由 `execspec.worker_argv`
         # 独家产出，workerd 的 spawn 规格吃的是同一份（同源看护在
         # `test_workerd_pool.py`）。`spec.env` 只存**增量**（序列化形态）；
@@ -2781,11 +3030,15 @@ class EngineWorker:
             logsafe.known(self.python_source, SOURCE_LABELS),
         )
         try:
-            popen_env = launch_env(self.launcher, python, env, self.env_overlay, bundled=bundled)
+            with _seg("spawn_ms"):
+                popen_env = launch_env(
+                    self.launcher, python, env, self.env_overlay, bundled=bundled
+                )
         except launcher_mod.CaptureDeferred:
             raise  # 持锁起会话时缓存没命中：交回 `acquire` 出锁预热再来
         except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
             raise _launcher_error(exc) from exc
+        spawn_t0 = time.perf_counter()
         self.proc = subprocess.Popen(
             execspec.worker_argv(
                 self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
@@ -2804,6 +3057,9 @@ class EngineWorker:
             errors="surrogateescape",
             creationflags=runtime.CREATE_NO_WINDOW,
         )
+        cur = getattr(_TRACE, "cur", None)
+        if cur is not None:
+            cur["spawn_ms"] = cur.get("spawn_ms", 0.0) + (time.perf_counter() - spawn_t0) * 1000
 
     #: 逻辑死标记。**`poll()` 一个人说了不算**：`Popen.kill()` 只发信号，不等
     #: 进程真的退出，紧接着的 `poll()` 完全可能还回 None。那个窗口里别的线程
@@ -2818,6 +3074,8 @@ class EngineWorker:
     #: （`force_kill` 的取消 / 超时 / 看门狗、失效重建、切项目、整体关停）的差别：那些**不**置它——用户
     #: 取消的脚本、超时的脚本绝不能被自动重取会话再跑一遍。
     _evicted = False
+    #: 这条会话只被后台补渲染（`PURPOSE_NEIGHBOUR`）用过、没有前台请求碰过它：淘汰时排在所有前台会话之前。
+    _background_only = False
     #: `acquire` 刚交出去、调用方还没发第一条请求时有效的租约截止（`time.monotonic()`）；见 `ACQUIRE_LEASE`。
     _lease_until = 0.0
     #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
@@ -3110,7 +3368,7 @@ class EngineWorker:
             obj = {**obj, "artifact_source": self.artifact_source}
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
-        self.last_used = time.time()
+        _note_dispatch(self)
         # 所有命令（build/override/export/render_png/preview_png）都经这里，
         # 是「这个会话真的被用了」覆盖面最全的一个点。
         self._touch()
@@ -3653,7 +3911,8 @@ class WorkerdWorker:
             )
         )
         # 与 EngineWorker 同源：spawn 时的脚本指纹 + 最后应用的 patch 哈希
-        self.script_sha1 = script_sha1(figures_dir, script_name)
+        with _seg("fingerprint_ms"):
+            self.script_sha1 = script_sha1(figures_dir, script_name)
         self.last_patch_hash = ""
         self.last_patch_hash_by_stem: dict[str, str] = {}
         # workerd 自己排队，这把锁只是为了与 EngineWorker 同形（调用方不该关心
@@ -3679,7 +3938,8 @@ class WorkerdWorker:
             raise WorkerdUnavailable("workerd 不可用")
         # 与 EngineWorker 同源：项目级解释器决策的唯一出处是
         # `resolve_worker_python`，换控制面不换答案。
-        python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
+        with _seg("resolve_python_ms"):
+            python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
         self.launcher = None
         if launcher_mod.launcher_for_interpreter(python) is not None:
@@ -3688,11 +3948,13 @@ class WorkerdWorker:
         if _overlay_for(figures_dir, python, pinned):
             # 同理：叠加环境（ROOT）不进 workerd 的 spawn 规格（规格进回执与哈希，不带安装路径），只走 Python 池
             raise WorkerdUnavailable("该解释器需要叠加 ROOT 环境启动，workerd 不接")
-        self.python_generation = projectenv.environment_generation(python)
-        self.env_state = launcher_mod.env_state_of(python)
-        self.launch_context = launcher_mod.context_key(python)
+        with _seg("env_probe_ms"):
+            self.python_generation = projectenv.environment_generation(python)
+            self.env_state = launcher_mod.env_state_of(python)
+            self.launch_context = launcher_mod.context_key(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
-        self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
+        with _seg("fingerprint_ms"):
+            self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
         # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
         # 按同一份 spec 语义产出）。
@@ -3746,9 +4008,10 @@ class WorkerdWorker:
         # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
         self._log_offset = start_log_generation(self.log_path)
         try:
-            resp = self._client.call(
-                "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT
-            )
+            with _seg("handshake_ms"):
+                resp = self._client.call(
+                    "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT
+                )
         except workerd_client.WorkerdError as exc:
             self._dead = True
             # **失败也要认领 session_id 并把它关掉。**
@@ -3853,7 +4116,7 @@ class WorkerdWorker:
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
-        self.last_used = time.time()
+        _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
         for attempt in (0, 1):
@@ -4404,13 +4667,14 @@ def _new_worker(
     """
     from . import workerd_client
 
-    _workdir_gate(figures_dir, script_name)
+    with _seg("spawn_gate_ms"):
+        _workdir_gate(figures_dir, script_name)
     # 第二道门：依赖（U04，ADR 0061 §六）。判据住在 `deprepair`（它 import 本模块，所以这里
     # 不能反过来 import 它——它在 import 时把自己的门登记进 `SPAWN_GATES`）。门要问就抛带
     # `dependency_preparation` 载荷的 WorkerError；放行就什么都不做。
     # 检测钉下的解释器（`pinned`）：门里的一切解析与两个构造函数都只认它，不再读共享的项目记录
     # （Codex #820 r4221133355：否则会为另一个脚本的解释器弹授权，甚至先起在它上面再被拒）
-    with pinned_interpreter(figures_dir, pinned):
+    with _seg("spawn_gate_ms"), pinned_interpreter(figures_dir, pinned):
         for spawn_gate in SPAWN_GATES:
             spawn_gate(figures_dir, script_name)
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
@@ -4728,7 +4992,7 @@ def get(
     run=None,
     write_roots=None,
 ) -> EngineWorker:
-    """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。
+    """取（或重建）某脚本的 worker；崩溃的自动换新；超出 max_alive() 按 LRU 淘汰。
 
     `write_roots`（#898）：给了就是带写入根绊线的会话（MCP 来源），与不带的是两条（见 `_worker_key`）。"""
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
@@ -4755,9 +5019,42 @@ def acquire(
     会话之前看到「没有」，都会以为自己是主人，而池里只建了一条（Codex #451 P1）。
     `created` 只有一次调用拿到 True。
     """
+    segments: dict = {}
+    outer = getattr(_TRACE, "cur", None)
+    _TRACE.cur = segments
+    try:
+        return _acquire(
+            script_name,
+            figures_dir,
+            entry,
+            segments,
+            artifact_source=artifact_source,
+            run=run,
+            pinned=pinned,
+            write_roots=write_roots,
+        )
+    finally:
+        _TRACE.cur = outer
+        _TRACE.last = segments
+        _TRACE.count = getattr(_TRACE, "count", 0) + 1
+
+
+def _acquire(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    segments: dict,
+    *,
+    artifact_source=None,
+    run=None,
+    pinned: EnvironmentDecision | None = None,
+    write_roots=None,
+) -> tuple[EngineWorker, bool]:
     artifact_source = figcapture.selected_artifact_context(artifact_source)
     key = _worker_key(figures_dir, script_name, artifact_source, run, **_roots_kw(write_roots))
     created = False
+    cause = "new"
+    evicted = 0
     # 「换不换解释器」要在锁外、查租约之前决定（见下）；锁外那次「能不能复用」只是窥视——窥视说能复用、
     # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
     # 依赖门，本该自动改用的只会弹框。第二遍一定已经决定过，所以最多两遍。
@@ -4770,16 +5067,21 @@ def acquire(
     # caller's preparation pin. Watcher/retirement waits must not reselect from
     # a shared project record another script may have changed meanwhile.
     pin = pinned if pinned is not None and pinned.pinned else None
+    background = current_purpose() != PURPOSE_FOREGROUND
     while True:
+        # 上限在池锁**外**取（macOS 读内存是子进程）；同一次取会话内每一圈重取，缓存让它几乎免费
+        cap = max_alive()
         if retiring:
-            _confirm_retirements(key, retiring)
+            with _seg("retire_wait_ms"):
+                _confirm_retirements(key, retiring)
             retiring = ()
         if needs_watch_sync:
             # Only a new/replacement execution boundary, never a hot render.
             # This must stay outside _lock (watcher -> refresh -> pool).
             observer = COLD_ACQUIRE_OBSERVER
             if observer is not None:
-                observer(figures_dir, script_name)
+                with _seg("watch_sync_ms"):
+                    observer(figures_dir, script_name)
             watcher_synced = True
             needs_watch_sync = False
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
@@ -4787,11 +5089,12 @@ def acquire(
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         decided = not ENVIRONMENT_DECIDERS or pin is not None
         try:
-            want_python = (
-                pin.python
-                if pin is not None
-                else resolve_worker_python(figures_dir, script=script_name)[0]
-            )
+            with _seg("resolve_python_ms"):
+                want_python = (
+                    pin.python
+                    if pin is not None
+                    else resolve_worker_python(figures_dir, script=script_name)[0]
+                )
         except WorkerError as exc:
             # 默认链条里没有任何能跑的解释器（`no_worker_python`）时，项目 venv / 别处发现的用户环境也许能跑：
             # 检测要先于「第一次解析失败」之后的一切（Codex #820 r4221391630），否则只经池的入口（渲染已有素材、
@@ -4805,14 +5108,16 @@ def acquire(
             # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
             # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
             # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
-            for decide in ENVIRONMENT_DECIDERS:
-                got = decide(figures_dir, script_name)
-                if isinstance(got, EnvironmentDecision) and got.pinned:
-                    pin = got
+            with _seg("env_decide_ms"):
+                for decide in ENVIRONMENT_DECIDERS:
+                    got = decide(figures_dir, script_name)
+                    if isinstance(got, EnvironmentDecision) and got.pinned:
+                        pin = got
             # 决定带回了「检测出的解释器」就只认它，不再解析共享的项目记录（别的脚本可能刚把它换了）
-            want_python = (
-                pin.python if pin else resolve_worker_python(figures_dir, script=script_name)[0]
-            )
+            with _seg("resolve_python_ms"):
+                want_python = (
+                    pin.python if pin else resolve_worker_python(figures_dir, script=script_name)[0]
+                )
             decided = True
         if pin is not None and not pin.matches(pin.python):
             raise _environment_changed()
@@ -4820,10 +5125,11 @@ def acquire(
         if want_python:
             # 需要 Conda 激活的解释器：激活捕获（最长一个超时）在池锁**外**做完；锁内起会话只命中缓存
             try:
-                launcher_mod.prewarm(want_python)
+                with _seg("launcher_prewarm_ms"):
+                    launcher_mod.prewarm(want_python)
             except launcher_mod.LauncherUnavailable as exc:
                 raise _launcher_error(exc) from exc
-        with _lock:
+        with _pool_lock():
             w = _workers.get(key)
             why = ""
             if w is not None and is_fenced(w):
@@ -4861,6 +5167,14 @@ def acquire(
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
                     why = "改指表已变"
+            if background and (w is None or why):
+                # 后台补渲染（邻居图）需要一条新会话：池里**别的**活会话已占满上限就不做——起它就得淘汰
+                # 一个前台会话，而这次渲染没有人在等。放在 `needs_watch_sync` 之前：被拒的请求不触碰观察者
+                if sum(1 for k, x in _workers.items() if k != key and x.alive()) >= cap:
+                    raise WorkerError(
+                        "后台补渲染暂缓：会话已满，保留旧画面",
+                        code=BACKGROUND_DEFERRED,
+                    )
             if (w is None or why or getattr(w, "build_failed", False)) and not watcher_synced:
                 needs_watch_sync = True
                 continue
@@ -4868,7 +5182,7 @@ def acquire(
                 retiring = tuple(_pending_retirements.get(key, ()))
                 if retiring:
                     continue  # bounded close confirmation is outside every pool/watch lock
-                if sum(map(len, _pending_retirements.values())) >= MAX_ALIVE:
+                if sum(map(len, _pending_retirements.values())) >= cap:
                     # Unknown retirements count against cold-session capacity.
                     # Never drop a fence merely to admit a different script.
                     raise WorkerError("旧渲染会话尚未确认关闭，请重试", code="session_dead")
@@ -4886,6 +5200,7 @@ def acquire(
                 # 没失败，这里看不见——它随后会自己再跑一次 build；这一窗口与起会话本身的竞态同形，不在这里加锁。
                 _workdir_gate(figures_dir, script_name)
             if why:
+                cause = _REBUILD_REASON_CODES.get(why, "other")
                 LOG.warning(
                     "worker %s，重建: %s", logsafe.known(why, _REBUILD_REASONS), script_name
                 )
@@ -4932,18 +5247,38 @@ def acquire(
                     )
                 _workers[key] = w
                 created = True
-            w.last_used = time.time()
+                w._background_only = background
+            if not background:
+                # 只有前台取会话才刷新 LRU 时间并摘掉「仅后台用过」标记；邻居补渲染命中热会话时两样都不动
+                w.last_used = time.time()
+                w._background_only = False
             w._lease_until = time.monotonic() + ACQUIRE_LEASE
-            alive = [(k, x) for k, x in _workers.items() if x.alive()]
-            if len(alive) > MAX_ALIVE:
-                stale = sorted(alive, key=lambda kv: kv[1].last_used)
-                for vkey, victim in stale[: len(alive) - MAX_ALIVE]:
-                    if victim is not w and not _is_fence_holder(victim) and not _is_leased(victim):
-                        LOG.info("worker LRU 淘汰: %s", victim.script_name)
-                        _workers.pop(vkey, None)
-                        victim._evicted = True  # 先于 shutdown 命令（见类属性注释）
-                        threading.Thread(target=victim.shutdown, daemon=True).start()
+            with _seg("evict_ms"):
+                alive = [(k, x) for k, x in _workers.items() if x.alive()]
+                if len(alive) > cap:
+                    # 仅后台用过的会话先走，其余按 LRU
+                    stale = sorted(
+                        alive,
+                        key=lambda kv: (
+                            0 if getattr(kv[1], "_background_only", False) is True else 1,
+                            kv[1].last_used,
+                        ),
+                    )
+                    for vkey, victim in stale[: len(alive) - cap]:
+                        if (
+                            victim is not w
+                            and not _is_fence_holder(victim)
+                            and not _is_leased(victim)
+                        ):
+                            LOG.info("worker LRU 淘汰: %s", victim.script_name)
+                            _workers.pop(vkey, None)
+                            victim._evicted = True  # 先于 shutdown 命令（见类属性注释）
+                            threading.Thread(target=victim.shutdown, daemon=True).start()
+                            evicted += 1
         break
+    if not evicted:
+        segments.pop("evict_ms", None)  # 没淘汰就不是这一段：热路径上不出现
+    _record_health(created=created, evicted=evicted, cause=cause, segments=segments)
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
     _last_acquired.result = (w, created)
@@ -5010,8 +5345,12 @@ def _refuse_if_mutating(python: str) -> None:
 
 def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
     """池里这条会话此刻能不能直接复用（与 `acquire()` 锁内的重建判据同一组条件）。只是一次窥视：
-    复用的会话不需要重新决定环境；判错了（窥视之后它死了）`acquire()` 在锁内发现，出锁补上决定再来一遍。"""
-    with _lock:
+    复用的会话不需要重新决定环境；判错了（窥视之后它死了）`acquire()` 在锁内发现，出锁补上决定再来一遍。
+
+    走 `_pool_lock()`：别的线程正持锁起会话时，有环境决定器的取会话**先堵在这里**——不计进
+    `pool_wait_ms` 的话，等走到 `_acquire` 里那次计时的拿锁时争用早散了，分段显示约 0 而
+    `worker_get_ms` 很长（Codex #1637 P2）。不在 `acquire()` 里调时 `_seg` 什么都不做。"""
+    with _pool_lock():
         w = _workers.get(key)
         return (
             w is not None

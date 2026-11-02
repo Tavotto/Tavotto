@@ -829,3 +829,133 @@ def test_the_no_tomllib_fallback_treats_malformed_files_as_unreadable(monkeypatc
 
     monkeypatch.setattr(builtins, "__import__", no_tomllib)
     assert pyversionfix._pyproject_requires_python(text) == want
+
+
+# ---- TVD-22EY：项目上有依赖安装在跑时，换代先有界等它结束
+def _busy_job(root) -> str:
+    job = "job-busy-1"
+    assert deprepair._claim(job, project_id=managedenv.project_fingerprint(str(root)))
+    return job
+
+
+def _stub_generation(monkeypatch, calls: list) -> None:
+    def create(project, script, **kw):
+        calls.append("create")
+        return _FakeJoint()
+
+    monkeypatch.setattr(deprepair, "create_joint_plan", create)
+    monkeypatch.setattr(deprepair, "prepare", lambda *a, **k: {"ok": True})
+
+
+def test_apply_waits_for_an_in_flight_install_then_continues(tmp_path, monkeypatch):
+    root = _project(tmp_path)
+    calls: list = []
+    _stub_generation(monkeypatch, calls)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    job = _busy_job(root)
+    threading.Timer(0.15, deprepair._release, args=(job,)).start()
+    try:
+        result = pyversionfix.apply_python_change(_plan(root), None, threading.Event())
+    finally:
+        deprepair._release(job)
+    assert result == {"ok": True, "code": "", "to": "3.12"}
+    assert calls == ["create"]
+
+
+def test_apply_returns_busy_when_the_install_makes_no_progress(tmp_path, monkeypatch):
+    """在途安装连续 `INSTALL_STALL_SECONDS` 一点进展都没有：判卡住，回可重试的忙，什么都不建。"""
+    root = _project(tmp_path)
+    calls: list = []
+    _stub_generation(monkeypatch, calls)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 0.1)
+    job = _busy_job(root)
+    try:
+        result = pyversionfix.apply_python_change(_plan(root), None, threading.Event())
+    finally:
+        deprepair._release(job)
+    assert result == {"ok": False, "code": deprepair.ERROR_BUSY, "to": "3.12"}
+    assert calls == []  # 什么都没建
+
+
+def test_apply_keeps_waiting_while_the_install_makes_progress(tmp_path, monkeypatch):
+    """没有时钟上限：安装总时长远超卡死阈值，但一直有进展（日志在长），就一直等到它结束再继续，并报 waiting 阶段。"""
+    root = _project(tmp_path)
+    calls: list = []
+    _stub_generation(monkeypatch, calls)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    # 阈值留足余量：CI 机器调度慢时两笔进展之间可能隔上百毫秒，不能因此误判卡住
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 1.0)
+    job = _busy_job(root)
+    stop = threading.Event()
+
+    def install_is_working():
+        # 每 0.05 s 一笔进展，共 ~3 s（3 倍于卡死阈值），然后结束
+        for _ in range(60):
+            if stop.wait(0.05):
+                return
+            with deprepair._lock:
+                deprepair._bump_progress(job)
+        deprepair._release(job)
+
+    worker = threading.Thread(target=install_is_working)
+    stages: list = []
+    worker.start()
+    try:
+        result = pyversionfix.apply_python_change(
+            _plan(root), lambda snap: stages.append(snap["stage"]), threading.Event()
+        )
+    finally:
+        stop.set()
+        worker.join()
+        deprepair._release(job)
+    assert result == {"ok": True, "code": "", "to": "3.12"}
+    assert calls == ["create"]
+    assert pyversionfix.STAGE_WAITING in stages
+    # 等完回到 preparing，之后照常往下走
+    assert stages[stages.index(pyversionfix.STAGE_WAITING) + 1] == pyversionfix.STAGE_PREPARING
+
+
+def test_another_projects_progress_does_not_keep_a_stalled_install_alive(tmp_path, monkeypatch):
+    """Codex #1632 P2：本项目的在途安装卡住了，另一个项目的安装一直在出日志——卡死计时只看本项目，照样判卡住。"""
+    root = _project(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    calls: list = []
+    _stub_generation(monkeypatch, calls)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 0.3)
+    job = _busy_job(root)
+    other_job = "job-other-project"
+    assert deprepair._claim(other_job, project_id=managedenv.project_fingerprint(str(other)))
+    stop = threading.Event()
+
+    def other_project_is_busy():
+        while not stop.wait(0.02):
+            with deprepair._lock:
+                deprepair._bump_progress(other_job)
+
+    worker = threading.Thread(target=other_project_is_busy)
+    worker.start()
+    try:
+        result = pyversionfix.apply_python_change(_plan(root), None, threading.Event())
+    finally:
+        stop.set()
+        worker.join()
+        deprepair._release(job)
+        deprepair._release(other_job)
+    assert result == {"ok": False, "code": deprepair.ERROR_BUSY, "to": "3.12"}
+    assert calls == []
+
+
+def test_apply_wait_responds_to_cancel(tmp_path, monkeypatch):
+    root = _project(tmp_path)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    job = _busy_job(root)
+    cancel = threading.Event()
+    threading.Timer(0.1, cancel.set).start()
+    try:
+        result = pyversionfix.apply_python_change(_plan(root), None, cancel)
+    finally:
+        deprepair._release(job)
+    assert result["code"] == pyversionfix.ERROR_CANCELLED

@@ -223,11 +223,11 @@ def test_hot_acquisition_does_not_observe_or_flush_watcher(subject, monkeypatch)
 def test_publication_facts_are_bounded_even_for_unreaped_pool_entries(subject):
     ctx, _, _ = subject
     state = project_refresh.state_of(ctx)
-    for index in range(pool.MAX_ALIVE + 2):
+    for index in range(pool.max_alive() + 2):
         current = Worker(generation=index + 1)
         install(ctx, current, str(index))
         register_output(ctx, current)
-        assert len(state.publications) <= pool.MAX_ALIVE
+        assert len(state.publications) <= pool.max_alive()
 
 
 def test_target_generation_changed_in_place_is_not_an_old_event_target(subject):

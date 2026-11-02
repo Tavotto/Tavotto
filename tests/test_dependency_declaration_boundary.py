@@ -19,6 +19,8 @@ import pytest
 from tavotto.engine import depplan, deprepair, depresolve, importscan
 
 MANAGED = depplan.TARGET_MANAGED
+#: 与 tmp_path 无祖先关系的家目录（放宽读边界不得越过家目录或它的祖先）
+_UNRELATED_HOME = Path("/nonexistent-tavotto-test-home/u")
 
 
 def _write(root: Path, rel: str, text: str) -> Path:
@@ -272,7 +274,10 @@ class TestLiteralSysPathRoots:
             next(c for c in scan.classes if c.module == "mymod").bucket != importscan.BUCKET_LOCAL
         )
 
-    def test_escape_outside_project_is_not_a_root(self, tmp_path):
+    def test_escape_outside_project_is_a_bounded_root(self, tmp_path, monkeypatch):
+        """维护者裁决 2026-11-02（TVD-22EY）：由 `__file__` 推出的项目外目录也认，读的边界有界放宽
+        （上限与家目录 / 大文件夹的拒绝见 `TestLiteralDirOutsideProject`）；此前这里断言「越界不认」。"""
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
         proj = tmp_path / "p"
         _write(tmp_path, "outside/mymod.py", "x = 1\n")
         _write(
@@ -281,7 +286,10 @@ class TestLiteralSysPathRoots:
             'import os, sys\nsys.path.append(os.path.join(os.path.dirname(__file__), "..", "outside"))\nimport mymod\n',
         )
         scan = importscan.scan(proj, "a.py")
-        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        assert any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        assert next(c for c in scan.classes if c.module == "mymod").bucket == (
+            importscan.BUCKET_LOCAL
+        )
 
     @pytest.mark.parametrize(
         "wrap",
@@ -595,3 +603,87 @@ class TestSinglePackageFallbackSkipsNotPip:
         _write(proj, "a.py", "import lmfit\n")
         out = deprepair.offer(proj, "a.py", "lmfit")
         assert out["requirement"] is not None and "not_pip_installable" not in out
+
+
+class TestLiteralDirOutsideProject:
+    """反馈包 TVD-22EY：`O=Path(__file__).resolve().parent;ROOT=O.parents[1];sys.path.insert(0,str(ROOT))`——
+    本地模块在项目上两级的目录里，它用着 pandas / sklearn。扫描要认出 `.parents[N]`、同一行分号连写的先后，
+    并把读的边界放宽到那一级祖先（有界、不越过家目录 / 大文件夹）。"""
+
+    SCRIPT = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "import numpy as np\n"
+        "O=Path(__file__).resolve().parent;ROOT=O.parents[1];sys.path.insert(0,str(ROOT))\n"
+        "from helper_mod import load\n"
+    )
+    HELPER = "import pandas as pd\nfrom sklearn.cluster import KMeans\ndef load(p): return p\n"
+
+    @staticmethod
+    def _needed(scan) -> set[str]:
+        return {c.module for c in scan.needed}
+
+    def test_parents_index_on_the_same_line_inside_project(self, tmp_path):
+        proj = tmp_path / "p"
+        # 放在 lib/ 下：项目根本身就是 safe worker 的搜索根，放根里证明不了 `.parents[N]` 认出来了
+        _write(proj, "a/b/gen.py", self.SCRIPT.replace("str(ROOT)", "str(ROOT / 'lib')"))
+        _write(proj, "lib/helper_mod.py", self.HELPER)
+        scan = importscan.scan(proj, "a/b/gen.py")
+        assert next(c for c in scan.classes if c.module == "helper_mod").bucket == (
+            importscan.BUCKET_LOCAL
+        )
+        assert {"pandas", "sklearn"} <= self._needed(scan)
+
+    def test_root_two_levels_above_the_project_is_followed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
+        base = tmp_path / "Radscore"
+        proj = base / "analysis_outputs" / "case_v1"
+        _write(proj, "render.py", self.SCRIPT)
+        _write(base, "helper_mod.py", self.HELPER)
+        scan = importscan.scan(proj, "render.py")
+        assert any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        assert {"pandas", "sklearn"} <= self._needed(scan)
+        assert "helper_mod" not in {c.module for c in scan.by_bucket(importscan.BUCKET_UNKNOWN)}
+
+    def test_too_far_above_the_project_is_not_followed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
+        base = tmp_path / "Radscore"
+        proj = base / "a" / "b" / "c" / "case_v1"
+        _write(proj, "render.py", self.SCRIPT.replace("parents[1]", "parents[3]"))
+        _write(base, "helper_mod.py", self.HELPER)
+        assert importscan._MAX_OUTSIDE_LEVELS == 3
+        scan = importscan.scan(proj, "render.py")
+        assert not ({"pandas", "sklearn"} & self._needed(scan))
+
+    def test_home_and_its_ancestors_are_never_the_bound(self, tmp_path, monkeypatch):
+        base = tmp_path / "Radscore"
+        proj = base / "analysis_outputs" / "case_v1"
+        # 家目录就是 Radscore：放宽到它 = 读整个家目录，不认
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: base))
+        _write(proj, "render.py", self.SCRIPT)
+        _write(base, "helper_mod.py", self.HELPER)
+        scan = importscan.scan(proj, "render.py")
+        assert not ({"pandas", "sklearn"} & self._needed(scan))
+        # 家目录在 Radscore 下面：Radscore 是家目录的祖先，同样不认
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: base / "analysis_outputs"))
+        scan = importscan.scan(proj, "render.py")
+        assert not ({"pandas", "sklearn"} & self._needed(scan))
+
+    def test_external_helper_adds_a_dir_relative_to_its_own_file(self, tmp_path, monkeypatch):
+        """项目外的辅助模块再按它**自己**的 `__file__` 加目录：目录相对它所在处，而不是项目（Codex #1634 P2）。"""
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
+        base = tmp_path / "Radscore"
+        proj = base / "analysis_outputs" / "case_v1"
+        _write(proj, "render.py", self.SCRIPT)
+        _write(
+            base,
+            "helper_mod.py",
+            "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path(__file__).parent / 'deps'))\n"
+            "import deep_dep\ndef load(p): return p\n",
+        )
+        _write(base, "deps/deep_dep.py", "import pandas as pd\n")
+        # 项目里同名的 deps/ 是诱饵：按项目解析就会读到它而漏掉 pandas
+        _write(proj, "deps/deep_dep.py", "x = 1\n")
+        scan = importscan.scan(proj, "render.py")
+        assert "pandas" in self._needed(scan)
