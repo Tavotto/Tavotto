@@ -13697,6 +13697,10 @@ def api_ai_convert():
         )
     except engine_ai.DuplicateRequest as dup:
         return jsonify({"session": dup.sid, "script": rel, "deduped": True})
+    except engine_ai_convert.ConvertError as exc:
+        # 候选工作区建不出来（如 Windows 路径过长）：稳定码，前端按码出一句话卡片
+        LOG.warning("转换任务没能开始: %s %s (%s)", agent, rel, exc.code)
+        return _convert_error(exc)
     except engine_ai.AgentError as exc:
         LOG.warning("转换任务被拒: %s (%s)", agent, exc.code)
         return _agent_error(exc)
