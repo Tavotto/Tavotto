@@ -918,6 +918,55 @@ class TestJointTransaction:
         assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
         assert err.value.extra["joint"]["status"] == "nothing_needed"
 
+    @pytest.mark.parametrize(
+        ("hidden", "source", "carried"),
+        [
+            # 反馈包 TVD-22EY：本地模块在扫描看不到的地方（sys.path 由运行时值决定），它用着内置 runtime 的 pandas
+            (True, engine_pool.SOURCE_BUNDLED, True),
+            # 扫描看全了：联合求解已给出全部需要的，不多带
+            (False, engine_pool.SOURCE_BUNDLED, False),
+            # 此刻不在内置 runtime 里跑：内置 runtime 的包与这个脚本无关
+            (True, engine_pool.SOURCE_PROJECT_VENV, False),
+        ],
+    )
+    def test_fresh_generation_from_bundled_runtime_carries_its_packages_when_scan_is_incomplete(
+        self, tmp_path, offline_managed_env, monkeypatch, hidden, source, carried
+    ):
+        """脚本在内置 runtime 里跑到「缺 sklearn」，它经 sys.path 引入的本地模块还用着内置 runtime 的 pandas。
+        新建第一代只装 sklearn → 重跑立刻「缺 pandas」。这里 beta 扮内置 runtime 的 pandas，alpha 扮缺的 sklearn。"""
+        hide = (
+            "import os, sys\nsys.path.insert(0, os.environ['HIDDEN_DIR'])\nimport hidden_helper\n"
+        )
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n",
+            script=(hide if hidden else "") + f"import {ALPHA[1]}\n",
+        )
+        real = engine_pool.resolve_worker_python
+        monkeypatch.setattr(
+            engine_pool,
+            "resolve_worker_python",
+            lambda *a, **kw: (real(*a, **kw)[0], source),
+        )
+        monkeypatch.setattr(
+            deprepair.runtime,
+            "manifest",
+            lambda: {"top_level": ["numpy", "matplotlib", BETA[0]], "packages": {}},
+        )
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.creates_environment
+        names = {depresolve.normalize_distribution(r) for r in plan.requirements}
+        assert depresolve.normalize_distribution(ALPHA[0]) in names
+        assert (depresolve.normalize_distribution(BETA[0]) in names) is carried
+        # adapter 里已有的不重复列
+        assert "numpy" not in names and "matplotlib" not in names
+        if carried:
+            # 带上的包进账（之后换代随账带走）也进装后核验
+            assert BETA[1] in plan.widened.needed_imports
+            assert any(r["distribution"] == BETA[0] for r in plan.widened.record)
+
     def test_offer_on_the_failure_path_starts_no_interpreter(
         self, tmp_path, house, offline_managed_env, monkeypatch
     ):

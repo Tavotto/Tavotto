@@ -3754,6 +3754,51 @@ def test_perf_fixtures_admin_script_is_ascii_closed_and_scoped():
     assert "Dismount-DiskImage" in rm and "Remove-AppxProvisionedPackage" in rm
 
 
+def _ps_statements(script: str) -> list[str]:
+    """PowerShell 脚本里**可执行**的语句行（去掉 `<# … #>` 块注释与整行 `#` 注释，去首尾空白）。
+
+    判据只认这些行**以某条命令开头**——子串匹配会把注释掉的命令也算成「在」（Codex #1652 P1）。
+    这段 admin 脚本不写行尾注释；真出现了也只会让判据更严（那一行不再以命令开头），不会放过。"""
+    script = re.sub(r"<#.*?#>", "", script, flags=re.S)
+    out = []
+    for raw in script.splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
+
+
+def _stmt_at(lines: list[str], command: str, start: int = 0) -> int:
+    """第一条以 `command` 开头的可执行语句的位置（从 `start` 起找）；没有就让断言失败。"""
+    for i in range(start, len(lines)):
+        if lines[i].startswith(command):
+            return i
+    raise AssertionError(f"没有可执行语句以 {command!r} 开头（注释掉的不算）")
+
+
+def test_perf_fixtures_logon_task_can_read_its_admin_written_script():
+    """登录任务以 tavotto-lab 身份跑管理员写进 C:\\TavottoLab\\perf 的脚本：那个目录只继承 SYSTEM / Administrators，
+    不授读就是「任务触发了、PowerShell 打不开 -File、结果 0xFFFD0000、一行日志都没有」（Lab 11-03 实测）。
+    授权必须在写完脚本之后、注册任务之前；已登录时直接启动任务，不必再重启一次。"""
+    lines = _ps_statements(W._fill_perf(W.PERF_FIXTURES_PS))
+    written = _stmt_at(lines, "'@ | Set-Content -Path $setup")
+    grant = _stmt_at(lines, "icacls $setup /grant 'tavotto-lab:(RX)'", written)
+    register = _stmt_at(lines, "Register-ScheduledTask -TaskName 'TavottoLab-PerfPython'", grant)
+    _stmt_at(lines, "Start-ScheduledTask -TaskName 'TavottoLab-PerfPython'", register)
+
+
+def test_perf_fixtures_volume_is_openable_by_tavotto_lab():
+    """挂上的虚拟磁盘沿用 .vhdx **文件**的安全描述符：文件只继承 SYSTEM / Administrators 时，tavotto-lab 连卷都打不开，
+    P: 上任何 stat 都是 WinError 5，里面的 NTFS 授权不起作用（Lab 11-03 实测 cold-drive-p 崩在 `perf_dir.is_dir()`）。
+    授权在建盘 / 挂载之后，并且授权之后要重新挂载一次，新的描述符才生效；盘符校验放在重新挂载之后。"""
+    lines = _ps_statements(W._fill_perf(W.PERF_FIXTURES_PS))
+    created = _stmt_at(lines, "diskpart /s $dp")
+    grant = _stmt_at(lines, "icacls $vhdx /grant 'tavotto-lab:(M)'", created)
+    dismount = _stmt_at(lines, "Dismount-DiskImage -ImagePath $vhdx", grant)
+    remount = _stmt_at(lines, "Mount-DiskImage -ImagePath $vhdx", dismount)
+    _stmt_at(lines, "if ($vol.FileSystemLabel -ne 'TavottoPerf') { throw", remount)
+
+
 def test_pymanager_pin_and_fetch_rejects_a_wrong_download(tmp_path, monkeypatch):
     assert re.fullmatch(r"[0-9a-f]{64}", W.PYMANAGER_SHA256)
     assert W.PYMANAGER_URL.startswith("https://www.python.org/ftp/python/pymanager/")

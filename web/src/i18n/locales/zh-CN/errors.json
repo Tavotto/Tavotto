@@ -79,6 +79,7 @@
     "bad_objects": "画布内容格式有误，请刷新页面后重试。",
     "bad_overrides": "图内修改格式有误，请刷新页面后重试。",
     "bad_overwrite": "无法识别覆盖方式：{{value}}。",
+    "bad_pad": "留白设置有误：页面尺寸需要是正数，请调小裁切量。",
     "bad_policy": "无法识别检查策略：{{value}}。",
     "bad_ppi": "分辨率不是数值：{{value}}。",
     "bad_request": "导出请求格式有误，请刷新页面后重试。",

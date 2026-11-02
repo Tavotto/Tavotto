@@ -47,12 +47,29 @@ describe('singleAnnotatedDocument（QA-WIN-20）', () => {
     expect(JSON.stringify(doc)).toBe(frozen)
   })
 
-  it('面板在画布上被缩放：位置按 图幅/画布显示尺寸 映射，字号不缩', () => {
+  it('面板在画布上被缩放：位置与字号 / 线宽 / 内边距 / 描边 / 圆角同比映射（与图的相对大小同画布）', () => {
     const scaled = { ...panel, w: 40, h: 30 } // 画布上缩到一半，原图 80 × 60
-    const out = singleAnnotatedDocument(docOf([scaled, text({ x: 40, y: 30, w: 10, h: 3 })]), scaled, spec())!
-    const t = out.objects[1] as CanvasObject & { sizePt: number }
+    const objs = [
+      scaled,
+      text({ x: 40, y: 30, w: 10, h: 3, padding: 1, borderColor: '#000' }),
+      { id: 'a1', type: 'arrow', x: 40, y: 30, w: 10, h: 5, strokePt: 0.5 } as never,
+      { id: 's1', type: 'shape', shape: 'rect', x: 40, y: 30, w: 10, h: 5, strokePt: 1, cornerRadius: 2 } as never,
+    ]
+    const out = singleAnnotatedDocument(docOf(objs), scaled, spec())!
+    const t = out.objects[1] as CanvasObject & { sizePt: number; padding: number; borderPt: number }
     expect([t.x, t.y, t.w, t.h]).toEqual([20, 20, 20, 6])
+    // 画布上 9 pt 的字对着缩到一半的图摆；原图是两倍大，字也得是两倍（缺省 0.75 pt 的描边同样跟着缩）
+    expect([t.sizePt, t.padding, t.borderPt]).toEqual([18, 2, 1.5])
+    expect((out.objects[2] as CanvasObject & { strokePt: number }).strokePt).toBe(1)
+    const s = out.objects[3] as CanvasObject & { strokePt: number; cornerRadius: number }
+    expect([s.strokePt, s.cornerRadius]).toEqual([2, 4])
+  })
+
+  it('比例为 1：字号 / 线宽原样（只平移），不凭空补 borderPt', () => {
+    const out = singleAnnotatedDocument(docOf([panel, text()]), panel, spec())!
+    const t = out.objects[1] as CanvasObject & { sizePt: number }
     expect(t.sizePt).toBe(9)
+    expect('borderPt' in t).toBe(false)
   })
 
   it('画布上的裁剪 / 旋转 / 翻转 / 透明度不套用（与不带标注的原图导出同一张图）', () => {

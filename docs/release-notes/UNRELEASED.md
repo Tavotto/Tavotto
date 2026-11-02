@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Installing a missing package no longer leaves the figure missing another one
+
+When a script ran in Tavotto's built-in Python and stopped on a package it doesn't include (for example scikit-learn), installing it created a fresh environment for the project that could lack packages the script had been using all along from the built-in one, such as pandas. The next run then stopped again with "pandas is missing", one package per round. This happened mostly when the script imports its own helper module from a folder it adds to `sys.path` (including `Path(__file__).parents[1]` and folders above the project). Tavotto now reads helper modules in those folders when it plans the install, a few levels above the project at most and never your home folder or anything above it. When it still can't see all of the script's imports, the new environment also gets the built-in packages (pandas, SciPy, seaborn, Pillow). The confirmation lists every package before anything is installed.
+
 ## The first-run setup log is redacted, and a failed install says where it stopped
 
 When Tavotto sets up its own rendering environment (creating it, then installing matplotlib), everything written to the setup log is now redacted before it is kept: credentials and query strings in package-index URLs, personal paths and other secrets are removed, and the data folder appears as `<data>`. That log can end up in a feedback bundle, and previously pip's output went in verbatim. If a step fails, the log now ends with one line naming the step (environment, install or import check) and whether it timed out or exited with an error. A timed-out install keeps what pip printed before it was stopped, and a failed import check keeps its error. Nothing changes when setup succeeds. Thanks to @mvanhorn for this contribution (#807).
@@ -68,3 +72,7 @@ When you send a problem report and *Contact the maker* is on, the app now also k
 ## Scripts that `import pymupdf` can install it in one click
 
 PyMuPDF's current documentation imports it as `import pymupdf` instead of the older `import fitz`. Tavotto only recognised the older name, so a script written the new way that ran in an environment without PyMuPDF got a "missing pymupdf" card with no install button, and the "Specify package…" box was not even filled in. Both names now lead to the same install of PyMuPDF into an environment Tavotto manages, exactly as `import fitz` already did. Your own Python environments are not changed unless you choose them.
+
+## Text boxes added over a figure keep their size when you export that figure
+
+In single-figure editing, a text box, arrow or shape drawn over the figure came out much smaller relative to the figure when it was exported, whenever the figure was shown scaled down on the canvas (for example a large Matplotlib figure fitted into the page). A label set to match the figure's own text looked right on the canvas but ended up about half as large in the exported file, inside a box that was too big for it. Export now scales font size, line width, padding, border and corner radius by the same ratio as the figure, so the annotation looks the same relative to the figure as it did on the canvas. The figure's own text is unchanged, and nothing changes when the figure was shown at its original size.

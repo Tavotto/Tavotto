@@ -542,7 +542,7 @@ mod tests {
         #[cfg(windows)]
         cmd.arg("/C");
         cmd.args(args).stdin(Stdio::piped());
-        let mut child = cmd.spawn().unwrap();
+        let mut child = spawn_gate(|| cmd.spawn()).unwrap();
         let stdin = child.stdin.take();
         Sidecar {
             child: Mutex::new(Some(child)),
@@ -613,8 +613,25 @@ mod tests {
         d
     }
 
+    /// 测试里「写出可执行脚本」与「任何 fork」互斥。
+    ///
+    /// 并行用例里一个线程在写假 sidecar（fd 以写方式开着）时，另一个线程 fork 出的子进程会在 exec 之前
+    /// 继承这个 fd；写线程关掉 fd 后立刻 exec 那份脚本，就撞上 ETXTBSY（"Text file busy"），
+    /// 被误判成 `sidecar_spawn_failed`（偶发红，见 lessons）。锁住「写」与「spawn」两类操作：
+    /// `spawn()` 返回时子进程必已 exec（CLOEXEC 管道），所以写的窗口里不会有人带着那个 fd 在途。
+    /// 产品里不写正在启动的 exe，没有这个竞态。
+    fn spawn_gate<T>(f: impl FnOnce() -> T) -> T {
+        static GATE: Mutex<()> = Mutex::new(());
+        let _held = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        f()
+    }
+
     /// 在假资源目录里放一个「打包的 sidecar」。
     fn bundled(res: &Path, body: &[u8]) {
+        spawn_gate(|| write_bundled(res, body));
+    }
+
+    fn write_bundled(res: &Path, body: &[u8]) {
         let exe = res.join("sidecar").join("Tavotto").join(if cfg!(windows) {
             "Tavotto.exe"
         } else {
@@ -630,15 +647,18 @@ mod tests {
     }
 
     fn start_in(res: &Path, log_dir: &Path) -> StartError {
-        match Sidecar::start(
-            Some(res.to_path_buf()),
-            log_dir,
-            "n",
-            None,
-            None,
-            crate::i18n::DEFAULT_LOCALE,
-            false,
-        ) {
+        let started = spawn_gate(|| {
+            Sidecar::start(
+                Some(res.to_path_buf()),
+                log_dir,
+                "n",
+                None,
+                None,
+                crate::i18n::DEFAULT_LOCALE,
+                false,
+            )
+        });
+        match started {
             Ok(_) => panic!("must not start"),
             Err(e) => e,
         }
@@ -734,11 +754,13 @@ mod tests {
     /// 起一个 `sh -c body` 子进程，返回 (child, stdin)。
     #[cfg(unix)]
     fn spawn_sh(body: &str) -> (Child, ChildStdin) {
-        let mut child = Command::new("sh")
-            .args(["-c", body])
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = spawn_gate(|| {
+            Command::new("sh")
+                .args(["-c", body])
+                .stdin(Stdio::piped())
+                .spawn()
+        })
+        .unwrap();
         let stdin = child.stdin.take().unwrap();
         (child, stdin)
     }
@@ -813,16 +835,19 @@ mod tests {
             res,
             format!("#!/bin/sh\nIFS= read -r hello\n{script_body}\nsleep 30\n").as_bytes(),
         );
-        match Sidecar::start_with(
-            Some(res.to_path_buf()),
-            logs,
-            "n",
-            None,
-            None,
-            crate::i18n::DEFAULT_LOCALE,
-            safe,
-            Duration::from_millis(800),
-        ) {
+        let started = spawn_gate(|| {
+            Sidecar::start_with(
+                Some(res.to_path_buf()),
+                logs,
+                "n",
+                None,
+                None,
+                crate::i18n::DEFAULT_LOCALE,
+                safe,
+                Duration::from_millis(800),
+            )
+        });
+        match started {
             Ok(_) => panic!("must not start"),
             Err(e) => e,
         }

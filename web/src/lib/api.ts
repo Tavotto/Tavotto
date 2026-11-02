@@ -1967,6 +1967,12 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   objects?: ExportObject[]
   /** `objects` 里前几个画在图的下面（图层树里放在图之下的标注）；缺省 0 = 都在图上 */
   objects_below?: number
+  /**
+   * 单图留白（ADR 0161 §3）：`[左, 上, 右, 下]`，mm，可为负（负值 = 裁进图幅）。缺席或全 0 = 与从前逐字节相同。
+   * 非零时后端走带标注的合成路径（没有标注也走）：页面 = `w_mm + 左 + 右` × `h_mm + 上 + 下`，面板落在 `(左, 上)`，
+   * `objects` 的坐标以**页面**左上为原点；非零时 `w_mm` / `h_mm` 必填；页面不再为正则 `bad_pad`。
+   */
+  pad_mm?: [number, number, number, number]
 }
 
 export interface ExportRequest {
@@ -2512,6 +2518,14 @@ export interface ManifestElement {
   identity?: string
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
+  /**
+   * 只有 `gid === 'figure'` 的元素有（ADR 0161 §2）：图的内容边缘 `[x0, y0, x1, y1]`（**两个角点**，不是 `bbox` 的 `[x, y, w, h]`）——
+   * `fig.get_tightbbox(renderer)`，即 matplotlib `bbox_inches="tight"` 用的同一个框，**不含 pad**；换成相对
+   * manifest 对外报的图幅（有 savefig frame 时是 frame，ADR 0098，否则 figsize）的分数，y 向下，与 `bbox` 同一套坐标。
+   * 可以略伸出 [0, 1]（内容被图幅切掉的那部分）。**缺席**（旧后端 / 引擎量不出）= 没有「紧凑」停靠点，不猜。
+   * 产生者只有 `engine/manifest._ink_bbox()`；前端读它只经 `exactPanelManifest`（ADR 0017）。
+   */
+  ink_bbox?: [number, number, number, number]
   /**
    * matplotlib 会在这个框处把这个元素切掉，框外一笔都不画（figure 分数、
    * y 向下，与 `bbox` 同一套坐标）。**缺席 = 不裁 / 裁不掉任何东西。**

@@ -2374,11 +2374,13 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
 
     req = job.request
     src = req.original
+    # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
+    pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
         "type": "panel",
         "id": src.figure_id,
-        "x_mm": 0,
-        "y_mm": 0,
+        "x_mm": pad_l,
+        "y_mm": pad_t,
         "w_mm": src.w_mm,
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
@@ -2431,7 +2433,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         extra = {"raster_target": target} if target else {}
         return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
 
-    w_mm, h_mm = float(src.w_mm), float(src.h_mm)
+    w_mm, h_mm = src.page_mm  # 页面尺寸（无留白 = 图幅）
     if vector_formats:
         produced += run(
             vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
@@ -2440,15 +2442,25 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         ppi = req.ppi
         target = None
         if src.source_kind == "raster" and src.px_w:
-            dpi_x = float(src.px_w) * 25.4 / w_mm
-            ppi = dpi_x  # 页面 w_mm 对应 px_w 个像素
+            # 密度按**图幅**（面板）算：源的像素网格与图幅一一对应；留白只是在四周多出的页面
+            fig_w, fig_h = float(src.w_mm), float(src.h_mm)
+            dpi_x = float(src.px_w) * 25.4 / fig_w
+            ppi = dpi_x  # 图幅 w_mm 对应 px_w 个像素
             if src.px_h:
-                dpi_y = float(src.px_h) * 25.4 / h_mm
+                dpi_y = float(src.px_h) * 25.4 / fig_h
                 if abs(dpi_y - dpi_x) > 0.005 * dpi_x:
                     # 横纵密度不同：先按逻辑图幅各向同性画对（取两轴中较大的密度，两轴都不小于源像素），
-                    # 再整张面积平均缩到恰好 px_w × px_h；元数据写源的 x / y 密度
+                    # 再整张面积平均缩到恰好 px_w × px_h（带留白时是整个页面的像素数）；元数据写源的 x / y 密度
                     ppi = max(dpi_x, dpi_y)
-                    target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+                    if src.pad_mm:
+                        target = (
+                            max(1, round(w_mm * dpi_x / 25.4)),
+                            max(1, round(h_mm * dpi_y / 25.4)),
+                            dpi_x,
+                            dpi_y,
+                        )
+                    else:
+                        target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
         produced += run(
             raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
         )
@@ -2497,8 +2509,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             parts[key] = ("", None)
             continue
         compiled = rc_plan.compile_page(
-            float(src.w_mm),
-            float(src.h_mm),
+            *src.page_mm,
             objs,
             sources=_NoPanels(),
             faces=provider,
@@ -2522,14 +2533,31 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             )
         parts[key] = (text, compiled.page)
     page = parts["above"][1] or parts["below"][1]
+    page_w_mm, page_h_mm = src.page_mm
+    if page is not None:
+        page_w_pt, page_h_pt = page.width_pt, page.height_pt
+    else:  # 只有留白、没有标注：页面尺寸直接由图幅 + 留白算
+        page_w_pt, page_h_pt = page_w_mm * 72.0 / 25.4, page_h_mm * 72.0 / 25.4
+    pad_extra = {}
+    if src.pad_mm:
+        # 内嵌原图 EPS 的落点：左 = l、上 = t（PostScript 原点在左下，所以 y = 页高 − 上 − 图高）
+        pad_l, pad_t, _r, _b = src.pad_mm
+        pad_extra = {
+            "offset_pt": (
+                pad_l * 72.0 / 25.4,
+                page_h_pt - (pad_t + float(src.h_mm)) * 72.0 / 25.4,
+            ),
+            "clip_page": True,
+        }
     out = tmp_dir / "out_annotated.eps"
     out.write_bytes(
         engine_epsoverlay.compose(
             Path(inner.tmp_path).read_bytes(),
             parts["above"][0],
-            page.width_pt,
-            page.height_pt,
+            page_w_pt,
+            page_h_pt,
             underlay=parts["below"][0],
+            **pad_extra,
         )
     )
     bbox = engine_epsfile.bounding_box_pt(out)
@@ -2554,7 +2582,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
-    if src.objects:
+    if src.objects or src.pad_mm:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
