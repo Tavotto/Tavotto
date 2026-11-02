@@ -63,7 +63,20 @@ MAX_SELECTORS = 40
 #: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
 LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
 #: convert-live 的 --mode：转换场景的闭集（实现见 convert_plan）；all = 三组依次跑
-CONVERT_MODES = ("baseline", "cjk-path", "long-path", "all")
+CONVERT_MODES = (
+    "baseline",
+    "cjk-path",
+    "long-path",
+    "all",
+    "openai-baseline",
+    "openai-cjk-path",
+    "openai-all",
+)
+#: 走用户自己的 OpenAI 官方 API key（官方接口，不经中转）的 convert-live 模式；只能经 trojan 出口（国内直连不了 OpenAI）
+CONVERT_OPENAI_PREFIX = "openai-"
+CONVERT_OPENAI_NETWORK = "trojan"
+#: OpenAI 官方 key 经环境变量交给 Codex：`codex exec` 认的 API key 环境变量（只设这一个，设两个 Codex 会报「多个认证变量」）
+CODEX_OFFICIAL_KEY_ENV = "CODEX_API_KEY"
 #: 一次 convert-live 最多发起几次真实转换（每次都是一次真模型长任务，费用与时间的硬上限；测试核对 all 的计划不超过它）
 CONVERT_MAX_RUNS = 8
 #: 单次转换的轮询上限：产品对单次 AI 任务的上限是 900 s（ai_bridge.TIMEOUT_S），多等一分钟看收尾
@@ -431,6 +444,7 @@ TASKS: dict[str, Task] = {
             summary="转换真模型复现：Tavotto 真实的 R→Python 转换（POST /api/ai/convert、真 Codex、DeepSeek）在 Windows 路径场景下的结果与耗时",
             timeout_s=CONVERT_MAX_RUNS * (CONVERT_TIMEOUT_S + 120) + 1800,
             needs_model_conf=True,
+            networks=("direct", CONVERT_OPENAI_NETWORK),
             modes=CONVERT_MODES,
             claim=(
                 "产品真实转换路径（引擎 + 候选工作区 + 真 CodexAgent.build_command + 真 Codex CLI）在 Lab（zh-CN、cp936、"
@@ -438,7 +452,8 @@ TASKS: dict[str, Task] = {
                 "工作区最终文件清单与 token 用量；超时与「正常退出却缺目标文件」按产品自己的判定如实记录"
             ),
             unverified=(
-                "模型不是产品默认的：Codex CLI 是真的，推理由 DeepSeek 的 OpenAI 兼容 Responses 接口提供，行为与官方模型不同",
+                "默认（baseline / cjk-path / long-path / all）模型不是产品默认的：Codex CLI 是真的，推理由 DeepSeek 的 OpenAI 兼容 Responses 接口提供，行为与官方模型不同；openai-* 模式才走用户自己的 OpenAI 官方 key（经 trojan 出口）",
+                "openai-* 模式的官方模型行为（模型名取 Codex 当时的默认或 key 文件里的 model）随 OpenAI 服务端与 Codex 版本变化，报告写明版本与模型（若可得），不保证可复现",
                 "不经产品的连接配置界面：用 CODEX_HOME 的 env_key 引用密钥，绕过了 ai_providers 的第三方接口记录（为了密钥不落盘）",
                 "Codex CLI 用 npm 最新版（与 hosts-live 共用缓存前缀，不钉版本；报告写明版本）",
                 "用 Flask test client 调接口，不经桌面壳 / WebView / sidecar 进程边界",
@@ -2037,8 +2052,14 @@ class ConvertCase:
         return f"{self.scenario}-{self.project}"
 
 
+def convert_provider(mode: str) -> str:
+    """--mode → 推理供应商：openai-* 走 OpenAI 官方，其余走 DeepSeek。"""
+    return "openai" if mode.startswith(CONVERT_OPENAI_PREFIX) else "deepseek"
+
+
 def convert_plan(mode: str) -> list[ConvertCase]:
-    """--mode → 要发起的转换（闭集，总数 ≤ CONVERT_MAX_RUNS）。"""
+    """--mode → 要发起的转换（闭集，总数 ≤ CONVERT_MAX_RUNS）。openai-X 的场景与 X 相同，只换供应商。"""
+    mode = mode.removeprefix(CONVERT_OPENAI_PREFIX)
     baseline = [ConvertCase("baseline", "a"), ConvertCase("baseline", "e")]
     cjk = [
         ConvertCase("cjk-path", "d", backslash=True, cjk=True),
@@ -2128,9 +2149,17 @@ def usage_from_jsonl(text: str) -> dict:
 
 
 def _write_convert_codex_home(home: Path, conf: dict) -> None:
-    """convert-live 的 CODEX_HOME：DeepSeek 供应商 + env_key；不配 MCP / 沙箱 / 审批（这些由产品自己的命令行决定）。"""
+    """convert-live 的 CODEX_HOME；不配 MCP / 沙箱 / 审批（这些由产品自己的命令行决定）。
+    DeepSeek：自定义供应商 + `env_key`。OpenAI 官方：不写供应商表（用 Codex 内置的 openai 供应商）、只强制 API 方式；
+    模型名不写进源码——只有 key 文件里给了 `model` 才写，否则用 Codex 当时的默认。两种都不把 key 写进文件。"""
     home.mkdir(parents=True, exist_ok=True)
-    toml = "\n".join([*_codex_provider_lines(conf), "", *_codex_provider_table(conf), ""])
+    if conf.get("provider") == "openai":
+        lines = ['forced_login_method = "api"']
+        if conf.get("model"):
+            lines.insert(0, f"model = {_toml_str(str(conf['model']))}")
+        toml = "\n".join([*lines, ""])
+    else:
+        toml = "\n".join([*_codex_provider_lines(conf), "", *_codex_provider_table(conf), ""])
     (home / "config.toml").write_text(toml, encoding="utf-8")
 
 
@@ -2147,8 +2176,20 @@ def _convert_outcome(res: dict) -> str:
 
 
 def run_convert_live_task(
-    lab: Lab, run_dir: Path, env: dict, model_conf: dict, mode: str = "baseline"
+    lab: Lab,
+    run_dir: Path,
+    env: dict,
+    model_conf: dict,
+    mode: str = "baseline",
+    network: str = "direct",
 ) -> dict:
+    official = convert_provider(mode) == "openai"
+    if official and network != CONVERT_OPENAI_NETWORK:
+        # OpenAI 官方接口国内直连不了；不退回直连，也不在这里试
+        return {
+            "result": "environment_unavailable",
+            "summary": f"{mode}: OpenAI official API is only reachable through the {CONVERT_OPENAI_NETWORK} egress; rerun with --network {CONVERT_OPENAI_NETWORK} (never direct)",
+        }
     py = lab.venv_python()
     if not py.exists():
         return {
@@ -2183,6 +2224,7 @@ def run_convert_live_task(
     config_dir.mkdir(parents=True, exist_ok=True)
     _write_convert_codex_home(codex_home, model_conf)
     key = model_conf["api_key"]
+    key_env = CODEX_OFFICIAL_KEY_ENV if official else "WINLAB_MODEL_KEY"
     plan = convert_plan(mode)
     conversions: list[dict] = []
     usage_total: dict[str, int] = {}
@@ -2202,10 +2244,15 @@ def run_convert_live_task(
                     "TAVOTTO_CONFIG_DIR": str(config_dir),
                     "TAVOTTO_DATA_DIR": str(data),
                     "CODEX_HOME": str(codex_home),
-                    "WINLAB_MODEL_KEY": key,  # 只在这个子进程的环境里；不进 argv、文件、日志
+                    # 只在这个子进程的环境里；不进 argv、文件、日志
+                    key_env: key,
                     "PYTHONIOENCODING": "utf-8",
                 }
             )
+            if official:
+                # 官方模式只认这一个认证变量；Lab 环境里若有别的 OpenAI 变量一律不带进去
+                for k in [k for k in cenv if k.upper() in ("OPENAI_API_KEY", "WINLAB_MODEL_KEY")]:
+                    cenv.pop(k)
             step = _run_logged(
                 [
                     str(py),
@@ -2317,8 +2364,12 @@ def run_convert_live_task(
             "id": host.id,
             "version": version,
             "provider": model_conf.get("provider"),
-            "model": model_conf.get("openai_model") or "deepseek-flash",
-            "network": "direct",
+            "model": (
+                (model_conf.get("model") or "codex-default")
+                if official
+                else (model_conf.get("openai_model") or "deepseek-flash")
+            ),
+            "network": network,
         },
         "counts": counts,
         "conversions": conversions,
@@ -6198,7 +6249,12 @@ def _run_body(
         )
     if task.kind == "convert-live":
         return run_convert_live_task(
-            lab, run_dir, env, model_conf or {}, (pkg or {}).get("mode") or "baseline"
+            lab,
+            run_dir,
+            env,
+            model_conf or {},
+            (pkg or {}).get("mode") or "baseline",
+            network,
         )
     if task.kind == "env-matrix":
         return run_env_matrix_task(lab, run_dir, env, (pkg or {}).get("package", ""))

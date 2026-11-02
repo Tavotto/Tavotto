@@ -463,7 +463,14 @@ Restart-Service sshd
 MODEL_CONF_PATH = Path(
     os.environ.get("TAVOTTO_WINLAB_MODEL_SECRET", "~/.config/tavotto-winlab/model.json")
 ).expanduser()
-MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
+MODEL_PROVIDERS = {
+    "deepseek": "https://api.deepseek.com/anthropic",
+    "openai": "https://api.openai.com/v1",
+}
+#: 用户自己的 OpenAI 官方 API key：独立文件，永不落 Lab 盘（不在 ONDISK_MODES），只给 convert-live 的 openai-* 模式
+MODEL_CONF_OPENAI_PATH = MODEL_CONF_PATH.with_name("model-openai.json")
+#: 走 OpenAI 官方 key 的 convert-live 模式（与 agent.CONVERT_MODES 里 openai- 开头的一致，测试核对）
+OPENAI_MODES = ("openai-baseline", "openai-cjk-path", "openai-all")
 #: 宿主只能从明文配置文件读 key 的那几格（ZCode）用**另一把**专用、限额的 key：用户 2026-10-26 同意这一处落盘例外，
 #: 与 hosts-live / 其余 desktop-live 的那把分开，缺了就不跑，绝不退回用默认那把
 MODEL_CONF_ONDISK_PATH = MODEL_CONF_PATH.with_name("model-ondisk.json")
@@ -474,6 +481,8 @@ ACCOUNT_MODEL_MODES = ("workbuddy-native", "workbuddy-native-phone")
 
 
 def model_conf_path(mode: str | None) -> Path:
+    if mode in OPENAI_MODES:
+        return MODEL_CONF_OPENAI_PATH
     return MODEL_CONF_ONDISK_PATH if mode in ONDISK_MODES else MODEL_CONF_PATH
 
 
@@ -508,8 +517,9 @@ def load_model_secret(mode: str | None = None) -> bytes | None:
     path = model_conf_path(mode)
     if not path.exists():
         flag = " --ondisk" if mode in ONDISK_MODES else ""
+        prov = "openai" if mode in OPENAI_MODES else "deepseek"
         print(
-            f"missing {path}: run `python3 scripts/winlab/winlab.py secret-init deepseek{flag}` in your own terminal",
+            f"missing {path}: run `python3 scripts/winlab/winlab.py secret-init {prov}{flag}` in your own terminal",
             file=sys.stderr,
         )
         return None
@@ -523,24 +533,47 @@ def load_model_secret(mode: str | None = None) -> bytes | None:
             file=sys.stderr,
         )
         return None
+    if mode in OPENAI_MODES:
+        stored = _stored_key(path)
+        others = [_stored_key(p) for p in (MODEL_CONF_PATH, MODEL_CONF_ONDISK_PATH)]
+        if stored is None or stored in others:
+            # OpenAI 官方 key 必须是独立的一把，手工改成与其它 key 相同也不行
+            print(
+                f"{path} must hold its own OpenAI key (not shared with the other key files)",
+                file=sys.stderr,
+            )
+            return None
     return path.read_bytes()
 
 
 def secret_init(provider: str, ondisk: bool = False) -> int:
     """在用户自己的终端里录入（getpass 不回显），写 0600 文件；值从不进聊天或命令行参数。
-    `--ondisk`：录的是给 ONDISK_MODES 用的那把专用限额 key（会在 Lab 上短暂落盘），存另一个文件。"""
+    `--ondisk`：录的是给 ONDISK_MODES 用的那把专用限额 key（会在 Lab 上短暂落盘），存另一个文件。
+    `openai`：用户自己的 OpenAI 官方 key，存独立文件（model-openai.json），不落 Lab 盘，不接受 `--ondisk`。"""
     import getpass
 
-    path = MODEL_CONF_ONDISK_PATH if ondisk else MODEL_CONF_PATH
-    label = f"{provider} API key{' (dedicated, capped; written to disk on the Lab for ZCode)' if ondisk else ''}"
+    if provider == "openai" and ondisk:
+        print(
+            "refused: the OpenAI key is never written to the Lab's disk (no --ondisk)",
+            file=sys.stderr,
+        )
+        return 2
+    if provider == "openai":
+        path = MODEL_CONF_OPENAI_PATH
+        label = "OpenAI API key (official endpoint; used by convert-live openai-* via the trojan egress)"
+    else:
+        path = MODEL_CONF_ONDISK_PATH if ondisk else MODEL_CONF_PATH
+        label = f"{provider} API key{' (dedicated, capped; written to disk on the Lab for ZCode)' if ondisk else ''}"
     key = getpass.getpass(f"{label} (input hidden): ").strip()
     if not key:
         return 2
-    # 两把必须不同，不论先录哪一把（Codex #1439：只在 --ondisk 时比会漏掉「后录默认那把、填了同一个」）
-    other = MODEL_CONF_PATH if ondisk else MODEL_CONF_ONDISK_PATH
-    if _stored_key(other) == key:
+    # 各把必须互不相同，不论先录哪一把（Codex #1439：只在 --ondisk 时比会漏掉「后录默认那把、填了同一个」）
+    others = [
+        p for p in (MODEL_CONF_PATH, MODEL_CONF_ONDISK_PATH, MODEL_CONF_OPENAI_PATH) if p != path
+    ]
+    if any(_stored_key(p) == key for p in others):
         print(
-            "refused: the default key and the on-disk (ZCode) key must be different — create a separate capped key",
+            "refused: the default key, the on-disk (ZCode) key and the OpenAI key must all be different — create a separate key",
             file=sys.stderr,
         )
         return 2
@@ -808,7 +841,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--from", dest="frm", help="installer：先装这个旧包再升级")
     t.add_argument(
         "--mode",
-        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
+        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all，或 openai-baseline | openai-cjk-path | openai-all（用你自己的 OpenAI 官方 key，必须 --network trojan）；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
     )
     t.add_argument("--ref", help="先 prepare 到这个提交（经可信度检查）")
     n = sub.add_parser("network")
@@ -893,6 +926,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         if err:
             print(err, file=sys.stderr)
+            return 2
+        if ns.mode in OPENAI_MODES and network != lab_agent.CONVERT_OPENAI_NETWORK:
+            # OpenAI 官方接口国内直连不了：不读 key、不连 Lab，直接说明
+            print(
+                f"{ns.mode} needs the {lab_agent.CONVERT_OPENAI_NETWORK} egress: add --network {lab_agent.CONVERT_OPENAI_NETWORK}",
+                file=sys.stderr,
+            )
             return 2
         if ns.ref:
             rc = cmd_prepare(ns.ref)

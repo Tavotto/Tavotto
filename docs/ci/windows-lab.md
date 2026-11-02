@@ -255,6 +255,31 @@ python3 scripts/winlab/winlab.py reports --id <run_id>
 `workspace_path_len`、`usage`）、`usage_total`（所有 `turn.completed.usage` 之和）、`host`（Codex 版本、供应商、模型）。
 原始 Codex JSONL、提示词、argv（长文本只记长度）、产品日志、会话 JSON 在 `evidence\convert-live\<场景-项目>\`。
 
+#### 用 OpenAI 官方模型（openai-* 模式）
+
+默认三组走 DeepSeek；要在 Windows 上用**官方模型**验证（例如 BCZ0 修复的最终验收），用 `openai-baseline` / `openai-cjk-path` / `openai-all`
+（场景同去掉前缀的那一组）。Codex 走官方接口（不经第三方中转），用你**自己的 OpenAI API key**，且**只能经 DMIT 的 `trojan` 出口**——
+国内直连不了 OpenAI；不带 `--network trojan` 时 Mac 端直接拒绝（退出码 2，不读 key、不连 Lab），Lab 端同样返回 `environment_unavailable`，绝不直连。
+
+**费用提示**：按 OpenAI API 标准价计费，每次转换是一次真模型长任务（单次上限 960 s，`openai-all` 共 5 次）；先用 `openai-baseline`（2 次）。
+
+1. 你自己的终端里录入（不回显、不进聊天 / 命令行；写独立的 0600 文件 `~/.config/tavotto-winlab/model-openai.json`，必须与 DeepSeek 那把不同，永不落 Lab 盘）：
+
+   ```sh
+   python3 scripts/winlab/winlab.py secret-init openai
+   ```
+
+2. 部署后运行：
+
+   ```sh
+   python3 scripts/winlab/winlab.py test convert-live --mode openai-baseline --network trojan --ref <提交>
+   ```
+
+做法：CODEX_HOME 的 `config.toml` 只有 `forced_login_method = "api"`（用 Codex 内置的 openai 供应商，不写自定义供应商 / 地址 / 密钥）；
+模型名不写进源码——`model-openai.json` 里手工加 `"model"` 才指定，否则用 Codex 当时的默认。key 只以环境变量 `CODEX_API_KEY` 交给 Codex 子进程
+（`codex exec` 认的 API key 变量；Lab 环境里的 `OPENAI_API_KEY` 一律不带），代理由 `HTTPS_PROXY` 等环境变量指向本机 trojan 客户端，Codex 子进程继承。
+报告 `host` 含 `provider` / Codex 版本 / `model`（key 文件没给就是 `codex-default`）/ `network`；官方模型行为随服务端与 Codex 版本变化，见 `unverified`。
+
 ### 黄金快照
 
 腾讯云 CAM 子账号只授 `lighthouse:DescribeInstances` / `DescribeSnapshots` / `CreateInstanceSnapshot`
