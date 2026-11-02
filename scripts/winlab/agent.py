@@ -64,9 +64,15 @@ MAX_SELECTORS = 40
 LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
 #: render-bench 的 --mode：测量场景的闭集（实现见 run_render_bench_task）。路径与解释器都写死在这里，不收任何自由输入：
 #: rotation = 池上限轮转 + 解释器探针；cold = 冷启动分解（项目在 cache 下含中文与空格的路径）+ 探针；
-#: cold-store = 渲染解释器换成微软商店版 python 别名（%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe）；
-#: cold-drive-d/e = 项目放在 D:/E: 盘（需要该盘是本地固定盘且 tavotto-lab 能在盘根建目录）；all = rotation + cold + 探针
-RENDER_BENCH_MODES = ("rotation", "cold", "cold-store", "cold-drive-d", "cold-drive-e", "all")
+#: cold-store = 渲染解释器换成 WindowsApps 应用执行别名里的 Python（`winlab admin perf-fixtures` 装的 Python 安装管理器，
+#: %LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe）；cold-drive-p = 项目放在 perf-fixtures 建的 VHDX 盘 P:（路径含中文与空格）；
+#: cold-store-drive-p = 两者叠加（别名入口 + 另一块盘，最接近「商店版 Python + U 盘上的中文路径项目」）；all = rotation + cold + 探针
+RENDER_BENCH_MODES = ("rotation", "cold", "cold-store", "cold-drive-p", "cold-store-drive-p", "all")
+#: perf-fixtures 的 VHDX 盘符与里面的目录：「科研 数据」\「项目」（脚本是 ASCII，这里与 winlab.py 的 PERF_DIR_* 是同一份码点）
+PERF_DRIVE = "P"
+PERF_DIR_PARTS = ("\u79d1\u7814 \u6570\u636e", "\u9879\u76ee")
+#: Python 安装管理器装好的真实运行时目录（别名入口 vs 真实 exe 的对照）
+PERF_RUNTIME_GLOB = "pythoncore-3.11*"
 RENDER_BENCH_FIXTURES = Path("scripts") / "winlab" / "fixtures" / "renderbench"
 RENDER_BENCH_ROUNDS = 20
 RENDER_BENCH_COLD_RUNS = 5
@@ -481,7 +487,7 @@ TASKS: dict[str, Task] = {
                 "只测 Python 池控制面：Lab 上没有 tavotto-workerd 二进制时 workerd 控制面记为 skipped",
                 "6 张图是最简夹具，不是用户的脚本；冷启动里没有项目自带的重依赖",
                 "不经安装包 / 冻结 sidecar / 桌面壳；后端是 Lab venv 的源码态，渲染解释器默认由产品自己选",
-                "cold-store 需要商店版 Python 已装且装了 numpy / matplotlib；cold-drive-* 需要对应的盘存在",
+                "cold-store* 需要 perf-fixtures 装好别名入口的 Python（含 numpy / matplotlib）；cold-*drive-p 需要 perf-fixtures 建好的 P: 盘；它们都不等于用户机器上的微软商店版 Python 3.11 与真实 U 盘（别名机制相同、运行时与盘速不同）",
                 "Defender 实时扫描的影响包含在数字里，本任务不关它",
             ),
         ),
@@ -2405,18 +2411,32 @@ def render_bench_plan(mode: str) -> dict:
     """--mode → 驱动的测量块与位置（闭集，全是常量，不收自由输入）。"""
     return {
         "driver_mode": {"rotation": "rotation", "all": "all"}.get(mode, "cold"),
-        "store": mode == "cold-store",
-        "drive": mode[-1] if mode.startswith("cold-drive-") else None,
+        "store": mode in ("cold-store", "cold-store-drive-p"),
+        "drive": PERF_DRIVE if mode in ("cold-drive-p", "cold-store-drive-p") else None,
     }
 
 
-def store_python_path(env: dict) -> Path | None:
-    """微软商店版 Python 的 App Execution Alias：%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe；不存在就是 None。"""
+def _local_appdata(env: dict) -> Path | None:
     base = env.get("LOCALAPPDATA") or os.environ.get("LOCALAPPDATA") or ""
-    if not base:
+    return Path(base) if base else None
+
+
+def store_python_path(env: dict) -> Path | None:
+    """WindowsApps 应用执行别名里的 python.exe：%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe；不存在就是 None。"""
+    base = _local_appdata(env)
+    if base is None:
         return None
-    p = Path(base) / "Microsoft" / "WindowsApps" / "python.exe"
+    p = base / "Microsoft" / "WindowsApps" / "python.exe"
     return p if p.exists() or p.is_symlink() else None
+
+
+def alias_runtime_python_path(env: dict) -> Path | None:
+    """Python 安装管理器把运行时装到 %LOCALAPPDATA%\\Python\\pythoncore-3.11*\\python.exe——和别名是同一个解释器的真实 exe 路径。"""
+    base = _local_appdata(env)
+    if base is None:
+        return None
+    hits = sorted((base / "Python").glob(f"{PERF_RUNTIME_GLOB}/python.exe"))
+    return hits[-1] if hits else None
 
 
 def run_render_bench_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
@@ -2446,10 +2466,14 @@ def run_render_bench_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict
             }
         worker_python = str(store)
     if plan["drive"]:
-        root = Path(f"{str(plan['drive']).upper()}:\\")
-        if os.name != "nt" or not root.exists():
-            return {"result": "environment_unavailable", "summary": f"drive {root} not present"}
-        base = root / "tavotto-rbench" / run_dir.name
+        root = Path(f"{plan['drive']}:\\")
+        perf_dir = root.joinpath(*PERF_DIR_PARTS)
+        if os.name != "nt" or not perf_dir.is_dir():
+            return {
+                "result": "environment_unavailable",
+                "summary": f"{perf_dir} not present: run `winlab admin perf-fixtures` (user must be present)",
+            }
+        base = perf_dir / run_dir.name
     else:
         base = lab.cache / "render-bench" / run_dir.name
     ev = run_dir / "evidence" / "render-bench"
@@ -2504,6 +2528,13 @@ def run_render_bench_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict
     ]
     if worker_python:
         argv += ["--worker-python", worker_python]
+    # 探针对照：Lab venv 的解释器、别名入口、别名背后的真实 exe（装了才有）——「是不是别名入口慢」直接看 import_sys 这一项
+    probes = [str(py)]
+    for extra in (store_python_path(env), alias_runtime_python_path(env)):
+        if extra is not None:
+            probes.append(str(extra))
+    for pp in dict.fromkeys(probes):
+        argv += ["--probe-python", pp]
     try:
         step = _run_logged(argv, lab.repo, benv, ev / "driver", RENDER_BENCH_TIMEOUT_S - 300)
         data: dict = {}

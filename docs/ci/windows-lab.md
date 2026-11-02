@@ -269,18 +269,43 @@ Lab 在中国大陆，convert-live 只走国内合规的 DeepSeek、只用 `dire
 - **解释器探针**（每个模式都跑）：渲染解释器 `-c "import sys"`、`import numpy, matplotlib`、`import matplotlib.pyplot` 各 5 次，用来分开「解释器入口慢」与「导入 / 磁盘慢」。
 
 ```sh
-python3 scripts/winlab/winlab.py test render-bench --mode rotation     --ref HEAD   # 轮转 + 探针
-python3 scripts/winlab/winlab.py test render-bench --mode cold         --ref HEAD   # 冷启动 + 探针；项目在 cache 下含中文与空格的路径
-python3 scripts/winlab/winlab.py test render-bench --mode cold-store   --ref HEAD   # 渲染解释器 = 微软商店版 python 别名（WindowsApps\python.exe）
-python3 scripts/winlab/winlab.py test render-bench --mode cold-drive-d --ref HEAD   # 项目放在 D: 盘（cold-drive-e 同理）
-python3 scripts/winlab/winlab.py test render-bench --mode all          --ref HEAD   # rotation + cold + 探针
+python3 scripts/winlab/winlab.py test render-bench --mode rotation           --ref HEAD   # 轮转 + 探针
+python3 scripts/winlab/winlab.py test render-bench --mode cold               --ref HEAD   # 冷启动 + 探针；项目在 cache 下含中文与空格的路径
+python3 scripts/winlab/winlab.py test render-bench --mode cold-store         --ref HEAD   # 渲染解释器 = WindowsApps 别名入口的 Python（perf-fixtures 装的）
+python3 scripts/winlab/winlab.py test render-bench --mode cold-drive-p       --ref HEAD   # 项目放在 VHDX 盘 P:\科研 数据\项目\
+python3 scripts/winlab/winlab.py test render-bench --mode cold-store-drive-p --ref HEAD   # 别名入口 + 另一块盘（最接近用户的组合）
+python3 scripts/winlab/winlab.py test render-bench --mode all                --ref HEAD   # rotation + cold + 探针
 ```
 
-解释器与项目位置都由 `--mode` 选，写死在 `agent.py`，不收自由路径（没有透传通道）。`cold-store` 要求商店版 Python 已装且装了 numpy / matplotlib，
-别名不在就是 `environment_unavailable`；`cold-drive-*` 要求该盘存在、`tavotto-lab` 能在盘根建 `tavotto-rbench\`。
+解释器与项目位置都由 `--mode` 选，写死在 `agent.py`，不收自由路径（没有透传通道）。`cold-store*` / `cold-*drive-p` 依赖下一节的 `admin perf-fixtures`，
+没装就是 `environment_unavailable`。每个模式的**解释器探针**同时计时三个解释器的 `-c "import sys"` / `import numpy, matplotlib` / `import matplotlib.pyplot`：
+Lab venv、别名入口 `WindowsApps\python.exe`、别名背后的真实 exe（`%LOCALAPPDATA%\Python\pythoncore-3.11*\python.exe`）——别名入口慢不慢直接看 `import_sys` 这一项的差。
 前提同 `convert-live`：管理员 `admin deploy-agent` 之后才生效（部署 `render_bench_driver.py`，只在用户在场时由用户安排）。
 报告 `bench.rotation[].sets[]` / `bench.cold[]` / `bench.probe[]` 是全部原始数据，`rotation_summary` 是一眼表；
 只测 Python 池控制面，没有 `tavotto-workerd` 二进制时 workerd 记为 `skipped`。驱动在 Mac 上也能直接跑（`python scripts/winlab/render_bench_driver.py --help`），用于出基线。
+
+#### 夹具：`admin perf-fixtures`（一次性管理员动作，用户在场时执行）
+
+```sh
+python3 scripts/winlab/winlab.py admin perf-fixtures            # 幂等，可重复跑
+python3 scripts/winlab/winlab.py admin perf-fixtures --remove   # 撤销
+```
+
+它在 Lab 上改了这些东西，也只有这些：
+
+1. `C:\TavottoLab\perf\perf-fixtures.vhdx`（4 GB 动态 VHDX，diskpart 创建 / 挂载，NTFS，卷标 `TavottoPerf`，盘符 `P:`；不依赖 Hyper-V 模块），
+   计划任务 `TavottoLab-PerfVhd`（SYSTEM，开机时重新挂载）。盘上建 `P:\科研 数据\项目\`，**只在这个目录上**授 `tavotto-lab` 修改权限（`Set-Acl`，不碰盘根）。
+   它**只覆盖「另一块盘 + 中文路径」，不限速、不模拟 U 盘的速度**（VHDX 的 QoS 限速要 Hyper-V；底下是 Lab 自己的云盘）。
+2. Python 安装管理器 MSIX（python.org 官方发布，固定版本与 SHA-256 写在 `winlab.py` 的 `PYMANAGER_*`）：**Mac 端直连 python.org 下载**（显式不走代理）、核大小与散列后经 scp 送到
+   `C:\TavottoLab\perf\`，Lab 上再核 SHA-256 与 Authenticode（有效且签名者含 Python Software Foundation）才 `Add-AppxProvisionedPackage -Online -SkipLicense`
+   （系统级预置：`tavotto-lab` 下次登录时得到它，`WindowsApps` 里出现 `python.exe` / `py.exe` 等应用执行别名）。
+3. 一次性登录任务 `TavottoLab-PerfPython`（`tavotto-lab` 登录时运行 `perf-python-setup.ps1`）：等别名出现 → `py install --yes 3.11` → 用清华镜像装 `matplotlib>=3.8,<3.12` 与 `numpy>=1.24,<3`
+   → 核对别名 `python.exe` 能 import 它们 → 写 `C:\TavottoLab\cache\perf-python-setup.log`（末行 `done`）→ 删除自己。执行后让 `tavotto-lab` 注销再登录（或重启）。
+
+这不是用户机器上的「微软商店版 Python 3.11」（那是商店里的独立包 `PythonSoftwareFoundation.Python.3.11`，Server 2025 没有商店），而是 python.org 官方的新机制：
+同样是 `WindowsApps` 里的应用执行别名（走 AppX 激活而不是普通 exe），运行时则装在 `%LOCALAPPDATA%\Python\`。别名机制相同，所以「别名入口本身慢不慢」可以回答，运行时差异不能。
+
+撤销：`admin perf-fixtures --remove` 删两个计划任务、卸载并删除 VHDX、移除预置包与全部用户的包；`tavotto-lab` 的 `%LOCALAPPDATA%\Python\` 是用户目录，手动删。
 
 ### 黄金快照
 

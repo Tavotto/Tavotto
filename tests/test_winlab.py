@@ -3714,8 +3714,86 @@ def test_render_bench_modes_pick_interpreter_and_location_from_constants():
         "store": True,
         "drive": None,
     }
-    assert A.render_bench_plan("cold-drive-d")["drive"] == "d"
-    assert A.render_bench_plan("cold-drive-e")["drive"] == "e"
+    assert A.render_bench_plan("cold-drive-p") == {
+        "driver_mode": "cold",
+        "store": False,
+        "drive": "P",
+    }
+    assert A.render_bench_plan("cold-store-drive-p") == {
+        "driver_mode": "cold",
+        "store": True,
+        "drive": "P",
+    }
+
+
+def test_perf_fixtures_directory_names_match_between_agent_and_admin_script():
+    """admin 脚本是 ASCII，中文目录名靠码点拼；agent 这边用真字符——两边必须是同一个目录。"""
+    parts = tuple("".join(chr(int(x, 16)) for x in cp.split(",")) for cp in W.PERF_DIR_CODEPOINTS)
+    assert parts == A.PERF_DIR_PARTS == ("科研 数据", "项目")
+    assert W.PERF_LETTER == A.PERF_DRIVE
+
+
+def test_perf_fixtures_admin_script_is_ascii_closed_and_scoped():
+    fill = W._fill_perf(W.PERF_FIXTURES_PS)
+    fill.encode("ascii")  # admin_ssh 要求 ASCII（5.1 按 ANSI 读无 BOM 文件）
+    assert not re.findall(r"__[A-Z0-9_]+__", fill)  # 占位符都替换完了
+    # 只授 tavotto-lab 修改权限，且只在这个目录上，不碰盘根
+    assert "FileSystemAccessRule('tavotto-lab', 'Modify'" in fill
+    assert fill.count("Set-Acl") == 1 and "Set-Acl -LiteralPath $dir" in fill
+    # 下载包先核散列再核 Authenticode 才装；不经代理
+    assert fill.index("sha256 mismatch") < fill.index("Add-AppxProvisionedPackage")
+    assert "Get-AuthenticodeSignature" in fill and "-SkipLicense" in fill
+    assert "proxy" not in fill.lower() and "7890" not in fill
+    # VHDX 在 C:\TavottoLab 下，不放系统目录；开机自动重新挂载
+    assert W.PERF_VHDX.startswith("C:\\TavottoLab\\perf\\")
+    assert "TavottoLab-PerfVhd" in fill and "-AtStartup" in fill
+    # 幂等：已有 VHDX / 已装包都不重建
+    assert "Test-Path $vhdx" in fill and "already provisioned" in fill
+    rm = W._fill_perf(W.PERF_REMOVE_PS)
+    rm.encode("ascii")
+    assert "Dismount-DiskImage" in rm and "Remove-AppxProvisionedPackage" in rm
+
+
+def test_pymanager_pin_and_fetch_rejects_a_wrong_download(tmp_path, monkeypatch):
+    assert re.fullmatch(r"[0-9a-f]{64}", W.PYMANAGER_SHA256)
+    assert W.PYMANAGER_URL.startswith("https://www.python.org/ftp/python/pymanager/")
+    import io
+    import urllib.request
+
+    used = {}
+
+    class FakeOpener:
+        def open(self, url, timeout=0):
+            used["url"] = url
+            return io.BytesIO(b"not the msix")
+
+    def fake_build_opener(*handlers):
+        used["handlers"] = handlers
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
+    dest = tmp_path / "x.msix"
+    with pytest.raises(RuntimeError):
+        W.fetch_pymanager(dest)
+    assert not dest.exists()  # 不符即删
+    # 显式不走环境里的代理
+    assert any(
+        isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in used["handlers"]
+    )
+
+
+def test_perf_fixtures_verb_is_registered_and_dispatches(monkeypatch):
+    calls = []
+    monkeypatch.setattr(W, "admin_perf_fixtures", lambda remove=False: calls.append(remove) or 0)
+    assert W.main(["admin", "perf-fixtures"]) == 0
+    assert W.main(["admin", "perf-fixtures", "--remove"]) == 0
+    assert calls == [False, True]
+
+
+def test_render_bench_modes_do_not_accept_free_paths():
+    t = A.TASKS["render-bench"]
+    for bad in ("P:\\", "cold-drive-d", "cold-drive-e", "python.exe"):
+        assert A.validate_test_args(t, [], None, "direct", mode=bad)
 
 
 def test_store_python_path_needs_the_alias_file(tmp_path):
@@ -3730,7 +3808,10 @@ def test_store_python_path_needs_the_alias_file(tmp_path):
 def test_render_bench_driver_is_deployed_and_listed_in_help():
     text = (WINLAB / "winlab.py").read_text(encoding="utf-8")
     assert 'HERE / "render_bench_driver.py"' in text
-    assert "render-bench：rotation | cold | cold-store | cold-drive-d | cold-drive-e | all" in text
+    assert (
+        "render-bench：rotation | cold | cold-store | cold-drive-p | cold-store-drive-p | all"
+        in text
+    )
     assert "render-bench" in W.build_parser().parse_args(["test", "render-bench"]).task
 
 
