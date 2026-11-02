@@ -1290,7 +1290,65 @@ def _widen_for_fresh_generation(
     project: str, script: str, requirement: depresolve.DependencyRequirement
 ) -> _Widened | None:
     joint = _fresh_generation_joint(project, script)
-    return _fold_requested(requirement, joint) if joint is not None else None
+    wide = _fold_requested(requirement, joint) if joint is not None else None
+    if wide is None:
+        return None
+    return _carry_bundled_packages(project, script, joint, wide)
+
+
+def _scan_sees_everything(joint: depplan.JointPlan) -> bool:
+    """静态扫描是否看全了脚本开跑要的 import：没有映射不到的名字、没有留到运行时再看的名字、本地模块跟进没被截断。
+
+    不看 `search_complete`：脚本只要改了 `sys.path` 它就恒为 False（搜索路径不静态可定），而那些脚本的 import
+    多数都已经认全了——那时联合求解给出的就是全部需要的。"""
+    scan = joint.scan or {}
+    return not joint.unknown and not joint.deferred_unverified and not scan.get("truncated")
+
+
+def _carry_bundled_packages(
+    project: str, script: str, joint: depplan.JointPlan, wide: _Widened
+) -> _Widened:
+    """脚本此刻在**内置 runtime** 里跑、而静态扫描没看全时，新建的第一代把内置 runtime 的顶层科学包一起带上（TVD-22EY）。
+
+    看不全的 import（本地模块在扫描读不到的地方、动态导入……）多半也用着内置 runtime 里的 pandas / scipy 等；
+    只装缺的那一个，新一代比原来能跑到这一步的环境还少，重跑必然一轮轮撞「缺 pandas」直到用完修复轮数。
+    看全了就不带（联合求解已经给出了全部需要的）。只在新建第一代时调用；已有一代时账上的包随换代带走。"""
+    if _scan_sees_everything(joint):
+        return wide
+    try:
+        source = pool.resolve_worker_python(project, script=script)[1]
+    except pool.WorkerError:
+        return wide
+    if source != pool.SOURCE_BUNDLED:
+        return wide
+    info = runtime.manifest() or {}
+    top = [str(n) for n in (info.get("top_level") or ()) if str(n).strip()]
+    have = {depresolve.normalize_distribution(_name_of(r)) for r in wide.requirements}
+    # 这一代本来就带的 adapter（matplotlib / numpy）不重复列
+    have |= {depresolve.normalize_distribution(n) for n in depplan.adapter_distributions()}
+    extra = [n for n in top if depresolve.normalize_distribution(n) not in have]
+    if not extra:
+        return wide
+    imports = list(wide.needed_imports)
+    record = list(wide.record)
+    for dist in extra:
+        mod = runtime.import_name_of(dist)
+        if mod not in imports:
+            imports.append(mod)
+        record.append(
+            {
+                "import_name": mod,
+                "distribution": dist,
+                "specifier": "",
+                "resolution_source": depresolve.SOURCE_CURATED,
+            }
+        )
+    return dataclasses.replace(
+        wide,
+        requirements=(*wide.requirements, *extra),
+        needed_imports=tuple(imports),
+        record=tuple(record),
+    )
 
 
 def _private_python_offer() -> dict | None:
