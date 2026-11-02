@@ -1421,7 +1421,8 @@
         "launching": "Starting Python…",
         "preparing": "Getting ready…",
         "creating": "Creating the new environment…",
-        "installing": "Installing the packages the script needs…"
+        "installing": "Installing the packages the script needs…",
+        "waiting": "Waiting for another installation to finish…"
       }
     },
     "aiFix": {
