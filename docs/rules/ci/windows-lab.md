@@ -48,6 +48,8 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
   `agent.py` 的 `TASKS`，每条写 `claim` 与 `unverified`；`winlab.py` 导入同一份做参数预检。
 - 参数可审计、没有透传通道：`--tests` 只收 `tests/…\.py(::节点)?`，`--shard` 只收 `N/M`，
   网络模式只收登记值。新增任务就是在 `TASKS` 加一条，argv 只调仓库里已有的验证器。
+- `render-bench` 是只读测量任务：解释器与项目位置只能由 `--mode` 在登记值里选（商店版 Python 别名、D: / E: 盘都是写死的常量），
+  不收自由路径；驱动只起 Tavotto 后端打 `/api/engine/render`，不起模型、不联网、不装包，测量用的项目目录与一次性数据目录任务结束即删。
 - 结果用 ADR 0131 的闭集，**任何非 passed 都不聚合成 passed**：skip 让结论降为 `skipped`；
   前置不满足（venv 缺、代理入口不在、宿主未登录）是 `environment_unavailable`。
   对外的验收表映射为：passed → PASS、failed / error → FAIL、environment_unavailable → BLOCKED、

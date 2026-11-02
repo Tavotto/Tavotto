@@ -62,6 +62,15 @@ SHARD_RE = re.compile(r"^([1-9][0-9]?)/([1-9][0-9]?)$")
 MAX_SELECTORS = 40
 #: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
 LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
+#: render-bench 的 --mode：测量场景的闭集（实现见 run_render_bench_task）。路径与解释器都写死在这里，不收任何自由输入：
+#: rotation = 池上限轮转 + 解释器探针；cold = 冷启动分解（项目在 cache 下含中文与空格的路径）+ 探针；
+#: cold-store = 渲染解释器换成微软商店版 python 别名（%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe）；
+#: cold-drive-d/e = 项目放在 D:/E: 盘（需要该盘是本地固定盘且 tavotto-lab 能在盘根建目录）；all = rotation + cold + 探针
+RENDER_BENCH_MODES = ("rotation", "cold", "cold-store", "cold-drive-d", "cold-drive-e", "all")
+RENDER_BENCH_FIXTURES = Path("scripts") / "winlab" / "fixtures" / "renderbench"
+RENDER_BENCH_ROUNDS = 20
+RENDER_BENCH_COLD_RUNS = 5
+RENDER_BENCH_TIMEOUT_S = 3600
 #: convert-live 的 --mode：转换场景的闭集（实现见 convert_plan）；all = 三组依次跑
 CONVERT_MODES = (
     "baseline",
@@ -454,6 +463,26 @@ TASKS: dict[str, Task] = {
                 "用 Flask test client 调接口，不经桌面壳 / WebView / sidecar 进程边界",
                 "R 项目是内置的小夹具，不是用户的真实项目；Lab 没装 R，转换不运行 R（产品本来也不运行）",
                 "模型行为有随机性：一次不复现不代表没有问题；每次真实调用要花费用",
+            ),
+        ),
+        Task(
+            id="render-bench",
+            kind="render-bench",
+            summary="渲染测量（只读）：池上限轮转（2/3/4/6 张图 × 20 轮）+ 冷启动分解（含解释器入口 / 导入耗时），项目路径与解释器按 --mode 选",
+            timeout_s=RENDER_BENCH_TIMEOUT_S,
+            modes=RENDER_BENCH_MODES,
+            claim=(
+                "Tavotto 后端（Python 池控制面）在 Lab（zh-CN、cp936、非管理员、Defender 开）上，对内置的 6 张最简 matplotlib 图："
+                "轮流渲染时每次的 server_ms / wall_ms、是否冷启动、app.log 里 LRU 淘汰次数的中位数与 P90；"
+                "同一张图冷启动 5 次的各段计时（worker_get_ms / script_build_ms / script_exec_ms …）；"
+                '渲染解释器 `-c "import sys"` 与 `import numpy, matplotlib` 的耗时'
+            ),
+            unverified=(
+                "只测 Python 池控制面：Lab 上没有 tavotto-workerd 二进制时 workerd 控制面记为 skipped",
+                "6 张图是最简夹具，不是用户的脚本；冷启动里没有项目自带的重依赖",
+                "不经安装包 / 冻结 sidecar / 桌面壳；后端是 Lab venv 的源码态，渲染解释器默认由产品自己选",
+                "cold-store 需要商店版 Python 已装且装了 numpy / matplotlib；cold-drive-* 需要对应的盘存在",
+                "Defender 实时扫描的影响包含在数字里，本任务不关它",
             ),
         ),
     )
@@ -2368,6 +2397,153 @@ def run_convert_live_task(
         "counts": counts,
         "conversions": conversions,
         "usage_total": usage_total,
+    }
+
+
+# ----------------------------------------------------------------------------- render-bench
+def render_bench_plan(mode: str) -> dict:
+    """--mode → 驱动的测量块与位置（闭集，全是常量，不收自由输入）。"""
+    return {
+        "driver_mode": {"rotation": "rotation", "all": "all"}.get(mode, "cold"),
+        "store": mode == "cold-store",
+        "drive": mode[-1] if mode.startswith("cold-drive-") else None,
+    }
+
+
+def store_python_path(env: dict) -> Path | None:
+    """微软商店版 Python 的 App Execution Alias：%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe；不存在就是 None。"""
+    base = env.get("LOCALAPPDATA") or os.environ.get("LOCALAPPDATA") or ""
+    if not base:
+        return None
+    p = Path(base) / "Microsoft" / "WindowsApps" / "python.exe"
+    return p if p.exists() or p.is_symlink() else None
+
+
+def run_render_bench_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    fixtures = lab.repo / RENDER_BENCH_FIXTURES
+    driver = Path(__file__).resolve().parent / "render_bench_driver.py"
+    if not fixtures.is_dir() or not driver.is_file():
+        return {
+            "result": "environment_unavailable",
+            "summary": "render-bench fixtures / driver missing: `prepare` a ref that has scripts/winlab/fixtures/renderbench and `admin deploy-agent`",
+        }
+    if mode not in RENDER_BENCH_MODES:
+        return {"result": "error", "summary": f"unknown mode {mode!r}"}
+    plan = render_bench_plan(mode)
+    worker_python: str | None = None
+    if plan["store"]:
+        store = store_python_path(env)
+        if store is None:
+            return {
+                "result": "environment_unavailable",
+                "summary": "Microsoft Store python alias (WindowsApps\\python.exe) not found for tavotto-lab",
+            }
+        worker_python = str(store)
+    if plan["drive"]:
+        root = Path(f"{str(plan['drive']).upper()}:\\")
+        if os.name != "nt" or not root.exists():
+            return {"result": "environment_unavailable", "summary": f"drive {root} not present"}
+        base = root / "tavotto-rbench" / run_dir.name
+    else:
+        base = lab.cache / "render-bench" / run_dir.name
+    ev = run_dir / "evidence" / "render-bench"
+    ev.mkdir(parents=True, exist_ok=True)
+    project = base / Path(*CONVERT_CJK_PARTS)
+    work = run_dir / "work" / "render-bench"
+    try:
+        # 旧的残留（上次被打断）：只清 run id 形状的兄弟目录
+        parent = base.parent
+        for stale in parent.glob("*") if parent.is_dir() else ():
+            if RUN_ID_RE.fullmatch(stale.name) and stale.name != run_dir.name:
+                with contextlib.suppress(OSError):
+                    _rmtree_no_follow(_long(stale))
+        project.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(fixtures, project)
+        work.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {
+            "result": "environment_unavailable",
+            "summary": f"cannot create the project folder under {base.parent}: {type(exc).__name__}",
+        }
+    result_file = ev / "result.json"
+    benv = dict(env)
+    benv.update(
+        {
+            "PYTHONPATH": str(lab.repo / "src"),
+            "PYTHONIOENCODING": "utf-8",
+            "MPLCONFIGDIR": str(run_dir / "work" / "mpl"),
+        }
+    )
+    argv = [
+        str(py),
+        str(driver),
+        "--mode",
+        plan["driver_mode"],
+        "--python",
+        str(py),
+        "--figures",
+        str(project),
+        "--work",
+        str(work),
+        "--mplconfigdir",
+        benv["MPLCONFIGDIR"],
+        "--rounds",
+        str(RENDER_BENCH_ROUNDS),
+        "--cold-runs",
+        str(RENDER_BENCH_COLD_RUNS),
+        "--planes",
+        "python",
+        "--result",
+        str(result_file),
+    ]
+    if worker_python:
+        argv += ["--worker-python", worker_python]
+    try:
+        step = _run_logged(argv, lab.repo, benv, ev / "driver", RENDER_BENCH_TIMEOUT_S - 300)
+        data: dict = {}
+        with contextlib.suppress(OSError, ValueError):
+            data = json.loads(result_file.read_text(encoding="utf-8"))
+    finally:
+        with contextlib.suppress(OSError):
+            _rmtree_no_follow(_long(base))
+    errors = data.get("errors") or []
+    rot = data.get("rotation") or []
+    cold = data.get("cold") or []
+    summary_rows = [
+        {
+            "scripts": r["scripts"],
+            "cold": f"{r['cold_count']}/{r['renders']}",
+            "lru_evictions": r["lru_evictions"],
+            "server_ms_median": r["server_ms"]["median"],
+            "server_ms_p90": r["server_ms"]["p90"],
+        }
+        for p in rot
+        for r in p.get("sets", [])
+    ]
+    if not data:
+        return {
+            "result": "error",
+            "summary": f"driver wrote no result (exit={step.get('exit_code')}, timed_out={step.get('timed_out')})",
+            "step": step,
+        }
+    got = bool(rot or cold or data.get("probe"))
+    return {
+        "result": "error" if errors or not got else "passed",
+        "summary": f"{mode}: rotation sets={len(summary_rows)} cold planes={len(cold)} probes={len(data.get('probe') or [])}"
+        + (f"; errors={len(errors)}" if errors else ""),
+        "mode": mode,
+        "project_path_len": len(str(project)),
+        "worker_python": worker_python,
+        "rotation_summary": summary_rows,
+        "bench": data,
+        "evidence": "evidence/render-bench",
+        "step": step,
     }
 
 
@@ -6250,6 +6426,8 @@ def _run_body(
             (pkg or {}).get("mode") or "baseline",
             network,
         )
+    if task.kind == "render-bench":
+        return run_render_bench_task(lab, run_dir, env, (pkg or {}).get("mode") or "rotation")
     if task.kind == "env-matrix":
         return run_env_matrix_task(lab, run_dir, env, (pkg or {}).get("package", ""))
     if task.kind == "corpus":

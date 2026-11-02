@@ -3688,6 +3688,90 @@ def test_convert_driver_has_no_key_argument_and_is_importable_alone(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+# --------------------------------------------------------------------------- render-bench（渲染测量，只读）
+def test_render_bench_is_a_closed_set_task_without_model_or_network():
+    t = A.TASKS["render-bench"]
+    assert not t.needs_model_conf and t.networks == ("direct",) and not t.accepts_package
+    assert t.modes == A.RENDER_BENCH_MODES
+    for m in A.RENDER_BENCH_MODES:
+        assert A.validate_test_args(t, [], None, "direct", mode=m) is None
+    assert A.validate_test_args(
+        t, [], None, "direct", mode="C:\\Python313"
+    )  # 路径 / 解释器不是自由输入
+    assert A.validate_test_args(t, ["tests/test_x.py"], None, "direct")
+    assert t.claim and t.unverified and t.timeout_s == A.RENDER_BENCH_TIMEOUT_S
+
+
+def test_render_bench_modes_pick_interpreter_and_location_from_constants():
+    assert A.render_bench_plan("rotation") == {
+        "driver_mode": "rotation",
+        "store": False,
+        "drive": None,
+    }
+    assert A.render_bench_plan("all")["driver_mode"] == "all"
+    assert A.render_bench_plan("cold-store") == {
+        "driver_mode": "cold",
+        "store": True,
+        "drive": None,
+    }
+    assert A.render_bench_plan("cold-drive-d")["drive"] == "d"
+    assert A.render_bench_plan("cold-drive-e")["drive"] == "e"
+
+
+def test_store_python_path_needs_the_alias_file(tmp_path):
+    env = {"LOCALAPPDATA": str(tmp_path)}
+    assert A.store_python_path(env) is None
+    alias = tmp_path / "Microsoft" / "WindowsApps" / "python.exe"
+    alias.parent.mkdir(parents=True)
+    alias.write_bytes(b"")
+    assert A.store_python_path(env) == alias
+
+
+def test_render_bench_driver_is_deployed_and_listed_in_help():
+    text = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert 'HERE / "render_bench_driver.py"' in text
+    assert "render-bench：rotation | cold | cold-store | cold-drive-d | cold-drive-e | all" in text
+    assert "render-bench" in W.build_parser().parse_args(["test", "render-bench"]).task
+
+
+def test_render_bench_fixtures_are_six_minimal_numpy_matplotlib_scripts():
+    fx = ROOT / A.RENDER_BENCH_FIXTURES
+    scripts = sorted(fx.glob("*.py"))
+    assert len(scripts) == 6
+    reg = json.loads((fx / "tavotto_registry.json").read_text(encoding="utf-8"))["scripts"]
+    assert sorted(reg) == [p.name for p in scripts]
+    for p in scripts:
+        src = p.read_text(encoding="utf-8")
+        assert "import numpy" in src and "import matplotlib.pyplot" in src and "def main" in src
+        assert reg[p.name]["stems"] == [p.stem]
+    assert sum(p.stat().st_size for p in fx.rglob("*") if p.is_file()) < 20_000
+
+
+def test_render_bench_driver_statistics_and_timing_whitelist():
+    import render_bench_driver as R
+
+    assert R.pct([], 0.9) is None
+    assert R.pct([5.0], 0.9) == 5.0
+    assert R.pct([float(i) for i in range(1, 11)], 0.9) == 9.0  # 最近邻：真实出现过的一次耗时
+    assert R.pct([float(i) for i in range(1, 11)], 1.0) == 10.0
+    assert R.summarize([1.0, 2.0, 3.0])["median"] == 2.0
+    kept = R.numeric_timings(
+        {
+            "server_ms": 12.5,
+            "script_build_ms": 3,
+            "bad": "x",
+            "nan": float("nan"),
+            "neg": -1,
+            "flag": True,
+            "huge": 9e9,
+        }
+    )
+    assert kept == {"server_ms": 12.5, "script_build_ms": 3.0}
+    assert R.variant(None, 1) == []
+    assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 1)[0]["value"] == 8.5
+    assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 2)[0]["value"] == 7.5
+
+
 # --------------------------------------------------------------------------- convert-live 的地区政策看护
 def test_no_official_vendor_modes_or_providers_exist_for_convert_live_or_secret_init():
     """docs/rules/ci/windows-lab.md:122-124（地区政策）：Lab 在中国大陆，Anthropic / OpenAI 的真实模型调用保持 BLOCKED，

@@ -258,6 +258,30 @@ python3 scripts/winlab/winlab.py reports --id <run_id>
 Lab 在中国大陆，convert-live 只走国内合规的 DeepSeek、只用 `direct` 出口；不提供 Anthropic / OpenAI 官方模型的模式，
 经代理出口调用也不行（见 `docs/rules/ci/windows-lab.md`「地区政策」，授权不改变）。
 
+### 渲染测量（render-bench，只读）
+
+不起模型、不联网、不装包。起 Tavotto 后端（Lab venv 源码态，`127.0.0.1` 随机端口，一次性数据目录），对仓库内置的 6 张最简 matplotlib 图
+（`scripts/winlab/fixtures/renderbench/`）直接打 `/api/engine/render`，用来量「越改越慢」类反馈：
+
+- **池上限轮转**：同一个后端里依次对 2 / 3 / 4 / 6 张图轮流渲染，每组先预热一遍（不计入）再正式 20 轮；每次记 `server_ms` / `wall_ms` /
+  是否冷启动（响应 timings 里有 `script_build_ms`），每组前后数 `app.log` 里「LRU 淘汰」行数，给中位数 / P90。
+- **冷启动分解**：同一张图每次**重起后端 + 全新数据目录**后渲染第一次，共 5 次，记 timings 里所有数字段与后端就绪耗时。
+- **解释器探针**（每个模式都跑）：渲染解释器 `-c "import sys"`、`import numpy, matplotlib`、`import matplotlib.pyplot` 各 5 次，用来分开「解释器入口慢」与「导入 / 磁盘慢」。
+
+```sh
+python3 scripts/winlab/winlab.py test render-bench --mode rotation     --ref HEAD   # 轮转 + 探针
+python3 scripts/winlab/winlab.py test render-bench --mode cold         --ref HEAD   # 冷启动 + 探针；项目在 cache 下含中文与空格的路径
+python3 scripts/winlab/winlab.py test render-bench --mode cold-store   --ref HEAD   # 渲染解释器 = 微软商店版 python 别名（WindowsApps\python.exe）
+python3 scripts/winlab/winlab.py test render-bench --mode cold-drive-d --ref HEAD   # 项目放在 D: 盘（cold-drive-e 同理）
+python3 scripts/winlab/winlab.py test render-bench --mode all          --ref HEAD   # rotation + cold + 探针
+```
+
+解释器与项目位置都由 `--mode` 选，写死在 `agent.py`，不收自由路径（没有透传通道）。`cold-store` 要求商店版 Python 已装且装了 numpy / matplotlib，
+别名不在就是 `environment_unavailable`；`cold-drive-*` 要求该盘存在、`tavotto-lab` 能在盘根建 `tavotto-rbench\`。
+前提同 `convert-live`：管理员 `admin deploy-agent` 之后才生效（部署 `render_bench_driver.py`，只在用户在场时由用户安排）。
+报告 `bench.rotation[].sets[]` / `bench.cold[]` / `bench.probe[]` 是全部原始数据，`rotation_summary` 是一眼表；
+只测 Python 池控制面，没有 `tavotto-workerd` 二进制时 workerd 记为 `skipped`。驱动在 Mac 上也能直接跑（`python scripts/winlab/render_bench_driver.py --help`），用于出基线。
+
 ### 黄金快照
 
 腾讯云 CAM 子账号只授 `lighthouse:DescribeInstances` / `DescribeSnapshots` / `CreateInstanceSnapshot`
