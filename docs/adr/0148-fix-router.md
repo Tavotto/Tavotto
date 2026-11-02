@@ -48,6 +48,20 @@ type Remedy =
    **优先于** `ai_fix` / `connect_ai`（不把这类失败送进 AI 修复）。字段表不变（仍是 `silent`），只多一条 golden 向量；
    「给不给按钮」的事实由 `prepsession._native_confirm_offered` 量好放进 `Ctx.confirm_native`，路由本身不判来源。
 
+   **修订 2026-11-01（TVD-H1M5，维护者批准）**：第 4、5 条之间插一条——失败码是 `script_error`，且 `Ctx.revertible_ai_edit` 有值
+   → `{ kind: 'revert_ai_edit'; session }`（闭集多一种，字段 `session` = 那次 AI 会话 id）。事实由 `prepsession._ai_edit_fact` 量：
+   脚本此刻的字节正是**最近一次改过它的** AI 会话结束时留下的那一版（`ai_bridge.revertible_edit`，与回滚的 `_refuse_stale_revert`
+   同一条判据，所以卡上的回滚不会撞 `ai_revert_conflict`），**且**那次修改开始之前本会话账本里有跑通的尝试（后端重启后账本空，
+   不给——只少一个建议，不会错给）。失败卡：一句话「AI 改过之后运行出错了」+ 主按钮「回滚 AI 的修改」（与助手历史「回滚此次修改」
+   同一个端点，成功后沿用「再试一次」重跑），「使用你的 AI 来修复」仍是次按钮。不论给不给这个主按钮，报告的 `ai_edit`
+   （`{session, succeeded_before}`）都交给修复助手（`fixtools/runreport.py` 的 `recent_ai_edit`）：那次反馈里助手不知道脚本刚被
+   AI 改过，把「改前 native 成功、改后 safe 失败」读成运行方式差异，绕了一圈。只认脚本自己的错误：守卫拦截 / 缺包 / 版本类
+   仍走各自更确定的出路；也不绕过脚本自带的检查（那是用户要的判据）。看护 `tests/test_ai_edit_revert_remedy.py`。
+   回滚之后的重跑是「`recheck` → 新修订的运行」：为此 `SessionService.check(force=True)`（`recheck`）在会话没标失效、指纹也没变时，
+   再按认领时的同一条判据（`preparation.stale_reason`）核一次计划，不成立就换新计划——之前「跑过一次 → 脚本被改写 → 重新检查」
+   保留旧计划，随后的 `run` 必然 `preparation_plan_stale`（指纹不含源码修订，`_note_source_change` 对已跑过的修订不提前标失效）。
+   直接回滚（助手面板没列着那次会话）同样经 `rebindRenamedIdentities` 把改名改回去（ADR 0083 §五）。
+
 **一次「运行」最多走 3 种修法**：读 `attempt_history` 里本次 run 的 `changed`（换了执行语义 = `switch_native`，换了解释器 =
 `change_python`）加本次 run 里装过包（`install_packages`），已满 3 种再失败就是 `feedback`；同一种修法一次运行只走一回。
 
@@ -81,3 +95,26 @@ AI 环境修复任务本身（PR D）；`change_python` 的执行（PR B）；AI
 * 规则全文：`docs/rules/backend/preparation-and-receipts.md`、`docs/rules/frontend/readiness-and-left-shell.md` 各有一句指向本 ADR；看护
   `tests/test_fixrouter.py` / `tests/test_fixrouter_pair.py` / `tests/test_fixrouter_report.py`、`web/src/lib/preparationText.test.ts`、
   `web/src/components/PreparationCard.test.tsx`（「智能修复」一节）。
+
+## 修订 2026-11-01：装不了的缺包不再以 AI 为主按钮；Python 版本不合时一键改用现成环境（维护者裁决）
+
+1. **装不了的缺包**（`missing_dependency` 且 `missing_installable` 为假，或包名认不出——私有库 / 本地模块 / conda-only）：
+   主按钮不是「使用你的 AI 来修复」。AI 不能凭空变出一个私有库，确定的出路是让用户指向装了它的 Python。
+   * 新 remedy 种类 **`choose_environment`**（无字段；不带模块名，诊断包里的 `remedy` 因此不含用户的模块名）：主按钮是既有的
+     「选择运行环境」（`pick_environment`，文案「换用我的 Python」），AI 修复退为**次按钮**（`aiFix` 照常摆，每张失败卡都有 AI 次入口的规则不变）。
+     没连 AI 时同样不以「连接 AI」为主按钮。
+   * 缺的是什么都说不出（`Ctx.missing_named` 为假）：没有可指给用户的东西 -> `feedback`。
+   * 范围只有「装不了」这一支：装过一次包还缺、以及脚本自身报错等确实适合 AI 的失败，路由与主按钮**不变**。
+   * 路由顺序：缺依赖（可装 -> `install_packages`；装不了 -> `choose_environment` / `feedback`）仍在写不了缓存 / 版本类之前。
+2. **Python 版本不合**：`change_python` 多一个字段 **`env`**（`{id, generation, name, version}` 或 `null`，无路径），`to` 现在真的有值。
+   * 后端（`prepsession._python_switch_target`，失败那一刻只读）：目标范围取 `pyversionfix.required_span`，`to` = 范围内最高小版本；
+     候选取 `envadvice.recommend` 的公开投影里**体检确认健康**、版本落在范围内（含补丁位约束）、**不是内置 runtime**、不是当前环境的，
+     按 `userenvs.rank`（来源档位 → 官方验证 → Python 新）挑第一个。没量过（`unchecked`）的候选不冒充满足。全局显式解释器压着时
+     （采用会 409）不给 `env`。没有候选 `env: null`。
+   * 前端：有 `env` -> 主按钮「改用 <环境名>」，点一下走既有候选采用（`adoptCandidate`：后端现场再体检、环境代对不上就拒绝，原文回到卡上、不重跑），
+     成功再「打开并运行」（与 #1595 的清选择重跑同一个模式）；`env` 为 `null` 才进选择器。
+   * **用户显式选过的环境不碰**：按钮永远是用户点了才切，路由与渲染都不执行任何切换；另外 `prepsession._plan_python_change`
+     （版本不合时的自动另建受管环境）遇到用户显式挑过的项目环境（`projectenv` 授权来源 = confirmed、且不是默认链条）时让路，不再把
+     「记住的解释器」悄悄换掉——此时只剩失败卡上的按钮。内置 runtime 永远不是 `env` 的目标。
+   * `interpreter_cache_denied` 的 `change_python` 仍是 `to: null, env: null`（#1595 的「改用 Tavotto 自带的 Python」不变）。
+3. 同源对：种类闭集多 `choose_environment`、`change_python` 字段多 `env`；golden 向量与 `fixRemedy.ts` 的字段表同步，`PrepPrimary` 多 `switch_python`。

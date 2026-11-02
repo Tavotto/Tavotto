@@ -71,7 +71,7 @@ import { markWorkspaceOpenedAfter, startVersionCheckpoints } from '@/hooks/useVe
 import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionRouting } from '@/hooks/useSelectionRouting'
-import { useUiStore } from '@/store/uiStore'
+import { isRightOverlay, useUiStore } from '@/store/uiStore'
 import { startValidation } from '@/store/validationStore'
 import { startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
 import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
@@ -172,7 +172,10 @@ function Workspace() {
   const showTabs = !fastEdit || multiCanvas
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
-  const overlay = useWorkspaceLayout() === 'narrow'
+  const layoutKind = useWorkspaceLayout()
+  const overlay = layoutKind === 'narrow'
+  // 属性栏 < 1280 且没固定时也是覆盖层（G1）；左抽屉与遮罩仍只在 narrow 覆盖
+  const rightOverlay = useUiStore(isRightOverlay)
   // 收起时先把退场播完再卸载；退场时长与 --animate-drawer-out 同源
   const left = usePresence(leftOpen, DURATION.fast)
   const right = usePresence(rightOpen, DURATION.fast)
@@ -319,7 +322,7 @@ function Workspace() {
                 <ForeignScriptCard />
               </div>
             </div>
-            {right.mounted && <Inspector overlay={overlay} state={right.state} />}
+            {right.mounted && <Inspector overlay={rightOverlay} state={right.state} />}
             {/* ⌥⌘S 命名小框：挂在工作面板里，居中于面板自己（不是整行，左栏 / 属性栏开合都不偏） */}
             <NamedNodeQuickBox />
           </div>

@@ -35,7 +35,7 @@
     "mm": "{{value}} mm",
     "mmPair": "{{a}}, {{b}} mm",
     "mmSize": "{{w}} × {{h}} mm",
-    "ppi": "{{value}} ppi",
+    "ppi": "{{value}} dpi",
     "pxSize": "{{w}} × {{h}} px"
   },
   "mixed": "多个值",

@@ -190,11 +190,11 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             onClick={act(store.resume)}
             title={ns('resumeHint')}
           >
-            <Play size={ICON_SIZE.xs} />
+            <Play size={ICON_SIZE.sm} />
             {ns('resume')}
           </Button>
           <Button variant="secondary" size="sm" disabled={busy} onClick={act(store.detach)}>
-            <Unplug size={ICON_SIZE.xs} />
+            <Unplug size={ICON_SIZE.sm} />
             {ns('detach')}
           </Button>
           <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>

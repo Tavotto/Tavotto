@@ -306,6 +306,11 @@ class ExecutionSpec:
     #: 由 `safe_spec` 按 `shadowscript.lookup(project_root, target, write_roots)` 取，只在带写入根的运行里才可能非空。
     #: 机器相关路径，**不进 `stable_payload()`**；`worker_argv` 的 `--script-source` 唯一出处。
     script_source: str | None = None
+    #: 用户在失败卡上选了「跳过这个文件夹」的目录（ADR 0154，`engine/pathignore.paths_for`，绝对路径）：worker / bridge
+    #: 的顶层导入不再去那里找（`bridgeboot.IgnoredImportPaths`）。safe 与 native **同一个字段、同一个 argv 参数**
+    #: （`--ignore-paths`），所以 workerd 的 spawn 规格哈希天然随它变。机器相关路径，**不进 `stable_payload()`**。
+    #: 空元组 = 没有决定，argv 逐字节不变（golden）。
+    ignored_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -380,6 +385,10 @@ class ExecutionSpec:
             list(self.input_remap)
         ) != list(self.input_remap):
             raise ValueError(f"input_remap 必须是校验过的规则元组: {self.input_remap!r}")
+        if not isinstance(self.ignored_paths, tuple) or not all(
+            isinstance(p, str) and p for p in self.ignored_paths
+        ):
+            raise ValueError(f"ignored_paths 必须是非空字符串元组: {self.ignored_paths!r}")
         if self.write_roots is not None:
             if not isinstance(self.write_roots, tuple) or not all(
                 isinstance(r, str) and r for r in self.write_roots
@@ -414,6 +423,7 @@ class ExecutionSpec:
         out["input_remap"] = [dict(r) for r in self.input_remap]
         out["write_roots"] = None if self.write_roots is None else list(self.write_roots)
         out["script_source"] = self.script_source
+        out["ignored_paths"] = list(self.ignored_paths)
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -536,6 +546,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         stdin=data.get("stdin", STDIN_INHERIT) or STDIN_INHERIT,
         write_roots=(None if data.get("write_roots") is None else tuple(data.get("write_roots"))),
         script_source=data.get("script_source") or None,
+        ignored_paths=tuple(data.get("ignored_paths") or ()),
     )
 
 
@@ -575,6 +586,7 @@ def safe_spec(
     argv: tuple[str, ...] | list[str] = (),
     run_config: str = "",
     write_roots: tuple[str, ...] | list[str] | None = None,
+    ignored_paths: tuple[str, ...] | list[str] = (),
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
@@ -610,6 +622,7 @@ def safe_spec(
         input_remap=tuple(figcapture.clean_remap_rules(list(input_remap or ()))),
         run_config=run_config,
         write_roots=None if write_roots is None else tuple(write_roots),
+        ignored_paths=tuple(ignored_paths or ()),
         script_source=(
             shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
             if write_roots is not None
@@ -626,6 +639,7 @@ def native_spec(
     project_root: str,
     target_kind: str = TARGET_SCRIPT,
     argv: tuple[str, ...] = (),
+    ignored_paths: tuple[str, ...] | list[str] = (),
 ) -> ExecutionSpec:
     """native 档的**唯一权威构造函数**（ADR 0014 §2 / ADR 0020）。
 
@@ -650,6 +664,7 @@ def native_spec(
         project_root=project_root,
         target_kind=target_kind,
         argv=argv,
+        ignored_paths=ignored_paths,
     )
 
 
@@ -664,6 +679,7 @@ def desktop_native_spec(
     run_config: str = "",
     env: dict[str, str] | None = None,
     stdin: str = STDIN_NULL,
+    ignored_paths: tuple[str, ...] | list[str] = (),
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -688,6 +704,7 @@ def desktop_native_spec(
         env=env,
         env_source=ENV_SOURCE_SIDECAR,
         stdin=stdin,
+        ignored_paths=ignored_paths,
     )
 
 
@@ -704,6 +721,7 @@ def _native(
     env: dict[str, str] | None = None,
     env_source: str = "",
     stdin: str = STDIN_INHERIT,
+    ignored_paths: tuple[str, ...] | list[str] = (),
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -731,6 +749,7 @@ def _native(
         owner=owner,
         env_source=env_source,
         stdin=stdin,
+        ignored_paths=tuple(ignored_paths or ()),
     )
 
 
@@ -786,6 +805,12 @@ def bridge_argv(
         # 桌面拥有的启动：runner 观察脚本读到的项目内文件与 import 的本地模块（与 safe 同口径），native 成功记录据此
         # 带上 helper / 数据依据、可被沿用（#1047）。terminal 拥有的命令行逐字节不变（golden）
         out.append("--observe-inputs")
+    if spec.ignored_paths:
+        # ADR 0154：用户选了「跳过这个文件夹」的目录。只在有决定时多两个 token——没有它的命令行逐字节不变（golden）
+        out += [
+            "--ignore-paths",
+            json.dumps(list(spec.ignored_paths), ensure_ascii=False, separators=(",", ":")),
+        ]
     out.append("--")
     out.extend(spec.argv)
     return out
@@ -848,5 +873,12 @@ def worker_argv(
         out += [
             "--write-roots",
             json.dumps(list(spec.write_roots), ensure_ascii=False, separators=(",", ":")),
+        ]
+    if spec.ignored_paths:
+        # ADR 0154：用户选了「跳过这个文件夹」的目录（两个 token，没有决定时 argv 逐字节不变）；同样进 argv，
+        # workerd 的 spawn 规格哈希天然不同
+        out += [
+            "--ignore-paths",
+            json.dumps(list(spec.ignored_paths), ensure_ascii=False, separators=(",", ":")),
         ]
     return out

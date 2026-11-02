@@ -111,6 +111,8 @@ def test_every_check_id_has_a_registered_severity():
     """检查项忘了登记等级 = 用户以为它通过了。兜底是 warn，但不许靠兜底过日子。"""
     ids = _all_check_ids()
     p = profiles.load("lab-publication-v1")
+    # `font-size-recommended` 只在 profile 带 `advisories` 时才出现，但自建 / 导入的规范也可能带，
+    # 所以三份内置规范都登记成 suggestion（不然兜底成 warn）。
     missing = sorted(i for i in ids if i not in p["severity"])
     assert not missing, f"这些检查项没在 lab-publication-v1 的 severity 表里登记: {missing}"
 

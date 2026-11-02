@@ -34,4 +34,16 @@ describe('engineErrorMsg 带结构化 params', () => {
     expect(text).toContain('.work_deps')
     expect(text).not.toContain('{{')
   })
+
+  it('私有依赖文件夹是为别的 Python 版本装的：点名文件夹与两个版本，不露占位符', () => {
+    const text = formatMessage(
+      engineErrorMsg(
+        TEX('import_folder_abi_mismatch', { folder: '.kegg_python', abi: '3.12', current: '3.14' }, 'ImportError: cannot import name'),
+      ),
+    )
+    expect(text).toContain('.kegg_python')
+    expect(text).toContain('3.12')
+    expect(text).toContain('3.14')
+    expect(text).not.toContain('{{')
+  })
 })

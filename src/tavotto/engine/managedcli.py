@@ -75,7 +75,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import atomicio, brand, config, logsafe, tlstrust
+from . import atomicio, brand, config, logsafe, msixmigrate, tlstrust
 from .runtime import CREATE_NO_WINDOW
 
 LOG = logging.getLogger("tavotto.managedcli")
@@ -409,7 +409,25 @@ def offered(name: str) -> bool:
 
 # --------------------------------------------------------------- 路径
 def root_dir(name: str) -> Path:
+    # `cli/<名>/` 还不存在：MSIX 宿主私有区里若有同名的（#1574 之前装进去的）先搬回来，入口文件核过才算数；
+    # 搬不成 = 当没装，照旧走下载。进程内每个名字只问一次。
+    msixmigrate.adopt_dir(DIRNAME, name, validate=lambda cand: _adopted_cli_ok(name, cand))
     return config.data_dir() / DIRNAME / name
+
+
+def _adopted_cli_ok(name: str, candidate: Path) -> bool:
+    """搬来的 `cli/<名>/`：指针认得出、指针指的版本目录里入口文件在（版本目录是内容寻址的，名字里带树摘要前缀）。"""
+    try:
+        ptr = json.loads((candidate / POINTER_NAME).read_text(encoding="utf-8"))
+        cli = cli_for(name)
+    except (OSError, ValueError, KeyError):
+        return False
+    ident = ptr.get("id") if isinstance(ptr, dict) else None
+    if cli is None or not isinstance(ident, str):
+        return False
+    if not re.fullmatch(r"\d+\.\d+\.\d+-[0-9a-f]{12}", ident):
+        return False
+    return (candidate / ident / Path(*cli.entrypoint.split("/"))).is_file()
 
 
 def _under(path: Path, root: Path) -> Path:

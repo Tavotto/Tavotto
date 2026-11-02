@@ -280,8 +280,12 @@ def test_a_tool_that_needs_consent_shows_the_users_card_and_waits_for_the_answer
 def test_cancel_returns_a_blocked_tool_call_and_kills_the_cli_process(box, served):
     pid_file = box.tmp / "cli.pid"
     s, token = start_session(box, [sys.executable, "-c", FAKE_CLI_SLEEP, str(pid_file)])
+    # 假 CLI 先建文件、再写 pid：只等「文件在」会读到空串（Windows 慢腿上 ValueError: ''）。等到写完一个数字再读
     end = time.monotonic() + 10
-    while not pid_file.is_file() and time.monotonic() < end:
+    while time.monotonic() < end:
+        text = pid_file.read_text().strip() if pid_file.is_file() else ""
+        if text.isdigit():
+            break
         time.sleep(0.02)
     pid = int(pid_file.read_text())
     base = f"{served.url}/api/ai/fix/{s.id}/tool"

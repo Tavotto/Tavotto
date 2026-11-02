@@ -55,6 +55,16 @@ FALLBACK_MIN_FONT_SIZE_PT = 8.0
 #: 严格同源对：`web/src/lib/profile.ts` 的同名常量。
 FONT_FLOOR_TOL_PT = 0.005
 
+#: 页面宽能取的范围（mm）。严格同源对：`web/src/lib/pageRange.ts` 的 `PAGE_MM_MIN` / `PAGE_MM_MAX`。
+PAGE_MM_MIN = 10
+PAGE_MM_MAX = 1000
+#: 规则限定词闭集（期刊库 `journals.QUALIFIERS` 与栏位 `page_columns[].qualifier` 共用）。
+#: 严格同源对：`web/src/lib/profile.ts` 的 `QUALIFIERS`。
+QUALIFIERS = ("exact", "max", "min", "typical", "range", "recommended")
+#: 建议性提示（`advisories`）的检查 id 与角色闭集。严格同源对：profile.ts 同名常量。
+ADVISORY_CHECKS = ("font-size-recommended",)
+ADVISORY_ROLES = ("body_min", "script_min")
+
 #: journal 覆盖里允许深合并的子对象（其余键整体替换）
 _DEEP_KEYS = (
     "widths_mm",
@@ -191,10 +201,84 @@ def _validate(profile: dict, pid: str) -> None:
     for key, value in profile["severity"].items():
         if value not in SEVERITIES:
             raise ProfileError(f"profile {pid} 的 severity[{key}] 不是合法等级: {value!r}")
+    _validate_page_columns(profile.get("page_columns"), pid)
+    _validate_advisories(profile.get("advisories"), pid)
     widths = profile["widths_mm"]
     for key in ("single", "double"):
-        if not _is_number(widths.get(key)) or widths[key] <= 0:
-            raise ProfileError(f"profile {pid} 的 widths_mm.{key} 必须是正数")
+        # null = 这份规范没规定该栏宽（期刊底 journal-base-v1 就是这样：不拿占位数字
+        # 冒充规定）；写了就必须是正数。严格同源对：profile.ts `validateSpecShape`。
+        if widths.get(key) is None:
+            continue
+        if not _is_number(widths[key]) or widths[key] <= 0:
+            raise ProfileError(f"profile {pid} 的 widths_mm.{key} 必须是正数或 null")
+
+
+def _validate_page_columns(cols: object, pid: str) -> None:
+    """可选的有序栏位表 `[{id, label:{zh,en}, width_mm, qualifier}]`（期刊自有栏位）。"""
+    if cols is None:
+        return
+    if not isinstance(cols, list):
+        raise ProfileError(f"profile {pid} 的 page_columns 必须是数组")
+    seen: set[str] = set()
+    for i, c in enumerate(cols):
+        w = f"profile {pid} 的 page_columns[{i}]"
+        if not isinstance(c, dict):
+            raise ProfileError(f"{w} 必须是对象")
+        cid = c.get("id")
+        if not isinstance(cid, str) or not cid.strip() or cid in seen:
+            raise ProfileError(f"{w}.id 必须是非空且不重复的字符串")
+        seen.add(cid)
+        label = c.get("label")
+        if not isinstance(label, dict) or not all(
+            isinstance(label.get(k), str) and label[k].strip() for k in ("zh", "en")
+        ):
+            raise ProfileError(f"{w}.label 必须是 {{zh, en}} 两个非空字符串")
+        width = c.get("width_mm")
+        if not _is_number(width) or not PAGE_MM_MIN <= width <= PAGE_MM_MAX:
+            raise ProfileError(f"{w}.width_mm 必须在 {PAGE_MM_MIN}–{PAGE_MM_MAX} mm 内")
+        if c.get("qualifier", "exact") not in QUALIFIERS:
+            raise ProfileError(f"{w}.qualifier 不在闭集里")
+
+
+def _validate_advisories(adv: object, pid: str) -> None:
+    """可选的建议性提示表（期刊库折叠生成；只产生 suggestion 级提示，不是判据）。"""
+    if adv is None:
+        return
+    if not isinstance(adv, list):
+        raise ProfileError(f"profile {pid} 的 advisories 必须是数组")
+    for i, a in enumerate(adv):
+        w = f"profile {pid} 的 advisories[{i}]"
+        if not isinstance(a, dict):
+            raise ProfileError(f"{w} 必须是对象")
+        if a.get("check") not in ADVISORY_CHECKS or a.get("role") not in ADVISORY_ROLES:
+            raise ProfileError(f"{w}.check / role 不在闭集里")
+        if not _is_number(a.get("value_pt")) or a["value_pt"] <= 0:
+            raise ProfileError(f"{w}.value_pt 必须是正数")
+        for k in ("journal", "quote"):
+            if not isinstance(a.get(k), str) or not a[k].strip():
+                raise ProfileError(f"{w}.{k} 必须是非空字符串")
+
+
+def derive_page_columns(profile: dict) -> list[dict]:
+    """下游读栏位的**唯一形状**：写了 `page_columns` 就用它，否则由 `widths_mm` 派生
+    「单栏 / 双栏」两档（没规定的那档不出现）。严格同源对：`profile.ts` 的 `derivePageColumns`。"""
+    cols = profile.get("page_columns")
+    if isinstance(cols, list) and cols:
+        return [c for c in cols if isinstance(c, dict)]
+    widths = profile.get("widths_mm") or {}
+    out = []
+    for cid, zh, en in (("single", "单栏", "Single column"), ("double", "双栏", "Double column")):
+        w = widths.get(cid)
+        if _is_number(w):
+            out.append(
+                {
+                    "id": cid,
+                    "label": {"zh": zh, "en": en},
+                    "width_mm": w,
+                    "qualifier": "exact",
+                }
+            )
+    return out
 
 
 def validate_spec(profile: object, pid: str | None = None) -> dict:
@@ -220,10 +304,17 @@ def merge_journal(base: dict, journal: dict) -> dict:
 
 
 def list_profiles() -> list[dict]:
-    """全部可用 profile 的摘要（界面下拉用）。"""
+    """全部可用 profile 的摘要（界面下拉用）。
+
+    `listed: false` 的 profile（如期刊底 `journal-base-v1`，ADR 0155）只是别的东西的
+    底，不是一份可选规范——不进列表，但 `load()` 照常取得到。
+    严格同源对：`web/src/lib/profile.ts` 的 `listProfiles()`。
+    """
     doc = _load_document()
     out = []
     for pid, profile in doc["profiles"].items():
+        if profile.get("listed") is False:
+            continue
         out.append(
             {
                 "profile_id": pid,
@@ -233,6 +324,15 @@ def list_profiles() -> list[dict]:
             }
         )
     return sorted(out, key=lambda p: p["profile_id"] != doc.get("default_profile"))
+
+
+def all_profile_ids() -> list[str]:
+    """**可解析**的内置 profile id（含 `listed:false` 的底，如 `journal-base-v1`）。
+
+    「可列出」（`list_profiles`，给下拉用）与「可解析」是两件事：隐藏的底不进下拉，
+    但按 id 取规范（预检 / 导出 / MCP 走 `profilestore.resolve_spec`）必须取得到。
+    """
+    return list(_load_document()["profiles"])
 
 
 def default_profile_id() -> str:

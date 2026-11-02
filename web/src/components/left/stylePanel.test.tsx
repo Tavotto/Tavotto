@@ -378,6 +378,19 @@ describe('问题只在「问题」面板里看（用户 2026-09-26）：样式�
     expect(row.children).toHaveLength(2)
     expect(row.className).toContain('grid-cols-[var(--insp-label')
   })
+
+  it('按侧栏宽度自适应（容器查询，不跟窗口）：滚动区是容器；行有宽 / 窄两档，控件行在宽档摊平成行网格的列', async () => {
+    await seed()
+    await mount()
+    const scroll = container.querySelector<HTMLElement>('[data-style-scroll]')!
+    expect(scroll.className).toContain('@container')
+    const row = container.querySelector<HTMLElement>('[data-style-row="title"]')!
+    expect(row.className).toContain('@min-[350px]:grid-cols-')
+    expect(row.className).toContain('@max-[262px]:grid-cols-1')
+    for (const line of container.querySelectorAll('[data-style-line]')) {
+      expect(line.className, `${line.getAttribute('data-style-line')} 宽档要摊平`).toContain('@min-[350px]:contents')
+    }
+  })
 })
 
 describe('「跟随样式」是可折叠的一节（2026-10-07 设计审计 §10.3）', () => {

@@ -107,3 +107,19 @@ override 的路完全相同），四个格式出自同一次运行；没有 EPS 
   TIFF（Deflate、dpi 标签、zlib 解得开）。
 * `web/src/lib/exportRequest.test.ts` / `ExportDialog.test.tsx`：可用性闭集、请求不带不可用的
   EPS、只勾 EPS 切画布时按钮灰、TIFF 让分辨率行出现。
+
+## 5. 补记（2026-10-31，QA-WIN-20）：带画布标注的原图 EPS = 外层 EPS 叠加
+
+单图编辑里画布上的文字 / 箭头 / 形状要随原图一起导出（`original.objects`，后端 `_export_produce_original_annotated`）。PDF / SVG / PNG / TIFF 由 RenderCore 合成；
+EPS 仍然**只有 worker 的 matplotlib 写得出原图**（§1 不变），所以：
+
+1. worker 照旧出原图 EPS（含 `eps_needs_script` / `eps_needs_live_figure` 等原有逐项失败码）；
+2. 父进程写一个**外层 EPS**（`engine/epsoverlay.py`）：DSC 头（`BoundingBox` = 图幅），按 Adobe EPSF 嵌入惯例把原图 EPS **原样**放进
+   `%%BeginDocument` … `%%EndDocument`（前后保存 / 恢复 VM、字典栈、操作数栈，`/showpage {} def`，裁到嵌入 EPS 的包围盒）；
+3. 其后叠标注：`rendercore/epswriter.py` 把 `plan.compile_page` 为同一组标注编出的 IR（路径、填充 / 描边 / 线型 / 裁剪 / 变换、已排好的字形轮廓）写成 PostScript 运算符。
+   几何只取这一份 IR，不另写标注布局；文字是批准字体的字形轮廓路径（与 SVG 写入器的 outlines 同源），不依赖 PS 字体。
+
+PostScript 没有透明：标注含常量 alpha<1、透明组、位图、外来页时，EPS 这一项逐项失败 `eps_annotations_unsupported`（params `operation`），其余格式照常交付，**不静默丢标注、
+不静默变不透明**。**不使用 Ghostscript 或任何外部转换程序**（Artifex 双许可会重新引入商业版阻断项，`docs/legal/COMMERCIAL_EDITION_RIGHTS_POLICY.md`；与 ADR 0072 去 PyMuPDF 同因）；
+RenderCore 能力表里整版画布的 `eps` 仍是 `unsupported`，EPS 叠加只服务这一条原图路径。
+看护：`tests/test_export_original_annotations.py`（外层结构 / 原样嵌入 / 无位图运算符 / 半透明逐项失败；本机有 gs 时**仅在测试里**把 EPS 栅格化与同请求的 PNG 比标注区域）。

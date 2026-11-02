@@ -651,7 +651,7 @@ function TreeView({
             data-element-isolate
             className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
           >
-            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+            <Crosshair size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />
             <span className="min-w-0 truncate">{isolatedLabel}</span>
             <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
               <X size={ICON_SIZE.xs} />
@@ -827,7 +827,9 @@ const ElementRow = memo(function ElementRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
-  const { prefix, name: rest } = splitTypePrefix(name)
+  const { prefix, name: restRaw } = splitTypePrefix(name)
+  // 类型词与内容同一种灰（前缀自带一个空格分隔），内容不再包中文弯引号（可达名 / title 仍用原串）
+  const rest = prefix ? restRaw.replace(/^[“"‘']/, '').replace(/[”"’']$/, '') : restRaw
 
   return (
     <li
@@ -896,7 +898,7 @@ const ElementRow = memo(function ElementRow({
       <TreeIcon icon={roleIcon(role)} />
 
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
-        {prefix && <span className={cn('font-normal', selected ? 'text-ink-2' : 'text-ink-3')}>{prefix}</span>}
+        {prefix}
         {rest}
       </span>
 
@@ -916,7 +918,7 @@ const ElementRow = memo(function ElementRow({
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
       {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
-      {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
+      {hidden && <EyeOff size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
       {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}
       <span className="flex shrink-0" onPointerDown={(e) => e.stopPropagation()}>

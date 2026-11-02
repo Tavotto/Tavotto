@@ -130,8 +130,8 @@ test('show-only 项目：素材库普通入口 → Runtime Figure → 画布 →
 
   // undo 两次（线宽、字号各一条历史）→ redo 两次回来（当前面板显示的是
   // 曲线：第一次 redo 恢复的是标题字号，第二次才轮到曲线的线宽）
-  await page.getByRole('button', { name: '撤销' }).click()
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
   await page.getByRole('button', { name: '重做' }).click()
   await page.getByRole('button', { name: '重做' }).click()
@@ -190,7 +190,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   await width.press('Enter')
   await expect(panel.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
   // undo/redo 一轮（结束时两条编辑都在）
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
   // 这份夹具只有一个面板。对象身份来自实际画布；首次防抖前恢复索引可能尚不存在，
   // 也可能仍指向另一份排版，不能拿它猜当前文档的写盘槽位。

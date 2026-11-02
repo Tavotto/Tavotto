@@ -573,24 +573,92 @@ def _is_absolute_component(text: str) -> bool:
     return text.startswith(("/", "\\")) or bool(re.match(r"[A-Za-z]:", text))
 
 
-def _literal_dir(node: ast.AST):
+#: 能按名字动态改写模块命名空间的内置调用：出现任何一个，`_dir_consts` 整份不推断
+_NAMESPACE_WRITERS = frozenset(
+    {"globals", "vars", "locals", "exec", "eval", "setattr", "__import__"}
+)
+
+#: 模块层「只绑定一次」的名字 → (绑定行号, 值表达式)；`_dir_consts` 产出，`_dir_value` 只拿它解析目录表达式里的名字
+_DirConsts = dict[str, tuple[int, ast.expr]]
+
+
+def _dir_consts(tree: ast.AST) -> _DirConsts:
+    """`ROOT = Path(__file__).resolve().parent` 这类**模块层无条件**、整份文件里**只绑定这一次**的名字（反馈包 TVD-705N）。
+
+    保守判：任何作用域里同名的再绑定（赋值 / 增量赋值 / for / with / except / import / def / class / match / del）都算一次，
+    出现 `global` / `nonlocal` 声明直接不认；有星号导入或 `globals()` / `exec` 等动态改写（`_NAMESPACE_WRITERS`）整份不推断；只认 `tree.body` 顶层的单目标 `Name = <值>`（含带注解的）。值认不认得出
+    由 `_dir_value` 在用到时再判。"""
+    counts: dict[str, int] = {}
+    banned: set[str] = set()
+
+    def bump(name: str) -> None:
+        counts[name] = counts.get(name, 0) + 1
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bump(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                if a.name == "*":
+                    return {}  # 星号导入能悄悄改写任何名字（Codex #1582 P2）：整份不推断
+                bump(a.asname or a.name.split(".")[0])
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _NAMESPACE_WRITERS
+        ):
+            return {}  # `globals()[...] =` / `exec(...)` 之类按名字动态改写命名空间：同上
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bump(node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bump(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            banned.update(node.names)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            bump(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bump(node.rest)
+    out: _DirConsts = {}
+    for stmt in getattr(tree, "body", ()):
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target, value = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            target, value = stmt.target, stmt.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and counts.get(target.id) == 1 and target.id not in banned:
+            out[target.id] = (stmt.lineno, value)
+    return out
+
+
+def _literal_dir(node: ast.AST, consts: _DirConsts | None = None, line: int | None = None):
     """`sys.path.append/insert` 的目录实参里，**只由 `__file__` 所在目录与字符串字面量拼出**的那类表达式 →
     相对于「这份文件所在目录」的路径段元组；认不出（含任何变量 / 环境 / cwd 相关）回 None。
 
     认的形状：`os.path.dirname(__file__)`（含 abspath / realpath 包装）、`os.path.join(<目录>, "a", "b")`、
-    `Path(__file__).parent`（含 `.resolve()` / `.absolute()` / 链式 `.parent`）、`<目录> / "a"`、`str(<目录>)`。"""
-    val = _dir_value(node, 0)
+    `Path(__file__).parent`（含 `.resolve()` / `.absolute()` / 链式 `.parent`）、`<目录> / "a"`、`str(<目录>)`。
+    给了 `consts`（`_dir_consts`）与调用所在行 `line` 时，表达式里的名字若是那一行**之前**模块层只绑定一次的名字，按它的值认
+    （值本身也得是这些形状）；其余变量照旧不认。"""
+    val = _dir_value(node, 0, consts, line)
     if val is not None and val[0] == "D":
         return val[1]
     return None
 
 
-def _dir_value(node: ast.AST, depth: int):
+def _dir_value(
+    node: ast.AST, depth: int, consts: _DirConsts | None = None, line: int | None = None
+):
     """内部值：`("F",)` = `__file__`；`("D", segs)` = 目录；`("S", text)` = 字符串字面量。"""
     if depth > _MAX_DIR_EXPR_DEPTH:
         return None
     if isinstance(node, ast.Name) and node.id == "__file__":
         return ("F",)
+    if isinstance(node, ast.Name):
+        bound = consts.get(node.id) if consts and line is not None else None
+        if bound is None or bound[0] >= line:
+            return None
+        # 值里的名字只能引用更早绑定的名字（自引用 / 循环由行号挡住）
+        return _dir_value(bound[1], depth + 1, consts, bound[0])
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return ("S", node.value)
     if isinstance(node, ast.Call):
@@ -601,17 +669,17 @@ def _dir_value(node: ast.AST, depth: int):
         if fn in _PATH_WRAPPERS:
             if len(args) != 1:
                 return None
-            inner = _dir_value(args[0], depth + 1)
+            inner = _dir_value(args[0], depth + 1, consts, line)
             return inner if inner is not None and inner[0] in ("F", "D") else None
         if fn in ("os.path.dirname", "dirname"):
-            return _parent(_dir_value(args[0], depth + 1)) if len(args) == 1 else None
+            return _parent(_dir_value(args[0], depth + 1, consts, line)) if len(args) == 1 else None
         if fn in ("os.path.join", "join"):
-            first = _dir_value(args[0], depth + 1) if args else None
+            first = _dir_value(args[0], depth + 1, consts, line) if args else None
             if first is None or first[0] != "D":
                 return None
             segs = list(first[1])
             for a in args[1:]:
-                part = _dir_value(a, depth + 1)
+                part = _dir_value(a, depth + 1, consts, line)
                 if part is None or part[0] != "S" or _is_absolute_component(part[1]):
                     return None  # 绝对 / 带盘符的分量会丢掉前面的目录（Python 语义）：不当作相对本文件的路径
                 segs += [x for x in _SEP_RE.split(part[1]) if x and x != "."]
@@ -621,14 +689,14 @@ def _dir_value(node: ast.AST, depth: int):
             and node.func.attr in ("resolve", "absolute")
             and not args
         ):
-            inner = _dir_value(node.func.value, depth + 1)
+            inner = _dir_value(node.func.value, depth + 1, consts, line)
             return inner if inner is not None and inner[0] in ("F", "D") else None
         return None
     if isinstance(node, ast.Attribute) and node.attr == "parent":
-        return _parent(_dir_value(node.value, depth + 1))
+        return _parent(_dir_value(node.value, depth + 1, consts, line))
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-        left = _dir_value(node.left, depth + 1)
-        right = _dir_value(node.right, depth + 1)
+        left = _dir_value(node.left, depth + 1, consts, line)
+        right = _dir_value(node.right, depth + 1, consts, line)
         if (
             left is None
             or right is None
@@ -654,9 +722,10 @@ def _parent(inner):
 class _Visitor(ast.NodeVisitor):
     """收集一份模块里的 import 及其上下文。"""
 
-    def __init__(self, via: str, aliases: _Aliases) -> None:
+    def __init__(self, via: str, aliases: _Aliases, consts: _DirConsts | None = None) -> None:
         self.via = via
         self.al = aliases
+        self.consts = consts or {}
         self.uses: list[ImportUse] = []
         self.dynamic: list[ImportUse] = []
         self.relatives: list[RelativeImport] = []
@@ -829,7 +898,7 @@ class _Visitor(ast.NodeVisitor):
                 and len(node.args) == 1
                 and _is_sys_path(fn.value, self.al)
             ):
-                segs = _literal_dir(node.args[0])
+                segs = _literal_dir(node.args[0], self.consts, node.lineno)
                 if segs is not None:
                     self.path_dirs.append((False, segs, node.lineno))
             elif (
@@ -840,7 +909,7 @@ class _Visitor(ast.NodeVisitor):
                 and isinstance(node.args[0], ast.Constant)
                 and node.args[0].value == 0
             ):
-                segs = _literal_dir(node.args[1])
+                segs = _literal_dir(node.args[1], self.consts, node.lineno)
                 if segs is not None:
                     self.path_dirs.append((True, segs, node.lineno))
         self.generic_visit(node)
@@ -1531,7 +1600,7 @@ class _Scanner:
         return self._visit(tree, via, rel)
 
     def _visit(self, tree: ast.Module, via: str, rel: str) -> _Parsed:
-        v = _Visitor(via, _collect_aliases(tree))
+        v = _Visitor(via, _collect_aliases(tree), _dir_consts(tree))
         v.visit(tree)
         if v.path_mutations:
             self.path_modified = True

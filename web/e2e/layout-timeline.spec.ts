@@ -250,9 +250,9 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await placeFigureAndBack(page)
   await addText(page, '甲版标注', 420, 240)
 
-  // ── 顶栏时钟钮打开时间线；等第一个自动节点 ──────────────────────────
-  const clock = await only(page.locator('[data-timeline-button]'))
-  await clock.click()
+  // ── 右栏「时间线」页签打开时间线（顶栏时钟钮已并入，审计 A2）；等第一个自动节点 ──
+  await expect(page.locator('[data-timeline-button]')).toHaveCount(0)
+  await (await only(page.locator('[data-inspector-tab="timeline"]'))).click()
   const drawer = await only(page.locator('[data-timeline-panel]'))
   await expect(drawer).toBeVisible()
   const nodes = drawer.locator('[data-timeline-node]')
@@ -260,7 +260,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(drawer.locator('[data-timeline-kind="auto"]')).not.toHaveCount(0)
 
   // ── ⌥⌘S 命名「投稿前」：就地小框，不打开抽屉 ──────────────────────
-  await clock.click() // 先收起抽屉：命名不该依赖它先开着
+  await (await only(page.locator('[data-inspector-tab="properties"]'))).click() // 先收起时间线：命名不该依赖它先开着
   await expect(drawer).toHaveCount(0)
   await page.keyboard.press('ControlOrMeta+Alt+S')
   const quick = await only(page.locator('[data-timeline-quick-name-input]'))
@@ -325,7 +325,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(leftOpen).toHaveCount(0)
   await expectCentered()
   // 抽屉里的按钮照旧：点开展开，Esc 只收输入
-  await clock.click()
+  await page.locator('[data-inspector-tab="timeline"]').click()
   await expect(drawer).toBeVisible()
   await (await only(drawer.locator('[data-timeline-name-open]'))).click()
   const again = await only(drawer.locator('[data-timeline-name-input]'))
@@ -336,7 +336,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-name-collapsed.png') })
 
   // ── 「命名」视图里找得到它（抽屉一直开着）──────────────────────────
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="all"]'))).click()
   // 命名节点只有这一个；名字是用户起的，按名字核对的是数据，不是定位
   const named = await only(drawer.locator('[data-timeline-node][data-timeline-named]'))
   await expect(named.locator('[data-timeline-name]')).toHaveText('投稿前')
@@ -368,7 +368,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-named-view.png') })
 
   // ── 继续改：再加一段文字 ───────────────────────────────────────────
-  await clock.click() // 收起抽屉，腾出画布
+  await page.locator('[data-inspector-tab="properties"]').click() // 收起时间线，腾出画布
   await expect(drawer).toHaveCount(0)
   await addText(page, '乙版标注', 420, 320)
   await expect(canvasText(page, '甲版标注')).toBeVisible()
@@ -376,7 +376,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 预览「投稿前」：模态对话框，画布一个字都不动 ────────────────────
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="all"]'))).click()
   // 点一行弹出对比小卡片：左「那一刻」右「现在」自动并排；卡片角上的「放大查看」才开模态
   await (await only(named.locator('[data-timeline-row]'))).click()
   const card = await only(page.locator('[data-timeline-card]'))
@@ -420,7 +420,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(canvasText(page, '甲版标注')).toBeVisible()
 
   // ── 时间线里出现「恢复前」节点；用它恢复回来 ──────────────────────
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="all"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="named"]'))).click()
   const before = drawer.locator('[data-timeline-node]', {
     has: page.locator('[data-timeline-moment="before_restore"]'),
   })
@@ -447,10 +447,14 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 重开（启动时恢复上次的项目）：时间线里多一个「打开项目」节点 ──────────
   // Workspace 挂上、文档恢复完之后才打这个点；在 projectStore 里打的那一下发生在
   // 时间线开始跑之前，是空的（Codex #679 P2）
+  // 重开前先改一处：内容与上一个关键时刻相同的「打开」不记（#1575，用户 2026-10-31 拍板），
+  // 撤销后的内容正好等于第二次恢复前那一条
+  await addText(page, '丙版标注', 420, 400)
   await expect(await only(page.locator('[data-topbar] [data-save-state]'))).toBeVisible()
   await page.waitForTimeout(1500) // 让撤销之后那次自动保存落盘
   await page.reload()
   await expect(canvasText(page, '甲版标注')).toBeVisible({ timeout: 30_000 })
+  await expect(canvasText(page, '丙版标注')).toBeVisible()
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
   // 两个「打开」：第一次启动那一次（那时画布还是空的——关键时刻空画布也打，Codex #679）

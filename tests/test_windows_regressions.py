@@ -4015,3 +4015,83 @@ def test_desktop_window_paste_test_compares_sizes_within_one_view():
     tail = body[body.index("assert len(new) == 1") :]
     assert "original[" not in tail, "粘贴后的尺寸不能和粘贴前量的原对象比：取景已经变了"
     assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"
+
+
+def test_msix_private_store_data_is_copied_back_without_overwriting(tmp_path, monkeypatch):
+    """#1574 善后：0.20 之前从 MSIX 宿主（Codex 桌面版）拉起的 Tavotto，数据在
+    `%LOCALAPPDATA%\\Packages\\<包>\\LocalCache\\...`。脱包后真实目录里没有这些：
+    补回缺的、不覆盖已有的、原件不删。（真机的重定向行为只能在 Windows 上验。）"""
+    from tavotto.engine import msixmigrate
+
+    local = tmp_path / "Local"
+    pkg = local / "Packages" / "OpenAI.Codex_x" / "LocalCache" / "Local" / "Tavotto" / "origin"
+    pkg.mkdir(parents=True)
+    (pkg / "a.json").write_text("pkg", encoding="utf-8")
+    (pkg / "b.json").write_text("pkg", encoding="utf-8")
+    real = tmp_path / "data"
+    (real / "origin").mkdir(parents=True)
+    (real / "origin" / "b.json").write_text("real", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(real))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(msixmigrate, "_is_windows", lambda: True)
+    monkeypatch.setattr(msixmigrate.msixbreakaway, "has_package_identity", lambda **_k: False)
+    msixmigrate.run_once()
+    assert (real / "origin" / "a.json").read_text(encoding="utf-8") == "pkg"
+    assert (real / "origin" / "b.json").read_text(encoding="utf-8") == "real"
+    assert (pkg / "b.json").read_text(encoding="utf-8") == "pkg"
+
+
+def test_codex_on_windows_runs_with_unelevated_sandbox(monkeypatch):
+    """TVD-BCZ0：Windows 上 Codex 默认沙盒起不来（所有命令启动前被拒、0 命令 0 写入），
+    `-c windows.sandbox="unelevated"` 是 Lab 真机验证过的修法；转换与修复会话都要带。"""
+    from tavotto.engine import ai_agents
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+    codex = ai_agents.CodexAgent()
+    run = codex.build_command(ai_agents.RunContext(argv=["codex"], prompt="p", cwd="C:\\w")).argv
+    fix = codex.build_fix_command(
+        ai_agents.FixRunContext(
+            argv=["codex"],
+            prompt="p",
+            cwd="C:\\w",
+            mcp_command=["m", "fix-mcp"],
+            mcp_name="tavotto_fix",
+            token_env="T",
+            tool_timeout_s=10,
+        )
+    ).argv
+    for argv in (run, fix):
+        assert 'windows.sandbox="unelevated"' in argv
+
+
+def _pip_says(env, target):
+    """真起一个 pip 进程，让它在输出里报出带中文的路径；按 Tavotto 的口径（UTF-8、坏字节替换）解码。"""
+    argv = [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", str(target)]
+    r = subprocess.run(
+        argv, capture_output=True, encoding="utf-8", errors="replace", env=env, timeout=180
+    )
+    return r.stdout + r.stderr
+
+
+def test_owned_pip_output_with_a_chinese_path_decodes_cleanly(tmp_path, monkeypatch):
+    """#1601：Tavotto 自管的 pip 子进程经 `runtime.pip_child_env` 补 UTF-8，中文 Windows（cp936）上
+    pip 报错里的中文路径按 UTF-8 解码不出乱码。真进程、真管道，不 mock 解码。
+
+    前提反证：本机标准流默认编码不是 UTF-8（Windows Lab 的 zh-CN）时，同一条命令不补环境就必须是乱码——
+    否则这条用例在这台机器上证明不了什么。UTF-8 默认的机器（mac / Linux）上前提反证不适用，只断言正路。"""
+    import locale
+
+    from tavotto.engine import runtime
+
+    monkeypatch.setattr(runtime, "is_owned_python", lambda _p: True)
+    target = tmp_path / "中文目录 测试" / "不存在的包"
+    base = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+
+    fixed = _pip_says(runtime.pip_child_env(sys.executable, base), target)
+    assert "中文目录" in fixed, fixed[-400:]
+    assert "�" not in fixed, fixed[-400:]
+
+    if locale.getpreferredencoding(False).replace("-", "").lower() != "utf8":
+        raw = _pip_says(base, target)
+        assert "中文目录" not in raw, "前提不成立：不补 UTF-8 也没乱码，这台机器上反证不了"

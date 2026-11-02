@@ -190,6 +190,9 @@ def test_b_cancels_a_session_owned_by_a_and_a_kills_its_own_cli(client, db, owne
     # A 的心跳线程收取意图 → A 自己终止它的（假）CLI → A 的泵线程收尾
     assert _wait(lambda: not _alive(cli_pid)), "A 没有终止它的假 CLI"
     assert _wait(lambda: _row(db, sid)["ended_ms"] is not None), "A 没有把行收尾"
+    # A 的执行入口先 `_cancel_local`（泵线程随即把行收尾成 cancelled），**之后**才 `record_cancel_result("ok")`：
+    # 两次写之间读到的是 cancel_result=None。结果会落定，等它落定再断言（截止时间同上）
+    assert _wait(lambda: _row(db, sid)["cancel_result"] is not None), "A 没有记下取消结果"
     row = _row(db, sid)
     assert row["status"] == "cancelled" and row["cancel_result"] == "ok"
     det = client.get(f"/api/ai/sessions/{sid}").get_json()

@@ -11,7 +11,7 @@ test('问题列表的组头被关在抽屉的层叠上下文里，右缘不越�
   const a = await app()
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await page.locator('[data-element-svg] > svg').waitFor({ timeout: 120_000 })
   const rail = page.locator('[data-rail="problems"]')
   if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()

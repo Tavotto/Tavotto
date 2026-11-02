@@ -351,7 +351,9 @@ test(
     await expect(active).not.toHaveAttribute('data-canvas-tab', first!)
     await expect(objs).toHaveCount(0)
 
-    await stage.click({ position: { x: 700, y: 500 } })
+    // 只是让画布区拿到焦点：点舞台左上角的空白（左栏默认钉住后舞台约 690px 宽，原来的 x=700 已在舞台外；
+    // 新画布正中是选图卡，也别点在卡上）
+    await stage.click({ position: { x: 24, y: 24 } })
     await page.keyboard.press('ControlOrMeta+v')
     await expect(page.locator('[data-status-live]')).toHaveText(/已粘贴 1 个对象/, { timeout: 10_000 })
     await expect(objs).toHaveCount(1)
@@ -853,6 +855,8 @@ test(
     await addText.click()
     await expect(objects).toHaveCount(1)
     await expectInViewport(page, objects, '新建的画布文字')
+    // 先等命令面板退场完：退场途中焦点还在它的搜索框里，紧跟着的 Esc / ⌘E 落在输入框上，⌘E 被当成打字放过
+    await expect(addText).toHaveCount(0)
     await page.keyboard.press('Escape')
     await page.keyboard.press('ControlOrMeta+e')
 

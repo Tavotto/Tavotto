@@ -79,7 +79,8 @@ def dispatch(argv: list[str]) -> int | None:
     if argv[0] == "agent-run":
         # ADR 0147 第二阶段：改图助手的内置执行器子进程（= `python -m tavotto.engine.agent_runner`；冻结产物里没有 `-m`，
         # 所以同一个入口也挂在这里）。纯标准库；stdout 归事件流独占，提示词走 stdin，密钥只读环境变量。
-        from .agent_runner import __main__ as agent_runner_main
+        # 必须 import `runner_cli` 而不是 `agent_runner.__main__`：冻结产物不收 `__main__` 子模块（TVD-BCZ0）。
+        from .agent_runner import runner_cli as agent_runner_main
 
         return agent_runner_main.main(argv[1:])
     if argv[0] == "hosts":

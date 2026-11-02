@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「UI 视觉纪律」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
 
 <!-- agents-route
 sheet: web/AGENTS.md
@@ -44,7 +44,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 外壳、多行浮动面板）/ panel 16（对话框、工作面板、助手输入框、命令面板）/ full（带字按钮、图标钮、分段、chip、toast、单行浮动条）**，外层 = 内层 + 内边距；
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
-`-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、
+`-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、指针操作之后的程序化 focus 不画环（`lib/inputModality` 给 `<html>` 记 `data-input-modality`，`index.css` 在 `pointer` 时关 `:focus-visible` 的 outline；只有 Tab / 方向键 / Home / End / PageUp / PageDown 算键盘，Enter / Space 不算）、
 插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画；`ui/ProgressBar` 是铅笔排线：11px、发丝框、整像素 5px 斜线 mask，不确定态排线 2.2s 线性流动、确定态宽度吸附整条线）；光标一律箭头（可拖的卡用抓手）。
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
@@ -127,7 +127,7 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 工作台结构：顶栏 44px（左=首页胶囊/文档名/状态芯片/时间线，右=撤销重做/导出/更多）；
 画布工具（选择 / 文字 / 标注 ▾ / 序号 | 适应）在画布底部居中的**浮动工具条**
 （`CanvasToolbar`，`data-canvas-toolbar`，只在排版模式出现、快速编辑时整条不在），缩放菜单在画布
-标签行最右（快速编辑没有标签行，悬在画布右上角），写回是「⋯」菜单第一项
+标签行最右（快速编辑没有标签行，悬在画布右上角），写回在「⋯」菜单「文件」组
 （`useWriteBackMenuEntry`，计数 n 在项右侧，属性栏「源文件」里那一颗不动）。工具条（12 内距 + 40 高）占掉画布
 底边约 64px：底部居中的 toast 列与左下 HUD 在它显示时抬到 `bottom-16`（`useCanvasToolbarVisible`
 一处判据），`fixed` 的选中浮动栏 / 右键快编落位时给窗口底边留 `BOTTOM_SAFE`
@@ -140,12 +140,12 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：拖动中的几何读数贴在选区下方（`MeasureChip`；放不下翻到上方，最后整体夹进舞台，选区占满 / 出界时也不被裁掉；底部浮动工具条显示时那一条（`viewportStore.fitBottomClear` = `TOOLBAR_FIT_CLEARANCE`，与「适应」取景同一个值）不算舞台，翻转与夹取都让开它；图内编辑态的方向键微调贴在被推的图内元素下面——位置与 Δ 都取 `InFigureMove.preview` 发布的预览（`elementPreview` / `gidDrag`，与 `ElementBoxes` 同源），落到页面走画布画这张图的同一个变换 `lib/panelTransform`（先翻转再旋转，翻转面板上贴在镜像后的元素下、Δ 报看得见的方向，#832 评审），子图贴边被钳住时芯片跟着停、Δ 报真正挪了的量，权威缺席时不报，不拿面板的框顶替，Codex #833），左下 HUD 只有工具提示，
 通知只有一条轨（`NotificationRail`，底部居中、宽 ≤ 360、**最多三条**叠着、最新的最靠近底边；`StatusBar` 的 `RAIL_MAX`）：普通状态短暂即逝
 （成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`；带动作的状态默认常驻，唯一例外是声明了 `dismissMs` 的导出成功胶囊——6 秒收，`EXPORT_DONE_DISMISS_MS`，悬停 / 聚焦暂停）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
-`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。**有模态对话框开着时**（`ui/Dialog` 经 `dialogLayerStore` 登记）整列通知移进 body 的 `z-toast` 层压在对话框上面（画布列里的那条会被遮罩盖暗），点它不算「点了对话框外面」（`Dialog` 的 `onInteractOutside` 认 `[data-notification-rail]`）。
+`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。**有模态对话框开着时**（`ui/Dialog` 经 `dialogLayerStore` 登记）整列通知移进 body 的 `z-toast` 层压在对话框上面（画布列里的那条会被遮罩盖暗），但**只压对话框自己动作的结果**（状态 / 引擎退出 / 环境与答案提示）；背景性的加入说明、操作提示、作者回信胶囊在模态期间不画（浮在遮罩上只会打岔，关掉后照常回来）；点它不算「点了对话框外面」（`Dialog` 的 `onInteractOutside` 认 `[data-notification-rail]`）。
 
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与
 lucide 时代相同），**任何第三方图标库都不许再 import**；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}`
-= 12 / 14 / 16 / 20，默认 sm，描边 2 按比例缩放，都由 `components/ui/Icon.tsx` 的
+= 12 / 16 / 16 / 20（2026-10-31 起 sm 由 14 改 16，ADR 0157），默认 sm，描边 1.5 按比例缩放、几何吸到 0.75 网格，都由 `components/ui/Icon.tsx` 的
 `IconProvider` 在三个根上给。写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写
 strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽略）；折叠 / 下拉箭头一律 xs；
 折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图、品牌标与图标集本体

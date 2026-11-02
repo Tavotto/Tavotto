@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
 from .base import FixContext, err, ok, shadow_note
@@ -51,6 +52,53 @@ def _plain_text(v) -> str:
     return str(v)
 
 
+def _stale_entry_fact(plan: object, error: object, ctx: FixContext) -> dict | None:
+    """这次运行用的登记入口在脚本当前源码里已经不存在（脚本被改写过，TVD-CHR5）：`{registered, suggested, fix}`。
+
+    判据只在 `entryfresh.diagnose`（运行前校验与 `fix_entry` 同一份）；读不到脚本 / 判不出 = None。
+    worker 已经以 `script_entry_missing` 收场时也带上，即便这里重判不出建议。"""
+    entry = plan.get("entry") if isinstance(plan, dict) else None
+    script = ""
+    if ctx.script_path is not None:
+        try:
+            script = Path(ctx.script_path).relative_to(ctx.project_root).as_posix()
+        except ValueError:
+            script = ""
+    if not script or not isinstance(entry, str):
+        return None
+    try:
+        from .. import entryfresh
+
+        found = entryfresh.diagnose(ctx.project_root, script, entry)
+    except Exception:  # noqa: BLE001 - 事实是锦上添花，判不出不能让报告失败
+        return None
+    if found is None:
+        return None
+    return {**found, "fix": "call fix_entry, then try_run"}
+
+
+def _ai_edit_fact(raw: object) -> dict | None:
+    """准备会话报告的 `ai_edit`（`{session, succeeded_before}`）→ 给修复助手的事实（TVD-H1M5）。
+
+    那次案例里助手不知道脚本几分钟前刚被改图助手改过，把「改前 native 成功、改后 safe 失败」读成运行方式的差异，
+    去切执行方式、复制脚本对照，一直绕。这里把事实摆在报告前面，并说清界面上已有的出路。"""
+    if not isinstance(raw, dict) or not raw.get("session"):
+        return None
+    if raw.get("succeeded_before"):
+        return {
+            "fact": "The script on disk is exactly the version the user's AI assistant left in its most recent "
+            "edit, and this script ran successfully in this session before that edit.",
+            "meaning": "The edit most likely caused this failure; execution mode or environment changes will not "
+            "fix it.",
+            "fix": "Tell the user the AI edit caused it and that the failure card's main button undoes that "
+            "edit; or, if the user wants to keep the edit, explain what in the edited script fails.",
+        }
+    return {
+        "fact": "The script on disk is exactly the version the user's AI assistant left in its most recent edit "
+        "(it can still be undone). Whether it ran before that edit is not known.",
+    }
+
+
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
@@ -72,6 +120,9 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     note = shadow_note(ctx, err_text).removeprefix("\nproject_package_shadow: ")
     if note:
         picked = {"project_package_shadow": note, **picked}
+    ai_edit = _ai_edit_fact(report.get("ai_edit"))
+    if ai_edit:
+        picked["recent_ai_edit"] = ai_edit
     if isinstance(error, dict):
         picked["error"] = {
             k: _precis(error[k]) for k in ("code", "message", "module", "params") if error.get(k)
@@ -79,6 +130,9 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     elif error:
         picked["error"] = _precis(error)
     plan = report.get("plan") or {}
+    stale = _stale_entry_fact(plan, error, ctx)
+    if stale:
+        picked["entry_stale"] = stale
     if isinstance(plan, dict):
         if plan.get("launch_context"):
             picked["launch_context"] = _precis(plan["launch_context"])

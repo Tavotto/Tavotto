@@ -160,7 +160,7 @@ export function FigurePickerDialog() {
                     // 没跑出预览（cache 被清理/物化失败）：不渲染假按钮，
                     // 如实指去素材库「运行并发现图」
                     <span className="flex items-center gap-1 text-sm text-ink-3">
-                      <Play size={ICON_SIZE.xs} />
+                      <Play size={ICON_SIZE.sm} />
                       {fp('needsRun')}
                     </span>
                   )}

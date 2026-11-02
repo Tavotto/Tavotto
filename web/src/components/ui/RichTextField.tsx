@@ -548,10 +548,10 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
       <div className="absolute bottom-1 right-1 flex items-center gap-0.5">
         {!latex && (
           <>
-            {tool('bold', <Bold size={ICON_SIZE.xs} />, 'bold', modKey('B'))}
-            {tool('italic', <Italic size={ICON_SIZE.xs} />, 'italic', modKey('I'))}
-            {tool('sup', <Superscript size={ICON_SIZE.xs} />, 'sup', modKey('↑'))}
-            {tool('sub', <Subscript size={ICON_SIZE.xs} />, 'sub', modKey('↓'))}
+            {tool('bold', <Bold size={ICON_SIZE.sm} />, 'bold', modKey('B'))}
+            {tool('italic', <Italic size={ICON_SIZE.sm} />, 'italic', modKey('I'))}
+            {tool('sup', <Superscript size={ICON_SIZE.sm} />, 'sup', modKey('↑'))}
+            {tool('sub', <Subscript size={ICON_SIZE.sm} />, 'sub', modKey('↓'))}
             <Button
               size="icon-xs"
               data-rich-action="break"
@@ -561,7 +561,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
               aria-label={rt('newline')}
               title={rt('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
             >
-              <CornerDownLeft size={ICON_SIZE.xs} />
+              <CornerDownLeft size={ICON_SIZE.sm} />
             </Button>
           </>
         )}

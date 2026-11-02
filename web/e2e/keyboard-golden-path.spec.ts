@@ -215,7 +215,7 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // ── 2+3. 打开这张图：Tab 到素材卡，Enter ────────────────────────────
   // Prompt 09 起 Enter = 打开（快速编辑工作区），**当场就在图内编辑态**；
   // 从前要先「加入画布」、再 Tab 到属性栏点一次「编辑图内元素」。
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
   await tabTo(page, 'css=[data-card="Fig1_kinetics.pdf"]')
   await page.keyboard.press('Enter')
   await expect(page.getByText('画布是空的')).toHaveCount(0)
@@ -392,7 +392,7 @@ test('快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter �
 }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
   await tabTo(page, 'css=[data-card="Fig1_kinetics.pdf"]')
   await page.keyboard.press('Enter') // 打开这张图（快速编辑工作区）
   await expect(page.getByText('画布是空的')).toHaveCount(0)

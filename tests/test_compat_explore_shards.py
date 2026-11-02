@@ -31,6 +31,43 @@ import compat_triage as tg  # noqa: E402
 
 N = 4
 
+# xt.default_parents() + xt.generate(42) 在 Windows runner 上一次约 28 秒，本文件要做三十多次，
+# 每次都是同一个种子、同一批母本：按值记住结果，每次交出深拷贝——用例拿到的与现算的相等
+# （两者都确定；键用 `==` 比，不用 pickle 哈希：相等的母本 pickle 出来的字节会不同）
+_REAL_DEFAULT_PARENTS, _REAL_GENERATE = xt.default_parents, xt.generate
+_PARENTS: list = []
+_POOLS: list[tuple[int, list, dict]] = []
+_MEMO_PATCHES = [
+    mock.patch.object(xt, "default_parents", lambda: copy.deepcopy(_memo_parents())),
+    mock.patch.object(xt, "generate", lambda seed, parents=None: _memo_generate(seed, parents)),
+]
+
+
+def _memo_parents() -> list:
+    if not _PARENTS:
+        _PARENTS.append(_REAL_DEFAULT_PARENTS())
+    return _PARENTS[0]
+
+
+def _memo_generate(seed: int, parents=None) -> dict:
+    parents = _memo_parents() if parents is None else parents
+    for s, p, pool in _POOLS:
+        if s == seed and p == parents:
+            return copy.deepcopy(pool)
+    pool = _REAL_GENERATE(seed, copy.deepcopy(parents))
+    _POOLS.append((seed, copy.deepcopy(parents), pool))
+    return copy.deepcopy(pool)
+
+
+def setUpModule():
+    for p in _MEMO_PATCHES:
+        p.start()
+
+
+def tearDownModule():
+    for p in reversed(_MEMO_PATCHES):
+        p.stop()
+
 
 def run_cli(*argv: str) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()

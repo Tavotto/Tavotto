@@ -51,14 +51,14 @@ async function expectNoCjk(el: Locator, label: string): Promise<void> {
 
 async function openFigures(page: Page, baseURL: string): Promise<void> {
   await page.goto(baseURL)
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
 }
 
 /** 把面板放上画布并进入图内编辑（错误场景大多在 build 阶段暴露）。 */
 async function placeAndEdit(page: Page): Promise<void> {
   // Prompt 09 起，双击素材卡 = 打开这张图（快速编辑工作区），**当场就在图内
   // 编辑态**——不再需要先「加入画布」再点一次「编辑图内元素」。
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
 }
 
 test('无可用渲染环境：英文的环境缺件卡片 + 可点的修复出口', async ({ app, page }) => {
@@ -173,7 +173,7 @@ test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续
   copyTree(path.join(REPO, 'examples', 'figures'), ok)
   await input.fill(ok)
   await input.press('Enter')
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
   chmodSync(locked, 0o755)
 })
 
@@ -184,7 +184,7 @@ test('导出目录不可写：导出失败给英文报错，且不丢项目', as
   )
   const a = await app()
   await openFigures(page, a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
 
   // 先把每项目导出目录设到一个可建的位置，再收走写权限——设置端点会当场
   // 建目录（那是它自己的前置校验），失败必须发生在导出那一步
@@ -244,7 +244,7 @@ test('没有任何 AI 连接（CLI 不可用）：英文说明 + 「Connect AI�
 
   // 选中一个可参数化面板后打开助手 → 英文说明「还没连接 AI」+ 连接入口（连接视图下取代旧的「两个 CLI 都没找到」+ 设置入口）。
   // 提示在「作用范围与 AI」弹层里（AiPanel 的 agent 分区）；面板顶层输入框上方另有一条中性说明条。
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
   await page.getByRole('tab', { name: /Assistant/i }).click()

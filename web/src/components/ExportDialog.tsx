@@ -48,7 +48,7 @@ import {
   Download,
   FileExclamationPoint,
   ImageOff,
-  Pencil,
+  Info,
   TriangleAlert,
   X,
 } from "@/components/ui/icons";
@@ -118,8 +118,10 @@ import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
+import { journalCatalogUi } from "@/lib/journalUi";
 import {
   bindingFor,
+  journalCarry,
   resolveDocumentSpec,
   type SpecCatalogEntry,
 } from "@/lib/specBinding";
@@ -127,6 +129,7 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
+import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
@@ -166,7 +169,10 @@ import {
   runValidation,
   useValidationStore,
 } from "@/store/validationStore";
-import { Button } from "./ui/Button";
+import { Button, IconButton } from "./ui/Button";
+import { TruncateMiddle } from "./ui/TruncateMiddle";
+import { scrollFadeStyle, useScrollFade } from "./ui/scrollFade";
+import { Details, Summary } from "./ui/Details";
 import { FormRow } from "./FormRow";
 import { Dialog } from "./ui/Dialog";
 import { TextInput } from "./ui/Input";
@@ -463,10 +469,29 @@ export function ExportDialog() {
       : "canvas"
     : scopeState;
   const singleFallback = single && scope === "canvas";
+  /**
+   * 单图档、原图口径、画布上有可见标注（QA-WIN-20）：`lib/singleExportDoc` 把「图 + 标注」合成一份以原图图幅为页面的
+   * 文档。**预览画这份；请求里的 `original.objects` 取这份里的标注部分**——预览与文件同一个来源。后端用整版导出那条
+   * RenderCore 路径把标注画在原图上（PDF / SVG / PNG / TIFF / EPS 都带）。没有标注 = null，请求与从前逐字节相同。
+   */
+  const annotatedDoc = useMemo(
+    () =>
+      single && scope === "original" && availability.ok
+        ? singleAnnotatedDocument(doc, panel, availability.spec)
+        : null,
+    [single, scope, availability.ok, availability.spec, doc, panel],
+  );
+  const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
+  const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
-    () => (singleFallback ? cropToVisibleContent(doc.page, doc.objects) : null),
-    [singleFallback, doc.page, doc.objects],
+    () =>
+      annotatedDoc
+        ? { page: annotatedDoc.page, objects: annotatedDoc.objects }
+        : singleFallback
+          ? cropToVisibleContent(doc.page, doc.objects)
+          : null,
+    [annotatedDoc, singleFallback, doc.page, doc.objects],
   );
   /**
    * 这次导出的文档：单图退路 = 裁后的文档（只算一次），检查、proof report、请求、预览全吃它；
@@ -551,6 +576,10 @@ export function ExportDialog() {
   /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
   const locale = useLocale();
   const checkSpecName = useMemo(() => {
+    // 按期刊选的绑定（中性底 + 期刊覆盖）：结论里说期刊名，不说「期刊底」
+    const journalName = (checkOnActive ? doc.profile : canvases.find((c) => c.id === checkCanvasId)?.profile)
+      ?.journalRef?.label;
+    if (journalName && journalCatalogUi()) return journalName;
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;
@@ -558,7 +587,7 @@ export function ExportDialog() {
     // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
     // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, specRecords, locale]);
+  }, [resolved, specRecords, locale, checkOnActive, doc.profile, canvases, checkCanvasId]);
   /** 别的画布上的规范在这里改不了（`applyProfile` 写的是当前画布）——说出原因，不静默改错画布 */
   const checkCanvasName = checkOnActive
     ? null
@@ -771,6 +800,16 @@ export function ExportDialog() {
     errors.length > 0 || notVerifiable.length > 0 || summary.failed;
   // 有未处理项就**必须**留档：它是「导出时未处理的项」唯一的落点，用户关掉报告开关也不能让它消失
   const reportRequired = hasUnhandled;
+  /**
+   * 「高级」折叠区：用户本次打开后的手动选择（null = 没动过，跟着当下有效设置走）。
+   * 对话框常驻挂载，初值在后端默认值水合 / 校验完成之前就定了，所以**不存「默认值」**，
+   * 每次渲染按 `strict || hasUnhandled` 现算；关上对话框就忘掉用户的选择。
+   */
+  const [advancedUser, setAdvancedUser] = useState<boolean | null>(null);
+  const advancedOpen = advancedUser ?? (strict || hasUnhandled);
+  useEffect(() => {
+    if (!open) setAdvancedUser(null);
+  }, [open]);
   const reportOn = withReport || reportRequired;
 
   /**
@@ -842,6 +881,8 @@ export function ExportDialog() {
       figureId,
       panel,
       spec: availability.spec,
+      annotations,
+      annotationsBelow: annotationsUnder,
       route,
       exportDir: exportDirNow,
       ...over,
@@ -1000,7 +1041,7 @@ export function ExportDialog() {
       msg("history.setPublicationProfile", undefined, "workspace"),
       (d) => {
         d.profile = bindingFor(entry, {
-          journal: doc.profile?.journal,
+          ...journalCarry(doc.profile, entry.id),
           follow: doc.profile?.follow,
         });
       },
@@ -1015,7 +1056,7 @@ export function ExportDialog() {
       msg("history.syncPublicationProfile", undefined, "workspace"),
       (d) => {
         d.profile = bindingFor(entry, {
-          journal: doc.profile?.journal,
+          ...journalCarry(doc.profile, entry.id),
           follow: doc.profile?.follow,
         });
       },
@@ -1295,16 +1336,16 @@ export function ExportDialog() {
     if (id !== "page" && scope === "original") pickFigure(id);
     else setPreviewId(id);
   };
-  /** 带检查提示的对象（缩略图上的橙点）：当前画布上除建议级以外的问题所指的对象 */
+  /** 缩略图上打红点的对象：当前画布上有「要改」级问题所指的对象。留意 / 建议 / 无法核验不打点——几乎每张图都有留意项，点全亮就分不出哪张该处理 */
   const flaggedObjectIds = useMemo(() => {
     const ids = new Set<string>();
     for (const i of validationIssues) {
-      if (i.severity === "suggestion") continue;
+      if (i.severity !== "error") continue;
       if (i.objectRef.objectId) ids.add(i.objectRef.objectId);
     }
     return ids;
   }, [validationIssues]);
-  const pageFlagged = flaggedObjectIds.size > 0 || errors.length > 0 || notVerifiable.length > 0;
+  const pageFlagged = flaggedObjectIds.size > 0 || errors.length > 0;
 
   /**
    * 导出终局报一次状态。**只在终局报一次**（作业 + 终态为键，重复快照不再报），不在每次进度推送上报。
@@ -1649,7 +1690,7 @@ export function ExportDialog() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
       <ExportPreviewPane
         single={single}
-        fallbackPage={singleFallback}
+        fallbackPage={singleFallback || annotatedDoc !== null}
         fallbackCrop={fallbackCrop}
         doc={doc}
         figures={single ? figures : canvasFigures}
@@ -1900,17 +1941,6 @@ export function ExportDialog() {
                   /* 同一张表单里的下拉只有一种宽（全面打磨 D40） */
                   className="w-56"
                 />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={ex("profileEditAria")}
-                  onClick={() => {
-                    useUiStore.getState().setSettingsOpen(true, "spec");
-                  }}
-                >
-                  <Pencil size={ICON_SIZE.sm} aria-hidden />
-                  {ex("profileEdit")}
-                </Button>
               </FormRow>
               {/* 图在别的画布上：显示的是那张画布的规范，改它得先切过去（Codex 评审 #596 P1） */}
               {checkCanvasName !== null && (
@@ -1959,14 +1989,30 @@ export function ExportDialog() {
 
             </section>
 
+            {/* 高级（默认折叠）：严格核验与样式检查报告两个开关。**判据 / 默认值 / 请求字段都不变**——只是收起来；
+                严格核验已开（用户上次的选择）或报告被规范强制时默认展开，不把已生效的设置藏起来 */}
+            <Details
+              data-export-advanced
+              className="text-ink"
+              open={advancedOpen}
+              onToggle={(e) => {
+                // 程序改 open 属性也会触发 toggle：与当下有效值相同的不是用户操作，不记
+                const next = e.currentTarget.open;
+                if (next !== advancedOpen) setAdvancedUser(next);
+              }}
+            >
+              <Summary className="min-h-7 text-sm text-ink-2 hover:text-ink">
+                <span>{ex("advancedLabel")}</span>
+              </Summary>
+              <div className="flex flex-col gap-1 pt-1">
             {/* 严格核验（ADR 0068）：按这套规范的阈值重新打开封口的文件量事实，
                 必需项失败**或无法核验**的那一项不发布。standard 是缺省，不勾就不发这个键 */}
-            <label className="flex min-h-7 items-center justify-between gap-4 text-ink" title={ex("strictTitle")}>
-              <span>{ex("strictToggle")}</span>
+                <label className="flex min-h-7 items-center justify-between gap-4 text-ink" title={ex("strictTitle")}>
+                  <span>{ex("strictToggle")}</span>
               <Toggle aria-label={ex("strictToggle")} checked={strict} onChange={setStrict} />
             </label>
-            <label className="flex min-h-7 items-center justify-between gap-4 text-ink" title={ex("reportTitle")}>
-              <span>{ex("reportToggle")}</span>
+                <label className="flex min-h-7 items-center justify-between gap-4 text-ink" title={ex("reportTitle")}>
+                  <span>{ex("reportToggle")}</span>
               <Toggle
                 aria-label={ex("reportToggle")}
                 checked={reportOn}
@@ -1974,6 +2020,8 @@ export function ExportDialog() {
                 disabled={reportRequired}
               />
             </label>
+              </div>
+            </Details>
           </FieldGroup>
         </FormSection>
       </fieldset>
@@ -1997,6 +2045,11 @@ interface FigureThumbSource {
   src: string | null;
   /** 图幅宽高比（读不到时 4:3） */
   ratio: number;
+  /**
+   * `src` 是不是磁盘原图那条 `figureThumbSrc`：只有它能按舞台放大换档。按 overrides 现出的变体 /
+   * runtime 按状态取的预览换档会退回「最近一次渲染」，撤销后显示撤销前（QA-WIN-21）
+   */
+  plain: boolean;
 }
 
 /**
@@ -2043,10 +2096,11 @@ function useFigureThumbSource(
         ? runtimePreview.url
         : null
       : figureThumbSrc(figure, bucket));
+  const plain = !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
-  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio };
+  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio, plain };
 }
 
 const NO_OVERRIDES: PanelObject["overrides"] = [];
@@ -2174,17 +2228,29 @@ function ExportPreviewPane({
     : (specMm ?? shownFigure?.sizeMm ?? null);
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
   const pageSize = fallbackCrop?.page ?? doc.page;
+  // 预览按图幅比例定高（舞台内仍是 contain，不改导出几何）：灰底面板只包住图，不再被右栏的高度撑出上下大块空白；
+  // 比例未知（读不到图幅）才退回铺满整列的旧做法
+  const stageRatio = showPage
+    ? pageSize.w / pageSize.h
+    : sizeMm && sizeMm[1] > 0
+      ? sizeMm[0] / sizeMm[1]
+      : null;
+  const strip = useRef<HTMLDivElement>(null);
+  const { fade } = useScrollFade(strip, "x");
+  const fitted = stageRatio !== null && stageRatio > 0 && Number.isFinite(stageRatio);
   return (
-    // 直角：容器不给圆角（overflow-hidden 会把图的四角裁圆），图本身也不带圆角
-    // 整列都是预览区：灰底面板从上到下铺满本列，图在里面按比例 contain、不留边距（上下或左右顶满）
+    // 预览框：画布灰（bg-canvas）+ md 圆角 + 12px 内边距，纸面（白）在里面按图幅比例 contain；缩略卡一排与尺寸标签都在框外
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
-      <div className="flex h-full max-h-[calc(86vh-13rem)] min-h-[320px] flex-col overflow-hidden bg-surface-2 md:sticky md:top-0">
+     <div className="md:sticky md:top-0">
+      {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；放不下横向滚动 + 两端渐隐 */}
         {!single && (
           <div
             role="tablist"
             aria-label={ex("previewTabs")}
             data-export-preview-tabs
-            className="flex max-w-full shrink-0 gap-2 overflow-x-auto p-2"
+            ref={strip}
+            style={scrollFadeStyle(fade, "x")}
+            className="-mx-1 mb-2 flex max-w-full shrink-0 gap-2 overflow-x-auto p-1"
           >
             <PreviewTab
               id="page"
@@ -2193,10 +2259,12 @@ function ExportPreviewPane({
               flagged={pageFlagged}
               onShow={onShow}
             >
+              {/* flush：不画页框与内边距（卡片自己有边），页面在缩略图区里 contain 铺满 */}
               <CanvasThumb
                 page={doc.page}
                 objects={doc.objects}
                 className="h-full w-full"
+                flush
                 editedPanel={editedPanelOf}
                 exportedText={exportedTextOf}
               />
@@ -2215,7 +2283,21 @@ function ExportPreviewPane({
             ))}
           </div>
         )}
-        <div data-export-preview-stage className="relative min-h-0 flex-1">
+      <div
+        className={cn(
+          "flex flex-col overflow-hidden rounded-md bg-canvas p-3",
+          !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
+        )}
+      >
+        <div
+          data-export-preview-stage
+          className={cn("relative min-h-0", !fitted && "flex-1")}
+          style={
+            fitted
+              ? { aspectRatio: String(stageRatio), maxHeight: "calc(86vh - 13rem)", minHeight: 160 }
+              : undefined
+          }
+        >
           {showPage ? (
             <ExportZoomStage key="page" ratio={pageSize.w / pageSize.h}>
               {(px) => (
@@ -2242,14 +2324,13 @@ function ExportPreviewPane({
               <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
             </div>
           )}
-          {/* 左下角一枚小标：这块预览的尺寸。不加「示意」之类的说明（用户 10-24：别加字） */}
-          <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-4rem)] items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1 backdrop-blur">
-            <span data-export-preview-size className="type-meta truncate tabular-nums">
-              {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
-            </span>
-          </div>
         </div>
       </div>
+      {/* 尺寸标在预览框外、左对齐的灰色小字：不叠在图上（不加「示意」之类的说明，用户 10-24：别加字） */}
+      <p data-export-preview-size className="type-meta mt-1.5 truncate tabular-nums text-ink-3">
+        {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+      </p>
+     </div>
     </div>
   );
 }
@@ -2269,6 +2350,9 @@ function PreviewTab({
   onShow: (id: string) => void;
   children: ReactNode;
 }) {
+  // 一张独立的小卡：surface 白底 + 1px 发丝边 + md 8 圆角（= 内层缩略图 xs 4 + 内边距 4）。
+  // 不用 `ui/Card`：它是 lg 12 圆角的 div + shadow-card，几何对这么小的按钮卡太大，也不该投影——只用细边。
+  // 三态互不相同：选中 = accent 1.5px 外环 + 图名 ink 中粗；悬停 = 边框加深到 border-strong；键盘焦点 = 2px 焦点环（outline，随圆角）
   return (
     <button
       type="button"
@@ -2280,20 +2364,25 @@ function PreviewTab({
       data-flagged={flagged ? "" : undefined}
       onClick={() => onShow(id)}
       className={cn(
-        "relative flex w-[64px] shrink-0 flex-col items-center gap-1 rounded-md p-1 outline-none focus-visible:focus-ring",
-        selected ? "bg-selected ring-1 ring-inset ring-border" : "hover:bg-surface-hover",
+        "relative flex w-[88px] shrink-0 flex-col gap-1 rounded-md border bg-surface p-1 text-left outline-none focus-visible:focus-ring",
+        selected ? "border-transparent ring-[1.5px] ring-accent" : "border-border hover:border-border-strong",
       )}
     >
-      <span className="flex h-10 w-full items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
+      <span className="flex h-12 w-full items-center justify-center overflow-hidden rounded-xs bg-paper">
         {children}
       </span>
-      <span className="w-full truncate text-center text-xs text-ink-2">{label}</span>
+      <TruncateMiddle
+        text={label}
+        tail={5}
+        measure
+        className={cn("px-0.5 text-xs", selected ? "font-medium text-ink" : "text-ink-2")}
+      />
       {flagged && (
         <span
           data-export-flag
           role="img"
           aria-label={translate("export.previewFlagged", { ns: "dialogs" })}
-          className="absolute right-1 top-1 h-2 w-2 rounded-full bg-warn"
+          className="absolute right-[6px] top-[6px] h-[7px] w-[7px] rounded-full bg-danger ring-[1.5px] ring-surface"
         />
       )}
     </button>
@@ -2302,12 +2391,13 @@ function PreviewTab({
 
 function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
   const source = useFigureThumbSource(figure, 160);
-  return <FigureThumbArt source={source} boxRatio={56 / 40} />;
+  return <FigureThumbArt source={source} boxRatio={80 / 48} />;
 }
 
 /**
  * 大预览：放进缩放舞台，按真实图幅比例（`ratio` 优先，其次素材自报 / 渲染清单里的比例）contain 铺满。
  * 位图放大时按舞台给的 `px` 换更高档的 `/api/render`（沿用 `figureThumbSrc`，不新起接口）；
+ * 只对磁盘原图那条换档：按 overrides 出的变体 / runtime 按状态取的预览原样挂，换档会退回「最近一次渲染」；
  * 引擎 SVG / 矢量源是矢量，放大本来就清晰。
  */
 function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: number | undefined }) {
@@ -2324,7 +2414,7 @@ function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: n
             />
           );
         }
-        const src = px ? figureThumbSrc(figure, px) : source.src;
+        const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
         if (src) {
           return (
             <RetryImg
@@ -2448,6 +2538,26 @@ export function diskSizeNote(
 }
 
 /**
+ * 磁盘原件与图幅的差别「有意义」的阈值：任一边差超过 1 mm，或超过图幅该边的 2%（小图上 0.5 mm 也是肉眼可见的）。
+ * 低于它的差别（脚本保存时 bbox 裁边常见的 0.x mm）只收进尺寸旁的 ⓘ，不占标题下的第二行。
+ */
+const DISK_DIFF_MM = 1;
+const DISK_DIFF_RATIO = 0.02;
+export function diskSizeDiffSignificant(
+  spec: OriginalOutputSpec,
+  asset: Pick<AssetOriginalSpec, "logical_w_mm" | "logical_h_mm">,
+): boolean {
+  const dw = Math.abs(asset.logical_w_mm - spec.widthMm);
+  const dh = Math.abs(asset.logical_h_mm - spec.heightMm);
+  return (
+    dw > DISK_DIFF_MM ||
+    dh > DISK_DIFF_MM ||
+    dw > spec.widthMm * DISK_DIFF_RATIO ||
+    dh > spec.heightMm * DISK_DIFF_RATIO
+  );
+}
+
+/**
  * 导出对象头部，一行：名字 · 最终尺寸（原图 = `OriginalOutputSpec`，画布 = 页面尺寸）。
  * 缩略图在左栏预览（`ExportPreviewPane`）；会写出的文件名由右栏文件名输入框 + 格式勾选说了，这里不复述。
  */
@@ -2483,15 +2593,30 @@ function TargetHeader({
     : ex("mmSize", { w: round1(page.w), h: round1(page.h) });
   const originNote =
     original && spec ? diskSizeNote(spec, asset?.original_spec) : null;
+  const originalSpec = asset?.original_spec;
+  const noteLoud =
+    !!originNote && !!spec && !!originalSpec && diskSizeDiffSignificant(spec, originalSpec);
   return (
     // 一行：名字 · 尺寸（范围 / 对象数 / 文件名清单都不重复：右栏的导出内容与文件名输入框已经说了）
     <div data-export-target className="min-w-0">
-      <p className="truncate font-medium text-ink" title={name}>
-        {name}
-        {" · "}
-        <span className="tabular-nums font-normal text-ink-2">{size}</span>
-      </p>
-      {originNote && <p className="type-caption">{originNote}</p>}
+      <div className="flex min-w-0 items-center gap-1">
+        <p className="truncate font-medium text-ink" title={name}>
+          {name}
+          {" · "}
+          <span className="tabular-nums font-normal text-ink-2">{size}</span>
+        </p>
+        {/* 差别很小：说明收进 ⓘ（悬停 / 聚焦出气泡，读屏读得到） */}
+        {originNote && !noteLoud && (
+          <IconButton label={originNote} iconSize="sm" data-export-origin-note-info>
+            <Info size={ICON_SIZE.sm} />
+          </IconButton>
+        )}
+      </div>
+      {noteLoud && (
+        <p className="type-caption" data-export-origin-note>
+          {originNote}
+        </p>
+      )}
     </div>
   );
 }
@@ -2912,7 +3037,7 @@ function InspectionLine({
         data-inspection="verified"
         className="flex items-center gap-1 text-sm text-ok-content"
       >
-        <CircleCheck size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+        <CircleCheck playIn size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
         {ex("inspection.verified")}
       </p>
     );

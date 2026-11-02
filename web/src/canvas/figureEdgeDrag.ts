@@ -1,6 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { t as translate } from '@/i18n'
-import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
+import { columnName, resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { figureFrameFacts } from '@/lib/figureEdgeFrame'
 import { planFigureFrame, type PageEdge } from '@/lib/pageEdgeResize'
@@ -63,7 +62,7 @@ function holdPlaceholder(panelId: string, box: { x: number; y: number; w: number
 }
 
 function columnLabel(specLabel: string, c: PageColumn): string {
-  const name = translate(`canvas.presets.${c.id}.label`, { ns: 'inspector' })
+  const name = columnName(c)
   return specLabel ? `${specLabel} ${name}` : name
 }
 

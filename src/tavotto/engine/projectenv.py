@@ -97,6 +97,11 @@ ERROR_WORKER_IMPORT = "project_env_worker_import_failed"
 #: 找到了一个能用的候选环境，但采用它是用户的决定（ADR 0114）：接手的结构上带 `recommended`，
 #: 由用户点一次采用（`PATCH /api/engine/environment`），之后才进项目设置。
 ERROR_CONFIRMATION_REQUIRED = "environment_confirmation_required"
+#: 这个解释器起出来的进程在 Tavotto 的数据目录里**建不了目录**（体检在自己的空 cwd——`<data_dir>/cache/probe/` 下——里建一个
+#: 再删掉，被系统拒绝）。worker 每次 build 都要在会话缓存里建目录，接受它 = 之后每次运行都在用户代码之前失败（TVD-B6MR，
+#: #1594；真机上低完整性标签的 python.exe 就是这样：能读、能复用已有目录、不能新建）。与 worker 侧失败码同值
+#: （`pool.INTERPRETER_CACHE_DENIED_CODE`），文案同一份。内置 runtime 不做这条判定（见 `_probe_environment`）。
+ERROR_CACHE_DENIED = "interpreter_cache_denied"
 
 #: 找哪些目录名。顺序即优先级（同一层同时存在时按这个顺序裁决）。
 VENV_DIRNAMES = (".venv", "venv", "env")
@@ -373,6 +378,17 @@ mode = sys.argv[4] if len(sys.argv) > 4 else ""
 project_root = sys.argv[5] if len(sys.argv) > 5 else ""
 isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
 out["pythonpath_entries"] = (os.environ.get("PYTHONPATH") or "").split(os.pathsep) if os.environ.get("PYTHONPATH") else []
+# 能不能在 Tavotto 的数据目录里新建目录（cwd 是父进程在 `<data_dir>/cache/probe/` 下建的空目录，与 worker 会话缓存同一棵树）：
+# worker 每次 build 都要建 `out` / `sandbox` / `out/script-input`。只认 PermissionError 为「被拒」，别的 OSError 不下结论
+try:
+    _wc = os.path.join(os.getcwd(), "tavotto-write-check")
+    os.mkdir(_wc)
+    os.rmdir(_wc)
+    out["cache_write"] = "ok"
+except PermissionError:
+    out["cache_write"] = "denied"
+except OSError:
+    out["cache_write"] = "unknown"
 # 两种体检都记住尚未创建的绝对根；相对 / 空条目仍待统一 worker 启动 cwd 后处理。
 out["pythonpath_dirs"] = [p for p in out["pythonpath_entries"] if os.path.isabs(p)]
 
@@ -1036,6 +1052,12 @@ def _probe_environment(
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
         info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)
         # 版本硬边界不依赖包 / 启动路径，消费者不能把确定不支持当成待确认。
+        info.pop("deferred_env", None)
+        return info
+    if not bundled and info.get("cache_write") == "denied":
+        # 内置 runtime 是 Tavotto 自己的：它也被拒（杀软拦了安装目录里的解释器）时不在这里判「不可用」——那会被当成
+        # 「安装包不完整」去劝重装；运行时由 worker 的 `interpreter_cache_denied` 如实报
+        info.update(ok=False, code=ERROR_CACHE_DENIED)
         info.pop("deferred_env", None)
         return info
     if info.get("deferred_env"):

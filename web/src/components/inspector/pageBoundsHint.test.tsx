@@ -71,6 +71,18 @@ describe('PageBoundsHint', () => {
     expect(note()!.closest('[aria-live]')).toBeNull() // 锚点组件自己不再 live
   })
 
+  it('右栏已经停在「画布」页：不出这一条（自指且盖住标题）；已出的在切到画布页时收起', () => {
+    act(() => useUiStore.setState({ rightTab: 'canvas' }))
+    expect(showHint('layout_page_bounds')).toBe(false)
+    expect(note()).toBeNull()
+    act(() => useUiStore.setState({ rightTab: 'properties' }))
+    act(() => void showHint('layout_page_bounds'))
+    expect(note()).not.toBeNull()
+    act(() => useUiStore.setState({ rightTab: 'canvas' }))
+    tick(300)
+    expect(note()).toBeNull()
+  })
+
   it('不抢键盘焦点', () => {
     act(() => void showHint('layout_page_bounds'))
     expect(note()!.contains(document.activeElement)).toBe(false)

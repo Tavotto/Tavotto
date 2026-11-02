@@ -84,7 +84,7 @@ test('大 Trace：展开耗时与实时刷新期间的长任务', async ({ app, 
   const startedAt = Date.now() / 1000 - 46
   await page.route('**/api/exec-trace?**', (route) => route.fulfill({ json: { available: true, trace: bigTrace(startedAt) } }))
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   await page.locator('[data-inspector-tab="assistant"]').click()
   await page.locator('[data-ai-input]').fill('把线条加粗一点')
@@ -136,7 +136,7 @@ test('大 Trace：已结束的回放（自动播放约 4 秒）期间的长任�
   const startedAt = Date.now() / 1000 - 60
   await page.route('**/api/exec-trace?**', (route) => route.fulfill({ json: { available: true, trace: bigTrace(startedAt, true) } }))
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   await page.locator('[data-inspector-tab="assistant"]').click()
   await page.locator('[data-ai-input]').fill('把线条加粗一点')

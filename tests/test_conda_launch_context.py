@@ -69,6 +69,8 @@ def _isolated_conda_roots(monkeypatch):
 @pytest.fixture(autouse=True)
 def _fresh_captures():
     launcher.reset_captures()  # 激活增量只缓存在进程内存里；用例之间不串
+    # 只等这个用例自己起的线程：同一分片里更早的文件留下的常驻线程（如 tavotto-exectrace-writer）永远不退，等它们就是每例白等 15 秒
+    before = set(threading.enumerate())
     yield
     # 上一个用例留下的进程级状态 / 后台线程不许在下一个用例里拿旧解释器去捕获（捕获读的是“此刻”的环境变量与数据目录，
     # 会串进下一个用例的 conda 日志）：收掉会话、清各层按解释器的缓存，再等 Tavotto 自己的后台线程退出
@@ -84,7 +86,7 @@ def _fresh_captures():
     while time.time() < deadline and any(
         t.is_alive() and t.name.startswith(("tavotto-", "mm-"))
         for t in threading.enumerate()
-        if t is not threading.current_thread()
+        if t is not threading.current_thread() and t not in before
     ):
         time.sleep(0.05)
     launcher.reset_captures()

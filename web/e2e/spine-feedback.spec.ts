@@ -29,7 +29,7 @@ test('spine hover text paints above a later panel stacking context', { tag: '@fe
   const a = await app({ figures: project() })
   await page.goto(a.baseURL)
   const rendered = page.waitForResponse(r => r.url().includes('/api/engine/render') && r.status() === 200)
-  await page.getByText('Fig_feedback.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig_feedback.pdf').dblclick({ timeout: 30_000 })
   const { manifest } = await (await rendered).json()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('[data-authority="ready"]').first()).toBeVisible()

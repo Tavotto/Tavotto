@@ -861,7 +861,7 @@ function RepairProgress({
         {failed ? (
           // 失败：只露一句（原因 + 下一步，`repairShortMessage`），标题、完整说明、错误码、日志都在「详情」里
           <p className="text-sm leading-relaxed text-danger" data-repair-failure>
-            {repairShortMessage(progress.code, progress.not_found)}
+            {repairShortMessage(progress.code, progress.not_found, progress.net_cause)}
           </p>
         ) : (
           <h3 className="type-section">{en(key, { module: progressPackages(progress, module) })}</h3>
@@ -944,7 +944,13 @@ export function repairCodeMessage(code: string): string | null {
 export function repairShortMessage(
   code: string,
   notFound?: { name?: string; import_name?: string; source?: string },
+  netCause?: string,
 ): string {
+  // 联网类失败按原因各一句（后端 `net_cause` 闭集）：官方源和镜像都没连上 / 用户自配的源连不上；没有这个键用下面通用的一句
+  if (code === 'dependency_network_unavailable' || code === 'dependency_install_timeout') {
+    if (netCause === 'official_and_mirror') return en('repairNetBoth')
+    if (netCause === 'user_source') return en('repairNetUserSource')
+  }
   // 找不到的包点名（ADR 0061 修订 2026-10-21）：「软件源里找不到 X（来自 Y）」；Y = 声明文件，没有就写 import 名
   if (code === 'dependency_not_found' && notFound?.name) {
     const source = notFound.source || (notFound.import_name ? `import ${notFound.import_name}` : '')

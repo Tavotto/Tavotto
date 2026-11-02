@@ -163,7 +163,7 @@ export function FeedbackCorner() {
         >
           {/* 不画彩盘：语义色只留在图形上；实心孪生 + 与标题首行同高的图标槽（text-sm = 标题的行高） */}
           <IconSlot aria-hidden className="text-sm text-danger">
-            <CircleAlert filled size={ICON_SIZE.md} />
+            <CircleAlert size={ICON_SIZE.md} />
           </IconSlot>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <p className="text-sm font-medium text-ink">{title(shown)}</p>

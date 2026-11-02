@@ -12,9 +12,9 @@ import { useUiStore, type IssueHover } from '@/store/uiStore'
  * 23 条几乎一样的「字号低于绝对下限」逐条铺开，用户看到的是一面墙，而不是
  * 「一个问题、23 个对象、一颗修复」。
  */
-export const PREVIEW_ROWS = 5
-/** 只差一两条就不值得折：「显示其余 1 项」比直接列出来更啰嗦 */
-export const MIN_HIDDEN_ROWS = 3
+export const PREVIEW_ROWS = 3
+/** 一组最多露 {@link PREVIEW_ROWS} 行：只多出 1 行也收成「还有 1 个」，每组的高度有上限 */
+export const MIN_HIDDEN_ROWS = 1
 
 /**
  * 尾随格的宽（112px）与名字那一侧给它让出的位置（112 + 行外边距）。

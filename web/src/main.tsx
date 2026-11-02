@@ -6,8 +6,10 @@ import { installUnexpectedErrorCapture } from './lib/unexpectedErrors'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { WindowControls } from './components/WindowControls'
 import { IconProvider } from './components/ui/Icon'
+import { installIconMotion } from './components/ui/iconMotion'
 import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale, windowChrome } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
+import { installInputModality } from './lib/inputModality'
 import { applyTheme } from './lib/theme'
 import { useUiStore } from './store/uiStore'
 import './index.css'
@@ -18,6 +20,8 @@ import './index.css'
 installConsoleCapture()
 // 意外错误卡的来源（订阅上面那一份 window 监听 + 引擎 500 出口）；卡片只在「发送问题反馈」开着时才会出现
 installUnexpectedErrorCapture()
+// 图标微动效（ADR 0156）：点按钮 / 指针进按钮时播按钮里那枚图标的动作，委托在 document 上只装一次
+installIconMotion()
 initI18n()
 document.documentElement.lang = currentLocale()
 
@@ -25,6 +29,8 @@ document.documentElement.lang = currentLocale()
 // 跑到这里时浏览器可能已经画过一帧）；这里是对账——以 uiStore 读出的偏好为准再落一次。
 // 下面那个不经 React 的「会话建立失败」页也读同一套 CSS 变量（宪法第二十八节）
 applyTheme(useUiStore.getState().theme)
+// 输入方式：指针操作之后程序化挪焦点不画键盘焦点环（`lib/inputModality`、index.css）
+installInputModality()
 
 // 原生菜单的文案在壳里另有一份（Rust 在 webview 起来之前就要建菜单）。
 // 这条通知**放在这儿而不是放进 `@/i18n`**：i18n 模块被 store / lib / 单测到处

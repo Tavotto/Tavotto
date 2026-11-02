@@ -163,6 +163,7 @@ def test_change_tools_are_registered_with_the_planned_tiers():
         "install_packages": "listed",
         "switch_execution": "tavotto",
         "change_python": "tavotto",
+        "fix_entry": "tavotto",
         "select_environment": "user_env",
         "convert_script": "tavotto",
         "rollback": "tavotto",

@@ -92,7 +92,8 @@
     "via": {
       "endpoint": "API endpoint",
       "cli": "Local CLI"
-    }
+    },
+    "viewDiff": "View changes"
   },
   "markdown": {
     "image": "[image: {{alt}}]",
@@ -223,7 +224,8 @@
     "dataFigurePartial": "Created script {{script}}; some rows weren’t drawn",
     "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use",
     "dataFigureFailedWritten": "Created {{script}}, but verification failed",
-    "dataFigureUnconfirmed": "Result unconfirmed"
+    "dataFigureUnconfirmed": "Result unconfirmed",
+    "stalled": "No activity from the AI for {{seconds}}s"
   },
   "status": {
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",

@@ -368,7 +368,9 @@ pdf-minus-bin1-m … pdf-plus-bin8-r` 一并送进一次 pip，`dependency_not_f
    PEP 723 仍只看脚本本身。`project_declared()` 与 `declared_intents()` 共用同一函数，边界只有一处。
 2. **字面量 `sys.path` 搜索根**（`importscan`）：`sys.path.append/insert(0, …)` 的实参若只由 `__file__` 所在目录与字符串字面量拼成
    （`os.path.dirname(__file__)`、`os.path.join`、`Path(__file__).parent`、`/` 运算、abspath/realpath/resolve 包装），该目录加进本地模块
-   搜索根（标签 `sys_path_literal`，至多 8 个，词法钉在项目内，变量 / 环境 / cwd 相关一律不认）。仍记 `sys_path_modified`，
+   搜索根（标签 `sys_path_literal`，至多 8 个，词法钉在项目内，变量 / 环境 / cwd 相关一律不认）。
+   补充（2026-11-01，反馈包 TVD-705N）：模块层顶层无条件、全文只绑定一次、绑定在调用之前、值本身也只由 `__file__` 目录与字面量拼成的
+   名字（`ROOT = Path(__file__).resolve().parent`）按它的值认——它不是「变量」意义上的未知量；再绑定过、条件绑定、`global` 改写过的照旧不认。仍记 `sys_path_modified`，
    搜索面照旧不算「完整」。脚本加了这类目录、里面却找不到的 import = **本地模块缺失**：`origins[].local_module_missing`，
    **不预填、不接受 `user_specified`（`UserSpecifiedRejected`）、不送 pip**。
 3. **不可 pip 安装表**（`depresolve.NOT_PIP_INSTALLABLE`，首条 `ROOT`）：计划阶段点名（`origins[].not_pip_installable`；声明里出现

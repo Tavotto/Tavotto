@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import tiffprobe
-from tavotto.engine import folderrepair
+from tavotto.engine import folderrepair, pathignore
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
@@ -91,6 +91,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.projectcopy",
     # 「修复权限」（ADR 0153 修订 2026-10-30）：`RepairError.code` 由 `/api/engine/folder-repair` 转成 JSON
     "tavotto.engine.folderrepair",
+    # 「跳过这个文件夹」（ADR 0154）：`IgnoreError.code` 由 `/api/engine/path-ignore` 转成 JSON
+    "tavotto.engine.pathignore",
 )
 
 
@@ -190,6 +192,10 @@ USER_VISIBLE_CODES = {
     "write_outside_roots": set(),
     # ADR 0153：脚本加进 sys.path 的项目外文件夹读不了、跳过之后仍失败；参数来自 `pool.recovery_params`（只有目录名）
     "import_folder_unreadable": {"folder"},
+    # ADR 0154：私有依赖目录里的编译扩展是为别的 Python 小版本编的；参数来自 `pool.recovery_params`（显示名 + 两个版本）
+    "import_folder_abi_mismatch": {"folder", "abi", "current"},
+    # 「跳过这个文件夹」（ADR 0154，`engine/pathignore`）：固定文案、不带参数——路径不进响应
+    **{code: set() for code in pathignore.ERROR_CODES},
     # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应
     **{code: set() for code in folderrepair.ERROR_CODES},
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
@@ -460,6 +466,7 @@ USER_VISIBLE_CODES = {
     "eps_needs_script": {"figure"},
     "eps_source_unverified": {"figure"},
     "eps_needs_live_figure": {"figure"},
+    "eps_annotations_unsupported": {"operation"},
     "export_basis_mismatch": {"format"},
     "svg_source_unsupported": {"id"},
     "svg_figure_unavailable": {"figure"},
@@ -482,6 +489,8 @@ USER_VISIBLE_CODES = {
     "version_name_too_long": {"max"},
     "version_moment_invalid": {"moment"},
     "version_thumb_invalid": set(),
+    # 只拍内容区域的缩略图：图写上了、裁切框写不上 → 撤掉这张图（500，文案固定）
+    "version_thumb_write_failed": set(),
     # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
     #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
     **{code: {"file"} for code in tiffprobe.ERROR_CODES},
@@ -492,6 +501,8 @@ USER_VISIBLE_CODES = {
     "project_copy_failed": {"reason"},
     # --- 只读项目里脚本写不出输出文件（worker 把 EACCES/EROFS 的写失败归成这个码；文案只有 {{product}} 一个占位，由前端填，不带路径）---
     "output_folder_read_only": {"product"},
+    # --- 解释器在 Tavotto 自己的会话缓存里建不了目录（TVD-B6MR）：用户代码之前就失败，文案只有 {{product}} 一个占位 ---
+    "interpreter_cache_denied": {"product"},
     # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
     "write_back_format_unsupported": {"format"},
     # 同一 stem 下另一张图写的文件（`app.WriteBackForeignFileError`）：写回拒绝覆盖
@@ -705,7 +716,7 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}}
+DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
 
 
 def _error_blocks(text: str):

@@ -428,7 +428,7 @@ test('右键快捷编辑弹层：开着动效退场播 pop-out 再卸载；reduc
   await page.setViewportSize({ width: 1440, height: 900 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
 
   // 图内一个有体积的元素（轴标题 / 曲线 / 图例之一）：右键它开元素弹层

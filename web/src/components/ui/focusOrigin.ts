@@ -14,10 +14,20 @@ let closingReturn: { owner: symbol; el: HTMLElement } | null = null
  */
 export function focusOrigin(): HTMLElement | null {
   const active = document.activeElement
-  const own = active instanceof HTMLElement && active !== document.body ? active : null
+  const own = menuTrigger(active instanceof HTMLElement && active !== document.body ? active : null)
   if (own && own.closest('[data-dialog]')?.getAttribute('data-state') !== 'closed') return own
   if (closingReturn?.el.isConnected) return closingReturn.el
   return own
+}
+
+/**
+ * 焦点在一个菜单项上（「⋯ → 项目接入状态…」这类从菜单打开的对话框）：菜单项随菜单关闭就卸掉了，
+ * 记它关对话框时还不回去，焦点掉到别处。改记打开这个菜单的按钮（Radix 的触发钮 `aria-controls` 指向菜单）
+ */
+function menuTrigger(el: HTMLElement | null): HTMLElement | null {
+  const menu = el?.closest<HTMLElement>('[role="menu"]')
+  if (!menu?.id) return el
+  return document.querySelector<HTMLElement>(`[aria-controls="${CSS.escape(menu.id)}"]`) ?? el
 }
 
 /** 一层共用对话框关上了：登记它退场后该还焦点给谁（`ui/Dialog` 调） */

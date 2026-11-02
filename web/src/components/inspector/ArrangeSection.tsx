@@ -391,7 +391,7 @@ function MultiSpacingGroupLayout() {
         <div className="grid w-full min-w-0 grid-cols-[repeat(auto-fit,minmax(6.5rem,1fr))] gap-1.5">
           <NumberField
             fill
-            prefix={<MoveHorizontal size={ICON_SIZE.xs} aria-hidden />}
+            prefix={<MoveHorizontal size={ICON_SIZE.sm} aria-hidden />}
             unit="mm"
             ariaLabel={ar('spacingH')}
             step={0.5}
@@ -403,7 +403,7 @@ function MultiSpacingGroupLayout() {
           />
           <NumberField
             fill
-            prefix={<MoveVertical size={ICON_SIZE.xs} aria-hidden />}
+            prefix={<MoveVertical size={ICON_SIZE.sm} aria-hidden />}
             unit="mm"
             ariaLabel={ar('spacingV')}
             step={0.5}

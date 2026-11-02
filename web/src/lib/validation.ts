@@ -147,6 +147,8 @@ const RULES: Record<
   'font-below-absolute-floor': { category: 'text', context: 'document', fix: 'safe_auto' },
   'font-too-small': { category: 'text', context: 'document', fix: 'safe_auto' },
   'font-too-large': { category: 'text', context: 'document', fix: 'safe_auto' },
+  // 期刊「说明」的建议字号（suggestion 级，不是判据）：改不改是用户的判断，所以不给自动修复
+  'font-size-recommended': { category: 'text', context: 'document', fix: 'none' },
   // 改成规范的拉丁字体是确定的；「装没装」由后端对真实渲染里画字的那张脸核验
   // （没装就如实退出，ADR 0080），所以它进了 safe_auto
   'font-family-substituted': { category: 'text', context: 'document', fix: 'safe_auto' },

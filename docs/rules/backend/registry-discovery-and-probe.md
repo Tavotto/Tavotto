@@ -54,6 +54,15 @@ order: 130
     脚本；按内容缓存）：它认就按它的结果算（`parser == "target"`，脚本不从列表消失），它也不认
     才是确认的语法错误。目标解释器由调用方给（`pool.peek_worker_python`：只读路径、不复检，T02；
     导入即扫描从不给），`discover` 自己不挑解释器、不 import pool。
+- **登记的入口必须对照当前源码（`engine/entryfresh.py`，TVD-CHR5）**：`entry` 是首次打开时起草的函数名，脚本之后被改写成顶层直接画图
+  时 `getattr(module, entry)()` 只会撞 `AttributeError`。判据 `is_stale`：入口是函数名、源码能解析、顶层作用域**没有**这个名字
+  （def / async def / class / 赋值 / import 进来的同名都算还在；`import *`、模块级 `__getattr__`、读不动 / 解析不了 = 判不出 = 不动）。
+  `reconcile` 按 `probe.entry_candidates(static_only=True)` 重判，**只改这一条的 `entry` 字段**（经 `discover.write_config`，其余键原样），
+  消费点只有四处且都调同一函数：app 的 `_reconcile_registered_entry`（磁盘面板 `_disk_panel_rel`、runtime 素材 `_resolve_runtime_asset`、
+  准备目标 `entry is None` 分支）、准备会话规划 `prepsession._plan_of`（`effective_entry`：只纠正「就是登记的那个」，调用方显式给的入口不碰）、
+  AI 修复工具 `fix_entry`（`tavotto` 档，运行报告多 `entry_stale` 事实）。**刷新项目 / 静态合并不碰它**（「现有条目永远优先」）。
+  纠不出时 worker 报闭集码 `script_entry_missing`（`worker.SCRIPT_ENTRY_MISSING` ↔ `pool.SCRIPT_ENTRY_MISSING_CODE` ↔ 两份语言包 `errors.json`）。
+  看护 `tests/test_entry_fresh.py`。
 - **试运行探测（`engine/probe.py`）**：stem 真的只有运行期才知道时（遍历数据
   目录、读配置、命令行参数），把脚本**跑一遍**按真实产出登记——worker 本来
   就在 build 阶段拦 savefig 并按真实文件名捕获，跑得起来 = 能参数化。

@@ -2,6 +2,7 @@
 import { t } from '@/i18n'
 import type { ArtifactValidation, SourceBackedFigure } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
+import type { JournalFieldSource } from '@/lib/journals'
 import { displayText, type TextFormat } from '@/lib/richText'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
@@ -412,6 +413,22 @@ export interface DocumentProfile {
   snapshotVersion?: string
   /** 用户明确选了「跟着全局走」。缺省 = 没选 = 按快照 */
   follow?: boolean
+  /** 按期刊选的：选那一刻的期刊 id / 库版本 / 采集日期 / 期刊名（ADR 0155 §4）；缺省 = 没按期刊选过 */
+  journalRef?: { id: string; catalogRev: number; retrieved: string; label: string }
+  /** 生效字段出处的精简版（`lib/journals.JournalFieldSource`），出处卡离线也读得到 */
+  journalSources?: Record<string, JournalFieldSource>
+  /** 选期刊之前的规范绑定与页宽（`specBinding.JournalPrev`）：「不按期刊」据此退回 */
+  journalPrev?: {
+    profile: {
+      id: string
+      journal?: Record<string, unknown>
+      snapshot?: Record<string, unknown>
+      snapshotVersion?: string
+      follow?: boolean
+    } | null
+    pageW: number
+    setW?: number
+  }
 }
 
 /**

@@ -42,10 +42,12 @@ from . import (
     cli_failure,
     config,
     exectrace,
+    logsafe,
     managedcli,
     projectenv,
     scriptlock,
 )
+from .agent_runner import loop as agent_loop
 from .agent_runner.tools import TOOL_NAMES as _RUNNER_TOOLS
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import (  # noqa: F401 — 重导出，历史调用方仍认这个名字
@@ -57,6 +59,10 @@ LOG = logging.getLogger("tavotto.ai")
 
 SNAP_DIR = config.data_dir() / "cache" / "ai_snapshots"
 TIMEOUT_S = 900  # 单次 AI 任务上限
+#: 无输出看门狗：CLI 这么久没吐任何一行 → 推 `ai.stalled` 让界面说「没有动静」并给取消 / 重试。**只提示，不杀进程**
+#: （慢慢思考的模型会被误杀）；总超时 `TIMEOUT_S` 不变。检查间隔 `STALL_POLL_S` 决定提示最迟晚到多久
+STALL_AFTER_S = 120
+STALL_POLL_S = 5.0
 SNAP_KEEP = 20  # 快照保留的最近会话数（超龄的 revert 入口早已不可见）
 SESSIONS: dict[str, dict] = {}
 
@@ -156,6 +162,48 @@ exectrace.register_vocabulary(
 )
 exectrace.register_vocabulary("tool", _RUNNER_TOOLS)
 exectrace.register_vocabulary("refresh", ("pending", "ok", "failed", "skipped", "not_wired"))
+exectrace.register_vocabulary("cli_event", ai_agents.CLI_EVENT_TYPES)
+exectrace.register_vocabulary("cli_item", ai_agents.CLI_ITEM_TYPES)
+exectrace.register_vocabulary("endpoint_kind", ai_agents.ENDPOINT_KINDS)
+
+#: `CliRunFacts.snapshot()` 的键 → `agent_run` span 的 attributes 键（登记在 `exectrace.ATTRIBUTES`）
+_CLI_FACT_ATTRS = {
+    **{
+        k: f"cli_{k}"
+        for k in (
+            "events",
+            "commands",
+            "commands_failed",
+            "commands_declined",
+            "commands_open",
+            "file_changes",
+            "file_changes_failed",
+            "files_inside",
+            "files_outside",
+            "reasoning",
+            "messages",
+            "errors",
+            "turns_failed",
+            "target_touched",
+            "target_on_disk",
+            "target_bytes",
+            "first_event_ms",
+            "max_gap_ms",
+            "idle_end_ms",
+            "last_event",
+            "last_item",
+        )
+    },
+    "endpoint": "endpoint_kind",
+}
+
+
+def _cli_fact_attributes(facts: dict | None) -> dict:
+    """运行事实 → span attributes（`first_event_ms` 为 None = 一个事件都没收到，不写这一键）。"""
+    if not facts:
+        return {}
+    return {attr: facts[k] for k, attr in _CLI_FACT_ATTRS.items() if facts.get(k) is not None}
+
 
 #: 会话 status → 根 Trace 的终局（Agent 退出、文件变了、刷新、任务结局四件事分开记在根的 attributes 上）
 _TRACE_END = {
@@ -203,13 +251,133 @@ def _trace_runner_event(trace, parent, line: str, model, endpoint) -> None:
         pass
 
 
-def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
+_RUNNER_STDERR_CODE = re.compile(r"^agent_runner: ([a-z_]{1,32})(?: |$)", re.M)
+
+#: 「这一项没有事实」的占位。也要经 `logsafe.known` 放行，否则 `-` 在诊断包里会被哈希
+_NO_FACT = frozenset({"-"})
+
+
+def _code(value: object, allowed) -> object:
+    """闭集码 → `logsafe.known` 明文；缺省 → `-`；集合外的值原样交回（诊断包里照样哈希，app.log 里是原值）。"""
+    if not value:
+        return logsafe.known("-", _NO_FACT)
+    return logsafe.known(value, allowed)
+
+
+def _codes(values: list, allowed) -> object:
+    """一组码：全在 `allowed` 里 → 明文；有一个不在 → 整组以逗号拼成普通字符串（诊断包里哈希）；空 → `-`。"""
+    if not values:
+        return logsafe.known("-", _NO_FACT)
+    shown = logsafe.known_each(values, allowed)
+    return shown if shown is not values else ",".join(str(v) for v in values)
+
+
+def _stderr_facts(sid: str) -> tuple[int | None, object]:
+    """内置执行器 stderr 的事实：字节数与 `agent_runner: <词>` 的第一个词（诊断函数只写短码）。
+    有字节却没有短码 = 解释器级崩溃（traceback），其内容含路径，不进日志。"""
+    try:
+        data = (SNAP_DIR / f"{sid}.stderr.log").read_bytes()
+    except OSError:
+        return None, _code("", _NO_FACT)
+    if not data:
+        return None, _code("", _NO_FACT)
+    text = data[-65536:].decode("utf-8", errors="replace")
+    codes = []
+    for code in _RUNNER_STDERR_CODE.findall(text):
+        if code not in codes:
+            codes.append(code)
+    return len(data), _codes(codes[:4], agent_loop.STDERR_CODES)
+
+
+def _end_facts(sess: dict, proc, sid: str, builtin: bool) -> tuple:
+    """「AI 会话结束」那行日志的失败事实，**逐项**返回（日志模板是固定字面量，每项是独立参数）：
+    `(exit, runner, runner_detail, unmet, unmet_reasons, stderr_bytes, stderr_codes)`。
+
+    诊断包只明文放行数字与 `logsafe.known*` 过的值，所以码类事实都经源码里的闭集常量放行
+    （`agent_loop.DONE_REASONS` 同源的 `ai_agents.RUNNER_ERRORS` / `exectrace.RUNNER_DETAILS` /
+    `ai_tasks.UNMET_*` / `agent_loop.STDERR_CODES`）；集合外的值（自由文本 / 路径 / 新增未登记的码）
+    不会明文出门。缺省的字符串槽位是 `-`，数字槽位是 None。
+    `unmet` / `unmet_reasons` 按同样的顺序一一对应（`约束`、`原因`）。"""
+    from . import ai_tasks  # 惰性：与本模块其它处一致（ai_tasks 依赖面大，不在 import 期拉进来）
+
+    code = getattr(proc, "returncode", None)
+    runner = detail = None
+    if builtin:
+        runner = sess.get("runner_error")
+        if runner:
+            detail = sess.get("runner_detail")
+        elif isinstance(code, int) and code != 0 and sess.get("status") == "failed":
+            runner = "no_done_event"
+    unmet = [u for u in ((sess.get("task") or {}).get("unmet") or [])[:6] if isinstance(u, dict)]
+    size, stderr_codes = (
+        _stderr_facts(sid)
+        if builtin and sess.get("status") == "failed"
+        else (None, _code("", _NO_FACT))
+    )
+    return (
+        code if isinstance(code, int) else None,
+        _code(runner, ai_agents.RUNNER_ERRORS),
+        _code(detail, exectrace.RUNNER_DETAILS),
+        _codes([str(u.get("constraint_id") or "") for u in unmet], ai_tasks.UNMET_CONSTRAINT_IDS),
+        _codes([str(u.get("reason_code") or "") for u in unmet], ai_tasks.UNMET_REASON_CODES),
+        size,
+        stderr_codes,
+    )
+
+
+def _is_relay(endpoint: dict | None) -> bool:
+    """这次会话是不是走第三方中转：记录里写了 base_url 才算（官方登录没有）。只返回布尔，不碰地址本身。"""
+    return bool(endpoint and str(endpoint.get("base_url") or "").strip())
+
+
+def _run_facts(agent: str, cwd: str, cand, script: str):
+    """该 Agent 的运行事实累计器（没有就 None）。目标名只取文件名，用于判「改到过目标文件」。"""
+    adapter = ai_agents.get_agent(agent)
+    if adapter is None:
+        return None
+    target = cand.target_name if cand is not None else Path(script).name
+    return adapter.run_facts(str(cwd or ""), target)
+
+
+def _cli_log_facts(sess: dict) -> tuple:
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 19 项）。
+    数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
+    没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
+    f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
+    if f is None:
+        dash = _code("", _NO_FACT)
+        return (None,) * 13 + (dash, dash, None, None, None, dash)
+    return (
+        f["events"],
+        f["commands"],
+        f["commands_failed"],
+        f["commands_declined"],
+        f["commands_open"],
+        f["file_changes"],
+        f["files_inside"],
+        f["files_outside"],
+        f["target_touched"],
+        f.get("target_on_disk"),
+        f.get("target_bytes"),
+        f["errors"],
+        f["turns_failed"],
+        _code(f["last_event"], ai_agents.CLI_EVENT_TYPES),
+        _code(f["last_item"], ai_agents.CLI_ITEM_TYPES),
+        f["first_event_ms"],
+        f["max_gap_ms"],
+        f["idle_end_ms"],
+        _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
+    )
+
+
+def _trace_agent_exit(trace, span, sess: dict, proc, facts: dict | None = None) -> None:
     try:
         status = sess.get("status")
+        extra = _cli_fact_attributes(facts)
         if status in ("cancelled", "timeout"):
-            trace.end_span(span, status)
+            trace.end_span(span, status, attributes=extra or None)
         elif proc.returncode == 0:
-            trace.end_span(span, exectrace.STATUS_OK, attributes={"exit_ok": True})
+            trace.end_span(span, exectrace.STATUS_OK, attributes={"exit_ok": True, **extra})
         else:
             trace.end_span(
                 span,
@@ -217,6 +385,7 @@ def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
                 error_code=sess.get("runner_error") or "agent_exit_nonzero",
                 attributes={
                     "exit_ok": False,
+                    **extra,
                     **(
                         {"runner_detail": sess["runner_detail"]}
                         if sess.get("runner_detail")
@@ -1339,6 +1508,51 @@ def fix_cli_command(
     return list(spec.argv), dict(spec.env)
 
 
+class _SilenceWatch:
+    """一次 CLI 进程的「无输出」看门狗（只观察，不碰进程）。`touch()` 在每读到 stdout 一行时调；后台线程每 `STALL_POLL_S` 看一次：
+    静默达 `STALL_AFTER_S` 发一次 `ai.stalled{stalled: true, idle_s}`，之后再有输出发一次 `{stalled: false}` 复位。
+    状态只放在这个对象里，不进会话字典（会话字典的字段会进响应）。`complete` 置位线程即退出。"""
+
+    def __init__(self, sid: str, emit, complete: threading.Event, clock=time.monotonic) -> None:
+        self._sid = sid
+        self._emit = emit
+        self._complete = complete
+        self._clock = clock
+        # 状态翻转与推送在同一把锁里：否则后台线程判定「卡住」后、推送前恰好来了输出，`stalled:false`
+        # 会先于 `stalled:true` 到前端，界面停在「没动静」
+        self._lock = threading.Lock()
+        self._last = clock()
+        self._stalled = False
+
+    def touch(self) -> None:
+        with self._lock:
+            self._last = self._clock()
+            if self._stalled:
+                self._stalled = False
+                self._publish({"stalled": False, "idle_s": 0})
+
+    def _publish(self, payload: dict) -> None:
+        try:
+            self._emit("ai.stalled", {"session": self._sid, **payload})
+        except Exception:  # noqa: BLE001 — 看门狗不能因事件通道出错而影响会话
+            LOG.exception("推送 ai.stalled 失败（session %s）", self._sid)
+
+    def check(self) -> None:
+        """看一次：静默达阈值且还没提示过就提示。后台线程每 `STALL_POLL_S` 调一次；测试直接调。"""
+        with self._lock:
+            idle = self._clock() - self._last
+            if idle >= STALL_AFTER_S and not self._stalled:
+                self._stalled = True
+                self._publish({"stalled": True, "idle_s": int(idle)})
+
+    def _run(self) -> None:
+        while not self._complete.wait(STALL_POLL_S):
+            self.check()
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True, name=f"ai-silence-{self._sid}").start()
+
+
 def _classify(agent_id: str, line: str, st: dict) -> list[tuple[str, str]]:
     """把 CLI 原始输出分类为事件列表。kind：
       delta    — 当前回答的流式增量（只走 SSE，不进 transcript）
@@ -1860,6 +2074,12 @@ def run(
             attempt=agent_runs[0],
             attributes={"agent": agent, "opaque": agent != ai_agents.BUILTIN_ID},
         )
+        # 第三方 CLI 的运行事实（只有数字 / 闭集码）：与 `_classify` 读同一条 stdout，进 agent_run span 与会话结束日志
+        run_facts = (
+            None if agent == ai_agents.BUILTIN_ID else _run_facts(agent, agent_cwd, cand, script)
+        )
+        # 进行中的累计器给会话详情判“长时间静默的生成”（`get()` → `task.activity`）；结束后摘掉
+        sess["cli_live"] = run_facts
 
         def expire():
             # A silent process (or one holding a partial line) never reaches a
@@ -1868,11 +2088,16 @@ def run(
                 sess["status"] = "timeout"
                 _terminate(sess)
 
-        timer = threading.Timer(max(0.0, TIMEOUT_S - (time.time() - sess["started"])), expire)
+        # 转换任务按源脚本规模放宽（`ai_convert.convert_timeout_s`，envelope_for 写进候选）；其它任务仍是基线
+        limit_s = TIMEOUT_S + int(getattr(cand, "extras", {}).get("timeout_extra_s") or 0)
+        timer = threading.Timer(max(0.0, limit_s - (time.time() - sess["started"])), expire)
         timer.daemon = True
         timer.start()
+        silence = _SilenceWatch(sid, emit, complete)
+        silence.start()
         try:
             for line in proc.stdout:
+                silence.touch()
                 line = line.rstrip("\n")
                 if not line.strip():
                     continue
@@ -1881,6 +2106,8 @@ def run(
                     continue
                 if agent == ai_agents.BUILTIN_ID:
                     _trace_runner_event(trace, run_span, line, model, endpoint)
+                elif run_facts is not None:
+                    run_facts.observe(line)
                 for kind, text in _classify(agent, line, st):
                     if not text:
                         continue
@@ -1888,7 +2115,7 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
-            if agent == ai_agents.BUILTIN_ID and st.get("runner_error"):
+            if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")
         finally:
@@ -1906,7 +2133,18 @@ def run(
                         sess["failure_category"] = cli_failure.consume(err)
                 except (OSError, ValueError):
                     sess["failure_category"] = "other"
-            _trace_agent_exit(trace, run_span, sess, proc)
+            sess.pop("cli_live", None)
+            snapshot = None
+            if run_facts is not None:
+                try:
+                    snapshot = run_facts.snapshot(_is_relay(endpoint))
+                    sess.setdefault("cli_runs", []).append(snapshot)
+                    if cand is not None and hasattr(cand, "extras"):
+                        # 写入被拒的失败码要读它（`ai_convert.write_denied`）：提交前检查在进程结束之后才跑
+                        cand.extras["run_facts"] = ai_agents.merge_run_facts(sess["cli_runs"])
+                except Exception:  # noqa: BLE001 —— 事实采集不影响会话
+                    snapshot = None
+            _trace_agent_exit(trace, run_span, sess, proc, snapshot)
 
     def _respawn(note: str) -> None:
         """TAF 有界修正：在同一个候选目录里、带着原提示词 + 修正指令再起一次 CLI（Phase 4，`ai_tasks._admit_correction`
@@ -2010,12 +2248,19 @@ def run(
             else:
                 sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
             LOG.info(
-                "AI 会话结束: %s %s status=%s changed=%s refresh=%s",
+                "AI 会话结束: %s %s status=%s changed=%s refresh=%s exit=%s runner=%s runner_detail=%s "
+                "unmet=%s unmet_reasons=%s stderr_bytes=%s stderr_codes=%s "
+                "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
+                "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s cli_target_on_disk=%s cli_target_bytes=%s "
+                "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s",
                 agent,
                 script,
                 sess["status"],
                 sess["changed"],
                 sess["refresh"]["status"],
+                *_end_facts(sess, sess.get("proc") or proc, sid, agent == ai_agents.BUILTIN_ID),
+                *_cli_log_facts(sess),
             )
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
             _finish_session(sess, task_result=task["task_result"] if task else None)
@@ -2029,6 +2274,8 @@ def run(
                     "script": script,
                     "refresh": sess["refresh"],
                     "rev": sess.get("rev"),
+                    # 失败码随终态一起推（TVD-VSNF）：前端只靠这条事件收尾，缺了它「AI 没跑起来」会被说成「没通过写回前检查」
+                    **({"error": sess["error"]} if sess.get("error") else {}),
                     **({"task": dict(sess["task"])} if task is not None else {}),
                 },
             )
@@ -2397,6 +2644,7 @@ def resume_figure_edit(
                     "refresh": sess["refresh"],
                     "task": dict(sess["task"]),
                     "rev": sess.get("rev"),
+                    **({"error": sess["error"]} if sess.get("error") else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001
@@ -2689,6 +2937,41 @@ def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None
     raise AgentError("ai_revert_conflict", {"script": sess["script"]})
 
 
+def revertible_edit(project_root: str, script: str) -> dict | None:
+    """这份脚本此刻是不是「最近一次改过它的 AI 会话留下的那一版」，且那次修改能原样撤销（TVD-H1M5）。
+
+    是 → `{"session": 会话 id, "started_ms": 那次修改开始的时刻}`；否则 None。主语是**此刻磁盘上的这份脚本**：
+
+    * 最近一次改过它的会话（`ai_history.latest_change_to`）正常结束（`done`）——已撤销 / 中断 / 失败的不算，也不退回去找更早的；
+    * 不是转换会话（转换从不改原脚本，`revert` 对它是 `ai_revert_not_applicable`）；
+    * 快照还在，且记过会话结束版本（`after_sha256`），脚本字节此刻正好等于它——与 `_refuse_stale_revert` 同一条判据：
+      之后人工又改过、另一次修改又改过、没有记录（判不出），一律不算。这样失败卡上的「撤销」永远不会撞上 `ai_revert_conflict`。
+
+    只读：查一次库、读一次 sidecar、读一次脚本求摘要；任何一步读不出都回 None（只少一个建议，不影响失败卡的其余出路）。"""
+    key = str(Path(project_root).resolve())
+    row = ai_history.latest_change_to(key, script)
+    if row is None or row.get("status") != "done":
+        return None
+    sid = str(row["id"])
+    sess = SESSIONS.get(sid) or _load_sidecar(sid)
+    if not isinstance(sess, dict) or sess.get("kind") == "convert":
+        return None
+    expected = sess.get("after_sha256")
+    snap = sess.get("snapshot")
+    if not expected or not snap or not Path(snap).is_file():
+        return None
+    target = projectenv.contained_path(project_root, str(Path(project_root) / script))
+    if target is None:
+        return None
+    try:
+        current = Path(target).read_bytes()
+    except OSError:
+        return None
+    if _sha256(current) != expected:
+        return None
+    return {"session": sid, "started_ms": int(row.get("started_ms") or 0)}
+
+
 #: 会话详情（`GET /api/ai/sessions/<sid>`）对外给的字段——**显式白名单**，每个值都必须能 `json.dumps`。
 #: 内存里的会话 dict 带着不可序列化的内部对象（`proc` 子进程、`exited` 的 `threading.Event`），用黑名单排除会在下一次有人
 #: 往会话里加字段时再炸一次（曾经只排除了 `proc`，`exited` 让本进程正在运行的会话详情一律 500）。
@@ -2735,7 +3018,19 @@ SESSION_TERMINAL_FIELDS: tuple[str, ...] = (
 #: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
 #: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
 SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
-    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid", "taf", "trace"}
+    {
+        "proc",
+        "exited",
+        "script_path",
+        "snapshot",
+        "project",
+        "context",
+        "owner_pid",
+        "taf",
+        "trace",
+        "cli_runs",
+        "cli_live",
+    }
 )
 
 
@@ -2765,6 +3060,24 @@ def _session_dto(raw: dict) -> dict:
     return out
 
 
+#: 事件流静默超过这么久、且模型此刻在生成（不是在等命令），转换进度行改说“正在生成较长的文件…”
+LONG_WRITE_IDLE_MS = 45_000
+
+
+def _live_activity(live: dict) -> str | None:
+    """进行中的转换会话此刻的活动（闭集：`writing_long` 或 None）。判据只用 `CliRunFacts` 的结构化事实
+    （`ai_agents.CliRunFacts.generating_silent`），不匹配任何自由文本；事件一来静默清零，下一次轮询自然恢复。"""
+    if live.get("kind") != "convert" or live.get("status") != "running":
+        return None
+    facts = live.get("cli_live")
+    try:
+        if facts is not None and facts.generating_silent(LONG_WRITE_IDLE_MS):
+            return "writing_long"
+    except Exception:  # noqa: BLE001 —— 判不出就当没有
+        pass
+    return None
+
+
 def get(sid: str) -> dict | None:
     sess = SESSIONS.get(sid)
     if sess is not None:
@@ -2773,6 +3086,9 @@ def get(sid: str) -> dict | None:
         live["revert_available"] = (
             bool(snap) and Path(snap).is_file() and live.get("kind") != "convert"
         )
+        activity = _live_activity(live)
+        if activity is not None and isinstance(live.get("task"), dict):
+            live["task"] = {**live["task"], "activity": activity}
         return _session_dto(live)
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）

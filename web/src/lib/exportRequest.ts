@@ -31,7 +31,7 @@ import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
-import type { FigureDocument, PanelObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
@@ -223,6 +223,10 @@ export interface ExportRequestInput {
   mergePages?: readonly { figureId: string; panel: PanelObject | null; spec: OriginalOutputSpec | null }[]
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
+  /** 单图带标注（QA-WIN-20）：已换算到原图图幅的标注对象（`lib/singleExportDoc.annotationsOf`）；进 `original.objects` */
+  annotations?: readonly CanvasObject[]
+  /** `annotations` 里前几个在图的下面（保留图层次序） */
+  annotationsBelow?: number
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
   /**
@@ -312,6 +316,12 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       request.merge_pdf = { pages: input.mergePages.map((p) => sourceOf(p.figureId, p.panel, p.spec)) }
     } else {
       request.original = sourceOf(input.figureId ?? '', input.panel ?? null, input.spec ?? null)
+      const objects = input.annotations?.length ? toExportObjects([...input.annotations]) : []
+      if (objects.length) {
+        request.original.objects = objects
+        const below = Math.min(Math.max(input.annotationsBelow ?? 0, 0), objects.length)
+        if (below > 0) request.original.objects_below = below
+      }
     }
   }
   if (input.report) request.style_check_report = input.report

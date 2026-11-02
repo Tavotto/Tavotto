@@ -2,10 +2,14 @@
  * 图标集的几何定义——全产品 147 个界面图标的唯一出处（ADR 0052；说明书
  * `docs/ux/ICONOGRAPHY.md`）。
  *
- * 画法：24 网格；一切线条都是 2 单位描边、圆头圆角；实心形状 = 同一条路径再填色；
+ * 画法：24 网格；一切线条都是 1.5 单位描边（2026-10-31 起，ADR 0157；此前 2）、圆头圆角；落在线上的点最后统一吸到
+ * 0.75 网格（`snapToPixelGrid`，16px 上 = 1 个物理像素）；实心形状 = 同一条路径再填色；
  * 闭合外形外角 ≥ 2.5、内角 ≥ 1；标点是直径 2.5 的纯填充圆；每个图标 ≤ 3 个可辨元素。
  * 规格是从 OpenAI 的 `@openai/apps-sdk-ui`（755 个图标）量出来再落到这个网格上的，
  * 图形本身都是自己画的。
+ *
+ * 状态记号（警告 / 提示 / 完成 / 出错 / 盾牌警告）默认就是实心底 + 挖空符号，没有线条版（2026-11-01 用户选定，
+ * ADR 0158）：「现在是什么状态」用实心，「点了会做什么」用线条。
  *
  * 每个图标：s = 描边路径，f = 实心路径，k = 挖空（蒙版里画黑），o = 挖空后再压上去的
  * 线；sel = 选中态的实心孪生（f 实心外形 + k 挖出内部细节 + s 保留的线）。只有真正
@@ -22,6 +26,8 @@ export interface IconPath {
   dash?: string
   /** 只在挖空 / 压线里用：这条按实心画 */
   solid?: boolean
+  /** 静止时不画（描边 / 填充透明），只在微动效里显形的辅助形（ADR 0156） */
+  ghost?: boolean
 }
 export type IconPathSpec = string | IconPath
 export interface IconVariant {
@@ -89,10 +95,13 @@ const EYE = 'M2.5 12c2.4-4.4 5.6-6.5 9.5-6.5s7.1 2.1 9.5 6.5c-2.4 4.4-5.6 6.5-9.
 const BULB = 'M9.5 16.5c-2.5-1.3-4-3.6-4-6.5a6.5 6.5 0 0 1 13 0c0 2.9-1.5 5.2-4 6.5'
 const BULB_BASE = 'M9.5 16.5v1.5a2.5 2.5 0 0 0 2.5 2.5a2.5 2.5 0 0 0 2.5-2.5v-1.5'
 const FOLDER = 'M3.5 7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5v8.5A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z'
+// 打开的文件夹（FolderOpen 同一份）：后片 + 朝观众倒下的前片
+const FOLDER_OPEN_BACK = 'M3.5 11V7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5V11'
+const FOLDER_OPEN_FRONT = 'M2.9 11h17.3a1.5 1.5 0 0 1 1.4 2l-2 5.5A2 2 0 0 1 17.7 20H5.3a2 2 0 0 1-1.9-1.5L2.9 11z'
 const HEX = poly(regular(12, 12, 9.3, 6, -90), 2.4)
 // 八角（平边朝上，边心距 9 与 RING 同外沿）
 const OCT = poly(regular(12, 12, 9 / Math.cos(Math.PI / 8), 8, -67.5), 2.5)
-const TWO = (x: number, y: number) => `M${x} ${y}a2 2 0 0 1 3.5 1.3c0 1.5-3.5 2.4-3.5 4.7h4`
+const TWO = (x: number, y: number) => `M${x} ${y + 1.75}a2.25 2.25 0 0 1 4.5 0c0 2-4.5 3.25-4.5 6h4.5`
 // 光学居中：指针 + 三道点击射线整体外接盒（含 2 单位描边）原先是 x 1.5–18.5 / y 1.5–18，中心 (10, 9.75)，
 // 离 24 网格中心 (12, 12) 偏左上约 2 单位——放进 32px 的墨色实心圆里（选中态）肉眼就是没居中。
 // 整组平移 (+2, +2.25) 把外接盒中心挪回 (12, 12)；射线与指针的相对位置不变。
@@ -102,6 +111,8 @@ const CARD = rr(3, 8, 13, 13, 2.5)
 const CARD_BACK = 'M8 8V5.5A2.5 2.5 0 0 1 10.5 3h8A2.5 2.5 0 0 1 21 5.5v8a2.5 2.5 0 0 1-2.5 2.5H16'
 const TAG = 'M5.5 3.5h5.2a2 2 0 0 1 1.4.6l8 8a2 2 0 0 1 0 2.8l-5.4 5.4a2 2 0 0 1-2.8 0l-8-8a2 2 0 0 1-.6-1.4V5.5a2 2 0 0 1 2-2z'
 const IMG_FRAME = rr(3, 4, 18, 16, 2.5)
+const LOCK_BODY_IN: IconPath = { d: rr(5.25, 11.25, 13.5, 8.5, 1.75), w: 0 }
+const LOCK_KEYHOLE: IconPath = { d: circ(12, 15.5, 1.6), solid: true }
 const MOUNTAIN = 'M3.5 17l4.5-4.5 3 3 3-3 6.5 6.5'
 const CLIP_BOARD = 'M8.5 4.5H6.5A2.5 2.5 0 0 0 4 7v11.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V7a2.5 2.5 0 0 0-2.5-2.5h-2'
 const CLIP = rr(8.5, 2.5, 7, 4, 1.5)
@@ -113,7 +124,7 @@ const bar = (x: number, y: number, w: number, h: number) => rr(x, y, w, h, 1.5)
 
 const HEART = 'M12 20.2C6.6 16.4 3.8 13.1 3.8 9.6A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 8.2 2c0 3.5-2.8 6.8-8.2 10.6z'
 
-export const ICON_DEFS = {
+const RAW_DEFS = {
   // ───────── 左轨 ─────────
   LayoutGrid: { s: [rr(3, 3, 7, 7, 2), rr(14, 3, 7, 7, 2), rr(3, 14, 7, 7, 2), rr(14, 14, 7, 7, 2)],
     sel: { f: [rr(3, 3, 7, 7, 2), rr(14, 3, 7, 7, 2), rr(3, 14, 7, 7, 2), rr(14, 14, 7, 7, 2)] } },
@@ -122,9 +133,8 @@ export const ICON_DEFS = {
   Layers: { s: [poly([[12, 3], [20, 7], [12, 11], [4, 7]], 1.2), 'M4 13l8 4 8-4', 'M4 17l8 4 8-4'],
     sel: { f: [poly([[12, 3], [20, 7], [12, 11], [4, 7]], 1.2)], s: ['M4 13l8 4 8-4', 'M4 17l8 4 8-4'] } },
   SquareMousePointer: { s: ['M13.5 21H5.5A2.5 2.5 0 0 1 3 18.5v-13A2.5 2.5 0 0 1 5.5 3h13A2.5 2.5 0 0 1 21 5.5V13.5'], f: ['M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z'],
-    sel: { f: [rr(3, 3, 18, 18, 2.5)], k: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', w: 4 }], o: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', solid: true }] } },
-  TriangleAlert: { s: [TRI, 'M12 9.5v4'], f: [dot(12, 17.2)],
-    sel: { f: [TRI], k: ['M12 9.5v4', dot(12, 17.2)] } },
+    sel: { f: [rr(3, 3, 18, 18, 2.5)], k: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', w: 3 }], o: [{ d: 'M12.5 12.5L21 15.6l-3.3 1.4-1.4 3.3z', solid: true }] } },
+  TriangleAlert: { f: [TRI], k: ['M12 9.5v4', dot(12, 17.2)] },
   Settings: { s: [HEX, circ(12, 12, 2.75)],
     sel: { f: [HEX], k: [{ d: circ(12, 12, 2.4), solid: true }] } },
   ClipboardList: { s: [CLIP_BOARD, CLIP, 'M8.5 13.5l2.4 2.4 4.6-5'],
@@ -162,7 +172,12 @@ export const ICON_DEFS = {
   Heart: { s: [HEART], sel: { f: [HEART] } },
   Pin: { s: [PIN_BODY, 'M12 14v6.5'], sel: { f: [PIN_BODY], s: ['M12 14v6.5'] } },
   MousePointerClick: { f: [CURSOR], s: ['M6 10.75H4.5', 'M10.5 6.25V4.75', 'M7 7.25L5.9 6.15'] },
-  SlidersHorizontal: { s: ['M3.5 7.5h8.75', 'M18.75 7.5h1.75', circ(15.5, 7.5, 2.25), 'M3.5 16.5h1.75', 'M11.75 16.5h8.75', circ(8.5, 16.5, 2.25)] },
+  // 旋钮右侧会缩短的两段从外端画起（同一条线反向画，静止逐像素同形）；会变长的两段静止就是原来那截，另有两条
+  // 只在动作里显形的延长线（ghost，静止不画）：悬停动作（ADR 0156）里旋钮滑到哪、线就接到哪
+  SlidersHorizontal: {
+    s: ['M3.5 7.5h8.75', 'M18.75 7.5h1.75', circ(15.5, 7.5, 2.25), 'M3.5 16.5h1.75', 'M20.5 16.5h-8.75', circ(8.5, 16.5, 2.25),
+      { d: 'M20.5 7.5h-8.25', ghost: true }, { d: 'M3.5 16.5h8.25', ghost: true }],
+  },
   X: { s: ['M6 6l12 12', 'M18 6L6 18'] },
   Check: { s: ['M5 12.5l4.5 4.5L19 7'] },
   Pencil: { s: [PENCIL, 'M14.6 5.5l3.9 3.9'] },
@@ -170,12 +185,12 @@ export const ICON_DEFS = {
     sel: { f: [rr(4, 8, 16, 11, 3), dot(12, 4, 1.4)], s: ['M12 8V5.5'], k: [dot(9, 13.5, 1.5), dot(15, 13.5, 1.5)] } },
 
   // ───────── 状态家族（同一个圆圈、同一套标点） ─────────
-  CircleAlert: { s: [RING, 'M12 8v4'], f: [dot(12, 16.5)], sel: { f: [RING_SOLID], k: ['M12 8v4', dot(12, 16.5)] } },
+  CircleAlert: { f: [RING_SOLID], k: ['M12 8v4', dot(12, 16.5)] },
   // 阻断（问题等级 error）：停车牌的八角，标点与 CircleAlert 同一套（2026-09-14 二审 C1 把阻断与警告分成两个形状）
   OctagonAlert: { s: [OCT, 'M12 8v4'], f: [dot(12, 16.5)] },
-  Info: { s: [RING, 'M12 11.5V16'], f: [dot(12, 8)], sel: { f: [RING_SOLID], k: ['M12 11.5V16', dot(12, 8)] } },
-  CircleCheck: { s: [RING, 'M8 12.5l3 3 5-6.5'], sel: { f: [RING_SOLID], k: ['M8 12.5l3 3 5-6.5'] } },
-  CircleX: { s: [RING, 'M9 9l6 6', 'M15 9l-6 6'], sel: { f: [RING_SOLID], k: ['M9 9l6 6', 'M15 9l-6 6'] } },
+  Info: { f: [RING_SOLID], k: ['M12 11.5V16', dot(12, 8)] },
+  CircleCheck: { f: [RING_SOLID], k: ['M8 12.5l3 3 5-6.5'] },
+  CircleX: { f: [RING_SOLID], k: ['M9 9l6 6', 'M15 9l-6 6'] },
   CircleQuestionMark: { s: [RING, 'M9.6 9.5a2.4 2.4 0 1 1 3.6 2.1c-.8.5-1.2 1-1.2 1.9v.3'], f: [dot(12, 16.8)],
     sel: { f: [RING_SOLID], k: ['M9.6 9.5a2.4 2.4 0 1 1 3.6 2.1c-.8.5-1.2 1-1.2 1.9v.3', dot(12, 16.8)] } },
   CircleMinus: { s: [RING, 'M8.5 12h7'], sel: { f: [RING_SOLID], k: ['M8.5 12h7'] } },
@@ -184,7 +199,7 @@ export const ICON_DEFS = {
   Ban: { s: [RING, 'M5.7 5.7l12.6 12.6'] },
   LoaderCircle: { s: ['M21 12a9 9 0 1 1-2.64-6.36'] },
   Lightbulb: { s: [BULB, BULB_BASE], sel: { f: [BULB + 'z'], s: [BULB_BASE] } },
-  ShieldAlert: { s: [SHIELD, 'M12 8v4'], f: [dot(12, 15.8)], sel: { f: [SHIELD], k: ['M12 8v4', dot(12, 15.8)] } },
+  ShieldAlert: { f: [SHIELD], k: ['M12 8v4', dot(12, 15.8)] },
   ShieldCheck: { s: [SHIELD, 'M8.5 12l2.5 2.5 4.5-5'], sel: { f: [SHIELD], k: ['M8.5 12l2.5 2.5 4.5-5'] } },
   ShieldQuestionMark: { s: [SHIELD, 'M9.8 9.3a2.3 2.3 0 1 1 3.4 2c-.8.5-1.2 1-1.2 1.8v.2'], f: [dot(12, 16.2)],
     sel: { f: [SHIELD], k: ['M9.8 9.3a2.3 2.3 0 1 1 3.4 2c-.8.5-1.2 1-1.2 1.8v.2', dot(12, 16.2)] } },
@@ -194,10 +209,12 @@ export const ICON_DEFS = {
   Copy: { s: [CARD_BACK, CARD] },
   Trash2: { s: ['M4 7h16', 'M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7', 'M6 7l.8 11.7A2.5 2.5 0 0 0 9.3 21h5.4a2.5 2.5 0 0 0 2.5-2.3L18 7', 'M10 11v6', 'M14 11v6'] },
   Eye: { s: [EYE, circ(12, 12, 3.25)], sel: { f: [EYE], k: [{ d: circ(12, 12, 3.25), solid: true }] } },
-  EyeOff: { s: [EYE, circ(12, 12, 3.25)], k: [{ d: 'M4 4l16 16', w: 6 }], o: ['M4 4l16 16'] },
-  Lock: { s: ['M8 10.5V8a4 4 0 0 1 8 0v2.5', rr(4.5, 10.5, 15, 10, 2.5)], f: [dot(12, 15.5, 1.6)],
+  EyeOff: { s: [EYE, circ(12, 12, 3.25)], k: [{ d: 'M4 4l16 16', w: 4.5 }], o: ['M4 4l16 16'] },
+  // 锁身内部挖空（LOCK_BODY_IN）：锁扣上下动时伸进锁身的那段腿被挡住，不压锁孔；锁孔挖空之后再压回（o）
+  Lock: { s: ['M8 10.5V8a4 4 0 0 1 8 0v2.5', rr(4.5, 10.5, 15, 10, 2.5)], k: [LOCK_BODY_IN], o: [LOCK_KEYHOLE],
     sel: { s: ['M8 10.5V8a4 4 0 0 1 8 0v2.5'], f: [rr(4.5, 10.5, 15, 10, 2.5)], k: [dot(12, 15.5, 1.6)] } },
-  LockOpen: { s: ['M8 10.5V8a4 4 0 0 1 7.9-.9', rr(4.5, 10.5, 15, 10, 2.5)], f: [dot(12, 15.5, 1.6)] },
+  // 与 Lock 同一个锁扣整体抬起 4 单位、右腿离开锁身（2026-11-02 用户选定）
+  LockOpen: { s: ['M8 10.5V6.5a4 4 0 0 1 8 0v1', rr(4.5, 10.5, 15, 10, 2.5)], k: [LOCK_BODY_IN], o: [LOCK_KEYHOLE] },
   Link2: { s: ['M10 7H7.5a5 5 0 0 0 0 10H10', 'M14 7h2.5a5 5 0 0 1 0 10H14', 'M8.5 12h7'] },
   Unlink2: { s: ['M9.5 7H7.5a5 5 0 0 0 0 10h2', 'M14.5 7h2a5 5 0 0 1 0 10h-2', 'M10.5 13.5l3-3'] },
   // 线性圆角三角（与同屏其余线性图标一致）；早先是纯实心，16px 内显得重
@@ -206,7 +223,8 @@ export const ICON_DEFS = {
   Search: { s: [circ(10.5, 10.5, 7), 'M15.8 15.8L21 21'] },
   SearchX: { s: [circ(10.5, 10.5, 7), 'M15.8 15.8L21 21', 'M8 8l5 5', 'M13 8l-5 5'] },
   ExternalLink: { s: ['M11 4.5H6.5A2.5 2.5 0 0 0 4 7v10.5A2.5 2.5 0 0 0 6.5 20H17a2.5 2.5 0 0 0 2.5-2.5V13', 'M14 3.5h6.5V10', 'M20.5 3.5L12 12'] },
-  Save: { s: ['M4 6.5A2.5 2.5 0 0 1 6.5 4H15l5 5v8.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z', 'M8 4v4.5h6', 'M8 20v-5.5h8V20'] },
+  // 软盘：缺角收小，上面滑盖居中，下面标签带圆角（2026-11-02 用户选定）
+  Save: { s: ['M4 6.5A2.5 2.5 0 0 1 6.5 4H16.5L20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z', 'M8.5 4v3a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V4', 'M7.5 20v-4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V20'] },
   Bookmark: { s: ['M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V20.5l-6-4-6 4z'], sel: { f: ['M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V20.5l-6-4-6 4z'] } },
   Wrench: { s: ['M20.5 8.5a5.5 5.5 0 0 1-7.2 5.2L6.7 20.3a2.1 2.1 0 0 1-3-3l6.6-6.6a5.5 5.5 0 0 1 5.2-7.2l.5.1-3.3 3.3.7 2.6 2.6.7 3.3-3.3z'],
     sel: { f: ['M20.5 8.5a5.5 5.5 0 0 1-7.2 5.2L6.7 20.3a2.1 2.1 0 0 1-3-3l6.6-6.6a5.5 5.5 0 0 1 5.2-7.2l.5.1-3.3 3.3.7 2.6 2.6.7 3.3-3.3z'], k: [dot(5.9, 18.1, 1.1)] } },
@@ -216,7 +234,8 @@ export const ICON_DEFS = {
   Paintbrush: { s: ['M18.3 3.5a2.2 2.2 0 0 1 2.2 2.2l-8 8-3-3z', 'M9.5 10.5c-2.5.2-4.2 1.7-4.5 4.2-.2 1.6-1 2.6-2.5 3.3 3.2 1 7.5.2 8.7-3.2.3-1-.2-2.5-1.7-4.3z'],
     sel: { f: ['M18.3 3.5a2.2 2.2 0 0 1 2.2 2.2l-8 8-3-3z', 'M9.5 10.5c-2.5.2-4.2 1.7-4.5 4.2-.2 1.6-1 2.6-2.5 3.3 3.2 1 7.5.2 8.7-3.2.3-1-.2-2.5-1.7-4.3z'] } },
   KeyRound: { s: [circ(7.5, 7.5, 4), 'M10.5 10.5L20.5 20.5', 'M17.5 17.5l2.5-2.5', 'M14.5 14.5l2.5-2.5'] },
-  Unplug: { s: ['M9 3.5V7', 'M15 3.5V7', 'M5.5 7h13v3a6.5 6.5 0 0 1-13 0z', 'M12 16.5v2.5', 'M9.5 21.5L12 19l2.5 2.5'] },
+  // 插头拔离插座：上面插座、下面插头，中间留一道空（2026-11-02 用户选定）；插座内部挖空，插回去时插脚被挡住
+  Unplug: { s: ['M9.5 9v2.5', 'M14.5 9v2.5', 'M6.5 11.5h11v1.5a5.5 5.5 0 0 1-11 0z', 'M12 18.5V21.5', rr(5, 2.5, 14, 3.5, 1.5)], k: [{ d: rr(5.75, 3.25, 12.5, 2, 0.75), w: 0 }] },
   Crop: { s: ['M6.5 2.5v13a2 2 0 0 0 2 2h13', 'M2.5 6.5h13a2 2 0 0 1 2 2v13'] },
   Group: { s: [{ d: rr(3, 3, 18, 18, 2.5), dash: '3.6 2.65' }], f: [rr(7, 7, 4, 4, 1), rr(13, 13, 4, 4, 1)] },
   Ungroup: { s: ['M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8', 'M16 21h2.5a2.5 2.5 0 0 0 2.5-2.5V16'], f: [rr(7, 7, 4, 4, 1), rr(13, 13, 4, 4, 1)] },
@@ -230,9 +249,12 @@ export const ICON_DEFS = {
   FlipVertical2: { s: [poly([[7, 3.5], [12, 8.5], [17, 3.5]], 0.9), poly([[7, 20.5], [12, 15.5], [17, 20.5]], 0.9), { d: 'M3.5 12h17', dash: '3 2.5' }] },
   HardDrive: { s: [rr(3, 6, 18, 12, 2.5), 'M3 12h18'], f: [dot(17, 15, 1.4)] },
   BookOpen: { s: ['M12 6.5c-1.6-1.7-4.4-2.2-8.5-2v14.5c4.1-.2 6.9.3 8.5 2 1.6-1.7 4.4-2.2 8.5-2V4.5c-4.1-.2-6.9.3-8.5 2z', 'M12 6.5V21'] },
-  Folder: { s: [FOLDER, 'M3.5 10h17'],
-    sel: { f: [FOLDER], k: ['M3.5 10h17'] } },
-  FolderOpen: { s: ['M3.5 11V7A2.5 2.5 0 0 1 6 4.5h3.2a2 2 0 0 1 1.4.6L12 6.5h6a2.5 2.5 0 0 1 2.5 2.5V11', 'M2.9 11h17.3a1.5 1.5 0 0 1 1.4 2l-2 5.5A2 2 0 0 1 17.7 20H5.3a2 2 0 0 1-1.9-1.5L2.9 11z'] },
+  // 静止仍是「整圈外形 + 一道横线」原样；悬停时换成打开的文件夹（与 FolderOpen 同形，ghost，只在动作里显形）、
+  // 前片落下露出里面一张纸，再合上（ADR 0156，用户 10-31：朝观众打开；压扁前片的版本在 16px 上看着像破了）
+  Folder: { s: [FOLDER, 'M3.5 10h17', { d: FOLDER_OPEN_BACK, ghost: true }, { d: FOLDER_OPEN_FRONT, ghost: true }, { d: 'M7 11V9h10V11', ghost: true }],
+    sel: { f: [FOLDER, { d: FOLDER_OPEN_BACK + 'z', ghost: true }, { d: FOLDER_OPEN_FRONT, ghost: true }],
+      k: ['M3.5 10h17', { d: 'M2.9 11h17.3', ghost: true }] } },
+  FolderOpen: { s: [FOLDER_OPEN_BACK, FOLDER_OPEN_FRONT] },
   FolderPlus: { s: [FOLDER, 'M12 10.5v6', 'M9 13.5h6'] },
   // 主页 = 项目列表（顶栏左上角「回到项目列表」）：屋形外框 + 一扇门，两个元素
   House: { s: [poly([[4, 10], [12, 3.5], [20, 10], [20, 20], [4, 20]], 2.5), 'M9.5 20v-4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V20'] },
@@ -241,7 +263,7 @@ export const ICON_DEFS = {
   FileCodeCorner: { s: [DOC, DOC_FOLD, 'M10 12l-2 2.5 2 2.5', 'M14 12l2 2.5-2 2.5'] },
   FileExclamationPoint: { s: [DOC, DOC_FOLD, 'M12 11v3.5'], f: [dot(12, 17.5)] },
   FileSliders: { s: [DOC, DOC_FOLD, 'M8.5 13.5h7', 'M8.5 17h7'], f: [dot(13.5, 13.5, 1.5), dot(10.5, 17, 1.5)] },
-  ImageOff: { s: [IMG_FRAME, MOUNTAIN], f: [dot(8, 9, 1.6)], k: [{ d: 'M4 4l16 16', w: 6 }], o: ['M4 4l16 16'] },
+  ImageOff: { s: [IMG_FRAME, MOUNTAIN], f: [dot(8, 9, 1.6)], k: [{ d: 'M4 4l16 16', w: 4.5 }], o: ['M4 4l16 16'] },
   Layers2: { s: [poly([[12, 5], [20, 9.5], [12, 14], [4, 9.5]], 1.2), 'M4 15.5l8 4.5 8-4.5'],
     sel: { f: [poly([[12, 5], [20, 9.5], [12, 14], [4, 9.5]], 1.2)], s: ['M4 15.5l8 4.5 8-4.5'] } },
   CornerDownLeft: { s: ['M19 4v7.5a2.5 2.5 0 0 1-2.5 2.5H5', 'M9 10l-4 4 4 4'] },
@@ -272,12 +294,14 @@ export const ICON_DEFS = {
   AlignVerticalDistributeCenter: { s: ['M3 7.5h18', 'M3 16.5h18'], f: [bar(6, 5.5, 12, 4), bar(8.5, 14.5, 7, 4)] },
 
   // ───────── 文字 ─────────
-  Bold: { s: [{ d: 'M7.5 4h5.5a3.5 3.5 0 0 1 0 7H7.5z', w: 2.75 }, { d: 'M7.5 11h6.5a4.25 4.25 0 0 1 0 8.5h-6.5z', w: 2.75 }] },
+  Bold: { s: [{ d: 'M7.5 4h5.5a3.5 3.5 0 0 1 0 7H7.5z', w: 2.1 }, { d: 'M7.5 11h6.5a4.25 4.25 0 0 1 0 8.5h-6.5z', w: 2.1 }] },
   Italic: { s: ['M13.5 4.5h5', 'M5.5 19.5h5', 'M14.5 4.5l-5 15'] },
   Underline: { s: ['M6.5 3.5v7a5.5 5.5 0 0 0 11 0v-7', 'M4.5 20.5h15'] },
-  Superscript: { s: ['M4 7l7 8', 'M11 7l-7 8', TWO(15.5, 4.5)] },
-  Subscript: { s: ['M4 5l7 8', 'M11 5l-7 8', TWO(15.5, 13.5)] },
-  CaseSensitive: { s: ['M3.5 15.5l3.5-9 3.5 9', 'M4.9 12h4.2', 'M20 15.5v-5.5a2.5 2.5 0 0 0-5 0', 'M20 12.5h-3a2 2 0 0 0 0 4h.5a2.5 2.5 0 0 0 2.5-2.5'] },
+  // 上下标：x 放大、2 改成更开的写法（2026-11-01 用户指出原来那版不好看）
+  Superscript: { s: ['M4 9l7.5 10', 'M11.5 9l-7.5 10', TWO(15, 3)] },
+  Subscript: { s: ['M4 5l7.5 10', 'M11.5 5l-7.5 10', TWO(15, 12.5)] },
+  // 大小写：A 与单层 a 同一条基线，a 是圆碗 + 右竖（原来的双层 a 在 16px 上读成 ə）
+  CaseSensitive: { s: ['M3 18l4.5-12 4.5 12', 'M4.75 14h5.5', circ(17.25, 15.25, 2.75), 'M20 12.5V18'] },
   TextAlignStart: { s: ['M4 6h16', 'M4 12h10', 'M4 18h14'] },
   TextAlignCenter: { s: ['M4 6h16', 'M7 12h10', 'M5 18h14'] },
   TextAlignEnd: { s: ['M4 6h16', 'M10 12h10', 'M6 18h14'] },
@@ -294,7 +318,9 @@ export const ICON_DEFS = {
     sel: { s: ['M12 4v5', 'M12 15v5', 'M8.5 4h7', 'M8.5 20h7'], f: [dot(12, 12, 3.2)] } },
   WavesHorizontal: { s: ['M3 7.5c2-2 4-2 6 0s4 2 6 0 4-2 6 0', 'M3 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0', 'M3 16.5c2-2 4-2 6 0s4 2 6 0 4-2 6 0'] },
   Ruler: { s: [rr(3, 8, 18, 8, 2), 'M7 8v3.5', 'M11 8v5', 'M15 8v3.5', 'M19 8v5'] },
-  LayoutList: { f: [rr(3.5, 5, 5, 5, 1.2), rr(3.5, 14, 5, 5, 1.2)], s: ['M12 7.5h8.5', 'M12 16.5h8.5'] },
+  // 左轨「大纲」：选中态与 ListChecks 同一副骨架——左列两块放大成实心圆角块（与它的底块同尺寸），右列两道照旧
+  LayoutList: { f: [rr(3.5, 5, 5, 5, 1.2), rr(3.5, 14, 5, 5, 1.2)], s: ['M12 7.5h8.5', 'M12 16.5h8.5'],
+    sel: { f: [rr(2.5, 3.5, 8, 8, 2.5), rr(2.5, 12.5, 8, 8, 2.5)], s: ['M13.5 7.5h7', 'M13.5 16.5h7'] } },
   // 左轨「问题」（2026-10-07 设计审计 §9.4）：此前与警告同形（TriangleAlert），轨上一枚警告三角一直在余光里报警。
   // 与 LayoutList 同一副骨架（左列记号 + 右列两道），左列是两枚对勾——「检查清单」，不是「出事了」
   ListChecks: {
@@ -309,4 +335,100 @@ export const ICON_DEFS = {
 
 } satisfies Record<string, IconDef>
 
+/**
+ * 像素对齐（ADR 0157，用户 2026-10-31 在清晰度演示页上选定「描边 1.5 + 对齐像素」）：每条路径里落在线上的点
+ * （M / L / H / V 的终点、曲线与圆弧的端点）吸到 0.75 的整数倍——16px 图标在 2 倍屏上 1 单位 = 4/3 物理像素，
+ * 0.75 单位 = 1 物理像素，描边 1.5 = 2 物理像素，中心线落在整像素上，两侧边缘也就落在整像素上，不再糊成灰边。
+ * 曲线的控制点跟着各自端点平移，圆弧半径不动。几何仍按上面的原值写，改图形照常改原值，吸附在这里统一做。
+ */
+const GRID = 0.75
+const ARGC: Record<string, number> = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 }
+
+export function snapPathToPixelGrid(d: string, grid = GRID, offset = 0): string {
+  const snapV = (v: number) => Math.round((v - offset) / grid) * grid + offset
+  const toks = d.match(/[a-zA-Z]|-?(?:\d*\.\d+|\d+\.?)(?:e-?\d+)?/g) ?? []
+  const out: string[] = []
+  let i = 0
+  let cmd = ''
+  let x = 0, y = 0, sx = 0, sy = 0
+  let dx0 = 0, dy0 = 0 // 当前点被吸附挪了多少（下一段曲线的第一个控制点跟着它挪）
+  while (i < toks.length) {
+    if (/[a-zA-Z]/.test(toks[i])) cmd = toks[i++]
+    const C = cmd.toUpperCase()
+    const rel = cmd !== C
+    if (C === 'Z') { out.push('Z'); x = sx; y = sy; dx0 = snapV(x) - x; dy0 = snapV(y) - y; continue }
+    const a = toks.slice(i, i + ARGC[C.toLowerCase()]).map(Number)
+    i += ARGC[C.toLowerCase()]
+    const P = (ax: number, ay: number): [number, number] => (rel ? [x + ax, y + ay] : [ax, ay])
+    const end = (ex: number, ey: number) => { const qx = snapV(ex), qy = snapV(ey); const r = [qx - ex, qy - ey]; x = ex; y = ey; return { qx, qy, dx: r[0], dy: r[1] } }
+    if (C === 'M' || C === 'L' || C === 'T') {
+      const [ex, ey] = P(a[0], a[1]); const e = end(ex, ey)
+      out.push(`${C}${N(e.qx)} ${N(e.qy)}`)
+      if (C === 'M') { sx = ex; sy = ey; cmd = rel ? 'l' : 'L' }
+      dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'H' || C === 'V') {
+      const e = C === 'H' ? end(rel ? x + a[0] : a[0], y) : end(x, rel ? y + a[0] : a[0])
+      out.push(`L${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'C') {
+      const [c1x, c1y] = P(a[0], a[1]), [c2x, c2y] = P(a[2], a[3]), [ex, ey] = P(a[4], a[5])
+      const e = end(ex, ey)
+      out.push(`C${N(c1x + dx0)} ${N(c1y + dy0)} ${N(c2x + e.dx)} ${N(c2y + e.dy)} ${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'S' || C === 'Q') {
+      const [c2x, c2y] = P(a[0], a[1]), [ex, ey] = P(a[2], a[3])
+      const e = end(ex, ey)
+      out.push(`${C}${N(c2x + e.dx)} ${N(c2y + e.dy)} ${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    } else if (C === 'A') {
+      // 弦长变了半径不变，整圆（两段大弧）会鼓成柠檬形：半径按弦长的伸缩比例跟着缩放
+      const sx0 = x, sy0 = y, qsx = x + dx0, qsy = y + dy0
+      const [ex, ey] = P(a[5], a[6]); const e = end(ex, ey)
+      const before = Math.hypot(ex - sx0, ey - sy0), after = Math.hypot(e.qx - qsx, e.qy - qsy)
+      const k = before > 1e-6 ? after / before : 1
+      out.push(`A${N(a[0] * k)} ${N(a[1] * k)} ${a[2]} ${a[3]} ${a[4]} ${N(e.qx)} ${N(e.qy)}`); dx0 = e.dx; dy0 = e.dy
+    }
+  }
+  return out.join('')
+}
+
+const snapSpec = (p: IconPathSpec): IconPathSpec =>
+  typeof p === 'string' ? snapPathToPixelGrid(p) : { ...p, d: snapPathToPixelGrid(p.d) }
+const snapVariant = <V extends IconVariant>(v: V): V => {
+  const o = { ...v }
+  for (const k of ['s', 'f', 'k', 'o'] as const) if (v[k]) o[k] = v[k]!.map(snapSpec)
+  return o
+}
+
+export const ICON_DEFS = Object.fromEntries(
+  Object.entries(RAW_DEFS).map(([name, def]) => {
+    const d = def as IconDef
+    return [name, { ...snapVariant(d), ...(d.sel ? { sel: snapVariant(d.sel) } : {}) }]
+  }),
+) as { [K in keyof typeof RAW_DEFS]: IconDef }
+
 export type IconName = keyof typeof ICON_DEFS
+
+/**
+ * 12px 专用字形（ADR 0158，用户 2026-11-01 在小图标演示页上选定）：24 网格的图形缩到 12px 后线只剩 0.75px、
+ * 坐标落不到像素上，怎么吸附都糊。最常用的这几个小记号在 12 格上另画一份——为了与大图共用动作（角色、
+ * 变换原点、位移量都按 24 单位写），坐标仍写在 24 单位里，但只用偶数 = 12px 上的整像素：线 2 单位 = 1px，
+ * 线的中心落在奇数（半像素）上，横竖线两侧边缘都是整像素；能走横竖就不走斜线，斜线只用 45°。
+ * 状态记号在这里也是实心底 + 挖空，挖空的符号是整像素的矩形，上下两段之间至少留 1px。
+ *
+ * 路径条数和顺序与大图一一对应（`motion.ts` 的角色按下标套用）。没有小号字形的图标不该用 `ICON_SIZE.xs`，
+ * 门禁在 `iconography.test.tsx`。
+ */
+const SMALL_RING = circ(12, 12, 9)
+export const SMALL_DEFS: Partial<Record<IconName, IconDef>> = {
+  ChevronRight: { s: ['M9 5L16 12L9 19'] },
+  ChevronDown: { s: ['M5 9L12 16L19 9'] },
+  X: { s: ['M6 6L18 18', 'M18 6L6 18'] },
+  Check: { s: ['M5 13L10 18L19 7'] },
+  Plus: { s: ['M12 5V19', 'M5 12H19'] },
+  RotateCcw: { s: ['M5 13a7 7 0 1 0 2-6', 'M7 3V7H11'] },
+  Download: { s: ['M5 20H19', 'M12 4V15', 'M7 10L12 15L17 10'] },
+  ExternalLink: { s: ['M10 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V14', 'M14 5H19V10', 'M19 5L11 13'] },
+  Circle: { s: [SMALL_RING] },
+  Lock: { s: ['M8 11V8a4 4 0 0 1 8 0v3'], f: [{ d: 'M7 11H17a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V13a2 2 0 0 1 2-2Z', w: 0 }] },
+  TriangleAlert: { f: [{ d: 'M12 3.5L21 19H3Z', w: 2 }], k: [{ d: 'M11 8H13V13H11Z', w: 0 }, { d: 'M11 15H13V17H11Z', w: 0 }] },
+  Info: { f: [{ d: SMALL_RING, w: 0 }], k: [{ d: 'M11 10H13V17H11Z', w: 0 }, { d: 'M11 6H13V8H11Z', w: 0 }] },
+  CircleCheck: { f: [{ d: SMALL_RING, w: 0 }], k: ['M8 12.5L10.5 15L16 9.5'] },
+}

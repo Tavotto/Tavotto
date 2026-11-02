@@ -1400,6 +1400,8 @@ def _parse_args(argv: list):
     ap.add_argument("--input-bridge", action="store_true")
     # 桌面拥有的启动：观察脚本读了哪些项目内文件、import 了哪些本地模块（与 safe 同口径，#1047）；终端拥有的不带
     ap.add_argument("--observe-inputs", action="store_true")
+    # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
+    ap.add_argument("--ignore-paths", default=None)
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -1461,9 +1463,47 @@ def _unreadable_folder_extra(exc: BaseException, args) -> dict:
     return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
 
 
+def _foreign_abi_extra(exc: BaseException, args) -> dict:
+    """脚本失败是不是「它加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的」（ADR 0154）。
+    判据在 `bridgeboot.foreign_abi_facts`（与 safe worker 同一份）；任何意外都当没有，绝不盖掉原来的脚本错误。"""
+    try:
+        import sysconfig
+
+        script_dir = os.path.dirname(args.source_path or "")
+        roots = [r for r in (args.project_root or os.getcwd(), script_dir) if r]
+        interp = [
+            sys.prefix,
+            sys.base_prefix,
+            sys.exec_prefix,
+            *(
+                sysconfig.get_paths().get(k, "")
+                for k in ("stdlib", "platstdlib", "purelib", "platlib")
+            ),
+        ]
+        fact, private = bridgeboot.foreign_abi_facts(
+            exc, [p for p in interp if p], roots, [args.project_root] if args.project_root else []
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
+
+
+def _parse_ignore_paths(raw) -> list:
+    """`--ignore-paths` 的 JSON 数组；没给 / 坏了就当没有。"""
+    if not raw:
+        return []
+    try:
+        paths = json.loads(raw)
+    except ValueError:
+        return []
+    return [p for p in paths if isinstance(p, str) and p] if isinstance(paths, list) else []
+
+
 def main(argv: list | None = None) -> int:
     global _INPUTS
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
+    # 用户在失败卡上选了「跳过这个文件夹」的目录（ADR 0154）：与 safe worker 同一个装配点，在用户代码之前
+    bridgeboot.install_ignored_import_paths(_parse_ignore_paths(args.ignore_paths))
     if not args.out_dir:
         # **不往用户 home 里放一个 dotdir**。产物目录归 Tavotto 管
         # （父进程按 `config.data_dir()` 算好经 `--out-dir` 传进来），
@@ -1516,6 +1556,7 @@ def main(argv: list | None = None) -> int:
             "traceback": traceback.format_exc(),
             # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
             **_unreadable_folder_extra(exc, args),
+            **_foreign_abi_extra(exc, args),
         }
         traceback.print_exc()
     finally:

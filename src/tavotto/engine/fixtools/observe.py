@@ -276,9 +276,14 @@ def _environment_entries(ctx: FixContext) -> list[dict]:
         except ValueError:
             script = None
     out: list[dict] = []
+    # 这次准备会话**此刻在用**的环境排第一，内置 runtime 也在内（TVD-QMJV：只列外部 Python，AI 看不见当前用的
+    # 那个，`try_run` 又只接受会话选中的环境，于是任何验证都跑不起来）。路径只进 `ctx.environments`，不出现在返回里。
+    current = ctx.current_environment
+    if current and isinstance(current.get("python"), str) and current["python"]:
+        out.append({**current, "current": True})
     for venv in projectenv.discover(root, script):
         py = projectenv.interpreter_of(venv, root=root)
-        if py:
+        if py and not any(userenvs._key(py) == userenvs._key(e["python"]) for e in out):
             out.append(
                 {"python": py, "source": userenvs.SOURCE_PROJECT_VENV, "label": Path(venv).name}
             )
@@ -298,6 +303,8 @@ def _env_rank(ctx: FixContext, entry: dict, remembered_key) -> int:
     """排序键：本项目当前所用的环境（前缀在 `env_prefixes` 里）与用户为本项目选过的环境排最前，项目自己的 `.venv` 其次。"""
     from .. import projectenv
 
+    if entry.get("current"):
+        return -1  # 准备会话此刻在用的那个（含内置 runtime）
     py = entry.get("python")
     if not isinstance(py, str) or not py:
         return 3
@@ -351,6 +358,8 @@ def list_environments(ctx: FixContext, args: dict) -> ToolResult:
         if isinstance(e.get("overlay"), dict):
             ctx.environment_overlays[eid] = e["overlay"]
         row = {"id": eid, "source": e.get("source", ""), "label": e.get("label", "")}
+        if e.get("current"):
+            row["current"] = True  # 本次准备会话正在用的环境：try_run 的应用验证只认它
         if "satisfies" in e or "checked" in e:
             # 已评估过的：给落选原因的稳定码（与界面 envRejectionText 同一套 reason code）
             rej = userenvs.rejection_reason(e)

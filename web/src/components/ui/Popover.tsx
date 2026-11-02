@@ -19,6 +19,8 @@ interface PopoverProps {
   keepFocus?: boolean
   /** 浮层内容的可达名（帮助气泡用；不给的话屏幕阅读器只念到正文） */
   ariaLabel?: string
+  /** 内容自己出血到边（无内边距、裁圆角、一条发丝边）：出处卡这类整卡浮层用 */
+  flush?: boolean
 }
 
 export function Popover({
@@ -31,6 +33,7 @@ export function Popover({
   onOpenChange,
   keepFocus,
   ariaLabel,
+  flush,
 }: PopoverProps) {
   return (
     <RP.Root open={open} onOpenChange={onOpenChange}>
@@ -45,7 +48,8 @@ export function Popover({
           onOpenAutoFocus={keepFocus ? (e) => e.preventDefault() : undefined}
           onKeyDown={(e) => e.stopPropagation()}
           className={cn(
-            'z-popover rounded-lg bg-surface p-2 shadow-pop',
+            'z-popover rounded-lg bg-surface shadow-pop',
+            flush ? 'overflow-hidden border border-border' : 'p-2',
             'origin-[var(--radix-popover-content-transform-origin)]',
             'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           )}

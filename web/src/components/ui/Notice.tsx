@@ -82,6 +82,8 @@ export function Notice({
         {Icon && (
           <IconSlot>
             <Icon
+              // 说明条出现的那一下图标播一次（ADR 0156：警告轻摇、失败摇头、完成画勾、提示落点）
+              playIn
               size={ICON_SIZE.sm}
               aria-hidden
               data-notice-icon={tone === 'danger' ? 'attention' : ''}

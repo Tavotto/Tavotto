@@ -65,7 +65,19 @@ def test_a_python_version_failure_reports_change_python(client, tmp_path, fake_p
         engine_pool.WorkerError("old python", code="project_env_unsupported_python"),
     )
     assert final["remedy"]["kind"] == "change_python"
-    assert set(final["remedy"]) == {"kind", "from", "to"}
+    assert set(final["remedy"]) == {"kind", "from", "to", "env"}
+    assert final["remedy"]["env"] is None  # 没有可挑的现成环境：前端走选择器
+
+
+def test_an_uninstallable_missing_module_reports_choose_environment_even_with_ai(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    """私有库 / 本地模块缺了、装不了：主修法是「选择运行环境」，不是 AI（ADR 0148 修订 2026-11-01）"""
+    monkeypatch.setattr(prepsession.SESSIONS, "ai_connected", lambda: True)
+    err = engine_pool.WorkerError("no module", code="missing_dependency")
+    err.module = "our_private_lib"
+    _sid, final = _run_to_failure(client, tmp_path, fake_pool, err)
+    assert final["remedy"] == {"kind": "choose_environment"}
 
 
 def test_a_session_that_has_not_failed_has_no_remedy(client, tmp_path, fake_pool, sessions):

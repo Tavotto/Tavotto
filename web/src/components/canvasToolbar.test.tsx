@@ -17,6 +17,7 @@ import { CanvasToolbar } from '@/components/CanvasToolbar'
 import { TopBar } from '@/components/TopBar'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
+import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -133,7 +134,7 @@ describe('缩放菜单在画布标签行', () => {
   })
 })
 
-describe('写回在「⋯」菜单第一项', () => {
+describe('写回在「⋯」菜单「文件」组', () => {
   const openMenu = async () => {
     const more = q('[data-more-menu]')!
     await act(async () => {
@@ -143,15 +144,41 @@ describe('写回在「⋯」菜单第一项', () => {
   }
   const item = () => document.body.querySelector<HTMLElement>('[data-write-back-entry="menu"]')
 
-  it('第一项就是写回；没有可写回内容时禁用', async () => {
+  it('写回在「文件」小标题下；没有可写回内容时禁用，原因在 title 而不占第二行', async () => {
     await mount(<TopBar />)
     await openMenu()
     const menu = document.body.querySelector('[role="menu"]')
     expect(menu, '菜单没打开').toBeTruthy()
-    // 菜单的第一个子节点（不是「第一个菜单项」：前面垫一条分隔线也算不上第一）
-    expect(menu!.firstElementChild).toBe(item())
+    // 菜单以分组小标题开头，禁用的写回不再占首位
+    expect(menu!.firstElementChild).not.toBe(item())
+    expect(menu!.firstElementChild!.getAttribute('role')).not.toBe('menuitem')
+    expect(item()!.previousElementSibling).toBe(menu!.firstElementChild)
     expect(item()!.getAttribute('data-disabled')).not.toBeNull()
     expect(item()!.getAttribute('data-write-back')).toBe('open')
+    expect(item()!.getAttribute('title')).toBeTruthy()
+    expect(item()!.querySelectorAll('span.text-xs')).toHaveLength(0)
+  })
+})
+
+describe('「⋯」菜单的「开始教程」与顶栏胶囊不重复', () => {
+  const openMenu = async () => {
+    const more = q('[data-more-menu]')!
+    await act(async () => {
+      more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false }))
+      more.click()
+    })
+  }
+  const entry = () => document.body.querySelector('[data-onboarding-anchor="help-tutorial"]')
+
+  it('胶囊在显示时菜单没有这一项；胶囊消失（记了看过）后才出现', async () => {
+    useOnboardingStore.setState({ status: 'not_started', welcomeSeenAt: null, surface: 'none' })
+    await mount(<TopBar />)
+    expect(q('[data-tutorial-chip]')).toBeTruthy()
+    await openMenu()
+    expect(entry()).toBeNull()
+    await act(async () => useOnboardingStore.setState({ welcomeSeenAt: Date.now() }))
+    expect(q('[data-tutorial-chip]')).toBeNull()
+    expect(entry()).toBeTruthy()
   })
 })
 

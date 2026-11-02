@@ -9,6 +9,7 @@ import { apiUrl, withProject } from '@/lib/session'
 import { usePerfProbeStore } from '@/perf/probeStore'
 import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
+import { useContactStore } from '@/store/contactStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from '@/components/ui/icons'
@@ -304,6 +305,8 @@ function DiagnosticsReportSection() {
   /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。前端侧失败即关（没取到 / 关着）：没有就不画那一行。 */
   const sendCap = useDiagSendStore((s) => s.capability)
   const showContact = useWeComContactVisible()
+  /** 顶栏「联系作者」开着（引擎说开）：设置里的「发送问题反馈」就是它——同一个对话框，企业微信也在那里面（审计 A2） */
+  const contactOn = useContactStore((s) => s.capability !== null)
   useEffect(() => {
     void useDiagSendStore.getState().load()
   }, [])
@@ -327,13 +330,25 @@ function DiagnosticsReportSection() {
     <FormSection title={st('diagnostics.reportTitle')} data-settings-anchor="diagnostics.report">
       <FieldGroup>
         {/* 第一行（2026-10-21，beta 0.19.0b1 反馈：最该点的入口放最前）。能力说明在 App 启动时就取了，设置页打开时基本已就绪；没取到则不画 */}
-        {sendCap && (
+        {(sendCap || contactOn) && (
           <SettingRow
             label={st('diagnostics.send.row')}
             description={st('diagnostics.send.rowHint')}
             data-diagnostics-send
           >
-            <Button variant="secondary" size="sm" onClick={() => useDiagSendStore.getState().setOpen(true)} data-diagnostics-send-open>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                if (contactOn) {
+                  useUiStore.getState().setSettingsOpen(false)
+                  useContactStore.getState().setOpen(true)
+                } else {
+                  useDiagSendStore.getState().setOpen(true)
+                }
+              }}
+              data-diagnostics-send-open
+            >
               {st('diagnostics.send.open')}
             </Button>
           </SettingRow>
@@ -372,7 +387,7 @@ function DiagnosticsReportSection() {
           )}
         </SettingRow>
         {/* 联系方式不依赖上传通道：发送功能关着也在；仅中文界面 */}
-        {showContact && (
+        {showContact && !contactOn && (
           <SettingRow
             label={st('diagnostics.send.contact.row')}
             description={st('diagnostics.send.contact.rowHint')}

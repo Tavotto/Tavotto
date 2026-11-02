@@ -242,6 +242,15 @@ def _tiers_of(job_block: str) -> set[tuple[str, str]]:
 #: needs 里长得一模一样。
 FAST_LANE_CONDITION = "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
 
+#: docs-only 快车道（`docs-scope` job）：这四个 fast 档 job 在 docs-only 的 run 上**照跑**，
+#: 条件仍是 FAST_LANE_CONDITION 原文；其余 fast 档 job 的条件是下面的 GUARDED。
+DOCS_KEPT_FAST = frozenset({"python-lint", "cla-check", "release-note-gate", "docs-scope"})
+DOCS_GUARD = "needs.docs-scope.outputs.docs_only != 'true'"
+GUARDED_FAST_LANE_CONDITION = f"({FAST_LANE_CONDITION}) && {DOCS_GUARD}"
+#: docs_only 非 true 时 `needs.docs-scope` 的合成值（普通 run）。
+NEEDS_PLAIN = {"docs-scope": {"result": "success", "outputs": {"docs_only": "false"}}}
+NEEDS_DOCS_ONLY = {"docs-scope": {"result": "success", "outputs": {"docs_only": "true"}}}
+
 
 # ============================================================ merge_group 触发
 class TestMergeGroupTrigger:
@@ -453,7 +462,15 @@ class TestPullRequestEventTypes:
     )
 
     HEAVY = ("backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e")
-    FAST = ("python-lint", "invariants", "backend-fast", "frontend", "workerd", "compat-smoke")
+    FAST = (
+        "python-lint",
+        "docs-scope",
+        "invariants",
+        "backend-fast",
+        "frontend",
+        "workerd",
+        "compat-smoke",
+    )
 
     def test_pull_request_types_are_exactly_the_six_we_rely_on(self):
         """集合相等，正面列全：少一个多一个都红。
@@ -504,12 +521,17 @@ class TestPullRequestEventTypes:
 
     # ---- 把 ci.yml 里真实的表达式算出来 ----
     def _fast_runs(self, github: dict) -> bool:
-        conds = {_if_of(_code(_job(CI, j))) for j in self.FAST}
-        assert conds == {FAST_LANE_CONDITION}, conds
-        return G.truthy(G.evaluate(FAST_LANE_CONDITION, github))
+        verdicts = {}
+        for j in self.FAST:
+            cond = _if_of(_code(_job(CI, j)))
+            want = FAST_LANE_CONDITION if j in DOCS_KEPT_FAST else GUARDED_FAST_LANE_CONDITION
+            assert cond == want, (j, cond)
+            verdicts[j] = G.truthy(G.evaluate(cond, github, NEEDS_PLAIN))
+        assert len(set(verdicts.values())) == 1, f"快线各 job 的条件算出了不同结果：{verdicts}"
+        return next(iter(verdicts.values()))
 
     def _heavy_runs(self, github: dict) -> bool:
-        verdicts = {j: G.truthy(G.evaluate(_folded_if(j), github)) for j in self.HEAVY}
+        verdicts = {j: G.truthy(G.evaluate(_folded_if(j), github, NEEDS_PLAIN)) for j in self.HEAVY}
         assert len(set(verdicts.values())) == 1, f"五个重型 job 的条件算出了不同结果：{verdicts}"
         return next(iter(verdicts.values()))
 
@@ -550,7 +572,15 @@ class TestPullRequestEventTypes:
         env = {
             "PATH": f"{shim}:{os.environ.get('PATH', '')}",
             "RUNNER_TEMP": str(runner_temp),
-            "NEEDS_JSON": json.dumps({j: {"result": r} for j, r in heavy_results.items()}),
+            "NEEDS_JSON": json.dumps(
+                {
+                    **{j: {"result": r} for j, r in heavy_results.items()},
+                    # 普通 run 上分类 job 成功、docs_only=false（与 ci.yml 的 needs 形状一致）
+                    "docs-scope": {"result": "success", "outputs": {"docs_only": "false"}},
+                }
+            ),
+            "DOCS_ONLY": "false",
+            "DOCS_SCOPE_RESULT": "success",
             "GATE_EVENT": G.render("${{ github.event_name }}", github),
             "GATE_FULL_CI": G.render(_gate_full_ci_expression(), github),
         }
@@ -622,7 +652,9 @@ class TestPullRequestEventTypes:
         assert self._fast_runs(push) is False and self._heavy_runs(push) is False
         for gate in ("ci-fast-gate", "ci-integration-gate"):
             cond = _if_of(_code(_job(CI, gate))).replace("always()", "true")
-            assert G.truthy(G.evaluate(cond, push)) is False, f"{gate} 在 push main 上不该跑"
+            assert G.truthy(G.evaluate(cond, push, NEEDS_PLAIN)) is False, (
+                f"{gate} 在 push main 上不该跑"
+            )
 
     def test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr(self, tmp_path):
         """§4 ① 的核心：`unlabeled(full-ci)` 那个 run 同一 head SHA 上不许产出 deferred（绿）的
@@ -812,7 +844,9 @@ class TestGates:
 
     def test_integration_gate_needs_matches_required_closed_set(self):
         block = _job(CI, "ci-integration-gate")
-        assert _needs_of(block) == _required_of(block)
+        # docs-scope 只作 docs-only 豁免的证据进 needs，不进 required 闭集
+        # （理由见 ci.yml 里该 Gate 的注释与 TestDocsOnlyFastLane）
+        assert _needs_of(block) == _required_of(block) | {"docs-scope"}
 
     def test_fast_gate_covers_the_fast_layer(self):
         assert {
@@ -841,7 +875,8 @@ class TestGates:
         里也含 `pull_request`，只是后面还跟着 `full-ci` 标签。
         """
         for job_id in sorted(_needs_of(_job(CI, "ci-fast-gate"))):
-            assert _if_of(_job(CI, job_id)) == FAST_LANE_CONDITION, (
+            want = FAST_LANE_CONDITION if job_id in DOCS_KEPT_FAST else GUARDED_FAST_LANE_CONDITION
+            assert _if_of(_job(CI, job_id)) == want, (
                 f"fast 档的 `{job_id}` 不是在每个 PR 上都跑——它在 Gate 里，"
                 "但普通 PR 上没有结论，等于一道登记了却不执行的门禁"
             )
@@ -1380,7 +1415,7 @@ class TestHeavyLaneDependencies:
         或把长边加回来，都得改这条用例并在 PR 里说理由。
         """
         for job_id in self.HEAVY_CONSUMERS:
-            assert self._optional_needs(_job(CI, job_id)) == {"frontend"}, (
+            assert self._optional_needs(_job(CI, job_id)) == {"docs-scope", "frontend"}, (
                 f"{job_id} 的 needs 不再恰好是 [frontend]——短预筛的决定被改了，"
                 "先改这条用例并写明理由"
             )
@@ -1898,7 +1933,7 @@ class TestPackageSmokeIsolation:
     def test_the_job_shape_and_the_gate_closed_set_are_unchanged(self):
         """job id、needs、if、四条腿、runs-on 与 Gate 闭集一个都没动。"""
         block = _job(CI, self.JOB)
-        assert _needs_of(block) == {"frontend"}
+        assert _needs_of(block) == {"docs-scope", "frontend"}
         code = _code(block)
         assert "github.event_name == 'merge_group'" in code and "'full-ci'" in code
         assert re.search(r"(?m)^    runs-on: \$\{\{ matrix\.os \}\}\s*$", code)

@@ -35,7 +35,7 @@ vi.mock('./DirBrowser', () => ({
 }))
 
 import { initI18n } from '@/i18n'
-import { ExportLocationRow, parentDir } from './ExportLocationRow'
+import { ExportLocationRow, parentDir, projectRelativeLocation } from './ExportLocationRow'
 import { abbreviateHome } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
 
@@ -76,15 +76,34 @@ afterEach(() => {
 })
 
 describe('位置显示', () => {
-  it('家目录缩成 ~，保留末尾至少两级；title 是完整绝对路径；不是等宽字', () => {
+  it('项目外：家目录缩成 ~；title 是完整绝对路径；中间省略保留头尾；不是等宽字', () => {
     const el = q('[data-export-location]')!
     expect(el.textContent).toContain('~/混合等离子体气体文章/export')
     expect(el.textContent).not.toContain('/Users/ann')
     expect(el.getAttribute('title')).toBe('/Users/ann/混合等离子体气体文章/export')
     expect(el.className).not.toContain('font-mono')
-    // 放不下时从左边省略（rtl + truncate），末尾两级留着
-    expect(el.getAttribute('dir')).toBe('rtl')
-    expect(el.className).toContain('truncate')
+    expect(el.getAttribute('dir')).toBeNull() // 不再 rtl 从左截断
+  })
+
+  it('项目内：显示「项目名 / 相对路径」，全路径在 title', async () => {
+    useProjectStore.setState({
+      project: {
+        id: 'pa', settings: {}, name: 'audit-proj', figures_dir: '/Users/ann/work/audit-proj',
+        export_dir: '/Users/ann/work/audit-proj/tavottofile/export', backup_dir: '/b', home_dir: '/Users/ann',
+      } as never,
+    })
+    await act(async () => root.render(<ExportLocationRow />))
+    const el = q('[data-export-location]')!
+    expect(el.textContent).toBe('audit-proj / tavottofile/export')
+    expect(el.getAttribute('title')).toBe('/Users/ann/work/audit-proj/tavottofile/export')
+  })
+
+  it('projectRelativeLocation：同名前缀的兄弟目录不算项目内；项目根本身只显示项目名', () => {
+    expect(projectRelativeLocation('/w/p2/export', '/w/p', 'p')).toBeNull()
+    expect(projectRelativeLocation('/w/p', '/w/p/', 'P')).toBe('P')
+    expect(projectRelativeLocation('/w/p/x', '/w/p', null)).toBe('p / x')
+    expect(projectRelativeLocation('C:\\w\\p\\out\\a', 'C:\\w\\p', 'p')).toBe('p / out/a')
+    expect(projectRelativeLocation('/w/p/x', null, 'p')).toBeNull()
   })
 
   it('abbreviateHome：只认后端给的真实家目录，不按路径形状猜', () => {

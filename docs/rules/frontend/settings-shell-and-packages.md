@@ -58,7 +58,7 @@ order: 140
   `LeftRail` 的 `ITEMS.map` 里每颗都带 `data-rail={id}`，注释也写着「aria-label 是本地化
   文案，不能当选择器」；但「接入状态」与「设置」是循环外单独写的两颗，**漏了这个属性**，
   于是三个 spec 只能退回按中文文案找它们（同一个赌注在三处各下了一次）。现在是
-  `data-rail="readiness" | "settings"`，id 与 rail 文案键的末段对齐。
+  `data-rail="readiness" | "settings"`，id 与 rail 文案键的末段对齐。（2026-10 审计 A3：「接入状态」不再占左轨，左轨只剩 `settings` 这一颗循环外的按钮。）
   连带两处：覆盖式抽屉的遮罩认 `[data-scrim]`（`App.tsx`，判「左抽屉此刻盖住了下面的
   东西」，原先按「收起侧栏」这句话），设置对话框按**里面装着 `[data-settings-shell]`**
   与帮助气泡消歧，不按对话框的名字。`e2e/` 里已经没有按可见文案定位的入口了

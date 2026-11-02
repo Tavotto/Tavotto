@@ -18,7 +18,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, ONBOARDING_FLOW_VERSION, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
+import { expect, ONBOARDING_FLOW_VERSION, openElementsTab, openWorkspace, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
 import { indistinctFieldBoxes, lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
 import { chooseTheme, openGeneralSettings } from './theme'
@@ -272,7 +272,7 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   await page.setViewportSize({ width: 1440, height: 900 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   // 快速编辑会切到元素树；把素材栏打开并选中卡片，确实覆盖选中底色上的元数据。
   const assets = page.locator('[data-rail="assets"]')
@@ -335,7 +335,7 @@ test('暗色主题 · 打开的设置对话框：axe 无违规、无未定性的
 test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
 
   const inspector = page.locator('[data-inspector-panel]')
@@ -401,7 +401,7 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   // 门禁两条腿一直是绿的，因为它从没扫过这一屏。这条用例就是那个缺口。
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
 
   // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
@@ -470,7 +470,7 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
 }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   // 预览 PNG 先于快速编辑到达；等工作流和精确图都就绪，导出才默认这张原图。
   await waitForFigureEdit(page)
 
@@ -540,12 +540,13 @@ test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢�
   const a = await app()
   await page.goto(a.baseURL)
 
-  // 从常驻轨道进（键盘打开——鼠标才能开的入口不算可达）。轨道是 <nav>，
-  // 这样不会跟横幅上那个同名按钮撞上。
-  const railButton = page
-    .getByRole('navigation')
-    .getByRole('button', { name: /项目接入状态|Project readiness/ })
+  // 键盘打开（鼠标才能开的入口不算可达）。左轨的「状态」项已撤（审计 A3）：入口是项目抽屉「当前」卡片的 ⋯ 菜单
+  await openWorkspace(page)
+  const railButton = page.locator('[data-workspace-section="current"] button[aria-haspopup]')
   await railButton.focus()
+  await page.keyboard.press('Enter')
+  const item = page.getByRole('menuitem', { name: /项目接入状态|Project readiness/ })
+  await item.focus()
   await page.keyboard.press('Enter')
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
@@ -629,7 +630,7 @@ test('问题面板：axe 无违规、行内的「修复」不是「定位」的�
   const a = await app()
   await page.goto(a.baseURL)
   // 先把一张图放上画布——空画布上问题清单只有页面级那几条，行内动作量不到
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
     .toBeVisible({ timeout: 60_000 })
 

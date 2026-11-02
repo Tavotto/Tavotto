@@ -94,10 +94,12 @@ from .engine import (
     discover as engine_discover,
     documents as engine_documents,
     enginesession as engine_enginesession,
+    entryfresh as engine_entryfresh,
     envadvice as engine_envadvice,
     envdiag as engine_envdiag,
     envlease as engine_envlease,
     epsfile as engine_epsfile,
+    epsoverlay as engine_epsoverlay,
     execspec as engine_execspec,
     exectrace as engine_exectrace,
     exectrace_diag as engine_exectrace_diag,
@@ -121,6 +123,7 @@ from .engine import (
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
     mathtypeset as engine_mathtypeset,
+    msixmigrate as engine_msixmigrate,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
@@ -128,6 +131,7 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
+    pathignore as engine_pathignore,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -515,6 +519,39 @@ def safe_resolve(rel_id: str) -> Path:
     return p
 
 
+def _reconcile_registered_entry(script: str) -> bool:
+    """跑这个脚本之前，登记的入口对照一次当前源码（TVD-CHR5）；过时就换成重判结果并重载注册表。
+
+    **判据与改写只在 `engine/entryfresh`**；这里是 app 层唯一的接线：
+    所有「用登记的 entry 去取 worker / 开准备会话」的入口（磁盘面板、runtime 素材、准备目标、AI 修复）都经它。
+    判不出 / 写不了 = 当没有变化，维持原行为（运行期由 `script_entry_missing` 说话）。"""
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return False  # 没有当前项目（指名的项目已关闭）：不纠偏，调用方的原行为不变
+    if ctx is None:
+        return False
+    try:
+        changed = engine_entryfresh.reconcile(ctx.path, script)
+    except Exception:  # noqa: BLE001 —— 运行前的纠偏不许让请求失败
+        return False
+    if not changed:
+        return False
+    try:
+        refresh_project(ctx, reason="registry", allow_static_merge=False)
+    except engine_refresh.RefreshError:
+        return False
+    return True
+
+
+def _resolve_runtime_asset(asset_id: str) -> dict | None:
+    """`engine_runtimeasset.resolve` 在 app 层的唯一出处：解析到的脚本先过一次入口校验，纠正过就重新解析。"""
+    info = engine_runtimeasset.resolve(asset_id, current_registry())
+    if info is not None and _reconcile_registered_entry(str(info["script"])):
+        info = engine_runtimeasset.resolve(asset_id, current_registry())
+    return info
+
+
 def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     """磁盘素材文件（项目相对路径）→ `(stem, 注册表信息)`；注册表认不得它就是 `(文件名 stem, None)`。
 
@@ -525,6 +562,8 @@ def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     """
     reg = current_registry()
     info = reg.for_artifact(rel)
+    if info is not None and _reconcile_registered_entry(str(info["script"])):
+        info = reg.for_artifact(rel)  # 登记的入口刚被纠正过：用重载后的这一条
     # stem 由 `artifact_stem` 给（CLI 的 `handoff.resolve_target` 用同一个函数，交接回执两边的键因此一致）
     return reg.artifact_stem(rel), info
 
@@ -778,6 +817,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         engine_pool.ARGUMENTS_ERROR_CODE,
         *engine_texdiag.ERROR_CODES,
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
+        engine_pool.IMPORT_FOLDER_ABI_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -1402,7 +1442,7 @@ def _serialize_figure_with_worker(
         script = str(current_registry().for_stem(stem)["script"])
     elif engine_runtimeasset.is_runtime_id(rel_id):
         worker, stem = _engine_worker(rel_id)
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         script = str(info["script"]) if info else ""
     else:
         path = safe_resolve(rel_id)
@@ -1869,7 +1909,7 @@ def _svg_legacy_runtime_owner(root, source_id):
     """Positive old-runtime provenance for revocation only, never cold authority."""
     if not engine_runtimeasset.is_runtime_id(source_id):
         return None
-    info = engine_runtimeasset.resolve(source_id, current_registry())
+    info = _resolve_runtime_asset(source_id)
     if info is None:
         meta = engine_runtimeasset.load_metadata(root, source_id) or {}
         desc = meta.get("descriptor")
@@ -2321,6 +2361,187 @@ def _original_svg_result(path, artifact, receipt):
     )
 
 
+def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    """`scope=original` 且带画布标注（QA-WIN-20）：图 + 标注由**整版导出那条 RenderCore 合成路径**画。
+
+    构造一份「页面 = 原图图幅、面板在 (0,0)、再叠标注」的画布请求，交给 `_export_produce_rendercore`——标注怎么画
+    只有那一份实现。坐标由前端换算到原图图幅，图幅之外的部分被页面裁掉。PDF / SVG / PNG / TIFF 直接出自这份合成；
+    位图源的 ppi 取「页面像素数 = 源像素网格」，尺寸与不带标注的原图导出一致。
+    EPS：RenderCore 没有完整的 PostScript 写入器，由 `_produce_annotated_eps` 把 worker 的原图 EPS 嵌进外层 EPS 再叠同一份标注 IR；
+    PostScript 表达不了的标注（alpha<1 等）这一项逐项失败（`eps_annotations_unsupported`），其余格式照常交付，不静默丢标注。
+    """
+    import dataclasses
+
+    req = job.request
+    src = req.original
+    panel = {
+        "type": "panel",
+        "id": src.figure_id,
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": src.w_mm,
+        "h_mm": src.h_mm,
+        **({"overrides": src.overrides} if src.overrides else {}),
+        **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
+        **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
+        **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
+        **(
+            {"confirmed_reconstruction_sha256": src.confirmed_reconstruction_sha256}
+            if src.confirmed_reconstruction_sha256 is not None
+            else {}
+        ),
+    }
+
+    def stacked(objs, panel_obj):
+        """保留图层次序：前 `objects_below` 个标注在图下面，其余在图上面。"""
+        n = src.objects_below
+        return [*objs[:n], panel_obj, *objs[n:]]
+
+    wants_eps = engine_exportreq.FORMAT_EPS in req.formats
+    formats = tuple(f for f in req.formats if f != engine_exportreq.FORMAT_EPS)
+    raster_formats = tuple(f for f in formats if f in engine_exportreq.RASTER_FORMATS)
+    vector_formats = tuple(f for f in formats if f not in raster_formats)
+    # 同一张图所有格式出自同一个来源（与无标注的原图导出同一个判定）：要 EPS（且不要 SVG）时，有脚本的磁盘图
+    # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
+    rerender_ids = frozenset(
+        {src.figure_id}
+        if engine_exportroute.original_rerender(req.formats)
+        and Path(src.figure_id).suffix.lower() not in SVG_EXT
+        and _has_runnable_script(src.figure_id)
+        else ()
+    )
+    produced: list = []
+    dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
+    if rerender_ids:
+        dir_arg["rerender_ids"] = rerender_ids
+
+    def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
+        # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
+        work = tmp_dir / sub
+        work.mkdir(parents=True, exist_ok=True)
+        canvas = engine_exportreq.CanvasSource(page_w_mm=w_mm, page_h_mm=h_mm, objects=objects)
+        canvas_req = dataclasses.replace(
+            req,
+            scope=engine_exportreq.SCOPE_CANVAS,
+            formats=fmts,
+            ppi=ppi,
+            canvas=canvas,
+            original=None,
+        )
+        extra = {"raster_target": target} if target else {}
+        return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
+
+    w_mm, h_mm = float(src.w_mm), float(src.h_mm)
+    if vector_formats:
+        produced += run(
+            vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
+        )
+    if raster_formats:
+        ppi = req.ppi
+        target = None
+        if src.source_kind == "raster" and src.px_w:
+            dpi_x = float(src.px_w) * 25.4 / w_mm
+            ppi = dpi_x  # 页面 w_mm 对应 px_w 个像素
+            if src.px_h:
+                dpi_y = float(src.px_h) * 25.4 / h_mm
+                if abs(dpi_y - dpi_x) > 0.005 * dpi_x:
+                    # 横纵密度不同：先按逻辑图幅各向同性画对（取两轴中较大的密度，两轴都不小于源像素），
+                    # 再整张面积平均缩到恰好 px_w × px_h；元数据写源的 x / y 密度
+                    ppi = max(dpi_x, dpi_y)
+                    target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+        produced += run(
+            raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
+        )
+    if wants_eps:
+        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+    return produced
+
+
+def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
+    """带标注的 EPS（自写叠加，ADR 0046 补记）：worker 的 matplotlib 照旧出原图 EPS，再由 `engine/epsoverlay`
+    把它原样嵌进外层 EPS，叠上 RenderCore 为**同一组标注**编出的 IR（`rendercore/epswriter` 写成 PostScript 运算符）。
+    PostScript 没有透明：标注含 alpha<1 / 位图等 PS 表达不了的东西时，这一项逐项失败（`eps_annotations_unsupported`），
+    其余格式照常交付，不静默丢标注。"""
+    from .rendercore import epswriter, facade as rc_facade, plan as rc_plan
+
+    src = req.original
+    fmt = engine_exportreq.FORMAT_EPS
+    dpi = req.ppi or engine_exportreq.PPI_DEFAULT
+    source_ctx = (artifact_sources or {}).get(src.figure_id)
+    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+        inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
+    else:
+        inner = _produce_original_eps(
+            job,
+            src,
+            dpi,
+            tmp_dir,
+            artifact_source=source_ctx,
+            **({"existing_only": True} if engine_exportreq.FORMAT_SVG in req.formats else {}),
+        )
+    if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
+        return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
+    provider = rc_facade.provider()
+
+    class _NoPanels:
+        def resolve(self, obj):  # 标注里没有面板；到这里说明请求被篡改
+            raise engine_exportreq.ExportRequestError("bad_objects", "标注里不能有面板", {})
+
+    n = src.objects_below
+    parts = {}
+    for key, objs, prefix in (
+        ("below", list(src.objects[:n]), "tvu"),
+        ("above", list(src.objects[n:]), "tvg"),
+    ):
+        if not objs:
+            parts[key] = ("", None)
+            continue
+        compiled = rc_plan.compile_page(
+            float(src.w_mm),
+            float(src.h_mm),
+            objs,
+            sources=_NoPanels(),
+            faces=provider,
+            background=None,
+            math=engine_mathtypeset.layouts_for(objs, _mathtext_project()),
+        )
+        for p in compiled.problems:
+            msg = f"{p['object_id']}: {p['code']} {''.join(p.get('chars', []))}".rstrip()
+            if msg not in job.warnings:
+                job.warnings.append(msg)
+        try:
+            text, _facts = epswriter.overlay_ps(compiled.page, provider, prefix=prefix)
+        except epswriter.UnsupportedCapability as exc:
+            return engine_exportjob.Produced(
+                format=fmt,
+                error_code="eps_annotations_unsupported",
+                error_params={
+                    "operation": exc.operation,
+                    "object_id": exc.params.get("object_id", ""),
+                },
+            )
+        parts[key] = (text, compiled.page)
+    page = parts["above"][1] or parts["below"][1]
+    out = tmp_dir / "out_annotated.eps"
+    out.write_bytes(
+        engine_epsoverlay.compose(
+            Path(inner.tmp_path).read_bytes(),
+            parts["above"][0],
+            page.width_pt,
+            page.height_pt,
+            underlay=parts["below"][0],
+        )
+    )
+    bbox = engine_epsfile.bounding_box_pt(out)
+    return engine_exportjob.Produced(
+        format=fmt,
+        tmp_path=out,
+        width_mm=round(bbox[0] * 25.4 / 72.0, 3) if bbox else None,
+        height_mm=round(bbox[1] * 25.4 / 72.0, 3) if bbox else None,
+        vector=True,
+    )
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -2333,6 +2554,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if src.objects:
+        return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides
@@ -2775,7 +2998,9 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
     return result
 
 
-def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+def _export_produce_rendercore(
+    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
+) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
     **忠实于画布**——页面尺寸、布局、裁切照搬；多格式出自同一份 Canonical PDF，所以 PDF 与 PNG 不可能
@@ -2828,7 +3053,23 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
                     )
             return fs
 
-    resolver = rc_sources.ExecutionSourceResolver(
+    class _Resolver(rc_sources.ExecutionSourceResolver):
+        """`rerender_ids`：这几张磁盘图即使没有 override 也由 worker 现画（原图导出要 EPS 时的单一来源，
+        与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
+
+        def resolve(self, obj: dict):
+            if str(obj.get("id", "")) in rerender_ids:
+                fs = self.execute(obj)
+                if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
+                    raise rc_sources.SourceError(
+                        "source_needs_execution",
+                        f"{obj.get('id', '')}：execute 回调交回的不是执行产物",
+                        {"figure": str(obj.get("id", ""))},
+                    )
+                return fs
+            return super().resolve(obj)
+
+    resolver = _Resolver(
         static=_StaticInProject(),
         execute=lambda obj: _execution_source(
             obj,
@@ -2859,6 +3100,7 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
         provider=rc_facade.provider(),
         host=rc_facade.host(),
         math=math,
+        **({"raster_target": raster_target} if raster_target else {}),
     )
 
 
@@ -3535,7 +3777,7 @@ def api_package():
         # 副本——cache 是本机派生物不是原件，接收方跑一次脚本即可重建。
         # 它没有磁盘文件这件事是设计而非缺失，绝不进 missing 清单。
         if engine_runtimeasset.is_runtime_id(rel_id):
-            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            info = _resolve_runtime_asset(rel_id)
             entry = {"id": rel_id, "kind": "runtime"}
             if info is not None:
                 entry.update(script=info["script"], stem=info["stem"])
@@ -7507,10 +7749,12 @@ _OBSERVED_RENDER_ERRORS = frozenset(
         "script_error",
         "missing_input",
         "script_exited",
+        "script_entry_missing",
         "script_needs_arguments",
         "script_needs_input",
         "script_input_timeout",
         "output_folder_read_only",
+        "interpreter_cache_denied",
         "safe_file_operation_blocked",
     }
 )
@@ -7687,7 +7931,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
     if artifact_source is not None and engine_runtimeasset.is_runtime_id(rel_id):
         _refuse_artifact_policy(artifact_source["render_policy"])
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         # T03：这张图当初的运行配置（资产 id 里冻结的引用）——不是项目此刻的任何配置。本机没有就显式拒绝
@@ -7759,7 +8003,7 @@ def _handoff_target_stem(rel_id: str) -> str:
     """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板经 `Registry.artifact_stem`，CLI 的 `handoff.resolve_target` 同一个函数）。"""
     try:
         if engine_runtimeasset.is_runtime_id(rel_id):
-            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            info = _resolve_runtime_asset(rel_id)
             return info["stem"] if info else ""
     except Exception:  # noqa: BLE001 —— 结论表是旁路
         return ""
@@ -8391,7 +8635,7 @@ def api_engine_invalidate():
     rel_id = body.get("id", "")
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         if engine_enginesession.profile_of(root, rel_id) == engine_enginesession.PROFILE_NATIVE:
@@ -9781,6 +10025,15 @@ def _fix_session_env(sess) -> dict:
         prefix = Path(py).parent.parent
         if prefix.is_dir():
             out["env_prefixes"] = [prefix]
+        # 当前在用的环境（含内置 runtime）要让 `list_environments` 列得出来，否则 AI 只能在外部 Python 里选，
+        # 而应用验证只认会话选中的那一个（TVD-QMJV）
+        source = (getattr(sess.plan, "environment", None) or {}).get("source")
+        bundled = source == "bundled"
+        out["current_environment"] = {
+            "python": py,
+            "source": source if isinstance(source, str) else "",
+            "label": "Tavotto built-in Python" if bundled else Path(py).parent.parent.name,
+        }
     return out
 
 
@@ -9899,10 +10152,21 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
         with bound_project(ctx):
             engine_pool.shutdown_all(str(ctx.path))
 
+    def registry_changed(_script):
+        # `fix_entry` 已把登记的入口写进注册表：重载 + 作废旧入口的 worker（唯一刷新入口）
+        with bound_project(ctx):
+            try:
+                refresh_project(ctx, reason="registry", allow_static_merge=False)
+            except engine_refresh.RefreshError:
+                pass
+
     return {
         "application_runner": run,
         "application_check": check,
         "on_workdir_changed": cwd_changed,
+        # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）
+        "on_ignored_paths_changed": cwd_changed,
+        "on_registry_changed": registry_changed,
     }
 
 
@@ -10287,6 +10551,37 @@ def api_engine_folder_repair():
             {"error": f"修复权限未完成: {exc.code}", "code": exc.code, "params": {}}
         ), _FOLDER_REPAIR_STATUS.get(exc.code, 500)
     return jsonify({"ok": True, **result})
+
+
+#: 「跳过这个文件夹」接口的 HTTP 状态：令牌失效 410，被拒的目标 403
+_PATH_IGNORE_STATUS = {
+    engine_pathignore.ERROR_TOKEN_INVALID: 410,
+    engine_pathignore.ERROR_REJECTED: 403,
+}
+
+
+@app.post("/api/engine/path-ignore")
+def api_engine_path_ignore():
+    """「跳过这个文件夹」（ADR 0154）：只收失败卡上的不透明令牌，不收路径。
+
+    要「用户在页面上点了」（`_page_authenticated`，fail closed：MCP / CLI 的本机凭据头不算）；令牌绑项目、
+    一次性、会过期。成功 `{ok: true, path_ignore: {paths}}`，调用方随后重跑脚本。"""
+    root = str(require_project())
+    body = request.get_json(silent=True) or {}
+    token = body.get("token") if isinstance(body, dict) else None
+    try:
+        if not _page_authenticated():
+            raise engine_pathignore.IgnoreError(engine_pathignore.ERROR_REJECTED)
+        path = engine_pathignore.path_of_token(token, root)
+        state = engine_pathignore.remember(
+            root, path, on_changed=lambda: engine_pool.shutdown_all(root)
+        )
+        engine_pathignore.consume_token(token)
+    except engine_pathignore.IgnoreError as exc:
+        return jsonify(
+            {"error": f"跳过文件夹未完成: {exc.code}", "code": exc.code, "params": {}}
+        ), _PATH_IGNORE_STATUS.get(exc.code, 500)
+    return jsonify({"ok": True, "path_ignore": state})
 
 
 def _input_remap_error(exc):
@@ -10750,7 +11045,7 @@ def _preparation_target(rel_id: str) -> dict:
     不到 404 + 稳定 code。
     """
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         run = engine_runtimeasset.run_selection(require_project(), info)
@@ -10841,6 +11136,8 @@ def _native_preparation_runner(pl, before_retry=None):
         raise engine_pool.WorkerError(
             "这份计划没有桌面拥有的启动身份", code=engine_runcodes.DESKTOP_RUN_LAUNCH_INVALID
         )
+    # 「跳过这个文件夹」的名单取起进程的这一刻的（ADR 0154）：失败卡上点了按钮之后沿用同一份计划重跑，计划里冻结的那份可能是旧的
+    spec = dataclasses.replace(spec, ignored_paths=engine_pathignore.paths_for(pl.project_root))
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
@@ -10876,6 +11173,14 @@ def _native_preparation_runner(pl, before_retry=None):
             native_project = str(require_project())
         except NoProjectError:
             native_project = ""
+        foreign = engine_pool.foreign_abi_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+            project=native_project,
+        )
+        if foreign is not None:
+            raise foreign
         unreadable = engine_pool.unreadable_folder_error(
             str(error.get("message") or "脚本运行出错"),
             str(error.get("traceback") or ""),
@@ -11177,6 +11482,7 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         )
     entry = body.get("entry")
     if entry is None:
+        _reconcile_registered_entry(script)
         registered = current_registry().entries().get(script) or {}
         entry = registered.get("entry") or engine_probe.entry_candidates(ctx.path, script)[0]
     elif not isinstance(entry, str) or not engine_registry.valid_entry(entry):
@@ -11417,6 +11723,8 @@ def _ai_connected() -> bool:
 
 
 engine_prepsession.SESSIONS.ai_connected = _ai_connected
+# 失败卡「撤销刚才的 AI 修改」（TVD-H1M5）：脚本此刻是不是改图助手刚改出来、还能原样撤销的那一版
+engine_prepsession.SESSIONS.ai_edit_lookup = engine_ai.revertible_edit
 
 
 def _dependency_event_sink(ctx: "ProjectCtx", extra=None):
@@ -11796,6 +12104,15 @@ def api_engine_environment_set():
                         "params": {"path": str(p)},
                     }
                 ), 400
+            if code == engine_projectenv.ERROR_CACHE_DENIED:
+                # 起得来，但在 Tavotto 的数据目录里建不了目录（TVD-B6MR）：存下它 = 之后每次运行都在用户代码之前失败
+                return jsonify(
+                    {
+                        "error": f"{p} 起出来的进程没法在 Tavotto 的缓存里新建文件夹",
+                        "code": engine_projectenv.ERROR_CACHE_DENIED,
+                        "params": {"path": str(p)},
+                    }
+                ), 400
             if code == engine_projectenv.ERROR_WORKER_IMPORT:
                 detail = str(health.get("error") or "")[:400]
                 return jsonify(
@@ -12057,6 +12374,8 @@ def _project_env_message(health: dict) -> str:
             "这个环境里能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来："
             f"{health.get('error', '')}"
         )
+    if code == engine_projectenv.ERROR_CACHE_DENIED:
+        return "这个环境的 Python 没法在 Tavotto 的缓存里新建文件夹，Tavotto 用不了它"
     return f"这个 Python 起不来：{health.get('detail', '')}"
 
 
@@ -12991,7 +13310,7 @@ def _ai_run_impl():
     if engine_runtimeasset.is_runtime_id(panel_id):
         # runtime 面板（「运行脚本」捕获的图，ADR 0013）：fileId 是不透明的 asset id，不是磁盘路径——
         # 按注册表正向重算出 (script, stem)，之后与磁盘面板同一条路
-        info = engine_runtimeasset.resolve(panel_id, current_registry())
+        info = _resolve_runtime_asset(panel_id)
         if info is None:
             return _runtime_asset_unknown(panel_id)
         disk_stem = info["stem"]
@@ -15397,6 +15716,11 @@ def _save_versions(doc_id: str, versions: list[dict], keep: dict | None = None) 
 #: 那样一个拼错的 moment 会在时间线上没有标记、还跟普通自动节点一起先被裁。
 VERSION_MOMENTS = engine_versionstore.MOMENTS
 
+#: 内容没变就不记的关键时刻（用户 2026-10-31 裁定）：打开 / 关闭 / 恢复前只说明「这时候长这样」，
+#: 与上一条相同时上一条就是它，不记也丢不了任何能恢复的东西。导出 / 保存 / 写回照记：
+#: 「投稿前导出过的那一版」这类标记即使内容没变也是用户要找的东西（ADR 0101）。
+_MOMENTS_SKIPPED_WHEN_UNCHANGED = frozenset({"open", "close", "before_restore"})
+
 #: 后端给未命名节点起的名字（`api_versions_create` 的 `strftime`）。只在读**旧**
 #: 条目时用：`named` 字段出现之前，手动存的那一版名字要么是用户敲的、要么是这个
 #: 时间串——用户敲过名字的旧节点认作命名节点，升级不让它们变得可以被裁。
@@ -15512,6 +15836,44 @@ def _version_thumb_path(doc_id: str, vid: object) -> Path | None:
     if not found:
         return None
     return max(found, key=lambda t: t[0])[1]
+
+
+#: 缩略图拍的是页面的哪一块（mm）。整页的图没有这个文件；只拍内容区域的图旁边放一份
+#: `<vid>.box`（JSON `{x, y, w, h}`）。与图同目录、同 stem，`_sweep_version_thumbs` 一并清。
+_VERSION_THUMB_BOX_EXT = "box"
+#: 裁切框坐标的合理上限（mm）：页面再大也到不了这里，只挡误传
+_VERSION_THUMB_BOX_LIMIT = 100_000.0
+
+
+def _parse_thumb_box(raw: object) -> dict | None:
+    """`x,y,w,h`（mm，有限数、宽高为正）→ dict；不合法 → None。"""
+    if not isinstance(raw, str):
+        return None
+    parts = raw.split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        x, y, w, h = (float(p) for p in parts)
+    except ValueError:
+        return None
+    vals = (x, y, w, h)
+    if not all(math.isfinite(v) and abs(v) <= _VERSION_THUMB_BOX_LIMIT for v in vals):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def _version_thumb_box(doc_id: str, vid: str) -> dict | None:
+    """这张缩略图拍的那一块；没有（整页图、旧节点）或读不出来 = None（照整页处理）。"""
+    p = _version_thumbs_dir(doc_id) / f"{vid}.{_VERSION_THUMB_BOX_EXT}"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _parse_thumb_box(",".join(str(data.get(k)) for k in ("x", "y", "w", "h")))
 
 
 def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
@@ -15990,11 +16352,25 @@ def api_versions_list(doc_id):
     max_objects, max_text = _sketch_limits()
     out = []
     tl = _open_timeline(doc_id)
+    prev = None
     for v in tl.full_list():
         meta = _version_meta(v)
+        # 照今天的规则本不会记下的那条（2026-10-31 之前记下的打开 / 关闭 / 恢复前重复条）：
+        # 标出来让时间线不显示，数据原样留着、不删
+        if (
+            prev is not None
+            and _skippable_when_unchanged(v)
+            and _same_as(prev, v)
+            and _covers(prev, v)
+        ):
+            meta["unchanged"] = True
+        prev = v
         thumb = _version_thumb_path(doc_id, v.get("id"))
         if thumb is not None:
             meta["thumb"] = thumb.suffix[1:]
+            box = _version_thumb_box(doc_id, v.get("id"))
+            if box is not None:
+                meta["thumbBox"] = box
         if max_objects > 0:
             sketch = _version_sketch(v, max_objects, max_text)
             # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
@@ -16084,25 +16460,46 @@ def api_versions_create(doc_id):
     with _versions_lock(doc_id):
         tl = _timeline_for_write(doc_id)
         ver["id"] = _fresh_version_id(tl.entries())
-        # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）。
-        # 关键时刻**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
-        # 它的标记正是用户要找的东西（ADR 0101）。
-        last = tl.last() if ver["auto"] and moment is None else None
-        if last is not None:
-            # 画布身份也参与去重判据：两张画布内容恰好相同（复制一张画布之后
-            # 很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，
-            # 于是那张画布在时间线上一个检查点都没有。
-            same_canvas = last.get("canvasId") == ver.get("canvasId")
-            if same_canvas and json.dumps(last.get("doc"), sort_keys=True) == json.dumps(
-                doc, sort_keys=True
-            ):
-                return jsonify({"skipped": True, "version": _version_meta(last)})
+        # 自动检查点与打开 / 关闭 / 恢复前若与最近一版内容相同则跳过（刷新 / 空转 / 反复开关
+        # 不该刷版本）。导出 / 保存 / 写回**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
+        # 它的标记正是用户要找的东西（ADR 0101；判据与列表的 `unchanged` 同一个 `_same_as`）。
+        last = tl.last() if _skippable_when_unchanged(ver) else None
+        if last is not None and _same_as(last, ver) and _covers(last, ver):
+            return jsonify({"skipped": True, "version": _version_meta(last)})
         if named:
             refusal = _named_budget_refusal(tl.named_bytes(extra=ver))
             if refusal is not None:
                 return refusal
         tl.append(ver)
     return jsonify({"version": _version_meta(ver)})
+
+
+def _skippable_when_unchanged(v: dict) -> bool:
+    """这一条与上一条内容相同时可以不记：普通自动检查点，或打开 / 关闭 / 恢复前。命名的永远记。"""
+    if not v.get("auto") or _is_named(v):
+        return False
+    moment = v.get("moment")
+    return moment is None or moment in _MOMENTS_SKIPPED_WHEN_UNCHANGED
+
+
+def _covers(prev: dict, v: dict) -> bool:
+    """内容相同的上一条能不能顶替这一条。打开 / 关闭 / 恢复前是关键时刻：在「命名」视图里
+    看得见、容量不够时比普通自动检查点后牺牲。上一条只是普通自动检查点时顶替不了——
+    「恢复前」就会只剩一条最先被清掉、命名视图里也找不到的自动节点，回不去恢复前。"""
+    if v.get("moment") is None:
+        return True
+    return _version_kind(prev) in ("named", "moment")
+
+
+def _same_as(prev: dict, v: dict) -> bool:
+    """同一张画布、同一份内容。画布身份也参与判据：两张画布内容恰好相同（复制一张画布之后
+    很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，于是那张画布在时间线上
+    一个检查点都没有。"""
+    if prev.get("_damaged") or v.get("_damaged") or prev.get("doc") is None:
+        return False  # 读不出内容的一条不拿来比：不知道就不算相同
+    return prev.get("canvasId") == v.get("canvasId") and json.dumps(
+        prev.get("doc"), sort_keys=True
+    ) == json.dumps(v.get("doc"), sort_keys=True)
 
 
 @app.patch("/api/versions/<doc_id>/<vid>")
@@ -16198,6 +16595,11 @@ def api_versions_thumb_put(doc_id, vid):
         return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
     if not _VERSION_ID_RE.match(vid):
         abort(404)
+    # 只拍了页面的一块时带 `?box=x,y,w,h`（mm）；不带 = 整页
+    raw_box = request.args.get("box")
+    box = _parse_thumb_box(raw_box) if raw_box is not None else None
+    if raw_box is not None and box is None:
+        return jsonify({"error": "缩略图的裁切框不合法", "code": "version_thumb_invalid"}), 400
     with _versions_lock(doc_id):
         ids = {v.get("id") for v in _open_timeline(doc_id).entries()}
         if vid not in ids:
@@ -16210,6 +16612,21 @@ def api_versions_thumb_put(doc_id, vid):
         # 写成之后删旧图是尽力清理：删不掉只记日志、不算失败——两张同时在时
         # `_version_thumb_path` 取较新的那张，刚写上的新图胜出。
         engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
+        # 裁切框紧跟着图：图与框必须说的是同一张。框写不上 / 旧框删不掉时把刚写的图也撤掉——
+        # 宁可这一版没有缩略图（退回草图），也不让一张局部图按整页摆、或整页图按旧框裁
+        box_path = d / f"{vid}.{_VERSION_THUMB_BOX_EXT}"
+        try:
+            if box is not None:
+                engine_atomicio.write_bytes(box_path, json.dumps(box).encode("utf-8"))
+            else:
+                box_path.unlink(missing_ok=True)
+        except OSError as exc:
+            LOG.warning("版本缩略图的裁切框写不上，撤掉这张图: %s: %s", d, exc)
+            try:
+                (d / f"{vid}.{ext}").unlink()
+            except OSError:
+                pass
+            return jsonify({"error": "缩略图写不上", "code": "version_thumb_write_failed"}), 500
         for other in _VERSION_THUMB_TYPES.values():
             if other != ext:
                 try:
@@ -16493,6 +16910,9 @@ def main():
     safe_start = desktop_mode.parse_safe_start((hello or {}).get(desktop_mode.SAFE_START_FIELD))
 
     setup_logging()
+    # 把 MSIX 宿主（Codex 桌面版等）私有区里的旧数据补回真实目录（#1574 善后，一次性、无界面、永不抛）。
+    # 必须早于任何读配置 / 恢复上次项目的动作；大目录（受管环境 / CLI）不在这里搬，用到时才搬。
+    engine_msixmigrate.run_once()
     # 安装清单刷成「这套 Tavotto 现在在这儿」。安装器只写得了装的那一刻，
     # 而用户会把 .app 拖到别处、会用免安装形态、macOS 压根没有安装后钩子——
     # 每次启动刷一遍，外部程序（Codex 插件）查到的就永远是最后真跑起来过的

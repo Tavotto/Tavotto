@@ -10,15 +10,14 @@ import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
+import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, isLeftPinned, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
 import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
-import { CanvasList } from './CanvasList'
 import { DrawerCount } from './DrawerCount'
 import { DrawerSlotsContext } from './drawerSlots'
 import { ElementTree } from './ElementTree'
-import { LayerTree } from './LayerTree'
+import { OutlineTree } from './OutlineTree'
 import { ProblemPanel } from './ProblemPanel'
 import { StylePanel } from './StylePanel'
 import { WorkspaceList } from './WorkspaceList'
@@ -39,9 +38,8 @@ export function LeftPanel({
   const { t } = useTranslation('workspace')
   const tab = useUiStore((s) => s.leftTab)
   const width = useUiStore((s) => s.leftWidth)
-  const pinned = useUiStore((s) => s.leftPinned)
+  const pinned = useUiStore(isLeftPinned)
   const wide = useUiStore((s) => s.layout === 'wide')
-  const objectCount = useDocumentStore((s) => s.doc.objects.length)
   // 标题行的两个槽（`DrawerHeader`）：节点进 state，抽屉在下一帧把自己的动作 portal 进来
   const [metaSlot, setMetaSlot] = useState<HTMLElement | null>(null)
   const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null)
@@ -81,9 +79,6 @@ export function LeftPanel({
           「图 3」分区标题还小一号，层级倒挂（左栏审计 L01） */}
       <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
         <h2 className="type-section shrink-0">{t(`rail.${tab}`)}</h2>
-        {tab === 'layers' && objectCount > 0 && (
-          <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
-        )}
         {tab === 'elements' && <ElementCount />}
         {/* meta 槽：抽屉自己的计数 / 范围（问题面板的「当前图 13 ▾」胶囊，审计 §9.4：范围并入标题行） */}
         <span ref={setMetaSlot} data-drawer-meta className="flex min-w-0 items-center gap-1.5 empty:hidden" />
@@ -106,18 +101,16 @@ export function LeftPanel({
       <DrawerSlotsContext.Provider value={slots}>
       {tab === 'workspace' ? (
         <WorkspaceList />
-      ) : tab === 'canvases' ? (
-        <CanvasList />
       ) : tab === 'assets' ? (
         <AssetBrowser />
-      ) : tab === 'layers' ? (
-        <LayerTree />
+      ) : tab === 'elements' ? (
+        <ElementTree />
       ) : tab === 'style' ? (
         <StylePanel />
       ) : tab === 'problems' ? (
         <ProblemPanel />
       ) : (
-        <ElementTree />
+        <OutlineTree />
       )}
       </DrawerSlotsContext.Provider>
       </div>

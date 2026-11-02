@@ -383,6 +383,46 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 会话元数据：sidecar 与 `meta.json` 记 `source_language`；`library` 在 r / matlab 时为 null；遥测不新增事件。看护：`tests/test_sourcelang.py`、
 `tests/test_ai_convert_foreign.py`、`tests/test_ai_convert_foreign_app.py`、`tests/test_convertdeps.py`。
 
+### Codex 运行事实（TVD-BCZ0，`ai_agents.CliRunFacts`）
+
+第三方 CLI 的内部步骤看不见（exec trace 的 `agent_run` 是 `opaque`），几分钟的会话判不了根因。`CodexAgent.run_facts()` 给出的
+`CliRunFacts` 在 `ai_bridge._consume` 里与 `_classify` 读**同一条** stdout 逐行累计，**只有数字 / 布尔 / 闭集码**：事件数、
+命令数 / 失败 / 被拒（`status=declined`）/ 起了没结束、文件改动数与工作区内外（`-C` 目录，只给计数，不给路径）、是否改到目标文件名、
+`error` / `turn.failed` 次数、最后事件与最后 item 类型（`CLI_EVENT_TYPES` / `CLI_ITEM_TYPES`，集合外归 `other`）、首个事件延迟 /
+最长无事件间隔 / 末尾空闲（毫秒）、接口是 `official` 还是 `relay`（只看 base_url 有没有，不带地址与标签）。判据只用事件里**结构化**字段，
+不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
+（登记在 `exectrace.ATTRIBUTES`，词表由 `ai_bridge` 用上述常量登记），与「AI 会话结束」日志（`_cli_log_facts`，多次进程用
+`merge_run_facts` 合并；码类经 `logsafe.known` 放行）。新增事实先加常量集合 / ATTRIBUTES，再由 `tests/test_codex_run_facts.py` 钉住。
+会话里的 `cli_runs` 是 `SESSION_INTERNAL_KEYS`，不进任何响应。
+
+**「改到目标文件名」（`target_touched`）只看得见 `file_change` 事件**：模型把 `apply_patch` 当 shell 命令跑、或用重定向写文件时事件流里只有 `command_execution`（真模型复现时见过写成了而 `target_touched=False`）。所以进程结束时另记工作区根下目标文件此刻`target_on_disk`（普通文件、不是符号链接）与 `target_bytes`；判「到底写没写出来」以这两项为准。
+
+### 转换任务的写入被拒 / 时限 / 长静默（TVD-BCZ0）
+
+- **提示词**：`ai_prompt_pack.convert_prompt` 对所有来源加 `rule_write_fail`（写目标文件失败就说明原因并停，不换位置写）；R / MATLAB 来源另加
+  `rule_foreign_no_search`（这台机器不运行 R / MATLAB，不查找安装或源码，不做全盘 / 主目录搜索，只读工作目录与原项目目录）。看护：
+  `tests/test_ai_convert_foreign.py::test_convert_prompts_forbid_searching_…`。
+- **失败码 `agent_write_denied`**（`ai_tasks.UNMET_REASON_CODES`）：提交前检查 `candidate.target` 判“目标缺失”时，若本次运行事实
+  （桥在每个 CLI 进程结束时把 `merge_run_facts(cli_runs)` 放进 `cand.extras["run_facts"]`）显示 `file_changes_failed > 0` 或
+  `commands_declined > 0`（`ai_convert.write_denied`），原因码是 `agent_write_denied`，否则仍是 `target_missing`。它**不可修正**
+  （`convert_fix_text` 不收它，不再起一轮 Agent）。前端 `convert.fail.agent_write_denied` 一句话 + 「重试」，文案走既有 `convert.fail.<reason>` 映射。
+  **第二种形状（Windows 沙盒起不来）**：命令在启动前就被策略拒绝，事件流里没有 `command_execution`，上面两个计数都是 0。
+  `write_denied` 另判：`events > 0` 且 `last_event == "turn.completed"` 且 `commands == 0` 且 `file_changes == 0`（有命令没写入仍是 `target_missing`）。
+- **Windows 上的 Codex 沙盒（TVD-BCZ0 根因）**：Codex 0.164.0 在 Windows 的默认沙盒起不来，模型自述“当前会话为只读沙箱，所有命令在启动时被策略拒绝”，
+  连 `pwd` 都不行，正常退出 → 转换判 `target_missing` 或回 `TAVOTTO_NEEDS_INPUT`（Lab run `20261101T084752Z-227df5`）。同环境只加
+  `-c windows.sandbox="unelevated"`（受限令牌，不需要管理员；`elevated` 要建沙盒用户，不采用）后两次转换分别跑了 39 / 59 条命令并写出目标文件
+  （Lab run `20261101T090337Z-e765ae`）。`CodexAgent.build_command` / `build_fix_command` 在 `os.name == "nt"` 时追加
+  `ai_agents.CODEX_WINDOWS_SANDBOX_ARGS`（本次调用级覆盖，**不写用户的 `~/.codex/config.toml`**）；`endpoint_args` 里已显式给了 `windows.sandbox`
+  就不重复。非 Windows 不变。看护：`tests/test_ai_agents.py::test_codex_argv_*`、`tests/test_windows_regressions.py::test_codex_on_windows_runs_with_unelevated_sandbox`。
+- **总时限**：`ai_convert.convert_timeout_s(lines) = min(1800, 900 + 2 × lines)`（`source_line_count` 数原脚本行数）。`envelope_for` 把它写进
+  `budget.max_wall_s`，并把 `timeout_extra_s = 时限 − 900` 记进候选 `extras`；桥的进程看门狗用 `TIMEOUT_S + timeout_extra_s`。没有候选的任务
+  （改图等）额外为 0，仍是 900 s。
+- **长静默进度**：进行中的 `CliRunFacts` 挂在会话 `cli_live`（`SESSION_INTERNAL_KEYS`，进程结束摘掉）。`ai_bridge.get()` 对 running 的转换会话在
+  `task.activity` 里给闭集值 `writing_long`，判据 `CliRunFacts.generating_silent(45 s)`：收到过事件、无未完成命令、最后事件不是
+  `turn.completed` / `turn.failed` / `error`、最后 item 是 reasoning / agent_message / file_change / 已完成的 command_execution（或刚 `turn.started`），
+  且静默 ≥ `LONG_WRITE_IDLE_MS`。只用结构化字段；事件一来静默清零，下一次轮询自然恢复。前端 `convertStore` 轮询时把它写进条目 `activity`，
+  进度行只换文字（`convert.writingLong`），不加横条 / 弹窗。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
@@ -395,6 +435,12 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - `path_override` 必须 realpath + 指向该 Agent
 - spawn 时注入、绝不改写用户的 settings / config.toml
 - 模型名不写进源码
+
+## CLI 失败归类（Codex / Claude，`ai_agents.codex_failure_class` / `claude_failure_class`）
+
+非零退出默认写 `agent_exit_nonzero`；适配器的 `classify_event` 只凭**结构化字段**把失败归到 `RUNNER_ERRORS` 里的 `agent_auth` / `agent_quota` / `agent_network`，写进 `state["runner_error"]`（`ai_bridge` 对所有 Agent 取它）。
+Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpected status <三位码>`（真机 0.163.0 无结构化码字段；401/403 auth、429 quota、502/503/504 network）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
+**不匹配任何自由文本、不保留原文**；字段没有或不认识就不判。失败卡「错误码 → 主按钮」的闭集表是前端 `AGENT_ERROR_ACTION`，与 `tests/golden/ai_error_action_vectors.json` 前后端对拍（`tests/test_ai_cli_error_classes.py`、`transcriptModel.test.ts`）。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
 
@@ -543,7 +589,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 ### D2a：「改」组（`change.py` / `snapshots.py` / `executors.py`，ADR 0149 §七）
 
-工具：`install_packages`（`listed`）、`switch_execution` / `switch_workdir` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 见下面专节。
+工具：`install_packages`（`listed`）、`switch_execution` / `switch_workdir` / `fix_entry`（登记的入口已不在脚本里：同 `entryfresh.reconcile`，只改注册表一个字段，不弹卡不打快照、幂等，TVD-CHR5）/ `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 见下面专节。
 看护 `tests/test_fixtools_change.py`。`FIX_SESSION_TIERS` 放行 observe / run / tavotto / listed / user_env / outward，**放行 ≠ 不问**：要不要问用户由各工具自己经 `FixContext.ask` 把关
 （`change.approve`：没有 `ask`、回答不是 `yes`、`ask` 抛了、超时，一律 `needs_approval` 且审计记 `blocked`；通过则审计记 `approved_by=user`）。
 
@@ -616,6 +662,17 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - **已知取舍**：同一处的旧 `file` 规则（`remap_target` 里 `file` 优先）会盖住后来的 `prefix` 规则——与弹窗行为一致，没有为此改规则优先级；`known_requests` 不含已被现有规则救回的 `open` 读取。
 
 - **诊断三缺口（覆盖率测量补）**：① 项目内同名包遮蔽——`engine/importshadow.py`（纯函数、只读文件系统）对 `No module named 'a.b'` / `cannot import name … (项目内路径)` 判「父包目录在脚本目录 / 项目根下、缺的子模块不在里面」（脚本目录在 `sys.path[0]`、先于已装的包；项目根被 worker 追加在末尾、排在 site-packages 之后，所以项目根里的同名包要 traceback 里有一帧落在它里面才算，`search_order=after_site`，装同名发行包能修）；`read_run_report` 与应用 `try_run` 共用 `runreport.project_run_report`，以当前错误为准、`project_package_shadow` 放最前，历史失败不覆盖当前判断；诊断副本 `try_run` / `try_import` 按自己的导入范围调用 `base.shadow_note`。`regular` 包装同名包不管用；无 `__init__.py` 或扩展包路径的 namespace 可由安装真包修复，提示词 3f 同此。② 安装失败只按安装器输出分类，并带脱敏后的 `ERROR:` 一两行（`detail`），由 `install_packages` 回给模型；不再另起 `pip index` 探测，以免忽略私有源设置并泄露包名。`dependency_not_found` 不断言包不存在，也可能仅没有当前 Python / 平台的可用版本；取消事件贯穿安装。③ `read_logs(worker)` 按 `diagnostics.owned_worker_logs(项目)` 取当前项目最近一份日志。看护 `tests/test_fixdiagnostics.py` / `tests/test_fixdiagnostics_report.py`。
+
+### `ignore_import_folder`：脚本自带的私有依赖文件夹为别的 Python 版本装的（`fixtools/importpath.py`，ADR 0154，2026-10-31）
+
+看护 `tests/test_fixtools_importpath.py`（工具 / 回滚 / 方向路由）、`tests/test_foreign_abi_path.py`（识别、过滤器、端到端）。
+
+- **失败码 `import_folder_abi_mismatch`**（报告 `error.code` / `params.folder|abi|current`）：换 Python 版本救不了——那个目录永远是为别的版本装的（TVD-ZCR4 里 AI 两轮 `change_python` 要 3.12 都是 `python_change_unavailable`）。
+  系统提示 3h 明令不换版本、不在它上面装包，改用本工具；`change_python` 在报告错误码是它时直接 `python_change_not_applicable`（不打快照、不建环境）；`pyversionfix.FAILURE_CODES` 不含它，`failure_from_report` / `required_span` 认不出。
+- **工具不收路径**：忽略哪个文件夹由失败那一刻 Tavotto 登记（`pathignore.latest_path`，随令牌签发），模型指认不了任意目录；没有登记 = `no_foreign_folder`，不打扰用户。
+- **一律问**（approve 卡 = 一句话 `summary` + 折叠 `details`，如实说明这是对「与终端里一致」的偏离、脚本与文件夹都不动、可撤销）。没有 `ctx.ask` / 非 yes = `needs_approval`，名单与快照都不写。
+- **同一条路径**：写入只经 `pathignore.remember`（失败卡主按钮的令牌端点调的也是它）；名单变了才调 `FixContext.on_ignored_paths_changed`（应用侧 = 收掉这个项目的会话，`--ignore-paths` 是 spawn 时交的）。
+  快照 `settings_keys()` 含 `ignored_import_paths`，回滚精确恢复（含「原来没有」），名单变了同样通知。
 
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
@@ -730,3 +787,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
   统一加；版本只由锁控制）。就绪判定仍是 `claude auth status`（只取 `loggedIn`）。前端文案 `engine.managedCliError.*` 带 `{{product}}`，
   Codex / Claude Code 共用；订阅登录卡（`MethodList`）在 agent 没装时不置灰，点开走 `AgentStepAction`「安装并登录」。
   升版本：`python scripts/managed_cli_lock.py --update <版本> --cli claude`。
+
+### 无输出看门狗（`ai.stalled`）
+
+`ai_bridge._SilenceWatch`：每个 CLI 进程一个，只观察。stdout 静默达 `STALL_AFTER_S`（120）发一次 `ai.stalled{session, stalled: true, idle_s}`，再有输出发 `{stalled: false}` 复位；**不杀进程**（慢慢思考的模型会被误杀），总超时 `TIMEOUT_S` 不变。状态只在看门狗对象里、不进会话字典。前端 `aiStore.setStalled` 把它翻译成状态行「AI 已经 N 秒没有动静」+「取消 / 重试」（重试 = 取消、等收尾、再原样重发）。看护 `tests/test_ai_silence_watch.py`、`assistantStalled.test.tsx`。

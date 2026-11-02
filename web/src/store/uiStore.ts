@@ -10,7 +10,9 @@ import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/l
 import { drillKey } from '@/lib/drillKey'
 import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
-export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
+export type LeftTab = 'workspace' | 'assets' | 'outline' | 'elements' | 'style' | 'problems'
+/** 2026-10 审计 A3：画布 + 图层合成一棵「大纲」（图内元素仍是独立的「图内」页签）；旧版本机偏好里的 canvases / layers 落到它上面 */
+const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
 export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
@@ -94,6 +96,30 @@ export const MEDIUM = 1024
 export const layoutFor = (w: number): WorkspaceLayout =>
   w >= WIDE ? 'wide' : w >= MEDIUM ? 'medium' : 'narrow'
 
+/**
+ * 左栏此刻算不算「固定」（选中对象 / 加完图后不自动收起素材抽屉）。只在 wide 成立：
+ * 用户没表过态（`null`）时 ≥1280 默认固定，< 1280 的窗口放不下两栏并排。
+ */
+export const isLeftPinned = (s: Pick<Persisted, 'leftPinned'> & { layout: WorkspaceLayout }): boolean =>
+  s.layout === 'wide' && (s.leftPinned ?? true)
+
+/**
+ * 属性栏算不算「固定」：没表过态时 ≥1280 默认固定、更窄默认不固定（见 `isRightOverlay`）；
+ * 用户显式选过的值永远优先。
+ */
+export const isRightPinned = (s: Pick<Persisted, 'rightPinned'> & { layout: WorkspaceLayout }): boolean =>
+  s.rightPinned ?? s.layout === 'wide'
+
+/**
+ * 属性栏是不是盖在画布上的覆盖层（不挤占画布）：< 1024 一律是；1024–1279 只在没固定时是
+ * （2026-10 UI 审计 G1：1093×614 下 360px 的右栏把画布挤掉一半）。固定了照旧挤占。
+ */
+export const isRightOverlay = (s: Pick<Persisted, 'rightPinned'> & { layout: WorkspaceLayout }): boolean =>
+  s.layout === 'narrow' || (s.layout === 'medium' && !isRightPinned(s))
+
+/** 窗口窄于此值，左轨只留图标（标签文字进气泡 / 可达名） */
+export const RAIL_ICON_ONLY = 1180
+
 interface Persisted {
   /**
    * 偏好版本号。默认值改动过一次（右栏由「等选中再弹」改成常驻），老用户
@@ -105,9 +131,13 @@ interface Persisted {
   leftWidth: number
   /** 右栏宽度（px） */
   rightWidth: number
-  /** 钉住：宽屏下选中对象时不自动收起该侧 */
-  leftPinned: boolean
-  rightPinned: boolean
+  /**
+   * 钉住：宽屏下选中对象时不自动收起该侧。**三态**：`null` = 用户没表过态，按窗口宽度取默认
+   * （`isLeftPinned` / `isRightPinned`）；`true` / `false` = 用户在设置或面板头亲手选的，永远优先。
+   * 此前默认值直接写成 false / true 并随每次 persist 落进本机，「没设过」与「设为关」分不出来。
+   */
+  leftPinned: boolean | null
+  rightPinned: boolean | null
   /** 网格间距（mm） */
   gridSize: number
   /** 吸附总开关与三类吸附目标 */
@@ -138,7 +168,7 @@ interface Persisted {
   theme: ThemePref
 }
 
-export const PREFS_VERSION = 2
+export const PREFS_VERSION = 3
 
 const DEFAULTS: Persisted = {
   prefsVersion: PREFS_VERSION,
@@ -146,8 +176,8 @@ const DEFAULTS: Persisted = {
   leftOpen: true,
   leftWidth: LEFT_DEFAULT,
   rightWidth: RIGHT_DEFAULT,
-  leftPinned: false,
-  rightPinned: true,
+  leftPinned: null,
+  rightPinned: null,
   gridSize: 10,
   snapEnabled: true,
   snapToGrid: false,
@@ -205,6 +235,11 @@ function readPersisted(): Persisted {
     if (from < 2 && (state.rightWidth ?? 0) <= 320) {
       state = { ...state, rightWidth: RIGHT_DEFAULT }
     }
+    // v2 → v3：钉住改三态。右栏旧默认 true 一直随 persist 落盘，与「用户亲手钉住」分不出来，
+    // 而它决定 < 1280 时右栏是否挤占画布——等于旧默认的 true 当「没表过态」（null）；
+    // 不同于旧默认的值（false）必是亲手选的，原样保留。左栏旧默认 false 同理分不出来，
+    // 但把它改成 null 会把宽屏用户亲手关掉的固定翻成开，宁可不动（新装才享受新默认）。
+    if (from < 3 && saved.rightPinned === true) state = { ...state, rightPinned: null }
     state = { ...state, prefsVersion: PREFS_VERSION }
   }
   // 时间线页签依赖「打开了哪份排版」，是会话态：刷新后不带着它启动（落回属性页）
@@ -215,6 +250,9 @@ function readPersisted(): Persisted {
     ...state,
     // 手改过 / 未来版本写进来的未知外观值当「跟随系统」
     theme: isThemePref(state.theme) ? state.theme : DEFAULTS.theme,
+    leftTab: LEGACY_OUTLINE_TABS.includes(state.leftTab as string) ? 'outline' : state.leftTab,
+    leftPinned: typeof state.leftPinned === 'boolean' ? state.leftPinned : null,
+    rightPinned: typeof state.rightPinned === 'boolean' ? state.rightPinned : null,
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
     leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, state.leftWidth)),
   }
@@ -223,7 +261,8 @@ function readPersisted(): Persisted {
   prefOpen = { left: state.leftOpen, right: state.rightOpen }
   // 窄屏下右栏是盖在画布上的覆盖层，开机就铺满等于把画布藏了；常驻标记留着，
   // 拉宽窗口自然生效。
-  if (typeof window !== 'undefined' && layoutFor(window.innerWidth) === 'narrow') {
+  // 1024–1279 里没固定的右栏同样是覆盖层（G1），开机同样不铺。
+  if (typeof window !== 'undefined' && isRightOverlay({ ...state, layout: layoutFor(window.innerWidth) })) {
     state = { ...state, rightOpen: false }
   }
   return state
@@ -446,7 +485,7 @@ interface UiState extends Persisted {
   /** 点图标轨道：同一项再点一次关抽屉，否则换页并打开 */
   railClick: (tab: LeftTab) => void
   /** 选中对象时的自动路由：素材抽屉让位、右栏进属性；停在助手时不抢 */
-  autoShowProperties: () => void
+  autoShowProperties: (opts?: { holdAssets?: boolean }) => void
   /** 选择清空：未钉住的属性栏不再占位 */
   autoHideProperties: () => void
   setCanvasPref: (patch: Partial<Persisted>) => void
@@ -678,8 +717,17 @@ export const useUiStore = create<UiState>((set, get) => ({
     prefOpen.right = get().rightOpen
     persist(get())
   },
-  autoShowProperties: () => {
+  autoShowProperties: (opts) => {
     const s = get()
+    // 指针还在素材抽屉里（正从里面连着加图 / 拖图）：抽屉不收。互斥断点上开右栏本身就会收左栏，
+    // 所以那里整个推迟；宽屏只是不让位。指针离开抽屉后调用方再不带 holdAssets 调一次
+    if (opts?.holdAssets && s.leftOpen && s.leftTab === 'assets') {
+      if (exclusive(s)) return
+      set({ rightOpen: true, rightTab: 'properties' })
+      prefOpen.right = true
+      persist(get())
+      return
+    }
     // 选中对象时一律回到属性页：属性属于「当前选中的对象」，助手属于独立
     // 工作流——用户点了一个对象却对着助手页，是上下文错位（重构前的
     // 「停在助手时不抢」正是这么表现的）。助手会话状态在 aiStore 里，
@@ -689,7 +737,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     // 下面写偏好时直接复用——写两遍的话两份迟早分叉，而分叉的表现是
     // 「关掉的抽屉过一会儿自己回来了」。
     const assetsYield =
-      s.leftOpen && s.leftTab === 'assets' && !(s.leftPinned && s.layout === 'wide')
+      s.leftOpen && s.leftTab === 'assets' && !isLeftPinned(s)
     if (assetsYield || exclusive(s)) patch.leftOpen = false
     set(patch)
     prefOpen.right = true
@@ -703,7 +751,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     if (!s.rightOpen || s.rightTab !== 'properties') return
     // 常驻在 wide 与 medium 都生效（medium 靠互斥保证画布空间）；
     // narrow 是覆盖层，物理上无法常驻
-    if (s.rightPinned && s.layout !== 'narrow') {
+    if (isRightPinned(s) && s.layout !== 'narrow') {
       // 常驻的右栏在没有选中对象时**给画布**，不留一整栏「没有选中对象」的占位
       // （2026-09-13 审计 B02 / B57：无选中 → 画布设置，选中 → 对象属性；Figma
       // 的右栏也是这么分工的）。选中一出现 `autoShowProperties` 就切回属性页。
@@ -749,12 +797,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     const s = get()
     // 两侧开合按此刻的窗口裁一次（与开机读偏好同一条规矩：偏好是默认值，排布跟着窗口走）
     const layout = s.layout
-    const open =
-      layout === 'narrow'
-        ? { leftOpen: DEFAULTS.leftOpen, rightOpen: false }
-        : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
-          ? { leftOpen: false, rightOpen: true }
-          : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
+    const open = isRightOverlay({ rightPinned: DEFAULTS.rightPinned, layout })
+      ? { leftOpen: DEFAULTS.leftOpen, rightOpen: false }
+      : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
+        ? { leftOpen: false, rightOpen: true }
+        : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
     // 外观不算排布：保留用户选的那一套（否则「重置布局」顺手把深色切回跟随系统）
     set({ ...DEFAULTS, ...open, theme: s.theme })
     persist(get())

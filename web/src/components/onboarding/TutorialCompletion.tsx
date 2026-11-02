@@ -97,7 +97,7 @@ function Panel({
       )}
     >
       <h2 className={cn('flex shrink-0 items-center gap-1.5 text-lg', after ? 'font-medium text-ink' : 'text-ink-3')}>
-        {after && <CircleCheck size={ICON_SIZE.md} className="text-ok" aria-hidden="true" />}
+        {after && <CircleCheck playIn size={ICON_SIZE.md} className="text-ok" aria-hidden="true" />}
         {heading}
       </h2>
       <FigureBoundary>

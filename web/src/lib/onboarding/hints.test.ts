@@ -109,6 +109,34 @@ describe('触发', () => {
     expect(current()).toBeNull()
   })
 
+  it('提示排队期间用户已进图内编辑：收起，且已自己进过 = 看过', () => {
+    useSelectionStore.getState().set(['a'])
+    expect(current()).toBe('panel_editable')
+    useUiStore.getState().setElementPanel('a')
+    expect(current()).toBeNull()
+    expect(hintSeen('panel_editable')).toBe(true)
+  })
+
+  it('显示前再判一次：已在图内编辑 / 已不再选中这张图 → 不显示，也不记看过', () => {
+    useSelectionStore.getState().set(['a'])
+    useHintStore.getState().dismiss()
+    useOnboardingStore.getState().resetHints()
+    useUiStore.setState({ elementPanelId: 'a' })
+    expect(showHint('panel_editable')).toBe(false)
+    useUiStore.setState({ elementPanelId: null })
+    useOnboardingStore.getState().resetHints() // 上面自己进图内编辑那一下按设计记了「看过」，这里只验未选中的那一支
+    useSelectionStore.getState().clear()
+    expect(showHint('panel_editable')).toBe(false)
+    expect(hintSeen('panel_editable')).toBe(false)
+  })
+
+  it('选区移走后，排队中的「选中图」提示收起', () => {
+    useSelectionStore.getState().set(['a'])
+    expect(current()).toBe('panel_editable')
+    useSelectionStore.getState().clear()
+    expect(current()).toBeNull()
+  })
+
   it('第一次多选 → multi_select；第一次进快速编辑 → fast_edit_entered', () => {
     useSelectionStore.getState().set(['a', 'b'])
     expect(current()).toBe('multi_select')
@@ -137,6 +165,27 @@ describe('触发', () => {
         },
       ],
     })
+    expect(current()).toBe('problem_found')
+  })
+
+  it('只有文档级问题（没有可定位的对象，如空画布）：不弹；之后出现落在对象上的第一个问题才弹', () => {
+    const issue = (objectId: string | null) =>
+      ({
+        issueId: `i_${objectId}`,
+        ruleCode: 'r',
+        severity: 'warn',
+        context: 'document',
+        objectRef: { documentId: 'd_hints', canvasId: 'c', objectId, gid: null },
+        subject: { kind: 'object' },
+        propertyPath: null,
+        message: literal('x'),
+        technicalDetails: {},
+        fixKind: 'none',
+      }) as never
+    useValidationStore.setState({ ready: true, issues: [] })
+    useValidationStore.setState({ ready: true, issues: [issue(null)] })
+    expect(current()).toBeNull()
+    useValidationStore.setState({ ready: true, issues: [issue(null), issue('a')] })
     expect(current()).toBe('problem_found')
   })
 })

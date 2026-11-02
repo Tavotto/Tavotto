@@ -1598,11 +1598,12 @@ function TickPage({
           状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路，放最后
           （设计稿 A5：写成一句话）。-ml-2 与「原始比例」「全部清除」那些 ghost 文字键同一写法：
           钮内文字与上面的分区头对齐；按钮字 12 之后英文整句在 320px 的 DejaVu Sans 下是
-          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内 */}
+          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内。中文主力字号提到 13px 之后
+          连这一点余量也没了：整句允许折成两行（h-auto + whitespace-normal），不截断、不撑破栏宽 */}
       <Button
         size="sm"
         data-tick-spines-link
-        className="-ml-2 w-fit text-ink-2"
+        className="-ml-2 h-auto min-h-7 w-fit max-w-full shrink whitespace-normal py-1 text-start text-ink-2"
         onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
       >
         {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
@@ -2653,7 +2654,7 @@ function FieldRow({
                   onClick={() => move(i, -1)}
                   aria-label={el('moveUp')}
                 >
-                  <MoveUp size={ICON_SIZE.xs} />
+                  <MoveUp size={ICON_SIZE.sm} />
                 </Button>
                 <Button
                   size="icon-sm"
@@ -2661,7 +2662,7 @@ function FieldRow({
                   onClick={() => move(i, 1)}
                   aria-label={el('moveDown')}
                 >
-                  <MoveDown size={ICON_SIZE.xs} />
+                  <MoveDown size={ICON_SIZE.sm} />
                 </Button>
               </li>
             ))}
@@ -2996,7 +2997,7 @@ function AxesSizeMm({
            来源入口回答「是哪一个」，联动的原理进那个按钮的悬停提示——提示挂在
            按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
         <div className="flex min-w-0 items-center gap-1.5">
-          <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+          <Link2 size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           <p className="min-w-0 flex-1 truncate type-section">
             {el('proxiedSizeHead', { label: engineLabel(element.label) })}
           </p>

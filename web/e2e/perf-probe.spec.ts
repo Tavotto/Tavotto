@@ -56,7 +56,7 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   })
 
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   const svgWrap = page.locator('[data-element-svg]').first()
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)

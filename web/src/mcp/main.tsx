@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { installIconMotion } from '@/components/ui/iconMotion'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { applyLocale, t as translate } from '@/i18n'
 import { normalizeLocale } from '@/i18n/locale'
@@ -9,6 +10,9 @@ import { McpApp } from './McpApp'
 import { McpProviders } from './McpProviders'
 import { installMcpTransport, seedSession, type OpenFigureResult } from './session'
 import '@/index.css'
+
+// 图标微动效（ADR 0156）与桌面应用同一份委托
+installIconMotion()
 
 /**
  * MCP App 画布的入口。

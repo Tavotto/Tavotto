@@ -25,6 +25,7 @@ import {
   backendErrorText,
   fetchDependencyOffer,
   isNativeTerminal,
+  ignoreImportFolder,
   repairImportFolder,
   type GuiDialogPayload,
   type PreparationAttempt,
@@ -39,6 +40,7 @@ import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
+import type { RemedyEnv } from '@/lib/fixRemedy'
 import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -46,7 +48,8 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { aiRevert, convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { parseRenames } from '@/lib/overrideIdentity'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -68,6 +71,8 @@ import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEn
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useAiFixStore } from '@/store/aiFixStore'
+import { useAiStore } from '@/store/aiStore'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
 import { useConvertStore } from '@/store/convertStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
@@ -239,8 +244,8 @@ const STEPS = ['prepare', 'run', 'edit'] as const
 const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
   // 状态图标：颜色 + 实心孪生双重提示（空心环 + 细线记号四种长得太像）；busy 是全产品唯一的 Spinner
   busy: <Spinner size={ICON_SIZE.md} className="text-accent" />,
-  ok: <CircleCheck filled size={ICON_SIZE.md} className="shrink-0 text-ok" />,
-  bad: <CircleAlert filled size={ICON_SIZE.md} className="shrink-0 text-danger" />,
+  ok: <CircleCheck playIn size={ICON_SIZE.md} className="shrink-0 text-ok" />,
+  bad: <CircleAlert playIn size={ICON_SIZE.md} className="shrink-0 text-danger" />,
   mute: <CircleQuestionMark filled size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
 }
 
@@ -248,7 +253,7 @@ function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
   // 几个状态有自己更具体的记号（设计稿 v2）
   if (state === 'no_figure' || state === 'no_figure_raster') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
-  if (state === 'offline') return <Unplug size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
+  if (state === 'offline') return <Unplug playIn size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'restarted') return <RotateCcw size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'input_secret') return <KeyRound size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   return TONE_ICON[tone]
@@ -674,6 +679,14 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.send')
     case 'repair_folder':
       return pt('btn.repairFolder')
+    case 'skip_folder':
+      return pt('btn.skipFolder')
+    case 'use_builtin_python':
+      return pt('btn.useBuiltinPython', { product: PRODUCT_NAME })
+    case 'switch_python':
+      return pt('btn.switchPython', { name: p.env.name })
+    case 'revert_ai_edit':
+      return pt('btn.revertAiEdit')
   }
 }
 
@@ -683,9 +696,111 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
  * 重跑沿用卡上「再试一次」同一个动作；挂起期间换了项目就什么都不做。
  */
 async function repairFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, () => repairImportFolder(token))
+}
+
+/** 「跳过这个文件夹」（ADR 0154）并重跑一次：只把令牌交给后端，之后与「修复权限」同一个重跑动作 */
+async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, () => ignoreImportFolder(token))
+}
+
+/**
+ * 「改用自带的 Python」（`interpreter_cache_denied`，TVD-B6MR）并重跑一次：清掉还会选中失败解释器的那几层选择——
+ * `global` 清全局（`setPython(null)`）；`project` 让项目改用默认链条（`setProjectPython(null)`，后端 `remember_default`）；
+ * `both`（全局指定的同时也是项目记住的那条，只清全局下一档还是它）两层都清。清不掉回那一句话、不重跑。
+ *
+ * 重跑走「打开并运行」，但要**等环境变化触发的那次重新检查落定**：envStore 一变，订阅就让空闲会话 `recheck`（`pending`
+ * 置上），此刻立刻 `open(run)` 会被「同目标有动作在飞」挡回、不认领（Codex #1595）。等它落定后 `open` 按新报告认领。
+ */
+async function switchToBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project' | 'both'): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const env = useEnvStore.getState()
+  if (scope !== 'project') {
+    const err = await env.setPython(null)
+    if (!guard.still()) return null
+    if (err) return err
+  }
+  if (scope !== 'global') {
+    const err = await env.setProjectPython(null)
+    if (!guard.still()) return null
+    if (err) return err
+  }
+  await actionSettled(entry.key)
+  if (!guard.still()) return null
+  await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
+}
+
+/** 等这条目上在飞的动作（环境变化触发的 `recheck` 之类）落定；条目没了 / 超时也放行（`open` 自己会再检查一次） */
+function actionSettled(key: string, timeoutMs = 30_000): Promise<void> {
+  const busy = () => !!useProjectPreparationStore.getState().entries[key]?.pending
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      unsub()
+      resolve()
+    }
+    const timer = setTimeout(done, timeoutMs)
+    const unsub = useProjectPreparationStore.subscribe(() => {
+      if (!busy()) done()
+    })
+  })
+}
+
+/**
+ * 「改用 <环境名>」（Python 版本不合，后端挑的现成环境）并重跑一次：走既有的候选采用（`adoptCandidate`：后端现场再体检，
+ * 环境代对不上 / 被全局解释器压着就拒绝，原文如实回到卡上、不重跑），采用成功再「打开并运行」——与上面清选择那条同一个重跑模式。
+ * 只在用户点击时发生；用户之前显式挑的环境因此只会被用户自己的这一下换掉。
+ */
+async function switchToEnvAndRerun(entry: PrepEntry, env: RemedyEnv): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const err = await useEnvStore.getState().adoptCandidate({ id: env.id, generation: env.generation }, targetName(entry))
+  if (!guard.still()) return null
+  if (err) return err
+  // 采用会改 envStore，触发空闲会话的 recheck；先等它落定再 open（Codex #1595，同上面清选择那条）
+  await actionSettled(entry.key)
+  if (!guard.still()) return null
+  await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
+}
+
+/**
+ * 「回滚 AI 的修改」（remedy `revert_ai_edit`，TVD-H1M5）并重跑一次：与助手历史里「回滚此次修改」同一个后端动作（`ai_bridge.revert`，
+ * 带版本：脚本之后又变过就 `ai_revert_conflict`，一个字节不动，那句话落在卡上）。助手面板这会儿列着那次会话就经 `aiStore.revert`
+ * （同步它的状态与改名映射）；没列着（换过项目再回来 / 面板没打开过）直接调同一个端点，改名映射照样经 `rebindRenamedIdentities`
+ * 改回旧名字——与助手历史的直接回滚同一处理（ADR 0083 §五），否则画布编辑的身份停在 AI 起的新名字上、被渲染拒掉。
+ *
+ * 重跑**不**认领失败报告里的旧 `run`：那份计划冻结的是 AI 改过的脚本版本（`script_revision`），回滚之后认领会被
+ * `preparation_plan_stale` 拒掉、什么都不跑。先认领 `recheck`（后端按回滚后的源码换新计划），再认领新修订的运行动作。
+ */
+async function revertAiEditAndRerun(entry: PrepEntry, session: string): Promise<string | null> {
   const guard = captureProjectEpoch()
   try {
-    await repairImportFolder(token)
+    const ai = useAiStore.getState()
+    if (ai.sessions.some((x) => x.id === session)) await ai.revert(session)
+    else {
+      const res = await aiRevert(session)
+      if (guard.still()) rebindRenamedIdentities(parseRenames(res?.renamed), 'back')
+    }
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  if (!guard.still()) return null
+  const store = useProjectPreparationStore.getState()
+  await store.act(entry.key, 'recheck')
+  const fresh = useProjectPreparationStore.getState().entries[entry.key]?.report
+  if (!guard.still() || !fresh) return null
+  const can = (kind: 'run_when_ready' | 'run') => fresh.actions.some((a) => a.kind === kind)
+  const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
+  if (rerun) await store.act(entry.key, rerun)
+  return null
+}
+
+async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<unknown>): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  try {
+    await decide()
   } catch (e) {
     return guard.still() ? backendErrorText(e) : null
   }
@@ -805,6 +920,14 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return null
       case 'repair_folder':
         return repairFolderAndRerun(entry, p.token)
+      case 'skip_folder':
+        return skipFolderAndRerun(entry, p.token)
+      case 'use_builtin_python':
+        return switchToBuiltinPythonAndRerun(entry, p.scope)
+      case 'switch_python':
+        return switchToEnvAndRerun(entry, p.env)
+      case 'revert_ai_edit':
+        return revertAiEditAndRerun(entry, p.session)
     }
   }
 }
@@ -885,8 +1008,15 @@ function convertFlow(
       }
       // 转换要几分钟：满一分钟起说「已用 X 分钟」（卡片每 30 秒重绘一次，见 `useConvertTick`）
       const minutes = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 60_000) : 0
+      const long = c.activity === 'writing_long'
       return {
-        title: minutes >= 1 ? pt('convert.runningElapsed', { minutes }) : pt('convert.running'),
+        title: long
+          ? minutes >= 1
+            ? pt('convert.writingLongElapsed', { minutes })
+            : pt('convert.writingLong')
+          : minutes >= 1
+            ? pt('convert.runningElapsed', { minutes })
+            : pt('convert.running'),
         slot: <Progress />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
@@ -1415,9 +1545,9 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       case 'busy':
         return <Spinner size={ICON_SIZE.sm} className="text-accent" />
       case 'ok':
-        return <CircleCheck filled size={ICON_SIZE.sm} className="shrink-0 text-ok" />
+        return <CircleCheck playIn size={ICON_SIZE.sm} className="shrink-0 text-ok" />
       case 'bad':
-        return <CircleAlert filled size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+        return <CircleAlert playIn size={ICON_SIZE.sm} className="shrink-0 text-danger" />
       default:
         return <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
     }

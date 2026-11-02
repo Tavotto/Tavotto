@@ -559,10 +559,16 @@ def is_self_written(ctx, path: Path | None = None) -> bool:
     而内容比较两头都不会错（用户把文件改回原样 = 内容没变 = 确实不用刷新）。
     """
     st = state_of(ctx)
-    if st.registry_revision is None:
-        return False
     target = Path(path) if path is not None else registry.registry_path(ctx.path)
-    return atomicio.content_revision(target) == st.registry_revision
+    # 执行登记（`publishing_execution`）刚写下、统一刷新还没来得及装载的那一份也是自写：写盘与随后的
+    # `refresh_project(allow_static_merge=False)` 之间不是原子的，watcher 恰好在这个缝里轮询到时
+    # （Windows 上物化 / 启动记录慢），把它当外部修改会跑一次**带静态合并**的刷新，把这次运行刚替换掉的
+    # 静态字面量图名又并回去——报告说 `unlinked_stems`、文件却已经丢了这个结论。
+    # 刷新一装载，`publication_revision` 即被消费清空，不会长期放行
+    candidates = {st.registry_revision, st.publication_revision} - {None}
+    if not candidates:
+        return False
+    return atomicio.content_revision(target) in candidates
 
 
 # ---------------------------------------------------------------------------

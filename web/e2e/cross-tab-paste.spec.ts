@@ -28,7 +28,7 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
       r.status() < 300,
     { timeout: 30_000 },
   )
-  await tabA.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await tabA.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   // Prompt 09 起双击 = 进**单图编辑**，那一屏只渲染这一张图，而且单图编辑里粘贴不落——
   // 标签 B 加载出来若只有一张图，同样是单图编辑，粘贴进文档的对象存在但根本不画出来（量错了对象）。
   // 这条用例测的是画布上的跨标签粘贴，所以放第二张图进来（画布上两张图 = 多图排版）再往下走；

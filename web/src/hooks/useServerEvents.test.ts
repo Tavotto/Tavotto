@@ -545,13 +545,12 @@ describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
     }
   })
 
-  it('冷启动「正在构建…」是 progress，随后的「渲染完成」是 done', () => {
+  it('冷启动「正在构建…」是 progress，随后渲染完成：不再说「渲染完成」，只收掉构建中', () => {
     handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true }))
     expect(statusKey()).toBe('status.building')
     expect(useUiStore.getState().statusTone).toBe('progress')
     handleServerEvent(ev({ kind: 'render.done', pj: 'p1', id: 'Fig1.pdf' }))
-    expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('done')
+    expect(useUiStore.getState().status).toBeNull()
   })
 })
 
@@ -637,12 +636,34 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
     expect(useUiStore.getState().statusTone).toBe('done')
   })
 
+  it('没有失败提示时渲染成功：什么都不说（成功是常态）', () => {
+    done('Fig_ok.pdf')
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('渲染完成只收被动的冷启动「正在构建…」，用户触发的 progress（problems.fixing / 带主人的重建）不被清', () => {
+    const ui = useUiStore.getState()
+    ui.setStatus({ key: 'problems.fixing', ns: 'errors' }, 'progress')
+    done('Fig_ok.pdf')
+    expect(statusKey(), '非被动 progress 仍在').toBe('problems.fixing')
+
+    ui.setStatus({ key: 'artifact.rebuilding', ns: 'workspace' }, 'progress', { owner: 'artifact.rebuild:x' })
+    done('Fig_ok.pdf')
+    expect(statusKey(), '带主人的 progress 仍在').toBe('artifact.rebuilding')
+
+    ui.setStatus(null)
+    ui.setStatus({ key: 'status.building', ns: 'workspace', values: { name: 'Fig_ok', hint: '' } }, 'progress', {
+      passive: true,
+    })
+    done('Fig_ok.pdf')
+    expect(useUiStore.getState().status, '被动的冷启动提示被收掉').toBeNull()
+  })
+
   it('用户已经关掉的不会被重新挂回来', () => {
     failed('Fig1.pdf')
     useUiStore.getState().setStatus(null)
     done('Fig1.pdf')
-    expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('done')
+    expect(useUiStore.getState().status, '没有可见的失败提示要替换：成功不用报').toBeNull()
   })
 })
 
@@ -853,6 +874,22 @@ describe('AI 修改之后（ADR 0041）', () => {
     )
     const s1 = useAiStore.getState().sessions.find((s) => s.id === 's1')!
     expect(s1.task).toEqual({ task_type: 'figure_edit', outcome: 'completed', corrections: 1 })
+  })
+
+  it('ai.stalled 只标本标签页持有、运行中的会话的静默秒数；stalled:false 复位', () => {
+    useAiStore.setState({
+      sessions: [
+        { id: 's1', status: 'running', entries: [] },
+        { id: 's3', status: 'done', entries: [], finalized: true },
+      ] as never,
+    })
+    for (const sid of ['s1', 's3', 'nope']) {
+      handleServerEvent(ev({ kind: 'ai.stalled', pj: 'p1', session: sid, stalled: true, idle_s: 120 }))
+    }
+    const stalled = () => Object.fromEntries(useAiStore.getState().sessions.map((s) => [s.id, s.stalledS]))
+    expect(stalled()).toEqual({ s1: 120, s3: undefined })
+    handleServerEvent(ev({ kind: 'ai.stalled', pj: 'p1', session: 's1', stalled: false, idle_s: 0 }))
+    expect(stalled()).toEqual({ s1: undefined, s3: undefined })
   })
 
   it('新发起的会话（本地没有 task）收到 ai.task 后有 correcting 阶段，收尾的 ai.done 不带 phase 就消失', () => {

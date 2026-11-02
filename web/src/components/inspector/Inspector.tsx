@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
-import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
+import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, isRightPinned, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { TimelinePanel } from '../VersionDialog'
@@ -66,7 +66,7 @@ export function Inspector({
   const tab = useUiStore((s) => s.rightTab)
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
-  const pinned = useUiStore((s) => s.rightPinned)
+  const pinned = useUiStore(isRightPinned)
   const layout = useUiStore((s) => s.layout)
   const runningAi = useAiStore((s) => s.sessions.some((x) => x.status === 'running'))
 
@@ -378,16 +378,16 @@ function DocumentSummary() {
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
             className={cn(
-              'shrink-0 rounded-xs text-sm text-ink-3 outline-none transition-opacity duration-fast hover:text-ink focus-visible:focus-ring',
+              'shrink-0 rounded-xs type-caption outline-none transition-opacity duration-fast hover:text-ink focus-visible:focus-ring',
               open ? 'opacity-100' : 'opacity-0 focus-visible:opacity-100 group-focus-within/doc:opacity-100 group-hover/doc:opacity-100',
             )}
           >
             {t('docSummary.details')}
           </button>
         </div>
-        <p className="mt-0.5 truncate px-0.5 text-sm tabular-nums text-ink-3">{meta}</p>
+        <p className="mt-0.5 truncate px-0.5 type-caption tabular-nums">{meta}</p>
         {open && (
-          <div data-document-summary-detail className="mt-2 px-0.5 text-sm text-ink-3">
+          <div data-document-summary-detail className="mt-2 px-0.5 type-caption">
             {extra.length > 0 && <p className="tabular-nums">{extra.join(' · ')}</p>}
             <p className={extra.length > 0 ? 'mt-1' : undefined}>{t('emptyHint')}</p>
           </div>

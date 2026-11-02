@@ -50,6 +50,7 @@ def produce(
     provider: HbFaceProvider,
     host: RenderHost | None = None,
     math: dict | None = None,
+    raster_target: tuple[int, int, float, float] | None = None,
 ) -> list[exportjob.Produced]:
     req = job.request
     job.check_cancelled()
@@ -222,9 +223,21 @@ def produce(
             max(1, int(round(rp.page.width_pt * dpi / 72.0))),
             max(1, int(round(rp.page.height_pt * dpi / 72.0))),
         ]
+        if raster_target is not None:
+            # 先按逻辑图幅各向同性画对，再整张面积平均缩到源像素宽高（横纵密度不同的位图，QA-WIN-20）；
+            # 计划里的期望像素就是目标尺寸
+            planned_px = [raster_target[0], raster_target[1]]
         h = host if host is not None else _shared_host()
         try:
-            if banded.needs_bands(h, planned_px):
+            if raster_target is not None and banded.needs_bands(
+                h,
+                [
+                    max(1, int(round(rp.page.width_pt * dpi / 72.0))),
+                    max(1, int(round(rp.page.height_pt * dpi / 72.0))),
+                ],
+            ):
+                raise ValueError("resampled raster export is not supported for banded sizes")
+            if raster_target is None and banded.needs_bands(h, planned_px):
                 # 超出单张预算：按行带渲染、边收边写（ADR 0077 P2）；预算以内的照旧整页一次（逐字节同从前）
                 banded_files = {
                     fmt: tmp_dir / f"out.{fmt}"
@@ -255,6 +268,14 @@ def produce(
                     transparent=rp.page.background is None,
                     page_size_pt=(rp.page.width_pt, rp.page.height_pt),
                 )
+                if raster_target is not None:
+                    buf = raster.resample_area(
+                        buf,
+                        raster_target[0],
+                        raster_target[1],
+                        dpi=raster_target[2],
+                        dpi_y=raster_target[3],
+                    )
                 raster_facts = {
                     "renderer": "pdfium",
                     "px": [buf.width, buf.height],

@@ -35,7 +35,7 @@ vi.mock('@/lib/desktop', async (importOriginal) => {
 const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 
-import { ExportDialog } from '@/components/ExportDialog'
+import { ExportDialog, diskSizeDiffSignificant } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { enginePreviewPng, fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
@@ -460,8 +460,11 @@ describe('信息架构：删掉的东西不许回来', () => {
     ])
     expect(group('checks').textContent).toContain('样式检查报告')
     expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
-    // 没有一个收起的「高级」把它们藏起来
-    for (const d of document.body.querySelectorAll('details')) expect(d.textContent).not.toContain('样式检查报告')
+    // 两个开关收进唯一一个默认折叠的「高级」（2026-10-31 UI 审计）；开关仍在「检查」组里、请求字段不变。
+    // 严格核验已开 / 报告被规范强制时它默认展开，已生效的设置不会被藏起来
+    const adv = [...document.body.querySelectorAll('details')].filter((d) => d.textContent!.includes('样式检查报告'))
+    expect(adv.map((d) => d.hasAttribute('data-export-advanced'))).toEqual([true])
+    expect(group('checks').contains(adv[0])).toBe(true)
     // 输出组里导出之前就看得见文件落到哪；「更改…」直接弹选择文件夹（细节在 ExportLocationRow.test.tsx），不再跳设置页
     expect(group('output').querySelector('[data-export-location]')).not.toBeNull()
     await click(group('output').querySelector('[data-export-location-change]')!)
@@ -597,6 +600,86 @@ describe('单图退路裁白边：检查 / proof report / 请求吃同一份裁�
     const report = exportBodies[0].style_check_report as { page_mm: { w: number; h: number } }
     expect(report.page_mm.w).toBe(80)
     expect(report.page_mm.h).toBe(60)
+  })
+})
+
+describe('单图档带入画布上的标注（QA-WIN-20）', () => {
+  const textAt = (x: number, y: number, extra: Partial<CanvasObject> = {}): CanvasObject =>
+    ({
+      id: 't1',
+      type: 'text',
+      text: 'Label QA',
+      sizePt: 9,
+      x,
+      y,
+      w: 20,
+      h: 6,
+      ...extra,
+    }) as never
+
+  const openSingle = async () => {
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('图幅内的文字：仍是 scope=original，original.objects 带着它（坐标在原图图幅里）；预览画同一份合成页', async () => {
+    await setup(9, { w: 180, h: 120 })
+    useDocumentStore.getState().commit(literal('挪图并加字'), (d) => {
+      d.objects = [{ ...d.objects[0], x: 30, y: 20 }, textAt(40, 30)]
+    })
+    await openSingle()
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览画的是合成后的页面').toBeTruthy()
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toMatch(/80\s×\s60\smm/)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    expect(exportBodies[0].canvas).toBeUndefined()
+    const original = exportBodies[0].original as {
+      w_mm: number
+      h_mm: number
+      objects?: { type: string; x_mm: number; y_mm: number; text?: string }[]
+    }
+    expect([original.w_mm, original.h_mm], '页面 = 原图图幅').toEqual([80, 60])
+    expect(original.objects).toHaveLength(1)
+    expect(original.objects![0].text).toBe('Label QA')
+    expect([original.objects![0].x_mm, original.objects![0].y_mm], '文字坐标映射到原图坐标系').toEqual([10, 10])
+  })
+
+  it('图下面的标注：objects_below 带上图层次序；都在图上时没有这个键', async () => {
+    await setup(9, { w: 180, h: 120 })
+    useDocumentStore.getState().commit(literal('图下加字'), (d) => {
+      d.objects = [textAt(40, 30, { id: 'under' }), { ...d.objects[0], x: 30, y: 20 }, textAt(41, 31, { id: 'over' })]
+    })
+    await openSingle()
+    await click(button('开始导出')!)
+    const original = exportBodies[0].original as { objects: { text?: string }[]; objects_below?: number }
+    expect(original.objects).toHaveLength(2)
+    expect(original.objects_below).toBe(1)
+  })
+
+  it('没有标注时仍是纯原图请求（original 里没有 objects 键）', async () => {
+    await setup(9)
+    await openSingle()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+    expect(exportBodies[0].canvas).toBeUndefined()
+    expect('objects' in (exportBodies[0].original as object)).toBe(false)
+  })
+
+  it('隐藏的标注不带入', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('加隐藏字'), (d) => {
+      d.objects = [...d.objects, textAt(5, 5, { hidden: true })]
+    })
+    await openSingle()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+    expect('objects' in (exportBodies[0].original as object)).toBe(false)
   })
 })
 
@@ -856,6 +939,65 @@ describe('导出默认值以后端为准（#715 PR-B）', () => {
     })
     await click(button('开始导出')!)
     expect(exportBodies.at(-1)!.ppi).toBe(1200)
+  })
+})
+
+describe('「高级」默认展开跟着打开那一刻的有效设置', () => {
+  const advanced = () => document.body.querySelector('[data-export-advanced]') as HTMLDetailsElement
+  const closeThenOpen = async () => {
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('先以关闭状态挂载，之后才水合出 strict=true：打开时「高级」是展开的', async () => {
+    await setup(20) // 无阻断项；本机缓存空：strict=false
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '600', formats: ['pdf'], withProof: false, strictInspection: true },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(advanced().open).toBe(true)
+  })
+
+  it('用户本次手动折叠 / 展开后，重渲染不覆盖；关上再开重新按有效设置', async () => {
+    await setup(20)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '600', formats: ['pdf'], withProof: false, strictInspection: true },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(advanced().open).toBe(true)
+    await act(async () => {
+      advanced().open = false
+      advanced().dispatchEvent(new Event('toggle'))
+    })
+    // 无关重渲染（改文件名）不把它重新展开
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改页面'), (d) => {
+        d.page = { w: 81, h: 60 }
+      })
+    })
+    expect(advanced().open).toBe(false)
+    await closeThenOpen()
+    expect(advanced().open).toBe(true)
   })
 })
 
@@ -1835,6 +1977,32 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(text().split('80 × 57.6 mm').length - 1).toBe(3)
   })
 
+  it('磁盘原件与图幅只差零点几毫米：标题下只有「图名 · 尺寸」，说明收进尺寸旁的 ⓘ；差得多才在主视图写出来', async () => {
+    await stage({
+      panels: [{ ...panel, nativeW: 80, nativeH: 57.6, h: 57.6 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 57.6]) },
+      assetSpecs: { 'Fig1.pdf': vectorOnDisk(79.7, 57.4) },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).not.toContain('磁盘上的原文件')
+    expect(document.body.querySelector('[data-export-origin-note]')).toBeNull()
+    const info = document.body.querySelector('[data-export-target] [data-export-origin-note-info]')
+    expect(info?.getAttribute('aria-label')).toContain('磁盘上的原文件为 79.7')
+  })
+
+  it('diskSizeDiffSignificant：>1 mm 或 >2% 才算有意义', () => {
+    const spec = { widthMm: 80, heightMm: 57.6 } as never
+    const d = (w: number, h: number) => diskSizeDiffSignificant(spec, { logical_w_mm: w, logical_h_mm: h })
+    expect(d(79.7, 57.4)).toBe(false)
+    expect(d(79.1, 57.6)).toBe(false) // 0.9 mm, 1.1%
+    expect(d(78.8, 57.6)).toBe(true) // 1.2 mm
+    expect(d(80, 56.3)).toBe(true) // 1.3 mm
+    expect(diskSizeDiffSignificant({ widthMm: 20, heightMm: 20 } as never, { logical_w_mm: 19.5, logical_h_mm: 20 })).toBe(true) // 0.5 mm 但 2.5%
+  })
+
   it('位图源没有「裁过」这回事：尺寸不一致也不说那句', async () => {
     await stage({
       panels: [{ ...panel, nativeW: 80, nativeH: 57.6, h: 57.6 }],
@@ -1959,6 +2127,38 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     })
     // 页签缩略图 + 大预览各自按新版本重出一次（至少两处）；版本号不进缓存键时只剩单图预览那一处
     expect(vi.mocked(enginePreviewPng).mock.calls.length - before).toBeGreaterThanOrEqual(2)
+  })
+
+  it('单图大预览量到舞台尺寸（px > 0）时仍挂按 overrides 出的那张，不换档回「最近一次渲染」（QA-WIN-21）', async () => {
+    clearVariantPngCache()
+    URL.createObjectURL = vi.fn(() => 'blob:edited-rt')
+    URL.revokeObjectURL = vi.fn()
+    const RT = 'runtime:fig.py#F'
+    const edited: PanelObject = {
+      ...panel,
+      fileId: RT,
+      fileKind: 'runtime',
+      overrides: [{ gid: 'legend_0', prop: 'fontsize', value: 8.8 }],
+    } as PanelObject
+    // jsdom 的 clientWidth 恒为 0（舞台给 px = 0、走默认档，测不到换档那条分支）：量出一块真实舞台
+    const w = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+    const h = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    try {
+      await stage({ panels: [edited], renders: { [RT]: manifestWithTicks(1, 9) } })
+      useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+      await mountDialogs()
+      await openDialog()
+      await act(async () => {
+        await new Promise<void>((r) => setTimeout(r, 30))
+      })
+      const img = document.body.querySelector<HTMLImageElement>(
+        '[data-export-preview-stage] [data-export-thumb="file"]',
+      )
+      expect(img?.getAttribute('src')).toBe('blob:edited-rt')
+    } finally {
+      w.mockRestore()
+      h.mockRestore()
+    }
   })
 })
 
@@ -2266,17 +2466,15 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
   const dialogs = () => [...document.body.querySelectorAll('[role="dialog"]')] as HTMLElement[]
   const covered = (el: HTMLElement) => el.hasAttribute('data-covered')
 
-  it('「编辑规范」不关导出面板：设置压在上面，Esc 只退设置，回来时填过的东西与焦点都在', async () => {
+  it('设置压在导出之上不关导出面板：Esc 只退设置，回来时填过的东西都在（导出对话框里的「编辑规范」按钮已并入设置，审计 A2；栈规则不变）', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
     await mountDialogs(true)
     await openDialog()
     await typeFilename('mine')
     await click(radios()[1]) // 整版
 
-    const edit = document.body.querySelector('button[aria-label="编辑规范"]') as HTMLButtonElement
-    // 真浏览器里 mousedown 会先把焦点给按钮；jsdom 的 click() 不会，这里补上
-    edit.focus()
-    await click(edit)
+    // 压在导出之上打开设置的深链（命令面板 / 其它入口同一个 `setSettingsOpen`）
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'spec'))
     await act(async () => {})
 
     const s = useUiStore.getState()
@@ -2308,9 +2506,6 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
     expect(dialogs()).toHaveLength(1)
     expect(covered(dialogs()[0])).toBe(false)
     expect(filenameInput().value, '被盖住期间状态一个字没丢').toBe('mine')
-    expect(document.activeElement, '焦点回到打开子步骤的那颗按钮').toBe(
-      document.body.querySelector('button[aria-label="编辑规范"]'),
-    )
   })
 })
 
@@ -2435,6 +2630,35 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     await click(originalRadio())
     expect(text()).toContain('80 × 60 mm')
+  })
+
+  it('预览标签的图名被量宽截断成省略号时，标签的可访问名字仍含完整图名', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} })
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      font: '',
+      measureText: (t: string) => ({ width: t.length * 100 }),
+    } as never)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(50)
+    try {
+      await setupTwo({ select: [] })
+      const tab = figureOptions()[0]
+      // 读屏名字 = 没被 aria-hidden 的文字：可见段（带省略号）被隐藏，完整图名在 sr-only 里
+      const name = (el: Element): string =>
+        [...el.childNodes]
+          .map((n) =>
+            n.nodeType === 3
+              ? (n.textContent ?? '')
+              : (n as Element).getAttribute('aria-hidden') === 'true'
+                ? ''
+                : name(n as Element),
+          )
+          .join('')
+      expect(tab.textContent).toContain('…')
+      expect(name(tab)).toContain('Fig1')
+      expect(name(tab)).not.toContain('…')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('什么都没选、项目里有两张图：缩略图条永远在；切到「每张图单独导出」不用先选一张，点哪张只换预览 / 检查摘要', async () => {
@@ -3320,7 +3544,9 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
   it('预览角上只有尺寸，不带「示意 · 非最终文件」之类的说明（两种范围都没有）', async () => {
     await setup(9)
     expect(document.body.textContent).not.toContain('仅为示意')
-    expect(stage().querySelector('[data-export-preview-size]')).toBeTruthy()
+    // 尺寸标在预览框外（不叠在图上），仍在预览列里
+    expect(stage().querySelector('[data-export-preview-size]')).toBeNull()
+    expect(document.body.querySelector('[data-export-preview] > div > [data-export-preview-size]')).toBeTruthy()
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await act(async () => useUiStore.getState().setExportOpen(false))
     await act(async () => useUiStore.getState().setExportOpen(true))

@@ -253,9 +253,9 @@ describe('素材库脚本行的「已关联」与分组（T13b）', () => {
     )
     await mount(<ScriptLibrary query="" />)
     const never = host.querySelector('[data-script-row="never.py"]')!
-    expect(never.textContent).not.toContain('已关联')
+    expect(never.textContent).not.toContain('张图')
     expect(groupOfRow('never.py')).toBe('尚未运行')
-    expect(host.querySelector('[data-script-row="done.py"]')!.textContent).toContain('已关联')
+    expect(host.querySelector('[data-script-row="done.py"]')!.textContent).toContain('1 张图')
     expect(groupOfRow('done.py')).toBe('已关联')
   })
 

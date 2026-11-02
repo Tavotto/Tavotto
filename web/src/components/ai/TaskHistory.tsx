@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Info, Pin, RotateCcw, RotateCcwClock, Trash2, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { msg, t as translate } from '@/i18n'
+import { formatMessage, msg, t as translate, type UiMessage } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import {
   agentById,
   agentDisplayName,
   aiRevert,
+  ApiError,
   backendErrorMsg,
   backendErrorText,
   deleteAiHistory,
@@ -26,8 +27,10 @@ import { EmptyState } from '../ui/EmptyState'
 import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { statusLabel } from './transcriptModel'
-import { AgentBadge, HistoryDetailsCard, HoverPopover } from './historyRowCards'
+import { AgentBadge, HistoryDetailsCard, HoverPopover, RevertConflictCard } from './historyRowCards'
 import { TraceDialogHost } from './TraceDetails'
+import { RevertDiffHost } from './RevertDiffHost'
+import { useRevertDiffStore } from '@/store/revertDiffStore'
 import { useTraceDialogStore } from '@/store/traceDialogStore'
 import { Popover } from '../ui/Popover'
 
@@ -69,6 +72,7 @@ export function TaskHistoryPopover() {
         <TaskHistory onClose={() => setOpen(false)} />
       </Popover>
       <TraceDialogHost />
+      <RevertDiffHost />
     </>
   )
 }
@@ -217,6 +221,8 @@ function HistoryRow({
   // 动作回来时已经换了项目：后果（提示、重查）属于那个项目，不写进现在这个
   const stillMine = () => currentProjectId() === pj
   const caps = useAiStore((s) => s.caps)
+  // 回滚被「脚本之后又改过」拒绝：这一条下面给出路（查看差异），不只在状态栏说一句
+  const [conflict, setConflict] = useState<UiMessage | null>(null)
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
   const running = entry.status === 'running'
   // 状态点 + 一个词：完成的任务说「有改动 / 没有改动」（不再单独说「完成」），其余照状态说
@@ -269,7 +275,7 @@ function HistoryRow({
               )}
               <span aria-hidden className="text-ink-faint">·</span>
               <span className="shrink-0 tabular-nums">{timeOf(entry.started_ms)}</span>
-              {entry.pinned && <Pin data-ai-history-pinned aria-hidden size={ICON_SIZE.xs} filled className="shrink-0 text-accent" />}
+              {entry.pinned && <Pin data-ai-history-pinned aria-hidden size={ICON_SIZE.sm} filled className="shrink-0 text-accent" />}
               <Info
                 aria-hidden
                 size={ICON_SIZE.xs}
@@ -307,7 +313,7 @@ function HistoryRow({
           aria-pressed={entry.pinned}
           onClick={() => void pinAiHistory(entry.id, !entry.pinned, pj).then(() => stillMine() && onChanged())}
         >
-          <Pin size={ICON_SIZE.xs} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
+          <Pin size={ICON_SIZE.sm} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
         </IconButton>
         {entry.changed && entry.revert_available && (
           <IconButton
@@ -328,7 +334,12 @@ function HistoryRow({
                 // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚——
                 // 但只在还是那个项目的时候说（#589）
                 (e) => {
-                  if (stillMine()) useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
+                  if (!stillMine()) return
+                  if (e instanceof ApiError && e.body?.code === 'ai_revert_conflict' && entry.diff) {
+                    setConflict(backendErrorMsg(e))
+                    return
+                  }
+                  useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
                 },
               )
             }
@@ -343,9 +354,17 @@ function HistoryRow({
           className="text-ink-3 hover:text-ink"
           onClick={() => void deleteAiHistory(entry.id, pj).then(() => stillMine() && onChanged())}
         >
-          <Trash2 size={ICON_SIZE.xs} />
+          <Trash2 size={ICON_SIZE.sm} />
         </IconButton>
       </div>
+      <RevertConflictCard
+        text={conflict ? formatMessage(conflict) : null}
+        onView={() => {
+          // 弹层要先收起（它的层级比对话框高），对话框由常驻宿主画
+          useRevertDiffStore.getState().open({ diff: entry.diff, script: entry.script ?? undefined })
+          onDismiss()
+        }}
+      />
     </div>
   )
 }

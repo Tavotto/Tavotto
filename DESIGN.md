@@ -8,6 +8,7 @@ colors:
   surface-2: "#f7f7f5"
   paper: "#ffffff"
   paper-ink: "#1b1b18"
+  paper-highlight: "#fff3a3"
   field: "#f2f2f0"
   field-hover: "#eeeeec"
   border-control: "#84847c"

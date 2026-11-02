@@ -1457,6 +1457,11 @@ export interface LayoutVersionMeta {
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
   /**
+   * 这张缩略图拍的是页面的哪一块（mm）。新节点只拍内容区域（`lib/timelineThumb`），旁边记这块；
+   * 缺席 = 整页（旧节点）。后端校验过才发（`_version_thumb_box`）。
+   */
+  thumbBox?: { x: number; y: number; w: number; h: number }
+  /**
    * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
    * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
    */
@@ -1478,6 +1483,11 @@ export interface LayoutVersionMeta {
    * 时间线按「当前这张图」分开靠它；缺席 = 没有图 / 老后端，不猜。
    */
   figures?: string[]
+  /**
+   * 与上一条同一张画布、同一份内容的打开 / 关闭 / 恢复前（以及普通自动节点）：照今天的规则本不会
+   * 记下（后端读时派生，不落盘）。时间线不显示它，数据原样留着。
+   */
+  unchanged?: boolean
   /**
    * 够画一行缩略图的**草图**，只有请求里要了才有（见 `fetchVersions`）。
    * 画不出来的那些版本**没有这个字段**——空草图与「这一版真的什么都没有」
@@ -1689,11 +1699,12 @@ export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' |
 export const putVersionThumb = (
   docId: string,
   vid: string,
-  thumb: { blob: Blob; type: string },
+  thumb: { blob: Blob; type: string; box?: { x: number; y: number; w: number; h: number } },
   pj?: string | null,
 ) =>
   jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
-    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb`,
+    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb` +
+      (thumb.box ? `?box=${[thumb.box.x, thumb.box.y, thumb.box.w, thumb.box.h].join(',')}` : ''),
     { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
     pj,
   )
@@ -1949,6 +1960,13 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   source_kind?: string
   /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
   ignored?: string[]
+  /**
+   * 画布上的标注（text / arrow / shape，QA-WIN-20）：坐标已换算到原图图幅（图左上角为原点、mm），后端用整版导出
+   * 那条合成路径画在原图上。缺省 / 空 = 纯原图导出（载荷与从前逐字节相同）；非空时 `w_mm` / `h_mm` 必填。
+   */
+  objects?: ExportObject[]
+  /** `objects` 里前几个画在图的下面（图层树里放在图之下的标注）；缺省 0 = 都在图上 */
+  objects_below?: number
 }
 
 export interface ExportRequest {
@@ -4012,6 +4030,8 @@ export interface AiTaskSummary {
   explain?: { message_key: string; params: Record<string, unknown> }
   /** 进行中的阶段：只在 Agent 正在自动修正上一版时为 `correcting`（有界修正，Phase 4）；终态没有 */
   phase?: 'correcting' | null
+  /** 转换进行中的活动（后端闭集）：`writing_long` = 事件流静默已久、模型在生成较长的文件；事件一来后端就不再给。其它任务没有 */
+  activity?: 'writing_long' | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
   /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
@@ -4161,7 +4181,7 @@ export function isDefiniteRunFailure(e: unknown): boolean {
   return typeof e.body?.code === 'string' && e.body.code !== ''
 }
 
-export const aiRevert = (sid: string, pj: string | null) =>
+export const aiRevert = (sid: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean; script: string; renamed?: IdentityRename[] }>(
     `/api/ai/sessions/${sid}/revert`,
     { method: 'POST' },
@@ -4501,6 +4521,15 @@ export type ServerEvent =
       task_type: string
       phase: 'correcting'
     } & ProjectScoped)
+  /** CLI 一段时间没有任何输出（`stalled: true`，`idle_s` = 已静默秒数）/ 又有输出了（`stalled: false`）；只提示，后端不杀进程；老后端不发 */
+  | ({
+      kind: 'ai.stalled'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stalled: boolean
+      idle_s: number
+    } & ProjectScoped)
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
@@ -4558,6 +4587,7 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.task',
+  'ai.stalled',
   'ai.done',
   'script.input_requested',
   'script.input_closed',
@@ -5537,6 +5567,17 @@ export const repairImportFolder = (token: string) =>
     body: JSON.stringify({ token }),
   })
 
+/**
+ * 「跳过这个文件夹」（ADR 0154）：失败卡 `import_folder_abi_mismatch` 的 `params.ignore_token` 是服务端的不透明令牌，
+ * 接口只收它，路径不出后端。后端记住「这个项目别让脚本去那个文件夹 import」并关掉这个项目的会话；成功后调用方负责重跑脚本。
+ */
+export const ignoreImportFolder = (token: string) =>
+  jsonFetch<{ ok: boolean; path_ignore: { paths: string[] } }>('/api/engine/path-ignore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+
 // ---------------------------------------------------------------------------
 // 受控依赖修复（ADR 0019）
 //
@@ -5728,6 +5769,8 @@ export interface DependencyProgress {
   retryable?: boolean
   /** 连不上默认包源、这次改用了 PyPI 镜像：镜像地址（此后每个快照都带；没用镜像时没有这个键） */
   pypi_mirror?: string
+  /** 终态 failed 且 code 是联网类（下载失败 / 超时）时的原因：官方源和镜像都没连上 / 用户自配的源连不上；说不清时没有这个键 */
+  net_cause?: 'official_and_mirror' | 'user_source'
   /**
    * 终态 failed 且 `code = dependency_import_still_failed`、是装后「发行包与版本」核验没过时：原因码（`DIST_FAILURE_REASONS` 的子集，
    * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
@@ -6952,7 +6995,7 @@ export interface PreparationAttempt {
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
-export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage' | 'plotly' | 'root'
+export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage' | 'plotly' | 'root' | 'svg'
 
 /**
  * 会话里一次真实执行尝试的账本条目（`engine/execpolicy.AttemptRecord.public()`，ADR 0127）：执行语义 · 解释器摘要 ·
@@ -7087,6 +7130,12 @@ export interface PreparationResultError {
     /** `import_folder_unreadable`：目录名（不是路径）+ 仅 Windows 才有的一次性修复令牌（不透明，推不出路径） */
     folder?: string
     repair_token?: string
+    /** `import_folder_abi_mismatch`（`folder` 同上，是显示名）：目录里扩展的 Python 版本、当前版本，与「跳过这个文件夹」的一次性令牌 */
+    abi?: string
+    current?: string
+    ignore_token?: string
+    /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
+    switch?: 'global' | 'project' | 'both' | string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

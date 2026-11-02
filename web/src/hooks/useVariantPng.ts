@@ -74,6 +74,15 @@ export interface VariantPng {
   approximate: boolean
 }
 
+/**
+ * 这一版要不要出引擎图：没有 override、或来源驱动面板零编辑（只有结构性 FRAME）都不出，
+ * 磁盘原像素就是对的（ADR 0139 §五.1）。调用方据此判断「还在出图」——这条路径
+ * 永远拿不到 url，不能当成没出好。
+ */
+export function variantNeedsRender(overrides: unknown[], artifactValidation?: AdoptionGuard | null): boolean {
+  return overrides.length > 0 && !(artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))
+}
+
 export function useVariantPng(
   fileId: string,
   overrides: unknown[],
@@ -101,7 +110,7 @@ export function useVariantPng(
     if (issue) { setState({ key,url:null,loading:false,approximate:true}); return }
     // 没有 override 的面板与磁盘图一模一样，白跑一次引擎没有意义
     // 来源驱动面板零编辑（只有结构性 FRAME）显示磁盘原像素，同样不出引擎图（ADR 0139 §五.1）
-    if (!overrides.length || (artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))) {
+    if (!variantNeedsRender(overrides, artifactValidation)) {
       setState({ key, url: null, loading: false, approximate: false })
       return
     }

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { setLocale } from '@/i18n'
-import { SEVERITY_ICON, issueTitle, issueValues, ruleExpectation, severityLabel, subjectName, technicalDetailLines } from './validationText'
+import { SEVERITY_ICON, issueTitle, issueValues, ruleExpectation, severityLabel, sharedTarget, subjectName, technicalDetailLines } from './validationText'
 import { SEVERITIES, loadProfile } from './profile'
 import { runSpec, type PreflightSpec } from './preflight'
 import type { ValidationIssue } from './validation'
@@ -26,6 +26,49 @@ const issue = (over: Partial<ValidationIssue> = {}): ValidationIssue => ({
 })
 
 afterEach(() => setLocale('zh-CN'))
+
+describe('线宽档位表：行内只写就近的那一档', () => {
+  const lw = (effective: string, presets: string) =>
+    issue({ ruleCode: 'line-width-off-preset', message: { key: 'preflight.lineWidthOffPreset', ns: 'errors', values: { effective, presets } } })
+  it('0.30 pt 在 0.5/0.75/1 里就近是 0.5，整张表留给 tooltip', () => {
+    const v = issueValues(lw('0.30', '0.5/0.75/1'))
+    expect(v.expected).toBe('0.5 pt')
+    expect(v.expectedAll).toBe('0.5/0.75/1 pt')
+  })
+  it('与 specfix._plan_line_width 同一把尺（下列期望值由后端函数对同样输入算出，与档位表排列顺序无关）', () => {
+    expect(issueValues(lw('0.70', '0.5/0.75/1')).expected).toBe('0.75 pt')
+    expect(issueValues(lw('0.70', '1/0.75/0.5')).expected).toBe('0.75 pt')
+    expect(issueValues(lw('0.90', '1/0.5/0.75')).expected).toBe('1 pt')
+    expect(issueValues(lw('0.50', '1/0.25')).expected, '0.50 距 0.25 比距 1 近').toBe('0.25 pt')
+  })
+  it('离两档几乎等距（两位小数分不出取哪档）：不猜，要求留空，整张表在 expectedAll', () => {
+    for (const eff of ['0.63', '0.62', '0.625']) {
+      const v = issueValues(lw(eff, '1/0.75/0.5'))
+      expect(v.expected, eff).toBeNull()
+      expect(v.expectedHead).toBeNull()
+      expect(v.expectedAll).toBe('1/0.75/0.5 pt')
+    }
+    expect(sharedTarget([lw('0.63', '1/0.75/0.5'), lw('0.30', '1/0.75/0.5')])).toBeNull()
+  })
+  it('每个对象各取各的档', () => {
+    expect(issueValues(lw('0.90', '0.5/0.75/1')).expected).toBe('1 pt')
+  })
+})
+
+describe('组头说一次的要求（sharedTarget）', () => {
+  const at = (min: string) => issue({ message: { key: 'preflight.fontTooSmall', ns: 'errors', values: { effective: '7', min } } })
+  it('同组每条的要求相同：返回那个要求（行内写法）', () => {
+    expect(sharedTarget([at('8'), at('8')])).toBe('≥ 8 pt')
+  })
+  it('要求因对象而异：null，每行各说各的', () => {
+    expect(sharedTarget([at('8'), at('9')])).toBeNull()
+  })
+  it('有一条没有要求（出界这类规则）：null，不拿别的行冒充', () => {
+    const none = issue({ ruleCode: 'overlap', message: { key: 'preflight.overlap', ns: 'errors' } })
+    expect(sharedTarget([at('8'), none])).toBeNull()
+    expect(sharedTarget([])).toBeNull()
+  })
+})
 
 describe('主语说人话', () => {
   it('图内元素用引擎给的标签，不是 gid', () => {

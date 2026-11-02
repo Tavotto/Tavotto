@@ -276,9 +276,8 @@ describe('文件卡：两个动作', () => {
     expect(host.querySelector<HTMLButtonElement>('[data-asset-add]')!.disabled).toBe(true)
   })
 
-  it('文件名后的「可编辑」小图标有可达名', () => {
-    const marker = cardOf('Fig1.pdf').querySelector<HTMLElement>('[role="img"]')
-    expect(marker?.getAttribute('aria-label')).toBe('可编辑')
+  it('可编辑是默认情况：文件名后不再有「可编辑」小图标', () => {
+    expect(cardOf('Fig1.pdf').querySelector('[role="img"]')).toBeNull()
   })
 })
 

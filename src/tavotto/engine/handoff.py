@@ -52,6 +52,8 @@ from . import (
     figcapture as engine_figcapture,
     handoffreceipt as engine_receipt,
     locate as engine_locate,
+    msixbreakaway,
+    msixmigrate,
     registry as engine_registry,
     session_client,
 )
@@ -428,6 +430,17 @@ def _probe_error(err) -> HandoffError:
             "在 Tavotto 界面里打开这张图并按提示安装缺少的依赖，或给这个账户开放该文件夹的读取权限"
         )
         return HandoffError(message, "import_folder_unreadable", **{**extra, "probe_code": code})
+    if code == "import_folder_abi_mismatch" and isinstance(folder, str) and folder:
+        # 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：说清是哪个文件夹，别落成「项目要它自己的环境」
+        extra.update(
+            {k: params[k] for k in ("abi", "current") if isinstance(params.get(k), str)},
+            folder=folder,
+        )
+        message = (
+            f"脚本自带的“{folder}”文件夹是为 Python {params.get('abi', '')} 装的，和当前环境不兼容。"
+            "在 Tavotto 界面里打开这张图并选“跳过这个文件夹重跑”即可，不需要换 Python"
+        )
+        return HandoffError(message, "import_folder_abi_mismatch", **{**extra, "probe_code": code})
     tb = err.get("traceback")
     if tb:
         extra["traceback"] = str(tb)[-2000:]
@@ -713,6 +726,14 @@ def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen):
     else:
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP：控制台关了也不带走窗口
         kwargs["creationflags"] = 0x00000008 | 0x00000200
+        # 从 MSIX 宿主（Codex 桌面版）一路继承下来的包身份会把我们的 %LOCALAPPDATA% 新文件重定向进
+        # 包私有区（#1574）：Windows 上一律经 msixbreakaway 的 0x01 策略创建，整棵子树落在包外。
+        # 只在用默认 Popen 时走（注入的 spawn 是测试桩 / 调用方自己的约定）；返回 None = 不可用或
+        # 失败，退回下面的 Popen，行为与从前一致。
+        if spawn is subprocess.Popen:
+            proc = msixbreakaway.spawn_detached(argv, creationflags=kwargs["creationflags"])
+            if proc is not None:
+                return proc
     return spawn(argv, **kwargs)
 
 
@@ -1577,6 +1598,13 @@ def _record_origin_cli(args) -> int:
 
 def cli(argv: list[str]) -> int:
     """`tavotto open` 的入口。返回退出码。"""
+    # 带 MSIX 包身份（Codex 桌面版等宿主里拉起）时，先脱包整条命令重跑一遍：本地 safe probe 等落盘动作
+    # 发生在拉起桌面版之前，带着包身份它们会被重定向进宿主私有区（#1574）。必须在任何落盘之前。
+    relaunched = msixbreakaway.relaunch_cli(["open", *argv])
+    if relaunched is not None:
+        return relaunched
+    # 已脱离包身份（或本来就没有）：把包私有区里的旧数据补回真实目录，一次性、永不抛（#1574 善后）
+    msixmigrate.run_once()
     ap = argparse.ArgumentParser(
         prog="tavotto open", description="把一张图 / 一个脚本 / 一个图库目录交给 Tavotto 打开"
     )

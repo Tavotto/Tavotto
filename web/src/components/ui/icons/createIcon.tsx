@@ -1,8 +1,17 @@
-import { forwardRef, useId, type ForwardRefExoticComponent, type RefAttributes, type SVGProps } from 'react'
+import {
+  forwardRef,
+  useId,
+  type CSSProperties,
+  type ForwardRefExoticComponent,
+  type RefAttributes,
+  type SVGProps,
+} from 'react'
 
 import { cn } from '@/lib/utils'
-import { useIconDefaults } from '../Icon'
+import { ICON_SIZE, useIconDefaults } from '../Icon'
 import type { IconDef, IconPath, IconPathSpec, IconVariant } from './defs'
+import './motion.css'
+import { ICON_MOTION, motionRoles, type IconMotion, type MotionRole } from './motion'
 
 /**
  * 图标组件工厂：把 `defs.ts` 里的一条几何定义变成一个 React 组件。
@@ -15,6 +24,10 @@ import type { IconDef, IconPath, IconPathSpec, IconVariant } from './defs'
  * - 无障碍与 lucide 一致：没有 `aria-label` / `aria-labelledby` / 子元素时自动
  *   `aria-hidden`，图标是装饰，名字由旁边的文字或按钮的可达名给。
  * - 类名 `icon icon-<kebab-name>`，用例按它认形状（`svg.icon-triangle-alert`）。
+ * - 12px（`ICON_SIZE.xs`）有小号字形的（`SMALL_DEFS`，ADR 0158）换画小号那份，描边按 2 单位 = 1px 画；
+ *   小号只有一种形，`filled` 不起作用。
+ * - 微动效（ADR 0156）：`motion.ts` 里登记了的图标带 `data-motion=<触发>`、各路径带 `data-m=<角色>`，
+ *   关键帧在 `motion.css`；`playIn` = 挂载时播一次（状态图标刚出现的那一下）。
  */
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
   /** 渲染边长（px），只写 `ICON_SIZE.*` */
@@ -23,6 +36,8 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
   strokeWidth?: number
   /** 选中 / 激活态：实心孪生 */
   filled?: boolean
+  /** 挂载时播一次这枚图标的动作（只对 `motion.ts` 登记了的图标有效） */
+  playIn?: boolean
 }
 
 export type IconComponent = ForwardRefExoticComponent<IconProps & RefAttributes<SVGSVGElement>>
@@ -35,42 +50,82 @@ const kebab = (name: string) =>
 
 const spec = (p: IconPathSpec): IconPath => (typeof p === 'string' ? { d: p } : p)
 
-function strokePath(p: IconPathSpec, i: number) {
-  const o = spec(p)
-  if (o.w === 0) return <path key={`s${i}`} d={o.d} fill="currentColor" stroke="none" />
-  return <path key={`s${i}`} d={o.d} fill="none" strokeWidth={o.w} strokeDasharray={o.dash} />
+type Role = { role: MotionRole | null; k: number } | undefined
+
+// 动作角色贴在路径上：`d` / `e`（一笔画出）要 pathLength=1 才能按比例走描边进度，`t`（依次动）带错开下标
+function motionAttrs(r: Role) {
+  if (!r?.role) return {}
+  return {
+    'data-m': r.role,
+    ...(r.role === 'd' || r.role === 'e' ? { pathLength: 1 } : {}),
+    ...(r.role === 't' ? { style: { '--k': r.k } as CSSProperties } : {}),
+  }
 }
-function solidPath(p: IconPathSpec, i: number) {
+
+function strokePath(p: IconPathSpec, i: number, r?: Role) {
   const o = spec(p)
-  if (o.w === 0) return <path key={`f${i}`} d={o.d} fill="currentColor" stroke="none" />
-  return <path key={`f${i}`} d={o.d} fill="currentColor" stroke="currentColor" strokeWidth={o.w} />
+  if (o.w === 0) return <path key={`s${i}`} d={o.d} fill="currentColor" stroke="none" {...motionAttrs(r)} />
+  return (
+    <path
+      key={`s${i}`}
+      d={o.d}
+      fill="none"
+      strokeWidth={o.w}
+      strokeDasharray={o.dash}
+      strokeOpacity={o.ghost ? 0 : undefined}
+      {...motionAttrs(r)}
+    />
+  )
 }
-function cutPath(p: IconPathSpec, i: number) {
+function solidPath(p: IconPathSpec, i: number, r?: Role) {
   const o = spec(p)
-  if (o.w === 0) return <path key={`k${i}`} d={o.d} fill="#000" stroke="none" />
-  return <path key={`k${i}`} d={o.d} fill={o.solid ? '#000' : 'none'} stroke="#000" strokeWidth={o.w} />
+  if (o.w === 0) return <path key={`f${i}`} d={o.d} fill="currentColor" stroke="none" {...motionAttrs(r)} />
+  const ghost = o.ghost ? { fillOpacity: 0, strokeOpacity: 0 } : {}
+  return <path key={`f${i}`} d={o.d} fill="currentColor" stroke="currentColor" strokeWidth={o.w} {...ghost} {...motionAttrs(r)} />
 }
-function overPath(p: IconPathSpec, i: number) {
+function cutPath(p: IconPathSpec, i: number, r?: Role) {
   const o = spec(p)
-  if (o.solid) return <path key={`o${i}`} d={o.d} fill="currentColor" stroke="currentColor" />
-  return <path key={`o${i}`} d={o.d} fill="none" strokeWidth={o.w} />
+  if (o.w === 0) return <path key={`k${i}`} d={o.d} fill="#000" stroke="none" {...motionAttrs(r)} />
+  return (
+    <path
+      key={`k${i}`}
+      d={o.d}
+      fill={o.solid ? '#000' : 'none'}
+      stroke="#000"
+      strokeWidth={o.w}
+      strokeOpacity={o.ghost ? 0 : undefined}
+      {...motionAttrs(r)}
+    />
+  )
+}
+function overPath(p: IconPathSpec, i: number, r?: Role) {
+  const o = spec(p)
+  if (o.solid) return <path key={`o${i}`} d={o.d} fill="currentColor" stroke="currentColor" {...motionAttrs(r)} />
+  return <path key={`o${i}`} d={o.d} fill="none" strokeWidth={o.w} {...motionAttrs(r)} />
 }
 
 function variantOf(def: IconDef, filled: boolean | undefined): IconVariant {
   return filled && def.sel ? def.sel : def
 }
 
-export function createIcon(name: string, def: IconDef): IconComponent {
+export function createIcon(name: string, def: IconDef, small?: IconDef): IconComponent {
   const shapeClass = `icon-${kebab(name)}`
+  const motion: IconMotion | undefined = (ICON_MOTION as Record<string, IconMotion | undefined>)[name]
+  const rolesPlain = motionRoles(motion, def, false)
+  const rolesSel = def.sel ? motionRoles(motion, def.sel, true) : null
+  const rolesSmall = small ? motionRoles(motion, small, false) : null
   const Component = forwardRef<SVGSVGElement, IconProps>(function Icon(
-    { size, strokeWidth, filled, className, children, ...rest },
+    { size, strokeWidth, filled, playIn, className, children, style, ...rest },
     ref,
   ) {
     const defaults = useIconDefaults()
     const reactId = useId()
-    const v = variantOf(def, filled)
     const px = size ?? defaults.size
-    const sw = strokeWidth ?? defaults.strokeWidth
+    const useSmall = !!small && px <= ICON_SIZE.xs
+    const v = useSmall ? small : variantOf(def, filled)
+    const roles = useSmall ? rolesSmall : v === def ? rolesPlain : rolesSel
+    // 小号字形的线按 12px 上整 1px 画：常规 1.5 → 2 单位，加粗档同比
+    const sw = (strokeWidth ?? defaults.strokeWidth) * (useSmall ? 4 / 3 : 1)
     const hasA11y = 'aria-label' in rest || 'aria-labelledby' in rest || !!children
     const maskId = v.k && v.k.length ? `icon-mask-${reactId.replace(/[^A-Za-z0-9_-]/g, '')}` : undefined
     return (
@@ -86,20 +141,29 @@ export function createIcon(name: string, def: IconDef): IconComponent {
         strokeLinecap="round"
         strokeLinejoin="round"
         className={cn('icon', shapeClass, defaults.className, className)}
+        // 图标集出的图标都带这个标记：微动效的委托按它认图标（ADR 0156），不认 class
+        data-icon=""
         {...(hasA11y ? {} : { 'aria-hidden': true })}
+        {...(roles && motion
+          ? {
+              'data-motion': motion.on,
+              ...(playIn ? { 'data-play': '' } : {}),
+              style: { '--icon-ms': `${motion.ms}ms`, ...style } as CSSProperties,
+            }
+          : { style })}
         {...rest}
       >
         {maskId && (
           <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={24} height={24}>
             <rect width={24} height={24} fill="#fff" />
-            {v.k!.map(cutPath)}
+            {v.k!.map((p, i) => cutPath(p, i, roles?.k?.[i]))}
           </mask>
         )}
         <g mask={maskId ? `url(#${maskId})` : undefined}>
-          {v.s?.map(strokePath)}
-          {v.f?.map(solidPath)}
+          {v.s?.map((p, i) => strokePath(p, i, roles?.s?.[i]))}
+          {v.f?.map((p, i) => solidPath(p, i, roles?.f?.[i]))}
         </g>
-        {v.o?.map(overPath)}
+        {v.o?.map((p, i) => overPath(p, i, roles?.o?.[i]))}
         {children}
       </svg>
     )

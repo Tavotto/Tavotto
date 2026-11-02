@@ -296,6 +296,22 @@ describe('对话框的四个状态', () => {
     expect(q('[data-contact-send]')!.hasAttribute('disabled')).toBe(false)
   })
 
+  it('版面：「企业微信」在标题下一行、不在页脚；页脚三槽（我的来信 / 关闭 / 发送）；附件是次按钮，没附件时没有缩略图列表；主题与邮箱同属次要字段区', async () => {
+    await openDialog()
+    const dlg = q('[data-dialog="contact"]')!
+    expect(q('[data-contact-wecom-line] [data-contact-wecom]')).not.toBeNull()
+    const footer = [...dlg.querySelectorAll('button')].filter((b) => b.hasAttribute('data-contact-switch-view') || b.hasAttribute('data-contact-dismiss') || b.hasAttribute('data-contact-send'))
+    expect(footer).toHaveLength(3)
+    expect(q('[data-contact-send]')!.parentElement!.textContent).not.toContain('企业微信')
+    expect(q('[data-contact-pick]')!.tagName).toBe('BUTTON')
+    expect(q('[data-contact-pick]')!.textContent).toContain(t('contact.attachPick', { ns: 'dialogs' }))
+    expect(q('[data-contact-file-list]')).toBeNull()
+    const secondary = q('[data-contact-secondary]')!
+    expect(secondary.querySelector('[data-contact-subject]')).not.toBeNull()
+    expect(secondary.querySelector('[data-contact-email]')).not.toBeNull()
+    expect(secondary.querySelector('[data-contact-text]')).toBeNull()
+  })
+
   it('字数计数只在超过上限的 90% 时出现', async () => {
     await openDialog()
     await typeInto(q<HTMLTextAreaElement>('[data-contact-text]'), 'x'.repeat(4400))

@@ -172,6 +172,36 @@ def check_control_plane(
     ok(f"渲染会话确实跑在 workerd 上: {sessions}")
 
 
+def check_cli_subcommands(exe: Path, env: dict) -> None:
+    """产物里的 `tavotto-cli` 子命令真的能起来（TVD-BCZ0）。
+
+    应用拉起的子进程（内置执行器 `agent-run`、修复会话的 `fix-mcp`）走的是同目录的
+    `tavotto-cli`，不是 sidecar 本身；冻结时漏收的模块只在这里炸。0.19.0–0.19.2 的
+    `agent-run` 一启动就 ImportError，源码测试与本冒烟一直绿——因为没人在产物上起过它。
+    `--help` 只走到 argparse，不发请求、不读 stdin，足以证明入口模块装进了包。
+    """
+    suffix = ".exe" if os.name == "nt" else ""
+    cli = exe.parent / f"tavotto-cli{suffix}"
+    if not cli.exists():
+        cli = exe  # 源码模式：`.venv/bin/tavotto` 同一个分发
+    for sub in ("agent-run", "fix-mcp"):
+        out = subprocess.run(
+            [str(cli), sub, "--help"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=60,
+        )
+        # 判「入口模块装进了包」：argparse 印出了 usage 且没有 traceback（有的子命令把 --help 当缺参数，退出码 2）
+        text = out.stdout + out.stderr
+        if "usage:" not in text or "Traceback" in text:
+            fail(f"{cli.name} {sub} --help 退出码 {out.returncode}:\n{text[-2000:]}")
+        ok(f"{cli.name} {sub} 能起来")
+
+
 def request(
     port: int,
     method: str,
@@ -233,6 +263,8 @@ def main() -> None:
         "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake),
     }
     env.pop("TAVOTTO_DESKTOP_NONCE", None)
+
+    check_cli_subcommands(exe, env)
 
     proc = subprocess.Popen(
         [str(exe), "--desktop-sidecar"],

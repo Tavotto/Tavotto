@@ -339,7 +339,7 @@ export function PreflightPill({
       title={stale ? mc('pillStaleTitle') : mc('pillTitle')}
     >
       <StatusPill tone={tone}>
-        <Icon size={ICON_SIZE.xs} aria-hidden />
+        <Icon size={ICON_SIZE.sm} aria-hidden />
         {stale
           ? mc('pillStale')
           : clean

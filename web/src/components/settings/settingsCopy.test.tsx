@@ -252,7 +252,7 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
     })
     const s = useUiStore.getState()
     expect(s.leftWidth).toBe(300)
-    expect(s.leftPinned).toBe(false)
+    expect(s.leftPinned).toBeNull() // 回到「没表过态」，不是写成关
     expect(s.gridSize).toBe(10)
     // 写回本机的也是默认值（此前只删掉存储里那一份，刷新之前的任何一次写入又会把旧值写回去）
     expect(JSON.parse(localStorage.getItem('tavotto.ui') ?? '{}').leftWidth).toBe(300)
@@ -273,13 +273,9 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
     )
   })
 
-  it('「画布设置」直接到右栏的画布页', async () => {
-    useUiStore.setState({ rightTab: 'properties' })
+  it('通用页不再有「打开画布设置」一行（画布属性在右栏「画布」页）', async () => {
     await open('general')
-    await act(async () => {
-      byText(st('canvas.openCanvasSettings'))!.click()
-    })
-    expect(useUiStore.getState().rightTab).toBe('canvas')
+    expect(document.querySelector('[data-settings-anchor="general.canvas"]')).toBeNull()
   })
 })
 
@@ -417,11 +413,11 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     expect(bodyText()).not.toContain('DPI')
   })
 
-  it('单位是 ppi', async () => {
+  it('单位是 dpi', async () => {
     defaults({ dpi: '600' })
     await open('export')
-    expect(bodyText()).toContain('600 ppi')
-    expect(bodyText()).not.toContain('600 dpi')
+    expect(bodyText()).toContain('600 dpi')
+    expect(bodyText()).not.toContain('600 ppi')
   })
 
   it('格式旁不再标注类型（2026-09-11 设计包）：只有格式名', async () => {

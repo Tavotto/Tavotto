@@ -54,6 +54,12 @@ export function findFreeSlot(
  */
 export const OVERSIZE_CAP = 1.15
 
+/** 找不到空位时，新图为了挤进某个空位最多缩到这个比例（相对已定好的放置尺寸） */
+export const MIN_FIT_SCALE = 0.4
+
+/** 缩也塞不进去时，级联偏移的步长（mm） */
+export const CASCADE_STEP = 8
+
 /**
  * 软上限曲线：`r` = 原图相对可用区域的倍数（取宽高里更吃紧的那一边），返回放上去的倍数。
  * `r ≤ 1` 原样；之后 `1 + K·tanh((r − 1) / K)`，K = CAP − 1。在 r = 1 处值与斜率都接上
@@ -77,7 +83,8 @@ export function softCap(r: number, cap = OVERSIZE_CAP): number {
  *
  * 位置：给了落点（拖放）就以落点为中心（用户在屏幕上挑的位置，不避让）；否则页面上已有
  * 对象（`occupied`，包围盒 mm）时先避开它们——排到右边、一行放不下换到下方
- * （`findFreeSlot`）；页面空着或找不到空位（含图本身比页面大）就页面居中。每一维分开处理：装得下的
+ * （`findFreeSlot`）；页面空着就页面居中（单图编辑只有一张图，页面不画，居中无妨）；有对象但找不到空位时先等比缩小
+ * （≥ `MIN_FIT_SCALE`）去适配某个空位，仍不行才级联偏移到不与任何对象完全重合，从不移动已有对象；图本身比页面大就页面居中。每一维分开处理：装得下的
  * 整条钳进页面；比页面大的那一维在页面上居中，两边均匀伸出，不贴着左上角。
  */
 /** 页面 ∪ 若干矩形（mm）：新加的图伸出页面时视口要取景的那一块 */
@@ -90,6 +97,31 @@ export function pageUnion(
   const x1 = Math.max(page.w, ...boxes.map((b) => b.x + b.w))
   const y1 = Math.max(page.h, ...boxes.map((b) => b.y + b.h))
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/**
+ * 缩也没有空位时的最后一招：从页面居中出发，每步 (+CASCADE_STEP, +CASCADE_STEP) 级联偏移（钳进页面），
+ * 取第一个与每个已有对象左上角都错开至少一步的位置——保证不与任何对象完全重合。
+ */
+function cascadeFrom(
+  w: number,
+  h: number,
+  page: Pick<PageSetup, 'w' | 'h'>,
+  occupied: Box[],
+): { x: number; y: number; w: number; h: number } {
+  const place = (size: number, pageSize: number, center: number) =>
+    size <= pageSize ? clamp(center - size / 2, 0, pageSize - size) : (pageSize - size) / 2
+  let best = { x: 0, y: 0, w, h }
+  for (let i = 0; i <= 64; i++) {
+    const x = place(w, page.w, page.w / 2 + i * CASCADE_STEP)
+    const y = place(h, page.h, page.h / 2 + i * CASCADE_STEP)
+    best = { x, y, w, h }
+    const clear = occupied.every(
+      (o) => Math.abs(o.x - x) >= CASCADE_STEP - 1e-6 || Math.abs(o.y - y) >= CASCADE_STEP - 1e-6,
+    )
+    if (clear) break
+  }
+  return best
 }
 
 export function placePanelInPage(
@@ -110,8 +142,17 @@ export function placePanelInPage(
   const h = nativeH * k
   if (!at && occupied.length > 0) {
     const area = { x: inset, y: inset, w: page.w - 2 * inset, h: page.h - 2 * inset }
-    const slot = area.w > 0 && area.h > 0 ? findFreeSlot(w, h, area, occupied) : null
+    const hasArea = area.w > 0 && area.h > 0
+    const slot = hasArea ? findFreeSlot(w, h, area, occupied) : null
     if (slot) return { ...slot, w, h }
+    // 没有落点又放不下：等比缩小去适配某个空位（不动已有对象）；比可用区还大的图本来就铺满页面，不缩
+    if (hasArea && w <= area.w && h <= area.h) {
+      for (let s = 0.95; s >= MIN_FIT_SCALE - 1e-9; s -= 0.05) {
+        const fit = findFreeSlot(w * s, h * s, area, occupied)
+        if (fit) return { ...fit, w: w * s, h: h * s }
+      }
+    }
+    return cascadeFrom(w, h, page, occupied)
   }
   const place = (size: number, pageSize: number, center: number) =>
     size <= pageSize ? clamp(center - size / 2, 0, pageSize - size) : (pageSize - size) / 2

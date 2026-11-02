@@ -14,3 +14,7 @@
   同源对……），跳过它们直接改代码等于蒙着眼改。
 - 产品名 **Tavotto**；品牌常量唯一出处 `web/src/lib/brand.ts` /
   `engine/brand.py`，界面与导出格式不得手写产品名。
+- 会话卫生（全文在 `AGENTS.md`「会话卫生」）：动手前 `git fetch && git status -sb`，
+  分支工作进独立 worktree、推送写明 refspec；先核 git 身份，提交不加
+  Co-Authored-By；vitest 大片 `localStorage is undefined` 用
+  `NODE_OPTIONS=--no-experimental-webstorage` 重跑；只按自己的 PID 结束进程。

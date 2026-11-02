@@ -52,6 +52,18 @@ order: 210
     没有脚本的图报 `eps_needs_script`（有脚本但没有活 Figure 另报 `eps_needs_live_figure`），其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
     也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
+    **原图导出带画布标注（QA-WIN-20，2026-10-31）**：`original.objects`（`OriginalSource.objects`，仅 text / arrow / shape，坐标已由前端换算到原图图幅、
+    图幅外由页面裁掉；非空时 `w_mm` / `h_mm` 必填，否则 `bad_objects`）。非空时 `app._export_produce_original_annotated` 构造「页面 = 图幅、面板在 (0,0) + 标注」的
+    画布请求交给 `_export_produce_rendercore`——标注绘制只有 RenderCore 一份。PDF / SVG / PNG / TIFF 直接出自这份合成（SVG 能力与整版一致：同一个源整版给不出 SVG 时这里给同一个稳定码）；
+    位图源取有效 ppi = `px_w` × 25.4 / `w_mm`，页面像素数 = 源像素网格（尺寸一致，不保证逐像素）。**EPS**（自写叠加，ADR 0046 补记；**不用 Ghostscript / 任何外部程序**）：
+    worker 的 matplotlib 照旧出原图 EPS，`engine/epsoverlay.compose` 把它按 EPSF 嵌入惯例（保存状态 + `/showpage {} def` + `%%BeginDocument`…`%%EndDocument` 原样嵌入 + 恢复）
+    放进外层 EPS（BoundingBox = 图幅），再叠 `rendercore/epswriter.overlay_ps` 把 `plan.compile_page` 为同一组标注编出的 IR 写成的 PostScript 运算符（路径 / 填充 / 描边 / 线型 / 裁剪 / 变换；
+    文字是批准字体的字形轮廓路径）。PostScript 没有透明：标注含 alpha<1、透明组、位图、外来页时这一项逐项失败 `eps_annotations_unsupported`（params `operation`），
+    其余格式照常交付，**不静默丢标注**；原图 EPS 本身给不出（没有脚本等）沿用 `eps_needs_script` 等原码。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
+    **单一来源 / 图层次序 / 横纵密度**（#1551 评审）：要 EPS 且不要 SVG 时（`exportroute.original_rerender`），有脚本的磁盘图在合成路径里也由 worker 现画（`_export_produce_rendercore(rerender_ids=…)`），PDF / PNG / TIFF 与 EPS 内层出自同一次运行，
+    与无标注的 `_resolve_panel_source(rerender=True)` 同一判定；`original.objects_below` = `objects` 里前几个画在图下面（z 序保留；EPS 里写在嵌入段之前）；位图源横纵密度不同（逻辑 mm 宽高比 ≠ 像素宽高比）时，
+    PNG / TIFF 先按逻辑图幅各向同性合成（ppi 取两轴中较大的密度，文字 / 行距 / 描边不被压扁），再由 `raster.resample_area`（纯标准库面积平均，RGBA 按预乘权重）整张缩到恰好 `px_w × px_h`，pHYs / TIFF 分辨率写源的 x / y 密度（`RasterBuffer.dpi_y`）；等密度位图不重采样；PDF / SVG 仍按逻辑 mm。
+    看护 `tests/test_export_original_annotations.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
     `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字**默认保留为 `<text>`**（ADR 0144，取代 X03 起的「一律转轮廓」；

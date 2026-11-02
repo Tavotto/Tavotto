@@ -273,6 +273,11 @@ def _log_import_skip(event: dict) -> None:
     print(f"[import-skip] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
 
 
+def _log_import_ignore(event: dict) -> None:
+    """用户忽略的目录挡掉了一次顶层导入时在 worker.log 留一行结构化记录（ADR 0154）；路径由诊断包统一脱敏。"""
+    print(f"[import-ignore] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
+
+
 #: 与 native bridge 同一个装配点（`bridgeboot.install_unreadable_import_skipper`）：用户脚本往 `sys.path` 里塞了
 #: 当前账户读不了的项目外目录时，换下一个位置继续找，而不是让整次 import 挂在 `PermissionError` 上。
 bridgeboot.install_unreadable_import_skipper(_log_import_skip)
@@ -770,6 +775,9 @@ SCRIPT_INPUT_TIMEOUT = "script_input_timeout"
 #: 脚本要读的文件不存在，且说得出是哪个（ADR 0106）：界面据此请用户指认，不是笼统的 script_error。
 MISSING_INPUT = "missing_input"
 SCRIPT_EXITED = "script_exited"
+#: 登记的入口函数在脚本里已经不存在（脚本被改写、注册表里的 `entry` 没跟上），且入口没有在运行前被纠正过
+#: （`engine/entryfresh` 才是纠正的唯一出处）。与脚本自己的 `AttributeError` 分开：这不是脚本的错。
+SCRIPT_ENTRY_MISSING = "script_entry_missing"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
@@ -779,7 +787,27 @@ WRITE_OUTSIDE_ROOTS = writetripwire.CODE
 #: 脚本想写的文件夹没有写入权限（只读项目 / 只读卷），脚本因此没能写出它的输出文件。与父进程
 #: `pool.OUTPUT_FOLDER_READ_ONLY_CODE` 同值（本模块不 import 兄弟模块）。
 OUTPUT_FOLDER_READ_ONLY = "output_folder_read_only"
+#: 这个解释器在 Tavotto 自己的会话缓存（本会话的 `out_dir` / `sandbox` / 输入会合目录）里建不了目录：一行用户代码
+#: 都还没跑，不是脚本的问题，也不是项目文件夹的权限（TVD-B6MR：用别处带来的 Python 建的 venv，能读不能在
+#: `%LOCALAPPDATA%` 里新建）。与父进程 `pool.INTERPRETER_CACHE_DENIED_CODE` 同值；出口是换回 Tavotto 自带的 Python。
+INTERPRETER_CACHE_DENIED = "interpreter_cache_denied"
 _WRITE_DENIED_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
+
+
+def _prepare_cache_dir(make) -> None:
+    """build 开头、用户代码之前在本会话缓存里建目录；被系统拒绝（`PermissionError`）就报 `interpreter_cache_denied`。
+
+    主语是「这个 worker 进程、用户代码之前、Tavotto 自己的缓存目录」：此刻失败与脚本无关，归 `script_error` 会把人引去改脚本。
+    只认 `PermissionError`（Windows 的 WinError 5 / POSIX 的 EACCES、EPERM）；盘满之类别的 `OSError` 原样上抛。"""
+    try:
+        make()
+    except PermissionError as exc:
+        raise ProtocolError(
+            INTERPRETER_CACHE_DENIED,
+            f"这个 Python 没法在 Tavotto 的缓存里新建文件夹，脚本还没开始运行: {exc}",
+            retryable=False,
+            traceback_text=traceback.format_exc(),
+        ) from exc
 
 
 #: 脚本 build 期间**带写意图**的文件系统操作所碰的路径（原样字符串，与 `OSError.filename` 同一个写法）。
@@ -960,7 +988,9 @@ def _argparse_failure_kind(exc: BaseException) -> str | None:
     return None
 
 
-def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError:
+def _script_exit_error(
+    exc: SystemExit, *, argv_count: int = 0, argv_check: bool = False
+) -> ProtocolError:
     """用户脚本以非零 `sys.exit` 结束 → 结构化错误（进程不退出）。
 
     `SystemExit` 不是 `Exception`：不接住的话它会穿过 `ensure_built`，落到主循环
@@ -973,7 +1003,9 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     # 那一行，用户自己看得到。message 里只写 CPython 真正用的退出状态。
     status = _exit_status(exc.code)
     call = f"sys.exit({exc.code})" if isinstance(exc.code, int) else "sys.exit(<一段文字>)"
-    if _raised_by_cli_parser(exc):
+    # `argv_check`：脚本自己数 `sys.argv`、不够就退出（TVD-VB36，判据 `figcapture.exit_controlled_by_argv`）——
+    # 与解析库退出同一个答案：界面据此给「运行参数」。没有解析库，就没有 `parse_kind`
+    if _raised_by_cli_parser(exc) or argv_check:
         extra = {"exit_code": status}
         kind = _argparse_failure_kind(exc)
         if kind is not None:
@@ -1009,20 +1041,26 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     )
 
 
-def _script_frame_line(exc: BaseException, script) -> int | None:
-    """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
+def _script_frame_lines(exc: BaseException, script) -> list[int]:
+    """异常回溯里属于用户脚本文件的每一帧的行号，由外到内；读不到是空列表。"""
     try:
         want = os.path.normcase(os.path.realpath(str(script)))
-        line = None
+        lines: list[int] = []
         tb = exc.__traceback__
         while tb is not None:
             name = tb.tb_frame.f_code.co_filename
             if os.path.normcase(os.path.realpath(name)) == want:
-                line = tb.tb_lineno
+                lines.append(tb.tb_lineno)
             tb = tb.tb_next
-        return line
+        return lines
     except (OSError, ValueError):
-        return None
+        return []
+
+
+def _script_frame_line(exc: BaseException, script) -> int | None:
+    """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
+    lines = _script_frame_lines(exc, script)
+    return lines[-1] if lines else None
 
 
 def _blocked_operations_error(
@@ -1285,6 +1323,11 @@ class Worker(wireproto.V1Handler):
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
         #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
         self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
+        #: 用户在失败卡上选了「跳过这个文件夹」的目录（`--ignore-paths`，ADR 0154；父进程按项目给）：
+        #: 顶层导入不再去那里找。与 native bridge 同一个装配点；没有名单什么都不装。
+        bridgeboot.install_ignored_import_paths(
+            _parse_ignore_paths(getattr(args, "ignore_paths", None)), _log_import_ignore
+        )
         #: Only the opaque reference is on the command line. Values arrive over
         #: the private request pipe before the first execution, then stay frozen.
         self.script_argv: list[str] = []
@@ -1469,8 +1512,8 @@ class Worker(wireproto.V1Handler):
         # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
         self.session.begin_save_moments()
         self.configure_run({})
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.sandbox.mkdir(parents=True, exist_ok=True)
+        _prepare_cache_dir(lambda: self.out_dir.mkdir(parents=True, exist_ok=True))
+        _prepare_cache_dir(lambda: self.sandbox.mkdir(parents=True, exist_ok=True))
         # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
         # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
         os.chdir(self.workdir or self.sandbox)
@@ -1685,7 +1728,7 @@ class Worker(wireproto.V1Handler):
             tail=stdout_tail,
             private_key=self._input_key,
         )
-        channel.reset()
+        _prepare_cache_dir(channel.reset)
         self._input_channel = channel
         scriptinput.install(channel)
 
@@ -1746,13 +1789,24 @@ class Worker(wireproto.V1Handler):
                         runpy.run_path(str(self.script), run_name="__main__")
                 else:
                     with _capture_entry_sha(self.script, entry_shas):
-                        if self.script_source != self.script:
+                        # 文件名带点号（`4-51.名称.py` / `fig.v2.py`，TVD-6ZMX）：`import_module` 会把点号当包分隔符
+                        # 先找 `4-51` 包 → ModuleNotFoundError，而 `python 脚本.py` 跑得好好的。按文件路径装，模块名仍是
+                        # stem（`__name__` 与无点号的入口脚本同一口径）；影子 loader 在 source == display 时就是原件。
+                        if self.script_source != self.script or "." in self.script.stem:
                             module = _import_shadow_entry(
                                 self.script, self.script_source, self.script.stem
                             )
                         else:
                             module = importlib.import_module(self.script.stem)
-                    getattr(module, self.entry)()
+                    entry_fn = getattr(module, self.entry, None)
+                    if entry_fn is None:
+                        raise ProtocolError(
+                            SCRIPT_ENTRY_MISSING,
+                            f"脚本里没有登记的入口函数 {self.entry}（脚本可能被改写过），Tavotto 没有运行它。",
+                            retryable=False,
+                            extra={"entry": self.entry},
+                        )
+                    entry_fn()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
                     # 被拦下的操作之后观察到不同的世界而退出：原因是守卫，不是脚本自己想退（P01a）
@@ -1768,7 +1822,14 @@ class Worker(wireproto.V1Handler):
                         raise _blocked_operations_error(
                             ledger.material(), cause=exc, fidelity=ledger.summary()
                         ) from exc
-                    exit_error = _script_exit_error(exc, argv_count=len(self.script_argv))
+                    exit_error = _script_exit_error(
+                        exc,
+                        argv_count=len(self.script_argv),
+                        argv_check=not _raised_by_cli_parser(exc)
+                        and figcapture.exit_controlled_by_argv(
+                            script_source, _script_frame_lines(exc, self.script)
+                        ),
+                    )
                     exit_error.extra.update(self._probe_miss_facts())
                     raise exit_error from exc
             except scriptinput.ScriptNeedsInput as exc:
@@ -2087,6 +2148,7 @@ class Worker(wireproto.V1Handler):
             # 在丢之前先把「顶层模块名」这一个安全事实带上，依赖修复 / 环境交接才不会丢
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
+            facts.update(self._foreign_abi_fact(exc))
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -2116,6 +2178,21 @@ class Worker(wireproto.V1Handler):
             (sys.prefix, sys.base_prefix, sys.exec_prefix, *_INTERPRETER_PACKAGE_DIRS),
         )
         return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
+
+    def _foreign_abi_fact(self, exc: BaseException) -> dict:
+        """失败是「脚本加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的」：`{"foreign_abi_folder": {...}}`。
+        判据在 `bridgeboot.foreign_abi_facts`（native 同一份）；完整路径只在私有键 `foreign_abi_folder_private`
+        （给父进程登记「跳过这个文件夹」的令牌，敏感运行的白名单不放行它）。任何意外都当没有。"""
+        try:
+            fact, private = bridgeboot.foreign_abi_facts(
+                exc,
+                (sys.prefix, sys.base_prefix, sys.exec_prefix, *_INTERPRETER_PACKAGE_DIRS),
+                (str(self.figures_dir), str(self.script.parent)),
+                (str(self.figures_dir),),
+            )
+        except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
+            return {}
+        return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
@@ -2236,6 +2313,17 @@ def _parse_write_roots(raw) -> list[str] | None:
     return roots
 
 
+def _parse_ignore_paths(raw) -> list[str]:
+    """`--ignore-paths` 的 JSON 数组；没给 / 坏了就当没有（只是不忽略任何目录，旧行为）。"""
+    if not raw:
+        return []
+    try:
+        paths = json.loads(raw)
+    except ValueError:
+        return []
+    return [p for p in paths if isinstance(p, str) and p] if isinstance(paths, list) else []
+
+
 def _parse_remap(raw) -> list[dict]:
     """`--input-remap` 的 JSON → 校验过的规则；坏了就当没有（渲染照跑，只是不改道）。"""
     if not raw:
@@ -2262,6 +2350,8 @@ def main() -> None:
     ap.add_argument("--run-config", default="")
     # #898：写入根绊线的授权根（JSON 数组）；只有 MCP 来源的运行才出现，没有它 = 不装（旧 argv 逐字节不变）
     ap.add_argument("--write-roots", default=None)
+    # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
+    ap.add_argument("--ignore-paths", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

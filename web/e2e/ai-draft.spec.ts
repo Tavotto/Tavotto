@@ -50,7 +50,7 @@ async function openAssistant(page: Page, baseURL: string, opts: { reloaded?: boo
     await page.locator('[data-inspector-tab="assistant"]').click()
   } else {
     await page.goto(baseURL)
-    await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+    await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
     await waitForFigureEdit(page)
     await page.locator('[data-inspector-tab="assistant"]').click()
   }

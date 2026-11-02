@@ -12,6 +12,19 @@ from tavotto import app
 from tavotto.engine import deprepair, diagnostics, envdiag
 
 
+def _read_while_writer_runs(path):
+    """Read a file the background writer may be replacing right now, or None.
+
+    On Windows, opening a file while ``atomicio`` is ``os.replace``-ing it raises
+    ``PermissionError`` (sharing violation), not ``FileNotFoundError``; the product
+    reader (``envdiag._load``) already treats every ``OSError`` as "not there yet".
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError):
+        return None
+
+
 def test_job_and_first_render_survive_reload_without_paths_or_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
     project, other = tmp_path / "project", tmp_path / "other"
@@ -39,9 +52,8 @@ def test_job_and_first_render_survive_reload_without_paths_or_credentials(tmp_pa
     # Wait for the owned background writer so the reload checks disk, not the cache.
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        try:
-            raw = envdiag._path(envdiag._key(project)).read_text()
-        except FileNotFoundError:
+        raw = _read_while_writer_runs(envdiag._path(envdiag._key(project)))
+        if raw is None:
             time.sleep(0.01)
             continue
         if '"render": {' in raw:
@@ -94,7 +106,8 @@ def test_retention_expires_individual_rows_and_clears_cached_and_persisted_data(
     def wait_for_disk(expected):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if json.loads(path.read_text()) == expected:
+            raw = _read_while_writer_runs(path)
+            if raw is not None and json.loads(raw) == expected:
                 return
             time.sleep(0.01)
         pytest.fail("expired package data remained on disk")

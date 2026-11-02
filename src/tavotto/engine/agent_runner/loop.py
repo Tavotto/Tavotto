@@ -77,6 +77,27 @@ TRUNCATION_FEEDBACK = (
 )
 
 
+#: `done.reason` 闭集（见模块文档）。父进程写「AI 会话结束」日志时经 `logsafe.known` 放行，
+#: `tests/test_ai_end_facts.py` 用 AST 看护本模块写出的 reason 字面量都在这里。
+DONE_REASONS = frozenset(
+    {
+        "completed",
+        "max_turns",
+        "budget",
+        "tool_error_loop",
+        "auth",
+        "quota",
+        "refused",
+        "network",
+        "cancelled",
+        "internal",
+    }
+)
+
+#: 子进程 stderr 里 `agent_runner: <词>` 的第一个词（`runner_cli.diag` 只写这几种短码）
+STDERR_CODES = frozenset({"log", "bad_prompt", "internal"})
+
+
 # --------------------------------------------------------------------------- 账本
 @dataclass
 class Ledger:

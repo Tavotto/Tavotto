@@ -1011,7 +1011,7 @@ class TestCli:
         assert _tree(cand) == before
 
     def test_default_task_is_still_figure_edit(self):
-        from tavotto.engine.agent_runner.__main__ import _parser
+        from tavotto.engine.agent_runner.runner_cli import _parser
 
         a = _parser().parse_args(["--cwd", "x", "--target", "t", "--wire", "demo"])
         assert a.task == "figure_edit" and a.output == ""
