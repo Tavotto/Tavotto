@@ -43,6 +43,7 @@ import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
+import { usePrewarm } from '@/hooks/usePrewarm'
 import { startStyleBindingSync } from '@/store/styleBinding'
 import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
@@ -160,6 +161,8 @@ function Workspace() {
   // 同步器的渲染态一侧挂在树尾的叶子 <EngineRenderSync /> 上：新图到达时渲染态要变
   // 两三回，挂在这里的话每一回都把整个工作区重画一遍（见 useEngineDocumentSync）
   useEngineDocumentSync()
+  // 打开项目后为第一张带脚本的图在后台预热渲染会话（ADR 0159）
+  usePrewarm()
   // 画布跟随样式（ADR 0081）：纯订阅、不画东西，挂一次
   useEffect(() => startStyleBindingSync(), [])
   useSelectionRouting()

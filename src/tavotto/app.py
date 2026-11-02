@@ -136,6 +136,7 @@ from .engine import (
     pool as engine_pool,
     preparation as engine_preparation,
     prepsession as engine_prepsession,
+    prewarm as engine_prewarm,
     probe as engine_probe,
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
@@ -8049,6 +8050,46 @@ def api_handoff_display_ack():
     return jsonify({"ok": True})
 
 
+@app.post("/api/engine/prewarm")
+def api_engine_prewarm():
+    """项目打开后为一张图**提前取渲染会话**（ADR 0159）：只起会话，不 build、不出图、不写盘、不发事件。
+
+    与 `/api/engine/render` 开头同一扇门（`_engine_worker`），所以「谁来渲染」的判据仍只有
+    `enginesession.resolve()`；native 档的 runtime 图不预热（native 会话不进池）。
+    判定同步做（只读、不起进程），取会话在后台线程里；任何失败静默。恒 200，body 说明结果。
+    """
+    body = request.get_json(silent=True) or {}
+    rel_id = body.get("id", "")
+    if not isinstance(rel_id, str) or not rel_id:
+        return jsonify({"status": "skipped", "reason": "no_id"})
+    ctx = current_ctx()
+    try:
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            if _resolve_runtime_asset(rel_id) is None:
+                return jsonify({"status": "skipped", "reason": "unknown"})
+            if (
+                engine_enginesession.profile_of(str(ctx.path), rel_id)
+                != engine_enginesession.PROFILE_SAFE
+            ):
+                return jsonify({"status": "skipped", "reason": "native"})
+        elif _disk_panel(safe_resolve(rel_id))[1] is None:
+            return jsonify({"status": "skipped", "reason": "not_script"})
+    except Exception:  # noqa: BLE001 —— 预热是旁路，解析不了就不预热
+        return jsonify({"status": "skipped", "reason": "unresolvable"})
+
+    def work():
+        with bound_project(ctx):
+            _engine_worker(rel_id)  # 只取会话：build 仍由第一次真渲染惰性触发
+
+    status = engine_prewarm.PREWARM.request(
+        (str(ctx.path), rel_id),
+        work,
+        alive=engine_pool.alive_count(),
+        cap=engine_pool.MAX_ALIVE - 1,
+    )
+    return jsonify({"status": status})
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -8115,7 +8156,9 @@ def api_engine_render():
     pj = current_ctx().id
     sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     try:
-        worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
+        # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
+        with engine_prewarm.PREWARM.foreground():
+            worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
         # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
         get_ms = round((time.perf_counter() - t_get) * 1000, 3)
         info = current_registry().for_stem(stem) or {}
