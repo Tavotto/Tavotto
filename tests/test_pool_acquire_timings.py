@@ -139,12 +139,12 @@ def test_report_json_carries_the_summary_without_names(isolated_pool, tmp_path):
     """导出包与发送包共用 `report.json`：摘要从这一处出门（bundle schema 14）。"""
     from tavotto.engine import diagnostics
 
-    pool.acquire("secret_fig_name_xyz.py", str(tmp_path / "secret_project_dir"), "main")
+    pool.acquire("private_fig_name_xyz.py", str(tmp_path / "private_project_dir"), "main")
     rp = diagnostics.build_report(None, 0)["render_pool"]
     assert rp["sessions_created"] == 1 and rp["max_alive"] == pool.MAX_ALIVE
     assert set(rp["recent_cold_starts"][0]["timings"]) <= set(pool.ACQUIRE_SEGMENTS)
     blob = json.dumps(rp)
-    assert "secret_fig_name_xyz" not in blob and "secret_project_dir" not in blob
+    assert "private_fig_name_xyz" not in blob and "private_project_dir" not in blob
 
 
 def test_exported_bundle_has_the_summary(isolated_pool):
