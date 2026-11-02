@@ -165,6 +165,12 @@
       "failure": "safe_file_operation_blocked",
       "ctx": { "native_allowed": true, "revertible_ai_edit": "s-ai-1" },
       "remedy": { "kind": "switch_native", "silent": true }
+    },
+    {
+      "name": "figure names already owned by another live script -> feedback, never AI (TVD-TZQ9)",
+      "failure": "multiple_stem_conflict",
+      "ctx": { "ai_connected": true },
+      "remedy": { "kind": "feedback", "tried": [] }
     }
   ]
 }
