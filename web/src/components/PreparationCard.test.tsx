@@ -1369,6 +1369,16 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe(`这个脚本是用 ${name} 直接画成图片的，不是 Matplotlib 图`)
   })
 
+  it('手写 SVG 的脚本（library svg，没有落盘文件）：一句话读作「用 SVG 画的」，主按钮「生成可编辑版本」，次按钮「知道了」（TVD-ZWV6）', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'svg', in_project: false, path: null } }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 SVG 画的，Tavotto 不能直接编辑它。')
+    expect(primary()?.textContent).toBe('生成可编辑版本')
+    expect(secondary()?.textContent).toBe('知道了')
+  })
+
   it('点「打开素材库」：刷新还没结束时 AssetBrowser 读的 loading 已为真，刷新结束后才取清单', async () => {
     await mount()
     useUiStore.setState({ guideCard: 'card', leftTab: 'outline' })

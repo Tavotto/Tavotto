@@ -301,7 +301,7 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "逐一保留原脚本的出图数量、独立页面和顺序，不把几张图合成一张子图，也不省略后续输出。"
         "绘图可全部写在顶层，或放进 main() 并只由 if __name__ == '__main__': main() 启动；"
         "不要在模块导入时无条件调用 main()，避免应用选择 main 入口时重复出图。"
-        "禁止再用 PIL / OpenCV / plotly / ROOT 画布出图。",
+        "禁止再用 PIL / OpenCV / plotly / ROOT 画布或手拼 SVG 文本出图。",
     ),
     "rule_size": (
         frozenset(),
@@ -362,6 +362,24 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "保留实际参数；这不等于把文字/形状或整张成品图栅格化后当成可编辑转换。"
         "只有无法保留计算/内容语义或必要可编辑对象时停下，"
         "你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话说清是哪一步换不了、为什么，并且不要写任何新文件。",
+    ),
+    # --- 手写 SVG 来源（ADR 0143 修订，2026-11-01）：library == "svg" 时在硬性要求后追加；别的库不出现
+    "svg_table": (
+        frozenset(),
+        "SVG → Matplotlib 对照（原脚本没用画图库，是自己拼 SVG 文本写成 .svg 的；SVG 的原点在左上角、y 向下，搬运时务必处理坐标翻转）：\n"
+        "- 先读懂拼 SVG 的那段代码里每个元素的坐标是怎么从数据算出来的；能从数据直接画就用数据坐标重画"
+        "（ax.plot / ax.bar / ax.fill_between / ax.imshow 等），并用原脚本的刻度、轴标签与范围设好坐标轴，"
+        "不要只把算好的像素坐标照搬成一堆图形。\n"
+        "- 确实只能按画布坐标搬运时：<svg width/height/viewBox> → fig = plt.figure(figsize=(W / dpi, H / dpi), dpi=dpi)，"
+        '一个铺满整张图的 ax（fig.add_axes([0, 0, 1, 1])、ax.set_xlim(0, W)、ax.set_ylim(H, 0)、ax.axis("off")）；'
+        "<line>/<polyline>/<path> → ax.plot 或 matplotlib.patches.PathPatch；<rect>/<circle>/<ellipse>/<polygon> → "
+        "patches.Rectangle / Circle / Ellipse / Polygon；fill / stroke / stroke-width / opacity 对应 facecolor / edgecolor / linewidth / alpha"
+        "（SVG 的 px 线宽换成 pt：pt = px × 72 / dpi）；<g transform> 的平移 / 缩放按层级换算进坐标。\n"
+        '- <text> → ax.text，text-anchor start/middle/end → ha left/center/right，dominant-baseline 缺省是基线（va="baseline"）；'
+        "font-size 的 px 换成 pt（pt = px × 72 / dpi）；font-family 沿用原值。\n"
+        "- 渐变、滤镜、clipPath、<image> 嵌入位图等没有可靠对应时停下，"
+        "你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话说清是哪一步换不了、为什么，并且不要写任何新文件。\n"
+        "- 原脚本写出的数据表 / 汇总文件照旧写；图本身改由 Figure.savefig 存成原来的 .svg 文件名，不再手拼 SVG 文本。",
     ),
     "note": (
         frozenset({"project_root"}),
@@ -563,6 +581,8 @@ def convert_prompt(
             lines.append("6. " + _convert_render("rule_windows_shell"))
     if not foreign and (library or "").lower() == "pillow":
         lines += ["", _convert_render("pillow_table")]
+    if not foreign and (library or "").lower() == "svg":
+        lines += ["", _convert_render("svg_table")]
     lines += ["", _convert_render("note", project_root=project_root)]
     return "\n".join(lines)
 

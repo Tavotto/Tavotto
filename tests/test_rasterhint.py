@@ -954,3 +954,85 @@ def test_draw_bound_in_the_same_function_before_the_call_gets_a_hint(tmp_path):
 def test_draw_and_font_combination_evidence_is_unchanged_by_scoping(tmp_path):
     body = "from PIL import Image, ImageDraw, ImageFont\nim = Image.open('a.png')\nf = ImageFont.truetype('x.ttf', 12)\nd = ImageDraw.Draw(im)\nrender(d, f)\n"
     assert _bare(tmp_path, body) == _NO_PATH
+
+
+# ---------------------------------------------------------------- 手写 SVG（ADR 0143 修订 2026-11-01，反馈包 TVD-ZWV6）
+#: 只用标准库拼 SVG 文本再写成 `.svg`：safe 档在项目模式下这次写入被守卫拦下，磁盘上没有任何文件——
+#: 判据只能是 AST（`<svg` 标记 + 往 .svg 写文本），所以这里直接调 `detect`，**不**补出输出文件。
+SVG_PATH_WRITE_TEXT = """
+    from pathlib import Path
+    out = Path(__file__).parent / "results"
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">']
+    for i in range(3):
+        parts.append(f'<rect x="{i * 50}" y="10" width="40" height="80" fill="#336699"/>')
+    parts.append("</svg>")
+    (out / "cycle.svg").write_text("\\n".join(parts), encoding="utf-8")
+"""
+
+SVG_OPEN_DYNAMIC = """
+    import os
+    def render(name):
+        body = f'<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>'
+        with open(os.path.join("out", name + ".svg"), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    render("fig1")
+"""
+
+
+@pytest.mark.parametrize("body", [SVG_PATH_WRITE_TEXT, SVG_OPEN_DYNAMIC])
+@pytest.mark.parametrize("mode", ["project", "project_root", "sandbox", None])
+def test_hand_written_svg_scripts_get_the_svg_hint_without_a_file(tmp_path, body, mode):
+    _write(tmp_path, "make.py", body)
+    hint = rasterhint.detect(tmp_path, "make.py", mode, run_started_at=START)
+    assert hint == {"kind": "raster_script", "library": "svg", "in_project": False, "path": None}
+    assert "svg" in rasterhint.LIBRARIES
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # 有 matplotlib：没出图另有原因，不说「是手写 SVG」
+        "import matplotlib.pyplot as plt\n" + textwrap.dedent(SVG_PATH_WRITE_TEXT),
+        # 有 `<svg` 字样，但从不往 .svg 写（写的是 .txt / 只打印）
+        """
+        from pathlib import Path
+        Path("note.txt").write_text('<svg width="1"></svg>')
+        """,
+        """
+        print('<svg width="1"></svg>')
+        """,
+        # 往 .svg 写，但源码里没有 SVG 标记（拷贝 / 转存别人的文件）
+        """
+        from pathlib import Path
+        Path("copy.svg").write_text(Path("src.svg").read_text())
+        """,
+        # 只读模式打开
+        """
+        data = '<svg/>'
+        with open("a.svg") as fh:
+            fh.read()
+        """,
+    ],
+)
+def test_svg_lookalikes_stay_silent(tmp_path, body):
+    _write(tmp_path, "make.py", body)
+    assert rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START) is None
+
+
+def test_hand_written_svg_with_dynamic_imports_stays_silent(tmp_path):
+    _write(
+        tmp_path,
+        "make.py",
+        "import importlib\nimportlib.import_module('x' + 'y')\n"
+        + textwrap.dedent(SVG_OPEN_DYNAMIC),
+    )
+    assert rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START) is None
+
+
+def test_hand_written_svg_in_a_followed_local_module_counts(tmp_path):
+    _write(
+        tmp_path, "svgout.py", SVG_PATH_WRITE_TEXT.replace("(out /", "def go():\n        (out /", 1)
+    )
+    _write(tmp_path, "make.py", "import svgout\nsvgout.go()\n")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START)
+    assert hint is not None and hint["library"] == "svg"

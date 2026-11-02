@@ -268,6 +268,23 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 8. **盲点（写在明处）**：绘制方法的接收者只跟踪同文件内赋值得到的 Draw 对象；Draw 对象当参数传进 helper 后在 helper 里画（接收者是形参）看不见，除非同时有 `ImageFont`。
    不改变“永远不改用户脚本”：结果仍另存 `<原名>_matplotlib.py`，不加遥测事件。
 
+## 修订：手写 SVG 来源（2026-11-01，维护者裁决选 A，反馈包 TVD-ZWV6）
+
+脚本不用任何画图库、自己拼 SVG 文本写成 `.svg` 时，`rasterhint` 的来源闭集里没有它：失败卡退回普通「没出图」（还说「多半是数据文件没找到」），
+改图助手的 `convert_script` 也没有合法的 `library` 可填。safe 档项目模式下那次 `.svg` 写入本身还被写入守卫拦下（守卫不变），磁盘上不会有文件。
+
+1. **来源闭集加一项** `svg`（`rasterhint.LIB_SVG`，`LIBRARIES` 末尾）；端点校验、`convert_script` 枚举、修复路由都从这一份取，不另列。
+2. **判据（AST，纯静态）**：扫描到的文件里①有含 `<svg` 的字符串字面量（含 f-string 常量段），且②有往 `.svg` 或判不出扩展名的路径写文本的调用
+   （内置 `open` / `io.open` / `codecs.open` 的字面量写模式 w / a / x；`.write_text` / `.write_bytes`；目标可以是字符串、f-string、`Path(字面量)`、`目录 / "x.svg"`）。
+   两条同时成立，且没有 matplotlib 家族、没有别的库在存图、没有动态 import、扫描看得全，才回 `{"library": "svg", "path": null, "in_project": false}`。
+   不要求文件证据（与 Pillow 强证据同理：运行事实已是「没捕获到 Figure」，而这次写入多半被守卫拦了）。
+3. **卡片**：沿用 `path` 为空时的现成句子，库名显示「SVG」（两种语言相同）——「这张图是用 SVG 画的，Tavotto 不能直接编辑它。」，主按钮「生成可编辑版本」，次按钮「知道了」。不加新文案。
+4. **提示词**：`convert_prompt(library="svg")` 在硬性要求后追加 SVG → Matplotlib 对照（优先从数据重画；只能按画布搬运时 viewBox → figsize、
+   元素 → patches / plot / text、`set_ylim(H, 0)` 处理 y 向下、px → pt；渐变 / 滤镜 / clipPath / 嵌入位图没有可靠对应就 `TAVOTTO_NEEDS_INPUT:` 停下）。
+   `rule_matplotlib` 的禁用清单加「手拼 SVG 文本」。
+5. **不做**：不放松 safe 写入守卫、不把被拦的 SVG 当静态素材放进素材库（维护者否了方案 B）；不加遥测事件。
+6. **盲点**：未调用的 helper 里拼 SVG 也会被算上（与 Pillow 强证据同一取舍）；SVG 标记全由运行时读入的模板产生（源码里没有 `<svg` 字面量）时不提示。
+
 ## 不做
 
 - 不自动采用；不替用户改任何已有脚本；不在原脚本上叠改。
