@@ -505,3 +505,128 @@ class TestDocsOnlyCli:
         needs = {j: {"result": r} for j, r in _docs_results().items()}
         rc, _ = self._run(capsys, needs, *self.FLAGS)
         assert rc == 1
+
+
+# ============================================================ merge_group 快速失败归因
+class TestMergeGroupFailFastAttribution:
+    """重腿红 → workflow 取消其余 job → 它们的结论是 cancelled。判红规则不变，只多归因。"""
+
+    HEAVY = ["backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e"]
+
+    def _mg(self, **overrides):
+        r = {j: "success" for j in self.HEAVY}
+        r.update(overrides)
+        return AG.decide("integration", "merge_group", self.HEAVY, r, require_heavy=True)
+
+    def test_a_red_leg_with_cancelled_siblings_is_red_and_names_the_root(self):
+        v = self._mg(
+            **{"windows-exe-smoke": "failure", "package": "cancelled", "posix-e2e": "cancelled"}
+        )
+        assert v["status"] == "failure" and v["reason"] == "upstream_not_success"
+        assert v["root_failures"] == ["windows-exe-smoke"]
+        assert v["cancelled_by_fail_fast"] == ["package", "posix-e2e"]
+
+    def test_cancelled_without_any_failure_is_still_red_and_not_blamed_on_fail_fast(self):
+        """外部取消（新 push / 人手点取消）没有 failure：保持裸 cancelled，不得冒充快速失败。"""
+        v = self._mg(**{"package": "cancelled", "posix-e2e": "cancelled"})
+        assert v["status"] == "failure"
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_all_cancelled_after_a_failure_can_never_pass(self):
+        """快速失败后哪怕其余全是 cancelled，也不能因为『没有别的红』被放过。"""
+        v = self._mg(
+            **{
+                "backend-platforms": "failure",
+                "package": "cancelled",
+                "windows-exe-smoke": "cancelled",
+                "macos-app-smoke": "cancelled",
+                "posix-e2e": "cancelled",
+            }
+        )
+        assert v["status"] == "failure"
+
+    def test_attribution_is_merge_group_only(self):
+        r = {j: "success" for j in self.HEAVY}
+        r.update({"package": "failure", "posix-e2e": "cancelled"})
+        v = AG.decide("integration", "pull_request", self.HEAVY, r, require_heavy=True)
+        assert v["status"] == "failure"
+        assert v["cancelled_by_fail_fast"] == [], "PR / full-ci 的语义不变：不归因快速失败"
+
+    def test_all_success_carries_no_attribution_and_still_passes(self):
+        v = self._mg()
+        assert v["status"] == "success" and "root_failures" not in v
+
+    def test_summary_points_at_the_root_failure(self):
+        v = self._mg(**{"package": "failure", "posix-e2e": "cancelled"})
+        text = AG.render_summary(v, self.HEAVY)
+        assert "快速失败" in text and "`package`" in text and "`posix-e2e`" in text
+
+
+class TestFailFastRootFromRunJobs:
+    """快速失败取消的是整个 run，红腿自己的 job 结论也是 cancelled（#1655 合入前第一个红组实测：
+    backend-platforms (macos-latest, 6) 的 pytest 红，job 却显示 cancelled）。归因改读步骤结论。"""
+
+    HEAVY = TestMergeGroupFailFastAttribution.HEAVY
+    RUN_JOBS = [
+        {"name": "backend-platforms (macos-latest, 6)", "failed_steps": ["pytest"]},
+        {"name": "backend-platforms (macos-latest, 5)", "failed_steps": []},
+        {"name": "posix-e2e (1/3)", "failed_steps": []},
+        {"name": "CI fast gate", "failed_steps": ["聚合判定"]},
+        {"name": "CI integration gate", "failed_steps": ["聚合判定"]},
+    ]
+
+    def _all_cancelled(self, event="merge_group", run_jobs=None):
+        r = {j: "cancelled" for j in self.HEAVY}
+        return AG.decide("integration", event, self.HEAVY, r, require_heavy=True, run_jobs=run_jobs)
+
+    def test_root_is_found_in_step_conclusions_when_every_leg_shows_cancelled(self):
+        v = self._all_cancelled(run_jobs=self.RUN_JOBS)
+        assert v["status"] == "failure"
+        assert v["root_failures"] == ["backend-platforms (macos-latest, 6) · pytest"]
+        assert v["cancelled_by_fail_fast"] == sorted(self.HEAVY)
+
+    def test_gates_own_failed_steps_are_never_the_root(self):
+        only_gates = [j for j in self.RUN_JOBS if j["name"].startswith("CI ")]
+        assert AG.root_failures_from_run_jobs(only_gates) == []
+        v = self._all_cancelled(run_jobs=only_gates)
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_without_run_jobs_all_cancelled_stays_external(self):
+        v = self._all_cancelled(run_jobs=None)
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_run_jobs_are_ignored_outside_merge_group(self):
+        v = self._all_cancelled(event="pull_request", run_jobs=self.RUN_JOBS)
+        assert v["status"] == "failure"
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_run_jobs_never_turn_red_into_green(self):
+        r = {j: "success" for j in self.HEAVY}
+        r["package"] = "cancelled"
+        v = AG.decide("integration", "merge_group", self.HEAVY, r, require_heavy=True, run_jobs=[])
+        assert v["status"] == "failure"
+
+    def test_main_reads_run_jobs_from_env_and_tolerates_bad_lines(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        f = tmp_path / "run-jobs.ndjson"
+        f.write_text(
+            "not json\n"
+            + "\n".join(json.dumps(j, ensure_ascii=False) for j in self.RUN_JOBS)
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("RUN_JOBS_FILE", str(f))
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        needs = json.dumps({j: {"result": "cancelled", "outputs": {}} for j in self.HEAVY})
+        rc = AG.main(
+            ["--mode", "integration", "--event", "merge_group", "--required", ",".join(self.HEAVY),
+             "--needs-json", needs, "--require-heavy"]
+        )  # fmt: skip
+        assert rc == 1
+        verdict = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert verdict["root_failures"] == ["backend-platforms (macos-latest, 6) · pytest"]
+
+    def test_missing_run_jobs_file_is_not_an_error(self, tmp_path):
+        assert AG._read_run_jobs(str(tmp_path / "nope.ndjson")) is None
+        assert AG._read_run_jobs("") is None
