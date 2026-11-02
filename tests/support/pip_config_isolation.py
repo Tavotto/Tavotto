@@ -33,14 +33,16 @@ try:
 
     from pip._internal import configuration
     discover = configuration.get_configuration_files
+    # pip 26.3 把 `configuration.kinds`（字符串常量）改成了枚举 `Kind`；两者的 GLOBAL 都等于 "global"
+    _GLOBAL = (getattr(configuration, "kinds", None) or configuration.Kind).GLOBAL
 
     def fixture_configuration_files():
         files = dict(discover())
-        files[configuration.kinds.GLOBAL] = [_GLOBAL_FILE]
+        files[_GLOBAL] = [_GLOBAL_FILE]
         return files
 
     configuration.get_configuration_files = fixture_configuration_files
-    if configuration.get_configuration_files()[configuration.kinds.GLOBAL] != [_GLOBAL_FILE]:
+    if configuration.get_configuration_files()[_GLOBAL] != [_GLOBAL_FILE]:
         raise RuntimeError("pip global configuration isolation did not activate")
 except BaseException as exc:
     # site.py 吞普通 Exception 并继续执行；SystemExit 才能在 startup 失败关闭。
@@ -81,7 +83,8 @@ def isolated_pip_globals(
             "-B",
             "-c",
             "import json; from pip._internal import configuration as c; "
-            "print(json.dumps(c.get_configuration_files()[c.kinds.GLOBAL]))",
+            "k = (getattr(c, 'kinds', None) or c.Kind).GLOBAL; "
+            "print(json.dumps(c.get_configuration_files()[k]))",
         ],
         env=env,
         capture_output=True,
