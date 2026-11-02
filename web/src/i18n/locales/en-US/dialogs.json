@@ -1467,7 +1467,7 @@
         "cancelled": "Cancelled. Nothing was sent.",
         "doneTitle": "Sent",
         "reportId": "Report ID",
-        "replyInbox": "The maker's reply will appear in Contact the maker › My letters",
+        "replyInbox": "Sent. The maker's reply will appear in Contact the maker › My letters",
         "copyId": "Copy report ID",
         "send": "Send",
         "retry": "Try again",
@@ -1507,7 +1507,7 @@
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
         "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
-        "sentence": "Sends error details, logs (may include output printed by your script) and Python package versions; not your script or data files.",
+        "sentence": "Includes errors and logs (may include output printed by your script), not your scripts or data",
         "details": "Show contents",
         "bestEffort": "Redaction is best-effort, not guaranteed; you can save and inspect the bundle first.",
         "errorSummaryNote": "If you agreed to anonymous statistics, a content-free error summary is attached too.",
@@ -1550,14 +1550,8 @@
           "corrupt_sessions": "corrupted copies"
         },
         "optionsLost": "The extras were too large, so they could not be attached this time.",
-        "sentenceExtras": "Sends error details, logs (may include output printed by your script) and Python package versions, plus what you ticked: {{items}}.",
-        "sentenceItem": {
-          "source": "script source",
-          "crash_reports": "system crash reports",
-          "corrupt_sessions": "corrupted session copies"
-        },
+        "sentenceExtras": "Includes errors, logs (may include output printed by your script) and the extras you tick",
         "contact": {
-          "hint": "Want to talk directly? Include the report ID in your message: ",
           "hintNoId": "Want to talk directly? ",
           "link": "Contact us on WeCom",
           "showQr": "Show QR code",

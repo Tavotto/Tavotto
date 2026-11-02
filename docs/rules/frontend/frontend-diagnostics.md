@@ -81,7 +81,7 @@ order: 170
 - **故障卡入口与轻确认框（用户 10-10 要求）。** 对话框全应用只挂一处（`components/DiagnosticsSendHost.tsx`，状态 `diagSendStore.open`）；设置页入口行与故障卡的 `components/SendReportButton.tsx` 都只是 `setOpen(true)`
   （打开 = 本机备包，不发送），开关判据同一个（`diagSendStore.capability`，关着完全不渲染）。覆盖的故障卡（都经 `TaskDiagnostic` 或点名处理）：导出失败卡（`ExportDialog.ResultBlock`：可重试时在折叠的「本次问题的诊断」里；
   不可恢复、没有任何修复动作时**就是主按钮**）、导出部分失败（折叠详情）、准备卡失败态（`PreparationCard`：有主按钮时在详情里；失败且没有任何可执行动作时是主按钮）、脚本行「详情」里的运行失败、依赖准备失败。
-  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。**说明框在前**（用户 2026-10-19 裁决，取代 10-10 的「默认只露一句话」——用户嫌展开后太臃肿、说明框反被折起来）：默认可见 = 对话框副标题那一句（`Dialog description`：「发送报错详情、日志（可能含脚本打印的内容）和 Python 包版本；不含你的脚本和数据文件。」——
+  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。**说明框在前**（用户 2026-10-19 裁决，取代 10-10 的「默认只露一句话」——用户嫌展开后太臃肿、说明框反被折起来）：默认可见 = 对话框副标题那一句（`Dialog description`：「附报错和日志（可能含脚本打印的内容），不含脚本和数据」（一行放下；勾了额外内容换成「…及你勾选的额外内容」）——
   必须如实提醒日志里可能有脚本输出，#1012 4，文案测试钉住，**这句不许折进去**；2026-11-02 起压成这一短句，用户要求「尽可能节省」，照联系作者写信页的结构：短副标题、靠 placeholder 而不是说明段落、次要内容折叠）+ 表单（参照 OpenBitFun 的表单语言：标签在字段上方、间距 6；提示与字数同一行、提示左字数右；框只给可编辑的控件）：「补充说明（可选）」textarea、「问题类型」`Select`；
   + 一组（`FieldGroup`，3% 底、无边）里的一行可展开项「附带诊断包 · 大小 … 查看内容」（展开内容与标题文字对齐缩进）+「发送」「关闭」（一颗主按钮）。其余（内容类别、额外勾选项、包内文件、保存 ZIP、保存期、隐私政策链接、「脱敏尽力而为」）
   全在默认收起的「查看内容」里（`DiagnosticsSendDialog.test.tsx`「说明框在前」一条钉可见集合；e2e 量收起态高度 < 500px）。那句承诺由
@@ -93,8 +93,7 @@ order: 170
 - **迟到 start 的 409 不是失败（#928，Codex #923）。** 取消先被引擎处理时，引擎正确拒绝迟到的 start（409 `diag_stale_action` / `diag_session_cancelled`）。`DiagnosticsSendDialog` 的 `send()` catch 把这两个 code 当作取消流程的一部分：置 `cancelling`（不覆盖成不可重试的 `failed`），轮询继续到 `cancelled` 后自动重新备包（`DiagnosticsSendDialog.test.tsx`「迟到的 start」两组）。
 - **清理显式带备包时的项目（Codex #955）。** 引擎会话按项目分键，而切项目时全局当前项目先于 effect 清理变成 B；`discardDiagSend(id, pj)` 因此由对话框传 `packagePj`（备包那一刻的项目；迟到的 prepare 响应用闭包里捕获的 `pj`），请求以 `?pj=` + 头显式指向 A。不传则按 B 找不到 A 的 id、静默 `{ok:true}`，A 的上传继续。后端 `?pj=` 本就先于请求头（`app._request_ctx` / `_diag_send_scope`），`test_diag_send_api.py::test_explicit_pj_query_wins_over_a_conflicting_header` 钉住。
 - **联系维护者（企业微信，仅中文界面）。** 两个地址只在 `lib/contact.ts`（获客链接 `WECOM_CONTACT_URL`、名片码地址 `WECOM_CARD_URL`），二维码图 `assets/wecom-contact-qr.png` 必须解码为后者（`tests/test_wecom_contact_qr.py`，无 `cv2` 则跳过）。
-  组件 `settings/WeComContact.tsx`：**判据是界面语言 `currentLocale() === 'zh-CN'`，不看系统区域**；英文界面不渲染元素（不是隐藏）。位置：发送问题反馈确认框的 done / unknown / failed 三态（ready / preparing 不出现），
-  与设置页「诊断报告」组里发送行之前的「联系维护者」行（发送功能关闭也在，联系方式不依赖上传通道）；确认框里链接与「显示二维码」同占一行，其余阶段该行**占位不显示**（`invisible` + `inert`，#797 的发送按钮不跳位；英文界面连占位也不渲染）；二维码默认折叠、展开才挂 `<img>`；链接是 `target=_blank` 外链。不收集、不上传任何联系方式，不进诊断包；/try 不加（`WeComContact.test.tsx`）。
+  组件 `settings/WeComContact.tsx`：**判据是界面语言 `currentLocale() === 'zh-CN'`，不看系统区域**；英文界面不渲染元素（不是隐藏）。位置：发送问题反馈确认框**完成态且没有回信通道**时，副标题位置换成「已发送 · 想直接沟通？加企业微信联系我们」（`WeComDirectLine`，只是文字链，替换副标题那一行而不是新增行，#797 的发送按钮不跳位；英文界面连这一句都不渲染；unknown / failed 不再带联系行），以及设置页「诊断报告」组里发送行之前的「联系维护者」行（发送功能关闭也在，联系方式不依赖上传通道）；二维码（设置页那一行里）二维码默认折叠、展开才挂 `<img>`；链接是 `target=_blank` 外链。不收集、不上传任何联系方式，不进诊断包；/try 不加（`WeComContact.test.tsx`）。
 - **异步回调一律认代号**：`DiagnosticsSendDialog` 里 prepare / startDiagSend / 保存 / 状态轮询的 then·catch 都捕获发起时的 `gen`（轮询用 `stop`），代号变了（项目切换、重新备包、关窗）就忽略——A 的迟到失败不许改 B 的对话框（`DiagnosticsSendDialog.test.tsx`「A 的 start 挂起 → 切到 B」，含 404）。
 
 ## 发送包的 detail 载荷与勾选项（bundle schema 8，ADR 0118 修订 2026-10-13，`diagnostics/detail.ts`）
@@ -148,7 +147,8 @@ order: 170
 
 ## 反馈包回信的界面（ADR 0118 / 0145 修订 2026-11-02）
 
-- `DiagSendStatus.reply_inbox`（引擎登记成功才有）为真时，发送确认框完成态在「已发送 · 报告编号」下多一行 `settings.diagnostics.send.replyInbox`。这一行在联系作者开着（`contactStore.capability` 非空）时**一直占位**（`invisible`，`data-diag-send-reply-inbox="reserved"`），完成且 `reply_inbox` 才显示（`active`）——页脚按钮不跳位（#797）；联系作者关着不占位。
+- `DiagSendStatus.reply_inbox`（引擎登记成功才有）为真时，发送确认框完成态的**副标题那一行**原地换成 `settings.diagnostics.send.replyInbox`（「已发送。作者回复会出现在「联系作者 › 我的来信」」，`data-diag-send-reply-inbox`），不新增行、不预留空白（v3）。
 - 「我的来信」：`ContactMessage.kind === 'report'` 的条目头部显示标签 `contact.lettersReportTag`（问题反馈 / Report）+ `contact.lettersReportNumber`（报告编号），`YourLetter` 对报告显示附言、没写显示 `contact.lettersNoNote`。回信渲染、小圆点、通知胶囊全部复用，不加新提醒形态。
 - 看护：`contact.test.tsx`（标签 / 编号 / 无附言）、`DiagnosticsSendDialog.test.tsx`（完成态那一行出现 / 占位 / 不占位）。
-- **发送框瘦身（2026-11-02，维护者「太丑、字太多」）**：只删减、合并、改排版，没有新增说明。额外内容三项各只留名字 + 一行短提示（崩溃转储无法脱敏、脚本源码可能含密钥的事实保留）；补充说明的「会原样附上 / 别填隐私」并进 placeholder，框下只留字数；「大小」行删（摘要行已有大小）；结果态底部只占一行：联系作者登记了回信 → 回信提示，否则（仅中文）企业微信一行，两者叠在同一格里取较大高度（页脚不跳位 #797）。
+- **发送框瘦身（2026-11-02，维护者「太丑、字太多」；v3 照联系作者写信页的顺序与卡片）**：只删减、合并、改排版，没有新增说明。顺序：标题 + 一行副标题 → 补充说明（像「想说的话」，说明并进 placeholder，字数只在 ≥ 80% 上限时显示）→ 额外内容（`FieldGroup` 浅底圆角卡，「全选」在右上；每项只有名字，**隐私提示只在勾选后**出现在该项下面——崩溃转储无法脱敏、脚本源码可能含密钥）→ 问题类型（两栏网格里的半宽一格）→ 附带诊断包行（「查看内容」不动）→ 页脚。
+  结果态**没有任何预留空白**：完成时副标题那一行原地换成「已发送。作者回复会出现在「联系作者 › 我的来信」」（`reply_inbox` 为真），否则「已发送」（中文再带企业微信一句）；页脚左侧仍是「已发送 · 报告编号 + 复制」。「大小」行删（摘要行已有大小）。

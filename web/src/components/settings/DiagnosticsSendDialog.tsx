@@ -18,7 +18,6 @@ import {
 import { PRIVACY_DOC_URL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import { useContactStore } from '@/store/contactStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useProjectStore } from '@/store/projectStore'
 import { Button } from '../ui/Button'
@@ -30,7 +29,7 @@ import { TextArea } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { CopyButton } from './CopyButton'
 import { saveDiagnosticsZip } from './diagnosticsSave'
-import { WeComContactNote } from './WeComContact'
+import { WeComDirectLine } from './WeComContact'
 
 const ds = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.diagnostics.send.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -387,15 +386,11 @@ export function DiagnosticsSendDialog({
       })
   }
 
-  // 常显的那一句按**引擎确认的** options 选句（`prepared.options`，不是用户点的）：勾了源码 / 崩溃报告就如实说附带了什么。
-  // 仍然只有一句话（卡片一句话纪律）；多项组合用同一个模板列出。
+  // 副标题一行：按**引擎确认的** options 选句（`prepared.options`，不是用户点的）：勾了额外内容就如实说「及你勾选的额外内容」；
+  // 结果态（done）原地换成「已发送…」——替换这一行而不是新增行，页脚按钮不跳位（#797）。
   const applied = EXTRA_KEYS.filter((k) => prepared?.options?.[k])
-  const sentence = applied.length
-    ? ds('sentenceExtras', { items: applied.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')) })
-    : ds('sentence')
+  const sentence = applied.length ? ds('sentenceExtras') : ds('sentence')
   const sending = phase === 'sending' || phase === 'cancelling'
-  // 联系作者开着才占位（关了就没有回信通道，不留空行）；引擎登记成功（reply_inbox）才显示
-  const replyReserved = useContactStore((st) => st.capability !== null)
   const replyShown = phase === 'done' && status?.reply_inbox === true
   const editable = phase === 'ready' || phase === 'failed'
   const retryable = phase === 'failed' && status?.retryable !== false
@@ -479,7 +474,18 @@ export function DiagnosticsSendDialog({
       title={ds('title')}
       description={
         <span className="block text-sm leading-5" data-diag-send-sentence>
-          {sentence}
+          {phase === 'done' ? (
+            replyShown ? (
+              <span data-diag-send-reply-inbox>{ds('replyInbox')}</span>
+            ) : (
+              <>
+                {ds('doneTitle')}
+                <WeComDirectLine />
+              </>
+            )
+          ) : (
+            sentence
+          )}
         </span>
       }
       size="md"
@@ -521,41 +527,8 @@ export function DiagnosticsSendDialog({
       }}
     >
       <div className="flex flex-col gap-4" data-diag-send-body>
-        {/* 表单语言（2026-10-19，参照 OpenBitFun）：标签在字段上方、间距 6；提示与字数同一行（提示左、字数右）；
-            框只给可编辑的控件；诊断包是一组（`FieldGroup`：3% 底、无边）里的一行可展开项，展开的内容与标题文字对齐缩进。
-            如实说明要发什么的那一句是对话框副标题（常显）。 */}
-        {/* 额外内容（2026-10-21，beta 0.19.0b1 反馈）：三个框不折叠、紧跟副标题那一句，别埋在「查看内容」下面要滚才看到；
-            默认全不勾、不记忆；各框的风险短句留在各自下面；右上「全选 / 全不选」一键切换（一次只换一次包）。
-            勾选变化 = 换包，但点击本身即时生效（见 `scheduleRefresh`）。 */}
-        <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="type-section">{ds('extrasTitle')}</h3>
-            <Button variant="ghost" size="sm" disabled={!editable} onClick={toggleAllOptions} data-diag-send-extras-all>
-              {allOptionsOn ? ds('extrasSelectNone') : ds('extrasSelectAll')}
-            </Button>
-          </div>
-          {EXTRA_KEYS.map((key) => (
-            <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
-              <Checkbox
-                checked={options[key]}
-                disabled={!editable}
-                onChange={() => toggleOption(key)}
-                data-diag-send-extra={key}
-                className="mt-0.5"
-              />
-              <span className="flex min-w-0 flex-col">
-                <span className="text-ink">{ds(`extra.${key}`)}</span>
-                <span className="type-caption">{ds(`extraHint.${key}`)}</span>
-              </span>
-            </label>
-          ))}
-          {optionsLost && (
-            <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
-              {ds('optionsLost')}
-            </p>
-          )}
-        </section>
-
+        {/* 顺序照联系作者写信页：补充说明（像「想说的话」）→ 额外内容（浅底圆角卡）→ 问题类型 → 附带诊断包 → 页脚。
+            额外内容默认全不勾、不记忆；勾选变化 = 换包，点击本身即时生效（见 `scheduleRefresh`）。 */}
         <div className="flex flex-col gap-1.5">
           <label htmlFor={noteId} className="type-section">
             {ds('noteLabel')}
@@ -573,24 +546,64 @@ export function DiagnosticsSendDialog({
             data-diag-send-note
             className="px-3 py-2"
           />
-          <p className="type-caption text-right tabular-nums">{ds('noteCount', { count: note.length, max: noteMax })}</p>
+          {note.length >= noteMax * 0.8 && (
+            <p className="type-caption text-right tabular-nums">{ds('noteCount', { count: note.length, max: noteMax })}</p>
+          )}
         </div>
 
-        <div className="flex flex-col gap-1.5" data-diag-send-category>
-          <span id={categoryId} className="type-section">
-            {ds('categoryLabel')}
-          </span>
-          <Select
-            value={category}
-            onChange={setCategory}
-            options={categories.map((c) => ({
-              value: c,
-              label: translate(`settings.diagnostics.send.category.${c}`, { ns: 'dialogs', defaultValue: c }),
-            }))}
-            ariaLabel={ds('categoryLabel')}
-            disabled={!editable}
-            className="w-56"
-          />
+        <FieldGroup>
+          <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5 px-3 py-2" data-diag-send-extras>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="type-section">{ds('extrasTitle')}</h3>
+              <Button variant="ghost" size="sm" disabled={!editable} onClick={toggleAllOptions} data-diag-send-extras-all>
+                {allOptionsOn ? ds('extrasSelectNone') : ds('extrasSelectAll')}
+              </Button>
+            </div>
+            {EXTRA_KEYS.map((key) => (
+              <label key={key} className="flex items-start gap-2 text-sm text-ink">
+                <Checkbox
+                  checked={options[key]}
+                  disabled={!editable}
+                  onChange={() => toggleOption(key)}
+                  data-diag-send-extra={key}
+                  className="mt-0.5"
+                />
+                <span className="flex min-w-0 flex-col">
+                  <span>{ds(`extra.${key}`)}</span>
+                  {/* 隐私提示只在勾选后出现在该项下面：勾选那一刻正是需要知情的时候 */}
+                  {options[key] && (
+                    <span className="type-caption" data-diag-send-extra-hint={key}>
+                      {ds(`extraHint.${key}`)}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+            {optionsLost && (
+              <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
+                {ds('optionsLost')}
+              </p>
+            )}
+          </section>
+        </FieldGroup>
+
+        <div className="grid grid-cols-2 gap-3" data-diag-send-category>
+          <div className="flex flex-col gap-1.5">
+            <span id={categoryId} className="type-section">
+              {ds('categoryLabel')}
+            </span>
+            <Select
+              value={category}
+              onChange={setCategory}
+              options={categories.map((c) => ({
+                value: c,
+                label: translate(`settings.diagnostics.send.category.${c}`, { ns: 'dialogs', defaultValue: c }),
+              }))}
+              ariaLabel={ds('categoryLabel')}
+              disabled={!editable}
+              className="w-full"
+            />
+          </div>
         </div>
 
         <FieldGroup>
@@ -684,26 +697,6 @@ export function DiagnosticsSendDialog({
             </div>
           </Details>
         </FieldGroup>
-
-        {/* 结果态底部只占一行（二选一，页脚不跳位 #797）：联系作者登记了回信 → 说作者回复在哪看；否则（仅中文）给企业微信一条直接找人的路。
-            两者叠在同一格里取较大高度；联系作者开着时回信提示一直占位 */}
-        <div className="grid">
-          {replyReserved && (
-            <p
-              className={cn('type-caption [grid-area:1/1]', !replyShown && 'invisible')}
-              aria-hidden={replyShown ? undefined : true}
-              data-diag-send-reply-inbox={replyShown ? 'active' : 'reserved'}
-            >
-              {ds('replyInbox')}
-            </p>
-          )}
-          <div className="[grid-area:1/1]">
-            <WeComContactNote
-              active={(phase === 'done' || phase === 'unknown' || phase === 'failed') && !replyShown}
-              withReportId={phase !== 'failed' && !!status?.report_id}
-            />
-          </div>
-        </div>
       </div>
     </Dialog>
   )

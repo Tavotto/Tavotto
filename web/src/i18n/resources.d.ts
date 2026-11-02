@@ -2274,7 +2274,6 @@ export default interface Resources {
           "categoryLabel": "问题类型",
           "close": "关闭",
           "contact": {
-            "hint": "想直接沟通？发消息时附上报告编号：",
             "hintNoId": "想直接沟通？",
             "link": "加企业微信联系我们",
             "qrAlt": "Tavotto 维护者的企业微信二维码，用手机微信扫码添加",
@@ -2375,7 +2374,7 @@ export default interface Resources {
             "init": "正在联系诊断服务…",
             "upload": "正在上传 {{percent}}%"
           },
-          "replyInbox": "作者回复会出现在「联系作者 › 我的来信」",
+          "replyInbox": "已发送。作者回复会出现在「联系作者 › 我的来信」",
           "reportId": "报告编号",
           "reprepare": "重新准备",
           "retention": "报告保存 {{days}} 天，仅维护者可读，与匿名统计标识无关。",
@@ -2388,13 +2387,8 @@ export default interface Resources {
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
-          "sentence": "发送报错详情、日志（可能含脚本打印的内容）和 Python 包版本；不含你的脚本和数据文件。",
-          "sentenceExtras": "发送报错详情、日志（可能含脚本打印的内容）和 Python 包版本，另附你勾选的：{{items}}。",
-          "sentenceItem": {
-            "corrupt_sessions": "损坏会话副本",
-            "crash_reports": "系统崩溃报告",
-            "source": "脚本源码"
-          },
+          "sentence": "附报错和日志（可能含脚本打印的内容），不含脚本和数据",
+          "sentenceExtras": "附报错和日志（可能含脚本打印的内容）及你勾选的额外内容",
           "short": {
             "console": "控制台",
             "corrupt_sessions": "损坏副本",

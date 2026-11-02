@@ -37,7 +37,6 @@ import {
 } from '@/lib/api'
 import { t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
-import { useContactStore } from '@/store/contactStore'
 import { useProjectStore } from '@/store/projectStore'
 import { clearDiagnosticTrace, recordDiagnosticEvent, type DiagnosticEvent } from '@/diagnostics'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
@@ -225,10 +224,14 @@ describe('先看再发', () => {
     const footer = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-diag-send-confirm],[data-diag-send-dismiss]'))
     expect(footer.map((b) => b.textContent)).toEqual([ds('close'), ds('send')])
     expect(document.body.querySelectorAll('[data-dialog-footer] [data-variant="primary"]'), '一颗主按钮').toHaveLength(1)
-    // 额外内容（2026-10-21）：三个框 + 一键全选不折叠，且排在说明框之前（紧跟副标题）
+    // 额外内容（v3）：说明框在前（像联系作者写信页的「想说的话」），其后是三个框 + 一键全选的浅底卡片，不折叠；提示只在勾选后出现
     const extras = q('[data-diag-send-extras]')!
     expect(extras.closest('details'), '额外内容不折叠').toBeNull()
-    expect(extras.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(note.compareDocumentPosition(extras) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(extras.closest('[data-ui-field-group]'), '浅底圆角卡').not.toBeNull()
+    expect(extras.querySelectorAll('[data-diag-send-extra-hint]'), '未勾选不显示隐私提示').toHaveLength(0)
+    await click(extras.querySelector<HTMLInputElement>('[data-diag-send-extra="crash_reports"]')!)
+    expect(q('[data-diag-send-extra-hint="crash_reports"]')!.textContent).toBe(ds('extraHint.crash_reports'))
     expect(extras.querySelectorAll('input[type=checkbox]')).toHaveLength(3)
     expect(q('[data-diag-send-extras-all]')!.textContent).toBe(ds('extrasSelectAll'))
     expect(det.textContent).toContain(ds('bestEffort'))
@@ -319,47 +322,45 @@ describe('发送', () => {
     expect(q('[data-diag-send-confirm]')).toBeNull()
   })
 
-  it('成功且关联来信已登记：报告编号下面多一行去哪看回复；没登记 / 联系作者关着都不显示', async () => {
-    const reply = () => q('[data-diag-send-reply-inbox]')
-    const finish = async (over: Record<string, unknown>) => {
-      startMock.mockResolvedValue(status({}))
-      statusMock.mockResolvedValue(
-        status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS', ...over }),
-      )
-      await mount()
-      expect(reply()?.getAttribute('data-diag-send-reply-inbox') ?? 'reserved').toBe('reserved')
-      await click(q('[data-diag-send-confirm]'))
-      await tick()
-    }
-    useContactStore.setState({ capability: { enabled: true } as never })
-    await finish({ reply_inbox: true })
-    expect(reply()!.getAttribute('data-diag-send-reply-inbox')).toBe('active')
-    expect(reply()!.textContent).toBe(ds('replyInbox'))
-    expect(reply()!.textContent).toBe('作者回复会出现在「联系作者 › 我的来信」')
-    expect((enDialogs as any).settings.diagnostics.send.replyInbox).toContain('My letters')
-  })
-
-  it('没有 reply_inbox：占位仍在（页脚不跳位）但不可见；联系作者关着则根本不占位', async () => {
-    startMock.mockResolvedValue(status({}))
-    statusMock.mockResolvedValue(status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS' }))
-    useContactStore.setState({ capability: { enabled: true } as never })
-    await mount()
-    await click(q('[data-diag-send-confirm]'))
-    await tick()
-    expect(q('[data-diag-send-reply-inbox]')!.getAttribute('data-diag-send-reply-inbox')).toBe('reserved')
-    expect(q('[data-diag-send-reply-inbox]')!.className).toContain('invisible')
-  })
-
-  it('联系作者关着：不占位', async () => {
+  it('成功且关联来信已登记：副标题位置换成「已发送。作者回复会出现在…」（不新增行）；页脚左侧仍是报告编号', async () => {
     startMock.mockResolvedValue(status({}))
     statusMock.mockResolvedValue(
       status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS', reply_inbox: true }),
     )
-    useContactStore.setState({ capability: null })
+    await mount()
+    expect(q('[data-diag-send-reply-inbox]')).toBeNull()
+    const before = q('[data-diag-send-sentence]')!.textContent
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    const line = q('[data-diag-send-sentence]')!
+    expect(before).toBe(ds('sentence'))
+    expect(line.querySelector('[data-diag-send-reply-inbox]')!.textContent).toBe(ds('replyInbox'))
+    expect(ds('replyInbox')).toBe('已发送。作者回复会出现在「联系作者 › 我的来信」')
+    expect((enDialogs as any).settings.diagnostics.send.replyInbox).toContain('My letters')
+    expect(q('[data-diag-report-id]')!.textContent).toBe('TVD-ABCD-EFGH-JKMN-PQRS')
+    expect(document.body.querySelectorAll('[data-diag-send-sentence]')).toHaveLength(1)
+  })
+
+  it('没有 reply_inbox：副标题换成「已发送」（中文再带企业微信一句），不留任何空白占位', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockResolvedValue(status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS' }))
     await mount()
     await click(q('[data-diag-send-confirm]'))
     await tick()
     expect(q('[data-diag-send-reply-inbox]')).toBeNull()
+    expect(q('[data-diag-send-sentence]')!.textContent).toContain(ds('doneTitle'))
+  })
+
+  it('补充说明的字数只在接近上限（≥ 80%）时显示', async () => {
+    await mount()
+    expect(document.body.textContent).not.toContain(ds('noteCount', { count: 0, max: 1000 }))
+    const box = q<HTMLTextAreaElement>('[data-diag-send-note]')!
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      set.call(box, 'x'.repeat(800))
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.body.textContent).toContain(ds('noteCount', { count: 800, max: 1000 }))
   })
 
   it('备好的包在引擎里已被清掉（404）：说「关闭重开」，不给重试', async () => {
@@ -1016,9 +1017,8 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
       // 点任意一个框触发重新备包；显示以引擎回的 options 为准
       await click(box('source'))
       await tick(350)
-      const want = ds('sentenceExtras', {
-        items: keys.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')),
-      })
+      void keys
+      const want = ds('sentenceExtras')
       expect(sentence()).toBe(want)
       expect(document.body.querySelectorAll('[data-diag-send-sentence]')).toHaveLength(1)
       expect(sentence()).not.toBe(ds('sentence'))
@@ -1088,9 +1088,6 @@ describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4
       const send = (d as any).settings.diagnostics.send
       expect(send.sentence, lang).toContain(phrase)
       expect(send.sentenceExtras, lang).toContain(phrase)
-      const packages = lang === 'zh-CN' ? 'Python 包版本' : 'Python package versions'
-      expect(send.sentence, lang).toContain(packages)
-      expect(send.sentenceExtras, lang).toContain(packages)
       expect(send.notIncluded, lang).toContain(
         lang === 'zh-CN' ? '脚本打印出的内容' : 'output printed by your script',
       )

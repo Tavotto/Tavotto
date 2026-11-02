@@ -136,7 +136,7 @@
 - **响应。** 可选 `reply: {message_id: "TVM-…", reply_token: <64 位小写 hex>}`（pending / verifying / complete 重放分支都可能带）。形状不合（id 不匹配 `contactinbox.MESSAGE_ID`、令牌不是 64 hex）**只丢回信、不让发送失败，失败码闭集不变**。
   令牌只在 `SendSession.reply`（`repr=False`，连同它所属的 `report_id`，对账换 id 后不会把旧令牌登记到新报告名下），不进 `public()` / 日志 / 诊断包 / 遥测。
 - **登记。** 发送收尾为 `done`（含 init 回 `complete` 的重放、改参数对账出「其实已送达」、取消竞态里确认已送达）时 `_register_reply`：`contactinbox.add(mid, token, route_label(target), delivered=True, kind="report", report_id=<TVD>, body=<用户写的附言，没写为空>)`；
-  落盘成功才让 `public()` 带 `reply_inbox: true`（界面据此多说一行去哪看回复）。`unknown` / `failed` / `cancelled` 不登记。登记时再核一次联系作者开关。
+  落盘成功才让 `public()` 带 `reply_inbox: true`（界面据此把完成态副标题换成「作者回复会出现在…」）。`unknown` / `failed` / `cancelled` 不登记。登记时再核一次联系作者开关。
 - **保存期。** `kind=report` 且没有任何回信的本机记录 30 天后删（与服务端反馈包保存期一致）；有回信后同来信 365 天。没有任何记录时仍一次网络都不发。
-- **界面。** 确认框完成态在「已发送 · 报告编号」下多一行「作者回复会出现在「联系作者 › 我的来信」」，位置占位（`invisible`）防止页脚按钮跳位（#797）；「我的来信」里该条目带「问题反馈」标签 + 报告编号，附言没写显示「没有附言」。回信渲染 / 小圆点 / 通知胶囊全部复用。
+- **界面。** 确认框完成态把副标题那一行原地换成「已发送。作者回复会出现在「联系作者 › 我的来信」」（不新增行、不预留空白，页脚按钮不跳位 #797）；「我的来信」里该条目带「问题反馈」标签 + 报告编号，附言没写显示「没有附言」。回信渲染 / 小圆点 / 通知胶囊全部复用。
 - **未验证（NOT_RUN）。** 真服务端的 `want_reply` / `reply`（另一路在 infra 实现，客户端对接的是上述契约与本地模拟 `tests/support/diag_fakes.py`）；真机 WebView。
