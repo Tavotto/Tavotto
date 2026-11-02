@@ -2153,6 +2153,17 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
         expect(primary()?.disabled).toBe(false)
       })
 
+      it('PUT 期间切换项目：不再用新项目重试', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        let release!: (v: { convert_unsandboxed_windows: boolean }) => void
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockReturnValue(new Promise((r) => { release = r }))
+        await act(async () => primary()!.click())
+        await act(async () => setCurrentProjectId('pj-b'))
+        await act(async () => release({ convert_unsandboxed_windows: true }))
+        await settle()
+        expect(startConvert).toHaveBeenCalledTimes(1)
+      })
+
       it.each([
         ['非 Windows（无能力键）', 'agent_write_denied', mk('codex', undefined)],
         ['开关已打开', 'agent_write_denied', mk('codex', true)],

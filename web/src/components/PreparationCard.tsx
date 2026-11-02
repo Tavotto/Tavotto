@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChartLine,
@@ -998,6 +998,13 @@ function useConvertTick(active: boolean): void {
  */
 function AllowUnsandboxedRetryButton({ onRetry }: { onRetry: () => void }) {
   const [busy, setBusy] = useState(false)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
   return (
     <Button
       variant="primary"
@@ -1007,15 +1014,18 @@ function AllowUnsandboxedRetryButton({ onRetry }: { onRetry: () => void }) {
       loading={busy}
       disabled={busy}
       onClick={async () => {
+        const guard = captureProjectEpoch() // 发起时的项目：重试按 start() 调用时的当前项目提交，切走后绝不能再发
         setBusy(true)
         try {
           await setConvertUnsandboxedWindows(true)
         } catch {
-          setBusy(false)
+          if (alive.current) setBusy(false)
           return
         }
-        setBusy(false)
+        if (alive.current) setBusy(false)
+        if (!guard.still() || !alive.current) return
         await useAiStore.getState().loadCaps(false).catch(() => undefined) // 设置页里的开关随能力刷新显示为开
+        if (!guard.still() || !alive.current) return
         onRetry()
       }}
     >

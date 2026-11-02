@@ -96,4 +96,19 @@ describe('ConvertSandboxRow', () => {
     expect(putMock).toHaveBeenCalledWith(true)
     expect(sw()?.getAttribute('aria-checked')).toBe('false')
   })
+
+  it('保存成功但能力刷新失败：保留已保存的值，不退回', async () => {
+    putMock.mockResolvedValue({ convert_unsandboxed_windows: true })
+    await mount(false)
+    useAiStore.setState({
+      loadCaps: vi.fn(async () => {
+        throw new Error('refresh boom')
+      }),
+    })
+    await act(async () => sw()!.click())
+    await act(async () => {})
+    expect(putMock).toHaveBeenCalledWith(true)
+    expect(sw()?.getAttribute('aria-checked')).toBe('true')
+    expect(sw()?.disabled).toBe(false)
+  })
 })

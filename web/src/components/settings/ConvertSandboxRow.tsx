@@ -29,12 +29,14 @@ export function ConvertSandboxRow() {
     try {
       const r = await setConvertUnsandboxedWindows(next)
       setValue(r.convert_unsandboxed_windows)
-      await useAiStore.getState().loadCaps(false)
     } catch {
       setValue(prev) // 没存上就退回原样，不让界面说谎（用户可再点一次）
-    } finally {
       setBusy(false)
+      return
     }
+    // 已存上：能力刷新失败不退回（后端已是新值），保留 PUT 返回的值
+    await useAiStore.getState().loadCaps(false).catch(() => undefined)
+    setBusy(false)
   }
 
   return (
