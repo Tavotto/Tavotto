@@ -295,6 +295,7 @@ python3 scripts/winlab/winlab.py admin perf-fixtures --remove   # 撤销
 
 1. `C:\TavottoLab\perf\perf-fixtures.vhdx`（4 GB 动态 VHDX，diskpart 创建 / 挂载，NTFS，卷标 `TavottoPerf`，盘符 `P:`；不依赖 Hyper-V 模块），
    计划任务 `TavottoLab-PerfVhd`（SYSTEM，开机时重新挂载）。盘上建 `P:\科研 数据\项目\`，**只在这个目录上**授 `tavotto-lab` 修改权限（`Set-Acl`，不碰盘根）。
+   另外 `.vhdx` **文件**本身也授 `tavotto-lab` 修改并重新挂载一次：挂上的虚拟磁盘沿用镜像文件的安全描述符，文件只继承 SYSTEM / Administrators 时 tavotto-lab 连卷都打不开（`P:` 上任何 stat 都是 WinError 5，盘内 NTFS 授权不起作用）。
    它**只覆盖「另一块盘 + 中文路径」，不限速、不模拟 U 盘的速度**（VHDX 的 QoS 限速要 Hyper-V；底下是 Lab 自己的云盘）。
 2. Python 安装管理器 MSIX（python.org 官方发布，固定版本与 SHA-256 写在 `winlab.py` 的 `PYMANAGER_*`）：**Mac 端直连 python.org 下载**（显式不走代理）、核大小与散列后经 scp 送到
    `C:\TavottoLab\perf\`，Lab 上再核 SHA-256 与 Authenticode（有效且签名者含 Python Software Foundation）才 `Add-AppxProvisionedPackage -Online -SkipLicense`

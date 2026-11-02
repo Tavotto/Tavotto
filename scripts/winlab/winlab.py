@@ -839,6 +839,13 @@ if (-not (Test-Path $vhdx)) {
 } elseif (-not (Get-DiskImage -ImagePath $vhdx).Attached) {
   Mount-DiskImage -ImagePath $vhdx | Out-Null
 }
+# An attached virtual disk takes the security descriptor of its image FILE: C:\TavottoLab\perf inherits
+# SYSTEM/Administrators only, so tavotto-lab could not open the volume at all (every stat on P: -> WinError 5,
+# whatever the NTFS ACLs inside say). Grant tavotto-lab on the .vhdx, then re-attach so the new descriptor applies.
+icacls $vhdx /grant 'tavotto-lab:(M)' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls grant on $vhdx failed: $LASTEXITCODE" }
+Dismount-DiskImage -ImagePath $vhdx | Out-Null
+Mount-DiskImage -ImagePath $vhdx | Out-Null
 $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
 if (-not $vol -or $vol.FileSystemLabel -ne 'TavottoPerf') {
   $part = Get-DiskImage -ImagePath $vhdx | Get-Disk | Get-Partition | Where-Object Type -eq 'Basic' | Select-Object -First 1

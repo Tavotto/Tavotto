@@ -3772,6 +3772,22 @@ def test_perf_fixtures_logon_task_can_read_its_admin_written_script():
     )
 
 
+def test_perf_fixtures_volume_is_openable_by_tavotto_lab():
+    """挂上的虚拟磁盘沿用 .vhdx **文件**的安全描述符：文件只继承 SYSTEM / Administrators 时，tavotto-lab 连卷都打不开，
+    P: 上任何 stat 都是 WinError 5，里面的 NTFS 授权不起作用（Lab 11-03 实测 cold-drive-p 崩在 `perf_dir.is_dir()`）。
+    授权在建盘 / 挂载之后，并且授权之后要重新挂载一次，新的描述符才生效；盘符校验放在重新挂载之后。"""
+    fill = W._fill_perf(W.PERF_FIXTURES_PS)
+    grant = "icacls $vhdx /grant 'tavotto-lab:(M)'"
+    assert grant in fill
+    assert (
+        fill.index("diskpart /s $dp")
+        < fill.index(grant)
+        < fill.index("Dismount-DiskImage -ImagePath $vhdx")
+        < fill.rindex("Mount-DiskImage -ImagePath $vhdx")
+        < fill.index("is not the perf VHDX")
+    )
+
+
 def test_pymanager_pin_and_fetch_rejects_a_wrong_download(tmp_path, monkeypatch):
     assert re.fullmatch(r"[0-9a-f]{64}", W.PYMANAGER_SHA256)
     assert W.PYMANAGER_URL.startswith("https://www.python.org/ftp/python/pymanager/")
