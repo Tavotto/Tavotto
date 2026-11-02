@@ -4,7 +4,8 @@
 `input_remap` → worker 只读改道，**脚本不改**。本工具只是让 AI 能替用户「找」，找到的东西接上去走**同一套**推导与落盘
 （`inputremap.link`，数据失联弹窗的 HTTP 端点调的也是它，不复制第二份校验），并且**一律先问用户**：
 
-1. `requested` 只认两处出处（`inputremap.known_requests`：报告里的 `missing_input` 载荷、脚本里以常量出现且此刻找不到的路径），
+1. `requested` 只认三处出处（`inputremap.known_requests`：报告里的 `missing_input` 载荷、脚本里以常量出现且此刻找不到的路径、
+   已经接上的改指——接错了文件时 AI 要能改过来，TVD-6Z9R），
    而且得是改指救得回来的读取（`open`）；exists / glob / C++ 读取器改指救不回来，要改脚本——AI 永远不改脚本，直接拒。
 2. `chosen` 先过读取范围（`ctx.scope`，凭据位置 / 范围外拒绝），再要存在；规则当场推演，推不出来就不打扰用户。
 3. 弹 approve 卡（`ctx.ask`）：没有界面 = `needs_approval`，用户说不 = 什么都不写。
@@ -81,12 +82,15 @@ def link_data_file(ctx: FixContext, args: dict) -> ToolResult:
     root = str(ctx.project_root)
 
     known = inputremap.known_requests(script, root, _reported_payload(ctx))
-    if requested not in known:
+    matched = inputremap.match_request(known, requested)
+    if matched is None:
         return err(
             "requested_unknown",
             "`requested` is not a path this script was found to be missing. Use the path from the run report "
-            "(read_run_report) exactly as written; Tavotto will not link a path it cannot tie to the script.",
+            "(read_run_report: `missing_input`, or `script_asks_for` of an existing data link) exactly as "
+            "written; Tavotto will not link a path it cannot tie to the script.",
         )
+    requested = matched
     if known[requested] != inputremap.VIA_OPEN:
         return err(
             "link_unreachable",
@@ -158,7 +162,9 @@ LINK_TOOLS: tuple[FixTool, ...] = (
         "propose_fix first; if the user declines nothing is written. A file the user already chose in ask_user "
         "or pick_file is linked without a second card. `requested` = the path string the script uses, exactly as in the run report. "
         "`chosen` = the file (or the folder that holds it) you found; it must be somewhere you may read. "
-        "Only reading is redirected, and only when the original path cannot be opened. Afterwards call try_run.",
+        "Only reading is redirected, and only when the original path cannot be opened. It also re-points an "
+        "existing data link (run report `data_links`) whose linked file turns out to be the wrong one. "
+        "Afterwards call try_run.",
         obj(
             {
                 "requested": {
