@@ -895,7 +895,7 @@ def test_apply_keeps_waiting_while_the_install_makes_progress(tmp_path, monkeypa
             if stop.wait(0.05):
                 return
             with deprepair._lock:
-                deprepair._bump_progress()
+                deprepair._bump_progress(job)
         deprepair._release(job)
 
     worker = threading.Thread(target=install_is_working)
@@ -914,6 +914,38 @@ def test_apply_keeps_waiting_while_the_install_makes_progress(tmp_path, monkeypa
     assert pyversionfix.STAGE_WAITING in stages
     # 等完回到 preparing，之后照常往下走
     assert stages[stages.index(pyversionfix.STAGE_WAITING) + 1] == pyversionfix.STAGE_PREPARING
+
+
+def test_another_projects_progress_does_not_keep_a_stalled_install_alive(tmp_path, monkeypatch):
+    """Codex #1632 P2：本项目的在途安装卡住了，另一个项目的安装一直在出日志——卡死计时只看本项目，照样判卡住。"""
+    root = _project(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    calls: list = []
+    _stub_generation(monkeypatch, calls)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 0.3)
+    job = _busy_job(root)
+    other_job = "job-other-project"
+    assert deprepair._claim(other_job, project_id=managedenv.project_fingerprint(str(other)))
+    stop = threading.Event()
+
+    def other_project_is_busy():
+        while not stop.wait(0.02):
+            with deprepair._lock:
+                deprepair._bump_progress(other_job)
+
+    worker = threading.Thread(target=other_project_is_busy)
+    worker.start()
+    try:
+        result = pyversionfix.apply_python_change(_plan(root), None, threading.Event())
+    finally:
+        stop.set()
+        worker.join()
+        deprepair._release(job)
+        deprepair._release(other_job)
+    assert result == {"ok": False, "code": deprepair.ERROR_BUSY, "to": "3.12"}
+    assert calls == []
 
 
 def test_apply_wait_responds_to_cancel(tmp_path, monkeypatch):

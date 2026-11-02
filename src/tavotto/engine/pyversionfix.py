@@ -60,7 +60,7 @@ ERROR_CANCELLED = "python_change_cancelled"
 ERROR_FAILED = "python_change_failed"
 ERROR_UNAVAILABLE = "python_change_unavailable"
 #: 这个项目的依赖安装 / 换代作业还在跑：换代前等它结束（TVD-22EY：单包修复持环境锁约 3 分钟，换 Python 立即撞忙）。
-#: 不设时钟上限——网络慢、包大时安装本来就要很久；只在它**这么久一点进展都没有**（`deprepair.progress_seq` 不动）时才
+#: 不设时钟上限——网络慢、包大时安装本来就要很久；只在它**这么久一点进展都没有**（`deprepair.project_progress` 不动）时才
 #: 判卡住、回可重试的忙。安装自己另有总预算（`deprepair.INSTALL_TIMEOUT_S`），正常情况下一定会结束
 INSTALL_STALL_SECONDS = 600.0
 INSTALL_WAIT_POLL = 0.5
@@ -499,20 +499,20 @@ def apply_python_change(
 def _wait_for_installs(project: str, cancel: threading.Event, note=None) -> bool:
     """这个项目的受管环境此刻有依赖安装 / 换代在跑（`deprepair.installing`）时等它结束，响应取消。
 
-    等多久看那个作业自己：只要进度表还在变（`deprepair.progress_seq`），就一直等；连续 `INSTALL_STALL_SECONDS`
+    等多久看这个项目的在途作业自己：只要它们的进度记录还在变（`deprepair.project_progress`；别的项目的不算），就一直等；连续 `INSTALL_STALL_SECONDS`
     一点进展都没有才判卡住。开始等时报一次 `STAGE_WAITING`（`note`）。
     回 True = 可以继续；False = 判卡住，或被取消（调用方看 `cancel` 区分）。"""
     if not deprepair.installing(project):
         return True
     if note is not None:
         note(STAGE_WAITING)
-    seen = deprepair.progress_seq()
+    seen = deprepair.project_progress(project)
     last_progress = time.monotonic()
     while deprepair.installing(project):
         if cancel.is_set():
             return False
         now = time.monotonic()
-        seq = deprepair.progress_seq()
+        seq = deprepair.project_progress(project)
         if seq != seen:
             seen, last_progress = seq, now
         elif now - last_progress >= INSTALL_STALL_SECONDS:

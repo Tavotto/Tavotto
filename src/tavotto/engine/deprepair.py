@@ -174,9 +174,10 @@ STATE_CANCELLED = "cancelled"
 _lock = threading.RLock()
 _plans: dict[str, "RepairPlan"] = {}
 _progress: dict[str, dict] = {}
-#: `_progress` 每被写一次就加一（状态 / 日志 / 包源……任何一笔）。等别的作业结束的一方据此判「它还有没有进展」
-#: （`pyversionfix._wait_for_installs` 的卡死判据，TVD-22EY）；只在 `_lock` 下读写
-_progress_seq = 0
+#: 每条进度记录被写过几笔（状态 / 日志 / 包源……任何一笔；键 = 进度 id，认领的作业与它的进度记录同一个 id）。
+#: 等别的作业结束的一方按**这个项目**在途作业的这些计数判「它还有没有进展」（`project_progress`；
+#: `pyversionfix._wait_for_installs` 的卡死判据，TVD-22EY / Codex #1632 P2：别的项目的进展不算）；只在 `_lock` 下读写
+_progress_seq: dict[str, int] = {}
 _cancels: dict[str, threading.Event] = {}
 #: (项目指纹, 脚本) → 已经修过几轮。
 _rounds: dict[tuple[str, str], int] = {}
@@ -2719,16 +2720,18 @@ def custom_package_index(python: str) -> bool | None:
 _LOG_MAX = 20_000
 
 
-def _bump_progress() -> None:
-    """（持 `_lock`）进度表又变了一笔。"""
-    global _progress_seq
-    _progress_seq += 1
+def _bump_progress(progress_id: str) -> None:
+    """（持 `_lock`）这条进度记录又变了一笔。"""
+    _progress_seq[progress_id] = _progress_seq.get(progress_id, 0) + 1
 
 
-def progress_seq() -> int:
-    """进度表到此刻一共变过几笔（只增不减）。两次读到不同的值 = 期间有作业有进展。"""
+def project_progress(project: str | Path) -> tuple:
+    """这个项目此刻在途作业的进展快照：(在途作业 id 集合, 它们各自进度记录被写过的笔数)。
+    两次读到的不同 = 期间这个项目有作业有进展（换了作业也算）；别的项目的作业不进来。"""
+    pid = managedenv.project_fingerprint(str(Path(project)))
     with _lock:
-        return _progress_seq
+        ids = sorted(k for k, meta in _active_jobs.items() if meta.get("project_id") == pid)
+        return tuple(ids), tuple(_progress_seq.get(k, 0) for k in ids)
 
 
 def _append_log(plan_id: str, line: str, on_event) -> None:
@@ -2737,7 +2740,7 @@ def _append_log(plan_id: str, line: str, on_event) -> None:
         if rec is None:
             return
         rec["log"] = (rec["log"] + _sanitize(line))[-_LOG_MAX:]
-        _bump_progress()
+        _bump_progress(plan_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2751,7 +2754,7 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_mirror"] = url
-        _bump_progress()
+        _bump_progress(progress_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2765,7 +2768,7 @@ def _note_source(progress_id: str, source: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_source"] = source
-        _bump_progress()
+        _bump_progress(progress_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2860,7 +2863,7 @@ def _emit(
         if plan_id in _committed:
             rec["committed"] = True
         _progress[plan_id] = rec
-        _bump_progress()
+        _bump_progress(plan_id)
         snapshot = dict(rec)
         listeners = list(_listeners.get(plan_id, ()))
         if state in TERMINAL_STATES:
@@ -4097,7 +4100,7 @@ def _emit_job(
         if job is not None:
             rec.update(op=job.op, distribution=job.distribution, requirement=job.requirement)
         _progress[job_id] = rec
-        _bump_progress()
+        _bump_progress(job_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -4673,6 +4676,7 @@ def _release(plan_id: str) -> None:
     """作业结束（不论怎么结束）：认领 / 登记 / 监听都清掉。"""
     with _lock:
         _running.discard(plan_id)
+        _progress_seq.pop(plan_id, None)
         meta = _active_jobs.pop(plan_id, None)
         if meta and meta.get("project_id") and meta.get("digest"):
             key = (meta["project_id"], meta.get("scope", ""), meta["digest"])
