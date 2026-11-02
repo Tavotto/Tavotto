@@ -6351,6 +6351,8 @@ export interface DiagSendStatus {
   report_id?: string
   /** 用户取消时报告其实已送达（引擎收到 409 already_complete）：按成功展示，如实说明 */
   cancel_raced?: boolean
+  /** 随报告开的关联来信已登记进本机「我的来信」（作者的回复会出现在那里）；没有就不带 */
+  reply_inbox?: boolean
   /** 失败码（引擎 `diagsend.FAILURES` 的键） */
   code?: string
   retryable?: boolean
@@ -6398,7 +6400,11 @@ export async function fetchDiagSendBundle(id: string): Promise<Blob> {
 }
 
 /** **用户点了「发送」**：唯一会让引擎去连诊断服务的调用。 */
-export const startDiagSend = (id: string, body: { category: string; note: string; gen?: number }) =>
+/** `reply: false` = 这次不开回信通道（联系作者窗口随信附带的包：回信走那封信）；缺省 true。 */
+export const startDiagSend = (
+  id: string,
+  body: { category: string; note: string; gen?: number; reply?: boolean },
+) =>
   jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -6475,6 +6481,9 @@ export interface ContactMessage {
   message_id: string
   sent_at: number
   route: 'cn' | 'global'
+  /** `report` = 发送「问题反馈」时随报告开的关联来信（带 `report_id`）；旧引擎不带 = 普通来信 */
+  kind?: 'letter' | 'report'
+  report_id?: string
   state: 'new' | 'replied' | 'closed'
   unread: number
   /** 用户自己写的主题 / 正文 / 附件文件名（本机存的那一份；旧记录没有就是空） */

@@ -52,3 +52,7 @@ When the in-app fix assistant tried to create a new Python environment while a p
 ## Rendering no longer gets slower as more figures are open
 
 With four or more scripted figures on the canvas, editing one figure could re-render the others in the background one after another. Tavotto kept only three render sessions alive, so every one of those renders restarted a script from scratch (about 15 times slower than a warm render, and 20 to 40 seconds on some Windows machines). Tavotto now keeps up to eight sessions alive when your computer has the free memory (three otherwise), and background re-renders of neighbouring figures no longer push out the figure you are editing. A neighbouring figure that would need a fresh start while the sessions are full simply keeps its previous picture.
+
+## The maker's reply to a problem report now shows up in the app
+
+When you send a problem report and *Contact the maker* is on, the app now also keeps a small record so the maker's reply can appear under *Contact the maker > My letters*, tagged "Report" with the report ID. The dialog says so after sending. Nothing changes if you turn *Contact the maker* off (`TAVOTTO_NO_CONTACT=1`), and a report that gets no reply is forgotten locally after 30 days.
