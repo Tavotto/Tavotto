@@ -53,6 +53,7 @@
 |---|---|---|
 | `wall` | bench 客户端 | 整次 HTTP 往返 |
 | `worker_get` | `app.py` | 取（必要时 spawn）会话——**既不属于 worker 也不属于 build** |
+| `worker_get` 分段 | `pool.acquire` | `resolve_python_ms` / `env_decide_ms` / `launcher_prewarm_ms` / `watch_sync_ms` / `retire_wait_ms` / `pool_wait_ms` / `spawn_gate_ms` / `env_probe_ms` / `fingerprint_ms` / `spawn_ms`（Python 池）/ `handshake_ms`（workerd）/ `evict_ms`，只有进过那一段才有键；`worker_get_ms` 仍是总数，分段是加法 |
 | `build 往返` | `pool` | 整条 build 命令（含子解释器启动与 `import matplotlib`） |
 | `script_build` | worker | build 里 worker 自己那一段（跑脚本 + instrument + 首次预览） |
 | `queue_wait` | `pool` | 请求发出去之前排了多久（Python 池 = 抢 `w.lock`；workerd 侧口径见下） |
