@@ -64,3 +64,7 @@ When you send a problem report and *Contact the maker* is on, the app now also k
 ## Scripts that `import pymupdf` can install it in one click
 
 PyMuPDF's current documentation imports it as `import pymupdf` instead of the older `import fitz`. Tavotto only recognised the older name, so a script written the new way that ran in an environment without PyMuPDF got a "missing pymupdf" card with no install button, and the "Specify package…" box was not even filled in. Both names now lead to the same install of PyMuPDF into an environment Tavotto manages, exactly as `import fitz` already did. Your own Python environments are not changed unless you choose them.
+
+## Text boxes added over a figure keep their size when you export that figure
+
+In single-figure editing, a text box, arrow or shape drawn over the figure came out much smaller relative to the figure when it was exported, whenever the figure was shown scaled down on the canvas (for example a large Matplotlib figure fitted into the page). A label set to match the figure's own text looked right on the canvas but ended up about half as large in the exported file, inside a box that was too big for it. Export now scales font size, line width, padding, border and corner radius by the same ratio as the figure, so the annotation looks the same relative to the figure as it did on the canvas. The figure's own text is unchanged, and nothing changes when the figure was shown at its original size.
