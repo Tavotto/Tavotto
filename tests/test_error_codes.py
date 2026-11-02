@@ -322,6 +322,7 @@ USER_VISIBLE_CODES = {
     "convert_source_changed": set(),
     "convert_context_changed": set(),
     "convert_reference_invalid": set(),
+    "workspace_path_too_long": set(),
     "convert_project_changed": set(),
     "convert_candidate_changed": set(),
     "convert_outside_project": set(),
