@@ -273,8 +273,9 @@ subprocess.run([sys.executable, "-c", "import os; os.write(1, b'raw-{marker}\\\\
     assert worker.ensure_built()["ok"]
     time.sleep(0.1)
     log = worker.log_path.read_text(encoding="utf-8", errors="replace")
-    for prefix in ("native-", "已重绘 ", "raw-"):
-        assert prefix + marker in log
+    # 子进程按它自己的 stdio 编码写中文（Windows 中文区是 cp936），只认 ASCII 标记
+    assert f"native-{marker}" in log and f"raw-{marker}" in log
+    assert log.count(marker) == 3
 
 
 def test_ordinary_worker_error_payload_preserves_parse_facts():
