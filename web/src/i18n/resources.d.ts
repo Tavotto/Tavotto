@@ -6535,7 +6535,8 @@ export default interface Resources {
           "installing": "正在安装所需的包…",
           "launching": "正在启动 Python…",
           "preparing": "正在准备…",
-          "verifying": "正在检查…"
+          "verifying": "正在检查…",
+          "waiting": "正在等另一个安装完成…"
         }
       },
       "rasterHint": {

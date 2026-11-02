@@ -583,6 +583,61 @@ def test_change_python_failure_codes_pass_through(box):
     assert r.is_error and r.code == "no_base_python"
 
 
+def _default_changer_with_apply_result(monkeypatch, result):
+    from tavotto.engine import pyversionfix
+    from tavotto.engine.fixtools import executors  # noqa: F401
+
+    monkeypatch.setattr(pyversionfix, "auto_change_enabled", lambda: True)
+    monkeypatch.setattr(
+        pyversionfix,
+        "plan_python_change",
+        lambda failure, project: pyversionfix.PythonChangePlan(
+            from_version="3.14",
+            to_version="3.12",
+            base=pyversionfix.BASE_SYSTEM,
+            download_bytes=0,
+            code="root_python_mismatch",
+            project=project,
+            script="",
+            base_python="/sys/python3.12",
+        ),
+    )
+    monkeypatch.setattr(pyversionfix, "apply_python_change", lambda plan, progress, cancel: result)
+
+
+def test_change_python_busy_install_is_a_retryable_env_busy_with_a_readable_message(
+    box, monkeypatch
+):
+    # TVD-22EY：依赖安装还占着环境时，AI 得到的是可重试的 env_busy + 说明，而不是裸的 dependency_install_busy
+    _default_changer_with_apply_result(
+        monkeypatch, {"ok": False, "code": "dependency_install_busy", "to": "3.12"}
+    )
+    ctx = change_ctx(box)
+    r = call(ctx, "change_python", {"version": "3.12"})
+    assert r.is_error and r.code == "env_busy"
+    assert "Retryable" in r.content and "call change_python again" in r.content
+    assert "could not be created" not in r.content
+
+
+def test_change_python_native_session_in_use_is_not_marked_retryable(box, monkeypatch):
+    from tavotto.engine import deprepair
+
+    _default_changer_with_apply_result(
+        monkeypatch, {"ok": False, "code": deprepair.ERROR_IN_USE_BY_NATIVE, "to": "3.12"}
+    )
+    ctx = change_ctx(box)
+    r = call(ctx, "change_python", {"version": "3.12"})
+    assert r.is_error and r.code == deprepair.ERROR_IN_USE_BY_NATIVE
+    assert "Retryable" not in r.content and "env_busy" not in r.content
+
+
+def test_change_python_description_states_the_busy_precondition():
+    from tavotto.engine.fixtools import REGISTRY
+
+    text = REGISTRY["change_python"].description
+    assert "waits for it to finish" in text and "env_busy" in text
+
+
 # =========================================================================== select_environment
 def test_select_environment_always_asks_then_remembers_for_the_project(box):
     ctx = change_ctx(box)
