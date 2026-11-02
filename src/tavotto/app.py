@@ -8159,7 +8159,12 @@ def api_engine_render():
             observe_worker=observe_render_worker,
         )
     except engine_pool.WorkerError as exc:
-        LOG.error("引擎渲染失败: %s: %s", stem, exc)
+        if exc.code == "queue_superseded":
+            # 拖动 / 连续调参时排队里的旧请求被同一张图的新请求顶掉是常态，不是故障：记 ERROR 会刷满
+            # 诊断包的报错清单、把真报错挤出去（反馈包 TVD-MDBH 一分钟 38 条）。响应与事件照旧。
+            LOG.info("引擎渲染被同图新请求顶替: %s", stem)
+        else:
+            LOG.error("引擎渲染失败: %s: %s", stem, exc)
         _note_handoff_render(stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
