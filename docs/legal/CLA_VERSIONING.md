@@ -116,8 +116,9 @@ those executed copies: login, immutable GitHub account id, agreement, version,
 the two signing dates and a one-line note on where the record is kept — no
 name, address or email (the gate rejects any extra field). The gate qualifies a
 contributor from it only when the version still equals the current agreement
-version and every account id observed for that login in the pull request
-equals the recorded `github_id`.
+version and every account id that GitHub itself reports for that login in the
+pull request (the PR author's id, the `author.id` of their commits) equals the
+recorded `github_id`.
 
 This does not reintroduce two authorities, because the two never coexist: the
 gate refuses a policy in which `provider.configured` is `true` and

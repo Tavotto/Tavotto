@@ -45,8 +45,12 @@ fail-closed 的几处（每一处都是「宁可红」）：
 * 认不出 GitHub 账号的 co-author（邮箱不是 GitHub noreply 形态）→ 失败，
   让人来认领，而不是猜一个 login 或者当它不存在；
 * 线下签署按 login 找到条目后，还要**按不可变的 GitHub 账号 id 核身份**：
-  这个 PR 里该 login 名下观察到的每一个账号 id 都必须等于条目里的
-  `github_id`，且至少观察到一个——login 可以改名、被别人注册，id 不会；
+  这个 PR 里该 login 名下**由可信来源**给出的每一个账号 id 都必须等于条目里的
+  `github_id`，且至少有一个——login 可以改名、被别人注册，id 不会。可信来源
+  只有两个：PR 事件里 PR 作者的 id（`CLA_PR_AUTHOR_ID` / `--pr-author-id`）与
+  GitHub API 对提交作者解析出的 `author.id`。`Co-authored-by` 与 noreply 邮箱里
+  的数字是贡献者自己写的字符串，**不算身份证明**（Codex 评审 #1630）；
+  PR 作者是线下签署人却拿不到 PR 作者 id → 不算；
   签的版本 ≠ 当前协议版本 → 不算（新版本要新同意，见 CLA_VERSIONING.md）；
 * 豁免只按 login 精确匹配显式名单，**没有「名字像机器人就放行」这种规则**——
   `dependabot[bot]` 能过是因为它在表里写着，不是因为它带个 `[bot]` 后缀；
@@ -351,7 +355,9 @@ def verify_documents(policy: dict, root: Path) -> list[str]:
 # ────────────────────────────────────────────────────────────── 贡献者收集
 
 
-def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dict], list[dict]]:
+def collect_contributors(
+    pr_author: str | None, commits: list, pr_author_id: int | None = None
+) -> tuple[list[dict], list[dict]]:
     """把 PR 作者 + 每个 commit 的 author + Co-authored-by 收成一张去重的表。
 
     纯函数：`commits` 是 PR 的全部提交对象（`GET /repos/{o}/{r}/compare/{base}...{head}` 逐页的 `commits`）。
@@ -377,7 +383,10 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
             if account_id not in ids:
                 ids.append(account_id)
 
-    add(pr_author, "pr_author")
+    add(pr_author, "pr_author", account_id=_account_id(pr_author_id))
+    if pr_author and _account_id(pr_author_id) is None:
+        # PR 作者的 id 没传进来：线下签署不能只凭 login 认 PR 作者。
+        found[pr_author.lower()]["pr_author_id_missing"] = True
 
     if not isinstance(commits, list):
         raise ConfigError(f"commits JSON 不是数组：{type(commits).__name__}")
@@ -389,13 +398,15 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
         # GitHub 已经解析好的账号。null = 这个 commit 的邮箱没绑到任何账号。
         author = c.get("author")
         if isinstance(author, dict) and author.get("login"):
+            # GitHub 按已验证邮箱解析出的账号——它的 id 是可信的身份证明。
             add(author["login"], "commit_author", sha, _account_id(author.get("id")))
         else:
             meta = (c.get("commit") or {}).get("author") or {}
             email = str(meta.get("email", ""))
             m = NOREPLY_RE.match(email)
             if m:
-                add(m.group("login"), "commit_author", sha, _account_id(m.group("id")))
+                # 邮箱是提交者自己写的字符串：认得出 login，但里面的数字不是身份证明。
+                add(m.group("login"), "commit_author", sha)
             else:
                 unresolved.append(
                     {
@@ -411,7 +422,8 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
             email = m.group("email").strip()
             nm = NOREPLY_RE.match(email)
             if nm:
-                add(nm.group("login"), "co_author", sha, _account_id(nm.group("id")))
+                # trailer 是 PR 作者自己写的：login 要检查，数字不能当身份证明。
+                add(nm.group("login"), "co_author", sha)
             else:
                 unresolved.append(
                     {"kind": "co_author", "sha": sha, "name": m.group("name"), "email": email}
@@ -425,7 +437,7 @@ def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dic
 
 
 def _account_id(raw) -> int | None:
-    """API 给的整数 id，或 noreply 邮箱里的数字前缀。别的形状一律当没看到。"""
+    """可信来源（PR 事件 / API）给的正整数 id。别的形状一律当没看到。"""
     if type(raw) is int and raw > 0:
         return raw
     if isinstance(raw, str) and raw.isdigit() and int(raw) > 0:
@@ -459,12 +471,17 @@ def _offline_verdict(sig: dict, contributor: dict, policy: dict) -> str | None:
             f"当前版本是 {current}——新版本要新同意（docs/legal/CLA_VERSIONING.md），"
             "请本人签当前版本后由维护者更新 offline_signatures"
         )
+    if contributor.get("pr_author_id_missing"):
+        return (
+            f"`{sig['login']}` 是 PR 作者且有线下签署记录，但判定器没拿到 PR 作者的"
+            "账号 id（CLA_PR_AUTHOR_ID），无法确认是同一个账号——不凭 login 放行"
+        )
     ids = contributor.get("ids") or []
     if not ids:
         return (
-            f"`{sig['login']}` 有线下签署记录，但这个 PR 里没观察到它的 GitHub 账号 id，"
-            "无法确认是同一个账号（login 能改名、能被别人注册）——"
-            "需要至少一个由该账号署名的提交"
+            f"`{sig['login']}` 有线下签署记录，但这个 PR 里没有可信来源给出它的 GitHub 账号 id"
+            "（Co-authored-by / noreply 邮箱里的数字不算），无法确认是同一个账号——"
+            "需要它是 PR 作者，或有 GitHub 认得出的、由该账号署名的提交"
         )
     stray = [i for i in ids if i != sig["github_id"]]
     if stray:
@@ -849,6 +866,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--pr-author", default=None)
     ap.add_argument(
+        "--pr-author-id",
+        type=int,
+        default=None,
+        help="PR 作者的不可变账号 id（github.event.pull_request.user.id）。"
+        "缺省读环境变量 CLA_PR_AUTHOR_ID——workflow 用环境变量传，"
+        "免得默认分支上还不认识这个参数的旧判定器在自举期报错",
+    )
+    ap.add_argument(
         "--commits-json",
         default=None,
         help="PR 的提交列表：`compare/{base}...{head}` 逐页 `.commits` 首尾相接的文件",
@@ -918,7 +943,10 @@ def main(argv: list[str] | None = None) -> int:
             commits = []
             if args.commits_json:
                 commits = load_commits(Path(args.commits_json), args.expected_commits)
-            contributors, unresolved = collect_contributors(args.pr_author, commits)
+            pr_author_id = args.pr_author_id
+            if pr_author_id is None and os.environ.get("CLA_PR_AUTHOR_ID", "").isdigit():
+                pr_author_id = int(os.environ["CLA_PR_AUTHOR_ID"])
+            contributors, unresolved = collect_contributors(args.pr_author, commits, pr_author_id)
             verdict = decide(args.event, policy, checks, contributors, unresolved, context)
     except ConfigError as exc:
         verdict = {

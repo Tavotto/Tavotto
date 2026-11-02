@@ -217,10 +217,14 @@ agreement is listed in `offline_signatures` (format and rationale:
 Three properties keep that from widening the check:
 
 - **Identity is the immutable account id, not the login.** A login can be
-  renamed and later registered by someone else. Every account id observed for
-  that login in the pull request (the API's `author.id`, or the numeric prefix
-  of a `<id>+<login>@users.noreply.github.com` address) must equal the recorded
-  `github_id`, and at least one must be observed.
+  renamed and later registered by someone else. Only trusted sources supply an
+  id: the pull request author's id from the event
+  (`github.event.pull_request.user.id`, passed as `CLA_PR_AUTHOR_ID`) and the
+  `author.id` GitHub resolves for a commit. A number inside a `Co-authored-by`
+  trailer or a `<id>+<login>@users.noreply.github.com` address is a string the
+  contributor typed and proves nothing. Every trusted id for that login must
+  equal the recorded `github_id`, at least one must exist, and if the signer is
+  the PR author, the author's id must have been supplied.
 - **A signature covers one version.** If the agreement version moves on, the
   entry stops qualifying until the contributor signs the new text.
 - **It cannot coexist with a provider.** `provider.configured: true` with a

@@ -1063,7 +1063,8 @@ class TestOfflineSignatures:
         with pytest.raises(gate.ConfigError):
             gate.validate_policy(self._policy(sigs=[dict(self.SIG), dict(self.SIG)]))
 
-    def test_collection_records_account_ids_from_api_and_noreply(self, gate):
+    def test_only_trusted_sources_supply_account_ids(self, gate):
+        """API 解析出的 author.id 与 PR 事件的作者 id 是身份证明；trailer / noreply 里的数字不是。"""
         commits = [
             {
                 "sha": "a1",
@@ -1076,17 +1077,60 @@ class TestOfflineSignatures:
             {
                 "sha": "b2",
                 "commit": {
-                    "author": {"name": "S", "email": "9+signer@users.noreply.github.com"},
+                    "author": {"name": "S", "email": "9+other@users.noreply.github.com"},
                     "message": "y",
                 },
                 "author": None,
             },
         ]
-        found, unresolved = gate.collect_contributors("signer", commits)
+        found, unresolved = gate.collect_contributors("opener", commits, 31)
         by = {c["login"]: c for c in found}
         assert unresolved == []
-        assert by["signer"]["ids"] == [777, 9]
-        assert by["coa"]["ids"] == [42]
+        assert by["signer"]["ids"] == [777]
+        assert by["opener"]["ids"] == [31]
+        assert by["coa"]["ids"] == [] and by["other"]["ids"] == []
+
+    @staticmethod
+    def _repo_policy_with_signer():
+        pol = TestOfflineSignatures()._policy()
+        pol["offline_signatures"][0].update(login="signer", github_id=777)
+        return pol
+
+    def test_trailer_cannot_vouch_for_a_recycled_pr_author_login(self, gate):
+        """Codex #1630 复现：抢注了旧 login 的人开 PR，提交署名豁免账号，
+        再写一行带签署人 id 的 Co-authored-by——不能因此被判已签。"""
+        commits = [
+            {
+                "sha": "c3",
+                "commit": {
+                    "author": {"name": "O", "email": "o@example.com"},
+                    "message": "z\n\nCo-authored-by: S <777+signer@users.noreply.github.com>",
+                },
+                "author": {"login": "owner", "id": 1},
+            }
+        ]
+        pol = self._repo_policy_with_signer()
+        for author_id in (None, 999):
+            who, unresolved = gate.collect_contributors("signer", commits, author_id)
+            v = gate.decide("pull_request", pol, None, who, unresolved)
+            assert v["status"] == "failure", (author_id, v)
+        who, unresolved = gate.collect_contributors("signer", commits, 777)
+        assert gate.decide("pull_request", pol, None, who, unresolved)["status"] == "success"
+
+    def test_pr_author_signer_without_pr_author_id_fails_closed(self, gate):
+        """PR 作者 id 没传进来时，哪怕提交里有 API 给的正确 id，也不凭 login 认 PR 作者。"""
+        commits = [
+            {
+                "sha": "d4",
+                "commit": {"author": {"name": "S", "email": "s@example.com"}, "message": "m"},
+                "author": {"login": "signer", "id": 777},
+            }
+        ]
+        pol = self._repo_policy_with_signer()
+        who, unresolved = gate.collect_contributors("signer", commits)
+        v = gate.decide("pull_request", pol, None, who, unresolved)
+        assert v["status"] == "failure"
+        assert "CLA_PR_AUTHOR_ID" in " ".join(v["problems"])
 
     def test_end_to_end_against_the_repository_policy(self, gate, policy, tmp_path):
         """真 policy + 真 CLI：每个线下签署人凭自己的 id 能过，换个 id 就红。"""
@@ -1118,6 +1162,8 @@ class TestOfflineSignatures:
                         str(ROOT),
                         "--pr-author",
                         sig["login"],
+                        "--pr-author-id",
+                        str(account_id),
                         "--commits-json",
                         str(commits),
                         "--expected-commits",
