@@ -62,6 +62,11 @@ order: 10
   报 `sw=66 cw=21`，两个数是同一段字的两种量法），主语错了只会产出假红。这条原先只补进了
   `settings-shell.spec.ts` 那一份抄本，另外两份带着盲区活到 2026-09-07 才被发现（#299），
   所以现在只留一份，新用例一律 import 它、别再抄第四份。
+- **本机跑 e2e 前先 `python scripts/build_frontend.py`，并带齐 PYTHONPATH 与解释器变量（错题本 L-072
+  升级，2026-11-03）。** worktree 里 `PYTHONPATH` 用绝对路径指向本树的 `src`；共享 venv 不装
+  matplotlib 时渲染另给 `TAVOTTO_WORKER_PYTHON`；本机有没有 AI CLI 会改变分支，结论要注明。
+  为什么：漏 `PYTHONPATH` 测的是主工作区那棵树，漏 `build_frontend` 一路绿却测了旧界面，五个不同日子
+  反复出现（#207、#819）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

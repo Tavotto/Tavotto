@@ -78,3 +78,9 @@ run，09:35:34Z 的 push 才起了 CI / CodeQL / conflict domains 三个。看�
 的读改写，两条并行的叠栈链各带一个新证据 workflow 时谁后合谁的合并组就红。新加一个 PR 级
 workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercore.yml` /
 `private-python-targets.yml` 已经带了）。
+
+**碰 Windows 路径 / 进程 / 安装的 PR，开 PR 时就打 `full-ci` 并看 Windows 腿（错题本 L-096 升级，
+2026-11-03）。** PR 级 CI 不跑 Windows 后端，只在 Windows 显形的缺陷（fsync 只读句柄、cp1252 编码、
+非法文件名、文件占用）到合并组才第一次红；入队前确认 Windows 后端腿真跑过且绿，只在 Windows 生效的
+改动另在 Lab 整文件跑相关测试。为什么：六个不同日子各被合并组踢一次，每次白烧约一小时
+（#214、#296、#314、#317、#319、#360、#725、#1587、#1604）。
