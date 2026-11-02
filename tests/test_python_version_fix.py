@@ -884,14 +884,15 @@ def test_apply_keeps_waiting_while_the_install_makes_progress(tmp_path, monkeypa
     calls: list = []
     _stub_generation(monkeypatch, calls)
     monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
-    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 0.1)
+    # 阈值留足余量：CI 机器调度慢时两笔进展之间可能隔上百毫秒，不能因此误判卡住
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 1.0)
     job = _busy_job(root)
     stop = threading.Event()
 
     def install_is_working():
-        # 每 0.03 s 一笔进展，共 ~0.6 s（6 倍于卡死阈值），然后结束
-        for _ in range(20):
-            if stop.wait(0.03):
+        # 每 0.05 s 一笔进展，共 ~3 s（3 倍于卡死阈值），然后结束
+        for _ in range(60):
+            if stop.wait(0.05):
                 return
             with deprepair._lock:
                 deprepair._bump_progress()
