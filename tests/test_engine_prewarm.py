@@ -133,6 +133,7 @@ def _open(client, tmp_path):
 
 
 def _stub(monkeypatch, worker, gets):
+    monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
     monkeypatch.setattr(
         m.engine_registry.Registry,
         "for_stem",
@@ -183,6 +184,7 @@ def test_foreground_render_reuses_the_prewarmed_session(client, tmp_path, monkey
 
 def test_prewarm_failure_is_silent(client, tmp_path, monkeypatch):
     _open(client, tmp_path)
+    monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
     monkeypatch.setattr(
         m.engine_registry.Registry,
         "for_stem",
@@ -199,6 +201,51 @@ def test_prewarm_failure_is_silent(client, tmp_path, monkeypatch):
     assert res.status_code == 200
     prewarm.PREWARM.join()
     assert events == []
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "workdir_confirmation_required",
+        "dependency_preparation_required",
+        "missing_input",
+        "conda_launcher_unavailable",
+    ],
+)
+def test_gates_that_would_ask_the_user_stay_silent_in_prewarm(client, tmp_path, monkeypatch, code):
+    """依赖门 / 工作目录门 / 缺输入只是**抛**（载荷挂在异常上、由渲染响应带给前端）：预热吞掉它，
+    不发 SSE、不登记任何待弹窗——用户什么都没点就不会看到弹窗。"""
+    _open(client, tmp_path)
+    monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
+    monkeypatch.setattr(
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
+
+    def asks(*a, **kw):
+        err = pool.WorkerError("needs an answer", code=code)
+        err.confirmation = {"kind": "ask"}
+        err.dependency_preparation = {"plan": {}}
+        raise err
+
+    monkeypatch.setattr(m.engine_pool, "get", asks)
+    events = []
+    monkeypatch.setattr(m, "sse_publish", lambda *a, **kw: events.append(a))
+    assert _post(client)["status"] == "started"
+    prewarm.PREWARM.join()
+    assert events == []
+
+
+def test_undecided_environment_is_not_prewarmed(client, tmp_path, monkeypatch):
+    """还没定解释器的项目：取会话会先做环境决定（写用户配置），预热不做。"""
+    _open(client, tmp_path)
+    gets = []
+    _stub(monkeypatch, _FakeWorker(), gets)
+    monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: None)
+    assert _post(client) == {"status": "skipped", "reason": "environment_undecided"}
+    prewarm.PREWARM.join()
+    assert gets == []
 
 
 def test_native_runtime_figure_is_not_prewarmed(client, tmp_path, monkeypatch):
@@ -230,6 +277,7 @@ def test_prewarm_yields_while_a_foreground_render_is_getting_its_session(
 ):
     """前台优先（确定性）：渲染卡在取会话时，预热请求直接让路，一个会话都不起。"""
     _open(client, tmp_path)
+    monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
     in_get, release, gets = threading.Event(), threading.Event(), []
     worker = _FakeWorker()
     monkeypatch.setattr(

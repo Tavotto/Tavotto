@@ -8064,6 +8064,10 @@ def api_engine_prewarm():
         return jsonify({"status": "skipped", "reason": "no_id"})
     ctx = current_ctx()
     try:
+        # 项目的解释器还没定下来时不预热：取会话会先走「换不换解释器」的决定（体检候选、记住 / 采用项目环境），
+        # 那是写用户配置的动作，不该发生在用户什么都没点的时候。已定的项目取会话只复用这个决定。
+        if engine_pool.peek_project_resolution(str(ctx.path)) is None:
+            return jsonify({"status": "skipped", "reason": "environment_undecided"})
         if engine_runtimeasset.is_runtime_id(rel_id):
             if _resolve_runtime_asset(rel_id) is None:
                 return jsonify({"status": "skipped", "reason": "unknown"})
