@@ -14,7 +14,10 @@
 下，权限 0600、资产目录 0700（尽力而为：Windows 上 chmod 只管只读位，所以另一道防线是——令牌对泄漏的后果只是
 “有人能读到作者对你的回信”，且服务端 365 天后删除）。
 
-保留期：`RETENTION_DAYS`（365）天后本机记录也删，与服务端同期。没完成投递（`delivered=False`）的记录只留
+保留期：`RETENTION_DAYS`（365）天后本机记录也删，与服务端同期。
+反馈包回信（ADR 0118 / 0145 修订 2026-11-02）：`kind="report"` 的记录是发送「问题反馈」时服务端开的关联来信，
+带 `report_id`（`TVD-…`）与用户的附言；没有任何回信的只留 `REPORT_NO_REPLY_DAYS`（30）天（与服务端反馈包保存期一致），
+有回信后同来信 365 天。旧记录没有 `kind` 一律是 `letter`。没完成投递（`delivered=False`）的记录只留
 `UNDELIVERED_KEEP_S`：complete 的响应丢了又不知道服务端收没收，先存着，等轮询证实（200）再转正，否则到点清掉。
 """
 
@@ -38,6 +41,10 @@ FILE_NAME = "contact_messages.json"
 SCHEMA_VERSION = 1
 RETENTION_DAYS = 365
 UNDELIVERED_KEEP_S = 2 * 3600
+#: 记录种类：普通来信 / 随反馈包开的关联来信
+KINDS = ("letter", "report")
+#: 反馈包的关联来信若一直没有回信，本机只留这么多天（服务端反馈包同期删除）
+REPORT_NO_REPLY_DAYS = 30
 #: 单封信最多缓存多少条回信 / 每条回信正文多长（服务端回信是作者手写的，不会大；这里只是防御性封顶）
 #: 与服务端 `MAX_REPLIES_PER_MESSAGE`（infra）一致；超过的只存前 50 条。`contactsend.REPLIES_MAX_BYTES` 依赖这个数。
 MAX_REPLIES_PER_MESSAGE = 50
@@ -68,10 +75,11 @@ POLL_ERRORS = ("too_large", "bad_response")
 #: 附图目录“有界扫尾”：每次加载最多尝试删多少个不属于任何现存记录 / 回信的目录（失败留在盘上，下次再被发现）
 MAX_ASSET_SWEEP = 20
 
-_MESSAGE_ID = re.compile(r"^TVM-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
+MESSAGE_ID = re.compile(r"^TVM-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
 _TOKEN = re.compile(r"^[0-9a-f]{64}$")
 _REPLY_ID = re.compile(r"^r_[0-9A-Za-z]{1,40}$")
 _ASSET_N = re.compile(r"^(?:0|[1-9][0-9]?)$")
+_REPORT_ID = re.compile(r"^TVD-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
 ROUTES = ("cn", "global")
 _STATES = ("new", "replied", "closed")
 
@@ -90,11 +98,22 @@ def _blank() -> dict:
     return {"version": SCHEMA_VERSION, "messages": []}
 
 
+def _valid_report_fields(rec: dict) -> bool:
+    kind = rec.get("kind", "letter")
+    if kind not in KINDS:
+        return False
+    if kind == "report":
+        rid = rec.get("report_id")
+        return isinstance(rid, str) and bool(_REPORT_ID.match(rid))
+    return True
+
+
 def _valid_record(rec: object) -> bool:
     return (
         isinstance(rec, dict)
+        and _valid_report_fields(rec)
         and isinstance(rec.get("message_id"), str)
-        and bool(_MESSAGE_ID.match(rec["message_id"]))
+        and bool(MESSAGE_ID.match(rec["message_id"]))
         and isinstance(rec.get("reply_token"), str)
         and bool(_TOKEN.match(rec["reply_token"]))
         and rec.get("route") in ROUTES
@@ -167,11 +186,14 @@ def _normalize(rec: dict) -> dict:
     ids = {r["id"] for r in replies}
     read = [x for x in (rec.get("read") or []) if isinstance(x, str) and x in ids]
     state = rec.get("state")
+    kind = "report" if rec.get("kind") == "report" else "letter"
     return {
         "message_id": rec["message_id"],
         "reply_token": rec["reply_token"],
         "route": rec["route"],
         "sent_at": float(rec["sent_at"]),
+        "kind": kind,
+        "report_id": rec["report_id"] if kind == "report" else "",
         "subject": rec["subject"][:MAX_SUBJECT_CHARS]
         if isinstance(rec.get("subject"), str)
         else "",
@@ -205,6 +227,8 @@ def _prune_locked(data: dict) -> None:
         if age > RETENTION_DAYS * 86400:
             continue
         if not rec["delivered"] and age > UNDELIVERED_KEEP_S:
+            continue
+        if rec["kind"] == "report" and not rec["replies"] and age > REPORT_NO_REPLY_DAYS * 86400:
             continue
         keep.append(rec)
     kept = keep[-MAX_MESSAGES:]
@@ -249,9 +273,12 @@ def add(
     subject: str = "",
     body: str = "",
     attachment_names: tuple[str, ...] | list[str] = (),
+    kind: str = "letter",
+    report_id: str = "",
 ) -> bool:
     """登记一封信（幂等：同编号已有则只升级 `delivered`、补上还没存的原文，不覆盖令牌与已取回的回信）。
     `subject` / `body` / `attachment_names`：用户写的原文与附件**文件名**（上限见 `MAX_*`，超出截断）。
+    `kind="report"`：随反馈包开的关联来信，`report_id` 必填（`TVD-…`），`body` 是用户写的附言。
     返回令牌此刻是否已在本机落盘；写不下去（目录不可写 / 盘满）返回 False，调用方据此告诉用户「应用里收不到回信」。"""
     rec = {
         "message_id": message_id,
@@ -261,7 +288,10 @@ def add(
         "subject": subject,
         "body": body,
         "attachment_names": list(attachment_names),
+        "kind": kind,
     }
+    if kind == "report":
+        rec["report_id"] = report_id
     if not _valid_record(rec):
         return False
     with _LOCK:
@@ -371,6 +401,8 @@ def public_messages() -> list[dict]:
                 "message_id": m["message_id"],
                 "sent_at": int(m["sent_at"]),
                 "route": m["route"],
+                "kind": m["kind"],
+                "report_id": m["report_id"],
                 "state": m["state"] or "new",
                 "unread": _unread(m),
                 "subject": m["subject"],
@@ -402,7 +434,7 @@ def _assets_root() -> Path:
 
 def asset_file(message_id: str, reply_id: str, n: int) -> Path | None:
     """附图的本机路径；任何一段不合规（路径穿越的唯一防线）返回 None。"""
-    if not (_MESSAGE_ID.match(message_id) and _REPLY_ID.match(reply_id) and _ASSET_N.match(str(n))):
+    if not (MESSAGE_ID.match(message_id) and _REPLY_ID.match(reply_id) and _ASSET_N.match(str(n))):
         return None
     return _assets_root() / message_id / reply_id / str(n)
 
@@ -423,7 +455,7 @@ def _try_remove_dir(target: Path, label: str) -> bool:
 
 def _remove_assets(message_id: str) -> None:
     """尽力删这封信的附图目录；删不掉不记任何“凭据”——磁盘本身就是凭据，`_sweep_orphan_assets` 会重新发现它。"""
-    if _MESSAGE_ID.match(message_id):
+    if MESSAGE_ID.match(message_id):
         _try_remove_dir(_assets_root() / message_id, message_id)
 
 
@@ -445,7 +477,7 @@ def _sweep_orphan_assets(data: dict) -> None:
     live = {m["message_id"]: {r["id"] for r in m["replies"]} for m in data["messages"]}
     orphans: list[tuple[Path, str]] = []
     for d in _subdirs(_assets_root()):
-        if not _MESSAGE_ID.match(d.name):
+        if not MESSAGE_ID.match(d.name):
             continue
         if d.name not in live:
             orphans.append((d, d.name))

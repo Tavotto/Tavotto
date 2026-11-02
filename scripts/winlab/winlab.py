@@ -434,6 +434,7 @@ def admin_deploy_agent() -> int:
             HERE / "gui_host.py",
             HERE / "mcp_recorder.py",
             HERE / "convert_driver.py",
+            HERE / "render_bench_driver.py",
             HERE / "window_probe.py",
             HERE / "desktop_driver.py",
             HERE / "connect_driver.py",
@@ -796,6 +797,171 @@ def admin_gui_setup() -> int:
     return admin_ssh(GUI_SETUP_PS.replace("__PW__", pw))
 
 
+# ----------------------------------------------------------------------------- perf-fixtures（渲染测量用的两个一次性夹具）
+#: Python 安装管理器（python.org 官方发布的 MSIX；PSF 签名）。固定版本 + SHA-256：Mac 端直连 python.org 下载、核散列，
+#: 再 scp 到 Lab（Lab 在大陆直连 python.org 又慢又不稳；也不经任何代理），Lab 上再核一遍散列与 Authenticode。
+PYMANAGER_VERSION = "26.4"
+PYMANAGER_URL = (
+    f"https://www.python.org/ftp/python/pymanager/python-manager-{PYMANAGER_VERSION}.msix"
+)
+PYMANAGER_SHA256 = "002cfe4f4b63e322e9c8170cea4d7d97e3e2d18246887325f969bb75f482f4dc"
+PYMANAGER_SIZE = 100896559
+PYMANAGER_PUBLISHER = "Python Software Foundation"
+PERF_DIR = "C:\\TavottoLab\\perf"
+PERF_VHDX = PERF_DIR + "\\perf-fixtures.vhdx"
+PERF_LETTER = "P"
+PERF_VHDX_MB = 4096
+#: 与 agent.PERF_DIR_PARTS 同一份：「科研 数据」\「项目」；PowerShell 脚本必须是 ASCII，所以这里给码点
+PERF_DIR_CODEPOINTS = ("0x79D1,0x7814,0x20,0x6570,0x636E", "0x9879,0x76EE")
+
+PERF_FIXTURES_PS = r"""
+$perf = '__PERF_DIR__'
+$vhdx = '__PERF_VHDX__'
+$letter = '__LETTER__'
+$msix = "$perf\python-manager-__PYM_VER__.msix"
+New-Item -ItemType Directory -Force $perf | Out-Null
+
+# ---- 1. VHDX disk, mounted as __LETTER__: (diskpart: works without the Hyper-V module) ----
+if (-not (Test-Path $vhdx)) {
+  $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+  if ($vol) { throw "drive letter ${letter}: is already in use by another volume" }
+  $dp = Join-Path $perf 'create.diskpart'
+  @(
+    "create vdisk file=`"$vhdx`" maximum=__VHDX_MB__ type=expandable",
+    'attach vdisk',
+    'create partition primary',
+    'format fs=ntfs quick label=TavottoPerf',
+    "assign letter=$letter"
+  ) | Set-Content -Path $dp -Encoding ASCII
+  diskpart /s $dp
+  if ($LASTEXITCODE -ne 0) { throw "diskpart failed: $LASTEXITCODE" }
+  Remove-Item $dp -Force
+} elseif (-not (Get-DiskImage -ImagePath $vhdx).Attached) {
+  Mount-DiskImage -ImagePath $vhdx | Out-Null
+}
+$vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+if (-not $vol -or $vol.FileSystemLabel -ne 'TavottoPerf') {
+  $part = Get-DiskImage -ImagePath $vhdx | Get-Disk | Get-Partition | Where-Object Type -eq 'Basic' | Select-Object -First 1
+  if (-not $part) { throw 'perf VHDX has no basic partition' }
+  Set-Partition -InputObject $part -NewDriveLetter $letter
+  $vol = Get-Volume -DriveLetter $letter
+}
+if ($vol.FileSystemLabel -ne 'TavottoPerf') { throw "volume ${letter}: is not the perf VHDX" }
+
+# remount after every reboot (a VHDX stays attached only until shutdown)
+$act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -Command `"if (-not (Get-DiskImage -ImagePath '$vhdx').Attached) { Mount-DiskImage -ImagePath '$vhdx' }`""
+$trg = New-ScheduledTaskTrigger -AtStartup
+$prn = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+Register-ScheduledTask -TaskName 'TavottoLab-PerfVhd' -Action $act -Trigger $trg -Principal $prn -Force | Out-Null
+
+# Chinese + space directory, built from code points (this script is ASCII); only tavotto-lab gets Modify, on this folder only
+$d1 = -join ([char[]](__DIR1__))
+$d2 = -join ([char[]](__DIR2__))
+$dir = "${letter}:\$d1\$d2"
+New-Item -ItemType Directory -Force $dir | Out-Null
+$acl = Get-Acl -LiteralPath $dir
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule('tavotto-lab', 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+$acl.AddAccessRule($rule)
+Set-Acl -LiteralPath $dir -AclObject $acl
+"perf disk ready: $dir (" + $vol.FileSystemLabel + ', ' + [math]::Round($vol.Size / 1GB, 1) + ' GB)'
+
+# ---- 2. Python install manager (python.org MSIX; WindowsApps app execution aliases python.exe / py.exe) ----
+$have = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'PythonSoftwareFoundation.PythonManager'
+if (-not $have) {
+  if (-not (Test-Path $msix)) { throw "missing $msix (upload failed)" }
+  $h = (Get-FileHash -Algorithm SHA256 $msix).Hash.ToLower()
+  if ($h -ne '__PYM_SHA__') { throw "python-manager msix sha256 mismatch: $h" }
+  $sig = Get-AuthenticodeSignature $msix
+  if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike '*__PUBLISHER__*') {
+    throw ('python-manager msix signature not valid: ' + $sig.Status + ' ' + $sig.SignerCertificate.Subject)
+  }
+  Add-AppxProvisionedPackage -Online -PackagePath $msix -SkipLicense | Out-Null
+  'python install manager provisioned (tavotto-lab gets it at its next sign-in)'
+} else { 'python install manager already provisioned' }
+
+# one-shot logon task for tavotto-lab: wait for the alias, install runtime 3.11 + numpy/matplotlib, then remove itself
+$setup = "$perf\perf-python-setup.ps1"
+@'
+$log = 'C:\TavottoLab\cache\perf-python-setup.log'
+function Log($m) { ('{0:s} {1}' -f (Get-Date), $m) | Add-Content -Path $log -Encoding UTF8 }
+try {
+  $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\py.exe'
+  for ($i = 0; $i -lt 60 -and -not (Test-Path $alias); $i++) { Start-Sleep -Seconds 5 }
+  if (-not (Test-Path $alias)) { Log 'py.exe alias never appeared (is the package provisioned? sign out and in again)'; exit 1 }
+  & $alias install --yes 3.11 *>> $log
+  $exe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Python\pythoncore-3.11*\python.exe') | Select-Object -Last 1
+  if (-not $exe) { Log 'runtime 3.11 not found after py install'; exit 2 }
+  & $exe.FullName -m pip install --disable-pip-version-check -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple 'matplotlib>=3.8,<3.12' 'numpy>=1.24,<3' *>> $log
+  Log ('real exe: ' + $exe.FullName)
+  $viaAlias = & (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\python.exe') -c 'import sys, numpy, matplotlib; print(sys.executable)' 2>&1
+  Log ('alias python.exe -> ' + $viaAlias)
+  schtasks /Delete /TN TavottoLab-PerfPython /F | Out-Null
+  Log 'done'
+} catch { Log ('failed: ' + $_.Exception.Message); exit 3 }
+'@ | Set-Content -Path $setup -Encoding ASCII
+$act2 = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$setup`""
+$trg2 = New-ScheduledTaskTrigger -AtLogOn -User 'tavotto-lab'
+$prn2 = New-ScheduledTaskPrincipal -UserId 'tavotto-lab' -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName 'TavottoLab-PerfPython' -Action $act2 -Trigger $trg2 -Principal $prn2 -Force | Out-Null
+'next: sign tavotto-lab out and in (or reboot); check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+"""
+
+PERF_REMOVE_PS = r"""
+$vhdx = '__PERF_VHDX__'
+Unregister-ScheduledTask -TaskName 'TavottoLab-PerfVhd' -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'TavottoLab-PerfPython' -Confirm:$false -ErrorAction SilentlyContinue
+if (Test-Path $vhdx) {
+  if ((Get-DiskImage -ImagePath $vhdx).Attached) { Dismount-DiskImage -ImagePath $vhdx | Out-Null }
+  Remove-Item -Force $vhdx
+}
+Remove-Item -Force -ErrorAction SilentlyContinue '__PERF_DIR__\perf-python-setup.ps1', '__PERF_DIR__\python-manager-__PYM_VER__.msix'
+Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'PythonSoftwareFoundation.PythonManager' | Remove-AppxProvisionedPackage -Online | Out-Null
+Get-AppxPackage -AllUsers PythonSoftwareFoundation.PythonManager | Remove-AppxPackage -AllUsers
+'perf-fixtures removed (the runtime under tavotto-lab LOCALAPPDATA\Python, if any, is a per-user folder: delete it by hand)'
+"""
+
+
+def _fill_perf(ps: str) -> str:
+    return (
+        ps.replace("__PERF_DIR__", PERF_DIR)
+        .replace("__PERF_VHDX__", PERF_VHDX)
+        .replace("__LETTER__", PERF_LETTER)
+        .replace("__VHDX_MB__", str(PERF_VHDX_MB))
+        .replace("__PYM_VER__", PYMANAGER_VERSION)
+        .replace("__PYM_SHA__", PYMANAGER_SHA256)
+        .replace("__PUBLISHER__", PYMANAGER_PUBLISHER)
+        .replace("__DIR1__", PERF_DIR_CODEPOINTS[0])
+        .replace("__DIR2__", PERF_DIR_CODEPOINTS[1])
+    )
+
+
+def fetch_pymanager(dest: Path) -> Path:
+    """本机直连 python.org 下载 Python 安装管理器 MSIX（不走任何代理），核大小与 SHA-256，不符即删。"""
+    import hashlib
+    import urllib.request
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 显式不走环境里的代理
+    h = hashlib.sha256()
+    with opener.open(PYMANAGER_URL, timeout=60) as r, open(dest, "wb") as f:
+        while chunk := r.read(1 << 20):
+            h.update(chunk)
+            f.write(chunk)
+    if h.hexdigest() != PYMANAGER_SHA256 or dest.stat().st_size != PYMANAGER_SIZE:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError("python-manager msix sha256/size mismatch")
+    return dest
+
+
+def admin_perf_fixtures(remove: bool = False) -> int:
+    if remove:
+        return admin_ssh(_fill_perf(PERF_REMOVE_PS))
+    admin_ssh(f"New-Item -ItemType Directory -Force {PERF_DIR} | Out-Null")
+    with tempfile.TemporaryDirectory() as td:
+        msix = fetch_pymanager(Path(td) / f"python-manager-{PYMANAGER_VERSION}.msix")
+        admin_scp(msix, f"{PERF_DIR}\\{msix.name}")
+    return admin_ssh(_fill_perf(PERF_FIXTURES_PS))
+
+
 # ----------------------------------------------------------------------------- CLI
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="winlab", description=__doc__.splitlines()[0])
@@ -813,7 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--from", dest="frm", help="installer：先装这个旧包再升级")
     t.add_argument(
         "--mode",
-        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
+        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all；render-bench：rotation | cold | cold-store | cold-drive-p | cold-store-drive-p | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
     )
     t.add_argument("--ref", help="先 prepare 到这个提交（经可信度检查）")
     n = sub.add_parser("network")
@@ -857,6 +1023,11 @@ def build_parser() -> argparse.ArgumentParser:
         "claude-policy-acl",
         help="一次性：建 tavotto-lab 的 Claude Desktop 用户级策略键并只授它写这一个键（不写任何值）",
     )
+    pf = asub.add_parser(
+        "perf-fixtures",
+        help="一次性：渲染测量夹具——VHDX 盘 P:（中文路径）+ Python 安装管理器（WindowsApps 别名入口的 Python 3.11）；--remove 撤销",
+    )
+    pf.add_argument("--remove", action="store_true")
     sn = asub.add_parser("snapshot", help="黄金快照（腾讯云轻量；不做回滚 / 删除）")
     sn.add_argument("--name", required=True)
     return ap
@@ -933,6 +1104,8 @@ def main(argv: list[str] | None = None) -> int:
             return admin_snapshot(ns.name)
         if ns.admin_verb == "claude-policy-acl":
             return admin_claude_policy_acl()
+        if ns.admin_verb == "perf-fixtures":
+            return admin_perf_fixtures(ns.remove)
         return admin_proxy_install()
     return 2
 

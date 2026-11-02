@@ -1,0 +1,47 @@
+{
+  "_comment": "render-bench 夹具：六张互相独立的最简 matplotlib 图（numpy + matplotlib，无外部数据）",
+  "scripts": {
+    "fig1_line.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "fig1_line"
+      ]
+    },
+    "fig2_scatter.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "fig2_scatter"
+      ]
+    },
+    "fig3_bar.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "fig3_bar"
+      ]
+    },
+    "fig4_hist.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "fig4_hist"
+      ]
+    },
+    "fig5_fill.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "fig5_fill"
+      ]
+    },
+    "fig6_step.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "fig6_step"
+      ]
+    }
+  }
+}

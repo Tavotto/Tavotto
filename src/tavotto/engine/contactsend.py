@@ -1099,3 +1099,7 @@ def start_poller() -> None:
             poll_wake.wait(POLL_INTERVAL_S)
 
     threading.Thread(target=loop, name="tavotto-contact-poll", daemon=True).start()
+
+
+# 反馈包回信通道（ADR 0118 / 0145 修订 2026-11-02）：依赖倒置——`diagsend` 不 import 本模块，由本模块把「是否启用 / 线路标签」注册给它。
+diagsend.register_reply_channel(enabled, route_label)
