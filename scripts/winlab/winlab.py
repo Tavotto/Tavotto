@@ -839,6 +839,13 @@ if (-not (Test-Path $vhdx)) {
 } elseif (-not (Get-DiskImage -ImagePath $vhdx).Attached) {
   Mount-DiskImage -ImagePath $vhdx | Out-Null
 }
+# An attached virtual disk takes the security descriptor of its image FILE: C:\TavottoLab\perf inherits
+# SYSTEM/Administrators only, so tavotto-lab could not open the volume at all (every stat on P: -> WinError 5,
+# whatever the NTFS ACLs inside say). Grant tavotto-lab on the .vhdx, then re-attach so the new descriptor applies.
+icacls $vhdx /grant 'tavotto-lab:(M)' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls grant on $vhdx failed: $LASTEXITCODE" }
+Dismount-DiskImage -ImagePath $vhdx | Out-Null
+Mount-DiskImage -ImagePath $vhdx | Out-Null
 $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
 if (-not $vol -or $vol.FileSystemLabel -ne 'TavottoPerf') {
   $part = Get-DiskImage -ImagePath $vhdx | Get-Disk | Get-Partition | Where-Object Type -eq 'Basic' | Select-Object -First 1
@@ -899,11 +906,21 @@ try {
   Log 'done'
 } catch { Log ('failed: ' + $_.Exception.Message); exit 3 }
 '@ | Set-Content -Path $setup -Encoding ASCII
+# the logon task runs AS tavotto-lab: it must be able to read this admin-written script (C:\TavottoLab\perf inherits
+# SYSTEM/Administrators only; without this the task starts, PowerShell cannot open -File, result 0xFFFD0000, no log)
+icacls $setup /grant 'tavotto-lab:(RX)' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls grant on $setup failed: $LASTEXITCODE" }
 $act2 = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$setup`""
 $trg2 = New-ScheduledTaskTrigger -AtLogOn -User 'tavotto-lab'
 $prn2 = New-ScheduledTaskPrincipal -UserId 'tavotto-lab' -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName 'TavottoLab-PerfPython' -Action $act2 -Trigger $trg2 -Principal $prn2 -Force | Out-Null
-'next: sign tavotto-lab out and in (or reboot); check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+# re-run on a box where tavotto-lab is already signed in (autologon): start the setup now instead of waiting for a reboot
+if ((quser 2>$null) -match 'tavotto-lab') {
+  Start-ScheduledTask -TaskName 'TavottoLab-PerfPython'
+  'tavotto-lab is signed in: setup task started; check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+} else {
+  'next: sign tavotto-lab out and in (or reboot); check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+}
 """
 
 PERF_REMOVE_PS = r"""
