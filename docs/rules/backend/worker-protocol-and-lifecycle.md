@@ -147,6 +147,10 @@ order: 60
   `test_non_utf8_bytes_inside_a_json_response…` / `test_a_non_json_line…`、
   `workerd/tests/supervisor_behaviour.rs` 的 `a_dead_worker_reports_how_it_died…` /
   `non_utf8_bytes_on_the_protocol_pipe…` / `non_utf8_bytes_inside_a_json_envelope…`。
+  **safe worker 的协议只走 `main()` 里 dup 出的私有不可继承 fd；公开 fd 1 / Win32 标准输出一律改指 stderr
+  （worker.log）**（TVD-5J0Y）：`redirect_stdout` 只换得了 Python 层，脚本 `subprocess.run(...)` 起的子进程、
+  C 扩展直写 fd 1 走的是 OS 层，曾把一行 print 写进协议管道 → protocol_mismatch。敏感运行再把 fd 1/2 换成丢弃管道。
+  看护：`tests/test_run_argv_privacy.py` 的 `test_ordinary_native_and_child_stdout_never_reach_the_protocol_pipe`（两条控制面）。
   **请求之间死掉的 worker 只有一个答案**（QA LONG-03-B1）：`EngineWorker.request` 拿锁时已看得见它死了、
   写管道撞上 `BrokenPipeError` / 管道已关、写进去后读到 EOF，三处都走同一条带退出状态的 `session_dead`——
   不许有 code 为空的「worker 进程已退出」，也不许让 `OSError` 冒成 internal_error

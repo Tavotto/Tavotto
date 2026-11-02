@@ -255,6 +255,29 @@ def test_ordinary_output_still_has_the_original_diagnostics(worker_factory):
     assert SECRET in caught.value.traceback_text
 
 
+def test_ordinary_native_and_child_stdout_never_reach_the_protocol_pipe(worker_factory):
+    """TVD-5J0Y：主脚本 `subprocess.run` 起一个会 print 的子脚本（没 capture），子进程继承 OS 层的
+    fd 1 / Win32 标准输出句柄。普通运行时它们曾经就是协议管道 → 父进程读到一行中文 → protocol_mismatch。
+    与敏感运行同一条纪律：协议只走不可继承的私有 fd，公开 fd 1 指向 worker.log（stderr），输出照常留在日志里。
+    """
+    marker = "child-stdout-MARKER-5J0Y"
+    worker = worker_factory(
+        f"""import os, subprocess, sys
+os.write(1, b"native-{marker}\\n")
+subprocess.run([sys.executable, "-c", "print('redrawn {marker}')"], check=True)
+subprocess.run([sys.executable, "-c", "import os; os.write(1, b'raw-{marker}\\\\n')"], check=True)
+""",
+        [],
+        sensitive=False,
+    )
+    assert worker.ensure_built()["ok"]
+    time.sleep(0.1)
+    log = worker.log_path.read_text(encoding="utf-8", errors="replace")
+    # 子进程只打 ASCII：它往管道写中文用的是它自己的区域编码（cp1252 的 CI 机上直接 UnicodeEncodeError），与协议无关
+    assert f"native-{marker}" in log and f"raw-{marker}" in log
+    assert log.count(marker) == 3
+
+
 def test_ordinary_worker_error_payload_preserves_parse_facts():
     from tavotto import app
 
