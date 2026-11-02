@@ -8072,6 +8072,22 @@ def api_engine_render():
     rev 一样不少。老 worker 不返回它时字段整个不出现。
     """
     body = request.get_json(force=True)
+    # 可选 `purpose`（闭集）：`foreground`（缺省 = 老前端）/ `neighbour`（跨图对齐的顺手补渲染，ADR 0159）。
+    # neighbour 不刷新池的 LRU 时间；需要冷启动而池已满时不做（409 + `background_render_deferred`，前端保留旧画面）。
+    purpose = body.get("purpose", engine_pool.PURPOSE_FOREGROUND)
+    if purpose not in engine_pool.PURPOSES:
+        return jsonify(
+            {
+                "error": f"purpose 必须是 {' / '.join(engine_pool.PURPOSES)}: {purpose!r}",
+                "code": "invalid_purpose",
+                "params": {"value": repr(purpose)},
+            }
+        ), 400
+    with engine_pool.acquire_purpose(purpose):
+        return _api_engine_render_body(body)
+
+
+def _api_engine_render_body(body):
     rel_id = body.get("id", "")
     try:
         artifact_source = _artifact_source(
@@ -8113,7 +8129,9 @@ def api_engine_render():
     # 取会话会起解释器 / 准备环境，必须在这段静默等待之前给界面进度。
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
-    sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    # 后台补渲染可能被暂缓（不起会话）：没有人在等它，不报「准备中」，免得暂缓时还要补一个终局事件
+    if engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND:
+        sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     acquire_mark = engine_pool.acquire_mark()
     try:
         worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
@@ -8124,6 +8142,11 @@ def api_engine_render():
         info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
+        if isinstance(exc, engine_pool.WorkerError) and exc.code == engine_pool.BACKGROUND_DEFERRED:
+            # 不是失败：没有 render.* 事件、不进交接结论，前端保留旧画面
+            return jsonify(
+                {"error": str(exc), "code": engine_pool.BACKGROUND_DEFERRED, "deferred": True}
+            ), 409
         # worker 启动 / 环境解析失败（WorkerError、原件核对不上）也是「那一次渲染」的失败结论：
         # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
         # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
@@ -8158,6 +8181,12 @@ def api_engine_render():
             observe_worker=observe_render_worker,
         )
     except engine_pool.WorkerError as exc:
+        if exc.code == engine_pool.BACKGROUND_DEFERRED:
+            # 被淘汰后的那次重取撞上「池已满」：这次补渲染作罢。render.started 已发过，补一个中性终局收掉「构建中」
+            sse_publish("render.done", {"pj": pj, "id": rel_id})
+            return jsonify(
+                {"error": str(exc), "code": engine_pool.BACKGROUND_DEFERRED, "deferred": True}
+            ), 409
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         _note_handoff_render(stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实

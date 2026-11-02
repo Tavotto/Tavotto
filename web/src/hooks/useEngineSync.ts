@@ -25,6 +25,7 @@ import { panelRotation } from '@/types/document'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
+import type { RenderPurpose } from '@/lib/renderPurpose'
 
 /**
  * 需要引擎渲染的面板，**按 (fileId, overrides) 去重**。
@@ -132,6 +133,27 @@ export function crossFigureNeighbours(
   return ids
 }
 
+/**
+ * 这次渲染请求的意图（后端闭集，见 `lib/renderPurpose`）。**只有**「纯邻居补渲染」是 `neighbour`：
+ * 进了 `neighbours`、且没有任何别的渲染理由（不是正在编辑、没绑样式、脚本没领先磁盘、没有真实的图内修改）。
+ * 这种渲染没有人在等——后端不为它刷新会话池 LRU，池满时它让位而不是挤掉前台会话。其余一律 foreground。
+ */
+export function renderPurposeOf(
+  panel: PanelObject,
+  editingId: string | null,
+  neighbours: ReadonlySet<string>,
+  tracked: Record<string, boolean | undefined>,
+  styleBound: boolean,
+  assets: Record<string, BakedBaselineFacts | undefined>,
+): RenderPurpose {
+  if (panel.id === editingId || styleBound || tracked[panel.fileId] || !neighbours.has(panel.id)) {
+    return 'foreground'
+  }
+  return panel.overrides.length > 0 && !isJustBakedBaselineOf(panel.overrides, assets[panel.fileId])
+    ? 'foreground'
+    : 'neighbour'
+}
+
 /** 文档里现存（含其它画布）的全部面板变体键——prune 的保留名单 */
 function liveRenderKeys(objects: readonly CanvasObject[]): Set<string> {
   const keys = new Set<string>()
@@ -186,7 +208,12 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     if (state && !state.svgEvicted && (state.lastPatches === want || state.wantPatches === want))
       continue
     // 进入编辑态的首次渲染立即发出，其余（打字等）走防抖
-    requestRender(panel, !state)
+    const purpose = renderPurposeOf(panel, editingId, neighbours, store.tracked, styleBound, assets)
+    // 后端对这一版的后台补渲染说过「暂缓」（会话池已满）：不以后台身份重发同一版。用户进编辑 / 改值 /
+    // 脚本变更后它不再是「纯邻居」或不再是这一版，上面的判断自然放行
+    if (purpose === 'neighbour' && state?.deferredPatches === want) continue
+    if (purpose === 'neighbour') requestRender(panel, !state, purpose)
+    else requestRender(panel, !state)
   }
   // 编辑期每改一个值就多一条变体（各带一份 SVG）：没人再引用的当场清掉
   useRenderStore.getState().prune(liveRenderKeys(objects))

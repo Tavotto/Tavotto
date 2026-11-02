@@ -954,7 +954,7 @@ def test_lru_eviction_never_evicts_a_fence_placeholder(monkeypatch, tmp_path):
         def shutdown(self):
             pass
 
-    for i in range(pool.MAX_ALIVE):
+    for i in range(pool.max_alive()):
         pool._workers[pool._worker_key(str(tmp_path), f"o{i}.py")] = Other()
     monkeypatch.setattr(worker, "alive", lambda: True)  # 关闭进行中，尚未标死
     pool.acquire("new.py", str(tmp_path), "main")

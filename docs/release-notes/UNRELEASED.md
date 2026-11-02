@@ -40,3 +40,7 @@ On Windows without long-path support, "Make editable version" for an R / MATLAB 
 ## Preparing the environment on Windows no longer fails once at random
 
 On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
+
+## Rendering no longer gets slower as more figures are open
+
+With four or more scripted figures on the canvas, editing one figure could re-render the others in the background one after another. Tavotto kept only three render sessions alive, so every one of those renders restarted a script from scratch (about 15 times slower than a warm render, and 20 to 40 seconds on some Windows machines). Tavotto now keeps up to eight sessions alive when your computer has the free memory (three otherwise), and background re-renders of neighbouring figures no longer push out the figure you are editing. A neighbouring figure that would need a fresh start while the sessions are full simply keeps its previous picture.

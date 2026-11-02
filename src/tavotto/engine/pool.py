@@ -1,6 +1,6 @@
 """Worker 池（Flask 父进程侧，纯标准库——.venv 里没有 matplotlib）。
 
-每个 (项目, 脚本) 一个常驻子进程；LRU 淘汰，超出 MAX_ALIVE 的最久未用者关停。
+每个 (项目, 脚本) 一个常驻子进程；LRU 淘汰，超出 max_alive() 的最久未用者关停。
 
 **池键必须带项目路径**：多个标签页可以各自打开不同的图库，两个项目里
 同名的 fig1.py 是两个完全不同的脚本，只按脚本名索引会把 A 项目的会话
@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import collections
 import contextlib
+import contextvars
 import functools
 import hashlib
 import json
@@ -45,6 +46,7 @@ from . import (
     rootenv,
     runtime,
     scanbudget,
+    sysmem,
     texdiag,
     workdir,
 )
@@ -53,7 +55,90 @@ LOG = logging.getLogger("tavotto.engine")
 
 ENGINE_CACHE = config.data_dir() / "cache" / "engine"
 WORKER_PY = Path(__file__).resolve().parent / "worker.py"
-MAX_ALIVE = 3  # 同时存活的 worker 会话数（每个都端着整套 Figure 的内存）
+#: 同时存活的 worker 会话数（每个都端着整套 Figure 的内存）**不再是写死的数**，而是 `max_alive()`
+#: 按本机可用内存算出的 [`MIN_ALIVE`, `MAX_ALIVE_CEILING`]（ADR 0159）：写死 3 时，4~6 张图轮流渲染
+#: 是 LRU 的最坏情形——每一次都冷启动（实测热渲染约 105ms，冷启动约 1.6s，Windows 上可达 20–40s）。
+MIN_ALIVE = 3
+MAX_ALIVE_CEILING = 8
+#: 每个会话的保守内存估计（matplotlib + numpy + 一整套 Figure）。取不到实测 RSS 时用它；宁可高估。
+SESSION_MEMORY_ESTIMATE = 500 * 1024 * 1024
+#: 只拿可用内存的这一部分给会话池，剩下的留给用户的其它程序和脚本自己的峰值。
+MEMORY_SAFETY_FACTOR = 0.5
+#: 整数环境变量覆盖（Lab 压测 / 排障）；非整数一律忽略，夹到 [1, `MAX_ALIVE_ENV_LIMIT`]。
+MAX_ALIVE_ENV = "TAVOTTO_MAX_ALIVE"
+MAX_ALIVE_ENV_LIMIT = 64
+#: 内存读数的缓存窗口（秒）：可用内存时刻在变，不必每次取会话都读（macOS 读一次是个子进程）。
+MAX_ALIVE_REFRESH = 60.0
+#: 测试 / 临时覆盖钩子：给了整数就压过环境变量和自适应（`None` = 自适应）。产品代码不赋值。
+MAX_ALIVE: int | None = None
+_cap_cache: tuple[float, int] | None = None
+
+
+def cap_from_available(available: int | None) -> int:
+    """可用内存字节 → 会话上限。读不到（None / 非正数）一律回 `MIN_ALIVE`。"""
+    if not isinstance(available, int) or available <= 0:
+        return MIN_ALIVE
+    fit = int(available * MEMORY_SAFETY_FACTOR // SESSION_MEMORY_ESTIMATE)
+    return max(MIN_ALIVE, min(MAX_ALIVE_CEILING, fit))
+
+
+def _env_cap() -> int | None:
+    raw = os.environ.get(MAX_ALIVE_ENV, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return max(1, min(MAX_ALIVE_ENV_LIMIT, value))
+
+
+def max_alive() -> int:
+    """worker 会话数上限的**唯一出处**（淘汰、冷启动容量、发布账本都问它）。
+
+    优先级：`MAX_ALIVE` 钩子 > 环境变量 `TAVOTTO_MAX_ALIVE` > 按可用内存自适应（缓存 `MAX_ALIVE_REFRESH` 秒）。
+    **不要在持 `_lock` 时调**：macOS 上读内存是一个带超时的子进程。"""
+    global _cap_cache
+    if MAX_ALIVE is not None:
+        return int(MAX_ALIVE)
+    env = _env_cap()
+    if env is not None:
+        return env
+    now = time.monotonic()
+    cached = _cap_cache
+    if cached is not None and now - cached[0] < MAX_ALIVE_REFRESH:
+        return cached[1]
+    cap = cap_from_available(sysmem.available_memory_bytes())
+    _cap_cache = (now, cap)
+    return cap
+
+
+#: 取会话的**意图**（闭集；缺省 foreground = 老请求、老前端）。`neighbour` = 前端「顺手补渲染」视口里别的图
+#: （跨图对齐，ADR 0128）：不刷新 LRU 时间、需要冷启动而池已满时不挤掉别人（`BACKGROUND_DEFERRED`）。
+PURPOSE_FOREGROUND = "foreground"
+PURPOSE_NEIGHBOUR = "neighbour"
+PURPOSES = (PURPOSE_FOREGROUND, PURPOSE_NEIGHBOUR)
+#: 后台补渲染这次没做（冷启动会淘汰别的会话）。**不是失败**：调用方保留旧画面、不报错。
+BACKGROUND_DEFERRED = "background_render_deferred"
+_purpose: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "tavotto_acquire_purpose", default=PURPOSE_FOREGROUND
+)
+
+
+@contextlib.contextmanager
+def acquire_purpose(purpose: str):
+    """在这个上下文里的 `acquire()` 按 `purpose` 取会话（线程 / 请求局部）。未知取值抛 ValueError。"""
+    if purpose not in PURPOSES:
+        raise ValueError(f"unknown acquire purpose: {purpose!r}")
+    token = _purpose.set(purpose)
+    try:
+        yield
+    finally:
+        _purpose.reset(token)
+
+
+def current_purpose() -> str:
+    return _purpose.get()
+
+
 #: 取到会话（`acquire`）到它第一次真正拿到 `w.lock` 发请求之间的**租约**（秒）。
 #: 租约期内的会话不被 LRU 淘汰：调用方已经拿着它的引用，淘汰线程的 `shutdown()` 与
 #: 调用方的请求在 `w.lock` 上竞争，淘汰一赢，调用方读到的就是「自己以退出码 0 结束了」
@@ -625,7 +710,7 @@ def health_snapshot() -> dict:
         ]
         created, evicted = _health["created"], _health["evicted"]
     return {
-        "max_alive": MAX_ALIVE,
+        "max_alive": max_alive(),  # 锁外取（macOS 读内存是子进程）
         "alive": alive,
         "pending_retirements": pending,
         "lock_busy": not got,
@@ -2910,6 +2995,8 @@ class EngineWorker:
     #: （`force_kill` 的取消 / 超时 / 看门狗、失效重建、切项目、整体关停）的差别：那些**不**置它——用户
     #: 取消的脚本、超时的脚本绝不能被自动重取会话再跑一遍。
     _evicted = False
+    #: 这条会话只被后台补渲染（`PURPOSE_NEIGHBOUR`）用过、没有前台请求碰过它：淘汰时排在所有前台会话之前。
+    _background_only = False
     #: `acquire` 刚交出去、调用方还没发第一条请求时有效的租约截止（`time.monotonic()`）；见 `ACQUIRE_LEASE`。
     _lease_until = 0.0
     #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
@@ -4826,7 +4913,7 @@ def get(
     run=None,
     write_roots=None,
 ) -> EngineWorker:
-    """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。
+    """取（或重建）某脚本的 worker；崩溃的自动换新；超出 max_alive() 按 LRU 淘汰。
 
     `write_roots`（#898）：给了就是带写入根绊线的会话（MCP 来源），与不带的是两条（见 `_worker_key`）。"""
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
@@ -4901,7 +4988,10 @@ def _acquire(
     # caller's preparation pin. Watcher/retirement waits must not reselect from
     # a shared project record another script may have changed meanwhile.
     pin = pinned if pinned is not None and pinned.pinned else None
+    background = current_purpose() != PURPOSE_FOREGROUND
     while True:
+        # 上限在池锁**外**取（macOS 读内存是子进程）；同一次取会话内每一圈重取，缓存让它几乎免费
+        cap = max_alive()
         if retiring:
             with _seg("retire_wait_ms"):
                 _confirm_retirements(key, retiring)
@@ -4998,6 +5088,14 @@ def _acquire(
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
                     why = "改指表已变"
+            if background and (w is None or why):
+                # 后台补渲染（邻居图）需要一条新会话：池里**别的**活会话已占满上限就不做——起它就得淘汰
+                # 一个前台会话，而这次渲染没有人在等。放在 `needs_watch_sync` 之前：被拒的请求不触碰观察者
+                if sum(1 for k, x in _workers.items() if k != key and x.alive()) >= cap:
+                    raise WorkerError(
+                        "后台补渲染暂缓：会话已满，保留旧画面",
+                        code=BACKGROUND_DEFERRED,
+                    )
             if (w is None or why or getattr(w, "build_failed", False)) and not watcher_synced:
                 needs_watch_sync = True
                 continue
@@ -5005,7 +5103,7 @@ def _acquire(
                 retiring = tuple(_pending_retirements.get(key, ()))
                 if retiring:
                     continue  # bounded close confirmation is outside every pool/watch lock
-                if sum(map(len, _pending_retirements.values())) >= MAX_ALIVE:
+                if sum(map(len, _pending_retirements.values())) >= cap:
                     # Unknown retirements count against cold-session capacity.
                     # Never drop a fence merely to admit a different script.
                     raise WorkerError("旧渲染会话尚未确认关闭，请重试", code="session_dead")
@@ -5070,13 +5168,24 @@ def _acquire(
                     )
                 _workers[key] = w
                 created = True
-            w.last_used = time.time()
+                w._background_only = background
+            if not background:
+                # 只有前台取会话才刷新 LRU 时间并摘掉「仅后台用过」标记；邻居补渲染命中热会话时两样都不动
+                w.last_used = time.time()
+                w._background_only = False
             w._lease_until = time.monotonic() + ACQUIRE_LEASE
             with _seg("evict_ms"):
                 alive = [(k, x) for k, x in _workers.items() if x.alive()]
-                if len(alive) > MAX_ALIVE:
-                    stale = sorted(alive, key=lambda kv: kv[1].last_used)
-                    for vkey, victim in stale[: len(alive) - MAX_ALIVE]:
+                if len(alive) > cap:
+                    # 仅后台用过的会话先走，其余按 LRU
+                    stale = sorted(
+                        alive,
+                        key=lambda kv: (
+                            0 if getattr(kv[1], "_background_only", False) is True else 1,
+                            kv[1].last_used,
+                        ),
+                    )
+                    for vkey, victim in stale[: len(alive) - cap]:
                         if (
                             victim is not w
                             and not _is_fence_holder(victim)

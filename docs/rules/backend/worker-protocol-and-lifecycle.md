@@ -65,10 +65,15 @@ order: 60
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
+- **会话池上限 = `pool.max_alive()`，不是常数（ADR 0159）**：`clamp(3, 可用内存×0.5÷500MiB, 8)`，读不到内存回 3，`TAVOTTO_MAX_ALIVE` 覆盖；
+  淘汰、冷启动容量、未确认退役的拒绝线、发布账本**只问这一个函数**（`tests/test_pool_adaptive_cap.py` 用 AST 钉「别处不许读 `MAX_ALIVE`」；
+  测试里 `pool.MAX_ALIVE` 是覆盖钩子，conftest 默认钉成 3）。读内存的 `engine/sysmem.py` 纯标准库，读不到一律下限，且不许在持 `_lock` 时调。
+  取会话带闭集意图 `purpose`（`foreground` 缺省 / `neighbour`，`acquire_purpose()` 上下文，请求体可选字段）：`neighbour` 命中热会话不刷新 `last_used`；
+  需要冷启动而别的活会话已满上限 → `background_render_deferred`（HTTP 409，不是失败，前端保留旧画面）；淘汰时「仅后台用过」的会话先走。
 - **LRU 淘汰不收「刚取到、还没发请求」的会话（Python 池）**：`acquire` 给会话打 `ACQUIRE_LEASE`（30 秒）租约，
-  调用方第一条请求拿到 `w.lock` 即清零；租约内 `MAX_ALIVE` 淘汰跳过它（上限因此是软的）。否则淘汰线程的优雅
+  调用方第一条请求拿到 `w.lock` 即清零；租约内上限淘汰（`max_alive()`）跳过它（上限因此是软的）。否则淘汰线程的优雅
   `shutdown()` 与该调用方的首条请求在 `w.lock` 上竞争，淘汰一赢，worker 按 shutdown 正常退出（退出码恒为 0），
-  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、`MAX_ALIVE=3` 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
+  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、上限为 3 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
   排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["evicted"]`（不解释退出码），
   `app._engine_attempt` 只对这一种重新取会话重试一次。用户取消（`force_kill`）/ 超时 / 看门狗 / 失效重建 / 切项目 / 整体关停
   都不置、不重试——重试会把用户刚停掉的脚本又跑起来；真崩溃同样不重试。看护 `tests/test_pool_lru_lease.py`。

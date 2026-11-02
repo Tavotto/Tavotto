@@ -1,4 +1,5 @@
 import { classifyArtifactFailure } from '@/lib/artifactReason'
+import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
@@ -2910,6 +2911,12 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
    * 四分之三传输；纯矢量图上一分钱都不值（docs/perf-baseline.md）。
    */
   previewDpi?: number
+  /**
+   * 这次渲染的意图（后端闭集，缺省 = foreground）。`neighbour` = 同步器「顺手补渲染」视口里别的图
+   * （跨图对齐，ADR 0128）：后端不为它刷新 LRU、需要冷启动而会话池已满时回 409
+   * `background_render_deferred`（见 `lib/renderPurpose`），**不是失败**。
+   */
+  purpose?: RenderPurpose
 }
 
 /**
@@ -2952,6 +2959,7 @@ export async function engineRender(
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
+      ...(opts.purpose && opts.purpose !== 'foreground' ? { purpose: opts.purpose } : {}),
     }),
     signal: opts.signal,
   }))
