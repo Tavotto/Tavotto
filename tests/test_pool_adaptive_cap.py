@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import threading
 
@@ -494,3 +495,66 @@ def test_vm_stat_uses_an_absolute_path(monkeypatch):
     monkeypatch.setattr(sysmem.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or Done())
     assert sysmem._macos() == 4096
     assert seen == [["/usr/bin/vm_stat"]]
+
+
+# ------------------- 后台意图在真正发请求那一刻也不刷新 LRU -------------------
+
+
+def test_neighbour_dispatch_does_not_refresh_last_used_on_a_reused_session(
+    rig, monkeypatch, tmp_path
+):
+    """从 acquire 一路到真正发出请求（WorkerdWorker._call_observed）：邻居复用前台会话时 `last_used` 不动。"""
+
+    class Client:
+        def call(self, op, **kw):
+            return {"ok": True, "session_id": "s-1"}
+
+    monkeypatch.setattr(
+        pool, "select_worker_python", lambda: ("/usr/bin/python3", pool.SOURCE_SYSTEM)
+    )
+    monkeypatch.setattr(
+        pool,
+        "_new_worker",
+        lambda script, fd, entry, **kw: pool.WorkerdWorker(script, fd, entry, client=Client()),
+    )
+    fg = rig.take("a.py")
+    old = fg.last_used = 1.0
+    with pool.acquire_purpose(pool.PURPOSE_NEIGHBOUR):
+        w, _ = pool.acquire("a.py", rig.project, "main")
+        assert w is fg
+        with contextlib.suppress(pool.WorkerError):
+            w.ensure_built()  # 真正发请求（走 _call_observed）
+    assert fg.last_used == old
+    # 前台发请求照旧刷新
+    with contextlib.suppress(pool.WorkerError):
+        fg.ensure_built()
+    assert fg.last_used > old
+
+
+def test_both_control_planes_stamp_last_used_through_the_purpose_aware_helper():
+    """两条控制面（Python 池 / workerd）在 dispatch 处只经 `_note_dispatch`，不自己写 `last_used`。"""
+    import ast
+    import inspect
+
+    for cls, name in (
+        (pool.EngineWorker, "_request_observed"),
+        (pool.WorkerdWorker, "_call_observed"),
+    ):
+        tree = ast.parse(
+            inspect.getsource(getattr(cls, name)).lstrip()
+            if False
+            else __import__("textwrap").dedent(inspect.getsource(getattr(cls, name)))
+        )
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_note_dispatch"
+        ]
+        writes = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute)
+            and n.attr == "last_used"
+            and isinstance(n.ctx, ast.Store)
+        ]
+        assert calls and not writes, name

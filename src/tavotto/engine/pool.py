@@ -139,6 +139,15 @@ _purpose: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
+def _note_dispatch(worker) -> None:
+    """请求真正发给 worker 的那一刻刷新 LRU 时间——**后台（neighbour）意图不刷新**。
+
+    只在 `acquire()` 里跳过不够：随后的 `override` 经 `_request_observed` / `_call_observed` 发出时
+    会无条件写 `last_used`，后台补渲染照样把前台会话刷成最新。两条控制面都走这一个函数，读的是同一个 ContextVar。"""
+    if current_purpose() == PURPOSE_FOREGROUND:
+        worker.last_used = time.time()
+
+
 @contextlib.contextmanager
 def acquire_purpose(purpose: str):
     """在这个上下文里的 `acquire()` 按 `purpose` 取会话（线程 / 请求局部）。未知取值抛 ValueError。"""
@@ -3305,7 +3314,7 @@ class EngineWorker:
             obj = {**obj, "artifact_source": self.artifact_source}
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
-        self.last_used = time.time()
+        _note_dispatch(self)
         # 所有命令（build/override/export/render_png/preview_png）都经这里，
         # 是「这个会话真的被用了」覆盖面最全的一个点。
         self._touch()
@@ -4053,7 +4062,7 @@ class WorkerdWorker:
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
-        self.last_used = time.time()
+        _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
         for attempt in (0, 1):

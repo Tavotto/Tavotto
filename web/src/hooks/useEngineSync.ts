@@ -145,13 +145,49 @@ export function renderPurposeOf(
   tracked: Record<string, boolean | undefined>,
   styleBound: boolean,
   assets: Record<string, BakedBaselineFacts | undefined>,
+  /** `foregroundRenderKeys` 的结果：同一渲染键下别的面板（`renderTargets` 去重时被合并掉的副本）的前台理由。 */
+  foregroundKeys: ReadonlySet<string> = NO_NEIGHBOURS,
 ): RenderPurpose {
-  if (panel.id === editingId || styleBound || tracked[panel.fileId] || !neighbours.has(panel.id)) {
-    return 'foreground'
+  if (hasForegroundReason(panel, editingId, tracked, styleBound, assets)) return 'foreground'
+  if (!neighbours.has(panel.id) || foregroundKeys.has(renderKeyOf(panel))) return 'foreground'
+  return 'neighbour'
+}
+
+/** 这张面板自己有没有「用户在等 / 真实需要」的渲染理由（与 `renderTargets` 的 wants 判据同源）。 */
+function hasForegroundReason(
+  panel: PanelObject,
+  editingId: string | null,
+  tracked: Record<string, boolean | undefined>,
+  styleBound: boolean,
+  assets: Record<string, BakedBaselineFacts | undefined>,
+): boolean {
+  return (
+    panel.id === editingId ||
+    styleBound ||
+    !!tracked[panel.fileId] ||
+    (panel.overrides.length > 0 && !isJustBakedBaselineOf(panel.overrides, assets[panel.fileId]))
+  )
+}
+
+/**
+ * 有前台理由的面板的渲染键集合。`renderTargets` 把「同文件同 overrides」的副本去重成一次渲染，
+ * 这次共享的渲染只要有**任一**副本是前台（比如用户编辑的是后一张），就必须按前台发——
+ * 否则池满时被暂缓，被编辑的那张永远拿不到 manifest。
+ */
+export function foregroundRenderKeys(
+  objects: readonly CanvasObject[],
+  editingId: string | null,
+  tracked: Record<string, boolean | undefined>,
+  styleBound: boolean,
+  assets: Record<string, BakedBaselineFacts | undefined>,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const o of objects) {
+    if (o.type === 'panel' && hasForegroundReason(o, editingId, tracked, styleBound, assets)) {
+      keys.add(renderKeyOf(o))
+    }
   }
-  return panel.overrides.length > 0 && !isJustBakedBaselineOf(panel.overrides, assets[panel.fileId])
-    ? 'foreground'
-    : 'neighbour'
+  return keys
 }
 
 /** 文档里现存（含其它画布）的全部面板变体键——prune 的保留名单 */
@@ -187,6 +223,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     useWorkspaceStore.getState().mode,
     currentVisibleRectMm(),
   )
+  const foregroundKeys = foregroundRenderKeys(objects, editingId, store.tracked, styleBound, assets)
   for (const panel of renderTargets(
     objects,
     editingId,
@@ -208,7 +245,15 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     if (state && !state.svgEvicted && (state.lastPatches === want || state.wantPatches === want))
       continue
     // 进入编辑态的首次渲染立即发出，其余（打字等）走防抖
-    const purpose = renderPurposeOf(panel, editingId, neighbours, store.tracked, styleBound, assets)
+    const purpose = renderPurposeOf(
+      panel,
+      editingId,
+      neighbours,
+      store.tracked,
+      styleBound,
+      assets,
+      foregroundKeys,
+    )
     // 后端对这一版的后台补渲染说过「暂缓」（会话池已满）：不以后台身份重发同一版。用户进编辑 / 改值 /
     // 脚本变更后它不再是「纯邻居」或不再是这一版，上面的判断自然放行
     if (purpose === 'neighbour' && state?.deferredPatches === want) continue

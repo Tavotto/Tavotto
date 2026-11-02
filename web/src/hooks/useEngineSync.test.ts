@@ -1499,4 +1499,22 @@ describe('渲染意图：纯邻居补渲染标 neighbour，其余一律 foregrou
       vi.restoreAllMocks()
     }
   })
+
+  it('同文件同 overrides 的两张面板被去重成一次渲染：编辑的是后一张时按前台发，暂缓记号不卡死', () => {
+    const spy = vi.spyOn(renderScheduler, 'requestRender').mockImplementation(() => {})
+    try {
+      const o = [panel('first', 'Fig1.pdf', 0), panel('second', 'Fig1.pdf', 0)] as CanvasObject[]
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: o } }))
+      vi.spyOn(viewport, 'currentVisibleRectMm').mockReturnValue({ x: -100, y: -100, w: 400, h: 400 })
+      // 编辑 second；first 是视口里的邻居，去重后 first 是那次共享渲染的代表
+      const key = renderKeyOf(o[0] as PanelObject)
+      useRenderStore.getState().patch(key, { fileId: 'Fig1.pdf', deferredPatches: '[]', wantPatches: null })
+      syncEngine(o, 'second')
+      const sent = spy.mock.calls.filter(([p]) => (p as PanelObject).fileId === 'Fig1.pdf')
+      expect(sent).toHaveLength(1)
+      expect(sent[0][2]).toBeUndefined() // foreground：不带 neighbour
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
 })
