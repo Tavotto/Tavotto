@@ -640,6 +640,61 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
     return out
 
 
+def _split_same_name(
+    figures_dir: str | Path, script: str, conflicts: dict[str, str], result: dict, stems: list[str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """冲突图 → `({原图名: 登记图名}, 仍是冲突的 {图名: 归属脚本})`（ADR 0159）。
+
+    判据：这次执行写出的文件与原归属脚本登记的文件**有交集**（`artifacts`，同一个磁盘文件被两份脚本写）——
+    证明了是同一个文件，仍报 `multiple_stem_conflict`；其余（不同文件夹、或者路径只在子文件夹里、注册表里
+    没有记录）一律分开登记。只要还剩一张真冲突，整次登记照旧失败、一个别名也不写。"""
+    if not conflicts:
+        return {}, {}
+    reg = registry.Registry()
+    try:
+        reg.load(figures_dir)
+    except (FileNotFoundError, RuntimeError):
+        return {}, conflicts
+    mine = descriptor_artifacts(result.get("descriptors")) or {}
+    hard: dict[str, str] = {}
+    split: list[str] = []
+    for stem, owner in sorted(conflicts.items()):
+        theirs = {a for a, s in reg.artifacts_of(owner).items() if s == stem}
+        ours = {a for a, s in mine.items() if s == stem}
+        if theirs & ours:
+            hard[stem] = owner
+        else:
+            split.append(stem)
+    if hard:
+        return {}, hard
+    taken = {s for name in reg.all_scripts() for s in reg.stems_of(name)} | set(stems)
+    aliases: dict[str, str] = {}
+    for stem in split:
+        aliases[stem] = figcapture.aliased_stem(stem, script, taken)
+        taken.add(aliases[stem])
+    return aliases, {}
+
+
+def _renamed_result(result: dict, aliases: dict[str, str]) -> dict:
+    """把一次执行结果里的原图名换成登记图名（只换登记要读的字段：stems、逐图失败、描述符的 stem）。"""
+
+    def rename(stem):
+        return aliases.get(stem, stem) if isinstance(stem, str) else stem
+
+    out = {**result, "stems": [rename(s) for s in result.get("stems") or ()]}
+    if result.get("failed_figures"):
+        out["failed_figures"] = [
+            {**f, "stem": rename(f.get("stem"))} if isinstance(f, dict) else f
+            for f in result["failed_figures"]
+        ]
+    if isinstance(result.get("descriptors"), list):
+        out["descriptors"] = [
+            {**d, "stem": rename(d.get("stem"))} if isinstance(d, dict) else d
+            for d in result["descriptors"]
+        ]
+    return out
+
+
 def descriptor_artifacts(descriptors) -> dict[str, str] | None:
     """一次执行的描述符 → `{磁盘文件相对路径: stem}`：登记进注册表的 `artifacts`（#1251）。
 
@@ -741,6 +796,13 @@ def register_probed(
     ]
     all_stems = sorted({*result["stems"], *failed_stems})
     conflicts = _live_stem_conflicts(figures_dir, script, all_stems)
+    # 同名不同脚本（复制一份脚本换样本、输出到别的文件夹，TVD-TZQ9）：证明不了两份写的是同一个文件的，
+    # 后登记的这份以 `原图名@脚本文件名` 分开登记（ADR 0159）；只有证明了是同一个文件的仍是冲突
+    new_aliases, conflicts = _split_same_name(figures_dir, script, conflicts, result, all_stems)
+    if new_aliases and not conflicts:
+        result = _renamed_result(result, new_aliases)
+        failed_stems = [new_aliases.get(s, s) for s in failed_stems]
+        all_stems = sorted({*result["stems"], *failed_stems})
     if conflicts:
         detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
         return {
@@ -808,6 +870,7 @@ def register_probed(
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
                 append=append,
                 artifacts=descriptor_artifacts(result.get("descriptors")),
+                **({"stem_aliases": new_aliases} if new_aliases else {}),
                 **({"on_written": written.append} if on_registered is not None else {}),
             )
             registry.load(figures_dir)
@@ -824,7 +887,14 @@ def register_probed(
         }
     if on_registered is not None and written:
         on_registered(written[-1], registered_config)
-    return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+    return {
+        **result,
+        "registered": True,
+        **({"unlinked_stems": unlinked} if unlinked else {}),
+        # 这次刚分开登记的图（ADR 0159）：这次执行里的图还叫原名——调用方不物化它的缓存、不沿用它的活会话，
+        # 用户第一次打开时按登记图名重跑（池的复用判定见 `pool._aliases_current`）
+        **({"stem_aliases_added": dict(new_aliases)} if new_aliases else {}),
+    }
 
 
 def captured_stems(

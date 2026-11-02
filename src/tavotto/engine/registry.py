@@ -28,6 +28,11 @@
     一律走 `for_artifact()`：先查这张表，查不到再退回按 stem。字段可缺（旧文件），旧版本
     读新文件时按未知键忽略（`load_data` 只取已知键）；表是**派生数据**，坏的条目（非字符串、
     stem 不在本脚本 stems 里、同一路径被两个脚本认领）静默丢弃，不让整份注册表打不开
+  * stem_aliases（可选，ADR 0159）：`{脚本保存时的图名: 登记的图名}`。两份脚本保存同名的图（复制一份脚本
+    换样本、输出到另一个文件夹）时，后登记的那份的图以 `原图名@脚本文件名` 登记，捕获层按这张表在收图之后
+    改名（`figcapture.apply_stem_aliases`），之后缓存、预览、编辑请求、覆盖记录都只见登记图名，不会和
+    原来那份串。界面显示的是原图名（`display_name()`）。坏的条目（非字符串、登记名不在本脚本 stems 里、
+    两个原图名指向同一个登记名）静默丢弃
 
 **一个进程可以同时端着多个项目的注册表**（不同标签页各开各的图库），所以
 索引数据装在 Registry 实例里；模块级函数代理到一个默认实例，保持老调用方式。
@@ -141,6 +146,10 @@ class Registry:
                 "notes": str(cfg.get("notes", "")),
                 "stems": list(stems),
             }
+            aliases = clean_stem_aliases(cfg.get("stem_aliases"), stems)
+            if aliases:
+                # 有才带（同 `artifacts`）：没有别名的条目与旧文件逐键相同
+                cleaned[script]["stem_aliases"] = aliases
         # 同一路径被两个脚本认领 = 歧义：整条丢掉（解析退回按文件名 stem），与脚本在 JSON 里的顺序无关
         artifacts = unambiguous_artifacts(per_script)
         for script, mine in per_script.items():
@@ -200,6 +209,19 @@ class Registry:
     def all_scripts(self) -> list[str]:
         return list(self._scripts)
 
+    def stem_aliases_of(self, script: str) -> dict[str, str]:
+        """某脚本的 `{原图名: 登记图名}`（只读副本；没有 = 空）。"""
+        return dict(self._scripts.get(script, {}).get("stem_aliases") or {})
+
+    def display_name(self, stem: str) -> str:
+        """登记图名 → 界面显示的名字：分开登记的图显示脚本保存时的原图名，其余就是 stem 本身。"""
+        script = self._index.get(stem)
+        if script is not None:
+            for raw, registered in self.stem_aliases_of(script).items():
+                if registered == stem:
+                    return raw
+        return stem
+
     def stems_of(self, script: str) -> list[str]:
         return list(self._scripts.get(script, {}).get("stems", []))
 
@@ -224,6 +246,36 @@ def clean_artifacts(raw: object, stems: list[str]) -> dict[str, str]:
             if out.setdefault(key, stem) != stem:
                 clash.add(key)  # `a\b` 与 `a/b` 归一后指向不同的图：歧义，不记
     return {a: s for a, s in out.items() if a not in clash}
+
+
+def clean_stem_aliases(raw: object, stems: list[str]) -> dict[str, str]:
+    """`stem_aliases` 字段的宽容清洗：只留「非空原图名 → 本脚本 stems 里、与原图名不同的登记名」，
+    两个原图名指向同一个登记名的都不要（改名必须一对一，否则两张图会收进同一个键）。
+
+    读（`load_data`）与写（`discover.register`）共用这一份。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    allowed = set(stems)
+    out: dict[str, str] = {}
+    for src, dst in raw.items():
+        if isinstance(src, str) and src and isinstance(dst, str) and dst in allowed and dst != src:
+            out[src] = dst
+    seen: dict[str, int] = {}
+    for dst in out.values():
+        seen[dst] = seen.get(dst, 0) + 1
+    return {s: d for s, d in sorted(out.items()) if seen[d] == 1}
+
+
+def stem_aliases_for(figures_dir: str | Path, script: str) -> tuple[tuple[str, str], ...]:
+    """执行描述取别名表的**唯一出处**（`execspec.safe_spec` / native 构造函数、池的复用判定都走这里）：
+    `((原图名, 登记图名), …)`，按原图名排序。没有注册表 / 读不出 / 没有这个脚本 = 空元组（旧行为）。"""
+    reg = Registry()
+    try:
+        reg.load(figures_dir)
+    except (FileNotFoundError, RuntimeError, OSError):
+        return ()
+    return tuple(sorted(reg.stem_aliases_of(str(script).replace("\\", "/")).items()))
 
 
 def unambiguous_artifacts(per_script: dict[str, dict[str, str]]) -> dict[str, str]:

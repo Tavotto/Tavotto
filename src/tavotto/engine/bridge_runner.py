@@ -412,6 +412,7 @@ def collect_pyplot(plt) -> None:
     stems, dropped = figcapture.collect_pyplot_figures(_CAPTURE, _SCRIPT_STEM[0], plt)
     for stem in stems:
         _CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
+    _apply_stem_aliases()
     if dropped:
         _DROPPED += dropped
         print(
@@ -431,6 +432,15 @@ def adopt_pdf_pages() -> None:
 #: 兜底 stem 的基名（`<脚本名>`、`<脚本名>-2`…）。列表包一层是因为钩子闭包
 #: 在解析目标之前就装好了。
 _SCRIPT_STEM = ["figure"]
+#: 图名别名表（`--stem-aliases`，ADR 0159）：收图之后把原图名换成登记图名；空 = 没有
+_STEM_ALIASES: dict = {}
+
+
+def _apply_stem_aliases() -> None:
+    """每个收图时刻（show 屏障、脚本结束）之后、图进编辑会话之前：与 safe worker 同一个函数。"""
+    figcapture.apply_stem_aliases(
+        _STEM_ALIASES, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1402,6 +1412,8 @@ def _parse_args(argv: list):
     ap.add_argument("--observe-inputs", action="store_true")
     # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
     ap.add_argument("--ignore-paths", default=None)
+    # ADR 0159：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
+    ap.add_argument("--stem-aliases", default=None)
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -1502,6 +1514,11 @@ def _parse_ignore_paths(raw) -> list:
 def main(argv: list | None = None) -> int:
     global _INPUTS
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
+    try:
+        _STEM_ALIASES.update(figcapture.parse_stem_aliases(args.stem_aliases))
+    except ValueError as exc:
+        print(f"[tavotto] {exc}", file=sys.stderr)
+        return 2
     # 用户在失败卡上选了「跳过这个文件夹」的目录（ADR 0154）：与 safe worker 同一个装配点，在用户代码之前
     bridgeboot.install_ignored_import_paths(_parse_ignore_paths(args.ignore_paths))
     if not args.out_dir:
@@ -1584,6 +1601,8 @@ def main(argv: list | None = None) -> int:
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
         collect_pyplot(plt)
+    else:
+        _apply_stem_aliases()  # 纯 OO 脚本没有 pyplot 兜底这一步，别名照样要换
 
     if run.control is not None and _CAPTURE:
         try:

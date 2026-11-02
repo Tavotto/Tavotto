@@ -3025,6 +3025,101 @@ def adopt_displaced_writers(
     return added
 
 
+#: 分开登记的图名里，原图名与脚本文件名之间的分隔（ADR 0159）：`sensemakr@plot_新样本`
+ALIAS_SEPARATOR = "@"
+
+
+def aliased_stem(raw: str, script: str, taken) -> str:
+    """同名不同脚本时给后登记的那份起的登记图名：`原图名@脚本文件名`，再撞就 `-2`、`-3`…（ADR 0159）。
+
+    只由 (原图名, 脚本相对路径) 与「已经被占用的图名」决定；`taken` 是项目里此刻已登记的全部图名。
+    脚本文件名取不带扩展名的末段（子目录不进名字：界面显示原图名，这里只要可读且不撞）。"""
+    name = os.path.basename(str(script).replace("\\", "/"))
+    base = f"{raw}{ALIAS_SEPARATOR}{os.path.splitext(name)[0] or 'script'}"
+    used = set(taken)
+    if base not in used:
+        return base
+    n = 2
+    while f"{base}-{n}" in used:
+        n += 1
+    return f"{base}-{n}"
+
+
+def parse_stem_aliases(raw) -> dict[str, str]:
+    """`--stem-aliases` 的 JSON（`[[原图名, 登记图名], …]`）→ `{原图名: 登记图名}`；没给 = 空。
+
+    worker 与 native bridge 共用。父进程只会给 `execspec` 编出来的合法形状，坏了就抛 `ValueError`：
+    静默当没有的话，产出的图名对不上注册表，用户打开的是「图不存在」而不是一句真话。"""
+    if not raw:
+        return {}
+    pairs = json.loads(raw)
+    if not isinstance(pairs, list) or not all(
+        isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) and x for x in p)
+        for p in pairs
+    ):
+        raise ValueError(f"--stem-aliases 形状不对: {raw!r}")
+    out = {a: b for a, b in pairs}
+    if len(out) != len(pairs) or len(set(out.values())) != len(out):
+        raise ValueError(f"--stem-aliases 必须一对一: {raw!r}")
+    return out
+
+
+def apply_stem_aliases(
+    aliases,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    file_stems: dict | None = None,
+) -> list[str]:
+    """按登记的别名表把捕获表里的原图名换成登记图名（ADR 0159）；返回换过的登记图名（捕获顺序）。
+
+    三条入口（safe worker、native bridge 的每个收图时刻）在 pyplot 兜底**之后**、图进入编辑会话**之前**各调一次，
+    之后的一切（instrument、描述符、预览产物、编辑请求、runtime 身份）只见登记图名。`file_stems`（给了就填）记
+    登记图名 → 它写文件时用的名字，找原件用（与 `adopt_displaced_writers` 的 `panel-2` → `panel` 同一张表；
+    原图名本身已是补认领名时沿着链取到真正的文件名）。
+
+    捕获顺序保持不变（dict 原地重建）。登记图名已被**同一张** Figure 占着（native 第二个屏障上脚本又存了一次原名）
+    就只摘掉原名；被**另一张**图占着时，原名这张按 `-2` 规则另起名字，绝不覆盖。`aliases` 为空时零改动。"""
+    table = dict(aliases or ())
+    if not table or not any(stem in table for stem in capture):
+        return []
+    renamed: list[str] = []
+    order = list(capture.items())
+    out: dict = {}
+    for stem, fig in order:
+        target = table.get(stem)
+        if target is None:
+            if stem not in out:
+                out[stem] = fig
+            continue
+        held = out.get(target, capture.get(target))
+        if held is fig:
+            out.setdefault(target, fig)
+            name = None
+        else:
+            name = target if held is None else fallback_stems(set(capture) | set(out), target, 1)[0]
+            out[name] = fig
+        if name is not None:
+            if stem in capture_source:
+                capture_source[name] = capture_source[stem]
+            if stem in calls:
+                calls[name] = calls[stem]
+            if stem in extras:
+                extras[name] = extras[stem]
+            if file_stems is not None:
+                file_stems[name] = file_stems.get(stem, stem)
+            renamed.append(name)
+        capture_source.pop(stem, None)
+        calls.pop(stem, None)
+        extras.pop(stem, None)
+        if file_stems is not None:
+            file_stems.pop(stem, None)
+    capture.clear()
+    capture.update(out)
+    return renamed
+
+
 def _record_writer_call(mine: list, call: dict | None, extra) -> None:
     """把一次调用记进某个写入者自己的表（`record_savefig_call` 同一条规则，`mine[1] is None` = 不知道）。"""
     if mine[1] is None:

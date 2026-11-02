@@ -820,8 +820,9 @@ class TestRegistryEffects:
         assert engine_probe.probe_and_register(figs, "quiet.py")["registered"] is False
         assert (figs / "tavotto_registry.json").read_bytes() == before
 
-    def test_stem_conflict_with_a_live_script_is_not_silently_stolen(self, figs):
-        """产出的 stem 已被另一份**仍存在**的脚本登记：报 code，不写注册表。"""
+    def test_same_name_from_another_live_script_is_split_not_stolen(self, figs):
+        """产出的 stem 已被另一份**仍存在**的脚本登记、又证明不了是同一个文件（ADR 0159，TVD-TZQ9）：
+        原来那份一字不动，这份以 `原图名@脚本文件名` 分开登记，别名表写进注册表。"""
         write(figs, "a.py", 'print("owner")\n')
         (figs / "tavotto_registry.json").write_text(
             json.dumps(
@@ -840,12 +841,128 @@ class TestRegistryEffects:
             encoding="utf-8",
         )
         write(figs, "panels/figure.py", SHOW_ONLY)  # fallback stem = "figure"
-        before = (figs / "tavotto_registry.json").read_bytes()
         result = engine_probe.probe_and_register(figs, "panels/figure.py")
+        assert result["registered"] is True
+        assert result["stems"] == ["figure@figure"]
+        assert result["stem_aliases_added"] == {"figure": "figure@figure"}
+        scripts = json.loads((figs / "tavotto_registry.json").read_text("utf-8"))["scripts"]
+        assert scripts["a.py"]["stems"] == ["figure"]
+        assert scripts["panels/figure.py"]["stems"] == ["figure@figure"]
+        assert scripts["panels/figure.py"]["stem_aliases"] == {"figure": "figure@figure"}
+
+    def test_proven_same_file_is_still_a_conflict(self, figs):
+        """两份脚本写的是项目根目录里**同一个文件**（注册表的 `artifacts` 证明了）：仍报 code，不写注册表。"""
+        (figs / "shared.png").write_bytes(b"x")
+        write(figs, "a.py", 'print("owner")\n')
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "a.py": {
+                            "entry": "main",
+                            "cost": "medium",
+                            "notes": "",
+                            "stems": ["shared"],
+                            "artifacts": {"shared.png": "shared"},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        write(
+            figs,
+            "b.py",
+            "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.savefig('shared.png')\n",
+        )
+        before = (figs / "tavotto_registry.json").read_bytes()
+        result = engine_probe.probe_and_register(figs, "b.py")
         assert result["registered"] is False
         assert result["error"]["code"] == engine_probe.ERROR_STEM_CONFLICT
-        assert result["stem_conflicts"] == {"figure": "a.py"}
+        assert result["stem_conflicts"] == {"shared": "a.py"}
         assert (figs / "tavotto_registry.json").read_bytes() == before
+
+    def test_copied_script_saving_same_names_elsewhere_gets_its_own_figures(self, figs):
+        """TVD-TZQ9 的形状，真跑两份脚本：复制一份脚本换样本，图名相同、输出到另一个文件夹。
+
+        第二份分开登记；之后再跑它，捕获层按别名表直接产出登记图名（描述符、runtime 身份都是新名字），
+        再登记不再冲突、别名粘住；原来那份的登记一字不动。"""
+        body = (
+            "import os\nimport matplotlib.pyplot as plt\n"
+            "OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), {out!r})\n"
+            "os.makedirs(OUT, exist_ok=True)\n"
+            "for name in ('sensitivity', 'preview'):\n"
+            "    plt.figure()\n"
+            "    plt.plot([1, 2, {k}])\n"
+            "    plt.savefig(os.path.join(OUT, name + '.png'))\n"
+        )
+        write(figs, "plot_a.py", body.format(out="output", k=3))
+        write(figs, "plot_b.py", body.format(out="output_new", k=4))
+        first = engine_probe.probe_and_register(figs, "plot_a.py")
+        assert first["registered"] is True and sorted(first["stems"]) == ["preview", "sensitivity"]
+
+        second = engine_probe.probe_and_register(figs, "plot_b.py")
+        assert second["registered"] is True, second.get("error")
+        assert sorted(second["stems"]) == ["preview@plot_b", "sensitivity@plot_b"]
+        reg = json.loads((figs / "tavotto_registry.json").read_text("utf-8"))["scripts"]
+        assert sorted(reg["plot_a.py"]["stems"]) == ["preview", "sensitivity"]
+        assert reg["plot_b.py"]["stem_aliases"] == {
+            "preview": "preview@plot_b",
+            "sensitivity": "sensitivity@plot_b",
+        }
+
+        # 下一次运行（池按别名表判旧会话过期，新会话带 `--stem-aliases`）：直接是登记图名
+        again = engine_probe.probe(figs, "plot_b.py")
+        assert again["error"] is None
+        assert sorted(again["stems"]) == ["preview@plot_b", "sensitivity@plot_b"]
+        assert sorted(d["stem"] for d in again["descriptors"]) == [
+            "preview@plot_b",
+            "sensitivity@plot_b",
+        ]
+        assert all(d["asset_id"].endswith("@plot_b") for d in again["descriptors"])
+        third = engine_probe.probe_and_register(figs, "plot_b.py")
+        assert third["registered"] is True and "stem_aliases_added" not in third
+        reg = json.loads((figs / "tavotto_registry.json").read_text("utf-8"))["scripts"]
+        assert reg["plot_b.py"]["stem_aliases"] == {
+            "preview": "preview@plot_b",
+            "sensitivity": "sensitivity@plot_b",
+        }
+        assert sorted(reg["plot_a.py"]["stems"]) == ["preview", "sensitivity"]
+        # 原来那份照旧产出原图名
+        assert sorted(engine_probe.probe(figs, "plot_a.py")["stems"]) == ["preview", "sensitivity"]
+
+    def test_a_hot_session_started_before_the_split_is_not_reused(self, figs):
+        """热会话是分开登记之前起的（图还叫原名）：别名表一变，池不许再把它交出去（ADR 0159，`pool._aliases_current`）。"""
+        write(
+            figs,
+            "plot_b.py",
+            "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.savefig('fig1.png')\n",
+        )
+        before = engine_pool.get("plot_b.py", str(figs), "__main__")
+        before.ensure_built()
+        assert [d["stem"] for d in before.last_build_descriptors] == ["fig1"]
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "plot_b.py": {
+                            "entry": "__main__",
+                            "cost": "medium",
+                            "notes": "",
+                            "stems": ["fig1@plot_b"],
+                            "stem_aliases": {"fig1": "fig1@plot_b"},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        after = engine_pool.get("plot_b.py", str(figs), "__main__")
+        assert after is not before
+        after.ensure_built()
+        assert [d["stem"] for d in after.last_build_descriptors] == ["fig1@plot_b"]
 
     def test_a_dead_owners_stems_are_reassigned(self, figs):
         """归属脚本已不在磁盘上的旧条目不算冲突——改名/删除后重探测要顺畅。"""

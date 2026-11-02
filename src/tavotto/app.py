@@ -6350,13 +6350,15 @@ def api_registry_probe():
             # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
             # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
             # 清单与预览，那时 cache 里得已经有东西。
-            _materialize_runtime(
-                script,
-                result.get("entry") or "",
-                result.get("descriptors") or [],
-                remap_generation=result.get("remap_generation"),
-                run=run,
-            )
+            # 刚分开登记的图（ADR 0159）：这次执行里还叫原名，不物化（第一次打开时按登记图名重跑）
+            if not result.get("stem_aliases_added"):
+                _materialize_runtime(
+                    script,
+                    result.get("entry") or "",
+                    result.get("descriptors") or [],
+                    remap_generation=result.get("remap_generation"),
+                    run=run,
+                )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
             # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
             # B 再经这里成功，旧记录 A 会冒充「最近成功」
@@ -11650,7 +11652,14 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
     native = None
-    if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+    if registered.get("stem_aliases_added"):
+        # 这次刚分开登记的图（ADR 0159）：这次执行里的图还叫原名，物化出来就是登记表里没有的身份。不物化、
+        # 不沿用这条活会话（池按别名表判它过期），用户第一次打开时按登记图名重跑
+        if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+            for sess in engine_nativesession.REGISTRY.list(str(ctx.path)):
+                if sess.launch_id == plan.plan_id and sess.owned is not None:
+                    _end_native_session(sess)
+    elif getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
         # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
         native = next(
             (
@@ -11690,8 +11699,9 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
+    added = registered.get("stem_aliases_added") or {}
     failed = [
-        {"stem": f.get("stem"), "code": f.get("code")}
+        {"stem": added.get(f.get("stem"), f.get("stem")), "code": f.get("code")}
         for f in (captured.get("failed_figures") or ())
         if isinstance(f, dict)
     ]

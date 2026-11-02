@@ -40,3 +40,7 @@ On Windows without long-path support, "Make editable version" for an R / MATLAB 
 ## Preparing the environment on Windows no longer fails once at random
 
 On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
+
+## A copied script that saves figures with the same names now gets its own figures
+
+If you copied a script to rerun it on new data and it saves figures with the same file names as the original (for example into a different output folder), preparing the copy used to stop with "these figure names already belong to other scripts", and the only way out took the figures away from the original script. Tavotto now links the copy's figures separately, so both scripts' figures can be opened and edited on their own; the asset panel still shows the original file names. The first time you open the copy's figures, Tavotto runs it once more. Only when both scripts write the very same file in the project folder is it still reported as a clash. Your scripts are never changed.
