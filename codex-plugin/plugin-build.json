@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "plugin": "tavotto",
-  "plugin_version": "0.19.2",
+  "plugin_version": "0.20.0",
   "min_tavotto_version": "0.16.0",
-  "source_sha": "84951824d4713c15b6d6a752d07317443b4ec9bb",
-  "build_inputs_fingerprint": "95b1c5b3fca3275a",
+  "source_sha": "637482d4e35ef215a3cc4eb1f93ab8c8bc360a91",
+  "build_inputs_fingerprint": "e5e99861fc481715",
   "lockfile_sha256": "e108c1fb6208cabd84ff2dfdfc0a8df74e344259438630cac90be53a9ae29767",
   "toolchain": {
     "python": "3.13.17",
@@ -14,13 +14,13 @@
   "files": [
     {
       "path": ".claude-plugin/plugin.json",
-      "sha256": "97b932a2878f687d37416abac2260b79cb625366a90b81fb63bb1161d1fc9a94",
+      "sha256": "44591275635f801d07b4a45d3a46e00d6d66743a6d7094e4de6b9d22f771a947",
       "size": 915,
       "mode": "100644"
     },
     {
       "path": ".codex-plugin/plugin.json",
-      "sha256": "d148696cafaf05c9f3aef13c49c4351f5e41d21c498a0d2430f7e13ff971a9ba",
+      "sha256": "429b3985f1750f12f616a2bd4619aa100a50677c8d7ff8b81d9d8f66a1474fbd",
       "size": 1934,
       "mode": "100644"
     },
@@ -146,13 +146,13 @@
     },
     {
       "path": "mcp/widget/canvas.html",
-      "sha256": "bee23c0d7169782b91daa70e63fb72f67e2842bad866a525960f1a8949ac856c",
-      "size": 2344810,
+      "sha256": "da8b1a674dc97a6d6c26d6da3ccd7a22dd524a2b3f617210bdbf1752aab475c0",
+      "size": 2427050,
       "mode": "100644"
     },
     {
       "path": "package.json",
-      "sha256": "1b5a08b3e0d2f99b82ddeca8c2d6e16d488709b8a1d48526888902cd5d82c6bf",
+      "sha256": "263cf91ef614a284fad7d83d94095c241b39c5607299457dba7c51e6d438c057",
       "size": 823,
       "mode": "100644"
     },
@@ -243,10 +243,10 @@
       ]
     }
   },
-  "content_digest": "9b0022a3dccebeaecc41681f42a4324e9af9050fe6861a03e215c76c9484bfd8",
+  "content_digest": "2fd7e1030a05b78e258ee9560a34133edf84c30f167d488376791ba847725a0d",
   "audit": {
     "workflow": "release",
-    "run_id": "41168236349",
-    "tag": "v0.19.2"
+    "run_id": "41384175473",
+    "tag": "v0.20.0"
   }
 }
