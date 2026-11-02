@@ -505,3 +505,58 @@ class TestDocsOnlyCli:
         needs = {j: {"result": r} for j, r in _docs_results().items()}
         rc, _ = self._run(capsys, needs, *self.FLAGS)
         assert rc == 1
+
+
+# ============================================================ merge_group 快速失败归因
+class TestMergeGroupFailFastAttribution:
+    """重腿红 → workflow 取消其余 job → 它们的结论是 cancelled。判红规则不变，只多归因。"""
+
+    HEAVY = ["backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e"]
+
+    def _mg(self, **overrides):
+        r = {j: "success" for j in self.HEAVY}
+        r.update(overrides)
+        return AG.decide("integration", "merge_group", self.HEAVY, r, require_heavy=True)
+
+    def test_a_red_leg_with_cancelled_siblings_is_red_and_names_the_root(self):
+        v = self._mg(
+            **{"windows-exe-smoke": "failure", "package": "cancelled", "posix-e2e": "cancelled"}
+        )
+        assert v["status"] == "failure" and v["reason"] == "upstream_not_success"
+        assert v["root_failures"] == ["windows-exe-smoke"]
+        assert v["cancelled_by_fail_fast"] == ["package", "posix-e2e"]
+
+    def test_cancelled_without_any_failure_is_still_red_and_not_blamed_on_fail_fast(self):
+        """外部取消（新 push / 人手点取消）没有 failure：保持裸 cancelled，不得冒充快速失败。"""
+        v = self._mg(**{"package": "cancelled", "posix-e2e": "cancelled"})
+        assert v["status"] == "failure"
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_all_cancelled_after_a_failure_can_never_pass(self):
+        """快速失败后哪怕其余全是 cancelled，也不能因为『没有别的红』被放过。"""
+        v = self._mg(
+            **{
+                "backend-platforms": "failure",
+                "package": "cancelled",
+                "windows-exe-smoke": "cancelled",
+                "macos-app-smoke": "cancelled",
+                "posix-e2e": "cancelled",
+            }
+        )
+        assert v["status"] == "failure"
+
+    def test_attribution_is_merge_group_only(self):
+        r = {j: "success" for j in self.HEAVY}
+        r.update({"package": "failure", "posix-e2e": "cancelled"})
+        v = AG.decide("integration", "pull_request", self.HEAVY, r, require_heavy=True)
+        assert v["status"] == "failure"
+        assert v["cancelled_by_fail_fast"] == [], "PR / full-ci 的语义不变：不归因快速失败"
+
+    def test_all_success_carries_no_attribution_and_still_passes(self):
+        v = self._mg()
+        assert v["status"] == "success" and "root_failures" not in v
+
+    def test_summary_points_at_the_root_failure(self):
+        v = self._mg(**{"package": "failure", "posix-e2e": "cancelled"})
+        text = AG.render_summary(v, self.HEAVY)
+        assert "快速失败" in text and "`package`" in text and "`posix-e2e`" in text

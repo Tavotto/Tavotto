@@ -43,6 +43,10 @@
   照常必须 success。docs-only 通过时 status 仍是 `success`，reason 是
   `docs_only_fast_path`，summary 会列出被豁免跳过的 job。
 
+* merge_group 快速失败（`fail_fast_attribution()`）：重腿红后 workflow 取消其余 job，
+  结论里多出 `cancelled`。判红规则不变（非 success 即红），verdict 另给 `root_failures`
+  与 `cancelled_by_fail_fast` 供人先看真红的那条；没有 failure 的 cancelled 不归因。
+
 退出码：0 = success 或 deferred；1 = Gate 失败；2 = 配置 / 输入错误
 （同样让 Gate 红——判定器自己坏了不能算通过）。
 
@@ -101,6 +105,24 @@ def parse_needs_full(raw: str) -> tuple[dict[str, str], dict[str, dict[str, str]
         if isinstance(raw_outputs, dict):
             outputs[job] = {str(k): str(v) for k, v in raw_outputs.items()}
     return out, outputs
+
+
+def fail_fast_attribution(event: str, jobs: dict[str, str]) -> dict:
+    """merge_group 快速失败的归因（纯函数）：谁是真红、谁是被收尾取消的。
+
+    重腿红了之后 workflow 会取消本 run 的其余 job（ci.yml 各重腿最后一步），它们的结论
+    于是是 `cancelled`。判红本身不依赖这个归因——任何非 success 都已经是红；这里只回答
+    「该先看哪条腿」：有 failure 才有 `root_failures`，`cancelled_by_fail_fast` 仅在
+    merge_group 且同时存在 failure 与 cancelled 时非空。**没有任何 failure 的 cancelled
+    不归因给快速失败**（那是外部取消，保持裸 cancelled，L-114 的核对口径照旧）。
+    """
+    failed = sorted(j for j, r in jobs.items() if r == "failure")
+    cancelled = sorted(j for j, r in jobs.items() if r == "cancelled")
+    fast = event == "merge_group" and bool(failed)
+    return {
+        "root_failures": failed,
+        "cancelled_by_fail_fast": cancelled if fast else [],
+    }
 
 
 def decide(
@@ -207,7 +229,13 @@ def decide(
 
     bad = [f"{j}: {results[j]}" for j in required if results[j] != "success"]
     if bad:
-        return {**base, "status": "failure", "reason": "upstream_not_success", "problems": bad}
+        return {
+            **base,
+            "status": "failure",
+            "reason": "upstream_not_success",
+            "problems": bad,
+            **fail_fast_attribution(event, jobs),
+        }
     return {**base, "status": "success", "reason": "all_required_success", "problems": []}
 
 
@@ -232,6 +260,14 @@ def render_summary(verdict: dict, required: list[str]) -> str:
             "docs-only 快车道：本次只改了 `docs/release-notes/`（分类 job 已核对），",
             "下列重型 job 按设计被跳过："
             + "、".join(f"`{j}`" for j in verdict["docs_only_skipped"]),
+        ]
+    if verdict.get("cancelled_by_fail_fast"):
+        lines += [
+            "",
+            "merge_group 快速失败：先看真红的 "
+            + "、".join(f"`{j}`" for j in verdict.get("root_failures", []))
+            + "；下列 job 是被收尾取消的（不是各自的问题）："
+            + "、".join(f"`{j}`" for j in verdict["cancelled_by_fail_fast"]),
         ]
     if verdict.get("problems"):
         lines += ["", "问题："] + [f"- {p}" for p in verdict["problems"]]
