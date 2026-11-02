@@ -5220,6 +5220,32 @@ def _build_manifest(state: FigState, stem: str, arm, *, timings: dict | None = N
         return result
 
 
+def _ink_bbox(fig, renderer, W: float, H: float) -> list[float] | None:
+    """图的内容边缘 `[x0, y0, x1, y1]`（ADR 0161 §2）：`fig.get_tightbbox(renderer)`——
+    matplotlib `bbox_inches="tight"` 用的同一个框，**不加 pad**——换成相对图幅的分数（y 向下，
+    与元素 `bbox` 同一套坐标）。
+
+    在 `in_frame` 里显示坐标原点与 `fig.bbox` 就是图幅 F（ADR 0098），所以除以 `W` / `H`
+    得到的就是相对对外那个图幅的分数；没有 frame 时就是相对 figsize。可以略伸出 [0, 1]
+    （内容被图幅切掉的部分），不钳。取不到（异常 / 空框 / 非有限数）回 None，字段不出现，不猜。
+    """
+    try:
+        bb = fig.get_tightbbox(renderer)
+        dpi = float(fig.dpi)
+        x0, y0, x1, y1 = (
+            float(bb.x0) * dpi,
+            float(bb.y0) * dpi,
+            float(bb.x1) * dpi,
+            float(bb.y1) * dpi,
+        )
+    except Exception:  # noqa: BLE001 - 用户的图、用户的 artist：什么都可能抛
+        return None
+    vals = [x0 / W, 1.0 - y1 / H, x1 / W, 1.0 - y0 / H]
+    if not all(math.isfinite(v) for v in vals) or vals[2] <= vals[0] or vals[3] <= vals[1]:
+        return None
+    return [round(v, 5) for v in vals]
+
+
 def _measure_manifest(
     state: FigState, stem: str, arm, fig, renderer, min_hit=_MIN_HIT_PX, vector_metrics=True
 ) -> dict:
@@ -5421,6 +5447,9 @@ def _measure_manifest(
                 entry["geom_gid"] = host_gid
         if el["role"] == "figure":
             entry["bbox"] = [0.0, 0.0, 1.0, 1.0]
+            ink = _ink_bbox(fig, renderer, W, H)
+            if ink is not None:
+                entry["ink_bbox"] = ink
         elif el["role"] == "ticklabel":
             t = artist.live()
             if t is None or not t.get_text():

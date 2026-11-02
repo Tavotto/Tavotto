@@ -80,9 +80,14 @@ def compose(
     *,
     underlay: str = "",
     name: str = "figure.eps",
+    offset_pt: tuple[float, float] | None = None,
+    clip_page: bool = False,
 ) -> bytes:
     """原图 EPS + 叠加层 → 外层 EPS 字节。外层 BoundingBox = 图幅（向上取整），原图按其包围盒左下角对齐图幅左下角。
-    `underlay` = 图层树里放在图**下面**的标注，写在嵌入段之前；`overlay` 在嵌入段之后（图上面）。"""
+    `underlay` = 图层树里放在图**下面**的标注，写在嵌入段之前；`overlay` 在嵌入段之后（图上面）。
+
+    单图留白（ADR 0161 §3）：`offset_pt = (x, y)` 是原图包围盒左下角在页面里的落点（pt，原点左下；缺省 (0, 0)
+    = 与从前逐字节相同）；`clip_page` 把整页内容裁到 BoundingBox（留白为负时原图会伸出页面）。"""
     if not inner.startswith(b"%!PS-Adobe"):
         raise EpsOverlayError("embedded file is not a DSC EPS")
     embedded_bbox(inner)  # 没有可用的包围盒就拒绝
@@ -95,13 +100,17 @@ def compose(
         "%%Creator: Tavotto\n%%Pages: 1\n%%LanguageLevel: 2\n%%EndComments\n"
         "%%BeginProlog\n%%EndProlog\n%%Page: 1 1\n"
     )
+    dx, dy = offset_pt if offset_pt is not None else (0.0, 0.0)
     place = (
-        f"gsave {_n(-x0)} {_n(-y0)} translate newpath "
+        f"gsave {_n(dx - x0)} {_n(dy - y0)} translate newpath "
         f"{_n(x0)} {_n(y0)} {_n(ix1 - x0)} {_n(iy1 - y0)} rectclip\n"
     )
+    page_open = f"gsave newpath 0 0 {_n(width_pt)} {_n(height_pt)} rectclip\n" if clip_page else ""
+    page_close = "grestore\n" if clip_page else ""
     body = inner if inner.endswith(b"\n") else inner + b"\n"
     out = [
         head.encode("ascii"),
+        page_open.encode("ascii"),
         underlay.encode("ascii"),
         place.encode("ascii"),
         BEGIN_EPSF.encode("ascii"),
@@ -111,6 +120,7 @@ def compose(
         END_EPSF.encode("ascii"),
         b"grestore\n",
         overlay.encode("ascii"),
+        page_close.encode("ascii"),
         b"showpage\n%%EOF\n",
     ]
     return b"".join(out)

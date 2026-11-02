@@ -447,6 +447,7 @@ USER_VISIBLE_CODES = {
     "bad_validation": set(),
     "bad_objects": set(),
     "bad_merge": set(),
+    "bad_pad": set(),
     "missing_original": set(),
     "missing_figure": set(),
     "bad_overrides": set(),
