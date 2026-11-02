@@ -181,6 +181,20 @@ describe('拖边 = 画布留白：图不动，整次一条历史', () => {
     fire('pointerup', dx(20), 0, true)
   })
 
+  it('#1648 Codex 复核 P2：⌥ 把左边裁深后，右边拖到内容边缘不会写进 framePadTight，生效画布宽 ≥ 5 mm', () => {
+    act(() => seedExactRender(fig() as PanelObject, manifestOf(80, 55, [0.05, 0, 0.875, 1])))
+    startFramePadEdge(down(0, 0), 'l', 'a')
+    fire('pointermove', dx(70), 0, true)
+    fire('pointerup', dx(70), 0, true)
+    expect(pad()?.l).toBe(-70)
+    startFramePadEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(-10), 0)
+    fire('pointerup', dx(-10), 0)
+    expect(tight() ?? []).not.toContain('r')
+    expect(pad()?.r).toBeCloseTo(-5, 6)
+    expect(80 + (pad()?.l ?? 0) + (pad()?.r ?? 0)).toBeGreaterThanOrEqual(5 - 1e-6)
+  })
+
   it('画布宽吸栏宽（图 80 + 右留白 70 = 150，内置默认规范的双栏）', () => {
     startFramePadEdge(down(0, 0), 'r', 'a')
     fire('pointermove', dx(69.2), 0)

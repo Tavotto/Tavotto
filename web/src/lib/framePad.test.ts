@@ -45,6 +45,18 @@ describe('effectiveFramePad', () => {
     )
     expect(p).toEqual({ l: -4.5, t: 2, r: 3, b: 0 })
   })
+  it('#1648 Codex 复核 P2：紧凑边换成 -inset 会把画布挤没时，抬到画布宽 5 mm', () => {
+    const p = effectiveFramePad(
+      { framePad: { l: -70, t: 0, r: -10, b: 0 }, framePadTight: ['r'] },
+      { l: 0, t: 0, r: 10, b: 0 },
+      [80, 60],
+    )
+    expect(p.r).toBe(-5)
+    expect(80 + p.l + p.r).toBe(5)
+    // 不传图幅尺寸时保持旧行为；非紧凑边不动
+    expect(effectiveFramePad({ framePad: { l: -70, t: 0, r: 0, b: 0 }, framePadTight: ['r'] }, { l: 0, t: 0, r: 10, b: 0 }).r).toBe(-10)
+    expect(p.l).toBe(-70)
+  })
   it('没有内容边缘事实时紧凑边沿用存的 mm；缺省全 0', () => {
     expect(effectiveFramePad({ framePad: { l: -1, t: 0, r: 0, b: 0 }, framePadTight: ['l'] }, null).l).toBe(-1)
     expect(isZeroPad(effectiveFramePad({}, null))).toBe(true)
@@ -81,6 +93,21 @@ describe('planPadEdge', () => {
     // 竖向同理
     const q = planPadEdge({ ...base, pad0: { l: 0, t: 0, r: 0, b: -40 }, edge: 't', deltaOut: -90, inset: null, allowCrop: true })
     expect(60 - 40 + q.value).toBe(5)
+  })
+
+  it('#1648 Codex 复核 P2：夹取改了停靠值就不再算紧凑（80 mm、左裁 -70、右内容边距 10，右边拖到内容边缘）', () => {
+    const p = planPadEdge({
+      ...base,
+      sizeMm: [80, 60],
+      pad0: { l: -70, t: 0, r: 0, b: 0 },
+      edge: 'r',
+      deltaOut: -10,
+      inset: { l: 4, t: 0, r: 10, b: 0 },
+      allowCrop: false,
+    })
+    expect(p.value).toBe(-5)
+    expect(p.tight).toBe(false)
+    expect(p.state).toBe('trim')
   })
 
   it('往外拖 = 扩充画布', () => {

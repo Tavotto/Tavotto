@@ -58,7 +58,7 @@ export function startFramePadEdge(e: ReactPointerEvent, edge: PageEdge, panelId:
   const facts = figureFrameFacts(panel, manifest)
   if (!facts) return
   const inset = inkInsetMm(manifest, facts.sizeMm)
-  const pad0 = effectiveFramePad(d0, inset)
+  const pad0 = effectiveFramePad(d0, inset, facts.sizeMm)
   const tight0 = (d0.framePadTight ?? []).filter((s) => s !== edge)
   const k = panel.w / facts.sizeMm[0]
   const box0 = { x: panel.x, y: panel.y, w: panel.w, h: panel.h }
@@ -142,7 +142,7 @@ export function startFigureCornerResize(e: ReactPointerEvent, corner: FrameCorne
   const manifest = exactPanelManifest(useRenderStore.getState(), panel)
   const facts = figureFrameFacts(panel, manifest)
   if (!facts) return
-  const pad = effectiveFramePad(d0, inkInsetMm(manifest, facts.sizeMm))
+  const pad = effectiveFramePad(d0, inkInsetMm(manifest, facts.sizeMm), facts.sizeMm)
   const k = panel.w / facts.sizeMm[0]
   const box0 = frameCanvasBox(panel, pad, k)
   const view0 = useViewportStore.getState().freezeView()

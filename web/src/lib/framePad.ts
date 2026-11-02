@@ -53,12 +53,23 @@ export function inkInsetMm(manifest: Manifest | null, sizeMm: readonly [number, 
 export function effectiveFramePad(
   doc: Pick<FigureDocument, 'framePad' | 'framePadTight'>,
   inset: FramePad | null,
+  sizeMm?: readonly [number, number] | null,
 ): FramePad {
   const p = doc.framePad ?? ZERO_PAD
   const tight = doc.framePadTight ?? []
   if (!tight.length || !inset) return { ...p }
   const out = { ...p }
-  for (const s of tight) out[s] = -inset[s]
+  for (const s of tight) {
+    out[s] = -inset[s]
+    // 不变量：生效留白下画布每一维 ≥ FRAME_MIN_VISIBLE_MM。内容边缘会随图幅变（拖角），
+    // 紧凑边换成 -inset 后若把画布挤没了，把这条紧凑边抬到刚好满足下限（非紧凑边是用户显式拖的、已过 planPadEdge 下限，不动）。
+    if (sizeMm) {
+      const horizontal = s === 'l' || s === 'r'
+      const dim = horizontal ? sizeMm[0] : sizeMm[1]
+      const opp = horizontal ? (s === 'l' ? 'r' : 'l') : s === 't' ? 'b' : 't'
+      out[s] = Math.max(out[s], FRAME_MIN_VISIBLE_MM - dim - out[opp])
+    }
+  }
   return out
 }
 
@@ -137,9 +148,19 @@ export function planPadEdge(opts: {
   // 下限 = 这一维的画布至少剩 FRAME_MIN_VISIBLE_MM：图幅 + 对边此刻的留白 + 这条边的留白 ≥ 最小可见量
   const opp = horizontal ? (edge === 'l' ? pad0.r : pad0.l) : edge === 't' ? pad0.b : pad0.t
   const lo = -(dim + opp - FRAME_MIN_VISIBLE_MM)
+  const v0 = v
   v = Math.min(FRAME_PAD_MAX_MM, Math.max(lo, v))
+  const clampedBest = v === v0 ? best : null
+  if (v !== v0) {
+    // 夹取改了停靠值：按夹取后的值重新判定，不再算停在内容边缘（否则 tight 标记会被 effectiveFramePad 再覆盖回去）
+    if (v > 0.05) state = 'grow'
+    else if (v > -0.05) state = 'edge'
+    else if (stop == null || v > stop + 0.05) state = 'trim'
+    else if (v > stop - 0.05) state = 'tight'
+    else state = 'crop'
+  }
   const tight = state === 'tight' || state === 'blocked'
-  return { value: tight ? v : round1(v), state, tight, snap: best?.kind === 'col' ? best.col! : null }
+  return { value: tight ? v : round1(v), state, tight, snap: clampedBest?.kind === 'col' ? clampedBest.col! : null }
 }
 
 export type FrameCorner = 'tl' | 'tr' | 'bl' | 'br'
@@ -236,7 +257,7 @@ export function frameCanvasOf(
   const facts = figureFrameFacts(panel, manifest)
   const sizeMm: [number, number] = facts ? facts.sizeMm : [panel.nativeW || panel.w, panel.nativeH || panel.h]
   const inset = facts ? inkInsetMm(manifest, sizeMm) : null
-  const pad = effectiveFramePad(doc, inset)
+  const pad = effectiveFramePad(doc, inset, sizeMm)
   const k = sizeMm[0] > 0 ? panel.w / sizeMm[0] : 1
   return { pad, inset, sizeMm, k, exact: !!facts, box: frameCanvasBox(panel, pad, k) }
 }
