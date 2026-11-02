@@ -668,3 +668,22 @@ class TestLiteralDirOutsideProject:
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: base / "analysis_outputs"))
         scan = importscan.scan(proj, "render.py")
         assert not ({"pandas", "sklearn"} & self._needed(scan))
+
+    def test_external_helper_adds_a_dir_relative_to_its_own_file(self, tmp_path, monkeypatch):
+        """项目外的辅助模块再按它**自己**的 `__file__` 加目录：目录相对它所在处，而不是项目（Codex #1634 P2）。"""
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
+        base = tmp_path / "Radscore"
+        proj = base / "analysis_outputs" / "case_v1"
+        _write(proj, "render.py", self.SCRIPT)
+        _write(
+            base,
+            "helper_mod.py",
+            "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path(__file__).parent / 'deps'))\n"
+            "import deep_dep\ndef load(p): return p\n",
+        )
+        _write(base, "deps/deep_dep.py", "import pandas as pd\n")
+        # 项目里同名的 deps/ 是诱饵：按项目解析就会读到它而漏掉 pandas
+        _write(proj, "deps/deep_dep.py", "x = 1\n")
+        scan = importscan.scan(proj, "render.py")
+        assert "pandas" in self._needed(scan)

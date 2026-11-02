@@ -1658,22 +1658,26 @@ class _Scanner:
         if problem is not None:
             self.problems.append(problem)
             return None
-        return self._visit(tree, via, rel)
+        return self._visit(tree, via, rel, path)
 
-    def _visit(self, tree: ast.Module, via: str, rel: str) -> _Parsed:
+    def _visit(self, tree: ast.Module, via: str, rel: str, path: Path | None = None) -> _Parsed:
         v = _Visitor(via, _collect_aliases(tree), _dir_consts(tree))
         v.visit(tree)
         if v.path_mutations:
             self.path_modified = True
             for line in v.path_mutations:
                 self.warn("sys_path_modified", rel, line)
-        self._add_literal_roots(v.path_dirs, rel, v.uses)
+        self._add_literal_roots(v.path_dirs, rel, v.uses, path)
         return _Parsed(v.uses, v.dynamic, v.relatives, v.path_mutations, tree)
 
-    def _add_literal_roots(self, dirs, rel: str, uses=()) -> None:
+    def _add_literal_roots(self, dirs, rel: str, uses=(), path: Path | None = None) -> None:
         """`sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))` 这类（只认字面量，有界）：目录加进本地模块
         搜索根。词法钉在项目内（出界的不认；链接形态由 `_Finder` 的闸门照常挡）；目录不存在也不报错——模块照旧找不到。"""
-        base = (self.root / rel).parent if rel else self.script_p.parent
+        # 基准 = 这份文件真实所在的目录。项目外的文件 `rel` 只剩文件名（`_rel`），不能从它反推（Codex #1634 P2）
+        if path is not None:
+            base = Path(path).parent
+        else:
+            base = (self.root / rel).parent if rel else self.script_p.parent
         for front, segs, line in dirs[:_MAX_LITERAL_ROOTS]:
             target = Path(os.path.normpath(base.joinpath(*segs)))
             pinned = _pinned(self.bound, target)
