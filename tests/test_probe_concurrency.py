@@ -208,3 +208,131 @@ def test_has_matplotlib_records_its_subsegment(monkeypatch):
     finally:
         pool._TRACE.cur = None
     assert "probe_matplotlib_ms" in cur
+
+
+# ---- 解析解释器那一段与事实预热并发（`ENVIRONMENT_PREFETCHERS`）-------------------------------------------
+
+
+class _W:
+    python = "/py"
+    entry = "main"
+    script_name = "a.py"
+    build_failed = False
+    last_used = 0
+
+    def alive(self):
+        return True
+
+    def shutdown(self):
+        pass
+
+
+@pytest.fixture
+def acq(monkeypatch):
+    import collections
+    import sys
+
+    monkeypatch.setattr(pool, "_workers", {})
+    monkeypatch.setattr(pool, "_pending_retirements", {})
+    monkeypatch.setattr(pool, "_last_acquired", threading.local())
+    monkeypatch.setattr(pool, "_TRACE", threading.local())
+    monkeypatch.setattr(pool, "_health", {"created": 0, "evicted": 0, "seq": 0})
+    monkeypatch.setattr(pool, "_cold_starts", collections.deque(maxlen=8))
+    monkeypatch.setattr(pool, "COLD_ACQUIRE_OBSERVER", None)
+    monkeypatch.setattr(pool, "ENVIRONMENT_DECIDERS", [lambda *a: None])
+    monkeypatch.setattr(pool, "ACQUIRE_LEASE", 0.0)
+    monkeypatch.setattr(pool, "_refuse_if_mutating", lambda *a: None)
+    monkeypatch.setattr(pool.launcher_mod, "prewarm", lambda *a: None)
+    monkeypatch.setattr(pool, "_schedule_prune", lambda: None)
+    monkeypatch.setattr(pool, "generation_stale", lambda w: False)
+    monkeypatch.setattr(pool, "_remap_current", lambda *a: True)
+    monkeypatch.setattr(pool, "_workdir_gate", lambda *a: None)
+    monkeypatch.setattr(pool, "_new_worker", lambda *a, **k: _W())
+    monkeypatch.setattr(pool, "same_python", lambda a, b: True)
+    monkeypatch.setattr(pool, "ENVIRONMENT_PREFETCHERS", [])
+    return sys.executable
+
+
+def test_resolve_overlaps_with_prefetch_on_cold_acquire(acq, monkeypatch):
+    ran = []
+    resolves = []
+    monkeypatch.setattr(
+        pool,
+        "resolve_worker_python",
+        lambda *a, **k: (time.sleep(NAP), resolves.append(1), ("/py", "t"))[2],
+    )
+    # 与真提供者一样：预热过一次（缓存已有）之后不再给 thunk
+    pool.register_environment_prefetch(
+        lambda fd, sc: None if ran else (lambda: (time.sleep(NAP), ran.append(1)))
+    )
+    t0 = time.perf_counter()
+    pool.acquire("a.py", "/p", "main")
+    assert ran == [1]
+    # 解析 NAP + 预热 NAP 并发 ≈ NAP（加上之后决定阶段再解析一次 NAP）；串行至少 3*NAP
+    # 串行 = 每次解析各 NAP + 预热 NAP；预热被解析盖住时只剩解析的总和
+    assert time.perf_counter() - t0 < len(resolves) * NAP + NAP * 0.6
+
+
+def test_resolve_error_wins_over_prefetch(acq, monkeypatch):
+    def bad(*a, **k):
+        raise pool.WorkerError("explicit", code="explicit_python_unusable")
+
+    monkeypatch.setattr(pool, "resolve_worker_python", bad)
+    pool.register_environment_prefetch(lambda fd, sc: lambda: time.sleep(0.05))
+    with pytest.raises(pool.WorkerError) as info:
+        pool.acquire("a.py", "/p", "main")
+    assert info.value.code == "explicit_python_unusable"
+
+
+def test_no_prefetch_when_a_live_worker_exists_or_nothing_registered(acq, monkeypatch, no_threads):
+    monkeypatch.setattr(pool, "resolve_worker_python", lambda *a, **k: ("/py", "t"))
+    pool.acquire("a.py", "/p", "main")  # 没有注册任何预热：不起线程
+    started = []
+    pool.register_environment_prefetch(lambda fd, sc: started.append(1))
+    pool.acquire("a.py", "/p", "main")  # 已有活会话：连提供者都不问
+    assert started == []
+
+
+def test_prefetch_facts_skips_cached_and_conda(monkeypatch):
+    monkeypatch.setattr(pool, "likely_worker_python", lambda fd: "/py")
+    monkeypatch.setattr(depplan, "facts_cached", lambda py: True)
+    assert deprepair._prefetch_facts("/p", "a.py") is None
+    monkeypatch.setattr(depplan, "facts_cached", lambda py: False)
+    monkeypatch.setattr(deprepair.launcher, "launcher_for_interpreter", lambda py: object())
+    assert deprepair._prefetch_facts("/p", "a.py") is None
+    monkeypatch.setattr(deprepair.launcher, "launcher_for_interpreter", lambda py: None)
+    monkeypatch.setattr(pool, "likely_worker_python", lambda fd: "")
+    assert deprepair._prefetch_facts("/p", "a.py") is None
+
+
+def test_prefetch_facts_swallows_probe_failure_and_records_segment(monkeypatch):
+    monkeypatch.setattr(pool, "likely_worker_python", lambda fd: "/py")
+    monkeypatch.setattr(depplan, "facts_cached", lambda py: False)
+    monkeypatch.setattr(deprepair.launcher, "launcher_for_interpreter", lambda py: None)
+
+    def boom(py, use_cache=True):
+        raise launcher.LauncherUnavailable("x")
+
+    monkeypatch.setattr(depplan, "target_facts", boom)
+    thunk = deprepair._prefetch_facts("/p", "a.py")
+    thunk()  # 不抛
+    seen = []
+    monkeypatch.setattr(depplan, "target_facts", lambda py, use_cache=True: seen.append(py))
+    pool._TRACE.cur = cur = {}
+    try:
+        thunk()
+    finally:
+        pool._TRACE.cur = None
+    assert seen == ["/py"] and "probe_facts_ms" in cur
+
+
+def test_likely_python_prefers_project_choice_then_first_existing(monkeypatch, tmp_path):
+    real = tmp_path / "python"
+    real.write_text("")
+    monkeypatch.setattr(pool, "peek_worker_python", lambda fd: ("/chosen", "x"))
+    assert pool.likely_worker_python("/p") == "/chosen"
+    monkeypatch.setattr(pool, "peek_worker_python", lambda fd: None)
+    monkeypatch.setattr(
+        pool, "_prioritized_candidates", lambda: [("/nope/python", "a"), (str(real), "b")]
+    )
+    assert pool.likely_worker_python("/p") == str(real)

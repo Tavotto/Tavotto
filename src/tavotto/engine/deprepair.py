@@ -7071,8 +7071,28 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
     raise err
 
 
+def _prefetch_facts(project: str, script: str):
+    """解析解释器那一段并发预热目标事实（`pool.ENVIRONMENT_PREFETCHERS`）：环境决定随后一定要量这条解释器的事实，
+    而解析里的 `import matplotlib` 体检与它互不依赖——猜它们是同一条解释器（`pool.likely_worker_python`），
+    重叠起来跑。只填 `depplan` 的事实缓存；猜错 / 探测失败都只是白做，之后的真调用照常重来并抛自己的错。
+    已缓存、需要 Conda 激活（两处会各自去捕获激活环境）的不预热。"""
+    python = pool.likely_worker_python(project)
+    if not python or depplan.facts_cached(python) or launcher.launcher_for_interpreter(python):
+        return None
+
+    def thunk() -> None:
+        try:
+            with pool.segment("probe_facts_ms"):
+                depplan.target_facts(python)
+        except Exception:  # noqa: BLE001 — 投机预热，失败由真调用方报告
+            pass
+
+    return thunk
+
+
 pool.register_spawn_gate(_spawn_gate)
 pool.register_environment_decider(decide_environment_pinned)
+pool.register_environment_prefetch(_prefetch_facts)
 
 
 #: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /

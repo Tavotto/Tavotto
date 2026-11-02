@@ -4526,6 +4526,32 @@ def _resolve_for_worker(
     return resolve_worker_python(figures_dir, script=script_name)
 
 
+#: 解析解释器时可以并发预热的探测提供者：`fn(figures_dir, script) -> thunk | None`。thunk 只许往缓存里填、
+#: 吞掉自己的失败（它是投机的，真正的调用方之后会照常重来一遍并抛自己的错）。`_acquire` 在「解析解释器」
+#: 那一段把它们和解析并发跑，使解析里的 `import matplotlib` 体检与随后环境决定要量的事实探测重叠起来。
+ENVIRONMENT_PREFETCHERS: list = []
+
+
+def register_environment_prefetch(fn) -> None:
+    if fn not in ENVIRONMENT_PREFETCHERS:
+        ENVIRONMENT_PREFETCHERS.append(fn)
+
+
+def likely_worker_python(figures_dir: str | Path) -> str:
+    """解析大概率会落到哪条解释器（**纯读，不起进程**；猜错只是白预热一份缓存）：项目 / 全局已定下的，
+    否则默认链条里第一条存在的候选。没有回空串。"""
+    try:
+        got = peek_worker_python(figures_dir)
+        if got:
+            return got[0]
+        for cand, _source in _prioritized_candidates():
+            if Path(cand).exists():
+                return cand
+    except (OSError, WorkerError):
+        pass
+    return ""
+
+
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
         ENVIRONMENT_DECIDERS.append(decider)
@@ -4982,13 +5008,23 @@ def _acquire(
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         decided = not ENVIRONMENT_DECIDERS or pin is not None
+        prefetch: list = []
+        if not decided and ENVIRONMENT_PREFETCHERS:
+            _w0 = _workers.get(key)  # 已有活会话：多半能复用、用不着决定，不投机
+            if _w0 is None or not _w0.alive():
+                prefetch = [
+                    t for t in (f(figures_dir, script_name) for f in ENVIRONMENT_PREFETCHERS) if t
+                ]
         try:
             with _seg("resolve_python_ms"):
-                want_python = (
-                    pin.python
-                    if pin is not None
-                    else resolve_worker_python(figures_dir, script=script_name)[0]
-                )
+                if pin is not None:
+                    want_python = pin.python
+                elif prefetch:
+                    want_python = run_probes_concurrently(
+                        lambda: resolve_worker_python(figures_dir, script=script_name)[0], *prefetch
+                    )[0]
+                else:
+                    want_python = resolve_worker_python(figures_dir, script=script_name)[0]
         except WorkerError as exc:
             # 默认链条里没有任何能跑的解释器（`no_worker_python`）时，项目 venv / 别处发现的用户环境也许能跑：
             # 检测要先于「第一次解析失败」之后的一切（Codex #820 r4221391630），否则只经池的入口（渲染已有素材、

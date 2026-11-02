@@ -52,3 +52,7 @@ When the in-app fix assistant tried to create a new Python environment while a p
 ## The maker's reply to a problem report now shows up in the app
 
 When you send a problem report and *Contact the maker* is on, the app now also keeps a small record so the maker's reply can appear under *Contact the maker > My letters*, tagged "Report" with the report ID. The dialog says so after sending. Nothing changes if you turn *Contact the maker* off (`TAVOTTO_NO_CONTACT=1`), and a report that gets no reply is forgotten locally after 30 days.
+
+## The first picture after launch appears a little sooner
+
+The first time you render after starting Tavotto, the app checks your Python environment with several small probes. Probes that don't depend on each other now run side by side instead of one after another, which trims a fraction of a second from that first render on a typical setup. Later renders are unchanged, and Tavotto still never picks a different Python on its own.

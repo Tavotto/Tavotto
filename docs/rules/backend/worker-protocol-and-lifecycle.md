@@ -27,7 +27,7 @@ order: 60
   `manifest_ms`；**没有 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开），
   `pool` 补 `queue_wait_ms` / `total_ms` 并把冷启动那次的 build 计时折叠进来，
   `app.py` 再补 `worker_get_ms`（取/spawn 会话，既不属于 worker 也不属于 build，
-  **漏了它冷启动的十几秒在数据里就凭空消失**）。全部是加字段，协议不升版；
+  **漏了它冷启动的十几秒在数据里就凭空消失**）。`worker_get_ms` 的分段（含 `probe_*_ms` 探测子段，嵌在 `resolve_python_ms` / `env_decide_ms` 里、不可相加）见 `diagnostics.md` 的「渲染池健康摘要」。全部是加字段，协议不升版；
   legacy 信封一个字节不加。基线报告与「值得做的优化」清单在
   `docs/perf-baseline.md`，重测走 `python scripts/bench_render.py`。
   **先测量后优化**：那份文档里被数据否掉的两条（挪 SVG 顺序省 draw = 图例 bbox
