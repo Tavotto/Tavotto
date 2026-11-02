@@ -1090,6 +1090,110 @@ class TestConsumers:
             assert err.value.code == privatepython.ERROR_WRITE_FAILED
         assert _parts() == [] and _runtime_dirs() == set()
 
+    def _commit_replace_that_fails(self, monkeypatch, times, *, winerror=5):
+        """让 staging → 最终目录的 `os.replace` 前 `times` 次抛 Windows 形状的共享冲突（`times=None` 恒抛）。"""
+        real_replace = os.replace
+        calls: list[int] = []
+        monkeypatch.setattr(
+            privatepython, "SHARING_RETRY_DELAYS_S", (0.01, 0.01, 0.01, 0.01), raising=False
+        )
+
+        def _replace(src_p, dst_p):
+            if Path(src_p).parent.name.startswith(privatepython.STAGING_PREFIX):
+                calls.append(1)
+                if times is None or len(calls) <= times:
+                    err = PermissionError(13, "Access is denied")
+                    err.winerror = winerror  # type: ignore[attr-defined]
+                    raise err
+            return real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(privatepython.os, "replace", _replace)
+        return calls
+
+    def test_commit_rename_sharing_conflict_is_retried_until_it_succeeds(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """TVD-22EY：Windows 杀软 / 索引器短暂占着刚解完的目录，最终改名被拒（WinError 5）；
+        有界重试后成功，不报 write_failed。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        calls = self._commit_replace_that_fails(monkeypatch, 3)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            python = privatepython.provision(src)
+            assert python == str(privatepython.runtime_python(src))
+        assert len(calls) == 4
+        assert _runtime_dirs() == {src.id}
+
+    def test_commit_rename_persistent_conflict_is_write_failed_with_step_and_winerror(
+        self, tmp_path, launches, monkeypatch, caplog
+    ):
+        """一直被拒：重试用完仍是 private_python_write_failed；detail 与 WARNING 带步骤 / winerror / errno，不带路径。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        calls = self._commit_replace_that_fails(monkeypatch, None, winerror=32)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            with caplog.at_level("WARNING", logger=privatepython.LOG.name):
+                with pytest.raises(privatepython.ProvisionError) as err:
+                    privatepython.provision(src)
+        assert err.value.code == privatepython.ERROR_WRITE_FAILED
+        assert err.value.detail == {
+            "step": "commit_rename",
+            "exc_type": "PermissionError",
+            "winerror": 32,
+            "errno": 13,
+        }
+        assert len(calls) == 5
+        failure = [r for r in caplog.records if "供应失败" in r.getMessage()]
+        assert len(failure) == 1
+        text = failure[0].getMessage()
+        assert "commit_rename" in text and "PermissionError" in text
+        assert "winerror=32" in text and "errno=13" in text
+        assert str(tmp_path) not in text
+        assert _runtime_dirs() == set()
+
+    def test_commit_rename_non_sharing_error_is_not_retried(self, tmp_path, launches, monkeypatch):
+        archive, sha, rel = _make(tmp_path, launches)
+        real_replace = os.replace
+        calls: list[int] = []
+
+        def _replace(src_p, dst_p):
+            if Path(src_p).parent.name.startswith(privatepython.STAGING_PREFIX):
+                calls.append(1)
+                raise OSError(28, "No space left on device")
+            return real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(privatepython.os, "replace", _replace)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            with pytest.raises(privatepython.ProvisionError) as err:
+                privatepython.provision(src)
+        assert err.value.code == privatepython.ERROR_WRITE_FAILED
+        assert err.value.detail["step"] == "commit_rename" and err.value.detail["errno"] == 28
+        assert len(calls) == 1
+
+    def test_archive_rename_sharing_conflict_is_retried(self, tmp_path, launches, monkeypatch):
+        """`.part` → 正式名同样的共享冲突：正式名上没有别人的校验过的字节时，重试后成功。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        real_replace = os.replace
+        calls: list[int] = []
+        monkeypatch.setattr(
+            privatepython, "SHARING_RETRY_DELAYS_S", (0.01, 0.01, 0.01, 0.01), raising=False
+        )
+
+        def _replace(src_p, dst_p):
+            if str(src_p).endswith(".part"):
+                calls.append(1)
+                if len(calls) <= 2:
+                    raise PermissionError(13, "Access is denied")
+            return real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(privatepython.os, "replace", _replace)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            python = privatepython.provision(src)
+            assert python == str(privatepython.runtime_python(src))
+        assert len(calls) == 3 and _parts() == []
+
     def test_one_consumer_cancelling_does_not_stop_the_others(self, tmp_path, launches):
         """取消按消费者管理（D11）：A 取消只是 A 退出，B 照样拿到；下载不因 A 而中止。"""
         archive, sha, rel = _make(tmp_path, launches)
