@@ -771,6 +771,15 @@ class SendSession:
     summary: dict | None = field(default=None, repr=False)
     #: 服务端把带 `error_summary` 的 init 当请求形状错拒了（尚未升级的旧版）：本会话此后不再带它
     summary_refused: bool = False
+    #: 最近一次「点发送」那一刻定的 `want_reply`（联系作者启用）：init 不可变提交的一部分，与 summary 同理决定能否复用 id
+    want_reply: bool = field(default=False, repr=False)
+    #: 服务端把带 `want_reply` 的 init 当请求形状错拒了（尚未升级的旧版）：本会话此后不再带它
+    reply_refused: bool = False
+    #: 服务端随 init 给的关联来信 (report_id, message_id, reply_token)。**只在这里**，不进 public() / 日志；
+    #: 带着 report_id 是为了对账换 id 后不把旧报告的令牌登记到新报告名下
+    reply: tuple[str, str, str] | None = field(default=None, repr=False)
+    #: 关联来信已登记进本机收件记录（落盘成功）——界面据此说「作者回复会出现在我的来信」
+    reply_inbox: bool = False
 
     def public(self) -> dict:
         out: dict = {
@@ -787,6 +796,8 @@ class SendSession:
             out["report_id"] = self.report_id
         if self.state == "done" and self.cancel_raced:
             out["cancel_raced"] = True
+        if self.state == "done" and self.reply_inbox:
+            out["reply_inbox"] = True
         if self.state == "failed":
             out["code"] = self.failure
             out["retryable"] = FAILURES.get(self.failure, False)
@@ -1049,10 +1060,12 @@ def start(
         params = (str(cat), text)
         # 最终点击的这一刻重新判一次同意：关掉统计后再点发送，就不会再带摘要（已提交的不撤回，这里只管之后）
         summary = None if sess.summary_refused else diagsummary.build(scope)
+        want_reply = not sess.reply_refused and _contact_enabled()
         reuse = bool(
             sess.client_request_id
             and sess.params == params
             and sess.summary == summary
+            and sess.want_reply == want_reply
             and sess.failure not in REOPEN_ON
             and sess.state != "cancelled"
         )
@@ -1077,6 +1090,7 @@ def start(
             sess.token, sess.spec = "", None
         sess.params = params
         sess.summary = summary
+        sess.want_reply = want_reply
         sess.state, sess.stage, sess.failure, sess.retry_after = "sending", "init", "", None
         sess.cancel_raced = False
         sess.touched = _clock()
@@ -1265,7 +1279,57 @@ def _settle(
             sess.token, sess.spec, sess.server_open = "", None, False
         if sess.discard_after:
             _discard_locked(sess)
+    if final == "done":
+        _register_reply(sess)
     _log({"done": "ok"}.get(final, final if final != "failed" else (code or "internal")), stage)
+
+
+def _contact_enabled() -> bool:
+    """联系作者是否启用（回信通道依附它）。`contactsend` import 了本模块，所以函数内延迟 import。"""
+    from . import contactsend
+
+    return contactsend.enabled()
+
+
+def _parse_reply(report_id: str, raw: object) -> tuple[str, str, str] | None:
+    """服务端可选的 `reply`：id 不是 `TVM-…`、令牌不是 64 位小写 hex 就整个丢掉——只是没有回信通道，不让发送失败。"""
+    from . import contactinbox
+
+    if not isinstance(raw, dict):
+        return None
+    mid, tok = raw.get("message_id"), raw.get("reply_token")
+    if (
+        isinstance(mid, str)
+        and contactinbox.MESSAGE_ID.match(mid)
+        and isinstance(tok, str)
+        and _TOKEN.match(tok)
+    ):
+        return (report_id, mid, tok)
+    return None
+
+
+def _register_reply(sess: SendSession) -> None:
+    """报告确认送达后，把关联来信登记进「联系作者」的收件记录（轮询代码照旧）。联系作者关了（硬开关 / 无线路）不登记。
+    不在 `_LOCK` 里调用：落盘是文件 IO。登记幂等（同编号只补齐）。"""
+    from . import contactinbox, contactsend
+
+    with _LOCK:
+        reply, report_id, note = sess.reply, sess.report_id, (sess.params or ("", ""))[1]
+        target = resolve_target()
+    if reply is None or reply[0] != report_id or target is None or not contactsend.enabled():
+        return
+    ok = contactinbox.add(
+        reply[1],
+        reply[2],
+        contactsend.route_label(target),
+        delivered=True,
+        body=note,
+        kind="report",
+        report_id=report_id,
+    )
+    if ok:
+        with _LOCK:
+            sess.reply_inbox = True
 
 
 def _flow(sess: SendSession, target: Target) -> None:
@@ -1339,7 +1403,15 @@ def _init(sess: SendSession, target: Target, category: str, note: str, size: int
         body["note"] = note
     if sess.summary is not None:
         body["error_summary"] = sess.summary
+    if sess.want_reply and not sess.reply_refused:
+        body["want_reply"] = True
     resp = _json_request(target, "/v1/reports/init", body, API_TIMEOUT_S)
+    if "want_reply" in body and resp.status in (400, 422) and _server_code(resp) == "bad_request":
+        # 同上的部署顺序保险：旧服务端不认 `want_reply`。去掉它、同一 client_request_id 重发一次，本会话此后不再带。
+        with _LOCK:
+            sess.want_reply, sess.reply_refused = False, True
+        del body["want_reply"]
+        resp = _json_request(target, "/v1/reports/init", body, API_TIMEOUT_S)
     if (
         sess.summary is not None
         and resp.status in (400, 422)
@@ -1363,6 +1435,10 @@ def _init(sess: SendSession, target: Target, category: str, note: str, size: int
         or not _REPORT_ID.match(report_id)
     ):
         raise _Failure("bad_response")
+    reply = _parse_reply(report_id, obj.get("reply"))
+    if reply is not None:
+        with _LOCK:
+            sess.reply = reply
     if state == "complete":  # 幂等重放：这次发送早已成功（丢了 complete 的响应）
         with _LOCK:
             sess.report_id, sess.state, sess.server_open = report_id, "done", False
@@ -1526,6 +1602,7 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
 
     def run() -> None:
         outcome = _cancel_remote(snapshot, target)
+        raced_done = False
         with _LOCK:
             if sess.dropped:
                 return  # 会话已被丢弃 / 替换：迟到的答复不碰任何现役会话
@@ -1535,6 +1612,7 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
                     sess.state, sess.stage, sess.failure = "done", "", ""
                     sess.cancel_raced = True
                     sess.bundle = None
+                    raced_done = True
             elif sess.state == "cancelling":
                 if outcome == CANCEL_UNKNOWN and complete_sent:
                     sess.report_id = report_id
@@ -1545,5 +1623,7 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
                     sess.state, sess.stage, sess.failure = "cancelled", "", ""
             if sess.discard_after:
                 _discard_locked(sess)
+        if raced_done:
+            _register_reply(sess)
 
     threading.Thread(target=run, name="tavotto-diag-cancel", daemon=True).start()

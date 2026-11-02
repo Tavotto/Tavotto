@@ -652,7 +652,10 @@ export default interface Resources {
       "lettersEmpty": "还没有写过信。发出的信会记在这里，作者的回信也会出现在这里。",
       "lettersExpand": "展开",
       "lettersForget": "从本机删除",
+      "lettersNoNote": "没有附言",
       "lettersNumber": "编号 {{id}}",
+      "lettersReportNumber": "报告编号 {{id}}",
+      "lettersReportTag": "问题反馈",
       "lettersSentAt": "{{time}} 发出",
       "lettersState": {
         "closed": "已结束",
@@ -2375,6 +2378,7 @@ export default interface Resources {
             "init": "正在联系诊断服务…",
             "upload": "正在上传 {{percent}}%"
           },
+          "replyInbox": "作者回复会出现在「联系作者 › 我的来信」",
           "reportId": "报告编号",
           "reprepare": "重新准备",
           "retention": "报告保存 {{days}} 天，只有 Tavotto 维护者能读取，与匿名统计的标识没有关联。",

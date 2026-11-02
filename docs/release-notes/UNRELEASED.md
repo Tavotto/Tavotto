@@ -40,3 +40,7 @@ On Windows without long-path support, "Make editable version" for an R / MATLAB 
 ## Preparing the environment on Windows no longer fails once at random
 
 On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
+
+## The maker's reply to a problem report now shows up in the app
+
+When you send a problem report and *Contact the maker* is on, the app now also keeps a small record so the maker's reply can appear under *Contact the maker > My letters*, tagged "Report" with the report ID. The dialog says so after sending. Nothing changes if you turn *Contact the maker* off (`TAVOTTO_NO_CONTACT=1`), and a report that gets no reply is forgotten locally after 30 days.

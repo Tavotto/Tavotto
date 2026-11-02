@@ -37,6 +37,7 @@ import {
 } from '@/lib/api'
 import { t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
+import { useContactStore } from '@/store/contactStore'
 import { useProjectStore } from '@/store/projectStore'
 import { clearDiagnosticTrace, recordDiagnosticEvent, type DiagnosticEvent } from '@/diagnostics'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
@@ -317,6 +318,49 @@ describe('发送', () => {
     expect(q('[data-diag-report-id]')!.textContent).toBe('TVD-ABCD-EFGH-JKMN-PQRS')
     expect(q('[data-diag-send-close]')!.textContent).toBe(ds('done'))
     expect(q('[data-diag-send-confirm]')).toBeNull()
+  })
+
+  it('成功且关联来信已登记：报告编号下面多一行去哪看回复；没登记 / 联系作者关着都不显示', async () => {
+    const reply = () => q('[data-diag-send-reply-inbox]')
+    const finish = async (over: Record<string, unknown>) => {
+      startMock.mockResolvedValue(status({}))
+      statusMock.mockResolvedValue(
+        status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS', ...over }),
+      )
+      await mount()
+      expect(reply()?.getAttribute('data-diag-send-reply-inbox') ?? 'reserved').toBe('reserved')
+      await click(q('[data-diag-send-confirm]'))
+      await tick()
+    }
+    useContactStore.setState({ capability: { enabled: true } as never })
+    await finish({ reply_inbox: true })
+    expect(reply()!.getAttribute('data-diag-send-reply-inbox')).toBe('active')
+    expect(reply()!.textContent).toBe(ds('replyInbox'))
+    expect(reply()!.textContent).toBe('作者回复会出现在「联系作者 › 我的来信」')
+    expect((enDialogs as any).settings.diagnostics.send.replyInbox).toContain('My letters')
+  })
+
+  it('没有 reply_inbox：占位仍在（页脚不跳位）但不可见；联系作者关着则根本不占位', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockResolvedValue(status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS' }))
+    useContactStore.setState({ capability: { enabled: true } as never })
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-send-reply-inbox]')!.getAttribute('data-diag-send-reply-inbox')).toBe('reserved')
+    expect(q('[data-diag-send-reply-inbox]')!.className).toContain('invisible')
+  })
+
+  it('联系作者关着：不占位', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockResolvedValue(
+      status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS', reply_inbox: true }),
+    )
+    useContactStore.setState({ capability: null })
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-send-reply-inbox]')).toBeNull()
   })
 
   it('备好的包在引擎里已被清掉（404）：说「关闭重开」，不给重试', async () => {

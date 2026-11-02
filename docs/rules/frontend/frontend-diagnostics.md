@@ -145,3 +145,9 @@ order: 170
 - **回信提醒只用小圆点 + 通知轨胶囊**（`StatusBar.NotificationRail` 里的 `data-contact-capsule`，最多三条的让位规则里与操作提示同档；× 收起后只有未读数再增加才重现），**不加横条 / BannerStack**。「我的来信」是同一窗里的另一页，列出信与回信，进页即已读（本趟仍标「新」）；未读数每 5 分钟读一次本机记录（引擎自己每 6 小时问服务器）。
 - **信纸（第二期）**：「我的来信」每封信先画用户自己写的主题 / 正文（长正文折前 4 行）/ 附件名（旧记录没有就不画），回信 `has_html` 为真用 `ReplyPaper`（沙盒 iframe `srcDoc`，文档来自 `fetchContactReplyDoc`，**sandbox 不含 `allow-scripts`**、白纸 `bg-paper` 深色模式也是白的），取不到文档退回纯文字；没有 HTML 的回信照旧显示文字（`contact.test.tsx`）。
 - 文案 `dialogs:contact.*`；`contact.failure.*` 的键集 = `contactsend.FAILURES`、`contact.error.*` ⊇ 引擎 `ContactError` 的码（`contact.test.tsx` 读 Python 源码对拍）；`settings.about.privacyContact` 是隐私摘要里的一句（能力开着才出现）。
+
+## 反馈包回信的界面（ADR 0118 / 0145 修订 2026-11-02）
+
+- `DiagSendStatus.reply_inbox`（引擎登记成功才有）为真时，发送确认框完成态在「已发送 · 报告编号」下多一行 `settings.diagnostics.send.replyInbox`。这一行在联系作者开着（`contactStore.capability` 非空）时**一直占位**（`invisible`，`data-diag-send-reply-inbox="reserved"`），完成且 `reply_inbox` 才显示（`active`）——页脚按钮不跳位（#797）；联系作者关着不占位。
+- 「我的来信」：`ContactMessage.kind === 'report'` 的条目头部显示标签 `contact.lettersReportTag`（问题反馈 / Report）+ `contact.lettersReportNumber`（报告编号），`YourLetter` 对报告显示附言、没写显示 `contact.lettersNoNote`。回信渲染、小圆点、通知胶囊全部复用，不加新提醒形态。
+- 看护：`contact.test.tsx`（标签 / 编号 / 无附言）、`DiagnosticsSendDialog.test.tsx`（完成态那一行出现 / 占位 / 不占位）。

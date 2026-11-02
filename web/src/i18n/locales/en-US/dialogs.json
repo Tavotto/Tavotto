@@ -116,6 +116,9 @@
     "lettersCheck": "Check for replies",
     "lettersChecking": "Checking...",
     "lettersNumber": "Message {{id}}",
+    "lettersReportTag": "Report",
+    "lettersReportNumber": "Report ID {{id}}",
+    "lettersNoNote": "No note",
     "lettersSentAt": "Sent {{time}}",
     "lettersState": {
       "new": "Waiting for a reply",
@@ -1466,6 +1469,7 @@
         "cancelled": "Cancelled. Nothing was sent.",
         "doneTitle": "Sent",
         "reportId": "Report ID",
+        "replyInbox": "The maker's reply will appear in Contact the maker › My letters",
         "doneBody": "Mention this ID in a GitHub issue or chat so the maintainers can find your report.",
         "copyId": "Copy report ID",
         "send": "Send",

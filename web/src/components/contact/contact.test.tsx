@@ -775,6 +775,40 @@ describe('未读回信：小圆点、通知轨胶囊、我的来信', () => {
     expect(q('[data-contact-letter-toggle]')).toBeNull() // 短正文不折叠
   })
 
+  it('反馈包的关联来信：标签「问题反馈」+ 报告编号；有附言显示附言，没写显示「没有附言」；普通来信不带标签', async () => {
+    const RID = 'TVD-ABCD-EFGH-JKMN-PQRS'
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [
+        message({ kind: 'report', report_id: RID, body: '一直闪退', replies: [] }),
+        message({ message_id: 'TVM-0000-0000-0000-0001', kind: 'report', report_id: RID, replies: [] }),
+        message({ message_id: 'TVM-0000-0000-0000-0002', kind: 'letter', body: 'hello' }),
+      ],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    const tags = document.body.querySelectorAll('[data-contact-letter-kind="report"]')
+    expect(tags).toHaveLength(2)
+    expect(tags[0].textContent).toBe(t('dialogs:contact.lettersReportTag'))
+    expect(tags[0].textContent).toBe('问题反馈')
+    const first = q(`[data-contact-letter="${MSG}"]`)!
+    expect(first.querySelector('[data-contact-report-id]')!.textContent).toContain(RID)
+    expect(first.querySelector('[data-contact-letter-body]')!.textContent).toBe('一直闪退')
+    expect(first.querySelector('[data-contact-letter-no-note]')).toBeNull()
+    const second = q('[data-contact-letter="TVM-0000-0000-0000-0001"]')!
+    expect(second.querySelector('[data-contact-letter-no-note]')!.textContent).toBe('没有附言')
+    const letter = q('[data-contact-letter="TVM-0000-0000-0000-0002"]')!
+    expect(letter.querySelector('[data-contact-letter-kind]')).toBeNull()
+    expect(letter.querySelector('[data-contact-letter-no-note]')).toBeNull()
+  })
+
+  it('英文界面的标签与无附言文案', () => {
+    expect(enDialogs.contact.lettersReportTag).toBe('Report')
+    expect(enDialogs.contact.lettersNoNote).toBe('No note')
+    expect(zhDialogs.contact.lettersNoNote).toBe('没有附言')
+  })
+
   it('长正文折叠成前 4 行，「展开」后全部显示、可再收起', async () => {
     const long = Array.from({ length: 9 }, (_, i) => `line ${i}`).join('\n')
     vi.mocked(fetchContactMessages).mockResolvedValue({ messages: [message({ body: long })], unread: 0 })

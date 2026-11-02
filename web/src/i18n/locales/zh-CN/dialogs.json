@@ -116,6 +116,9 @@
     "lettersCheck": "检查回信",
     "lettersChecking": "正在检查…",
     "lettersNumber": "编号 {{id}}",
+    "lettersReportTag": "问题反馈",
+    "lettersReportNumber": "报告编号 {{id}}",
+    "lettersNoNote": "没有附言",
     "lettersSentAt": "{{time}} 发出",
     "lettersState": {
       "new": "等待回信",
@@ -1451,6 +1454,7 @@
         "cancelled": "已取消，没有发送任何内容。",
         "doneTitle": "已发送",
         "reportId": "报告编号",
+        "replyInbox": "作者回复会出现在「联系作者 › 我的来信」",
         "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
         "copyId": "复制报告编号",
         "send": "发送",

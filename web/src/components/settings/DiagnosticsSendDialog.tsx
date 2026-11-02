@@ -18,6 +18,7 @@ import {
 import { PRIVACY_DOC_URL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
+import { useContactStore } from '@/store/contactStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useProjectStore } from '@/store/projectStore'
 import { Button } from '../ui/Button'
@@ -393,6 +394,9 @@ export function DiagnosticsSendDialog({
     ? ds('sentenceExtras', { items: applied.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')) })
     : ds('sentence')
   const sending = phase === 'sending' || phase === 'cancelling'
+  // 联系作者开着才占位（关了就没有回信通道，不留空行）；引擎登记成功（reply_inbox）才显示
+  const replyReserved = useContactStore((st) => st.capability !== null)
+  const replyShown = phase === 'done' && status?.reply_inbox === true
   const editable = phase === 'ready' || phase === 'failed'
   const retryable = phase === 'failed' && status?.retryable !== false
   const kinds = Array.from(new Set((prepared?.entries ?? []).map((e) => e.kind)))
@@ -687,6 +691,17 @@ export function DiagnosticsSendDialog({
             </div>
           </Details>
         </FieldGroup>
+
+        {/* 作者回复去哪看：联系作者开着时一直占位（不显示则 invisible），结果态才出现——页脚不跳位（#797 e2e 量按钮坐标） */}
+        {replyReserved && (
+          <p
+            className={cn('type-caption', !replyShown && 'invisible')}
+            aria-hidden={replyShown ? undefined : true}
+            data-diag-send-reply-inbox={replyShown ? 'active' : 'reserved'}
+          >
+            {ds('replyInbox')}
+          </p>
+        )}
 
         {/* 结果出来后（成功 / 未知 / 失败）给一条直接找人的路；其余阶段占位不显示（按钮不跳位）；仅中文界面 */}
         <WeComContactNote
