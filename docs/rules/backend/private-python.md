@@ -98,6 +98,7 @@ order: 170
   受管环境的任一代记着它为 base（`managedenv.referenced_base_runtimes()`，venv 挪不走 base）或池里 / envlease 上有
   会话用着它就不删；事务提交后各试一次。下载前 `require_free_disk`（归档 × `EXTRACTED_FACTOR` + 余量）→
   `private_python_disk_low`，计划阶段就查一次。
+- **写失败可诊断 + Windows 共享冲突有界重试**（TVD-22EY，2026-11）：`private_python_write_failed` 一律经 `_write_failed(step, exc, …)` 产出，`ProvisionError.detail` 带闭集 `step`（`WRITE_STEPS`：mkdir / staging / archive_read / archive_write / archive_replace / snapshot / extract / commit_rename / unexpected）、`exc_type`（闭集）、整数 `winerror` / `errno`，**不带路径**；`_run_inflight` 的 WARNING 同样记这几项（`logsafe.known`）。最终目录改名（`commit_rename`）与 `.part` 改名（`archive_replace`）经 `_replace_with_retry`：`PermissionError` 或 `winerror in (5, 32)` 有界重试（`SHARING_RETRY_DELAYS_S`，5 次尝试、总等待约 3 秒），**退避等待不持 `_lock`**，每次尝试重新在锁内做 `_check_abort` / 「别的进程已就位」（`final.exists()` / 校验过的归档）判定；其它错误（磁盘满等）不重试。看护 `tests/test_private_python.py::TestConsumers::test_commit_rename_*` / `test_archive_rename_sharing_conflict_is_retried`。
 - **隔离**：写入只在 `data_dir/private-python/` 之下；不改 PATH、shell、注册表、默认 Python、用户 `.python-version`
   （用例：HOME 指空目录跑完仍为空、`os.environ` / cwd 前后相同、新文件全在私有目录下）；真起时摘掉 `PYTHON*` /
   `VIRTUAL_ENV` / `CONDA_PREFIX`。Windows 注册表前后快照由目标验证腿（PR C）取。

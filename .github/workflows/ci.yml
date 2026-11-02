@@ -399,6 +399,9 @@ jobs:
       - name: 判定
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          # 不可变账号 id：线下签署按它认 PR 作者（login 能改名、能被抢注）。
+          # 用环境变量而不是参数传——判定器取自默认分支，参数要等它先落 main 才认得。
+          CLA_PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
         run: |
           set -euo pipefail
           # provider.configured=true 之后这里还要多传 --provider-checks-json，

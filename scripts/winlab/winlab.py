@@ -433,6 +433,7 @@ def admin_deploy_agent() -> int:
             HERE / "installer-check.ps1",
             HERE / "gui_host.py",
             HERE / "mcp_recorder.py",
+            HERE / "convert_driver.py",
             HERE / "window_probe.py",
             HERE / "desktop_driver.py",
             HERE / "connect_driver.py",
@@ -462,7 +463,10 @@ Restart-Service sshd
 MODEL_CONF_PATH = Path(
     os.environ.get("TAVOTTO_WINLAB_MODEL_SECRET", "~/.config/tavotto-winlab/model.json")
 ).expanduser()
-MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
+#: 只登记国内合规的推理供应商（docs/rules/ci/windows-lab.md「地区政策」：Anthropic / OpenAI 官方模型不在 Lab 上调）
+MODEL_PROVIDERS = {
+    "deepseek": "https://api.deepseek.com/anthropic",
+}
 #: 宿主只能从明文配置文件读 key 的那几格（ZCode）用**另一把**专用、限额的 key：用户 2026-10-26 同意这一处落盘例外，
 #: 与 hosts-live / 其余 desktop-live 的那把分开，缺了就不跑，绝不退回用默认那把
 MODEL_CONF_ONDISK_PATH = MODEL_CONF_PATH.with_name("model-ondisk.json")
@@ -507,8 +511,9 @@ def load_model_secret(mode: str | None = None) -> bytes | None:
     path = model_conf_path(mode)
     if not path.exists():
         flag = " --ondisk" if mode in ONDISK_MODES else ""
+        prov = "deepseek"
         print(
-            f"missing {path}: run `python3 scripts/winlab/winlab.py secret-init deepseek{flag}` in your own terminal",
+            f"missing {path}: run `python3 scripts/winlab/winlab.py secret-init {prov}{flag}` in your own terminal",
             file=sys.stderr,
         )
         return None
@@ -527,7 +532,8 @@ def load_model_secret(mode: str | None = None) -> bytes | None:
 
 def secret_init(provider: str, ondisk: bool = False) -> int:
     """在用户自己的终端里录入（getpass 不回显），写 0600 文件；值从不进聊天或命令行参数。
-    `--ondisk`：录的是给 ONDISK_MODES 用的那把专用限额 key（会在 Lab 上短暂落盘），存另一个文件。"""
+    `--ondisk`：录的是给 ONDISK_MODES 用的那把专用限额 key（会在 Lab 上短暂落盘），存另一个文件。
+    provider 闭集见 MODEL_PROVIDERS（只有国内合规的供应商）。"""
     import getpass
 
     path = MODEL_CONF_ONDISK_PATH if ondisk else MODEL_CONF_PATH
@@ -535,11 +541,11 @@ def secret_init(provider: str, ondisk: bool = False) -> int:
     key = getpass.getpass(f"{label} (input hidden): ").strip()
     if not key:
         return 2
-    # 两把必须不同，不论先录哪一把（Codex #1439：只在 --ondisk 时比会漏掉「后录默认那把、填了同一个」）
-    other = MODEL_CONF_PATH if ondisk else MODEL_CONF_ONDISK_PATH
-    if _stored_key(other) == key:
+    # 各把必须互不相同，不论先录哪一把（Codex #1439：只在 --ondisk 时比会漏掉「后录默认那把、填了同一个」）
+    others = [p for p in (MODEL_CONF_PATH, MODEL_CONF_ONDISK_PATH) if p != path]
+    if any(_stored_key(p) == key for p in others):
         print(
-            "refused: the default key and the on-disk (ZCode) key must be different — create a separate capped key",
+            "refused: the default key and the on-disk (ZCode) key must be different — create a separate key",
             file=sys.stderr,
         )
         return 2
@@ -807,7 +813,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--from", dest="frm", help="installer：先装这个旧包再升级")
     t.add_argument(
         "--mode",
-        help="corpus：smoke | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
+        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
     )
     t.add_argument("--ref", help="先 prepare 到这个提交（经可信度检查）")
     n = sub.add_parser("network")
