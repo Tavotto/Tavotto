@@ -3426,3 +3426,385 @@ def test_page_shot_without_a_png_is_not_passed(tmp_path, monkeypatch):
     assert rep["result"] == "passed" and rep["shot"] == "page.png"
     assert seen["argv"][-1] == (lab.repo / rel).resolve().as_uri()
     assert "--headless=new" in seen["argv"]
+
+
+# --------------------------------------------------------------------------- convert-live（转换真模型复现）
+def test_convert_live_is_registered_as_a_closed_set_task_needing_the_secret():
+    t = A.TASKS["convert-live"]
+    assert t.needs_model_conf and t.networks == ("direct",)
+    assert t.modes == A.CONVERT_MODES == ("baseline", "cjk-path", "long-path", "all")
+    assert A.validate_test_args(t, [], None, "direct", mode="cjk-path") is None
+    assert A.validate_test_args(t, [], None, "direct", mode="anything")
+    assert A.validate_test_args(t, ["tests/test_x.py"], None, "direct")  # 不收 --tests
+    assert t.claim and t.unverified
+
+
+def test_convert_live_secret_comes_from_the_default_key_file_not_the_ondisk_one():
+    assert "cjk-path" not in W.ONDISK_MODES and "cjk-path" not in W.ACCOUNT_MODEL_MODES
+    for m in A.CONVERT_MODES:
+        assert W.model_conf_path(m) == W.MODEL_CONF_PATH
+
+
+def test_convert_live_without_local_secret_file_stops_before_ssh(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "MODEL_CONF_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(
+        W, "remote_json", lambda *a, **k: pytest.fail("must not reach the Lab without a secret")
+    )
+    assert W.main(["test", "convert-live", "--mode", "baseline"]) == 3
+
+
+def test_convert_live_is_listed_in_test_help_and_deployed():
+    text = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert "convert-live：baseline | cjk-path | long-path | all" in text
+    assert 'HERE / "convert_driver.py"' in text
+    assert "convert-live" in W.build_parser().parse_args(["test", "convert-live"]).task
+
+
+def test_convert_plans_are_bounded_and_each_scenario_has_its_projects():
+    for m in A.CONVERT_MODES:
+        assert 0 < len(A.convert_plan(m)) <= A.CONVERT_MAX_RUNS
+    assert [c.key for c in A.convert_plan("baseline")] == ["baseline-a", "baseline-e"]
+    assert {c.scenario for c in A.convert_plan("all")} == {"baseline", "cjk-path", "long-path"}
+    assert all(c.cjk and c.backslash for c in A.convert_plan("cjk-path"))
+    assert all(c.long_ws for c in A.convert_plan("long-path"))
+    assert len(A.convert_plan("all")) == sum(
+        len(A.convert_plan(m)) for m in ("baseline", "cjk-path", "long-path")
+    )
+
+
+def test_convert_fixtures_exist_and_are_small():
+    fx = ROOT / A.CONVERT_FIXTURES
+    for proj, rel in A.CONVERT_FIXTURE_SCRIPTS.items():
+        assert (fx / proj / rel).is_file(), proj
+    assert sum(p.stat().st_size for p in fx.rglob("*") if p.is_file()) < 100_000
+
+
+def test_backslash_r_paths_only_rewrites_relative_parent_strings():
+    src = 'source("../R/utils.R")\npara <- read.csv("../data/parasitoid.csv")\nx <- read.csv("data/a.csv")\n'
+    out = A.backslash_r_paths(src)
+    assert 'source("..\\\\R\\\\utils.R")' in out
+    assert 'read.csv("..\\\\data\\\\parasitoid.csv")' in out
+    assert 'read.csv("data/a.csv")' in out
+
+
+def test_cjk_case_has_a_cjk_spaced_project_path_and_backslash_sources(tmp_path):
+    case = A.ConvertCase("cjk-path", "d", backslash=True, cjk=True)
+    root, rel, data = A.materialize_convert_case(case, ROOT / A.CONVERT_FIXTURES, tmp_path)
+    assert " " in str(root) and any(ord(ch) > 127 for ch in str(root))
+    text = (root / rel).read_text(encoding="utf-8")
+    assert '"..\\\\R\\\\utils.R"' in text and "../" not in text.split("source(", 1)[1].split(")")[0]
+    assert (root / "data" / "field.csv").is_file() and (root / "R" / "utils.R").is_file()
+    assert data == tmp_path / "data"
+
+
+def test_long_path_case_pads_the_candidate_workspace_close_to_max_path(tmp_path):
+    case = A.ConvertCase("long-path", "a", long_ws=True)
+    _root, _rel, data = A.materialize_convert_case(case, ROOT / A.CONVERT_FIXTURES, tmp_path)
+    ws = data / "cache" / "ai_convert" / ("0" * 12)
+    assert abs(len(str(ws)) - A.CONVERT_LONG_WS_LEN) <= 2  # 0.x 段分隔符取整的误差
+    assert all(len(seg) <= 255 for seg in data.parts)
+
+
+def test_codex_home_and_project_workspace_are_different_trees(tmp_path):
+    assert A.trees_disjoint(
+        tmp_path / "runs" / "r1" / "work" / "codex-home", tmp_path / "cache" / "convert-work" / "r1"
+    )
+    assert not A.trees_disjoint(tmp_path / "a", tmp_path / "a" / "b")
+    assert not A.trees_disjoint(tmp_path / "a" / "b", tmp_path / "a")
+    assert A.trees_disjoint(tmp_path / "ab", tmp_path / "a")  # 前缀相同但不是父子
+
+
+def test_usage_is_summed_over_turn_completed_events_only():
+    text = "\n".join(
+        [
+            json.dumps({"type": "thread.started"}),
+            json.dumps(
+                {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 2}}
+            ),
+            "not json",
+            json.dumps({"type": "item.completed", "usage": {"input_tokens": 999}}),
+            json.dumps(
+                {"type": "turn.completed", "usage": {"input_tokens": 5, "cached_input_tokens": 3}}
+            ),
+        ]
+    )
+    assert A.usage_from_jsonl(text) == {
+        "turns": 2,
+        "input_tokens": 15,
+        "output_tokens": 2,
+        "cached_input_tokens": 3,
+    }
+
+
+def test_convert_codex_home_has_env_key_and_no_key_value(tmp_path):
+    conf = {"api_key": "sk-" + "x" * 30}
+    A._write_convert_codex_home(tmp_path / "codex-home", conf)
+    toml = (tmp_path / "codex-home" / "config.toml").read_text(encoding="utf-8")
+    assert conf["api_key"] not in toml and 'env_key = "WINLAB_MODEL_KEY"' in toml
+    assert 'wire_api = "responses"' in toml and "mcp_servers" not in toml
+
+
+def _fake_convert_lab(tmp_path, monkeypatch, driver):
+    """假 Lab：venv / 夹具 / 假 codex 都在，驱动换成 `driver(argv, env)`；不碰网络也不起真进程。"""
+    lab = A.Lab(tmp_path / "lab")
+    py = lab.venv_python()
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    shutil_fixtures = lab.repo / A.CONVERT_FIXTURES
+    import shutil
+
+    shutil.copytree(ROOT / A.CONVERT_FIXTURES, shutil_fixtures)
+    monkeypatch.setattr(
+        A, "ensure_live_host", lambda *a, **k: (Path("codex.cmd"), "codex-cli 9.9.9")
+    )
+    seen: list[dict] = []
+
+    def fake_run(argv, cwd, env, prefix, timeout, stdin_data=None):
+        seen.append({"argv": argv, "env": dict(env)})
+        driver(argv, env)
+        return {"exit_code": 0, "timed_out": False, "duration_s": 0.1}
+
+    monkeypatch.setattr(A, "_run_logged", fake_run)
+    return lab, seen
+
+
+def _argval(argv, flag):
+    return argv[argv.index(flag) + 1]
+
+
+def test_convert_live_run_keeps_the_key_in_env_only_and_scrubs_everything(tmp_path, monkeypatch):
+    key = "sk-" + "k" * 30
+
+    def driver(argv, env):
+        out = Path(_argval(argv, "--out"))
+        # 假装模型把 key 回显进了事件流、日志、CODEX_HOME 的快照和工作区
+        (out / "codex_stdout.jsonl").write_text(
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 7}})
+            + f"\nleak {key}\n",
+            encoding="utf-8",
+        )
+        (Path(env["CODEX_HOME"]) / "shell_snapshots").mkdir(parents=True, exist_ok=True)
+        (Path(env["CODEX_HOME"]) / "shell_snapshots" / "s.sh").write_text(key, encoding="utf-8")
+        (Path(env["TAVOTTO_DATA_DIR"]) / "leak.txt").parent.mkdir(parents=True, exist_ok=True)
+        Path(_argval(argv, "--result")).write_text(
+            json.dumps(
+                {
+                    "session": "abc",
+                    "finished_in_time": True,
+                    "outcome": "completed",
+                    "status": "done",
+                    "elapsed_s": 12.5,
+                    "workspace_files": [{"name": "fig_converted.py", "bytes": 3, "path_len": 99}],
+                    "workspace_path_len": 80,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    lab, seen = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    run_dir = lab.runs / "20261101T000000Z-abcdef"
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_convert_live_task(
+        lab, run_dir, {}, {"api_key": key, "provider": "deepseek"}, "baseline"
+    )
+    assert rep["result"] == "passed" and rep["counts"]["done"] == 2 == rep["counts"]["runs"]
+    assert rep["usage_total"] == {"turns": 2, "input_tokens": 14}
+    assert rep["conversions"][0]["workspace_files"] == ["fig_converted.py"]
+    for call in seen:
+        assert key not in " ".join(call["argv"])  # 密钥不进 argv
+        assert call["env"]["WINLAB_MODEL_KEY"] == key  # 只进子进程环境
+        # Lab 隔离实例的显式认证旁路（test_ci_qualification 的三选一）
+        assert call["env"]["TAVOTTO_INSECURE_NO_AUTH"] == "1"
+        # CODEX_HOME 与项目 / 工作区不同树
+        assert A.trees_disjoint(
+            Path(call["env"]["CODEX_HOME"]), Path(call["env"]["TAVOTTO_DATA_DIR"])
+        )
+        assert A.trees_disjoint(
+            Path(call["env"]["CODEX_HOME"]), Path(_argval(call["argv"], "--project"))
+        )
+    # 证据与 CODEX_HOME 里没有密钥；shell_snapshots 已删；工作树整棵删了
+    for f in run_dir.rglob("*"):
+        if f.is_file():
+            assert key.encode() not in f.read_bytes(), f
+    assert not (run_dir / "work" / "codex-home" / "shell_snapshots").exists()
+    assert not (lab.cache / "convert-work" / run_dir.name).exists()
+    assert "turn.completed" in (
+        run_dir / "evidence" / "convert-live" / "baseline-a" / "codex_stdout.jsonl"
+    ).read_text(encoding="utf-8")
+
+
+def test_convert_live_timeout_and_missing_session_are_never_a_pass(tmp_path, monkeypatch):
+    def driver(argv, env):
+        Path(_argval(argv, "--result")).write_text(
+            json.dumps({"session": "abc", "finished_in_time": False, "elapsed_s": 961}),
+            encoding="utf-8",
+        )
+
+    lab, _ = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    run_dir = lab.runs / "20261101T000001Z-abcdef"
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_convert_live_task(lab, run_dir, {}, {"api_key": "sk-" + "k" * 30}, "baseline")
+    assert rep["result"] == "failed" and rep["counts"]["timeout"] == 2
+
+    def crashed(argv, env):  # 驱动没留下结果文件
+        pass
+
+    lab2, _ = _fake_convert_lab(tmp_path / "x", monkeypatch, crashed)
+    run2 = lab2.runs / "20261101T000002Z-abcdef"
+    (run2 / "evidence").mkdir(parents=True)
+    rep2 = A.run_convert_live_task(lab2, run2, {}, {"api_key": "sk-" + "k" * 30}, "long-path")
+    assert rep2["result"] == "error" and rep2["counts"]["driver_error"] == 1
+
+
+def test_convert_live_without_prepared_fixtures_is_environment_unavailable(tmp_path):
+    lab = A.Lab(tmp_path / "lab")
+    lab.venv_python().parent.mkdir(parents=True)
+    lab.venv_python().write_text("", encoding="utf-8")
+    rep = A.run_convert_live_task(lab, tmp_path / "run", {}, {"api_key": "sk-" + "k" * 30})
+    assert rep["result"] == "environment_unavailable"
+
+
+def test_convert_driver_has_no_key_argument_and_is_importable_alone(tmp_path):
+    import shutil
+    import subprocess as sp
+
+    src = (WINLAB / "convert_driver.py").read_text(encoding="utf-8")
+    assert "api_key" not in src and "--key" not in src  # 没有任何密钥参数；变量名只出现在文档里
+    assert "os.environ[" in src and "WINLAB_MODEL_KEY" not in src.split("def ", 1)[1]
+    shutil.copy(WINLAB / "convert_driver.py", tmp_path / "convert_driver.py")
+    r = sp.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path[:0] = [sys.argv[1]]; import convert_driver",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert r.returncode == 0, r.stderr
+
+
+# --------------------------------------------------------------------------- convert-live 的地区政策看护
+def test_no_official_vendor_modes_or_providers_exist_for_convert_live_or_secret_init():
+    """docs/rules/ci/windows-lab.md:122-124（地区政策）：Lab 在中国大陆，Anthropic / OpenAI 的真实模型调用保持 BLOCKED，
+    经代理出口调用等于绕开服务商地区限制，授权也不改变——所以 convert-live 的 mode 闭集与 secret-init 的 provider
+    闭集里都不能出现官方厂商，convert-live 也不能走 trojan 出口。"""
+    banned = ("openai", "anthropic", "claude")
+    for m in A.CONVERT_MODES:
+        assert not any(v in m.lower() for v in banned), m
+    assert A.TASKS["convert-live"].networks == ("direct",)
+    assert not any(v in p.lower() for p in W.MODEL_PROVIDERS for v in banned)
+    parser = W.build_parser()
+    for v in banned:
+        with pytest.raises(SystemExit):
+            parser.parse_args(["secret-init", v])
+    for name in ("OPENAI_MODES", "MODEL_CONF_OPENAI_PATH"):
+        assert not hasattr(W, name)
+    for name in ("CONVERT_OPENAI_PREFIX", "CONVERT_OPENAI_NETWORK", "CODEX_OFFICIAL_KEY_ENV"):
+        assert not hasattr(A, name)
+
+
+def _convert_driver():
+    sys.path.insert(0, str(WINLAB))
+    try:
+        import convert_driver as CD
+    finally:
+        sys.path.remove(str(WINLAB))
+    return CD
+
+
+class _FakeConvert:
+    """假的 ai_convert：公式与产品同形（900 + 2/行，封顶 1800）。"""
+
+    @staticmethod
+    def convert_timeout_s(lines):
+        return min(1800, 900 + 2 * lines)
+
+    @staticmethod
+    def source_line_count(data):
+        return data.count(b"\n")
+
+
+def test_convert_driver_deadline_follows_the_product_formula_per_script():
+    CD = _convert_driver()
+    assert CD.MARGIN_S == A.CONVERT_TIMEOUT_MARGIN_S == 120
+    long_script = b"x\n" * 500  # 900 + 1000 = 1900 → 封顶 1800，再加余量
+    assert CD.timeout_for(long_script, _FakeConvert) == 1800 + 120 > 960
+    mid = b"x\n" * 97  # d 类项目：1094 s
+    assert CD.timeout_for(mid, _FakeConvert) == 900 + 194 + 120
+    assert CD.timeout_for(b"x\n" * 10, _FakeConvert) == 900 + 20 + 120  # 短脚本按公式
+
+
+def test_convert_driver_deadline_falls_back_to_900_plus_margin_without_the_product_function():
+    CD = _convert_driver()
+    import types
+
+    assert CD.timeout_for(b"x\n" * 500, types.SimpleNamespace()) == 900 + 120
+    assert CD.DEFAULT_TIMEOUT_S == A.CONVERT_TIMEOUT_FALLBACK_S + A.CONVERT_TIMEOUT_MARGIN_S
+
+
+def test_convert_case_timeout_is_passed_to_driver_and_outer_process(tmp_path, monkeypatch):
+    def driver(argv, env):
+        Path(_argval(argv, "--result")).write_text(
+            json.dumps({"session": "abc", "finished_in_time": True, "outcome": "completed"}),
+            encoding="utf-8",
+        )
+
+    lab, _ = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    monkeypatch.setattr(A, "convert_case_timeout_s", lambda py, script, src, env: 1682 + 120)
+    outer: list[int] = []
+    orig = A._run_logged
+
+    def spy(argv, cwd, env, prefix, timeout, stdin_data=None):
+        outer.append(timeout)
+        assert _argval(argv, "--timeout") == str(1682 + 120)
+        return orig(argv, cwd, env, prefix, timeout, stdin_data)
+
+    monkeypatch.setattr(A, "_run_logged", spy)
+    run_dir = lab.runs / "20261102T000000Z-abcdef"
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_convert_live_task(lab, run_dir, {}, {"api_key": "sk-" + "k" * 30}, "baseline")
+    assert rep["result"] == "passed"
+    assert outer and all(t == 1682 + 120 + 180 > 960 for t in outer)
+
+
+def test_convert_case_timeout_s_falls_back_when_the_driver_cannot_answer(tmp_path):
+    script = tmp_path / "s.R"
+    script.write_text("x\n", encoding="utf-8")
+    missing_python = tmp_path / "no-such-python"
+    assert A.convert_case_timeout_s(missing_python, script, tmp_path, {}) == 900 + 120
+
+
+def test_convert_driver_serves_the_app_on_a_real_loopback_port_and_calls_it_over_http():
+    """方案 A 的写入工具回调要连真实端口：驱动起真服务，请求环境里的 SERVER_PORT 就是它；非 2xx 也带回 JSON 体。"""
+    flask = pytest.importorskip("flask")
+    sys.path.insert(0, str(WINLAB))
+    try:
+        import convert_driver as CD
+    finally:
+        sys.path.remove(str(WINLAB))
+    app = flask.Flask("fake")
+
+    @app.post("/echo")
+    def echo():
+        return flask.jsonify(
+            {"port": flask.request.environ.get("SERVER_PORT"), "got": flask.request.get_json()}
+        )
+
+    @app.get("/nope")
+    def nope():
+        return flask.jsonify({"code": "x"}), 409
+
+    server, port = CD.serve_app(app)
+    try:
+        assert port > 0 and server.server_address[0] == "127.0.0.1"
+        api = CD.Api(port)
+        assert api.call("POST", "/echo", {"a": 1}) == (200, {"port": str(port), "got": {"a": 1}})
+        assert api.call("GET", "/nope") == (409, {"code": "x"})
+        assert api.call("GET", "/missing")[0] == 404
+    finally:
+        server.shutdown()
