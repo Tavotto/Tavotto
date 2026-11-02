@@ -46,9 +46,10 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import diagsummary, logsafe, telemetry, tlstrust
+from . import contactinbox, diagsummary, logsafe, telemetry, tlstrust
 
 LOG = logging.getLogger("tavotto.diagsend")
 
@@ -1296,17 +1297,30 @@ def _settle(
     _log({"done": "ok"}.get(final, final if final != "failed" else (code or "internal")), stage)
 
 
-def _contact_enabled() -> bool:
-    """联系作者是否启用（回信通道依附它）。`contactsend` import 了本模块，所以函数内延迟 import。"""
-    from . import contactsend
+#: 回信通道的注册点（依赖倒置）：`contactsend` import 了本模块，所以不能反过来 import 它——由它在模块末尾调
+#: `register_reply_channel(enabled, route_label)` 把「联系作者是否启用」与「线路标签」交进来。
+#: 未注册 = 没有回信通道：不带 `want_reply`、不登记（`tests/test_import_architecture.py` 的无环不变量）。
+_REPLY_ENABLED: Callable[[], bool] | None = None
+_REPLY_ROUTE: Callable[[Target], str] | None = None
 
-    return contactsend.enabled()
+
+def register_reply_channel(enabled: Callable[[], bool], route_of: Callable[[Target], str]) -> None:
+    global _REPLY_ENABLED, _REPLY_ROUTE
+    _REPLY_ENABLED, _REPLY_ROUTE = enabled, route_of
+
+
+def reply_channel_registered() -> bool:
+    return _REPLY_ENABLED is not None and _REPLY_ROUTE is not None
+
+
+def _contact_enabled() -> bool:
+    """联系作者是否启用（回信通道依附它）；通道没注册 = 没有。"""
+    fn = _REPLY_ENABLED
+    return bool(fn is not None and fn())
 
 
 def _parse_reply(report_id: str, raw: object, note: str) -> tuple[str, str, str, str] | None:
     """服务端可选的 `reply`：id 不是 `TVM-…`、令牌不是 64 位小写 hex 就整个丢掉——只是没有回信通道，不让发送失败。"""
-    from . import contactinbox
-
     if not isinstance(raw, dict):
         return None
     mid, tok = raw.get("message_id"), raw.get("reply_token")
@@ -1325,19 +1339,18 @@ def _register_reply(sess: SendSession, report_id: str) -> bool:
     联系作者关了（硬开关 / 无线路）或本次不要回信通道（`reply_allowed`）不登记。不在 `_LOCK` 里调用：落盘是文件 IO。
     登记幂等（同编号只补齐）；附言用**发那一份报告时**的快照（`reply[3]`），不是此刻的 `sess.params`——
     改附言重试后对账出「上一份其实已送达」时，登记的是上一份的附言。"""
-    from . import contactinbox, contactsend
-
     with _LOCK:
         reply, allowed = sess.reply, sess.reply_allowed
         target = resolve_target()
     if not allowed or reply is None or reply[0] != report_id or target is None:
         return False
-    if not contactsend.enabled():
+    route_of = _REPLY_ROUTE
+    if route_of is None or not _contact_enabled():
         return False
     return contactinbox.add(
         reply[1],
         reply[2],
-        contactsend.route_label(target),
+        route_of(target),
         delivered=True,
         body=reply[3],
         kind="report",

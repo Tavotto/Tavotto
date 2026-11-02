@@ -351,3 +351,29 @@ def test_replay_complete_also_waits_for_registration(srv, monkeypatch):
     assert diagsend.status(pid, scope=PJ)["state"] != "done"
     release.set()
     assert _wait(pid, {"done"})["reply_inbox"] is True
+
+
+def test_importing_the_app_registers_the_reply_channel():
+    """依赖倒置：diagsend 不 import contactsend；生产启动路径（app 注册 /api/contact）一 import 就把通道注册进来。
+    判据的主语是**子进程里干净导入 tavotto.app 之后** diagsend 的注册状态。"""
+    import subprocess
+    import sys
+
+    code = (
+        "import tavotto.app\n"
+        "from tavotto.engine import diagsend\n"
+        "raise SystemExit(0 if diagsend.reply_channel_registered() else 3)\n"
+    )
+    root = Path(__file__).resolve().parent.parent
+    env = {**__import__("os").environ, "PYTHONPATH": str(root / "src")}
+    proc = subprocess.run([sys.executable, "-c", code], env=env, cwd=root, timeout=120)
+    assert proc.returncode == 0
+
+
+def test_unregistered_channel_means_no_want_reply_and_no_registration(srv, monkeypatch):
+    srv.accepts_want_reply = True
+    monkeypatch.setattr(diagsend, "_REPLY_ENABLED", None)
+    monkeypatch.setattr(diagsend, "_REPLY_ROUTE", None)
+    st = _wait(_send(), {"done"})
+    assert "want_reply" not in _inits(srv)[0]
+    assert "reply_inbox" not in st and _records() == []
