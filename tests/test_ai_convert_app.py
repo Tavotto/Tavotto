@@ -677,3 +677,23 @@ def test_replan_endpoint_rechecks_the_same_candidate_with_the_current_environmen
     # 已经不在等依赖了：再 replan = 409
     late = client.post(f"/api/ai/convert/{sid}/dependencies", json={"action": "replan"})
     assert late.status_code == 409
+
+
+def test_start_reports_workspace_path_too_long_as_a_closed_code_not_internal_error(
+    project, monkeypatch
+):
+    """issue #1623：候选工作区路径超长 → 400 + 闭集码，不是 500 internal_error。"""
+    import errno
+
+    from tavotto.engine import convertcontext
+
+    m, client, figs, state = project
+
+    def boom(*a, **k):
+        raise OSError(errno.ENAMETOOLONG, "File name too long")
+
+    monkeypatch.setattr(convertcontext, "snapshot", boom)
+    resp = _start(client)
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "workspace_path_too_long"
+    assert not any((ai_convert.CONVERT_DIR).glob("*")) if ai_convert.CONVERT_DIR.exists() else True

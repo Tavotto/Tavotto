@@ -563,9 +563,10 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
       set1(script, {
         phase: 'failed',
         error: backendErrorText(e),
-        reason: e instanceof ApiError && e.status === 400 && e.body.code === 'convert_reference_invalid'
-          ? 'convert_reference_invalid'
-          : null,
+        reason:
+          e instanceof ApiError && e.status === 400 && (e.body.code === 'convert_reference_invalid' || e.body.code === 'workspace_path_too_long')
+            ? String(e.body.code)
+            : null,
       })
     }
   },

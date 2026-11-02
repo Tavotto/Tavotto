@@ -432,8 +432,21 @@ def rule_for_choice(requested, chosen, kind) -> dict:
 
 
 def link(root: str | os.PathLike, requested, chosen, kind) -> tuple[dict, dict]:
-    """推规则并按项目记住：回 `(规则, 新状态)`。端点与 AI 修复的 `link_data_file` 都只调这一个。"""
+    """推规则并按项目记住：回 `(规则, 新状态)`。端点与 AI 修复的 `link_data_file` 都只调这一个。
+
+    重新指认一处已经接上的路径（TVD-6Z9R：上次指错了文件）：推出来的 `prefix` 规则会被同一串上的旧 `file`
+    规则盖住（`remap_target` 里 `file` 整串相等优先），新的选择就白选了。这时收窄成精确的 `file` 规则——
+    与旧的同源，`add_rule` 替换它；只动这一串，不删别的规则。"""
     rule = rule_for_choice(requested, chosen, kind)
+    intended = figcapture.remap_target([rule], requested)
+    if intended is not None and rule["kind"] != figcapture.REMAP_FILE:
+        others = [r for r in rules_for(root) if not _same_source(r, rule)]
+        if figcapture.remap_target([*others, rule], requested) != intended:
+            rule = {
+                "kind": figcapture.REMAP_FILE,
+                "from": requested,
+                "to": os.path.normpath(intended),
+            }
     return rule, add_rule(root, rule)
 
 
@@ -1070,7 +1083,7 @@ def known_requests(
 ) -> dict[str, str]:
     """可以拿来指认的「脚本要的那串」：`{路径串: via}`。AI 修复的 `link_data_file` 用它挡掉模型编出来的 `requested`。
 
-    出处只有两处：① 报告里的 `missing_input` 载荷（worker 亲眼见到落空的那串，加载荷里列的 `others`）——
+    出处有三处：① 报告里的 `missing_input` 载荷（worker 亲眼见到落空的那串，加载荷里列的 `others`）——
     脚本用拼出来的路径时，只有它认得；② 脚本源码里以常量出现、此刻哪儿都找不到的路径（`static_missing`，与弹窗同一把尺子）。
     同一串的 `via` 按 `payload_for` 的口径合并（也被 exists / glob 问过 = 探路）。"""
     rules = rules_for(root)
@@ -1089,7 +1102,31 @@ def known_requests(
     for o in (reported or {}).get("others") or []:
         if isinstance(o, dict) and isinstance(o.get("path"), str):
             out.setdefault(o["path"], str(o.get("via") or VIA_OPEN))
+    if rules:
+        # ③ 已经接上的（TVD-6Z9R）：接错了文件时重跑报的是解析错、不再是 missing_input，前两处都认不出这串，
+        # AI 找到对的文件也改不过来。认：脚本里写着、原位置找不到、靠现有规则才读得到的常量（分类照静态判据），
+        # 与用户此前亲手确认过的 `file` 规则的 `from`（拼出来的路径只剩它记得）。
+        for o in static_missing(script, root, []):
+            if figcapture.remap_target(rules, o["path"]) is not None:
+                out.setdefault(o["path"], o["via"])
+        for r in rules:
+            if r["kind"] == figcapture.REMAP_FILE and r["from"]:
+                out.setdefault(r["from"], VIA_OPEN)
     return out
+
+
+def match_request(known: dict[str, str], requested: str) -> str | None:
+    """`requested` 在 `known_requests` 里对应的那一串：原样优先，其次按 `remap_parts` 规范化后相同
+    （模型把 `D:/a/b.json` 写成 `D:\\a\\b.json`、盘符大小写不同都是同一处）。对不上回 None。"""
+    if requested in known:
+        return requested
+    want = figcapture.remap_parts(requested)
+    if want is None:
+        return None
+    for k in known:
+        if figcapture.remap_parts(k) == want:
+            return k
+    return None
 
 
 def _as_written(filename: str, cwd: str) -> str:

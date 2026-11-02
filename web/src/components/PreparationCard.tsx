@@ -1105,6 +1105,8 @@ function convertFlow(
       // Missing evidence needs an explicit reference selection before another attempt.
       const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
       const multiline = needsInput && c.detail?.includes('\n')
+      // 路径太长：重试不会变好，主按钮只给「关闭」（一句话 + 一个按钮）
+      const dismissOnly = needsInput || c.reason === 'workspace_path_too_long'
       return {
         title:
           c.error ??
@@ -1116,7 +1118,7 @@ function convertFlow(
             {c.detail}
           </p>
         ) : undefined,
-        primary: needsInput ? (
+        primary: dismissOnly ? (
           <Button
             variant="primary"
             size="md"
@@ -1134,7 +1136,7 @@ function convertFlow(
             {pt('convert.btn.retry')}
           </Button>
         ),
-        ghost: needsInput ? undefined : <SendReportButton variant="ghost" size="md" />,
+        ghost: dismissOnly ? undefined : <SendReportButton variant="ghost" size="md" />,
       }
     }
     case 'adopted':
