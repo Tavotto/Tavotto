@@ -88,6 +88,7 @@ import {
   scaledAnchorRect,
   snapScaleNearest,
 } from '@/lib/scaleSnap'
+import { scaleDragStatus } from '@/lib/dragStatus'
 import { applyAnnotationScale, annotationsOver, captureOrigins } from '@/lib/annotationScale'
 import { panelScale } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
@@ -391,7 +392,7 @@ function minEffectiveFontPt(): number | null {
 }
 
 /**
- * 面板角缩放的状态句数据（`interaction.layoutReadout`）：缩放 a% → b%、图内文字等效 pt、是否低于规范下限。
+ * 面板角缩放的状态句数据（`interaction.dragStatus`）：缩放 a% → b%、图内文字等效 pt、是否低于规范下限。
  * 缩放比 = `preflight.panelScale`、等效字号 = `units.effectivePt`（与属性页「等效字号」同一份算法，不另写一套）；
  * `box` 是此刻的包围盒，其余字段取 `panel` 起手时的样子。位图源（按 dpi 评质量）不报 pt。
  */
@@ -409,15 +410,15 @@ function scaleReadout(
   const from = at(panel)
   const to = at(box)
   const floorPt = minEffectiveFontPt()
-  return {
-    kind: 'scale' as const,
+  return scaleDragStatus({
     fromPct: from.pct,
     toPct: to.pct,
     fromPt: from.pt,
     toPt: to.pt,
     low: floorPt != null && to.pt != null && to.pt < floorPt - FONT_FLOOR_TOL_PT,
     follow: { on: followOn, count: followCount },
-  }
+    box: { x: box.x, y: box.y, w: box.w, h: box.h },
+  })
 }
 
 /**
@@ -476,7 +477,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
 
   interaction().begin('resize')
   if (layoutCorner) {
-    interaction().setLayoutReadout(
+    interaction().setDragStatus(
       scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length),
     )
   }
@@ -573,7 +574,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       const following = followEnabled && proportional && orig.w > 0
       const factor = following ? placed.w / orig.w : 1
       if (layoutCorner) {
-        interaction().setLayoutReadout(
+        interaction().setDragStatus(
           scaleReadout(
             target as PanelObject,
             placed,

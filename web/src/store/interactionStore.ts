@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { perfSegmentBegin, perfSegmentEnd } from '@/perf/core'
 import type { Rect4 } from '@/lib/axesLayout'
 import type { Rect } from '@/lib/geometry'
+import type { UiMessage } from '@/i18n'
 
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
@@ -29,31 +30,19 @@ export interface SnapFeedback {
 }
 
 /**
- * 多图排版里面板角缩放 / 边裁剪这一下拖动的含义（ADR 0161）：胶囊（`ContextBar`）读它画状态句，
- * **只翻译、不判断**——语气（`low`）与停靠状态（`state`）都由手势算好放进来。
- * 只是画布叠加层的读数，不进文档；`end()` 清掉。
+ * 拖动中胶囊显示的状态（ADR 0161）：**手势算好、胶囊只读不判**。多图排版的面板角缩放 / 边裁剪写它，
+ * 单图编辑的拖角 / 拖边复用同一个形状。`main` / `detail` 是描述符（显示那一刻才翻），
+ * `box` 是被拖对象此刻的框（页面 mm）：胶囊贴在它下方，放不下贴上方。`end()` 清成 null。
+ * 不进文档、不进历史。
  */
-export type LayoutReadout =
-  | {
-      kind: 'scale'
-      /** 面板缩放百分比（摆放宽度 / 原生宽度），起手 → 此刻 */
-      fromPct: number
-      toPct: number
-      /** 图内文字等效 pt；位图源没有 = null */
-      fromPt: number | null
-      toPt: number | null
-      /** 低于当前期刊 / 规范下限（读不到下限就是 false） */
-      low: boolean
-      /** 标注怎么办：`on` = 一起缩放（count 个）、否则不动 */
-      follow: { on: boolean; count: number }
-    }
-  | {
-      kind: 'crop'
-      side: 'l' | 'r' | 't' | 'b'
-      state: 'full' | 'trim' | 'tight' | 'blocked' | 'content'
-      /** 这条边此刻裁掉的宽度 / 高度（mm） */
-      mm: number
-    }
+export interface DragStatus {
+  tone: 'normal' | 'warn' | 'danger'
+  /** 主句，如「缩放 92% → 75% · 图内文字 7.4 → 6.0 pt」 */
+  main: UiMessage
+  /** 淡色后缀，如「标注 3 个一起缩放」 */
+  detail?: UiMessage | null
+  box: { x: number; y: number; w: number; h: number }
+}
 
 const NO_FEEDBACK: SnapFeedback[] = []
 
@@ -130,8 +119,8 @@ interface InteractionState {
     sizeMm: [number, number]
   } | null
 
-  /** 多图排版面板角缩放 / 边裁剪的状态句数据（拖动期间胶囊显示它） */
-  layoutReadout: LayoutReadout | null
+  /** 拖动中胶囊显示的状态；null = 没有 */
+  dragStatus: DragStatus | null
 
   begin: (kind: DragKind) => void
   end: () => void
@@ -149,7 +138,7 @@ interface InteractionState {
   setPageEdge: (p: InteractionState['pageEdge']) => void
   setFigureEdgeBox: (b: InteractionState['figureEdgeBox']) => void
   setFigureFramePending: (p: InteractionState['figureFramePending']) => void
-  setLayoutReadout: (r: LayoutReadout | null) => void
+  setDragStatus: (s: DragStatus | null) => void
 }
 
 export const useInteractionStore = create<InteractionState>((set) => ({
@@ -169,7 +158,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   pendingGuide: null,
   pageEdge: null,
   figureEdgeBox: null,
-  layoutReadout: null,
+  dragStatus: null,
   figureFramePending: null,
 
   // 一次拖动 = 性能探针的一个片段（ADR 0075）；没在录制时两个调用都是空转
@@ -189,7 +178,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       pendingGuide: null,
       pageEdge: null,
       figureEdgeBox: null,
-      layoutReadout: null,
+      dragStatus: null,
       gidDrag: null,
       arrowPreview: null,
       elementPreview: null,
@@ -218,5 +207,5 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setPageEdge: (pageEdge) => set({ pageEdge }),
   setFigureEdgeBox: (figureEdgeBox) => set({ figureEdgeBox }),
   setFigureFramePending: (figureFramePending) => set({ figureFramePending }),
-  setLayoutReadout: (layoutReadout) => set({ layoutReadout }),
+  setDragStatus: (dragStatus) => set({ dragStatus }),
 }))

@@ -1,5 +1,6 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, type UiMessage } from '@/i18n'
+import { cropDragStatus } from '@/lib/dragStatus'
 import {
   depthOf,
   inkDepths,
@@ -57,13 +58,15 @@ export function startPanelHandleDrag(e: ReactPointerEvent, objectId: string, dir
   startResizeDrag(e, objectId, dir)
 }
 
+type PanelBox = { x: number; y: number; w: number; h: number }
+
 const isFullCrop = (c: CropRect) => c.x <= 1e-9 && c.y <= 1e-9 && c.w >= 1 - 1e-9 && c.h >= 1 - 1e-9
 
 /**
  * 拖面板的一条边 = 改 `panel.crop`（与裁剪工具同一字段、同一条历史标签 `adjustCrop`）。
  * 整图锚在画布上不动（与 `startCropDrag` 同一个锚点约定，`setTxnAnchor`），所以内容纹丝不动，
  * 只是这一边的取景窗在收 / 放；图的缩放比（mm / 原图幅）不变。停靠点与 ⌥ 放行见 `lib/panelEdgeCrop`。
- * 拖动中的含义（裁掉多少、停在哪）放进 `interaction.layoutReadout`，胶囊只读它。
+ * 拖动中的含义（裁掉多少、停在哪）放进 `interaction.dragStatus`，胶囊只读它。
  */
 export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, side: CropSide) {
   e.stopPropagation()
@@ -87,11 +90,11 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
   const inkDepth = ink ? ink[side] : null
 
   const ix = () => useInteractionStore.getState()
-  const readout = (state: EdgeCropState, depth: number) =>
-    ix().setLayoutReadout({ kind: 'crop', side, state, mm: depth * fullDim })
+  const status = (state: EdgeCropState, depth: number, box: PanelBox) =>
+    ix().setDragStatus(cropDragStatus({ side, state, mm: depth * fullDim, box }))
 
   ix().begin('crop')
-  readout(
+  status(
     depth0 <= 1e-9
       ? 'full'
       : inkDepth == null
@@ -102,6 +105,7 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
             ? 'content'
             : 'trim',
     depth0,
+    { x: panel.x, y: panel.y, w: panel.w, h: panel.h },
   )
   store.beginTxn(hist('adjustCrop'))
   setTxnAnchor(objectId, { x: imgX + fullW / 2, y: imgY + fullH / 2 })
@@ -124,15 +128,16 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
       const next = withEdgeDepth(crop0, side, plan.depth)
       const full = isFullCrop(next)
       const c = full ? { x: 0, y: 0, w: 1, h: 1 } : next
-      readout(plan.state, plan.depth)
+      const box = { x: imgX + fullW * c.x, y: imgY + fullH * c.y, w: fullW * c.w, h: fullH * c.h }
+      status(plan.state, plan.depth, box)
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o || o.type !== 'panel') return
         o.crop = full ? undefined : { ...c }
-        o.x = imgX + fullW * c.x
-        o.y = imgY + fullH * c.y
-        o.w = fullW * c.w
-        o.h = fullH * c.h
+        o.x = box.x
+        o.y = box.y
+        o.w = box.w
+        o.h = box.h
       })
     },
     onEnd: (moved, _ev, end) => {

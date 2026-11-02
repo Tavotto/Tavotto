@@ -158,7 +158,7 @@
     "layoutResetCrop": "Reset crop",
     "layoutResetCropTip": "Restore the full figure frame and remove the crop",
     "layoutScale": "Scale {{from}}% → {{to}}%",
-    "layoutScalePt": "In-figure text {{from}} → {{to}} pt",
+    "layoutScalePtFull": "Scale {{from}}% → {{to}}% · In-figure text {{ptFrom}} → {{ptTo}} pt",
     "layoutSideB": "bottom",
     "layoutSideL": "left",
     "layoutSideR": "right",

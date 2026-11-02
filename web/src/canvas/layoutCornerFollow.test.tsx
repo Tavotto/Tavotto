@@ -5,7 +5,7 @@
  *
  * 版面：pa 在 (10,20) 100×75，拖东南角（固定点 = 左上角 (10,20)）。
  */
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 
 import { useDocumentStore } from '@/store/documentStore'
@@ -126,9 +126,14 @@ function dragCorner(to: [number, number], mods: { altKey?: boolean } = {}) {
   startResizeDrag(down(), 'pa', 'se')
   fire('pointermove', [to[0] / 2, to[1] / 2], mods)
   fire('pointermove', to, mods)
-  const readout = useInteractionStore.getState().layoutReadout
+  const st = useInteractionStore.getState().dragStatus
   fire('pointerup', to, mods)
-  return readout
+  return st && {
+    main: formatMessage(st.main),
+    detail: formatMessage(st.detail),
+    tone: st.tone,
+    box: st.box,
+  }
 }
 
 beforeEach(async () => {
@@ -206,7 +211,7 @@ describe('连同标注', () => {
     const readout = dragCorner([-50, -37.5])
     expect(get<PanelObject>('pa').w).toBeLessThan(100)
     expect(get<TextObject>('t1')).toMatchObject({ x: 30, y: 30, w: 40, sizePt: 10 })
-    expect(readout).toMatchObject({ kind: 'scale', follow: { on: false } })
+    expect(readout).toMatchObject({ detail: '标注不动' })
   })
 
   it('⌥ 反转比例锁定 = 非等比：没有"一个比例"，标注留在原处', () => {
@@ -214,7 +219,7 @@ describe('连同标注', () => {
     const p = get<PanelObject>('pa')
     expect(p.w / 100).not.toBeCloseTo(p.h / 75, 3)
     expect(get<TextObject>('t1')).toMatchObject({ x: 30, y: 30, w: 40, sizePt: 10 })
-    expect(readout).toMatchObject({ kind: 'scale', follow: { on: false } })
+    expect(readout).toMatchObject({ detail: '标注不动' })
   })
 
   it('单图编辑（fast_edit）里不跟，也没有读数', () => {
@@ -233,35 +238,31 @@ describe('连同标注', () => {
   })
 })
 
-describe('缩放读数', () => {
-  it('缩放百分比与图内文字等效 pt（panelScale / effectivePt 同一份算法）', () => {
+describe('缩放状态（interaction.dragStatus）', () => {
+  it('主句 = 缩放百分比 + 图内文字等效 pt（panelScale / effectivePt 同一份算法），后缀 = 标注数', () => {
     const readout = dragCorner([-50, -37.5])
     const p = get<PanelObject>('pa')
     const s = p.w / 100
     expect(readout).toMatchObject({
-      kind: 'scale',
-      fromPct: 100,
-      toPct: Math.round(s * 100),
-      fromPt: 9,
-      follow: { on: true, count: 3 },
+      main: `缩放 100% → ${Math.round(s * 100)}% · 图内文字 9.0 → ${(Math.round(9 * s * 10) / 10).toFixed(1)} pt`,
+      detail: '标注 3 个一起缩放',
     })
-    expect((readout as { toPt: number }).toPt).toBeCloseTo(9 * s, 9)
+    // 胶囊贴着被拖面板此刻的框
+    expect(readout!.box.w).toBeCloseTo(p.w, 9)
   })
 
-  it('低于规范下限 → low；规范库没载入读不到下限 → 不判', () => {
+  it('低于规范下限 → warn；规范库没载入读不到下限 → 不判（normal）', () => {
     useProfileStore.setState({ loaded: false })
-    expect(dragCorner([-50, -37.5])).toMatchObject({ low: false })
+    expect(dragCorner([-50, -37.5])).toMatchObject({ tone: 'normal' })
     useDocumentStore.getState().undo()
     useProfileStore.setState({ loaded: true })
-    const readout = dragCorner([-50, -37.5]) as { low: boolean; toPt: number }
     // 默认规范的字号下限（8pt 左右）：缩到约 50% 后图内文字 ≈ 4.5pt，低于它
-    expect(readout.toPt).toBeLessThan(8)
-    expect(readout.low).toBe(true)
+    expect(dragCorner([-50, -37.5])).toMatchObject({ tone: 'warn' })
   })
 
   it('放大不低于下限', () => {
     useProfileStore.setState({ loaded: true })
-    expect(dragCorner([50, 37.5])).toMatchObject({ low: false })
+    expect(dragCorner([50, 37.5])).toMatchObject({ tone: 'normal' })
   })
 
   it('位图源不报 pt（按 dpi 评质量）', async () => {
@@ -269,11 +270,12 @@ describe('缩放读数', () => {
     useDocumentStore.getState().commit(literal('改成位图'), (d) => {
       ;(d.objects[0] as PanelObject).fileKind = 'raster'
     })
-    expect(dragCorner([-50, -37.5])).toMatchObject({ kind: 'scale', fromPt: null, toPt: null })
+    const r = dragCorner([-50, -37.5])
+    expect(r!.main).toMatch(/^缩放 100% → \d+%$/)
   })
 
-  it('松手后读数清掉', () => {
+  it('松手后状态清掉', () => {
     dragCorner([-50, -37.5])
-    expect(useInteractionStore.getState().layoutReadout).toBeNull()
+    expect(useInteractionStore.getState().dragStatus).toBeNull()
   })
 })

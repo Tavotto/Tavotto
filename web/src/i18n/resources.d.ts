@@ -5748,7 +5748,7 @@ export default interface Resources {
       "layoutResetCrop": "取消裁剪",
       "layoutResetCropTip": "恢复完整图幅，不再裁剪",
       "layoutScale": "缩放 {{from}}% → {{to}}%",
-      "layoutScalePt": "图内文字 {{from}} → {{to}} pt",
+      "layoutScalePtFull": "缩放 {{from}}% → {{to}}% · 图内文字 {{ptFrom}} → {{ptTo}} pt",
       "layoutSideB": "下",
       "layoutSideL": "左",
       "layoutSideR": "右",

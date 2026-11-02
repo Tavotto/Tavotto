@@ -5,7 +5,7 @@
  * 版面：pa 在 (10,20) 100×75（原生同尺寸，缩放 100%）；缩放 1 时 mmToWorld(1mm) 个屏幕像素 = 1mm，
  * 吸附半径 6px ≈ 1.6mm ≈ 1.6% 图宽。ink_bbox 左缘在 0.10。
  */
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Manifest } from '@/lib/api'
@@ -99,9 +99,9 @@ function drag(dir: 'w' | 'e' | 'n' | 's', to: [number, number], mods: { altKey?:
   startPanelHandleDrag(down(), 'pa', dir)
   fire('pointermove', [to[0] / 2, to[1] / 2], mods)
   fire('pointermove', to, mods)
-  const readout = useInteractionStore.getState().layoutReadout
+  const status = useInteractionStore.getState().dragStatus
   fire('pointerup', to, mods)
-  return readout
+  return status && { text: formatMessage(status.main), tone: status.tone, box: status.box }
 }
 
 afterEach(() => {
@@ -123,7 +123,7 @@ describe('排版里面板的边柄 = 裁剪', () => {
     expect(p.w).toBeCloseTo(90, 9)
     expect(p.y).toBe(20)
     expect(p.h).toBe(75)
-    expect(readout).toMatchObject({ kind: 'crop', side: 'l', state: 'blocked' })
+    expect(readout).toMatchObject({ text: expect.stringContaining('已到内容边缘'), tone: 'warn' })
     expect(useDocumentStore.getState().past).toHaveLength(1)
   })
 
@@ -131,33 +131,35 @@ describe('排版里面板的边柄 = 裁剪', () => {
     const readout = drag('w', [5, 0])
     const p = get()
     expect(p.crop?.x).toBeCloseTo(0.05, 12)
-    expect(readout).toMatchObject({ kind: 'crop', side: 'l', state: 'trim' })
-    expect((readout as { mm: number }).mm).toBeCloseTo(5, 9)
+    expect(readout).toMatchObject({ text: '裁掉留白 · 左 5.0 mm', tone: 'normal' })
+    // 状态胶囊贴着被拖面板此刻的框
+    expect(readout!.box.x).toBeCloseTo(15, 9)
+    expect(readout!.box.w).toBeCloseTo(95, 9)
   })
 
   it('靠近内容边缘半径内吸上去：紧凑（tight），crop 精确等于内容边缘', () => {
     const readout = drag('w', [9.2, 0])
     expect(get().crop?.x).toBe(0.1)
-    expect(readout).toMatchObject({ state: 'tight' })
+    expect(readout).toMatchObject({ text: '紧凑 · 左贴合内容', tone: 'normal' })
   })
 
   it('按住 ⌥ 放行：越过内容边缘，裁掉内容（content）', () => {
     const readout = drag('w', [20, 0], { altKey: true })
     expect(get().crop?.x).toBeCloseTo(0.2, 12)
-    expect(readout).toMatchObject({ kind: 'crop', side: 'l', state: 'content' })
+    expect(readout).toMatchObject({ text: '裁剪 · 左 20.0 mm，将裁掉内容', tone: 'danger' })
   })
 
   it('右 / 上 / 下三条边各自对应自己的 ink 边缘', () => {
     // 右：ink 右缘 0.9 → 深度 0.1；往左拖 30mm 被挡在 0.1
     let readout = drag('e', [-30, 0])
     expect(get().crop?.w).toBeCloseTo(0.9, 12)
-    expect(readout).toMatchObject({ side: 'r', state: 'blocked' })
+    expect(readout).toMatchObject({ text: expect.stringContaining('已到内容边缘'), tone: 'warn' })
     // 上：ink 上缘 0.2（75mm 的 20% = 15mm）；往下拖 8mm 是留白
     readout = drag('n', [0, 8])
-    expect(readout).toMatchObject({ side: 't', state: 'trim' })
+    expect(readout).toMatchObject({ text: '裁掉留白 · 上 8.0 mm' })
     // 下：ink 下缘 0.8 → 深度 0.2；往上拖 100mm 被挡
     readout = drag('s', [0, -100])
-    expect(readout).toMatchObject({ side: 'b', state: 'blocked' })
+    expect(readout).toMatchObject({ tone: 'warn' })
     expect(get().crop?.y).toBeCloseTo(8 / 75, 9)
     expect(get().crop?.h).toBeCloseTo(0.8 - 8 / 75, 9)
   })
@@ -175,14 +177,14 @@ describe('排版里面板的边柄 = 裁剪', () => {
     expect(p.crop).toBeUndefined()
     expect(p.x).toBeCloseTo(10, 9)
     expect(p.w).toBeCloseTo(100, 9)
-    expect(readout).toMatchObject({ state: 'full' })
+    expect(readout).toMatchObject({ text: '到图边 · 左未裁剪', tone: 'normal' })
   })
 
   it('没有 ink_bbox（旧后端）：照样能裁，没有紧凑停靠点也没有闸', async () => {
     await setup({}, null)
     const readout = drag('w', [20, 0])
     expect(get().crop?.x).toBeCloseTo(0.2, 12)
-    expect(readout).toMatchObject({ state: 'trim' })
+    expect(readout).toMatchObject({ text: '裁掉留白 · 左 20.0 mm' })
   })
 
   it('拖动中读数在，松手后清掉；pointercancel 不留裁剪、不进历史', () => {
@@ -190,13 +192,13 @@ describe('排版里面板的边柄 = 裁剪', () => {
     fire('pointermove', [5, 0])
     fire('pointermove', [10, 0])
     expect(useInteractionStore.getState().kind).toBe('crop')
-    expect(useInteractionStore.getState().layoutReadout).not.toBeNull()
+    expect(useInteractionStore.getState().dragStatus).not.toBeNull()
     expect(get().crop).toBeDefined()
     fire('pointercancel', [10, 0])
     expect(get().crop).toBeUndefined()
     expect(get().x).toBe(10)
     expect(useDocumentStore.getState().past).toHaveLength(0)
-    expect(useInteractionStore.getState().layoutReadout).toBeNull()
+    expect(useInteractionStore.getState().dragStatus).toBeNull()
     expect(useInteractionStore.getState().kind).toBe('none')
   })
 

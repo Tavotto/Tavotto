@@ -1,22 +1,22 @@
 /**
- * 胶囊在多图排版的「面板角缩放 / 边裁剪」拖动期间不隐藏、显示这一下拖动的含义（ADR 0161）；
- * 其余手势（移动、普通对象缩放、框选……）仍然拖动即藏；不拖时选中面板，胶囊里有
+ * 拖动状态胶囊（`DragStatusBar`，读 `interaction.dragStatus`，ADR 0161）：有状态就显示、不受
+ * 「拖动即藏」影响；没有状态时一切照旧（移动、框选、普通缩放……仍然拖动即藏）；不拖时选中面板，胶囊里有
  * 「贴合内容 / 取消裁剪 / 连同标注」。
  */
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
-import { useInteractionStore, type LayoutReadout } from '@/store/interactionStore'
+import { useInteractionStore, type DragStatus } from '@/store/interactionStore'
+import { cropDragStatus, scaleDragStatus } from '@/lib/dragStatus'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { ContextBar } from './ContextBar'
-import { readoutSentence } from './LayoutGestureBar'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -40,16 +40,18 @@ const panel = (extra: Partial<PanelObject> = {}): PanelObject =>
     ...extra,
   }) as unknown as PanelObject
 
-const scale = (extra: Partial<Extract<LayoutReadout, { kind: 'scale' }>> = {}): LayoutReadout => ({
-  kind: 'scale',
-  fromPct: 92,
-  toPct: 75,
-  fromPt: 7.4,
-  toPt: 6.0,
-  low: false,
-  follow: { on: true, count: 2 },
-  ...extra,
-})
+const BOX = { x: 10, y: 20, w: 100, h: 75 }
+const scale = (extra: Partial<Parameters<typeof scaleDragStatus>[0]> = {}): DragStatus =>
+  scaleDragStatus({
+    fromPct: 92,
+    toPct: 75,
+    fromPt: 7.4,
+    toPt: 6.0,
+    low: false,
+    follow: { on: true, count: 2 },
+    box: BOX,
+    ...extra,
+  })
 
 let root: Root
 
@@ -126,41 +128,54 @@ afterEach(async () => {
 })
 
 const bar = () => document.querySelector('[data-context-bar]')
-const readoutEl = () => document.querySelector('[data-layout-readout]')
-const begin = async (kind: Parameters<ReturnType<typeof useInteractionStore.getState>['begin']>[0], r: LayoutReadout | null) =>
+const statusEl = () => document.querySelector('[data-drag-status]')
+const begin = async (kind: Parameters<ReturnType<typeof useInteractionStore.getState>['begin']>[0], st: DragStatus | null) =>
   act(async () => {
     useInteractionStore.getState().begin(kind)
-    useInteractionStore.getState().setLayoutReadout(r)
-    // 画布上的 pointerdown（任意位置）本来会把胶囊藏起来；这两种手势要不藏
+    useInteractionStore.getState().setDragStatus(st)
+    // 画布上的 pointerdown（任意位置）本来会把快捷胶囊藏起来；状态胶囊不受影响
     window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
   })
 
-describe('拖动期间的胶囊', () => {
+describe('拖动状态胶囊', () => {
   beforeEach(async () => {
     await mountBar({ ink: true })
   })
 
-  it('面板角缩放（resize + 缩放读数）：不藏，显示状态句', async () => {
+  it('有 dragStatus：显示主句 + 淡色后缀，带语气；快捷胶囊（拖动即藏）不出现', async () => {
     expect(bar()).not.toBeNull()
     await begin('resize', scale())
-    expect(bar()).not.toBeNull()
-    const el = readoutEl()!
-    expect(el.getAttribute('data-layout-readout')).toBe('scale')
-    expect(el.textContent).toBe('缩放 92% → 75% · 图内文字 7.4 → 6.0 pt · 标注 2 个一起缩放')
-    // 状态句替换了快捷动作，拖动中不出现按钮
-    expect(bar()!.querySelector('button')).toBeNull()
+    const el = statusEl()!
+    expect(el.getAttribute('data-drag-tone')).toBe('normal')
+    expect(el.textContent).toBe('缩放 92% → 75% · 图内文字 7.4 → 6.0 pt· 标注 2 个一起缩放')
+    expect(bar()).toBeNull()
   })
 
-  it('面板边裁剪（crop + 裁剪读数）：不藏', async () => {
-    await begin('crop', { kind: 'crop', side: 'l', state: 'trim', mm: 3.14 })
-    expect(bar()).not.toBeNull()
-    expect(readoutEl()!.textContent).toBe('裁掉留白 · 左 3.1 mm')
+  it('不依赖手势种类或选区：kind 为 none 或 move 照样显示（单图编辑复用同一个形状）', async () => {
+    await act(async () => {
+      useInteractionStore.getState().setDragStatus(scale({ low: true }))
+    })
+    expect(statusEl()!.getAttribute('data-drag-tone')).toBe('warn')
+    await begin('move', scale())
+    expect(statusEl()).not.toBeNull()
   })
 
-  it('其余手势照旧拖动即藏：移动 / 框选 / 平移（无读数）与普通 resize（无读数）', async () => {
+  it('end() 清掉：状态胶囊消失，快捷胶囊回来', async () => {
+    await begin('crop', cropDragStatus({ side: 'l', state: 'trim', mm: 3.14, box: BOX }))
+    expect(statusEl()!.textContent).toContain('裁掉留白 · 左 3.1 mm')
+    await act(async () => {
+      useInteractionStore.getState().end()
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+    expect(statusEl()).toBeNull()
+    expect(bar()!.querySelector('button')).not.toBeNull()
+  })
+
+  it('没有 dragStatus 时一切照旧：移动 / 框选 / 平移 / 普通缩放仍拖动即藏', async () => {
     for (const kind of ['move', 'marquee', 'pan', 'resize', 'endpoint'] as const) {
       await begin(kind, null)
       expect(bar(), kind).toBeNull()
+      expect(statusEl(), kind).toBeNull()
       await act(async () => {
         useInteractionStore.getState().end()
         window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
@@ -168,44 +183,31 @@ describe('拖动期间的胶囊', () => {
       expect(bar(), `${kind} 松手`).not.toBeNull()
     }
   })
-
-  it('读数与手势种类对不上（move + 缩放读数）不算：仍然藏', async () => {
-    await begin('move', scale())
-    expect(bar()).toBeNull()
-  })
-
-  it('松手：状态句消失，快捷动作回来', async () => {
-    await begin('resize', scale())
-    await act(async () => {
-      useInteractionStore.getState().end()
-      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
-    })
-    expect(readoutEl()).toBeNull()
-    expect(bar()!.querySelector('button')).not.toBeNull()
-  })
 })
 
-describe('状态句（读数 → 文字与语气，只翻译不判断）', () => {
-  it('缩放：低于下限 warn；不带 pt（位图）、标注不动 / 无标注', () => {
-    expect(readoutSentence(scale({ low: true })).tone).toBe('warn')
-    expect(readoutSentence(scale()).tone).toBe('neutral')
-    expect(readoutSentence(scale({ fromPt: null, toPt: null, follow: { on: false, count: 2 } })).text).toBe(
-      '缩放 92% → 75% · 标注不动',
-    )
-    expect(readoutSentence(scale({ follow: { on: true, count: 0 } })).text).toBe(
-      '缩放 92% → 75% · 图内文字 7.4 → 6.0 pt',
-    )
+describe('状态构造（手势侧：语气与句子）', () => {
+  const text = (s: DragStatus) => ({ main: formatMessage(s.main), detail: formatMessage(s.detail), tone: s.tone })
+
+  it('缩放：低于下限 warn；位图不带 pt；标注不动 / 无标注', () => {
+    expect(scale({ low: true }).tone).toBe('warn')
+    expect(scale().tone).toBe('normal')
+    expect(text(scale({ fromPt: null, toPt: null, follow: { on: false, count: 2 } }))).toEqual({
+      main: '缩放 92% → 75%',
+      detail: '标注不动',
+      tone: 'normal',
+    })
+    expect(text(scale({ follow: { on: true, count: 0 } })).detail).toBe('')
   })
 
   it('裁剪五态：full / trim / tight / blocked(warn) / content(danger)', () => {
     const s = (state: 'full' | 'trim' | 'tight' | 'blocked' | 'content', side: 'l' | 'r' | 't' | 'b' = 'l', mm = 4.2) =>
-      readoutSentence({ kind: 'crop', side, state, mm })
-    expect(s('full')).toEqual({ text: '到图边 · 左未裁剪', tone: 'neutral' })
-    expect(s('trim', 'l', 3.1)).toEqual({ text: '裁掉留白 · 左 3.1 mm', tone: 'neutral' })
-    expect(s('tight')).toEqual({ text: '紧凑 · 左贴合内容', tone: 'neutral' })
+      text(cropDragStatus({ side, state, mm, box: BOX }))
+    expect(s('full')).toMatchObject({ main: '到图边 · 左未裁剪', tone: 'normal' })
+    expect(s('trim', 'l', 3.1)).toMatchObject({ main: '裁掉留白 · 左 3.1 mm', tone: 'normal' })
+    expect(s('tight')).toMatchObject({ main: '紧凑 · 左贴合内容', tone: 'normal' })
     expect(s('blocked').tone).toBe('warn')
-    expect(s('blocked').text).toMatch(/^紧凑 · 已到内容边缘，按住 .+ 继续会裁掉内容$/)
-    expect(s('content', 'r')).toEqual({ text: '裁剪 · 右 4.2 mm，将裁掉内容', tone: 'danger' })
+    expect(s('blocked').main).toMatch(/^紧凑 · 已到内容边缘，按住 .+ 继续会裁掉内容$/)
+    expect(s('content', 'r')).toMatchObject({ main: '裁剪 · 右 4.2 mm，将裁掉内容', tone: 'danger' })
   })
 })
 

@@ -244,3 +244,23 @@ export function selectionScreenRect(bounds: Rect, t: ViewTransform): ScreenRect 
     height: mmToPx(bounds.h, t),
   }
 }
+
+/**
+ * 拖动状态胶囊（`DragStatusBar`）的落位：贴在被拖对象框的**下方**，放不下（会压到底部浮动区）贴上方；
+ * 水平居中于框并夹进两侧栏之间。与 `placeToolbar` 同一套边距 / 禁区常量，只是首选方向相反。
+ */
+export function placeStatus(
+  anchor: ScreenRect,
+  size: { w: number; h: number },
+  viewport: { width: number; height: number },
+  insets: Insets,
+  bottomSafe: number = BOTTOM_SAFE,
+): Placement {
+  const minX = insets.left + MARGIN
+  const maxX = viewport.width - insets.right - size.w - MARGIN
+  const x = Math.max(minX, Math.min(anchor.left + anchor.width / 2 - size.w / 2, maxX))
+  const below = anchor.top + anchor.height + MARGIN
+  const limit = viewport.height - bottomSafe - size.h - MARGIN
+  if (below <= limit) return { x, y: below, placement: 'below' }
+  return { x, y: Math.max(TOP_SAFE, Math.min(anchor.top - size.h - MARGIN, limit)), placement: 'above' }
+}
