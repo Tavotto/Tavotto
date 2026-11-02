@@ -278,6 +278,13 @@ _EXT_RE = re.compile(
 #: 一次扫描最多认几个字面量搜索根
 _MAX_LITERAL_ROOTS = 8
 
+#: 字面量搜索根落在项目外时，读的边界最多从项目根往上放宽几级（TVD-22EY：脚本 `Path(__file__).parents[1]`
+#: 把项目上两级的目录加进 `sys.path`，本地模块在那里）。放宽到的那一级不得是大文件夹 / 家目录及其祖先 / 盘符根
+_MAX_OUTSIDE_LEVELS = 3
+
+#: `Path(...).parents[N]` 里认的最大 N
+_MAX_PARENTS_INDEX = 8
+
 #: `sys.path` 的就地修改方法（源码里出现就说明搜索路径不是静态可定的）。
 _PATH_MUTATORS = frozenset(
     {"insert", "append", "extend", "remove", "pop", "clear", "reverse", "sort", "__setitem__"}
@@ -579,7 +586,8 @@ _NAMESPACE_WRITERS = frozenset(
 )
 
 #: 模块层「只绑定一次」的名字 → (绑定行号, 值表达式)；`_dir_consts` 产出，`_dir_value` 只拿它解析目录表达式里的名字
-_DirConsts = dict[str, tuple[int, ast.expr]]
+#: 名字 → ((行, 列), 值)：同一行用分号连写的几条赋值（`O=…;ROOT=O.parents[1];sys.path.insert(…)`）按列分先后
+_DirConsts = dict[str, tuple[tuple[int, int], ast.expr]]
 
 
 def _dir_consts(tree: ast.AST) -> _DirConsts:
@@ -627,11 +635,13 @@ def _dir_consts(tree: ast.AST) -> _DirConsts:
         else:
             continue
         if isinstance(target, ast.Name) and counts.get(target.id) == 1 and target.id not in banned:
-            out[target.id] = (stmt.lineno, value)
+            out[target.id] = ((stmt.lineno, stmt.col_offset), value)
     return out
 
 
-def _literal_dir(node: ast.AST, consts: _DirConsts | None = None, line: int | None = None):
+def _literal_dir(
+    node: ast.AST, consts: _DirConsts | None = None, line: tuple[int, int] | None = None
+):
     """`sys.path.append/insert` 的目录实参里，**只由 `__file__` 所在目录与字符串字面量拼出**的那类表达式 →
     相对于「这份文件所在目录」的路径段元组；认不出（含任何变量 / 环境 / cwd 相关）回 None。
 
@@ -646,7 +656,10 @@ def _literal_dir(node: ast.AST, consts: _DirConsts | None = None, line: int | No
 
 
 def _dir_value(
-    node: ast.AST, depth: int, consts: _DirConsts | None = None, line: int | None = None
+    node: ast.AST,
+    depth: int,
+    consts: _DirConsts | None = None,
+    line: tuple[int, int] | None = None,
 ):
     """内部值：`("F",)` = `__file__`；`("D", segs)` = 目录；`("S", text)` = 字符串字面量。"""
     if depth > _MAX_DIR_EXPR_DEPTH:
@@ -694,6 +707,19 @@ def _dir_value(
         return None
     if isinstance(node, ast.Attribute) and node.attr == "parent":
         return _parent(_dir_value(node.value, depth + 1, consts, line))
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and isinstance(node.slice, ast.Constant)
+        and type(node.slice.value) is int
+        and 0 <= node.slice.value <= _MAX_PARENTS_INDEX
+    ):
+        # `Path(__file__).parents[1]` = `.parent.parent`
+        val = _dir_value(node.value.value, depth + 1, consts, line)
+        for _ in range(node.slice.value + 1):
+            val = _parent(val)
+        return val
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         left = _dir_value(node.left, depth + 1, consts, line)
         right = _dir_value(node.right, depth + 1, consts, line)
@@ -898,7 +924,7 @@ class _Visitor(ast.NodeVisitor):
                 and len(node.args) == 1
                 and _is_sys_path(fn.value, self.al)
             ):
-                segs = _literal_dir(node.args[0], self.consts, node.lineno)
+                segs = _literal_dir(node.args[0], self.consts, (node.lineno, node.col_offset))
                 if segs is not None:
                     self.path_dirs.append((False, segs, node.lineno))
             elif (
@@ -909,7 +935,7 @@ class _Visitor(ast.NodeVisitor):
                 and isinstance(node.args[0], ast.Constant)
                 and node.args[0].value == 0
             ):
-                segs = _literal_dir(node.args[1], self.consts, node.lineno)
+                segs = _literal_dir(node.args[1], self.consts, (node.lineno, node.col_offset))
                 if segs is not None:
                     self.path_dirs.append((True, segs, node.lineno))
         self.generic_visit(node)
@@ -1240,7 +1266,10 @@ class _Finder:
         budget: scanbudget.Budget,
         ext_suffixes: tuple[str, ...] | None = None,
     ) -> None:
+        #: 读的边界（链接 / 越界判据的主语）：项目根，或字面量 sys.path 根把它放宽到的那一级祖先（`_Scanner._widen_bound`）
         self.root = root
+        #: 项目根（只用于项目相对的记录路径）
+        self.project = root
         self.ext_suffixes = ext_suffixes
         self.no_follow = no_follow
         self.budget = budget
@@ -1286,7 +1315,7 @@ class _Finder:
             out = None  # 没有这个目录：不是「读不动」
         except (OSError, ValueError):
             out = None
-            rel = _rel(self.root, d)
+            rel = _rel(self.project, d)
             self.unreadable.add(rel)
             self.budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="import", path=rel)
         self._lists[key] = out
@@ -1385,6 +1414,35 @@ class _Top:
 # ---------------------------------------------------------------- 本地模块：读与解析
 
 
+def _outside_bound(root: Path, target: Path) -> Path | None:
+    """项目外的字面量 `sys.path` 根（由 `__file__` 推出，见 `_literal_dir`）要读时，读的边界放宽到哪一级（TVD-22EY）。
+
+    放宽到项目根与 `target` 的公共祖先：最多往上 `_MAX_OUTSIDE_LEVELS` 级；那一级不得是大文件夹、家目录或它的祖先、
+    盘符根（`depresolve.is_broad_folder`）；跨盘符 / 认不出回 None（照旧不认）。只做词法判断，链接仍由查找器的闸门挡。"""
+    try:
+        base = os.path.abspath(os.fspath(root))
+        cand = os.path.abspath(os.fspath(target))
+        common = os.path.commonpath([base, cand])
+    except (OSError, ValueError):
+        return None
+    if os.path.normcase(common) == os.path.normcase(base):
+        return None  # 在项目内：不需要放宽
+    levels = len(Path(os.path.relpath(base, common)).parts)
+    if levels > _MAX_OUTSIDE_LEVELS:
+        return None
+    wider = Path(common)
+    if depresolve.is_broad_folder(wider):
+        return None
+    try:
+        home = os.path.normcase(os.path.abspath(Path.home()))
+    except (RuntimeError, OSError, ValueError):
+        return None
+    key = os.path.normcase(str(wider))
+    if home == key or home.startswith(key.rstrip(os.sep) + os.sep):
+        return None
+    return wider
+
+
 def _pinned(root: Path, path: Path) -> str | None:
     """`path` 钉在 `root` 之内（词法：绝对化 + 归一化 + 前缀）；越界回 None。读文件前的最后一道闸。
 
@@ -1465,6 +1523,8 @@ class _Scanner:
         extra_imports: tuple[str, ...] = (),
     ) -> None:
         self.root = root
+        #: 读的边界：项目根，或被项目外的字面量 sys.path 根放宽到的那一级祖先（`_widen_bound`）
+        self.bound = root
         self.extra_imports = extra_imports
         self.dists = dists
         self.ext_suffixes = ext_suffixes
@@ -1614,9 +1674,16 @@ class _Scanner:
         搜索根。词法钉在项目内（出界的不认；链接形态由 `_Finder` 的闸门照常挡）；目录不存在也不报错——模块照旧找不到。"""
         base = (self.root / rel).parent if rel else self.script_p.parent
         for front, segs, line in dirs[:_MAX_LITERAL_ROOTS]:
-            pinned = _pinned(self.root, Path(os.path.normpath(base.joinpath(*segs))))
+            target = Path(os.path.normpath(base.joinpath(*segs)))
+            pinned = _pinned(self.bound, target)
             if pinned is None:
-                continue
+                wider = _outside_bound(self.root, target)
+                if wider is None:
+                    continue
+                self._widen_bound(wider)
+                pinned = _pinned(self.bound, target)
+                if pinned is None:
+                    continue
             if any(os.path.normcase(str(r.path)) == os.path.normcase(pinned) for r in self.roots):
                 continue
             before = {u.module for u in uses if u.lineno < line}
@@ -1626,13 +1693,20 @@ class _Scanner:
             self.roots = [root, *self.roots] if front else [*self.roots, root]
             self._tops.clear()
 
+    def _widen_bound(self, bound: Path) -> None:
+        """读的边界放宽到项目根的某一级祖先（只会变宽）：查找器的清单缓存作废（之前越界的目录现在可以列）。"""
+        self.bound = bound
+        self.finder.root = bound
+        self.finder._lists.clear()
+        self._tops.clear()
+
     def _read(self, path: Path, rel: str) -> tuple[str | None, dict | None]:
         # 读之前把路径钉在项目根内（词法）：越界不 stat、不读。链接指到项目外由 `_Finder.guard` / no_follow 另判
-        pinned = _pinned(self.root, path)
+        pinned = _pinned(self.bound, path)
         if pinned is None:
             return None, {"path": rel, "kind": "outside_project"}
-        root = self.root
-        if _confined_path(self.root, Path(pinned), no_follow=self.no_follow) is None:
+        root = self.bound
+        if _confined_path(self.bound, Path(pinned), no_follow=self.no_follow) is None:
             # 任何一级是链接 / 路径替身（no_follow）或越界链接（默认）：连 lstat / realpath 都不发
             if not self.no_follow:
                 self.outside_hit = True
@@ -1642,13 +1716,13 @@ class _Scanner:
         if not self.no_follow:
             # 跟随模式：词法前缀过了不等于实体在项目内（入口脚本 / 命中的文件本身可能是指到项目外的链接）。
             # 先 realpath 再按前缀判（`contained_path`），之后 stat / 读都用**净化后**的那条真实路径
-            real = projectenv.contained_path(self.root, pinned)
+            real = projectenv.contained_path(self.bound, pinned)
             if real is None:
                 self.outside_hit = True
                 self.budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="import", path=rel)
                 return None, {"path": rel, "kind": "outside_project"}
             pinned = real
-            root = Path(os.path.realpath(self.root))
+            root = Path(os.path.realpath(self.bound))
         path = Path(pinned)
         try:
             st = os.lstat(pinned) if self.no_follow else os.stat(pinned)
@@ -1851,7 +1925,7 @@ class _Scanner:
         if parsed is not None:
             unused = figcapture.unused_imports(parsed.tree)
             targets = _relative_targets(
-                parsed.tree, self.script_p, self.root, no_follow=self.no_follow
+                parsed.tree, self.script_p, self.bound, no_follow=self.no_follow
             )
             if targets is None:
                 self.main_reachable = True
@@ -1920,14 +1994,14 @@ class _Scanner:
         if parsed is None:
             return
         if job.pkg_dir is not None:
-            files = _package_files(job.pkg_dir, self.budget, self.root, no_follow=self.no_follow)
+            files = _package_files(job.pkg_dir, self.budget, self.bound, no_follow=self.no_follow)
             if files is None:
                 self.main_reachable = True
             else:
                 self.main_queue += files
         if figcapture.reaches_main(parsed.tree, self.stem):
             self.main_reachable = True
-        targets = _relative_targets(parsed.tree, job.path, self.root, no_follow=self.no_follow)
+        targets = _relative_targets(parsed.tree, job.path, self.bound, no_follow=self.no_follow)
         if targets is None:
             self.main_reachable = True
         else:
@@ -2049,7 +2123,7 @@ class _Scanner:
             if key in main_scanned:
                 continue
             if len(main_scanned) >= MAX_MAIN_SCAN_FILES or not _inside(
-                self.root, f, no_follow=self.no_follow
+                self.bound, f, no_follow=self.no_follow
             ):
                 self.main_reachable = True
                 break
@@ -2061,7 +2135,7 @@ class _Scanner:
             if sub is None:
                 self.problems.append(problem or problem2)
                 break
-            targets = _relative_targets(sub, f, self.root, no_follow=self.no_follow)
+            targets = _relative_targets(sub, f, self.bound, no_follow=self.no_follow)
             if targets is None or figcapture.reaches_main(sub, self.stem):
                 self.main_reachable = True
                 break

@@ -437,7 +437,7 @@ order: 160
   `legacy` 一代，第一次按代时登记进 `generations`。**目录名永远不撞在册的代**（`managedenv.fresh_generation`：同一份
   身份再来一次——重建两次同一份账——而那一代还 active / 旧代还有人用，就 `g<身份>-2`、`-3`……；`register_generation`
   拒绝重新登记 active 或 `ready` 的代），身份字段照记（Codex #461 P1：否则 active 目录会被当成「上次建到一半的」删掉）。
-- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条；**新建第一代（没有 active 代）时是脚本开跑所需的全部第三方依赖**：`create_plan` 复用联合求解存进 `RepairPlan.widened`，ADR 0061 §五 2026-09-30 修订，看护 `test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs`）、
+- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条；**新建第一代（没有 active 代）时是脚本开跑所需的全部第三方依赖**：`create_plan` 复用联合求解存进 `RepairPlan.widened`，ADR 0061 §五 2026-09-30 修订，看护 `test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs`；此刻在内置 runtime 里跑而扫描没看全时再带上内置 runtime 的 `top_level`，§五 2026-11-02 修订，看护 `test_fresh_generation_from_bundled_runtime_carries_its_packages_when_scan_is_incomplete`）、
   重建 `rebuild_managed()`（delta 为空 = 按账重建）、包管理里环境还不在时的首装。没有第二套建 / 装 / 验代码；包管理对
   **已有** active 那一代的原地 install / update / uninstall 不变。
 - **锁仍是 `envlease` 那一张表**：换代拿合成 key `tavotto_managed:<项目指纹>` + active 那一代的解释器，
@@ -739,10 +739,13 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 - **三类名字不送 pip**：`NOT_PIP_INSTALLABLE`（ROOT；声明里的同名发行包也过滤，进 `JointPlan.not_pip_installable`）、脚本字面量 `sys.path`
   目录里找不到的 import（`origins[].local_module_missing`）、没有可信安装名的表外名（只有预填，用户确认才成 `user_specified`）。前两类不预填，
   `user_specified` 对它们抛 `UserSpecifiedRejected(NOT_APPLICABLE)`。
-- **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内；
+- **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内（项目外的有界放宽见下）；
   新增标签 `sys_path_literal`（证据码同名）。表达式里的名字只在一种情形下按值认（`_dir_consts`，TVD-705N）：模块层顶层无条件的单目标
   赋值、整份文件里同名只绑定这一次（任何作用域的再绑定 / `global` / `nonlocal` 都不认；有星号导入或 `globals()` / `exec` 等动态改写时整份不推断）、绑定在 `sys.path` 那一行之前，且值本身也是这些形状
   （`ROOT = Path(__file__).resolve().parent` → `str(ROOT / "source")`）；其余变量照旧不认。
+  认 `Path(…).parents[N]`；同一行分号连写按（行, 列）分先后。**项目外的这类目录也认**（TVD-22EY，ADR 0061 §十 2026-11-02 补充）：
+  读的边界 `_Scanner.bound` 放宽到公共祖先，至多上 `_MAX_OUTSIDE_LEVELS` 级，大文件夹 / 家目录及其祖先 / 盘符根 / 跨盘符不认；
+  看护 `TestLiteralDirOutsideProject`。
 - **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
   不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
 - 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。
