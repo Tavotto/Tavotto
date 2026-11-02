@@ -899,11 +899,21 @@ try {
   Log 'done'
 } catch { Log ('failed: ' + $_.Exception.Message); exit 3 }
 '@ | Set-Content -Path $setup -Encoding ASCII
+# the logon task runs AS tavotto-lab: it must be able to read this admin-written script (C:\TavottoLab\perf inherits
+# SYSTEM/Administrators only; without this the task starts, PowerShell cannot open -File, result 0xFFFD0000, no log)
+icacls $setup /grant 'tavotto-lab:(RX)' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls grant on $setup failed: $LASTEXITCODE" }
 $act2 = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$setup`""
 $trg2 = New-ScheduledTaskTrigger -AtLogOn -User 'tavotto-lab'
 $prn2 = New-ScheduledTaskPrincipal -UserId 'tavotto-lab' -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName 'TavottoLab-PerfPython' -Action $act2 -Trigger $trg2 -Principal $prn2 -Force | Out-Null
-'next: sign tavotto-lab out and in (or reboot); check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+# re-run on a box where tavotto-lab is already signed in (autologon): start the setup now instead of waiting for a reboot
+if ((quser 2>$null) -match 'tavotto-lab') {
+  Start-ScheduledTask -TaskName 'TavottoLab-PerfPython'
+  'tavotto-lab is signed in: setup task started; check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+} else {
+  'next: sign tavotto-lab out and in (or reboot); check C:\TavottoLab\cache\perf-python-setup.log for "done"'
+}
 """
 
 PERF_REMOVE_PS = r"""

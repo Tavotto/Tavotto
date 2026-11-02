@@ -300,7 +300,7 @@ python3 scripts/winlab/winlab.py admin perf-fixtures --remove   # 撤销
    `C:\TavottoLab\perf\`，Lab 上再核 SHA-256 与 Authenticode（有效且签名者含 Python Software Foundation）才 `Add-AppxProvisionedPackage -Online -SkipLicense`
    （系统级预置：`tavotto-lab` 下次登录时得到它，`WindowsApps` 里出现 `python.exe` / `py.exe` 等应用执行别名）。
 3. 一次性登录任务 `TavottoLab-PerfPython`（`tavotto-lab` 登录时运行 `perf-python-setup.ps1`）：等别名出现 → `py install --yes 3.11` → 用清华镜像装 `matplotlib>=3.8,<3.12` 与 `numpy>=1.24,<3`
-   → 核对别名 `python.exe` 能 import 它们 → 写 `C:\TavottoLab\cache\perf-python-setup.log`（末行 `done`）→ 删除自己。执行后让 `tavotto-lab` 注销再登录（或重启）。
+   → 核对别名 `python.exe` 能 import 它们 → 写 `C:\TavottoLab\cache\perf-python-setup.log`（末行 `done`）→ 删除自己。安装脚本写在 `C:\TavottoLab\perf\`（只继承 SYSTEM / Administrators），所以写完立刻 `icacls` 授 tavotto-lab 读与执行——漏了它登录任务会触发但 PowerShell 打不开 `-File`（结果码 `0xFFFD0000`、不写日志）。执行时 tavotto-lab 已登录就直接 `Start-ScheduledTask`；否则让它注销再登录（或重启）。
 
 这不是用户机器上的「微软商店版 Python 3.11」（那是商店里的独立包 `PythonSoftwareFoundation.Python.3.11`，Server 2025 没有商店），而是 python.org 官方的新机制：
 同样是 `WindowsApps` 里的应用执行别名（走 AppX 激活而不是普通 exe），运行时则装在 `%LOCALAPPDATA%\Python\`。别名机制相同，所以「别名入口本身慢不慢」可以回答，运行时差异不能。

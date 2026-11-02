@@ -3754,6 +3754,24 @@ def test_perf_fixtures_admin_script_is_ascii_closed_and_scoped():
     assert "Dismount-DiskImage" in rm and "Remove-AppxProvisionedPackage" in rm
 
 
+def test_perf_fixtures_logon_task_can_read_its_admin_written_script():
+    """登录任务以 tavotto-lab 身份跑管理员写进 C:\\TavottoLab\\perf 的脚本：那个目录只继承 SYSTEM / Administrators，
+    不授读就是「任务触发了、PowerShell 打不开 -File、结果 0xFFFD0000、一行日志都没有」（Lab 11-03 实测）。
+    授权必须在写完脚本之后、注册任务之前；已登录时直接启动任务，不必再重启一次。"""
+    fill = W._fill_perf(W.PERF_FIXTURES_PS)
+    grant = "icacls $setup /grant 'tavotto-lab:(RX)'"
+    assert grant in fill
+    assert (
+        fill.index("Set-Content -Path $setup")
+        < fill.index(grant)
+        < fill.index("Register-ScheduledTask -TaskName 'TavottoLab-PerfPython'")
+    )
+    assert "Start-ScheduledTask -TaskName 'TavottoLab-PerfPython'" in fill
+    assert fill.index("Register-ScheduledTask -TaskName 'TavottoLab-PerfPython'") < fill.index(
+        "Start-ScheduledTask -TaskName 'TavottoLab-PerfPython'"
+    )
+
+
 def test_pymanager_pin_and_fetch_rejects_a_wrong_download(tmp_path, monkeypatch):
     assert re.fullmatch(r"[0-9a-f]{64}", W.PYMANAGER_SHA256)
     assert W.PYMANAGER_URL.startswith("https://www.python.org/ftp/python/pymanager/")
