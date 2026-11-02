@@ -121,9 +121,20 @@ function AttachTile({ file, onRemove, disabled }: { file: File; onRemove: () => 
 }
 
 /** 「我的来信」里用户自己写的那一份：灰色引用块；正文长了折叠成前 4 行 +「展开」。 */
-function YourLetter({ subject, body, names }: { subject: string; body: string; names: string[] }) {
+function YourLetter({
+  subject,
+  body,
+  names,
+  isReport = false,
+}: {
+  subject: string
+  body: string
+  names: string[]
+  isReport?: boolean
+}) {
   const [open, setOpen] = useState(false)
-  if (!subject && !body && names.length === 0) return null // 旧记录没存原文
+  const empty = !subject && !body && names.length === 0
+  if (empty && !isReport) return null // 旧记录没存原文
   const long = body.split('\n').length > 4 || body.length > 240
   return (
     <blockquote
@@ -132,6 +143,11 @@ function YourLetter({ subject, body, names }: { subject: string; body: string; n
     >
       <span className="type-caption">{cs('lettersYouWrote')}</span>
       {subject && <span className="break-words font-medium" data-contact-letter-subject>{subject}</span>}
+      {isReport && !body && (
+        <span className="break-words" data-contact-letter-no-note>
+          {cs('lettersNoNote')}
+        </span>
+      )}
       {body && (
         <p
           className={cn('whitespace-pre-wrap break-words', long && !open && 'line-clamp-4')}
@@ -550,10 +566,24 @@ export function ContactDialog() {
       <ul className="flex flex-col gap-3">
         {s.messages.map((m) => (
           <li key={m.message_id} className="flex flex-col gap-2 rounded-md bg-surface-hover px-3 py-2.5" data-contact-letter={m.message_id}>
-            <div className="flex items-center gap-x-2 text-sm">
-              <span className="font-mono text-xs text-ink" data-contact-letter-number>
-                {cs('lettersNumber', { id: m.message_id })}
-              </span>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+              {m.kind === 'report' && m.report_id ? (
+                <>
+                  <span
+                    className="shrink-0 whitespace-nowrap rounded-full bg-accent-subtle px-1.5 text-xs text-accent"
+                    data-contact-letter-kind="report"
+                  >
+                    {cs('lettersReportTag')}
+                  </span>
+                  <span className="whitespace-nowrap font-mono text-xs text-ink" data-contact-letter-number data-contact-report-id={m.report_id}>
+                    {cs('lettersReportNumber', { id: m.report_id })}
+                  </span>
+                </>
+              ) : (
+                <span className="font-mono text-xs text-ink" data-contact-letter-number>
+                  {cs('lettersNumber', { id: m.message_id })}
+                </span>
+              )}
               <span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-1.5">
                 <span className="type-caption">{cs('lettersSentAt', { time: formatDateTime(m.sent_at * 1000) })}</span>
                 <span className="type-caption">· {cs(`lettersState.${m.state}`)}</span>
@@ -567,7 +597,12 @@ export function ContactDialog() {
                 <Trash2 size={ICON_SIZE.sm} />
               </IconButton>
             </div>
-            <YourLetter subject={m.subject ?? ''} body={m.body ?? ''} names={m.attachment_names ?? []} />
+            <YourLetter
+              subject={m.subject ?? ''}
+              body={m.body ?? ''}
+              names={m.attachment_names ?? []}
+              isReport={m.kind === 'report'}
+            />
             {m.poll_error && (
               <p className="type-caption" data-contact-poll-error={m.poll_error}>
                 {cs(m.poll_error === 'too_large' ? 'pollTooLarge' : 'pollBad')}

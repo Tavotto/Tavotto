@@ -296,7 +296,7 @@ class TestDefaultContents:
         # 勾选项没勾：没有 optional 内容
         assert not [n for n in names if n.startswith("optional-")]
         manifest = json.loads(z.read("manifest.json"))
-        assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 13
+        assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 14
         assert manifest["contains_detail"] is True
         assert manifest["truncated"] == []
         listed = {f["path"]: f["bytes"] for f in manifest["detail_files"]}
@@ -3380,10 +3380,11 @@ class TestExportPathUnchanged:
         _prep, z = _prepare(client)
         b = json.loads(z.read("report.json"))
         a = json.loads(a)
-        # render 段含进程池的实时会话状态、recent_errors 随日志增长：同一进程里两次采集之间可能变，
-        # 只对拍键集；其余段逐字节相同
-        volatile = {"render", "recent_errors"}
+        # render 段与 render_pool（渲染池健康摘要）都是进程池的实时状态、recent_errors 随日志增长：
+        # 同一进程里两次采集之间可能变（如最近冷启动的 age_s），只对拍键集；其余段逐字节相同
+        volatile = {"render", "render_pool", "recent_errors"}
         assert list(a) == list(b) and list(a["render"]) == list(b["render"])
+        assert list(a["render_pool"]) == list(b["render_pool"])
         assert {k: (a[k], b[k]) for k in a if k not in volatile and a[k] != b[k]} == {}
 
 

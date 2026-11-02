@@ -5349,6 +5349,7 @@ def api_diagnostics_send_start(pid: str):
             note=body.get("note"),
             gen=body.get("gen"),
             scope=_diag_send_scope(),
+            reply=body.get("reply") is not False,
         )
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
@@ -8114,10 +8115,13 @@ def api_engine_render():
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
     sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    acquire_mark = engine_pool.acquire_mark()
     try:
         worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
         # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
         get_ms = round((time.perf_counter() - t_get) * 1000, 3)
+        # `worker_get_ms` 的分段（池 acquire 里量的；没经过池的原生会话为空）
+        acquire_segments = engine_pool.acquire_timings(acquire_mark, worker)
         info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
@@ -8189,7 +8193,7 @@ def api_engine_render():
     # 阶段计时：worker 的 script_build/patch_apply/manifest/canvas_draw +
     # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
     # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。
-    timings = {**(resp.get("timings") or {}), "worker_get_ms": get_ms}
+    timings = {**(resp.get("timings") or {}), **acquire_segments, "worker_get_ms": get_ms}
     # 服务端在这次请求上花的总时间（取会话起、到组装响应前）。前端拿「请求往返 − 它」
     # 就是传输 + JSON 解析——没有它，松手到落定的那 0.5 秒分不清是后端慢还是搬运慢
     # （2026-09-23 一份 M2 Pro 报告里 commit→权威 500ms，而 worker 各段加起来说不清）
