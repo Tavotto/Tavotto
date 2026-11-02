@@ -44,7 +44,11 @@ def _deny_create_children(folder: Path):
     管理员），这条用例证明不了什么，判红而不是跳过。"""
     sid = (
         subprocess.run(
-            ["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True, check=True
+            ["whoami", "/user", "/fo", "csv", "/nh"],
+            capture_output=True,
+            encoding="utf-8",  # SID 全是 ASCII；门禁要求显式 UTF-8
+            errors="replace",
+            check=True,
         )
         .stdout.strip()
         .split(",")[-1]
