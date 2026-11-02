@@ -28,3 +28,7 @@ A script that uses no plotting library and builds the SVG text itself (for examp
 ## Icon animations no longer overlap themselves
 
 Several interface icon animations had parts passing through each other while playing (the sheet in the folder icon poked out of the front panel, the two squares in the group icon merged, the envelope flap flipped through the top edge, the sun in the image icon crossed the mountain, the small sparkle touched the big one). Each animation now starts from the state before the action and ends at the resting icon without any parts crossing: lock drops its shackle in and unlock pops it out by the same distance, disconnect pulls the plug out of its socket, and distribute slides one block to even spacing. The disconnect, save and unlock icons were redrawn, and clicking "Disconnect" now plays the unplug motion.
+
+## Converting scripts with the official OpenAI models in Codex now works on Windows
+
+On Windows, "Make editable version" with Codex signed in to an official OpenAI model could read your script and data and then stop with "the AI was not allowed to write the new file", because Codex's own file-writing tool fails inside its Windows sandbox. Tavotto now writes the new Matplotlib script itself on Codex's behalf (only that one file, inside Tavotto's own working folder), so the conversion goes through. Your original script and project folder are never touched.

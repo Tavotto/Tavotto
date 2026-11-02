@@ -695,6 +695,22 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
   `read_run_report` 保留 nested `result.error` 与实际 launch/workdir。前端收尾复查照旧；诊断包仍只记审计摘要。
   看护 `tests/test_fix_application_verification.py`、`tests/test_fixasks.py`、`tests/test_ai_fix_endpoint.py`。
 
+### 转换目标由 Tavotto 代写（TVD-BCZ0 方案 A，`engine/convertwrite.py`、`fixmcp.py` 转换模式，ADR 0143 修订 2026-11-02）
+
+- **根因**：Windows `windows.sandbox="unelevated"` 之下命令能跑，但 Codex 自带的 file_change / apply_patch **一律 `Failed to write file`**（Lab run `20261102T055146Z-8fc66e`，OpenAI 官方模型，Codex 0.164：读完源码与数据、写目标时 file_change `status=failed`，模型按提示词停下，目标缺失）。DeepSeek 那次成功只因为它恰好用 shell 写文件。
+- **做法**：转换会话里由 Tavotto 在沙盒外写目标文件。复用修复模式的服务进程：`tavotto fix-mcp --url … --convert-id <会话>`（与 `--fix-id` 互斥）换一个工具集——`tools/list` 是 `fixmcp.CONVERT_TOOL` 写死的一条（不回调），
+  `tools/call` → `POST /api/ai/convert/<id>/target {content}` → `convertwrite.write`。服务名 `tavotto_convert`，工具 `write_conversion_target`，参数只有 `content`（整份脚本，UTF-8 文本）；额外参数（如 `path`）在 MCP 层就被丢掉，**目标路径只有 Tavotto 定**（`Grant.target` = `cand.target`）。
+- **鉴权**：每个转换会话一枚随机令牌（`convertwrite.open_grant`，`ai_bridge.run` 在 `_cmd` 之前开），**只经子进程环境变量 `TAVOTTO_CONVERT_TOKEN`**（Codex 的 `env_vars` 只列变量名），不进 argv、不进日志；头 `X-Tavotto-Convert-Token`；
+  `security._session_guard` 只认「`POST /api/ai/convert/<该会话>/target` + 对应令牌」；会话终态（`_finish_session`）/ 被拒绝的尝试（`_drop_attempt_files`）即 `close`，另有 3 小时兜底寿命。令牌错 / 别的会话 / 已结束 = 401（guard）或 403 `convert_tool_forbidden`，不区分原因。
+- **上限与失败码**：`MAX_BYTES` = 2 MiB（超限拒绝，不截断）；闭集失败码 `bad_content | empty | too_large | target_unsafe（目标是符号链接/目录）| write_failed`；写入走 `atomicio.write_bytes`。只记闭集码与字节数（`cand.extras["target_tool"] = {calls, ok, last_code, bytes}`）。
+- **注入**：`CodexAgent.build_command` 在**所有平台**追加 `ai_agents._codex_convert_mcp_args(ctx.convert_mcp)`（本次调用级 `-c mcp_servers.tavotto_convert.{command,args,env_vars,tool_timeout_sec,startup_timeout_sec,default_tools_approval_mode="approve"}`，与修复会话同一写法）；Windows 上与 `windows.sandbox="unelevated"` 并存。
+  适配器声明 `convert_write_tool = True` 才开（只有 Codex）。**Claude Code 不加**：它自带的 Write 不经 Codex 的 Windows 沙盒，没有失败证据，改它会动一条已验证的路径；内置执行器本来就由 Tavotto 写文件。
+- **提示词**：`ai_prompt_pack.convert_prompt(write_tool=True)` 用 `rule_write_tool` 替换 `rule_write_fail`——“写目标文件只能调用 MCP 工具 write_conversion_target（参数 content 是整份脚本，一次写入）；不要用文件编辑工具、apply_patch 或命令写目标文件。如果这个工具返回失败，直接说明它给出的失败原因并停止，不要换别的方式或位置写。”；Windows 的 cmd.exe 一条保留。`prompt_for` 读 `cand.extras["write_tool"]`（桥按适配器声明写）。
+- **判定**：写入之后的校验 / 写回流程不变。`ai_convert.write_denied` 增第三种形状：`target_tool.calls > 0` 且没有一次成功 → 目标缺失时判 `agent_write_denied`（不可修正）。运行事实多一项 `target_tool_ok`（布尔，权威来源是 `convertwrite.ok`，不看事件；`merge_run_facts` 取或，没有该工具的会话是 None），
+  登记进 `exectrace.ATTRIBUTES` 的 `cli_target_tool_ok` 与「AI 会话结束」日志的 `cli_target_tool_ok=`。
+- **看护**：`tests/test_convert_write_tool.py`（工具本体、令牌、HTTP guard、fixmcp 转换模式、argv 各平台、提示词、`agent_write_denied` 新形状、假 Codex 端到端）、`tests/test_windows_regressions.py::test_codex_convert_on_windows_has_unelevated_sandbox_and_tavotto_write_tool`。
+  **待 Windows Lab 用官方模型验证**：真 Codex 0.164 在 unelevated 沙盒里能否拉起 MCP 子进程（`tavotto-cli.exe`）并调用该工具（修复会话的 MCP 在 Windows 上同样依赖这一点）。
+
 ### D3：CLI 经 MCP 修复模式（`engine/fixmcp.py`、`fixsession.py` 的 CLI 分支、`ai_agents` 的 `build_fix_command`）
 
 只连了 Codex / Claude Code 时，同一个修复会话起那个 CLI；CLI 经 `tavotto fix-mcp`（`engine/cli.py` 的子命令，冻结产物里用同目录 console 版 `tavotto-cli`，`fixsession.mcp_launcher`）调同一张 `REGISTRY`。看护 `tests/test_fixcli.py`、`tests/test_fixmcp.py`、`tests/test_ai_fix_endpoint.py`。

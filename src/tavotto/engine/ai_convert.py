@@ -438,6 +438,7 @@ def prompt_for(cand: ConvertCandidate) -> str:
         source_language=cand.source_language,
         reference=f"{REFERENCE_DIR}/{cand.reference_name}" if cand.reference_name else None,
         project_root=cand.project_root,
+        write_tool=bool(cand.extras.get("write_tool")),
     )
     hint = getattr(cand.extras.get("runner"), "runtime_hint", None)
     runtime = hint() if callable(hint) else {"status": "unknown", "verified": False}
@@ -883,12 +884,16 @@ def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = N
 
 
 def write_denied(cand: ConvertCandidate) -> bool:
-    """本次 Codex 运行事实是否显示“写入被拒”，两种形状：
+    """本次 Codex 运行事实是否显示“写入被拒”，三种形状：
     1. 有文件改动失败（`file_changes_failed`）或命令被拒绝（`commands_declined`）；
     2. 沙盒起不来、命令在启动前就被策略拒绝（TVD-BCZ0，Windows）：收到过事件、回合正常结束（`last_event == turn.completed`），
        却 0 条命令、0 个文件改动——事件流里没有任何 command_execution，第 1 条抓不到。
+    3. Tavotto 代写工具（`convertwrite`，`cand.extras["target_tool"]`）被调用过却没有一次成功（返回了闭集失败码）。
     事实由桥在每次 CLI 进程结束时合并（`ai_agents.merge_run_facts`）放进 `cand.extras["run_facts"]`；没有事实（内置执行器等）= False。
     只在“目标文件缺失”时才拿来改失败码，不影响其它路径。"""
+    tool = cand.extras.get("target_tool")
+    if isinstance(tool, dict) and int(tool.get("calls") or 0) > 0 and not tool.get("ok"):
+        return True
     facts = cand.extras.get("run_facts")
     if not isinstance(facts, dict):
         return False

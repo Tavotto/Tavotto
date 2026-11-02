@@ -83,6 +83,7 @@ from .engine import (
     contactinbox as engine_contactinbox,
     contactsend as engine_contactsend,
     convertdeps as engine_convertdeps,
+    convertwrite as engine_convertwrite,
     databinding as engine_databinding,
     depplan as engine_depplan,
     deprepair as engine_deprepair,
@@ -10309,6 +10310,25 @@ def api_ai_fix_tool(fix_id):
     return resp
 
 
+# ---- 转换会话的「代写目标文件」回调（TVD-BCZ0 方案 A，`engine/convertwrite.py`）----
+# Codex 拉起的 `tavotto fix-mcp --convert-id` 子进程打回来的一个端点。认证：scoped token（`X-Tavotto-Convert-Token`，
+# 只对该转换会话的这个路径有效，会话结束即失效），见 security.py。路径不由请求给：写的永远是该会话候选里 Tavotto 决定的那一个目标文件。
+@app.post("/api/ai/convert/<sid>/target")
+def api_ai_convert_target(sid):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    try:
+        out = engine_convertwrite.write(
+            sid, request.headers.get(security.CONVERT_TOKEN_HEADER), body.get("content")
+        )
+    except engine_convertwrite.Forbidden:
+        return jsonify({"error": "convert_tool_forbidden", "code": "convert_tool_forbidden"}), 403
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _publish_fix_hint(scope: str, fix_id: str) -> None:
     sse_publish("ai.fix", {"pj": scope, "fix_id": fix_id})
 
@@ -13666,6 +13686,7 @@ def api_ai_convert():
     )
     if refused is not None:
         return refused
+    engine_convertwrite.note_port(request.environ.get("SERVER_PORT"))
     try:
         sid = engine_ai.run(
             agent,
