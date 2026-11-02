@@ -288,14 +288,14 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "单图编辑里直接拖图的四条边改图幅（内容不缩放、重新渲染）：虚线框 + 机械制图式尺寸标注、栏宽吸附，松手一步撤销",
-        "en-US": "In single-figure editing, drag any of the figure's four edges to change its size, with dimension lines, column-width snapping and a single undo step"
+        "zh-CN": "单图编辑里拖画布：四条边加 / 收留白（图不动，停在图边 / 内容边缘，⌥ 才裁进内容，画布宽吸栏宽），四个角等比改图幅（文字 pt 不变、松手重新出图）；拖动中胶囊说明这一下的含义，导出页面 = 图幅 + 留白",
+        "en-US": "In single-figure editing, drag the canvas edges to add or tighten margin around the figure (it stays put; stops at the figure edge and the content edge, ⌥ to crop, width snaps to column widths) and drag a corner to resize the figure proportionally (text keeps its pt size); a capsule explains each drag and exports use the figure plus margin"
       },
-      "entry": "画布 → 单图编辑 → 悬停并拖图的上 / 下 / 左 / 右边",
+      "entry": "画布 → 单图编辑 → 拖画布的四条边 / 四个角",
       "e2e": [
         {
           "spec": "figure-edge-resize.spec.ts",
-          "title": "单图编辑拖右边：拖动中只有虚线框与标注，松手图幅变宽（重渲染）、左边不动，撤销一步回到原样"
+          "title": "单图编辑拖右边往外：画纸变宽、图纹丝不动，拖动中胶囊说「扩充画布」，撤销一步回到原样"
         }
       ]
     },

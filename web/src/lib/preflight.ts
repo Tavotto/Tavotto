@@ -16,7 +16,7 @@ import { textDiagnostics } from './glyphPlan'
 import { mathBoxOf } from './mathtext'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
-import type { CanvasObject, FigureDocument, PanelObject, TextObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
 
@@ -1347,10 +1347,13 @@ export function buildOriginalSpec(
   /** 本次所选格式：要 EPS 且不要 SVG 时有脚本的图会被重画成矢量（`exportRoute.originalRerenders`） */
   formats: readonly string[],
   route?: ExportRoute | null,
+  /** 单图画布留白（ADR 0161，导出 mm）：页面 = 图幅 + 留白、图落在 (左, 上)——栏宽等页面规则按导出的页面判 */
+  pad?: FramePad | null,
 ): PreflightSpec {
-  const rect_mm: [number, number, number, number] = [0, 0, size.widthMm, size.heightMm]
+  const p = pad ?? { l: 0, t: 0, r: 0, b: 0 }
+  const rect_mm: [number, number, number, number] = [p.l, p.t, size.widthMm, size.heightMm]
   return {
-    page: { w_mm: size.widthMm, h_mm: size.heightMm, margin_mm: 0 },
+    page: { w_mm: size.widthMm + p.l + p.r, h_mm: size.heightMm + p.t + p.b, margin_mm: 0 },
     panels: [panelSpec(panel, assets, render, rect_mm, 1, 'original', formats, route)],
     texts: [],
     objects: [{ id: panel.id, type: panel.type, rect_mm, hidden: !!panel.hidden }],

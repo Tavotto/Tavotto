@@ -484,7 +484,24 @@ export interface FigureDocument {
   profile?: DocumentProfile
   /** 可选的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
   style?: DocumentStyle
+  /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0，画布就是图幅 */
+  framePad?: FramePad
+  /** 单图画布处在「紧凑」停靠点上的那几边（ADR 0161）：图幅变了按新的内容边缘重算，不保留旧 mm */
+  framePadTight?: FramePadSide[]
 }
+
+/**
+ * 单图编辑的画布留白（ADR 0161）：图四周各加多少 mm（**导出 mm**，即图幅的 mm），负值 = 裁进图幅。
+ * 挂在画布上：模式按画布判、单图一张图一张画布；变成多图排版时保留不用，删回一张原样回来。
+ * 只在 Tavotto 的导出里生效，不写回脚本。
+ */
+export interface FramePad {
+  l: number
+  t: number
+  r: number
+  b: number
+}
+export type FramePadSide = keyof FramePad
 
 /* ------------------------- schema 3：项目 / 画布 --------------------------- */
 /**
@@ -505,6 +522,9 @@ export interface CanvasData {
   profile?: DocumentProfile
   /** 每张画布各自的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
   style?: DocumentStyle
+  /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0 */
+  framePad?: FramePad
+  framePadTight?: FramePadSide[]
 }
 
 /**
@@ -536,6 +556,8 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.layoutGroups ? { layoutGroups: c.layoutGroups } : {}),
     ...(c.profile ? { profile: c.profile } : {}),
     ...(c.style ? { style: c.style } : {}),
+    ...(c.framePad ? { framePad: c.framePad } : {}),
+    ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
   }
 }
 
@@ -549,6 +571,8 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.layoutGroups ? { layoutGroups: doc.layoutGroups } : {}),
     ...(doc.profile ? { profile: doc.profile } : {}),
     ...(doc.style ? { style: doc.style } : {}),
+    ...(doc.framePad ? { framePad: doc.framePad } : {}),
+    ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
   }
 }
 

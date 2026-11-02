@@ -2,11 +2,11 @@ import { addSecondFigure, expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
- * 单图编辑里直接拖这张图的四条边改图幅（与多图排版里拖页面边同一套手感与标注）。
+ * 单图编辑拖画布（ADR 0161）：边 = 留白（图不动、画纸变大），角 = 等比改图幅（松手重新出图）。
  *
- * 只放 jsdom 量不到的：真浏览器里命中区压在图边缘上能不能按到、拖动后**屏幕上量到的**图框、对侧边是否纹丝不动、
- * 撤销一步是否回到原样。逻辑（吸附 / 夹取 / 一次拖动一个事务）在 `canvas/figureEdgeResize.test.tsx`。
- * 定位认 `data-figure-edge` / `data-figure-dims` / `data-object-id`。
+ * 只放 jsdom 量不到的：真浏览器里命中区 / 角柄按不按得到、**屏幕上量到的**画纸与图框、对角是否纹丝不动、
+ * 胶囊在拖动中是否显示读数、撤销一步是否回到原样。逻辑在 `canvas/frameDrag.test.tsx` 与 `lib/framePad.test.ts`。
+ * 定位认 `data-figure-edge` / `data-figure-corner` / `data-fast-edit-paper` / `data-object-id` / `data-drag-status`。
  */
 
 async function toFastEdit(page: Page, baseURL: string) {
@@ -18,6 +18,7 @@ async function toFastEdit(page: Page, baseURL: string) {
   await expect(page.locator('[data-fast-edit-paper]')).toBeVisible()
   // 拖边只认精确 manifest：图渲染回来（冷启动要一会儿）命中区才挂出来
   await expect(page.locator('[data-figure-edge]')).toHaveCount(4, { timeout: 90_000 })
+  await expect(page.locator('[data-figure-corner]')).toHaveCount(4)
   await expect(page.locator('[data-view-tweening]')).toHaveCount(0)
   // 取景随舞台尺寸安顿：等世界层变换连续 800 ms 不变再量
   const world = page.locator('[data-world-transform]')
@@ -35,13 +36,16 @@ async function toFastEdit(page: Page, baseURL: string) {
     .toBeGreaterThan(800)
 }
 
-/** 图的背纸框；松手后新图回来之前背纸收起（只剩虚线占位），那时量不到 = null */
+/** 画纸框（= 画布：图 + 留白）；松手后新图回来之前画纸收起（只剩虚线占位），那时量不到 = null */
 const paperBox = (page: Page) => page.locator('[data-fast-edit-paper]').boundingBox({ timeout: 1000 }).catch(() => null)
+/** 图本身（面板对象）的屏幕框 */
+const figureBox = (page: Page) => page.locator('[data-object-id]').first().boundingBox({ timeout: 1000 }).catch(() => null)
 
-async function dragEdge(page: Page, edge: 'l' | 'r' | 't' | 'b', dx: number, dy: number, onMid?: () => Promise<void>) {
-  const eb = (await page.locator(`[data-figure-edge="${edge}"]`).boundingBox())!
+async function dragHandle(page: Page, sel: string, dx: number, dy: number, onMid?: () => Promise<void>) {
+  const eb = (await page.locator(sel).boundingBox())!
   // 上 / 下边取靠左 15% 处按下：舞台底部居中的通知条（教程提示 / 构建中）会压在下边中段
-  const x = edge === 't' || edge === 'b' ? eb.x + eb.width * 0.15 : eb.x + eb.width / 2
+  const horizontalStrip = sel.includes('"t"') || sel.includes('"b"')
+  const x = horizontalStrip ? eb.x + eb.width * 0.15 : eb.x + eb.width / 2
   const y = eb.y + eb.height / 2
   await page.mouse.move(x, y)
   await page.mouse.down()
@@ -51,83 +55,84 @@ async function dragEdge(page: Page, edge: 'l' | 'r' | 't' | 'b', dx: number, dy:
 }
 
 test(
-  '单图编辑拖右边：拖动中只有虚线框与标注，松手图幅变宽（重渲染）、左边不动，撤销一步回到原样',
+  '单图编辑拖右边往外：画纸变宽、图纹丝不动，拖动中胶囊说「扩充画布」，撤销一步回到原样',
   { tag: '@feature:canvas.single-figure-edge-resize' },
   async ({ app, page }) => {
     const a = await app()
     await toFastEdit(page, a.baseURL)
     const p0 = (await paperBox(page))!
-    await expect(page.locator('[data-figure-edge]')).toHaveCount(4)
+    const f0 = (await figureBox(page))!
     await expect(page.locator('[data-page-edge]')).toHaveCount(0)
-    await dragEdge(page, 'r', 60, 0, async () => {
+    await dragHandle(page, '[data-figure-edge="r"]', 60, 0, async () => {
+      await expect(page.locator('[data-drag-status]')).toBeVisible()
       await expect(page.locator('[data-figure-dims]')).toHaveCount(1)
-      await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
-      await expect(page.locator('[data-dim-readout="width"]')).toContainText(/\d/)
-      // 拖动中图本身纹丝不动（不写文档、不重渲染）
       const mid = (await paperBox(page))!
-      expect(Math.abs(mid.width - p0.width)).toBeLessThan(1)
-      const pv = (await page.locator('[data-figure-preview]').boundingBox())!
-      expect(pv.width).toBeGreaterThan(p0.width + 40)
+      expect(mid.width).toBeGreaterThan(p0.width + 40)
     })
-    await expect(page.locator('[data-figure-dims]')).toHaveCount(0)
-    await expect(page.locator('[data-figure-preview]')).toHaveCount(0)
-    // 松手后图按新图幅重渲染，面板随之变宽
-    await expect.poll(async () => (await paperBox(page))?.width ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.width + 40)
+    await expect(page.locator('[data-drag-status]')).toHaveCount(0)
     const p1 = (await paperBox(page))!
+    const f1 = (await figureBox(page))!
+    expect(p1.width).toBeGreaterThan(p0.width + 40)
     expect(Math.abs(p1.x - p0.x)).toBeLessThan(1.5)
-    expect(Math.abs(p1.height - p0.height)).toBeLessThan(1.5)
-    // 一次拖动 = 一步撤销
+    // 图本身不动、不重渲染
+    expect(Math.abs(f1.x - f0.x)).toBeLessThan(1)
+    expect(Math.abs(f1.width - f0.width)).toBeLessThan(1)
+    // 画布外画淡出现（伸出画布的不进导出）
+    await expect(page.locator('[data-page-outside-mask]')).toHaveCount(1)
     await page.keyboard.press('ControlOrMeta+z')
-    await expect.poll(async () => Math.abs(((await paperBox(page))?.width ?? 1e9) - p0.width), { timeout: 30_000 }).toBeLessThan(1.5)
+    await expect.poll(async () => Math.abs(((await paperBox(page))?.width ?? 1e9) - p0.width), { timeout: 10_000 }).toBeLessThan(1.5)
+    await expect(page.locator('[data-page-outside-mask]')).toHaveCount(0)
   },
 )
 
-test('单图编辑拖左边：松手并渲染回来后右边在屏幕上不动，图向左长出去；中间不闪旧图错位', async ({ app, page }) => {
+test('单图编辑拖右下角：等比改图幅，松手重新出图后左上角不动、宽高同比变大', async ({ app, page }) => {
   const a = await app()
   await toFastEdit(page, a.baseURL)
   const p0 = (await paperBox(page))!
-  await dragEdge(page, 'l', -50, 0)
+  await dragHandle(page, '[data-figure-corner="br"]', 60, 0, async () => {
+    await expect(page.locator('[data-drag-status]')).toBeVisible()
+    await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
+    // 拖动中图本身纹丝不动（不写文档、不重渲染）
+    const mid = (await paperBox(page))!
+    expect(Math.abs(mid.width - p0.width)).toBeLessThan(1)
+  })
+  await expect.poll(async () => (await paperBox(page))?.width ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.width + 40)
+  const p1 = (await paperBox(page))!
+  expect(Math.abs(p1.x - p0.x)).toBeLessThan(1.5)
+  expect(Math.abs(p1.y - p0.y)).toBeLessThan(1.5)
+  expect(Math.abs(p1.width / p1.height - p0.width / p0.height)).toBeLessThan(0.03)
+})
+
+test('单图编辑拖左上角：松手并渲染回来后右下角在屏幕上不动；中间不闪旧图错位', async ({ app, page }) => {
+  const a = await app()
+  await toFastEdit(page, a.baseURL)
+  const p0 = (await paperBox(page))!
+  await dragHandle(page, '[data-figure-corner="tl"]', -50, 0)
   const right0 = p0.x + p0.width
-  // 采样松手后一段时间里「图的右边」：渲染没回来时看虚线占位框，回来后看背纸；任何时刻都不许偏离原处（不闪错位的旧图）
+  const bottom0 = p0.y + p0.height
   let maxDev = 0
-  let sawPlaceholder = false
   const t0 = Date.now()
   let settled = false
   while (Date.now() - t0 < 30_000 && !settled) {
     const pend = await page.locator('[data-figure-pending]').boundingBox({ timeout: 300 }).catch(() => null)
     const paper = await paperBox(page)
     const b = pend ?? paper
-    if (pend) sawPlaceholder = true
     if (b) {
-      maxDev = Math.max(maxDev, Math.abs(b.x + b.width - right0))
-      settled = !pend && !!paper && paper.width > p0.width + 30 && Math.abs(paper.x + paper.width - right0) < 1.5
+      maxDev = Math.max(maxDev, Math.abs(b.x + b.width - right0), Math.abs(b.y + b.height - bottom0))
+      settled = !pend && !!paper && paper.width > p0.width + 30
     }
     await page.waitForTimeout(30)
   }
-  expect(settled, '渲染回来后右边没回到原处').toBe(true)
-  console.log(`[figure-edge-resize] 拖左边松手后右边最大偏移 ${maxDev.toFixed(1)} px，见过占位 ${sawPlaceholder}`)
-  expect(maxDev, '松手到新图回来之间右边偏离了原处（闪了错位的旧图）').toBeLessThan(2)
+  expect(settled, '渲染回来后没有变大').toBe(true)
+  expect(maxDev, '松手到新图回来之间右下角偏离了原处（闪了错位的旧图）').toBeLessThan(2)
 })
 
-test('单图编辑拖下边改高、拖上边：对侧不动', async ({ app, page }) => {
-  const a = await app()
-  await toFastEdit(page, a.baseURL)
-  const p0 = (await paperBox(page))!
-  await dragEdge(page, 'b', 0, 40)
-  await expect.poll(async () => (await paperBox(page))?.height ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.height + 25)
-  const p1 = (await paperBox(page))!
-  expect(Math.abs(p1.y - p0.y)).toBeLessThan(1.5)
-  await dragEdge(page, 't', 0, -30)
-  await expect.poll(async () => (await paperBox(page))?.height ?? 0, { timeout: 30_000 }).toBeGreaterThan(p1.height + 15)
-  const p2 = (await paperBox(page))!
-  expect(Math.abs(p2.y + p2.height - (p1.y + p1.height))).toBeLessThan(1.5)
-})
-
-test('加第二张图进多图排版后，拖的是页面边而不是图边', async ({ app, page }) => {
+test('加第二张图进多图排版后，拖的是页面边而不是画布边', async ({ app, page }) => {
   const a = await app()
   await toFastEdit(page, a.baseURL)
   await addSecondFigure(page)
   await expect(page.locator('[data-page-sheet]')).toBeVisible()
   await expect(page.locator('[data-figure-edge]')).toHaveCount(0)
+  await expect(page.locator('[data-figure-corner]')).toHaveCount(0)
   await expect(page.locator('[data-page-edge]')).toHaveCount(4)
 })

@@ -43,7 +43,7 @@ import {
   type PreflightOccurrence,
   type PreflightSpec,
 } from './preflight'
-import type { CanvasData, CanvasObject, FigureDocument } from '@/types/document'
+import type { CanvasData, CanvasObject, FigureDocument, FramePad } from '@/types/document'
 import { subplotLookup, type SubplotPart } from './subplotParts'
 import { displayText } from './richText'
 
@@ -308,6 +308,8 @@ export interface OriginalTarget {
   formats: readonly string[]
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
+  /** 单图画布留白（ADR 0161）：页面规则按「图幅 + 留白」判 */
+  pad?: FramePad | null
 }
 
 /**
@@ -330,7 +332,7 @@ export function validateOriginal(
   return resultOf(
     input,
     documentId,
-    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats, target.route),
+    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats, target.route, target.pad),
   )
 }
 

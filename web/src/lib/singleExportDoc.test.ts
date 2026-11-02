@@ -104,3 +104,23 @@ describe('singleAnnotatedDocument（QA-WIN-20）', () => {
     expect(annotationsOf(out).map((o) => o.id)).toEqual(['t1'])
   })
 })
+
+describe('singleAnnotatedDocument：画布留白（ADR 0161）', () => {
+  it('只有留白、没有标注也合成：页面 = 图幅 + 留白，图落在 (左, 上)', () => {
+    const out = singleAnnotatedDocument(docOf([panel]), panel, spec(), { l: 5, t: 2, r: 3, b: 0 })!
+    expect([out.page.w, out.page.h]).toEqual([88, 62])
+    expect(out.objects.map((o) => [o.id, o.x, o.y])).toEqual([['p1', 5, 2]])
+    expect(annotationsOf(out)).toEqual([])
+  })
+  it('标注跟着平移；负留白（紧凑 / 裁剪）页面比图幅小', () => {
+    const out = singleAnnotatedDocument(docOf([panel, text()]), panel, spec(), { l: -4, t: -2, r: -1, b: 0 })!
+    expect([out.page.w, out.page.h]).toEqual([75, 58])
+    expect(out.objects.map((o) => [o.id, o.x, o.y])).toEqual([
+      ['p1', -4, -2],
+      ['t1', 6, 8],
+    ])
+  })
+  it('全 0 留白与不给一样：没有标注时仍是 null（载荷不变）', () => {
+    expect(singleAnnotatedDocument(docOf([panel]), panel, spec(), { l: 0, t: 0, r: 0, b: 0 })).toBeNull()
+  })
+})
