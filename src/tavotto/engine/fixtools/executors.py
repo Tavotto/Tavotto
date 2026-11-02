@@ -119,7 +119,7 @@ def _default_python_changer(req: dict, cancel: threading.Event | None = None) ->
                 "ok": False,
                 "code": "env_busy",
                 "message": "Retryable: a dependency installation in this project's environment is still running, "
-                "and it did not finish within the wait. Nothing was changed. Wait a moment, then call "
+                "and it has shown no progress for a long time. Nothing was changed. Wait a moment, then call "
                 "change_python again (or carry on with other steps and retry later).",
             }
         return {"ok": False, "code": code}

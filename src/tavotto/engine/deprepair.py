@@ -174,6 +174,9 @@ STATE_CANCELLED = "cancelled"
 _lock = threading.RLock()
 _plans: dict[str, "RepairPlan"] = {}
 _progress: dict[str, dict] = {}
+#: `_progress` 每被写一次就加一（状态 / 日志 / 包源……任何一笔）。等别的作业结束的一方据此判「它还有没有进展」
+#: （`pyversionfix._wait_for_installs` 的卡死判据，TVD-22EY）；只在 `_lock` 下读写
+_progress_seq = 0
 _cancels: dict[str, threading.Event] = {}
 #: (项目指纹, 脚本) → 已经修过几轮。
 _rounds: dict[tuple[str, str], int] = {}
@@ -2716,12 +2719,25 @@ def custom_package_index(python: str) -> bool | None:
 _LOG_MAX = 20_000
 
 
+def _bump_progress() -> None:
+    """（持 `_lock`）进度表又变了一笔。"""
+    global _progress_seq
+    _progress_seq += 1
+
+
+def progress_seq() -> int:
+    """进度表到此刻一共变过几笔（只增不减）。两次读到不同的值 = 期间有作业有进展。"""
+    with _lock:
+        return _progress_seq
+
+
 def _append_log(plan_id: str, line: str, on_event) -> None:
     with _lock:
         rec = _progress.get(plan_id)
         if rec is None:
             return
         rec["log"] = (rec["log"] + _sanitize(line))[-_LOG_MAX:]
+        _bump_progress()
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2735,6 +2751,7 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_mirror"] = url
+        _bump_progress()
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2748,6 +2765,7 @@ def _note_source(progress_id: str, source: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_source"] = source
+        _bump_progress()
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2842,6 +2860,7 @@ def _emit(
         if plan_id in _committed:
             rec["committed"] = True
         _progress[plan_id] = rec
+        _bump_progress()
         snapshot = dict(rec)
         listeners = list(_listeners.get(plan_id, ()))
         if state in TERMINAL_STATES:
@@ -4078,6 +4097,7 @@ def _emit_job(
         if job is not None:
             rec.update(op=job.op, distribution=job.distribution, requirement=job.requirement)
         _progress[job_id] = rec
+        _bump_progress()
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)

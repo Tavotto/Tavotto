@@ -862,12 +862,13 @@ def test_apply_waits_for_an_in_flight_install_then_continues(tmp_path, monkeypat
     assert calls == ["create"]
 
 
-def test_apply_returns_busy_when_the_install_outlasts_the_wait(tmp_path, monkeypatch):
+def test_apply_returns_busy_when_the_install_makes_no_progress(tmp_path, monkeypatch):
+    """在途安装连续 `INSTALL_STALL_SECONDS` 一点进展都没有：判卡住，回可重试的忙，什么都不建。"""
     root = _project(tmp_path)
     calls: list = []
     _stub_generation(monkeypatch, calls)
     monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
-    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_SECONDS", 0.1)
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 0.1)
     job = _busy_job(root)
     try:
         result = pyversionfix.apply_python_change(_plan(root), None, threading.Event())
@@ -875,6 +876,43 @@ def test_apply_returns_busy_when_the_install_outlasts_the_wait(tmp_path, monkeyp
         deprepair._release(job)
     assert result == {"ok": False, "code": deprepair.ERROR_BUSY, "to": "3.12"}
     assert calls == []  # 什么都没建
+
+
+def test_apply_keeps_waiting_while_the_install_makes_progress(tmp_path, monkeypatch):
+    """没有时钟上限：安装总时长远超卡死阈值，但一直有进展（日志在长），就一直等到它结束再继续，并报 waiting 阶段。"""
+    root = _project(tmp_path)
+    calls: list = []
+    _stub_generation(monkeypatch, calls)
+    monkeypatch.setattr(pyversionfix, "INSTALL_WAIT_POLL", 0.01)
+    monkeypatch.setattr(pyversionfix, "INSTALL_STALL_SECONDS", 0.1)
+    job = _busy_job(root)
+    stop = threading.Event()
+
+    def install_is_working():
+        # 每 0.03 s 一笔进展，共 ~0.6 s（6 倍于卡死阈值），然后结束
+        for _ in range(20):
+            if stop.wait(0.03):
+                return
+            with deprepair._lock:
+                deprepair._bump_progress()
+        deprepair._release(job)
+
+    worker = threading.Thread(target=install_is_working)
+    stages: list = []
+    worker.start()
+    try:
+        result = pyversionfix.apply_python_change(
+            _plan(root), lambda snap: stages.append(snap["stage"]), threading.Event()
+        )
+    finally:
+        stop.set()
+        worker.join()
+        deprepair._release(job)
+    assert result == {"ok": True, "code": "", "to": "3.12"}
+    assert calls == ["create"]
+    assert pyversionfix.STAGE_WAITING in stages
+    # 等完回到 preparing，之后照常往下走
+    assert stages[stages.index(pyversionfix.STAGE_WAITING) + 1] == pyversionfix.STAGE_PREPARING
 
 
 def test_apply_wait_responds_to_cancel(tmp_path, monkeypatch):
