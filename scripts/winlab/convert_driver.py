@@ -21,6 +21,11 @@ import sys
 import time
 from pathlib import Path
 
+# Windows 上流被捕获 / 重定向时退回系统区域编码，中文报文会静默丢掉——两条流都钉成 UTF-8（见 scripts/build_frontend.py）
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 #: 产品对单次 AI 任务的上限是 900 s（ai_bridge.TIMEOUT_S）；多等一分钟看收尾
 DEFAULT_TIMEOUT_S = 960
 MAX_LISTED_FILES = 200
