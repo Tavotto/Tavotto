@@ -1,7 +1,7 @@
-# ADR 0159：打开项目后在后台预热一条渲染会话，并合并并发的解释器体检
+# ADR 0160：打开项目后在后台预热一条渲染会话，并合并并发的解释器体检
 
 日期：2026-11-02 · 状态：**Proposed**
-相关：[0003 worker 协议 v1](0003-worker-protocol-v1.md)、[0013 RuntimeFigureAsset](0013-runtime-figure-asset.md)、[0021 tavotto run 产品契约](0021-tavotto-run-product-contract.md)；`docs/rules/backend/worker-protocol-and-lifecycle.md`、`runtime-figure-assets.md`。
+相关：[0003 worker 协议 v1](0003-worker-protocol-v1.md)、[0013 RuntimeFigureAsset](0013-runtime-figure-assets.md)、[0021 tavotto run 产品契约](0021-tavotto-run-product-contract.md)；`docs/rules/backend/worker-protocol-and-lifecycle.md`、`runtime-figure-assets.md`。
 依据：反馈包 TVD-ZWV6 / TVM-Y37X（0.19.2 Windows，微软商店版 Python 3.11，项目在 U 盘）。
 
 ## 动机

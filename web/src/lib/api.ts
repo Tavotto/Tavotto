@@ -2936,7 +2936,7 @@ export async function postHandoffDisplayAck(ack: HandoffDisplayAck): Promise<voi
 }
 
 /**
- * 后台预热（ADR 0159）：让后端提前为这张图**取渲染会话**（不 build、不出图、不写盘、不发事件）。
+ * 后台预热（ADR 0160）：让后端提前为这张图**取渲染会话**（不 build、不出图、不写盘、不发事件）。
  * 纯旁路：任何失败（老后端 404 / 网络）一律吞掉，界面什么都不显示。
  */
 export async function postEnginePrewarm(id: string): Promise<void> {

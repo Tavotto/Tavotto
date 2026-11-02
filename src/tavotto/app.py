@@ -8052,7 +8052,7 @@ def api_handoff_display_ack():
 
 @app.post("/api/engine/prewarm")
 def api_engine_prewarm():
-    """项目打开后为一张图**提前取渲染会话**（ADR 0159）：只起会话，不 build、不出图、不写盘、不发事件。
+    """项目打开后为一张图**提前取渲染会话**（ADR 0160）：只起会话，不 build、不出图、不写盘、不发事件。
 
     与 `/api/engine/render` 开头同一扇门（`_engine_worker`），所以「谁来渲染」的判据仍只有
     `enginesession.resolve()`；native 档的 runtime 图不预热（native 会话不进池）。
