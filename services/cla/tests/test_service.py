@@ -1038,6 +1038,8 @@ class ServiceTests(unittest.TestCase):
 
         consumer, gate = load("cla_service_verify"), load("cla_gate")
         policy = json.loads(canonical(self.policy))
+        # Offline signatures and a configured provider are mutually exclusive.
+        policy["offline_signatures"] = []
         policy["provider"] = {
             "configured": True,
             "protocol": "tavotto-cla-v1",
@@ -1082,6 +1084,8 @@ class GateTests(unittest.TestCase):
 
     def setUp(self):
         self.policy = json.loads((ROOT / ".github/cla-policy.json").read_text())
+        # Offline signatures and a configured provider are mutually exclusive.
+        self.policy["offline_signatures"] = []
         self.policy["provider"] = {
             "configured": True,
             "name": "Synthetic",
