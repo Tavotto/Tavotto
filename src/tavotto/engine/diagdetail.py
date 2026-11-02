@@ -2074,11 +2074,6 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
     from .. import __version__
 
     doc: dict = {"schema": DETAIL_SCHEMA, "tavotto_version": __version__}
-    try:
-        # 渲染池健康：上限 / 存活 / 累计淘汰与冷启动 / 最近几次冷启动的分段（内存计数器，无脚本名与路径）
-        doc["render_pool"] = pool.health_snapshot()
-    except Exception as exc:  # noqa: BLE001 — 摘要取不到不许让备包失败
-        doc["render_pool"] = {"error": type(exc).__name__}
     figures_dir = (src.project or {}).get("figures_dir")
     panels = (src.frontend or {}).get("overrides") or []
     profile, session = "safe", None

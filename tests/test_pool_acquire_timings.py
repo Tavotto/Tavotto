@@ -3,19 +3,21 @@
 看护三件事：
 1. 分段字段是**闭集**，且只有进过那一段才出现；
 2. 计数器在冷启动（新建会话）与 LRU 淘汰时递增，环形记录有界；
-3. 进诊断包（`detail-render-env.json` 的 `render_pool`）的摘要不含脚本名 / 路径，池锁被占时不卡住备包。
+3. 进诊断包（`report.json` 的 `render_pool`，导出包与发送包同一出口）的摘要不含脚本名 / 路径，池锁被占时不卡住备包。
 """
 
 from __future__ import annotations
 
 import collections
+import io
 import json
 import sys
 import threading
+import zipfile
 
 import pytest
 
-from tavotto.engine import diagdetail, pool
+from tavotto.engine import pool
 
 HOT_ONLY = {"resolve_python_ms", "launcher_prewarm_ms", "pool_wait_ms"}
 
@@ -133,19 +135,26 @@ def test_snapshot_does_not_wait_for_a_busy_pool_lock(isolated_pool, monkeypatch)
     assert snap["lock_busy"] is True and snap["alive"] is None
 
 
-def test_diagnostic_summary_is_in_render_env_and_carries_no_names(isolated_pool, tmp_path):
-    secret = "secret_fig_name_xyz.py"
-    pool.acquire(secret, str(tmp_path / "secret_project_dir"), "main")
-    src = diagdetail.Sources(project={"figures_dir": str(tmp_path)})
-    # 只验摘要段：探针子进程与本测试无关
-    items = diagdetail.collect_render_env(src, diagdetail.DetailOptions(), diagdetail.Scrubber())
-    text = items[0].data if isinstance(items[0].data, str) else items[0].data.decode("utf-8")
-    doc = json.loads(text)
-    rp = doc["render_pool"]
+def test_report_json_carries_the_summary_without_names(isolated_pool, tmp_path):
+    """导出包与发送包共用 `report.json`：摘要从这一处出门（bundle schema 14）。"""
+    from tavotto.engine import diagnostics
+
+    pool.acquire("secret_fig_name_xyz.py", str(tmp_path / "secret_project_dir"), "main")
+    rp = diagnostics.build_report(None, 0)["render_pool"]
     assert rp["sessions_created"] == 1 and rp["max_alive"] == pool.MAX_ALIVE
     assert set(rp["recent_cold_starts"][0]["timings"]) <= set(pool.ACQUIRE_SEGMENTS)
     blob = json.dumps(rp)
     assert "secret_fig_name_xyz" not in blob and "secret_project_dir" not in blob
+
+
+def test_exported_bundle_has_the_summary(isolated_pool):
+    """本地导出（`detail=None`）的包里也有——用户拍板：不能只在发送包里。"""
+    from tavotto.engine import diagnostics
+
+    pool.acquire("a.py", "/p", "main")
+    z = zipfile.ZipFile(io.BytesIO(diagnostics.build_bundle()))
+    assert "render_pool" in json.loads(z.read("report.json"))
+    assert json.loads(z.read("report.json"))["render_pool"]["sessions_created"] == 1
 
 
 try:
