@@ -1417,30 +1417,31 @@ class _Top:
 def _outside_bound(root: Path, target: Path) -> Path | None:
     """项目外的字面量 `sys.path` 根（由 `__file__` 推出，见 `_literal_dir`）要读时，读的边界放宽到哪一级（TVD-22EY）。
 
-    放宽到项目根与 `target` 的公共祖先：最多往上 `_MAX_OUTSIDE_LEVELS` 级；那一级不得是大文件夹、家目录或它的祖先、
-    盘符根（`depresolve.is_broad_folder`）；跨盘符 / 认不出回 None（照旧不认）。只做词法判断，链接仍由查找器的闸门挡。"""
-    try:
-        base = os.path.abspath(os.fspath(root))
-        cand = os.path.abspath(os.fspath(target))
-        common = os.path.commonpath([base, cand])
-    except (OSError, ValueError):
-        return None
-    if os.path.normcase(common) == os.path.normcase(base):
+    从项目根逐级往上（最多 `_MAX_OUTSIDE_LEVELS` 级）找第一个词法上包含 `target` 的祖先；那一级不得是大文件夹、
+    家目录或它的祖先、盘符根（`depresolve.is_broad_folder`）；找不到（含跨盘符）回 None（照旧不认）。纯词法，
+    链接仍由查找器的闸门挡。"""
+    if _pinned(root, target) is not None:
         return None  # 在项目内：不需要放宽
-    levels = len(Path(os.path.relpath(base, common)).parts)
-    if levels > _MAX_OUTSIDE_LEVELS:
-        return None
-    wider = Path(common)
-    if depresolve.is_broad_folder(wider):
-        return None
     try:
         home = os.path.normcase(os.path.abspath(Path.home()))
     except (RuntimeError, OSError, ValueError):
         return None
-    key = os.path.normcase(str(wider))
-    if home == key or home.startswith(key.rstrip(os.sep) + os.sep):
-        return None
-    return wider
+    wider = Path(root)
+    for _ in range(_MAX_OUTSIDE_LEVELS):
+        parent = wider.parent
+        if parent == wider:
+            return None
+        wider = parent
+        key = os.path.normcase(os.path.abspath(wider))
+        if (
+            depresolve.is_broad_folder(wider)
+            or home == key
+            or home.startswith(key.rstrip(os.sep) + os.sep)
+        ):
+            return None  # 再往上只会更宽：停
+        if _pinned(wider, target) is not None:
+            return wider
+    return None
 
 
 def _pinned(root: Path, path: Path) -> str | None:
@@ -1680,9 +1681,13 @@ class _Scanner:
                 wider = _outside_bound(self.root, target)
                 if wider is None:
                     continue
+                previous = self.bound
                 self._widen_bound(wider)
                 pinned = _pinned(self.bound, target)
-                if pinned is None:
+                if pinned is None or self.finder.listing(Path(pinned)) is None:
+                    # 项目外的目录此刻不存在（多半是脚本运行时才建的，如 `../.work_deps`）：不当搜索根、不放宽，
+                    # 照旧「先跑一次」（`deferred_unverified`）而不是判成本地模块缺失
+                    self._widen_bound(previous)
                     continue
             if any(os.path.normcase(str(r.path)) == os.path.normcase(pinned) for r in self.roots):
                 continue
@@ -1694,7 +1699,7 @@ class _Scanner:
             self._tops.clear()
 
     def _widen_bound(self, bound: Path) -> None:
-        """读的边界放宽到项目根的某一级祖先（只会变宽）：查找器的清单缓存作废（之前越界的目录现在可以列）。"""
+        """读的边界改为 `bound`（项目根或它的某一级祖先；目标目录不存在时由调用方改回原边界）：查找器的清单缓存作废。"""
         self.bound = bound
         self.finder.root = bound
         self.finder._lists.clear()

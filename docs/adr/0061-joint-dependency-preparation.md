@@ -384,7 +384,7 @@ pdf-minus-bin1-m … pdf-plus-bin8-r` 一并送进一次 pip，`dependency_not_f
    补充（2026-11-02，反馈包 TVD-22EY，维护者裁决）：认 `Path(…).parents[N]`（N ≤ 8）；同一行分号连写的绑定按（行, 列）分先后
    （`O=Path(__file__).resolve().parent;ROOT=O.parents[1];sys.path.insert(0,str(ROOT))`）。**这类目录落在项目外时也认**：读的边界
    （链接 / 越界判据的主语，`_Scanner.bound`）放宽到项目根与该目录的公共祖先，最多往上 `_MAX_OUTSIDE_LEVELS`（3）级；那一级是
-   大文件夹（`depresolve.is_broad_folder`）、家目录或它的祖先、盘符根、跨盘符时照旧不认。项目相对的记录路径不变（项目外的只记文件名）；
+   大文件夹（`depresolve.is_broad_folder`）、家目录或它的祖先、盘符根、跨盘符时照旧不认；项目外的目录此刻不存在时也不认（多半是运行时才建的，照旧「先跑一次」`deferred_unverified`，不判本地模块缺失）。项目相对的记录路径不变（项目外的只记文件名）；
    链接 / 路径替身的闸门、读预算不变。理由：路径是脚本自己由 `__file__` 写死的，Python 运行时一定会去那里找；不读，缺包就只能靠运行时
    一轮轮撞出来（见 §五 同日修订）。仍记 `sys_path_modified`，
    搜索面照旧不算「完整」。脚本加了这类目录、里面却找不到的 import = **本地模块缺失**：`origins[].local_module_missing`，

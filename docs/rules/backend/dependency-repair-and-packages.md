@@ -744,7 +744,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   赋值、整份文件里同名只绑定这一次（任何作用域的再绑定 / `global` / `nonlocal` 都不认；有星号导入或 `globals()` / `exec` 等动态改写时整份不推断）、绑定在 `sys.path` 那一行之前，且值本身也是这些形状
   （`ROOT = Path(__file__).resolve().parent` → `str(ROOT / "source")`）；其余变量照旧不认。
   认 `Path(…).parents[N]`；同一行分号连写按（行, 列）分先后。**项目外的这类目录也认**（TVD-22EY，ADR 0061 §十 2026-11-02 补充）：
-  读的边界 `_Scanner.bound` 放宽到公共祖先，至多上 `_MAX_OUTSIDE_LEVELS` 级，大文件夹 / 家目录及其祖先 / 盘符根 / 跨盘符不认；
+  读的边界 `_Scanner.bound` 放宽到公共祖先，至多上 `_MAX_OUTSIDE_LEVELS` 级，大文件夹 / 家目录及其祖先 / 盘符根 / 跨盘符不认，项目外的目录此刻不存在也不认（照旧 `deferred_unverified`）；
   看护 `TestLiteralDirOutsideProject`。
 - **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
   不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。

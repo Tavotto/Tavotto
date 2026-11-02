@@ -19,6 +19,8 @@ import pytest
 from tavotto.engine import depplan, deprepair, depresolve, importscan
 
 MANAGED = depplan.TARGET_MANAGED
+#: 与 tmp_path 无祖先关系的家目录（放宽读边界不得越过家目录或它的祖先）
+_UNRELATED_HOME = Path("/nonexistent-tavotto-test-home/u")
 
 
 def _write(root: Path, rel: str, text: str) -> Path:
@@ -275,7 +277,7 @@ class TestLiteralSysPathRoots:
     def test_escape_outside_project_is_a_bounded_root(self, tmp_path, monkeypatch):
         """维护者裁决 2026-11-02（TVD-22EY）：由 `__file__` 推出的项目外目录也认，读的边界有界放宽
         （上限与家目录 / 大文件夹的拒绝见 `TestLiteralDirOutsideProject`）；此前这里断言「越界不认」。"""
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "elsewhere"))
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
         proj = tmp_path / "p"
         _write(tmp_path, "outside/mymod.py", "x = 1\n")
         _write(
@@ -633,7 +635,7 @@ class TestLiteralDirOutsideProject:
         assert {"pandas", "sklearn"} <= self._needed(scan)
 
     def test_root_two_levels_above_the_project_is_followed(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "elsewhere"))
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
         base = tmp_path / "Radscore"
         proj = base / "analysis_outputs" / "case_v1"
         _write(proj, "render.py", self.SCRIPT)
@@ -644,7 +646,7 @@ class TestLiteralDirOutsideProject:
         assert "helper_mod" not in {c.module for c in scan.by_bucket(importscan.BUCKET_UNKNOWN)}
 
     def test_too_far_above_the_project_is_not_followed(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "elsewhere"))
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: _UNRELATED_HOME))
         base = tmp_path / "Radscore"
         proj = base / "a" / "b" / "c" / "case_v1"
         _write(proj, "render.py", self.SCRIPT.replace("parents[1]", "parents[3]"))
