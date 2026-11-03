@@ -88,19 +88,65 @@ describe('console 环', () => {
     expect(readConsoleRing()).toHaveLength(1)
   })
 
-  it('有界序列化：10 万元素数组 / 深嵌套对象不会让 console 调用变慢，message ≤ MAX_MESSAGE', () => {
+  it('有界序列化：10 万元素数组 / 深嵌套 / 10 万键对象，序列化器触碰的元素、层、键有界，message ≤ MAX_MESSAGE', () => {
+    // 判据的主语：序列化器**实际触碰**了多少元素 / 层 / 键（Proxy trap 计数），不是这台机器忙不忙（不判墙钟，L-100）。
+    // 上限的由来（detail.ts）：SHOW_MAX_BREADTH=50 / SHOW_MAX_DEPTH=4。每个被写出的键在对象分支上最多触发 3 次
+    // getOwnPropertyDescriptor（for...in 的可枚举检查 + hasOwnProperty + 取 desc），数组分支 1 次；故触碰量 ≤ 3×(50+1)，
+    // 远小于 n=10 万。已知盲点：对象分支的 `for...in` 会让引擎一次性取 ownKeys（O(n)，引擎内部、只 1 次），
+    // 实现并不保证避开它，所以只断言 ownKeys ≤ 1 次，不断言它不是 O(n)。
     uninstall = installConsoleCapture()
-    const big = markPlainData(Array.from({ length: 100_000 }, (_, i) => ({ i, text: 'x'.repeat(50) })))
-    let deep: Record<string, unknown> = { leaf: 1 }
-    for (let i = 0; i < 5000; i++) deep = { child: deep }
-    const wide: Record<string, number> = {}
-    for (let i = 0; i < 100_000; i++) wide[`k${i}`] = i
-    const t0 = performance.now()
+    const BREADTH = 50
+    const DEPTH = 4
+    const touches = { gopd: 0, get: 0, ownKeys: 0 }
+    const counted = <T extends object>(target: T, onTouch?: () => void): T =>
+      new Proxy(target, {
+        get(t, k, r) {
+          touches.get++
+          onTouch?.()
+          return Reflect.get(t, k, r)
+        },
+        getOwnPropertyDescriptor(t, k) {
+          touches.gopd++
+          onTouch?.()
+          return Reflect.getOwnPropertyDescriptor(t, k)
+        },
+        ownKeys(t) {
+          touches.ownKeys++
+          onTouch?.()
+          return Reflect.ownKeys(t)
+        },
+      })
+    const reset = () => {
+      touches.gopd = touches.get = touches.ownKeys = 0
+    }
+    const N = 100_000
+    const big = markPlainData(counted(Array.from({ length: N }, (_, i) => ({ i, text: 'x'.repeat(50) }))))
+    // 深嵌套：每层都是 Proxy，记下被碰过的最深一层
+    let deepestTouched = -1
+    let deep: Record<string, unknown> = counted({ leaf: 1 }, () => (deepestTouched = Math.max(deepestTouched, 0)))
+    const LEVELS = 5000
+    for (let i = 1; i <= LEVELS; i++) {
+      const level = LEVELS - i // 越靠外 level 越小：最外层为 0
+      deep = counted({ child: deep }, () => (deepestTouched = Math.max(deepestTouched, level)))
+    }
+    const wideTarget: Record<string, number> = {}
+    for (let i = 0; i < N; i++) wideTarget[`k${i}`] = i
+    const wide = markPlainData(counted(wideTarget))
+
     console.error(big)
+    expect(touches.gopd).toBeLessThanOrEqual(BREADTH + 1) // 元素：只碰前 50 个，不是 10 万
+    reset()
     console.warn(markPlainData(deep))
-    console.error(markPlainData(wide))
+    // 最外层 level 0 → 只允许碰 0..DEPTH-1 这几层；碰到 level ≥ DEPTH 说明深度上限失效
+    expect(deepestTouched).toBeLessThan(DEPTH)
+    expect(touches.gopd).toBeLessThanOrEqual(3 * DEPTH)
+    reset()
+    console.error(wide)
+    expect(touches.gopd).toBeLessThanOrEqual(3 * (BREADTH + 1)) // 键：只碰前 50 个，不是 10 万
+    expect(touches.ownKeys).toBeLessThanOrEqual(1) // 引擎一次性取键，见上方盲点说明
+    reset()
     console.error('prefix', big, markPlainData(deep))
-    expect(performance.now() - t0).toBeLessThan(50)
+
     for (const r of readConsoleRing()) expect(r.message.length).toBeLessThanOrEqual(4000)
     const [a, b, c] = readConsoleRing()
     expect(a.message.startsWith('[{"i":0')).toBe(true)
