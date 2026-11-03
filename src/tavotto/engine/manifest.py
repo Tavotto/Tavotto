@@ -114,6 +114,8 @@ from overrides import (
     font_file_key,
     font_installed,
     gradient_base_hex,
+    gradient_detect,
+    gradient_stops,
     image_pixels_skipped,
     is_linecoll_family,
     legend_handle_props,
@@ -2192,10 +2194,28 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab}
         )
     if "fill" in caps:
-        fc = collection_face_rgba(coll)
-        fields.append(
-            {"prop": "facecolor", "type": "color", "value": to_hex(fc[0]) if len(fc) else "#000000"}
-        )
+        # 渐变色带（几十上百条逐条一色的长条）：一个「填充颜色」只说得出第一条、改它就把渐变压成
+        # 纯色——认出来就换成两端颜色一个字段（`overrides.gradient_detect`），不再出 facecolor
+        grad = gradient_detect(coll)
+        ends = gradient_stops(coll, grad) if grad is not None else None
+        if ends is not None:
+            fields.append(
+                {
+                    "prop": "gradient",
+                    "type": "gradient",
+                    "value": {"stops": list(ends), "direction": grad["direction"]},
+                    "group": "渐变填充",
+                }
+            )
+        else:
+            fc = collection_face_rgba(coll)
+            fields.append(
+                {
+                    "prop": "facecolor",
+                    "type": "color",
+                    "value": to_hex(fc[0]) if len(fc) else "#000000",
+                }
+            )
     if "sizes" in caps:
         sizes = collection_sizes(coll)
         fields.append(

@@ -2341,6 +2341,8 @@ export interface EditableField {
     | 'rect'
     | 'order'
     | 'number_list'
+    /** 渐变色带的两端颜色：value 为 `{stops: [起端, 止端], direction}`（`overrides.gradient_detect`） */
+    | 'gradient'
   value: unknown
   min?: number
   max?: number

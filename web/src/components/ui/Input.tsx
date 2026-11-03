@@ -502,6 +502,7 @@ export function ColorField({
   mixed,
   disabled,
   swatchOnly,
+  popoverAlign = 'start',
 }: {
   value: string
   onChange: (v: string) => void
@@ -540,6 +541,11 @@ export function ColorField({
    * 取色面板照旧（宿主挂了的话），只是不占那一截宽度
    */
   swatchOnly?: boolean
+  /**
+   * 取色面板相对色块的对齐（默认 `start`：从色块左缘往右展开）。贴着属性栏右边的色块（渐变行的止端色块）
+   * 用 `end`，否则面板伸出右边被裁掉一截
+   */
+  popoverAlign?: 'start' | 'end'
 }) {
   // 引擎报 `none` = 这条没有颜色（没设边色的形状、`fill` 关着的面、空心 marker），
   // 不是黑色（#427 之前 `to_hex` 丢掉 alpha，透明黑显示成 #000000，检查器摆出一条
@@ -621,7 +627,7 @@ export function ColorField({
           <Popover
             open={open}
             onOpenChange={setOpen}
-            align="start"
+            align={popoverAlign}
             width={208}
             ariaLabel={ariaLabel}
             trigger={

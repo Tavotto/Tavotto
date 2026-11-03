@@ -1,4 +1,5 @@
 import { Dialog } from '../ui/Dialog'
+import { GradientStopsField, readGradient } from './controls/GradientStopsField'
 import { EmptyState } from '../ui/EmptyState'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
@@ -1957,6 +1958,20 @@ function BatchFieldRow({
             onGestureEnd={gesture.end}
           />
         )
+      case 'gradient': {
+        // 多选的渐变峰：两端颜色写给全部成员；方向按第一个成员（各成员各自按自己的方向重算）
+        const grad = readGradient(first)
+        if (!grad) return null
+        return (
+          <GradientStopsField
+            value={grad}
+            label={label}
+            mixed={mixed}
+            onChange={(stops) => write({ stops }, true)}
+            onGestureEnd={gesture.end}
+          />
+        )
+      }
       case 'bool':
         // 不一致时开关是第三态（滑块居中 + 短横、aria-checked="mixed"），点一下全部设为开
         return <Toggle aria-label={label} mixed={mixed} checked={!mixed && !!first} onChange={writeOnce} />
@@ -2609,6 +2624,19 @@ function FieldRow({
         </>
       )
 
+    case 'gradient': {
+      // 渐变色带的两端颜色：两个色块 + 渐变条，取色同「填充颜色」是连续动作（事务由 gesture 收口）
+      const grad = readGradient(value)
+      if (!grad) return null
+      return wrap(
+        <GradientStopsField
+          value={grad}
+          label={label}
+          onChange={(stops) => write({ stops }, true)}
+          onGestureEnd={gesture.end}
+        />,
+      )
+    }
     case 'color':
       if (hasFollowEdge(field)) {
         const read = hatchColorReading(value, field, overridden)
