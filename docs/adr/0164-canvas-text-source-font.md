@@ -62,6 +62,8 @@ SimHei），而画布文字由 RenderCore 合成，字体只能是批准集合�
 macOS 已测：DejaVu（mpl-data）嵌入与按字体程序比对、`.ttc` 面序号、fsType 全部档位的反证、同名异字节、陈旧索引、超限、变量字体、端点三类响应、预检双侧向量。
 **需要上 Windows Lab 的点**（macOS 上不生效）：`system_font_dirs()` 的 Windows 分支（`%WINDIR%\Fonts`、`%LOCALAPPDATA%\Microsoft\Windows\Fonts`，含非 ASCII 用户名）；`matplotlib_font_dirs()` 对 `Scripts\python.exe` / `Lib\site-packages` 的路径推导（含 MSIX 重定向的 `LOCALAPPDATA`）；系统 `.ttc`（`msyh.ttc` / `simsun.ttc` / `times.ttf`）的面序号与 sha256；系统字体文件被占用时只读打开不失败；`font-locator.json` 写在 MSIX 虚拟化的数据目录里仍能读回。
 
+**用户字体按字节加载、不持有文件**：`admit` 用到那一刻读一次整份字节，大小上限、sha256、sfnt 解析、HarfBuzz（`hb.Blob(data)`）、fontTools（`BytesIO`，含子集化）都用这同一份字节，读完即关，进程不留指向用户字体文件的句柄或映射（Windows 上否则用户更新 / 卸载字体报「文件正在使用」，替换文件失败）；批准字体仍按路径加载。内存有界：用户脸最多 32 张、字节总量 384 MiB，超出按最久未用丢弃（当前这张保留，被丢的下次重新入场）。
+
 ## 反证（新增核心不变式测试提交前手工反证过一次，每条变异一次就红）
 
 | 变异 | 红在 |
@@ -70,6 +72,7 @@ macOS 已测：DejaVu（mpl-data）嵌入与按字体程序比对、`.ttc` 面�
 | fsType 的 Restricted 位不查 | `test_a_face_that_forbids_embedding_is_not_embedded[2]` / `[6]`、`test_fs_type_policy_is_exactly_the_documented_bits`、`test_problems_and_warnings_never_carry_a_local_path` |
 | 定位器不比 sha256（扫到的第一个字体文件就算） | `test_the_locator_never_matches_by_name` 与六条嵌入用例 |
 | 失败时改写文档对象（`pop("source_font")`） | `test_a_missing_font_falls_back_to_the_approved_family_and_reports` |
+| `HbFace` 对用户字体改回按路径加载（`lazy=True` 的文件句柄） | `test_embedding_a_users_face_leaves_no_open_handle_on_the_file`（macOS 上枚举 fd 即红；Linux 另查 maps；映射在 macOS 不可枚举，Windows 靠 `os.replace`） |
 | `user_face` 在 `plan` 之外被调用 | `test_user_fonts_enter_rendercore_only_through_a_source_font_object` |
 | manifest 取 `style_flags` 不先取 `.value`（matplotlib 3.11 的 `StyleFlags` 是 `enum.Flag`，`int()` 抛 TypeError） | `test_the_reported_identity_is_the_file_the_renderer_resolves_and_carries_no_path`；**这一条在完整回归里先于反证被 `test_invariants_engine.py::test_every_enum_option_can_actually_be_applied` 抓到**（采集失败拖垮了整份 manifest），所以现在 `face_sources` 的调用外面还有 `try/except`：身份是附加事实，采集失败只是少一个键 |
 | 写入层改粗细时不清 `sourceFont` | `typography.test.ts`「换了族 / 粗细 / 斜体 = 换脸，身份清掉」 |

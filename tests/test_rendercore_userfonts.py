@@ -477,3 +477,86 @@ def test_same_size_and_mtime_but_different_bytes_is_caught_at_the_point_of_use(
     problems, found, _ = _embedded(provider, [_text(ref)], tmp_path)
     assert [p["reason"] for p in problems] == ["not_found"]
     assert not any("DejaVu" in b for b, _ in found)
+
+
+# ------------------------------------------------------------------ 不持有用户字体文件（ADR 0164）
+
+
+def _holders_of(path) -> list[str]:
+    """进程里仍指向 `path` 的句柄 / 映射；判不了的平台返回 None 由调用方改用 os.replace 判。"""
+    import fcntl
+    import os
+    import sys
+
+    real = os.path.realpath(path)
+    hits: list[str] = []
+    if sys.platform.startswith("linux"):
+        for fd in os.listdir("/proc/self/fd"):
+            try:
+                if os.path.realpath(os.readlink(f"/proc/self/fd/{fd}")) == real:
+                    hits.append(f"fd {fd}")
+            except OSError:
+                pass
+        with open("/proc/self/maps", encoding="utf-8", errors="replace") as fh:
+            hits += [f"map {ln.strip()}" for ln in fh if real in ln]
+        return hits
+    if sys.platform == "darwin":
+        for fd in range(0, 1024):
+            try:
+                buf = fcntl.fcntl(fd, 50, b"\0" * 1024)  # F_GETPATH
+            except OSError:
+                continue
+            if os.path.realpath(buf.split(b"\0", 1)[0].decode("utf-8", "replace")) == real:
+                hits.append(f"fd {fd}")
+        return hits
+    return None  # Windows：没有等价的枚举，调用方用 os.replace 判
+
+
+def test_embedding_a_users_face_leaves_no_open_handle_on_the_file(provider, locator, tmp_path):
+    """用户字体按字节加载，进程不持有指向它的句柄 / 映射：Windows 上否则更新 / 卸载字体会「文件正在使用」。
+    POSIX 枚举句柄（Linux 另查 maps；macOS 的 mmap 不可枚举，那一半只在 Linux / Windows 上能红）；
+    Windows 直接 os.replace 换掉文件。"""
+    import os
+    import sys
+
+    f = tmp_path / "held" / "H.ttf"
+    f.parent.mkdir()
+    f.write_bytes(_mpl_font("DejaVu Sans").read_bytes())
+    ref = _ref(f, "H")
+    locator.add_hint_dirs([f.parent])
+    problems, found, _ = _embedded(provider, [_text(ref)], tmp_path)
+    assert problems == () and any(b.endswith("DejaVuSans") for b, _ in found)
+    if sys.platform == "win32":
+        other = tmp_path / "held" / "other.ttf"
+        other.write_bytes(_mpl_font("DejaVu Serif").read_bytes())
+        os.replace(other, f)  # 有句柄 / 映射占着 → PermissionError
+        f.unlink()  # 用户卸载字体
+        assert not f.exists()
+    else:
+        holders = _holders_of(f)
+        assert holders == [], holders
+
+
+def test_user_face_cache_is_bounded_and_evicts_least_recently_used(
+    provider, locator, tmp_path, monkeypatch
+):
+    """常驻进程里用户字体字节不能无界增长：超过张数上限，最久没用的被丢，当前这张保留，被丢的能再入场。"""
+    from tavotto.rendercore import hbshaper
+
+    monkeypatch.setattr(hbshaper.HbFaceProvider, "USER_FACE_COUNT_CAP", 2)
+    names = ["DejaVu Sans", "DejaVu Serif", "DejaVu Sans Mono"]
+    refs = []
+    for i, n in enumerate(names):
+        f = tmp_path / "lru" / f"F{i}.ttf"
+        f.parent.mkdir(exist_ok=True)
+        f.write_bytes(_mpl_font(n).read_bytes())
+        locator.add_hint_dirs([f.parent])
+        refs.append(userfonts.FaceRef(f"F{i}", fonts.sha256_of(f), 0))
+    hp = provider
+    for r in refs:
+        hp.user_face(r)
+    assert len(hp._user_records) == 2
+    assert (refs[0].sha256, refs[0].face) not in hp._user_records  # 最久的被丢
+    assert (refs[2].sha256, refs[2].face) in hp._user_records
+    hp.user_face(refs[0])  # 再入场
+    assert (refs[0].sha256, refs[0].face) in hp._user_records and len(hp._user_records) == 2

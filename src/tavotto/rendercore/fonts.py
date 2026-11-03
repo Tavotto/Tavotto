@@ -290,10 +290,11 @@ def _cmap_table(data: bytes, coff: int) -> dict[int, int]:
     return best12 or best4
 
 
-def read_sfnt(path: Path, face_index: int = 0) -> SfntInfo:
+def read_sfnt(path: Path, face_index: int = 0, data: bytes | None = None) -> SfntInfo:
     """读注册表需要的那几张表。任何一张缺失 / 截断 → `ValueError`（调用方包成
     `font_file_invalid`）。`face_index` 只对 `.ttc` / `.otc` 有意义（批准字体恒为 0）。"""
-    data = Path(path).read_bytes()
+    if data is None:
+        data = Path(path).read_bytes()
     tables = _tables(data, face_index)
     for need in (b"head", b"OS/2", b"name", b"cmap", b"maxp"):
         if need not in tables:
@@ -345,6 +346,9 @@ class FaceRecord:
     path: Path
     info: SfntInfo
     face_index: int = 0
+    #: 用户本机字体（ADR 0164）：入场时读进内存的整份字节，之后排版 / 子集化只用它，**进程不再持有
+    #: 该文件的句柄或映射**（Windows 上否则用户更新 / 卸载字体会报「文件正在使用」）。批准字体为 None
+    data: bytes | None = field(default=None, repr=False, compare=False)
 
     @property
     def identity(self) -> tuple[str, int]:

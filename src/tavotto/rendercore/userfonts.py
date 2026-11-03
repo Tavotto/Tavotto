@@ -23,6 +23,7 @@ ADR 0060 的批准字体集合（Liberation + Noto Sans SC）仍是**默认**也
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import struct
@@ -80,22 +81,24 @@ def admit(ref: FaceRef, *, locator: FontLocator | None = None) -> fonts.FaceReco
     if path is None:
         raise UserFontUnavailable("not_found")
     try:
-        size = path.stat().st_size
-    except OSError as exc:
-        raise UserFontUnavailable("unreadable", f"{path}: {exc}") from exc
-    if size > MAX_FONT_BYTES:
-        raise UserFontUnavailable("too_large", f"{path}: {size}")
-    try:
-        # 用到它的这一刻读字节重算（不信索引里的 (size, mtime) 快照：同大小、同 mtime 的另一份字节——
-        # `cp -p` / 还原时间戳的替换——只有这里拦得住）
-        digest = loc.rehash(path)
+        # 用到它的这一刻**读一次字节**：大小上限、sha256、sfnt 解析、之后的排版与子集化都用这同一份字节
+        # （不信索引里的 (size, mtime) 快照；检查与使用之间文件被换也无从插入）。读完即关，进程不留句柄
+        with open(path, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            if st.st_size > MAX_FONT_BYTES:
+                raise UserFontUnavailable("too_large", f"{path}: {st.st_size}")
+            data = fh.read(MAX_FONT_BYTES + 1)
+        if len(data) > MAX_FONT_BYTES:
+            raise UserFontUnavailable("too_large", f"{path}: >{MAX_FONT_BYTES}")
+        digest = hashlib.sha256(data).hexdigest()
+        loc.note_hash(path, st.st_size, st.st_mtime_ns, digest)
     except OSError as exc:
         raise UserFontUnavailable("unreadable", f"{path}: {exc}") from exc
     if digest != ref.sha256:  # 定位缓存说是它，字节已经不是了
         loc.forget(path)
         raise UserFontUnavailable("not_found", f"{path}: 字节已变")
     try:
-        info = fonts.read_sfnt(path, ref.face)
+        info = fonts.read_sfnt(path, ref.face, data)
     except (ValueError, OSError, struct.error) as exc:
         raise UserFontUnavailable("unreadable", f"{path}: {exc}") from exc
     kind = fonts.font_kind(info.tables)
@@ -123,7 +126,7 @@ def admit(ref: FaceRef, *, locator: FontLocator | None = None) -> fonts.FaceReco
         source={},
         notice="",
     )
-    return fonts.FaceRecord(approved, path, info, face_index=ref.face)
+    return fonts.FaceRecord(approved, path, info, face_index=ref.face, data=data)
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +282,13 @@ class FontLocator:
             self._index[str(path)] = (st.st_size, st.st_mtime_ns, digest)
             self._dirty = True
         return digest
+
+    def note_hash(self, path: Path, size: int, mtime_ns: int, digest: str) -> None:
+        """调用方已读过整份字节算出 sha256：写回索引（省得再读一遍）。"""
+        with self._lock:
+            self._load()
+            self._index[str(path)] = (size, mtime_ns, digest)
+            self._dirty = True
 
     def forget(self, path: Path) -> None:
         with self._lock:

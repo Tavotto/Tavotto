@@ -80,7 +80,15 @@ class HbFace:
         self.ascender = self.record.ascender
         self.descender = self.record.descender
         self.path: Path = self.record.path
-        self._tt = TTFont(str(self.path), lazy=True, fontNumber=self.record.face_index)
+        # 用户字体（record.data 非空，ADR 0164）按字节加载：不 lazy、不 mmap，进程不持有指向用户文件的
+        # 句柄 / 映射。批准字体随包分发，维持按路径加载
+        self._data = self.record.data
+        if self._data is not None:
+            import io
+
+            self._tt = TTFont(io.BytesIO(self._data), fontNumber=self.record.face_index)
+        else:
+            self._tt = TTFont(str(self.path), lazy=True, fontNumber=self.record.face_index)
         tables = set(self._tt.keys())
         kind = fonts.font_kind(frozenset(tables))
         if kind == "cff-cid":
@@ -99,7 +107,11 @@ class HbFace:
         self.upem: int = self._tt["head"].unitsPerEm
         self._hmtx = self._tt["hmtx"].metrics
         self._order: list[str] = list(self._tt.getGlyphOrder())
-        blob = hb.Blob.from_file_path(str(self.path))
+        blob = (
+            hb.Blob(self._data)
+            if self._data is not None
+            else hb.Blob.from_file_path(str(self.path))
+        )
         self._hb_font = hb.Font(hb.Face(blob, self.record.face_index))
         self._hb_font.scale = (self.upem, self.upem)
 
@@ -210,7 +222,13 @@ class HbFace:
         # 全进 app.log。它不是产品的日志（产品的进度在 job.trace），压到 WARNING——真出问题的
         # 那些（缺表、坏 cmap）仍是 warning / error，留得住。只动 fontTools.subset 这个 logger。
         logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
-        fresh = TTFont(str(self.path), recalcTimestamp=False, fontNumber=self.record.face_index)
+        if self._data is not None:
+            import io as _io
+
+            src = _io.BytesIO(self._data)
+        else:
+            src = str(self.path)
+        fresh = TTFont(src, recalcTimestamp=False, fontNumber=self.record.face_index)
         s = ftsubset.Subsetter(opts)
         s.populate(gids=want)
         s.subset(fresh)
@@ -301,6 +319,9 @@ class HbFaceProvider:
             st = rec.path.stat()
             self._user_records[key] = rec
             self._user_stat[key] = (st.st_size, st.st_mtime_ns)
+        else:
+            self._user_records[key] = self._user_records.pop(key)  # LRU：最近用的挪到队尾
+        self._evict_user_faces(keep=key)
         try:
             return self._load(rec)
         except fonts.FontsUnavailable as exc:
@@ -313,6 +334,25 @@ class HbFaceProvider:
             raise userfonts.UserFontUnavailable(
                 "unreadable", f"{type(exc).__name__}: {exc}"
             ) from exc
+
+    #: 内存里的用户字体字节总量上限（含已建 face 的表副本不计；按原文件字节算）。超出从最久没用的开始丢，
+    #: 当前这张永远保留；被丢的下次 `user_face` 重新入场（再读一遍文件）
+    USER_FACE_BYTES_CAP = 384 * 1024 * 1024
+    USER_FACE_COUNT_CAP = 32
+
+    def _evict_user_faces(self, keep: tuple[str, int]) -> None:
+        def total() -> int:
+            return sum(len(r.data or b"") for r in self._user_records.values())
+
+        while len(self._user_records) > 1 and (
+            len(self._user_records) > self.USER_FACE_COUNT_CAP or total() > self.USER_FACE_BYTES_CAP
+        ):
+            victim = next((k for k in self._user_records if k != keep), None)
+            if victim is None:
+                break
+            rec = self._user_records.pop(victim)
+            self._user_stat.pop(victim, None)
+            self._faces.pop(rec.identity, None)
 
     def face_by_resource(self, resource: FontResource) -> HbFace:
         """IR 里的 `FontResource` → 脸。**按 sha256 找**，找到的脸身份必须与资源逐字相同——同名不同
