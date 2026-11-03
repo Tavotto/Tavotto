@@ -232,6 +232,58 @@ def test_research_prepare_mirrors_the_s0_workflow():
         assert needle in B.research_prepare("research_x", tex=True, source_package=True), needle
 
 
+def _run_research_fetch(tmp_path, fetch_failures: int):
+    """真 bash 跑 research_prepare 里「放缓存 → 重试取回 → 存回」那几行（python 换成桩）。"""
+    bash = shutil.which("bash")
+    if not bash or sys.platform == "win32":
+        pytest.skip("needs a POSIX bash")
+    box, work, bin_ = tmp_path / "boxcache", tmp_path / "work", tmp_path / "bin"
+    (box / "research-sources").mkdir(parents=True)
+    (box / "research-sources" / "old.py").write_text("cached")
+    bin_.mkdir()
+    stub = bin_ / "python"
+    stub.write_text(
+        f"""#!/bin/sh
+n=$(cat {tmp_path}/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > {tmp_path}/n
+[ -f "$TAVOTTO_RESEARCH_CACHE/old.py" ] || exit 9
+echo part > "$TAVOTTO_RESEARCH_CACHE/part$n.py"
+[ $n -le {fetch_failures} ] && exit 1
+echo new > "$TAVOTTO_RESEARCH_CACHE/new.py"
+"""
+    )
+    stub.chmod(0o755)
+    (bin_ / "sleep").write_text("#!/bin/sh\ntrue\n")
+    (bin_ / "sleep").chmod(0o755)
+    lines = B.research_prepare("research_x", tex=False, source_package=False).splitlines()
+    end = next(i for i, ln in enumerate(lines) if ln.endswith('[ "$fetched" = 1 ]')) + 1
+    script = "\n".join(["set -euo pipefail", *lines[:end], "echo FETCHED"])
+    script = script.replace("/boxcache", str(box)).replace("/work", str(work))
+    env = {**os.environ, "PATH": f"{bin_}:/usr/bin:/bin"}
+    proc = subprocess.run(
+        [bash, "-c", script], env=env, capture_output=True, text=True, encoding="utf-8", timeout=30
+    )
+    return proc, box / "research-sources"
+
+
+def test_research_fetch_reuses_cache_retries_and_saves_back(tmp_path):
+    proc, saved = _run_research_fetch(tmp_path, fetch_failures=2)
+    assert proc.returncode == 0, proc.stderr
+    assert "FETCHED" in proc.stdout
+    assert (saved / "new.py").read_text().strip() == "new"
+    assert (saved / "old.py").read_text() == "cached"
+    assert (tmp_path / "n").read_text().strip() == "3"
+
+
+def test_research_fetch_keeps_partial_progress_and_fails_after_40_rounds(tmp_path):
+    proc, saved = _run_research_fetch(tmp_path, fetch_failures=99)
+    assert proc.returncode != 0
+    assert "FETCHED" not in proc.stdout
+    assert (tmp_path / "n").read_text().strip() == "40"
+    assert not (saved / "new.py").exists()
+    # 每一轮取到的（核过的）文件都已存回，下一晚只补缺的
+    assert (saved / "part1.py").exists() and (saved / "part40.py").exists()
+
+
 # --------------------------------------------------------------------------- 不进仓库的东西
 def test_no_host_address_or_credentials_in_the_executor():
     for path in sorted(p for p in BOX_DIR.iterdir() if p.suffix in (".py", ".sh")):
