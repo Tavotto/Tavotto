@@ -109,3 +109,26 @@ workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercor
 看护：`TestMergeGroupFailFast`（最后一步、只在 merge_group、不含判定、只有五腿拿 `actions: write`、
 check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actions、归因步骤只在 merge_group 且取不到不打红、
 归因经环境变量）、`TestMergeGroupFailFastAttribution`、`TestFailFastRootFromRunJobs`。
+
+**PR 上被取消的 run 不上报 Gate（2026-11-03，#1664）。** 现场：`gh pr create --label a --label b` 同秒触发
+opened + labeled×N，`ci.yml` 的 concurrency 取消旧 run，但两个 Gate 是 `if: always()`——官方 `always()`
+「returns `true`, even when canceled」，取消后 Gate 照跑并以 failure 上报。#1664（head acb945a）三个 run 同在
+03:07:48–49Z，被取消的 41570318962 与成功的 41570318729 各给 `CI fast gate` / `CI integration gate` 一条
+FAILURE 一条 SUCCESS，rollup=FAILURE、`mergeStateStatus=BLOCKED`，自动合并 30 分钟不进队列，推空提交换 head 才解。
+做法：两个 Gate 的 job 级 `if` 改为 `always() && (merge_group || (pull_request && !cancelled()))`
+（`cancelled()`：「Returns `true` if the workflow was canceled」）——PR run 被取消时 Gate 被 skip，不再上报 failure。
+* **merge_group 一点没动**：它的取消是自身判红后的快速失败（上一节），Gate 必须取消后仍以 failure 完成，所以条件里
+  merge_group 分支不含 `!cancelled()`；push main 照旧不跑；Gate 名与 needs / `--required` 闭集不变。
+* **为什么不会让真红的 PR 显示可合并**：被 concurrency 取消的 PR run 在同组（同 PR 号）必有继任 run，继任 run 的 Gate
+  给本 head 的真结论；被 skip 的 Gate 按官方「skipped jobs」表（conditional skip：「The job reports "Success"」）不拦合并，
+  所以并存的是 SKIPPED + 真结论，真结论决定。**拿不准、文档没写**：同名 required check 多条结果如何取舍（#1664 说明至少
+  两条 FAILURE/SUCCESS 并存会判 FAILURE，即“有红则红”倾向，但 GitHub 没有文档承诺）；本方案避开它——取消的 run 不再产生
+  与真结论冲突的第二条 failure/success。
+* **残余风险（接受）**：人手取消某 PR 的**唯一** run 时，Gate 也被 skip，required check 呈「Success」而没有真验证。
+  兜底：入队后 merge_group 会重跑完整资格，PR 阶段 Gate 只是入队门票；工具侧（pr-watch ready-to-enqueue）应以 CI 结论
+  为准、不把 skipped Gate 当作通过。
+* 被否方案：① 合并 labeled/opened 事件或对无关标签跳过——GitHub 不支持按标签名过滤事件，job 级短路会让 fast gate 在无关
+  标签 run 上判红（见 ci.yml `types` 注释与 CI01 §4 ①）；② 步骤里查继任 run 再放行——云端取消语义本地无法验证、多一次 API 依赖。
+* 看护：`tests/test_merge_queue_workflows.py::TestCancelledPullRequestGateSilent`（四格真值表：PR 被取消 skip、
+  merge_group 被取消仍跑、push 不跑；条件仍以 `always()` 开头）。反证：还原 ci.yml 则该类红。
+* 生效判据（合入后核）：新开带多个标签的 PR，被取消的 run 里两个 Gate 显示 skipped，rollup 为 SUCCESS/不含 FAILURE。

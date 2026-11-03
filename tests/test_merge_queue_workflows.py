@@ -651,7 +651,11 @@ class TestPullRequestEventTypes:
         push = self._push_main()
         assert self._fast_runs(push) is False and self._heavy_runs(push) is False
         for gate in ("ci-fast-gate", "ci-integration-gate"):
-            cond = _if_of(_code(_job(CI, gate))).replace("always()", "true")
+            cond = (
+                _if_of(_code(_job(CI, gate)))
+                .replace("always()", "true")
+                .replace("cancelled()", "false")
+            )
             assert G.truthy(G.evaluate(cond, push, NEEDS_PLAIN)) is False, (
                 f"{gate} 在 push main 上不该跑"
             )
@@ -3718,3 +3722,39 @@ class TestMergeGroupFailFast:
 
     def test_cancel_in_progress_is_still_pull_request_only(self):
         assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in CI
+
+
+class TestCancelledPullRequestGateSilent:
+    """pull_request 上被 concurrency 取消的 run 不上报 Gate；merge_group 取消后仍判红（#1664）。
+
+    主语：两个 Gate job 的 job 级 `if:`，在「event_name × 本 run 是否已被取消」四格上的真值。
+    `always()` / `cancelled()` 由测试按 GitHub 语义代入（求值器不认函数）：always()=真，
+    cancelled()=本 run 被取消。"""
+
+    GATES = ("ci-fast-gate", "ci-integration-gate")
+
+    def _runs(self, gate: str, event: str, cancelled: bool) -> bool:
+        cond = _if_of(_code(_job(CI, gate)))
+        cond = cond.replace("always()", "true").replace(
+            "cancelled()", "true" if cancelled else "false"
+        )
+        return G.truthy(G.evaluate(cond, {"event_name": event}, NEEDS_PLAIN))
+
+    @pytest.mark.parametrize("gate", GATES)
+    def test_truth_table(self, gate):
+        rows = [
+            ("pull_request", False, True),  # 普通 PR run：照跑
+            ("pull_request", True, False),  # 被 concurrency 取消的 PR run：不上报
+            ("merge_group", False, True),
+            ("merge_group", True, True),  # 快速失败自取消：Gate 必须跑完并红（#1655 的前提）
+            ("push", False, False),
+            ("push", True, False),
+        ]
+        for event, cancelled, expect in rows:
+            assert self._runs(gate, event, cancelled) is expect, (gate, event, cancelled)
+
+    @pytest.mark.parametrize("gate", GATES)
+    def test_condition_still_always_and_names_unchanged(self, gate):
+        assert _if_of(_code(_job(CI, gate))).startswith("${{ always() &&")
+        assert "cancelled()" in _if_of(_code(_job(CI, gate)))
+        assert list(MQ.GATE_CONTEXTS) == ["CI fast gate", "CI integration gate", "CodeQL gate"]

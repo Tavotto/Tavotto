@@ -2582,9 +2582,15 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   ci-fast-gate:
     name: CI fast gate
+    # **pull_request 上被 concurrency 取消的 run 不上报 Gate**（`!cancelled()`）：开 PR 带标签会
+    # 同秒起 opened + labeled×N 多个 run，旧的被取消，而 always() 的 Gate 取消后照跑并以 failure
+    # 上报，与新 run 的 success 在同名 required check 上并存——#1664 实证 rollup=FAILURE、
+    # BLOCKED 不进队列。被取消的 PR run 永远有同组继任者出了真正的结论。merge_group **不加**
+    # 这个条件：它的取消是自身判红后的快速失败，Gate 必须取消后仍以 failure 完成。
+    # 规则与取舍见 docs/rules/ci/ci-lanes.md「PR 上被取消的 run 不上报 Gate」。
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
-    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    if: ${{ always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !cancelled())) }}
     needs: [python-lint, cla-check, release-note-gate, docs-scope, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -2640,7 +2646,7 @@ jobs:
 
   ci-integration-gate:
     name: CI integration gate
-    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    if: ${{ always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && !cancelled())) }}
     needs: [docs-scope, backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
