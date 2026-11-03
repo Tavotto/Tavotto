@@ -120,3 +120,7 @@ Editing the font of a text element in a figure used to take two rows, "Chinese f
 ## The properties panel no longer shows the "Figure › Subplot" trail at the top
 
 Selecting something inside a figure used to put a clickable trail of its parents (figure, subplot, group) above the name. It is gone; to go up a level, click the parent in the Figure elements tree on the left. The "n changes" button with its restore menu now sits on the name line, to the right of the name.
+
+## AI history from the old Microsoft Store install is no longer lost on first start
+
+On Windows, when Tavotto moved data out of the old Microsoft Store (MSIX) package's private folder, the AI history could end up empty if two parts of the app opened the history at the same moment on first start. The second one now waits for the first to finish bringing the old history over, so it is kept.
