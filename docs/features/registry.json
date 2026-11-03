@@ -1311,6 +1311,22 @@
           "title": "版本竖线条：划过出浮卡、点下去开对比卡片、键盘也能用"
         }
       ]
+    },
+    {
+      "id": "canvas.text-rotate",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字标注自由旋转：选中后拖选框顶的旋转柄（按住 ⇧ 每 15° 吸附），或在属性页输入角度；单行文字转之前先收到贴字宽",
+        "en-US": "Rotate a text annotation to any angle: drag the handle above its frame (hold ⇧ to snap to 15°) or type an angle in the Properties panel; single-line text is first fitted to its text width"
+      },
+      "entry": "画布 → 选中文字标注 → 拖选框顶的圆点 / 属性页「位置与尺寸」→「旋转」",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：文字标注自由旋转——选中后拖旋转柄，文字在画面上真的转了；⇧ 吸 15°；属性页角度同步；撤销回到 0°"
+        }
+      ]
     }
   ]
 }
