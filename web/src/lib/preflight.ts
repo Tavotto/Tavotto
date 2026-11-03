@@ -1189,6 +1189,25 @@ export function panelScale(o: PanelObject): number {
 }
 
 /**
+ * 这张图里**画出来的**文字最小的脚本字号（pt，未乘缩放）；没有 manifest / 没有字号 = null。
+ * 与字号三条规则同一个迭代器（`fontElements`：隐藏的、被整体藏起来的图例条目不算）。
+ * 缩放手势的胶囊用它起手取一次，再经 `scaledFontPt` 折算——不另写第二份「哪些字算数」的判据。
+ */
+export function drawnMinFontPt(manifest: Manifest | null | undefined): number | null {
+  if (!manifest) return null
+  let min: number | null = null
+  for (const [, size] of fontElements(manifest, hiddenLegends(manifest))) {
+    if (min == null || size < min) min = size
+  }
+  return min
+}
+
+/** 脚本字号 → 这张面板此刻读者量到的 pt（与预检同一个 `panelScale`） */
+export function scaledFontPt(scriptPt: number, panel: PanelObject): number {
+  return scriptPt * panelScale(panel)
+}
+
+/**
  * 一张面板 → 求值器的面板输入。画布范围（`buildSpec`）与原图范围（`buildOriginalSpec`）
  * **共用这一份**：两者只在「落位」与「缩放」上不同，面板自己的状态（缺失 / 过期 /
  * 渲染失败 / 未应用的 override）是同一件事，不许各写一份。

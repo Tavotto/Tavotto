@@ -105,6 +105,13 @@ on:
 # **cancel-in-progress 只对 PR 开**：push 到 main 的每一次 run 都是那个 commit
 # 的唯一验证记录，连着合两个 PR 时把前一个取消掉，main 上就留了一段没验过的
 # 历史；merge_group run 是队列候选的资格验证，被取消 = 候选白等 90 分钟超时。
+#
+# 这里说的是**外部取消**（新 push / 人手取消，没有任何 Gate 给出结论）。与之不同的是
+# **自身判红后的收尾**：merge_group 里五条重腿任一红了，它最后一步 `gh run cancel` 取消
+# 本 run 其余 job，而 `CI integration gate` / `CI fast gate` 都是 `if: always()`——
+# 官方 workflow-cancellation 文档：取消开始时服务端重新求值条件，`always()` 为真的 job
+# 「continues to run」——于是 Gate 照跑并以 failure 结论完成（上游 cancelled 一律红），
+# required check 不会缺席。规则与看护见 docs/rules/ci/ci-lanes.md「合并组快速失败」。
 # tag / release 工作流不在这个文件里，天然不受影响。
 #
 # group 里带 `github.workflow`（codeql.yml 各有各的槽）+ `github.event_name`
@@ -911,6 +918,10 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: ${{ matrix.os }}
     # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
     # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
@@ -985,6 +996,19 @@ jobs:
             ${{ runner.temp }}/junit.xml
           retention-days: 7
           if-no-files-found: warn
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   # ────────────────────────────────────────────────────────────────
   # Matplotlib 兼容性冒烟（CompatBench 的 PR 档）
@@ -1498,6 +1522,10 @@ jobs:
           - { os: macos-latest,   python: "3.13" }
           - { os: windows-latest, python: "3.13" }
     timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -1637,6 +1665,19 @@ jobs:
             ${{ runner.temp }}/smoke-run/attempt-*/server.log
           retention-days: 7
           if-no-files-found: ignore
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   windows-exe-smoke:
     # 「只在别人电脑上发生」的问题基本都在这一段：打包后的 .exe、隔离的
@@ -1711,6 +1752,10 @@ jobs:
           - { shard: 1, browsers: "chromium",        projects: "--project=chromium --shard=1/2",         others: "--project=webkit --project=chromium-en|--project=chromium --shard=2/2" }
           - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium --shard=1/2|--project=chromium --shard=2/2" }
           - { shard: 3, browsers: "chromium",        projects: "--project=chromium --shard=2/2",         others: "--project=chromium --shard=1/2|--project=webkit --project=chromium-en" }
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: windows-latest
     # 分片 + 去 --with-deps 后整个 job 实测 11–14 分钟（663–824s，合并组 35069266028 /
     # 35073686963）；分片前中位 23.5 分钟（1411s，CI00）。2026-10-07 片 1 已到 34–35 分钟、
@@ -2122,6 +2167,19 @@ jobs:
             web/test-results/**
           if-no-files-found: warn
           retention-days: 7
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   macos-app-smoke:
     # windows-exe-smoke 的 macOS 对应物（2026-08-18 起）。
@@ -2151,6 +2209,10 @@ jobs:
       && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [docs-scope, frontend]
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: macos-latest        # 只有 Apple Silicon 一档；Intel 在发行链的 desktop-tauri 上构建（ADR 0076）
     timeout-minutes: 60
     steps:
@@ -2336,6 +2398,19 @@ jobs:
             build/**/warn-*.txt
           if-no-files-found: warn
           retention-days: 7
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   posix-e2e:
     name: posix-e2e (${{ matrix.shard }}/3)
@@ -2372,6 +2447,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -2475,6 +2554,19 @@ jobs:
             web/test-results/**
           if-no-files-found: warn
           retention-days: 7
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   # ────────────────────────────────────────────────────────────────
   # 稳定 Gate（Merge Queue 迁移的落点，判定逻辑在 scripts/ci/aggregate_gate.py）
@@ -2552,8 +2644,23 @@ jobs:
     needs: [docs-scope, backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # actions: read 只为「快速失败归因」读本 run 各 job 的步骤结论；不给 write（Gate 不取消任何东西）。
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v5
+      # **快速失败归因**（只在 merge_group）：重腿的快速失败步骤取消的是整个 run，红腿自己的
+      # job 结论也成了 cancelled，needs 里看不出谁真红。步骤结论不受取消影响——这里把各 job 的
+      # 失败步骤取下来交给判定器写进 summary / verdict。只用于归因，取不到就留空，不改变结论。
+      - name: 快速失败归因：读本 run 各 job 的失败步骤
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --paginate --jq '.jobs[] | {name, failed_steps: [.steps[]? | select(.conclusion == "failure") | .name]} | tojson' \
+            > "$RUNNER_TEMP/run-jobs.ndjson" || : > "$RUNNER_TEMP/run-jobs.ndjson"
       # 与 fast gate 同一条纪律：判定器取默认分支（理由见上面那段注释）
       - name: 取默认分支上的可信判定器
         env:
@@ -2588,6 +2695,8 @@ jobs:
         # （merge_group payload 里没有它们；tests/test_merge_queue_workflows.py 钉住）。
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          # 归因输入经环境变量（判定器取自默认分支，新参数会让旧判定器报错；环境变量它只会忽略）
+          RUN_JOBS_FILE: ${{ github.event_name == 'merge_group' && format('{0}/run-jobs.ndjson', runner.temp) || '' }}
           GATE_EVENT: ${{ github.event_name }}
           GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
           DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
