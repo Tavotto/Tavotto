@@ -723,6 +723,121 @@ def _clip_rect(artist, W: float, H: float):
     ]
 
 
+#: 「这组色带拼成一个矩形」的面积容差（相对）：浮点拼缝远小于它。
+_TILE_AREA_RTOL = 1e-3
+#: 裁剪多边形顶点落在填充里的判定容差（display 像素）：峰形多边形的顶 / 底顶点
+#: 正好压在色带边上，严格的「点在多边形内」在边上两可。
+_COVER_TOL_PX = 0.5
+
+
+def _tiled_rect(subs) -> tuple[float, float, float, float] | None:
+    """子路径全是轴对齐矩形、且无缝拼成它们的外包矩形时回那个矩形（display 像素），否则 None。
+
+    渐变色带（`PolyCollection` 里几百条横条 / 竖条）就是这个形状：并集是矩形，于是
+    「色带 ∩ 裁剪路径」=「裁剪路径 ∩ 这个矩形」，矩形交给 geometry 的 `clip` 表达，
+    不必对凹多边形做布尔运算。
+    """
+    if not subs:
+        return None
+    total = 0.0
+    for pts, _closed in subs:
+        ring = np.unique(np.round(np.asarray(pts, dtype=float), 6), axis=0)
+        if len(ring) != 4:
+            return None
+        lo, hi = ring.min(axis=0), ring.max(axis=0)
+        # 四个点都是外包盒的角 = 轴对齐矩形
+        on_x = (ring[:, 0] == lo[0]) | (ring[:, 0] == hi[0])
+        on_y = (ring[:, 1] == lo[1]) | (ring[:, 1] == hi[1])
+        if not bool(np.all(on_x & on_y)):
+            return None
+        total += float((hi - lo).prod())
+    allpts = np.vstack([np.asarray(p, dtype=float) for p, _ in subs])
+    x0, y0 = allpts.min(axis=0)
+    x1, y1 = allpts.max(axis=0)
+    area = float((x1 - x0) * (y1 - y0))
+    if area <= 0 or abs(total - area) > _TILE_AREA_RTOL * area:
+        return None
+    return float(x0), float(y0), float(x1), float(y1)
+
+
+def _covers(subs, probe: np.ndarray) -> bool:
+    """`probe` 的每个点都落在某条子路径围出的区域里（边上 `_COVER_TOL_PX` 以内也算）。"""
+    covered = np.zeros(len(probe), dtype=bool)
+    for pts, _closed in subs:
+        if len(pts) < 3:
+            continue
+        p = Path(np.asarray(pts, dtype=float))
+        # radius 的符号随环绕方向而定（matplotlib 的已知行为）：两个方向各判一次
+        covered |= p.contains_points(probe, radius=_COVER_TOL_PX)
+        covered |= p.contains_points(probe, radius=-_COVER_TOL_PX)
+        if covered.all():
+            return True
+    return bool(covered.all())
+
+
+def _custom_clip_ink(artist, W: float, H: float, budget) -> dict | None:
+    """填充集合被 `set_clip_path` 裁成任意形状时，**画出来的那块**的几何；表达不了回 None。
+
+    墨迹 = 填充 ∩ 裁剪路径 ∩ 裁剪框。两种情形表达得出：
+
+    * 填充无缝拼成一个矩形 R（渐变色带）：几何 = 裁剪路径，`clip` = R ∩ 裁剪框；
+    * 裁剪路径整个落在填充里：几何 = 裁剪路径，`clip` = 裁剪框。
+
+    其余（填充只盖住裁剪路径的一部分、又不是矩形）要做多边形布尔运算，回 None——
+    调用方照旧按填充本身出几何，与从前一致。`set_clip_path(Rectangle)` 被 matplotlib
+    折成 clip box（`get_clip_path()` 是 None），不走这里。
+    """
+    if not artist.get_clip_on():
+        return None
+    tp = artist.get_clip_path()
+    if tp is None or not _has_paint(artist.get_facecolor()):
+        return None
+    rings = [
+        (pts, True)
+        for pts, _closed in _display_subpaths(tp.get_fully_transformed_path(), Affine2D())
+        if len(pts) >= 3
+    ]
+    subs = _collection_subpaths(artist)
+    if not rings or not subs:
+        return None
+    rect = _tiled_rect(subs)
+    if rect is None and not _covers(subs, np.vstack([p for p, _ in rings])):
+        return None
+    box = artist.get_clip_box()
+    if box is not None:
+        bx = (float(box.x0), float(box.y0), float(box.x1), float(box.y1))
+        if rect is None:
+            rect = bx
+        else:
+            rect = (
+                max(rect[0], bx[0]),
+                max(rect[1], bx[1]),
+                min(rect[2], bx[2]),
+                min(rect[3], bx[3]),
+            )
+    if rect is not None and (rect[2] <= rect[0] or rect[3] <= rect[1]):
+        return None  # 与裁剪框不相交：图上没有它的墨迹，交给调用方照旧处理
+    clip = None
+    if rect is not None:
+        x0, y0, x1, y1 = rect
+        clip = [
+            round(x0 / W, _ND),
+            round(1.0 - y1 / H, _ND),
+            round((x1 - x0) / W, _ND),
+            round((y1 - y0) / H, _ND),
+        ]
+    return _pack(
+        rings,
+        W,
+        H,
+        fill=True,
+        # 描边同样被这条路径裁掉，色带之间的拼缝不是轮廓——只按填充命中
+        stroke=False,
+        clip=clip,
+        budget=budget,
+    )
+
+
 def _pack(
     subpaths,
     W,
@@ -1224,6 +1339,13 @@ def element_geometry(
                 budget=budget,
             )
         if isinstance(artist, PolyCollection):
+            # 渐变填充的惯用写法：一组铺满矩形的色带（逐条一个颜色）再 `set_clip_path`
+            # 到峰形 / 曲线下方的多边形。画出来的只是那块多边形——按色带出几何，选中
+            # 框是一整条横贯子图的矩形、点这个峰选中那个峰，几百条色带还会吃光整张图
+            # 的点数预算，让后面的元素全部退回 bbox（2026-11-03 用户同门的 XPS 分峰图）。
+            clipped = _custom_clip_ink(artist, W, H, budget)
+            if clipped is not None:
+                return clipped
             subs = _collection_subpaths(artist, budget)
             lw = artist.get_linewidths()
             return _pack(
