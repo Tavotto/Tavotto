@@ -47,3 +47,8 @@ Before a separately approved deployment:
 
 Rollback after real signatures/holds/revocation requires a coherent forward
 recovery plan. Returning to a stale database snapshot is not a safe rollback.
+
+The staging rehearsal (`staging/`) is the one exception to "no route, no cron": it is checked with
+`node scripts/deployment-plan.mjs --staging deployment/staging/wrangler.staging.json`, whose profile admits only
+the `cla-staging.tavotto.com` custom domain and the two proposed crons and still requires every flag false in the
+file. It changes nothing above for production.
