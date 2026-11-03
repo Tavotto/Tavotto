@@ -36,7 +36,13 @@ def _run(tmp_path: Path, body: str) -> dict:
     code = PRELUDE.format(src=SRC, base=str(tmp_path)) + textwrap.dedent(body)
     code += "\nw.arm(False)\nprint('RESULT' + json.dumps(out))\n"
     done = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=False
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
     line = [ln for ln in done.stdout.splitlines() if ln.startswith("RESULT")][-1]
