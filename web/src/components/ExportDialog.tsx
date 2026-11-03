@@ -2329,6 +2329,7 @@ function ExportPreviewPane({
                   pxWidth={px || undefined}
                   editedPanel={editedPanelOf}
                   exportedText={exportedTextOf}
+                  exportedShape={exportedShapeOf}
                 />
               )}
             </ExportZoomStage>
