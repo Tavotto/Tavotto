@@ -526,6 +526,11 @@ def test_cancel_and_taking_the_session_interleaved_never_lose_the_cancel_or_kill
         assert out["status"] == 200, i
 
 
+#: 确定性交错里每一步「等对方走到」的上限。这些是 Event 等待，对方到了就立刻返回，上限只在真卡死时才用得上；
+#: 之前写死 5 s——慢 runner 整机停顿（macOS 合并组上单条 setup 38 s）超过它，就把「机器卡了」报成「交错坏了」。
+_STEP_WAIT = 60.0
+
+
 class _SteppedLock:
     """`app._PROBES_LOCK` 的替身：在**指定的那一次** `with` 之后 / 之前停住，把两条线程摆成某一种确定的交错。
 
@@ -542,7 +547,7 @@ class _SteppedLock:
     def __enter__(self):
         caller = sys._getframe(1).f_code.co_name
         if caller == "note_owner" and self.before_note is not None:
-            assert self.before_note.wait(5), "取消一直没走完"
+            assert self.before_note.wait(_STEP_WAIT), "取消一直没走完"
         self._lock.acquire()
         return self
 
@@ -553,7 +558,7 @@ class _SteppedLock:
             if self.cancel_entries == 2:
                 self.cancel_read_done.set()
                 if self.after_cancel_read is not None:
-                    assert self.after_cancel_read.wait(5), "试运行一直没过取会话那一步"
+                    assert self.after_cancel_read.wait(_STEP_WAIT), "试运行一直没过取会话那一步"
         return False
 
 
@@ -576,7 +581,7 @@ def test_a_cancel_that_reads_the_owner_before_the_probe_records_it_is_still_seen
     real_build = engine_pool.build
 
     def build(script, root_, entry, *, before_build=None, **kw):
-        assert taking.wait(5)
+        assert taking.wait(_STEP_WAIT)
 
         def gated(worker):
             try:
@@ -589,16 +594,16 @@ def test_a_cancel_that_reads_the_owner_before_the_probe_records_it_is_still_seen
     monkeypatch.setattr(engine_pool, "build", build)
     lock.after_cancel_read = checked
     th, done = _start_probe(client)
-    deadline = time.time() + 5
+    deadline = time.time() + _STEP_WAIT
     while (pj, "fig.py") not in m._PROBES:
         assert time.time() < deadline
         time.sleep(0.005)
     canceller = threading.Thread(target=lambda: done.update(cancel=_cancel(client)))
     canceller.start()
-    assert lock.cancel_read_done.wait(5)
+    assert lock.cancel_read_done.wait(_STEP_WAIT)
     taking.set()  # 取消已读完所有权（还没有）：现在才让试运行去取会话、记所有权、看标志
-    canceller.join(10)
-    th.join(10)
+    canceller.join(_STEP_WAIT)
+    th.join(_STEP_WAIT)
     assert not th.is_alive()
     assert done["cancel"]["cancelling"] is True
     # 取消丢了的样子：试运行 3 s 后「成功」登记（error 为空）、会话没被杀
@@ -616,12 +621,12 @@ def test_a_probe_that_looks_at_the_flag_before_recording_its_owner_is_still_canc
     lock = _stepped(monkeypatch, jittery_pool)
     lock.before_note = lock.cancel_read_done
     th, done = _start_probe(client)
-    deadline = time.time() + 5
+    deadline = time.time() + _STEP_WAIT
     while not jittery_pool["workers"]:
         assert time.time() < deadline  # 试运行已取到会话、停在记所有权之前
         time.sleep(0.005)
     done["cancel"] = _cancel(client)
-    th.join(10)
+    th.join(_STEP_WAIT)
     assert not th.is_alive()
     assert done["cancel"]["cancelling"] is True
     # 取消丢了的样子：试运行 3 s 后「成功」登记（error 为空）、会话没被杀
