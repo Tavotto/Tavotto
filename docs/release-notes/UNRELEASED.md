@@ -85,6 +85,10 @@ In single-figure editing, a text box, arrow or shape drawn over the figure came 
 
 Dragging one of the four side handles of a figure in a multi-figure layout used to stretch the figure in one direction, which squashed its text and markers. It now crops that side: the figure stays where it is and at the same scale, the handle stops at the figure edge and again at the edge of the plotted content, and you hold ⌥ (Alt on Windows) to cut into the content. Corner handles still scale the whole figure proportionally; while you drag, a small capsule shows the scale and the resulting text size in pt, and turns amber when the text falls below your journal's minimum. Annotations that sit on the figure (panel letters, arrows, text boxes) now scale with it; turn this off with **With annotations** in the figure's toolbar. Crops already in your layouts are unchanged; **Reset crop** in the toolbar puts a figure back to its full size.
 
+## The first click on a figure after opening a project no longer waits for a cold start
+
+On a slow disk or a Microsoft Store Python, the first render after opening a project could take 20 to 40 seconds, because the render session had to start (and the interpreter had to be checked) at that moment. Tavotto now starts the session for the first script-backed figure quietly in the background once the project has settled, and checks each interpreter once instead of once per task running at the same time. Nothing is run, drawn or written in the background, a failure is ignored, and your scripts and files are never touched.
+
 ## The first picture after launch appears a little sooner
 
 The first time you render after starting Tavotto, the app checks your Python environment with several small probes. Probes that don't depend on each other now run side by side instead of one after another, which trims a fraction of a second from that first render on a typical setup. Later renders are unchanged, and Tavotto still never picks a different Python on its own.

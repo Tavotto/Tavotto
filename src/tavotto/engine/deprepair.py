@@ -7148,7 +7148,22 @@ def _prefetch_facts(project: str, script: str):
     return thunk
 
 
+def environment_decision_is_noop(project: str | Path, script: str) -> bool:
+    """`decide_environment_pinned` 在这个项目上**必然什么都不做**吗？只读设置与 `stat`，不起子进程、不写记录。
+
+    后台预热（`pool.PURPOSE_PREWARM`）只在这种情况下放行：确认模式（决定本来就不由机器做），或检测模式下
+    解释器不是机器挑的（全局显式 / 用户为本项目选的 / 选回默认链条——决定函数第一步就返回）。
+    机器自己记住的解释器、旧模式都算「可能要干活」：检测会体检候选、跑项目解释器、写记录。"""
+    mode = projectenv.adoption_mode()
+    if mode == projectenv.ADOPTION_CONFIRM:
+        return True
+    if mode == projectenv.ADOPTION_DETECT:
+        return not pool.machine_chosen_interpreter(str(project))
+    return False
+
+
 pool.register_spawn_gate(_spawn_gate)
+pool.register_environment_noop_check(environment_decision_is_noop)
 pool.register_environment_decider(decide_environment_pinned)
 pool.register_environment_prefetch(_prefetch_facts)
 
