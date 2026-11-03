@@ -87,9 +87,7 @@ describe('GradientStopsField', () => {
   })
 
   it('渐变条用这两端画；多个值时不画任何一个渐变', async () => {
-    await mount(
-      <GradientStopsField label="渐变" value={{ stops: ['#ffd8b2', '#d94d0d'] }} onChange={() => {}} />,
-    )
+    await mount(<GradientStopsField label="渐变" value={{ stops: ['#ffd8b2', '#d94d0d'] }} onChange={() => {}} />)
     const bar = host.querySelector<HTMLElement>('[data-gradient-bar]')!
     expect(bar.style.background).toContain('linear-gradient')
     await act(async () => {
@@ -112,12 +110,9 @@ describe('readGradient', () => {
     expect(readGradient({ stops: ['#000000', '#ffffff'] })?.direction).toBe('vertical')
   })
 
-  it.each([null, '#ff0000', { stops: ['#000000'] }, { stops: [1, 2] }, { stops: 'ab' }])(
-    '形状不对不猜：%j',
-    (v) => {
-      expect(readGradient(v)).toBeNull()
-    },
-  )
+  it.each([null, '#ff0000', { stops: ['#000000'] }, { stops: [1, 2] }, { stops: 'ab' }])('形状不对不猜：%j', (v) => {
+    expect(readGradient(v)).toBeNull()
+  })
 })
 
 describe('override 值缺 direction 时（Codex P2）', () => {
@@ -157,5 +152,83 @@ describe('展示注册表', () => {
     const primary = ROLE_PROFILES.fill.primary
     expect(primary).toContain('gradient')
     expect(primary.indexOf('gradient')).toBe(primary.indexOf('facecolor') + 1)
+  })
+})
+
+describe('图例色块跟着改（ADR 0167 修订）', () => {
+  const cand = (ci: number, gi: number, caption?: string) => ({
+    ref: [ci, gi] as [number, number],
+    gid: `axes_0.fill_${ci}`,
+    stops: ['#ffd8b2', '#d94d0d'] as [string, string],
+    ...(caption ? { caption } : {}),
+  })
+
+  it('只有一块对得上、已经配上：整行不出现（静默跟着改，不加说明）', async () => {
+    const legend = {
+      candidates: [cand(4, 0, 'TiO₂')],
+      linked: [4, 0] as [number, number],
+      auto: [4, 0] as [number, number],
+    }
+    await mount(
+      <GradientStopsField
+        label="渐变"
+        value={{ stops: ['#ffd8b2', '#d94d0d'], legend }}
+        onChange={() => {}}
+        onLink={() => {}}
+      />,
+    )
+    expect(host.querySelector('[data-gradient-legend]')).toBeNull()
+    expect(host.textContent).not.toContain('TiO₂')
+  })
+
+  it('几块同色：列出来、都不预选、没有提示文字，也没有「不跟」；点一块回它的 ref', async () => {
+    const onLink = vi.fn()
+    const legend = { candidates: [cand(2, 0, 'B1'), cand(2, 1, 'B2')], linked: null, auto: null }
+    await mount(
+      <GradientStopsField
+        label="渐变"
+        value={{ stops: ['#ffd8b2', '#d94d0d'], legend }}
+        onChange={() => {}}
+        onLink={onLink}
+      />,
+    )
+    const row = host.querySelector('[data-gradient-legend]')!
+    const radios = [...row.querySelectorAll('[role="radio"]')]
+    expect(radios.map((r) => r.textContent)).toEqual(['B1', 'B2'])
+    expect(radios.every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
+    expect(row.querySelectorAll('p')).toHaveLength(0)
+    await act(async () => {
+      ;(radios[1] as HTMLButtonElement).click()
+    })
+    expect(onLink).toHaveBeenCalledWith([2, 1])
+  })
+
+  it('多选（不给 onLink）不画这一行', async () => {
+    const legend = { candidates: [cand(2, 0), cand(2, 1)], linked: null, auto: null }
+    await mount(
+      <GradientStopsField label="渐变" value={{ stops: ['#ffd8b2', '#d94d0d'], legend }} onChange={() => {}} />,
+    )
+    expect(host.querySelector('[data-gradient-legend]')).toBeNull()
+  })
+
+  it('读得出引擎的 legend；写回把此刻的配对写死，换配对时用新的', () => {
+    const g = readGradientWithFact(
+      { stops: ['#000000', '#ffffff'] },
+      {
+        stops: ['#111111', '#eeeeee'],
+        direction: 'vertical',
+        screen_start: 'high',
+        legend: { candidates: [cand(4, 0)], linked: [4, 0], auto: [4, 0] },
+      },
+    )!
+    expect(g.legend?.linked).toEqual([4, 0])
+    expect(gradientPayload(['#000000', '#ffffff'], g)).toEqual({
+      stops: ['#000000', '#ffffff'],
+      screen_start: 'high',
+      legend: [4, 0],
+    })
+    expect(gradientPayload(['#000000', '#ffffff'], g, [4, 1]).legend).toEqual([4, 1])
+    // 没有候选：不带 legend 键（引擎走自动配对）
+    expect('legend' in gradientPayload(['#000000', '#ffffff'], { stops: ['#000000', '#ffffff'] })).toBe(false)
   })
 })

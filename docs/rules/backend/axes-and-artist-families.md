@@ -161,6 +161,8 @@ order: 80
     PolyCollection 时，manifest 发两端颜色（起端 / 止端按屏幕方向）；`_gradient_apply` 按原两端连线上的位置重新配色、从
     `_mm_gradient_base`（第一次改之前的逐条颜色）算，热态 == 重放；基准与还原值取**源颜色设定**（`_original_facecolor`），不取合成了 Artist alpha 的 `get_facecolor()`。
     override 值带 `screen_start`（"high"/"low"，manifest 发出），引擎按数据坐标顺序配色、不依赖 setter 运行时的坐标变换（`invert_y` 与它同序）；缺失时才退回当时变换。没认出的填充一个字节不变。
+  * **渐变峰的图例色块跟着改**（ADR 0167 修订）：`gradient_legend_candidates` 在同一子图里找两端原色对得上的色块（`gradient_swatch_groups`，
+    序号只按数据坐标），互相唯一才自动配；`gradient` 的值记 `legend: [集合, 色块] | null`，`_gradient_apply` 先还原上次跟着改的那块再改新的。
   * **gid 一个都没变**：`axes_i.scatter_j` / `axes_i.fill_j` / `axes_i.patches_j`
     的序号取的一直是所属列表（`ax.collections` / `ax.patches`）的下标，不是
     「第几个散点」，所以把从前没登记的那些补登记进来不挪动任何已有名字。

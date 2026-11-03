@@ -46,6 +46,12 @@ const gradEl = (n: number, screenStart: 'high' | 'low'): ManifestElement =>
         stops: ['#ff0000', '#0000ff'],
         direction: 'vertical',
         screen_start: screenStart,
+        // 各自配上了自己子图里的图例色块（ADR 0167 修订）：多选改色时各带各的
+        legend: {
+          candidates: [{ ref: [4, n], gid: `axes_${n}.fill_4`, stops: ['#ff0000', '#0000ff'] }],
+          linked: [4, n],
+          auto: [4, n],
+        },
       }),
     ],
   }) as unknown as ManifestElement
@@ -156,10 +162,12 @@ describe('多选渐变：screen_start 逐成员保留', () => {
     expect(overrideOf('axes_0.fill_0')).toEqual({
       stops: ['#00ff00', '#0000ff'],
       screen_start: 'high',
+      legend: [4, 0],
     })
     expect(overrideOf('axes_0.fill_1')).toEqual({
       stops: ['#00ff00', '#0000ff'],
       screen_start: 'low',
+      legend: [4, 1],
     })
   })
 })
