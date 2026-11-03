@@ -26,10 +26,41 @@
 | SG06 | passed | 133d2bf7 | chartdata 类型化数据入口 + chartbind 校准/确认产物（经 chartmodel 同一合同） |
 | SG07 | passed(M1) | f505c216 | 脚手架+组合+worker 分发；热=冷字节一致；注释锚定/NaN 间断入口未完成（SG08+） |
 | SG08 | passed | 834c0053+f74757f5 | 类别轴/bar/errorbar/图例同步；vectors 14 条双侧同判 |
-| SG09 | running | — | — |
-| SG10–SG17 | pending | — | — |
+| SG09 | passed(core) | d962ecae | 网格/热图绑定全链 + vectors 16 条双侧同判；极坐标/3D 等以信息前提登记（不冒充） |
+| SG10 | running | — | 前端集成：文档契约 + API client + 绑定向导 |
+| SG11–SG17 | pending | — | — |
 
 ## Checkpoint 追加
+
+### 2026-11-04 SG09 核心通过（时间：UTC 04:4x）
+
+- `d962ecae`：dataset.grids（矩形/有限数校验 + 条件摘要）、series kind=image（grid 引用）、
+  chartdata.parse_grid、chartbind grid_text、脚手架 imshow+colorbar（cmap/vmin/vmax 生效）、
+  compose 图像替换；vectors 16 条双侧同判；TS 镜像同步（grids 校验 + image 角色 + 摘要口径）。
+- 极坐标/3D/双轴/inset：**未实现**，信息前提登记在 SG00 能力清单 §3（3D 需 z 数据等）——
+  按计划「无原输入的信息不冒充已恢复」，该批以「已实现网格/色阶 + 对等盘点」记账，非全部退出条件。
+
+### 接续指南（SG10 开始时的状态快照）
+
+- 分支 `zixu.wang/svg-computational-editing`，HEAD ≈ d962ecae + checkpoint commits。
+- **后端计算核心已可用**：chartmodel/chartdata/chartbind（确认产物）/svgchart（worker 脚手架，
+  worker 命令 `svg_scaffold`，请求 {model, frame, salt}，响应 {fragment_b64, facts}）/
+  svgcompose（组合）/svgscene+svgcoord（盘点+坐标）/svgadopt（路径 A 采用）/两个端点
+  （GET /api/svg/chart/inspect 只读盘点）。
+- **还没有的服务端接线**：bind/compute 的 POST 端点（复用 pool worker 跑 svg_scaffold——
+  需要走 pool.get 或 one_shot 的哪一个要想清楚：脚手架不建会话，可用 one_shot 式隔离或
+  轻量命令通道）；文档 schema 的 chart 面板字段（PanelObject 新可选字段 + SCHEMA 升版评估）；
+  compose 产物作为面板渲染版本的提供路径（renderStore 按「文件+变体」分键）。
+- **SG10 的最小正确切分**：① 文档契约（types/document.ts + documents.py 同批加可选字段，
+  不升 schema 版本——旧程序读新字段的防损策略写清）② api client（inspect/bind/compute）
+  ③ 绑定向导 UI（选轴区→CSV→系列→对照→确认/取消，全部进 documentStore commit/撤销）
+  ④ PanelView 对 chart 面板渲染 compose 后的 SVG。每一小步带测试；前端改动跑
+  `pnpm exec vitest run <spec>` + `pnpm build`（Windows 下 pnpm test 脚本的 POSIX 语法不可跑，
+  用等价命令 NODE_OPTIONS=--no-experimental-webstorage pnpm exec vitest run）。
+- 前端 e2e 的 chromium 已装（E:\devcache\ms-playwright）；spec 接入 playwright.config 的
+  project 白名单（webkit/chromium-en 显式 testMatch，见 SG15 清单）。
+- 反证纪律延续：每个新不变式在一次性 worktree 变异验证（git worktree add --detach <tmp> <HEAD>，
+  从实施仓取 HEAD，勿用主仓）。
 
 ### 2026-11-04 SG08 通过（时间：UTC 03:5x）
 
