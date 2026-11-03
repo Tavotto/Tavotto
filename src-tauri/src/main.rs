@@ -7,8 +7,8 @@ mod app_update;
 #[cfg(test)]
 mod app_update_flow_tests;
 mod crash_dump;
-// 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+// 分派由 macOS 的 native_drop 与 Windows 的 native_drop_win 用；Linux 上它只剩单测（分派规则各平台一样，照样跑）
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod drop_paths;
 #[cfg(test)]
 mod exit_guard_tests;
@@ -19,6 +19,8 @@ mod i18n;
 mod msix_breakaway;
 #[cfg(target_os = "macos")]
 mod native_drop;
+#[cfg(windows)]
+mod native_drop_win;
 #[cfg(test)]
 mod reinstall_guard_tests;
 mod remote;
@@ -308,7 +310,7 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
-/// 主页拖放能不能拿到真实路径（ADR 0092）：macOS 上旁听装好了才是 true，其余平台
+/// 主页拖放能不能拿到真实路径（ADR 0092）：macOS / Windows 上旁听装好了才是 true，其余平台
 /// 一律 false，前端据此走「提示文件名 + 选择器」的降级。只读、无参数。
 #[tauri::command]
 fn native_file_drop() -> bool {
@@ -316,7 +318,11 @@ fn native_file_drop() -> bool {
     {
         native_drop::installed()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        native_drop_win::installed()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         false
     }
@@ -2148,6 +2154,14 @@ fn main() {
             // macOS 主窗口本来就是显示的，但插件已跳过建窗时的恢复：这里补上，否则记不住位置与大小
             #[cfg(target_os = "macos")]
             restore_main_window_state(&win);
+            // 主页拖放拿真实路径（Windows）：页面在 drop 里把 File 经 postMessageWithAdditionalObjects
+            // 交过来，这里读 ICoreWebView2File 的路径。同样不装 Tauri 的拖放处理器。见 native_drop_win.rs。
+            #[cfg(windows)]
+            {
+                let drop_handle = handle.clone();
+                let _ = win
+                    .with_webview(move |pw| native_drop_win::install(pw.controller(), drop_handle));
+            }
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
             #[cfg(target_os = "macos")]
