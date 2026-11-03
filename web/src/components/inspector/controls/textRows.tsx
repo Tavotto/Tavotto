@@ -16,6 +16,7 @@ import { Select } from '../../ui/Select'
 import { Tip } from '../../ui/Tooltip'
 import { fontFamilySelectModel } from './fontFamilySelect'
 import { INSPECTOR_CONTROL_X } from '../layout'
+import { cjkFontShortName } from './fontShortName'
 
 /**
  * 文字属性的共享行组件：**「字体」「字号」是可见文字标签**，不再只有
@@ -27,6 +28,7 @@ import { INSPECTOR_CONTROL_X } from '../layout'
  * 就不渲染 FontFamilyRow——不摆假控件。
  */
 
+const tb = (key: string) => translate(`textBar.${key}`, { ns: 'inspector' })
 const tc = (key: string) => translate(`textControls.${key}`, { ns: 'inspector' })
 
 /**
@@ -238,6 +240,23 @@ export function FontMissingHint({ className }: { className?: string } = {}) {
   return <p className={cn('pl-1 text-xs leading-relaxed text-warn-content', className)}>{tc('fontMissingHint')}</p>
 }
 
+export type FontFallbackCell = {
+  /** 当前中文字体；空串 = 自动 */
+  value: string
+  mixed?: boolean
+  /** 可选的字体名（已含当前值） */
+  options: string[]
+  optionLabels?: Readonly<Record<string, string>>
+  optionLabelOf: (v: string) => string
+  /** 英文字体本身带中文字形：这一格置灰，悬停说明原因 */
+  shadowed?: boolean
+  /** 当前中文字体这个运行时画不出来 */
+  missing?: boolean
+  /** 问题面板定位的锚点路径（`propertyPathOf`） */
+  anchor?: string | null
+  onChange: (v: string | null) => void
+}
+
 function FontFamilyRowView({
   labelText,
   value,
@@ -251,6 +270,8 @@ function FontFamilyRowView({
   optionFaces,
   mixed,
   unavailable = [],
+  fallback,
+  anchor,
 }: {
   /** 只用来让语言切换时重画（选项标签随语言变）；memo 比较它，组件体不读 */
   lang?: string
@@ -281,6 +302,13 @@ function FontFamilyRowView({
    * 用户于是知道图上那行字实际是别的字体画的。
    */
   unavailable?: readonly string[]
+  /**
+   * 中文字体（回退）那一格。有它就在英文那一格右边并排放一格窄的（一行两格）；
+   * 没有就只有英文一格、占满整格。数据而不是节点：memo 要按数据比较
+   */
+  fallback?: FontFallbackCell
+  /** 一行两格时英文那一格自己挂的定位锚点（单格时由调用方在整行外挂） */
+  anchor?: string | null
 }) {
   // 性能探针（ADR 0075）：它下面挂着本机字体并表的几百个选项，重画一次很贵
   perfCount('render.FontFamilyRow')
@@ -296,6 +324,57 @@ function FontFamilyRowView({
     onChange,
     extra: (o) => missing.has(o) && <FontMissingTag />,
   })
+  const englishSelect = (
+    <Select
+      // 一行两格时收紧左右内边距与箭头间距（只动这一行的两格），12px 的「Times New Roman」要放得下
+      className={cn('min-w-0 flex-1', fallback && 'gap-0.5 px-1')}
+      ariaLabel={fallback ? tb('latinFont') : label}
+      // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
+      value={fm.value}
+      placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
+      onChange={fm.onChange}
+      options={fm.options}
+      // 一行两格时英文格窄，名字会被省略号截断：悬停给完整名
+      title={fm.title ?? (fallback && !mixed && fm.value ? optionLabelOf(fm.value) : undefined)}
+    />
+  )
+  const cjkMixed = !!fallback?.mixed
+  const cjkOptions = fallback
+    ? fallback.value && !fallback.options.includes(fallback.value)
+      ? [fallback.value, ...fallback.options]
+      : fallback.options
+    : []
+  const cjkTitle = fallback
+    ? fallback.shadowed
+      ? tb('cjkFallbackShadowed')
+      : cjkMixed
+        ? undefined
+        : fallback.value
+          ? fallback.optionLabelOf(fallback.value)
+          : tb('cjkFallbackAuto')
+    : undefined
+  const cjkCell = fallback && (
+    <span className="contents" data-prop={fallback.anchor ?? undefined}>
+      <div data-font-fallback-cell className="w-[66px] shrink-0">
+        <Select
+          className="min-w-0 gap-0.5 px-1"
+          ariaLabel={tb('cjkFallback')}
+          prefix={tb('cjkPrefix')}
+          value={cjkMixed ? '' : fallback.value || '__auto__'}
+          placeholder={translate('element.mixedValues', { ns: 'inspector' })}
+          disabled={fallback.shadowed}
+          // 64px 一格：收起时只显示短名，列表与悬停仍是完整名
+          triggerLabel={cjkMixed ? undefined : cjkFontShortName(fallback.value ? fallback.optionLabelOf(fallback.value) : tb('cjkFallbackAuto'))}
+          title={cjkTitle}
+          onChange={(v) => fallback.onChange(v === '__auto__' ? null : v)}
+          options={[
+            { value: '__auto__', label: tb('cjkFallbackAuto') },
+            ...cjkOptions.map((o) => ({ value: o, label: fallback.optionLabelOf(o) })),
+          ]}
+        />
+      </div>
+    </span>
+  )
   return (
     <>
       <Row
@@ -303,18 +382,17 @@ function FontFamilyRowView({
         labelWidth={labelWidth}
         status={overridden && overridden !== 'none' && onReset ? <ResetChip label={label} onReset={onReset} /> : undefined}
       >
-        <Select
-          className="min-w-0 flex-1"
-          ariaLabel={label}
-          // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
-          value={fm.value}
-          placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
-          onChange={fm.onChange}
-          options={fm.options}
-          title={fm.title}
-        />
+        {fallback ? (
+          <span className="contents" data-prop={anchor ?? undefined}>
+            <div className="min-w-0 flex-1">{englishSelect}</div>
+          </span>
+        ) : englishSelect}
+        {cjkCell}
       </Row>
       {!mixed && missing.has(value) && (
+        <FontMissingHint className={labelWidth === 'grid' ? INSPECTOR_CONTROL_X : undefined} />
+      )}
+      {fallback?.missing && !cjkMixed && (
         <FontMissingHint className={labelWidth === 'grid' ? INSPECTOR_CONTROL_X : undefined} />
       )}
     </>
@@ -345,11 +423,23 @@ const sameLabels = (
  * 就不重画。选项数组与显示名表（每次渲染响应里的 `font_family_names` 都是新对象）常是
  * 新引用、内容相同，按内容比。
  */
+const sameFallback = (a?: FontFallbackCell, b?: FontFallbackCell) =>
+  a === b ||
+  (!!a && !!b &&
+    a.value === b.value &&
+    !!a.mixed === !!b.mixed &&
+    !!a.shadowed === !!b.shadowed &&
+    !!a.missing === !!b.missing &&
+    a.anchor === b.anchor &&
+    sameList(a.options, b.options) &&
+    sameLabels(a.optionLabels, b.optionLabels))
+
 const FontFamilyRowMemo = memo(
   FontFamilyRowView,
   (a, b) =>
     a.value === b.value &&
     a.labelText === b.labelText &&
+    a.anchor === b.anchor &&
     a.mixed === b.mixed &&
     a.overridden === b.overridden &&
     a.labelWidth === b.labelWidth &&
@@ -357,6 +447,7 @@ const FontFamilyRowMemo = memo(
     sameLabels(a.optionLabels, b.optionLabels) &&
     sameLabels(a.optionFaces, b.optionFaces) &&
     !!a.onReset === !!b.onReset &&
+    sameFallback(a.fallback, b.fallback) &&
     sameList(a.options, b.options) &&
     sameList(a.unavailable, b.unavailable),
 )
@@ -375,9 +466,11 @@ export function FontFamilyRow(props: FontFamilyRowProps) {
   })
   const onChange = useCallback((v: string) => latest.current.onChange(v), [])
   const onReset = useCallback(() => latest.current.onReset?.(), [])
+  const onFallback = useCallback((v: string | null) => latest.current.fallback?.onChange(v), [])
   return (
     <FontFamilyRowMemo
       {...props}
+      fallback={props.fallback ? { ...props.fallback, onChange: onFallback } : undefined}
       lang={i18n.language}
       onChange={onChange}
       onReset={props.onReset ? onReset : undefined}

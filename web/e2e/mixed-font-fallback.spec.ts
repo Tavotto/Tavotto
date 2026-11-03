@@ -63,19 +63,20 @@ test('中文回退字体：编辑、撤销、保存、重开和导出', { tag: '
   await page.locator(`[data-select-option=${JSON.stringify(coveredName)}]`).click()
   await fallback.click()
   await page.locator(`[data-select-option=${JSON.stringify(chineseName)}]`).click()
-  const hint = panel.locator('[data-font-fallback-hint]')
-  await expect(hint).toBeVisible({ timeout: 60_000 })
-  await hint.hover()
-  await expect(page.locator('[data-font-fallback-tooltip]')).toBeVisible()
+  // 英文字体自带中文字形：中文那格置灰，悬停说明原因（不再有单独的 ⓘ）
+  await expect(fallback).toBeDisabled({ timeout: 60_000 })
+  await expect(fallback).toHaveAttribute('title', '请改选不含中文字符的英文字体。')
   if (shots) await panel.screenshot({ path: path.join(shots, 'inspector-covered.png') })
   await latin.click()
   await expect(page.locator('[data-select-option="PingFang SC"]')).toHaveCount(0)
   await page.locator(`[data-select-option=${JSON.stringify(latinName)}]`).click()
-  await expect(hint).toHaveCount(0)
-  await expect(fallback).toContainText(chineseLabel)
+  await expect(fallback).toBeEnabled()
+  // 中文格只有 64px：收起时显示短名（去掉「-简」「 SC」之类），完整名在悬停 title 里
+  await expect(fallback).toContainText(mac ? /^中宋体$/ : /Noto Sans|思源黑体/)
+  await expect(fallback).toHaveAttribute('title', chineseLabel)
   if (shots) await panel.screenshot({ path: path.join(shots, 'inspector-songti.png') })
   await page.locator('[data-history-action="undo"]').click()
-  await expect(hint).toBeVisible()
+  await expect(fallback).toBeDisabled()
   await page.locator('[data-history-action="redo"]').click()
   await expect(latin).toContainText(latinName)
   const object = page.locator('[data-canvas-stage] [data-object-id]')
@@ -103,7 +104,9 @@ test('中文回退字体：编辑、撤销、保存、重开和导出', { tag: '
   await openElementsTab(page)
   await expect(title).toHaveCount(1)
   await title.click()
-  await expect(fallback).toContainText(chineseLabel)
+  // 中文格只有 64px：收起时显示短名（去掉「-简」「 SC」之类），完整名在悬停 title 里
+  await expect(fallback).toContainText(mac ? /^中宋体$/ : /Noto Sans|思源黑体/)
+  await expect(fallback).toHaveAttribute('title', chineseLabel)
   const result = await page.request.post(`${a2.baseURL}/api/export`, { data: {
     page_w_mm: 120, page_h_mm: 90, formats: ['pdf', 'svg'], stem: 'mixed_font_e2e',
     objects: [{ type: 'panel', id: 'runtime:mixed.py#mixed', x_mm: 5, y_mm: 5, w_mm: 100, h_mm: 75, overrides: savedPanel.overrides }],

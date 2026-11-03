@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
 import { Row, type RowLabelWidth } from '../../ui/Field'
-import { Select } from '../../ui/Select'
-import { Tip } from '../../ui/Tooltip'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -20,9 +18,9 @@ import {
   AlignmentRow,
   FontFamilyRow,
   FontSizeRow,
-  FontMissingHint,
   StyleToggle,
   TextColorRow,
+  type ModifiedState,
 } from './textRows'
 
 /**
@@ -42,6 +40,12 @@ import {
 
 const tb = (key: string, values?: Record<string, unknown>) =>
   translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
+
+function mergeDirty(a: ModifiedState, b: ModifiedState): ModifiedState {
+  if (a === 'all' || b === 'all') return 'all'
+  if (a === 'some' || b === 'some') return 'some'
+  return 'none'
+}
 
 export function TypographyControls({
   adapter,
@@ -85,6 +89,8 @@ export function TypographyControls({
   // 修改状态四档不压扁（typography-capability-layer）：多选里只改了几个 = 'some'，标签旁是空心环
   const dirty = (prop: TypographyProp) => adapter.overrideStateOf(prop)
   const reset = (prop: TypographyProp) => () => adapter.reset(prop)
+  // 字体与中文字体合成一行：任一项改过就算改过，恢复一并清掉两项
+  const fontDirty = mergeDirty(dirty('fontFamily'), fallback ? dirty('fontFallback') : 'none')
 
   /*
    * 一组四行（2026-10-07 设计审计 §9.2 拍板①，宪法第二十节当日修订）：
@@ -137,29 +143,9 @@ export function TypographyControls({
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      {fallback && (
-        <Anchor adapter={adapter} prop="fontFallback"><Row label={tb('cjkFallback')} labelWidth={labelWidth}>
-          <Select
-            className="min-w-0 flex-1"
-            ariaLabel={tb('cjkFallback')}
-            value={fallbackVal.kind === 'mixed' ? '' : fallbackCurrent || '__auto__'}
-            placeholder={translate('element.mixedValues', { ns: 'inspector' })}
-            onChange={(v) => adapter.writeOnce('fontFallback', v === '__auto__' ? null : v)}
-            options={[
-              { value: '__auto__', label: tb('cjkFallbackAuto') },
-              ...fallbackNames.map((o) => ({ value: o, label: fontFamilyOptionLabel(o, fallback.option_labels, fallbackNames) })),
-            ]}
-          />
-          {adapter.fontFallbackShadowed && <Tip label={<span data-font-fallback-tooltip className="block max-w-40 whitespace-normal">{tb('cjkFallbackShadowed')}</span>} side="left">
-            <button data-font-fallback-hint type="button" className="shrink-0 text-xs text-ink-3" aria-label={tb('cjkFallbackShadowed')}>ⓘ</button>
-          </Tip>}
-        </Row></Anchor>
-      )}
-      {fallback && fallbackCurrent && adapter.unavailableOptions('fontFallback').includes(fallbackCurrent) && <FontMissingHint />}
-      {family && (
-        <Anchor adapter={adapter} prop="fontFamily">
+      {family && (() => {
+        const row = (
           <FontFamilyRow
-            labelText={fallback ? tb('latinFont') : undefined}
             labelWidth={labelWidth}
             value={String(displayValueOf(familyVal) ?? '')}
             mixed={familyVal.kind === 'mixed'}
@@ -169,11 +155,25 @@ export function TypographyControls({
             optionLabels={family.option_labels}
             optionLabelOf={(o) => fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])}
             optionFaces={family.option_faces}
-            overridden={dirty('fontFamily')}
+            overridden={fontDirty}
             onReset={reset('fontFamily')}
+            anchor={fallback ? adapter.pathOf('fontFamily') : undefined}
+            fallback={fallback ? {
+              value: fallbackCurrent,
+              mixed: fallbackVal.kind === 'mixed',
+              options: fallbackNames,
+              optionLabels: fallback.option_labels,
+              optionLabelOf: (o) => fontFamilyOptionLabel(o, fallback.option_labels, fallbackNames),
+              shadowed: !!adapter.fontFallbackShadowed,
+              missing: !!fallbackCurrent && adapter.unavailableOptions('fontFallback').includes(fallbackCurrent),
+              anchor: adapter.pathOf('fontFallback'),
+              onChange: (v) => adapter.writeOnce('fontFallback', v),
+            } : undefined}
           />
-        </Anchor>
-      )}
+        )
+        // 一行两格时两个锚点各挂在自己那一格上（定位到「英文字体」/「中文字体」落在对应的下拉）
+        return fallback ? row : <Anchor adapter={adapter} prop="fontFamily">{row}</Anchor>
+      })()}
       {size ? (
         <Anchor adapter={adapter} prop="sizePt">
           <FontSizeRow

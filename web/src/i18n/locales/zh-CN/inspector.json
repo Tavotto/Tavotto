@@ -1047,6 +1047,7 @@
     "cjkFallbackAuto": "自动",
     "cjkFallbackShadowed": "请改选不含中文字符的英文字体。",
     "latinFont": "英文字体",
+    "cjkPrefix": "中",
     "alignCenter": "居中",
     "alignLeft": "左对齐",
     "alignRight": "右对齐",

@@ -1,7 +1,6 @@
 import { useState, type ComponentType, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ChevronRight,
   Copy,
   Ellipsis,
   Eye,
@@ -28,7 +27,6 @@ import { objectLabel, type CanvasObject, type PanelObject } from '@/types/docume
 import { Button } from '../ui/Button'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
-import { TruncateMiddle } from '../ui/TruncateMiddle'
 import { displayLabel, identityCrumbs, untruncatedLabel } from './identityCrumbs'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { KindBadge, ObjectKindSwitch } from './ObjectKindSwitch'
@@ -48,8 +46,9 @@ const TYPE_ICON = {
 /**
  * 唯一的上下文头：现在改的是谁、它处于什么状态、对它还能做什么。
  *
- * **固定两行**（2026-10-07 设计审计 §9.2 P1）：上面 24px 一行是路径（祖先面包屑 / 对象类型）+ 状态 chip，
- * 下面 32px 一行是角色图标 + 名字 + ⋯。此前路径行只在有祖先 / 有修改时才出现，切换选择时整栏跳 24px。
+ * 两行骨架（2026-10-07 设计审计 §9.2 P1）：上面 24px 一行是路径（对象类型）+ 状态 chip，
+ * 下面 32px 一行是角色图标 + 名字 + ⋯。2026-11-03 起祖先面包屑撤掉：选了元素 / 组时路径行不渲染（不占高度），
+ * 「n 项已修改」恢复菜单挪到名字行右侧；路径行只在没选元素（类型小字）与画布对象（类型 / 锁定 / 隐藏）时出现。
  * 两种对象（画布对象 / 图内元素）**同一副右侧簇**：状态 chip（已修改 / 已锁定 / 已隐藏；问题的入口只在左栏「问题」）在路径行右端，
  * 命令收进名字行右端的 ⋯。头部下面不再画分隔线——一屏的发丝线只留节与节之间那一条。
  *
@@ -77,10 +76,12 @@ function IdentityFrame({
   return (
     <header data-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
       {/* 路径行：p 是稳定结构（用例按 `header p` 找面包屑），一行 24 高 */}
-      <p data-identity-path className="flex h-6 min-w-0 items-center gap-1.5 type-caption">
-        <span className="flex min-w-0 flex-1 items-center gap-1">{path}</span>
-        {chips}
-      </p>
+      {(path || chips) && (
+        <p data-identity-path className="flex h-6 min-w-0 items-center gap-1.5 type-caption">
+          <span className="flex min-w-0 flex-1 items-center gap-1">{path}</span>
+          {chips}
+        </p>
+      )}
       {/* 角色图标：无框 16px，坐在名字**第一行**的中线上（槽高 32 = 名字单行时的行高；名字折两行时第一行仍在 16 处，
           名字块上下各留 4px 保证这一点）——手帐线稿 2026-10-28，原来是 28px 灰底座 */}
       <div className="flex min-h-8 items-start gap-2">
@@ -199,14 +200,6 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
     container?.label,
     ancGroup && manifest ? groupName(ancGroup, manifest) : undefined,
   )
-  // 面包屑里每一级祖先都能点（2026-09-14 审计 A4）：往上走的路就是它本身。
-  // 与 identityCrumbs 同一套条件，顺序一致：整张图 → 组 → 宿主子图 → 容器
-  const crumbTargets = [
-    'figure',
-    ancGroup ? ancGroup.gid : null,
-    axes && axes.gid !== gid ? axes.gid : null,
-    container ? container.gid : null,
-  ].filter((g): g is string => !!g)
   const hideable = el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
   // 来源状态：选中元素时报它自己被改了几项，没选（整张图）时报面板总数。组没有自己的属性、
   // 也没有「恢复这个组」——恢复菜单在组页上不出现
@@ -222,41 +215,22 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
     <IdentityFrame
       path={
         // 类型词只有一种写法（2026-10-16 UI 2.0 §07）：名字上方路径行里的灰色小字——面板写「图」、
-        // 整张图写「整张图」，不再是名字前一枚灰底胶囊
-        !el && !selGroup && crumbs.length <= 1 ? (
-          <KindBadge>{roleName('figure')}</KindBadge>
-        ) : (
-          crumbs.length > 1 && (
-          // 整条路径的全文在 title 上；每一级是 24px 高的按钮，长名字中间省略（保留有区分力的尾部）
-          <span className="flex min-w-0 items-center gap-0.5" title={crumbs.join(' / ')}>
-            {crumbs.slice(0, -1).map((c, i) => (
-              <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-0.5">
-                {i > 0 && <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0" />}
-                <button
-                  type="button"
-                  data-crumb={crumbTargets[i]}
-                  onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
-                  className="flex h-6 min-w-0 max-w-full items-center rounded-sm px-1 text-ink-3 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
-                >
-                  <TruncateMiddle text={c} tail={4} />
-                </button>
-              </span>
-            ))}
-          </span>
-          )
-        )
+        // 整张图写「整张图」，不再是名字前一枚灰底胶囊。
+        // 祖先面包屑 2026-11-03 由维护者撤掉（原 2026-09-14 审计 A4 的「每一级可点」）：往上一级
+        // 的导航由左侧图内元素树承担；选了元素 / 组时这一行不出现，整行不占高度
+        !el && !selGroup ? <KindBadge>{roleName('figure')}</KindBadge> : null
       }
-      chips={
-        <>
-          {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图） */}
-          <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
-        </>
-      }
+      // 「n 项已修改」恢复菜单挪到名字那一行（标题右侧、⋯ 左侧），见 name
+      chips={null}
       icon={<RoleIcon size={ICON_SIZE.md} aria-hidden />}
       name={
         <>
           {/* 没选元素时标题是面板名；「整张图」这一层写在上面的路径行里（审计 T01 → 2026-10-16 统一类型词） */}
           <NameHeading>{name}</NameHeading>
+          {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）；没有修改时它自己不渲染 */}
+          <span className="ml-auto shrink-0">
+            <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
+          </span>
         </>
       }
       menu={

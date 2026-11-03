@@ -249,8 +249,9 @@ export function useFigureTypography(
     },
     reset: (prop) => {
       const m = mp(prop)
-      if (prop === 'fontFamily' || prop === 'fontFallback') {
-        writeFont(prop === 'fontFamily' ? 'primary' : 'fallback', null)
+      // 字体与中文字体共用一条 override（`fontfamily`）：恢复 = 整条清掉，两项一起回到脚本、一条历史
+      if (m && (prop === 'fontFamily' || prop === 'fontFallback')) {
+        inner.reset('fontfamily')
         return
       }
       if (m) inner.reset(m)
