@@ -89,7 +89,12 @@ print(json.dumps({"W": W, "H": H, "anchors": anchors, "elements": byid, "order":
 def _run_script(mode: str = "") -> dict:
     env = {**os.environ, "PYTHONPATH": str(ENGINE), "TAVOTTO_NO_TELEMETRY": "1", "TC_MODE": mode}
     r = subprocess.run(
-        [sys.executable, "-c", SCRIPT], capture_output=True, text=True, env=env, timeout=180
+        [sys.executable, "-c", SCRIPT],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=180,
     )
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout.strip().splitlines()[-1])
