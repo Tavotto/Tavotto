@@ -728,6 +728,8 @@ _TILE_AREA_RTOL = 1e-3
 #: 裁剪多边形顶点落在填充里的判定容差（display 像素）：峰形多边形的顶 / 底顶点
 #: 正好压在色带边上，严格的「点在多边形内」在边上两可。
 _COVER_TOL_PX = 0.5
+#: `_tiled_rect` 接受的最多瓦片数（两两重叠检查 O(N²)）。
+_TILE_MAX = 4096
 
 
 def _tiled_rect(subs) -> tuple[float, float, float, float] | None:
@@ -739,7 +741,10 @@ def _tiled_rect(subs) -> tuple[float, float, float, float] | None:
     """
     if not subs:
         return None
+    if len(subs) > _TILE_MAX:
+        return None  # 两两重叠检查是 O(N²)：真实色带 256 条，超过上限就当表达不了
     total = 0.0
+    boxes = []
     for pts, _closed in subs:
         ring = np.unique(np.round(np.asarray(pts, dtype=float), 6), axis=0)
         if len(ring) != 4:
@@ -751,17 +756,33 @@ def _tiled_rect(subs) -> tuple[float, float, float, float] | None:
         if not bool(np.all(on_x & on_y)):
             return None
         total += float((hi - lo).prod())
+        boxes.append((lo[0], lo[1], hi[0], hi[1]))
     allpts = np.vstack([np.asarray(p, dtype=float) for p, _ in subs])
     x0, y0 = allpts.min(axis=0)
     x1, y1 = allpts.max(axis=0)
     area = float((x1 - x0) * (y1 - y0))
     if area <= 0 or abs(total - area) > _TILE_AREA_RTOL * area:
         return None
+    # 面积和 = 外包盒面积还不够：互相重叠的瓦片会留下空洞。再要求两两互不重叠，
+    # 「不重叠 + 面积和相等」才推出并集恰是外包盒。
+    b = np.asarray(boxes, dtype=float)
+    w = np.minimum(b[:, None, 2], b[None, :, 2]) - np.maximum(b[:, None, 0], b[None, :, 0])
+    h = np.minimum(b[:, None, 3], b[None, :, 3]) - np.maximum(b[:, None, 1], b[None, :, 1])
+    ov = np.clip(w, 0.0, None) * np.clip(h, 0.0, None)
+    np.fill_diagonal(ov, 0.0)
+    if float(ov.sum()) / 2.0 > _TILE_AREA_RTOL * area:
+        return None
     return float(x0), float(y0), float(x1), float(y1)
 
 
 def _covers(subs, probe: np.ndarray) -> bool:
-    """`probe` 的每个点都落在某条子路径围出的区域里（边上 `_COVER_TOL_PX` 以内也算）。"""
+    """`probe` 的每个点都落在**凸的**单条填充里（边上 `_COVER_TOL_PX` 以内也算）。
+
+    只认「填充是单条闭合的凸多边形」：凸区域里所有顶点都在 ⇒ 整个裁剪多边形都在。
+    凹 / 多块的填充（U 形的凹口里顶点在、中间不在）无法这样推断，一律 False。
+    """
+    if len(subs) != 1 or not subs[0][1] or not _is_convex_ring(np.asarray(subs[0][0], dtype=float)):
+        return False
     covered = np.zeros(len(probe), dtype=bool)
     for pts, _closed in subs:
         if len(pts) < 3:

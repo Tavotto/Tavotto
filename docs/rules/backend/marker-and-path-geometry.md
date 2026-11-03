@@ -113,7 +113,7 @@ order: 90
   渐变峰 = 几百条横贯子图的色带 `PolyCollection` + `set_clip_path(PathPatch(峰形))`，按色带出几何时
   选中框是整条矩形、点 A 峰选中上层的 B 峰，色带还吃光点数预算让后面的子图全部退回 bbox）：
   `pathgeom._custom_clip_ink` 在墨迹表达得出时发「裁剪路径（fill、不按描边命中）+ `clip`」——色带无缝
-  拼成矩形 R 时 `clip` = R ∩ 裁剪框；裁剪路径整个落在填充里时 `clip` = 裁剪框。填充只盖住裁剪路径一部分
+  拼成矩形 R（瓦片须**两两互不重叠**且面积和等于外包盒，否则会有空洞；超过 4096 条放弃）时 `clip` = R ∩ 裁剪框；裁剪路径整个落在填充里时 `clip` = 裁剪框（填充必须是**单条凸闭合多边形**，凹 / 多块的填充只验顶点会漏掉凹口，一律不认）。填充只盖住裁剪路径一部分
   又不是矩形的，要做多边形布尔运算，**不冒充**，照旧按填充本身出。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`、`tests/test_series_shape_geometry.py`、
   `tests/test_clip_path_fill_geometry.py`。

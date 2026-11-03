@@ -57,7 +57,7 @@ def band(ax, x, y, bg, n=256):
 
 
 def main():
-    fig, (ax, ax2, ax3) = plt.subplots(1, 3, figsize=(9.0, 3.0))
+    fig, (ax, ax2, ax3, ax4, ax5) = plt.subplots(1, 5, figsize=(15.0, 3.0))
     x = np.linspace(-1.0, 11.0, 400)
     bg = 0.1 + 0.0 * x
     # axes_0.fill_0 / fill_1：两个相互重叠的峰（A 在 4、B 在 6），B 后画、在上层
@@ -83,6 +83,22 @@ def main():
         band(ax3, x, bg + 0.5 * np.exp(-((x - c) / 0.3) ** 2), bg)
     ax3.set_xlim(0.0, 10.0)
     ax3.set_ylim(0.0, 1.0)
+
+    # axes_3.fill_0：U 形填充（凹口在中间），三角形裁剪的三个顶点都在 U 里、(5,6) 在凹口里
+    u = PolyCollection([[(0, 0), (10, 0), (10, 10), (7, 10), (7, 3), (3, 3), (3, 10), (0, 10)]],
+                       facecolors="tab:blue")
+    ax4.add_collection(u)
+    u.set_clip_path(PathPatch(Path([(1, 8), (9, 8), (5, 1), (1, 8)]), transform=ax4.transData))
+    ax4.set_xlim(0.0, 10.0)
+    ax4.set_ylim(0.0, 10.0)
+
+    # axes_4.fill_0：三块互相重叠的矩形，面积和 = 3x2 外包盒，但右上角 1x1 是空的
+    ov = PolyCollection([[(0, 0), (2, 0), (2, 1), (0, 1)], [(1, 0), (3, 0), (3, 1), (1, 1)],
+                         [(0, 1), (2, 1), (2, 2), (0, 2)]], facecolors="tab:orange")
+    ax5.add_collection(ov)
+    ov.set_clip_path(PathPatch(Path([(0, 0), (3, 0), (3, 2), (0, 2), (0, 0)]), transform=ax5.transData))
+    ax5.set_xlim(0.0, 4.0)
+    ax5.set_ylim(0.0, 4.0)
     fig.savefig("ClipFill.pdf")
 """
 
@@ -181,3 +197,18 @@ def test_many_clipped_bands_all_keep_their_geometry(manifest):
     assert len(fills) == 24
     missing = [e["gid"] for e in fills if "geometry" not in e]
     assert not missing, f"点数预算被色带吃光、退回 bbox：{missing}"
+
+
+def test_concave_fill_is_not_faked_as_the_clip_triangle(manifest):
+    geom = _el(manifest, "axes_3.fill_0")["geometry"]
+    pts = geom["paths"][0]["points"]
+    notch = _data_to_frac(manifest, "axes_3", 5.0, 6.0, xlim=(0, 10), ylim=(0, 10))
+    # 凹口里的点不在 U 形填充里；退回填充本身的路径后它不会落在几何里
+    assert not _in_polygon(notch, pts), "凹口（空的）被三角形裁剪路径冒充成了墨迹"
+
+
+def test_overlapping_tiles_with_a_hole_do_not_count_as_a_rect(manifest):
+    geom = _el(manifest, "axes_4.fill_0")["geometry"]
+    pts = geom["paths"][0]["points"]
+    hole = _data_to_frac(manifest, "axes_4", 2.5, 1.5, xlim=(0, 4), ylim=(0, 4))
+    assert not _in_polygon(hole, pts), "右上角的空洞被裁剪路径（整个 3x2 矩形）盖住了"
