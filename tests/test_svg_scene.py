@@ -21,6 +21,7 @@ CORPUS = Path(__file__).resolve().parent / "support" / "svg_corpus"
 # 纯函数层
 # ---------------------------------------------------------------------------
 
+
 def test_corpus_scene_inventory_is_stable_and_complete():
     data = (CORPUS / "line_two_series.svg").read_bytes()
     inv = scene_inventory(data)
@@ -91,6 +92,7 @@ def test_duplicate_ids_are_reported_not_guessed():
 # ---------------------------------------------------------------------------
 # 端点（会话认证内的只读盘点）
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
