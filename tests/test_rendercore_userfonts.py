@@ -560,3 +560,57 @@ def test_user_face_cache_is_bounded_and_evicts_least_recently_used(
     assert (refs[2].sha256, refs[2].face) in hp._user_records
     hp.user_face(refs[0])  # 再入场
     assert (refs[0].sha256, refs[0].face) in hp._user_records and len(hp._user_records) == 2
+
+
+def test_user_face_cache_holds_its_bounds_under_concurrent_requests(
+    provider, locator, tmp_path, monkeypatch
+):
+    """进程级单例被多线程并发问：超过上限的不同脸 + 反复问同一张，不抛错、张数始终 ≤ 上限、字节 ≤ 上限、
+    同一身份只有一份记录；被淘汰的脸别的线程手里还能用（淘汰只删缓存条目）。"""
+    import threading
+
+    from tavotto.rendercore import hbshaper
+
+    monkeypatch.setattr(hbshaper.HbFaceProvider, "USER_FACE_COUNT_CAP", 2)
+    names = ["DejaVu Sans", "DejaVu Serif", "DejaVu Sans Mono", "DejaVu Sans Bold"]
+    refs = []
+    for i, n in enumerate(dict.fromkeys(names)):
+        src = _mpl_font(n)
+        f = tmp_path / "cc" / f"F{i}.ttf"
+        f.parent.mkdir(exist_ok=True)
+        f.write_bytes(
+            src.read_bytes() + bytes([i])
+        )  # 不同字节 → 不同 sha（尾部多一字节不影响 sfnt 表）
+        locator.add_hint_dirs([f.parent])
+        refs.append(userfonts.FaceRef(f"F{i}", fonts.sha256_of(f), 0))
+    errors: list[BaseException] = []
+    violations: list[str] = []
+    held: list = []
+    cap = provider.USER_FACE_COUNT_CAP
+    barrier = threading.Barrier(8)
+
+    def work(n: int) -> None:
+        try:
+            barrier.wait()
+            for k in range(12):
+                r = refs[(n + k) % len(refs)] if k % 3 else refs[0]
+                face = provider.user_face(r)
+                held.append(face)
+                with provider._lock:
+                    if len(provider._user_records) > cap:
+                        violations.append(f"count {len(provider._user_records)}")
+                    if sum(len(x.data or b"") for x in provider._user_records.values()) > (
+                        provider.USER_FACE_BYTES_CAP
+                    ):
+                        violations.append("bytes")
+                face.shape("Hamburg")  # 被淘汰的脸仍可用
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    ts = [threading.Thread(target=work, args=(n,)) for n in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert errors == [] and violations == []
+    assert len(provider._user_records) <= cap
+    assert len(set(provider._user_records)) == len(provider._user_records)
+    assert set(provider._user_stat) <= set(provider._user_records)

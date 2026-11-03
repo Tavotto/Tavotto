@@ -19,6 +19,7 @@ RenderCore 的运行时依赖没装的机器上 `import tavotto.rendercore.hbsha
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -280,13 +281,19 @@ class HbFaceProvider:
         #: ——批准集合是闭集（ADR 0060），用户脸只在被某个对象的 `source_font` 点名时才登记进来
         self._user_records: dict[tuple[str, int], fonts.FaceRecord] = {}
         self._user_stat: dict[tuple[str, int], tuple[int, int]] = {}
+        #: 进程级单例（`facade.provider()`），Flask 多线程下预览与导出会并发进来：这把锁只护**字典操作**
+        #: （查 / 插 / 移到最新 / 淘汰 / 计字节）。读文件、算 sha256、解析 sfnt、建 `HbFace` 都在锁外
+        self._lock = threading.RLock()
 
     def _load(self, record: fonts.FaceRecord) -> HbFace:
-        face = self._faces.get(record.identity)
-        if face is None:
-            face = HbFace(record)
-            self._faces[record.identity] = face
-        return face
+        with self._lock:
+            face = self._faces.get(record.identity)
+        if face is not None:
+            return face
+        built = HbFace(record)  # 慢（解析字体）：锁外建
+        with self._lock:
+            # 别的线程可能已经插了同一身份：用已有的那份，丢掉自己的
+            return self._faces.setdefault(record.identity, built)
 
     def face_for(self, family: str, bold: bool, italic: bool) -> HbFace:
         return self._load(self.registry.record_for(family, bold, italic))
@@ -302,35 +309,42 @@ class HbFaceProvider:
         from . import userfonts
 
         key = (ref.sha256, ref.face)
-        rec = self._user_records.get(key)
+        with self._lock:
+            rec = self._user_records.get(key)
+            expect = self._user_stat.get(key)
         if rec is not None:
             # 进程里活得比文件久：登记之后文件被删 / 被换，下一次问就重新核（不拿旧记录嵌一张已经不是它的脸）
             try:
                 st = rec.path.stat()
-                fresh = (st.st_size, st.st_mtime_ns) == self._user_stat[key]
+                fresh = expect is not None and (st.st_size, st.st_mtime_ns) == expect
             except OSError:
                 fresh = False
             if not fresh:
-                self._user_records.pop(key, None)
-                self._faces.pop(rec.identity, None)
+                with self._lock:
+                    if self._user_records.get(key) is rec:
+                        self._user_records.pop(key, None)
+                        self._user_stat.pop(key, None)
+                        self._faces.pop(rec.identity, None)
                 rec = None
         if rec is None:
-            rec = userfonts.admit(ref)
-            st = rec.path.stat()
-            self._user_records[key] = rec
-            self._user_stat[key] = (st.st_size, st.st_mtime_ns)
-        else:
-            self._user_records[key] = self._user_records.pop(key)  # LRU：最近用的挪到队尾
-        self._evict_user_faces(keep=key)
+            new_rec = userfonts.admit(ref)  # 读文件 + sha256 + 解析：锁外
+            st = new_rec.path.stat()
+            with self._lock:
+                rec = self._user_records.setdefault(key, new_rec)  # 别的线程先插了就用它的
+                self._user_stat.setdefault(key, (st.st_size, st.st_mtime_ns))
+        with self._lock:
+            if key in self._user_records:
+                self._user_records[key] = self._user_records.pop(key)  # LRU：最近用的挪到队尾
+            self._evict_user_faces(keep=key)
         try:
             return self._load(rec)
         except fonts.FontsUnavailable as exc:
-            self._user_records.pop(key, None)
+            self._forget_user(key)
             raise userfonts.UserFontUnavailable("unsupported_format", str(exc)) from exc
         except CandidatePackagesMissing:
             raise
         except Exception as exc:  # noqa: BLE001 —— fontTools / HarfBuzz 对坏字体各有各的异常类型
-            self._user_records.pop(key, None)
+            self._forget_user(key)
             raise userfonts.UserFontUnavailable(
                 "unreadable", f"{type(exc).__name__}: {exc}"
             ) from exc
@@ -340,7 +354,14 @@ class HbFaceProvider:
     USER_FACE_BYTES_CAP = 384 * 1024 * 1024
     USER_FACE_COUNT_CAP = 32
 
+    def _forget_user(self, key: tuple[str, int]) -> None:
+        with self._lock:
+            self._user_records.pop(key, None)
+            self._user_stat.pop(key, None)
+
     def _evict_user_faces(self, keep: tuple[str, int]) -> None:
+        """调用方持锁。只删缓存条目，不关闭 / 释放任何东西：别的线程手里还拿着的 face 靠引用计数活到用完。"""
+
         def total() -> int:
             return sum(len(r.data or b"") for r in self._user_records.values())
 
@@ -357,7 +378,8 @@ class HbFaceProvider:
     def face_by_resource(self, resource: FontResource) -> HbFace:
         """IR 里的 `FontResource` → 脸。**按 sha256 找**，找到的脸身份必须与资源逐字相同——同名不同
         字体在这里被拒（RC-023）。用户脸（ADR 0164）同一条规则：只认已经 `user_face` 登记过的身份。"""
-        user = self._user_records.get((resource.sha256, resource.face_index))
+        with self._lock:
+            user = self._user_records.get((resource.sha256, resource.face_index))
         if user is not None:
             face = self._load(user)
             if face.resource != resource:
