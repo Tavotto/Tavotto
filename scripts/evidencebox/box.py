@@ -48,7 +48,9 @@ RUNS = ROOT / "runs"
 LOCK = ROOT / "lock"
 #: 批准字体的持久缓存（大陆到 raw.githubusercontent.com 很慢）。只是缓存：fetch_fonts 对目录里已有的每个文件
 #: 重核 allowlist 的 sha256，不符就删掉重下，所以缓存被改过也进不了镜像。
-FONT_CACHE = ROOT / "cache" / "fonts"
+CACHE = ROOT / "cache"  # 跨次保留的下载缓存；内容每次都按仓库里钉的 sha256 重核，不是信任边界
+FONT_CACHE = CACHE / "fonts"
+RESEARCH_CACHE = CACHE / "research-sources"
 
 BASE_IMAGE = os.environ.get("TAVOTTO_EVIDENCE_BASE", "python:3.13-bookworm")
 NOVICE_IMAGE = "ubuntu:24.04"
@@ -200,7 +202,7 @@ def prepare_argv(name: str, src: Path, base: str) -> list[str]:
     return [
         "docker", "run", "--name", name,
         "-v", f"{src}:/srcro:ro",
-        "-v", f"{FONT_CACHE}:/fontcache:rw",
+        "-v", f"{CACHE}:/boxcache:rw",
         *env_args({**NO_PHONE_HOME, "PIP_INDEX_URL": PIP_MIRROR, "PIP_DEFAULT_TIMEOUT": "30",
                    "PIP_RETRIES": "5", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}),
         base,
@@ -242,6 +244,7 @@ def build_image(sha: str, profile: str, script: str, *, base: str = BASE_IMAGE) 
         return tag
     src = checkout(sha)
     FONT_CACHE.mkdir(parents=True, exist_ok=True)
+    RESEARCH_CACHE.mkdir(parents=True, exist_ok=True)
     name = f"tavotto-evidence-prep-{sha[:12]}-{profile}".replace("_", "-")
     sh(["docker", "rm", "-f", name], check=False, capture=True)
     full = "\n".join(
@@ -252,12 +255,12 @@ def build_image(sha: str, profile: str, script: str, *, base: str = BASE_IMAGE) 
             "mkdir -p /work && cp -a /srcro /work/src && cd /work/src",
             # 字体缓存：先放进去（fetch_fonts 逐个重核 sha256），装完再存回来
             "mkdir -p src/tavotto/resources/fonts build/fonts-cache",
-            "cp -a /fontcache/fonts/. src/tavotto/resources/fonts/ 2>/dev/null || true",
-            "cp -a /fontcache/archives/. build/fonts-cache/ 2>/dev/null || true",
+            "cp -a /boxcache/fonts/fonts/. src/tavotto/resources/fonts/ 2>/dev/null || true",
+            "cp -a /boxcache/fonts/archives/. build/fonts-cache/ 2>/dev/null || true",
             script,
-            "mkdir -p /fontcache/fonts /fontcache/archives",
-            "cp -a src/tavotto/resources/fonts/. /fontcache/fonts/ 2>/dev/null || true",
-            "cp -a build/fonts-cache/. /fontcache/archives/ 2>/dev/null || true",
+            "mkdir -p /boxcache/fonts/fonts /boxcache/fonts/archives",
+            "cp -a src/tavotto/resources/fonts/. /boxcache/fonts/fonts/ 2>/dev/null || true",
+            "cp -a build/fonts-cache/. /boxcache/fonts/archives/ 2>/dev/null || true",
             # 执行身份要能读源码树，但不能改它
             "chmod -R a+rX /work",
         ]
@@ -296,7 +299,15 @@ def research_prepare(case: str, tex: bool, source_package: bool) -> str:
     """与 compat-research-s0.yml 的 baseline job 同一组步骤：两个解释器、钉版本、原样的科研依赖。"""
     lines = [
         "export TAVOTTO_RESEARCH_CACHE=/work/research-sources",
-        f"python scripts/ci/compat_guardian_research.py fetch --case {case}",
+        # 上游源码从 raw.githubusercontent 取，大陆常被重置：先放进上次存下的（fetch 逐个重核
+        # sha256，对不上就报错），断了重试三次，取到就立刻存回，后面的步骤失败也不白下
+        "mkdir -p /work/research-sources",
+        "cp -a /boxcache/research-sources/. /work/research-sources/ 2>/dev/null || true",
+        "for i in 1 2 3; do"
+        f" python scripts/ci/compat_guardian_research.py fetch --case {case} && break;"
+        ' [ "$i" = 3 ] && exit 1; sleep 30; done',
+        "mkdir -p /boxcache/research-sources",
+        "cp -a /work/research-sources/. /boxcache/research-sources/",
         "python -m venv /work/tavotto-venv",
         "python scripts/ci/runtime_pins.py --format lines > /work/tavotto-constraints.txt",
         "/work/tavotto-venv/bin/python -m pip install -q -c /work/tavotto-constraints.txt -e '.[dev,ci]'",

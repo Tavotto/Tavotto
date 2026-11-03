@@ -56,6 +56,8 @@ scp -r tavotto-evidence-box:/srv/tavotto-evidence/runs/<run> ~/TavottoEvidence/
 - `raw.githubusercontent.com` 取字体会卡住不动：`/srv/tavotto-evidence/cache/fonts/` 是批准字体的持久缓存，
   每次准备先放进去、装完存回来；fetch_fonts 对每个文件重核 sha256，缓存被改过也进不了镜像。
   新机器上第一次可以从维护者本机 `scp` 一份已过 `fetch_fonts.py --check` 的字体进去。
+- S0 的上游源码同样走 raw.githubusercontent：`cache/research-sources/` 是持久缓存，准备时先放进去、
+  `fetch` 断了重试三次、取到立刻存回；`fetch` 逐个重核 cohort 里钉的 sha256，对不上就报错。
 
 ## 首轮实测（2026-11-03，main 348c9af96）
 
@@ -64,3 +66,4 @@ scp -r tavotto-evidence-box:/srv/tavotto-evidence/runs/<run> ~/TavottoEvidence/
 | guardian-suites | 准备 856 s（镜像 3.28 GB）；执行 2 分 24 秒：engine 6/6 passed（退出 0）、V2 退出 4，两份报告 `validate` 通过 |
 | guardian-explore（3 片、各 300 s 冒烟） | 每片执行约 20 个候选、各有差异（退出 1）；三片合并 triage：5 个簇、无新的可复现家族 |
 | novice-u2404 | README 原样 pipx 15 分钟超时；镜像 192 s 装好；README 两条 Codex 命令、`tavotto codex install` / `doctor` 全过；插件 MCP 列出 10 个工具 |
+| 第一轮 nightly（2026-11-04 02:56 CST 手动起，main 87c340c37） | guardian-suites 退出 0（2 分 24 秒）；guardian-explore 3 片各退出 1、合并 279 条发现 / 40 簇、无 unknown；第 1 片 364 个候选（62 有差异 / 263 无差异 / 39 只做静态）跑完池子就停，用时 1 小时 14 分、没用满 3 h；research-s0 准备时 `fetch` 被 raw.githubusercontent 重置连接 → 加上述缓存与重试 |
