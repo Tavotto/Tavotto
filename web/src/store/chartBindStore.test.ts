@@ -112,7 +112,8 @@ describe('chartBindStore', () => {
     expect(s.result).toEqual(CHART)
     expect(s.previewSvg).toBe('<svg/>')
     // 证据按表单透传（判据在后端，这里只看形状）
-    expect(vi.mocked(chartBind).mock.calls[0]?.[0].x.scale).toBe('linear')
+    const bindCall = vi.mocked(chartBind).mock.calls[0]?.[0]
+    expect(bindCall?.x.scale).toBe('linear')
   })
 
   it('bind errors keep the wizard open with the code', async () => {
