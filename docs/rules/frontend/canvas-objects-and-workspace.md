@@ -43,7 +43,9 @@ order: 210
   ObjectView memo，切换标签 = 纯 CSS 显隐，不重建 DOM / 不重新解码图片。
 - **标注**：任意角度 `rotationDeg`（面板除外；导出经 RenderCore 的 `Group.transform`
   绕中心旋转，CSS 顺时针在 PDF y 向上空间里是负角——`rendercore/plan.py` 的换算与
-  旋转方向看护用例）；形状
+  旋转方向看护用例）。`rotationDeg` 落盘一律 `geometry.normalizeRotationDeg`（(-180, 180]、回 0 删字段）；
+  文字标注选中时选框顶上有旋转柄（`rotateDrag.ts`，⇧ 吸 15°，ADR 0163）；对齐 / 分布 / 间距 / 拖动吸附 /
+  多选联合框一律取 `visualBounds`（转出来的外接框），写回只平移 x / y，别回去拿未旋转盒；形状
   triangle/diamond/polygon/brace + 圆角/
   虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段
   兼容推导）；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**

@@ -5965,6 +5965,7 @@ export default interface Resources {
       "restoreNativeSize": "恢复原始尺寸",
       "restoreStyle": "恢复原样并解除样式跟随",
       "rotate": "旋转 {{deg}}°",
+      "rotateObjects": "旋转对象",
       "rotateReset": "取消旋转",
       "scaleLegend": "缩放图例",
       "scriptWinsOverStyle": "脚本改动优先于样式",

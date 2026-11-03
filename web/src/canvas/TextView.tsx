@@ -130,6 +130,7 @@ export function TextView({
       // （历史：plaintext contentEditable 时代留下的野节点会让正文显示两遍）。
       key={editing ? 'editing' : 'static'}
       ref={ref}
+      data-text-body
       spellCheck={false}
       onPointerDown={editing ? (e) => e.stopPropagation() : undefined}
       className={cn(
