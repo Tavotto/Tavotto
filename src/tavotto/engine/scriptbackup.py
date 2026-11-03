@@ -198,9 +198,7 @@ def _run_git_bounded(args: list[str], timeout: float = _GIT_TIMEOUT_S) -> tuple[
     env["GIT_ASKPASS"] = ""
     env["GIT_PAGER"] = "cat"
     kwargs: dict = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = CREATE_NO_WINDOW  # GUI 拥有的子进程：Windows 上不闪控制台窗
-    else:
+    if os.name != "nt":
         kwargs["start_new_session"] = True  # 自成进程组，超时可整组杀
     try:
         with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
@@ -210,6 +208,7 @@ def _run_git_bounded(args: list[str], timeout: float = _GIT_TIMEOUT_S) -> tuple[
                 stdout=out_f,
                 stderr=err_f,
                 env=env,
+                creationflags=CREATE_NO_WINDOW,  # GUI 拥有的子进程：Windows 上不闪控制台窗（非 Windows 恒为 0）
                 **kwargs,
             )
             job = None

@@ -12,7 +12,6 @@ Windows 上它会真的终止进程），不按名字杀。
 from __future__ import annotations
 
 import os
-import stat
 import subprocess
 import sys
 import time
@@ -20,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from support import procprobe
 from tavotto.engine import scriptbackup
 
 _IS_NT = os.name == "nt"
@@ -30,31 +30,6 @@ _SPAWN_SLEEPER = (
 )
 
 
-def _pid_alive(pid: int) -> bool:
-    if _IS_NT:
-        import ctypes
-
-        k32 = ctypes.windll.kernel32
-        k32.OpenProcess.restype = ctypes.c_void_p
-        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not h:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            if not k32.GetExitCodeProcess(ctypes.c_void_p(h), ctypes.byref(code)):
-                return False
-            return code.value == 259  # STILL_ACTIVE
-        finally:
-            k32.CloseHandle(ctypes.c_void_p(h))
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def _read_pids(path: Path) -> list[int]:
     return [int(x) for x in path.read_text().split()]
 
@@ -63,7 +38,7 @@ def _assert_all_gone(pids: list[int], grace: float = 8.0) -> None:
     deadline = time.monotonic() + grace
     alive = list(pids)
     while alive and time.monotonic() < deadline:
-        alive = [p for p in alive if _pid_alive(p)]
+        alive = [p for p in alive if procprobe.alive(p)]
         if alive:
             time.sleep(0.1)
     if alive:  # 万一没清掉，别把睡眠进程留在机器上（只杀自己登记的 PID）
@@ -87,7 +62,7 @@ def _fake_git(tmp_path: Path, body: str, name: str = "bin") -> Path:
         return exe
     exe = bindir / "git"
     exe.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
-    exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    exe.chmod(0o755)
     return bindir
 
 
