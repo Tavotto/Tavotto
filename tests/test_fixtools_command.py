@@ -1146,6 +1146,9 @@ def _fake_frozen_exe(tmp_path: Path) -> str:
     return str(exe)
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="sandbox-exec / bwrap 只在 POSIX；Windows 没有 /usr/bin/true"
+)
 @pytest.mark.parametrize("module", ["trial", "cmdsandbox"])
 def test_frozen_probe_never_runs_dash_c_on_the_app_executable(box, monkeypatch, module):
     from tavotto.engine import runtime
