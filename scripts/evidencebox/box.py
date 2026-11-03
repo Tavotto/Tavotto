@@ -35,6 +35,11 @@ import sys
 import time
 from pathlib import Path
 
+# 中文报文全在 stderr：流被重定向（cron、SSH 管道）时别退回区域编码
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_URL = "https://github.com/Tavotto/Tavotto.git"
 ROOT = Path(os.environ.get("TAVOTTO_EVIDENCE_ROOT", "/srv/tavotto-evidence"))
 CONTROL = ROOT / "control"  # 控制检出：blobless 全历史，只用来判可达性与导出源码
