@@ -627,6 +627,13 @@ _lock = threading.Lock()
 ACQUIRE_SEGMENTS = (
     "resolve_python_ms",  # 解析项目该用的解释器（含构造函数里的那一次）
     "env_decide_ms",  # 首开环境决定 / 体检（ENVIRONMENT_DECIDERS）
+    # 下面五段是 `resolve_python_ms` / `env_decide_ms` 里面的**子段**（嵌套，不可与父段相加；并发探测时它们互相重叠），
+    # 只在真起了那个探测（缓存未命中）时才有键：拆首开那 1~2 秒花在哪个子进程上。
+    "probe_matplotlib_ms",  # 解释器体检 `import matplotlib`（`_has_matplotlib`）
+    "probe_facts_ms",  # 目标环境事实探测（`depplan.target_facts`）
+    "probe_base_python_ms",  # 基础解释器探测（`import venv`，`managedenv.base_python`）
+    "probe_login_shell_ms",  # 问用户登录 shell 的 python（macOS / Linux）
+    "probe_user_envs_ms",  # 用户环境发现整体（含 Conda / pyenv / Windows 注册表；登录 shell 命中预取缓存后只剩其余部分）
     "launcher_prewarm_ms",  # Conda 激活捕获（锁外）
     "watch_sync_ms",  # 新会话前的项目监视同步（COLD_ACQUIRE_OBSERVER）
     "retire_wait_ms",  # 等旧会话确认关闭
@@ -653,6 +660,61 @@ def _seg(name: str):
         yield
     finally:
         cur[name] = cur.get(name, 0.0) + (time.perf_counter() - t0) * 1000
+
+
+segment = _seg  # 给别的模块（deprepair）在自己的探测外面记子段用；不在 acquire 里什么都不做
+
+
+def _timed_probe(name: str):
+    """装饰器：函数每次被调用都把耗时记进子段 `name`（调用方保证只在真探测时才调它）。"""
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with _seg(name):
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return deco
+
+
+def run_probes_concurrently(*thunks):
+    """并发跑若干互不依赖的探测，回各自结果（按传入顺序）。**结果与异常和依次串行跑逐项对得上**：
+
+    * 全部跑完才返回 / 抛出；多个失败时抛**传入顺序里最靠前**的那个（串行时它先出，后面的根本不会跑）；
+    * 第一个探测在调用线程里跑，其余各起一条守护线程，并带上调用线程的取会话分段表（子段照常记）；
+    * 以下情况退回串行、不起任何线程：只有一个探测；池锁正被持着（不在持锁时起线程去等可能要它的东西）；
+      调用线程在 `launcher.no_capture()` 里（该标记是线程局部的，新线程继承不了）；
+    * 每个探测各自的超时预算不变，总耗时 ≈ 最长的那个而不是总和。
+    调用方负责只在「缓存未命中、真要探」时才调用：命中缓存的热路径一行都不多跑。"""
+    if len(thunks) < 2 or _lock.locked() or getattr(launcher_mod._no_capture, "on", False):
+        return tuple(t() for t in thunks)
+    cur = getattr(_TRACE, "cur", None)
+    results: list = [None] * len(thunks)
+    errors: list = [None] * len(thunks)
+
+    def run(i: int, inherit: bool) -> None:
+        if inherit:
+            _TRACE.cur = cur
+        try:
+            results[i] = thunks[i]()
+        except BaseException as exc:  # noqa: BLE001 — 原样带回调用线程按顺序抛
+            errors[i] = exc
+
+    threads = [
+        threading.Thread(target=run, args=(i, True), daemon=True, name="tavotto-probe")
+        for i in range(1, len(thunks))
+    ]
+    for t in threads:
+        t.start()
+    run(0, False)
+    for t in threads:
+        t.join()
+    for exc in errors:
+        if exc is not None:
+            raise exc
+    return tuple(results)
 
 
 @contextlib.contextmanager
@@ -2002,6 +2064,7 @@ def worker_env(python: str, source: str, *, base: dict | None = None) -> dict | 
 _HAS_MPL_BUDGET_S = 30.0
 
 
+@_timed_probe("probe_matplotlib_ms")
 def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """真去 import 一次。manifest 说装了不算数——DLL 缺失、被杀毒软件隔离了
     某个 .pyd，都是「文件在但 import 不了」。
@@ -4641,6 +4704,32 @@ def _resolve_for_worker(
     return resolve_worker_python(figures_dir, script=script_name)
 
 
+#: 解析解释器时可以并发预热的探测提供者：`fn(figures_dir, script) -> thunk | None`。thunk 只许往缓存里填、
+#: 吞掉自己的失败（它是投机的，真正的调用方之后会照常重来一遍并抛自己的错）。`_acquire` 在「解析解释器」
+#: 那一段把它们和解析并发跑，使解析里的 `import matplotlib` 体检与随后环境决定要量的事实探测重叠起来。
+ENVIRONMENT_PREFETCHERS: list = []
+
+
+def register_environment_prefetch(fn) -> None:
+    if fn not in ENVIRONMENT_PREFETCHERS:
+        ENVIRONMENT_PREFETCHERS.append(fn)
+
+
+def likely_worker_python(figures_dir: str | Path) -> str:
+    """解析大概率会落到哪条解释器（**纯读，不起进程**；猜错只是白预热一份缓存）：项目 / 全局已定下的，
+    否则默认链条里第一条存在的候选。没有回空串。"""
+    try:
+        got = peek_worker_python(figures_dir)
+        if got:
+            return got[0]
+        for cand, _source in _prioritized_candidates():
+            if Path(cand).exists():
+                return cand
+    except (OSError, WorkerError):
+        pass
+    return ""
+
+
 #: 「这个项目此刻的环境决定是纯空操作」的只读判据：`(figures_dir, script_name) -> bool`，只读设置与 `stat`，
 #: 不起子进程、不写记录。今天只有 `deprepair.environment_decision_is_noop`。没人登记 = 不是空操作（预热不做）。
 ENVIRONMENT_NOOP_CHECKS: list = []
@@ -4660,6 +4749,14 @@ def environment_decision_is_noop(figures_dir: str | Path, script_name: str) -> b
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
         ENVIRONMENT_DECIDERS.append(decider)
+
+
+def _workdir_needs_confirmation(figures_dir: str, script_name: str) -> bool:
+    """`_workdir_gate` 的只读版：此刻会不会要用户确认。读不了证据按「要问」算——投机宁可不做。"""
+    try:
+        return bool(workdir.decision_for(figures_dir, script_name)["needs_confirmation"])
+    except Exception:  # noqa: BLE001 —— 只用来决定投不投机，失败就不投机
+        return True
 
 
 def _workdir_gate(figures_dir: str, script_name: str) -> None:
@@ -5116,13 +5213,29 @@ def _acquire(
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         decided = not ENVIRONMENT_DECIDERS or pin is not None
+        prefetch: list = []
+        # 后台预热（`PURPOSE_PREWARM`，ADR 0160 §6）不投机：预热只在环境决定是空操作时放行，而这里的事实探测会起
+        # 子进程——跑在下面那道「决定前先问空操作」的硬挡**之前**，放进来就绕过了它。
+        if not decided and ENVIRONMENT_PREFETCHERS and current_purpose() != PURPOSE_PREWARM:
+            _w0 = _workers.get(key)  # 已有活会话：多半能复用、用不着决定，不投机
+            # 工作目录那道门（`_workdir_gate`，ADR 0057 §三）要问时一个进程都不许起：预取在门**之前**，这里只读
+            # 判一次，要问就不投机；真正的报错仍由下面原来的顺序抛出。
+            if (_w0 is None or not _w0.alive()) and not _workdir_needs_confirmation(
+                figures_dir, script_name
+            ):
+                prefetch = [
+                    t for t in (f(figures_dir, script_name) for f in ENVIRONMENT_PREFETCHERS) if t
+                ]
         try:
             with _seg("resolve_python_ms"):
-                want_python = (
-                    pin.python
-                    if pin is not None
-                    else resolve_worker_python(figures_dir, script=script_name)[0]
-                )
+                if pin is not None:
+                    want_python = pin.python
+                elif prefetch:
+                    want_python = run_probes_concurrently(
+                        lambda: resolve_worker_python(figures_dir, script=script_name)[0], *prefetch
+                    )[0]
+                else:
+                    want_python = resolve_worker_python(figures_dir, script=script_name)[0]
         except WorkerError as exc:
             # 默认链条里没有任何能跑的解释器（`no_worker_python`）时，项目 venv / 别处发现的用户环境也许能跑：
             # 检测要先于「第一次解析失败」之后的一切（Codex #820 r4221391630），否则只经池的入口（渲染已有素材、

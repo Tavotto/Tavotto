@@ -478,6 +478,17 @@ _facts_lock = threading.Lock()
 _facts_cache: dict[str, TargetFacts] = {}
 
 
+def _facts_key(python: str, ctx: str) -> str:
+    # 启动上下文分区：裸起量到的事实不能在 Conda 激活下复用（反之亦然）
+    return f"{_key(python)}|{ctx}"
+
+
+def facts_cached(python: str) -> bool:
+    """`target_facts(python)` 会不会直接命中缓存（纯读，不起进程）。调用方据此决定要不要为它并发预取。"""
+    with _facts_lock:
+        return _facts_key(python, launcher.context_key(python)) in _facts_cache
+
+
 def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     """在目标解释器里量一次事实；起不来回 None（调用方据此 `blocked`）。
 
@@ -485,9 +496,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     环境被改动（装完包 / 换代）时调 `reset_cache(python)`——`deprepair` 在事务结束时做。
     """
     ctx = launcher.context_key(python)
-    key = (
-        f"{_key(python)}|{ctx}"  # 启动上下文分区：裸起量到的事实不能在 Conda 激活下复用（反之亦然）
-    )
+    key = _facts_key(python, ctx)
     if use_cache:
         with _facts_lock:
             hit = _facts_cache.get(key)

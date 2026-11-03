@@ -570,3 +570,26 @@ def test_render_api_does_not_accept_the_internal_prewarm_purpose(client, tmp_pat
         "/api/engine/render", json={"id": "p1.pdf", "patches": [], "purpose": "prewarm"}
     )
     assert res.status_code == 400
+
+
+def test_prewarm_does_not_start_speculative_environment_prefetch(
+    decider_world, monkeypatch, tmp_path
+):
+    """解析解释器那段的投机事实预热（`ENVIRONMENT_PREFETCHERS`）会起子进程，而且跑在「决定前先问空操作」的硬挡
+    **之前**：预热意图下一个都不许启动；前台照旧启动（与 import matplotlib 体检重叠，省首开时间）。"""
+    calls, _state = decider_world
+    started = []
+
+    def prefetcher(figures_dir, script_name):
+        return lambda: started.append(script_name)
+
+    monkeypatch.setattr(pool, "ENVIRONMENT_PREFETCHERS", [prefetcher])
+    with pool.acquire_purpose(pool.PURPOSE_PREWARM):
+        with pytest.raises(pool.WorkerError):
+            pool.acquire("f0.py", str(tmp_path), "main")
+    assert started == []
+
+    with pytest.raises(_Reached):
+        pool.acquire("f0.py", str(tmp_path), "main")
+    # 前台照常投机（`_acquire` 窥视后补决定可能走第二遍；真预热函数对已缓存的事实回 None，不会重复起进程）
+    assert started and set(started) == {"f0.py"}
