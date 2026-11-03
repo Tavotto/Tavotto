@@ -148,24 +148,106 @@ def resolve(root: str | os.PathLike, script: str) -> Path:
     return real
 
 
-def git_state(path: Path) -> dict | None:
-    """脚本受不受 git 管、有没有未提交的修改（只读探测，带超时）；没有 git / 不在仓库里回 None。"""
+_GIT_TIMEOUT_S = 3.0
+
+
+def _kill_tree(proc: subprocess.Popen, job=None) -> None:
+    """只杀自己起的 git 及其子孙：POSIX 用它自己的进程组；Windows 用 Job Object（`TerminateJobObject`）。
+
+    Windows 不靠 `taskkill /T`：它顺父进程 PID 链找后代，venv 启动器 → 真解释器 → 孙进程这类链一断就漏；
+    Job 成员关系由内核维护，与父子链无关。没有 Job（建不起来）才退到 `taskkill /T`。
+    """
     try:
-        out = subprocess.run(
-            ["git", "-C", str(path.parent), "status", "--porcelain", "--", path.name],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=3,
-            check=False,
-            creationflags=CREATE_NO_WINDOW,  # GUI 拥有的子进程：Windows 上不闪控制台窗
-        )
+        if os.name == "nt":
+            if job is not None:
+                job.kill()
+            else:
+                subprocess.run(  # noqa: S603, S607 — 固定 argv，pid 是自己 Popen 出来的
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                    check=False,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+        else:
+            import signal
+
+            os.killpg(proc.pid, signal.SIGKILL)
     except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _run_git_bounded(args: list[str], timeout: float = _GIT_TIMEOUT_S) -> tuple[int, str] | None:
+    """跑一条只读 git，**无论如何**在 ~timeout 内返回；超时 / 起不来 / 出错回 None。
+
+    `subprocess.run(timeout=)` 超时后 kill 了直接子进程，却还会 `communicate()` 等管道读到 EOF——孙进程
+    （credential helper / fsmonitor 守护 / 代理）握着管道不放就永远等下去（QA-WIN-25）。这里
+    stdout/stderr 写到临时文件、stdin 给 DEVNULL，只 `wait(timeout)` 直接子进程，没有管道可等。
+    """
+    import tempfile
+
+    env = dict(os.environ)
+    env["GIT_OPTIONAL_LOCKS"] = "0"  # status 不去刷新 index（不写、不抢锁）
+    env["GIT_TERMINAL_PROMPT"] = "0"  # 任何凭据 / 确认提示直接失败，不等终端
+    env["GIT_ASKPASS"] = ""
+    env["GIT_PAGER"] = "cat"
+    kwargs: dict = {}
+    if os.name != "nt":
+        kwargs["start_new_session"] = True  # 自成进程组，超时可整组杀
+    try:
+        with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
+            proc = subprocess.Popen(  # noqa: S603, S607 — argv 是列表，shell=False
+                ["git", "-c", "core.fsmonitor=false", *args],
+                stdin=subprocess.DEVNULL,
+                stdout=out_f,
+                stderr=err_f,
+                env=env,
+                creationflags=CREATE_NO_WINDOW,  # GUI 拥有的子进程：Windows 上不闪控制台窗（非 Windows 恒为 0）
+                **kwargs,
+            )
+            job = None
+            if os.name == "nt":
+                try:
+                    from tavotto.engine import desktopproc
+
+                    # 复用桌面进程所有者的 Job 封装（KILL_ON_JOB_CLOSE）；起进程到入 Job 之间的瞬间窗口与它相同
+                    job = desktopproc._windows_job_for(proc)  # noqa: SLF001
+                except Exception:  # noqa: BLE001 — 退到 taskkill /T
+                    job = None
+            try:
+                try:
+                    code = proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    _kill_tree(proc, job)
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass  # 杀不掉也不等：预览照常出
+                    return None
+            finally:
+                if job is not None:
+                    job.close()  # KILL_ON_JOB_CLOSE：正常退出后遗留的后台孙进程也一并收掉
+            out_f.seek(0)
+            return code, out_f.read().decode("utf-8", errors="replace")
+    except (OSError, ValueError):
         return None
-    if out.returncode != 0:
+
+
+def git_state(path: Path) -> dict | None:
+    """脚本受不受 git 管、有没有未提交的修改（只读探测，**有界**）；没有 git / 不在仓库里 / 超时回 None。"""
+    res = _run_git_bounded(["-C", str(path.parent), "status", "--porcelain", "--", path.name])
+    if res is None:
         return None
-    line = out.stdout.strip()
+    returncode, stdout = res
+    if returncode != 0:
+        return None
+    line = stdout.strip()
     if line.startswith("??"):
         return {"tracked": False, "dirty": True}
     return {"tracked": True, "dirty": bool(line)}

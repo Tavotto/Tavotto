@@ -765,6 +765,7 @@
     "rewriteChecksums": "{{files}} in the same folder records this script's checksum; it won't match after the change.",
     "rewriteConfirm": "I've reviewed the changes above and understand this modifies my script",
     "rewriteBack": "Back",
+    "rewritePreviewTimeout": "Building the preview took too long and was stopped. The script was not changed; you can try again.",
     "rewriteApply": "Modify script",
     "scriptEditNotDurable": "{{script}} was rewritten, but the disk did not confirm the write (a power loss could undo it). The script is now in its edited state; keep a copy to be safe.",
     "rewriteDone": "Changed the data paths in “{{script}}” and running it again. You can restore the original in Settings → Environment diagnostics.",

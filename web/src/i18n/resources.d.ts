@@ -3749,6 +3749,7 @@ export default interface Resources {
       "rewriteGitDirty": "这个脚本受 git 管理，且有未提交的修改。也可以用 git 恢复。",
       "rewriteGitUntracked": "这个脚本在 git 仓库里，但没有被 git 跟踪。",
       "rewriteLine": "第 {{line}} 行",
+      "rewritePreviewTimeout": "生成预览用了太久，已停止。脚本没有改动，可以再试一次。",
       "rewriteSkip": {
         "concatenated": "路径由几段字符串接在一起，不会自动改",
         "context": "这里不是在当路径用（字典键、比较、存图的输出……）",

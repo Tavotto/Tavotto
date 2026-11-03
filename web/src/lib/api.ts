@@ -5640,11 +5640,13 @@ export const previewInputPathEdit = (
   entry: string,
   chosen: string,
   chosenKind: 'file' | 'dir' | 'auto',
+  signal?: AbortSignal,
 ) =>
   jsonFetch<ScriptEditPreview>('/api/script-edit/input-path/preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ script, entry, chosen, chosen_kind: chosenKind }),
+    signal,
   })
 
 /** 用户勾选确认之后：两处备份 → 原子替换（令牌只在这个窗口的会话里有效） */
