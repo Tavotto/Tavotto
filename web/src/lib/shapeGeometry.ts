@@ -1,4 +1,5 @@
-import type { DashStyle, ShapeKind } from '@/types/document'
+import type { ArrowObject, DashStyle, ShapeKind } from '@/types/document'
+import { arrowHeads } from '@/types/document'
 
 /** 正 N 边形顶点（内切于包围盒，顶点朝上）；与后端 _polygon_points 同一公式 */
 export function polygonPoints(
@@ -145,4 +146,69 @@ export const HIT_PX = 8
  */
 export function hitStrokeWidth(strokeW: number, zoom: number, minWidth = 0): number {
   return Math.max(strokeW, HIT_PX / Math.max(zoom, 0.01), minWidth)
+}
+
+type Pt = { x: number; y: number }
+
+/** 箭头的一个端型的几何：triangle = 实心多边形点串；open / bar = 描边路径 */
+export type ArrowHeadShape =
+  | { kind: 'triangle'; points: string }
+  | { kind: 'open' | 'bar'; d: string }
+
+/**
+ * 箭头的真实几何（**ArrowView 与导出预览 `CanvasThumb` 的箭头共用的唯一出处**）。
+ * 与后端 _draw_arrow 一一对应：帽长 4×线宽、帽半宽 1.7×线宽、仅 triangle 端回缩 0.75×帽长。
+ * `w` / `h` 是包围盒、`sw` 是线宽，三者同单位（画布传世界 px，预览传页面 mm）；结果在包围盒左上角为原点的坐标里。
+ */
+export function arrowGeometry(
+  obj: Pick<ArrowObject, 'start' | 'end' | 'head' | 'headStart' | 'headEnd'>,
+  w: number,
+  h: number,
+  sw: number,
+): { a: Pt; b: Pt; p1: Pt; p2: Pt; headLen: number; headHalf: number; startHead: ArrowHeadShape | null; endHead: ArrowHeadShape | null } {
+  const a = { x: obj.start.rx * w, y: obj.start.ry * h }
+  const b = { x: obj.end.rx * w, y: obj.end.ry * h }
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const nx = -uy
+  const ny = ux
+  const headLen = sw * 4
+  const headHalf = sw * 1.7
+  const heads = arrowHeads(obj as ArrowObject)
+
+  const headOf = (kind: string, tip: Pt, sign: 1 | -1): ArrowHeadShape | null => {
+    const bx = tip.x - sign * ux * headLen
+    const by = tip.y - sign * uy * headLen
+    if (kind === 'triangle') {
+      return {
+        kind,
+        points: `${tip.x},${tip.y} ${bx + nx * headHalf},${by + ny * headHalf} ${bx - nx * headHalf},${by - ny * headHalf}`,
+      }
+    }
+    if (kind === 'open') {
+      return {
+        kind,
+        d: `M ${bx + nx * headHalf},${by + ny * headHalf} L ${tip.x},${tip.y} L ${bx - nx * headHalf},${by - ny * headHalf}`,
+      }
+    }
+    if (kind === 'bar') {
+      return { kind, d: `M ${tip.x + nx * headHalf},${tip.y + ny * headHalf} L ${tip.x - nx * headHalf},${tip.y - ny * headHalf}` }
+    }
+    return null
+  }
+
+  // 仅实心三角端回缩线段（其余端型线到尖）
+  const trim = headLen * 0.75
+  const p1 = {
+    x: a.x + (heads.start === 'triangle' ? ux * trim : 0),
+    y: a.y + (heads.start === 'triangle' ? uy * trim : 0),
+  }
+  const p2 = {
+    x: b.x - (heads.end === 'triangle' ? ux * trim : 0),
+    y: b.y - (heads.end === 'triangle' ? uy * trim : 0),
+  }
+  return { a, b, p1, p2, headLen, headHalf, startHead: headOf(heads.start, a, -1), endHead: headOf(heads.end, b, 1) }
 }
