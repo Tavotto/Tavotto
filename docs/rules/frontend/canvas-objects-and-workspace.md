@@ -19,6 +19,10 @@ order: 210
   readText/writeText，跨标签页粘贴只有这条路全浏览器通。keydown 层不再拦
   ⌘C/⌘V；按钮触发的复制仍走 writeText（点击是用户手势）。e2e
   cross-tab-paste.spec.ts 看护。
+  **图内编辑里选着元素时 ⌘C 复制的是元素**（`handleCopyEvent` → `buildElementClipPayload`，ADR 0163）：文字元素换算成与原文字页面上重合的
+  `TextObject`（`lib/figureTextCopy.ts`，字号走 `pagePtLens`、几何只认权威 manifest）写进**同一份**对象负载，⌘V / 菜单粘贴走既有的
+  `consumePayload` → `materializePaste`（同画布错开 `DUPLICATE_OFFSET_MM`，与 ⌘D 共用）；不能复制的元素（曲线、色块、刻度组）也消费这次复制、
+  只出顶栏胶囊「{元素名}还不能复制」。在图内编辑里粘贴后退出图内编辑、选中新标注。看护 `lib/figureTextClipboard.test.tsx`。
 - **默认画布名只有一个生成器** `types/document.defaultCanvasName(n)`（「Figure N」，
   2026-09-06 审计 T05）：空文档的第一张、新建、教程项目全走它。此前空文档叫
   「Fig 1」、新建的叫「Fig 2」、教程里的叫「Figure 1」，三种写法混在一行标签里。

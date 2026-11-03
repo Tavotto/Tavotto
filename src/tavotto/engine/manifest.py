@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import colors as mcolors, font_manager, text as mtext
+from matplotlib import cbook as mcbook, colors as mcolors, font_manager, text as mtext
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import (
@@ -41,7 +41,7 @@ from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
-from matplotlib.transforms import Bbox
+from matplotlib.transforms import Bbox, IdentityTransform
 
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
@@ -1505,6 +1505,81 @@ def face_sources(text: str, families, file=None, props=None) -> dict:
                     out["cjk_src"] = cjk
             break
     return out
+
+
+def text_block(t, renderer, W: float, H: float) -> dict | None:
+    """这段文字排出来的**块**（figure 分数）：「复制为画布文字标注」据此把标注摆到原文字的位置上（ADR 0163）。
+
+    * `center`：文字块（未转时的矩形；转了就是转后外接框——矩形的外接框与它同心）的中心 `[x, y]`，y 向下；
+      只取**文字自己**（Annotation 的 `get_window_extent` 会并上箭头，这里绕过）。
+    * `w`：块宽（图宽分数，沿阅读方向）；`h`：块高（图高分数，含最后一行的下行）；
+    * `asc`：块顶到**第一行基线**的距离（图高分数）——标注的第一行基线要落在同一处，量不出基线靠它；
+    * `step`：多行时相邻基线的平均间距（图高分数）；单行缺席。
+
+    只用 matplotlib 的**公开 API**：用同一份字体属性、行距、数学解析起几个探针 `Text`（转角 0、左 / 基线对齐、
+    原点处），量它们的外接框——`_get_layout` 的返回形状每个 matplotlib 版本都变过（3.11 起不再是
+    `(bbox, info, descent)`），不碰它。排不出（wrap 过的、usetex、缺渲染器、任何异常）= 键缺席，不编造。"""
+    if not isinstance(t, mtext.Text) or t.get_wrap() or t.get_usetex():
+        return None
+    s = t.get_text()
+    if not isinstance(s, str) or not s.strip():
+        return None
+    fig = t.get_figure(root=True)
+    if fig is None:
+        return None
+    try:
+        # Annotation 的 window extent 并了箭头：先让它把文字位置更新到当前状态，再量 Text 自己的
+        update = getattr(t, "update_positions", None)
+        if callable(update):
+            update(renderer)
+        own = mtext.Text.get_window_extent(t, renderer)
+        cx, cy = (own.x0 + own.x1) / 2, (own.y0 + own.y1) / 2
+
+        def probe(text: str):
+            p = mtext.Text(
+                0,
+                0,
+                text,
+                fontproperties=t.get_fontproperties().copy(),
+                linespacing=t.get_linespacing(),
+                parse_math=t.get_parse_math(),
+                rotation=0,
+                horizontalalignment="left",
+                verticalalignment="baseline",
+            )
+            p.set_transform(IdentityTransform())
+            p.set_figure(fig)
+            return mtext.Text.get_window_extent(p, renderer)
+
+        lines = s.split("\n")
+        full = probe(s)
+        first = probe(lines[0])
+        out = {
+            "center": [float(cx / W), float(1.0 - cy / H)],
+            "w": float(full.width / W),
+            "h": float(full.height / H),
+            "asc": float(first.y1 / H),  # 第一行基线以上的部分：基线在原点，y1 = 上行
+        }
+        if len(lines) > 1:
+            out["step"] = float((full.height - first.height) / (len(lines) - 1) / H)
+        # 这段字**此刻画出来的样子**（含尚未写回脚本的改动）：刻度标签自己的 `editable` 只有 `text`，
+        # 字号 / 颜色 / 转角在刻度组上——「复制为标注」不去拼两处，直接读画的那个 Text
+        out.update(
+            text=s,
+            math=bool(t.get_parse_math() and mcbook.is_math_text(s)),
+            size=float(t.get_fontsize()),  # 脚本 pt；换到页面 pt 是前端 `pagePtLens` 的事
+            color=to_hex(t.get_color()),
+            # 字重 / 字形原样（名字或数字）：粗不粗、斜不斜的判据只在前端 `weightIsBold` / `styleIsItalic`
+            weight=t.get_fontweight(),
+            style=str(t.get_fontstyle()),
+            rotation=float(t.get_rotation()),  # 逆时针为正（matplotlib 语义），0–360
+            ha=str(t.get_ha()),
+        )
+        if not all(math.isfinite(v) for v in (*out["center"], out["w"], out["h"], out["asc"])):
+            return None
+        return out
+    except Exception:  # noqa: BLE001 —— 附加事实：量不出就少这个键，绝不拖垮 manifest
+        return None
 
 
 #: mathtext 内置字体集 → 它画字用的那张脸的族名。`custom` 不在表里：那一档由
@@ -5987,6 +6062,12 @@ def _measure_manifest(
                 )
             except Exception:  # noqa: BLE001 —— 身份是附加事实：采集失败只是少一个键，绝不拖垮 manifest
                 pass
+            # 文字块（ADR 0163）：「复制为画布文字标注」把标注摆在原文字的位置上。刻度组（`ticks`）是一组标签，
+            # 没有「一块文字」可言，不出
+            if el["role"] != "ticks":
+                block = text_block(live_text, renderer, W, H)
+                if block is not None:
+                    entry["text_block"] = block
         elements.append(entry)
 
     if budget.skipped:

@@ -1,6 +1,6 @@
 # ADR 0163：画布文字标注自由旋转，与「图内文字复制为标注」「横排 / 竖排」
 
-日期：2026-11-03 · 状态：**Accepted（旋转部分）/ Proposed（其余两节，由后续 PR 填写）**（维护者 2026-11-03 拍板并给 1.0 豁免：「给，三项都做」）
+日期：2026-11-03 · 状态：**Accepted（旋转、图内文字复制为标注）/ Proposed（横排 / 竖排，由后续 PR 填写）**（维护者 2026-11-03 拍板并给 1.0 豁免：「给，三项都做」）
 相关：[0032 typography 能力层](0032-typography-capability-layer.md)、[0060 字体政策](0060-font-policy-and-allowlist.md)、[0065 合成](0065-imported-page-composition.md)、[0072 RenderCore](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、
 [0152 所见即所得文字编辑框](0152-wysiwyg-text-editor.md)；字体同原图是另一个 PR 的 ADR 0164（本文不重复）。
 
@@ -51,16 +51,56 @@
    断言 30 / -30 / 90° 的首字符原点 == 参照点绕框中心顺时针转 θ、阅读方向 == (cosθ, sinθ)——自由角度与直角档是同一条公式，
    不许分叉。
 
-## 其余两节（占位，由后续 PR 填写；已拍板的交互要点）
+## 决定（图内文字复制为标注）
 
-### 图内文字复制为标注
+维护者 2026-11-03 拍板（用户来信「修改图内内容的时候能否对某一元素复制粘贴」）。图内编辑里选中**文字类**元素，⌘C /
+右键「复制为标注」、⌘V / 右键「粘贴为标注」，在画布上得到一个与原文字**页面上重合**的 `TextObject`（同样先向右下错 4 mm）。
 
-- 入口：选中图内文字后 ⌘C / ⌘V，以及右键「复制为标注」。
-- 粘贴：放在原位**右下 4 mm**；**旋转原样带过去**（y 轴标签 90° 就是 90°，经本 ADR 的 `rotationDeg`）。
-- 刻度数字也能复制；曲线、色块等非文字元素按 ⌘C 时顶栏胶囊提示「曲线还不能复制」（只用胶囊，不挤页面）。
-- 字体同原图：见 ADR 0164。
+1. **哪些元素**：manifest 里带 `text_block` 的——标题、轴标签、`ax.text` / `annotate` 的文字、图例文字（含标题）、**单个**刻度数字。
+   刻度**组**（`ticks`）是一组标签、没有「一块文字」，曲线 / 色块 / 集合 / 箭头 / 图例整体都不是。判据只有一个：`figureTextCopy.isCopyableText`。
+2. **数据来源**：新增 manifest 键 `text_block`（`engine/manifest.text_block`，加字段协议：老前端原样忽略，老后端没有这个键 = 不可复制）：
+   `center`（文字块中心）、`w`（块宽）、`h`（块高）、`asc`（块顶到**第一行基线**）、`step`（多行相邻基线间距）、`text`、`math`、`size`、
+   `color`、`weight`、`style`、`rotation`、`ha`，长度都是 figure 分数。为什么不读 `bbox` / `editable`：`bbox` 是转后的外接框，反推不出
+   未转的块宽与基线；刻度标签自己的 `editable` 只有 `text`（字号 / 颜色 / 转角在刻度组上）；而基线位置要**对得上原图里画出来的那一行**，
+   只有排版那一侧知道。块尺寸与基线用**matplotlib 公开 API** 的探针 `Text`（转角 0、左 / 基线对齐）量，不碰 `_get_layout`（3.11 起返回形状变了）。
+   量不出（wrap、usetex、异常）= 键缺席。
+3. **换算只在 `lib/figureTextCopy.ts`**（不判断、不发请求、不写文档）：
+   * 字号：脚本 pt 经 `pagePtLens`（ADR 0082）换成页面 pt；颜色原样；粗 / 斜走 `weightIsBold` / `styleIsItalic`；水平对齐 = `ha`。
+   * 文字：没有公式保持普通文本（旧标记里会被误读的写法按 `serializeRuns` 转义，`\$` 画成 `$`）；有 `$…$` 按 matplotlib 的开合规则切成
+     文字段与公式段，写成 LaTeX 子集（ADR 0152）`textFormat: 'latex'`，文字段里的 `\ { } ~` 转义成字面。
+   * 字体：`sourceFont = sourceFontFromElement(el)`（ADR 0164，原图那张脸）；`fontFamily` 取 `genericFamilyOf(face_src.family ?? face)`
+     （与样式示例的 CSS 回退栈共用一份名字线索表）作回退族。
+   * **旋转**：matplotlib 转角 θ（逆时针、y 向上）→ 内容坐标阅读方向 `(cosθ, −sinθ)` → 与面板自己的翻转 / 90° 旋转同一个变换
+     `contentToPageVec` → `atan2` 得页面上的**顺时针**角 = `rotationDeg`（y 轴标签 θ = 90 → −90；面板再转 90° 就是 0）。面板被镜像（翻转一次）时
+     页面上没有「镜像的文字」：取同一条基线上读得顺的方向，左 / 右对齐跟着对调。
+   * **位置**：标注的框绕**自己的中心**转（A 的语义），所以先让**第一行基线**落在原文字的第一行基线上（竖直方向：标注基线在框内的位置
+     `size × (行高/2 + K)`，`K = (sTypoAscender + sTypoDescender)/2` 是批准三族各一个常数，`tests/test_figure_text_copy_metrics.py` 从字体文件反推），
+     再让文字块沿阅读方向与原文字块同一条边 / 同一条中线（水平方向由 `align` 决定）。框宽 = `textFit.fitWidthMm(块宽, 字号)`——与 A 的
+     「旋转前收框」**同一个公式**（`FIT_MARGIN_*` 不另造；多行用块宽加同样余量）。多行时 `lineHeight` 取原文字的相邻基线间距。
+4. **剪贴板走既有路径**：复制写的是现有对象剪贴板负载（系统剪贴板 JSON + 魔数）里的**已换算好的 TextObject**，所以跨标签页 / 跨排版粘贴、
+   菜单与 ⌘V 与对象粘贴是同一条路（`consumePayload` → `materializePaste`，同画布向右下错开 `DUPLICATE_OFFSET_MM`——与 ⌘D 共用的常量，此前是两处写死的 4）。
+   **分派**：`handleCopyEvent` 在图内编辑里选着元素（`elementPanelId` 且 `selectedGids` 非空）时复制的是元素，不是整张图；不能复制的元素也**消费**这次
+   复制（放过去的话选区里那张整图会被复制走）。属性页的文字框在**画布上点选**带文字的元素时会抢焦点并全选、随后焦点还给页面，框里留下一段没有焦点的残留选区，浏览器把
+   copy 事件派给那个文字框（ProseMirror 也会自己接走）——这种「没有焦点的输入控件里的选区」不算用户在复制的文字（`inIdleEditor`），
+   此时复制的仍是元素；真有焦点的文字框 / 别处的真实文字选区照旧让位给原生复制。粘贴不限工作区：单图编辑里粘标注仍是单图编辑（没有第二张图）；在图内编辑里粘贴后**退出图内编辑**、
+   选中新标注（与点中别的对象同一件事，否则属性页仍指着图内元素，看不到刚粘出来的东西）。一次粘贴一条历史，撤销 / 重做对称。
+5. **几何权威**：读 bbox 之后要写文档 → 只认**权威 manifest**（`exactPanelManifest`，ADR 0017）；权威不在（正在重渲染）时按「还不能复制」处理，不拿旧清单算位置。
+6. **不能复制时**：顶栏状态胶囊「{元素名}还不能复制」（`status.elementNotCopyable`，ⓘ），不用横条、不加别的说明；右键弹层里「复制为标注」置灰。
+7. **右键入口**：图内元素的右键是 `QuickEdit` 里 `role="dialog"` 的元素弹层（含控件，不是 Radix 菜单），其中本来就有 `MenuButton` 形状的项（恢复 / 隐藏 / 全部属性）。
+   「复制为标注 ⌘C」「粘贴为标注 ⌘V」两项加在同一处、同一个外壳，其余项不变，没有长出新的菜单体系。粘贴靠异步读剪贴板，WebKit / 没有 `readText` 的引擎上不摆
+   （与对象右键菜单同一判据 `canPasteFromMenu`，用 ⌘V）；已授予读权限且剪贴板里没有本工具的对象时置灰（`peekClipboardHasObjects`：从不为了置灰去弹权限窗，
+   不知道 = 可点）。文案走 i18n 中英两份；**不写**「粘出来的标注和原图没有关联」之类的说明（维护者明确不要）。
 
-### 横排 / 竖排
+### 已知边界
+
+* **图例文字：manifest 里的位置与导出 PDF 里画的位置有 1–2 pt 的既有偏差**（教程图实测，8 pt 字：`Blank` 约 1.0 pt，含公式的 `Catalyst` 约 1.9 pt；
+  画布上图例文字的选框与字也有同样的错位）。标注复制的是 manifest 的位置、与它逐点吻合（偏差 ≤ 0.02 pt），所以与导出里**原图**的图例文字就有同样的偏差。
+  标题 / 轴标签 / 刻度数字没有这个偏差（≤ 0.07 pt）。偏差出在 manifest 的图例几何（图例是 `offsetbox` 布局，原因未查清），不在复制路径，另案处理。
+* 前端没有字体度量，竖直方向的 `K` 常数按批准三族取；用户字体（`sourceFont`）的 typo 度量与批准族差在 0.02 em 内。
+* 非镜像面板才保证左右对齐语义与页面一致（镜像时按「读得顺」取向，左右对调）。
+* 复制的是**当前画出来的**文字（含尚未写回脚本的 override）；标注与原文字此后**没有关联**（改一边不影响另一边）。
+
+## 横排 / 竖排（占位，由后续 PR 填写）
 
 - 竖排中文：字头朝上；英文与数字侧躺。具体字段与排版规则由该 PR 定。
 
@@ -75,3 +115,7 @@
   锁定不响应、一次手势一条历史；对齐 / 吸附候选 / 分布取外接框；⌘D 与撤销重做保角。
 - `tests/test_compose_annotations.py::test_rotated_text_lands_where_the_preview_puts_it`：导出与预览一致（30 / -30 / 90°）。
 - 既有：`rotatedObjects.test.tsx`（手柄随转、缩放锚点）、`test_rotated_text_direction_is_css_clockwise`（90 / 270 方向）。
+- 图内文字复制为标注：`web/src/lib/figureTextCopy.test.ts`（换算：横排 / y 轴标签 -90 / 面板转 90° / 水平翻转 / 裁剪 / 多行 / 30° / 字体族 / sourceFont / 粗斜 / 公式与转义）、
+  `web/src/lib/figureTextClipboard.test.tsx`（⌘C 分派与曲线胶囊、权威缺席、粘贴一条历史与撤销重做、选中新标注并退出图内编辑、右键弹层两项与置灰）、
+  `tests/test_manifest_text_block.py`（块中心 / 尺寸 / 第一行基线对任意转角——期望值取自 `va=baseline` 锚点与真实 artist 外接框两把独立的尺）、
+  `tests/test_figure_text_copy_metrics.py`（前端基线常数 ↔ 批准字体的 OS/2 typo 度量）。

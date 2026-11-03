@@ -534,7 +534,9 @@
     "deleteCount": "Delete {{count}} objects",
     "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
     "copy": "Copy",
-    "paste": "Paste"
+    "paste": "Paste",
+    "copyAsAnnotation": "Copy as annotation",
+    "pasteAsAnnotation": "Paste as annotation"
   },
   "rail": {
     "assets": "Assets",
@@ -842,6 +844,7 @@
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
     "nudgeNotMovable": "The selected element can't be moved",
+    "elementNotCopyable": "{{name}} can't be copied yet",
     "objectCopied": "Copied {{name}}",
     "objectsCopied": "Copied {{count}} objects",
     "overridesCleared": "Cleared this figure’s edits",
