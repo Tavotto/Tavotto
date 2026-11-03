@@ -9,7 +9,7 @@ Use Node 24 and Python 3.10+ with sqlite3. From this directory:
     npm ci --ignore-scripts
     npm run check
 
-The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files. Review-only disabled deployment inputs and an offline planner live in [deployment/](deployment/README.md); no deploy command or real binding IDs are supplied.
+The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files. Review-only disabled deployment inputs and an offline planner live in [deployment/](deployment/README.md). The only real binding IDs and deploy commands are the disposable staging rehearsal in [deployment/staging/](deployment/staging/README.md) (sandbox repository, staging texts with no legal effect, every flag false in the file).
 
 Tests use synthetic identities, ephemeral test encryption keys, a test-only database clock and local SQLite. Outbound fetch and publication are forbidden. The concurrency test uses two worker threads with separate WAL connections and real BEGIN IMMEDIATE transactions; it is not a Cloudflare D1 concurrency claim. Test databases are removed afterward.
 
@@ -268,3 +268,9 @@ rehearses the exact main77 v2 namespace to #1168 with synthetic SQLite only.
 Its CLI emits a disabled in-memory schema plan and has no file-target writer or
 production execution option. It does not replace real D1 schema/backup/cutover
 acceptance, enable capabilities or resolve the single-slot availability limit.
+
+The [offline timing/capacity contract](../../docs/implementation/cla-timing-contract/README.md)
+adds a data-only planner for remaining proof lifetime, independent confirmation,
+CI attempts and declared recovery load. Its output never grants eligibility or
+activation. The persistent confirmation slot has since landed default-off;
+independent wakeup and live acceptance remain pending.

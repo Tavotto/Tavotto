@@ -207,6 +207,10 @@ def test_every_named_step_in_the_live_workflow_has_an_execution_category(live_wo
     assert CB.classify_step("某个没登记过的步骤") == "other"
 
 
+def test_merge_group_fail_fast_step_is_overhead():
+    assert CB.classify_step("merge_group 快速失败（取消本 run 的其余 job）") == "overhead"
+
+
 def test_cla_service_contract_step_is_classified_as_test():
     assert CB.classify_step("CLA service contract tests (isolated)") == "test"
     assert CB.classify_step("CLA service contract tests (unregistered)") == "other"

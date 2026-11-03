@@ -1,0 +1,3 @@
+## Windows: optional setting to let the AI convert scripts without Codex's sandbox
+
+If "Make editable version" still stops with "the AI was not allowed to write the new file" on a Windows PC where Codex's sandbox cannot run at all, you can now turn on **Let the AI run without a sandbox when converting** (Settings > Figure assistant > Advanced; Windows only, off by default). With it on, Codex runs conversions without its own sandbox; other AI tasks are unaffected. A conversion that is blocked by the sandbox also offers to turn it on and retry in one click. The diagnostic bundle records whether it was on.

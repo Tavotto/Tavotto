@@ -925,3 +925,46 @@ describe('任务历史是弹层（§6.6）', () => {
     expect(document.querySelector('[data-ai-history]')).toBeNull()
   })
 })
+
+describe('思考小球（ADR 0165）', () => {
+  const orbOf = (sel: string) => q(sel)!.querySelector<HTMLCanvasElement>('canvas[data-thinking-orb]')!
+  const running = (entries: AiSession['entries']) => session({ status: 'running', finishedAt: undefined, entries })
+
+  it('进行中：组首小球按最新一步换形态——思考 breathing、运行脚本 solving、其余动作 composing', async () => {
+    await mount([running([{ kind: 'thinking', text: '先看一眼脚本', at: T0 + 1000 }])])
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrb).toBe('breathing')
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrbTone).toBe('live')
+
+    await mount([running([{ kind: 'action', text: '$ python fig1.py', at: T0 + 1000 }])])
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrb).toBe('solving')
+
+    await mount([running([{ kind: 'action', text: '✎ Edit fig1.py', at: T0 + 1000 }])])
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrb).toBe('composing')
+  })
+
+  it('结束后仍是小球（settled）：纯思考是 breathing，动过手是 listening', async () => {
+    await mount([session({ entries: [{ kind: 'thinking', text: '想一想', at: T0 + 1000 }] })])
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrb).toBe('breathing')
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrbTone).toBe('settled')
+
+    await mount([
+      session({
+        entries: [
+          { kind: 'thinking', text: '想一想', at: T0 + 1000 },
+          { kind: 'action', text: '$ python fig1.py', at: T0 + 2000 },
+        ],
+      }),
+    ])
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrb).toBe('listening')
+    expect(orbOf('[data-ai-process-toggle]').dataset.thinkingOrbTone).toBe('settled')
+  })
+
+  it('发出后还没回第一个字：状态行前一颗 connecting；一有过程输出就交给过程行', async () => {
+    await mount([running([])])
+    expect(orbOf('[data-ai-awaiting-first]').dataset.thinkingOrb).toBe('connecting')
+    await mount([running([{ kind: 'thinking', text: '想一想', at: T0 + 1000 }])])
+    expect(q('[data-ai-awaiting-first]')).toBeNull()
+    await mount([session({ entries: [] })])
+    expect(q('[data-ai-awaiting-first]')).toBeNull()
+  })
+})

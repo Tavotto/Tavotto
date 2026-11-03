@@ -647,6 +647,8 @@ def real_spawn(tmp_path, monkeypatch):
     y = _touch(tmp_path / "env-y" / "bin" / "python")
     monkeypatch.setattr(engine_pool, "resolve_worker_python", _REAL_RESOLVE)
     monkeypatch.setattr(engine_pool, "_has_matplotlib", lambda p: True)
+    # 本夹具把 Popen 当账本数「起了几次解释器」；投机的事实预热（ENVIRONMENT_PREFETCHERS）也会起探测进程，会污染这本账
+    monkeypatch.setattr(engine_pool, "ENVIRONMENT_PREFETCHERS", [])
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
     monkeypatch.setattr(engine_pool, "_schedule_prune", lambda: None)
     launched: list[str] = []

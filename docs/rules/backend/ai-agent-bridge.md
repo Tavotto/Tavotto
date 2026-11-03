@@ -344,6 +344,7 @@ order: 240
 写进项目只有 `ai_convert.adopt` → `scriptlock.create_script` → `atomicio.create_new_bytes`（O_EXCL，存在即失败，重名加序号，
 永不覆盖），采用前再核原脚本 sha256 与候选摘要。校验 = 在用户同一路由下 probe 一遍（紧挨原脚本的 `tavotto_convert_probe_<sid>.py`
 临时文件，后端建、跑完删），必须捕获到 Matplotlib 图。看护：`tests/test_ai_convert.py`、`tests/test_ai_convert_app.py`。
+候选工作区（含 `project_context/` 里按项目相对路径复制的文件）在 Windows 上可能超 260 字符：Tavotto 自己的 mkdir / 读写 / 遍历 / 删除一律经 `engine/longpath.py` 的 `long()`（`\\?\` 前缀，非 Windows 原样）；交给 Codex 的 `-C` 与提示词里的路径保持普通形式。仍放不下（`WinError 206` / `ENAMETOOLONG`）时 `create_candidate` 回闭集码 `workspace_path_too_long`（400，前端一句话 + 「关闭」），不是 `internal_error`。
 
 校验的写入绊线错误沿 `probe.error.params.worker_code` 传给转换层，不能被通用
 `script_probe_failed` 丢掉原因。转换层统一提示候选 / 临时目录的写入边界，删除仅为输出准备的
@@ -598,7 +599,7 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
   `convertdeps.describe_env` 判为系统自带 / 内置 runtime 的解释器永不装（`env_not_installable`）。切运行方式 = `execpolicy.set_mode`（`safe` → `safe_only`，`native` → `compatible`；
   把用户明确选过的 `safe_only` 放宽要先问）。换环境 = `projectenv.remember(..., automatic=False, trigger="user_selected")`。
   执行器全部可经 `FixContext` 注入（`installer` / `uninstaller` / `freezer` / `python_changer`）；**测试一律注入假的，不往真实环境装包**。
-  `change_python` 缺省接 `executors._default_python_changer`（#1342 `pyversionfix` 的公开入口 `plan_python_change` → `apply_python_change`：只在 Tavotto 受管环境另建、不碰用户环境、私有 Python 锁里没有的版本不下载；本机关了 `TAVOTTO_AUTO_PYTHON_CHANGE` 或版本推不出就如实报错，不换；修复会话暂无进度事件通道，下载进度不推前端），可经 `python_changer` 注入替换；`convert_script` 没有执行器（见下，只记交接）。
+  `change_python` 缺省接 `executors._default_python_changer`（#1342 `pyversionfix` 的公开入口 `plan_python_change` → `apply_python_change`：只在 Tavotto 受管环境另建、不碰用户环境、私有 Python 锁里没有的版本不下载；本机关了 `TAVOTTO_AUTO_PYTHON_CHANGE` 或版本推不出就如实报错，不换；修复会话暂无进度事件通道，下载进度不推前端）。**依赖安装在途先等**（TVD-22EY）：`apply_python_change` 开头若 `deprepair.installing(project)`（读 `_active_jobs`）为真，等它结束（不设时钟上限，维护者裁决 2026-11-02：只要这个项目在途作业的进度记录还在变——`deprepair.project_progress`，别的项目的进展不算（Codex #1632 P2）——就一直等；连续 `pyversionfix.INSTALL_STALL_SECONDS`=600 没有进展才判卡住；`INSTALL_WAIT_POLL`=0.5，响应取消；开始等时报阶段 `waiting`，准备卡片显示「正在等另一个安装完成…」）；判卡住或竞态里撞上 `dependency_install_busy` → 执行器映射成 `env_busy`（与 `_default_installer` 同码）并在 message 里写明 Retryable、可再调；`ERROR_IN_USE_BY_NATIVE` 原样透传、不标可重试（要用户自己结束脚本）。工具结果契约没有额外字段，可重试只写在 message 里，可经 `python_changer` 注入替换；`convert_script` 没有执行器（见下，只记交接）。
 - **快照**（`snapshots.py`）：除 `rollback` 外每个会改东西的工具执行前先 `snapshots.take`，存 `data_dir()/cache/fix_snapshots/<会话>/<id>.json`：项目设置里 `execution_policy` / `environment` 两个键的原值（含「没有」）+
   数据改指与工作目录设置、目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行不存）+ 环境目录顶层条目名。**打不出快照就不改**（`snapshot_failed`）；快照 id 进工具返回与审计行 `snapshot` 字段；每会话留最近 30 份。
   `rollback` 只认本会话 + 本项目的快照、id 形状固定（`snap_<时间>_<6 位十六进制>`）；设置**精确恢复**（原来没有的键清掉，并 `projectenv.reset_cache`）；包按 freeze 差异——快照后新装的卸掉
@@ -653,13 +654,13 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
 看护 `tests/test_fixtools_link.py`（含真子进程的整链用例）、`tests/test_missing_input.py::test_the_endpoint_and_ai_repair_share_one_link_function`。
 
 - **一律问**：approve 卡 = 模型给的一句话 `summary` + 折叠 `details`（脚本要的串、完整路径、`evidence`、规则含义）。没有 `ctx.ask` / 非 yes = `needs_approval`，规则与快照都不写。
-- **判据都在弹卡之前**：`requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径）里，否则 `requested_unknown`；其 `via` 不是 `open`（探路 / glob / C++ 读取器）→ `link_unreachable`（要改脚本，AI 不改）。
+- **判据都在弹卡之前**：`requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（探路 / glob / C++ 读取器）→ `link_unreachable`（要改脚本，AI 不改）。
   `chosen` 过 `ctx.scope.check`（凭据位置 `denied`、范围外 `outside`）、存在、`inputremap.rule_for_choice` 当场推得出规则，才打扰用户。
 - **同一套推导与落盘**：写入只经 `inputremap.link`（= `rule_for_choice` + `add_rule`；`POST /api/engine/input-remap` 调的也是它）。快照先于写入，`settings_keys()` 含 `input_remap`；
   回滚经 `inputremap.restore_raw`（项目锁 + 换代），**只在改指表真的变了才动**，别的回滚不让它换代。应用侧通知 `FixContext.on_input_remap_changed(state, "added"|"restored")` 由 `app._fix_remap_notifier` 在 `bound_project` 下做收会话 / 取消试运行 / SSE（工作线程没有请求上下文）。
 - **`try_run` 带规则**：副本里的守卫进程按文件加载 `figcapture`（`TAVOTTO_TRIAL_ENGINE_DIR`，用完摘掉 `sys.path` 与模块）并 `install_input_remap(rules_for(项目))`；规则里落在被复制脚本目录内的绝对 `from` 另加一条换算到副本路径的（`trial_remap_rules`，脚本用 `__file__` 拼路径时才命中）。
   装不上如实报 `input_remap: …could not load…`，不静默当没有。自定义 runner 仅在有规则时多收一个 `input_remap` 关键字。
-- **已知取舍**：同一处的旧 `file` 规则（`remap_target` 里 `file` 优先）会盖住后来的 `prefix` 规则——与弹窗行为一致，没有为此改规则优先级；`known_requests` 不含已被现有规则救回的 `open` 读取。
+- **已知取舍**：同一处的旧 `file` 规则（`remap_target` 里 `file` 优先）会盖住后来的 `prefix` 规则——与弹窗行为一致，没有为此改规则优先级。重新指认已接上的一串时，`inputremap.link` 把会被旧 `file` 规则盖住的新 `prefix` 规则收窄成 `file` 规则（替换旧的），新选择不会白选；`read_run_report` 的 `data_links` 列出生效规则，供 AI 判断「读到的是用户指认的那份」；每条的 `requested` 是 `known_requests` 里经这条规则改道的具体串（`prefix` 规则的 `from` 只放 `applies_to`，拿它当 `requested` 会 `requested_unknown`）。
 
 - **诊断三缺口（覆盖率测量补）**：① 项目内同名包遮蔽——`engine/importshadow.py`（纯函数、只读文件系统）对 `No module named 'a.b'` / `cannot import name … (项目内路径)` 判「父包目录在脚本目录 / 项目根下、缺的子模块不在里面」（脚本目录在 `sys.path[0]`、先于已装的包；项目根被 worker 追加在末尾、排在 site-packages 之后，所以项目根里的同名包要 traceback 里有一帧落在它里面才算，`search_order=after_site`，装同名发行包能修）；`read_run_report` 与应用 `try_run` 共用 `runreport.project_run_report`，以当前错误为准、`project_package_shadow` 放最前，历史失败不覆盖当前判断；诊断副本 `try_run` / `try_import` 按自己的导入范围调用 `base.shadow_note`。`regular` 包装同名包不管用；无 `__init__.py` 或扩展包路径的 namespace 可由安装真包修复，提示词 3f 同此。② 安装失败只按安装器输出分类，并带脱敏后的 `ERROR:` 一两行（`detail`），由 `install_packages` 回给模型；不再另起 `pip index` 探测，以免忽略私有源设置并泄露包名。`dependency_not_found` 不断言包不存在，也可能仅没有当前 Python / 平台的可用版本；取消事件贯穿安装。③ `read_logs(worker)` 按 `diagnostics.owned_worker_logs(项目)` 取当前项目最近一份日志。看护 `tests/test_fixdiagnostics.py` / `tests/test_fixdiagnostics_report.py`。
 

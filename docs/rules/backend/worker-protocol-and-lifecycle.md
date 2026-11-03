@@ -27,7 +27,7 @@ order: 60
   `manifest_ms`；**没有 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开），
   `pool` 补 `queue_wait_ms` / `total_ms` 并把冷启动那次的 build 计时折叠进来，
   `app.py` 再补 `worker_get_ms`（取/spawn 会话，既不属于 worker 也不属于 build，
-  **漏了它冷启动的十几秒在数据里就凭空消失**）。全部是加字段，协议不升版；
+  **漏了它冷启动的十几秒在数据里就凭空消失**）。`worker_get_ms` 的分段（含 `probe_*_ms` 探测子段，嵌在 `resolve_python_ms` / `env_decide_ms` 里、不可相加）见 `diagnostics.md` 的「渲染池健康摘要」。全部是加字段，协议不升版；
   legacy 信封一个字节不加。基线报告与「值得做的优化」清单在
   `docs/perf-baseline.md`，重测走 `python scripts/bench_render.py`。
   **先测量后优化**：那份文档里被数据否掉的两条（挪 SVG 顺序省 draw = 图例 bbox
@@ -65,10 +65,15 @@ order: 60
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
+- **会话池上限 = `pool.max_alive()`，不是常数（ADR 0159）**：`clamp(3, (可用内存 + 池内活会话×500MiB)×0.5÷500MiB, 8)`（池自己会话占的内存算回预算，否则上限随会话增多而自降、振荡），读不到内存回 3，下降不足 `MAX_ALIVE_HYSTERESIS`（2）沿用旧值，`TAVOTTO_MAX_ALIVE` 覆盖；淘汰只在 `acquire()` 且活会话数 > 上限时发生；
+  淘汰、冷启动容量、未确认退役的拒绝线、发布账本**只问这一个函数**（`tests/test_pool_adaptive_cap.py` 用 AST 钉「别处不许读 `MAX_ALIVE`」；
+  测试里 `pool.MAX_ALIVE` 是覆盖钩子，conftest 默认钉成 3）。读内存的 `engine/sysmem.py` 纯标准库，读不到一律下限，且不许在持 `_lock` 时调。
+  取会话带闭集意图 `purpose`（`foreground` 缺省 / `neighbour`，`acquire_purpose()` 上下文，请求体可选字段）：`neighbour` 命中热会话不刷新 `last_used`；
+  需要冷启动而别的活会话已满上限 → `background_render_deferred`（HTTP 409，不是失败，前端保留旧画面）；淘汰时「仅后台用过」的会话先走。
 - **LRU 淘汰不收「刚取到、还没发请求」的会话（Python 池）**：`acquire` 给会话打 `ACQUIRE_LEASE`（30 秒）租约，
-  调用方第一条请求拿到 `w.lock` 即清零；租约内 `MAX_ALIVE` 淘汰跳过它（上限因此是软的）。否则淘汰线程的优雅
+  调用方第一条请求拿到 `w.lock` 即清零；租约内上限淘汰（`max_alive()`）跳过它（上限因此是软的）。否则淘汰线程的优雅
   `shutdown()` 与该调用方的首条请求在 `w.lock` 上竞争，淘汰一赢，worker 按 shutdown 正常退出（退出码恒为 0），
-  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、`MAX_ALIVE=3` 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
+  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、上限为 3 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
   排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["evicted"]`（不解释退出码），
   `app._engine_attempt` 只对这一种重新取会话重试一次。用户取消（`force_kill`）/ 超时 / 看门狗 / 失效重建 / 切项目 / 整体关停
   都不置、不重试——重试会把用户刚停掉的脚本又跑起来；真崩溃同样不重试。看护 `tests/test_pool_lru_lease.py`。
@@ -142,6 +147,10 @@ order: 60
   `test_non_utf8_bytes_inside_a_json_response…` / `test_a_non_json_line…`、
   `workerd/tests/supervisor_behaviour.rs` 的 `a_dead_worker_reports_how_it_died…` /
   `non_utf8_bytes_on_the_protocol_pipe…` / `non_utf8_bytes_inside_a_json_envelope…`。
+  **safe worker 的协议只走 `main()` 里 dup 出的私有不可继承 fd；公开 fd 1 / Win32 标准输出一律改指 stderr
+  （worker.log）**（TVD-5J0Y）：`redirect_stdout` 只换得了 Python 层，脚本 `subprocess.run(...)` 起的子进程、
+  C 扩展直写 fd 1 走的是 OS 层，曾把一行 print 写进协议管道 → protocol_mismatch。敏感运行再把 fd 1/2 换成丢弃管道。
+  看护：`tests/test_run_argv_privacy.py` 的 `test_ordinary_native_and_child_stdout_never_reach_the_protocol_pipe`（两条控制面）。
   **请求之间死掉的 worker 只有一个答案**（QA LONG-03-B1）：`EngineWorker.request` 拿锁时已看得见它死了、
   写管道撞上 `BrokenPipeError` / 管道已关、写进去后读到 EOF，三处都走同一条带退出状态的 `session_dead`——
   不许有 code 为空的「worker 进程已退出」，也不许让 `OSError` 冒成 internal_error
@@ -271,3 +280,7 @@ marker 不含脚本、路径、argv 或输出，读写失败不阻止科学运�
 confirmed pre-send/排队取消/依赖门不撤旧代；unknown 的迟到结果不能污染更新执行。单次验证 `one_shot` 不替代当前图。
 safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变化的 worker generation 冒充同一次执行；公开语义身份不变。
 看护：`tests/test_execution_observation.py`、`tests/test_execution_receipt.py`、`tests/test_svg_execution_lifecycle.py`。
+- **后台预热与解释器体检单飞（2026-11-02，ADR 0160，TVD-ZWV6）**：`POST /api/engine/prewarm` 只经 `_engine_worker` **取会话**
+  （不 build / 不出图 / 不写盘 / 不发事件），节流与去重全在 `engine/prewarm.py`（每 (项目, 面板) 一次、同时一路、池里已活
+  `MAX_ALIVE-1` 条不预热、前台取会话时让路）；native 档不预热。同一解释器上同时的 `import matplotlib` 体检只跑一个
+  （`pool._has_matplotlib_once`，只共享成功结论）。看护 `tests/test_engine_prewarm.py`。

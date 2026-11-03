@@ -1,5 +1,7 @@
 import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
-import type { CanvasObject } from '@/types/document'
+import type { CanvasObject, FigureDocument } from '@/types/document'
+import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
+import { exactPanelManifest, useRenderStore } from './renderStore'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useViewportStore } from './viewportStore'
@@ -91,15 +93,32 @@ export function stageFitFrame(
   objects: readonly CanvasObject[],
   page: { w: number; h: number },
   fastEditPanelId: string | null,
+  /** 单图画布框（图 + 留白，ADR 0161）；有留白时并进取景框，否则 null */
+  canvasBox: Rect | null = null,
 ): Rect & { page: boolean } {
   const panel = fastEditPanelId === null ? undefined : objects.find((x) => x.id === fastEditPanelId)
   if (!panel) return { x: 0, y: 0, w: page.w, h: page.h, page: true }
   // 没隐藏对象的并集；图被隐藏时只剩标注（照样框它们），连标注都没有就框那张（看不见的）图自己的外框——
   // 单图编辑不画页面，退到页面会让取消隐藏时视口跳一下，图回来的位置也对不上
-  const box =
-    boundsOf(objects.filter((o) => !o.hidden).map(visualBounds)) ?? boundsOf([visualBounds(panel)])
+  const visible = objects.filter((o) => !o.hidden).map(visualBounds)
+  if (canvasBox && !panel.hidden) visible.push(canvasBox)
+  const box = boundsOf(visible) ?? boundsOf([visualBounds(panel)])
   if (!box || box.w <= 0 || box.h <= 0) return { x: 0, y: 0, w: page.w, h: page.h, page: true }
   return { x: box.x, y: box.y, w: box.w, h: box.h, page: false }
+}
+
+/**
+ * 单图编辑的画布框（ADR 0161）：文档有留白时 = 面板 + 生效留白（紧凑边读精确 manifest），没有留白回 null。
+ * 取景入口把它交给 `stageFitFrame`。
+ */
+export function fastEditCanvasBox(
+  doc: Pick<FigureDocument, 'objects' | 'framePad' | 'framePadTight'>,
+  panelId: string | null,
+): Rect | null {
+  if (panelId == null || (isZeroPad(doc.framePad) && !doc.framePadTight?.length)) return null
+  const p = doc.objects.find((o) => o.id === panelId)
+  if (!p || p.type !== 'panel') return null
+  return frameCanvasOf(doc, p, exactPanelManifest(useRenderStore.getState(), p)).box
 }
 
 /** 把视口适应到 `stageFitFrame` 交出的框：页面走 `fit*`，面板矩形走 `fitRect*`（保留原点）。`animated` 选补间版 */
@@ -116,11 +135,13 @@ export function applyStageFit(frame: Rect & { page: boolean }, animated: boolean
  */
 export function fitStageNow(): void {
   const doc = useDocumentStore.getState().doc
-  applyStageFit(stageFitFrame(doc.objects, doc.page, fastEditPanelOf(useWorkspaceStore.getState())), false)
+  const id = fastEditPanelOf(useWorkspaceStore.getState())
+  applyStageFit(stageFitFrame(doc.objects, doc.page, id, fastEditCanvasBox(doc, id)), false)
 }
 
 /** 按此刻的文档与工作区模式「适应」（带补间）——所有「适应画布」入口的动作 */
 export function fitStage(): void {
   const doc = useDocumentStore.getState().doc
-  applyStageFit(stageFitFrame(doc.objects, doc.page, fastEditPanelOf(useWorkspaceStore.getState())), true)
+  const id = fastEditPanelOf(useWorkspaceStore.getState())
+  applyStageFit(stageFitFrame(doc.objects, doc.page, id, fastEditCanvasBox(doc, id)), true)
 }

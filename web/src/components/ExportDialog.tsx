@@ -136,7 +136,7 @@ import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
-import { usePanelRender, useRenderStore } from "@/store/renderStore";
+import { useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
@@ -161,6 +161,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
+import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
 import {
   getValidationSummary,
   originalValidationFor,
@@ -474,12 +475,21 @@ export function ExportDialog() {
    * 文档。**预览画这份；请求里的 `original.objects` 取这份里的标注部分**——预览与文件同一个来源。后端用整版导出那条
    * RenderCore 路径把标注画在原图上（PDF / SVG / PNG / TIFF / EPS 都带）。没有标注 = null，请求与从前逐字节相同。
    */
+  // 单图画布留白（ADR 0161）：与画布上画纸同一份事实（`frameCanvasOf`，紧凑边读精确 manifest）；没有留白 = null
+  const exactManifest = useExactPanelManifest(single ? panel : null);
+  const framePad = useMemo(
+    () =>
+      single && scope === "original" && panel && !(isZeroPad(doc.framePad) && !doc.framePadTight?.length)
+        ? frameCanvasOf(doc, panel, exactManifest).pad
+        : null,
+    [single, scope, panel, doc, exactManifest],
+  );
   const annotatedDoc = useMemo(
     () =>
       single && scope === "original" && availability.ok
-        ? singleAnnotatedDocument(doc, panel, availability.spec)
+        ? singleAnnotatedDocument(doc, panel, availability.spec, framePad ?? undefined)
         : null,
-    [single, scope, availability.ok, availability.spec, doc, panel],
+    [single, scope, availability.ok, availability.spec, doc, panel, framePad],
   );
   const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
   const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
@@ -734,10 +744,11 @@ export function ExportDialog() {
             heightMm: originalHeightMm,
             formats,
             route,
+            pad: framePad,
           })
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm, formats, route],
+    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm, formats, route, framePad],
   );
   /**
    * 原图范围、选中的图只在素材 / 运行时清单里（`panel` 为 null）：它不在任何画布上，
@@ -883,6 +894,7 @@ export function ExportDialog() {
       spec: availability.spec,
       annotations,
       annotationsBelow: annotationsUnder,
+      framePad,
       route,
       exportDir: exportDirNow,
       ...over,

@@ -243,7 +243,7 @@ def publishing_execution(ctx, worker, execution_id):
                 kept.append(ExecutionPublication(target, execution, script, registration))
             # Bound strong references even when dead pool handles have not been reaped;
             # losing this optimization is conservative. Consume on next refresh.
-            state.publications = kept[-pool.MAX_ALIVE :]
+            state.publications = kept[-pool.max_alive() :]
             state.publication_revision = revision
 
         yield published

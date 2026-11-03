@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { fitBeforeRotate } from '@/canvas/textFit'
+import { normalizeRotationDeg } from '@/lib/geometry'
 import { formatMm } from '@/lib/units'
 import { updateObjects } from '@/store/actions'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
@@ -109,8 +111,8 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           <Row label={t('transform.rotation')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               half
-              value={shared(objs, (o) => o.rotationDeg ?? 0) ?? 0}
-              mixed={shared(objs, (o) => o.rotationDeg ?? 0) === undefined}
+              value={shared(objs, (o) => normalizeRotationDeg(o.rotationDeg ?? 0)) ?? 0}
+              mixed={shared(objs, (o) => normalizeRotationDeg(o.rotationDeg ?? 0)) === undefined}
               step={15}
               min={-360}
               max={360}
@@ -118,7 +120,13 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
               ariaLabel={t('transform.rotation')}
               onChange={(v) =>
                 setEach(hist('rotateObject'), (o) => {
-                  const deg = ((Math.round(v * 10) / 10) % 360 + 360) % 360
+                  const deg = normalizeRotationDeg(v)
+                  // 单行文字从 0 变非 0 的那一次先收到贴字宽（量法与落位见 canvas/textFit）
+                  const fit = deg ? fitBeforeRotate(o) : null
+                  if (fit) {
+                    o.x = fit.x
+                    o.w = fit.w
+                  }
                   if (deg) o.rotationDeg = deg
                   else delete o.rotationDeg
                 })

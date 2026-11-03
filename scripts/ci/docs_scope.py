@@ -17,8 +17,9 @@ package / smoke 加合并队列（v0.19.2 两个，约 3 小时）。这个脚�
 「docs-only」的范围（只此一条，别扩到整个 docs/）：
 
 * 路径在 `docs/release-notes/` 之下、是 `.md`、规范化后没有 `..` / 反斜杠 / 绝对路径；
-* **不含 `UNRELEASED.md`**：`tests/test_claude_plugin.py` / `test_dsh_bundle.py` 会读它
-  断言「待发说明里有安装那一行」，改它可能让 backend 的测试红，不能跳过那些测试；
+* **不含 `UNRELEASED.md` 与 `unreleased/` 片段目录**：`tests/test_claude_plugin.py` /
+  `test_dsh_bundle.py` / `test_install_commands_from_brand.py` 会读它们断言「待发说明里有
+  安装那一行」，改它们可能让 backend 的测试红，不能跳过那些测试；
 * 改名 / 移动：旧路径与新路径**都**要在范围内（把别处的文件挪进来也是改动）；
 * 一个文件都没有 → 不是 docs-only（空 diff 不该拿到快车道）。
 队列里多个 PR 组合成的候选：`base_sha..head_sha` 里**任一**文件在范围外就不是 docs-only。
@@ -50,6 +51,8 @@ for _stream in (sys.stdout, sys.stderr):
 SCOPE_PREFIX = "docs/release-notes/"
 #: 范围内但被测试读取的文件：改它必须跑完整 CI。
 EXCLUDED = frozenset({"docs/release-notes/UNRELEASED.md"})
+#: 同上：待发片段目录（每个 PR 一个文件），与 UNRELEASED.md 同等对待。
+EXCLUDED_PREFIXES = ("docs/release-notes/unreleased/",)
 KNOWN_EVENTS = ("pull_request", "merge_group")
 
 
@@ -65,7 +68,7 @@ def in_scope(path: str) -> bool:
         return False
     if not path.startswith(SCOPE_PREFIX) or not path.endswith(".md"):
         return False
-    return path not in EXCLUDED
+    return path not in EXCLUDED and not path.startswith(EXCLUDED_PREFIXES)
 
 
 def decide(paths: list[str]) -> dict:

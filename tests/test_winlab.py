@@ -3426,3 +3426,612 @@ def test_page_shot_without_a_png_is_not_passed(tmp_path, monkeypatch):
     assert rep["result"] == "passed" and rep["shot"] == "page.png"
     assert seen["argv"][-1] == (lab.repo / rel).resolve().as_uri()
     assert "--headless=new" in seen["argv"]
+
+
+# --------------------------------------------------------------------------- convert-live（转换真模型复现）
+def test_convert_live_is_registered_as_a_closed_set_task_needing_the_secret():
+    t = A.TASKS["convert-live"]
+    assert t.needs_model_conf and t.networks == ("direct",)
+    assert t.modes == A.CONVERT_MODES == ("baseline", "cjk-path", "long-path", "all")
+    assert A.validate_test_args(t, [], None, "direct", mode="cjk-path") is None
+    assert A.validate_test_args(t, [], None, "direct", mode="anything")
+    assert A.validate_test_args(t, ["tests/test_x.py"], None, "direct")  # 不收 --tests
+    assert t.claim and t.unverified
+
+
+def test_convert_live_secret_comes_from_the_default_key_file_not_the_ondisk_one():
+    assert "cjk-path" not in W.ONDISK_MODES and "cjk-path" not in W.ACCOUNT_MODEL_MODES
+    for m in A.CONVERT_MODES:
+        assert W.model_conf_path(m) == W.MODEL_CONF_PATH
+
+
+def test_convert_live_without_local_secret_file_stops_before_ssh(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "MODEL_CONF_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(
+        W, "remote_json", lambda *a, **k: pytest.fail("must not reach the Lab without a secret")
+    )
+    assert W.main(["test", "convert-live", "--mode", "baseline"]) == 3
+
+
+def test_convert_live_is_listed_in_test_help_and_deployed():
+    text = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert "convert-live：baseline | cjk-path | long-path | all" in text
+    assert 'HERE / "convert_driver.py"' in text
+    assert "convert-live" in W.build_parser().parse_args(["test", "convert-live"]).task
+
+
+def test_convert_plans_are_bounded_and_each_scenario_has_its_projects():
+    for m in A.CONVERT_MODES:
+        assert 0 < len(A.convert_plan(m)) <= A.CONVERT_MAX_RUNS
+    assert [c.key for c in A.convert_plan("baseline")] == ["baseline-a", "baseline-e"]
+    assert {c.scenario for c in A.convert_plan("all")} == {"baseline", "cjk-path", "long-path"}
+    assert all(c.cjk and c.backslash for c in A.convert_plan("cjk-path"))
+    assert all(c.long_ws for c in A.convert_plan("long-path"))
+    assert len(A.convert_plan("all")) == sum(
+        len(A.convert_plan(m)) for m in ("baseline", "cjk-path", "long-path")
+    )
+
+
+def test_convert_fixtures_exist_and_are_small():
+    fx = ROOT / A.CONVERT_FIXTURES
+    for proj, rel in A.CONVERT_FIXTURE_SCRIPTS.items():
+        assert (fx / proj / rel).is_file(), proj
+    assert sum(p.stat().st_size for p in fx.rglob("*") if p.is_file()) < 100_000
+
+
+def test_backslash_r_paths_only_rewrites_relative_parent_strings():
+    src = 'source("../R/utils.R")\npara <- read.csv("../data/parasitoid.csv")\nx <- read.csv("data/a.csv")\n'
+    out = A.backslash_r_paths(src)
+    assert 'source("..\\\\R\\\\utils.R")' in out
+    assert 'read.csv("..\\\\data\\\\parasitoid.csv")' in out
+    assert 'read.csv("data/a.csv")' in out
+
+
+def test_cjk_case_has_a_cjk_spaced_project_path_and_backslash_sources(tmp_path):
+    case = A.ConvertCase("cjk-path", "d", backslash=True, cjk=True)
+    root, rel, data = A.materialize_convert_case(case, ROOT / A.CONVERT_FIXTURES, tmp_path)
+    assert " " in str(root) and any(ord(ch) > 127 for ch in str(root))
+    text = (root / rel).read_text(encoding="utf-8")
+    assert '"..\\\\R\\\\utils.R"' in text and "../" not in text.split("source(", 1)[1].split(")")[0]
+    assert (root / "data" / "field.csv").is_file() and (root / "R" / "utils.R").is_file()
+    assert data == tmp_path / "data"
+
+
+def test_long_path_case_pads_the_candidate_workspace_close_to_max_path(tmp_path):
+    case = A.ConvertCase("long-path", "a", long_ws=True)
+    _root, _rel, data = A.materialize_convert_case(case, ROOT / A.CONVERT_FIXTURES, tmp_path)
+    ws = data / "cache" / "ai_convert" / ("0" * 12)
+    assert abs(len(str(ws)) - A.CONVERT_LONG_WS_LEN) <= 2  # 0.x 段分隔符取整的误差
+    assert all(len(seg) <= 255 for seg in data.parts)
+
+
+def test_codex_home_and_project_workspace_are_different_trees(tmp_path):
+    assert A.trees_disjoint(
+        tmp_path / "runs" / "r1" / "work" / "codex-home", tmp_path / "cache" / "convert-work" / "r1"
+    )
+    assert not A.trees_disjoint(tmp_path / "a", tmp_path / "a" / "b")
+    assert not A.trees_disjoint(tmp_path / "a" / "b", tmp_path / "a")
+    assert A.trees_disjoint(tmp_path / "ab", tmp_path / "a")  # 前缀相同但不是父子
+
+
+def test_usage_is_summed_over_turn_completed_events_only():
+    text = "\n".join(
+        [
+            json.dumps({"type": "thread.started"}),
+            json.dumps(
+                {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 2}}
+            ),
+            "not json",
+            json.dumps({"type": "item.completed", "usage": {"input_tokens": 999}}),
+            json.dumps(
+                {"type": "turn.completed", "usage": {"input_tokens": 5, "cached_input_tokens": 3}}
+            ),
+        ]
+    )
+    assert A.usage_from_jsonl(text) == {
+        "turns": 2,
+        "input_tokens": 15,
+        "output_tokens": 2,
+        "cached_input_tokens": 3,
+    }
+
+
+def test_convert_codex_home_has_env_key_and_no_key_value(tmp_path):
+    conf = {"api_key": "sk-" + "x" * 30}
+    A._write_convert_codex_home(tmp_path / "codex-home", conf)
+    toml = (tmp_path / "codex-home" / "config.toml").read_text(encoding="utf-8")
+    assert conf["api_key"] not in toml and 'env_key = "WINLAB_MODEL_KEY"' in toml
+    assert 'wire_api = "responses"' in toml and "mcp_servers" not in toml
+
+
+def _fake_convert_lab(tmp_path, monkeypatch, driver):
+    """假 Lab：venv / 夹具 / 假 codex 都在，驱动换成 `driver(argv, env)`；不碰网络也不起真进程。"""
+    lab = A.Lab(tmp_path / "lab")
+    py = lab.venv_python()
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    shutil_fixtures = lab.repo / A.CONVERT_FIXTURES
+    import shutil
+
+    shutil.copytree(ROOT / A.CONVERT_FIXTURES, shutil_fixtures)
+    monkeypatch.setattr(
+        A, "ensure_live_host", lambda *a, **k: (Path("codex.cmd"), "codex-cli 9.9.9")
+    )
+    seen: list[dict] = []
+
+    def fake_run(argv, cwd, env, prefix, timeout, stdin_data=None):
+        seen.append({"argv": argv, "env": dict(env)})
+        driver(argv, env)
+        return {"exit_code": 0, "timed_out": False, "duration_s": 0.1}
+
+    monkeypatch.setattr(A, "_run_logged", fake_run)
+    return lab, seen
+
+
+def _argval(argv, flag):
+    return argv[argv.index(flag) + 1]
+
+
+def test_convert_live_run_keeps_the_key_in_env_only_and_scrubs_everything(tmp_path, monkeypatch):
+    key = "sk-" + "k" * 30
+
+    def driver(argv, env):
+        out = Path(_argval(argv, "--out"))
+        # 假装模型把 key 回显进了事件流、日志、CODEX_HOME 的快照和工作区
+        (out / "codex_stdout.jsonl").write_text(
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 7}})
+            + f"\nleak {key}\n",
+            encoding="utf-8",
+        )
+        (Path(env["CODEX_HOME"]) / "shell_snapshots").mkdir(parents=True, exist_ok=True)
+        (Path(env["CODEX_HOME"]) / "shell_snapshots" / "s.sh").write_text(key, encoding="utf-8")
+        (Path(env["TAVOTTO_DATA_DIR"]) / "leak.txt").parent.mkdir(parents=True, exist_ok=True)
+        Path(_argval(argv, "--result")).write_text(
+            json.dumps(
+                {
+                    "session": "abc",
+                    "finished_in_time": True,
+                    "outcome": "completed",
+                    "status": "done",
+                    "elapsed_s": 12.5,
+                    "workspace_files": [{"name": "fig_converted.py", "bytes": 3, "path_len": 99}],
+                    "workspace_path_len": 80,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    lab, seen = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    run_dir = lab.runs / "20261101T000000Z-abcdef"
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_convert_live_task(
+        lab, run_dir, {}, {"api_key": key, "provider": "deepseek"}, "baseline"
+    )
+    assert rep["result"] == "passed" and rep["counts"]["done"] == 2 == rep["counts"]["runs"]
+    assert rep["usage_total"] == {"turns": 2, "input_tokens": 14}
+    assert rep["conversions"][0]["workspace_files"] == ["fig_converted.py"]
+    for call in seen:
+        assert key not in " ".join(call["argv"])  # 密钥不进 argv
+        assert call["env"]["WINLAB_MODEL_KEY"] == key  # 只进子进程环境
+        # Lab 隔离实例的显式认证旁路（test_ci_qualification 的三选一）
+        assert call["env"]["TAVOTTO_INSECURE_NO_AUTH"] == "1"
+        # CODEX_HOME 与项目 / 工作区不同树
+        assert A.trees_disjoint(
+            Path(call["env"]["CODEX_HOME"]), Path(call["env"]["TAVOTTO_DATA_DIR"])
+        )
+        assert A.trees_disjoint(
+            Path(call["env"]["CODEX_HOME"]), Path(_argval(call["argv"], "--project"))
+        )
+    # 证据与 CODEX_HOME 里没有密钥；shell_snapshots 已删；工作树整棵删了
+    for f in run_dir.rglob("*"):
+        if f.is_file():
+            assert key.encode() not in f.read_bytes(), f
+    assert not (run_dir / "work" / "codex-home" / "shell_snapshots").exists()
+    assert not (lab.cache / "convert-work" / run_dir.name).exists()
+    assert "turn.completed" in (
+        run_dir / "evidence" / "convert-live" / "baseline-a" / "codex_stdout.jsonl"
+    ).read_text(encoding="utf-8")
+
+
+def test_convert_live_timeout_and_missing_session_are_never_a_pass(tmp_path, monkeypatch):
+    def driver(argv, env):
+        Path(_argval(argv, "--result")).write_text(
+            json.dumps({"session": "abc", "finished_in_time": False, "elapsed_s": 961}),
+            encoding="utf-8",
+        )
+
+    lab, _ = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    run_dir = lab.runs / "20261101T000001Z-abcdef"
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_convert_live_task(lab, run_dir, {}, {"api_key": "sk-" + "k" * 30}, "baseline")
+    assert rep["result"] == "failed" and rep["counts"]["timeout"] == 2
+
+    def crashed(argv, env):  # 驱动没留下结果文件
+        pass
+
+    lab2, _ = _fake_convert_lab(tmp_path / "x", monkeypatch, crashed)
+    run2 = lab2.runs / "20261101T000002Z-abcdef"
+    (run2 / "evidence").mkdir(parents=True)
+    rep2 = A.run_convert_live_task(lab2, run2, {}, {"api_key": "sk-" + "k" * 30}, "long-path")
+    assert rep2["result"] == "error" and rep2["counts"]["driver_error"] == 1
+
+
+def test_convert_live_without_prepared_fixtures_is_environment_unavailable(tmp_path):
+    lab = A.Lab(tmp_path / "lab")
+    lab.venv_python().parent.mkdir(parents=True)
+    lab.venv_python().write_text("", encoding="utf-8")
+    rep = A.run_convert_live_task(lab, tmp_path / "run", {}, {"api_key": "sk-" + "k" * 30})
+    assert rep["result"] == "environment_unavailable"
+
+
+def test_convert_driver_has_no_key_argument_and_is_importable_alone(tmp_path):
+    import shutil
+    import subprocess as sp
+
+    src = (WINLAB / "convert_driver.py").read_text(encoding="utf-8")
+    assert "api_key" not in src and "--key" not in src  # 没有任何密钥参数；变量名只出现在文档里
+    assert "os.environ[" in src and "WINLAB_MODEL_KEY" not in src.split("def ", 1)[1]
+    shutil.copy(WINLAB / "convert_driver.py", tmp_path / "convert_driver.py")
+    r = sp.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path[:0] = [sys.argv[1]]; import convert_driver",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert r.returncode == 0, r.stderr
+
+
+# --------------------------------------------------------------------------- render-bench（渲染测量，只读）
+def test_render_bench_is_a_closed_set_task_without_model_or_network():
+    t = A.TASKS["render-bench"]
+    assert not t.needs_model_conf and t.networks == ("direct",) and not t.accepts_package
+    assert t.modes == A.RENDER_BENCH_MODES
+    for m in A.RENDER_BENCH_MODES:
+        assert A.validate_test_args(t, [], None, "direct", mode=m) is None
+    assert A.validate_test_args(
+        t, [], None, "direct", mode="C:\\Python313"
+    )  # 路径 / 解释器不是自由输入
+    assert A.validate_test_args(t, ["tests/test_x.py"], None, "direct")
+    assert t.claim and t.unverified and t.timeout_s == A.RENDER_BENCH_TIMEOUT_S
+
+
+def test_render_bench_modes_pick_interpreter_and_location_from_constants():
+    assert A.render_bench_plan("rotation") == {
+        "driver_mode": "rotation",
+        "store": False,
+        "drive": None,
+    }
+    assert A.render_bench_plan("all")["driver_mode"] == "all"
+    assert A.render_bench_plan("cold-store") == {
+        "driver_mode": "cold",
+        "store": True,
+        "drive": None,
+    }
+    assert A.render_bench_plan("cold-drive-p") == {
+        "driver_mode": "cold",
+        "store": False,
+        "drive": "P",
+    }
+    assert A.render_bench_plan("cold-store-drive-p") == {
+        "driver_mode": "cold",
+        "store": True,
+        "drive": "P",
+    }
+
+
+def test_perf_fixtures_directory_names_match_between_agent_and_admin_script():
+    """admin 脚本是 ASCII，中文目录名靠码点拼；agent 这边用真字符——两边必须是同一个目录。"""
+    parts = tuple("".join(chr(int(x, 16)) for x in cp.split(",")) for cp in W.PERF_DIR_CODEPOINTS)
+    assert parts == A.PERF_DIR_PARTS == ("科研 数据", "项目")
+    assert W.PERF_LETTER == A.PERF_DRIVE
+
+
+def test_perf_fixtures_admin_script_is_ascii_closed_and_scoped():
+    fill = W._fill_perf(W.PERF_FIXTURES_PS)
+    fill.encode("ascii")  # admin_ssh 要求 ASCII（5.1 按 ANSI 读无 BOM 文件）
+    assert not re.findall(r"__[A-Z0-9_]+__", fill)  # 占位符都替换完了
+    # 只授 tavotto-lab 修改权限，且只在这个目录上，不碰盘根
+    assert "FileSystemAccessRule('tavotto-lab', 'Modify'" in fill
+    assert fill.count("Set-Acl") == 1 and "Set-Acl -LiteralPath $dir" in fill
+    # 下载包先核散列再核 Authenticode 才装；不经代理
+    assert fill.index("sha256 mismatch") < fill.index("Add-AppxProvisionedPackage")
+    assert "Get-AuthenticodeSignature" in fill and "-SkipLicense" in fill
+    assert "proxy" not in fill.lower() and "7890" not in fill
+    # VHDX 在 C:\TavottoLab 下，不放系统目录；开机自动重新挂载
+    assert W.PERF_VHDX.startswith("C:\\TavottoLab\\perf\\")
+    assert "TavottoLab-PerfVhd" in fill and "-AtStartup" in fill
+    # 幂等：已有 VHDX / 已装包都不重建
+    assert "Test-Path $vhdx" in fill and "already provisioned" in fill
+    rm = W._fill_perf(W.PERF_REMOVE_PS)
+    rm.encode("ascii")
+    assert "Dismount-DiskImage" in rm and "Remove-AppxProvisionedPackage" in rm
+
+
+def _ps_statements(script: str) -> list[str]:
+    """PowerShell 脚本里**可执行**的语句行（去掉 `<# … #>` 块注释与整行 `#` 注释，去首尾空白）。
+
+    判据只认这些行**以某条命令开头**——子串匹配会把注释掉的命令也算成「在」（Codex #1652 P1）。
+    这段 admin 脚本不写行尾注释；真出现了也只会让判据更严（那一行不再以命令开头），不会放过。"""
+    script = re.sub(r"<#.*?#>", "", script, flags=re.S)
+    out = []
+    for raw in script.splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
+
+
+def _stmt_at(lines: list[str], command: str, start: int = 0) -> int:
+    """第一条以 `command` 开头的可执行语句的位置（从 `start` 起找）；没有就让断言失败。"""
+    for i in range(start, len(lines)):
+        if lines[i].startswith(command):
+            return i
+    raise AssertionError(f"没有可执行语句以 {command!r} 开头（注释掉的不算）")
+
+
+def test_perf_fixtures_logon_task_can_read_its_admin_written_script():
+    """登录任务以 tavotto-lab 身份跑管理员写进 C:\\TavottoLab\\perf 的脚本：那个目录只继承 SYSTEM / Administrators，
+    不授读就是「任务触发了、PowerShell 打不开 -File、结果 0xFFFD0000、一行日志都没有」（Lab 11-03 实测）。
+    授权必须在写完脚本之后、注册任务之前；已登录时直接启动任务，不必再重启一次。"""
+    lines = _ps_statements(W._fill_perf(W.PERF_FIXTURES_PS))
+    written = _stmt_at(lines, "'@ | Set-Content -Path $setup")
+    grant = _stmt_at(lines, "icacls $setup /grant 'tavotto-lab:(RX)'", written)
+    register = _stmt_at(lines, "Register-ScheduledTask -TaskName 'TavottoLab-PerfPython'", grant)
+    _stmt_at(lines, "Start-ScheduledTask -TaskName 'TavottoLab-PerfPython'", register)
+
+
+def test_perf_fixtures_volume_is_openable_by_tavotto_lab():
+    """挂上的虚拟磁盘沿用 .vhdx **文件**的安全描述符：文件只继承 SYSTEM / Administrators 时，tavotto-lab 连卷都打不开，
+    P: 上任何 stat 都是 WinError 5，里面的 NTFS 授权不起作用（Lab 11-03 实测 cold-drive-p 崩在 `perf_dir.is_dir()`）。
+    授权在建盘 / 挂载之后，并且授权之后要重新挂载一次，新的描述符才生效；盘符校验放在重新挂载之后。"""
+    lines = _ps_statements(W._fill_perf(W.PERF_FIXTURES_PS))
+    created = _stmt_at(lines, "diskpart /s $dp")
+    grant = _stmt_at(lines, "icacls $vhdx /grant 'tavotto-lab:(M)'", created)
+    dismount = _stmt_at(lines, "Dismount-DiskImage -ImagePath $vhdx", grant)
+    remount = _stmt_at(lines, "Mount-DiskImage -ImagePath $vhdx", dismount)
+    _stmt_at(lines, "if ($vol.FileSystemLabel -ne 'TavottoPerf') { throw", remount)
+
+
+def test_pymanager_pin_and_fetch_rejects_a_wrong_download(tmp_path, monkeypatch):
+    assert re.fullmatch(r"[0-9a-f]{64}", W.PYMANAGER_SHA256)
+    assert W.PYMANAGER_URL.startswith("https://www.python.org/ftp/python/pymanager/")
+    import io
+    import urllib.request
+
+    used = {}
+
+    class FakeOpener:
+        def open(self, url, timeout=0):
+            used["url"] = url
+            return io.BytesIO(b"not the msix")
+
+    def fake_build_opener(*handlers):
+        used["handlers"] = handlers
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
+    dest = tmp_path / "x.msix"
+    with pytest.raises(RuntimeError):
+        W.fetch_pymanager(dest)
+    assert not dest.exists()  # 不符即删
+    # 显式不走环境里的代理
+    assert any(
+        isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in used["handlers"]
+    )
+
+
+def test_perf_fixtures_verb_is_registered_and_dispatches(monkeypatch):
+    calls = []
+    monkeypatch.setattr(W, "admin_perf_fixtures", lambda remove=False: calls.append(remove) or 0)
+    assert W.main(["admin", "perf-fixtures"]) == 0
+    assert W.main(["admin", "perf-fixtures", "--remove"]) == 0
+    assert calls == [False, True]
+
+
+def test_render_bench_modes_do_not_accept_free_paths():
+    t = A.TASKS["render-bench"]
+    for bad in ("P:\\", "cold-drive-d", "cold-drive-e", "python.exe"):
+        assert A.validate_test_args(t, [], None, "direct", mode=bad)
+
+
+def test_store_python_path_needs_the_alias_file(tmp_path):
+    env = {"LOCALAPPDATA": str(tmp_path)}
+    assert A.store_python_path(env) is None
+    alias = tmp_path / "Microsoft" / "WindowsApps" / "python.exe"
+    alias.parent.mkdir(parents=True)
+    alias.write_bytes(b"")
+    assert A.store_python_path(env) == alias
+
+
+def test_render_bench_driver_is_deployed_and_listed_in_help():
+    text = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert 'HERE / "render_bench_driver.py"' in text
+    assert (
+        "render-bench：rotation | cold | cold-store | cold-drive-p | cold-store-drive-p | all"
+        in text
+    )
+    assert "render-bench" in W.build_parser().parse_args(["test", "render-bench"]).task
+
+
+def test_render_bench_fixtures_are_six_minimal_numpy_matplotlib_scripts():
+    fx = ROOT / A.RENDER_BENCH_FIXTURES
+    scripts = sorted(fx.glob("*.py"))
+    assert len(scripts) == 6
+    reg = json.loads((fx / "tavotto_registry.json").read_text(encoding="utf-8"))["scripts"]
+    assert sorted(reg) == [p.name for p in scripts]
+    for p in scripts:
+        src = p.read_text(encoding="utf-8")
+        assert "import numpy" in src and "import matplotlib.pyplot" in src and "def main" in src
+        assert reg[p.name]["stems"] == [p.stem]
+    assert sum(p.stat().st_size for p in fx.rglob("*") if p.is_file()) < 20_000
+
+
+def test_render_bench_driver_statistics_and_timing_whitelist():
+    import render_bench_driver as R
+
+    assert R.pct([], 0.9) is None
+    assert R.pct([5.0], 0.9) == 5.0
+    assert R.pct([float(i) for i in range(1, 11)], 0.9) == 9.0  # 最近邻：真实出现过的一次耗时
+    assert R.pct([float(i) for i in range(1, 11)], 1.0) == 10.0
+    assert R.summarize([1.0, 2.0, 3.0])["median"] == 2.0
+    kept = R.numeric_timings(
+        {
+            "server_ms": 12.5,
+            "script_build_ms": 3,
+            "bad": "x",
+            "nan": float("nan"),
+            "neg": -1,
+            "flag": True,
+            "huge": 9e9,
+        }
+    )
+    assert kept == {"server_ms": 12.5, "script_build_ms": 3.0}
+    assert R.variant(None, 1) == []
+    assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 1)[0]["value"] == 8.5
+    assert R.variant({"gid": "g", "prop": "fontsize", "value": 8.0}, 2)[0]["value"] == 7.5
+
+
+@pytest.mark.parametrize("n", [2, 3, 4, 6])
+def test_render_bench_rotation_changes_every_panel_value_on_every_visit(n):
+    """任何张数下，同一张面板相邻两次访问拿到的补丁值都不同——否则 `overrides.apply()` 跳过没变的值，
+    热基线量的是「没改」，各组不可比（Codex #1641 P2）。"""
+    import render_bench_driver as R
+
+    patch = {"gid": "g", "prop": "fontsize", "value": 8.0}
+    subset = [f"p{i}" for i in range(n)]
+    plan = R.rotation_plan(subset, 4)
+    assert len(plan) == 4 * n
+    last: dict = {}
+    for pid, visit in plan:
+        value = R.variant(patch, visit)[0]["value"]
+        assert last.get(pid) != value, (n, pid, visit)
+        last[pid] = value
+
+
+# --------------------------------------------------------------------------- convert-live 的地区政策看护
+def test_no_official_vendor_modes_or_providers_exist_for_convert_live_or_secret_init():
+    """docs/rules/ci/windows-lab.md:122-124（地区政策）：Lab 在中国大陆，Anthropic / OpenAI 的真实模型调用保持 BLOCKED，
+    经代理出口调用等于绕开服务商地区限制，授权也不改变——所以 convert-live 的 mode 闭集与 secret-init 的 provider
+    闭集里都不能出现官方厂商，convert-live 也不能走 trojan 出口。"""
+    banned = ("openai", "anthropic", "claude")
+    for m in A.CONVERT_MODES:
+        assert not any(v in m.lower() for v in banned), m
+    assert A.TASKS["convert-live"].networks == ("direct",)
+    assert not any(v in p.lower() for p in W.MODEL_PROVIDERS for v in banned)
+    parser = W.build_parser()
+    for v in banned:
+        with pytest.raises(SystemExit):
+            parser.parse_args(["secret-init", v])
+    for name in ("OPENAI_MODES", "MODEL_CONF_OPENAI_PATH"):
+        assert not hasattr(W, name)
+    for name in ("CONVERT_OPENAI_PREFIX", "CONVERT_OPENAI_NETWORK", "CODEX_OFFICIAL_KEY_ENV"):
+        assert not hasattr(A, name)
+
+
+def _convert_driver():
+    sys.path.insert(0, str(WINLAB))
+    try:
+        import convert_driver as CD
+    finally:
+        sys.path.remove(str(WINLAB))
+    return CD
+
+
+class _FakeConvert:
+    """假的 ai_convert：公式与产品同形（900 + 2/行，封顶 1800）。"""
+
+    @staticmethod
+    def convert_timeout_s(lines):
+        return min(1800, 900 + 2 * lines)
+
+    @staticmethod
+    def source_line_count(data):
+        return data.count(b"\n")
+
+
+def test_convert_driver_deadline_follows_the_product_formula_per_script():
+    CD = _convert_driver()
+    assert CD.MARGIN_S == A.CONVERT_TIMEOUT_MARGIN_S == 120
+    long_script = b"x\n" * 500  # 900 + 1000 = 1900 → 封顶 1800，再加余量
+    assert CD.timeout_for(long_script, _FakeConvert) == 1800 + 120 > 960
+    mid = b"x\n" * 97  # d 类项目：1094 s
+    assert CD.timeout_for(mid, _FakeConvert) == 900 + 194 + 120
+    assert CD.timeout_for(b"x\n" * 10, _FakeConvert) == 900 + 20 + 120  # 短脚本按公式
+
+
+def test_convert_driver_deadline_falls_back_to_900_plus_margin_without_the_product_function():
+    CD = _convert_driver()
+    import types
+
+    assert CD.timeout_for(b"x\n" * 500, types.SimpleNamespace()) == 900 + 120
+    assert CD.DEFAULT_TIMEOUT_S == A.CONVERT_TIMEOUT_FALLBACK_S + A.CONVERT_TIMEOUT_MARGIN_S
+
+
+def test_convert_case_timeout_is_passed_to_driver_and_outer_process(tmp_path, monkeypatch):
+    def driver(argv, env):
+        Path(_argval(argv, "--result")).write_text(
+            json.dumps({"session": "abc", "finished_in_time": True, "outcome": "completed"}),
+            encoding="utf-8",
+        )
+
+    lab, _ = _fake_convert_lab(tmp_path, monkeypatch, driver)
+    monkeypatch.setattr(A, "convert_case_timeout_s", lambda py, script, src, env: 1682 + 120)
+    outer: list[int] = []
+    orig = A._run_logged
+
+    def spy(argv, cwd, env, prefix, timeout, stdin_data=None):
+        outer.append(timeout)
+        assert _argval(argv, "--timeout") == str(1682 + 120)
+        return orig(argv, cwd, env, prefix, timeout, stdin_data)
+
+    monkeypatch.setattr(A, "_run_logged", spy)
+    run_dir = lab.runs / "20261102T000000Z-abcdef"
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_convert_live_task(lab, run_dir, {}, {"api_key": "sk-" + "k" * 30}, "baseline")
+    assert rep["result"] == "passed"
+    assert outer and all(t == 1682 + 120 + 180 > 960 for t in outer)
+
+
+def test_convert_case_timeout_s_falls_back_when_the_driver_cannot_answer(tmp_path):
+    script = tmp_path / "s.R"
+    script.write_text("x\n", encoding="utf-8")
+    missing_python = tmp_path / "no-such-python"
+    assert A.convert_case_timeout_s(missing_python, script, tmp_path, {}) == 900 + 120
+
+
+def test_convert_driver_serves_the_app_on_a_real_loopback_port_and_calls_it_over_http():
+    """方案 A 的写入工具回调要连真实端口：驱动起真服务，请求环境里的 SERVER_PORT 就是它；非 2xx 也带回 JSON 体。"""
+    flask = pytest.importorskip("flask")
+    sys.path.insert(0, str(WINLAB))
+    try:
+        import convert_driver as CD
+    finally:
+        sys.path.remove(str(WINLAB))
+    app = flask.Flask("fake")
+
+    @app.post("/echo")
+    def echo():
+        return flask.jsonify(
+            {"port": flask.request.environ.get("SERVER_PORT"), "got": flask.request.get_json()}
+        )
+
+    @app.get("/nope")
+    def nope():
+        return flask.jsonify({"code": "x"}), 409
+
+    server, port = CD.serve_app(app)
+    try:
+        assert port > 0 and server.server_address[0] == "127.0.0.1"
+        api = CD.Api(port)
+        assert api.call("POST", "/echo", {"a": 1}) == (200, {"port": str(port), "got": {"a": 1}})
+        assert api.call("GET", "/nope") == (409, {"code": "x"})
+        assert api.call("GET", "/missing")[0] == 404
+    finally:
+        server.shutdown()

@@ -1,0 +1,74 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "tavotto-cla-staging",
+  "main": "../../src/entry.ts",
+  "compatibility_date": "2026-10-18",
+  "keep_names": false,
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "cla-staging.tavotto.com",
+      "custom_domain": true
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/2 * * * *",
+      "7-59/15 * * * *"
+    ]
+  },
+  "vars": {
+    "CLA_GITHUB_ENABLED": "false",
+    "CLA_OAUTH_ENABLED": "false",
+    "CLA_SIGNING_ENABLED": "false",
+    "CLA_CHECK_PUBLISHING_ENABLED": "false",
+    "CLA_UI_ENABLED": "false",
+    "CLA_BACKGROUND_ENABLED": "false",
+    "CLA_CI_VERIFICATION_ENABLED": "false",
+    "CLA_DELEGATED_COUNTERSIGNING_ENABLED": "false",
+    "CLA_AUTOMATIC_VERIFICATION_ENABLED": "false",
+    "CLA_AUTOMATIC_PUBLISHING_ENABLED": "false",
+    "CLA_AGREEMENT_ACTIVATION_ENABLED": "false",
+    "CLA_CONFIRMATION_SLOT_ENABLED": "false",
+    "CLA_CONFIG": "{\"origin\":\"https://cla-staging.tavotto.com\",\"repository\":\"erwanjun/cla-e2e-sandbox-20261026\",\"repositoryId\":1434279607,\"referenceSha\":\"6c8e96cec1d3bf81bdf10da4362a571586474ce1\",\"holderId\":88193520,\"holderName\":\"Jiaqi Wan (staging)\",\"appId\":5480322,\"appSlug\":\"erwanjun-cla-e2e-20261026\",\"installationId\":175465132,\"clientId\":\"Iv23liIfB3rp9SGapg1u\",\"checkName\":\"Tavotto CLA (staging)\",\"exemptionIds\":{\"erwanjun\":88193520},\"policy\":{\"agreements\":{\"individual\":{\"path\":\"docs/legal/CLA_INDIVIDUAL.md\",\"version\":\"1.0\",\"sha256\":\"544e127b677cd1b7dc30e9c9cc6e9f42c8fc72ddc25633ddad75323f8e404847\"},\"corporate\":{\"path\":\"docs/legal/CLA_CORPORATE.md\",\"version\":\"1.0\",\"sha256\":\"4fa4720b6a875941543ad7b3d25b720e277f9ea903a1bba22ef1bd2dfb2ef315\"}},\"exemptions\":[{\"login\":\"erwanjun\",\"kind\":\"rights_holder\",\"reason\":\"Sandbox owner (GitHub account id 88193520, pinned in .github/cla-e2e-fixture.json). An exempt verdict is not a signed verdict.\"}],\"provider\":{\"configured\":true,\"protocol\":\"tavotto-cla-v1\",\"name\":\"Tavotto CLA staging\",\"app_id\":5480322,\"app_slug\":\"erwanjun-cla-e2e-20261026\",\"check_name\":\"Tavotto CLA (staging)\",\"note\":\"STAGING ONLY. Points at the staging service https://cla-staging.tavotto.com. Staging signatures have no legal effect.\"}},\"syntheticSigning\":false,\"mockCheckPublishing\":false,\"autoHolder\":false}"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tavotto-cla-staging",
+      "database_id": "4d253c89-4035-4d04-a330-ffe7edd540f9"
+    }
+  ],
+  "assets": {
+    "directory": "./assets",
+    "binding": "CLA_PUBLIC_AGREEMENT",
+    "run_worker_first": true
+  },
+  "ratelimits": [
+    {
+      "name": "CLA_OAUTH_LIMITER",
+      "namespace_id": "26110301",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    },
+    {
+      "name": "CLA_VERIFICATION_LIMITER",
+      "namespace_id": "26110302",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "CLA_WEBHOOK_LIMITER",
+      "namespace_id": "26110303",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ]
+}

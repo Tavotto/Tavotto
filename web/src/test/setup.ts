@@ -23,6 +23,7 @@ import { cancelFocusRescues } from '@/lib/focusRescue'
 import { cancelStartupProbe } from '@/lib/startupProbe'
 import { forgetProjectFilesInSession } from '@/lib/projectFile'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
+import { __stopThinkingOrbsForTests } from '@/components/ui/thinkingOrb/loop'
 
 const pinNavigator = () => {
   Object.defineProperty(navigator, 'language', {
@@ -65,6 +66,15 @@ afterEach(() => {
 // 上一条用例没写成的版本不该在下一条用例里被重试到它的替身后端上
 afterEach(() => {
   __resetOutboxForTests()
+})
+
+// jsdom 没装 canvas 包：`getContext` 本来就返回 null，只是每次都往控制台打一行「Not implemented」。思考小球（ADR 0165）
+// 让助手面板的每个用例都会调到它——换成同语义的静默版本（返回 null）；要量画布的用例照旧自己换上假 context
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
+
+// 思考小球（ADR 0165）共用一个模块级循环（rAF + 兜底定时器）与一个 IntersectionObserver：不许活过用例（L-087）
+afterEach(() => {
+  __stopThinkingOrbsForTests()
 })
 
 // ProseMirror（所见即所得文字框，ADR 0152）聚焦 / 滚动时要量选区的矩形：jsdom 没有版面，

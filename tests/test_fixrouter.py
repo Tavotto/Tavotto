@@ -203,3 +203,15 @@ def test_dist_name_reads_the_distribution_from_a_requirement():
     assert fixrouter.dist_name("scipy>=1.2") == "scipy"
     assert fixrouter.dist_name("  scikit-learn[extra]==1") == "scikit-learn"
     assert fixrouter.dist_name("") == ""
+
+
+def test_stem_ownership_conflict_is_never_routed_to_ai():
+    """`multiple_stem_conflict`（TVD-TZQ9）：脚本已经跑完、图也捕获到了，只是图名已登记给另一份仍在的脚本。
+    AI 修不了（脚本不许改，冲突也不在脚本里），转写 / 换环境同样无关——给反馈，不让用户白跑一轮 AI。"""
+    for ctx in (
+        Ctx(ai_connected=True),
+        Ctx(ai_connected=False),
+        Ctx(ai_connected=True, source_language="r"),
+        Ctx(ai_connected=True, no_figure_hint={"kind": "raster_script"}),
+    ):
+        assert choose("multiple_stem_conflict", ctx) == {"kind": "feedback", "tried": []}

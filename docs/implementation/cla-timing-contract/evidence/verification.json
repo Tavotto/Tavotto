@@ -1,0 +1,139 @@
+{
+  "base_sha": "830bd89cc905d28b41f690c7aa6c0236a06aec84",
+  "latest_observed_main": "78a12af161cd95d02aeb62c7ab23780a9a57bc83",
+  "node": "v24.19.0",
+  "commands": [
+    {
+      "command": "node --test tests/timing-plan.test.mjs",
+      "exit_code": 0,
+      "passed": 51,
+      "log": "target.tap"
+    },
+    {
+      "command": "npm test",
+      "exit_code": 0,
+      "passed": 400,
+      "failed": 0,
+      "skipped": 0,
+      "log": "full.tap"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "passed": 4,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "detected": 80,
+      "new_cases": 14,
+      "new_cases_required_selected_exit": 1,
+      "new_cases_required_error": "AssertionError",
+      "log": "mutations.txt"
+    },
+    {
+      "command": "node scripts/timing-plan.mjs planning/timing.disabled.synthetic.json",
+      "exit_code": 2,
+      "meaning": "valid but refused offline model",
+      "log": "disabled-example.json"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "reason": "tsc absent",
+      "log": "typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "reason": "esbuild absent",
+      "log": "build.txt"
+    }
+  ],
+  "source_sha256": {
+    "services/cla-cloudflare/scripts/timing-plan.mjs": "0cfcb86f7ae32da1b5be5b005bdd9ca336228a41dea2ea3dbabc15da0cf85cbe",
+    "services/cla-cloudflare/tests/timing-plan.test.mjs": "cb94210c04d6f4431166f59fd5e425fc58433e8cacbce8e970c7474b4cddd89a",
+    "services/cla-cloudflare/tests/timing-plan-fixture.mjs": "6bb0046e6123f9dbf95ed1a7ed442da7ff58d414b3bd195c416633084745caeb",
+    "services/cla-cloudflare/tests/timing-plan-mutation-cases.json": "4044fa2ae607023ec0e83f6f44b2b98759ad7c8bf21be50117582730c435e961",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "f0e4f399f9677ee53bfe5dcfce73be38ec11429d1b4194d2570ec8e983894e0f",
+    "services/cla-cloudflare/planning/timing.disabled.synthetic.json": "89a33ecf088a562eb4f3c581f1cda9ec22f852098cbe5eac13b684c426e0de9e"
+  },
+  "log_sha256": {
+    "mutations.txt": "beca70cf9ea75b2e1487258dedd6332c1ebb0445e1b344e423dd7edd0514f5ec",
+    "build.txt": "f306fe0cabc3d58eed085ea9b9e311fb6bbbd610c39fe4cb741c927228bea4f6",
+    "migration.txt": "6bdff07fdc138a5a5f4194affc0c860a207398c8c95f4ca6da6a15c0bae861b2",
+    "target.tap": "1e67601a50193fdaa4b6ab982c5397b037f20ae73c88137499fea58829ba8e89",
+    "typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50",
+    "disabled-example.json": "d707a04dda9dd4f3371168099c1502d59e3a47a5517cbf6dcc3a2ca489b8b9f8",
+    "full.tap": "720edc4c765d08df787e09001723b1dacd8568d317a23417fa9c9f030ca90cde"
+  },
+  "independent_review": {
+    "status": "complete; P2 resolved; no other unresolved finding",
+    "finding": "first CI read at exact readiness assumed commit ordering; strict after fixed and permanent mutation added",
+    "same_independent_tests": 9,
+    "red_exit": 1,
+    "green_exit": 0,
+    "baseline_exits": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "mutant_exits": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "all_mutant_assertion_errors": true,
+    "manifest": "independent/final-independent-manifest.json",
+    "mutation_logs": "independent/mutation-logs.json",
+    "scope": "offline snapshot; no HTTP or publication",
+    "red_log_whitespace": "Trailing whitespace normalized in display .txt; exact original text+SHA256 preserved in independent/red-logs-original.json"
+  },
+  "excluded": {
+    "network": true,
+    "http_peer": true,
+    "real_signing": true,
+    "publication": true,
+    "dynamic_success_publication_across_expiry": true,
+    "runtime_integration": true,
+    "resource_or_permission_changes": true,
+    "dispatch": true,
+    "dependency_download_retry": true
+  },
+  "known_harness_setup_issue": "Initial mutation manifest generation used service cwd with repo-relative prefix and raised FileNotFoundError before writing; excluded from 80-case evidence. Corrected at repository cwd, then final complete 80-case command exited0.",
+  "independent_evidence_sha256": {
+    "boundary-only.diff": "1e4d130c7753eff53b0be3f18c937ba8aa737576513784ae855d01e140a2218c",
+    "cli-directory.txt": "3e72a2c63d1df791387d581ed8f139d6f72a34153b58e1338727b2fe2caab7ef",
+    "cli-oversize.txt": "3bdb1237f4e68d9542cd858e54c2c5e20772a2bba35eee052bf4ac35951b2e29",
+    "cli-refused.txt": "39db7c78413c7bcf1137b7a5a1b8b8afa02817d8b62ff1c4c0d590cd605214d2",
+    "cli-short-read.txt": "bfe2a05527dd4dd47822119b43a1498db8ba0dd78a64432cce915c9c8e4a44d5",
+    "final-independent-manifest.json": "28074450f91c45d2ec61286062337a6ddeebd5915f14ef62a081094c6988a171",
+    "independent-commands.json": "211cd15109d0b9acc7794cfed336348d5b6cc5404d7538a8eb445fc423f325d9",
+    "independent-green-final-source.txt": "a37f57751f087dad45334ea0bd54e9b7e66fb1300d277e921c97aab5c54a8a81",
+    "independent-red-boundary-only.txt": "7c54df7fa52abeedc46ac64a651d92e4596e03a72362bd44da9b4bdf1e33578a",
+    "independent-red-original-source.txt": "ac5c28a42bac202ec8c228b836e1813132b4d81b161daae61b618726e8d0a12d",
+    "initial-timing-plan.mjs.txt": "0b562df2210853c1bd89d5e032fd92830da3c045d8f1ed4299f3111a832af22a",
+    "mutation-logs.json": "859ce858864d26e03cd4b131bcd65890936a91ad84ca25908c00da10917d860b",
+    "mutations.json": "219db45967514dc24cfd8ab49caf069905cc281d113c22cd2e69b10790992c23",
+    "red-logs-original.json": "637ef8a4037c93a6eaf8d117511ac63cfb0d8a46843bce79b4eb54e9c8f9e8d4",
+    "reviewed-timing-plan.mjs.txt": "0cfcb86f7ae32da1b5be5b005bdd9ca336228a41dea2ea3dbabc15da0cf85cbe",
+    "run-review.py.txt": "75c5cee3d940b18bf714f65866fe6d3c9d9cf799baabda111d2b2f38841a955e",
+    "source-manifest.json": "5d78c2e8cd37367342efac7e28b75d8c890a3b14c4c3219a0cb2edd8afd7023e",
+    "timing-independent.test.mjs.txt": "a99ef0839a47bd0e74b0b501431d0342cae7dc68d17c49223a90d8ea2febf10a"
+  }
+}

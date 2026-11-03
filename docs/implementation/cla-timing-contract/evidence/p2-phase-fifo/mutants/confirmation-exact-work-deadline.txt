@@ -1,0 +1,28 @@
+✖ timing phase rejects the exact deadline confirmation_ms (3.465843ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 155.568771
+
+✖ failing tests:
+
+test at tests/timing-plan.test.mjs:111:1
+✖ timing phase rejects the exact deadline confirmation_ms (3.465843ms)
+  AssertionError [ERR_ASSERTION]: ["recovery_window_overcommitted"]
+      at rejected (file:///tmp/cla-timing-final-independent-mutants/confirmation-exact-work-deadline/tests/timing-plan.test.mjs:5:109)
+      at TestContext.<anonymous> (file:///tmp/cla-timing-final-independent-mutants/confirmation-exact-work-deadline/tests/timing-plan.test.mjs:113:3)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

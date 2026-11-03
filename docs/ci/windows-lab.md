@@ -225,6 +225,89 @@ python3 scripts/winlab/winlab.py test desktop-live --mode claude-desktop-native 
 
 建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` / `test desktop-live` 经 SSH stdin 交给那一次运行，Lab 不落盘（交互会话一侧经命名管道，`request.json` 里没有它）。
 
+### 转换真模型复现（convert-live）
+
+在 Lab 上用真模型跑 **Tavotto 真实的 R→Python 转换**（`POST /api/ai/convert`、`agent=codex`、真 `CodexAgent.build_command`、真 Codex CLI，
+推理走 DeepSeek 的 OpenAI 兼容 Responses 接口），复现反馈包里 Windows 上的 900 s 超时 / 正常退出却缺目标文件。费用提示：**每次转换都是一次真模型长任务**
+（单次时限按源脚本行数取产品同一个公式 `ai_convert.convert_timeout_s`，基线 900 s、封顶 1800 s，再加 120 s 完成余量；`all` 共 5 次，硬上限 8 次），用你给 Lab 单独建的限额 key；密钥规则同 `hosts-live`（经 stdin 到那一次运行的子进程环境，不落盘、不进 argv / 证据）。
+
+前提：
+
+1. `secret-init deepseek` 已录入默认那把 key（见上一节）。
+2. 管理员 `admin deploy-agent` 之后才生效——它把新任务 `convert-live` 与驱动 `convert_driver.py` 部署到 Lab（只在用户在场时由用户安排）。
+3. 被测提交要带 `scripts/winlab/fixtures/convert/`（`--ref` 会先 `prepare`）。
+
+```sh
+python3 scripts/winlab/winlab.py test convert-live --mode baseline  --ref HEAD   # 项目 a、e，英文路径
+python3 scripts/winlab/winlab.py test convert-live --mode cjk-path  --ref HEAD   # 项目路径含中文与空格、数据在 ..\data、source("..\\R\\utils.R")
+python3 scripts/winlab/winlab.py test convert-live --mode long-path --ref HEAD   # 候选工作区路径逼近 MAX_PATH（LongPathsEnabled=0）
+python3 scripts/winlab/winlab.py test convert-live --mode all       --ref HEAD   # 以上三组依次，共 5 次转换
+python3 scripts/winlab/winlab.py reports --id <run_id>
+```
+
+做法：CODEX_HOME 在 run 目录里（`work\codex-home`，只有 DeepSeek 供应商 + `env_key`，没有 key 本身）；R 项目与转换工作区在**另一棵树**
+`C:\TavottoLab\cw\<run_id>\`，任务结束整棵删掉，`shell_snapshots` 也删（模型曾 rg 到它把 key 发出去）。产品那一侧只做两处最小替换
+（绕过 `require_usable` / 第三方接口记录，密钥因此只在环境变量里），其余走产品原路径。驱动在本进程里把同一个 app 起在 `127.0.0.1:<空闲端口>` 的真实回环服务上，所有 API 调用走真实 HTTP（方案 A 的写入工具回调 `POST /api/ai/convert/<sid>/target` 需要真实端口；报告里 `target_tool_ok` 即该工具是否被调用且成功，代码里没有该事实为 null）；该子进程环境显式设 `TAVOTTO_INSECURE_NO_AUTH=1`（仅 Lab 隔离实例、只绑 127.0.0.1）。
+
+报告字段：`result`（全部转换完成 passed；有失败 / 超时 failed；驱动没跑完 error）、`counts`（`runs` / `done` / `failed` / `timeout` / `driver_error` /
+`not_started` / `target_missing`）、`conversions[]`（每次：`case`、`outcome`、`elapsed_s`、产品的 `status` / `code` / `product_outcome`、
+`convert_state` / `convert_failure`、`cli_run_facts`（#1587 的 Codex 运行事实，所 prepare 的代码里有才有）、`workspace_files`、
+`workspace_path_len`、`usage`）、`usage_total`（所有 `turn.completed.usage` 之和）、`host`（Codex 版本、供应商、模型）。
+原始 Codex JSONL、提示词、argv（长文本只记长度）、产品日志、会话 JSON 在 `evidence\convert-live\<场景-项目>\`。
+
+Lab 在中国大陆，convert-live 只走国内合规的 DeepSeek、只用 `direct` 出口；不提供 Anthropic / OpenAI 官方模型的模式，
+经代理出口调用也不行（见 `docs/rules/ci/windows-lab.md`「地区政策」，授权不改变）。
+
+### 渲染测量（render-bench，只读）
+
+不起模型、不联网、不装包。起 Tavotto 后端（Lab venv 源码态，`127.0.0.1` 随机端口，一次性数据目录），对仓库内置的 6 张最简 matplotlib 图
+（`scripts/winlab/fixtures/renderbench/`）直接打 `/api/engine/render`，用来量「越改越慢」类反馈：
+
+- **池上限轮转**：同一个后端里依次对 2 / 3 / 4 / 6 张图轮流渲染，每组先预热一遍（不计入）再正式 20 轮；每次记 `server_ms` / `wall_ms` /
+  是否冷启动（响应 timings 里有 `script_build_ms`），每组前后数 `app.log` 里「LRU 淘汰」行数，给中位数 / P90。
+- **冷启动分解**：同一张图每次**重起后端 + 全新数据目录**后渲染第一次，共 5 次，记 timings 里所有数字段与后端就绪耗时。
+- **解释器探针**（每个模式都跑）：渲染解释器 `-c "import sys"`、`import numpy, matplotlib`、`import matplotlib.pyplot` 各 5 次，用来分开「解释器入口慢」与「导入 / 磁盘慢」。
+
+```sh
+python3 scripts/winlab/winlab.py test render-bench --mode rotation           --ref HEAD   # 轮转 + 探针
+python3 scripts/winlab/winlab.py test render-bench --mode cold               --ref HEAD   # 冷启动 + 探针；项目在 cache 下含中文与空格的路径
+python3 scripts/winlab/winlab.py test render-bench --mode cold-store         --ref HEAD   # 渲染解释器 = WindowsApps 别名入口的 Python（perf-fixtures 装的）
+python3 scripts/winlab/winlab.py test render-bench --mode cold-drive-p       --ref HEAD   # 项目放在 VHDX 盘 P:\科研 数据\项目\
+python3 scripts/winlab/winlab.py test render-bench --mode cold-store-drive-p --ref HEAD   # 别名入口 + 另一块盘（最接近用户的组合）
+python3 scripts/winlab/winlab.py test render-bench --mode all                --ref HEAD   # rotation + cold + 探针
+```
+
+解释器与项目位置都由 `--mode` 选，写死在 `agent.py`，不收自由路径（没有透传通道）。`cold-store*` / `cold-*drive-p` 依赖下一节的 `admin perf-fixtures`，
+没装就是 `environment_unavailable`。每个模式的**解释器探针**同时计时三个解释器的 `-c "import sys"` / `import numpy, matplotlib` / `import matplotlib.pyplot`：
+Lab venv、别名入口 `WindowsApps\python.exe`、别名背后的真实 exe（`%LOCALAPPDATA%\Python\pythoncore-3.11*\python.exe`）——别名入口慢不慢直接看 `import_sys` 这一项的差。
+前提同 `convert-live`：管理员 `admin deploy-agent` 之后才生效（部署 `render_bench_driver.py`，只在用户在场时由用户安排）。
+报告 `bench.rotation[].sets[]` / `bench.cold[]` / `bench.probe[]` 是全部原始数据，`rotation_summary` 是一眼表；
+只测 Python 池控制面，没有 `tavotto-workerd` 二进制时 workerd 记为 `skipped`。驱动在 Mac 上也能直接跑（`python scripts/winlab/render_bench_driver.py --help`），用于出基线。
+
+#### 夹具：`admin perf-fixtures`（一次性管理员动作，用户在场时执行）
+
+```sh
+python3 scripts/winlab/winlab.py admin perf-fixtures            # 幂等，可重复跑
+python3 scripts/winlab/winlab.py admin perf-fixtures --remove   # 撤销
+```
+
+它在 Lab 上改了这些东西，也只有这些：
+
+1. `C:\TavottoLab\perf\perf-fixtures.vhdx`（4 GB 动态 VHDX，diskpart 创建 / 挂载，NTFS，卷标 `TavottoPerf`，盘符 `P:`；不依赖 Hyper-V 模块），
+   计划任务 `TavottoLab-PerfVhd`（SYSTEM，开机时重新挂载）。盘上建 `P:\科研 数据\项目\`，**只在这个目录上**授 `tavotto-lab` 修改权限（`Set-Acl`，不碰盘根）。
+   另外 `.vhdx` **文件**本身也授 `tavotto-lab` 修改并重新挂载一次：挂上的虚拟磁盘沿用镜像文件的安全描述符，文件只继承 SYSTEM / Administrators 时 tavotto-lab 连卷都打不开（`P:` 上任何 stat 都是 WinError 5，盘内 NTFS 授权不起作用）。
+   它**只覆盖「另一块盘 + 中文路径」，不限速、不模拟 U 盘的速度**（VHDX 的 QoS 限速要 Hyper-V；底下是 Lab 自己的云盘）。
+2. Python 安装管理器 MSIX（python.org 官方发布，固定版本与 SHA-256 写在 `winlab.py` 的 `PYMANAGER_*`）：**Mac 端直连 python.org 下载**（显式不走代理）、核大小与散列后经 scp 送到
+   `C:\TavottoLab\perf\`，Lab 上再核 SHA-256 与 Authenticode（有效且签名者含 Python Software Foundation）才 `Add-AppxProvisionedPackage -Online -SkipLicense`
+   （系统级预置：`tavotto-lab` 下次登录时得到它，`WindowsApps` 里出现 `python.exe` / `py.exe` 等应用执行别名）。
+3. 一次性登录任务 `TavottoLab-PerfPython`（`tavotto-lab` 登录时运行 `perf-python-setup.ps1`）：等别名出现 → `py install --yes 3.11` → 用清华镜像装 `matplotlib>=3.8,<3.12` 与 `numpy>=1.24,<3`
+   → 核对别名 `python.exe` 能 import 它们 → 写 `C:\TavottoLab\cache\perf-python-setup.log`（末行 `done`）→ 删除自己。安装脚本写在 `C:\TavottoLab\perf\`（只继承 SYSTEM / Administrators），所以写完立刻 `icacls` 授 tavotto-lab 读与执行——漏了它登录任务会触发但 PowerShell 打不开 `-File`（结果码 `0xFFFD0000`、不写日志）。执行时 tavotto-lab 已登录就直接 `Start-ScheduledTask`；否则让它注销再登录（或重启）。
+
+这不是用户机器上的「微软商店版 Python 3.11」（那是商店里的独立包 `PythonSoftwareFoundation.Python.3.11`，Server 2025 没有商店），而是 python.org 官方的新机制：
+同样是 `WindowsApps` 里的应用执行别名（走 AppX 激活而不是普通 exe），运行时则装在 `%LOCALAPPDATA%\Python\`。别名机制相同，所以「别名入口本身慢不慢」可以回答，运行时差异不能。
+
+撤销：`admin perf-fixtures --remove` 删两个计划任务、卸载并删除 VHDX、移除预置包与全部用户的包；`tavotto-lab` 的 `%LOCALAPPDATA%\Python\` 是用户目录，手动删。
+
 ### 黄金快照
 
 腾讯云 CAM 子账号只授 `lighthouse:DescribeInstances` / `DescribeSnapshots` / `CreateInstanceSnapshot`

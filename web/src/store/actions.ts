@@ -84,11 +84,12 @@ import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
+import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
+import { alignOneVisual, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
@@ -520,7 +521,7 @@ export function revealObjects(ids: string[]) {
   const objs = doc().objects.filter((o) => ids.includes(o.id))
   if (!objs.length) return
   select(objs.map((o) => o.id))
-  const bounds = boundsOf(objs)
+  const bounds = boundsOf(objs.map(visualBounds))
   if (bounds) useViewportStore.getState().revealRect(bounds)
 }
 
@@ -971,7 +972,7 @@ export function renameObject(id: string, name: string) {
 }
 
 /** 选区包围盒，状态栏与 Inspector 多选态用 */
-export const selectionBounds = () => boundsOf(selectedObjects())
+export const selectionBounds = () => boundsOf(selectedObjects().map(visualBounds))
 
 /* ---------------------------- 图内元素 override ---------------------------- */
 
@@ -2587,13 +2588,15 @@ function alignIn(objs: CanvasObject[], mode: AlignMode, box: Rect): void {
   if (mode === 'hdist' || mode === 'vdist') {
     const k = mode === 'hdist' ? 'x' : 'y'
     const s = mode === 'hdist' ? 'w' : 'h'
-    const sorted = objs.slice().sort((a, b) => a[k] - b[k])
-    const total = sorted.reduce((t, o) => t + o[s], 0)
+    // 量看得见的盒（旋转过的标注取外接框），写回只平移，见 geometry.alignOneVisual
+    const sorted = objs.slice().sort((a, b) => visualBounds(a)[k] - visualBounds(b)[k])
+    const total = sorted.reduce((t, o) => t + visualBounds(o)[s], 0)
     const gap = (box[s] - total) / (sorted.length - 1)
     let cur = box[k]
     for (const o of sorted) {
-      o[k] = cur
-      cur += o[s] + gap
+      const vb = visualBounds(o)
+      o[k] += cur - vb[k]
+      cur += vb[s] + gap
     }
     return
   }
@@ -2614,14 +2617,7 @@ function alignIn(objs: CanvasObject[], mode: AlignMode, box: Rect): void {
     }
     return
   }
-  for (const o of objs) {
-    if (mode === 'left') o.x = box.x
-    else if (mode === 'right') o.x = box.x + box.w - o.w
-    else if (mode === 'hcenter') o.x = box.x + (box.w - o.w) / 2
-    else if (mode === 'top') o.y = box.y
-    else if (mode === 'bottom') o.y = box.y + box.h - o.h
-    else if (mode === 'vcenter') o.y = box.y + (box.h - o.h) / 2
-  }
+  for (const o of objs) alignOneVisual(o, mode, box)
 }
 
 /**
@@ -2656,8 +2652,12 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
       ref === 'page'
         ? { x: 0, y: 0, w: d.page.w, h: d.page.h }
         : ref === 'primary'
-          ? rectOf(primary)
-          : (boundsOf(objs) ?? rectOf(primary))
+          ? // 统一宽 / 高比的是对象自身未旋转的 w / h（与属性页 W / H、applyAlign 同口径），
+            // 其余对齐才量旋转后的外接框（ADR 0163 旋转一节第 5 点）
+            mode === 'samew' || mode === 'sameh'
+            ? { x: primary.x, y: primary.y, w: primary.w, h: primary.h }
+            : visualBounds(primary)
+          : (boundsOf(objs.map(visualBounds)) ?? visualBounds(primary))
     // 以某个对象为参照时它自己不动，否则等宽等高会把基准也改掉
     const targets = objs.filter(
       (o) => movableIds.has(o.id) && (ref !== 'primary' || o !== primary),
@@ -2676,11 +2676,13 @@ export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
   commit(hist(axis === 'x' ? 'spacingX' : 'spacingY'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const s = axis === 'x' ? 'w' : 'h'
-    const sorted = objs.slice().sort((a, b) => a[axis] - b[axis])
-    let cur = sorted[0][axis]
+    // 间距量的是看得见的盒（旋转过的标注取外接框），写回只平移
+    const sorted = objs.slice().sort((a, b) => visualBounds(a)[axis] - visualBounds(b)[axis])
+    let cur = visualBounds(sorted[0])[axis]
     for (const o of sorted) {
-      o[axis] = cur
-      cur += o[s] + gap
+      const vb = visualBounds(o)
+      o[axis] += cur - vb[axis]
+      cur += vb[s] + gap
     }
   })
 }
@@ -2914,6 +2916,19 @@ export function cancelCrop() {
 export function resetPanelCrop(ids: string[]) {
   updatePanels(ids, hist('resetCrop'), (o) => {
     if (o.crop) applyCropDraft(o, undefined)
+  })
+}
+
+/**
+ * 贴合内容（ADR 0161）：把四边一次裁到 `figure.ink_bbox`（内容边缘）。一条历史，图的缩放比与整图在画布上的位置不变
+ * （`applyCropDraft`）。ink_bbox 只经精确 manifest 读（几何权威）；缺席 / 已贴合 = 这张面板不动，没有任何改动则不进历史。
+ */
+export function fitPanelsToContent(ids: string[]) {
+  const render = useRenderStore.getState()
+  updatePanels(ids, hist('fitContentCrop'), (o) => {
+    const ink = exactPanelManifest(render, o)?.elements.find((e) => e.gid === 'figure')?.ink_bbox
+    const target = fitContentCrop(ink)
+    if (target && !isContentFit(o.crop, ink)) applyCropDraft(o, target)
   })
 }
 

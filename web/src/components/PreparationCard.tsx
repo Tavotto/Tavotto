@@ -1154,6 +1154,8 @@ function convertFlow(
       // Missing evidence needs an explicit reference selection before another attempt.
       const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
       const multiline = needsInput && c.detail?.includes('\n')
+      // 路径太长：重试不会变好，主按钮只给「关闭」（一句话 + 一个按钮）
+      const dismissOnly = needsInput || c.reason === 'workspace_path_too_long'
       return {
         title:
           c.error ??
@@ -1167,7 +1169,7 @@ function convertFlow(
         ) : undefined,
         primary: offerUnsandboxed && c.reason === 'agent_write_denied' ? (
           <AllowUnsandboxedRetryButton script={p.script} onRetry={retry} />
-        ) : needsInput ? (
+        ) : dismissOnly ? (
           <Button
             variant="primary"
             size="md"
@@ -1185,7 +1187,7 @@ function convertFlow(
             {pt('convert.btn.retry')}
           </Button>
         ),
-        ghost: needsInput ? undefined : offerUnsandboxed && c.reason === 'agent_write_denied' ? (
+        ghost: dismissOnly ? undefined : offerUnsandboxed && c.reason === 'agent_write_denied' ? (
           <>
             <Button variant="ghost" size="md" data-convert-retry className="text-ink-2" onClick={retry}>
               {pt('convert.btn.retry')}
@@ -1725,7 +1727,17 @@ function WorkdirChoice({
  * 自动换 Python 版本时卡片里的那一行进度（ADR 0114 修订 2026-10-23）：下载那一段说字节数并画一根确定的进度条，其余阶段
  * 一句话 + 不定态的条。完成后不留（主句已经换成出图的句子），「换成了 Python x」在详情里。
  */
-const PYTHON_CHANGE_STAGES = new Set(['downloading', 'verifying', 'extracting', 'launching', 'preparing', 'creating', 'installing'])
+const PYTHON_CHANGE_STAGES = new Set([
+  'downloading',
+  'verifying',
+  'extracting',
+  'launching',
+  'preparing',
+  'creating',
+  'installing',
+  // 等这个项目上另一个依赖安装结束（pyversionfix.STAGE_WAITING，TVD-22EY）
+  'waiting',
+])
 
 function PythonChangeLine({ report }: { report: PreparationReport | null }) {
   useTranslation('workspace')

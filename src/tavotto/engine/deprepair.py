@@ -174,6 +174,10 @@ STATE_CANCELLED = "cancelled"
 _lock = threading.RLock()
 _plans: dict[str, "RepairPlan"] = {}
 _progress: dict[str, dict] = {}
+#: 每条进度记录被写过几笔（状态 / 日志 / 包源……任何一笔；键 = 进度 id，认领的作业与它的进度记录同一个 id）。
+#: 等别的作业结束的一方按**这个项目**在途作业的这些计数判「它还有没有进展」（`project_progress`；
+#: `pyversionfix._wait_for_installs` 的卡死判据，TVD-22EY / Codex #1632 P2：别的项目的进展不算）；只在 `_lock` 下读写
+_progress_seq: dict[str, int] = {}
 _cancels: dict[str, threading.Event] = {}
 #: (项目指纹, 脚本) → 已经修过几轮。
 _rounds: dict[tuple[str, str], int] = {}
@@ -877,6 +881,14 @@ def pinned_base_python() -> str:
     return str(getattr(_pin, "python", "") or "")
 
 
+def _base_python_cached() -> bool:
+    """`base_python()` 此刻会不会直接返回（钉住了 / 进程内已探过）；False = 它要真起子进程探。纯读。"""
+    if pinned_base_python():
+        return True
+    with _lock:
+        return _base_python_known
+
+
 def base_python() -> str | None:
     """基础解释器（同步；没有回 None）。计划创建那条路上用它。"""
     pinned = pinned_base_python()
@@ -1286,7 +1298,65 @@ def _widen_for_fresh_generation(
     project: str, script: str, requirement: depresolve.DependencyRequirement
 ) -> _Widened | None:
     joint = _fresh_generation_joint(project, script)
-    return _fold_requested(requirement, joint) if joint is not None else None
+    wide = _fold_requested(requirement, joint) if joint is not None else None
+    if wide is None:
+        return None
+    return _carry_bundled_packages(project, script, joint, wide)
+
+
+def _scan_sees_everything(joint: depplan.JointPlan) -> bool:
+    """静态扫描是否看全了脚本开跑要的 import：没有映射不到的名字、没有留到运行时再看的名字、本地模块跟进没被截断。
+
+    不看 `search_complete`：脚本只要改了 `sys.path` 它就恒为 False（搜索路径不静态可定），而那些脚本的 import
+    多数都已经认全了——那时联合求解给出的就是全部需要的。"""
+    scan = joint.scan or {}
+    return not joint.unknown and not joint.deferred_unverified and not scan.get("truncated")
+
+
+def _carry_bundled_packages(
+    project: str, script: str, joint: depplan.JointPlan, wide: _Widened
+) -> _Widened:
+    """脚本此刻在**内置 runtime** 里跑、而静态扫描没看全时，新建的第一代把内置 runtime 的顶层科学包一起带上（TVD-22EY）。
+
+    看不全的 import（本地模块在扫描读不到的地方、动态导入……）多半也用着内置 runtime 里的 pandas / scipy 等；
+    只装缺的那一个，新一代比原来能跑到这一步的环境还少，重跑必然一轮轮撞「缺 pandas」直到用完修复轮数。
+    看全了就不带（联合求解已经给出了全部需要的）。只在新建第一代时调用；已有一代时账上的包随换代带走。"""
+    if _scan_sees_everything(joint):
+        return wide
+    try:
+        source = pool.resolve_worker_python(project, script=script)[1]
+    except pool.WorkerError:
+        return wide
+    if source != pool.SOURCE_BUNDLED:
+        return wide
+    info = runtime.manifest() or {}
+    top = [str(n) for n in (info.get("top_level") or ()) if str(n).strip()]
+    have = {depresolve.normalize_distribution(_name_of(r)) for r in wide.requirements}
+    # 这一代本来就带的 adapter（matplotlib / numpy）不重复列
+    have |= {depresolve.normalize_distribution(n) for n in depplan.adapter_distributions()}
+    extra = [n for n in top if depresolve.normalize_distribution(n) not in have]
+    if not extra:
+        return wide
+    imports = list(wide.needed_imports)
+    record = list(wide.record)
+    for dist in extra:
+        mod = runtime.import_name_of(dist)
+        if mod not in imports:
+            imports.append(mod)
+        record.append(
+            {
+                "import_name": mod,
+                "distribution": dist,
+                "specifier": "",
+                "resolution_source": depresolve.SOURCE_CURATED,
+            }
+        )
+    return dataclasses.replace(
+        wide,
+        requirements=(*wide.requirements, *extra),
+        needed_imports=tuple(imports),
+        record=tuple(record),
+    )
 
 
 def _private_python_offer() -> dict | None:
@@ -2716,12 +2786,27 @@ def custom_package_index(python: str) -> bool | None:
 _LOG_MAX = 20_000
 
 
+def _bump_progress(progress_id: str) -> None:
+    """（持 `_lock`）这条进度记录又变了一笔。"""
+    _progress_seq[progress_id] = _progress_seq.get(progress_id, 0) + 1
+
+
+def project_progress(project: str | Path) -> tuple:
+    """这个项目此刻在途作业的进展快照：(在途作业 id 集合, 它们各自进度记录被写过的笔数)。
+    两次读到的不同 = 期间这个项目有作业有进展（换了作业也算）；别的项目的作业不进来。"""
+    pid = managedenv.project_fingerprint(str(Path(project)))
+    with _lock:
+        ids = sorted(k for k, meta in _active_jobs.items() if meta.get("project_id") == pid)
+        return tuple(ids), tuple(_progress_seq.get(k, 0) for k in ids)
+
+
 def _append_log(plan_id: str, line: str, on_event) -> None:
     with _lock:
         rec = _progress.get(plan_id)
         if rec is None:
             return
         rec["log"] = (rec["log"] + _sanitize(line))[-_LOG_MAX:]
+        _bump_progress(plan_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2735,6 +2820,7 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_mirror"] = url
+        _bump_progress(progress_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2748,6 +2834,7 @@ def _note_source(progress_id: str, source: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_source"] = source
+        _bump_progress(progress_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2842,6 +2929,7 @@ def _emit(
         if plan_id in _committed:
             rec["committed"] = True
         _progress[plan_id] = rec
+        _bump_progress(plan_id)
         snapshot = dict(rec)
         listeners = list(_listeners.get(plan_id, ()))
         if state in TERMINAL_STATES:
@@ -3093,6 +3181,51 @@ def clear_missing_dependency_evidence() -> None:
     """测试之间清空（用户侧没有入口：进程退出即消失）。"""
     with _lock:
         _missing_evidence.clear()
+        _missing_commands.clear()
+
+
+# 脚本拉起外部命令却找不到可执行文件（bundle schema 15，`cmddiag`）：同一套进程内记录纪律——不写盘、不进 telemetry、
+# 只取当前项目的。事实在 worker 里失败那一刻量好（用 worker 实际的 env），这里只抄进来并校验形状。
+MISSING_COMMAND_EVIDENCE_LIMIT = 8
+_missing_commands: deque[dict] = deque(maxlen=MISSING_COMMAND_EVIDENCE_LIMIT)
+
+
+def note_missing_command_of(project: str | Path, exc: BaseException) -> bool:
+    """`WorkerError.extra["missing_command"]`（`cmddiag.collect` 的产物）→ 进程内记录；没有这份事实 / 没有项目不记。
+    返回是否记下了。记录失败不许盖掉原始错误。"""
+    extra = getattr(exc, "extra", None)
+    fact = extra.get("missing_command") if isinstance(extra, dict) else None
+    if not isinstance(fact, dict) or not project:
+        return False
+    try:
+        has = fact.get("path_has") if isinstance(fact.get("path_has"), dict) else {}
+        record = {
+            "at": time.time(),
+            "project_id": managedenv.project_fingerprint(project),
+            "command": str(fact.get("command") or "")[:128],
+            "on_path": bool(fact.get("on_path")),
+            "path_segments": int(fact.get("path_segments") or 0),
+            "path_has": {str(k): bool(v) for k, v in has.items()},
+            "found_in": [str(k) for k in (fact.get("found_in") or []) if isinstance(k, str)],
+            "keg_present": None if fact.get("keg_present") is None else bool(fact["keg_present"]),
+            "keg_unlinked": None
+            if fact.get("keg_unlinked") is None
+            else bool(fact["keg_unlinked"]),
+        }
+        if fact.get("scan_truncated"):
+            record["scan_truncated"] = True
+    except (OSError, ValueError, TypeError):
+        return False
+    with _lock:
+        _missing_commands.append(record)
+    return True
+
+
+def recent_missing_commands(project: str | Path) -> list[dict]:
+    """这个项目最近的「找不到外部命令」现场（旧 → 新，最多 `MISSING_COMMAND_EVIDENCE_LIMIT` 条）。"""
+    pid = managedenv.project_fingerprint(project)
+    with _lock:
+        return [copy.deepcopy(r) for r in _missing_commands if r["project_id"] == pid]
 
 
 # ---------------------------------------------------------------------------
@@ -4078,6 +4211,7 @@ def _emit_job(
         if job is not None:
             rec.update(op=job.op, distribution=job.distribution, requirement=job.requirement)
         _progress[job_id] = rec
+        _bump_progress(job_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -4391,15 +4525,35 @@ def _facts_for(
 def _facts_for_inner(
     kind: str, python: str, root: str, *, use_cache: bool = True, fresh: bool = False
 ) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
-    run = depplan.target_facts(python, use_cache=use_cache) if python else None
+    managed_python = (managedenv.python_of(root) or "") if kind == TARGET_MANAGED else ""
+    base_needed = kind == TARGET_MANAGED and not (managed_python and not fresh)
+    facts_miss = bool(python) and (not use_cache or not depplan.facts_cached(python))
+    base_miss = base_needed and not _base_python_cached()
+
+    def measure_run():
+        if not python:
+            return None
+        with pool.segment("probe_facts_ms") if facts_miss else contextlib.nullcontext():
+            return depplan.target_facts(python, use_cache=use_cache)
+
+    def measure_base():
+        with pool.segment("probe_base_python_ms") if base_miss else contextlib.nullcontext():
+            return base_python() or ""
+
+    base = None
+    if facts_miss and base_miss:
+        # 目标事实探测与基础解释器探测互不依赖，首次（两者都没缓存）并发跑：结果与异常顺序同串行（`run_probes_concurrently`）
+        run, base = pool.run_probes_concurrently(measure_run, measure_base)
+    else:
+        run = measure_run()
     if kind != TARGET_MANAGED:
         return run, None, python
-    managed_python = managedenv.python_of(root) or ""
     if managed_python and not fresh:
         if python and pool.same_python(managed_python, python):
             return run, None, python
         return run, depplan.target_facts(managed_python, use_cache=use_cache), python
-    base = base_python() or ""
+    if base is None:
+        base = measure_base()
     if not base:
         # 没有基础解释器：提供私有 Python 就按它（真量 / 替身）量新的一代，否则计划只能按选中的量
         return run, private_fresh_facts(), python
@@ -4653,6 +4807,7 @@ def _release(plan_id: str) -> None:
     """作业结束（不论怎么结束）：认领 / 登记 / 监听都清掉。"""
     with _lock:
         _running.discard(plan_id)
+        _progress_seq.pop(plan_id, None)
         meta = _active_jobs.pop(plan_id, None)
         if meta and meta.get("project_id") and meta.get("digest"):
             key = (meta["project_id"], meta.get("scope", ""), meta["digest"])
@@ -6208,11 +6363,12 @@ def user_environment_candidates(
                 )
     # 登录 shell 只在机器可以替用户决定时（检测 / 旧模式，都由用户发起的准备 / 运行触发）现问；确认模式只用明确
     # 检查动作已经问出来的答案
-    out += (
-        userenvs.discover(root, script)
-        if silent
-        else userenvs.discover(root, script, ask_login_shell=None)
-    )
+    with pool.segment("probe_user_envs_ms"):
+        out += (
+            userenvs.discover(root, script)
+            if silent
+            else userenvs.discover(root, script, ask_login_shell=None)
+        )
     out += userenvs.system_candidates()
     seen: set = set()
     uniq: list[dict] = []
@@ -6740,6 +6896,24 @@ def _root_overlay_entries(
     )
 
 
+def _warm_login_shell() -> None:
+    with pool.segment("probe_login_shell_ms"):
+        userenvs.login_shell_pythons()
+
+
+def _joint_plan_warming_login_shell(root: str, script: str):
+    """`joint_plan_for`，首次（登录 shell 还没问过）顺手并发问登录 shell。
+
+    检测流程在联合计划之后无条件走 `user_environment_candidates`，而它在「机器可以替用户决定」时现问登录 shell
+    （同一个 `silent_adoption_enabled()` 判据）；两者互不依赖，所以并发预热 `userenvs` 自己的登录 shell 缓存，
+    之后那一问只剩命中缓存。联合计划抛错时（调用方接住的 `WorkerError` 分支）这一问可能白做，但只是填同一份缓存。
+    缓存已有答案 / 没有登录 shell 的平台 / 确认模式：不起线程，原样串行。"""
+    if not (projectenv.silent_adoption_enabled() and userenvs.login_shell_needs_ask()):
+        return joint_plan_for(root, script)
+    got, _ = pool.run_probes_concurrently(lambda: joint_plan_for(root, script), _warm_login_shell)
+    return got
+
+
 def _detect_environment_unlocked(
     root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
 ) -> dict | None:
@@ -6772,7 +6946,7 @@ def _detect_environment_unlocked(
         return None
     record = projectenv.remembered_record(root)
     try:
-        joint, _kind, python = joint_plan_for(root, script)
+        joint, _kind, python = _joint_plan_warming_login_shell(root, script)
     except pool.WorkerError:
         if current:
             return None
@@ -7000,8 +7174,43 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
     raise err
 
 
+def _prefetch_facts(project: str, script: str):
+    """解析解释器那一段并发预热目标事实（`pool.ENVIRONMENT_PREFETCHERS`）：环境决定随后一定要量这条解释器的事实，
+    而解析里的 `import matplotlib` 体检与它互不依赖——猜它们是同一条解释器（`pool.likely_worker_python`），
+    重叠起来跑。只填 `depplan` 的事实缓存；猜错 / 探测失败都只是白做，之后的真调用照常重来并抛自己的错。
+    已缓存、需要 Conda 激活（两处会各自去捕获激活环境）的不预热。"""
+    python = pool.likely_worker_python(project)
+    if not python or depplan.facts_cached(python) or launcher.launcher_for_interpreter(python):
+        return None
+
+    def thunk() -> None:
+        try:
+            with pool.segment("probe_facts_ms"):
+                depplan.target_facts(python)
+        except Exception:  # noqa: BLE001 — 投机预热，失败由真调用方报告
+            pass
+
+    return thunk
+
+
+def environment_decision_is_noop(project: str | Path, script: str) -> bool:
+    """`decide_environment_pinned` 在这个项目上**必然什么都不做**吗？只读设置与 `stat`，不起子进程、不写记录。
+
+    后台预热（`pool.PURPOSE_PREWARM`）只在这种情况下放行：确认模式（决定本来就不由机器做），或检测模式下
+    解释器不是机器挑的（全局显式 / 用户为本项目选的 / 选回默认链条——决定函数第一步就返回）。
+    机器自己记住的解释器、旧模式都算「可能要干活」：检测会体检候选、跑项目解释器、写记录。"""
+    mode = projectenv.adoption_mode()
+    if mode == projectenv.ADOPTION_CONFIRM:
+        return True
+    if mode == projectenv.ADOPTION_DETECT:
+        return not pool.machine_chosen_interpreter(str(project))
+    return False
+
+
 pool.register_spawn_gate(_spawn_gate)
+pool.register_environment_noop_check(environment_decision_is_noop)
 pool.register_environment_decider(decide_environment_pinned)
+pool.register_environment_prefetch(_prefetch_facts)
 
 
 #: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /

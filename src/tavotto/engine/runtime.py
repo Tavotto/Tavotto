@@ -552,13 +552,18 @@ _IMPORT_NAMES = {
 }
 
 
+def import_name_of(distribution: str) -> str:
+    """内置 runtime 里一个发行包的 import 名（`pillow` → `PIL`）。"""
+    return _IMPORT_NAMES.get(distribution.lower(), distribution.replace("-", "_"))
+
+
 def default_packages() -> list[str]:
     """manifest 里声明的**顶层**科学包的 import 名（传递依赖不逐个探测）。"""
     info = manifest()
     if not info:
         return []
     top = info.get("top_level") or list(info.get("packages", {}))
-    return [_IMPORT_NAMES.get(n.lower(), n.replace("-", "_")) for n in top]
+    return [import_name_of(n) for n in top]
 
 
 def child_args() -> list[str]:

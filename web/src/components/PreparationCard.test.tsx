@@ -4077,6 +4077,14 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
     expect(panel().textContent).not.toContain('执行器')
   })
 
+  it('项目上另一个依赖安装还没完：阶段一句说在等它（TVD-22EY），不退回「正在准备…」', async () => {
+    await mount()
+    await openWith(change({ stage: 'waiting' }))
+    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('正在等另一个安装完成…')
+    expect(panel().querySelector('[data-prep-stop]')).not.toBeNull()
+    expect(visibleSentenceCount(panel())).toBeLessThanOrEqual(1)
+  })
+
   it('私有 Python 要下载：标题如实说约多少 MB；下载那一段说已下载字节并画确定的进度条（百分比）', async () => {
     await mount()
     await openWith(report(STATES.pythonChangeDownload))

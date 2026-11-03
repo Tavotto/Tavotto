@@ -149,7 +149,10 @@ export function yieldsCanvasShortcuts(el: EventTarget | null): boolean {
   return (
     el.isContentEditable ||
     /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ||
-    el.closest('[role="dialog"]') != null
+    el.closest('[role="dialog"]') != null ||
+    // 文字框的浮动格式胶囊 portal 到 body（不在 dialog / 属性页的 DOM 子树里），
+    // 但归属同一层：焦点在胶囊按钮上与焦点在文字框里一致——空格激活按钮、Delete / 方向键 / ⌘Z 不碰画布。
+    el.closest('[data-rich-pill]') != null
   )
 }
 

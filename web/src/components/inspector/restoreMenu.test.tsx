@@ -180,8 +180,8 @@ describe('头部只有计数徽标：没有脚本行、没有类名徽标', () =
     const header = host.querySelector('header')!
     expect(restoreTrigger()!.textContent).toBe('2 项已修改')
     expect(header.textContent).not.toMatch(/\.py|脚本未改动/)
-    // 头部只有两行：标题行 + 面包屑行；面包屑里没有类名徽标那个 <code>
-    expect(header.children.length).toBe(2)
+    // 选了元素：头部只有名字行（面包屑 2026-11-03 撤掉，徽标挪到名字行）；没有类名徽标那个 <code>
+    expect(header.children.length).toBe(1)
     expect(header.querySelector('code')).toBeNull()
   })
 

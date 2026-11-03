@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
-from .base import FixContext, err, ok, shadow_note
+from .base import FixContext, err, home_relative, ok, shadow_note
 
 REPORT_MAX_CHARS = 8000
 
@@ -99,6 +100,74 @@ def _ai_edit_fact(raw: object) -> dict | None:
     }
 
 
+#: `data_links` 最多列这么多条（取最新的）
+DATA_LINKS_MAX = 10
+
+
+def _data_links_fact(ctx: FixContext) -> dict | None:
+    """本项目生效的数据改指（ADR 0106）→ 给修复助手的事实（TVD-6Z9R）。
+
+    用户在数据失联弹窗里指错了文件时，重跑报的是解析错（`JSONDecodeError` 之类），报告里既没有 missing_input、
+    错误里也没有被改道的那个文件——助手看不出「读的其实是用户指认的那份」。这里把规则摆出来，并给出
+    `link_data_file` 认得的 `requested` 串（照样先问用户）。
+
+    `prefix` 规则的 `from` 是目录前缀（或空串 = 任意相对路径），不是脚本打开的那串，拿去当 `requested` 只会
+    `requested_unknown`；所以每条规则的 `requested` 列的是 `known_requests` 里**经这条规则改道**的具体串。"""
+    from .. import figcapture, inputremap
+    from .link import _reported_payload, _script_rel
+
+    try:
+        rules = inputremap.rules_for(ctx.project_root)
+    except Exception:  # noqa: BLE001 - 事实是锦上添花，读不到设置不能让报告失败
+        return None
+    if not rules:
+        return None
+    known: list[str] = []
+    script = _script_rel(ctx)
+    if script is not None:
+        try:
+            known = list(
+                inputremap.known_requests(script, str(ctx.project_root), _reported_payload(ctx))
+            )
+        except Exception:  # noqa: BLE001 - 同上
+            known = []
+
+    def through(rule: dict) -> list[str]:
+        """经这条规则改道的已知串：在整张表里换算的结果就是这条规则给的。"""
+        out = []
+        for k in known:
+            alone = figcapture.remap_target([rule], k)
+            if alone is not None and figcapture.remap_target(rules, k) == alone:
+                out.append(k)
+        return out[:DATA_LINKS_MAX]
+
+    links = []
+    for r in rules[-DATA_LINKS_MAX:]:
+        if r["kind"] == figcapture.REMAP_FILE and r["from"]:
+            requested = [r["from"]]
+        else:
+            requested = through(r)
+        links.append(
+            {
+                "kind": r["kind"],
+                "applies_to": r["from"] or "(any relative path)",
+                "requested": requested,
+                "reads_instead": home_relative(ctx, r["to"]),
+                "target_exists": os.path.exists(r["to"]),
+            }
+        )
+    return {
+        "fact": "Data links are active for this project: when the script cannot open a path, Tavotto reads the "
+        "linked location instead. The user (or an earlier repair) chose them.",
+        "links": links,
+        "meaning": "If the script fails while reading or parsing data (for example JSONDecodeError, missing "
+        "columns, wrong shape), the linked file may be the wrong one. To re-point a link, call link_data_file "
+        "with one of that link's `requested` strings exactly as written (never `applies_to`, which for a "
+        "`prefix` link is a folder prefix, not a path the script opens); the user is asked first. A link with "
+        "an empty `requested` list has no script path Tavotto can tie to it and cannot be re-pointed this way.",
+    }
+
+
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
@@ -149,6 +218,9 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
             if isinstance(item.get("payload"), dict):
                 picked["missing_input"] = _precis(item["payload"])
             break
+    links = _data_links_fact(ctx)
+    if links:
+        picked["data_links"] = links
     if isinstance(error, dict) and error.get("traceback"):
         picked["error_tail"] = _precis(error["traceback"])
     for key in _REPORT_KEYS:

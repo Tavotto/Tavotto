@@ -1557,9 +1557,14 @@ def register(
     *,
     append: bool = False,
     artifacts: dict[str, str] | None = None,
+    stem_aliases: dict[str, str] | None = None,
     on_written: Callable[[str], None] | None = None,
 ) -> dict:
     """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
+
+    `stem_aliases`（ADR 0162）：这次新定下的 `{原图名: 登记图名}`，并进这个脚本已有的别名表。已有的别名
+    **粘住**——只要登记图名还在本次的 stems 里就保留（下一次运行按别名表直接产出登记图名，探测结果里再也
+    看不到原图名，不保留的话图名会在第二次运行时退回原名、撞上原来那份脚本）。
 
     `artifacts`（#1251）：这次执行里「磁盘文件（项目相对路径）→ 写它的那张图的 stem」。给了就并进
     （`append`）或替换（默认）这个脚本的 `artifacts` 字段；**不给 = 沿用磁盘上已有的**（手工裁决 /
@@ -1588,6 +1593,7 @@ def register(
             notes,
             append=append,
             artifacts=artifacts,
+            stem_aliases=stem_aliases,
             on_written=on_written,
         )
 
@@ -1672,6 +1678,7 @@ def _register_locked(
     *,
     append: bool,
     artifacts: dict[str, str] | None = None,
+    stem_aliases: dict[str, str] | None = None,
     on_written: Callable[[str], None] | None = None,
 ) -> dict:
     path = registry.existing_registry_path(figures_dir)
@@ -1706,6 +1713,13 @@ def _register_locked(
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
+        if "stem_aliases" in entry_cfg:
+            # 被本脚本认领走的登记图名，别处指向它的别名跟着摘掉
+            other_aliases = registry.clean_stem_aliases(entry_cfg["stem_aliases"], kept)
+            if other_aliases:
+                entry_cfg["stem_aliases"] = other_aliases
+            else:
+                entry_cfg.pop("stem_aliases")
         if "artifacts" in entry_cfg:
             # 被本脚本认领走的图 / 文件，别处的映射跟着摘掉（一个文件只属于一个脚本）
             other = registry.clean_artifacts(entry_cfg["artifacts"], kept)
@@ -1714,6 +1728,9 @@ def _register_locked(
                 entry_cfg["artifacts"] = other
             else:
                 entry_cfg.pop("artifacts")
+    aliases = registry.clean_stem_aliases(
+        {**((prev_entry or {}).get("stem_aliases") or {}), **(stem_aliases or {})}, claimed_list
+    )
     if claimed:
         prev = prev_entry or {}
         scripts[script] = {
@@ -1722,6 +1739,7 @@ def _register_locked(
             "notes": notes or prev.get("notes", ""),
             "stems": claimed_list,
             **({"artifacts": dict(sorted(new_arts.items()))} if new_arts else {}),
+            **({"stem_aliases": aliases} if aliases else {}),
         }
     else:
         scripts.pop(script, None)

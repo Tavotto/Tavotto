@@ -1,0 +1,57 @@
+import type { CanvasObject, TextObject } from '@/types/document'
+import { MM_PER_PT } from '@/lib/units'
+import { useViewportStore, worldToMm } from '@/store/viewportStore'
+
+/**
+ * 单行文字的「贴字宽」框（ADR 0163）：开始旋转前把框收到字宽，旋转才绕字的中心转。
+ *
+ * 量法是**预览自己的排版**——直接在画布上那个文字 DOM（`data-text-body`，与导出对齐的那份
+ * 预览）里量：临时让它 `width: max-content; white-space: pre`，读 border-box 宽（已含内边距与描边），
+ * 同一帧还原，不留痕迹、不触发绘制。没有第二套测宽。
+ *
+ * 只收「不会换行」的文字：正文含换行，或自然宽度超过当前框宽（= 现在就在折行）都返回 null，
+ * 保持原框宽。收框时按 `align` 保持字的落位：左对齐锚住左边、居中锚住中线、右对齐锚住右边，
+ * 所以字在页面上一动不动，只是多余空白没了。
+ */
+/**
+ * 收框余量：定额 0.5 em 兜标点 / 单字落到别的脸的差；比例 4 % 兜整行字宽的系统性偏窄（长文字上定额不够）。
+ * 写成**整数百分数**是因为后端看护用例要用 `tests/support/tsconst.exported_number` 结构性地读它们（同源对，
+ * `docs/rules/repo/same-origin-pairs.md`），那个读法只认十进制整数字面量。
+ */
+export const FIT_MARGIN_EM_PERCENT = 50
+export const FIT_MARGIN_RATIO_PERCENT = 4
+export const FIT_MARGIN_EM = FIT_MARGIN_EM_PERCENT / 100
+export const FIT_MARGIN_RATIO = FIT_MARGIN_RATIO_PERCENT / 100
+
+export function fitSingleLineBox(o: TextObject): { x: number; w: number } | null {
+  if (o.text.includes('\n')) return null
+  const el = document.querySelector<HTMLElement>(
+    `[data-object-id="${CSS.escape(o.id)}"] [data-text-body]`,
+  )
+  if (!el) return null
+  // 取小数宽（getBoundingClientRect 回屏幕 px，除缩放换回世界 px）：offsetWidth 是整数，向下取整会让收后的框
+  // 比字窄一丁点而折行
+  const zoom = useViewportStore.getState().zoom || 1
+  const cur = el.getBoundingClientRect().width / zoom
+  const prev = { width: el.style.width, whiteSpace: el.style.whiteSpace }
+  el.style.width = 'max-content'
+  el.style.whiteSpace = 'pre'
+  const natural = el.getBoundingClientRect().width / zoom
+  el.style.width = prev.width
+  el.style.whiteSpace = prev.whiteSpace
+  if (!(natural > 0) || natural > cur + 0.5) return null
+  // 余量 0.5 em：预览按浏览器 CSS 字体栈排，导出按 RenderCore 的 Liberation / Noto 排——Times New Roman / Arial
+  // 与 Liberation 度量兼容，但机器上落到别的脸（Linux 无 TNR、中文落到 PingFang / Songti、标点宽度不同）时
+  // 窄一点就会让导出折成两行。宁可框略宽，绝不让导出折行（看护：tests/test_compose_annotations.py 的收框用例）
+  const w = worldToMm(natural) * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * o.sizePt * MM_PER_PT
+  if (!(w > 0) || w >= o.w - 0.01) return null
+  const x =
+    o.align === 'left' ? o.x : o.align === 'right' ? o.x + o.w - w : o.x + (o.w - w) / 2
+  return { x, w }
+}
+
+/** 旋转前要不要收框：只在文字、此刻没转（0 → 非 0 那一次）时才算 */
+export function fitBeforeRotate(o: CanvasObject): { x: number; w: number } | null {
+  if (o.type !== 'text' || (o.rotationDeg ?? 0) !== 0) return null
+  return fitSingleLineBox(o)
+}

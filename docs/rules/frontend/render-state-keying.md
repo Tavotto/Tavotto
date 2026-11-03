@@ -64,6 +64,12 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 （按 AST 钉 Workspace：调 `useEngineDocumentSync`、挂 `<EngineRenderSync />`、不调
 `useEngineSync` / `useRenderStore`）。
 
+**渲染意图（ADR 0159）**：同步器给「纯邻居补渲染」（进了 `crossFigureNeighbours`、且没有别的渲染理由）标 `purpose: 'neighbour'`
+（判定唯一函数 `useEngineSync.renderPurposeOf`），经 `renderScheduler.requestRender` → `renderStore.render` → `engineRender` 带给后端；
+其余一律前台，**前台请求的调用形状与请求体字节不变**。后端回 409 `background_render_deferred`（会话池已满）不是失败：状态回到发请求前
+（有过一版仍 ready、否则 idle），`wantPatches` 清掉、`deferredPatches` 记下，同步器不以后台身份重发同一版；`markStale` / 成功渲染清它。
+意图与暂缓只在这三处（调度器 / store / 同步器）出现，别处不要自己拼 `purpose`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

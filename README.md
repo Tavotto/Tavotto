@@ -75,6 +75,12 @@ tavotto
 
 Your browser opens at `http://127.0.0.1:5089`. It needs Python 3.10 or later; on an older Python, `uv tool install --python 3.12 "tavotto[worker]"` fetches one. `tavotto --figures <dir>` opens a figure folder directly. More (uv, SSH to a remote server, your own Python environment): [installation details](docs/guide/install-advanced.md).
 
+In mainland China, downloads from PyPI can stall; install from a domestic mirror instead:
+
+```sh
+pipx install "tavotto[worker]" --index-url https://mirrors.aliyun.com/pypi/simple/
+```
+
 ## What it does
 
 ### Edit inside the figure
@@ -164,6 +170,8 @@ codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
 codex plugin add tavotto@tavotto
 pipx install "tavotto[worker]"
 ```
+
+In mainland China, if the `pipx` line stalls, run `pipx install "tavotto[worker]" --index-url https://mirrors.aliyun.com/pypi/simple/` instead.
 
 Then **close your current Codex session and start a new one.** The plugin's skill and MCP tools do not hot-reload into a session that is already open. If you installed the engine with `pip`/`pipx`, `tavotto codex install` does the two `codex plugin` steps for you and skips what is already healthy; `tavotto codex doctor` only diagnoses.
 

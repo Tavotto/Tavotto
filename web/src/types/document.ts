@@ -202,6 +202,34 @@ export interface PanelObject extends ObjectBase {
   figureFrame?: 1
 }
 
+/**
+ * 一张字体脸的**身份**（ADR 0164）：文件 sha256 + 面序号，名字只用于显示。
+ * 文档里不存字体文件、不存路径。
+ */
+export interface SourceFace {
+  family: string
+  /** 字体文件字节的 sha256（小写十六进制，64 位）；认脸只看它 */
+  sha256: string
+  /** 字体集（.ttc）里的第几张脸；单脸文件为 0 */
+  face: number
+}
+
+/**
+ * 画布文字「用原图那个字体」（ADR 0164，修订 ADR 0060）。**可选：老文档没有它 = 现状逐字不变**，
+ * 磁盘格式不升版；导出载荷缺席时也不多字段。`fontFamily` 继续当回退族：本机找不到这张脸 /
+ * 许可不让嵌入 / 在浏览器 playground 里，都按 `fontFamily` 的批准脸画，名字原样保留、给提示，
+ * **绝不换掉再改文档**。用户在属性页改字体族 / 粗细 / 斜体就清掉它。
+ *
+ * 值的唯一产生者是 `lib/sourceFont.sourceFontFromElement`（图内文字的 manifest 身份 → 这里）。
+ */
+export interface SourceFont extends SourceFace {
+  /** 这张脸自己的粗斜（来自原图），不是对象的粗斜开关 */
+  bold?: boolean
+  italic?: boolean
+  /** 原图里中日韩字符实际由哪张脸画；缺席 = 批准的 Noto Sans SC */
+  cjk?: SourceFace
+}
+
 export interface TextObject extends ObjectBase {
   type: 'text'
   text: string
@@ -215,6 +243,8 @@ export interface TextObject extends ObjectBase {
    * matplotlib 的 Flask 进程里，画得出来的就是批准字体集合里的 Liberation 三族。
    */
   fontFamily?: 'serif' | 'sans-serif' | 'monospace'
+  /** 原图字体的身份（ADR 0164）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
+  sourceFont?: SourceFont
   /**
    * 科学文本解释档位。**可选：老文档没有它 = auto**（与升级前逐字符同样的
    * 渲染），磁盘格式不升版。
@@ -484,7 +514,24 @@ export interface FigureDocument {
   profile?: DocumentProfile
   /** 可选的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
   style?: DocumentStyle
+  /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0，画布就是图幅 */
+  framePad?: FramePad
+  /** 单图画布处在「紧凑」停靠点上的那几边（ADR 0161）：图幅变了按新的内容边缘重算，不保留旧 mm */
+  framePadTight?: FramePadSide[]
 }
+
+/**
+ * 单图编辑的画布留白（ADR 0161）：图四周各加多少 mm（**导出 mm**，即图幅的 mm），负值 = 裁进图幅。
+ * 挂在画布上：模式按画布判、单图一张图一张画布；变成多图排版时保留不用，删回一张原样回来。
+ * 只在 Tavotto 的导出里生效，不写回脚本。
+ */
+export interface FramePad {
+  l: number
+  t: number
+  r: number
+  b: number
+}
+export type FramePadSide = keyof FramePad
 
 /* ------------------------- schema 3：项目 / 画布 --------------------------- */
 /**
@@ -505,6 +552,9 @@ export interface CanvasData {
   profile?: DocumentProfile
   /** 每张画布各自的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
   style?: DocumentStyle
+  /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0 */
+  framePad?: FramePad
+  framePadTight?: FramePadSide[]
 }
 
 /**
@@ -536,6 +586,8 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.layoutGroups ? { layoutGroups: c.layoutGroups } : {}),
     ...(c.profile ? { profile: c.profile } : {}),
     ...(c.style ? { style: c.style } : {}),
+    ...(c.framePad ? { framePad: c.framePad } : {}),
+    ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
   }
 }
 
@@ -549,6 +601,8 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.layoutGroups ? { layoutGroups: doc.layoutGroups } : {}),
     ...(doc.profile ? { profile: doc.profile } : {}),
     ...(doc.style ? { style: doc.style } : {}),
+    ...(doc.framePad ? { framePad: doc.framePad } : {}),
+    ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
   }
 }
 

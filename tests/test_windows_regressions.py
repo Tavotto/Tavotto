@@ -2514,6 +2514,16 @@ def _byte_compared_generated_files() -> list[str]:
         # U06 的批准字体 allowlist：report.json 记它的 sha256、evidence 用例逐字节核。人写的 JSON，
         # 与 CLA 正文同一类——u06-rendercore.yml windows 腿 CRLF 检出后哈希对不上红过一次。
         "src/tavotto/rendercore/fonts_allowlist.json",
+        # 运行时锁：research cohort 记它的 sha256、load_cohort() 逐字节核（#1682 windows 片 4）
+        "packaging/runtime-lock.json",
+        # 研究语料的科学环境配方：research-manifest 记 sha256、check_project_contract() 逐字节核。
+        # 按目录现读而不是手抄：新增一个 S0 case 时，没在 .gitattributes 登记就在这里红（#1682 windows 片 4）
+        *sorted(
+            p.relative_to(Path(__file__).resolve().parent.parent).as_posix()
+            for p in (Path(__file__).resolve().parent / "compat" / "research-environments").glob(
+                "*.txt"
+            )
+        ),
         # Codex 插件的启动器对（#266）：POSIX 半边的 shebang 遇 CRLF 即失效；Windows 半边逐字节稳定
         "codex-plugin/mcp/launch",
         "codex-plugin/mcp/launch.cmd",
@@ -4156,3 +4166,36 @@ def test_owned_pip_output_with_a_chinese_path_decodes_cleanly(tmp_path, monkeypa
     if locale.getpreferredencoding(False).replace("-", "").lower() != "utf8":
         raw = _pip_says(base, target)
         assert "中文目录" not in raw, "前提不成立：不补 UTF-8 也没乱码，这台机器上反证不了"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="260 字符限制只在 Windows 上存在")
+def test_convert_candidate_workspace_survives_paths_over_260_chars(tmp_path, monkeypatch):
+    """issue #1623：项目里数据文件的相对路径很深时，转换候选工作区（data_dir/cache/ai_convert/<sid>/project_context/…）
+    超过 260 字符也要建得出来（`LongPathsEnabled=0` 下曾 WinError 206 → internal_error）。"""
+    from tavotto.engine import ai_convert, convertcontext, longpath
+
+    monkeypatch.setattr(ai_convert, "CONVERT_DIR", tmp_path / "convert")
+    figs = tmp_path / "figs"
+    # 项目侧路径约 240 字符（普通 API 还能读），候选侧多出 convert/<sid>/project_context 约 30 字符 → 超 260
+    room = 240 - len(str(figs / "measurement.csv")) - 1
+    parts = []
+    while room > 0:
+        parts.append(("实验数据目录" * 10)[: min(60, room - 1)] or "d")
+        room -= len(parts[-1]) + 1
+    rel_dir = Path(*parts)
+    long_dir = longpath.long(figs / rel_dir)
+    long_dir.mkdir(parents=True)
+    (long_dir / "measurement.csv").write_bytes(b"x,y\n1,2\n")
+    script = figs / "fig.R"
+    script.write_bytes(f'd <- read.csv("{(rel_dir / "measurement.csv").as_posix()}")\n'.encode())
+    cand = ai_convert.create_candidate(
+        "0123456789ab", script, figs, "fig.R", library=None, source_language="r"
+    )
+    try:
+        assert len(str(cand.dir / convertcontext.DIRECTORY / rel_dir / "measurement.csv")) > 260
+        copied = longpath.long(cand.dir / convertcontext.DIRECTORY / rel_dir / "measurement.csv")
+        assert copied.read_bytes() == b"x,y\n1,2\n"
+        assert not str(cand.dir).startswith("\\\\?\\")  # 给 Codex 的路径保持普通形式
+    finally:
+        ai_convert.remove_dir(cand.dir)
+        assert not os.path.exists(longpath.extended(cand.dir))

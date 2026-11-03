@@ -20,6 +20,7 @@ import {
   type SnapPick,
   type SnapLineCandidates,
   unrotateVecDeg,
+  visualBounds,
   type Rect,
   type ResizeDir,
 } from '@/lib/geometry'
@@ -88,6 +89,11 @@ import {
   scaledAnchorRect,
   snapScaleNearest,
 } from '@/lib/scaleSnap'
+import { scaleDragStatus } from '@/lib/dragStatus'
+import { applyAnnotationScale, annotationsOver, captureOrigins } from '@/lib/annotationScale'
+import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
+import { resolveDocumentSpec } from '@/lib/specBinding'
+import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
@@ -97,6 +103,7 @@ import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
   clientToMm,
@@ -318,7 +325,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   if (!targets.length) return
   const primary = targets.find((o) => o.id === objectId) ?? targets[0]
   const origin = new Map(targets.map((o) => [o.id, { x: o.x, y: o.y }]))
-  const primaryOrigin = origin.get(primary.id)!
+  const primaryVisual = visualBounds(primary)
   const excluded = new Set(targets.map((o) => o.id))
   const cands = candidatesFor(excluded)
 
@@ -337,11 +344,12 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
       let snapX: number[] = []
       let snapY: number[] = []
       if (cands && !ev.metaKey && !ev.ctrlKey) {
+        // 吸附用看得见的外接框（旋转过的标注取转出来的盒），随平移原样位移
         const moving: Rect = {
-          x: primaryOrigin.x + dx,
-          y: primaryOrigin.y + dy,
-          w: primary.w,
-          h: primary.h,
+          x: primaryVisual.x + dx,
+          y: primaryVisual.y + dy,
+          w: primaryVisual.w,
+          h: primaryVisual.h,
         }
         const snap = perfSpan('snap.compute', () => snapMove(moving, cands, snapTolMm(t)))
         dx += snap.dx
@@ -372,6 +380,51 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
 /*  缩放                                                                       */
 /* -------------------------------------------------------------------------- */
 
+const isCornerDir = (dir: ResizeDir) =>
+  (dir.includes('e') || dir.includes('w')) && (dir.includes('n') || dir.includes('s'))
+
+/** 当前期刊 / 规范的"图内文字最小有效字号"（pt）；规范库没载入、或这一项读不到 = null（不判） */
+function minEffectiveFontPt(): number | null {
+  const ps = useProfileStore.getState()
+  if (!ps.loaded) return null
+  const { profile } = resolveDocumentSpec(doc().profile, toCatalog(ps.specs))
+  const v = profile.min_effective_font_size_pt
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/**
+ * 面板角缩放的状态句数据（`interaction.dragStatus`）：缩放 a% → b%、图内文字等效 pt、是否低于规范下限。
+ * 缩放比 = `preflight.panelScale`；图内文字 = 图里**真实画出来的最小字号**（`preflight.drawnMinFontPt`，
+ * 起手从 manifest 取一次）× 缩放比，下限判的也是它——与预检同一来源，不按固定 9 pt 估；
+ * 读不到 manifest / 图里没有文字就不报 pt（只说缩放百分比），也不判下限，不拿估计值冒充事实；
+ * `box` 是此刻的包围盒，其余字段取 `panel` 起手时的样子。位图源（按 dpi 评质量）不报 pt。
+ */
+function scaleReadout(
+  panel: PanelObject,
+  box: Rect,
+  followOn: boolean,
+  followCount: number,
+  minSrcPt: number | null,
+) {
+  const at = (r: { w: number; h: number }) => {
+    const p = { ...panel, w: r.w, h: r.h } as PanelObject
+    const pt = panel.fileKind === 'raster' || minSrcPt == null ? null : scaledFontPt(minSrcPt, p)
+    return { pct: Math.round(panelScale(p) * 100), pt }
+  }
+  const from = at(panel)
+  const to = at(box)
+  const floorPt = minEffectiveFontPt()
+  return scaleDragStatus({
+    fromPct: from.pct,
+    toPct: to.pct,
+    fromPt: from.pt,
+    toPt: to.pt,
+    low: floorPt != null && to.pt != null && to.pt < floorPt - FONT_FLOOR_TOL_PT,
+    follow: { on: followOn, count: followCount },
+    box: { x: box.x, y: box.y, w: box.w, h: box.h },
+  })
+}
+
 /**
  * 拖八个缩放手柄。对象可能带任意角度 rotationDeg（x/y/w/h 恒为未旋转包围盒，
  * 旋转只由 ObjectView 的 CSS rotate 呈现），所以：
@@ -387,7 +440,17 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const target = doc().objects.find((o) => o.id === objectId)
   if (!target || target.locked) return
   const orig: Rect = { x: target.x, y: target.y, w: target.w, h: target.h }
-  const excluded = new Set([objectId])
+  // 多图排版里拖面板的角：「连同标注」（ADR 0161）——叠在它上面的标注按同一固定点、同一比例一起缩。
+  // 起手定下跟随的集合与它们的起手快照（整个手势里不变）；它们随面板一起动，所以不当吸附候选
+  const layoutCorner =
+    target.type === 'panel' &&
+    isCornerDir(dir) &&
+    useWorkspaceStore.getState().mode === 'layout'
+  const followEnabled = layoutCorner && useUiStore.getState().scaleWithAnnotations
+  const followOrigins = followEnabled
+    ? captureOrigins(annotationsOver(doc().objects, target as PanelObject))
+    : []
+  const excluded = new Set([objectId, ...followOrigins.map((f) => f.id)])
   const cands = candidatesFor(excluded)
   const isText = target.type === 'text'
   const rot = objectRotation(target)
@@ -417,6 +480,15 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       : null
 
   interaction().begin('resize')
+  const minSrcPt =
+    layoutCorner && target.type === 'panel'
+      ? drawnMinFontPt(exactPanelManifest(useRenderStore.getState(), target))
+      : null
+  if (layoutCorner) {
+    interaction().setDragStatus(
+      scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length, minSrcPt),
+    )
+  }
   store.beginTxn(hist('resizeObjects'))
   // 被拖手柄的对侧手柄：图幅在手势中途变了时，收尾换算绕这一点伸缩（面板恒无任意角
   // 旋转）。角柄 = 对角；边柄只提到一个轴，另一轴取中点（对边手柄的中心）——取
@@ -506,6 +578,20 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       interaction().setSnap(snapX, snapY, feedback)
 
       const placed = anchoredRect(orig, next, dir, rot)
+      // 标注只在等比缩放时跟着走（一个比例才说得清）；这一帧非等比（面板解锁比例）就留在原处
+      const following = followEnabled && proportional && orig.w > 0
+      const factor = following ? placed.w / orig.w : 1
+      if (layoutCorner) {
+        interaction().setDragStatus(
+          scaleReadout(
+            target as PanelObject,
+            placed,
+            following,
+            followOrigins.length,
+            minSrcPt,
+          ),
+        )
+      }
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o) return
@@ -513,6 +599,10 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
         o.y = placed.y
         o.w = placed.w
         if (!isText) o.h = placed.h
+        if (followOrigins.length) {
+          // 固定点 = 被拖角的对角（面板恒无任意角旋转，anchoredRect 与 scaleFixedPoint 同口径）
+          applyAnnotationScale(d.objects, followOrigins, scaleFixedPoint(orig, dir), factor)
+        }
       })
     },
     onEnd: (moved, _ev, end) => {

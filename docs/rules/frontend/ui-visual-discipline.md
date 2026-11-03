@@ -45,7 +45,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
 `-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、指针操作之后的程序化 focus 不画环（`lib/inputModality` 给 `<html>` 记 `data-input-modality`，`index.css` 在 `pointer` 时关 `:focus-visible` 的 outline；只有 Tab / 方向键 / Home / End / PageUp / PageDown 算键盘，Enter / Space 不算）、
-插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画；`ui/ProgressBar` 是铅笔排线：11px、发丝框、整像素 5px 斜线 mask，不确定态排线 2.2s 线性流动、确定态宽度吸附整条线）；光标一律箭头（可拖的卡用抓手）。
+插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画——唯一例外是改图助手的思考小球，ADR 0165；`ui/ProgressBar` 是点阵（ADR 0168）：12px、未完成稀点 / 已完成密点、同色，canvas 按物理像素画，几何只在 `lib/dotProgress.ts`；不确定态一段密点来回扫）；光标一律箭头（可拖的卡用抓手）。
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
@@ -157,8 +157,12 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 `mt-px / mt-0.5 / mt-[3px]` 之类的 margin-top 微调（`iconography.test` 的 `icon-nudge`，豁免表
 `NUDGE_ALLOWLIST` 目前为空）；文字的行高在兄弟元素上时给槽写同一组文字类（`text-xs leading-relaxed`）或
 `h-5`。②「加载中」只有 `ui/Spinner`（淡底环 + 约 100° 短弧，描边 2.5/24、12 / 14px 档不低于 1.4px，
-减少动态效果时不转），不再有 `LoaderCircle` 式 3/4 弧；其余图标的描边仍按比例缩放、不设下限。
-④ **手帐线稿（2026-10-28，framed-icons 审计）：图标不套底座。** 空状态的图形是 `ui/Sketch` 的线稿（封闭集 11 幅、54×42（唯一尺寸例外：首页拖放区的 `drop` 96×72，`SKETCH_SIZE_OVERRIDE`）、1px 发丝线落在 .5 坐标、45° 整像素排线、仅 `currentColor` = ink-faint，亮暗同源；`EmptyState` 的 `art` 属性按意思选，同义复用，不为一个调用处新画）。行首 / 标题行的角色图标（项目行、属性栏标题、连接 AI 方式行、教程脚本卡）是无框 16px + `IconSlot`，居中在**第一行文字**上（名字折两行也不动）；不再有 `bg-surface-hover` 一类的 28/32/40px 图标底座，也不再有 48px 绿底圆盘（联系作者「已发送」是标题行首的 ok 色对勾）。缩略图占位是 `.hatch-box`（发丝框 + 与进度条同一张 45° 排线瓦片，`index.css`），不画图标。`Sketch.tsx` 在 `iconography.test` 的内联 svg 豁免表里占 1 个。
+减少动态效果时不转），不再有 `LoaderCircle` 式 3/4 弧；其余图标的描边仍按比例缩放、不设下限。唯一例外是 AI 的「正在想 / 正在做 / 想过了」：
+`ui/ThinkingOrb`（ADR 0165，改自 thinking-orbs）。只出现在改图助手：过程组组首的图标槽（16px，进行中按最新一步换形态，结束后
+ink-3 半速、仍在动）、发出后到第一个字之间状态行前那一格（16px `connecting`），以及空白面板（见 ④）。形态是封闭集六种，按 ADR 0165
+的表映射，不为单个调用处新加；墨色只取 canvas 自己的 `text-ink` / `text-ink-3`，深浅只经不透明度；减少动态效果时画静止帧；
+滚出视口不画。尺寸只写 `size="row" | "hero"`。文件读写、导出、安装这类「加载」照旧 `Spinner`。
+④ **手帐线稿（2026-10-28，framed-icons 审计）：图标不套底座。** 空状态的图形是 `ui/Sketch` 的线稿（封闭集 11 幅、54×42（唯一尺寸例外：首页拖放区的 `drop` 96×72，`SKETCH_SIZE_OVERRIDE`）、1px 发丝线落在 .5 坐标、45° 整像素排线、仅 `currentColor` = ink-faint，亮暗同源；`EmptyState` 的 `art` 属性按意思选，同义复用，不为一个调用处新画）。唯一例外：改图助手还没开始对话的空白面板，图形是 64px 的 `searching` 思考小球（`EmptyState` 的 `figure`，ink-3、半速；ADR 0165），标题与说明照旧。行首 / 标题行的角色图标（项目行、属性栏标题、连接 AI 方式行、教程脚本卡）是无框 16px + `IconSlot`，居中在**第一行文字**上（名字折两行也不动）；不再有 `bg-surface-hover` 一类的 28/32/40px 图标底座，也不再有 48px 绿底圆盘（联系作者「已发送」是标题行首的 ok 色对勾）。缩略图占位是 `.hatch-box`（发丝框 + 与进度条同一张 45° 排线瓦片，`index.css`），不画图标。`Sketch.tsx` 在 `iconography.test` 的内联 svg 豁免表里占 1 个。
 ③ 状态不画彩色圆盘：语义色只留在图形上，状态图标用实心孪生（`CircleCheck` / `CircleAlert` /
 `CircleQuestionMark` 的 `filled`），进行中是 `Spinner`；点状标记（脚本行状态点）6px、空心环描边 1.5px，
 与文字同在一个 `items-baseline` 组里、用 `vertical-align: middle` 对准小写字母中心，不靠 margin。

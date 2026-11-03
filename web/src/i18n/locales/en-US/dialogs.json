@@ -116,6 +116,9 @@
     "lettersCheck": "Check for replies",
     "lettersChecking": "Checking...",
     "lettersNumber": "Message {{id}}",
+    "lettersReportTag": "Report",
+    "lettersReportNumber": "Report ID {{id}}",
+    "lettersNoNote": "No note",
     "lettersSentAt": "Sent {{time}}",
     "lettersState": {
       "new": "Waiting for a reply",
@@ -1404,7 +1407,7 @@
       "okCount_one": "{{count}} OK",
       "send": {
         "row": "Send problem report",
-        "rowHint": "Send the diagnostics bundle to the Tavotto maintainers. Nothing is uploaded until you press Send in the confirmation dialog.",
+        "rowHint": "Send the diagnostics bundle to the maintainers. Nothing uploads until you press Send.",
         "open": "Send…",
         "title": "Send a problem report",
         "includedTitle": "What will be sent",
@@ -1435,8 +1438,7 @@
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included by default: your script files, data files, or the identifier used by anonymous usage statistics. Error messages and logs may mention project folder names, file names, and output printed by your script.",
-        "size": "Size {{size}}",
+        "notIncluded": "Not included by default: your scripts, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script.",
         "save": "Save this bundle",
         "saved": "Saved",
         "saveFailed": "Could not save",
@@ -1452,9 +1454,8 @@
           "other": "Other"
         },
         "noteLabel": "Notes (optional)",
-        "noteHint": "Please leave out names, emails, paths and data.",
         "noteCount": "{{count}} / {{max}}",
-        "retention": "Reports are kept for {{days}} days, readable only by the Tavotto maintainers, and are not linked to the anonymous-statistics identifier.",
+        "retention": "Kept for {{days}} days, readable only by the maintainers, unlinked from the statistics identifier.",
         "preparing": "Building the bundle…",
         "prepareFailed": "Could not build the bundle. Close and try again, or use Export diagnostics to save it locally.",
         "tooLarge": "This bundle is {{size}}, above the online limit of {{max}} (extras were already cut short). Save it locally and send it to the maintainers yourself.",
@@ -1467,7 +1468,7 @@
         "cancelled": "Cancelled. Nothing was sent.",
         "doneTitle": "Sent",
         "reportId": "Report ID",
-        "doneBody": "Mention this ID in a GitHub issue or chat so the maintainers can find your report.",
+        "replyInbox": "Sent. The maker's reply will appear in Contact the maker › My letters",
         "copyId": "Copy report ID",
         "send": "Send",
         "retry": "Try again",
@@ -1507,17 +1508,16 @@
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
         "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
-        "sentence": "A diagnostic bundle will be sent, with error details, logs (which may contain output printed by your script), and managed-environment Python package names and versions, but without your script or data files.",
+        "sentence": "Includes errors and logs (may include output printed by your script), not your scripts or data",
         "details": "Show contents",
-        "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
-        "errorSummaryNote": "If you have agreed to anonymous statistics, a content-free error summary (the internal area that failed and a fixed error code) is attached as well. Sending does not consent to automatic reporting later.",
-        "noteAttached": "What you write is attached as is. ",
+        "bestEffort": "Redaction is best-effort, not guaranteed; you can save and inspect the bundle first.",
+        "errorSummaryNote": "If you agreed to anonymous statistics, a content-free error summary is attached too.",
         "policy": "Privacy policy",
         "cardButton": "Send problem report",
         "reprepare": "Prepare again",
         "doneAfterCancel": "Cancelled too late — the report had already arrived",
         "unknownOutcome": "Could not confirm whether the report arrived; to have it removed, open a GitHub issue quoting only the report ID",
-        "extrasTitle": "Extras (not sent by default)",
+        "extrasTitle": "Extras",
         "extrasSelectAll": "Select all",
         "extrasSelectNone": "Select none",
         "extra": {
@@ -1526,9 +1526,9 @@
           "corrupt_sessions": "Contents of corrupted session copies"
         },
         "extraHint": {
-          "source": "The script that failed (even if it is not registered in the project; R and MATLAB scripts count too, together with the candidate script the AI left behind when making an editable version), the scripts registered in the project, and the requirements / constraints / pyproject files used for dependency installs are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if these files contain secrets, do not tick this.",
-          "crash_reports": "Tavotto system crash reports from the last 7 days. Windows crash dumps are snapshots of the program's memory and may contain the contents and paths of files that were open; they cannot be redacted.",
-          "corrupt_sessions": "By default only the names and sizes of corrupted copies; tick to attach their contents."
+          "source": "Scripts and dependency files are attached as is; secrets may survive redaction, so do not tick if they hold any.",
+          "crash_reports": "A Windows crash dump is a memory snapshot and may hold file contents and paths; it cannot be redacted.",
+          "corrupt_sessions": "Only names and sizes by default; tick to attach contents."
         },
         "filesTitle": "Files in the bundle ({{count}})",
         "truncated": "The bundle was over the size limit, so these were cut short (lowest priority first): {{kinds}}.",
@@ -1551,14 +1551,8 @@
           "corrupt_sessions": "corrupted copies"
         },
         "optionsLost": "The extras were too large, so they could not be attached this time.",
-        "sentenceExtras": "A diagnostic bundle will be sent, with error details, logs (which may contain output printed by your script), managed-environment Python package names and versions, plus what you ticked: {{items}}.",
-        "sentenceItem": {
-          "source": "script source and dependency declaration files",
-          "crash_reports": "system crash reports (may contain the contents of open files)",
-          "corrupt_sessions": "contents of corrupted session copies"
-        },
+        "sentenceExtras": "Includes errors, logs (may include output printed by your script) and the extras you tick",
         "contact": {
-          "hint": "Want to talk directly? Include the report ID in your message: ",
           "hintNoId": "Want to talk directly? ",
           "link": "Contact us on WeCom",
           "showQr": "Show QR code",
@@ -1567,7 +1561,7 @@
           "rowHint": "For a direct conversation, add us on WeCom (shown in Chinese only)."
         },
         "attachmentTitle": "Diagnostics bundle attached",
-        "notePlaceholder": "What happened? For example, what you clicked and what you saw."
+        "notePlaceholder": "What happened? Please leave out names, emails, paths and data."
       }
     },
     "export": {

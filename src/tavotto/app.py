@@ -137,6 +137,7 @@ from .engine import (
     pool as engine_pool,
     preparation as engine_preparation,
     prepsession as engine_prepsession,
+    prewarm as engine_prewarm,
     probe as engine_probe,
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
@@ -809,6 +810,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    _note_missing_command(exc)
     if figure_snapshot_invalidation is not None:
         body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
@@ -989,6 +991,21 @@ def _note_missing_dependency(exc, project_env: dict | None, repair: dict | None)
         )
     except (OSError, ValueError, TypeError) as err:
         LOG.warning("缺依赖现场记录失败: %s", err)
+
+
+def _note_missing_command(exc) -> None:
+    """脚本调外部命令却找不到：把 worker 当场量好的闭集事实记进进程内记录（`deprepair.note_missing_command_of`）。
+    没有打开项目 / 没有这份事实不记；记录失败不许盖掉原始错误。"""
+    if not isinstance(getattr(exc, "extra", None), dict) or "missing_command" not in exc.extra:
+        return
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return
+    try:
+        engine_deprepair.note_missing_command_of(root, exc)
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("找不到外部命令的现场记录失败: %s", err)
 
 
 def _project_relative(path: str) -> str:
@@ -2375,11 +2392,13 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
 
     req = job.request
     src = req.original
+    # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
+    pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
         "type": "panel",
         "id": src.figure_id,
-        "x_mm": 0,
-        "y_mm": 0,
+        "x_mm": pad_l,
+        "y_mm": pad_t,
         "w_mm": src.w_mm,
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
@@ -2432,7 +2451,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         extra = {"raster_target": target} if target else {}
         return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
 
-    w_mm, h_mm = float(src.w_mm), float(src.h_mm)
+    w_mm, h_mm = src.page_mm  # 页面尺寸（无留白 = 图幅）
     if vector_formats:
         produced += run(
             vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
@@ -2441,15 +2460,25 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         ppi = req.ppi
         target = None
         if src.source_kind == "raster" and src.px_w:
-            dpi_x = float(src.px_w) * 25.4 / w_mm
-            ppi = dpi_x  # 页面 w_mm 对应 px_w 个像素
+            # 密度按**图幅**（面板）算：源的像素网格与图幅一一对应；留白只是在四周多出的页面
+            fig_w, fig_h = float(src.w_mm), float(src.h_mm)
+            dpi_x = float(src.px_w) * 25.4 / fig_w
+            ppi = dpi_x  # 图幅 w_mm 对应 px_w 个像素
             if src.px_h:
-                dpi_y = float(src.px_h) * 25.4 / h_mm
+                dpi_y = float(src.px_h) * 25.4 / fig_h
                 if abs(dpi_y - dpi_x) > 0.005 * dpi_x:
                     # 横纵密度不同：先按逻辑图幅各向同性画对（取两轴中较大的密度，两轴都不小于源像素），
-                    # 再整张面积平均缩到恰好 px_w × px_h；元数据写源的 x / y 密度
+                    # 再整张面积平均缩到恰好 px_w × px_h（带留白时是整个页面的像素数）；元数据写源的 x / y 密度
                     ppi = max(dpi_x, dpi_y)
-                    target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+                    if src.pad_mm:
+                        target = (
+                            max(1, round(w_mm * dpi_x / 25.4)),
+                            max(1, round(h_mm * dpi_y / 25.4)),
+                            dpi_x,
+                            dpi_y,
+                        )
+                    else:
+                        target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
         produced += run(
             raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
         )
@@ -2482,6 +2511,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
         )
     if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
         return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
+    _prepare_source_fonts()
     provider = rc_facade.provider()
 
     class _NoPanels:
@@ -2498,8 +2528,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             parts[key] = ("", None)
             continue
         compiled = rc_plan.compile_page(
-            float(src.w_mm),
-            float(src.h_mm),
+            *src.page_mm,
             objs,
             sources=_NoPanels(),
             faces=provider,
@@ -2523,14 +2552,31 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             )
         parts[key] = (text, compiled.page)
     page = parts["above"][1] or parts["below"][1]
+    page_w_mm, page_h_mm = src.page_mm
+    if page is not None:
+        page_w_pt, page_h_pt = page.width_pt, page.height_pt
+    else:  # 只有留白、没有标注：页面尺寸直接由图幅 + 留白算
+        page_w_pt, page_h_pt = page_w_mm * 72.0 / 25.4, page_h_mm * 72.0 / 25.4
+    pad_extra = {}
+    if src.pad_mm:
+        # 内嵌原图 EPS 的落点：左 = l、上 = t（PostScript 原点在左下，所以 y = 页高 − 上 − 图高）
+        pad_l, pad_t, _r, _b = src.pad_mm
+        pad_extra = {
+            "offset_pt": (
+                pad_l * 72.0 / 25.4,
+                page_h_pt - (pad_t + float(src.h_mm)) * 72.0 / 25.4,
+            ),
+            "clip_page": True,
+        }
     out = tmp_dir / "out_annotated.eps"
     out.write_bytes(
         engine_epsoverlay.compose(
             Path(inner.tmp_path).read_bytes(),
             parts["above"][0],
-            page.width_pt,
-            page.height_pt,
+            page_w_pt,
+            page_h_pt,
             underlay=parts["below"][0],
+            **pad_extra,
         )
     )
     bbox = engine_epsfile.bounding_box_pt(out)
@@ -2555,7 +2601,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
-    if src.objects:
+    if src.objects or src.pad_mm:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
@@ -3094,6 +3140,7 @@ def _export_produce_rendercore(
         if canvas is not None
         else {}
     )
+    _prepare_source_fonts()
     return rc_job.produce(
         job,
         tmp_dir,
@@ -3590,6 +3637,95 @@ def api_mathtext():
     return jsonify(
         {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}
     )
+
+
+def _prepare_source_fonts() -> None:
+    """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
+    字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""
+    from .rendercore import userfonts
+
+    pythons: list[str] = []
+    try:
+        project = _mathtext_project()
+        if project is not None:
+            hit = engine_pool.peek_worker_python(project)
+            if hit is not None:
+                pythons.append(hit[0])
+    except Exception:  # noqa: BLE001 —— 项目解释器读不出来只是少一条线索
+        pass
+    bundled = engine_runtime.bundled_python()
+    if bundled:
+        pythons.append(bundled)
+    dirs: list[Path] = []
+    for py in pythons:
+        dirs += userfonts.matplotlib_font_dirs(py)
+    dirs += userfonts.matplotlib_font_dirs(None)
+    userfonts.default_locator().add_hint_dirs(dirs)
+
+
+#: `/api/source-fonts/status` 一次最多问几张脸（一页画布的标注远小于此）
+SOURCE_FONTS_MAX_ITEMS = 64
+
+
+@app.post("/api/source-fonts/status")
+def api_source_fonts_status():
+    """画布文字的 `sourceFont`（ADR 0164）在**这台机器**上能不能用：body `{"fonts": [{"sha256", "face"}]}` →
+    `{"ok": true, "results": [{"sha256", "face", "state"}]}`，`state` 是 `ok` 或 `sourcefont.REASONS` 里的一个。
+
+    判据与导出**同一个函数**（`HbFaceProvider.user_face`），所以预览 / 属性页说「能用」的，导出就嵌得进去。
+    响应里没有路径，也没有字体文件的任何字节。"""
+    from .rendercore import facade as rc_facade, sourcefont
+
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("fonts")
+    if not isinstance(items, list) or len(items) > SOURCE_FONTS_MAX_ITEMS:
+        return jsonify({"ok": False, "error": "bad_items"}), 400
+    _prepare_source_fonts()
+    results = []
+    provider = None
+    for it in items:
+        ref, bad = sourcefont.parse_source_font(
+            {**it, "family": it.get("family") or "-"} if isinstance(it, dict) else None
+        )
+        if ref is None:
+            return jsonify({"ok": False, "error": "bad_items"}), 400
+        try:
+            provider = provider or rc_facade.provider()
+            provider.user_face(ref.primary)
+            state = "ok"
+        except sourcefont.UserFontUnavailable as exc:
+            state = exc.reason
+        results.append({"sha256": ref.primary.sha256, "face": ref.primary.face, "state": state})
+    return jsonify({"ok": True, "results": results})
+
+
+@app.get("/api/source-fonts/<sha256>/<int:face>")
+def api_source_fonts_bytes(sha256: str, face: int):
+    """预览用：本机上这张脸的字节（单脸 sfnt）。**只来自本机、只按 sha256 取**，不走网络；禁止嵌入的脸
+    不供（预览与导出同一条许可线）。会话认证与其它端点同一道全局 guard。"""
+    import io
+
+    from .rendercore import facade as rc_facade, sourcefont
+
+    if not sourcefont.HEX64.match(sha256):
+        return jsonify({"ok": False, "error": "bad_sha256"}), 400
+    _prepare_source_fonts()
+    try:
+        record = rc_facade.provider().user_face(sourcefont.FaceRef("-", sha256, face)).record
+    except sourcefont.UserFontUnavailable as exc:
+        return jsonify({"ok": False, "error": exc.reason}), 404
+    if record.path.suffix.lower() in (".ttc", ".otc"):
+        from fontTools.ttLib import TTFont
+
+        buf = io.BytesIO()
+        TTFont(str(record.path), fontNumber=face, lazy=False).save(buf)
+        data = buf.getvalue()
+    else:
+        data = record.path.read_bytes()
+    resp = Response(data, mimetype="application/octet-stream")
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"  # 内容由 sha256 决定
+    resp.headers["ETag"] = f'"{sha256}-{face}"'
+    return resp
 
 
 @app.post("/api/export/validate")
@@ -5130,6 +5266,8 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 脚本拉起外部命令却找不到可执行文件（bundle schema 15）：交原值，换形与脱敏在 `diagnostics._project_section`
+        status["missing_commands"] = engine_deprepair.recent_missing_commands(str(ctx.path))
         status["managed_environment_jobs"] = engine_envdiag.recent(ctx.path)
         # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
         # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
@@ -5350,6 +5488,7 @@ def api_diagnostics_send_start(pid: str):
             note=body.get("note"),
             gen=body.get("gen"),
             scope=_diag_send_scope(),
+            reply=body.get("reply") is not False,
         )
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
@@ -6351,13 +6490,15 @@ def api_registry_probe():
             # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
             # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
             # 清单与预览，那时 cache 里得已经有东西。
-            _materialize_runtime(
-                script,
-                result.get("entry") or "",
-                result.get("descriptors") or [],
-                remap_generation=result.get("remap_generation"),
-                run=run,
-            )
+            # 刚分开登记的图（ADR 0162）：这次执行里还叫原名，不物化（第一次打开时按登记图名重跑）
+            if not result.get("stem_aliases_added"):
+                _materialize_runtime(
+                    script,
+                    result.get("entry") or "",
+                    result.get("descriptors") or [],
+                    remap_generation=result.get("remap_generation"),
+                    run=run,
+                )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
             # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
             # B 再经这里成功，旧记录 A 会冒充「最近成功」
@@ -8050,6 +8191,60 @@ def api_handoff_display_ack():
     return jsonify({"ok": True})
 
 
+@app.post("/api/engine/prewarm")
+def api_engine_prewarm():
+    """项目打开后为一张图**提前取渲染会话**（ADR 0160）：只起会话，不 build、不出图、不写盘、不发事件。
+
+    与 `/api/engine/render` 开头同一扇门（`_engine_worker`），所以「谁来渲染」的判据仍只有
+    `enginesession.resolve()`；native 档的 runtime 图不预热（native 会话不进池）。
+    判定同步做（只读、不起进程），取会话在后台线程里；任何失败静默。恒 200，body 说明结果。
+    """
+    body = request.get_json(silent=True) or {}
+    rel_id = body.get("id", "")
+    if not isinstance(rel_id, str) or not rel_id:
+        return jsonify({"status": "skipped", "reason": "no_id"})
+    ctx = current_ctx()
+    try:
+        # 项目的解释器还没定下来时不预热：取会话会先走「换不换解释器」的决定（体检候选、记住 / 采用项目环境），
+        # 那是写用户配置的动作，不该发生在用户什么都没点的时候。已定的项目取会话只复用这个决定。
+        if engine_pool.peek_project_resolution(str(ctx.path)) is None:
+            return jsonify({"status": "skipped", "reason": "environment_undecided"})
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = _resolve_runtime_asset(rel_id)
+            if info is None:
+                return jsonify({"status": "skipped", "reason": "unknown"})
+            if (
+                engine_enginesession.profile_of(str(ctx.path), rel_id)
+                != engine_enginesession.PROFILE_SAFE
+            ):
+                return jsonify({"status": "skipped", "reason": "native"})
+            script = info["script"]
+        else:
+            panel = _disk_panel(safe_resolve(rel_id))[1]
+            if panel is None:
+                return jsonify({"status": "skipped", "reason": "not_script"})
+            script = panel["script"]
+        # 环境决定必须是纯空操作（只读判据）：真决定会体检候选、跑项目自带的解释器、写项目记录。
+        # 池里 `PURPOSE_PREWARM` 在跑 deciders 之前还有一道同判据的硬挡，这里只是让响应早点说明
+        if not engine_pool.environment_decision_is_noop(str(ctx.path), script):
+            return jsonify({"status": "skipped", "reason": "environment_needs_decision"})
+    except Exception:  # noqa: BLE001 —— 预热是旁路，解析不了就不预热
+        return jsonify({"status": "skipped", "reason": "unresolvable"})
+
+    def work():
+        with bound_project(ctx), engine_pool.acquire_purpose(engine_pool.PURPOSE_PREWARM):
+            _engine_worker(rel_id)  # 只取会话：build 仍由第一次真渲染惰性触发
+
+    status = engine_prewarm.PREWARM.request(
+        (str(ctx.path), rel_id),
+        work,
+        alive=engine_pool.alive_count(),
+        # 上限唯一出处 `max_alive()`（ADR 0159，按内存自适应）；它不能在持 `_lock` 时调——这里在锁外
+        cap=engine_pool.max_alive() - 1,
+    )
+    return jsonify({"status": status})
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -8073,6 +8268,22 @@ def api_engine_render():
     rev 一样不少。老 worker 不返回它时字段整个不出现。
     """
     body = request.get_json(force=True)
+    # 可选 `purpose`（闭集）：`foreground`（缺省 = 老前端）/ `neighbour`（跨图对齐的顺手补渲染，ADR 0159）。
+    # neighbour 不刷新池的 LRU 时间；需要冷启动而池已满时不做（409 + `background_render_deferred`，前端保留旧画面）。
+    purpose = body.get("purpose", engine_pool.PURPOSE_FOREGROUND)
+    if purpose not in engine_pool.PURPOSES:
+        return jsonify(
+            {
+                "error": f"purpose 必须是 {' / '.join(engine_pool.PURPOSES)}: {purpose!r}",
+                "code": "invalid_purpose",
+                "params": {"value": repr(purpose)},
+            }
+        ), 400
+    with engine_pool.acquire_purpose(purpose):
+        return _api_engine_render_body(body)
+
+
+def _api_engine_render_body(body):
     rel_id = body.get("id", "")
     try:
         artifact_source = _artifact_source(
@@ -8114,14 +8325,26 @@ def api_engine_render():
     # 取会话会起解释器 / 准备环境，必须在这段静默等待之前给界面进度。
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
-    sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    # 后台补渲染可能被暂缓（不起会话）：没有人在等它，不报「准备中」，免得暂缓时还要补一个终局事件
+    if engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND:
+        sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    acquire_mark = engine_pool.acquire_mark()
     try:
-        worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
+        # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
+        with engine_prewarm.PREWARM.foreground():
+            worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
         # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
         get_ms = round((time.perf_counter() - t_get) * 1000, 3)
+        # `worker_get_ms` 的分段（池 acquire 里量的；没经过池的原生会话为空）
+        acquire_segments = engine_pool.acquire_timings(acquire_mark, worker)
         info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
+        if isinstance(exc, engine_pool.WorkerError) and exc.code == engine_pool.BACKGROUND_DEFERRED:
+            # 不是失败：没有 render.* 事件、不进交接结论，前端保留旧画面
+            return jsonify(
+                {"error": str(exc), "code": engine_pool.BACKGROUND_DEFERRED, "deferred": True}
+            ), 409
         # worker 启动 / 环境解析失败（WorkerError、原件核对不上）也是「那一次渲染」的失败结论：
         # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
         # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
@@ -8156,7 +8379,18 @@ def api_engine_render():
             observe_worker=observe_render_worker,
         )
     except engine_pool.WorkerError as exc:
-        LOG.error("引擎渲染失败: %s: %s", stem, exc)
+        if exc.code == engine_pool.BACKGROUND_DEFERRED:
+            # 被淘汰后的那次重取撞上「池已满」：这次补渲染作罢。render.started 已发过，补一个中性终局收掉「构建中」
+            sse_publish("render.done", {"pj": pj, "id": rel_id})
+            return jsonify(
+                {"error": str(exc), "code": engine_pool.BACKGROUND_DEFERRED, "deferred": True}
+            ), 409
+        if exc.code == "queue_superseded":
+            # 拖动 / 连续调参时排队里的旧请求被同一张图的新请求顶掉是常态，不是故障：记 ERROR 会刷满
+            # 诊断包的报错清单、把真报错挤出去（反馈包 TVD-MDBH 一分钟 38 条）。响应与事件照旧。
+            LOG.info("引擎渲染被同图新请求顶替: %s", stem)
+        else:
+            LOG.error("引擎渲染失败: %s: %s", stem, exc)
         _note_handoff_render(stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
@@ -8185,7 +8419,7 @@ def api_engine_render():
     # 阶段计时：worker 的 script_build/patch_apply/manifest/canvas_draw +
     # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
     # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。
-    timings = {**(resp.get("timings") or {}), "worker_get_ms": get_ms}
+    timings = {**(resp.get("timings") or {}), **acquire_segments, "worker_get_ms": get_ms}
     # 服务端在这次请求上花的总时间（取会话起、到组装响应前）。前端拿「请求往返 − 它」
     # 就是传输 + JSON 解析——没有它，松手到落定的那 0.5 秒分不清是后端慢还是搬运慢
     # （2026-09-23 一份 M2 Pro 报告里 commit→权威 500ms，而 worker 各段加起来说不清）
@@ -11694,7 +11928,14 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
     native = None
-    if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+    if registered.get("stem_aliases_added"):
+        # 这次刚分开登记的图（ADR 0162）：这次执行里的图还叫原名，物化出来就是登记表里没有的身份。不物化、
+        # 不沿用这条活会话（池按别名表判它过期），用户第一次打开时按登记图名重跑
+        if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+            for sess in engine_nativesession.REGISTRY.list(str(ctx.path)):
+                if sess.launch_id == plan.plan_id and sess.owned is not None:
+                    _end_native_session(sess)
+    elif getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
         # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
         native = next(
             (
@@ -11734,8 +11975,9 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
+    added = registered.get("stem_aliases_added") or {}
     failed = [
-        {"stem": f.get("stem"), "code": f.get("code")}
+        {"stem": added.get(f.get("stem"), f.get("stem")), "code": f.get("code")}
         for f in (captured.get("failed_figures") or ())
         if isinstance(f, dict)
     ]
@@ -13742,6 +13984,10 @@ def api_ai_convert():
         )
     except engine_ai.DuplicateRequest as dup:
         return jsonify({"session": dup.sid, "script": rel, "deduped": True})
+    except engine_ai_convert.ConvertError as exc:
+        # 候选工作区建不出来（如 Windows 路径过长）：稳定码，前端按码出一句话卡片
+        LOG.warning("转换任务没能开始: %s %s (%s)", agent, rel, exc.code)
+        return _convert_error(exc)
     except engine_ai.AgentError as exc:
         LOG.warning("转换任务被拒: %s (%s)", agent, exc.code)
         return _agent_error(exc)

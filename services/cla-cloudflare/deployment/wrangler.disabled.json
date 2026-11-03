@@ -3,6 +3,7 @@
   "name": "tavotto-cla-REPLACE_BEFORE_REVIEWED_DEPLOYMENT",
   "main": "../src/entry.ts",
   "compatibility_date": "2026-10-18",
+  "keep_names": false,
   "workers_dev": false,
   "preview_urls": false,
   "routes": [],

@@ -572,7 +572,7 @@ test(
         return selected()
       })
       .toBe(title.slice(-1))
-    await page.locator('[data-prop="text"] [data-rich-action="italic"]').click()
+    await page.locator('[data-rich-pill] [data-rich-action="italic"]').click()
     await expect(field.locator('em')).toHaveText(title.slice(-1))
     await expect(field).toHaveText(title)
     await page.keyboard.press('Enter') // Enter 提交（失焦结束编辑事务）
@@ -1376,5 +1376,87 @@ test(
     await expect(pinsItem).toHaveAttribute('aria-checked', 'false')
     await page.keyboard.press('Escape')
     await expect(pins, '关掉之后画布上不应再有标记').toHaveCount(0)
+  },
+)
+
+test(
+  '功能：文字标注自由旋转——选中后拖旋转柄，文字在画面上真的转了；⇧ 吸 15°；属性页角度同步；撤销回到 0°',
+  { tag: ['@feature:canvas.text-rotate'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    await page.locator('[data-context-back]').click()
+    const stage = page.locator('[data-canvas-stage]')
+
+    // 加一个文字标注：文字工具 → 点画布 → 输入 → Esc，再点一下选中它（不进编辑态）
+    await page.locator('[data-tool="text"]').click()
+    await stage.click({ position: { x: 420, y: 260 } })
+    await page.keyboard.type('Time (s)')
+    await page.keyboard.press('Escape')
+    const text = stage.locator('[data-object-id]').filter({ hasText: 'Time (s)' })
+    await expect(text).toHaveCount(1)
+    await text.click()
+
+    /** 文字对象在画面上的旋转角（度）：读浏览器算出来的 transform 矩阵，不是读文档字段 */
+    const angleOnScreen = () =>
+      text.evaluate((el) => {
+        const m = new DOMMatrix(getComputedStyle(el).transform)
+        return (Math.atan2(m.b, m.a) * 180) / Math.PI
+      })
+    expect(await angleOnScreen(), '起手是横排').toBeCloseTo(0, 3)
+
+    const knob = page.locator('[data-rotate-handle]')
+    await expect(knob, '选中文字后选框顶上有旋转柄').toHaveCount(1)
+    await expectInViewport(page, knob, '旋转柄')
+    await expectHittable(knob, '旋转柄')
+    const kb0 = (await knob.boundingBox())!
+
+    // 单行文字开始旋转时框先收到贴字宽（字不动），旋转中心随之移到字的中心——所以先抓住柄微动一下让框收好，
+    // 再读此刻字的中心；旋转角 = 起手角 + 指针绕中心转过的角度，目标方位 = 起手方位 + 45°，⇧ 吸附后恰好 45°
+    const start = { x: kb0.x + kb0.width / 2, y: kb0.y + kb0.height / 2 }
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    // 微动不按 ⇧：⇧ 会把这点转角吸回 0°，框就不收了
+    await page.mouse.move(start.x + 4, start.y, { steps: 2 })
+    await expect.poll(angleOnScreen, { message: '微动后文字应当转了一点' }).toBeGreaterThan(0.5)
+    await page.keyboard.down('Shift')
+    const tb = (await text.boundingBox())!
+    const cx = tb.x + tb.width / 2
+    const cy = tb.y + tb.height / 2
+    const bearing0 = Math.atan2(start.x - cx, -(start.y - cy))
+    const target = bearing0 + (45 * Math.PI) / 180
+    const R = 80
+    await page.mouse.move(cx + R * Math.sin(target - 0.3), cy - R * Math.cos(target - 0.3), { steps: 4 })
+    await page.mouse.move(cx + R * Math.sin(target), cy - R * Math.cos(target), { steps: 6 })
+    await page.mouse.up()
+    await page.keyboard.up('Shift')
+
+    // 画面真的变了：文字转了 45°（⇧ 吸附到 15° 的倍数），柄跟着转到了别处
+    await expect.poll(angleOnScreen, { message: '拖旋转柄后文字应当转 45°' }).toBeCloseTo(45, 1)
+    const kb1 = (await knob.boundingBox())!
+    expect(
+      Math.hypot(kb1.x - kb0.x, kb1.y - kb0.y),
+      '旋转柄应当随文字转到别处',
+    ).toBeGreaterThan(10)
+    await expectInViewport(page, knob, '转后的旋转柄')
+
+    // 属性页的角度与画面一致（「位置与尺寸」折叠里）
+    const fold = page.getByText('位置与尺寸', { exact: true })
+    await fold.click()
+    const angleField = page.getByLabel('旋转', { exact: true })
+    await expect(angleField).toHaveValue(/^45/)
+
+    // 属性页直接填角度：-90（规范形 (-180, 180]）→ 画面转到 -90°
+    await angleField.fill('-90')
+    await angleField.press('Enter')
+    await expect.poll(angleOnScreen, { message: '属性页填 -90 后文字应当转到 -90°' }).toBeCloseTo(-90, 1)
+
+    // 撤销两步回到横排：属性页那一步、拖柄那一步各一条历史
+    await page.locator('[data-canvas-stage]').click({ position: { x: 20, y: 20 } })
+    await text.click()
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(angleOnScreen, { message: '撤销属性页那一步回到 45°' }).toBeCloseTo(45, 1)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(angleOnScreen, { message: '再撤销拖柄那一步回到横排' }).toBeCloseTo(0, 1)
   },
 )

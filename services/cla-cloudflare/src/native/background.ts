@@ -7,7 +7,7 @@ import { Rejected } from '../core/types.ts';
 import type { LiveService } from './service.ts';
 import type { Publication, RefreshRequest } from './store.ts';
 import {slotRecoveryOnly} from './store.ts';
-import { BudgetDeferred, FREE_BUDGET, qualificationSQL } from './budget.ts';
+import { BudgetDeferred, CONFIRMATION_FIXED_SQL, FREE_BUDGET, qualificationSQL } from './budget.ts';
 
 async function one(s:LiveService,job:Job,p:Publication,revision:number,target:Target):Promise<string> {
   let previous:Proof;try{previous=JSON.parse(p.proof_text.split('\n').slice(1).join('\n'));}catch{throw new Rejected('stored_proof_unavailable');}
@@ -69,7 +69,7 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
     // Confirmation uses 14 fixed work statements; reserve two additional
     // reads to authorize withdrawal if revalidation fails, plus two per actor.
     const exemptions=new Set(Object.values(s.c.exemptionIds));
-    if(16+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exemptions.has(person.id)).length>FREE_BUDGET.sqlWork)
+    if(CONFIRMATION_FIXED_SQL+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exemptions.has(person.id)).length>FREE_BUDGET.sqlWork)
       throw new BudgetDeferred('sql');
     const predecessor=await s.store.refreshPredecessor(job.target_key,check.headSha);
     if(!predecessor || predecessor.id!==request.source_attempt)throw new Rejected('refresh_predecessor_unavailable');

@@ -20,6 +20,12 @@ export type Variant = 'ghost' | 'secondary' | 'primary' | 'danger' | 'danger-tin
  * （标题行里的 ?、搜索框的清除、通知的 ×）——它是唯一低于 28 的一档，只给行内。
  * 图标钮一律是圆（rounded-full，2026-10-07：发送键不再是胶囊堆里的方块）。
  */
+/**
+ * 「按下」时字形自己跟着变重（B 真的加粗、图标描边加粗）：状态不只写在底色上。配 `Button active`。
+ * 属性页的 `StyleToggle` 与文字框的浮动格式条共用这一份，别各写一遍。
+ */
+export const PRESSED_GLYPH = 'font-bold [&_svg]:[stroke-width:2.5]'
+
 export type Size = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm' | 'icon-lg' | 'icon-xs'
 
 const VARIANTS: Record<Variant, string> = {

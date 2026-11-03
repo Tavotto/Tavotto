@@ -1,0 +1,82 @@
+{
+  "mutation-authority-cap-baseline.txt": {
+    "sha256": "4fa5c3b42cf5cc9b7291422e9882761b47ccb9e9dff1fea5f35fa5d878aaf92c",
+    "content": "✔ independent authority ceiling is inclusive for proof but expiry is strict for completion (3.501269ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 157.066562\n"
+  },
+  "mutation-authority-cap-red.txt": {
+    "sha256": "ec04d3b478132f3750a040f225a28b5feb1f6b28a0e806fd9d4abf43013fed60",
+    "content": "✖ independent authority ceiling is inclusive for proof but expiry is strict for completion (4.73281ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 160.23065\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:29:1\n✖ independent authority ceiling is inclusive for proof but expiry is strict for completion (4.73281ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at refused (file:///tmp/cla-timing-independent-review-830bd89c/mutants/authority-cap/tests/timing-independent.test.mjs:5:57)\n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/authority-cap/tests/timing-independent.test.mjs:32:27)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-confirmation-sql-baseline.txt": {
+    "sha256": "237a3df96fa7c921bc3525f474ddb9f4f4665a154d5fbfb48b4760bcfaccea4e",
+    "content": "✔ independent SQL phases and correction requests preserve both ceilings (2.67342ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 121.229159\n"
+  },
+  "mutation-confirmation-sql-red.txt": {
+    "sha256": "49716ff49bd1564c4c418319fa08e0e957577820bcb68f881bc229645c34125a",
+    "content": "✖ independent SQL phases and correction requests preserve both ceilings (3.402447ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 138.288521\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:39:1\n✖ independent SQL phases and correction requests preserve both ceilings (3.402447ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  19 !== 20\n  \n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/confirmation-sql/tests/timing-independent.test.mjs:42:9)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 19,\n    expected: 20,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-correction-requests-baseline.txt": {
+    "sha256": "90e78d5e908f7ddda7694a3447e86f69c42997233e95d8fbcb823174fd7622d3",
+    "content": "✔ independent SQL phases and correction requests preserve both ceilings (2.812018ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 131.043162\n"
+  },
+  "mutation-correction-requests-red.txt": {
+    "sha256": "b35b58a57348f590d3bd46f8f951ed73b7810f4ba52e0d4956b68eac6afecb5b",
+    "content": "✖ independent SQL phases and correction requests preserve both ceilings (3.516608ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 127.175374\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:39:1\n✖ independent SQL phases and correction requests preserve both ceilings (3.516608ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at refused (file:///tmp/cla-timing-independent-review-830bd89c/mutants/correction-requests/tests/timing-independent.test.mjs:5:57)\n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/correction-requests/tests/timing-independent.test.mjs:43:67)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-first-poll-readiness-baseline.txt": {
+    "sha256": "4c49353147d9265c0125ffc0ea57ec14e1387ba447d8d7b87e95942e484d53b6",
+    "content": "✔ independent single-shot earliest read exactly at readiness refuses ordering race (2.572415ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 130.861312\n"
+  },
+  "mutation-first-poll-readiness-red.txt": {
+    "sha256": "4d13c7473f22ac0566fc03d50abde1b3150959f9a48c8ae0317069cab9cbac84",
+    "content": "✖ independent single-shot earliest read exactly at readiness refuses ordering race (3.109871ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 144.555368\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:6:1\n✖ independent single-shot earliest read exactly at readiness refuses ordering race (3.109871ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at refused (file:///tmp/cla-timing-independent-review-830bd89c/mutants/first-poll-readiness/tests/timing-independent.test.mjs:5:57)\n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/first-poll-readiness/tests/timing-independent.test.mjs:10:2)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-last-poll-readiness-baseline.txt": {
+    "sha256": "0eb11b8722d5667b5e840d123e5c0ae93572e463515ad38b7375649f20d43b1d",
+    "content": "✔ timing readiness at the final earliest poll refuses boundary races (2.925639ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 129.744439\n"
+  },
+  "mutation-last-poll-readiness-red.txt": {
+    "sha256": "352a267f743b55709e09142057056e13ed7c6adf34533b428b28231f85cff913",
+    "content": "✖ timing readiness at the final earliest poll refuses boundary races (3.599892ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 147.021649\n\n✖ failing tests:\n\ntest at tests/timing-plan.test.mjs:41:1\n✖ timing readiness at the final earliest poll refuses boundary races (3.599892ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at rejected (file:///tmp/cla-timing-independent-review-830bd89c/mutants/last-poll-readiness/tests/timing-plan.test.mjs:5:69)\n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/last-poll-readiness/tests/timing-plan.test.mjs:42:49)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-pending-duration-baseline.txt": {
+    "sha256": "8ee71ca078322dff41b3f82d8b91b7e6aaffa34699b562ac0372daab1a8c8f58",
+    "content": "✔ independent latest pending schedule includes pauses after every pending result (4.470745ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 165.284277\n"
+  },
+  "mutation-pending-duration-red.txt": {
+    "sha256": "748e93b64315a2a2a813f6d060aef0b478c7670ce43f137697ffdc0bff8b3936",
+    "content": "✖ independent latest pending schedule includes pauses after every pending result (3.546477ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 131.240011\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:18:1\n✖ independent latest pending schedule includes pauses after every pending result (3.546477ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at refused (file:///tmp/cla-timing-independent-review-830bd89c/mutants/pending-duration/tests/timing-independent.test.mjs:5:57)\n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/pending-duration/tests/timing-independent.test.mjs:22:2)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-proof-strict-expiry-baseline.txt": {
+    "sha256": "10761a749321c738bbe4130298cd9a4911bfd7d8cef2e0c606db5ed61b80e079",
+    "content": "✔ timing critical path equality at original expiry refuses (3.352632ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 143.656579\n"
+  },
+  "mutation-proof-strict-expiry-red.txt": {
+    "sha256": "c0c8a1c437d1d9fd75bc9527e681676854bd45432dce9e2adf33489ae584d242",
+    "content": "✖ timing critical path equality at original expiry refuses (3.974928ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 143.235456\n\n✖ failing tests:\n\ntest at tests/timing-plan.test.mjs:29:1\n✖ timing critical path equality at original expiry refuses (3.974928ms)\n  AssertionError [ERR_ASSERTION]: [\"ci_attempts_exhaust_before_readiness\"]\n      at rejected (file:///tmp/cla-timing-independent-review-830bd89c/mutants/proof-strict-expiry/tests/timing-plan.test.mjs:5:109)\n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/proof-strict-expiry/tests/timing-plan.test.mjs:30:51)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-remaining-clock-baseline.txt": {
+    "sha256": "5bd0b2f2f966ffd8d1d2f5669cb9409cace22181276c776ddef5a69f2b59e4ac",
+    "content": "✔ independent proof deadline uses fractional dispatch milliseconds (3.39644ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 161.092315\n"
+  },
+  "mutation-remaining-clock-red.txt": {
+    "sha256": "ea9470c6cc18a092051e48c1cd087509c2b76a04386e595455d8e5d863117d39",
+    "content": "✖ independent proof deadline uses fractional dispatch milliseconds (3.440608ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 142.736164\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:24:1\n✖ independent proof deadline uses fractional dispatch milliseconds (3.440608ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  120000 !== 4999\n  \n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/remaining-clock/tests/timing-independent.test.mjs:26:9)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 120000,\n    expected: 4999,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-runtime-acceptance-baseline.txt": {
+    "sha256": "76e03a90da500ad4d8024234306979ddd9c9106bf53b56cee2ad4c36b685bd07",
+    "content": "✔ independent model feasibility never grants platform or runtime acceptance (2.473202ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 145.315415\n"
+  },
+  "mutation-runtime-acceptance-red.txt": {
+    "sha256": "1edb11dadd82f87239b7109f363b821768b4fdd628cd292ad36a27694aab225b",
+    "content": "✖ independent model feasibility never grants platform or runtime acceptance (5.085956ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 140.885158\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:45:1\n✖ independent model feasibility never grants platform or runtime acceptance (5.085956ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/runtime-acceptance/tests/timing-independent.test.mjs:47:106)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "mutation-withdrawal-load-baseline.txt": {
+    "sha256": "4f1392b8a9762ef655e8375c6bfb6cb89fc5a1aab66ee87219e35bb69c17fc28",
+    "content": "✔ independent withdrawal ahead contributes actual queue time and demand (2.59714ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 132.465297\n"
+  },
+  "mutation-withdrawal-load-red.txt": {
+    "sha256": "e370cafcec075875bc028c7b7b92de252012fdff0c60fe1c7862b69495313dc6",
+    "content": "✖ independent withdrawal ahead contributes actual queue time and demand (3.168193ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 129.530912\n\n✖ failing tests:\n\ntest at tests/timing-independent.test.mjs:34:1\n✖ independent withdrawal ahead contributes actual queue time and demand (3.168193ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  2000 !== 3000\n  \n      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/mutants/withdrawal-load/tests/timing-independent.test.mjs:36:81)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 2000,\n    expected: 3000,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  }
+}
