@@ -54,6 +54,7 @@ fn main() {
             "take_previous_exit",
             "current_engine_exit",
             "current_fullscreen",
+            "screen_ppi",
             "restart_engine",
             "rescue_status",
             "rescue_retry",

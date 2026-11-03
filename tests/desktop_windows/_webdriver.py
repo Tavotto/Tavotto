@@ -101,6 +101,24 @@ class Driver:
                 )
             time.sleep(0.25)
 
+    def cdp(self, cmd: str, params: dict | None = None) -> Any:
+        """直接发一条 CDP 命令（msedgedriver 的 `ms/cdp/execute`）。同样只进这个 WebView 的渲染进程。"""
+        return self._call("POST", "/ms/cdp/execute", {"cmd": cmd, "params": params or {}})
+
+    def drop_files(self, x: float, y: float, paths: list[str]) -> None:
+        """在视口坐标 (x, y) 处模拟一次**带磁盘文件**的拖放：dragEnter → dragOver → drop。
+
+        `Input.dispatchDragEvent` 的 `files` 让渲染进程造出**由磁盘文件支撑**的 File（与从资源管理器拖进来的
+        同一种），页面的 drop 处理、WebView2 的 `postMessageWithAdditionalObjects` 交给壳的 `ICoreWebView2File`
+        都是真的；绕开的只有 OLE 那一层（`DoDragDrop` 的模态循环与真光标），盲点照旧记在 verification-chain。"""
+        data = {"items": [], "files": list(paths), "dragOperationsMask": 1}
+        for kind in ("dragEnter", "dragOver", "drop"):
+            self.cdp(
+                "Input.dispatchDragEvent",
+                {"type": kind, "x": x, "y": y, "data": data, "modifiers": 0},
+            )
+            time.sleep(0.1)
+
     # -------------------------------------------------------------- 元素
 
     def find(self, css: str) -> str:

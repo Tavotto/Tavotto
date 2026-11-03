@@ -562,6 +562,48 @@ def test_user_face_cache_is_bounded_and_evicts_least_recently_used(
     assert (refs[0].sha256, refs[0].face) in hp._user_records and len(hp._user_records) == 2
 
 
+def test_user_face_cache_never_exceeds_its_cap_when_the_lock_is_released(
+    provider, locator, tmp_path, monkeypatch
+):
+    """确定性看护（不靠线程撞时机）：每次放锁那一刻缓存都不超上限——插入和淘汰在同一段锁里。
+    分两段时，插入后放锁、淘汰前再拿锁的缝里，别的线程会看到超上限的缓存（CI 偶发 'count 3'）。"""
+    from tavotto.rendercore import hbshaper
+
+    monkeypatch.setattr(hbshaper.HbFaceProvider, "USER_FACE_COUNT_CAP", 2)
+    refs = []
+    for i, n in enumerate(["DejaVu Sans", "DejaVu Serif", "DejaVu Sans Mono"]):
+        f = tmp_path / "rel" / f"F{i}.ttf"
+        f.parent.mkdir(exist_ok=True)
+        f.write_bytes(_mpl_font(n).read_bytes())
+        locator.add_hint_dirs([f.parent])
+        refs.append(userfonts.FaceRef(f"F{i}", fonts.sha256_of(f), 0))
+
+    seen: list[int] = []
+    inner = provider._lock
+
+    class _CheckOnRelease:
+        def __enter__(self):
+            inner.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            seen.append(len(provider._user_records))
+            inner.release()
+            return False
+
+        def acquire(self, *a, **k):
+            return inner.acquire(*a, **k)
+
+        def release(self):
+            seen.append(len(provider._user_records))
+            inner.release()
+
+    monkeypatch.setattr(provider, "_lock", _CheckOnRelease())
+    for r in refs + refs:
+        provider.user_face(r)
+    assert seen and max(seen) <= provider.USER_FACE_COUNT_CAP, seen
+
+
 def test_user_face_cache_holds_its_bounds_under_concurrent_requests(
     provider, locator, tmp_path, monkeypatch
 ):

@@ -401,3 +401,10 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
   * 真实语义报错：往项目目录路径 `open/os.open` 写 → `IsADirectoryError`；项目文件上 `mkdir` → `FileExistsError`；文件 `rename/replace/copyfile` 到项目目录上 → `IsADirectoryError`；`copytree` 到已有目标 → `FileExistsError`。
   * 失败（绊线）：项目已有目录的 `rmdir/rmtree/目录改名`；目录改名到已有目录 / 文件上；`copytree(dirs_exist_ok=True)`；`copymode/copystat` 到仅在项目里的文件；白名单文件处 `mkdir`；`shutil.move` 进项目目录且同名项已存在；`copytree` 源目录项目与暂存区各一半；`symlink/link/truncate`。
   * 无法失败只能文档化的未包装读：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir` 看不到暂存区。目录没有白名单（目录删除一律走上面的失败）。
+
+## 修订（2026-11-02）：Codex 转换的目标文件由 Tavotto 在沙盒外代写（TVD-BCZ0，维护者批准方案 A）
+
+Windows 上给 Codex 加 `windows.sandbox="unelevated"` 后命令能跑，但 Codex 自带的文件写入工具（file_change / apply_patch）在该沙盒里一律 `Failed to write file`（Lab run 20261102T055146Z-8fc66e，OpenAI 官方模型：读完源码与数据，写目标时 file_change 失败，按提示词停下，目标缺失）。
+决定：转换会话里目标文件**由 Tavotto 写**。Codex 经本次调用级 `-c mcp_servers.tavotto_convert.*`（所有平台，令牌只经环境变量名，工具免 Codex 审批，不写用户 `config.toml`）拉起 `tavotto fix-mcp --convert-id <会话>`，
+它只暴露一个工具 `write_conversion_target(content)`——**没有路径参数**，写的永远是候选工作区里那一个目标文件（`convertwrite.py`，≤ 2 MiB、原子写、会话令牌、会话结束即失效）。其余不变：写完之后的校验 / 采用流程原样；工具失败且目标缺失 = `agent_write_denied`。
+Claude Code 自带的 Write 不受该沙盒影响、内置执行器本来就由 Tavotto 写，都不加。细则与看护：`docs/rules/backend/ai-agent-bridge.md`「转换目标由 Tavotto 代写」。

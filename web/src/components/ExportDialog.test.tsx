@@ -22,6 +22,9 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchExportDefaultsRemote: vi.fn(() => Promise.resolve(undefined)),
   // 预览里「带图内修改的那一版」按 overrides 出图（`useVariantPng`）
   enginePreviewPng: vi.fn(() => Promise.resolve(new Blob(['png']))),
+  // 准备会话（默认的「准备并运行」）：多页 PDF 合并项的集成用例从它的完成回报出发
+  createPreparationSession: vi.fn(),
+  fetchRuntimeAssets: vi.fn(),
 }))
 
 // 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
@@ -38,7 +41,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 import { ExportDialog, diskSizeDiffSignificant } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { enginePreviewPng, fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
+import { createPreparationSession, enginePreviewPng, fetchRuntimeAssets, fetchExportDefaultsRemote, postTelemetryEvent, type PreparationReport } from '@/lib/api'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -52,7 +56,7 @@ import { bindingFor } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
-import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
+import { aggregateBatch, applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { currentFigureOf } from '@/lib/problemContext'
 import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -2962,6 +2966,47 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(document.body.querySelector('[data-export-finish]')).toBeTruthy()
   })
 
+  it('QA-WIN-24：store 里留着上一回（整版）的终局，逐张导出的汇总只含本批实际写出的文件，且每张都发出去', async () => {
+    const oldDone = { format: 'pdf', name: 'old.pdf', url: '/exports/old.pdf', bytes: 1, dimensions: { px: null, mm: null }, vector: true, status: 'done', replaced: false, error: null }
+    useExportStore.setState({
+      job: { job_id: 'old', status: 'done', outputs: [oldDone], warnings: [], conflicts: [], export_dir: '/old', error: null } as never,
+      running: false,
+    })
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(bodiesFigureIds()).toEqual(['Fig1.pdf', 'Fig2.pdf'])
+    const agg = useExportStore.getState().batch!.aggregate!
+    expect(agg.outputs.map((o) => o.name)).not.toContain('old.pdf')
+    expect(agg.outputs).toHaveLength(2)
+    expect(agg.export_dir).toBe('/out')
+  })
+
+  it('QA-WIN-24：批收尾后再单张导出，结果块不再读上一批的汇总', async () => {
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(useExportStore.getState().batch?.done).toBe(true)
+    await click(button('再次导出')!)
+    await batchDone()
+    // 再次导出走批：汇总是新的一批（2 件），而不是两批叠加
+    expect(useExportStore.getState().batch!.aggregate!.outputs).toHaveLength(2)
+  })
+
+  it('QA-WIN-24：没有任何错误详情的失败行不露出 {{error}} 占位符', () => {
+    const agg = aggregateBatch({
+      results: [{ job_id: 'x', status: 'failed', outputs: [], warnings: [], conflicts: [], error: null } as never],
+      resultNames: ['Fig1'],
+      failedStarts: [],
+      cancelRequested: false,
+    })
+    const err = agg.outputs[0]!.error!
+    expect(JSON.stringify(err.params)).not.toBe('{}')
+    expect(String(err.params.error ?? err.params.message ?? '')).not.toBe('')
+  })
+
   it('每张各自按它自己的原图口径检查与留档：两份请求的 original 各是各的图', async () => {
     await setupTwo({ select: [] })
     await click(originalRadio())
@@ -3969,6 +4014,51 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
   ])('%s：不出现', async (_name, opts) => {
     await setupMerge(opts)
     expect(mergeRow()).toBeNull()
+  })
+
+  it('默认「准备并运行」完成后（不预先往 byScript 注入）：出现合并勾选；重跑成没有多页 PDF 则消失（QA-MAC-02）', async () => {
+    await setupMerge({ pdfPages: [] }) // 注入一份空账本：此刻没有合并项
+    useScriptRunStore.setState({ byScript: {} } as never)
+    expect(mergeRow()).toBeNull()
+    const report = (over: Record<string, unknown>) =>
+      ({
+        session_version: 1, session_id: 'ps-1', project_id: 'pj', config_revision: 1, observation_seq: 1,
+        target: { kind: 'script', script: 's.py', entry: 'main', asset_id: null, stem: null },
+        phase: 'completed', outcome: { kind: 'succeeded' },
+        facts: { execution_finished: true, figure_captured: true },
+        checks: [], requirements: [], actions: [],
+        provider: { plan_id: 'pp', attempt_id: 'a1', attempts: 1, dependency: null },
+        runtime_input: null, result: null,
+        captured: [{ asset_id: 'Fig1.pdf', stem: 'a' }, { asset_id: 'Fig2.pdf', stem: 'b' }],
+        ...over,
+      }) as unknown as PreparationReport
+    const { setCurrentProjectId } = await import('@/lib/session')
+    setCurrentProjectId('pj')
+    // 完成回调会重取素材清单（真实行为）：回两张属于 s.py 的图
+    vi.mocked(fetchRuntimeAssets).mockResolvedValue({ assets: [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b')] } as never)
+    vi.mocked(createPreparationSession).mockResolvedValueOnce(report({ pdf_pages: [pages()] }))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open(scriptTarget('s.py'))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100)) // onCompleted 里的动态 import 与账本写入
+    })
+    expect(mergeRow()).toBeTruthy()
+    expect(mergeRow()!.textContent).toContain('all_samples.pdf')
+    // 重跑覆盖：同一脚本再准备一次，这次没有多页 PDF
+    vi.mocked(createPreparationSession).mockResolvedValueOnce(
+      report({ observation_seq: 2, provider: { plan_id: 'pp', attempt_id: 'a2', attempts: 2, dependency: null } }),
+    )
+    await act(async () => {
+      useProjectPreparationStore.getState().clear()
+      await useProjectPreparationStore.getState().open(scriptTarget('s.py'))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100)) // onCompleted 里的动态 import 与账本写入
+    })
+    expect(mergeRow()).toBeNull()
+    useProjectPreparationStore.getState().clear()
+    setCurrentProjectId(null)
   })
 
   it('取消 PDF 格式：勾选消失（SVG / PNG 没有多页）', async () => {

@@ -4206,6 +4206,7 @@ dependencies = [
  "time",
  "tokio",
  "url",
+ "webview2-com",
  "windows",
 ]
 
