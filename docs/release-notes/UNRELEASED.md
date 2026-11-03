@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Feedback bundles say which external command a script could not find
+
+When a script runs an external program (for example `rsvg-convert` through `subprocess`) and it cannot be found, the task only reported a generic script error, and a feedback bundle could not show whether the program was missing, not on the render process's PATH, or installed but not linked (a common Homebrew case). The bundle's report now has a short `project.missing_commands` entry for that moment: the command name (well-known tools as-is, anything else hashed), whether it is on the render process's PATH, whether it exists in a few common install locations (named, never as paths), whether a Homebrew install is present but unlinked, and how many PATH entries there were. It contains no paths and no text from your script, and nothing is sent unless you send the bundle yourself.
+
 ## The assistant shows what it is doing with small animated dot orbs
 
 In the figure assistant, the line that says what the AI is doing now starts with a small animated dot orb instead of a static icon. The orb changes with the step: one shape while it thinks, another while it runs your script, another while it reads or edits it, and another between sending your request and the first reply. Finished steps keep a dimmer, slower orb: a breathing ring when the AI only thought, a rolling sphere when it also did something. The empty assistant panel shows a larger orb above "How should this figure change?". Orbs stop drawing while they are scrolled out of view, and with "Reduce motion" turned on in your system settings they stay still. Nothing else about the assistant changes.
