@@ -75,6 +75,12 @@ tavotto
 
 浏览器会打开 `http://127.0.0.1:5089`。需要 Python 3.10 及以上；Python 太旧时，`uv tool install --python 3.12 "tavotto[worker]"` 会自带一份。`tavotto --figures <目录>` 直接打开某个图库。更多（uv、SSH 连远程服务器、用你自己的 Python 环境）见[安装详解](docs/guide/install-advanced.zh-CN.md)。
 
+在中国大陆从 PyPI 下载可能很慢甚至卡住，改用国内镜像：
+
+```sh
+pipx install "tavotto[worker]" --index-url https://mirrors.aliyun.com/pypi/simple/
+```
+
 ## 能做什么
 
 ### 在图里改
@@ -164,6 +170,8 @@ codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
 codex plugin add tavotto@tavotto
 pipx install "tavotto[worker]"
 ```
+
+在中国大陆，`pipx` 那一行卡住时改运行 `pipx install "tavotto[worker]" --index-url https://mirrors.aliyun.com/pypi/simple/`。
 
 然后**关闭当前 Codex 会话并新开一个会话**。插件的 skill 与 MCP 工具不会在已经打开的会话里热重载。引擎是用 `pip`/`pipx` 装的话，`tavotto codex install` 会替你做那两条 `codex plugin` 步骤，并跳过已经正常的部分；`tavotto codex doctor` 只诊断、不改动。
 
