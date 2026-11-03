@@ -74,7 +74,7 @@ import { previewStyle } from '@/store/svgPreviewStore'
 import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
-import { renderKeyOf, useExactPanelManifest, usePanelRender } from '@/store/renderStore'
+import { renderKeyOf, useExactPanelManifest, usePanelInspectorManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import {
@@ -235,7 +235,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   const render = usePanelRender(panel)
   const selectedGids = useUiStore((s) => s.selectedGids)
   // 显示用：列元素、认 role、画角标。可能来自上一版（画布也正显示那一版）
-  const manifest = render?.manifest
+  const manifest = usePanelInspectorManifest(panel) ?? undefined
   /**
    * 几何权威：只有它能喂给对齐、成组缩放、孤儿判定这些**写几何**的地方。
    * null = 这一版还没画出来（改完字号的那 600ms、脚本刚变过），此时那些
@@ -1832,7 +1832,7 @@ function BatchFieldRow({
   const label = propLabel(field.prop, elements[0].role)
   const gesture = useFieldGesture(panel, el('batchEdit', { label }))
   // 只有色图的「脚本原样」要看别的元素（谁是谁的色条）；显示用，上一版也行
-  const batchManifest = usePanelRender(panel)?.manifest
+  const batchManifest = usePanelInspectorManifest(panel) ?? undefined
   // 多选里每个成员各自判断能不能预览：同时选中曲线和刻度组时，曲线照样
   // 抢先显示，刻度组安静地等后端——**不能因为有一个不支持就整批放弃**
   const previewables = elements.filter((el) => canPreviewStyle(el.role, field.prop))
@@ -2196,7 +2196,7 @@ function FieldRow({
   /** 同一个元素上 `cmap` 字段的只读事实：白名单之外的色图，小色条预览靠它上色 */
   const siblingCmapFacts = () => element.editable.find((x) => x.prop === 'cmap')?.cmap_current
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
-  const rowManifest = usePanelRender(panel)?.manifest
+  const rowManifest = usePanelInspectorManifest(panel) ?? undefined
   const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
   const gidRef = useRef<string>('')
   const autoFocus = useCallback(
