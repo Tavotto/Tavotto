@@ -299,15 +299,15 @@ def research_prepare(case: str, tex: bool, source_package: bool) -> str:
     """与 compat-research-s0.yml 的 baseline job 同一组步骤：两个解释器、钉版本、原样的科研依赖。"""
     lines = [
         "export TAVOTTO_RESEARCH_CACHE=/work/research-sources",
-        # 上游源码从 raw.githubusercontent 取，大陆常被重置：先放进上次存下的（fetch 逐个重核
-        # sha256，对不上就报错），断了重试三次，取到就立刻存回，后面的步骤失败也不白下
-        "mkdir -p /work/research-sources",
+        # 上游源码从 raw.githubusercontent 取，大陆约五成以上请求被重置。fetch 只发布核过 sha256 的完整
+        # 文件、已有的逐个重核，所以每一轮无论成败都把已取到的存回缓存，下一轮 / 下一晚只补缺的；
+        # 重置是秒级失败，40 轮、间隔 5 s 也就几分钟。最后仍不全就让准备失败。
+        "mkdir -p /work/research-sources /boxcache/research-sources",
         "cp -a /boxcache/research-sources/. /work/research-sources/ 2>/dev/null || true",
-        "for i in 1 2 3; do"
-        f" python scripts/ci/compat_guardian_research.py fetch --case {case} && break;"
-        ' [ "$i" = 3 ] && exit 1; sleep 30; done',
-        "mkdir -p /boxcache/research-sources",
-        "cp -a /work/research-sources/. /boxcache/research-sources/",
+        "fetched=0; for i in $(seq 1 40); do"
+        f" if python scripts/ci/compat_guardian_research.py fetch --case {case}; then fetched=1; fi;"
+        " cp -a /work/research-sources/. /boxcache/research-sources/;"
+        ' [ "$fetched" = 1 ] && break; sleep 5; done; [ "$fetched" = 1 ]',
         "python -m venv /work/tavotto-venv",
         "python scripts/ci/runtime_pins.py --format lines > /work/tavotto-constraints.txt",
         "/work/tavotto-venv/bin/python -m pip install -q -c /work/tavotto-constraints.txt -e '.[dev,ci]'",

@@ -236,6 +236,7 @@ def _run_research_fetch(tmp_path, fetch_failures: int):
         f"""#!/bin/sh
 n=$(cat {tmp_path}/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > {tmp_path}/n
 [ -f "$TAVOTTO_RESEARCH_CACHE/old.py" ] || exit 9
+echo part > "$TAVOTTO_RESEARCH_CACHE/part$n.py"
 [ $n -le {fetch_failures} ] && exit 1
 echo new > "$TAVOTTO_RESEARCH_CACHE/new.py"
 """
@@ -244,7 +245,7 @@ echo new > "$TAVOTTO_RESEARCH_CACHE/new.py"
     (bin_ / "sleep").write_text("#!/bin/sh\ntrue\n")
     (bin_ / "sleep").chmod(0o755)
     lines = B.research_prepare("research_x", tex=False, source_package=False).splitlines()
-    end = lines.index("cp -a /work/research-sources/. /boxcache/research-sources/") + 1
+    end = next(i for i, ln in enumerate(lines) if ln.endswith('[ "$fetched" = 1 ]')) + 1
     script = "\n".join(["set -euo pipefail", *lines[:end], "echo FETCHED"])
     script = script.replace("/boxcache", str(box)).replace("/work", str(work))
     env = {**os.environ, "PATH": f"{bin_}:/usr/bin:/bin"}
@@ -261,12 +262,14 @@ def test_research_fetch_reuses_cache_retries_and_saves_back(tmp_path):
     assert (tmp_path / "n").read_text().strip() == "3"
 
 
-def test_research_fetch_fails_the_prepare_after_three_drops(tmp_path):
+def test_research_fetch_keeps_partial_progress_and_fails_after_40_rounds(tmp_path):
     proc, saved = _run_research_fetch(tmp_path, fetch_failures=99)
     assert proc.returncode != 0
     assert "FETCHED" not in proc.stdout
-    assert (tmp_path / "n").read_text().strip() == "3"
+    assert (tmp_path / "n").read_text().strip() == "40"
     assert not (saved / "new.py").exists()
+    # 每一轮取到的（核过的）文件都已存回，下一晚只补缺的
+    assert (saved / "part1.py").exists() and (saved / "part40.py").exists()
 
 
 # --------------------------------------------------------------------------- 不进仓库的东西
