@@ -2514,6 +2514,8 @@ def _byte_compared_generated_files() -> list[str]:
         # U06 的批准字体 allowlist：report.json 记它的 sha256、evidence 用例逐字节核。人写的 JSON，
         # 与 CLA 正文同一类——u06-rendercore.yml windows 腿 CRLF 检出后哈希对不上红过一次。
         "src/tavotto/rendercore/fonts_allowlist.json",
+        # 运行时锁：research cohort 记它的 sha256、load_cohort() 逐字节核（#1682 windows 片 4）
+        "packaging/runtime-lock.json",
         # Codex 插件的启动器对（#266）：POSIX 半边的 shebang 遇 CRLF 即失效；Windows 半边逐字节稳定
         "codex-plugin/mcp/launch",
         "codex-plugin/mcp/launch.cmd",
