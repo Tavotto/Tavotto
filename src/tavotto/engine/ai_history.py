@@ -322,13 +322,20 @@ def _needs_setup(con: sqlite3.Connection) -> bool:
     return con.execute(_BACKFILL_PENDING).fetchone() is not None
 
 
+#: 等写锁的上限（秒）。线上一次写只占锁几毫秒，10 秒远够；它是**常量不是调参口**，只给测试留缝：
+#: 两个进程背靠背硬写几十次的压力用例，在 fsync 慢的 Windows runner 上整段要 5–35 秒，而 SQLite 的 busy 轮询
+#: 不公平（等待者每 ≤100 ms 才醒一次，对方一个事务提交完立刻又拿走锁），被饿的一方在 10 秒到点报
+#: `database is locked`——量的是 runner 磁盘快慢，不是版本号有没有撞。
+BUSY_TIMEOUT_S = 10.0
+
+
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
     if db_path is None and not path.exists():
         # 新建之前先把 MSIX 私有区里的旧历史补回来：库一旦被新建，迁移的「只补缺」就永远跳过它（#1574 善后）
         msixmigrate.adopt_sqlite("cache", "ai_history.sqlite3")
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path, timeout=10)
+    con = sqlite3.connect(path, timeout=BUSY_TIMEOUT_S)
     con.row_factory = sqlite3.Row
     if _needs_setup(con):
         # 建表 + 迁移整个放进一个 `BEGIN IMMEDIATE`：开头就拿写锁，busy handler 才会等 timeout。
