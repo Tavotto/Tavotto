@@ -700,13 +700,21 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
   const engineProgress = useRenderProgress(panel.fileId, render?.status === 'rendering', pn('building'))
   const { active: building, cold } = engineProgress
+  // 图源脚本缺失时重建必然失败：此时说「脚本已更新」是错的，改说缺源（与接入中心同一句，QA-WIN-48）
+  const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
+  const sourceMissing = cap?.status === 'source_missing' || render?.code === 'script_not_found'
+  const staleText = sourceMissing
+    ? cap?.status === 'source_missing'
+      ? reasonText(cap)
+      : statusLabel('source_missing')
+    : pn('staleScript')
   // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
   // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
   const overrides = overrideCounts(panel.overrides, null).figure
   /** 三条提示各自此刻的文案（可见时 title 与正文同源；不可见的也要写真实译文，保住换行足迹） */
   const engineMessageText = (kind: 'cold' | 'building' | 'stale') =>
     kind === 'stale'
-      ? pn('staleScript')
+      ? staleText
       : building && (kind === 'cold' ? cold : !cold) && !editing
         ? engineProgress.text
         : pn(kind === 'cold' ? 'coldBuilding' : 'building')
@@ -782,7 +790,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
               )}
             >
               {kind === 'stale' ? (
-                pn('staleScript')
+                staleText
               ) : (
                 // 「进行中」的字是 text-shimmer（宪法第七节的加载方言之一），不配呼吸点
                 <span className="text-shimmer">{engineMessageText(kind)}</span>
