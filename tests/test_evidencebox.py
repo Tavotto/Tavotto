@@ -249,7 +249,9 @@ echo new > "$TAVOTTO_RESEARCH_CACHE/new.py"
     script = "\n".join(["set -euo pipefail", *lines[:end], "echo FETCHED"])
     script = script.replace("/boxcache", str(box)).replace("/work", str(work))
     env = {**os.environ, "PATH": f"{bin_}:/usr/bin:/bin"}
-    proc = subprocess.run([bash, "-c", script], env=env, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(
+        [bash, "-c", script], env=env, capture_output=True, text=True, encoding="utf-8", timeout=30
+    )
     return proc, box / "research-sources"
 
 
