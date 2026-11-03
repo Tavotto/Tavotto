@@ -257,6 +257,14 @@ describe('写回成功的回执', () => {
     expect(text()).toContain(OK_BODY.backup_dir)
   })
 
+  it('成功回执不再带「还没有可写回的图内修改」（QA-WIN-13）', async () => {
+    stubFetch(200, OK_BODY)
+    render()
+    await confirm()
+    expect(text()).toContain('已更新以下文件')
+    expect(text()).not.toContain('还没有可写回的图内修改')
+  })
+
   it('热态无从对照时不谎称校验过', async () => {
     stubFetch(200, {
       ...OK_BODY,
