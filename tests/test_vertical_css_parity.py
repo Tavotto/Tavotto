@@ -59,7 +59,11 @@ def _browser_columns(tmp_path: Path):
     inp = tmp_path / "cases.json"
     inp.write_text(json.dumps(payload), encoding="utf-8")
     proc = subprocess.run(
-        ["node", str(PROBE), str(WEB), str(inp)], capture_output=True, text=True, timeout=120
+        ["node", str(PROBE), str(WEB), str(inp)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
     )
     if proc.returncode != 0:
         if "Executable doesn't exist" in proc.stderr or "browserType.launch" in proc.stderr:
