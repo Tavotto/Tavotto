@@ -1393,7 +1393,8 @@ describe('快捷编辑里的公式字体跟正文（Codex #1496）', () => {
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, 1)))
     })
     const before = past().length
-    await click(document.querySelector<HTMLElement>('[role="dialog"] [data-rich-action="italic"]'))
+    await act(async () => box.focus())
+    await click(document.querySelector<HTMLElement>('[data-rich-pill] [data-rich-action="italic"]'))
     const ov = byId<PanelObject>('p1').overrides
     expect(ov).toContainEqual({ gid: 'axes_0.title', prop: 'fontfamily', value: 'serif' })
     expect(ov.find((o) => o.prop === 'text')?.value).toBe('$\\mathit{H}$i')

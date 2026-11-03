@@ -179,6 +179,48 @@ describe.each(['input', 'textarea', 'select'] as const)('焦点在 <%s> 里', (s
   })
 })
 
+describe('焦点在 portal 出去的文字格式胶囊按钮上（#1674，快速编辑与属性页同此）', () => {
+  const pillButton = () => {
+    const pill = document.createElement('div')
+    pill.setAttribute('role', 'toolbar')
+    pill.setAttribute('data-rich-pill', '')
+    const b = document.createElement('button')
+    pill.appendChild(b)
+    document.body.appendChild(pill) // 与 createPortal(…, document.body) 同位：不在任何 dialog 内
+    b.focus()
+    return b
+  }
+
+  it.each(['Backspace', 'Delete'])('%s 不删画布上选中的元素', (key) => {
+    const ev = press(pillButton(), { key })
+    expect(panel()).toBeDefined()
+    expect(doc().past).toHaveLength(0)
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('空格不进平移态、不被吞（留给按钮激活）', () => {
+    const ev = press(pillButton(), { key: ' ', code: 'Space' })
+    expect(useViewportStore.getState().spaceDown).toBe(false)
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
+  it('方向键不微调对象；⌘Z 不动文档历史', () => {
+    act(() => {
+      doc().commit(literal('move'), (d) => {
+        const p = d.objects[0] as PanelObject
+        p.x = 99
+      })
+    })
+    const b = pillButton()
+    for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
+      expect(press(b, { key }).defaultPrevented).toBe(false)
+    }
+    expect(press(b, { key: 'z', metaKey: true }).defaultPrevented).toBe(false)
+    expect([panel()!.x, panel()!.y]).toEqual([99, PANEL.y])
+    expect(doc().past).toHaveLength(1)
+  })
+})
+
 describe('对照：同样的键派在 window 上，画布快捷键照常生效', () => {
   it('Backspace 删掉选中的面板', () => {
     const ev = press(window, { key: 'Backspace' })

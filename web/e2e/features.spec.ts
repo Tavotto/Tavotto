@@ -572,7 +572,7 @@ test(
         return selected()
       })
       .toBe(title.slice(-1))
-    await page.locator('[data-prop="text"] [data-rich-action="italic"]').click()
+    await page.locator('[data-rich-pill] [data-rich-action="italic"]').click()
     await expect(field.locator('em')).toHaveText(title.slice(-1))
     await expect(field).toHaveText(title)
     await page.keyboard.press('Enter') // Enter 提交（失焦结束编辑事务）

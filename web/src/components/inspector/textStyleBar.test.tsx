@@ -387,7 +387,7 @@ describe('公式字体跟正文（ADR 0152 PR 5）', () => {
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, 1)))
     })
     await act(async () => {
-      ;(document.querySelector('[data-prop="text"] [data-rich-action="italic"]') as HTMLElement).click()
+      ;(document.querySelector('[data-rich-pill] [data-rich-action="italic"]') as HTMLElement).click()
     })
     expect(String(overrideOf('axes_0.title', 'text'))).toContain('$\\mathit{')
     expect(overrideOf('axes_0.title', 'fontfamily')).toBe('serif')

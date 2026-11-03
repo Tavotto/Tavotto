@@ -3,6 +3,7 @@ import { Slice } from 'prosemirror-model'
 import { TextSelection } from 'prosemirror-state'
 import { EditorView, type NodeView } from 'prosemirror-view'
 import type { Node as PMNode } from 'prosemirror-model'
+import { createPortal } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   forwardRef,
@@ -33,6 +34,7 @@ import {
 import type { TextRun } from '@/lib/richText'
 import { ALT, cn, combo, modKey } from '@/lib/utils'
 import { Button } from './Button'
+import { PRESSED_GLYPH } from './buttonClass'
 import { FIELD_BOX, FIELD_FOCUS_WITHIN } from './fieldBox'
 import { MathFormula } from './MathFormula'
 import { MathPreviewStrip } from './MathPreviewStrip'
@@ -200,6 +202,8 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
 ) {
   useTranslation('inspector')
   const host = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const pillRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   // 宿主的回调每次渲染都可能是新的：键位与事务处理只读 ref，不随它重建编辑器
   const cb = useRef({ codec, onChange, onEnter, onEscape, onFocus, onBlur })
@@ -319,6 +323,10 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         keydown: (v, e) => {
           if (!(e.key === 'Escape' && !cb.current.onEscape)) e.stopPropagation()
           if (e.metaKey || e.ctrlKey) syncDomSelection(v)
+          // Tab 进浮动格式条（条只在编辑中存在）；没有条就照常往下走
+          if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && focusPill(pillRef.current, 'first')) {
+            e.preventDefault()
+          }
           return false
         },
       },
@@ -454,6 +462,11 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     />
   )
 
+  // 浮动格式条的开合状态：Hook 必须在任何提前 return 之前（inline 形态不用它，但调用顺序每次渲染都要一致）
+  const [open, setOpen] = useState(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(closeTimer.current), [])
+
   if (variant === 'inline') {
     return (
       <div className={className} style={{ ...style, ...vars }}>
@@ -462,12 +475,23 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     )
   }
 
+  const latex = mode === 'latex'
+  const keepOpen = () => {
+    clearTimeout(closeTimer.current)
+    setOpen(true)
+  }
+  const scheduleClose = () => {
+    clearTimeout(closeTimer.current)
+    closeTimer.current = setTimeout(() => setOpen(false), 0)
+  }
+
   const tool = (mark: RichMark, icon: ReactNode, key: string, hotkey: string) => (
     <Button
-      size="icon-xs"
+      size="icon-sm"
       data-rich-action={mark}
       aria-pressed={active(mark)}
-      className={cn('text-ink-2', active(mark) && 'bg-accent-subtle text-accent')}
+      active={active(mark)}
+      className={cn(active(mark) && PRESSED_GLYPH)}
       // 按下不抢焦点：选区要留在框里，命令才知道作用在哪段字上
       onPointerDown={(e) => e.preventDefault()}
       onClick={() => run(mark)}
@@ -477,17 +501,25 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
       {icon}
     </Button>
   )
+  const divider = <span aria-hidden className="mx-1 h-3.5 w-px shrink-0 bg-border" />
+  const pillHasContent = !latex || extra != null
 
-  const latex = mode === 'latex'
   return (
     <div
-      className={cn('relative w-full min-w-0 text-ink', FIELD_BOX, FIELD_FOCUS_WITHIN, className)}
+      ref={rootRef}
+      className={cn('relative flex min-h-7 w-full min-w-0 items-start text-ink', FIELD_BOX, FIELD_FOCUS_WITHIN, className)}
       style={style}
       data-rich-mode={mode}
+      onFocus={keepOpen}
+      onBlur={(e) => {
+        const to = e.relatedTarget as Node | null
+        if (to && (rootRef.current?.contains(to) || pillRef.current?.contains(to))) return
+        scheduleClose()
+      }}
     >
-      <div className={cn('px-2 pt-1.5 pb-7 leading-relaxed', latex && 'hidden')}>{content}</div>
+      <div className={cn('min-w-0 flex-1 px-2 py-[3px] leading-relaxed', latex && 'hidden')}>{content}</div>
       {latex && (
-        <div className="px-2 pt-1.5 pb-7">
+        <div className="min-w-0 flex-1 px-2 py-[3px]">
           <textarea
             ref={sourceRef}
             aria-label={ariaLabel}
@@ -507,6 +539,9 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
               if (e.key === 'Escape' && cb.current.onEscape?.()) e.preventDefault()
               // Enter 的契约与所见即所得一致：宿主接了 Enter（提交）就提交；⌥/⌘/Ctrl+Enter 换行
               if (e.key === 'Enter' && !(e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) && cb.current.onEnter?.()) {
+                e.preventDefault()
+              }
+              if (e.key === 'Tab' && !e.shiftKey && focusPill(pillRef.current, 'first')) {
                 e.preventDefault()
               }
             }}
@@ -529,44 +564,153 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
           )}
         </div>
       )}
-      <div className="absolute bottom-1 left-1 flex items-center">
-        <Button
-          size="icon-xs"
-          data-rich-action="mode"
-          active={latex}
-          aria-pressed={latex}
-          // 与右边那排图标钮同一档高度；字比图标宽，宽度随字
-          className={cn('w-auto px-1 font-mono text-xs', !latex && 'text-ink-3')}
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={() => (latex ? leaveLatex() : enterLatex.current())}
-          title={rt(latex ? 'modeToRichTitle' : 'modeToLatexTitle')}
-          aria-label={rt('modeLatex')}
-        >
-          {rt('modeShort')}
-        </Button>
-      </div>
-      <div className="absolute bottom-1 right-1 flex items-center gap-0.5">
-        {!latex && (
-          <>
-            {tool('bold', <Bold size={ICON_SIZE.sm} />, 'bold', modKey('B'))}
-            {tool('italic', <Italic size={ICON_SIZE.sm} />, 'italic', modKey('I'))}
-            {tool('sup', <Superscript size={ICON_SIZE.sm} />, 'sup', modKey('↑'))}
-            {tool('sub', <Subscript size={ICON_SIZE.sm} />, 'sub', modKey('↓'))}
-            <Button
-              size="icon-xs"
-              data-rich-action="break"
-              className="text-ink-2"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => run('break')}
-              aria-label={rt('newline')}
-              title={rt('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
-            >
-              <CornerDownLeft size={ICON_SIZE.sm} />
-            </Button>
-          </>
+      {/* 写法后缀：像字号框里的「pt」；点它在 文本 ↔ TeX 之间切换，当前是 TeX 时是实心小标 */}
+      <button
+        type="button"
+        data-rich-action="mode"
+        aria-pressed={latex}
+        // 按下不抢焦点：选区要留在框里
+        onPointerDown={(e) => e.preventDefault()}
+        onClick={() => (latex ? leaveLatex() : enterLatex.current())}
+        title={rt(latex ? 'modeToRichTitle' : 'modeToLatexTitle')}
+        aria-label={rt('modeLatex')}
+        className={cn(
+          'mr-1 mt-[3px] h-5 shrink-0 select-none rounded-sm px-1.5 font-mono text-xs leading-none outline-none',
+          'transition-colors duration-fast focus-visible:focus-ring',
+          latex ? 'bg-ink text-surface' : 'text-ink-3 hover:bg-surface-hover hover:text-ink-2',
         )}
-        {extra}
-      </div>
+      >
+        {rt('modeShort')}
+      </button>
+      {open && pillHasContent && (
+        <FormatPill anchor={rootRef} pillRef={pillRef} editor={() => (latex ? sourceRef.current : viewRef.current?.dom ?? null)} label={rt('formatBar')}>
+          {!latex && (
+            <>
+              {tool('bold', <Bold size={ICON_SIZE.sm} />, 'bold', modKey('B'))}
+              {tool('italic', <Italic size={ICON_SIZE.sm} />, 'italic', modKey('I'))}
+              {divider}
+              {tool('sup', <Superscript size={ICON_SIZE.sm} />, 'sup', modKey('↑'))}
+              {tool('sub', <Subscript size={ICON_SIZE.sm} />, 'sub', modKey('↓'))}
+              {divider}
+              <Button
+                size="icon-sm"
+                data-rich-action="break"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => run('break')}
+                aria-label={rt('newline')}
+                title={rt('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
+              >
+                <CornerDownLeft size={ICON_SIZE.sm} />
+              </Button>
+            </>
+          )}
+          {extra}
+        </FormatPill>
+      )}
     </div>
   )
 })
+
+/** 焦点移进格式条的第一 / 最后一个按钮；没有可聚焦的按钮返回 false */
+function focusPill(pill: HTMLElement | null, which: 'first' | 'last'): boolean {
+  const items = pill ? [...pill.querySelectorAll<HTMLElement>('button:not([disabled])')] : []
+  const to = which === 'first' ? items[0] : items[items.length - 1]
+  if (!to) return false
+  to.focus()
+  return true
+}
+
+/** 框后面的下一个可聚焦控件（格式条里 Tab 走到头时接着往下走，不把人困在框里） */
+function nextTabbableAfter(from: HTMLElement | null): HTMLElement | null {
+  if (!from) return null
+  const all = [
+    ...document.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]',
+    ),
+  ].filter((n) => !n.closest('[data-rich-pill]') && n.offsetParent !== null)
+  return all.find((n) => from.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING && !from.contains(n)) ?? null
+}
+
+/**
+ * 编辑中浮在框上方居中的格式条：与画布上选中文字时的浮动条同一副（胶囊 + shadow-pop + surface 底，`data-capsule`），
+ * 不占布局。挂在 body 的 portal 里、fixed 定位，不被属性页的滚动容器 / 弹层裁掉；滚动 / 缩放 / 框长高时重算位置，
+ * 上方放不下翻到框下方。Tab 从框进入条；条里 Tab 走到头继续往下走，Shift+Tab 走到头与 Esc 都回框。
+ */
+function FormatPill({
+  anchor,
+  pillRef,
+  editor,
+  label,
+  children,
+}: {
+  anchor: React.RefObject<HTMLElement | null>
+  pillRef: React.RefObject<HTMLDivElement | null>
+  editor: () => HTMLElement | null
+  label: string
+  children: ReactNode
+}) {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const place = () => {
+    const a = anchor.current?.getBoundingClientRect()
+    const p = pillRef.current
+    if (!a || !p) return
+    const w = p.offsetWidth
+    const h = p.offsetHeight
+    const GAP = 6
+    const M = 8
+    const left = Math.round(Math.min(Math.max(a.left + a.width / 2 - w / 2, M), window.innerWidth - w - M))
+    const above = a.top - h - GAP
+    const top = Math.round(above >= M ? above : a.bottom + GAP)
+    setPos((cur) => (cur && cur.left === left && cur.top === top ? cur : { left, top }))
+  }
+  useLayoutEffect(place)
+  useEffect(() => {
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(place)
+    if (anchor.current) ro?.observe(anchor.current)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+      ro?.disconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return createPortal(
+    <div
+      ref={pillRef}
+      role="toolbar"
+      aria-label={label}
+      data-rich-pill
+      data-capsule
+      style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0 }}
+      className={cn(
+        'fixed z-popover flex w-max items-center gap-1 rounded-full bg-surface p-1 text-sm text-ink shadow-pop',
+        pos ? 'animate-pop-in' : 'invisible',
+      )}
+      onKeyDown={(e) => {
+        const items = [...(e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled])') ?? [])]
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          editor()?.focus()
+        } else if (e.key === 'Tab') {
+          const first = e.target === items[0]
+          const last = e.target === items[items.length - 1]
+          if (e.shiftKey && first) {
+            e.preventDefault()
+            editor()?.focus()
+          } else if (!e.shiftKey && last) {
+            e.preventDefault()
+            const next = nextTabbableAfter(anchor.current)
+            if (next) next.focus()
+            else editor()?.focus()
+          }
+        }
+      }}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
+}

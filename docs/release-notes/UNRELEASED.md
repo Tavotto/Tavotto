@@ -100,6 +100,11 @@ On a slow disk or a Microsoft Store Python, the first render after opening a pro
 ## In single-figure editing, drag the canvas edges to add margin without resizing the figure
 
 Dragging an edge of the figure in single-figure editing used to change the figure size, so the plot area stretched or squeezed. Edges now change the canvas around the figure instead: drag outward to add white margin (for example to make room for labels, or to bring the canvas to a journal column width, which it snaps to), drag inward to remove it. Dragging inward stops at the figure edge and again at the edge of the plotted content ("tight"); hold ⌥ (Alt on Windows) to crop into the content. Drag a corner to resize the figure itself, proportionally (hold ⇧ for a free aspect ratio); text keeps its pt size and the figure re-renders when you let go. A capsule next to the canvas explains each drag, and **Fit to content** / **Remove margin** appear when the figure is selected. Exports use the figure plus its margin. Margins live in your layout only and are not written back to the script.
+
+## The text box looks like any other input, and its formatting buttons appear only while you edit
+
+In the Quick Edit card and the properties panel, the text box used to carry a permanent row of formatting buttons that crowded the narrow card. At rest it is now a plain input, with a small "TeX" tag at its right edge that switches between plain text and LaTeX source. While you are editing, a floating bar with bold, italic, superscript, subscript, line break and case appears above the box; it disappears when focus leaves. Press Tab in the box to reach the bar, Esc to come back. The Quick Edit header now shows only the kind of element (for example "Title") instead of repeating the text that is already in the box. Shortcuts and behavior are unchanged.
+
 ## Text annotations can be rotated to any angle
 
 Select a text annotation and drag the round handle above its frame to rotate it; hold Shift to snap to 15 degree steps. You can also type an angle in the Properties panel. Alignment, snapping and the multi-selection frame now follow the rotated outline instead of the unrotated frame, so a rotated label lines up by what you see. Exports draw the rotated text exactly where the canvas shows it. Existing projects are unchanged until you rotate something.

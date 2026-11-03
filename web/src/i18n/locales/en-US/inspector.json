@@ -1280,6 +1280,7 @@
     "errorBrace": "Character {{at}}: unmatched brace — fix it to switch back to rich text",
     "errorDollar": "Character {{at}}: unmatched $ — fix it to switch back to rich text",
     "modeShort": "TeX",
+    "formatBar": "Text formatting",
     "preview": "Formula preview",
     "previewNoRuntime": "No typesetting environment available"
   }
