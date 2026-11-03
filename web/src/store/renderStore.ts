@@ -1428,6 +1428,33 @@ export function usePanelRender(panel: PanelObject | null | undefined): PanelRend
 }
 
 /**
+ * 已采用面板（ADR 0139）的**属性表专用**显示退路：新变体的 manifest 还没回来时，
+ * 只许退到 `latest[fileId]` 里**同一个采用 guard**（键里 NUL 之后的后缀逐字相等）的上一版——
+ * 同一份来源 / 同一次采用，只是 overrides 不同，元素清单（gid / 可编辑字段）不变。
+ * guard 不同（换了来源字节、重新采用、另一副本）一律不退，返回 null：不许拿别的素材的 manifest 冒充。
+ * 只供「列字段 / 认 role」的只读显示；几何仍只认 `exactPanelManifest`。
+ * 为什么要有：逐字输入每个字都提交一次 override，新变体 manifest 回来前属性表若卸成构建提示，
+ * 回来时重挂的文字框会全选，下一个字就替换了前一个（QA-WIN-35）。
+ */
+export function sameGuardFallbackManifest(
+  state: Pick<RenderState, 'byKey' | 'latest'>,
+  panel: PanelObject,
+): Manifest | null {
+  if (!isAdoptedPanel(panel) || artifactValidationIssue(panel)) return null
+  const key = state.latest[panel.fileId]
+  if (!key) return null
+  const suffix = artifactKeySuffix(adoptionGuardOf(panel))
+  if (!suffix || !key.endsWith(suffix) || key.indexOf('\u0000') !== key.length - suffix.length) return null
+  return state.byKey[key]?.manifest ?? null
+}
+
+export function usePanelInspectorManifest(panel: PanelObject | null | undefined): Manifest | null {
+  const render = usePanelRender(panel)
+  const fallback = useRenderStore((s) => (panel ? sameGuardFallbackManifest(s, panel) : null))
+  return render?.manifest ?? fallback
+}
+
+/**
  * **显示用** manifest：可能来自上一版或同文件另一个副本。
  * 只用于列元素 / 认 role / 画角标这类读操作。
  * 名字里的 `Display` 是刻意的——调用点上一眼就该看出这不是权威。
