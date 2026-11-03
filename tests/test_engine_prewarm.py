@@ -133,7 +133,9 @@ def _open(client, tmp_path):
 
 
 def _stub(monkeypatch, worker, gets):
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: True)
     monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: True)
     monkeypatch.setattr(
         m.engine_registry.Registry,
         "for_stem",
@@ -185,6 +187,7 @@ def test_foreground_render_reuses_the_prewarmed_session(client, tmp_path, monkey
 def test_prewarm_failure_is_silent(client, tmp_path, monkeypatch):
     _open(client, tmp_path)
     monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: True)
     monkeypatch.setattr(
         m.engine_registry.Registry,
         "for_stem",
@@ -217,6 +220,7 @@ def test_gates_that_would_ask_the_user_stay_silent_in_prewarm(client, tmp_path, 
     不发 SSE、不登记任何待弹窗——用户什么都没点就不会看到弹窗。"""
     _open(client, tmp_path)
     monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: True)
     monkeypatch.setattr(
         m.engine_registry.Registry,
         "for_stem",
@@ -278,6 +282,7 @@ def test_prewarm_yields_while_a_foreground_render_is_getting_its_session(
     """前台优先（确定性）：渲染卡在取会话时，预热请求直接让路，一个会话都不起。"""
     _open(client, tmp_path)
     monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: True)
     in_get, release, gets = threading.Event(), threading.Event(), []
     worker = _FakeWorker()
     monkeypatch.setattr(
@@ -431,3 +436,137 @@ def test_prewarm_cap_comes_from_max_alive_under_the_production_default(
     assert _post(client)["status"] == "started"
     prewarm.PREWARM.join()
     assert len(gets) == 1
+
+
+# ------------------- 环境决定：预热只许走纯空操作（Codex #1638 P1） -------------------
+
+
+class _Reached(Exception):
+    """`acquire()` 越过了「环境决定」那一步、走到了起会话。"""
+
+
+@pytest.fixture
+def decider_world(monkeypatch):
+    """假 decider（记录调用）+ 可调的「决定是否空操作」判据；起会话处放一个哨兵。"""
+    calls = {"decide": 0, "spawn": 0}
+
+    def decide(figures_dir, script_name):
+        calls["decide"] += 1
+        return None
+
+    def spawn(*a, **kw):
+        calls["spawn"] += 1
+        raise _Reached
+
+    state = {"noop": False}
+    monkeypatch.setattr(pool, "ENVIRONMENT_DECIDERS", [decide])
+    monkeypatch.setattr(pool, "ENVIRONMENT_NOOP_CHECKS", [lambda root, script: state["noop"]])
+    monkeypatch.setattr(pool, "resolve_worker_python", lambda *a, **kw: ("/x/python", "x"))
+    monkeypatch.setattr(pool, "_refuse_if_mutating", lambda python: None)
+    monkeypatch.setattr(pool.launcher_mod, "prewarm", lambda python, **kw: None)
+    monkeypatch.setattr(pool, "_new_worker", spawn)
+    monkeypatch.setattr(pool, "_workers", {})
+    return calls, state
+
+
+def _no_subprocess(monkeypatch):
+    def boom(*a, **kw):
+        raise AssertionError("预热不许起任何子进程")
+
+    monkeypatch.setattr(pool.subprocess, "run", boom)
+    monkeypatch.setattr(pool.subprocess, "Popen", boom)
+
+
+def test_prewarm_never_runs_environment_deciders_when_work_is_needed(
+    decider_world, monkeypatch, tmp_path
+):
+    """(a) 决定要干活（检测候选 / 写记录）时：预热在 deciders 之前就停下，零探测、零子进程、零起会话。"""
+    calls, _state = decider_world
+    _no_subprocess(monkeypatch)
+    with pool.acquire_purpose(pool.PURPOSE_PREWARM):
+        with pytest.raises(pool.WorkerError) as err:
+            pool.acquire("f0.py", str(tmp_path), "main")
+    assert err.value.code == pool.PREWARM_NEEDS_DECISION
+    assert calls == {"decide": 0, "spawn": 0}
+
+
+def test_prewarm_proceeds_when_the_decision_is_a_noop(decider_world, monkeypatch, tmp_path):
+    """(b) 决定是纯空操作：照常往下走到起会话（deciders 照旧跑——它们在这种情形下第一步就返回）。"""
+    calls, state = decider_world
+    state["noop"] = True
+    with pool.acquire_purpose(pool.PURPOSE_PREWARM):
+        with pytest.raises(_Reached):
+            pool.acquire("f0.py", str(tmp_path), "main")
+    assert calls["spawn"] == 1 and calls["decide"] >= 1
+
+
+def test_foreground_still_runs_the_deciders_exactly_as_before(decider_world, tmp_path):
+    """(c) 前台渲染在同样的场景（决定要干活）下照旧跑 deciders，再起会话。"""
+    calls, state = decider_world
+    assert state["noop"] is False
+    with pytest.raises(_Reached):
+        pool.acquire("f0.py", str(tmp_path), "main")
+    assert calls["spawn"] == 1 and calls["decide"] >= 1
+
+
+def test_no_registered_check_means_prewarm_does_not_decide(decider_world, monkeypatch, tmp_path):
+    calls, _ = decider_world
+    monkeypatch.setattr(pool, "ENVIRONMENT_NOOP_CHECKS", [])
+    with pool.acquire_purpose(pool.PURPOSE_PREWARM):
+        with pytest.raises(pool.WorkerError) as err:
+            pool.acquire("f0.py", str(tmp_path), "main")
+    assert err.value.code == pool.PREWARM_NEEDS_DECISION and calls["decide"] == 0
+
+
+def test_deprepair_noop_check_matches_the_deciders_first_exit(monkeypatch):
+    from tavotto.engine import deprepair, projectenv
+
+    def check(mode, machine_chosen):
+        monkeypatch.setattr(projectenv, "adoption_mode", lambda: mode)
+        monkeypatch.setattr(pool, "machine_chosen_interpreter", lambda root: machine_chosen)
+        return deprepair.environment_decision_is_noop("/p", "a.py")
+
+    assert check(projectenv.ADOPTION_CONFIRM, True) is True  # 确认模式：机器不做决定
+    assert check(projectenv.ADOPTION_DETECT, False) is True  # 用户选的 / 显式：决定函数第一步就返回
+    assert check(projectenv.ADOPTION_DETECT, True) is False  # 机器记的：检测会体检、可能写记录
+    assert check("legacy", False) is False  # 旧模式：不保证
+    assert deprepair.environment_decision_is_noop in pool.ENVIRONMENT_NOOP_CHECKS
+
+
+def test_endpoint_skips_when_the_decision_would_do_work(client, tmp_path, monkeypatch):
+    _open(client, tmp_path)
+    gets = []
+    _stub(monkeypatch, _FakeWorker(), gets)
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: False)
+    assert _post(client) == {"status": "skipped", "reason": "environment_needs_decision"}
+    prewarm.PREWARM.join()
+    assert gets == []
+
+
+def test_endpoint_takes_the_session_under_the_prewarm_purpose(client, tmp_path, monkeypatch):
+    _open(client, tmp_path)
+    seen = []
+    monkeypatch.setattr(
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
+    monkeypatch.setattr(m.engine_pool, "peek_project_resolution", lambda root: ("/x/python", "x"))
+    monkeypatch.setattr(m.engine_pool, "environment_decision_is_noop", lambda root, script: True)
+
+    def fake_get(*a, **kw):
+        seen.append(pool.current_purpose())
+        return _FakeWorker()
+
+    monkeypatch.setattr(m.engine_pool, "get", fake_get)
+    assert _post(client)["status"] == "started"
+    prewarm.PREWARM.join()
+    assert seen == [pool.PURPOSE_PREWARM]
+
+
+def test_render_api_does_not_accept_the_internal_prewarm_purpose(client, tmp_path):
+    _open(client, tmp_path)
+    res = client.post(
+        "/api/engine/render", json={"id": "p1.pdf", "patches": [], "purpose": "prewarm"}
+    )
+    assert res.status_code == 400

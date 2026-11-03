@@ -132,6 +132,13 @@ def max_alive() -> int:
 PURPOSE_FOREGROUND = "foreground"
 PURPOSE_NEIGHBOUR = "neighbour"
 PURPOSES = (PURPOSE_FOREGROUND, PURPOSE_NEIGHBOUR)
+#: 内部意图（不在 `PURPOSES` 里：`/api/engine/render` 的 `purpose` 字段不接受它）：打开项目后的后台预热（ADR 0160）。
+#: 与 neighbour 同样不刷新 LRU、池满不挤别人；另外**绝不跑环境决定**（见 `PrewarmDeferred`）。
+PURPOSE_PREWARM = "prewarm"
+_INTERNAL_PURPOSES = (PURPOSE_PREWARM,)
+#: 预热需要真去决定 / 探测环境时抛它：`acquire()` 在跑 `ENVIRONMENT_DECIDERS` 之前就停下，一个子进程都没起、
+#: 一条记录都没写；预热吞掉它，第一次真渲染走原路径。
+PREWARM_NEEDS_DECISION = "prewarm_environment_needs_decision"
 #: 后台补渲染这次没做（冷启动会淘汰别的会话）。**不是失败**：调用方保留旧画面、不报错。
 BACKGROUND_DEFERRED = "background_render_deferred"
 _purpose: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -151,7 +158,7 @@ def _note_dispatch(worker) -> None:
 @contextlib.contextmanager
 def acquire_purpose(purpose: str):
     """在这个上下文里的 `acquire()` 按 `purpose` 取会话（线程 / 请求局部）。未知取值抛 ValueError。"""
-    if purpose not in PURPOSES:
+    if purpose not in PURPOSES and purpose not in _INTERNAL_PURPOSES:
         raise ValueError(f"unknown acquire purpose: {purpose!r}")
     token = _purpose.set(purpose)
     try:
@@ -4629,6 +4636,22 @@ def _resolve_for_worker(
     return resolve_worker_python(figures_dir, script=script_name)
 
 
+#: 「这个项目此刻的环境决定是纯空操作」的只读判据：`(figures_dir, script_name) -> bool`，只读设置与 `stat`，
+#: 不起子进程、不写记录。今天只有 `deprepair.environment_decision_is_noop`。没人登记 = 不是空操作（预热不做）。
+ENVIRONMENT_NOOP_CHECKS: list = []
+
+
+def register_environment_noop_check(check) -> None:
+    if check not in ENVIRONMENT_NOOP_CHECKS:
+        ENVIRONMENT_NOOP_CHECKS.append(check)
+
+
+def environment_decision_is_noop(figures_dir: str | Path, script_name: str) -> bool:
+    return bool(ENVIRONMENT_NOOP_CHECKS) and all(
+        check(str(figures_dir), script_name) for check in ENVIRONMENT_NOOP_CHECKS
+    )
+
+
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
         ENVIRONMENT_DECIDERS.append(decider)
@@ -5108,6 +5131,14 @@ def _acquire(
             # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
             # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
             # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
+            if current_purpose() == PURPOSE_PREWARM and not environment_decision_is_noop(
+                figures_dir, script_name
+            ):
+                # 后台预热只许走「决定是纯空操作」的路：真决定会体检候选、跑项目自带的解释器、写项目记录——
+                # 用户什么都没点，不做。留给第一次真渲染（前台路径一行不变）
+                raise WorkerError(
+                    "environment decision needed; prewarm skipped", code=PREWARM_NEEDS_DECISION
+                )
             with _seg("env_decide_ms"):
                 for decide in ENVIRONMENT_DECIDERS:
                     got = decide(figures_dir, script_name)

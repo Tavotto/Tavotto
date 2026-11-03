@@ -8098,20 +8098,29 @@ def api_engine_prewarm():
         if engine_pool.peek_project_resolution(str(ctx.path)) is None:
             return jsonify({"status": "skipped", "reason": "environment_undecided"})
         if engine_runtimeasset.is_runtime_id(rel_id):
-            if _resolve_runtime_asset(rel_id) is None:
+            info = _resolve_runtime_asset(rel_id)
+            if info is None:
                 return jsonify({"status": "skipped", "reason": "unknown"})
             if (
                 engine_enginesession.profile_of(str(ctx.path), rel_id)
                 != engine_enginesession.PROFILE_SAFE
             ):
                 return jsonify({"status": "skipped", "reason": "native"})
-        elif _disk_panel(safe_resolve(rel_id))[1] is None:
-            return jsonify({"status": "skipped", "reason": "not_script"})
+            script = info["script"]
+        else:
+            panel = _disk_panel(safe_resolve(rel_id))[1]
+            if panel is None:
+                return jsonify({"status": "skipped", "reason": "not_script"})
+            script = panel["script"]
+        # 环境决定必须是纯空操作（只读判据）：真决定会体检候选、跑项目自带的解释器、写项目记录。
+        # 池里 `PURPOSE_PREWARM` 在跑 deciders 之前还有一道同判据的硬挡，这里只是让响应早点说明
+        if not engine_pool.environment_decision_is_noop(str(ctx.path), script):
+            return jsonify({"status": "skipped", "reason": "environment_needs_decision"})
     except Exception:  # noqa: BLE001 —— 预热是旁路，解析不了就不预热
         return jsonify({"status": "skipped", "reason": "unresolvable"})
 
     def work():
-        with bound_project(ctx):
+        with bound_project(ctx), engine_pool.acquire_purpose(engine_pool.PURPOSE_PREWARM):
             _engine_worker(rel_id)  # 只取会话：build 仍由第一次真渲染惰性触发
 
     status = engine_prewarm.PREWARM.request(

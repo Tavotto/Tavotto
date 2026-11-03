@@ -24,6 +24,14 @@ sidecar 就绪后会话迟了约 20s 才打开，期间另一张图的准备会�
    （`CaptureDeferred` 取决于调用线程的锁状态，不能继承）。
    未改的争用点（如实记录）：`acquire()` 在池锁内构造会话，不同脚本的冷启动在池锁上串行；准备会话里的 build 与前台 build 争 CPU，没有可让路的代码点，不硬做。
 
+6. **环境决定只许纯空操作**（Codex #1638 P1）。冷会话的 `acquire()` 会先跑 `ENVIRONMENT_DECIDERS`，检测模式下它会体检候选环境、
+   启动项目自带的解释器导入依赖、甚至记住新的环境决定。预热走内部意图 `pool.PURPOSE_PREWARM`（不在 `PURPOSES` 里，渲染接口不接受）：
+   `acquire()` 在跑 deciders 之前问只读判据 `environment_decision_is_noop`（`deprepair` 登记；确认模式，或检测模式下解释器不是机器挑的——
+   决定函数第一步就返回的那些情形），不是空操作就抛 `prewarm_environment_needs_decision`，一个子进程没起、一条记录没写，留给第一次真渲染走原路径。
+   端点用同一判据先行返回 `skipped / environment_needs_decision`。前台渲染一行不变。
+   代价：机器自己记住的解释器（自动采用的项目 venv 等）不预热。未覆盖：`resolve_worker_python` 对记住的解释器首次做的
+   `import matplotlib` 体检仍会在预热里跑一次（只跑解释器、不跑项目脚本；结论缓存）。
+
 ## 后果
 
 - 冷启动成本不变，只是在用户点图之前发生；点得早则与预热合并为同一次。
