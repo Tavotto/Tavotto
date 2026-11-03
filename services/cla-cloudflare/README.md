@@ -9,7 +9,7 @@ Use Node 24 and Python 3.10+ with sqlite3. From this directory:
     npm ci --ignore-scripts
     npm run check
 
-The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files. Review-only disabled deployment inputs and an offline planner live in [deployment/](deployment/README.md); no deploy command or real binding IDs are supplied.
+The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files. Review-only disabled deployment inputs and an offline planner live in [deployment/](deployment/README.md). The only real binding IDs and deploy commands are the disposable staging rehearsal in [deployment/staging/](deployment/staging/README.md) (sandbox repository, staging texts with no legal effect, every flag false in the file).
 
 Tests use synthetic identities, ephemeral test encryption keys, a test-only database clock and local SQLite. Outbound fetch and publication are forbidden. The concurrency test uses two worker threads with separate WAL connections and real BEGIN IMMEDIATE transactions; it is not a Cloudflare D1 concurrency claim. Test databases are removed afterward.
 
