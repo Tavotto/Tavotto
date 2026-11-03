@@ -356,6 +356,7 @@
     "alignToStyle": "按样式「{{name}}」对齐",
     "scriptWinsOverStyle": "脚本改动优先于样式",
     "rotate": "旋转 {{deg}}°",
+    "rotateObjects": "旋转对象",
     "rotateReset": "取消旋转",
     "seedBaked": "载入文件中的基线",
     "setOpacity": "修改不透明度",

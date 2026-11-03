@@ -30,6 +30,7 @@
  */
 
 import type { EditableField } from './api'
+import { normalizeRotationDeg } from './geometry'
 import {
   DEFAULT_INTERPRETATION,
   TEXT_INTERPRETATIONS,
@@ -514,8 +515,11 @@ export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unkn
       else o.lineHeight = Number(value)
       return
     case 'rotationDeg':
-      if (!Number(value)) delete o.rotationDeg
-      else o.rotationDeg = Number(value)
+      {
+        const deg = normalizeRotationDeg(Number(value))
+        if (!deg) delete o.rotationDeg
+        else o.rotationDeg = deg
+      }
       return
     case 'interpretation':
       if (value === DEFAULT_INTERPRETATION || !value) delete o.interpretation

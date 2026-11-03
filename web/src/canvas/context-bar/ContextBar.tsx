@@ -3,7 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { usePalette } from '@/components/CommandPalette'
 import { isElementHidden } from '@/lib/elementGeom'
-import { boundsOf } from '@/lib/geometry'
+import {
+  boundsOf,
+  ROTATE_KNOB_RADIUS,
+  rotateKnobCenterOffset,
+  visualBounds,
+} from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { hasActivePointerGesture } from '@/store/gestureCoordinator'
@@ -12,8 +17,8 @@ import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderSt
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useTimelineStore } from '@/store/timelineStore'
-import { useViewportStore, type ViewTransform } from '@/store/viewportStore'
-import type { CanvasObject, PanelObject } from '@/types/document'
+import { mmToPx, useViewportStore, type ViewTransform } from '@/store/viewportStore'
+import { objectRotation, type CanvasObject, type PanelObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
 import { CropBar } from './CropBar'
 import { DragStatusBar } from './DragStatusBar'
@@ -315,7 +320,7 @@ function ContextBarBody() {
     }
     let anchor: ScreenRect | null = null
     if (mode === 'multi' && multi) {
-      const b = boundsOf(multi)
+      const b = boundsOf(multi.map(visualBounds))
       const t: ViewTransform = { zoom, panX, panY, originX, originY }
       anchor = b ? selectionScreenRect(b, t) : null
     } else if (mode === 'elements' && panel && multiGids) {
@@ -350,6 +355,17 @@ function ContextBarBody() {
       if (node) {
         const r = (node as Element).getBoundingClientRect()
         anchor = { left: r.left, top: r.top, width: r.width, height: r.height }
+        // 文字标注的旋转柄伸在选框外（随旋转转到哪都算）：把柄并进锚点，工具栏停在柄之外，别盖住它
+        if (mode === 'object' && obj?.type === 'text' && !obj.locked && editingText !== obj.id) {
+          const k = rotateKnobCenterOffset(mmToPx(obj.h, { zoom, panX, panY, originX, originY }), objectRotation(obj))
+          const kx = r.left + r.width / 2 + k.dx
+          const ky = r.top + r.height / 2 + k.dy
+          const left = Math.min(anchor.left, kx - ROTATE_KNOB_RADIUS)
+          const top = Math.min(anchor.top, ky - ROTATE_KNOB_RADIUS)
+          const right = Math.max(anchor.left + anchor.width, kx + ROTATE_KNOB_RADIUS)
+          const bottom = Math.max(anchor.top + anchor.height, ky + ROTATE_KNOB_RADIUS)
+          anchor = { left, top, width: right - left, height: bottom - top }
+        }
       }
     }
     if (!anchor) {
@@ -428,6 +444,7 @@ function ContextBarBody() {
     multiBarDocked,
     manifest,
     noticeTop,
+    editingText,
   ])
 
   if (!visible) return null
