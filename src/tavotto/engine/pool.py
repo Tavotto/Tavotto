@@ -5206,7 +5206,9 @@ def _acquire(
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         decided = not ENVIRONMENT_DECIDERS or pin is not None
         prefetch: list = []
-        if not decided and ENVIRONMENT_PREFETCHERS:
+        # 后台预热（`PURPOSE_PREWARM`，ADR 0160 §6）不投机：预热只在环境决定是空操作时放行，而这里的事实探测会起
+        # 子进程——跑在下面那道「决定前先问空操作」的硬挡**之前**，放进来就绕过了它。
+        if not decided and ENVIRONMENT_PREFETCHERS and current_purpose() != PURPOSE_PREWARM:
             _w0 = _workers.get(key)  # 已有活会话：多半能复用、用不着决定，不投机
             if _w0 is None or not _w0.alive():
                 prefetch = [
