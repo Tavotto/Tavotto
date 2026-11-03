@@ -11,7 +11,7 @@ export function client():void {
     actor:'{0} · GitHub ID {1}',roleHolder:'rights holder',roleContributor:'contributor',
     eyebrow:'Thank you for contributing',title:'Your work makes Tavotto better for every researcher who uses it.',
     lede:'Before we can merge your first pull request, we ask you to sign this agreement once. You keep the copyright in what you write; you give us permission to use and distribute it. It covers every contribution you make afterwards.',
-    holderEyebrow:'Rights holder',holderTitle:'A contributor signed and is waiting for you.',holderLede:'Review what they signed, then countersign as the rights holder. They can download their signed PDF as soon as you do.',
+    holderEyebrow:'Rights holder',holderTitle:'A contributor signed and is waiting for you.',holderLede:'Review what they signed, then countersign as the rights holder. They can download their signed PDF as soon as you do.',holderLedeNoPdf:'Review what they signed, then countersign as the rights holder.',
     holderIdleTitle:'Countersign contributor agreements here.',holderIdleLede:'Choose a signing record to review it.',
     step1:'Sign in',step2:'Read & sign',step3:'Countersignature',step4:'Your copy',
     modeOpen:'',modeClosed:'Signing is paused right now. You can still read the agreement.',
@@ -19,7 +19,7 @@ export function client():void {
     readPct:'Read {0}%',readDone:'You have reached the end',readHint:'Scroll to the end to confirm you have read it',
     signTitle:'Sign as yourself',signHint:'Only you can sign for yourself. Nothing is pre-filled or ticked for you.',
     holderHint:'Your name must read exactly “{0}”, as registered for this service.',
-    name:'Full legal name',address:'Postal address',addressHint:'Kept privately in the signed record and in your PDF copy. Never shown on GitHub.',
+    name:'Full legal name',address:'Postal address',addressHint:'Kept privately in the signed record and in your PDF copy. Never shown on GitHub.',addressHintNoPdf:'Kept privately in the signed record. Never shown on GitHub.',
     signature:'Type your full name to sign',signatureHint:'Must match the name above exactly.',legend:'Confirm each statement yourself',
     signContributor:'Sign the agreement',signHolder:'Countersign as rights holder',
     recordTitle:'Your signing record',packets:'Record',choose:'Choose a signing record',noRecord:'No record yet',create:'Start a new signing record',more:'Load earlier records',
@@ -33,7 +33,7 @@ export function client():void {
     eGone:'The record you had open is not available to this account. Choose one of your own records.',eGoneCreate:'The record you had open is not available to this account. You can start your own.',
     tDelegated:'Automatic authorisation valid until {0}',tDeadline:'Please finish signing by {0}',
     thanksEyebrow:'Signed',thanksTitle:'Thank you. You’re all set.',thanksLede:'Both signatures are on the record, and every future contribution is already covered. Push any new commit to your pull request and the CLA check will pass within about 15 minutes. We’re glad to have you here.',
-    thanksHolderTitle:'Countersigned. Thank you.',thanksHolderLede:'Both signatures are on the record. The contributor can now download their signed PDF, and their next push will pass the CLA check.',
+    thanksHolderTitle:'Countersigned. Thank you.',thanksHolderLede:'Both signatures are on the record. The contributor can now download their signed PDF, and their next push will pass the CLA check.',thanksHolderLedeNoPdf:'Both signatures are on the record. The contributor’s next push will pass the CLA check.',
     pdf:'Download signed PDF',records:'Technical records',recordsHint:'Machine-readable evidence for this record: the exact agreement text, its fingerprint and the chosen party’s signature. Only the two parties can download it.',
     dlContributor:'Contributor evidence',dlHolder:'Rights holder evidence',dlAudit:'Delegation audit',
     withdrawOpen:'Withdraw my signature…',withdrawTitle:'Withdraw your signature?',withdrawBody:'Your pull requests will stop passing the CLA check. You will not be able to sign again yourself afterwards: a maintainer has to review it with you first.',
@@ -53,7 +53,7 @@ export function client():void {
     actor:'{0} · GitHub ID {1}',roleHolder:'权利人',roleContributor:'贡献者',
     eyebrow:'感谢你的贡献',title:'你的每一份贡献，都让 Tavotto 对每一位科研工作者更好用。',
     lede:'合并你的第一个 Pull Request 之前，请签一次这份协议。你写的内容著作权仍归你；你授权我们使用和分发它。签一次，之后的所有贡献都适用。',
-    holderEyebrow:'权利人',holderTitle:'有一位贡献者已经签好，正在等你联署。',holderLede:'先看看对方签了什么，再以权利人身份联署。你签完后，对方马上就能下载签署好的 PDF。',
+    holderEyebrow:'权利人',holderTitle:'有一位贡献者已经签好，正在等你联署。',holderLede:'先看看对方签了什么，再以权利人身份联署。你签完后，对方马上就能下载签署好的 PDF。',holderLedeNoPdf:'先看看对方签了什么，再以权利人身份联署。',
     holderIdleTitle:'在这里联署贡献者协议。',holderIdleLede:'选择一条签署记录开始审阅。',
     step1:'登录',step2:'阅读并签署',step3:'权利人联署',step4:'你的副本',
     modeOpen:'',modeClosed:'签署暂时关闭，协议仍可阅读。',
@@ -61,7 +61,7 @@ export function client():void {
     readPct:'已读 {0}%',readDone:'已读到结尾',readHint:'读到结尾后才能确认「已阅读」',
     signTitle:'由你本人签署',signHint:'只有你本人能签。任何内容都不会预先填好或替你勾选。',
     holderHint:'姓名须与本服务登记的完全一致：「{0}」。',
-    name:'本人的完整姓名',address:'本人地址',addressHint:'只保存在签署记录和你的 PDF 副本里，不会出现在 GitHub 上。',
+    name:'本人的完整姓名',address:'本人地址',addressHint:'只保存在签署记录和你的 PDF 副本里，不会出现在 GitHub 上。',addressHintNoPdf:'只保存在签署记录里，不会出现在 GitHub 上。',
     signature:'键入完整姓名作为电子签名',signatureHint:'必须与上方姓名完全一致。',legend:'逐项确认本人的意愿',
     signContributor:'由我本人签署（贡献者）',signHolder:'由我本人签署（权利人）',
     recordTitle:'你的签署记录',packets:'签署记录',choose:'选择签署记录',noRecord:'尚无记录',create:'新建签署记录',more:'加载更早的记录',
@@ -75,7 +75,7 @@ export function client():void {
     eGone:'之前打开的记录不属于当前账号。请选择你自己的记录。',eGoneCreate:'之前打开的记录不属于当前账号。你可以新建自己的记录。',
     tDelegated:'自动授权有效至 {0}',tDeadline:'请在 {0} 前完成签署',
     thanksEyebrow:'已签署',thanksTitle:'谢谢你，一切就绪。',thanksLede:'双方签名都已记录，你之后的所有贡献也都已覆盖。往你的 Pull Request 推一个新提交，大约 15 分钟内 CLA 检查就会通过。很高兴你加入。',
-    thanksHolderTitle:'已联署，谢谢。',thanksHolderLede:'双方签名都已记录。贡献者现在可以下载签署好的 PDF，下一次推送就会通过 CLA 检查。',
+    thanksHolderTitle:'已联署，谢谢。',thanksHolderLede:'双方签名都已记录。贡献者现在可以下载签署好的 PDF，下一次推送就会通过 CLA 检查。',thanksHolderLedeNoPdf:'双方签名都已记录。贡献者的下一次推送就会通过 CLA 检查。',
     pdf:'下载签署 PDF',records:'技术记录',recordsHint:'这条记录的机器可读证据：精确的协议全文、指纹和所选一方的签署。只有双方可以下载。',
     dlContributor:'贡献者证据',dlHolder:'权利人证据',dlAudit:'限定授权审计',
     withdrawOpen:'撤回我的签署…',withdrawTitle:'确定撤回签署吗？',withdrawBody:'撤回后，你的 Pull Request 将不再通过 CLA 检查，而且你之后不能自己重新签署，需要维护者先和你一起核对。',
@@ -108,6 +108,7 @@ export function client():void {
   }
   function message(key:string,args:unknown[]=[],error=false){lastMessage=[key,args,error];text('message',t(key,...args));$('message').className=error?'notice error':'notice';}
   const signedBy=(role:string)=>!!state?.signatures?.some((row:any)=>row.role===role);
+  const hasPdf=()=>cap?.signedPdf===true;
   const bothSigned=()=>signedBy('contributor') && signedBy('holder');
   const canCreate=()=>cap.signingEnabled && cap.actor?.role==='contributor' && (!state?!hasPackets:
     state.actor?.id===cap.actor.id && state.packet?.subject===cap.actor.id && state.completed===false && state.blocked===false &&
@@ -119,7 +120,7 @@ export function client():void {
     ($('packets-more') as HTMLButtonElement).disabled=busy || uncertain || !nextCursor;
     ($('login') as HTMLButtonElement).disabled=busy || !cap.oauthEnabled;
     ($('refresh') as HTMLButtonElement).disabled=busy;
-    ($('download-pdf') as HTMLButtonElement).disabled=busy || uncertain || !bothSigned();
+    ($('download-pdf') as HTMLButtonElement).disabled=busy || uncertain || !hasPdf() || !bothSigned();
     for(const role of ['contributor','holder','audit'])$<HTMLButtonElement>('download-'+role).disabled=busy || uncertain || !state ||
       (role==='audit'?!state.delegated?.canAudit:!state.signatures.some((row:any)=>row.role===role));
     for(const {input,key} of consentLabels)if(key==='read')input.disabled=!readDone;
@@ -215,6 +216,7 @@ export function client():void {
   // Everything below is derived from the last server observation; switching language re-runs it.
   function render(){
     for(const [id,key] of Object.entries(STATIC))text(id,t(key));
+    text('t-address-hint',t(hasPdf()?'addressHint':'addressHintNoPdf'));
     if(typeof document.documentElement==='object' && document.documentElement)document.documentElement.lang=lang==='zh'?'zh-CN':'en';
     text('mode',cap.signingEnabled===false?t('modeClosed'):'');
     text('login',signedIn?t('relogin'):t('login'));
@@ -223,12 +225,12 @@ export function client():void {
     const holder=cap.actor?.role==='holder';
     text('hero-eyebrow',holder?t('holderEyebrow'):t('eyebrow'));
     text('hero-title',holder?(signedBy('contributor') && !signedBy('holder')?t('holderTitle'):t('holderIdleTitle')):t('title'));
-    text('hero-lede',holder?(signedBy('contributor') && !signedBy('holder')?t('holderLede'):t('holderIdleLede')):t('lede'));
+    text('hero-lede',holder?(signedBy('contributor') && !signedBy('holder')?t(hasPdf()?'holderLede':'holderLedeNoPdf'):t('holderIdleLede')):t('lede'));
     const stage=!signedIn?1:bothSigned()?4:signedBy('contributor')?3:2;
     for(let n=1;n<=4;n++){const li=$('step-'+n);if(li)li.className=n<stage?'done':n===stage?'now':'';}
-    const done=bothSigned() && !state?.blocked;
-    show('thanks',done);show('hero',!done);show('personal-signature',!done);
-    text('thanks-eyebrow',t('thanksEyebrow'));text('thanks-title',holder?t('thanksHolderTitle'):t('thanksTitle'));text('thanks-lede',holder?t('thanksHolderLede'):t('thanksLede'));
+    const done=bothSigned() && state?.current===true && state?.blocked!==true;
+    show('download-pdf',hasPdf());show('thanks',done);show('hero',!done);show('personal-signature',!done);
+    text('thanks-eyebrow',t('thanksEyebrow'));text('thanks-title',holder?t('thanksHolderTitle'):t('thanksTitle'));text('thanks-lede',holder?t(hasPdf()?'thanksHolderLede':'thanksHolderLedeNoPdf'):t('thanksLede'));
     show('holder-hint',holder && !!holderName);if(holder && holderName)text('holder-hint',t('holderHint',holderName));
     if(legendEl)legendEl.textContent=t('legend');for(const {words,key} of consentLabels)words.textContent=t('a_'+key);
     text('sign',holder?t('signHolder'):t('signContributor'));

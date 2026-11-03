@@ -19,7 +19,7 @@ function status(id=ID(1),changes={}){
   return {packet:{id,subject:2,valid_until:100},actor,now:100,completed:false,blocked:false,current:false,
     signatures:[],canSign:false,canHold:true,...changes};
 }
-async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],states={[ID(1)]:status()},signingEnabled=true,stored='',urlPacket='',createID=ID(99),failPage=false,language='zh-CN',agreementContent='SYNTHETIC AGREEMENT'}={}){
+async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],states={[ID(1)]:status()},signingEnabled=true,signedPdf=undefined,stored='',urlPacket='',createID=ID(99),failPage=false,language='zh-CN',agreementContent='SYNTHETIC AGREEMENT'}={}){
   const elements=new Map([...uiHTML.matchAll(/\bid="([^"]+)"/g)].map(match=>[match[1],new Element(match[1]==='packets'?'select':'div')]));
   const inputs=()=>{
     const walk=node=>[...(node.tagName==='input'?[node]:[]),...(node.children??[]).flatMap(walk)];
@@ -34,7 +34,7 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
     history:{replaceState:(_state,_title,url)=>{location.href=new URL(url,location.href).href;}},
     fetch:async(url,options)=>{
       calls.push({url,options});let result;
-      if(url==='/capabilities')result={signingEnabled,oauthEnabled:false};
+      if(url==='/capabilities')result={signingEnabled,oauthEnabled:false,...(signedPdf===undefined?{}:{signedPdf})};
       else if(url==='/session'){result=pages[0];if(result.error)return {ok:false,json:async()=>structuredClone(result)};}
       else if(url.startsWith('/session?cursor=')){
         if(failPage)return {ok:false,json:async()=>({error:'request_unavailable'})};
@@ -256,10 +256,29 @@ test('the rights holder sees the exact registered name before signing',async()=>
 test('a contributor never sees the holder name hint',async()=>{
   const b=await browser();assert.equal(b.elements.get('holder-hint').hidden,true);
 });
-test('both signatures show the thank-you state with the PDF download enabled',async()=>{
-  const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,completed:true,signatures:[{role:'contributor'},{role:'holder'}]})}});
+const both=(extra={})=>({states:{[ID(1)]:status(ID(1),{current:true,completed:true,signatures:[{role:'contributor'},{role:'holder'}],...extra})}});
+test('both signatures show the thank-you state; the PDF button is hidden and disabled while signedPdf is absent',async()=>{
+  const b=await browser(both());
   assert.equal(b.elements.get('thanks').hidden,false);assert.equal(b.elements.get('hero').hidden,true);
-  assert.equal(b.elements.get('personal-signature').hidden,true);assert.equal(b.elements.get('download-pdf').disabled,false);
+  assert.equal(b.elements.get('personal-signature').hidden,true);
+  assert.equal(b.elements.get('download-pdf').hidden,true);assert.equal(b.elements.get('download-pdf').disabled,true);
+});
+test('with signedPdf true the PDF button is visible and enabled once both have signed',async()=>{
+  const b=await browser({...both(),signedPdf:true});
+  assert.equal(b.elements.get('download-pdf').hidden,false);assert.equal(b.elements.get('download-pdf').disabled,false);
+});
+test('the address hint mentions the PDF copy only when signedPdf is available',async()=>{
+  let b=await browser();assert.doesNotMatch(b.elements.get('t-address-hint').textContent,/PDF/);
+  b=await browser({signedPdf:true});assert.match(b.elements.get('t-address-hint').textContent,/PDF/);
+});
+test('a completed record that is no longer current does not claim the contributor is all set',async()=>{
+  const b=await browser(both({current:false}));
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('hero').hidden,false);
+  assert.equal(b.elements.get('eligibility').textContent,'这条记录已过期，或对应的是旧版本协议。');
+});
+test('a blocked completed record does not show the thank-you state',async()=>{
+  const b=await browser(both({blocked:true}));
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('hero').hidden,false);
 });
 test('the PDF download stays disabled until both parties have signed',async()=>{
   const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[{role:'contributor'}]})}});
