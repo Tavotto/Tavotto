@@ -62,7 +62,7 @@ def swatches(ax, entries):
 
 
 def main():
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(9.0, 3.0))
+    fig, (ax, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(18.0, 3.0))
     x = np.linspace(0.0, 10.0, 300)
     # axes_0：两个不同色的峰（fill_0 橙、fill_1 蓝），图例两块（fill_2：上 Orange、下 Blue）——各自唯一
     peak(ax, x, 3.0, ORANGE)
@@ -76,6 +76,17 @@ def main():
     swatches(ax2, [(0.9, BLUE, "B1"), (0.75, BLUE, "B2")])
     ax2.set_xlim(0, 10)
     ax2.set_ylim(0, 1.3)
+    # axes_2：两个同色峰 + 一块匹配的图例（fill_2）——手动让两个峰都跟同一块（P1 撤销顺序）
+    peak(ax3, x, 3.0, BLUE)
+    peak(ax3, x, 7.0, BLUE)
+    swatches(ax3, [(0.9, BLUE, "Shared")])
+    ax3.set_xlim(0, 10)
+    ax3.set_ylim(0, 1.3)
+    # axes_3：一个峰 + 自成一个 PolyCollection（16 条、不裁剪）的图例色块——它自己不是对手
+    peak(ax4, x, 3.0, ORANGE)
+    swatches(ax4, [(0.9, ORANGE, "Solo")])
+    ax4.set_xlim(0, 10)
+    ax4.set_ylim(0, 1.3)
     fig.savefig("GradLegend.pdf")
 """
 
@@ -199,3 +210,32 @@ def test_switching_the_pick_matches_a_fresh_replay(library, manifest):
     hot = _render(library, [first], [final])
     fresh = _render(library, [final])
     assert _grad(hot, "axes_1.fill_0") == _grad(fresh, "axes_1.fill_0")
+
+
+def test_two_peaks_sharing_one_swatch_undo_one_matches_fresh_replay(library):
+    """Codex #1695 P1：两个同色峰手动跟同一块，各改成不同颜色，撤销 A 后色块应是 B 的颜色（与只重放 B 相同）。"""
+    ref = _grad(_render(library), "axes_2.fill_0")["legend"]["candidates"][0]["ref"]
+    xa = ["#ffd9de", "#b00020"]
+    xb = ["#d9ffd9", "#007020"]
+    a = {"gid": "axes_2.fill_0", "prop": "gradient", "value": {"stops": xa, "legend": ref}}
+    b = {"gid": "axes_2.fill_1", "prop": "gradient", "value": {"stops": xb, "legend": ref}}
+    hot = _render(library, [a, b], [b])
+    fresh = _render(library, [b])
+    hot_stops = _cand(_grad(hot, "axes_2.fill_1"), ref)["stops"]
+    assert hot_stops == _cand(_grad(fresh, "axes_2.fill_1"), ref)["stops"]
+    assert _close(hot_stops[0], xb[0]) and _close(hot_stops[1], xb[1]), hot_stops
+    # 反过来撤 B，剩 A
+    hot2 = _render(library, [a, b], [a])
+    fresh2 = _render(library, [a])
+    assert (
+        _cand(_grad(hot2, "axes_2.fill_0"), ref)["stops"]
+        == _cand(_grad(fresh2, "axes_2.fill_0"), ref)["stops"]
+    )
+
+
+def test_swatch_drawn_as_its_own_collection_is_not_a_rival(library):
+    """Codex #1695 P2：图例色块自成一个 16 条的 PolyCollection（不裁剪）不算对手，唯一对得上就自动配上。"""
+    v = _grad(_render(library), "axes_3.fill_0")["legend"]
+    assert len(v["candidates"]) == 1
+    assert v["auto"] == v["candidates"][0]["ref"]
+    assert v["linked"] == v["auto"]

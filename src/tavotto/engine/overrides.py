@@ -4240,7 +4240,7 @@ def _remember_base(coll) -> np.ndarray:
 _GRAD_SWATCH_MIN = 4
 #: 两端颜色「相同」的容差（每通道，0–1）：峰的端条取的是色阶上离端点半条的位置，与色块端点差一点点
 _GRAD_MATCH_TOL = 8 / 255
-#: 峰身上记着「我上次跟着改了哪一块」：(色块所在集合, 那几条的下标)
+#: 峰身上记着「我此刻跟着哪一块、新两端是什么」：(色块序号, 屏幕起端次序, 新起端, 新止端) 或 None
 _GRAD_LINKED = "_mm_gradient_linked"
 
 
@@ -4305,7 +4305,7 @@ def gradient_legend_candidates(coll) -> dict | None:
         return None
     me = _gradient_base_colors(coll)
     order = info["order"]
-    peaks = [c for c in ax.collections if c is not coll and gradient_detect(c) is not None]
+    peaks = [c for c in ax.collections if c is not coll and _is_peak_band(c)]
     cands: list[tuple[int, int]] = []
     for ci, other in enumerate(ax.collections):
         if other is coll or _is_peak_band(other):
@@ -4323,7 +4323,8 @@ def gradient_legend_candidates(coll) -> dict | None:
         rivals = [
             p
             for p in peaks
-            if _ends_match(_gradient_base_colors(p), gradient_detect(p)["order"], ob, rows)
+            if p is not other
+            and _ends_match(_gradient_base_colors(p), gradient_detect(p)["order"], ob, rows)
         ]
         if not rivals:
             auto = cands[0]
@@ -4334,65 +4335,99 @@ def gradient_legend_linked(coll):
     """此刻跟着这个峰改的那一块：改过就是记下的那块，没改过就是自动配对的那块（可能是 None）。"""
     linked = getattr(coll, _GRAD_LINKED, None)
     if linked is not None:
-        return linked[2]
+        return linked[0]
     if getattr(coll, "_mm_gradient_explicit_off", False):
         return None
     info = gradient_legend_candidates(coll)
     return info["auto"] if info else None
 
 
-def _gradient_unlink(coll) -> None:
-    """把上次跟着改的那块色块还原成它自己的原色。"""
-    linked = getattr(coll, _GRAD_LINKED, None)
-    if linked is None:
-        return
-    other, rows, _ref = linked
-    base = getattr(other, _GRAD_BASE, None)
-    if base is not None:
-        fc = _gradient_source_colors(other)
-        if len(fc) == len(base):
-            fc[rows] = base[rows]
-            other.set_facecolor(fc)
-    setattr(coll, _GRAD_LINKED, None)
+#: 子图身上记着「上次被峰改过色的色块」：{(集合序号, 色块序号)}——刷新时先把它们全部还原再重画
+_GRAD_TOUCHED = "_mm_gradient_touched_swatches"
 
 
-def _gradient_link(coll, peak_order, ref, new0, new1) -> None:
-    """把 `ref` 那块色块按峰的新两端一起改。哪头对哪头**按原色**认：色块上与峰起端原色更近的那头取新起端
-    （与坐标变换无关，反转坐标轴前后热态 == 重放）。"""
+def _swatch_rows(coll, ref):
+    """`ref` 指的那块色块：回 (所在集合, 条带下标)；指不到回 None。"""
     ax = getattr(coll, "axes", None)
     if ax is None or not isinstance(ref, (list, tuple)) or len(ref) != 2:
-        return
+        return None
     ci, gi = int(ref[0]), int(ref[1])
     if not (0 <= ci < len(ax.collections)) or ax.collections[ci] is coll:
-        return
+        return None
     other = ax.collections[ci]
     groups = gradient_swatch_groups(other)
     if not (0 <= gi < len(groups)):
-        return
-    rows = groups[gi]
+        return None
+    return other, groups[gi]
+
+
+def _gradient_refresh_swatches(ax) -> None:
+    """图例色块的颜色是**派生状态**：每个峰各自记着「我跟哪一块、新两端是什么」（`_GRAD_LINKED`），
+    色块此刻的颜色 = 脚本原色 + 按峰在 `ax.collections` 里的升序依次重画（同一块被几个峰跟，后者赢）。
+    每次有峰改了或还原都整体重算，所以热态 == 全量重放，与 override 应用 / 撤销的先后无关。"""
+    touched = set(getattr(ax, _GRAD_TOUCHED, None) or ())
+    peaks = [
+        (c, getattr(c, _GRAD_LINKED))
+        for c in ax.collections
+        if getattr(c, _GRAD_LINKED, None) is not None
+    ]
+    touched |= {tuple(int(v) for v in st[0]) for _c, st in peaks}
+    for ci, gi in touched:
+        if not (0 <= ci < len(ax.collections)):
+            continue
+        other = ax.collections[ci]
+        groups = gradient_swatch_groups(other)
+        base = getattr(other, _GRAD_BASE, None)
+        if base is None or not (0 <= gi < len(groups)):
+            continue
+        fc = _gradient_source_colors(other)
+        if len(fc) == len(base):
+            rows = groups[gi]
+            fc[rows] = base[rows]
+            other.set_facecolor(fc)
+    painted: set[tuple[int, int]] = set()
+    for coll, (ref, peak_order, new0, new1) in peaks:
+        if _gradient_paint(coll, peak_order, ref, new0, new1):
+            painted.add((int(ref[0]), int(ref[1])))
+    setattr(ax, _GRAD_TOUCHED, painted)
+
+
+def _gradient_paint(coll, peak_order, ref, new0, new1) -> bool:
+    """把 `ref` 那块色块按峰的新两端画上。哪头对哪头**按原色**认：色块上与峰起端原色更近的那头取新起端
+    （与坐标变换无关，反转坐标轴前后热态 == 重放）。"""
+    hit = _swatch_rows(coll, ref)
+    if hit is None:
+        return False
+    other, rows = hit
     base = _remember_base(other)
     fc = _gradient_source_colors(other)
     if len(fc) != len(base):
-        return
+        return False
     start = _gradient_base_colors(coll)[peak_order[0], :3]
     if np.abs(base[rows[-1], :3] - start).sum() < np.abs(base[rows[0], :3] - start).sum():
         rows = rows[::-1]
     fc[rows] = _gradient_recolor(base, rows, new0, new1)
     other.set_facecolor(fc)
-    setattr(coll, _GRAD_LINKED, (other, rows, (ci, gi)))
+    return True
 
 
 def _gradient_apply(coll, value) -> None:
     """`value` = `{"stops": [起端, 止端], "legend": [集合, 色块] | null}`：保留深浅节奏换两端颜色，跟着改的图例色块
-    一起换（`legend` 缺席 = 自动配对）；数组（还原）原样写回，并把跟着改过的色块还原。"""
-    _gradient_unlink(coll)
+    一起换（`legend` 缺席 = 自动配对）；数组（还原）原样写回，并清掉这个峰的跟随状态。
+    色块颜色随后按子图整体重算（`_gradient_refresh_swatches`）。"""
+    setattr(coll, _GRAD_LINKED, None)
+    ax = getattr(coll, "axes", None)
     if not isinstance(value, dict):
         coll.set_facecolor(value)
         coll._mm_gradient_explicit_off = False
+        if ax is not None:
+            _gradient_refresh_swatches(ax)
         return
     info = gradient_detect(coll)
     pair = value.get("stops")
     if info is None or not isinstance(pair, (list, tuple)) or len(pair) != 2:
+        if ax is not None:
+            _gradient_refresh_swatches(ax)
         return
     base = _remember_base(coll)
     ss = value.get("screen_start")
@@ -4412,8 +4447,10 @@ def _gradient_apply(coll, value) -> None:
         cand = gradient_legend_candidates(coll)
         ref = cand["auto"] if cand else None
         coll._mm_gradient_explicit_off = False
-    if ref is not None:
-        _gradient_link(coll, order, ref, pair[0], pair[1])
+    if ref is not None and _swatch_rows(coll, ref) is not None:
+        setattr(coll, _GRAD_LINKED, (tuple(int(v) for v in ref), order, pair[0], pair[1]))
+    if ax is not None:
+        _gradient_refresh_swatches(ax)
 
 
 #: Collection family（PathCollection / PolyCollection / LineCollection /
