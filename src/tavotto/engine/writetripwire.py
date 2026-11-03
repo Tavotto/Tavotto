@@ -44,6 +44,10 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
 在被删除的文件处 `mkdir`、`shutil.move` 进项目目录且同名项已在项目里、`copytree` 的源目录同时存在于项目与暂存区、`symlink|link|truncate`。
 未包装、所以看不到暂存区的**读**（只能文档化，没法失败）：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir`。
 
+**隔离重放（QA-WIN-51，只属于写回校验）**：`install_isolation(暂存目录, 写回目标们)` 复用上面这套包装，但只改道那几个精确文件，
+没有授权根绊线；审计钩子只盯这些目标，改道层不能忠实模拟的写（`os.truncate|symlink|link`、目录级改动）在落到原件之前失败。
+条目 `isolate-dir:` / `isolate-file:` 同样放进 `write_roots`（`isolate_entries` / `split_isolation`），不与授权根混用。
+
 纯标准库、**不 import 任何兄弟模块**：它装进 worker 的私有包（`worker._ENGINE_MODULES`）。
 """
 
@@ -97,8 +101,13 @@ _MAX_RECORDED = 8
 #: 改道模式的两个条目前缀（放进 `write_roots` 元组里随现有通道走：spec / argv / 池键 / 影子脚本键都不用改）。
 REDIRECT_PROJECT_PREFIX = "redirect-project:"
 REDIRECT_DIR_PREFIX = "redirect-dir:"
+#: 隔离重放模式（写回校验用，见 `install_isolation`）：一个暂存目录 + 若干个「写回目标文件」。同样放进 `write_roots` 元组随现有通道走。
+ISOLATE_DIR_PREFIX = "isolate-dir:"
+ISOLATE_FILE_PREFIX = "isolate-file:"
 
 _state: dict = {
+    "only": None,  # 隔离模式：{目标 normcase 真实路径: 目标真实路径}；None = 普通（项目级）改道
+    "only_fold": {},  # 隔离模式里目录不区分大小写的目标：小写路径 → 上面的键
     "redirect": None,  # (项目真实路径, 项目 normcase 路径, 改道区真实路径, 改道区 normcase 路径)
     "redirect_installed": False,
     "whiteouts": set(),  # 本窗口里被删除 / 改名走的项目路径（键 = normcase 的项目相对路径）
@@ -298,6 +307,12 @@ def _hook(event: str, args: tuple) -> None:
             # 相对 `dir_fd` 的相对路径解析不出（盲区，见模块头）；绝对路径时 dir_fd 被操作系统忽略
             if dir_fd not in (None, -1) and not os.path.isabs(raw):
                 continue
+            if _state.get("only") is not None:
+                # 隔离重放：只有写回目标本身算越界（能改道的写到这里时路径已经是暂存区里的）
+                real = _norm(raw)
+                if _match_target(real) is not None:
+                    _violation(event, real)
+                continue
             real = _norm(raw)
             if not allowed(real, _state["roots"], event):
                 if event == "os.mkdir" and os.path.isdir(raw):
@@ -326,6 +341,8 @@ def install(roots, *, display_base: str = "", redirect: tuple[str, str] | None =
     _state["violations"] = []
     _state["redirected"] = []
     _state["whiteouts"] = set()
+    _state["only"] = None
+    _state["only_fold"] = {}
     if redirect is None:
         _state["redirect"] = None
     else:
@@ -341,6 +358,70 @@ def install(roots, *, display_base: str = "", redirect: tuple[str, str] | None =
     if not _state["installed"]:
         sys.addaudithook(_hook)
         _state["installed"] = True
+
+
+def install_isolation(directory: str, files, *, display_base: str = "") -> None:
+    """隔离重放（写回校验）：脚本对 `files`（写回目标，项目里的原件）的**写**换到 `directory` 里的副本，别的写原样。
+
+    与项目级改道（`install(redirect=…)`）共用同一套包装（写时复制 / 读回 / 白名单 / 失败即关闭），区别只有两点：
+
+    * 只改道 `files` 这一小撮**精确路径**（规范化真实路径比较；不区分大小写的卷按小写折叠），项目里其余文件的写行为一字不变，
+      也**没有**授权根绊线（不会把别的写变成 `write_outside_roots`）；
+    * 审计钩子只盯这些目标：改道层没法忠实模拟的写（`os.truncate|symlink|link`、目录级改动……）落到原件之前就在审计事件里失败
+      （`write_outside_roots`），写回宁可整体失败也不让重放改动原件。C 层写 / 外部进程 / 硬链接别名看不见（同绊线盲区）。"""
+    real_files: dict[str, str] = {}
+    fold: dict[str, str] = {}
+    for f in files:
+        rp = os.path.realpath(os.fspath(f))
+        key = os.path.normcase(rp)
+        real_files[key] = rp
+        if folds_case(os.path.dirname(key)):
+            fold[key.lower()] = key
+    if not real_files:
+        raise ValueError("隔离重放需要至少一个目标文件")
+    dirs = {os.path.dirname(rp) for rp in real_files.values()}
+    try:
+        project = os.path.commonpath(sorted(dirs))
+    except ValueError as exc:  # 跨盘符：没有共同父目录
+        raise ValueError("隔离重放的目标必须在同一个盘上") from exc
+    _state["roots"] = ()
+    _state["display_base"] = _real(display_base) if display_base else ""
+    _state["violations"] = []
+    _state["redirected"] = []
+    _state["whiteouts"] = set()
+    os.makedirs(directory, exist_ok=True)
+    rd = os.path.realpath(directory)
+    pr = os.path.realpath(project)
+    _state["redirect"] = (pr, os.path.normcase(pr), rd, os.path.normcase(rd))
+    _state["only"] = real_files
+    _state["only_fold"] = fold
+    folds_case(os.path.normcase(pr))
+    _install_redirect()
+    if not _state["installed"]:
+        sys.addaudithook(_hook)
+        _state["installed"] = True
+
+
+def isolate_entries(directory: str, files) -> tuple[str, ...]:
+    """隔离重放的 `write_roots` 条目：一个暂存目录 + 每个写回目标一条。"""
+    return (ISOLATE_DIR_PREFIX + str(directory), *(ISOLATE_FILE_PREFIX + str(f) for f in files))
+
+
+def split_isolation(entries) -> tuple[list[str], tuple[str, list[str]] | None]:
+    """`write_roots` → (其余条目, (暂存目录, 目标文件们) | None)。有文件没目录（或反之）是配置错误（ValueError）。"""
+    rest: list[str] = []
+    directory = None
+    files: list[str] = []
+    for e in entries:
+        if e.startswith(ISOLATE_DIR_PREFIX):
+            directory = e[len(ISOLATE_DIR_PREFIX) :]
+        elif e.startswith(ISOLATE_FILE_PREFIX):
+            files.append(e[len(ISOLATE_FILE_PREFIX) :])
+        else:
+            rest.append(e)
+    if (directory is None) != (not files) or (directory is not None and not directory):
+        raise ValueError("隔离重放需要一个 isolate-dir 和至少一个 isolate-file 条目")
+    return rest, (None if directory is None else (directory, files))
 
 
 def arm(on: bool) -> None:
@@ -403,6 +484,14 @@ def _resolve(raw):
         rn = os.path.normcase(rp)
         if _under(rn, [rdir_n]) or not _under(rn, [project_n]):
             return None
+        if _state.get("only") is not None:
+            # 隔离重放：只认写回目标（精确文件）；键与路径都取登记时的那一份，大小写不同的写法落到同一个暂存副本
+            key = _match_target(rn)
+            if key is None:
+                return None
+            rp = _state["only"][key]
+            rel = os.path.relpath(rp, project)
+            return rp, key, os.path.join(rdir, rel)
         rel = os.path.relpath(rp, project)
         if rel == os.pardir or rel.startswith(os.pardir + os.sep):
             return None
@@ -414,6 +503,16 @@ def _resolve(raw):
         _rtls.busy = prev
 
 
+def _match_target(rn: str) -> str | None:
+    """隔离模式：规范化路径 `rn` 是不是写回目标；是就回目标的规范键。不区分大小写的卷按小写折叠。"""
+    only = _state.get("only")
+    if only is None:
+        return None
+    if rn in only:
+        return rn
+    return _state.get("only_fold", {}).get(rn.lower())
+
+
 def _white(key: str) -> bool:
     return key in _state["whiteouts"]
 
@@ -423,6 +522,8 @@ def _trip_if_project_link(op: str, raw) -> None:
     把「删别名」模拟成「删目标」。项目里的符号链接不模拟，失败即关闭。"""
     if isinstance(raw, int) or not isinstance(raw, (str, bytes, os.PathLike)):
         return
+    if _state.get("only") is not None and _resolve(raw) is None:
+        return  # 隔离重放：只有指向写回目标的链接才算
     try:
         lexical = os.path.abspath(os.fsdecode(os.fspath(raw)))
         inside = os.path.islink(lexical) and _under(
@@ -789,6 +890,10 @@ def _w_copy2(orig):
             return orig(src, dst, follow_symlinks=follow_symlinks)
         if os.path.isdir(dst):
             dst = os.path.join(dst, os.path.basename(src))
+        if _state.get("only") is not None and _resolve(src) is None and _resolve(dst) is None:
+            return orig(
+                src, dst, follow_symlinks=follow_symlinks
+            )  # 隔离重放：与写回目标无关的拷贝原样
         shutil.copyfile(src, dst, follow_symlinks=follow_symlinks)
         shutil.copystat(src, dst, follow_symlinks=follow_symlinks)
         return dst

@@ -1508,6 +1508,18 @@ class Worker(wireproto.V1Handler):
         会话沙盒与会话缓存目录（`out/` 的上一级：out / sandbox / export / worker.log）是引擎自己的；
         matplotlib 的缓存 / 配置目录要在 matplotlib 已 import 之后才知道。其余基础设施目录（临时目录、平台缓存、
         seaborn / sklearn 数据目录）见 `writetripwire.infrastructure_roots`，每一项都带理由。"""
+        try:
+            rest, isolation = writetripwire.split_isolation(self.write_roots)
+        except ValueError as exc:
+            raise SystemExit(f"--write-roots: {exc}") from exc
+        if isolation is not None:
+            # 写回校验的隔离重放：只把写回目标的写换到暂存副本，不装授权根绊线（其它写原样）；不能与授权根混用
+            if rest:
+                raise SystemExit("--write-roots: 隔离重放条目不能与授权根 / 改道条目混用")
+            writetripwire.install_isolation(
+                isolation[0], isolation[1], display_base=str(self.figures_dir)
+            )
+            return
         extra = [self.sandbox, self.out_dir.parent]
         for getter in ("get_cachedir", "get_configdir"):
             try:
@@ -2013,24 +2025,6 @@ class Worker(wireproto.V1Handler):
             run_config=self.run_config,
         )
 
-    def _project_writes(self) -> list[str]:
-        """这次 build 里脚本带写意图碰过的**项目内**路径（绝对路径，去重）。
-
-        写回事务用它认出「一次性重放自己改写了写回目标」（脚本经文件对象 `savefig(handle)` 写项目里的
-        PNG 之类），把这些目标的身份基线挪到重放之后——否则自己的写被当成外部改动。来源是
-        `_WRITE_ATTEMPTS`（审计钩子在写发生那一刻记下，路径已按当时 cwd 解成绝对）；它有容量上限、
-        满了会丢最旧的——丢了只会让写回多一次保守的 409，不会漏判外部改动。"""
-        root = os.path.normcase(os.path.realpath(self.figures_dir))
-        out: list[str] = []
-        for absolute in list(_WRITE_ATTEMPTS.values()):
-            try:
-                real = os.path.realpath(absolute)
-                if os.path.normcase(real).startswith(root + os.sep) and real not in out:
-                    out.append(real)
-            except (OSError, ValueError):
-                continue
-        return out
-
     def _stems_summary(self) -> dict:
         # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
         # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
@@ -2332,8 +2326,6 @@ class Worker(wireproto.V1Handler):
         """
         return {
             **self._stems_summary(),
-            # 加字段，只在 v1 出现（legacy 形状不变）：写回事务据此区分「重放自己写的」与外部改动
-            "project_writes": self._project_writes(),
             "descriptors": self._descriptor_cache,
             "savefig_observations": self.session.savefig_observations.report(),
             **(

@@ -50,6 +50,7 @@ from . import (
     sysmem,
     texdiag,
     workdir,
+    writetripwire,
 )
 
 LOG = logging.getLogger("tavotto.engine")
@@ -3032,7 +3033,6 @@ class EngineWorker:
         self.last_build_descriptors: list = []
         #: 本次 build 里写进 `PdfPages` 的摘要（`figcapture.PdfPagesLedger.summary`；写回守卫用，#1370）
         self.last_build_pdf_pages: list = []
-        self.last_build_project_writes: list = []
         #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
@@ -3572,7 +3572,6 @@ class EngineWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
-        self.last_build_project_writes = list(resp.get("project_writes") or [])
         self.last_build_runtime = _runtime_of(resp)
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
@@ -3589,7 +3588,6 @@ class EngineWorker:
             self.build_failed = True
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
-            self.last_build_project_writes = []
             self.last_build_source_sha256 = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
@@ -4003,7 +4001,6 @@ class WorkerdWorker:
         self.last_build_descriptors: list = []
         #: 本次 build 里写进 `PdfPages` 的摘要（`figcapture.PdfPagesLedger.summary`；写回守卫用，#1370）
         self.last_build_pdf_pages: list = []
-        self.last_build_project_writes: list = []
         self.last_build_runtime: dict | None = None
         self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
@@ -4120,7 +4117,6 @@ class WorkerdWorker:
         self.built = False
         self.last_build_descriptors = []
         self.last_build_pdf_pages = []
-        self.last_build_project_writes = []
 
     def _log_tail(self, n: int = 30) -> str:
         # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
@@ -4337,7 +4333,6 @@ class WorkerdWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
-        self.last_build_project_writes = list(resp.get("project_writes") or [])
         self.last_build_runtime = _runtime_of(resp)
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
@@ -4354,7 +4349,6 @@ class WorkerdWorker:
             self.build_failed = True
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
-            self.last_build_project_writes = []
             self.last_build_source_sha256 = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
@@ -4836,8 +4830,14 @@ def one_shot(
     run=None,
     pinned: EnvironmentDecision | None = None,
     write_roots=None,
+    isolate_writes=None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
+
+    `isolate_writes`（仅写回校验用）：写回目标文件（项目里的原件）的绝对路径们。重放期间脚本对它们的**写**
+    （`open("wb")` / `savefig(handle)` / `os.open` / `os.replace` 到目标 ……）被换到本 worker 目录里的暂存副本，
+    原件在重放期间逐字节不变，所以调用方拿 prepare 时的指纹当基线就不会把重放自己的写误判成外部改动。
+    机制见 `writetripwire.install_isolation`；暂存副本随 `discard()` 删掉整个 worker 目录一起消失。不与 `write_roots` 同用。
 
     热会话是长期活着的：build 之后经历过任意多次 override / 还原，applied 与
     originals 两表就是一份增量历史。写回要保证的是「重开这个项目、按这组
@@ -4876,6 +4876,13 @@ def one_shot(
         if write_roots is not None:
             # #898：冷重放也装同一份绊线（verify_replay / 写回重放跑的是「再跑一遍用户脚本」）
             context["write_roots"] = write_roots
+        if isolate_writes:
+            if write_roots is not None:
+                raise ValueError("isolate_writes 不能与 write_roots 同用")
+            # 暂存区放在一次性 worker 自己的目录里：discard() 删整个 base 时一并清掉
+            context["write_roots"] = writetripwire.isolate_entries(
+                base / "isolate", [str(p) for p in isolate_writes]
+            )
         if pinned is not None and pinned.pinned:
             # 写回重放钉热会话自己的解释器与环境代：项目记录可能已被同项目的另一个脚本换成别的（#820 r4221133372）
             context["pinned"] = pinned
