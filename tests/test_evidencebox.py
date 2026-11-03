@@ -201,6 +201,8 @@ def test_research_matrix_really_imports_its_sibling_modules():
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert out.returncode == 0, out.stderr
     assert B.json.loads(out.stdout)["include"]

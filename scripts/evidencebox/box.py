@@ -81,7 +81,15 @@ ENGINE_CASES = (
 def sh(
     argv: list[str], *, check: bool = True, capture: bool = False, **kw
 ) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, check=check, text=True, capture_output=capture, **kw)
+    return subprocess.run(
+        argv,
+        check=check,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=capture,
+        **kw,
+    )
 
 
 def git(*args: str, cwd: Path = CONTROL) -> str:
