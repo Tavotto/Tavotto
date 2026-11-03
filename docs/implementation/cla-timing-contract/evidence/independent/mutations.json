@@ -1,0 +1,112 @@
+[
+  {
+    "name": "remaining-clock",
+    "unique_landing_count": 1,
+    "before": "const remaining=proof.expires_at*1000-input.dispatch_at_ms;",
+    "after": "const remaining=120000;",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "05bcce39402f5f4752dd302be066b521ebe875d4a153c659ede79704d98c054b",
+    "test": "timing-independent.test.mjs",
+    "pattern": "fractional dispatch"
+  },
+  {
+    "name": "authority-cap",
+    "unique_landing_count": 1,
+    "before": "proof.expires_at>input.authority_expires_at",
+    "after": "false",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "c445994780802f555b1048ca651a550d83f158492362c8eba0e4d85f057a3399",
+    "test": "timing-independent.test.mjs",
+    "pattern": "authority ceiling"
+  },
+  {
+    "name": "proof-strict-expiry",
+    "unique_landing_count": 1,
+    "before": "if(criticalPath>=remaining)",
+    "after": "if(criticalPath>remaining)",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "05e3f148ed61176dd8de11ba6425fbce57a156550def5b3e9e9307512f97a128",
+    "test": "timing-plan.test.mjs",
+    "pattern": "critical path equality"
+  },
+  {
+    "name": "first-poll-readiness",
+    "unique_landing_count": 1,
+    "before": "if(readyAfterEvent<start)",
+    "after": "if(readyAfterEvent<=start)",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "5fe37991d4932bb142ac08d45b90e93786b79188f41ddaaf3a3a623c76691af2",
+    "test": "timing-independent.test.mjs",
+    "pattern": "single-shot earliest read"
+  },
+  {
+    "name": "last-poll-readiness",
+    "unique_landing_count": 1,
+    "before": "if(readyAfterEvent>=start+(wait.maxAttempts-1)*wait.intervalMs)",
+    "after": "if(readyAfterEvent>start+(wait.maxAttempts-1)*wait.intervalMs)",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "b0ecdce8fc8b6cb0b6b59fd939a230fc12739df75a33c3c1c7f9db065d48455f",
+    "test": "timing-plan.test.mjs",
+    "pattern": "readiness at the final earliest poll"
+  },
+  {
+    "name": "pending-duration",
+    "unique_landing_count": 1,
+    "before": "(wait.maxAttempts-1)*(wait.intervalMs+b.pending_read_ms)",
+    "after": "(wait.maxAttempts-1)*wait.intervalMs",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "2b79c21d14c92cbf50ba882ec8153e88eed4a6401ef1ca182912802b0d4059ae",
+    "test": "timing-independent.test.mjs",
+    "pattern": "latest pending schedule"
+  },
+  {
+    "name": "withdrawal-load",
+    "unique_landing_count": 1,
+    "before": "+l.withdrawals_in_window*l.withdrawal_pass_ms",
+    "after": "+0",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "122bd602a159b57e3024d13985d6112d7ada801fcec148883cae941756dd6c7d",
+    "test": "timing-independent.test.mjs",
+    "pattern": "withdrawal ahead"
+  },
+  {
+    "name": "confirmation-sql",
+    "unique_landing_count": 1,
+    "before": "confirmationWork=16+q*n+s.confirmation_work",
+    "after": "confirmationWork=16+q*n",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "5f1a6ccd3ec09f0ca6831a424c12063db4e80004d06d30eb83e9f8f35c608545",
+    "test": "timing-independent.test.mjs",
+    "pattern": "SQL phases"
+  },
+  {
+    "name": "correction-requests",
+    "unique_landing_count": 1,
+    "before": "e.confirmation_total<e.confirmation_work+5",
+    "after": "e.confirmation_total<e.confirmation_work",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "47b92de0f15a1d1f50f8cc7276fc65572c81b951d5870a0a08f45f1945d4ba8e",
+    "test": "timing-independent.test.mjs",
+    "pattern": "SQL phases"
+  },
+  {
+    "name": "runtime-acceptance",
+    "unique_landing_count": 1,
+    "before": "runtime_eligibility:false",
+    "after": "runtime_eligibility:true",
+    "baseline_exit": 0,
+    "mutant_exit": 1,
+    "mutant_sha256": "766e0e7f257e3e39e8ece21ebeee8a2224df2150f679e7c2d7e472048737a7f8",
+    "test": "timing-independent.test.mjs",
+    "pattern": "model feasibility never grants"
+  }
+]

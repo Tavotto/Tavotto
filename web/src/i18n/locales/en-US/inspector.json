@@ -1070,6 +1070,7 @@
     "cjkFallbackAuto": "Automatic",
     "cjkFallbackShadowed": "Choose an English font without Chinese characters.",
     "latinFont": "English font",
+    "cjkPrefix": "CJK",
     "alignCenter": "Center",
     "alignLeft": "Align left",
     "alignRight": "Align right",

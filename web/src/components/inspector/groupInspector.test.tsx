@@ -20,6 +20,7 @@ import { literal, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import type { Manifest } from '@/lib/api'
 import { Inspector } from './Inspector'
+import { ancestorsOf, structuralParent } from './roles/hierarchy'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -139,6 +140,7 @@ async function mount(select: string) {
 
 const title = () => document.querySelector('h2')?.textContent ?? ''
 const crumbs = () => [...document.querySelectorAll('[data-crumb]')].map((b) => (b as HTMLElement).dataset.crumb)
+const ancestors = (gid: string) => ancestorsOf(structuralParent(manifest), gid)
 const groupName = t('modelGroup.sharedColorbar', { ns: 'inspector', members: '子图 2、子图 3' })
 
 beforeEach(async () => {
@@ -168,7 +170,7 @@ describe('选中组 → 组页', () => {
     expect(document.querySelector('[data-object-kind]')).toBeNull()
     expect(document.querySelector('[data-group-page]')).not.toBeNull()
     // 面板上有一条 override：「没选元素」的头会挂恢复整张图的菜单，组的头不挂
-    expect(document.querySelectorAll('header p button:not([data-crumb])')).toHaveLength(0)
+    expect(document.querySelectorAll('header p button')).toHaveLength(0)
   })
 
   it('成员逐个列出（色条轴换成它的色条），点一下选中那个成员', async () => {
@@ -235,26 +237,23 @@ describe('选中组 → 组页', () => {
   )
 })
 
-describe('面包屑走真实父级', () => {
-  it('组里的子图：整张图 / 组，点组回到组', async () => {
+describe('祖先链走真实父级（头部面包屑 2026-11-03 撤掉，导航在元素树）', () => {
+  it('组里的子图：整张图 / 组；头部没有面包屑按钮', async () => {
     await mount('axes_2')
-    expect(crumbs()).toEqual(['figure', GROUP])
-    await act(async () => {
-      ;(document.querySelector(`[data-crumb="${GROUP}"]`) as HTMLElement).click()
-    })
-    expect(useUiStore.getState().selectedGids).toEqual([GROUP])
+    expect(crumbs()).toEqual([])
+    expect(ancestors('axes_2')).toEqual(['figure', GROUP])
   })
 
-  it('共享色条：整张图 / 组 / 色条——色条轴这一级不单列', async () => {
+  it('共享色条：祖先链里有组', async () => {
     await mount('axes_3.colorbar')
-    expect(crumbs()).toEqual(['figure', GROUP])
-    const text = document.querySelector('header p')?.textContent ?? ''
-    expect(text).toContain(groupName)
-    expect(text).not.toContain('色条轴')
+    expect(crumbs()).toEqual([])
+    expect(ancestors('axes_3.colorbar')).toContain(GROUP)
+    expect(document.querySelector('header')?.textContent ?? '').not.toContain('色条轴')
   })
 
   it('单宿主色条：上一级是宿主子图，不是色条轴', async () => {
     await mount('axes_4.colorbar')
-    expect(crumbs()).toEqual(['figure', 'axes_0'])
+    expect(crumbs()).toEqual([])
+    expect(ancestors('axes_4.colorbar')).toContain('axes_0')
   })
 })

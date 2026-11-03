@@ -45,9 +45,9 @@ test('流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、
   await page.getByRole('treeitem', { name: /^标题/ }).click()
 
   const panel = inspector(page)
-  // 两行字体和字号都是可见文字（不是只有 aria-label）
-  await expect(panel.getByText('中文字体', { exact: true })).toBeVisible()
-  await expect(panel.getByText('英文字体', { exact: true })).toBeVisible()
+  // 字体一行两格：英文 / 中文两个下拉各挂自己的 data-prop 锚点
+  await expect(panel.locator('[data-prop="fontfamily"] [data-select-trigger]')).toBeVisible()
+  await expect(panel.locator('[data-prop="fontfamily.fallback"] [data-select-trigger]')).toBeVisible()
   await expect(panel.getByText('字号', { exact: true })).toBeVisible()
   await expect(panel.getByText('颜色', { exact: true })).toBeVisible()
 

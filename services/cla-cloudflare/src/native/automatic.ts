@@ -5,7 +5,7 @@ import {validId,validSha} from '../core/policy.ts';
 import {Rejected} from '../core/types.ts';
 import type {LiveService} from './service.ts';
 import {DB_NOW} from './store.ts';
-import {BudgetDeferred,FREE_BUDGET,qualificationSQL} from './budget.ts';
+import {BudgetDeferred,CONFIRMATION_FIXED_SQL,FREE_BUDGET,newHeadReservedSQL,qualificationSQL} from './budget.ts';
 interface HeadRequest {request_key:string;pr:number;head:string;status:string;attempt:string;lease_until:number}
 // A separate scheduled invocation keeps both queues' existing per-invocation budgets intact.
 export const AUTOMATIC_CRON='7-59/15 * * * *';
@@ -51,11 +51,11 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
     WHERE request_key=(SELECT request_key FROM head_requests WHERE status='pending' AND (${s.c.automaticPublishingEnabled?s.store.positiveAdmission(s.c.confirmationSlotEnabled===true):'1'}) ORDER BY created,request_key LIMIT 1) AND status='pending' RETURNING *`,attempt)]);
   if(result.some(r=>!r.success))throw new Rejected('transaction_rejected');const job=result[0]?.results[0];if(!job)return 'idle';
   try {
-    const check=await s.evaluate(job.pr,s.c.automaticPublishingEnabled?(s.c.confirmationSlotEnabled===true?8:7):5);
+    const check=await s.evaluate(job.pr,newHeadReservedSQL(s.c));
     if(check.headSha!==job.head)throw new Rejected('automatic_head_changed');
     if(s.c.automaticPublishingEnabled) {
       const exempt=new Set(Object.values(s.c.exemptionIds));
-      if(16+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exempt.has(person.id)).length>FREE_BUDGET.sqlWork)throw new BudgetDeferred('confirmation_capacity');
+      if(CONFIRMATION_FIXED_SQL+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exempt.has(person.id)).length>FREE_BUDGET.sqlWork)throw new BudgetDeferred('confirmation_capacity');
       let issued:string|undefined;
       try {
         const receipt=await s.github.publishNew(check,async()=>{

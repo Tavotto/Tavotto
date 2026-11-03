@@ -1,0 +1,99 @@
+[
+  {
+    "argv": [
+      "node",
+      "--input-type=module",
+      "-e",
+      "import assert from 'node:assert/strict';import {timingPlan} from './scripts/timing-plan.mjs';import {assumptions} from './tests/timing-plan-fixture.mjs';const c=assumptions();c.bounds.send_settle_ms=70000;c.ci.start_after_event_ms=73000;c.ci.wait={enabled:false};const p=timingPlan(c);console.log(JSON.stringify({model_feasible:p.model_feasible,reasons:p.reasons,send_settle_ms:c.bounds.send_settle_ms}));assert.equal(p.model_feasible,false);"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 1,
+    "log": "dispatch-original-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=timing CLI refuses a FIFO",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 1,
+    "log": "fifo-original-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 0,
+    "log": "target-green.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=timing dispatch work",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 0,
+    "log": "mutation-1-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=timing dispatch work",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-p2-6e12bd49/mutants/1",
+    "exit": 1,
+    "log": "mutation-1-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=timing CLI refuses a FIFO before reading without blocking",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 0,
+    "log": "mutation-2-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=timing CLI refuses a FIFO before reading without blocking",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-p2-6e12bd49/mutants/2",
+    "exit": 1,
+    "log": "mutation-2-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--input-type=module",
+      "-e",
+      "import assert from 'node:assert/strict';import {timingPlan} from './scripts/timing-plan.mjs';import {assumptions} from './tests/timing-plan-fixture.mjs';const c=assumptions();c.bounds.dispatch_work_ms=70000;c.bounds.send_settle_ms=70000;c.ci.start_after_event_ms=73000;c.ci.wait={enabled:false};const p=timingPlan(c);console.log(JSON.stringify({model_feasible:p.model_feasible,reasons:p.reasons,dispatch_work_ms:c.bounds.dispatch_work_ms,send_settle_ms:c.bounds.send_settle_ms}));assert.equal(p.model_feasible,false);"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 0,
+    "log": "dispatch-final-green.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "scripts/timing-plan.mjs",
+      "planning/timing.disabled.synthetic.json"
+    ],
+    "cwd": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare",
+    "exit": 2,
+    "log": "disabled-example.txt"
+  }
+]

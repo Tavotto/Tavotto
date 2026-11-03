@@ -435,3 +435,23 @@ def test_answering_the_recommended_mode_makes_the_relative_glob_script_draw(tmp_
     assert worker.spec.cwd_mode == execspec.CWD_PROJECT
     assert Path(resp["runtime"]["cwd"]).resolve() == root.resolve()
     assert not (root / "longrun_summary.png").exists()
+
+
+def test_speculative_environment_prefetch_waits_for_the_workdir_gate(tmp_path, monkeypatch):
+    """首开要问工作目录时，解析解释器那段的投机事实预取也不许起：门之前一个进程都不起（与机器上有没有别的
+    Python 无关——CI 的 macOS 上 `/Library/...` 有解释器，预取就真去探了）。"""
+    root = _project(tmp_path, ROOT_ONLY, {"data/x.csv": "x\n"})
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda *a, **k: ("/nonexistent/python", "system")
+    )
+    started = []
+    monkeypatch.setattr(
+        engine_pool,
+        "ENVIRONMENT_PREFETCHERS",
+        [lambda figures_dir, script_name: lambda: started.append(script_name)],
+    )
+    monkeypatch.setattr(engine_pool, "ENVIRONMENT_DECIDERS", [lambda *a, **k: None])
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.get("s/fig.py", str(root), "__main__")
+    assert err.value.code == workdir.ERROR_CONFIRMATION_REQUIRED
+    assert started == []
