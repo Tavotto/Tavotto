@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "repository": "erwanjun/cla-e2e-sandbox-20261026",
+  "repositoryId": 1434279607,
+  "origin": "https://cla-staging.tavotto.com",
+  "appId": 5480322,
+  "appSlug": "erwanjun-cla-e2e-20261026",
+  "checkName": "Tavotto CLA (staging)",
+  "wait": {
+    "enabled": false
+  }
+}
