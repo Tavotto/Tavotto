@@ -4751,6 +4751,14 @@ def register_environment_decider(decider) -> None:
         ENVIRONMENT_DECIDERS.append(decider)
 
 
+def _workdir_needs_confirmation(figures_dir: str, script_name: str) -> bool:
+    """`_workdir_gate` 的只读版：此刻会不会要用户确认。读不了证据按「要问」算——投机宁可不做。"""
+    try:
+        return bool(workdir.decision_for(figures_dir, script_name)["needs_confirmation"])
+    except Exception:  # noqa: BLE001 —— 只用来决定投不投机，失败就不投机
+        return True
+
+
 def _workdir_gate(figures_dir: str, script_name: str) -> None:
     """工作目录那道门（U03，ADR 0057 §三）：要问就抛带 `confirmation` 载荷的
     `workdir_confirmation_required`。起新会话（`_new_worker`）与复用**没 build 成的**会话（`acquire`）
@@ -5210,7 +5218,11 @@ def _acquire(
         # 子进程——跑在下面那道「决定前先问空操作」的硬挡**之前**，放进来就绕过了它。
         if not decided and ENVIRONMENT_PREFETCHERS and current_purpose() != PURPOSE_PREWARM:
             _w0 = _workers.get(key)  # 已有活会话：多半能复用、用不着决定，不投机
-            if _w0 is None or not _w0.alive():
+            # 工作目录那道门（`_workdir_gate`，ADR 0057 §三）要问时一个进程都不许起：预取在门**之前**，这里只读
+            # 判一次，要问就不投机；真正的报错仍由下面原来的顺序抛出。
+            if (_w0 is None or not _w0.alive()) and not _workdir_needs_confirmation(
+                figures_dir, script_name
+            ):
                 prefetch = [
                     t for t in (f(figures_dir, script_name) for f in ENVIRONMENT_PREFETCHERS) if t
                 ]
