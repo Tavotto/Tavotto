@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import fcntl
 import json
 import os
 import re
@@ -611,6 +610,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ROOT.mkdir(parents=True, exist_ok=True)
     RUNS.mkdir(parents=True, exist_ok=True)
+    import fcntl  # 只在证据机（Linux）上用到；模块顶层不导入，看护用例在 Windows 上也要能 import
+
     with open(LOCK, "w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -63,7 +63,7 @@ def test_explore_shards_use_the_same_isolated_constructor(shards, monkeypatch, t
 
     monkeypatch.setattr(B, "RUNS", tmp_path)
     monkeypatch.setattr(B, "build_image", lambda *a, **k: "img")
-    monkeypatch.setattr(B.os, "chown", lambda *a: None)
+    monkeypatch.setattr(B.os, "chown", lambda *a: None, raising=False)  # Windows 的 os 没有 chown
     monkeypatch.setattr(B.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(B, "run_container", lambda *a, **k: 0)
     assert B.task_guardian_explore(SHA, 42, shards, 60) == 0
@@ -88,7 +88,7 @@ def test_every_container_hard_disables_phone_home():
 
 def test_novice_container_mounts_only_its_script_and_run_directory():
     argv = B.novice_argv(Path("/n.sh"), OUT)
-    assert _flag_values(argv, "-v") == ["/n.sh:/novice.sh:ro", f"{OUT}:/out:rw"]
+    assert _flag_values(argv, "-v") == [f"{Path('/n.sh')}:/novice.sh:ro", f"{OUT}:/out:rw"]
     assert "--rm" in argv and "--privileged" not in argv and "docker.sock" not in " ".join(argv)
 
 
