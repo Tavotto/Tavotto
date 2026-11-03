@@ -1334,7 +1334,7 @@ def _ft_font(path: str, face_index: int = 0):
     return hit or None
 
 
-def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
+def _resolved_font_paths(families, file=None, props=None) -> list[tuple[str, int]]:
     """这段文字**真正会用到**的 (字体文件, 面索引)，按 matplotlib 自己的回退顺序。
 
     走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
@@ -1356,10 +1356,17 @@ def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
     matplotlib 画字**只用那一个文件的那一张脸**（路径带的面索引，`overrides.font_face_index`；
     3.10 及以前恒为第 0 张）、族列表整个不看——这里照实只报它。
     按族列表算的话，中文会被说成「回退链画出来了」，而图上是方框。
+
+    `props` 是文字自己的完整 `FontProperties`（粗细 / 斜体 / 字形变体 / 拉伸 / 字号——findfont 看的全部）。
+    给了就按它解析：matplotlib 画 `fontweight='bold'` 的文字用的是 Bold 那个文件，只传族列表会解析到
+    Regular（ADR 0164 的文件级身份据此认脸，错一个就是 sha256 与粗斜标志都错）。不给 = 只按族列表（既有行为）。
     """
     if file is not None:
         return [(str(file), font_face_index(file))]
-    prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
+    if props is not None:
+        prop = props
+    else:
+        prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
     try:
         found = font_manager.fontManager._find_fonts_by_props(prop)
     except (AttributeError, TypeError, ValueError, RuntimeError):
@@ -1465,16 +1472,19 @@ def _face_source(path: str, face_index: int, ft) -> dict | None:
     }
 
 
-def face_sources(text: str, families, file=None) -> dict:
+def face_sources(text: str, families, file=None, props=None) -> dict:
     """这段文字实际由哪几张**文件级**的脸画：`face_src`（正文脸，族链解析到的第一张）与
     `cjk_src`（回退链上画了第一个中日韩字符的那张；正文脸自己画得出汉字时没有）。
 
     与 `font_faces` / `_glyph_scan` 走同一条解析链（`_resolved_font_paths`），所以「报的身份」==
     「matplotlib 实际画的脸」。给「复制为画布文字标注」当 `sourceFont`：**字体文件**随图 PDF 里的
-    子集嵌入，但文档里只记身份。解析不出 / 文件读不了 → 键缺席（不编造）。"""
+    子集嵌入，但文档里只记身份。解析不出 / 文件读不了 → 键缺席（不编造）。
+
+    `props` = 文字的完整 `FontProperties`（带粗细 / 斜体等）：`fontweight='bold'` 的普通文字画的是 Bold 文件，
+    身份必须是它。manifest 里调用方一律传；不传 = 只按族列表。"""
     resolved = [
         (p, i, ft)
-        for p, i in _resolved_font_paths(families, file)
+        for p, i in _resolved_font_paths(families, file, props)
         if (ft := _ft_font(p, i)) is not None
     ]
     if not resolved:
@@ -5968,7 +5978,12 @@ def _measure_manifest(
             # 文件级身份（ADR 0164）：画布「复制为标注」要用原图同一张脸；加字段协议，老前端原样忽略
             try:
                 entry.update(
-                    face_sources(live_text.get_text(), live_text.get_fontfamily() or [], font_file)
+                    face_sources(
+                        live_text.get_text(),
+                        live_text.get_fontfamily() or [],
+                        font_file,
+                        live_text.get_fontproperties(),
+                    )
                 )
             except Exception:  # noqa: BLE001 —— 身份是附加事实：采集失败只是少一个键，绝不拖垮 manifest
                 pass

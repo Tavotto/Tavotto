@@ -18,6 +18,7 @@ import {
   readCanvasText,
   supportsTypography,
   withMachineFamilies,
+  resetCanvasText,
   writeCanvasText,
   type TypographyKind,
   type TypographyProp,
@@ -468,14 +469,8 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       gesture.end()
       updateObjects(ids, hist('resetTextProp'), (o) => {
         if (o.type !== 'text') return
-        // 「恢复」= 删掉这个字段回到继承。写一个等于默认值的显式值会让
-        // 「没设过」变成「设过、正好一样」——下一次默认值改了它就不跟了。
-        if (prop === 'fontFamily') {
-          delete o.fontFamily
-          delete o.sourceFont // 恢复继承 = 回到默认族，原图字体的身份一并清掉
-        } else if (prop === 'style') delete o.italic
-        else if (prop === 'lineHeight') delete o.lineHeight
-        else if (prop === 'rotationDeg') delete o.rotationDeg
+        // 「恢复」= 删掉这个字段回到继承，规则（含原图字体的失效）在 `resetCanvasText`，与写入同一处
+        resetCanvasText(o, prop)
       })
     },
     pathOf: (prop) => propertyPathOf('canvasText', prop),

@@ -7,8 +7,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const cache = vi.hoisted(() => ({
-  state: vi.fn((): string => 'unknown'),
-  family: vi.fn((): string | undefined => undefined),
+  state: vi.fn((_f?: unknown): string => 'unknown'),
+  family: vi.fn((_f?: unknown): string | undefined => undefined),
 }))
 vi.mock('@/lib/sourceFontCache', () => ({
   sourceFontState: cache.state,
@@ -88,6 +88,24 @@ describe('TextView 原图字体预览', () => {
   it('状态 ok 但字节没加载成功：仍是批准族栈', () => {
     cache.state.mockReturnValue('ok')
     expect(render({ sourceFont: sf }).style.fontFamily).toBe(canvasFontStack('serif'))
+  })
+
+  const cjk = { family: 'SimHei', sha256: '1e'.repeat(32), face: 0 }
+
+  it('CJK 脸（sourceFont.cjk）也进预览栈：正文脸之后、批准族之前', () => {
+    cache.state.mockReturnValue('ok')
+    cache.family.mockImplementation((f: unknown) => cssFamilyOf(f as typeof sf))
+    expect(render({ sourceFont: { ...sf, cjk }, fontFamily: 'sans-serif' }).style.fontFamily).toBe(
+      `"${cssFamilyOf(sf)}", "${cssFamilyOf(cjk)}", ${canvasFontStack('sans-serif')}`,
+    )
+  })
+
+  it('CJK 脸不可用：与导出一样只剩正文脸 + 批准族（汉字回批准的 Noto）', () => {
+    cache.state.mockImplementation((f: unknown) => ((f as typeof sf).sha256 === cjk.sha256 ? 'not_found' : 'ok'))
+    cache.family.mockImplementation((f: unknown) => cssFamilyOf(f as typeof sf))
+    expect(render({ sourceFont: { ...sf, cjk }, fontFamily: 'sans-serif' }).style.fontFamily).toBe(
+      `"${cssFamilyOf(sf)}", ${canvasFontStack('sans-serif')}`,
+    )
   })
 
   it('没有 sourceFont 的标注：与从前逐字相同', () => {

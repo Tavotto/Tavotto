@@ -23,7 +23,8 @@ import { registerGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { isSourceFont } from '@/lib/sourceFont'
-import { previewFamilyOf, sourceFontState, useSourceFonts } from '@/lib/sourceFontCache'
+import { useSourceFonts } from '@/lib/sourceFontCache'
+import { previewStackOf } from '@/lib/sourceFontPreview'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
@@ -130,8 +131,7 @@ export function TextView({
   useSourceFonts()
   const stack = canvasFontStack(effectiveCanvasFamily(obj))
   const source = isSourceFont(obj.sourceFont) ? obj.sourceFont : undefined
-  const sourceFace = source && sourceFontState(source, source) === 'ok' ? previewFamilyOf(source) : undefined
-  const previewStack = sourceFace ? `"${sourceFace}", ${stack}` : stack
+  const previewStack = previewStackOf(source, stack)
 
   return (
     <div

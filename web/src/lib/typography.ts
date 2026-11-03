@@ -488,6 +488,48 @@ export function inheritedCanvasValue(prop: TypographyProp): unknown {
  * **回到默认值就删字段**，不写一个等于默认值的显式值：留着的话导出载荷会
  * 多一个字段、老后端拿到的字节就不一样了，而语义完全相同。
  */
+/** 对象此刻的粗斜（`sourceFont` 那张脸的粗斜是它自己的一部分，见下）。 */
+const faceStyleOf = (o: TextObject) => ({ bold: o.bold === true, italic: o.italic === true })
+
+/**
+ * 原图字体的失效规则（ADR 0164）——**唯一一处**：粗斜是那张文件脸自己的一部分，对象的粗斜变了，它就不再是原图那张脸，
+ * 身份作废（不造假粗体、不继续用着旧文件）。`writeCanvasText` 的粗细 / 斜体写入与 `resetCanvasText`
+ * 的任何一条恢复都经过它，所以「写」与「恢复」不可能再各管各的。
+ */
+function dropSourceFontIfFaceChanged(o: TextObject, before: { bold: boolean; italic: boolean }): void {
+  const now = faceStyleOf(o)
+  if (now.bold !== before.bold || now.italic !== before.italic) delete o.sourceFont
+}
+
+/**
+ * 「恢复」= 删字段回到继承（不是写一个等于默认值的显式值）。与 `writeCanvasText` 同一个文件、同一套失效规则：
+ * 恢复族 = 回到默认族（原图字体一并清掉）；恢复斜体 = 斜体没了，斜体的原图字体跟着作废。
+ */
+export function resetCanvasText(o: TextObject, prop: TypographyProp): void {
+  const before = faceStyleOf(o)
+  switch (prop) {
+    case 'fontFamily':
+      delete o.fontFamily
+      delete o.sourceFont
+      break
+    case 'style':
+      delete o.italic
+      break
+    case 'lineHeight':
+      delete o.lineHeight
+      break
+    case 'rotationDeg':
+      delete o.rotationDeg
+      break
+    case 'interpretation':
+      delete o.interpretation
+      break
+    default:
+      return
+  }
+  dropSourceFontIfFaceChanged(o, before)
+}
+
 export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unknown): void {
   switch (prop) {
     case 'fontFamily':
@@ -502,13 +544,19 @@ export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unkn
       return
     case 'weight':
       // 粗细是这张脸自己的一部分：改了粗细，原图那张脸就不再是画出来的那张（不造假粗体）
-      if ((value === 'bold') !== (o.bold === true)) delete o.sourceFont
-      o.bold = value === 'bold'
+      {
+        const before = faceStyleOf(o)
+        o.bold = value === 'bold'
+        dropSourceFontIfFaceChanged(o, before)
+      }
       return
     case 'style':
-      if ((value === 'italic') !== (o.italic === true)) delete o.sourceFont
-      if (value === 'italic') o.italic = true
-      else delete o.italic
+      {
+        const before = faceStyleOf(o)
+        if (value === 'italic') o.italic = true
+        else delete o.italic
+        dropSourceFontIfFaceChanged(o, before)
+      }
       return
     case 'color':
       o.color = String(value)

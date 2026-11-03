@@ -294,4 +294,35 @@ describe('原图字体 sourceFont（ADR 0164）', () => {
     act(() => adapter.reset('fontFamily'))
     expect((s().doc.objects[0] as TextObject).sourceFont).toBeUndefined()
   })
+
+  it('恢复斜体：斜体的原图字体一并清掉，不再用着斜体文件（Codex #1671 P2）', async () => {
+    await mount([textObj({ sourceFont: { ...sf, italic: true }, italic: true })])
+    act(() => adapter.reset('style'))
+    const o = s().doc.objects[0] as TextObject
+    expect(o.italic).toBeUndefined()
+    expect(o.sourceFont).toBeUndefined()
+  })
+
+  it('批量恢复斜体：每个对象各自按自己的粗斜判；与字体无关的恢复不碰身份', async () => {
+    await mount([
+      textObj({ id: 't1', sourceFont: { ...sf, italic: true }, italic: true }),
+      textObj({ id: 't2', sourceFont: sf }),
+    ])
+    act(() => adapter.reset('style'))
+    const [a, b] = s().doc.objects as TextObject[]
+    expect(a.sourceFont).toBeUndefined()
+    expect(b.sourceFont).toEqual(sf) // 本来就没斜体，恢复不是换脸
+
+    await mount([textObj({ sourceFont: { ...sf, italic: true }, italic: true, lineHeight: 2 })])
+    act(() => adapter.reset('lineHeight'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toEqual({ ...sf, italic: true })
+  })
+
+  it('恢复粗细没有这个动作（必填字段）；粗体的原图字体在写入层改回正常时清掉', async () => {
+    await mount([textObj({ sourceFont: { ...sf, bold: true }, bold: true })])
+    act(() => adapter.reset('weight'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toEqual({ ...sf, bold: true })
+    act(() => adapter.writeOnce('weight', 'normal'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toBeUndefined()
+  })
 })

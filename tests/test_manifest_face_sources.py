@@ -32,6 +32,24 @@ bfile = sys.argv[2]
 out["locked"] = manifest.face_sources("Hello", ["DejaVu Sans"], fname)
 out["bolditalic"] = manifest.face_sources("Hello", ["DejaVu Sans"], bfile)
 out["empty"] = manifest.face_sources("", [])
+
+# 普通文字：只写 fontweight / fontstyle、没有 fname。身份必须是 matplotlib 画它时 findfont 用的那个文件
+from matplotlib.figure import Figure
+fig = Figure()
+live = {}
+for name, kw in {
+    "bold": {"fontweight": "bold"},
+    "italic": {"fontstyle": "italic"},
+    "bolditalic2": {"fontweight": "bold", "fontstyle": "italic"},
+    "plain": {},
+}.items():
+    t = fig.text(0.5, 0.5, "Hello", fontfamily="DejaVu Sans", **kw)
+    prop = t.get_fontproperties()
+    out["live_" + name] = manifest.face_sources(t.get_text(), t.get_fontfamily(), prop.get_file(), prop)
+    out["found_" + name] = str(fm.findfont(prop))
+    # 老签名（只给族列表）解析到 Regular——这正是修复前 manifest 的写法
+    out["familyonly_" + name] = manifest.face_sources(t.get_text(), t.get_fontfamily(), prop.get_file())
+print(json.dumps(out))
 print(json.dumps(out))
 """
 
@@ -68,9 +86,44 @@ def test_the_reported_identity_is_the_file_the_renderer_resolves_and_carries_no_
     assert got["bolditalic"]["face_src"]["bold"] is True
     assert got["bolditalic"]["face_src"]["italic"] is True
     assert got["bolditalic"]["face_src"]["sha256"] != src["sha256"]
-    assert str(real.parent) not in json.dumps(got)  # 路径不进 manifest
+    assert str(real.parent) not in json.dumps(
+        {k: v for k, v in got.items() if not k.startswith("found_")}
+    )  # 路径不进 manifest
     # 族链为空 = matplotlib 自己的默认（sans-serif）解析：报的仍是它真正会用的脸，不是另编一张
     assert got["empty"]["face_src"]["sha256"] == src["sha256"]
+
+
+def test_ordinary_bold_or_italic_text_reports_the_face_matplotlib_resolves_for_the_full_properties():
+    """P1（Codex #1671）：`fontweight='bold'` / `fontstyle='italic'` 的普通文字（没有 fname）画的是
+    DejaVu Sans Bold / Oblique；身份的 sha256 与粗斜标志必须是那个文件的，不是 Regular 的。"""
+    import hashlib
+
+    from matplotlib import font_manager as fm
+
+    real = Path(str(fm.findfont(fm.FontProperties(family="DejaVu Sans"))))
+    got = _run(str(real), str(real))
+    regular = hashlib.sha256(real.read_bytes()).hexdigest()
+    expect = {
+        "bold": (True, False),
+        "italic": (False, True),
+        "bolditalic2": (True, True),
+        "plain": (False, False),
+    }
+    for name, (bold, italic) in expect.items():
+        file = Path(got["found_" + name])
+        src = got["live_" + name]["face_src"]
+        assert src["sha256"] == hashlib.sha256(file.read_bytes()).hexdigest(), name
+        assert (src["bold"], src["italic"]) == (bold, italic), name
+        if name != "plain":
+            assert src["sha256"] != regular, name
+    # 不带 props 的老写法确实会错（用例本身能复现原问题，而不是恒真）
+    assert got["familyonly_bold"]["face_src"]["sha256"] == regular
+
+
+def test_the_manifest_builder_passes_the_live_texts_full_font_properties():
+    text = (ENGINE / "manifest.py").read_text(encoding="utf-8")
+    call = text.split("face_sources(\n", 1)[1].split("\n                    )", 1)[0]
+    assert "live_text.get_fontproperties()" in call
 
 
 def test_a_font_file_locked_by_fname_is_identified_by_its_own_bytes(tmp_path):
