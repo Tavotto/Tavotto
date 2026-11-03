@@ -1536,13 +1536,17 @@ def text_block(t, renderer, W: float, H: float) -> dict | None:
         own = mtext.Text.get_window_extent(t, renderer)
         cx, cy = (own.x0 + own.x1) / 2, (own.y0 + own.y1) / 2
 
+        # `get_linespacing` 是 3.11 才有的公开读法；3.10 及更早只有私有属性 `_linespacing`（构造参数名两边一样）
+        _ls = getattr(t, "get_linespacing", None)
+        linespacing = _ls() if callable(_ls) else getattr(t, "_linespacing", None)
+
         def probe(text: str):
             p = mtext.Text(
                 0,
                 0,
                 text,
                 fontproperties=t.get_fontproperties().copy(),
-                linespacing=t.get_linespacing(),
+                linespacing=linespacing,
                 parse_math=t.get_parse_math(),
                 rotation=0,
                 horizontalalignment="left",
@@ -6065,7 +6069,11 @@ def _measure_manifest(
                 pass
             # 文字块（ADR 0163）：「复制为画布文字标注」把标注摆在原文字的位置上。刻度组（`ticks`）是一组标签，
             # 没有「一块文字」可言，不出
-            if el["role"] != "ticks":
+            # 隐藏中的图例项也不出：它的 Text 已不在图例盒里，自己量出的位置是上一次布局的残影
+            # （热态留着旧位置、清空重放是初始位置——「热态 == 重放」不变式据此红过）；本来就没画出来，也无从复制
+            if el["role"] != "ticks" and not (
+                el["role"] == "legend_text" and _entry_is_hidden(artist)
+            ):
                 try:
                     block = text_block(live_text, renderer, W, H)
                 except Exception:  # noqa: BLE001 —— 附加事实：算不出 = 该元素不出 text_block（不可复制），绝不拖垮 manifest
