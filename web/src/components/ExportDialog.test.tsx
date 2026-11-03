@@ -63,7 +63,10 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
-import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
+import { emptyProject, type ArrowObject, type CanvasObject, type PanelObject } from '@/types/document'
+import { arrowGeometry, dashArray } from '@/lib/shapeGeometry'
+import { buildPreset } from '@/lib/presets'
+import { MM_PER_PT } from '@/lib/units'
 import { seedExactRender } from '@/test/renderFixtures'
 
 declare global {
@@ -2092,6 +2095,30 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(label!.getAttribute('font-weight')).toBe('700')
     expect(label!.getAttribute('fill')).toBe('#000000')
     expect(label!.getAttribute('style')).toContain('var(--font-doc)')
+  })
+
+  it('整版预览里的箭头按导出出来的样子画（主预览 ExportZoomStage）：端点取对象自己的、带箭头帽、虚线带 dasharray', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 150, h: 112.5 } })
+    const arrow = buildPreset('callout', { x: 75, y: 50 })[0] as ArrowObject // 左下→右上斜向
+    arrow.headEnd = 'open'
+    arrow.dash = 'dashed'
+    useDocumentStore.getState().commit(literal('箭头'), (d) => {
+      d.objects.push(arrow as CanvasObject)
+    })
+    await mountDialogs()
+    await openDialog()
+    const g = document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb] [data-thumb-shape]')
+    expect(g, '主预览里的箭头走导出画法').toBeTruthy()
+    const sw = arrow.strokePt * MM_PER_PT
+    const geo = arrowGeometry(arrow, arrow.w, arrow.h, sw)
+    const line = g!.querySelector('line')!
+    expect(Number(line.getAttribute('x1'))).toBeCloseTo(geo.p1.x, 9)
+    expect(Number(line.getAttribute('y1'))).toBeCloseTo(geo.p1.y, 9)
+    expect(Number(line.getAttribute('x2'))).toBeCloseTo(geo.p2.x, 9)
+    expect(Number(line.getAttribute('y2'))).toBeCloseTo(geo.p2.y, 9)
+    expect(Number(line.getAttribute('y2')), '斜率向上').toBeLessThan(Number(line.getAttribute('y1')))
+    expect(line.getAttribute('stroke-dasharray')).toBe(dashArray('dashed', sw))
+    expect(g!.querySelector('path'), '箭头帽').toBeTruthy()
   })
 
   it('runtime 面板带图内修改：重跑脚本（previewNonce 变）后整版预览按新版本重新出图，不停在上一次运行的图', async () => {

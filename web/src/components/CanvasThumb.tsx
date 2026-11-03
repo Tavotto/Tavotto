@@ -34,7 +34,8 @@ import { DEFAULT_INTERPRETATION, glanceText, interpretRuns, runLines } from '@/l
 import { ThumbMathLine, ThumbRun } from '@/components/ThumbMathLine'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
-import type { PanelObject, TextObject } from '@/types/document'
+import { ThumbShape } from '@/components/ThumbShape'
+import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
 
 /**
@@ -64,6 +65,7 @@ export function CanvasThumb({
   pxWidth,
   editedPanel,
   exportedText,
+  exportedShape,
 }: {
   page: ThumbPage
   objects: readonly ThumbObject[]
@@ -98,6 +100,12 @@ export function CanvasThumb({
    * 草图里也没有这些字段，DOM 与不带这个 prop 之前逐字相同。
    */
   exportedText?: (o: ThumbObject) => TextObject | null
+  /**
+   * 导出预览用：这个箭头 / 形状要按「导出出来的样子」画时返回它的文档对象——真实端点（含反向 / 斜向）、箭头帽、
+   * 填色、描边色、线宽、虚线、旋转，取法与画布 `ArrowView` / `ShapeView` 同一套几何函数；层级就是对象顺序。
+   * 不给 / 返回 null = 缩略图的示意画法（灰色外框线）：草图里没有这些字段，DOM 与不带这个 prop 之前逐字相同。
+   */
+  exportedShape?: (o: ThumbObject) => ArrowObject | ShapeObject | null
 }) {
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
@@ -226,6 +234,8 @@ export function CanvasThumb({
               </text>
             )
           }
+          const exactShape = exportedShape?.(o)
+          if (exactShape) return <ThumbShape key={key} obj={exactShape} />
           const common = {
             key,
             fill: 'none',

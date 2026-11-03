@@ -159,7 +159,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -2142,6 +2142,12 @@ function exportedTextOf(o: ThumbObject): TextObject | null {
   return obj.type === "text" ? obj : null;
 }
 
+/** 整版预览里的箭头 / 形状按导出出来的样子画：端点、填色、线型、旋转都取对象自己的（喂给 `CanvasThumb` 的 `exportedShape`） */
+function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | null {
+  const obj = o as CanvasObject;
+  return obj.type === "arrow" || obj.type === "shape" ? obj : null;
+}
+
 /**
  * 缩略图本体：按**真实图幅比例**定盒，再放进调用方给的固定外框里（外框尺寸不变、不溢出）。
  * `boxRatio` = 外框的宽高比，用来判断该贴宽还是贴高。
@@ -2284,6 +2290,7 @@ function ExportPreviewPane({
                 flush
                 editedPanel={editedPanelOf}
                 exportedText={exportedTextOf}
+                exportedShape={exportedShapeOf}
               />
             </PreviewTab>
             {figures.map((f) => (
@@ -2327,6 +2334,7 @@ function ExportPreviewPane({
                   pxWidth={px || undefined}
                   editedPanel={editedPanelOf}
                   exportedText={exportedTextOf}
+                  exportedShape={exportedShapeOf}
                 />
               )}
             </ExportZoomStage>
