@@ -57,7 +57,12 @@ print(json.dumps(out))
 def _run(*args: str) -> dict:
     env = {**os.environ, "PYTHONPATH": str(ENGINE), "TAVOTTO_NO_TELEMETRY": "1"}
     r = subprocess.run(
-        [sys.executable, "-c", SCRIPT, *args], capture_output=True, text=True, env=env, timeout=120
+        [sys.executable, "-c", SCRIPT, *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=120,
     )
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout.strip().splitlines()[-1])
