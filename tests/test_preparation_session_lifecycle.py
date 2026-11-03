@@ -432,3 +432,47 @@ def test_a_cancel_force_kills_an_owned_worker_that_already_left_the_pool(
     late = _KillableWorker(root)
     svc.note_owner(plan2.plan_id, late, True)
     assert late.force_killed
+
+
+_PDF_PAGES = [
+    {
+        "name": "all.pdf",
+        "pages": 3,
+        "captured": 3,
+        "stems": ["s0", "s1", "s2"],
+        "path": "all.pdf",
+        "scope": "project",
+        "page_stems": ["s0", "s1", "s2"],
+        "complete": True,
+    }
+]
+
+
+def test_a_successful_attempt_reports_the_pdf_pages_ledger(client, tmp_path, fake_pool, sessions):
+    """QA-MAC-02：准备会话的 build 响应带 `pdf_pages` 时，报告原样给出（与试运行响应同一份账本，导出的合并选项靠它）。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    report = _create(client, {"script": "fig.py"}).get_json()
+    assert "pdf_pages" not in report  # 没有时一个字节都不多
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {"fig": 1},
+        "descriptors": [{"stem": "fig", "script": "fig.py"}],
+        "runtime": {"pid": 4242},
+        "pdf_pages": _PDF_PAGES,
+    }
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    final = _terminal(client, sid, timeout=10.0)
+    assert final["outcome"]["kind"] == "succeeded"
+    assert final["pdf_pages"] == _PDF_PAGES
+
+
+def test_an_attempt_without_pdf_pages_omits_the_key(client, tmp_path, fake_pool, sessions):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    report = _create(client, {"script": "fig.py"}).get_json()
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    final = _terminal(client, sid, timeout=10.0)
+    assert "pdf_pages" not in final

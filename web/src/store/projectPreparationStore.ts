@@ -830,6 +830,18 @@ async function onCompleted(report: PreparationReport, owner: ProjectEpochGuard):
       void useScriptLibraryStore.getState().load()
     })
     .catch(() => undefined)
+  // 多页 PDF 账本：与试运行成功同一个出口（scriptRunStore 是导出窗口读的唯一来源，QA-MAC-02）；没有账本 = 清掉旧的
+  if ((report.captured ?? []).length && report.target.kind === 'script' && report.target.script) {
+    try {
+      const { useScriptRunStore } = await import('@/store/scriptRunStore')
+      if (!owner.still()) return
+      useScriptRunStore
+        .getState()
+        .recordPdfPages(report.target.script, report.pdf_pages ?? [], report.target.run_config ?? '')
+    } catch {
+      /* 账本是尽力而为：缺了只是导出窗口不提供合并项 */
+    }
+  }
   const ids = (report.captured ?? []).map((d) => d.asset_id).filter(Boolean)
   if (!ids.length) return
   try {

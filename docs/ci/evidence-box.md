@@ -17,7 +17,7 @@ ssh tavotto-evidence-box 'python3 /srv/tavotto-evidence/box.py doctor && python3
   && python3 /srv/tavotto-evidence/box.py install-cron'
 ```
 
-`install-cron` 写 `/etc/cron.d/tavotto-evidence`：每天 18:30 UTC（02:30 CST）取回 main，用 **main 上的** `box.py` 跑 `nightly`。
+`install-cron` 写 `/etc/cron.d/tavotto-evidence`：每天 18:30 UTC（02:30 CST）取回 main，用 **main 上的** `box.py` 跑 `nightly`。控制检出是 blobless，`git show` 要现去 GitHub 取内容：取回失败重试三次（间隔 60 s），先写 `.new` 再 `mv`，不会把本机副本截成空文件；三次都失败就在 `nightly.log` 记一行 `nightly skipped`，当晚不跑。
 
 ## 日常
 

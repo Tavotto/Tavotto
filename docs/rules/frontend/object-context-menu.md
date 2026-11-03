@@ -45,6 +45,10 @@ order: 130
   兄弟图」时摆（不做 disabled）；点它只调 `openSyncOverrides`，窗口是画布舞台上常驻的 `SyncOverridesHost`。
   目标图不在画布上时「同步并写回」走标准 `WriteBackDialog`（`detached`），不许在这里再长出第二条写回路径。
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
+* **图内元素弹层的「复制为标注 ⌘C」「粘贴为标注 ⌘V」**（ADR 0163）：加在元素弹层（`QuickEdit.ElementQuick`，`MenuButton` 形状的项，
+  `data-quick-item="copy-as-annotation" / "paste-as-annotation"`）里，其余项不变。复制只对文字元素可点（`isCopyableText`，曲线 / 色块 / 刻度组置灰）；
+  粘贴与对象菜单同一判据 `canPasteFromMenu`（读不了的引擎上不摆，用 ⌘V），已授予读权限且剪贴板里没有本工具的对象时置灰（`peekClipboardHasObjects`，
+  不为置灰去弹权限窗）。看护 `lib/figureTextClipboard.test.tsx`。
 * **剪贴板组**（2026-10-07 设计审计 §10.1）：公共尾巴的第一组是「复制 / 粘贴 / 创建副本」（`data-quick-item="copy" / "paste" /
   "duplicate"`）。复制 / 粘贴调属性页按钮那一对 `copySelectedObjects` / `pasteObjects`（菜单点击是用户手势）；
   菜单没有原生 paste 事件可接，粘贴只能走异步 `readText`——WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，

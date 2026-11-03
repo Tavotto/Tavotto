@@ -167,6 +167,21 @@ class LoginSpec:
 
 
 @dataclass(frozen=True)
+class ConvertMcp:
+    """转换会话里由 Tavotto 代写目标文件的 MCP 服务（`tavotto fix-mcp --convert-id`，`convertwrite.py`）。与 `FixRunContext` 同一条纪律：
+    **这里没有令牌**，只有环境变量**名**；值由调用方放进子进程环境，绝不进 argv。"""
+
+    #: 服务启动命令（可执行文件 + 参数，不含令牌）
+    command: list[str]
+    #: 服务在 CLI 配置里的名字
+    name: str
+    #: 令牌所在的环境变量名
+    token_env: str
+    #: 单次工具调用上限秒数
+    tool_timeout_s: int = 120
+
+
+@dataclass(frozen=True)
 class RunContext:
     """构造一次任务命令所需的全部输入。"""
 
@@ -187,6 +202,8 @@ class RunContext:
     checks_used: int = 0
     #: 内置执行器：`check` 经 stdout/stdin 回调父进程（改图任务只在有 TAF 候选时才给；转换任务恒给）
     check_ipc: bool = False
+    #: 转换任务：由 Tavotto 代写目标文件的 MCP 服务（只有 `AgentDefinition.convert_write_tool` 的适配器会用；其余忽略）
+    convert_mcp: ConvertMcp | None = None
 
 
 @dataclass(frozen=True)
@@ -542,6 +559,8 @@ class CliRunFacts:
         self.files_inside = 0
         self.files_outside = 0
         self.target_touched = False
+        #: Tavotto 代写目标的 MCP 工具是否成功写过（权威事实在 `convertwrite`，由桥在进程结束前填；None = 这次会话没有该工具）
+        self.target_tool_ok: bool | None = None
         self.reasoning = 0
         self.messages = 0
         self.errors = 0
@@ -696,6 +715,7 @@ class CliRunFacts:
             "target_touched": self.target_touched,
             "target_on_disk": on_disk,
             "target_bytes": size,
+            "target_tool_ok": self.target_tool_ok,
             "reasoning": self.reasoning,
             "messages": self.messages,
             "errors": self.errors,
@@ -733,6 +753,8 @@ def merge_run_facts(runs: list[dict]) -> dict | None:
     last = runs[-1]
     out: dict = {k: sum(int(r.get(k) or 0) for r in runs) for k in _SUM_FACTS}
     out["target_touched"] = any(bool(r.get("target_touched")) for r in runs)
+    tool = [r["target_tool_ok"] for r in runs if r.get("target_tool_ok") is not None]
+    out["target_tool_ok"] = any(tool) if tool else None  # 只有转换会话的 Codex 进程有这一项
     out["max_gap_ms"] = max(int(r.get("max_gap_ms") or 0) for r in runs)
     out["first_event_ms"] = runs[0].get("first_event_ms")
     for k in (
@@ -777,6 +799,9 @@ class AgentDefinition:
     #: 内部执行器（Tavotto 自己的进程，没有可探测的 CLI）：不进 `AGENT_REGISTRY`、不出现在 capabilities 的 `agents[]`，
     #: 只经 `get_agent` 被改图执行路径找到（ADR 0147 第二阶段）
     internal: bool = False
+    #: 转换任务里支持“Tavotto 经 MCP 代写目标文件”（TVD-BCZ0 方案 A）。Codex 是（Windows 沙盒里它自带的写文件工具一律失败）；
+    #: Claude Code 自带的 Write 不受该沙盒影响，内置执行器本来就由 Tavotto 写，都不开
+    convert_write_tool: bool = False
 
     # -- 探测 --------------------------------------------------------------
     def extra_search_locations(self) -> list[SearchLocation]:
@@ -850,8 +875,31 @@ def _codex_windows_sandbox_args(endpoint_args: list[str]) -> list[str]:
     return list(CODEX_WINDOWS_SANDBOX_ARGS)
 
 
+def _codex_convert_mcp_args(mcp: ConvertMcp | None) -> list[str]:
+    """转换会话的代写 MCP 服务：本次调用级 `-c mcp_servers.<名>.…`（TOML 值，不写 `~/.codex/config.toml`），令牌只列环境变量名；
+    工具免 Codex 自己的审批（exec 模式没人点，不放行就一直挂着——与修复会话同一条，10-24 真机核实）。**所有平台**都注入。"""
+    if mcp is None:
+        return []
+    pre = f"mcp_servers.{mcp.name}"
+    return [
+        "-c",
+        f"{pre}.command={toml_value(mcp.command[0])}",
+        "-c",
+        f"{pre}.args={toml_value(list(mcp.command[1:]))}",
+        "-c",
+        f"{pre}.env_vars={toml_value([mcp.token_env])}",
+        "-c",
+        f"{pre}.tool_timeout_sec={int(mcp.tool_timeout_s)}",
+        "-c",
+        f"{pre}.startup_timeout_sec=60",
+        "-c",
+        f'{pre}.default_tools_approval_mode="approve"',
+    ]
+
+
 class CodexAgent(AgentDefinition):
     id = "codex"
+    convert_write_tool = True
     display_name = "Codex"
     icon_key = "codex"
     command_names = ("codex",)
@@ -1049,6 +1097,7 @@ class CodexAgent(AgentDefinition):
             "--skip-git-repo-check",
         ]
         cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
+        cmd += _codex_convert_mcp_args(ctx.convert_mcp)
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]

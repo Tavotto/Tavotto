@@ -457,11 +457,16 @@ class Channel:
 
 
 class BridgedStdin(io.TextIOBase):
-    """顶替 `sys.stdin`：`readline()` 问一次（回答补换行），`read()` 问一次后一律 EOF。"""
+    """顶替 `sys.stdin`：`readline()` 问一次（回答补换行），`read()` 问一次后一律 EOF。
+
+    与真文本流一致（QA-WIN-55）：一次回答多出来的部分留在行缓冲里，`readline(size)` / `read(size)` 至多交
+    size 个字符，剩下的给下一次 read / readline / `input()`；缓冲里已有的数据不再提问。
+    与 `bridge_runner._BridgeStdin` 是同一语义（同源对，见 same-origin-pairs.md）。"""
 
     def __init__(self, channel: Channel):
         self._channel = channel
         self._eof = False
+        self._buffer = ""
 
     def readable(self) -> bool:
         return True
@@ -473,29 +478,68 @@ class BridgedStdin(io.TextIOBase):
     def encoding(self):
         return "utf-8"
 
-    def readline(self, size=-1) -> str:
+    def _fill(self, kind: str) -> bool:
+        """问一次，把回答放进缓冲。False = EOF（不再提问）。"""
         if self._eof:
-            return ""
-        answer = self._channel.ask("", "readline")
+            return False
+        answer = self._channel.ask("", kind)
         if answer is None:
             self._eof = True
-            return ""
-        return answer + "\n"
+            return False
+        if kind == "readline" and not answer.endswith("\n"):
+            answer += "\n"
+        self._buffer += answer
+        if kind == "read":
+            self._eof = True  # 「读到 EOF」的一次回答就是全部内容
+        return True
+
+    def take_buffered_line(self) -> str | None:
+        """`input()` 先吃缓冲：有整行就取走；流已尽而剩没换行的尾巴也当一行。没有则 None，由调用方提问。"""
+        if "\n" in self._buffer:
+            head, _nl, self._buffer = self._buffer.partition("\n")
+            return head.rstrip("\r")
+        if self._buffer and self._eof:
+            tail, self._buffer = self._buffer, ""
+            return tail.rstrip("\r")
+        return None
+
+    def readline(self, size=-1) -> str:
+        if size is not None and size == 0:
+            return ""  # 与真文件一致：0 长度读不消费、不阻塞——不是一次提问
+        while "\n" not in self._buffer and (size is None or size < 0 or len(self._buffer) < size):
+            if not self._fill("readline"):
+                break
+        head, nl, rest = self._buffer.partition("\n")
+        line = head + nl
+        if size is not None and 0 <= size < len(line):
+            line, rest = line[:size], line[size:] + rest
+        self._buffer = rest
+        return line
 
     def read(self, size=-1) -> str:
-        if self._eof:
-            return ""
-        answer = self._channel.ask("", "read")
-        self._eof = True
-        return answer or ""
+        if size is None or size < 0:
+            while self._fill("read"):
+                pass
+            out, self._buffer = self._buffer, ""
+            return out
+        while len(self._buffer) < size:
+            if not self._fill("read"):
+                break
+        out, self._buffer = self._buffer[:size], self._buffer[size:]
+        return out
 
     def readlines(self, hint=-1) -> list[str]:
+        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度「超过」hint 才停
         out = []
+        total = 0
         while True:
             line = self.readline()
             if not line:
                 return out
             out.append(line)
+            total += len(line)
+            if hint is not None and hint > 0 and total > hint:
+                return out
 
     def __iter__(self):
         return self
@@ -518,6 +562,11 @@ def install(channel: Channel) -> None:
                 sys.stdout.flush()
             except (OSError, ValueError):
                 pass
+        stdin = sys.stdin
+        if isinstance(stdin, BridgedStdin):
+            buffered = stdin.take_buffered_line()  # 有界读剩在缓冲里的先给 input()，不再提问
+            if buffered is not None:
+                return buffered
         answer = channel.ask(text, "input")
         if answer is None:
             raise EOFError("EOF when reading a line")
