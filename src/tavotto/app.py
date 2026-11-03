@@ -9503,6 +9503,35 @@ def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
         raise ScriptChangedError(script_name, spawned, now)
 
 
+def _source_fingerprint(paths) -> dict[Path, tuple[int, int] | None]:
+    """目标文件此刻的身份：`(mtime_ns, size)`；读不到（被删 / 被占）记 None。"""
+    out: dict[Path, tuple[int, int] | None] = {}
+    for p in paths:
+        try:
+            st = p.stat()
+            out[p] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            out[p] = None
+    return out
+
+
+def _assert_sources_unchanged(base: dict, paths) -> None:
+    """复核：`paths` 里每个目标仍是 prepare 时看到的那一版，否则 `SourceChangedError`（409）。
+
+    prepare 只在请求入口比一次；之后的全量重放 / 导出可能分钟级，备份与替换之前
+    必须再问一遍，否则会先备份别人刚写的新版、再把它盖掉（QA-WIN-51）。
+    """
+    for p in paths:
+        want = base.get(p)
+        if want is None:
+            continue  # prepare 时就不存在 / 读不到：没有可比的基准
+        now = _source_fingerprint([p])[p]
+        if now != want:
+            raise SourceChangedError(
+                p.name, int(want[0] // 1_000_000_000), int((now or (0, 0))[0] // 1_000_000_000)
+            )
+
+
 def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
     """热会话当前的 manifest；拿不到（或热态压根不是这组 patches）回 None。
 
@@ -9665,6 +9694,8 @@ def _write_source_files(
     _refuse_pdf_pages_source(worker, src)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
+    # 与 prepare 同一刻的身份基线：重放结束后、备份与每次替换之前拿它复核（QA-WIN-51）
+    source_base = _source_fingerprint(targets)
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -9757,8 +9788,29 @@ def _write_source_files(
     done: list[Path] = []
     try:
         with remap_guard:
+            # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
+            try:
+                _assert_sources_unchanged(source_base, [t for t, _ in tmps])
+            except SourceChangedError:
+                _discard_updating(tmps)
+                raise
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
-            for target, tmp in tmps:
+            for i, (target, tmp) in enumerate(tmps):
+                # 备份之后、每次替换之前再核尚未替换的目标：备份必须就是将被覆盖的那一版；
+                # 已替换的目标按事务规矩从备份回滚
+                try:
+                    _assert_sources_unchanged(source_base, [t for t, _ in tmps[i:]])
+                except SourceChangedError as exc:
+                    _discard_updating(tmps)
+                    if not done:
+                        shutil.rmtree(
+                            backup_dir, ignore_errors=True
+                        )  # 本次独占，且可能含新版的半截拷贝
+                        raise
+                    rolled, failed = _rollback(done, backup_dir)
+                    if failed:
+                        raise FileLockedError(exc.name, str(exc), failed, rolled, failed) from exc
+                    raise
                 try:
                     tmp.replace(target)
                 except OSError as exc:
