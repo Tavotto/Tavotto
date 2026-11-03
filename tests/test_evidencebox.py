@@ -7,7 +7,10 @@ cron 执行 main 上的副本、仓库里没有主机地址与凭据。
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -130,6 +133,57 @@ def test_cron_runs_the_copy_from_origin_main(monkeypatch, tmp_path):
     assert "fetch -q origin main" in text
     assert "show origin/main:scripts/evidencebox/box.py" in text
     assert "show origin/main:scripts/evidencebox/novice_u2404.sh" in text
+    # 不许直接 > 本机副本（取一半失败会把它截成空文件）；crontab 里的 % 必须转义
+    assert f"> {B.ROOT}/box.py " not in text
+    assert "%" not in text.replace("\\%", "")
+
+
+def _run_cron(tmp_path, monkeypatch, show_failures: int):
+    bash = shutil.which("bash")
+    if not bash or sys.platform == "win32":
+        pytest.skip("needs a POSIX bash")
+    root, bin_ = tmp_path / "root", tmp_path / "bin"
+    root.mkdir()
+    bin_.mkdir()
+    (root / "box.py").write_text("OLD")
+    (root / "novice_u2404.sh").write_text("OLD")
+    monkeypatch.setattr(B, "ROOT", root)
+    monkeypatch.setattr(B, "CONTROL", root / "control")
+    stubs = {
+        # show 前 N 次写出半截内容后失败（模拟 TLS 中断），之后正常
+        "git": f"""n=$(cat {tmp_path}/n 2>/dev/null || echo 0)
+case "$*" in *" show "*)
+  n=$((n+1)); echo $n > {tmp_path}/n
+  if [ $n -le {show_failures} ]; then echo -n PART; exit 128; fi
+  echo NEW;;
+esac""",
+        "python3": f'echo "$@" >> {tmp_path}/python.calls',
+        "sleep": "true",
+    }
+    for name, body in stubs.items():
+        f = bin_ / name
+        f.write_text("#!/bin/sh\n" + body + "\n")
+        f.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_}:/usr/bin:/bin"}
+    subprocess.run([bash, "-c", B.cron_command()], env=env, check=False, timeout=30)
+    calls = tmp_path / "python.calls"
+    return root, calls.read_text() if calls.exists() else ""
+
+
+def test_cron_retries_a_dropped_fetch_then_runs_main_copy(tmp_path, monkeypatch):
+    root, calls = _run_cron(tmp_path, monkeypatch, show_failures=1)
+    assert (root / "box.py").read_text().strip() == "NEW"
+    assert (root / "novice_u2404.sh").read_text().strip() == "NEW"
+    assert calls.strip() == f"{root}/box.py nightly"
+    assert not list(root.glob("*.new"))
+
+
+def test_cron_never_truncates_or_runs_when_main_cannot_be_fetched(tmp_path, monkeypatch):
+    root, calls = _run_cron(tmp_path, monkeypatch, show_failures=99)
+    assert (root / "box.py").read_text() == "OLD"
+    assert (root / "novice_u2404.sh").read_text() == "OLD"
+    assert calls == ""
+    assert "nightly skipped" in (root / "nightly.log").read_text()
 
 
 def test_task_closed_set_matches_the_rules_doc():

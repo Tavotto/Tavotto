@@ -28,7 +28,7 @@ Guardian 全候选池 / S0 科研语料的长跑，以及 Ubuntu 24.04 新手按
   **没有**「维护者自己的提交」例外（Guardian 夹具只有合入 main 才算评审过，`docs/ci/compat-guardian.md` §1）。
 - 任务闭集：`guardian-suites` / `guardian-explore` / `research-s0` / `novice-u2404`。新增任务改 `box.py` 的 `TASKS`、
   本节与看护用例，三处同一个 PR。
-- cron 执行的是**刚取回的 main** 上的 `box.py`（`git show origin/main:…`），不是本机留着的旧副本。
+- cron 执行的是**刚取回的 main** 上的 `box.py`（`git show origin/main:…`），不是本机留着的旧副本。取不回 main 就当晚不跑，也不退回旧副本。
 
 ## 容器纪律
 
