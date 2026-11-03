@@ -41,11 +41,22 @@ async function figureGeometry(page: Page) {
   })
 }
 
-async function drag(page: Page, x: number, y: number, dx: number, dy: number) {
+async function drag(page: Page, x: number, y: number, dx: number, dy: number, modifier?: 'Shift') {
   await page.mouse.move(x, y)
   await page.mouse.down()
+  if (modifier) await page.keyboard.down(modifier)
   await page.mouse.move(x + dx, y + dy, { steps: 8 })
   await page.mouse.up()
+  if (modifier) await page.keyboard.up(modifier)
+}
+
+/**
+ * 单图编辑里改图幅 = 拖画布的角（ADR 0161；边改的是画布留白）。⇧ = 自由比例：只把图拉宽、高不变，
+ * 与此前「拖右边改图幅」的效果一致（这几条用例要的正是宽高比变了的那次重排）。
+ */
+async function widenFigure(page: Page, dx: number) {
+  const corner = (await page.locator('[data-figure-corner="br"]').boundingBox())!
+  await drag(page, corner.x + corner.width / 2, corner.y + corner.height / 2, dx, 0, 'Shift')
 }
 
 /**
@@ -178,8 +189,7 @@ test('figure resize shows current rendering and failure states', async ({ app, p
   await openFigure(page, a.baseURL)
   const held: Route[] = []
   await page.route('**/api/engine/render**', (route) => { held.push(route) })
-  const edge = (await page.locator('[data-figure-edge="r"]').boundingBox())!
-  await drag(page, edge.x + edge.width / 2, edge.y + edge.height / 2, 50, 0)
+  await widenFigure(page, 50)
   await expect.poll(() => held.length).toBe(1)
   await expect(page.locator('[data-figure-pending]')).toBeVisible()
   await expect(page.locator('[data-panel-badge="busy"]')).toBeVisible({ timeout: 5_000 })
@@ -269,9 +279,8 @@ test('legend, font and figure size survive saving and reopening', async ({ app, 
   await nextExact(page, fontKey)
   const paper = page.locator('[data-fast-edit-paper]')
   const width = (await paper.boundingBox())!.width
-  const edge = (await page.locator('[data-figure-edge="r"]').boundingBox())!
   const frameKey = await page.locator('[data-display]').getAttribute('data-display-key')
-  await drag(page, edge.x + edge.width / 2, edge.y + edge.height / 2, 35, 0)
+  await widenFigure(page, 35)
   await expect.poll(async () => (await paper.boundingBox())?.width ?? 0, { timeout: 90_000 }).toBeGreaterThan(width + 20)
   await nextExact(page, frameKey)
   await expect(page.locator('[data-authority]')).toHaveAttribute('data-authority', 'ready', { timeout: 90_000 })
@@ -337,9 +346,8 @@ test('legend, font and figure size survive writing the original and reopening it
   await input.fill('18')
   await input.press('Enter')
   await nextExact(page, key)
-  const edge = (await page.locator('[data-figure-edge="r"]').boundingBox())!
   key = await page.locator('[data-display]').getAttribute('data-display-key')
-  await drag(page, edge.x + edge.width / 2, edge.y + edge.height / 2, 35, 0)
+  await widenFigure(page, 35)
   await nextExact(page, key)
   await expect(page.locator('[data-authority]')).toHaveAttribute('data-authority', 'ready', { timeout: 90_000 })
   const before = await figureGeometry(page)
