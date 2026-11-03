@@ -3032,6 +3032,7 @@ class EngineWorker:
         self.last_build_descriptors: list = []
         #: 本次 build 里写进 `PdfPages` 的摘要（`figcapture.PdfPagesLedger.summary`；写回守卫用，#1370）
         self.last_build_pdf_pages: list = []
+        self.last_build_project_writes: list = []
         #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
@@ -3571,6 +3572,7 @@ class EngineWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
+        self.last_build_project_writes = list(resp.get("project_writes") or [])
         self.last_build_runtime = _runtime_of(resp)
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
@@ -3587,6 +3589,7 @@ class EngineWorker:
             self.build_failed = True
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
+            self.last_build_project_writes = []
             self.last_build_source_sha256 = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
@@ -4000,6 +4003,7 @@ class WorkerdWorker:
         self.last_build_descriptors: list = []
         #: 本次 build 里写进 `PdfPages` 的摘要（`figcapture.PdfPagesLedger.summary`；写回守卫用，#1370）
         self.last_build_pdf_pages: list = []
+        self.last_build_project_writes: list = []
         self.last_build_runtime: dict | None = None
         self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
@@ -4116,6 +4120,7 @@ class WorkerdWorker:
         self.built = False
         self.last_build_descriptors = []
         self.last_build_pdf_pages = []
+        self.last_build_project_writes = []
 
     def _log_tail(self, n: int = 30) -> str:
         # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
@@ -4332,6 +4337,7 @@ class WorkerdWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
+        self.last_build_project_writes = list(resp.get("project_writes") or [])
         self.last_build_runtime = _runtime_of(resp)
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
@@ -4348,6 +4354,7 @@ class WorkerdWorker:
             self.build_failed = True
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
+            self.last_build_project_writes = []
             self.last_build_source_sha256 = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH

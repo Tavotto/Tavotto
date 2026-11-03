@@ -9515,6 +9515,25 @@ def _source_fingerprint(paths) -> dict[Path, tuple[int, int] | None]:
     return out
 
 
+def _rebaseline_replay_writes(base: dict, fresh) -> None:
+    """把一次性重放 build 期间**脚本自己写过**的目标的身份基线更新到此刻（原地改 `base`）。
+
+    判据是 worker 在写发生那一刻记下的带写意图路径（`last_build_project_writes`），不是「指纹变了」：
+    后者分不清自己写的与外部改的。残留窗口：脚本写完该目标之后到本函数之间的外部改动会被吸进新基线
+    （脚本写它那一刻之前的外部改动本来就被脚本自己盖掉了）；其余目标与这些目标在此之后的窗口照旧复核。"""
+    written = set()
+    for raw in getattr(fresh, "last_build_project_writes", None) or []:
+        try:
+            written.add(os.path.normcase(os.path.realpath(raw)))
+        except (OSError, TypeError, ValueError):
+            continue
+    if not written:
+        return
+    for p in list(base):
+        if base[p] is not None and os.path.normcase(os.path.realpath(p)) in written:
+            base[p] = _source_fingerprint([p])[p]
+
+
 def _assert_sources_unchanged(base: dict, paths) -> None:
     """复核：`paths` 里每个目标仍是 prepare 时看到的那一版，否则 `SourceChangedError`（409）。
 
@@ -9715,6 +9734,10 @@ def _write_source_files(
     warnings: list[str] = []
     try:
         resp = fresh.override(stem, patches)
+        # 重放（一次性 worker 刚 build）自己改写的写回目标不是外部改动：脚本经文件对象
+        # `savefig(handle)` / open("wb") 写项目里的 PNG 时，每次执行都会重写它，mtime 必变。
+        # 这些目标的基线挪到 build 之后；脚本没碰过的目标仍用 prepare 时的基线（外部改动照样 409）
+        _rebaseline_replay_writes(source_base, fresh)
         # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
         # 在任何临时文件产生之前
         targets = _own_write_back_targets(fresh, stem, src, targets, need_pdf=bool(annotations))
