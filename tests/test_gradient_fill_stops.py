@@ -214,3 +214,36 @@ def test_hot_session_matches_a_fresh_replay(library):
         _field(hot, "axes_0.fill_0", "gradient")["value"]
         == _field(fresh, "axes_0.fill_0", "gradient")["value"]
     )
+
+
+def test_invert_y_between_two_gradient_edits_does_not_flip_the_colours(library):
+    """Codex P1：编辑渐变 → 切 y 轴反转 → 再编辑渐变。override 列表里 gradient 排在 invert_y 前面
+    （同一个 `_apply_rank`，原位替换），热会话第三步的 setter 看到的是**已经反转**的轴，全新 worker
+    重放时却是反转之前——按当时坐标变换算起端 / 止端会得到相反方向。override 值现在带 `screen_start`，
+    引擎按数据坐标顺序重算，与重放时的变换无关。"""
+    gid = "axes_0.fill_0"
+
+    def grad(stops, screen_start):
+        return {
+            "gid": gid,
+            "prop": "gradient",
+            "value": {"stops": stops, "screen_start": screen_start},
+        }
+
+    inv = {"gid": "axes_0", "prop": "invert_y", "value": True}
+    first = grad(["#00ff00", "#000000"], "high")  # 正常 y 轴：屏幕上端 = 数据大的一头
+    # 反转之后用户在界面上看到的上端 = 数据小的一头，检查器写回 screen_start="low"
+    final = grad(["#ffd9de", "#b00020"], "low")
+    w = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    try:
+        w.ensure_built()
+        w.override(STEM, [first])
+        w.override(STEM, [first, inv])
+        hot = w.override(STEM, [final, inv])["manifest"]
+    finally:
+        pool.discard(w)
+    fresh = _render(library, [final, inv])
+    hv = _field(hot, gid, "gradient")["value"]
+    assert hv == _field(fresh, gid, "gradient")["value"]
+    top, bottom = hv["stops"]
+    assert _close(top, "#ffd9de") and _close(bottom, "#b00020"), hv

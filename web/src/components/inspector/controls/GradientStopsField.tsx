@@ -12,16 +12,43 @@ import { ColorField } from '../../ui/Input'
 export interface GradientValue {
   stops: [string, string]
   direction?: 'vertical' | 'horizontal'
+  /** 屏幕起端对应数据坐标的哪一头（引擎事实；写回时原样带上，让重放不依赖当时的坐标变换） */
+  screenStart?: 'high' | 'low'
 }
 
 /** 引擎发来的值 → 两端颜色；形状不对时回 null（调用方退回原样渲染） */
 export function readGradient(value: unknown): GradientValue | null {
   if (!value || typeof value !== 'object') return null
-  const v = value as { stops?: unknown; direction?: unknown }
+  const v = value as { stops?: unknown; direction?: unknown; screen_start?: unknown }
   if (!Array.isArray(v.stops) || v.stops.length !== 2) return null
   const [a, b] = v.stops
   if (typeof a !== 'string' || typeof b !== 'string') return null
-  return { stops: [a, b], direction: v.direction === 'horizontal' ? 'horizontal' : 'vertical' }
+  const screenStart = v.screen_start === 'high' || v.screen_start === 'low' ? v.screen_start : undefined
+  return {
+    stops: [a, b],
+    direction: v.direction === 'horizontal' ? 'horizontal' : 'vertical',
+    ...(screenStart ? { screenStart } : {}),
+  }
+}
+
+/**
+ * 当前值（override 或引擎值）里取两端颜色；方向与 `screen_start` 是引擎事实，取字段自己的 `value`——
+ * override 值只有 `{stops, screen_start}`，没有 direction，直接读会把横向渐变的「左 / 右」读成「上 / 下」。
+ */
+export function readGradientWithFact(current: unknown, fact: unknown): GradientValue | null {
+  const cur = readGradient(current)
+  if (!cur) return null
+  const f = readGradient(fact)
+  return {
+    stops: cur.stops,
+    direction: f?.direction ?? cur.direction,
+    ...((f?.screenStart ?? cur.screenStart) ? { screenStart: f?.screenStart ?? cur.screenStart } : {}),
+  }
+}
+
+/** 写回的 override 值：两端颜色 + 引擎事实 `screen_start`（没有就不带，引擎走旧形状兜底） */
+export function gradientPayload(stops: [string, string], g: GradientValue) {
+  return g.screenStart ? { stops, screen_start: g.screenStart } : { stops }
 }
 
 export function GradientStopsField({

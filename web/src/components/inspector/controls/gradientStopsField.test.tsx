@@ -12,7 +12,7 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import type { EditableField } from '@/lib/api'
 import { controlKindOf } from '../presentation/registry'
 import { ROLE_PROFILES } from '../presentation/roleProfiles'
-import { GradientStopsField, readGradient } from './GradientStopsField'
+import { GradientStopsField, gradientPayload, readGradient, readGradientWithFact } from './GradientStopsField'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -118,6 +118,32 @@ describe('readGradient', () => {
       expect(readGradient(v)).toBeNull()
     },
   )
+})
+
+describe('override 值缺 direction 时（Codex P2）', () => {
+  const fact = { stops: ['#e61a1a', '#ffe61a'], direction: 'horizontal', screen_start: 'low' }
+  const overrideValue = { stops: ['#000000', '#ffffff'] }
+
+  it('stops 取当前值，direction / screen_start 取引擎事实：横向渐变改过后仍是「左端 / 右端」', async () => {
+    const g = readGradientWithFact(overrideValue, fact)!
+    expect(g).toEqual({ stops: ['#000000', '#ffffff'], direction: 'horizontal', screenStart: 'low' })
+    await mount(<GradientStopsField label="渐变" value={g} onChange={() => {}} />)
+    expect(colorInput(/左端/)).toBeTruthy()
+    expect(colorInput(/右端/)).toBeTruthy()
+    expect(host.querySelector('input[aria-label*="上端"]')).toBeNull()
+  })
+
+  it('写回带 screen_start；事实里没有时不带，形状不对仍拒收', () => {
+    const g = readGradientWithFact(overrideValue, fact)!
+    expect(gradientPayload(['#111111', '#222222'], g)).toEqual({
+      stops: ['#111111', '#222222'],
+      screen_start: 'low',
+    })
+    expect(gradientPayload(['#111111', '#222222'], { stops: ['#1', '#2'] })).toEqual({
+      stops: ['#111111', '#222222'],
+    })
+    expect(readGradientWithFact({ stops: [1, 2] }, fact)).toBeNull()
+  })
 })
 
 describe('展示注册表', () => {

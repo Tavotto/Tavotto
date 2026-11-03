@@ -1,5 +1,5 @@
 import { Dialog } from '../ui/Dialog'
-import { GradientStopsField, readGradient } from './controls/GradientStopsField'
+import { GradientStopsField, gradientPayload, readGradientWithFact } from './controls/GradientStopsField'
 import { EmptyState } from '../ui/EmptyState'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
@@ -1960,14 +1960,14 @@ function BatchFieldRow({
         )
       case 'gradient': {
         // 多选的渐变峰：两端颜色写给全部成员；方向按第一个成员（各成员各自按自己的方向重算）
-        const grad = readGradient(first)
+        const grad = readGradientWithFact(first, field.value)
         if (!grad) return null
         return (
           <GradientStopsField
             value={grad}
             label={label}
             mixed={mixed}
-            onChange={(stops) => write({ stops }, true)}
+            onChange={(stops) => write(gradientPayload(stops, grad), true)}
             onGestureEnd={gesture.end}
           />
         )
@@ -2626,13 +2626,13 @@ function FieldRow({
 
     case 'gradient': {
       // 渐变色带的两端颜色：两个色块 + 渐变条，取色同「填充颜色」是连续动作（事务由 gesture 收口）
-      const grad = readGradient(value)
+      const grad = readGradientWithFact(value, field.value)
       if (!grad) return null
       return wrap(
         <GradientStopsField
           value={grad}
           label={label}
-          onChange={(stops) => write({ stops }, true)}
+          onChange={(stops) => write(gradientPayload(stops, grad), true)}
           onGestureEnd={gesture.end}
         />,
       )

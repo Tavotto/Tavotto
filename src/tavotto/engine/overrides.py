@@ -4126,7 +4126,7 @@ def gradient_detect(coll) -> dict | None:
     paths = coll.get_paths()
     if len(paths) < _GRAD_MIN_STRIPES:
         return None
-    fc = np.asarray(_gradient_base_colors(coll), dtype=float)
+    fc = _gradient_base_colors(coll)
     if fc.ndim != 2 or len(fc) != len(paths):
         return None
     if np.ptp(fc[:, :3], axis=0).max() < 1e-3:
@@ -4151,14 +4151,33 @@ def gradient_detect(coll) -> dict | None:
     key = disp[:, axis]
     # display 的 y 向上：竖向渐变的「上端」是 y 最大的那条；横向的「左端」是 x 最小的
     order = np.argsort(-key if axis == 1 else key, kind="stable")
-    return {"direction": direction, "order": order}
+    # 屏幕起端对应数据坐标的哪一头——写回 override 时一起记下，重放不再依赖当时的坐标变换
+    dkey = centers[:, axis]
+    screen_start = "high" if dkey[order[0]] > dkey[order[-1]] else "low"
+    return {
+        "direction": direction,
+        "order": order,
+        "screen_start": screen_start,
+        "data_order": np.argsort(dkey, kind="stable"),  # 数据坐标升序，与任何变换无关
+    }
 
 
 def _gradient_base_colors(coll) -> np.ndarray:
+    """脚本原样的逐条颜色（N×4）：取**源设定**而不是 `get_facecolor()`——后者已经和 Artist 级 alpha
+    合成过，把「透明度」滑块的值烤进基准，之后单独清掉 alpha 也回不去（热态 ≠ 重放）。"""
     base = getattr(coll, _GRAD_BASE, None)
     if base is not None:
         return base
-    return np.asarray(coll.get_facecolor(), dtype=float)
+    return _gradient_source_colors(coll)
+
+
+def _gradient_source_colors(coll) -> np.ndarray:
+    spec = _get_coll_facecolor(coll)
+    try:
+        arr = np.array(mcolors.to_rgba_array(spec), dtype=float)
+    except (TypeError, ValueError):
+        arr = np.array(coll.get_facecolor(), dtype=float)
+    return arr
 
 
 def gradient_stops(coll, info: dict | None = None) -> tuple[str, str] | None:
@@ -4174,8 +4193,16 @@ def gradient_stops(coll, info: dict | None = None) -> tuple[str, str] | None:
 
 
 def _gradient_current(coll):
-    """override 的原样（还原用）：此刻的逐条颜色，拷贝一份。"""
-    return np.array(coll.get_facecolor(), dtype=float, copy=True)
+    """override 的原样（还原用）：逐条颜色的**源设定**（拷贝），不是合成了 Artist alpha 的数组。"""
+    spec = _get_coll_facecolor(coll)
+    if isinstance(spec, np.ndarray):
+        return np.array(spec, copy=True)
+    if isinstance(spec, (list, tuple)):
+        try:
+            return np.array(mcolors.to_rgba_array(spec), dtype=float)
+        except (TypeError, ValueError):
+            pass
+    return spec
 
 
 def _gradient_apply(coll, value) -> None:
@@ -4188,9 +4215,15 @@ def _gradient_apply(coll, value) -> None:
     if info is None or not isinstance(pair, (list, tuple)) or len(pair) != 2:
         return
     if getattr(coll, _GRAD_BASE, None) is None:
-        setattr(coll, _GRAD_BASE, np.array(coll.get_facecolor(), dtype=float, copy=True))
+        setattr(coll, _GRAD_BASE, _gradient_source_colors(coll))
     base = getattr(coll, _GRAD_BASE)
-    order = info["order"]
+    ss = value.get("screen_start")
+    if ss in ("high", "low"):
+        # 与此刻的坐标变换无关：按数据坐标升序，「high」= 屏幕起端在数据大的那头
+        asc = info["data_order"]
+        order = asc[::-1] if ss == "high" else asc
+    else:
+        order = info["order"]  # 旧形状 override：退回此刻变换下的屏幕次序
     a0, a1 = base[order[0], :3], base[order[-1], :3]
     span = a1 - a0
     denom = float(np.dot(span, span))

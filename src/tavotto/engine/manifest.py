@@ -2203,7 +2203,11 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
                 {
                     "prop": "gradient",
                     "type": "gradient",
-                    "value": {"stops": list(ends), "direction": grad["direction"]},
+                    "value": {
+                        "stops": list(ends),
+                        "direction": grad["direction"],
+                        "screen_start": grad["screen_start"],
+                    },
                     "group": "渐变填充",
                 }
             )
