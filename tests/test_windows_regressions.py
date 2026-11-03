@@ -2516,6 +2516,14 @@ def _byte_compared_generated_files() -> list[str]:
         "src/tavotto/rendercore/fonts_allowlist.json",
         # 运行时锁：research cohort 记它的 sha256、load_cohort() 逐字节核（#1682 windows 片 4）
         "packaging/runtime-lock.json",
+        # 研究语料的科学环境配方：research-manifest 记 sha256、check_project_contract() 逐字节核。
+        # 按目录现读而不是手抄：新增一个 S0 case 时，没在 .gitattributes 登记就在这里红（#1682 windows 片 4）
+        *sorted(
+            p.relative_to(Path(__file__).resolve().parent.parent).as_posix()
+            for p in (Path(__file__).resolve().parent / "compat" / "research-environments").glob(
+                "*.txt"
+            )
+        ),
         # Codex 插件的启动器对（#266）：POSIX 半边的 shebang 遇 CRLF 即失效；Windows 半边逐字节稳定
         "codex-plugin/mcp/launch",
         "codex-plugin/mcp/launch.cmd",
