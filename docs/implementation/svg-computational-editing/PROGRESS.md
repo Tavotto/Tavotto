@@ -27,7 +27,7 @@
 | SG07 | passed(M1) | f505c216 | 脚手架+组合+worker 分发；热=冷字节一致；注释锚定/NaN 间断入口未完成（SG08+） |
 | SG08 | passed | 834c0053+f74757f5 | 类别轴/bar/errorbar/图例同步；vectors 14 条双侧同判 |
 | SG09 | passed(core) | d962ecae | 网格/热图绑定全链 + vectors 16 条双侧同判；极坐标/3D 等以信息前提登记（不冒充） |
-| SG10 | running(1/3) | 00de628a+c95bdb03 | 后端端点+文档契约+api client 完成；绑定向导 UI 与 PanelView 接线未做 |
+| SG10 | running(2/3) | 00de628a+c95bdb03+b4d229ab+c3d15aaf+b2688a39 | 端点/契约/api client/store 完成；Dialog 组件、PanelView 渲染接线、e2e 待做 |
 | SG11–SG17 | pending | — | — |
 
 ## Checkpoint 追加
@@ -39,6 +39,23 @@
   compose 图像替换；vectors 16 条双侧同判；TS 镜像同步（grids 校验 + image 角色 + 摘要口径）。
 - 极坐标/3D/双轴/inset：**未实现**，信息前提登记在 SG00 能力清单 §3（3D 需 z 数据等）——
   按计划「无原输入的信息不冒充已恢复」，该批以「已实现网格/色阶 + 对等盘点」记账，非全部退出条件。
+
+### 2026-11-04 SG10 进行到 2/3（时间：UTC 06:4x）
+
+- `b4d229ab`+`c3d15aaf`+`b2688a39`：web/src/store/chartBindStore.ts（向导状态机：
+  openFor→inspect→data→confirmBinding(chartBind)→confirm(chartCompute 预览)；错误稳定码透传；
+  6 个 vitest 用例全绿）+ TS strictness 修复（pnpm build 绿）。
+- **SG10 3/3 的确切剩余**：
+  1. `web/src/components/chart/ChartBindDialog.tsx`：用 `ui/Dialog`（宽度 md/lg）+
+     `useChartBindStore` 渲染三步（data/confirm 两步已够 v1）；确认按钮调
+     `documentStore` 的 updateObject 把 `chart` 字段写进面板（一次 commit、可撤销）；
+     入口挂画布 SVG 面板的右键菜单/Inspector（object-context-menu 规则）。
+  2. PanelView 渲染接线：fileKind==='svg' 且 `obj.chart` 存在的面板 → chartCompute
+     （键 = renderKeyOf + model.data_digest，结果进 PanelRender.svg 三件套——遵守
+     render-state-keying 与 svg-byte-budget 纪律）。
+  3. e2e：`web/e2e/chart-bind.spec.ts`（B 路径真浏览器）+ playwright.config 白名单评估。
+  4. i18n：向导文案走 `t()`，新 key 进 errors.json / ui 资源（`pnpm i18n:check` 是硬门禁）。
+- 修复纪律备忘：build 失败的提交绝不入树（本轮曾连犯两次，均以 fix 提交补救）。
 
 ### 2026-11-04 SG10 进行到 1/3（时间：UTC 05:5x）
 
