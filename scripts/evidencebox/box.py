@@ -42,6 +42,9 @@ CONTROL = ROOT / "control"  # 控制检出：blobless 全历史，只用来判�
 SRC = ROOT / "src"  # 每个 SHA 一份浅检出，进镜像
 RUNS = ROOT / "runs"
 LOCK = ROOT / "lock"
+#: 批准字体的持久缓存（大陆到 raw.githubusercontent.com 很慢）。只是缓存：fetch_fonts 对目录里已有的每个文件
+#: 重核 allowlist 的 sha256，不符就删掉重下，所以缓存被改过也进不了镜像。
+FONT_CACHE = ROOT / "cache" / "fonts"
 
 BASE_IMAGE = os.environ.get("TAVOTTO_EVIDENCE_BASE", "python:3.13-bookworm")
 NOVICE_IMAGE = "ubuntu:24.04"
@@ -185,6 +188,7 @@ def prepare_argv(name: str, src: Path, base: str) -> list[str]:
     return [
         "docker", "run", "--name", name,
         "-v", f"{src}:/srcro:ro",
+        "-v", f"{FONT_CACHE}:/fontcache:rw",
         *env_args({**NO_PHONE_HOME, "PIP_INDEX_URL": PIP_MIRROR, "PIP_DEFAULT_TIMEOUT": "30",
                    "PIP_RETRIES": "5", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}),
         base,
@@ -225,6 +229,7 @@ def build_image(sha: str, profile: str, script: str, *, base: str = BASE_IMAGE) 
     if image_exists(tag):
         return tag
     src = checkout(sha)
+    FONT_CACHE.mkdir(parents=True, exist_ok=True)
     name = f"tavotto-evidence-prep-{sha[:12]}-{profile}".replace("_", "-")
     sh(["docker", "rm", "-f", name], check=False, capture=True)
     full = "\n".join(
@@ -233,7 +238,14 @@ def build_image(sha: str, profile: str, script: str, *, base: str = BASE_IMAGE) 
             apt_mirror_cmd(),
             "git config --system safe.directory '*'",
             "mkdir -p /work && cp -a /srcro /work/src && cd /work/src",
+            # 字体缓存：先放进去（fetch_fonts 逐个重核 sha256），装完再存回来
+            "mkdir -p src/tavotto/resources/fonts build/fonts-cache",
+            "cp -a /fontcache/fonts/. src/tavotto/resources/fonts/ 2>/dev/null || true",
+            "cp -a /fontcache/archives/. build/fonts-cache/ 2>/dev/null || true",
             script,
+            "mkdir -p /fontcache/fonts /fontcache/archives",
+            "cp -a src/tavotto/resources/fonts/. /fontcache/fonts/ 2>/dev/null || true",
+            "cp -a build/fonts-cache/. /fontcache/archives/ 2>/dev/null || true",
             # 执行身份要能读源码树，但不能改它
             "chmod -R a+rX /work",
         ]
@@ -244,7 +256,13 @@ def build_image(sha: str, profile: str, script: str, *, base: str = BASE_IMAGE) 
     try:
         if rc != 0:
             raise SystemExit(f"prepare {profile} failed (exit {rc}); container {name} removed")
-        sh(["docker", "commit", "-q", "--change", "WORKDIR /work/src", name, tag], capture=True)
+        commit = sh(
+            ["docker", "commit", "--change", "WORKDIR /work/src", name, tag],
+            check=False,
+            capture=True,
+        )
+        if commit.returncode != 0:
+            raise SystemExit(f"docker commit {tag} failed: {commit.stderr.strip()}")
     finally:
         sh(["docker", "rm", "-f", name], check=False, capture=True)
     log(f"prepared {tag} in {time.time() - t0:.0f}s")

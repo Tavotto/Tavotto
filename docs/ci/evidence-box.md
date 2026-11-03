@@ -51,4 +51,16 @@ scp -r tavotto-evidence-box:/srv/tavotto-evidence/runs/<run> ~/TavottoEvidence/
 
 - 大陆到 GitHub 偶有 TLS 断连或 130 s 连不上，`box.py` 对 clone / fetch 重试三次。
 - `ubuntu:24.04` 默认 apt 源在大陆很慢；`novice-u2404` 故意不换源（照新手的真实环境）。
-- PyPI 官方源下载慢；准备阶段走阿里云 PyPI 镜像，`novice-u2404` 不换源。
+- PyPI 官方源（files.pythonhosted.org，Fastly）约 1 MB/min：`novice-u2404` 先照 README 原样装、限时 15 分钟
+  （实测两次都超时），再换阿里云镜像走完后半段（约 200 s）。准备阶段直接走阿里云镜像。
+- `raw.githubusercontent.com` 取字体会卡住不动：`/srv/tavotto-evidence/cache/fonts/` 是批准字体的持久缓存，
+  每次准备先放进去、装完存回来；fetch_fonts 对每个文件重核 sha256，缓存被改过也进不了镜像。
+  新机器上第一次可以从维护者本机 `scp` 一份已过 `fetch_fonts.py --check` 的字体进去。
+
+## 首轮实测（2026-11-03，main 348c9af96）
+
+| 任务 | 结果 |
+| --- | --- |
+| guardian-suites | 准备 856 s（镜像 3.28 GB）；执行 2 分 24 秒：engine 6/6 passed（退出 0）、V2 退出 4，两份报告 `validate` 通过 |
+| guardian-explore（3 片、各 300 s 冒烟） | 每片执行约 20 个候选、各有差异（退出 1）；三片合并 triage：5 个簇、无新的可复现家族 |
+| novice-u2404 | README 原样 pipx 15 分钟超时；镜像 192 s 装好；README 两条 Codex 命令、`tavotto codex install` / `doctor` 全过；插件 MCP 列出 10 个工具 |

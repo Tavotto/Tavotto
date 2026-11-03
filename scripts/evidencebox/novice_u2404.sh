@@ -37,10 +37,28 @@ step tavotto-on-path xb "command -v tavotto && tavotto doctor"
 # 2. 起引擎、拿首页
 step serve xb "mkdir -p ~/figs && (nohup tavotto --no-browser --figures ~/figs >~/serve.log 2>&1 &) ; for i in \$(seq 1 90); do curl -fsS -o /dev/null http://127.0.0.1:5089/ && echo up after \$i s && exit 0; sleep 1; done; cat ~/serve.log; exit 1"
 
-# 3. MCP stdio 握手 + 列工具（不调模型）
+# 4. Codex CLI（新手照 OpenAI 文档：npm i -g @openai/codex）
+step apt-node root "apt-get install -y nodejs npm git"
+step npm-codex root "npm install -g @openai/codex && codex --version"
+# 4a. README 原文两行
+step readme-marketplace xb "codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins"
+step readme-plugin-add xb "codex plugin add tavotto@tavotto"
+step codex-doctor xb "tavotto codex doctor"
+# 4b. 另一条：从干净的 ~/.codex 交给 tavotto codex install
+step reset-codex xb "rm -rf ~/.codex"
+step tavotto-codex-install xb "tavotto codex install"
+step codex-doctor-2 xb "tavotto codex doctor"
+
+# 5. 插件的 MCP stdio 握手 + 列工具（不调模型）
 cat >/home/xb/mcp_probe.py <<'PY'
 import json, subprocess, sys
-p = subprocess.Popen(["tavotto", "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, text=True)
+from pathlib import Path
+# 照插件 codex.mcp.json：cwd = 插件根，command ./mcp/launch，args ./mcp/server.py（pipx 装的引擎没有内置 MCP 服务端）
+roots = sorted((Path.home() / ".codex/plugins/cache/tavotto/tavotto").glob("*/mcp/server.py"))
+if not roots: raise SystemExit("plugin not installed: no mcp/server.py under ~/.codex/plugins/cache")
+root = roots[-1].parent.parent
+print("plugin root:", root)
+p = subprocess.Popen(["./mcp/launch", "./mcp/server.py"], cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, text=True)
 def rpc(i, method, params=None):
     msg = {"jsonrpc": "2.0", "method": method, **({"id": i} if i is not None else {}), "params": params or {}}
     p.stdin.write(json.dumps(msg) + "\n"); p.stdin.flush()
@@ -61,17 +79,5 @@ sys.exit(0 if names else 1)
 PY
 chown xb /home/xb/mcp_probe.py
 step mcp-tools xb "timeout 120 /usr/bin/python3 ~/mcp_probe.py"
-
-# 4. Codex CLI（新手照 OpenAI 文档：npm i -g @openai/codex）
-step apt-node root "apt-get install -y nodejs npm git"
-step npm-codex root "npm install -g @openai/codex && codex --version"
-# 4a. README 原文两行
-step readme-marketplace xb "codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins"
-step readme-plugin-add xb "codex plugin add tavotto@tavotto"
-step codex-doctor xb "tavotto codex doctor"
-# 4b. 另一条：从干净的 ~/.codex 交给 tavotto codex install
-step reset-codex xb "rm -rf ~/.codex"
-step tavotto-codex-install xb "tavotto codex install"
-step codex-doctor-2 xb "tavotto codex doctor"
 
 echo DONE | tee -a /out/full.log
