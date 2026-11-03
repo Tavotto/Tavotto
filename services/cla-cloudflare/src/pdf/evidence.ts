@@ -10,7 +10,7 @@ export interface Evidence {
 export interface BuildInput {
   agreement:AgreementInfo;contributor:Evidence;holder:Evidence;contributorSha256?:string;holderSha256?:string;
   /** Offline/test hooks. The signing page does not pass these. */
-  overrides?:{agreementPdf?:Uint8Array;font?:Uint8Array;rasterizer?:import('./raster.ts').Rasterizer;now?:Date;serviceHost?:string};
+  overrides?:{agreementPdf?:Uint8Array;font?:Uint8Array;rasterizer?:import('./raster.ts').Rasterizer;now?:Date;serviceHost?:string;timeoutMs?:number};
 }
 export const KINDS:Record<string,{title:string;short:string;you:string}>={
   individual:{title:'Individual Contributor License Agreement',short:'Individual CLA',you:'You (Individual)'},

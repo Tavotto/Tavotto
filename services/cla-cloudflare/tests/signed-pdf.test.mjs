@@ -170,3 +170,15 @@ test('agreement/publishedUrl come from the hash-verified PDF metadata unless the
     const d=await D.load(stagingPdf);d.setSubject(subject);const [,,c]=await pages(await build({...base,agreement:a,overrides:{...base.overrides,agreementPdf:new Uint8Array(await d.save())}}));
     assert.doesNotMatch(c.text,/Published text|javascript/);}
 });
+
+test('a rasteriser callback that never returns ends in build_timeout, not an eternal pending',async()=>{
+  const name='王嘉琪',hang={measure:()=>10,render:()=>new Promise(()=>{})};
+  const t0=Date.now(),guard=(p)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new assert.AssertionError({message:'build hung past its own limit'})),5000).unref())]);
+  await rejects(guard(build(await input({contributor:evidence('contributor',{name,signature:name}),overrides:{rasterizer:hang,timeoutMs:200}}))),'build_timeout');
+  assert.ok(Date.now()-t0<3000);
+  // A fetch that never answers is bounded the same way (the default path used in browsers).
+  const real=globalThis.fetch;globalThis.fetch=()=>new Promise(()=>{});
+  try{const i=await input({overrides:{timeoutMs:200}});delete i.overrides.agreementPdf;await rejects(guard(build(i)),'build_timeout');}finally{globalThis.fetch=real;}
+  // Normal builds are unaffected by the limit and leave no timer behind (the test process would not exit otherwise).
+  assert.ok((await build(await input({overrides:{timeoutMs:60000}}))).length>1000);
+});

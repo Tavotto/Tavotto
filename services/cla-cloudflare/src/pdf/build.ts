@@ -37,7 +37,16 @@ export function assertAgreementPdf(doc:PDFDocument,sha256:string):void {
 }
 const roundRect=(w:number,h:number,r:number)=>`M ${r},0 H ${w-r} A ${r},${r} 0 0 1 ${w},${r} V ${h-r} A ${r},${r} 0 0 1 ${w-r},${h} H ${r} A ${r},${r} 0 0 1 0,${h-r} V ${r} A ${r},${r} 0 0 1 ${r},0 Z`;
 
+/** Whole-build ceiling. A canvas callback or fetch that never answers must end in a stable error, not an eternal pending. */
+export const BUILD_TIMEOUT_MS=20000;
 export async function build(input:BuildInput):Promise<Uint8Array> {
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  const limit=input?.overrides?.timeoutMs??BUILD_TIMEOUT_MS;
+  try {
+    return await Promise.race([buildPdf(input),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('build_timeout')),limit);})]);
+  } finally {clearTimeout(timer);}
+}
+async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   const v=checkInput(input),over=input.overrides??{},kind=KINDS[v.agreement.kind]!,now=over.now??new Date();
   const agreementBytes=over.agreementPdf??await fetchAsset(AGREEMENT_PDF_PATH,8*1024*1024);
   const doc=await PDFDocument.load(agreementBytes);

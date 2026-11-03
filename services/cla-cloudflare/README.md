@@ -237,11 +237,11 @@ fingerprint.
 `Error` whose `message` is a stable code: `agreement_input_invalid`, `evidence_role_mismatch`,
 `evidence_agreement_mismatch` (evidence hash/kind/version differ from `agreement`), `evidence_packet_mismatch`,
 `evidence_invalid`, `evidence_attestations_invalid`, `evidence_fingerprint_missing` (a fingerprint was given but malformed or contradictory),
-`agreement_pdf_hash_mismatch`, `asset_unavailable`, `canvas_unavailable`. Nothing is drawn or downloaded when
+`agreement_pdf_hash_mismatch`, `asset_unavailable`, `canvas_unavailable`, `build_timeout` (the whole build is capped at 20 s). Nothing is drawn or downloaded when
 it throws. `attribution` is an optional one-line footer on the Signatures page (for example the Harmony
 credit); nothing is printed if it is omitted. Extra `overrides` (`agreementPdf`, `font`, `rasterizer`, `now`,
 `serviceHost`) exist for offline tests and sample generation; the signing page does not pass them.
-`scripts/sample-signed-pdf.mjs` builds a sample in a real headless Chrome with synthetic data.
+`scripts/sample-signed-pdf.mjs` builds samples in a real headless Chrome with synthetic data, driven in real time over the DevTools protocol (`--runs N` prints per-run results and timings). Do not use `--virtual-time-budget --dump-dom` for this: canvas encoding is untracked by virtual time, so it dumps the page before the build finishes.
 
 ### Identity fan-out and verification admission
 

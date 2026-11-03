@@ -78,5 +78,14 @@
     "pattern": "agreement/publishedUrl come from the hash-verified PDF metadata",
     "testFile": "tests/signed-pdf.test.mjs",
     "assertionError": true
+  },
+  {
+    "name": "signed PDF build timeout",
+    "file": "src/pdf/build.ts",
+    "before": "setTimeout(()=>reject(new Error('build_timeout')),limit)",
+    "after": "setTimeout(()=>{},limit)",
+    "pattern": "a rasteriser callback that never returns",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
   }
 ]
