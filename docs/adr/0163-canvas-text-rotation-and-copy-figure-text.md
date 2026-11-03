@@ -1,6 +1,6 @@
 # ADR 0163：画布文字标注自由旋转，与「图内文字复制为标注」「横排 / 竖排」
 
-日期：2026-11-03 · 状态：**Accepted（旋转、图内文字复制为标注）/ Proposed（横排 / 竖排，由后续 PR 填写）**（维护者 2026-11-03 拍板并给 1.0 豁免：「给，三项都做」）
+日期：2026-11-03 · 状态：**Accepted（旋转、图内文字复制为标注、横排 / 竖排）**（维护者 2026-11-03 拍板并给 1.0 豁免：「给，三项都做」）
 相关：[0032 typography 能力层](0032-typography-capability-layer.md)、[0060 字体政策](0060-font-policy-and-allowlist.md)、[0065 合成](0065-imported-page-composition.md)、[0072 RenderCore](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、
 [0152 所见即所得文字编辑框](0152-wysiwyg-text-editor.md)；字体同原图是另一个 PR 的 ADR 0164（本文不重复）。
 
@@ -101,15 +101,58 @@
 * 非镜像面板才保证左右对齐语义与页面一致（镜像时按「读得顺」取向，左右对调）。
 * 复制的是**当前画出来的**文字（含尚未写回脚本的 override）；标注与原文字此后**没有关联**（改一边不影响另一边）。
 
-## 横排 / 竖排（占位，由后续 PR 填写）
+## 横排 / 竖排（2026-11-03）
 
-- 竖排中文：字头朝上；英文与数字侧躺。具体字段与排版规则由该 PR 定。
+画布文字可切 **横排 / 竖排**：从上到下、列从右往左（CSS `writing-mode: vertical-rl`）。**中文、日文假名、全角标点字头朝上；
+英文与数字侧躺**（顺时针转 90°，CSS `text-orientation: mixed`）；全角标点用竖排字形（`，。「」（）` 走 OpenType `vert` / `vrt2`）。
+可与上面的自由旋转叠加：先竖排排版、再绕未旋转框中心整体转（第 6 条那一条公式，不分叉）。
+
+1. **字段**：`TextObject.writingMode?: 'vertical'`，导出载荷 `writing_mode`。缺席 = 横排，磁盘格式不升版；回到横排**删字段**
+   （`'horizontal'` 只是控件取值，不落盘）。走 typography 能力层：`TYPOGRAPHY_PROPS` 加 `writingMode`，支持表 / property path / 校验三张表一起改；
+   图内文字不支持（`kind_unsupported`，混选两类时交集里没有它）。控件：属性页与浮动文字工具条各一个「横排 / 竖排」两段切换，值四档照旧
+   （多选一横一竖 = mixed，两段都不选中）。
+2. **框语义**：`x / y / w / h` 仍是**未旋转**的框。横排是「w 用户定（行长）、h 由内容撑」；竖排对称：**`h` 是行长**（列按它折行）、
+   **`w` 由列数撑开**——画布上的 `TextView` 量出列宽写回（`silent`，不进历史），**右边缘不动**（第一列贴右边、往左长，x 同步挪，字不跳）。
+   属性页里竖排文字的 H 可编辑、W 灰掉（「竖排的宽度随列数」），横排相反。切换排向时 w / h 对调、**左上角不动**（行长跟着走；
+   绕中心对调会让长条框的上沿甩出页面）。
+3. **对齐**：`align` 左 / 中 / 右在竖排里解释为**每一列内的 上 / 中 / 下**（CSS 里 vertical-rl 的 line-left 就是上边，浏览器实测同）；
+   列之间永远从右往左。
+4. **旋转时的收框**（第 4 条的竖排版）：竖排**单行（一列）**第一次旋转时收的是**高度**（贴字高）：同一个 `fitSingleLineBox`（`textFit.ts` 扩展、
+   不另写一套），同一对余量常量（预览量长 × 1.04 + 0.5 em），按 `align` 锚点（左 / 中 / 右 = 上 / 中 / 下）；收的是 `y / h`，不是 `x / w`。
+   后端同源看护 `test_fit_to_text_box_never_wraps_in_export_vertical`（预览模拟窄 3 % 仍是一列，无余量折成多列）。
+5. **预览与导出同源的机制**（先说清横排现状：**没有共享的折行实现**——预览是浏览器 CSS，导出是 `typography.break_lines`，两边各自实现同一份语义
+   「贪心、CJK 逐字、拉丁按词、超宽单词逐字兜底」，靠 `textFit` 的余量与真 PDF 几何用例兜底）。竖排沿用，并**多补一道真浏览器对账**：
+   - 折行算法**只有一份**：`break_lines` 多一个 `measure` 参数（沿「行」方向量一个单元的长度），竖排传入 `vertical.column_measure`
+     （直立字取竖排进退、侧躺字取横排字宽、公式取盒宽）；传同一把横排的尺得到与横排逐行相同的结果（测试钉着）。
+   - 直立 / 侧躺的判据 `vertical.UPRIGHT`（UAX #50 `Vertical_Orientation` 的核心区段：表意文字、假名、谚文、全角形式、CJK 符号标点、
+     带圈数字及 `§©®±×÷` 等；区间外一律侧躺，与 CSS 对未登记字符的缺省一致）。
+   - `tests/test_vertical_css_parity.py`：同样的批准字体文件、`TextView` 的竖排样式挂进真 Chromium，逐字量落在第几列，与 `vertical.layout` 逐列相比
+     （没有 node / 浏览器时 skip 并说明；反证：改坏列长即红）。
+   - 预览样式带 `text-spacing-trim: space-all`：Chrome 默认把相邻全角标点收成半宽（`，「`），RenderCore 不收，竖排预览关掉它两边才逐格一致。
+     **已知差异（横排同样存在，不是本次引入）**：浏览器的行首 / 行尾禁则（kinsoku）RenderCore 不做；横排预览仍有 `text-spacing-trim` 收窄。
+6. **导出（RenderCore）**：
+   - **直立字**：HarfBuzz **TTB** 塑形（`HbFace.shape_vertical`，套 `vert` / `vrt2`，读 `vmtx` / `vhea` / `VORG`；Noto Sans SC 有竖排表，
+     Liberation 与多数用户字体没有 → HarfBuzz **合成**竖排度量：进退 = 上升 − 下降、字形落在字宽中线，用户字体回退同此，不换脸、不报错）。
+     一字一个单字形 `ShapedText`，笔位 = 列中线 x / 字格顶边 y 加上 HarfBuzz 已折好的竖排原点偏移。
+   - **侧躺段**：仍按横排塑形（`shape_segment`，含分层 / 粗斜体变体），放进 `Group(rotate_about(-90°, 段起点))`（y 向上空间里 −90° = 顺时针）；
+     基线取**中线基线**（em 方框竖直中点落在列中线上，与直立字对齐——CSS 竖排用的同一条基线）。**公式**同为侧躺整块（轮廓与文本层占位在同一个旋转 Group 里）。
+   - 不改写入器：几何全是 IR 现成节点，PDF / SVG / EPS / 位图四个写入器不认识「竖排」。
+   - **下划线**：每列一条竖线，位置 = 侧躺基线「下面」0.11 字号，即**列的左边**（与横排同一条公式；浏览器竖排下划线同在左边，实测）。背景 / 描边跟框走，不跟列走。
+   - **文本层**：内容流按「列从右往左、列内从上到下」写出，按内容流读的读取器（PDFium、poppler `-raw`、MuPDF / pymupdf）得到用户原文顺序（直立字之间读出换行，
+     是每字一个文字对象的代价）。**已知读取器限制**：PDFium 对整体转了 90° 的多行文字按几何重排（横排文字转 90° 同样，三行读回来是反的），poppler 的
+     版面模式（不带 `-raw`）对竖排按几何拆行——这是读取器的启发式，写入的顺序是对的；没有引入 WMode=1 的竖排字体（Identity-V）是有意的，那要改写入器与四个后端。
+7. **不做**：样式复制 / 粘贴不带排向（它会改框语义）；缩略图 / 导出预览（`CanvasThumb`）里的竖排用 SVG `writing-mode` 近似画、不折行、与横排一样不旋转；
+   竖排里的拉丁连字 / 竖中横（`text-combine-upright`）不做。
 
 ## 逃生口与默认
 
 默认：只有用户拖了旋转柄或在属性页填了角度才有 `rotationDeg`，其余文档与导出逐字不变。逃生口：属性页角度填 0 / 拖回 0 即删字段。
 
 ## 看护
+
+- 竖排：`tests/test_rendercore_vertical.py`（直立 / 侧躺判据、折行与列序、对齐、竖排字形、中英混排朝向与中线基线、粗斜体、旋转叠加、下划线、公式、用户字体缺 vmtx 回退、文本层顺序）、
+  `tests/test_vertical_css_parity.py`（真 Chromium 折行对账）、`test_compose_annotations.py::test_fit_to_text_box_never_wraps_in_export_vertical`、
+  `web/src/canvas/verticalText.test.tsx`（能力层 / 字段增删 / 撤销重做 / 控件 / 预览框语义 / 收框高度 / 载荷往返）。
 
 - `web/src/canvas/textFit.test.tsx`：单行收框（左 / 中 / 右字不动）、多行与折行不收、一条历史、取消与拖回 0 不留。
 - `web/src/canvas/rotateKnob.test.tsx`：规范化 / 方位角 / 吸附换算；柄的位置与随转；拖动不跳、⇧ 吸 15°、-90 而非 270、回 0 删字段、

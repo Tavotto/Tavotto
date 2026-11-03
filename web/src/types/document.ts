@@ -246,6 +246,15 @@ export interface TextObject extends ObjectBase {
   /** 原图字体的身份（ADR 0164）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
   sourceFont?: SourceFont
   /**
+   * 排向（ADR 0163「横排 / 竖排」）。**可选：老文档没有它 = 横排**，磁盘格式不升版，导出载荷也不多字段；
+   * 回到横排时**删字段**。`'vertical'` = 从上到下、列从右往左（CSS `vertical-rl`）：中日韩字头朝上，
+   * 拉丁与数字侧躺，全角标点用竖排字形；可与 `rotationDeg` 叠加（先竖排排版、再整体旋转）。
+   *
+   * 框语义：`x/y/w/h` 仍是未旋转的框。竖排里 `h` 是「行长」（列按它折行），`w` 由列数撑开
+   * （画布上的 `TextView` 量出来写回，右边缘不动）；`align` 左 / 中 / 右 = 列内的 上 / 中 / 下。
+   */
+  writingMode?: 'vertical'
+  /**
    * 科学文本解释档位。**可选：老文档没有它 = auto**（与升级前逐字符同样的
    * 渲染），磁盘格式不升版。
    *

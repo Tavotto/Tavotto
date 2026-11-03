@@ -25,7 +25,7 @@ import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { isSourceFont } from '@/lib/sourceFont'
 import { useSourceFonts } from '@/lib/sourceFontCache'
 import { previewStackOf } from '@/lib/sourceFontPreview'
-import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
+import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
 /**
@@ -65,7 +65,12 @@ export function TextView({
   const ref = useRef<HTMLDivElement>(null)
   const heightRef = useRef(obj.h)
   heightRef.current = obj.h
+  const widthRef = useRef(obj.w)
+  widthRef.current = obj.w
   const sizePx = mmToWorld(obj.sizePt * MM_PER_PT)
+  // 竖排（ADR 0163）：框高是行长（用户定），框宽由列数撑开——与横排「宽用户定、高由内容撑」对称
+  const vertical = obj.writingMode === WRITING_MODE_VERTICAL
+  const columnPx = sizePx * (obj.lineHeight ?? 1.25)
 
   useLayoutEffect(() => {
     // 缩略图的 ID 由 buildPreset 临时生成，不在用户文档中。
@@ -75,6 +80,21 @@ export function TextView({
     const el = ref.current
     if (!el) return
     const measure = () => {
+      if (vertical) {
+        // 列数撑出来的宽度。右边缘不动（第一列贴右边，往左长）：x 随 w 一起挪，字不跳。
+        // 至少一列宽：空文字不让框缩成一条线
+        const wMm = worldToMm(Math.max(el.offsetWidth, columnPx))
+        if (wMm > 0 && Math.abs(wMm - widthRef.current) > 0.05) {
+          useDocumentStore.getState().silent((d) => {
+            const o = d.objects.find((x) => x.id === obj.id)
+            if (o) {
+              o.x += o.w - wMm
+              o.w = wMm
+            }
+          })
+        }
+        return
+      }
       const hMm = worldToMm(el.offsetHeight)
       if (hMm > 0 && Math.abs(hMm - heightRef.current) > 0.05) {
         useDocumentStore.getState().silent((d) => {
@@ -88,7 +108,7 @@ export function TextView({
     ro.observe(el)
     return () => ro.disconnect()
     // editing 在依赖里：div 带着 key 随编辑态重建（见下），必须重新 observe 新节点
-  }, [obj.id, editing, preview])
+  }, [obj.id, editing, preview, vertical, columnPx])
 
   /**
    * 就地编辑（ADR 0152）：所见即所得文字框，Enter / Esc 提交，⌥/⌘/Ctrl+Enter 换行。
@@ -161,6 +181,21 @@ export function TextView({
         textAlign: obj.align,
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
+        // 竖排（ADR 0163）= CSS `vertical-rl` + `mixed`：中文直立、拉丁与数字侧躺；`align` 左 / 中 / 右 = 列内 上 / 中 / 下。
+        // 框高（= 行长）由对象定，宽度由列数撑开、贴框右边（覆盖上面横排的 left-0 / w-full）。
+        // `text-spacing-trim: space-all`：Chrome 默认会把相邻全角标点收成半宽（`，「`），导出的 RenderCore 不收——
+        // 竖排的预览关掉它，两边才逐格一致（横排的既有差异不在本次范围）
+        ...(vertical
+          ? ({
+              writingMode: 'vertical-rl',
+              textOrientation: 'mixed',
+              textSpacingTrim: 'space-all',
+              left: 'auto',
+              right: 0,
+              width: 'auto',
+              height: '100%',
+            } as CSSProperties)
+          : null),
         cursor: editing ? 'text' : 'inherit',
         // 插入点是界面的东西，不是正文的颜色：accent（与所有可编辑框同一条规矩，宪法第二十六节）
         caretColor: editing ? 'var(--color-accent)' : undefined,

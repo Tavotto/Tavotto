@@ -1913,6 +1913,8 @@ export type ExportObject =
       interpretation?: 'auto' | 'scientific'
       /** 文字写法；缺席 = 旧标记，后端缺省与它一致（ADR 0152） */
       text_format?: 'latex'
+      /** 排向；缺席 = 横排，后端缺省与它一致（ADR 0163） */
+      writing_mode?: 'vertical'
       underline?: boolean
       line_height?: number
       padding_mm?: number

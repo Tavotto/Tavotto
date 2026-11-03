@@ -637,6 +637,7 @@
     "setHeadStart": "Change start head",
     "setHeight": "Change height",
     "setInterpretation": "Change scientific text mode",
+    "setWritingMode": "Change text direction",
     "setLineHeight": "Change line height",
     "setPadding": "Change padding",
     "setPageBackground": "Change page background",
@@ -1098,7 +1099,12 @@
     "styleItalic": "italic",
     "styleNormal": "upright",
     "weightBold": "bold",
-    "weightNormal": "regular"
+    "weightNormal": "regular",
+    "writingHorizontal": "Horizontal",
+    "writingHorizontalTip": "Horizontal: left to right, lines top to bottom",
+    "writingMode": "Direction",
+    "writingVertical": "Vertical",
+    "writingVerticalTip": "Vertical: top to bottom, columns right to left; Chinese stays upright, Latin letters and digits lie on their side"
   },
   "textControls": {
     "align": "Align",
@@ -1144,6 +1150,7 @@
     "rotation": "Rotation",
     "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "Height follows the content",
+    "textWidthAuto": "Vertical text: width follows the columns",
     "title": "Position and size"
   },
   "unlock": "Unlock",

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Row, type RowLabelWidth } from '../../ui/Field'
+import { Segmented } from '../../ui/Segmented'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -9,7 +10,9 @@ import {
   displayValueOf,
   nextToggle,
   toggleStateOf,
+  WRITING_MODES,
   type TypographyProp,
+  type WritingMode,
 } from '@/lib/typography'
 import type { TypographyAdapter } from '../typographyAdapter'
 import { fontFamilyOptionLabel } from '../roles/registry'
@@ -40,6 +43,15 @@ import {
 const tb = (key: string, values?: Record<string, unknown>) =>
   translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
+/** 横排 / 竖排两段的选项（属性页与浮动栏共用，文案只此一处） */
+export function writingModeItems() {
+  return WRITING_MODES.map((v) => ({
+    value: v,
+    label: tb(v === 'vertical' ? 'writingVertical' : 'writingHorizontal'),
+    tip: tb(v === 'vertical' ? 'writingVerticalTip' : 'writingHorizontalTip'),
+  }))
+}
+
 export function TypographyControls({
   adapter,
   className,
@@ -67,6 +79,7 @@ export function TypographyControls({
   const style = adapter.fieldOf('style')
   const color = adapter.fieldOf('color')
   const align = adapter.fieldOf('halign')
+  const writing = adapter.fieldOf('writingMode')
 
   const familyVal = adapter.valueOf('fontFamily')
   const fallbackVal = adapter.valueOf('fontFallback')
@@ -76,6 +89,7 @@ export function TypographyControls({
   const sizeVal = adapter.valueOf('sizePt')
   const colorVal = adapter.valueOf('color')
   const alignVal = adapter.valueOf('halign')
+  const writingVal = adapter.valueOf('writingMode')
   const boldState = toggleStateOf(adapter.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(adapter.valueOf('style'), 'italic')
 
@@ -226,6 +240,24 @@ export function TypographyControls({
             overridden={dirty('halign')}
             onReset={reset('halign')}
           />
+        </Anchor>
+      )}
+      {writing && (
+        <Anchor adapter={adapter} prop="writingMode">
+          {/* 横排 / 竖排两段（ADR 0163）：值四档照旧——多选不一致时没有一段被选中，绝不拿第一个冒充全部 */}
+          <Row label={tb('writingMode')} labelWidth={labelWidth}>
+            <Segmented
+              className="w-full"
+              ariaLabel={tb('writingMode')}
+              value={
+                writingVal.kind === 'mixed'
+                  ? null
+                  : ((displayValueOf(writingVal) ?? 'horizontal') as WritingMode)
+              }
+              onChange={(v) => adapter.writeOnce('writingMode', v)}
+              items={writingModeItems()}
+            />
+          </Row>
         </Anchor>
       )}
     </div>

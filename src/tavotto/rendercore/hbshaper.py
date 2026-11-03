@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import fonts
-from .ir import FontResource, Glyph
+from .ir import FontResource, Glyph, VGlyph
 
 
 class CandidatePackagesMissing(RuntimeError):
@@ -71,6 +71,7 @@ class HbFace:
     ascender: float = field(init=False)
     descender: float = field(init=False)
     _shape_cache: dict[str, tuple[Glyph, ...]] = field(default_factory=dict, repr=False)
+    _vshape_cache: dict[str, tuple[VGlyph, ...]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         require("uharfbuzz", "fontTools")
@@ -158,6 +159,50 @@ class HbFace:
         if len(self._shape_cache) >= 4096:
             self._shape_cache.clear()
         self._shape_cache[text] = result
+        return result
+
+    def shape_vertical(self, text: str) -> tuple[VGlyph, ...]:
+        """竖排（TTB）塑形——直立排的字（中日韩、假名、全角标点）走这里（ADR 0163）。
+
+        HarfBuzz 在 TTB 下自己做三件事：套 `vert` / `vrt2`（全角标点换竖排字形）、读 `vmtx` / `vhea` /
+        `VORG` 给竖排进退与竖排原点；字体没有这些表（Liberation、多数用户字体）时用**合成**的竖排度量
+        （进退 = 上升 + 下降，原点在字宽中线 / 上升处）。`x_offset` / `y_offset` 已经把横排原点折到
+        竖排原点，调用方只管把笔位加上它们。"""
+        cached = self._vshape_cache.get(text)
+        if cached is not None:
+            return cached
+        import uharfbuzz as hb
+
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.direction = "ttb"
+        buf.guess_segment_properties()
+        hb.shape(self._hb_font, buf, {"vert": True, "vrt2": True})
+        infos, positions = buf.glyph_infos, buf.glyph_positions
+        clusters = sorted({i.cluster for i in infos})
+        bounds = {
+            c: (c, clusters[k + 1] if k + 1 < len(clusters) else len(text))
+            for k, c in enumerate(clusters)
+        }
+        seen: set[int] = set()
+        out: list[VGlyph] = []
+        for info, pos in zip(infos, positions):
+            start, end = bounds[info.cluster]
+            piece = text[start:end] if info.cluster not in seen else ""
+            seen.add(info.cluster)
+            out.append(
+                VGlyph(
+                    gid=int(info.codepoint),
+                    text=piece,
+                    y_advance=-int(pos.y_advance),
+                    x_offset=int(pos.x_offset),
+                    y_offset=int(pos.y_offset),
+                )
+            )
+        result = tuple(out)
+        if len(self._vshape_cache) >= 4096:
+            self._vshape_cache.clear()
+        self._vshape_cache[text] = result
         return result
 
     # -- 写入器要的 ----------------------------------------------------------

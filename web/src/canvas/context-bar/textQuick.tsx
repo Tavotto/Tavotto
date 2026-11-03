@@ -2,13 +2,15 @@ import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { fontFamilySelectModel } from '@/components/inspector/controls/fontFamilySelect'
+import { writingModeItems } from '@/components/inspector/controls/TypographyControls'
 import { StyleToggle } from '@/components/inspector/controls/textRows'
+import { Segmented } from '@/components/ui/Segmented'
 import type { TypographyAdapter } from '@/components/inspector/typographyAdapter'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { FALLBACK_MIN_FONT_SIZE_PT } from '@/lib/profile'
 import { PT_DECIMALS } from '@/lib/stylePresets'
-import { displayValueOf, nextToggle, toggleStateOf } from '@/lib/typography'
+import { displayValueOf, nextToggle, toggleStateOf, type WritingMode } from '@/lib/typography'
 import { cn } from '@/lib/utils'
 import { Sep } from './shared'
 
@@ -43,6 +45,8 @@ export function TextQuickControls({
   const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   const firstColor = a.fieldOf('color')?.value
+  const writing = a.fieldOf('writingMode')
+  const writingVal = a.valueOf('writingMode')
   return (
     <span className="flex items-center gap-1" data-text-quick={compact ? 'compact' : 'full'}>
       {!compact && family && (family.options?.length ?? 0) > 0 && (
@@ -106,6 +110,22 @@ export function TextQuickControls({
           onChange={(v) => a.write('color', v, true)}
           onGestureEnd={a.endGesture}
         />
+      )}
+      {writing && (
+        /* 横排 / 竖排两段（ADR 0163）：与属性页同一份选项；多选不一致时没有一段被选中 */
+        <span data-inspector-prop="writingMode" className="flex items-center">
+          <Segmented
+            className="w-[88px] shrink-0"
+            ariaLabel={translate('textBar.writingMode', { ns: 'inspector' })}
+            value={
+              writingVal.kind === 'mixed'
+                ? null
+                : ((displayValueOf(writingVal) ?? 'horizontal') as WritingMode)
+            }
+            onChange={(v) => a.writeOnce('writingMode', v)}
+            items={writingModeItems()}
+          />
+        </span>
       )}
       <Sep />
     </span>

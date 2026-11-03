@@ -4754,6 +4754,7 @@ export default interface Resources {
       "setTextBorder": "修改文字描边",
       "setTextColor": "修改文字颜色",
       "setWidth": "修改宽度",
+      "setWritingMode": "修改排向",
       "setX": "修改 X",
       "setY": "修改 Y",
       "toggleBold": "切换加粗",
@@ -5247,7 +5248,12 @@ export default interface Resources {
       "styleItalic": "斜体",
       "styleNormal": "正体",
       "weightBold": "加粗",
-      "weightNormal": "常规"
+      "weightNormal": "常规",
+      "writingHorizontal": "横排",
+      "writingHorizontalTip": "横排：从左到右，逐行从上往下",
+      "writingMode": "排向",
+      "writingVertical": "竖排",
+      "writingVerticalTip": "竖排：从上到下，逐列从右往左；中文字头朝上，英文与数字侧躺"
     },
     "textControls": {
       "align": "对齐",
@@ -5293,6 +5299,7 @@ export default interface Resources {
       "rotation": "旋转",
       "summary": "X {{x}} · Y {{y}} mm",
       "textHeightAuto": "文字高度随内容",
+      "textWidthAuto": "竖排的宽度随列数",
       "title": "位置与尺寸"
     },
     "unlock": "解锁",

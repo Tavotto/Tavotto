@@ -554,3 +554,47 @@ def test_fit_to_text_box_never_wraps_in_export(client, tmp_path, kw):
     assert lines(preview_mm) > 1, (kw, "没有余量的框应当折行")
     if size_pt == 6:
         assert lines(preview_mm + FIT_MARGIN_EM * em_mm) > 1, (kw, "长文字只靠定额余量应当折行")
+
+
+def _columns_and_length(doc):
+    """竖排第一页文字的列数与首尾字符之间沿列方向的实排长度（pt，取字符包围盒的上下边界）。"""
+    raw = doc[0].get_text("rawdict")
+    chars = [c for b in raw["blocks"] for ln in b["lines"] for s in ln["spans"] for c in s["chars"]]
+    size = max(s["size"] for b in raw["blocks"] for ln in b["lines"] for s in ln["spans"])
+    # 列 = 字符包围盒中线 x 的聚类（直立字与侧躺字的原点 x 不同，不能按原点分列）；间隔小于半个行距算同一列
+    xs = sorted((c["bbox"][0] + c["bbox"][2]) / 2 for c in chars)
+    gap = 0.5 * 1.25 * size
+    n = 1 + sum(1 for a, b in zip(xs, xs[1:]) if b - a > gap)
+    return n, max(c["bbox"][3] for c in chars) - min(c["bbox"][1] for c in chars)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"text": "弹性段刚度与塑性段屈服强度"},
+        {"text": "Time (s)"},
+        {"text": "弹性段 E = 210 GPa", "bold": True, "italic": True},
+        {
+            "text": "催化转化率随温度的变化 Conversion vs temperature (K) 及其拟合曲线",
+            "size_pt": 6,
+        },
+    ],
+)
+def test_fit_to_text_box_never_wraps_in_export_vertical(client, tmp_path, kw):
+    """竖排的「收框到贴字高」（`textFit.ts` 同一对余量常量，量的是高度）也兜得住预览比导出窄：
+    导出必须仍是一列；没有余量的同一个框会折成两列。与横排用例同一个方法（真排的导出长度当「导出自然长」，
+    预览模拟窄 3 %）。"""
+    size_pt = kw.get("size_pt", 12)
+    base = {"x_mm": 40, "y_mm": 2, "w_mm": 10, "size_pt": size_pt, "writing_mode": "vertical"}
+    kw = {k: v for k, v in kw.items() if k != "size_pt"}
+    tall = _export(client, tmp_path, [_text(**kw, **base, h_mm=96)])
+    n, nat_pt = _columns_and_length(tall)
+    assert n == 1
+    preview_mm = nat_pt / MM * 0.97
+    em_mm = size_pt * 25.4 / 72
+
+    def columns(h):
+        return _columns_and_length(_export(client, tmp_path, [_text(**kw, **base, h_mm=h)]))[0]
+
+    assert columns(preview_mm * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * em_mm) == 1, kw
+    assert columns(preview_mm) > 1, (kw, "没有余量的框应当折成多列")
