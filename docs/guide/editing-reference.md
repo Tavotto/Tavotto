@@ -47,7 +47,7 @@ result matches what you were looking at, and it can be locked off per project.
 |---|---|
 | **Text** | Title, axis labels, tick labels, legend entries, annotations — content, size, colour, weight, style, rotation, opacity, visibility. Draggable. |
 | **Data series** | Line width, dash pattern, colour, markers (scatter markers can be swapped wholesale), legend entry order |
-| **Arrows** | Arrows your script drew (`FancyArrowPatch`): drag the whole arrow or either endpoint, change arrow style, line style, width, head size, colour. Arrows attached to `annotate()` keep their data anchors — style only. |
+| **Arrows** | Arrows your script drew (`FancyArrowPatch`): drag the whole arrow or either endpoint, change arrow style, line style, width, head size, colour. `annotate()` arrows with empty text and endpoint coordinates Tavotto can convert back can be dragged whole or by either end too; ones with text, or with coordinates that cannot be converted back, keep their data anchors — style only. |
 | **Axes** | Tick locators and formatters (how many ticks, where, written how), tick marks, grid, spines individually or all four, limits, scales, aspect. Drag a subplot and what belongs to it travels along — a label you had moved, its colourbar, a twin axis. |
 | **Colourbars** | Orientation, both-ended extend triangles, colour map, range, tick and label styling — rebuilt in place, so undo, write-back and re-export stay consistent |
 | **3D axes** | Viewing angle (elev / azim / roll), projection, axis lines, panes, grid, per-axis tick groups, optional axis arrows |
