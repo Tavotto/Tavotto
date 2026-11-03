@@ -31,7 +31,7 @@ config cannot turn anything on. Each step deploys the same manifest and passes
 the step's flags with `--var NAME:true`. `--var` applies only to that deploy,
 so **every deploy repeats the full flag set of its step**; a deploy without
 them returns the service to all-off. Crons live in the manifest and are added
-by a separate PR at S4.
+in the manifest (added for S4).
 
 Never set during the rehearsal: `CLA_DELEGATED_COUNTERSIGNING_ENABLED`
 (needs the rights holder's real authorization, ADR 0137) and
@@ -99,7 +99,7 @@ Expect: the non-exempt test account signs in, sees the staging text, signs the
 individual agreement; `erwanjun` countersigns as holder; the signature rows
 carry the pinned digest. Record the observed responses before S4.
 
-## S4 — automatic results on sandbox PRs (needs the cron PR)
+## S4 — automatic results on sandbox PRs
 
 App settings: webhook active, URL `https://cla-staging.tavotto.com/webhooks/github`,
 secret from `~/.cla-staging-webhook-secret`, subscribe to **Pull request**
@@ -112,6 +112,11 @@ secret from `~/.cla-staging-webhook-secret`, subscribe to **Pull request**
 Expect: a PR by the test account gets a `Tavotto CLA (staging)` Check Run
 within one `7-59/15` tick; failure before signing, success after a new commit
 once signed, failure again after revocation.
+
+The manifest carries both crons from S4 on: `*/2 * * * *` drives recovery
+(`CLA_BACKGROUND_ENABLED`) and `7-59/15 * * * *` drives new-head observation and
+dispatch (`CLA_AUTOMATIC_VERIFICATION_ENABLED`). With those flags off a tick
+returns immediately, so S3-only deploys stay inert.
 
 CPU: keep `$W tail tavotto-cla-staging --format json` running during S3–S4 and
 record each invocation's platform CPU time (and the dashboard's CPU
