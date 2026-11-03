@@ -107,18 +107,18 @@ def test_trust_decision_is_full_sha_on_main(sha, on_main, ok):
     assert B.trust_decision(sha, on_main) is ok
 
 
-def test_resolve_trusted_refuses_a_commit_off_main(monkeypatch):
+def test_resolve_main_commit_refuses_a_commit_off_main(monkeypatch):
     monkeypatch.setattr(B, "sync", lambda: "b" * 40)
     monkeypatch.setattr(B, "git", lambda *a, **k: SHA)
     monkeypatch.setattr(B, "is_ancestor", lambda sha: False)
     with pytest.raises(SystemExit, match="not on origin/main"):
-        B.resolve_trusted(SHA)
+        B.resolve_main_commit(SHA)
 
 
-def test_resolve_trusted_defaults_to_fresh_main(monkeypatch):
+def test_resolve_main_commit_defaults_to_fresh_main(monkeypatch):
     calls = []
     monkeypatch.setattr(B, "sync", lambda: calls.append("sync") or "b" * 40)
-    assert B.resolve_trusted(None) == "b" * 40
+    assert B.resolve_main_commit(None) == "b" * 40
     assert calls == ["sync"]
 
 

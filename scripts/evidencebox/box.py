@@ -130,7 +130,7 @@ def retry(argv: list[str], *, cleanup: Path | None = None, tries: int = 3) -> bo
     return False
 
 
-def resolve_trusted(sha: str | None, *, fresh: bool = True) -> str:
+def resolve_main_commit(sha: str | None, *, fresh: bool = True) -> str:
     main = sync() if fresh else git("rev-parse", "origin/main")
     if sha is None:
         return main
@@ -567,7 +567,7 @@ def guarded(fn, *args) -> int | str:
 
 
 def nightly() -> int:
-    sha = resolve_trusted(None)
+    sha = resolve_main_commit(None)
     today = _dt.date.today()
     results: dict[str, int | str] = {"sha": sha}
     results["guardian-suites"] = guarded(task_guardian_suites, sha)
@@ -631,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
             return nightly()
         if a.task == "novice-u2404":
             return task_novice_u2404()
-        sha = resolve_trusted(a.sha)
+        sha = resolve_main_commit(a.sha)
         if a.task == "guardian-suites":
             return task_guardian_suites(sha)
         if a.task == "guardian-explore":
