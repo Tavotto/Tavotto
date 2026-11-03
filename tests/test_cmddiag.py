@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import stat
 import subprocess
 import sys
 
@@ -27,7 +26,7 @@ def _exe(directory, name):
     directory.mkdir(parents=True, exist_ok=True)
     f = directory / name
     f.write_text("#!/bin/sh\n")
-    f.chmod(f.stat().st_mode | stat.S_IXUSR)
+    f.chmod(0o755)
     return f
 
 
