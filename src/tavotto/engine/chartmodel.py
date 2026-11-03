@@ -249,6 +249,14 @@ def validate_model(model: Any) -> dict:
                 raise ChartModelError(
                     "chart_model_invalid", f"axes[{i}].{key} must be one of {SCALES}"
                 )
+        # log 轴的范围必须为正（负值/零 log 是无效模型，不许带着假范围进脚手架）
+        for lim_key, scale_key in (("xlim", "xscale"), ("ylim", "yscale")):
+            if ax.get(scale_key) == "log":
+                lim = ax.get(lim_key)
+                if any(float(v) <= 0 for v in lim):
+                    raise ChartModelError(
+                        "chart_data_invalid", f"axes[{i}].{lim_key} must be positive on a log scale"
+                    )
         for key in ("invert_x", "invert_y"):
             if not isinstance(ax.get(key), bool):
                 raise ChartModelError("chart_model_invalid", f"axes[{i}].{key} must be bool")
@@ -356,7 +364,7 @@ def validate_binding(binding: Any, model: dict) -> dict:
         raise ChartModelError("chart_model_invalid", "binding.entries must be a non-empty list")
     known_axes = {f"axes:{ax['id']}" for ax in model["axes"]}
     known_series = {f"series:{sr['id']}" for sr in model["series"]}
-    seen_objects: set[str] = set()
+    seen_series: set[str] = set()
     seen_nodes: set[str] = set()
     for i, entry in enumerate(entries):
         _keys(entry, _ENTRY_KEYS, f"binding.entries[{i}]")
@@ -365,9 +373,11 @@ def validate_binding(binding: Any, model: dict) -> dict:
             raise ChartModelError(
                 "chart_model_invalid", f"binding.entries[{i}].object {obj!r} is not in the model"
             )
-        if obj in seen_objects:
-            raise ChartModelError("chart_duplicate_id", f"binding object {obj!r} twice")
-        seen_objects.add(obj)
+        # 系列与节点一一对应；轴区域可指定多个节点（普通 SVG 的轴框/刻度是散件）
+        if obj in known_series:
+            if obj in seen_series:
+                raise ChartModelError("chart_duplicate_id", f"binding series {obj!r} twice")
+            seen_series.add(obj)
         node = _str(entry.get("node"), f"binding.entries[{i}].node")
         if node in seen_nodes:
             raise ChartModelError("chart_duplicate_id", f"binding node {node!r} twice")
