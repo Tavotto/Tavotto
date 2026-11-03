@@ -31,11 +31,12 @@ export function startRotateDrag(e: ReactPointerEvent, objectId: string) {
   // 单行文字先收到贴字宽（字不动，只去多余空白），再绕收后的框中心转；收框在手势的同一事务里落，
   // 没真正转起来（回到 0 / 取消）就连收框一起不留
   const fit = fitBeforeRotate(target)
-  const box0 = { x: target.x, w: target.w }
-  const boxX = fit ? fit.x : target.x
-  const boxW = fit ? fit.w : target.w
-  const cx = boxX + boxW / 2
-  const cy = target.y + target.h / 2
+  // 收框只动行长那一对（横排 x / w、竖排 y / h）；其余原样
+  const box0 = { x: target.x, y: target.y, w: target.w, h: target.h }
+  const box = { ...box0, ...fit }
+  const fitKeys = (fit ? Object.keys(fit) : []) as ('x' | 'y' | 'w' | 'h')[]
+  const cx = box.x + box.w / 2
+  const cy = box.y + box.h / 2
   const start = clientToMm(e.clientX, e.clientY)
   const bearing0 = pointerBearingDeg(cx, cy, start.x, start.y)
   const rot0 = objectRotation(target)
@@ -54,8 +55,8 @@ export function startRotateDrag(e: ReactPointerEvent, objectId: string) {
         if (!o) return
         if (next) o.rotationDeg = next
         else delete o.rotationDeg
-        o.x = next ? boxX : box0.x
-        o.w = next ? boxW : box0.w
+        // 只写被收的那一对：别的键（比如画布上随手量出来的 w / h）手势里不碰
+        for (const k of fitKeys) o[k] = (next ? box : box0)[k]
       })
     },
     onEnd: (moved, _ev, end) => {

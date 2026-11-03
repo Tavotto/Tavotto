@@ -91,3 +91,6 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `FontFace` 以身份派生的族名注册；**全前端唯一加载字体字节的地方**，`test_font_provenance.py` 钉）；不可用时属性页用既有 `options_unavailable`
   机制（名字保留 + 字体缺失 warning）、预检 `source-font-unavailable`（事实由 spec 的 `source_font_missing` 带入，两个求值器同源）。
   playground / 旧后端没有这组端点 → `unsupported`，退批准族并提示。
+- **画布文字的排向 `writingMode`**（ADR 0163「横排 / 竖排」）：`TextObject.writingMode?: 'vertical'`，缺席 = 横排、回到横排删字段；`TYPOGRAPHY_PROPS` 的 `writingMode`
+  只画布文字支持（三张表一起改，图内文字 `kind_unsupported`）。控件是属性页与浮动工具条各一个「横排 / 竖排」两段（`writingModeItems` 一份选项）。写入层 `writeCanvasText`
+  切换时对调 w / h（左上角不动）：竖排的 `h` 是行长、`w` 由 `TextView` 量列数写回（右边缘不动）。折行 / 对齐 / 同源见 ADR 0163 与 `same-origin-pairs.md` 的竖排一行。

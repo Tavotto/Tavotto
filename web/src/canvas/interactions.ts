@@ -453,6 +453,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const excluded = new Set([objectId, ...followOrigins.map((f) => f.id)])
   const cands = candidatesFor(excluded)
   const isText = target.type === 'text'
+  const vertical = target.type === 'text' && target.writingMode === 'vertical'
   const rot = objectRotation(target)
   // 面板的等比与否由它自己的宽高比锁定开关决定，形状仍是默认等比
   const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
@@ -479,6 +480,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
         }
       : null
 
+  let lastPlacedX = orig.x
   interaction().begin('resize')
   const minSrcPt =
     layoutCorner && target.type === 'panel'
@@ -512,7 +514,11 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       let next = resizeRect(orig, dir, dx, dy, proportional)
 
       if (isText) {
-        next = { ...next, y: orig.y, h: orig.h }
+        // 文字只改行长：横排改 x / w（y / h 还原），竖排改 y / h（x / w 还原——w 由列数撑开，x 随右边缘，
+        // 都是 `TextView` 量出来写回的，拖动不碰）
+        next = vertical
+          ? { ...next, x: orig.x, w: orig.w }
+          : { ...next, y: orig.y, h: orig.h }
       }
 
       // 缩放时只吸附正在移动的边
@@ -595,10 +601,21 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o) return
-        o.x = placed.x
-        o.y = placed.y
-        o.w = placed.w
-        if (!isText) o.h = placed.h
+        if (vertical) {
+          // 竖排文字只写行长一侧（y / h）：x / w 归 `TextView` 的写回，这里重写会把它量出来的值盖回按下时的
+          o.y = placed.y
+          o.h = placed.h
+          // 旋转后「固定对侧不动」要把 x 也挪（anchoredRect）：只加这一帧相对上一帧的位移，不覆盖量出来的 x
+          if (placed.x !== lastPlacedX) {
+            o.x += placed.x - lastPlacedX
+            lastPlacedX = placed.x
+          }
+        } else {
+          o.x = placed.x
+          o.y = placed.y
+          o.w = placed.w
+          if (!isText) o.h = placed.h
+        }
         if (followOrigins.length) {
           // 固定点 = 被拖角的对角（面板恒无任意角旋转，anchoredRect 与 scaleFixedPoint 同口径）
           applyAnnotationScale(d.objects, followOrigins, scaleFixedPoint(orig, dir), factor)

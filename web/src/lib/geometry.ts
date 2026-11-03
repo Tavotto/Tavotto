@@ -382,7 +382,9 @@ export const ALL_DIRS: ResizeDir[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'
 
 /** 某个对象给哪些缩放手柄（唯一出处；OverlaySvg 照此画，单测直接调） */
 export function dirsFor(obj: CanvasObject): ResizeDir[] {
-  if (obj.type === 'text') return ['w', 'e']
+  // 文字只有「行长」一个自由度：横排是宽（东 / 西柄），竖排是高（北 / 南柄，ADR 0163）；
+  // 另一边由内容撑开（横排的高、竖排的宽），不给柄
+  if (obj.type === 'text') return obj.writingMode === 'vertical' ? ['n', 's'] : ['w', 'e']
   // 箭头与直线走端点手柄，不给包围盒缩放柄：侧边手柄丢弃竖直位移（掰不斜），
   // 还会把 0.01mm 的包围盒撑到 minH=2mm，凭空多出一个与线对不上的外框
   if (isLinear(obj)) return []

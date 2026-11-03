@@ -32,7 +32,7 @@ import { bucketFor } from '@/lib/previewBuckets'
 import { layerOf } from '@/lib/glyphPlan'
 import { DEFAULT_INTERPRETATION, glanceText, interpretRuns, runLines } from '@/lib/richText'
 import { ThumbMathLine, ThumbRun } from '@/components/ThumbMathLine'
-import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
+import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
 import { ThumbShape } from '@/components/ThumbShape'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
@@ -296,6 +296,42 @@ function ExportedText({ obj }: { obj: TextObject }) {
     }),
   )
   const mid = (i: number) => obj.y + pad + (i + 0.5) * lead
+  if (obj.writingMode === WRITING_MODE_VERTICAL) {
+    // 竖排（ADR 0163）：每一行是一列，第 i 列的中线在框右边往左 (i + 0.5) × 行距；`align` 左 / 中 / 右 = 列内 上 / 中 / 下。
+    // 与横排同一条口径：不折行（显式换行才换列）；公式按源码画（缩略图不排公式）
+    const colX = (i: number) => obj.x + obj.w - pad - (i + 0.5) * lead
+    const top = obj.align === 'center' ? obj.y + obj.h / 2 : obj.align === 'right' ? obj.y + obj.h - pad : obj.y + pad
+    return (
+      <g data-thumb-text data-thumb-vertical>
+        {(obj.bg || border > 0) && (
+          <rect
+            x={obj.x}
+            y={obj.y}
+            width={obj.w}
+            height={obj.h}
+            fill={obj.bg ?? 'none'}
+            stroke={border > 0 ? (obj.borderColor ?? undefined) : undefined}
+            strokeWidth={border > 0 ? border : undefined}
+          />
+        )}
+        <text
+          {...textProps}
+          // SVG2 竖排：直立 / 侧躺的判据与 CSS 的 `text-orientation: mixed` 同一条
+          style={{ ...textProps.style, writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+          textAnchor={anchor}
+          dominantBaseline="central"
+        >
+          {lines.map((runs, i) => (
+            <tspan key={i} x={colX(i)} y={top}>
+              {runs.map((r, j) => (
+                <ThumbRun key={j} r={r.math ? { ...r, math: false, text: `$${r.text}$` } : r} size={size} />
+              ))}
+            </tspan>
+          ))}
+        </text>
+      </g>
+    )
+  }
   const plainLines = lines.map((l, i) => [l, i] as const).filter(([l]) => !l.some((r) => r.math))
   return (
     <g data-thumb-text>

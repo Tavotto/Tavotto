@@ -125,6 +125,8 @@ const FIGURE_PROP: Record<TypographyProp, string | null> = {
   valign: 'va',
   lineHeight: null,
   rotationDeg: 'rotation',
+  // 竖排只属于画布文字（图内文字没有这条 prop）
+  writingMode: null,
   // 图内文字的上下标是 matplotlib 的 `$…$`（`mathTextModeOf` 的另一档），
   // 不是我们自己的合成管线——引擎不认这条 prop，所以是 null 而不是某个名字。
   interpretation: null,
@@ -365,6 +367,7 @@ const CANVAS_HISTORY: Record<TypographyProp, string> = {
   lineHeight: 'setLineHeight',
   rotationDeg: 'rotateObject',
   interpretation: 'setInterpretation',
+  writingMode: 'setWritingMode',
 }
 
 /**

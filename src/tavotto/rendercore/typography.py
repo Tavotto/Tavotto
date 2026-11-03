@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from .. import glyphplan, richtext
-from .ir import FontResource, Glyph, mm2pt
+from .ir import FontResource, Glyph, VGlyph, mm2pt
 
 #: 画布文字能选的字体族。**闭集，顺序即默认序**——与 `web/src/lib/typography.ts` 的
 #: `CANVAS_TEXT_FAMILIES` 和旧 facade 同名常量逐字相同（`test_typography_families.py` 钉着
@@ -41,6 +41,10 @@ CANVAS_TEXT_DEFAULT_FAMILY = CANVAS_TEXT_FAMILIES[0]
 
 #: 覆盖表枚举到哪（与旧 facade 同一个数：BMP + SMP）。
 COVERAGE_MAX_CP = 0x30000
+
+#: 画布文字的排向（`writing_mode` 字段；缺席 = 横排）。闭集只有这一个非默认值——与
+#: `web/src/lib/typography.ts` 的 `WRITING_MODE_VERTICAL` 同值（ADR 0163）。
+WRITING_VERTICAL = "vertical"
 
 #: 换行单元的判据（历史判据，只管「逐字还是按词」，不是覆盖判据；见 glyphplan）。
 _CJK_BREAK = 0x2E80
@@ -244,6 +248,37 @@ class TextBlock:
     cjk_chars: tuple[str, ...]
     #: 排不出来的公式：(源码, 原因)。这些公式按源码原样画了（`$…$`），调用方把它们报成问题
     math_failures: tuple[tuple[str, str], ...] = ()
+    #: 竖排（ADR 0163）：非空时 `lines` 为空，文字按列落笔（`rendercore.vertical`）。横排恒为空。
+    columns: tuple[VColumn, ...] = ()
+
+
+@dataclass(frozen=True)
+class VItem:
+    """竖排一列里的一件东西，`pos` 是它沿列方向离列首的距离（pt，向下为正）。
+
+    * `upright`：直立的字（中日韩 / 假名 / 全角标点）——`face` + 逐字的竖排字形，`size` 字号；
+    * `side`：侧躺的一段（拉丁 / 数字 …）——一个 `ShapedPiece`，按横排塑形，落笔时整体顺时针转 90°；
+    * `math`：侧躺的公式——`(排版结果, 源码)`，`length` 是它占的长度，`piece` 是文本层占位（可为 None）。"""
+
+    kind: str
+    pos: float
+    length: float
+    face: Face | None = None
+    size: float = 0.0
+    glyphs: tuple[VGlyph, ...] = ()
+    piece: ShapedPiece | None = None
+    math: tuple[dict, str] | None = None
+
+
+@dataclass(frozen=True)
+class VColumn:
+    cx: float  # 列中线 x（pt，页面 y 向下空间）
+    side_x: float  # 侧躺段 / 公式（转 90° 前的横排）基线所在的 x：em 方框中点落在列中线上
+    top: float  # 列首 y（pt）：对齐已折进来
+    length: float
+    items: tuple[VItem, ...]
+    #: 这一列**用户写的**原文（与横排 `LaidOutLine.logical` 同义）
+    logical: str
 
 
 #: 行内样式：(斜体, 粗体)。
@@ -367,11 +402,16 @@ def break_lines(
     interpretation: str,
     text_format: str | None = None,
     slots: MathSlots | None = None,
+    measure: Callable[[Unit], float] | None = None,
 ) -> list[Unit]:
     """贪心换行——与旧 facade `_draw_text` 逐句相同：行内标记先解析成片段，Unicode 上下标
     按 `richtext.interpret_runs` 受控解释；CJK 逐字、拉丁按词（空格附着前词）；单个单元
-    自己就超宽时先独占一行再逐字断。返回每行的片段序列（已 rstrip）。"""
+    自己就超宽时先独占一行再逐字断。返回每行的片段序列（已 rstrip）。
+
+    `measure`：一个单元沿「行」方向的长度。缺省是横排的字宽；竖排（ADR 0163）传入沿列方向的长度
+    （直立字取竖排进退、侧躺字取横排字宽）——**折行算法只有这一份**，横排 / 竖排只差这把尺。"""
     lines: list[Unit] = []
+    width_of = measure if measure is not None else (lambda u: _unit_w(u, faces, size, slots))
     for line_runs in _run_lines(text, text_format):
         units: list[Unit] = []
         cur: Unit = []
@@ -401,20 +441,20 @@ def break_lines(
 
         line: Unit = []
         for u in units:
-            if len(_chars_of(u)) > 1 and _unit_w(_rstrip(u), faces, size, slots) > box_w:
+            if len(_chars_of(u)) > 1 and width_of(_rstrip(u)) > box_w:
                 if line:
                     lines.append(_rstrip(line))
                     line = []
                 for cu in _chars_of(u):
                     cand = line + cu
-                    if line and _unit_w(_rstrip(cand), faces, size, slots) > box_w:
+                    if line and width_of(_rstrip(cand)) > box_w:
                         lines.append(_rstrip(line))
                         line = list(cu)
                     else:
                         line = cand
                 continue
             cand = line + u
-            if line and _unit_w(_rstrip(cand), faces, size, slots) > box_w:
+            if line and width_of(_rstrip(cand)) > box_w:
                 lines.append(_rstrip(line))
                 line = list(u)
             else:
@@ -476,26 +516,38 @@ def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> Shap
     return ShapedPiece(face, "primary", text, tuple(glyphs), size, 0.0, text, invisible=True)
 
 
-def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
-    """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。
-    空白文字回 None（什么都不画）。
-
-    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
-    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
-    text = t.get("text", "")
-    if not text.strip():
-        return None
+def text_params(
+    t: dict, math: dict | None = None
+) -> tuple[MathSlots | None, float, float, float, str, str | None]:
+    """横排 / 竖排共用的字段解析（唯一一份）：`(slots, size, line_h, pad, interp, fmt)`。
+    竖排（`vertical.layout_text`）与横排（`layout_text`）都从这里取，二者对字段的理解不会分叉。"""
     size = float(t.get("size_pt", 9))
     line_h = float(t.get("line_height") or 1.25)
     pad = mm2pt(float(t.get("padding_mm") or 0))
     interp = str(t.get("interpretation") or richtext.DEFAULT_INTERPRETATION)
     fmt = t.get("text_format") if t.get("text_format") in richtext.TEXT_FORMATS else None
+    fam = latin_family(t.get("font_family"))
+    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
+    return slots, size, line_h, pad, interp, fmt
+
+
+def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
+    """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。**只排横排**；
+    竖排（ADR 0163）走 `vertical.layout_text`，由调用方（`plan`）按 `writing_mode` 分派——本模块不依赖
+    `vertical`（它依赖本模块），避免 import 环。空白文字回 None（什么都不画）。
+
+    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
+    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
+    if t.get("writing_mode") == WRITING_VERTICAL:
+        # 宁可当场报错，也不把竖排对象悄悄按横排排出来（错图比报错更糟）
+        raise ValueError("竖排文字请走 vertical.layout_text（plan 按 writing_mode 分派）")
+    text = t.get("text", "")
+    if not text.strip():
+        return None
+    slots, size, line_h, pad, interp, fmt = text_params(t, math)
     x0, y0 = mm2pt(t["x_mm"]) + pad, mm2pt(t["y_mm"]) + pad
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")
-
-    fam = latin_family(t.get("font_family"))
-    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
     units_lines = break_lines(text, faces, size, box_w, interp, fmt, slots)
     asc, desc = faces.primary.ascender, faces.primary.descender
     baseline0 = y0 + size * ((line_h - (asc - desc)) / 2 + asc)

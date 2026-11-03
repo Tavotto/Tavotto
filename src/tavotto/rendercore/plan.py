@@ -32,11 +32,12 @@ import math
 from dataclasses import dataclass, field
 
 from ..engine import exportreq
-from . import geometry, typography
+from . import geometry, typography, vertical
 from .ir import (
     IDENTITY,
     RGB,
     FileResource,
+    Glyph,
     GlyphRun,
     Group,
     Image,
@@ -224,6 +225,89 @@ def _math_segments(box: dict, x: float, baseline_up: float, size: float) -> tupl
     return tuple(out)
 
 
+def _vertical_nodes(
+    block: typography.TextBlock,
+    page_h: float,
+    color: Paint,
+    oid: str,
+    resources: dict[str, Resource],
+    children: list[Node],
+    underlines: list[Path],
+) -> None:
+    """竖排（ADR 0163）：每一列的落笔。直立字一字一个单字形 `ShapedText`（笔位 = 列中线 x / 字格顶边 y，
+    加上 HarfBuzz 已折好的竖排原点偏移）；侧躺段与公式放进 `Group(rotate_about(-90°, 起点))`——y 向上空间里
+    −90° 是顺时针，起点处的横排基线转成向下的竖线，字头朝右。几何全是现成的 IR 节点，写入器不认识「竖排」。"""
+    for col in block.columns:
+        for item in col.items:
+            pen = col.top + item.pos  # 页面 y 向下空间
+            if item.kind == "upright":
+                face = item.face
+                key = f"font:{face.resource.face_id}"
+                resources.setdefault(key, face.resource)
+                k = item.size / face.resource.units_per_em
+                for g in item.glyphs:
+                    one = Glyph(g.gid, g.text, face.advance(g.gid))
+                    run = GlyphRun(font=key, size=item.size, glyphs=(one,))
+                    children.append(
+                        ShapedText(
+                            col.cx + g.x_offset * k,
+                            page_h - pen + g.y_offset * k,
+                            (run,),
+                            color,
+                            oid,
+                        )
+                    )
+                    pen += g.y_advance * k
+                continue
+            ox, oy = col.side_x, page_h - pen
+            inner: list[Node] = []
+            if item.kind == "side":
+                piece = item.piece
+                key = f"font:{piece.face.resource.face_id}"
+                resources.setdefault(key, piece.face.resource)
+                run = GlyphRun(
+                    font=key,
+                    size=piece.size,
+                    glyphs=tuple(piece.glyphs),
+                    rise=piece.rise,
+                    actual_text=piece.actual_text,
+                    invisible=piece.invisible,
+                )
+                inner.append(ShapedText(ox, oy, (run,), color, oid))
+            else:  # math
+                box, _src = item.math
+                segs = _math_segments(box, ox, oy, block.size)
+                if segs:
+                    inner.append(Path(segs, fill=color, object_id=oid))
+                mp = item.piece
+                if mp is not None:
+                    key = f"font:{mp.face.resource.face_id}"
+                    resources.setdefault(key, mp.face.resource)
+                    run = GlyphRun(
+                        font=key,
+                        size=mp.size,
+                        glyphs=tuple(mp.glyphs),
+                        actual_text=mp.actual_text,
+                        invisible=True,
+                    )
+                    inner.append(ShapedText(ox, oy, (run,), color, oid))
+            if inner:
+                children.append(
+                    Group(tuple(inner), transform=rotate_about(-90.0, ox, oy), object_id=oid)
+                )
+        if block.underline and col.items:
+            # 竖排的下划线：与横排同一条公式——画在（侧躺段的）基线「下面」0.11 字号；基线顺时针转了 90°，
+            # 「下面」就是左边（浏览器的 vertical-rl 下划线也在列的左侧）
+            ux = col.side_x - block.size * 0.11
+            underlines.append(
+                Path(
+                    (("M", ux, page_h - col.top), ("L", ux, page_h - (col.top + col.length))),
+                    stroke=Stroke(color, max(block.size * 0.06, 0.3)),
+                    object_id=oid,
+                )
+            )
+
+
 def _text_node(
     t: dict,
     page_h: float,
@@ -233,7 +317,13 @@ def _text_node(
     math: dict | None = None,
 ) -> Node | None:
     bx, by, bw, bh = _box_pt(t)  # 先校验框（缺字段 / 非有限数在这里就拒），再排版
-    block = typography.layout_text(t, faces, math)
+    # 排向分派只在这里（ADR 0163）：typography 只排横排、不依赖 vertical，避免 import 环
+    lay = (
+        vertical.layout_text
+        if t.get("writing_mode") == typography.WRITING_VERTICAL
+        else typography.layout_text
+    )
+    block = lay(t, faces, math)
     if block is None:
         return None
     oid = str(t.get("id", ""))
@@ -253,6 +343,8 @@ def _text_node(
         )
     color = Paint(hex2rgb(block.color))
     underlines: list[Path] = []
+    if block.columns:
+        _vertical_nodes(block, page_h, color, oid, resources, children, underlines)
     for line in block.lines:
         # 一段 ShapedText 里的字形按 advance 首尾相接；公式在中间占了宽度时（`piece_x` 不再首尾相接）
         # 在那里断开、另起一段，从公式右边落笔

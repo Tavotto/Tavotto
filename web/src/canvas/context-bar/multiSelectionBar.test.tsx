@@ -582,7 +582,10 @@ describe('无障碍与键盘', () => {
       expect(name, b.outerHTML).toBeTruthy()
     }
     // 参照分段的组名与属性页同一个键（inspector `refLabel`，2026-09-11 起叫「对齐到」）
-    expect(el.querySelector('[role="radiogroup"]')!.getAttribute('aria-label')).toBe('对齐到')
+    // 多选的全是文字时栏里还有「排向」（横排 / 竖排，ADR 0163）那一组：按组名取，不靠出现顺序
+    const groups = [...el.querySelectorAll('[role="radiogroup"]')].map((g) => g.getAttribute('aria-label'))
+    expect(groups).toContain('对齐到')
+    expect(groups).toContain('排向')
     expect(el.querySelector('[data-align-mode="hdist"]')!.getAttribute('aria-label')).toBe('水平等距')
   })
 

@@ -262,6 +262,21 @@ class Glyph:
 
 
 @dataclass(frozen=True)
+class VGlyph:
+    """竖排用的一个字形（ADR 0163「横排 / 竖排」）：HarfBuzz 以 TTB 方向塑形的结果。**不是 IR 节点**——
+    竖排的落笔点由 `rendercore.vertical` 逐字算好，IR 里仍是单字形的 `ShapedText`。
+    单位是字体单位。`y_advance` 取**向下为正**（HarfBuzz 在 TTB 下给负数，这里翻成长度）；
+    `x_offset` / `y_offset` 是 HarfBuzz 已经把「横排原点 → 竖排原点」折进去的偏移（y 向上的字体坐标）：
+    笔位（列中线 x，字格顶边 y）加上它们就是该字形横排原点该落的地方。"""
+
+    gid: int
+    text: str
+    y_advance: int
+    x_offset: int = 0
+    y_offset: int = 0
+
+
+@dataclass(frozen=True)
 class GlyphRun:
     font: str  # page.resources 里的 FontResource key
     size: float  # pt

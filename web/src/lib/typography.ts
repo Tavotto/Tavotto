@@ -56,6 +56,7 @@ export const TYPOGRAPHY_PROPS = [
   'lineHeight',
   'rotationDeg',
   'interpretation',
+  'writingMode',
 ] as const
 
 export type TypographyProp = (typeof TYPOGRAPHY_PROPS)[number]
@@ -75,6 +76,15 @@ export type TypographyKind = 'figureText' | 'canvasText'
 export const WEIGHTS = ['normal', 'bold'] as const
 export const STYLES = ['normal', 'italic'] as const
 export const HALIGNS = ['left', 'center', 'right'] as const
+
+/**
+ * 画布文字的排向（ADR 0163「横排 / 竖排」）。磁盘上只有 `'vertical'` 这一个值——**缺席 = 横排**，
+ * 回到横排时删字段（旧文档与导出载荷逐字不变）；`'horizontal'` 只是控件的取值，不落盘。
+ * 与 `rendercore/typography.WRITING_VERTICAL` 同值。
+ */
+export const WRITING_MODES = ['horizontal', 'vertical'] as const
+export type WritingMode = (typeof WRITING_MODES)[number]
+export const WRITING_MODE_VERTICAL = 'vertical' as const
 
 /**
  * matplotlib 字重名 → 数值（`font_manager.weight_dict`）。从图里提取的样式可能写着
@@ -204,6 +214,8 @@ const SUPPORT: Record<TypographyKind, ReadonlySet<TypographyProp>> = {
     'halign',
     'lineHeight',
     'rotationDeg',
+    // 竖排是画布文字自己的排版（图内文字的方向由 matplotlib 的 `rotation` 管）
+    'writingMode',
     // 图内文字**没有**这一条：那边的上下标是 matplotlib 的 `$…$`
     // （`mathTextModeOf` 的另一档），不是我们自己的合成管线。
     'interpretation',
@@ -267,6 +279,7 @@ const PATHS: Record<TypographyKind, Partial<Record<TypographyProp, string>>> = {
     lineHeight: 'lineHeight',
     rotationDeg: 'rotationDeg',
     interpretation: 'interpretation',
+    writingMode: 'writingMode',
   },
 }
 
@@ -415,6 +428,8 @@ export function coerceTypography(
         field?.options ??
         (prop === 'interpretation'
           ? (TEXT_INTERPRETATIONS as readonly string[])
+          : prop === 'writingMode'
+            ? (WRITING_MODES as readonly string[])
           : prop === 'weight'
           ? (WEIGHTS as readonly string[])
           : prop === 'style'
@@ -459,6 +474,8 @@ export function readCanvasText(o: TextObject, prop: TypographyProp): unknown {
       return o.rotationDeg
     case 'interpretation':
       return o.interpretation
+    case 'writingMode':
+      return o.writingMode
     default:
       return undefined
   }
@@ -477,6 +494,8 @@ export function inheritedCanvasValue(prop: TypographyProp): unknown {
       return 0
     case 'interpretation':
       return DEFAULT_INTERPRETATION
+    case 'writingMode':
+      return 'horizontal'
     default:
       return undefined
   }
@@ -579,6 +598,17 @@ export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unkn
       if (value === DEFAULT_INTERPRETATION || !value) delete o.interpretation
       else o.interpretation = value as TextInterpretation
       return
+    case 'writingMode': {
+      const next = value === WRITING_MODE_VERTICAL
+      if (next === (o.writingMode === WRITING_MODE_VERTICAL)) return
+      // 框的语义随排向换：横排 w 是用户给的行长、h 由内容撑；竖排 h 是行长、w 由列数撑（ADR 0163）。
+      // 切换时 w / h 对调、左上角不动——行长跟着走，首字大致仍在原处；w 随后由画布上的 `TextView` 按列数重量
+      // （右边缘不动）。不绕中心对调：长条的框会把上沿甩出页面
+      ;[o.w, o.h] = [o.h, o.w]
+      if (next) o.writingMode = WRITING_MODE_VERTICAL
+      else delete o.writingMode
+      return
+    }
     default:
       return
   }
@@ -612,6 +642,8 @@ export function canvasFieldOf(prop: TypographyProp): EditableField | undefined {
       return { prop: path, type: 'number', value: null, min: -180, max: 180, step: 5, unit: '°' }
     case 'interpretation':
       return { prop: path, type: 'enum', value: null, options: [...TEXT_INTERPRETATIONS] }
+    case 'writingMode':
+      return { prop: path, type: 'enum', value: null, options: [...WRITING_MODES] }
     default:
       return undefined
   }

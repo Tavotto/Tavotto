@@ -31,6 +31,10 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
   const ids = objs.map((o) => o.id)
   const one = objs.length === 1 ? objs[0] : null
   const textOnly = objs.every((o) => o.type === 'text')
+  // 竖排文字（ADR 0163）：框高是行长（用户定），框宽由列数撑开——与横排对称，W / H 的可编辑性对调
+  const isVertical = (o: CanvasObject) => o.type === 'text' && o.writingMode === 'vertical'
+  const allVertical = textOnly && objs.every(isVertical)
+  const noneVertical = !objs.some(isVertical)
   const keepRatio = objs.every((o) => o.type === 'panel')
   // 任意角度旋转只对 text/arrow/shape 开放；面板走 90° 步进（PanelSection）
   const rotatable = objs.every((o) => o.type !== 'panel')
@@ -79,9 +83,12 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           label="W"
           historyLabel={hist('setWidth')}
           min={1}
+          disabled={allVertical}
+          title={allVertical ? t('transform.textWidthAuto') : undefined}
           value={shared(objs, (o) => o.w)}
           onChange={(v) =>
             setEach(hist('setWidth'), (o) => {
+              if (isVertical(o)) return
               const k = v / o.w
               o.w = v
               if (o.type === 'panel' || (o.type === 'shape' && keepRatio)) o.h *= k
@@ -93,12 +100,12 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           label="H"
           historyLabel={hist('setHeight')}
           min={1}
-          disabled={textOnly}
-          title={textOnly ? t('transform.textHeightAuto') : undefined}
+          disabled={textOnly && noneVertical}
+          title={textOnly && noneVertical ? t('transform.textHeightAuto') : undefined}
           value={shared(objs, (o) => o.h)}
           onChange={(v) =>
             setEach(hist('setHeight'), (o) => {
-              if (o.type === 'text') return
+              if (o.type === 'text' && !isVertical(o)) return
               const k = v / o.h
               o.h = v
               if (o.type === 'panel') o.w *= k
@@ -123,10 +130,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
                   const deg = normalizeRotationDeg(v)
                   // 单行文字从 0 变非 0 的那一次先收到贴字宽（量法与落位见 canvas/textFit）
                   const fit = deg ? fitBeforeRotate(o) : null
-                  if (fit) {
-                    o.x = fit.x
-                    o.w = fit.w
-                  }
+                  if (fit) Object.assign(o, fit)
                   if (deg) o.rotationDeg = deg
                   else delete o.rotationDeg
                 })
