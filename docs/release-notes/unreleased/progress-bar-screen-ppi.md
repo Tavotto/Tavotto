@@ -1,0 +1,3 @@
+## Progress bar dots match your screen's real pixel density
+
+In the desktop app, the dots in progress bars are now sized from your display's physical pixel density instead of only from the Windows or macOS scaling setting, so they look about the same size on every screen. This mainly changes mid-density monitors run at 150% or 175% scaling (for example a 27-inch 4K screen), where the dots were twice as large as on a Mac. When the display doesn't report its size (some projectors, TVs, remote desktops and virtual machines) and in the browser version, the dots follow the scaling setting as before. Moving the window to another screen updates them.
