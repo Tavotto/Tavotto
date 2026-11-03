@@ -17,12 +17,26 @@
 
 | 批次 | 状态 | commits | 证据 |
 | --- | --- | --- | --- |
-| SG00 | running | a046b799（计划文档） | 本文 + SG00-CAPABILITY-MAP.md |
-| SG01 | pending | — | — |
+| SG00 | passed | a046b799（计划）、9a271f9f | SG00-CAPABILITY-MAP.md；基线 331+41+94 绿 / skip 全定性 |
+| SG01 | passed | 见下方 SG01 提交 | SG01-EXPERIMENTS.md + ADR 0166；实验 exit 0 ×4 |
 | SG02 | pending | — | — |
 | SG03–SG17 | pending | — | — |
 
 ## Checkpoint 追加
+
+### 2026-11-04 SG01 通过（时间：UTC 00:3x）
+
+- 状态：SG00 passed、SG01 passed
+- 分支 zixu.wang/svg-computational-editing；基线 2bc94f7f；commits：a046b799（计划）、9a271f9f（SG00）、本次 SG01 提交
+- 架构决定：**C2 精化「片段嫁接」**（ADR 0166，Accepted）——路径 A 复用 live-Figure 管线零新计算；
+  路径 B worker 脚手架产出坐标对齐 SVG 片段 + 父进程节点级替换（defs 上提契约）；路径 C 自包含包冷重放零执行；
+  导出经新增 SVG→IR 翻译器（stdlib+现有依赖，零 PyMuPDF 不变）。C1 否决（重建漂移 7.3mm）、C3 否决（计划禁令+实验二）。
+- 实验证据（`E:\0 - Project\svg-exp\`，仓库外）：exp2 158 断言、exp3 15 断言 + 浏览器 vs PDF 像素
+  changed 1.74% / ink IoU 0.848、exp4 冷重算逐字节同 + 恶意样本拒绝，全部 exit 0。
+- 五个结构性契约进 ADR：子区域所有权、跨区域 defs 上提、多根级 defs、叶级 clip、mathtext 经片段表达。
+- 验证：tests/test_docs_references.py + test_agents_rules_index.py exit 0（41 通过）；agents_budget --check exit 0。
+- 未验证：macOS / 真桌面 / workerd 控制面腿（workerd 已构建、cargo test exit 0，等价矩阵 workerd 腿在 SG15 前补跑）。
+- 下一步：SG02 模型和身份契约（冻结 schema、来源判别、错误码闭集；前后端同源镜像同提交）。
 
 ### 2026-11-03 SG00 进行中（时间：UTC 15:2x）
 

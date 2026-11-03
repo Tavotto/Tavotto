@@ -1,0 +1,77 @@
+# ADR 0166：SVG 计算图表编辑——片段嫁接架构与来源合同
+
+日期：2026-11-04 · 状态：**Accepted**（依据 SG01 六个可复核实验；1.0 豁免登记见 `docs/1.0-release-readiness.md` §1.8）
+相关：[0144 SVG 导出保留文字](0144-svg-export-keeps-text-by-default.md)、[0150 同次 draw 配对](0150-pdf-svg-pair-from-one-draw.md)、
+[0152 所见即所得文字](0152-wysiwyg-text-editor.md)、[0072 RenderCore / 零 PyMuPDF](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、
+[0017 几何权威](0017-display-fallback-vs-geometry-authority.md)；实验记录 `docs/implementation/svg-computational-editing/SG01-EXPERIMENTS.md`。
+
+## 背景
+
+产品已能导出 SVG（X03/ADR 0144）与展示静态 SVG 素材（`svgasset` 只读通道），但 SVG 既不能作为
+**计算图表**进入编辑，也不能把外部 SVG 绑定数据后联动重算。用户要求（2026-11-03 实施授权）三条路径：
+
+- **A**：有可信绘图来源的 SVG（Tavotto/其 Figure 产出）→ 复用现有 matplotlib 计算与编辑语义；
+- **B**：普通 SVG + 用户显式绑定（轴/系列/数据）→ 成为可计算图表；
+- **C**：自包含计算 SVG/项目保存后可校验、重开、继续编辑。
+
+三个候选（全模型重建 / 场景保留+区域重算 / 原生 SVG 自算）经 SG01 实验裁决，数字见实验记录。
+
+## 决定
+
+### 1. 三路径一个架构：场景保留 + 片段嫁接（C2 精化）
+
+- **路径 A 不新建计算**：matplotlib 产出的 SVG 带执行回执/配对身份（svgstore 既有机制）时，
+  编辑、重放、导出、写回全部走现有 Figure 管线；SVG 面板只是该 Figure 的**预览与来源身份**。
+  禁止按相邻同名 `.py` 猜来源。
+- **路径 B 片段嫁接**：
+  1. 原 SVG 场景（经 `svgcheck` 校验的字节）是**未绑定区域的唯一权威**，零编辑零重渲染（实验一）；
+  2. 用户显式绑定建立 **ChartModel**（轴/尺度/范围/系列/数据引用）与 **Binding**（场景节点 id ↔ 模型对象），
+     绑定区域的最小单位是**语义子区域**（axis 子树、单个系列组），不是整棵 axes 子树
+     （实验三事实 1：matplotlib 把 title/legend 放在 axes 子树内部，整树替换会静默重画装饰）；
+  3. 计算在 **worker 脚手架**完成：一个只有绑定 axes 的 matplotlib Figure（1 unit = 1 pt，rect 对齐场景），
+     **只复用 matplotlib 的 locator/formatter/scale/norm**（实验二：分数与独立公式一致到 1e-9；C3 自写刻度规则被计划与实验双重否决）；
+     脚手架**直接渲染 SVG 片段**（`svg.hashsalt` 固定 + 元数据剥离 → 字节确定，实验三），
+     mathtext/字体/虚线由 matplotlib 自己表达（纯 JSON 回填会丢 mathtext 字形——实验二副产物）；
+  4. 父进程做**节点级替换**：被外部引用的 defs 先**上提**到根 defs（实验三事实 2：图例引用系列组内部 marker），
+     再以片段换原节点；片段内 id 加后缀隔离；
+  5. 编辑后的场景 SVG 即该面板的预览与冻结产物；几何/命中事实由场景 + 脚手架事实派生（不解析浏览器 DOM）。
+- **路径 C 自包含包**：`model.json`（闭式 schema）+ 场景 SVG + 数据 + 绑定，冷重放 = 重算片段 + 重组场景，
+  **零脚本执行**（实验四：`python -I` 全新进程冷重算与热计算逐字节相同）。仅有来源引用（无数据）的图
+  如实提示缺来源，不自动执行陌生代码。
+
+### 2. 导出：SVG→IR 翻译器（新增 `rendercore/` 模块），五格式合同不变
+
+- 计算面板导出 PDF/PNG/TIFF：编辑后场景 SVG → **IR**（`rendercore` 纯 stdlib 解析 + 现有 pikepdf/fontTools/uharfbuzz/pypdfium2）
+  → 既有 `pdfwriter`（Canonical PDF）→ 既有栅格管线；**零 PyMuPDF 不变**，父进程不 import matplotlib 不变。
+- SVG 格式导出：**直接交付编辑后场景字节**（同静态素材的 copy 基准语义），不经翻译器。
+- EPS：维持「只有 worker 写得出」——计算面板无原脚本时按既有码报 `eps_needs_script` 一族，不伪矢量。
+- 翻译器能力逐项声明（native / unsupported 点名元素）：native=路径命令（A 弧除外）、基础形状、任意路径 clip、
+  opacity、dash、文字（批准脸+HarfBuzz，旋转经 Group 变换，字体不可解析时**按披露回退或逐项失败**，不静默换脸）；
+  unsupported=渐变/mask/filter/pattern → 该格式逐项失败带元素清单（同 `eps_annotations_unsupported` 的诚实模式）。
+- 文字层：PDF 文字层保留真实 Unicode（pdfwriter 既有 ToUnicode/ActualText 机制）；实验三核对文本层含标题/图例/新刻度。
+
+### 3. 身份与安全（扩展现有合同，不新增旁路）
+
+- 计算面板的版本身份 = **场景字节摘要 + 模型摘要 + 数据摘要 + 绑定摘要 + 计算环境身份**（worker matplotlib/引擎版本）；
+  任一变化都不得复用旧几何/旧快照（SG02 冻结 schema）。
+- 导入与元数据：`svgcheck` 边界原样（实验六拒绝 DTD/脚本/外链）；模型元数据**闭式字段集**校验，
+  不含可执行代码、不含完整机器路径；自动候选只辅助、确认前不进计算重放与写回。
+- 写回：计算面板的写回资格**显式化**（有可重放模型与数据者才可），走既有 prepare→verify→commit 事务（SG13）；
+  覆盖实验数据文件与覆盖 SVG 是不同操作。
+- worker/父进程边界不松：脚手架只在 worker（matplotlib）；父进程只做 stdlib 树操作与 IR 翻译。
+
+### 4. 明确不做（本轮）
+
+- 不从普通 SVG 猜测/反推原始数据；OCR/路径反算只出候选。
+- 不把静态 SVG 塞进 `FILE_KINDS` 冒充可放置原件；静态素材通道行为不变（`assets.svg-preview` 回归底线）。
+- 不新增原生依赖（resvg/svg2pdf 等不引入）；渐变等表达不了的特性以逐格式失败披露。
+- 不重写执行入口、版本时间线、认证、渲染闭包（1.0 收敛纪律）。
+
+## 后果
+
+- 新模块：worker 侧脚手架命令（engine/，纯 stdlib import 链不破坏）、父侧场景替换器与 SVG→IR 翻译器（rendercore/）。
+- SG02 冻结 ChartModel/Binding/SourceDescriptor schema 与错误码；SG03 扩展安全静态结构接受集；
+  SG05 场景身份与坐标链；SG06 绑定流程；SG07 最小闭环（实验三即其原型）。
+- 反证基线：削掉 defs 上提 → 图例 marker 悬空（svgcheck 拒绝）；削掉脚手架 rect 对齐 → 点位置偏离公式；
+  削掉闭式 schema → 可执行字段进入模型（SG02 起各批自带反证）。
+- 1.0 豁免：本 ADR 是用户 2026-11-03 明确要求的扩展授权记录；边界以本文 §4 为准。
