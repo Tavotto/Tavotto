@@ -1633,7 +1633,7 @@ const FOLD_LABEL: Record<string, string> = {
  * （几何走上面的对齐工具条，批量写同一个 bbox 会把元素叠在一起）。
  */
 const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm', 'size_frac'])
-const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum'])
+const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum', 'gradient'])
 
 /** 选中元素都有、且类型与选项一致的字段——以第一个元素的顺序和分组为准 */
 function commonFields(els: ManifestElement[]): EditableField[] {
@@ -1959,7 +1959,8 @@ function BatchFieldRow({
           />
         )
       case 'gradient': {
-        // 多选的渐变峰：两端颜色写给全部成员；方向按第一个成员（各成员各自按自己的方向重算）
+        // 多选的渐变峰：两端颜色写给全部成员；方向 / screen_start 是各成员自己的引擎事实
+        // （正向与反向 y 轴的两条渐变一起选时不能互相覆盖），逐成员各取各的
         const grad = readGradientWithFact(first, field.value)
         if (!grad) return null
         return (
@@ -1967,7 +1968,19 @@ function BatchFieldRow({
             value={grad}
             label={label}
             mixed={mixed}
-            onChange={(stops) => write(gradientPayload(stops, grad), true)}
+            onChange={(stops) => {
+              setOverrides(
+                panel.id,
+                elMsg('batchEdit', { label }),
+                elements.map((item) => {
+                  const own = item.editable.find((f) => f.prop === field.prop) ?? field
+                  const g = readGradientWithFact(currentValue(panel, item.gid, own), own.value) ?? grad
+                  return { gid: item.gid, prop: field.prop, value: gradientPayload(stops, g) }
+                }),
+                true,
+              )
+              gesture.touch()
+            }}
             onGestureEnd={gesture.end}
           />
         )
