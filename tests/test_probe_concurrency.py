@@ -254,23 +254,27 @@ def acq(monkeypatch):
 
 
 def test_resolve_overlaps_with_prefetch_on_cold_acquire(acq, monkeypatch):
-    ran = []
-    resolves = []
-    monkeypatch.setattr(
-        pool,
-        "resolve_worker_python",
-        lambda *a, **k: (time.sleep(NAP), resolves.append(1), ("/py", "t"))[2],
-    )
+    """解析与预热真的同时在跑：两边各等对方开始（不按墙钟判，CI 机器慢也不误报）。串行时第一个等的那边
+    会超时，记下 False。"""
+    resolving = threading.Event()
+    prefetching = threading.Event()
+    seen = {}
+
+    def resolve(*a, **k):
+        if "resolve" not in seen:
+            resolving.set()
+            seen["resolve"] = prefetching.wait(5)
+        return ("/py", "t")
+
+    def prefetch():
+        prefetching.set()
+        seen["prefetch"] = resolving.wait(5)
+
+    monkeypatch.setattr(pool, "resolve_worker_python", resolve)
     # 与真提供者一样：预热过一次（缓存已有）之后不再给 thunk
-    pool.register_environment_prefetch(
-        lambda fd, sc: None if ran else (lambda: (time.sleep(NAP), ran.append(1)))
-    )
-    t0 = time.perf_counter()
+    pool.register_environment_prefetch(lambda fd, sc: None if "prefetch" in seen else prefetch)
     pool.acquire("a.py", "/p", "main")
-    assert ran == [1]
-    # 解析 NAP + 预热 NAP 并发 ≈ NAP（加上之后决定阶段再解析一次 NAP）；串行至少 3*NAP
-    # 串行 = 每次解析各 NAP + 预热 NAP；预热被解析盖住时只剩解析的总和
-    assert time.perf_counter() - t0 < len(resolves) * NAP + NAP * 0.6
+    assert seen == {"resolve": True, "prefetch": True}
 
 
 def test_resolve_error_wins_over_prefetch(acq, monkeypatch):
