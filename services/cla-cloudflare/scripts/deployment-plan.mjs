@@ -18,6 +18,10 @@ const canonicalJSON=v=>JSON.stringify(v,Object.keys(v??{}).sort());
 export function deploymentPlan(input,{profile='disabled'}={}){
   if(!['disabled','staging'].includes(profile))throw Error('profile_invalid');
   const c=profile==='staging'?stagingShape(input):input;
+  // The signing page serves client.toString() as /ui.js. Wrangler's default keep_names wraps
+  // functions in an __name() helper that is not shipped with that string, so the page's script
+  // throws on load and no button works.
+  if(c?.keep_names!==false)throw Error('keep_names_false_required');
   if(!c || c.workers_dev!==false || c.preview_urls!==false || !Array.isArray(c.routes) || c.routes.length || !Array.isArray(c.triggers?.crons) || c.triggers.crons.length ||
     flags.some(flag=>c.vars?.[flag]!=='false') || Object.keys(c.vars??{}).some(key=>!flags.includes(key)&&key!=='CLA_CONFIG'))throw Error('disabled_manifest_required');
   if(c.d1_databases?.length!==1 || c.d1_databases[0].binding!=='DB' || !c.d1_databases[0].database_id ||
