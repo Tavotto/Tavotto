@@ -615,6 +615,31 @@ def test_second_target_swapped_before_its_replace_rolls_the_first_back(
     _assert_untouched(figs, {"Fig1.pdf": before_pdf, "Fig1.png": b"EXTERNAL-NEW-PNG"})
 
 
+def test_external_edit_of_both_after_first_replace_keeps_external_versions(
+    client, tmp_path, monkeypatch
+):
+    """PDF 替换后、PNG 复核前外部同时改了 PDF 和 PNG：回滚不得拿备份盖掉外部 PDF（Codex #1697 P1）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = m._assert_sources_unchanged
+
+    def recheck(base, paths):
+        # PDF 已发布完成；轮到复核 PNG 的这一刻，外部把两个都改了
+        if [p.name for p in paths] == ["Fig1.png"]:
+            _bump(figs / "Fig1.pdf", b"EXTERNAL-NEW-PDF")
+            _bump(figs / "Fig1.png", b"EXTERNAL-NEW-PNG")
+        return real(base, paths)
+
+    monkeypatch.setattr(m, "_assert_sources_unchanged", recheck)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "source_changed"
+    assert body["kept_external"] == ["Fig1.pdf"]
+    _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": b"EXTERNAL-NEW-PNG"})
+
+
 def test_untouched_sources_still_write_back_normally(client, tmp_path, monkeypatch):
     figs = _figs(tmp_path)
     hot, fresh = _pair(figs, tmp_path)
