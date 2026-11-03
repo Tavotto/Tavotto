@@ -1678,6 +1678,7 @@ export default interface Resources {
       },
       "autoLink": "自动连接",
       "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
+      "emptyRuntimeTitle_other": "图库目录里没有文件，当前有 {{count}} 张运行时生成的图",
       "emptyTitle": "项目里还没有图",
       "group": {
         "editable": "可编辑",
