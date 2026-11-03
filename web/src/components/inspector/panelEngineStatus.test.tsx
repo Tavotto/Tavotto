@@ -112,6 +112,6 @@ describe('引擎状态提示保留布局足迹', () => {
     await act(async () => {
       useRenderStore.getState().patch(renderKeyOf(panel), { status: 'error', stale: true, code: 'script_not_found' })
     })
-    expect(visible()[0].textContent).toContain('源脚本丢失')
+    expect(visible()[0].textContent).toContain('找不到脚本 fig1.py')
   })
 })

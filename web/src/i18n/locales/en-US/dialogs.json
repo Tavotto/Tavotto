@@ -854,8 +854,8 @@
     "allScriptsTitle": "All scripts",
     "autoLink": "Connect automatically",
     "emptyHint": "Run a plotting script, or drop a PDF or PNG into the figure folder.",
-    "emptyRuntimeTitle_one": "No files in the figure folder; {{count}} figure generated at runtime",
-    "emptyRuntimeTitle_other": "No files in the figure folder; {{count}} figures generated at runtime",
+    "emptyRuntimeTitle_one": "The figure folder is empty; {{count}} figure comes from a script run",
+    "emptyRuntimeTitle_other": "The figure folder is empty; {{count}} figures come from script runs",
     "emptyTitle": "No figures in this project yet",
     "group": {
       "editable": "Editable",

@@ -1311,7 +1311,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
       ? // 没有落盘文件（动态路径 / 只 show / 文件还没出现）：不说「画成图片」，说「画的、不能直接编辑」（ADR 0143 修订 2026-10-23）
         pt(report?.no_figure_hint?.path ? 'rasterHint.line' : 'rasterHint.lineNoFile', view.sentence.values)
       : view.sentence.key === 'tex'
-        ? // TeX 失败：说 errors:backend.<code> 那句针对性说明（缺命令 / 缺宏包 / 编译错误）
+        ? // TeX 编译错误 / 原因不明：说 errors:backend.<code> 那句针对性说明（缺命令 / 缺宏包用 prep.line.texCommand / texPackage 短句）
           translate(`backend.${String(view.sentence.values.code)}`, { ns: 'errors', ...view.sentence.values })
         : pt(`line.${view.sentence.key}`, view.sentence.values))
   const originView = localError ? null : originViewOfCard(view.state)
@@ -1962,6 +1962,9 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           }
           attr="parse-kind"
         />
+      )}
+      {view.state === 'tex_missing' && error?.code && (
+        <p data-prep-tex-why>{translate(`backend.${error.code}`, { ns: 'errors', ...errParams })}</p>
       )}
       {prompt && <Row k={pt('detail.prompt')} v={<span className="font-mono">{prompt}</span>} attr="input-prompt" />}
       {/* 那一次的诊断（T04）：失败尝试的冻结快照，不含路径和参数 */}

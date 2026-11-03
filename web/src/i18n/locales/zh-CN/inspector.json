@@ -726,6 +726,8 @@
     "source": "源文件",
     "sourceAdvanced": "源文件",
     "staleScript": "脚本已更新，进入编辑会自动重建",
+    "staleSourceMissing": "找不到脚本 {{script}}",
+    "staleSourceMissingNoName": "找不到源脚本",
     "unknown": "未知",
     "restore": "恢复",
     "replaceAction": "选择…",

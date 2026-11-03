@@ -700,13 +700,15 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
   const engineProgress = useRenderProgress(panel.fileId, render?.status === 'rendering', pn('building'))
   const { active: building, cold } = engineProgress
-  // 图源脚本缺失时重建必然失败：此时说「脚本已更新」是错的，改说缺源（与接入中心同一句，QA-WIN-48）
+  // 图源脚本缺失时重建必然失败：此时说「脚本已更新」是错的，改说找不到脚本（短句，只说文件名，QA-WIN-48）
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
   const sourceMissing = cap?.status === 'source_missing' || render?.code === 'script_not_found'
+  const missingScript = (cap?.status === 'source_missing' ? cap.script : null) || panel.source?.script || panel.script || ''
+  const missingName = missingScript.split(/[\\/]/).pop() ?? ''
   const staleText = sourceMissing
-    ? cap?.status === 'source_missing'
-      ? reasonText(cap)
-      : statusLabel('source_missing')
+    ? missingName
+      ? pn('staleSourceMissing', { script: missingName })
+      : pn('staleSourceMissingNoName')
     : pn('staleScript')
   // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
   // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
@@ -785,7 +787,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
               title={shown ? engineMessageText(kind) : undefined}
               className={cn(
                 'col-start-1 row-start-1 mt-0.5 block h-3 truncate text-xs leading-3',
-                kind === 'stale' ? 'text-danger-content' : 'text-ink-2',
+                'text-ink-2',
                 !shown && 'invisible',
               )}
             >

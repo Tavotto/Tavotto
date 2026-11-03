@@ -667,7 +667,8 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
         const tb = (report.result?.error?.traceback ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
         const values = { ...v, ...params, code, error: String(tb[tb.length - 1] ?? report.result?.error?.message ?? '') }
         const missing = code === 'tex_command_missing' || code === 'tex_package_missing'
-        return view(missing ? 'tex_missing' : 'failed', 'tex', values, runPrimary(report, 'retry') ?? fallback, { tone: 'bad', step: 1 })
+        const key = code === 'tex_command_missing' ? 'texCommand' : code === 'tex_package_missing' ? 'texPackage' : 'tex'
+        return view(missing ? 'tex_missing' : 'failed', key, values, runPrimary(report, 'retry') ?? fallback, { tone: 'bad', step: 1 })
       }
       // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次
       return view('failed', fellBack(report) ? 'failedAfterFallback' : 'failed', v, runPrimary(report, 'retry') ?? fallback, {

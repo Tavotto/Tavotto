@@ -270,7 +270,7 @@ describe('只有运行时捕获的图（QA-WIN-11）', () => {
     const text = document.body.textContent ?? ''
     expect(text).not.toContain('项目里还没有图')
     expect(text).not.toContain('运行一个绘图脚本')
-    expect(text).toContain('2 张运行时生成的图')
+    expect(text).toContain('2 张图来自脚本运行')
     useRuntimeAssetStore.setState({ assets: null } as never)
   })
 

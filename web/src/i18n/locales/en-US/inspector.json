@@ -746,6 +746,8 @@
     "source": "Source file",
     "sourceAdvanced": "Source file",
     "staleScript": "The script changed — entering edit mode rebuilds it automatically",
+    "staleSourceMissing": "Can’t find script {{script}}",
+    "staleSourceMissingNoName": "Can’t find the source script",
     "unknown": "Unknown",
     "restore": "Restore",
     "replaceAction": "Choose…",

@@ -1678,7 +1678,7 @@ export default interface Resources {
       },
       "autoLink": "自动连接",
       "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
-      "emptyRuntimeTitle_other": "图库目录里没有文件，当前有 {{count}} 张运行时生成的图",
+      "emptyRuntimeTitle_other": "图库目录是空的，{{count}} 张图来自脚本运行",
       "emptyTitle": "项目里还没有图",
       "group": {
         "editable": "可编辑",
@@ -4885,6 +4885,8 @@ export default interface Resources {
       "source": "源文件",
       "sourceAdvanced": "源文件",
       "staleScript": "脚本已更新，进入编辑会自动重建",
+      "staleSourceMissing": "找不到脚本 {{script}}",
+      "staleSourceMissingNoName": "找不到源脚本",
       "unknown": "未知"
     },
     "panelLabel": "右侧面板",
@@ -6482,7 +6484,7 @@ export default interface Resources {
         "envChoice": "用项目里自带的那套运行？",
         "envChoiceOpen": "要先选用哪一套运行",
         "envLocked": "设置里固定的 Python 缺组件",
-        "envLockedMissing": "设置里固定的 Python 缺组件：{{names}}",
+        "envLockedMissing": "设置里固定的 Python 缺 {{names}}",
         "expired": "上次的记录没了",
         "failed": "运行出错了",
         "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
@@ -6516,6 +6518,8 @@ export default interface Resources {
         "stale": "设置变了，要重新检查",
         "static": "可以直接排版",
         "stopping": "正在停止…",
+        "texCommand": "没找到 {{command}}。装好 TeX 后重启 Tavotto 再试。",
+        "texPackage": "缺 LaTeX 宏包 {{file}}，装好后再试。",
         "unknown": "有一项没查清",
         "workdir": "在哪个目录运行？"
       },
