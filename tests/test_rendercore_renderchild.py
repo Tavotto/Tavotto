@@ -748,12 +748,14 @@ def test_real_child_child_side_budget_bad_pdf_and_timeout_recovery(real_host, tm
     with pytest.raises(rh.RenderChildError) as ei:
         real_host.probe(bad)
     assert ei.value.code == "render_failed"
-    # 极短超时 → kill → 下一次恢复（真 child、真 kill、真 reap）
+    # 零超时 → kill → 下一次恢复（真 child、真 kill、真 reap）。
+    # 不写 0.0001：那是在跟渲染赛跑——Windows 的 `queue.get(timeout=…)` 受 ~15.6 ms 定时器粒度，实际会多等到
+    # 下一个 tick，热 child 渲这页（本机 8–20 ms）可以先交卷，于是 `DID NOT RAISE`（合并组 10-24 / 10-28 三次，
+    # 只在 Windows 腿）。timeout=0 在 `_recv` 里于读响应之前就判到点，请求已发出、child 正在渲，与时钟粒度和
+    # 渲染快慢都无关；「到点才发现慢」那条路径由上面 fake child 的 hang 用例（0.5 s）覆盖。
     pid = real_host.pid
     with pytest.raises(rh.RenderChildError) as ei:
-        real_host.render(
-            FIXTURE / "page.pdf", width_px=3000, page_size_pt=(270, 160), timeout=0.0001
-        )
+        real_host.render(FIXTURE / "page.pdf", width_px=3000, page_size_pt=(270, 160), timeout=0)
     assert ei.value.code == "render_child_timeout"
     _assert_not_alive(pid)
     buf = real_host.render(FIXTURE / "page.pdf", width_px=200, page_size_pt=(270, 160))
