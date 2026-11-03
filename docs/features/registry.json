@@ -622,11 +622,11 @@
         },
         {
           "spec": "shared-colorbar-group.spec.ts",
-          "title": "手动 cax single：树与面包屑按声明，缺声明时给出可执行关联方式"
+          "title": "手动 cax single：树按声明，缺声明时给出可执行关联方式"
         },
         {
           "spec": "shared-colorbar-group.spec.ts",
-          "title": "手动 cax unknown：树与面包屑按声明，缺声明时给出可执行关联方式"
+          "title": "手动 cax unknown：树按声明，缺声明时给出可执行关联方式"
         }
       ]
     },
