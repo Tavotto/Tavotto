@@ -90,25 +90,39 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
         kind = sr["kind"]
         label = str(style.pop("label", "") or "")
         if kind == "bar":
-            kwargs = _safe_style({k: v for k, v in style.items()
-                                  if k in ("color", "facecolor", "edgecolor", "alpha",
-                                           "bar_width")})
+            kwargs = _safe_style(
+                {
+                    k: v
+                    for k, v in style.items()
+                    if k in ("color", "facecolor", "edgecolor", "alpha", "bar_width")
+                }
+            )
             if "bar_width" in kwargs:
                 kwargs["width"] = kwargs.pop("bar_width")
             if "color" in kwargs and "facecolor" not in kwargs:
                 kwargs["facecolor"] = kwargs.pop("color")
             ax.bar(xs, ys, yerr=yerr, capsize=4, label=label or None, **kwargs)
         elif kind == "errorbar":
-            kwargs = _safe_style({k: v for k, v in style.items()
-                                  if k in ("color", "linewidth", "linestyle", "alpha")})
+            kwargs = _safe_style(
+                {
+                    k: v
+                    for k, v in style.items()
+                    if k in ("color", "linewidth", "linestyle", "alpha")
+                }
+            )
             ax.errorbar(xs, ys, yerr=yerr, capsize=4, label=label or None, **kwargs)
         else:
             plot_style = _safe_style(style)
             if kind == "scatter":
                 plot_style.setdefault("marker", "o")
                 plot_style["linestyle"] = "none"
-            ax.plot(xs, ys, linewidth=float(plot_style.pop("linewidth", 2.0) or 2.0),
-                    label=label or None, **plot_style)
+            ax.plot(
+                xs,
+                ys,
+                linewidth=float(plot_style.pop("linewidth", 2.0) or 2.0),
+                label=label or None,
+                **plot_style,
+            )
     if categorical:
         ax.set_xticks(list(range(len(cats))))
         ax.set_xticklabels(cats)

@@ -124,6 +124,7 @@ def build_vectors() -> list[dict]:
         "scene_digest": "b" * 64,
         "entries": [{"object": "series:s1", "node": "line2d_13"}],
     }
+
     def _categorical_bar_model():
         m = base_model()
         categorical_bar(m)
