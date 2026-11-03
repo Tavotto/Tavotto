@@ -60,6 +60,7 @@ test('staging deployment still routes the worker first and the committed PDF ass
   assert.equal(sha(md),config.policy.agreements.individual.sha256);
   const bytes=fs.readFileSync(staging('assets/CLA_INDIVIDUAL.pdf')),doc=await PDFDocument.load(bytes);
   assert.deepEqual((doc.getKeywords()??'').split(/\s+/).filter(x=>x.startsWith(HASH_KEYWORD)),[HASH_KEYWORD+sha(md)],'PDF is stale: rerun npm run render:agreement-pdf');
+  assert.equal(doc.getSubject(),'tavotto-agreement-meta:'+JSON.stringify({publishedUrl:'https://github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md'}),'staging metadata');
   assert.ok(doc.getPageCount()>=1);for(const p of doc.getPages())assert.deepEqual([p.getWidth(),p.getHeight()],[612,792],'US Letter');
   assert.ok(bytes.length<8*1024*1024);
 });
@@ -69,4 +70,15 @@ test('signature font is OFL with its licence file beside it',()=>{
   assert.match(ofl,/SIL OPEN FONT LICENSE Version 1\.1/i);assert.match(ofl,/Great Vibes/);
   const font=fs.readFileSync(staging('assets/cla-pdf-font.ttf'));assert.ok(font.length>10000&&font.length<2*1024*1024);
   assert.deepEqual([...font.subarray(0,4)],[0,1,0,0],'TrueType');
+});
+
+test('/capabilities reports signedPdf:true only while every PDF asset is really retrievable',async()=>{
+  const caps=async binding=>await (await get('/capabilities',env(binding))).json();
+  assert.equal((await caps(assets())).signedPdf,true);
+  assert.equal('signedPdf' in await caps(undefined),false,'no binding');
+  for(const missing of Object.keys(FIXED)){const table={...FIXED};delete table[missing];assert.equal('signedPdf' in await caps(assets(table)),false,missing+' missing');}
+  assert.equal('signedPdf' in await caps(assets({...FIXED,'/cla-pdf.js':[JS,'text/html']})),false,'wrong type');
+  assert.equal('signedPdf' in await caps({fetch:async()=>{throw Error('ASSET_DOWN');}}),false);
+  const c=await caps(assets());assert.deepEqual(Object.keys(c).sort(),['checkPublishingEnabled','oauthEnabled','signedPdf','signingEnabled']);
+  assert.equal(dbCalls,0);
 });

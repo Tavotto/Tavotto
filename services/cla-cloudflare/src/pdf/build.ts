@@ -5,7 +5,7 @@ import {canvasRasterizer} from './raster.ts';
 import type {Rasterizer} from './raster.ts';
 import {Typesetter,clean,customFace,standardFace} from './text.ts';
 import type {Color,Face} from './text.ts';
-import {KINDS,checkInput,isoTime,longDate,longTime} from './evidence.ts';
+import {KINDS,checkInput,isoTime,longDate,longTime,validMeta} from './evidence.ts';
 import type {BuildInput,Party} from './evidence.ts';
 
 export type {BuildInput,Evidence,AgreementInfo} from './evidence.ts';
@@ -14,6 +14,8 @@ export const AGREEMENT_PDF_PATH='/agreement.pdf';
 export const FONT_PATH='/cla-pdf-font.ttf';
 /** The offline renderer writes the Markdown's SHA-256 into the PDF keywords under this prefix. */
 export const HASH_KEYWORD='tavotto-agreement-sha256:';
+/** PDF Subject written by the renderer: this prefix followed by JSON {publishedUrl?,attribution?}. */
+export const META_SUBJECT='tavotto-agreement-meta:';
 const PRODUCT='Tavotto';
 const W=612,H=792,MX=68.4,CW=W-2*MX,TOP=64.8,LIMIT=78,THANKS_TOP=104;
 const INK:Color=[.106,.106,.094],MUTED:Color=[.424,.424,.4],RULE:Color=[.851,.851,.831],ROW:Color=[.902,.902,.886],NOTE:Color=[.29,.29,.27],FOOT:Color=[.608,.608,.58];
@@ -40,6 +42,10 @@ export async function build(input:BuildInput):Promise<Uint8Array> {
   const agreementBytes=over.agreementPdf??await fetchAsset(AGREEMENT_PDF_PATH,8*1024*1024);
   const doc=await PDFDocument.load(agreementBytes);
   assertAgreementPdf(doc,v.agreement.sha256);
+  // Hash-verified PDF metadata fills in what the caller did not pass; the caller's values win.
+  const subject=doc.getSubject()??'';let meta:{publishedUrl?:string;attribution?:string}={};
+  if(subject.startsWith(META_SUBJECT)){try{const j=JSON.parse(subject.slice(META_SUBJECT.length));meta=validMeta(j?.publishedUrl,j?.attribution);}catch{meta={};}}
+  const publishedUrl=v.agreement.publishedUrl??meta.publishedUrl,attribution=v.agreement.attribution??meta.attribution;
   doc.registerFontkit(fontkit);
   const fontBytes=over.font??await fetchAsset(FONT_PATH,2*1024*1024);
   const raster:Rasterizer=over.rasterizer??canvasRasterizer();
@@ -75,9 +81,17 @@ export async function build(input:BuildInput):Promise<Uint8Array> {
     y-=26-4;
   };
 
+  // Great Vibes' space glyph is too narrow to read as a word gap, so signature words are placed one by one.
+  // Text the script font cannot encode stays one raster run.
+  const sigWords=(t:string)=>script.covers(t)?clean(t).split(/ +/).filter(Boolean):[t];
+  const sigGap=(size:number)=>size*.35;
+  const sigWidth=(t:string,size:number)=>{const w=sigWords(t);return w.reduce((n,x)=>n+ts.width(script,x,size),0)+sigGap(size)*(w.length-1);};
+  const drawSig=async(page:PDFPage,t:string,x:number,y:number,size:number)=>{
+    for(const word of sigWords(t))x+=await ts.draw(page,script,word,x,y,size,INK)+sigGap(size);
+  };
   const partyBox=async(label:string,party:Party,rows:[string,string][])=>{
     const padX=20,padT=18,padB=16,inner=CW-2*padX,labelW=92,gap=12,valueW=inner-labelW-gap;
-    let size=27;const natural=ts.width(script,party.signature,size);if(natural>inner)size=Math.max(14,27*inner/natural);
+    let size=27;const natural=sigWidth(party.signature,size);if(natural>inner)size=Math.max(14,27*inner/natural);
     const sigH=Math.max(34,size*1.25),laid=rows.map(([k,val])=>({k,lines:ts.wrap(sans,val,9.5,valueW)}));
     const rowsH=laid.reduce((n,r)=>n+r.lines.length*14,0)+5*(laid.length-1);
     const height=padT+8.5+14+sigH+4+12+rowsH+padB;
@@ -88,7 +102,7 @@ export async function build(input:BuildInput):Promise<Uint8Array> {
     let cx=MX+padX;
     for(const ch of label.toUpperCase()){cx+=await ts.draw(page,sansB,ch,cx,cy-8.5*.8,8.5,MUTED)+.68;}
     cy-=8.5+14;
-    await ts.draw(page,script,party.signature,MX+padX,cy-sigH+size*.32+4,size,INK);
+    await drawSig(page,party.signature,MX+padX,cy-sigH+size*.32+4,size);
     page.drawLine({start:{x:MX+padX,y:cy-sigH+4-3},end:{x:MX+padX+inner,y:cy-sigH+4-3},thickness:.6,color:rgb(...INK)});
     cy-=sigH+4+12;
     for(const row of laid){
@@ -100,7 +114,7 @@ export async function build(input:BuildInput):Promise<Uint8Array> {
   };
 
   const youLabel=kind.you;
-  await begin(heading,v.agreement.attribution);
+  await begin(heading,attribution);
   await h1('Signatures','This page completes the agreement on the preceding pages. Both parties signed electronically through the Tavotto CLA service.');
   const identity=(p:Party)=>`@${p.login} · ID ${p.githubId}`;
   await partyBox(youLabel,v.contributor,[['Name',v.contributor.name],['Address',v.contributor.address],['GitHub',identity(v.contributor)],['Signed',longTime(v.contributor.signedAt)]]);
@@ -125,7 +139,7 @@ export async function build(input:BuildInput):Promise<Uint8Array> {
     }
   };
   const h3=async(title:string)=>{await ensure(60);y-=14;await ts.draw(page,sansB,title,MX,y-10*.85,10,INK);y-=10*1.3+6;};
-  await table([['Record',v.packet,mono],['Agreement',`${kind.short}, version ${v.agreement.version}`],['Agreement fingerprint (SHA-256)',v.agreement.sha256,mono],...(v.agreement.publishedUrl?[['Published text',v.agreement.publishedUrl,mono] as [string,string,Face]]:[])]);
+  await table([['Record',v.packet,mono],['Agreement',`${kind.short}, version ${v.agreement.version}`],['Agreement fingerprint (SHA-256)',v.agreement.sha256,mono],...(publishedUrl?[['Published text',publishedUrl,mono] as [string,string,Face]]:[])]);
   for(const [title,p] of [['Contributor',v.contributor],['Rights holder',v.holder]] as const){
     await h3(title);
     await table([['Identity',`Signed in with GitHub as @${p.login} (ID ${p.githubId})`],['Confirmations',p.confirmations.join(' · ')],...(p.consent?[['Consent wording version',p.consent] as [string,string]]:[]),...(p.fingerprint?[['Evidence fingerprint',p.fingerprint,mono] as [string,string,Face]]:[]),['Time',isoTime(p.signedAt)]]);

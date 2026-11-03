@@ -18,7 +18,7 @@ const md=path.resolve(mdArg??path.join(root,'../../docs/legal/CLA_INDIVIDUAL.md'
 const work=await mkdtemp(path.join(os.tmpdir(),'cla-sample-pdf-'));
 try{
   await mkdir(outDir,{recursive:true});
-  const agreementPdf=path.join(work,'agreement.pdf');await renderAgreementPdf(md,agreementPdf,{title:'Tavotto Individual Contributor License Agreement'});
+  const agreementPdf=path.join(work,'agreement.pdf');await renderAgreementPdf(md,agreementPdf,{title:'Tavotto Individual Contributor License Agreement',publishedUrl:'https://github.com/example/example/blob/main/docs/legal/CLA_INDIVIDUAL.md',attribution:'Derived from the Harmony Individual CLA 1.0, \u00a9 2011 Project Harmony, CC BY 3.0'});
   const b64=async f=>(await readFile(f)).toString('base64');
   const hex=n=>randomBytes(n).toString('hex'),packet='pkt_'+randomBytes(24).toString('base64url');
   const ev=(role,o)=>({protocol:'cla-signature-v1',packet,role,agreement_kind:'individual',agreement_version:'1.0',agreement_sha256:sha,consent_ui_version:'1',evidence_sha256:hex(32),
@@ -30,7 +30,7 @@ try{
   for(const [name,contributor] of Object.entries(samples)){
     const page=`<!doctype html><meta charset="utf-8"><pre id="out">pending</pre><script>${bundle}</script><script>
 const bytes=b=>Uint8Array.from(atob(b),c=>c.charCodeAt(0));
-TavottoClaPdf.build({agreement:{kind:'individual',version:'1.0',sha256:${JSON.stringify(sha)},publishedUrl:'https://github.com/example/example/blob/main/docs/legal/CLA_INDIVIDUAL.md',attribution:'Derived from the Harmony Individual CLA 1.0, \\u00a9 2011 Project Harmony, CC BY 3.0'},
+TavottoClaPdf.build({agreement:{kind:'individual',version:'1.0',sha256:${JSON.stringify(sha)}},
  contributor:${JSON.stringify(contributor)},holder:${JSON.stringify(holder)},
  overrides:{agreementPdf:bytes(${JSON.stringify(await b64(agreementPdf))}),font:bytes(${JSON.stringify(await b64(path.join(root,'deployment/staging/assets/cla-pdf-font.ttf')))}),serviceHost:'cla.example.test'}})
  .then(r=>{let s='';for(let i=0;i<r.length;i+=8192)s+=String.fromCharCode(...r.subarray(i,i+8192));document.getElementById('out').textContent='DONE:'+btoa(s);})

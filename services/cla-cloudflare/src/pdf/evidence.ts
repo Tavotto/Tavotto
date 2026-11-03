@@ -28,6 +28,13 @@ export interface Party {
   role:'contributor'|'holder';name:string;address:string;signature:string;login:string;githubId:number;signedAt:number;
   confirmations:string[];fingerprint?:string;consent?:string;
 }
+/** Only these two optional fields may come from the (hash-verified) agreement PDF metadata. */
+export function validMeta(url:unknown,attribution:unknown):{publishedUrl?:string;attribution?:string} {
+  const out:{publishedUrl?:string;attribution?:string}={};
+  if(text(url,500) && /^https:\/\//.test(url as string))out.publishedUrl=url as string;
+  if(text(attribution,200))out.attribution=attribution as string;
+  return out;
+}
 export function checkInput(input:BuildInput):{agreement:AgreementInfo;packet:string;contributor:Party;holder:Party} {
   const a=input?.agreement;
   if(!a || typeof a!=='object' || !KINDS[a.kind] || !text(a.version,40) || !HEX.test(a.sha256) || (a.publishedUrl!==undefined && (!text(a.publishedUrl,500) || !/^https:\/\//.test(a.publishedUrl))) ||

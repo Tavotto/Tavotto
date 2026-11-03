@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import vm from 'node:vm';
 import {PDFArray,PDFDocument,PDFName,decodePDFRawStream} from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import {build} from '../src/pdf/build.ts';
 import {buildPdfClient} from '../scripts/build-pdf-client.mjs';
-import {AGREEMENT_SHA,agreementPdf,evidence,fakeRasterizer,input,pdfWithKeyword,stagingPdf} from './pdf-fixture.mjs';
+import {AGREEMENT_SHA,agreementPdf,evidence,fakeRasterizer,font,input,pdfWithKeyword,stagingPdf} from './pdf-fixture.mjs';
 
 async function pages(bytes){
   const doc=await PDFDocument.load(bytes);
@@ -132,9 +133,40 @@ test('very long addresses flow onto continuation pages; order and footers stay c
 test('publishedUrl and fingerprints are optional: their rows are simply omitted; consent wording version is printed',async()=>{
   const base=await input(),a={...base.agreement};delete a.publishedUrl;
   const c=evidence('contributor',{consent_ui_version:'2'}),h=evidence('holder');delete c.evidence_sha256;delete h.evidence_sha256;
-  const [,,cert]=await pages(await build({...base,agreement:a,contributor:c,holder:h}));
+  const [,,cert]=await pages(await build({...base,agreement:a,contributor:c,holder:h,overrides:{...base.overrides,agreementPdf:await agreementPdf()}}));
   assert.doesNotMatch(cert.text,/Published text/);assert.doesNotMatch(cert.text,/Evidence fingerprint/);
   assert.ok(cert.text.includes('Consent wording version'));assert.ok(cert.flat.includes('Consentwordingversion2'));
   assert.ok(cert.text.includes('Time')&&cert.text.includes(base.contributor.packet));
   const [,,full]=await pages(await build(base));assert.ok(full.text.includes('Published text')&&full.text.includes('Evidence fingerprint'));
+});
+
+test('multi-word signatures keep a visible word gap (Great Vibes space is too narrow)',async()=>{
+  const bytes=await build(await input()),doc=await PDFDocument.load(bytes),page=doc.getPages()[1]; // Signatures page
+  const ctx=page.node.context,c=page.node.Contents();
+  const content=(c instanceof PDFArray?c.asArray().map(r=>ctx.lookup(r)):[c]).map(x=>Buffer.from(decodePDFRawStream(x).decode()).toString('latin1')).join('\n');
+  // Each drawText is: ... /Font 27 Tf ... x y Tm <hex> Tj. Collect the size-27 runs (the two signatures) with their x.
+  const runs=[...content.matchAll(/\/(\S+) 27 Tf[\s\S]*?1 0 0 1 ([\d.]+) ([\d.]+) Tm\s*<([0-9A-Fa-f]+)> Tj/g)].map(m=>({x:Number(m[2]),y:Number(m[3])}));
+  assert.equal(runs.length,4,'Wan + Jiaqi, then Jiaqi + Wan');
+  const probe=await PDFDocument.create();probe.registerFontkit(fontkit);const f=await probe.embedFont(font);
+  const [w1,w2]=[runs[2],runs[3]];assert.equal(w1.y,w2.y);
+  const first=f.widthOfTextAtSize('Jiaqi',27),gap=w2.x-(w1.x+first);
+  assert.ok(gap>=27*.3,'gap between words is at least ~0.3em, got '+gap);
+  assert.ok(gap<=27*.4);
+});
+
+test('agreement/publishedUrl come from the hash-verified PDF metadata unless the caller passes them',async()=>{
+  const base=await input(),a={...base.agreement};delete a.publishedUrl;
+  const [,,cert]=await pages(await build({...base,agreement:a}));   // staging PDF carries the sandbox URL
+  assert.ok(cert.flat.includes('github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md'));
+  const [,,own]=await pages(await build(base));assert.ok(own.flat.includes('github.com/example/example'));assert.ok(!own.flat.includes('cla-e2e-sandbox'));
+  // attribution: from metadata when the PDF has one, caller wins.
+  const {PDFDocument:D}=await import('pdf-lib');
+  const withMeta=async attribution=>{const d=await D.load(stagingPdf);d.setSubject('tavotto-agreement-meta:'+JSON.stringify({attribution}));return new Uint8Array(await d.save());};
+  const sigText=async(i)=>(await pages(await build(i)))[1].text;
+  assert.ok((await sigText(await input({overrides:{agreementPdf:await withMeta('Derived from the Example CLA')}}))).includes('Derived from the Example CLA'));
+  assert.ok((await sigText(await input({agreement:{...a,attribution:'Caller wins'},overrides:{agreementPdf:await withMeta('Derived from the Example CLA')}}))).includes('Caller wins'));
+  // Malformed or hostile metadata is ignored, never an error and never drawn as a link.
+  for(const subject of ['tavotto-agreement-meta:{not json','tavotto-agreement-meta:{"publishedUrl":"javascript:alert(1)"}']){
+    const d=await D.load(stagingPdf);d.setSubject(subject);const [,,c]=await pages(await build({...base,agreement:a,overrides:{...base.overrides,agreementPdf:new Uint8Array(await d.save())}}));
+    assert.doesNotMatch(c.text,/Published text|javascript/);}
 });

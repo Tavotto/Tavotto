@@ -187,6 +187,8 @@ response:
 | `GET /cla-pdf-font.ttf` | `/cla-pdf-font.ttf` | `font/ttf` |
 | `GET /cla-pdf-font-OFL.txt` | `/cla-pdf-font-OFL.txt` | `text/plain` |
 
+`GET /capabilities` gains `signedPdf: true` only while all four assets are actually retrievable from the binding with the expected types (probed on each call, nothing cached); otherwise the key is absent.
+
 A query string, another method or any other path is not served. An asset that is missing, redirected, of
 another type or too large gives 503 `pdf_asset_unavailable`.
 
@@ -195,9 +197,18 @@ Preparing the assets (operator step, offline, never at request time):
     npm run render:agreement-pdf   # staging: CLA_INDIVIDUAL.md -> CLA_INDIVIDUAL.pdf (headless Chrome)
     npm run build:pdf-client       # esbuild bundle of src/pdf (pdf-lib + fontkit) -> assets/cla-pdf.js
 
-For production run `node scripts/render-agreement-pdf.mjs assets-reviewed/CLA_INDIVIDUAL.md
-assets-reviewed/CLA_INDIVIDUAL.pdf --title "..."` on the exact reviewed bytes and put `cla-pdf.js`, the font
-and its licence next to them. The renderer writes the Markdown's SHA-256 into the PDF keywords
+For production run, on the exact reviewed bytes,
+
+    node scripts/render-agreement-pdf.mjs assets-reviewed/CLA_INDIVIDUAL.md assets-reviewed/CLA_INDIVIDUAL.pdf \
+      --title "Tavotto Individual Contributor License Agreement" \
+      --published-url https://github.com/Tavotto/Tavotto/blob/main/docs/legal/CLA_INDIVIDUAL.md \
+      --attribution "Derived from the Harmony Individual CLA 1.0, © 2011 Project Harmony, CC BY 3.0"
+
+and put `cla-pdf.js`, the font and its licence next to them. Staging passes only `--published-url`
+(the sandbox repository's text) and no attribution, because the staging text is not Harmony-derived.
+`--published-url` and `--attribution` are stored in the PDF Subject as `tavotto-agreement-meta:{json}`; the
+builder reads them only after the hash check passes, ignores anything malformed or non-https, and lets
+values passed in `build()` input win. The signing page therefore does not need to know either. The renderer writes the Markdown's SHA-256 into the PDF keywords
 (`tavotto-agreement-sha256:<hex>`); the builder refuses to run unless that equals the agreement hash being
 signed. This ties the PDF to the pinned text by the renderer's claim, not by re-reading the pages: a PDF
 rendered from different text but stamped with the pinned hash would pass, so review the PDF like the

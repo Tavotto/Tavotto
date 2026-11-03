@@ -51,5 +51,32 @@
     "pattern": "independent readEvidence returns the verified record plus its stored fingerprint",
     "testFile": "tests/independent-lifecycle.test.mjs",
     "assertionError": true
+  },
+  {
+    "name": "signed PDF signature word gap",
+    "file": "src/pdf/build.ts",
+    "before": "const sigGap=(size:number)=>size*.35;",
+    "after": "const sigGap=(size:number)=>0;",
+    "pattern": "multi-word signatures keep a visible word gap",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF capability is real",
+    "file": "src/native/worker.ts",
+    "before": "...(await signedPdfAvailable(env)?{signedPdf:true}:{})",
+    "after": "...({signedPdf:true})",
+    "pattern": "/capabilities reports signedPdf:true only while",
+    "testFile": "tests/signed-pdf-worker.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF metadata url must be https",
+    "file": "src/pdf/evidence.ts",
+    "before": "if(text(url,500) && /^https:\\/\\//.test(url as string))",
+    "after": "if(text(url,500))",
+    "pattern": "agreement/publishedUrl come from the hash-verified PDF metadata",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
   }
 ]
