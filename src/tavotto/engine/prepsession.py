@@ -2989,6 +2989,15 @@ class SessionService:
                     if result is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
                     else []
                 ),
+                # 脚本用 `PdfPages` 写进多页 PDF 的图的账（与 `/api/registry/probe` 的 `pdf_pages` 同一份、同一口径，#1370）：
+                # 导出窗口据此提供「合并为多页 PDF」。只在成功时给、没有时不出现（一个字节都不多）
+                **(
+                    {"pdf_pages": [dict(p) for p in (result.captured or {}).get("pdf_pages") or ()]}
+                    if result is not None
+                    and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    and (result.captured or {}).get("pdf_pages")
+                    else {}
+                ),
                 # T09b：这次（无参数）运行把哪些此前登记在这个脚本名下的图名替换掉了（T03 已知缺口：注册表按脚本整条替换）。
                 # 只是图名（与 `captured[].stem` 同一口径，项目相对的公开名字），不含参数；界面据此给「用原参数再运行」的提示
                 "unlinked_stems": (

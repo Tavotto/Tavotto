@@ -7183,6 +7183,8 @@ export interface PreparationReport {
   failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 脚本用 `PdfPages` 写进多页 PDF 的图的账（与 `ProbeResult.pdf_pages` 同一份；导出的「合并为多页 PDF」靠它，#1370）；没有 / 老后端不出现 */
+  pdf_pages?: PdfPagesCapture[]
   /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
   remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */

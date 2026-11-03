@@ -745,7 +745,15 @@ def _captured_of(worker, build_resp) -> dict | None:
         return None
     descriptors = build_resp.get("descriptors") if isinstance(build_resp, dict) else None
     failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
+    pdf_pages = build_resp.get("pdf_pages") if isinstance(build_resp, dict) else None
     return {
+        # 写进多页 PDF 而被逐页认领的图的账（`figcapture.PdfPagesLedger.summary`，项目相对路径；与试运行响应同一份，#1370）。
+        # 没有时不出现
+        **(
+            {"pdf_pages": [dict(p) for p in pdf_pages if isinstance(p, dict)]}
+            if isinstance(pdf_pages, list) and pdf_pages
+            else {}
+        ),
         **(
             {"failed_figures": [dict(f) for f in failed if isinstance(f, dict)], "partial": True}
             if isinstance(failed, list) and failed
@@ -1428,6 +1436,8 @@ class PreparationService:
         return {
             "descriptors": list(getattr(existing, "last_build_descriptors", None) or []),
             "runtime": getattr(existing, "last_build_runtime", None),
+            # 热会话那次 build 里脚本用 PdfPages 写的多页 PDF 账（#1370）：复用也要带上，导出的「合并为多页 PDF」靠它
+            "pdf_pages": list(getattr(existing, "last_build_pdf_pages", None) or []),
         }
 
     def _finish(self, entry: _Entry, status: str, *, note: str = "") -> None:

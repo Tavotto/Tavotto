@@ -22,6 +22,9 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchExportDefaultsRemote: vi.fn(() => Promise.resolve(undefined)),
   // 预览里「带图内修改的那一版」按 overrides 出图（`useVariantPng`）
   enginePreviewPng: vi.fn(() => Promise.resolve(new Blob(['png']))),
+  // 准备会话（默认的「准备并运行」）：多页 PDF 合并项的集成用例从它的完成回报出发
+  createPreparationSession: vi.fn(),
+  fetchRuntimeAssets: vi.fn(),
 }))
 
 // 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
@@ -38,7 +41,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 import { ExportDialog, diskSizeDiffSignificant } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { enginePreviewPng, fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
+import { createPreparationSession, enginePreviewPng, fetchRuntimeAssets, fetchExportDefaultsRemote, postTelemetryEvent, type PreparationReport } from '@/lib/api'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -3969,6 +3973,51 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
   ])('%s：不出现', async (_name, opts) => {
     await setupMerge(opts)
     expect(mergeRow()).toBeNull()
+  })
+
+  it('默认「准备并运行」完成后（不预先往 byScript 注入）：出现合并勾选；重跑成没有多页 PDF 则消失（QA-MAC-02）', async () => {
+    await setupMerge({ pdfPages: [] }) // 注入一份空账本：此刻没有合并项
+    useScriptRunStore.setState({ byScript: {} } as never)
+    expect(mergeRow()).toBeNull()
+    const report = (over: Record<string, unknown>) =>
+      ({
+        session_version: 1, session_id: 'ps-1', project_id: 'pj', config_revision: 1, observation_seq: 1,
+        target: { kind: 'script', script: 's.py', entry: 'main', asset_id: null, stem: null },
+        phase: 'completed', outcome: { kind: 'succeeded' },
+        facts: { execution_finished: true, figure_captured: true },
+        checks: [], requirements: [], actions: [],
+        provider: { plan_id: 'pp', attempt_id: 'a1', attempts: 1, dependency: null },
+        runtime_input: null, result: null,
+        captured: [{ asset_id: 'Fig1.pdf', stem: 'a' }, { asset_id: 'Fig2.pdf', stem: 'b' }],
+        ...over,
+      }) as unknown as PreparationReport
+    const { setCurrentProjectId } = await import('@/lib/session')
+    setCurrentProjectId('pj')
+    // 完成回调会重取素材清单（真实行为）：回两张属于 s.py 的图
+    vi.mocked(fetchRuntimeAssets).mockResolvedValue({ assets: [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b')] } as never)
+    vi.mocked(createPreparationSession).mockResolvedValueOnce(report({ pdf_pages: [pages()] }))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open(scriptTarget('s.py'))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100)) // onCompleted 里的动态 import 与账本写入
+    })
+    expect(mergeRow()).toBeTruthy()
+    expect(mergeRow()!.textContent).toContain('all_samples.pdf')
+    // 重跑覆盖：同一脚本再准备一次，这次没有多页 PDF
+    vi.mocked(createPreparationSession).mockResolvedValueOnce(
+      report({ observation_seq: 2, provider: { plan_id: 'pp', attempt_id: 'a2', attempts: 2, dependency: null } }),
+    )
+    await act(async () => {
+      useProjectPreparationStore.getState().clear()
+      await useProjectPreparationStore.getState().open(scriptTarget('s.py'))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100)) // onCompleted 里的动态 import 与账本写入
+    })
+    expect(mergeRow()).toBeNull()
+    useProjectPreparationStore.getState().clear()
+    setCurrentProjectId(null)
   })
 
   it('取消 PDF 格式：勾选消失（SVG / PNG 没有多页）', async () => {
