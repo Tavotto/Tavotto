@@ -3207,6 +3207,41 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
     })
   })
 
+  describe('TeX 工具链失败：卡片说针对性的那句，不是笼统的「运行出错了」（QA-WIN-29）', () => {
+    const tex = (code: string, params: Record<string, string>, remedy: unknown = { kind: 'ai_fix' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code, message: 'x', params, traceback: 'Traceback\nRuntimeError: boom' } },
+        remedy,
+      } as never)
+
+    it('tex_command_missing：卡上就是那句说明（含缺的命令），不摆 AI 修复', async () => {
+      await mount()
+      await openWith(tex('tex_command_missing', { command: 'latex' }))
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('没找到 latex。装好 TeX 后重启 Tavotto 再试。')
+      expect(panel().querySelector('[data-prep-primary]')?.textContent).toBe('再试一次')
+      expect(panel().querySelector('[data-prep-ai-fix], [data-prep-primary="ai_fix"]')).toBeNull()
+    })
+
+    it('tex_package_missing：短句，长说明在详情里', async () => {
+      await mount()
+      await openWith(tex('tex_package_missing', { file: 'foo.sty' }))
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toBe('缺 LaTeX 宏包 foo.sty，装好后再试。')
+      await act(async () => { panel().querySelector<HTMLElement>('[data-prep-details-toggle]')!.click() })
+      expect(panel().querySelector('[data-prep-tex-why]')!.textContent).toContain('不是 Python 包')
+    })
+
+    it('tex_failed：原因不明也带上 traceback 末行', async () => {
+      await mount()
+      await openWith(tex('tex_failed', {}))
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toContain('RuntimeError: boom')
+    })
+  })
+
   describe('解释器在 Tavotto 的缓存里建不了目录：一键改用自带的 Python（TVD-B6MR）', () => {
     const denied = (params: Record<string, string> = { switch: 'global' }) =>
       report({

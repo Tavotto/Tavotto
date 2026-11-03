@@ -843,6 +843,7 @@
     "allScriptsTitle": "全部脚本",
     "autoLink": "自动连接",
     "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
+    "emptyRuntimeTitle_other": "图库目录是空的，{{count}} 张图来自脚本运行",
     "emptyTitle": "项目里还没有图",
     "group": {
       "editable": "可编辑",

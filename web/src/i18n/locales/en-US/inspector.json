@@ -746,6 +746,8 @@
     "source": "Source file",
     "sourceAdvanced": "Source file",
     "staleScript": "The script changed — entering edit mode rebuilds it automatically",
+    "staleSourceMissing": "Can’t find script {{script}}",
+    "staleSourceMissingNoName": "Can’t find the source script",
     "unknown": "Unknown",
     "restore": "Restore",
     "replaceAction": "Choose…",
@@ -1177,7 +1179,7 @@
     "rewriting": "Rewriting…",
     "trigger": "Write-back records",
     "versionDescription": "{{count}} edits · {{ts}}",
-    "warnBody": "This rewrites the original file from this version’s edits. Backed up automatically to cache/original_backups.",
+    "warnBody": "This rewrites the original file from this version’s edits. Backed up automatically to {{dir}}.",
     "warnForward": "This restore is added as a new entry; you can always go back."
   },
   "writeBack": {

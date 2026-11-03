@@ -7007,7 +7007,7 @@ export type PreparationRequirement =
       payload: Record<string, unknown> | null
     }
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
-  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
+  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string; missing?: string[] } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
   /**
    * 沙盒里 glob / listdir / exists / C++ 读取器落空、脚本目录里找得到（#1254）：上一次尝试留下的不阻塞引导，
@@ -7263,6 +7263,10 @@ export interface PreparationResultError {
     ignore_token?: string
     /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
     switch?: 'global' | 'project' | 'both' | string
+    /** `tex_*`（TeX 工具链，`texdiag.params_of`）：缺的命令 / 宏包文件名 / LaTeX 报错那一行，有才带 */
+    command?: string
+    file?: string
+    line?: string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string
