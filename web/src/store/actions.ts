@@ -2652,7 +2652,11 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
       ref === 'page'
         ? { x: 0, y: 0, w: d.page.w, h: d.page.h }
         : ref === 'primary'
-          ? visualBounds(primary)
+          ? // 统一宽 / 高比的是对象自身未旋转的 w / h（与属性页 W / H、applyAlign 同口径），
+            // 其余对齐才量旋转后的外接框（ADR 0163 旋转一节第 5 点）
+            mode === 'samew' || mode === 'sameh'
+            ? { x: primary.x, y: primary.y, w: primary.w, h: primary.h }
+            : visualBounds(primary)
           : (boundsOf(objs.map(visualBounds)) ?? visualBounds(primary))
     // 以某个对象为参照时它自己不动，否则等宽等高会把基准也改掉
     const targets = objs.filter(
