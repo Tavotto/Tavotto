@@ -4676,6 +4676,13 @@ export default interface Resources {
         "symlog": "对称对数"
       }
     },
+    "gradientStops": {
+      "bottom": "下端",
+      "left": "左端",
+      "right": "右端",
+      "stopLabel": "{{field}} · {{end}}颜色",
+      "top": "上端"
+    },
     "group": {
       "advanced": "高级",
       "arrange": "排列",
@@ -4929,6 +4936,7 @@ export default interface Resources {
       "frame_rounded": "圆角边框",
       "framealpha": "边框不透明度",
       "frameon": "边框",
+      "gradient": "渐变",
       "gradient_color": "渐变基色",
       "grid_alpha": "网格不透明度",
       "grid_color": "网格颜色",
