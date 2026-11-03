@@ -77,9 +77,20 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     categorical = ax_cfg.get("kind") == "categorical"
     cats = ax_cfg.get("categories") or []
     for sr in model["series"]:
+        kind = sr["kind"]
+        style = dict(sr.get("style") or {})
+        if kind == "image":
+            grid = model["dataset"].get("grids", {}).get(sr.get("grid", ""))
+            if grid is None:
+                raise ValueError(f"series {sr['id']} references unknown grid")
+            imshow_kwargs = _safe_style(
+                {k: v for k, v in style.items() if k in ("cmap", "vmin", "vmax", "alpha")}
+            )
+            mappable = ax.imshow(grid["values"], origin="upper", **imshow_kwargs)
+            fig.colorbar(mappable, ax=ax)
+            continue
         xs = model["dataset"]["columns"][sr["x"]]
         ys = model["dataset"]["columns"][sr["y"]]
-        style = dict(sr.get("style") or {})
         yerr_col = sr.get("yerr")
         yerr = model["dataset"]["columns"].get(yerr_col) if yerr_col else None
         if categorical:
@@ -87,7 +98,6 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
             if xs != cats:
                 raise ValueError("series categories do not match the axis categories")
             xs = list(range(len(cats)))
-        kind = sr["kind"]
         label = str(style.pop("label", "") or "")
         if kind == "bar":
             kwargs = _safe_style(
@@ -133,6 +143,8 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     ax_disp_bottom = h_pt - bottom
     ax_w_px, ax_h_px = right - left, bottom - top
     for sr in model["series"]:
+        if sr["kind"] == "image":
+            continue  # 网格系列的命中事实由图像矩形承担，不做逐点
         xs = model["dataset"]["columns"][sr["x"]]
         ys = model["dataset"]["columns"][sr["y"]]
         if categorical:
@@ -170,6 +182,9 @@ def _safe_style(style: dict) -> dict:
         "facecolor": str,
         "edgecolor": str,
         "bar_width": float,
+        "cmap": str,
+        "vmin": float,
+        "vmax": float,
     }
     for key, kind in allowed.items():
         if key in style and style[key] is not None:

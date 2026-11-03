@@ -18,7 +18,7 @@ export const AXIS_KINDS = ['numeric', 'categorical'] as const
 export type ChartAxisKind = (typeof AXIS_KINDS)[number]
 
 // 系列种类闭集（SERIES_KINDS）。
-export const SERIES_KINDS = ['line', 'scatter', 'bar', 'errorbar'] as const
+export const SERIES_KINDS = ['line', 'scatter', 'bar', 'errorbar', 'image'] as const
 export type ChartSeriesKind = (typeof SERIES_KINDS)[number]
 
 // 系列样式可写键闭集（SERIES_STYLE_KEYS）。
@@ -33,6 +33,9 @@ export const SERIES_STYLE_KEYS = [
   'edgecolor',
   'bar_width',
   'label',
+  'cmap',
+  'vmin',
+  'vmax',
 ] as const
 export type ChartSeriesStyleKey = (typeof SERIES_STYLE_KEYS)[number]
 
@@ -73,11 +76,13 @@ export interface ChartSeries {
   x: string
   y: string
   yerr?: string
+  grid?: string
   style?: Partial<Record<ChartSeriesStyleKey, number | string>>
 }
 
 export interface ChartDataset {
   columns: Record<string, number[]>
+  grids?: Record<string, { values: number[][] }>
 }
 
 export interface ChartModel {
@@ -271,7 +276,7 @@ export function validateChartModel(model: unknown): ChartVerdict {
   const dataset = m.dataset
   if (typeof dataset !== 'object' || dataset === null) return invalid()
   const ds = dataset as Record<string, unknown>
-  if (!keysAllowed(ds, ['columns'])) return invalid()
+  if (!keysAllowed(ds, ['columns', 'grids'])) return invalid()
   const columns = ds.columns
   if (typeof columns !== 'object' || columns === null) return invalid()
   const colNames = new Set<string>()
@@ -283,21 +288,48 @@ export function validateChartModel(model: unknown): ChartVerdict {
     if (!col.every(v => isFiniteNumber(v) || (typeof v === 'string' && v))) return invalid()
   }
 
+  // 网格（热图/标量场）：矩形、有限数（engine/chartmodel.py grids 同款判据）
+  const grids = ds.grids
+  if (grids !== undefined) {
+    if (typeof grids !== 'object' || grids === null) return invalid()
+    for (const grid of Object.values(grids as Record<string, unknown>)) {
+      if (typeof grid !== 'object' || grid === null) return invalid()
+      const g = grid as Record<string, unknown>
+      if (!keysAllowed(g, ['values'])) return invalid()
+      const values = g.values
+      if (!Array.isArray(values) || values.length === 0) return reject('chart_data_invalid')
+      let width = -1
+      for (const row of values as unknown[]) {
+        if (!Array.isArray(row) || row.length === 0) return reject('chart_data_invalid')
+        if (width === -1) width = row.length
+        else if (row.length !== width) return reject('chart_data_invalid')
+        if (!row.every(isFiniteNumber)) return reject('chart_data_invalid')
+      }
+    }
+  }
+
   const series = m.series
   if (!Array.isArray(series) || series.length === 0) return invalid()
   const seriesIds = new Set<string>()
   for (const raw of series) {
     if (typeof raw !== 'object' || raw === null) return invalid()
     const sr = raw as Record<string, unknown>
-    if (!keysAllowed(sr, ['id', 'kind', 'axes', 'node', 'x', 'y', 'yerr', 'style'])) return invalid()
+    if (!keysAllowed(sr, ['id', 'kind', 'axes', 'node', 'x', 'y', 'yerr', 'grid', 'style'])) return invalid()
     if (typeof sr.id !== 'string' || !ID_RE.test(sr.id)) return invalid()
     if (ids.has(sr.id) || seriesIds.has(sr.id)) return reject('chart_duplicate_id')
     seriesIds.add(sr.id)
     if (!SERIES_KINDS.includes(sr.kind as ChartSeriesKind)) return invalid()
     if (typeof sr.axes !== 'string' || !ids.has(sr.axes)) return invalid()
     if (typeof sr.node !== 'string' || !sr.node) return invalid()
-    for (const key of ['x', 'y'] as const) {
-      if (typeof sr[key] !== 'string' || !colNames.has(sr[key] as string)) return reject('chart_data_invalid')
+    if (sr.kind === 'image') {
+      if (typeof sr.grid !== 'string'
+        || !Object.keys((ds.grids as Record<string, unknown>) ?? {}).includes(sr.grid)) {
+        return reject('chart_data_invalid')
+      }
+    } else {
+      for (const key of ['x', 'y'] as const) {
+        if (typeof sr[key] !== 'string' || !colNames.has(sr[key] as string)) return reject('chart_data_invalid')
+      }
     }
     if (sr.style !== undefined) {
       if (typeof sr.style !== 'object' || sr.style === null) return invalid()
@@ -307,7 +339,12 @@ export function validateChartModel(model: unknown): ChartVerdict {
 
   if (typeof m.scene_digest !== 'string' || !m.scene_digest) return invalid()
   if (typeof m.data_digest !== 'string' || !m.data_digest) return invalid()
-  if (m.data_digest !== digestOf({ columns })) return reject('chart_data_changed')
+  // 摘要口径与引擎侧一致：有 grids 时一并进入（否则只按 columns）
+  const digestPayload
+    = ds.grids !== undefined && Object.keys(ds.grids as object).length > 0
+      ? { columns, grids: ds.grids }
+      : { columns }
+  if (m.data_digest !== digestOf(digestPayload)) return reject('chart_data_changed')
   const engine = m.engine
   if (typeof engine !== 'object' || engine === null) return invalid()
   const en = engine as Record<string, unknown>

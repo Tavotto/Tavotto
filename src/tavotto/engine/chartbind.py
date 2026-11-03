@@ -102,7 +102,8 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         n["id"]
         for n in nodes
         if isinstance(n, dict)
-        and n.get("tag") in ("path", "rect", "circle", "ellipse", "line", "polygon", "polyline")
+        and n.get("tag")
+        in ("path", "rect", "circle", "ellipse", "line", "polygon", "polyline", "image", "use", "g")
     }
     rect = request.get("rect")
     if not isinstance(rect, list) or len(rect) != 4 or rect[2] <= 0 or rect[3] <= 0:
@@ -160,25 +161,41 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
             raise BindError("bind_node_not_graphic", f"node {node!r} is not in the scene")
         if node not in graphic_ids:
             raise BindError("bind_node_not_graphic", f"node {node!r} is not a graphic element")
-        for key in ("x_col", "y_col"):
-            if sr.get(key) not in columns and sr.get(key) not in (parsed.get("text_columns") or {}):
-                raise BindError("bind_column_missing", f"series[{i}].{key} {sr.get(key)!r}")
-        if sr.get("x_col") in (parsed.get("text_columns") or {}) and axis_kind != "categorical":
-            raise BindError(
-                "bind_evidence_invalid",
-                f"series[{i}].x_col is a text column; the axis must be categorical",
-            )
+        if sr.get("kind") != "image":
+            # image 系列的数据源是网格，不是 x/y 列
+            for key in ("x_col", "y_col"):
+                if sr.get(key) not in columns and sr.get(key) not in (
+                    parsed.get("text_columns") or {}
+                ):
+                    raise BindError("bind_column_missing", f"series[{i}].{key} {sr.get(key)!r}")
+            if sr.get("x_col") in (parsed.get("text_columns") or {}) and axis_kind != "categorical":
+                raise BindError(
+                    "bind_evidence_invalid",
+                    f"series[{i}].x_col is a text column; the axis must be categorical",
+                )
         series.append(
             {
                 "id": f"s{i + 1}",
                 "kind": sr.get("kind") if sr.get("kind") in chartmodel.SERIES_KINDS else "line",
                 "axes": "ax1",
                 "node": node,
-                "x": sr["x_col"],
-                "y": sr["y_col"],
+                "x": sr.get("x_col", "-"),
+                "y": sr.get("y_col", "-"),
                 "style": dict(sr.get("style") or {}),
             }
         )
+    # 图像/网格系列（可选）：grid_text 是数值矩阵文本；样式带 cmap/vmin/vmax
+    grids: dict = {}
+    if any(sr.get("kind") == "image" for sr in series_req):
+        from tavotto.engine import chartdata as _cd
+
+        parsed_grid = _cd.parse_grid(request.get("grid_text") or "")
+        if parsed_grid["issues"] or not parsed_grid["values"]:
+            raise BindError(
+                "bind_evidence_invalid", f"grid has issues: {parsed_grid['issues'][:3]}"
+            )
+        grids = {"g1": {"values": parsed_grid["values"]}}
+
     # 误差列（可选）：yerr_col 命名数据列，进入模型事实（误差定义随模型走）
     for i, sr in enumerate(series_req):
         if sr.get("yerr_col"):
@@ -188,9 +205,19 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
 
     # 数据列可能长短不齐：以所选系列的 x/y 列对齐为准，短列报错（不静默截断）
     merged = {**columns, **(parsed.get("text_columns") or {})}
-    lengths = {len(merged[sr["x"]]) for sr in series} | {len(merged[sr["y"]]) for sr in series}
-    if len(lengths) > 1:
-        raise BindError("bind_evidence_invalid", "series columns have different lengths")
+    for i, sr in enumerate(series_req):
+        if sr.get("kind") == "image":
+            # image 系列：数据源是网格；x/y 占位为 "-"（chartmodel 对 image 跳过列校验）
+            series[i]["x"] = "-"
+            series[i]["y"] = "-"
+            series[i]["grid"] = "g1"
+    scalar_series = [sr for sr in series if sr["kind"] != "image"]
+    if scalar_series:
+        lengths = {len(merged[sr["x"]]) for sr in scalar_series} | {
+            len(merged[sr["y"]]) for sr in scalar_series
+        }
+        if len(lengths) > 1:
+            raise BindError("bind_evidence_invalid", "series columns have different lengths")
 
     model = {
         "schema": chartmodel.MODEL_SCHEMA,
@@ -211,9 +238,11 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         ],
         "series": series,
         # 文本列（类别/标签）随数据集走：脚手架与校验都能引用（chartmodel 允许字符串值）
-        "dataset": {"columns": merged},
+        "dataset": {"columns": merged, **({"grids": grids} if grids else {})},
         "scene_digest": scene_digest,
-        "data_digest": chartmodel.digest_of({"columns": merged}),
+        "data_digest": chartmodel.digest_of(
+            {"columns": merged, **({"grids": grids} if grids else {})}
+        ),
         "engine": engine_identity,
     }
     chartmodel.validate_model(model)

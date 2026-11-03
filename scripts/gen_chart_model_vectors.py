@@ -141,11 +141,34 @@ def build_vectors() -> list[dict]:
         m["series"][0]["x"] = "cat"
         m["data_digest"] = cm.digest_of({"columns": m["dataset"]["columns"]})
 
+    def _heatmap_model():
+        m = base_model()
+        heatmap(m)
+        return m
+
+    def heatmap(m):
+        m["series"][0]["kind"] = "image"
+        m["series"][0]["grid"] = "g1"
+        m["series"][0]["style"] = {"cmap": "viridis", "vmin": 0.0, "vmax": 1.0}
+        m["series"][0].pop("x")
+        m["series"][0].pop("y")
+        m["dataset"]["grids"] = {"g1": {"values": [[0.1, 0.2], [0.3, 0.4]]}}
+        m["data_digest"] = cm.digest_of(
+            {"columns": m["dataset"]["columns"], "grids": m["dataset"]["grids"]}
+        )
+
+    def image_without_grid(m):
+        m["series"][0]["kind"] = "image"
+        m["series"][0].pop("x")
+        m["series"][0].pop("y")
+
     def log_negative_range(m):
         m["axes"][0]["yscale"] = "log"
         m["axes"][0]["ylim"] = [-5.0, 105.0]
 
     vectors += [
+        case("valid-heatmap-image", _heatmap_model(), "ok", binding),
+        mutated("reject-image-without-grid", image_without_grid, "chart_data_invalid"),
         case("valid-categorical-bar", _categorical_bar_model(), "ok", binding),
         mutated("reject-log-negative-range", log_negative_range, "chart_data_invalid"),
         case("reject-binding-stale", base_model(), "chart_binding_stale", stale),

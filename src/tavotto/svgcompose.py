@@ -45,6 +45,10 @@ def _is_descendant(node: ET.Element, ancestor: ET.Element) -> bool:
     return any(_ is node for _ in ancestor.iter())
 
 
+def _parent_of(root: ET.Element, node: ET.Element) -> ET.Element:
+    return next(p for p in root.iter() if any(c is node for c in p))
+
+
 def _ancestors(root: ET.Element, node: ET.Element):
     """node 的祖先链（ElementTree 无父指针，按身份查找）。"""
     child = node
@@ -178,13 +182,20 @@ def compose_scene(
                 _retint(target, str(color))
             continue
         hoist_external_defs(target)
-        if frag_slot >= len(frag_series):
-            raise ComposeError(
-                "compose_fragment_invalid",
-                f"fragment has {len(frag_series)} series groups, binding needs more",
-            )
-        frag = copy.deepcopy(frag_series[frag_slot])
-        frag_slot += 1
+        if series_def.get("kind") == "image":
+            # 图像系列：片段里 imshow 的 <image>（含裁剪组）整体替换
+            img = next((e for e in frag_axes.iter(f"{{{SVG_NS}}}image")), None)
+            if img is None:
+                raise ComposeError("compose_fragment_invalid", "fragment has no image")
+            frag = copy.deepcopy(_parent_of(frag_axes, img))
+        else:
+            if frag_slot >= len(frag_series):
+                raise ComposeError(
+                    "compose_fragment_invalid",
+                    f"fragment has {len(frag_series)} series groups, binding needs more",
+                )
+            frag = copy.deepcopy(frag_series[frag_slot])
+            frag_slot += 1
         _suffix_ids(frag, suffix)
         par = parent_map[id(target)]
         idx = list(par).index(target)

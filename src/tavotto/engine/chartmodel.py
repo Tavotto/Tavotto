@@ -42,7 +42,7 @@ SCALES = ("linear", "log")
 #: `categories` 列出类目——类别轴绝不套连续数值映射（计划 SG06 禁令）。
 AXIS_KINDS = ("numeric", "categorical")
 #: 系列种类闭集（v1；SG08/SG09 按同一条升版路径扩族）。
-SERIES_KINDS = ("line", "scatter", "bar", "errorbar")
+SERIES_KINDS = ("line", "scatter", "bar", "errorbar", "image")
 #: 系列样式可写键闭集（与既有 override 词汇对齐，语义见 engine/overrides.py）。
 SERIES_STYLE_KEYS = (
     "color",
@@ -55,6 +55,9 @@ SERIES_STYLE_KEYS = (
     "edgecolor",
     "bar_width",
     "label",
+    "cmap",
+    "vmin",
+    "vmax",
 )
 
 #: 稳定错误码闭集（前后端同源；文案在 web/src/i18n/errors.json 落地时同步）。
@@ -208,8 +211,8 @@ _AXES_KEYS = (
     "kind",
     "categories",
 )
-_SERIES_KEYS = ("id", "kind", "axes", "node", "x", "y", "yerr", "style")
-_DATASET_KEYS = ("columns",)
+_SERIES_KEYS = ("id", "kind", "axes", "node", "x", "y", "yerr", "grid", "style")
+_DATASET_KEYS = ("columns", "grids")
 
 
 def validate_model(model: Any) -> dict:
@@ -318,6 +321,30 @@ def validate_model(model: Any) -> dict:
                 continue
             _finite(v, f"dataset column {name!r}[{j}]")
 
+    grids = model["dataset"].get("grids", {})
+    grid_names: set[str] = set()
+    if not isinstance(grids, dict):
+        raise ChartModelError("chart_model_invalid", "model.dataset.grids must be an object")
+    for name, grid in grids.items():
+        _str(name, "grid name")
+        grid_names.add(name)
+        _keys(grid, ("values",), f"grids[{name!r}]")
+        values = grid.get("values")
+        if not isinstance(values, list) or not values:
+            raise ChartModelError("chart_data_invalid", f"grid {name!r} must be non-empty")
+        width = None
+        for r, row in enumerate(values):
+            if not isinstance(row, list) or not row:
+                raise ChartModelError(
+                    "chart_data_invalid", f"grid {name!r} row {r} must be non-empty"
+                )
+            if width is None:
+                width = len(row)
+            elif len(row) != width:
+                raise ChartModelError("chart_data_invalid", f"grid {name!r} row {r} ragged")
+            for c, v in enumerate(row):
+                _finite(v, f"grid {name!r}[{r}][{c}]")
+
     series = model.get("series")
     if not isinstance(series, list) or not series:
         raise ChartModelError("chart_model_invalid", "model.series must be a non-empty list")
@@ -340,12 +367,20 @@ def validate_model(model: Any) -> dict:
                 "chart_model_invalid", f"series[{i}].axes {sr.get('axes')!r} is not a known axis"
             )
         _str(sr.get("node"), f"series[{i}].node")
-        for key in ("x", "y"):
-            if sr.get(key) not in col_names:
+        if sr.get("kind") == "image":
+            # 图像/网格系列：数据源是 grid，不是 x/y 列
+            if sr.get("grid") not in grid_names:
                 raise ChartModelError(
                     "chart_data_invalid",
-                    f"series[{i}].{key} {sr.get(key)!r} is not a dataset column",
+                    f"series[{i}].grid {sr.get('grid')!r} is not a dataset grid",
                 )
+        else:
+            for key in ("x", "y"):
+                if sr.get(key) not in col_names:
+                    raise ChartModelError(
+                        "chart_data_invalid",
+                        f"series[{i}].{key} {sr.get(key)!r} is not a dataset column",
+                    )
         style = sr.get("style", {})
         _keys(style, SERIES_STYLE_KEYS, f"series[{i}].style")
         for k, v in style.items():
@@ -354,6 +389,12 @@ def validate_model(model: Any) -> dict:
                 if k == "alpha" and not 0.0 <= fv <= 1.0:
                     raise ChartModelError(
                         "chart_model_invalid", f"series[{i}].style.alpha out of range"
+                    )
+            if k in ("vmin", "vmax"):
+                fv = _finite(v, f"series[{i}].style.{k}")
+                if "vmin" in style and "vmax" in style and style["vmin"] >= style["vmax"]:
+                    raise ChartModelError(
+                        "chart_model_invalid", f"series[{i}].style requires vmin < vmax"
                     )
 
     _str(model.get("scene_digest"), "model.scene_digest")
@@ -364,7 +405,10 @@ def validate_model(model: Any) -> dict:
         _str(engine.get(k), f"model.engine.{k}")
 
     # 记录在模型里的摘要必须与自身内容一致（防「换数据不改账」）
-    if model["data_digest"] != digest_of({"columns": columns}):
+    digest_payload = {"columns": columns}
+    if grids:
+        digest_payload["grids"] = grids
+    if model["data_digest"] != digest_of(digest_payload):
         raise ChartModelError(
             "chart_data_changed", "model.data_digest does not match model.dataset"
         )

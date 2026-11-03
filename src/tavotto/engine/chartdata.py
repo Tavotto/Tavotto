@@ -148,3 +148,42 @@ def parse_table(text: str) -> dict:
                     }
                 )
     return {"columns": columns, "text_columns": text_columns, "issues": issues}
+
+
+def parse_grid(text: str) -> dict:
+    """解析数值矩阵（空白/逗号分隔，无表头）→ ``{"values": [[...]], "issues": []}``。
+
+    网格数据（热图/标量场）不带类别表头；任何非数值格都是带行列地址的问题，
+    绝不静默填零。
+    """
+    values: list[list[float]] = []
+    issues: list[dict] = []
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    width = None
+    for r, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        cells = [c.strip() for c in re.split(r"[,\s]+", line.strip()) if c != ""]
+        if width is None:
+            width = len(cells)
+        elif len(cells) != width:
+            issues.append(
+                {
+                    "code": "data_row_length",
+                    "row": r,
+                    "col": len(cells) + 1,
+                    "detail": f"expected {width} cells, got {len(cells)}",
+                }
+            )
+            continue
+        row: list[float] = []
+        for c, raw in enumerate(cells, start=1):
+            if _NUM_RE.fullmatch(raw):
+                row.append(float(raw))
+            else:
+                issues.append(
+                    {"code": "data_not_numeric", "row": r, "col": c, "detail": f"grid cell {raw!r}"}
+                )
+        if len(row) == len(cells):
+            values.append(row)
+    return {"values": values, "issues": issues}
