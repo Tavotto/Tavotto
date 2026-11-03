@@ -73,10 +73,6 @@ With four or more scripted figures on the canvas, editing one figure could re-re
 
 When you send a problem report and *Contact the maker* is on, the app now also keeps a small record so the maker's reply can appear under *Contact the maker > My letters*, tagged "Report" with the report ID. The dialog says so after sending. Nothing changes if you turn *Contact the maker* off (`TAVOTTO_NO_CONTACT=1`), and a report that gets no reply is forgotten locally after 30 days.
 
-## The first picture after launch appears a little sooner
-
-The first time you render after starting Tavotto, the app checks your Python environment with several small probes. Probes that don't depend on each other now run side by side instead of one after another, which trims a fraction of a second from that first render on a typical setup. Later renders are unchanged, and Tavotto still never picks a different Python on its own.
-
 ## Scripts that `import pymupdf` can install it in one click
 
 PyMuPDF's current documentation imports it as `import pymupdf` instead of the older `import fitz`. Tavotto only recognised the older name, so a script written the new way that ran in an environment without PyMuPDF got a "missing pymupdf" card with no install button, and the "Specify package…" box was not even filled in. Both names now lead to the same install of PyMuPDF into an environment Tavotto manages, exactly as `import fitz` already did. Your own Python environments are not changed unless you choose them.
@@ -88,3 +84,7 @@ In single-figure editing, a text box, arrow or shape drawn over the figure came 
 ## In a multi-figure layout, dragging a figure's edge crops it instead of stretching it
 
 Dragging one of the four side handles of a figure in a multi-figure layout used to stretch the figure in one direction, which squashed its text and markers. It now crops that side: the figure stays where it is and at the same scale, the handle stops at the figure edge and again at the edge of the plotted content, and you hold ⌥ (Alt on Windows) to cut into the content. Corner handles still scale the whole figure proportionally; while you drag, a small capsule shows the scale and the resulting text size in pt, and turns amber when the text falls below your journal's minimum. Annotations that sit on the figure (panel letters, arrows, text boxes) now scale with it; turn this off with **With annotations** in the figure's toolbar. Crops already in your layouts are unchanged; **Reset crop** in the toolbar puts a figure back to its full size.
+
+## The first picture after launch appears a little sooner
+
+The first time you render after starting Tavotto, the app checks your Python environment with several small probes. Probes that don't depend on each other now run side by side instead of one after another, which trims a fraction of a second from that first render on a typical setup. Later renders are unchanged, and Tavotto still never picks a different Python on its own.
