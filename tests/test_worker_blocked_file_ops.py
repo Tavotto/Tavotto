@@ -661,6 +661,46 @@ def test_ledger_sees_os_path_exists_even_when_it_bypasses_os_stat(tmp_path, monk
         assert getattr(os.path, name) is exists_without_os_stat  # 卸载还原的是安装前那个
 
 
+def test_ledger_probe_depth_and_busy_are_per_thread(tmp_path, monkeypatch):
+    """另一个线程正卡在被包装的 `os.path.exists` 里（探路深度 > 0），本线程的观察照样要记账。
+
+    钩子是进程全局的：脚本自己的线程、或测试遗留的后台轮询同时在探路时，若深度 / busy 是实例级共享，
+    本线程的 `exists` 会被当成「已经在探路里」而漏记（CI macOS 分片偶发红的根因）。"""
+    import os
+    import threading
+
+    inside, release = threading.Event(), threading.Event()
+    real_stat = os.stat
+
+    def slow_exists(path):
+        if str(path) == "/__other_thread_probe__":
+            inside.set()
+            release.wait(10)
+            return False
+        try:
+            real_stat(path)
+        except OSError:
+            return False
+        return True
+
+    monkeypatch.setattr(os.path, "exists", slow_exists)
+    f = tmp_path / "stale.csv"
+    f.write_text("9")
+    ledger = _ledger(tmp_path)
+    uninstall = ledger.install()
+    other = threading.Thread(target=lambda: os.path.exists("/__other_thread_probe__"), daemon=True)
+    try:
+        ledger.blocked("os.remove", "delete", str(f))
+        other.start()
+        assert inside.wait(10)  # 另一个线程此刻正在探路里
+        os.path.exists(str(f))
+        assert [o["op"] for o in ledger.material()] == ["os.remove"]
+    finally:
+        release.set()
+        other.join(10)
+        uninstall()
+
+
 def test_ledger_exists_hooks_exempt_savefig_targets_and_restore_originals(tmp_path):
     import os
 
