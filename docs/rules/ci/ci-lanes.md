@@ -109,3 +109,21 @@ workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercor
 看护：`TestMergeGroupFailFast`（最后一步、只在 merge_group、不含判定、只有五腿拿 `actions: write`、
 check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actions、归因步骤只在 merge_group 且取不到不打红、
 归因经环境变量）、`TestMergeGroupFailFastAttribution`、`TestFailFastRootFromRunJobs`。
+
+**main 红时修复插到队首（2026-11-03）。** 事实：10-13 ~ 11-02 Windows 腿红的 194 个合并组 run 里约 67%
+是**连坐**——一个坏提交（两个各自绿的 PR 的组合、或没带 full-ci 的 Windows-only 缺陷）进了 main 或排在队列前面，
+之后每个组都带着它红；只对应 84 个独立事件。10-31 两个 PR 撞了同一个 ADR 号 0154，合入后 main 红，修复 PR 排在
+队尾，7.5 小时里连踢 12 次。队列同时构建 4 组（`maximumEntriesToBuild`），main 不修好，排在前面的每一组都白跑。
+规则：
+* **「main 红」的判据**：main 的 push run 红在同一条用例，或**同一条用例**在 ≥ 2 个不同 PR 的合并组上红（只一组红是
+  那个 PR 自己的事，正常踢出即可，不插队）。
+* 满足时，**只修这条红**的那个 PR 门槛满足后插到队首：GraphQL `enqueuePullRequest(input: {pullRequestId, jump: true,
+  expectedHeadOid})`（管理员；`expectedHeadOid` 防止入的不是审过的 head）；GitHub 界面是 PR 页合并框的「Jump to
+  front」。插队不降门槛：Codex / CI / 线程照档位全满足才插。
+* 不为别的理由插队（赶发版、「这个 PR 很小」）：插队会让排在前面的组全部重建。
+
+**碰 Windows 路径 / 进程 / 安装的 PR，开 PR 时就打 `full-ci` 并看 Windows 腿（错题本 L-096 升级，
+2026-11-03）。** PR 级 CI 不跑 Windows 后端，只在 Windows 显形的缺陷（fsync 只读句柄、cp1252 编码、
+非法文件名、文件占用）到合并组才第一次红；入队前确认 Windows 后端腿真跑过且绿，只在 Windows 生效的
+改动另在 Lab 整文件跑相关测试。为什么：六个不同日子各被合并组踢一次，每次白烧约一小时
+（#214、#296、#314、#317、#319、#360、#725、#1587、#1604）。

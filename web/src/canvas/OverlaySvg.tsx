@@ -7,7 +7,7 @@ import { PATH_HIT_SHAPES, shapeOutline } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { patchBoundsOf } from '@/lib/patchResize'
-import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
+import { ALL_DIRS, boundsOf, dirsFor, ROTATE_KNOB_GAP, visualBounds, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
 import {
@@ -18,6 +18,7 @@ import {
 } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
   mmToPx,
   mmToViewX,
@@ -42,6 +43,7 @@ import {
   DRAW_COLOR,
 } from './interactions'
 import { startPanelHandleDrag } from './panelEdgeCrop'
+import { startRotateDrag } from './rotateDrag'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
@@ -148,6 +150,8 @@ export function OverlaySvg() {
   const guidesLocked = useUiStore((s) => s.guidesLocked)
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
   const linePanelIds = usePreviewLinePanels()
@@ -172,7 +176,10 @@ export function OverlaySvg() {
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
   // 图内编辑时不显示对象缩放手柄，避免和元素选择混淆
   const single = selected.length === 1 && !cropTarget && !elementPanel ? selected[0] : null
-  const groupBounds = selected.length > 1 ? boundsOf(selected) : null
+  // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
+  // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
+  const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
+  const groupBounds = selected.length > 1 ? boundsOf(selected.map(visualBounds)) : null
   const hovered =
     hoverId && !selectedIds.includes(hoverId) && dragKind === 'none'
       ? objects.find((o) => o.id === hoverId && !o.hidden)
@@ -310,7 +317,7 @@ export function OverlaySvg() {
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
-      {single && !single.locked && (
+      {single && !single.locked && !fastEditFigure && (
         <g
           transform={spinOf(single, toScreen(single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
@@ -333,6 +340,13 @@ export function OverlaySvg() {
             />
           ))}
           {isLinear(single) && <LinearEndpoints obj={single} t={t} />}
+        </g>
+      )}
+
+      {/* 文字标注的旋转柄（ADR 0163）：选框顶边中点外一枚圆点 + 一条短线，整组跟着对象一起转 */}
+      {single && single.type === 'text' && !single.locked && !cropTarget && editingTextId !== single.id && (
+        <g transform={spinOf(single, toScreen(single, t))} data-rotate-handle-group>
+          <RotateKnob box={toScreen(single, t)} onPointerDown={(e) => startRotateDrag(e, single.id)} />
         </g>
       )}
 
@@ -1191,6 +1205,48 @@ function Handle({
  * ——2026-10-07 设计审计 §10.1：此前 7px 的方块同时是视觉与命中区，触控板上要瞄半天。稳定钩子（`data-handle` /
  * `data-element-handle`）挂在命中那一层上：它的中心就是手柄的位置。
  */
+/** 旋转圆点：画一枚、命中一枚（命中区大于圆点）；短线只画不吃指针 */
+function RotateKnob({
+  box,
+  onPointerDown,
+}: {
+  box: Box
+  onPointerDown: (e: React.PointerEvent) => void
+}) {
+  const cx = box.x + box.w / 2
+  const cy = box.y - ROTATE_KNOB_GAP
+  return (
+    <>
+      <line
+        x1={cx}
+        y1={box.y}
+        x2={cx}
+        y2={cy}
+        stroke={SEL}
+        strokeWidth={1}
+        style={{ pointerEvents: 'none' }}
+      />
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4.5}
+        stroke={SEL}
+        strokeWidth={1}
+        style={{ fill: 'var(--handle-fill)', pointerEvents: 'none' }}
+      />
+      <circle
+        data-rotate-handle
+        cx={cx}
+        cy={cy}
+        r={HANDLE_HIT / 2}
+        fill="transparent"
+        style={{ pointerEvents: 'all', cursor: 'grab' }}
+        onPointerDown={onPointerDown}
+      />
+    </>
+  )
+}
+
 function HandleMark({
   at,
   hook,

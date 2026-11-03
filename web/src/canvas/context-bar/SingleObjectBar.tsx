@@ -28,6 +28,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
+import { FrameQuick } from './FrameQuick'
 import { TextQuickControls } from './textQuick'
 import { Sep } from './shared'
 import { hist, qb } from './text'
@@ -94,6 +95,8 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
   const explainable = !obj.script && !!cap && cap.status !== 'editable'
   return (
     <div className="flex items-center gap-1">
+      {/* 单图编辑：画布尺寸与留白（ADR 0161）；排版里不挂 */}
+      <FrameQuick obj={obj} />
       {obj.script && (
         <Button size="md" onClick={() => { void enterElementEdit(obj.id) }}>
           <Pencil size={ICON_SIZE.sm} />

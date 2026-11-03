@@ -724,6 +724,8 @@ jobs:
             --report-dir "$RUNNER_TEMP/foundation/report"
       - name: 首开 / 输出 harness 证据（JSON + JUnit + 摘要，只作证据不作判定输入）
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: foundation-harness-pr-${{ github.run_id }}
@@ -867,6 +869,8 @@ jobs:
       # **只作证据与日后重平衡的数据，不作任何判定输入**——Gate 读的是 needs 结论。
       - name: 分片证据
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: pytest-backend-fast-ubuntu-latest-${{ matrix.python }}-shard${{ matrix.shard }}
@@ -988,6 +992,8 @@ jobs:
       # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
       - name: 分片证据
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: pytest-backend-platforms-${{ matrix.os }}-3.13-shard${{ matrix.shard }}
@@ -2099,6 +2105,8 @@ jobs:
       - name: 上传分片自验证据
         # 两份 `--list` 清单 + check.json：日后重平衡与复核用，不是判定输入
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: playwright-shard-check-windows-shard${{ matrix.shard }}

@@ -147,6 +147,17 @@
     "layoutCropFull": "At image edge · {{side}} not cropped",
     "layoutCropTight": "Compact · {{side}} fits the content",
     "layoutCropTrim": "Trim whitespace · {{side}} {{mm}} mm",
+    "frameGrow": "Extend canvas · {{side}} +{{mm}} mm",
+    "frameAtEdge": "At figure edge · no margin on {{side}}",
+    "frameTrim": "Tighten margin · {{side}} −{{mm}} mm",
+    "frameTight": "Tight · {{side}} fits content",
+    "frameCrop": "Crop · {{side}} −{{mm}} mm, content will be cut",
+    "frameCanvasSize": "canvas {{w}} × {{h}} mm",
+    "frameCornerUniform": "Resize figure proportionally · width {{from}} → {{to}} mm",
+    "frameCornerFree": "Resize figure · {{fw}} × {{fh}} → {{tw}} × {{th}} mm",
+    "frameCornerDetail": "text keeps its pt size, re-renders on release",
+    "frameWithCol": "{{base}} · snapped to {{col}}",
+    "frameFigureStaysSize": "figure stays put · {{size}}",
     "layoutFitContent": "Fit content",
     "layoutFitContentTip": "Crop all four sides to the content edge and remove the surrounding whitespace",
     "layoutFitContentNone": "This figure has no content-edge information yet (needs a newer render service), so Fit content is unavailable",
@@ -358,6 +369,7 @@
     "alignToStyle": "Match to style “{{name}}”",
     "scriptWinsOverStyle": "Script changes take precedence over style",
     "rotate": "Rotate {{deg}}°",
+    "rotateObjects": "Rotate objects",
     "rotateReset": "Reset rotation",
     "seedBaked": "Load baked-in baseline",
     "setOpacity": "Change opacity",
@@ -390,7 +402,8 @@
     "lockObjects": "Lock {{count}} objects",
     "unlockObjects": "Unlock {{count}} objects",
     "hideObjects": "Hide {{count}} objects",
-    "showObjects": "Show {{count}} objects"
+    "showObjects": "Show {{count}} objects",
+    "setFramePad": "Change canvas margin"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1577,5 +1590,11 @@
   "renderProgress": {
     "preparing": "Preparing the figure…",
     "elapsed": "{{message}} · {{seconds}} s elapsed"
+  },
+  "frameDrag": {
+    "canvasSize": "Canvas {{w}} × {{h}} mm",
+    "fitContent": "Fit to content",
+    "clearPad": "Remove margin",
+    "notWrittenBack": "Margins apply to Tavotto exports only and are not written back to the script"
   }
 }

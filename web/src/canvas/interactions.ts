@@ -20,6 +20,7 @@ import {
   type SnapPick,
   type SnapLineCandidates,
   unrotateVecDeg,
+  visualBounds,
   type Rect,
   type ResizeDir,
 } from '@/lib/geometry'
@@ -324,7 +325,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   if (!targets.length) return
   const primary = targets.find((o) => o.id === objectId) ?? targets[0]
   const origin = new Map(targets.map((o) => [o.id, { x: o.x, y: o.y }]))
-  const primaryOrigin = origin.get(primary.id)!
+  const primaryVisual = visualBounds(primary)
   const excluded = new Set(targets.map((o) => o.id))
   const cands = candidatesFor(excluded)
 
@@ -343,11 +344,12 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
       let snapX: number[] = []
       let snapY: number[] = []
       if (cands && !ev.metaKey && !ev.ctrlKey) {
+        // 吸附用看得见的外接框（旋转过的标注取转出来的盒），随平移原样位移
         const moving: Rect = {
-          x: primaryOrigin.x + dx,
-          y: primaryOrigin.y + dy,
-          w: primary.w,
-          h: primary.h,
+          x: primaryVisual.x + dx,
+          y: primaryVisual.y + dy,
+          w: primaryVisual.w,
+          h: primaryVisual.h,
         }
         const snap = perfSpan('snap.compute', () => snapMove(moving, cands, snapTolMm(t)))
         dx += snap.dx

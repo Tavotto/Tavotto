@@ -17,17 +17,18 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
  * 色带用画布灰本身（`--color-canvas`）盖一层：空工作区上叠同色看不出变化，只有页面
  * 外真的有内容时才显出来。快速编辑那一屏没有页面，不挂。
  */
-export function PageOutsideMask() {
+export function PageOutsideMask({ rectMm }: { rectMm?: { x: number; y: number; w: number; h: number } } = {}) {
   perfCount('render.PageOutsideMask')
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
   const pageW = useDocumentStore((s) => s.doc.page.w)
   const pageH = useDocumentStore((s) => s.doc.page.h)
-  const x = panX
-  const y = panY
-  const w = mmToWorld(pageW) * zoom
-  const h = mmToWorld(pageH) * zoom
+  // 单图编辑有留白时（ADR 0161）框的是画布（图 + 留白），不是排版页面
+  const x = panX + (rectMm ? mmToWorld(rectMm.x) * zoom : 0)
+  const y = panY + (rectMm ? mmToWorld(rectMm.y) * zoom : 0)
+  const w = mmToWorld(rectMm ? rectMm.w : pageW) * zoom
+  const h = mmToWorld(rectMm ? rectMm.h : pageH) * zoom
   const band = 'absolute bg-canvas/70'
   return (
     <div data-page-outside-mask="" className="pointer-events-none absolute inset-0 overflow-hidden">

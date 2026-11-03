@@ -3718,3 +3718,36 @@ class TestMergeGroupFailFast:
 
     def test_cancel_in_progress_is_still_pull_request_only(self):
         assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in CI
+
+
+class TestEvidenceUploadsNeverFailTheJob:
+    """`if: always()` 的工件上传只作证据（分片清单、junit、harness 证据），不作判定输入；上传失败不得把 job 打红。
+
+    2026-11-03 合并组 run 41566707476：pytest 全绿，`分片证据` 上传时 artifact 服务 `ETIMEDOUT`，
+    job 红 → 快速失败取消整个 run → 整组踢出队列。判定只看测试本身；证据丢了是数据缺口，不是资格问题。
+    """
+
+    def _always_uploads(self):
+        steps = re.findall(r"(?ms)^(\s*)- name: ([^\n]+)\n((?:\1  [^\n]*\n|\s*\n)*)", CI)
+        out = []
+        for _ind, name, body in steps:
+            if "uses: actions/upload-artifact@" in body and re.search(
+                r"(?m)^\s*if: always\(\)\s*$", body
+            ):
+                out.append((name.strip(), body))
+        return out
+
+    def test_the_scan_sees_the_known_evidence_uploads(self):
+        names = [n for n, _ in self._always_uploads()]
+        assert names.count("分片证据") == 2, names
+        assert "上传分片自验证据" in names and any(
+            n.startswith("首开 / 输出 harness 证据") for n in names
+        ), names
+
+    def test_every_always_upload_continues_on_error(self):
+        bad = [
+            n
+            for n, body in self._always_uploads()
+            if not re.search(r"(?m)^\s*continue-on-error: true\s*$", body)
+        ]
+        assert bad == [], f"这些证据上传失败会把 job 打红、把整组踢出队列：{bad}"
