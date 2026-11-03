@@ -5323,7 +5323,7 @@ export default interface Resources {
       "rewriting": "正在重写…",
       "trigger": "写回记录",
       "versionDescription": "{{count}} 项修改 · {{ts}}",
-      "warnBody": "将用此版本的修改重写原图文件。备份自动存到 cache/original_backups。",
+      "warnBody": "将用此版本的修改重写原图文件。备份自动存到 {{dir}}。",
       "warnForward": "这次恢复会追加为新记录，随时可以再恢复回去。"
     },
     "writeBack": {

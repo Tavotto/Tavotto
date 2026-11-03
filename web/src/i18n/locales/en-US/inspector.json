@@ -1176,7 +1176,7 @@
     "rewriting": "Rewriting…",
     "trigger": "Write-back records",
     "versionDescription": "{{count}} edits · {{ts}}",
-    "warnBody": "This rewrites the original file from this version’s edits. Backed up automatically to cache/original_backups.",
+    "warnBody": "This rewrites the original file from this version’s edits. Backed up automatically to {{dir}}.",
     "warnForward": "This restore is added as a new entry; you can always go back."
   },
   "writeBack": {
