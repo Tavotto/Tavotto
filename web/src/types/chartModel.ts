@@ -13,8 +13,12 @@ export type ChartSourceKind = (typeof SOURCE_KINDS)[number]
 export const SCALES = ['linear', 'log'] as const
 export type ChartScale = (typeof SCALES)[number]
 
+// 轴维度闭集（AXIS_KINDS）：categorical = 类别位置（0..n-1），绝不套连续数值映射。
+export const AXIS_KINDS = ['numeric', 'categorical'] as const
+export type ChartAxisKind = (typeof AXIS_KINDS)[number]
+
 // 系列种类闭集（SERIES_KINDS）。
-export const SERIES_KINDS = ['line', 'scatter'] as const
+export const SERIES_KINDS = ['line', 'scatter', 'bar', 'errorbar'] as const
 export type ChartSeriesKind = (typeof SERIES_KINDS)[number]
 
 // 系列样式可写键闭集（SERIES_STYLE_KEYS）。
@@ -25,6 +29,10 @@ export const SERIES_STYLE_KEYS = [
   'marker',
   'markersize',
   'alpha',
+  'facecolor',
+  'edgecolor',
+  'bar_width',
+  'label',
 ] as const
 export type ChartSeriesStyleKey = (typeof SERIES_STYLE_KEYS)[number]
 
@@ -53,6 +61,8 @@ export interface ChartAxes {
   invert_y: boolean
   xlabel?: string
   ylabel?: string
+  kind?: ChartAxisKind
+  categories?: string[]
 }
 
 export interface ChartSeries {
@@ -62,6 +72,7 @@ export interface ChartSeries {
   node: string
   x: string
   y: string
+  yerr?: string
   style?: Partial<Record<ChartSeriesStyleKey, number | string>>
 }
 
@@ -221,7 +232,7 @@ export function validateChartModel(model: unknown): ChartVerdict {
   for (const raw of axes) {
     if (typeof raw !== 'object' || raw === null) return invalid()
     const ax = raw as Record<string, unknown>
-    if (!keysAllowed(ax, ['id', 'rect', 'xlim', 'ylim', 'xscale', 'yscale', 'invert_x', 'invert_y', 'xlabel', 'ylabel'])) return invalid()
+    if (!keysAllowed(ax, ['id', 'rect', 'xlim', 'ylim', 'xscale', 'yscale', 'invert_x', 'invert_y', 'xlabel', 'ylabel', 'kind', 'categories'])) return invalid()
     if (typeof ax.id !== 'string' || !ID_RE.test(ax.id)) return invalid()
     if (ids.has(ax.id)) return reject('chart_duplicate_id')
     ids.add(ax.id)
@@ -240,6 +251,21 @@ export function validateChartModel(model: unknown): ChartVerdict {
     for (const key of ['invert_x', 'invert_y'] as const) {
       if (typeof ax[key] !== 'boolean') return invalid()
     }
+    const axisKind = (ax.kind ?? 'numeric') as ChartAxisKind
+    if (!AXIS_KINDS.includes(axisKind)) return invalid()
+    if (axisKind === 'categorical') {
+      const cats = ax.categories
+      if (!Array.isArray(cats) || cats.length === 0
+        || !cats.every(c => typeof c === 'string' && c)) return invalid()
+    }
+    // log 轴的范围必须为正（引擎侧同款判据）
+    for (const pair of [['xlim', 'xscale'], ['ylim', 'yscale']] as const) {
+      const [limKey, scaleKey] = pair
+      if (ax[scaleKey] === 'log') {
+        const lim = ax[limKey] as number[]
+        if (!lim.every(v => (v as number) > 0)) return reject('chart_data_invalid')
+      }
+    }
   }
 
   const dataset = m.dataset
@@ -252,7 +278,9 @@ export function validateChartModel(model: unknown): ChartVerdict {
   for (const [name, col] of Object.entries(columns as Record<string, unknown>)) {
     if (!name) return invalid()
     colNames.add(name)
-    if (!Array.isArray(col) || !col.every(isFiniteNumber)) return invalid()
+    if (!Array.isArray(col)) return invalid()
+    // 数值列元素必须是有限数；文本列（类别/标签）允许非空字符串
+    if (!col.every(v => isFiniteNumber(v) || (typeof v === 'string' && v))) return invalid()
   }
 
   const series = m.series
@@ -261,7 +289,7 @@ export function validateChartModel(model: unknown): ChartVerdict {
   for (const raw of series) {
     if (typeof raw !== 'object' || raw === null) return invalid()
     const sr = raw as Record<string, unknown>
-    if (!keysAllowed(sr, ['id', 'kind', 'axes', 'node', 'x', 'y', 'style'])) return invalid()
+    if (!keysAllowed(sr, ['id', 'kind', 'axes', 'node', 'x', 'y', 'yerr', 'style'])) return invalid()
     if (typeof sr.id !== 'string' || !ID_RE.test(sr.id)) return invalid()
     if (ids.has(sr.id) || seriesIds.has(sr.id)) return reject('chart_duplicate_id')
     seriesIds.add(sr.id)
@@ -303,15 +331,18 @@ export function validateChartBinding(binding: unknown, model: ChartModel): Chart
     ...model.axes.map(ax => `axes:${ax.id}`),
     ...model.series.map(sr => `series:${sr.id}`),
   ])
-  const objects = new Set<string>()
+  const seriesObjects = new Set<string>()
   const nodes = new Set<string>()
   for (const raw of entries) {
     if (typeof raw !== 'object' || raw === null) return invalid()
     const e = raw as Record<string, unknown>
     if (!keysAllowed(e, ['object', 'node'])) return invalid()
     if (typeof e.object !== 'string' || !OBJECT_RE.test(e.object) || !known.has(e.object)) return invalid()
-    if (objects.has(e.object)) return reject('chart_duplicate_id')
-    objects.add(e.object)
+    // 系列与数据节点一一对应；轴区域可指定多个节点（普通 SVG 的轴是散件）
+    if (e.object.startsWith('series:')) {
+      if (seriesObjects.has(e.object)) return reject('chart_duplicate_id')
+      seriesObjects.add(e.object)
+    }
     if (typeof e.node !== 'string' || !e.node) return invalid()
     if (nodes.has(e.node)) return reject('chart_duplicate_id')
     nodes.add(e.node)

@@ -130,10 +130,15 @@ def binding_for(model_dict, axes_nodes=None):
     }
 
 
-def test_compose_replaces_series_and_keeps_unbound_text():
+def compose(model_dict, axes_nodes=None):
+    """SG07 组合入口：binding + model（图例同步/角色判定的合同自 SG08 起）。"""
     scene = (CORPUS / "line_two_series.svg").read_bytes()
-    frag = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
-    composed = compose_scene(scene, binding_for(model()), frag)
+    frag = svgchart.scaffold_fragment(model_dict, FRAME)["fragment"]
+    return compose_scene(scene, binding_for(model_dict, axes_nodes), frag, model_dict)
+
+
+def test_compose_replaces_series_and_keeps_unbound_text():
+    composed = compose(model())
     root = parse_svg(strip_matplotlib_doctype(composed))
     texts = {"".join(t.itertext()).strip() for t in root.iter() if t.tag.endswith("text")}
     assert "Two known series" in texts  # 标题（未绑定）保留
@@ -143,9 +148,7 @@ def test_compose_replaces_series_and_keeps_unbound_text():
 
 
 def test_compose_removes_bound_axes_nodes_and_inserts_axis_subtrees():
-    scene = (CORPUS / "line_two_series.svg").read_bytes()
-    frag = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
-    composed = compose_scene(scene, binding_for(model(), axes_nodes=["xtick_1"]), frag)
+    composed = compose(model(), axes_nodes=["xtick_1"])
     root = parse_svg(strip_matplotlib_doctype(composed))
     ids = {el.attrib.get("id") for el in root.iter()}
     assert "xtick_1" not in ids  # 被绑定的轴节点退役
@@ -156,15 +159,13 @@ def test_compose_rejects_scene_without_the_bound_node():
     scene = (CORPUS / "plain_shapes.svg").read_bytes()
     frag = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
     with pytest.raises(ComposeError) as ei:
-        compose_scene(scene, binding_for(model()), frag)
+        compose_scene(scene, binding_for(model()), frag, model())
     assert ei.value.code == "compose_node_missing"
 
 
 def test_compose_output_passes_svgcheck_and_is_deterministic():
-    scene = (CORPUS / "line_two_series.svg").read_bytes()
-    frag = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
-    a = compose_scene(scene, binding_for(model()), frag)
-    b = compose_scene(scene, binding_for(model()), frag)
+    a = compose(model())
+    b = compose(model())
     assert a == b
     parse_svg(strip_matplotlib_doctype(a))  # 不抛即过
 

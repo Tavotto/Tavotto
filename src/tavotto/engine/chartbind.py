@@ -110,19 +110,45 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
 
     if "dataset" in request and request["dataset"] is not None:
         parsed = request["dataset"]
-        if parsed.get("issues"):
-            raise BindError("bind_evidence_invalid", f"dataset has issues: {parsed['issues'][:3]}")
+        blocking = [
+            i
+            for i in parsed.get("issues", [])
+            if i.get("column") not in (parsed.get("text_columns") or {})
+        ]
+        if blocking:
+            raise BindError("bind_evidence_invalid", f"dataset has issues: {blocking[:3]}")
     else:
         parsed = chartdata.parse_table(request.get("dataset_text") or "")
-        if parsed["issues"]:
-            raise BindError("bind_evidence_invalid", f"dataset has issues: {parsed['issues'][:3]}")
+        text_cols = parsed.get("text_columns") or {}
+        blocking = [i for i in parsed["issues"] if i.get("column") not in text_cols]
+        if blocking:
+            raise BindError("bind_evidence_invalid", f"dataset has issues: {blocking[:3]}")
     columns = parsed["columns"]
     if not columns:
         raise BindError("bind_column_missing", "no fully numeric columns in the dataset")
 
-    x_ev, y_ev = request.get("x") or {}, request.get("y") or {}
-    xlo, xhi, xscale, xinv = axis_limits_from_evidence(x_ev)
+    y_ev = request.get("y") or {}
     ylo, yhi, yscale, yinv = axis_limits_from_evidence(y_ev)
+    axis_kind = "numeric"
+    categories: list[str] | None = None
+    if request.get("x_kind") == "categorical":
+        # 类别轴：类目来自文本列（用户显式指认），位置 = 序号；绝不套连续数值映射
+        cat_col = request.get("categories_col")
+        text_columns = parsed.get("text_columns") or {}
+        if cat_col not in text_columns:
+            raise BindError(
+                "bind_column_missing", f"categories_col {cat_col!r} is not a text column"
+            )
+        categories = text_columns[cat_col]
+        axis_kind = "categorical"
+        xlo, xhi, xinv, xscale = -0.5, len(categories) - 0.5, False, "linear"
+        if request.get("x"):
+            raise BindError(
+                "bind_evidence_invalid", "categorical axes take categories, not numeric evidence"
+            )
+    else:
+        x_ev = request.get("x") or {}
+        xlo, xhi, xscale, xinv = axis_limits_from_evidence(x_ev)
 
     series_req = request.get("series") or []
     if not series_req:
@@ -135,8 +161,13 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         if node not in graphic_ids:
             raise BindError("bind_node_not_graphic", f"node {node!r} is not a graphic element")
         for key in ("x_col", "y_col"):
-            if sr.get(key) not in columns:
+            if sr.get(key) not in columns and sr.get(key) not in (parsed.get("text_columns") or {}):
                 raise BindError("bind_column_missing", f"series[{i}].{key} {sr.get(key)!r}")
+        if sr.get("x_col") in (parsed.get("text_columns") or {}) and axis_kind != "categorical":
+            raise BindError(
+                "bind_evidence_invalid",
+                f"series[{i}].x_col is a text column; the axis must be categorical",
+            )
         series.append(
             {
                 "id": f"s{i + 1}",
@@ -148,9 +179,16 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
                 "style": dict(sr.get("style") or {}),
             }
         )
+    # 误差列（可选）：yerr_col 命名数据列，进入模型事实（误差定义随模型走）
+    for i, sr in enumerate(series_req):
+        if sr.get("yerr_col"):
+            if sr["yerr_col"] not in columns:
+                raise BindError("bind_column_missing", f"series[{i}].yerr_col {sr['yerr_col']!r}")
+            series[i]["yerr"] = sr["yerr_col"]
 
     # 数据列可能长短不齐：以所选系列的 x/y 列对齐为准，短列报错（不静默截断）
-    lengths = {len(columns[sr["x"]]) for sr in series} | {len(columns[sr["y"]]) for sr in series}
+    merged = {**columns, **(parsed.get("text_columns") or {})}
+    lengths = {len(merged[sr["x"]]) for sr in series} | {len(merged[sr["y"]]) for sr in series}
     if len(lengths) > 1:
         raise BindError("bind_evidence_invalid", "series columns have different lengths")
 
@@ -167,12 +205,15 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
                 "yscale": yscale,
                 "invert_x": xinv,
                 "invert_y": yinv,
+                "kind": axis_kind,
+                **({"categories": categories} if categories is not None else {}),
             }
         ],
         "series": series,
-        "dataset": {"columns": columns},
+        # 文本列（类别/标签）随数据集走：脚手架与校验都能引用（chartmodel 允许字符串值）
+        "dataset": {"columns": merged},
         "scene_digest": scene_digest,
-        "data_digest": chartmodel.digest_of({"columns": columns}),
+        "data_digest": chartmodel.digest_of({"columns": merged}),
         "engine": engine_identity,
     }
     chartmodel.validate_model(model)

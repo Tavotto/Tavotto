@@ -124,7 +124,29 @@ def build_vectors() -> list[dict]:
         "scene_digest": "b" * 64,
         "entries": [{"object": "series:s1", "node": "line2d_13"}],
     }
+    def _categorical_bar_model():
+        m = base_model()
+        categorical_bar(m)
+        return m
+
+    def categorical_bar(m):
+        m["axes"][0]["kind"] = "categorical"
+        m["axes"][0]["categories"] = ["A", "B", "C", "D"]
+        m["axes"][0]["xlim"] = [-0.5, 3.5]
+        m["series"][0]["kind"] = "bar"
+        m["series"][0]["yerr"] = "err"
+        m["dataset"]["columns"]["cat"] = ["A", "B", "C", "D"]
+        m["dataset"]["columns"]["err"] = [1.0, 2.0, 3.0, 4.0]
+        m["series"][0]["x"] = "cat"
+        m["data_digest"] = cm.digest_of({"columns": m["dataset"]["columns"]})
+
+    def log_negative_range(m):
+        m["axes"][0]["yscale"] = "log"
+        m["axes"][0]["ylim"] = [-5.0, 105.0]
+
     vectors += [
+        case("valid-categorical-bar", _categorical_bar_model(), "ok", binding),
+        mutated("reject-log-negative-range", log_negative_range, "chart_data_invalid"),
         case("reject-binding-stale", base_model(), "chart_binding_stale", stale),
         case("reject-binding-scene-mismatch", base_model(), "chart_source_mismatch", mismatched),
     ]

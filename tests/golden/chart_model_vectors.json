@@ -695,6 +695,169 @@
    "expect": "chart_model_invalid"
   },
   {
+   "name": "valid-categorical-bar",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       -0.5,
+       3.5
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false,
+      "kind": "categorical",
+      "categories": [
+       "A",
+       "B",
+       "C",
+       "D"
+      ]
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "bar",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "cat",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      },
+      "yerr": "err"
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ],
+      "cat": [
+       "A",
+       "B",
+       "C",
+       "D"
+      ],
+      "err": [
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "8375605fbc063b3e8eeabe9aa5840e3ee4df352f28d7d0c2d5b5db55a9e8d1fb",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "reject-log-negative-range",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       -5.0,
+       105.0
+      ],
+      "xscale": "linear",
+      "yscale": "log",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": null,
+   "expect": "chart_data_invalid"
+  },
+  {
    "name": "reject-binding-stale",
    "model": {
     "schema": "tavotto.chart-model/1",

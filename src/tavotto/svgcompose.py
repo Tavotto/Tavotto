@@ -45,6 +45,31 @@ def _is_descendant(node: ET.Element, ancestor: ET.Element) -> bool:
     return any(_ is node for _ in ancestor.iter())
 
 
+def _ancestors(root: ET.Element, node: ET.Element):
+    """node 的祖先链（ElementTree 无父指针，按身份查找）。"""
+    child = node
+    while True:
+        parent = next((p for p in root.iter() if any(c is child for c in p)), None)
+        if parent is None:
+            return
+        yield parent
+        child = parent
+
+
+def _retint(el: ET.Element, color: str) -> None:
+    """把手柄子树的描边/填充改为模型色（图例与系列同源的第一步）。"""
+    for node in (el, *el.iter()):
+        if node.attrib.get("stroke") not in (None, "none", ""):
+            node.attrib["stroke"] = color
+        if node.attrib.get("fill") not in (None, "none", ""):
+            node.attrib["fill"] = color
+        style = node.attrib.get("style", "")
+        if style:
+            style = re.sub(r"stroke:\s*[^;]+", f"stroke: {color}", style)
+            style = re.sub(r"fill:\s*[^;]+", f"fill: {color}", style)
+            node.attrib["style"] = style
+
+
 def _find_by_id(root: ET.Element, node_id: str) -> ET.Element | None:
     return next((el for el in root.iter() if el.attrib.get("id") == node_id), None)
 
@@ -78,8 +103,13 @@ def _refs_outside(root: ET.Element, target: ET.Element) -> set[str]:
     return refs
 
 
-def compose_scene(scene_bytes: bytes, binding: dict, fragment_bytes: bytes) -> bytes:
-    """按绑定把片段接进场景；返回编辑后的场景字节（原字节不动）。"""
+def compose_scene(
+    scene_bytes: bytes, binding: dict, fragment_bytes: bytes, model: dict | None = None
+) -> bytes:
+    """按绑定把片段接进场景；返回编辑后的场景字节（原字节不动）。
+
+    ``model``（可选）：图例手柄同步需要模型里的系列样式；缺省时手柄按原样保留。
+    """
     from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
 
     scene = parse_svg(strip_matplotlib_doctype(scene_bytes))
@@ -124,20 +154,37 @@ def compose_scene(scene_bytes: bytes, binding: dict, fragment_bytes: bytes) -> b
         for g in frag_axes.iter(f"{{{SVG_NS}}}g")
         if g.attrib.get("id", "").startswith("line2d_") and g.find("s:path", NS) is not None
     ]
-    if len(frag_series) < len(series_bindings):
-        raise ComposeError(
-            "compose_fragment_invalid",
-            f"fragment has {len(frag_series)} series groups, binding needs {len(series_bindings)}",
-        )
     suffix = "__c1"
     series_insert_parent = None
     series_insert_index = None
-    for i, entry in enumerate(series_bindings):
+    model_series = {f"series:{sr['id']}": sr for sr in (model or {}).get("series", [])}
+    frag_slot = 0
+    for entry in series_bindings:
         target = _find_by_id(edited, entry["node"])
         if target is None:
             raise ComposeError("compose_node_missing", f"bound node {entry['node']!r} not in scene")
+        series_def = model_series.get(entry["object"]) or {}
+        if entry["node"] != series_def.get("node"):
+            # 非数据节点（图例手柄等）：不替换，按模型样式同步描边/填充
+            ancestor_ids = {p.attrib.get("id", "") for p in _ancestors(edited, target)}
+            if not any(a.startswith("legend_") for a in ancestor_ids):
+                raise ComposeError(
+                    "compose_node_role_unknown",
+                    f"node {entry['node']!r} is neither the series data node nor a legend handle",
+                )
+            style = series_def.get("style") or {}
+            color = style.get("color") or style.get("facecolor")
+            if color:
+                _retint(target, str(color))
+            continue
         hoist_external_defs(target)
-        frag = copy.deepcopy(frag_series[i])
+        if frag_slot >= len(frag_series):
+            raise ComposeError(
+                "compose_fragment_invalid",
+                f"fragment has {len(frag_series)} series groups, binding needs more",
+            )
+        frag = copy.deepcopy(frag_series[frag_slot])
+        frag_slot += 1
         _suffix_ids(frag, suffix)
         par = parent_map[id(target)]
         idx = list(par).index(target)

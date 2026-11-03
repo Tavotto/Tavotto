@@ -70,9 +70,12 @@ def parse_table(text: str) -> dict:
         rows.append(cells)
 
     columns: dict[str, list[float]] = {}
+    text_columns: dict[str, list[str]] = {}
     for c, name in enumerate(header):
         col_name = name or f"col{c + 1}"
         values: list[float] = []
+        texts: list[str] = []
+        text_ok = True
         column_issues: list[dict] = []
         for r, cells in enumerate(rows, start=2):
             raw = cells[c] if c < len(cells) else ""
@@ -82,19 +85,24 @@ def parse_table(text: str) -> dict:
                         "code": "data_missing",
                         "row": r,
                         "col": c + 1,
+                        "column": col_name,
                         "detail": f"column {col_name!r}",
                     }
                 )
+                text_ok = False
                 continue
             if _NUM_RE.fullmatch(raw):
                 values.append(float(raw))
+                texts.append(raw)
                 continue
+            texts.append(raw)  # 非数值格：数值列的 issue；文本列候选同步积累
             if _DATE_HINT.fullmatch(raw):
                 column_issues.append(
                     {
                         "code": "data_not_numeric",
                         "row": r,
                         "col": c + 1,
+                        "column": col_name,
                         "detail": f"column {col_name!r}: date-like value needs conversion",
                     }
                 )
@@ -106,6 +114,7 @@ def parse_table(text: str) -> dict:
                         "code": "data_thousands_separator",
                         "row": r,
                         "col": c + 1,
+                        "column": col_name,
                         "detail": f"column {col_name!r}: {raw!r}",
                     }
                 )
@@ -115,6 +124,7 @@ def parse_table(text: str) -> dict:
                     "code": "data_not_numeric",
                     "row": r,
                     "col": c + 1,
+                    "column": col_name,
                     "detail": f"column {col_name!r}: {raw!r}",
                 }
             )
@@ -122,6 +132,9 @@ def parse_table(text: str) -> dict:
             columns[col_name] = values
         else:
             issues.extend(column_issues)
+            # 无缺失、全非空的文本列保留（类别/标签的**显式指认**来源，绝不自动当数值）
+            if text_ok and texts and all(t for t in texts):
+                text_columns[col_name] = texts
     # NaN/Infinity 已被 _NUM_RE 挡下（字面量不匹配）；显式再核一遍防御浮点噪声
     for name, values in columns.items():
         for j, v in enumerate(values):
@@ -134,4 +147,4 @@ def parse_table(text: str) -> dict:
                         "detail": f"column {name!r}",
                     }
                 )
-    return {"columns": columns, "issues": issues}
+    return {"columns": columns, "text_columns": text_columns, "issues": issues}

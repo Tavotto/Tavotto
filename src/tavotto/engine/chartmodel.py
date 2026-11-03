@@ -38,10 +38,24 @@ SOURCE_KINDS = (SOURCE_FIGURE, SOURCE_DECLARATIVE)
 
 #: 轴尺度闭集（v1；扩尺度 = 升次版本并同步两侧镜像与 golden vectors）。
 SCALES = ("linear", "log")
+#: 轴维度闭集：numeric = 连续映射（线性/对数）；categorical = 类别位置（0..n-1），
+#: `categories` 列出类目——类别轴绝不套连续数值映射（计划 SG06 禁令）。
+AXIS_KINDS = ("numeric", "categorical")
 #: 系列种类闭集（v1；SG08/SG09 按同一条升版路径扩族）。
-SERIES_KINDS = ("line", "scatter")
+SERIES_KINDS = ("line", "scatter", "bar", "errorbar")
 #: 系列样式可写键闭集（与既有 override 词汇对齐，语义见 engine/overrides.py）。
-SERIES_STYLE_KEYS = ("color", "linewidth", "linestyle", "marker", "markersize", "alpha")
+SERIES_STYLE_KEYS = (
+    "color",
+    "linewidth",
+    "linestyle",
+    "marker",
+    "markersize",
+    "alpha",
+    "facecolor",
+    "edgecolor",
+    "bar_width",
+    "label",
+)
 
 #: 稳定错误码闭集（前后端同源；文案在 web/src/i18n/errors.json 落地时同步）。
 ERROR_CODES = (
@@ -191,8 +205,10 @@ _AXES_KEYS = (
     "invert_y",
     "xlabel",
     "ylabel",
+    "kind",
+    "categories",
 )
-_SERIES_KEYS = ("id", "kind", "axes", "node", "x", "y", "style")
+_SERIES_KEYS = ("id", "kind", "axes", "node", "x", "y", "yerr", "style")
 _DATASET_KEYS = ("columns",)
 
 
@@ -263,6 +279,21 @@ def validate_model(model: Any) -> dict:
         for key in ("xlabel", "ylabel"):
             if key in ax and not isinstance(ax[key], str):
                 raise ChartModelError("chart_model_invalid", f"axes[{i}].{key} must be a string")
+        kind = ax.get("kind", "numeric")
+        if kind not in AXIS_KINDS:
+            raise ChartModelError(
+                "chart_model_invalid", f"axes[{i}].kind must be one of {AXIS_KINDS}"
+            )
+        if kind == "categorical":
+            cats = ax.get("categories")
+            if (
+                not isinstance(cats, list)
+                or not cats
+                or not all(isinstance(c, str) and c for c in cats)
+            ):
+                raise ChartModelError(
+                    "chart_model_invalid", f"axes[{i}].categories must be a non-empty string list"
+                )
 
     dataset = model.get("dataset")
     _keys(dataset, _DATASET_KEYS, "model.dataset")
@@ -278,6 +309,13 @@ def validate_model(model: Any) -> dict:
                 "chart_model_invalid", f"dataset column {name!r} must be an array"
             )
         for j, v in enumerate(col):
+            if isinstance(v, str):
+                # 文本列（类别/标签）：声明 categorical 轴的 categories / bar 的位置标签
+                if not v:
+                    raise ChartModelError(
+                        "chart_data_invalid", f"dataset column {name!r}[{j}] empty string"
+                    )
+                continue
             _finite(v, f"dataset column {name!r}[{j}]")
 
     series = model.get("series")

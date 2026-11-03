@@ -74,11 +74,44 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
         ax.set_ylabel(str(ax_cfg["ylabel"]))
 
     points = {}
+    categorical = ax_cfg.get("kind") == "categorical"
+    cats = ax_cfg.get("categories") or []
     for sr in model["series"]:
         xs = model["dataset"]["columns"][sr["x"]]
         ys = model["dataset"]["columns"][sr["y"]]
-        style = {k: v for k, v in (sr.get("style") or {}).items()}
-        ax.plot(xs, ys, linewidth=float(style.pop("linewidth", 2.0) or 2.0), **_safe_style(style))
+        style = dict(sr.get("style") or {})
+        yerr_col = sr.get("yerr")
+        yerr = model["dataset"]["columns"].get(yerr_col) if yerr_col else None
+        if categorical:
+            # 类别位置 = 序号；x 列的文本值必须与轴类目逐位一致（不猜顺序）
+            if xs != cats:
+                raise ValueError("series categories do not match the axis categories")
+            xs = list(range(len(cats)))
+        kind = sr["kind"]
+        label = str(style.pop("label", "") or "")
+        if kind == "bar":
+            kwargs = _safe_style({k: v for k, v in style.items()
+                                  if k in ("color", "facecolor", "edgecolor", "alpha",
+                                           "bar_width")})
+            if "bar_width" in kwargs:
+                kwargs["width"] = kwargs.pop("bar_width")
+            if "color" in kwargs and "facecolor" not in kwargs:
+                kwargs["facecolor"] = kwargs.pop("color")
+            ax.bar(xs, ys, yerr=yerr, capsize=4, label=label or None, **kwargs)
+        elif kind == "errorbar":
+            kwargs = _safe_style({k: v for k, v in style.items()
+                                  if k in ("color", "linewidth", "linestyle", "alpha")})
+            ax.errorbar(xs, ys, yerr=yerr, capsize=4, label=label or None, **kwargs)
+        else:
+            plot_style = _safe_style(style)
+            if kind == "scatter":
+                plot_style.setdefault("marker", "o")
+                plot_style["linestyle"] = "none"
+            ax.plot(xs, ys, linewidth=float(plot_style.pop("linewidth", 2.0) or 2.0),
+                    label=label or None, **plot_style)
+    if categorical:
+        ax.set_xticks(list(range(len(cats))))
+        ax.set_xticklabels(cats)
     fig.canvas.draw()  # realize transforms & locators（exp2 口径）
     # 轴分数（matplotlib 原生、y-up）：display(72dpi=pt) 减轴原点、除轴尺寸。
     # 轴在 display 空间的左/下：left(pt) 与 h_pt - bottom（SVG y-down 的 rect）。
@@ -88,6 +121,8 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     for sr in model["series"]:
         xs = model["dataset"]["columns"][sr["x"]]
         ys = model["dataset"]["columns"][sr["y"]]
+        if categorical:
+            xs = list(range(len(cats)))  # 类别位置 = 序号（与绘制同一映射）
         disp = ax.transData.transform(list(zip(xs, ys)))
         points[sr["id"]] = [
             {"x": (p[0] - ax_disp_left) / ax_w_px, "y": (p[1] - ax_disp_bottom) / ax_h_px}
@@ -112,7 +147,16 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
 def _safe_style(style: dict) -> dict:
     """系列样式 → matplotlib kwargs（闭集已在 chartmodel 校验；这里只做类型钉）。"""
     out = {}
-    allowed = {"color": str, "linestyle": str, "marker": str, "markersize": float, "alpha": float}
+    allowed = {
+        "color": str,
+        "linestyle": str,
+        "marker": str,
+        "markersize": float,
+        "alpha": float,
+        "facecolor": str,
+        "edgecolor": str,
+        "bar_width": float,
+    }
     for key, kind in allowed.items():
         if key in style and style[key] is not None:
             out[key] = kind(style[key])
