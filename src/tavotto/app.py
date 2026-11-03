@@ -809,6 +809,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    _note_missing_command(exc)
     if figure_snapshot_invalidation is not None:
         body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
@@ -989,6 +990,21 @@ def _note_missing_dependency(exc, project_env: dict | None, repair: dict | None)
         )
     except (OSError, ValueError, TypeError) as err:
         LOG.warning("缺依赖现场记录失败: %s", err)
+
+
+def _note_missing_command(exc) -> None:
+    """脚本调外部命令却找不到：把 worker 当场量好的闭集事实记进进程内记录（`deprepair.note_missing_command_of`）。
+    没有打开项目 / 没有这份事实不记；记录失败不许盖掉原始错误。"""
+    if not isinstance(getattr(exc, "extra", None), dict) or "missing_command" not in exc.extra:
+        return
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return
+    try:
+        engine_deprepair.note_missing_command_of(root, exc)
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("找不到外部命令的现场记录失败: %s", err)
 
 
 def _project_relative(path: str) -> str:
@@ -2494,6 +2510,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
         )
     if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
         return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
+    _prepare_source_fonts()
     provider = rc_facade.provider()
 
     class _NoPanels:
@@ -3122,6 +3139,7 @@ def _export_produce_rendercore(
         if canvas is not None
         else {}
     )
+    _prepare_source_fonts()
     return rc_job.produce(
         job,
         tmp_dir,
@@ -3618,6 +3636,95 @@ def api_mathtext():
     return jsonify(
         {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}
     )
+
+
+def _prepare_source_fonts() -> None:
+    """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
+    字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""
+    from .rendercore import userfonts
+
+    pythons: list[str] = []
+    try:
+        project = _mathtext_project()
+        if project is not None:
+            hit = engine_pool.peek_worker_python(project)
+            if hit is not None:
+                pythons.append(hit[0])
+    except Exception:  # noqa: BLE001 —— 项目解释器读不出来只是少一条线索
+        pass
+    bundled = engine_runtime.bundled_python()
+    if bundled:
+        pythons.append(bundled)
+    dirs: list[Path] = []
+    for py in pythons:
+        dirs += userfonts.matplotlib_font_dirs(py)
+    dirs += userfonts.matplotlib_font_dirs(None)
+    userfonts.default_locator().add_hint_dirs(dirs)
+
+
+#: `/api/source-fonts/status` 一次最多问几张脸（一页画布的标注远小于此）
+SOURCE_FONTS_MAX_ITEMS = 64
+
+
+@app.post("/api/source-fonts/status")
+def api_source_fonts_status():
+    """画布文字的 `sourceFont`（ADR 0164）在**这台机器**上能不能用：body `{"fonts": [{"sha256", "face"}]}` →
+    `{"ok": true, "results": [{"sha256", "face", "state"}]}`，`state` 是 `ok` 或 `sourcefont.REASONS` 里的一个。
+
+    判据与导出**同一个函数**（`HbFaceProvider.user_face`），所以预览 / 属性页说「能用」的，导出就嵌得进去。
+    响应里没有路径，也没有字体文件的任何字节。"""
+    from .rendercore import facade as rc_facade, sourcefont
+
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("fonts")
+    if not isinstance(items, list) or len(items) > SOURCE_FONTS_MAX_ITEMS:
+        return jsonify({"ok": False, "error": "bad_items"}), 400
+    _prepare_source_fonts()
+    results = []
+    provider = None
+    for it in items:
+        ref, bad = sourcefont.parse_source_font(
+            {**it, "family": it.get("family") or "-"} if isinstance(it, dict) else None
+        )
+        if ref is None:
+            return jsonify({"ok": False, "error": "bad_items"}), 400
+        try:
+            provider = provider or rc_facade.provider()
+            provider.user_face(ref.primary)
+            state = "ok"
+        except sourcefont.UserFontUnavailable as exc:
+            state = exc.reason
+        results.append({"sha256": ref.primary.sha256, "face": ref.primary.face, "state": state})
+    return jsonify({"ok": True, "results": results})
+
+
+@app.get("/api/source-fonts/<sha256>/<int:face>")
+def api_source_fonts_bytes(sha256: str, face: int):
+    """预览用：本机上这张脸的字节（单脸 sfnt）。**只来自本机、只按 sha256 取**，不走网络；禁止嵌入的脸
+    不供（预览与导出同一条许可线）。会话认证与其它端点同一道全局 guard。"""
+    import io
+
+    from .rendercore import facade as rc_facade, sourcefont
+
+    if not sourcefont.HEX64.match(sha256):
+        return jsonify({"ok": False, "error": "bad_sha256"}), 400
+    _prepare_source_fonts()
+    try:
+        record = rc_facade.provider().user_face(sourcefont.FaceRef("-", sha256, face)).record
+    except sourcefont.UserFontUnavailable as exc:
+        return jsonify({"ok": False, "error": exc.reason}), 404
+    if record.path.suffix.lower() in (".ttc", ".otc"):
+        from fontTools.ttLib import TTFont
+
+        buf = io.BytesIO()
+        TTFont(str(record.path), fontNumber=face, lazy=False).save(buf)
+        data = buf.getvalue()
+    else:
+        data = record.path.read_bytes()
+    resp = Response(data, mimetype="application/octet-stream")
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"  # 内容由 sha256 决定
+    resp.headers["ETag"] = f'"{sha256}-{face}"'
+    return resp
 
 
 @app.post("/api/export/validate")
@@ -5158,6 +5265,8 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 脚本拉起外部命令却找不到可执行文件（bundle schema 15）：交原值，换形与脱敏在 `diagnostics._project_section`
+        status["missing_commands"] = engine_deprepair.recent_missing_commands(str(ctx.path))
         status["managed_environment_jobs"] = engine_envdiag.recent(ctx.path)
         # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
         # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。

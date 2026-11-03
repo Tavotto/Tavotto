@@ -17,7 +17,7 @@ name: CI
 #                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
 #                   全部快线 + 全部重型资格在它上面真实跑一遍，
 #                   三个 Gate 全绿才允许合入 main。
-#   docs-only       只改 docs/release-notes/**.md（不含 UNRELEASED.md）的 PR / 队列候选：
+#   docs-only       只改 docs/release-notes/**.md（不含 UNRELEASED.md 与 unreleased/ 片段）的 PR / 队列候选：
 #                   `docs-scope` 分类 job 输出 docs_only，七个快线与五个重型 job skipped，
 #                   Gate 凭分类 job 的 success + 输出放行（见 docs-scope 段与 aggregate_gate.py）。
 #   push main       轻量落地审计（main-landing-audit）：结构契约 + 受管生成物
@@ -425,8 +425,8 @@ jobs:
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
 
   # ────────────────────────────────────────────────────────────────
-  # 发行说明闸：用户可见的 PR 必须往 docs/release-notes/UNRELEASED.md 新增一个
-  # `## ` 待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
+  # 发行说明闸：用户可见的 PR 必须新增 docs/release-notes/unreleased/<主题>.md 片段
+  # （或旧写法：往 UNRELEASED.md 新增 `## `）待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
   # docs/RELEASING.md；判定逻辑与「用户可见路径」清单在
   # scripts/ci/release_note_gate.py，看护在 tests/test_release_note_gate.py）。
   #
@@ -520,7 +520,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # docs-only 快车道的分类 job：这次改动是不是**只**碰了 docs/release-notes/ 下的发行说明
-  # （不含 UNRELEASED.md——有测试读它）。判据与理由在 scripts/ci/docs_scope.py，
+  # （不含 UNRELEASED.md 与 unreleased/ 片段——有测试读它们）。判据与理由在 scripts/ci/docs_scope.py，
   # 看护在 tests/test_docs_scope.py 与 tests/test_merge_queue_workflows.py::TestDocsOnlyFastLane。
   #
   # 为什么存在：发版当天补发行说明的纯文档 PR 以前要跑满整条 CI 加合并队列（v0.19.2

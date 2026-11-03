@@ -173,6 +173,7 @@ class TestWorkflowShape:
 
         assert docs_scope.SCOPE_PREFIX == "docs/release-notes/"
         assert docs_scope.EXCLUDED == {"docs/release-notes/UNRELEASED.md"}
+        assert docs_scope.EXCLUDED_PREFIXES == ("docs/release-notes/unreleased/",)
 
 
 # ───────────────────────────────────────────── Gate 步骤真跑

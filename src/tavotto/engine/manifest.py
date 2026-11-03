@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 import sys
 import time
@@ -1338,7 +1339,7 @@ def _ft_font(path: str, face_index: int = 0):
     return hit or None
 
 
-def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
+def _resolved_font_paths(families, file=None, props=None) -> list[tuple[str, int]]:
     """这段文字**真正会用到**的 (字体文件, 面索引)，按 matplotlib 自己的回退顺序。
 
     走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
@@ -1360,10 +1361,17 @@ def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
     matplotlib 画字**只用那一个文件的那一张脸**（路径带的面索引，`overrides.font_face_index`；
     3.10 及以前恒为第 0 张）、族列表整个不看——这里照实只报它。
     按族列表算的话，中文会被说成「回退链画出来了」，而图上是方框。
+
+    `props` 是文字自己的完整 `FontProperties`（粗细 / 斜体 / 字形变体 / 拉伸 / 字号——findfont 看的全部）。
+    给了就按它解析：matplotlib 画 `fontweight='bold'` 的文字用的是 Bold 那个文件，只传族列表会解析到
+    Regular（ADR 0164 的文件级身份据此认脸，错一个就是 sha256 与粗斜标志都错）。不给 = 只按族列表（既有行为）。
     """
     if file is not None:
         return [(str(file), font_face_index(file))]
-    prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
+    if props is not None:
+        prop = props
+    else:
+        prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
     try:
         found = font_manager.fontManager._find_fonts_by_props(prop)
     except (AttributeError, TypeError, ValueError, RuntimeError):
@@ -1421,6 +1429,87 @@ def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], l
         elif len(subst) < MAX_MISSING_GLYPHS:
             subst[ch] = None
     return list(gone), list(subst), list(cjk_faces)
+
+
+#: 字体文件（路径 + stat + 面）→ sha256。一次 manifest 过很多个 Text，同一张脸只读一遍；
+#: 键含 mtime / size（`overrides.font_file_key`），文件被原地换掉就是新键。
+_FILE_SHA256: dict[tuple, str | None] = {}
+
+#: 读来算 sha256 的字体文件上限；与 `rendercore.userfonts.MAX_FONT_BYTES` 同值（两个进程各持一份，
+#: worker 侧不能 import rendercore——`tests/test_source_font_wire.py` 看护两份字面相同）。
+FONT_SOURCE_MAX_BYTES = 192 * 1024 * 1024
+
+
+def _font_file_sha256(path: str, face_index: int) -> str | None:
+    key = font_file_key(path, face_index)
+    if key in _FILE_SHA256:
+        return _FILE_SHA256[key]
+    digest: str | None = None
+    try:
+        if os.path.getsize(key[0]) <= FONT_SOURCE_MAX_BYTES:
+            h = hashlib.sha256()
+            with open(key[0], "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+    except OSError:
+        digest = None
+    _FILE_SHA256[key] = digest
+    return digest
+
+
+def _face_source(path: str, face_index: int, ft) -> dict | None:
+    """一张脸的**身份**（ADR 0164）：名字 + 文件 sha256 + 面序号 + 粗斜。**不含路径**——路径不进 manifest、
+    不进文档、不进遥测；Flask 侧按 sha256 在本机找文件（`rendercore.userfonts`）。"""
+    digest = _font_file_sha256(path, face_index)
+    if digest is None:
+        return None
+    # FT_STYLE_FLAG_ITALIC=1 / BOLD=2。matplotlib 3.11 起 `style_flags` 是 `StyleFlags`（enum.Flag，不是
+    # IntFlag：`int()` 它会抛 TypeError），旧版是 int——两种都先取 `.value`
+    raw = getattr(ft, "style_flags", 0)
+    flags = int(getattr(raw, "value", raw) or 0)
+    return {
+        "family": str(ft.family_name),
+        "sha256": digest,
+        "face": int(face_index),
+        "bold": bool(flags & 2),
+        "italic": bool(flags & 1),
+    }
+
+
+def face_sources(text: str, families, file=None, props=None) -> dict:
+    """这段文字实际由哪几张**文件级**的脸画：`face_src`（正文脸，族链解析到的第一张）与
+    `cjk_src`（回退链上画了第一个中日韩字符的那张；正文脸自己画得出汉字时没有）。
+
+    与 `font_faces` / `_glyph_scan` 走同一条解析链（`_resolved_font_paths`），所以「报的身份」==
+    「matplotlib 实际画的脸」。给「复制为画布文字标注」当 `sourceFont`：**字体文件**随图 PDF 里的
+    子集嵌入，但文档里只记身份。解析不出 / 文件读不了 → 键缺席（不编造）。
+
+    `props` = 文字的完整 `FontProperties`（带粗细 / 斜体等）：`fontweight='bold'` 的普通文字画的是 Bold 文件，
+    身份必须是它。manifest 里调用方一律传；不传 = 只按族列表。"""
+    resolved = [
+        (p, i, ft)
+        for p, i in _resolved_font_paths(families, file, props)
+        if (ft := _ft_font(p, i)) is not None
+    ]
+    if not resolved:
+        return {}
+    out: dict = {}
+    src = _face_source(*resolved[0])
+    if src is not None:
+        out["face_src"] = src
+    if isinstance(text, str) and text.strip():
+        primary, rest = resolved[0][2], resolved[1:]
+        for ch in _MATH_SPAN.sub("", text):
+            if not _CJK_CHAR.match(ch) or primary.get_char_index(ord(ch)):
+                continue
+            hit = next((r for r in rest if r[2].get_char_index(ord(ch))), None)
+            if hit is not None:
+                cjk = _face_source(*hit)
+                if cjk is not None:
+                    out["cjk_src"] = cjk
+            break
+    return out
 
 
 #: mathtext 内置字体集 → 它画字用的那张脸的族名。`custom` 不在表里：那一档由
@@ -6000,6 +6089,18 @@ def _measure_manifest(
             # 中日韩白名单，界面拿它回答「我的中文是什么字体」。
             if cjk_faces:
                 entry["cjk_family"] = cjk_faces[0]
+            # 文件级身份（ADR 0164）：画布「复制为标注」要用原图同一张脸；加字段协议，老前端原样忽略
+            try:
+                entry.update(
+                    face_sources(
+                        live_text.get_text(),
+                        live_text.get_fontfamily() or [],
+                        font_file,
+                        live_text.get_fontproperties(),
+                    )
+                )
+            except Exception:  # noqa: BLE001 —— 身份是附加事实：采集失败只是少一个键，绝不拖垮 manifest
+                pass
         elements.append(entry)
 
     if budget.skipped:

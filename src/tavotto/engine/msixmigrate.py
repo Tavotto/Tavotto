@@ -91,6 +91,10 @@ EXCLUDE_SUFFIXES = (".lock", ".tmp", ".part", "-wal", "-shm", "-journal")
 _ADOPT_LOCK = threading.RLock()  # 校验里可能再按需搬私有 Python（同线程重入）
 _ADOPT_CHECKED: set[str] = set()
 _SQLITE_CHECKED: set[str] = set()
+#: 进程内串行化 `_adopt_sqlite`：第一个线程把目标标成「已查」后还在搬，第二个线程若直接读到「已查」就返回、随即新建空库，
+#: 第一个线程的 `os.replace` 前看到目标已存在便放弃——旧历史永远搬不回来（心跳线程与启动线程同时首次开库时真会发生）。
+#: 后到的线程在这里等先到的搬完，再看目标在不在。
+_SQLITE_ADOPT_LOCK = threading.Lock()
 
 
 class _Deadline(Exception):
@@ -351,7 +355,8 @@ def adopt_sqlite(*parts: str, budget_s: float = ADOPT_SQLITE_BUDGET_S) -> bool:
     与同步阶段同一把跨进程锁（拿不到就算了，别阻塞）；每个进程每个目标只试一次。返回「这次搬成了」。
     """
     try:
-        return _adopt_sqlite(parts, budget_s)
+        with _SQLITE_ADOPT_LOCK:
+            return _adopt_sqlite(parts, budget_s)
     except Exception:  # noqa: BLE001
         return False
 
