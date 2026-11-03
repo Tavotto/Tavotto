@@ -401,16 +401,28 @@ def cached_login_shell_pythons() -> list[str]:
         return list(_login_shell_cache.get(shell) or [])
 
 
-def login_shell_pythons() -> list[str]:
-    shell = _login_shell()
-    if not shell:
-        return []
+def _login_shell_hit(shell: str) -> list[str] | None:
+    """这个 shell 的有效缓存答案；没问过 / 空答案已过期回 None。"""
     with _lock:
         hit = _login_shell_cache.get(shell)
         # 空答案只管一小段时间：一次超时 / 冷启动的空结果不该让这个进程里此后永远看不见终端里的 python
         if hit is not None and not hit:
             if _monotonic() - _login_shell_empty_at.get(shell, 0.0) >= EMPTY_LOGIN_SHELL_TTL_S:
                 hit = None
+    return hit
+
+
+def login_shell_needs_ask() -> bool:
+    """`login_shell_pythons()` 此刻会不会真起一个登录 shell（纯读缓存；没有登录 shell 的平台恒 False）。"""
+    shell = _login_shell()
+    return bool(shell) and _login_shell_hit(shell) is None
+
+
+def login_shell_pythons() -> list[str]:
+    shell = _login_shell()
+    if not shell:
+        return []
+    hit = _login_shell_hit(shell)
     if hit is not None:
         return list(hit)
     found = _ask_login_shell(shell)

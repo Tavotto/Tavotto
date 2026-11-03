@@ -196,7 +196,9 @@ test(
   }
   expect(await indent('axes_0'), '子图 A 不在组里').toBe(gIndent)
   await pickRow(page, 'axes_3.colorbar')
-  await expect(page.locator(`[data-crumb="${GROUP}"]`)).toBeVisible()
+  // 头部面包屑已撤掉（2026-11-03）：上一级的导航在元素树——色条行缩进在组之下，点组行即选中组
+  await expect(page.locator('[data-crumb]')).toHaveCount(0)
+  expect(await indent('axes_3.colorbar'), '色条在组之下').toBeGreaterThan(gIndent)
 
   // 2) 选中组 → 拖 B = 整组平移（选中之后右栏打开、画布挪位，量要在那之后）
   await pickRow(page, GROUP)
@@ -295,7 +297,7 @@ test(
 }
 
 for (const owner of ['single', 'unknown'] as const) {
-  test(`手动 cax ${owner}：树与面包屑按声明，缺声明时给出可执行关联方式`,
+  test(`手动 cax ${owner}：树按声明，缺声明时给出可执行关联方式`,
     { tag: '@feature:figure.shared-colorbar-group' }, async ({ app, page }) => {
       const a = await app({ figures: writeSharedProject({ cax: true, owner }) })
       await page.goto(a.baseURL)
@@ -309,7 +311,8 @@ for (const owner of ['single', 'unknown'] as const) {
       else expect(await indent('axes_3')).toBe(await indent('axes_1'))
       await pickRow(page, 'axes_3.colorbar')
       if (owner === 'single') {
-        await expect(page.locator('[data-crumb="axes_1"]')).toBeVisible()
+        await expect(page.locator('[data-crumb]')).toHaveCount(0)
+        expect(await indent('axes_3.colorbar'), '单宿主色条挂在宿主子图之下').toBeGreaterThan(await indent('axes_1'))
         await expect(page.locator('[data-colorbar-ownership]')).toHaveCount(0)
         await pickRow(page, 'axes_1')
         await page.waitForTimeout(500)
@@ -320,7 +323,7 @@ for (const owner of ['single', 'unknown'] as const) {
         expect(after.rel.axes_3 - before.rel.axes_3).toBeCloseTo(after.rel.axes_1 - before.rel.axes_1, 0)
         expect(after.rel.axes_2).toBeCloseTo(before.rel.axes_2, 0)
       } else {
-        await expect(page.locator('[data-crumb="axes_1"]')).toHaveCount(0)
+        await expect(page.locator('[data-crumb]')).toHaveCount(0)
         await page.locator('[data-colorbar-ownership] summary').click()
         await expect(page.getByText('fig.colorbar(mappable, cax=cax, ax=ax)', { exact: true })).toBeVisible()
         await expect(page.getByText('fig.colorbar(mappable, cax=cax, ax=[b, c])', { exact: true })).toBeVisible()

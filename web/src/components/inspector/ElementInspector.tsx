@@ -130,10 +130,11 @@ import {
 } from './presentation/registry'
 import { foldValue, moreValue, valueText, type FoldReader } from './presentation/foldSummary'
 import type { PresentedField, PresentedFold } from './presentation/types'
+import { cjkFontShortName } from './controls/fontShortName'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
 import { colormapAliasGids } from '@/lib/colormapAlias'
-import { withMachineFamilies } from '@/lib/typography'
+import { propertyPathOf, withMachineFamilies } from '@/lib/typography'
 import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/ColorbarPickers'
 import { ProjectionPicker } from './controls/ProjectionPicker'
 import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
@@ -624,8 +625,9 @@ function relatedGids(
     if (e) out.push({ gid: e.gid, label: engineLabel(e.label), hint, text: text?.(engineLabel(e.label)) })
   }
 
-  // 「所属系列」「所属子图」「所属图例」这种往上一级的路都在身份头的面包屑里，而且面包屑
-  // 每一级都能点（2026-09-14 审计 A4）——这里不再重复写一行；只留往下 / 往旁边走的入口
+  // 「所属系列」「所属子图」「所属图例」这种往上一级的路不在这里写一行：身份头的面包屑
+  // （2026-09-14 审计 A4）已于 2026-11-03 由维护者撤掉，往上一级的导航走左侧图内元素树；
+  // 这里只留往下 / 往旁边走的入口
   // 单个刻度文字 → 整条轴的刻度（审计 B51）：这一页改的只是这一个刻度的文字，
   // 字号 / 朝向 / 间距那些整条轴的事在刻度组页；入口就写成「编辑整条 X 轴刻度」
   if (target.role === 'ticklabel') {
@@ -2442,23 +2444,60 @@ function FieldRow({
         },
       })
       const fallbackNames = selection && !fontOpts.includes(selection.fallback) ? [selection.fallback, ...fontOpts] : fontOpts
-      return <>
-        {field.font_fallback_selection && <Row label={translate('textBar.cjkFallback', { ns: 'inspector' })} labelWidth={LABEL_W}>
-          <Select
-            ariaLabel={translate('textBar.cjkFallback', { ns: 'inspector' })}
-            value={selection?.fallback ?? '__auto__'}
-            onChange={(v) => setFigureFontChoice(panel.id, [element.gid], 'fallback', v === '__auto__' ? null : v, elMsg('editProp', { label: translate('textBar.cjkFallback', { ns: 'inspector' }) }))}
-            options={[
-              { value: '__auto__', label: translate('textBar.cjkFallbackAuto', { ns: 'inspector' }) },
-              ...fallbackNames.map((v) => ({ value: v, label: fontFamilyOptionLabel(v, merged?.option_labels, fallbackNames) })),
-            ]}
+      if (!field.font_fallback_selection) {
+        return wrap(<Select value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title} ariaLabel={label} />)
+      }
+      // 一行两格：英文字体（宽）+ 中文字体（窄）；英文字体自带中文字形时中文那格置灰（悬停说明原因）
+      const shadowed = !!selection && !latinOnly.has(enumValue)
+      const cjkLabel = translate('textBar.cjkFallback', { ns: 'inspector' })
+      const cjkTitle = shadowed
+        ? translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })
+        : selection ? fontFamilyOptionLabel(selection.fallback, merged?.option_labels, fallbackNames) : translate('textBar.cjkFallbackAuto', { ns: 'inspector' })
+      // 两格各自可恢复（注册表「并成一行的两条字段仍各自可恢复」）：状态槽放 ResetPairChip，
+      // 只清自己那一项；两项都改了给小菜单，「两项都恢复」清整条 override、一条历史
+      const rawFont = effectiveOverride(panel.overrides, element.gid, 'fontfamily')?.value
+      const latinLabel = translate('textBar.latinFont', { ns: 'inspector' })
+      const dirtyFonts = [
+        ...(rawFont !== undefined && (selection ? selection.primary !== null : true) ? [{ prop: 'primary', label: latinLabel }] : []),
+        ...(selection ? [{ prop: 'fallback', label: cjkLabel }] : []),
+      ]
+      return <Row
+        label={labelNode}
+        labelWidth={LABEL_W}
+        align="center"
+        status={
+          <ResetPairChip
+            label={label}
+            fields={dirtyFonts}
+            onReset={(props, resetLabel) => {
+              if (props.length > 1) return clearOverride(panel.id, element.gid, 'fontfamily')
+              setFigureFontChoice(panel.id, [element.gid], props[0] === 'primary' ? 'primary' : 'fallback', null, elMsg('resetProp', { label: resetLabel }))
+            }}
           />
-          {selection && !latinOnly.has(enumValue) && <Tip label={<span className="block max-w-40 whitespace-normal">{translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}</span>} side="left">
-            <button type="button" className="shrink-0 text-xs text-ink-3" aria-label={translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}>ⓘ</button>
-          </Tip>}
-        </Row>}
-        {wrap(<Select value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title} ariaLabel={label} />)}
-      </>
+        }
+      ><>
+        <div className="min-w-0 flex-1">
+          <Select className="gap-0.5 px-1" value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title ?? (fm.value ? fontFamilyOptionLabel(fm.value, merged?.option_labels, fontOpts) : undefined)} ariaLabel={translate('textBar.latinFont', { ns: 'inspector' })} />
+        </div>
+        <span className="contents" data-prop={propertyPathOf('figureText', 'fontFallback') ?? undefined}>
+          <div data-font-fallback-cell className="w-[66px] shrink-0">
+            <Select
+              className="gap-0.5 px-1"
+              ariaLabel={cjkLabel}
+              prefix={translate('textBar.cjkPrefix', { ns: 'inspector' })}
+              disabled={shadowed}
+              triggerLabel={cjkFontShortName(selection ? fontFamilyOptionLabel(selection.fallback, merged?.option_labels, fallbackNames) : translate('textBar.cjkFallbackAuto', { ns: 'inspector' }))}
+              title={cjkTitle}
+              value={selection?.fallback ?? '__auto__'}
+              onChange={(v) => setFigureFontChoice(panel.id, [element.gid], 'fallback', v === '__auto__' ? null : v, elMsg('editProp', { label: cjkLabel }))}
+              options={[
+                { value: '__auto__', label: translate('textBar.cjkFallbackAuto', { ns: 'inspector' }) },
+                ...fallbackNames.map((v) => ({ value: v, label: fontFamilyOptionLabel(v, merged?.option_labels, fallbackNames) })),
+              ]}
+            />
+          </div>
+        </span>
+      </></Row>
     }
     case 'aspect':
       // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。

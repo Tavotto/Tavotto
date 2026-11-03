@@ -881,6 +881,14 @@ def pinned_base_python() -> str:
     return str(getattr(_pin, "python", "") or "")
 
 
+def _base_python_cached() -> bool:
+    """`base_python()` 此刻会不会直接返回（钉住了 / 进程内已探过）；False = 它要真起子进程探。纯读。"""
+    if pinned_base_python():
+        return True
+    with _lock:
+        return _base_python_known
+
+
 def base_python() -> str | None:
     """基础解释器（同步；没有回 None）。计划创建那条路上用它。"""
     pinned = pinned_base_python()
@@ -4517,15 +4525,35 @@ def _facts_for(
 def _facts_for_inner(
     kind: str, python: str, root: str, *, use_cache: bool = True, fresh: bool = False
 ) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
-    run = depplan.target_facts(python, use_cache=use_cache) if python else None
+    managed_python = (managedenv.python_of(root) or "") if kind == TARGET_MANAGED else ""
+    base_needed = kind == TARGET_MANAGED and not (managed_python and not fresh)
+    facts_miss = bool(python) and (not use_cache or not depplan.facts_cached(python))
+    base_miss = base_needed and not _base_python_cached()
+
+    def measure_run():
+        if not python:
+            return None
+        with pool.segment("probe_facts_ms") if facts_miss else contextlib.nullcontext():
+            return depplan.target_facts(python, use_cache=use_cache)
+
+    def measure_base():
+        with pool.segment("probe_base_python_ms") if base_miss else contextlib.nullcontext():
+            return base_python() or ""
+
+    base = None
+    if facts_miss and base_miss:
+        # 目标事实探测与基础解释器探测互不依赖，首次（两者都没缓存）并发跑：结果与异常顺序同串行（`run_probes_concurrently`）
+        run, base = pool.run_probes_concurrently(measure_run, measure_base)
+    else:
+        run = measure_run()
     if kind != TARGET_MANAGED:
         return run, None, python
-    managed_python = managedenv.python_of(root) or ""
     if managed_python and not fresh:
         if python and pool.same_python(managed_python, python):
             return run, None, python
         return run, depplan.target_facts(managed_python, use_cache=use_cache), python
-    base = base_python() or ""
+    if base is None:
+        base = measure_base()
     if not base:
         # 没有基础解释器：提供私有 Python 就按它（真量 / 替身）量新的一代，否则计划只能按选中的量
         return run, private_fresh_facts(), python
@@ -6335,11 +6363,12 @@ def user_environment_candidates(
                 )
     # 登录 shell 只在机器可以替用户决定时（检测 / 旧模式，都由用户发起的准备 / 运行触发）现问；确认模式只用明确
     # 检查动作已经问出来的答案
-    out += (
-        userenvs.discover(root, script)
-        if silent
-        else userenvs.discover(root, script, ask_login_shell=None)
-    )
+    with pool.segment("probe_user_envs_ms"):
+        out += (
+            userenvs.discover(root, script)
+            if silent
+            else userenvs.discover(root, script, ask_login_shell=None)
+        )
     out += userenvs.system_candidates()
     seen: set = set()
     uniq: list[dict] = []
@@ -6867,6 +6896,24 @@ def _root_overlay_entries(
     )
 
 
+def _warm_login_shell() -> None:
+    with pool.segment("probe_login_shell_ms"):
+        userenvs.login_shell_pythons()
+
+
+def _joint_plan_warming_login_shell(root: str, script: str):
+    """`joint_plan_for`，首次（登录 shell 还没问过）顺手并发问登录 shell。
+
+    检测流程在联合计划之后无条件走 `user_environment_candidates`，而它在「机器可以替用户决定」时现问登录 shell
+    （同一个 `silent_adoption_enabled()` 判据）；两者互不依赖，所以并发预热 `userenvs` 自己的登录 shell 缓存，
+    之后那一问只剩命中缓存。联合计划抛错时（调用方接住的 `WorkerError` 分支）这一问可能白做，但只是填同一份缓存。
+    缓存已有答案 / 没有登录 shell 的平台 / 确认模式：不起线程，原样串行。"""
+    if not (projectenv.silent_adoption_enabled() and userenvs.login_shell_needs_ask()):
+        return joint_plan_for(root, script)
+    got, _ = pool.run_probes_concurrently(lambda: joint_plan_for(root, script), _warm_login_shell)
+    return got
+
+
 def _detect_environment_unlocked(
     root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
 ) -> dict | None:
@@ -6899,7 +6946,7 @@ def _detect_environment_unlocked(
         return None
     record = projectenv.remembered_record(root)
     try:
-        joint, _kind, python = joint_plan_for(root, script)
+        joint, _kind, python = _joint_plan_warming_login_shell(root, script)
     except pool.WorkerError:
         if current:
             return None
@@ -7127,6 +7174,25 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
     raise err
 
 
+def _prefetch_facts(project: str, script: str):
+    """解析解释器那一段并发预热目标事实（`pool.ENVIRONMENT_PREFETCHERS`）：环境决定随后一定要量这条解释器的事实，
+    而解析里的 `import matplotlib` 体检与它互不依赖——猜它们是同一条解释器（`pool.likely_worker_python`），
+    重叠起来跑。只填 `depplan` 的事实缓存；猜错 / 探测失败都只是白做，之后的真调用照常重来并抛自己的错。
+    已缓存、需要 Conda 激活（两处会各自去捕获激活环境）的不预热。"""
+    python = pool.likely_worker_python(project)
+    if not python or depplan.facts_cached(python) or launcher.launcher_for_interpreter(python):
+        return None
+
+    def thunk() -> None:
+        try:
+            with pool.segment("probe_facts_ms"):
+                depplan.target_facts(python)
+        except Exception:  # noqa: BLE001 — 投机预热，失败由真调用方报告
+            pass
+
+    return thunk
+
+
 def environment_decision_is_noop(project: str | Path, script: str) -> bool:
     """`decide_environment_pinned` 在这个项目上**必然什么都不做**吗？只读设置与 `stat`，不起子进程、不写记录。
 
@@ -7144,6 +7210,7 @@ def environment_decision_is_noop(project: str | Path, script: str) -> bool:
 pool.register_spawn_gate(_spawn_gate)
 pool.register_environment_noop_check(environment_decision_is_noop)
 pool.register_environment_decider(decide_environment_pinned)
+pool.register_environment_prefetch(_prefetch_facts)
 
 
 #: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /
