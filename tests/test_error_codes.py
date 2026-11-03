@@ -320,6 +320,8 @@ USER_VISIBLE_CODES = {
     "convert_disabled": set(),
     # 转换代写工具（#1628）回调被拒：只给 MCP 子进程看，模型把它转述给用户（"Tavotto could not run this tool"）
     "convert_tool_forbidden": set(),
+    # 「转换时允许 AI 不受沙盒限制」（#1631）只在 Windows 存在；别的系统 PUT 被拒
+    "convert_unsandboxed_windows_only": set(),
     "convert_not_found": set(),
     "convert_not_ready": set(),
     "convert_source_changed": set(),

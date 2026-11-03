@@ -10260,7 +10260,12 @@ _IS_WINDOWS = os.name == "nt"
 def api_ai_convert_unsandboxed():
     """Windows 设置里的开关「转换时允许 AI 不受沙盒限制」（默认关）。非 Windows 不接受：该设置在那里永远不生效，也不该被写出来。"""
     if not _IS_WINDOWS:
-        return jsonify({"error": "not_supported", "code": "not_supported"}), 400
+        return jsonify(
+            {
+                "error": "convert_unsandboxed_windows_only",
+                "code": "convert_unsandboxed_windows_only",
+            }
+        ), 400
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
         abort(400)

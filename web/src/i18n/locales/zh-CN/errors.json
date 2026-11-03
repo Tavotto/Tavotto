@@ -54,6 +54,7 @@
     "ai_revert_not_applicable": "这次是「生成可编辑版本」，原脚本从未被改动，没有可撤销的内容。",
     "convert_disabled": "「生成可编辑版本」已被关闭。",
     "convert_tool_forbidden": "转换写入工具的请求不属于当前转换，已被拒绝。",
+    "convert_unsandboxed_windows_only": "「转换时允许 AI 不受沙盒限制」只在 Windows 上可用。",
     "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
     "convert_not_ready": "新版本还没生成好，或没有通过检查。",
     "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
