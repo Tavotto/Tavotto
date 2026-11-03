@@ -139,6 +139,10 @@ def _error_from_worker(
     的问题，worker 侧的细分 code（如 script_error）留在 params.worker_code 里备查。
     """
     reason = _short(str(exc), exc.traceback_text)
+    if figures_dir:
+        from . import deprepair
+
+        deprepair.note_missing_command_of(figures_dir, exc)
     if exc.code == "missing_dependency":
         params = {"module": exc.module}
         # 读不了的项目外文件夹里的包（ADR 0153）：文件夹名随参数带出，`tavotto open` 据此说清原因

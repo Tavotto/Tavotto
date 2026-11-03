@@ -809,6 +809,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    _note_missing_command(exc)
     if figure_snapshot_invalidation is not None:
         body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
@@ -989,6 +990,21 @@ def _note_missing_dependency(exc, project_env: dict | None, repair: dict | None)
         )
     except (OSError, ValueError, TypeError) as err:
         LOG.warning("缺依赖现场记录失败: %s", err)
+
+
+def _note_missing_command(exc) -> None:
+    """脚本调外部命令却找不到：把 worker 当场量好的闭集事实记进进程内记录（`deprepair.note_missing_command_of`）。
+    没有打开项目 / 没有这份事实不记；记录失败不许盖掉原始错误。"""
+    if not isinstance(getattr(exc, "extra", None), dict) or "missing_command" not in exc.extra:
+        return
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return
+    try:
+        engine_deprepair.note_missing_command_of(root, exc)
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("找不到外部命令的现场记录失败: %s", err)
 
 
 def _project_relative(path: str) -> str:
@@ -5249,6 +5265,8 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 脚本拉起外部命令却找不到可执行文件（bundle schema 15）：交原值，换形与脱敏在 `diagnostics._project_section`
+        status["missing_commands"] = engine_deprepair.recent_missing_commands(str(ctx.path))
         status["managed_environment_jobs"] = engine_envdiag.recent(ctx.path)
         # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
         # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
