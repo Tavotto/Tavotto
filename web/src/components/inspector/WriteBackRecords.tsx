@@ -95,12 +95,15 @@ export function WriteBackRecordsPage({
   panels,
   byFile,
   focusFileId,
+  mtimeOf,
   onDone,
 }: {
   panels: PanelObject[]
   byFile: Record<string, RecordsOf>
   /** 预先选好的那张图（属性栏入口带来的） */
   focusFileId?: string
+  /** 写回窗口打开时锁定的 mtime 基线；不给则取素材 store 当前值 */
+  mtimeOf?: (fileId: string) => number | undefined
   /** 恢复成功之后（窗口随之关掉） */
   onDone: () => void
 }) {
@@ -151,6 +154,7 @@ export function WriteBackRecordsPage({
       <RestoreDialog
         panel={panel}
         version={confirming}
+        mtimeOf={mtimeOf}
         onClose={() => setConfirming(null)}
         onDone={onDone}
       />
@@ -231,11 +235,13 @@ function VersionRow({
 function RestoreDialog({
   panel,
   version,
+  mtimeOf,
   onClose,
   onDone,
 }: {
   panel: PanelObject
   version: HistoryVersion | null
+  mtimeOf?: (fileId: string) => number | undefined
   onClose: () => void
   onDone: () => void
 }) {
@@ -253,7 +259,7 @@ function RestoreDialog({
     try {
       // 与写回同一条前置校验：素材被工具之外改过就别按旧状态覆盖（409 source_changed）
       refuseArtifactOperation(panel)
-      const mtime = useAssetStore.getState().byId[panel.fileId]?.mtime
+      const mtime = mtimeOf?.(panel.fileId) ?? useAssetStore.getState().byId[panel.fileId]?.mtime
       const res = await restoreHistory(panel.fileId, version.n, mtime)
       // 文件、基线、当前面板的 overrides 三者对齐，否则下次进编辑态又会打架
       // 恢复来的条目带着它们写下那一刻的身份，原样放回（ADR 0083）

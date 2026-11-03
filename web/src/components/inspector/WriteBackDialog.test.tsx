@@ -396,6 +396,46 @@ describe('前置校验的入参', () => {
   })
 })
 
+describe('确认框打开时锁定的 mtime 基线（QA-WIN-50）', () => {
+  const captureBodies = (status = 200, body: unknown = OK_BODY) => {
+    const bodies: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/engine/update_source')) {
+        bodies.push(String(init?.body))
+        return new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ figures_dir: '/figs', panels: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as typeof fetch
+    return bodies
+  }
+
+  it('框开着时素材 store 刷新了 mtime，提交仍带打开那一刻的旧值', async () => {
+    const bodies = captureBodies()
+    render()
+    act(() => {
+      useAssetStore.setState({ byId: { 'Fig1.pdf': { mtime: 1793268487 } } } as never)
+    })
+    await confirm()
+    expect(JSON.parse(bodies[0]).expected_mtime).toBe(1755000000)
+  })
+
+  it('后端回 409 source_changed：显示现有那一句', async () => {
+    captureBodies(409, { error: 'x', code: 'source_changed', file: 'Fig1.pdf' })
+    render()
+    act(() => {
+      useAssetStore.setState({ byId: { 'Fig1.pdf': { mtime: 1793268487 } } } as never)
+    })
+    await confirm()
+    expect(text()).toContain('Fig1.pdf 已在外部改动')
+  })
+})
+
 /**
  * 确认页的信息结构（审计 T34）。
  *

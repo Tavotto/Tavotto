@@ -1,5 +1,5 @@
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
@@ -238,10 +238,26 @@ export function WriteBackDialog({
   const [withAnnotations, setWithAnnotations] = useState(false)
   const backupDir = useProjectStore((s) => s.project?.backup_dir) ?? 'cache/original_backups'
   const objects = useDocumentStore((s) => s.doc.objects)
-  const assets = useAssetStore((s) => s.byId)
   const stems = panels.map((p) => stemOf(p.fileId))
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const fileIds = [...new Set(panels.map((p) => p.fileId))]
+  // 确认框打开时锁定原图的 mtime 基线：框开着期间素材 store 会刷新（/api/panels），
+  // 提交若取刷新后的值，后端的 source_changed 校验就形同虚设（QA-WIN-50）。
+  // 每个 fileId 只在框开着时第一次见到它的那一刻取一次；框关掉即清空。
+  const baselineRef = useRef(new Map<string, number>())
+  const fileKey = fileIds.join('\n')
+  useEffect(() => {
+    if (!open) {
+      baselineRef.current.clear()
+      return
+    }
+    const byId = useAssetStore.getState().byId
+    for (const f of fileKey.split('\n')) {
+      const m = byId[f]?.mtime
+      if (m && !baselineRef.current.has(f)) baselineRef.current.set(f, m)
+    }
+  }, [open, fileKey])
+  const baselineOf = (fileId: string) => baselineRef.current.get(fileId)
   const recordsByFile = useWriteBackRecords(fileIds, open && !detached)
   const hasRecords = fileIdsWithRecords(fileIds, recordsByFile).length > 0
   const shownPage = hasRecords ? page : 'write'
@@ -287,7 +303,7 @@ export function WriteBackDialog({
       const useAnn = withAnnotations && annCount > 0
       const res = await runWriteBack(
         panels,
-        (fileId) => assets[fileId]?.mtime,
+        baselineOf,
         useAnn ? annMap : undefined,
       )
       setResult(res)
@@ -338,6 +354,10 @@ export function WriteBackDialog({
           'done',
         )
     } catch (e) {
+      // 框开着期间原图被换过：后端已拒绝且零改动；把素材列表刷新到最新，用户关掉重开即以新版为基线
+      if (e instanceof WriteBackFailure && e.api?.body?.code === 'source_changed') {
+        void useAssetStore.getState().load()
+      }
       setError(
         e instanceof WriteBackFailure
           ? e
@@ -488,6 +508,7 @@ result ? (
             panels={panels}
             byFile={recordsByFile}
             focusFileId={panels[0]?.fileId}
+            mtimeOf={baselineOf}
             onDone={() => onOpenChange(false)}
           />
         </TabPanel>
