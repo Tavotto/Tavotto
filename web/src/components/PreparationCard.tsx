@@ -1310,7 +1310,10 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
     (view.state === 'no_figure_raster'
       ? // 没有落盘文件（动态路径 / 只 show / 文件还没出现）：不说「画成图片」，说「画的、不能直接编辑」（ADR 0143 修订 2026-10-23）
         pt(report?.no_figure_hint?.path ? 'rasterHint.line' : 'rasterHint.lineNoFile', view.sentence.values)
-      : pt(`line.${view.sentence.key}`, view.sentence.values))
+      : view.sentence.key === 'tex'
+        ? // TeX 失败：说 errors:backend.<code> 那句针对性说明（缺命令 / 缺宏包 / 编译错误）
+          translate(`backend.${String(view.sentence.values.code)}`, { ns: 'errors', ...view.sentence.values })
+        : pt(`line.${view.sentence.key}`, view.sentence.values))
   const originView = localError ? null : originViewOfCard(view.state)
   const attrs = {
     'data-prep-state': localError ? 'action_failed' : view.state,

@@ -260,6 +260,8 @@ const FAILURE_STATES = new Set([
  * AI 只是次选（它会在可读范围里找文件、经用户确认后接上，不改脚本）。不并进 FAILURE_STATES：那会改掉它的 remedy / 主按钮行为。
  */
 const AI_SECONDARY_ONLY_STATES = new Set(['missing_data'])
+/** 后端 `texdiag.ERROR_CODES`（errors.json 的 backend.<code> 各有两种语言的说明） */
+const TEX_CODES = new Set(['tex_command_missing', 'tex_package_missing', 'tex_compile_failed', 'tex_failed'])
 const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figure', 'not_registered'])
 /** Python 版本不合时主按钮换成「改用 <环境名>」/「选择运行环境」的卡（其余失败卡的主按钮照旧） */
 const PYTHON_FIX_STATES = new Set(['failed', 'blocked'])
@@ -274,7 +276,13 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
   if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
   // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
   // 解释器写不了 Tavotto 自己的缓存：用户代码一行没跑，改脚本没用——同样只留确定的那一颗主按钮，不摆 AI 入口
-  if (view.state === 'folder_unreadable' || view.state === 'folder_abi' || view.state === 'cache_denied') {
+  // TeX 命令 / 宏包缺失同理：这是系统里的 TeX 发行版，改脚本没用（QA-WIN-29）
+  if (
+    view.state === 'folder_unreadable' ||
+    view.state === 'folder_abi' ||
+    view.state === 'cache_denied' ||
+    view.state === 'tex_missing'
+  ) {
     return { ...view, remedy, aiFix: false }
   }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
@@ -644,6 +652,16 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           const values = { script, folder: String(params?.folder ?? ''), abi: String(params?.abi ?? ''), current: String(params?.current ?? '') }
           return view('folder_abi', 'folderAbi', values, { kind: 'skip_folder', token }, { tone: 'bad', step: 1 })
         }
+      }
+      if (TEX_CODES.has(code)) {
+        // TeX 工具链失败（缺命令 / 缺宏包或字体 / 编译错误 / 原因不明）：说 errors:backend.<code> 那句针对性说明，
+        // 不再落成笼统的「运行出错了」。参数来自后端 `pool.recovery_params`（command / file / line）；
+        // `tex_failed` 的 {{error}} 取 traceback 末行，与失败卡详情同一读法
+        const params = report.result?.error?.params
+        const tb = (report.result?.error?.traceback ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+        const values = { ...v, ...params, code, error: String(tb[tb.length - 1] ?? report.result?.error?.message ?? '') }
+        const missing = code === 'tex_command_missing' || code === 'tex_package_missing'
+        return view(missing ? 'tex_missing' : 'failed', 'tex', values, runPrimary(report, 'retry') ?? fallback, { tone: 'bad', step: 1 })
       }
       // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次
       return view('failed', fellBack(report) ? 'failedAfterFallback' : 'failed', v, runPrimary(report, 'retry') ?? fallback, {
