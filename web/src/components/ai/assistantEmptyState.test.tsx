@@ -115,6 +115,16 @@ describe('还没发过任务时的信息布局', () => {
     expect(empty!.contains(q('[data-ai-input]'))).toBe(false)
   })
 
+  it('空态的图形是 64px 的 searching 思考小球（ADR 0165），不是线稿', async () => {
+    await mount({ withPanel: true })
+    const state = q('[data-ai-empty] [data-empty-state]')!
+    const orb = state.querySelector<HTMLCanvasElement>('canvas[data-thinking-orb]')
+    expect(orb?.dataset.thinkingOrb).toBe('searching')
+    expect(orb?.dataset.thinkingOrbTone).toBe('settled')
+    expect(orb?.style.width).toBe('64px')
+    expect(state.querySelector('svg')).toBeNull()
+  })
+
   it('空态里至多三条示例提示，取自 chipsFor；点一下填进输入框', async () => {
     await mount({ withPanel: true })
     const examples = qa<HTMLButtonElement>('[data-ai-example]')

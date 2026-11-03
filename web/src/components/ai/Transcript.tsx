@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Pencil, RefreshCw, Sparkles, Wrench, type IconComponent } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot as RowIconSlot } from '@/components/ui/Icon'
+import { ThinkingOrb, type OrbForm } from '@/components/ui/ThinkingOrb'
 import { SwapText } from '@/components/ui/SwapText'
 import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
@@ -289,6 +290,12 @@ export function Turn({
           换字原位换（第二十三节）：`data-ai-status` 跟着字走——用例与诊断认它。
           执行器与总耗时是这一行的前后缀，不进 SwapText */}
       <p data-ai-turn-meta className="flex min-w-0 items-baseline gap-1 text-sm text-ink-3">
+        {/* 发出后到第一个字之间：状态行前面一颗 16px 的 connecting 小球（ADR 0165）；一有过程输出，小球交给过程行 */}
+        {running && groups.length === 0 && (
+          <RowIconSlot className="mr-1 self-start" data-ai-awaiting-first>
+            <ThinkingOrb form="connecting" />
+          </RowIconSlot>
+        )}
         <span className="shrink-0">{sessionAgentLabel(caps, session)} ·</span>
         <SwapText
           text={statusText(session)}
@@ -429,14 +436,29 @@ function stepSummary(step: Step): string {
   return [verb, arg].filter(Boolean).join(' ')
 }
 
+/** 进行中那一步的小球形态：思考 → breathing，运行脚本（`$`）→ solving，其余动作（读 / 改）→ composing */
+function liveForm(step: Step): OrbForm {
+  if (step.kind !== 'action') return 'breathing'
+  return ACTION_MARK.exec(step.text)?.[1] === '$' ? 'solving' : 'composing'
+}
+
 /** 14px 图标列：常态是种类图标，hover 时换成 chevron（不 hover 不显示展开提示，§6.2） */
-function IconSlot({ Icon, open, expandable }: { Icon: IconComponent; open: boolean; expandable: boolean }) {
+function IconSlot({
+  Icon,
+  glyph,
+  open,
+  expandable,
+}: {
+  Icon?: IconComponent
+  /** 代替 `Icon` 画在同一格里（过程组的思考小球） */
+  glyph?: ReactNode
+  open: boolean
+  expandable: boolean
+}) {
+  const fade = cn('col-start-1 row-start-1 transition-opacity duration-fast', expandable && 'group-hover/row:opacity-0')
   return (
     <span aria-hidden className="grid size-3.5 shrink-0 place-items-center text-ink-3">
-      <Icon
-        size={ICON_SIZE.sm}
-        className={cn('col-start-1 row-start-1 transition-opacity duration-fast', expandable && 'group-hover/row:opacity-0')}
-      />
+      {glyph ? <span className={cn('grid place-items-center', fade)}>{glyph}</span> : Icon && <Icon size={ICON_SIZE.sm} className={fade} />}
       {expandable && (
         <ChevronRight
           size={ICON_SIZE.sm}
@@ -478,7 +500,12 @@ function ProcessGroup({ items, live, defaultOpen }: { items: Step[]; live: boole
     if (actions) parts.push(ai('panel.processSteps', { count: actions }))
     summary = parts.join(' · ')
   }
-  const LeadIcon = actions ? Wrench : Sparkles
+  // 组首是思考小球（ADR 0165）：进行中按最新一步换形态；结束后 ink-3、半速，仍在动——纯思考是呼吸的环，动过手是 listening
+  const lead = live ? (
+    <ThinkingOrb form={liveForm(items.at(-1)!)} />
+  ) : (
+    <ThinkingOrb form={actions ? 'listening' : 'breathing'} tone="settled" />
+  )
 
   return (
     <div data-ai-process>
@@ -489,7 +516,7 @@ function ProcessGroup({ items, live, defaultOpen }: { items: Step[]; live: boole
         aria-expanded={open}
         className={cn(ROW_BUTTON, 'h-7 text-base text-ink-3 hover:text-ink-2')}
       >
-        <IconSlot Icon={LeadIcon} open={open} expandable />
+        <IconSlot glyph={lead} open={open} expandable />
         <span className={cn('min-w-0 truncate', live && 'text-shimmer')}>{summary}</span>
       </button>
       {/* 展开是跟着内容长高（Reveal），不是一整块瞬间跳出来 */}

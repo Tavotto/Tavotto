@@ -36,6 +36,6 @@ order: 120
   沿用带 patch 的会话会让画布账本与引擎状态对不上。这条同时堵掉「批量填满预算 →
   照指引再单独开一张看画布 → 静默挤掉这批里先开的那个」。真发生淘汰时
   `_evict_if_needed()` 返回被淘汰的 id，open 的文字里**必须说出口**。
-- **会话不抱 worker 引用**：池的 `MAX_ALIVE` 与桥的 `MAX_SESSIONS` 是两个数，
+- **会话不抱 worker 引用**：池的上限（`pool.max_alive()`）与桥的 `MAX_SESSIONS` 是两个数，
   必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
   会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。

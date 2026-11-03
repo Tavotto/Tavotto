@@ -97,6 +97,9 @@ def test_two_processes_writing_get_strictly_increasing_unique_revs(db):
         from pathlib import Path
         from tavotto.engine import ai_history
         ai_history.DB_PATH = Path(sys.argv[1])
+        # 这条用例量的是「版本号不撞、不回退」，不是等锁的上限：两个子进程背靠背写 80 次，慢盘（Windows runner 上
+        # 整段 5–35 s）下被饿的一方会在默认 10 s 到点 `database is locked`（合并组 5 次，只在 Windows 腿）。
+        ai_history.BUSY_TIMEOUT_S = 300.0
         tag = sys.argv[2]
         for i in range(40):
             sid = f"{tag}-{i}"

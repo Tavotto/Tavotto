@@ -2,7 +2,7 @@
 
 > 原文出自 `.github/AGENTS.md`「CI 分层（1.0 稳定化，2026-08-21 起）」（2026-09-18 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`、`tests/test_aggregate_gate.py`
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`（含 `TestMergeGroupFailFast`）、`tests/test_aggregate_gate.py`（含 `TestMergeGroupFailFastAttribution`）
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记）
 
 <!-- agents-route
@@ -78,6 +78,49 @@ run，09:35:34Z 的 push 才起了 CI / CodeQL / conflict domains 三个。看�
 的读改写，两条并行的叠栈链各带一个新证据 workflow 时谁后合谁的合并组就红。新加一个 PR 级
 workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercore.yml` /
 `private-python-targets.yml` 已经带了）。
+
+**合并组快速失败（2026-11-03）。** 事实：2026-10-13 ~ 11-02 的 525 个合入 PR 里 27% 被队列踢过，
+81% 的踢出是合并组检查红；抽样 46 条失败 run，第一个真实红 job 中位 38.6 分钟出现，而
+`CI integration gate` 要等五条重腿全结束，中位 69 分钟才红——每个红组白占 runner 约 30 分钟
+（免费计划总共 20 个并发槽）。做法：`backend-platforms` / `package` / `windows-exe-smoke` /
+`macos-app-smoke` / `posix-e2e` 各自的**最后一步**（`if: failure() && github.event_name == 'merge_group'`）
+执行 `gh run cancel $GITHUB_RUN_ID`，其余 job 被取消，Gate 照跑。**为什么不会让 required check 缺席**：
+两个 Gate 都是 `if: always()`，官方 workflow-cancellation 文档写明取消开始时服务端重新求值条件，
+`always()` 为真的 job 继续运行；它们的上游此时是 failure + cancelled，`aggregate_gate.py`
+一律判红（cancelled 从来不算通过），verdict 另给 `root_failures` / `cancelled_by_fail_fast`
+让人先看真红的那条（`fail_fast_attribution()`，纯函数；workflow 里没有任何判定）。
+**与「merge_group 不许被取消」不矛盾**：那条防的是**外部**取消（Gate 没机会给结论、候选白等
+90 分钟）；这里是 run 自己判红后的收尾，Gate 一定产出红结论。边界与取舍：
+* 只在 `merge_group`：PR / push / full-ci 的 run 不变（步骤的 `if` 钉死事件）；required check 名与两个
+  Gate 的 `needs` / `--required` 闭集不变，ruleset 不用动（也就无迁移顺序可言）；
+* 取消放在各腿最后一步，诊断产物上传（`if: failure()`）先做完；取消请求失败（`|| true`）不改变本 job 已红；
+* 权限：只有这五个 job 在 job 级加 `actions: write`（顶层仍 `contents: read`）；`actions: write` 也会出现在
+  同仓库 PR 的 full-ci run 里（permissions 不能按事件条件写），fork PR 的 token 本就只读；
+* 代价：同组里另外几条腿若也红，它们被取消、看不到——先看 Gate summary 的 `root_failures`，要全貌就重跑。
+  取消后其余腿显示 cancelled 是**预期**（L-114 的「裸 cancelled 先核时长」只对没有任何 failure 的 cancelled 适用）；
+* **红腿自己也显示 cancelled**：`gh run cancel` 取消的是整个 run，红腿的 job 结论也被改成 cancelled，
+  needs 里看不出谁真红（2026-11-03 本 PR 进队的第一个红组实测：`backend-platforms (macos-latest, 6)` 的
+  pytest 红，job 却是 cancelled；Gate 在取消后约 2 分钟以 failure 完成，机制本身成立）。所以 integration
+  Gate 在 merge_group 上先读本 run 各 job 的**步骤**结论（步骤结论不受取消影响；Gate 为此有 `actions: read`、
+  没有 write），经 `RUN_JOBS_FILE` 环境变量交给判定器，`root_failures` 写「job 显示名 · 失败步骤」。走环境变量
+  而不是新参数：判定器取自默认分支，新参数在合入前会让旧判定器 argparse 报错。取不到就留空，不改变结论；
+* 生效判据（合入后核）：红组里 Gate 在红腿之后几分钟内出现 failure、summary 写出真红的「job · 步骤」、其余腿
+  cancelled；若 Gate 没出结论（候选超时），回滚 = revert 本提交，Gate 与闭集本就没动。
+看护：`TestMergeGroupFailFast`（最后一步、只在 merge_group、不含判定、只有五腿拿 `actions: write`、
+check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actions、归因步骤只在 merge_group 且取不到不打红、
+归因经环境变量）、`TestMergeGroupFailFastAttribution`、`TestFailFastRootFromRunJobs`。
+
+**main 红时修复插到队首（2026-11-03）。** 事实：10-13 ~ 11-02 Windows 腿红的 194 个合并组 run 里约 67%
+是**连坐**——一个坏提交（两个各自绿的 PR 的组合、或没带 full-ci 的 Windows-only 缺陷）进了 main 或排在队列前面，
+之后每个组都带着它红；只对应 84 个独立事件。10-31 两个 PR 撞了同一个 ADR 号 0154，合入后 main 红，修复 PR 排在
+队尾，7.5 小时里连踢 12 次。队列同时构建 4 组（`maximumEntriesToBuild`），main 不修好，排在前面的每一组都白跑。
+规则：
+* **「main 红」的判据**：main 的 push run 红在同一条用例，或**同一条用例**在 ≥ 2 个不同 PR 的合并组上红（只一组红是
+  那个 PR 自己的事，正常踢出即可，不插队）。
+* 满足时，**只修这条红**的那个 PR 门槛满足后插到队首：GraphQL `enqueuePullRequest(input: {pullRequestId, jump: true,
+  expectedHeadOid})`（管理员；`expectedHeadOid` 防止入的不是审过的 head）；GitHub 界面是 PR 页合并框的「Jump to
+  front」。插队不降门槛：Codex / CI / 线程照档位全满足才插。
+* 不为别的理由插队（赶发版、「这个 PR 很小」）：插队会让排在前面的组全部重建。
 
 **碰 Windows 路径 / 进程 / 安装的 PR，开 PR 时就打 `full-ci` 并看 Windows 腿（错题本 L-096 升级，
 2026-11-03）。** PR 级 CI 不跑 Windows 后端，只在 Windows 显形的缺陷（fsync 只读句柄、cp1252 编码、

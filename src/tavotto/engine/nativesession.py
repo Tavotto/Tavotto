@@ -12,7 +12,7 @@ tavotto run CLI  ──relay──  这里（sidecar）  ──HTTP/SSE──  W
 
 | 池的语义 | 对 native 会话意味着 |
 |---|---|
-| 超出 `MAX_ALIVE` 按 LRU 淘汰 → `shutdown()` | **杀掉用户正在跑的脚本** |
+| 超出 `max_alive()` 按 LRU 淘汰 → `shutdown()` | **杀掉用户正在跑的脚本** |
 | `unknown_session → reopen`（workerd） | 重跑用户的命令——那是一次具体 invocation，不可透明重建 |
 | key = (figures_dir, script) | native 的身份还含 cwd / argv / env / 解释器 |
 | 进程属主 = sidecar | native 的进程属主是 **CLI** |

@@ -1344,6 +1344,11 @@ class Worker(wireproto.V1Handler):
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
         #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
         self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
+        #: 图名别名表（`--stem-aliases`，ADR 0162；父进程按注册表给）：收图之后把原图名换成登记图名
+        try:
+            self.stem_aliases = figcapture.parse_stem_aliases(getattr(args, "stem_aliases", None))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
         #: 用户在失败卡上选了「跳过这个文件夹」的目录（`--ignore-paths`，ADR 0154；父进程按项目给）：
         #: 顶层导入不再去那里找。与 native bridge 同一个装配点；没有名单什么都不装。
         bridgeboot.install_ignored_import_paths(
@@ -1930,6 +1935,18 @@ class Worker(wireproto.V1Handler):
                     file=sys.stderr,
                 )
                 self.dropped_figures = dropped
+        # 同名不同脚本、分开登记过的图（ADR 0162）：名字定下来之后、进编辑会话之前换成登记图名，三条入口同一个函数
+        renames: dict = {}
+        figcapture.apply_stem_aliases(
+            self.stem_aliases,
+            self.session.capture,
+            self.session.capture_source,
+            self.session.savefig_calls,
+            self.session.savefig_extras,
+            self.session.savefig_file_stem,
+            renames=renames,
+        )
+        self.session.rename_stems(renames)
 
         # 存盘后又被改过的图：能还原保存那一刻的 Figure 就用它当编辑基础（ADR 0139 §九）
         self.session.adopt_save_moments()
@@ -2373,6 +2390,8 @@ def main() -> None:
     ap.add_argument("--write-roots", default=None)
     # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
     ap.add_argument("--ignore-paths", default=None)
+    # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
+    ap.add_argument("--stem-aliases", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

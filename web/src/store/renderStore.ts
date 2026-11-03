@@ -20,6 +20,7 @@ import {
   INPUT_REMAP_CHANGED_CODE,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
+import { RENDER_DEFERRED_CODE, type RenderPurpose } from '@/lib/renderPurpose'
 import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
 import { noticeWorkdirHint, workdirHintOwner, type WorkdirHintNoticeDeps } from '@/lib/workdirHintNotice'
@@ -146,6 +147,12 @@ export interface PanelRender {
   lastPatches: string | null
   /** 已排队但尚未完成的 patches，避免同一批改动被重复排期 */
   wantPatches: string | null
+  /**
+   * 后端对这一版的**后台补渲染**说了「暂缓」（会话池已满，`RENDER_DEFERRED_CODE`）：记下是哪一版。
+   * 同步器据此不再以后台身份重发同一版（否则每次渲染态变化都重试一遍，白占一个请求）；用户进编辑 / 脚本变更 /
+   * 值变了 = 这一版不再是「后台」或不再是这一版，照常发。成功渲染与 `markStale` 清它。
+   */
+  deferredPatches?: string | null
   /**
    * 最近一次渲染用的预览 dpi；null = 默认（定稿质量）。
    * 连续调整期间含图像的面板会降质换快显，松手后必须有人把它重发成
@@ -323,6 +330,8 @@ interface RenderState {
     policy?: RenderRequestPolicy,
     epoch?: number,
     artifactValidation?: AdoptionGuard | null,
+    /** 缺省 foreground；`neighbour` 见 `lib/renderPurpose`（调度只住 `renderScheduler`，别处不要传）。 */
+    purpose?: RenderPurpose,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -374,7 +383,7 @@ const inflight = new Map<
   string,
   {
     busy: boolean
-    queued: { patches: unknown[]; previewDpi?: number; seq: number } | null
+    queued: { patches: unknown[]; previewDpi?: number; seq: number; purpose: RenderPurpose } | null
     /** 此刻那次尝试的 abort（`invalidateInflight` 用；看门狗用的是同一个） */
     abort?: () => void
   }
@@ -661,7 +670,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       } } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation) => {
+  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground') => {
     // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
     // 渲染的却是旧项目的 fileId 与 patches）
     if (epoch !== undefined && epoch !== projectEpoch) return
@@ -676,7 +685,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     if (slot.busy) {
       // 同一变体的重复请求：只有 dpi 可能不同（patches 相同才是同一个键），
       // 排在后面的那次说了算——松手后的定稿渲染必须盖住拖动中的低清那次
-      slot.queued = { patches, previewDpi, seq }
+      // 同键只要有一次是前台，排队的那次就按前台发（后台补渲染不能把用户在等的请求降级）
+      slot.queued = {
+        patches,
+        previewDpi,
+        seq,
+        purpose: purpose === 'foreground' || slot.queued?.purpose === 'foreground' ? 'foreground' : 'neighbour',
+      }
       return
     }
     slot.busy = true
@@ -689,6 +704,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     try {
       let current = patches
       let dpi = previewDpi
+      let currentPurpose = purpose
       for (;;) {
         patch(key, {
           fileId,
@@ -720,7 +736,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
           const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
-          const opts = { signal: ctrl.signal, previewDpi: dpi, ...source }
+          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source }
           const transport = engineTransport()
           if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
           // 性能探针（ADR 0075）：松手 → 图落定那段时间的第一个时刻
@@ -762,6 +778,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             timings: res.timings ?? {},
             stale: false,
             lastPatches: JSON.stringify(current),
+            deferredPatches: null,
             previewDpi: dpi ?? null,
           }
           // 沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊，同一份证据只提醒一次
@@ -860,8 +877,22 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             current = slot.queued.patches
             dpi = slot.queued.previewDpi
             seq = slot.queued.seq
+            currentPurpose = slot.queued.purpose
             slot.queued = null
             continue
+          }
+          // 后台补渲染被暂缓（会话池已满）：不是失败。回到发请求之前的样子——有过一版就仍是那一版（ready），
+          // 没有就 idle；不留错误块、不弹提示。wantPatches 清掉、deferredPatches 记下，同步器不会以后台身份重发
+          if (err instanceof EngineError && err.code === RENDER_DEFERRED_CODE) {
+            patch(key, {
+              fileId,
+              status: get().byKey[key]?.lastPatches != null ? 'ready' : 'idle',
+              error: null,
+              code: '',
+              wantPatches: null,
+              deferredPatches: JSON.stringify(current),
+            })
+            return
           }
           // 首开要先选运行目录（U03）：不是错误块，是一次确认——载荷交给 envStore，
           // `WorkdirConfirmDialog` 渲染它；条目上也留一份，「稍后」之后还能再开
@@ -922,6 +953,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         current = slot.queued.patches
         dpi = slot.queued.previewDpi
         seq = slot.queued.seq
+        currentPurpose = slot.queued.purpose
         slot.queued = null
       }
     } finally {
@@ -986,7 +1018,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         let touched = 0
         for (const [k, v] of Object.entries(byKey)) {
           if (v.fileId !== id) continue
-          byKey[k] = { ...v, stale: true, lastPatches: null, wantPatches: null,
+          byKey[k] = { ...v, stale: true, lastPatches: null, wantPatches: null, deferredPatches: null,
             ...(v.artifactValidation ? { manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}) }
           touched++
         }

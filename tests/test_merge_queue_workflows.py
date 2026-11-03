@@ -1740,6 +1740,8 @@ class TestPlaywrightShards:
             assert sum(nm.startswith(prefix) for nm in names) == n, (prefix, names)
         conditional = [_step_name(s) for s in steps if re.search(r"(?m)^        if:", s)]
         uploads = [_step_name(s) for s in steps if "uses: actions/upload-artifact@" in s]
+        # 唯一的另一个许可：最后一步的 merge_group 快速失败（TestMergeGroupFailFast 钉它的形状）
+        uploads += [n for n in names if n.startswith("merge_group 快速失败")]
         assert conditional and set(conditional) <= set(uploads), (
             f"这些步骤带了 if:（只有 artifact 上传可以）：{sorted(set(conditional) - set(uploads))}"
         )
@@ -3618,3 +3620,134 @@ with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.
             encoding="utf-8",
         )
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ============================================================ merge_group 快速失败（合并组一红即收尾）
+class TestMergeGroupFailFast:
+    """重腿红后取消本 run 其余 job，让 CI integration gate（always()）尽早红。
+
+    主语：ci.yml 里五条重腿各自的**最后一步**。钉住：只在 merge_group 生效、required
+    check 名与 Gate 闭集不变、判定不进 workflow、权限最小、取消在诊断产物之后。"""
+
+    HEAVY = ["backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e"]
+    STEP_NAME = "merge_group 快速失败"
+
+    @staticmethod
+    def _steps(job_block: str) -> list[str]:
+        return re.split(r"(?m)^(?=      - )", job_block.split("\n    steps:\n", 1)[1])[1:]
+
+    def _last_step(self, job_id: str) -> str:
+        steps = self._steps(_code(_job(CI, job_id)))
+        return steps[-1]
+
+    @pytest.mark.parametrize("job_id", HEAVY)
+    def test_the_last_step_of_every_heavy_leg_is_the_merge_group_only_cancel(self, job_id):
+        step = self._last_step(job_id)
+        assert self.STEP_NAME in step, f"{job_id} 最后一步不是快速失败步骤"
+        cond = re.search(r"(?m)^        if: (.+)$", step)
+        assert cond, "快速失败步骤没有 if"
+        assert "failure()" in cond.group(1)
+        assert "github.event_name == 'merge_group'" in cond.group(1)
+        assert "pull_request" not in cond.group(1) and "always()" not in cond.group(1)
+        assert "gh run cancel" in step and "$GITHUB_RUN_ID" in step
+
+    def test_the_step_carries_no_verdict_logic(self):
+        """判定只在 aggregate_gate.py：这一步只许 echo + 取消，不许读结论 / exit。"""
+        for job_id in self.HEAVY:
+            body = re.search(r"run: \|\n((?:          .*\n?)+)", self._last_step(job_id)).group(1)
+            lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+            assert (
+                len(lines) == 2
+                and lines[0].startswith("echo ")
+                and lines[1].startswith("gh run cancel ")
+            ), lines
+            assert lines[1].endswith("|| true"), "取消失败不得改变本 job 已红的结论"
+
+    def test_only_the_five_heavy_legs_may_cancel_a_run(self):
+        code = _code(CI)
+        assert code.count("gh run cancel") == len(self.HEAVY)
+        for job_id in ("ci-fast-gate", "ci-integration-gate"):
+            assert "gh run cancel" not in _job(CI, job_id), f"{job_id} 不该取消 run"
+
+    def test_actions_write_is_granted_to_exactly_the_five_legs(self):
+        assert re.search(r"(?ms)^permissions:\n  contents: read\n(?=\S|\n)", CI), "顶层应保持只读"
+        holders = {
+            m.group(1)
+            for m in re.finditer(
+                r"(?m)^  ([\w-]+):\n(?:(?!^  [\w-]+:\n).*\n)*?    permissions:\n      contents: read\n      actions: write\n",
+                CI,
+            )
+        }
+        assert holders == set(self.HEAVY), holders
+        assert _code(CI).count("actions: write") == len(self.HEAVY)
+
+    @pytest.mark.parametrize("job_id", HEAVY)
+    def test_cancel_comes_after_every_failure_artifact_upload(self, job_id):
+        steps = self._steps(_code(_job(CI, job_id)))
+        for i, st in enumerate(steps):
+            if "upload-artifact" in st:
+                assert i < len(steps) - 1, f"{job_id} 的诊断产物上传排在取消之后"
+
+    def test_required_check_names_and_gate_closed_sets_are_untouched(self):
+        assert list(MQ.GATE_CONTEXTS) == ["CI fast gate", "CI integration gate", "CodeQL gate"]
+        g = _job(CI, "ci-integration-gate")
+        assert "name: CI integration gate" in g
+        assert _needs_of(g) - {"docs-scope"} == set(self.HEAVY) == _required_of(g)
+        assert "if: ${{ always() &&" in g, "取消后 Gate 要靠 always() 继续跑并判红"
+
+    def test_integration_gate_reads_but_never_writes_actions(self):
+        """归因要读本 run 各 job 的步骤结论（actions: read）；Gate 不取消任何东西，不许 write。"""
+        g = _job(CI, "ci-integration-gate")
+        assert "    permissions:\n      contents: read\n      actions: read\n" in g
+        assert "actions: write" not in _code(g)
+        assert "actions:" not in _code(_job(CI, "ci-fast-gate"))
+
+    def test_attribution_step_is_merge_group_only_and_precedes_the_verdict(self):
+        g = _job(CI, "ci-integration-gate")
+        i = g.index("- name: 快速失败归因：读本 run 各 job 的失败步骤")
+        assert g.index("- name: 聚合判定") > i
+        step = g[i : g.index("- name:", i + 1)]
+        assert "if: ${{ github.event_name == 'merge_group' }}" in step
+        assert "|| : >" in step, "取不到就留空，不能让归因步骤把 Gate 打红"
+
+    def test_run_jobs_reach_the_trusted_judge_by_env_not_cli(self):
+        """判定器取自默认分支：新命令行参数在合入前会让旧判定器 argparse 报错（bootstrap）。"""
+        g = _job(CI, "ci-integration-gate")
+        assert "RUN_JOBS_FILE: ${{ github.event_name == 'merge_group' &&" in g
+        assert "--run-jobs" not in g
+
+    def test_cancel_in_progress_is_still_pull_request_only(self):
+        assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in CI
+
+
+class TestEvidenceUploadsNeverFailTheJob:
+    """`if: always()` 的工件上传只作证据（分片清单、junit、harness 证据），不作判定输入；上传失败不得把 job 打红。
+
+    2026-11-03 合并组 run 41566707476：pytest 全绿，`分片证据` 上传时 artifact 服务 `ETIMEDOUT`，
+    job 红 → 快速失败取消整个 run → 整组踢出队列。判定只看测试本身；证据丢了是数据缺口，不是资格问题。
+    """
+
+    def _always_uploads(self):
+        steps = re.findall(r"(?ms)^(\s*)- name: ([^\n]+)\n((?:\1  [^\n]*\n|\s*\n)*)", CI)
+        out = []
+        for _ind, name, body in steps:
+            if "uses: actions/upload-artifact@" in body and re.search(
+                r"(?m)^\s*if: always\(\)\s*$", body
+            ):
+                out.append((name.strip(), body))
+        return out
+
+    def test_the_scan_sees_the_known_evidence_uploads(self):
+        names = [n for n, _ in self._always_uploads()]
+        assert names.count("分片证据") == 2, names
+        assert "上传分片自验证据" in names and any(
+            n.startswith("首开 / 输出 harness 证据") for n in names
+        ), names
+
+    def test_every_always_upload_continues_on_error(self):
+        bad = [
+            n
+            for n, body in self._always_uploads()
+            if not re.search(r"(?m)^\s*continue-on-error: true\s*$", body)
+        ]
+        assert bad == [], f"这些证据上传失败会把 job 打红、把整组踢出队列：{bad}"

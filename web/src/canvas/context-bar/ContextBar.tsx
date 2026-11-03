@@ -16,6 +16,7 @@ import { useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
 import { CropBar } from './CropBar'
+import { DragStatusBar } from './DragStatusBar'
 import { ElementQuickActions } from './ElementBar'
 import { ElementMultiBar, annotationsIn, elementMultiPlan, selectedElements } from './ElementMultiBar'
 import { elementHasQuick } from './elementQuick'
@@ -71,7 +72,17 @@ const rectOf = (r: DOMRect): ScreenRect => ({
   height: r.height,
 })
 
+/** 选中对象旁的快捷条 + 拖动中的状态胶囊（`DragStatusBar`，读 `interaction.dragStatus`，两只互不影响） */
 export function ContextBar() {
+  return (
+    <>
+      <ContextBarBody />
+      <DragStatusBar />
+    </>
+  )
+}
+
+function ContextBarBody() {
   useTranslation('workspace')
   const ids = useSelectionStore((s) => s.ids)
   const gids = useUiStore((s) => s.selectedGids)

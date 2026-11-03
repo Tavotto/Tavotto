@@ -493,13 +493,13 @@ def _other_project(retirement):
 def test_project_close_reclaims_all_three_watcher_retirement_slots(retirement, monkeypatch, wait):
     supervisor = retirement.supervisor
     old = [_acquire(retirement, script)[0] for script in ("fig.py", "other.py", "fresh.py")]
-    assert pool.MAX_ALIVE == len(old) == 3
+    assert pool.max_alive() == len(old) == 3
     for worker, opened in zip(old, supervisor.opens[:]):
         supervisor.call("open_session", payload=opened["payload"])
         (retirement.root / worker.script_name).write_text("NEW SOURCE", encoding="utf-8")
     retirement.watcher.poll()
     supervisor.finish_closes()
-    assert sum(map(len, pool._pending_retirements.values())) == pool.MAX_ALIVE
+    assert sum(map(len, pool._pending_retirements.values())) == pool.max_alive()
     other = _other_project(retirement)
     with pytest.raises(pool.WorkerError) as caught:
         _acquire(other, "fresh.py")

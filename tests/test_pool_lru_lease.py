@@ -64,9 +64,9 @@ def test_lease_ends_at_first_request_so_the_cap_still_holds(project, monkeypatch
     fourth = pool.get("f3.py", str(project), "main")
     everyone = (*workers, fourth)
     deadline = time.monotonic() + 30  # 淘汰在后台线程里优雅关停
-    while sum(w.alive() for w in everyone) > pool.MAX_ALIVE and time.monotonic() < deadline:
+    while sum(w.alive() for w in everyone) > pool.max_alive() and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert sum(w.alive() for w in everyone) == pool.MAX_ALIVE
+    assert sum(w.alive() for w in everyone) == pool.max_alive()
     assert fourth.alive()
     assert workers[0]._evicted  # 最久未用的那条
 

@@ -1,6 +1,8 @@
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { panelFullSize, panelRotation } from '@/types/document'
 import type { OriginalOutputSpec } from './originalSpec'
+import { isZeroPad, ZERO_PAD } from './framePad'
+import type { FramePad } from '@/types/document'
 
 /**
  * 单图编辑（原图口径）带入画布上的标注（QA-WIN-20）。
@@ -21,18 +23,21 @@ import type { OriginalOutputSpec } from './originalSpec'
  *   只剩图内文字的一半大，框里空出一大片。ADR 0028 / 共享规则 §8「不因面板缩小而缩字号」管的是**图自己的**
  *   字号，原图导出照旧不碰；比例恰为 1 时（单图编辑里图幅多被静默校正为真实图幅）只是平移；
  * * 图幅之外的标注被页面裁掉（页面就是图幅），不扩大页面。
+ * * **画布留白**（ADR 0161，`pad`，导出 mm）：页面 = 图幅四周各加留白，面板落在 `(pad.l, pad.t)`，标注同量平移；
+ *   负值由页面裁掉。请求里同一份留白进 `original.pad_mm`，后端按同一规则合成。
  *
- * 没有可见标注（或不是恰好一张可见的图）返回 `null`：调用方照旧发纯原图请求，载荷与从前逐字节一致。
+ * 没有可见标注、也没有留白（或不是恰好一张可见的图）返回 `null`：调用方照旧发纯原图请求，载荷与从前逐字节一致。
  */
 export function singleAnnotatedDocument(
   doc: FigureDocument,
   panel: PanelObject | null,
   spec: OriginalOutputSpec | null,
+  pad: FramePad = ZERO_PAD,
 ): FigureDocument | null {
   if (!panel || panel.hidden) return null
   const visible = doc.objects.filter((o) => !o.hidden)
   if (visible.filter((o) => o.type === 'panel').length !== 1) return null
-  if (!visible.some((o) => o.type !== 'panel')) return null
+  if (!visible.some((o) => o.type !== 'panel') && isZeroPad(pad)) return null
   if (!visible.some((o) => o.id === panel.id)) return null
 
   const full = panelFullSize(panel)
@@ -49,7 +54,7 @@ export function singleAnnotatedDocument(
 
   const mapped: CanvasObject[] = doc.objects.map((o) => {
     if (o.id === panel.id) {
-      const rest: PanelObject = { ...panel, x: 0, y: 0, w: frame.w, h: frame.h }
+      const rest: PanelObject = { ...panel, x: pad.l, y: pad.t, w: frame.w, h: frame.h }
       delete rest.crop
       delete rest.rotation
       delete rest.opacity
@@ -57,9 +62,13 @@ export function singleAnnotatedDocument(
       delete rest.flipV
       return rest
     }
-    return scaleLengths({ ...o, x: (o.x - ox) * sx, y: (o.y - oy) * sy, w: o.w * sx, h: o.h * sy }, (sx + sy) / 2)
+    return scaleLengths(
+      { ...o, x: (o.x - ox) * sx + pad.l, y: (o.y - oy) * sy + pad.t, w: o.w * sx, h: o.h * sy },
+      (sx + sy) / 2,
+    )
   })
-  return { ...doc, page: { ...doc.page, w: frame.w, h: frame.h }, objects: mapped }
+  const page = { w: frame.w + pad.l + pad.r, h: frame.h + pad.t + pad.b }
+  return { ...doc, page: { ...doc.page, ...page }, objects: mapped }
 }
 
 /** 标注里与框一起缩放的各向同性长度量（pt / mm）：字号、线宽、内边距、描边、圆角 */

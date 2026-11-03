@@ -8,6 +8,9 @@ import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useExactPanelManifest } from '@/store/renderStore'
+import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
+import type { PanelObject } from '@/types/document'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -16,7 +19,7 @@ import { acceptsScriptDrag, useCanvasScriptDrop } from './useCanvasScriptDrop'
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
-import { applyStageFit, fitStage, stageFitFrame } from '@/store/zoomToSelection'
+import { applyStageFit, fastEditCanvasBox, fitStage, stageFitFrame } from '@/store/zoomToSelection'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
@@ -84,7 +87,16 @@ export function CanvasStage() {
   // 「适应」看的是哪一块。快速编辑下是那张图的包围盒（图比页面大是常态，
   // 按页面 fit 会把它切掉一半）；排版下是页面。
   // 取景框只有 `stageFitFrame` 一份（⌘1 / 缩放菜单 / 命令面板的 `fitStage` 读同一份）
-  const frame = stageFitFrame(objects, page, fastEdit ? activePanelId : null)
+  // 单图有留白时取景并进画布框（ADR 0161）：订阅留白，框变了 frame 跟着变
+  const framePad = useDocumentStore((s) => s.doc.framePad)
+  const framePadTight = useDocumentStore((s) => s.doc.framePadTight)
+  const fitPanelId = fastEdit ? activePanelId : null
+  const frame = stageFitFrame(
+    objects,
+    page,
+    fitPanelId,
+    fastEditCanvasBox({ objects, framePad, framePadTight }, fitPanelId),
+  )
 
   const pad = showRulers ? RULER_SIZE : 0
 
@@ -305,6 +317,8 @@ export function CanvasStage() {
 
         {/* 页面外画淡、页面轮廓压在内容之上：在世界层之后、选框覆盖层之前 */}
         {!fastEdit && <PageOutsideMask />}
+        {/* 单图编辑有留白时（ADR 0161）：画布之外画淡——伸出画布的图与标注不进导出 */}
+        {fastEdit && <FastEditCanvasMask panelId={activePanelId} objects={objects} />}
         {/* 拖页面四条边改画布大小：只在多图排版（单图编辑没有页面）；命中区在选框覆盖层之下 */}
         {layoutMode && <PageEdgeHandles />}
         {/* 单图编辑：直接拖这张图的四条边改图幅，手感与上面拖页面边一致 */}
@@ -456,11 +470,13 @@ function FastEditPaper({
   const o = panelId ? objects.find((x) => x.id === panelId) : undefined
   // 拖图边改图幅松手后、新图回来之前：背纸一并收起，只留虚线框占位（`FigureEdgeHandles`）
   const pending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
+  const box = useFrameCanvasBox(o?.type === 'panel' ? o : null)
   if (pending) return null
   // 隐藏的图不画，背纸也不画（否则画布上留一块白矩形；取消隐藏图回来、背纸跟着回来）
-  if (!o || o.hidden) return null
+  if (!o || o.hidden || !box) return null
   // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top
   // 上的小数原点吸到整像素，纸与图差半像素就露边。面板没有对象级旋转（`objectRotation` 对面板恒 0）。
+  // 纸 = 画布（图 + 留白，ADR 0161）；没有留白时就是图的框，与此前逐像素相同。
   return (
     <div
       aria-hidden
@@ -469,12 +485,39 @@ function FastEditPaper({
       style={{
         left: 0,
         top: 0,
-        width: mmToWorld(o.w),
-        height: mmToWorld(o.h),
-        transform: `translate(${mmToWorld(o.x)}px, ${mmToWorld(o.y)}px)`,
+        width: mmToWorld(box.w),
+        height: mmToWorld(box.h),
+        transform: `translate(${mmToWorld(box.x)}px, ${mmToWorld(box.y)}px)`,
       }}
     />
   )
+}
+
+/** 单图画布框（页面 mm）：面板 + 生效留白（ADR 0161）。没有留白时就是面板框 */
+function useFrameCanvasBox(panel: PanelObject | null) {
+  const framePad = useDocumentStore((s) => s.doc.framePad)
+  const framePadTight = useDocumentStore((s) => s.doc.framePadTight)
+  const manifest = useExactPanelManifest(panel)
+  if (!panel) return null
+  if (!framePad && !framePadTight?.length) return { x: panel.x, y: panel.y, w: panel.w, h: panel.h }
+  return frameCanvasOf({ framePad, framePadTight }, panel, manifest).box
+}
+
+/** 单图编辑有留白时画布外画淡（同排版页面外的那层遮罩）；没有留白不挂，画面与此前相同 */
+function FastEditCanvasMask({
+  panelId,
+  objects,
+}: {
+  panelId: string | null
+  objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
+}) {
+  const o = panelId ? objects.find((x) => x.id === panelId) : undefined
+  const panel = o?.type === 'panel' ? o : null
+  const hasPad = useDocumentStore((s) => !isZeroPad(s.doc.framePad) || !!s.doc.framePadTight?.length)
+  const pending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
+  const box = useFrameCanvasBox(panel)
+  if (!panel || panel.hidden || !hasPad || pending || !box) return null
+  return <PageOutsideMask rectMm={box} />
 }
 
 /** 画布层的文案在 workspace:stage.* 下 */

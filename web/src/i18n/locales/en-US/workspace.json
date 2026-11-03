@@ -142,6 +142,38 @@
     "cropAria": "Crop",
     "distributeMenu": "Distribute",
     "groupMenu": "Group",
+    "layoutCropBlocked": "Compact · at the content edge; hold {{alt}} to crop into the content",
+    "layoutCropContent": "Crop · {{side}} {{mm}} mm, will cut into the content",
+    "layoutCropFull": "At image edge · {{side}} not cropped",
+    "layoutCropTight": "Compact · {{side}} fits the content",
+    "layoutCropTrim": "Trim whitespace · {{side}} {{mm}} mm",
+    "frameGrow": "Extend canvas · {{side}} +{{mm}} mm",
+    "frameAtEdge": "At figure edge · no margin on {{side}}",
+    "frameTrim": "Tighten margin · {{side}} −{{mm}} mm",
+    "frameTight": "Tight · {{side}} fits content",
+    "frameCrop": "Crop · {{side}} −{{mm}} mm, content will be cut",
+    "frameCanvasSize": "canvas {{w}} × {{h}} mm",
+    "frameCornerUniform": "Resize figure proportionally · width {{from}} → {{to}} mm",
+    "frameCornerFree": "Resize figure · {{fw}} × {{fh}} → {{tw}} × {{th}} mm",
+    "frameCornerDetail": "text keeps its pt size, re-renders on release",
+    "frameWithCol": "{{base}} · snapped to {{col}}",
+    "frameFigureStaysSize": "figure stays put · {{size}}",
+    "layoutFitContent": "Fit content",
+    "layoutFitContentTip": "Crop all four sides to the content edge and remove the surrounding whitespace",
+    "layoutFitContentNone": "This figure has no content-edge information yet (needs a newer render service), so Fit content is unavailable",
+    "layoutFollow_one": "{{count}} annotation scales with it",
+    "layoutFollow_other": "{{count}} annotations scale with it",
+    "layoutFollowNone": "Annotations stay put",
+    "layoutFollowToggle": "With annotations",
+    "layoutFollowToggleTip": "When you scale a figure, the annotations on top of it (text, arrows, shapes) scale by the same ratio",
+    "layoutResetCrop": "Reset crop",
+    "layoutResetCropTip": "Restore the full figure frame and remove the crop",
+    "layoutScale": "Scale {{from}}% → {{to}}%",
+    "layoutScalePtFull": "Scale {{from}}% → {{to}}% · Smallest text in figure {{ptFrom}} → {{ptTo}} pt",
+    "layoutSideB": "bottom",
+    "layoutSideL": "left",
+    "layoutSideR": "right",
+    "layoutSideT": "top",
     "moreArrange": "More arrange options",
     "multiAria": "Multi-selection actions",
     "openInspector": "All properties",
@@ -282,6 +314,7 @@
     "duplicateObjects": "Duplicate objects",
     "editText": "Edit text",
     "fillPanel": "Fill frame",
+    "fitContentCrop": "Fit to content",
     "fitPanel": "Fit inside frame",
     "fixIssue": "Fix problem",
     "fixIssues_one": "Fix {{count}} problem",
@@ -368,7 +401,8 @@
     "lockObjects": "Lock {{count}} objects",
     "unlockObjects": "Unlock {{count}} objects",
     "hideObjects": "Hide {{count}} objects",
-    "showObjects": "Show {{count}} objects"
+    "showObjects": "Show {{count}} objects",
+    "setFramePad": "Change canvas margin"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1555,5 +1589,11 @@
   "renderProgress": {
     "preparing": "Preparing the figure…",
     "elapsed": "{{message}} · {{seconds}} s elapsed"
+  },
+  "frameDrag": {
+    "canvasSize": "Canvas {{w}} × {{h}} mm",
+    "fitContent": "Fit to content",
+    "clearPad": "Remove margin",
+    "notWrittenBack": "Margins apply to Tavotto exports only and are not written back to the script"
   }
 }

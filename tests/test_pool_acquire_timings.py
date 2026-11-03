@@ -141,7 +141,7 @@ def test_report_json_carries_the_summary_without_names(isolated_pool, tmp_path):
 
     pool.acquire("private_fig_name_xyz.py", str(tmp_path / "private_project_dir"), "main")
     rp = diagnostics.build_report(None, 0)["render_pool"]
-    assert rp["sessions_created"] == 1 and rp["max_alive"] == pool.MAX_ALIVE
+    assert rp["sessions_created"] == 1 and rp["max_alive"] == pool.max_alive()
     assert set(rp["recent_cold_starts"][0]["timings"]) <= set(pool.ACQUIRE_SEGMENTS)
     blob = json.dumps(rp)
     assert "private_fig_name_xyz" not in blob and "private_project_dir" not in blob

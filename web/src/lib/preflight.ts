@@ -16,7 +16,7 @@ import { textDiagnostics } from './glyphPlan'
 import { mathBoxOf } from './mathtext'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
-import type { CanvasObject, FigureDocument, PanelObject, TextObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
 
@@ -1189,6 +1189,25 @@ export function panelScale(o: PanelObject): number {
 }
 
 /**
+ * 这张图里**画出来的**文字最小的脚本字号（pt，未乘缩放）；没有 manifest / 没有字号 = null。
+ * 与字号三条规则同一个迭代器（`fontElements`：隐藏的、被整体藏起来的图例条目不算）。
+ * 缩放手势的胶囊用它起手取一次，再经 `scaledFontPt` 折算——不另写第二份「哪些字算数」的判据。
+ */
+export function drawnMinFontPt(manifest: Manifest | null | undefined): number | null {
+  if (!manifest) return null
+  let min: number | null = null
+  for (const [, size] of fontElements(manifest, hiddenLegends(manifest))) {
+    if (min == null || size < min) min = size
+  }
+  return min
+}
+
+/** 脚本字号 → 这张面板此刻读者量到的 pt（与预检同一个 `panelScale`） */
+export function scaledFontPt(scriptPt: number, panel: PanelObject): number {
+  return scriptPt * panelScale(panel)
+}
+
+/**
  * 一张面板 → 求值器的面板输入。画布范围（`buildSpec`）与原图范围（`buildOriginalSpec`）
  * **共用这一份**：两者只在「落位」与「缩放」上不同，面板自己的状态（缺失 / 过期 /
  * 渲染失败 / 未应用的 override）是同一件事，不许各写一份。
@@ -1328,10 +1347,13 @@ export function buildOriginalSpec(
   /** 本次所选格式：要 EPS 且不要 SVG 时有脚本的图会被重画成矢量（`exportRoute.originalRerenders`） */
   formats: readonly string[],
   route?: ExportRoute | null,
+  /** 单图画布留白（ADR 0161，导出 mm）：页面 = 图幅 + 留白、图落在 (左, 上)——栏宽等页面规则按导出的页面判 */
+  pad?: FramePad | null,
 ): PreflightSpec {
-  const rect_mm: [number, number, number, number] = [0, 0, size.widthMm, size.heightMm]
+  const p = pad ?? { l: 0, t: 0, r: 0, b: 0 }
+  const rect_mm: [number, number, number, number] = [p.l, p.t, size.widthMm, size.heightMm]
   return {
-    page: { w_mm: size.widthMm, h_mm: size.heightMm, margin_mm: 0 },
+    page: { w_mm: size.widthMm + p.l + p.r, h_mm: size.heightMm + p.t + p.b, margin_mm: 0 },
     panels: [panelSpec(panel, assets, render, rect_mm, 1, 'original', formats, route)],
     texts: [],
     objects: [{ id: panel.id, type: panel.type, rect_mm, hidden: !!panel.hidden }],

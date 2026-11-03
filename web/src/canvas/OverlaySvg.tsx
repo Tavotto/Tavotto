@@ -18,6 +18,7 @@ import {
 } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
   mmToPx,
   mmToViewX,
@@ -39,9 +40,9 @@ import {
   startLegendScale,
   startPatchResize,
   startGuideDrag,
-  startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
+import { startPanelHandleDrag } from './panelEdgeCrop'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
@@ -148,6 +149,8 @@ export function OverlaySvg() {
   const guidesLocked = useUiStore((s) => s.guidesLocked)
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
   const linePanelIds = usePreviewLinePanels()
@@ -172,6 +175,9 @@ export function OverlaySvg() {
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
   // 图内编辑时不显示对象缩放手柄，避免和元素选择混淆
   const single = selected.length === 1 && !cropTarget && !elementPanel ? selected[0] : null
+  // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
+  // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
+  const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
   const groupBounds = selected.length > 1 ? boundsOf(selected) : null
   const hovered =
     hoverId && !selectedIds.includes(hoverId) && dragKind === 'none'
@@ -310,7 +316,7 @@ export function OverlaySvg() {
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
-      {single && !single.locked && (
+      {single && !single.locked && !fastEditFigure && (
         <g
           transform={spinOf(single, toScreen(single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
@@ -321,7 +327,7 @@ export function OverlaySvg() {
             box={toScreen(single, t)}
             dirs={dirsFor(single)}
             cursor={(dir) => cursorFor(dir, objectRotation(single))}
-            onPointerDown={(e, dir) => startResizeDrag(e, single.id, dir)}
+            onPointerDown={(e, dir) => startPanelHandleDrag(e, single.id, dir)}
           />
           {dirsFor(single).map((dir) => (
             <HandleMark
@@ -329,7 +335,7 @@ export function OverlaySvg() {
               at={handlePos(toScreen(single, t), dir)}
               hook={{ 'data-handle': dir }}
               cursor={cursorFor(dir, objectRotation(single))}
-              onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
+              onPointerDown={(e) => startPanelHandleDrag(e, single.id, dir)}
             />
           ))}
           {isLinear(single) && <LinearEndpoints obj={single} t={t} />}
