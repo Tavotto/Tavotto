@@ -237,6 +237,9 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
   `tests/test_compat_guardian_workflow.py` 的判据主语是「所有引用 Guardian 脚本的 workflow」，
   不是一张手写名单。注意这类静态测试量的是 main 上的文件；PR 自带的 workflow 先在 PR 事件上跑一次，
   这一半由 runner group 配置与私有 `ci-infra` 兜底（见 `docs/rules/ci/runner-trust-zones.md`）。
+- 证据机（ADR 0166，`docs/rules/ci/evidence-box.md`）不是 runner、不接任何 workflow：只跑 `origin/main`，
+  执行阶段每次一个断网、非 root 的一次性容器。信任级与 hosted 相同——容器不算下一条所说的「OS 级隔离证明」，
+  非确定性 / 外部来源候选在那里同样只做静态检查。
 - Python 层 Safe 不是沙盒。可执行范围：登记夹具（托管 runner / 本机隔离目录）；由已评审模板对已评审父本做
   确定性变换得到的派生候选（CG-02）视同父本信任级；任何非确定性/外部来源候选只做静态检查，直到有 OS 级
   隔离证明。

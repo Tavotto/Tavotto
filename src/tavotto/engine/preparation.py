@@ -1221,6 +1221,7 @@ class PreparationService:
             deprepair.note_missing_dependency_of(
                 plan.project_root, exc, script=plan.script or "", offer=repair_offer
             )
+            deprepair.note_missing_command_of(plan.project_root, exc)
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module

@@ -64,6 +64,14 @@ order: 330
   `artifacts` 收回、PyInstaller `resources/` datas 带走、许可证全文同目录）；`TAVOTTO_FONTS_DIR` 是排他覆盖。
   加一张脸 = 改 allowlist + ADR 0060 §1 的限制表，`tests/test_rendercore_fonts.py` / `test_font_provenance.py`
   第四档看住。集合外的限制（没有 fallback 层、Hangul 不在、`⁻` 靠合成）写在 ADR 0060 §1，是能力边界不是缺陷。
+- **用户本机字体是批准集合旁边的一条受限通道**（ADR 0164，修订 0060）：对象带可选 `source_font`（名字 + 文件 sha256 + 面序号 + 粗斜；
+  `sourcefont.py` 纯模型解析）时，`plan._user_faces` 经 `HbFaceProvider.user_face` → `userfonts.admit` 请本机那张脸来排版、子集嵌入。
+  **只按 sha256 认**（`FontLocator`：索引在 `data_dir()/font-locator.json`，线索目录 = 解释器路径推出的 matplotlib 字体目录 + 系统字体目录），
+  每次使用前重算 sha256；OS/2 `fsType` 位 1 / 8 / 9 → `embedding_restricted`（不嵌入），变量 / 彩色 / 位图 / 非 CID 的 CFF / cmap 读不出 →
+  `unsupported_format`，> 192 MiB → `too_large`。任何一环不过：这一个对象回退成 `font_family` 的批准脸、`problems` 记
+  `source_font_unavailable`（`reason` 取 `sourcefont.REASONS`）、**不改文档对象、不换名字相近的脸**。路径只在本机索引与内存里，不进
+  problems / 警告 / 端点响应 / 遥测 / 诊断包。没有 `source_font` 的对象走的路径与 0060 逐字相同。看护 `tests/test_rendercore_userfonts.py`、
+  `test_source_font_wire.py`、`test_source_fonts_api.py`、`test_font_provenance.py` 末两条。
 - **native 包只在函数里 import**：pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow 自 U10 起是 pyproject 的
   `dependencies`（`requirements.txt` 是钉死镜像，`tests/test_rendercore_fonts.py` 看护两边同名同序；U06–U09 时是
   可选 extra `rendercore`），仍只在 native 适配层的函数 / 类里 import——没装时 `import tavotto.rendercore.*` 仍成功，

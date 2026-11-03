@@ -18,13 +18,16 @@ import {
   readCanvasText,
   supportsTypography,
   withMachineFamilies,
+  resetCanvasText,
   writeCanvasText,
   type TypographyKind,
   type TypographyProp,
   type TypographyValue,
   type UnsupportedReason,
 } from '@/lib/typography'
-import type { PanelObject, TextObject } from '@/types/document'
+import { isSourceFont, sameFace, sourceFacesOf, type SourceFontState } from '@/lib/sourceFont'
+import { sourceFontState, useSourceFonts } from '@/lib/sourceFontCache'
+import type { PanelObject, SourceFace, TextObject } from '@/types/document'
 // 「一轮」有多长**只有一个数**（原生取色对话框不保证发 blur，只能靠
 // 「安静了这么久」判定一轮结束）。抄第二份的话，同一个动作在属性页与
 // 画布标注上的撤销粒度会不一样，而两处都「看起来对」。
@@ -373,6 +376,7 @@ const CANVAS_HISTORY: Record<TypographyProp, string> = {
  */
 export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
   const gesture = useObjectGesture()
+  useSourceFonts() // 原图字体的本机状态到达时重渲染（ADR 0164）
   const ids = useMemo(() => objs.map((o) => o.id), [objs])
   const count = objs.length
 
@@ -385,7 +389,10 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
         reason: supportsTypography('canvasText', prop) ? 'not_in_manifest' : 'kind_unsupported',
       }
     }
-    const raw = objs.map((o) => readCanvasText(o, prop))
+    // 原图字体（ADR 0164）：字体行显示它自己的名字（本机缺失时名字照留，旁边有 warning）
+    const raw = objs.map((o) =>
+      prop === 'fontFamily' && isSourceFont(o.sourceFont) ? o.sourceFont.family : readCanvasText(o, prop),
+    )
     const eff = raw.map((v, i) =>
       v === undefined
         ? prop === 'fontFamily'
@@ -424,6 +431,18 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       // 不带的话会退回一个谁都不是的硬编码黑，而控件里的注释说的是
       // 「取第一个目标的真实颜色」。
       const first = objs.length ? readCanvasText(objs[0], prop) : undefined
+      if (prop === 'fontFamily') {
+        // 原图字体放在选项最前：名字是它自己的，选中它 = 保持（写入层认得）
+        const names = sourceFamilyNames(objs)
+        if (names.length) {
+          const own = isSourceFont(objs[0]?.sourceFont) ? objs[0].sourceFont.family : undefined
+          return {
+            ...base,
+            options: [...names, ...(base.options ?? [])],
+            value: own ?? first ?? inheritedCanvasValue(prop) ?? null,
+          }
+        }
+      }
       return { ...base, value: first ?? inheritedCanvasValue(prop) ?? null }
     },
     valueOf,
@@ -439,7 +458,9 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       // `TextObject` 的必填字段，磁盘上永远有值——拿「有没有值」当判据的话
       // 每一条都会永远挂着「已修改」的点和一颗按了没反应的恢复按钮。
       if (!CANVAS_INHERITABLE.has(prop)) return 'none'
-      const set = objs.filter((o) => readCanvasText(o, prop) !== undefined)
+      const set = objs.filter(
+        (o) => readCanvasText(o, prop) !== undefined || (prop === 'fontFamily' && !!o.sourceFont),
+      )
       if (!set.length) return 'none'
       return set.length === count ? 'all' : 'some'
     },
@@ -448,12 +469,8 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       gesture.end()
       updateObjects(ids, hist('resetTextProp'), (o) => {
         if (o.type !== 'text') return
-        // 「恢复」= 删掉这个字段回到继承。写一个等于默认值的显式值会让
-        // 「没设过」变成「设过、正好一样」——下一次默认值改了它就不跟了。
-        if (prop === 'fontFamily') delete o.fontFamily
-        else if (prop === 'style') delete o.italic
-        else if (prop === 'lineHeight') delete o.lineHeight
-        else if (prop === 'rotationDeg') delete o.rotationDeg
+        // 「恢复」= 删掉这个字段回到继承，规则（含原图字体的失效）在 `resetCanvasText`，与写入同一处
+        resetCanvasText(o, prop)
       })
     },
     pathOf: (prop) => propertyPathOf('canvasText', prop),
@@ -463,6 +480,27 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
         : supportsTypography('canvasText', prop)
           ? 'not_in_manifest'
           : 'kind_unsupported',
-    unavailableOptions: () => EMPTY,
+    unavailableOptions: (prop) => {
+      if (prop !== 'fontFamily') return EMPTY
+      // 本机用不了的原图字体：名字保留 + 现成的「字体缺失」warning（ADR 0164）
+      const bad = sourceFacesOf(objs).filter((f) => isBroken(sourceFontState(f)))
+      if (!bad.length) return EMPTY
+      const names = new Set(
+        objs.flatMap((o) =>
+          isSourceFont(o.sourceFont) && bad.some((b) => sameFace(b, o.sourceFont as SourceFace))
+            ? [o.sourceFont.family]
+            : [],
+        ),
+      )
+      return [...names]
+    },
   }
 }
+
+/** 原图字体在本机用不了（`ok` / 还没问到 都不算）。 */
+const isBroken = (s: SourceFontState): boolean => s !== 'ok' && s !== 'unknown'
+
+/** 选中对象里出现的原图字体名（去重、保顺序）。 */
+const sourceFamilyNames = (objs: readonly TextObject[]): string[] => [
+  ...new Set(objs.flatMap((o) => (isSourceFont(o.sourceFont) ? [o.sourceFont.family] : []))),
+]

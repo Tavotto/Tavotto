@@ -57,3 +57,15 @@ test('generated staging SQL seeds a fresh database to readiness',async()=>{
   await assert.rejects(new LiveStore(db,undefined,{...live,holderId:88193521,exemptionIds:{erwanjun:88193521}}).assertReady(),
     e=>e.code==='database_configuration_uninitialized_or_mismatched');
 });
+test('staging CI config mirrors the service identity and passes the trusted consumer validation',async()=>{
+  const {readOnly}=await import('../src/ci/consumer.ts');
+  const ci=JSON.parse(read('ci.json')),c=config();
+  for(const k of ['repository','repositoryId','origin','appId','appSlug','checkName'])assert.deepEqual(ci[k],c[k],k);
+  assert.equal(ci.enabled,true);assert.deepEqual(ci.wait,{enabled:false});
+  const seen=[];const transport=async url=>{seen.push(url);return new Response('{}',{status:200,headers:{'content-type':'application/json'}});};
+  await readOnly(ci,'token',transport)('https://api.github.com/repos/'+ci.repository,'github');
+  assert.deepEqual(seen,['https://api.github.com/repos/'+ci.repository]);
+  await assert.rejects(readOnly(ci,'token',transport)('https://api.github.com/repos/erwanjun/other','github'));
+  await assert.rejects(readOnly({...ci,origin:'http://cla-staging.tavotto.com'},'token',transport)('https://api.github.com/repos/'+ci.repository,'github'),
+    e=>e.code==='ci_configuration_invalid');
+});

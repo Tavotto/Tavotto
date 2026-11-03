@@ -311,6 +311,7 @@ _ENGINE_MODULES = (
     "runtime",
     "writetripwire",
     "texdiag",
+    "cmddiag",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -1446,6 +1447,7 @@ class Worker(wireproto.V1Handler):
                     "parse_kind",
                     "missing_module",
                     "missing_dependency",
+                    "missing_command",
                     "execution_id",
                 )
                 if k in err
@@ -2187,6 +2189,7 @@ class Worker(wireproto.V1Handler):
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
             facts.update(self._foreign_abi_fact(exc))
+            facts.update(self._missing_command_fact(exc))
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -2231,6 +2234,14 @@ class Worker(wireproto.V1Handler):
         except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
             return {}
         return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
+
+    def _missing_command_fact(self, exc: BaseException) -> dict:
+        """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（`cmddiag.collect`，用本 worker 的 env）。
+        敏感运行里命令名不在公开白名单就置空；只读检查，任何意外都当没有，绝不盖掉原来的脚本错误。"""
+        try:
+            return _PKG.cmddiag.collect(exc, sensitive=bool(self.sensitive_argv))
+        except Exception:  # noqa: BLE001
+            return {}
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
