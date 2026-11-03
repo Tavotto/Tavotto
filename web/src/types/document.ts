@@ -136,6 +136,15 @@ export interface FigureExecutionOwner {
 }
 
 /** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
+/**
+ * SVG 计算图表的文档内状态（ADR 0166）。形状与 `types/chartModel.ts` 的
+ * ChartModel / ChartBinding 同源；这里按 id 引用而不复制判据。
+ */
+export interface PanelChartState {
+  model: import('./chartModel').ChartModel
+  binding: import('./chartModel').ChartBinding
+}
+
 export interface FigureSnapshot {
   version: 1
   sourceId: string
@@ -172,6 +181,12 @@ export interface PanelObject extends ObjectBase {
    * 旧前端读到它会忽略，把面板当未采用 PNG 显示原像素；老项目不会获得这个字段。
    */
   sourceBackedFigure?: SourceBackedFigure
+  /**
+   * SVG 计算图表状态（ADR 0166，仅 fileKind === 'svg'）：显式绑定的声明式模型与绑定。
+   * 只存**语义真值**（模型 + 绑定）；组合后的 SVG 是派生物，按模型 rev 重算，不进文档。
+   * 旧前端读到它会忽略——面板退化为静态 SVG 预览，不丢数据。
+   */
+  chart?: PanelChartState
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。

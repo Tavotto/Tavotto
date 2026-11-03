@@ -1,0 +1,103 @@
+// SVG 计算图表的服务调用（ADR 0166，SG10）。判据在后端（chartmodel/chartbind/
+// svgcompose）；这里只做形状化的请求/响应与稳定错误码透传，不做第二份判定。
+import type { ApiError } from './api'
+import { apiUrl, withProject } from '@/lib/session'
+import type { ChartBinding, ChartModel } from '../types/chartModel'
+import type { PanelChartState } from '../types/document'
+
+export interface SceneInventory {
+  scene_digest: string
+  w_pt: number
+  h_pt: number
+  view_box: number[] | null
+  nodes: { id: string, tag: string, text?: string, fill?: string, stroke?: string }[]
+  truncated: boolean
+}
+
+export interface ChartAxisEvidence {
+  p1_user: number
+  p1_value: number
+  p2_user: number
+  p2_value: number
+  scale: string
+}
+
+export interface ChartBindRequest {
+  file: string
+  axes_id?: string
+  rect: [number, number, number, number]
+  x?: ChartAxisEvidence
+  y?: ChartAxisEvidence
+  x_kind?: 'categorical'
+  categories_col?: string
+  series: {
+    node: string
+    x_col?: string
+    y_col?: string
+    yerr_col?: string
+    kind?: string
+    style?: Record<string, string | number>
+  }[]
+  dataset_text?: string
+  grid_text?: string
+  completeness?: string
+}
+
+export interface ChartComputeResult {
+  svg: string
+  facts: {
+    series_points?: Record<string, { x: number, y: number }[]>
+    ticks?: unknown
+  }
+  scene_digest: string
+}
+
+/** 稳定错误码从响应体透传（后端 ERROR_CODES / BindError / SceneError 闭集）。 */
+async function readError(res: Response): Promise<ApiError & { code?: string }> {
+  let payload: Record<string, unknown> = {}
+  try {
+    payload = (await res.json()) as Record<string, unknown>
+  } catch {
+    /* 非 JSON 错误体，保留状态码 */
+  }
+  const message = typeof payload?.error === 'string' ? payload.error : `HTTP ${res.status}`
+  return Object.assign(new Error(message), {
+    status: res.status,
+    code: typeof payload?.code === 'string' ? payload.code : undefined,
+  }) as ApiError & { code?: string }
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(apiUrl(url), {
+    ...withProject(),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw await readError(res)
+  return res.json() as Promise<T>
+}
+
+/** 只读场景盘点（同一份字节重新校验 + 稳定节点清单）。 */
+export async function chartInspect(file: string): Promise<SceneInventory> {
+  const res = await fetch(
+    apiUrl(`/api/svg/chart/inspect?id=${encodeURIComponent(file)}`),
+    withProject(),
+  )
+  if (!res.ok) throw await readError(res)
+  return res.json() as Promise<SceneInventory>
+}
+
+/** 显式建模确认：校准证据 + 系列选择 → 模型 + 绑定（后端判据，未落盘）。 */
+export function chartBind(request: ChartBindRequest): Promise<PanelChartState> {
+  return postJson('/api/svg/chart/bind', request)
+}
+
+/** 按模型重算绑定区域 → 组合后的场景 SVG + 事实。 */
+export function chartCompute(file: string, chart: PanelChartState): Promise<ChartComputeResult> {
+  return postJson('/api/svg/chart/compute', {
+    file,
+    model: chart.model as unknown as ChartModel,
+    binding: chart.binding as unknown as ChartBinding,
+  })
+}
