@@ -244,6 +244,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           label="W"
           historyLabel={hist('setWidth')}
           min={1}
+          dataProp="panel.w"
           value={sharedPanel(objs, (o) => o.w)}
           onChange={(v) =>
             setEach(hist('setWidth'), (o) => {
@@ -255,6 +256,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         />
         {/* 锁是个小 ghost 图标钮：名字是动作，气泡讲当前状态；锁上时轻 tint */}
         <IconButton
+          data-panel-aspect-lock=""
           label={pn('lockAspect')}
           tip={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}
           iconSize="sm"

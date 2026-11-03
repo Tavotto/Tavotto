@@ -50,7 +50,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
-import { applyStageFit, stageFitFrame } from '@/store/zoomToSelection'
+import { applyStageFit, fastEditCanvasBox, stageFitFrame } from '@/store/zoomToSelection'
 import { figuresOf, settleMode, useWorkspaceStore } from '@/store/workspaceStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 
@@ -406,7 +406,7 @@ export function startWorkspaceModeSync(): () => void {
         useViewportStore.getState().fitAnimated(state.doc.page.w, state.doc.page.h)
       }
     } else if (now.mode === 'fast_edit' && (wasMode !== 'fast_edit' || wasPanel !== now.activePanelId)) {
-      applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId), true)
+      applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId, fastEditCanvasBox(state.doc, now.activePanelId)), true)
     } else if (now.mode === 'fast_edit' && now.activePanelId === wasPanel) {
       // 同一张图的图幅被静默校正了（渲染回来按真实图幅校正 w / h）而视口还停在「适应」上（没平移 / 缩放过）：
       // 取景框按新图幅重算——否则放大取景是按占位图幅算的，校正之后图伸出舞台
@@ -420,7 +420,7 @@ export function startWorkspaceModeSync(): () => void {
         useViewportStore.getState().fitted &&
         useInteractionStore.getState().kind === 'none'
       ) {
-        applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId), true)
+        applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId, fastEditCanvasBox(state.doc, now.activePanelId)), true)
       }
     }
   })

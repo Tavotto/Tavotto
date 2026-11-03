@@ -141,18 +141,15 @@ async function checkPanelRestoreActions(page: Page) {
     Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)
   expect(overlaps, JSON.stringify(layout)).toBe(false)
 
-  // 边柄默认只改宽（角柄才跟宽高比锁），先把两个恢复动作的非空前提摆出来。
-  const east = await only(page.locator('[data-canvas-stage] [data-handle="e"]'))
-  const handle = (await east.boundingBox())!
-  const x = handle.x + handle.width / 2
-  const y = handle.y + handle.height / 2
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  try {
-    await page.mouse.move(x + 36, y, { steps: 6 })
-  } finally {
-    await page.mouse.up()
-  }
+  // 先把两个恢复动作的非空前提摆出来：把图的宽高比弄歪。单图编辑里拖图的边 / 角改的是画布留白 / 图幅（ADR 0161），
+  // 选区缩放手柄不再画，所以走属性栏：解开宽高比锁，再把 W 改宽（只改宽、高不跟）。
+  const lock = await only(inspector.locator('[data-panel-aspect-lock]'))
+  if ((await lock.getAttribute('aria-pressed')) === 'true') await lock.click()
+  await expect(lock).toHaveAttribute('aria-pressed', 'false')
+  const wField = await only(inspector.locator('[data-inspector-prop="panel.w"]'))
+  const w0 = Number.parseFloat((await wField.inputValue()).replace(/[^\d.]/g, ''))
+  await wField.fill(String(Math.round((w0 + 12) * 10) / 10))
+  await wField.press('Enter')
   const distorted = await nameAndReadNow(page, 'restore-before')
   expect(distorted.objects).toHaveLength(1)
   const before = distorted.objects[0]

@@ -19,7 +19,8 @@ import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, origina
  * ### `scope=original` 里没有布局
  *
  * `original` 段里**根本没有** x/y/w/h、页面尺寸、裁切字段——不是"记得别填"，
- * 是这个类型里没有那几个键。想让画布缩放漏进原图导出，得先改这个结构，
+ * 是这个类型里没有那几个键。唯一的例外是用户在单图画布上显式加的留白 `pad_mm`（ADR 0161）：
+ * 它不是画布变换的漏网，是导出页面本身的定义。想让画布缩放漏进原图导出，得先改这个结构，
  * 而改它会当场撞上 `exportRequest.test.ts` 与 `tests/test_export_original.py`。
  * 被忽略的变换逐项进 `ignored`：**忽略而不说等于骗人**（ADR 0028）。
  */
@@ -28,10 +29,11 @@ import type { ExportObject, ExportOriginalSource, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
 import { epsFromRoute, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
+import { isZeroPad } from './framePad'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
-import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, FramePad, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
@@ -227,6 +229,8 @@ export interface ExportRequestInput {
   annotations?: readonly CanvasObject[]
   /** `annotations` 里前几个在图的下面（保留图层次序） */
   annotationsBelow?: number
+  /** 单图画布留白（ADR 0161，导出 mm）；非零时进 `original.pad_mm`，全 0 / 缺省时载荷与从前逐字节相同 */
+  framePad?: FramePad | null
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
   /**
@@ -321,6 +325,11 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
         request.original.objects = objects
         const below = Math.min(Math.max(input.annotationsBelow ?? 0, 0), objects.length)
         if (below > 0) request.original.objects_below = below
+      }
+      const pad = input.framePad
+      if (pad && !isZeroPad(pad)) {
+        const r2 = (v: number) => Math.round(v * 100) / 100
+        request.original.pad_mm = [r2(pad.l), r2(pad.t), r2(pad.r), r2(pad.b)]
       }
     }
   }

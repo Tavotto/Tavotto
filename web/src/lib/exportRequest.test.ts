@@ -437,3 +437,22 @@ describe('合成多页 PDF（#1370）', () => {
     expect(mk(pages)).not.toBe(mk([pages[1], pages[0], pages[2]]))
   })
 })
+
+describe('单图画布留白进 original.pad_mm（ADR 0161）', () => {
+  it('非零留白：带 pad_mm（0.01 mm 一格）；全 0 / 缺省：没有这个键', () => {
+    const withPad = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'Fig1.pdf', framePad: { l: 2.004, t: 0, r: -3.333, b: 1 } }),
+    ).request
+    expect(withPad.original?.pad_mm).toEqual([2, 0, -3.33, 1])
+    const zero = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'Fig1.pdf', framePad: { l: 0, t: 0, r: 0, b: 0 } }),
+    ).request
+    expect(zero.original && 'pad_mm' in zero.original).toBe(false)
+    const none = buildExportRequest(inputOf({ scope: 'original', figureId: 'Fig1.pdf' })).request
+    expect(none.original && 'pad_mm' in none.original).toBe(false)
+  })
+  it('画布口径不带留白', () => {
+    const r = buildExportRequest(inputOf({ framePad: { l: 5, t: 0, r: 0, b: 0 } })).request
+    expect(r.original).toBeUndefined()
+  })
+})

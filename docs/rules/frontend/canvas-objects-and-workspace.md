@@ -8,7 +8,7 @@
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 210
-改到: 画布标签图层、`CanvasThumb`、标注与 `lib/shapeSwitch.ts`、混排对齐、`writeBackAnnotations.ts`、`EmptyState`、`viewportStore.fitted`、拖页面边 / 单图拖图边 `PageEdgeResize` · `figureEdgeDrag`
+改到: 画布标签图层、`CanvasThumb`、标注与 `lib/shapeSwitch.ts`、混排对齐、`writeBackAnnotations.ts`、`EmptyState`、`viewportStore.fitted`、拖页面边 / 单图拖画布 `PageEdgeResize` · `frameDrag` · `figureEdgeDrag`
 主题: 画布对象、标注与工作区视口 → `canvas-objects-and-workspace.md`
 必守要点: 类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`
 -->
@@ -236,18 +236,18 @@ order: 210
   栏宽解析与属性栏预设同一判据 `lib/pageColumns.resolvePageColumns`：跟随全局清单的绑定在 `profileStore.loaded` 之前
   `ready=false`，这一次手势不吸附（每帧现读，目录到了就开始吸）。
   看护：`lib/pageEdgeResize.test.ts`、`canvas/pageEdgeResize.test.tsx`。
-- **单图编辑拖图的四条边改图幅（2026-10-23）**：与拖页面边同一套命中区 / 尺寸标注 / 栏宽吸附（`PageEdgeResize.EdgeStrips` /
-  `EdgeDimensions` 两处共用，不复制），但改的是**图幅** `figure.size_mm` override（属性栏「图幅」W / H 同一条），
-  **内容不缩放、字号线宽不变、图重渲染**——不是面板 w / h 的缩放（那是缩放手柄的事）。手势 `canvas/figureEdgeDrag.startFigureEdgeResize`：
-  拖动中**不写文档、不发渲染**，只在 `interaction.figureEdgeBox` 放虚线预览框并画标注；松手才 `actions.setFigureFrame` 一次
-  （一条历史「修改 图幅」+ 一次渲染）。拖左 / 上边时同一次提交里把 x / y 挪好（对侧边不动），渲染回来后 `useEngineSync`
-  以左上角为锚点静默校正 w / h。夹取 / 吸附在**页面 mm** 上做（`lib/pageEdgeResize.planFigureFrame` → `resizeFigureEdge`，
-  最小 10 mm），再按缩放比换回图幅 mm（0.01 一格、夹进引擎给 `size_mm` 的界）。**权威只认精确 manifest**（ADR 0017，
-  `lib/figureEdgeFrame.figureFrameFacts`）：缺席 / 被裁过 / 旋转过 / `size_mm` 只读，整组命中区不挂。松手到新图回来之间
-  （`interaction.figureFramePending`，不随 `end()` 清）旧图与背纸收起、只留虚线框占位，免得旧图错位闪一下；渲染状态角标保持可见且占位时立即显示。
-  新图回来 / 撤销 / 当前变体明确失败 / 20 s 超时即撤；不能把别的变体或之前缓存的失败当作这次失败。
-  拖动是对视口的直接操纵（每帧 `setPan` 退出「适应画布」，Esc 还原）。命中区图内编辑里也可用，压进图里只有 2 px（其余 8 px 在图外：贴着图框的 figure 级文字 / 轴标题要点得到，`multi-select-geometry.spec.ts` 看护）。
-  看护：`canvas/figureEdgeResize.test.tsx`、`lib/pageEdgeResize.test.ts`（`planFigureFrame`）、`e2e/figure-edge-resize.spec.ts`（`@feature:canvas.single-figure-edge-resize`）。
+- **单图编辑拖画布：边 = 留白、角 = 图幅（ADR 0161，2026-11-02；取代 2026-10-23 的「拖边改图幅」）**：命中区与尺寸标注仍是
+  `PageEdgeResize.EdgeStrips` / `EdgeDimensions`（与拖页面边共用），贴在**画布框**上（面板 + 生效留白，`lib/framePad.frameCanvasOf`）；四个角柄 `CornerGrips`
+  与选区缩放手柄同画法。**单图编辑里那张图（`activePanelId`）被选中时 `OverlaySvg` 不画它的选区缩放手柄 / 边带**（只留轮廓）：这一层在 `FigureEdgeHandles` 之上，画了就会抢走指针、落到 `startResizeDrag` 的视觉缩放；角 / 边只剩画布框上这一组（精确 manifest 缺席时整组不挂，那时宁可没有手柄）。**边**（`canvas/frameDrag.startFramePadEdge`）改 `doc.framePad`（导出 mm，负值 = 裁进图幅）：图不动，整次一个事务一条历史「修改画布留白」；
+  往里裁的下限 = 让这一维的画布（图幅 + 对边此刻的留白 + 本边）至少剩 5 mm；拖角缩图幅同理（`planFigureCorner`：图幅 + 此刻生效的两侧留白 ≥ 5 mm，等比时宽高取更严的，紧凑边按此刻的内容边缘值算）。
+  停靠点 `lib/framePad.planPadEdge`：图边（0）→ 内容边缘（manifest `figure.ink_bbox`，缺席 = 没有这一档）→ 越过要按住 ⌥；左右边还吸「画布宽 = 栏宽」。
+  落在紧凑档的边记进 `doc.framePadTight`：图幅再变时按新的内容边缘重算（`effectiveFramePad`，不保留旧 mm）。**角**（`startFigureCornerResize`）= 等比改 `figure.size_mm`
+  （⇧ 自由比例、⌥ 关吸附；吸附量的是**导出宽 = 图幅 + 左右留白**；对角不动）：拖动中不写文档、只放 `interaction.figureEdgeBox` 预览框，松手 `actions.setFigureFrame` 一次，
+  新图回来前 `figureEdgeDrag.holdPlaceholder` 只留虚线框（`figureFramePending`，不随 `end()` 清；撤销 / 当前变体失败 / 20 s 即撤）。两种拖动都写 `interaction.dragStatus`
+  （`lib/dragStatus.framePadDragStatus` / `frameCornerDragStatus`，框 = 画布框），由拖动状态胶囊 `DragStatusBar` 显示，不随拖动隐藏。画纸 `FastEditPaper` = 画布框；有留白时画布外画淡（`PageOutsideMask rectMm`），取景并进画布框
+  （`zoomToSelection.fastEditCanvasBox`）。导出：`singleAnnotatedDocument(…, pad)` 页面 = 图幅 + 留白、图落在 (左, 上)，请求带 `original.pad_mm`，原图口径检查按这个页面判
+  （`buildOriginalSpec(…, pad)`）。留白不写回脚本。**权威只认精确 manifest**（`figureFrameFacts`）：缺席 / 被裁 / 旋转 / `size_mm` 只读时整组不挂。
+  看护：`lib/framePad.test.ts`、`canvas/frameDrag.test.tsx`、`lib/singleExportDoc.test.ts`、`lib/exportRequest.test.ts`、`e2e/figure-edge-resize.spec.ts`。
 - **多图排版里面板的边 = 裁剪、角 =「连同标注」缩放（ADR 0161，2026-11-02）**：`mode === 'layout'` 下，未旋转 / 未翻转、未锁定面板的四条**边柄**
   走 `canvas/panelEdgeCrop.startPanelHandleDrag`（`OverlaySvg` 的唯一入口；不放进 `startResizeDrag` 是因为它要 `trackPointer`，`interactions` 反向 import 就成环）→ 写 `panel.crop`
   （与裁剪工具同一字段：相对原图幅的 0–1 分数、y 向下；同一条历史标签 `adjustCrop`；整图锚在画布上不动，缩放比不变）。停靠点是纯函数 `lib/panelEdgeCrop.planEdgeDepth`：
