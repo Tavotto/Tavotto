@@ -336,6 +336,14 @@ export function WriteBackDialog({
       void markMoment('writeback', written)
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
       await useAssetStore.getState().load()
+      // 本次写回自己改了这些原图：只把**它们**的基线推进到写回后的新 mtime，否则同一个框里
+      // 接着去「写回记录」恢复会带着打开时的旧值，被后端按 source_changed 误拒。
+      // 本次没写的文件不动——它们之后若被外部改过，恢复时仍要被拒。
+      const after = useAssetStore.getState().byId
+      for (const f of new Set(panels.map((p) => p.fileId))) {
+        const m = after[f]?.mtime
+        if (m) baselineRef.current.set(f, m)
+      }
       onWritten?.({ updated: res.updated })
       useUiStore
         .getState()
