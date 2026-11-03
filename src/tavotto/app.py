@@ -1280,6 +1280,25 @@ def api_file():
     return resp
 
 
+@app.get("/api/svg/chart/inspect")
+def api_svg_chart_inspect():
+    """计算图表绑定入口的只读盘点（ADR 0166）：同一份字节重新校验 + 稳定节点清单。
+
+    与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
+    失败 422 带稳定码，原文件零改动，无任何写入与执行。
+    """
+    from . import svgscene
+
+    path = safe_resolve(request.args.get("id", ""))
+    if path.suffix.lower() not in SVG_EXT:
+        return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
+    try:
+        inventory = svgscene.read_scene(path)
+    except svgscene.SceneError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    return jsonify(inventory)
+
+
 def _original_rerender(formats) -> bool:
     """原图范围：所选格式要不要让 `_resolve_panel_source` 有脚本就重渲染（哪怕没有 override）。
 
