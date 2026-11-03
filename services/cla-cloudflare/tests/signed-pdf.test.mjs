@@ -116,7 +116,7 @@ test('without a canvas the builder fails loudly for non-Latin text instead of pr
 test('accented Latin names need no raster fallback',async()=>{
   const r=fakeRasterizer(),name='José Müller-Ångström';
   const [,sig]=await pages(await build(await input({contributor:evidence('contributor',{name,signature:name}),overrides:{rasterizer:r}})));
-  assert.equal(r.calls.length,0);assert.ok(sig.text.includes(name.replace('é','\xe9').replace('ü','\xfc').replace('Å','\xc5')));
+  assert.equal(r.calls.length,0);assert.ok(sig.text.includes(name));
 });
 
 test('very long addresses flow onto continuation pages; order and footers stay correct',async()=>{
