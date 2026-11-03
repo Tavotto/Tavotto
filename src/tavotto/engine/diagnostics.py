@@ -454,7 +454,12 @@ def _missing_command_for_export(record: dict) -> dict:
         name = "cmd:" + _digest(name)
     has = record.get("path_has") if isinstance(record.get("path_has"), dict) else {}
     segments = record.get("path_segments")
-    return {
+
+    def _tri(key: str) -> bool | None:
+        v = record.get(key)
+        return None if v is None else bool(v)
+
+    out = {
         "at": _iso(at) if isinstance(at, (int, float)) else "",
         "command": name,
         "on_path": bool(record.get("on_path")),
@@ -465,9 +470,12 @@ def _missing_command_for_export(record: dict) -> dict:
         "found_in": sorted(
             k for k in (record.get("found_in") or []) if isinstance(k, str) and k in names
         ),
-        "keg_present": bool(record.get("keg_present")),
-        "keg_unlinked": bool(record.get("keg_unlinked")),
+        "keg_present": _tri("keg_present"),
+        "keg_unlinked": _tri("keg_unlinked"),
     }
+    if record.get("scan_truncated"):
+        out["scan_truncated"] = True
+    return out
 
 
 def _missing_dependency_for_export(record: dict, roots: list[tuple[str, str]]) -> dict:
@@ -1921,7 +1929,7 @@ def _readme(
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
         "  （report.json 的 project.missing_commands 段：脚本调用外部命令却找不到时的现场——命令名\n"
         "  （只有公开常见工具原样，其余换成哈希）、渲染进程的 PATH 上有没有它、几个固定常见安装位置\n"
-        "  （只写位置名，不写路径）里有没有、Homebrew 装了但未链接的是/否，以及 PATH 的段数；不含任何路径）\n"
+        "  （只写位置名，不写路径）里有没有、Homebrew 装了但未链接的是/否（目录太多没扫完时标 scan_truncated，是/否留空），以及 PATH 的段数；不含任何路径）\n"
         "  （report.json 的 project.managed_environment_jobs 段：受管环境安装和重建请求的 Python 包名、\n"
         "  实际观察到的已安装包名和版本、结果及环境代；不含路径、包源网址、凭据或 pip 原始输出）\n"
         + extra_zh
@@ -1948,8 +1956,8 @@ def _readme(
         "  (report.json, project.missing_commands: when a script calls an external command that cannot be\n"
         "  found — the command name (public well-known tools as-is, others hashed), whether it is on the\n"
         "  render process PATH, whether it exists in a few fixed common install locations (location names\n"
-        "  only, no paths), whether a Homebrew install is present but unlinked, and the PATH segment\n"
-        "  count; no paths at all)\n"
+        "  only, no paths), whether a Homebrew install is present but unlinked (null plus scan_truncated when too many\n"
+        "  directories to scan), and the PATH segment count; no paths at all)\n"
         "  (report.json, project.managed_environment_jobs: requested Python package names, observed installed\n"
         "  package names and versions, outcomes and environment generations; no paths, index URLs,\n"
         "  credentials or raw pip output)\n"

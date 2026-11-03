@@ -174,6 +174,50 @@ def _spawned(exc: BaseException) -> bool:
     return False
 
 
+def _first_word(text: str) -> str:
+    """命令行字符串的第一个词（Windows list2cmdline 规则：带引号取引号内，否则到第一个空白）。"""
+    text = text.lstrip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        return text[1:end] if end > 0 else text[1:]
+    return text.split(None, 1)[0] if text else ""
+
+
+def _recovered_name(exc: BaseException) -> str | None:
+    """Windows 的 `_winapi.CreateProcess` 抛 FileNotFoundError 不带 `filename`：
+    从 `subprocess.py` 的 Popen.__init__ / `_execute_child` 帧的局部变量恢复命令名。"""
+    try:
+        tb = exc.__traceback__
+        seen = 0
+        while tb is not None and seen < 256:
+            code = tb.tb_frame.f_code
+            if os.path.basename(code.co_filename) == "subprocess.py" and code.co_name in (
+                "__init__",
+                "_execute_child",
+            ):
+                loc = tb.tb_frame.f_locals
+                exe = loc.get("executable")
+                args = loc.get("args")
+                for cand in (exe, args):
+                    if cand is None:
+                        continue
+                    if isinstance(cand, (list, tuple)):
+                        if not cand:
+                            continue
+                        cand = cand[0]
+                    if isinstance(cand, (str, bytes, os.PathLike)):
+                        text = os.fsdecode(cand)
+                        if isinstance(args, (str, bytes)) and cand is args:
+                            text = _first_word(text)
+                        if text:
+                            return text
+            tb = tb.tb_next
+            seen += 1
+    except Exception:
+        return None
+    return None
+
+
 def command_of(exc: BaseException) -> str | None:
     """异常链里「拉起外部程序却找不到」的那个裸命令名；不是（含 open 一个裸文件名）回 None。"""
     for cur in _chain(exc):
@@ -182,6 +226,8 @@ def command_of(exc: BaseException) -> str | None:
         if cur.errno != errno.ENOENT and getattr(cur, "winerror", None) != 2:
             continue
         name = cur.filename
+        if not name and _spawned(cur):
+            name = _recovered_name(cur)
         if isinstance(name, bytes):
             try:
                 name = os.fsdecode(name)
@@ -200,18 +246,27 @@ def _norm(seg: str) -> str:
     return os.path.normcase(os.path.normpath(os.path.expanduser(seg))).rstrip("\\/")
 
 
-def _dirs_of(patterns: tuple[str, ...]) -> list[str]:
-    out: list[str] = []
+def _scan(patterns: tuple[str, ...], cands: tuple[str, ...]) -> tuple[bool, bool]:
+    """(有可执行的命令, 扫描被上限截断)。通配模式按「模式/候选名」直接匹配，不先枚举目录再截断。"""
     for pat in patterns:
         pat = os.path.expanduser(pat)
-        try:
-            hits = glob.glob(pat) if any(c in pat for c in "*?[") else [pat]
-        except OSError:
-            continue
-        for d in hits[:_GLOB_LIMIT]:
-            if os.path.isdir(d):
-                out.append(d)
-    return out[:_GLOB_LIMIT]
+        wild = any(c in pat for c in "*?[")
+        for c in cands:
+            if not wild:
+                if _runnable(os.path.join(pat, c)):
+                    return True, False
+                continue
+            n = 0
+            try:
+                for hit in glob.iglob(os.path.join(pat, glob.escape(c))):
+                    if _runnable(hit):
+                        return True, False
+                    n += 1
+                    if n >= _GLOB_LIMIT:
+                        return False, True
+            except OSError:
+                continue
+    return False, False
 
 
 def _candidates(name: str, platform: str) -> tuple[str, ...]:
@@ -253,14 +308,22 @@ def collect(
     normed = {_norm(s) for s in segments}
     has: dict[str, bool] = {}
     found_in: list[str] = []
+    truncated = False
+    keg_cut = False
     for key, patterns in table.items():
-        dirs = _dirs_of(patterns)
         if key not in KEG_DIRS:
             has[key] = any(_norm(p) in normed for p in patterns if not any(c in p for c in "*?["))
-        if any(_runnable(os.path.join(d, c)) for d in dirs for c in cands):
+        hit, cut = _scan(patterns, cands)
+        if hit:
             found_in.append(key)
-    keg_present = any(k in found_in for k in KEG_DIRS)
+        elif cut:
+            truncated = True
+            if key in KEG_DIRS:
+                keg_cut = True
+    keg_present: bool | None = any(k in found_in for k in KEG_DIRS)
     linked = any(k in found_in for k in LINKED_DIRS)
+    if not keg_present and keg_cut:
+        keg_present = None
     safe_name = name if name in PUBLIC_COMMANDS else ("" if sensitive else name)
     return {
         "missing_command": {
@@ -270,7 +333,8 @@ def collect(
             "path_has": has,
             "found_in": found_in,
             "keg_present": keg_present,
-            "keg_unlinked": keg_present and not linked,
+            "keg_unlinked": (keg_present and not linked) if keg_present is not None else None,
+            **({"scan_truncated": True} if truncated else {}),
         }
     }
 

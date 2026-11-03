@@ -22,6 +22,50 @@ def _spawn_error(name: str) -> FileNotFoundError:
     raise AssertionError("expected FileNotFoundError")
 
 
+def _winlike_error(tmp_path, args, executable=None) -> FileNotFoundError:
+    """造一个 Windows 形状的错误：filename 为空，traceback 里有 subprocess.py::_execute_child 帧，局部变量里有 args。"""
+    import importlib.util
+
+    src = tmp_path / "fake" / "subprocess.py"
+    src.parent.mkdir(exist_ok=True)
+    src.write_text(
+        "def _execute_child(args, executable):\n"
+        "    e = FileNotFoundError(2, 'The system cannot find the file specified')\n"
+        "    e.winerror = 2\n"
+        "    raise e\n"
+    )
+    spec = importlib.util.spec_from_file_location("_fake_subprocess", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        mod._execute_child(args, executable)
+    except FileNotFoundError as exc:
+        assert exc.filename is None
+        return exc
+    raise AssertionError("expected FileNotFoundError")
+
+
+class TestWindowsShapedError:
+    def test_list_args(self, tmp_path):
+        assert cmddiag.command_of(_winlike_error(tmp_path, ["rsvg-convert", "x"])) == PUBLIC
+
+    def test_str_args_first_word(self, tmp_path):
+        assert cmddiag.command_of(_winlike_error(tmp_path, "rsvg-convert x y")) == PUBLIC
+
+    def test_str_args_quoted(self, tmp_path):
+        assert cmddiag.command_of(_winlike_error(tmp_path, '"rsvg-convert" "a b"')) == PUBLIC
+
+    def test_executable_wins(self, tmp_path):
+        assert cmddiag.command_of(_winlike_error(tmp_path, ["other"], "rsvg-convert")) == PUBLIC
+
+    def test_path_with_separator_rejected(self, tmp_path):
+        assert cmddiag.command_of(_winlike_error(tmp_path, ["C:\\x\\tool.exe"])) is None
+
+    def test_no_spawn_frame_no_recovery(self):
+        exc = FileNotFoundError(2, "x")
+        assert cmddiag.command_of(exc) is None
+
+
 def _exe(directory, name):
     directory.mkdir(parents=True, exist_ok=True)
     f = directory / name
@@ -95,6 +139,31 @@ class TestCollect:
         _exe(tmp_path / "brew" / "bin", PUBLIC)
         fact = cmddiag.collect(_spawn_error(PUBLIC), env={"PATH": "/usr/bin"})["missing_command"]
         assert fact["keg_present"] is True and fact["keg_unlinked"] is False
+
+    def test_cellar_with_many_packages_finds_command_in_the_last(self, table, tmp_path):
+        cellar = tmp_path / "brew" / "Cellar"
+        for i in range(65):
+            (cellar / f"pkg{i:02d}" / "1.0" / "bin").mkdir(parents=True)
+        _exe(cellar / "pkg64" / "1.0" / "bin", PUBLIC)
+        fact = cmddiag.collect(_spawn_error(PUBLIC), env={"PATH": "/usr/bin"})["missing_command"]
+        assert fact["found_in"] == ["homebrew_cellar"]
+        assert fact["keg_present"] is True
+        assert "scan_truncated" not in fact
+
+    def test_scan_cap_reports_truncated_and_no_definite_no(self, table, tmp_path, monkeypatch):
+        monkeypatch.setattr(cmddiag, "_GLOB_LIMIT", 3)
+        cellar = tmp_path / "brew" / "Cellar"
+        for i in range(5):  # 命令文件在，但都不可执行：触顶也找不到
+            d = cellar / f"pkg{i}" / "1.0" / "bin"
+            d.mkdir(parents=True)
+            (d / PUBLIC).write_text("x")
+        fact = cmddiag.collect(_spawn_error(PUBLIC), env={"PATH": "/usr/bin"})["missing_command"]
+        assert fact["scan_truncated"] is True
+        assert fact["found_in"] == []
+        assert fact["keg_present"] is None and fact["keg_unlinked"] is None
+        exported = diagnostics._missing_command_for_export({**fact, "at": 1.0})
+        assert exported["scan_truncated"] is True
+        assert exported["keg_present"] is None and exported["keg_unlinked"] is None
 
     def test_sensitive_run_blanks_non_public_names(self, table):
         fact = cmddiag.collect(_spawn_error(BIN), env={"PATH": ""}, sensitive=True)

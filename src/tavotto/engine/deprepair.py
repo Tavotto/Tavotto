@@ -3199,9 +3199,13 @@ def note_missing_command_of(project: str | Path, exc: BaseException) -> bool:
             "path_segments": int(fact.get("path_segments") or 0),
             "path_has": {str(k): bool(v) for k, v in has.items()},
             "found_in": [str(k) for k in (fact.get("found_in") or []) if isinstance(k, str)],
-            "keg_present": bool(fact.get("keg_present")),
-            "keg_unlinked": bool(fact.get("keg_unlinked")),
+            "keg_present": None if fact.get("keg_present") is None else bool(fact["keg_present"]),
+            "keg_unlinked": None
+            if fact.get("keg_unlinked") is None
+            else bool(fact["keg_unlinked"]),
         }
+        if fact.get("scan_truncated"):
+            record["scan_truncated"] = True
     except (OSError, ValueError, TypeError):
         return False
     with _lock:
