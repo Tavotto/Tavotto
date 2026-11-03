@@ -876,3 +876,35 @@ export function __resetDesktopUpdate(): void {
   pendingUpdate = null
   updateOutcome = {}
 }
+
+/**
+ * 壳在主窗口换屏 / 换缩放时发的事件，载荷 `{ppi: number | null}`（`src-tauri/src/screen_ppi.rs` 的
+ * `SCREEN_PPI_EVENT`，两侧严格同源）。点阵进度条按它选点径（ADR 0168 第二节）。
+ */
+export const SCREEN_PPI_EVENT = 'tavotto:screen-ppi'
+
+/** 只认合理的 ppi（与壳的 `screen_ppi::plausible` 同一范围）；别的一律当「读不到」 */
+const asPpi = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 50 && v <= 1000 ? v : null
+
+/** 回读主窗口所在屏幕的物理 ppi。浏览器 / 远程实例窗口 / 老壳 / 读不到 / 出错一律 null（按缩放倍数取整）。 */
+export async function getScreenPpi(): Promise<number | null> {
+  if (!isDesktop()) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return asPpi(await invoke('screen_ppi'))
+  } catch {
+    return null
+  }
+}
+
+/** 订阅主窗口所在屏幕 ppi 的变化。浏览器 / 远程实例窗口返回空的取消函数。 */
+export async function onScreenPpiChange(cb: (ppi: number | null) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    return await listen<{ ppi?: unknown }>(SCREEN_PPI_EVENT, (e) => cb(asPpi(e.payload?.ppi)))
+  } catch {
+    return () => {}
+  }
+}

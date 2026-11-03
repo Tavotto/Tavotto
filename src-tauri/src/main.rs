@@ -25,6 +25,7 @@ mod native_drop_win;
 mod reinstall_guard_tests;
 mod remote;
 mod rescue;
+mod screen_ppi;
 mod shell_report;
 mod sidecar;
 mod window_chrome;
@@ -65,6 +66,8 @@ struct AppState {
     restarting: AtomicBool,
     /// 主窗口上一次告诉页面的全屏状态（macOS，见 `window_chrome::FULLSCREEN_EVENT`）。
     fullscreen: window_chrome::FullscreenTracker,
+    /// 主窗口所在屏幕的物理 ppi 去重底账（ADR 0168 第二节，`screen_ppi::SCREEN_PPI_EVENT`）。
+    screen_ppi: screen_ppi::PpiCache,
     /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
     /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
@@ -1647,6 +1650,36 @@ fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
             .is_some_and(|state| state.fullscreen.get()))
 }
 
+/// 主窗口所在屏幕的物理 ppi（回读，防事件早于前端监听）。`None` = 读不到，页面按缩放倍数取整。
+/// 只读缓存：真正去读屏幕的是主线程上的 [`announce_screen_ppi`]。
+#[tauri::command]
+fn screen_ppi(window: tauri::WebviewWindow) -> Result<Option<f64>, String> {
+    only_main_window(&window)?;
+    Ok(window
+        .app_handle()
+        .try_state::<AppState>()
+        .and_then(|state| state.screen_ppi.get()))
+}
+
+/// 重读主窗口所在屏幕的 ppi；真变了（含第一次）才发 `tavotto:screen-ppi`。只在主线程调
+/// （窗口建好时、`Moved` / `ScaleFactorChanged`）。
+fn announce_screen_ppi(window: &tauri::Window) {
+    if window.label() != MAIN_WINDOW {
+        return;
+    }
+    let Some(state) = window.app_handle().try_state::<AppState>() else {
+        return;
+    };
+    let now = screen_ppi::read(window);
+    if state.screen_ppi.update(now) {
+        let _ = window.app_handle().emit_to(
+            MAIN_WINDOW,
+            screen_ppi::SCREEN_PPI_EVENT,
+            serde_json::json!({ "ppi": now }),
+        );
+    }
+}
+
 /// 告诉主窗口的页面全屏状态；`FullscreenTracker` 去重，真变了才发 `tavotto:fullscreen`。
 #[cfg(target_os = "macos")]
 fn announce_fullscreen(app: &tauri::AppHandle, now: bool) {
@@ -1970,6 +2003,7 @@ fn main() {
         engine_gen: AtomicU64::new(0),
         restarting: AtomicBool::new(false),
         fullscreen: window_chrome::FullscreenTracker::default(),
+        screen_ppi: screen_ppi::PpiCache::default(),
         open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
@@ -2037,6 +2071,7 @@ fn main() {
             take_previous_exit,
             current_engine_exit,
             current_fullscreen,
+            screen_ppi,
             restart_engine,
             rescue::rescue_status,
             rescue::rescue_retry,
@@ -2048,6 +2083,13 @@ fn main() {
             rescue::rescue_diag_save
         ])
         .on_window_event(|window, event| {
+            // 主窗口换屏 / 换缩放：重读屏幕 ppi（点阵进度条按它选点径，ADR 0168）
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+            ) {
+                announce_screen_ppi(window);
+            }
             // macOS 全屏：主信号是原生的 will / did 通知（`fullscreen_observer`），这里只做对账兜底；
             // 主窗口没了就摘掉观察者。
             #[cfg(target_os = "macos")]
@@ -2154,6 +2196,8 @@ fn main() {
             // macOS 主窗口本来就是显示的，但插件已跳过建窗时的恢复：这里补上，否则记不住位置与大小
             #[cfg(target_os = "macos")]
             restore_main_window_state(&win);
+            // 屏幕 ppi 的初值（之后由 Moved / ScaleFactorChanged 更新）
+            announce_screen_ppi(&win.as_ref().window());
             // 主页拖放拿真实路径（Windows）：页面在 drop 里把 File 经 postMessageWithAdditionalObjects
             // 交过来，这里读 ICoreWebView2File 的路径。同样不装 Tauri 的拖放处理器。见 native_drop_win.rs。
             #[cfg(windows)]
