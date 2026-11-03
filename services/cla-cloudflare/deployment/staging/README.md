@@ -66,9 +66,14 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 
        openssl rand -base64 32 | tr -d '\n' | $W secret put CLA_EVIDENCE_KEY $C
        openssl pkcs8 -topk8 -nocrypt -in PATH/TO/app.private-key.pem -outform DER | base64 | tr -d '\n' | $W secret put CLA_APP_PKCS8 $C
-       $W secret put CLA_CLIENT_SECRET $C        # paste the App's client secret
+       pbpaste | tr -d '\n' | $W secret put CLA_CLIENT_SECRET $C   # copy the App's client secret first
        umask 077; openssl rand -hex 32 > ~/.cla-staging-webhook-secret
        tr -d '\n' < ~/.cla-staging-webhook-secret | $W secret put CLA_WEBHOOK_SECRET $C
+
+   Every secret goes in through a pipe. Run without a terminal (for example
+   through an agent's shell), an interactive `secret put` reads an empty stdin,
+   stores an empty string and still reports success; the 2026-11-03 rehearsal
+   lost its OAuth client secret this way (`oauth_rejected` on every callback).
 
    `CLA_EVIDENCE_KEY` must decode to exactly 32 bytes (AES-256-GCM).
    `CLA_APP_PKCS8` is base64 DER without PEM armour. The webhook secret file
@@ -78,7 +83,15 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 
 App settings: add the callback
 `https://cla-staging.tavotto.com/oauth/callback` (the earlier workers.dev
-callback can stay; GitHub Apps accept several).
+callback can stay; GitHub Apps accept several), and make the App **public**:
+a private App returns GitHub's 404 to every account except its owner. The
+sandbox repository must be public too: the token exchange is scoped with
+`repository_id`, and GitHub answers `repository_not_found` for a contributor
+who cannot see a private repository.
+
+The holder countersigns with name and signature exactly equal to
+`holderName` in `config.json` (`Jiaqi Wan (staging)`); anything else is
+`personal_evidence_required`.
 
     $W deploy $C --var CLA_GITHUB_ENABLED:true --var CLA_OAUTH_ENABLED:true --var CLA_UI_ENABLED:true --var CLA_SIGNING_ENABLED:true
 
