@@ -369,6 +369,7 @@
     "alignToStyle": "Match to style “{{name}}”",
     "scriptWinsOverStyle": "Script changes take precedence over style",
     "rotate": "Rotate {{deg}}°",
+    "rotateObjects": "Rotate objects",
     "rotateReset": "Reset rotation",
     "seedBaked": "Load baked-in baseline",
     "setOpacity": "Change opacity",

@@ -258,7 +258,7 @@ opacity + ≤4px 位移 + scale 0.97~1；没有缩放炫技、漂浮。`prefers-
 
 **加载只有四种写法**（2026-10-07，第二十六节）：不定进度 = `animate-sweep`（`ui/ProgressBar`，轨道 border 色）；骨架 = 静态
 `bg-surface-hover` + 65% 不透明，不动；「进行中」的字 = `text-shimmer`；按钮 / 行内 = `LoaderCircle animate-spin`。Tailwind 的
-呼吸动画（pulse）被 `foundation.test` 禁掉。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
+呼吸动画（pulse）被 `foundation.test` 禁掉。唯一例外是改图助手的思考小球（`ui/ThinkingOrb`，ADR 0165）：过程组组首、等第一个字的那一格与空白面板，结束后也慢速在动；它不是通用加载件，别处照旧这四种。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
 
 **写了 `transition-*` 没写时长的，默认档也是 token**（二审 E1）：`--default-transition-duration`
 = `--duration-fast`、`--default-transition-timing-function` = `--ease-standard`（对称曲线，给 hover /

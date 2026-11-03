@@ -43,6 +43,7 @@ import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
 import { Menu, MenuRadioGroup, MenuRadioItem } from '../ui/Menu'
@@ -735,7 +736,12 @@ function AssistantPanelBody() {
             /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */
             <div data-ai-empty className="flex min-h-full flex-col items-center justify-center pb-4">
               <div className="w-full">
-                <EmptyState art="pencil" title={ai('panel.emptyTitle')} hint={ai('panel.emptyHint')} />
+                <EmptyState
+                  art="pencil"
+                  figure={<ThinkingOrb form="searching" size="hero" tone="settled" />}
+                  title={ai('panel.emptyTitle')}
+                  hint={ai('panel.emptyHint')}
+                />
               </div>
               <div className="-mt-4 flex w-full max-w-[17rem] flex-col gap-1.5">
                 {suggestions.slice(0, EXAMPLE_COUNT).map((c) => (
