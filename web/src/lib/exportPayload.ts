@@ -51,6 +51,8 @@ function toExportObject(o: CanvasObject): ExportObject {
         // `fontFamily` 没设过 = 继承默认（衬线），**不发**——后端缺省就是它，
         // 发一个等价的显式值只会让老文档的载荷凭空多一个字段。
         font_family: o.fontFamily,
+        // 原图字体的身份（ADR 0164）：没有就不发；有就原样发（后端 `sourcefont.parse_source_font` 校验）
+        source_font: o.sourceFont,
         // 同理：`interpretation` 没设过 = auto = 后端缺省，不发。
         interpretation: o.interpretation,
         // 同理：`textFormat` 没设过 = 旧标记 = 后端缺省，不发（ADR 0152）。

@@ -491,6 +491,9 @@ export function inheritedCanvasValue(prop: TypographyProp): unknown {
 export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unknown): void {
   switch (prop) {
     case 'fontFamily':
+      // 原图字体（ADR 0164）：下拉里那一项就是它自己的名字，选它 = 不改；选了别的族 = 换脸，身份作废
+      if (o.sourceFont && value === o.sourceFont.family) return
+      delete o.sourceFont
       if (isCanvasTextFamily(value) && value !== CANVAS_TEXT_DEFAULT_FAMILY) o.fontFamily = value
       else delete o.fontFamily
       return
@@ -498,9 +501,12 @@ export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unkn
       o.sizePt = Number(value)
       return
     case 'weight':
+      // 粗细是这张脸自己的一部分：改了粗细，原图那张脸就不再是画出来的那张（不造假粗体）
+      if ((value === 'bold') !== (o.bold === true)) delete o.sourceFont
       o.bold = value === 'bold'
       return
     case 'style':
+      if ((value === 'italic') !== (o.italic === true)) delete o.sourceFont
       if (value === 'italic') o.italic = true
       else delete o.italic
       return

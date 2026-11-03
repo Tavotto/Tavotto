@@ -8,12 +8,21 @@
 import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDocumentStore } from '@/store/documentStore'
 import { resetGestureCoordinator, finishActiveGesture } from '@/store/gestureCoordinator'
 import { emptyProject, type TextObject } from '@/types/document'
 import { useCanvasTypography, type TypographyAdapter } from './typographyAdapter'
+
+// 原图字体的本机状态由后端说了算（ADR 0164）；这里只控制它回什么
+const sourceFontState = vi.hoisted(() => vi.fn(() => 'unknown'))
+vi.mock('@/lib/sourceFontCache', () => ({
+  sourceFontState,
+  useSourceFonts: () => 0,
+  subscribeSourceFonts: () => () => {},
+  previewFamilyOf: () => undefined,
+}))
 
 /** 自动保存会 PUT 到后端；这里只要不抛就行 */
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -238,5 +247,51 @@ describe('写入：事务与历史', () => {
     expect(adapter.pathOf('sizePt')).toBe('sizePt')
     expect(adapter.pathOf('fontFamily')).toBe('fontFamily')
     expect(adapter.pathOf('valign')).toBeNull()
+  })
+})
+
+describe('原图字体 sourceFont（ADR 0164）', () => {
+  const sf = { family: 'DejaVu Sans', sha256: '0f'.repeat(32), face: 0 }
+
+  it('字体行显示原图字体自己的名字，放在选项最前；算「已修改」', async () => {
+    await mount([textObj({ sourceFont: sf })])
+    expect(adapter.valueOf('fontFamily')).toEqual({ kind: 'uniform', value: 'DejaVu Sans' })
+    expect(adapter.fieldOf('fontFamily')?.options).toEqual(['DejaVu Sans', 'serif', 'sans-serif', 'monospace'])
+    expect(adapter.fieldOf('fontFamily')?.value).toBe('DejaVu Sans')
+    expect(adapter.overrideStateOf('fontFamily')).toBe('all')
+  })
+
+  it('与没有原图字体的对象一起选 → mixed，不谎报其中一个', async () => {
+    await mount([textObj({ id: 't1', sourceFont: sf }), textObj({ id: 't2' })])
+    expect(adapter.valueOf('fontFamily')).toEqual({ kind: 'mixed' })
+  })
+
+  it('本机用不了：名字保留，并交给既有的「字体缺失」标记；能用 / 还没问到不标', async () => {
+    await mount([textObj({ sourceFont: sf })])
+    sourceFontState.mockReturnValue('not_found')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual(['DejaVu Sans'])
+    sourceFontState.mockReturnValue('ok')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
+    sourceFontState.mockReturnValue('unknown')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
+    sourceFontState.mockReturnValue('unsupported')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual(['DejaVu Sans'])
+    sourceFontState.mockReturnValue('unknown')
+  })
+
+  it('改成别的族 = 换脸，身份清掉；选它自己的名字 = 不改（文档里仍是它）', async () => {
+    await mount([textObj({ sourceFont: sf, fontFamily: 'sans-serif' })])
+    act(() => adapter.writeOnce('fontFamily', 'DejaVu Sans'))
+    expect(s().doc.objects[0]).toMatchObject({ sourceFont: sf, fontFamily: 'sans-serif' })
+    act(() => adapter.writeOnce('fontFamily', 'monospace'))
+    const o = s().doc.objects[0] as TextObject
+    expect(o.sourceFont).toBeUndefined()
+    expect(o.fontFamily).toBe('monospace')
+  })
+
+  it('恢复 = 回到继承，身份一并清掉', async () => {
+    await mount([textObj({ sourceFont: sf })])
+    act(() => adapter.reset('fontFamily'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toBeUndefined()
   })
 })

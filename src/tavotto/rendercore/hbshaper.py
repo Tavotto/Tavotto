@@ -80,7 +80,7 @@ class HbFace:
         self.ascender = self.record.ascender
         self.descender = self.record.descender
         self.path: Path = self.record.path
-        self._tt = TTFont(str(self.path), lazy=True)
+        self._tt = TTFont(str(self.path), lazy=True, fontNumber=self.record.face_index)
         tables = set(self._tt.keys())
         kind = fonts.font_kind(frozenset(tables))
         if kind == "cff-cid":
@@ -100,7 +100,7 @@ class HbFace:
         self._hmtx = self._tt["hmtx"].metrics
         self._order: list[str] = list(self._tt.getGlyphOrder())
         blob = hb.Blob.from_file_path(str(self.path))
-        self._hb_font = hb.Font(hb.Face(blob))
+        self._hb_font = hb.Font(hb.Face(blob, self.record.face_index))
         self._hb_font.scale = (self.upem, self.upem)
 
     # -- typography.Face ----------------------------------------------------
@@ -210,7 +210,7 @@ class HbFace:
         # 全进 app.log。它不是产品的日志（产品的进度在 job.trace），压到 WARNING——真出问题的
         # 那些（缺表、坏 cmap）仍是 warning / error，留得住。只动 fontTools.subset 这个 logger。
         logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
-        fresh = TTFont(str(self.path), recalcTimestamp=False)
+        fresh = TTFont(str(self.path), recalcTimestamp=False, fontNumber=self.record.face_index)
         s = ftsubset.Subsetter(opts)
         s.populate(gids=want)
         s.subset(fresh)
@@ -258,6 +258,10 @@ class HbFaceProvider:
     def __init__(self, registry: fonts.FontRegistry | None = None) -> None:
         self.registry = registry if registry is not None else fonts.FontRegistry.discover()
         self._faces: dict[tuple[str, int], HbFace] = {}
+        #: 用户本机字体（ADR 0164）：身份 (sha256, face_index) → 已核过的记录。**不进 `registry.faces`**
+        #: ——批准集合是闭集（ADR 0060），用户脸只在被某个对象的 `source_font` 点名时才登记进来
+        self._user_records: dict[tuple[str, int], fonts.FaceRecord] = {}
+        self._user_stat: dict[tuple[str, int], tuple[int, int]] = {}
 
     def _load(self, record: fonts.FaceRecord) -> HbFace:
         face = self._faces.get(record.identity)
@@ -273,9 +277,55 @@ class HbFaceProvider:
         rec = self.registry.cjk_record()
         return self._load(rec) if rec is not None else None
 
+    def user_face(self, ref) -> "HbFace":
+        """`userfonts.FaceRef`（sha256 + face 序号）→ 脸。由 `userfonts.admit` 核过安全 / 许可 / 格式后
+        登记；任何一环不过抛 `userfonts.UserFontUnavailable(reason)`，**调用方决定回退**（本方法
+        不替谁换脸）。"""
+        from . import userfonts
+
+        key = (ref.sha256, ref.face)
+        rec = self._user_records.get(key)
+        if rec is not None:
+            # 进程里活得比文件久：登记之后文件被删 / 被换，下一次问就重新核（不拿旧记录嵌一张已经不是它的脸）
+            try:
+                st = rec.path.stat()
+                fresh = (st.st_size, st.st_mtime_ns) == self._user_stat[key]
+            except OSError:
+                fresh = False
+            if not fresh:
+                self._user_records.pop(key, None)
+                self._faces.pop(rec.identity, None)
+                rec = None
+        if rec is None:
+            rec = userfonts.admit(ref)
+            st = rec.path.stat()
+            self._user_records[key] = rec
+            self._user_stat[key] = (st.st_size, st.st_mtime_ns)
+        try:
+            return self._load(rec)
+        except fonts.FontsUnavailable as exc:
+            self._user_records.pop(key, None)
+            raise userfonts.UserFontUnavailable("unsupported_format", str(exc)) from exc
+        except CandidatePackagesMissing:
+            raise
+        except Exception as exc:  # noqa: BLE001 —— fontTools / HarfBuzz 对坏字体各有各的异常类型
+            self._user_records.pop(key, None)
+            raise userfonts.UserFontUnavailable(
+                "unreadable", f"{type(exc).__name__}: {exc}"
+            ) from exc
+
     def face_by_resource(self, resource: FontResource) -> HbFace:
         """IR 里的 `FontResource` → 脸。**按 sha256 找**，找到的脸身份必须与资源逐字相同——同名不同
-        字体在这里被拒（RC-023）。"""
+        字体在这里被拒（RC-023）。用户脸（ADR 0164）同一条规则：只认已经 `user_face` 登记过的身份。"""
+        user = self._user_records.get((resource.sha256, resource.face_index))
+        if user is not None:
+            face = self._load(user)
+            if face.resource != resource:
+                raise fonts.FontsUnavailable(
+                    "face_missing",
+                    f"资源 {resource.face_id} 的身份与已登记的用户脸不一致（{face.resource} ≠ {resource}）",
+                )
+            return face
         for rec in self.registry.faces.values():
             if rec.identity == (resource.sha256, resource.face_index):
                 face = self._load(rec)

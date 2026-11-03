@@ -391,6 +391,8 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "tavotto/rendercore/placement.py",
         "tavotto/rendercore/raster.py",
         "tavotto/rendercore/svgcheck.py",
+        # ADR 0164：文档里 source_font 的形状与解析（纯标准库；本机定位在 userfonts，native 层）
+        "tavotto/rendercore/sourcefont.py",
     ),
     "rendercore_native": ("tavotto/rendercore/",),
 }

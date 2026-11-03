@@ -6,6 +6,13 @@
 [0053 U01 合同](0053-foundation-contracts-and-preparation.md)；实施包 `01_SCOPE_AND_DECISIONS.md` D07 / D15、
 `03_CI_POLICY.md` §6；`docs/legal/LICENSING.md`、issue #182（NOTICE）。
 
+> **修订 2026-11-03（[ADR 0164](0164-canvas-text-source-font.md)）**：批准集合仍是**默认与回退**，下面「运行时定位 / 来源 allowlist /
+> 身份」三行对**没有 `source_font` 的对象**逐字不变。0164 在它旁边开了**一条**受限通道：画布文字可带一条原图字体的**身份**
+> （文件 sha256 + 面序号 + 名字 + 粗斜），导出时若本机有字节一模一样的文件，就用它排版并子集嵌入；找不到 / 许可（OS/2 `fsType`）
+> 不让嵌入 / 格式不支持 → 回退成 `fontFamily` 的批准脸、名字保留、报 `source_font_unavailable`。因此「不摸系统字体」这句话的主语改为：
+> **批准字体注册表（`FontRegistry`）不摸系统字体**；用户脸只经 `rendercore/userfonts.py` 一个入口、只按 sha256 认、不按名字猜。
+> §6 第一条「前端画布文字的同源预览」也由 0164 兑现（用户脸经本机端点供字节）；批准族的预览仍是 CSS 栈。
+
 ## 裁决摘要
 
 | 问题 | 裁决 | 落点 |
