@@ -25,11 +25,31 @@ ROOT = Path(__file__).resolve().parent.parent
 ENGINE = ROOT / "src" / "tavotto" / "engine"
 
 SCRIPT = r"""
-import json
+import json, os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import manifest, overrides
+from matplotlib.artist import Artist
+
+MODE = os.environ.get("TC_MODE", "")
+if MODE == "oldsig":
+    # matplotlib 3.8 / 3.9 的签名：get_figure(self) 不接受 root（matplotlib 自己内部的调用不受影响，只对 manifest 模块生效）
+    import sys
+    _new = Artist.get_figure
+    def _old(self, *a, **k):
+        if "root" in k and sys._getframe(1).f_globals.get("__name__") == "manifest":
+            raise TypeError("get_figure() got an unexpected keyword argument 'root'")
+        return _new(self, *a, **k)
+    Artist.get_figure = _old
+elif MODE == "inner_boom":
+    def _boom(*a, **k):
+        raise RuntimeError("probe failed")
+    manifest.IdentityTransform = _boom
+elif MODE == "outer_boom":
+    def _boom(*a, **k):
+        raise RuntimeError("text_block failed")
+    manifest.text_block = _boom
 
 fig, ax = plt.subplots(figsize=(4, 3), dpi=100)
 ax.plot([0, 1, 2], [0, 1, 0], label="a")
@@ -66,14 +86,39 @@ print(json.dumps({"W": W, "H": H, "anchors": anchors, "elements": byid, "order":
 """
 
 
-@pytest.fixture(scope="module")
-def run() -> dict:
-    env = {**os.environ, "PYTHONPATH": str(ENGINE), "TAVOTTO_NO_TELEMETRY": "1"}
+def _run_script(mode: str = "") -> dict:
+    env = {**os.environ, "PYTHONPATH": str(ENGINE), "TAVOTTO_NO_TELEMETRY": "1", "TC_MODE": mode}
     r = subprocess.run(
         [sys.executable, "-c", SCRIPT], capture_output=True, text=True, env=env, timeout=180
     )
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+@pytest.fixture(scope="module")
+def run() -> dict:
+    return _run_script()
+
+
+def test_old_matplotlib_get_figure_signature_still_yields_blocks(run):
+    """matplotlib 3.8 / 3.9 的 `Artist.get_figure()` 不接受 `root`：manifest 照常生成，文字照出 text_block，
+    且与新签名下量出来的一致（#1672 评审 P1）。"""
+    old = _run_script("oldsig")
+    for key in ("flat", "rot30", "two", "math"):
+        idx = old["order"].index(key)
+        tb = old["elements"][f"axes_0.texts_{idx}"]["text_block"]
+        assert tb is not None, key
+        assert tb == _block(run, key)[1]
+
+
+@pytest.mark.parametrize("mode", ["inner_boom", "outer_boom"])
+def test_text_block_failure_never_sinks_the_manifest(mode):
+    """text_block 内部（探针）或整个调用抛错：manifest 照常生成，文字元素只是没有 text_block。"""
+    out = _run_script(mode)
+    idx = out["order"].index("flat")
+    el = out["elements"][f"axes_0.texts_{idx}"]
+    assert el["role"] and el["bbox"]
+    assert el["text_block"] is None
 
 
 def _block(run: dict, key: str) -> tuple[dict, dict]:

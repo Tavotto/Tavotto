@@ -1524,10 +1524,11 @@ def text_block(t, renderer, W: float, H: float) -> dict | None:
     s = t.get_text()
     if not isinstance(s, str) or not s.strip():
         return None
-    fig = t.get_figure(root=True)
-    if fig is None:
-        return None
     try:
+        # 不用 3.10 才有的 `get_figure(root=True)`（pyproject 允许 matplotlib>=3.8）：走 pathgeom.root_figure
+        fig = pathgeom.root_figure(t.get_figure())
+        if fig is None:
+            return None
         # Annotation 的 window extent 并了箭头：先让它把文字位置更新到当前状态，再量 Text 自己的
         update = getattr(t, "update_positions", None)
         if callable(update):
@@ -6065,7 +6066,10 @@ def _measure_manifest(
             # 文字块（ADR 0163）：「复制为画布文字标注」把标注摆在原文字的位置上。刻度组（`ticks`）是一组标签，
             # 没有「一块文字」可言，不出
             if el["role"] != "ticks":
-                block = text_block(live_text, renderer, W, H)
+                try:
+                    block = text_block(live_text, renderer, W, H)
+                except Exception:  # noqa: BLE001 —— 附加事实：算不出 = 该元素不出 text_block（不可复制），绝不拖垮 manifest
+                    block = None
                 if block is not None:
                     entry["text_block"] = block
         elements.append(entry)
