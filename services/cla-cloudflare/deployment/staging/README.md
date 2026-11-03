@@ -13,6 +13,9 @@ checks.
 | `config.json` | The reviewed `CLA_CONFIG`. Identity pins only, no secrets. `referenceSha` is the sandbox `main` commit carrying the policy. |
 | `wrangler.staging.json` | Manifest with real resource IDs. Every capability flag is `false` in the file. `CLA_CONFIG` is `config.json` as a string (a test keeps them equal). |
 | `assets/CLA_INDIVIDUAL.md` | Byte copy of the sandbox's `docs/legal/CLA_INDIVIDUAL.md`; its SHA-256 is the pinned individual digest. |
+| `assets/CLA_INDIVIDUAL.pdf` | US Letter rendering of that exact Markdown, with its SHA-256 in the PDF keywords. Regenerate with `npm run render:agreement-pdf` (headless Chrome, offline) whenever the Markdown changes; a test fails on a stale copy. |
+| `assets/cla-pdf-font.ttf`, `assets/cla-pdf-font-OFL.txt` | Great Vibes (SIL OFL 1.1) signature typeface and its licence, served unchanged. |
+| `assets/cla-pdf.js` | Not committed (git-ignored). The browser-side PDF builder; produce it with `npm run build:pdf-client` before `wrangler deploy`. |
 
 Offline checks (no network):
 
