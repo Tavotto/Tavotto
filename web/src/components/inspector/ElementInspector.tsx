@@ -1,4 +1,5 @@
 import { Dialog } from '../ui/Dialog'
+import { GradientStopsField, gradientPayload, readGradientWithFact } from './controls/GradientStopsField'
 import { EmptyState } from '../ui/EmptyState'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
@@ -1632,7 +1633,7 @@ const FOLD_LABEL: Record<string, string> = {
  * （几何走上面的对齐工具条，批量写同一个 bbox 会把元素叠在一起）。
  */
 const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm', 'size_frac'])
-const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum'])
+const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum', 'gradient'])
 
 /** 选中元素都有、且类型与选项一致的字段——以第一个元素的顺序和分组为准 */
 function commonFields(els: ManifestElement[]): EditableField[] {
@@ -1957,6 +1958,33 @@ function BatchFieldRow({
             onGestureEnd={gesture.end}
           />
         )
+      case 'gradient': {
+        // 多选的渐变峰：两端颜色写给全部成员；方向 / screen_start 是各成员自己的引擎事实
+        // （正向与反向 y 轴的两条渐变一起选时不能互相覆盖），逐成员各取各的
+        const grad = readGradientWithFact(first, field.value)
+        if (!grad) return null
+        return (
+          <GradientStopsField
+            value={grad}
+            label={label}
+            mixed={mixed}
+            onChange={(stops) => {
+              setOverrides(
+                panel.id,
+                elMsg('batchEdit', { label }),
+                elements.map((item) => {
+                  const own = item.editable.find((f) => f.prop === field.prop) ?? field
+                  const g = readGradientWithFact(currentValue(panel, item.gid, own), own.value) ?? grad
+                  return { gid: item.gid, prop: field.prop, value: gradientPayload(stops, g) }
+                }),
+                true,
+              )
+              gesture.touch()
+            }}
+            onGestureEnd={gesture.end}
+          />
+        )
+      }
       case 'bool':
         // 不一致时开关是第三态（滑块居中 + 短横、aria-checked="mixed"），点一下全部设为开
         return <Toggle aria-label={label} mixed={mixed} checked={!mixed && !!first} onChange={writeOnce} />
@@ -2609,6 +2637,19 @@ function FieldRow({
         </>
       )
 
+    case 'gradient': {
+      // 渐变色带的两端颜色：两个色块 + 渐变条，取色同「填充颜色」是连续动作（事务由 gesture 收口）
+      const grad = readGradientWithFact(value, field.value)
+      if (!grad) return null
+      return wrap(
+        <GradientStopsField
+          value={grad}
+          label={label}
+          onChange={(stops) => write(gradientPayload(stops, grad), true)}
+          onGestureEnd={gesture.end}
+        />,
+      )
+    }
     case 'color':
       if (hasFollowEdge(field)) {
         const read = hatchColorReading(value, field, overridden)

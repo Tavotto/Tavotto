@@ -779,6 +779,7 @@
     "frame_rounded": "圆角边框",
     "framealpha": "边框不透明度",
     "frameon": "边框",
+    "gradient": "渐变",
     "gradient_color": "渐变基色",
     "grid_alpha": "网格不透明度",
     "grid_color": "网格颜色",
@@ -1253,5 +1254,12 @@
     "formatBar": "文字格式",
     "preview": "公式预览",
     "previewNoRuntime": "没有可用的排版环境"
+  },
+  "gradientStops": {
+    "top": "上端",
+    "bottom": "下端",
+    "left": "左端",
+    "right": "右端",
+    "stopLabel": "{{field}} · {{end}}颜色"
   }
 }

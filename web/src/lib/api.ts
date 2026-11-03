@@ -2357,6 +2357,7 @@ export interface EditableField {
   /**
    * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
    * number_list：一串数（固定刻度位置），value 为 number[]。
+   * gradient：渐变色带的两端颜色，value 为 `{stops: [起端, 止端], direction, screen_start, legend?}`（`overrides.gradient_detect`，ADR 0167）。
    */
   type:
     | 'text'
@@ -2368,6 +2369,7 @@ export interface EditableField {
     | 'rect'
     | 'order'
     | 'number_list'
+    | 'gradient'
   value: unknown
   min?: number
   max?: number
