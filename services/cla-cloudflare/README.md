@@ -195,7 +195,8 @@ another type or too large gives 503 `pdf_asset_unavailable`.
 Preparing the assets (operator step, offline, never at request time):
 
     npm run render:agreement-pdf   # staging: CLA_INDIVIDUAL.md -> CLA_INDIVIDUAL.pdf (headless Chrome)
-    npm run build:pdf-client       # esbuild bundle of src/pdf (pdf-lib + fontkit) -> assets/cla-pdf.js
+    npm run fetch:pdf-font         # Great Vibes TTF -> assets/ (commit-pinned URL + SHA-256; not committed)
+    npm run build:pdf-client       # fetches the font if missing, then esbuild bundle of src/pdf -> assets/cla-pdf.js
 
 For production run, on the exact reviewed bytes,
 
@@ -212,7 +213,7 @@ values passed in `build()` input win. The signing page therefore does not need t
 (`tavotto-agreement-sha256:<hex>`); the builder refuses to run unless that equals the agreement hash being
 signed. This ties the PDF to the pinned text by the renderer's claim, not by re-reading the pages: a PDF
 rendered from different text but stamped with the pinned hash would pass, so review the PDF like the
-Markdown. The signature typeface is Great Vibes (SIL OFL 1.1, licence shipped beside it). Text a standard
+Markdown. The signature typeface is Great Vibes (SIL OFL 1.1, licence committed beside it); the TTF itself is never committed (repository invariant) and is fetched by `scripts/fetch-pdf-font.mjs` from a pinned google/fonts commit and checked against a pinned SHA-256. Tests and `npm run check` need network once to obtain it and fail loudly without it; they never skip. For production, `node scripts/fetch-pdf-font.mjs --dest assets-reviewed`. Text a standard
 PDF font cannot encode (for example a Chinese name or address) is drawn by the browser onto a canvas at
 4x and embedded as an image, so nothing is dropped or replaced; without a canvas the builder fails
 instead of printing placeholders. The `devDependencies` pdf-lib, @pdf-lib/fontkit and marked exist only

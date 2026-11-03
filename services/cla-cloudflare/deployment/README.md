@@ -34,8 +34,9 @@ Before a separately approved deployment:
    never expose a bypass asset route.
    Also stage, in the same directory, the signed-PDF files (see the README section
    "Signed PDF copy"): CLA_INDIVIDUAL.pdf rendered from those exact bytes by
-   scripts/render-agreement-pdf.mjs, cla-pdf-font.ttf and cla-pdf-font-OFL.txt copied
-   from deployment/staging/assets/, and cla-pdf.js from `npm run build:pdf-client`.
+   scripts/render-agreement-pdf.mjs, cla-pdf-font-OFL.txt copied from deployment/staging/assets/, cla-pdf-font.ttf
+   from `node scripts/fetch-pdf-font.mjs --dest assets-reviewed` (hash-pinned download; the
+   font is never committed), and cla-pdf.js from `npm run build:pdf-client`.
 4. Rehearse namespaced schema/seed statements, verify backups, immutable history,
    DB clock, all D1 atomic guards and a single signing authority. Existing
    head_requests schemas need the new dispatched status before enabling dispatch.

@@ -4,11 +4,13 @@ import {readFileSync} from 'node:fs';
 import {deflateSync} from 'node:zlib';
 import {PDFDocument} from 'pdf-lib';
 import {HASH_KEYWORD} from '../scripts/render-agreement-pdf.mjs';
+import {ensureFont} from '../scripts/fetch-pdf-font.mjs';
 export const root=new URL('../',import.meta.url);
 export const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 export const stagingMd=readFileSync(new URL('deployment/staging/assets/CLA_INDIVIDUAL.md',root));
 export const stagingPdf=new Uint8Array(readFileSync(new URL('deployment/staging/assets/CLA_INDIVIDUAL.pdf',root)));
-export const font=new Uint8Array(readFileSync(new URL('deployment/staging/assets/cla-pdf-font.ttf',root)));
+// Not committed: fetched once by hash (see scripts/fetch-pdf-font.mjs). Without the file and without network this fails loudly.
+export const font=new Uint8Array(readFileSync(await ensureFont()));
 export const AGREEMENT_SHA=sha(stagingMd);
 export async function pdfWithKeyword(keyword,pages=1){
   const d=await PDFDocument.create();for(let i=0;i<pages;i++)d.addPage([612,792]);

@@ -7,6 +7,7 @@ import {deploymentPlan} from '../scripts/deployment-plan.mjs';
 import {PDFDocument} from 'pdf-lib';
 import {HASH_KEYWORD} from '../scripts/render-agreement-pdf.mjs';
 import {sha} from './pdf-fixture.mjs';
+import {ensureFont,FONT_SHA256} from '../scripts/fetch-pdf-font.mjs';
 let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('OUTBOUND_FORBIDDEN');};
 const staging=name=>new URL('../deployment/staging/'+name,import.meta.url);
 const config=JSON.parse(JSON.parse(fs.readFileSync(staging('wrangler.staging.json'),'utf8')).vars.CLA_CONFIG);
@@ -65,10 +66,10 @@ test('staging deployment still routes the worker first and the committed PDF ass
   assert.ok(bytes.length<8*1024*1024);
 });
 
-test('signature font is OFL with its licence file beside it',()=>{
+test('signature font is OFL with its licence file beside it',async()=>{
   const ofl=fs.readFileSync(staging('assets/cla-pdf-font-OFL.txt'),'utf8');
   assert.match(ofl,/SIL OPEN FONT LICENSE Version 1\.1/i);assert.match(ofl,/Great Vibes/);
-  const font=fs.readFileSync(staging('assets/cla-pdf-font.ttf'));assert.ok(font.length>10000&&font.length<2*1024*1024);
+  const font=fs.readFileSync(await ensureFont());assert.equal(sha(font),FONT_SHA256);assert.ok(font.length>10000&&font.length<2*1024*1024);
   assert.deepEqual([...font.subarray(0,4)],[0,1,0,0],'TrueType');
 });
 
