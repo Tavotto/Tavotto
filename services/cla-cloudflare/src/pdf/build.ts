@@ -116,19 +116,19 @@ export async function build(input:BuildInput):Promise<Uint8Array> {
   const labelW=150;
   const table=async(rows:[string,string,Face?][])=>{
     for(const [k,val,face] of rows){
-      const f=face??sans,size=f===mono?8:9,lines=ts.wrap(f,val,size,CW-labelW),height=lines.length*13+14;
+      const f=face??sans,size=f===mono?8:9,lines=ts.wrap(f,val,size,CW-labelW),height=lines.length*13+10;
       await ensure(height);
-      await ts.draw(page,sans,k,MX,y-7-9*.85,9,MUTED);
-      let ly=y-7;for(const line of lines){await ts.draw(page,f,line,MX+labelW,ly-size*.85,size,INK);ly-=13;}
+      await ts.draw(page,sans,k,MX,y-5-9*.85,9,MUTED);
+      let ly=y-5;for(const line of lines){await ts.draw(page,f,line,MX+labelW,ly-size*.85,size,INK);ly-=13;}
       page.drawLine({start:{x:MX,y:y-height},end:{x:W-MX,y:y-height},thickness:.5,color:rgb(...ROW)});
       y-=height;
     }
   };
-  const h3=async(title:string)=>{await ensure(60);y-=20;await ts.draw(page,sansB,title,MX,y-10*.85,10,INK);y-=10*1.3+6;};
-  await table([['Record',v.packet,mono],['Agreement',`${kind.short}, version ${v.agreement.version}`],['Agreement fingerprint (SHA-256)',v.agreement.sha256,mono],['Published text',v.agreement.publishedUrl,mono]]);
+  const h3=async(title:string)=>{await ensure(60);y-=14;await ts.draw(page,sansB,title,MX,y-10*.85,10,INK);y-=10*1.3+6;};
+  await table([['Record',v.packet,mono],['Agreement',`${kind.short}, version ${v.agreement.version}`],['Agreement fingerprint (SHA-256)',v.agreement.sha256,mono],...(v.agreement.publishedUrl?[['Published text',v.agreement.publishedUrl,mono] as [string,string,Face]]:[])]);
   for(const [title,p] of [['Contributor',v.contributor],['Rights holder',v.holder]] as const){
     await h3(title);
-    await table([['Identity',`Signed in with GitHub as @${p.login} (ID ${p.githubId})`],['Confirmations',p.confirmations.join(' · ')],['Evidence fingerprint',p.fingerprint,mono],['Time',isoTime(p.signedAt)]]);
+    await table([['Identity',`Signed in with GitHub as @${p.login} (ID ${p.githubId})`],['Confirmations',p.confirmations.join(' · ')],...(p.consent?[['Consent wording version',p.consent] as [string,string]]:[]),...(p.fingerprint?[['Evidence fingerprint',p.fingerprint,mono] as [string,string,Face]]:[]),['Time',isoTime(p.signedAt)]]);
   }
   y-=18;
   for(const line of ts.wrap(sans,CERT_NOTE,8.5,CW)){await ensure(14);await ts.draw(page,sans,line,MX,y-8.5*.85,8.5,NOTE);y-=13.2;}

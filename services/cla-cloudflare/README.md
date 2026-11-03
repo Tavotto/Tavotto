@@ -216,16 +216,16 @@ fingerprint.
 `/cla-pdf.js` defines exactly one global, `globalThis.TavottoClaPdf = { build }` (frozen):
 
     const bytes = await TavottoClaPdf.build({
-      agreement: {kind, version, sha256, publishedUrl, attribution?},  // from GET /agreement?packet=…; publishedUrl = public text location (https)
+      agreement: {kind, version, sha256, publishedUrl?, attribution?},  // from GET /agreement?packet=…; publishedUrl (https) optional: row omitted if absent
       contributor: <JSON of GET /evidence?packet=…&role=contributor>,
       holder:      <JSON of GET /evidence?packet=…&role=holder>,
-      contributorSha256?, holderSha256?,   // only if evidence_sha256 is not inside the evidence objects
+      contributorSha256?, holderSha256?,   // optional; evidence_sha256 inside the evidence is used first; row omitted if neither
     });                                    // -> Promise<Uint8Array> (a PDF); save with a Blob + download link
 
 `build` fetches `/agreement.pdf` and `/cla-pdf-font.ttf` itself (same origin, `redirect:'error'`) and throws an
 `Error` whose `message` is a stable code: `agreement_input_invalid`, `evidence_role_mismatch`,
 `evidence_agreement_mismatch` (evidence hash/kind/version differ from `agreement`), `evidence_packet_mismatch`,
-`evidence_invalid`, `evidence_attestations_invalid`, `evidence_fingerprint_missing`,
+`evidence_invalid`, `evidence_attestations_invalid`, `evidence_fingerprint_missing` (a fingerprint was given but malformed or contradictory),
 `agreement_pdf_hash_mismatch`, `asset_unavailable`, `canvas_unavailable`. Nothing is drawn or downloaded when
 it throws. `attribution` is an optional one-line footer on the Signatures page (for example the Harmony
 credit); nothing is printed if it is omitted. Extra `overrides` (`agreementPdf`, `font`, `rasterizer`, `now`,

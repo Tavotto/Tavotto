@@ -1,6 +1,6 @@
 // Input contract of TavottoClaPdf.build and its validation. Everything here is checked
 // before a single page is drawn: a PDF is never produced from inconsistent records.
-export interface AgreementInfo {kind:string;version:string;sha256:string;publishedUrl:string;attribution?:string}
+export interface AgreementInfo {kind:string;version:string;sha256:string;publishedUrl?:string;attribution?:string}
 /** Exactly what GET /evidence?packet=…&role=… returns (plus evidence_sha256). */
 export interface Evidence {
   protocol?:string;packet:string;role:'contributor'|'holder';name:string;address:string;signature:string;
@@ -26,11 +26,11 @@ const fail=(code:string):never=>{throw new Error(code);};
 const text=(v:unknown,max:number)=>typeof v==='string' && v.trim()!=='' && v.length<=max;
 export interface Party {
   role:'contributor'|'holder';name:string;address:string;signature:string;login:string;githubId:number;signedAt:number;
-  confirmations:string[];fingerprint:string;
+  confirmations:string[];fingerprint?:string;consent?:string;
 }
 export function checkInput(input:BuildInput):{agreement:AgreementInfo;packet:string;contributor:Party;holder:Party} {
   const a=input?.agreement;
-  if(!a || typeof a!=='object' || !KINDS[a.kind] || !text(a.version,40) || !HEX.test(a.sha256) || !text(a.publishedUrl,500) || !/^https:\/\//.test(a.publishedUrl) ||
+  if(!a || typeof a!=='object' || !KINDS[a.kind] || !text(a.version,40) || !HEX.test(a.sha256) || (a.publishedUrl!==undefined && (!text(a.publishedUrl,500) || !/^https:\/\//.test(a.publishedUrl))) ||
      (a.attribution!==undefined && !text(a.attribution,200)))fail('agreement_input_invalid');
   const party=(role:'contributor'|'holder',e:Evidence,extra:string|undefined):Party=>{
     if(!e || typeof e!=='object' || e.role!==role)fail('evidence_role_mismatch');
@@ -41,11 +41,12 @@ export function checkInput(input:BuildInput):{agreement:AgreementInfo;packet:str
     const att=e.attestations;
     if(!att || typeof att!=='object' || Object.keys(att).length===0 || Object.values(att).some(v=>v!==true))fail('evidence_attestations_invalid');
     const fingerprint=e.evidence_sha256??extra;
-    if(typeof fingerprint!=='string' || !HEX.test(fingerprint) || (e.evidence_sha256!==undefined && extra!==undefined && extra!==e.evidence_sha256))fail('evidence_fingerprint_missing');
+    if(fingerprint!==undefined && (typeof fingerprint!=='string' || !HEX.test(fingerprint) || (e.evidence_sha256!==undefined && extra!==undefined && extra!==e.evidence_sha256)))fail('evidence_fingerprint_missing');
+    const consent=typeof e.consent_ui_version==='string' && /^[A-Za-z0-9._-]{1,20}$/.test(e.consent_ui_version)?e.consent_ui_version:undefined;
     const keys=Object.keys(att),known=Object.keys(CONFIRMATIONS);
     const ordered=[...known.filter(k=>keys.includes(k)),...keys.filter(k=>!known.includes(k)).sort()];
     return {role,name:e.name,address:e.address,signature:e.signature,login:e.github_login_at_signing,githubId:e.github_id,signedAt:e.signed_at_unix,
-      confirmations:ordered.map(k=>CONFIRMATIONS[k]??k),fingerprint:fingerprint as string};
+      confirmations:ordered.map(k=>CONFIRMATIONS[k]??k),fingerprint,consent};
   };
   const contributor=party('contributor',input.contributor,input.contributorSha256),holder=party('holder',input.holder,input.holderSha256);
   if(input.contributor.packet!==input.holder.packet)fail('evidence_packet_mismatch');

@@ -79,7 +79,6 @@ test('builder refuses inconsistent evidence before drawing anything',async()=>{
   await bad({contributor:evidence('holder')},'evidence_role_mismatch');
   await bad({contributor:evidence('contributor',{signature:'Someone Else'})},'evidence_invalid');
   await bad({contributor:evidence('contributor',{attestations:{personal:true,read:false}})},'evidence_attestations_invalid');
-  await bad({contributor:{...evidence('contributor'),evidence_sha256:undefined}},'evidence_fingerprint_missing');
   await bad({contributor:evidence('contributor',{github_login_at_signing:'bad login'})},'evidence_invalid');
   await bad({agreement:{...base.agreement,kind:'weird'}},'agreement_input_invalid');
   await bad({agreement:{...base.agreement,publishedUrl:'javascript:alert(1)'}},'agreement_input_invalid');
@@ -87,6 +86,7 @@ test('builder refuses inconsistent evidence before drawing anything',async()=>{
   const c=evidence('contributor');const fp=c.evidence_sha256;delete c.evidence_sha256;
   assert.ok((await build({...base,contributor:c,contributorSha256:fp})).length>1000);
   await bad({contributor:{...c,evidence_sha256:fp},contributorSha256:'2'.repeat(64)},'evidence_fingerprint_missing');
+  await bad({contributor:{...c,evidence_sha256:'xyz'}},'evidence_fingerprint_missing');
 });
 
 test('Chinese names and addresses are rasterised whole, never dropped or mangled; Latin text stays real text',async()=>{
@@ -127,4 +127,14 @@ test('very long addresses flow onto continuation pages; order and footers stay c
   assert.equal(p[p.length-1].text.includes('Page '+p.length+' of '+p.length),true);
   assert.ok(p.at(-1).text.includes('the record governs')||p.at(-1).flat.includes('therecordgoverns'));
   assert.equal(p.filter(x=>x.flat.includes('Thankyoufor')).length,1);
+});
+
+test('publishedUrl and fingerprints are optional: their rows are simply omitted; consent wording version is printed',async()=>{
+  const base=await input(),a={...base.agreement};delete a.publishedUrl;
+  const c=evidence('contributor',{consent_ui_version:'2'}),h=evidence('holder');delete c.evidence_sha256;delete h.evidence_sha256;
+  const [,,cert]=await pages(await build({...base,agreement:a,contributor:c,holder:h}));
+  assert.doesNotMatch(cert.text,/Published text/);assert.doesNotMatch(cert.text,/Evidence fingerprint/);
+  assert.ok(cert.text.includes('Consent wording version'));assert.ok(cert.flat.includes('Consentwordingversion2'));
+  assert.ok(cert.text.includes('Time')&&cert.text.includes(base.contributor.packet));
+  const [,,full]=await pages(await build(base));assert.ok(full.text.includes('Published text')&&full.text.includes('Evidence fingerprint'));
 });
