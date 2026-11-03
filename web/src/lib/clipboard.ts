@@ -1,8 +1,7 @@
 import { create } from 'zustand'
-import { msg, type UiMessage } from '@/i18n'
+import { msg, t as translate, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
-import { engineLabel } from '@/components/inspector/roles/registry'
 import { figureTextToAnnotation } from '@/lib/figureTextCopy'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -98,7 +97,8 @@ export function buildElementClipPayload(
     : []
   if (!objects.length) {
     const first = els.find((e) => !e.text_block) ?? els[0]
-    return { payload: null, refusedName: engineLabel(first.label) }
+    // 只说元素类别（元素树里已有的类别词）；类别不认识时空串 = 「这个元素还不能复制」
+    return { payload: null, refusedName: translate(`role.${first.role}`, { ns: 'inspector', defaultValue: '' }) }
   }
   return {
     payload: {
@@ -134,7 +134,7 @@ function inIdleEditor(node: Node | null): boolean {
 /** 顶栏胶囊：这个元素还不能复制（只用状态胶囊，不挤页面） */
 function announceNotCopyable(name: string | null): void {
   if (name == null) return
-  useUiStore.getState().setStatus(note('elementNotCopyable', { name }), 'info')
+  useUiStore.getState().setStatus(name ? note('elementNotCopyable', { name }) : note('elementNotCopyableGeneric'), 'info')
 }
 
 /**

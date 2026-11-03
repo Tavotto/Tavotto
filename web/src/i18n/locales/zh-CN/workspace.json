@@ -807,6 +807,7 @@
     "nothingToUndo": "没有可撤销的操作",
     "nudgeNotMovable": "选中的图内元素不能移动",
     "elementNotCopyable": "{{name}}还不能复制",
+    "elementNotCopyableGeneric": "这个元素还不能复制",
     "objectCopied": "已复制 {{name}}",
     "objectsCopied": "已复制 {{count}} 个对象",
     "overridesCleared": "已清空这张图的图内修改",

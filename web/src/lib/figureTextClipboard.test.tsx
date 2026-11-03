@@ -54,6 +54,7 @@ const manifest = (): Manifest => ({
     el('axes_0.title', 'title', 'Reaction', TB),
     el('axes_0.ylabel', 'axis_label', 'Conversion', { ...TB, text: 'Conversion', math: false, rotation: 90, center: [0.03, 0.5], w: 0.3, h: 0.05, asc: 0.04 }),
     el('axes_0.lines_0', 'line', '曲线 A'),
+    el('x.unknown', 'weird_role', 'x'),
   ],
 })
 
@@ -125,7 +126,7 @@ describe('⌘C：图内编辑里选着元素', () => {
     expect(handleCopyEvent(e)).toBe(true) // 消费了：不放给「复制选区里的整张图」
     expect(preventDefault).toHaveBeenCalled()
     expect(setData).not.toHaveBeenCalled()
-    expect(formatMessage(useUiStore.getState().status)).toBe('曲线 A还不能复制')
+    expect(formatMessage(useUiStore.getState().status)).toBe('曲线还不能复制')
     expect(useUiStore.getState().statusTone).toBe('info')
   })
 
@@ -165,6 +166,13 @@ describe('⌘C：图内编辑里选着元素', () => {
     expect(handleCopyEvent(e)).toBe(true)
     expect(setData).not.toHaveBeenCalled()
     expect(formatMessage(useUiStore.getState().status)).toContain('还不能复制')
+  })
+})
+
+describe('胶囊只写元素类别', () => {
+  it('认识的类别用类别词；不认识的说「这个元素」', async () => {
+    await copyElementsAsAnnotations('p1', ['x.unknown'])
+    expect(formatMessage(useUiStore.getState().status)).toBe('这个元素还不能复制')
   })
 })
 
@@ -269,6 +277,6 @@ describe('右键弹层：复制为标注 / 粘贴为标注', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     expect(await copyElementsAsAnnotations('p1', ['axes_0.lines_0'])).toBe(false)
     expect(writeText).not.toHaveBeenCalled()
-    expect(formatMessage(useUiStore.getState().status)).toBe('曲线 A还不能复制')
+    expect(formatMessage(useUiStore.getState().status)).toBe('曲线还不能复制')
   })
 })

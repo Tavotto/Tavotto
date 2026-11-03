@@ -845,6 +845,7 @@
     "nothingToUndo": "Nothing to undo",
     "nudgeNotMovable": "The selected element can't be moved",
     "elementNotCopyable": "{{name}} can't be copied yet",
+    "elementNotCopyableGeneric": "This element can't be copied yet",
     "objectCopied": "Copied {{name}}",
     "objectsCopied": "Copied {{count}} objects",
     "overridesCleared": "Cleared this figure’s edits",
