@@ -27,7 +27,7 @@
 | SG07 | passed(M1) | f505c216 | 脚手架+组合+worker 分发；热=冷字节一致；注释锚定/NaN 间断入口未完成（SG08+） |
 | SG08 | passed | 834c0053+f74757f5 | 类别轴/bar/errorbar/图例同步；vectors 14 条双侧同判 |
 | SG09 | passed(core) | d962ecae | 网格/热图绑定全链 + vectors 16 条双侧同判；极坐标/3D 等以信息前提登记（不冒充） |
-| SG10 | running | — | 前端集成：文档契约 + API client + 绑定向导 |
+| SG10 | running(1/3) | 00de628a+c95bdb03 | 后端端点+文档契约+api client 完成；绑定向导 UI 与 PanelView 接线未做 |
 | SG11–SG17 | pending | — | — |
 
 ## Checkpoint 追加
@@ -39,6 +39,23 @@
   compose 图像替换；vectors 16 条双侧同判；TS 镜像同步（grids 校验 + image 角色 + 摘要口径）。
 - 极坐标/3D/双轴/inset：**未实现**，信息前提登记在 SG00 能力清单 §3（3D 需 z 数据等）——
   按计划「无原输入的信息不冒充已恢复」，该批以「已实现网格/色阶 + 对等盘点」记账，非全部退出条件。
+
+### 2026-11-04 SG10 进行到 1/3（时间：UTC 05:5x）
+
+- `00de628a`：POST /api/svg/chart/bind（probe 子进程取引擎身份 → chartbind 确认产物；
+  缺 matplotlib = 503 chart_engine_unavailable）、POST /api/svg/chart/compute
+  （svgscene 重读+verify_scene → svg_scaffold 子进程 → 引擎身份对账（错 = 409 chart_engine_mismatch）
+  → compose；原文件零改动；monkeypatch 断言不建脚本会话）。svgchart 子进程协议
+  （stdin/stdout JSON + probe 模式 + engine 身份回报）。compose 序列化注册 ns 前缀（ns0: 修复）。
+- `c95bdb03`：document.ts PanelObject.chart?: PanelChartState（语义真值=模型+绑定；
+  旧前端忽略退化为静态预览）+ lib/chartApi.ts（inspect/bind/compute 客户端）。
+- **SG10 剩余**：② 绑定向导 UI（inspect → 选轴区/CSV/系列 → chartBind → chartCompute 预览 →
+  documentStore.commit 写 chart 字段；取消不落文档）③ PanelView/渲染链：chart 面板的
+  renderStore 键「文件+变体」（变体=model rev+binding）与 chartCompute 结果的 svg 接入
+  （复用 exactPanelRender 家族纪律）④ 元素树/命中：svgcompose facts 的 series_points →
+  manifest 式几何 ⑤ e2e spec + playwright 白名单。
+- 验证基线：后端全部 chart 套件 exit 0（endpoints/compute/grid/series/bind/model/vectors）；
+  pnpm build 绿；golden 17 用例双侧同判。
 
 ### 接续指南（SG10 开始时的状态快照）
 
