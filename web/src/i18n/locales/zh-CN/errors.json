@@ -760,6 +760,7 @@
     "rewriteChecksums": "同一文件夹里的 {{files}} 记着这个脚本的校验值，改完会对不上。",
     "rewriteConfirm": "我已查看以上改动，知道这会修改我的脚本",
     "rewriteBack": "返回",
+    "rewritePreviewTimeout": "生成预览用了太久，已停止。脚本没有改动，可以再试一次。",
     "rewriteApply": "修改脚本",
     "scriptEditNotDurable": "已改写 {{script}}，但没能确认已写入磁盘（此时断电可能丢失）。脚本现在是改后的样子，如需保险请另存一份。",
     "rewriteDone": "已改写「{{script}}」里的数据路径，正在重新运行。可以在 设置 →「环境诊断」里恢复原脚本。",

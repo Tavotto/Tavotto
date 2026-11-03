@@ -31,7 +31,7 @@ import { createDismissTimer } from '@/lib/dismissTimer'
 import { retryArtifactEntry } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import { askConfirm, useUiStore } from '@/store/uiStore'
-import { msg } from '@/i18n'
+import { formatMessage, msg } from '@/i18n'
 
 /**
  * 渲染环境状态。⚡ 参数化编辑需要一个能 import 用户脚本依赖的 Python；
@@ -208,6 +208,13 @@ export interface AdoptedEnvironment {
  * 的采用、设置页）不必各自再挡一遍，也挡不住（写在它们看得见结果之前就发生了）。
  */
 let projectEpoch = 0
+/** 改写预览（只读，后端不改任何文件）的等待上限；后端 git 探测自己有界，这是兜底（QA-WIN-25） */
+const REWRITE_PREVIEW_TIMEOUT_MS = 30_000
+let previewAbort: AbortController | null = null
+function abortRewritePreview() {
+  previewAbort?.abort()
+  previewAbort = null
+}
 /**
  * 引擎 bootstrap（自助安装渲染环境）的状态：**只有一份** `{ attempt, state }`，来源三路（SSE `engine.bootstrap` /
  * 环境状态 GET / install POST 响应）都经 `applyBootstrap` 这一个入口，规则两条：
@@ -347,27 +354,48 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     if (get().missingInput) return
     set({ missingInput: offer })
   },
-  dismissMissingInput: () =>
-    set({ missingInput: null, rewritePreview: null, rewriteSkipped: [], rewriteError: null }),
+  dismissMissingInput: () => {
+    abortRewritePreview() // 预览还在等：连请求一起放弃（预览不改任何文件，放弃是安全的）
+    set({ missingInput: null, rewritePreview: null, rewriteSkipped: [], rewriteError: null })
+  },
   previewRewrite: async (entry, chosen, kind) => {
     const epoch = projectEpoch
     const offer = get().missingInput
     if (!offer) return null
     set({ rewriteSkipped: [], rewriteError: null })
+    abortRewritePreview()
+    const ctl = new AbortController()
+    previewAbort = ctl
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      ctl.abort()
+    }, REWRITE_PREVIEW_TIMEOUT_MS)
     try {
-      const preview = await previewInputPathEdit(offer.script, entry, chosen, kind)
+      const preview = await previewInputPathEdit(offer.script, entry, chosen, kind, ctl.signal)
       if (epoch !== projectEpoch || get().missingInput !== offer) return null
       set({ rewritePreview: preview })
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
+      if (ctl.signal.aborted) {
+        // 用户放弃（「稍后」/ Esc）：什么都不说；超时：说一句，脚本没动
+        if (!timedOut || get().missingInput !== offer) return null
+        return formatMessage(msg('engine.rewritePreviewTimeout', undefined, 'errors'))
+      }
       // 一处都改不了：后端逐条说了为什么（f-string 拼的、在字典键里……），对话框列出来
       const skipped = e instanceof ApiError ? (e.body?.params as { skipped?: unknown })?.skipped : null
       if (Array.isArray(skipped)) set({ rewriteSkipped: skipped as ScriptEditSkipped[] })
       return backendErrorText(e)
+    } finally {
+      clearTimeout(timer)
+      if (previewAbort === ctl) previewAbort = null
     }
   },
-  cancelRewrite: () => set({ rewritePreview: null }),
+  cancelRewrite: () => {
+    abortRewritePreview()
+    set({ rewritePreview: null })
+  },
   commitRewrite: async () => {
     const epoch = projectEpoch
     const preview = get().rewritePreview
