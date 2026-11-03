@@ -121,3 +121,9 @@ check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actio
   expectedHeadOid})`（管理员；`expectedHeadOid` 防止入的不是审过的 head）；GitHub 界面是 PR 页合并框的「Jump to
   front」。插队不降门槛：Codex / CI / 线程照档位全满足才插。
 * 不为别的理由插队（赶发版、「这个 PR 很小」）：插队会让排在前面的组全部重建。
+
+**碰 Windows 路径 / 进程 / 安装的 PR，开 PR 时就打 `full-ci` 并看 Windows 腿（错题本 L-096 升级，
+2026-11-03）。** PR 级 CI 不跑 Windows 后端，只在 Windows 显形的缺陷（fsync 只读句柄、cp1252 编码、
+非法文件名、文件占用）到合并组才第一次红；入队前确认 Windows 后端腿真跑过且绿，只在 Windows 生效的
+改动另在 Lab 整文件跑相关测试。为什么：六个不同日子各被合并组踢一次，每次白烧约一小时
+（#214、#296、#314、#317、#319、#360、#725、#1587、#1604）。

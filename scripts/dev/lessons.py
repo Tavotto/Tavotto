@@ -37,6 +37,10 @@ PROMOTE_AT = 3
 LAYERS = ("repo", "backend", "frontend", "ci", "plugin", "packaging", "desktop")
 KINDS = ("别这样", "照这样")
 FIELDS = ("类", "状态", "Seen", "为什么", "证据")
+#: Seen 按北京时间记（错题本「怎么用」与每日复盘约定），「不在未来」也按北京时间的今天判。
+#: 不用 runner 本地日期：CI 是 UTC，复盘 04:30（北京）开工时 UTC 还在前一天，当天的 Seen 会被判成未来。
+#: 用固定 +08:00 而不是 zoneinfo：中国不用夏令时，且 Windows 上没装 tzdata 时 zoneinfo 取不到。
+BEIJING = dt.timezone(dt.timedelta(hours=8), "Asia/Shanghai")
 
 #: 公开仓库里不许出现的东西：机器地址、反馈包编号、本机用户目录、邮箱、凭据形状。
 PRIVATE = re.compile(
@@ -179,6 +183,14 @@ def _build(c: dict) -> Lesson:
     )
 
 
+def beijing_today(now: dt.datetime | None = None) -> dt.date:
+    """北京时间的今天；now 不带时区时按 UTC 解读。"""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
+    return now.astimezone(BEIJING).date()
+
+
 def problems(text: str, *, root: Path = ROOT, today: dt.date | None = None) -> list[str]:
     """解析之外的检查：编号、体积、脱敏、升级目标存在、日期不在未来。"""
     out: list[str] = []
@@ -201,7 +213,7 @@ def problems(text: str, *, root: Path = ROOT, today: dt.date | None = None) -> l
         m = PRIVATE.search(line)
         if m:
             out.append(f"第 {n} 行有私有信息形状「{m.group(0)}」（公开仓库）")
-    today = today or dt.date.today()
+    today = today or beijing_today()
     for x in lessons:
         if x.promoted_to and not (root / x.promoted_to).is_file():
             out.append(f"{x.id}: 升级目标 {x.promoted_to} 不存在")

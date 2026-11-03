@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## The desktop app's AI repair can run protected commands again
+
+On the desktop app, when the AI repaired a script it could not run commands in its protected mode and always answered that the sandbox was unavailable, and its trial runs silently lost their operating-system sandbox. The app tested the sandbox by asking itself to run a one-line Python command, which the packaged app does not understand. It now tests with the built-in Python (or a plain system program when that is not installed yet). Nothing changes when you run Tavotto from source.
+
 ## Feedback bundles say which external command a script could not find
 
 When a script runs an external program (for example `rsvg-convert` through `subprocess`) and it cannot be found, the task only reported a generic script error, and a feedback bundle could not show whether the program was missing, not on the render process's PATH, or installed but not linked (a common Homebrew case). The bundle's report now has a short `project.missing_commands` entry for that moment: the command name (well-known tools as-is, anything else hashed), whether it is on the render process's PATH, whether it exists in a few common install locations (named, never as paths), whether a Homebrew install is present but unlinked, and how many PATH entries there were. It contains no paths and no text from your script, and nothing is sent unless you send the bundle yourself.
@@ -100,3 +104,6 @@ On a slow disk or a Microsoft Store Python, the first render after opening a pro
 ## In single-figure editing, drag the canvas edges to add margin without resizing the figure
 
 Dragging an edge of the figure in single-figure editing used to change the figure size, so the plot area stretched or squeezed. Edges now change the canvas around the figure instead: drag outward to add white margin (for example to make room for labels, or to bring the canvas to a journal column width, which it snaps to), drag inward to remove it. Dragging inward stops at the figure edge and again at the edge of the plotted content ("tight"); hold ⌥ (Alt on Windows) to crop into the content. Drag a corner to resize the figure itself, proportionally (hold ⇧ for a free aspect ratio); text keeps its pt size and the figure re-renders when you let go. A capsule next to the canvas explains each drag, and **Fit to content** / **Remove margin** appear when the figure is selected. Exports use the figure plus its margin. Margins live in your layout only and are not written back to the script.
+## Text annotations can be rotated to any angle
+
+Select a text annotation and drag the round handle above its frame to rotate it; hold Shift to snap to 15 degree steps. You can also type an angle in the Properties panel. Alignment, snapping and the multi-selection frame now follow the rotated outline instead of the unrotated frame, so a rotated label lines up by what you see. Exports draw the rotated text exactly where the canvas shows it. Existing projects are unchanged until you rotate something.

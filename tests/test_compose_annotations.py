@@ -454,3 +454,103 @@ def test_rotated_text_background_co_rotates_with_glyphs(client, tmp_path):
         wrong = min((_rot_cw(x * MM, y * MM, cx, cy, -deg) for x, y in corners), key=lambda q: q[1])
         assert math.hypot(top.x - want[0], top.y - want[1]) < 3, (deg, top)
         assert math.hypot(top.x - wrong[0], top.y - wrong[1]) > 30, (deg, top)
+
+
+def test_rotated_text_lands_where_the_preview_puts_it(client, tmp_path):
+    """导出与预览一致（ADR 0163）：预览 = 先按未旋转框排好版，再绕框中心顺时针转 θ（CSS rotate）。
+
+    所以任一角度下首字符的基线原点 == 未旋转导出里首字符原点绕框中心转 θ，阅读方向 == (cosθ, sinθ)。
+    拿未旋转的导出当参照，而不是自己重算排版，免得排版变了测试跟着一起错。30 / -30 是自由角度，
+    90 是旧的直角档——同一条公式，不许分叉成两套。"""
+    box = dict(x_mm=10, y_mm=45, w_mm=80, h_mm=10)
+    cx, cy = (10 + 40) * MM, 50 * MM
+
+    def first_char(deg):
+        kw = {"rotation_deg": deg} if deg else {}
+        doc = _export(client, tmp_path, [_text(text="HEADxxxxxxxxxxxxtail", **box, **kw)])
+        d, chars = _single_line_chars(doc[0])
+        return d, chars[0]["origin"]
+
+    _d0, o0 = first_char(0)
+    for deg in (30, -30, 90):
+        d, origin = first_char(deg)
+        want = _rot_cw(o0[0], o0[1], cx, cy, deg)
+        assert abs(origin[0] - want[0]) < 0.6 and abs(origin[1] - want[1]) < 0.6, (
+            deg,
+            origin,
+            want,
+        )
+        assert abs(d[0] - math.cos(math.radians(deg))) < 1e-3, (deg, d)
+        assert abs(d[1] - math.sin(math.radians(deg))) < 1e-3, (deg, d)
+
+
+def _lines_and_width(doc):
+    """第一页文字的行数与首尾字符之间的实排宽度（pt）。"""
+    raw = doc[0].get_text("rawdict")
+    lines = [ln for b in raw["blocks"] for ln in b["lines"]]
+    chars = [c for ln in lines for s in ln["spans"] for c in s["chars"]]
+    return len(lines), chars[-1]["bbox"][2] - chars[0]["bbox"][0]
+
+
+def _fit_margins() -> tuple[float, float]:
+    """前端收框余量（同源对：不在 Python 里手抄数字）——结构性地读 `textFit.ts` 导出的整数百分数。"""
+    from pathlib import Path
+
+    from tests.support.tsconst import exported_number
+
+    src = (Path(__file__).resolve().parent.parent / "web/src/canvas/textFit.ts").read_text(
+        encoding="utf-8"
+    )
+    return (
+        exported_number(src, "FIT_MARGIN_EM_PERCENT") / 100,
+        exported_number(src, "FIT_MARGIN_RATIO_PERCENT") / 100,
+    )
+
+
+FIT_MARGIN_EM, FIT_MARGIN_RATIO = _fit_margins()
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"text": "Time (s)"},
+        {"text": "Reaction time 反应时间（min）"},
+        {"text": "Conversion rate Δ", "bold": True, "italic": True},
+        {"text": "Sans label", "font_family": "sans-serif"},
+        # 长文字：定额余量兜不住整行字宽的偏窄，比例余量才行（字号取小，免得一行超过 100 mm 的页宽）
+        {
+            "text": "Temperature dependence of the catalytic conversion rate in aqueous solution",
+            "size_pt": 6,
+        },
+        {
+            "text": "催化转化率随温度的变化 Conversion vs temperature (K) 及其拟合曲线",
+            "size_pt": 6,
+            "bold": True,
+            "italic": True,
+        },
+    ],
+)
+def test_fit_to_text_box_never_wraps_in_export(client, tmp_path, kw):
+    """「收框到贴字宽」的余量（前端 `FIT_MARGIN_RATIO` 4 % + `FIT_MARGIN_EM` 0.5 em）要兜得住预览比导出窄。
+
+    预览按浏览器 CSS 字体栈量宽，导出按 RenderCore 的 Liberation / Noto 排；机器上落到别的脸
+    （Linux 无 Times New Roman、中文落到 PingFang / Songti、标点宽度不同）时预览会窄一点。
+    这里用真排的导出宽度当「导出自然宽」，把预览模拟成窄 3 %，按前端同一公式收框
+    （预览宽 × (1 + 比例) + 余量 em）——导出必须仍是一行；反证：不加余量的同一个框会折行，
+    且长文字上只有定额余量（比例为 0）也会折行。"""
+    size_pt = kw.get("size_pt", 12)
+    base = {"x_mm": 2, "y_mm": 45, "h_mm": 10, "size_pt": size_pt}
+    kw = {k: v for k, v in kw.items() if k != "size_pt"}
+    wide = _export(client, tmp_path, [_text(**kw, **base, w_mm=96)])
+    n, nat_pt = _lines_and_width(wide)
+    assert n == 1
+    preview_mm = nat_pt / MM * 0.97
+    em_mm = size_pt * 25.4 / 72
+
+    def lines(w):
+        return _lines_and_width(_export(client, tmp_path, [_text(**kw, **base, w_mm=w)]))[0]
+
+    assert lines(preview_mm * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * em_mm) == 1, kw
+    assert lines(preview_mm) > 1, (kw, "没有余量的框应当折行")
+    if size_pt == 6:
+        assert lines(preview_mm + FIT_MARGIN_EM * em_mm) > 1, (kw, "长文字只靠定额余量应当折行")

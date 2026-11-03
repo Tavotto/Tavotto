@@ -247,3 +247,54 @@ describe('本地活动信号', () => {
     expect(past()).toHaveLength(1)
   })
 })
+
+describe('统一宽 / 高比未旋转的 w / h（ADR 0163 旋转一节）', () => {
+  const rect = (id: string, over: Partial<CanvasObject>) =>
+    ({
+      id,
+      type: 'shape',
+      shape: 'rect',
+      strokePt: 1,
+      color: '#000000',
+      fill: null,
+      x: 0,
+      y: 0,
+      w: 40,
+      h: 10,
+      ...over,
+    }) as CanvasObject
+
+  it('两个相同 40×10 都转 90°：任一为参照，等宽 / 等高后尺寸不变', async () => {
+    for (const mode of ['samew', 'sameh'] as const) {
+      for (const order of [['a', 'b'], ['b', 'a']]) {
+        await seed([
+          rect('a', { x: 0, rotationDeg: 90 }),
+          rect('b', { x: 60, rotationDeg: 90 }),
+        ])
+        useSelectionStore.getState().set(order)
+        alignSelectedTo(mode, 'primary')
+        expect([byId('a').w, byId('a').h, byId('b').w, byId('b').h]).toEqual([40, 10, 40, 10])
+      }
+    }
+  })
+  it('一个转 90° 一个不转：按对象自身 w / h 比，参照物不动', async () => {
+    await seed([rect('a', { w: 40, h: 10, rotationDeg: 90 }), rect('b', { x: 60, w: 20, h: 6 })])
+    useSelectionStore.getState().set(['b', 'a'])
+    alignSelectedTo('samew', 'primary')
+    expect(byId('b').w).toBe(40)
+    expect(byId('a').w).toBe(40)
+    await seed([rect('a', { w: 40, h: 10, rotationDeg: 90 }), rect('b', { x: 60, w: 20, h: 6 })])
+    useSelectionStore.getState().set(['b', 'a'])
+    alignSelectedTo('sameh', 'primary')
+    expect(byId('b').h).toBe(10)
+  })
+  it('未旋转对象：等宽等高与旧行为一致', async () => {
+    await seed([rect('a', { w: 40, h: 10 }), rect('b', { x: 60, w: 20, h: 6 })])
+    useSelectionStore.getState().set(['b', 'a'])
+    alignSelectedTo('samew', 'primary')
+    expect(byId('b').w).toBe(40)
+    useSelectionStore.getState().set(['b', 'a'])
+    alignSelectedTo('sameh', 'primary')
+    expect(byId('b').h).toBe(10)
+  })
+})

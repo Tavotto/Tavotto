@@ -68,8 +68,10 @@ export function snapCandidates(
   if (targets.objects) {
     for (const o of objs) {
       if (exclude.has(o.id) || o.hidden) continue
-      xs.push(o.x, o.x + o.w / 2, o.x + o.w)
-      ys.push(o.y, o.y + o.h / 2, o.y + o.h)
+      // 旋转过的标注取转出来的外接框：吸的是屏幕上看得见的边，不是未旋转盒那几条不存在的线
+      const b = visualBounds(o)
+      xs.push(b.x, b.x + b.w / 2, b.x + b.w)
+      ys.push(b.y, b.y + b.h / 2, b.y + b.h)
     }
   }
   if (targets.guides) for (const g of guides) (g.axis === 'x' ? xs : ys).push(g.pos)
@@ -306,6 +308,22 @@ export type AlignMode =
 export const ALIGN_NEEDS_THREE: AlignMode[] = ['hdist', 'vdist']
 
 /**
+ * 把对象**看得见的**外接框（`visualBounds`）对到参照框的某条边 / 中线，只平移 x/y。
+ * 旋转过的标注 x/y/w/h 是未旋转的盒，直接拿它对齐会让可见图形偏出参照线（转 90° 的
+ * 长条文字尤其明显）；未旋转对象的 `visualBounds` 就是它自己，结果与以前逐位相同。
+ * `applyAlign` 与 `store/actions.alignIn` 共用这一处。
+ */
+export function alignOneVisual(o: CanvasObject, mode: AlignMode, box: Rect): void {
+  const vb = visualBounds(o)
+  if (mode === 'left') o.x += box.x - vb.x
+  else if (mode === 'right') o.x += box.x + box.w - vb.w - vb.x
+  else if (mode === 'hcenter') o.x += box.x + (box.w - vb.w) / 2 - vb.x
+  else if (mode === 'top') o.y += box.y - vb.y
+  else if (mode === 'bottom') o.y += box.y + box.h - vb.h - vb.y
+  else if (mode === 'vcenter') o.y += box.y + (box.h - vb.h) / 2 - vb.y
+}
+
+/**
  * 就地对齐一组对象（会直接修改传入对象，供 immer draft 使用）。
  * 单选时以页面为基准框，多选时以选区包围盒为基准 —— 与 v1 行为一致。
  */
@@ -317,20 +335,22 @@ export function applyAlign(
 ): boolean {
   if (!objs.length) return false
   const box: Rect =
-    objs.length === 1 ? { x: 0, y: 0, w: page.w, h: page.h } : boundsOf(objs)!
+    objs.length === 1 ? { x: 0, y: 0, w: page.w, h: page.h } : boundsOf(objs.map(visualBounds))!
   const prim = primary ?? objs[objs.length - 1]
 
   if (mode === 'hdist' || mode === 'vdist') {
     if (objs.length < 3) return false
     const k = mode === 'hdist' ? 'x' : 'y'
     const s = mode === 'hdist' ? 'w' : 'h'
-    const sorted = objs.slice().sort((a, b) => a[k] - b[k])
-    const total = sorted.reduce((t, o) => t + o[s], 0)
+    // 量的是**看得见的**盒（旋转过的标注取转出来的外接框），写回时只平移 x/y
+    const sorted = objs.slice().sort((a, b) => visualBounds(a)[k] - visualBounds(b)[k])
+    const total = sorted.reduce((t, o) => t + visualBounds(o)[s], 0)
     const gap = (box[s] - total) / (sorted.length - 1)
     let cur = box[k]
     for (const o of sorted) {
-      o[k] = cur
-      cur += o[s] + gap
+      const vb = visualBounds(o)
+      o[k] += cur - vb[k]
+      cur += vb[s] + gap
     }
     return true
   }
@@ -347,14 +367,7 @@ export function applyAlign(
     return true
   }
 
-  for (const o of objs) {
-    if (mode === 'left') o.x = box.x
-    else if (mode === 'right') o.x = box.x + box.w - o.w
-    else if (mode === 'hcenter') o.x = box.x + (box.w - o.w) / 2
-    else if (mode === 'top') o.y = box.y
-    else if (mode === 'bottom') o.y = box.y + box.h - o.h
-    else if (mode === 'vcenter') o.y = box.y + (box.h - o.h) / 2
-  }
+  for (const o of objs) alignOneVisual(o, mode, box)
   return true
 }
 
@@ -431,6 +444,42 @@ export function rotateVecDeg(x: number, y: number, deg: number): [number, number
   const s = Math.sin(rad)
   return [x * c - y * s, x * s + y * c]
 }
+
+/**
+ * 旋转角的规范形：(-180, 180]，顺时针为正，保留 0.1° 精度（属性页与旋转柄共用，
+ * 落盘值只有这一种写法；270 与 -90 是同一个朝向，只存 -90）。
+ * 0 返回 0（调用方据此删字段）；-180 归到 180。
+ */
+export function normalizeRotationDeg(deg: number): number {
+  if (!Number.isFinite(deg)) return 0
+  const r = Math.round(deg * 10) / 10
+  let q = ((r % 360) + 360) % 360
+  if (q > 180) q -= 360
+  return q === 0 ? 0 : q
+}
+
+/**
+ * 旋转柄拖动换算：指针相对旋转中心的方位角（度，正上方为 0、顺时针为正，y 向下坐标系）。
+ */
+export function pointerBearingDeg(cx: number, cy: number, px: number, py: number): number {
+  return (Math.atan2(px - cx, -(py - cy)) * 180) / Math.PI
+}
+
+/** 旋转柄离选框顶边的屏幕距离（px，与缩放无关）与圆点命中半径；覆盖层与浮动栏的避让共用 */
+export const ROTATE_KNOB_GAP = 22
+export const ROTATE_KNOB_RADIUS = 8
+
+/**
+ * 旋转柄圆心相对对象中心的屏幕偏移（px）：未旋转时在正上方 `h/2 + GAP`，随对象顺时针转 `deg`。
+ * 浮动栏据此把柄并进锚点，别压在柄上。
+ */
+export function rotateKnobCenterOffset(heightPx: number, deg: number): { dx: number; dy: number } {
+  const [dx, dy] = rotateVecDeg(0, -(heightPx / 2 + ROTATE_KNOB_GAP), deg)
+  return { dx, dy }
+}
+
+/** 旋转柄吸附：每 step 度一档（⇧ 的 15°）。 */
+export const snapRotationDeg = (deg: number, step = 15): number => Math.round(deg / step) * step
 
 /** 页面空间向量 → 对象局部空间（rotateVecDeg 的逆） */
 export const unrotateVecDeg = (x: number, y: number, deg: number): [number, number] =>
