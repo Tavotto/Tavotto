@@ -1,0 +1,222 @@
+"""显式建模流程的后端合同（SG06 / ADR 0166）：校准证据 → ChartModel + Binding。
+
+用户在确认预览里做的事，落到这里是纯函数：
+- **校准证据**（每个轴两条参考：两个已知数据值各在哪个用户单位位置）→
+  推出轴范围；线性推导 + log/倒轴校验；**类别轴没有连续映射的证据就不建模型**
+  （宁缺勿猜）。
+- **系列选择**（场景节点 + 数据列 + 样式保持）→ ChartModel.series。
+- 产出一律经 `chartmodel.validate_model / validate_binding`——确认产物与
+  运行时消费的是同一份合同，不存在第二套判据。
+"""
+
+from __future__ import annotations
+
+import math
+
+from tavotto.engine import chartdata, chartmodel
+
+#: 校准证据的字段闭集。
+CALIBRATION_KEYS = ("p1_user", "p1_value", "p2_user", "p2_value", "scale")
+#: 绑定请求的字段闭集。
+BINDING_REQUEST_KEYS = (
+    "axes_id",
+    "rect",
+    "x",
+    "y",
+    "series",
+    "scene_digest",
+    "nodes",
+    "completeness",
+)
+
+#: 稳定错误码（确认流程给用户的失败理由）。
+ERROR_CODES = (
+    "bind_evidence_invalid",  # 校准证据不完整/矛盾
+    "bind_log_needs_positive",  # log 轴证据里有非正值
+    "bind_degenerate_span",  # 两个参考点重合（推不出范围）
+    "bind_node_not_graphic",  # 选中的节点不是可绑定图形元素
+    "bind_column_missing",  # 选的数据列不存在
+    "bind_series_count",  # 系列数与所选节点数不一致
+)
+
+
+class BindError(ValueError):
+    def __init__(self, code: str, detail: str = "") -> None:
+        if code not in ERROR_CODES:
+            raise AssertionError(f"undisclosed bind error: {code}")
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+        self.detail = detail
+
+
+def axis_limits_from_evidence(evidence: dict) -> tuple[float, float, str, bool]:
+    """两条参考证据 → 该轴的 (lo, hi, scale, inverted)。
+
+    证据的坐标基准是**轴的绘图区用户单位**（rect 的两个端点各自已知数据值）；
+    线性外推到绘图区两端即得范围。log 轴要求两个参考值都为正。
+    """
+    if not isinstance(evidence, dict) or sorted(evidence) != sorted(CALIBRATION_KEYS):
+        raise BindError("bind_evidence_invalid", f"expected keys {sorted(CALIBRATION_KEYS)}")
+    scale = evidence["scale"]
+    if scale not in chartmodel.SCALES:
+        raise BindError("bind_evidence_invalid", f"scale must be one of {chartmodel.SCALES}")
+    p1u, p1v = float(evidence["p1_user"]), float(evidence["p1_value"])
+    p2u, p2v = float(evidence["p2_user"]), float(evidence["p2_value"])
+    for v in (p1u, p1v, p2u, p2v):
+        if not math.isfinite(v):
+            raise BindError("bind_evidence_invalid", "evidence values must be finite")
+    if p1u == p2u:
+        raise BindError("bind_degenerate_span", "reference points share one position")
+    if scale == "log" and (p1v <= 0 or p2v <= 0):
+        raise BindError("bind_log_needs_positive", "log evidence needs positive data values")
+
+    def value_at(user: float) -> float:
+        # 线性内插/外推：数据值随用户位置线性变化（log 轴在对数域内插）
+        if scale == "log":
+            lv = math.log10(p1v) + (math.log10(p2v) - math.log10(p1v)) * (user - p1u) / (p2u - p1u)
+            return 10.0**lv
+        return p1v + (p2v - p1v) * (user - p1u) / (p2u - p1u)
+
+    lo, hi = value_at(0.0), value_at(1.0)
+    inverted = lo > hi
+    return lo, hi, scale, inverted
+
+
+def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
+    """确认动作 → 可校验的 ``{"model": …, "binding": …}``（一律过 chartmodel 闸）。
+
+    ``request``：axes_id / rect([x,y,w,h] 用户单位) / x,y(轴校准证据) /
+    series([{node, x_col, y_col, kind, style?}]) / scene_digest / nodes(场景清单) /
+    completeness。数据在 ``request["dataset_text"]``（CSV/表格文本）或
+    ``request["dataset"]``（已解析列）。
+    """
+    if not isinstance(request, dict):
+        raise BindError("bind_evidence_invalid", "request must be an object")
+    missing = sorted(set(BINDING_REQUEST_KEYS) - set(request))
+    if missing:
+        raise BindError("bind_evidence_invalid", f"missing keys {missing}")
+    scene_digest = request.get("scene_digest")
+    nodes = request.get("nodes") or []
+    node_ids = {n["id"] for n in nodes if isinstance(n, dict) and "id" in n}
+    graphic_ids = {
+        n["id"]
+        for n in nodes
+        if isinstance(n, dict)
+        and n.get("tag") in ("path", "rect", "circle", "ellipse", "line", "polygon", "polyline")
+    }
+    rect = request.get("rect")
+    if not isinstance(rect, list) or len(rect) != 4 or rect[2] <= 0 or rect[3] <= 0:
+        raise BindError("bind_evidence_invalid", "rect must be [x,y,w,h] with positive size")
+
+    if "dataset" in request and request["dataset"] is not None:
+        parsed = request["dataset"]
+        if parsed.get("issues"):
+            raise BindError("bind_evidence_invalid", f"dataset has issues: {parsed['issues'][:3]}")
+    else:
+        parsed = chartdata.parse_table(request.get("dataset_text") or "")
+        if parsed["issues"]:
+            raise BindError("bind_evidence_invalid", f"dataset has issues: {parsed['issues'][:3]}")
+    columns = parsed["columns"]
+    if not columns:
+        raise BindError("bind_column_missing", "no fully numeric columns in the dataset")
+
+    x_ev, y_ev = request.get("x") or {}, request.get("y") or {}
+    xlo, xhi, xscale, xinv = axis_limits_from_evidence(x_ev)
+    ylo, yhi, yscale, yinv = axis_limits_from_evidence(y_ev)
+
+    series_req = request.get("series") or []
+    if not series_req:
+        raise BindError("bind_series_count", "at least one series is required")
+    series: list[dict] = []
+    for i, sr in enumerate(series_req):
+        node = sr.get("node")
+        if node not in node_ids:
+            raise BindError("bind_node_not_graphic", f"node {node!r} is not in the scene")
+        if node not in graphic_ids:
+            raise BindError("bind_node_not_graphic", f"node {node!r} is not a graphic element")
+        for key in ("x_col", "y_col"):
+            if sr.get(key) not in columns:
+                raise BindError("bind_column_missing", f"series[{i}].{key} {sr.get(key)!r}")
+        series.append(
+            {
+                "id": f"s{i + 1}",
+                "kind": sr.get("kind") if sr.get("kind") in chartmodel.SERIES_KINDS else "line",
+                "axes": "ax1",
+                "node": node,
+                "x": sr["x_col"],
+                "y": sr["y_col"],
+                "style": dict(sr.get("style") or {}),
+            }
+        )
+
+    # 数据列可能长短不齐：以所选系列的 x/y 列对齐为准，短列报错（不静默截断）
+    lengths = {len(columns[sr["x"]]) for sr in series} | {len(columns[sr["y"]]) for sr in series}
+    if len(lengths) > 1:
+        raise BindError("bind_evidence_invalid", "series columns have different lengths")
+
+    model = {
+        "schema": chartmodel.MODEL_SCHEMA,
+        "rev": 1,
+        "axes": [
+            {
+                "id": "ax1",
+                "rect": rect,
+                "xlim": [min(xlo, xhi), max(xlo, xhi)],
+                "ylim": [min(ylo, yhi), max(ylo, yhi)],
+                "xscale": xscale,
+                "yscale": yscale,
+                "invert_x": xinv,
+                "invert_y": yinv,
+            }
+        ],
+        "series": series,
+        "dataset": {"columns": columns},
+        "scene_digest": scene_digest,
+        "data_digest": chartmodel.digest_of({"columns": columns}),
+        "engine": engine_identity,
+    }
+    chartmodel.validate_model(model)
+    # 绑定条目 = 系列节点；轴区域由模型里的 rect 定义（用户划定的绘图区），
+    # 不要求场景里存在「轴框节点」——普通 SVG 的轴可能只是两条线段。
+    binding = {
+        "model_rev": model["rev"],
+        "scene_digest": scene_digest,
+        "entries": [{"object": f"series:{sr['id']}", "node": sr["node"]} for sr in series],
+    }
+    chartmodel.validate_binding(binding, model)
+    return {"model": model, "binding": binding}
+
+
+def preview_deviation(
+    model: dict, current_node_extents: dict[str, tuple[float, float]]
+) -> list[dict]:
+    """确认预览的几何偏差报告：每个系列「重算后位置」与「场景现状」的轴分数差。
+
+    ``current_node_extents``：node id → 该节点当前在轴分数坐标系里的 (fx, fy)
+    代表点（前端从场景几何提取；线性/log 的分数映射是纯公式——SG01 实验二
+    证明它与 matplotlib 一致到 1e-9）。
+    """
+    ax = model["axes"][0]
+    out = []
+    for sr in model["series"]:
+        col_x = model["dataset"]["columns"][sr["x"]]
+        col_y = model["dataset"]["columns"][sr["y"]]
+        first = _frac(col_x[0], ax["xlim"], ax["xscale"]), _frac(col_y[0], ax["ylim"], ax["yscale"])
+        cur = current_node_extents.get(sr["node"])
+        out.append(
+            {
+                "series": sr["id"],
+                "node": sr["node"],
+                "recomputed_first_frac": first,
+                "current_frac": list(cur) if cur else None,
+                "delta": [first[0] - cur[0], first[1] - cur[1]] if cur else None,
+            }
+        )
+    return out
+
+
+def _frac(v: float, lim: list[float], scale: str) -> float:
+    lo, hi = lim
+    if scale == "log":
+        return (math.log10(v) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))
+    return (v - lo) / (hi - lo)
