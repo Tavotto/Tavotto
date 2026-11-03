@@ -46,6 +46,8 @@ figure spec（两侧同源的规范化输入）：
                "interpretation": str,   # 科学文本解释档（没设过 = auto，不是空串）
                "text_format": str,      # 文字写法（缺席 = 旧标记；"latex" = ADR 0152）
                "math_errors": [{"src": str, "why": str}],  # 已知排不出来的公式（缺席 = 无）
+               "source_font_missing": {"family": str, "reason": str},  # 原图字体此刻用不了（缺席 = 能用 / 没有）
+               "source_font_in_use": bool,  # 文字由原图字体（本机用户脸）排：批准字体的覆盖表不适用，字形缺失以导出的 glyph_missing 为准
                "rect_mm": [x,y,w,h], "hidden": bool}],
   "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
 }
@@ -1028,11 +1030,15 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
             )
         # 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
         # 判据与前端 `glyphPlan.ts` 同源，读同一张生成的覆盖表。
-        gone, subst = glyphplan.text_diagnostics(
-            str(t.get("text") or ""),
-            _canvas_coverage(),
-            t.get("interpretation"),
-            text_format=t.get("text_format"),
+        gone, subst = (
+            ([], [])  # 用户脸的覆盖表在本机、不在批准集合里：不拿批准表冒充（ADR 0164）
+            if t.get("source_font_in_use")
+            else glyphplan.text_diagnostics(
+                str(t.get("text") or ""),
+                _canvas_coverage(),
+                t.get("interpretation"),
+                text_format=t.get("text_format"),
+            )
         )
         if gone:
             shown = "".join(gone)
@@ -1060,6 +1066,22 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
                 message=("textCjkFallbackMissing", {}),
                 object_ids=[tid],
             )
+        # 原图字体（ADR 0164）此刻在这台机器上用不了：名字保留、导出按 `font_family` 的批准族画；
+        # 事实由 spec 带进来（本机状态只有后端 `/api/source-fonts/status` 说了算），与 TS 侧同源。
+        gone_font = t.get("source_font_missing")
+        if isinstance(gone_font, dict) and gone_font.get("family"):
+            sf_family = str(gone_font["family"])
+            sf_reason = str(gone_font.get("reason") or "")
+            sink.add(
+                "source-font-unavailable",
+                f"画布文字用的字体 {sf_family} 在这台电脑上用不了（{sf_reason}），导出按 {family or 'serif'} 画",
+                message=(
+                    _SOURCE_FONT_MESSAGES.get(sf_reason, _SOURCE_FONT_MESSAGES["unreadable"]),
+                    {"font": sf_family, "fallback": family or "serif"},
+                ),
+                object_ids=[tid],
+                detail={"font": sf_family, "reason": sf_reason},
+            )
         # 排不出来的公式：导出按源码原样画并给 `math_unrenderable` 警告；这里让它进问题清单。
         # 事实由 spec 带进来（求值器纯函数、不起排版进程）；与 TS 侧同源。
         bad = [e for e in (t.get("math_errors") or []) if isinstance(e, dict) and "src" in e]
@@ -1083,6 +1105,19 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
                 },
                 worse=len(bad),
             )
+
+
+#: 原图字体用不了的原因 → 文案 key（`sourcefont.REASONS` + 前端自己的 `unsupported`；↔ `web/src/lib/preflight.ts`
+#: 的 `SOURCE_FONT_MESSAGES`，两侧逐项相同，看护 `tests/test_preflight_source_font.py`）
+_SOURCE_FONT_MESSAGES = {
+    "not_found": "textSourceFontNotFound",
+    "embedding_restricted": "textSourceFontEmbeddingRestricted",
+    "too_large": "textSourceFontTooLarge",
+    "unsupported_format": "textSourceFontUnsupportedFormat",
+    "unreadable": "textSourceFontUnreadable",
+    "invalid": "textSourceFontInvalid",
+    "unsupported": "textSourceFontUnsupported",
+}
 
 
 def _math_shown(src: object) -> str:

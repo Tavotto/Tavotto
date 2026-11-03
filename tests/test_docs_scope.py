@@ -36,6 +36,7 @@ class TestInScope:
         "path",
         [
             f"{RN}UNRELEASED.md",  # 有测试读它（test_claude_plugin / test_dsh_bundle）
+            f"{RN}unreleased/some-topic.md",  # 待发片段，同等对待
             f"{RN}v0.19.2.txt",  # 只认 .md
             f"{RN}v0.19.2.md.py",
             "docs/release-notes-x/a.md",  # 前缀撞名
@@ -68,6 +69,9 @@ class TestDecide:
 
     def test_unreleased_alone_is_not_docs_only(self):
         assert DS.decide([f"{RN}UNRELEASED.md"])["docs_only"] is False
+
+    def test_unreleased_fragment_alone_is_not_docs_only(self):
+        assert DS.decide([f"{RN}unreleased/some-topic.md"])["docs_only"] is False
 
     def test_empty_change_set_is_not_docs_only(self):
         v = DS.decide([])

@@ -33,11 +33,17 @@ PATTERNS = {
 }
 
 
+def _is_pending_doc(rel: str) -> bool:
+    return rel == PENDING or (
+        rel.startswith("docs/release-notes/unreleased/") and rel.endswith(".md")
+    )
+
+
 def _is_current_doc(rel: str) -> bool:
     if rel.startswith("docs/adr/"):
         return False
     if rel.startswith("docs/release-notes/"):
-        return rel == "docs/release-notes/UNRELEASED.md"
+        return _is_pending_doc(rel)
     return True
 
 
@@ -98,7 +104,15 @@ def test_the_scan_really_sees_the_user_facing_commands():
     for host_id, kinds in wanted.items():
         home = _published_home(host_id)
         # 技能与指南同进退：渠道 promote 之前技能也不教装法（#692 / #694 评审）
-        for rel in (home, SKILL_REFERENCE) if home == GUIDE else (home,):
+        if home == PENDING:
+            # 待发说明 = UNRELEASED.md + unreleased/ 片段：命令在其中任一处扫到即可
+            pending = [r for r in found if _is_pending_doc(r)]
+            for kind in kinds:
+                assert any(found[r][kind] for r in pending), (
+                    f"待发说明里没扫到 {kind}：命令换了写法，正则要跟着改"
+                )
+            continue
+        for rel in (home, SKILL_REFERENCE):
             for kind in kinds:
                 assert found[rel][kind], f"{rel} 里没扫到 {kind}：命令换了写法，正则要跟着改"
     if _published_home("dsh") == GUIDE:

@@ -9,6 +9,9 @@
 release.yml 的「拼 release body」当场红（scripts/check_pending_release_notes.py）。
 这段注释留在原处。
 
+**新条目请写到 `docs/release-notes/unreleased/<主题>.md`（每个 PR 一个文件，避免并行 PR 在这里冲突）；
+下面已有的段落发版时一并搬走。**
+
 
 v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.0 的 plugin-stable promote
 成功并核验后走独立文档 PR；技能源码的安装说明只随后续插件产物分发，不得重打包或替换
@@ -20,6 +23,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 ## The desktop app's AI repair can run protected commands again
 
 On the desktop app, when the AI repaired a script it could not run commands in its protected mode and always answered that the sandbox was unavailable, and its trial runs silently lost their operating-system sandbox. The app tested the sandbox by asking itself to run a one-line Python command, which the packaged app does not understand. It now tests with the built-in Python (or a plain system program when that is not installed yet). Nothing changes when you run Tavotto from source.
+
+## Feedback bundles say which external command a script could not find
+
+When a script runs an external program (for example `rsvg-convert` through `subprocess`) and it cannot be found, the task only reported a generic script error, and a feedback bundle could not show whether the program was missing, not on the render process's PATH, or installed but not linked (a common Homebrew case). The bundle's report now has a short `project.missing_commands` entry for that moment: the command name (well-known tools as-is, anything else hashed), whether it is on the render process's PATH, whether it exists in a few common install locations (named, never as paths), whether a Homebrew install is present but unlinked, and how many PATH entries there were. It contains no paths and no text from your script, and nothing is sent unless you send the bundle yourself.
 
 ## The assistant shows what it is doing with small animated dot orbs
 
@@ -64,6 +71,10 @@ On Windows without long-path support, "Make editable version" for an R / MATLAB 
 ## Preparing the environment on Windows no longer fails once at random
 
 On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
+
+## AI history from the old Microsoft Store install is no longer lost on first start
+
+On Windows, when Tavotto moved data out of the old Microsoft Store (MSIX) package's private folder, the AI history could end up empty if two parts of the app opened the history at the same moment on first start. The second one now waits for the first to finish bringing the old history over, so it is kept.
 
 ## Scripts that start another script which prints text no longer fail with a protocol error
 
@@ -116,6 +127,10 @@ Select a text annotation and drag the round handle above its frame to rotate it;
 ## The Font row of a figure's text is now one row with two dropdowns
 
 Editing the font of a text element in a figure used to take two rows, "Chinese font" and "English font". They are now a single "Font" row: the English font on the left and the Chinese font on the right. Each dropdown keeps its own name for screen readers, and hovering shows the full font name when it is cut short. When the English font you picked already draws Chinese characters, the Chinese dropdown is greyed out instead of showing an extra info button, and hovering it says why. Either font can be restored on its own: with only one changed, the restore button resets just that one; with both changed, it opens a small menu to restore the English font, the Chinese font, or both at once (one undo step). The Chinese dropdown is narrow and shows a short name (for example "宋体" instead of "宋体-简"); the list and the hover text still give the full name. Nothing about how fonts are saved has changed.
+
+## Text annotations can use the exact font the figure was drawn with
+
+A text annotation can now carry the identity of the font Matplotlib used for a piece of text in the figure, and the canvas and every export draw it in that same font file, instead of the nearest built-in serif, sans-serif or monospace font. Tavotto stores only the font's name and a fingerprint of the file in your layout; the font file itself is never copied into the project. If you open the project on a computer that does not have that font, or the font forbids embedding, the annotation is drawn in the closest built-in font, the properties panel keeps the font's name and marks it as missing, and the check list shows a warning — nothing in the layout is replaced. Annotations without this information look exactly as before.
 
 ## The properties panel no longer shows the "Figure › Subplot" trail at the top
 

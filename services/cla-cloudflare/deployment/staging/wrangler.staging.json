@@ -13,7 +13,10 @@
     }
   ],
   "triggers": {
-    "crons": []
+    "crons": [
+      "*/2 * * * *",
+      "7-59/15 * * * *"
+    ]
   },
   "vars": {
     "CLA_GITHUB_ENABLED": "false",

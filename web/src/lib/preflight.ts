@@ -14,6 +14,8 @@ import {
 import { effectiveCanvasFamily } from './typography'
 import { textDiagnostics } from './glyphPlan'
 import { mathBoxOf } from './mathtext'
+import { isSourceFont } from './sourceFont'
+import { sourceFontState } from './sourceFontCache'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
@@ -180,6 +182,13 @@ export interface PreflightTextSpec {
    * 缺席 = 没有已知失败。
    */
   math_errors?: { src: string; why: string }[]
+  /**
+   * 原图字体（ADR 0164）此刻在这台机器上用不了：名字保留、导出按 `font_family` 的批准族画。
+   * 本机状态由调用方带进来（前端读 `lib/sourceFontCache`，`ok` / 还没问到的不算）。缺席 = 能用 / 没有。
+   */
+  source_font_missing?: { family: string; reason: string }
+  /** 文字由原图字体（本机用户脸）排：批准字体的覆盖表不适用，字形缺失以导出的 `glyph_missing` 为准 */
+  source_font_in_use?: boolean
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -979,7 +988,9 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     }
     // 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
     // 判据与 `engine/preflight.py` 同源，读同一张生成的覆盖表。
-    const { missing, substituted } = textDiagnostics(t.text, t.interpretation, t.text_format)
+    const { missing, substituted } = t.source_font_in_use
+      ? { missing: [], substituted: [] } // 用户脸的覆盖表在本机、不在批准集合里：不拿批准表冒充（ADR 0164）
+      : textDiagnostics(t.text, t.interpretation, t.text_format)
     if (missing.length) {
       const chars = missing.join('')
       sink.add('glyph-missing', pf('textGlyphMissing', { chars, count: String(missing.length) }), {
@@ -1000,6 +1011,15 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
       sink.add('cjk-fallback-missing', pf('textCjkFallbackMissing'), {
         objectIds: [t.id],
       })
+    }
+    // 原图字体用不了（ADR 0164）：名字保留 + 回退，不把「画出来的不是它」藏起来
+    if (t.source_font_missing?.family) {
+      const { family: font, reason } = t.source_font_missing
+      sink.add(
+        'source-font-unavailable',
+        pf(SOURCE_FONT_MESSAGES[reason] ?? 'textSourceFontUnreadable', { font, fallback: family || 'serif' }),
+        { objectIds: [t.id], detail: { font, reason }, prop: 'fontFamily' },
+      )
     }
     // 排不出来的公式：导出时按源码原样画（不吞字）并给 `math_unrenderable` 警告；这里让它
     // 进问题面板。事实（哪些公式失败）由 spec 带进来——求值器不起排版进程。
@@ -1272,6 +1292,36 @@ export function mathErrorsOf(
   return out.length ? out : undefined
 }
 
+/** 原图字体用不了的原因 → 文案 key（↔ `engine/preflight.py` 的 `_SOURCE_FONT_MESSAGES`，逐项相同） */
+export const SOURCE_FONT_MESSAGES: Record<string, string> = {
+  not_found: 'textSourceFontNotFound',
+  embedding_restricted: 'textSourceFontEmbeddingRestricted',
+  too_large: 'textSourceFontTooLarge',
+  unsupported_format: 'textSourceFontUnsupportedFormat',
+  unreadable: 'textSourceFontUnreadable',
+  invalid: 'textSourceFontInvalid',
+  unsupported: 'textSourceFontUnsupported',
+}
+
+/**
+ * 一段标注文字的原图字体此刻在本机用不了吗（ADR 0164）。`ok` 与「还没问到」都不算——「还不知道」与
+ * 「用不了」是两个答案；状态到达时 `subscribeSourceFonts` 通知问题面板重算。
+ */
+export function sourceFontMissingOf(o: TextObject): { family: string; reason: string } | undefined {
+  if (o.hidden || !isSourceFont(o.sourceFont)) return undefined
+  const state = sourceFontState(o.sourceFont, o.sourceFont)
+  return state === 'ok' || state === 'unknown'
+    ? undefined
+    : { family: o.sourceFont.family, reason: state }
+}
+
+/** 原图字体此刻可用（状态 `ok`）：这段文字实际由本机用户脸排。 */
+export function sourceFontInUse(o: TextObject): true | undefined {
+  return isSourceFont(o.sourceFont) && sourceFontState(o.sourceFont, o.sourceFont) === 'ok'
+    ? true
+    : undefined
+}
+
 export function buildSpec(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
@@ -1316,6 +1366,8 @@ export function buildSpec(
         interpretation: o.type === 'text' ? o.interpretation : undefined,
         text_format: o.type === 'text' ? o.textFormat : undefined,
         math_errors: o.type === 'text' ? mathErrorsOf(o) : undefined,
+        source_font_missing: o.type === 'text' ? sourceFontMissingOf(o) : undefined,
+        source_font_in_use: o.type === 'text' ? sourceFontInUse(o) : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),

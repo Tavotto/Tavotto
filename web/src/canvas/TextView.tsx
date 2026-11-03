@@ -22,6 +22,9 @@ import { useDocumentStore } from '@/store/documentStore'
 import { registerGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
+import { isSourceFont } from '@/lib/sourceFont'
+import { useSourceFonts } from '@/lib/sourceFontCache'
+import { previewStackOf } from '@/lib/sourceFontPreview'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
@@ -124,6 +127,12 @@ export function TextView({
     })
   }, [editing, preview])
 
+  // 原图字体（ADR 0164）：本机服务供了字节、浏览器收下之后，预览用同一张脸；否则用 `fontFamily` 的批准族栈
+  useSourceFonts()
+  const stack = canvasFontStack(effectiveCanvasFamily(obj))
+  const source = isSourceFont(obj.sourceFont) ? obj.sourceFont : undefined
+  const previewStack = previewStackOf(source, stack)
+
   return (
     <div
       // key 随编辑态变：编辑器与静态渲染各自从空 DOM 开始，ResizeObserver 也随之重挂
@@ -142,7 +151,7 @@ export function TextView({
         editing && placeholderClass,
       )}
       style={{
-        fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
+        fontFamily: previewStack,
         fontSize: sizePx,
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
