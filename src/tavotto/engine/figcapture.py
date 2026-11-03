@@ -4535,7 +4535,10 @@ class BlockedFileOps:
         self._events: list[dict] = []
         self._spill: dict[tuple[str, str], dict] = {}
         self._active = True
-        self._busy = False
+        #: `_busy`（引擎自己在记账 / 自检）与 `_check_depth`（正在进行的探路调用）是**逐线程**的状态：
+        #: 钩子是进程全局的，别的线程（脚本自己的线程、测试遗留的后台轮询）同时跑 `os.path.exists`
+        #: 时，若共用一个计数，本线程的观察会被当成「已经在探路里」而漏记。见下面两个属性。
+        self._tls = threading.local()
         self._uninstall = None
         #: 脚本自己 `w` / `x` 重写成功的路径：目录级污点（`rmtree` 后重建）盖不到它们。后来的阻断会撤销。
         self._rewritten: set[str] = set()
@@ -4544,10 +4547,25 @@ class BlockedFileOps:
         #: 弱信号计数 {(kind, via): n}；拦下的操作计数 {(op, kind): n}（含没被回读的，只存次数）
         self._signals: dict[tuple[str, str], int] = {}
         self._counts: dict[tuple[str, str], int] = {}
-        #: 正在执行的「探路」调用（`exists` / `isfile` / `Path.exists`…）深度：它们本来就靠 stat 落空作答，不算 stat 失败
-        self._check_depth = 0
+        #: 「探路」调用（`exists` / `isfile` / `Path.exists`…）的深度见 `_check_depth`：它们本来就靠 stat 落空作答，不算 stat 失败
         #: 观察序号：每次脚本的 open / stat / 列目录 +1。`explain_exit` 要求"落空的 savefig 目标探测"是退出前最后一次观察。
         self._seq = 0
+
+    @property
+    def _busy(self) -> bool:
+        return getattr(self._tls, "busy", False)
+
+    @_busy.setter
+    def _busy(self, value: bool) -> None:
+        self._tls.busy = value
+
+    @property
+    def _check_depth(self) -> int:
+        return getattr(self._tls, "check_depth", 0)
+
+    @_check_depth.setter
+    def _check_depth(self, value: int) -> None:
+        self._tls.check_depth = value
 
     # ---- 记账 ----
     @staticmethod
