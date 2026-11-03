@@ -142,6 +142,18 @@ def scene_inventory(data: bytes) -> dict:
                         break
             if el.attrib.get("transform"):
                 entry["transformed"] = True
+            # 区域所有权需要的结构事实（SG07）：裁剪与透明
+            if el.attrib.get("clip-path"):
+                entry["clipped"] = True
+            for op_key in ("opacity", "fill-opacity", "stroke-opacity"):
+                raw = el.attrib.get(op_key) or style.get(op_key)
+                if raw is not None:
+                    try:
+                        alpha = float(raw)
+                    except ValueError:
+                        continue
+                    if alpha < 1.0:
+                        entry["alpha"] = min(float(entry.get("alpha", 1.0)), alpha)
             if tag == "use":
                 href = el.attrib.get("href") or el.attrib.get(
                     "{http://www.w3.org/1999/xlink}href", ""

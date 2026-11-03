@@ -139,3 +139,22 @@ def test_inspect_endpoint_never_modifies_the_source(project):
     client.get("/api/svg/chart/inspect?id=chart.svg")
     assert (root / "chart.svg").read_bytes() == before
     assert (root / "chart.svg").stat().st_mtime_ns == mtime
+
+
+def test_clip_and_opacity_facts_are_reported_for_region_ownership():
+    inv = scene_inventory((CORPUS / "clip_opacity.svg").read_bytes())
+    by_tag = {}
+    for n in inv["nodes"]:
+        by_tag.setdefault(n["tag"], []).append(n)
+    clipped = [n for n in inv["nodes"] if n.get("clipped")]
+    assert clipped, "the clip-path group must be reported"
+    alphas = [n["alpha"] for n in inv["nodes"] if "alpha" in n]
+    assert alphas and all(a < 1.0 for a in alphas)
+
+
+def test_outlined_text_is_paths_not_editable_text():
+    inv = scene_inventory((CORPUS / "text_outlined.svg").read_bytes())
+    text_nodes = [n for n in inv["nodes"] if n["tag"] == "text" and n.get("text")]
+    assert not text_nodes, "转曲文字不得冒充可编辑字符"
+    glyph_uses = [n for n in inv["nodes"] if n["tag"] == "use"]
+    assert glyph_uses, "轮廓字形以 use/defs 路径存在"
