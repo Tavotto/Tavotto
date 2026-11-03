@@ -24,10 +24,21 @@ from tavotto.rendercore.svgcheck import SVGBudget, parse_svg, strip_matplotlib_d
 MAX_INVENTORY_NODES = 5000
 
 #: 场景盘点可报告的「可绑定图形元素」白名单（与 svgcheck 的静态元素集对齐的子集）。
-GRAPHIC_TAGS = frozenset({
-    "path", "rect", "circle", "ellipse", "line", "polygon", "polyline",
-    "text", "image", "use", "g",
-})
+GRAPHIC_TAGS = frozenset(
+    {
+        "path",
+        "rect",
+        "circle",
+        "ellipse",
+        "line",
+        "polygon",
+        "polyline",
+        "text",
+        "image",
+        "use",
+        "g",
+    }
+)
 
 _SCENE_NODE_BUDGET = SVGBudget().max_elements
 
@@ -133,7 +144,8 @@ def scene_inventory(data: bytes) -> dict:
                 entry["transformed"] = True
             if tag == "use":
                 href = el.attrib.get("href") or el.attrib.get(
-                    "{http://www.w3.org/1999/xlink}href", "")
+                    "{http://www.w3.org/1999/xlink}href", ""
+                )
                 if href:
                     entry["href"] = href[:80]
             nodes.append(entry)
