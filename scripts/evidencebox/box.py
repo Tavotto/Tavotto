@@ -560,14 +560,33 @@ def doctor() -> int:
 CRON_FILE = "/etc/cron.d/tavotto-evidence"
 
 
+def cron_command() -> str:
+    """cron 那一行要执行的命令。
+
+    控制检出是 blobless，`git show` 要现去 GitHub 取文件内容；大陆链路常断 TLS。所以：
+    取回三次、每次间隔 60 s；先写 `.new` 再一起 `mv`，取一半失败不会把本机副本截成空文件；
+    取回成功才 `exec` **main 上的** box.py，三次都失败就记一行日志、今晚不跑（不退回旧副本）。
+    """
+    c, r = CONTROL, ROOT
+    fetch = (
+        f"git -C {c} fetch -q origin main"
+        f" && git -C {c} show origin/main:scripts/evidencebox/box.py > {r}/box.py.new"
+        f" && git -C {c} show origin/main:scripts/evidencebox/novice_u2404.sh > {r}/novice_u2404.sh.new"
+        f" && mv -f {r}/box.py.new {r}/box.py && mv -f {r}/novice_u2404.sh.new {r}/novice_u2404.sh"
+    )
+    return (
+        f"for i in 1 2 3; do {fetch} && exec python3 {r}/box.py nightly >> {r}/nightly.log 2>&1;"
+        f" rm -f {r}/box.py.new {r}/novice_u2404.sh.new; sleep 60; done;"
+        f' echo "$(date -u +%FT%TZ) nightly skipped: could not fetch main" >> {r}/nightly.log'
+    )
+
+
 def install_cron() -> int:
     """02:30 CST 夜跑。cron 先把控制检出对齐 main，再执行**main 上的** box.py（不跑本机任何旧副本）。"""
+    cmd = cron_command().replace("%", "\\%")  # crontab 里 % 是换行，要转义
     line = (
         "SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
-        f"30 18 * * * root git -C {CONTROL} fetch -q origin main && "
-        f"git -C {CONTROL} show origin/main:scripts/evidencebox/box.py > {ROOT}/box.py && "
-        f"git -C {CONTROL} show origin/main:scripts/evidencebox/novice_u2404.sh > {ROOT}/novice_u2404.sh && "
-        f"python3 {ROOT}/box.py nightly >> {ROOT}/nightly.log 2>&1\n"
+        f"30 18 * * * root {cmd}\n"
     )
     Path(CRON_FILE).write_text(line)
     os.chmod(CRON_FILE, 0o644)
