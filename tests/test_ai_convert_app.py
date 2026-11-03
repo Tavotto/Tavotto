@@ -68,7 +68,7 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ai_settings", lambda: {})
     state = {"code": WRITE_GOOD}
 
-    def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+    def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None, **_kwargs):
         state.setdefault("prompts", []).append(prompt)
         pre = "import pathlib, sys; d = pathlib.Path(sys.argv[1]); "
         return [sys.executable, "-c", pre + state["code"], cwd], {}

@@ -7,6 +7,10 @@
 * `tools/call` → `POST /api/ai/fix/<id>/tool`：由应用进程里的 `run_tool(tool, 会话上下文, 参数, 审计)` 执行——卡片、快照、审计、项目作用域
   全是 D2b 修复会话那一份，这里不另做一套。用户还没点卡片时这个调用就一直等（上限与卡片超时一致），会话取消时应用端立刻回错误。
 
+**转换模式**（`--convert-id <转换会话 id>`，TVD-BCZ0 方案 A）：同一个服务进程换一个工具集——只有一个工具 `write_conversion_target(content)`，
+`tools/list` 是本模块里写死的一条（不回调），`tools/call` → `POST /api/ai/convert/<id>/target`，由应用进程（`convertwrite`）把内容写进候选工作区
+里**Tavotto 决定的**那一个目标文件（参数里没有路径）。令牌是另一枚（`TAVOTTO_CONVERT_TOKEN` / `X-Tavotto-Convert-Token`），其余纪律同下。
+
 令牌（本次会话的 scoped token）只经环境变量 `TAVOTTO_FIX_TOKEN` 传入，**不进 argv**、不进日志；请求头 `X-Tavotto-Fix-Token`。
 回环请求走字面量 `http.client.HTTPConnection("127.0.0.1", 端口)`（与 `session_client.loopback_request` 同一条纪律，#1132）：不读任何代理设置、不跟随重定向，令牌不会被带给代理。**纯标准库**：stdout 归协议独占，别的一律写 stderr，且不写任何内容。
 """
@@ -24,6 +28,28 @@ ENV_TOKEN = "TAVOTTO_FIX_TOKEN"
 TOKEN_HEADER = "X-Tavotto-Fix-Token"
 SERVER_NAME = "tavotto_fix"
 PROTOCOL_VERSION = "2025-06-18"
+
+# ---- 转换模式（见模块说明）：服务名 / 令牌环境变量名 / 令牌头 / 工具名 / 工具定义都在这一处
+CONVERT_SERVER_NAME = "tavotto_convert"
+CONVERT_TOKEN_ENV = "TAVOTTO_CONVERT_TOKEN"
+CONVERT_TOKEN_HEADER = "X-Tavotto-Convert-Token"
+CONVERT_TOOL_NAME = "write_conversion_target"
+CONVERT_TOOL = {
+    "name": CONVERT_TOOL_NAME,
+    "description": (
+        "Write the complete new Matplotlib script (UTF-8 text) to the one target file of this conversion. "
+        "Tavotto chooses the file; you cannot pass a path. Call it once with the whole script; "
+        "call it again only to replace the whole content."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "The full text of the new script."}
+        },
+        "required": ["content"],
+        "additionalProperties": False,
+    },
+}
 #: 一次工具调用最长等多久（秒）：比卡片超时（`fixsession.ASK_TIMEOUT`）略长，让「用户没点」先由应用端报 timeout
 CALL_TIMEOUT = 660.0
 LIST_TIMEOUT = 30.0
@@ -64,16 +90,23 @@ def _loopback_transport(
 class Callback:
     """对应用修复端点的两个回环请求。`transport` 可注入（测试用），形状同 `_loopback_transport`。"""
 
-    def __init__(self, base_url: str, fix_id: str, token: str, transport=None) -> None:
+    def __init__(
+        self, base_url: str, fix_id: str, token: str, transport=None, *, convert: bool = False
+    ) -> None:
         self.port = _loopback_port(base_url)
         self.fix_id = fix_id
         self.token = token
         self.transport = transport or _loopback_transport
+        self.convert = convert
 
     def _request(self, method: str, suffix: str, body: dict | None, timeout: float) -> dict:
         data = None if body is None else json.dumps(body).encode("utf-8")
-        path = f"/api/ai/fix/{urllib.parse.quote(self.fix_id, safe='')}/{suffix}"
-        headers = {TOKEN_HEADER: self.token, "Content-Type": "application/json"}
+        base = "convert" if self.convert else "fix"
+        path = f"/api/ai/{base}/{urllib.parse.quote(self.fix_id, safe='')}/{suffix}"
+        headers = {
+            CONVERT_TOKEN_HEADER if self.convert else TOKEN_HEADER: self.token,
+            "Content-Type": "application/json",
+        }
         try:
             status, raw = self.transport(self.port, method, path, data, headers, timeout)
         except (http.client.HTTPException, OSError, TimeoutError, ValueError):
@@ -91,6 +124,8 @@ class Callback:
         return out
 
     def tools(self) -> list[dict]:
+        if self.convert:  # 转换模式只有一个写死的工具，不回调
+            return [CONVERT_TOOL]
         out = self._request("GET", "tools", None, LIST_TIMEOUT)
         tools = out.get("tools")
         if not isinstance(tools, list):
@@ -98,8 +133,28 @@ class Callback:
         return tools
 
     def call(self, name: str, arguments: dict) -> tuple[str, bool]:
+        if self.convert:
+            return self._convert_call(name, arguments)
         out = self._request("POST", "tool", {"name": name, "arguments": arguments}, CALL_TIMEOUT)
         return str(out.get("content") or ""), bool(out.get("is_error"))
+
+    def _convert_call(self, name: str, arguments: dict) -> tuple[str, bool]:
+        """转换模式的 `tools/call`：只认 `write_conversion_target`，只转发 `content`（别的参数一概丢掉）。"""
+        if name != CONVERT_TOOL_NAME:
+            return "Unknown tool.", True
+        out = self._request("POST", "target", {"content": arguments.get("content")}, CALL_TIMEOUT)
+        if out.get("ok") is True:
+            return (
+                f"Wrote {int(out.get('bytes') or 0)} bytes to the conversion target. "
+                "The file is in place; do not write it again unless you must replace it.",
+                False,
+            )
+        code = str(out.get("code") or "write_failed")
+        return (
+            f"Tavotto could not write the target file ({code}). "
+            "Explain this failure and stop; do not write the file any other way.",
+            True,
+        )
 
 
 def _tool_def(t: dict) -> dict:
@@ -140,7 +195,10 @@ class FixMcpServer:
                     "result": {
                         "protocolVersion": params.get("protocolVersion") or PROTOCOL_VERSION,
                         "capabilities": {"tools": {"listChanged": False}},
-                        "serverInfo": {"name": SERVER_NAME, "version": "1"},
+                        "serverInfo": {
+                            "name": CONVERT_SERVER_NAME if self.cb.convert else SERVER_NAME,
+                            "version": "1",
+                        },
                     },
                 }
             )
@@ -191,14 +249,21 @@ def cli(argv: list[str]) -> int:
     """`tavotto fix-mcp` 的入口。stdout 在这里抢下来给协议，`sys.stdout` 改道 stderr。"""
     ap = argparse.ArgumentParser(prog="tavotto fix-mcp", add_help=False)
     ap.add_argument("--url", required=True)
-    ap.add_argument("--fix-id", required=True)
+    group = ap.add_mutually_exclusive_group(required=True)
+    group.add_argument("--fix-id")
+    group.add_argument("--convert-id")
     try:
         args = ap.parse_args(argv)
     except SystemExit:
         return 2
-    token = os.environ.get(ENV_TOKEN, "")
+    convert = args.convert_id is not None
+    token = os.environ.get(CONVERT_TOKEN_ENV if convert else ENV_TOKEN, "")
     try:
-        callback = Callback(args.url, args.fix_id, token) if token else None
+        callback = (
+            Callback(args.url, args.convert_id if convert else args.fix_id, token, convert=convert)
+            if token
+            else None
+        )
     except (FixMcpError, ValueError):
         callback = None
     if callback is None:

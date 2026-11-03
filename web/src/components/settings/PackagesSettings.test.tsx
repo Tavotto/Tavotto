@@ -544,14 +544,14 @@ describe('安装', () => {
     expect(panel.querySelector('[role="progressbar"]')).toBeTruthy()
     // 反馈落在用户点的地方：作业面板紧跟安装框（包表之上），不是排在整张表之后
     expect(input().form!.nextElementSibling).toBe(panel)
-    // 不确定态：整片排线慢速流动（.progress-track，纸白底 + 发丝框）——
+    // 不确定态：点阵进度条（.progress-dots，canvas 里一段密点来回扫，ADR 0168）——
     // 不再是 surface-2 面板里一条 surface-2 轨道上的呼吸块
     const bar = panel.querySelector<HTMLElement>('[data-packages-progress]')!
     expect(bar.hasAttribute('data-progress-indeterminate')).toBe(true)
     expect(bar.hasAttribute('aria-valuenow')).toBe(false)
-    expect(bar.className).toContain('progress-track')
+    expect(bar.className).toContain('progress-dots')
     expect(bar.className).not.toContain('bg-surface-2')
-    expect(bar.querySelector('.progress-fill')).toBeTruthy()
+    expect(bar.querySelector('canvas')).toBeTruthy()
     expect(bar.innerHTML).not.toContain('animate-pulse')
     expect(byName(pk('job.cancel'))).toBeTruthy()
     // 作业期间相关按钮禁用，但页面还在（清单仍显示）
