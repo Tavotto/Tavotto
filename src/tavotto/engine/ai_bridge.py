@@ -167,6 +167,7 @@ exectrace.register_vocabulary("refresh", ("pending", "ok", "failed", "skipped", 
 exectrace.register_vocabulary("cli_event", ai_agents.CLI_EVENT_TYPES)
 exectrace.register_vocabulary("cli_item", ai_agents.CLI_ITEM_TYPES)
 exectrace.register_vocabulary("endpoint_kind", ai_agents.ENDPOINT_KINDS)
+exectrace.register_vocabulary("sandbox_mode", ai_agents.SANDBOX_MODES)
 
 #: `CliRunFacts.snapshot()` 的键 → `agent_run` span 的 attributes 键（登记在 `exectrace.ATTRIBUTES`）
 _CLI_FACT_ATTRS = {
@@ -198,6 +199,7 @@ _CLI_FACT_ATTRS = {
         )
     },
     "endpoint": "endpoint_kind",
+    "sandbox_mode": "cli_sandbox_mode",
 }
 
 
@@ -343,13 +345,13 @@ def _run_facts(agent: str, cwd: str, cand, script: str):
 
 
 def _cli_log_facts(sess: dict) -> tuple:
-    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 20 项）。
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 21 项）。
     数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
     没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
     f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
     if f is None:
         dash = _code("", _NO_FACT)
-        return (None,) * 13 + (dash, dash, None, None, None, dash, None)
+        return (None,) * 13 + (dash, dash, None, None, None, dash, None, dash)
     return (
         f["events"],
         f["commands"],
@@ -371,6 +373,7 @@ def _cli_log_facts(sess: dict) -> tuple:
         f["idle_end_ms"],
         _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
         f.get("target_tool_ok"),  # 仅转换会话的 Codex 有；其余 None
+        _code(f.get("sandbox_mode"), ai_agents.SANDBOX_MODES),
     )
 
 
@@ -1424,6 +1427,8 @@ def _cmd(
     checks_used: int = 0,
     check_ipc: bool = False,
     convert_mcp: ai_agents.ConvertMcp | None = None,
+    convert_task: bool = False,
+    convert_unsandboxed: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1468,6 +1473,8 @@ def _cmd(
             endpoint_args=list(extra_args),
             endpoint_env=dict(extra_env),
             convert_mcp=convert_mcp,
+            convert_task=convert_task,
+            convert_unsandboxed=convert_unsandboxed,
         )
     )
     return list(spec.argv), dict(spec.env)
@@ -1923,6 +1930,10 @@ def run(
         )
         if convert_mcp is not None:
             cmd_kw["convert_mcp"] = convert_mcp
+        if convert is not None:
+            # 是否转换任务与设置值**显式**传给适配器（它不读全局配置）；是否真生效（仅 Windows）由适配器判
+            cmd_kw["convert_task"] = True
+            cmd_kw["convert_unsandboxed"] = config.convert_unsandboxed_windows()
         cmd, extra_env = _cmd(
             agent, prompt, agent_cwd, model=model, effort=effort, endpoint=endpoint, **cmd_kw
         )
@@ -2190,6 +2201,7 @@ def run(
                         convert_mcp is not None
                     ):  # Tavotto 代写目标的工具是否成功写过（权威事实在 `convertwrite`，不看事件）
                         snapshot["target_tool_ok"] = convertwrite.ok(sid)
+                    snapshot["sandbox_mode"] = ai_agents.sandbox_mode_of(cmd)
                     sess.setdefault("cli_runs", []).append(snapshot)
                     if cand is not None and hasattr(cand, "extras"):
                         # 写入被拒的失败码要读它（`ai_convert.write_denied`）：提交前检查在进程结束之后才跑
@@ -2308,7 +2320,7 @@ def run(
                 "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
                 "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s cli_target_on_disk=%s cli_target_bytes=%s "
                 "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
-                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s",
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s sandbox_mode=%s",
                 agent,
                 script,
                 sess["status"],

@@ -1350,7 +1350,8 @@
       },
       "viewGuide": "查看使用指南",
       "defaultLabel": "默认助手",
-      "defaultNone": "没有可用的助手"
+      "defaultNone": "没有可用的助手",
+      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制"
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",

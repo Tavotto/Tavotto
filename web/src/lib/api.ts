@@ -3562,6 +3562,10 @@ export interface AiCapabilities {
    * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
    */
   ai_fix_available?: boolean
+  /**
+   * 「转换时允许 AI 不受沙盒限制」（Windows 专属开关，默认关）。**只有 Windows 后端才给这一键**：缺省（别的平台 / 老后端）= 设置里不出现该行
+   */
+  convert_unsandboxed_windows?: boolean
   /** 「连接 AI」视图（老后端没有 → 退回 `agents` 的旧界面） */
   vendors?: AiVendor[]
   connections?: AiConnection[]
@@ -3883,6 +3887,14 @@ export const setAiEndpointActive = (agent: AiAgentId, id: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent, id }),
+  })
+
+/** Windows 设置里的开关「转换时允许 AI 不受沙盒限制」；非 Windows 后端会 400 */
+export const setConvertUnsandboxedWindows = (enabled: boolean) =>
+  jsonFetch<{ convert_unsandboxed_windows: boolean }>('/api/ai/convert-unsandboxed', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
   })
 
 export const fetchAiCapabilities = (refresh = false) =>

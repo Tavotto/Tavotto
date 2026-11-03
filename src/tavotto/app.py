@@ -10240,8 +10240,37 @@ def api_ai_capabilities():
             # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接，
             # 或有可用的 Codex / Claude Code（经 MCP 修复模式，D3）时为 true；都没有则按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
             "ai_fix_available": engine_fixsession.available(),
+            # 「转换时允许 AI 不受沙盒限制」：**只在 Windows 给这一键**（值 = 用户存的开关）；别的平台没有这一键 → 设置里不出现该行
+            **(
+                {"convert_unsandboxed_windows": engine_config.convert_unsandboxed_windows()}
+                if _IS_WINDOWS
+                else {}
+            ),
         }
     )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+#: 「转换时允许 AI 不受沙盒限制」只在 Windows 存在；做成模块常量，测试不必改全局 `os.name`
+_IS_WINDOWS = os.name == "nt"
+
+
+@app.put("/api/ai/convert-unsandboxed")
+def api_ai_convert_unsandboxed():
+    """Windows 设置里的开关「转换时允许 AI 不受沙盒限制」（默认关）。非 Windows 不接受：该设置在那里永远不生效，也不该被写出来。"""
+    if not _IS_WINDOWS:
+        return jsonify(
+            {
+                "error": "convert_unsandboxed_windows_only",
+                "code": "convert_unsandboxed_windows_only",
+            }
+        ), 400
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    value = engine_config.set_convert_unsandboxed_windows(body["enabled"])
+    resp = jsonify({"convert_unsandboxed_windows": value})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

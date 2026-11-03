@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from tavotto import app as app_module
 from tavotto.engine import ai_agents, ai_bridge, config
 
 
@@ -53,6 +54,8 @@ def test_capabilities_shape(client, monkeypatch):
         "checked_at_ms",
         "taf_enabled",
         "ai_fix_available",
+        # 「转换时允许 AI 不受沙盒限制」（#1631）只在 Windows 并入
+        *(("convert_unsandboxed_windows",) if app_module._IS_WINDOWS else ()),
     }
     assert body["ai_fix_available"] is True  # 上面装了（假的）Codex / Claude Code：D3 起 CLI 也能修
     assert body["taf_enabled"] is False

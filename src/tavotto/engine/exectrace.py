@@ -168,6 +168,7 @@ _VOCABULARIES: dict[str, set[str]] = {
     "cli_event": set(),
     "cli_item": set(),
     "endpoint_kind": set(),
+    "sandbox_mode": set(),
 }
 
 #: attributes 白名单：键 → 类型（`count` 非负整数 / `ms` 非负毫秒 / `flag` 布尔 / `enum:<词表>` / `codes` 检查码列表）。
@@ -218,6 +219,7 @@ ATTRIBUTES: dict[str, str] = {
     "cli_last_event": "enum:cli_event",
     "cli_last_item": "enum:cli_item",
     "endpoint_kind": "enum:endpoint_kind",
+    "cli_sandbox_mode": "enum:sandbox_mode",
 }
 
 # ---------------------------------------------------------------- 上限

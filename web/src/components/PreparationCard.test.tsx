@@ -34,6 +34,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   refreshProject: vi.fn(),
   cancelNativeSession: vi.fn().mockResolvedValue({ confirmed: true, session: {} }),
   startConvert: vi.fn(),
+  setConvertUnsandboxedWindows: vi.fn(),
   fetchAiSession: vi.fn(),
   fetchConvert: vi.fn(),
   adoptConvert: vi.fn(),
@@ -112,7 +113,7 @@ import { useAiStore } from '@/store/aiStore'
 import { requestAiFix } from '@/lib/api'
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
+import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, setConvertUnsandboxedWindows, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -2107,6 +2108,86 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(panel().dataset.convertPhase).toBe('failed')
       expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('AI 没能写入转换工作区，没有生成新脚本。')
       expect(primary()?.textContent).toBe('重试')
+    })
+
+    describe('写入被拒时的一键方案 B（允许不受沙盒限制并重试）', () => {
+      const realLoadCaps = useAiStore.getState().loadCaps
+      const mk = (id: string, flag: boolean | undefined) =>
+        ({ agents: [{ id, usable: true, models: [], efforts: [], default_model: null, default_effort: null }], ...(flag === undefined ? {} : { convert_unsandboxed_windows: flag }) }) as never
+      const fail = async (code: string, caps: unknown) => {
+        await mount()
+        useUiStore.setState({ guideCard: 'card' })
+        useAiStore.setState({ agent: null, caps: caps as never, loadCaps: vi.fn(async () => {}) })
+        vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 'sid1', script: 'plot.py' })
+        vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'candidate.target', reason_code: code }] } } as never)
+        await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+        await act(async () => primary()!.click())
+        await settle()
+        expect(panel().dataset.convertPhase).toBe('failed')
+      }
+      afterEach(() => useAiStore.setState({ caps: null, loadCaps: realLoadCaps }))
+
+      it('条件满足：主按钮文案正确，一句话不变，「重试」降为次按钮；点了先 PUT 再重试', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockResolvedValue({ convert_unsandboxed_windows: true })
+        expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('AI 没能写入转换工作区，没有生成新脚本。')
+        expect(primary()?.textContent).toBe('允许不受沙盒限制并重试')
+        expect(panel().querySelector('[data-convert-retry]')?.textContent).toBe('重试')
+        expect(startConvert).toHaveBeenCalledTimes(1)
+        await act(async () => primary()!.click())
+        await settle()
+        expect(setConvertUnsandboxedWindows).toHaveBeenCalledWith(true)
+        expect(useAiStore.getState().loadCaps).toHaveBeenCalled()
+        expect(startConvert).toHaveBeenCalledTimes(2)
+        expect(vi.mocked(setConvertUnsandboxedWindows).mock.invocationCallOrder[0]!).toBeLessThan(vi.mocked(startConvert).mock.invocationCallOrder[1]!)
+      })
+
+      it('PUT 失败：不重试，卡片不变，主按钮恢复可点', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockRejectedValue(new Error('boom'))
+        await act(async () => primary()!.click())
+        await settle()
+        expect(startConvert).toHaveBeenCalledTimes(1)
+        expect(panel().dataset.convertPhase).toBe('failed')
+        expect(primary()?.textContent).toBe('允许不受沙盒限制并重试')
+        expect(primary()?.disabled).toBe(false)
+      })
+
+      it('能力刷新让按钮被普通「重试」换掉（卸载）后，仍然只重试一次', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockResolvedValue({ convert_unsandboxed_windows: true })
+        useAiStore.setState({
+          loadCaps: vi.fn(async () => {
+            useAiStore.setState({ caps: mk('codex', true) })
+          }),
+        })
+        await act(async () => primary()!.click())
+        await settle()
+        expect(panel().querySelector('[data-convert-allow-unsandboxed]')).toBeNull()
+        expect(startConvert).toHaveBeenCalledTimes(2)
+      })
+
+      it('PUT 期间切换项目：不再用新项目重试', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        let release!: (v: { convert_unsandboxed_windows: boolean }) => void
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockReturnValue(new Promise((r) => { release = r }))
+        await act(async () => primary()!.click())
+        await act(async () => setCurrentProjectId('pj-b'))
+        await act(async () => release({ convert_unsandboxed_windows: true }))
+        await settle()
+        expect(startConvert).toHaveBeenCalledTimes(1)
+      })
+
+      it.each([
+        ['非 Windows（无能力键）', 'agent_write_denied', mk('codex', undefined)],
+        ['开关已打开', 'agent_write_denied', mk('codex', true)],
+        ['别的失败码', 'no_matplotlib_figure', mk('codex', false)],
+        ['助手不是 Codex', 'agent_write_denied', mk('claude', false)],
+      ])('%s：没有这个按钮，卡片与原来一样', async (_n, code, caps) => {
+        await fail(code, caps)
+        expect(panel().querySelector('[data-convert-allow-unsandboxed]')).toBeNull()
+        expect(primary()?.dataset.prepPrimary).toBe('convert_retry')
+      })
     })
 
     it('进行中：后端给 writing_long 只换进度行文字，事件恢复后换回；没有新增横条或弹窗', async () => {

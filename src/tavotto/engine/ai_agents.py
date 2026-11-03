@@ -204,6 +204,10 @@ class RunContext:
     check_ipc: bool = False
     #: 转换任务：由 Tavotto 代写目标文件的 MCP 服务（只有 `AgentDefinition.convert_write_tool` 的适配器会用；其余忽略）
     convert_mcp: ConvertMcp | None = None
+    #: 这是不是一次转换会话（R / MATLAB / Python 转可编辑版），与用户设置 `ai.convert_unsandboxed_windows` 的值——**由桥显式传入**，
+    #: 适配器不读全局配置。仅 Codex 用：(Windows ∧ 转换 ∧ 设置为真) 才以 `danger-full-access` 起（方案 B，`codex_sandbox_mode`）
+    convert_task: bool = False
+    convert_unsandboxed: bool = False
 
 
 @dataclass(frozen=True)
@@ -528,6 +532,9 @@ CLI_ITEM_TYPES = frozenset(
 )
 #: 这次会话用的接口：官方登录 / 第三方中转（不带标签、不带地址）。
 ENDPOINT_KINDS = frozenset({"official", "relay"})
+#: Codex 这次会话实际的沙盒级别（诊断闭集事实 `sandbox_mode`，由实际 argv 反推，见 `sandbox_mode_of`）：
+#: `workspace_write` = Codex 默认；`unelevated` = Windows 的受限令牌覆盖；`unsandboxed` = 方案 B 的 `danger-full-access`
+SANDBOX_MODES = frozenset({"workspace_write", "unelevated", "unsandboxed"})
 _ITEM_ALIASES = {"local_shell_call": "command_execution", "patch_apply": "file_change"}
 _WIN_LONG_PREFIX = "\\\\?\\"
 
@@ -561,6 +568,8 @@ class CliRunFacts:
         self.target_touched = False
         #: Tavotto 代写目标的 MCP 工具是否成功写过（权威事实在 `convertwrite`，由桥在进程结束前填；None = 这次会话没有该工具）
         self.target_tool_ok: bool | None = None
+        #: 这次进程实际的沙盒级别（`SANDBOX_MODES`；由桥按实际 argv 填，None = 未知）
+        self.sandbox_mode: str | None = None
         self.reasoning = 0
         self.messages = 0
         self.errors = 0
@@ -716,6 +725,7 @@ class CliRunFacts:
             "target_on_disk": on_disk,
             "target_bytes": size,
             "target_tool_ok": self.target_tool_ok,
+            "sandbox_mode": self.sandbox_mode,
             "reasoning": self.reasoning,
             "messages": self.messages,
             "errors": self.errors,
@@ -765,6 +775,7 @@ def merge_run_facts(runs: list[dict]) -> dict | None:
         "endpoint",
         "target_on_disk",
         "target_bytes",
+        "sandbox_mode",
     ):
         out[k] = last.get(k)
     return out
@@ -866,6 +877,24 @@ class AgentDefinition:
 #: 20261101T084752Z-227df5）。`unelevated` = 受限令牌、不需要管理员；同环境加它后两次转换分别跑了 39 / 59 条命令并写出目标文件
 #: （Lab run 20261101T090337Z-e765ae）。`elevated` 要建沙盒用户，不采用。
 CODEX_WINDOWS_SANDBOX_ARGS = ["-c", 'windows.sandbox="unelevated"']
+
+
+def codex_sandbox_policy(ctx: "RunContext") -> str:
+    """`--sandbox` 的取值。**只有 (Windows ∧ 转换会话 ∧ 用户打开了「转换时允许 AI 不受沙盒限制」)** 是 `danger-full-access`，
+    其余（改图 / 修复会话、非 Windows、开关关着）一律 `workspace-write`，与方案 A 的 argv 逐字一致。"""
+    if os.name == "nt" and ctx.convert_task and ctx.convert_unsandboxed:
+        return "danger-full-access"
+    return "workspace-write"
+
+
+def sandbox_mode_of(argv: list[str]) -> str:
+    """从实际 argv 反推沙盒级别（诊断用，不信任何旁路状态）。"""
+    for i, a in enumerate(argv[:-1]):
+        if a == "--sandbox" and argv[i + 1] == "danger-full-access":
+            return "unsandboxed"
+    if any("windows.sandbox" in a and "unelevated" in a for a in argv):
+        return "unelevated"
+    return "workspace_write"
 
 
 def _codex_windows_sandbox_args(endpoint_args: list[str]) -> list[str]:
@@ -1086,6 +1115,7 @@ class CodexAgent(AgentDefinition):
         return ReadinessResult("unknown", "unrecognised_output")
 
     def build_command(self, ctx: RunContext) -> SpawnSpec:
+        policy = codex_sandbox_policy(ctx)
         cmd = [
             *ctx.argv,
             "exec",
@@ -1093,10 +1123,11 @@ class CodexAgent(AgentDefinition):
             ctx.cwd,
             "--json",
             "--sandbox",
-            "workspace-write",
+            policy,
             "--skip-git-repo-check",
         ]
-        cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
+        if policy != "danger-full-access":  # 不受限时再带 windows.sandbox 覆盖没有意义
+            cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
         cmd += _codex_convert_mcp_args(ctx.convert_mcp)
         cmd += ctx.endpoint_args
         if ctx.model:

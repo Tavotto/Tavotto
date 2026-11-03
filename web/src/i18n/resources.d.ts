@@ -1941,6 +1941,7 @@ export default interface Resources {
           "stepsTitle": "安装步骤"
         },
         "codexIntegrationName": "{{product}} for Codex",
+        "convertUnsandboxed": "转换时允许 AI 不受沙盒限制",
         "defaultButton": "默认",
         "defaultLabel": "默认助手",
         "defaultNone": "没有可用的助手",
@@ -3141,6 +3142,7 @@ export default interface Resources {
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
       "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
       "convert_tool_forbidden": "转换写入工具的请求不属于当前转换，已被拒绝。",
+      "convert_unsandboxed_windows_only": "「转换时允许 AI 不受沙盒限制」只在 Windows 上可用。",
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
       "data_empty": "这份数据是空的。",
@@ -6262,6 +6264,7 @@ export default interface Resources {
         "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
         "btn": {
           "adopt": "采用新版本",
+          "allowUnsandboxedRetry": "允许不受沙盒限制并重试",
           "discard": "放弃",
           "retry": "重试",
           "start": "生成可编辑版本"
