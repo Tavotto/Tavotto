@@ -39,6 +39,9 @@ import {
   FULLSCREEN_EVENT,
   getFullscreen,
   onFullscreenChange,
+  SCREEN_PPI_EVENT,
+  getScreenPpi,
+  onScreenPpiChange,
 } from './desktop'
 
 // 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
@@ -604,6 +607,58 @@ describe('全屏状态（macOS overlay 窗框）：订阅与回读', () => {
     expect(tauri.invoke).toHaveBeenCalledWith('current_fullscreen')
     tauri.invoke.mockRejectedValueOnce(new Error('denied'))
     expect(await getFullscreen()).toBe(false)
+  })
+})
+
+describe('屏幕物理 ppi（ADR 0168 第二节）', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_REMOTE_ENGINE__
+    tauri.invoke.mockReset()
+    tauri.listen.mockReset()
+    tauri.listen.mockImplementation(async () => () => {})
+  })
+
+  it('浏览器与远程实例窗口：不碰壳，一律 null / 空取消函数', async () => {
+    expect(await getScreenPpi()).toBeNull()
+    expect(typeof (await onScreenPpiChange(() => {}))).toBe('function')
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    expect(await getScreenPpi()).toBeNull()
+    await onScreenPpiChange(() => {})
+    expect(tauri.invoke).not.toHaveBeenCalled()
+    expect(tauri.listen).not.toHaveBeenCalled()
+  })
+
+  it('主窗口：回读走 screen_ppi；不合理的数与出错都当 null', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(141)
+    expect(await getScreenPpi()).toBe(141)
+    expect(tauri.invoke).toHaveBeenCalledWith('screen_ppi')
+    tauri.invoke.mockResolvedValueOnce(0)
+    expect(await getScreenPpi()).toBeNull()
+    tauri.invoke.mockResolvedValueOnce('254')
+    expect(await getScreenPpi()).toBeNull()
+    tauri.invoke.mockRejectedValueOnce(new Error('denied'))
+    expect(await getScreenPpi()).toBeNull()
+  })
+
+  it('主窗口：订阅同名事件，载荷按同一范围过滤', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    let handler: ((e: { payload: unknown }) => void) | undefined
+    tauri.listen.mockImplementationOnce(((name: string, cb: (e: { payload: unknown }) => void) => {
+      expect(name).toBe(SCREEN_PPI_EVENT)
+      handler = cb
+      return Promise.resolve(() => {})
+    }) as unknown as typeof tauri.listen)
+    const seen: (number | null)[] = []
+    await onScreenPpiChange((v) => seen.push(v))
+    handler!({ payload: { ppi: 163 } })
+    handler!({ payload: { ppi: null } })
+    handler!({ payload: { ppi: 5000 } })
+    handler!({ payload: null })
+    expect(seen).toEqual([163, null, null, null])
   })
 })
 

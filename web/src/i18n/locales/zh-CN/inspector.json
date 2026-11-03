@@ -726,6 +726,8 @@
     "source": "源文件",
     "sourceAdvanced": "源文件",
     "staleScript": "脚本已更新，进入编辑会自动重建",
+    "staleSourceMissing": "找不到脚本 {{script}}",
+    "staleSourceMissingNoName": "找不到源脚本",
     "unknown": "未知",
     "restore": "恢复",
     "replaceAction": "选择…",
@@ -779,6 +781,7 @@
     "frame_rounded": "圆角边框",
     "framealpha": "边框不透明度",
     "frameon": "边框",
+    "gradient": "渐变",
     "gradient_color": "渐变基色",
     "grid_alpha": "网格不透明度",
     "grid_color": "网格颜色",
@@ -1152,7 +1155,7 @@
     "rewriting": "正在重写…",
     "trigger": "写回记录",
     "versionDescription": "{{count}} 项修改 · {{ts}}",
-    "warnBody": "将用此版本的修改重写原图文件。备份自动存到 cache/original_backups。",
+    "warnBody": "将用此版本的修改重写原图文件。备份自动存到 {{dir}}。",
     "warnForward": "这次恢复会追加为新记录，随时可以再恢复回去。"
   },
   "writeBack": {
@@ -1253,5 +1256,12 @@
     "formatBar": "文字格式",
     "preview": "公式预览",
     "previewNoRuntime": "没有可用的排版环境"
+  },
+  "gradientStops": {
+    "top": "上端",
+    "bottom": "下端",
+    "left": "左端",
+    "right": "右端",
+    "stopLabel": "{{field}} · {{end}}颜色"
   }
 }

@@ -239,6 +239,24 @@ describe('恢复仍是原来那条路', () => {
     // 恢复完成 → 写回窗口随之关掉（原先是历史弹层关掉）
     expect(closed).toHaveBeenCalledWith(false)
   })
+
+  it('恢复确认框按项目实际备份目录提示，不再写死 cache/original_backups（QA-WIN-49）', async () => {
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    useProjectStore.setState({ project: { backup_dir: 'C:\\Users\\x\\writebackbackups1102' } } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const restoreBtns = [...document.body.querySelectorAll<HTMLElement>('[data-write-back="restore"]')]
+    await click(restoreBtns[1])
+    expect(text()).toContain('writebackbackups1102')
+    expect(text()).not.toContain('cache/original_backups')
+  })
+
+  it('项目没给备份目录：回落到默认 cache/original_backups', async () => {
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const restoreBtns = [...document.body.querySelectorAll<HTMLElement>('[data-write-back="restore"]')]
+    await click(restoreBtns[1])
+    expect(text()).toContain('cache/original_backups')
+  })
 })
 
 describe('同一个框里先写回再恢复：基线跟着本次写回推进', () => {

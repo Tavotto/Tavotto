@@ -401,7 +401,12 @@ class TestPinned:
         assert report["outcome"] == {"kind": "blocked", "code": "dependency_interpreter_pinned"}
         assert _kinds(report) == ["recheck"]  # 没有 run、没有 prepare_dependencies
         (req,) = [r for r in report["requirements"] if r["kind"] == "dependency_pinned"]
-        assert req["payload"] == dep["detail"]["pinned"]
+        # 载荷 = 谁锁的（同检查项）+ 被锁的解释器里缺的 import 名（QA-WIN-12）；检查项 detail 不带包名
+        assert {k: v for k, v in req["payload"].items() if k != "missing"} == dep["detail"][
+            "pinned"
+        ]
+        assert "missing" not in dep["detail"]
+        assert req["payload"]["missing"] == ["tavotto_test_alpha"]
         text = json.dumps(report, ensure_ascii=False)
         assert WORKER_PY not in text and str(proj) not in text  # 报告里没有机器路径
         assert managedenv.python_of(proj) is None

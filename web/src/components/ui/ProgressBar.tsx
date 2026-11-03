@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react'
 import { dotLayout, dotsFor, filledCells, sweepCells } from '@/lib/dotProgress'
 import { prefersReducedMotion } from '@/lib/motion'
+import { dotForPpi, useScreenPpi } from '@/lib/screenPpi'
 import { useEffectiveTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 
@@ -8,6 +9,7 @@ import { cn } from '@/lib/utils'
  * 点阵进度条（ADR 0168）：包管理作业、准备卡、更新下载、修复下载、导出进度共用这一份。
  * 未完成画稀点、已完成画密点——**点一样大、同一个颜色，只用疏密表现填充**；几何全在 `lib/dotProgress.ts`。
  *
+ * - 点径：桌面壳报了屏幕物理 ppi 就按它选（`lib/screenPpi.dotForPpi`，目标约 0.2 mm）；否则取最接近缩放倍数的整数。
  * - canvas 按**物理像素**画（ResizeObserver 的 `device-pixel-content-box`；不支持的内核按 dpr 估），点是整数个物理
  *   像素，Windows 125% / 175% 也不发灰；换主题当场重画（墨色读 canvas 自己的 `color`，即 `.progress-dots` 的 ink-2）。
  * - `pct` 是数就是确定态：变化时一格一格补齐或退回，`aria-valuenow` 照报。
@@ -98,9 +100,14 @@ export function ProgressBar({
   const box = useDeviceBox(canvasRef)
   const reduced = useReducedMotion()
   const theme = useEffectiveTheme()
+  // 桌面壳读得到屏幕物理 ppi 时按它选点径（各屏幕上点的实际大小接近 Mac Retina）；读不到按缩放倍数取整
+  const dot = dotForPpi(useScreenPpi())
   const indeterminate = pct === null
   const clamped = pct === null ? null : Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : 0
-  const layout = useMemo(() => (box && box.devW > 0 && box.devH > 0 ? dotLayout(box.devW, box.devH, box.cssW) : null), [box])
+  const layout = useMemo(
+    () => (box && box.devW > 0 && box.devH > 0 ? dotLayout(box.devW, box.devH, box.cssW, dot) : null),
+    [box, dot],
+  )
   const target = layout && clamped !== null ? filledCells(layout, clamped) : 0
 
   // 确定态：一格一格走到目标（第一次量到尺寸时直接到位，不从 0 补起）

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { engineLabel, groupName } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
-import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
+import { Clipboard, ClipboardPaste, ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
@@ -40,6 +40,9 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 import { figurePrimaryValue } from '@/lib/figureFontChoice'
 import { BOTTOM_SAFE } from './context-bar/position'
 import { trapTab } from '@/lib/focusTrap'
+import { canPasteFromMenu, copyElementsAsAnnotations, pasteObjects, peekClipboardHasObjects } from '@/lib/clipboard'
+import { isCopyableText } from '@/lib/figureTextCopy'
+import { keyOf } from '@/lib/keymap'
 import { usePresence } from '@/lib/motion'
 
 /**
@@ -386,6 +389,31 @@ function ElementQuick({
         <LegendControls panel={panel} element={el} read={read} field={field} write={write} />
       )}
 
+      <Divider />
+      {/* 复制为标注（ADR 0163）：图里的文字 → 页面上同一处的文字标注。曲线 / 色块 / 刻度组置灰（⌘C 时是顶栏胶囊说「还不能复制」）；
+          粘贴靠异步读剪贴板，读不了的引擎上不摆（同对象右键菜单，`canPasteFromMenu`），用 ⌘V；已知剪贴板里没有对象时置灰 */}
+      <MenuButton
+        icon={Clipboard}
+        shortcut={keyOf('copy')}
+        disabled={!isCopyableText(el)}
+        className="disabled:opacity-40"
+        data-quick-item="copy-as-annotation"
+        onClick={() => {
+          const picked = useUiStore.getState().selectedGids
+          void copyElementsAsAnnotations(panel.id, picked.includes(el.gid) ? picked : [el.gid])
+          close()
+        }}
+      >
+        {qe('copyAsAnnotation')}
+      </MenuButton>
+      {canPasteFromMenu() && (
+        <PasteAsAnnotation
+          onPaste={() => {
+            void pasteObjects()
+            close()
+          }}
+        />
+      )}
       {(field('visible') || own.length > 0) && <Divider />}
       {own.length > 0 && (
         <MenuButton icon={RotateCcw} onClick={resetElement} data-quick-item="reset-element">
@@ -401,6 +429,30 @@ function ElementQuick({
         {qe('openInspector')}
       </MenuButton>
     </>
+  )
+}
+
+/** 「粘贴为标注」：已知剪贴板里没有本工具的对象时置灰（读不出来 = 不知道 = 可点）。 */
+function PasteAsAnnotation({ onPaste }: { onPaste: () => void }) {
+  const [has, setHas] = useState<boolean | null>(null)
+  useEffect(() => {
+    let live = true
+    void peekClipboardHasObjects().then((v) => live && setHas(v))
+    return () => {
+      live = false
+    }
+  }, [])
+  return (
+    <MenuButton
+      icon={ClipboardPaste}
+      shortcut={keyOf('paste')}
+      disabled={has === false}
+      className="disabled:opacity-40"
+      data-quick-item="paste-as-annotation"
+      onClick={onPaste}
+    >
+      {qe('pasteAsAnnotation')}
+    </MenuButton>
   )
 }
 

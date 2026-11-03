@@ -332,10 +332,12 @@ class HbFaceProvider:
             with self._lock:
                 rec = self._user_records.setdefault(key, new_rec)  # 别的线程先插了就用它的
                 self._user_stat.setdefault(key, (st.st_size, st.st_mtime_ns))
-        with self._lock:
-            if key in self._user_records:
-                self._user_records[key] = self._user_records.pop(key)  # LRU：最近用的挪到队尾
-            self._evict_user_faces(keep=key)
+                # 插入与淘汰必须在同一段锁里：分两段时，别的线程会在两段之间看到超过上限的缓存
+                # （test_user_face_cache_holds_its_bounds_under_concurrent_requests 偶发 'count 3'）
+                self._touch_and_evict_user(key)
+        else:
+            with self._lock:
+                self._touch_and_evict_user(key)
         try:
             return self._load(rec)
         except fonts.FontsUnavailable as exc:
@@ -353,6 +355,12 @@ class HbFaceProvider:
     #: 当前这张永远保留；被丢的下次 `user_face` 重新入场（再读一遍文件）
     USER_FACE_BYTES_CAP = 384 * 1024 * 1024
     USER_FACE_COUNT_CAP = 32
+
+    def _touch_and_evict_user(self, key: tuple[str, int]) -> None:
+        """调用方持锁。LRU：把 key 挪到队尾，再按上限淘汰（当前这张保留）。"""
+        if key in self._user_records:
+            self._user_records[key] = self._user_records.pop(key)  # LRU：最近用的挪到队尾
+        self._evict_user_faces(keep=key)
 
     def _forget_user(self, key: tuple[str, int]) -> None:
         with self._lock:

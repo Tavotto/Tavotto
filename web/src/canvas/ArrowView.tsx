@@ -1,8 +1,7 @@
 import { MM_PER_PT } from '@/lib/units'
-import { dashArray, hitStrokeWidth } from '@/lib/shapeGeometry'
+import { arrowGeometry, dashArray, hitStrokeWidth, type ArrowHeadShape } from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ArrowObject } from '@/types/document'
-import { arrowHeads } from '@/types/document'
 
 /**
  * 箭头：两端点存比例坐标；端型独立（triangle 实心 / open 开口 / bar 短线）。
@@ -17,43 +16,7 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
   const h = Math.max(mmToWorld(obj.h), 0.001)
   const sw = Math.max(mmToWorld(obj.strokePt * MM_PER_PT), 0.05)
 
-  const a = { x: obj.start.rx * w, y: obj.start.ry * h }
-  const b = { x: obj.end.rx * w, y: obj.end.ry * h }
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const len = Math.hypot(dx, dy) || 1
-  const ux = dx / len
-  const uy = dy / len
-  const nx = -uy
-  const ny = ux
-
-  const headLen = sw * 4
-  const headHalf = sw * 1.7
-  const heads = arrowHeads(obj)
-
-  const trianglePts = (tip: { x: number; y: number }, sign: 1 | -1) => {
-    const bx = tip.x - sign * ux * headLen
-    const by = tip.y - sign * uy * headLen
-    return `${tip.x},${tip.y} ${bx + nx * headHalf},${by + ny * headHalf} ${bx - nx * headHalf},${by - ny * headHalf}`
-  }
-  const openPath = (tip: { x: number; y: number }, sign: 1 | -1) => {
-    const bx = tip.x - sign * ux * headLen
-    const by = tip.y - sign * uy * headLen
-    return `M ${bx + nx * headHalf},${by + ny * headHalf} L ${tip.x},${tip.y} L ${bx - nx * headHalf},${by - ny * headHalf}`
-  }
-  const barPath = (tip: { x: number; y: number }) =>
-    `M ${tip.x + nx * headHalf},${tip.y + ny * headHalf} L ${tip.x - nx * headHalf},${tip.y - ny * headHalf}`
-
-  // 仅实心三角端回缩线段（其余端型线到尖）
-  const trim = headLen * 0.75
-  const p1 = {
-    x: a.x + (heads.start === 'triangle' ? ux * trim : 0),
-    y: a.y + (heads.start === 'triangle' ? uy * trim : 0),
-  }
-  const p2 = {
-    x: b.x - (heads.end === 'triangle' ? ux * trim : 0),
-    y: b.y - (heads.end === 'triangle' ? uy * trim : 0),
-  }
+  const { a, b, p1, p2, headHalf, startHead, endHead } = arrowGeometry(obj, w, h, sw)
 
   // strokeLinejoin 必须显式给 round：后端 open 端型是 lineJoin=1，
   // SVG 缺省却是 miter，尖角对不上（同一条箭头两边画出来不一样）
@@ -63,11 +26,10 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
   }
-  const renderHead = (kind: string, tip: { x: number; y: number }, sign: 1 | -1) => {
-    if (kind === 'triangle') return <polygon points={trianglePts(tip, sign)} fill={obj.color} />
-    if (kind === 'open') return <path d={openPath(tip, sign)} fill="none" {...stroke} />
-    if (kind === 'bar') return <path d={barPath(tip)} fill="none" {...stroke} />
-    return null
+  const renderHead = (head: ArrowHeadShape | null) => {
+    if (!head) return null
+    if (head.kind === 'triangle') return <polygon points={head.points} fill={obj.color} />
+    return <path d={head.d} fill="none" {...stroke} />
   }
 
   return (
@@ -105,8 +67,8 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
         strokeDasharray={dashArray(obj.dash, sw)}
         {...stroke}
       />
-      {renderHead(heads.end, b, 1)}
-      {renderHead(heads.start, a, -1)}
+      {renderHead(endHead)}
+      {renderHead(startHead)}
     </svg>
   )
 }

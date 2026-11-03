@@ -1678,6 +1678,7 @@ export default interface Resources {
       },
       "autoLink": "自动连接",
       "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
+      "emptyRuntimeTitle_other": "图库目录是空的，{{count}} 张图来自脚本运行",
       "emptyTitle": "项目里还没有图",
       "group": {
         "editable": "可编辑",
@@ -3139,6 +3140,7 @@ export default interface Resources {
       "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
       "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
+      "convert_tool_forbidden": "转换写入工具的请求不属于当前转换，已被拒绝。",
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
       "data_empty": "这份数据是空的。",
@@ -4676,6 +4678,13 @@ export default interface Resources {
         "symlog": "对称对数"
       }
     },
+    "gradientStops": {
+      "bottom": "下端",
+      "left": "左端",
+      "right": "右端",
+      "stopLabel": "{{field}} · {{end}}颜色",
+      "top": "上端"
+    },
     "group": {
       "advanced": "高级",
       "arrange": "排列",
@@ -4884,6 +4893,8 @@ export default interface Resources {
       "source": "源文件",
       "sourceAdvanced": "源文件",
       "staleScript": "脚本已更新，进入编辑会自动重建",
+      "staleSourceMissing": "找不到脚本 {{script}}",
+      "staleSourceMissingNoName": "找不到源脚本",
       "unknown": "未知"
     },
     "panelLabel": "右侧面板",
@@ -4929,6 +4940,7 @@ export default interface Resources {
       "frame_rounded": "圆角边框",
       "framealpha": "边框不透明度",
       "frameon": "边框",
+      "gradient": "渐变",
       "gradient_color": "渐变基色",
       "grid_alpha": "网格不透明度",
       "grid_color": "网格颜色",
@@ -5323,7 +5335,7 @@ export default interface Resources {
       "rewriting": "正在重写…",
       "trigger": "写回记录",
       "versionDescription": "{{count}} 项修改 · {{ts}}",
-      "warnBody": "将用此版本的修改重写原图文件。备份自动存到 cache/original_backups。",
+      "warnBody": "将用此版本的修改重写原图文件。备份自动存到 {{dir}}。",
       "warnForward": "这次恢复会追加为新记录，随时可以再恢复回去。"
     },
     "writeBack": {
@@ -6481,6 +6493,7 @@ export default interface Resources {
         "envChoice": "用项目里自带的那套运行？",
         "envChoiceOpen": "要先选用哪一套运行",
         "envLocked": "设置里固定的 Python 缺组件",
+        "envLockedMissing": "设置里固定的 Python 缺 {{names}}",
         "expired": "上次的记录没了",
         "failed": "运行出错了",
         "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
@@ -6514,6 +6527,8 @@ export default interface Resources {
         "stale": "设置变了，要重新检查",
         "static": "可以直接排版",
         "stopping": "正在停止…",
+        "texCommand": "没找到 {{command}}。装好 TeX 后重启 Tavotto 再试。",
+        "texPackage": "缺 LaTeX 宏包 {{file}}，装好后再试。",
         "unknown": "有一项没查清",
         "workdir": "在哪个目录运行？"
       },
@@ -6631,6 +6646,7 @@ export default interface Resources {
       "changeKind": "更改为",
       "connectSource": "连接源脚本",
       "copy": "复制",
+      "copyAsAnnotation": "复制为标注",
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
       "deleteCount": "删除 {{count}} 个对象",
       "duplicate": "创建副本",
@@ -6647,6 +6663,7 @@ export default interface Resources {
       "openArrange": "打开排列属性",
       "openInspector": "打开全部属性",
       "paste": "粘贴",
+      "pasteAsAnnotation": "粘贴为标注",
       "rebuild": "重新构建",
       "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
       "scale": "缩放",
@@ -6928,6 +6945,8 @@ export default interface Resources {
       "elementCycled": "已选中「{{label}}」（此处第 {{index}}/{{total}} 个重叠元素）",
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
+      "elementNotCopyable": "{{name}}还不能复制",
+      "elementNotCopyableGeneric": "这个元素还不能复制",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
       "errorTitle": "这一步没有完成",
       "geometrySyncing": "正在同步图形几何，请稍候再试",

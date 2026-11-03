@@ -268,3 +268,36 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(t('prep.line.aiUnavailable', { ns: 'workspace' })).toBe('这个问题 AI 暂时还不会修')
   })
 })
+
+describe('设置里固定的 Python 缺组件：列出缺哪些（QA-WIN-12）', () => {
+  const pinned = (payload: Record<string, unknown>) =>
+    prepView(
+      {
+        ...lost,
+        connection: 'ok',
+        report: {
+          phase: 'action_required',
+          outcome: { kind: 'blocked', code: 'dependency_interpreter_pinned' },
+          target: { kind: 'script', script: 'a.py' },
+          checks: [],
+          requirements: [{ id: 'dependencies', kind: 'dependency_pinned', code: 'dependency_interpreter_pinned', payload }],
+          actions: [],
+        } as unknown as PreparationReport,
+      } as PrepEntry,
+      ctx,
+    )
+
+  it('后端给了缺的模块名：一行里带上名字', () => {
+    const v = pinned({ source: 'settings', missing: ['scipy', 'seaborn'] })
+    expect(v.state).toBe('deps_pinned')
+    expect(v.sentence.key).toBe('envLockedMissing')
+    const line = t('prep.line.envLockedMissing', { ns: 'workspace', ...v.sentence.values })
+    expect(line).toContain('scipy')
+    expect(line).toContain('seaborn')
+  })
+
+  it('后端没量到：保持原来那一句，不硬造', () => {
+    expect(pinned({ source: 'settings' }).sentence.key).toBe('envLocked')
+    expect(pinned({ source: 'settings', missing: [] }).sentence.key).toBe('envLocked')
+  })
+})

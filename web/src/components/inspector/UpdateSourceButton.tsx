@@ -453,7 +453,7 @@ result ? (
       }}
       title={wb('title')}
       description={
-        shownPage === 'records'
+        shownPage === 'records' || result
           ? undefined
           : editCount === 0
             ? wb('noOverridesTitle')

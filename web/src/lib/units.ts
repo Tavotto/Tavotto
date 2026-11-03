@@ -43,3 +43,9 @@ export function formatCm(v: number): string {
  * 开头的普通空格会被折叠吃掉（画布页顶读数曾显示成「100.0mm」）；细空格不参与折叠，也不会换行断开。
  */
 export const UNIT_GAP = '\u2009'
+
+/**
+ * 「创建副本」与「粘贴」把新对象错开原件的距离（mm，向右下各一份）。⌘D（`duplicateSelected`）、⌘V 的同画布粘贴
+ * （`clipboard.materializePaste`）共用——「图内文字复制为标注」粘出来的标注也走粘贴，所以偏移是同一个数。
+ */
+export const DUPLICATE_OFFSET_MM = 4

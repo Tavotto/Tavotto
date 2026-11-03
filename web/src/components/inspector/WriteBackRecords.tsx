@@ -11,6 +11,7 @@ import {
   restoreHistory,
   type HistoryVersion,
 } from '@/lib/api'
+import { dirTail } from '@/lib/pathDisplay'
 import { cn } from '@/lib/utils'
 import { restorePanelOverrides } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -248,6 +249,9 @@ function RestoreDialog({
   const { t } = useTranslation('inspector')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 与后端同一目录：历史恢复复用写回函数，按项目设置的备份根目录选择（project_backup_dir）
+  const projectBackupDir = useProjectStore((s) => s.project?.backup_dir)
+  const backupDirShown = projectBackupDir ? dirTail(projectBackupDir) : 'cache/original_backups'
 
   const run = async () => {
     if (!version) return
@@ -312,7 +316,7 @@ function RestoreDialog({
         <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
           <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
           <p className="text-xs leading-relaxed text-ink-2">
-            {vh('warnBody')}
+            {vh('warnBody', { dir: backupDirShown })}
             <span className="mt-1 block text-ink-3">{vh('warnForward')}</span>
           </p>
         </div>

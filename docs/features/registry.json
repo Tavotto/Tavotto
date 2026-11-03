@@ -1327,6 +1327,22 @@
           "title": "功能：文字标注自由旋转——选中后拖旋转柄，文字在画面上真的转了；⇧ 吸 15°；属性页角度同步；撤销回到 0°"
         }
       ]
+    },
+    {
+      "id": "canvas.copy-figure-text-as-annotation",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑里选中图中的文字，⌘C / 右键「复制为标注」，⌘V 在原文字右下得到同字号同字体的文字标注",
+        "en-US": "In figure editing, select text inside the figure, press Cmd/Ctrl+C or right-click Copy as annotation, then paste to get a text annotation matching size and font, offset to the lower right of the original"
+      },
+      "entry": "图内编辑：选中图里的文字后 ⌘C / 右键「复制为标注」，⌘V 粘贴",
+      "e2e": [
+        {
+          "spec": "copy-figure-text.spec.ts",
+          "title": "图内文字复制为标注：选中标题 ⌘C ⌘V → 多一个同字的文字标注，在原文字右下"
+        }
+      ]
     }
   ]
 }

@@ -52,6 +52,8 @@ objc2 = "0.6"
 webview2-com = "0.38"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    # screen_ppi.rs：MonitorFromWindow + GetDpiForMonitor(MDT_RAW_DPI)（点阵进度条按屏幕 ppi 选点径，ADR 0168）
+    "Win32_Graphics_Gdi",
     # crash_dump.rs：未处理异常过滤器 + MiniDumpWriteDump 写 .dmp
     "Win32_Security",
     "Win32_Storage_FileSystem",
@@ -62,6 +64,7 @@ windows = { version = "0.61", features = [
     "Win32_System_Memory",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    "Win32_UI_HiDpi",
 ] }
 
 [dev-dependencies]

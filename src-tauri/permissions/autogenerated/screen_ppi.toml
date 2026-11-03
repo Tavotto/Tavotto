@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-screen-ppi"
+description = "Enables the screen_ppi command without any pre-configured scope."
+commands.allow = ["screen_ppi"]
+
+[[permission]]
+identifier = "deny-screen-ppi"
+description = "Denies the screen_ppi command without any pre-configured scope."
+commands.deny = ["screen_ppi"]

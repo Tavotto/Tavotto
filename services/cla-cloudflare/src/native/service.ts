@@ -13,6 +13,11 @@ import { mergePrefixBinding } from './merge-prefix.ts';
 import type { MergePrefixAssessment, MergePrefixReader, MergePrefixTarget } from './merge-prefix.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+// Wording shown beside each attestation. Version 1: the original Chinese-only page;
+// version 2: the bilingual redesign (docs/implementation/cla-consent-ui/). Evidence
+// records which wording the signer saw; every version ever written stays readable.
+export const CONSENT_UI_VERSION = '2';
+export const CONSENT_UI_VERSIONS:readonly string[] = ['1','2'];
 export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
 export class LiveService {
   readonly c:LiveConfig; readonly store:LiveStore; readonly github:GitHub; private readonly key:CryptoKey;
@@ -93,7 +98,7 @@ export class LiveService {
     if(!d || d.kind!==p.kind || d.version!==p.version || await sha256(d.content)!==p.digest)throw new Rejected('agreement_unavailable');
     this.validateEvidence(input,requested); const revision=await this.store.revision();
     const record={...input,protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,
-      agreement_sha256:p.digest,role:requested,github_id:s.actor,github_login_at_signing:s.login,signed_at_unix:now,consent_ui_version:'1'};
+      agreement_sha256:p.digest,role:requested,github_id:s.actor,github_login_at_signing:s.login,signed_at_unix:now,consent_ui_version:CONSENT_UI_VERSION};
     const raw=canonical(record),cipher=await seal(this.key,raw,`signature:${p.id}:${requested}:${p.digest}`);
     await this.store.assertReady();
     const committed=await this.store.signAtomic({session:s,packet:p,intentHash:await sha256(nonce),role:requested,cipher,
@@ -122,8 +127,8 @@ export class LiveService {
     if (await sha256(raw)!==row.evidence_hash) throw new Rejected('evidence_unavailable');
     let data:Record<string,unknown>; try { data=JSON.parse(raw); } catch { throw new Rejected('evidence_unavailable'); }
     const fields={protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,
-      agreement_sha256:p.digest,role:row.role,github_id:row.actor,signed_at_unix:row.created,consent_ui_version:'1'};
-    if (Object.entries(fields).some(([k,v])=>data?.[k]!==v) || typeof data.github_login_at_signing!=='string' ||
+      agreement_sha256:p.digest,role:row.role,github_id:row.actor,signed_at_unix:row.created};
+    if (Object.entries(fields).some(([k,v])=>data?.[k]!==v) || !CONSENT_UI_VERSIONS.includes(data?.consent_ui_version as string) || typeof data.github_login_at_signing!=='string' ||
         !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(data.github_login_at_signing)) throw new Rejected('evidence_binding_mismatch');
     this.validateEvidence({name:data.name as string,address:data.address as string,signature:data.signature as string,
       attestations:data.attestations as Record<string,boolean>},row.role); return data;
@@ -184,7 +189,9 @@ export class LiveService {
       ORDER BY created DESC,id DESC LIMIT 21`,s.actor,s.actor,this.c.holderId,
       ...(anchor?[anchor.created,anchor.created,anchor.id]:[])).all<{id:string}>()).results;
     const packets=rows.slice(0,20);
-    return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor'},packets,
+    return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor',
+      // The holder must sign with exactly this name (validateEvidence); show it instead of failing late.
+      ...(s.actor===this.c.holderId?{holderName:this.c.holderName}:{})},packets,
       nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
   private async qualified(subject:number,ceiling?:{expires:number},now?:number):Promise<boolean> {
