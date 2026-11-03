@@ -462,6 +462,11 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     />
   )
 
+  // 浮动格式条的开合状态：Hook 必须在任何提前 return 之前（inline 形态不用它，但调用顺序每次渲染都要一致）
+  const [open, setOpen] = useState(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(closeTimer.current), [])
+
   if (variant === 'inline') {
     return (
       <div className={className} style={{ ...style, ...vars }}>
@@ -471,10 +476,6 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   }
 
   const latex = mode === 'latex'
-  /** 框聚焦（或焦点在浮动格式条里）时才出格式条；焦点在框与条之间挪动那一拍不收（延后一拍，被新的 focus 取消） */
-  const [open, setOpen] = useState(false)
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(closeTimer.current), [])
   const keepOpen = () => {
     clearTimeout(closeTimer.current)
     setOpen(true)
