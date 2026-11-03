@@ -181,7 +181,49 @@ export type NativeFileDrop =
   | { kind: 'unsupported'; name: string }
 
 /**
- * 这个壳能不能在拖放时交出真实路径（macOS 上旁听装好了才是 true）。浏览器模式、
+ * 页面转给 Windows 壳的那条消息（与 `src-tauri/src/native_drop_win.rs` 的 `MESSAGE_KIND` 严格同源，
+ * `tests/test_desktop_file_drop.py` 看护）。是对象不是字符串：wry 的 IPC 只收字符串消息，对象消息不会被
+ * 当成一次 Tauri invoke 去解析。
+ */
+export const DROP_MESSAGE = { tavotto: 'file-drop' } as const
+
+type WebView2Bridge = { postMessageWithAdditionalObjects?: (message: unknown, objects: ArrayLike<unknown>) => void }
+
+let dropForwarder: ((e: DragEvent) => void) | null = null
+
+/**
+ * Windows（WebView2）上把每一次**页面接受了的**系统文件放下转给壳（ADR 0092 修订 2026-11-03）。
+ *
+ * WebView2 不给页面路径，但 `chrome.webview.postMessageWithAdditionalObjects(消息, files)` 交过去的 File
+ * 在宿主那边是 `ICoreWebView2File`、带真实路径；壳读出来按 macOS 同一条分派、发 `tavotto:file-drop`。
+ * 只在 window 的**捕获阶段**听 `drop`：浏览器只在 dragover 被接受时才派发 `drop`，与 macOS 旁听
+ * `performDragOperation:` 同一个语义；页面自己的 drop 处理不受影响。没有这个桥（macOS / 浏览器）就什么都不装。
+ */
+export function ensureDropForwarder(): void {
+  if (dropForwarder || typeof window === 'undefined') return
+  const bridge = (window as unknown as { chrome?: { webview?: WebView2Bridge } }).chrome?.webview
+  const post = bridge?.postMessageWithAdditionalObjects
+  if (typeof post !== 'function') return
+  dropForwarder = (e: DragEvent) => {
+    const files = e.dataTransfer?.files
+    if (!files || files.length === 0) return
+    try {
+      post.call(bridge, DROP_MESSAGE, files)
+    } catch {
+      // 运行时太旧（< 1.0.1518）没有这条路：壳收不到，前端等满 grace 照旧降级到选择器
+    }
+  }
+  window.addEventListener('drop', dropForwarder, true)
+}
+
+/** 测试用：撤掉转发监听 */
+export function resetDropForwarderForTests(): void {
+  if (dropForwarder) window.removeEventListener('drop', dropForwarder, true)
+  dropForwarder = null
+}
+
+/**
+ * 这个壳能不能在拖放时交出真实路径（macOS / Windows 上旁听装好了才是 true）。浏览器模式、
  * 其它平台、命令被拒（ACL 漏登记）一律 false——调用方走「提示文件名 + 选择器」的降级。
  */
 export async function nativeFileDropAvailable(): Promise<boolean> {
@@ -203,6 +245,7 @@ export async function onNativeFileDrop(
   handler: (drop: NativeFileDrop) => void,
 ): Promise<() => void> {
   if (!isDesktop()) return () => {}
+  ensureDropForwarder()
   const { listen } = await import('@tauri-apps/api/event')
   return listen<NativeFileDrop>('tavotto:file-drop', (e) => handler(e.payload))
 }

@@ -205,9 +205,9 @@ type Importer = ReturnType<typeof useScriptImport>
  * 多张由卡片让用户挑。只开目录不跑的话，同一文件夹里拖进不同脚本打开的都是同一个项目，画布上恢复的是
  * 上次的排版，用户看到的永远是第一张图（2026-10-21 诊断包）。只给目录的入口（目录浏览器、拖文件夹）不运行任何脚本。
  *
- * 拖放（ADR 0092）：macOS 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
+ * 拖放（ADR 0092）：macOS / Windows 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
  * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、`.R` / `.r` / `.m` 打开所在文件夹并提议“生成可编辑版本”、文件夹直接当项目、别的说不收，
- * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、其它平台）退回选择器并说清是
+ * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、Linux、旧 WebView2）退回选择器并说清是
  * 哪个文件。同一次放下两条路都会到，谁先谁后不定，由 `createDropArbiter` 仲裁。
  */
 function useScriptImport(openPath: (path: string) => Promise<boolean>) {

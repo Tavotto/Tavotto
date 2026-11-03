@@ -15,11 +15,14 @@ use std::sync::Mutex;
 pub const SCREEN_PPI_EVENT: &str = "tavotto:screen-ppi";
 
 /// 合理范围：低于 50 / 高于 1000 的读数当作没读到（EDID 缺失时常见 0、或把英寸当厘米报）。
+/// 只有能读 ppi 的平台用得到（其他平台 `read` 恒为 `None`）。
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub fn plausible(ppi: f64) -> Option<f64> {
     (ppi.is_finite() && (50.0..=1000.0).contains(&ppi)).then_some(ppi)
 }
 
-/// 由像素宽与毫米宽算 ppi；毫米宽不正就是没读到。
+/// 由像素宽与毫米宽算 ppi；毫米宽不正就是没读到。只有 macOS 按毫米宽算（Windows 直接读 dpi）。
+#[cfg(any(target_os = "macos", test))]
 pub fn ppi_from_mm(pixels_wide: f64, mm_wide: f64) -> Option<f64> {
     if !(mm_wide.is_finite() && mm_wide > 0.0 && pixels_wide.is_finite() && pixels_wide > 0.0) {
         return None;
