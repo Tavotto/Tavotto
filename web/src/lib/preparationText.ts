@@ -540,7 +540,13 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
     })
   }
   const pinned = find(report, 'dependency_pinned')
-  if (pinned) return view('deps_pinned', 'envLocked', v, { kind: 'open_environment' })
+  if (pinned) {
+    // 后端量到被固定的解释器里缺哪些 import 就一并列出来（一行，QA-WIN-12）；没量到保持原来的笼统一句
+    const missing = (pinned.payload?.missing ?? []).filter((n): n is string => typeof n === 'string' && n !== '')
+    return missing.length > 0
+      ? view('deps_pinned', 'envLockedMissing', { ...v, names: listJoin(missing) }, { kind: 'open_environment' })
+      : view('deps_pinned', 'envLocked', v, { kind: 'open_environment' })
+  }
   const scope = find(report, 'dependency_scope_choice')
   if (scope) {
     return view('deps_scope', 'depsScope', v, has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'switchScope') : null)

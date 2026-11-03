@@ -6481,6 +6481,7 @@ export default interface Resources {
         "envChoice": "用项目里自带的那套运行？",
         "envChoiceOpen": "要先选用哪一套运行",
         "envLocked": "设置里固定的 Python 缺组件",
+        "envLockedMissing": "设置里固定的 Python 缺组件：{{names}}",
         "expired": "上次的记录没了",
         "failed": "运行出错了",
         "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",

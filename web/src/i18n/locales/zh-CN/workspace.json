@@ -980,6 +980,7 @@
       "notRegistered": "图没能登记",
       "cancelled": "已停止",
       "envLocked": "设置里固定的 Python 缺组件",
+      "envLockedMissing": "设置里固定的 Python 缺组件：{{names}}",
       "envChoice": "用项目里自带的那套运行？",
       "envChoiceOpen": "要先选用哪一套运行",
       "workdir": "在哪个目录运行？",

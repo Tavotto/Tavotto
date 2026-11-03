@@ -406,6 +406,23 @@ def gui_dialogs(plan: preparation.PreparationPlan) -> dict | None:
     return found if found["status"] == "found" else None
 
 
+#: 固定解释器卡上最多列几个缺的模块名（其余只在计划里）
+_PINNED_MISSING_LIMIT = 8
+
+
+def _pinned_missing(plan: preparation.PreparationPlan) -> dict:
+    """被固定的解释器里此刻缺的 import 名（QA-WIN-12）：计划的 `missing` 是按**会跑脚本的那个解释器**量的
+    （`deprepair._facts_for`），固定时就是被固定的那个。只给 import 名（闭为合法标识符、有上限），放在要用户答的
+    requirement 载荷里（本地报告），**不进检查项的 detail**——诊断投影不带包名。没有就不出这个键。"""
+    rows = (((plan.dependency_preparation or {}).get("plan") or {}).get("missing")) or ()
+    names: list[str] = []
+    for row in rows:
+        name = str((row or {}).get("import_name") or "")
+        if name.isidentifier() and name not in names:
+            names.append(name)
+    return {"missing": names[:_PINNED_MISSING_LIMIT]} if names else {}
+
+
 def requirements_of(
     plan: preparation.PreparationPlan,
     checks: list[dict],
@@ -488,7 +505,10 @@ def requirements_of(
                 "id": "dependencies",
                 "kind": "dependency_pinned",
                 "code": _PINNED_CODE,
-                "payload": dict((deps.get("detail") or {}).get("pinned") or {}),
+                "payload": {
+                    **dict((deps.get("detail") or {}).get("pinned") or {}),
+                    **_pinned_missing(plan),
+                },
             }
         )
     if runtime_missing is not None:

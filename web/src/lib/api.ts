@@ -6973,7 +6973,7 @@ export type PreparationRequirement =
       payload: Record<string, unknown> | null
     }
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
-  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
+  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string; missing?: string[] } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
   /**
    * 沙盒里 glob / listdir / exists / C++ 读取器落空、脚本目录里找得到（#1254）：上一次尝试留下的不阻塞引导，

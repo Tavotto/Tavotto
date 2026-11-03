@@ -1032,6 +1032,7 @@
       "notRegistered": "The figure couldn't be registered",
       "cancelled": "Stopped",
       "envLocked": "The Python fixed in Settings is missing components",
+      "envLockedMissing": "The Python fixed in Settings is missing components: {{names}}",
       "envChoice": "Run with the one in this project?",
       "envChoiceOpen": "Choose what to run with first",
       "workdir": "Run in which folder?",
