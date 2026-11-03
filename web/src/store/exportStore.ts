@@ -26,7 +26,7 @@ import type { PanelObject } from '@/types/document'
  * 格式、PPI 重新填一遍（§九）。
  */
 import { create } from 'zustand'
-import { msg, type UiMessage } from '@/i18n'
+import { i18n, msg, type UiMessage } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
   ApiError,
@@ -169,7 +169,7 @@ export const useExportStore = create<ExportState>(() => ({
 export function aggregateBatch(
   b: Pick<ExportBatch, 'results' | 'resultNames' | 'failedStarts' | 'cancelRequested'>,
 ): ExportJob {
-  const failedRow = (name: string, reason?: string): ExportJob['outputs'][number] => ({
+  const failedRow = (name: string, reason?: string, cause?: ExportJob['error']): ExportJob['outputs'][number] => ({
     format: '',
     name,
     url: null,
@@ -179,13 +179,16 @@ export function aggregateBatch(
     status: 'failed',
     replaced: false,
     // 有具体原因的用 `batch_start_failed`（原样显示那句话），没有的退回通用失败
-    error: reason ? { code: 'batch_start_failed', params: { message: reason } } : { code: 'export_failed', params: {} },
+    // 都没有时给通用一句（`export_failed` 的模板要 `{{error}}`，空参会把占位符原样露给用户，QA-WIN-24）
+    error: reason
+      ? { code: 'batch_start_failed', params: { message: reason } }
+      : (cause ?? { code: 'batch_start_failed', params: { message: i18n.t('dialogs:export.toast.failed') } }),
   })
   const outputs = [
     ...b.results.flatMap((j, i) =>
       // 作业失败 / 丢了却没有任何产物行：补一行点名是哪张，汇总的失败数才对得上
       (j.status === 'failed' || j.status === 'unknown') && j.outputs.length === 0
-        ? [failedRow(b.resultNames[i] ?? '')]
+        ? [failedRow(b.resultNames[i] ?? '', undefined, j.error)]
         : j.outputs,
     ),
     ...b.failedStarts.map((f) => failedRow(f.name, f.reason)),
@@ -217,6 +220,11 @@ export function aggregateBatch(
 
 function finishedBatch(b: ExportBatch): ExportBatch {
   return { ...b, done: true, aggregate: aggregateBatch(b) }
+}
+
+/** 丢掉已收尾的上一批汇总：新起一次单张导出后，结果块不能再读上一批的回执（QA-WIN-24） */
+export function dropFinishedBatch(): void {
+  if (useExportStore.getState().batch?.done) useExportStore.setState({ batch: null })
 }
 
 /** 开一批。已有作业在飞 / 已有一批没收尾 / 没有图 → 不开 */

@@ -52,7 +52,7 @@ import { bindingFor } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
-import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
+import { aggregateBatch, applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { currentFigureOf } from '@/lib/problemContext'
 import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -2960,6 +2960,47 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
     expect(document.body.querySelector('[data-export-again]')).toBeTruthy()
     expect(document.body.querySelector('[data-export-finish]')).toBeTruthy()
+  })
+
+  it('QA-WIN-24：store 里留着上一回（整版）的终局，逐张导出的汇总只含本批实际写出的文件，且每张都发出去', async () => {
+    const oldDone = { format: 'pdf', name: 'old.pdf', url: '/exports/old.pdf', bytes: 1, dimensions: { px: null, mm: null }, vector: true, status: 'done', replaced: false, error: null }
+    useExportStore.setState({
+      job: { job_id: 'old', status: 'done', outputs: [oldDone], warnings: [], conflicts: [], export_dir: '/old', error: null } as never,
+      running: false,
+    })
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(bodiesFigureIds()).toEqual(['Fig1.pdf', 'Fig2.pdf'])
+    const agg = useExportStore.getState().batch!.aggregate!
+    expect(agg.outputs.map((o) => o.name)).not.toContain('old.pdf')
+    expect(agg.outputs).toHaveLength(2)
+    expect(agg.export_dir).toBe('/out')
+  })
+
+  it('QA-WIN-24：批收尾后再单张导出，结果块不再读上一批的汇总', async () => {
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(useExportStore.getState().batch?.done).toBe(true)
+    await click(button('再次导出')!)
+    await batchDone()
+    // 再次导出走批：汇总是新的一批（2 件），而不是两批叠加
+    expect(useExportStore.getState().batch!.aggregate!.outputs).toHaveLength(2)
+  })
+
+  it('QA-WIN-24：没有任何错误详情的失败行不露出 {{error}} 占位符', () => {
+    const agg = aggregateBatch({
+      results: [{ job_id: 'x', status: 'failed', outputs: [], warnings: [], conflicts: [], error: null } as never],
+      resultNames: ['Fig1'],
+      failedStarts: [],
+      cancelRequested: false,
+    })
+    const err = agg.outputs[0]!.error!
+    expect(JSON.stringify(err.params)).not.toBe('{}')
+    expect(String(err.params.error ?? err.params.message ?? '')).not.toBe('')
   })
 
   it('每张各自按它自己的原图口径检查与留档：两份请求的 original 各是各的图', async () => {
