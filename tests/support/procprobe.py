@@ -71,7 +71,12 @@ def _is_zombie(pid: int) -> bool:
         import subprocess
 
         out = subprocess.run(
-            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
         )
         return out.stdout.strip().startswith("Z")
     except (OSError, subprocess.SubprocessError):
