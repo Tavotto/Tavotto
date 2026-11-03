@@ -151,3 +151,50 @@ def test_cli_check_exit_code(tmp_path):
     bad.write_text(GOOD.replace("- 状态: active", "- 状态: done", 1), encoding="utf-8")
     assert L.main(["--check", "--file", str(bad)]) == 1
     assert L.main(["--due", "--file", str(good)]) == 0
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        # 每日复盘 04:30（北京）开工时 UTC 还是前一天 20:30：Seen 写当天北京日期，不许被判成未来（#1656）
+        (dt.datetime(2026, 11, 2, 20, 30, tzinfo=dt.timezone.utc), dt.date(2026, 11, 3)),
+        # 跨零点前一刻：UTC 15:59 = 北京 23:59，仍是当天
+        (dt.datetime(2026, 11, 2, 15, 59, tzinfo=dt.timezone.utc), dt.date(2026, 11, 2)),
+        (dt.datetime(2026, 11, 2, 16, 0, tzinfo=dt.timezone.utc), dt.date(2026, 11, 3)),
+        # 不带时区按 UTC 解读
+        (dt.datetime(2026, 11, 2, 20, 30), dt.date(2026, 11, 3)),
+    ],
+)
+def test_today_is_beijing_date(now, expected):
+    assert L.beijing_today(now) == expected
+
+
+def test_future_check_defaults_to_beijing_today(monkeypatch):
+    """不传 today 时「未来」按北京日期判。伪造 CI runner 的时钟：UTC 11-02 20:30、本地 date.today() = 11-02；
+    此刻北京已是 11-03，写当天北京日期的 Seen 不许红，11-04 照样红（#1656）。"""
+    import types
+
+    class RunnerDate(dt.date):
+        @classmethod
+        def today(cls):
+            return dt.date(2026, 11, 2)
+
+    class RunnerDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            utc = dt.datetime(2026, 11, 2, 20, 30, tzinfo=dt.timezone.utc)
+            return utc if tz is None else utc.astimezone(tz)
+
+    fake = types.SimpleNamespace(
+        date=RunnerDate, datetime=RunnerDateTime, timezone=dt.timezone, timedelta=dt.timedelta
+    )
+    monkeypatch.setattr(L, "dt", fake)
+    today_bj = GOOD.replace(
+        "2026-11-01, 2026-11-02\n- 为什么: PR", "2026-11-01, 2026-11-03\n- 为什么: PR", 1
+    )
+    assert today_bj != GOOD
+    assert not any("未来" in e for e in L.problems(today_bj))
+    tomorrow = GOOD.replace(
+        "2026-11-01, 2026-11-02\n- 为什么: PR", "2026-11-01, 2026-11-04\n- 为什么: PR", 1
+    )
+    assert any("未来" in e for e in L.problems(tomorrow))

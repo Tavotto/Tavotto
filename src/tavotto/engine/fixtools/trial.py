@@ -304,6 +304,28 @@ def _sandbox_args(kind: str, tool: str, trial_dir: str) -> list[str]:
     ]  # fmt: skip
 
 
+def probe_command() -> list[str]:
+    """沙盒探测时放进沙盒里跑的那条命令（`cmdsandbox._probe` 与本模块 `_probe` 共用，探测只有这一份）。
+
+    源码模式：`sys.executable -c pass`——沙盒里能跑 Python 才算起得来。
+    冻结包（PyInstaller）里 `sys.executable` 是 Tavotto 本体而不是 Python，`-c pass` 会被它的参数解析
+    拒掉（rc=2），探测在每台桌面版上必败，AI 修复的 `run_command` 永远 `sandbox_unavailable`、试跑退成无 OS 沙盒。
+    所以冻结态改探「内置/受管 Python」（`runtime.bundled_python()`，仍证明沙盒里能跑 Python）；内置 runtime
+    不在（尚未下载）时退到系统固定程序 `/usr/bin/true`——只证明沙盒本身起得来，这是取舍：比把整个沙盒判死强。
+    """
+    from .. import runtime
+
+    if not runtime.is_frozen():
+        return [sys.executable, "-c", "pass"]
+    py = runtime.bundled_python()
+    if py:
+        return [py, *runtime.probe_args(bundled=True), "-c", "pass"]
+    for fixed in ("/usr/bin/true", "/bin/true"):
+        if os.path.exists(fixed):
+            return [fixed]
+    return [sys.executable, "-c", "pass"]  # 找不到任何固定程序：保持旧行为，探测失败即不可用
+
+
 def _probe(kind: str, tool: str) -> bool:
     """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具只探一次。"""
     key = (kind, tool)
@@ -317,7 +339,7 @@ def _probe(kind: str, tool: str) -> bool:
         try:
             args = _sandbox_args(kind, tool, probe_dir)
             r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
-                [*args, sys.executable, "-c", "pass"],
+                [*args, *probe_command()],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=20,
