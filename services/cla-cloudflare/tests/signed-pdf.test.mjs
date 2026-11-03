@@ -182,3 +182,45 @@ test('a rasteriser callback that never returns ends in build_timeout, not an ete
   // Normal builds are unaffected by the limit and leave no timer behind (the test process would not exit otherwise).
   assert.ok((await build(await input({overrides:{timeoutMs:60000}}))).length>1000);
 });
+
+// Every drawn item (text baselines and raster images) on every page, in content order.
+async function drawn(bytes){
+  const doc=await PDFDocument.load(bytes);
+  return doc.getPages().map(page=>{
+    const ctx=page.node.context,c=page.node.Contents();
+    const content=(c instanceof PDFArray?c.asArray().map(r=>ctx.lookup(r)):[c]).map(x=>Buffer.from(decodePDFRawStream(x).decode()).toString('latin1')).join('\n');
+    const texts=[...content.matchAll(/BT[\s\S]*?\/\S+ ([\d.]+) Tf[\s\S]*?1 0 0 1 ([\d.-]+) ([\d.-]+) Tm\s*<([0-9A-Fa-f]+)> Tj[\s\S]*?ET/g)].map(m=>({size:Number(m[1]),x:Number(m[2]),y:Number(m[3]),text:Buffer.from(m[4],'hex').toString('latin1')}));
+    const images=[...content.matchAll(/1 0 0 1 ([\d.e-]+) ([\d.e-]+) cm\s+1 0 0 1 0 0 cm\s+([\d.e-]+) 0 0 ([\d.e-]+) 0 0 cm[\s\S]*?Do/g)].map(m=>({x:Number(m[1]),y:Number(m[2]),w:Number(m[3]),h:Number(m[4])}));
+    return {texts,images};
+  });
+}
+const USABLE_BOTTOM=78,USABLE_TOP=792-64.8-8.5-10; // LIMIT in build.ts; below the header rule
+
+for(const [label,mk] of [['Latin',n=>`Address line ${String(n).padStart(2,'0')}`],['Chinese',n=>`示例路第${String(n).padStart(2,'0')}行`]]) {
+  test(`${label} 50-line addresses continue across pages: nothing drawn outside the usable area, order and footers correct`,async()=>{
+    const lines=Array.from({length:50},(_,i)=>mk(i+1)),address=lines.join('\n'),r=fakeRasterizer();
+    const bytes=await build(await input({contributor:evidence('contributor',{address}),holder:evidence('holder',{address}),overrides:{rasterizer:r}}));
+    const p=await drawn(bytes),t=await pages(bytes);
+    assert.ok(p.length>=5,'agreement + several signature pages + certificate, got '+p.length);
+    p.forEach((page,i)=>assert.match(t[i].text,new RegExp(`Page ${i+1} of ${p.length}$`,'m')));
+    assert.match(t.at(-1).text,/Electronic signature certificate/);
+    // Every address line (size 9.5 text, or raster image) sits inside [LIMIT, header rule] on its page.
+    for(const [i,page] of p.entries()){
+      for(const x of page.texts.filter(x=>x.size===9.5))assert.ok(x.y>=USABLE_BOTTOM&&x.y<=USABLE_TOP,`page ${i+1} text baseline ${x.y} outside usable area`);
+      for(const im of page.images)assert.ok(im.y>=USABLE_BOTTOM-6&&im.y+im.h<=USABLE_TOP+6,`page ${i+1} image at ${im.y} outside usable area`);
+    }
+    // Order: both parties' lines appear 1..50 in sequence, contributor first, holder second; signature page continues.
+    if(label==='Latin'){
+      const seq=t.flatMap(x=>x.text.split('\n')).filter(x=>/^Address line \d\d$/.test(x));
+      assert.deepEqual(seq,[...lines,...lines]);
+    } else {
+      assert.deepEqual(r.calls.map(c=>c.text).filter(x=>/^示例路/.test(x)),[...lines,...lines]);
+      assert.ok(p.reduce((n,x)=>n+x.images.length,0)>=100);
+    }
+    // The rows after the address (identity, time) are still drawn, on a page, inside the area.
+    assert.equal(t.filter(x=>x.text.includes('@synthetic-contributor · ID')).length,1);
+    assert.equal(t.filter(x=>x.text.includes('@synthetic-holder · ID')).length,1);
+    assert.equal(t.filter(x=>x.text.includes('4 November 2026, 13:20:07 UTC')).length,1);
+    assert.equal(t.filter(x=>x.text.includes('Thank you for')).length,1);
+  });
+}

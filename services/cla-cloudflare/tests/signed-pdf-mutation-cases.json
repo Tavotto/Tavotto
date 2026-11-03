@@ -87,5 +87,14 @@
     "pattern": "a rasteriser callback that never returns",
     "testFile": "tests/signed-pdf.test.mjs",
     "assertionError": true
+  },
+  {
+    "name": "signed PDF party box continuation",
+    "file": "src/pdf/build.ts",
+    "before": "if(!atStart && cy-u.h-reserve<LIMIT)",
+    "after": "if(false)",
+    "pattern": "50-line addresses continue across pages",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
   }
 ]

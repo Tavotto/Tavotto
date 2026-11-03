@@ -98,28 +98,34 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   const drawSig=async(page:PDFPage,t:string,x:number,y:number,size:number)=>{
     for(const word of sigWords(t))x+=await ts.draw(page,script,word,x,y,size,INK)+sigGap(size);
   };
+  // A party box is a list of units (the header with signature plus the first row line, then one unit per further line).
+  // Units are placed top-down; when the next one cannot fit above the page's usable area the box's border is closed on
+  // this page and the box continues, with a fresh border, on a continuation page. No unit is ever drawn below LIMIT.
   const partyBox=async(label:string,party:Party,rows:[string,string][])=>{
-    const padX=20,padT=18,padB=16,inner=CW-2*padX,labelW=92,gap=12,valueW=inner-labelW-gap;
+    const padX=20,padT=18,inner=CW-2*padX,labelW=92,gap=12,valueW=inner-labelW-gap,reserve=16,contTop=12;
     let size=27;const natural=sigWidth(party.signature,size);if(natural>inner)size=Math.max(14,27*inner/natural);
-    const sigH=Math.max(34,size*1.25),laid=rows.map(([k,val])=>({k,lines:ts.wrap(sans,val,9.5,valueW)}));
-    const rowsH=laid.reduce((n,r)=>n+r.lines.length*14,0)+5*(laid.length-1);
-    const height=padT+8.5+14+sigH+4+12+rowsH+padB;
-    await ensure(height+18);
-    const top=y;
-    page.drawSvgPath(roundRect(CW,height,6),{x:MX,y:top,borderColor:rgb(...RULE),borderWidth:.6});
-    let cy=top-padT;
-    let cx=MX+padX;
-    for(const ch of label.toUpperCase()){cx+=await ts.draw(page,sansB,ch,cx,cy-8.5*.8,8.5,MUTED)+.68;}
-    cy-=8.5+14;
-    await drawSig(page,party.signature,MX+padX,cy-sigH+size*.32+4,size);
-    page.drawLine({start:{x:MX+padX,y:cy-sigH+4-3},end:{x:MX+padX+inner,y:cy-sigH+4-3},thickness:.6,color:rgb(...INK)});
-    cy-=sigH+4+12;
-    for(const row of laid){
-      await ts.draw(page,sans,row.k,MX+padX,cy-9.5*.85,9.5,MUTED);
-      for(const line of row.lines){await ts.draw(page,sans,line,MX+padX+labelW+gap,cy-9.5*.85,9.5,INK);cy-=14;}
-      cy-=5;
+    const sigH=Math.max(34,size*1.25),x0=MX+padX;
+    const lineUnit=(k:string|null,line:string,last:boolean)=>({h:14+(last?5:0),draw:async(cy:number)=>{
+      if(k!==null)await ts.draw(page,sans,k,x0,cy-9.5*.85,9.5,MUTED);
+      await ts.draw(page,sans,line,x0+labelW+gap,cy-9.5*.85,9.5,INK);}});
+    const units:{h:number;draw:(cy:number)=>Promise<void>}[]=[];
+    rows.forEach(([k,val],r)=>{const lines=ts.wrap(sans,val,9.5,valueW);lines.forEach((line,n)=>units.push(lineUnit(n===0?k:null,line,n===lines.length-1)));void r;});
+    const first=units.shift()!;
+    const headH=padT+8.5+14+sigH+4+12;
+    units.unshift({h:headH+first.h,draw:async(cy:number)=>{
+      let cx=x0;for(const ch of label.toUpperCase())cx+=await ts.draw(page,sansB,ch,cx,cy-padT-8.5*.8,8.5,MUTED)+.68;
+      const sy=cy-padT-8.5-14;
+      await drawSig(page,party.signature,x0,sy-sigH+size*.32+4,size);
+      page.drawLine({start:{x:x0,y:sy-sigH+4-3},end:{x:x0+inner,y:sy-sigH+4-3},thickness:.6,color:rgb(...INK)});
+      await first.draw(cy-headH);}});
+    await ensure(units[0]!.h+reserve+18);
+    let pg=page,top=y,cy=y,atStart=true;
+    const close=(pad:number)=>pg.drawSvgPath(roundRect(CW,top-(cy-pad),6),{x:MX,y:top,borderColor:rgb(...RULE),borderWidth:.6});
+    for(const u of units){
+      if(!atStart && cy-u.h-reserve<LIMIT){close(8);await cont();pg=page;top=y;cy=y-contTop;atStart=true;}
+      await u.draw(cy);cy-=u.h;atStart=false;
     }
-    y=top-height-18;
+    close(reserve);y=cy-reserve-18;
   };
 
   const youLabel=kind.you;
