@@ -3139,6 +3139,7 @@ export default interface Resources {
       "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
       "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
+      "convert_tool_forbidden": "转换写入工具的请求不属于当前转换，已被拒绝。",
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
       "data_empty": "这份数据是空的。",
