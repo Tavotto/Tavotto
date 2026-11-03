@@ -34,3 +34,17 @@ for(const version of ['1','2','3'])test('independent evidence consent wording ve
 test('independent new signatures record consent wording version 2',()=>iso(async f=>{const p=await f.complete();const [token]=f.args('contributor');const ev=await f.svc.readEvidence(token,p.id,'contributor');assert.equal(ev.consent_ui_version,'2');}));
 test('independent session names the registered holder only to the holder',()=>iso(async f=>{const holder=await f.svc.packets(f.args('holder')[0]),contributor=await f.svc.packets(f.args('contributor')[0]);
   assert.equal(holder.actor.role,'holder');assert.equal(holder.actor.holderName,f.c.holderName);assert.equal(contributor.actor.role,'contributor');assert.equal('holderName' in contributor.actor,false);}));
+test('independent readEvidence returns the verified record plus its stored fingerprint',()=>iso(async f=>{
+  const p=await f.complete();
+  for(const role of ['contributor','holder']){
+    const row=(await f.store.signatures(p.id)).find(x=>x.role===role),e=await f.svc.readEvidence(f.args(role)[0],p.id,role);
+    assert.equal(e.evidence_sha256,row.evidence_hash);assert.match(e.evidence_sha256,/^[0-9a-f]{64}$/);
+    assert.equal(e.role,role);assert.equal(e.packet,p.id);assert.equal(e.agreement_sha256,p.digest);
+    assert.deepEqual(Object.keys(e.attestations).sort(),attestations(role).sort());
+  }
+}));
+test('independent readEvidence has no fingerprint for a role that has not signed',()=>iso(async f=>{
+  const p=await f.create();await f.sign(p,'contributor');
+  await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'holder'),e=>e.code==='evidence_unavailable');
+  await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'nobody'),e=>e.code==='role_rejected');
+}));

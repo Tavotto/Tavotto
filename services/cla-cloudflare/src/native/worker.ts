@@ -80,6 +80,38 @@ async function publicAgreement(env:Env,c:LiveConfig):Promise<Response> {
     return json({digest:a.sha256,kind:'individual',version:a.version,content});
   }catch(error){return json({error:error instanceof Rejected?error.code:'agreement_asset_unavailable'},503);}
 }
+// Static files the browser needs to assemble the signed PDF copy (src/pdf). Each public path maps to ONE fixed
+// asset path in the CLA_PUBLIC_AGREEMENT binding; nothing is derived from the request. The Worker only checks the
+// asset's status and type and streams it through: hashing and assembly happen in the browser, not on this CPU budget.
+const PDF_ASSETS=new Map<string,{asset:string;type:string;upstream:string[];max:number}>([
+  ['/cla-pdf.js',{asset:'/cla-pdf.js',type:'text/javascript; charset=utf-8',upstream:['text/javascript','application/javascript'],max:4194304}],
+  ['/agreement.pdf',{asset:'/CLA_INDIVIDUAL.pdf',type:'application/pdf',upstream:['application/pdf'],max:8388608}],
+  ['/cla-pdf-font.ttf',{asset:'/cla-pdf-font.ttf',type:'font/ttf',upstream:['font/ttf','font/sfnt','application/x-font-ttf'],max:2097152}],
+  ['/cla-pdf-font-OFL.txt',{asset:'/cla-pdf-font-OFL.txt',type:'text/plain; charset=utf-8',upstream:['text/plain'],max:65536}],
+]);
+async function pdfAssetResponse(env:Env,spec:{asset:string;type:string;upstream:string[];max:number}):Promise<Response> {
+  const response=await env.CLA_PUBLIC_AGREEMENT!.fetch(new Request('https://cla-assets.invalid'+spec.asset,{redirect:'manual'}));
+  const length=Number(response.headers.get('content-length') ?? 0);
+  if(response.status!==200 || response.redirected || !response.body || !spec.upstream.includes(response.headers.get('content-type')?.split(';')[0]?.trim() ?? '') || length>spec.max)
+    throw new Rejected('pdf_asset_unavailable');
+  return response;
+}
+async function pdfAsset(env:Env,pathname:string):Promise<Response> {
+  const spec=PDF_ASSETS.get(pathname);if(!spec)return json({error:'route_unavailable'},404);
+  if(!env.CLA_PUBLIC_AGREEMENT)return json({error:'agreement_configuration_required'},503);
+  try {
+    const response=await pdfAssetResponse(env,spec);
+    return new Response(response.body,{headers:{...headers,'content-type':spec.type}});
+  }catch{return json({error:'pdf_asset_unavailable'},503);}
+}
+// True only when every file the browser needs is really retrievable right now; never a constant.
+async function signedPdfAvailable(env:Env):Promise<boolean> {
+  if(!env.CLA_PUBLIC_AGREEMENT)return false;
+  try {
+    await Promise.all([...PDF_ASSETS.values()].map(async spec=>{await (await pdfAssetResponse(env,spec)).body!.cancel();}));
+    return true;
+  }catch{return false;}
+}
 export function config(env:Env):LiveConfig {
   let c:LiveConfig;try{c=JSON.parse(env.CLA_CONFIG ?? '');}catch{throw new Rejected('configuration_required');}
   // A JSON config cannot silently turn capabilities on. Each binding is explicit and defaults false.
@@ -124,7 +156,8 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       const asset=assets[url.pathname];if(asset && (url.pathname==='/' || !url.search))return new Response(asset[0],{headers:{...headers,'content-type':asset[1],
         'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     }
-    if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled,
+      ...(await signedPdfAvailable(env)?{signedPdf:true}:{})});
     if (req.method==='GET' && url.pathname==='/health' && !url.search)
       return json({runtime:'workers-d1',signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
     if(req.method==='GET' && url.pathname==='/verification/group') {
@@ -151,6 +184,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       return json(await verification(await service(env,new InvocationBudget()),pr,head,run,attempt));
     }
     if(req.method==='GET' && url.pathname==='/agreement' && !url.search)return publicAgreement(env,c);
+    if(req.method==='GET' && !url.search && PDF_ASSETS.has(url.pathname))return pdfAsset(env,url.pathname);
     if(req.method==='POST' && url.pathname==='/oauth/start' && !url.search) {
       if(req.headers.get('origin')!==c.origin)throw new Rejected('origin_rejected');
       if(req.headers.get('content-type')?.split(';')[0]!=='application/json')throw new Rejected('form_rejected');

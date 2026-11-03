@@ -171,6 +171,79 @@ Requests containing `packet` still require the appropriate session and return
 that packet's immutable historical document. This PR supplies only synthetic
 asset fixtures, no real agreement asset upload or deployment configuration.
 
+### Signed PDF copy (generated in the browser)
+
+After both parties have signed, the signing page can offer a PDF copy: the agreement text, a
+**Signatures** page and an **Electronic signature certificate** page, with "Page N of M" footers.
+The PDF is assembled entirely in the visitor's browser, so the Worker spends no CPU on it; the Worker
+only streams four fixed static files, always through explicit routes (no caller-derived path, no
+bypass; `assets.run_worker_first` stays `true`) and with the same security headers as every other
+response:
+
+| Route | Asset in `CLA_PUBLIC_AGREEMENT` | Content-Type |
+|---|---|---|
+| `GET /cla-pdf.js` | `/cla-pdf.js` | `text/javascript` |
+| `GET /agreement.pdf` | `/CLA_INDIVIDUAL.pdf` | `application/pdf` |
+| `GET /cla-pdf-font.ttf` | `/cla-pdf-font.ttf` | `font/ttf` |
+| `GET /cla-pdf-font-OFL.txt` | `/cla-pdf-font-OFL.txt` | `text/plain` |
+
+`GET /capabilities` gains `signedPdf: true` only while all four assets are actually retrievable from the binding with the expected types (probed on each call, nothing cached); otherwise the key is absent.
+
+A query string, another method or any other path is not served. An asset that is missing, redirected, of
+another type or too large gives 503 `pdf_asset_unavailable`.
+
+Preparing the assets (operator step, offline, never at request time):
+
+    npm run render:agreement-pdf   # staging: CLA_INDIVIDUAL.md -> CLA_INDIVIDUAL.pdf (headless Chrome)
+    npm run fetch:pdf-font         # Great Vibes TTF -> assets/ (commit-pinned URL + SHA-256; not committed)
+    npm run build:pdf-client       # fetches the font if missing, then esbuild bundle of src/pdf -> assets/cla-pdf.js
+
+For production run, on the exact reviewed bytes,
+
+    node scripts/render-agreement-pdf.mjs assets-reviewed/CLA_INDIVIDUAL.md assets-reviewed/CLA_INDIVIDUAL.pdf \
+      --title "Tavotto Individual Contributor License Agreement" \
+      --published-url https://github.com/Tavotto/Tavotto/blob/main/docs/legal/CLA_INDIVIDUAL.md \
+      --attribution "Derived from the Harmony Individual CLA 1.0, © 2011 Project Harmony, CC BY 3.0"
+
+and put `cla-pdf.js`, the font and its licence next to them. Staging passes only `--published-url`
+(the sandbox repository's text) and no attribution, because the staging text is not Harmony-derived.
+`--published-url` and `--attribution` are stored in the PDF Subject as `tavotto-agreement-meta:{json}`; the
+builder reads them only after the hash check passes, ignores anything malformed or non-https, and lets
+values passed in `build()` input win. The signing page therefore does not need to know either. The renderer writes the Markdown's SHA-256 into the PDF keywords
+(`tavotto-agreement-sha256:<hex>`); the builder refuses to run unless that equals the agreement hash being
+signed. This ties the PDF to the pinned text by the renderer's claim, not by re-reading the pages: a PDF
+rendered from different text but stamped with the pinned hash would pass, so review the PDF like the
+Markdown. The signature typeface is Great Vibes (SIL OFL 1.1, licence committed beside it); the TTF itself is never committed (repository invariant) and is fetched by `scripts/fetch-pdf-font.mjs` from a pinned google/fonts commit and checked against a pinned SHA-256. Tests need network once to obtain it and fail loudly without it (stable codes `pdf_font_network_unreachable`, `pdf_font_http_status`, `pdf_font_hash_mismatch`); they never skip. CI fetches it in its own step, "Fetch signed-PDF font (sha256-pinned)", before `npm run check`. For production, `node scripts/fetch-pdf-font.mjs --dest assets-reviewed`. Text a standard
+PDF font cannot encode (for example a Chinese name or address) is drawn by the browser onto a canvas at
+4x and embedded as an image, so nothing is dropped or replaced; without a canvas the builder fails
+instead of printing placeholders. The `devDependencies` pdf-lib, @pdf-lib/fontkit and marked exist only
+to build those static files; the Worker still has no production dependencies.
+
+`GET /evidence?packet=…&role=…` now also returns `evidence_sha256`: the stored hash of exactly the
+decrypted evidence returned (already verified against it). The certificate prints it as the evidence
+fingerprint.
+
+#### Browser interface (for the signing page)
+
+`/cla-pdf.js` defines exactly one global, `globalThis.TavottoClaPdf = { build }` (frozen):
+
+    const bytes = await TavottoClaPdf.build({
+      agreement: {kind, version, sha256, publishedUrl?, attribution?},  // from GET /agreement?packet=…; publishedUrl (https) optional: row omitted if absent
+      contributor: <JSON of GET /evidence?packet=…&role=contributor>,
+      holder:      <JSON of GET /evidence?packet=…&role=holder>,
+      contributorSha256?, holderSha256?,   // optional; evidence_sha256 inside the evidence is used first; row omitted if neither
+    });                                    // -> Promise<Uint8Array> (a PDF); save with a Blob + download link
+
+`build` fetches `/agreement.pdf` and `/cla-pdf-font.ttf` itself (same origin, `redirect:'error'`) and throws an
+`Error` whose `message` is a stable code: `agreement_input_invalid`, `evidence_role_mismatch`,
+`evidence_agreement_mismatch` (evidence hash/kind/version differ from `agreement`), `evidence_packet_mismatch`,
+`evidence_invalid`, `evidence_attestations_invalid`, `evidence_fingerprint_missing` (a fingerprint was given but malformed or contradictory),
+`agreement_pdf_hash_mismatch`, `asset_unavailable`, `canvas_unavailable`, `build_timeout` (the whole build is capped at 20 s). Nothing is drawn or downloaded when
+it throws. `attribution` is an optional one-line footer on the Signatures page (for example the Harmony
+credit); nothing is printed if it is omitted. Extra `overrides` (`agreementPdf`, `font`, `rasterizer`, `now`,
+`serviceHost`) exist for offline tests and sample generation; the signing page does not pass them.
+`scripts/sample-signed-pdf.mjs` builds samples in a real headless Chrome with synthetic data, driven in real time over the DevTools protocol (`--runs N` prints per-run results and timings). Do not use `--virtual-time-budget --dump-dom` for this: canvas encoding is untracked by virtual time, so it dumps the page before the build finishes.
+
 ### Identity fan-out and verification admission
 
 Binding construction now validates and deduplicates all local commit identities

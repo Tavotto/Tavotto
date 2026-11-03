@@ -37,5 +37,7 @@ jobs:
           python-version: "3.12"
       - name: Install locked development dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
+      - name: Fetch signed-PDF font (sha256-pinned)
+        run: node scripts/fetch-pdf-font.mjs
       - name: Typecheck, local regression, migration, build, mutation checks
         run: npm run check

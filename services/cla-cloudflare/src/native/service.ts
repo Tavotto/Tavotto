@@ -139,7 +139,10 @@ export class LiveService {
     const s=await this.session(token),p=await this.packetFor(s,packet);
     if (!['contributor','holder'].includes(role as string)) throw new Rejected('role_rejected');
     const row=(await this.store.signatures(p.id)).find(x=>x.role===role);
-    if (!row) throw new Rejected('evidence_unavailable'); return this.evidenceRecord(p,row);
+    if (!row) throw new Rejected('evidence_unavailable');
+    // evidenceRecord has already decrypted and checked the row against its stored hash, so that hash is
+    // a fingerprint of exactly the evidence returned here. It is for the signed-PDF certificate only.
+    return {...await this.evidenceRecord(p,row),evidence_sha256:row.evidence_hash};
   }
   async audit(token:string,id:string):Promise<unknown> {
     const p=await this.packetFor(await this.session(token),id),revision=await this.store.revision(),d=await this.store.document(p.digest);

@@ -1,0 +1,100 @@
+[
+  {
+    "name": "signed PDF agreement hash",
+    "file": "src/pdf/build.ts",
+    "before": "if(claimed.length!==1 || claimed[0]!==sha256)throw new Error('agreement_pdf_hash_mismatch');",
+    "after": "// mutation: accept any agreement PDF",
+    "pattern": "builder refuses an agreement PDF whose hash does not equal the agreement being signed",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF evidence bound to agreement",
+    "file": "src/pdf/evidence.ts",
+    "before": "if(e.agreement_sha256!==a.sha256 || e.agreement_kind!==a.kind || e.agreement_version!==a.version)fail('evidence_agreement_mismatch');",
+    "after": "// mutation: skip evidence/agreement binding",
+    "pattern": "builder refuses inconsistent evidence before drawing anything",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF non-Latin fallback",
+    "file": "src/pdf/text.ts",
+    "before": "if(face.covers(text)){page.drawText",
+    "after": "if(true){page.drawText",
+    "pattern": "Chinese names and addresses are rasterised whole",
+    "testFile": "tests/signed-pdf.test.mjs"
+  },
+  {
+    "name": "signed PDF fixed asset type",
+    "file": "src/native/worker.ts",
+    "before": "!spec.upstream.includes(response.headers.get('content-type')?.split(';')[0]?.trim() ?? '') || ",
+    "after": "",
+    "pattern": "signed-pdf routes fail closed",
+    "testFile": "tests/signed-pdf-worker.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF route is exact",
+    "file": "src/native/worker.ts",
+    "before": "if(req.method==='GET' && !url.search && PDF_ASSETS.has(url.pathname))",
+    "after": "if(req.method==='GET' && PDF_ASSETS.has(url.pathname))",
+    "pattern": "signed-pdf: any other path or method yields nothing",
+    "testFile": "tests/signed-pdf-worker.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "evidence fingerprint is the verified hash",
+    "file": "src/native/service.ts",
+    "before": "evidence_sha256:row.evidence_hash};",
+    "after": "evidence_sha256:'0'.repeat(64)};",
+    "pattern": "independent readEvidence returns the verified record plus its stored fingerprint",
+    "testFile": "tests/independent-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF signature word gap",
+    "file": "src/pdf/build.ts",
+    "before": "const sigGap=(size:number)=>size*.35;",
+    "after": "const sigGap=(size:number)=>0;",
+    "pattern": "multi-word signatures keep a visible word gap",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF capability is real",
+    "file": "src/native/worker.ts",
+    "before": "...(await signedPdfAvailable(env)?{signedPdf:true}:{})",
+    "after": "...({signedPdf:true})",
+    "pattern": "/capabilities reports signedPdf:true only while",
+    "testFile": "tests/signed-pdf-worker.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF metadata url must be https",
+    "file": "src/pdf/evidence.ts",
+    "before": "if(text(url,500) && /^https:\\/\\//.test(url as string))",
+    "after": "if(text(url,500))",
+    "pattern": "agreement/publishedUrl come from the hash-verified PDF metadata",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF build timeout",
+    "file": "src/pdf/build.ts",
+    "before": "setTimeout(()=>reject(new Error('build_timeout')),limit)",
+    "after": "setTimeout(()=>{},limit)",
+    "pattern": "a rasteriser callback that never returns",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "signed PDF party box continuation",
+    "file": "src/pdf/build.ts",
+    "before": "if(!atStart && cy-u.h-reserve<LIMIT)",
+    "after": "if(false)",
+    "pattern": "50-line addresses continue across pages",
+    "testFile": "tests/signed-pdf.test.mjs",
+    "assertionError": true
+  }
+]
