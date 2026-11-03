@@ -211,6 +211,44 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
             ],
         ],
     ),
+    (
+        # #1672（ADR 0163）：隐藏图例项后，它的 Text 已不在图例盒里，text_block 量出的是上一次布局的残影，
+        # 热态留旧位置、清空重放是初始位置。修法：隐藏中的图例项不出 text_block。InvMix 随机种子 2。
+        "1672-hide-legend-entry-text-block",
+        "InvMix",
+        [
+            [_p("axes_0.patches_0", "fill", True), _p("axes_0.patches_0", "facecolor", "#123456")],
+            [
+                _p("axes_0.patches_0", "fill", True),
+                _p("axes_0.patches_0", "facecolor", "#123456"),
+                _p(_T1, "visible", False),
+            ],
+        ],
+    ),
+    (
+        # 同一族，InvCont 随机种子 4：先给 texts_0 加底框、改柱子，再藏 texts_1。
+        "1672-hide-legend-entry-text-block-cont",
+        "InvCont",
+        [
+            [
+                _p("axes_0.barseries_1.bar_0", "hatch", "/"),
+                _p("axes_0.barseries_1.bar_0", "hatch_linewidth", 1.8),
+                _p(_T0, "bbox_visible", True),
+                _p(_T0, "bbox_facecolor", "#ff00ff"),
+                _p(_T0, "bbox_rounded", True),
+                _p("axes_0.barseries_1.bar_1", "facecolor", "#123456"),
+            ],
+            [
+                _p("axes_0.barseries_1.bar_0", "hatch", "/"),
+                _p("axes_0.barseries_1.bar_0", "hatch_linewidth", 1.8),
+                _p(_T0, "bbox_visible", True),
+                _p(_T0, "bbox_facecolor", "#ff00ff"),
+                _p(_T0, "bbox_rounded", True),
+                _p("axes_0.barseries_1.bar_1", "facecolor", "#123456"),
+                _p(_T1, "visible", False),
+            ],
+        ],
+    ),
 ]
 
 

@@ -23,6 +23,13 @@ export const FIT_MARGIN_RATIO_PERCENT = 4
 export const FIT_MARGIN_EM = FIT_MARGIN_EM_PERCENT / 100
 export const FIT_MARGIN_RATIO = FIT_MARGIN_RATIO_PERCENT / 100
 
+/**
+ * 贴字宽的框宽 = 字宽 × (1 + 4 %) + 0.5 em（余量的理由见上）。**收框公式只有这一处**：旋转前收框（`fitSingleLineBox`）
+ * 与「图内文字复制为标注」（`lib/figureTextCopy`，字宽取自 matplotlib 排出来的块）都走它。
+ */
+export const fitWidthMm = (naturalMm: number, sizePt: number): number =>
+  naturalMm * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * sizePt * MM_PER_PT
+
 export function fitSingleLineBox(o: TextObject): { x: number; w: number } | null {
   if (o.text.includes('\n')) return null
   const el = document.querySelector<HTMLElement>(
@@ -43,7 +50,7 @@ export function fitSingleLineBox(o: TextObject): { x: number; w: number } | null
   // 余量 0.5 em：预览按浏览器 CSS 字体栈排，导出按 RenderCore 的 Liberation / Noto 排——Times New Roman / Arial
   // 与 Liberation 度量兼容，但机器上落到别的脸（Linux 无 TNR、中文落到 PingFang / Songti、标点宽度不同）时
   // 窄一点就会让导出折成两行。宁可框略宽，绝不让导出折行（看护：tests/test_compose_annotations.py 的收框用例）
-  const w = worldToMm(natural) * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * o.sizePt * MM_PER_PT
+  const w = fitWidthMm(worldToMm(natural), o.sizePt)
   if (!(w > 0) || w >= o.w - 0.01) return null
   const x =
     o.align === 'left' ? o.x : o.align === 'right' ? o.x + o.w - w : o.x + (o.w - w) / 2

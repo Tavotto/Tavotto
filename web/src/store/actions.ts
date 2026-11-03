@@ -16,7 +16,7 @@ import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
-import { clamp } from '@/lib/units'
+import { clamp, DUPLICATE_OFFSET_MM } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { pickJournal } from '@/lib/journalPick'
 import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
@@ -446,8 +446,8 @@ export function duplicateSelected() {
     .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
-      copy.x += 4
-      copy.y += 4
+      copy.x += DUPLICATE_OFFSET_MM
+      copy.y += DUPLICATE_OFFSET_MM
       // 组要跟着复制成新的一份，否则副本会和原件粘成同一组
       if (copy.groupId) {
         const next = regroup.get(copy.groupId) ?? newId('g')

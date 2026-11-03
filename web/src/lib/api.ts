@@ -2543,6 +2543,31 @@ export interface ManifestFaceSource {
   italic: boolean
 }
 
+/** `ManifestElement.text_block`：文字块的位置、尺寸与样式。见该字段的说明。 */
+export interface ManifestTextBlock {
+  /** 文字块中心（figure 分数，y 向下）；转了的文字也是它自己那个矩形的中心 */
+  center: [number, number]
+  /** 块宽（沿阅读方向，图宽分数）与块高（含最后一行下行，图高分数） */
+  w: number
+  h: number
+  /** 块顶到第一行基线（图高分数） */
+  asc: number
+  /** 多行时相邻基线的平均间距（图高分数）；单行缺席 */
+  step?: number
+  text: string
+  /** 文字里有 mathtext（`$…$`）并且 matplotlib 真会当公式排 */
+  math: boolean
+  /** 脚本 pt（换到页面 pt 走 `pagePtLens`） */
+  size: number
+  color: string
+  /** 字重 / 字形原样（名字或数字）；粗不粗、斜不斜的判据在 `weightIsBold` / `styleIsItalic` */
+  weight: string | number
+  style: string
+  /** 度，逆时针为正 */
+  rotation: number
+  ha: 'left' | 'center' | 'right'
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2619,6 +2644,13 @@ export interface ManifestElement {
   face_src?: ManifestFaceSource
   /** 汉字由回退链上哪张文件级脸画的（同上）；正文脸自己画得出汉字 / 没有汉字时缺席。 */
   cjk_src?: ManifestFaceSource
+  /**
+   * 这段文字排出来的**块**与此刻画出来的样子（ADR 0163「图内文字复制为标注」）。产生者只有
+   * `engine/manifest.text_block` 一处；换算成画布文字标注只在 `lib/figureTextCopy.ts`。
+   * 有它 = 这是一段单独的文字（刻度**组**没有；排不出 / wrap / usetex 的文字缺席 = 不可复制）。
+   * 长度都是 figure 分数：`center` 与 `w` 按图宽、`h` / `asc` / `step` 按图高；`rotation` 逆时针为正（matplotlib 语义）。
+   */
+  text_block?: ManifestTextBlock
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
