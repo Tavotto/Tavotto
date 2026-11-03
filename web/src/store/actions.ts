@@ -84,6 +84,7 @@ import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
+import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
@@ -2914,6 +2915,19 @@ export function cancelCrop() {
 export function resetPanelCrop(ids: string[]) {
   updatePanels(ids, hist('resetCrop'), (o) => {
     if (o.crop) applyCropDraft(o, undefined)
+  })
+}
+
+/**
+ * 贴合内容（ADR 0161）：把四边一次裁到 `figure.ink_bbox`（内容边缘）。一条历史，图的缩放比与整图在画布上的位置不变
+ * （`applyCropDraft`）。ink_bbox 只经精确 manifest 读（几何权威）；缺席 / 已贴合 = 这张面板不动，没有任何改动则不进历史。
+ */
+export function fitPanelsToContent(ids: string[]) {
+  const render = useRenderStore.getState()
+  updatePanels(ids, hist('fitContentCrop'), (o) => {
+    const ink = exactPanelManifest(render, o)?.elements.find((e) => e.gid === 'figure')?.ink_bbox
+    const target = fitContentCrop(ink)
+    if (target && !isContentFit(o.crop, ink)) applyCropDraft(o, target)
   })
 }
 
