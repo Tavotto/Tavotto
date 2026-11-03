@@ -240,7 +240,9 @@ def test_export_is_captured_after_the_files_are_written():
 
 
 def test_ai_is_captured_after_the_session_exists():
-    src = inspect.getsource(m.api_ai_run)
+    src = inspect.getsource(
+        m._ai_run_impl
+    )  # 路由函数只是包了一层「拒绝时后端删账本行」，真身在 _ai_run_impl
     at_capture = _at(src, r'engine_telemetry\.capture\(\s*"ai_assistant_invoked"')
     assert src.index("sid = engine_ai.run(") < at_capture
     # 失败分支（except → 500）必须在埋点之前就 return 掉

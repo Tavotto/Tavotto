@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Copy, Info, Lightbulb, LoaderCircle, X } from '@/components/ui/icons'
+import { Check, CircleAlert, Copy, Info, Lightbulb, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
+import { ANCHORED_HINTS, hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
@@ -24,10 +26,11 @@ import {
 import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
-import { useDiagSendStore } from '@/store/diagSendStore'
-import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
+import { useNoticeRailStore } from '@/store/noticeRailStore'
+import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { restartEngineFromCard } from '@/lib/exitNotices'
+import { useContactStore } from '@/store/contactStore'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
@@ -113,7 +116,7 @@ function Toast({
   timer?: DismissTimer
   /** 出现的先后（越新越大）：轨里按它排，最新的那条最靠近底边 */
   order: number
-  /** error 语气但正文是一句固定的话（没有「这一步没有完成：原因」，没有复制详情）——意外错误卡用 */
+  /** error 语气但正文是一句固定的话（没有「这一步没有完成：原因」，没有复制详情）——引擎修复卡用 */
   plain?: boolean
   /** 折叠的补充一句：默认不占位，悬停（title）与读屏可得——卡片默认只露一句话 + 一个主按钮 */
   note?: string
@@ -172,6 +175,7 @@ function Toast({
           variant="ghost"
           size="sm"
           className="shrink-0 text-ink"
+          data-toast-action=""
           onClick={action.onClick}
           loading={action.loading}
         >
@@ -220,7 +224,7 @@ function ErrorBody({ text }: { text: string }) {
           )
         }}
       >
-        {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
+        {copied ? <Check playIn size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
       </Button>
     </div>
   )
@@ -228,15 +232,15 @@ function ErrorBody({ text }: { text: string }) {
 
 /**
  * 状态 toast 的图标按语气取（`StatusTone`，2026-10-07 审计 P0）：只有报告「做成了」的那句打 ✓，
- * 进行中的转圈（与 `Button` 忙碌态同一个 LoaderCircle），其余中性的一句给 Info——此前
+ * 进行中的转圈（与 `Button` 忙碌态同一个 Spinner），其余中性的一句给 Info——此前
  * 「正在构建…」也打勾。颜色除错误外都是 ink-3：图标只分语气，不抢字的戏；错误用 danger 锚点。
  */
 function StatusIcon({ tone }: { tone: StatusTone }) {
-  if (tone === 'error') return <CircleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden />
-  if (tone === 'done') return <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+  if (tone === 'error') return <CircleAlert playIn size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden />
+  if (tone === 'done') return <Check playIn size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
   if (tone === 'progress')
-    return <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-ink-3" aria-hidden />
-  return <Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+    return <Spinner size={ICON_SIZE.sm} className="text-ink-3" aria-hidden />
+  return <Info playIn size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
 }
 
 /**
@@ -275,6 +279,19 @@ function useArrivalOrder() {
  * 不再算作 alert——选择页自己的报错是页面上唯一的 alert（e2e 与读屏的「当前错误」都按它认）。
  */
 export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'alert' | null } = {}) {
+  const railRef = useRef<HTMLDivElement>(null)
+  // 每次渲染后量一次在场通知（退场中的不算）最上面那条的顶边，浮动胶囊据此避让（见 `noticeRailStore`）
+  // 有模态对话框开着：通知移进 body 的 toast 层压在对话框上面（见 `dialogLayerStore`），不再是画布列里的那一条轨。
+  // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
+  // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
+  const overModal = useDialogLayerStore((s) => s.open > 0)
+  useEffect(() => {
+    const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
+      Math.round(e.getBoundingClientRect().top),
+    )
+    useNoticeRailStore.getState().setTop(tops.length ? Math.min(...tops) : null)
+  })
+  useEffect(() => () => useNoticeRailStore.getState().setTop(null), [])
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
@@ -296,10 +313,14 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const liveText = fmt(status)
   const statusPresence = usePresence(!!status, DURATION.fast)
 
-  const hint = useHintStore((s) => s.current)
+  // 带锚点的提示（`ANCHORED_HINTS`）由锚点所在组件自己画，不进这条轨；它仍占 current 的槽位
+  // live region 仍取 current（锚点提示的画面由锚点组件画，但读屏照样要听见；锚点组件自己不加 aria-live，免得播两遍）
+  const current = useHintStore((s) => s.current)
+  const hint = current && ANCHORED_HINTS.has(current) ? null : current
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
+  const liveHintText = current ? t(`hints.${current}`) : ''
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
@@ -307,10 +328,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
   const addedPresence = usePresence(justAdded, DURATION.fast)
-  // 「移除」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
-  // 别的了）。名字用「移除」不用「撤销」：顶栏已有一颗「撤销」，同名两颗读屏与用例都分不清
+  // 「撤销」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
+  // 别的了）。用户 2026-10-31 拍板写「撤销」（行为与顶栏撤销同一条栈，按钮在提示条里、靠 data 钩子认）
   const addedDepth = useWorkspaceStore((s) => s.addedForEditDepth)
   const historyDepth = useDocumentStore((s) => s.past.length)
+  const canvasName = useDocumentStore((s) => s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? '')
   const canRemoveAdded = justAdded && historyDepth === addedDepth
 
   /**
@@ -327,12 +349,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const adopted = useEnvStore((s) => s.adoptedEnvironment)
   const lastAdopted = useRef<AdoptedEnvironment | null>(null)
   if (adopted) lastAdopted.current = adopted
-  // 「出了点意外」卡（PR A）：优先级低于「刚为编辑加入」、高于全部提示类（改回 / 已用上次的答案 / 操作提示）。
-  // 状态那条从不让位，所以 加入说明 + 状态 + 引擎修复卡 已满三条时它让位；下面三类提示的让位判据都改成数「更高档」的在场条数。
-  const unexpected = useUnexpectedErrorStore((s) => s.card)
-  const lastUnexpected = useRef<{ token: number } | null>(null)
-  if (unexpected) lastUnexpected.current = unexpected
-  const diagEnabled = useDiagSendStore((s) => s.capability !== null)
+  // 「出了点意外」与「上次没有正常退出」两张反馈卡不在这条轨里：它们是窗口右下角的 `FeedbackCorner`（2026-10-19）。
   // 引擎意外退出的修复卡（ADR 0129）：引擎没了，这是唯一能做的事，所以与状态一样从不让位；
   // 不受发送开关控制（只有「重新启动」，没有发送入口）
   const engineExit = useExitNoticeStore((s) => s.engineExit)
@@ -340,25 +357,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const enginePresence = usePresence(!!engineExit, DURATION.fast)
   const lastEngineExit = useRef(engineExit)
   if (engineExit) lastEngineExit.current = engineExit
-  const unexpectedHasSlot = diagEnabled && [!!engineExit, justAdded, !!status].filter(Boolean).length < RAIL_MAX
-  const unexpectedPresence = usePresence(!!unexpected && unexpectedHasSlot, DURATION.fast)
-  const unexpectedShown = unexpected ?? lastUnexpected.current
-  // 「上次 Tavotto 没有正常退出」卡（ADR 0129）：与意外错误卡同档、排在它后面；只在发送入口可用时登记
-  const previous = useExitNoticeStore((s) => s.previous)
-  const lastPrevious = useRef<{ kind: string; token: number } | null>(null)
-  if (previous) lastPrevious.current = previous
-  const previousHasSlot =
-    diagEnabled &&
-    [!!engineExit, justAdded, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length < RAIL_MAX
-  const previousPresence = usePresence(!!previous && previousHasSlot, DURATION.fast)
-  const previousShown = previous ?? lastPrevious.current
-  const higherThanNotices = [
-    !!engineExit,
-    justAdded,
-    !!status,
-    !!unexpected && unexpectedHasSlot,
-    !!previous && previousHasSlot,
-  ].filter(Boolean).length
+  const higherThanNotices = [!!engineExit, justAdded, !!status].filter(Boolean).length
   const adoptedHasSlot = higherThanNotices < RAIL_MAX
   const adoptedPresence = usePresence(!!adopted && adoptedHasSlot, DURATION.fast)
   const adoptedShown = adopted ?? lastAdopted.current
@@ -405,83 +404,44 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
     }
   }
 
-  const openSendFromCard = () => {
-    useUnexpectedErrorStore.getState().dismiss()
-    useDiagSendStore.getState().setOpen(true)
-  }
-  const openSendFromPreviousCard = () => {
-    useExitNoticeStore.getState().dismissPrevious()
-    useDiagSendStore.getState().setOpen(true)
-  }
-
   const hintHasSlot =
-    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!unexpected && unexpectedHasSlot, !!previous && previousHasSlot].filter(Boolean).length < RAIL_MAX
+    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status].filter(Boolean).length < RAIL_MAX
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.fast)
+
+  // 「作者回信了」胶囊（ADR 0145）：有未读回信、窗口没开着时出现，带「查看」；× 收起后只有未读数再增加才重新出现。
+  // 与操作提示同一档的让位（最多三条，状态 / 加入说明 / 环境那几条更重要）；它不自己走，要用户点「查看」或 ×
+  const contactUnread = useContactStore((s) => (s.capability ? s.unread : 0))
+  const contactDismissedAt = useContactStore((s) => s.capsuleDismissedAt)
+  const contactOpen = useContactStore((s) => s.open)
+  const contactSlots = [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!hint].filter(Boolean).length
+  const contactPresence = usePresence(
+    contactUnread > 0 && contactUnread > contactDismissedAt && !contactOpen && contactSlots < RAIL_MAX,
+    DURATION.fast,
+  )
+  const lastContactUnread = useRef(0)
+  if (contactUnread > 0) lastContactUnread.current = contactUnread
 
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
   const arrival = useArrivalOrder()
+  const contactOrder = arrival('contact', contactPresence.mounted && lastContactUnread.current)
   const addedOrder = arrival('added', addedPresence.mounted && `added:${addedDepth}`)
   const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
   const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
-  const unexpectedOrder = arrival('unexpected', unexpectedPresence.mounted && unexpectedShown?.token)
   const engineOrder = arrival('engine', enginePresence.mounted && lastEngineExit.current)
-  const previousOrder = arrival('previous', previousPresence.mounted && previousShown?.token)
   const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
   const statusOrder = arrival('status', statusPresence.mounted && shown.status)
 
-  return (
-    <div
-      // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
-      className={cn(
-        'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
-        toolbarUp ? 'bottom-16' : 'bottom-3',
-      )}
-    >
-      {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
-          `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
-          产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
-          `[role="status"]` 取第一个拿到的是「文档里排在最前的那个 status」，不是
-          「应用刚说了什么」。要问后者的（e2e）一律认这个属性，见 `web/AGENTS.md`。 */}
-      {/* `data-status-key`：刚说的那句话的消息键（e2e 认它，不认译文——换语言照样判得了） */}
-      <div
-        aria-live="polite"
-        role="status"
-        data-status-live
-        data-status-key={tone !== 'error' && status ? status.key : undefined}
-        className="sr-only"
-      >
-        {tone !== 'error' ? liveText : ''}
-      </div>
-      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
-        {tone === 'error' ? liveText : ''}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {hintText}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {adopted ? adoptedText : ''}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {autofilled ? autofillText : ''}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {unexpected && unexpectedHasSlot ? translate('unexpectedError.text', { ns: 'workspace' }) : ''}
-      </div>
-      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
-        {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {previous && previousHasSlot ? translate('exitNotice.previous.text', { ns: 'workspace' }) : ''}
-      </div>
+  const toasts = (
+    <>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
-      {addedPresence.mounted && (
+      {!overModal && addedPresence.mounted && (
         <Toast
           order={addedOrder}
           tone="info"
           state={addedPresence.state}
           data-fast-edit-added-note=""
           icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
-          text={t('fastEdit.addedForEdit')}
+          text={t('fastEdit.addedForEdit', { name: canvasName })}
           action={canRemoveAdded ? { label: t('fastEdit.removeAdded'), onClick: () => runUndoRedo(false) } : undefined}
         />
       )}
@@ -515,38 +475,6 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           closeLabel={translate('actions.close')}
         />
       )}
-      {unexpectedPresence.mounted && unexpectedShown && (
-        <Toast
-          key={`unexpected-${unexpectedShown.token}`}
-          order={unexpectedOrder}
-          tone="error"
-          state={unexpectedPresence.state}
-          plain
-          data-unexpected-error-card=""
-          icon={<StatusIcon tone="error" />}
-          text={translate('unexpectedError.text', { ns: 'workspace' })}
-          // 只打开现有的确认框（本机备包）；上传要等用户在框里点「发送」
-          action={{ label: translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' }), onClick: openSendFromCard }}
-          onClose={() => useUnexpectedErrorStore.getState().dismiss()}
-          closeLabel={translate('actions.close')}
-        />
-      )}
-      {previousPresence.mounted && previousShown && (
-        <Toast
-          key={`previous-exit-${previousShown.token}`}
-          order={previousOrder}
-          tone="error"
-          state={previousPresence.state}
-          plain
-          data-previous-exit-card={previousShown.kind}
-          icon={<StatusIcon tone="error" />}
-          text={translate('exitNotice.previous.text', { ns: 'workspace' })}
-          // 只打开现有的确认框（本机备包）；上传要等用户在框里点「发送」
-          action={{ label: translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' }), onClick: openSendFromPreviousCard }}
-          onClose={() => useExitNoticeStore.getState().dismissPrevious()}
-          closeLabel={translate('actions.close')}
-        />
-      )}
       {enginePresence.mounted && (
         <Toast
           order={engineOrder}
@@ -564,7 +492,23 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           }}
         />
       )}
-      {hintPresence.mounted && hint && (
+      {!overModal && contactPresence.mounted && (
+        <Toast
+          order={contactOrder}
+          tone="info"
+          state={contactPresence.state}
+          data-contact-capsule={String(lastContactUnread.current)}
+          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={translate('contact.capsule', { ns: 'dialogs' })}
+          action={{
+            label: translate('contact.capsuleOpen', { ns: 'dialogs' }),
+            onClick: () => useContactStore.getState().setOpen(true, 'letters'),
+          }}
+          onClose={() => useContactStore.getState().dismissCapsule()}
+          closeLabel={translate('contact.capsuleClose', { ns: 'dialogs' })}
+        />
+      )}
+      {!overModal && hintPresence.mounted && hint && (
         <Toast
           key={hintToken}
           order={hintOrder}
@@ -593,6 +537,60 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           closeLabel={t('status.dismissError')}
         />
       )}
+    </>
+  )
+  return (
+    <div
+      ref={overModal ? undefined : railRef}
+      data-notification-rail
+      // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
+      className={cn(
+        'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
+        toolbarUp ? 'bottom-16' : 'bottom-3',
+      )}
+    >
+      {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
+          `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
+          产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
+          `[role="status"]` 取第一个拿到的是「文档里排在最前的那个 status」，不是
+          「应用刚说了什么」。要问后者的（e2e）一律认这个属性，见 `web/AGENTS.md`。 */}
+      {/* `data-status-key`：刚说的那句话的消息键（e2e 认它，不认译文——换语言照样判得了） */}
+      <div
+        aria-live="polite"
+        role="status"
+        data-status-live
+        data-status-key={tone !== 'error' && status ? status.key : undefined}
+        className="sr-only"
+      >
+        {tone !== 'error' ? liveText : ''}
+      </div>
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
+        {tone === 'error' ? liveText : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {liveHintText}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {adopted ? adoptedText : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {autofilled ? autofillText : ''}
+      </div>
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
+        {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
+      </div>
+      {overModal
+        ? createPortal(
+            <div
+              ref={railRef}
+              data-notification-rail
+              className="pointer-events-none fixed inset-x-0 bottom-6 z-toast flex flex-col items-center gap-1.5 px-4"
+            >
+              {toasts}
+            </div>,
+            document.body,
+          )
+        : toasts}
     </div>
   )
 }

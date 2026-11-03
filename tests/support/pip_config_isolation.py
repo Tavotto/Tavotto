@@ -33,14 +33,18 @@ try:
 
     from pip._internal import configuration
     discover = configuration.get_configuration_files
+    # pip 26.3 把 `configuration.kinds`（常量命名空间）换成了 `Kind`（str 枚举）；两种都认。
+    # 先认 kinds：旧版也有一个 `Kind`，但那是 NewType 别名，没有成员。
+    # 不能直接用字符串 "global" 当键：str 枚举的 hash 取的是成员名，查不到。
+    _GLOBAL = (getattr(configuration, "kinds", None) or configuration.Kind).GLOBAL
 
     def fixture_configuration_files():
         files = dict(discover())
-        files[configuration.kinds.GLOBAL] = [_GLOBAL_FILE]
+        files[_GLOBAL] = [_GLOBAL_FILE]
         return files
 
     configuration.get_configuration_files = fixture_configuration_files
-    if configuration.get_configuration_files()[configuration.kinds.GLOBAL] != [_GLOBAL_FILE]:
+    if configuration.get_configuration_files()[_GLOBAL] != [_GLOBAL_FILE]:
         raise RuntimeError("pip global configuration isolation did not activate")
 except BaseException as exc:
     # site.py 吞普通 Exception 并继续执行；SystemExit 才能在 startup 失败关闭。
@@ -81,7 +85,8 @@ def isolated_pip_globals(
             "-B",
             "-c",
             "import json; from pip._internal import configuration as c; "
-            "print(json.dumps(c.get_configuration_files()[c.kinds.GLOBAL]))",
+            "k = getattr(c, 'kinds', None) or c.Kind; "
+            "print(json.dumps(c.get_configuration_files()[k.GLOBAL]))",
         ],
         env=env,
         capture_output=True,

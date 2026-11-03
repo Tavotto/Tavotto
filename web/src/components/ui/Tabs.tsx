@@ -1,7 +1,7 @@
 import { useRef, type ButtonHTMLAttributes, type HTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useSlidingIndicator } from './slidingIndicator'
-import { tabClass } from './tabClass'
+import { segmentedTabClass, tabClass } from './tabClass'
 import { useBoldWidthLock } from './useBoldWidthLock'
 
 /**
@@ -23,8 +23,17 @@ export function TabList({
   className,
   children,
   onKeyDown,
+  variant = 'underline',
   ...rest
-}: HTMLAttributes<HTMLDivElement> & { label: string; children: ReactNode }) {
+}: HTMLAttributes<HTMLDivElement> & {
+  label: string
+  children: ReactNode
+  /**
+   * `segmented`（右栏页签行，2026-10-22 用户裁决）：灰槽 + 滑动的白色 thumb，各格等宽、整格可点；
+   * 视觉与 `Segmented` 同形，语义仍是 tablist / tab（切视图，不是选值）。格数由 `children` 决定。
+   */
+  variant?: 'underline' | 'segmented'
+}) {
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(e)
     if (e.defaultPrevented) return
@@ -45,6 +54,20 @@ export function TabList({
   }
   const rootRef = useRef<HTMLDivElement>(null)
   const indicator = useSlidingIndicator(rootRef, '[role="tab"][aria-selected="true"]')
+  const thumbEl = indicator.style && (
+    <span
+      aria-hidden
+      data-tab-indicator
+      className={cn(
+        'pointer-events-none absolute left-0',
+        variant === 'segmented'
+          ? 'inset-y-0.5 rounded-full bg-thumb shadow-thumb'
+          : 'bottom-0 h-0.5 rounded-full bg-ink',
+        indicator.animate && 'transition-[transform,width] duration-base ease-snap',
+      )}
+      style={indicator.style}
+    />
+  )
   return (
     <div
       {...rest}
@@ -54,20 +77,18 @@ export function TabList({
       onKeyDown={handleKeyDown}
       // 页签间 12：右栏最窄 320px 英文（Linux 的 DejaVu Sans）下三个页签按加粗宽度预留是 71 + 85 + 49 = 205，
       // tablist 只有 230 可用——两段 12 刚好 229；原语打磨那轮改成 16（两家参照都没量到这一格）多出的 8px 恰好撑破 7px
-      className={cn('relative flex h-full items-center gap-3', className)}
-    >
-      {children}
-      {indicator.style && (
-        <span
-          aria-hidden
-          data-tab-indicator
-          className={cn(
-            'pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-ink',
-            indicator.animate && 'transition-[transform,width] duration-base ease-snap',
-          )}
-          style={indicator.style}
-        />
+      className={cn(
+        variant === 'segmented'
+          ? // 等宽列（minmax(0,1fr)）：英文再长也不撑开槽，超出的字在格内省略号截断
+            'relative grid h-7 auto-cols-fr grid-flow-col items-stretch rounded-full bg-surface-hover p-0.5'
+          : 'relative flex h-full items-center gap-3',
+        className,
       )}
+    >
+      {/* 分段式的 thumb 在各格**之前**渲染（同层 absolute 后画的盖在上面，会盖住选中格的字） */}
+      {variant === 'segmented' && thumbEl}
+      {children}
+      {variant !== 'segmented' && thumbEl}
     </div>
   )
 }
@@ -77,16 +98,20 @@ export function Tab({
   panelId,
   className,
   children,
+  variant = 'underline',
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   active: boolean
+  /** 与所在 `TabList` 的 variant 一致 */
+  variant?: 'underline' | 'segmented'
   /** 对应内容区（`TabPanel`）的 id：给了它页签就带上 id 与 aria-controls */
   panelId?: string
   children: ReactNode
 }) {
   const ref = useRef<HTMLButtonElement>(null)
   // 选中态 600 比 400 宽 2–3%：量一次加粗宽度当 min-width，切换时邻居不挪（画布页签共用同一个钩子）
-  useBoldWidthLock(ref)
+  // 分段格是等宽列、靠省略号截断，不能再被 min-width 撑开
+  useBoldWidthLock(ref, variant === 'underline')
   return (
     <button
       {...rest}
@@ -98,7 +123,7 @@ export function Tab({
       aria-controls={panelId}
       // roving tabindex：只有当前页在 Tab 顺序里，其余用方向键到达
       tabIndex={active ? 0 : -1}
-      className={cn(tabClass(active), className)}
+      className={cn(variant === 'segmented' ? segmentedTabClass(active) : tabClass(active), className)}
     >
       {children}
     </button>

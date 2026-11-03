@@ -1,0 +1,16 @@
+E...
+======================================================================
+ERROR: test_exact_history_and_rowid (__main__.Migration.test_exact_history_and_rowid)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/Tavotto-cla-confirmation-slot/services/cla-cloudflare/tests/migration.test.py", line 41, in test_exact_history_and_rowid
+    report = m.migrate(old, new)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Tavotto-cla-confirmation-slot/services/cla-cloudflare/migrations/migrate-local-snapshot.py", line 129, in migrate
+    raise ValueError("unreviewed target column defaults")
+ValueError: unreviewed target column defaults
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.068s
+
+FAILED (errors=1)

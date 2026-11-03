@@ -17,7 +17,7 @@ async function openFigure(page: Page, a: RunningApp) {
   await page.goto(a.baseURL)
   // Prompt 09 起，双击素材卡 = 打开这张图（快速编辑工作区），**当场就在图内
   // 编辑态**——不再需要先「加入画布」再点一次「编辑图内元素」。
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
 }
 
@@ -45,8 +45,9 @@ test('流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、
   await page.getByRole('treeitem', { name: /^标题/ }).click()
 
   const panel = inspector(page)
-  // 「字体」「字号」是可见文字（不是只有 aria-label）
-  await expect(panel.getByText('字体', { exact: true })).toBeVisible()
+  // 两行字体和字号都是可见文字（不是只有 aria-label）
+  await expect(panel.getByText('中文字体', { exact: true })).toBeVisible()
+  await expect(panel.getByText('英文字体', { exact: true })).toBeVisible()
   await expect(panel.getByText('字号', { exact: true })).toBeVisible()
   await expect(panel.getByText('颜色', { exact: true })).toBeVisible()
 
@@ -70,8 +71,8 @@ test('流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、
   await page.waitForTimeout(800)
 
   // undo 两次（字号那轮是一条历史、颜色一条）→ 计数归零；redo 回到 2
-  await page.getByRole('button', { name: '撤销' }).click()
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
   await page.getByRole('button', { name: '重做' }).click()
   await page.getByRole('button', { name: '重做' }).click()

@@ -13,7 +13,7 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -23,6 +23,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { AssistantPanel } from './AiPanel'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -46,9 +47,13 @@ let root: Root
 let host: HTMLDivElement
 
 /** 有没有选中一张可编辑的图，是两条完全不同的路径 */
-async function mount({ withPanel }: { withPanel: boolean }) {
+async function mount({ withPanel, extra = [] }: { withPanel: boolean; extra?: PanelObject[] }) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_assistant')
-  if (withPanel) {
+  if (!withPanel && extra.length) {
+    // 什么都没选，画布上有 extra 里这几张可编辑的图
+    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: extra } }) as never)
+    useSelectionStore.setState({ ids: [] } as never)
+  } else if (withPanel) {
     useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panel()] } }) as never)
     useSelectionStore.setState({ ids: ['p1'] } as never)
   } else {
@@ -71,6 +76,7 @@ const q = <T extends Element = HTMLElement>(sel: string) => host.querySelector<T
 const qa = <T extends Element = HTMLElement>(sel: string) => Array.from(host.querySelectorAll<T>(sel))
 const typeDraft = async (text: string) => {
   const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+  await vi.waitFor(() => expect(box.readOnly).toBe(false), { timeout: 8000 }) // 草稿读取结束前输入框只读
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
   await act(async () => {
     setter.call(box, text)
@@ -109,6 +115,16 @@ describe('还没发过任务时的信息布局', () => {
     expect(empty!.contains(q('[data-ai-input]'))).toBe(false)
   })
 
+  it('空态的图形是 64px 的 searching 思考小球（ADR 0165），不是线稿', async () => {
+    await mount({ withPanel: true })
+    const state = q('[data-ai-empty] [data-empty-state]')!
+    const orb = state.querySelector<HTMLCanvasElement>('canvas[data-thinking-orb]')
+    expect(orb?.dataset.thinkingOrb).toBe('searching')
+    expect(orb?.dataset.thinkingOrbTone).toBe('settled')
+    expect(orb?.style.width).toBe('64px')
+    expect(state.querySelector('svg')).toBeNull()
+  })
+
   it('空态里至多三条示例提示，取自 chipsFor；点一下填进输入框', async () => {
     await mount({ withPanel: true })
     const examples = qa<HTMLButtonElement>('[data-ai-example]')
@@ -128,6 +144,58 @@ describe('还没发过任务时的信息布局', () => {
     expect(q('[data-ai-scroller]')!.textContent).toContain(ai('panel.noPanelTitle'))
     expect(q('[data-ai-example]')).toBeNull()
     expect(q('[data-ai-context]'), '没有目标时没有上下文带').toBeNull()
+  })
+})
+
+describe('没选中对象时的目标（UI 审计 C5）', () => {
+  const second = (): PanelObject => ({ ...panel(), id: 'p2', name: 'Fig2', fileId: 'Fig2.pdf', script: '/tmp/figs/fig2.py' }) as PanelObject
+
+  it('画布上恰好一张可编辑的图、什么都没选：它自动是目标，输入框有占位，选区不动', async () => {
+    await mount({ withPanel: false, extra: [panel()] })
+    expect(q('[data-ai-target]')!.textContent).toContain('Fig1')
+    expect(q('[data-ai-target]')!.textContent).toContain(ai('scope.figure'))
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    expect(box.disabled).toBe(false)
+    expect(box.placeholder).toBe(ai('panel.placeholder'))
+    expect(useSelectionStore.getState().ids).toEqual([])
+  })
+
+  it('多张可编辑的图：空态列出名字，点一下选中那张', async () => {
+    await mount({ withPanel: false, extra: [panel(), second()] })
+    expect(q('[data-ai-context]')).toBeNull()
+    expect(qa('[data-ai-pick-panel]').map((b) => b.textContent)).toEqual(['Fig1', 'Fig2'])
+    await act(async () => qa('[data-ai-pick-panel]')[1].click())
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+  })
+
+  it('选图器的选择不把右栏从助手页签切走，目标是被点的那张；之后点画布选中仍切到属性', async () => {
+    await mount({ withPanel: false, extra: [panel(), second()] })
+    function Routing() {
+      useSelectionRouting()
+      return null
+    }
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <Routing />
+          <AssistantPanel />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => useUiStore.getState().setRightTab('assistant'))
+    await act(async () => qa('[data-ai-pick-panel]')[1].click())
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+    expect(useUiStore.getState().rightTab).toBe('assistant')
+    expect(q('[data-ai-target]')!.textContent).toContain('Fig2')
+    // 其它来源（画布点选）的选择行为不变：切到属性
+    await act(async () => useSelectionStore.getState().set(['p1']))
+    expect(useUiStore.getState().rightTab).toBe('properties')
+  })
+
+  it('选中了别的东西（非面板）时不回退到那张图', async () => {
+    await mount({ withPanel: false, extra: [panel()] })
+    await act(async () => useSelectionStore.setState({ ids: ['t1'] } as never))
+    expect(q('[data-ai-target]')).toBeNull()
   })
 })
 

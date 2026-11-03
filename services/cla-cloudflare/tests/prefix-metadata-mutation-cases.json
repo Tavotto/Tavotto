@@ -1,0 +1,52 @@
+[
+  {
+    "name": "prefix metadata retains independent closing batch",
+    "file": "src/native/github.ts",
+    "before": "      const after=await this.prMetadataBatch(numbers,token,readLease.guard);",
+    "after": "      const after=before;",
+    "pattern": "^batched closing metadata rejects changed base$",
+    "selectedTitle": "batched closing metadata rejects changed base",
+    "testFile": "tests/prefix-metadata-boundaries.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix metadata rejects partial GraphQL errors",
+    "file": "src/native/github.ts",
+    "before": "    if(result.errors!==undefined && (!Array.isArray(result.errors) || result.errors.length))throw new Rejected('merge_prefix_unavailable');",
+    "after": "",
+    "pattern": "^batched metadata fails closed on partial GraphQL error$",
+    "selectedTitle": "batched metadata fails closed on partial GraphQL error",
+    "testFile": "tests/prefix-metadata-boundaries.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix metadata rejects undeclared member aliases",
+    "file": "src/native/github.ts",
+    "before": "    if(Object.keys(repository).sort().join(',')!==['databaseId',...numbers.map(n=>'p'+n)].sort().join(','))throw new Rejected('merge_prefix_incomplete');",
+    "after": "",
+    "pattern": "^batched metadata fails closed on extra member$",
+    "selectedTitle": "batched metadata fails closed on extra member",
+    "testFile": "tests/prefix-metadata-boundaries.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix metadata retains dynamic author login fence",
+    "file": "src/native/github.ts",
+    "before": "after.user?.login!==pr.user?.login || ",
+    "after": "",
+    "pattern": "^batched closing metadata rejects changed login$",
+    "selectedTitle": "batched closing metadata rejects changed login",
+    "testFile": "tests/prefix-metadata-boundaries.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix metadata batching remains closed behind the read session",
+    "file": "src/native/github.ts",
+    "before": "    if(readLease && prefix.length>1){",
+    "after": "    if(prefix.length>1){",
+    "pattern": "^prefix read session false retains exact previous32 call behavior$",
+    "selectedTitle": "prefix read session false retains exact previous32 call behavior",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  }
+]

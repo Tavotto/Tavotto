@@ -20,7 +20,7 @@ pool.get(script, figures_dir, entry)            # 池键 = (norm(项目), 脚本
     env override → 用户配置 → 内置 runtime → 自身 → 系统探测
   → spawn worker.py --script --figures-dir --out-dir --sandbox --entry
       worker.build():
-        cwd = 沙盒；sys.path = [图库根, 脚本目录]
+        cwd = 沙盒；sys.path = [脚本目录, …标准库 / site-packages…, 图库根]（图库根追加在末尾）
         Path.unlink / Path.write_text 守卫（挡真实图库写删）
         figcapture.install_relative_read_fallback（只读回退）
         拦截 Figure.savefig（吞掉写盘，按 stem 捕获）+ paper_style.save

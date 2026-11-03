@@ -1,0 +1,51 @@
+{
+  "old_head": "23e0f50c0e7fb318d4d42c8421fcf821071ba3b8",
+  "new_stack_parent": "a5cf3549818f14c97c9c05f7aff6f14853a27f91",
+  "original_hosted_run": 39126028608,
+  "original_job": 117671233509,
+  "original_checkout_sha": "23e0f50c0e7fb318d4d42c8421fcf821071ba3b8",
+  "original_install": "success",
+  "original_typecheck": "TS2700 src/native/store.ts(153,52)",
+  "original_remaining_chain": "not executed",
+  "raw_original_ci_logs_in_parent": "docs/implementation/cla-confirmation-slot/evidence/ts2700/original-ci-logs.json",
+  "inherited_fix": "Omit<RefreshRequest,'capacity_blocked'> before numeric raw DB capacity field; no any or suppression.",
+  "runtime_store_sha256": "35c694576c1a8e4b6630ed6337f26a5a9e39fe55ddaa38dc46e31a50b672d140",
+  "module_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+  "schema_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+  "schema_target_ref_unchanged": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+  "schema_logic_unchanged": true,
+  "local_commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "count": 507,
+      "log": "node.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "count": 4,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "count": 146,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "node --test tests/independent-slot-budget.test.mjs tests/independent-refresh-boundaries.test.mjs",
+      "exit_code": 0,
+      "count": 50,
+      "log": "targeted.txt"
+    }
+  ],
+  "current_fix_hosted_typecheck_build": "pending; no current-fix run yet",
+  "no_external_review_triggered": true,
+  "artifact_sha256": {
+    "node.txt": "a5466d27223365c7f51a9b16b1afd70192c0c4c934c577a5d04250ba2830cc62",
+    "mutations.txt": "ccdce0808d9f08c3cca08b74b99540aaf529c85f79f7b9d95740e3b703f5d323",
+    "migration.txt": "695d659532a50ccb2c8c721223b0d28db4557e4602b82b948fbd5f9c7d0bf1f5",
+    "targeted.txt": "b1e9d99863b8a6523d359900bd37810d2e5588ece4fc895bbd2537f92681c4e7"
+  }
+}

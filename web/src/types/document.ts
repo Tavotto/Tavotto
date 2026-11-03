@@ -1,7 +1,9 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
 import { t } from '@/i18n'
-import type { ArtifactValidation } from '@/lib/artifactValidation'
+import type { ArtifactValidation, SourceBackedFigure } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
+import type { JournalFieldSource } from '@/lib/journals'
+import { displayText, type TextFormat } from '@/lib/richText'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
 export interface ObjectBase {
@@ -99,7 +101,14 @@ export type PanelRotation = 0 | 90 | 180 | 270
  * 未来新增的取值对旧构建是未知形态：消费方一律经 panelKind() 判别并对
  * unknown fail closed（当缺失素材显示，绝不猜成文件路径）。
  */
-export type PanelFileKind = 'pdf' | 'raster' | 'runtime'
+export type PanelFileKind = 'pdf' | 'raster' | 'svg' | 'runtime'
+
+/**
+ * 面板素材是不是**矢量文件**（pdf / svg）：按有效字号（pt）而不是有效 DPI 评质量、
+ * 来源判「矢量」都问它。新增矢量文件形态只改这一处（runtime 是执行捕获的图，不在内）。
+ */
+export const isVectorFileKind = (kind: string | null | undefined): boolean =>
+  kind === 'pdf' || kind === 'svg'
 
 /**
  * RuntimeFigureAsset 的持久化描述块（CapturedFigureDescriptor 的子集，
@@ -120,6 +129,23 @@ export interface RuntimePanelSource {
   runConfig?: string
 }
 
+/** Exact script/configuration ownership, derived and verified only by the backend. */
+export interface FigureExecutionOwner {
+  script: string
+  run_config: string | null
+}
+
+/** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
+export interface FigureSnapshot {
+  version: 1
+  sourceId: string
+  patchHash: string
+  receiptId: string
+  snapshotId: string
+  /** Backend-verified archived execution ownership; absent in older snapshots, never inferred. */
+  executionOwner?: FigureExecutionOwner
+}
+
 export interface PanelObject extends ObjectBase {
   type: 'panel'
   fileId: string
@@ -138,8 +164,14 @@ export interface PanelObject extends ObjectBase {
   /** 仅 fileKind === 'runtime'：捕获来源的持久化描述（见 RuntimePanelSource） */
   source?: RuntimePanelSource
   overrides: PanelOverride[]
+  figureSnapshot?: FigureSnapshot
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
+  /**
+   * 来源驱动采用 guard（ADR 0139 PR2），与 `artifactValidation` **并列且互斥**、形状不同。
+   * 旧前端读到它会忽略，把面板当未采用 PNG 显示原像素；老项目不会获得这个字段。
+   */
+  sourceBackedFigure?: SourceBackedFigure
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。
@@ -194,6 +226,12 @@ export interface TextObject extends ObjectBase {
    * 闭集与语义的唯一出处是 `lib/richText.ts`（↔ `src/tavotto/richtext.py`）。
    */
   interpretation?: 'auto' | 'scientific'
+  /**
+   * `text` 的写法（ADR 0152）。**可选：老文档没有它 = 旧标记**（`^{…}` / `_{…}`），读法逐字
+   * 不变、磁盘格式不升版。`'latex'` = LaTeX 子集（`\textit{}` / `\textbf{}` / `$…$`），由
+   * 所见即所得编辑框写入。闭集与语义的唯一出处是 `lib/richText.ts`（↔ `src/tavotto/richtext.py`）。
+   */
+  textFormat?: TextFormat
   bold: boolean
   /** 可选：旧文档无此字段，undefined 即 false（后端 t.get("italic") 同义）。
    *  斜体只作用于拉丁字形——导出走 times-italic，宋体无斜体变体。 */
@@ -270,7 +308,7 @@ export interface ShapeObject extends ObjectBase {
  * **绝不**把它当成相对路径去猜文件（那会显示出另一个面板的图）。
  */
 export function panelKind(o: Pick<PanelObject, 'fileKind'>): PanelFileKind | 'unknown' {
-  return o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
+  return o.fileKind === 'svg' || o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
     ? o.fileKind
     : 'unknown'
 }
@@ -375,6 +413,22 @@ export interface DocumentProfile {
   snapshotVersion?: string
   /** 用户明确选了「跟着全局走」。缺省 = 没选 = 按快照 */
   follow?: boolean
+  /** 按期刊选的：选那一刻的期刊 id / 库版本 / 采集日期 / 期刊名（ADR 0155 §4）；缺省 = 没按期刊选过 */
+  journalRef?: { id: string; catalogRev: number; retrieved: string; label: string }
+  /** 生效字段出处的精简版（`lib/journals.JournalFieldSource`），出处卡离线也读得到 */
+  journalSources?: Record<string, JournalFieldSource>
+  /** 选期刊之前的规范绑定与页宽（`specBinding.JournalPrev`）：「不按期刊」据此退回 */
+  journalPrev?: {
+    profile: {
+      id: string
+      journal?: Record<string, unknown>
+      snapshot?: Record<string, unknown>
+      snapshotVersion?: string
+      follow?: boolean
+    } | null
+    pageW: number
+    setW?: number
+  }
 }
 
 /**
@@ -430,7 +484,24 @@ export interface FigureDocument {
   profile?: DocumentProfile
   /** 可选的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
   style?: DocumentStyle
+  /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0，画布就是图幅 */
+  framePad?: FramePad
+  /** 单图画布处在「紧凑」停靠点上的那几边（ADR 0161）：图幅变了按新的内容边缘重算，不保留旧 mm */
+  framePadTight?: FramePadSide[]
 }
+
+/**
+ * 单图编辑的画布留白（ADR 0161）：图四周各加多少 mm（**导出 mm**，即图幅的 mm），负值 = 裁进图幅。
+ * 挂在画布上：模式按画布判、单图一张图一张画布；变成多图排版时保留不用，删回一张原样回来。
+ * 只在 Tavotto 的导出里生效，不写回脚本。
+ */
+export interface FramePad {
+  l: number
+  t: number
+  r: number
+  b: number
+}
+export type FramePadSide = keyof FramePad
 
 /* ------------------------- schema 3：项目 / 画布 --------------------------- */
 /**
@@ -451,6 +522,9 @@ export interface CanvasData {
   profile?: DocumentProfile
   /** 每张画布各自的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
   style?: DocumentStyle
+  /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0 */
+  framePad?: FramePad
+  framePadTight?: FramePadSide[]
 }
 
 /**
@@ -482,6 +556,8 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.layoutGroups ? { layoutGroups: c.layoutGroups } : {}),
     ...(c.profile ? { profile: c.profile } : {}),
     ...(c.style ? { style: c.style } : {}),
+    ...(c.framePad ? { framePad: c.framePad } : {}),
+    ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
   }
 }
 
@@ -495,6 +571,8 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.layoutGroups ? { layoutGroups: doc.layoutGroups } : {}),
     ...(doc.profile ? { profile: doc.profile } : {}),
     ...(doc.style ? { style: doc.style } : {}),
+    ...(doc.framePad ? { framePad: doc.framePad } : {}),
+    ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
   }
 }
 
@@ -650,7 +728,7 @@ export function objectLabel(o: CanvasObject): string {
     case 'panel':
       return o.fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? t('objectType.panel')
     case 'text':
-      return o.text.trim().slice(0, 18) || t('objectType.emptyText')
+      return displayText(o.text, o.textFormat).trim().slice(0, 18) || t('objectType.emptyText')
     case 'arrow':
       return t('objectType.arrow')
     case 'shape':

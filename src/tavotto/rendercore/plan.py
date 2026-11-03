@@ -162,6 +162,7 @@ def _panel_node(
             "source", str(exc), {"id": str(o.get("id", "")), "source_code": exc.code, **exc.params}
         ) from exc
     art = fs.artifact
+    companion = fs.svg_representation()
     key = f"file:{art.bytes_sha256[:16]}:{art.semantic_identity()[7:23]}"
     if key not in resources:
         resources[key] = FileResource(
@@ -170,6 +171,7 @@ def _panel_node(
             sha256=art.bytes_sha256,
             origin=art.origin,
             semantic_identity=art.semantic_identity(),
+            svg_sha256=companion.artifact.bytes_sha256 if companion is not None else None,
         )
         frozen[key] = fs
     x, y, w, h = _box_pt(o)
@@ -209,11 +211,28 @@ def _panel_node(
     )
 
 
+def _math_segments(box: dict, x: float, baseline_up: float, size: float) -> tuple:
+    """公式排版结果（em、基线 y = 0、y 向上）→ 页面上的路径段（pt、y 向上）。"""
+    out = []
+    for seg in box["segments"]:
+        op, coords = seg[0], seg[1:]
+        pts = []
+        for k in range(0, len(coords), 2):
+            pts += [x + float(coords[k]) * size, baseline_up + float(coords[k + 1]) * size]
+        out.append((op, *pts))
+    return tuple(out)
+
+
 def _text_node(
-    t: dict, page_h: float, faces: FaceSet, resources: dict[str, Resource], problems: list[dict]
+    t: dict,
+    page_h: float,
+    faces: FaceSet,
+    resources: dict[str, Resource],
+    problems: list[dict],
+    math: dict | None = None,
 ) -> Node | None:
     bx, by, bw, bh = _box_pt(t)  # 先校验框（缺字段 / 非有限数在这里就拒），再排版
-    block = typography.layout_text(t, faces)
+    block = typography.layout_text(t, faces, math)
     if block is None:
         return None
     oid = str(t.get("id", ""))
@@ -234,8 +253,18 @@ def _text_node(
     color = Paint(hex2rgb(block.color))
     underlines: list[Path] = []
     for line in block.lines:
+        # 一段 ShapedText 里的字形按 advance 首尾相接；公式在中间占了宽度时（`piece_x` 不再首尾相接）
+        # 在那里断开、另起一段，从公式右边落笔
         runs: list[GlyphRun] = []
-        for piece in line.pieces:
+        run_x = line.x
+        end_x = line.x
+        for k, piece in enumerate(line.pieces):
+            px = line.piece_x[k] if k < len(line.piece_x) else end_x
+            if runs and abs(px - end_x) > 1e-6:
+                children.append(ShapedText(run_x, page_h - line.baseline, tuple(runs), color, oid))
+                runs = []
+            if not runs:
+                run_x = px
             key = f"font:{piece.face.resource.face_id}"
             resources.setdefault(key, piece.face.resource)
             runs.append(
@@ -245,10 +274,17 @@ def _text_node(
                     glyphs=tuple(piece.glyphs),
                     rise=piece.rise,
                     actual_text=piece.actual_text,
+                    invisible=piece.invisible,
                 )
             )
+            end_x = px + piece.width
         if runs:
-            children.append(ShapedText(line.x, page_h - line.baseline, tuple(runs), color, oid))
+            children.append(ShapedText(run_x, page_h - line.baseline, tuple(runs), color, oid))
+        # 公式（ADR 0152 PR 4）：matplotlib mathtext 排出的轮廓，用文字颜色填充；画布预览读同一份结果
+        for mx, box, _src in line.math:
+            segs = _math_segments(box, mx, page_h - line.baseline, block.size)
+            if segs:
+                children.append(Path(segs, fill=color, object_id=oid))
         if block.underline:
             uy = page_h - (line.baseline + block.size * 0.11)
             underlines.append(
@@ -263,6 +299,11 @@ def _text_node(
         problems.append({"code": "glyph_missing", "object_id": oid, "chars": list(block.missing)})
     if block.cjk_chars:
         problems.append({"code": "cjk_face", "object_id": oid, "chars": list(block.cjk_chars)})
+    for src, why in block.math_failures:
+        # 排不出来的公式按源码原样画了（不吞字），这里报出来：导出警告里看得见是哪一段、为什么
+        problems.append(
+            {"code": "math_unrenderable", "object_id": oid, "chars": [f"${src}$"], "why": why}
+        )
     if not children:
         return None
     deg = _rotation_deg(t)
@@ -290,8 +331,12 @@ def compile_page(
     sources: SourceResolver,
     faces: FaceProvider,
     background: RGB | None = (1.0, 1.0, 1.0),
+    math: dict | None = None,
 ) -> CompiledPage:
-    """画布（毫米、顶原点、z 序对象列表）→ 已校验的 `Page`。"""
+    """画布（毫米、顶原点、z 序对象列表）→ 已校验的 `Page`。
+
+    `math`：标注公式的排版结果（`typography.math_key` → 结果），由调用方事先排好
+    （`engine.mathtypeset.layouts_for`）。缺席 = 公式按源码原样画（ADR 0152 PR 4）。"""
     page_w, page_h = mm2pt(float(page_w_mm)), mm2pt(float(page_h_mm))
     resources: dict[str, Resource] = {}
     frozen: dict[str, FrozenSource] = {}
@@ -319,7 +364,7 @@ def compile_page(
                     str(exc),
                     {"id": str(o.get("id", "")), "font_code": getattr(exc, "code", "")},
                 ) from exc
-            node = _text_node(o, page_h, fs, resources, problems)
+            node = _text_node(o, page_h, fs, resources, problems, math)
         elif kind in ("arrow", "shape"):
             node = _shape_node(o, page_h)
         else:
@@ -333,7 +378,11 @@ def compile_page(
 
 
 def compile_plan(
-    req: exportreq.ExportRequest, *, sources: SourceResolver, faces: FaceProvider
+    req: exportreq.ExportRequest,
+    *,
+    sources: SourceResolver,
+    faces: FaceProvider,
+    math: dict | None = None,
 ) -> RenderPlan:
     """`ExportRequest`（已规范化）→ `RenderPlan`。只编译 `scope=canvas`。"""
     if req.scope != exportreq.SCOPE_CANVAS or req.canvas is None:
@@ -349,9 +398,16 @@ def compile_plan(
         sources=sources,
         faces=faces,
         background=background,
+        math=math,
     )
     ref = exportreq.render_plan_ref(
-        req, [fs.artifact.to_payload() for fs in compiled.sources.values()]
+        req,
+        [
+            source.artifact.to_payload()
+            for fs in compiled.sources.values()
+            for source in (fs, fs.svg_representation())
+            if source is not None
+        ],
     )
     return RenderPlan(
         plan_ref=ref,

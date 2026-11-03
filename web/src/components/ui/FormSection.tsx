@@ -41,11 +41,19 @@ export function FormSection({
  * hairline（index.css 的 `[data-ui-field-group]` 规则——用背景画线，border 会顶到组的边缘）。
  * macOS 系统设置 / Linear 设置的标准形态；组里的说明条（`Notice`）作为最后一行。
  */
-export function FieldGroup({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
+export function FieldGroup({
+  className,
+  children,
+  plain = false,
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
+  /** 行与行之间不画 hairline（只剩卡片本身）；默认 false 时 DOM 与此前逐字相同 */
+  plain?: boolean
+}) {
   return (
     <InFieldGroup.Provider value>
       {/* `@container`：组里的设置行按**组的宽度**决定并排还是叠放（`settings/SettingRow` 的 SETTING_ROW_STACK_BELOW） */}
-      <div {...rest} data-ui-field-group className={cn('@container flex flex-col rounded-lg bg-group', className)}>
+      <div {...rest} data-ui-field-group data-ui-field-group-plain={plain ? '' : undefined} className={cn('@container flex flex-col rounded-lg bg-group', className)}>
         {children}
       </div>
     </InFieldGroup.Provider>

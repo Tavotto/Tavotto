@@ -12,7 +12,7 @@
  */
 import { create } from 'zustand'
 
-export type AssetTypeFilter = 'all' | 'pdf' | 'raster' | 'runtime'
+export type AssetTypeFilter = 'all' | 'pdf' | 'raster' | 'svg' | 'runtime'
 export type AssetSortKey = 'name' | 'recent' | 'used'
 /**
  * 「能不能编辑」这一维（搜索框下面那排胶囊）。只是把后端的接入状态

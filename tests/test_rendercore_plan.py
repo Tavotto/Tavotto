@@ -428,3 +428,69 @@ def test_zero_height_line_boxes_are_still_allowed_for_shapes(project: Path):
         ],
     )
     assert len(compiled.page.children) == 2
+
+
+# ---------------------------------------------------------------- 标注公式（ADR 0152 PR 4）
+
+#: 一个合成的公式排版结果：2 em 宽的矩形轮廓（em、基线 y = 0、y 向上）
+_BOX = {
+    "ok": True,
+    "width": 2.0,
+    "ascent": 0.8,
+    "descent": 0.2,
+    "segments": [["M", 0.0, -0.2], ["L", 2.0, -0.2], ["L", 2.0, 0.8], ["Z"]],
+}
+
+
+def test_math_is_drawn_as_filled_paths_at_its_place_in_the_line(project: Path):
+    """`a $x$ b`：公式紧跟在「a 」之后落位，按字号缩放、基线对齐、文字颜色填充；行宽算上公式。"""
+    from tavotto.rendercore import typography
+
+    t = _text("a $x$ b", w=60.0, text_format="latex", color="#336699")
+    compiled = _compile(project, [t], math={typography.math_key("x", "serif"): _BOX})
+    grp = compiled.page.children[0]
+    st = next(n for n in grp.children if isinstance(n, ir.ShapedText))
+    path = next(n for n in grp.children if isinstance(n, ir.Path))
+    faces = typography.faces_for(PROVIDER, "serif", False, False)
+    mx = 5 * MM + typography.mixed_width("a ", faces, 10.0)
+    assert path.segments[0] == pytest.approx(("M", mx, st.y - 0.2 * 10.0))
+    assert path.segments[2] == pytest.approx(("L", mx + 20.0, st.y + 8.0))
+    assert path.fill == ir.Paint(ir.hex2rgb("#336699"))
+    # 公式处在文本层里有一段不画的源码（`$x$`，ActualText 同文，advance 之和 = 公式宽），后面的字
+    # 紧跟在它后面——不必再断成两段（早先断开是因为公式的宽度没有字形占着）
+    texts = [n for n in grp.children if isinstance(n, ir.ShapedText)]
+    assert len(texts) == 1
+    mid = [r for r in st.runs if r.invisible]
+    assert len(mid) == 1 and mid[0].actual_text == "$x$"
+    assert "".join(g.text for g in mid[0].glyphs) == "$x$"
+    assert sum(g.x_advance for g in mid[0].glyphs) * mid[0].size / 1000 == pytest.approx(
+        20.0, abs=0.01
+    )
+    # 看得见的字只有 a、b；没有占位字符
+    visible = "".join(g.text for r in st.runs if not r.invisible for g in r.glyphs)
+    assert visible.replace(" ", "") == "ab"
+    assert list(compiled.problems) == []
+
+
+def test_unrenderable_math_draws_its_source_and_is_reported(project: Path):
+    from tavotto.rendercore import typography
+
+    bad = {"ok": False, "error": "ParseFatalException: Unknown symbol: \\bad"}
+    t = _text("k $\\bad$", w=60.0, text_format="latex")
+    compiled = _compile(project, [t], math={typography.math_key("\\bad", "serif"): bad})
+    grp = compiled.page.children[0]
+    st = next(n for n in grp.children if isinstance(n, ir.ShapedText))
+    assert "".join(g.text for r in st.runs for g in r.glyphs) == "k $\\bad$"
+    assert not any(isinstance(n, ir.Path) for n in grp.children)
+    assert list(compiled.problems) == [
+        {"code": "math_unrenderable", "object_id": "t1", "chars": ["$\\bad$"], "why": bad["error"]}
+    ]
+
+
+def test_without_math_results_formulas_draw_as_source_and_nothing_is_reported(project: Path):
+    """没接公式排版的调用方（缩略图、老调用形态）：行为与 PR 4 之前相同。"""
+    compiled = _compile(project, [_text("k $x$", w=60.0, text_format="latex")])
+    grp = compiled.page.children[0]
+    st = next(n for n in grp.children if isinstance(n, ir.ShapedText))
+    assert "".join(g.text for r in st.runs for g in r.glyphs) == "k $x$"
+    assert list(compiled.problems) == []

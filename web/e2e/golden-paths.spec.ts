@@ -11,7 +11,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { inflateRawSync } from 'node:zlib'
-import { expect, openWorkspace, showAllProjects, test, writeRuntimeNamedProject } from './fixtures'
+import { addSecondFigure, expect, openWorkspace, showAllProjects, test, writeRuntimeNamedProject } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -72,7 +72,7 @@ test('直接粘贴路径打开项目（含中文与空格）', async ({ app, pag
   // 顶栏出现项目切换器，名字就是那个中文目录
   await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible()
   // 素材库里能看到面板
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
 })
 
 test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复', async ({ app, page }) => {
@@ -80,17 +80,50 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   await page.goto(a.baseURL)
 
   // 双击素材把面板放上画布
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
-  // Prompt 09：双击 = 打开（快速编辑）。标注工具画的是**画布对象**，
-  // 只在画布排版模式下有落点——先回排版再用它们。返回入口自审计 T01 起
-  // 收成了上下文栏上唯一那颗「返回画布」。
-  await page.getByRole('button', { name: /返回画布/ }).first().click()
+  // Prompt 09：双击 = 打开（单图编辑）。标注工具画的是**画布对象**，
+  // 只在多图排版下有落点——画布上有第二张图才是排版（没有「回排版」按钮了）。
+  await addSecondFigure(page)
 
-  // 文字工具加一段带上标的标注，验证行内标记在画布上真的渲染成上标
-  await page.getByRole('button', { name: '文字' }).click()
-  await page.locator('[data-canvas-stage]').click({ position: { x: 420, y: 240 } })
-  await page.keyboard.type('cm^{-1}')
+  // 文字工具加一段带上标的标注：就地编辑是所见即所得的（ADR 0152）——选中「-1」按 ⌘↑ 变上标，
+  // 验证它在画布上真的渲染成上标。先退掉选区：加完第二张图它是选中的，图上方的浮动栏（「改图里的内容」…）
+  // 在 13px 字号 + Windows 字体下正好盖住下面那个固定落点，点击落在浮动栏上就不会起文字框
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-context-bar]')).toHaveCount(0)
+  // 文字工具按钮是开关（再点一次回到选择）：只在没按下时点，每次落点前都确认它是按下的
+  const textTool = page.getByRole('button', { name: '文字' })
+  const ensureTextTool = async () => {
+    if ((await textTool.getAttribute('aria-pressed')) !== 'true') await textTool.click()
+    await expect(textTool).toHaveAttribute('aria-pressed', 'true')
+  }
+  // 先确认文字框真的起来了再打字：落点被浮层（上下文栏、提示条……）盖住时点击不会起文字框，
+  // 之前要到后面「找不到 -1」才红，看不出是落点的问题（Windows 字体更宽、浮层更大，24h 红过 5 次）。
+  // 这条用例验的是上标渲染，不是「固定坐标」：被盖住就退掉换一个落点
+  const stage = page.locator('[data-canvas-stage]')
+  const editor = stage.locator('.ProseMirror')
+  let opened = false
+  for (const position of [
+    { x: 420, y: 240 },
+    { x: 420, y: 330 },
+    { x: 300, y: 380 },
+    { x: 560, y: 200 },
+  ]) {
+    await ensureTextTool()
+    await stage.click({ position })
+    opened = await editor
+      .first()
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (opened) break
+    await page.keyboard.press('Escape')
+  }
+  expect(opened, '文字工具在画布上四个落点都没起文字框（被浮层挡住？）').toBe(true)
+  await page.keyboard.type('cm-1')
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.press('ControlOrMeta+ArrowUp')
   await page.keyboard.press('Escape')
 
   const marked = page.locator('span', { hasText: /^-1$/ }).first()
@@ -267,7 +300,7 @@ test('导出诊断包：能下载，且不含主目录、用户脚本的报错�
 test('导出 PDF 后文件真的落盘', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
 
   const resp = await page.request.post(`${a.baseURL}/api/export`, {
     data: {

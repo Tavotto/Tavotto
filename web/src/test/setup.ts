@@ -18,9 +18,12 @@
  */
 import { afterEach, beforeEach } from 'vitest'
 import { DEFAULT_LOCALE, i18n, initI18n } from '@/i18n'
+import { __resetOutboxForTests } from '@/lib/aiDraftOutbox'
 import { cancelFocusRescues } from '@/lib/focusRescue'
+import { cancelStartupProbe } from '@/lib/startupProbe'
 import { forgetProjectFilesInSession } from '@/lib/projectFile'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
+import { __stopThinkingOrbsForTests } from '@/components/ui/thinkingOrb/loop'
 
 const pinNavigator = () => {
   Object.defineProperty(navigator, 'language', {
@@ -55,4 +58,35 @@ beforeEach(async () => {
 // 所以这里一刀切：每条用例结束都停掉，谁也活不过它的用例
 afterEach(() => {
   cancelFocusRescues()
+  // 开局读项目的连接层重试等待（#1175）同理：不许活过用例
+  cancelStartupProbe()
 })
+
+// 草稿发件箱（`lib/aiDraftOutbox.ts`）是模块级的：它的防抖 / 重试定时器与未落定的版本不属于任何组件，会活过用例——
+// 上一条用例没写成的版本不该在下一条用例里被重试到它的替身后端上
+afterEach(() => {
+  __resetOutboxForTests()
+})
+
+// jsdom 没装 canvas 包：`getContext` 本来就返回 null，只是每次都往控制台打一行「Not implemented」。思考小球（ADR 0165）
+// 让助手面板的每个用例都会调到它——换成同语义的静默版本（返回 null）；要量画布的用例照旧自己换上假 context
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
+
+// 思考小球（ADR 0165）共用一个模块级循环（rAF + 兜底定时器）与一个 IntersectionObserver：不许活过用例（L-087）
+afterEach(() => {
+  __stopThinkingOrbsForTests()
+})
+
+// ProseMirror（所见即所得文字框，ADR 0152）聚焦 / 滚动时要量选区的矩形：jsdom 没有版面，
+// Range 上这两个方法不存在，补成「零大小」——用例只断言文档与状态，不断言位置。
+if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList
+  Range.prototype.getBoundingClientRect = () => new DOMRect()
+}
+// ProseMirror 的 `pasteText`（粘贴识别用例）会 new 一个 ClipboardEvent：jsdom 没有这个构造器，
+// 补成不带剪贴板数据的普通事件——编辑框此时退回读 slice 里的文字，正是用例要走的那条路。
+if (typeof globalThis.ClipboardEvent === 'undefined') {
+  ;(globalThis as { ClipboardEvent?: unknown }).ClipboardEvent = class extends Event {
+    clipboardData: DataTransfer | null = null
+  }
+}

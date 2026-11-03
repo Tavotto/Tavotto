@@ -35,6 +35,7 @@ export interface Binding {
   policy_sha256: string;
 }
 export interface Proof extends Binding {
+  group?: {base_ref:'refs/heads/main';strategy:'queue-prefix-v1';prefix_sha256:string;queue_sha256:string;trusted_source_sha:string};
   protocol: 'tavotto-cla-v1'; revision: number; issued_at: number; expires_at: number;
 }
 export interface CheckProposal {

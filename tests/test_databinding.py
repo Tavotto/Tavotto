@@ -277,6 +277,71 @@ def test_probe_calls_are_recognised_only_from_constant_relative_targets(source, 
     assert got == expected
 
 
+# ---------------------------------------------------------------- 折叠常量拼出来的探路目标（qudit_tomography 的写法）
+#: 真实科研脚本：模块顶层常量目录前缀 + f-string 文件名（`{tag}` 是函数参数）。
+QUDIT_GLOB = (
+    "import glob\nimport numpy as np\n"
+    'data_dir = "./data/"\n'
+    "def get_data(tag):\n"
+    '    files = sorted(glob.glob(data_dir + f"times_{tag}_d*.txt"))\n'
+    "    return np.vstack([np.loadtxt(f) for f in files])\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # 常量名 + f-string：动态片段在文件名里 → 换成 `*`
+        (QUDIT_GLOB, [("glob", "./data/times_*_d*.txt")]),
+        # 常量名 / 拼接 / os.path.join
+        ('import glob\nP = "data/*.csv"\nglob.glob(P)\n', [("glob", "data/*.csv")]),
+        (
+            'import glob, os\nD = "runs"\nglob.glob(os.path.join(D, "*.dat"))\n',
+            [("glob", "runs/*.dat")],
+        ),
+        ('import os\nD = "runs/"\nos.listdir(D)\n', [("dir", "runs/")]),
+        ('import os\nD = "runs"\nos.path.exists(D + "/a.csv")\n', [("path", "runs/a.csv")]),
+        # 说不出话：目录部分动态 / 名字被重新绑定 / 局部覆盖 / global 改写 / 动态路径与列目录不放通配
+        ('import glob\nglob.glob(f"{root}/*.csv")\n', []),
+        ('import glob\nD = "data/"\nD = other()\nglob.glob(D + "*.csv")\n', []),
+        ('import glob\nD = "data/"\ndef f(D):\n    return glob.glob(D + "*.csv")\n', []),
+        (
+            'import glob\nD = "data/"\ndef g():\n    global D\n    D = "x/"\nglob.glob(D + "*.csv")\n',
+            [],
+        ),
+        ('import os\nos.listdir(f"runs_{n}")\n', []),
+        ('import os\nos.path.exists(f"runs/{n}.csv")\n', []),
+        ('import glob\nglob.glob(f"data/{n!r}*.csv")\n', []),
+        ('import glob\nD = "/abs/"\nglob.glob(D + "*.csv")\n', []),
+    ],
+)
+def test_probe_targets_fold_module_constants_and_only_wildcard_the_file_name(source, expected):
+    got = [(p["kind"], p["target"]) for p in db.probe_literals(source)]
+    assert got == expected
+
+
+def test_a_constant_prefixed_f_string_glob_is_script_parent_evidence_for_a_root_script(tmp_path):
+    """qudit_tomography 的形状：脚本在项目根，数据在 ./data/，模式拼自模块常量 + f-string。
+    以前一个探路目标都认不出，首开不问、沙盒里 glob 回空、`np.vstack([])` 崩。"""
+    root = _project(
+        tmp_path,
+        "plot.py",
+        QUDIT_GLOB,
+        {"data/times_CB_d2-140.txt": "1 2\n", "data/times_QB_d2-140.txt": "3 4\n"},
+    )
+    ev = db.evidence(root / "plot.py", root)
+    assert ev["probes"] == ["./data/times_*_d*.txt"]
+    assert ev["candidates"]["script.parent"]["probes"]["found"] == ["./data/times_*_d*.txt"]
+    assert ev["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+def test_a_folded_glob_without_matching_files_still_says_nothing(tmp_path):
+    root = _project(tmp_path, "plot.py", QUDIT_GLOB, {"data/other.txt": "1\n"})
+    ev = db.evidence(root / "plot.py", root)
+    assert ev["probes"] == ["./data/times_*_d*.txt"]
+    assert ev["verdict"] == db.VERDICT_NONE
+
+
 def test_a_relative_glob_that_only_matches_in_the_script_directory_is_script_parent_evidence(
     tmp_path,
 ):

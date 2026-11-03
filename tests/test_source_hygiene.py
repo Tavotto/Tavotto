@@ -301,6 +301,8 @@ _VERSION_SITES = [
     ("src-tauri/Cargo.toml", r'^version = "([^"]+)"'),
     ("src-tauri/tauri.conf.json", r'"version":\s*"([^"]+)"'),
     ("codex-plugin/.codex-plugin/plugin.json", r'"version":\s*"([^"]+)"'),
+    ("codex-plugin/.claude-plugin/plugin.json", r'"version":\s*"([^"]+)"'),
+    ("codex-plugin/package.json", r'"version":\s*"([^"]+)"'),
     ("workerd/Cargo.lock", r'name = "tavotto-workerd"\nversion = "([^"]+)"'),
     ("src-tauri/Cargo.lock", r'name = "tavotto-desktop"\nversion = "([^"]+)"'),
 ]

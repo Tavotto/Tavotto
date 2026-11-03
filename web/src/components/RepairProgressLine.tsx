@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
-import { Check, Circle, LoaderCircle } from '@/components/ui/icons'
+import { Check, Circle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import type { DependencyProgress } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -111,7 +112,7 @@ export function RepairStageList({ progress }: { progress: DependencyProgress }) 
               {state === 'done' ? (
                 <Check size={ICON_SIZE.xs} />
               ) : state === 'active' ? (
-                <LoaderCircle size={ICON_SIZE.xs} className="motion-safe:animate-spin" />
+                <Spinner size={ICON_SIZE.xs} />
               ) : (
                 <Circle size={ICON_SIZE.xs} />
               )}

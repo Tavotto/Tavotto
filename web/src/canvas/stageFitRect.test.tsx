@@ -166,3 +166,16 @@ describe('排版里「适应」照旧框页面（对照组）', () => {
     expectFramed({ x: 0, y: 0, w: page.w, h: page.h })
   })
 })
+
+describe('stageFitFrame：单图编辑里图被隐藏', () => {
+  const panel = { id: 'p', type: 'panel', x: 20, y: 15, w: 80, h: 60, hidden: true } as never
+  const note = { id: 't', type: 'text', x: 5, y: 5, w: 10, h: 4 } as never
+  const page = { w: 150, h: 100 }
+  it('只剩标注可见：框标注；一个可见的都没有：框那张（看不见的）图自己的外框，不退到不画的页面', async () => {
+    const { stageFitFrame } = await import('@/store/zoomToSelection')
+    expect(stageFitFrame([panel, note], page, 'p')).toMatchObject({ x: 5, y: 5, w: 10, h: 4, page: false })
+    expect(stageFitFrame([panel], page, 'p')).toMatchObject({ x: 20, y: 15, w: 80, h: 60, page: false })
+    // 图本身不在了才退回页面
+    expect(stageFitFrame([], page, 'p')).toMatchObject({ x: 0, y: 0, w: 150, h: 100, page: true })
+  })
+})

@@ -17,7 +17,14 @@ import pytest
 
 from support import envworld
 from support.envworld import real_venv
-from tavotto.engine import capabilities, envadvice, pool as engine_pool, projectenv, userenvs
+from tavotto.engine import (
+    capabilities,
+    envadvice,
+    pool as engine_pool,
+    projectenv,
+    userenvs,
+    writetripwire,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
@@ -104,6 +111,9 @@ def test_the_frontend_and_the_plugin_mirror_the_engine_names():
     assert bridge.SCRIPT_ARGV_FEATURE == capabilities.SCRIPT_ARGV
     assert bridge.ENVIRONMENT_ADOPTION_FEATURE == capabilities.ENVIRONMENT_ADOPTION
     assert bridge.CAPABILITY_MISSING == capabilities.ERROR_CAPABILITY_MISSING
+    # 写入根绊线（#898）：能力名与错误码在插件 / 池里各留一份镜像（旧引擎上 import 不到）
+    assert bridge.WRITE_ROOT_TRIPWIRE_FEATURE == capabilities.WRITE_ROOT_TRIPWIRE
+    assert bridge.WRITE_OUTSIDE_ROOTS == writetripwire.CODE == engine_pool.WRITE_OUTSIDE_ROOTS_CODE
     for lang in ("zh-CN", "en-US"):
         errors = json.loads(
             (ROOT / "web" / "src" / "i18n" / "locales" / lang / "errors.json").read_text("utf-8")

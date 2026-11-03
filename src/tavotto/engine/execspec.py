@@ -61,7 +61,7 @@ import os
 import secrets
 from pathlib import Path
 
-from . import figcapture
+from . import figcapture, shadowscript
 
 PROFILE_SAFE = figcapture.PROFILE_SAFE
 PROFILE_NATIVE = figcapture.PROFILE_NATIVE
@@ -223,6 +223,19 @@ def run_kwargs(run: RunSelection | None) -> dict:
     return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
 
 
+def write_roots_key(roots) -> str:
+    """写入根绊线的授权根 → 池键 / 缓存目录的区分段（空串 = 没装绊线）。
+
+    **唯一出处**：`pool._worker_key` / `_worker_base` 都用它。绊线是 worker 的身份——同一脚本，MCP 带绊线的
+    会话与 GUI 不带的会话必须是两条（否则 GUI 取到带绊线的会话看到「写入落在授权根之外」，MCP 取到没有绊线的
+    会话等于没装）。根集合变了（用户新绑了工作区）也是另一条：根是 spawn 时烤进 worker 的。
+    路径不是秘密，摘要只为得到定长、可进目录名的段。"""
+    if roots is None:
+        return ""
+    payload = json.dumps(sorted(roots), ensure_ascii=True, separators=(",", ":"))
+    return "wr" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
 def _normalize_target(target: str, target_kind: str) -> str:
     """script 目标 → 项目相对路径（POSIX）；module 目标原样。
 
@@ -282,6 +295,27 @@ class ExecutionSpec:
     env_source: str = ""
     #: native 的 stdin 通道（`STDIN_*`）。terminal 恒 `inherit`；safe 不使用（恒 `inherit` 占位）。
     stdin: str = STDIN_INHERIT
+    #: safe 档：写入根绊线的授权根（#898，ADR 0141）。`None` = 不装绊线（GUI / CLI 的旧行为，argv 逐字节
+    #: 不变）；元组 = worker 在脚本 build 期间把根外的写打开变成 `write_outside_roots`。**它是 worker 的
+    #: 身份**：进 `--write-roots`（`worker_argv` 的唯一出处），所以 workerd 的 spawn 规格哈希天然不同，池键 /
+    #: 缓存目录再并入 `write_roots_key`——MCP 与 GUI 取同一脚本得不到同一条会话。机器相关路径，
+    #: **不进 `stable_payload()`**。native 恒 None。
+    write_roots: tuple[str, ...] | None = None
+    #: safe 档：影子脚本的字节来源（`shadowscript`，ADR 0143 修订）。非 None = 项目里没有 `target` 这个文件
+    #: （生成可编辑版本的校验运行，候选留在候选目录），worker 读这里的字节、`__file__` 仍是 `target`。
+    #: 由 `safe_spec` 按 `shadowscript.lookup(project_root, target, write_roots)` 取，只在带写入根的运行里才可能非空。
+    #: 机器相关路径，**不进 `stable_payload()`**；`worker_argv` 的 `--script-source` 唯一出处。
+    script_source: str | None = None
+    #: 用户在失败卡上选了「跳过这个文件夹」的目录（ADR 0154，`engine/pathignore.paths_for`，绝对路径）：worker / bridge
+    #: 的顶层导入不再去那里找（`bridgeboot.IgnoredImportPaths`）。safe 与 native **同一个字段、同一个 argv 参数**
+    #: （`--ignore-paths`），所以 workerd 的 spawn 规格哈希天然随它变。机器相关路径，**不进 `stable_payload()`**。
+    #: 空元组 = 没有决定，argv 逐字节不变（golden）。
+    ignored_paths: tuple[str, ...] = ()
+    #: 这个脚本的图名别名表（ADR 0162，`registry.stem_aliases_for` 是唯一来源）：`((原图名, 登记图名), …)`。
+    #: 同名不同脚本时后登记的那份的图在收图之后改成登记图名。safe 与 native **同一个字段、同一个 argv 参数**
+    #: （`--stem-aliases`），workerd 的 spawn 规格哈希随它变。它改变图的身份（runtime id 里的 stem），跨机器稳定，
+    #: 非空时进 `stable_payload()`。空元组 = 没有别名，argv 与稳定身份逐字节不变（golden）。
+    stem_aliases: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -356,6 +390,31 @@ class ExecutionSpec:
             list(self.input_remap)
         ) != list(self.input_remap):
             raise ValueError(f"input_remap 必须是校验过的规则元组: {self.input_remap!r}")
+        if not isinstance(self.ignored_paths, tuple) or not all(
+            isinstance(p, str) and p for p in self.ignored_paths
+        ):
+            raise ValueError(f"ignored_paths 必须是非空字符串元组: {self.ignored_paths!r}")
+        if not isinstance(self.stem_aliases, tuple) or not all(
+            isinstance(pair, tuple)
+            and len(pair) == 2
+            and all(isinstance(x, str) and x for x in pair)
+            and pair[0] != pair[1]
+            for pair in self.stem_aliases
+        ):
+            raise ValueError(
+                f"stem_aliases 必须是 (原图名, 登记图名) 元组的元组: {self.stem_aliases!r}"
+            )
+        if len({a for a, _ in self.stem_aliases}) != len(self.stem_aliases) or len(
+            {b for _, b in self.stem_aliases}
+        ) != len(self.stem_aliases):
+            raise ValueError(f"stem_aliases 必须一对一: {self.stem_aliases!r}")
+        if self.write_roots is not None:
+            if not isinstance(self.write_roots, tuple) or not all(
+                isinstance(r, str) and r for r in self.write_roots
+            ):
+                raise ValueError(f"write_roots 必须是非空字符串元组或 None: {self.write_roots!r}")
+            if self.profile != PROFILE_SAFE:
+                raise ValueError("写入根绊线只属于 safe profile（native 是用户自己的 python）")
         if self.profile == PROFILE_NATIVE:
             if self.cwd_mode != CWD_SANDBOX:
                 raise ValueError("native profile 没有 cwd_mode 这个维度（cwd 是用户的）")
@@ -381,6 +440,10 @@ class ExecutionSpec:
         out["argv"] = list(self.argv)
         out["env"] = dict(self.env) if self.env is not None else None
         out["input_remap"] = [dict(r) for r in self.input_remap]
+        out["write_roots"] = None if self.write_roots is None else list(self.write_roots)
+        out["script_source"] = self.script_source
+        out["ignored_paths"] = list(self.ignored_paths)
+        out["stem_aliases"] = [list(pair) for pair in self.stem_aliases]
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -404,6 +467,9 @@ class ExecutionSpec:
             out["owner"] = (
                 self.owner
             )  # 只有桌面拥有的才多这一键：terminal 的身份逐字节不变（golden）
+        if self.stem_aliases:
+            # 图名别名改变图的身份（ADR 0162）：只有分开登记过的脚本才多这一键，其余逐字节不变（golden）
+            out["stem_aliases"] = [list(pair) for pair in self.stem_aliases]
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -501,7 +567,31 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         owner=data.get("owner", "") or "",
         env_source=data.get("env_source", "") or "",
         stdin=data.get("stdin", STDIN_INHERIT) or STDIN_INHERIT,
+        write_roots=(None if data.get("write_roots") is None else tuple(data.get("write_roots"))),
+        script_source=data.get("script_source") or None,
+        ignored_paths=tuple(data.get("ignored_paths") or ()),
+        stem_aliases=_alias_pairs(data.get("stem_aliases")),
     )
+
+
+def _alias_pairs(raw) -> tuple[tuple[str, str], ...]:
+    """payload / argv 里的 `[[原图名, 登记图名], …]` → spec 的元组形态；形状不对的条目丢掉（校验在 spec 里）。"""
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(
+        (str(p[0]), str(p[1]))
+        for p in raw
+        if isinstance(p, (list, tuple)) and len(p) == 2 and all(isinstance(x, str) for x in p)
+    )
+
+
+def _registered_aliases(figures_dir, script: str, given) -> tuple[tuple[str, str], ...]:
+    """构造函数的别名表：调用方没给（None）就从注册表取（`registry.stem_aliases_for`，唯一来源）。"""
+    if given is not None:
+        return _alias_pairs(given)
+    from . import registry  # noqa: PLC0415 — registry 是纯标准库，延迟只为不在模块顶部多一条依赖边
+
+    return registry.stem_aliases_for(figures_dir, script)
 
 
 def run_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str | None:
@@ -539,8 +629,13 @@ def safe_spec(
     input_remap=(),
     argv: tuple[str, ...] | list[str] = (),
     run_config: str = "",
+    write_roots: tuple[str, ...] | list[str] | None = None,
+    ignored_paths: tuple[str, ...] | list[str] = (),
+    stem_aliases=None,
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
+
+    `stem_aliases`（ADR 0162）：缺省 None = 从项目注册表取这个脚本的别名表；显式给（含空）就用给的。
 
     safe 的语义（与 ADR 0014 §2 逐条对应）：target 是项目内脚本、argv 只有
     脚本自身（`sys.argv[1:]` 缺省为空，由 worker 落实；T03 起用户可以给**精确的 token 列表**——
@@ -573,6 +668,14 @@ def safe_spec(
         # ADR 0106：用户指认过的只读改指表（`inputremap.rules_for`），空 = 没有
         input_remap=tuple(figcapture.clean_remap_rules(list(input_remap or ()))),
         run_config=run_config,
+        write_roots=None if write_roots is None else tuple(write_roots),
+        ignored_paths=tuple(ignored_paths or ()),
+        stem_aliases=_registered_aliases(figures_dir, script, stem_aliases),
+        script_source=(
+            shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
+            if write_roots is not None
+            else None
+        ),
     )
 
 
@@ -584,6 +687,8 @@ def native_spec(
     project_root: str,
     target_kind: str = TARGET_SCRIPT,
     argv: tuple[str, ...] = (),
+    ignored_paths: tuple[str, ...] | list[str] = (),
+    stem_aliases=None,
 ) -> ExecutionSpec:
     """native 档的**唯一权威构造函数**（ADR 0014 §2 / ADR 0020）。
 
@@ -608,6 +713,8 @@ def native_spec(
         project_root=project_root,
         target_kind=target_kind,
         argv=argv,
+        ignored_paths=ignored_paths,
+        stem_aliases=stem_aliases,
     )
 
 
@@ -622,6 +729,8 @@ def desktop_native_spec(
     run_config: str = "",
     env: dict[str, str] | None = None,
     stdin: str = STDIN_NULL,
+    ignored_paths: tuple[str, ...] | list[str] = (),
+    stem_aliases=None,
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -646,6 +755,8 @@ def desktop_native_spec(
         env=env,
         env_source=ENV_SOURCE_SIDECAR,
         stdin=stdin,
+        ignored_paths=ignored_paths,
+        stem_aliases=stem_aliases,
     )
 
 
@@ -662,6 +773,8 @@ def _native(
     env: dict[str, str] | None = None,
     env_source: str = "",
     stdin: str = STDIN_INHERIT,
+    ignored_paths: tuple[str, ...] | list[str] = (),
+    stem_aliases=None,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -689,6 +802,13 @@ def _native(
         owner=owner,
         env_source=env_source,
         stdin=stdin,
+        ignored_paths=tuple(ignored_paths or ()),
+        # 模块目标没有项目相对脚本身份，注册表里也不会有它的条目
+        stem_aliases=(
+            _alias_pairs(stem_aliases)
+            if target_kind == TARGET_MODULE
+            else _registered_aliases(project_root, target.replace(os.sep, "/"), stem_aliases)
+        ),
     )
 
 
@@ -740,6 +860,19 @@ def bridge_argv(
         # 桌面拥有、stdin 走输入桥：脚本的 input / stdin / getpass 变成控制通道上的提问（P07，ADR 0126）。
         # 其余通道（terminal 的真 stdin、桌面的 pipe / null）命令行逐字节不变（golden）
         out.append("--input-bridge")
+    if spec.owner == OWNER_DESKTOP:
+        # 桌面拥有的启动：runner 观察脚本读到的项目内文件与 import 的本地模块（与 safe 同口径），native 成功记录据此
+        # 带上 helper / 数据依据、可被沿用（#1047）。terminal 拥有的命令行逐字节不变（golden）
+        out.append("--observe-inputs")
+    if spec.ignored_paths:
+        # ADR 0154：用户选了「跳过这个文件夹」的目录。只在有决定时多两个 token——没有它的命令行逐字节不变（golden）
+        out += [
+            "--ignore-paths",
+            json.dumps(list(spec.ignored_paths), ensure_ascii=False, separators=(",", ":")),
+        ]
+    if spec.stem_aliases:
+        # ADR 0162：分开登记过的脚本才多两个 token——没有别名的命令行逐字节不变（golden）
+        out += ["--stem-aliases", _aliases_json(spec.stem_aliases)]
     out.append("--")
     out.extend(spec.argv)
     return out
@@ -792,4 +925,30 @@ def worker_argv(
         # 也不受 Windows list2cmdline 的引号膨胀影响。引用仍参与 workerd 的 spawn
         # 身份；worker 缺少匹配载荷时拒绝执行，绝不回落为空 argv。
         out += ["--run-config", spec.run_config]
+    if spec.script_source:
+        # 影子脚本（ADR 0143 修订）：只在转换校验运行里多两个 token——没有它的 argv 逐字节不变（golden）
+        out += ["--script-source", spec.script_source]
+    if spec.write_roots is not None:
+        # #898：写入根绊线。只在 MCP 来源的运行里多两个 token——没有它的 argv 逐字节不变（golden）。
+        # 根进 argv（而不是环境变量）：workerd 的 spawn 规格哈希只看 argv / env / cwd，
+        # 身份天然分开；env 在 workerd 路径下只是增量，易遗漏。
+        out += [
+            "--write-roots",
+            json.dumps(list(spec.write_roots), ensure_ascii=False, separators=(",", ":")),
+        ]
+    if spec.ignored_paths:
+        # ADR 0154：用户选了「跳过这个文件夹」的目录（两个 token，没有决定时 argv 逐字节不变）；同样进 argv，
+        # workerd 的 spawn 规格哈希天然不同
+        out += [
+            "--ignore-paths",
+            json.dumps(list(spec.ignored_paths), ensure_ascii=False, separators=(",", ":")),
+        ]
+    if spec.stem_aliases:
+        # ADR 0162：分开登记过的脚本才多两个 token——没有别名的 argv 逐字节不变（golden）
+        out += ["--stem-aliases", _aliases_json(spec.stem_aliases)]
     return out
+
+
+def _aliases_json(pairs) -> str:
+    """`--stem-aliases` 的唯一编码（worker 与 bridge 同一个）：`[[原图名, 登记图名], …]`。"""
+    return json.dumps([list(p) for p in pairs], ensure_ascii=False, separators=(",", ":"))

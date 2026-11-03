@@ -1,0 +1,344 @@
+[
+  {
+    "name": "v2 upgrade default-off pre-database gate",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade default off never inspects a database or a plan",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade default off never inspects a database or a plan",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "3ec122ef8507c66ce84f5b72b682cca79ab3adee1793bb1c01ada1f0b03c7a4b",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-01.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade precise internal-name exclusion",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade exact source rejects sqliteX names instead of treating underscore as wildcard",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade exact source rejects sqliteX names instead of treating underscore as wildcard",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "826a7693f016968fcfb7663074e3918a4fb06000a9713091af45c2c10bb6bd1c",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-02.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade temporary-schema isolation",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade rejects temporary or attached objects CREATE TEMP TABLE",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade rejects temporary or attached objects CREATE TEMP TABLE",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "d057b1d4a16cb503927c1c149b4ebf4207db66f89613f98ed10884b1e696524d",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-03.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade attached-schema isolation",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade rejects temporary or attached objects ATTACH",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade rejects temporary or attached objects ATTACH",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "1326fb9317d0e302f66c97bd2a667076391a4b01926f33bbbba38ef4d8565d5c",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-04.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade issued and unknown refusal",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade quiescence rejects unknown failure",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade quiescence rejects unknown failure",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "e23e564d679dc510496e579e8fbe4d0c963d788113baf7d2995a82d2789fd03b",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-05.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade zero deadline quiescence",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade quiescence rejects mismatched or stale lease  999999",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade quiescence rejects mismatched or stale lease  999999",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "898a2a9964cc21cd102fed953fe76f2fbc85b175682935d9e752078974f291bb",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-06.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade arbitrary guard refusal",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade quiescence rejects arbitrary guards without cleaning them",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade quiescence rejects arbitrary guards without cleaning them",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "a831a7509c58d87a8e79a98e3780697211c306b3f88cc06b5184574676b72187",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-07.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade raw TEXT byte identity",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade differing invalid UTF8 bytes cannot collide in a stale plan",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade differing invalid UTF8 bytes cannot collide in a stale plan",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "31fed4942a14f9879ef08f30ad3c0607ddfde903071bab4741be636925f35771",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-08.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade full int64 storage reads",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade preserves every old typed cell rowid tuple and manual cursor with31 DDL",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade preserves every old typed cell rowid tuple and manual cursor with31 DDL",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "c51faeddffb6bc2440179f858adbca2fdf955af101f1582290a59f05a3d5b9aa",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-09.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade prepared plan exact comparison",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade stale prepared data is rechecked inside its actual transaction",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade stale prepared data is rechecked inside its actual transaction",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "4afd7c07c91af51f9fc4b1d99cbd604b125f7edc3c7dfbcfaa1fdeda438444d4",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-10.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade caller transaction ownership",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade never owns or rolls back a caller transaction",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade never owns or rolls back a caller transaction",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "044771d2125f46fe0f3018eedc2956aa10d0cb729a7c5b2d44e13e3c6257b99e",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-11.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade transactional DDL rollback",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade late ALTER failure restores complete schema rows and revision",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade late ALTER failure restores complete schema rows and revision",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "1048ac51ef9927f737fd1aeb1f2243891cac9b00cebb05abf6706b9bd5158731",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-12.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade full original-cell preservation",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade final verification detects unexpected old row writes and rolls them back",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade final verification detects unexpected old row writes and rolls them back",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "7190ecd79f25b1fcfc295fb53c8df9bd6245851bc8512d03b85654a3a4b691a8",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-13.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade exact upgraded schema",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade final verification rejects an unexpected schema write during DDL",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade final verification rejects an unexpected schema write during DDL",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "794ad588569919d99943e5618b05dc7c728183e640eaf09e475afe4cdac47e59",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-14.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade reviewed zero fence default",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade final verification rejects a nonzero historical fence",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade final verification rejects a nonzero historical fence",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "72f033a39c591193336ae0c0bccc566670876b3d3a992c81b32aa31bf95010cf",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-15.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade empty new mechanisms",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade final verification rejects synthesized capability data",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade final verification rejects synthesized capability data",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "034859f5171f03c594fc50a5f57d74090b6f55741b8895cbb0aad414f8d127f8",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-16.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade uncertain-commit exact old data",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade uncertain commit retry rejects changed old data without repair",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade uncertain commit retry rejects changed old data without repair",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "64556059bf1a478ca099efeddf26e8e1ba0f7b89d10611e6eba310740115b010",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-17.log",
+    "detected": true
+  },
+  {
+    "name": "v2 upgrade BEGIN reply ownership timing",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=v2 upgrade lost BEGIN reply rolls back its newly acquired transaction",
+      "tests/independent-v2-upgrade.test.mjs"
+    ],
+    "selected_test": "v2 upgrade lost BEGIN reply rolls back its newly acquired transaction",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "source_after_sha256": "62fefce961321cd392ffbbcbb371d053bcd6e1db7b00d737ff60b841b24e5016",
+    "log": "/tmp/cla-v2-upgrade-implementation-review/mutation-18.log",
+    "detected": true
+  }
+]

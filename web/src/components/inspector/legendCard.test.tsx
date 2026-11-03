@@ -1056,3 +1056,60 @@ describe('拖到一半在元素树里换图例', () => {
     expect(useDocumentStore.getState().past.length).toBe(1)
   })
 })
+
+// ------------------------------------------------------------------
+// 图例卡的字号 = 图例整体的 `fontsize`（与画布浮动栏同一个属性；ADR 0034 2026-09-25 修订的原生语义）。
+// 卡片曾批量写各图例项的字号：框不跟着重排，浮动栏读到的还是旧值（属性页 10 pt、浮动栏 8 pt）。
+
+describe('图例卡的字号写图例整体', () => {
+  const ENTRY_GIDS = ['axes_0.legend.texts_0', 'axes_0.legend.texts_1', 'axes_0.legend.texts_2']
+  const sizeInput = () => host.querySelector<HTMLInputElement>('[data-prop="fontsize"] input')!
+  async function typeNumber(input: HTMLInputElement, value: string) {
+    await act(async () => {
+      input.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+  }
+  const seed = (overrides: PanelObject['overrides']) =>
+    useDocumentStore.getState().commit(literal('预置'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push(...overrides)
+    })
+
+  it('输入的字号落在图例的 fontsize 上，图例项上一条不写', async () => {
+    await mount(['axes_0.legend'])
+    await typeNumber(sizeInput(), '11')
+    expect(overrideOf('axes_0.legend', 'fontsize')).toBe(11)
+    for (const gid of ENTRY_GIDS) expect(overrideOf(gid, 'fontsize'), gid).toBeUndefined()
+  })
+
+  it('读数就是图例的 fontsize（与浮动栏同一个值），刚写下、未渲染回来也不闪「多个值」', async () => {
+    seed([{ gid: 'axes_0.legend', prop: 'fontsize', value: 12 }])
+    await mount(['axes_0.legend'])
+    // manifest 里各项仍是 8：只拿各项去比的话，这里会是空的「多个值」
+    expect(sizeInput().value).toBe('12')
+  })
+
+  it('旧卡片逐条写下的字号与图例不一致 → 「多个值」，不拿任何一个冒充', async () => {
+    seed(ENTRY_GIDS.map((gid) => ({ gid, prop: 'fontsize', value: 10 })))
+    await mount(['axes_0.legend'])
+    expect(sizeInput().value).toBe('')
+  })
+
+  it('恢复 = 图例与各项的 fontsize 一起清，一条撤销', async () => {
+    seed([
+      { gid: 'axes_0.legend', prop: 'fontsize', value: 12 },
+      ...ENTRY_GIDS.map((gid) => ({ gid, prop: 'fontsize', value: 10 })),
+    ])
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await click(byAria('恢复字号'))
+    expect(overrideOf('axes_0.legend', 'fontsize')).toBeUndefined()
+    for (const gid of ENTRY_GIDS) expect(overrideOf(gid, 'fontsize'), gid).toBeUndefined()
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+})

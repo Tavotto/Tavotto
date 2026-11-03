@@ -18,6 +18,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ShapeObject } from '@/types/document'
 import { OverlaySvg } from './OverlaySvg'
+import { DRAW_COLOR } from './interactions'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -56,6 +57,29 @@ afterEach(async () => {
 })
 
 describe('覆盖层语法', () => {
+  it.each(['arrow', 'line'])('拖画 %s 的主题描边包住文档色，结束后移除', async (tool) => {
+    await act(async () => useInteractionStore.getState().setDraft({
+      tool, x: -20, y: -20, w: 40, h: 30,
+      start: { x: -20, y: -20 }, end: { x: 20, y: 10 },
+    }))
+    const draft = container.querySelector('[data-draft-line-preview]')!
+    expect(draft.querySelector('[data-draft-outline="line"]')?.getAttribute('stroke')).toBe('var(--color-sel)')
+    expect(draft.querySelector('[data-draft-content="line"]')?.getAttribute('stroke')).toBe(DRAW_COLOR)
+    const head = draft.querySelector('[data-draft-outline="head"]')
+    const contentHead = draft.querySelector('[data-draft-content="head"]')
+    if (tool === 'arrow') {
+      expect(head?.getAttribute('fill')).toBe('var(--color-sel)')
+      expect(head?.getAttribute('stroke')).toBe('var(--color-sel)')
+      expect(contentHead?.getAttribute('fill')).toBe(DRAW_COLOR)
+    } else {
+      expect(head).toBeNull()
+      expect(contentHead).toBeNull()
+    }
+    expect(useDocumentStore.getState().doc.objects).toEqual([rect])
+    await act(async () => useInteractionStore.getState().end())
+    expect(container.querySelector('[data-draft-line-preview]')).toBeNull()
+  })
+
   it('手柄：16px 命中层带钩子，8px 视觉层填 --handle-fill；中心重合', () => {
     const hit = container.querySelector<SVGRectElement>('[data-handle="se"]')!
     expect(hit.getAttribute('width')).toBe('16')

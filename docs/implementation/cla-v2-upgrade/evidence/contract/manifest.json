@@ -1,0 +1,148 @@
+{
+  "source_schema_sha": "77e2cab77597318859f874d9319c47f15da0e1dd",
+  "target_schema_and_base_head_sha": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+  "base_tree_sha": "cfb6ef24e44c2aa882baefb01845262a31019c94",
+  "target_state": "uncommitted offline module with frozen source/target DDL and two reviewer-owned files",
+  "source_files_sha256": {
+    "services/cla-cloudflare/scripts/v2-upgrade-offline.mjs": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "services/cla-cloudflare/migrations/v2-main-77e2cab7/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "services/cla-cloudflare/migrations/v2-main-77e2cab7/native-schema.sql": "5e2a63a7560aee08253f942c8ee34a2cf0c99e692ef14417014d6081e348392a",
+    "services/cla-cloudflare/src/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "services/cla-cloudflare/src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "services/cla-cloudflare/src/native/store.ts": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "services/cla-cloudflare/src/core/crypto.ts": "17baac97c94bd6f5c892bf013dc876711b52c1538ab6b1f11a3b1d704cd4242e",
+    "services/cla-cloudflare/tests/independent-v2-upgrade.test.mjs": "242af17b34828e987f2bc3154dcd308807854089eca8e92f53aa44f571f5ced5",
+    "services/cla-cloudflare/tests/v2-upgrade-mutation-cases.json": "5c13701a0b1507461094aa781d92438d8386eb687330ba3c5cea08aec2192ec4"
+  },
+  "aggregate_source_sha256": "69cd89afe10d0460f884918b9c2abfd9fa325ce8a4c854f6adaefb91e4578713",
+  "commands": [
+    {
+      "command": "node --test tests/independent-v2-upgrade.test.mjs",
+      "exit_code": 1,
+      "tests": 42,
+      "pass": 3,
+      "fail": 39,
+      "log": "/tmp/cla-v2-upgrade-implementation-review/first-tests.log",
+      "reason": "Reviewer fixture omitted deliveries.created; no product finding"
+    },
+    {
+      "command": "node --test tests/independent-v2-upgrade.test.mjs",
+      "exit_code": 1,
+      "tests": 42,
+      "pass": 41,
+      "fail": 1,
+      "log": "/tmp/cla-v2-upgrade-implementation-review/second-tests.log",
+      "reason": "Assertion used old metadata name after author rename; no product finding"
+    },
+    {
+      "command": "node --test tests/independent-v2-upgrade.test.mjs",
+      "exit_code": 0,
+      "tests": 42,
+      "log": "/tmp/cla-v2-upgrade-implementation-review/third-tests.log"
+    },
+    {
+      "command": "node --test tests/independent-v2-upgrade.test.mjs",
+      "exit_code": 0,
+      "tests": 46,
+      "log": "/tmp/cla-v2-upgrade-implementation-review/final-tests.log"
+    },
+    {
+      "command": "node --test --test-name-pattern=v2 upgrade lost BEGIN reply rolls back its newly acquired transaction tests/independent-v2-upgrade.test.mjs",
+      "exit_code": 0,
+      "tests": 1,
+      "log": "/tmp/cla-v2-upgrade-implementation-review/begin-reply-fixed-green.log",
+      "note": "Actual source already fixed; not a pre-fix red"
+    },
+    {
+      "command": "python /tmp/cla-v2-upgrade-implementation-review/run-mutants.py",
+      "exit_code": 0,
+      "mutants": 18,
+      "each_unique_match_count": 1,
+      "each_selected_exit_code": 1,
+      "each_actual_assertion_error": true,
+      "log": "/tmp/cla-v2-upgrade-implementation-review/mutations-run.log",
+      "results": "/tmp/cla-v2-upgrade-implementation-review/mutations.json"
+    }
+  ],
+  "exploration": [
+    {
+      "log": "/tmp/cla-v2-upgrade-implementation-review/temp-shadow-red.log",
+      "exit_code": 1,
+      "outcome": "TEMP-outbox attempt rejected by final schema mismatch; not a bypass"
+    },
+    {
+      "log": "/tmp/cla-v2-upgrade-implementation-review/temp-shadow-confirmed.log",
+      "exit_code": 1,
+      "outcome": "TEMP-guard attempt rejected by author-added isolation guard; original filename is misleading, contents show refusal",
+      "pre_fix_source_snapshot_not_captured": true
+    }
+  ],
+  "earlier_17_mutant_round": "/tmp/cla-v2-upgrade-implementation-review/first-17-mutations",
+  "mutant_survivors": [],
+  "mutation_repairs_after_execution": [],
+  "reviewer_workspace_writes": [
+    "services/cla-cloudflare/tests/independent-v2-upgrade.test.mjs",
+    "services/cla-cloudflare/tests/v2-upgrade-mutation-cases.json"
+  ],
+  "prohibited_actions_performed": [],
+  "caller_synthetic_label_is_not_provenance_proof": true,
+  "unverified_boundaries": [
+    "File/WAL durability and reopen (parent separate tests)",
+    "Real multi-connection locking, process crash and writer quiescence",
+    "Live D1/cutover/deployment and legal/cryptographic qualification",
+    "Any successful publication or excluded expiry-success test"
+  ],
+  "evidence_files_sha256": {
+    "review.md": "1f34460f098f68240fda9db125ba84bbaac7371cf3d7fabbd60d8ad9c7a2292c",
+    "mutations.json": "f932f3f1bc40258952065cb16c1cf2eb37595c4b209044c290a0d634b945f712",
+    "mutation-18.log": "0aa88d3290c0b0d14495a2389fb13f351f8bafc56d5856dbb3ee20dc9bb60144",
+    "mutation-17.log": "e38562edde7c814d32ce0ac9878c3920910fbd1774621f274dd51320bb4f8302",
+    "mutation-16.log": "c9daced1242e8e6798d70cc6b6998e6d7a5b978b7e1ed50ef19b2c2e8f2b485b",
+    "mutation-15.log": "25eda858daf43bf48ea855c8bcc33ebf6261b85eef9cee94051a858c086d4f00",
+    "mutation-14.log": "a38d8be3430a26935ef55055694d9d24e20fd7ae1515d8fbc74838f498de3172",
+    "mutation-13.log": "5b447740b6e46008efbe83e73f3eef79080e788ffe6cf661525e78bc50626775",
+    "mutation-12.log": "189e3691f6e071b55bd6ff6e63503d21ecd867c4417ea3a8860f3f470765a5f4",
+    "mutation-11.log": "53fb5ff9ee03b3f685b2b787f97e40d78aead422604f6fe1c97a51db905b9177",
+    "mutation-10.log": "e3687d05e9ff6e63be5e7ce0d571fac680f349fa4409528dd0e81ce18a8fac89",
+    "mutation-09.log": "03980e088432751c4955fb9fc6dc787a0ad709d17304649dec8f0b21bd373158",
+    "mutation-08.log": "4897bb2b6f16a3ba4a68b154aaa178f8e9847659901690fe1b54a3fa951919dc",
+    "mutation-07.log": "b4352fe55d5c2748eb000047223dcc2cd12fb2844c4e09aa48d9fc7336364c5e",
+    "mutation-06.log": "218f6b1e2f15e52a0782f9a16b757cd603e03c8029992281d4225e40f6271af3",
+    "mutation-05.log": "f7103332c4ae2129bf77db615f5c92a1906076e23c9025669ba124fd2fdf482f",
+    "mutation-04.log": "a282d3f7970144c3fde99dfe35184ebac7dbd0b33b70b8241f597fc34d57706d",
+    "mutation-03.log": "d8896bc5ef861f7c9e247fe6483cb605d4ca0dd6efe364cb3960c54b9291f2d2",
+    "mutation-02.log": "ad011eec1d2582c5c0827f845f2a0241c76a9bc01d213028baa87d4e9073d78d",
+    "mutation-01.log": "12c5dca70a10061757d05a5dc0a81bd075014bc3fadef1c236497a126cc39b26",
+    "mutations-run.log": "94c876d45950065357313130209e32f3a522279c73722a515c8ba9d08ea96985",
+    "begin-reply-fixed-source.txt": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "begin-reply-fixed-green.log": "14c01012a83a58b54acd03baf0612e859b24c09ec874c2b68e4b052d8d9cc259",
+    "run-mutants.py": "f5ce9dc41271e8ff57bfa702fb61cd7b3cc612b06e08d5bd87d78457e9c738f6",
+    "make-cases.py": "beb9485ac852c4ed5cdaf855977509db34ecfe2e404644897d5ae160e9d70d2a",
+    "final-tests.log": "0c80b20476efef27bcf0d8e636f6d7dd322050bccc97eae3a2c0f3429360029d",
+    "third-tests.log": "b7aca60e6526700cf926bc12609f14d421a342fbefb0badac02e0369f469657f",
+    "second-tests.log": "825273cd21813aa57bd34b6a978f74fc6aaa66906c36a775444536b83e6ca368",
+    "first-tests.log": "24ad4e6e2cc8b193935ab6a2666191194f38dabe6502d93749c4a247318ef879",
+    "temp-shadow-confirmed.log": "902523c4c09f49c0f44e4c9510e3028fc1407dca75351179a5d62535640a5139",
+    "temp-shadow-red.log": "7019631b28f582d0433f4849eb49c8a6a3e9710c763b5ff132f43d0a9e8ae27a",
+    "temp-shadow-probe.mjs": "a0958dcb00d984d1d65f81a4a27879c92b38d4fa5d99f54485eeea6656cb027d",
+    "first-17-mutations/mutations-run.log": "92ef9716e4acafb09d4517dae40430142cde4f0c7c317151f0e9d04fedcc5e21",
+    "first-17-mutations/mutations.json": "cfe3633432d2146639f2a058aa53d351821a0b9298b118a6ab23ae0a33ff16f5",
+    "first-17-mutations/mutation-17.log": "f4bb2dd1cd2e2bd6d538d9776d41f7a3eef2b1b8434105982c5546154f1cb73f",
+    "first-17-mutations/mutation-16.log": "60cd67bf4fe9c6a51c3ca81830701ba7b14062f40d3c4056aec5148990bac9aa",
+    "first-17-mutations/mutation-15.log": "b549a52cbc9993f28f522e7f2dde6e548b4292bbd18c9123d5ff8ec967284580",
+    "first-17-mutations/mutation-14.log": "8ddce04eee5ead1dbd743c12288ac1f9f666f889e18abe3d154093c2b1ddaa96",
+    "first-17-mutations/mutation-13.log": "5d7db8ff11258d417adef1af45678e81a651d9aba32bbc55748988868369cad5",
+    "first-17-mutations/mutation-12.log": "630ad1482d7c3c6a02d2a2239007cc0c109592e1f9f2a398ac9e6dd2cd58af6e",
+    "first-17-mutations/mutation-11.log": "7ce6baee28b3f61bef70db75b680631a8cec0c1907927fca3fef5b84c37a2e3e",
+    "first-17-mutations/mutation-10.log": "41db8d5e6bd889eb7fc235afed90e8a00d53d007aa09fd5f46883fa10da35ae9",
+    "first-17-mutations/mutation-09.log": "4b5f74dc2053a3b07f5264fa322751d5da5cfd2c89ee649ab78a7953fe696994",
+    "first-17-mutations/mutation-08.log": "79703f3489afb217e2e6a8a628a08f3cc078964e4135906497d931bd34cda4af",
+    "first-17-mutations/mutation-07.log": "b5c131fff8e3cc44becea2a24544dde779fda1444a39f1b628dcc4ada806df63",
+    "first-17-mutations/mutation-06.log": "5f246d770561ef02800eddabe3ad9ea4b86911962ed8894006cf5fa19fb2702a",
+    "first-17-mutations/mutation-05.log": "b4aef371d8703b048277704ef6897e52decd7e4c9f66733292f24055f5d7364f",
+    "first-17-mutations/mutation-04.log": "4bdd8e9a9304ffdc18147e800b784fa102ffc17e291dbea31d698e7b4c723063",
+    "first-17-mutations/mutation-03.log": "2bf1c4371e5a107a7a2a3ff6522d41d450f9c365b789e7bd3c155cff4c3d5064",
+    "first-17-mutations/mutation-02.log": "4e06b520a98c397bfe4e49e82d1b7521919ac2d783403a0014b26986a24ad94f",
+    "first-17-mutations/mutation-01.log": "892d12ab716a987c3bef86fa1fbeb6c9f22cde3ddb7b1b0acc4203c04a8139be"
+  }
+}

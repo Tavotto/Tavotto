@@ -17,6 +17,8 @@ const el = (key: string, values?: Record<string, unknown>) =>
 export interface FoldReader {
   read: (prop: string) => unknown
   fieldOf: (prop: string) => EditableField | undefined
+  /** 这个字段被用户改过没有（可选；给了才有「n 项已修改」这一档） */
+  isOverridden?: (prop: string) => boolean
 }
 
 /** 一个字段此刻的值说成人话：枚举取显示名、布尔说显示 / 不显示、颜色大写十六进制 */
@@ -57,6 +59,12 @@ export function foldValue(fold: PresentedFold, r: FoldReader): string | undefine
       return lead(r, 'minor_visible')
     case 'numformat':
       return lead(r, 'format')
+    case 'bboxDetail': {
+      // 收起时改过的不能看不见：有改动报个数（同「更多」），否则只写内边距的当前值
+      const modified = fold.spec.props.filter((p) => r.isOverridden?.(p)).length
+      if (modified > 0) return translate('element.modifiedCount', { ns: 'inspector', count: modified })
+      return lead(r, 'bbox_pad')
+    }
     case 'fontcolor': {
       const bits = [lead(r, 'fontfamily'), lead(r, 'color')].filter(Boolean)
       return bits.length ? bits.join(' · ') : undefined

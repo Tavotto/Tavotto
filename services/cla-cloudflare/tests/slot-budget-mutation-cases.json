@@ -1,0 +1,56 @@
+[
+  {
+    "name": "slot measured new head issued statement cost",
+    "file": "src/native/store.ts",
+    "before": "      this.stmt('INSERT OR IGNORE INTO targets VALUES(?,?)',key,json),",
+    "after": "      this.stmt('SELECT 1'),this.stmt('INSERT OR IGNORE INTO targets VALUES(?,?)',key,json),",
+    "pattern": "slot new-head one delegated person actual issued and unknown settlement SQL",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot busy capacity cannot consume retry",
+    "file": "src/native/store.ts",
+    "before": "attempts=CASE WHEN ${blocked} THEN attempts ELSE min(3,attempts+1) END",
+    "after": "attempts=CASE WHEN ${blocked} THEN min(3,attempts+1) ELSE min(3,attempts+1) END",
+    "pattern": "slot busy queues stay pending without consuming refresh retries",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot confirmed owner keeps live send fence",
+    "file": "src/native/store.ts",
+    "before": "AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW})",
+    "after": "AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.phase='issued' AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW})",
+    "pattern": "slot expired confirmed owner retains every-phase live send fence",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot durable latch fences flagfalse head admission",
+    "file": "src/native/store.ts",
+    "before": "      `NOT EXISTS(SELECT 1 FROM slot_policy)`;",
+    "after": "      `1`;",
+    "pattern": "slot restart flagfalse fences new positives and recovers exact owner by GET witness",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot expired withdrawal target precedes ordinary due target",
+    "file": "src/native/store.ts",
+    "before": "ORDER BY CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND ${this.withdrawalPriority()}) THEN 0 ELSE 1 END,",
+    "after": "ORDER BY CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND ${this.withdrawalPriority()}) THEN 1 ELSE 0 END,",
+    "pattern": "slot withdrawal has target and within-target priority over older ordinary work",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot expired owner precedes older eligible ordinary journal",
+    "file": "src/native/store.ts",
+    "before": "ORDER BY CASE WHEN ${this.withdrawalPriority()} THEN 0 ELSE 1 END,p.rowid LIMIT",
+    "after": "ORDER BY CASE WHEN ${this.withdrawalPriority()} THEN 1 ELSE 0 END,p.rowid LIMIT",
+    "pattern": "slot withdrawal has target and within-target priority over older ordinary work",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  }
+]

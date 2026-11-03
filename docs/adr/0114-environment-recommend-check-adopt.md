@@ -2,6 +2,7 @@
 
 日期：2026-10-05 · 状态：**Accepted**（产品目标由「项目 Onboarding × 执行主链路收敛」包给定，编排者 2026-10-05 裁决立本 ADR）
 · **2026-10-06 修订**：用户裁决「环境不让用户选」——默认改为自动检测（§六），§一～§二 的确认流程改为可选模式
+· **2026-10-23 修订**：维护者裁决「换 Python 版本不问、直接换」——版本不合时自动另建合适版本的 Tavotto 管理环境（§七）
 修订：[0057 首开的环境与工作目录](0057-first-open-environment-and-workdir.md) §一（解析解释器第 4 档「首开发现 + 体检 + 自动采用项目 venv」）；
 [0079 缺包时先找用户自己的 Python](0079-user-environment-discovery-and-auto-adoption.md) §四（跑前的门里**直接**改用）；
 [0107 缺包时无提示改用这台机器上装着它的 Python](0107-silent-system-interpreter-adoption-and-native-workdir.md) §一（运行后缺包的无提示采用，含项目 venv 那一层）
@@ -152,6 +153,42 @@
   检测模式下不出现 `environment_choice`，界面不出现「确认采用」。
 * **迁移**：`confirmed` / `legacy_auto` 记录照旧有效；确认模式下写的、仍有效的显式选择就是用户的选择，检测不碰。
   不新增持久化格式（记录多一个 trigger 值）。
+
+### 七、修订（2026-10-23，维护者裁决）：版本不合时不问，直接另建合适版本的管理环境来跑
+
+维护者问答：「换 Python 版本要不要每次问？」→ **不问，直接换**。理由与 §六 同源：用户不懂「解释器版本」，问了也答不出；
+而换的只是 Tavotto 自己的东西。因此在下面的护栏内，版本不合是**自动修复**，不是待用户回答的卡片：
+
+* **只在 Tavotto 自己的管理环境里另建**（`managedenv` 的新一代，`deprepair` 的代事务；`engine/pyversionfix.py`）。**绝不**改用户的
+  环境 / 系统 Python / conda——原环境原样保留（它不是安装目标，ADR 0019 §一 / 0044 不变）。新一代验过才切 active、
+  并经现有 `projectenv.remember` 记住为本项目的解释器（「同一脚本记住这个环境」）；失败 / 取消不留半成品（代事务未提交的一代
+  标 incomplete，active 不动）。
+* **基础解释器只有一个挑选处**：`managedenv.base_pick(within=)`（`base_python` 的带版本、带范围形态）——先找合格的系统 Python（范围内
+  取最高），没有再用私有 Python（ADR 0063 / 0111）。私有 Python 的锁里只有**一个**版本：不在需要的范围内就不是候选，不凭空下载别的版本。
+  下载字节如实进计划（`download_bytes`，已就位 / 缓存为 0）、过程走现有进度通道、可以停止。
+* **只针对「版本不合」这一类失败**：`project_env_unsupported_python`、`userenvs.REJECT_CODES` 的 `python_out_of_range` /
+  `root_python_mismatch`（带 `root_python` / `env_python`，#1333）、`runcodes.UNSUPPORTED_PYTHON_VERSION`。其余失败码一概不碰。
+* **需要的范围必须推得出，推不出就不自动换**（交给后续的 AI 修复 / 卡片，不猜）：起点是失败本身的事实（ROOT 为哪个小版本编译）
+  或 Tavotto 的支持区间，再与脚本 PEP 723 / 项目 `pyproject.toml` 的 `requires-python` 求交（`pyversionfix.required_span`）；读不懂的约束、
+  空交集、环境其实已在范围内，都是推不出。在范围内挑 Tavotto 支持的**最高**版本。
+* **每次运行最多自动换一次**（`prepsession.Session.python_change_run == ledger.run`，防循环）；只对桌面窗口发起的运行生效
+  （改磁盘上的环境是桌面用户的授权边界，同 ADR 0127 的 native 闸门）；用户点过取消、全局显式解释器压着、运维开关
+  `TAVOTTO_AUTO_PYTHON_CHANGE=0` 都不换。
+* **新环境里补依赖走现有联合计划**（`create_joint_plan` → `prepare`），名单内包的口径不变：`deprepair.pinned_base()` 是线程局部的钉子，
+  把新一代的基础解释器钉成上面挑出的那个，计划按它的 fresh venv 量事实（与干净机器同形），目标强制 `TARGET_MANAGED`。
+* **取消在规划前就挂上；补丁位按完整版本判**：取消事件在运行开始时就挂在会话上（`Session.python_change_cancel`），规划（探测系统解释器）
+  期间点停止也能置上，规划返回后、执行前、执行内每个阶段边界都查它，已取消就不下载、不建环境、不激活。`requires-python` 里带补丁位的子句
+  （`>=3.11.2`、`==3.12.1`）区间装不下，原样记下，选解释器时对候选的**完整版本**（探测本来就带「主.次.微」，不多起进程；私有 Python 用锁里的精确版本）
+  用 `packaging.specifiers` 判；拿不到完整版本而约束含补丁位 = 不满足，宁可不换。
+* **进账本，报告看得见**：`attempt_history` 多一种条目 `kind: "python_changed"`（from / to / base / download_bytes / outcome，不占回退预算）；
+  报告顶层 `python_change` 带阶段与进度；换版本期间 phase 是 `preparing_environment`（`outcome.reason = python_change`），
+  卡片一句话「正在换成 Python 3.12（下载约 N MB）…」+ 进度 + 停止，完成后照常出图，详情里留「换成了 Python 3.12」。
+  界面不出现「执行器」这个词。
+
+调用点：`prepsession._done_callback` 里 `_plan_python_change`（只此一处；fixrouter 的 `remedy.kind == 'change_python'` 之后从同一处接入）。
+看护：`tests/test_python_version_fix.py`（范围推断 · 基础来源与下载披露 · 只在管理环境另建 · 取消 · 真代事务与用户环境摘要不变）、
+`tests/test_python_version_fix_session.py`（会话：换完重跑一次、至多一次、取消、失败保留原结局、非桌面不换）、
+`web/src/components/PreparationCard.test.tsx`（进度句 · 停止 · 完成）。
 
 ## 不做的事
 

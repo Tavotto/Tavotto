@@ -5,7 +5,7 @@
 ## Current status
 
 The default-off engineering candidate for limited holder delegation and new-head
-observations is described in [ADR 0134](../adr/0134-limited-cla-countersigning-authority.md).
+observations is described in [ADR 0137](../adr/0137-limited-cla-countersigning-authority.md).
 It supplies no real authorization, provider activation, deployment or CI wiring.
 The [activation checklist](../implementation/cla-delegated-authority/README.md)
 remains outstanding; observations cannot satisfy the live CLA gate.
@@ -27,7 +27,7 @@ reason.
 | Versioning + hash-binding policy | In force — CI red on drift |
 | Repository-side qualification check | **Live** — the `cla-check` job feeds `CI fast gate` |
 | Security model of that check | Complete; no secrets, no PR code executed |
-| Signature source of truth | **Defined: the provider.** The repository stores no signer data. |
+| Signature source of truth | **Defined: the provider.** Until one is configured: countersigned paper agreements held by the rights holder, indexed (no personal data) by `offline_signatures` — see [CLA_VERSIONING.md](CLA_VERSIONING.md#before-a-provider-exists-countersigned-paper-agreements). Never both at once. |
 | Rights holder | **Resolved — Jiaqi Wan (natural person), Hong Kong SAR law, <support@tavotto.com>** |
 | Agreement version | **`1.0` — signable** |
 | Signature provider | Not configured (`provider.configured: false`) — deliberate, see below |
@@ -209,6 +209,30 @@ can justify is one nobody will dare delete later.
 Currently exempt: `erwanjun` (rights holder), `dependabot[bot]`,
 `github-actions[bot]`.
 
+### 7. Offline signatures are bound to an account id, a version, and "no provider"
+
+Before a provider exists, a contributor who has countersigned the paper
+agreement is listed in `offline_signatures` (format and rationale:
+[CLA_VERSIONING.md](CLA_VERSIONING.md#before-a-provider-exists-countersigned-paper-agreements)).
+Three properties keep that from widening the check:
+
+- **Identity is the immutable account id, not the login.** A login can be
+  renamed and later registered by someone else. Only trusted sources supply an
+  id: the pull request author's id from the event
+  (`github.event.pull_request.user.id`, passed as `CLA_PR_AUTHOR_ID`) and the
+  `author.id` GitHub resolves for a commit. A number inside a `Co-authored-by`
+  trailer or a `<id>+<login>@users.noreply.github.com` address is a string the
+  contributor typed and proves nothing. Every trusted id for that login must
+  equal the recorded `github_id`, at least one must exist, and if the signer is
+  the PR author, the author's id must have been supplied.
+- **A signature covers one version.** If the agreement version moves on, the
+  entry stops qualifying until the contributor signs the new text.
+- **It cannot coexist with a provider.** `provider.configured: true` with a
+  non-empty `offline_signatures` is a configuration error.
+
+The entries are read from the default branch like the rest of the policy, so a
+pull request cannot add itself.
+
 ## How it fits the existing CI
 
 Tavotto's ruleset depends on exactly three required contexts — `CI fast gate`,
@@ -306,7 +330,11 @@ When the time comes:
 3. Check where it stores signatures and whether that is acceptable. CLA
    Assistant's README states Azure Cosmos DB in Europe. If not acceptable,
    self-host, or collect countersigned documents and use a manual check instead.
-4. **Wire it into the gate — four edits, all in this repository:**
+4. **Move every `offline_signatures` entry into the provider first** (each
+   contributor's executed copy is the evidence), then empty that list in the
+   same change that sets `provider.configured: true` — the gate rejects the
+   two together.
+5. **Wire it into the gate — four edits, all in this repository:**
    - `.github/cla-policy.json`: set `provider.configured: true`,
      `provider.name`, `provider.check_name` (the **exact** check-run name the
      provider publishes), and — **not optional** — `provider.app_slug` and

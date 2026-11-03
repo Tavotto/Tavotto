@@ -5,6 +5,7 @@ import { sameRules } from './specBinding'
 import { effectiveCanvasFamily, type CanvasTextFamily } from './typography'
 import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/types/document'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figureFontChoice } from '@/lib/figureFontChoice'
 
 /**
  * 论文样式预设：一组可复用的排版规格（字号/线宽/刻度/图例/配色/页面）。
@@ -108,10 +109,10 @@ export const STYLE_ROLE_PROPS: Record<string, string[]> = {
 /**
  * 以 pt 计、**跟着面板缩放**的属性：样式里的值是页面上的 pt，写入前 ÷ 缩放比。
  *
- * 口径与预检同源——`preflight.ts` 量字号（`fontsize` / `tick_fontsize` /
- * `title_fontsize`）与线宽（`linewidth` / `spine_linewidth` / `handle_linewidth`）
- * 时都乘 `scale`；其余同为 pt 的几何量（刻度长宽、标记、误差棒帽、图例框线、
- * 色条外框）预检不量，但它们在页面上同样跟着面板缩放，同一份样式里不该有两种单位。
+ * 口径与预检同源——`preflight.ts` 量字号（画出来的文字元素的 `fontsize`）与线宽
+ * （`linewidth` / `spine_linewidth` / `handle_linewidth`）时都乘 `scale`；其余同为
+ * pt 的量（图例标题 / 色条刻度的容器字号设置器 `title_fontsize` / `tick_fontsize`、
+ * 刻度长宽、标记、误差棒帽、图例框线、色条外框）预检不量，但它们在页面上同样跟着面板缩放，同一份样式里不该有两种单位。
  * 透明度、颜色、枚举不在表里：它们没有尺寸。
  */
 export const PAGE_PT_PROPS: ReadonlySet<string> = new Set([
@@ -418,7 +419,7 @@ export function planStyle(
       for (const el of els) {
         for (const [prop, value] of Object.entries(props)) {
           const field = el.editable.find((f) => f.prop === prop)
-          if (!field) {
+          if (!field || (prop === 'fontfamily' && figureFontChoice(value) && !field.font_fallback_selection)) {
             unmappable.push(
               t('style.unmappableEntry', { ns: 'dialogs', label: el.label, prop }),
             )

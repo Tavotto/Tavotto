@@ -13,10 +13,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setCurrentProjectId } from '@/lib/session'
 import { BASE_PX_PER_MM } from '@/lib/units'
-import { emptyProject, type ProjectDocument } from '@/types/document'
+import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useProjectStore } from './projectStore'
 import { useViewportStore } from './viewportStore'
+import { useWorkspaceStore } from './workspace'
 
 const PROJECT_IDS: Record<string, string> = { '/figs/a': 'p_a', '/figs/b': 'p_b' }
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
@@ -91,5 +92,40 @@ describe('打开项目后的视口', () => {
 
     useViewportStore.getState().setViewRect(VIEW)
     expect(useViewportStore.getState().zoom).toBeCloseTo(expectedZoom(150, 100), 6)
+  })
+
+  /**
+   * 从选择器打开一个恰好一张图的项目：Workspace 还没挂、模式订阅没在跑，前面的 reset 把模式留在排版。
+   * 取景之前要先对一遍派生的模式（`settleMode`），否则按页面取景、之后首次对模式切成单图编辑又不再取景。
+   */
+  it('Workspace 未挂载时打开单图项目：模式 = 单图编辑，视口按那张图取景（不是页面）', async () => {
+    const panel = {
+      id: 'only',
+      type: 'panel',
+      fileId: 'Fig.pdf',
+      fileKind: 'pdf',
+      nativeW: 80,
+      nativeH: 60,
+      overrides: [],
+      x: 20,
+      y: 15,
+      w: 80,
+      h: 60,
+    } as PanelObject
+    useWorkspaceStore.getState().clear()
+    await useProjectStore.getState().adoptOpenedProject(
+      { open: true, id: 'p_b', figures_dir: '/figs/b' },
+      {
+        prepareDocument: async () => {
+          const pd = docWithPage(150, 100)
+          pd.canvases[0].objects = [panel]
+          return useDocumentStore.getState().switchDocument(pd, 'd_single')
+        },
+      },
+    )
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(useWorkspaceStore.getState().activePanelId).toBe('only')
+    expect(useViewportStore.getState().fitFrame()).toMatchObject({ x: 20, y: 15, w: 80, h: 60 })
+    expect(useViewportStore.getState().zoom).not.toBeCloseTo(expectedZoom(150, 100), 3)
   })
 })

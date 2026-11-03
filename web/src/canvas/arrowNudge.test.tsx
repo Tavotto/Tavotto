@@ -442,14 +442,14 @@ describe('画布对象：步长与撤销', () => {
     expect(obj('h').x).toBe(40)
   })
 
-  it('快速编辑里没选图内元素：面板在版上的 x/y 不动，也不进历史', async () => {
+  it('单图编辑里没选图内元素：方向键与排版同口径推选中的面板（0.5 mm，一条历史）', async () => {
     await setup()
     useSelectionStore.getState().set(['p1'])
     useWorkspaceStore.getState().enterFastEdit('p1')
     tap('ArrowRight')
     settle()
-    expect(livePanel().x).toBe(20)
-    expect(past()).toHaveLength(0)
+    expect(livePanel().x).toBeCloseTo(20.5, 9)
+    expect(past()).toHaveLength(1)
   })
 })
 

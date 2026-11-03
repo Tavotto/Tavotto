@@ -2,6 +2,18 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「受控依赖修复（ADR 0019，2026-08-27）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_dependency_repair.py`、`tests/test_pypi_mirror_fallback.py`、`tests/test_pypi_slow_fallback.py`、`test_dependency_repair_e2e.py`、`test_package_management.py`、`test_package_lookup.py`、`test_environment_health_parity.py`、`test_dependency_plan.py`、`test_dependency_declared_roots.py`、`test_import_origin_static.py`、`test_import_origin_safety.py`、`test_import_origin_metadata.py`、`test_environment_coverage.py`、`test_user_environments.py`、`test_root_env_overlay.py`、`test_env_project_attribution.py`、`test_environment_adoption.py`、`test_environment_session.py`、`test_environment_autodetect.py`、`test_dependency_impact.py`、`test_dependency_scope.py`、`test_import_origin_user_specified.py`、`test_import_origin_cross_platform.py`、`test_import_origin_perf.py`、`test_import_origin_diagnostics_privacy.py`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；环境建议纯读；环境覆盖度只有 `userenvs._probe_cache` 一份，授权检查会执行用户包、不宣称无副作用；来源解析默认零执行、来源事实不进诊断内容；默认准备/运行时自动检测、能跑就用，确认模式可选（ADR 0114 §六）；镜像回退见细则
+> `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：受控依赖修复与包管理、联合依赖准备（ADR 0061）、Import 来源解析（ADR 0119）、PyPI 镜像回退（ADR 0111 / 0112 §二） → `dependency-repair-and-packages.md`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；来源解析默认零执行；镜像回退见细则
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 160
+改到: `engine/depresolve.py`、`managedenv.py`、`deprepair.py`、`userenvs.py`、`rootenv.py`、`envadvice.py`、`projectenv.probe_environment`、`pool.mutating_environment`、`importscan.py`、`distmeta.py`、`depplan.py`
+主题: 受控依赖修复、联合准备、来源解析、镜像回退 → `dependency-repair-and-packages.md`
+必守要点: 内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；来源解析默认零执行
+-->
 
 缺包时「一键装上并继续」。**动它之前先读 ADR 0019**——它是本仓库唯一一个会
 往磁盘装第三方代码的子系统，边界比实现重要得多。
@@ -52,6 +64,29 @@
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。
+  **Windows 发现补强与落选原因（ADR 0079 修订 2026-10-21，用户裁决「脚本默认在它原本能跑的环境里运行」）**：
+  `.condarc`（`%CONDARC%` / `~/.condarc`）的 `envs_dirs` / `pkgs_dirs` 旁的根、PATH 里 `conda.exe` / `mamba.exe` /
+  `micromamba.exe` 反推安装根（只 `is_file`，**不执行**）、PEP 514 注册表（`userenvs._windows_registry_pythons`，来源
+  `windows_registry`，第 3 档）；`rank()` 第一把尺子是体检确认程度（确认能跑 > 没量到 > 确认跑不了），不碰「内置能跑就不换」
+  （`runs_now` 分支）；被评估没选用的候选各有稳定码原因（`userenvs.REJECT_CODES`），在 `pool.EnvironmentDecision.rejected`，不带路径。
+  看护 `tests/test_user_environment_windows_discovery.py`。
+  **ROOT 叠加环境（ADR 0079 修订 2026-10-21 b）**：脚本 import 了 `ROOT`、且没有候选**裸起**就导入得了它时，
+  `deprepair._root_overlay_entries` 把用户装的 CERN ROOT（`engine/rootenv.py`：`ROOTSYS` / Windows 卸载项 / 常见位置 / Homebrew
+  Cellar；判据 = `bin/thisroot.(bat|sh)` + PyROOT 标志，纯 stat，**不执行 thisroot**，至多 8 个、组合用最新 2 个、至多 8 对）
+  叠到候选解释器（含内置 runtime 与 Conda 环境——叠加层在激活增量之后叠）上用现有体检再量，`source=root_overlay`，标签 `Python 3.14 + ROOT 6.38`，
+  与裸起候选进同一张表走 `best()`。叠加层 = `{"kind","root","version"}`，随项目记录持久化（`projectenv.remember(env_overlay=)` /
+  `remembered_overlay`），环境变量每次起进程现算（`rootenv.apply_overlay`：安装根不再像 ROOT 就不叠），**最后**叠（内置 runtime
+  摘了 `PYTHONPATH` 之后；`pool.launch_env`）；只进 Popen 的 env，**不进 `ExecutionSpec`**，带叠加层的解释器只走 Python 池
+  （`WorkerdWorker` 拒收）；会话复用前核对叠加层（`叠加环境已变`）。**身份键 vs 代次键**：`rootenv.key_of`（只按路径）用于持久化 / pin / 候选身份 / `env_id` 对账，不随安装内容变；体检缓存键（`userenvs._cache_key`）与热 worker 复用（`env_overlay_key`）比的是 `rootenv.generation_of` = 身份键 + 安装内容指纹（`bin/thisroot.*`、版本头、`ROOT/_python_version.py`、`bin/cppyy/libcppyy*.pyd` 的 size + mtime_ns，纯 stat），原地升级 / 重新解压后旧结论与旧进程不再复用。`os.add_dll_directory` 返回的句柄必须被持有（worker 模块级 `_dll_dir_handles`、体检脚本模块变量）。身份是 `userenvs.entry_key` / `env_id(python, overlay)`
+  （同一解释器裸起与叠加是两个候选）。运行之前不量叠加组合（`spec` 体检 `-I` 忽略环境变量），采用发生在用户点「运行」之后。
+  落选原因多 `root_python_mismatch`（叠上仍 import 不了 ROOT：二进制包只配一个 Python 小版本）+ `root_version`（不带路径）。
+  **Windows 真机修订（2026-10-21，ADR 0079 同名小节）**：`apply_overlay` 在 Windows 上设私有变量 `TAVOTTO_ROOT_DLL_DIR`（`rootenv.DLL_DIR_ENV`）与
+  `TAVOTTO_ROOT_CPPYY_DIR`（`CPPYY_DIR_ENV`；`bin\cppyy` 里有 `types.py` 等同名标准库文件，**不许**进 `PYTHONPATH` / `sys.path`），worker 启动钩子 `worker._startup_dll_directory` 与体检脚本据此 `os.add_dll_directory` 并往 `sys.meta_path` 末尾装只认 `libcppyy` 的 finder
+  （两处必须同做，否则体检把 DLL 没登记误判成版本不配；worker 里的变量名与 `rootenv.DLL_DIR_ENV` 对拍；py3.10 兼容）；
+  `ROOT\_python_version.py` 的 `_root_python_version` 静态读出 `build_python`，与底小版本都已知且不同 → `overlay_candidates` 给组合打
+  `overlay_reject`（`root_python_mismatch`），没有 C++ 工具（`rootenv.msvc_available`，vswhere，有界超时）→ `root_needs_msvc`，均不起进程；
+  发现多 `PATH` 里含 thisroot 的 bin 与家目录 / 桌面 / 下载下一层的 `root*`（及 `root*\root`）；`RVersion.hxx` 宏合成版本。
+  看护 `tests/test_root_env_overlay.py`。
   **映射不到包名的 import 也触发（ADR 0079 修订 2026-09-25，QA ENV-08-B1）**：计划 `nothing_needed` 但有无条件
   `unknown` 时，先经 `deprepair.unknown_imports_missing` → `userenvs.imports_missing` 在此刻的解释器里量一次（同一条体检、
   同一个缓存；内置 runtime 按 worker 的 `child_env()` / `child_args()` 量，`probe_environment(bundled=True)`）；只有**确实**
@@ -206,7 +241,15 @@
   「配过」）——才带 `--index-url PYPI_MIRROR_URL`（清华 TUNA，固定一个）**再跑一次**，不再换。日志一行写明、
   进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。联合准备（跑前准备弹窗那条路，原地 / 换代两种）与单包修复、包管理**同一个字段、同一层**（进度记录顶层），先记字段再写日志那句，带说明的第一个快照（`installing`）就已带着它。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
-  包查找（`pip index versions`）不在回退范围内。
+  包查找（`pip index versions`）：联网类失败（输出判为 offline 或超时）且 `mirror_retry_warranted(...)` 放行时，用同一个
+  `PYPI_MIRROR_URL`（`pip_index_argv(..., index_url=)`，只认这一个值）再查一次；镜像那次另有预算
+  `LOOKUP_MIRROR_TIMEOUT_S`，整个查找受 `LOOKUP_TOTAL_S` 约束，余量不足 1 s 就不起。放行判据问的是 `pip index` 命令**自己**的生效选项（`lookup_package_source` / `PIP_INDEX_OPTIONS_PROBE`；`[index]` 节只对它生效，装包路径仍用 install 那份），探测超时 = min(`LOOKUP_SOURCE_PROBE_S`, 剩余预算 − 1 s)，剩余不足 2 s 连探测都不做，探测失败 / 超时 = 问不出 = 不换源。未找到 / 解析失败 / 用户自配源都不重查。
+  看护 `tests/test_net_failure_split.py`。
+- **联网失败原因（`net_cause`）**：装包终态为 `dependency_network_unavailable` / `dependency_install_timeout` 时，
+  `_emit` 按最后包源写闭集顶层字段 `net_cause`：`tuna` → `official_and_mirror`（官方和镜像都没连上），`user_config` →
+  `user_source`（用户自配的源连不上，没有换源）；其余不带，界面用通用一句。界面 `repairShortMessage(code, notFound, netCause)`。
+- **自管 pip 子进程的 UTF-8**：`runtime.pip_child_env`（只在 `is_owned_python` 时补 `PYTHONUTF8=1` + `PYTHONIOENCODING=utf-8`）
+  用在 `_run_pip` / `_run` / `_run_lookup`。**不进 `owned_env`**——它同时是用户脚本 worker 的环境来源。
 - **慢 / 超时也换源、预算共用、结局进日志（ADR 0111 的 2026-09-29 修订；决策全文在 #744 带来的 ADR「自动测速选源」§二 / §三）**：`_run_pip_install`
   **开始之前**问一次 pip（`user_package_source`：在目标解释器里跑 `PIP_OPTIONS_PROBE`，让 pip 自己把 `pip install` 的
   选项解析一遍——配置文件覆盖顺序、`[install]` 压 `[global]`、`PIP_CONFIG_FILE`、`PIP_*` 都由 pip 按装包时的规则算，
@@ -394,7 +437,7 @@
   `legacy` 一代，第一次按代时登记进 `generations`。**目录名永远不撞在册的代**（`managedenv.fresh_generation`：同一份
   身份再来一次——重建两次同一份账——而那一代还 active / 旧代还有人用，就 `g<身份>-2`、`-3`……；`register_generation`
   拒绝重新登记 active 或 `ready` 的代），身份字段照记（Codex #461 P1：否则 active 目录会被当成「上次建到一半的」删掉）。
-- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条；**新建第一代（没有 active 代）时是脚本开跑所需的全部第三方依赖**：`create_plan` 复用联合求解存进 `RepairPlan.widened`，ADR 0061 §五 2026-09-30 修订，看护 `test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs`）、
+- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条；**新建第一代（没有 active 代）时是脚本开跑所需的全部第三方依赖**：`create_plan` 复用联合求解存进 `RepairPlan.widened`，ADR 0061 §五 2026-09-30 修订，看护 `test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs`；此刻在内置 runtime 里跑而扫描没看全时再带上内置 runtime 的 `top_level`，§五 2026-11-02 修订，看护 `test_fresh_generation_from_bundled_runtime_carries_its_packages_when_scan_is_incomplete`）、
   重建 `rebuild_managed()`（delta 为空 = 按账重建）、包管理里环境还不在时的首装。没有第二套建 / 装 / 验代码；包管理对
   **已有** active 那一代的原地 install / update / uninstall 不变。
 - **锁仍是 `envlease` 那一张表**：换代拿合成 key `tavotto_managed:<项目指纹>` + active 那一代的解释器，
@@ -660,7 +703,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   `try: import cv2 / except ImportError`、`TYPE_CHECKING` 或条件下的 `import cv2` 不触发冲突；`try` / 条件 / `TYPE_CHECKING` 里的 `importlib.import_module(name)` 不让声明变相关。
   扫描器为此在 named / relative import 的内部 `enclosing` 保留完整外围保护，别名字面量沿本地闭包（包括包内相对导入）继承；
   `_join_enclosing` 让任何层的条件 / 可选 / 类型检查优先于函数体的延后，不能拿公开 `CONTEXTS` 的旧聚合排序合并保护。
-  非字面量动态导入的外围记录与跟进保持原合同。
+  非字面量动态导入同用完整外围与本地闭包传播，缓存重访也重放其上下文、源码仍只读一次；公开 `dynamic` 字段形状不变。
   分类的 `ImportClass.enclosing_contexts` 保留同名各处的外围集合，由 `_is_binding` 判有没有绑定来源（`conditional` 与 `deferred` 不能只按枚举强弱合一）；
   普通 named import 的内部外围只为到达别名时保留来路；分类只在含 dynamic 候选时消费该集合。两字段均不进 `to_payload`，公开 `context` / `needed` 原样。
   仲裁出的 provider（`cv2` 的 headless 等）只在脚本确实 import 那个模块时相关——未 import 就不相关，连「有未解释 import」也不让它变相关。
@@ -668,6 +711,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 - 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；来源标签与计划共用 `managedenv.is_managed_python`，归属按**路径身份、不 realpath**（叶子 `interpreterpath.same_python`，`pool.same_python` 同一实现，比登记的各代 `bin/python`）——托管 venv 的 `bin/python` 常是指向基础解释器的软链接，realpath 会把用户当前用的系统 python 判成「我们的」；
   用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
 - 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
+  hash 模式同样登记实际安装集合里的相关声明 root（沿用 `_relevant_declarations`），以便换回非 hash 后按账重建；不把无关锁条目一律登记为 roots，锁的安装集合与 hash 输入不变。
 - 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。
   冲突与「能否 ready」都按**本计划实际安装集合**判，不看「是否 roots 模式」这个全局开关：点名的两个 provider 只在脚本 import 了那个模块、或它们真会被装（受管环境按声明装的 roots；hash 模式整份锁）时才冲突，无关脚本不被拦；hash 模式下相关缺口同样让计划 `ready`（`_arbitrate_providers(installing)` / `declared_install`）。
   账本合并（`generation_requirements`）与记账（`forget_install`）同源，不把被替掉的 provider 带回。
@@ -686,3 +730,28 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   hash 锁的 `provider_decisions` 与已扫描 import 的 `install_only` 按同一份实际安装集合 `installing`（整份选中锁）生成，不拿 active 环境里另一种 provider 的满足状态抵消本次安装记录（#970）；不因此增加锁外需求或改变仅声明依赖的记账规则。
 - 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
   `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。
+
+## 声明读取边界与「不送 pip」的名字（ADR 0061 §十，2026-10-21）
+
+- **声明只读到最近的项目标志**：`depresolve._decl_dirs` 从脚本目录往上，到含 `PROJECT_MARKERS`（`.git` / `pyproject.toml` / `setup.cfg` /
+  `setup.py`）的目录为止；`is_broad_folder`（家目录、桌面 / 文档 / 下载、盘符根）一律不读，遍历到就停。`project_declared()` 与
+  `declared_intents()` 共用，PEP 723 只看脚本本身。
+- **三类名字不送 pip**：`NOT_PIP_INSTALLABLE`（ROOT；声明里的同名发行包也过滤，进 `JointPlan.not_pip_installable`）、脚本字面量 `sys.path`
+  目录里找不到的 import（`origins[].local_module_missing`）、没有可信安装名的表外名（只有预填，用户确认才成 `user_specified`）。前两类不预填，
+  `user_specified` 对它们抛 `UserSpecifiedRejected(NOT_APPLICABLE)`。
+- **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内（项目外的有界放宽见下）；
+  新增标签 `sys_path_literal`（证据码同名）。表达式里的名字只在一种情形下按值认（`_dir_consts`，TVD-705N）：模块层顶层无条件的单目标
+  赋值、整份文件里同名只绑定这一次（任何作用域的再绑定 / `global` / `nonlocal` 都不认；有星号导入或 `globals()` / `exec` 等动态改写时整份不推断）、绑定在 `sys.path` 那一行之前，且值本身也是这些形状
+  （`ROOT = Path(__file__).resolve().parent` → `str(ROOT / "source")`）；其余变量照旧不认。
+  认 `Path(…).parents[N]`；同一行分号连写按（行, 列）分先后。**项目外的这类目录也认**（TVD-22EY，ADR 0061 §十 2026-11-02 补充）：
+  读的边界 `_Scanner.bound` 放宽到公共祖先，至多上 `_MAX_OUTSIDE_LEVELS` 级，大文件夹 / 家目录及其祖先 / 盘符根 / 跨盘符不认，项目外的目录此刻不存在也不认（照旧 `deferred_unverified`）；
+  看护 `TestLiteralDirOutsideProject`。
+- **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
+  不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
+- 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。
+
+## 缺包形态向量表（2026-11-01）
+
+「这个缺包怎么认」修过 #1418 / #1426 / #1494 / #1507 / #1564 / #1582 六轮，每轮冒新边界。这些形态现在收在一张闭集表
+`tests/golden/missing_package_shapes.json`（真实最小夹具 → 现有判定入口 → 期望结论），由 `tests/test_missing_package_shapes.py` 逐条驱动。
+**新的缺包工单必须先在这张表里加一条向量**（形态不在 `SHAPES` 里就先加形态），再改产品代码；修的是已有形态的新写法，也加一条同形态的向量。

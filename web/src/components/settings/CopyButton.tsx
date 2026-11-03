@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from '@/components/ui/icons'
+import { playIcon } from '@/components/ui/iconMotion'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -30,6 +31,8 @@ export function CopyButton({
   className,
   variant = 'ghost',
   appearance = 'text',
+  feedback = 'button',
+  onCopied,
 }: {
   /** 要复制的文本；函数形式用于「点的那一刻才生成」 */
   text: string | (() => string)
@@ -39,14 +42,26 @@ export function CopyButton({
   variant?: ButtonProps['variant']
   /** text：带「复制」二字；icon：只有图标的 28×28 小钮（值旁边的那种） */
   appearance?: 'text' | 'icon'
+  /** button：钮自己说「已复制」两秒（默认，设置页）；toast：钮不变，复制成功后调 `onCopied` 由调用方在通知轨说一句 */
+  feedback?: 'button' | 'toast'
+  onCopied?: () => void
 }) {
   const [done, setDone] = useState(false)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
+  // 勾一直挂着（与复制图标叠在同一格淡换），所以「已复制」那一刻手动播它一笔画出来（ADR 0156）
+  const checkRef = useRef<SVGSVGElement>(null)
+  useEffect(() => {
+    if (done && checkRef.current) playIcon(checkRef.current)
+  }, [done])
   const copy = async () => {
     const value = typeof text === 'function' ? text() : text
     try {
       await navigator.clipboard.writeText(value)
+      if (feedback === 'toast') {
+        onCopied?.()
+        return
+      }
       setDone(true)
       window.clearTimeout(timer.current)
       timer.current = window.setTimeout(() => setDone(false), 2000)
@@ -76,6 +91,7 @@ export function CopyButton({
             )}
           />
           <Check
+            ref={checkRef}
             size={ICON_SIZE.sm}
             aria-hidden
             className={cn(
@@ -110,7 +126,7 @@ export function CopyButton({
           className={cn('col-start-1 row-start-1 inline-flex items-center gap-1 transition-opacity duration-fast', !done && 'opacity-0')}
           aria-hidden={!done || undefined}
         >
-          <Check size={ICON_SIZE.sm} aria-hidden />
+          <Check ref={checkRef} size={ICON_SIZE.sm} aria-hidden />
           <span>{st('copied')}</span>
         </span>
       </span>

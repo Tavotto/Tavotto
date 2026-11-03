@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tavotto.org/schemas/compatibility-guardian/family-1.json",
+  "title": "Guardian failure family record",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "tavotto-guardian-family/1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "title": {
+      "type": "string",
+      "minLength": 10
+    },
+    "affected_script_shapes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 5
+      }
+    },
+    "root_cause": {
+      "type": "string",
+      "minLength": 30
+    },
+    "category": {
+      "type": "string",
+      "minLength": 3
+    },
+    "signature": {
+      "type": "object",
+      "properties": {
+        "behavior_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_site": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "tavotto_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "behavior_kind",
+        "call_site",
+        "tavotto_error"
+      ],
+      "additionalProperties": false
+    },
+    "repro": {
+      "type": "object"
+    },
+    "key_regression_tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 5
+      }
+    },
+    "environments": {
+      "type": "object",
+      "properties": {
+        "verified": {
+          "type": "array",
+          "minItems": 1
+        },
+        "unverified": {
+          "type": "array",
+          "minItems": 1
+        }
+      },
+      "required": [
+        "verified",
+        "unverified"
+      ],
+      "additionalProperties": false
+    },
+    "recurrence": {
+      "type": "string",
+      "minLength": 3
+    },
+    "in_corpus": {
+      "type": "boolean"
+    },
+    "fix_pr": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "promoted": {
+      "type": "boolean"
+    },
+    "issues": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "affected_script_shapes",
+    "root_cause",
+    "category",
+    "signature",
+    "repro",
+    "key_regression_tests",
+    "environments",
+    "recurrence",
+    "in_corpus",
+    "fix_pr",
+    "promoted",
+    "issues"
+  ],
+  "additionalProperties": false
+}

@@ -25,8 +25,16 @@ separately approved, signed, narrowly scoped holder authorization and current
 signed enable control. It records a distinct system receipt, never a personal
 signature. No real authorization is shipped. GitHub authentication does not
 establish legal identity, ownership or authority. Corporate/guardian/unresolved
-cases remain outside this route. See [ADR 0134](../../docs/adr/0134-limited-cla-countersigning-authority.md)
+cases remain outside this route. See [ADR 0137](../../docs/adr/0137-limited-cla-countersigning-authority.md)
 and the [outstanding activation gates](../../docs/implementation/cla-delegated-authority/README.md).
+
+The internal `appendHistoricalRevocation(id, signedControl)` candidate can append
+only a terminal revoke signed by the original registered key after an ID/key
+rotation. It has no HTTP or activation route. It retains the exact historical
+agreement, current holder/repository identity, full signed chain and atomic
+revision checks; it cannot enable old authority. Full chains, unavailable old
+keys and identity changes fail closed. See the [historical revocation evidence
+and remaining migration work](../../docs/implementation/cla-historical-revocation/README.md).
 
 The native entry is src/entry.ts. Each capability requires its explicit environment flag; omitted flags keep it off. No credentials, account bindings, worker IDs, queues or resource names are shipped. Agreement version 1.0 remains the only supported configuration; changing the same version's digest fails closed. A future version rollout needs separate review.
 
@@ -70,7 +78,31 @@ Refresh is limited to the same head and an existing, exactly identified owned ch
 
 Resource limits remain 20 work SQL statements / 40 total and 35 work external calls / 40 total per invocation. Dispatch needs 13 + 2N work SQL statements, where N is the number of non-exempt contributors. Confirmation needs 14 + 2N, plus two reserved reads if withdrawal becomes necessary. Consequently this initial automatic refresh path admits at most two non-exempt contributors. More contributors or complex remote reads can exhaust the unchanged budget: no fresh publication is sent, retries are bounded to three with 60-second backoff, then manual review is required. This is a resource/capability boundary, not a negative legal or eligibility determination. There is no automatic clearing of manual states.
 
-Dynamic success-publication-across-expiry integration validation is not part of this candidate's passing evidence. New tests are restricted to offline rejection, budget, durable deduplication and uncertainty handling with failed proposals; they do not establish successful end-to-end refresh behavior. Live GitHub/Cloudflare acceptance and the excluded integration scenario remain activation gates.
+The [offline lifecycle acceptance](../../docs/implementation/cla-offline-acceptance/README.md)
+now exercises successful synthetic publication, independent confirmation, expiry
+withdrawal, exact negative-witness release, fresh same-head publication and both
+CI authority reads, with personal and delegated evidence. It also covers lost
+responses without replay and OAuth consume-time expiry. The native adapter,
+journal and verifiers execute against an in-process peer and SQLite; this is not
+live GitHub/Cloudflare acceptance or actual CPU evidence. The default-off native
+merge-group path now has synthetic positive publication, recovery, authority and
+CI coverage as described in that evidence. It reuses the complete-prefix reader,
+existing outbox/journal and shared confirmation slot; no workflow is activated.
+Group publication reserves 14 fixed/withdrawal work SQL plus qualification cost;
+the SQL ceiling is three personal or two delegated non-exempt contributors, with
+the full two-person lifecycle verified in both modes and every prefix member
+retained. These are whole-group bounds, not per-wakeup batches. Unissued SQL/HTTP
+capacity exhaustion now uses three bounded retries and retains the exhausted
+outbox; a busy shared slot remains a durable wait. No stale qualification cache
+is reused across wakeups. Real
+queue-schema/permission, CPU, D1, OAuth and timing acceptance remain separate gates.
+
+The [complete-prefix metadata transport fix](../../docs/implementation/cla-prefix-metadata-budget/README.md)
+batches fresh member metadata only within the enabled prefix read session. Its
+single-page synthetic P1/P2/P3/P4 dispatch costs are 26/28/30/32 external calls,
+with full prefix, two snapshots and independent confirmation retained. More
+pages/coauthors can still exceed the unchanged budget; the whole-group SQL
+limits above remain unchanged. This is offline evidence, not live acceptance.
 
 ### Public endpoints: abuse limits and pinned agreement asset
 
@@ -176,8 +208,8 @@ and fresh qualification checks remain separate from packet retrieval.
 
 ### Explicit database bootstrap and consumable proposal limits
 
-The production service binds every store to its configured holder and exact two
-agreement kind/version/digest rows. The existing revision read incorporates this
+In default legacy mode the production service binds every store to its configured
+holder and exactly two agreement kind/version/digest rows. The existing revision read incorporates this
 shared readiness predicate without adding a query to evaluation/verification.
 Signing/OAuth writes also perform an explicit read-only readiness check. The
 background driver reads readiness/revision before claiming work; normal
@@ -203,6 +235,14 @@ same ordered statements atomically through its batch mechanism and verify
 readiness before enabling requests. Existing v2 schema upgrades also need the
 new immutable authority triggers. No live initialization is authorized here.
 
+The separately disabled [agreement selection journal](../../docs/implementation/cla-agreement-activation/README.md)
+adds an internal atomic append/archive/select transaction for future approved
+versions. It requires an explicit environment flag and exact latest hash pin;
+old configs/binaries reject after a real third agreement is retained. Old
+signatures do not migrate. The legacy bootstrap refuses this mode and any
+existing selection journal. Existing v2 databases need a separately reviewed
+additive schema upgrade before this binary is enabled.
+
 A proposal that can become successful is limited to six non-exempt contributors:
 verification requires eight fixed SQL reads plus two per contributor, so six
 uses the unchanged 20-work-statement ceiling. The producer rejects seven or more
@@ -223,7 +263,14 @@ in one `db.batch(...)`, then perform the production readiness read. Do not split
 it into independently committed requests. The local adapter test exercises this
 single-batch shape without invoking Cloudflare.
 
+The final [offline repo-v2 upgrade candidate](../../docs/implementation/cla-v2-upgrade/README.md)
+rehearses the exact main77 v2 namespace to #1168 with synthetic SQLite only.
+Its CLI emits a disabled in-memory schema plan and has no file-target writer or
+production execution option. It does not replace real D1 schema/backup/cutover
+acceptance, enable capabilities or resolve the single-slot availability limit.
+
 The [offline timing/capacity contract](../../docs/implementation/cla-timing-contract/README.md)
 adds a data-only planner for remaining proof lifetime, independent confirmation,
 CI attempts and declared recovery load. Its output never grants eligibility or
-activation; the runtime slot/wakeup adapter and live acceptance remain pending.
+activation. The persistent confirmation slot has since landed default-off;
+independent wakeup and live acceptance remain pending.

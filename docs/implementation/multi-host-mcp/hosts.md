@@ -201,6 +201,15 @@
 - MCP Apps：支持，受设置 `chat.mcp.apps.enabled` 控制；组织策略禁用时如实告知，**测试与生成器都不替用户改设置**。
 - 远程窗口（SSH / WSL / Dev Containers）不在首版承诺内。
 
+### Antigravity（仅桌面「接入 AI 编辑器」按钮，`engine/hostconnect.py`；不在配置生成器里；第三方资料，未真机验证）
+
+- 来源：第三方资料 + 本机残留目录（2026-10-29），**工具能否在 Antigravity 里加载未验证**。
+- 配置：`mcpServers` / `command` `args` `env`（与 Cursor 同形）。路径新旧两处都写：`~/.gemini/config/mcp_config.json`
+  （2.0 起共享，本机残留是 0 字节空文件，按 `{}` 处理）与 `~/.gemini/antigravity/mcp_config.json`（旧）。
+  Windows 的 `~` 是 `%USERPROFILE%`。
+- 「装了没有」只认 `~/.gemini/config` 或 `~/.gemini/antigravity` 存在；`~/.gemini` 本身 Gemini CLI 也会建，不算。
+- 没有已知深链协议，不写超时字段、不装 Skill；执行器（`agy -p`）不在范围。
+
 ## 失败分档（宿主里「没工具」不是一件事）
 
 | 现象 | 分档 | 怎么分辨 | 下一步 |

@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
-import { msg, t as translate } from '@/i18n'
-import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
+import { formatMessage, msg, t as translate } from '@/i18n'
+import { backendCodeMsg, type EngineSource, type ProjectEnvFailure } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { currentProjectId } from '@/lib/session'
 import { InputRemapRows, ScriptBackupRows, WorkdirRow } from './WorkdirRow'
@@ -40,6 +40,16 @@ import { Notice } from './ui/Notice'
 const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
 
+/**
+ * 失败出在**用户自己选的环境**上（显式指定的解释器用不了、Conda 激活失败）：与安装包是否完整无关，
+ * 桌面版也不许说成「安装文件不完整」（后端同一张表：`bootstrap.USER_ENV_FAILURE_CODES`）。
+ */
+const USER_ENV_FAILURE_CODES = new Set([
+  'explicit_python_unusable',
+  'project_python_unusable',
+  'conda_launcher_unavailable',
+])
+
 /** 后端给的是稳定的 source 枚举，人话在这里按当前语言取。
  *  产品名走 `brand.ts`——界面文案里不手写它（根 AGENTS.md）。 */
 const sourceLabel = (source: EngineSource): string =>
@@ -61,11 +71,25 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   if (!env) return null
   // 正常工作流里不制造多余提示：环境没问题时，紧凑位置（图内元素面板）什么都不显示
   if (env.ok && compact) return null
+  const userEnvFailure = !env.ok && !!env.code && USER_ENV_FAILURE_CODES.has(env.code)
+  const userEnvFailureText = () =>
+    formatMessage(backendCodeMsg(env.code, undefined, env.error ?? ''))
 
   // ---- 紧凑位置（图内元素面板 / 脚本区里的错误块）：一张卡 ------------------------
   // 它在那里是插进别的内容之间的一段独立提示，不套框就散了
   if (compact) {
     const title = (key: string) => <h3 className="type-section">{en(key)}</h3>
+    if (userEnvFailure) {
+      return (
+        <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
+          <div>
+            {title('unusableTitle')}
+            <p className="mt-1 text-xs leading-relaxed text-ink-2">{userEnvFailureText()}</p>
+            <EnvironmentAdviceRow />
+          </div>
+        </Card>
+      )
+    }
     if (env.runtime?.expected) {
       return (
         <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
@@ -103,14 +127,19 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
    */
   return (
     <FieldGroup data-engine-env-card>
-      {!env.ok && env.runtime?.expected && (
+      {userEnvFailure && (
+        <GroupNotice tone="danger" title={en('unusableTitle')}>
+          {userEnvFailureText()}
+        </GroupNotice>
+      )}
+      {!env.ok && !userEnvFailure && env.runtime?.expected && (
         <GroupNotice tone="danger" title={en('incompleteTitle')}>
           {en('incompleteBefore')}
           {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
           {en('incompleteAfter')} {en('incompleteHint')}
         </GroupNotice>
       )}
-      {!env.ok && !env.runtime?.expected && (
+      {!env.ok && !userEnvFailure && !env.runtime?.expected && (
         <GroupNotice
           tone="danger"
           title={en('missingTitle')}

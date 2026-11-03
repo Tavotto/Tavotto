@@ -21,6 +21,7 @@ import {
 import { effectiveOverride, isEffectiveOverrideAt } from '@/lib/effectiveOverride'
 import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { structuralParent } from '@/components/inspector/roles/hierarchy'
+import { displayText } from './richText'
 
 /**
  * 图内元素的几何代理层。
@@ -904,7 +905,7 @@ export function annotationAlignEntries(
     // 箭头/形状用类型名
     const name =
       o.type === 'text'
-        ? t('annotationEntry.text', { ns: 'workspace', text: o.text.slice(0, 12) })
+        ? t('annotationEntry.text', { ns: 'workspace', text: displayText(o.text, o.textFormat).slice(0, 12) })
         : t(`annotationEntry.${o.type === 'arrow' ? 'arrow' : 'shape'}`, { ns: 'workspace' })
     out.push({
       key: `obj:${o.id}`,

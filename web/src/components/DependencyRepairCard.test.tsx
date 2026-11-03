@@ -38,7 +38,7 @@ import {
   type DependencyRepairOffer,
   type DependencyRepairPlan,
 } from '@/lib/api'
-import { DependencyRepairCard, ManagedEnvironmentRow, repairCodeMessage } from '@/components/DependencyRepairCard'
+import { DependencyRepairCard, ManagedEnvironmentRow, repairCodeMessage, repairShortMessage } from '@/components/DependencyRepairCard'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useEnvStore } from '@/store/envStore'
 import { i18n, t } from '@/i18n'
@@ -1626,5 +1626,20 @@ describe('engine 文案的品牌名走插值', () => {
     expect(text()).toContain(`重建 ${PRODUCT_NAME} 环境`)
     expect(byName(en('managedEnvRebuild', { product: PRODUCT_NAME }))).toBeTruthy()
     expect(text()).not.toContain('{{')
+  })
+})
+
+describe('联网失败按原因各说一句（net_cause）', () => {
+  it('官方源和镜像都没连上 / 用户自配的源连不上 / 说不清', () => {
+    for (const code of ['dependency_network_unavailable', 'dependency_install_timeout']) {
+      expect(repairShortMessage(code, undefined, 'official_and_mirror')).toBe(t('errors:engine.repairNetBoth'))
+      expect(repairShortMessage(code, undefined, 'user_source')).toBe(t('errors:engine.repairNetUserSource'))
+      expect(repairShortMessage(code)).toBe(t(`errors:engine.repairErrorShort.${code}`))
+    }
+    // 反证：别的码带着这个键也不改说法
+    expect(repairShortMessage('dependency_conflict', undefined, 'user_source')).toBe(
+      t('errors:engine.repairErrorShort.dependency_conflict', { product: PRODUCT_NAME }),
+    )
+    expect(t('errors:engine.repairNetBoth')).not.toBe(t('errors:engine.repairNetUserSource'))
   })
 })

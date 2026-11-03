@@ -6,7 +6,7 @@ export function identity(user: Identity): Identity {
   if (!user || !validId(user.id) || !/^[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?$/.test(user.login) || !['User', 'Bot'].includes(user.type)) throw new Rejected('identity_unresolved');
   return user;
 }
-export async function binding(c: Config, port: GitHubPort, target: Target, snapshot: Candidate): Promise<Binding> {
+export async function binding(c: Config, port: Pick<GitHubPort,'resolveLogin'>, target: Target, snapshot: Candidate): Promise<Binding> {
   if (snapshot.repositoryId !== c.repositoryId || snapshot.kind !== target.kind || !validSha(snapshot.headSha) || !validSha(snapshot.baseSha) ||
     await policyDigest(snapshot.policy) !== await policyDigest(c.policy)) throw new Rejected('trusted_snapshot_mismatch');
   if (target.kind === 'pr' && (snapshot.prs.length !== 1 || snapshot.prs[0]?.number !== target.number || snapshot.prs[0].headSha !== snapshot.headSha || snapshot.prs[0].baseSha !== snapshot.baseSha || snapshot.members.length!==0)) throw new Rejected('pr_mismatch');
@@ -68,6 +68,6 @@ export async function binding(c: Config, port: GitHubPort, target: Target, snaps
 }
 export const sameBinding = (a: Binding, b: Binding) => {
   const fields = (x: Binding) => ({repository_id:x.repository_id,head_sha:x.head_sha,base_sha:x.base_sha,kind:x.kind,
-    ...(x.pr===undefined?{}:{pr:x.pr}),members:x.members,contributors:x.contributors,policy_sha256:x.policy_sha256});
+    ...(x.pr===undefined?{}:{pr:x.pr}),...('group' in x?{group:(x as Binding & {group:unknown}).group}:{}),members:x.members,contributors:x.contributors,policy_sha256:x.policy_sha256});
   return canonical(fields(a)) === canonical(fields(b));
 };

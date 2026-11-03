@@ -1,0 +1,1237 @@
+{
+  "baseline_commit": "d22b61a92e25d69c0e446e6276c13f5860e04b32",
+  "runtime": "v24.19.0",
+  "command": "npm run check",
+  "cwd": "services/cla-cloudflare",
+  "exit_code": 0,
+  "node_tests": {
+    "pass": 868,
+    "fail": 0,
+    "skip": 0
+  },
+  "migration_tests": {
+    "pass": 4,
+    "fail": 0
+  },
+  "typecheck_exit_code": 0,
+  "build": {
+    "exit_code": 0,
+    "production_inputs": 22
+  },
+  "mutations": [
+    {
+      "name": "prefix metadata retains independent closing batch",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix metadata rejects partial GraphQL errors",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix metadata rejects undeclared member aliases",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix metadata retains dynamic author login fence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix metadata batching remains closed behind the read session",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "multi group keeps invocation epoch fence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "multi group keeps durable horizon",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "multi group resumes existing journal",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "multi group progress lease fence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "multi group avoids redundant progress read",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group resource exhaustion has bounded durable retries",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group schema strategy",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group schema lifetime",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group producer refuses unsigned predecessor",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group event dispatch",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group second authority read",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group HMAC admission",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group action admission",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group journal stale generation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group exact failure witness",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group binding provenance",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group recovery binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group refresh evaluation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "two-person group fits actual confirmation capacity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group fresh revocation revision ceiling",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "lifecycle send receipt is not confirmation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "lifecycle expired positive must withdraw",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "lifecycle release needs post-patch GET",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "lifecycle durable manual backoff",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "lifecycle second live authority read",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "OAuth exact consumption expiry",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "OAuth single-use consumed state",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "OAuth correct browser binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "OAuth response never expands scope",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "group discriminator keeps PR and complete group proofs distinct",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "OAuth consume-time semantics is not a completion deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session environment exact true",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session canonical configuration pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session key material pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session budget identity pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session closed capability before I/O",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session failures are terminal",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session concurrent read is forbidden",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session callback cannot finish with pending I/O",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session monotonic expiry with stalled wall",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session provider actual token expiry",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session clock never rolls back",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session monotonic clock never rolls back",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session mint delay cannot renew lifetime",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session expiry rounds down",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session cache hit pins live source",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session cached policy never escapes",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session installation pause remains fresh",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session reuses exactly one narrow token",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session three validated immutable contents reused",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session final SQL remains inside lease guard",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent session unchanged external budget",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session read-token POST is shared",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session pinned three content reads are shared",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session cached token cannot bypass fresh installation check",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session identity GET stays fresh",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session metadata stays fresh",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session new main tip refuses immediately",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session fourth queue read still binds current state",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session second full snapshot remains mandatory",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session all commit pages remain mandatory",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session disabled flag keeps old runtime",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session config flag remains boolean",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session explicit Worker opt-in",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session external budget never resets",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session 35 work cap remains unchanged",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "prefix read session every contributor retains real qualification reads",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent prefix exact environment capability",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent prefix disabled before any I/O",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent prefix shared invocation budget",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent complete prefix rather than current entry only",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent every contributor is qualified",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent queue repository identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent complete queue positions",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent exact candidate base",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent queue member head matches live PR",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent first snapshot queue recheck",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent final full binding recheck",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent trusted source remains in assessment binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent prefix digest authenticates ordered entries",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent final SQL revision cannot reuse old revision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent final SQL strict assessment deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent grant deadline caps assessment",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent contributor raw evidence hash",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent all coauthor identities enter prefix union",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent contributor capacity before fanout",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent final shared work deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "independent explicit complete prefix cap",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter GraphQL repository identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter stable pagination total",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter repeated pagination cursor",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter unique entry ID",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter unique PR number",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter complete queue positions",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter complete approved prefix",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter candidate base SHA",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter unambiguous candidate",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter full second queue comparison",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter queued PR head pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter own PR base comparison",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter unchanged token permission list",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter opaque visible ASCII identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter unchanged external work cap",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "merge prefix adapter actual external cost accounting",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "manual owner SQL eligibility",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "exhausted publication SQL eligibility",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "held owner outbox retry admission",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "nonowner exhaustion isolation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "strict manual recovery due",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "never evaluate or reconfirm manual owner",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "missing owned run remains scheduled",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "error does not restore null retry deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "saturated publication attempt history",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "saturated outbox attempt history",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "durable deadline is not restarted",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "manual owner does not jump rowid progress",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "manual send fence blocks claim itself",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "manual recurrence must not monopolize global claim",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery owner-only retry-cap exception",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery manual SQL eligibility",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery strict persisted backoff",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery cannot reconfirm manual success",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery retains target exhaustion",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery persists manual phase",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot recovery durable sixty-second deferral",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade committed WAL result persists before success",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade uncertain-commit fresh-schema provenance",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade default-off pre-database gate",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade precise internal-name exclusion",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade temporary-schema isolation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade attached-schema isolation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade issued and unknown refusal",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade zero deadline quiescence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade arbitrary guard refusal",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade raw TEXT byte identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade full int64 storage reads",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade prepared plan exact comparison",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade caller transaction ownership",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade transactional DDL rollback",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade full original-cell preservation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade exact upgraded schema",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade reviewed zero fence default",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade empty new mechanisms",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade uncertain-commit exact old data",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade BEGIN reply ownership timing",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade default-off caller guard",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade CLI has no execution target",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "v2 upgrade plan never enables capability",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot marker consumption",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot automatic marker admission",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot legacy global blocker",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot marker duplicate no-op",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot policy replacement",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot owner replacement",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot policy transition capability",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot immutable original proof",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot released historical observation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot owned outbox retention",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot legacy NULL positive downgrade",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot owner projection when disabled",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot capability single consumption",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot adapter freshness boundary",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot fresh GET exact run",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot fresh GET required",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot settlement phase CAS",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot settlement exact proof snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot settlement current generation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot settlement current revision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot live sender recovery exclusion",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "confirmation slot SQL observed phase binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot measured new head issued statement cost",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot busy capacity cannot consume retry",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot confirmed owner keeps live send fence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot durable latch fences flagfalse head admission",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot expired withdrawal target precedes ordinary due target",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot expired owner precedes older eligible ordinary journal",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot exact environment switch",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot independent recovery prerequisite",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "slot disabled deployment switch required",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation real legacy binary fence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation whole call SQL budget",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation legacy anchor exclusion",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation configuration pin binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation runtime canonical record verification",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation new document bytes",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation new version marker",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation exact repeat is no operation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation identical concurrency confirmation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation consumes its own evidence revision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation complete transaction rollback",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation packet supplied tuple",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation final current packet predicate",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation subsequent evidence revisions",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation snapshot packet write guard",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation snapshot intent write guard",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation prior personal consent is not inherited",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation environment capability override",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation explicit current hash pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation bounded stable versions",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation failed byte replacement cannot report success",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation immutable archive first source",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation journal no updates",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation journal no deletes",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation bootstrap is not activation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation prepare config snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation prepare predecessor snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation prepare document snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation apply config snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "activation apply proposal snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "terminal revocation audit priority after rotation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical terminal only",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical registry existence",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical full chain authentication",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical registered key for new control",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical final revision CAS",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical commit clock",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical current holder boundary",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "historical control monotonic time",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "archive-current-binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "audit-final-session",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "audit-subject-hold",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "dispatch-final-binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "journal-revision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "journal-proof-expiry",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "journal-unresolved-other-head",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "dispatch-external-reserve",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "adapter-existing-owned-run",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "recovery-required",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "status-captured-revision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "journal-request-head",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "journal-lease-boundary",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "persisted send lease",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "active send claim exclusion",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "active send eligibility",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "active send next deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "reconciliation snapshot CAS",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "failure snapshot CAS",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "deferral snapshot CAS",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "automatic settlement cannot resurrect manual",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "automatic wake preserves current lease",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "automatic settlement durable wake",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "migration every source column",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "migration namespaces new objects",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "trusted source pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "candidate identity pin",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "second authority stage",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "current Worker status contract",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "pending exact response shape",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "global return deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "monotonic rollback",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "proof expiry before another read",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "proof monotonic deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "subsecond proof cancellation precision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "maximum attempt configuration",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "trusted config snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "proof deadline before first authority",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "default subsecond wall precision",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "millisecond wall validity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "millisecond wall rollback",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "millisecond wall expiry",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "initial clock sample validation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "proof mapping validated clock snapshot",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "head admission capacity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delivery admission capacity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated disabled direct operation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated receipt hash",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated holder identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated exact agreement hash",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated authorization signature",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated personal evidence verification",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "CI default-branch binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated active control",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated receipt identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "delegated expiry ceiling",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "automatic expected head",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "automatic final binding",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "automatic evidence revision requeue",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "verification producer capacity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "production bootstrap readiness",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "identity lookup preflight cap",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "fresh exemption identity",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "OAuth bounded burst",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "public agreement pinned digest",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "target-wide refresh blocker",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "cached account selection",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "expired UI replacement",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "holder page continuation",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "stateless token length",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "completed deadline",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "proof lifetime",
+      "selected_exit_code": 1
+    },
+    {
+      "name": "evidence hash",
+      "selected_exit_code": 1
+    }
+  ],
+  "production_and_test_sha256": {
+    "services/cla-cloudflare/src/native/github.ts": "2f19fd0b48d80d4a59262034b412df78c7bfd714cbe4f366cc077f13d984a5a3",
+    "services/cla-cloudflare/tests/group-multi-fixture.mjs": "e2868c0288011fb8a12cc81a2a0ab19ada99cc8073b3e549fdbde8e82279c94e",
+    "services/cla-cloudflare/tests/group-prefix-budget.test.mjs": "b73012b38092303fddc4ba09d107a5f107392c7e99375f8b90764b2f126fa691",
+    "services/cla-cloudflare/tests/group-publication-lifecycle.test.mjs": "14ca9becf1c0eabf899f362c4a964d6259928409d91c9ec4911ca0b0a45c9e4d",
+    "services/cla-cloudflare/tests/independent-prefix-read-session-fixture.mjs": "1feb2d93ae971f269c1fcd279c0cddc2d57735460c32fd136651ded2102cdc71",
+    "services/cla-cloudflare/tests/independent-prefix-read-session-mutation-cases.json": "e37ff00c43a1875c44b7c80e37965359288bc9aa03d48f3b83e6361175b1ee71",
+    "services/cla-cloudflare/tests/independent-prefix-read-session.test.mjs": "9bb53fdce1a1d989debb0883e1f03fdb09e6a2fd99851286a734288ef034a149",
+    "services/cla-cloudflare/tests/merge-prefix-fixture.mjs": "e9f8b3b162664f293981d96c737b1f556421a00189d75f5952a5b5054b4641c3",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "d3f21f96492fc11fd7d05cd7cb7fc12864c7f84193379b2943ad7ffad07e9cbd",
+    "services/cla-cloudflare/tests/prefix-metadata-boundaries.test.mjs": "a55e6ce2bd6245fa284f7f47f5867af04de3318da1f6b115ff98bf1906f55ae8",
+    "services/cla-cloudflare/tests/prefix-metadata-mutation-cases.json": "6316779bcb82656f2d252a1e66fefd0cbdbe76df926fee9292eb3a63067bbe91",
+    "services/cla-cloudflare/tests/prefix-read-session-mutation-cases.json": "f8bd1aa8f4394a99ea1f5cc9eaf4d0164164b7e37a62e4dd2eb457161a807144",
+    "services/cla-cloudflare/tests/prefix-read-session.test.mjs": "130fb02628e09e1b70e536e3b60dd2d32afd6e17e50612602c79d9f2fc504d3e",
+    "services/cla-cloudflare/tests/publication-lifecycle-fixture.mjs": "5a431affa0d8edadb75fb696ed7d59f370af9bc45024de398820233cdba19afb"
+  },
+  "baseline_counterexample": {
+    "command": "node --test tests/group-prefix-budget.test.mjs",
+    "baseline": "before production fix",
+    "exit_code": 1,
+    "failed_positive_tests": 4,
+    "scenarios": "P3/P4 personal/delegated, one contributor"
+  },
+  "boundary": "Synthetic peers, keys and local SQLite; no real signing, HTTP publication, D1 writes, CPU or native App acceptance.",
+  "workflow_contract": {
+    "command": "python -m pytest -q tests/test_cla_workflow_contract.py",
+    "interpreter": "existing repository development venv",
+    "exit_code": 0,
+    "pass": 26
+  }
+}

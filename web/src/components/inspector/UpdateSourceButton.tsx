@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -13,6 +13,7 @@ import {
   type PanelAnnotations,
 } from '@/lib/writeBackAnnotations'
 import { dirTail } from '@/lib/pathDisplay'
+import { noticeWriteBackMultipage } from '@/lib/writeBackMultipageNotice'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -46,7 +47,7 @@ const wb = (key: string, values?: Record<string, unknown>) =>
  *
  * 三个入口共用同一个窗口：
  * - 属性页里的 UpdateSourceButton（单面板，随选中面板出现）
- * - 「⋯」菜单第一项 useWriteBackMenuEntry（可一次写回多个面板）
+ * - 「⋯」菜单「文件」组 useWriteBackMenuEntry（可一次写回多个面板）
  * - 同步修改到别的图之后「同步并写回」（`detached`：目标图不在画布上，没有面板可言）
  *
  * 窗口有两页：「写回」与「写回记录」（原属性栏的「历史」，2026-10-01 设计稿 C11）。
@@ -107,6 +108,11 @@ async function runWriteBack(
       // 走 backendErrorMsg：有稳定 code 时取当前语言的那句，没有才用后端原文，
       // 与 NativeConfirmDialog / ScriptLibrary / RegistryDialog 同一条出口。
       const detail = formatMessage(backendErrorMsg(e))
+      // 目标是脚本用 PdfPages 写的 PDF：写回一律拒绝，通知轨挂一条带「导出」的胶囊（#1370）
+      if (e instanceof ApiError && e.body?.code === 'write_back_multipage_pdf') {
+        const params = (e.body.params ?? {}) as { file?: string }
+        noticeWriteBackMultipage(params.file ?? stemOf(p.fileId), { ui: useUiStore.getState() })
+      }
       throw new WriteBackFailure(
         updated.length
           ? wb('failedPartial', {
@@ -147,7 +153,7 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
     return (
       <div className="flex flex-col gap-1.5 rounded-sm border border-danger/40 bg-surface-2 p-2">
         <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink">
-          <ShieldAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
+          <IconSlot><ShieldAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
           <span>
             <b className="font-medium">{wb('divergenceTitle')}</b>
             {wb('divergenceBody')}
@@ -596,7 +602,7 @@ export function useWriteBackTargets(): PanelObject[] {
 }
 
 /**
- * 「⋯」菜单第一项：写回原始文件…（2026-09-30 重设计：写回从顶栏搬进 ⋯，与属性栏「源文件」里
+ * 「⋯」菜单「文件」组：写回原始文件…（2026-09-30 重设计：写回从顶栏搬进 ⋯，与属性栏「源文件」里
  * 那一颗是同一个写回窗口）。无可写回内容时禁用并在项里写出原因，而不是消失；
  * 可写回的图不止一张时，项右侧的数字就是张数（此前顶栏按钮上的「写回 n」）。
  *
@@ -614,7 +620,7 @@ export function useWriteBackMenuEntry() {
       data-write-back="open"
       data-write-back-entry="menu"
       disabled={disabled}
-      reason={readOnly ? wb('topBarReadOnly') : !targets.length ? wb('noOverridesTitle') : undefined}
+      tip={readOnly ? wb('topBarReadOnly') : !targets.length ? wb('noOverridesTitle') : undefined}
       shortcut={targets.length > 1 ? String(targets.length) : undefined}
       onSelect={() => setOpen(true)}
     >

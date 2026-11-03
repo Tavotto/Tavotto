@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { CircleQuestionMark, Crop, Minimize2, Pencil } from '@/components/ui/icons'
+import { CircleQuestionMark, Crop, Link2, Minimize2, Pencil, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n'
@@ -7,7 +7,18 @@ import { useCanvasTypography } from '@/components/inspector/typographyAdapter'
 import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Tip } from '@/components/ui/Tooltip'
-import { beginCrop, enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
+import { isContentFit, fitContentCrop } from '@/lib/panelEdgeCrop'
+import {
+  beginCrop,
+  enterElementEdit,
+  fitPanels,
+  fitPanelsToContent,
+  resetPanelCrop,
+  updateObjects,
+} from '@/store/actions'
+import { useExactPanelManifest } from '@/store/renderStore'
+import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import type {
@@ -17,9 +28,10 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
+import { FrameQuick } from './FrameQuick'
 import { TextQuickControls } from './textQuick'
 import { Sep } from './shared'
-import { hist } from './text'
+import { hist, qb } from './text'
 
 /* ------------------------------- 画布对象 --------------------------------- */
 
@@ -83,6 +95,8 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
   const explainable = !obj.script && !!cap && cap.status !== 'editable'
   return (
     <div className="flex items-center gap-1">
+      {/* 单图编辑：画布尺寸与留白（ADR 0161）；排版里不挂 */}
+      <FrameQuick obj={obj} />
       {obj.script && (
         <Button size="md" onClick={() => { void enterElementEdit(obj.id) }}>
           <Pencil size={ICON_SIZE.sm} />
@@ -118,8 +132,62 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
           <Minimize2 size={ICON_SIZE.sm} />
         </Button>
       </Tip>
+      <LayoutPanelActions obj={obj} />
       <Sep />
     </div>
+  )
+}
+
+/**
+ * 多图排版里选中一张面板（不在拖动）时，胶囊里的"裁剪与标注"三件事（ADR 0161）：
+ * 「贴合内容」一次把四边裁到内容边缘（缺 `ink_bbox` 或已贴合时置灰）、「取消裁剪」（`resetPanelCrop`）、
+ * 「连同标注」开关（缩放面板时叠在上面的标注一起缩，存在 `uiStore`，本机偏好）。单图编辑里不出。
+ */
+function LayoutPanelActions({ obj }: { obj: PanelObject }) {
+  const layout = useWorkspaceStore((s) => s.mode === 'layout')
+  const follow = useUiStore((s) => s.scaleWithAnnotations)
+  const manifest = useExactPanelManifest(obj)
+  if (!layout) return null
+  const ink = manifest?.elements.find((e) => e.gid === 'figure')?.ink_bbox
+  const target = fitContentCrop(ink)
+  const fitted = isContentFit(obj.crop, ink)
+  return (
+    <>
+      <Sep />
+      <Tip label={target ? qb('layoutFitContentTip') : qb('layoutFitContentNone')} side="bottom">
+        <Button
+          size="md"
+          data-layout-action="fit-content"
+          disabled={!target || fitted}
+          onClick={() => fitPanelsToContent([obj.id])}
+        >
+          {qb('layoutFitContent')}
+        </Button>
+      </Tip>
+      <Tip label={qb('layoutResetCropTip')} side="bottom">
+        <Button
+          size="md"
+          data-layout-action="reset-crop"
+          disabled={!obj.crop}
+          onClick={() => resetPanelCrop([obj.id])}
+        >
+          <RotateCcw size={ICON_SIZE.sm} />
+          {qb('layoutResetCrop')}
+        </Button>
+      </Tip>
+      <Tip label={qb('layoutFollowToggleTip')} side="bottom">
+        <Button
+          size="md"
+          data-layout-action="follow-annotations"
+          active={follow}
+          aria-pressed={follow}
+          onClick={() => useUiStore.getState().setCanvasPref({ scaleWithAnnotations: !follow })}
+        >
+          <Link2 size={ICON_SIZE.sm} />
+          {qb('layoutFollowToggle')}
+        </Button>
+      </Tip>
+    </>
   )
 }
 

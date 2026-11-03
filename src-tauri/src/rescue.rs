@@ -62,13 +62,66 @@ pub mod stage {
     pub const NAVIGATE: &str = "navigate";
 }
 
-/// 启动失败的结构化事实：阶段 + 稳定码 + 退出码。**不含任何文本**——人读的报错原文走 error.html 的 `msg`，
+/// locate 阶段失败时安装目录里三样东西在不在（只有布尔值：不含路径、不含文本）。
+/// 用来区分「杀软隔离了 exe」（目录在、`exe` 为假）和「安装不完整」（`sidecar_dir` 或 `internal_dir` 为假）。
+/// 资源目录本身拿不到时整体记 `None`（报告里是 `null`），与「三项都为假」区分开。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct InstallFiles {
+    pub sidecar_dir: bool,
+    pub internal_dir: bool,
+    pub exe: bool,
+}
+
+/// launch 阶段 spawn 失败时操作系统错误的类别（闭集，进 shell 报告；不是错误原文）。`other` 是兜底。
+/// 用来区分「杀软 / 策略拦了」「文件坏了」「权限不对」——`sidecar_spawn_failed` 本身分不出来（TVD-JNZE）。
+pub const SPAWN_ERRORS: &[&str] = &[
+    "access_denied",
+    "virus_detected",
+    "blocked_by_policy",
+    "bad_executable",
+    "file_in_use",
+    "not_found",
+    "other",
+];
+
+/// 把 spawn 的系统错误归入 [`SPAWN_ERRORS`]。纯函数：`windows` 由调用方传 `cfg!(windows)`，两套错误号都能在任一平台上测。
+pub fn spawn_error_kind(raw: Option<i32>, kind: std::io::ErrorKind, windows: bool) -> &'static str {
+    use std::io::ErrorKind;
+    let by_raw = match (windows, raw) {
+        // ERROR_VIRUS_INFECTED / ERROR_VIRUS_DELETED：Defender 等杀软在 CreateProcess 时拦下
+        (true, Some(225 | 226)) => Some("virus_detected"),
+        // ERROR_ACCESS_DISABLED_BY_POLICY（SRP / AppLocker）/ ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION（WDAC）
+        (true, Some(1260 | 4551)) => Some("blocked_by_policy"),
+        // ERROR_BAD_FORMAT / ERROR_BAD_EXE_FORMAT / ERROR_EXE_MACHINE_TYPE_MISMATCH：文件损坏或下载不完整
+        (true, Some(11 | 193 | 216)) => Some("bad_executable"),
+        // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION：杀软正在扫描或另一个进程占着
+        (true, Some(32 | 33)) => Some("file_in_use"),
+        // ENOEXEC / ETXTBSY（macOS 与 Linux 同号）
+        (false, Some(8)) => Some("bad_executable"),
+        (false, Some(26)) => Some("file_in_use"),
+        _ => None,
+    };
+    by_raw.unwrap_or(match kind {
+        ErrorKind::PermissionDenied => "access_denied",
+        ErrorKind::NotFound => "not_found",
+        _ => "other",
+    })
+}
+
+/// 启动失败的结构化事实：阶段 + 稳定码 + 退出码 + 安装文件事实 + spawn 错误类别。**不含任何文本**——人读的报错原文走 error.html 的 `msg`，
 /// 那是另一条链路，不进 shell 报告。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FailureInfo {
     pub stage: &'static str,
     pub code: &'static str,
     pub exit_code: Option<i32>,
+    /// 只在 locate 阶段失败时有值；其余阶段（文件都找到了）为 `None`。
+    pub install_files: Option<InstallFiles>,
+    /// 只在 launch 阶段 spawn 失败时有值（[`SPAWN_ERRORS`] 之一）；其余为 `None`。
+    pub spawn_error: Option<&'static str>,
+    /// 只在握手超时（`sidecar_timeout`）时有值：sidecar 卡在启动的哪一步（[`crate::sidecar::startup_phase`] 的
+    /// 闭集阶段名，或 `none` = 本次启动没留下任何标记）；其余为 `None`。
+    pub startup_phase: Option<&'static str>,
 }
 
 impl FailureInfo {
@@ -77,7 +130,25 @@ impl FailureInfo {
             stage,
             code,
             exit_code: None,
+            install_files: None,
+            spawn_error: None,
+            startup_phase: None,
         }
+    }
+
+    pub fn with_install_files(mut self, files: Option<InstallFiles>) -> Self {
+        self.install_files = files;
+        self
+    }
+
+    pub fn with_spawn_error(mut self, kind: &'static str) -> Self {
+        self.spawn_error = Some(kind);
+        self
+    }
+
+    pub fn with_startup_phase(mut self, phase: &'static str) -> Self {
+        self.startup_phase = Some(phase);
+        self
     }
 }
 
@@ -154,6 +225,48 @@ fn gate(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), &'s
     )
 }
 
+/// 「重新安装」（允许同版本）适用的失败码：文件丢失（`sidecar_not_found`）与文件在但系统拒绝运行
+/// （`sidecar_spawn_failed`：杀软拦截、文件损坏、权限不对——重启都修不好，重装同一个版本最可能一下修好，TVD-JNZE）。
+/// 别的失败（握手超时、启动崩溃……）重装同一个版本修不好，也就不放行同版本安装。
+pub const REINSTALL_DENY_NOT_APPLICABLE: &str = "reinstall_not_applicable";
+
+pub fn reinstall_applies(code: &str) -> bool {
+    code == code::SIDECAR_NOT_FOUND || code == code::SIDECAR_SPAWN_FAILED
+}
+
+/// 「重新启动」要走安全启动（这一次不恢复上次项目，TVD-DT76）的失败码。判据只有这一个出处，页面不自己猜。
+/// 目前只有握手超时：sidecar 起来了却没在 60 秒内写 ready，最常见的原因是恢复上次项目时卡在挂住的系统调用
+/// （离线网络盘、OneDrive 按需下载、超大目录），重启再恢复同一个项目就是死路。别的失败码和项目无关。
+pub fn safe_start_applies(code: &str) -> bool {
+    code == code::SIDECAR_TIMEOUT
+}
+
+/// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码满足 [`reinstall_applies`]。
+/// 同版本安装的放行点只有这一处。
+pub fn decide_reinstall(
+    label: &str,
+    url: Option<&url::Url>,
+    entered: bool,
+    failure_code: Option<&str>,
+) -> Result<(), &'static str> {
+    decide(label, url, entered)?;
+    if failure_code.is_some_and(reinstall_applies) {
+        Ok(())
+    } else {
+        Err(REINSTALL_DENY_NOT_APPLICABLE)
+    }
+}
+
+fn gate_reinstall(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<(), &'static str> {
+    let url = window.url().ok();
+    let state = app.state::<RescueState>();
+    let code = state.failure().map(|f| f.code);
+    decide_reinstall(window.label(), url.as_ref(), state.entered(), code)
+}
+
 /* -------------------------------------------------------------------------- */
 /*  命令                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -171,6 +284,9 @@ pub struct Status {
     update: bool,
     /// 启动诊断可发送（环境变量只能关闭它，不能改地址）。
     upload: bool,
+    /// 页面主按钮该是「重新安装」：可用 + 更新通道已配置 + 失败码满足 [`reinstall_applies`]（文件丢失 /
+    /// 系统拒绝运行，重启修不好）。判据只有 [`reinstall_applies`] 这一个出处，页面不自己猜。
+    reinstall: bool,
 }
 
 fn update_configured(app: &tauri::AppHandle) -> bool {
@@ -209,6 +325,7 @@ pub fn rescue_status(
         exit_code: info.exit_code,
         update: eligible && update_configured(&app),
         upload: eligible && shell_report::upload_enabled(),
+        reinstall: eligible && reinstall_applies(info.code) && update_configured(&app),
     })
 }
 
@@ -222,6 +339,13 @@ pub async fn rescue_retry(
     gate(&app, &window)?;
     if state.retrying.swap(true, Ordering::SeqCst) {
         return Ok(());
+    }
+    // 握手超时后的「重新启动」：给下一次启动留一次性标记，让它不恢复上次项目（sidecar/safe_start.rs）。
+    // 在收 sidecar 之前做、且只在第一次点击（上面的幂等闸之后）做；写不进去就照常重启
+    if state.failure().is_some_and(|f| safe_start_applies(f.code)) {
+        let config_dir = app.path().app_config_dir().ok();
+        let marker = crate::sidecar::safe_start::path(config_dir.as_deref());
+        crate::sidecar::safe_start::arm(marker.as_deref(), crate::sidecar::safe_start::now_secs());
     }
     let worker = app.clone();
     // 收 sidecar 最长等 10 s，不占 async 运行时线程
@@ -254,6 +378,20 @@ pub async fn rescue_update_install(
 ) -> Result<app_update::Source, Failure> {
     gate(&app, &window).map_err(Failure::code)?;
     crate::update_install(&app, &state, Some(&expected_version), &|_| {}).await
+}
+
+/// 重新安装当前版本（文件丢失时的出路）：走同一个协调器——同一把锁、内置公钥验签、`run_install_expecting`
+/// 核对版本——但允许**同版本**。同版本放行只在这条命令里（`app_update::reinstall_builder`），且先过
+/// [`gate_reinstall`]：可信页面 + 从未进入编辑态 + 失败码满足 [`reinstall_applies`]。装完由页面调 `rescue_retry` 重启。
+#[tauri::command]
+pub async fn rescue_reinstall(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, app_update::UpdateState>,
+    ui_lang: Option<String>,
+) -> Result<app_update::Source, Failure> {
+    gate_reinstall(&app, &window).map_err(Failure::code)?;
+    crate::update_reinstall(&app, &state, ui_lang.as_deref()).await
 }
 
 #[derive(Debug, Serialize)]
@@ -296,6 +434,9 @@ fn ensure_prepared(app: &tauri::AppHandle, state: &RescueState) -> Prepared {
         stage: info.stage.to_string(),
         code: info.code.to_string(),
         exit_code: info.exit_code,
+        install_files: info.install_files,
+        spawn_error: info.spawn_error,
+        startup_phase: info.startup_phase,
         created_at: now_iso(),
     });
     *slot = Some(p.clone());
@@ -452,6 +593,244 @@ mod tests {
     }
 
     #[test]
+    fn same_version_reinstall_needs_the_trusted_page_a_clean_window_and_a_reinstallable_code() {
+        let page = u("tauri://localhost/error.html");
+        let missing = Some(code::SIDECAR_NOT_FOUND);
+        let reinstallable = [code::SIDECAR_NOT_FOUND, code::SIDECAR_SPAWN_FAILED];
+        for c in reinstallable {
+            assert_eq!(
+                decide_reinstall("main", Some(&page), false, Some(c)),
+                Ok(()),
+                "{c}"
+            );
+        }
+        // 文件丢失 / 拒绝运行以外的码：重装同一个版本修不好，不放行（闭集里每一个别的码都拒）
+        for c in CODES.iter().filter(|c| !reinstallable.contains(c)) {
+            assert_eq!(
+                decide_reinstall("main", Some(&page), false, Some(c)),
+                Err(REINSTALL_DENY_NOT_APPLICABLE),
+                "{c}"
+            );
+        }
+        // 还没有失败事实（不该发生）也不放行
+        assert_eq!(
+            decide_reinstall("main", Some(&page), false, None),
+            Err(REINSTALL_DENY_NOT_APPLICABLE)
+        );
+        // 进过编辑态：即使失败码对也拒（救援门禁在前）
+        assert_eq!(
+            decide_reinstall("main", Some(&page), true, missing),
+            Err(DENY_EDITING_UNKNOWN)
+        );
+        // 不可信调用方：先于一切
+        assert_eq!(
+            decide_reinstall("remote", Some(&page), false, missing),
+            Err(DENY_NOT_TRUSTED)
+        );
+        assert_eq!(
+            decide_reinstall("main", None, false, missing),
+            Err(DENY_NOT_TRUSTED)
+        );
+    }
+
+    #[test]
+    fn spawn_errors_fall_into_the_closed_set_by_platform_error_number() {
+        use std::io::ErrorKind::{NotFound, Other, PermissionDenied};
+        for (raw, kind, windows, want) in [
+            (Some(5), PermissionDenied, true, "access_denied"),
+            (Some(225), Other, true, "virus_detected"),
+            (Some(226), Other, true, "virus_detected"),
+            (Some(1260), Other, true, "blocked_by_policy"),
+            (Some(4551), Other, true, "blocked_by_policy"),
+            (Some(193), Other, true, "bad_executable"),
+            (Some(216), Other, true, "bad_executable"),
+            (Some(32), Other, true, "file_in_use"),
+            (Some(2), NotFound, true, "not_found"),
+            (Some(1455), Other, true, "other"),
+            (Some(13), PermissionDenied, false, "access_denied"),
+            (Some(8), Other, false, "bad_executable"),
+            (Some(26), Other, false, "file_in_use"),
+            // 同一个错误号在另一个平台上不是同一件事：Unix 的 8 不按 Windows 解释，反之亦然
+            (Some(225), Other, false, "other"),
+            (Some(8), Other, true, "other"),
+            (None, Other, true, "other"),
+        ] {
+            let got = spawn_error_kind(raw, kind, windows);
+            assert_eq!(got, want, "{raw:?} {kind:?} windows={windows}");
+            assert!(SPAWN_ERRORS.contains(&got));
+        }
+    }
+
+    #[test]
+    fn only_a_handshake_timeout_restarts_into_safe_start() {
+        for c in CODES {
+            assert_eq!(safe_start_applies(c), *c == "sidecar_timeout", "{c}");
+        }
+        assert!(!safe_start_applies(""));
+        // 与「重新安装」互不相交：安全启动和重装是两种不同的出路
+        assert!(CODES
+            .iter()
+            .all(|c| !(safe_start_applies(c) && reinstall_applies(c))));
+    }
+
+    /// 一段语句里的真实调用（AST，不是子串）：路径调用记「倒数两段」（`safe_start::arm`），方法调用记方法名。
+    #[derive(Default)]
+    struct Calls {
+        paths: Vec<String>,
+        methods: Vec<String>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Calls {
+        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(p) = &*c.func {
+                let segs: Vec<String> = p
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
+                let n = segs.len();
+                self.paths.push(segs[n.saturating_sub(2)..].join("::"));
+            }
+            syn::visit::visit_expr_call(self, c);
+        }
+
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            self.methods.push(m.method.to_string());
+            syn::visit::visit_expr_method_call(self, m);
+        }
+    }
+
+    fn calls_of_expr(e: &syn::Expr) -> Calls {
+        let mut c = Calls::default();
+        syn::visit::Visit::visit_expr(&mut c, e);
+        c
+    }
+
+    fn calls_of_stmt(s: &syn::Stmt) -> Calls {
+        let mut c = Calls::default();
+        syn::visit::Visit::visit_stmt(&mut c, s);
+        c
+    }
+
+    fn calls_of_block(b: &syn::Block) -> Calls {
+        let mut c = Calls::default();
+        syn::visit::Visit::visit_block(&mut c, b);
+        c
+    }
+
+    /// 解析 `rescue_retry` 的函数体语句（AST）；`src` 是 `rescue.rs` 全文。
+    fn retry_stmts(src: &str) -> Vec<syn::Stmt> {
+        let file = syn::parse_file(src).expect("rescue.rs 解析失败");
+        file.items
+            .into_iter()
+            .find_map(|i| match i {
+                syn::Item::Fn(f) if f.sig.ident == "rescue_retry" => Some(f.block.stmts),
+                _ => None,
+            })
+            .expect("找不到 rescue_retry")
+    }
+
+    /// 结构判据：返回违反项（空 = 通过）。
+    /// 恰好一处 `safe_start::arm(..)` 真实调用，且在顶层 `if safe_start_applies(..)` 的 then 分支里；
+    /// 顶层语句顺序上在 `retrying.swap` 幂等闸之后、`shutdown_sidecar` 与 `.restart()` 之前。
+    fn retry_arm_violations(src: &str) -> Vec<String> {
+        let stmts = retry_stmts(src);
+        let mut bad = Vec::new();
+        let total: usize = stmts
+            .iter()
+            .map(|s| {
+                calls_of_stmt(s)
+                    .paths
+                    .iter()
+                    .filter(|p| *p == "safe_start::arm")
+                    .count()
+            })
+            .sum();
+        if total != 1 {
+            bad.push(format!("safe_start::arm 调用应恰好 1 处，实际 {total}"));
+        }
+        let idx = |f: &dyn Fn(&Calls) -> bool| stmts.iter().position(|s| f(&calls_of_stmt(s)));
+        let swap = idx(&|c| c.methods.iter().any(|m| m == "swap"));
+        let shutdown = idx(&|c| c.methods.iter().any(|m| m == "shutdown_sidecar"));
+        let restart = idx(&|c| c.methods.iter().any(|m| m == "restart"));
+        let arm = idx(&|c| c.paths.iter().any(|p| p == "safe_start::arm"));
+        match (swap, arm, shutdown, restart) {
+            (Some(w), Some(a), Some(d), Some(r)) => {
+                if w >= a {
+                    bad.push("arm 必须在 retrying.swap 幂等闸之后".into());
+                }
+                if !(a < d && a < r) {
+                    bad.push("arm 必须在 shutdown_sidecar 与 restart 之前".into());
+                }
+                match &stmts[a] {
+                    syn::Stmt::Expr(syn::Expr::If(i), _) => {
+                        if !calls_of_expr(&i.cond)
+                            .paths
+                            .iter()
+                            .any(|p| p.ends_with("safe_start_applies"))
+                        {
+                            bad.push("arm 外层 if 的条件必须调用 safe_start_applies".into());
+                        }
+                        let in_then = calls_of_block(&i.then_branch)
+                            .paths
+                            .iter()
+                            .any(|p| p == "safe_start::arm");
+                        let in_else = i.else_branch.as_ref().is_some_and(|(_, e)| {
+                            calls_of_expr(e)
+                                .paths
+                                .iter()
+                                .any(|p| p == "safe_start::arm")
+                        });
+                        if !in_then || in_else {
+                            bad.push("arm 必须只在 if 的 then 分支里".into());
+                        }
+                    }
+                    _ => bad.push("arm 必须直接位于顶层 `if safe_start_applies(..)` 里".into()),
+                }
+            }
+            other => bad.push(format!(
+                "找不到 swap/arm/shutdown_sidecar/restart 之一：{other:?}"
+            )),
+        }
+        bad
+    }
+
+    #[test]
+    fn the_retry_command_arms_the_safe_start_marker_exactly_once_before_restarting() {
+        let bad = retry_arm_violations(include_str!("rescue.rs"));
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    #[test]
+    fn the_retry_arm_check_rejects_commented_unguarded_and_misordered_variants() {
+        let good = "async fn rescue_retry() { if s.retrying.swap(true, O) { return Ok(()); } \
+            if s.failure().is_some_and(|f| safe_start_applies(f.code)) { crate::sidecar::safe_start::arm(m, 1); } \
+            let _ = spawn(move || { w.shutdown_sidecar(); }).await; app.restart() }";
+        assert!(retry_arm_violations(good).is_empty());
+        let variants = [
+            good.replace("crate::sidecar::safe_start::arm(m, 1);", "/* safe_start::arm(m, 1); */"),
+            good.replace("crate::sidecar::safe_start::arm(m, 1);", "let _ = \"safe_start::arm(\";"),
+            good.replace("if s.failure().is_some_and(|f| safe_start_applies(f.code))", "if true"),
+            good.replace(
+                "if s.failure().is_some_and(|f| safe_start_applies(f.code)) { crate::sidecar::safe_start::arm(m, 1); }",
+                "crate::sidecar::safe_start::arm(m, 1);",
+            ),
+            good.replace("{ crate::sidecar::safe_start::arm(m, 1); }", "{ } else { crate::sidecar::safe_start::arm(m, 1); }"),
+            good.replace("app.restart() }", "crate::sidecar::safe_start::arm(m, 1); app.restart() }"),
+            good.replace("crate::sidecar::safe_start::arm(m, 1); }", "crate::sidecar::safe_start::arm(m, 1); crate::sidecar::safe_start::arm(m, 2); }"),
+        ];
+        for (i, v) in variants.iter().enumerate() {
+            assert!(!retry_arm_violations(v).is_empty(), "变体 {i} 应被拒绝");
+        }
+        // arm 挪到 restart 之后
+        let after = "async fn rescue_retry() { if s.retrying.swap(true, O) { return Ok(()); } \
+            let _ = spawn(move || { w.shutdown_sidecar(); }).await; \
+            if safe_start_applies(c) { safe_start::arm(m, 1); } app.restart() }";
+        assert!(!retry_arm_violations(after).is_empty());
+    }
+
+    #[test]
     fn the_entered_flag_only_ever_goes_one_way() {
         let s = RescueState::default();
         assert!(!s.entered());
@@ -472,6 +851,9 @@ mod tests {
             stage: "handshake".into(),
             code: "sidecar_timeout".into(),
             exit_code: None,
+            install_files: None,
+            spawn_error: None,
+            startup_phase: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }));
         s.set_failure(FailureInfo::new("launch", "sidecar_spawn_failed"));
@@ -498,11 +880,12 @@ mod tests {
     }
 
     // ---- 结构：命令三处同步 + 每条命令先过闸 + 远程窗口拿不到 ----
-    const RESCUE_COMMANDS: [&str; 7] = [
+    const RESCUE_COMMANDS: [&str; 8] = [
         "rescue_status",
         "rescue_retry",
         "rescue_update_check",
         "rescue_update_install",
+        "rescue_reinstall",
         "rescue_diag_preview",
         "rescue_diag_send",
         "rescue_diag_save",
@@ -530,8 +913,14 @@ mod tests {
                 assert!(body.contains("trusted_page("), "{name}");
                 continue;
             }
+            // 重新安装多一道失败码判据（`gate_reinstall` = `gate` 的超集）
+            let gate_call = if name == "rescue_reinstall" {
+                "gate_reinstall(&app, &window)"
+            } else {
+                "gate(&app, &window)"
+            };
             let g = body
-                .find("gate(&app, &window)")
+                .find(gate_call)
                 .unwrap_or_else(|| panic!("{name} 没有先过 gate"));
             for side_effect in [
                 "shutdown_sidecar",
@@ -539,6 +928,7 @@ mod tests {
                 "restart()",
                 "crate::update_check(",
                 "crate::update_install(",
+                "crate::update_reinstall(",
                 "ensure_prepared(",
                 "shell_report::send(",
                 "blocking_save_file",

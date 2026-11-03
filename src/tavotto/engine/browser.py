@@ -101,7 +101,15 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not figcapture.savefig_targets_path(fname):
         if _ACTIVE is not None:
             _ACTIVE.passthrough_figures.add(id(self))
-        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
+            if figcapture.is_pdf_pages(fname):
+                # 写进 PdfPages 的一页：记成那份 PDF 路径的一次 occurrence（与 worker 同一处语义：写之前建、补 intercepted）
+                observation = _ACTIVE.savefig_observations.record(self, fname, "", None)
+                _ACTIVE.savefig_observations.complete(observation, "intercepted")
+        result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        # 写进 PdfPages 的一页：真写成功之后才记（与 worker 同语义）
+        if _ACTIVE is not None and figcapture.is_pdf_pages(fname):
+            _ACTIVE.pdf_pages.note(fname, self)
+        return result
     stem = figcapture.savefig_stem(fname)
     call = figcapture.savefig_call(fname, kwargs) if stem else None
     if _ACTIVE is not None:
@@ -119,14 +127,21 @@ def _patched_savefig(self, fname, *args, **kwargs):
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
         _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
-        if _ACTIVE is not None and figcapture.record_savefig_call(
-            _ACTIVE.savefig_calls,
-            _ACTIVE.capture,
-            stem,
-            self,
-            call,
-        ):
-            _ACTIVE.savefig_extras.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
+        if _ACTIVE is not None:
+            figcapture.note_savefig_writer(
+                _ACTIVE.savefig_writers,
+                _ACTIVE.capture,
+                _ACTIVE.capture_source,
+                _ACTIVE.savefig_calls,
+                _ACTIVE.savefig_extras,
+                stem,
+                self,
+                figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+                call,
+                kwargs.get("bbox_extra_artists"),
+                verify=figcapture.savefig_verifier(_REAL_SAVEFIG, self, fname, args, kwargs),
+            )
+        figcapture.mark_saved(self)
     return None
 
 
@@ -207,9 +222,13 @@ class BrowserSession:
         self.workspace = workspace
         self.capture: dict[str, object] = {}  # stem → Figure（脚本产出顺序）
         self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
+        #: stem → {files: 目标文件键 → 最近写它的 Figure 弱引用, log: 影子日志}（`figcapture.note_savefig_writer`）
+        self.savefig_writers: dict[str, dict] = {}
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}
         self.passthrough_figures: set[int] = set()
+        #: 写进 `PdfPages` 的 Figure 账（与 worker 的 `_PDF_PAGES` 同一个类；一个会话只跑一个文件，不必重建）
+        self.pdf_pages = figcapture.PdfPagesLedger()
         self.savefig_observations = figcapture.SavefigObservations(
             execution_root=workspace, metadata=_SAVEFIG_METADATA
         )
@@ -300,6 +319,17 @@ class BrowserSession:
         # 实现——两边各写一份的话，同一个脚本会在两个入口产出不同的 stem，
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
+        figcapture.adopt_displaced_writers(
+            self.savefig_writers,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+        )
+        figcapture.note_modified_after_save(self.capture, self.capture_source)
+        # 与 worker 同一个位置：写进 PdfPages 的图先于 pyplot 兜底认领（浏览器同样传账——同一份脚本两个入口一个答案；
+        # 总数仍受下面的 MAX_FIGURES 截断，如实进 truncated_figures）
+        figcapture.adopt_pdf_pages(self.capture, self.capture_source, self.pdf_pages, base)
         fallback, dropped = figcapture.collect_pyplot_figures(
             self.capture, base, plt, limit=MAX_FIGURES
         )
@@ -350,6 +380,12 @@ class BrowserSession:
             "log": log.text(),
             "descriptors": self._descriptors(source.encode("utf-8")),
             "savefig_observations": self.savefig_observations.report(),
+            # 写进多页 PDF 的图（与 worker 同一份摘要；没有时不出现）
+            **(
+                {"pdf_pages": pages}
+                if (pages := self.pdf_pages.summary(self.savefig_observations))
+                else {}
+            ),
             "truncated_figures": truncated,
             "script": self.script_name,
             "source_sha256": status.get("sha256", ""),
@@ -556,7 +592,7 @@ class BrowserSession:
         `preview_hybrid.save_preview_svg`——抄一份过来的代价是同一个脚本在两个
         入口里预览表示法不一样。
         """
-        man = manifest_mod.build_manifest(state, stem)
+        manifest_mod.prepare_preview(state)
         # 先按原样准备；预览结束、临时 rasterize 还原后，按最终 SVG 的坐标重测。
         # 与桌面同一份 capture_preview_manifest，不在临时表示法里读语义。
         buf = io.BytesIO()

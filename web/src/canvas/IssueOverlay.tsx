@@ -27,7 +27,8 @@ import { PIN_COLORS, tokenVar } from './issuePinColors'
  *   等级色小圆 + 项数；点它 = `openProblemAt`（定位 + 问题面板点开它所在的那一支、落游标）——
  *   与左栏样式面板直达走同一个入口，不另写第二套「跳到问题」。
  *
- * 定位之后那一下闪（`issueHighlight`）仍由 `OverlaySvg` 画（token 关键帧 `animate-attention`）。
+ * 定位高亮框（`issueHighlight`）仍由 `OverlaySvg` 挂；问题带 gid 时框图内那个元素，画法在这里
+ * （`IssueElementHighlight`，与悬停轮廓共用 `useElementRect`）。动效开着时它只当舞台灯的光圈锚点。
  */
 export function IssueOverlay({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTransform }) {
   const hover = useUiStore((s) => s.issueHover)
@@ -83,29 +84,58 @@ function HoverRect({
  * 解不出来（manifest 没就位、gid 不在里面、是 `figure` 或已隐藏）退回整张图的轮廓（Codex #832）。
  */
 function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: ViewTransform }) {
+  const rect = useElementRect(panel, gid, t, 2)
+  return rect ? <HoverRect id={panel.id} {...rect} /> : <HoverRect id={panel.id} {...boxOf(panel, t, 2)} />
+}
+
+/**
+ * 图内元素在屏幕上的框（含面板内容的显示变换）；解不出来回 null，调用方退回整张图。
+ * 悬停轮廓与定位高亮共用这一份换算——两处各算一遍，下一次改换算时只会改到一处。
+ */
+function useElementRect(panel: PanelObject, gid: string, t: ViewTransform, pad: number) {
   const manifest = useDisplayedExactManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === gid)
-  if (!manifest || !el || el.gid === 'figure' || isElementHidden(el)) {
-    return <HoverRect id={panel.id} {...boxOf(panel, t, 2)} />
-  }
+  if (!manifest || !el || el.gid === 'figure' || isElementHidden(el)) return null
   const target = geomTarget(manifest, el)
   const full = panelFullRect(panel)
   const [bx, by, bw, bh] = target.bbox
-  const pad = 2
   const x = mmToViewX(full.x + bx * full.w, t)
   const y = mmToViewY(full.y + by * full.h, t)
   const pb = box(panel, t)
+  return {
+    gid: target.gid,
+    x: x - pad,
+    y: y - pad,
+    width: mmToPx(bw * full.w, t) + 2 * pad,
+    height: mmToPx(bh * full.h, t) + 2 * pad,
+    // 与面板内容同一个显示变换（`PanelView` 的 CSS transform 同出 `lib/panelTransform`）：先翻转、再旋转，
+    // 都绕包围盒中心——只转不翻的话，水平 / 垂直翻转过的图上轮廓落在镜像位置（#832 评审）
+    transform: panelTransformSvg(panelContentTransform(panel), pb.x + pb.w / 2, pb.y + pb.h / 2),
+  }
+}
+
+/**
+ * 定位高亮框落在**图内元素**上的那一种：框的是那个元素，不是整张图（`OverlaySvg` 只在问题带 gid 时
+ * 挂它）。它是舞台灯（`IssueSpotlight`）的光圈锚点：动效开着时不画出来，光圈读它的屏幕外接框；
+ * reduced motion 下没有舞台灯，它以 sel 虚线 + 淡底静静显示。解不出元素框时退回整张图。
+ */
+export function IssueElementHighlight({ panel, gid, t }: { panel: PanelObject; gid: string; t: ViewTransform }) {
+  const rect = useElementRect(panel, gid, t, 3)
+  const { gid: drawn, ...attrs } = rect ?? { gid: undefined, ...boxOf(panel, t, 3) }
   return (
-    <HoverRect
-      id={panel.id}
-      gid={target.gid}
-      x={x - pad}
-      y={y - pad}
-      width={mmToPx(bw * full.w, t) + 2 * pad}
-      height={mmToPx(bh * full.h, t) + 2 * pad}
-      // 与面板内容同一个显示变换（`PanelView` 的 CSS transform 同出 `lib/panelTransform`）：先翻转、再旋转，
-      // 都绕包围盒中心——只转不翻的话，水平 / 垂直翻转过的图上轮廓落在镜像位置（#832 评审）
-      transform={panelTransformSvg(panelContentTransform(panel), pb.x + pb.w / 2, pb.y + pb.h / 2)}
+    <rect
+      data-issue-highlight={panel.id}
+      data-issue-highlight-gid={drawn}
+      {...attrs}
+      rx={2}
+      fill="var(--color-sel)"
+      fillOpacity={0.12}
+      stroke="var(--color-sel)"
+      strokeWidth={2}
+      style={{ strokeDasharray: 'var(--sel-dash)' }}
+      pointerEvents="none"
+      // 动效开着时它只当舞台灯的光圈锚点、不画出来（用户：不要突兀的粗蓝框）；reduced motion 下没有舞台灯，它照旧亮
+      className="motion-safe:invisible"
     />
   )
 }

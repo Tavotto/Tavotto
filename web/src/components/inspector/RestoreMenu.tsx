@@ -9,6 +9,7 @@ import { clearOverrides, resetOverrides } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
+import { isAdoptedPanel } from '@/lib/artifactValidation'
 
 const el = (key: string, values?: Record<string, unknown>) =>
   translate(`element.${key}`, { ns: 'inspector', ...(values ?? {}) })
@@ -19,7 +20,7 @@ const el = (key: string, values?: Record<string, unknown>) =>
  * 徽标回答「这个对象被 Tavotto 改了几项」，↺ 回答「怎么撤回」——同一个问题的两半，
  * 就该是同一个东西，不另起一行、不另加一颗钮（2026-09-12 用户对首版「脚本行」的
  * 回退意见：那一行把脚本名、「脚本未改动」、↺、? 摆成一整行，占地且啰嗦）。
- * 形态是身份头路径行右端的状态胶囊（与「已锁定」「n 个问题」同一副）：20 高、全圆角、hover 加深。
+ * 形态是身份头路径行右端的状态胶囊（与「已锁定」同一副）：20 高、全圆角、hover 加深。
  *
  * 菜单两项各说各的对象与数量（审计 T32）：「恢复此元素 · n 项」只在选中了元素且它
  * 自己有修改时出现；「恢复整张图 · m 项」永远在。数字来自同一份 `overrideCounts`，
@@ -37,7 +38,7 @@ export function RestoreMenu({
   count: number
 }) {
   useTranslation('inspector')
-  if (count <= 0 && !Object.hasOwn(panel, 'artifactValidation')) return null
+  if (count <= 0 && !isAdoptedPanel(panel)) return null
   const counts = overrideCounts(panel.overrides, gid)
 
   return (

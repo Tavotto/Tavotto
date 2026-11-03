@@ -116,6 +116,8 @@ export interface PreviewSession {
   cancelled: boolean
   /** 已经收尾（提交完成或已取消）；留着只是为了让 reattach 认领 */
   settled: boolean
+  /** 精确几何起手的单元素平移，用于识别同步期间继续拖的是同一对象。 */
+  move: { gid: string; role: string; dragProp: string; identity: unknown } | null
   timing: PreviewTiming
 }
 
@@ -182,6 +184,7 @@ export function beginPreview(opts: BeginOptions): number {
     awaitKey: null,
     cancelled: false,
     settled: false,
+    move: null,
     timing: newTiming(opts.panelId),
   }
   recordDiagnosticEvent({
@@ -279,6 +282,10 @@ export function commitPreview(patches: PreviewPatch[], awaitKey: string | null):
 /** 当前 session（只读，测试与调试用） */
 export function previewSession(): Readonly<PreviewSession> | null {
   return session
+}
+
+export function markPreviewMove(move: NonNullable<PreviewSession['move']>): void {
+  if (session && !session.settled) session.move = move
 }
 
 /** 某个面板当前挂着的预览位移（覆盖层跟随用） */
@@ -447,6 +454,77 @@ const scheduleRaf = (fn: () => void): number =>
 const cancelRaf = (id: number): void => {
   if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id)
   else clearTimeout(id as unknown as ReturnType<typeof setTimeout>)
+}
+
+/** 同步中排队的相对位移，只属于预览平面，不能用作几何写入依据。 */
+export interface QueuedTranslation {
+  panelId: string
+  gid: string
+  node: Element | null
+  base: string | null
+  committedBase: string | null
+  lastApplied: string | null
+  delta: [number, number]
+  frame: number | null
+}
+
+export function queuedTranslation(panelId: string, gid: string): QueuedTranslation {
+  return { panelId, gid, node: null, base: null, committedBase: null, lastApplied: null, delta: [0, 0], frame: null }
+}
+
+function restoreTransform(node: Element, base: string | null) {
+  if (base == null) node.removeAttribute('transform')
+  else node.setAttribute('transform', base)
+}
+
+export function flushQueuedTranslation(q: QueuedTranslation): void {
+  if (q.frame != null) cancelRaf(q.frame)
+  q.frame = null
+  const svg = findPanelSvg(q.panelId)
+  const node = findGidNode(svg, q.gid)
+  if (!node || !svg) return
+  if (node !== q.node) {
+    q.node = node
+    q.base = node.getAttribute('transform')
+  }
+  const [w, h] = viewBox(svg)
+  const [dx, dy] = q.delta
+  q.lastApplied = dx || dy ? `translate(${dx * w},${dy * h})${q.base ? ` ${q.base}` : ''}` : q.base
+  restoreTransform(node, q.lastApplied)
+}
+
+export function updateQueuedTranslation(q: QueuedTranslation, delta: [number, number]): void {
+  q.delta = delta
+  if (q.frame == null) q.frame = scheduleRaf(() => flushQueuedTranslation(q))
+}
+
+/** 提交前先移去排队位移，再让普通预览账本采权威 SVG 的 base。 */
+export function prepareQueuedTranslationCommit(q: QueuedTranslation): void {
+  flushQueuedTranslation(q)
+  if (q.node?.isConnected) restoreTransform(q.node, q.base)
+  q.committedBase = q.node?.getAttribute('transform') ?? null
+}
+
+export function captureQueuedTranslationCommit(q: QueuedTranslation): void {
+  q.node = findGidNode(findPanelSvg(q.panelId), q.gid)
+  q.base = q.node?.getAttribute('transform') ?? null
+  q.lastApplied = q.base
+}
+
+export function rebaseQueuedTranslation(q: QueuedTranslation): void {
+  if (q.frame != null) cancelRaf(q.frame)
+  q.frame = null
+  const node = findGidNode(findPanelSvg(q.panelId), q.gid)
+  // 同一 SVG 字符串可以复用 DOM 节点；先去掉已被权威接管的那次预览。
+  if (node && node === q.node) restoreTransform(node, q.committedBase)
+  q.node = null
+}
+
+export function cancelQueuedTranslation(q: QueuedTranslation): void {
+  if (q.frame != null) cancelRaf(q.frame)
+  q.frame = null
+  // 另一条预览/撤销路径可能已经还原了节点，不能用旧 base 再盖回去。
+  if (q.node?.isConnected && q.node.getAttribute('transform') === q.lastApplied) restoreTransform(q.node, q.base)
 }
 
 function schedule(key: string, op: PendingOp): void {

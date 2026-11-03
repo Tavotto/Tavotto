@@ -1,7 +1,8 @@
 // Offline assumptions only: no transport, database, signature or publication API.
 import fs from 'node:fs';import {fileURLToPath} from 'node:url';import {createHash} from 'node:crypto';
 import {canonical} from '../src/core/crypto.ts';import {parseProof} from '../src/core/proof.ts';
-import {waiting} from '../src/ci/wait.ts';import {FREE_BUDGET,qualificationSQL} from '../src/native/budget.ts';
+import {waiting} from '../src/ci/wait.ts';
+import {CONFIRMATION_FIXED_SQL,FREE_BUDGET,NEW_HEAD_PRE_EVALUATE_SQL,newHeadReservedSQL,qualificationSQL} from '../src/native/budget.ts';
 const object=(v,keys)=>v && typeof v==='object' && !Array.isArray(v) && Object.keys(v).sort().join(',')===[...keys].sort().join(',');
 const integer=(v,min=0,max=604800000)=>Number.isSafeInteger(v) && v>=min && v<=max;
 const hash=v=>createHash('sha256').update(canonical(v)).digest('hex');
@@ -25,10 +26,12 @@ export function timingPlan(input){
   if(!object(e,['dispatch_work','dispatch_total','confirmation_work','confirmation_total']) || Object.values(e).some(v=>v!==null && !integer(v,0,100)))throw Error('external_assumptions_invalid');
   if(!object(input.ci,['start_after_event_ms','wait']) || !integer(input.ci.start_after_event_ms))throw Error('ci_assumptions_invalid');
   const wait=waiting({wait:input.ci.wait}),n=proof.contributors.filter(p=>!input.exemption_ids.includes(p.id)).length;
-  // Existing source accounting: automatic new-head work 13+q*N, settlement 4;
-  // independent confirmation 14+q*N plus two reserved withdrawal SQL reads.
-  const q=qualificationSQL({delegatedCountersigningEnabled:input.delegated}),dispatchWork=13+q*n+s.dispatch_work;
-  const dispatchTotal=dispatchWork+4+s.settlement,confirmationWork=16+q*n+s.confirmation_work;
+  // Source accounting comes from budget.ts, the same constants the Worker reserves with.
+  // This model is the single-slot path: automatic publishing with the confirmation slot on.
+  // Dispatch = pre-evaluate SQL + q*N + 1 + reserved; settlement adds four statements.
+  const q=qualificationSQL({delegatedCountersigningEnabled:input.delegated});
+  const dispatchWork=NEW_HEAD_PRE_EVALUATE_SQL+q*n+1+newHeadReservedSQL({automaticPublishingEnabled:true,confirmationSlotEnabled:true})+s.dispatch_work;
+  const dispatchTotal=dispatchWork+4+s.settlement,confirmationWork=CONFIRMATION_FIXED_SQL+q*n+s.confirmation_work;
   const reasons=[],reject=reason=>reasons.push(reason);
   if(n>1)reject('single_contributor_model_exceeded');
   if(dispatchWork>FREE_BUDGET.sqlWork || dispatchTotal>FREE_BUDGET.sql || confirmationWork>FREE_BUDGET.sqlWork)reject('sql_budget_exceeded');

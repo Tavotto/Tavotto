@@ -45,6 +45,7 @@ from tavotto.engine import (
     projectenv,
     taskdiag,
     userenvs,
+    workdir,
 )
 from test_preparation_session_dependencies import (  # noqa: F401 — 同一套夹具与工具，不写第二份
     ALPHA,
@@ -687,6 +688,95 @@ def real_spawn(tmp_path, monkeypatch):
     engine_pool._workers.clear()
 
 
+@pytest.mark.parametrize("boundary", ["watcher", "retirement"])
+@pytest.mark.parametrize("origin", ["detected", "caller"])
+@pytest.mark.parametrize("change", ["record", "generation", "launch_context"])
+def test_acquire_keeps_its_environment_decision_across_lifecycle_waits(
+    real_spawn, monkeypatch, boundary, origin, change
+):
+    """A wait may change shared selection, never this call's validated environment.
+
+    The real constructor and spawn gate consume the pin. Only process creation
+    and the source of the concurrent change are controlled by this fixture.
+    """
+    root, x, y = (real_spawn[k] for k in ("root", "x", "y"))
+    assert projectenv.remember(root, x, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED)
+    pin = engine_pool.EnvironmentDecision(
+        python=x,
+        source=engine_pool.SOURCE_SYSTEM,
+        generation=projectenv.environment_generation(x),
+        launch_context=launcher.context_key(x),
+    )
+    original_context = launcher.context_key
+    changes, decisions = [], []
+
+    def change_while_waiting():
+        changes.append(boundary)
+        assert len(changes) == 1
+        assert projectenv.remember(
+            root, y, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED
+        )
+        if change == "generation":
+            os.utime(x, (1, 1))
+            assert projectenv.environment_generation(x) != pin.generation
+        elif change == "launch_context":
+            monkeypatch.setattr(
+                launcher,
+                "context_key",
+                lambda python: (
+                    "changed-launch-context" if python == x else original_context(python)
+                ),
+            )
+            assert launcher.context_key(x) != pin.launch_context
+
+    def decide(*_):
+        decisions.append(1)
+        assert origin == "detected", "a caller pin must not trigger another environment decision"
+        # If acquire incorrectly decides again after the wait, the other
+        # script's choice is now Y. Checking the actual launch catches it.
+        return (
+            engine_pool.EnvironmentDecision(
+                python=y,
+                source=engine_pool.SOURCE_SYSTEM,
+                generation=projectenv.environment_generation(y),
+            )
+            if changes
+            else pin
+        )
+
+    monkeypatch.setattr(engine_pool, "ENVIRONMENT_DECIDERS", [decide])
+    monkeypatch.setattr(engine_pool, "_pending_retirements", {})
+    monkeypatch.setattr(
+        engine_pool,
+        "COLD_ACQUIRE_OBSERVER",
+        lambda *_: change_while_waiting() if boundary == "watcher" else None,
+    )
+    key = engine_pool._worker_key(root, "fig.py")
+    if boundary == "retirement":
+
+        class Retiring:
+            def force_kill(self):
+                change_while_waiting()
+                return True
+
+        engine_pool._pending_retirements[key] = [Retiring()]
+    kwargs = {"pinned": pin} if origin == "caller" else {}
+    if change == "record":
+        worker, created = engine_pool.acquire("fig.py", root, "__main__", **kwargs)
+        assert created and worker.python == x
+        assert real_spawn["gate_saw"] == [x]
+        assert real_spawn["launched"] == [x]
+    else:
+        with pytest.raises(engine_pool.WorkerError) as caught:
+            engine_pool.acquire("fig.py", root, "__main__", **kwargs)
+        assert caught.value.code == engine_pool.ENVIRONMENT_CHANGED
+        assert real_spawn["launched"] == []
+        assert key not in engine_pool._workers
+    assert changes == [boundary]
+    assert decisions == ([1] if origin == "detected" else [])
+    assert key not in engine_pool._pending_retirements
+
+
 def test_real_new_worker_hands_the_pinned_interpreter_to_the_gate_and_the_constructor(real_spawn):
     """修复前：依赖门与 `EngineWorker` 构造函数各自再解析一遍共享记录，拿到的是 Y——第一个脚本会为 Y 弹依赖授权、
     甚至先起在 Y 上再被拒。修复后：钉下的决定作为参数一路传进门和构造函数。"""
@@ -1254,19 +1344,14 @@ def test_when_the_pending_project_env_cannot_run_the_next_candidate_is_used(
     assert _act(client, report, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
 
-    # 落到下一个候选（项目外的用户环境）：采用了它，同时默认工作目录档变成「在脚本目录里跑」（ADR 0107 §二）——授权档变了
-    # 不就地吸收（那是用户没确认过的写入范围），照旧报过期、让用户重新检查看到新档；重新检查之后一次运行就出图
+    # 落到下一个候选（项目外的用户环境）：采用了它，同时默认工作目录档变成「在脚本目录里跑」（ADR 0107 §二）。
+    # 项目没决定过工作目录，这一变化只是本次自动采用派生出来的默认——就地吸收、接着跑完（2026-10-22 用户裁决），
+    # 不报 grant_changed、不让用户再点一次
     assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(lab)
-    assert final["outcome"]["kind"] == "stale" and final["outcome"]["reason"] == "grant_changed", (
-        final
-    )
-    again = _act(client, final, "recheck")
-    assert again.status_code in (200, 202)
-    fresh = _get(client, report["session_id"])
-    assert "run" in _kinds(fresh)
-    assert _act(client, fresh, "run").status_code == 202
-    done = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
-    assert done["phase"] == "completed", done
+    assert final["phase"] == "completed", final
+    assert final["outcome"]["kind"] != "stale", final
+    assert workdir.decided(proj) is False  # 吸收的是派生授权，没有替用户写下任何设置
+    assert workdir.grant_for(proj)["implied_by"] == "user_interpreter"
 
 
 @needs_worker
@@ -2145,13 +2230,8 @@ def test_pythonpath_candidate_keeps_the_run_action_and_is_adopted_only_after_run
     final = _wait(client, report["session_id"], lambda r: r["phase"] != "running", timeout=60)
     assert marker.exists()
     assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(py), final
-    if final["outcome"]["kind"] == "stale":
-        # 沿用环境采用后的工作目录授权纪律：确认新计划，才在新 cwd 下真正跑脚本。
-        assert final["outcome"]["reason"] == "grant_changed", final
-        assert _act(client, final, "recheck").status_code in (200, 202)
-        fresh = _get(client, report["session_id"])
-        assert _act(client, fresh, "run").status_code == 202
-        final = _wait(client, report["session_id"], lambda r: r["phase"] != "running", timeout=60)
+    # 自动采用带来的派生授权（脚本目录）就地吸收，不再 grant_changed（ADR 0107 §二修订，2026-10-22）
+    assert final["outcome"]["kind"] != "stale", final
     assert final["phase"] == "completed" and final["captured"], final
 
 
@@ -2404,3 +2484,44 @@ def test_a_dangling_pth_does_not_disable_site_cache_invalidation(tmp_path, monke
     assert userenvs._probe(py, ("pth_added_pkg",), **kwargs)["modules_ok"] == {
         "pth_added_pkg": True
     }
+
+
+# ===========================================================================
+# 落选原因（ADR 0079 修订 2026-10-21）：被评估但没选用的候选各有一句稳定码，挂在决定结果上
+# ===========================================================================
+
+
+def test_the_decision_names_why_each_evaluated_candidate_was_not_chosen(rig):
+    shell = rig["cand"]("shell-py", userenvs.SOURCE_LOGIN_SHELL)
+    conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA, "other")
+    rig["cand"]("broken", userenvs.SOURCE_PYENV)
+    rig["satisfying"] |= {shell, conda}
+
+    decision = deprepair.decide_environment_pinned(rig["root"], "fig.py")
+
+    assert decision.adopted["python"] == shell
+    by_source = {r["source"]: r for r in decision.rejected}
+    assert set(by_source) == {userenvs.SOURCE_CONDA, userenvs.SOURCE_PYENV}
+    assert by_source[userenvs.SOURCE_CONDA]["reason"] == userenvs.REJECT_OUTRANKED
+    assert by_source[userenvs.SOURCE_PYENV]["reason"] == userenvs.REJECT_MISSING_IMPORTS
+    assert by_source[userenvs.SOURCE_PYENV]["missing"] == ["alpha"]
+    assert all(
+        set(r) == {"id", "source", "label", "reason", "missing", "import_failed"}
+        for r in decision.rejected
+    )
+    assert all(str(rig["root"].parent) not in repr(r) for r in decision.rejected)
+
+
+def test_nothing_runnable_still_explains_every_candidate(rig):
+    rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
+    decision = deprepair.decide_environment_pinned(rig["root"], "fig.py")
+    assert decision.adopted is None
+    assert [r["reason"] for r in decision.rejected] == [userenvs.REJECT_MISSING_IMPORTS]
+
+
+def test_a_builtin_that_runs_keeps_the_environment_and_evaluates_nothing(rig):
+    rig["runs_now"] = True
+    rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
+    decision = deprepair.decide_environment_pinned(rig["root"], "fig.py")
+    assert decision.adopted is None and decision.rejected == ()
+    assert rig["probed"] == []

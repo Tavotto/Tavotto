@@ -409,7 +409,7 @@ class TestChangeKinds:
         """内容改了：worker 作废 → 一次刷新 → `panel.file_changed`。"""
         figs, ctx, w, calls = self._armed(tmp_path)
         killed: list[tuple[str, str]] = []
-        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: killed.append((s, d)))
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d, **kw: killed.append((s, d)))
 
         (figs / "fig1.py").write_text(CANARY.format(stem="Fig1") + "# edited\n", encoding="utf-8")
         w.poll()
@@ -437,8 +437,8 @@ class TestChangeKinds:
         """
         figs, ctx, w, calls = self._armed(tmp_path)
         killed: list[str] = []
-        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: killed.append(s))
-        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d: killed.append("*"))
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d, **kw: killed.append(s))
+        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d, **kw: killed.append("*"))
 
         _script(figs, "fig_new.py", "FigNew")
         w.poll()
@@ -456,7 +456,7 @@ class TestChangeKinds:
         """
         figs, ctx, w, calls = self._armed(tmp_path)
         killed: list[str] = []
-        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: killed.append(s))
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d, **kw: killed.append(s))
 
         (figs / "fig1.py").unlink()
         w.poll()
@@ -500,8 +500,8 @@ class TestChangeKinds:
 
         whole: list[str] = []
         single: list[str] = []
-        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d: whole.append(d))
-        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: single.append(s))
+        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d, **kw: whole.append(d))
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d, **kw: single.append(s))
 
         (figs / "paper_style.py").write_text("# v2 —— 改了配色\n", encoding="utf-8")
         w.poll()
@@ -574,8 +574,8 @@ class TestChangeKinds:
         用户会以为自己点坏了什么。"""
         figs, ctx, w, calls = self._armed(tmp_path)
         killed: list[str] = []
-        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: killed.append(s))
-        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d: killed.append("*"))
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d, **kw: killed.append(s))
+        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d, **kw: killed.append("*"))
 
         _pdf(figs / "Unrelated.pdf")
         w.poll()
@@ -944,7 +944,7 @@ class TestLifecycle:
             {"version": 1, "scripts": {"fig1.py": {"entry": "main", "stems": ["Fig1"]}}}
         )
         killed: list[tuple[str, str]] = []
-        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: killed.append((s, d)))
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d, **kw: killed.append((s, d)))
         sink, _ = _recording_sink()
         wa = _watcher(ctx_a, sink)
 
@@ -959,7 +959,7 @@ class TestLifecycle:
         ctx_a = _FakeCtx(a, "pj-a")
         ctx_a.registry.load_data({"version": 1, "scripts": {}})
         whole: list[str] = []
-        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d: whole.append(d))
+        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d, **kw: whole.append(d))
         sink, _ = _recording_sink()
         wa = _watcher(ctx_a, sink)
 

@@ -5,19 +5,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { BASE_PX_PER_MM } from '@/lib/units'
-import { emptyProject } from '@/types/document'
+import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { setPageSize } from './actions'
 import { activateCanvas, createCanvasAndActivate } from './canvasSession'
 import { useDocumentStore } from './documentStore'
 import { startPageSizeFit } from './pageFit'
 import { useViewportStore } from './viewportStore'
-import { returnToLayout, useWorkspaceStore } from './workspace'
+import { startWorkspaceModeSync, useWorkspaceStore } from './workspace'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 
 const VIEW = { left: 0, top: 0, width: 800, height: 600 }
 const vp = () => useViewportStore.getState()
 let stop: () => void = () => {}
+let stopMode: () => void = () => {}
+
+const fig = (id: string, x: number, y: number): PanelObject =>
+  ({
+    id,
+    type: 'panel',
+    fileId: `${id}.pdf`,
+    fileKind: 'pdf',
+    nativeW: 20,
+    nativeH: 20,
+    overrides: [],
+    x,
+    y,
+    w: 20,
+    h: 20,
+  }) as PanelObject
+/** 往画布上放一张图（单张 = 单图编辑，第二张 = 多图排版；模式订阅 `startWorkspaceModeSync` 判） */
+const addFig = (f: PanelObject) =>
+  useDocumentStore.getState().commit(literal('加图'), (d) => {
+    d.objects.push(f as CanvasObject)
+  })
 
 /** 适配落点按公式独立算（不借 `fit` 求值：那等于拿被测代码验自己） */
 function expectedFit(w: number, h: number) {
@@ -43,10 +64,12 @@ beforeEach(async () => {
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, fitted: false })
   vp().setViewRect(VIEW)
   stop = startPageSizeFit()
+  stopMode = startWorkspaceModeSync()
 })
 
 afterEach(() => {
   stop()
+  stopMode()
   useWorkspaceStore.setState({ mode: 'layout' })
   vi.unstubAllGlobals()
 })
@@ -83,36 +106,27 @@ describe('startPageSizeFit', () => {
     expect(vp()).toMatchObject({ zoom: 3, panX: -500, panY: -400 })
   })
 
-  it('快速编辑里不按页面取景', () => {
-    useWorkspaceStore.setState({ mode: 'fast_edit' })
+  it('单图编辑里不按页面取景', () => {
+    addFig(fig('p1', 50, 40)) // 一张图 = 单图编辑
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
     setPageSize(300, 200)
     expect(vp()).toMatchObject({ zoom: 3, panX: -500, panY: -400 })
   })
 
-  it('快速编辑里改了页面尺寸：回排版按新页面取景，不还原按旧页面停放的那一片（#706 评审 P2）', () => {
+  it('单图编辑里改了页面尺寸：第二张图进来时按新页面取景「页面 ∪ 图」（#706 评审 P2）', () => {
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
-    useWorkspaceStore.getState().enterFastEdit('p_none')
-    vp().setView({ zoom: 2, panX: 10, panY: 20 }) // 快速编辑那一屏自己的取景
+    addFig(fig('p1', 50, 40)) // 进单图编辑
+    vp().setView({ zoom: 2, panX: 10, panY: 20 }) // 单图编辑那一屏自己的取景
     setPageSize(300, 200)
     expect(vp()).toMatchObject({ zoom: 2, panX: 10, panY: 20 })
-    returnToLayout()
+    addFig(fig('p2', 80, 40)) // 第二张进来 = 多图排版
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
     const want = expectedFit(300, 200)
     expect(vp().zoom).toBeCloseTo(want.zoom)
     expect(vp().panX).toBeCloseTo(want.panX)
     expect(vp().panY).toBeCloseTo(want.panY)
     expect(vp().fitted).toBe(true)
-  })
-
-  it('快速编辑里没改页面尺寸：回排版原样还原进来之前那一片', () => {
-    vp().setView({ zoom: 3, panX: -500, panY: -400 })
-    useWorkspaceStore.getState().enterFastEdit('p_none')
-    vp().setView({ zoom: 2, panX: 10, panY: 20 })
-    useDocumentStore.getState().commit(literal('bg'), (d) => {
-      d.page.bg = '#eeeeee'
-    })
-    returnToLayout()
-    expect(vp()).toMatchObject({ zoom: 3, panX: -500, panY: -400 })
   })
 
   it('切回一张手动取过景的画布：原样还原，订阅不插手', () => {

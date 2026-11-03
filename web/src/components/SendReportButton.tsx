@@ -13,9 +13,12 @@ import { Button, type ButtonProps } from './ui/Button'
 export function SendReportButton({
   variant = 'secondary',
   size = 'sm',
+  label,
 }: {
   variant?: ButtonProps['variant']
   size?: ButtonProps['size']
+  /** 覆盖按钮文案（反馈卡的主按钮只说「发送」）；缺省是设置页同款「发送问题反馈」 */
+  label?: string
 }) {
   useTranslation('dialogs')
   const enabled = useDiagSendStore((s) => s.capability !== null)
@@ -27,7 +30,7 @@ export function SendReportButton({
       data-send-report
       onClick={() => useDiagSendStore.getState().setOpen(true)}
     >
-      {translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' })}
+      {label ?? translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' })}
     </Button>
   )
 }

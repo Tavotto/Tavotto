@@ -1,0 +1,20 @@
+[
+  {
+    "name": "v2 upgrade default-off caller guard",
+    "locations": 1,
+    "exit": 1,
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade CLI has no execution target",
+    "locations": 1,
+    "exit": 1,
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade plan never enables capability",
+    "locations": 1,
+    "exit": 1,
+    "assertionError": true
+  }
+]

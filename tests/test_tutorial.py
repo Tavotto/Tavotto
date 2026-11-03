@@ -327,6 +327,106 @@ def test_reset_restores_pristine_copy_and_leaves_no_leftovers(data_dir):
     assert leftovers == [], leftovers
 
 
+def test_copy_status_lists_only_user_saved_layouts(data_dir, client):
+    """`copy.layouts` = 重置会一并删掉的、用户另存的画布：不含教程画布本身与 `_styles`。"""
+    assert tutorial.copy_status()["layouts"] == []  # 副本不存在
+    first = tutorial.ensure_tutorial_copy()
+    own = tutorial.tutorial_metadata()["document_name"]
+    assert (first.path / "tavottofile" / f"{own}.json").is_file()  # 教程画布本身在
+    assert tutorial.copy_status()["layouts"] == []  # 刚复制出来：没有另存
+    (first.path / "tavottofile" / "MyDraft.json").write_text("{}", encoding="utf-8")
+    (first.path / "tavottofile" / "_styles.json").write_text("{}", encoding="utf-8")
+    (first.path / "canvases").mkdir()
+    (first.path / "canvases" / "OldCanvas.json").write_text("{}", encoding="utf-8")
+    (first.path / "canvases" / "MyDraft.json").write_text("{}", encoding="utf-8")  # 重名只算一次
+    assert tutorial.copy_status()["layouts"] == ["MyDraft", "OldCanvas"]
+    # 数据目录 layouts/ 不在副本里，重置不删它，不列
+    (data_dir / "layouts").mkdir(exist_ok=True)
+    (data_dir / "layouts" / "Elsewhere.json").write_text("{}", encoding="utf-8")
+    assert client.get("/api/tutorial").get_json()["copy"]["layouts"] == ["MyDraft", "OldCanvas"]
+    tutorial.ensure_tutorial_copy(reset=True)
+    assert tutorial.copy_status()["layouts"] == []
+
+
+def test_copy_status_layouts_is_none_when_the_inventory_is_incomplete(
+    data_dir, client, monkeypatch
+):
+    """遍历 / stat 出错不能少列一项冒充完整清单：回 None（「不知道」），前端据此中止重置。
+
+    不能靠 `Path.glob()` / `Path.is_file()` 抛错——它们会把权限 / I/O 错误吞成「没有」/ False
+    （Python 3.14 起 glob 也是），所以这里打桩的是实现真正依赖的 `os.stat` / `os.scandir`。
+    """
+    first = tutorial.ensure_tutorial_copy()
+    store = engine_config.project_store_dir(first.path)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "MyDraft.json").write_text("{}", encoding="utf-8")
+    (store / "Locked.json").write_text("{}", encoding="utf-8")
+    meta = tutorial.tutorial_metadata()
+    assert tutorial.saved_layouts(first.path, meta) == ["Locked", "MyDraft"]
+
+    real_stat = os.stat
+
+    def flaky_stat(path, *a, **kw):
+        if os.fspath(path).endswith("Locked.json"):
+            raise PermissionError("acl")
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", flaky_stat)
+        assert tutorial.saved_layouts(first.path, meta) is None
+        assert client.get("/api/tutorial").get_json()["copy"]["layouts"] is None
+
+    real_scandir = os.scandir
+
+    def flaky_scandir(path, *a, **kw):
+        if os.fspath(path) == os.fspath(store):
+            raise PermissionError("acl")
+        return real_scandir(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "scandir", flaky_scandir)
+        assert tutorial.saved_layouts(first.path, meta) is None
+
+    # 条目在列举与 stat 之间被删掉：不算清点不全
+    def vanished_stat(path, *a, **kw):
+        if os.fspath(path).endswith("Locked.json"):
+            raise FileNotFoundError(path)
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", vanished_stat)
+        assert tutorial.saved_layouts(first.path, meta) == ["MyDraft"]
+
+
+def test_copy_status_unreadable_copy_dir_is_unknown_not_missing(data_dir, client, monkeypatch):
+    """副本目录本身 stat 出错（ACL / I/O）不能报成「不存在」：报「在、清点不了」，前端据此中止重置。"""
+    first = tutorial.ensure_tutorial_copy()
+    real_stat = os.stat
+
+    def flaky_stat(path, *a, **kw):
+        if os.fspath(path) == os.fspath(first.path):
+            raise PermissionError("acl")
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", flaky_stat)
+        st = tutorial.copy_status()
+        assert st["exists"] is True
+        assert st["layouts"] is None
+        assert client.get("/api/tutorial").get_json()["copy"]["layouts"] is None
+
+    def missing_stat(path, *a, **kw):
+        if os.fspath(path) == os.fspath(first.path):
+            raise FileNotFoundError(path)
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", missing_stat)
+        st = tutorial.copy_status()
+        assert st["exists"] is False
+        assert st["layouts"] == []
+
+
 def test_stale_leftovers_from_an_interrupted_reset_are_swept(data_dir):
     first = tutorial.ensure_tutorial_copy()
     stale_old = first.path.parent / f".{tutorial.PROJECT_DIRNAME}-deadbeef.old"
@@ -481,6 +581,7 @@ def test_get_reports_availability_without_leaking_package_paths(client):
         "complete": False,
         "missing": sorted(tutorial.resource_files()),
         "registry_ok": False,
+        "layouts": [],
         "version": body["tutorial_version"],
         "resource_digest": body["copy"]["resource_digest"],
     }
@@ -884,6 +985,49 @@ def test_reset_keeps_tutorial_as_default_only_if_it_was(client, tmp_path):
     client.post("/api/tutorial/open", json={"default": True})
     tut = client.post("/api/tutorial/reset", json={}).get_json()
     assert client.get("/api/project").get_json()["id"] == tut["project"]["id"]
+
+
+def test_reset_with_expected_layouts_is_checked_under_the_lock(client, data_dir, monkeypatch):
+    """确认框看到的清单随重置请求发来：与持锁时的现状一致才换副本；确认之后别处又另存了一份、
+    或清点不了，一律 409 `tutorial_layouts_changed` 且副本原样（新画布还在）。"""
+    tut = client.post("/api/tutorial/open", json={}).get_json()
+    tpath = Path(tut["project"]["figures_dir"])
+    store = engine_config.project_store_dir(tpath)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "MyDraft.json").write_text("{}", encoding="utf-8")
+    seen = client.get("/api/tutorial").get_json()["copy"]["layouts"]
+    assert seen == ["MyDraft"]
+    # 确认之后、重置之前：另一个标签页 / 进程又另存了一份
+    (store / "Late.json").write_text("{}", encoding="utf-8")
+    resp = client.post("/api/tutorial/reset", json={"expected_layouts": seen})
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "tutorial_layouts_changed"
+    assert (store / "Late.json").is_file() and (store / "MyDraft.json").is_file()
+    proj = client.get("/api/project").get_json()  # 项目重新打开还给用户
+    assert proj["open"] and proj["id"] == tut["project"]["id"]
+    # 清点不了（None）也拒绝，同样不动副本
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial, "saved_layouts", lambda dest, meta: None)
+        resp = client.post("/api/tutorial/reset", json={"expected_layouts": ["Late", "MyDraft"]})
+    assert resp.status_code == 409 and resp.get_json()["code"] == "tutorial_layouts_changed"
+    assert (store / "Late.json").is_file()
+    # 清单与现状一致（顺序无关）：重置成功，另存排版随副本一起没了
+    resp = client.post("/api/tutorial/reset", json={"expected_layouts": ["MyDraft", "Late"]})
+    assert resp.status_code == 200 and resp.get_json()["reset"] is True
+    assert tutorial.copy_status()["layouts"] == []
+
+
+def test_reset_without_expected_layouts_keeps_legacy_behaviour(client):
+    """没带清单的是老前端（没有清单确认这一步）：照旧重置，拒绝只会让它永远重置不了。"""
+    tut = client.post("/api/tutorial/open", json={}).get_json()
+    tpath = Path(tut["project"]["figures_dir"])
+    store = engine_config.project_store_dir(tpath)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "MyDraft.json").write_text("{}", encoding="utf-8")
+    assert client.post("/api/tutorial/reset", json={}).status_code == 200
+    assert tutorial.copy_status()["layouts"] == []
+    bad = client.post("/api/tutorial/reset", json={"expected_layouts": "x"})
+    assert bad.status_code == 400
 
 
 def test_reset_when_locked_reopens_the_old_copy(client, monkeypatch):

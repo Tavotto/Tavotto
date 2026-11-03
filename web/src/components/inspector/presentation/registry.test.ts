@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditableField } from '@/lib/api'
+import { ROLE_PROFILES } from './roleProfiles'
 import { controlKindOf, fieldVisible, isPercentField, presentFields } from './registry'
 
 const f = (prop: string, type: EditableField['type'] = 'number', group?: string): EditableField =>
@@ -224,21 +225,45 @@ describe('图内文字的背景 / 描边：开关 + 从属字段（审计 T14）
     },
   )
 
-  it('背景开了铺背景的参数，描边仍收着；反之亦然', () => {
+  it('背景开了铺背景的常用参数，细项（线宽 / 内边距 / 圆角）收进摘要行；描边仍收着；反之亦然', () => {
     expect(primaryProps('title', { bbox_visible: true, stroke_enabled: false })).toEqual([
       'text', 'fontsize', 'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
-      'bbox_linewidth', 'bbox_pad', 'bbox_rounded',
     ])
+    const folds = present('title', { bbox_visible: true, stroke_enabled: false }).folds
+    expect(folds.map((x) => x.spec.id)).toEqual(['bboxDetail'])
+    expect(folds[0].fields.map((x) => x.field.prop)).toEqual(['bbox_linewidth', 'bbox_pad', 'bbox_rounded'])
     expect(moreProps('title', { bbox_visible: true, stroke_enabled: false })).toEqual(['stroke_enabled'])
     expect(moreProps('title', { bbox_visible: false, stroke_enabled: true })).toEqual([
       'stroke_enabled', 'stroke_color', 'stroke_width',
     ])
   })
 
-  it('用户改过的从属字段照旧显示（override 不因折叠而不可发现）', () => {
-    expect(primaryProps('title', { bbox_visible: false, stroke_enabled: false }, ['bbox_pad'])).toEqual([
-      'text', 'fontsize', 'bbox_visible', 'bbox_pad',
+  it('背景关着时没有「背景细项」这一行；用户改过的从属字段照旧显示（进摘要行，不被丢掉）', () => {
+    expect(present('title', { bbox_visible: false, stroke_enabled: false }).folds).toEqual([])
+    const r = present('title', { bbox_visible: false, stroke_enabled: false }, ['bbox_pad'])
+    expect(r.primary.map((x) => x.field.prop)).toEqual(['text', 'fontsize', 'bbox_visible'])
+    expect(r.folds.map((x) => [x.spec.id, x.fields.map((y) => y.field.prop)])).toEqual([
+      ['bboxDetail', ['bbox_pad']],
     ])
+  })
+
+  it('图例条目：「链接」(binding) 紧跟文字样式、排在背景之前；字段集合不变', () => {
+    const fields = [
+      ...textFields(),
+      f('binding', 'enum', 'custom'),
+      f('handle_color', 'color'),
+      f('handle_linestyle'),
+    ]
+    const r = presentFields('legend_text', fields, opts([], { bbox_visible: true, binding: 'custom' }))
+    expect(r.primary.map((x) => x.field.prop)).toEqual([
+      'text', 'fontsize', 'binding', 'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
+      'handle_color', 'handle_linestyle',
+    ])
+    expect(r.folds[0].fields.map((x) => x.field.prop)).toEqual(['bbox_linewidth', 'bbox_pad', 'bbox_rounded'])
+  })
+
+  it.each(['title', 'text', 'axis_label', 'legend_text'])('%s 都有「背景细项」摘要行', (role) => {
+    expect(ROLE_PROFILES[role].folds?.map((x) => x.id)).toEqual(['bboxDetail'])
   })
 
   it('开关的控件形态是 effect（关着画「＋添加」），别的 bool 仍是开关', () => {

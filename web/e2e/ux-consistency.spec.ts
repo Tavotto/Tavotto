@@ -20,7 +20,7 @@ async function openFigure(page: Page, a: RunningApp) {
   await page.goto(a.baseURL)
   // Prompt 09 起，双击素材卡 = 打开这张图（快速编辑工作区），**当场就在图内
   // 编辑态**——不再需要先「加入画布」再点一次「编辑图内元素」。
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
 }
 
@@ -92,7 +92,7 @@ test('流程 A：图标题 + X/Y 轴标题一起改字体 / 字号 / 加粗，�
   await expect(bold).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 })
 
   // --- 字体：选一个新字体 ---
-  await panel.getByRole('combobox', { name: '字体' }).click()
+  await panel.getByRole('combobox', { name: '英文字体' }).click()
   await page.getByRole('option', { name: /无衬线|sans/i }).first().click()
   await page.waitForTimeout(600)
 
@@ -110,7 +110,7 @@ test('流程 A：图标题 + X/Y 轴标题一起改字体 / 字号 / 加粗，�
   }
 
   // --- 撤销：一次点击 = 一条历史 ---
-  const undo = page.getByRole('button', { name: '撤销' })
+  const undo = page.locator('[data-history-action="undo"]')
   const redo = page.getByRole('button', { name: '重做' })
   await undo.click() // 字体
   await undo.click() // 加粗
@@ -201,7 +201,7 @@ test('流程 B：选中子图即可设四边刻度、方向与次刻度，示意
   await page.waitForTimeout(2500)
 
   // --- 撤销 / 重做 ---
-  const undo = page.getByRole('button', { name: '撤销' })
+  const undo = page.locator('[data-history-action="undo"]')
   await undo.click()
   await expect(panel.locator('[data-tick-minor="bottom"]')).toHaveCount(0, { timeout: 15_000 })
   await page.getByRole('button', { name: '重做' }).click()

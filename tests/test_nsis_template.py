@@ -735,3 +735,26 @@ def test_nightly_packaging_does_not_need_a_signing_key():
     desktop = (ROOT / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     assert "TAURI_SIGNING_PRIVATE_KEY" in desktop
     assert "createUpdaterArtifacts" in desktop
+
+
+def test_uninstall_writes_reinstall_marker_only_when_not_updating():
+    """卸载记号（ADR 0136 修订 2026-10-21）：非 /UPDATE 的卸载才写，更新不写。
+
+    记号文件名、目录与后端 `engine/reinstall_marker` / `config_dir()`（Windows：%APPDATA%\\Tavotto）
+    同源；写在 `$UpdateMode <> 1` 守卫里，否则应用内更新也会让用户被当成新手。
+    """
+    from tavotto.engine import reinstall_marker
+
+    target = f'"$APPDATA\\Tavotto\\{reinstall_marker.MARKER_NAME}"'
+    assert target in SECTION_UNINSTALL
+    assert reinstall_marker.MARKER_NAME not in SECTION_INSTALL
+    guard = SECTION_UNINSTALL.index("${If} $UpdateMode <> 1")
+    write = SECTION_UNINSTALL.index(target)
+    end_if = SECTION_UNINSTALL.index("${EndIf}", write)
+    # 写入点前最近的一个 If 就是 $UpdateMode <> 1 守卫，且守卫在写入点之前、与它之间没有别的 EndIf 闭合它
+    assert guard < write
+    assert SECTION_UNINSTALL.rfind("${If}", 0, write) == guard
+    assert "${EndIf}" not in SECTION_UNINSTALL[guard:write].replace("${IfNot} ${Errors}", "")
+    assert end_if > write
+    # 写不出来不许打断卸载
+    assert "Abort" not in SECTION_UNINSTALL[guard:end_if]

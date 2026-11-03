@@ -212,3 +212,14 @@ job 级 timeout 60 → 90 / 删掉 `name:` 行（两条用例红：合同 + ci_b
 - 本机数字（§6.2）不代表 CI：机器被并行会话共用；模型（§4）用的是 CI 自己的两份实测。
 - `retries: 1` 在 CI 上保留：attempt 2 那次 chromium 有 1 flaky（asset-library 多-Figure，第一次 x 重试 ok）——**不靠分片消掉它**，
   它在 `coverage_ledger.json` 的 known_limitations 里继续挂着。
+
+## 10. 增量（2026-10-19）：chromium 再拆两半，两片 → 三片
+
+- **起因**：chromium 一个 project 涨到 292 条，片 1 的 e2e 步 36–49 分钟，合并组里 5 次在 50 分钟被 interrupted。§2 当时否掉了 `--shard`，
+  理由是**跨 project** 时它按 group 顺序等分、不看时长；而 chromium 内部切不存在跨 project 平衡问题，所以这里用 `--shard=1/2`、`--shard=2/2`。
+- **片号**：片 1 = chromium 前半、片 2 = webkit + chromium-en（不变）、新增片 3 = chromium 后半。已登记的 check 名（`windows-exe-smoke (1)` / `(2)`）不消失；
+  required contexts 只有三个 Gate，新增的 `(3)` 不用登记。
+- **估算**（run 39235718807 片 1 的逐条耗时，按 `workers: 1`、分组 == 文件累加）：前半 151 条 / 32 文件 ≈ 23.4 分钟，后半 141 条 / 43 文件 ≈ 20.0 分钟。
+- **自验升级**：`playwright_shard_check.py` 的 `--others` 改为 `|` 隔开的其余每一片，`--web` 模式对本片与其余每一片各 `--list` 一次，判据变为各片两两不交、并集 == 全集，
+  同一 project 的多片必须 `--shard=1/n..n/n` 各一次；离线模式用 `--other-list`（按 `--others` 顺序，每片一份）。旧的两片形状（整 project 的片）仍合法。
+- **已知边界**：`--shard` 按条数等分、不看时长，spec 增删会让两半慢慢偏；偏到某半 e2e 逼近 30 分钟再重估。

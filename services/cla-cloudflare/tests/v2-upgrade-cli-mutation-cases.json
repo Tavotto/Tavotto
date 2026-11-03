@@ -1,0 +1,29 @@
+[
+  {
+    "name": "v2 upgrade default-off caller guard",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(execute!==true || syntheticFixture!==true)return {status:'disabled',offline_only:true,production_authorized:false};",
+    "after": "if(execute!==true && syntheticFixture!==true)return {status:'disabled',offline_only:true,production_authorized:false};",
+    "pattern": "v2 upgrade default API does not inspect a database or enable execution",
+    "testFile": "tests/v2-upgrade-cli.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade CLI has no execution target",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "  if(process.argv.length>3 || process.argv[2]!==undefined && process.argv[2]!=='--plan')deny('usage: node scripts/v2-upgrade-offline.mjs [--plan]; no file target or execution option');",
+    "after": "  // mutation: accepts execution-looking arguments",
+    "pattern": "v2 upgrade CLI refuses execution flags and database path arguments",
+    "testFile": "tests/v2-upgrade-cli.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade plan never enables capability",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "offline_only:true,execution_enabled:false,production_authorized:false,activation_performed:false,",
+    "after": "offline_only:true,execution_enabled:true,production_authorized:false,activation_performed:false,",
+    "pattern": "v2 upgrade CLI only emits a disabled synthetic schema plan and creates no files",
+    "testFile": "tests/v2-upgrade-cli.test.mjs",
+    "assertionError": true
+  }
+]

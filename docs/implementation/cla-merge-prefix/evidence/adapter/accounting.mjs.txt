@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {fixture,networkCalls} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/tests/merge-prefix-fixture.mjs';
+const output=[];
+for(const prefix of [2,3]){
+ const f=await fixture({prefix});
+ try{
+  const before=await f.digest();let assessment,error;
+  try{assessment=await f.assess();}catch(e){error={name:e.name,code:e.code};}
+  f.assertReadOnly();assert.equal(await f.digest(),before);assert.equal(networkCalls(),0);
+  if(prefix===2){assert.equal(assessment.eligible,true);assert.equal(assessment.publication,'not_attempted');assert.deepEqual(f.budget.snapshot(),{sql:6,external:32});}
+  else{assert.equal(error.code,'budget_deferred');assert.equal(f.calls.length,35);}
+  output.push({prefix,outcome:assessment??error,budget:f.budget.snapshot(),calls:f.calls,SQL:f.sqlReads,counts:{installation:f.state.installationReads,token:f.state.tokenReads,metadata:f.state.metadataReads,branch:f.state.branchReads,queueQueries:f.queries.length,userLookups:f.state.userReads,PRReads:[...f.state.prReads],compareReads:[...f.state.compareReads]},databaseUnchanged:true,defaultNetworkCalls:networkCalls(),publicationCalls:f.forbidden.length});
+ }finally{f.close();}
+}
+console.log(JSON.stringify(output,null,2));

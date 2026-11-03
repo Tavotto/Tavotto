@@ -5,15 +5,27 @@ import {validId,validSha} from '../core/policy.ts';
 import {Rejected} from '../core/types.ts';
 import type {LiveService} from './service.ts';
 import {DB_NOW} from './store.ts';
-import {BudgetDeferred,FREE_BUDGET,qualificationSQL} from './budget.ts';
+import {BudgetDeferred,CONFIRMATION_FIXED_SQL,FREE_BUDGET,newHeadReservedSQL,qualificationSQL} from './budget.ts';
 interface HeadRequest {request_key:string;pr:number;head:string;status:string;attempt:string;lease_until:number}
 // A separate scheduled invocation keeps both queues' existing per-invocation budgets intact.
 export const AUTOMATIC_CRON='7-59/15 * * * *';
 export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signature:string,delivery:string,event:string,secret:string):Promise<void> {
   if(s.c.automaticVerificationEnabled!==true)throw new Rejected('automatic_verification_disabled');
-  if(raw.length>262144 || !/^[A-Za-z0-9-]{1,100}$/.test(delivery) || event!=='pull_request' || secret.length<32 || secret.length>256 ||
+  if(raw.length>262144 || !/^[A-Za-z0-9-]{1,100}$/.test(delivery) || !['pull_request','merge_group'].includes(event) || secret.length<32 || secret.length>256 ||
     !await validWebhook(bytes(secret),raw,signature))throw new Rejected('webhook_rejected');
   let data;try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}catch{throw new Rejected('webhook_rejected');}
+  if(event==='merge_group'){
+    const g=data?.merge_group;
+    if(s.c.mergePrefixAssessmentEnabled!==true || data?.action!=='checks_requested' || data?.repository?.id!==s.c.repositoryId || data.repository.full_name!==s.c.repository ||
+      data?.installation?.id!==s.c.installationId || g?.base_ref!=='refs/heads/main' || !validSha(g?.head_sha) || !validSha(g?.base_sha))throw new Rejected('webhook_rejected');
+    await s.store.assertReady();const target={kind:'merge_group' as const,headSha:g.head_sha,baseSha:g.base_sha},key=s.store.targetKey(s.c.repositoryId,target);
+    const hash=await sha256(raw),now=await s.store.databaseNow();
+    await s.store.batch([...s.store.guard(`(EXISTS(SELECT 1 FROM targets WHERE target_key=?) OR (SELECT count(*) FROM (SELECT 1 FROM targets LIMIT 100))<100)
+      AND (EXISTS(SELECT 1 FROM deliveries WHERE id=?) OR (SELECT count(*) FROM (SELECT 1 FROM deliveries LIMIT 1000))<1000)`,key,delivery),
+      s.store.stmt('INSERT OR IGNORE INTO targets VALUES(?,?)',key,canonical(target)),
+      ...s.store.guard('EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND NOT EXISTS(SELECT 1 FROM deliveries WHERE id=? AND (body_sha!=? OR target_key!=?))',key,canonical(target),delivery,hash,key),
+      s.store.stmt('INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)',delivery,hash,key,now)]);return;
+  }
   const pr=data?.pull_request,head=pr?.head?.sha;
   if(!['opened','reopened','synchronize'].includes(data?.action) || data?.repository?.id!==s.c.repositoryId || data.repository.full_name!==s.c.repository ||
     data?.installation?.id!==s.c.installationId || !validId(data?.number) || data.number!==pr?.number || pr?.state!=='open' ||
@@ -36,14 +48,14 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
   // Expired workers require manual recovery. No uncertain operation is automatically replayed.
   await s.store.stmt(`UPDATE head_requests SET status='manual',result='' WHERE status='running' AND lease_until<=${DB_NOW}`).run();
   const result=await s.store.db.batch<HeadRequest>([s.store.stmt(`UPDATE head_requests SET status='running',attempt=?,lease_until=${DB_NOW}+120
-    WHERE request_key=(SELECT request_key FROM head_requests WHERE status='pending' ORDER BY created,request_key LIMIT 1) AND status='pending' RETURNING *`,attempt)]);
+    WHERE request_key=(SELECT request_key FROM head_requests WHERE status='pending' AND (${s.c.automaticPublishingEnabled?s.store.positiveAdmission(s.c.confirmationSlotEnabled===true):'1'}) ORDER BY created,request_key LIMIT 1) AND status='pending' RETURNING *`,attempt)]);
   if(result.some(r=>!r.success))throw new Rejected('transaction_rejected');const job=result[0]?.results[0];if(!job)return 'idle';
   try {
-    const check=await s.evaluate(job.pr,s.c.automaticPublishingEnabled?7:5);
+    const check=await s.evaluate(job.pr,newHeadReservedSQL(s.c));
     if(check.headSha!==job.head)throw new Rejected('automatic_head_changed');
     if(s.c.automaticPublishingEnabled) {
       const exempt=new Set(Object.values(s.c.exemptionIds));
-      if(16+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exempt.has(person.id)).length>FREE_BUDGET.sqlWork)throw new BudgetDeferred('confirmation_capacity');
+      if(CONFIRMATION_FIXED_SQL+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exempt.has(person.id)).length>FREE_BUDGET.sqlWork)throw new BudgetDeferred('confirmation_capacity');
       let issued:string|undefined;
       try {
         const receipt=await s.github.publishNew(check,async()=>{
@@ -75,7 +87,11 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
   }catch {
     // Clear the result on every rejected, uncertain or budget-exhausted evaluation.
     s.store.budget?.settlement();
-    await s.store.stmt("UPDATE head_requests SET status='manual',result='' WHERE request_key=? AND status='running' AND attempt=?",job.request_key,attempt).run();
+    const waiting=s.c.automaticPublishingEnabled?`lease_until>${DB_NOW} AND NOT (${s.store.positiveAdmission(s.c.confirmationSlotEnabled===true)}) AND
+      NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND head_sha=?)`:'0';
+    await s.store.stmt(`UPDATE head_requests SET status=CASE WHEN ${waiting} THEN 'pending' ELSE 'manual' END,result=''
+      WHERE request_key=? AND status='running' AND attempt=?`,
+      ...(s.c.automaticPublishingEnabled?[s.store.targetKey(s.c.repositoryId,{kind:'pr',number:job.pr}),job.head]:[]),job.request_key,attempt).run();
     return 'head_requires_manual_review';
   }
 }

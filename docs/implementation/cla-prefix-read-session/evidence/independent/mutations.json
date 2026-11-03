@@ -1,0 +1,380 @@
+[
+  {
+    "name": "independent session environment exact true",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session switch uses exact environment true$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session switch uses exact environment true",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f7bb2c43933eb135f29cc1be162a64dc44a013ad1246dd5651d850a8246fcb31",
+    "source_after_sha256": "f8bcb4e6f6b74d9fb3afc19102478eaa4d870a2db71618625bb4392ea5a834b1",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-01.log",
+    "detected": true
+  },
+  {
+    "name": "independent session canonical configuration pin",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session callback closing context pin provider$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session callback closing context pin provider",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "82ba89bdd73c302159c06beca9eb1f10ae0421da487b2979e0de18456cfdf04c",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-02.log",
+    "detected": true
+  },
+  {
+    "name": "independent session key material pin",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session callback closing context pin key$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session callback closing context pin key",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "a23a169ab7fc30a52e3d8fbd3a26728804c0f59133818af6bba3389620b64ab4",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-03.log",
+    "detected": true
+  },
+  {
+    "name": "independent session budget identity pin",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session callback closing context pin budget$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session callback closing context pin budget",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "a668e7358f264bea5037839adb063d40870921e3222c55a1ac2348ebfce4b91c",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-04.log",
+    "detected": true
+  },
+  {
+    "name": "independent session closed capability before I/O",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session escaped reader cannot restart after close$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session escaped reader cannot restart after close",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "10fd16c86523447316983c50e7a91a43ced23da958cd8f6d2711eaac0cc4d94e",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-05.log",
+    "detected": true
+  },
+  {
+    "name": "independent session failures are terminal",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session caught semantic failure cannot return success$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session caught semantic failure cannot return success",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "64f9232d1a691400014d5591077f01b624e2d2bd31acb5c14619b0ddb8ac73c8",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-06.log",
+    "detected": true
+  },
+  {
+    "name": "independent session concurrent read is forbidden",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session concurrent identity operations poison whole session$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session concurrent identity operations poison whole session",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "56be760f8f07702e99ee3a985227958f7e102391ac3d9502486e719b6d71f3f9",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-07.log",
+    "detected": true
+  },
+  {
+    "name": "independent session callback cannot finish with pending I/O",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session callback cannot return with an in-flight read$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session callback cannot return with an in-flight read",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "d8298549bd0117b6f7e8a58fbe6947ec8a7e851cf5237e8705939d0027479c14",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-08.log",
+    "detected": true
+  },
+  {
+    "name": "independent session monotonic expiry with stalled wall",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session frozen wall cannot extend monotonic token deadline$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session frozen wall cannot extend monotonic token deadline",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "a09b7fc99d83c97d68656058f31d6c37f527467cb2e31512f4f0ae9e5f9856f6",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-09.log",
+    "detected": true
+  },
+  {
+    "name": "independent session provider actual token expiry",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session expired actual token refuses before second I/O$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session expired actual token refuses before second I/O",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "96ad2598358142c6e371cc3c7d8379637da4cac68412c5da69728157141dd647",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-10.log",
+    "detected": true
+  },
+  {
+    "name": "independent session clock never rolls back",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session observed clock rollback closes wall$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session observed clock rollback closes wall",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "b0e991085100a0a7c2fff21ca9062b22dd9c862e68476c50ff679f78f0b32427",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-11.log",
+    "detected": true
+  },
+  {
+    "name": "independent session monotonic clock never rolls back",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session observed clock rollback closes monotonic$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session observed clock rollback closes monotonic",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "953d67dcdf3fd4ba7064d2d5c4791bbfa0177d2060ce7d3c96c5b0727057ad22",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-12.log",
+    "detected": true
+  },
+  {
+    "name": "independent session mint delay cannot renew lifetime",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session mint transit consumes token monotonic lifetime$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session mint transit consumes token monotonic lifetime",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "cd32c837b0d01e8769d0f3bee3694b21da45ffa7eae7783ef12484639c11eee0",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-13.log",
+    "detected": true
+  },
+  {
+    "name": "independent session expiry rounds down",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session fractional expiry is not rounded upward$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session fractional expiry is not rounded upward",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "35c95fcd2b1536e2b28bddbeb42d005a257d626a72bc5c3986f00550a6ad3960",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-14.log",
+    "detected": true
+  },
+  {
+    "name": "independent session cache hit pins live source",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session source SHA changes on cache hit reject before content fetch$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session source SHA changes on cache hit reject before content fetch",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "3ef8dafbdd62ccc4b6249d5651c84c451822abb113dbb03839d6d405635755cb",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-15.log",
+    "detected": true
+  },
+  {
+    "name": "independent session cached policy never escapes",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session cached policy cannot be changed through first snapshot$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session cached policy cannot be changed through first snapshot",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "9f8a11e2622f5108360f21366cf236e66bd84624eab0138500380c21d97513dc",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-16.log",
+    "detected": true
+  },
+  {
+    "name": "independent session installation pause remains fresh",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session installation pause is still observed snapshot$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session installation pause is still observed snapshot",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "ae4cb296413229fdb63c8d73a7e7f2756dabb852e1a6091199aadfa7906e57ce",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-17.log",
+    "detected": true
+  },
+  {
+    "name": "independent session reuses exactly one narrow token",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session complete prefix measured cost 2$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session complete prefix measured cost 2",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "b8ea774d3ae3b6880ef85c52eb878e0fe23931d1c2e691d95fafcc143a2b9765",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-18.log",
+    "detected": true
+  },
+  {
+    "name": "independent session three validated immutable contents reused",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session complete prefix measured cost 2$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session complete prefix measured cost 2",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "b1a1eb20d0f9ff6e2dda6c3f6c93722b17a09124e878a38c9c27bd75663cf5f9",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-19.log",
+    "detected": true
+  },
+  {
+    "name": "independent session final SQL remains inside lease guard",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session final SQL completion cannot hide time$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session final SQL completion cannot hide time",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "source_after_sha256": "fad5bb6a3e980d8f02643f198a8c066aff63ce48275de08d5f48d12ba50fe203",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-20.log",
+    "detected": true
+  },
+  {
+    "name": "independent session unchanged external budget",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent read session fourth prefix member cannot exceed unchanged35 work cap$",
+      "tests/independent-prefix-read-session.test.mjs"
+    ],
+    "selectedTitle": "independent read session fourth prefix member cannot exceed unchanged35 work cap",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "source_after_sha256": "53163f0775b7352919d70786738c800c2aa273c0c47cae1aa01b848b18608be4",
+    "log": "/tmp/cla-prefix-read-session-independent/mutation-21.log",
+    "detected": true
+  }
+]

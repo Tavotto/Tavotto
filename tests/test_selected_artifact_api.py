@@ -1,6 +1,7 @@
 """Real controller routes, isolated fake workers: byte authority before edits/publication."""
 
 import json
+import logging
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m
 from tavotto.engine import artifactcontext as ac, exportreq, figcapture
 
@@ -26,7 +28,7 @@ def api(tmp_path, monkeypatch):
     ctx = SimpleNamespace(
         id="selected-project",
         path=root,
-        registry=SimpleNamespace(for_stem=lambda stem: {"script": "plot.py", "entry": "main"}),
+        registry=stem_registry({"script": "plot.py", "entry": "main"}),
     )
     monkeypatch.setattr(m, "PROJECTS", {ctx.id: ctx})
     monkeypatch.setattr(m, "DEFAULT_PROJECT", ctx.id)
@@ -163,6 +165,20 @@ def test_pdf_png_a_b_a_admits_once_and_preserves_legacy(api):
     assert "artifact_source" not in api.resolutions[-1]
 
 
+def test_legacy_png_render_without_policy_is_flagged_unverified(api):
+    """#1145：缺 source_policy 的 PNG 渲染照常走 legacy（不拒绝），但响应机器可读地标出「未核对」。"""
+    response = api.client.post("/api/engine/render", json={"id": "plot.png", "patches": []})
+    body = response.get_json()
+    assert response.status_code == 200, body
+    assert body["source_unverified"] == {"reason": "source_policy_missing", "kind": "png"}
+    assert "artifact_source" not in body and "artifact_source" not in api.resolutions[-1]
+    # 带 policy 的受守渲染不带这个标记；PDF 与其它 legacy 响应形状一字不变
+    guarded = render(api, "plot.png", expected_source=basis(api, "plot.png")).get_json()
+    assert "source_unverified" not in guarded and "artifact_source" in guarded
+    legacy_pdf = api.client.post("/api/engine/render", json={"id": "plot.pdf", "patches": []})
+    assert legacy_pdf.status_code == 200 and "source_unverified" not in legacy_pdf.get_json()
+
+
 @pytest.mark.parametrize("route", ["render", "preview_png"])
 def test_nonempty_selected_edits_require_exact_baseline(api, route):
     body = {"id": "plot.pdf", "source_policy": POLICY, "patches": PATCHES, "with_manifest": True}
@@ -241,7 +257,7 @@ def test_source_changed_during_render_is_not_published(api, monkeypatch):
 @pytest.mark.parametrize("selected", [False, True], ids=["legacy", "selected"])
 @pytest.mark.parametrize("operation", ["render", "preview_png", "export"])
 def test_superseded_request_preserves_shared_worker_and_error(
-    api, monkeypatch, selected, operation
+    api, monkeypatch, caplog, selected, operation
 ):
     policy = POLICY if selected else None
     assert render(api, "plot.png", source_policy=policy).status_code == 200
@@ -274,6 +290,10 @@ def test_superseded_request_preserves_shared_worker_and_error(
         )
         assert response.status_code == 500
         assert response.get_json()["code"] == "queue_superseded"
+    # 被顶替是常态不是故障：不许记成 ERROR 刷满诊断包的报错清单（TVD-MDBH）
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR
+    ]
     assert retired == []
     monkeypatch.setattr(worker, method, original)
     assert render(api, "plot.png", source_policy=policy).status_code == 200
@@ -700,8 +720,10 @@ def test_selected_source_aliases_share_canonical_identity(api, alias):
 @pytest.mark.parametrize("canvas", [False, True])
 @pytest.mark.parametrize("edited", [False, True])
 def test_export_validate_acknowledges_policy_and_disk_identity_without_worker(
-    api, policy, canvas, edited
+    api, policy, canvas, edited, monkeypatch
 ):
+    # 来源驱动策略在实验开关后面（默认关）；开关关着的行为由 test_script_backed_policy.py 看护。
+    monkeypatch.setattr(ac, "script_backed_enabled", lambda: True)
     spec = export_spec(api, canvas=canvas)
     source = spec["canvas"]["objects"][0] if canvas else spec["original"]
     source.update(source_policy=policy, expected_source=basis(api, "plot.png"))
@@ -749,7 +771,11 @@ def test_export_validate_plain_response_remains_unchanged(api, canvas):
     source.pop("source_policy")
     response = api.client.post("/api/export/validate", json=spec)
     assert response.status_code == 200
-    assert response.get_json() == {
+    body = response.get_json()
+    # `route`（#1209 ExportRoute）是每次 validate 都带的附加事实，与采用流程无关；其余字段逐字不变
+    assert "route" in body
+    body.pop("route")
+    assert body == {
         "ok": True,
         "conflicts": [],
         "writable": True,

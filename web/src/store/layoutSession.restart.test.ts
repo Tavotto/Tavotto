@@ -206,10 +206,10 @@ describe('换了 origin 的重启', () => {
     })
   })
 
-  it('导出默认值不因换 origin 退回默认', async () => {
+  it.each([{ formats: ['pdf', 'png'] }, { formats: ['svg'] }])('导出默认值不因换 origin 退回默认 ($formats)', async ({ formats }) => {
     vi.resetModules()
     const before = await import('@/lib/exportDefaults')
-    before.writeExportDefaults({ dpi: '1200' })
+    before.writeExportDefaults({ dpi: '1200', formats })
     await settle()
 
     newOrigin()
@@ -219,6 +219,7 @@ describe('换了 origin 的重启', () => {
     }
     await after.hydrateExportDefaults?.()
     expect(after.readExportDefaults().dpi).toBe('1200')
+    expect(after.readExportDefaults().formats).toEqual(formats)
   })
 })
 

@@ -816,9 +816,100 @@ fn exceeding_the_session_cap_evicts_the_least_recently_used() {
     let mut wd = Workerd::start();
     wd.call("hello", json!({"max_sessions": 1}), None, None, 0);
     let (a, _) = wd.open(&["--stems", "Fig1"], 10_000);
+    // a 已经用过（租约随第一条请求结束）、此刻闲着：可以淘汰
+    assert_eq!(
+        wd.call("build", json!({}), Some(&a), None, 10_000)["ok"],
+        true
+    );
     let (b, _) = wd.open(&["--stems", "FigB"], 10_000);
     assert_ne!(a, b);
     // 淘汰是 kill，不等锁：a 立刻就不认了
+    let resp = wd.call("build", json!({}), Some(&a), None, 10_000);
+    assert_eq!(err_code(&resp), "unknown_session", "{resp:#?}");
+    assert_eq!(
+        wd.call("build", json!({}), Some(&b), None, 10_000)["ok"],
+        true
+    );
+}
+
+fn session_count(wd: &mut Workerd) -> usize {
+    wd.call("sessions", json!({}), None, None, 0)["sessions"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+#[test]
+fn eviction_never_kills_a_session_that_is_rendering() {
+    // 多张图同时冷启动（会话数 > 上限）：最久未用的那张正在渲染，杀了它调用方就收到
+    // 一条莫名其妙的 session_dead。忙的不挑，宁可暂时超出上限。
+    let mut wd = Workerd::start();
+    wd.call("hello", json!({"max_sessions": 1}), None, None, 0);
+    let (a, _) = wd.open(&["--sleep-ms", "1500"], 10_000);
+    let slow = wd.send("render", json!({}), Some(&a), Some("Fig1"), 10_000);
+    std::thread::sleep(Duration::from_millis(300)); // 让 render 真的在飞
+    let (b, _) = wd.open(&[], 10_000);
+    assert!(!b.is_empty());
+    let resp = wd.wait(&slow, Duration::from_secs(10));
+    assert_eq!(resp["ok"], true, "在飞的渲染被淘汰杀掉了: {resp:#?}");
+    // b 握手期间 a 在忙、b 自己在握手：两条都留着，暂时超出上限
+    // a 跑完闲下来之后，下一条请求处理完就补上欠着的淘汰
+    assert_eq!(
+        wd.call("build", json!({}), Some(&b), None, 10_000)["ok"],
+        true
+    );
+    assert_eq!(session_count(&mut wd), 1);
+    let resp = wd.call("build", json!({}), Some(&a), None, 10_000);
+    assert_eq!(err_code(&resp), "unknown_session", "{resp:#?}");
+}
+
+#[test]
+fn eviction_spares_a_session_handed_out_but_not_yet_used() {
+    // 调用方刚拿到 session_id、下一步才发 build：这段空档里淘汰它，冷启动时被杀的
+    // 正好是最早开的那张。租约内不挑。
+    let mut wd = Workerd::start();
+    let hello = wd.call("hello", json!({"max_sessions": 1}), None, None, 0);
+    assert_eq!(
+        hello["acquire_lease_ms"], 30_000,
+        "默认租约对齐 pool.ACQUIRE_LEASE"
+    );
+    let (a, _) = wd.open(&["--stems", "Fig1"], 10_000);
+    let (b, _) = wd.open(&["--stems", "FigB"], 10_000);
+    assert_ne!(a, b);
+    assert_eq!(session_count(&mut wd), 2, "租约内的 a 不该被淘汰");
+    assert_eq!(
+        wd.call("build", json!({}), Some(&a), None, 10_000)["ok"],
+        true,
+        "a 在租约内发出的第一条请求必须照常执行"
+    );
+    // 用过之后 a 闲着、b 还在租约内：补淘汰挑的是 a
+    wd.call("ping", json!({}), None, None, 0);
+    assert_eq!(session_count(&mut wd), 1);
+    let resp = wd.call("build", json!({}), Some(&a), None, 10_000);
+    assert_eq!(err_code(&resp), "unknown_session", "{resp:#?}");
+    assert_eq!(
+        wd.call("build", json!({}), Some(&b), None, 10_000)["ok"],
+        true
+    );
+}
+
+#[test]
+fn an_unused_lease_is_bounded() {
+    // 取了会话却始终不发请求的调用方（中途出错）不能让会话永远淘汰不掉。
+    let mut wd = Workerd::start();
+    wd.call(
+        "hello",
+        json!({"max_sessions": 1, "acquire_lease_ms": 300}),
+        None,
+        None,
+        0,
+    );
+    let (a, _) = wd.open(&["--stems", "Fig1"], 10_000);
+    let (b, _) = wd.open(&["--stems", "FigB"], 10_000);
+    assert_eq!(session_count(&mut wd), 2);
+    std::thread::sleep(Duration::from_millis(600));
+    wd.call("ping", json!({}), None, None, 0);
+    assert_eq!(session_count(&mut wd), 1);
     let resp = wd.call("build", json!({}), Some(&a), None, 10_000);
     assert_eq!(err_code(&resp), "unknown_session", "{resp:#?}");
     assert_eq!(

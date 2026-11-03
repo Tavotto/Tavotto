@@ -97,16 +97,15 @@ describe('duplicateSelected', () => {
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1', 'a1'])
   })
 
-  // Codex #833：快速编辑这一屏只画那张图，副本落在版面上看不见。⌘D、系统菜单、对象右键菜单、属性页「⋯」都到这里
-  it('快速编辑里什么都不做：不加对象、不进历史、选区不动', () => {
+  // 2026-10-21：单图编辑里也能创建副本（取消 Codex #833 的「快编不落」）；副本是图 = 第二张图，由模式订阅切到排版
+  it('单图编辑里照常创建副本：加对象、一条历史', () => {
     seed(text('t1'))
     useWorkspaceStore.getState().enterFastEdit('t1')
     try {
       const before = s().past.length
       duplicateSelected()
-      expect(s().doc.objects).toHaveLength(1)
-      expect(s().past).toHaveLength(before)
-      expect(useSelectionStore.getState().ids).toEqual(['t1'])
+      expect(s().doc.objects).toHaveLength(2)
+      expect(s().past).toHaveLength(before + 1)
     } finally {
       useWorkspaceStore.getState().clear()
     }

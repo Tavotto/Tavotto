@@ -1,9 +1,8 @@
 import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
-import { fontStackOf } from '@/components/inspector/controls/fontStack'
+import { fontFamilySelectModel } from '@/components/inspector/controls/fontFamilySelect'
 import { StyleToggle } from '@/components/inspector/controls/textRows'
-import { fontFamilyOptionLabel } from '@/components/inspector/roles/registry'
 import type { TypographyAdapter } from '@/components/inspector/typographyAdapter'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -30,6 +29,14 @@ export function TextQuickControls({
   sizeFallback?: number
 }) {
   const family = a.fieldOf('fontFamily')
+  const familyValue = String(displayValueOf(a.valueOf('fontFamily')) ?? '')
+  const fm = fontFamilySelectModel({
+    value: familyValue,
+    options: family?.options ?? [],
+    labels: family?.option_labels,
+    faces: family?.option_faces,
+    onChange: (v) => a.writeOnce('fontFamily', v),
+  })
   const size = a.fieldOf('sizePt')
   const sizeVal = a.valueOf('sizePt')
   const colorVal = a.valueOf('color')
@@ -42,16 +49,10 @@ export function TextQuickControls({
         <Select
           className={cn(familyWidth, 'shrink-0')}
           ariaLabel={translate('textControls.font', { ns: 'inspector' })}
-          value={String(displayValueOf(a.valueOf('fontFamily')) ?? '')}
-          onChange={(v) => a.writeOnce('fontFamily', v)}
-          options={(family.options ?? []).map((o) => ({
-            value: o,
-            label: (
-              <span style={{ fontFamily: fontStackOf(o) }}>
-                {fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])}
-              </span>
-            ),
-          }))}
+          value={fm.value}
+          onChange={fm.onChange}
+          options={fm.options}
+          title={fm.title}
         />
       )}
       {size && (

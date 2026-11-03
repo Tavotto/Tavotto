@@ -26,6 +26,7 @@ from tavotto.engine import (
     depplan,
     deprepair,
     depresolve,
+    envdiag,
     envlease,
     managedenv,
     pool as engine_pool,
@@ -463,6 +464,15 @@ class TestJointTransaction:
         assert set(ledger) == {ALPHA[0], BETA[0], GAMMA[0]}
         assert ledger[BETA[0]]["resolved_version"] == "1.0"
         assert engine_pool.same_python(projectenv.remembered(project), python)
+        deadline = time.monotonic() + 5
+        while not envdiag.recent(project) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        (evidence,) = envdiag.recent(project)
+        assert {ALPHA[0], BETA[0], GAMMA[0]} <= set(evidence["requested"])
+        assert {r["name"] for r in evidence["installed"]} >= {ALPHA[0], BETA[0], GAMMA[0], WIDE[0]}
+        assert evidence["committed"] and evidence[
+            "generation"
+        ] == projectenv.environment_generation(python)
         # 计划文件留在项目的受管目录下（可审计），内容是重新序列化过的
         plans = managedenv.env_dir(project) / "plans" / gen
         assert (plans / "requirements.txt").read_text("utf-8").splitlines()[-3:] == list(
@@ -907,6 +917,55 @@ class TestJointTransaction:
             deprepair.create_joint_plan(project, "figure.py")
         assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
         assert err.value.extra["joint"]["status"] == "nothing_needed"
+
+    @pytest.mark.parametrize(
+        ("hidden", "source", "carried"),
+        [
+            # 反馈包 TVD-22EY：本地模块在扫描看不到的地方（sys.path 由运行时值决定），它用着内置 runtime 的 pandas
+            (True, engine_pool.SOURCE_BUNDLED, True),
+            # 扫描看全了：联合求解已给出全部需要的，不多带
+            (False, engine_pool.SOURCE_BUNDLED, False),
+            # 此刻不在内置 runtime 里跑：内置 runtime 的包与这个脚本无关
+            (True, engine_pool.SOURCE_PROJECT_VENV, False),
+        ],
+    )
+    def test_fresh_generation_from_bundled_runtime_carries_its_packages_when_scan_is_incomplete(
+        self, tmp_path, offline_managed_env, monkeypatch, hidden, source, carried
+    ):
+        """脚本在内置 runtime 里跑到「缺 sklearn」，它经 sys.path 引入的本地模块还用着内置 runtime 的 pandas。
+        新建第一代只装 sklearn → 重跑立刻「缺 pandas」。这里 beta 扮内置 runtime 的 pandas，alpha 扮缺的 sklearn。"""
+        hide = (
+            "import os, sys\nsys.path.insert(0, os.environ['HIDDEN_DIR'])\nimport hidden_helper\n"
+        )
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n",
+            script=(hide if hidden else "") + f"import {ALPHA[1]}\n",
+        )
+        real = engine_pool.resolve_worker_python
+        monkeypatch.setattr(
+            engine_pool,
+            "resolve_worker_python",
+            lambda *a, **kw: (real(*a, **kw)[0], source),
+        )
+        monkeypatch.setattr(
+            deprepair.runtime,
+            "manifest",
+            lambda: {"top_level": ["numpy", "matplotlib", BETA[0]], "packages": {}},
+        )
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.creates_environment
+        names = {depresolve.normalize_distribution(r) for r in plan.requirements}
+        assert depresolve.normalize_distribution(ALPHA[0]) in names
+        assert (depresolve.normalize_distribution(BETA[0]) in names) is carried
+        # adapter 里已有的不重复列
+        assert "numpy" not in names and "matplotlib" not in names
+        if carried:
+            # 带上的包进账（之后换代随账带走）也进装后核验
+            assert BETA[1] in plan.widened.needed_imports
+            assert any(r["distribution"] == BETA[0] for r in plan.widened.record)
 
     def test_offer_on_the_failure_path_starts_no_interpreter(
         self, tmp_path, house, offline_managed_env, monkeypatch
@@ -1684,6 +1743,47 @@ class TestRunEnvOwnership:
 @needs_worker
 @pytest.mark.usefixtures("tavotto_owned_run_env")
 class TestDeclaredRootsTransaction:
+    def test_a_hash_dynamic_root_survives_the_next_nonhash_generation(
+        self, tmp_path, house, offline_managed_env
+    ):
+        """#963：hash 首代实际装成的动态 root 必须记账，换回普通声明后重建仍能 import。"""
+        import hashlib
+
+        wheel = next(house.glob(f"{BETA[0].replace('-', '_')}-1.0-*.whl"))
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        dynamic = (
+            f'import importlib\nname = "{BETA[1]}"\nprint(importlib.import_module(name).VALUE)\n'
+        )
+        project = _project(
+            tmp_path,
+            requirements=f"{BETA[0]}==1.0 --hash=sha256:{digest}\n",
+            script=dynamic,
+        )
+        first = deprepair.create_joint_plan(project, "figure.py")
+        assert first.require_hashes and first.needed_imports == ()
+        first_rec = _prepare_with(first)
+        assert first_rec["state"] == deprepair.STATE_DONE, first_rec
+        assert _run_script(managedenv.python_of(project), project) == "42"
+        first_ledger = managedenv.ledger_entries(project)
+
+        (project / "requirements.txt").write_text(
+            f"{BETA[0]}==1.0\n{GAMMA[0]}==1.0\n", encoding="utf-8"
+        )
+        (project / "figure.py").write_text(
+            dynamic + f"import {GAMMA[1]}\nprint({GAMMA[1]}.VALUE)\n", encoding="utf-8"
+        )
+        second = deprepair.create_joint_plan(project, "figure.py")
+        assert second.require_hashes is False
+        second_rec = _prepare_with(second)
+        assert second_rec["state"] == deprepair.STATE_DONE, second_rec
+        assert second_rec["result"]["generation"] != first_rec["result"]["generation"]
+        assert _run_script(managedenv.python_of(project), project) == "42\n42"
+        assert {e["distribution"] for e in first_ledger} == {BETA[0]}
+        assert {e["distribution"] for e in managedenv.ledger_entries(project)} == {
+            BETA[0],
+            GAMMA[0],
+        }
+
     def test_a_declared_root_reached_only_by_a_dynamic_import_is_installed_with_its_dependency(
         self, tmp_path, audit_house, offline_managed_env
     ):

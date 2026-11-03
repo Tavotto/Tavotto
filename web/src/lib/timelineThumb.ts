@@ -1,4 +1,5 @@
 import { panelSrc } from '@/lib/api'
+import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
 import { useAssetStore } from '@/store/assetStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
@@ -20,8 +21,15 @@ import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document
  * 的节点在列表里退回草图，拍节点这件事本身绝不因为缩略图失败。
  */
 
-/** 缩略图的长边（px）。列表行画 56×40，预览不用它；2× 屏上够清楚、体积几 KB。 */
-export const TIMELINE_THUMB_PX = 240
+/**
+ * 缩略图的长边（px）。只拍页面上有内容的那块（`contentBox`）——单图编辑没有「页面」，
+ * 整页拍的话图常常只占一角；竖线条浮卡按 2× 屏约 400 px 显示，所以比列表行要的大。
+ */
+export const TIMELINE_THUMB_PX = 360
+/** 为了裁出内容区域先按整页画的那张画布，长边不超过它（内容极小、页面极大时降分辨率） */
+const TIMELINE_THUMB_PAGE_MAX_PX = 4096
+/** 后端单张上限（`VERSION_THUMB_MAX_BYTES` 256 KiB）留点余量：超了就缩一档再编 */
+const TIMELINE_THUMB_MAX_BYTES = 240 * 1024
 /** 一张图最多等多久（素材图要走网络）；超时就用已经画上去的部分。 */
 const IMAGE_TIMEOUT_MS = 2500
 const MM_PER_PT = 25.4 / 72
@@ -29,6 +37,8 @@ const MM_PER_PT = 25.4 / 72
 export interface TimelineThumb {
   blob: Blob
   type: 'image/webp' | 'image/png'
+  /** 拍的是页面的哪一块（mm）；整页时缺席 */
+  box?: ThumbBox
 }
 
 /**
@@ -352,7 +362,12 @@ export async function composeTimelineThumb(
   try {
     const { w: pw, h: ph } = doc.page
     if (!(pw > 0 && ph > 0) || typeof document === 'undefined') return null
-    const scale = TIMELINE_THUMB_PX / Math.max(pw, ph)
+    // 只拍内容区域：先按「内容区域长边 = TIMELINE_THUMB_PX」的比例画整页，最后裁出那一块
+    const box = contentBox(doc.page, doc.objects)
+    const scale = Math.min(
+      TIMELINE_THUMB_PX / Math.max(box?.w ?? pw, box?.h ?? ph),
+      TIMELINE_THUMB_PAGE_MAX_PX / Math.max(pw, ph),
+    )
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(pw * scale))
     canvas.height = Math.max(1, Math.round(ph * scale))
@@ -405,7 +420,27 @@ export async function composeTimelineThumb(
       }
       drawObject(ctx, o, scale)
     }
-    return await encode(canvas)
+    // 裁出内容区域（没有可裁的就是整页）；编出来超过后端上限就缩一档再编——WKWebView 只编得出 png
+    const src = box ?? { x: 0, y: 0, w: pw, h: ph }
+    for (let k = 1; k >= 0.5; k -= 0.25) {
+      if (!box && k === 1) {
+        // 整页、原尺寸：直接编主画布（与只拍整页时逐字相同）
+        const whole = await encode(canvas)
+        if (!whole) return null
+        if (whole.blob.size <= TIMELINE_THUMB_MAX_BYTES) return whole
+        continue
+      }
+      const out = document.createElement('canvas')
+      out.width = Math.max(1, Math.round(src.w * scale * k))
+      out.height = Math.max(1, Math.round(src.h * scale * k))
+      const octx = out.getContext('2d')
+      if (!octx) return null
+      octx.drawImage(canvas, src.x * scale, src.y * scale, src.w * scale, src.h * scale, 0, 0, out.width, out.height)
+      const thumb = await encode(out)
+      if (!thumb) return null
+      if (thumb.blob.size <= TIMELINE_THUMB_MAX_BYTES) return box ? { ...thumb, box } : thumb
+    }
+    return null
   } catch {
     return null
   }

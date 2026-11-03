@@ -20,6 +20,64 @@ from . import databinding, exportjob, exportreq, figcapture, pool, profilestore,
 LOG = logging.getLogger(__name__)
 
 
+def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
+    """Normalize only trusted worker output before its bytes are frozen or inspected.
+
+    The parser itself always rejects DTDs. Only this producer boundary removes the
+    exact inert Matplotlib declaration; custom DTDs and active content still fail.
+    """
+    from ..rendercore import svgcheck
+
+    budget = svgcheck.SVGBudget()
+    with Path(path).open("rb") as stream:
+        data = stream.read(budget.max_bytes + 1)
+    if len(data) > budget.max_bytes:
+        raise svgcheck.SVGError("svg_resource_limit")
+    if expected is not None:
+        import hashlib
+
+        if expected.get("sha256") != hashlib.sha256(data).hexdigest() or expected.get(
+            "size_bytes"
+        ) != len(data):
+            raise exportreq.ExportRequestError(
+                "export_render_failed", "SVG companion changed", {"reason": "source_changed"}
+            )
+    normalized = svgcheck.strip_matplotlib_doctype(data)
+    svgcheck.parse_svg(normalized, budget=budget)
+    if normalized != data:
+        Path(path).write_bytes(normalized)
+
+
+def svg_vector(path: Path) -> bool:
+    """Classify generated SVG artwork without claiming that raster images are vectors.
+
+    This is a producer fact, not an inspection verdict. Nonpainted definitions do
+    not qualify; local use references are followed after bounded safe validation.
+    """
+    from ..rendercore import svgcheck
+
+    budget = svgcheck.SVGBudget()
+    with Path(path).open("rb") as stream:
+        root = svgcheck.parse_svg(stream.read(budget.max_bytes + 1), budget=budget)
+    ids = {node.get("id"): node for node in root.iter() if node.get("id")}
+    stack = [root]
+    has_image = False
+    vector_tags = {"path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text"}
+    while stack:
+        node = stack.pop()
+        tag = node.tag.removeprefix(f"{{{svgcheck.SVG_NS}}}")
+        if tag in vector_tags:
+            return True
+        if tag == "image":
+            has_image = True
+        elif tag == "use":
+            href = node.get("href") or node.get(f"{{{svgcheck.XLINK_NS}}}href")
+            stack.append(ids[href[1:]])
+        elif tag in ("svg", "g", "symbol"):
+            stack.extend(node)
+    return not has_image
+
+
 def execution_provenance(
     job: exportjob.ExportJob,
     worker,
@@ -169,11 +227,9 @@ def inspect_produced(
 
     policy = job.request.inspection
     profile = inspection_profile(policy)
-    out: list[exportjob.Produced] = []
-    for p in produced:
-        if p.error_code is not None or p.tmp_path is None:
-            out.append(p)
-            continue
+
+    def inspect_file(p: exportjob.Produced) -> tuple[dict, list[str] | None]:
+        """一个封口文件的完整检查：回 (manifest, 拦住它的检查码；通过则 None)。"""
         plan = plan_half(job, p, backend=backend)
         try:
             manifest = inspector.inspect(
@@ -195,27 +251,55 @@ def inspect_produced(
                 reason=str(exc)[:200],
                 run_id=job.id,
             )
-        summary = inspector.summary(manifest)
-        if manifest["policy"]["verdict"] == inspector.REJECTED:
-            # 拦住这一项的是哪些检查：失败的；严格政策下必需 unknown 也算（D08）
-            blocked = list(manifest["policy"]["failed"])
-            if manifest["policy"]["mode"] == inspector.POLICY_STRICT:
-                blocked += manifest["policy"]["unknown"]
+        if manifest["policy"]["verdict"] != inspector.REJECTED:
+            return manifest, None
+        # 拦住这一项的是哪些检查：失败的；严格政策下必需 unknown 也算（D08）
+        blocked = list(manifest["policy"]["failed"])
+        if manifest["policy"]["mode"] == inspector.POLICY_STRICT or p.format == "svg":
+            blocked += manifest["policy"]["unknown"]
+        return manifest, blocked
+
+    out: list[exportjob.Produced] = []
+    for p in produced:
+        if p.error_code is not None or p.tmp_path is None:
+            out.append(p)
+            continue
+        # 多页 PDF（#1370）：检查器只读首页，所以**每一页**各自带着自己的单页文件走同一套检查，
+        # 任何一页不过整份不发布（码前加页号）；合并后的文件再整份检查一次（完整性 + 首页）
+        blocked: list[str] | None = None
+        checked: dict[str, list[str] | None] = {}
+        for n, part in enumerate(p.parts or [], start=1):
+            key = str(part.tmp_path)
+            if key not in checked:
+                checked[key] = inspect_file(part)[1]
+            if checked[key] and blocked is None:
+                blocked = [f"page {n}: {c}" for c in checked[key]]
+        manifest = None
+        if blocked is None:
+            manifest, blocked = inspect_file(p)
+        if blocked is not None:
             out.append(
                 exportjob.Produced(
                     format=p.format,
                     error_code="artifact_rejected",
                     error_params={
                         "failed": ", ".join(blocked),
-                        "policy": manifest["policy"]["mode"],
+                        "policy": policy.mode,
                     },
-                    manifest=summary,
+                    manifest=inspector.summary(manifest) if manifest else None,
                 )
             )
             continue
-        p.manifest = summary
+        p.manifest = inspector.summary(manifest)
         out.append(p)
     return out
 
 
-__all__ = ["execution_provenance", "inspect_produced", "inspection_profile", "plan_half"]
+__all__ = [
+    "execution_provenance",
+    "inspect_produced",
+    "inspection_profile",
+    "normalize_worker_svg",
+    "plan_half",
+    "svg_vector",
+]

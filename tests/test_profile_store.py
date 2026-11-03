@@ -48,6 +48,30 @@ def test_builtin_specs_come_from_the_canonical_json(data_dir):
     assert lab["data"] == profiles.load("lab-publication-v1")
 
 
+def test_hidden_journal_base_is_resolvable_but_not_listed(client):
+    """`journal-base-v1`（listed:false）不进清单，但按 id 取规范必须取得到（ADR 0155）。
+
+    回归：`resolve_spec` 曾用「可列出」判内置，隐藏的底被当成用户自建 → 404，
+    选了期刊后预检 / 导出 / MCP 全部失败。
+    """
+    base_id = "journal-base-v1"
+    assert base_id not in [r["id"] for r in store.builtins(store.KIND_SPEC)]
+    assert base_id not in [r["id"] for r in store.list_profiles(store.KIND_SPEC)]
+    listed = client.get("/api/profiles/spec").get_json()["profiles"]
+    assert base_id not in [r["id"] for r in listed]
+
+    plain = store.resolve_spec(base_id)
+    assert plain["profile_id"] == base_id
+    over = {"widths_mm": {"double": 170.0}, "severity": {"page-width": "warn"}}
+    spec = store.resolve_spec(base_id, journal=over)
+    assert spec["widths_mm"]["double"] == 170.0 and spec["widths_mm"]["single"] is None
+    assert spec["derived_from"] == base_id
+    # 坏覆盖仍是 profile_bad_journal，不被说成「没有这个规范」
+    with pytest.raises(store.ProfileStoreError) as exc:
+        store.resolve_spec(base_id, journal={"widths_mm": {"double": -1}})
+    assert exc.value.code == "profile_bad_journal"
+
+
 def test_builtin_style_is_derived_from_the_default_spec(data_dir, tmp_path, monkeypatch):
     """内置样式是**从规范派生的**，不是第二份数字。
 
@@ -90,9 +114,8 @@ def test_builtin_style_keeps_the_type_hierarchy_and_passes_its_own_spec(data_dir
     """默认样式套上去之后，**它自己的规范**不能再报字号问题，而且层级还在。
 
     2026-09-24 用户实测：旧规则把所有文字一律设成 9 pt（刻度与轴标题一样大），
-    且刻度 / 图例若按脚本里常见的 8 pt 写，正好踩在 `eff <= floor` 那条不含等号的
-    边上。这里用真实的默认规范逐条对：正文档含等号地落在区间里、刻度 / 图例
-    严格高于绝对下限、不高于轴标题、图例在图例区间里。
+    这里用真实的默认规范逐条对：每档都含等号地落在区间里（下限含等号，ADR 0029
+    修订 2026-10-26）、刻度 / 图例不高于轴标题、图例在图例区间里。
     """
     spec = profiles.load()
     el = store.list_profiles(store.KIND_STYLE)[0]["data"]["element"]
@@ -102,7 +125,7 @@ def test_builtin_style_keeps_the_type_hierarchy_and_passes_its_own_spec(data_dir
     lo, hi = spec["legend_policy"]["min_font_size_pt"], spec["legend_policy"]["max_font_size_pt"]
     sizes = {role: el[role]["fontsize"] for role in ("title", "axis_label", "ticks", "legend")}
     for role, size in sizes.items():
-        assert floor < size <= biggest and size >= strict, (role, size)
+        assert floor <= size <= biggest and size >= strict, (role, size)
     assert lo <= sizes["legend"] <= hi
     assert sizes["ticks"] < sizes["axis_label"], "刻度与轴标题一样大 = 层级被抹平"
     assert sizes["legend"] <= sizes["axis_label"]
@@ -111,11 +134,13 @@ def test_builtin_style_keeps_the_type_hierarchy_and_passes_its_own_spec(data_dir
 def test_builtin_legend_size_stays_inside_the_legend_band(data_dir, tmp_path, monkeypatch):
     """图例区间比「最小一档」还窄时，图例取区间上沿，不越出 `legend_policy`。
 
-    8 / 8 的下限推出 8.5，而图例区间只到 8.25：照搬 8.5 的话套完样式图例当场
-    报 `legend-font-size`。8.25 仍然严格高于绝对下限，是这份规范里唯一两头都满足的值。
+    绝对下限 8.25 推出最小一档 8.5，而图例区间只到 8.25：照搬 8.5 的话套完样式图例
+    当场报 `legend-font-size`。8.25 正好等于绝对下限（含等号，通过），是这份规范里
+    唯一两头都满足的值。
     """
     doc = json.loads(profiles.profiles_path().read_text(encoding="utf-8"))
     lab = doc["profiles"]["lab-publication-v1"]
+    lab["absolute_min_font_size_pt"] = 8.25
     lab["legend_policy"]["min_font_size_pt"] = 8.0
     lab["legend_policy"]["max_font_size_pt"] = 8.25
     other = tmp_path / "narrow-legend.json"
@@ -534,6 +559,14 @@ def test_font_floor_fallback_is_one_number_on_both_sides():
     match = re.search(r"export const FALLBACK_MIN_FONT_SIZE_PT = ([\d.]+)", ts)
     assert match, "TS 侧找不到 FALLBACK_MIN_FONT_SIZE_PT"
     assert float(match.group(1)) == profiles.FALLBACK_MIN_FONT_SIZE_PT
+
+
+def test_font_floor_tolerance_is_one_number_on_both_sides():
+    """严格同源对：`profiles.FONT_FLOOR_TOL_PT` ↔ `web/src/lib/profile.ts`。"""
+    ts = (ROOT / "web" / "src" / "lib" / "profile.ts").read_text(encoding="utf-8")
+    match = re.search(r"export const FONT_FLOOR_TOL_PT = ([\d.]+)", ts)
+    assert match, "TS 侧找不到 FONT_FLOOR_TOL_PT"
+    assert float(match.group(1)) == profiles.FONT_FLOOR_TOL_PT == 0.005
 
 
 def test_an_explicit_historical_八点五_is_preserved(data_dir):

@@ -2,6 +2,7 @@ import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 import { type FitFrame, useViewportStore } from './viewportStore'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /**
  * 每画布的 UI 会话：selection / 视口 / 图内编辑上下文 / 左右栏。
@@ -60,7 +61,7 @@ function restore(canvasId: string): void {
   if (!saved) {
     useSelectionStore.getState().clear()
     ui.setElementPanel(null)
-    useViewportStore.getState().fit(doc.page.w, doc.page.h)
+    fitStageNow()
     return
   }
   const alive = new Set(doc.objects.map((o) => o.id))
@@ -75,7 +76,7 @@ function restore(canvasId: string): void {
   // 原样留下，下一次侧栏开合就按别的画布的取景框把还原出来的视口重算掉
   const vp = useViewportStore.getState()
   if (saved.fitted && saved.fitFrame) vp.fitRect(saved.fitFrame, saved.fitFrame.padding)
-  else if (saved.fitted) vp.fit(doc.page.w, doc.page.h)
+  else if (saved.fitted) fitStageNow()
   else vp.setView({ zoom: saved.zoom, panX: saved.panX, panY: saved.panY })
   useUiStore.setState({ leftOpen: saved.leftOpen, rightOpen: saved.rightOpen })
 }

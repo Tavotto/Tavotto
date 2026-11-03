@@ -279,6 +279,13 @@ def test_status_says_where_documents_are_saved(client, tmp_path):
     assert (Path(body["document_dir"]) / "Fig_1.json").exists()
 
 
+def test_status_reports_the_real_home_dir(client, tmp_path):
+    """界面缩写 `~` 用后端说的真实家目录，不靠路径形状猜（/Users/Shared 不是谁的家）。"""
+    figs = _make_figs(tmp_path)
+    body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+    assert body["home_dir"] == str(Path.home())
+
+
 def test_open_missing_dir_keeps_current(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
     m.open_project(str(figs))
@@ -444,6 +451,25 @@ def test_browse_lists_dirs_only(client, tmp_path):
     body = client.get(f"/api/projects/browse?path={tmp_path}").get_json()
     assert [d["name"] for d in body["dirs"]] == ["sub"]
     assert body["parent"]
+
+
+def test_browse_has_file_only_for_leaf_names(client, tmp_path):
+    (tmp_path / "fig.R").write_text("x")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "deep.R").write_text("x")
+
+    def has(name):
+        return client.get(
+            "/api/projects/browse", query_string={"path": str(tmp_path), "has_file": name}
+        ).get_json()
+
+    assert has("fig.R")["has_file"] is True
+    assert has("nope.R")["has_file"] is False
+    assert has("sub")["has_file"] is False  # 目录不是文件
+    assert has("sub/deep.R")["has_file"] is False  # 只认叶子名
+    assert has("../fig.R")["has_file"] is False
+    assert has("")["has_file"] is False
+    assert "has_file" not in client.get(f"/api/projects/browse?path={tmp_path}").get_json()
 
 
 def test_browse_missing_dir(client, tmp_path):

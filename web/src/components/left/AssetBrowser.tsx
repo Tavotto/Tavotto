@@ -14,13 +14,14 @@ import {
   Zap,
   type IconComponent,
 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
   backendErrorMsg,
   extOf,
   renderUrl,
+  fileUrl,
+  runtimeAssetName,
   runtimePreviewUrl,
   type PanelInfo,
   type RuntimeAssetInfo,
@@ -28,8 +29,10 @@ import {
 } from '@/lib/api'
 import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { formatCm } from '@/lib/units'
+import { formatOf, nameTail } from '@/lib/assetCardText'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
+import { startForeignConvert } from '@/lib/foreignEntry'
 import { PENDING_STATUSES, reasonText, statusLabel } from '@/lib/readinessText'
 import {
   DEFAULT_ASSET_FILTERS,
@@ -62,19 +65,12 @@ import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
+import { MiddleEllipsis } from '../ui/MiddleEllipsis'
 import { DrawerHeaderActions } from './DrawerHeader'
 import { ScriptLibrary } from './ScriptLibrary'
 
 /** 面板文件名（带扩展名）：同 stem 的 PDF / PNG 靠它区分 */
 const fileName = (id: string) => id.split('/').pop() ?? id
-/** 格式名（不翻译）。位图按扩展名说实话：以前一律写 PNG，JPEG / TIFF 素材也被叫成 PNG */
-const FORMAT_LABEL: Record<string, string> = { jpg: 'JPEG', jpeg: 'JPEG', tif: 'TIFF', tiff: 'TIFF' }
-const formatOf = (p: PanelInfo) => {
-  if (p.kind === 'pdf') return 'PDF'
-  const ext = extOf(p.id)
-  return FORMAT_LABEL[ext] ?? (ext.toUpperCase() || 'PNG')
-}
-
 type TypeFilter = AssetTypeFilter
 type SortKey = AssetSortKey
 
@@ -82,13 +78,13 @@ type SortKey = AssetSortKey
 const ab = (key: string, values?: Record<string, unknown>) =>
   translate(`assets.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'runtime']
+const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'svg', 'runtime']
 const SORT_VALUES: SortKey[] = ['name', 'recent', 'used']
 
 /** PDF 是格式名，不翻译；其余按 key 取当前语言 */
 const typeLabel = (v: TypeFilter) =>
-  v === 'pdf'
-    ? 'PDF'
+  v === 'pdf' || v === 'svg'
+    ? v.toUpperCase()
     : ab(v === 'all' ? 'typeAll' : v === 'raster' ? 'typeRaster' : 'typeRuntime')
 const sortLabel = (v: SortKey) =>
   ab(v === 'name' ? 'sortName' : v === 'recent' ? 'sortRecent' : 'sortUsed')
@@ -154,7 +150,11 @@ export function AssetBrowser() {
   const recentlyUsed = useAssetStore((s) => s.recentlyUsed)
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
   const objects = useDocumentStore((s) => s.doc.objects)
-  const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts?.length ?? 0)
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const scriptCount = useScriptLibraryStore(
+    (s) => (s.view?.all_scripts?.length ?? 0) + (s.view?.foreign_scripts?.length ?? 0),
+  )
   const scriptsLoaded = useScriptLibraryStore((s) => s.loaded)
   const scriptsGeneration = useScriptLibraryStore((s) => s.generation)
   // 取失败（load 结束、没有清单）：脚本数是「不知道」，宁可摆搜索框。还没取到（含刚挂载、已触发未返回）则先不摆——
@@ -217,6 +217,20 @@ export function AssetBrowser() {
     return map
   }, [objects])
 
+  /** 当前项目**全部画布**里每个素材的使用次数：当前画布用实时 objects，其余取 canvases（未显示的画布
+   * 的最新状态在那里，可能还没保存到磁盘）。只给「从素材中移除」的在用判定与 used_ids，卡片角标仍用 usage */
+  const projectUsage = useMemo(() => {
+    const map = new Map<string, number>()
+    const add = (list: readonly { type: string; fileId?: string }[]) => {
+      for (const o of list) {
+        if (o.type === 'panel' && o.fileId) map.set(o.fileId, (map.get(o.fileId) ?? 0) + 1)
+      }
+    }
+    add(objects as never)
+    for (const c of canvases) if (c.id !== activeCanvasId) add(c.objects as never)
+    return map
+  }, [objects, canvases, activeCanvasId])
+
   // 来源选项也收「用不了的文件」所在的目录：一个子目录里只有范围之外的 TIFF 时，它得选得中，
   // 否则那张清单按来源筛不出来（Codex #561）
   const folders = useMemo(() => assetFolders(panels, unsupported), [panels, unsupported])
@@ -226,9 +240,10 @@ export function AssetBrowser() {
     const q = query.trim().toLowerCase()
     const { source: src, type: ty, usedOnly: used, editability: ed } = filters
     // 用不了的文件连排版都进不去，不属于「能不能编辑」的任何一组
-    if (used || ed !== 'all' || (ty !== 'all' && ty !== 'raster')) return []
+    if (used || ed !== 'all' || (ty !== 'all' && ty !== 'raster' && ty !== 'svg')) return []
     return unsupported.filter(
       (u) =>
+        (ty === 'all' || (extOf(u.id) === 'svg' ? ty === 'svg' : ty === 'raster')) &&
         (src === 'all' || u.folder === src) &&
         (!q || u.id.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)),
     )
@@ -243,6 +258,7 @@ export function AssetBrowser() {
       if (source !== 'all' && p.folder !== source) return false
       if (type === 'pdf' && p.kind !== 'pdf') return false
       if (type === 'raster' && p.kind !== 'raster') return false
+      if (type === 'svg' && p.kind !== 'svg') return false
       if (type === 'runtime') return false
       if (editability !== 'all' && editabilityOf({ kind: 'file', panel: p }) !== editability)
         return false
@@ -344,7 +360,9 @@ export function AssetBrowser() {
   // 标题行两颗动作钮的对象：选中的那张卡；没有描述符的运行时图没有可编辑 / 可添加的东西
   const activeItem = items.find((it) => itemId(it) === activeId)
   const activeActionable = !!activeItem && (activeItem.kind === 'file' || !!activeItem.asset.descriptor)
-  const activeName = activeItem ? (activeItem.kind === 'file' ? fileName(activeItem.panel.id) : activeItem.asset.stem) : ''
+  const activeCap = activeItem?.kind === 'file' ? activeItem.panel.capability : undefined
+  const activeForeign = activeCap?.foreign_source ?? null
+  const activeName = activeItem ? (activeItem.kind === 'file' ? fileName(activeItem.panel.id) : runtimeAssetName(activeItem.asset)) : ''
 
   const focusId = items.some((it) => itemId(it) === activeId)
     ? activeId
@@ -418,7 +436,7 @@ export function AssetBrowser() {
           onClick={refreshNow}
         >
           {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
-              LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
+              Spinner，28px 的图标按钮里挤两个图标就是布局跳变 */}
           <RefreshCw size={ICON_SIZE.md} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
         </IconButton>
       </DrawerHeaderActions>
@@ -566,6 +584,7 @@ export function AssetBrowser() {
             <ul
               role="listbox"
               aria-label={ab('listLabel')}
+              data-asset-list=""
               className="grid gap-2"
               style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
             >
@@ -605,6 +624,22 @@ export function AssetBrowser() {
             </ul>
           )}
 
+          {/* 选中的图旁边有同名 R / MATLAB 脚本（后端报的 `foreign_source`）：一句话 + 一个主按钮，走主页那张卡的同一个转换入口。
+              在 listbox 之外（option 里不许再嵌可 Tab 的控件） */}
+          {activeForeign && (
+            <div className="mt-2 flex items-center gap-2" data-asset-foreign={activeForeign.script}>
+              <p className="min-w-0 flex-1 text-xs text-ink-2">{reasonText(activeCap!)}</p>
+              <Button
+                variant="primary"
+                size="sm"
+                data-asset-foreign-convert={activeForeign.language}
+                onClick={() => startForeignConvert(activeForeign)}
+              >
+                {translate('prep.convert.btn.start', { ns: 'workspace' })}
+              </Button>
+            </div>
+          )}
+
           {/* 与素材卡同一条规则：加载过就显示保留下来的那份——刷新失败时卡片还在，这张清单也在 */}
           {loaded && unsupportedShown.length > 0 && (
             <UnsupportedAssets items={unsupportedShown} />
@@ -632,6 +667,8 @@ export function AssetBrowser() {
         <AssetCardMenu
           item={items.find((it) => itemId(it) === cardMenu.id)}
           panel={panels.find((p) => p.id === cardMenu.id)}
+          usage={projectUsage}
+          runtimeAssets={runtimeAssets ?? []}
           at={cardMenu}
           onClose={() => {
             setCardMenu(null)
@@ -643,7 +680,7 @@ export function AssetBrowser() {
       <Dialog
         open={!!zoomed}
         onOpenChange={(v) => !v && setZoomed(null)}
-        title={zoomed ? (zoomed.kind === 'file' ? fileName(zoomed.panel.id) : zoomed.kind === 'runtime' ? zoomed.asset.stem : '') : ''}
+        title={zoomed ? (zoomed.kind === 'file' ? fileName(zoomed.panel.id) : zoomed.kind === 'runtime' ? runtimeAssetName(zoomed.asset) : '') : ''}
         description={
           zoomed?.kind === 'file'
             ? `${formatOf(zoomed.panel)} · ${translate('measure.cmSize', { w: formatCm(zoomed.panel.native_w_mm), h: formatCm(zoomed.panel.native_h_mm) })}`
@@ -673,7 +710,7 @@ export function AssetBrowser() {
         {zoomed?.kind === 'file' && (
           <div className="flex items-center justify-center bg-paper p-2">
             <img
-              src={renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
+              src={zoomed.panel.kind === 'svg' ? fileUrl(zoomed.panel.id, zoomed.panel.mtime) : renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
               alt={ab('zoomAlt', { name: fileName(zoomed.panel.id) })}
               className="max-h-[56vh] max-w-full object-contain"
             />
@@ -954,7 +991,7 @@ function AssetCard({
       <CardPreview>
         <img
           loading="lazy"
-          src={renderUrl(panel.id, 400, panel.mtime)}
+          src={panel.kind === 'svg' ? fileUrl(panel.id, panel.mtime) : renderUrl(panel.id, 400, panel.mtime)}
           alt=""
           draggable={false}
           className="h-full w-full object-contain p-1"
@@ -965,6 +1002,17 @@ function AssetCard({
             键盘 / 读屏用户在 option 上按 Enter / Shift+Enter 走同一对动作，
             列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
         <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name })} onClick={onAdd} />
+
+        {/* 状态只在不正常时出现：可编辑是默认，不标；其余（仅版面 / 待连接…）在缩略图左下角打小标签 */}
+        {cap && cap.status !== 'editable' && (
+          <span
+            data-card-status={cap.status}
+            title={reasonText(cap)}
+            className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-full bg-thumb px-1.5 type-meta text-paper-ink-2 shadow-thumb"
+          >
+            {statusLabel(cap.status)}
+          </span>
+        )}
       </CardPreview>
 
       {/* 文字区：文件名一行、元数据一行。格式 / 尺寸 / 接入状态 / 使用次数都在
@@ -975,27 +1023,12 @@ function AssetCard({
       <CardMeta
         name={name}
         selected={selected}
-        marker={
-          panel.script ? (
-            <span
-              role="img"
-              aria-label={ab('scriptBadgeTitle')}
-              className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
-              title={ab('scriptBadgeTitle')}
-            >
-              <EditableFigureIcon size={ICON_SIZE.xs} />
-            </span>
-          ) : undefined
-        }
         parts={[
           formatOf(panel),
           translate('measure.cmSize', {
             w: formatCm(panel.native_w_mm),
             h: formatCm(panel.native_h_mm),
           }),
-          cap && cap.status !== 'editable'
-            ? { text: statusLabel(cap.status), title: reasonText(cap) }
-            : null,
         ]}
         used={used}
       />
@@ -1109,7 +1142,7 @@ function RuntimeAssetCard({
           onMove(step[e.key])
         }
       }}
-      title={ab('runtimeCardTitle', { stem: asset.stem, script: asset.script })}
+      title={ab('runtimeCardTitle', { stem: runtimeAssetName(asset), script: asset.script })}
       className={CARD_ITEM}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
@@ -1133,7 +1166,7 @@ function RuntimeAssetCard({
         {/* 就近入口（与文件卡同款，非嵌套控件）：有描述符 = 编辑原图 + 添加到
             画布；没有 = 只有「运行并发现图」 */}
         {asset.descriptor ? (
-          <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name: asset.stem })} onClick={add} />
+          <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name: runtimeAssetName(asset) })} onClick={add} />
         ) : (
           <CardAdd
             icon={Play}
@@ -1147,11 +1180,11 @@ function RuntimeAssetCard({
       {/* 第二行：「运行时图」是它的格式名；之后有同源磁盘图先说关系（脚本路径在
           title 与可达名里仍然有），否则尺寸（跑过）或脚本路径（没跑过） */}
       <CardMeta
-        name={asset.stem}
+        name={runtimeAssetName(asset)}
         selected={selected}
         marker={
           <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
-            <Zap size={ICON_SIZE.xs} />
+            <Zap size={ICON_SIZE.sm} />
           </span>
         }
         parts={[
@@ -1250,8 +1283,9 @@ function CardMeta({
   return (
     <div className="flex flex-col px-1.5 py-1">
       <p className="flex items-center gap-1 text-sm">
-        <span className={cn('min-w-0 truncate', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
-          {name}
+        <span className={cn('min-w-0 flex-1', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
+          {/* 截断时保留扩展名和结尾几位（Fig2_corr…ation.pdf）：用户靠结尾的编号与扩展名区分文件 */}
+          <MiddleEllipsis text={name} tail={nameTail(name)} />
         </span>
         {marker}
       </p>
@@ -1337,7 +1371,7 @@ function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
       <ul className="mt-1 space-y-1">
         {items.map((u) => (
           <li key={u.id} className="flex gap-1.5 text-xs text-ink-2" title={u.id}>
-            <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+            <IconSlot><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden /></IconSlot>
             <span className="min-w-0">
               {formatMessage(backendCodeMsg(u.code, { file: u.name }, u.name))}
             </span>
@@ -1357,11 +1391,16 @@ function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
 function AssetCardMenu({
   item,
   panel,
+  usage,
+  runtimeAssets,
   at,
   onClose,
 }: {
   item: LibraryItem | undefined
   panel?: PanelInfo
+  /** 当前项目全部画布里每个素材的使用次数（移除的在用判定与 used_ids；不是卡片角标那份） */
+  usage: Map<string, number>
+  runtimeAssets: RuntimeAssetInfo[]
   at: { x: number; y: number }
   onClose: () => void
 }) {
@@ -1370,12 +1409,27 @@ function AssetCardMenu({
     item?.kind === 'runtime' ? s.byScript[item.asset.script] : undefined,
   )
   if (!item) return null
-  const name = item.kind === 'file' ? fileName(item.panel.id) : item.asset.stem
+  const name = item.kind === 'file' ? fileName(item.panel.id) : runtimeAssetName(item.asset)
   const actionable = item.kind === 'file' || !!item.asset.descriptor
   const busy = !!run && isBusyPhase(run.phase)
   const stale = item.kind === 'runtime' && actionable && !!runtimeStaleKey(item.asset)
   const runScript = () => {
     if (item.kind === 'runtime' && !busy) void useScriptRunStore.getState().run(item.asset.script)
+  }
+  // 「从素材中移除」只给脚本已不在磁盘上的运行时图；画布在用就置灰（同一张图的运行配置变体也算在用）
+  const orphan = item.kind === 'runtime' && item.asset.status === 'missing_source'
+  const inUse =
+    item.kind === 'runtime' &&
+    runtimeAssets.some(
+      (a) =>
+        a.script === item.asset.script && a.stem === item.asset.stem && (usage.get(a.id) ?? 0) > 0,
+    )
+  const removeAsset = () => {
+    if (item.kind !== 'runtime') return
+    void useRuntimeAssetStore
+      .getState()
+      .removeAsset(item.asset.id, [...usage.keys()])
+      .catch((e: unknown) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'))
   }
   const cap = panel?.capability
   const showCap = !!panel && !!cap && cap.status !== 'editable'
@@ -1417,6 +1471,17 @@ function AssetCardMenu({
           {translate('readiness.openCenter', { ns: 'workspace' })}
         </MenuItem>
       )}
+      {orphan && (
+        <MenuItem
+          icon={X}
+          disabled={inUse}
+          reason={inUse ? ab('removeInUse') : undefined}
+          data-asset-remove
+          onSelect={removeAsset}
+        >
+          {ab('removeFromAssets')}
+        </MenuItem>
+      )}
     </PointMenu>
   )
 }
@@ -1432,7 +1497,7 @@ function RuntimeZoom({ asset }: { asset: RuntimeAssetInfo }) {
         <div className="flex items-center justify-center bg-paper p-2">
           <img
             src={runtimePreviewUrl(asset.id, nonce)}
-            alt={ab('zoomAlt', { name: asset.stem })}
+            alt={ab('zoomAlt', { name: runtimeAssetName(asset) })}
             className="max-h-[50vh] max-w-full object-contain"
           />
         </div>

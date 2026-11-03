@@ -2,7 +2,9 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { crossFigureNeighbours, renderTargets, syncEngine, useEngineSync } from './useEngineSync'
+import { crossFigureNeighbours, renderPurposeOf, renderTargets, syncEngine, useEngineSync } from './useEngineSync'
+import * as renderScheduler from '@/store/renderScheduler'
+import * as viewport from '@/store/viewportStore'
 import { flushRender, requestRender } from '@/store/renderScheduler'
 import { seedExactRender } from '@/test/renderFixtures'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -1396,6 +1398,43 @@ describe('跨图邻居补渲染（ADR 0128 §二）', () => {
     })
   })
 
+  describe('未采用 PNG 源图：tracked 路径不发无策略渲染；style-bound 画布照旧渲染（#1145，Codex #1179 r4313254705）', () => {
+    const guard = { version: 1, requiredFrame: 'figsize', sourceId: 'same.png', bytesSha256: 'a'.repeat(64), sizeBytes: 9 } as const
+    const png = (extra: Partial<PanelObject> = {}) =>
+      ({ ...panel('p', 'same.png', 0), fileKind: 'raster', ...extra }) as PanelObject
+    const edited = [{ gid: 'g', prop: 'color', value: '#000' }] as PanelObject['overrides']
+
+    it('styleBound：未采用的照旧渲染（它是结清样式债的唯一 manifest 来源）；采用过的 / 有 override 的 / 普通 PDF 面板同样入选', () => {
+      expect(renderTargets([png()], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([png({ artifactValidation: guard })], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([png({ overrides: edited })], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([panel('a', 'Fig1.pdf', 0)], null, {}, {}, {}, true)).toHaveLength(1)
+    })
+
+    it('tracked（脚本已变）：未采用的不渲染；采用过的照旧', () => {
+      expect(renderTargets([png()], null, { 'same.png': true })).toEqual([])
+      expect(renderTargets([png({ artifactValidation: guard })], null, { 'same.png': true })).toHaveLength(1)
+    })
+
+    it('进编辑的那张照旧入选（采用请求由 admitPngEntry 自己发）', () => {
+      expect(renderTargets([png()], 'p', {})).toHaveLength(1)
+    })
+
+    it('syncEngine：tracked 时未采用 PNG 不发任何渲染；style-bound 画布上发一次（无 policy 的 patches=[]）', () => {
+      useRenderStore.getState().markStale(['same.png'])
+      syncEngine([png()], null)
+      expect(calls).toEqual([])
+      const before = useDocumentStore.getState().doc
+      try {
+        useDocumentStore.setState({ doc: { ...before, style: { id: 's', detached: false } } as unknown as FigureDocument })
+        syncEngine([png()], null)
+        expect(calls).toHaveLength(1)
+      } finally {
+        useDocumentStore.setState({ doc: before })
+      }
+    })
+  })
+
   it('syncEngine：进编辑时发出邻居的渲染；快速编辑不发', async () => {
     const { useWorkspaceStore } = await import('@/store/workspaceStore')
     for (const [mode, expected] of [
@@ -1410,5 +1449,72 @@ describe('跨图邻居补渲染（ADR 0128 §二）', () => {
       expect(calls.map((c) => c.fileId).sort()).toEqual([...expected])
     }
     useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+  })
+})
+
+describe('渲染意图：纯邻居补渲染标 neighbour，其余一律 foreground', () => {
+  const objs = () => [panel('a', 'Fig1.pdf', 0), panel('b', 'Fig2.pdf', 0)] as CanvasObject[]
+  const nb = new Set(['b'])
+  const purpose = (p: PanelObject, edit: string | null, tracked = {}, styleBound = false) =>
+    renderPurposeOf(p, edit, nb, tracked, styleBound, {})
+
+  it('纯邻居（没有别的渲染理由）= neighbour', () => {
+    expect(purpose(objs()[1] as PanelObject, 'a')).toBe('neighbour')
+  })
+
+  it('正在编辑的 / 不在邻居集的 / 绑了样式的 / 脚本领先磁盘的 / 有真实图内修改的 = foreground', () => {
+    const [a, b] = objs() as PanelObject[]
+    expect(purpose(a, 'a')).toBe('foreground')
+    expect(purpose(b, 'b')).toBe('foreground')
+    expect(renderPurposeOf(a, 'b', new Set(), {}, false, {})).toBe('foreground')
+    expect(purpose(b, 'a', {}, true)).toBe('foreground')
+    expect(purpose(b, 'a', { 'Fig2.pdf': true })).toBe('foreground')
+    expect(purpose(panel('b', 'Fig2.pdf', 1), 'a')).toBe('foreground')
+  })
+
+  it('syncEngine：邻居的请求带 neighbour，被暂缓后同一版不再重发；改值 / 进编辑后放行', () => {
+    const spy = vi.spyOn(renderScheduler, 'requestRender').mockImplementation(() => {})
+    try {
+      const o = objs()
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: o } }))
+      const visible = { x: -100, y: -100, w: 400, h: 400 }
+      vi.spyOn(viewport, 'currentVisibleRectMm').mockReturnValue(visible)
+      syncEngine(o, 'a')
+      const calls = spy.mock.calls.map(([p, , purpose]) => [p.id, purpose ?? 'foreground'])
+      expect(calls).toEqual([
+        ['a', 'foreground'],
+        ['b', 'neighbour'],
+      ])
+      // 后端暂缓 b：记下这一版
+      const key = renderKeyOf(o[1] as PanelObject)
+      useRenderStore.getState().patch(key, { fileId: 'Fig2.pdf', deferredPatches: '[]', wantPatches: null })
+      spy.mockClear()
+      syncEngine(o, 'a')
+      expect(spy.mock.calls.map(([p]) => p.id)).not.toContain('b')
+      // 用户把编辑切到 b：它不再是纯邻居，照常以前台发
+      spy.mockClear()
+      syncEngine(o, 'b')
+      expect(spy.mock.calls.find(([p]) => p.id === 'b')?.[2]).toBeUndefined()
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('同文件同 overrides 的两张面板被去重成一次渲染：编辑的是后一张时按前台发，暂缓记号不卡死', () => {
+    const spy = vi.spyOn(renderScheduler, 'requestRender').mockImplementation(() => {})
+    try {
+      const o = [panel('first', 'Fig1.pdf', 0), panel('second', 'Fig1.pdf', 0)] as CanvasObject[]
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: o } }))
+      vi.spyOn(viewport, 'currentVisibleRectMm').mockReturnValue({ x: -100, y: -100, w: 400, h: 400 })
+      // 编辑 second；first 是视口里的邻居，去重后 first 是那次共享渲染的代表
+      const key = renderKeyOf(o[0] as PanelObject)
+      useRenderStore.getState().patch(key, { fileId: 'Fig1.pdf', deferredPatches: '[]', wantPatches: null })
+      syncEngine(o, 'second')
+      const sent = spy.mock.calls.filter(([p]) => (p as PanelObject).fileId === 'Fig1.pdf')
+      expect(sent).toHaveLength(1)
+      expect(sent[0][2]).toBeUndefined() // foreground：不带 neighbour
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })

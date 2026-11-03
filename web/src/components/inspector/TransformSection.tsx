@@ -137,7 +137,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
       </FoldedTransform>
     )
   }
-  return <Section title={t('transform.title')}>{body}</Section>
+  return <Section data-transform-section title={t('transform.title')}>{body}</Section>
 }
 
 /**
@@ -168,6 +168,7 @@ function FoldedTransform({
 
   return (
     <SummaryRow
+      data-fold={foldKey}
       label={title}
       open={open}
       onToggle={() => setOpen(foldKey, !open)}

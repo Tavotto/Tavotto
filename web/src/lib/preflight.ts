@@ -4,6 +4,8 @@ import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import {
   FALLBACK_MIN_FONT_SIZE_PT,
+  FONT_FLOOR_TOL_PT,
+  derivePageColumns,
   profileStamp,
   severityOf,
   type PublicationProfile,
@@ -11,7 +13,10 @@ import {
 } from './profile'
 import { effectiveCanvasFamily } from './typography'
 import { textDiagnostics } from './glyphPlan'
-import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
+import { mathBoxOf } from './mathtext'
+import { parseRuns } from './richText'
+import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
+import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
 
@@ -167,6 +172,14 @@ export interface PreflightTextSpec {
   font_family: string
   /** **生效**的科学文本解释档（没设过 = auto）。缺字形判据要量渲染表示，不是原文 */
   interpretation?: 'auto' | 'scientific'
+  /** 文字写法（缺席 = 旧标记）。缺字形判据按它拆标记（ADR 0152） */
+  text_format?: 'latex'
+  /**
+   * 这段文字里**已知排不出来**的公式（ADR 0152 §七）。求值器是纯函数、不起排版进程，
+   * 事实由调用方带进来：前端读 `lib/mathtext` 缓存里 `ok: false` 的，排版还没回来的不算。
+   * 缺席 = 没有已知失败。
+   */
+  math_errors?: { src: string; why: string }[]
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -309,20 +322,23 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
   const w = num(spec.page.w_mm) ?? 0
   const h = num(spec.page.h_mm) ?? 0
   const { single, double, tolerance_mm: tol } = profile.widths_mm
-  let matched: string | null = null
-  for (const [name, target] of [
-    ['single', single],
-    ['double', double],
-  ] as const) {
-    if (target != null && Math.abs(w - target) <= tol) {
-      matched = name
-      break
-    }
-  }
-  if (matched == null && (single != null || double != null)) {
-    const want = [single, double].filter((v) => v != null).map(g).join('/')
-    sink.add('page-width', pf('pageWidth', { actual: g(w), want }), {
-      detail: { page_w_mm: r2(w), single_mm: single, double_mm: double, column: null },
+  // 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
+  // 只有 exact 的栏位参与判据（max / typical / range 的宽度不是「等于」）。
+  const columns = derivePageColumns(profile).filter(
+    (c) => (c.qualifier ?? 'exact') === 'exact' && num(c.width_mm) != null,
+  )
+  const matched = columns.some((c) => Math.abs(w - c.width_mm) <= tol)
+  if (columns.length && !matched) {
+    const want = columns.map((c) => g(c.width_mm)).join('/')
+    const both = columns.map((c) => `${c.label.zh} (${c.label.en}) ${g(c.width_mm)}`).join(' / ')
+    sink.add('page-width', pf('pageWidth', { actual: g(w), want, columns: both }), {
+      detail: {
+        page_w_mm: r2(w),
+        single_mm: single,
+        double_mm: double,
+        column: null,
+        columns: columns.map((c) => ({ id: c.id, width_mm: c.width_mm })),
+      },
       prop: 'page.w',
     })
   }
@@ -404,17 +420,114 @@ function checkPanelRaster(
   )
 }
 
+/**
+ * 被整体藏起来的图例的 gid。图例条目（`legend_text`，含标题）的 `visible` 是条目
+ * 自己的可见性，图例整体 `set_visible(False)` 时它们仍报 true——「这段字画没画出来」
+ * 要回到图例本体上问。与 `engine/preflight.py::_hidden_legends` 逐字同口径。
+ */
+function hiddenLegends(manifest: Manifest): Set<string> {
+  const out = new Set<string>()
+  for (const el of manifest.elements ?? []) {
+    if (el.role === 'legend' && field(el, 'visible') === false) out.add(el.gid)
+  }
+  return out
+}
+
+/** gid 去掉最后一段（`axes_0.legend.texts_1` → `axes_0.legend`） */
+function parentGid(gid: string): string {
+  const i = gid.lastIndexOf('.')
+  return i < 0 ? '' : gid.slice(0, i)
+}
+
+/**
+ * 这个元素此刻画出来了吗——预检里所有「只量画出来的东西」共用的唯一判据：
+ * `visible` 不是 false，且（图例条目）所在的图例没有被整体藏起来。
+ * 与 `engine/preflight.py::_is_drawn` 同源。
+ */
+function isDrawn(el: ManifestElement, hidden: Set<string>): boolean {
+  if (field(el, 'visible') === false) return false
+  if (el.role === 'legend_text') return !hidden.has(parentGid(el.gid))
+  return true
+}
+
+/**
+ * 图例 gid → 它里面**画出来的条目文字**的字号（脚本值，不乘缩放）。`legend-font-size`
+ * 量的是这个，不是图例的 `fontsize` 设置器；标题（`.title`）不在内——它是单独一个
+ * 文字元素，由字号三条规则按自己的 gid 报。与 `engine/preflight.py::legend_entry_sizes` 同源。
+ */
+function legendEntrySizes(manifest: Manifest, hidden: Set<string>): Map<string, number[]> {
+  const out = new Map<string, number[]>()
+  for (const el of manifest.elements ?? []) {
+    if (el.role !== 'legend_text' || !isDrawn(el, hidden)) continue
+    const size = num(field(el, 'fontsize'))
+    const leaf = el.gid.slice(el.gid.lastIndexOf('.') + 1)
+    if (!leaf.startsWith('texts_') || size == null) continue
+    const k = parentGid(el.gid)
+    if (!out.has(k)) out.set(k, [])
+    out.get(k)!.push(size)
+  }
+  return out
+}
+
+/**
+ * 一切**画出来的文字元素**的字号。容器上的字号设置器（图例的 `fontsize` /
+ * `title_fontsize`、色条的 `tick_fontsize`）不量：它们画出来的字已由 `legend_text`
+ * （含图例标题）与 `ticks` 元素各自带着真实字号报过一遍，再量一次是同一段字报两次；
+ * 而设置器的值与画出来的字会分叉（逐条改好图例项后 `_fontsize` 不动），那样的提醒
+ * 用户永远消不掉。与 `engine/preflight.py::_iter_font_elements` 同源。
+ */
 function* fontElements(
   manifest: Manifest,
+  hidden: Set<string>,
 ): Generator<[ManifestElement, number, string]> {
   for (const el of manifest.elements ?? []) {
+    if (el.role === 'legend' || !isDrawn(el, hidden)) continue
     const size = num(field(el, 'fontsize'))
     if (size != null) yield [el, size, 'fontsize']
-    const tick = num(field(el, 'tick_fontsize'))
-    if (tick != null) yield [el, tick, 'tick_fontsize']
-    const title = num(field(el, 'title_fontsize'))
-    if (title != null) yield [el, title, 'title_fontsize']
   }
+}
+
+/**
+ * 有效字号低于期刊「说明」的最小字号时给 suggestion：带期刊名与原话。上下标求值器分不出，
+ * 所以按正文建议值（没有就按上下标值）统一提示。同源对：`preflight.py` 的 `_advise_font`。
+ */
+function adviseFont(
+  profile: PublicationProfile,
+  eff: number,
+  sink: Sink,
+  ids: { objectIds: string[]; gids?: string[] },
+  prop: string,
+): void {
+  const adv = (profile.advisories ?? []).filter((a) => a.check === 'font-size-recommended')
+  const body = adv.find((a) => a.role === 'body_min')
+  const script = adv.find((a) => a.role === 'script_min')
+  const lead = body ?? script
+  if (!lead) return
+  if (!(eff < lead.value_pt - FONT_FLOOR_TOL_PT)) return
+  const quote = [body, script]
+    .filter((a) => !!a)
+    .map((a) => a!.quote)
+    .join(' … ')
+  const key = body && script ? 'fontSizeAdvisedBoth' : body ? 'fontSizeAdvisedBody' : 'fontSizeAdvisedScript'
+  sink.add(
+    'font-size-recommended',
+    pf(key, {
+      journal: lead.journal,
+      body: body ? g(body.value_pt) : '',
+      script: script ? g(script.value_pt) : '',
+      quote,
+    }),
+    {
+      ...ids,
+      detail: {
+        effective_pt: r2(eff),
+        body_min_pt: body ? body.value_pt : null,
+        script_min_pt: script ? script.value_pt : null,
+      },
+      worse: -eff,
+      prop,
+    },
+  )
 }
 
 function checkPanelFonts(
@@ -436,17 +549,17 @@ function checkPanelFonts(
   const cjkOk = new Set((cjk.accepted ?? []).map((s) => s.toLowerCase()))
   const weights = profile.text_weight_policy ?? {}
 
-  for (const [el, size, sizeProp] of fontElements(manifest)) {
+  const hidden = hiddenLegends(manifest)
+  for (const [el, size, sizeProp] of fontElements(manifest, hidden)) {
     const gid = el.gid
-    if (field(el, 'visible') === false) continue
     const eff = size * scale
-    if (eff <= floor) {
+    if (eff < floor - FONT_FLOOR_TOL_PT) {
       sink.add(
         'font-below-absolute-floor',
         pf('fontBelowFloor', { effective: eff.toFixed(2), floor: g(floor) }),
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor }, worse: -eff, prop: sizeProp },
       )
-    } else if (eff < strict) {
+    } else if (eff < strict - FONT_FLOOR_TOL_PT) {
       sink.add(
         'font-too-small',
         pf('fontTooSmall', { effective: eff.toFixed(2), min: g(strict) }),
@@ -460,9 +573,11 @@ function checkPanelFonts(
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest }, worse: eff, prop: sizeProp },
       )
     }
+    adviseFont(profile, eff, sink, { objectIds: [pid], gids: [gid] }, sizeProp)
   }
 
   for (const el of manifest.elements ?? []) {
+    if (!isDrawn(el, hidden)) continue
     const gid = el.gid
     const family = field(el, 'fontfamily')
     const text = field(el, 'text')
@@ -558,6 +673,13 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       .map((c) => c.toLowerCase()),
   )
 
+  const hidden = hiddenLegends(manifest)
+  const legendSizes = legendEntrySizes(manifest, hidden)
+  const barredSeries = new Set<string>()
+  for (const el of manifest.elements ?? []) {
+    if (el.role === 'bar') barredSeries.add(parentGid(el.gid))
+  }
+
   const tickLabels = new Map<string, number>()
   const linesByAxes = new Map<string, ManifestElement[]>()
   const rolesByAxes = new Map<string, Set<string>>()
@@ -569,22 +691,30 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     if (!rolesByAxes.has(ax)) rolesByAxes.set(ax, new Set())
     rolesByAxes.get(ax)!.add(role)
 
-    if (role === 'legend') {
+    if (role === 'legend' && isDrawn(el, hidden)) {
       if (legend.frame === false && field(el, 'frameon') === true) {
         sink.add('legend-frame', pf('legendFrame'), { objectIds: [pid], gids: [gid], prop: 'frameon' })
       }
-      const size = num(field(el, 'fontsize'))
+      // 量的是图例里**画出来的条目文字**，不是图例的 `fontsize` 设置器（它是创建时的
+      // 值，逐条改完条目也不动）。多条出界取离区间最远的那条
       const lo = num(legend.min_font_size_pt)
       const hi = num(legend.max_font_size_pt)
-      if (size != null && lo != null && hi != null) {
-        const eff = size * scale
-        if (eff < lo - 1e-9 || eff > hi + 1e-9) {
+      if (lo != null && hi != null) {
+        let worst: { dist: number; eff: number } | null = null
+        for (const size of legendSizes.get(gid) ?? []) {
+          const eff = size * scale
+          if (eff < lo - 1e-9 || eff > hi + 1e-9) {
+            // 越出区间越远越糟（两边都可能出界，所以取到区间的距离）
+            const dist = Math.max(lo - eff, eff - hi)
+            if (worst == null || dist > worst.dist) worst = { dist, eff }
+          }
+        }
+        if (worst) {
           sink.add(
             'legend-font-size',
-            pf('legendFontSize', { effective: eff.toFixed(2), min: g(lo), max: g(hi) }),
-            // 越出区间越远越糟（两边都可能出界，所以取到区间的距离）
-            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
-              worse: Math.max(lo - eff, eff - hi), prop: 'fontsize' },
+            pf('legendFontSize', { effective: worst.eff.toFixed(2), min: g(lo), max: g(hi) }),
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(worst.eff) },
+              worse: worst.dist, prop: 'fontsize' },
           )
         }
       }
@@ -646,8 +776,12 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       }
     }
 
+    // 柱形系列容器的 linewidth 是设置器（广播到每根柱）；柱已各自登记成 `bar` 元素、
+    // 各报各的，再量容器是同一处墨迹报两遍。茎叶 / 误差棒的成员没有登记成元素，
+    // 容器就是唯一的被量对象，照旧量
     if (
-      ['line', 'scatter', 'fill', 'bar_series', 'bar', 'errorbar', 'arrow_patch'].includes(role)
+      ['line', 'scatter', 'fill', 'bar_series', 'bar', 'errorbar', 'arrow_patch'].includes(role) &&
+      !(role === 'bar_series' && barredSeries.has(gid))
     ) {
       const lw = num(field(el, 'linewidth'))
       if (lw != null && presets.length && lw > 0) {
@@ -662,7 +796,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         }
       }
     }
-    if (role === 'legend_text') {
+    if (role === 'legend_text' && isDrawn(el, hidden)) {
       // 图例项的示意线（ADR 0034）：自定义的那些自己是一份状态，宽度要过档位，
       // 定位到图例项本身；跟随源的由源那条规则管着（再报一次是同一件事报两遍）
       const lw = num(field(el, 'handle_linewidth'))
@@ -814,14 +948,14 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     if (t.hidden) continue
     const size = num(t.size_pt) ?? 0
     // 画布标注的 size_pt 已经是页面上的绝对 pt：不再乘 scale
-    if (size <= floor) {
+    if (size < floor - FONT_FLOOR_TOL_PT) {
       sink.add('font-below-absolute-floor', pf('textBelowFloor', { size: g(size), floor: g(floor) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), floor_pt: floor },
         worse: -size,
         prop: 'sizePt',
       })
-    } else if (size < strict) {
+    } else if (size < strict - FONT_FLOOR_TOL_PT) {
       sink.add('font-too-small', pf('textTooSmall', { size: g(size), min: g(strict) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), min_pt: strict },
@@ -829,6 +963,7 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         prop: 'sizePt',
       })
     }
+    adviseFont(profile, size, sink, { objectIds: [t.id] }, 'sizePt')
     // 字体族：画布文字现在也能各设各的，规范里那条族约束必须看得见它们
     // ——**新增一条能违反规则的路，就要同时把检查的范围扩到那条路上**。
     const family = String(t.font_family ?? '')
@@ -844,7 +979,7 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     }
     // 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
     // 判据与 `engine/preflight.py` 同源，读同一张生成的覆盖表。
-    const { missing, substituted } = textDiagnostics(t.text, t.interpretation)
+    const { missing, substituted } = textDiagnostics(t.text, t.interpretation, t.text_format)
     if (missing.length) {
       const chars = missing.join('')
       sink.add('glyph-missing', pf('textGlyphMissing', { chars, count: String(missing.length) }), {
@@ -866,7 +1001,37 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         objectIds: [t.id],
       })
     }
+    // 排不出来的公式：导出时按源码原样画（不吞字）并给 `math_unrenderable` 警告；这里让它
+    // 进问题面板。事实（哪些公式失败）由 spec 带进来——求值器不起排版进程。
+    const bad = (t.math_errors ?? []).filter((e) => e && typeof e.src === 'string')
+    if (bad.length) {
+      sink.add(
+        'math-unrenderable',
+        pf('textMathUnrenderable', {
+          count: String(bad.length),
+          src: mathShown(bad[0].src),
+          why: mathWhy(bad[0].why),
+        }),
+        {
+          objectIds: [t.id],
+          detail: { formulas: bad.map((e) => ({ src: e.src, why: mathWhy(e.why) })) },
+          worse: bad.length,
+        },
+      )
+    }
   }
+}
+
+/** 公式源码在文案里的样子：`$…$`，过长截断（与 Python 侧 `_math_shown` 同源） */
+const mathShown = (src: string): string => {
+  const one = src.replace(/\s+/g, ' ').trim()
+  return `$${one.length > 40 ? one.slice(0, 40) + '…' : one}$`
+}
+
+/** 排不出的原因：折成单行、截到 80 字（与 Python 侧 `_math_why` 同源） */
+const mathWhy = (why: string): string => {
+  const one = String(why ?? '').replace(/\s+/g, ' ').trim()
+  return one.length > 80 ? one.slice(0, 80) + '…' : one
 }
 
 /**
@@ -1023,6 +1188,90 @@ export function panelScale(o: PanelObject): number {
   return full.w / o.nativeW
 }
 
+/**
+ * 这张图里**画出来的**文字最小的脚本字号（pt，未乘缩放）；没有 manifest / 没有字号 = null。
+ * 与字号三条规则同一个迭代器（`fontElements`：隐藏的、被整体藏起来的图例条目不算）。
+ * 缩放手势的胶囊用它起手取一次，再经 `scaledFontPt` 折算——不另写第二份「哪些字算数」的判据。
+ */
+export function drawnMinFontPt(manifest: Manifest | null | undefined): number | null {
+  if (!manifest) return null
+  let min: number | null = null
+  for (const [, size] of fontElements(manifest, hiddenLegends(manifest))) {
+    if (min == null || size < min) min = size
+  }
+  return min
+}
+
+/** 脚本字号 → 这张面板此刻读者量到的 pt（与预检同一个 `panelScale`） */
+export function scaledFontPt(scriptPt: number, panel: PanelObject): number {
+  return scriptPt * panelScale(panel)
+}
+
+/**
+ * 一张面板 → 求值器的面板输入。画布范围（`buildSpec`）与原图范围（`buildOriginalSpec`）
+ * **共用这一份**：两者只在「落位」与「缩放」上不同，面板自己的状态（缺失 / 过期 /
+ * 渲染失败 / 未应用的 override）是同一件事，不许各写一份。
+ */
+function panelSpec(
+  o: PanelObject,
+  assets: Record<string, PanelInfo>,
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  rect_mm: [number, number, number, number],
+  scale: number,
+  scope: ExportRouteScope,
+  formats: readonly string[],
+  route?: ExportRoute | null,
+): PreflightPanelSpec {
+  const r = panelRender(render, o)
+  return {
+    id: o.id,
+    name: o.name ?? o.fileId,
+    // 预检的 kind 只区分「矢量 / 位图」，主语是**本次导出嵌入的产物**，不是文件后缀：
+    // 带 override 且有脚本的 PNG 会被脚本重画成矢量，按 pdf 档判；runtime 面板由引擎
+    // 出矢量 SVG，同样按 pdf 档（golden vectors 的枚举不为它扩张）。判据只在 exportRoute.ts
+    kind: embedsDiskBitmap(o, assets, scope, formats, route) ? ('raster' as const) : ('pdf' as const),
+    rect_mm,
+    scale,
+    manifest: r?.manifest ?? null,
+    px_w: o.pxW ?? null,
+    // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
+    // stale/rerun 那套状态表达
+    missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
+    stale: !!r?.stale,
+    render_error: o.overrides.length > 0 && r?.status === 'error'
+      ? (formatMessage(r.error) || 'error')
+      : null,
+    // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
+    unapplied_overrides:
+      o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
+        ? o.overrides.length
+        : 0,
+    hidden: !!o.hidden,
+  }
+}
+
+/**
+ * 一段标注文字里**已知排不出来**的公式（缓存里 `ok: false`）。还在排 / 没问过的不算——
+ * 「还不知道」与「排不出」是两个答案。读缓存会顺手把没问过的排进下一次请求，
+ * 结果回来时 `subscribeMath` 通知问题面板重算（`validationStore.startValidation`）。
+ * 键与 `MathFormula` 画公式时用的同一个：(生效族, 源码)。
+ */
+export function mathErrorsOf(
+  o: TextObject,
+): { src: string; why: string }[] | undefined {
+  if (o.textFormat !== 'latex' || o.hidden) return undefined
+  const family = effectiveCanvasFamily(o)
+  const seen = new Set<string>()
+  const out: { src: string; why: string }[] = []
+  for (const run of parseRuns(o.text, o.textFormat)) {
+    if (!run.math || seen.has(run.text)) continue
+    seen.add(run.text)
+    const box = mathBoxOf(run.text, family)
+    if (box && !box.ok) out.push({ src: run.text, why: box.error ?? '' })
+  }
+  return out.length ? out : undefined
+}
+
 export function buildSpec(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
@@ -1050,33 +1299,7 @@ export function buildSpec(
   }
   const panels: PreflightPanelSpec[] = doc.objects
     .filter((o): o is PanelObject => o.type === 'panel')
-    .map((o) => {
-      const r = panelRender(render, o)
-      return {
-        id: o.id,
-        name: o.name ?? o.fileId,
-        // 预检的 kind 只区分「矢量 / 位图」：runtime 面板由引擎出矢量 SVG，
-        // 按 pdf 档判（golden vectors 的枚举不为它扩张——语义上就是矢量）
-        kind: o.fileKind === 'raster' ? ('raster' as const) : ('pdf' as const),
-        rect_mm: rect(o),
-        scale: panelScale(o),
-        manifest: r?.manifest ?? null,
-        px_w: o.pxW ?? null,
-        // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
-        // stale/rerun 那套状态表达
-        missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
-        stale: !!r?.stale,
-        render_error: o.overrides.length > 0 && r?.status === 'error'
-          ? (formatMessage(r.error) || 'error')
-          : null,
-        // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
-        unapplied_overrides:
-          o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
-            ? o.overrides.length
-            : 0,
-        hidden: !!o.hidden,
-      }
-    })
+    .map((o) => panelSpec(o, assets, render, rect(o), panelScale(o), 'canvas', []))
   return {
     page: { w_mm: doc.page.w, h_mm: doc.page.h, margin_mm: doc.page.margin ?? 0 },
     panels,
@@ -1091,6 +1314,8 @@ export function buildSpec(
         // 只有 `lib/typography` 一处，这里不写第二个。
         font_family: o.type === 'text' ? effectiveCanvasFamily(o) : '',
         interpretation: o.type === 'text' ? o.interpretation : undefined,
+        text_format: o.type === 'text' ? o.textFormat : undefined,
+        math_errors: o.type === 'text' ? mathErrorsOf(o) : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),
@@ -1100,6 +1325,38 @@ export function buildSpec(
       rect_mm: rect(o),
       hidden: !!o.hidden,
     })),
+  }
+}
+
+/**
+ * **按原图导出**时那份产物的 spec：页面 = 这张图的图幅、margin 0、面板铺满、**scale = 1**。
+ *
+ * 原图导出不带画布上的缩放 / 裁剪 / 旋转（ADR 0028：画布变换只进 `spec.ignored`），
+ * 读者量到的就是脚本里写的那个字号。拿画布那份 spec（`scale = panelScale()`）去判原图，
+ * 160 mm 的图在画布上缩到 80 mm 时，8 pt 的刻度会被报成 4 pt 的阻断——而导出的文件里
+ * 它仍是 8 pt。位图 PPI 同理：按图幅算，不按画布上的摆放宽度。
+ *
+ * 与后端 MCP 那条入口 `engine/preflight.py` 的 `spec_from_manifest()`（页面 = figure 自己、
+ * scale 1）同一口径；求值器仍是同一个 `runSpec()`，这里只换输入。
+ */
+export function buildOriginalSpec(
+  panel: PanelObject,
+  assets: Record<string, PanelInfo>,
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  size: { widthMm: number; heightMm: number },
+  /** 本次所选格式：要 EPS 且不要 SVG 时有脚本的图会被重画成矢量（`exportRoute.originalRerenders`） */
+  formats: readonly string[],
+  route?: ExportRoute | null,
+  /** 单图画布留白（ADR 0161，导出 mm）：页面 = 图幅 + 留白、图落在 (左, 上)——栏宽等页面规则按导出的页面判 */
+  pad?: FramePad | null,
+): PreflightSpec {
+  const p = pad ?? { l: 0, t: 0, r: 0, b: 0 }
+  const rect_mm: [number, number, number, number] = [p.l, p.t, size.widthMm, size.heightMm]
+  return {
+    page: { w_mm: size.widthMm + p.l + p.r, h_mm: size.heightMm + p.t + p.b, margin_mm: 0 },
+    panels: [panelSpec(panel, assets, render, rect_mm, 1, 'original', formats, route)],
+    texts: [],
+    objects: [{ id: panel.id, type: panel.type, rect_mm, hidden: !!panel.hidden }],
   }
 }
 

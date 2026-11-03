@@ -16,8 +16,11 @@ mod exit_marker;
 #[cfg(target_os = "macos")]
 mod fullscreen_observer;
 mod i18n;
+mod msix_breakaway;
 #[cfg(target_os = "macos")]
 mod native_drop;
+#[cfg(test)]
+mod reinstall_guard_tests;
 mod remote;
 mod rescue;
 mod shell_report;
@@ -250,6 +253,42 @@ enum NavDecision {
     OpenExternal,
 }
 
+/// 「新窗口请求」守卫（主窗口与远程实例窗口共用这一份）。
+///
+/// `<a target="_blank">` 与 `window.open(url, '_blank')` 不是同窗导航，**不经过**
+/// `on_navigation`：macOS 的 wry 在没装新窗口处理器时直接放弃这次请求（静默无反应），
+/// Windows 的 WebView2 则弹出自带的浏览器小窗。所以每个窗口都要另装 `on_new_window`，
+/// 并且永远不让它真的新开 webview 窗口：
+/// - 外部 http(s)/mailto → `OpenExternal`，交给系统默认程序；
+/// - 其余一律 `Deny`。这里**不能**直接用 `navigation_allowed` 的结果：它对壳自带页面与
+///   本机引擎根路径会给 `Allow`（同窗导航里是对的），放到新窗口里 `Allow` 就成了多开一个
+///   窗口，所以 `Allow` 也要折成 `Deny`；传 `port = None`，本机 127.0.0.1 因此一律 `Deny`。
+fn new_window_decision(url: &url::Url) -> NavDecision {
+    match navigation_allowed(url, None) {
+        NavDecision::OpenExternal => NavDecision::OpenExternal,
+        NavDecision::Allow | NavDecision::Deny => NavDecision::Deny,
+    }
+}
+
+/// 把外链交给系统默认程序。**失败不许静默**：用户看到的只是「点了没反应」，
+/// 日志里至少要有一行说清哪条链接、为什么没打开。
+fn open_external(app: &tauri::AppHandle, url: &url::Url) {
+    if let Err(e) = app.opener().open_url(url.as_str(), None::<&str>) {
+        eprintln!("open external link {url}: {e}");
+    }
+}
+
+/// `on_new_window` 的处理体：外链交给系统浏览器，永远返回 `Deny`（不新开 webview 窗口）。
+fn handle_new_window(
+    app: &tauri::AppHandle,
+    url: &url::Url,
+) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    if let NavDecision::OpenExternal = new_window_decision(url) {
+        open_external(app, url);
+    }
+    tauri::webview::NewWindowResponse::Deny
+}
+
 /// 在导出目录里定位文件并在文件管理器中显示。前端只能传「目录 + 纯文件名」，
 /// 文件名不得含路径分隔符。暴露给（本机 sidecar 页面的）IPC 的文件类能力只有两条，
 /// 都只 reveal 不 open：这一条与下面的 `reveal_project_dir`。
@@ -352,15 +391,164 @@ async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<Stri
     if action != "install" && action != "doctor" {
         return Err("bad_action".into());
     }
+    run_cli_json(app, vec!["codex".into(), action, "--json".into()]).await
+}
+
+/// 「接入 AI 编辑器」的宿主闭集——**与 `engine/hostconnect.py` 的 `HOST_IDS` 逐字相同**
+/// （看护 `tests/test_desktop_hosts_button.py`）。webview 递不进任意宿主名。
+const HOST_IDS: [&str; 9] = [
+    "codex",
+    "claude-code",
+    "cursor",
+    "vscode",
+    "trae",
+    "zcode",
+    "workbuddy",
+    "claude-desktop",
+    "antigravity",
+];
+
+/// 「接入 AI 编辑器」：spawn `tavotto-cli hosts <action> [<host>] [--project-root <目录>] --json`，
+/// 原样交回那一行 JSON——**壳里没有第二套安装器**，写哪些文件、怎么备份、怎么断开都只在
+/// `engine/hostconnect.py`（与 `codex_integration` 同一条纪律，ADR 0012）。
+///
+/// `action` 是闭集 `list` / `connect` / `disconnect`（断开是方案里的 ⋯ 菜单项：只删 tavotto 一条）；
+/// `host` 必须在 `HOST_IDS` 里；`project_root` 只给 `connect`，作为一个 argv 元素传（不过 shell），
+/// 文件夹本身合不合格由引擎判（根 / HOME 拒绝）。
+#[tauri::command]
+async fn host_integration(
+    app: tauri::AppHandle,
+    action: String,
+    host: Option<String>,
+    project_root: Option<String>,
+) -> Result<String, String> {
+    let args = host_cli_args(&action, host.as_deref(), project_root.as_deref())?;
+    run_cli_json(app, args).await
+}
+
+/// `host_integration` 收到的参数 → `tavotto-cli` 的 argv。**校验只在这里**（行为由下面的 `host_cli_tests` 钉住）：
+/// action 闭集、宿主必须在 `HOST_IDS`、文件夹只给 `connect` 且非空、作为一个 argv 元素传。
+fn host_cli_args(
+    action: &str,
+    host: Option<&str>,
+    project_root: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut args: Vec<String> = vec!["hosts".into()];
+    match action {
+        "list" => {
+            if host.is_some() || project_root.is_some() {
+                return Err("bad_args".into());
+            }
+            args.push(action.into());
+        }
+        "connect" | "disconnect" => {
+            let h = host.ok_or_else(|| "bad_args".to_string())?;
+            if !HOST_IDS.contains(&h) {
+                return Err("bad_host".into());
+            }
+            args.push(action.into());
+            args.push(h.into());
+            if let Some(root) = project_root {
+                if action != "connect" || root.is_empty() {
+                    return Err("bad_args".into());
+                }
+                args.push("--project-root".into());
+                args.push(root.into());
+            }
+        }
+        _ => return Err("bad_action".into()),
+    }
+    args.push("--json".into());
+    Ok(args)
+}
+
+#[cfg(test)]
+mod host_cli_tests {
+    use super::host_cli_args;
+
+    fn ok(v: &[&str]) -> Result<Vec<String>, String> {
+        Ok(v.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn list_takes_no_host_or_folder() {
+        assert_eq!(
+            host_cli_args("list", None, None),
+            ok(&["hosts", "list", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("list", Some("cursor"), None),
+            Err("bad_args".into())
+        );
+        assert_eq!(
+            host_cli_args("list", None, Some("/p")),
+            Err("bad_args".into())
+        );
+    }
+
+    #[test]
+    fn only_known_hosts_pass() {
+        assert_eq!(
+            host_cli_args("connect", Some("cursor"), None),
+            ok(&["hosts", "connect", "cursor", "--json"])
+        );
+        for bad in ["--project-root", "cursor --json", "", "../x", "sh"] {
+            assert_eq!(
+                host_cli_args("connect", Some(bad), None),
+                Err("bad_host".into()),
+                "{bad}"
+            );
+        }
+        assert_eq!(host_cli_args("connect", None, None), Err("bad_args".into()));
+    }
+
+    #[test]
+    fn the_folder_is_one_argv_element_and_only_for_connect() {
+        let root = "/Users/me/论文 a;b/figs";
+        assert_eq!(
+            host_cli_args("connect", Some("zcode"), Some(root)),
+            ok(&[
+                "hosts",
+                "connect",
+                "zcode",
+                "--project-root",
+                root,
+                "--json"
+            ])
+        );
+        assert_eq!(
+            host_cli_args("disconnect", Some("zcode"), Some(root)),
+            Err("bad_args".into())
+        );
+        assert_eq!(
+            host_cli_args("connect", Some("zcode"), Some("")),
+            Err("bad_args".into())
+        );
+    }
+
+    #[test]
+    fn unknown_actions_are_refused() {
+        for bad in ["install", "uninstall", "LIST", ""] {
+            assert_eq!(
+                host_cli_args(bad, Some("cursor"), None),
+                Err("bad_action".into()),
+                "{bad}"
+            );
+        }
+    }
+}
+
+/// spawn 桌面版的 `tavotto-cli <args>`，取 stdout 里**最后一行 JSON**。失败也是一行 JSON（引擎的
+/// `--json` 纪律），所以不看退出码；真的一行都没有才回稳定 code（`cli_not_found` / `spawn_failed` /
+/// `bad_output`），由前端翻成人话——英文 code 不进界面。
+async fn run_cli_json(app: tauri::AppHandle, args: Vec<String>) -> Result<String, String> {
     let resource_dir = app.path().resource_dir().ok();
     tauri::async_runtime::spawn_blocking(move || {
         let cli = sidecar::resolve_cli(resource_dir.as_deref())?;
         let mut cmd = std::process::Command::new(&cli);
-        cmd.arg("codex")
-            .arg(&action)
-            .arg("--json")
-            // 安装要拉一次稀疏检出，可能跑上几分钟。stdin 给 null：这条命令
-            // 刻意不是交互向导，等在一个没人接的提示上等于挂死。
+        cmd.args(&args)
+            // 安装要拉一次稀疏检出、写配置后要真握手一次，可能跑上几分钟。stdin 给 null：
+            // 这些命令刻意不是交互向导，等在一个没人接的提示上等于挂死。
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -774,6 +962,7 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let locale = *state.menu_locale.lock().unwrap();
     let slot = state.remote.clone();
     let nav_handle = app.clone();
+    let new_window_handle = app.clone();
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
@@ -792,11 +981,13 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             NavDecision::Allow => true,
             NavDecision::Deny => false,
             NavDecision::OpenExternal => {
-                let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                open_external(&nav_handle, url);
                 false
             }
         }
     })
+    // target=_blank / window.open 不经 on_navigation（见 new_window_decision）
+    .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
     .build()?;
     win.set_focus()
 }
@@ -1020,7 +1211,7 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
     }
     menus.push(Sub(m.view, view));
 
-    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在标题栏上，不另开一栏。
+    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在页面右上角（window_chrome.rs），不另开一栏。
     if macos {
         menus.push(Sub(
             m.window,
@@ -1046,6 +1237,14 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
     }
     menus.push(Sub(m.help, help));
     menus
+}
+
+/// opener 插件：`open_js_links_on_click` 必须关（原因见 `run()` 注册处与
+/// `the_opener_plugin_never_swallows_link_clicks`）。注册只许经这个函数。
+fn opener_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
+    tauri_plugin_opener::Builder::new()
+        .open_js_links_on_click(false)
+        .build()
 }
 
 fn build_native<R: tauri::Runtime>(
@@ -1184,6 +1383,24 @@ fn set_menu_locale(
     Ok(())
 }
 
+/// window-state 插件与主窗口手动恢复共用的状态位：不管窗框（Windows 主窗口没有系统标题栏，
+/// 恢复旧版本存下的 `decorated: true` 会让系统标题栏与页面窗口按钮并存，#1279 真机）与可见性
+/// （非 macOS 主窗口建时不显示，由壳在藏好菜单后亮出来）。不管窗框也就不往状态文件写 false，
+/// 退回旧版本时不会恢复出一个没有关闭按钮的窗口。
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    tauri_plugin_window_state::StateFlags::all()
+        - tauri_plugin_window_state::StateFlags::DECORATIONS
+        - tauri_plugin_window_state::StateFlags::VISIBLE
+}
+
+/// 主窗口建好后手动恢复上次的位置 / 大小 / 最大化（插件在建窗时跳过了这一步）。
+fn restore_main_window_state(win: &tauri::WebviewWindow) {
+    use tauri_plugin_window_state::WindowExt;
+    if let Err(e) = win.restore_state(window_state_flags()) {
+        eprintln!("restore main window state: {e}");
+    }
+}
+
 /// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键
 /// 照旧由它截获——只是不占一行。`app.set_menu` 会把菜单重新挂上**并显示**，所以每次换菜单
 /// 之后都要再藏一次。远程实例窗口不藏：那里是服务器那一版前端，未必有「菜单」按钮。
@@ -1215,27 +1432,6 @@ fn show_app_menu(
     window
         .popup_menu_at(&menu, tauri::LogicalPosition::new(x, y))
         .map_err(|e| e.to_string())
-}
-
-/// 页面按当前主题报上来的顶栏底色 / 文字色（`#rrggbb`）→ 系统标题栏同色（Windows 11 起；
-/// 别的平台与 Windows 10 什么都不做）。颜色认不出来就回错，标题栏维持原样。
-#[tauri::command]
-fn set_titlebar_colors(
-    window: tauri::WebviewWindow,
-    background: String,
-    text: String,
-) -> Result<(), String> {
-    let (Some(bg), Some(fg)) = (
-        window_chrome::parse_hex_rgb(&background),
-        window_chrome::parse_hex_rgb(&text),
-    ) else {
-        return Err(format!("颜色认不出来：{background} / {text}"));
-    };
-    #[cfg(windows)]
-    window_chrome::apply_caption_colors(&window, bg, fg);
-    #[cfg(not(windows))]
-    let _ = (window, bg, fg);
-    Ok(())
 }
 
 /// 引擎意外退出时发给主窗口的事件（载荷 `{kind}`，闭集 signal / nonzero / zero）。
@@ -1276,6 +1472,13 @@ fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
 
     let project = open.as_ref().map(|o| o.project.as_str());
     let config_dir = app.path().app_config_dir().ok();
+    // 握手超时后救援页「重新启动」留下的一次性标记：读到即删，这一次启动不恢复上次项目（sidecar/safe_start.rs）。
+    // 只有进程首次启动读（`first`）；引擎崩溃后的 `restart_engine` 不是那条路径
+    let safe = first
+        && sidecar::safe_start::take(
+            sidecar::safe_start::path(config_dir.as_deref()).as_deref(),
+            sidecar::safe_start::now_secs(),
+        );
     let result = sidecar::Sidecar::start(
         resource_dir,
         &log_dir,
@@ -1283,6 +1486,7 @@ fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
         project,
         config_dir.as_deref(),
         menu_locale,
+        safe,
     );
     let Some(win) = app.get_webview_window("main") else {
         if let Ok((sc, _)) = result {
@@ -1695,6 +1899,26 @@ async fn update_install(
     .await
 }
 
+/// 救援页「重新安装」的实现：查 + 装一气呵成，允许同版本（`app_update::run_reinstall`）。
+/// 只有 `rescue::rescue_reinstall` 调它（先过 `gate_reinstall`）。
+async fn update_reinstall(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    ui_lang: Option<&str>,
+) -> Result<app_update::Source, app_update::Failure> {
+    let endpoints = app_update::endpoints(app)?;
+    let order = app_update::detect_order(ui_lang);
+    app_update::run_reinstall(
+        &|| updater_builder(app),
+        &endpoints,
+        state,
+        &order,
+        &app_update::Limits::default(),
+        &|_| {},
+    )
+    .await
+}
+
 /// 应用内更新·查（前端 `checkDesktopUpdate` 的唯一入口，ADR 0121）。来源顺序由本机时区 / 系统语言 /
 /// 界面语言决定（`app_update::source_order`）；第一个答上来的来源说了算。绝不静默下载。
 /// 只许主窗口调（远程实例窗口的 capability 里本来就没有它，这里再查一道）。
@@ -1728,6 +1952,8 @@ async fn desktop_update_install(
 fn main() {
     // 最先：越早装，启动早期的崩溃越有转储可收（仅 Windows 生效，见 crash_dump.rs）
     crash_dump::install();
+    // 带 MSIX 包身份（从 Codex 桌面版等拉起）就脱离包重新拉起自己后退出——在建任何窗口 / 写任何配置之前（#1574）
+    msix_breakaway::relaunch_outside_package_if_needed();
     let state = AppState {
         sidecar: Mutex::new(None),
         port: Arc::new(Mutex::new(None)),
@@ -1761,9 +1987,25 @@ fn main() {
                 let _ = app.emit_to("main", "tavotto:open", req);
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 记住窗口位置 / 大小 / 最大化，状态位见 `window_state_flags`（不管窗框与可见性）。
+        // 主窗口跳过插件在建窗钩子里的那次恢复（`skip_initial_state`）：上次以最大化关闭时，那次恢复会在
+        // `.build()` 返回之前就把 HWND 显示出来，藏菜单 / 换底色赶不上第一帧，启动闪烁照旧。改由壳在藏好
+        // 菜单栏、铺好底色之后自己 `restore_state`（同一组状态位），再 `show()`。退出时的保存照常；远程实例窗口不受影响。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .skip_initial_state(MAIN_WINDOW)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // opener 插件：**必须**关掉 `open_js_links_on_click`。开着时插件往每个页面注入一个
+        // window 级 click 监听，对 `<a target="_blank">` 先 `preventDefault` 再走 IPC
+        // `plugin:opener|open_url`——而 capability 不开放任意 opener（见 `capabilities/main.json`），
+        // IPC 被 ACL 静默拒绝，链接于是「点了没反应」，WebKit 的导航策略 / 新窗口请求也永远等不到
+        // （`on_navigation` / `on_new_window` 全被抢先吞了）。关掉之后 `<a target=_blank>` 回到
+        // 原生路径（`navigation_allowed` → `OpenExternal`），`window.open` 走 `on_new_window`，
+        // 两条都由壳在 Rust 侧调 `open_external`，不需要给页面任何 opener 权限。
+        .plugin(opener_plugin())
         // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见
         // app_update.rs，ADR 0121）检查/下载/安装，装完用 process 的 restart 重启。升级永不静默
         // 进行——什么时候换版本是用户按下按钮的结果（与 Python updater 同一条纪律）。
@@ -1778,6 +2020,7 @@ fn main() {
             reveal_project_dir,
             set_menu_locale,
             codex_integration,
+            host_integration,
             arm_close_guard,
             resolve_close_request,
             native_file_drop,
@@ -1785,7 +2028,6 @@ fn main() {
             desktop_update_check,
             desktop_update_install,
             show_app_menu,
-            set_titlebar_colors,
             take_previous_exit,
             current_engine_exit,
             current_fullscreen,
@@ -1794,6 +2036,7 @@ fn main() {
             rescue::rescue_retry,
             rescue::rescue_update_check,
             rescue::rescue_update_install,
+            rescue::rescue_reinstall,
             rescue::rescue_diag_preview,
             rescue::rescue_diag_send,
             rescue::rescue_diag_save
@@ -1836,6 +2079,7 @@ fn main() {
             let handle = app.handle().clone();
             let port_cell = app.state::<AppState>().port.clone();
             let nav_handle = handle.clone();
+            let new_window_handle = handle.clone();
             // 上次记下的语言。菜单与启动画面都用它——「装完第一次打开」之外
             // 每一次启动，用户看到的第一屏就已经是他选的语言。
             // 这里才是第一个能安全用 `handle.path()` 的地方（见 build_menu）
@@ -1874,8 +2118,9 @@ fn main() {
             .inner_size(1280.0, 860.0)
             // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
             .min_inner_size(1024.0, 680.0)
-            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏；
-            // 并注入窗框标记，页面据它让出红绿灯 / 摆出「菜单」按钮
+            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏，
+            // Windows 去掉系统窗框、窗口按钮由页面画；并注入窗框标记，页面据它让出红绿灯 /
+            // 摆出「菜单」与窗口按钮
             .main_window_chrome()
             // Tauri 默认接管窗口的拖放事件（tauri://drag-drop），代价是 webview 里
             // 的 HTML5 drag&drop 整个失效——「素材拖入画布」在桌面壳里就是这么坏的。
@@ -1887,13 +2132,22 @@ fn main() {
                     NavDecision::Allow => true,
                     NavDecision::Deny => false,
                     NavDecision::OpenExternal => {
-                        let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                        open_external(&nav_handle, url);
                         false
                     }
                 },
             )
+            // target=_blank / window.open 不经 on_navigation（见 new_window_decision）
+            .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
             .build()?;
             hide_main_menu_bar(&handle);
+            // 非 macOS 的主窗口建时不显示（window_chrome.rs）：菜单栏藏好、底色换好、位置 / 大小 / 最大化
+            // 恢复好才亮出来。恢复失败不阻止显示。
+            #[cfg(not(target_os = "macos"))]
+            window_chrome::reveal_main_window(&win, || restore_main_window_state(&win));
+            // macOS 主窗口本来就是显示的，但插件已跳过建窗时的恢复：这里补上，否则记不住位置与大小
+            #[cfg(target_os = "macos")]
+            restore_main_window_state(&win);
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
             #[cfg(target_os = "macos")]
@@ -2339,6 +2593,173 @@ mod tests {
             navigation_allowed(&u("https://example.com/"), Some(5089)),
             NavDecision::OpenExternal
         ));
+    }
+
+    /// `target=_blank` / `window.open` 的新窗口请求：只有外链交给系统浏览器，
+    /// 其余（含本机引擎同源、壳自带页面、file:/javascript:/data:）一律拒，绝不新开窗口。
+    #[test]
+    fn new_window_requests_only_open_external_links() {
+        let d = |s: &str| new_window_decision(&url::Url::parse(s).unwrap());
+        let ext = |s: &str| matches!(d(s), NavDecision::OpenExternal);
+        assert!(ext("https://example.com/support"));
+        assert!(ext("http://example.com/"));
+        assert!(ext("mailto:a@example.com"));
+        for denied in [
+            "http://127.0.0.1:5089/",
+            "http://127.0.0.1:5089/?pj=x",
+            "tauri://localhost/index.html",
+            "http://tauri.localhost/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+        ] {
+            assert!(matches!(d(denied), NavDecision::Deny), "{denied}");
+        }
+    }
+
+    /// 外链「点了没反应」的根因看护（beta 0.19.0b2）：opener 插件默认注入的 click 监听会
+    /// 吞掉 `<a target=_blank>` 再走被 ACL 拒绝的 IPC，原生路径（`on_navigation` /
+    /// `on_new_window`）永远等不到。插件必须经 `opener_plugin()` 关掉它，且 capability
+    /// 不给页面任何 opener 权限（外链全由壳在 Rust 侧打开）。
+    #[test]
+    fn the_opener_plugin_never_swallows_link_clicks() {
+        let src = include_str!("main.rs");
+        let prod = &src[..src.find("#[cfg(test)]\nmod tests").expect("找不到测试模块")];
+        let code: String = strip_rust_comments(prod)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // 生效的注册：恰好一处 `.plugin(opener_plugin())`，且没有别的 opener 注册方式。
+        assert_eq!(code.matches(".plugin(opener_plugin())").count(), 1);
+        assert_eq!(code.matches("opener_plugin()").count(), 1);
+        assert!(!code.contains("tauri_plugin_opener::init"));
+        assert!(!code.contains("open_js_links_on_click(true)"));
+        assert_eq!(code.matches("tauri_plugin_opener::Builder").count(), 1);
+        // 函数体：Builder::new() 链上先关注入、再 build。
+        assert!(
+            code.contains(
+                "fnopener_plugin<R:tauri::Runtime>()->impltauri::plugin::Plugin<R>\
+                 {tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build()}"
+            ),
+            "opener_plugin() 必须是 Builder::new().open_js_links_on_click(false).build()"
+        );
+
+        // 全部 capability 文件（含 rescue-page / remote-connect 等）都不得给页面 opener 权限。
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            seen += 1;
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            for perm in v["permissions"].as_array().expect("permissions 应为数组") {
+                let id = perm
+                    .as_str()
+                    .or_else(|| perm["identifier"].as_str())
+                    .unwrap_or_else(|| panic!("{path:?} 出现无法识别的权限项 {perm}"));
+                assert!(
+                    !id.starts_with("opener:"),
+                    "{path:?} 页面不得持有 opener 权限：{id}"
+                );
+            }
+        }
+        assert!(
+            seen >= 4,
+            "capabilities/ 只枚举到 {seen} 个文件，疑似空目录假绿"
+        );
+    }
+
+    /// 去掉 `//` 行注释与 `/* */` 块注释（块注释可嵌套）；字符串 / 原始字符串 / 字符字面量原样保留。
+    fn strip_rust_comments(src: &str) -> String {
+        let b: Vec<char> = src.chars().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < b.len() {
+            let c = b[i];
+            let n = b.get(i + 1).copied();
+            if c == '/' && n == Some('/') {
+                while i < b.len() && b[i] != '\n' {
+                    i += 1;
+                }
+            } else if c == '/' && n == Some('*') {
+                let mut depth = 1;
+                i += 2;
+                while i < b.len() && depth > 0 {
+                    if b[i] == '/' && b.get(i + 1) == Some(&'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if b[i] == '*' && b.get(i + 1) == Some(&'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push(' ');
+            } else if c == 'r' && matches!(n, Some('"') | Some('#')) {
+                // 原始字符串 r#"..."#
+                let mut j = i + 1;
+                let mut hashes = 0;
+                while b.get(j) == Some(&'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if b.get(j) == Some(&'"') {
+                    j += 1;
+                    let close: Vec<char> = std::iter::once('"')
+                        .chain(std::iter::repeat_n('#', hashes))
+                        .collect();
+                    while j < b.len()
+                        && b[j..].len() >= close.len()
+                        && b[j..j + close.len()] != close[..]
+                    {
+                        j += 1;
+                    }
+                    j = (j + close.len()).min(b.len());
+                    out.extend(&b[i..j]);
+                    i = j;
+                } else {
+                    out.push(c);
+                    i += 1;
+                }
+            } else if c == '"' {
+                out.push(c);
+                i += 1;
+                while i < b.len() {
+                    out.push(b[i]);
+                    if b[i] == '\\' {
+                        i += 1;
+                        if i < b.len() {
+                            out.push(b[i]);
+                        }
+                    } else if b[i] == '"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if c == '\'' && (n == Some('\\') || b.get(i + 2) == Some(&'\'')) {
+                // 字符字面量（生命周期 'a 不会命中）
+                let mut j = i + 1;
+                if b[j] == '\\' {
+                    j += 1;
+                }
+                j += 1;
+                while j < b.len() && b[j] != '\'' {
+                    j += 1;
+                }
+                j = (j + 1).min(b.len());
+                out.extend(&b[i..j]);
+                i = j;
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        }
+        out
     }
 
     /// 远程实例窗口的标记与前端读的全局名是同一个（Python 侧再比一次两侧源码）。

@@ -143,7 +143,7 @@ class Server {
     this.proc.stdout.on('data', (b) => { this.log += b })
     this.proc.stderr.on('data', (b) => { this.log += b })
     for (let i = 0; i < 400; i++) {
-      const m = /\* 打开 (\S+#dnonce=\S+)/.exec(this.log)
+      const m = /(http:\/\/127\.0\.0\.1:\d+\/\S*#dnonce=[A-Za-z0-9_-]+)/.exec(this.log)
       if (m) { this.url = m[1]; break }
       if (this.proc.exitCode !== null) throw new Error('server exited early:\n' + this.log.slice(-3000))
       await sleep(300)

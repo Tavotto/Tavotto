@@ -6,7 +6,6 @@ import { boundsOf, visualBounds } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { renderedSelection } from '@/store/zoomToSelection'
 import { mmToPx, mmToViewX, mmToViewY, useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import { startGuideDrag } from './interactions'
@@ -239,8 +238,7 @@ function useSelectionSpan(): { x: [number, number]; y: [number, number] } | null
   const objects = useDocumentStore((s) => s.doc.objects)
   // 只认画在舞台上的：快速编辑里只有那张图（`renderedSelection`，与缩放到选中同一判据）。今天快速编辑不挂
   // 标尺（`CanvasStage` 的 showRulers），这里是第二道：选区里挂着的看不见的版面对象不进选区带
-  const fastEditPanelId = useWorkspaceStore(fastEditPanelOf)
-  const sel = renderedSelection(objects, ids, fastEditPanelId)
+  const sel = renderedSelection(objects, ids)
   if (!sel.length) return null
   const b = boundsOf(sel.map(visualBounds))
   if (!b) return null
@@ -269,12 +267,14 @@ export function Rulers({ viewW, viewH }: { viewW: number; viewH: number }) {
       </div>
       <canvas
         ref={topRef}
+        data-ruler="x"
         className="absolute top-0 z-sticky cursor-ns-resize"
         style={{ left: RULER_SIZE, width: viewW, height: RULER_SIZE }}
         onPointerDown={(e) => startGuideDrag(e, 'y', null)}
       />
       <canvas
         ref={leftRef}
+        data-ruler="y"
         className="absolute left-0 z-sticky cursor-ew-resize"
         style={{ top: RULER_SIZE, width: RULER_SIZE, height: viewH }}
         onPointerDown={(e) => startGuideDrag(e, 'x', null)}

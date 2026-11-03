@@ -31,6 +31,7 @@ Tavotto 给出的仍然是一句 `ModuleNotFoundError` ——用户得先知道 
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import hashlib
@@ -51,6 +52,7 @@ from pathlib import Path
 from . import (
     depplan,
     depresolve,
+    envdiag,
     envlease,
     execspec,
     importscan,
@@ -60,6 +62,7 @@ from . import (
     pool,
     privatepython,
     projectenv,
+    rootenv,
     runcodes,
     runtime,
     taskdiag,
@@ -171,6 +174,10 @@ STATE_CANCELLED = "cancelled"
 _lock = threading.RLock()
 _plans: dict[str, "RepairPlan"] = {}
 _progress: dict[str, dict] = {}
+#: 每条进度记录被写过几笔（状态 / 日志 / 包源……任何一笔；键 = 进度 id，认领的作业与它的进度记录同一个 id）。
+#: 等别的作业结束的一方按**这个项目**在途作业的这些计数判「它还有没有进展」（`project_progress`；
+#: `pyversionfix._wait_for_installs` 的卡死判据，TVD-22EY / Codex #1632 P2：别的项目的进展不算）；只在 `_lock` 下读写
+_progress_seq: dict[str, int] = {}
 _cancels: dict[str, threading.Event] = {}
 #: (项目指纹, 脚本) → 已经修过几轮。
 _rounds: dict[tuple[str, str], int] = {}
@@ -401,9 +408,11 @@ def reset_state(project: str | Path | None = None) -> None:
             _cancels.clear()
             _rounds.clear()
             _attempted.clear()
+            pool.reset_unreadable_installs()
             _base_python, _base_python_known = None, False
             _base_epoch += 1
             return
+        pool.reset_unreadable_installs(project)
         pid = managedenv.project_fingerprint(project)
         for key in [k for k, p in _plans.items() if p.project_id == pid]:
             _plans.pop(key, None)
@@ -580,7 +589,12 @@ def _managed_scope(root: str, kind: str) -> tuple[bool, dict | None, str]:
     if kind != TARGET_MANAGED:
         return False, None, ""
     managed_python = managedenv.python_of(root) or ""
-    return not managed_python, _private_python_offer(), managed_python
+    # 钉了基础解释器（换 Python 版本）：就算已有 active 代，也是在它旁边另建一代
+    return (
+        (not managed_python) or bool(pinned_base_python()),
+        _private_python_offer(),
+        managed_python,
+    )
 
 
 def offer_impact(root: str, joint, kind: str, python: str, scope_policy: str = "") -> dict | None:
@@ -844,8 +858,34 @@ def _probe_base_python() -> str | None:
     return found
 
 
+#: 「换 Python 版本」（`engine/pyversionfix.py`，ADR 0114 修订 2026-10-23）钉下的基础解释器：**线程局部**，
+#: 只在 `pinned_base()` 的 with 块里、同一线程上生效（计划与执行是同步的同一线程）。别的线程 / 别的请求
+#: 看到的永远是 `base_python()` 的常规结论，所以它不会漏到别的项目的计划里。
+_pin = threading.local()
+
+
+@contextlib.contextmanager
+def pinned_base(python: str):
+    """块内把受管环境新一代的基础解释器钉成 `python`：计划按它的 fresh venv 量事实、事务拿它建 venv。
+    仍然只往 Tavotto 自己的受管环境里建（目标永远是 `TARGET_MANAGED`），用户的环境一个字节不碰。"""
+    prev = getattr(_pin, "python", "")
+    _pin.python = str(python or "")
+    try:
+        yield
+    finally:
+        _pin.python = prev
+
+
+def pinned_base_python() -> str:
+    """此刻线程上钉着的基础解释器；没钉回空串。"""
+    return str(getattr(_pin, "python", "") or "")
+
+
 def base_python() -> str | None:
     """基础解释器（同步；没有回 None）。计划创建那条路上用它。"""
+    pinned = pinned_base_python()
+    if pinned:
+        return pinned
     with _lock:
         if _base_python_known:
             return _base_python
@@ -856,6 +896,17 @@ def supported_python_range() -> dict:
     """支持的 Python 次版本闭区间 `{"min": "3.10", "max": "3.14"}`（界面文案用）。"""
     lo, hi = projectenv.PYTHON_MIN, projectenv.PYTHON_TESTED[-1]
     return {"min": f"{lo[0]}.{lo[1]}", "max": f"{hi[0]}.{hi[1]}"}
+
+
+def _not_pip_of(module: str, requirement: "depresolve.DependencyRequirement | None") -> dict | None:
+    """这个缺的 import / 解析出的发行包是「已知装不了」表里的吗？是则回 `{label, hint}`（与联合计划同一张表、同一口径）。
+
+    单包兜底路径（`offer` / `create_plan`）也要查：声明 `root`、`import ROOT` 时联合计划已把它从 missing 里摘掉，
+    执行后撞 import 失败才落到这里——这时 `depresolve.resolve()` 仍会解出一个「可装」的 `root`（Codex #1276 P1）。"""
+    hit = depresolve.not_pip_installable(module)
+    if hit is None and requirement is not None and requirement.distribution:
+        hit = depresolve.not_pip_for_distribution(requirement.distribution)
+    return {"label": hit["label"], "hint": hit["hint"]} if hit else None
 
 
 def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
@@ -963,6 +1014,13 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         for r in projectenv.rejected_system_candidates(system)
     ]
 
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        # 点名「需要自己的环境」：不给安装需求，也不给任何装进 Tavotto 管的环境的目标（上面采用已有环境的目标照旧）
+        out["requirement"] = None
+        out["not_pip_installable"] = not_pip
+        out["code"] = ERROR_UNRESOLVED
+        return out
     if requirement is None or not requirement.installable:
         out["code"] = ERROR_UNRESOLVED
         return out
@@ -1081,6 +1139,13 @@ def create_plan(
         requirement = depresolve.resolve(root, module, script)
         if requirement is None:
             raise RepairError(ERROR_UNRESOLVED, f"无法确定 {module} 对应哪个安装包")
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        raise RepairError(
+            ERROR_UNRESOLVED,
+            f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境",
+            not_pip_installable=not_pip,
+        )
     if not requirement.installable:
         raise RepairError(ERROR_REQUIREMENT_INVALID, "这个需求不可安装")
 
@@ -1225,7 +1290,65 @@ def _widen_for_fresh_generation(
     project: str, script: str, requirement: depresolve.DependencyRequirement
 ) -> _Widened | None:
     joint = _fresh_generation_joint(project, script)
-    return _fold_requested(requirement, joint) if joint is not None else None
+    wide = _fold_requested(requirement, joint) if joint is not None else None
+    if wide is None:
+        return None
+    return _carry_bundled_packages(project, script, joint, wide)
+
+
+def _scan_sees_everything(joint: depplan.JointPlan) -> bool:
+    """静态扫描是否看全了脚本开跑要的 import：没有映射不到的名字、没有留到运行时再看的名字、本地模块跟进没被截断。
+
+    不看 `search_complete`：脚本只要改了 `sys.path` 它就恒为 False（搜索路径不静态可定），而那些脚本的 import
+    多数都已经认全了——那时联合求解给出的就是全部需要的。"""
+    scan = joint.scan or {}
+    return not joint.unknown and not joint.deferred_unverified and not scan.get("truncated")
+
+
+def _carry_bundled_packages(
+    project: str, script: str, joint: depplan.JointPlan, wide: _Widened
+) -> _Widened:
+    """脚本此刻在**内置 runtime** 里跑、而静态扫描没看全时，新建的第一代把内置 runtime 的顶层科学包一起带上（TVD-22EY）。
+
+    看不全的 import（本地模块在扫描读不到的地方、动态导入……）多半也用着内置 runtime 里的 pandas / scipy 等；
+    只装缺的那一个，新一代比原来能跑到这一步的环境还少，重跑必然一轮轮撞「缺 pandas」直到用完修复轮数。
+    看全了就不带（联合求解已经给出了全部需要的）。只在新建第一代时调用；已有一代时账上的包随换代带走。"""
+    if _scan_sees_everything(joint):
+        return wide
+    try:
+        source = pool.resolve_worker_python(project, script=script)[1]
+    except pool.WorkerError:
+        return wide
+    if source != pool.SOURCE_BUNDLED:
+        return wide
+    info = runtime.manifest() or {}
+    top = [str(n) for n in (info.get("top_level") or ()) if str(n).strip()]
+    have = {depresolve.normalize_distribution(_name_of(r)) for r in wide.requirements}
+    # 这一代本来就带的 adapter（matplotlib / numpy）不重复列
+    have |= {depresolve.normalize_distribution(n) for n in depplan.adapter_distributions()}
+    extra = [n for n in top if depresolve.normalize_distribution(n) not in have]
+    if not extra:
+        return wide
+    imports = list(wide.needed_imports)
+    record = list(wide.record)
+    for dist in extra:
+        mod = runtime.import_name_of(dist)
+        if mod not in imports:
+            imports.append(mod)
+        record.append(
+            {
+                "import_name": mod,
+                "distribution": dist,
+                "specifier": "",
+                "resolution_source": depresolve.SOURCE_CURATED,
+            }
+        )
+    return dataclasses.replace(
+        wide,
+        requirements=(*wide.requirements, *extra),
+        needed_imports=tuple(imports),
+        record=tuple(record),
+    )
 
 
 def _private_python_offer() -> dict | None:
@@ -1470,7 +1593,9 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
         )
-        outcome = _run_generation_locked(job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(req.distribution), "")
@@ -1485,6 +1610,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 代事务生成的回执原样带到对外终态（它自己的 `done` 被 `_emit_repair_step` 吞了）
             "providers": outcome.get("providers", []),
         }
+        pool.note_unreadable_install(plan.project, req.import_name, result.get("python", ""))
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
         LOG.info(
             "依赖修复成功: %s %s → %s",
@@ -1603,6 +1729,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "",
         ),
     }
+    pool.note_unreadable_install(plan.project, req.import_name, result.get("python", ""))
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info(
         "依赖修复成功: %s %s → %s",
@@ -1668,25 +1795,75 @@ def claim_rebuild_progress_id(raw: str | None) -> str:
     return pid
 
 
-def start_rebuild(project: str | Path, on_event, progress_id: str) -> None:
+def resolve_rebuild_offer(
+    private_python_id: str = "", seen_origin: str = "", seen_download_bytes: int | None = None
+) -> dict | None:
+    """重建要供应的私有 Python 载荷；授权绑在用户**实际看到的那份**上（ADR 0111 §一）。
+
+    用户确认时看到的是 `id` + `origin` + `download_bytes`（缓存的说「不下载」、下载的说大小）。此刻重算的载荷
+    id 相同但来源或下载量变了（点击前缓存归档被清 = cached 变 download），那不是用户同意过的事——
+    `repair_plan_stale`、零请求，让他按新的来源重新确认。没回显来源 / 下载量（老前端）同样按未确认处理。
+    没传 id / 已有基础解释器 / 锁换了：不供应（照旧，不静默换成另一份下载）。
+    """
+    if not private_python_id or base_python():
+        return None
+    offered = privatepython.offer_payload()
+    if offered is None or offered.get("id") != private_python_id:
+        return None
+    if offered.get("origin") != seen_origin or offered.get("download_bytes") != seen_download_bytes:
+        raise RepairError(ERROR_PLAN_STALE, "确认之后 Python 的来源或下载量变了，请重新确认")
+    return offered
+
+
+def start_rebuild(
+    project: str | Path,
+    on_event,
+    progress_id: str,
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> None:
     """起重建线程（`progress_id` 必须已经由 `claim_rebuild_progress_id` 占用）。"""
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, on_event, progress_id),
+        target=lambda: _rebuild_guarded(
+            project, on_event, progress_id, private_python_id, seen_origin, seen_download_bytes
+        ),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
 
 
-def rebuild_managed_async(project: str | Path, on_event=None, progress_id: str = "") -> str:
+def rebuild_managed_async(
+    project: str | Path,
+    on_event=None,
+    progress_id: str = "",
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> str:
     """占用 id + 起线程；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
     pid = claim_rebuild_progress_id(progress_id)
-    start_rebuild(project, on_event, pid)
+    start_rebuild(project, on_event, pid, private_python_id, seen_origin, seen_download_bytes)
     return pid
 
 
-def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
+def _rebuild_guarded(
+    project,
+    on_event,
+    progress_id: str,
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> dict:
     try:
-        return rebuild_managed(project, on_event, progress_id=progress_id)
+        return rebuild_managed(
+            project,
+            on_event,
+            progress_id=progress_id,
+            private_python_id=private_python_id,
+            seen_origin=seen_origin,
+            seen_download_bytes=seen_download_bytes,
+        )
     except RepairError as exc:
         _log_repair_failure("受管环境重建", progress_id, exc.code)
         return _emit(progress_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
@@ -1701,7 +1878,15 @@ def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
         )
 
 
-def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = "") -> dict:
+def rebuild_managed(
+    project: str | Path,
+    on_event=None,
+    *,
+    progress_id: str = "",
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> dict:
     """重建受管环境：按账上记过的那些**建新的一代**，验完再切 active（U04 起不再删旧的
     重来——旧代留到没人用）。`progress_id` 没给就现生成一个（同步调用方用回值里的 `progress_id`）。
 
@@ -1711,8 +1896,14 @@ def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = ""
     **不声称 lockfile 级复现**：`environment.json` 里记的是安装当时解析出来的
     版本，重建时那个版本可能已经从 index 上撤了。真撤了就如实报错，不悄悄
     换一个别的版本装上——「重建完跟以前不一样」比「重建失败」难查得多。
+
+    **没有基础解释器时的私有 Python**（ADR 0063 / 0111）：授权绑在用户看过的那份载荷上——调用方回传
+    `capability.private_python.id` 并回显看到的 `origin` / `download_bytes`，与此刻的 `offer_payload()`
+    逐项一致才供应（`resolve_rebuild_offer`：锁换了 = 没授权，照旧 `managed_env_unavailable`；来源或下载量变了
+    = `repair_plan_stale`，不把重算出的下载当已授权）；没传 / 有基础解释器则不下载。
     """
     root = str(Path(project))
+    private = resolve_rebuild_offer(private_python_id, seen_origin, seen_download_bytes)
     pid = progress_id or new_rebuild_progress_id()
     cancel_ev = threading.Event()
     with _lock:
@@ -1733,6 +1924,8 @@ def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = ""
             emit=lambda state, **kw: _emit(pid, state, on_event, **kw),
             on_log=lambda text: _append_log(pid, text, on_event),
             label="rebuild",
+            provision_private=private is not None,
+            private_plan=private,
         )
         outcome = _run_generation(job, cancel_ev)
         if outcome.get("ok"):
@@ -1809,6 +2002,57 @@ def classify_pip_failure(text: str) -> str:
     if "could not find a version" in low or "no matching distribution" in low:
         return ERROR_NOT_FOUND if "from versions: none" in low else ERROR_REQUIRES_BUILD
     return ERROR_FAILED
+
+
+_NOT_FOUND_NAME_RES = (
+    re.compile(r"no matching distribution found for\s+([A-Za-z0-9][A-Za-z0-9._-]*)", re.I),
+    re.compile(
+        r"could not find a version that satisfies the requirement\s+([A-Za-z0-9][A-Za-z0-9._-]*)",
+        re.I,
+    ),
+)
+
+
+def not_found_detail(
+    out: str, record: tuple[dict, ...] | list[dict], project: str | Path, script: str
+) -> dict:
+    """pip 报「找不到」时点名：是哪个分发名、来自哪个声明文件 / 哪个 import（ADR 0061 修订 2026-10-21）。
+
+    `{name, import_name, source}`；认不出名字回 `{}`（界面退回通用句，不猜）。声明文件按 `depresolve.declared_intents`
+    重新读（只读），不在 `record` 里加字段（`record` 进回执与指纹）。"""
+    name = ""
+    for rx in _NOT_FOUND_NAME_RES:
+        m = rx.search(out or "")
+        if m:
+            name = m.group(1)
+            break
+    if not name:
+        return {}
+    key = depresolve.normalize_distribution(name)
+    import_name = next(
+        (
+            str(r.get("import_name") or "")
+            for r in record or ()
+            if depresolve.normalize_distribution(str(r.get("distribution") or "")) == key
+        ),
+        "",
+    )
+    source = ""
+    try:
+        for it in depresolve.declared_intents(project, script):
+            if it.declared and it.name == key and it.source:
+                source = it.source
+                break
+    except Exception:  # noqa: BLE001 - 点名是锦上添花，读不了声明不能让失败变形
+        source = ""
+    return {"name": key, "import_name": import_name, "source": source}
+
+
+def _not_found_extra(code: str, out: str, record, project, script) -> dict:
+    if code != ERROR_NOT_FOUND:
+        return {}
+    detail = not_found_detail(out, record, project, script)
+    return {"not_found": detail} if detail else {}
 
 
 def pip_install_argv(
@@ -1974,6 +2218,22 @@ def pip_install_options(python: str) -> dict | None:
     return parse_pip_options(out)
 
 
+#: 查找路径（`pip index versions`）专用的选项探测。**不是** `PIP_OPTIONS_PROBE` 的镜像：`pip index` 有自己的
+#: 命令名，pip 配置键是「命令名.选项名」（`[index] index-url = …` 只对它生效，`[global]` 对所有命令），
+#: 所以只问 install 会漏掉私有仓库配在 index 节的情形。装包路径继续用 install 那份。
+PIP_INDEX_OPTIONS_PROBE = PIP_OPTIONS_PROBE.replace(
+    'create_command("install")', 'create_command("index")'
+)
+
+
+def lookup_package_source(python: str, timeout: float = 30) -> bool | None:
+    """`pip index` 此刻生效的选项里有没有**用户自配的包源**（同 `options_name_a_user_source` 口径）。
+    探测失败 / 超时 / 太旧的 pip 回 None（= 问不出，查找不换源）。`timeout` 由调用方按剩余预算给。"""
+    rc, out = _run([str(python), "-c", PIP_INDEX_OPTIONS_PROBE], timeout)  # type: ignore[arg-type]
+    opts = parse_pip_options(out) if rc == 0 else None
+    return None if opts is None else options_name_a_user_source(opts)
+
+
 def user_package_source(python: str) -> bool | None:
     """这个环境的 pip 是不是配了**用户自己的包源**（`options_name_a_user_source`）。只回真假、不回地址。
     问不出来回 None——镜像回退把 None 当「配过」处理（宁可不换源）。环境变量与配置文件都由 pip 自己解析。"""
@@ -2068,6 +2328,27 @@ class _PipWatch:
             self.reason = PIP_STALLED
             self.detail = f"联网阶段 {now - self.last_line:.0f} s 没有进展"
         return self.reason
+
+
+#: 联网类失败的原因（进度记录顶层 `net_cause`，闭集；界面据此各说一句话，不解析文案）：
+#: `NET_CAUSE_BOTH` 官方源和镜像（`PYPI_MIRROR_URL`）都没连上；`NET_CAUSE_USER_SOURCE` 用户自配的包源连不上。
+#: 其余情况（问不出配置、镜像没起来）不带这个键，界面用通用的一句。
+NET_CAUSE_BOTH = "official_and_mirror"
+NET_CAUSE_USER_SOURCE = "user_source"
+NET_CAUSES = (NET_CAUSE_BOTH, NET_CAUSE_USER_SOURCE)
+
+
+def net_failure_cause(code: str, source: str | None) -> str:
+    """联网类失败（`ERROR_NETWORK` / `ERROR_TIMEOUT`）的原因 → `NET_CAUSES` 之一，说不清回空串。
+    判据主语是 `_run_pip_install` 记下的最后包源（`PIP_SOURCES`）：`user` = 用户自配的源连不上（没有换源）；
+    `tuna` = 官方源失败后镜像那一次也失败。不新增镜像、不改换源条件。"""
+    if code not in (ERROR_NETWORK, ERROR_TIMEOUT):
+        return ""
+    if source == PIP_SOURCE_USER:
+        return NET_CAUSE_USER_SOURCE
+    if source == PIP_SOURCE_MIRROR:
+        return NET_CAUSE_BOTH
+    return ""
 
 
 def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
@@ -2207,8 +2488,11 @@ def _run_pip(
         # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装。
         # 激活捕获可能要几十秒：用安装的剩余预算，捕获完**再查一次取消与期限**才起 pip——
         # 用户在激活期间点了取消，pip 一个字节都不许动环境
-        env = launcher.activate_env(
-            argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+        env = runtime.pip_child_env(
+            argv[0],
+            launcher.activate_env(
+                argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+            ),
         )
     except launcher.LauncherUnavailable as exc:
         return exc.code, str(exc)
@@ -2285,7 +2569,9 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     try:
         # 激活捕获与命令本身共用一个预算：慢的激活不能让 `pip --version` 这类短探测远超它自己的超时
         deadline = time.monotonic() + timeout
-        env = launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        env = runtime.pip_child_env(
+            argv[0], launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise launcher.LauncherUnavailable(
@@ -2492,12 +2778,27 @@ def custom_package_index(python: str) -> bool | None:
 _LOG_MAX = 20_000
 
 
+def _bump_progress(progress_id: str) -> None:
+    """（持 `_lock`）这条进度记录又变了一笔。"""
+    _progress_seq[progress_id] = _progress_seq.get(progress_id, 0) + 1
+
+
+def project_progress(project: str | Path) -> tuple:
+    """这个项目此刻在途作业的进展快照：(在途作业 id 集合, 它们各自进度记录被写过的笔数)。
+    两次读到的不同 = 期间这个项目有作业有进展（换了作业也算）；别的项目的作业不进来。"""
+    pid = managedenv.project_fingerprint(str(Path(project)))
+    with _lock:
+        ids = sorted(k for k, meta in _active_jobs.items() if meta.get("project_id") == pid)
+        return tuple(ids), tuple(_progress_seq.get(k, 0) for k in ids)
+
+
 def _append_log(plan_id: str, line: str, on_event) -> None:
     with _lock:
         rec = _progress.get(plan_id)
         if rec is None:
             return
         rec["log"] = (rec["log"] + _sanitize(line))[-_LOG_MAX:]
+        _bump_progress(plan_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2511,6 +2812,7 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_mirror"] = url
+        _bump_progress(progress_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2524,6 +2826,7 @@ def _note_source(progress_id: str, source: str, on_event) -> None:
         if rec is None:
             return
         rec["pypi_source"] = source
+        _bump_progress(progress_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2556,12 +2859,22 @@ def _emit(
     pinned: dict | None = None,
     impact: dict | None = None,
     dist_reasons: list[str] | None = None,
+    not_found: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
+        if not_found:
+            # pip 找不到的那个包（点名：分发名 / 来自哪个 import / 哪份声明文件）：界面一句话说「找不到 X（来自 Y）」
+            rec["not_found"] = {
+                k: str(v) for k, v in not_found.items() if k in ("name", "import_name", "source")
+            }
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if state == STATE_FAILED:
+            cause = net_failure_cause(code, rec.get("pypi_source"))
+            if cause:
+                rec["net_cause"] = cause
         if dist_reasons:
             # 装后核验没过的原因码（闭集，`DIST_REASONS`）：终态上带着，界面按原因分别说人话
             rec["dist_reasons"] = list(dist_reasons)
@@ -2608,6 +2921,7 @@ def _emit(
         if plan_id in _committed:
             rec["committed"] = True
         _progress[plan_id] = rec
+        _bump_progress(plan_id)
         snapshot = dict(rec)
         listeners = list(_listeners.get(plan_id, ()))
         if state in TERMINAL_STATES:
@@ -2926,9 +3240,12 @@ class PackageJob:
     dependents: tuple[str, ...]
     created_at: float
     expires_at: float
+    #: 首装且没有基础解释器时，计划里说出口的私有 Python 载荷（`privatepython.offer_payload()`）；其余为 None
+    private_python: dict | None = None
 
     def to_payload(self) -> dict:
         return {
+            "private_python": self.private_python,
             "job_id": self.job_id,
             "op": self.op,
             "distribution": self.distribution,
@@ -3125,10 +3442,9 @@ def list_managed_packages(project: str | Path | None) -> dict:
     busy = envlease.is_mutating_key(_env_key(TARGET_MANAGED, "", root)) or (
         bool(python) and envlease.is_mutating(python)
     )
-    available = True if managed["exists"] else managed_available()
-    capability = {"available": available is not False, "reason": ""}
-    if available is False:
-        capability = {"available": False, "reason": ERROR_MANAGED_UNAVAILABLE}
+    capability = _managed_capability(bool(managed["exists"]))
+    if not capability["available"]:
+        pass
     elif managed["exists"] and inv is None:
         capability = {"available": True, "reason": ERROR_MANAGED_BROKEN}
     elif managed["state"] == managedenv.STATE_INCOMPLETE and (managedenv.read_manifest(root) or {}):
@@ -3153,6 +3469,50 @@ def list_managed_packages(project: str | Path | None) -> dict:
         "snapshots": len(managedenv.list_snapshots(root)),
         # 卸载没有回滚这件事要在界面上**说出来**（ADR 0019 §八）
         "rollback": "snapshot_only",
+    }
+
+
+def _managed_capability(env_exists: bool) -> dict:
+    """设置 → 包管理能不能动手，以及（没有基础解释器时）为什么、还有什么路。
+
+    * 基础解释器还在后台探（`managed_available()` 为 None）：`checking=True`，界面说「正在检查」——
+      不先隐藏提醒再冒出来（探完结论只变一次）；
+    * 没有合格的基础解释器但提供私有 Python：**可用**，带 `private_python` 载荷（界面把字节数说出口，
+      首装 / 重建 / 「自动准备」都凭它授权；ADR 0063 / 0111）——不再叫用户去装 Python；
+    * 连私有 Python 也不提供（不支持的平台 / 锁关着）：才是 `managed_env_unavailable`；
+    * 装着的 Python 因版本在支持区间之外被拒时带 `rejected_python`（版本 + 支持区间），界面说「太新 / 太旧」。
+    """
+    base = managed_available()
+    if base is None:
+        return {"available": True, "reason": "", **({"checking": True} if not env_exists else {})}
+    if base:
+        return {"available": True, "reason": ""}
+    private = privatepython.offer_payload()
+    cap: dict = {"available": env_exists or private is not None, "reason": ""}
+    if private is not None:
+        cap["private_python"] = private
+    if not cap["available"]:
+        cap["reason"] = ERROR_MANAGED_UNAVAILABLE
+    rejected = _rejected_python()
+    if rejected:
+        cap["rejected_python"] = rejected
+    return cap
+
+
+def _rejected_python() -> dict | None:
+    """被支持区间拒掉的已装 Python：`{version, direction: newer|older, min, max}`；没有回 None。"""
+    versions = managedenv.rejected_python_versions()
+    if not versions:
+        return None
+    version = versions[0]
+    try:
+        minor = tuple(int(x) for x in version.split(".")[:2])
+    except ValueError:
+        return None
+    return {
+        "version": ".".join(version.split(".")[:3]),
+        "direction": "newer" if minor >= projectenv.PYTHON_MAX_EXCLUSIVE else "older",
+        **supported_python_range(),
     }
 
 
@@ -3185,6 +3545,13 @@ LOOKUP_PIP_RETRIES = 1
 #: 整个子进程的墙上时间预算。算术：pip 启动 ~0.3 s + 两次 socket 等待
 #: （3 s × (1 + 重试 1)）= 6.3 s，留一点余量给慢磁盘。
 LOOKUP_TIMEOUT_S = 8
+#: 官方源查不到（连不上 / 超时）且用户没自配源时，换 `PYPI_MIRROR_URL` 再查一次——与装包同一个镜像、同一个换源条件
+#: （`mirror_retry_warranted`）。官方那次可能已经用满 `LOOKUP_TIMEOUT_S`（被墙时典型就是超时），所以镜像这一次
+#: 另有一份预算，整个查找以 `LOOKUP_TOTAL_S` 为总上限（官方 8 s + 问配置 ~1 s + 镜像最多 5 s）。
+LOOKUP_MIRROR_TIMEOUT_S = 5
+LOOKUP_TOTAL_S = 14
+#: 问 `pip index` 选项的探测超时上限（实际取它与剩余预算的较小者）。
+LOOKUP_SOURCE_PROBE_S = 30
 #: 版本表的上限。numpy 有 120 个版本，几百个是想得到的上界；截断只是防一个
 #: 畸形索引把响应撑爆，正常包一个版本都不会少。
 LOOKUP_MAX_VERSIONS = 300
@@ -3235,7 +3602,7 @@ def argv_package_name(name: str) -> str:
     return "".join(out)
 
 
-def pip_index_argv(python: str, name: str) -> list[str]:
+def pip_index_argv(python: str, name: str, index_url: str | None = None) -> list[str]:
     """查找命令——**唯一出处**，测试逐字节钉住。
 
     * `-m pip`：绝不用 PATH 上的 `pip`（那个 pip 属于哪个解释器全看 PATH）；
@@ -3250,9 +3617,15 @@ def pip_index_argv(python: str, name: str) -> list[str]:
       （证明 `--` 被吃掉了、没当成第二个参数）；
     * 包名放**最后**，且由 `argv_package_name` 从常量字母表重拼出来。
 
+    * `index_url`：只有一个合法值 `PYPI_MIRROR_URL`（镜像回退那一次），别的值一律拒；缺省不带 `--index-url`，
+      pip 按用户 / 官方配置走。
+
     名字拼不出来时**抛异常，不返回一个凑合的 argv**：这个函数是 argv 的唯一
     出处，让它有能力回一个不合规的 argv 等于把上面那句保证作废。
     """
+    if index_url is not None and index_url != PYPI_MIRROR_URL:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "查找只允许换到内置的 PyPI 镜像")
+    mirror = ["--index-url", PYPI_MIRROR_URL] if index_url is not None else []
     return [
         str(python),
         "-m",
@@ -3265,12 +3638,13 @@ def pip_index_argv(python: str, name: str) -> list[str]:
         str(LOOKUP_PIP_RETRIES),
         "--timeout",
         str(LOOKUP_PIP_TIMEOUT_S),
+        *mirror,
         "--",
         argv_package_name(name),
     ]
 
 
-def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
+def _run_lookup(argv: list[str], timeout: float | None = None) -> tuple[int, str, bool]:
     """跑一次查找子进程 → `(退出码, 合并输出, 是不是超时)`。
 
     比 `_run()` 多回一个 `timed_out` 是有理由的：`_run` 把超时压成
@@ -3291,10 +3665,10 @@ def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=LOOKUP_TIMEOUT_S,
+            timeout=LOOKUP_TIMEOUT_S if timeout is None else timeout,
             stdin=subprocess.DEVNULL,
             # 查找只在受管环境上跑：pip 的 HTTP 缓存落回数据目录（`runtime.owned_env`）
-            env=runtime.owned_env(argv[0]) if argv else None,
+            env=runtime.pip_child_env(argv[0], runtime.owned_env(argv[0])) if argv else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
@@ -3373,7 +3747,24 @@ def lookup_package(project: str | Path, name: str) -> dict:
     if not python:
         raise RepairError(ERROR_LOOKUP_FAILED, "这台机器上没有可以用来查找的 Python")
 
+    started = time.monotonic()
     rc, text, timed_out = _run_lookup(pip_index_argv(python, canonical))
+    if timed_out or (rc != 0 and classify_lookup_failure(text) == ERROR_LOOKUP_OFFLINE):
+        # 联网类失败：没自配源（与装包同一个判据 `mirror_retry_warranted`）就用镜像再查一次，总时长受 LOOKUP_TOTAL_S 约束
+        first = ERROR_TIMEOUT if timed_out else ERROR_NETWORK
+        # 先看剩余预算：不够起镜像那次（< 1 s）就连探测都不做；探测超时 = min(原超时, 剩余 − 镜像最少 1 s)
+        remaining = LOOKUP_TOTAL_S - (time.monotonic() - started)
+        if remaining >= 2:
+            user_source = lookup_package_source(python, min(LOOKUP_SOURCE_PROBE_S, remaining - 1))
+            remaining = LOOKUP_TOTAL_S - (time.monotonic() - started)
+            budget = min(LOOKUP_MIRROR_TIMEOUT_S, remaining)
+            if mirror_retry_warranted(first, user_source) and budget >= 1:
+                LOG.warning(
+                    "包查找换源：官方 PyPI 没查到（%s），改用 %s 再查一次", first, PYPI_MIRROR_URL
+                )
+                rc, text, timed_out = _run_lookup(
+                    pip_index_argv(python, canonical, PYPI_MIRROR_URL), timeout=budget
+                )
     if timed_out:
         raise RepairError(ERROR_LOOKUP_TIMEOUT, "查找超时")
     if rc != 0:
@@ -3420,12 +3811,13 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
 
     python = managedenv.python_of(root) or ""
     creates = False
+    private_python: dict | None = None
     if not python:
         if op != OP_INSTALL:
             raise RepairError(ERROR_PACKAGE_ENV_MISSING, "这个项目还没有 Tavotto 环境")
         creates = True
-        if not base_python():
-            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+        # 没有基础解释器：提供私有 Python 就把它挂在作业上（授权绑在计划上，ADR 0063 / 0111），否则才拒绝
+        private_python = _private_python_offer()
 
     env_key = _env_key(TARGET_MANAGED, python, root)
     busy = envlease.is_mutating(python) if python else envlease.is_mutating_key(env_key)
@@ -3464,6 +3856,7 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         dependents=dependents,
         created_at=now,
         expires_at=now + PLAN_TTL_S,
+        private_python=private_python,
     )
     with _lock:
         for stale in [k for k, j in _jobs.items() if j.expires_at < now]:
@@ -3574,8 +3967,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ),
             on_log=lambda text: _append_log(job.job_id, text, on_event),
             label=f"{job.op}-{job.distribution}",
+            provision_private=job.private_python is not None,
+            private_plan=job.private_python,
         )
-        outcome = _run_generation_locked(gen_job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            gen_job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(job.distribution), "")
@@ -3761,6 +4158,7 @@ def _emit_job(
         if job is not None:
             rec.update(op=job.op, distribution=job.distribution, requirement=job.requirement)
         _progress[job_id] = rec
+        _bump_progress(job_id)
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -3846,6 +4244,8 @@ class JointRepairPlan:
     install_layers_digest: str = ""
     #: 用户指定、未经可信来源核实的需求（`depplan.JointPlan.user_specified`）：披露（`impact`）与替身重算（`_replan_on_base`）都读它。
     user_specified: tuple[dict, ...] = ()
+    #: 运行时观察到缺了的顶层模块名（`create_joint_plan(extra_imports=)`）：替身重算（`_replan_on_base`）要把它们再交给 `depplan.plan`。
+    extra_imports: tuple[str, ...] = ()
     #: 计划用到的 import 名（needed + unknown）与形成计划那一刻这些名字在两份事实的静态索引里的提供状态指纹
     #: （`depplan.provider_digest`，#932）：执行前重量事实后再比，变了 = `repair_plan_stale`。同 `layers_digest`，只是执行期的一致性校验。
     names: tuple[str, ...] = ()
@@ -3941,6 +4341,12 @@ def private_python_target(project: str | Path, script: str) -> tuple[str, str, o
     这是干净机器上第一份计划的来源（U05 PR B）：没有它，`joint_target_for` 抛 `no_worker_python`、
     `depplan.plan(facts=None)` 是 `dependency_target_unavailable`——都不是「先下载再准备」这条路。"""
     root = str(Path(project))
+    pinned = pinned_base_python()
+    if pinned:
+        # 换 Python 版本：目标永远是受管环境（新建一代），事实按这个基础解释器的 fresh venv 量——
+        # 与干净机器同一个形状（缺什么 / 装什么都按将要新建的那一代，不按此刻跑不了脚本的那个解释器）
+        fresh = depplan.fresh_venv_facts(pinned, provided=depplan.adapter_distributions())
+        return (TARGET_MANAGED, fresh.python, fresh) if fresh is not None else None
     try:
         pool.resolve_worker_python(root, script=script)
         return None
@@ -3981,7 +4387,7 @@ def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> boo
     """此刻跑脚本的环境是不是 Tavotto 自己的、坏了只能换一代而不是原地修（`depplan.plan(run_env_replaceable=)`）：受管环境的某一代、
     内置 runtime、还没落盘（替身事实）或刚由私有 Python 新建的一代。用户交给我们的系统解释器 / 本进程的解释器 / 任何别的路径都不是——
     项目声明里多出来的差集在那里只记录，不为它去换环境（能原样跑就不动，ADR 0114 §六）。"""
-    if facts is None or not facts.python:
+    if facts is None or not facts.python or pinned_base_python():
         return True
     python = facts.python
     if _is_managed_generation_path(project, python):
@@ -4012,6 +4418,7 @@ def joint_plan_for(
     *,
     groups: list[str] | None = None,
     scope_policy: str = "",
+    extra_imports: tuple[str, ...] = (),
 ) -> tuple[depplan.JointPlan, str, str]:
     """算一份联合计划（只读）：缺什么按**此刻选中的**解释器量、装什么按目标量（`_facts_for`）。
     回 (计划, 目标类型, 解释器)。
@@ -4039,6 +4446,7 @@ def joint_plan_for(
         install_facts=install_facts,
         coverage=_coverage_reader(facts),
         run_env_replaceable=_run_env_ours(root, facts),
+        extra_imports=extra_imports,
     )
     return _with_scope_check(root, script, plan, target_kind, scope_policy), target_kind, python
 
@@ -4106,6 +4514,7 @@ def create_joint_plan(
     groups: list[str] | None = None,
     scope_policy: str = "",
     user_specified: Mapping[str, str] | None = None,
+    extra_imports: tuple[str, ...] = (),
 ) -> JointRepairPlan:
     """把联合计划绑定成可执行的（发 plan_id）。**不装任何东西。**
 
@@ -4113,6 +4522,9 @@ def create_joint_plan(
     未经可信来源核实**的需求；只收来源未定的表外 import，过 `depresolve.from_user_input` 的严格语法，进联合计划并在影响披露里标明
     （`impact["user_specified"]`）。不合格的整份拒绝：语法不对 `package_requirement_invalid`，这个 import 不是表外名
     `dependency_install_not_allowed`——不静默丢弃、不降级成别的需求。
+
+    `extra_imports`：运行时观察到缺了的顶层模块名（转换校验运行的 `missing_dependency`，`convertdeps` 传入），按静态 import 同一棵来源判决并入；
+    随计划保存，替身重算（`_replan_on_base`）再交给 `depplan.plan`。
 
     计划不是 `ready`（没缺的 / blocked）就拒绝：`dependency_plan_blocked` 带 blocked 理由——
     执行端不会「把认不出的那行剥掉偷偷继续」。`target_kind` 可以由调用方指定（用户在用户
@@ -4159,6 +4571,7 @@ def create_joint_plan(
             coverage=_coverage_reader(facts),
             user_specified=user_specified,
             run_env_replaceable=_run_env_ours(root, facts),
+            extra_imports=extra_imports,
         )
     except depplan.UserSpecifiedRejected as exc:
         raise _user_specified_error(exc) from exc
@@ -4225,6 +4638,7 @@ def create_joint_plan(
         layers_digest=depplan.layer_digest(facts),
         install_layers_digest=depplan.layer_digest(install_facts),
         user_specified=tuple(joint.user_specified),
+        extra_imports=tuple(extra_imports),
         names=plan_names,
         names_digest=depplan.provider_digest(facts, plan_names),
         install_names_digest=depplan.provider_digest(install_facts, plan_names),
@@ -4320,6 +4734,7 @@ def _release(plan_id: str) -> None:
     """作业结束（不论怎么结束）：认领 / 登记 / 监听都清掉。"""
     with _lock:
         _running.discard(plan_id)
+        _progress_seq.pop(plan_id, None)
         meta = _active_jobs.pop(plan_id, None)
         if meta and meta.get("project_id") and meta.get("digest"):
             key = (meta["project_id"], meta.get("scope", ""), meta["digest"])
@@ -4574,6 +4989,7 @@ def _prepare_guarded(
             code=exc.code,
             error=str(exc),
             dist_reasons=dist_reasons_of(exc),
+            not_found=(exc.extra or {}).get("not_found"),
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
@@ -4668,6 +5084,7 @@ def prepare(
                 replace_ledger=plan.scope_policy == SCOPE_POLICY_SWITCH,
                 refuse_pinned=True,
                 user_specified=plan.user_specified,
+                extra_imports=plan.extra_imports,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
@@ -4718,7 +5135,11 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
     if code:
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **_not_found_extra(code, out, plan.record, plan.project, plan.script),
+        )
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
     provided = _verify_distributions(
@@ -4760,6 +5181,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         "installed": installed,
         "providers": _provider_receipt(plan.record, provided, installed, ""),
     }
+    _note_unreadable_installs(plan.project, plan.record, python)
     _emit(plan.plan_id, STATE_DONE, on_event, joint=plan, result=result)
     return result
 
@@ -4783,8 +5205,8 @@ class _GenerationJob:
     emit: object  # (state, **kw) -> dict
     on_log: object  # (text) -> None
     label: str = "generation"  # 快照文件名里的动作名（`after-<label>`）
-    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）；重建 / 包管理首装为假——
-    #: 那两条路没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
+    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）：联合准备 / 单包修复由计划载荷、包管理首装由作业载荷、
+    #: 重建由用户回传的载荷 id 授权；没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
     provision_private: bool = False
     #: 计划里告诉用户的那段私有 Python 载荷（`offer_payload()` / `present_payload()`）：执行时来源必须还是它说的
     #: 那一处（`origin`、同一个 id），否则 `repair_plan_stale`——不静默换源、不变成联网下载（ADR 0111 §一）。
@@ -4811,6 +5233,10 @@ class _GenerationJob:
     #: 用户指定、未经可信来源核实的需求（`JointRepairPlan.user_specified`）：替身重算（`_replan_on_base`）要把它们再交给
     #: `depplan.plan`，装后核验（`_verify_distributions`）对这些 import 更严（读不出 = 失败）。
     user_specified: tuple[dict, ...] = ()
+    #: 运行时观察到缺了的顶层模块名（`JointRepairPlan.extra_imports`）：替身重算时再交给 `depplan.plan`。
+    extra_imports: tuple[str, ...] = ()
+    #: Diagnostic observations only; never consulted by the environment transaction.
+    diagnostic: dict = dataclasses.field(default_factory=dict, compare=False, repr=False)
 
 
 def generation_requirements(
@@ -4863,20 +5289,71 @@ def _name_of(requirement: str) -> str:
     return text
 
 
+def _note_unreadable_installs(project: str, record, python: str = "") -> None:
+    """联合安装 / 换代事务成功提交之后，按账里每一条的 import 名记一笔「装过了」（`pool.note_unreadable_install`，ADR 0153）：
+    装好后读不了的项目外文件夹里同一个模块仍然失败时，不再弹第二次安装卡。没有 import 名的条目（用户指定的包）跳过。"""
+    for entry in record or ():
+        name = entry.get("import_name") if isinstance(entry, dict) else ""
+        if name:
+            pool.note_unreadable_install(project, name, python)
+
+
+def _observe_generation(job: _GenerationJob, run) -> dict:
+    """Record terminal facts once, including for callers that already hold the lease."""
+    project = job.project
+    facts = job.diagnostic
+    facts["started_at"] = time.time()
+    recorded = False
+
+    def record_terminal(outcome: str, code: str | None = None) -> None:
+        nonlocal recorded
+        if recorded:
+            return
+        recorded = True
+        facts.update(outcome=outcome, error_code=code, finished_at=time.time())
+        with _lock:
+            source = (_progress.get(job.progress_id) or {}).get("pypi_source")
+        facts["source"] = {PIP_SOURCE_USER: "custom", PIP_SOURCE_MIRROR: "mirror"}.get(
+            source, source
+        )
+        envdiag.record_job(project, facts)
+
+    emit = job.emit
+
+    def emit_observed(state, **kwargs):
+        if state in (STATE_DONE, STATE_CANCELLED, STATE_FAILED):
+            record_terminal(state, kwargs.get("code"))
+        return emit(state, **kwargs)
+
+    job = dataclasses.replace(job, emit=emit_observed)
+    try:
+        result = run(job)
+        record_terminal("done" if result.get("ok") else result.get("state", "unknown"))
+        return result
+    except Exception as exc:
+        record_terminal("failed", getattr(exc, "code", None))
+        raise
+    finally:
+        record_terminal("unknown")
+
+
 def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
     project = job.project
     key = _env_key(TARGET_MANAGED, "", project)
     active_python = managedenv.python_of(project) or ""
-    try:
-        # 锁：合成 key（序列化同一项目的两次换代）+ active 那一代的解释器（挡住包管理的原地
-        # 作业同时改它——两者的账要一致）。**不收掉旧代上的 worker**（`shutdown=False`）：
-        # 旧代目录不动，它们跑完自然作废；native 会话同理不杀（有就拒绝开始）。
-        with pool.mutating_environment(key, active_python, shutdown=False):
-            if job.refuse_pinned:
-                _refuse_if_pinned()
-            return _run_generation_locked(job, cancel_ev, key)
-    except pool.EnvironmentBusy as exc:
-        raise _busy_error(exc) from exc
+
+    def under_lease(observed):
+        try:
+            # Existing callers of _run_generation_locked already hold this
+            # lease; only the top-level generation path acquires it here.
+            with pool.mutating_environment(key, active_python, shutdown=False):
+                if observed.refuse_pinned:
+                    _refuse_if_pinned()
+                return _run_generation_locked(observed, cancel_ev, key)
+        except pool.EnvironmentBusy as exc:
+            raise _busy_error(exc) from exc
+
+    return _observe_generation(job, under_lease)
 
 
 def _require_record_sources(record) -> None:
@@ -4913,6 +5390,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     requirements = generation_requirements(
         project, job.delta, hash_mode=job.require_hashes, replace=job.replace_ledger
     )
+    job.diagnostic["requested"] = [_name_of(req) for req in requirements]
     identity = job.identity or depplan._digest(
         {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
     )
@@ -4990,10 +5468,18 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             result={"generation": generation, "activated": False},
         )
     if code:
+        job.diagnostic["pip_error_type"] = code
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
-        raise RepairError(code, _sanitize(out)[-800:])
+        not_found = _not_found_extra(code, out, job.record, job.project, job.script)
+        if isinstance(not_found.get("not_found"), dict):
+            job.diagnostic["failed"] = [not_found["not_found"].get("name")]
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **not_found,
+        )
     if job.attempted:
         # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
         # 防循环的黑名单这时才登记——与项目 venv 那条路 `_run_install` 的登记点同一语义
@@ -5056,7 +5542,20 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
-    installed = _versions_of(python, [r["distribution"] for r in job.record])
+    inv = inventory(python)
+    installed = {
+        name: str(inv[name].get("version") or "")
+        for rec in job.record
+        if inv
+        and (name := depresolve.normalize_distribution(str(rec["distribution"]))) in inv
+        and inv[name]
+    }
+    if inv is not None:
+        job.diagnostic["installed"] = [
+            {"name": name, "version": str(info.get("version") or "")}
+            for name, info in inv.items()
+            if isinstance(info, dict)
+        ]
     scope = scope_of(job.script) if job.script else ""
 
     def ledger_fields(rec: dict) -> dict:
@@ -5082,6 +5581,11 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             if job.replace_ledger
             else None,
         )
+        job.diagnostic.update(
+            committed=True,
+            activated_at=time.time(),
+            generation=projectenv.environment_generation(python),
+        )
     except OSError as exc:
         # 清单没落盘 = 没切：撤回「已提交」，这一代按 incomplete 记（尽力而为），如实报失败
         with _lock:
@@ -5106,6 +5610,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         trigger=TRIGGER_DEPENDENCY_REPAIR,
         health=health if health.get("ok") else None,
     )
+    job.diagnostic["adopted_at"] = time.time()
     pool.note_project_python_ok(python)
     pool.reset_worker_python()
     if job.script:
@@ -5131,6 +5636,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         "providers": _provider_receipt(job.record, provided, installed, generation),
         "retired": retired,
     }
+    _note_unreadable_installs(project, job.record, python)
     job.emit(STATE_DONE, result=result)
     LOG.info("受管环境换代: %s → %s（装 %d 条）", project, generation, len(requirements))
     return result
@@ -5169,7 +5675,13 @@ def _provider_receipt(
 
 
 def _generation_in_use(python: str) -> bool:
-    return pool.safe_workers_using(python) > 0 or bool(envlease.native_sessions_on(python))
+    return (
+        pool.safe_workers_using(python) > 0
+        or bool(envlease.native_sessions_on(python))
+        or bool(
+            envlease.retained_on(python)
+        )  # AI 修复会话保留的旧代（change_python 之后还要能回滚）
+    )
 
 
 def _private_runtime_in_use(runtime_id: str, python: str) -> bool:
@@ -5250,6 +5762,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
             target_kind=TARGET_MANAGED,
             groups=list(job.groups) or None,
             user_specified={u["import_name"]: u["requirement"] for u in job.user_specified} or None,
+            extra_imports=job.extra_imports,
         )
     except depplan.UserSpecifiedRejected as exc:
         # 下载期间脚本 / 声明变了，用户指定的那个 import 不再是来源未定的表外名：用户确认的不是这件事
@@ -5939,7 +6452,9 @@ def _user_env_discovery_off() -> bool:
     return projectenv.auto_adoption_off()
 
 
-def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str]:
+def unknown_imports_missing(
+    plan: dict, python: str, root: str = "", overlay: dict | None = None
+) -> list[str]:
     """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
     2026-09-25，QA ENV-08-B1）。
 
@@ -5954,7 +6469,16 @@ def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str
         return []
     # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
     bundled = pool.same_python(python, runtime.bundled_python())
-    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root)
+    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root, overlay=overlay)
+
+
+def _unknown_missing_here(plan: dict, python: str, project: str, spec_root: str) -> list[str]:
+    """`unknown_imports_missing` 加上"项目记着的解释器若带叠加环境（ROOT），按带着它量"——否则每次都判成缺 ROOT、
+    重新发现一遍。没有叠加层时调用形状与以前逐字相同。"""
+    overlay = projectenv.remembered_overlay(project, python)
+    if overlay is None:
+        return unknown_imports_missing(plan, python, spec_root)
+    return unknown_imports_missing(plan, python, spec_root, overlay=overlay)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -6097,7 +6621,7 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
         # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
         # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
-        unknown_missing = unknown_imports_missing(plan_payload, python, root)
+        unknown_missing = _unknown_missing_here(plan_payload, python, root, root)
         if unknown_missing:
             user_envs = user_environment_offer(root, script, plan_payload, python)
     # 授权的实际影响（T06）：只有真能授权的计划才有——与 `create_joint_plan` 绑定出的计划同一个函数算出，
@@ -6253,8 +6777,53 @@ def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
     )
 
 
+def _root_overlay_entries(
+    root: str,
+    entries: list[dict],
+    current: str,
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+) -> list[dict]:
+    """「候选解释器 × 用户装的 ROOT」的体检结果（`userenvs.evaluate` 的形状，带 `overlay`）。
+
+    底 = 此刻的解释器（内置 runtime 也算，它摘 `PYTHONPATH` 之后才叠）+ 已量过、健康、但装不齐的候选；
+    正被安装占着的不叠。Conda 环境也可以当底（2026-10-21 Win11 真机：conda-forge 在 Windows 上没有 `root` 包，
+    用户的 Python 3.14 恰是 conda-forge 的）：叠加层在激活增量**之后**叠（`pool.launch_env` / `projectenv._probe_environment`
+    同一个顺序），激活盖不掉它；conda-forge 自带 ROOT 的环境裸起就导入得了，根本走不到这里。
+    ROOT 至多拿最新的 2 个，组合至多 8 个，一个 ROOT 都找不到就是空表。点「运行」之前不起任何进程
+    （`cache_only`：叠加组合运行之前的体检要 import，那是明确的执行动作）。"""
+    installs = userenvs.root_installs()
+    if not installs:
+        return []
+    bases: list[dict] = []
+    seen: set = set()
+
+    def add(python: str, **extra) -> None:
+        if not python or userenvs._key(python) in seen or envlease.is_mutating(python):
+            return
+        seen.add(userenvs._key(python))
+        bases.append({"python": python, **extra})
+
+    if current:
+        add(current, bundled=pool.same_python(current, runtime.bundled_python()))
+    name = Path(root).name
+    for e in sorted(
+        (e for e in entries if e.get("ok") and not e.get("satisfies") and e.get("checked", True)),
+        key=lambda e: userenvs.rank(e, name),
+    ):
+        add(e["python"], python_version=e.get("python_version", ""))
+    combos = userenvs.overlay_candidates(bases, installs)
+    if not combos:
+        return []
+    return userenvs.evaluate(
+        combos, needed, unknown, cache_only=not project_exec, project_name=name
+    )
+
+
 def _detect_environment_unlocked(
-    root: str, script: str, *, project_exec: bool = True
+    root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
 ) -> dict | None:
     """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
     （`userenvs.evaluate` 的形状），不换回 None。
@@ -6271,7 +6840,10 @@ def _detect_environment_unlocked(
     * 机器先前定下的仍能跑 → 不动；不能跑 → 找别的能跑的换过去；都不能跑 → 检测自己记下的那条作废（装进 Tavotto
       管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
     * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
-      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。"""
+      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。
+
+    `rejected`（调用方给的空表）：本轮体检过、最终没被选用的候选各追加一条落选原因
+    （`userenvs.rejection_reason`，稳定码、不带路径）。默认链条能跑且无项目候选可比时没有体检，表保持为空。"""
     try:
         current = pool.resolve_worker_python(root, script=script, discover=False)[0]
     except pool.WorkerError as exc:
@@ -6299,7 +6871,7 @@ def _detect_environment_unlocked(
     runs_now = (
         not clean
         and joint.status == depplan.STATUS_NOTHING_NEEDED
-        and not unknown_imports_missing(plan, python, "" if project_exec else root)
+        and not _unknown_missing_here(plan, python, root, "" if project_exec else root)
     )
     needed, unknown = _plan_imports(plan)
     candidates = user_environment_candidates(root, script, exclude=current or python)
@@ -6334,11 +6906,23 @@ def _detect_environment_unlocked(
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     adopted = False
-    if candidates and not _user_env_discovery_off():
+    evaluated: list[dict] = []
+    wants_root = not runs_now and rootenv.wants_root(
+        [n["import_name"] for n in needed if n.get("import_name")] + unknown
+    )
+    if (candidates or wants_root) and not _user_env_discovery_off():
         entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        evaluated = list(entries)
         if not project_exec and any(e.get("deferred") for e in entries):
             # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
             return None
+        if wants_root and userenvs.best(entries, Path(root).name) is None:
+            # 脚本 import ROOT、而没有一个候选**裸起**就导入得了它：把用户装的 ROOT 叠到候选解释器上再试
+            # （ADR 0079 修订 2026-10-21 b）。叠加组合与裸起的候选进同一张表，走同一个 best / 采用 / 落选原因
+            entries = entries + _root_overlay_entries(
+                root, entries, current or python, needed, unknown, project_exec=project_exec
+            )
+            evaluated = list(entries)
         while True:
             entry = userenvs.best(entries, Path(root).name)
             if entry is None:
@@ -6360,7 +6944,16 @@ def _detect_environment_unlocked(
                             **({} if project_exec else {"root": root}),
                         )[0]
                         if not fresh.get("satisfies"):
-                            entries = [e for e in entries if e["python"] != entry["python"]]
+                            # 缓存说装齐、现量说不齐：落选原因以现量的为准
+                            evaluated = [
+                                fresh if userenvs.entry_key(e) == userenvs.entry_key(entry) else e
+                                for e in evaluated
+                            ]
+                            entries = [
+                                e
+                                for e in entries
+                                if userenvs.entry_key(e) != userenvs.entry_key(entry)
+                            ]
                             continue
                         entry = {**entry, **fresh}
                     try:
@@ -6373,14 +6966,17 @@ def _detect_environment_unlocked(
                                 trigger=projectenv.TRIGGER_AUTO_DETECTED,
                                 health=entry,
                                 only_if=_record_allows_auto_adopt,
+                                env_overlay=entry.get("overlay"),
                             ),
                         )
                     except envlease.EnvironmentBusy:
                         return None
             except envlease.EnvironmentBusy:
-                entries = [e for e in entries if e["python"] != entry["python"]]
+                entries = [e for e in entries if userenvs.entry_key(e) != userenvs.entry_key(entry)]
                 continue
             break
+    if rejected is not None and evaluated:
+        rejected.extend(userenvs.rejections(evaluated, entry if adopted else None))
     if entry is None:
         if (
             not runs_now
@@ -6397,7 +6993,12 @@ def _detect_environment_unlocked(
     if not adopted:
         return None
     pool.note_project_python_ok(entry["python"])
-    LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
+    LOG.info(
+        "自动检测：改用 %s（%s%s）",
+        entry["python"],
+        entry.get("source"),
+        "，叠加 " + rootenv.label_of(entry["overlay"]) if entry.get("overlay") else "",
+    )
     for listener in list(_adoption_listeners):
         try:
             listener(root, userenvs.public(entry))
@@ -6414,13 +7015,19 @@ def _detect_environment_pinned(
     锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
     同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
     with _detect_lock(root):
-        adopted = _detect_environment_unlocked(root, script, project_exec=project_exec)
+        rejected: list[dict] = []
+        adopted = _detect_environment_unlocked(
+            root, script, project_exec=project_exec, rejected=rejected
+        )
         try:
             python, source = pool.resolve_worker_python(root, script=script, discover=False)
         except pool.WorkerError:
-            return pool.EnvironmentDecision(adopted=adopted)  # 解析不出来：原路径去报那条错
+            # 解析不出来：原路径去报那条错
+            return pool.EnvironmentDecision(adopted=adopted, rejected=tuple(rejected))
         return pool.EnvironmentDecision(
             adopted=adopted,
+            rejected=tuple(rejected),
+            env_overlay=projectenv.remembered_overlay(root, python),
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),
@@ -6475,7 +7082,22 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
     raise err
 
 
+def environment_decision_is_noop(project: str | Path, script: str) -> bool:
+    """`decide_environment_pinned` 在这个项目上**必然什么都不做**吗？只读设置与 `stat`，不起子进程、不写记录。
+
+    后台预热（`pool.PURPOSE_PREWARM`）只在这种情况下放行：确认模式（决定本来就不由机器做），或检测模式下
+    解释器不是机器挑的（全局显式 / 用户为本项目选的 / 选回默认链条——决定函数第一步就返回）。
+    机器自己记住的解释器、旧模式都算「可能要干活」：检测会体检候选、跑项目解释器、写记录。"""
+    mode = projectenv.adoption_mode()
+    if mode == projectenv.ADOPTION_CONFIRM:
+        return True
+    if mode == projectenv.ADOPTION_DETECT:
+        return not pool.machine_chosen_interpreter(str(project))
+    return False
+
+
 pool.register_spawn_gate(_spawn_gate)
+pool.register_environment_noop_check(environment_decision_is_noop)
 pool.register_environment_decider(decide_environment_pinned)
 
 

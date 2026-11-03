@@ -118,19 +118,18 @@ describe('handlePasteEvent', () => {
 })
 
 /**
- * Codex #833：快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`）。⌘V 落下的副本在版面上、
- * 换掉选区，用户什么都看不见——不落、不拦事件。图内文字编辑器 / 输入框里的粘贴照旧交给浏览器。
+ * 2026-10-21：单图编辑里也能粘（取消 Codex #833 的「快编不落」）：舞台画着这张画布上的全部对象，粘贴落下的
+ * 副本看得见；粘出一张图 = 第二张图，由模式订阅切到多图排版，粘标注就留在单图编辑。
+ * 图内文字编辑器 / 输入框里的粘贴照旧交给浏览器。
  */
-describe('handlePasteEvent：快速编辑', () => {
-  it('本工具负载：不落进文档、不动选区、不拦事件', () => {
+describe('handlePasteEvent：单图编辑', () => {
+  it('本工具负载：落进文档、拦事件', () => {
     useWorkspaceStore.getState().enterFastEdit('t1')
     useSelectionStore.getState().set(['t1'])
     const { e, preventDefault } = fakeEvent({ getData: payloadText })
-    expect(handlePasteEvent(e)).toBe(false)
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
-    expect(useDocumentStore.getState().past).toHaveLength(0)
-    expect(useSelectionStore.getState().ids).toEqual(['t1'])
+    expect(handlePasteEvent(e)).toBe(true)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(2)
   })
 
   it('目标在输入框里（图内文字编辑）：照旧让位给原生粘贴', () => {

@@ -35,3 +35,35 @@ the figure is drawn at its figure size (80 × 57.6 mm) inside the frame the
 panel was placed at. It was in the previous `workbench.png` too. It is the
 product's behaviour, photographed as is; if it is a defect it is one for the
 product, not for the screenshot.
+
+## 2026-10-26 re-capture (README rewrite)
+
+Capture environment: `main` @ `1e3db090e` (the interface after #1411), frontend built from that tree
+(`python scripts/build_frontend.py`), fonts via `scripts/fetch_fonts.py`. Stills: `capture.mjs` +
+`lib.mjs` against a throwaway profile in the bundled Playwright Chromium, **1440 × 900 at 2×
+(2880 × 1800)**, `examples/figures/` as the project (folder shown as `kinetics-paper`), layout named
+"Kinetics study · Figure 2" / "反应动力学 · 图 2", interface language forced per set. Walkthrough:
+`record-demo.mjs` (Playwright video, trimmed, a pointer dot added because the recorder draws none) →
+`demo-to-gif.sh` (1280 px wide, 12 fps). Desktop window: `hero-window.mjs` — a debug build of
+`src-tauri/` with a throwaway bundle identifier, sidecar pointed at the worktree engine
+(`TAVOTTO_SIDECAR_EXE`), captured with `screencapture -l <windowid> -o`; no key or mouse event is
+sent to any app (the page selects panel (a) itself through `hero-driver.js`, added to the built
+frontend for the run only). The shell is started with `open -g` from a throwaway `.app` wrapper, so it
+never takes the foreground; an unfocused window has grey traffic lights. The browser-built stills show
+"Saved to project" (⌘S before every shot); the hero reads "Saved to project" too: its webview starts from a copy of the browser session's
+local storage (hero-ls.js, written by hero-window.mjs); the driver script is cache-busted with `?v=`
+because WKWebView otherwise keeps serving an earlier copy of `/assets/*`. Nothing is retouched.
+
+| Image | Shows | Status |
+| --- | --- | --- |
+| `hero-window(.zh).png` | the packaged-app window (macOS title bar, shadow), a three-panel 150 × 125 mm layout, panel (a) selected, its position / size / scale in the right column | `current` · 2560 × 1720 |
+| `layout(.zh).png` | the same page (label (c) nudged off the y-axis tick), panel (a) selected, size in mm | `current` · replaces the 2026-09-19 file |
+| `canvas-edit(.zh).png` | inside figure (a): the element tree, the title selected, its font / size / colour | `current` |
+| `preflight(.zh).png` | the export dialog cropped to itself; Checks reads "1 to review · 3 not verifiable" (panel (a) drawn at 79 %) — a real mid state, not staged all-clear | `current` · replaces the 2026-09-19 file |
+| `connect-ai(.zh).png` | the "Connect an AI" dialog (cropped to the dialog) | `current` |
+| `run-script(.zh).png` | after the run: the script row reads "Captured 1 figure", the produced figure (Fig1_kinetics) sits on the canvas, the layout is saved | `current` |
+| `timeline(.zh).png` | the right-column Timeline tab with two named moments | `current` |
+| `demo(.zh).gif` | select a panel, drag it, set its width, export (~12 s) | `current` |
+
+`workbench*.png`, `hero.svg`, `workflow*.svg` are superseded by the rows above and no longer
+photographed; they stay until the README stops referencing them.

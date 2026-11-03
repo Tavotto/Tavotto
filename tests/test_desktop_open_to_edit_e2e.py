@@ -133,7 +133,7 @@ def _pending(app, root: Path):
 def test_open_native_run_input_edit_export_and_cancel(project):
     proj, out, work = project
     assert sorted(p.name for p in proj.iterdir()) == ["fig.py"]  # 没有预建的图 / 注册表 / 答案
-    with fa.running_app(proj, work, env_overrides=ENV) as app:
+    with fa.sidecar_app(proj, work, env_overrides=ENV) as app:
         sid = _start(app, proj)
 
         # ---- 脚本停在 input() 上：Pending 是后端的事实（不属于某个窗口），准备会话仍在运行
@@ -267,7 +267,7 @@ def test_open_native_run_input_edit_export_and_cancel(project):
 
 def test_closing_the_project_terminates_the_owned_process(project):
     proj, out, work = project
-    with fa.running_app(proj, work, env_overrides=ENV) as app:
+    with fa.sidecar_app(proj, work, env_overrides=ENV) as app:
         _start(app, proj)
         s = _pending(app, proj)
         pid = s["process_pid"]
@@ -303,7 +303,7 @@ def test_cancelling_the_preparation_session_while_waiting_for_input_kills_the_pr
         f"open({str(out / 'after.txt')!r}, 'w').write('ran')\n",
         encoding="utf-8",
     )
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with fa.sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         sid = _start(app, proj)
         s = _pending(app, proj)
         pid = s["process_pid"]
@@ -344,7 +344,7 @@ def test_a_failing_native_script_is_not_rerun_behind_the_users_back(tmp_path):
         "import definitely_not_installed_pkg_p07  # noqa\n",
         encoding="utf-8",
     )
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with fa.sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         sid = _start(app, proj)
         final = _settled(app, sid)
         assert final["phase"] != "completed", final
@@ -363,7 +363,7 @@ def test_stopping_the_native_session_cancels_the_preparation_too(tmp_path):
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "fig.py").write_text("input('go? ')\n", encoding="utf-8")
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with fa.sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         sid = _start(app, proj)
         s = _pending(app, proj)
         pid = s["process_pid"]

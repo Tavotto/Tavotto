@@ -8,14 +8,20 @@ import {
   WORKDIR_CONFIRMATION_CODE,
   type CapturedFigureDescriptor,
   type DependencyPreparationOffer,
+  type PdfPagesCapture,
   type ProbeError,
   type WorkdirConfirmation,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useAssetStore } from '@/store/assetStore'
+import '@/store/figureSnapshotInvalidation'
 import { msg, t as translate } from '@/i18n'
+import { noticePdfPages, pdfPagesNoticeOwner } from '@/lib/pdfPagesNotice'
+import { noticeWorkdirHint, workdirHintOwner } from '@/lib/workdirHintNotice'
 import { useEnvStore } from '@/store/envStore'
-import { useRenderStore } from '@/store/renderStore'
+import { useRenderStore, workdirHintDeps } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { probeWithDraft, useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
@@ -78,6 +84,10 @@ export interface ScriptRunState {
   stems?: string[]
   /** 成功那次（无参数）整条替换掉的旧图名（T09b，后端 `unlinked_stems`）：界面给「用原参数再运行」的提示 */
   unlinkedStems?: string[]
+  /** 成功那次里脚本用 `PdfPages` 写的多页 PDF（后端 `pdf_pages`；导出对话框据此提供「合成一个多页 PDF」，#1370） */
+  pdfPages?: PdfPagesCapture[]
+  /** 产出这份 `pdfPages` 的那次运行的配置引用（无参数 = ''）：账本只属于那一次运行，不同配置的同名图不能混着拼页 */
+  pdfPagesRunConfig?: string
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
@@ -250,6 +260,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     const prev = get().byScript[script]
     if (prev && isBusyPhase(prev.phase)) return // 同脚本防并发
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
     const projectAtStart = currentProjectId()
     const gen = (prev?.gen ?? 0) + 1
     set((s) => ({
@@ -261,7 +272,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
     /** 迟到响应（换代 / 换项目）一律丢弃 */
     const stale = () =>
-      get().epoch !== epoch || get().byScript[script]?.gen !== gen
+      !owner.still() || get().epoch !== epoch || get().byScript[script]?.gen !== gen
     const settle = (patch: Partial<ScriptRunState>) => {
       if (stale()) return
       set((s) => ({
@@ -278,6 +289,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         ? probeWithDraft(probeScript, script)
         : probeScript(script, undefined, { run_config: runConfig }))
       if (stale()) return
+      observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
       if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
         // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
         set((s) => {
@@ -307,10 +319,23 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         phase: res.descriptors.length > 1 ? 'captured_many' : 'captured_one',
         descriptors: res.descriptors,
         droppedFigures: res.dropped_figures ?? 0,
+        pdfPages: res.pdf_pages ?? [],
+        pdfPagesRunConfig: res.run_config ?? '',
         stems: res.stems,
         unlinkedStems: res.unlinked_stems ?? [],
         error: null,
       })
+      // 脚本把图写进了多页 PDF：每页被认领成一张图，通知轨一条胶囊说清楚（#1370）
+      noticePdfPages(pdfPagesNoticeOwner(projectAtStart, script), res.pdf_pages, {
+        ui: useUiStore.getState(),
+      })
+      // 跑通了有图，但沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊（同渲染入口）
+      noticeWorkdirHint(
+        workdirHintOwner(projectAtStart, `script:${script}`),
+        res.workdir_hint,
+        projectAtStart,
+        workdirHintDeps(),
+      )
       // 成功的副作用：素材库立即出现新东西。
       // - runtime 清单重取（RuntimeFigureAsset 卡片，含刚物化的描述符）；
       // - 面板列表重取（脚本这次也可能 savefig 出了真文件 / ⚡ 状态变化）；
@@ -331,6 +356,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }
     } catch (e) {
       if (stale()) return
+      if (e instanceof ApiError) observeFigureExecution(e.body.figure_snapshot_invalidation, projectAtStart)
       const error = probeErrorOf(e)
       settle({ phase: phaseOf(error), error, diagnostic: probeDiagnosticOf(e), descriptors: [] })
       handOffProbeGate(error, projectAtStart)

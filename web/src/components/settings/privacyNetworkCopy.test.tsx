@@ -80,4 +80,11 @@ it.each([
   expect(link.getAttribute('href')).toBe(href)
   expect(link.getAttribute('target')).toBe('_blank')
   expect(link.textContent).toBe(label)
+  const heart = link.querySelector<SVGElement>('[data-about-support-heart]')!
+  expect(heart, '文字前有一颗爱心').not.toBeNull()
+  expect(heart.getAttribute('aria-hidden')).toBe('true')
+  expect(heart.getAttribute('class')).toContain('text-danger')
+  expect(heart.querySelector('path')!.getAttribute('fill'), '实心').not.toBe('none')
+  expect(link.querySelectorAll('svg').length, '爱心 + 外链箭头').toBe(2)
+  expect(link.lastElementChild!.tagName.toLowerCase()).toBe('svg')
 })

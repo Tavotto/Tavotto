@@ -183,7 +183,7 @@ def test_the_operator_kill_switch_stops_direct_native_too(
 def test_a_native_success_is_recorded_but_not_reused_while_its_helper_inputs_were_never_observed(
     client, tmp_path, fake_pool, native, sessions
 ):
-    """Codex #1034 r6：native 没有观察 helper / 数据文件（`basis_observed: false`），与 #982 的 reuse_last_success 一样保守——
+    """Codex #1034 r6：native 成功没报输入观察（这里的假 native 不报；`basis_observed: false`），与 #982 的 reuse_last_success 一样保守——
     不据此沿用 native，回到静态路由（动态路径 → safe + 回退）。记录本身仍写（#982 / 诊断读它）。"""
     root = _setup(client, tmp_path, DYNAMIC)
     first = _report(client)

@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 /// 与 `diagsend.PRODUCTION_ENDPOINT` 同一个字面量（契约样例的 `endpoint`，两侧各验）。
 pub const PRODUCTION_ENDPOINT: &str = "https://tavotto.cn";
 /// 与 `diagnostics.BUNDLE_SCHEMA_VERSION` 同源（契约样例的 `schema_version`，Python 侧验等于它）。
-pub const BUNDLE_SCHEMA: u32 = 8;
+pub const BUNDLE_SCHEMA: u32 = 14;
 /// 壳包的故障类别：启动失败属于「安装、启动、更新」。
 pub const CATEGORY: &str = "install_update";
 /// 壳只存在于桌面发行版。
@@ -63,6 +63,12 @@ pub struct ReportInput {
     pub stage: String,
     pub code: String,
     pub exit_code: Option<i32>,
+    /// locate 阶段失败时的安装文件事实（三个布尔值）；其余阶段 / 资源目录拿不到为 `None`（报告里是 `null`）。
+    pub install_files: Option<crate::rescue::InstallFiles>,
+    /// launch 阶段 spawn 失败时的系统错误类别（`rescue::SPAWN_ERRORS` 闭集）；其余为 `None`（报告里是 `null`）。
+    pub spawn_error: Option<&'static str>,
+    /// 握手超时时 sidecar 卡在启动的哪一步（`sidecar::startup_phase` 闭集 + `none`）；其余为 `None`（报告里是 `null`）。
+    pub startup_phase: Option<&'static str>,
     pub created_at: String,
 }
 
@@ -74,7 +80,7 @@ pub fn version_ok(v: &str) -> bool {
 }
 
 impl ReportInput {
-    /// 版本不合形状 → `unknown`；阶段 / 错误码不在闭集 → `unknown`。
+    /// 版本不合形状 → `unknown`；阶段 / 错误码不在闭集 → `unknown`；spawn 错误类别不在闭集 → `other`。
     fn sanitized(&self) -> ReportInput {
         let mut s = self.clone();
         if !version_ok(&s.version) {
@@ -85,6 +91,20 @@ impl ReportInput {
         }
         if !crate::rescue::CODES.contains(&s.code.as_str()) {
             s.code = "unknown".into();
+        }
+        if s.spawn_error
+            .is_some_and(|k| !crate::rescue::SPAWN_ERRORS.contains(&k))
+        {
+            s.spawn_error = Some("other");
+        }
+        // 启动阶段只属于握手超时；别的失败码带了也丢掉，闭集外的值归 `none`
+        if s.code != crate::rescue::code::SIDECAR_TIMEOUT {
+            s.startup_phase = None;
+        } else if s
+            .startup_phase
+            .is_some_and(|p| !crate::sidecar::startup_phase::is_known(p))
+        {
+            s.startup_phase = Some(crate::sidecar::startup_phase::NONE);
         }
         s
     }
@@ -133,7 +153,21 @@ pub fn build_documents(input: &ReportInput) -> (Value, Value) {
         "report_version": 1,
         "tavotto": { "version": i.version, "build": if i.debug_build { "debug" } else { "release" } },
         "platform": { "os": i.os, "arch": i.arch, "distribution": DISTRIBUTION },
-        "failure": { "stage": i.stage, "code": i.code, "exit_code": i.exit_code },
+        "failure": {
+            "stage": i.stage,
+            "code": i.code,
+            "exit_code": i.exit_code,
+            // 只有三个布尔值：没有路径、没有文本
+            "install_files": i.install_files.map(|f| json!({
+                "sidecar_dir": f.sidecar_dir,
+                "internal_dir": f.internal_dir,
+                "exe": f.exe,
+            })),
+            // 闭集里的类别名，不是系统错误原文
+            "spawn_error": i.spawn_error,
+            // 闭集阶段名（或 `none`），不是日志原文
+            "startup_phase": i.startup_phase,
+        },
     });
     (manifest, report)
 }
@@ -929,6 +963,26 @@ mod tests {
             stage: i["stage"].as_str().unwrap().into(),
             code: i["code"].as_str().unwrap().into(),
             exit_code: i["exit_code"].as_i64().map(|n| n as i32),
+            install_files: i["install_files"]
+                .as_object()
+                .map(|f| crate::rescue::InstallFiles {
+                    sidecar_dir: f["sidecar_dir"].as_bool().unwrap(),
+                    internal_dir: f["internal_dir"].as_bool().unwrap(),
+                    exe: f["exe"].as_bool().unwrap(),
+                }),
+            spawn_error: i["spawn_error"].as_str().map(|k| {
+                *crate::rescue::SPAWN_ERRORS
+                    .iter()
+                    .find(|e| **e == k)
+                    .expect("样例里的 spawn_error 在闭集里")
+            }),
+            startup_phase: i["startup_phase"].as_str().map(|k| {
+                *crate::sidecar::startup_phase::PHASES
+                    .iter()
+                    .chain([&crate::sidecar::startup_phase::NONE])
+                    .find(|e| **e == k)
+                    .expect("样例里的 startup_phase 在闭集里")
+            }),
             created_at: i["created_at"].as_str().unwrap().into(),
         }
     }
@@ -975,6 +1029,84 @@ mod tests {
         assert_eq!(body["size"], p.zip.len());
         assert_eq!(body["sha256"], sha256_hex(&p.zip));
         assert_eq!(body["category"], c["category"]);
+    }
+
+    #[test]
+    fn install_files_are_three_booleans_or_null_and_never_text() {
+        use crate::rescue::InstallFiles;
+        let c = contract();
+        let mut input = sample_input(&c);
+        // 三种形状：全在、缺 exe、整个 sidecar 目录不在；再加「资源目录拿不到」= null
+        for (files, want) in [
+            (
+                Some(InstallFiles {
+                    sidecar_dir: true,
+                    internal_dir: true,
+                    exe: true,
+                }),
+                json!({"sidecar_dir": true, "internal_dir": true, "exe": true}),
+            ),
+            (
+                Some(InstallFiles {
+                    sidecar_dir: true,
+                    internal_dir: true,
+                    exe: false,
+                }),
+                json!({"sidecar_dir": true, "internal_dir": true, "exe": false}),
+            ),
+            (
+                Some(InstallFiles {
+                    sidecar_dir: false,
+                    internal_dir: false,
+                    exe: false,
+                }),
+                json!({"sidecar_dir": false, "internal_dir": false, "exe": false}),
+            ),
+            (None, Value::Null),
+        ] {
+            input.install_files = files;
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["install_files"], want);
+        }
+    }
+
+    #[test]
+    fn the_spawn_error_is_a_closed_set_name_or_null() {
+        let c = contract();
+        let mut input = sample_input(&c);
+        for kind in crate::rescue::SPAWN_ERRORS {
+            input.spawn_error = Some(kind);
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["spawn_error"], json!(kind));
+        }
+        input.spawn_error = None;
+        let (_, r) = build_documents(&input);
+        assert_eq!(r["failure"]["spawn_error"], Value::Null);
+    }
+
+    #[test]
+    fn the_startup_phase_is_a_closed_set_name_only_for_a_handshake_timeout() {
+        let c = contract();
+        let mut input = sample_input(&c);
+        input.stage = "handshake".into();
+        input.code = "sidecar_timeout".into();
+        let phases = crate::sidecar::startup_phase::PHASES
+            .iter()
+            .chain([&crate::sidecar::startup_phase::NONE]);
+        for phase in phases {
+            input.startup_phase = Some(phase);
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["startup_phase"], json!(phase));
+        }
+        // 闭集外的值不进报告（归 none）
+        input.startup_phase = Some("/home/someone/secret");
+        let (_, r) = build_documents(&input);
+        assert_eq!(r["failure"]["startup_phase"], json!("none"));
+        // 别的失败码带了阶段也丢掉
+        input.code = "sidecar_exited".into();
+        input.startup_phase = Some("serving");
+        let (_, r) = build_documents(&input);
+        assert_eq!(r["failure"]["startup_phase"], Value::Null);
     }
 
     #[test]

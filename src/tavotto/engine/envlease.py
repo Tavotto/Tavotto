@@ -27,6 +27,9 @@ native_sessions   有 tavotto run 会话在用（在这里记）
 mutating          正在装包（在这里记）
 ```
 
+另有一种**保留型**租约（`acquire_retain`，AI 修复的 `change_python` 用）：只让受管环境的旧代不被 `retire_unused`
+清掉，**不是状态**——不挡 `mutating()`、不挡 native 会话（native 租约才挡换代 / 装包）。
+
 `safe_workers` 不在本模块存表：那是 `pool._workers` 的事实，重复存一份就是
 第二个权威。本模块只回答"能不能开始改这个环境"和"能不能在这个环境上起
 native 会话"，前者由 pool 在进入 mutating 时自己收掉 worker。
@@ -73,6 +76,9 @@ _native: dict[str, set[str]] = {}
 #: env_key -> 正在对它做「采用前体检 + 提交决定」的人数（`inspecting()`）。体检量的是这个环境此刻的样子，
 #: 装包在这个窗口里改它，体检结论就是半截的——所以安装（`mutating`）要等这些人走完。
 _inspecting: dict[str, int] = {}
+#: env_key -> {owner}。**保留型**占用（AI 修复的 `change_python` 用）：只表示「这一代先别被 `retire_unused` 清掉」，
+#: 不是 native 会话——`mutating()` 不因它拒绝（换代事务照常拿独占锁），`deprepair._generation_in_use` 认它。
+_retained: dict[str, set[str]] = {}
 
 
 class EnvironmentBusy(RuntimeError):
@@ -131,6 +137,7 @@ def snapshot() -> dict:
         return {
             "mutating": sorted(_mutating),
             "native": {k: sorted(v) for k, v in _native.items() if v},
+            "retained": {k: sorted(v) for k, v in _retained.items() if v},
         }
 
 
@@ -167,6 +174,29 @@ def release_native(python: str, session_id: str) -> None:
         alive.discard(session_id)
         if not alive:
             _native.pop(key, None)
+
+
+def acquire_retain(python: str, owner: str) -> None:
+    """保留型租约：让这个解释器所在的受管环境那一代不被 `managedenv.retire_unused` 清理，直到 `release_retain`。
+    与 native 租约的区别：**不挡** `mutating()`（换代 / 装包照常），也不挡 native 会话；不会失败。"""
+    with _lock:
+        _retained.setdefault(env_key_of(python), set()).add(owner)
+
+
+def release_retain(python: str, owner: str) -> None:
+    key = env_key_of(python)
+    with _lock:
+        alive = _retained.get(key)
+        if not alive:
+            return
+        alive.discard(owner)
+        if not alive:
+            _retained.pop(key, None)
+
+
+def retained_on(python: str) -> list[str]:
+    with _lock:
+        return sorted(_retained.get(env_key_of(python), ()))
 
 
 @contextlib.contextmanager
@@ -286,4 +316,5 @@ def reset_for_tests() -> None:
     with _lock:
         _mutating.clear()
         _native.clear()
+        _retained.clear()
         _inspecting.clear()

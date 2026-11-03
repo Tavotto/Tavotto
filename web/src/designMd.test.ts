@@ -110,9 +110,9 @@ function utility(name: string): Record<string, string> {
   return out
 }
 
-/** `var(--text-lg)` → `14px`；不是 var 的原样回 */
+/** `var(--text-lg)` → `14px`；`var(--caption-size, var(--text-sm))` 取回退值（容器未覆盖时的值）；不是 var 的原样回 */
 const resolve = (v: string): string => {
-  const m = v.match(/^var\(--([a-z0-9-]+)\)$/)
+  const m = v.match(/^var\(--([a-z0-9-]+)\)$/) ?? v.match(/^var\(--[a-z0-9-]+,\s*var\(--([a-z0-9-]+)\)\)$/)
   return m ? vars[m[1]] : v
 }
 
@@ -148,7 +148,7 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
 
   it('字体角色：type-<role> 解析出的字号 / 行高 / 字重 / 字距等于 frontmatter', () => {
     const typo = nestedMap('typography')
-    for (const role of ['display', 'heading', 'title', 'reading', 'section', 'body', 'control', 'caption', 'meta', 'number']) {
+    for (const role of ['hero', 'display', 'heading', 'title', 'reading', 'section', 'body', 'control', 'caption', 'meta', 'number']) {
       const u = utility(`type-${role}`)
       const fm = typo[role]
       expect(fm, `frontmatter 缺 typography.${role}`).toBeDefined()

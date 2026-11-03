@@ -18,6 +18,7 @@ import {
 } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
   mmToPx,
   mmToViewX,
@@ -39,12 +40,12 @@ import {
   startLegendScale,
   startPatchResize,
   startGuideDrag,
-  startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
+import { startPanelHandleDrag } from './panelEdgeCrop'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
-import { IssueOverlay } from './IssueOverlay'
+import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -148,6 +149,8 @@ export function OverlaySvg() {
   const guidesLocked = useUiStore((s) => s.guidesLocked)
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
   const linePanelIds = usePreviewLinePanels()
@@ -161,7 +164,9 @@ export function OverlaySvg() {
     }
   }, [objects, linePanelIds])
 
-  const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
+  // 拖图边改图幅松手后、新图落定之前：该面板只留虚线占位，选区轮廓与缩放手柄一并压住（旧 w/h 的手柄不可见也不可点）
+  const pendingFrameId = useInteractionStore((s) => s.figureFramePending?.id)
+  const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden && o.id !== pendingFrameId)
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
   // 联合框只说「选了这一片」，说不出「以谁为基准」
   const primaryId = selectedIds.at(-1) ?? null
@@ -170,6 +175,9 @@ export function OverlaySvg() {
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
   // 图内编辑时不显示对象缩放手柄，避免和元素选择混淆
   const single = selected.length === 1 && !cropTarget && !elementPanel ? selected[0] : null
+  // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
+  // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
+  const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
   const groupBounds = selected.length > 1 ? boundsOf(selected) : null
   const hovered =
     hoverId && !selectedIds.includes(hoverId) && dragKind === 'none'
@@ -244,6 +252,17 @@ export function OverlaySvg() {
         (() => {
           const target = objects.find((o) => o.id === issueHighlight.objectId)
           if (!target) return null
+          // 问题落在图内某个元素上：闪那个元素，不闪整张图（`IssueElementHighlight`）
+          if (target.type === 'panel' && issueHighlight.gid) {
+            return (
+              <IssueElementHighlight
+                key={issueHighlight.token}
+                panel={target}
+                gid={issueHighlight.gid}
+                t={t}
+              />
+            )
+          }
           const box = toScreen(target, t)
           return (
             <rect
@@ -258,7 +277,8 @@ export function OverlaySvg() {
               stroke={SEL}
               strokeWidth={2}
               style={DASH}
-              className="motion-safe:animate-attention"
+              // 舞台灯（`IssueSpotlight`）的光圈锚点：动效开着时不画出来；reduced motion 下照旧显示
+              className="motion-safe:invisible"
             />
           )
         })()}
@@ -296,7 +316,7 @@ export function OverlaySvg() {
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
-      {single && !single.locked && (
+      {single && !single.locked && !fastEditFigure && (
         <g
           transform={spinOf(single, toScreen(single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
@@ -307,7 +327,7 @@ export function OverlaySvg() {
             box={toScreen(single, t)}
             dirs={dirsFor(single)}
             cursor={(dir) => cursorFor(dir, objectRotation(single))}
-            onPointerDown={(e, dir) => startResizeDrag(e, single.id, dir)}
+            onPointerDown={(e, dir) => startPanelHandleDrag(e, single.id, dir)}
           />
           {dirsFor(single).map((dir) => (
             <HandleMark
@@ -315,7 +335,7 @@ export function OverlaySvg() {
               at={handlePos(toScreen(single, t), dir)}
               hook={{ 'data-handle': dir }}
               cursor={cursorFor(dir, objectRotation(single))}
-              onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
+              onPointerDown={(e) => startPanelHandleDrag(e, single.id, dir)}
             />
           ))}
           {isLinear(single) && <LinearEndpoints obj={single} t={t} />}
@@ -383,9 +403,8 @@ export function OverlaySvg() {
 }
 
 /**
- * 箭头 / 直线的拖画预览：直接按新对象的最终样式画（默认色 + 1pt 线宽 +
- * 箭头帽），几何与 ArrowView 同一套（帽长 4×线宽、帽半宽 1.7×线宽、
- * 实心三角端线段回缩 0.75×帽长）——预览即成品。
+ * 箭头 / 直线的拖画预览：中心保持新对象的颜色与几何，外加仅在拖画期间出现的
+ * 选区色描边，使它在纸外的深色画布上也可见。描边不进入文档。
  */
 function DraftLinePreview({
   draft,
@@ -410,8 +429,29 @@ function DraftLinePreview({
   const trim = isArrow ? headLen * 0.75 : 0
   const p2 = { x: b.x - ux * trim, y: b.y - uy * trim }
   return (
-    <g>
+    <g data-draft-line-preview>
       <line
+        data-draft-outline="line"
+        x1={a.x}
+        y1={a.y}
+        x2={p2.x}
+        y2={p2.y}
+        stroke={SEL}
+        strokeWidth={sw + 3}
+        strokeLinecap="round"
+      />
+      {isArrow && len > headLen && (
+        <polygon
+          data-draft-outline="head"
+          points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
+          fill={SEL}
+          stroke={SEL}
+          strokeWidth={3}
+          strokeLinejoin="round"
+        />
+      )}
+      <line
+        data-draft-content="line"
         x1={a.x}
         y1={a.y}
         x2={p2.x}
@@ -422,6 +462,7 @@ function DraftLinePreview({
       />
       {isArrow && len > headLen && (
         <polygon
+          data-draft-content="head"
           points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
           fill={color}
         />

@@ -24,6 +24,10 @@ export interface Env {
   CLA_DELEGATED_COUNTERSIGNING_ENABLED?:string;
   CLA_AUTOMATIC_VERIFICATION_ENABLED?:string;
   CLA_AUTOMATIC_PUBLISHING_ENABLED?:string;
+  CLA_AGREEMENT_ACTIVATION_ENABLED?:string;
+  CLA_CONFIRMATION_SLOT_ENABLED?:string;
+  CLA_MERGE_PREFIX_ASSESSMENT_ENABLED?:string;
+  CLA_MERGE_PREFIX_READ_SESSION_ENABLED?:string;
   CLA_WEBHOOK_SECRET?:string;
   CLA_WEBHOOK_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
 }
@@ -31,6 +35,15 @@ const headers = {'cache-control':'no-store','referrer-policy':'no-referrer','x-c
   'content-security-policy':"default-src 'none'; frame-ancestors 'none'"};
 const json = (data:unknown,status=200,extra:Record<string,string>={}) => Response.json(data,{status,headers:{...headers,...extra}});
 const cookie = (name:string,value:string,age:number) => `${name}=${value}; Path=/; Max-Age=${age}; Secure; HttpOnly; SameSite=Lax`;
+// GitHub's /.well-known/oauth-authorization-server/login/oauth declares this
+// issuer and authorization_response_iss_parameter_supported=true. RFC 9207
+// section 2.4 requires an issuer for that provider and exact decoded-string
+// comparison; URL normalization or a missing-issuer fallback is not allowed.
+const GITHUB_OAUTH_ISSUER='https://github.com/login/oauth';
+function validOAuthCallbackQuery(url:URL):boolean {
+  return [...url.searchParams.keys()].sort().join(',')==='code,iss,state' &&
+    url.searchParams.get('iss')===GITHUB_OAUTH_ISSUER;
+}
 function cookies(req:Request):Map<string,string> {
   const result=new Map<string,string>();
   for (const piece of (req.headers.get('cookie') ?? '').split(';').filter(x=>x.trim())) {
@@ -73,7 +86,8 @@ export function config(env:Env):LiveConfig {
   return {...c,githubEnabled:env.CLA_GITHUB_ENABLED==='true',oauthEnabled:env.CLA_OAUTH_ENABLED==='true',
     signingEnabled:env.CLA_SIGNING_ENABLED==='true',checkPublishingEnabled:env.CLA_CHECK_PUBLISHING_ENABLED==='true',backgroundEnabled:env.CLA_BACKGROUND_ENABLED==='true',
     delegatedCountersigningEnabled:env.CLA_DELEGATED_COUNTERSIGNING_ENABLED==='true',automaticVerificationEnabled:env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true',
-    automaticPublishingEnabled:env.CLA_AUTOMATIC_PUBLISHING_ENABLED==='true'};
+    automaticPublishingEnabled:env.CLA_AUTOMATIC_PUBLISHING_ENABLED==='true',agreementActivationEnabled:env.CLA_AGREEMENT_ACTIVATION_ENABLED==='true',
+    confirmationSlotEnabled:env.CLA_CONFIRMATION_SLOT_ENABLED==='true',mergePrefixAssessmentEnabled:env.CLA_MERGE_PREFIX_ASSESSMENT_ENABLED==='true',mergePrefixReadSessionEnabled:env.CLA_MERGE_PREFIX_READ_SESSION_ENABLED==='true'};
 }
 export async function service(env:Env,budget?:InvocationBudget):Promise<LiveService> {
   const c=config(env),secrets:Secrets={clientSecret:env.CLA_CLIENT_SECRET ?? '',pkcs8:env.CLA_APP_PKCS8 ?? '',evidenceKey:env.CLA_EVIDENCE_KEY ?? ''};
@@ -113,6 +127,16 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
     if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
     if (req.method==='GET' && url.pathname==='/health' && !url.search)
       return json({runtime:'workers-d1',signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && url.pathname==='/verification/group') {
+      if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
+      if([...url.searchParams.keys()].sort().join(',')!=='attempt,base,head,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
+      const head=url.searchParams.get('head')!,base=url.searchParams.get('base')!,run=Number(url.searchParams.get('run')),attempt=url.searchParams.get('attempt')!;
+      if(!validSha(head) || !validSha(base) || !validId(run) || !/^[A-Za-z0-9_-]{43}$/.test(attempt))throw new Rejected('verification_invalid');
+      if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
+      let admitted=false;try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:'verification-group'})).success===true;}catch{return json({error:'verification_abuse_control_unavailable'},503);}
+      if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
+      return json(await verification(await service(env,new InvocationBudget()),{kind:'merge_group',headSha:head,baseSha:base},head,run,attempt));
+    }
     if(req.method==='GET' && url.pathname==='/verification/pr') {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
       if([...url.searchParams.keys()].sort().join(',')!=='attempt,head,pr,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('pr') ?? '') ||
@@ -143,7 +167,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
     }
     const s=await service(env),jar=cookies(req),token=jar.get('__Host-cla-session') ?? '',csrf=req.headers.get('x-csrf-token') ?? '';
     if(req.method==='GET' && url.pathname==='/oauth/callback') {
-      const query=[...url.searchParams.keys()];if(query.length!==2 || !query.includes('state') || !query.includes('code')) throw new Rejected('oauth_rejected');
+      if(!validOAuthCallbackQuery(url)) throw new Rejected('oauth_rejected');
       const login=await s.completeOAuth(url.searchParams.get('state')!,jar.get('__Host-cla-oauth') ?? '',url.searchParams.get('code')!);
       const browser=req.headers.get('accept')?.includes('text/html');
       const response=browser?new Response(null,{status:303,headers:{...headers,location:'/'}}):json({csrf:login.csrf});response.headers.append('set-cookie',cookie('__Host-cla-session',login.token,900));

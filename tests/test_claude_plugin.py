@@ -20,6 +20,8 @@ import tavotto
 from tavotto.engine import brand, pluginmanifest
 
 ROOT = Path(__file__).resolve().parent.parent
+#: 逐宿主安装章节所在（2026-10-28 起 README 只留一张表指过来）
+GUIDE = Path("docs") / "guide" / "ai-hosts.md"
 PLUGIN = ROOT / brand.CODEX_PLUGIN_SUBDIR
 CLAUDE_MANIFEST = PLUGIN / ".claude-plugin" / "plugin.json"
 CODEX_MANIFEST = PLUGIN / ".codex-plugin" / "plugin.json"
@@ -154,9 +156,10 @@ def _claude_code_status() -> str:
 def test_install_lines_are_published_where_the_matrix_says():
     """两条安装命令整行等于由常量拼出来的那两行，放在哪由支持矩阵的这一档决定（2026-09-30 用户决定）。
 
-    * `beta`：plugin-stable 已带清单，README 给出这两行（整行相等，不是包含）；
-    * 其它：plugin-stable 还没带 `.claude-plugin/`，照 README 装会坏，所以 README 与插件（技能）里
-      **一行都不许有**，两行只在待发说明 `UNRELEASED.md` 里等发版。发版时把 README 一节加回、矩阵改回 beta——
+    * `beta`：plugin-stable 已带清单，宿主接入指南 `docs/guide/ai-hosts.md` 给出这两行（整行相等，不是包含；README
+      只留一张表指过去，2026-10-28）；
+    * 其它：plugin-stable 还没带 `.claude-plugin/`，照着装会坏，所以指南与插件（技能）里
+      **一行都不许有**，两行只在待发说明 `UNRELEASED.md` 里等发版。发版时把指南一节加回、矩阵改回 beta——
       漏了哪一步，这里或 `test_beta_label_follows_the_matrix_and_its_evidence` 就红。
     """
     expected = [
@@ -169,7 +172,7 @@ def test_install_lines_are_published_where_the_matrix_says():
         ),
         f"claude plugin install {brand.CLAUDE_PLUGIN_REF}",
     ]
-    lines = [ln.strip() for ln in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()]
+    lines = [ln.strip() for ln in (ROOT / GUIDE).read_text(encoding="utf-8").splitlines()]
     found = [ln for ln in lines if re.match(r"claude plugin (marketplace add|install) ", ln)]
     if _claude_code_status() == "beta":
         assert found == expected
@@ -205,20 +208,20 @@ def test_workbuddy_section_installs_the_same_plugin_from_brand():
     `brand.CLAUDE_PLUGIN_REF`——同一份市场、同一个插件，不另起名字。
 
     这一节在哪由支持矩阵 workbuddy 这一档决定（2026-09-30 用户决定，与 Claude Code / DSH 同一条）：`beta` 时在
-    README；此前 plugin-stable 还没带清单，README 里不许有，原文在待发说明里等发版——两处用同一套检查。
+    宿主接入指南；此前 plugin-stable 还没带清单，指南里不许有，原文在待发说明里等发版——两处用同一套检查。
     """
-    heading = "### Using Tavotto with WorkBuddy (Beta)"
+    heading = "## Using Tavotto with WorkBuddy (Beta)"
     matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
     (host,) = [h for h in matrix["mcp_hosts"]["hosts"] if h["id"] == "workbuddy"]
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / GUIDE).read_text(encoding="utf-8")
     if host["status"] == "beta":
-        text = readme
+        text = guide
     else:
-        assert "### Using Tavotto with WorkBuddy" not in readme
+        assert "## Using Tavotto with WorkBuddy" not in guide
         text = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
     # 按整行找标题：待发说明的恢复步骤里也会提到这个标题
-    assert f"\n{heading}\n" in text, "这一节既不在 README 也不在待发说明里"
-    section = text.split(f"\n{heading}\n", 1)[1].split("\n### ", 1)[0].split("\n-->", 1)[0]
+    assert f"\n{heading}\n" in text, "这一节既不在指南也不在待发说明里"
+    section = text.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0].split("\n-->", 1)[0]
     blocks = re.findall(r"```text\n(.*?)\n```", section, flags=re.S)
     assert blocks == [brand.WORKBUDDY_MARKETPLACE]
     assert f"`{brand.CLAUDE_PLUGIN_REF}`" in section

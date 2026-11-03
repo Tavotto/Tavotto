@@ -9,6 +9,8 @@ import { GitHub } from './github.ts';
 import { LiveStore, type SignatureRow } from './store.ts';
 import { Delegation } from './delegation.ts';
 import { qualificationSQL, successCapacity } from './budget.ts';
+import { mergePrefixBinding } from './merge-prefix.ts';
+import type { MergePrefixAssessment, MergePrefixReader, MergePrefixTarget } from './merge-prefix.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
@@ -230,6 +232,41 @@ export class LiveService {
     return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:bound.head_sha,
       conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof),
       ...(ceiling.expires<Number.MAX_SAFE_INTEGER?{authorityExpires:ceiling.expires}:{})};
+  }
+  async assessMergePrefix(input:MergePrefixTarget,reservedSQL=0,expectedRevision?:number):Promise<MergePrefixAssessment> {
+    if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
+    const target=structuredClone(input);
+    if(this.c.mergePrefixReadSessionEnabled===true)return this.github.withMergePrefixReads(target,reader=>this.assessMergePrefixFacts(target,reader,reservedSQL,expectedRevision));
+    return this.assessMergePrefixFacts(target,{snapshot:()=>this.github.mergePrefixSnapshot(target),resolveLogin:login=>this.github.resolveLogin(login)},reservedSQL,expectedRevision);
+  }
+  private async assessMergePrefixFacts(target:MergePrefixTarget,reader:MergePrefixReader,reservedSQL:number,expectedRevision?:number):Promise<MergePrefixAssessment> {
+    const budget=this.store.budget;
+    if(!budget || this.github.budget!==budget)throw new Rejected('invocation_budget_required');
+    const revision=expectedRevision ?? await this.store.revision();
+    if(!Number.isSafeInteger(revision) || revision<0)throw new Rejected('state_changed');
+    const first=await mergePrefixBinding(this.c,reader,target,await reader.snapshot());
+    const now=await this.store.databaseNow(),exempt=new Set(Object.values(this.c.exemptionIds));
+    const people=first.binding.contributors.filter(person=>!exempt.has(person.id));
+    if(people.length>successCapacity(this.c))throw new Rejected('contributor_capacity_exceeded');
+    budget.reserveWorkSQL(qualificationSQL(this.c)*people.length+1+reservedSQL);
+    let eligible=this.c.policy.provider.configured===true;const ceiling={expires:Number.MAX_SAFE_INTEGER};
+    for(const person of people)if(!await this.qualified(person.id,ceiling,now))eligible=false;
+    const last=await mergePrefixBinding(this.c,reader,target,await reader.snapshot());
+    if(canonical(first)!==canonical(last))throw new Rejected('merge_prefix_changed');
+    // Revision and database time belong to one final SQL snapshot. A hold/revoke
+    // committed while the closing read waits cannot hide behind an earlier revision.
+    const final=await this.store.assessmentState(),expires=Math.min(now+120,ceiling.expires);
+    budget.checkWork();
+    if(final.revision!==revision || final.now<now || final.now>=expires)throw new Rejected('state_changed');
+    return {...first,protocol:'cla-merge-prefix-assessment-v1',eligible,revision,observed_at:final.now,valid_until:expires,publication:'not_attempted'};
+  }
+  async evaluateTarget(target:import('../core/types.ts').Target,reservedSQL=0,expectedRevision?:number):Promise<CheckProposal> {
+    if(target.kind==='pr')return this.evaluate(target.number,reservedSQL);
+    const a=await this.assessMergePrefix({headSha:target.headSha,baseSha:target.baseSha,baseRef:'refs/heads/main'},reservedSQL,expectedRevision);
+    const proof={...a.binding,protocol:'tavotto-cla-v1' as const,revision:a.revision,issued_at:a.observed_at,expires_at:a.valid_until,
+      group:{base_ref:'refs/heads/main' as const,strategy:a.strategy,prefix_sha256:a.prefix_sha256,queue_sha256:a.queue_sha256,trusted_source_sha:a.trusted_source_sha}};
+    return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:target.headSha,conclusion:a.eligible?'success':'failure',proof,
+      text:'tavotto-cla-v1\n'+canonical(proof),authorityExpires:a.valid_until};
   }
   async check(pr:number,expectedHead?:string):Promise<{disposition:string;check:CheckProposal}> {
     // Track before evaluation: each later evidence/hold revision enqueues a durable notification intent.

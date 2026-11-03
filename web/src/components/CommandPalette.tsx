@@ -20,6 +20,7 @@ import {
   LayoutGrid,
   LayoutList,
   Lightbulb,
+  ListChecks,
   Paintbrush,
   Play,
   Plus,
@@ -37,8 +38,9 @@ import {
   Ungroup,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
-import { KeyCaps } from '@/components/ui/Kbd'
+import { ShortcutText } from '@/components/ui/Kbd'
 import { Dialog } from '@/components/ui/Dialog'
+import { scrollFadeStyle, useScrollFade } from '@/components/ui/scrollFade'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { keyOf } from '@/lib/keymap'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -58,9 +60,18 @@ import {
   selectAll,
   ungroupSelected,
   startNamedNode,
+  openTimeline,
 } from '@/store/actions'
 import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
-import { resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
+import {
+  ensureTutorialStatus,
+  hasSampleProject,
+  resetHints,
+  resetTutorial,
+  runTutorialEntry,
+  tutorialEntry,
+  useTutorialStore,
+} from '@/lib/onboarding/tutorial'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -155,7 +166,7 @@ const COMMANDS: Command[] = [
   },
   {
     id: 'tutorial-reset',
-    available: () => useOnboardingStore.getState().tutorialProjectId != null,
+    available: () => hasSampleProject(),
     run: () => void resetTutorial(),
   },
   { id: 'hints-reset', run: () => resetHints() },
@@ -163,7 +174,7 @@ const COMMANDS: Command[] = [
   { id: 'save-document', shortcut: keyOf('save'), run: () => void runManualSave() },
   { id: 'save-layout', shortcut: keyOf('saveAs'), run: () => ui().setLayoutOpen(true, 'save') },
   { id: 'load-layout', run: () => ui().setLayoutOpen(true, 'load') },
-  { id: 'versions', shortcut: keyOf('timeline'), run: () => ui().setVersionsOpen(true) },
+  { id: 'versions', shortcut: keyOf('timeline'), run: openTimeline },
   { id: 'save-named-version', shortcut: keyOf('saveNamed'), run: startNamedNode },
   { id: 'styles', run: () => ui().setStylesOpen(true) },
   { id: 'new-doc', run: () => void newBlankDocument() },
@@ -218,13 +229,13 @@ const COMMANDS: Command[] = [
   { id: 'canvas-settings', run: () => ui().setRightTab('canvas') },
   { id: 'left-assets', run: () => ui().setLeftTab('assets') },
   { id: 'left-elements', run: () => ui().setLeftTab('elements') },
-  { id: 'left-layers', run: () => ui().setLeftTab('layers') },
+  { id: 'left-layers', run: () => ui().setLeftTab('outline') },
   { id: 'shortcut-help', shortcut: keyOf('help'), run: () => ui().setShortcutHelpOpen(true) },
 ]
 
 /**
- * 命令前的图标：只从 `components/ui/icons` 里挑；没有合适图标的命令（全选、网格）不放，
- * 不新造。**只是外观**，命令清单与顺序仍由上面的 COMMANDS 与 `rankCommands` 决定。
+ * 命令前的图标：只从 `components/ui/icons` 里挑；每条命令都有图标（没有专门图标的取集内最接近的，
+ * 不新造）。**只是外观**，命令清单与顺序仍由上面的 COMMANDS 与 `rankCommands` 决定。
  */
 const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: string }>> = {
   'refresh-project': RefreshCw,
@@ -244,6 +255,7 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   'new-doc': Plus,
   'add-text': Type,
   'sub-labels': Tags,
+  'select-all': ListChecks,
   group: Group,
   ungroup: Ungroup,
   'layout-row': AlignHorizontalDistributeCenter,
@@ -254,6 +266,8 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   fit: Fullscreen,
   'zoom-selection': Scaling,
   rulers: Ruler,
+  // 图标集里没有专门的「网格」，取最接近的 LayoutGrid（与 layout-grid 同形）
+  grid: LayoutGrid,
   'canvas-settings': SlidersHorizontal,
   'left-assets': Images,
   'left-elements': LayoutList,
@@ -279,6 +293,8 @@ export function CommandPalette() {
   // 教程状态变了要重算可用命令（三条互斥）；项目开合决定项目命令出不出现
   const onboardingStatus = useOnboardingStore((s) => s.status)
   const projectPhase = useProjectStore((s) => s.phase)
+  // 「重置示例项目」看示例副本探测结果；探测在面板打开时按需发（见下），回来要重算
+  const sampleStatus = useTutorialStore((s) => s.status)
   // 「缩放到选中」的可用判据看的是选区里**可见**的对象：隐藏 / 换选不一定改 ids 的长度
   const docObjects = useDocumentStore((s) => s.doc.objects)
   const selectionIds = useSelectionStore((s) => s.ids)
@@ -293,6 +309,7 @@ export function CommandPalette() {
   const [cursor, setCursor] = useState<{ id: string; query: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
+  const { fade: listFade, measure: measureListFade } = useScrollFade(listRef, 'y')
 
   // 每次打开都从空查询、首行开始。焦点进输入框、Esc / 点外面关闭、关闭后焦点还给打开前的元素——
   // 这三件都由 `Dialog chrome="palette"` 给（焦点陷阱与归还，2026-10-07 设计审计 §10.1），这里不再自己挂监听
@@ -300,6 +317,7 @@ export function CommandPalette() {
     if (!open) return
     setQuery('')
     setCursor(null)
+    ensureTutorialStatus()
   }, [open])
 
   // 搜索按**当前语言**的文案与关键词来：英文界面下输 "export" 能中，
@@ -324,9 +342,9 @@ export function CommandPalette() {
         })
       : pool
     return rankCommands(hit, { hasSelection, recent })
-    // `onboardingStatus` / `projectPhase` / `docObjects` / `selectionIds` / `fastEditPanelId` 是让 memo 在状态变化时重算的信号，不是入参
+    // `onboardingStatus` / `projectPhase` / `sampleStatus` / `docObjects` / `selectionIds` / `fastEditPanelId` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, docObjects, selectionIds, fastEditPanelId])
+  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, sampleStatus, docObjects, selectionIds, fastEditPanelId])
   const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
   const showHeaders = !q
 
@@ -405,7 +423,11 @@ export function CommandPalette() {
       <ul
         ref={listRef}
         id={LIST_ID}
-        className="max-h-80 overflow-y-auto p-1"
+        // 底部多 8px 留白 + 20px 渐隐：最后一行不再被容器下沿硬切；滚到底渐隐收掉（scrollFade 共享件）
+        className="max-h-80 overflow-y-auto p-1 pb-3"
+        style={scrollFadeStyle(listFade, 'y', 20)}
+        // 列表在 Dialog 里随打开才挂载，useScrollFade 的原生 scroll 监听挂在了空 ref 上；滚动由这里补量
+        onScroll={measureListFade}
         role="listbox"
         aria-label={t('palette.listLabel')}
       >
@@ -422,7 +444,7 @@ export function CommandPalette() {
                 key={`h:${section.section}`}
                 role="presentation"
                 data-palette-section={section.section}
-                // 组头与菜单的 `MenuLabel` 同一格：12 / 400 / ink-3（比项淡一档，审计 M3）
+                // 组头与菜单的 `MenuLabel` 同一格：11 / 500 / ink-2
                 className="px-3 pb-1 pt-2.5 text-sm text-ink-3"
               >
                 {sectionLabel(section.section)}
@@ -458,7 +480,7 @@ export function CommandPalette() {
                   <span data-cmd-label className="min-w-0 flex-1 truncate">
                     {c.label}
                   </span>
-                  {c.shortcut && <KeyCaps keys={c.shortcut} className="shrink-0 flex-nowrap" />}
+                  {c.shortcut && <ShortcutText data-cmd-shortcut="">{c.shortcut}</ShortcutText>}
                 </li>
               )
             }),

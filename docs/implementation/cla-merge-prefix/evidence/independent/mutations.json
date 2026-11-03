@@ -1,0 +1,380 @@
+[
+  {
+    "name": "independent prefix exact environment capability",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix default switch requires exact environment true$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix default switch requires exact environment true",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a704260c92327e2e1e268325cb5b8c69dbf29644f6d4a64daa8fb3db085eec92",
+    "source_after_sha256": "b02a2096df2dd8caf32ce436c2a65b3a3b392ff0909d7b1360699f3f7402def6",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-01.log",
+    "detected": true
+  },
+  {
+    "name": "independent prefix disabled before any I/O",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix disabled refuses before database or transport$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix disabled refuses before database or transport",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "c3924eb2bbaea756873384221b041a2893055fd1bf51058a2d35210b300977fa",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-02.log",
+    "detected": true
+  },
+  {
+    "name": "independent prefix shared invocation budget",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix requires shared budget different$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix requires shared budget different",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "81dfe600bb301ec5f0edc8eef6014a07bf53336a2849a909aa7c53367cd007b0",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-03.log",
+    "detected": true
+  },
+  {
+    "name": "independent complete prefix rather than current entry only",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix unsigned predecessor blocks signed current PR$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix unsigned predecessor blocks signed current PR",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "62529efb0dfb97ee8f4994253d7ba8757b946af2a40f0a7e2a5d99d4735c4126",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-04.log",
+    "detected": true
+  },
+  {
+    "name": "independent every contributor is qualified",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix unsigned predecessor blocks signed current PR$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix unsigned predecessor blocks signed current PR",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "5ab9275ec92a427fedea035544f48f4a7879ac3ec210e8c6128913dc784d5ad2",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-05.log",
+    "detected": true
+  },
+  {
+    "name": "independent queue repository identity",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix queue malformed pagination rejects repo$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix queue malformed pagination rejects repo",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "365d30075a37febe43e05ce2ebd0d9f38b0fa110648dd01ada8d4176e3902238",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-06.log",
+    "detected": true
+  },
+  {
+    "name": "independent complete queue positions",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix queue positions must be complete from one$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix queue positions must be complete from one",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "48608ee9b8b5ccc1a11e86b750f38a5189b4e974a5b840e70d4b9ded7757cbac",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-07.log",
+    "detected": true
+  },
+  {
+    "name": "independent exact candidate base",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix exact candidate base is required$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix exact candidate base is required",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "327df2103352086a560037e68c88cead21e62006f53db2a1a012bf9e8b4ad5e4",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-08.log",
+    "detected": true
+  },
+  {
+    "name": "independent queue member head matches live PR",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix adapter rejects PR head disagreeing with queue entry$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix adapter rejects PR head disagreeing with queue entry",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "58e846e63ce98d2b95a246d789a2756bc3f9b86c9baa665deccb5268c70d3315",
+    "source_after_sha256": "515b5de67c10c500fb2d0778d316a22c8475856755b4ca758e57fa18d850f439",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-09.log",
+    "detected": true
+  },
+  {
+    "name": "independent first snapshot queue recheck",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix queue drift within first snapshot rejects$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix queue drift within first snapshot rejects",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "58e846e63ce98d2b95a246d789a2756bc3f9b86c9baa665deccb5268c70d3315",
+    "source_after_sha256": "1480d1bf117a3df3abe8201e449662bc599c5e3025edc68360f8bc6294beebba",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-10.log",
+    "detected": true
+  },
+  {
+    "name": "independent final full binding recheck",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix final full snapshot rejects source$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix final full snapshot rejects source",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "59598fb5d2ac30ff05edfb914f3e7b00922e68a2e36085679a6690ebaacecbf4",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-11.log",
+    "detected": true
+  },
+  {
+    "name": "independent trusted source remains in assessment binding",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix final full snapshot rejects source$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix final full snapshot rejects source",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "bb732579eca966315e298afd2b6c56a02ecc768be67198a9d9534e9aa546bb93",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-12.log",
+    "detected": true
+  },
+  {
+    "name": "independent prefix digest authenticates ordered entries",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix all preceding and current real personal evidence qualify without writes$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix all preceding and current real personal evidence qualify without writes",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "3e0941745502f8fae419d97ce81d95b6d97e7731ca526dfcfe9bfaff9d991aab",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-13.log",
+    "detected": true
+  },
+  {
+    "name": "independent final SQL revision cannot reuse old revision",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix hold before final SQL invalidates prior eligibility$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix hold before final SQL invalidates prior eligibility",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "f7ef633137364d1d25d49dc3b53eaf2a5db882e15c1b96f6f812c4f45e4a831e",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-14.log",
+    "detected": true
+  },
+  {
+    "name": "independent final SQL strict assessment deadline",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix final SQL at assessment deadline rejects$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix final SQL at assessment deadline rejects",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "48c9573058138ecf3cb0f8ed550e99c7a69920427108a9bb060ff2d1863d85c1",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-15.log",
+    "detected": true
+  },
+  {
+    "name": "independent grant deadline caps assessment",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix delegated authorization deadline caps assessment$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix delegated authorization deadline caps assessment",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "de011d60255d1ee69932eb1664cd06ebfc10e1caa126d04525703de6daeb9d5e",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-16.log",
+    "detected": true
+  },
+  {
+    "name": "independent contributor raw evidence hash",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix evidence hash corruption is rejected$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix evidence hash corruption is rejected",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "47b621fb0d1105c5de379aeea90c4c837579aad95037a62bc7792fc36fc9ecee",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-17.log",
+    "detected": true
+  },
+  {
+    "name": "independent all coauthor identities enter prefix union",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix author commit author and noreply coauthor all require actual signatures$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix author commit author and noreply coauthor all require actual signatures",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "606324b384342474f72cb2ac8338a77aa608fcfa47344f1057033bc609a1d951",
+    "source_after_sha256": "f9f8451bdec5efdd7b279b3ea253ab800a1fcd5f6861e179607090afad0a749e",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-18.log",
+    "detected": true
+  },
+  {
+    "name": "independent contributor capacity before fanout",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix contributor capacity is checked before qualification fanout$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix contributor capacity is checked before qualification fanout",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "72b63ce5140441d19217f795937d783812d626de7474b1ee8717233df32ffbe1",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-19.log",
+    "detected": true
+  },
+  {
+    "name": "independent final shared work deadline",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix final cryptographic work cannot outlive shared work deadline$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix final cryptographic work cannot outlive shared work deadline",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "source_after_sha256": "91833fbf32d54c45bcd3f8f04543de71aefca530bbfc5337579205392b909ab5",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-20.log",
+    "detected": true
+  },
+  {
+    "name": "independent explicit complete prefix cap",
+    "unique_location_count": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=^independent merge prefix cannot truncate a prefix beyond its explicit size cap$",
+      "tests/independent-merge-prefix.test.mjs"
+    ],
+    "selectedTitle": "independent merge prefix cannot truncate a prefix beyond its explicit size cap",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_executed": true,
+    "source_before_sha256": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "source_after_sha256": "6b770e4ea78b1b70748e4ebcd1857706f60ec171bb23f67513aab828cd8cf6fc",
+    "log": "/tmp/cla-merge-prefix-independent/mutation-21.log",
+    "detected": true
+  }
+]

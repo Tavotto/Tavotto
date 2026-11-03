@@ -234,9 +234,20 @@ _ALLOWED_IMPORTS = {
     "pathlib",
     "__future__",
 }
-_ALLOWED_SIBLINGS = {"depresolve", "distmeta", "execspec", "figcapture", "projectenv", "scanbudget"}
+#: shadowscript（ADR 0143 修订）：纯标准库的路径登记表，没有进程 / 网络 / 动态执行；importscan 只许用它的只读查询 `lookup_active`
+#: （校验运行自己的上下文里才命中候选字节，普通会话读磁盘原件）。
+_ALLOWED_SIBLINGS = {
+    "depresolve",
+    "distmeta",
+    "execspec",
+    "figcapture",
+    "projectenv",
+    "scanbudget",
+    "shadowscript",
+}
 #: 对兄弟模块只许用这些属性（projectenv 里有起解释器的 `probe_environment`，不许碰）。
 _ALLOWED_ATTRS = {
+    "shadowscript": {"lookup_active"},
     "projectenv": {"within", "contained_path"},
     "figcapture": {"PROFILE_SAFE", "PROFILE_NATIVE", "unused_imports", "reaches_main"},
     "execspec": {
@@ -255,6 +266,9 @@ _ALLOWED_ATTRS = {
         "SOURCE_PROJECT_DECLARED",
         "SOURCE_CURATED",
         "distribution_alternatives",
+        # 纯词法的「大文件夹」判断（abspath + 家目录推出的表，不碰文件系统）：项目外字面量 sys.path 根放宽读边界时
+        # 拒绝放宽到家目录 / 桌面 / 盘符根（TVD-22EY）
+        "is_broad_folder",
     },
     #: importscan 只**消费**调用方读好的索引（`Index` 类型 + `resolve_module` 纯函数）；读 site-packages 的
     #: `site_packages` / `build_index` / `index_environment` 不在白名单里——扫描自己不碰 site-packages。

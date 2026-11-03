@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「`tavotto run` 的控制面（ADR 0021，Beta）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/native/`（含 `test_run_cli_integration.py`、`test_native_inconsistent.py`）、`tests/test_windows_regressions.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 190
+改到: `runcli.py`、`runspec.py`、`nativerelay.py`、`nativesession.py`、`envlease.py`、`enginesession.py`、`desktopproc.py`
+主题: `tavotto run` 的控制面 → `tavotto-run-control-plane.md`
+必守要点: 确认前一行用户代码不跑；Tavotto 只写 stderr；屏障释放必经 `release_barrier()`
+-->
 
 进程关系是**倒过来的**——用户的 Python 是 **CLI 的子进程**，sidecar 只是
 通过一条认证 relay 连上去：
@@ -42,6 +51,11 @@
 - **屏障释放必经 `bridge_runner.release_barrier()`**：保存 patch → 恢复成
   脚本原样。下一个屏障 `rebase()` 重新采基准 + 重放。任何绕过它的释放路径
   都会让**故障路径上的语义比正常路径更宽松**（ADR 0021 §8.1）。
+- **Figure 当前快照资格与已保存历史分开**：native release 已可能发出却无确定响应，或活屏障控制连接断开
+  （runner 会释放屏障继续脚本），只撤当前屏障 receipt 的资格，不伪造成功执行事实。明确未发送 / 还原失败且连接仍活
+  不撤；冷开时明示的已保存历史引用仍按文档合同读取。HTTP 返回的真实执行事实与 SSE 同样消费，不能按动作名猜是否执行；
+  跨项目 approve 的归属来自已连接 session 的项目短 id，不能使用当前标签页。看护 `tests/native/test_native_release_outcome.py`、
+  `test_native_api.py`、`web/src/store/nativeSessionSnapshot.test.ts`。
 - **不许再写第二处 `pool.get()` 分支**：`app.py` 里所有"谁来渲染"都经
   `enginesession.resolve()`（结构性守卫
   `test_native_api::test_the_resolver_is_the_only_place_that_branches`）。

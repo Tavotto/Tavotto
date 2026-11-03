@@ -960,7 +960,9 @@ def _launch_reaches(src: str, target: str) -> bool:
                     out.add(f.attr)
         return out
 
-    launchers = [fn for fn in funcs.values() if "Popen" in calls_in(fn)]
+    # `proctree.spawn` 是 `subprocess.Popen` 的 Windows 版本（先挂起、进 Job 再恢复），
+    # 同样算「起实例」——只认 Popen 的话，改用它的函数会从这条扫描里悄悄消失
+    launchers = [fn for fn in funcs.values() if {"Popen", "spawn"} & calls_in(fn)]
     if not launchers:  # 模块级 Popen：退回全文件
         launchers = [tree]
     for fn in launchers:
@@ -1307,6 +1309,10 @@ def test_kill_stale_actually_reaches_a_runner_workspace_process(monkeypatch):
 
     work = "/home/runner/actions-runner/_work/Tavotto"
     monkeypatch.setenv("RUNNER_WORKSPACE", work)
+    # 传入的 root 与 state_root() 不一致时按「人工指了另一个根」处理、只收那个根下的进程。
+    # Windows Lab 的执行器给每次运行设了 TAVOTTO_CI_STATE_ROOT，不钉死就把这条用例从
+    # 「runner 工作目录」那一格拐到了另一格（与非管理员无关，是环境泄漏）。
+    monkeypatch.delenv("TAVOTTO_CI_STATE_ROOT", raising=False)
     monkeypatch.setattr(
         "cleanup.find_ci_owned_tavotto",
         lambda extra_markers=None: [(4242, f"{work}/dist/tavotto --figures x")],

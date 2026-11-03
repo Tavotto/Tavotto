@@ -3,11 +3,31 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「非 Codex 宿主（2026-09-24，全文 `docs/implementation/multi-host-mcp/README.md`）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_configure.py`、`tests/test_mcp_host_profiles.py`、`tests/test_plugin_candidate.py`、`tests/test_claude_plugin.py`、`tests/test_dsh_bundle.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：同一份包、同一个启动器、同一份 Skill；不写任何文件；授权只来自 `--project-root`；文档证明不了的字段不加；Claude 插件的 server 名与 Codex 配置同名、超时按毫秒换算且 `timeout` / `timeoutMs` 同值（ADR 0103 / 0109）；插件目录里不许有别家自动读的 `.mcp.json` / `mcp/*.json`（ADR 0109）；DSH bundle 的包目录只由胶水插件提供（ADR 0104）
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：同一份包 / 启动器 / Skill；不写任何文件；授权只来自 `--project-root`；server 名与超时与 Codex 配置同值；不放别家自动读的 MCP 配置
+
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 80
+改到: `integrations/configure.py`、`HOSTS` 表、`RELOAD_HINT` / `RESTART_HOST`、`.claude-plugin/plugin.json` 与仓库根 `.claude-plugin/marketplace.json`、`package.json` 与 `dsh/`（DSH bundle）
+主题: 非 Codex 宿主 → `non-codex-hosts.md`
+必守要点: 同一份包 / 启动器 / Skill；不写任何文件；授权只来自 `--project-root`；不放别家自动读的 MCP 配置
+-->
 
 - **同一份完整包、同一个启动器、同一份 Skill**：`integrations/configure.py`（纯标准库，进
   `pluginmanifest.STAGE_REQUIRED`——只卡新 staging；**不进** `REQUIRED`，否则体检会把没有它的旧版已装插件报成损坏）从自己的位置找 `mcp/server.py`，按 `--host` 打印那一家的配置片段，
   **不写任何文件**。宿主差异只在它的 `HOSTS` 表（顶层 key / 额外字段 / 超时单位 / 落点 / Skill 入口）；
   字段依据与查证日期在 `docs/implementation/multi-host-mcp/hosts.md`，文档证明不了的字段不加。
+- **会写文件的是另一条命令：`tavotto hosts`**（2026-10-27，「接入 AI 编辑器」，`engine/hostconnect.py`）。`configure.py`
+  仍然只打印；桌面设置里的「接入」按钮 spawn 的是 `tavotto hosts connect <宿主> --json`。它写**用户级**配置
+  （Cursor `~/.cursor/mcp.json`、VS Code 用户目录的 `mcp.json`（`servers`）、TRAE / TRAE CN 用户目录的 `mcp.json`、
+  ZCode `~/.zcode` 下 `cli/` 与 `workspace/default/.zcode/` 两处的 `mcp.servers`、WorkBuddy `~/.workbuddy/mcp.json`、
+  Claude 桌面版 `claude_desktop_config.json`；Claude Code 用它自己的 `claude mcp add --scope user`；Codex 委托
+  `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`），授权同样只有 `TAVOTTO_MCP_ROOTS`
+  ——用户第一次接入时选的那个文件夹（`hosts.json`，所有宿主共用；根 / HOME / HOME 的上级拒绝）。三条纪律：写之前
+  备份、只动 tavotto 一条、读不懂（JSONC 等）就不写并报 `config_unreadable`；断开只删 tavotto；WorkBuddy 额外在
+  `mcp-approvals.json` 只信任 tavotto 这一条（用户点「接入」即同意，方案决策）。看护 `tests/test_hosts_connect.py`。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与
   `launcher_starts()` 同一把尺（跑 `--health` 要体检 JSON）；引擎只在当前 shell 环境里找得到时才钉
   `TAVOTTO_MCP_PYTHON`，钉完在最小环境里再验。超时唯一出处是 Codex 配置 `codex.mcp.json` 的 `tool_timeout_sec`（启动超时是 `startup_timeout_sec`），按单位换算。

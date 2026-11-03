@@ -29,9 +29,9 @@ import os
 import platform
 import re
 import sys
+import threading
 import time
 import traceback
-import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -42,12 +42,15 @@ from . import (
     depresolve,
     diagnostics_frontend,
     logsafe,
+    msixbreakaway,
+    msixmigrate,
     pool,
     projectenv,
     runtime,
     telemetry,
     updater,
 )
+from .diagnostictext import _digest, _redact_text, redact_text  # noqa: F401 - public compatibility
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30  # 报告里单列的最近错误条数
@@ -83,13 +86,23 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
 #: 8 = 发送包新增 `detail-…` / `optional-…` 条目与 manifest 的 `contains_detail` / `detail_files` / `detail_options` / `truncated`
 #: （ADR 0118 修订 2026-10-13）；导出包的 report.json 与老文件一个字节没动，只有 manifest 多了这几个键。
-BUNDLE_SCHEMA_VERSION = 8
+#: 9 = 新增 `exec-traces.json`（ADR 0151 PR4）：本项目最近几次任务的执行追踪（层级阶段、耗时、稳定错误码、首个失败与
+#: 归因摘要），出门前经 `exectrace_diag` 的独立白名单投影；report.json 形状没变，读不认识的文件的人忽略它即可。
+#: 10 = report.json 新增顶层 `ai_probe`（AI 候选链探测摘要）与每个 agent 的 `readiness` / `readiness_detail` /
+#: `broken_path`（托管 Codex 安装 PR）；旧读法忽略这些键即可，但换形必升号。
+#: 11 = project.managed_environment_jobs: requested and observed installed package names and
+#: versions, job outcomes and environment generation observations (user-authorized disclosure).
+#: 12 = report.json 的 `system.has_package_identity`、`system.msix_breakaway`（闭集字符串）与 `paths.data_dir_under_packages` /
+#: `paths.config_dir_under_packages`（三个 bool，MSIX 宿主下数据被重定向的分诊，#1574；不带用户名与包名）。
+#: 13 = report.json 的 `system.msix_data_migration`（#1574 善后：包私有区旧数据补回真实目录的结果，闭集 `state`
+#: none / partial / done + 几个计数与 `config_merged` 布尔；不带路径与包族名）。
+#: 14 = report.json 顶层 `render_pool`（渲染池健康摘要：上限 / 存活 / 累计淘汰与冷启动 / 最近几次冷启动的分段毫秒；
+#: `pool.health_snapshot()`，闭集字段，不带脚本名与路径，TVM-Y37X）。
+BUNDLE_SCHEMA_VERSION = 14
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
 
-# 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点
-_SECRET_VALUE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
 _SECRET_KEYS = ("api_key", "token", "secret", "password", "auth")
 
 #: 假名标识：不是密钥，但也不该被顺手复制进 issue 或群聊。
@@ -102,46 +115,6 @@ _PSEUDONYM_KEYS = ("install_id", "anonymous_id", "distinct_id")
 #: 对隐私却是实打实的暴露面（用户在往 issue 上贴自己所有课题的名字）。
 #: 只留条数。当前打开的那个项目仍在 report.json 的 project 段里。
 _USER_INVENTORY_KEYS = ("recent_projects", "pinned_projects", "projects")
-
-
-def _install_id() -> str:
-    """本机的匿名遥测标识（没同意过就是空串）。只用来把它从输出里抹掉。"""
-    try:
-        from . import telemetry
-
-        return telemetry.install_id() or ""
-    except Exception:  # noqa: BLE001 — 脱敏不该被它拖垮
-        return ""
-
-
-#: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
-#: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希
-_CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
-#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）。
-#:
-#: **不在 token 内部找地址的边界**（#536 评审连续五轮）：先后漏过只认 ASCII 的 `用户@例子.公司`、
-#: punycode 的 `--p1ai` 尾巴、转义的 `＠` 与代理对、IDNA 的 `l·l`，以及在「分隔符」处切开
-#: 的 `o'connor@…`、`user@[192.0.2.1]`——每一轮都是在 token 里判断「地址从哪到哪」时漏一类。
-#: 所以不再判：
-#:
-#: * token = 连续的非空白字符。一行整个是 JSON（`{` / `[` / `"` 开头且解析得了）时，只在 JSON
-#:   字符串字面量的内容里按空白切，引号与 `{}[],:` 结构原样留下；其余文本只按空白切；
-#: * token 里只要有 `@`（`＠`、转义 `@` / `＠`、URL 编码 `%40` 都算），**整个 token**
-#:   换成 `<email>`——`(user@x.com),` 连括号逗号一起抹，不猜边界；
-#: * 引号括起来的本地部分（`"quoted local"@x.com`）里会有空白：`@` 前的引号数是奇数时，
-#:   把 token 往左并到同一行上一个 `"` 所在的 token；
-#: * 只放行负面清单（`_not_an_email`），三条都是结构上确定不是地址的格式。
-_EMAIL_AT = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)|%40")
-_EMAIL_DOTS = ".。．｡"
-#: 放行：`pkg@1.2.3` / `matplotlib@3.10` / `pkg@2.0.0-beta`——域名一侧是版本号（数字段 + 可选的
-#: 预发布 / 构建后缀），不是域名。只认 ASCII 数字：`\d` 会认全角与其他文字的数字。
-_VERSION_AFTER_AT = re.compile(r"v?[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?")
-_JSON_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
-_JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
-
-
-def _digest(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
 
 
 def _root_variants(path: str) -> list[str]:
@@ -181,140 +154,6 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
         token = f"<project:{_digest(os.path.normcase(os.path.realpath(path)))}>"
         out += [(v, token) for v in _root_variants(path)]
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
-
-
-def _only_openers(text: str) -> bool:
-    """全由开括号组成（含空串）：`@` 前只有这些时，`@` 前没有账号。
-
-    **引号不算**（#540）：`'@example.com` / `` `@example.com `` / `“@x.com` 里那一个引号就是
-    合法的本地部分（RFC 5321 的 atext 含 `'` 与 `` ` ``，SMTPUTF8 放开了其余 Unicode）。代价是
-    `"@app.route"` 这种引号里的装饰器也被抹——宁可多抹。"""
-    return all(unicodedata.category(c) == "Ps" for c in text)
-
-
-def _not_an_email(local: str, domain: str) -> bool:
-    """负面清单：结构上确定不是地址的已知格式。`local` / `domain` 是这个 `@` 两侧、到 token 边界
-    （或同一 token 里相邻的 `@`）为止的全部字符。每条的理由：
-
-    * `@` 前没有账号——`@app.route`、`@dataclass`、`(@某人`：装饰器与提及（只认开括号，引号不算）；
-    * 域名不到两段——`user@localhost`、`HEAD@{0}`、`a@b`、`x@例子`：邮件地址的域名至少两段；
-    * 域名是版本号——`numpy@1.26.4`、`pkg@2.0.0-beta`、`jsdom@30.0.1/lib/x.js`：包管理器的
-      「包@版本」写法（只看第一个 `/` 之前、去掉句读之后是不是版本号，只认 ASCII 数字）。
-
-    域名是方括号里的地址字面量（`user@[IPv6:2001:db8::1]`、`user@[192.0.2.1]`，#540）不算「不到
-    两段」：`[` 开头的域名一律按地址抹，先于数段数。
-    URL 里的 userinfo（`ssh://git@github.com/…`）不在清单上：整个 token 照样抹。
-    判断前先解开 `\\uXXXX`（`json.dumps` 把全角句点写成 `\\u3002`，不解开就数不出两段）。
-    """
-    local, domain = (
-        _JSON_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), x) for x in (local, domain)
-    )
-    if _only_openers(local):
-        return True
-    if domain.startswith("["):
-        return False
-    labels = re.split(f"[{_EMAIL_DOTS}]", domain.rstrip(_EMAIL_DOTS))
-    if len(labels) < 2 or not all(labels):
-        return True
-    core = re.split(r"[/\\]", domain, maxsplit=1)[0].rstrip(_EMAIL_DOTS + ",;:)]}>\"'")
-    return _VERSION_AFTER_AT.fullmatch(core) is not None
-
-
-def _redact_email_tokens(text: str) -> str:
-    """含 `@` 的 token 整个换成 `<email>`（判据见 `_EMAIL_AT` 上方）。token 按空白切。"""
-    out: list[str] = []
-    done = 0  # 已经交出去的位置
-    for at in _EMAIL_AT.finditer(text):
-        if at.start() < done:
-            continue
-        start = at.start()
-        while start > done and not text[start - 1].isspace():
-            start -= 1
-        end = at.end()
-        while end < len(text) and not text[end].isspace():
-            end += 1
-        # 引号括起来的本地部分里有空白：`@` 前引号是奇数个，就并到同一行上一个引号所在的 token
-        if text.count('"', start, at.start()) % 2 == 1:
-            quote = text.rfind('"', done, start)
-            if quote >= 0 and "\n" not in text[quote:start]:
-                start = quote
-                while start > done and not text[start - 1].isspace():
-                    start -= 1
-        token = text[start:end]
-        ats = [m.span() for m in _EMAIL_AT.finditer(token)]
-        edges = [0] + [e for _, e in ats[:-1]]
-        nexts = [s for s, _ in ats[1:]] + [len(token)]
-        if all(
-            _not_an_email(token[lo:s], token[e:hi])
-            for (s, e), lo, hi in zip(ats, edges, nexts, strict=True)
-        ):
-            continue
-        out += [text[done:start], "<email>"]
-        done = end
-    out.append(text[done:])
-    return "".join(out)
-
-
-def _redact_json_line(line: str) -> str | None:
-    """一行整个是 JSON 时：只在字符串字面量的内容里抹，结构原样。不是 JSON 就 None。"""
-    head = line.lstrip()[:1]
-    if head not in ("{", "[", '"'):
-        return None
-    try:
-        json.loads(line)
-    except ValueError:
-        return None
-    return _JSON_STRING.sub(lambda m: f'"{_redact_email_tokens(m.group()[1:-1])}"', line)
-
-
-def _redact_emails(text: str) -> str:
-    if not _EMAIL_AT.search(text):
-        return text
-    out: list[str] = []
-    for line in text.splitlines(keepends=True):
-        body = line.rstrip("\r\n")
-        redacted = _redact_json_line(body)
-        if redacted is None:
-            redacted = _redact_email_tokens(body)
-        out.append(redacted + line[len(body) :])
-    return "".join(out)
-
-
-def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
-    """文本脱敏：密钥 → 假名标识 → 项目根 → 主目录 → 用户名 → 云盘账号 → 邮箱。
-
-    **项目根必须在主目录之前换**：先换主目录的话，项目根的原文就不在文本里了，
-    `~/…/<人名>/paper` 再也认不出来。"""
-    text = _SECRET_VALUE.sub("***", text)
-    # 按**值**再抹一次假名标识：按键名那道只挡得住结构化的
-    # `"install_id": "..."`，挡不住它偶然出现在别的字符串里。
-    ident = _install_id()
-    if ident:
-        text = text.replace(ident, "***")
-    for raw, token in roots or ():
-        text = text.replace(raw, token)
-    home = os.path.expanduser("~")
-    if home and home != os.sep:
-        text = text.replace(home, "~")
-        # Windows 上日志里可能混着两种分隔符写法
-        text = text.replace(home.replace("\\", "/"), "~")
-    user = os.environ.get("USER") or os.environ.get("USERNAME") or ""
-    if len(user) >= 3:  # 太短的用户名replace 会误伤正常词
-        text = re.sub(rf"\b{re.escape(user)}\b", "<user>", text)
-    text = _CLOUD_ACCOUNT.sub(
-        lambda m: f"{m.group(1)}{m.group(2)}-acct:{_digest(m.group(3))}", text
-    )
-    return _redact_emails(text)
-
-
-def redact_text(text: str) -> str:
-    """文本脱敏的**对外名字**（`engine/deprepair.py` 的安装日志走它）。
-
-    刻意不让别的模块各写一份「抹掉主目录名」：那种规则一旦有两份，其中一份
-    迟早漏掉某一条（Windows 的两种分隔符写法就是这么漏过的）。安装日志里
-    pip 特有的那条（index 地址可能带凭据）归 deprepair，其余都在这里。
-    """
-    return _redact_text(text)
 
 
 #: 键名以这些结尾的字符串值是**网址**：只留 `scheme://host[:port]`（`_url_fact`）。按出处放行——网址里
@@ -528,6 +367,15 @@ def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict
             for r in (records if isinstance(records, list) else [])
             if isinstance(r, dict)
         ]
+    if "managed_environment_jobs" in out:
+        from . import envdiag
+
+        rows = out.get("managed_environment_jobs")
+        out["managed_environment_jobs"] = [
+            envdiag._project(row)
+            for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict)
+        ][:16]
     return out
 
 
@@ -1653,6 +1501,39 @@ def _runtime_section() -> dict:
     return section
 
 
+#: 报告里 AI 能力的刷新上限（秒）。缓存里的结论可能是装/登录之前的（用户刚装完 CLI 就来反馈很常见）：
+#: 生成报告时在后台线程里真刷新一次；到点没回就用缓存兜底并在 `ai_probe` 里如实写 `stale`/`timeout`，
+#: 刷新线程继续跑完并写回缓存。比 `app.DIAG_AI_PROBE_BUDGET_S`（30 s，诊断页自己的等待）短：包是在用户点
+#: 「导出」时同步生成的，不能让它比诊断页还慢。
+AI_REFRESH_BUDGET_S = 20.0
+
+
+def _fresh_ai_capabilities() -> tuple[dict, str]:
+    """→ (能力表, 来源)：`refreshed`（刚真探测过）| `stale`（超时，用的缓存）| `timeout`（超时且缓存为空）。"""
+    box: dict = {}
+
+    def work() -> None:
+        try:
+            box["caps"] = ai_bridge.capabilities(refresh=True)
+        except Exception as exc:  # noqa: BLE001 — 探测失败不许拖垮诊断包
+            box["error"] = type(exc).__name__
+
+    t = threading.Thread(target=work, daemon=True, name="mm-diag-ai-refresh")
+    t.start()
+    t.join(AI_REFRESH_BUDGET_S)
+    if "caps" in box:
+        return box["caps"], "refreshed"
+    cached = ai_bridge.cached_capabilities()
+    return cached, ("stale" if cached else "timeout")
+
+
+def _render_pool_summary() -> dict:
+    try:
+        return pool.health_snapshot()
+    except Exception as exc:  # noqa: BLE001 — 摘要取不到不许让备包失败
+        return {"error": type(exc).__name__}
+
+
 def build_report(project: dict | None = None, port: int | None = None) -> dict:
     """结构化诊断报告（已脱敏）。project 由 app 层传入，避免这里反向依赖。"""
     from .. import __version__
@@ -1671,7 +1552,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
         else None
     )
     roots = project_roots(project)
-    caps = ai_bridge.capabilities()
+    caps, ai_probe = _fresh_ai_capabilities()
     lines = _export_log_lines(roots)
     errors = recent_errors(lines)
 
@@ -1689,6 +1570,13 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "machine": platform.machine(),
             "python": sys.version.split()[0],
             "os_name": os.name,
+            # MSIX 包身份（#1574）：从 Codex 桌面版等 MSIX 宿主拉起时为 true，数据会被重定向进包私有区。
+            # 只回 bool，不带包名。
+            "has_package_identity": msixbreakaway.has_package_identity(),
+            # 桌面壳兜底（重新拉起到包外）的结果，闭集：none / relaunched / still_packaged / failed
+            "msix_breakaway": msixbreakaway.shell_breakaway_outcome(),
+            # 包私有区旧数据补回真实目录的结果（闭集 state + 计数，不带路径与包族名）
+            "msix_data_migration": msixmigrate.diagnostic_facts(),
             "encoding": {
                 "stdout": getattr(sys.stdout, "encoding", None),
                 "filesystem": sys.getfilesystemencoding(),
@@ -1699,6 +1587,10 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "data_dir": str(config.data_dir()),
             "config_dir": str(config.config_dir()),
             "log": str(_app_log_path()),
+            # realpath 是否落在 `\\Packages\\` 段下（#1574）：true = 数据在 MSIX 宿主的私有区，
+            # 与直接启动的那套分叉。只回 bool。
+            "data_dir_under_packages": msixbreakaway.path_under_packages(config.data_dir()),
+            "config_dir_under_packages": msixbreakaway.path_under_packages(config.config_dir()),
         },
         "render": {
             "worker_python": worker_python,
@@ -1730,9 +1622,15 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
                 "path": entry["executable_path"],
                 "source": entry["detection_source"],
                 "version": entry["version"],
+                # 「装了但用不了 / 没登录」的分诊（TVD 反馈里常缺）：就绪状态是闭集三值，detail 是适配器写死的
+                # 稳定诊断串（不含账号信息，见 `ReadinessResult`）；broken_path 是第一个起不来的候选路径
+                "readiness": (entry.get("diagnostics") or {}).get("readiness"),
+                "readiness_detail": (entry.get("diagnostics") or {}).get("readiness_detail"),
+                "broken_path": (entry.get("diagnostics") or {}).get("broken_path"),
             }
             for entry in caps.get("agents", [])
         },
+        "ai_probe": ai_probe,
         "ai_endpoints": [
             {
                 "id": e["id"],
@@ -1751,6 +1649,8 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "hard_disabled": telemetry.hard_disabled(),
         },
         "project": _project_section(project, roots),
+        # 渲染池健康摘要（内存计数器，闭集字段，无脚本名 / 路径）；导出包与发送包共用 report.json 这一处出口
+        "render_pool": _render_pool_summary(),
         "recent_errors": errors,
     }
     return _redact_obj(report, roots)
@@ -1803,6 +1703,7 @@ def build_bundle(
     task_snapshots: dict | None = None,
     detail: DetailPayload | None = None,
     report: dict | None = None,
+    exec_traces: dict | None = None,
 ) -> bytes:
     """诊断包 zip 的字节流（全部内容已脱敏）。
 
@@ -1840,6 +1741,10 @@ def build_bundle(
             z.writestr(
                 "task-diagnostics.json", json.dumps(task_snapshots, ensure_ascii=False, indent=1)
             )
+
+        # ---- 执行追踪（ADR 0151 PR4）：调用方给的已是 `exectrace_diag.bundle_section` 的出门投影，原样放进去 ----
+        if exec_traces is not None and exec_traces.get("traces"):
+            z.writestr("exec-traces.json", json.dumps(exec_traces, ensure_ascii=False, indent=1))
 
         # ---- 发送包独有的 detail-… / optional-… 条目（diagdetail 组装；导出路径 detail=None，一个都不会有）----
         detail_files: list[dict] = []
@@ -1884,6 +1789,7 @@ def build_bundle(
                 bool(trace),
                 list(report.get("project") or {}),
                 has_tasks=task_snapshots is not None,
+                has_exec_traces=bool(exec_traces and exec_traces.get("traces")),
                 detail=detail,
             ),
         )
@@ -1918,6 +1824,7 @@ def _readme(
     project_keys: list[str] | None = None,
     *,
     has_tasks: bool = False,
+    has_exec_traces: bool = False,
     detail: DetailPayload | None = None,
 ) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
@@ -1950,6 +1857,16 @@ def _readme(
             "configuration choices, output dimensions/PPI, revision hashes and opaque local "
             "attempt/configuration references; no file names, paths, argument values or error text)\n"
         )
+    if has_exec_traces:
+        extra_zh += (
+            "- exec-traces.json：最近几次任务的执行追踪（阶段的父子关系、耗时、状态、稳定错误码、首个失败与归因摘要、"
+            "可验证的 Token 与估算费用；记录不完整会注明；没有提示词、脚本、文件名、路径、工具参数、模型输出）\n"
+        )
+        extra_en += (
+            "- exec-traces.json: execution traces of recent tasks (step hierarchy, timings, statuses, stable error "
+            "codes, first failure and an attribution summary, verifiable tokens and estimated cost; incomplete records "
+            "are marked; no prompts, scripts, file names, paths, tool arguments or model output)\n"
+        )
     text = (
         "Tavotto 诊断包 / Tavotto diagnostic package\n"
         "\n"
@@ -1966,6 +1883,8 @@ def _readme(
         "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
         "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
+        "  （report.json 的 project.managed_environment_jobs 段：受管环境安装和重建请求的 Python 包名、\n"
+        "  实际观察到的已安装包名和版本、结果及环境代；不含路径、包源网址、凭据或 pip 原始输出）\n"
         + extra_zh
         + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
@@ -1987,6 +1906,9 @@ def _readme(
         "  hashed script name, which kind of Python was rendering, the version and verdict of\n"
         "  every other Python that was checked, and whether each one-click fix was available;\n"
         "  paths are hashed segment by segment)\n"
+        "  (report.json, project.managed_environment_jobs: requested Python package names, observed installed\n"
+        "  package names and versions, outcomes and environment generations; no paths, index URLs,\n"
+        "  credentials or raw pip output)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"
@@ -2068,6 +1990,7 @@ def _readme_detail(detail: DetailPayload) -> str:
         "项目文件夹名、文件名、图里的文字不再被抹掉；家目录统一写成 ~，系统用户名写成 <user>，\n"
         "凭证 / cookie / API key / token / 代理账号密码一律去掉。\n"
         f"你在确认框里勾选了的额外内容 / Extras you ticked: {on_zh}。\n"
+        "「脚本源码」包括 Python / R / MATLAB 脚本，以及「生成可编辑版本」任务留在本机缓存里、没被采用的 AI 候选脚本。\n"
         "没有勾选「脚本源码」时，包里没有任何脚本源码（日志里 traceback 的源码行也已去掉）。\n"
         "\n"
         "This package carries more in its detail-… / optional-… entries so maintainers can diagnose in depth: error messages with full stack\n"
@@ -2078,7 +2001,8 @@ def _readme_detail(detail: DetailPayload) -> str:
         "written as ~, the system user name as <user>, and credentials / cookies / API keys / tokens / proxy\n"
         "passwords are removed. Extras you ticked: "
         + on_en
-        + '. Without "script source" ticked, the package contains\n'
+        + '. "Script source" covers Python, R and MATLAB scripts and the unadopted AI candidate scripts that\n'
+        '"generate editable version" tasks left in the local cache. Without "script source" ticked, the package contains\n'
         "no script source at all (source lines inside log tracebacks are removed too).\n"
         "\n"
         "manifest.json 的 detail_files 列出了每个 detail-… / optional-… 条目与大小；truncated 记录因体积上限被截短的类别。\n"

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Reveal } from '../ui/Field'
 import { ChevronRight, CircleQuestionMark, TriangleAlert } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Notice, type StatusTone } from '../ui/Notice'
@@ -61,6 +61,14 @@ export const settingControlStacked =
   '@max-[424px]:justify-self-stretch @max-[424px]:justify-start @max-[424px]:[--setting-control:min(240px,100%)]'
 /** 叠放时只读摘要行的值：左起，与标题同一条竖线 */
 export const settingValueStacked = '@max-[424px]:justify-self-start'
+/**
+ * `control="auto"`：控件按自己的内容宽（三档分段这种比 240 宽、又不是整行宽的），贴右缘、与标题块垂直居中；
+ * 组宽不够「标题最小 + 间距 + 控件」时叠放（阈值 560：标题最小 128 + 24 + 分段约 370 + 组内边距 32，留余量）。
+ * Tailwind 只认字面量类名，所以 560 写死在下面两串里。
+ */
+export const settingRowAutoStacked = '@max-[560px]:grid-cols-1 @max-[560px]:gap-y-1.5'
+export const settingControlAutoStacked =
+  '@max-[560px]:justify-self-stretch @max-[560px]:justify-start'
 
 /**
  * 一行设置（Visual Consolidation Session 5 定下的网格，Session 6 定下的对齐）：
@@ -105,6 +113,7 @@ export const settingRowLabelId = (controlId: string) => `${controlId}-label`
 
 export function SettingRow({
   label,
+  leading,
   description,
   help,
   helpLabel,
@@ -138,12 +147,14 @@ export function SettingRow({
   children?: ReactNode
   /** 控件的 id：给了标签就是 `<label htmlFor>`，点文字等于点控件。**控件必须一直挂着**（指向未挂载的输入是坏标签） */
   controlId?: string
+  /** 标题左侧的裸图标（厂商标志之类；无框无底）：放在 28px 标题盒里，与标题文字同一条中线，与标题间距 10px */
+  leading?: ReactNode
   /** normal 48px（默认）/ compact 32px（密集字段清单，不放说明） */
   density?: 'normal' | 'compact'
-  /** fixed：控件落在定宽的控件列；fill：控件整行宽，落到标题下一行 */
-  control?: 'fixed' | 'fill'
+  /** fixed：控件落在定宽的控件列；fill：控件整行宽，落到标题下一行；auto：控件按内容宽贴右缘、与标题块垂直居中，组太窄才叠放 */
+  control?: 'fixed' | 'fill' | 'auto'
   /**
-   * default：标题列弹性 + 控件列定宽 240、控件贴右缘；balanced：两列 4 : 6、控件从控件列左缘起排
+   * default：标题列弹性 + 控件列定宽 240、控件贴右缘；balanced：两列 4 : 6、控件贴控件列右缘
    * （格式复选框、库选择、安装表单这类控件本身就宽、或是一组控件的行；2026-10-07 设计审计 §9.1）
    */
   layout?: 'default' | 'balanced'
@@ -151,6 +162,7 @@ export function SettingRow({
   const labelText = typeof label === 'string' ? label : ''
   const LabelTag = controlId ? 'label' : 'span'
   const fill = control === 'fill'
+  const auto = control === 'auto'
   const compact = density === 'compact'
   const balanced = layout === 'balanced' && !fill
   // 坐在 FieldGroup 里：上下 12 / 左右 16 的内边距由组给（index.css 的 [data-ui-field-group] 规则），行只管最小高；
@@ -164,15 +176,27 @@ export function SettingRow({
       data-layout={balanced ? 'balanced' : undefined}
       style={settingControlStyle}
       className={cn(
-        'grid items-start gap-x-6',
-        fill ? 'grid-cols-1 gap-y-1.5' : balanced ? 'grid-cols-[minmax(0,4fr)_minmax(0,6fr)]' : settingRowGrid,
-        !fill && settingRowStacked,
+        'grid gap-x-6',
+        auto ? 'items-center' : 'items-start',
+        fill
+          ? 'grid-cols-1 gap-y-1.5'
+          : auto
+            ? cn('grid-cols-[minmax(0,1fr)_auto]', settingRowAutoStacked)
+            : balanced
+              ? 'grid-cols-[minmax(0,4fr)_minmax(0,6fr)]'
+              : settingRowGrid,
+        !fill && !auto && settingRowStacked,
         compact ? cn('min-h-8', grouped ? 'py-1.5' : 'py-0.5') : grouped ? 'min-h-12' : 'min-h-12 py-2.5',
       )}
     >
       <div className="flex min-w-0 flex-col">
         {/* 标题行是一个与控件同高的 28px 盒：控件对齐它，不对齐整行中线 */}
         <span className="flex min-h-7 items-center gap-1">
+          {leading != null && (
+            <IconSlot data-setting-leading className="mr-1.5">
+              {leading}
+            </IconSlot>
+          )}
           <LabelTag
             id={controlId ? settingRowLabelId(controlId) : undefined}
             htmlFor={controlId}
@@ -206,7 +230,10 @@ export function SettingRow({
         className={cn(
           'flex min-h-7 min-w-0 items-center gap-2',
           !fill && !balanced && 'justify-end justify-self-end',
-          !fill && settingControlStacked,
+          // balanced 的控件列是 6/10 的宽格：控件仍贴格的右缘，与别的行的控件同一条右缘线
+          balanced && 'justify-end',
+          !fill && !auto && settingControlStacked,
+          auto && settingControlAutoStacked,
         )}
       >
         {children}
@@ -417,7 +444,7 @@ export function InlineWarning({
         tone === 'danger' ? 'bg-danger-surface text-danger-content' : 'bg-surface-hover text-ink-2',
       )}
     >
-      <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0" aria-hidden />
+      <IconSlot><TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden /></IconSlot>
       <span className="min-w-0">{children}</span>
     </p>
   )

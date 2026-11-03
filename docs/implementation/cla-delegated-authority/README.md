@@ -2,7 +2,7 @@
 
 This draft is default disabled. All tests use synthetic identities and ephemeral
 keys. Authoritative CLA text/hashes and provider.configured=false are unchanged.
-See [ADR 0134](../../adr/0134-limited-cla-countersigning-authority.md).
+See [ADR 0137](../../adr/0137-limited-cla-countersigning-authority.md).
 
 ## Reviewable implementation
 

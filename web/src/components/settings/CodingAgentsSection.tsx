@@ -6,6 +6,7 @@ import {
   agentById,
   backendErrorText,
   effectiveAgent,
+  hasConnectionView,
   patchAiAgent,
   type AiAgentId,
 } from '@/lib/api'
@@ -17,7 +18,13 @@ import { Select } from '../ui/Select'
 import { GroupNotice, SettingRow } from './SettingRow'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
+import { ConnectionsList } from './connectAi/ConnectionsList'
+import { cx } from './connectAi/copy'
+import { useCapsWatch } from './connectAi/useCapsWatch'
+import { Details, Summary } from '../ui/Details'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
+import { HostsPanel } from './HostsPanel'
+import { isDesktop } from '@/lib/desktop'
 import { ag } from './agentState'
 
 /** 最近的可滚动祖先（设置对话框的内容区）；返回详情时要把它归位 */
@@ -57,6 +64,8 @@ export function CodingAgentsSection() {
   const caps = useAiStore((s) => s.caps)
   const preferred = useAiStore((s) => s.agent)
   const [detailId, setDetailId] = useState<AiAgentId | null>(null)
+  // 页底「高级」的展开态放在这里而不是 <details> 自己：进详情再返回时整块会重新挂载，不记着就又收起来了
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [busyAgent, setBusyAgent] = useState<AiAgentId | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -71,10 +80,12 @@ export function CodingAgentsSection() {
     try {
       await useAiStore.getState().loadCaps(refresh)
       setAnnounce(ag('announce.done'))
+      return true
     } catch (e) {
       // **保留上一次成功的结果**：清空的话用户会看到「全部未安装」，那是假的
       setError(backendErrorText(e))
       setAnnounce(ag('announce.failed'))
+      return false // 登录流程据此区分「刷新失败」与成功（错误本身已在 error 里）
     } finally {
       setBusy(false)
     }
@@ -117,6 +128,8 @@ export function CodingAgentsSection() {
     }
   }
 
+  // 回到前台（用户刚在终端里装 / 登录完）刷新一次；设置页不轮询
+  useCapsWatch(true, { poll: false })
   const detail = agentById(caps, detailId)
   if (detail && caps) {
     return (
@@ -163,13 +176,24 @@ export function CodingAgentsSection() {
   const usable = caps ? caps.agents.filter((a) => a.usable) : []
 
   // 两组是两件事，标题按**用户想完成什么**命名（审计 T44）；分组之间的间距由外壳给
-  return (
-    <div ref={rootRef} className="contents">
-      {/* 检测结果的播报：完成 / 失败都要说一声，不能只有视觉上的变化 */}
-      <p aria-live="polite" className="sr-only">
-        {announce}
-      </p>
+  // 反方向：在编码 Agent 里用 Tavotto。新界面里由独立的「接入 AI 编辑器」一组（HostsPanel，含 Codex）接替，
+  // 不再在「高级」里另放一份；老后端（没有连接视图）与浏览器模式照旧显示这一行。
+  const external = (
+    <>
+        {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
+            一行：名字 + 安装 + ⋯（浏览器模式是名字 + 指南外链）。没有说明段（ADR 0038）——
+            「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
+        {/* 这一组不依赖探测结果（名字 + 安装 / 指南），探测还没回来时也在 */}
+        <FormSection title={ag('useFromAgents')}>
+          <FieldGroup data-agent-section="external">
+            <CodexIntegrationPanel />
+          </FieldGroup>
+        </FormSection>
+    </>
+  )
 
+  const legacy = (
+    <>
       <FormSection title={ag('useInProduct')} action={rescanAction} data-settings-anchor="ai.agents">
         <FieldGroup data-agent-section="in-app">
           {error && (
@@ -224,15 +248,41 @@ export function CodingAgentsSection() {
         </FieldGroup>
       </FormSection>
 
-      {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
-          一行：名字 + 安装 + ⋯（浏览器模式是名字 + 指南外链）。没有说明段（ADR 0038）——
-          「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
-      {/* 这一组不依赖探测结果（名字 + 安装 / 指南），探测还没回来时也在 */}
-      <FormSection title={ag('useFromAgents')}>
-        <FieldGroup data-agent-section="external">
-          <CodexIntegrationPanel />
-        </FieldGroup>
-      </FormSection>
+      {/* 浏览器模式没有「接入」按钮（HostsPanel 整组不显示），这一行的使用指南外链照旧留着 */}
+      {(!hasConnectionView(caps) || !isDesktop()) && external}
+    </>
+  )
+
+  // 「连接 AI」视图（后端给了 vendors / connections）：厂商同级列表是主入口；原来的 Codex / Claude Code
+  // 清单、详情、诊断与「在 Codex 里用 Tavotto」整体收进页底「高级」。老后端没有这些字段 → 原样显示旧页面
+  if (hasConnectionView(caps) && caps) {
+    return (
+      <div ref={rootRef} className="contents">
+        <p aria-live="polite" className="sr-only">
+          {announce}
+        </p>
+        <ConnectionsList caps={caps} />
+        <HostsPanel />
+        <Details
+          data-connect-advanced
+          open={advancedOpen}
+          onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+          className="flex flex-col gap-6"
+        >
+          <Summary className="w-fit text-base font-medium text-ink">{cx('advanced')}</Summary>
+          <div className="mt-3 flex flex-col gap-6">{legacy}</div>
+        </Details>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={rootRef} className="contents">
+      {/* 检测结果的播报：完成 / 失败都要说一声，不能只有视觉上的变化 */}
+      <p aria-live="polite" className="sr-only">
+        {announce}
+      </p>
+      {legacy}
     </div>
   )
 }

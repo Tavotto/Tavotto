@@ -9,6 +9,7 @@ import { apiUrl, withProject } from '@/lib/session'
 import { usePerfProbeStore } from '@/perf/probeStore'
 import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
+import { useContactStore } from '@/store/contactStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from '@/components/ui/icons'
@@ -289,7 +290,7 @@ async function downloadDiagnostics(): Promise<void> {
 }
 
 /**
- * 「诊断报告」组：两行。
+ * 「诊断报告」组，自上而下（2026-10-21 起）：发送问题反馈 / 诊断摘要 / 联系维护者（仅中文）/ 诊断包。
  *
  *   * **诊断包**：导出（secondary）；结果（「诊断包已生成」/ 失败的人话）就是这一行的现状——此前它挤在分区头的
  *     按钮组里（2026-10-07 设计审计 §9.1）。问号说清包里有什么、没有什么。
@@ -304,6 +305,8 @@ function DiagnosticsReportSection() {
   /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。前端侧失败即关（没取到 / 关着）：没有就不画那一行。 */
   const sendCap = useDiagSendStore((s) => s.capability)
   const showContact = useWeComContactVisible()
+  /** 顶栏「联系作者」开着（引擎说开）：设置里的「发送问题反馈」就是它——同一个对话框，企业微信也在那里面（审计 A2） */
+  const contactOn = useContactStore((s) => s.capability !== null)
   useEffect(() => {
     void useDiagSendStore.getState().load()
   }, [])
@@ -326,6 +329,77 @@ function DiagnosticsReportSection() {
   return (
     <FormSection title={st('diagnostics.reportTitle')} data-settings-anchor="diagnostics.report">
       <FieldGroup>
+        {/* 第一行（2026-10-21，beta 0.19.0b1 反馈：最该点的入口放最前）。能力说明在 App 启动时就取了，设置页打开时基本已就绪；没取到则不画 */}
+        {(sendCap || contactOn) && (
+          <SettingRow
+            label={st('diagnostics.send.row')}
+            description={st('diagnostics.send.rowHint')}
+            data-diagnostics-send
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                if (contactOn) {
+                  useUiStore.getState().setSettingsOpen(false)
+                  useContactStore.getState().setOpen(true)
+                } else {
+                  useDiagSendStore.getState().setOpen(true)
+                }
+              }}
+              data-diagnostics-send-open
+            >
+              {st('diagnostics.send.open')}
+            </Button>
+          </SettingRow>
+        )}
+        <SettingRow
+          label={st('diagnostics.summaryLabel')}
+          status={
+            phase === 'error' ? (
+              <span role="alert" className="text-danger-content">
+                {st('diagnostics.prepareFailed')}
+              </span>
+            ) : undefined
+          }
+          below={
+            phase === 'ready' ? (
+              <div className="flex flex-col gap-1" data-diagnostics-preview>
+                <p className="type-caption">{st('diagnostics.previewNote')}</p>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface p-2 font-mono text-xs leading-relaxed text-ink-3">
+                  {text}
+                </pre>
+              </div>
+            ) : undefined
+          }
+        >
+          {phase !== 'ready' ? (
+            <Button variant="secondary" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
+              {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
+                {st('diagnostics.hidePreview')}
+              </Button>
+              <CopyButton text={text} label={st('diagnostics.copyReport')} variant="secondary" />
+            </>
+          )}
+        </SettingRow>
+        {/* 联系方式不依赖上传通道：发送功能关着也在；仅中文界面 */}
+        {showContact && !contactOn && (
+          <SettingRow
+            label={st('diagnostics.send.contact.row')}
+            description={st('diagnostics.send.contact.rowHint')}
+            below={<WeComQr />}
+            data-diagnostics-contact
+            data-settings-anchor="diagnostics.contact"
+          >
+            <span className="text-sm">
+              <WeComLink />
+            </span>
+          </SettingRow>
+        )}
         <SettingRow
           label={st('diagnostics.bundleLabel')}
           help={
@@ -351,65 +425,6 @@ function DiagnosticsReportSection() {
             {bundle === 'busy' ? st('about.exporting') : st('about.exportBundle')}
           </Button>
         </SettingRow>
-        <SettingRow
-          label={st('diagnostics.summaryLabel')}
-          status={
-            phase === 'error' ? (
-              <span role="alert" className="text-danger-content">
-                {st('diagnostics.prepareFailed')}
-              </span>
-            ) : undefined
-          }
-          below={
-            phase === 'ready' ? (
-              <div className="flex flex-col gap-1" data-diagnostics-preview>
-                <p className="type-caption">{st('diagnostics.previewNote')}</p>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface p-2 font-mono text-xs leading-relaxed text-ink-3">
-                  {text}
-                </pre>
-              </div>
-            ) : undefined
-          }
-        >
-          {phase !== 'ready' ? (
-            <Button variant="ghost" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
-              {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
-            </Button>
-          ) : (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
-                {st('diagnostics.hidePreview')}
-              </Button>
-              <CopyButton text={text} label={st('diagnostics.copyReport')} variant="secondary" />
-            </>
-          )}
-        </SettingRow>
-        {/* 联系方式不依赖上传通道：发送功能关着也在；仅中文界面。放在发送行之前，让发送行仍是组的最后一行 */}
-        {showContact && (
-          <SettingRow
-            label={st('diagnostics.send.contact.row')}
-            description={st('diagnostics.send.contact.rowHint')}
-            below={<WeComQr />}
-            data-diagnostics-contact
-            data-settings-anchor="diagnostics.contact"
-          >
-            <span className="text-sm">
-              <WeComLink />
-            </span>
-          </SettingRow>
-        )}
-        {/* 放在组的最后一行：能力说明是异步取到的，它出现时上面的行一个像素都不动 */}
-        {sendCap && (
-          <SettingRow
-            label={st('diagnostics.send.row')}
-            description={st('diagnostics.send.rowHint')}
-            data-diagnostics-send
-          >
-            <Button variant="secondary" size="sm" onClick={() => useDiagSendStore.getState().setOpen(true)} data-diagnostics-send-open>
-              {st('diagnostics.send.open')}
-            </Button>
-          </SettingRow>
-        )}
       </FieldGroup>
     </FormSection>
   )

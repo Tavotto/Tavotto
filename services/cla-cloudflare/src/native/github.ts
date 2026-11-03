@@ -1,4 +1,5 @@
-import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Policy, Target } from '../core/types.ts';
+import {parseProof} from '../core/proof.ts';
+import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Job, Policy, PrSnapshot, Target } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import { appJwtWithKey, importAppSigningKey, bytes, canonical, sha256, unbase64 } from '../core/crypto.ts';
 import { identity } from '../core/identity.ts';
@@ -7,28 +8,41 @@ import type { LiveConfig, Secrets } from './config.ts';
 import { validateLive } from './config.ts';
 import type { Document, Publication } from './store.ts';
 import { BudgetDeferred, InvocationBudget } from './budget.ts';
+import { readQueue, prefixFor } from './merge-prefix.ts';
+import type { MergePrefixReader, MergePrefixSnapshot, MergePrefixTarget } from './merge-prefix.ts';
 
 type Json = Record<string, any>;
+interface PrefixReadLease {guard():void;pinExpiry():void;token?:string;expires?:number;source?:{sha:string;policy:Policy}}
 type AppJwtCache={material:string;context:string;mintedAt:number;expiresAt:number;promise:Promise<string>};
 export type Transport = (url: string, init: RequestInit) => Promise<Response>;
+export interface NegativeWitness {readonly protocol:'cla-negative-witness-v1'}
+export interface NegativeContext {job:Job;revision:number}
+interface NegativeRelease {
+  protocol:'cla-negative-release-v1';repository_id:number;attempt:string;target_key:string;head:string;original_revision:number;
+  expires:number;proof_text:string;old_run_id:number|null;run_id:number;observed_phase:string;
+  recovery_revision:number;lease:string;generation:number;observed_at:number;valid_until:number;source:'observed_get'|'withdrawal_get';
+}
 // Production hosts are fixed. Local tests intercept fetch outside the bundle via Miniflare.
 export class GitHub implements GitHubPort {
   readonly mode = 'real' as const;
-  readonly c:LiveConfig; private readonly secrets:Secrets; private readonly transport:Transport; private readonly now:()=>number;
+  readonly c:LiveConfig; private readonly secrets:Secrets; private readonly transport:Transport; private readonly now:()=>number; private readonly tick:()=>number;
   readonly budget:InvocationBudget|undefined;
   #appSigningKey:{material:string;promise:Promise<CryptoKey>}|undefined;
   #appJwtCache:AppJwtCache|undefined;
   #jsonDecoder:TextDecoder|undefined;
+  // Invocation-local, single-use receipts. JSON or a previous adapter's object
+  // cannot manufacture a release capability, and no request state is global.
+  #negativeWitnesses=new WeakMap<NegativeWitness,{data:NegativeRelease;budget:InvocationBudget}>();
   constructor(c: LiveConfig, secrets: Secrets,
-    transport: Transport = (u,i) => fetch(u,i), now = () => Math.floor(Date.now()/1000),budget?:InvocationBudget) {
-    validateLive(c); this.c=c; this.secrets=secrets; this.transport=transport; this.now=now;this.budget=budget;
+    transport: Transport = (u,i) => fetch(u,i), now = () => Math.floor(Date.now()/1000),budget?:InvocationBudget,tick=()=>performance.now()) {
+    validateLive(c); this.c=c; this.secrets=secrets; this.transport=transport; this.now=now;this.budget=budget;this.tick=tick;
   }
   private async json(url: string, method: string, token: string | null, body?: unknown, oauth = false): Promise<Json> {
     if (!this.c.githubEnabled) throw new Rejected('network_disabled');
     const u = new URL(url);
     if (u.username || u.password || u.hash || !(u.origin === 'https://api.github.com' || oauth &&
         u.origin === 'https://github.com' && u.pathname === '/login/oauth/access_token')) throw new Rejected('api_host_rejected');
-    const headers: Record<string,string> = {Accept: oauth ? 'application/json' : 'application/vnd.github+json',
+    const headers: Record<string,string> = {'Cache-Control':'no-store',Accept: oauth ? 'application/json' : 'application/vnd.github+json',
       'User-Agent':'Tavotto-CLA-native','X-GitHub-Api-Version':'2026-03-10'};
     if (token) headers.Authorization = 'Bearer ' + token;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -47,7 +61,7 @@ export class GitHub implements GitHubPort {
     try {
     let response: Response;
     try { response = await within(this.transport(url,{method,headers,body:body === undefined ? undefined : JSON.stringify(body),
-      redirect:'manual',signal}));this.budget?.checkWork(); }
+      redirect:'manual',cache:'no-store',signal}));this.budget?.checkWork(); }
     catch(error) {if(error instanceof BudgetDeferred)throw error;this.budget?.checkWork();throw new Rejected('github_unavailable'); }
     if (!response.ok || !/application\/(?:[^;]+\+)?json/i.test(response.headers.get('content-type') ?? ''))
       throw new Rejected('github_unavailable');
@@ -131,7 +145,7 @@ export class GitHub implements GitHubPort {
     let cached=this.#appJwtCache;
     if(!cached || cached.material!==material || cached.context!==context || now<cached.mintedAt || now>=cached.expiresAt-60) {
       // App JWT carries issuer/time claims, not installation-token permissions.
-      // Single flight is scoped to this invocation's GitHub instance; token exchanges and scope checks remain per call.
+      // Single flight is scoped to this invocation's GitHub instance; ordinary token exchanges and scope checks remain per call. The optional prefix read lease still rechecks installation state.
       const promise=this.#signingKey(material).then(key=>appJwtWithKey(key,appId,now));
       cached={material,context,mintedAt:now,expiresAt:now+300,promise};
       this.#appJwtCache=cached;
@@ -148,7 +162,8 @@ export class GitHub implements GitHubPort {
       throw error;
     }
   }
-  private async installationToken(write = false): Promise<string> {
+  private async installationToken(write = false,readLease?:PrefixReadLease): Promise<string> {
+    readLease?.guard();if(write && readLease)throw new Rejected('prefix_read_session_invalid');
     this.budget?.checkWork();
     if (!this.c.githubEnabled || write && !this.c.checkPublishingEnabled || !this.secrets.pkcs8)
       throw new Rejected('publication_disabled');
@@ -162,13 +177,16 @@ export class GitHub implements GitHubPort {
         throw new Rejected('app_jwt_context_or_expiry_changed');
       }
     };
-    unchanged();const jwt=authorization.jwt;
+    unchanged();readLease?.guard();const jwt=authorization.jwt;
     const installation = await this.json(`https://api.github.com/repos/${this.c.repository}/installation`,'GET',jwt);
     unchanged();
     if (installation.id !== this.c.installationId || installation.app_id !== this.c.appId ||
         installation.app_slug !== this.c.appSlug || installation.suspended_at !== null)
       throw new Rejected('installation_mismatch');
+    readLease?.guard();
+    if(readLease?.token!==undefined)return readLease.token;
     const permissions = {contents:'read',pull_requests:'read',checks:write ? 'write' : 'read'};
+    readLease?.guard();
     const data = await this.json(`https://api.github.com/app/installations/${this.c.installationId}/access_tokens`,'POST',jwt,
       {repository_ids:[this.c.repositoryId],permissions});
     unchanged();
@@ -181,6 +199,7 @@ export class GitHub implements GitHubPort {
         Object.entries(permissions).some(([k,v]) => data.permissions?.[k] !== v) ||
         Object.keys(data.permissions ?? {}).some(k => k !== 'metadata' && !(k in permissions)) ||
         data.permissions?.metadata !== 'read') throw new Rejected('token_scope_mismatch');
+    if(readLease){readLease.expires=Math.floor(Date.parse(data.expires_at)/1000);readLease.token=data.token;readLease.pinExpiry();readLease.guard();}
     return data.token;
   }
   private async api(path: string, token: string): Promise<Json> { return this.json('https://api.github.com'+path,'GET',token); }
@@ -227,13 +246,26 @@ export class GitHub implements GitHubPort {
           await sha256(await this.content(agreement.path,trusted.sha,token)) !== agreement.sha256)
         throw new Rejected('agreement_hash_mismatch');
     }
-    const pr = await this.api(repo+'/pulls/'+target.number,token);
+    const pr=await this.prSnapshot(target,token,repo);
+    const branchAfter=await this.api(repo+'/commits/'+encodeURIComponent(metadata.default_branch),token);
+    if(branchAfter.sha!==trusted.sha)throw new Rejected('state_changed');
+    return {kind:'pr',repositoryId:this.c.repositoryId,headSha:pr.headSha,baseSha:pr.baseSha,policy,members:[],prs:[pr]};
+  }
+  private async prSnapshot(target:{number:number},token:string,repo:string,baseRef?:string,guard?:()=>void):Promise<PrSnapshot> {
+    const finish=await this.prSnapshotContent(target,token,repo,baseRef,guard);
+    guard?.();const after=await this.api(repo+'/pulls/'+target.number,token);guard?.();
+    return finish(after);
+  }
+  private async prSnapshotContent(target:{number:number},token:string,repo:string,baseRef?:string,guard?:()=>void,before?:Json):Promise<(after:Json)=>PrSnapshot> {
+    guard?.();
+    const pr = before ?? await this.api(repo+'/pulls/'+target.number,token);guard?.();
     if (pr.number !== target.number || pr.state !== 'open' || pr.base?.repo?.id !== this.c.repositoryId ||
         !validSha(pr.head?.sha) || !validSha(pr.base?.sha) || !Number.isSafeInteger(pr.commits) || pr.commits < 1 || pr.commits > 1000)
       throw new Rejected('pr_mismatch');
-    const commits = []; let total = -1;
+    const commits:PrSnapshot['commits'] = []; let total = -1;
     for (let page = 1; page <= Math.ceil(pr.commits/100); page++) {
-      const data = await this.api(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=100&page=${page}`,token);
+      guard?.();
+      const data = await this.api(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=100&page=${page}`,token);guard?.();
       if (data.total_commits !== pr.commits || !Array.isArray(data.commits) || data.commits.length < 1 || data.commits.length > 100 ||
           data.base_commit?.sha !== pr.base.sha) throw new Rejected('commits_incomplete');
       total = data.total_commits;
@@ -246,13 +278,139 @@ export class GitHub implements GitHubPort {
     }
     if (total !== commits.length || new Set(commits.map(x=>x.sha)).size !== commits.length || !commits.some(x=>x.sha === pr.head.sha))
       throw new Rejected('commits_incomplete');
-    const after = await this.api(repo+'/pulls/'+target.number,token);
-    const branchAfter = await this.api(repo+'/commits/'+encodeURIComponent(metadata.default_branch),token);
+    return after=>{
+    guard?.();
     if (after.state !== 'open' || after.number !== pr.number || after.head?.sha !== pr.head.sha || after.base?.sha !== pr.base.sha ||
-        after.commits !== pr.commits || after.user?.id !== pr.user?.id || after.base?.repo?.id !== this.c.repositoryId ||
-        branchAfter.sha !== trusted.sha) throw new Rejected('state_changed');
-    return {kind:'pr',repositoryId:this.c.repositoryId,headSha:pr.head.sha,baseSha:pr.base.sha,policy,members:[],
-      prs:[{number:pr.number,state:'open',headSha:pr.head.sha,baseSha:pr.base.sha,author:identity(pr.user),expectedCommits:pr.commits,commits}]};
+        after.commits !== pr.commits || after.user?.id !== pr.user?.id || after.base?.repo?.id !== this.c.repositoryId) throw new Rejected('state_changed');
+    if(baseRef!==undefined && (pr.base?.ref!==baseRef || after.base?.ref!==baseRef || after.user?.login!==pr.user?.login || after.user?.type!==pr.user?.type))throw new Rejected('state_changed');
+    return {number:pr.number,state:'open',headSha:pr.head.sha,baseSha:pr.base.sha,author:identity(pr.user),expectedCommits:pr.commits,commits};
+    };
+  }
+  // Batch only the dynamic metadata transport. Each member is freshly read
+  // before and after all commit pages in EACH of the two complete snapshots.
+  // No commit page, identity, queue read or cross-snapshot value is reused.
+  private async prMetadataBatch(numbers:number[],token:string,guard:()=>void):Promise<Map<number,Json>> {
+    guard();
+    if(numbers.length<2 || numbers.length>100 || new Set(numbers).size!==numbers.length ||
+      numbers.some(n=>!validId(n) || n>2147483647))throw new Rejected('merge_prefix_incomplete');
+    const fields='number state headRefOid baseRefOid baseRefName baseRepository { databaseId } author { __typename login ... on User { databaseId } ... on Bot { databaseId } } commits(first:1) { totalCount }';
+    const query=`query NativePrefixPRMetadata($owner:String!,$name:String!) { repository(owner:$owner,name:$name) { databaseId ${numbers.map(n=>`p${n}:pullRequest(number:${n}) { ${fields} }`).join(' ')} } }`;
+    const [owner,name]=this.c.repository.split('/');
+    const result=await this.json('https://api.github.com/graphql','POST',token,{query,variables:{owner,name}});guard();
+    if(result.errors!==undefined && (!Array.isArray(result.errors) || result.errors.length))throw new Rejected('merge_prefix_unavailable');
+    const repository=result.data?.repository;
+    if(!repository || Array.isArray(repository) || repository.databaseId!==this.c.repositoryId)throw new Rejected('repository_mismatch');
+    if(Object.keys(repository).sort().join(',')!==['databaseId',...numbers.map(n=>'p'+n)].sort().join(','))throw new Rejected('merge_prefix_incomplete');
+    const values=new Map<number,Json>();
+    for(const n of numbers){
+      guard();const p=repository['p'+n];
+      if(!p || p.number!==n || p.state!=='OPEN' || p.baseRepository?.databaseId!==this.c.repositoryId ||
+        !validSha(p.headRefOid) || !validSha(p.baseRefOid) || p.baseRefName!=='main' ||
+        !Number.isSafeInteger(p.commits?.totalCount) || p.commits.totalCount<1 || p.commits.totalCount>1000)throw new Rejected('pr_mismatch');
+      const user=identity({id:p.author?.databaseId,login:p.author?.login,type:p.author?.__typename});
+      values.set(n,{number:n,state:'open',user,commits:p.commits.totalCount,head:{sha:p.headRefOid},base:{sha:p.baseRefOid,ref:p.baseRefName,repo:{id:p.baseRepository.databaseId}}});
+    }
+    guard();return values;
+  }
+
+  async mergePrefixSnapshot(input:MergePrefixTarget):Promise<MergePrefixSnapshot> {
+    return this.mergePrefixSnapshotRead(input);
+  }
+  private async mergePrefixSnapshotRead(input:MergePrefixTarget,readLease?:PrefixReadLease):Promise<MergePrefixSnapshot> {
+    readLease?.guard();
+    if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
+    const target=structuredClone(input);
+    if(!target || Object.keys(target).sort().join(',')!=='baseRef,baseSha,headSha' || target.baseRef!=='refs/heads/main' ||
+      !validSha(target.headSha) || !validSha(target.baseSha))throw new Rejected('merge_prefix_target_invalid');
+    const token=await this.installationToken(false,readLease),repo=`/repos/${this.c.repository}`;
+    readLease?.guard();const metadata=await this.api(repo,token);readLease?.guard();
+    if(metadata.id!==this.c.repositoryId || metadata.full_name!==this.c.repository || metadata.default_branch!=='main')throw new Rejected('repository_mismatch');
+    readLease?.guard();const trusted=await this.api(repo+'/commits/main',token);readLease?.guard();
+    if(!validSha(trusted.sha))throw new Rejected('policy_unavailable');
+    let policy:Policy;
+    if(readLease?.source) {
+      if(trusted.sha!==readLease.source.sha)throw new Rejected('merge_prefix_changed');
+      policy=structuredClone(readLease.source.policy);
+    }else {
+      readLease?.guard();
+      try{policy=JSON.parse(await this.content('.github/cla-policy.json',trusted.sha,token));readLease?.guard();}
+      catch(error){if(error instanceof BudgetDeferred)throw error;throw new Rejected('policy_unavailable');}
+      if(await policyDigest(policy)!==await policyDigest(this.c.policy) || canonical(policy.provider)!==canonical(this.c.policy.provider))throw new Rejected('trusted_policy_changed');
+      for(const [kind,agreement]of Object.entries(this.c.policy.agreements)) {
+        readLease?.guard();
+        if(agreement.path!==(kind==='individual'?'docs/legal/CLA_INDIVIDUAL.md':'docs/legal/CLA_CORPORATE.md') ||
+          await sha256(await this.content(agreement.path,trusted.sha,token))!==agreement.sha256)throw new Rejected('agreement_hash_mismatch');
+        readLease?.guard();
+      }
+      if(readLease)readLease.source={sha:trusted.sha,policy:structuredClone(policy)};
+    }
+    readLease?.guard();
+    const queue=()=>readQueue(this.c.repository,this.c.repositoryId,async(query,variables)=>{readLease?.guard();const data=await this.json('https://api.github.com/graphql','POST',token,{query,variables});readLease?.guard();return data;});
+    const entries=await queue(),prefix=prefixFor(entries,target),prs:PrSnapshot[]=[];
+    if(readLease && prefix.length>1){
+      const numbers=prefix.map(e=>e.pullRequest.number),before=await this.prMetadataBatch(numbers,token,readLease.guard);
+      const pending:Array<(after:Json)=>PrSnapshot>=[];
+      for(const n of numbers)pending.push(await this.prSnapshotContent({number:n},token,repo,'main',readLease.guard,before.get(n)!));
+      const after=await this.prMetadataBatch(numbers,token,readLease.guard);
+      for(let i=0;i<prefix.length;i++){
+        const pr=pending[i]!(after.get(numbers[i]!)!);
+        if(pr.headSha!==prefix[i]!.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');prs.push(pr);
+      }
+    }else for(const entry of prefix) {
+      const pr=await this.prSnapshot({number:entry.pullRequest.number},token,repo,'main',readLease?.guard);
+      if(pr.headSha!==entry.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');prs.push(pr);
+    }
+    if(canonical(entries)!==canonical(await queue()))throw new Rejected('merge_prefix_changed');
+    readLease?.guard();
+    if((await this.api(repo+'/commits/main',token)).sha!==trusted.sha)throw new Rejected('merge_prefix_changed');
+    readLease?.guard();
+    return {kind:'merge_group',repositoryId:this.c.repositoryId,headSha:target.headSha,baseSha:target.baseSha,policy:structuredClone(policy),
+      members:prefix.map(entry=>({pr:entry.pullRequest.number,headSha:entry.pullRequest.headRefOid})),prs,queueEntries:entries,trustedSourceSha:trusted.sha};
+  }
+  // One callback owns this read lease. Credentials never leave it; its private
+  // source cache is not retained on the instance or reused after close.
+  async withMergePrefixReads<T>(input:MergePrefixTarget,work:(reader:MergePrefixReader)=>Promise<T>):Promise<T> {
+    if(this.c.mergePrefixReadSessionEnabled!==true || this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('prefix_read_session_disabled');
+    const budget=this.budget;if(!budget)throw new Rejected('invocation_budget_required');
+    const target=structuredClone(input),context=canonical(JSON.parse(JSON.stringify(this.c))),material=this.secrets.pkcs8;
+    const tick=this.tick,startedAt=this.now(),startedTick=tick();
+    let active=true,failed=false,busy=false,snapshots=0,last=startedAt,lastTick=startedTick,deadline:number|undefined;
+    const lease:PrefixReadLease={guard:()=>{
+      const now=this.now(),at=tick();
+      if(!active || failed || this.budget!==budget || this.tick!==tick || !Number.isFinite(at) || !Number.isFinite(lastTick) || at<lastTick || deadline!==undefined && at>=deadline || canonical(JSON.parse(JSON.stringify(this.c)))!==context ||
+        this.secrets.pkcs8!==material || !Number.isSafeInteger(now) || !Number.isSafeInteger(last) || now<last ||
+        lease.expires!==undefined && now>=lease.expires)throw new Rejected('prefix_read_session_invalid');
+      budget.checkWork();last=now;lastTick=at;
+    },pinExpiry:()=>{
+      lease.guard();if(deadline!==undefined || lease.expires===undefined)throw new Rejected('prefix_read_session_invalid');
+      // Seconds-only wall time conservatively budgets from its final millisecond.
+      // One fixed monotonic deadline prevents wall-clock stalls extending a token.
+      deadline=startedTick+Math.max(0,(lease.expires-startedAt-1)*1000);lease.guard();
+    }};
+    const exclusive=<R>(read:()=>Promise<R>):Promise<R>=>{
+      const promise=(async()=>{
+        if(busy){failed=true;throw new Rejected('prefix_read_session_invalid');}busy=true;
+        try{lease.guard();const result=await read();lease.guard();return result;}
+        catch(error){failed=true;throw error;}finally{busy=false;}
+      })();
+      void promise.catch(()=>{});return promise;
+    };
+    const reader:MergePrefixReader=Object.freeze({
+      snapshot:()=>exclusive(async()=>{
+        if(++snapshots>2)throw new Rejected('prefix_read_session_invalid');
+        return this.mergePrefixSnapshotRead(target,lease);
+      }),
+      resolveLogin:(login:string)=>exclusive(async()=>{
+        if(!/^[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?$/.test(login))throw new Rejected('identity_unresolved');
+        const token=await this.installationToken(false,lease);lease.guard();
+        const user=identity(await this.api('/users/'+encodeURIComponent(login),token) as Identity);lease.guard();
+        if(user.login.toLowerCase()!==login.toLowerCase())throw new Rejected('identity_unresolved');return user;
+      }),
+    });
+    try {
+      lease.guard();const result=await work(reader);lease.guard();
+      if(busy || snapshots!==2)throw new Rejected('prefix_read_session_invalid');return result;
+    }finally{active=false;lease.token=undefined;lease.expires=undefined;lease.source=undefined;}
   }
   private receipt(data: Json, check: CheckProposal): CheckReceipt {
     if (!validId(data.id) || data.app?.id !== this.c.appId || data.app?.slug !== this.c.appSlug ||
@@ -275,29 +433,68 @@ export class GitHub implements GitHubPort {
       throw new Rejected('check_source_mismatch');
     if(data.conclusion==='success' && (p.conclusion!=='success' || data.output?.summary!==p.proof_text))throw new Rejected('check_source_mismatch');
   }
-  async observe(p:Publication):Promise<{id:number;conclusion:'success'|'failure'}|null> {
+  private groupPublicationKey(p:Publication):string|undefined {
+    try{const raw=JSON.parse(p.proof_text.slice('tavotto-cla-v1\n'.length)),proof=parseProof(p.proof_text,raw.issued_at);
+      if(proof.kind==='merge_group' && proof.repository_id===this.c.repositoryId && proof.head_sha===p.head_sha)
+        return `merge:${proof.repository_id}:${proof.head_sha}:${proof.base_sha}`;
+    }catch{}return undefined;
+  }
+  #negativeWitness(p:Publication,run:number,context:NegativeContext|undefined,began:number,source:NegativeRelease['source']):NegativeWitness {
+    const now=this.now(),job=context?.job,revision=context?.revision;
+    if(!this.budget || !job || !Number.isSafeInteger(revision) || revision!<0 || !validId(run) ||
+      p.confirmation_slot!==1 || p.conclusion!=='success' || !/^[A-Za-z0-9_-]{43}$/.test(p.id) ||
+      job.target_key!==p.target_key || !(p.target_key.startsWith('pr:'+this.c.repositoryId+':') || this.groupPublicationKey(p)===p.target_key) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(job.lease) || !validId(job.generation) || !Number.isSafeInteger(job.lease_until) ||
+      !Number.isSafeInteger(began) || !Number.isSafeInteger(now) || now<began || now>=began+10 || now>=job.lease_until)
+      throw new Rejected('fresh_negative_witness_unavailable');
+    const witness:NegativeWitness=Object.freeze({protocol:'cla-negative-witness-v1'});
+    this.#negativeWitnesses.set(witness,{budget:this.budget,data:{protocol:'cla-negative-release-v1',repository_id:this.c.repositoryId,
+      attempt:p.id,target_key:p.target_key,head:p.head_sha,original_revision:p.revision,expires:p.expires,proof_text:p.proof_text,
+      old_run_id:p.run_id,run_id:run,observed_phase:p.phase,recovery_revision:revision!,lease:job.lease,generation:job.generation,
+      observed_at:now,valid_until:Math.min(began+10,job.lease_until),source}});return witness;
+  }
+  consumeNegativeWitness(witness:NegativeWitness,p:Publication,job:Job,revision:number):string {
+    const entry=this.#negativeWitnesses.get(witness);this.#negativeWitnesses.delete(witness);
+    const d=entry?.data,now=this.now();
+    if(!d || entry!.budget!==this.budget || !Number.isSafeInteger(now) || now<d.observed_at || now>=d.valid_until ||
+      d.repository_id!==this.c.repositoryId || d.attempt!==p.id || d.target_key!==p.target_key || d.head!==p.head_sha ||
+      d.original_revision!==p.revision || d.expires!==p.expires || d.proof_text!==p.proof_text || d.old_run_id!==p.run_id ||
+      d.observed_phase!==p.phase || d.recovery_revision!==revision || d.target_key!==job.target_key || d.lease!==job.lease ||
+      d.generation!==job.generation || p.confirmation_slot!==1)throw new Rejected('fresh_negative_witness_unavailable');
+    return canonical(d);
+  }
+  async observe(input:Publication,negativeContext?:NegativeContext):Promise<{id:number;conclusion:'success'|'failure';negativeWitness?:NegativeWitness}|null> {
+    const p=structuredClone(input),context=negativeContext?structuredClone(negativeContext):undefined;
     const token=await this.installationToken(),runs=await this.runs(p.head_sha,token);
     const own=runs.filter(x=>x.app?.id===this.c.appId && x.app?.slug===this.c.appSlug && x.name===this.c.checkName && x.head_sha===p.head_sha);
     if(own.length===0)return null;
     if(own.length!==1 || own[0]?.external_id!==p.id || p.run_id!==null && own[0]?.id!==p.run_id)throw new Rejected('ambiguous_own_check');
-    this.own(own[0]!,p);return {id:own[0]!.id,conclusion:own[0]!.conclusion};
+    this.own(own[0]!,p);
+    if(p.confirmation_slot===1 && own[0]!.conclusion==='failure'){
+      const began=this.now(),fresh=await this.api(`/repos/${this.c.repository}/check-runs/${own[0]!.id}`,token);
+      this.own(fresh,p);if(fresh.id!==own[0]!.id || fresh.conclusion!=='failure')throw new Rejected('negative_observation_changed');
+      return {id:fresh.id,conclusion:'failure',negativeWitness:this.#negativeWitness(p,fresh.id,context,began,'observed_get')};
+    }
+    return {id:own[0]!.id,conclusion:own[0]!.conclusion};
   }
   async readPublication(p:Publication):Promise<void> {
     if(!validId(p.run_id))throw new Rejected('proof_not_confirmed');
     const data=await this.api(`/repos/${this.c.repository}/check-runs/${p.run_id}`,await this.installationToken());
     this.own(data,p);if(data.id!==p.run_id || data.conclusion!=='success')throw new Rejected('qualification_changed');
   }
-  async withdraw(p:Publication,run:number,revision:number):Promise<void> {
+  async withdraw(input:Publication,run:number,revision:number,negativeContext?:NegativeContext):Promise<NegativeWitness|undefined> {
+    const p=structuredClone(input),context=negativeContext?structuredClone(negativeContext):undefined;
     if(!this.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
     const token=await this.installationToken(true),path=`/repos/${this.c.repository}/check-runs/${run}`;
-    const before=await this.api(path,token);this.own(before,p);if(before.id!==run)throw new Rejected('check_source_mismatch');
-    if(before.conclusion==='failure')return;
+    let began=this.now();const before=await this.api(path,token);this.own(before,p);if(before.id!==run)throw new Rejected('check_source_mismatch');
+    if(before.conclusion==='failure')return p.confirmation_slot===1?this.#negativeWitness(p,run,context,began,'withdrawal_get'):undefined;
     const data=await this.json('https://api.github.com'+path,'PATCH',token,{name:this.c.checkName,status:'completed',conclusion:'failure',external_id:p.id,
       completed_at:new Date(this.now()*1000).toISOString(),output:{title:this.c.checkName,summary:'tavotto-cla-revocation-v1\n'+canonical({
         repository_id:this.c.repositoryId,head_sha:p.head_sha,attempt:p.id,revision,reason:'eligibility_requires_review'})}});
     this.own(data,p);if(data.id!==run || data.conclusion!=='failure')throw new Rejected('check_source_mismatch');
-    const after=await this.api(path,token);this.own(after,p);
+    began=this.now();const after=await this.api(path,token);this.own(after,p);
     if(after.id!==run || after.conclusion!=='failure')throw new Rejected('check_source_mismatch');
+    return p.confirmation_slot===1?this.#negativeWitness(p,run,context,began,'withdrawal_get'):undefined;
   }
   // Refresh only an exactly observed, durably resolved same-head predecessor.
   // Authentication and all remote pre-reads finish before the journal callback;
@@ -330,6 +527,33 @@ export class GitHub implements GitHubPort {
         completed_at:new Date(this.now()*1000).toISOString(),output:{title:check.name,summary:check.text}});
     if(data.id!==old.id || data.external_id!==attempt || data.status!=='completed' || data.conclusion!==check.conclusion ||
       data.output?.summary!==check.text)throw new Rejected('check_source_mismatch');
+    return this.receipt(data,check);
+  }
+  async publishGroup(target:Extract<Target,{kind:'merge_group'}>,prepare:(withdrawnRevision?:number)=>Promise<{check:CheckProposal;attempt:string}>,predecessor?:Publication):Promise<CheckReceipt> {
+    if(!this.c.automaticPublishingEnabled || !this.c.checkPublishingEnabled || this.c.mergePrefixAssessmentEnabled!==true || !validSha(target.headSha) || !validSha(target.baseSha))throw new Rejected('publication_disabled');
+    const token=await this.installationToken(true),runs=await this.runs(target.headSha,token);
+    const own=runs.filter(x=>x.app?.id===this.c.appId && x.app?.slug===this.c.appSlug && x.name===this.c.checkName && x.head_sha===target.headSha);
+    let withdrawnRevision:number|undefined;
+    if(predecessor){
+      const old=own[0];
+      if(own.length!==1 || !old || predecessor.phase!=='resolved' || predecessor.target_key!==`merge:${this.c.repositoryId}:${target.headSha}:${target.baseSha}` ||
+        predecessor.head_sha!==target.headSha || old.id!==predecessor.run_id || old.conclusion!=='failure')throw new Rejected('refresh_predecessor_unavailable');
+      this.own(old,predecessor);
+      let revoked;try{revoked=JSON.parse(old.output?.summary?.slice('tavotto-cla-revocation-v1\n'.length));}catch{}
+      if(!old.output?.summary?.startsWith('tavotto-cla-revocation-v1\n') || canonical(revoked)!==old.output.summary.slice('tavotto-cla-revocation-v1\n'.length) ||
+        revoked.repository_id!==this.c.repositoryId || revoked.head_sha!==target.headSha || revoked.attempt!==predecessor.id ||
+        revoked.reason!=='eligibility_requires_review' || !Number.isSafeInteger(revoked.revision) || revoked.revision<predecessor.revision)throw new Rejected('refresh_predecessor_unavailable');
+      withdrawnRevision=revoked.revision;
+    }else if(own.length)throw new Rejected('new_head_run_already_exists');
+    const {check,attempt}=await prepare(withdrawnRevision),proof=parseProof(check.text,this.now());
+    if(proof.kind!=='merge_group' || proof.repository_id!==this.c.repositoryId || proof.head_sha!==target.headSha || proof.base_sha!==target.baseSha ||
+      check.appId!==this.c.appId || check.appSlug!==this.c.appSlug || check.name!==this.c.checkName || check.headSha!==target.headSha ||
+      check.conclusion!=='success' || canonical(proof)!==canonical(check.proof) || !/^[A-Za-z0-9_-]{43}$/.test(attempt))throw new Rejected('check_invalid');
+    const data=await this.json(`https://api.github.com/repos/${this.c.repository}/check-runs`+(predecessor?'/'+predecessor.run_id:''),predecessor?'PATCH':'POST',token,
+      {name:check.name,...(predecessor?{}:{head_sha:check.headSha}),status:'completed',conclusion:check.conclusion,external_id:attempt,
+        completed_at:new Date(this.now()*1000).toISOString(),output:{title:check.name,summary:check.text}});
+    if(data.external_id!==attempt || data.status!=='completed' || data.conclusion!==check.conclusion || data.output?.summary!==check.text ||
+      predecessor && data.id!==predecessor.run_id)throw new Rejected('check_source_mismatch');
     return this.receipt(data,check);
   }
   // New heads only. All authentication and reads precede the durable send intent.

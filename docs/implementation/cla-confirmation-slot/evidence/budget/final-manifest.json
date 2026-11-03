@@ -1,0 +1,71 @@
+{
+  "head": "a4695f830d321ffa03184595afd895d2055db3b3",
+  "source_matches_tested_snapshot": true,
+  "baseline_exit": 0,
+  "tests": 14,
+  "mutants": [
+    {
+      "name": "slot measured new head issued statement cost",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1
+    },
+    {
+      "name": "slot busy capacity cannot consume retry",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1
+    },
+    {
+      "name": "slot confirmed owner keeps live send fence",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1
+    },
+    {
+      "name": "slot durable latch fences flagfalse head admission",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1
+    },
+    {
+      "name": "slot expired withdrawal target precedes ordinary due target",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1
+    },
+    {
+      "name": "slot expired owner precedes older eligible ordinary journal",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1
+    }
+  ],
+  "sha256": {
+    "services/cla-cloudflare/src/native/store.ts": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "services/cla-cloudflare/src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "services/cla-cloudflare/src/native/automatic.ts": "13e38d5ea456a627e9f898a875b83e3be639c09d3095bbb6d8504bec5f1164b5",
+    "services/cla-cloudflare/src/native/background.ts": "cf0aec0bcfe02c8c8d51d3e2a4d512625ac9b2d9d10d1a78a92743af7949fb41",
+    "services/cla-cloudflare/src/native/github.ts": "7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5",
+    "services/cla-cloudflare/src/native/budget.ts": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "services/cla-cloudflare/src/native/config.ts": "00f997e6a66a8d04c1d0fa189980143e0223253b7d952554fcf531cc2b7709af",
+    "services/cla-cloudflare/tests/independent-slot-budget.test.mjs": "1f45a5241e439c1a99e4e36edbc9a323417eb7bf8f66d5d65f110ce550f71a67",
+    "services/cla-cloudflare/tests/slot-budget-mutation-cases.json": "bafa76ed6967faf0fe9944ce3d8755da7db9400591193cba9e33f41f439d5007"
+  },
+  "restrictions": {
+    "http_requests": 0,
+    "worker_fetch": 0,
+    "publication_requests": 0,
+    "clock_advances": 0,
+    "workspace_source_edits_by_this_agent": 0
+  },
+  "artifacts": {
+    "report.md": "87013246937189558b1a3fc713d9556be29341bd00d937dbdd686d722bd6a8b8",
+    "commands.json": "a1a25114f17c7b1daf2a4ad8d5f91ef81b28b4af8e39413d002cb9dc904722b0",
+    "mutants.json": "1377aab23e33ce9922ad3cc97ac47caa1b14c887853661f493e0bdd3be19727d",
+    "independent-tests.log": "58f9eabd33fc2f360291ccd9a76a54468d87f9584e962b03f97a3ab80bc4bfb2",
+    "initial-tests.log": "6d6799c036547fbe0322e11d67afdf1c8513fcdc9697887b2413f5375e0aef43",
+    "snapshot-source.json": "3431a8521aca8bc2b30f7fe8c8cb4c35a94ad9a6704617351e069f8e0bc6ca21",
+    "run.py": "7675d8a61f4a40e5a5708c931b7ad38e885ab103b55fa44d4c9af20646596375"
+  }
+}

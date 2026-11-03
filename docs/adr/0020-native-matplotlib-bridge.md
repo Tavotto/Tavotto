@@ -419,6 +419,10 @@ SVG / PNG / PDF + 结构化元数据。
 之后每一份响应都能重新 JSON 编码；导出的 PDF 是**子进程自己写盘**产出的，
 通道上传的只是一个路径）。
 
+**唯一登记的例外**：safe worker 的保存瞬间快照（ADR 0139 §九）只在本进程内存里序列化再还原，字节不出进程。门禁
+`test_no_engine_module_ever_pickles_a_figure` 按「类 / 函数」登记（`figcapture.py` 的四处），不是整模块放行；
+`test_the_snapshot_bytes_never_leave_the_process` 用 AST 正面断言字节只落在 `SaveMomentLedger` 内、不碰任何写盘 / 发送调用。
+
 ---
 
 ## 9. 打包

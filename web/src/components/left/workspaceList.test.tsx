@@ -22,10 +22,11 @@ import { useUiStore } from '@/store/uiStore'
 import { WorkspaceList } from './WorkspaceList'
 
 /** 桌面能力由 `lib/desktop` 决定；这里按用例切「桌面 / 浏览器」，并记下 reveal 了哪条路径 */
-const desktop = vi.hoisted(() => ({ can: false, ok: true, revealed: [] as string[] }))
+const desktop = vi.hoisted(() => ({ can: false, is: false, ok: true, revealed: [] as string[] }))
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/desktop')>()),
   canRevealInFileManager: () => desktop.can,
+  isDesktop: () => desktop.is,
   fileManagerKind: () => 'finder',
   revealProjectFolder: async (path: string) => {
     desktop.revealed.push(path)
@@ -118,6 +119,7 @@ const pinButton = (path: string) =>
 
 beforeEach(() => {
   desktop.can = false
+  desktop.is = false
   desktop.ok = true
   desktop.revealed = []
   ops = []
@@ -488,6 +490,42 @@ describe('右键「在 Finder 中打开」', () => {
     rightClick(row('/work/p-3'))
     expect(menu()).not.toBeNull()
     expect(reveal()).toBeNull()
+  })
+})
+
+describe('菜单「在新标签页打开」：桌面壳不新开窗口，桌面版不给', () => {
+  const rightClick = (el: Element) =>
+    act(() => {
+      el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+    })
+  const menuText = () => document.querySelector<HTMLElement>('[role="menu"]')?.textContent ?? null
+  const NEW_TAB = '在新标签页打开'
+
+  it('浏览器：最近行与当前项目卡片的菜单都有这一项', async () => {
+    useProjectStore.setState({ recent: [entryOf('/work/p-3', { id: 'p-3' })] })
+    await mount()
+    rightClick(host.querySelector('[data-workspace-row][data-project-path="/work/p-3"]')!)
+    expect(menuText()).toContain(NEW_TAB)
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    rightClick(host.querySelector('[data-workspace-current]')!)
+    expect(menuText()).toContain(NEW_TAB)
+  })
+
+  it('桌面：最近行的菜单没有这一项', async () => {
+    desktop.is = true
+    useProjectStore.setState({ recent: [entryOf('/work/p-3', { id: 'p-3' })] })
+    await mount()
+    rightClick(host.querySelector('[data-workspace-row][data-project-path="/work/p-3"]')!)
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+    expect(menuText()).not.toContain(NEW_TAB)
+  })
+
+  it('桌面：当前项目卡片的菜单没有这一项', async () => {
+    desktop.is = true
+    await mount()
+    rightClick(host.querySelector('[data-workspace-current]')!)
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+    expect(menuText()).not.toContain(NEW_TAB)
   })
 })
 

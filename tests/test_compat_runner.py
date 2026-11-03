@@ -853,3 +853,644 @@ def test_browser_verdict_without_desktop_capture_detail_is_not_penalised():
         "semantics": {"s": {"roles": ["axes"], "editable": []}},
     }
     assert CM._browser_verdict(c, ok, desktop)["ok"]
+
+
+# ============================================================ runner 自身崩溃（#1133）
+class TestRunnerError:
+    """runner 自己崩了 ≠ 产品缺陷：独立分类 `runner_error`，报告可见、门禁不当产品回归。"""
+
+    def _crashed(self, cid="x"):
+        return CM.runner_crash_result(case(cid), "Traceback: boom")
+
+    def test_runner_crash_is_runner_error_not_product_bug(self):
+        r = self._crashed()
+        assert r["classification"] == "runner_error"
+        assert r["classification"] != "product_bug"
+        assert "boom" in r["detail"]["runner_error"]
+
+    def test_runner_error_is_not_a_declarable_classification(self):
+        """清单/基线只能声明闭集里的状态，runner_error 只是一次运行的观测。"""
+        assert "runner_error" not in CC.CLASSIFICATIONS
+        assert "runner_error" in CC.RESULT_CLASSIFICATIONS
+
+    def test_real_product_error_is_still_product_bug(self):
+        cls, _r, _d = CM.classify(case("p"), stages(execute=False), {})
+        assert cls == "product_bug"
+
+    def test_crashed_route_runner_is_runner_error(self):
+        routes = {
+            "r": {
+                "status": "fail",
+                "code": "route_runner_crashed",
+                "classification": "runner_error",
+            }
+        }
+        cls, _r, _d = CM.classify(case(), stages(execute=True), {}, routes)
+        assert cls == "runner_error"
+        # 真正走不通的路由仍是 product_bug
+        routes = {"r": {"status": "fail", "code": "x", "classification": "product_bug"}}
+        assert CM.classify(case(), stages(execute=True), {}, routes)[0] == "product_bug"
+
+    def _crashed_routes(self):
+        return {
+            "runner_error": {
+                "status": "fail",
+                "code": "route_runner_crashed",
+                "classification": "runner_error",
+                "detail": "Traceback: route boom",
+            }
+        }
+
+    def test_stage_failure_plus_route_runner_crash_stays_product_bug(self):
+        """引擎阶段已独立失败，随后路由 runner 崩溃：真回归不能被抹成 runner_error。"""
+        routes = self._crashed_routes()
+        cls, _r, detail = CM.classify(case(), stages(execute=True, replay=False), {}, routes)
+        assert cls == "product_bug"
+        assert "replay" in detail and "runner_error" in detail  # 崩溃信息仍可见
+        # 经 _finish 落到结果里：分类 product_bug、stage 为失败阶段
+        res = CM._blank(case("z"))
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = routes
+        out = CM._finish({"z": res}, [case("z")], 0.0)["z"]
+        assert out["classification"] == "product_bug"
+        assert out["stage"] == "replay"
+        assert "runner_error" in out["detail_note"]
+        assert out["routes"]["runner_error"]["detail"] == "Traceback: route boom"
+
+    def test_other_failed_route_plus_route_runner_crash_stays_product_bug(self):
+        routes = {
+            "bad": {"status": "fail", "code": "x", "classification": "product_bug"},
+            **self._crashed_routes(),
+        }
+        cls, _r, detail = CM.classify(case(), stages(execute=True), {}, routes)
+        assert cls == "product_bug" and "bad" in detail
+
+    def test_route_runner_crash_detail_reaches_summary_at_documented_path(self):
+        c = case("x")
+        res = CM._blank(c)
+        res["stages"].update(execute=True)
+        res["routes"] = self._crashed_routes()
+        results = CM._finish({"x": res}, [c], 0.0)
+        assert results["x"]["classification"] == "runner_error"
+        report = CM.build_report([c], results, {}, "current", "all")
+        (e,) = report["summary"]["runner_errors"]
+        assert e["detail"] and e["detail"] == results["x"]["routes"]["runner_error"]["detail"]
+        text = CM.render_summary(report)
+        assert "routes.runner_error.detail" in text
+        # run_group 崩溃的位置同样存在
+        crashed = self._crashed("y")
+        assert crashed["detail"]["runner_error"]
+        report = CM.build_report([case("y")], {"y": crashed}, {}, "current", "all")
+        assert report["summary"]["runner_errors"][0]["detail"] == "Traceback: boom"
+
+    def test_crash_alongside_product_bug_still_listed_in_runner_errors(self):
+        """stage 失败 + 路由崩溃 → 仍是 product_bug，但崩溃按事实进 runner_errors。"""
+        c = case("z")
+        res = CM._blank(c)
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = self._crashed_routes()
+        results = CM._finish({"z": res}, [c], 0.0)
+        assert results["z"]["classification"] == "product_bug"
+        report = CM.build_report([c], results, {}, "current", "all")
+        s = report["summary"]
+        assert s["classification"].get("runner_error", 0) == 0  # 分类计数不重复
+        assert [b["id"] for b in s["product_bugs"]] == ["z"]
+        (e,) = s["runner_errors"]
+        assert e["id"] == "z" and e["classification"] == "product_bug"
+        assert e["detail"] == "Traceback: route boom"
+        text = CM.render_summary(report)
+        assert "Runner errors" in text and "`z`" in text
+        import summarize as SUM
+
+        detail = SUM._detail("compat.json", {"target": "bundled", "summary": report["summary"]})
+        assert "runner 崩溃 1" in detail
+        warns: list[str] = []
+        CM.evaluate_gate("pr", [c], results, {"cases": {}}, warns)
+        wtext = "\n".join(warns)
+        # 混合 case：走「也崩溃了」那条，不再说它没有裁决
+        assert "也崩溃了" in wtext and "z" in wtext and "没有裁决" not in wtext
+
+    def test_gate_warns_but_does_not_fail_on_runner_error(self):
+        """维护者裁决（#1178）：runner 崩溃门禁只告警不致红，但告警里逐条可见。"""
+        cases = [case("x")]
+        results = {"x": self._crashed("x")}
+        baseline = {"cases": {"x": {"classification": "full_support", "stages": {}}}}
+        for gate in ("pr", "release"):
+            warns: list[str] = []
+            ok, fails = CM.evaluate_gate(gate, cases, results, baseline, warns)
+            text = "\n".join(fails)
+            assert "新出现的 product_bug" not in text
+            assert "product_bug（含基线" not in text
+            assert "退步" not in text
+            assert ok and fails == []
+            # 不能静默：没有裁决的 case 以基础设施理由出现在告警里
+            wtext = "\n".join(warns)
+            assert "runner 自身崩溃" in wtext and "非产品回归" in wtext and "x" in wtext
+
+    def test_crash_before_any_stage_records_no_stage_and_skips_funnel(self):
+        """discover 前崩溃：stages 留空，funnel 的 Discovery 分母/失败都不含它（Codex r4310627547）。"""
+        crashed = self._crashed("x")
+        assert crashed["stages"] == {}
+        ok = CM._blank(case("y"))
+        ok["stages"]["discover"] = True
+        rows = CM.funnel([case("x"), case("y")], {"x": crashed, "y": ok})
+        disc = next(r for r in rows if r["stage"] == "discover")
+        assert disc["total"] == 1 and disc["passed"] == 1 and disc["rate"] == 1.0
+
+    def test_gate_warning_splits_pure_crash_from_mixed_product_failure(self):
+        """纯 runner_error 与「已有产品失败 + 崩溃」各一条告警，措辞各自正确（Codex r4310627554）。"""
+        pure_case, mixed_case = case("pure"), case("mixed")
+        res = CM._blank(mixed_case)
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = self._crashed_routes()
+        results = CM._finish({"mixed": res}, [mixed_case], 0.0)
+        results["pure"] = self._crashed("pure")
+        assert results["mixed"]["classification"] == "product_bug"
+        warns: list[str] = []
+        CM.evaluate_gate("pr", [pure_case, mixed_case], results, {"cases": {}}, warns)
+        assert len(warns) == 2
+        (pure_w,) = [w for w in warns if "没有裁决" in w]
+        (mixed_w,) = [w for w in warns if "也崩溃了" in w]
+        assert "pure" in pure_w and "mixed" not in pure_w
+        assert "mixed" in mixed_w and "pure" not in mixed_w
+        assert "按 product_bug 处理" in mixed_w
+
+    def test_runner_error_never_counts_as_a_product_bug_in_the_report(self):
+        cases = [case("x"), case("y")]
+        results = {"x": self._crashed("x")}
+        results["y"] = {
+            "id": "y",
+            "category": "core_artists",
+            "tier": "expected",
+            "classification": "full_support",
+            "stages": stages(discover=True, execute=True),
+            "detail": {},
+            "skipped": {},
+            "census": {},
+            "browser": None,
+        }
+        report = CM.build_report(cases, results, {}, "current", "all")
+        s = report["summary"]
+        assert s["product_bugs"] == []
+        assert s["classification"] == {"full_support": 1, "runner_error": 1}
+        assert [e["id"] for e in s["runner_errors"]] == ["x"]
+        text = CM.render_summary(report)
+        assert "runner_error | 1" in text and "Runner errors" in text
+        assert "Product bugs: 0" in text
+
+    def test_baseline_refuses_to_freeze_a_runner_error(self):
+        with pytest.raises(CC.CorpusError) as ei:
+            CC.baseline_payload({"x": self._crashed("x")})
+        assert ei.value.code == "baseline_runner_error"
+
+    # ---- #1178 r4310553654：基线按崩溃事实拒绝，统一判据 ----
+    def _stage_fail_plus_route_crash(self, cid="z"):
+        res = CM._blank(case(cid))
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = self._crashed_routes()
+        return CM._finish({cid: res}, [case(cid)], 0.0)[cid]
+
+    def test_baseline_refuses_when_route_crash_hidden_behind_product_bug(self):
+        out = self._stage_fail_plus_route_crash("z")
+        assert out["classification"] == "product_bug"  # 最终分类不是 runner_error
+        with pytest.raises(CC.CorpusError) as ei:
+            CC.baseline_payload({"z": out})
+        assert ei.value.code == "baseline_runner_error"
+        assert "z" in str(ei.value)
+
+    def test_has_runner_crash_is_fact_based(self):
+        assert CC.has_runner_crash(self._crashed("x"))
+        assert CC.has_runner_crash(self._stage_fail_plus_route_crash("z"))
+        clean = CM._blank(case("c"))
+        assert not CC.has_runner_crash(clean)
+        # 路由条目只有 classification、没有 detail 也算崩溃事实
+        clean["routes"] = {"r": {"status": "fail", "classification": "runner_error"}}
+        assert CC.has_runner_crash(clean)
+
+    def test_report_lists_crash_hidden_behind_product_bug_without_detail(self):
+        cases = [case("z")]
+        res = CM._blank(case("z"))
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = {"r": {"status": "fail", "classification": "runner_error"}}
+        results = CM._finish({"z": res}, cases, 0.0)
+        report = CM.build_report(cases, results, {}, "current", "all")
+        assert [e["id"] for e in report["summary"]["runner_errors"]] == ["z"]
+
+
+class TestRunGroupCrashKeepsPartialResults:
+    """run_group 中途崩溃：已记录的阶段结果保留，已有产品失败时仍判 product_bug（Codex #1178）。"""
+
+    CRASH = "Traceback: hot.override boom"
+
+    def test_finish_with_crash_keeps_independent_product_failure(self):
+        c = case("a")
+        res = CM._blank(c)
+        res["stages"].update(discover=True, execute=True, replay=False)
+        out = CM._finish({"a": res}, [c], 0.0, crash_tb=self.CRASH)["a"]
+        assert out["classification"] == "product_bug"
+        assert out["stage"] == "replay"
+        assert out["stages"]["replay"] is False
+        assert out["detail"]["runner_error"] == self.CRASH
+        assert "runner_error" in out["detail_note"]
+        assert "run_group_crashed" not in json.dumps(out["routes"])  # 合成条目不外泄
+        assert CC.has_runner_crash(out)
+
+    def test_finish_with_crash_and_no_failure_is_runner_error(self):
+        c = case("a")
+        res = CM._blank(c)
+        res["stages"].update(discover=True, execute=True)
+        out = CM._finish({"a": res}, [c], 0.0, crash_tb=self.CRASH)["a"]
+        assert out["classification"] == "runner_error"
+        assert out["stages"] == {"discover": True, "execute": True}
+
+    def test_finish_with_crash_and_untouched_case_is_whole_runner_error(self):
+        c = case("a")
+        out = CM._finish({"a": CM._blank(c)}, [c], 0.0, crash_tb=self.CRASH)["a"]
+        assert out["classification"] == "runner_error"
+        assert out["detail"]["runner_error"] == self.CRASH
+
+    def _patch_pipeline(self, monkeypatch, tmp_path, *, override_boom):
+        from tavotto.engine import pool
+
+        class FakeHot:
+            def __init__(self):
+                self.calls = 0
+
+            def ensure_built(self):
+                return {"stems": {"s": {"source": "x"}}, "timings": {}}
+
+            def override(self, stem, patches):
+                self.calls += 1
+                if self.calls >= 2 and override_boom:
+                    raise RuntimeError("hot.override boom")
+                return {"manifest": {"elements": [{"gid": "g", "editable": []}]}, "timings": {}}
+
+        monkeypatch.setattr(CM, "materialize", lambda g, w: (tmp_path, "s.py", "main"))
+        monkeypatch.setattr(
+            CM, "stage_discover", lambda *a, **k: {"ok": True, "entry": "main", "detail": {}}
+        )
+        monkeypatch.setattr(CM, "_fresh_worker", lambda *a, **k: FakeHot())
+        monkeypatch.setattr(CM, "stage_semantic", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(
+            CM,
+            "stage_edit",
+            lambda *a, **k: {"ok": True, "detail": {}, "full_patches": [{"gid": "g"}]},
+        )
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": False, "detail": {}})
+        monkeypatch.setattr(pool, "discard", lambda w: None)
+
+    def _run(self, group, tmp_path):
+        return CM.run_group(
+            group,
+            python=sys.executable,
+            root=tmp_path,
+            out_dir=tmp_path,
+            want_fidelity=False,
+            want_browser=False,
+        )
+
+    def test_run_group_crash_after_replay_failure_stays_product_bug(self, monkeypatch, tmp_path):
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=True)
+        c = case("a", expected_figures=1)
+        results = self._run([c], tmp_path)
+        r = results["a"]
+        assert r["classification"] == "product_bug"
+        assert r["stages"]["replay"] is False
+        assert "hot.override boom" in r["detail"]["runner_error"]
+        assert CC.has_runner_crash(r)
+        report = CM.build_report([c], results, {}, "current", "all")
+        assert [b["id"] for b in report["summary"]["product_bugs"]] == ["a"]
+        assert [e["id"] for e in report["summary"]["runner_errors"]] == ["a"]
+        with pytest.raises(CC.CorpusError) as ei:
+            CC.baseline_payload(results)
+        assert ei.value.code == "baseline_runner_error"
+
+    def test_run_group_crash_before_any_stage_is_runner_error(self, monkeypatch, tmp_path):
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+
+        def boom(*a, **k):
+            raise RuntimeError("discover boom")
+
+        monkeypatch.setattr(CM, "stage_discover", boom)
+        results = self._run([case("a")], tmp_path)
+        assert results["a"]["classification"] == "runner_error"
+        assert "discover boom" in results["a"]["detail"]["runner_error"]
+
+    def test_route_runner_crash_keeps_completed_routes_and_appends_crash(
+        self, monkeypatch, tmp_path
+    ):
+        """stage_product_routes 抛错：A 已存下的失败路由保留（product_bug），B 只有崩溃 → runner_error。"""
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        failed = {
+            "status": "fail",
+            "via": "http",
+            "code": "route_failed",
+            "classification": "product_bug",
+            "reason": "产品路由未走通（case a）",
+            "follow_up": "x",
+            "detail": {},
+        }
+
+        def routes_then_boom(group, root, results):
+            results["a"]["routes"] = {"http": dict(failed), "cli": {"status": "pass"}}
+            raise RuntimeError("routes boom")
+
+        monkeypatch.setattr(CM, "stage_product_routes", routes_then_boom)
+        # a 还声明了一条没来得及存的 native_run → 路由检查未完成，才会被追加崩溃
+        a = case("a", product_routes={"http": True, "cli": True, "native_run": True})
+        b = case("b", product_routes={"http": True})
+        results = self._run([a, b], tmp_path)
+
+        ra = results["a"]
+        assert ra["classification"] == "product_bug"
+        assert ra["routes"]["http"] == failed
+        assert ra["routes"]["cli"] == {"status": "pass"}
+        assert ra["routes"]["runner_error"]["code"] == "route_runner_crashed"
+        assert CC.has_runner_crash(ra)
+
+        rb = results["b"]
+        assert rb["classification"] == "runner_error"
+        assert list(rb["routes"]) == ["runner_error"]
+
+        report = CM.build_report([a, b], results, {}, "current", "all")
+        assert [x["id"] for x in report["summary"]["product_bugs"]] == ["a"]
+        assert {x["id"] for x in report["summary"]["runner_errors"]} >= {"a", "b"}
+
+    def test_route_runner_crash_does_not_retag_a_case_whose_routes_finished(
+        self, monkeypatch, tmp_path
+    ):
+        """真实异常路径：A 只声明 safe_probe 且已存好；B 的 native_run 崩溃 → 只有 B 记崩溃（r4310699342）。"""
+        from tavotto import app as tavotto_app
+
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(
+            CM, "route_probe_via_app", lambda *a, **k: {"ok": True, "via": "http", "detail": {}}
+        )
+        monkeypatch.setattr(CM, "route_cli_open", lambda *a, **k: {"ok": True, "via": "cli"})
+        monkeypatch.setattr(tavotto_app, "close_project", lambda pj: None)
+
+        def native_boom(*a, **k):
+            raise RuntimeError("native boom")
+
+        monkeypatch.setattr(CM, "route_native_run", native_boom)
+        a = case("a", product_routes={"safe_probe": True})
+        b = case("b", product_routes={"native_run": True})
+        results = self._run([a, b], tmp_path)
+
+        ra = results["a"]
+        assert ra["routes"] == {"safe_probe": ra["routes"]["safe_probe"]}
+        assert ra["routes"]["safe_probe"]["status"] == "pass"
+        assert "runner_error" not in ra["routes"]
+        assert ra["classification"] != "runner_error"
+        assert not CC.has_runner_crash(ra)
+
+        rb = results["b"]
+        # 逐路由隔离：崩溃记在 native_run 自己的条目上（不再是汇总键）
+        assert rb["routes"]["native_run"]["code"] == "route_runner_crashed"
+        assert "native boom" in rb["routes"]["native_run"]["detail"]
+        assert "native boom" in CC.runner_error_detail(rb)
+        assert rb["classification"] == "runner_error"
+
+        report = CM.build_report([a, b], results, {}, "current", "all")
+        assert [e["id"] for e in report["summary"]["runner_errors"]] == ["b"]
+
+    def test_later_route_crash_keeps_earlier_failed_route_of_same_case(self, monkeypatch, tmp_path):
+        """真实 stage_product_routes：同一 case 的 desktop_project 已失败、native_run 抛 OSError → 仍是 product_bug（r4310730061）。"""
+        from tavotto import app as tavotto_app
+
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(
+            CM,
+            "route_probe_via_app",
+            lambda *a, **k: {"ok": True, "via": "http", "pj": object(), "detail": {}},
+        )
+        monkeypatch.setattr(
+            CM,
+            "route_desktop_project",
+            lambda *a, **k: {"ok": False, "code": "desktop_project_failed", "detail": {}},
+        )
+        monkeypatch.setattr(CM, "route_cli_open", lambda *a, **k: {"ok": True, "via": "cli"})
+        monkeypatch.setattr(tavotto_app, "close_project", lambda pj: None)
+
+        def native_boom(*a, **k):
+            raise OSError("spawn native_run boom")
+
+        monkeypatch.setattr(CM, "route_native_run", native_boom)
+        a = case("a", product_routes={"desktop_project": True, "native_run": True})
+        results = self._run([a], tmp_path)
+
+        ra = results["a"]
+        assert ra["routes"]["desktop_project"]["status"] == "fail"
+        assert ra["routes"]["desktop_project"]["classification"] == "product_bug"
+        assert ra["routes"]["native_run"]["code"] == "route_runner_crashed"
+        assert ra["routes"]["native_run"]["classification"] == "runner_error"
+        assert "spawn native_run boom" in ra["routes"]["native_run"]["detail"]
+        assert ra["classification"] == "product_bug"
+
+        report = CM.build_report([a], results, {}, "current", "all")
+        assert [x["id"] for x in report["summary"]["product_bugs"]] == ["a"]
+        assert [x["id"] for x in report["summary"]["runner_errors"]] == ["a"]
+        ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
+        assert not ok and any("新出现的 product_bug" in f for f in fails)
+
+    def _isolation_pipeline(self, monkeypatch, tmp_path, *, probe, cli, close=None):
+        from tavotto import app as tavotto_app
+
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "route_probe_via_app", probe)
+        monkeypatch.setattr(CM, "route_cli_open", cli)
+        monkeypatch.setattr(tavotto_app, "close_project", close or (lambda pj: None))
+
+    def test_shared_probe_failure_survives_later_cli_crash(self, monkeypatch, tmp_path):
+        """safe_probe 已是产品失败，随后 route_cli_open 起不来 → 仍 product_bug，门禁致红（r4310776661）。"""
+
+        def cli_boom(*a, **k):
+            raise OSError("cli spawn boom")
+
+        self._isolation_pipeline(
+            monkeypatch,
+            tmp_path,
+            probe=lambda *a, **k: {
+                "ok": False,
+                "code": "probe_failed",
+                "via": "http",
+                "pj": "pj1",
+                "detail": {},
+            },
+            cli=cli_boom,
+        )
+        a = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = self._run([a], tmp_path)
+        ra = results["a"]
+        assert ra["routes"]["safe_probe"]["status"] == "fail"
+        assert ra["routes"]["safe_probe"]["classification"] == "product_bug"
+        assert ra["routes"]["cli_open"]["code"] == "route_runner_crashed"
+        assert ra["routes"]["cli_open"]["classification"] == "runner_error"
+        assert "cli spawn boom" in ra["routes"]["cli_open"]["detail"]
+        assert ra["classification"] == "product_bug"
+        assert CC.has_runner_crash(ra)
+        report = CM.build_report([a], results, {}, "current", "all")
+        assert [x["id"] for x in report["summary"]["runner_errors"]] == ["a"]
+        ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
+        assert not ok and any("新出现的 product_bug" in f for f in fails)
+
+    def test_close_project_crash_keeps_route_verdicts_and_records_fact(self, monkeypatch, tmp_path):
+        def close_boom(pj):
+            raise RuntimeError("close boom")
+
+        self._isolation_pipeline(
+            monkeypatch,
+            tmp_path,
+            probe=lambda *a, **k: {
+                "ok": False,
+                "code": "probe_failed",
+                "via": "http",
+                "pj": "pj1",
+                "detail": {},
+            },
+            cli=lambda *a, **k: {"ok": True, "via": "cli", "payload": {"stem": "s"}},
+            close=close_boom,
+        )
+        a = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = self._run([a], tmp_path)
+        ra = results["a"]
+        assert ra["routes"]["safe_probe"]["classification"] == "product_bug"
+        assert ra["routes"]["cli_open"]["status"] == "pass"
+        assert ra["routes"]["runner_error"]["code"] == "route_runner_crashed"
+        assert "close boom" in CC.runner_error_detail(ra)
+        assert ra["classification"] == "product_bug"
+        assert CC.has_runner_crash(ra)
+
+    def test_only_one_route_crashing_is_runner_error(self, monkeypatch, tmp_path):
+        def cli_boom(*a, **k):
+            raise OSError("cli only boom")
+
+        self._isolation_pipeline(
+            monkeypatch,
+            tmp_path,
+            probe=lambda *a, **k: {"ok": True, "via": "http", "detail": {}},
+            cli=cli_boom,
+        )
+        a = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = self._run([a], tmp_path)
+        ra = results["a"]
+        assert ra["routes"]["safe_probe"]["status"] == "pass"
+        assert ra["routes"]["cli_open"]["code"] == "route_runner_crashed"
+        assert ra["classification"] == "runner_error"
+        ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
+        assert not any("新出现的 product_bug" in f for f in fails)
+
+
+class TestMalformedProductResponseIsProductBug:
+    """产品返回不合契约的响应 = 路由失败（product_bug），不是 runner 崩溃（Codex #1178 r4310660485）。"""
+
+    class _Resp:
+        def __init__(self, status, body):
+            self.status_code, self._body = status, body
+
+        def get_json(self):
+            return self._body
+
+    def _patch(self, monkeypatch, tmp_path, *, open_body, cli_stdout):
+        from tavotto import app as tavotto_app
+
+        outer = self
+
+        class Client:
+            def post(self, url, json=None):
+                if url == "/api/projects/open":
+                    return outer._Resp(200, open_body)
+                return outer._Resp(200, {"registered": True, "stems": ["s"]})
+
+            def get(self, url):
+                return outer._Resp(200, {})
+
+        monkeypatch.setattr(tavotto_app.app, "test_client", lambda: Client())
+        monkeypatch.setattr(tavotto_app, "close_project", lambda pj: None)
+        monkeypatch.setattr(CM, "materialize", lambda g, w: (tmp_path, "s.py", "main"))
+        monkeypatch.setattr(
+            CM.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=cli_stdout, stderr=""),
+        )
+
+    def _routes(self, monkeypatch, tmp_path, **kw):
+        self._patch(monkeypatch, tmp_path, **kw)
+        c = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = {"a": CM._blank(c)}
+        CM.stage_product_routes([c], tmp_path, results)
+        return c, results["a"]["routes"]
+
+    GOOD_CLI = json.dumps({"ok": True, "stem": "s"})
+
+    def test_open_200_without_id_is_a_failed_route_not_a_crash(self, monkeypatch, tmp_path):
+        c, routes = self._routes(
+            monkeypatch, tmp_path, open_body={"name": "x"}, cli_stdout=self.GOOD_CLI
+        )
+        e = routes["safe_probe"]
+        assert e["status"] == "fail"
+        assert e["classification"] == "product_bug"
+        assert e["code"] == "malformed_product_response"
+        assert e["detail"]["field"] == "id"
+        assert routes["cli_open"]["status"] == "pass"
+        cls, _r, _d = CM.classify(c, stages(execute=True), {}, routes)
+        assert cls == "product_bug"
+
+    def test_open_body_not_an_object_is_a_failed_route(self, monkeypatch, tmp_path):
+        _c, routes = self._routes(monkeypatch, tmp_path, open_body=["id"], cli_stdout=self.GOOD_CLI)
+        assert routes["safe_probe"]["code"] == "malformed_product_response"
+        assert routes["safe_probe"]["classification"] == "product_bug"
+
+    def test_cli_output_not_an_object_is_a_failed_route(self, monkeypatch, tmp_path):
+        _c, routes = self._routes(
+            monkeypatch, tmp_path, open_body={"id": "p1"}, cli_stdout="[1, 2]"
+        )
+        e = routes["cli_open"]
+        assert e["status"] == "fail" and e["classification"] == "product_bug"
+        assert e["code"] == "malformed_product_response"
+
+    def test_cli_figures_malformed_is_a_failed_route(self, monkeypatch, tmp_path):
+        self._patch(
+            monkeypatch,
+            tmp_path,
+            open_body={"id": "p1"},
+            cli_stdout=json.dumps({"ok": False, "code": "multiple_figures_found", "figures": [1]}),
+        )
+        group = [case("a", product_routes={"cli_open": True}), case("b", stem="t")]
+        results = {c["id"]: CM._blank(c) for c in group}
+        CM.stage_product_routes(group, tmp_path, results)
+        e = results["a"]["routes"]["cli_open"]
+        assert e["status"] == "fail" and e["classification"] == "product_bug"
+
+    def test_gate_treats_it_as_a_new_product_bug(self, monkeypatch, tmp_path):
+        c, routes = self._routes(monkeypatch, tmp_path, open_body={}, cli_stdout=self.GOOD_CLI)
+        res = CM._blank(c)
+        res["stages"].update(discover=True, execute=True)
+        res["routes"] = routes
+        res["classification"], res["reason"], note = CM.classify(c, res["stages"], {}, routes)
+        res["detail"] = {"note": note}
+        assert res["classification"] == "product_bug"
+        ok, fails = CM.evaluate_gate("pr", [c], {"a": res}, {"cases": {}})
+        assert not ok and any("新出现的 product_bug" in f for f in fails)
+
+    def test_harness_crash_in_materialize_is_a_route_runner_error(self, monkeypatch, tmp_path):
+        self._patch(monkeypatch, tmp_path, open_body={"id": "p"}, cli_stdout=self.GOOD_CLI)
+
+        def boom(*a, **k):
+            raise OSError("materialize boom")
+
+        monkeypatch.setattr(CM, "materialize", boom)
+        c = case("a", product_routes={"safe_probe": True})
+        results = {"a": CM._blank(c)}
+        CM.stage_product_routes([c], tmp_path, results)
+        e = results["a"]["routes"]["safe_probe"]
+        assert e["code"] == "route_runner_crashed" and e["classification"] == "runner_error"
+        assert "materialize boom" in e["detail"]

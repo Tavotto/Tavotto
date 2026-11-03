@@ -390,6 +390,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
         # U07（ADR 0065 / 0066）：落位几何与 RasterBuffer 也是纯模型
         "tavotto/rendercore/placement.py",
         "tavotto/rendercore/raster.py",
+        "tavotto/rendercore/svgcheck.py",
     ),
     "rendercore_native": ("tavotto/rendercore/",),
 }

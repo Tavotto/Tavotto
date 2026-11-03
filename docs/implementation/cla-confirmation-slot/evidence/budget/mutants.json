@@ -1,0 +1,68 @@
+[
+  {
+    "name": "slot measured new head issued statement cost",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "offset": 10806,
+    "source_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "mutant_sha256": "48adbdcf0bf64e179610a308780fc6a93b894a274cbfe30253dece8e342967ec",
+    "exit": 1,
+    "assertionError": true,
+    "log": "/tmp/cla-slot-budget-independent/mutant-1.log"
+  },
+  {
+    "name": "slot busy capacity cannot consume retry",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "offset": 19829,
+    "source_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "mutant_sha256": "e9dcffe16cd57338d2c3703f9e0cdaa54fbf51d0bb852942873fed3d5f627a74",
+    "exit": 1,
+    "assertionError": true,
+    "log": "/tmp/cla-slot-budget-independent/mutant-2.log"
+  },
+  {
+    "name": "slot confirmed owner keeps live send fence",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "offset": 30978,
+    "source_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "mutant_sha256": "eac774aeb0cc3f824af96a987ae01894a8dd33e5dddf458bf5db2f08f2ac72e1",
+    "exit": 1,
+    "assertionError": true,
+    "log": "/tmp/cla-slot-budget-independent/mutant-3.log"
+  },
+  {
+    "name": "slot durable latch fences flagfalse head admission",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "offset": 7860,
+    "source_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "mutant_sha256": "a1c23d8a75299c7b81b64dee419f25e81b47918aea03ea0b83b6d2cdc49a8369",
+    "exit": 1,
+    "assertionError": true,
+    "log": "/tmp/cla-slot-budget-independent/mutant-4.log"
+  },
+  {
+    "name": "slot expired withdrawal target precedes ordinary due target",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "offset": 31162,
+    "source_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "mutant_sha256": "3cf61343e4ed31e7445918d90a2f9f1123d248fb5031ddaf6b724d3a83eaf729",
+    "exit": 1,
+    "assertionError": true,
+    "log": "/tmp/cla-slot-budget-independent/mutant-5.log"
+  },
+  {
+    "name": "slot expired owner precedes older eligible ordinary journal",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "offset": 23823,
+    "source_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "mutant_sha256": "8743de5e49c1d6d79783a33c4dee32b161de88614759d688a4f00da81aa3d666",
+    "exit": 1,
+    "assertionError": true,
+    "log": "/tmp/cla-slot-budget-independent/mutant-6.log"
+  }
+]

@@ -12,7 +12,14 @@ import threading
 
 import pytest
 
-from tavotto.engine import patchspec, pool
+from tavotto.engine import executionfact, patchspec, pool
+
+
+def _command_payload(payload):
+    """Check the request-bound observation token separately from command semantics."""
+    payload = dict(payload)
+    assert executionfact.valid_watch(payload.pop("execution_watch"))
+    return payload
 
 
 class _FakePipe:
@@ -135,7 +142,7 @@ def test_envelope_carries_version_generation_revision_and_hash(tmp_path):
     # 池方法叫 override（app.py 一路这么叫），线上命令叫 render
     assert env["cmd"] == "render"
     assert env["stem"] == "Fig1"  # stem 走顶层，不在 payload 里
-    assert env["payload"] == {"patches": patches}
+    assert _command_payload(env["payload"]) == {"patches": patches}
     assert env["canonical_patch_hash"] == patchspec.patch_hash(patches)
 
 
@@ -157,11 +164,15 @@ def test_commands_map_to_the_v1_names_and_payloads(tmp_path):
     w.export("Fig1", [], "/tmp/x.pdf", "pdf", 300)
     sent = {e["cmd"]: e for e in w.proc.stdin.sent}
     assert set(sent) == {"build", "render_png", "preview_png", "export"}
-    assert sent["build"]["payload"] == {}
+    assert _command_payload(sent["build"]["payload"]) == {}
     assert "canonical_patch_hash" not in sent["build"]  # 不带 patches 就不算
-    assert sent["render_png"]["payload"] == {"width": 800}
-    assert sent["preview_png"]["payload"] == {"patches": [], "width": 400, "tag": "hist3"}
-    assert sent["export"]["payload"] == {
+    assert _command_payload(sent["render_png"]["payload"]) == {"width": 800}
+    assert _command_payload(sent["preview_png"]["payload"]) == {
+        "patches": [],
+        "width": 400,
+        "tag": "hist3",
+    }
+    assert _command_payload(sent["export"]["payload"]) == {
         "patches": [],
         "path": "/tmp/x.pdf",
         "format": "pdf",
@@ -401,18 +412,18 @@ def test_preview_dpi_is_only_sent_when_asked(tmp_path):
     """不给 preview_dpi 时信封形状一字不变（老调用方与 golden 断言都靠这条）。"""
     w = _worker(lambda env: _echo(env, manifest={}, warnings=[]), tmp_path)
     w.override("Fig1", [])
-    assert w.proc.stdin.sent[-1]["payload"] == {"patches": []}
+    assert _command_payload(w.proc.stdin.sent[-1]["payload"]) == {"patches": []}
     w.override("Fig1", [], preview_dpi=96)
-    assert w.proc.stdin.sent[-1]["payload"] == {"patches": [], "preview_dpi": 96}
+    assert _command_payload(w.proc.stdin.sent[-1]["payload"]) == {"patches": [], "preview_dpi": 96}
 
 
 def test_inline_svg_is_only_sent_when_asked(tmp_path):
     """同上：`inline_svg` 也是「不给就一个字段都不加」的可选项。"""
     w = _worker(lambda env: _echo(env, manifest={}, warnings=[], svg="<svg/>"), tmp_path)
     w.override("Fig1", [])
-    assert w.proc.stdin.sent[-1]["payload"] == {"patches": []}
+    assert _command_payload(w.proc.stdin.sent[-1]["payload"]) == {"patches": []}
     resp = w.override("Fig1", [], inline_svg=True)
-    assert w.proc.stdin.sent[-1]["payload"] == {"patches": [], "inline_svg": True}
+    assert _command_payload(w.proc.stdin.sent[-1]["payload"]) == {"patches": [], "inline_svg": True}
     # 结果字段整体透传（控制面不解释 svg，只是把它带上来）
     assert resp["svg"] == "<svg/>"
 
@@ -434,4 +445,4 @@ def test_png_snapshot_uses_existing_command_with_paired_response(tmp_path, edite
     assert result["png"] == "cG5n" and result["manifest"] == {"elements": []}
     env = w.proc.stdin.sent[-1]
     assert env["cmd"] == "preview_png"
-    assert env["payload"] == {"patches": [], "width": 800, "with_manifest": True}
+    assert _command_payload(env["payload"]) == {"patches": [], "width": 800, "with_manifest": True}

@@ -75,7 +75,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, launcher, runtime, scanbudget
+from . import config, launcher, rootenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.projectenv")
 
@@ -97,6 +97,11 @@ ERROR_WORKER_IMPORT = "project_env_worker_import_failed"
 #: 找到了一个能用的候选环境，但采用它是用户的决定（ADR 0114）：接手的结构上带 `recommended`，
 #: 由用户点一次采用（`PATCH /api/engine/environment`），之后才进项目设置。
 ERROR_CONFIRMATION_REQUIRED = "environment_confirmation_required"
+#: 这个解释器起出来的进程在 Tavotto 的数据目录里**建不了目录**（体检在自己的空 cwd——`<data_dir>/cache/probe/` 下——里建一个
+#: 再删掉，被系统拒绝）。worker 每次 build 都要在会话缓存里建目录，接受它 = 之后每次运行都在用户代码之前失败（TVD-B6MR，
+#: #1594；真机上低完整性标签的 python.exe 就是这样：能读、能复用已有目录、不能新建）。与 worker 侧失败码同值
+#: （`pool.INTERPRETER_CACHE_DENIED_CODE`），文案同一份。内置 runtime 不做这条判定（见 `_probe_environment`）。
+ERROR_CACHE_DENIED = "interpreter_cache_denied"
 
 #: 找哪些目录名。顺序即优先级（同一层同时存在时按这个顺序裁决）。
 VENV_DIRNAMES = (".venv", "venv", "env")
@@ -373,8 +378,50 @@ mode = sys.argv[4] if len(sys.argv) > 4 else ""
 project_root = sys.argv[5] if len(sys.argv) > 5 else ""
 isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
 out["pythonpath_entries"] = (os.environ.get("PYTHONPATH") or "").split(os.pathsep) if os.environ.get("PYTHONPATH") else []
+# 能不能在 Tavotto 的数据目录里新建目录（cwd 是父进程在 `<data_dir>/cache/probe/` 下建的空目录，与 worker 会话缓存同一棵树）：
+# worker 每次 build 都要建 `out` / `sandbox` / `out/script-input`。只认 PermissionError 为「被拒」，别的 OSError 不下结论
+try:
+    _wc = os.path.join(os.getcwd(), "tavotto-write-check")
+    os.mkdir(_wc)
+    os.rmdir(_wc)
+    out["cache_write"] = "ok"
+except PermissionError:
+    out["cache_write"] = "denied"
+except OSError:
+    out["cache_write"] = "unknown"
 # 两种体检都记住尚未创建的绝对根；相对 / 空条目仍待统一 worker 启动 cwd 后处理。
 out["pythonpath_dirs"] = [p for p in out["pythonpath_entries"] if os.path.isabs(p)]
+
+
+# 叠加的 ROOT（Windows）：与 worker 启动钩子（`worker._startup_dll_directory`）同一件事——登记 DLL 目录（Python >= 3.8 不按 PATH
+# 找 .pyd 依赖的 DLL），并往 sys.meta_path 末尾装只认顶层名 `libcppyy` 的 finder（`bin\\cppyy` 里有 `types.py` 等同名标准库文件，
+# 不能进 sys.path）。否则体检里 `import ROOT` 失败、被误判成「Python 版本对不上」。变量名 = `rootenv.DLL_DIR_ENV` / `CPPYY_DIR_ENV`
+_root_dll = os.environ.get("TAVOTTO_ROOT_DLL_DIR")
+if _root_dll and os.name == "nt" and hasattr(os, "add_dll_directory") and os.path.isdir(_root_dll):
+    try:
+        # 句柄存进模块级变量：体检进程存活期间一直持有（与 worker 的 `_dll_dir_handles` 同一件事）
+        _dll_handle = os.add_dll_directory(_root_dll)
+    except (OSError, ValueError):
+        pass
+    _cppyy = os.environ.get("TAVOTTO_ROOT_CPPYY_DIR")
+    try:
+        _pyds = sorted(n for n in os.listdir(_cppyy) if n.startswith("libcppyy") and n.endswith(".pyd")) if _cppyy else []
+    except OSError:
+        _pyds = []
+    if _pyds:
+        _pyd = os.path.join(_cppyy, "libcppyy.pyd" if "libcppyy.pyd" in _pyds else _pyds[0])
+
+        class _LibcppyyFinder:
+            @staticmethod
+            def find_spec(name, path=None, target=None):
+                if name != "libcppyy":
+                    return None
+                from importlib.machinery import ExtensionFileLoader
+                from importlib.util import spec_from_file_location
+
+                return spec_from_file_location(name, _pyd, loader=ExtensionFileLoader(name, _pyd))
+
+        sys.meta_path.append(_LibcppyyFinder)
 
 
 def _norm(path):
@@ -850,8 +897,13 @@ def _probe_environment(
     timeout: float | None = None,
     import_mode: str = "import",
     project_root: str = "",
+    env_overlay: dict | None = None,
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
+
+    `env_overlay`（ADR 0079 修订 2026-10-21 b）：把 ROOT 之类的「叠加环境」（`rootenv`）叠到体检进程的环境上——
+    在内置 runtime 摘掉 `PYTHONPATH`、Conda 激活取环境**之后**叠，与 worker 起进程（`pool.worker_env`）同一个顺序。
+    只用于 `import` 方式：`spec` 方式的体检以 `-I` 启动，忽略 `PYTHON*` 环境变量，叠加层在那里不起作用。
 
     `import_mode="spec"`（用户点「运行」之前）：脚本要的模块**不 import**，只问顶层名的 `find_spec`，路径落在
     `project_root` 里的回 `None`（延后到运行）。体检进程本身：cwd 是空的临时目录、`-c` 的 `sys.path[0]` 就是它——项目目录
@@ -924,6 +976,8 @@ def _probe_environment(
         probe_env = launcher.activate_env(
             python, runtime.probe_env(python, bundled=bundled), timeout=probe_timeout
         )
+        if env_overlay and not isolate:
+            probe_env = rootenv.apply_overlay(probe_env, env_overlay, replace_pythonpath=bundled)
         spawned = activating  # 激活跑过 conda 与 activate.d：之后的任何失败都不许报成「什么都没跑」
         probe_timeout = deadline - time.monotonic()
         if probe_timeout <= 0:
@@ -967,6 +1021,8 @@ def _probe_environment(
             "python": python,
             "detail": str(exc)[:400],
             "execution": execution_note(**shape, started=started),
+            # 超时单独标出（落选原因 `probe_timeout`，ADR 0079 修订）；只在超时时才有这个键
+            **({"timed_out": True} if isinstance(exc, subprocess.TimeoutExpired) else {}),
         }
     finally:
         if scratch:
@@ -996,6 +1052,12 @@ def _probe_environment(
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
         info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)
         # 版本硬边界不依赖包 / 启动路径，消费者不能把确定不支持当成待确认。
+        info.pop("deferred_env", None)
+        return info
+    if not bundled and info.get("cache_write") == "denied":
+        # 内置 runtime 是 Tavotto 自己的：它也被拒（杀软拦了安装目录里的解释器）时不在这里判「不可用」——那会被当成
+        # 「安装包不完整」去劝重装；运行时由 worker 的 `interpreter_cache_denied` 如实报
+        info.update(ok=False, code=ERROR_CACHE_DENIED)
         info.pop("deferred_env", None)
         return info
     if info.get("deferred_env"):
@@ -1284,13 +1346,17 @@ def env_key(python: str) -> tuple[str, str]:
     return os.path.normcase(os.path.dirname(path)), os.path.normcase(real)
 
 
-def env_id(python: str) -> str:
+def env_id(python: str, overlay: dict | None = None) -> str:
     """对外的不透明身份：HTTP 投影不带机器路径（ADR 0053 §二），界面采用时交回这个 id，后端用自己的
-    发现结果换回路径——路径只来自 `userenvs` 的枚举，不接受调用方给（ADR 0044 的安全口径）。"""
+    发现结果换回路径——路径只来自 `userenvs` 的枚举，不接受调用方给（ADR 0044 的安全口径）。
+
+    `overlay`（ROOT 叠加层）给了，同一个解释器 + 不同叠加层是不同的候选：叠加层的键并进摘要；
+    没有叠加层时与以前逐字相同。"""
     import hashlib
 
     d, real = env_key(python)
-    return hashlib.sha1(f"{d}|{real}".encode()).hexdigest()[:16]
+    extra = rootenv.key_of(overlay)
+    return hashlib.sha1((f"{d}|{real}" + (f"|{extra}" if extra else "")).encode()).hexdigest()[:16]
 
 
 def environment_generation(python: str) -> str:
@@ -1465,6 +1531,25 @@ def remembered(figures_dir: str | Path) -> str | None:
     return path
 
 
+def remembered_overlay(figures_dir: str | Path, python: str | None = None) -> dict | None:
+    """项目记录里随解释器一起记着的叠加环境（`rootenv.valid_spec` 规整过的），没有回 None。
+
+    `python` 给了就要求它与记录里的解释器是同一个（记录换了解释器、旧叠加层就不适用）。纯读设置，不 stat 叠加层的安装根
+    （起进程时 `rootenv.apply_overlay` 会核对）。"""
+    stored = (config.project_settings(str(Path(figures_dir))) or {}).get(SETTINGS_KEY)
+    if not isinstance(stored, dict) or stored.get("mode") == MODE_DEFAULT_CHAIN:
+        return None
+    spec = rootenv.valid_spec(stored.get("env_overlay"))
+    if spec is None:
+        return None
+    if python is not None:
+        rel = stored.get("python_relative")
+        path = str(Path(figures_dir) / rel) if rel else (stored.get("python") or "")
+        if not path or env_key(path) != env_key(python):
+            return None
+    return spec
+
+
 def project_relative(figures_dir: str | Path, python: str) -> str:
     """解释器在项目内时的相对路径（**POSIX 形态**，`.venv/Scripts/python.exe` 在 Windows 上也是
     正斜杠）；在项目外（或算不出来）回空串。
@@ -1513,8 +1598,12 @@ def remember(
     module: str = "",
     health: dict | None = None,
     only_if=None,
+    env_overlay: dict | None = None,
 ) -> bool:
     """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）；回写了没有。
+
+    `env_overlay`（`rootenv.overlay_spec`）：解释器要带着叠加环境才跑得了这个脚本（ROOT）——一并持久化，
+    `pool.worker_env` 起 worker 时叠上；不给 = 清掉先前记着的叠加层（换了解释器就不该再带旧的）。
 
     `only_if(record)`：给了就在写入锁里拿此刻的 `remembered_record()` 问一次，False 就不写（回 False）。
     项目设置写不进去（数据目录只读 / 满）同样回 False：`resolve_worker_python()` 读的是持久化的记录，
@@ -1527,10 +1616,10 @@ def remember(
     with _decision_lock:
         if only_if is not None and not only_if(remembered_record(figures_dir)):
             return False
-        return _remember(figures_dir, python, automatic, trigger, module, health)
+        return _remember(figures_dir, python, automatic, trigger, module, health, env_overlay)
 
 
-def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
+def _remember(figures_dir, python, automatic, trigger, module, health, env_overlay=None) -> bool:
     root = Path(figures_dir)
     payload = {"automatic": bool(automatic), "trigger": trigger or "", "module": module or ""}
     # 把体检当时的事实一并存下来：诊断包要回答「为什么用了这个 Python」，
@@ -1539,6 +1628,9 @@ def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
     for key in ("python_version", "matplotlib_version", "support"):
         if (health or {}).get(key):
             payload[key] = str(health[key])
+    spec = rootenv.valid_spec(env_overlay)
+    if spec is not None:
+        payload["env_overlay"] = spec
     generation = environment_generation(python)
     if generation:
         # 采用时的环境代：解析解释器时对一遍，同一路径被重建就要重新确认（ADR 0114 §四）
@@ -1839,4 +1931,13 @@ def state(figures_dir: str | Path) -> dict:
     }
     if python:
         out["python_relative"] = project_relative(figures_dir, python)
+        # 解释器带着的叠加环境（ROOT，ADR 0079 修订）：只读事实，**只给种类 / 版本 / 标签，不带安装路径**（ADR 0053 §二：
+        # 公开投影不带机器路径）。没有叠加 = 不出现这个键
+        overlay = remembered_overlay(figures_dir, python)
+        if overlay is not None:
+            out["env_overlay"] = {
+                "kind": overlay.get("kind", ""),
+                "version": overlay.get("version", ""),
+                "label": rootenv.label_of(overlay),
+            }
     return out

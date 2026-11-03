@@ -441,6 +441,14 @@ fn allowed_hits() -> Vec<Hit> {
         h("main.rs", "spawn_e2e_update_if_requested", "restart"),
         // 原生救援页「重新尝试」（ADR 0130）：mark_clean_exit 在 restart 之前，由 main.rs 的结构测试钉住
         h("rescue.rs", "rescue_retry", "restart"),
+        // MSIX 包身份兜底（#1574）：在 `main()` 里崩溃过滤器之后、任何窗口 / 退出标记 / sidecar 之前，
+        // 新进程已在包外拉起，本进程什么都没启动过——没有 clean 可写，也没有东西要收；
+        // 位置由 msix_breakaway.rs 的结构测试钉住
+        h(
+            "msix_breakaway.rs",
+            "relaunch_outside_package_if_needed",
+            "process::exit",
+        ),
         // sidecar.rs 为 spawn 子进程导入的类型（不含 exit）
         h("sidecar.rs", "", "use std::process::Child"),
         h("sidecar.rs", "", "use std::process::ChildStdin"),
@@ -449,12 +457,12 @@ fn allowed_hits() -> Vec<Hit> {
         // Windows 上给 Command 加 CREATE_NO_WINDOW
         h(
             "sidecar.rs",
-            "start",
+            "start_with",
             "use std::os::windows::process::CommandExt",
         ),
         h(
             "main.rs",
-            "codex_integration",
+            "run_cli_json",
             "use std::os::windows::process::CommandExt",
         ),
     ]

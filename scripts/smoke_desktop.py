@@ -127,7 +127,9 @@ def is_packaged(exe: Path) -> bool:
     return (exe.parent / "_internal").is_dir()
 
 
-def check_control_plane(port: int, cookie: str, packaged: bool, rendered: bool) -> None:
+def check_control_plane(
+    port: int, cookie: str, packaged: bool, rendered: bool, data_dir: Path | None = None
+) -> None:
     """渲染控制面必须是 workerd（Rust supervisor），而且渲染真的走了它。
 
     回退到 Python 池是**静默**的（`pool._new_worker()` 的 except 分支），所以
@@ -154,11 +156,50 @@ def check_control_plane(port: int, cookie: str, packaged: bool, rendered: bool) 
         print("⚠ 本次没跑渲染（环境缺 matplotlib）：只验到「带着 workerd」，没验到「渲染真走了它」")
         return
     if "workerd" not in sessions:
+        # CI 上数据目录是临时的、跑完即删：日志不在这里打出来就再也看不到了
+        log = data_dir / "cache" / "workerd.log" if data_dir else None
+        if log and log.is_file():
+            tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+            print(f"--- {log}（最后 {len(tail)} 行）---")
+            print("\n".join(tail))
+            print("--- end ---")
+        elif log:
+            print(f"（没有 {log}）")
         fail(
             f"渲染跑完了，但会话走的是 Python 渲染池: {sessions}"
             "（workerd 起不来？看数据目录 cache/workerd.log）"
         )
     ok(f"渲染会话确实跑在 workerd 上: {sessions}")
+
+
+def check_cli_subcommands(exe: Path, env: dict) -> None:
+    """产物里的 `tavotto-cli` 子命令真的能起来（TVD-BCZ0）。
+
+    应用拉起的子进程（内置执行器 `agent-run`、修复会话的 `fix-mcp`）走的是同目录的
+    `tavotto-cli`，不是 sidecar 本身；冻结时漏收的模块只在这里炸。0.19.0–0.19.2 的
+    `agent-run` 一启动就 ImportError，源码测试与本冒烟一直绿——因为没人在产物上起过它。
+    `--help` 只走到 argparse，不发请求、不读 stdin，足以证明入口模块装进了包。
+    """
+    suffix = ".exe" if os.name == "nt" else ""
+    cli = exe.parent / f"tavotto-cli{suffix}"
+    if not cli.exists():
+        cli = exe  # 源码模式：`.venv/bin/tavotto` 同一个分发
+    for sub in ("agent-run", "fix-mcp"):
+        out = subprocess.run(
+            [str(cli), sub, "--help"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=60,
+        )
+        # 判「入口模块装进了包」：argparse 印出了 usage 且没有 traceback（有的子命令把 --help 当缺参数，退出码 2）
+        text = out.stdout + out.stderr
+        if "usage:" not in text or "Traceback" in text:
+            fail(f"{cli.name} {sub} --help 退出码 {out.returncode}:\n{text[-2000:]}")
+        ok(f"{cli.name} {sub} 能起来")
 
 
 def request(
@@ -222,6 +263,8 @@ def main() -> None:
         "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake),
     }
     env.pop("TAVOTTO_DESKTOP_NONCE", None)
+
+    check_cli_subcommands(exe, env)
 
     proc = subprocess.Popen(
         [str(exe), "--desktop-sidecar"],
@@ -342,7 +385,7 @@ def main() -> None:
             ok(f"导出 PDF+PNG: {[f['name'] for f in body['files']]}")
 
         # ---- 渲染控制面（放在渲染之后问：那时池里才有真会话）----
-        check_control_plane(port, cookie, is_packaged(exe), rendered)
+        check_control_plane(port, cookie, is_packaged(exe), rendered, tmp / "data")
 
         # ---- 退出：关 stdin = 壳没了 ----
         # 关停**之前**把整棵后代快照下来（见 `_descendants`：父进程一死树就断）。

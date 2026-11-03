@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib
+import inspect
 import json
 import ntpath
 import os
@@ -133,7 +134,12 @@ class BridgeError(RuntimeError):
 #: 这个能力，就当场以 `engine_capability_missing` 拒绝，绝不先「试着无参数跑一次」。
 SCRIPT_ARGV_FEATURE = "script-argv"
 ENVIRONMENT_ADOPTION_FEATURE = "environment-adoption"
+#: 写入根绊线（#898，ADR 0141）：不是「先问再拒绝」的能力——引擎没宣告就**不传参**（旧引擎行为照旧），
+#: 因为拒绝一次本来能跑的合法运行比没有绊线更糟。同时是引擎侧回滚开关（从 FEATURES 去掉即可）。
+WRITE_ROOT_TRIPWIRE_FEATURE = "write-root-tripwire"
 CAPABILITY_MISSING = "engine_capability_missing"
+#: worker 的写入根绊线终局码（`engine/writetripwire.CODE` 的镜像；旧引擎上 import 不到）。
+WRITE_OUTSIDE_ROOTS = "write_outside_roots"
 
 
 #: 桥**可选**使用的引擎模块：比插件的最低引擎版本新，旧引擎上不存在。它们不进 `_BRIDGE_IMPORT` /
@@ -702,8 +708,23 @@ def _spawn_worker(session: "Session", *, one_shot: bool):
     _recheck_run(run, session.project, session.script)
     # 无配置时调用形状与旧版一致（旧引擎的池函数不认识 `run=`）
     context = {"run": run} if run is not None else {}
+    roots = _tripwire_roots()
+    if roots is not None:
+        context["write_roots"] = roots
     fn = engine_pool.one_shot if one_shot else engine_pool.get
     return fn(session.script, session.project, session.entry, **context)
+
+
+def _tripwire_roots() -> tuple[str, ...] | None:
+    """MCP 来源的 safe 运行带给 worker 的写入根绊线授权根；None = 不装（引擎没宣告能力 / 已回滚）。
+
+    根就是 `allowed_roots()`（`RootAuthority` 快照：用户绑定 / 宿主 roots / 显式环境变量里**可信**的那些，
+    已拒 HOME 这类过宽的根）——与 `check_scope` 判「项目在不在范围内」的是同一份，所以脚本能写的地方不会
+    比 Agent 能指向的地方更大。根是 spawn 时烤进 worker 的：根集合变了，池键也变（另一条会话）。
+    GUI / native / CLI 不经这里，不装。"""
+    if WRITE_ROOT_TRIPWIRE_FEATURE not in engine_features():
+        return None
+    return tuple(allowed_roots())
 
 
 def _answer_workdir(project: str, mode: str) -> None:
@@ -943,6 +964,15 @@ def _bridge_error_from_worker(
             + private_note
         )
     code = exc.code or default_code
+    if code == WRITE_OUTSIDE_ROOTS:
+        # 绊线（#898）：路径已被 worker 相对化到项目根，这里不再补任何绝对路径或授权根列表
+        wanted = (getattr(exc, "extra", None) or {}).get("path")
+        if isinstance(wanted, str) and wanted:
+            extra["path"] = wanted
+        extra["recovery"] = (
+            "脚本想写已授权工作区之外的位置。改成写到项目内（相对路径要留意脚本里的 os.chdir），"
+            "或请用户在 Tavotto 窗口里自己运行这个脚本；不要换个写法绕过，也不要把路径换成别的形状重试。"
+        )
     _project_needs(code, exc, extra, project=project, script=script)
     extra["requirements"] = _requirements(code, extra)
     if not extra["requirements"]:
@@ -1336,6 +1366,24 @@ def _live_session_for(project: str, stem: str, run_config: str | None = None) ->
         and not s.patches
     ]
     return max(live, key=lambda s: s.last_used) if live else None
+
+
+def note_tool_call(properties: dict) -> None:
+    """一次 tools/call 的匿名用量事件（属性由 `usage.properties` 折成闭集）。
+
+    旧引擎的白名单里没有 `mcp_tool_call`：`capture` 校验不过、安静地回 False——这正是想要的
+    降级，桥不为它抬最低引擎版本。"""
+    try:
+        engine_telemetry.capture("mcp_tool_call", properties)
+    except Exception:  # noqa: BLE001 — 埋点绝不连累工具调用
+        pass
+
+
+def flush_usage(timeout: float) -> None:
+    try:
+        engine_telemetry.flush(timeout)
+    except Exception:  # noqa: BLE001 — 收尾不许连累退出
+        pass
 
 
 def shutdown_all() -> None:
@@ -2559,11 +2607,48 @@ def export(
 
     def _produce(job, tmp_dir: Path) -> list:
         produced = []
+        paired = {"pdf", "svg"}.issubset(job.request.formats)
+        pair_response = None
+        pair_error = None
+        normalize_svg = getattr(engine_artifactinspect, "normalize_worker_svg", None)
+        # Older supported engines must still export PDF, but cannot certify a
+        # pair. Inspect before calling: a TypeError retry could draw twice.
+        pair_supported = False
+        if paired and normalize_svg is not None:
+            try:
+                parameter = inspect.signature(worker.export).parameters.get("svg_path")
+                pair_supported = parameter is not None and parameter.kind in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            except (TypeError, ValueError):
+                pass
         for fmt in job.request.formats:
             job.check_cancelled()
             tmp = tmp_dir / f"{job.id}.{fmt}"
             try:
-                resp = worker.export(session.stem, session.patches, str(tmp), fmt, dpi)
+                if paired and fmt in {"pdf", "svg"}:
+                    if pair_response is None and pair_error is None:
+                        try:
+                            pair_response = worker.export(
+                                session.stem,
+                                session.patches,
+                                str(tmp_dir / f"{job.id}.pdf"),
+                                "pdf",
+                                dpi,
+                                **(
+                                    {"svg_path": str(tmp_dir / f"{job.id}.svg")}
+                                    if pair_supported
+                                    else {}
+                                ),
+                            )
+                        except engine_pool.WorkerError as exc:
+                            pair_error = exc
+                    if pair_error is not None:
+                        raise pair_error
+                    resp = pair_response
+                else:
+                    resp = worker.export(session.stem, session.patches, str(tmp), fmt, dpi)
             except engine_pool.WorkerError as exc:
                 # 一个格式挂了，不该让另一个已经渲染好的成果跟着丢，更不该把
                 # 半套文件留在最终目录里：失败的那一项带自己的 code 进
@@ -2580,6 +2665,52 @@ def export(
             for w in resp.get("warnings") or []:
                 if w not in job.warnings:
                     job.warnings.append(w)
+            vector = fmt in engine_exportreq.VECTOR_FORMATS
+            if fmt == "svg":
+                expected = None
+                if paired:
+                    expected = resp.get("svg")
+                    # A leftover file is not an acknowledgement. In particular,
+                    # dynamic draw guards may preserve PDF while declining SVG.
+                    if (
+                        not pair_supported
+                        or not isinstance(expected, dict)
+                        or expected.get("path") != str(tmp)
+                    ):
+                        error = resp.get("svg_error")
+                        produced.append(
+                            engine_exportjob.Produced(
+                                format=fmt,
+                                error_code="svg_source_unsupported",
+                                error_params={
+                                    "error": (
+                                        error.get("message") if isinstance(error, dict) else None
+                                    )
+                                    or "The engine could not produce a verified PDF/SVG pair.",
+                                },
+                            )
+                        )
+                        continue
+                # New engines share HTTP's static-SVG producer boundary; older
+                # supported engines retain their own inspector without a new import.
+                if normalize_svg is not None:
+                    try:
+                        if paired:
+                            normalize_svg(tmp, expected)
+                        else:
+                            normalize_svg(tmp)
+                        svg_vector = getattr(engine_artifactinspect, "svg_vector", None)
+                        if svg_vector is not None:
+                            vector = svg_vector(tmp)
+                    except (ValueError, OSError):
+                        produced.append(
+                            engine_exportjob.Produced(
+                                format=fmt,
+                                error_code="artifact_rejected",
+                                error_params={"failed": "integrity", "policy": "standard"},
+                            )
+                        )
+                        continue
             if acceptance is not None:
                 # **验的是临时目录里那个文件本身**（不是 figsize、不是预览）：
                 # 不过就不发布，回执里那一项带 `acceptance_failed`
@@ -2629,8 +2760,8 @@ def export(
                     # 文件里的像素数，不给的话 `size` 那一维只能 unknown
                     width_px=int(round(size_mm[0] / 25.4 * dpi)) if raster else None,
                     height_px=int(round(size_mm[1] / 25.4 * dpi)) if raster else None,
-                    # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
-                    vector=fmt in engine_exportreq.VECTOR_FORMATS,
+                    # SVG reports its actual static carrier, including image-only originals.
+                    vector=vector,
                     manifest={"provenance": provenance} if provenance else None,
                 )
             )

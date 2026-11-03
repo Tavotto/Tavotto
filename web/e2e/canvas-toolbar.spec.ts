@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -35,12 +35,12 @@ async function toLayout(page: Page, baseURL: string) {
   const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
   await expect(card).toHaveCount(1, { timeout: 30_000 })
   await card.dblclick()
-  // 快速编辑：没有浮动工具条，缩放菜单仍够得着（没有标签行，悬在画布右上角）
-  await expect(page.locator('[data-context-back]')).toHaveCount(1)
-  await expect(page.locator('[data-canvas-toolbar]')).toHaveCount(0)
-  await expect(page.locator('[data-zoom-menu]')).toHaveCount(1)
-  await page.locator('[data-context-back]').click()
+  // 单图编辑（画布上只有一张图）：不画页面纸；工具条在（标注可画），缩放菜单仍够得着（没有标签行，悬在画布右上角）
+  await expect(page.locator('[data-page-sheet]')).toHaveCount(0)
   await expect(page.locator('[data-canvas-toolbar]')).toHaveCount(1)
+  await expect(page.locator('[data-zoom-menu]')).toHaveCount(1)
+  // 第二张图进来才是多图排版
+  await addSecondFigure(page)
 }
 
 for (const width of [600, 780, 920, 1024]) {
@@ -53,7 +53,8 @@ for (const width of [600, 780, 920, 1024]) {
     const close = page.locator('[data-inspector-close]')
     if (await close.count()) await close.first().click()
     // 选中画布上的那张图：选中浮动栏出现
-    await page.locator('[data-object-id]').first().click()
+    // 两张图可能叠着放（窄窗口里放不下并排）：点最上面那张（刚加进来的）
+    await page.locator('[data-object-id]').last().click()
     await expect(page.locator('[data-context-bar]')).toHaveCount(1)
 
     const bar = await box(page, '[data-canvas-toolbar]')

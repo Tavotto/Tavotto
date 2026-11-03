@@ -20,8 +20,22 @@
   .dot:nth-child(2) { animation-delay: .15s } .dot:nth-child(3) { animation-delay: .3s }
   @keyframes b { 0%,80%,100% { opacity: .25 } 40% { opacity: 1 } }
   @media (prefers-reduced-motion: reduce) { .dot { animation: none; opacity: .6 } }
+  /* Windows 主窗口没有系统标题栏（window_chrome.rs 的 menu-button）：右上角自画窗口按钮，形制与
+     web 的 WindowControls 同（46 × 44、方角、悬停浮一层、关闭悬停变红）；别的窗框里不显示 */
+  #winctl { position: fixed; top: 0; right: 0; height: 44px; display: flex; }
+  #winctl button {
+    width: 46px; height: 44px; padding: 0; margin: 0; border: 0; border-radius: 0;
+    background: transparent; color: #4A4A45; cursor: default;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #winctl button:hover { background: rgba(26, 26, 24, 0.06); }
+  #winctl button.close:hover { background: #C4442A; color: #FFFFFF; }
+  #winctl[hidden], #winctl svg[hidden] { display: none; }
   /* 暗色外观（宪法第二十八节）：壳自带的页面不读 web/ 的 CSS，值抄 index.css 暗色表（桌面 / ink / ink-3） */
   @media (prefers-color-scheme: dark) {
+    #winctl button { color: #C2C2BC; }
+    #winctl button:hover { background: rgba(236, 236, 234, 0.08); }
+    #winctl button.close:hover { background: #EF6E55; color: #161615; }
     body { background: #161615; color: #ECECEA; }
     p { color: #9B9B94; }
     .dot { background: #9B9B94; }
@@ -34,6 +48,11 @@
     <h1>Tavotto</h1>
     <p><span id="booting">正在启动渲染服务</span><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
   </main>
+  <div id="winctl" hidden>
+    <button type="button" data-act="minimize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" fill="none"/></svg></button>
+    <button type="button" data-act="toggle_maximize"><svg class="ico-max" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" fill="none"/></svg><svg class="ico-restore" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" hidden><path d="M2.5 2.5V0.5h7v7h-2" stroke="currentColor" fill="none"/><rect x="0.5" y="2.5" width="7" height="7" stroke="currentColor" fill="none"/></svg></button>
+    <button type="button" data-act="close" class="close"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" fill="none"/></svg></button>
+  </div>
   <script>
     // 这张页面在 tauri:// 源下，既没有 i18next，也读不到 sidecar 那个源的
     // localStorage——文案只能内联两份。语言由壳经 ?lang= 带过来（它记着上次
@@ -49,9 +68,40 @@
       if (primary === 'en') return 'en-US'
       return null
     }
+    const WINCTL = {
+      'zh-CN': { minimize: '最小化', toggle_maximize: '最大化', restore: '还原', close: '关闭' },
+      'en-US': { minimize: 'Minimize', toggle_maximize: 'Maximize', restore: 'Restore', close: 'Close' },
+    }
     const q = new URLSearchParams(location.search)
     const locale = pick(q.get('lang')) || pick(navigator.language) || 'zh-CN'
     document.documentElement.lang = locale
+    // 窗口按钮（见上面 #winctl 的样式注释）：壳注入的窗框标记说 menu-button 才露出来。
+    // 走窗口插件的命令（main.json 授权）；关闭照旧进 CloseRequested，这张页面没有关窗询问
+    if (window.__TAVOTTO_WINDOW_CHROME__ === 'menu-button') {
+      const box = document.getElementById('winctl')
+      const labels = WINCTL[locale]
+      for (const b of box.querySelectorAll('button')) b.setAttribute('aria-label', labels[b.dataset.act])
+      box.addEventListener('click', (e) => {
+        const b = e.target.closest('button')
+        if (!b) return
+        window.__TAURI_INTERNALS__.invoke('plugin:window|' + b.dataset.act, { label: 'main' }).catch(() => {})
+      })
+      // 最大化按钮随窗口状态换「还原」图标与文案（窗口可能是 window-state 恢复成最大化的）
+      const maxBtn = box.querySelectorAll('button')[1]
+      const sync = () => {
+        window.__TAURI_INTERNALS__
+          .invoke('plugin:window|is_maximized', { label: 'main' })
+          .then((on) => {
+            maxBtn.querySelector('.ico-max').hidden = !!on
+            maxBtn.querySelector('.ico-restore').hidden = !on
+            maxBtn.setAttribute('aria-label', on ? labels.restore : labels.toggle_maximize)
+          })
+          .catch(() => {})
+      }
+      window.addEventListener('resize', sync)
+      box.hidden = false
+      sync()
+    }
     document.getElementById('booting').textContent = STRINGS[locale].booting
   </script>
 </body>

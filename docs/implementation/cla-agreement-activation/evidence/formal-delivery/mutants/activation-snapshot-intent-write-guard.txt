@@ -1,0 +1,27 @@
+✖ activation after packet or intent preread rejects the final stale write (51.720911ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 248.647706
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:188:1
+✖ activation after packet or intent preread rejects the final stale write (51.720911ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-snapshot-intent-write-guard/tests/agreement-activation.test.mjs:195:5
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-snapshot-intent-write-guard/tests/activation-fixture.mjs:44:66)
+      at async TestContext.<anonymous> (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-snapshot-intent-write-guard/tests/agreement-activation.test.mjs:189:46)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

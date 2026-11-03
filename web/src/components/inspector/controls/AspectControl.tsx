@@ -94,7 +94,9 @@ export function AspectControl({
           onPick(aspectValueOf(m, ratio ?? DEFAULT_RATIO))
         }}
         // 分段里写短名（「自定义」），全名（「自定义比例」）在可达名与气泡里：行网格的控件列在 320 栏宽下
-        // 只有约 170px，三个全名放不下（2026-10-07 e2e/inspector-overflow 量到 58 > 55）
+        // 只有约 170px，三个全名放不下（2026-10-07 e2e/inspector-overflow 量到 58 > 55）。
+        // 13px 字号 + 加宽的标签列之后控件列只剩 164px：每档左右各收 2px（px-2 → px-1.5），字号不动
+        className="[&>button]:px-1.5"
         items={MODES.map((m) => ({ value: m, label: ctl(`aspectShort.${m}`), ariaLabel: ctl(`aspect.${m}`), tip: ctl(`aspect.${m}`) }))}
       />
       {custom && (

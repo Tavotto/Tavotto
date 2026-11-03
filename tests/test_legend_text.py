@@ -218,3 +218,20 @@ def test_hot_and_fresh_agree_on_text_plus_rebuild(library):
     assert _el(man_hot, "axes_0.legend")["bbox"] == pytest.approx(
         _el(man_fresh, "axes_0.legend")["bbox"], abs=5e-3
     )
+
+
+def test_the_legend_entry_bound_to_a_line_takes_the_text_override_and_the_label_stays(library):
+    """AI 改图收尾的「一起改」按钮写的就是这条（`task.suggestions` 的 `legend_gid` + `text`）：manifest 里图例项带
+    `legend_entry.source_gid`（找图例项的唯一依据），写它的 `text` 后图例项文字变新值、曲线自己的 label 不变
+    ——不许改回写曲线 `label`（那不会动图例）。"""
+    man = _render(library)
+    bound = next(
+        e["gid"]
+        for e in man["elements"]
+        if e["role"] == "legend_text"
+        and (e.get("legend_entry") or {}).get("source_gid") == "axes_0.lines_1"
+    )
+    assert bound == T1
+    man2 = _render(library, [{"gid": bound, "prop": "text", "value": "beta: treated (n=6)"}])
+    assert _field(man2, bound, "text") == "beta: treated (n=6)"
+    assert _field(man2, "axes_0.lines_1", "label") == "beta", "曲线自身 label 不变"

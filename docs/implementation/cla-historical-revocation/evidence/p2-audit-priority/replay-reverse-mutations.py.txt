@@ -1,0 +1,20 @@
+import pathlib,shutil,subprocess,json,hashlib
+root=pathlib.Path('/tmp/cla-historical-revocation-audit-review');src=root/'fixed/services/cla-cloudflare'
+before="""const state=e.action==='revoke'?'revoked':blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':
+      grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||
+      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':
+      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='suspend'?'suspended':
+      e.hash!==r.control_hash?'superseded':'current';"""
+after="""const state=blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':
+      grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||
+      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':
+      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='revoke'?'revoked':e.action==='suspend'?'suspended':
+      e.hash!==r.control_hash?'superseded':'current';"""
+cases=[{'name':'revert-terminal-summary-priority','before':before,'after':after},{'name':'revocation-must-remain-inactive','before':"return {current:state==='current',state,executed_at:",'after':"return {current:state==='current'||state==='revoked',state,executed_at:"}]
+results=[]
+for c in cases:
+ dst=root/'mutants'/c['name'];shutil.copytree(src,dst,dirs_exist_ok=True);p=dst/'src/native/delegation.ts';s=p.read_text();assert s.count(c['before'])==1,c['name'];p.write_text(s.replace(c['before'],c['after'],1))
+ argv=['node','--test','tests/independent-terminal-audit-priority.test.mjs'];r=subprocess.run(argv,cwd=dst,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT);log=root/(c['name']+'.txt');log.write_text(r.stdout)
+ record={**c,'file':'src/native/delegation.ts','location_count':1,'argv':argv,'cwd':str(dst),'selected_exit_code':r.returncode,'actual_assertion_error':'AssertionError' in r.stdout,'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest()};results.append(record)
+ assert r.returncode==1 and record['actual_assertion_error'],record
+(root/'reverse-mutations.json').write_text(json.dumps(results,indent=2)+'\n');print(json.dumps([{k:r[k] for k in ['name','location_count','selected_exit_code','actual_assertion_error','log']}for r in results],indent=2))

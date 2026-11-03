@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「UI 视觉纪律」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 300
+改到: `components/ui/*`、`src/index.css` 的 `@theme` 与暗色值表、`lib/theme.ts`、图标、设置窗口排版、工作台结构
+主题: UI 视觉纪律 → `ui-visual-discipline.md`（全文 `docs/ux/DESIGN_CONSTITUTION.md`）
+必守要点: 尺寸 / 层级 / 颜色只走语义 token（纸两套同值）；卡只经 `ui/Card`；同类控件第二套先删
+-->
 
 全文是 `docs/ux/DESIGN_CONSTITUTION.md`（Paper × Instrument；2026-09-11 Visual
 Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
@@ -35,8 +44,8 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 外壳、多行浮动面板）/ panel 16（对话框、工作面板、助手输入框、命令面板）/ full（带字按钮、图标钮、分段、chip、toast、单行浮动条）**，外层 = 内层 + 内边距；
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
-`-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、
-插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画）；光标一律箭头（可拖的卡用抓手）。
+`-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、指针操作之后的程序化 focus 不画环（`lib/inputModality` 给 `<html>` 记 `data-input-modality`，`index.css` 在 `pointer` 时关 `:focus-visible` 的 outline；只有 Tab / 方向键 / Home / End / PageUp / PageDown 算键盘，Enter / Space 不算）、
+插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画——唯一例外是改图助手的思考小球，ADR 0165；`ui/ProgressBar` 是铅笔排线：11px、发丝框、整像素 5px 斜线 mask，不确定态排线 2.2s 线性流动、确定态宽度吸附整条线）；光标一律箭头（可拖的卡用抓手）。
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
@@ -118,7 +127,7 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 工作台结构：顶栏 44px（左=首页胶囊/文档名/状态芯片/时间线，右=撤销重做/导出/更多）；
 画布工具（选择 / 文字 / 标注 ▾ / 序号 | 适应）在画布底部居中的**浮动工具条**
 （`CanvasToolbar`，`data-canvas-toolbar`，只在排版模式出现、快速编辑时整条不在），缩放菜单在画布
-标签行最右（快速编辑没有标签行，悬在画布右上角），写回是「⋯」菜单第一项
+标签行最右（快速编辑没有标签行，悬在画布右上角），写回在「⋯」菜单「文件」组
 （`useWriteBackMenuEntry`，计数 n 在项右侧，属性栏「源文件」里那一颗不动）。工具条（12 内距 + 40 高）占掉画布
 底边约 64px：底部居中的 toast 列与左下 HUD 在它显示时抬到 `bottom-16`（`useCanvasToolbarVisible`
 一处判据），`fixed` 的选中浮动栏 / 右键快编落位时给窗口底边留 `BOTTOM_SAFE`
@@ -130,19 +139,33 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：拖动中的几何读数贴在选区下方（`MeasureChip`；放不下翻到上方，最后整体夹进舞台，选区占满 / 出界时也不被裁掉；底部浮动工具条显示时那一条（`viewportStore.fitBottomClear` = `TOOLBAR_FIT_CLEARANCE`，与「适应」取景同一个值）不算舞台，翻转与夹取都让开它；图内编辑态的方向键微调贴在被推的图内元素下面——位置与 Δ 都取 `InFigureMove.preview` 发布的预览（`elementPreview` / `gidDrag`，与 `ElementBoxes` 同源），落到页面走画布画这张图的同一个变换 `lib/panelTransform`（先翻转再旋转，翻转面板上贴在镜像后的元素下、Δ 报看得见的方向，#832 评审），子图贴边被钳住时芯片跟着停、Δ 报真正挪了的量，权威缺席时不报，不拿面板的框顶替，Codex #833），左下 HUD 只有工具提示，
 通知只有一条轨（`NotificationRail`，底部居中、宽 ≤ 360、**最多三条**叠着、最新的最靠近底边；`StatusBar` 的 `RAIL_MAX`）：普通状态短暂即逝
-（成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
-`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。
+（成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`；带动作的状态默认常驻，唯一例外是声明了 `dismissMs` 的导出成功胶囊——6 秒收，`EXPORT_DONE_DISMISS_MS`，悬停 / 聚焦暂停）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
+`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。**有模态对话框开着时**（`ui/Dialog` 经 `dialogLayerStore` 登记）整列通知移进 body 的 `z-toast` 层压在对话框上面（画布列里的那条会被遮罩盖暗），但**只压对话框自己动作的结果**（状态 / 引擎退出 / 环境与答案提示）；背景性的加入说明、操作提示、作者回信胶囊在模态期间不画（浮在遮罩上只会打岔，关掉后照常回来）；点它不算「点了对话框外面」（`Dialog` 的 `onInteractOutside` 认 `[data-notification-rail]`）。
 
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与
 lucide 时代相同），**任何第三方图标库都不许再 import**；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}`
-= 12 / 14 / 16 / 20，默认 sm，描边 2 按比例缩放，都由 `components/ui/Icon.tsx` 的
+= 12 / 16 / 16 / 20（2026-10-31 起 sm 由 14 改 16，ADR 0157），默认 sm，描边 1.5 按比例缩放、几何吸到 0.75 网格，都由 `components/ui/Icon.tsx` 的
 `IconProvider` 在三个根上给。写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写
 strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽略）；折叠 / 下拉箭头一律 xs；
 折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图、品牌标与图标集本体
 按个数豁免）、不许引入图标集里没有的名字、不许拿字符 / emoji 当图标、不许裸 `<summary>`
 ——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）；加新
 图标是在 `defs.ts` 里**画**，不是去别的库挑。
+**对齐、加载、状态**（2026-10-28 图标审计）：①「图标 + 文字」行的图标一律包 `ui/Icon` 的 `IconSlot`
+（槽高 = 该行行高 `1lh`、图标居中），行容器 `items-start`；图标 / `Spinner` 的 className 上不许写
+`mt-px / mt-0.5 / mt-[3px]` 之类的 margin-top 微调（`iconography.test` 的 `icon-nudge`，豁免表
+`NUDGE_ALLOWLIST` 目前为空）；文字的行高在兄弟元素上时给槽写同一组文字类（`text-xs leading-relaxed`）或
+`h-5`。②「加载中」只有 `ui/Spinner`（淡底环 + 约 100° 短弧，描边 2.5/24、12 / 14px 档不低于 1.4px，
+减少动态效果时不转），不再有 `LoaderCircle` 式 3/4 弧；其余图标的描边仍按比例缩放、不设下限。唯一例外是 AI 的「正在想 / 正在做 / 想过了」：
+`ui/ThinkingOrb`（ADR 0165，改自 thinking-orbs）。只出现在改图助手：过程组组首的图标槽（16px，进行中按最新一步换形态，结束后
+ink-3 半速、仍在动）、发出后到第一个字之间状态行前那一格（16px `connecting`），以及空白面板（见 ④）。形态是封闭集六种，按 ADR 0165
+的表映射，不为单个调用处新加；墨色只取 canvas 自己的 `text-ink` / `text-ink-3`，深浅只经不透明度；减少动态效果时画静止帧；
+滚出视口不画。尺寸只写 `size="row" | "hero"`。文件读写、导出、安装这类「加载」照旧 `Spinner`。
+④ **手帐线稿（2026-10-28，framed-icons 审计）：图标不套底座。** 空状态的图形是 `ui/Sketch` 的线稿（封闭集 11 幅、54×42（唯一尺寸例外：首页拖放区的 `drop` 96×72，`SKETCH_SIZE_OVERRIDE`）、1px 发丝线落在 .5 坐标、45° 整像素排线、仅 `currentColor` = ink-faint，亮暗同源；`EmptyState` 的 `art` 属性按意思选，同义复用，不为一个调用处新画）。唯一例外：改图助手还没开始对话的空白面板，图形是 64px 的 `searching` 思考小球（`EmptyState` 的 `figure`，ink-3、半速；ADR 0165），标题与说明照旧。行首 / 标题行的角色图标（项目行、属性栏标题、连接 AI 方式行、教程脚本卡）是无框 16px + `IconSlot`，居中在**第一行文字**上（名字折两行也不动）；不再有 `bg-surface-hover` 一类的 28/32/40px 图标底座，也不再有 48px 绿底圆盘（联系作者「已发送」是标题行首的 ok 色对勾）。缩略图占位是 `.hatch-box`（发丝框 + 与进度条同一张 45° 排线瓦片，`index.css`），不画图标。`Sketch.tsx` 在 `iconography.test` 的内联 svg 豁免表里占 1 个。
+③ 状态不画彩色圆盘：语义色只留在图形上，状态图标用实心孪生（`CircleCheck` / `CircleAlert` /
+`CircleQuestionMark` 的 `filled`），进行中是 `Spinner`；点状标记（脚本行状态点）6px、空心环描边 1.5px，
+与文字同在一个 `items-baseline` 组里、用 `vertical-align: middle` 对准小写字母中心，不靠 margin。
 
 ## 说明条与不推挤（2026-10-16 UI 2.0·PR10，规格 02 / 05；与上文冲突处以本节为准）
 

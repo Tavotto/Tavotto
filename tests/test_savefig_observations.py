@@ -234,8 +234,11 @@ def test_real_worker_and_playground_observe_all_occurrences_without_changing_cap
     ]
     assert {r["result"] for r in rows} == {"intercepted"}
     for result in (desktop, browser):
-        (descriptor,) = result["descriptors"]
-        assert [c["format"] for c in descriptor["savefig_calls"]] == ["pdf", "png"]
+        by_stem = {d["stem"]: d for d in result["descriptors"]}
+        # 观察记录不改变捕获规则；第二张图是 `same.pdf` 的最近写入者，按同 stem 补认领成 `same-2`
+        assert sorted(by_stem) == ["same", "same-2"]
+        assert [c["format"] for c in by_stem["same"]["savefig_calls"]] == ["pdf", "png"]
+        assert [c["format"] for c in by_stem["same-2"]["savefig_calls"]] == ["pdf"]
     assert original.read_bytes() == b"original file must remain unchanged"
     assert not (project / "same.png").exists()
     assert not (workspace / "same.pdf").exists()

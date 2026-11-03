@@ -28,9 +28,9 @@ from __future__ import annotations
 import os
 import socket
 import socketserver
+from collections.abc import Callable
 
 from flask import Flask
-from flask.cli import show_server_banner
 from werkzeug.serving import ThreadedWSGIServer
 
 
@@ -100,19 +100,26 @@ def claim(host: str, port: int) -> socket.socket:
     return sock
 
 
-def serve_browser(app: Flask, host: str, port: int, listener: socket.socket | None = None) -> None:
+def serve_browser(
+    app: Flask,
+    host: str,
+    port: int,
+    listener: socket.socket | None = None,
+    announce: Callable[[], None] | None = None,
+) -> None:
     """浏览器模式的服务循环：与 `app.run(host, port, threaded=True)` 逐项等价。
 
     `app.run` → `run_simple` 今天实际做的事，逐项对照：
 
-    * 启动横幅（`Serving Flask app` / `Debug mode: off`）——照打，顺序也一样
-      （横幅在构造 server 之前）；
+    * 启动横幅（`Serving Flask app` / `Debug mode: off`）——**不打**，见下面 `log_startup` 那条；
     * `threaded=True` → `ThreadedWSGIServer`——`LocalWSGIServer` 继承它；
     * `request_handler=None` → `WSGIRequestHandler`，多线程下 HTTP/1.1；
       `passthrough_errors=False`；`ssl_context=None`——全是父类默认值；
-    * `srv.log_startup()`（`Running on …` + 开发服务器警告）与
-      `Press CTRL+C to quit`——照打；后者少了 werkzeug 给它上的黄色
-      ANSI（`_ansi_style` 是私有函数，不为一个颜色去 import 它）；
+    * `srv.log_startup()`（`Running on …` + 红色开发服务器警告）与 `Press CTRL+C to quit`——
+      **不打**，换成调用方的 `announce()`（server 已 listen 之后、`serve_forever` 之前）。原来那几行是
+      终端上最后、最显眼的输出，而最像链接的 `Running on …` 不带 `#dnonce=`、登录不了，真正的登录地址
+      被埋在它们上面（Ubuntu 经 SSH 的用户找不到链接，2026-10-22）。本机单用户服务，那条警告也只会吓人；
+      要打印什么由 `launchhint.ready_banner` 一处决定；
     * `serve_forever()` 吞 KeyboardInterrupt、退出时 `server_close()`——沿用；
     * debug / reloader / debugger：`app.run` 只在 `FLASK_DEBUG` 环境变量或
       `app.debug` 为真时才开，产品两者都不设，这里**固定关**——不再因为用户
@@ -125,7 +132,6 @@ def serve_browser(app: Flask, host: str, port: int, listener: socket.socket | No
     `listener` 是 `claim()` 先占下的监听 socket（werkzeug 的 `fd=` 接管，reloader 用的同一条路）：
     server 从它 dup 一份，这里的原件随即关掉。没有就照旧自己 bind（占不到时 werkzeug 报错退出）。
     """
-    show_server_banner(False, app.name)
     if listener is None:
         srv = LocalWSGIServer(host, port, app)
     else:
@@ -134,6 +140,6 @@ def serve_browser(app: Flask, host: str, port: int, listener: socket.socket | No
         # fd 路径不走 server_bind：把 HTTPServer 会填的两个属性照 `server_bind` 那样填上
         srv.server_name = host
         srv.server_port = srv.port
-    srv.log_startup()
-    srv.log("info", "Press CTRL+C to quit")
+    if announce is not None:
+        announce()
     srv.serve_forever()

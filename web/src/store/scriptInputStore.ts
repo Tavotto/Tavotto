@@ -14,6 +14,8 @@ import {
 } from '@/lib/api'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { captureNativeExecutionResponse } from '@/lib/nativeExecutionAdmission'
 
 /**
  * 脚本里的 `input()`（ADR 0099）：等作答的问、自动回填的轻提示、记住的答案。
@@ -203,16 +205,21 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     const head = get().queue[0]
     if (!head || get().busy) return
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
+    const execution = head.native ? captureNativeExecutionResponse(head.native.session_id) : undefined
     set({ busy: true, error: null })
     try {
-      if (head.native) await answerNativeInput(head.native.session_id, head.native.request_id, answer)
-      else await answerScriptInput(head.id, answer)
+      if (head.native) {
+        const response = await answerNativeInput(head.native.session_id, head.native.request_id, answer)
+        if (owner.still()) execution?.acceptSession(response.session)
+      } else await answerScriptInput(head.id, answer)
       if (get().epoch !== epoch) return
       // 后端随后发 `script.input_closed`；这里先出队，界面不必等那条事件
       get().onClosed(head.id)
       if (answer !== null && head.input_kind !== 'getpass') void get().loadAnswers()
     } catch (e) {
       if (get().epoch !== epoch) return
+      if (owner.still()) execution?.acceptError(e)
       // 这一问已经不在等了（脚本结束 / 被停）：收起，不留一个答不了的框
       // native：409 `native_input_not_pending` = 别的窗口先答了 / 脚本已不在等——同样收起
       // 同一端点的 409 还可能是 `native_session_disconnected`：只有 not_pending 才收起，其它留框显示原因
@@ -227,15 +234,20 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     const head = get().queue[0]
     if (!head || get().busy) return
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
+    const execution = head.native ? captureNativeExecutionResponse(head.native.session_id) : undefined
     set({ busy: true, error: null })
     try {
       // native：停止 = 真终止这个脚本进程（取消桌面拥有的会话）
-      if (head.native) await cancelNativeSession(head.native.session_id)
-      else await stopScriptInput(head.id)
+      if (head.native) {
+        const response = await cancelNativeSession(head.native.session_id)
+        if (owner.still()) execution?.acceptSession(response.session)
+      } else await stopScriptInput(head.id)
       if (get().epoch !== epoch) return
       get().onClosed(head.id)
     } catch (e) {
       if (get().epoch !== epoch) return
+      if (owner.still()) execution?.acceptError(e)
       if (e instanceof ApiError && e.status === 404) get().onClosed(head.id)
       else set({ busy: false, error: errorText(e) })
     }

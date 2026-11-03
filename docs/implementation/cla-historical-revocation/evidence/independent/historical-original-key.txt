@@ -1,0 +1,26 @@
+✖ independent historical uses registered original key even when current key signs the exact revoke body (29.19353ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 206.261828
+
+✖ failing tests:
+
+test at tests/independent-historical-revocation.test.mjs:18:1
+✖ independent historical uses registered original key even when current key signs the exact revoke body (29.19353ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async denied (file:///tmp/cla-historical-revocation-review/mutants/historical-original-key/tests/independent-historical-revocation.test.mjs:6:55)
+      at async file:///tmp/cla-historical-revocation-review/mutants/historical-original-key/tests/independent-historical-revocation.test.mjs:21:2
+      at async iso (file:///tmp/cla-historical-revocation-review/mutants/historical-original-key/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

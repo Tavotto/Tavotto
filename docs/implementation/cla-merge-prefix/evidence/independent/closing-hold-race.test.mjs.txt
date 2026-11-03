@@ -1,0 +1,17 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {fixture} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/tests/delegation-fixture.mjs';
+import {LiveStore} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/store.ts';
+import {LiveService} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/service.ts';
+import {InvocationBudget} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/budget.ts';
+const sha=n=>n.toString(16).padStart(40,'0');
+test('hold during final database clock cannot leave merge prefix eligible',async()=>{
+ const f=await fixture(false);try{
+  const p=await f.create();await f.sign(p);await f.sign(p,'holder');
+  const target={headSha:sha(20),baseSha:sha(21),baseRef:'refs/heads/main'},user={id:2,login:'contributor',type:'User'};
+  const snapshot={repositoryId:707,kind:'merge_group',headSha:target.headSha,baseSha:target.baseSha,policy:f.c.policy,members:[{pr:9,headSha:sha(9)}],prs:[{number:9,state:'open',headSha:sha(9),baseSha:sha(8),author:user,expectedCommits:1,commits:[{sha:sha(9),author:user,email:'',message:'SYNTHETIC'}]}],queueEntries:[{id:'QE1',position:1,headCommit:{oid:target.headSha},baseCommit:{oid:target.baseSha},pullRequest:{number:9,headRefOid:sha(9),baseRefName:'main'}}],trustedSourceSha:f.c.referenceSha};
+  const c={...f.c,githubEnabled:true,mergePrefixAssessmentEnabled:true},budget=new InvocationBudget(()=>0,()=>f.now()*1000),store=new LiveStore(f.db,budget,c),gh={...f.gh,budget,mergePrefixSnapshot:async()=>structuredClone(snapshot)},service=new LiveService(c,store,gh,f.key);
+  const clock=store.databaseNow.bind(store);let calls=0;
+  store.databaseNow=async()=>{if(++calls===2){await f.s.hold(...f.args('contributor'),p.id,await f.s.intent(...f.args('contributor'),p.id,'hold'));}return clock();};
+  await assert.rejects(service.assessMergePrefix(target),e=>e.code==='state_changed');
+ }finally{f.close();}
+});

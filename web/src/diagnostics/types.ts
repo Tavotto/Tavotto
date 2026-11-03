@@ -21,10 +21,13 @@
  * 诊断包整体的 schema（老三件 + 新三件那一版是 2；3 = report.json 的 project 段换形，#524；
  * 4 = project 段新增 `missing_dependencies` 缺依赖现场；5 = 新增 task-diagnostics.json 任务快照，T04；
  * 6 = project 段新增 `recent_runs` 最近脚本运行的结果分类；7 = 网址只留 origin；
- * 8 = 发送包新增 `detail-…` / `optional-…` 条目，manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`）。
+ * 8 = 发送包新增 `detail-…` / `optional-…` 条目，manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`；
+ * 9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4；
+ * 10 = report.json 新增 `ai_probe` 与 agent 的 `readiness` / `readiness_detail` / `broken_path`；
+ * 11 = project.managed_environment_jobs（受管环境安装与换代事实）。
  * 与 `engine/diagnostics.py` 的同名常量是严格同源对。
  */
-export const BUNDLE_SCHEMA_VERSION = 8
+export const BUNDLE_SCHEMA_VERSION = 14
 /**
  * frontend-state.json 的 schema。
  *
@@ -564,6 +567,19 @@ export interface FrontendDiagnosticSnapshot {
    * 两者不可互相冒充——诊断包里把它们并排放着，正是为了让读包的人分得清
    * 「JS 侧大 payload 驻留」与「renderer 生命周期泄漏」是两回事。
    */
+  /**
+   * 新手教程状态（`tavotto.onboarding`）的结构摘要，排查「为什么没弹新手教程」用。
+   * 只有闭集取值与键名：状态机、步骤内容版本、走过的步骤 id、欢迎页出现过没有、看过的提示种类。
+   * 没有时间戳、项目 id、文档 id 与任何用户内容。
+   */
+  onboarding: {
+    status: 'not_started' | 'active' | 'paused' | 'completed' | 'skipped'
+    flow_version: number
+    completed_steps: string[]
+    /** `welcomeSeenAt` 非空 = 欢迎页已经出现过（首启自动弹只弹一次） */
+    welcome_seen: boolean
+    hint_seen_keys: string[]
+  }
   preview_memory: {
     /** 此刻 `byKey` 里所有还带着 `svg` 的条目的字节和（`residentSvgBytes`） */
     resident_svg_bytes: number

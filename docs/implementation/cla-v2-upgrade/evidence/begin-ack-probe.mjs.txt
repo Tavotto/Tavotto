@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+const file='/workspace/Tavotto-cla-v2-upgrade/services/cla-cloudflare/scripts/v2-upgrade-offline.mjs';
+const {syntheticSource,prepareSyntheticV2Upgrade,applySyntheticV2Upgrade}=await import(file);
+const source_sha256=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const db=syntheticSource(),plan=prepareSyntheticV2Upgrade(db),exec=db.exec.bind(db);let began=false;
+db.exec=sql=>{const result=exec(sql);if(sql==='BEGIN IMMEDIATE'){began=true;throw Error('synthetic-begin-ack-lost');}return result;};
+assert.throws(()=>applySyntheticV2Upgrade(db,plan,{execute:true,syntheticFixture:true}),/synthetic-begin-ack-lost/);
+const report={source_sha256,begin_did_succeed:began,transaction_left_open:db.isTransaction};
+try{assert.equal(db.isTransaction,false,'callee BEGIN succeeded but threw before begun=true; its transaction must be rolled back');report.status='pass';}
+catch(e){report.status='FAIL';report.error=String(e);process.exitCode=1;}
+finally{db.exec=exec;if(db.isTransaction)exec('ROLLBACK');db.close();}
+fs.writeFileSync('/tmp/cla-v2-upgrade-begin-ack-probe.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));

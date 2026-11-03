@@ -20,13 +20,27 @@ import type { Page } from '@playwright/test'
  * 一下，直接从「守着」变成「假绿」。
  */
 async function openAgentSettings(page: Page, baseURL: string) {
+  // 先挂上 capabilities 响应的等待再导航：回来之前页面是「老后端」形状，回来后才换成连接视图
+  const capsLoaded = page.waitForResponse((r) => r.url().includes('/api/ai/capabilities'), { timeout: 60_000 })
   await page.goto(baseURL)
   await page.locator('[data-rail="settings"]').click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible({ timeout: 30_000 })
+  await capsLoaded
   // 分区 id 是持久化格式的一部分（AiPanel 的「打开设置」按它跳转），
   // 比导航项上那句会被改名的文案稳得多
   await dialog.getByRole('navigation').locator('[data-section="ai"]').click()
+  // 「连接 AI」视图（后端给了 vendors / connections）下，执行器清单与诊断收在页底「高级」里：
+  // 先展开它。capabilities 是异步到的：探测回来之前页面按「老后端」渲染（执行器清单直接可见），回来后整块换成连接视图，
+  // 清单被收进**重新挂载、默认收起**的「高级」折叠。所以不能数一次就走——重试到「高级」展开（或确认是老后端）
+  // 且执行器清单真的可见为止（老后端没有这块，`count()` 为 0 就原样往下走，这是导航，不是断言）
+  await expect(async () => {
+    const adv = dialog.locator('[data-connect-advanced]')
+    if ((await adv.count()) > 0 && (await adv.getAttribute('open')) === null) {
+      await adv.locator('> summary').click()
+    }
+    await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible({ timeout: 1_000 })
+  }).toPass({ timeout: 30_000 })
   return dialog
 }
 

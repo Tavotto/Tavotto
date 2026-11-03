@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, interpreterpath, privatepython, runtime
+from . import config, interpreterpath, msixmigrate, privatepython, runtime
 
 LOG = logging.getLogger("tavotto.managedenv")
 
@@ -92,7 +92,51 @@ def project_fingerprint(project: str | Path) -> str:
 
 def env_dir(project: str | Path) -> Path:
     """`<data_dir>/environments/<项目指纹>/`。"""
-    return config.data_path(ENVIRONMENTS_DIRNAME, project_fingerprint(project))
+    fingerprint = project_fingerprint(project)
+    # 目录还不存在：看看 MSIX 宿主私有区里有没有同名的受管环境（#1574 之前写进去的），有就先搬回来；
+    # 搬不成 / 校验不过 = 当没有，照旧新建。逐个指纹在进程内只问一次。
+    msixmigrate.adopt_dir(ENVIRONMENTS_DIRNAME, fingerprint, validate=_adopted_env_ok)
+    return config.data_path(ENVIRONMENTS_DIRNAME, fingerprint)
+
+
+def _adopted_env_ok(candidate: Path) -> bool:
+    """从 MSIX 私有区搬来的受管环境完整吗（搬进正式位置之前核）：manifest 认得出、active 那一代的解释器在、
+    venv 的基础解释器（`pyvenv.cfg` 的 `home`）也在——基础解释器若是 Tavotto 自己的私有 Python 且还没搬，
+    先按需搬它。任何一条不满足 = 当没有环境（走原来的创建路径）。"""
+    try:
+        data = json.loads((candidate / MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if (
+        not isinstance(data, dict)
+        or data.get("schema") != SCHEMA
+        or not data.get("created_by_tavotto")
+    ):
+        return False
+    active = data.get("active")
+    if isinstance(active, str) and active and active != LEGACY_GENERATION:
+        try:
+            venv = candidate / ENVS_DIRNAME / _safe_generation(active)
+        except ValueError:
+            return False
+    else:
+        venv = candidate / VENV_DIRNAME
+    python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not python.is_file():
+        return False
+    try:
+        cfg_text = (venv / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    home = ""
+    for line in cfg_text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip().lower() == "home":
+            home = value.strip()
+            break
+    if not home:
+        return False
+    return msixmigrate.base_runtime_available(home)
 
 
 def venv_dir(project: str | Path, generation: str | None = None) -> Path:
@@ -481,7 +525,18 @@ def remove(project: str | Path) -> bool:
 
 
 # --------------------------------------------------------------- 创建
-def base_python() -> str | None:
+#: 上一次不带范围收窄的基础解释器探测里，探得到、却因版本在支持区间之外被拒的完整版本串（探到合格者则为空）。
+_last_rejected: tuple[str, ...] = ()
+
+
+def rejected_python_versions() -> tuple[str, ...]:
+    """这台机器上装着、却因版本不在支持区间被拒的 Python 版本（上一次探测的结论；还没探过为空）。"""
+    return _last_rejected
+
+
+def base_python(
+    *, within: tuple[tuple[int, int], tuple[int, int]] | None = None, patch_spec: str = ""
+) -> str | None:
     """能用来建 venv 的基础解释器；一个都没有回 None。
 
     直接复用 `bootstrap.find_base_python()`——它已经排除了内置 runtime
@@ -494,23 +549,96 @@ def base_python() -> str | None:
     界面提供受管修复 → 建 venv → 下载装 matplotlib 与那个包 → **最后**才在
     体检那一步报「这个 Python 不在支持范围内」。用户白等一场下载。
     把判据提到选解释器那一刻，代价从「几十 MB + 几分钟」降到一次版本探测。
+
+    `within=((lo_major, lo_minor), (hi_major, hi_minor))`（半开区间，ADR 0114 修订 2026-10-23「版本不合自动换」）：
+    再收窄到脚本 / 项目要的小版本范围，且在范围内**挑最高的**（默认形态仍是候选清单里的第一个合格者）。
     """
+    pick = base_pick(within=within, with_version=False, patch_spec=patch_spec)
+    return pick[0] if pick else None
+
+
+def base_pick(
+    *,
+    within: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    with_version: bool = True,
+    patch_spec: str = "",
+) -> tuple[str, str] | None:
+    """`base_python` 的带版本形态：回 `(解释器路径, "主.次")`；没有回 None。选择逻辑只此一处。
+    `with_version=False`（`base_python` 用）时默认形态不为取版本多起一个子进程，版本串为空。
+
+    `patch_spec`（PEP 440 specifier 串，只含带补丁位的子句；ADR 0114 §七）：候选的**完整**版本（探测本来就带「主.次.微」）
+    要满足它；拿不到完整版本（探测只给了「主.次」）就当不满足——宁可不换。私有 Python 的锁版本同样按完整版本判。"""
     from . import bootstrap, projectenv
 
-    def _supported(_path: str, version: str) -> bool:
+    spec = None
+    if patch_spec:
+        from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
+        try:
+            spec = SpecifierSet(patch_spec)
+        except InvalidSpecifier:
+            return None  # 读不懂的约束 = 推不出，不选
+
+    def _full_ok(version: str) -> bool:
+        if spec is None:
+            return True
+        parts = version.strip().split(".")
+        if len(parts) != 3 or not all(x.isdigit() for x in parts):
+            return False
+        return spec.contains(".".join(parts), prereleases=True)
+
+    def _minor(version: str) -> tuple[int, int] | None:
         try:
             parts = tuple(int(x) for x in version.strip().split(".")[:2])
         except ValueError:
+            return None
+        return (parts[0], parts[1]) if len(parts) == 2 else None
+
+    rejected: list[str] = []
+
+    def _supported(_path: str, version: str) -> bool:
+        parts = _minor(version)
+        if parts is None:
             return False
-        return bool(parts) and projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE
+        if not (projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE):
+            rejected.append(version.strip())
+            return False
+        if within is not None and not within[0] <= parts < within[1]:
+            return False
+        return _full_ok(version)
+
+    found: list[tuple[tuple[int, ...], str]] = []
+
+    def _micro(version: str) -> int:
+        tail = version.strip().split(".")[2:3]
+        return int(tail[0]) if tail and tail[0].isdigit() else 0
+
+    def _accept(path: str, version: str) -> bool:
+        ok = _supported(path, version)
+        if ok and within is not None:
+            # 要「范围内最高」：收集全部合格者，不在第一个就停
+            found.append(((*(_minor(version) or (0, 0)), _micro(version)), path))
+            return False
+        return ok
 
     try:
-        found = bootstrap.find_base_python(accept=_supported)
+        first = bootstrap.find_base_python(accept=_accept)
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
-        found = None
-    if found:
-        return found
+        first = None
+    if within is None and not patch_spec:
+        # 没找到合格者时，界面要能说「你装的 3.15 太新」而不是笼统的「请安装 Python」：
+        # 记下这一轮因版本区间被拒的候选（只记探测本来就拿到的版本，不多起进程）
+        global _last_rejected
+        _last_rejected = tuple(dict.fromkeys(rejected)) if not first else ()
+    if within is not None and found:
+        best = max(range(len(found)), key=lambda i: (found[i][0], -i))
+        version, path = found[best]
+        return path, f"{version[0]}.{version[1]}"
+    if first:
+        if not with_version:
+            return first, ""
+        return first, ".".join(python_version_of(first).split(".")[:2])
     # 这台机器上没有合格的基础解释器 → **已经供应好的**私有 Python（U05，ADR 0063）。
     # 只认磁盘上已就位的那份，这里一个字节都不下载：下载要经计划里明示的授权
     # （`deprepair` 的事务在 `provision_private` 为真时才去取），探测路径上不联网。
@@ -519,7 +647,15 @@ def base_python() -> str | None:
     source = privatepython.source_for()
     if source is None or not privatepython.offered(source):
         return None
-    return privatepython.python_of(source)
+    private = privatepython.python_of(source)
+    if not private:
+        return None
+    private_minor = _minor(source.version)
+    if within is not None and (private_minor is None or not within[0] <= private_minor < within[1]):
+        return None
+    if not _full_ok(source.version):
+        return None
+    return private, ".".join(source.version.split(".")[:2])
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:

@@ -15,19 +15,31 @@
  * 拿不到路径时不猜、不上传副本（脚本里的相对路径会断）：退回选择器，让用户点一下。
  */
 
+import { foreignLanguageOf, type ForeignLanguage } from './foreignScript'
+
 /** 放下来的东西该怎么处理 */
 export type DropTarget =
-  /** 拿到了路径：打开 `folder`（放下的是 .py 就是它的上级目录，放下的是目录就是它自己） */
-  | { kind: 'path'; folder: string }
+  /**
+   * 拿到了路径：打开 `folder`（放下的是 .py 就是它的上级目录，放下的是目录就是它自己）；
+   * 放下的是 .py 时 `script` 是它在那个目录里的文件名（打开后要运行的就是它），目录是 null
+   */
+  | { kind: 'path'; folder: string; script: string | null }
   /** 是 .py，但宿主没给路径：退回选择器，并说出是哪个文件 */
   | { kind: 'no-path'; name: string }
+  /**
+   * 放下的是 R / MATLAB 脚本（`.R` / `.r` / `.m`，ADR 0143 修订）且拿到了路径：打开它所在的文件夹，然后由入口卡提议
+   * 「生成可编辑版本」。后缀只是粗判，内容由后端 `sourcelang.detect` 复核
+   */
+  | { kind: 'foreign-path'; folder: string; script: string; language: ForeignLanguage }
+  /** 是 R / MATLAB 脚本，但宿主没给路径：同 `no-path`，退回选择器并说出是哪个文件 */
+  | { kind: 'foreign-no-path'; name: string; language: ForeignLanguage }
   /** 放下的不是 .py（也不是目录；带了 file:// 路径的文件同样落在这里） */
   | { kind: 'not-script'; name: string }
   /** 什么文件都没有（拖进来的是文字 / 链接） */
   | { kind: 'none' }
 
 /** 路径的最后一段（去掉结尾的分隔符）；分隔符两种都认 */
-const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
+export const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
 
 /**
  * 什么算脚本：最后一段以 `.py` 结尾（不分大小写）、`.py` 前面至少还有一个字符、不以分隔符结尾。
@@ -35,7 +47,7 @@ const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\/]/).po
  * `tests/golden/drop_script_rule.json` 比（`dropScriptRule.golden.test.ts`）。**不 trim**：文件名
  * 真可以以空格结尾，`plot.py ` 的扩展名是 `py `，不是脚本；`.py` 这样的隐藏文件没有扩展名。
  */
-const isScriptName = (path: string) => !/[\\/]$/.test(path) && /.\.py$/i.test(baseName(path))
+export const isScriptName = (path: string) => !/[\\/]$/.test(path) && /.\.py$/i.test(baseName(path))
 
 /**
  * 页面只拿到一串路径、不能 stat：以分隔符结尾，或最后一段没有扩展名，才当目录。
@@ -57,7 +69,12 @@ export function parentDir(path: string): string {
 
 /** 选择器 / 拖放给出的一条路径 → 该打开的目录。`.py` 取上级，其余原样（当目录打开） */
 export function folderForPath(path: string): string {
-  return isScriptName(path) ? parentDir(path) : path
+  return isScriptName(path) || foreignLanguageOf(path) ? parentDir(path) : path
+}
+
+/** 选择器 / 拖放给出的一条路径 → 打开 `folderForPath` 之后要运行的脚本（项目相对，即文件名）；不是 .py 就 null */
+export function scriptForPath(path: string): string | null {
+  return isScriptName(path) ? baseName(path) : null
 }
 
 /**
@@ -100,14 +117,18 @@ export function dropTargetOf(dt: DropData): DropTarget {
       .find((l) => l && !l.startsWith('#'))
     const path = first ? pathFromFileUri(first) : null
     if (path) {
-      if (isScriptName(path) || looksLikeDir(path)) return { kind: 'path', folder: folderForPath(path) }
+      if (isScriptName(path) || looksLikeDir(path)) return { kind: 'path', folder: folderForPath(path), script: scriptForPath(path) }
+      const foreign = foreignLanguageOf(path)
+      if (foreign) return { kind: 'foreign-path', folder: parentDir(path), script: baseName(path), language: foreign }
       // 拿到了路径但放下的是 pdf 之类：如实说不收，不拿它当项目去开（Codex #688）
       return { kind: 'not-script', name: baseName(path) }
     }
   }
   const file = dt.files.length > 0 ? dt.files[0] : null
   if (!file) return { kind: 'none' }
-  return isScriptName(file.name) ? { kind: 'no-path', name: file.name } : { kind: 'not-script', name: file.name }
+  if (isScriptName(file.name)) return { kind: 'no-path', name: file.name }
+  const foreign = foreignLanguageOf(file.name)
+  return foreign ? { kind: 'foreign-no-path', name: file.name, language: foreign } : { kind: 'not-script', name: file.name }
 }
 
 /** 拖着的东西里有没有文件（dragover 时只能看 types，看不到内容） */

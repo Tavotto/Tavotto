@@ -196,7 +196,7 @@ for (const theme of THEMES) {
       expect(ring).toMatch(/outline-offset:\s*-2px/)
     })
 
-    it('控件边界（border-control：复选框 / 单选 / 关态开关）对白 / 纸 / surface-2 ≥3:1', () => {
+    it('控件边界（border-control：复选框 / 单选 / 关态开关的 1.5px 内描边与缩小的滑块——同一个色，同一条 ≥3:1）对白 / 纸 / surface-2 ≥3:1', () => {
       for (const g of GROUNDS) {
         expect(contrast(token('border-control'), token(g)), `border-control on ${g}`).toBeGreaterThanOrEqual(3)
       }
@@ -314,6 +314,12 @@ for (const theme of THEMES) {
       expect(contrast(token('surface'), token('ink'))).toBeGreaterThanOrEqual(4.5)
     })
 
+    it('画布尺寸标注 / 拖边把手（dim，图形元素）对画布灰与 surface（标注条底）≥3:1', () => {
+      for (const g of ['canvas', 'surface']) {
+        expect(contrast(token('dim'), token(g)), g).toBeGreaterThanOrEqual(3)
+      }
+    })
+
     it('画布等级标记：每一档 pin 的项数字（10px）对它自己的底色 ≥4.5:1；底色对画布灰 / 纸白 ≥3:1（Codex #832）', () => {
       for (const [severity, { fill, text }] of Object.entries(PIN_COLORS)) {
         const f = rc(fill)
@@ -348,7 +354,8 @@ const SELECTION_FG = (() => {
 const SELECTABLE_GROUNDS = ['surface', 'bg', 'canvas', 'surface-2', 'field', 'field-hover', 'thumb'] as const
 const TEXT_VIEW = readFileSync(path.resolve(HERE, 'canvas/TextView.tsx'), 'utf8')
 /** 两套主题都不变的不透明 token：纸与纸上的墨是文档内容；sel 是画在纸上的那一种彩色线（对纸白与两种画布灰都 ≥3） */
-const THEME_INVARIANT = ['paper', 'paper-ink', 'sel']
+// spotlight-shade：定位舞台灯压在画布内容（纸）上的暗幕，与纸一样不跟主题走（`canvas/IssueSpotlight`）
+const THEME_INVARIANT = ['paper', 'paper-ink', 'paper-highlight', 'sel', 'spotlight-shade']
 const PAGE_SHEET = readFileSync(path.resolve(HERE, 'canvas/PageSheet.tsx'), 'utf8')
 /**
  * 透明页面棋盘格的深格 `--color-paper-checker`：`color-mix(in srgb, var(--color-paper-ink) N%, var(--color-paper))`

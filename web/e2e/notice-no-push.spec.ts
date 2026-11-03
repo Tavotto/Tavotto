@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { lowContrastNodes } from './contrast'
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 /**
  * UI 2.0「错误与警告」+「不推挤」（PR10）。
@@ -21,9 +21,8 @@ async function openCanvasWithFigure(page: Page, baseURL: string) {
   const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
   await expect(card).toHaveCount(1, { timeout: 30_000 })
   await card.dblclick()
-  const back = page.locator('[data-context-back]')
-  await expect(back).toHaveCount(1)
-  await back.click()
+  // 画布标签行在单图编辑里隐藏（只有一张画布时）；第二张图进来 = 多图排版，标签行回来
+  await addSecondFigure(page)
   await expect(page.locator('[data-canvas-tabs]')).toHaveCount(1)
   await expect(page.locator('[data-canvas-stage]')).toHaveCount(1)
 }
@@ -55,7 +54,17 @@ test('构建版本不一致：是顶栏芯片，工作面板里的标签行与�
   const a = await app()
   await openCanvasWithFigure(page, a.baseURL)
   await expect(page.locator('[data-build-mismatch]')).toHaveCount(0)
-  const before = await layoutBoxes(page)
+  // 打开图之后左栏抽屉还可能在收起的过渡里：等版面连续两次量得一样再记「之前」，否则量到的是半路的盒子
+  let before = await layoutBoxes(page)
+  await expect
+    .poll(async () => {
+      await page.waitForTimeout(250)
+      const now = await layoutBoxes(page)
+      const same = JSON.stringify(now) === JSON.stringify(before)
+      before = now
+      return same
+    }, { timeout: 10_000 })
+    .toBe(true)
 
   // 让下一次版本自检认为后端换了构建：芯片出现
   await page.route(/\/api\/version(\?|$)/, (route) => route.fulfill({ json: { build: 'index-someothernewbuild', version: 'x' } }))
@@ -129,6 +138,8 @@ test('左栏刷新失败：Notice 顺着滑出来（有过渡帧），终态位�
       const reveal = n.closest('[data-reveal]')!
       const anims = [reveal, ...Array.from(reveal.querySelectorAll('*'))]
         .flatMap((el) => el.getAnimations())
+        // 只量这次滑出的过渡：Notice 图标出现时那一下微动效（ADR 0156，比滑出长）不推挤布局，不算进时长
+        .filter((a) => !((a.effect as KeyframeEffect | null)?.target as Element | null)?.closest?.('svg[data-icon]'))
         .filter((a) => a.effect && (a.effect.getTiming().duration as number) > 0)
       anims.forEach((a) => a.pause())
       const dur = Math.max(0, ...anims.map((a) => a.effect!.getTiming().duration as number))

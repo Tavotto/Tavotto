@@ -839,21 +839,25 @@ def test_autosave_get_refuses_to_hand_out_a_poisoned_slot(client, tmp_path):
 
 
 def test_a_poisoned_timeline_is_not_silently_reported_as_no_versions(client, tmp_path):
-    """**这一处不许吞。** `DocumentError` 是 `ValueError` 的子类，跟着
-    `_load_versions` 原来那个 `except (OSError, ValueError): return []` 走的话，
-    时间线会显示成"没有版本"，而下一次创建检查点会在这个空列表上追加并整份
-    写回——**用户全部的检查点当场没了**。
+    """**这一处不许吞，也不许毁。** 磁盘上写着 `NaN` 的旧时间线读不出来：
+
+    * 列表不能把它显示成"没有版本"而不吭声——响应带 `legacy_unreadable`，告诉前端旧历史还在；
+    * 下一次创建检查点**不能**在这个空列表上整份写回把它盖掉（原来靠 400 拦；ADR 0140 §五
+      之后写入不再碰旧文件：新历史开在新存储里，旧文件逐字节原样）。
     """
     poisoned = tmp_path / documents.VERSIONS_DIRNAME / "dv.json"
     poisoned.parent.mkdir(parents=True, exist_ok=True)
-    poisoned.write_text('{"versions": [{"id": "v1", "doc": {"x": NaN}}]}', encoding="utf-8")
+    poisoned.write_text('{"versions": [{"id": "v1-1", "doc": {"x": NaN}}]}', encoding="utf-8")
     before = poisoned.read_bytes()
 
-    assert client.get("/api/versions/dv").status_code == 400
+    listed = client.get("/api/versions/dv")
+    assert listed.status_code == 200
+    assert listed.get_json()["versions"] == []
+    assert listed.get_json()["legacy_unreadable"] == {"name": "dv.json", "size": len(before)}
     r = client.post("/api/versions/dv", json={"doc": PD})
-    assert r.status_code == 400
-    assert r.get_json()["code"] == "non_finite_on_disk"
-    assert poisoned.read_bytes() == before, "被拒的那次创建把旧时间线整份盖掉了"
+    assert r.status_code == 200, r.get_json()
+    assert poisoned.read_bytes() == before, "创建把旧时间线整份盖掉了"
+    assert len(client.get("/api/versions/dv").get_json()["versions"]) == 1
 
 
 def test_package_open_rejects_a_layout_the_browser_cannot_parse(client, tmp_path):
@@ -1060,9 +1064,9 @@ def test_no_response_ever_carries_a_bare_infinity(client, tmp_path):
     """
     poisoned = tmp_path / documents.VERSIONS_DIRNAME / "dinf.json"
     poisoned.parent.mkdir(parents=True, exist_ok=True)
-    poisoned.write_text('{"versions": [{"id": "v1", "doc": {"x": 1e400}}]}', encoding="utf-8")
+    poisoned.write_text('{"versions": [{"id": "v1-1", "doc": {"x": 1e400}}]}', encoding="utf-8")
 
-    r = client.get("/api/versions/dinf/v1")
+    r = client.get("/api/versions/dinf/v1-1")
     assert r.status_code == 500, "非有限数悄悄地被发出去了"
     documents.loads_document(r.get_data())  # 浏览器那一侧必须解析得动这份错误响应
 

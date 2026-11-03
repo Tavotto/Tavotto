@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {cpSync,mkdtempSync,readFileSync,rmSync,writeFileSync,mkdirSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+const root='/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare',out='/tmp/cla-merge-prefix-adapter';
+const cases=JSON.parse(readFileSync(root+'/tests/merge-prefix-adapter-mutation-cases.json','utf8')),results=[];
+for(const [i,c] of cases.entries()){
+ const tmp=mkdtempSync(out+'/mutation-');
+ try{
+  for(const p of ['src','tests','scripts','migrations','deployment','package.json'])cpSync(path.join(root,p),path.join(tmp,p),{recursive:true});
+  const file=path.join(tmp,c.file),before=readFileSync(file,'utf8'),locations=before.split(c.before).length-1;
+  assert.equal(locations,1,c.name+' unique location');
+  const changed=before.replace(c.before,c.after);assert.notEqual(changed,before);writeFileSync(file,changed);
+  const args=['--test','--test-name-pattern='+c.pattern,c.testFile];
+  const r=spawnSync(process.execPath,args,{cwd:tmp,encoding:'utf8'}),raw=r.stdout+r.stderr;
+  const log='mutation-'+String(i+1).padStart(2,'0')+'.raw.log';writeFileSync(out+'/'+log,raw);
+  const result={name:c.name,file:c.file,locations,command:[process.execPath,...args],exit:r.status,assertionError:raw.includes('AssertionError'),selected:raw.includes(c.selectedTitle),log,sha256:createHash('sha256').update(raw).digest('hex')};results.push(result);
+  writeFileSync(out+'/mutations.json',JSON.stringify(results,null,2)+'\n');
+  assert.equal(r.error,undefined);assert.equal(r.status,1,c.name);assert.ok(result.assertionError,c.name+' assertion');assert.ok(result.selected,c.name+' selected');
+  console.log(JSON.stringify(result));
+ }finally{rmSync(tmp,{recursive:true,force:true});}
+}
+console.log('All '+cases.length+' unique-location mutants rejected with exit1/AssertionError.');

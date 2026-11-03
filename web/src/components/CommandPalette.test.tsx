@@ -3,7 +3,7 @@
  * 与关键词、项目命令只在项目打开时出现、动作复用真实 helper。
  */
 import { act } from 'react'
-import { MOD } from '@/lib/utils'
+import { keyOf } from '@/lib/keymap'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -15,7 +15,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchTutorialStatus: vi.fn().mockResolvedValue(null),
 }))
 
-import { refreshProject } from '@/lib/api'
+import { fetchTutorialStatus, refreshProject } from '@/lib/api'
+import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import { i18n } from '@/i18n'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
@@ -26,7 +27,7 @@ import { useProjectScanStore } from '@/store/projectScanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { CommandPalette, usePalette } from './CommandPalette'
@@ -130,8 +131,8 @@ describe('命令集', () => {
     }
   })
 
-  // Codex #833：快速编辑这一屏只画正在编辑的那张图；选区里只有看不见的版面对象时不出现，有那张图时只框它
-  it('「缩放到选中」在快速编辑里只认正在编辑的那张图', async () => {
+  // 2026-10-21：单图编辑的舞台也画这张画布上的标注，选区里的对象都看得见 → 与排版同一口径，框选区的并集
+  it('「缩放到选中」在单图编辑里与排版同口径：选了标注就能缩放，选图 + 标注框并集', async () => {
     const text: TextObject = {
       id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
       color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
@@ -150,13 +151,13 @@ describe('命令集', () => {
       useSelectionStore.setState({ ids: ['t1'] })
       mount()
       expect(cmd()).not.toBeNull()
-      // 进快速编辑本身就让命令重算（面板开着也一样）
+      // 进单图编辑后标注仍看得见，命令照常可用
       act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
-      expect(cmd()).toBeNull()
+      expect(cmd()).not.toBeNull()
       act(() => useSelectionStore.setState({ ids: ['t1', 'p1'] }))
       expect(cmd()).not.toBeNull()
       act(() => cmd()!.click())
-      expect(spy).toHaveBeenCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+      expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 130, h: 90 })
     } finally {
       useSelectionStore.setState({ ids: [] })
       useWorkspaceStore.getState().clear()
@@ -164,9 +165,9 @@ describe('命令集', () => {
     }
   })
 
-  // Codex #833（数据丢失）：快速编辑这一屏只画那张图——「全选」只收它，不把整版看不见的对象选上（接着 Delete
-  // 就删掉它们）；「适应画布」与 ⌘1 / 舞台双击同一个取景框，适应那张图。对照组：排版里全选整版、适应页面
-  it('「全选」与「适应画布」在快速编辑里只认正在编辑的那张图', async () => {
+  // 2026-10-21：单图编辑的舞台画着这张画布上的全部对象——「全选」收全部可选对象（与排版同口径，不再只收那张图）；
+  // 「适应画布」与 ⌘1 / 舞台双击同一个取景框：图 ∪ 标注的包围盒。对照组：排版里全选整版、适应页面
+  it('「全选」与「适应画布」在单图编辑里：全选整张画布，适应图 ∪ 标注', async () => {
     const text: TextObject = {
       id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
       color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
@@ -198,11 +199,11 @@ describe('命令集', () => {
       useWorkspaceStore.getState().enterFastEdit('p1')
       useSelectionStore.setState({ ids: [] })
       run('select-all')
-      expect(useSelectionStore.getState().ids).toEqual(['p1'])
+      expect(useSelectionStore.getState().ids).toEqual(['t1', 'p1'])
       run('fit')
-      // 那张图本身的矩形（含原点），不是 (0,0) 到它右下角的 140×110（Codex #833）
+      // 图 ∪ 标注的包围盒（含原点），不是 (0,0) 到右下角（Codex #833）
       expect(fit).toHaveBeenCalledTimes(1)
-      expect(fitRect).toHaveBeenLastCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+      expect(fitRect).toHaveBeenLastCalledWith({ x: 10, y: 20, w: 130, h: 90 })
     } finally {
       useSelectionStore.setState({ ids: [] })
       useWorkspaceStore.getState().clear()
@@ -244,7 +245,7 @@ describe('命令集', () => {
 
   it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」就地弹出命名小框（不开抽屉）', async () => {
     const { useTimelineStore } = await import('@/store/timelineStore')
-    useUiStore.setState({ versionsOpen: false })
+    useUiStore.setState({ rightTab: 'properties' })
     useTimelineStore.setState({ namingOpen: false })
     mount()
     const find = (t: string) =>
@@ -253,13 +254,13 @@ describe('命令集', () => {
       ) as HTMLElement
     act(() => find('把现在存为命名节点').click())
     expect(useTimelineStore.getState().namingOpen).toBe(true)
-    expect(useUiStore.getState().versionsOpen).toBe(false)
-    useUiStore.setState({ versionsOpen: false })
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
+    useUiStore.setState({ rightTab: 'properties' })
     act(() => root?.unmount())
     usePalette.setState({ open: true })
     mount()
     act(() => find('排版时间线').click())
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
   })
 
   it('英文界面下按英文关键词能搜到', async () => {
@@ -607,6 +608,50 @@ describe('空查询时的顺序（审计 T50）', () => {
     }
   })
 
+  // Codex #1181：示例副本在磁盘上、却不在最近列表也没打开时，「重置示例项目」被藏——探测要在面板打开时按需发
+  it('示例副本只在磁盘上：面板打开时探测一次，「重置示例项目」才出现', async () => {
+    useTutorialStore.setState({ status: null, busy: null, failure: null })
+    useProjectStore.setState({ recent: [] } as never)
+    vi.mocked(fetchTutorialStatus).mockClear()
+    vi.mocked(fetchTutorialStatus).mockResolvedValue({
+      available: true,
+      problems: [],
+      copy: { exists: true },
+    } as never)
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).toHaveBeenCalledTimes(1)
+    expect(cmdIds()).toContain('tutorial-reset')
+    useTutorialStore.setState({ status: null })
+  })
+
+  it('缓存的「副本不在」会过时（之后打开示例项目建出了副本）：面板打开时再问一次，重置照样出现', async () => {
+    useTutorialStore.setState({ status: { available: true, problems: [], copy: { exists: false } } as never, busy: null, failure: null })
+    useProjectStore.setState({ recent: [] } as never)
+    vi.mocked(fetchTutorialStatus).mockClear()
+    vi.mocked(fetchTutorialStatus).mockResolvedValue({ available: true, problems: [], copy: { exists: true } } as never)
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).toHaveBeenCalledTimes(1)
+    expect(cmdIds()).toContain('tutorial-reset')
+    useTutorialStore.setState({ status: null })
+  })
+
+  it('缓存说副本在：不再重复问', async () => {
+    useTutorialStore.setState({ status: { available: true, problems: [], copy: { exists: true } } as never, busy: null, failure: null })
+    vi.mocked(fetchTutorialStatus).mockClear()
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).not.toHaveBeenCalled()
+    useTutorialStore.setState({ status: null })
+  })
+
   it('跑过一条就进「最近使用」，并排在常用之前', () => {
     useUiStore.setState({ recentCommands: [] })
     mount()
@@ -643,14 +688,14 @@ describe('空查询时的顺序（审计 T50）', () => {
 })
 
 describe('外观：图标与键帽（2026-10-01）', () => {
-  it('有快捷键的命令画成一个个键帽，图标只来自图标集（没有 emoji / 手写 svg）', () => {
+  it('快捷键是不加框的灰字（与菜单同一原语），每条命令都有来自图标集的图标', () => {
     mount()
     const exp = document.querySelector('[data-cmd-id="export"]')!
-    expect([...exp.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([MOD, 'E'])
-    expect(exp.querySelector('svg'), '导出有图标').not.toBeNull()
-    // 没有合适图标的命令不硬凑：行仍在、图标槽留空对齐
-    const all = document.querySelector('[data-cmd-id="select-all"]')!
-    expect(all.querySelector('svg')).toBeNull()
+    expect(exp.querySelectorAll('kbd')).toHaveLength(0)
+    expect(exp.querySelector('[data-cmd-shortcut]')!.textContent).toBe(keyOf('export'))
+    for (const row of document.querySelectorAll('[data-cmd-id]')) {
+      expect(row.querySelector('svg'), `${row.getAttribute('data-cmd-id')} 有图标`).not.toBeNull()
+    }
   })
 })
 

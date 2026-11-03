@@ -5,9 +5,9 @@ SVG、manifest 结构或几何。没有证据时不能直接优化引擎。
 
 ## 阶段含义
 
-- `manifest_prepare_ms`：前置 `build_manifest` 的总耗时。
+- `manifest_prepare_ms`：前置布局与测量准备的总耗时。
 - `manifest_layout_ms`：前置阶段里的 Agg 布局 draw（包括有 frame 时的追加布局）。
-- `manifest_measure_ms`：前置阶段逐元素测量、清单组装。
+- `manifest_measure_ms`：前置阶段的图例、隐藏 3D 投影和刻度登记准备；完整清单只在最终 SVG 绘制后测量一次。历史版本的这个字段包含前置逐元素测量和清单组装，跨版本对比时须区分。
 - `manifest_final_geometry_ms`：最终 SVG savefig 后的几何复测以及作用域退出。
 - `manifest_ms`：保留原有总计时，等于 prepare + final。
 

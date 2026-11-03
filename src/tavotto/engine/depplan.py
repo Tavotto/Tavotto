@@ -58,7 +58,7 @@ import threading
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
-from . import config, depresolve, distmeta, importscan, launcher, projectenv, runtime
+from . import config, depresolve, distmeta, folderrepair, importscan, launcher, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.depplan")
 
@@ -781,6 +781,12 @@ class JointPlan:
     provider_decisions: tuple[dict, ...] = ()
     #: 差集总数；超过 `MAX_DECLARED_GAPS` 被截断时 > `len(declared_gaps)`（状态判定用的是完整集合，只有对外载荷截断）。
     declared_gaps_total: int = 0
+    #: 计划里点名、**不送 pip** 的已知装不了的包（`depresolve.NOT_PIP_INSTALLABLE`；ADR 0061 修订 2026-10-21）：
+    #: `{name, distribution, hint, sources: [声明文件], imports: [import 名]}`。只在有时才进 `to_payload`（`plan_version` 不升）。
+    not_pip_installable: tuple[dict, ...] = ()
+    #: 脚本（或它静态 import 的本地模块）会在运行时改 `sys.path`，而这些表外名字没有可信映射、静态又找不到：不在运行前拦下来问包名，
+    #: 先跑一次看（读不了 → 修复权限卡；真缺 → 现有的确认包名流程）。只列 import 名；有才进 `to_payload` 与检查项的来源事实。
+    deferred_unverified: tuple[str, ...] = ()
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -816,6 +822,16 @@ class JointPlan:
             **(
                 {"provider_decisions": [dict(d) for d in self.provider_decisions]}
                 if self.provider_decisions
+                else {}
+            ),
+            **(
+                {"not_pip_installable": [dict(n) for n in self.not_pip_installable]}
+                if self.not_pip_installable
+                else {}
+            ),
+            **(
+                {"deferred_unverified": list(self.deferred_unverified)}
+                if self.deferred_unverified
                 else {}
             ),
             **(
@@ -1038,7 +1054,14 @@ def _specifiable(
     )
 
 
-def _origin_entry(c: importscan.ImportClass, reason: str, state: str, *, suggest: str = "") -> dict:
+def _origin_entry(
+    c: importscan.ImportClass,
+    reason: str,
+    state: str,
+    *,
+    suggest: str = "",
+    literal_dirs: list[str] | None = None,
+) -> dict:
     reason = _effective_reason(c, reason)
     candidates = sorted(
         {
@@ -1059,6 +1082,18 @@ def _origin_entry(c: importscan.ImportClass, reason: str, state: str, *, suggest
         "candidates": candidates[:MAX_ORIGIN_CANDIDATES],
         "coverage": state,
     }
+    not_pip = depresolve.not_pip_installable(c.module)
+    if not_pip is not None:
+        # 已知装不了（ROOT 之类）：计划阶段点名，不预填、不送 pip
+        entry["not_pip_installable"] = {"label": not_pip["label"], "hint": not_pip["hint"]}
+    elif (
+        literal_dirs
+        and c.bucket == importscan.BUCKET_UNKNOWN
+        and not c.distribution
+        and c.resolution_status == importscan.STATUS_UNRESOLVED
+    ):
+        # 脚本把这些目录加进了搜索路径、里面却没有这个模块：本地模块缺失，不是缺 PyPI 包
+        entry["local_module_missing"] = {"search_dirs": list(literal_dirs[:4])}
     if suggest:
         # 预填（Import Origin PR5b，C1）：**不是**可信来源、不进 requirements、不自动装——确认界面输入框的初始值，
         # 用户接受（可改）后经 `plan(user_specified=)` 才进计划
@@ -1314,6 +1349,7 @@ def plan(
     coverage: Callable[[tuple[str, ...]], dict | None] | None = None,
     user_specified: Mapping[str, str] | None = None,
     run_env_replaceable: bool | None = None,
+    extra_imports: tuple[str, ...] = (),
 ) -> JointPlan:
     """拼一份联合计划。`facts` 是**此刻会跑脚本的**解释器的事实（缺什么按它量——门问的是
     「现在起会话会不会缺包」）；`target_kind` 说安装会落到哪种环境（受管环境并入 adapter 约束，
@@ -1336,6 +1372,8 @@ def plan(
     不必有一条被 AST 认出的 import 指到它；目标里没有、或装着的版本不满足声明的约束，就进 `requirements`。`run_env_replaceable`
     说此刻跑脚本的环境是不是 Tavotto 自己的（受管代 / 内置 runtime / 尚未落盘的新一代）：是，**相关的**差集（见 `declared_gaps`）才让计划
     `ready`；不是（用户交给我们的系统解释器；缺省 None = 受管目标一律视为是）只记录偏差、不为它动手。用户自己的 venv 目标永不并入 roots。
+    `extra_imports`：运行时观察到缺了的顶层模块名（转换校验运行报 `missing_dependency` 点名的、静态看不见的惰性依赖），
+    并入扫描当作入口脚本的顶层 import，之后走与静态 import 完全相同的来源判决（`importscan.scan(extra_imports=)`）。
     同一个 import 名有多个互斥发行包（`cv2`）时，项目声明点名的那个胜出，点名了两个 = `dependency_conflict`（roots 不与 curated 取并集）。"""
     if target_kind not in TARGETS:
         raise ValueError(f"target_kind 非法: {target_kind!r}")
@@ -1358,6 +1396,7 @@ def plan(
         builtin=(target.builtin or None) if target is not None else None,
         ext_suffixes=(target.ext_suffixes or None) if target is not None else None,
         dists=dists,
+        extra_imports=tuple(extra_imports),
     )
     installed = facts.installed if facts is not None else {}
     target_installed = target.installed if target is not None else {}
@@ -1467,28 +1506,53 @@ def plan(
         and c.module not in open_classes
         and _installed_index_satisfies(c, installed, states.get(c.module, ""), index_incomplete)
     }
+    # 在这个项目里撞过「读不了的项目外文件夹」的模块（`folderrepair.unreadable_modules`）：它在那个文件夹里、多半是用户自己的
+    # 模块，既不问包名也不送 pip——失败卡会直接给「修复权限」
+    unreadable_local = folderrepair.unreadable_modules(root_p)
     origin_classes = [
         c
         for c in scan.classes
-        if c.module in open_classes
-        or (c.module in plain_unknown and c.module not in index_satisfied)
+        if (
+            c.module in open_classes
+            or (c.module in plain_unknown and c.module not in index_satisfied)
+        )
+        and c.module not in unreadable_local
+    ]
+    # 脚本字面量加进 sys.path 的目录（`importscan` 的 `sys_path_literal` 搜索根）：那里没找到的 import 是「本地模块缺失」，
+    # 不预填包名、不接受用户指定、绝不送 pip（ADR 0061 修订 2026-10-21）
+    literal_dirs = [
+        str(r.get("path") or ".") for r in scan.search_roots if r.get("tag") == "sys_path_literal"
     ]
     specifiable = {
         c.module
         for c in origin_classes
-        if _specifiable(
+        if not literal_dirs
+        and depresolve.not_pip_installable(c.module) is None
+        and _specifiable(
             c,
             _effective_reason(c, open_classes.get(c.module, ORIGIN_UNRESOLVED)),
             states.get(c.module, ""),
             index_incomplete,
         )
     }
+    # 脚本会在运行时改 `sys.path`（`importscan` 的 AST 判据 `sys_path_modified`）：表外、没有可信映射的未装模块静态上找不到不等于
+    # 没有——它可能就在脚本运行时才加进路径的目录里。不在运行前问包名，先跑一次（`deferred_unverified`）；运行时真的
+    # `ModuleNotFoundError` 点名它了（`extra_imports`）才走确认包名。用户已经指定过包名的不延后（他们已经答了）
+    deferred: tuple[str, ...] = ()
+    if any(w.get("code") == "sys_path_modified" for w in scan.warnings):
+        observed = set(extra_imports)
+        asked = set(user_specified or {})
+        deferred = tuple(sorted(m for m in specifiable if m not in observed and m not in asked))
+        origin_classes = [c for c in origin_classes if c.module not in deferred]
+        specifiable -= set(deferred)
     chosen: dict[str, tuple[depresolve.DependencyIntent, importscan.ImportClass]] = {}
     for imp, text in sorted((user_specified or {}).items()):
         cls = next((c for c in origin_classes if c.module == imp), None)
         if cls is None or imp not in specifiable:
             raise UserSpecifiedRejected(str(imp), UserSpecifiedRejected.NOT_APPLICABLE)
         asked = depresolve.from_user_input(imp, str(text or ""))
+        if asked is not None and depresolve.not_pip_for_distribution(asked.distribution):
+            raise UserSpecifiedRejected(str(imp), UserSpecifiedRejected.NOT_APPLICABLE)
         intent = (
             depresolve.parse_intent(asked.requirement())
             if asked is not None and asked.installable
@@ -1503,6 +1567,7 @@ def plan(
             open_classes.get(c.module, ORIGIN_UNRESOLVED),
             states.get(c.module, ""),
             suggest=depresolve.suggest_distribution(c.module) if c.module in specifiable else "",
+            literal_dirs=literal_dirs,
         )
         for c in origin_classes
         if c.module not in chosen
@@ -1549,8 +1614,41 @@ def plan(
         }
     if roots_active:
         to_install |= declared_install
-    # 本计划实际会装的名字：hash 模式 = 整份选中集合；否则 = 上面算出的 to_install（含按声明装的 roots）
-    installing = set(by_name) if hash_mode else set(to_install)
+    # 已知装不了的发行包（`depresolve.NOT_PIP_INSTALLABLE`）：计划阶段点名（来自哪个声明文件 / 哪个 import），不送 pip
+    not_pip_entries: list[dict] = []
+    # 候选 = 要装的 + 声明 roots + 本计划 missing 里点到的 + hash 模式下整份选中集合：任何一处都不许把它们带进 pip（Codex #1276 P1）
+    not_pip_candidates = (
+        to_install
+        | declared_install
+        | {str(m.get("distribution") or "") for m in missing}
+        | (set(by_name) if hash_mode else set())
+    )
+    not_pip_names: set[str] = set()
+    for name in sorted(n for n in not_pip_candidates if n):
+        hit = depresolve.not_pip_for_distribution(name)
+        if hit is None:
+            continue
+        not_pip_names.add(name)
+        to_install.discard(name)
+        declared_install.discard(name)
+        not_pip_entries.append(
+            {
+                "name": hit["label"],
+                "distribution": name,
+                "hint": hit["hint"],
+                "sources": sorted({it.source for it in by_name.get(name, ()) if it.source})[:4],
+                "imports": sorted(
+                    c.module
+                    for c in scan.classes
+                    if arbitrated.get(c.module, c.distribution) == name
+                )[:4],
+            }
+        )
+    if not_pip_names:
+        # missing 里同样不留：否则计划仍是 ready、空需求集、装后核验 ROOT 必失败
+        missing[:] = [m for m in missing if str(m.get("distribution") or "") not in not_pip_names]
+    # 本计划实际会装的名字：hash 模式 = 整份选中集合（去掉装不了的）；否则 = 上面算出的 to_install（含按声明装的 roots）
+    installing = (set(by_name) - not_pip_names) if hash_mode else set(to_install)
     _, provider_conflicts = _arbitrate_providers(scan.classes, by_name, installing)
     missing_imports = {m["import_name"] for m in missing}
     install_only = tuple(
@@ -1575,8 +1673,10 @@ def plan(
         if arbitrated.get(c.module, c.distribution) in installing
         and c.module not in missing_imports
     )
-    if roots_active:
+    if target_kind == TARGET_MANAGED:
         # 没有任何 import 条目指到的声明 root：照样进账（重建时装得回来）与装后核验（发行包 / 版本），import 名未知就留空
+        # hash 锁会重装整份集合，但这里只登记既有判据选中的相关声明，不把无关锁条目抬成 roots（#963）。
+        recorded_roots = (relevant & installing) if hash_mode else to_install
         covered = {m["distribution"] for m in (*missing, *install_only)}
         modules_of = {
             arbitrated.get(c.module, c.distribution): c.module
@@ -1594,7 +1694,7 @@ def plan(
                     "specifiers": sorted({it.specifier for it in by_name[name] if it.specifier}),
                     "via": [],
                 }
-                for name in sorted(to_install)
+                for name in sorted(recorded_roots)
                 if name in by_name and name not in covered
             ),
         )
@@ -1605,7 +1705,9 @@ def plan(
     if hash_mode:
         # hash 模式 = 锁文件语义：整份选中集合就是闭包，全部按 hash 装（pip 要求每一条
         # 都有 hash，缺一条整次拒绝——那是它的判据，这里提前说出来）。
-        without = [it for it in selection.requirements if not it.hashes]
+        without = [
+            it for it in selection.requirements if not it.hashes and it.name not in not_pip_names
+        ]
         if without:
             blocked.append(
                 {
@@ -1615,6 +1717,8 @@ def plan(
                 }
             )
         for it in selection.requirements:
+            if it.name in not_pip_names:
+                continue
             text = depresolve.requirement_string(it)
             if text not in reqs:
                 reqs.append(text)
@@ -1758,6 +1862,8 @@ def plan(
             None if same_target else target_installed,
         ),
         declared_gaps_total=gaps_total,
+        not_pip_installable=tuple(not_pip_entries),
+        deferred_unverified=deferred,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

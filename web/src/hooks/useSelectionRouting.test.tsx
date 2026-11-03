@@ -55,7 +55,7 @@ function Harness() {
     {leftOpen && <aside data-left-drawer>
       {tab === 'assets'
         ? <button data-asset onPointerDown={() => useSelectionStore.getState().set([panel.id])} />
-        : tab === 'layers' ? <LayerTree /> : <ElementTree />}
+        : tab === 'outline' ? <LayerTree /> : <ElementTree />}
       <button data-explicit onClick={() => useUiStore.getState().setRightTab('properties')} />
     </aside>}
     <div data-canvas-stage><span data-canvas-hit onPointerDown={() => {
@@ -93,7 +93,7 @@ beforeEach(async () => {
   useSelectionStore.getState().clear()
   useInteractionStore.getState().end()
   useViewportStore.setState({ spaceDown: false })
-  useUiStore.setState({ layout: 'medium', leftOpen: true, leftTab: 'layers',
+  useUiStore.setState({ layout: 'medium', leftOpen: true, leftTab: 'outline',
     rightOpen: false, rightTab: 'properties', rightPinned: false,
     elementPanelId: null, selectedGids: [], tool: 'select' })
   host = document.createElement('div')
@@ -214,6 +214,61 @@ describe('selection routing keeps the active drawer workflow', () => {
       expect(useUiStore.getState().rightTab).toBe('properties')
     })
   }
+
+  it.each(['wide', 'medium'] as const)('%s: 指针还在素材抽屉里时加图不收抽屉，离开后才让位', layout => {
+    act(() => {
+      useUiStore.getState().setLayout(layout)
+      useUiStore.getState().setLeftPinned(false)
+      useUiStore.getState().setLeftTab('assets')
+    })
+    const hover = (sel: string) =>
+      act(() => node(sel).dispatchEvent(new PointerEvent('pointerover', { bubbles: true })))
+    hover('[data-asset]')
+    pointer('[data-asset]')
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    hover('[data-canvas-stage]')
+    expect(useUiStore.getState().leftOpen).toBe(false)
+    expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+
+  describe('覆盖式属性栏（< 1280 没固定）的收回', () => {
+    const openAssistant = () => act(() => {
+      useUiStore.setState({ layout: 'medium', leftOpen: false, rightPinned: null })
+      useUiStore.getState().setRightTab('assistant')
+    })
+
+    it('点画布空白处收回，且不写偏好', async () => {
+      openAssistant()
+      expect(useUiStore.getState().rightOpen).toBe(true)
+      act(() => node('[data-canvas-stage]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })))
+      await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+      expect(useUiStore.getState().rightOpen).toBe(false)
+      expect(JSON.parse(localStorage.getItem('tavotto.ui') ?? '{}').rightOpen).not.toBe(false)
+    })
+
+    it('Esc 在没有选区时收回；有选区时不动（Esc 先退选区）', () => {
+      openAssistant()
+      act(() => useSelectionStore.getState().set([panel.id]))
+      act(() => useUiStore.getState().setRightTab('assistant'))
+      act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+      expect(useUiStore.getState().rightOpen).toBe(true)
+      act(() => useSelectionStore.getState().clear())
+      act(() => useUiStore.getState().setRightTab('assistant'))
+      act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+      expect(useUiStore.getState().rightOpen).toBe(false)
+    })
+
+    it('显式固定的属性栏不被点空白处收回', async () => {
+      act(() => {
+        useUiStore.setState({ layout: 'medium', leftOpen: false, rightPinned: true })
+        useUiStore.getState().setRightTab('assistant')
+      })
+      act(() => node('[data-canvas-stage]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })))
+      await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+      expect(useUiStore.getState().rightOpen).toBe(true)
+    })
+  })
 
   for (const layout of ['medium', 'narrow'] as const) {
     for (const gid of gids) {

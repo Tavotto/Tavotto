@@ -81,6 +81,9 @@ _ALLOW: dict[str, dict[str, str]] = {
     "scanbudget.redirected_component": {
         "_Finder.guard": "只做逐级 lstat",
     },
+    ".read_text": {
+        "_shadow_tree": "读的是 shadowscript 登记的候选文件——Tavotto 自己的候选目录，不是项目派生路径；只在 lookup_active 命中本次校验时读",
+    },
 }
 # distmeta.py（读用户环境目录里的 dist-info / egg-link / conda-meta）同样受审。它的调用本来就几乎都不跟随：
 # 条目只取 entry.stat(follow_symlinks=False)，其余先 os.lstat 再动；没有 os.walk / Path.* / DirEntry.is_dir()。

@@ -1,0 +1,125 @@
+[
+  {
+    "name": "group schema strategy",
+    "file": "src/core/proof.ts",
+    "before": "p.group.strategy!=='queue-prefix-v1'",
+    "after": "false",
+    "pattern": "group proof schema binds provenance",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group schema lifetime",
+    "file": "src/core/proof.ts",
+    "before": "p.expires_at<=p.issued_at+120",
+    "after": "p.expires_at<=p.issued_at+121",
+    "pattern": "group proof schema binds provenance",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group producer refuses unsigned predecessor",
+    "file": "src/native/service.ts",
+    "before": "conclusion:a.eligible?'success':'failure'",
+    "after": "conclusion:'success'",
+    "pattern": "group refuses publication for unsigned-predecessor",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group event dispatch",
+    "file": "src/ci/consumer.ts",
+    "before": "if(eventName==='merge_group')",
+    "after": "if(false)",
+    "pattern": "legal complete-prefix group publishes once",
+    "testFile": "tests/group-publication-lifecycle.test.mjs"
+  },
+  {
+    "name": "group second authority read",
+    "file": "src/ci/consumer.ts",
+    "before": "try{receipt(await read(url,'authority'));}catch(error){if(error instanceof CIPending)",
+    "after": "try{/* MUTANT skip second authority */}catch(error){if(error instanceof CIPending)",
+    "pattern": "group member head changes after first CI read",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group HMAC admission",
+    "file": "src/native/automatic.ts",
+    "before": "!await validWebhook(bytes(secret),raw,signature)",
+    "after": "false",
+    "pattern": "group admission rejects a forged HMAC",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group action admission",
+    "file": "src/native/automatic.ts",
+    "before": "data?.action!=='checks_requested'",
+    "after": "false",
+    "pattern": "group admission rejects authenticated wrong action",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group journal stale generation",
+    "file": "src/native/store.ts",
+    "before": "...this.leaseGuard(job,proof.revision)",
+    "after": "...[]",
+    "pattern": "group journal rejects a stale lease generation",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group exact failure witness",
+    "file": "src/native/github.ts",
+    "before": "this.groupPublicationKey(p)===p.target_key",
+    "after": "false",
+    "pattern": "group expiry withdraws with exact failure GET",
+    "testFile": "tests/group-publication-lifecycle.test.mjs"
+  },
+  {
+    "name": "group binding provenance",
+    "file": "src/core/identity.ts",
+    "before": "...('group' in x?{group:(x as Binding & {group:unknown}).group}:{}),",
+    "after": "",
+    "pattern": "group queue entry identity change",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group recovery binding",
+    "file": "src/native/background.ts",
+    "before": "sameBinding(previous,current.proof)",
+    "after": "true",
+    "pattern": "group queue entry identity change",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group refresh evaluation",
+    "file": "src/native/group.ts",
+    "before": "s.evaluateTarget(target,0,revision)",
+    "after": "s.evaluateTarget({kind:'pr',number:9},0,revision)",
+    "pattern": "group expiry withdraws with exact failure GET",
+    "testFile": "tests/group-publication-lifecycle.test.mjs"
+  },
+  {
+    "name": "two-person group fits actual confirmation capacity",
+    "file": "src/native/group.ts",
+    "before": "if(14+qualificationSQL",
+    "after": "if(15+qualificationSQL",
+    "pattern": "two independently signed contributors complete group across wakeups delegated=true",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group fresh revocation revision ceiling",
+    "file": "src/native/group.ts",
+    "before": "if(withdrawnRevision!==undefined && withdrawnRevision>check.proof.revision)throw new Rejected('refresh_predecessor_unavailable');",
+    "after": "// MUTANT ignore future revocation",
+    "pattern": "group refresh rejects a remote revocation",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  }
+]

@@ -1,0 +1,106 @@
+✖ activation current config binds hash (33.565229ms)
+✖ activation current config binds repository (12.301754ms)
+✖ activation current config binds holder (11.225935ms)
+✖ activation current config binds reference (10.579801ms)
+✖ activation current config binds policy (10.398963ms)
+✖ activation current config binds agreement (11.425139ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 260.133767
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:85:84
+✖ activation current config binds hash (33.565229ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/agreement-activation.test.mjs:93:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/agreement-activation.test.mjs:85:84
+✖ activation current config binds repository (12.301754ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/agreement-activation.test.mjs:93:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/agreement-activation.test.mjs:85:84
+✖ activation current config binds holder (11.225935ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/agreement-activation.test.mjs:93:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/agreement-activation.test.mjs:85:84
+✖ activation current config binds reference (10.579801ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/agreement-activation.test.mjs:93:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/agreement-activation.test.mjs:85:84
+✖ activation current config binds policy (10.398963ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/agreement-activation.test.mjs:93:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/agreement-activation.test.mjs:85:84
+✖ activation current config binds agreement (11.425139ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/agreement-activation.test.mjs:93:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-configuration-pin-binding/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_protocol.py`、`test_loginpath.py`、`test_tex_diagnostics.py`、`test_worker_roundtrip.py`、`test_worker_exit_report.py`、`test_pool_lru_lease.py`、`test_workerd_client.py`、`test_build_watchdog.py`、`test_windows_regressions.py`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 60
+改到: `engine/pool.py`、`executionfact.py`、`wireproto.py`、`workerd_client.py`、`texdiag.py`、`loginpath.py`、超时 / 关停 / 计时
+主题: worker 协议、计时、超时与关停、TeX 分类 → `worker-protocol-and-lifecycle.md`
+必守要点: 协议 v1 信封原样回显、`request_id` 对不上 kill；patch 规范化唯一权威 `patchspec.py`；kill 之后必 reap；TeX 先于缺依赖判
+-->
 
 - **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
   worker_generation/render_revision/canonical_patch_hash` 信封，命令
@@ -29,6 +38,9 @@
 - 前端渲染态分键与假实时预览（渲染平面 / 历史平面）的规则在
   `web/AGENTS.md`——引擎侧只需知道：render 请求带 `inline_svg` 时 SVG 与
   manifest 必须同一次响应返回；SSE 的 render.started/done 只带 fileId。
+- **export 的两个可选「保留文字」字段（ADR 0144，加字段协议）**：`svg_fonttype`（`"none"`，仅 `format=svg`）与 `svg_text_path`
+  （要带 `svg_path`、不与 `snapshot_only` 同用；应答多 `svg_text` / `svg_text_error`）。只给成品用，path 基准字节与 #1185 等价证人不动；
+  旧 worker 静默忽略，父进程只对签名里有这两个参数的 worker 带上，回退为 path 版。看护 `tests/test_worker_svg_pair.py`、`tests/test_export_svg.py`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
@@ -42,15 +54,29 @@
   兜底拦一直打印的死循环。**判据两条控制面同一条**——Python 池 `stat` 日志、
   workerd 收 `idle_timeout_ms` 后 `stat` 同一个文件。注册表的 `cost` **不再参与
   引擎侧超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
-  「会打进度的脚本不再有总时长上限」**只在引擎侧成立**：画布前端另有按 `cost`
-  取档的悬挂看门狗（`renderStore.ts` 的 `WATCHDOG_MS`，2 / 5 / 15 分钟，都短于
-  `BUILD_IDLE_TIMEOUT`），冷启动很长的脚本在画布上会先被前端断开请求，服务端 build
-  照常继续——有意保留的现状（#312，ADR 0050 补注）。
+  画布前端按同一个信号续期（#1207）：日志长大时引擎发 SSE `render.progress {pj, id}`
+  （`ProgressListeners`，节流 `PROGRESS_EMIT_INTERVAL`；订阅者含排在同一把 `w.lock` 后面
+  的重试；workerd 路径由 `_relay_log_growth` 转述），`renderStore.ts` 的看门狗是租约
+  （窗口 `WATCHDOG_MS` 2 / 5 / 15 分钟，总上限 `RENDER_HARD_CAP_MS` 对齐
+  `BUILD_HARD_TIMEOUT`）。没有进度通道的消费者（MCP 内嵌画布、SSE 断线）退回「请求开始起
+  一个窗口」。改节流或总上限要同步另一侧（`tests/test_build_watchdog.py` 钉着；ADR 0050 补注）。
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
+- **会话池上限 = `pool.max_alive()`，不是常数（ADR 0159）**：`clamp(3, (可用内存 + 池内活会话×500MiB)×0.5÷500MiB, 8)`（池自己会话占的内存算回预算，否则上限随会话增多而自降、振荡），读不到内存回 3，下降不足 `MAX_ALIVE_HYSTERESIS`（2）沿用旧值，`TAVOTTO_MAX_ALIVE` 覆盖；淘汰只在 `acquire()` 且活会话数 > 上限时发生；
+  淘汰、冷启动容量、未确认退役的拒绝线、发布账本**只问这一个函数**（`tests/test_pool_adaptive_cap.py` 用 AST 钉「别处不许读 `MAX_ALIVE`」；
+  测试里 `pool.MAX_ALIVE` 是覆盖钩子，conftest 默认钉成 3）。读内存的 `engine/sysmem.py` 纯标准库，读不到一律下限，且不许在持 `_lock` 时调。
+  取会话带闭集意图 `purpose`（`foreground` 缺省 / `neighbour`，`acquire_purpose()` 上下文，请求体可选字段）：`neighbour` 命中热会话不刷新 `last_used`；
+  需要冷启动而别的活会话已满上限 → `background_render_deferred`（HTTP 409，不是失败，前端保留旧画面）；淘汰时「仅后台用过」的会话先走。
+- **LRU 淘汰不收「刚取到、还没发请求」的会话（Python 池）**：`acquire` 给会话打 `ACQUIRE_LEASE`（30 秒）租约，
+  调用方第一条请求拿到 `w.lock` 即清零；租约内上限淘汰（`max_alive()`）跳过它（上限因此是软的）。否则淘汰线程的优雅
+  `shutdown()` 与该调用方的首条请求在 `w.lock` 上竞争，淘汰一赢，worker 按 shutdown 正常退出（退出码恒为 0），
+  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、上限为 3 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
+  排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["evicted"]`（不解释退出码），
+  `app._engine_attempt` 只对这一种重新取会话重试一次。用户取消（`force_kill`）/ 超时 / 看门狗 / 失效重建 / 切项目 / 整体关停
+  都不置、不重试——重试会把用户刚停掉的脚本又跑起来；真崩溃同样不重试。看护 `tests/test_pool_lru_lease.py`。
 - **管道 EOF 先问死因，再说话（#435）**。EOF 之后两条控制面都先给子进程
   `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数——两侧各自钉在 `tests/golden/exit_grace_ms.txt`，
   不拿正则扫对方的源码，没有解析器就分不清注释 / 字符串 / 原始字符串）自己退出，拿到退出状态才 kill
@@ -121,6 +147,10 @@
   `test_non_utf8_bytes_inside_a_json_response…` / `test_a_non_json_line…`、
   `workerd/tests/supervisor_behaviour.rs` 的 `a_dead_worker_reports_how_it_died…` /
   `non_utf8_bytes_on_the_protocol_pipe…` / `non_utf8_bytes_inside_a_json_envelope…`。
+  **safe worker 的协议只走 `main()` 里 dup 出的私有不可继承 fd；公开 fd 1 / Win32 标准输出一律改指 stderr
+  （worker.log）**（TVD-5J0Y）：`redirect_stdout` 只换得了 Python 层，脚本 `subprocess.run(...)` 起的子进程、
+  C 扩展直写 fd 1 走的是 OS 层，曾把一行 print 写进协议管道 → protocol_mismatch。敏感运行再把 fd 1/2 换成丢弃管道。
+  看护：`tests/test_run_argv_privacy.py` 的 `test_ordinary_native_and_child_stdout_never_reach_the_protocol_pipe`（两条控制面）。
   **请求之间死掉的 worker 只有一个答案**（QA LONG-03-B1）：`EngineWorker.request` 拿锁时已看得见它死了、
   写管道撞上 `BrokenPipeError` / 管道已关、写进去后读到 EOF，三处都走同一条带退出状态的 `session_dead`——
   不许有 code 为空的「worker 进程已退出」，也不许让 `OSError` 冒成 internal_error
@@ -166,6 +196,23 @@
   `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。
   问答去向计数（`InputFacts`）经 `facts_projection` 进 T04 任务诊断。不向协议 stdin 写答案；native / 子进程 input 不变。
   看护：`tests/test_script_input_context.py`、`tests/test_script_input_transcript_api.py`、`tests/test_input_transcript.py`。
+
+## TeX 工具链失败的分类（`texdiag`）
+
+`text.usetex` 的失败在两条错误收口（`pool.EngineWorker._error_of` / `pool._worker_error`）按 matplotlib 的固定模板分四码，
+**先于缺依赖判**（LaTeX 日志不会落进 `missing_dependency` 的 pip 出口）：`tex_command_missing`（`command` 闭集）/
+`tex_package_missing`（`.sty` / `.tfm`，文件名白名单清洗）/ `tex_compile_failed`（LaTeX 的 `! …` 行）/ `tex_failed`
+（落在 matplotlib 的 TeX 模块里但认不出原因；`dviread.find_tex_file` 那句分不清 kpsewhich 缺失与文件缺失，也归这里）。
+build 与之后的 render / export 同一收口；超时 / 取消保持各自的码。参数经错误转换合同 `pool.recovery_params`，渲染端点 /
+试运行探测 / 准备会话同一份。分类只读已发生的那次执行，不另起探测、不执行用户代码。worker 继承父进程 PATH。从 Finder / Dock 启动的
+桌面版只有 GUI 的最小 PATH（没有 `/Library/TeX/texbin`、`/opt/homebrew/bin`），所以 macOS sidecar 启动时（`desktop.run` 最前）调一次
+`engine/loginpath.apply_to_environ()`：继承的 PATH 原样在前，只读 `/etc/paths` 与 `/etc/paths.d/*`（文件名排序、逐行一个目录，不执行
+`path_helper`、不起 shell），把存在且未出现的目录追加在末尾，不改既有顺序、不去重既有项；非 macOS 不变。选「改一次 `os.environ`」而不是只在
+几处 worker env 构造里补：worker（`pool.worker_env` 对用户环境回 None = 继承）、`_has_matplotlib` 探测、用户脚本自己 `subprocess` 调的命令、
+`ai_agents.spawn_env` 全都继承同一份，探测与 worker 天然同一套 PATH，没有「漏补一处」的第二条路（`ai_agents.spawn_env` 补的是猜测的
+安装目录，判据不同，保持不动，它读到的 `os.environ` 已含本补全）。代价：装完 TeX 后要重启 Tavotto 才读到新装的 `/etc/paths.d/TeX`，
+文案正是这么说的「装完重启 Tavotto」；宏包装上后同一会话重跑即重新验证（kpathsea 每次编译现查，
+不依赖环境代）。看护 `tests/test_loginpath.py`（PATH 补全与 worker / 探测同一份）、`tests/test_tex_diagnostics.py`（stub）与 `tests/test_tex_toolchain_real.py`（真 TeX，没有时 environment-blocked）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -223,3 +270,17 @@ native 另带 `figure_facts`（逐图 `state` / `generation` / `capabilities` / 
    （`clear_preview_poison`：作废之后没重新发布的指针摘掉再解除）。
 
 新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。
+
+## 实际执行事实（X03 快照资格）
+
+`executionfact` 的 48 位不透明 ID 只在 worker 即将进入用户代码的边界产生，v1 成功/错误响应与请求级短文件为独立通道；
+marker 不含脚本、路径、argv 或输出，读写失败不阻止科学运行。owner 由父进程可信 spec 的项目/script/run_config 提供，
+不是从描述符子集、HTTP 成功或 Figure 数量推断。正常轮询早通知；导出按 owner 同步刷新关闭轮询间隔。
+两条证据都丢失时以 dispatch 时序记 unknown，不能说没执行，也不伪造 started。执行中尚无事实时旧快照导出临时拒绝，
+confirmed pre-send/排队取消/依赖门不撤旧代；unknown 的迟到结果不能污染更新执行。单次验证 `one_shot` 不替代当前图。
+safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变化的 worker generation 冒充同一次执行；公开语义身份不变。
+看护：`tests/test_execution_observation.py`、`tests/test_execution_receipt.py`、`tests/test_svg_execution_lifecycle.py`。
+- **后台预热与解释器体检单飞（2026-11-02，ADR 0160，TVD-ZWV6）**：`POST /api/engine/prewarm` 只经 `_engine_worker` **取会话**
+  （不 build / 不出图 / 不写盘 / 不发事件），节流与去重全在 `engine/prewarm.py`（每 (项目, 面板) 一次、同时一路、池里已活
+  `MAX_ALIVE-1` 条不预热、前台取会话时让路）；native 档不预热。同一解释器上同时的 `import matplotlib` 体检只跑一个
+  （`pool._has_matplotlib_once`，只共享成功结论）。看护 `tests/test_engine_prewarm.py`。

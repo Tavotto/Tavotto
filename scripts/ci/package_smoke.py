@@ -35,7 +35,8 @@ VM 用完即毁所以从没暴露（docs/implementation/ci-foundation/04_BUILD_T
   `/api/version` 200 的话，租约丢失时那个 200 可能来自隔壁实例（公共端点谁都答）。
 * **终止**：判据是**进程不存在**，不是「发了信号」。POSIX 上 `start_new_session=True` 起、
   对整个进程组 SIGTERM → 等 10 秒 → SIGKILL → `wait()`，最后 `killpg(pgid, 0)` 必须 ESRCH；
-  Windows 上 `taskkill /T /F` 杀整棵树再 `wait()`（`terminate()` 只杀直接子进程）。之后再用
+  Windows 上进程是在 Job Object 里起的（`proctree.spawn`），`TerminateJobObject` 杀整棵树，
+  判据是 Job 里 ActiveProcesses == 0（不调 taskkill：非管理员账户上它不可靠）。之后再用
   `smoke_app._leftover_workers`（按本实例 data dir 认）确认没有 worker 残留。
 
 stdout 永远只有一行 JSON（`ok / port / attempts / ready_seconds / version / workdir / history`），
@@ -70,6 +71,7 @@ for _stream in (sys.stdout, sys.stderr):
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent))  # scripts/ ——复用既有冒烟工具（与 soak.py 同一种复用）
 
+import proctree  # noqa: E402
 import smoke_app as SA  # noqa: E402
 
 POLL_S = 0.25
@@ -351,22 +353,6 @@ def _wait_group_gone(pgid: int, timeout: float) -> bool:
         time.sleep(POLL_S)
 
 
-def _taskkill_tree(pid: int) -> bool:
-    """Windows：杀整棵树。`Popen.terminate()` 是 TerminateProcess，只杀直接子进程。"""
-    try:
-        out = subprocess.run(
-            ["taskkill", "/T", "/F", "/PID", str(pid)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return out.returncode == 0
-
-
 def _is_group_leader(pid: int) -> bool:
     """这个 pid 是不是自己进程组的组长（`start_new_session=True` 起的必然是）。
 
@@ -385,14 +371,14 @@ def terminate(proc: subprocess.Popen) -> dict:
 
     POSIX：对整组 SIGTERM → 等直接子进程 ≤ 10 秒（不退就整组 SIGKILL）→ 再看**组里**还有没有
     人（worker 之类的孙进程可能不理 SIGTERM）→ 有就整组 SIGKILL 再看一次。`group_gone` 是最后
-    那一眼的结果，不是「发过信号」。Windows：`taskkill /T /F` 一次杀整棵树，组的判据不存在。
+    那一眼的结果，不是「发过信号」。Windows：Job Object 一次杀整棵树，最后那一眼是 Job 里已没有活进程。
     """
     info: dict = {"how": "already-exited", "returncode": None, "group_gone": None}
     if os.name != "nt":
         info["group_leader"] = _is_group_leader(proc.pid)
     if proc.poll() is None:
         if os.name == "nt":
-            info["how"] = "taskkill" if _taskkill_tree(proc.pid) else "terminate"
+            info["how"] = proctree.kill_tree(proc) or "terminate"
             if info["how"] == "terminate":
                 proc.terminate()
         elif info["group_leader"]:
@@ -411,7 +397,10 @@ def terminate(proc: subprocess.Popen) -> dict:
                 _killpg(proc.pid, _SIGKILL)
             proc.wait()
     info["returncode"] = proc.returncode
-    if os.name != "nt" and info["group_leader"]:
+    if os.name == "nt":
+        # 判据是整棵树**不存在**（Job 里 ActiveProcesses == 0），不是 taskkill 退出码为 0
+        info["group_gone"] = proctree.tree_gone(proc, GROUP_GONE_WAIT_S)
+    elif info["group_leader"]:
         gone = _wait_group_gone(proc.pid, GROUP_GONE_WAIT_S)
         if not gone:
             info["how"] += "+kill-group"
@@ -419,6 +408,58 @@ def terminate(proc: subprocess.Popen) -> dict:
             gone = _wait_group_gone(proc.pid, GROUP_GONE_WAIT_S)
         info["group_gone"] = gone
     return info
+
+
+IS_WINDOWS = os.name == "nt"
+
+
+def _open_kill_on_close_job(proc: subprocess.Popen):
+    """Windows：把进程放进 `proctree` 的 Job Object，返回带 `kill()` 的句柄；拿不到返回 None。
+
+    直接子进程先退出时 `terminate()` 够不到它的后代；Job 的成员关系不随父进程退出而消失，
+    `TerminateJobObject` 杀的是整个 Job。
+    """
+    return proctree.adopt(proc)
+
+
+def run_isolated_command(
+    command: list[str], *, env: dict, cwd: Path, evidence: Path, timeout: float
+) -> dict:
+    """Bound a generic harness subprocess with the existing process-tree cleanup.
+
+    Application launch/authentication stays with the calling harness. This helper
+    owns only process lifetime and retained output; it never calls an app API.
+    """
+    with (
+        (evidence / "stdout.txt").open("w") as stdout,
+        (evidence / "stderr.txt").open("w") as stderr,
+    ):
+        proc = subprocess.Popen(
+            command,
+            env=env,
+            cwd=cwd,
+            stdout=stdout,
+            stderr=stderr,
+            stdin=subprocess.DEVNULL,
+            start_new_session=os.name != "nt",
+        )
+        job = None
+        if IS_WINDOWS:
+            try:
+                job = _open_kill_on_close_job(proc)
+            except (OSError, AttributeError, ValueError):
+                job = None  # fall back to terminate() alone; reported as job_killed=None
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            cleanup = terminate(proc)
+            if IS_WINDOWS:
+                # The direct child may already be gone while its descendants still run.
+                cleanup["job_killed"] = job.kill() if job else None
+    return {"exit_code": proc.returncode, "timed_out": timed_out, "cleanup": cleanup}
 
 
 def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: float) -> dict:
@@ -441,7 +482,7 @@ def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: f
     t0 = time.monotonic()
     # 落文件、不开 PIPE：应用写满 64 KiB 管道缓冲就会永久阻塞在写日志上，症状指向「关不干净」
     with log_path.open("w", encoding="utf-8") as log:
-        proc = subprocess.Popen(
+        proc = proctree.spawn(  # Windows：挂起 → 进 Job → 恢复，后代逃不出去
             cmd,
             env=child_env(data_dir, config_dir),
             stdin=subprocess.DEVNULL,

@@ -305,3 +305,15 @@ def test_global_scope_absolutizes_a_relative_path_before_probing(client, tmp_pat
     assert resp.status_code == 200, resp.get_json()
     stored = engine_config.worker_python()
     assert os.path.isabs(stored) and Path(stored) == Path(exe), stored
+
+
+def test_global_scope_refuses_an_interpreter_that_cannot_create_folders_in_the_cache(
+    client, tmp_path
+):
+    """起得来、matplotlib 与 worker 链都在，但在 Tavotto 的数据目录里建不了目录（TVD-B6MR，#1594）：
+    存下它 = 之后每次运行都在用户代码之前失败。体检报 `interpreter_cache_denied`，不存。"""
+    exe = _fake_interpreter(tmp_path, _probe_answer(cache_write="denied"))
+    resp = client.patch("/api/engine/environment", json={"python": exe})
+    assert resp.status_code == 400, resp.get_json()
+    assert resp.get_json()["code"] == "interpreter_cache_denied"
+    assert engine_config.worker_python() is None, "体检不过绝不先存"

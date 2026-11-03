@@ -1,3 +1,4 @@
+import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
@@ -27,6 +28,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         type: 'panel',
         ...artifactRequestFields(o),
         id: o.fileId,
+        ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,
         rotation: rotation || undefined,
@@ -51,6 +53,8 @@ function toExportObject(o: CanvasObject): ExportObject {
         font_family: o.fontFamily,
         // 同理：`interpretation` 没设过 = auto = 后端缺省，不发。
         interpretation: o.interpretation,
+        // 同理：`textFormat` 没设过 = 旧标记 = 后端缺省，不发（ADR 0152）。
+        text_format: o.textFormat,
         underline: o.underline || undefined,
         line_height: o.lineHeight,
         padding_mm: o.padding || undefined,

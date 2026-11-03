@@ -1,4 +1,4 @@
-import { artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
+import { artifactValidationIssue, ArtifactValidationError, adoptionGuardOf } from '@/lib/artifactValidation'
 import { engineErrorMsg } from '@/lib/api'
 /**
  * 引擎渲染的**调度器**：把「什么时候麻烦 matplotlib」这件事从 React 里拿出来。
@@ -14,6 +14,7 @@ import { engineErrorMsg } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
 import { panelRender, renderEpoch, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
+import type { RenderPurpose } from '@/lib/renderPurpose'
 
 /** 文字/数值输入合并成一次渲染的窗口；颜色、开关、拖动结束走 immediate */
 export const DEBOUNCE_MS = 300
@@ -74,7 +75,12 @@ export function hasScheduledRender(panelId: string): boolean {
  * 请求渲染。同一面板的连续请求会被合并：debounce 期内只保留最后一次，
  * 真正发出后由 renderStore 的 busy/queued 再兜一层。
  */
-export function requestRender(panel: PanelObject, immediate: boolean | RenderPolicy = false) {
+export function requestRender(
+  panel: PanelObject,
+  immediate: boolean | RenderPolicy = false,
+  /** 同步器给「顺手补渲染」的邻居图标 `neighbour`（后端不让它挤掉前台会话）；其余一律缺省 foreground。 */
+  purpose: RenderPurpose = 'foreground',
+) {
   const policy = policyOf(immediate)
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
@@ -101,7 +107,10 @@ export function requestRender(panel: PanelObject, immediate: boolean | RenderPol
   const epoch = renderEpoch()
   const fire = () => {
     timers.delete(panel.id)
-    void store.render(fileId, patches, dpi, policy, epoch, panel.artifactValidation)
+    // 前台请求的调用形状一字不变（只有邻居补渲染多一个实参）
+    void (purpose === 'foreground'
+      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel))
+      : store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose))
   }
   cancelScheduledRender(panel.id)
   if (policy === 'none') return

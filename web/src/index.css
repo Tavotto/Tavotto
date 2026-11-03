@@ -2,7 +2,7 @@
    按 vite 根（web/）自动探测、连 .md 与 e2e 一起扫，散文里写全的工具类名会把规则吊在
    产物里。三条构建链（vite.config / vite.mcp.config / vite.playground.config）都进这一份
    CSS，所以声明一次三份产物都收窄；两向门禁 scripts/tailwind-scan-check.mjs 接在 pnpm build 后。 */
-/* 会滚的数字（@sfinterface/numbers，只给顶栏缩放读数一处；2026-09-15 调研后用户拍板）：先于 Tailwind
+/* 会滚的数字（@sfinterface/numbers，只给两处：顶栏缩放读数、画布尺寸（拖页面边的标注 + 属性栏画布页头）；2026-09-15 调研后用户拍板）：先于 Tailwind
    import，它开头声明的 `@layer arc, theme, base, components, utilities` 才把自己排在最低层，工具类盖得住它。
    它的样式表只描述运动与几何，字体 / 字号 / 颜色全继承。 */
 @import '@sfinterface/numbers/styles.css';
@@ -48,6 +48,8 @@
      占位框的字）用的墨：纸不变，它也不变。 */
   --color-paper: #ffffff;
   --color-paper-ink: #1b1b18;
+  /* 纸上的荧光笔（出处卡摘录里命中的数）：浅黄，两套主题同值（纸不反相） */
+  --color-paper-highlight: #fff3a3;
   /* 纸上的二 / 三级墨（缩略图里的文字框 / 标注线、纸上的图形记号）：paper-ink 的 80% / 65%，合成到纸白上约等于浅色的
      ink-2 / ink-3。纸上不许用界面的 ink-2 / ink-3——它们在暗色里变浅，落在不变的白纸上只剩 1.8:1 / 2.8:1
      （foundation.test「纸上的东西用纸上的墨」+ tokenContrast.test 守着） */
@@ -160,6 +162,8 @@
   --color-warn-subtle: var(--color-warn-surface);
   --color-ok-subtle: var(--color-ok-surface);
   --color-sel: #4685e2;
+  /* 画布尺寸标注与拖边把手（机械制图式浅蓝）：只画在画布叠加层，不进文档 / 导出；暗色里提亮一档 */
+  --color-dim: #4a8bdf;
 
   /* 代码着色（2026-10-07 设计审计 §6.3 / §10.4）：只读代码块（/try 的 Code Sheet、助手的代码块）共用这七档，
      不在组件里写 hex。每一档在白 / 桌面 / surface-2 上都 ≥4.5:1（tokenContrast.test 守着）；
@@ -228,6 +232,8 @@
   --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
   /* 拖放接收态的外发光（ui/dropZone）：accent 14% 的 4px 环，不透明度走 color-mix，不在组件里手写任意投影 */
   --shadow-drop: 0 0 0 4px color-mix(in srgb, var(--color-accent) 14%, transparent);
+  /* 定位舞台灯（`canvas/IssueSpotlight`）的暗幕颜色：压在画布内容上，两档主题同值 */
+  --color-spotlight-shade: #050609;
   --shadow-composer:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 4%, transparent),
     0 2px 8px color-mix(in srgb, var(--color-shadow) 4%, transparent),
@@ -252,6 +258,10 @@
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   /* 画布内文字对象专用：与 UI 字体严格分离，模拟论文排版 */
   --font-doc: 'Times New Roman', 'Songti SC', 'Source Han Serif SC', serif;
+  /* 小缩略图的字（画布列表 / 版本列表，`glanceText` 读出来的 Unicode 上下标）：Windows 上界面栈落到微软雅黑，
+     它缺全部下标与一半上标，`Eₐ`、`Tₘₐₓ` 会逐字回退到衬线字体、与正文不搭（Windows Lab page-shot glance-fonts 实测）。
+     Segoe UI 上下标齐全，排在最前；Mac 没有它，照旧走界面栈。中文仍回退到界面栈里的中文字体 */
+  --font-glance: 'Segoe UI', var(--font-sans);
 
   /* --------------------------------------------------------------------------
      动效 token —— 时长与缓动的唯一出处，组件里不写字面量。
@@ -341,6 +351,13 @@
      不是 Tailwind 的 pulse——那条无限呼吸被门禁禁了（加载方言只有 sweep / 静态骨架 / shimmer / 转圈）；
      这是一次性的注意力信号，有限次数、走 token 曲线。 */
   --animate-attention: attention 900ms var(--ease-standard) 3;
+  /* 定位舞台灯（`canvas/IssueSpotlight`，参照 iMessage「聚光灯」）：光打过来 · 停 · 散开，整段 1000ms
+     （`SPOTLIGHT_MS` 同长），一次性、有限。景深层的关键帧直接动 backdrop-filter（祖先有 opacity / transform 时
+     背后取不到，模糊失效）；光圈与光柱的缓动写在各关键帧里（打过来 pop、散开 exit） */
+  --animate-spotlight-blur: spotlight-blur 1000ms var(--ease-standard) both;
+  --animate-spotlight-fade: spotlight-fade 1000ms linear both;
+  --animate-spotlight-land: spotlight-land 1000ms linear both;
+  --animate-spotlight-shaft: spotlight-shaft 1000ms linear both;
 }
 
 /* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
@@ -353,6 +370,13 @@
      --card-lift-scale 上限 1.02（门禁 foundationPrimitives.test 读这里）；--lift-halo = accent 20% 的 1px 环（描边，不是外发光），
      是 --shadow-lift 阴影串里的最后一层，不要光晕就写 0 0 0 0 transparent */
   --card-lift-scale: 1.015;
+
+  /* 首页（HomeView）的垂直节奏：随窗高在上下限之间平滑伸缩，没有断点跳变。
+     --home-gap 各段之间（Logo 块 / 拖放区 / 示例 / 最近项目）、--home-gap-tight Logo 与下一句之间（下限 16px，不挤）、
+     --home-dz-pad 拖放区上下内边距（矮窗口收缩；线稿从 42 放大到 72 高后上下各让出 15px，整屏高度与改版前持平）。上下限是 rem（跟字号设置走），伸缩量按视口高 vh。 */
+  --home-gap: clamp(1rem, 0.4rem + 2.2vh, 2.25rem);
+  --home-gap-tight: clamp(1rem, 0.55rem + 1.2vh, 1.5rem);
+  --home-dz-pad: clamp(0.5rem, 3.4vh - 0.4375rem, 1.5625rem);
   --lift-halo: 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent);
 
   /* 层级（z-index）token（2026-10-07 设计审计 §1）：组件里只写 z-sticky / z-canvas-chrome / … 这些工具类
@@ -365,7 +389,8 @@
        popover 60       菜单 / popover / select 弹层（从对话框里打开的也在它上面）
        tooltip 70       气泡
        toast 80         预留给通知轨移出画布列之后（此前它在画布列里，用 canvas-chrome）
-       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层） */
+       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层）
+       window-controls 100 Windows 无框窗口右上角的最小化 / 最大化 / 关闭：它是窗口的一部分，压在所有页面层（含教程）之上 */
   --z-sticky: 10;
   --z-canvas-chrome: 20;
   --z-drawer: 30;
@@ -376,6 +401,7 @@
   --z-toast: 80;
   --z-onboarding-ring: 89;
   --z-onboarding: 90;
+  --z-window-controls: 100;
 
   /* 画布覆盖层 token（2026-10-07 设计审计 §10.1）：悬停描边的不透明度、唯一的一种虚线、手柄填充、遮罩。
      画布那一期（2026-10-07）已迁完：OverlaySvg / PageSheet / 裁剪框只读这几个 token，不再写 #fff / rgba(27,27,24,…) 字面量。 */
@@ -527,6 +553,140 @@
   }
 }
 
+/* 进度条（ui/ProgressBar，2026-10-28 铅笔排线）：11px 高、2px 圆角、发丝内描边（1× 是 ink 16% 的 1px，
+   ≥2dppx 是 ink 30% 的 0.5px），纸白底；内缩 2px 画 45° 整像素阶梯斜线（5×5 瓦片、节距 5px，SVG data-URI
+   做 mask，任何缩放都锐利）。底排线 ink 15%，已完成的一段是 ink-3；确定态宽度吸附到整条线
+   （不支持 CSS round() 的内核退回精确百分比）；不确定态整片排线以 2.2s 线性慢速斜向流动，
+   减少动态效果时静止。 */
+.progress-track,
+.hatch-box {
+  --progress-hatch: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5' shape-rendering='crispEdges'%3E%3Crect x='4' y='0' width='1' height='1'/%3E%3Crect x='3' y='1' width='1' height='1'/%3E%3Crect x='2' y='2' width='1' height='1'/%3E%3Crect x='1' y='3' width='1' height='1'/%3E%3Crect x='0' y='4' width='1' height='1'/%3E%3C/svg%3E");
+}
+.progress-track {
+  position: relative;
+  height: 11px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .progress-track {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-ink) 30%, transparent);
+  }
+}
+/* 缩略图占位（手帐线稿）：与进度条同一块纸——发丝框 + 同一张 45° 排线瓦片，不画图标。
+   尺寸与圆角由使用处给；排线与进度条的底排线同色（ink 15%） */
+.hatch-box {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .hatch-box {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-ink) 30%, transparent);
+  }
+}
+.hatch-box[data-gone] {
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dashed color-mix(in srgb, var(--color-ink) 22%, transparent);
+  outline-offset: -1px;
+}
+.hatch-box[data-gone]::before {
+  display: none;
+}
+.hatch-box::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  -webkit-mask: var(--progress-hatch) 0 0 / 5px 5px;
+  mask: var(--progress-hatch) 0 0 / 5px 5px;
+  background: color-mix(in srgb, var(--color-ink) 15%, transparent);
+}
+/* 属性栏默认卡的页面预览（Inspector DocumentSummary，redesign-3 B2）：画在**纸**上，纸在暗色里仍是白的，
+   所以发丝与排线用纸上的墨（--color-paper-ink，两套主题同值），不用界面的 ink（暗色里会变浅、落在白纸上看不见） */
+.paper-sheet {
+  background: var(--color-paper);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .paper-sheet {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 30%, transparent);
+  }
+}
+.hatch-box.hatch-box-paper {
+  background: var(--color-paper);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .hatch-box.hatch-box-paper {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 30%, transparent);
+  }
+}
+.hatch-box.hatch-box-paper::before {
+  background: color-mix(in srgb, var(--color-paper-ink) 15%, transparent);
+}
+.paper-slot-empty {
+  outline: 1px dashed color-mix(in srgb, var(--color-paper-ink) 22%, transparent);
+  outline-offset: -1px;
+}
+.progress-track > .progress-base,
+.progress-track > .progress-fill {
+  position: absolute;
+  inset: 2px;
+  -webkit-mask: var(--progress-hatch) 0 0 / 5px 5px;
+  mask: var(--progress-hatch) 0 0 / 5px 5px;
+}
+.progress-track > .progress-base {
+  background: color-mix(in srgb, var(--color-ink) 15%, transparent);
+}
+.progress-track > .progress-fill {
+  right: auto;
+  width: var(--progress-w, 0%);
+  background: var(--color-ink-3);
+}
+@supports (width: round(down, 43%, 5px)) {
+  .progress-track > .progress-fill {
+    width: round(down, var(--progress-w, 0%), 5px);
+  }
+}
+.progress-track[data-progress-indeterminate] > .progress-fill {
+  right: 2px;
+  width: auto;
+  background: color-mix(in srgb, var(--color-ink-3) 70%, transparent);
+  animation: progress-slide 2.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-track[data-progress-indeterminate] > .progress-fill {
+    animation: none;
+  }
+}
+/* 首页拖放区线稿（ui/Sketch 'drop'）：拖入时文件卡连同三道节拍下落 4px（整数，保持锐利），
+   落点虚线换 accent；减少动态效果时直接到位，不做过渡 */
+[data-home-dropzone] .sk-fall {
+  transition: transform var(--duration-fast) var(--ease-pop);
+}
+[data-home-dropzone][data-dragging] {
+  --sk-landing: var(--color-accent);
+}
+[data-home-dropzone][data-dragging] .sk-fall {
+  transform: translateY(4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-home-dropzone] .sk-fall {
+    transition: none;
+  }
+}
+@keyframes progress-slide {
+  to {
+    -webkit-mask-position: 5px 0;
+    mask-position: 5px 0;
+  }
+}
+
 @keyframes sweep {
   0% {
     transform: translateX(-100%);
@@ -575,6 +735,74 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* 舞台灯的景深：光外轻微失焦，两端都是原样（blur 0），停在末帧不留痕。
+   **带前缀的那条必须写在前面**：构建期的压缩器把两条当成同一属性、只留后写的那条——标准写法在前时产物里只剩
+   -webkit-，Chrome 不认它，整段在 Chrome 里什么都没有（2026-10-23 实测） */
+@keyframes spotlight-blur {
+  0%,
+  100% {
+    -webkit-backdrop-filter: blur(0);
+    backdrop-filter: blur(0);
+  }
+  30%,
+  70% {
+    -webkit-backdrop-filter: blur(2.5px);
+    backdrop-filter: blur(2.5px);
+  }
+}
+
+/* 舞台灯的暗幕：渐入 · 停 · 渐出（整层的不透明度；它没有 backdrop-filter，动 opacity 不影响景深层） */
+@keyframes spotlight-fade {
+  0% {
+    opacity: 0;
+    animation-timing-function: var(--ease-pop);
+  }
+  30%,
+  70% {
+    opacity: 1;
+    animation-timing-function: var(--ease-exit);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 舞台灯的光圈（暗幕遮罩里的受光区）：从光源那一侧、放大着收拢到目标（pop，像光打过来对上焦），停住，最后放大散开 */
+@keyframes spotlight-land {
+  0% {
+    transform: translate(var(--spot-from-x), var(--spot-from-y)) scale(1.5);
+    animation-timing-function: var(--ease-pop);
+  }
+  30%,
+  70% {
+    transform: none;
+    animation-timing-function: var(--ease-exit);
+  }
+  100% {
+    transform: scale(1.2);
+  }
+}
+
+/* 舞台灯的光柱：从光源一端射出去（transform-origin 由组件设在光源处），停住，淡出 */
+@keyframes spotlight-shaft {
+  0% {
+    opacity: 0;
+    transform: scale(0.15);
+    animation-timing-function: var(--ease-pop);
+  }
+  30% {
+    opacity: 1;
+    transform: none;
+  }
+  70% {
+    opacity: 1;
+    animation-timing-function: var(--ease-exit);
+  }
+  100% {
+    opacity: 0;
   }
 }
 
@@ -701,6 +929,17 @@
     background: transparent;
   }
 
+  /* 定位落点（`lib/issueFocus.focusField` 加上、到点撤掉）：问题面板「定位」把焦点送到的那一行亮一下——
+     sel 色内环 + 淡底，与画布上那一圈同一个注意力节拍（`--animate-attention`，有限三次）。此前落点只有
+     输入框自己的焦点边，混在一屏字段里认不出来（2026-10-23 用户反馈「提醒不够明显」）。内环不外扩：
+     属性栏的滚动容器会裁掉外扩的阴影。reduced motion 下不闪，静静亮同样长的时间 */
+  [data-locate-flash] {
+    border-radius: var(--radius-sm);
+    background-color: color-mix(in srgb, var(--color-sel) 14%, transparent);
+    box-shadow: inset 0 0 0 2px var(--color-sel);
+    animation: var(--animate-attention);
+  }
+
   /* 动效可关：动画只是点缀，关掉不损失任何信息 */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -731,6 +970,14 @@
   outline-offset: 2px;
 }
 
+/* 指针操作之后的程序化 focus 不画环（2026-10-31 UI 审计 D4，`lib/inputModality`）：WebKit 在鼠标点击之后，
+   经 Enter 进图内编辑 / 菜单关闭还焦点这类程序化 focus 仍会让 :focus-visible 成立。
+   `data-input-modality` 只在指针按下时是 pointer、Tab / 方向键时回到 keyboard；没有它（启动后无指针操作）一切照旧。
+   不用 `!important`：未分层的规则本来就压过 utilities 层。 */
+:root[data-input-modality='pointer'] :focus-visible {
+  outline: none;
+}
+
 /* 内凹焦点环：同一根 2px accent，但画在元素边框内侧（offset -2px）。给密排的列表 / 树行用——行左右各让 4px、
    上下贴着邻行，外扩的环会盖到邻行并触到抽屉边（2026-10 UI 审计 G1）。对 selected 底合成后仍 ≥3:1（tokenContrast.test）。 */
 @utility focus-ring-inset {
@@ -742,6 +989,14 @@
    那一刻已经截好，所以拖影是实色、原位这一行淡下去——一眼分得出「在拿的」和「放哪儿」（2026-10 UI 审计 G11）。 */
 @utility opacity-dragging {
   opacity: 0.6;
+}
+
+/* 舞台灯景深层的遮罩（`canvas/IssueSpotlight`）：以元素中心为光心、`--spot-r` 为光圈半径，0.7r 内清晰、
+   往外 smoothstep 一条曲线到全模糊（逐点取样，没有折点）。暗幕的受光曲线在组件里，与它同一个起点 */
+@utility mask-spotlight {
+  -webkit-mask-image: var(--spotlight-mask);
+  mask-image: var(--spotlight-mask);
+  --spotlight-mask: radial-gradient(circle farthest-side at 50% 50%, rgb(0 0 0 / 0.0) calc(var(--spot-r) * 0.7), rgb(0 0 0 / 0.043) calc(var(--spot-r) * 0.85), rgb(0 0 0 / 0.156) calc(var(--spot-r) * 1.0), rgb(0 0 0 / 0.316) calc(var(--spot-r) * 1.15), rgb(0 0 0 / 0.5) calc(var(--spot-r) * 1.3), rgb(0 0 0 / 0.684) calc(var(--spot-r) * 1.45), rgb(0 0 0 / 0.844) calc(var(--spot-r) * 1.6), rgb(0 0 0 / 0.957) calc(var(--spot-r) * 1.75), rgb(0 0 0 / 1.0) calc(var(--spot-r) * 1.9));
 }
 
 /* 层级工具类：值在 :root 的 --z-*（见上），组件只写名字 */
@@ -774,6 +1029,9 @@
 }
 @utility z-onboarding {
   z-index: var(--z-onboarding);
+}
+@utility z-window-controls {
+  z-index: var(--z-window-controls);
 }
 
 /* 可滚但不画滚动条：只给画布页签条这种「一行、36px 高」的横滚区（2026-09-27 用户拍板）。
@@ -845,6 +1103,7 @@
    字体角色：层级由角色决定，不由页面自己挑 font-size / font-weight 组合。
    对应 docs/ux/DESIGN_CONSTITUTION.md 第六节（2026-10-07 设计审计 §2 增补 display / heading / reading，
    title 升 600、caption 升 12 / ink-3）。
+     type-hero     新手教程欢迎页那一句     44px 650 0.02em ink（宽高窗口 56 / 矮窗口 36；只此一处，ADR 0136）
      type-display  首页 / 空态大标题        24px 600 -0.02em ink
      type-heading  属性栏对象名、设置页头    17px 600 -0.01em ink
      type-title    对话框 / 分区级标题      15px 600 ink
@@ -867,6 +1126,29 @@
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--color-ink);
+}
+/* 新手教程欢迎页那一句「直接在图上改 :)」（ADR 0136）——只此一处，不给别的页面挑。
+   44 / 52（矮窗口 34 / 42）：欢迎页是一屏只有一句话的地方，24 的 display 撑不起原型的气质 */
+@utility type-hero {
+  text-autospace: normal;
+  font-size: 44px;
+  line-height: 52px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--color-ink);
+}
+/* 宽而高的窗口（≥1280×760）放大到原型的比例；矮窗口（≤720）要一屏放下：只缩这一句，留白先让 */
+@media (min-width: 1280px) and (min-height: 760px) {
+  .type-hero {
+    font-size: 56px;
+    line-height: 64px;
+  }
+}
+@media (max-height: 720px) {
+  .type-hero {
+    font-size: 36px;
+    line-height: 44px;
+  }
 }
 @utility type-heading {
   text-autospace: normal;
@@ -913,7 +1195,8 @@
    说明与 meta 同一档颜色、靠字号分开） */
 @utility type-caption {
   text-autospace: normal;
-  font-size: var(--text-sm);
+  /* 属性栏把 --text-sm 映射到 13（components/inspector/layout.ts）；说明文字是辅助角色，留 12：该容器给 --caption-size 钉回 12px */
+  font-size: var(--caption-size, var(--text-sm));
   line-height: 1.5;
   color: var(--color-ink-3);
   text-wrap: pretty;
@@ -984,8 +1267,16 @@
   [data-ui-field-group] > * {
     padding: 12px 16px;
   }
-  [data-ui-field-group] > * + * {
+  [data-ui-field-group]:not([data-ui-field-group-plain]) > * + * {
     background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 16px 0 / calc(100% - 32px) 1px;
+  }
+
+  /* 无分隔线的字段组（FieldGroup plain）：只保留卡片本身，行与行靠留白分开（导出对话框「输出」组） */
+  [data-ui-field-group-plain] {
+    padding-block: 4px;
+  }
+  [data-ui-field-group-plain] > * {
+    padding-block: 8px;
   }
 
   /* 搜索框（ui/SearchInput 用在 type="search" 时，如设置导航）自带清除钮：WebKit 原生的那颗蓝 × 藏掉，不出现两颗 */
@@ -1009,8 +1300,8 @@
   }
   [data-dialog-footer][data-scrolled] {
     background: color-mix(in srgb, var(--color-surface) 82%, transparent);
-    backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
     box-shadow: 0 -1px 0 var(--color-border);
   }
   @media (prefers-reduced-transparency: reduce) {
@@ -1051,6 +1342,7 @@
     --color-ink-faint: #6a6a64;
     --color-accent: #5a92e5;
     --color-accent-subtle: #1d2a3d;
+  --color-dim: #7db6f5;
     --color-danger: #ef6e55;
     --color-warn: #d9a23a;
     --color-ok: #4fb37a;
@@ -1087,6 +1379,7 @@
   --color-ink-faint: #6a6a64;
   --color-accent: #5a92e5;
   --color-accent-subtle: #1d2a3d;
+  --color-dim: #7db6f5;
   --color-danger: #ef6e55;
   --color-warn: #d9a23a;
   --color-ok: #4fb37a;

@@ -243,9 +243,11 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 4))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    // 描述符交给 openFastEdit（新建画布放它），不先加进当前画布；mock 的 openFastEdit 放一个面板
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toEqual(fig('a'))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
     const panels = useDocumentStore.getState().doc.objects.filter((o) => o.type === 'panel')
     expect(panels).toHaveLength(1)
-    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
   })
 
   it('这次运行替换掉了旧图名（unlinked_stems）：不自动进入——卡片详情里的恢复提示是用户必须看到的', async () => {
@@ -259,6 +261,22 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(openFastEdit).not.toHaveBeenCalled()
     expect(entry().editing).toEqual([])
     expect(entry().armed).toBe(false)
+  })
+
+  it('部分捕获（partial + succeeded + failed_figures，#1134）：成功那张图照常留在卡上，但不自动进入——没画出来的图是用户必须看到的', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    mockGet.mockResolvedValueOnce(
+      done(['a'], 'att-1', 3, { phase: 'partial', failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }] }),
+    )
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(entry().editing).toEqual([])
+    expect(entry().armed).toBe(false)
+    expect(entry().report?.captured).toHaveLength(1)
   })
 
   it.each(['pill', 'closed'] as const)('用户把卡放到后台 / 收起（%s）之后才跑完：不抢他的工作区，角标 / 卡上仍有「进入编辑」', async (mode) => {
@@ -305,7 +323,25 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
-    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toEqual(fig('a'))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+  })
+
+  it('脚本是拖到画布上发起的（placeIn）：跑完把图放进那张画布、落在放下的位置，`openFastEdit` 不再新建画布；「继续」沿用这份意图', async () => {
+    const canvasId = useDocumentStore.getState().activeCanvasId
+    const placeIn = { canvasId, at: { x: 40, y: 30 } }
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await store().open(scriptTarget('plot.py'), { run: true, placeIn })
+    expect(entry().placeIn).toEqual(placeIn)
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(addRuntimePanelToCanvas).toHaveBeenCalledWith(fig('a'), 40, 30, expect.anything())
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toBeUndefined()
+    // 别的入口（脚本库 ▶ 等）不带它：同一脚本再从那里打开就是普通「打开」
+    await store().open(scriptTarget('plot.py'), { run: true })
+    expect(entry().placeIn).toBeNull()
   })
 
   it('重跑已缓存的图、合并进来的旧清单带的是上一次的非空描述符：以这次报告的描述符插入（Codex #1044 r4285970263）', async () => {
@@ -316,8 +352,8 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
-    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(addRuntimePanelToCanvas).mock.calls[0][0]).toEqual(fig('a'))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toEqual(fig('a'))
   })
 
   it('清单里已有与这次一致的描述符：不重复插入', async () => {
@@ -905,6 +941,27 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     await store().refresh(KEY)
     expect(mockAct).toHaveBeenCalledTimes(1)
     expect(entry().armed).toBe(true)
+  })
+
+  it('卡上「继续」（run:true, rerun:false）首次检查超时、恢复后落到已跑完的同配置会话：不认领 run 重跑（Codex #1152 补评 r4305863214）', async () => {
+    mockCreate.mockRejectedValueOnce(new TypeError('network'))
+    await store().open(scriptTarget('plot.py'), { run: true, rerun: false })
+    expect(entry().wantsRun).toBe(true)
+    expect(entry().allowRerun).toBe(false)
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 3, { actions: [action('run'), action('recheck')] }))
+    await store().refresh(KEY)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('对照：明确「打开并运行」（rerun 未设）首次检查超时、恢复后落到已跑完的同配置会话：仍认领 run 重跑', async () => {
+    mockCreate.mockRejectedValueOnce(new TypeError('network'))
+    await open()
+    expect(entry().allowRerun).toBe(true)
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 3, { actions: [action('run'), action('recheck')] }))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(4) })
+    await store().refresh(KEY)
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
   })
 
   it('普通打开（不是一键入口）的首次检查超时后恢复：不代认领', async () => {

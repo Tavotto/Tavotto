@@ -225,6 +225,41 @@ def test_pdf_text_layer_reads_back_the_chinese_and_embeds_a_cjk_face(rendered, i
     assert any("DejaVu" not in f for f in fonts), fonts
 
 
+def test_selected_fallback_reaches_worker_pdf_and_editable_svg(library, tmp_path, installed_cjk):
+    if not installed_cjk:
+        pytest.skip("no installed CJK font in worker")
+    fallback = installed_cjk[0]
+    patches = [
+        {"gid": "axes_0.title", "prop": "text", "value": "中文 Test 123"},
+        {
+            "gid": "axes_0.title",
+            "prop": "fontfamily",
+            "value": {"primary": "DejaVu Serif", "fallback": fallback},
+        },
+    ]
+    w = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    try:
+        w.ensure_built()
+        result = w.override(STEM, patches)
+        assert not result.get("warnings"), result
+        title = _el(result["manifest"], "axes_0.title")
+        assert title.get("cjk_family"), title
+        assert not title.get("glyphs_missing"), title
+        pdf, svg = tmp_path / "mixed.pdf", tmp_path / "mixed.svg"
+        w.export(STEM, patches, str(pdf), "pdf")
+        w.export(STEM, patches, str(svg), "svg", svg_fonttype="none")
+        with pymupdf.open(pdf) as doc:
+            assert "中文 Test 123" in " ".join(p.get_text() for p in doc)
+            fonts = {f[3] for page in doc for f in page.get_fonts()}
+        assert any("DejaVuSerif" in f for f in fonts), fonts
+        assert any("DejaVu" not in f for f in fonts), fonts
+        svg_text = svg.read_text(encoding="utf-8")
+        assert "<text" in svg_text and "中文 Test 123" in svg_text
+        assert fallback in svg_text
+    finally:
+        pool.discard(w)
+
+
 def test_png_draws_two_different_chinese_glyphs_not_the_same_box(rendered, installed_cjk):
     _require_chain(rendered["manifest"], installed_cjk)
     assert rendered["png_zhong"] != rendered["png_wen"]
@@ -345,6 +380,126 @@ def test_ensure_helpers_cover_texts_created_after_build_and_explicit_families(in
         pytest.skip("worker 的解释器找不到任何中日韩候选字体")
     out = subprocess.run(
         [WORKER_PY, "-c", _ENSURE_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("OK")
+
+
+_USETEX_DRIVER = """\
+import sys, warnings
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.texmanager import TexManager
+import overrides
+
+# a) rcParams 开着 usetex：TeX 管理器只认长度为 1 的 font.family，补尾巴会退成 serif
+matplotlib.rcParams["text.usetex"] = True
+matplotlib.rcParams["font.family"] = "sans-serif"
+overrides.ensure_rcparams_fallback()
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+assert TexManager._get_font_family_and_reduced() == ("sans-serif", False)
+
+# b) rcParams 关着，但图上有个别 usetex=True 的 Text：同样不补
+matplotlib.rcParams["text.usetex"] = False
+fig, ax = plt.subplots()
+ax.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+
+# b2) 一张图遍历抛异常：判不出 → 不补 rcParams，也不让异常逃出去
+class Boom:
+    def findobj(self, *a, **k):
+        raise RuntimeError("custom artist")
+
+overrides.ensure_rcparams_fallback([Boom()])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+
+# c) 没有任何 TeX 文字：照旧补
+plt.close(fig)
+fig, ax = plt.subplots()
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+
+# c2) 先补了尾巴、之后才出现 TeX 文字（native 两个屏障之间开 usetex）：撤回我们追加的那段
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+overrides.ensure_rcparams_fallback([fig])  # 无 TeX 时幂等
+chain = list(matplotlib.rcParams["font.family"])
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == chain
+ax.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+assert TexManager._get_font_family_and_reduced() == ("sans-serif", False)
+overrides.ensure_rcparams_fallback([fig])  # 有 TeX 时幂等
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+
+# c2b) 离开屏障：撤回；下一个屏障无 TeX 时重新补上
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+overrides.restore_rcparams_fallback()
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+overrides.restore_rcparams_fallback()  # 幂等
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+
+# c3) 脚本自己设的多项 family 不被我们动（有 TeX 时）；补过尾巴后脚本又改了值，也不被撤成旧值
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = ["serif", "Some Fallback"]
+fig, ax = plt.subplots()
+ax.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["serif", "Some Fallback"]
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig2, _ = plt.subplots()
+overrides.ensure_rcparams_fallback([fig2])
+matplotlib.rcParams["font.family"] = ["Script Own A", "Script Own B"]  # 脚本在屏障之间自己改了
+_, ax3 = plt.subplots()
+ax3.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([plt.gcf()])
+assert list(matplotlib.rcParams["font.family"]) == ["Script Own A", "Script Own B"]
+
+# d) 反方向：rcParams 开着 usetex 时，同图 usetex=False 的汉字走逐个 Text 补，仍画得出来
+matplotlib.rcdefaults()
+matplotlib.rcParams["text.usetex"] = True
+fig, ax = plt.subplots()
+ax.set_axis_off()
+t = ax.text(0.5, 0.5, "中文", usetex=False)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+overrides.ensure_figure_fallback(fig)
+assert overrides.cjk_fallback_tail()[0] in t.get_fontfamily(), t.get_fontfamily()
+with warnings.catch_warnings():
+    warnings.simplefilter("error")  # Glyph missing / findfont 都当错
+    fig.canvas.draw()
+print("OK")
+"""
+
+
+def test_rcparams_fallback_leaves_tex_font_family_alone(installed_cjk):
+    """Celerite 零编辑漂移的根因：有 TeX 文字时 `font.family` 多了尾巴，TeX 文字度量变了。
+
+    整个 rcParams 开 usetex、只有个别 Text 开 usetex 都要不动；同图 `usetex=False` 的汉字
+    仍由逐个补的尾巴画出（不出方框）。无需 TeX：断言的是 rcParams 与 TexManager 的选族。
+    """
+    if not installed_cjk:
+        pytest.skip("worker 的解释器找不到任何中日韩候选字体")
+    out = subprocess.run(
+        [WORKER_PY, "-c", _USETEX_DRIVER, str(ENGINE_DIR)],
         capture_output=True,
         text=True,
         encoding="utf-8",

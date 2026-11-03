@@ -28,8 +28,10 @@ import {
   type NativeSessionInfo,
 } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
+import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
 import { useNativeSessionStore } from './nativeSessionStore'
 import { useScriptInputStore } from './scriptInputStore'
+const acceptedExecution = vi.fn()
 
 const base = (over: Partial<NativeSessionInfo> = {}): NativeSessionInfo => ({
   session_id: 'native-owned-prep-1-abc',
@@ -78,6 +80,40 @@ beforeEach(() => {
   setCurrentProjectId('p_a')
   useScriptInputStore.getState().clear()
   useNativeSessionStore.getState().clear()
+  registerFigureExecutionConsumer(acceptedExecution)
+})
+
+describe.each(['submit', 'stop'] as const)('native input %s execution evidence', (action) => {
+  it.each(['success', 'error'] as const)('rejects a late %s response after the current token advanced', async (outcome) => {
+    const first = { scope: 'sources' as const, script: 'fig.py', run_config: null, source_ids: [], execution_id: 'request-token' }
+    useNativeSessionStore.getState().applyEvent(asking(2, {}))
+    const current = useNativeSessionStore.getState().sessions['native-owned-prep-1-abc']
+    useNativeSessionStore.setState({ sessions: { [current.session_id]: { ...current, figure_snapshot_invalidation: first } } })
+    let resolve!: (value: never) => void
+    let reject!: (error: unknown) => void
+    const call = action === 'submit' ? vi.mocked(answerNativeInput) : vi.mocked(cancelNativeSession)
+    call.mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no }))
+    const request = action === 'submit' ? useScriptInputStore.getState().submit(null) : useScriptInputStore.getState().stop()
+    useNativeSessionStore.getState().applyEvent(base({ sequence: 5, figure_snapshot_invalidation: { ...first, execution_id: 'current-token' } }))
+    acceptedExecution.mockClear()
+    const late = { ...first, execution_id: 'late-token', receipt_ids: ['late-receipt'] }
+    if (outcome === 'success') resolve({ session: base({ sequence: 4, figure_snapshot_invalidation: late }) } as never)
+    else reject(new ApiError('failed', 500, { figure_snapshot_invalidation: late }))
+    await request
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('drops facts if the input owner is cleared while the request is in flight', async () => {
+    useNativeSessionStore.getState().applyEvent(asking(2))
+    let resolve!: (value: never) => void
+    const call = action === 'submit' ? vi.mocked(answerNativeInput) : vi.mocked(cancelNativeSession)
+    call.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const request = action === 'submit' ? useScriptInputStore.getState().submit(null) : useScriptInputStore.getState().stop()
+    useScriptInputStore.getState().clear()
+    resolve({ session: base({ sequence: 3, figure_snapshot_invalidation: { scope: 'sources', script: 'fig.py', run_config: null, source_ids: [], receipt_ids: ['old'], execution_id: 'new' } }) } as never)
+    await request
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
 })
 
 describe('native pending input', () => {

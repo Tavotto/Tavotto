@@ -56,12 +56,16 @@ REASON_CHANNEL_UNAVAILABLE = "channel_unavailable"
 REASON_NO_TARGET_STEM = "no_target_stem"
 #: 登记结果说这张图不可参数化（无脚本）：界面不会为它发起引擎渲染，等也是白等
 REASON_NOT_RENDERABLE = "not_renderable"
+#: 重复交接命中了已经显示着的面板：前端不会再渲染，只回一条「当前显示着、但没有可凭的渲染结论」的确认
+#: （显示着的内容过期 / 不是这一版的精确渲染）。与 `timeout` 的区别：实例明确应答了，不是没信号
+REASON_ALREADY_DISPLAYED = "already_displayed"
 REASONS = (
     REASON_NOT_WAITED,
     REASON_TIMEOUT,
     REASON_CHANNEL_UNAVAILABLE,
     REASON_NO_TARGET_STEM,
     REASON_NOT_RENDERABLE,
+    REASON_ALREADY_DISPLAYED,
 )
 #: 实例报「渲染失败」却没给合法 code（或给了不合规的串）时用的稳定码
 CODE_RENDER_FAILED = "render_failed"
@@ -165,6 +169,65 @@ def record_failed(project: str, stem: str, code: str, *, now=time.time) -> None:
     LEDGER.record(project, stem, {"status": STATUS_FAILED, "code": _safe_code(code)}, now=now)
 
 
+def record_displayed(project: str, stem: str, *, now=time.time) -> None:
+    """重复交接命中已显示的面板，但前端拿不出这一版的精确渲染：如实记 unverified/already_displayed。"""
+    LEDGER.record(
+        project,
+        stem,
+        {"status": STATUS_UNVERIFIED, "reason": REASON_ALREADY_DISPLAYED},
+        now=now,
+    )
+
+
+#: 前端显示确认（`POST /api/handoff/display-ack`）的 `status` 闭集
+ACK_OK = "ok"
+ACK_FAILED = "failed"
+ACK_DISPLAYED = "displayed"
+ACK_STATUSES = (ACK_OK, ACK_FAILED, ACK_DISPLAYED)
+#: 面板 id（图库相对路径 / runtime id）长度上限
+MAX_ACK_ID = 1024
+
+
+def parse_ack(body) -> dict | None:
+    """校验显示确认的请求体；不合法 None（端点回 400）。只放行闭集内的标量，其余字段一律忽略。"""
+    if not isinstance(body, dict):
+        return None
+    panel_id = body.get("id")
+    status = body.get("status")
+    if not isinstance(panel_id, str) or not panel_id or len(panel_id) > MAX_ACK_ID:
+        return None
+    if status not in ACK_STATUSES:
+        return None
+    out: dict = {"id": panel_id, "status": status}
+    if status == ACK_OK:
+        count = body.get("manifest_elements")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return None
+        out["manifest_elements"] = count
+    elif status == ACK_FAILED:
+        code = body.get("code")
+        if not isinstance(code, str):
+            return None
+        out["code"] = code
+    return out
+
+
+def record_ack(project: str, stem: str, ack: dict, *, registry_match: bool, now=time.time) -> None:
+    """把已校验的显示确认记成与 `/api/engine/render` 收尾**同形状**的结论（`verified` 仍只在 `summarize` 判）。"""
+    if ack["status"] == ACK_OK:
+        record_ok(
+            project,
+            stem,
+            registry_match=registry_match,
+            manifest_elements=ack["manifest_elements"],
+            now=now,
+        )
+    elif ack["status"] == ACK_FAILED:
+        record_failed(project, stem, ack["code"], now=now)
+    else:
+        record_displayed(project, stem, now=now)
+
+
 def query(project: str, stem: str, since: float, *, now=time.time) -> dict:
     """端点的响应体：只含公开字段（不回显路径）。"""
     got = LEDGER.first_since(project, stem, since, now=now)
@@ -199,6 +262,8 @@ def clean_result(res) -> dict | None:
         }
     if status == STATUS_FAILED:
         return {"status": STATUS_FAILED, "code": _safe_code(res.get("code"))}
+    if status == STATUS_UNVERIFIED and res.get("reason") == REASON_ALREADY_DISPLAYED:
+        return {"status": STATUS_UNVERIFIED, "reason": REASON_ALREADY_DISPLAYED}
     return None
 
 
@@ -211,6 +276,8 @@ def summarize(stem: str, got: dict | None, waited_ms: int, *, reason: str) -> di
     """
     if got is None:
         return unverified(reason, waited_ms)
+    if got["status"] == STATUS_UNVERIFIED:
+        return unverified(got["reason"], waited_ms)
     if got["status"] == STATUS_FAILED:
         return {
             "status": STATUS_FAILED,

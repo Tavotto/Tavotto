@@ -44,6 +44,8 @@ SHEETS: dict[str, Path] = {
     "web/AGENTS.md": RULES / "frontend",
     ".github/AGENTS.md": RULES / "ci",
     "codex-plugin/AGENTS.md": RULES / "plugin",
+    "packaging/AGENTS.md": RULES / "packaging",
+    "src-tauri/AGENTS.md": RULES / "desktop",
 }
 #: 细则目录 = 速查表点名的那些（加一层只改上表）。
 LAYERS = tuple(dict.fromkeys(v.name for v in SHEETS.values()))
@@ -165,11 +167,15 @@ def test_the_rules_corpus_is_actually_there():
     repo = _rules_files(RULES / "repo")
     ci = _rules_files(RULES / "ci")
     plugin = _rules_files(RULES / "plugin")
+    packaging = _rules_files(RULES / "packaging")
+    desktop = _rules_files(RULES / "desktop")
     assert len(backend) >= 25, f"backend 细则只有 {len(backend)} 份"
     assert len(frontend) >= 25, f"frontend 细则只有 {len(frontend)} 份"
     assert len(repo) >= 2, f"repo 细则只有 {len(repo)} 份"
     assert len(ci) >= 10, f"ci 细则只有 {len(ci)} 份"
     assert len(plugin) >= 10, f"plugin 细则只有 {len(plugin)} 份"
+    assert len(packaging) >= 6, f"packaging 细则只有 {len(packaging)} 份"
+    assert len(desktop) >= 9, f"desktop 细则只有 {len(desktop)} 份"
     for sheet in SHEETS:
         assert (ROOT / sheet).is_file(), sheet
 
@@ -373,3 +379,147 @@ def test_budget_json_covers_every_layer_and_every_agents_file():
     assert set(SHEETS) <= files
     assert {s["file"] for s in report["sheets"]} == files
     assert {f for c in report["codex"] for f in c["files"]} == files
+
+
+# ---------------------------------------------------------------- 四、棘轮上限与每格限长（2026-10-23）
+
+
+def test_every_resident_instruction_stays_under_its_ceiling():
+    """每份 AGENTS.md / SKILL.md 都登记了棘轮上限，且没越过（`tests/fixtures/agents_ceilings.json`）。
+
+    只有 32 KiB 那条硬线时，速查表一路涨到撞墙才有人发现，然后临时「腾字」——余量曾经只剩
+    72 B。上限按文件钉住，长大必须在同一个 PR 里重写那份 JSON，增长在 diff 里看得见。
+    判据的主语：仓库**跟踪的**每一份常驻指令（`git ls-files`），按 CRLF 口径量。
+    """
+    ab = _budget()
+    targets = ab.ceiling_targets()
+    assert set(SHEETS) <= set(targets) and ab.skill_files(), "枚举多半量在空集合上"
+    problems = ab.ceiling_violations()
+    assert not problems, (
+        "越过棘轮上限（确需长大：`python scripts/dev/agents_budget.py --write-ceilings` 并在 PR "
+        "正文写明理由；更好的是把全文迁进细则）:\n  " + "\n  ".join(problems)
+    )
+
+
+def test_ceilings_along_every_codex_chain_fit_the_default_cap():
+    """上限本身也不许越过 Codex 的 32 KiB：沿每条拼接链把上限加起来 ≤ 默认上限。
+
+    否则「按规矩重写上限」就能把一串推过硬线，棘轮失去意义。
+    """
+    ab = _budget()
+    ceilings = ab.load_ceilings()
+    over = []
+    for cwd in ab.codex_cwds():
+        fs = ab.codex_chain(cwd)
+        total = sum(ceilings.get(f, 0) for f in fs)
+        if total > ab.CODEX_DEFAULT_CAP:
+            over.append(f"cwd={cwd}: 上限之和 {total:,} B ← {' + '.join(fs)}")
+    assert not over, "这些拼接链的上限之和越过了 32 KiB:\n  " + "\n  ".join(over)
+
+
+@pytest.mark.parametrize("sheet", sorted(set(SHEETS) - {"AGENTS.md"}))
+def test_sheet_rows_are_three_short_cells(sheet: str):
+    """速查表每行三格「改到 | 主题 | 必守要点」，每格 ≤ `SHEET_CELL_MAX` 里那一列的字节数（改到 300 / 主题 120 / 必守要点 150）。
+
+    #608 之后表格又涨回八成体积：每个功能 PR 往「改到」「看护」里追加文件名与用例名。
+    「看护」列已整列迁进细则头部引用块；「改到」写目录与入口文件、「必守要点」写一句索引，
+    想写更多就是该写进细则的信号。
+    """
+    ab = _budget()
+    assert sheet in ab.SHEETS_WITH_TABLE
+    rows = ab.sheet_rows(sheet)
+    assert len(rows) >= 5, f"{sheet} 只解析到 {len(rows)} 行——表头变了，判据量在空集合上"
+    wrong = [f"{sheet}:{ln} 有 {len(cells)} 格" for ln, cells in rows if len(cells) != 3]
+    assert not wrong, "速查表每行只有三格（看护用例写在细则头部）:\n  " + "\n  ".join(wrong)
+    long = ab.oversized_cells([sheet])
+    assert not long, "这些格太长了（完整清单 / 全文迁进细则，这里留索引）:\n  " + "\n  ".join(long)
+
+
+def test_sheets_with_table_matches_sheets():
+    """预算脚本里那份有表的清单与这里的 `SHEETS` 一致（加一层两边一起改）。"""
+    assert set(_budget().SHEETS_WITH_TABLE) == set(SHEETS) - {"AGENTS.md"}
+
+
+# ---------------------------------------------------------------- 五、路由表由细则生成（2026-10-23）
+
+
+def _gen():
+    spec = importlib.util.spec_from_file_location(
+        "gen_agents_sheets", ROOT / "scripts" / "dev" / "gen_agents_sheets.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_gen_sheet_layers_match_sheets():
+    """生成器里「速查表 → 细则层」与这里的 `SHEETS`（去掉根）一致（加一层两边一起改）。"""
+    gen = _gen()
+    assert gen.SHEET_LAYERS == {s: SHEETS[s].name for s in SHEETS if s != "AGENTS.md"}
+
+
+def test_generated_route_tables_are_not_stale():
+    """四份速查表里 BEGIN/END GENERATED 之间的路由表 == 由细则头部 `agents-route` 块生成的结果。
+
+    判据的主语：**仓库里已提交的速查表**与**已提交的细则块**此刻生成出来的表是否逐字相同。
+    手改了表、或改了细则块却没跑 `--write`，两种都红；这样「表 = 细则的投影」才不会重新退化成
+    两处手写（#1354 之后每个功能 PR 改同一张表的冲突就是这么来的）。
+    """
+    gen = _gen()
+    by_sheet = gen.collect()
+    # 前提：每张表都真的有块，且块总数不小（空集合上「生成物相同」恒真）。
+    assert set(by_sheet) == set(SHEETS) - {"AGENTS.md"}
+    assert all(len(v) >= 5 for v in by_sheet.values()), {k: len(v) for k, v in by_sheet.items()}
+    diff = gen.stale()
+    assert not diff, (
+        "速查表路由表已过期：改细则头部的 agents-route 块后跑 "
+        "`python scripts/dev/gen_agents_sheets.py --write`\n" + "\n".join(diff[:40])
+    )
+
+
+def test_agents_route_blocks_are_well_formed():
+    """每个 agents-route 块：键齐全、`sheet` 是 `SHEETS` 里有表的一份、同一 sheet 内 `order` 不重复。
+
+    判据的主语：`docs/rules/**` 下每份细则里的**每一个**块（一份细则可有多个）。`collect()` 对
+    任一违规抛 `RouteError`，这里再单独核一遍块总数与每份细则的块都在 `SHEETS` 里。
+    """
+    gen = _gen()
+    blocks = [b for p in gen.rules_files() for b in gen.parse_blocks(p)]
+    assert len(blocks) >= 80, f"只解析到 {len(blocks)} 个块——解析多半量在空集合上"
+    allowed = set(SHEETS) - {"AGENTS.md"}
+    bad_sheet = [f"{b['_file']}: {b['sheet']}" for b in blocks if b["sheet"] not in allowed]
+    assert not bad_sheet, bad_sheet
+    seen: dict[tuple[str, str], str] = {}
+    dup = []
+    for b in blocks:
+        key = (b["sheet"], b["order"])
+        if key in seen:
+            dup.append(f"{b['sheet']} order {b['order']}: {seen[key]} 与 {b['_file']}")
+        seen[key] = b["_file"]
+    assert not dup, dup
+    gen.collect()  # 其余违规（缺键 / order 非整数 / 单元格含 ' | '）在这里抛
+
+
+def test_agents_route_checker_catches_malformed_blocks(tmp_path, monkeypatch):
+    """生成器对坏块真的报错（门禁自己的反证：缺 `order`、重复 `order`、未知 `sheet`）。"""
+    gen = _gen()
+    rules = tmp_path / "docs" / "rules" / "backend"
+    rules.mkdir(parents=True)
+    monkeypatch.setattr(gen, "ROOT", tmp_path)
+    monkeypatch.setattr(gen, "RULES", tmp_path / "docs" / "rules")
+
+    def block(order: str | None, sheet: str = "src/tavotto/AGENTS.md") -> str:
+        o = f"order: {order}\n" if order is not None else ""
+        return f"<!-- agents-route\nsheet: {sheet}\n{o}改到: a\n主题: b\n必守要点: c\n-->\n"
+
+    (rules / "a.md").write_text(block("10"), encoding="utf-8")
+    assert len(gen.collect()["src/tavotto/AGENTS.md"]) == 1
+    (rules / "b.md").write_text(block("10"), encoding="utf-8")
+    with pytest.raises(gen.RouteError, match="重复"):
+        gen.collect()
+    (rules / "b.md").write_text(block(None), encoding="utf-8")
+    with pytest.raises(gen.RouteError, match="缺少键"):
+        gen.collect()
+    (rules / "b.md").write_text(block("20", sheet="nope/AGENTS.md"), encoding="utf-8")
+    with pytest.raises(gen.RouteError, match="不是有路由表"):
+        gen.collect()

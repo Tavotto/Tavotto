@@ -1,0 +1,33 @@
+[
+  {
+    "command": [
+      "node",
+      "--test",
+      "tests/prefix-read-session.test.mjs"
+    ],
+    "cwd": "/workspace/Tavotto-cla-prefix-read-session/services/cla-cloudflare",
+    "exit": 0,
+    "tests": 37,
+    "log": "final-tests.raw.log"
+  },
+  {
+    "command": [
+      "node",
+      "/tmp/cla-prefix-read-session-adapter/run-mutations.mjs"
+    ],
+    "exit": 0,
+    "mutants": 15,
+    "each_mutant_selected_exit": 1,
+    "each_mutant_AssertionError": true,
+    "log": "mutations-run.raw.log"
+  },
+  {
+    "command": [
+      "node",
+      "/tmp/cla-prefix-read-session-adapter/accounting.mjs"
+    ],
+    "exit": 0,
+    "scenarios": 6,
+    "log": "accounting.raw.log"
+  }
+]

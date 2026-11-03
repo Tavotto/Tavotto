@@ -8,6 +8,7 @@
   `data/run1/x.csv` ↔ `/Volumes/B/proj/data/run1/x.csv` 推出「相对路径到 `/Volumes/B/proj` 找」；
   `/Users/a/proj/data/x.csv` ↔ `/Volumes/B/proj/data/x.csv` 推出「`/Users/a/proj` → `/Volumes/B/proj`」；
   文件改了名就只改指这一个文件。**不搜同名、不猜候选**（ADR 0057 / FO08）：位置全由用户指认。
+  （AI 修复可以搜、给候选，但写规则必须经用户确认的卡片，仍走本函数——ADR 0106 修订 2026-10-24。）
 * 规则的存取 —— 本机项目设置 `config.project_settings(<项目>)["input_remap"]`（与 `workdir` 同处，
   ADR 0106 §用户拍板 C）：规则里全是本机绝对路径，不进随项目走的 `tavottofile/`。
   `rules_for()` 是三条 spawn 路径取规则的**唯一出处**（写回的重放必须和热态读同一份数据）。
@@ -304,6 +305,20 @@ def add_rule(root: str | os.PathLike, rule: dict) -> dict:
         return state(root)
 
 
+def restore_raw(root: str | os.PathLike, raw) -> dict:
+    """把项目设置里的改指表整段恢复成 `raw`（`None` = 原来没有这个键）并换代——AI 修复的快照回滚用
+    （`fixtools.snapshots`）；与 `add_rule` / `remove_rule` 同一把项目锁、同一次换代。"""
+    with project_mutex(root):
+        config.set_project_settings(str(root), {SETTINGS_KEY: raw})
+        _bump(root)
+        return state(root)
+
+
+def raw_setting(root: str | os.PathLike):
+    """项目设置里改指表的原值（快照用；没有就是 `None`）。"""
+    return config.project_settings(str(root)).get(SETTINGS_KEY)
+
+
 def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
     """删一条规则；删了就是回到报错。没有这一条 → `input_remap_rule_unknown`。"""
     with project_mutex(root):
@@ -400,6 +415,39 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
             ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件上", name=body[-1], path=chosen
         )
     return rule
+
+
+def rule_for_choice(requested, chosen, kind) -> dict:
+    """用户（或经用户确认的 AI）指认的位置 → 一条规则：`POST /api/engine/input-remap` 与 AI 修复的
+    `link_data_file` **共用的唯一出处**。`kind` 是 `file` / `dir` / `auto`（`auto` = 磁盘上是文件夹按文件夹推，
+    其余按文件，不存在由 `derive` 报）。类型不对抛 `input_remap_requested_invalid`。"""
+    kind = str(kind or "")
+    if kind == "auto" and isinstance(chosen, str):
+        kind = "dir" if os.path.isdir(chosen) else "file"
+    if not isinstance(requested, str) or not isinstance(chosen, str) or kind not in ("file", "dir"):
+        raise RemapError(
+            ERROR_REQUESTED_INVALID, "需要 requested、chosen 与 chosen_kind（file / dir）"
+        )
+    return derive(requested, chosen, chosen_is_dir=kind == "dir")
+
+
+def link(root: str | os.PathLike, requested, chosen, kind) -> tuple[dict, dict]:
+    """推规则并按项目记住：回 `(规则, 新状态)`。端点与 AI 修复的 `link_data_file` 都只调这一个。
+
+    重新指认一处已经接上的路径（TVD-6Z9R：上次指错了文件）：推出来的 `prefix` 规则会被同一串上的旧 `file`
+    规则盖住（`remap_target` 里 `file` 整串相等优先），新的选择就白选了。这时收窄成精确的 `file` 规则——
+    与旧的同源，`add_rule` 替换它；只动这一串，不删别的规则。"""
+    rule = rule_for_choice(requested, chosen, kind)
+    intended = figcapture.remap_target([rule], requested)
+    if intended is not None and rule["kind"] != figcapture.REMAP_FILE:
+        others = [r for r in rules_for(root) if not _same_source(r, rule)]
+        if figcapture.remap_target([*others, rule], requested) != intended:
+            rule = {
+                "kind": figcapture.REMAP_FILE,
+                "from": requested,
+                "to": os.path.normpath(intended),
+            }
+    return rule, add_rule(root, rule)
 
 
 def _has_glob(text: str) -> bool:
@@ -665,6 +713,8 @@ READ_FUNCS = frozenset(
         "loadmat",
         "imread",
         "File",  # h5py.File
+        "ParquetFile",  # pyarrow.parquet；read_table / read_feather / read_csv 已被 `read_*` 前缀认
+        "ParquetDataset",
         "Dataset",  # netCDF4.Dataset
         "open_dataset",
         "open_mfdataset",
@@ -1026,6 +1076,57 @@ def payload_for(
         "probe_kind": probe_kind,
         "others": others,
     }
+
+
+def known_requests(
+    script: str, root: str | os.PathLike, reported: dict | None = None
+) -> dict[str, str]:
+    """可以拿来指认的「脚本要的那串」：`{路径串: via}`。AI 修复的 `link_data_file` 用它挡掉模型编出来的 `requested`。
+
+    出处有三处：① 报告里的 `missing_input` 载荷（worker 亲眼见到落空的那串，加载荷里列的 `others`）——
+    脚本用拼出来的路径时，只有它认得；② 脚本源码里以常量出现、此刻哪儿都找不到的路径（`static_missing`，与弹窗同一把尺子）。
+    同一串的 `via` 按 `payload_for` 的口径合并（也被 exists / glob 问过 = 探路）。"""
+    rules = rules_for(root)
+    first = None
+    if isinstance(reported, dict) and isinstance(reported.get("requested"), str):
+        first = {"requested": reported["requested"], "absolute": bool(reported.get("absolute"))}
+    fresh = payload_for(
+        script, root, first, rules=rules, via=str((reported or {}).get("via") or VIA_OPEN)
+    )
+    out: dict[str, str] = {}
+    if fresh is not None:
+        if fresh["requested"] is not None:
+            out[fresh["requested"]] = fresh["via"]
+        for o in fresh["others"]:
+            out.setdefault(o["path"], o["via"])
+    for o in (reported or {}).get("others") or []:
+        if isinstance(o, dict) and isinstance(o.get("path"), str):
+            out.setdefault(o["path"], str(o.get("via") or VIA_OPEN))
+    if rules:
+        # ③ 已经接上的（TVD-6Z9R）：接错了文件时重跑报的是解析错、不再是 missing_input，前两处都认不出这串，
+        # AI 找到对的文件也改不过来。认：脚本里写着、原位置找不到、靠现有规则才读得到的常量（分类照静态判据），
+        # 与用户此前亲手确认过的 `file` 规则的 `from`（拼出来的路径只剩它记得）。
+        for o in static_missing(script, root, []):
+            if figcapture.remap_target(rules, o["path"]) is not None:
+                out.setdefault(o["path"], o["via"])
+        for r in rules:
+            if r["kind"] == figcapture.REMAP_FILE and r["from"]:
+                out.setdefault(r["from"], VIA_OPEN)
+    return out
+
+
+def match_request(known: dict[str, str], requested: str) -> str | None:
+    """`requested` 在 `known_requests` 里对应的那一串：原样优先，其次按 `remap_parts` 规范化后相同
+    （模型把 `D:/a/b.json` 写成 `D:\\a\\b.json`、盘符大小写不同都是同一处）。对不上回 None。"""
+    if requested in known:
+        return requested
+    want = figcapture.remap_parts(requested)
+    if want is None:
+        return None
+    for k in known:
+        if figcapture.remap_parts(k) == want:
+            return k
+    return None
 
 
 def _as_written(filename: str, cwd: str) -> str:

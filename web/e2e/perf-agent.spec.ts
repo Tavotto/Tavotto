@@ -3,7 +3,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, test, waitForDocumentReady } from './fixtures'
+import { addSecondFigure, expect, test, waitForDocumentReady } from './fixtures'
 
 /**
  * Agent 性能脚本：真实浏览器 + 真实 Tavotto 后端 + 用户点击。
@@ -82,7 +82,7 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
   const a = await app()
   await page.goto(a.baseURL)
   await page.locator('[data-card^="Fig1_kinetics."]').dblclick({ timeout: 30_000 })
-  await page.locator('[data-context-back]').click()
+  await addSecondFigure(page)
   await waitForDocumentReady(page)
   await expect(page.locator('[data-canvas-toolbar]')).toBeVisible()
 

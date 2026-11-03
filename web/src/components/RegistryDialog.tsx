@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleCheck, CircleDashed, CircleMinus, Ellipsis, Play, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
+import { CircleCheck, CircleDashed, CircleMinus, Ellipsis, Folder, Play, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
 import { CountChip } from '@/components/ui/CountChip'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
   backendErrorText,
@@ -29,6 +28,8 @@ import {
   statusLabel,
 } from '@/lib/readinessText'
 import { cn } from '@/lib/utils'
+import { canRevealInFileManager, fileManagerKind, joinProjectPath, revealProjectFile, type FileManagerKind } from '@/lib/desktop'
+import { useProjectStore } from '@/store/projectStore'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
@@ -287,7 +288,7 @@ function ReadinessBody() {
     if (loadError) {
       return (
         <EmptyState
-          icon={TriangleAlert}
+          art="warn"
           title={rd('loadFailed')}
           hint={loadError}
           action={{
@@ -336,7 +337,7 @@ function ReadinessBody() {
       </NoticeReveal>
 
       {report.summary.total === 0 ? (
-        <EmptyState icon={EditableFigureIcon} title={rd('emptyTitle')} hint={rd('emptyHint')} />
+        <EmptyState art="select" title={rd('emptyTitle')} hint={rd('emptyHint')} />
       ) : (
         groups.map(
           ({ key, panels }) =>
@@ -515,7 +516,7 @@ function StatusMark({ status }: { status: ReadinessStatus }) {
   const { icon: Icon, tone } = STATUS_MARK[status]
   return (
     <span className="flex shrink-0 items-center gap-1">
-      <Icon size={ICON_SIZE.xs} className={tone} aria-hidden />
+      <Icon size={ICON_SIZE.sm} className={tone} aria-hidden />
       {statusLabel(status)}
     </span>
   )
@@ -536,6 +537,36 @@ function PanelThumb({ panel }: { panel: ReadinessPanel }) {
   const box = 'aspect-[4/3] w-16 shrink-0 rounded-xs border border-border bg-paper'
   if (!src) return <span className={cn(box, 'bg-surface-2')} aria-hidden />
   return <RetryImg src={src} alt="" className={cn(box, 'object-contain')} />
+}
+
+/** 「在 Finder 中显示」按平台说出文件管理器的名字（键写全，方便按键名查到用处） */
+const REVEAL_LABEL: Record<FileManagerKind, string> = {
+  finder: 'revealInFinder',
+  explorer: 'revealInExplorer',
+  files: 'revealInFileManager',
+}
+
+/**
+ * 这张图「在 Finder 中显示」（用户反馈 2026-10-24：脚本删了、图还在，接入状态里没有任何出口）。
+ *
+ * Tavotto **不替用户删文件**：只把文件在系统文件管理器里选中，删不删由用户在那边决定（进系统废纸篓、能找回）；
+ * 删掉之后项目 watcher 触发统一刷新，这一行自己消失。只有桌面壳做得到（`canRevealInFileManager`），浏览器模式
+ * 回 null、不摆入口；素材清单里没有这一项（文件此刻不在）也回 null——选中一个不存在的文件只会是一条错误。
+ * 项目根以 `/api/project` 的 figures_dir 为准，取不到再用素材清单那份（与左栏脚本行同一条规矩）。
+ */
+function useRevealFigure(panel: ReadinessPanel): (() => void) | null {
+  const projectRoot = useProjectStore((s) => s.project?.figures_dir)
+  const assetRoot = useAssetStore((s) => s.figuresDir)
+  const hasAsset = useAssetStore((s) => !!s.byId[panel.id])
+  const root = projectRoot || assetRoot
+  if (!root || !hasAsset || !canRevealInFileManager()) return null
+  return () =>
+    void revealProjectFile(root, panel.id).then((ok) => {
+      if (!ok)
+        useUiStore
+          .getState()
+          .setStatus(msg('readiness.revealFailed', { path: joinProjectPath(root, panel.id) }, 'dialogs'), 'error')
+    })
 }
 
 function PanelRow({
@@ -564,6 +595,7 @@ function PanelRow({
   const [highlight, setHighlight] = useState(false)
   const asset = useAssetStore((s) => s.byId[panel.id])
   const disabled = busy !== null
+  const onReveal = useRevealFigure(panel)
 
   // 「为什么不能编辑？」进来的那一次：滚到它、把焦点放上去、短暂高亮。
   // 高亮是**静态底色**不是动画——reduced-motion 下不需要另写一份。
@@ -626,6 +658,7 @@ function PanelRow({
             }}
             onProbe={onProbe}
             onRescan={onRescan}
+            onReveal={onReveal}
           />
           <MoreMenu
             panel={panel}
@@ -634,6 +667,7 @@ function PanelRow({
             disabled={disabled}
             onProbe={onProbe}
             onLink={onLink}
+            onReveal={onReveal}
           />
         </div>
       </div>
@@ -687,6 +721,7 @@ function PrimaryAction({
   onAdd,
   onProbe,
   onRescan,
+  onReveal,
 }: {
   panel: ReadinessPanel
   disabled: boolean
@@ -695,6 +730,7 @@ function PrimaryAction({
   onAdd: () => void
   onProbe: (script: string) => void
   onRescan: () => void
+  onReveal: (() => void) | null
 }) {
   useTranslation('dialogs')
 
@@ -707,6 +743,17 @@ function PrimaryAction({
       <Button variant="secondary" size="sm" disabled={disabled} onClick={onAdd}>
         <Plus size={ICON_SIZE.sm} />
         {rd('addToCanvas')}
+      </Button>
+    )
+  }
+
+  // 脚本是用户自己删的：「重新扫描」扫多少次都还是这一档（注册表说的仍是那个不存在的文件）。最可能对的那一步是
+  // 去文件夹里看这张图——不要了就删掉。重扫仍在对话框顶部；浏览器模式没有文件管理器，回落到重扫
+  if (panel.status === 'source_missing' && onReveal) {
+    return (
+      <Button variant="secondary" size="sm" disabled={disabled} onClick={onReveal} data-readiness-reveal>
+        <Folder size={ICON_SIZE.sm} />
+        {rd(REVEAL_LABEL[fileManagerKind()])}
       </Button>
     )
   }
@@ -735,7 +782,7 @@ function PrimaryAction({
 }
 
 /**
- * 行尾的 ⋯：低频动作都在这里——重新试运行（排障）、改绑 / 选择源脚本（手工关联）。
+ * 行尾的 ⋯：低频动作都在这里——重新试运行（排障）、改绑 / 选择源脚本（手工关联）、在 Finder 中显示（桌面壳）。
  * 一个都没有时不渲染：空菜单比没有菜单更糟。
  */
 function MoreMenu({
@@ -745,6 +792,7 @@ function MoreMenu({
   disabled,
   onProbe,
   onLink,
+  onReveal,
 }: {
   panel: ReadinessPanel
   allScripts: string[]
@@ -752,6 +800,7 @@ function MoreMenu({
   disabled: boolean
   onProbe: (script: string) => void
   onLink: (script: string) => void
+  onReveal: (() => void) | null
 }) {
   useTranslation('dialogs')
   const options = useMemo(() => sourceOptions(panel, allScripts), [panel, allScripts])
@@ -760,7 +809,9 @@ function MoreMenu({
   // （那时用户会以为是自己操作错了）。冲突那一档的候选已经在行里逐个列出。
   const canPick =
     writable && panel.can_manual_link && panel.status !== 'conflict' && options.length > 0
-  if (!canReprobe && !canPick) return null
+  // 主按钮已经是它的那一档（source_missing）不在菜单里再摆一遍
+  const canReveal = !!onReveal && panel.status !== 'source_missing'
+  if (!canReprobe && !canPick && !canReveal) return null
   return (
     <Menu
       align="end"
@@ -789,6 +840,11 @@ function MoreMenu({
             </MenuItem>
           ))}
         </MenuSub>
+      )}
+      {canReveal && (
+        <MenuItem icon={Folder} onSelect={onReveal} data-readiness-reveal>
+          {rd(REVEAL_LABEL[fileManagerKind()])}
+        </MenuItem>
       )}
     </Menu>
   )

@@ -1,0 +1,1150 @@
+{
+  "schema": "tavotto-research-baseline/1",
+  "cohort_id": "s0-2026-10-22",
+  "product_baseline_sha": "6dcf344cef79be2c948953449b6b055be133e314",
+  "enrollment_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+  "n_raw": 16,
+  "holdout_sealed_not_run": 8,
+  "missing_cases": [
+    "research_bio_pysb_tyson",
+    "research_sgwbprobe"
+  ],
+  "projects": [
+    {
+      "project_id": "sgwbprobe",
+      "case_id": "research_sgwbprobe",
+      "domain": "materials_physics",
+      "status": "not_run",
+      "eligible": false,
+      "stages": {},
+      "failure_category": "environment_resolution",
+      "source_code": "setup_receipt_missing",
+      "environment_fingerprint": null,
+      "requires_tex": true,
+      "setup": null
+    },
+    {
+      "project_id": "qudit_tomography",
+      "case_id": "research_qudit_tomography",
+      "domain": "materials_physics",
+      "sample_kind": "research_artifact",
+      "status": "failed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": null,
+        "tavotto_valid": null
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 1,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "failed",
+        "capture": "not_run",
+        "open": "not_run",
+        "semantic": "not_run",
+        "edit": "not_run",
+        "replay": "not_run",
+        "export": "not_run",
+        "fidelity": "not_run"
+      },
+      "failure_category": "safe_execution_divergence",
+      "source_code": "stage:execute",
+      "environment_fingerprint": "920a1a8b9aff6e3e096121b0c3f2f64262918be7b482436926d7fe6e81e69ea7",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": true,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_qudit_tomography",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "success"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "steel_dilatometry",
+      "case_id": "research_steel_dilatometry",
+      "domain": "materials_physics",
+      "sample_kind": "research_artifact",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 7,
+        "tavotto_captured": 7,
+        "tavotto_valid": 7
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "920a1a8b9aff6e3e096121b0c3f2f64262918be7b482436926d7fe6e81e69ea7",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_steel_dilatometry",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "monogenic_signal",
+      "case_id": "research_monogenic_signal",
+      "domain": "geoscience",
+      "sample_kind": "research_artifact",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 3,
+        "tavotto_captured": 3,
+        "tavotto_valid": 3
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "bfe4cb35bf413b6b66b5adb81d272f66314e08e6f475320f22559015e9d69cbd",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_monogenic_signal",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "infiltration_theory",
+      "case_id": "research_infiltration_theory",
+      "domain": "geoscience",
+      "sample_kind": "research_artifact",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": 1,
+        "tavotto_valid": 1
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 2,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "920a1a8b9aff6e3e096121b0c3f2f64262918be7b482436926d7fe6e81e69ea7",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_infiltration_theory",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "burnman_seismic",
+      "case_id": "research_burnman_seismic",
+      "domain": "geoscience",
+      "sample_kind": "upstream_workflow",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 2,
+        "tavotto_captured": 2,
+        "tavotto_valid": 2
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "f1eb199b2174ea378d98054393e8d048b6be5a9e662381b33b53f1fc84d93a15",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_burnman_seismic",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "15ba466c95d35769dd590aec053eb2aa1887e9f9fe3b186de54a182506ff4c30"
+      }
+    },
+    {
+      "project_id": "aec_calibration",
+      "case_id": "research_aec_calibration",
+      "domain": "chemistry",
+      "sample_kind": "research_artifact",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": 1,
+        "tavotto_valid": 1
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 2,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "66ad6666c9dd3c59a9af7ebc6993a042773e168193182254ec4ce9d2fc2cf073",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_aec_calibration",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "8a857d7639adfeb2b64cee7e527ec18cb8458d64f073d0a6764fa417ab591732"
+      }
+    },
+    {
+      "project_id": "cantera_sofc",
+      "case_id": "research_cantera_sofc",
+      "domain": "chemistry",
+      "sample_kind": "upstream_workflow",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": 1,
+        "tavotto_valid": 1
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "15c14d08e3dbe9a26066eea2eaf4bce7ea61b792c1484d69d4d0213b6c0fb006",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_cantera_sofc",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "4487163c4be64256e762152b6a2edc25670465384ac5e77b28d093efdb1bc8b8"
+      }
+    },
+    {
+      "project_id": "astro_celerite_sho",
+      "case_id": "research_astro_celerite_sho",
+      "domain": "astronomy",
+      "sample_kind": "research_artifact",
+      "status": "failed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": 1,
+        "tavotto_valid": 1
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 2,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "failed"
+      },
+      "failure_category": "export_or_fidelity",
+      "source_code": "stage:fidelity",
+      "environment_fingerprint": "59422d8ea8be7ff56cb39193dd47f38c3dbb9bcf1a9ec0b126ed5cbb1759c61a",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": true,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_astro_celerite_sho",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "success"
+        },
+        "installed_sha256": "5567165d7819830f29f343be432a628c6193e5123fa72ab9b9886f2a2adfefa9"
+      }
+    },
+    {
+      "project_id": "astro_ztf_m31",
+      "case_id": "research_astro_ztf_m31",
+      "domain": "astronomy",
+      "sample_kind": "research_artifact",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 4,
+        "tavotto_captured": 4,
+        "tavotto_valid": 4
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 2,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "920a1a8b9aff6e3e096121b0c3f2f64262918be7b482436926d7fe6e81e69ea7",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_astro_ztf_m31",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "astro_gala_draco",
+      "case_id": "research_astro_gala_draco",
+      "domain": "astronomy",
+      "sample_kind": "upstream_workflow",
+      "status": "failed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 2,
+        "tavotto_captured": 2,
+        "tavotto_valid": 2
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "failed",
+        "fidelity": "passed"
+      },
+      "failure_category": "export_or_fidelity",
+      "source_code": "stage:export",
+      "environment_fingerprint": "c641310a2e1538d6e5153af7fdec015a9ee081bf2c9e77a1645c0616650b0bca",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_astro_gala_draco",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "de4342e604a9028a81bd94bc7672a62f5789a92669c06bd57f39f05bba40bebd"
+      }
+    },
+    {
+      "project_id": "bio_brian_hindmarsh",
+      "case_id": "research_bio_brian_hindmarsh",
+      "domain": "biology",
+      "sample_kind": "upstream_workflow",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": 1,
+        "tavotto_valid": 1
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "b823c06cb06e63d268d3b8c75a56352dab0037ad3e0b773702cb7fd284db143b",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_bio_brian_hindmarsh",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "6e190cdd08a7e1fb35a99857abfc56807e1307064ab673edfbbbbc9b5a81ef11"
+      }
+    },
+    {
+      "project_id": "bio_vitay_timing",
+      "case_id": "research_bio_vitay_timing",
+      "domain": "biology",
+      "sample_kind": "research_artifact",
+      "status": "invalid_fixture",
+      "eligible": false,
+      "native_status": "invalid_fixture",
+      "figures": {
+        "native": 1,
+        "tavotto_captured": null,
+        "tavotto_valid": null
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": null,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "not_run",
+        "execute": "not_run",
+        "capture": "not_run",
+        "open": "not_run",
+        "semantic": "not_run",
+        "edit": "not_run",
+        "replay": "not_run",
+        "export": "not_run",
+        "fidelity": "not_run"
+      },
+      "failure_category": "invalid_fixture",
+      "source_code": "native_failed",
+      "environment_fingerprint": "bfe4cb35bf413b6b66b5adb81d272f66314e08e6f475320f22559015e9d69cbd",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_bio_vitay_timing",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "bio_pysb_tyson",
+      "case_id": "research_bio_pysb_tyson",
+      "domain": "biology",
+      "status": "not_run",
+      "eligible": false,
+      "stages": {},
+      "failure_category": "environment_resolution",
+      "source_code": "environment_setup_failed",
+      "environment_fingerprint": null,
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_bio_pysb_tyson",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "failure",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "engineering_leaf_hppc",
+      "case_id": "research_engineering_leaf_hppc",
+      "domain": "engineering",
+      "sample_kind": "research_artifact",
+      "status": "failed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 5,
+        "tavotto_captured": null,
+        "tavotto_valid": null
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 1,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "failed",
+        "execute": "not_run",
+        "capture": "not_run",
+        "open": "not_run",
+        "semantic": "not_run",
+        "edit": "not_run",
+        "replay": "not_run",
+        "export": "not_run",
+        "fidelity": "not_run"
+      },
+      "failure_category": "product_entry_reachability",
+      "source_code": "stage:discover",
+      "environment_fingerprint": "920a1a8b9aff6e3e096121b0c3f2f64262918be7b482436926d7fe6e81e69ea7",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_engineering_leaf_hppc",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "f82ff7bbabb86dd04e129e51299215edba1e7447dfbb1d7c4d67f80c0e481cea"
+      }
+    },
+    {
+      "project_id": "engineering_cruise_control",
+      "case_id": "research_engineering_cruise_control",
+      "domain": "engineering",
+      "sample_kind": "upstream_workflow",
+      "status": "passed",
+      "eligible": true,
+      "native_status": "passed",
+      "figures": {
+        "native": 6,
+        "tavotto_captured": 6,
+        "tavotto_valid": 6
+      },
+      "executions": {
+        "native": 1,
+        "tavotto": 3,
+        "basis": "python_exec_audit",
+        "attempt_history": null,
+        "attempt_history_agrees": null
+      },
+      "stages": {
+        "discover": "passed",
+        "execute": "passed",
+        "capture": "passed",
+        "open": "passed",
+        "semantic": "passed",
+        "edit": "passed",
+        "replay": "passed",
+        "export": "passed",
+        "fidelity": "passed"
+      },
+      "failure_category": null,
+      "source_code": null,
+      "environment_fingerprint": "ee936ffbbf26db5398da1134c978f51ae26a605289624db44090030d5c1d4557",
+      "unverified": [
+        "real desktop shell",
+        "save occurrence snapshots",
+        "arbitrary user scripts",
+        "scientific values beyond registered oracle",
+        "fidelity metric is existing grayscale comparison; not RGBA qualification",
+        "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+      ],
+      "requires_tex": false,
+      "setup": {
+        "schema": "tavotto-research-setup/1",
+        "case_id": "research_engineering_cruise_control",
+        "source_sha": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "run_id": "39761204696",
+        "run_attempt": "1",
+        "python": "3.13.16",
+        "steps": {
+          "core": "success",
+          "fonts": "success",
+          "scientific": "success",
+          "tex": "skipped"
+        },
+        "installed_sha256": "69cdc5d05fbb0cb32ce75a3fc2a88339fdf92b43a064df1a85313afa078a7e1c"
+      }
+    }
+  ],
+  "reports": [
+    {
+      "run_id": "8034ccf8a3d249c1a7de2d1399749672",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "e7ce1c5c46404ab6965ff916dfa5f422",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "a12e9a082b6147e886195cee87874ee6",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "5a95c8df7f7c4151bbec5a6f7cc3796f",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "9b8f7e9c7f544df39ab30ecc86b2c3ed",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "7e9e7927cc464391aae40d8ca43313b7",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "70fc71a3a1694365b88f77354a22e243",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "a7d963a2d10a4d91a83cd8f5442cca9a",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "4c8c73eaa08140afbb2cd92188021b1a",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "a9e2cecafa6141bf94dadcced970fa52",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "e16b2051160d40398b7886e2317ee9ae",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "1784f4bf7ffc4a41a9d13778d4a03e47",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "993bb9eb66d64d6491a04bcbbda5479a",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    },
+    {
+      "run_id": "3f07168aac184153affc6f5e045b5dfb",
+      "source": {
+        "commit": "dc5922e642bd64a4452af8c33414e30aacaaebec",
+        "tree": "81a2fc86b3041b73148e7dff2b2e19d87e6b11e0",
+        "dirty": false,
+        "content_sha256": "53aee81c2c9f2d2c519ff2e6981f34ca19b0ea3f0dbdc730eca00f68d4b37c05"
+      }
+    }
+  ],
+  "unverified": [
+    "Convenience pilot, not a representative user success rate.",
+    "Engine adapter only: desktop/CLI/native routes and document persistence not covered.",
+    "Aggregation checks report structure/proof; complete evidence validation occurs in the producing hosted job.",
+    "Different projects may use different prerequisite environments; compare a project only to its own frozen environment.",
+    "Taxonomy clusters identify observed failure layers; detailed causal diagnosis needs the original evidence."
+  ],
+  "n_eligible": 13,
+  "status_counts": {
+    "not_run": 2,
+    "failed": 4,
+    "passed": 9,
+    "invalid_fixture": 1
+  },
+  "stages_fixed_denominator": {
+    "discover": {
+      "passed": 12,
+      "denominator": 13
+    },
+    "execute": {
+      "passed": 11,
+      "denominator": 13
+    },
+    "capture": {
+      "passed": 11,
+      "denominator": 13
+    },
+    "open": {
+      "passed": 11,
+      "denominator": 13
+    },
+    "semantic": {
+      "passed": 11,
+      "denominator": 13
+    },
+    "edit": {
+      "passed": 11,
+      "denominator": 13
+    },
+    "replay": {
+      "passed": 11,
+      "denominator": 13
+    },
+    "export": {
+      "passed": 10,
+      "denominator": 13
+    },
+    "fidelity": {
+      "passed": 10,
+      "denominator": 13
+    }
+  },
+  "clusters": {
+    "prerequisite_or_evidence:environment_resolution:environment_setup_failed": [
+      "bio_pysb_tyson"
+    ],
+    "prerequisite_or_evidence:environment_resolution:setup_receipt_missing": [
+      "sgwbprobe"
+    ],
+    "prerequisite_or_evidence:invalid_fixture:native_failed": [
+      "bio_vitay_timing"
+    ],
+    "product:export_or_fidelity:stage:export": [
+      "astro_gala_draco"
+    ],
+    "product:export_or_fidelity:stage:fidelity": [
+      "astro_celerite_sho"
+    ],
+    "product:product_entry_reachability:stage:discover": [
+      "engineering_leaf_hppc"
+    ],
+    "product:safe_execution_divergence:stage:execute": [
+      "qudit_tomography"
+    ]
+  },
+  "missing_setup_receipts": [
+    "research_sgwbprobe"
+  ],
+  "evidence": {
+    "reports": [
+      "docs/implementation/script-compat/s0-evidence/baseline/research_aec_calibration/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_celerite_sho/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_gala_draco/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_ztf_m31/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_brian_hindmarsh/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_vitay_timing/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_burnman_seismic/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_cantera_sofc/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_cruise_control/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_leaf_hppc/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_infiltration_theory/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_monogenic_signal/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_qudit_tomography/guardian.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_steel_dilatometry/guardian.json"
+    ],
+    "setup_receipts": [
+      "docs/implementation/script-compat/s0-evidence/baseline/research_aec_calibration/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_celerite_sho/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_gala_draco/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_ztf_m31/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_brian_hindmarsh/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_pysb_tyson/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_vitay_timing/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_burnman_seismic/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_cantera_sofc/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_cruise_control/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_leaf_hppc/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_infiltration_theory/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_monogenic_signal/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_qudit_tomography/setup-receipt.json",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_steel_dilatometry/setup-receipt.json"
+    ],
+    "sha256": {
+      "docs/implementation/script-compat/s0-evidence/baseline/research_aec_calibration/guardian.json": "9e81a23e32ace9bffe58d19b134d3ba18778eda7c8730228f71792d29a89837d",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_celerite_sho/guardian.json": "90cff47eba803ebfb5427d8b788823f23279d60e6ea2e2f77c2acbbfc11bf7e2",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_gala_draco/guardian.json": "8c47b5e436483355df6744ea614521695b8883ee68b8c15a442343abc71efadd",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_ztf_m31/guardian.json": "8e5315079428960a0ad9211f6c6466e882adaf9b4085916aabd958c3e3547cd9",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_brian_hindmarsh/guardian.json": "146882976bd14c90b92e492e901dd00bfb797afa45653dd3807dd4f06344827b",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_vitay_timing/guardian.json": "9f39ec2fb34c5b0d36be6a4c5fe07d8949a35b59f6583a6cc970c10dbae19e1c",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_burnman_seismic/guardian.json": "7d9bd1830a4cbf23ea6fbe5d902a48274083a84a0a3a553db845b6a66f196f43",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_cantera_sofc/guardian.json": "362fbcfeabf8a1d603939df10ec5c8899d25daa754ea5fd67667ea65711079ca",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_cruise_control/guardian.json": "2f7722c7af01d2f94dbe5d933122bf602a8fd96743118465cf8253dfcb979796",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_leaf_hppc/guardian.json": "dae51780c7ff31e41132657ceeea679cd34e01c7864a6c56948c744aaac4b3e0",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_infiltration_theory/guardian.json": "de943e8cc16ab5389a439c8ad8be2ca919e24fc296e8a888139f9fb55e8a71b6",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_monogenic_signal/guardian.json": "7041d6734fbeab3dfb874ec0287d12f8cb0e0c78055cf67856c618c50210824e",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_qudit_tomography/guardian.json": "4b68fbe462ab05201be4f16d86eb5beb728ee4cd93995ca7470e3a9051869f16",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_steel_dilatometry/guardian.json": "96b41d5a5a5c05c967feba69c8f9f43d90a45e51faea080f1e828edb9d7d71ea",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_aec_calibration/setup-receipt.json": "e3f173daa5b46424595beab55c244c606a74871ea4846cfb10027016d9c4fce3",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_celerite_sho/setup-receipt.json": "0ee9b3b2964a1e79ab9c28fb629c927b62cf4b113bf9a05e23053f3a1252214f",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_gala_draco/setup-receipt.json": "d700f004ce94fed2a0b788409a16a665b6d4de1d000768bba0fb730e1a6f1210",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_astro_ztf_m31/setup-receipt.json": "7934ca63619053c3fc355b7ff3d4f05138cc5f162fe7e5e9c0d44bf5780f7cd2",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_brian_hindmarsh/setup-receipt.json": "586b33e3b6cca1cf11101393b000fc33285291711fe8cc96c3a955430a5b62e1",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_pysb_tyson/setup-receipt.json": "4b82e1fba29ea2c3cd360a95e55d0bba2ea2bb11545d691dafb39f8f87b8e161",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_bio_vitay_timing/setup-receipt.json": "e033bcdca067442b3bebcd752d360f151ee48de627ad81b414a4fee31a41b934",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_burnman_seismic/setup-receipt.json": "356c9ac3646a6aa869c7baf1e3de3532ec1003f7af9746a8b049f0cc854b569e",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_cantera_sofc/setup-receipt.json": "8d5b8ad0d636f88e02bd7ac2abb229f00ff8dd550268c3964f3388f03bf724f4",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_cruise_control/setup-receipt.json": "b89283393af040d2159b2839e5986de27a2d11088e6fe63185db6574c4c762d0",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_engineering_leaf_hppc/setup-receipt.json": "53a05dbbae744fe2e54a51065242add228a03cb09b9036fc9868a556506a969d",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_infiltration_theory/setup-receipt.json": "168f617ffb826ec17e4fdef1cae5cf184541b0c547826c2b2d1a103713c0a1d0",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_monogenic_signal/setup-receipt.json": "ce2ec0f482a12ca1e6deebbb30292cd35ee5cc204ad083b90a606361db4300f6",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_qudit_tomography/setup-receipt.json": "2a269568cbec69bcdd0ecc789c6b517f1d42b7e9675529053c532f83c01821da",
+      "docs/implementation/script-compat/s0-evidence/baseline/research_steel_dilatometry/setup-receipt.json": "d89382880e0463a917217cdc9ca8ac45f5e4109aed80b7486fae6edf9bb4c312"
+    }
+  }
+}

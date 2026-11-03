@@ -4,7 +4,8 @@
  * 调用方的 `issueFixActions` 把抛出的一律当不确定处理：文档不改，按此刻的列表重放 worker。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EngineError, engineSpecfix } from './api'
+import { EngineError, engineErrorMsg, engineSpecfix } from './api'
+import { formatMessage } from '@/i18n'
 
 const GOOD = {
   ok: true,
@@ -91,5 +92,25 @@ describe('engineSpecfix 的成功体校验', () => {
   it('带 replay_required（native 回滚不干净）：原样交出', async () => {
     body = { ...GOOD, replay_required: true }
     await expect(call()).resolves.toMatchObject({ ok: true, replay_required: true })
+  })
+})
+
+describe('engineSpecfix 的失败体', () => {
+  it('后端的结构化 params 带进 EngineError：TeX 文案不露字面占位符', async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: 'x', code: 'tex_command_missing', params: { command: 'latex' }, traceback: 'RuntimeError: tex' }),
+          { status: 500 },
+        ),
+    ) as typeof fetch
+    const err = await call().then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(EngineError)
+    const text = formatMessage(engineErrorMsg(err as EngineError))
+    expect(text).toContain('latex')
+    expect(text).not.toContain('{{')
   })
 })

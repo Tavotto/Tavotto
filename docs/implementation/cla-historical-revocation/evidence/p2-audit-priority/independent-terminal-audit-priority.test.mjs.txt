@@ -1,0 +1,20 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {iso} from './delegation-fixture.mjs';import {LiveStore} from '../src/native/store.ts';import {LiveService} from '../src/native/service.ts';import {randomToken} from '../src/core/crypto.ts';
+globalThis.fetch=async()=>{throw Error('OUTBOUND_FORBIDDEN');};
+for(const mode of ['disabled-rotated','enabled-rotated','held-rotated','expired-current-pin','expired-disabled-rotated'])test('independent terminal audit priority '+mode,()=>iso(async f=>{
+ if(mode.startsWith('expired'))f.grant.expires_at=f.now()+1;
+ await f.install();const p=await f.create();await f.sign(p);
+ const held=mode==='held-rotated';if(held)await f.s.hold(...f.args('contributor'),p.id,await f.s.intent(...f.args('contributor'),p.id,'hold'));
+ const enabled=mode==='enabled-rotated'||mode==='held-rotated'||mode==='expired-current-pin';
+ const c={...structuredClone(f.c),signingEnabled:enabled,delegatedCountersigningEnabled:enabled};
+ if(mode!=='expired-current-pin'){c.holderAuthorizationId=randomToken();c.holderAuthorizationKey=randomToken();}
+ const s=new LiveService(c,new LiveStore(f.db,undefined,c),f.gh,f.key);
+ await s.delegation.appendHistoricalRevocation(f.grant.id,await f.control('revoke'));
+ if(mode.startsWith('expired'))f.advance(1);
+ const result=await s.audit(f.args('contributor')[0],p.id);
+ console.log(JSON.stringify({mode,state:result.delegated.state,current:result.delegated.current,last:JSON.parse(result.delegated.controls.at(-1).body).action}));
+ assert.equal(result.delegated.state,'revoked','terminal signed revocation must remain visible in the rotated caller');
+ assert.equal(result.delegated.current,false);
+ const status=await s.status(f.args('holder')[0],p.id);assert.equal(status.delegated.state,'revoked');assert.equal(status.delegated.current,false);assert.equal(status.blocked,held);assert.equal(status.canSign,enabled&&!held);
+ await assert.rejects(s.delegation.qualified(p,(await f.store.signatures(p.id))[0],f.now()));
+}));

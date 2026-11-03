@@ -208,11 +208,12 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 
 ## 六、文字
 
-十个角色（`index.css` 的 `@utility type-*`），层级由角色定，不由页面自己挑组合（2026-10-07 增 display / heading / reading，
-title 升 600、caption 升 12 / ink-3，第二十六节）：
+十一个角色（`index.css` 的 `@utility type-*`），层级由角色定，不由页面自己挑组合（2026-10-07 增 display / heading / reading，
+title 升 600、caption 升 12 / ink-3，第二十六节；2026-10-19 增 hero，只给新手教程欢迎页，ADR 0136）：
 
 | 角色 | 值 | 给谁 |
 | --- | --- | --- |
+| `type-hero` | 44 / 52 · 650 · 0.02em · ink（≥1280×760 为 56 / 64，矮窗口 36 / 44） | **只给**新手教程欢迎页那一句「直接在图上改」（ADR 0136）；别的页面不许挑 |
 | `type-display` | 24 / 30 · 600 · -0.02em · ink | 首页、空画布这类「一屏只有一件事」的大标题（取代 `text-[24px]` 一类例外） |
 | `type-heading` | 17 / 24 · 600 · -0.01em · ink | 属性栏对象名、设置页页头 |
 | `type-title` | 15 / 20 · 600 · ink | 对话框标题、空态标题（2026-09-15 从 14 抬到 15；2026-10-07 从 500 升 600） |
@@ -257,13 +258,19 @@ opacity + ≤4px 位移 + scale 0.97~1；没有缩放炫技、漂浮。`prefers-
 
 **加载只有四种写法**（2026-10-07，第二十六节）：不定进度 = `animate-sweep`（`ui/ProgressBar`，轨道 border 色）；骨架 = 静态
 `bg-surface-hover` + 65% 不透明，不动；「进行中」的字 = `text-shimmer`；按钮 / 行内 = `LoaderCircle animate-spin`。Tailwind 的
-呼吸动画（pulse）被 `foundation.test` 禁掉。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
+呼吸动画（pulse）被 `foundation.test` 禁掉。唯一例外是改图助手的思考小球（`ui/ThinkingOrb`，ADR 0165）：过程组组首、等第一个字的那一格与空白面板，结束后也慢速在动；它不是通用加载件，别处照旧这四种。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
 
 **写了 `transition-*` 没写时长的，默认档也是 token**（二审 E1）：`--default-transition-duration`
 = `--duration-fast`、`--default-transition-timing-function` = `--ease-standard`（对称曲线，给 hover /
 颜色 / 折叠箭头这类来回都要顺的过渡；`--ease-pop` 进场、`--ease-exit` 退场不变）。此前 53 处落在
 Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，抓不到「没写」；`motion.test`
 守着默认档与 token 同源。
+
+**图标微动效是登记豁免**（ADR 0156，用户 2026-10-31 在演示页逐个看过、46 个全要）：界面图标（只限 `components/ui/icons`
+的图标集，品牌标与画布不在内）可以有超出上面三条形态的动作——整枚转 90° / 360°、格子缩到 0.6、斜线一笔画出——时长 300–720ms
+写在 `icons/motion.ts` 的登记表里而不是 token。前提：一次性（只有原来的 `Spinner` 循环）、播完回静止形、跟着用户动作走
+（点按钮 / 指针进按钮 / 调用方显式 `playIn` 的状态出现），`prefers-reduced-motion` 下不播。按钮里没有自己点按动作的图标，点的时候整枚轻按一下（缩到 0.84 弹回，260ms）。关键帧只在 `icons/motion.css`，
+`icons/motion.test.tsx` 守着登记表与关键帧同源。
 
 **跟随选中项滑动的指示物用 `--ease-snap`**（2026-10-15）：Segmented 的 thumb 与 Tabs 的下划线 = `duration-base ease-snap`，
 `cubic-bezier(0.32, 0.72, 0, 1)`，不过冲、终点 y = 1；JS 侧同一份是 `lib/motion.ts` 的 `EASE_SNAP`（`motion.test` 逐字节看护）。
@@ -579,6 +586,9 @@ B02 / B09 / B25 / B31 / B45 / B52「像同一套产品」：
 - **任务历史是弹层**：面板顶部那颗钮下拉一块 320px 的 popover（最近 20 条 + 搜索 + 状态筛选 + 翻页），不再盖住整个面板；每条是 md 圆角行
   （hover 浮底），状态用 `StatusPill`。
 - **错误**：发送失败与会话失败都是 danger `Notice`（一行中性提示：「没有发出去 · 原因」+「重试」，技术细节在「详情」里；2026-10-16 起不再有红底红框红字）。
+- **没选中对象时的目标（2026-10 UI 审计 C5）**：判据仍只在 `AiPanel` 的 `useTargetPanel`——图内编辑中的 / 单选的可编辑图优先；
+  什么都没选（也不在图内编辑）且画布上恰好一张可编辑的图时它就是目标（只定助手的目标，不动画布选区），上下文带 chip 与占位文字照常。
+  多张时空态列出可编辑图的名字（`data-ai-pick-panel`），点一下选中那张。
 - 没做的（路线图里另立）：`@` 提及图元素 / 附件、Custom Highlight API 的 paint-only 流式淡入、轮次轨、回到底部的未读数、发送时气泡的 WAAPI
   形变（一轮落位已有 settle-in）。
 
@@ -631,7 +641,7 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 
 ### 原语层落下的规矩
 - **同一高度只有一种字号**：28px 的按钮（sm / md 只差内边距）、菜单项、页签、Select 项、命令面板行都是 12。11 只留给标签 / caption / meta。
-- **菜单分组标题比项淡一档**（12/400/ink-3），不再是 type-section；`MenuLabel` 与 `MenuHeading` 同一样式。
+- **菜单分组标题是小一号的半粗字**（11/500/ink-2；原 12/400/ink-3 已修订，见本行末），不再是 type-section；`MenuLabel` 与 `MenuHeading` 同一样式。**2026-10-31 修订（UI 审计 D2）**：组标题改 11 / 500 / ink-2——禁用项是 ink 40% 的灰，与 ink-3 的 12/400 组头撞成同一种浅灰，读起来像两行都不能点；改小一号、半粗、深一档后与禁用项分开。
 - **触发钮有打开态**：ghost / secondary 作为 Menu / Popover 触发器时 `data-[state=open]` 底色常驻（surface-active）。
 - **20px 行内小钮是 28 之外唯一的一档**（`Button size="icon-xs"` / `IconButton iconSize="xs"`）：标题行里的 ?、搜索框清除、通知 ×。
 - **Checkbox / Radio 16、Toggle 28×16 + shadow-thumb**；hover 只能加深。
@@ -773,13 +783,15 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   surface-2 底的等宽片里；thinking 是一句话，Sparkles + ink-3、无片。前端不写死那个字形（iconography 门禁
   也不许字符当图标），后端换标记照样能拆。
 
-### 只上一处的会滚的数字
-`@sfinterface/numbers`（MIT、零依赖、静止时与普通文字像素一致、原生 reduced-motion）只给**顶栏缩放读数**
-（`TopBar.ZoomControls`）：一步到位的缩放（± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」。
+### 只上两处的会滚的数字
+`@sfinterface/numbers`（MIT、零依赖、静止时与普通文字像素一致、原生 reduced-motion）只给两处：**顶栏缩放读数**
+（`ZoomControls`）与**画布尺寸**（拖页面边时的「宽 / 高 N mm」标注 `canvas/PageEdgeResize` + 属性栏「画布」页头的只读尺寸）。
+缩放读数：一步到位的缩放（± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」。
 两条边界：读数显示的是**补间的终点值**（`viewportStore.readoutZoom`，一起步就是目标，与画布同拍，不逐帧滚）；
 滚轮 / 捏合是连续输入，`readoutRolls` 为假时 `duration={0}` 即时换数——柱子不会永远在半路。时长接 token
 （`--sfi-resolve` = slow 240、`--sfi-settle` = exit 90），`useGrouping:false`，locale 跟 i18n，版本锁死
-0.3.4（两天九版、作者自述会动）。**不上**的地方：HUD 光标 / 尺寸读数（拖动中每帧都变）、输入框、导出像素预览
+0.3.4（两天九版、作者自述会动）。画布尺寸沿用同一条规矩：逐 mm 的连续拖动即时换（`duration={0}`），吸上 / 离开栏宽、⌥ 按下 / 松开这类离散跳变与属性栏一步到位的改动才滚
+（`interactionStore.pageEdge.rolls`）。**不上**的地方：HUD 光标读数（拖动中每帧都变）、输入框、导出像素预览
 （先看一周再说）。
 
 ### 看到了但不学
@@ -953,8 +965,8 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   对齐工具条的组间是 12px 空而不是竖线。
 - **折叠只有三种写法**：SummaryRow（低频项）/ GroupToggle（卡内小尾巴）/ Details（技术细节，如渲染失败的 traceback）。
 - **身份头固定两行**（路径 24 + 名字 32）：面包屑每级 24px 命中区、长名字中间省略（`TruncateMiddle`）；名字 `type-heading`、折两行、全文在 title；
-  角色图标底座圆角 8；右侧簇两种对象同一副——路径行右端是状态胶囊（n 项已修改 / n 个问题 / 已锁定 / 已隐藏，点它就是撤销那个状态或去看问题），
-  名字行右端是 ⋯；修改徽标是胶囊、hover 只加深；多选图标是 Layers。「n 个问题 ›」直达问题面板里的那一条（`openProblemAt`）。
+  角色图标底座圆角 8；右侧簇两种对象同一副——路径行右端是状态胶囊（n 项已修改 / 已锁定 / 已隐藏，点它就是撤销那个状态或去看问题），
+  名字行右端是 ⋯；修改徽标是胶囊、hover 只加深；多选图标是 Layers。头部不放问题入口（2026-10-22 起），问题只在左栏「问题」。
 - **ColorField**：属性栏里（宿主挂 `ColorFieldContext`）色块旁是可编辑的 hex，点色块开取色面板（文档颜色 / 最近使用 / 系统取色器…）；
   浮动栏不挂这层，色块照旧直接开系统取色盘。`disabled` 是真禁用（画布页透明背景时的背景色），不再 `pointer-events-none` 假禁用。
   「无」与不透明度不进面板：有这两件事的属性各有自己的开关 / 一行（同一属性不出第二个控件）。
@@ -1120,5 +1132,5 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
 - 用在：导出对话框「检查」行（芯片 + 一个「在问题面板中查看」；范围「整个画布 / 仅此图」进 tooltip）、问题面板摘要条的等级开关、
   属性栏标题行的「N 个问题」、接入状态对话框顶部的「可编辑 / 待连接 / 仅版面」。**不再有整行红字、红底红字的胶囊、三种次级文字混排。**
 - **清单每条一行**：「对象 · 属性 · 当前值 → 要求」，值用等宽数字，行尾一个动作（定位 / 修复）；先露 3 条，其余「还有 N 项 · 在问题面板中查看全部」。
-  长说明（边界句「正好等于不算通过」）进 title / 技术详情，行内只留要求本身（`expectationHead`）。问题面板的组头只有一颗圆点带色；
+  长说明（边界句「当前值实际略低，显示已四舍五入」）进 title / 技术详情，行内只留要求本身（`expectationHead`）。问题面板的组头只有一颗圆点带色；
   「全部修复」是 ghost 按钮，不是黑色实心胶囊。接入状态的行内只标异常项（可编辑由分组名与顶部芯片说了）。

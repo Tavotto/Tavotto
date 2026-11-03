@@ -16,22 +16,16 @@ import {
   Trash2,
   Type as TypeIcon,
 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { useHeldWhilePointerDown } from '@/hooks/useHeldWhilePointerDown'
-import { openProblemAt } from '@/lib/issueFocus'
 import { switchKindOf } from '@/lib/shapeSwitch'
 import { MOD } from '@/lib/utils'
-import type { ValidationIssue } from '@/lib/validation'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
-import { useValidationStore } from '@/store/validationStore'
-import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { objectLabel, type CanvasObject, type PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
-import { CountChip } from '../ui/CountChip'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
@@ -56,7 +50,7 @@ const TYPE_ICON = {
  *
  * **固定两行**（2026-10-07 设计审计 §9.2 P1）：上面 24px 一行是路径（祖先面包屑 / 对象类型）+ 状态 chip，
  * 下面 32px 一行是角色图标 + 名字 + ⋯。此前路径行只在有祖先 / 有修改时才出现，切换选择时整栏跳 24px。
- * 两种对象（画布对象 / 图内元素）**同一副右侧簇**：状态 chip（已修改 / 问题 / 已锁定 / 已隐藏）在路径行右端，
+ * 两种对象（画布对象 / 图内元素）**同一副右侧簇**：状态 chip（已修改 / 已锁定 / 已隐藏；问题的入口只在左栏「问题」）在路径行右端，
  * 命令收进名字行右端的 ⋯。头部下面不再画分隔线——一屏的发丝线只留节与节之间那一条。
  *
  * 图内编辑态的头上**没有退出按钮**：返回排版的唯一入口是画布上方上下文栏的
@@ -83,20 +77,18 @@ function IdentityFrame({
   return (
     <header data-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
       {/* 路径行：p 是稳定结构（用例按 `header p` 找面包屑），一行 24 高 */}
-      <p data-identity-path className="flex h-6 min-w-0 items-center gap-1.5 text-sm text-ink-3">
+      <p data-identity-path className="flex h-6 min-w-0 items-center gap-1.5 type-caption">
         <span className="flex min-w-0 flex-1 items-center gap-1">{path}</span>
         {chips}
       </p>
-      <div className="flex min-h-8 items-center gap-2">
-        {/* 角色图标底座：圆角 md（8），与行 / 框同一档（此前 rounded-sm 与圆形图标钮不一致） */}
-        <span
-          data-identity-icon
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface-hover text-ink-2"
-        >
+      {/* 角色图标：无框 16px，坐在名字**第一行**的中线上（槽高 32 = 名字单行时的行高；名字折两行时第一行仍在 16 处，
+          名字块上下各留 4px 保证这一点）——手帐线稿 2026-10-28，原来是 28px 灰底座 */}
+      <div className="flex min-h-8 items-start gap-2">
+        <IconSlot data-identity-icon className="h-8 w-4 text-ink-3">
           {icon}
-        </span>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">{name}</div>
-        {menu}
+        </IconSlot>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 py-1">{name}</div>
+        <span className="flex h-8 shrink-0 items-center">{menu}</span>
       </div>
     </header>
   )
@@ -153,52 +145,10 @@ function StateChip({
         onClick={onClick}
         className="flex h-5 shrink-0 items-center gap-1 rounded-full bg-surface-hover px-1.5 text-xs text-ink-2 outline-none transition-colors hover:bg-surface-active hover:text-ink focus-visible:focus-ring"
       >
-        <Icon size={ICON_SIZE.xs} />
+        <Icon size={ICON_SIZE.sm} />
         {label}
       </button>
     </Tip>
-  )
-}
-
-/**
- * 「2 个问题 ›」：这一选择在问题清单里还有几条错误 / 警告；点它直达问题面板里的第一条
- * （`openProblemAt`，与左栏样式面板的直达同一个动作，2026-10-07 设计审计 §9.4 P2）。
- * 判据只读 `validationStore.issues` 的 `objectRef`，不在这里另判。
- */
-function ProblemsChip({
-  objectIds,
-  inScope,
-  figureId,
-}: {
-  objectIds: string[]
-  /** 图内 gid 归不归这一选择；`null` / 缺省 = 不按 gid 过滤（整张图、画布对象） */
-  inScope?: ((gid: string) => boolean) | null
-  figureId: string | null
-}) {
-  const { t } = useTranslation('inspector')
-  // 胶囊是一颗按钮：校验结果（常在首次渲染之后才有）在用户按着某个控件时到达，就等他松手再出现，
-  // 免得按下与松开之间属性栏多出一颗按钮（e2e layout-timeline「首次渲染在水平翻转按下与松开间完成」）
-  const all = useHeldWhilePointerDown(useValidationStore((s) => s.issues))
-  const mine = all.filter(
-    (i) =>
-      (i.severity === 'error' || i.severity === 'warn') &&
-      i.objectRef.objectId != null &&
-      objectIds.includes(i.objectRef.objectId) &&
-      // 多选图内元素时数整组选择，不只最后点的那一个；选中组时只数它的成员（Codex #829 P2）
-      (inScope == null || (i.objectRef.gid != null && inScope(i.objectRef.gid))),
-  )
-  if (!mine.length) return null
-  const errors = mine.filter((i) => i.severity === 'error')
-  const first: ValidationIssue = errors[0] ?? mine[0]
-  return (
-    <CountChip
-      size="sm"
-      tone={errors.length ? 'danger' : 'warn'}
-      data-identity-problems={mine.length}
-      count={mine.length}
-      label={t('identity.problemsLabel', { count: mine.length })}
-      onClick={() => openProblemAt(first, all, figureId)}
-    />
   )
 }
 
@@ -265,13 +215,6 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
     : el
       ? panel.overrides.filter((o) => o.gid === el.gid).length
       : panel.overrides.length
-  // 问题胶囊的范围：选中元素 = 那组选择；选中组 = 组与它结构上的全部后代（成员子图 / 色条轴
-  // 及其下的元素，同一份 `structuralParent`，manifest 里没有的 gid 按路径回退）；整张图 = 不过滤
-  const problemScope: ((g: string) => boolean) | null = el
-    ? (g) => selectedGids.includes(g) && g !== 'figure'
-    : selGroup && manifest
-      ? (g) => g === selGroup.gid || ancestorsOf(structuralParent(manifest), g).includes(selGroup.gid)
-      : null
   const RoleIcon = roleIcon(el?.role ?? (selGroup ? 'group' : 'figure'))
   const name = crumbs.at(-1) ?? t('elementFallback')
 
@@ -305,11 +248,6 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
       }
       chips={
         <>
-          <ProblemsChip
-            objectIds={[panel.id]}
-            inScope={problemScope}
-            figureId={panel.id}
-          />
           {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图） */}
           <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
         </>
@@ -346,8 +284,6 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
 
 function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
   const { t } = useTranslation('inspector')
-  // 快速编辑里不摆「创建副本」：副本落在版面上，这一屏看不见（`duplicateSelected` 自己也挡，Codex #833）
-  const fastEdit = useWorkspaceStore((s) => fastEditPanelOf(s) !== null)
   const one = objs.length === 1 ? objs[0] : null
   const kinds = [...new Set(objs.map((o) => o.type))]
   // 标注的图标按**它自己那一种**画（与 MarkerPicker 同一条纪律——形状是事实）；
@@ -399,7 +335,6 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
       }
       chips={
         <>
-          <ProblemsChip objectIds={ids} figureId={null} />
           {locked && (
             <StateChip
               icon={Lock}
@@ -424,11 +359,9 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
       name={title != null ? <NameHeading>{title}</NameHeading> : <ObjectKindSwitch objs={objs} />}
       menu={
         <MoreMenu label={t('objectActions')}>
-          {!fastEdit && (
-            <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
-              {translate('actions.copy')}
-            </MenuItem>
-          )}
+          <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
+            {translate('actions.copy')}
+          </MenuItem>
           <MenuItem icon={hidden ? Eye : EyeOff} onSelect={() => setHidden(!hidden)}>
             {t(hidden ? 'show' : 'hide')}
           </MenuItem>

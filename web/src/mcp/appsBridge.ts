@@ -165,14 +165,24 @@ export class AppsBridge {
     }
   }
 
-  /** 调 server 上的工具。**画布与后端之间的唯一通道**（没有任何跨源请求）。 */
+  /**
+   * 调 server 上的工具。**画布与后端之间的唯一通道**（没有任何跨源请求）。
+   *
+   * 每次都带 `origin: 'canvas'`：server 据此不把画布里的操作记成 Agent 的工具调用
+   * （画布不发遥测，ADR 0134 §MCP）。能调的工具都在 server 的 `CANVAS_TOOLS` 里声明了它。
+   */
   callTool(
     name: string,
     args: Record<string, unknown>,
     timeoutMs?: number,
     signal?: AbortSignal,
   ): Promise<ToolCallResult> {
-    return this.request<ToolCallResult>('tools/call', { name, arguments: args }, timeoutMs, signal)
+    return this.request<ToolCallResult>(
+      'tools/call',
+      { name, arguments: { ...args, origin: 'canvas' } },
+      timeoutMs,
+      signal,
+    )
   }
 
   /** 请求全屏：复杂编辑画布的主要形态（inline 那点高度放不下一张图 + 属性页）。 */

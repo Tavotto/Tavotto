@@ -55,13 +55,15 @@ describe('scriptLibraryStore', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
-  it('幂等去重仍然成立：同代内并发 load 只发一次请求', async () => {
+  it('同代内并发刷新共用一次补问，不吞掉旧请求发出后的改动', async () => {
     mockFetch.mockResolvedValue(view(['x.py']))
     const st = useScriptLibraryStore.getState()
     const p1 = st.load()
     const p2 = st.load()
-    expect(p1).toBe(p2)
-    await p1
+    const p3 = st.load()
+    expect(p2).toBe(p3)
     expect(mockFetch).toHaveBeenCalledTimes(1)
+    await Promise.all([p1, p2, p3])
+    expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 })

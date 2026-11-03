@@ -19,7 +19,10 @@
  *      引入**——lucide-react 已经拆掉，别再装回来。
  *   4. 不许拿 Unicode 字符 / emoji 当图标（JSX 文本里单独一个 ✕ ▸ ▾ …）。
  *      快捷键提示里的 ⌘ ⇧ ⏎ 是按键名不是图标，那些在字符串里，不在这条规则内。
- *   5. 折叠块不用原生 `<summary>`：浏览器自带的实心三角每家长得都不一样，也对不上
+ *   6. 图标不靠 margin-top 凑对齐：`mt-px / mt-0.5 / mt-1 / mt-[3px]` 之类的微调写在图标（或
+      Spinner）自己的 className 上就是红——单行时恰好对上，换字号 / 图标档 / 折成两行就歪。
+      图标 + 文字行用 `IconSlot`（槽高 = 该行行高 `1lh`，图标居中）。
+   5. 折叠块不用原生 `<summary>`：浏览器自带的实心三角每家长得都不一样，也对不上
  *      树 / 检查器里的折叠箭头。统一走 `ui/Details` 的 `Summary`（ChevronRight）。
  *
  * 判源码结构用 TypeScript 的 AST 而不是正则：注释、docstring、`onClick={() =>`
@@ -34,7 +37,8 @@ import ts from 'typescript'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { ICON_SIZE, ICON_STROKE, IconProvider } from './Icon'
-import { ChevronRight, ICON_DEFS, TriangleAlert, Type, X, type IconDef } from './icons'
+import { Circle, ChevronRight, ICON_DEFS, SMALL_DEFS, TriangleAlert, Type, X, type IconDef } from './icons'
+import { snapPathToPixelGrid } from './icons/defs'
 
 const SOURCES = import.meta.glob('/src/**/*.{ts,tsx}', {
   eager: true,
@@ -55,7 +59,12 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/ShapeView.tsx': 1, // 画布形状本体
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
+  '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
+  '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
+  '/src/components/ui/Sketch.tsx': 1, // 空状态手帐线稿（54×42 的插图，不是图标；一个 <svg> 出 11 幅）
+  '/src/components/ui/Spinner.tsx': 1, // 全产品唯一的加载图形（底环 + 短弧，描边下限属于它，不走图标集的比例缩放）
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
+  '/src/components/settings/BrandLogo.tsx': 2, // 厂商标志（多色 / 渐变，图形数据在 brandLogoData.ts）+ 没有彩色版的厂商的单色图形
   '/src/components/inspector/controls/TickAndSpineDiagram.tsx': 1, // 四边刻度示意图（网格开关那枚小 svg 已随 Toggle 回收）
   '/src/components/inspector/controls/TickTaskCard.tsx': 1, // 刻度朝向示意（in/out/both）
   '/src/components/inspector/controls/HatchPicker.tsx': 1, // 填充纹样样本
@@ -68,22 +77,53 @@ const SVG_ALLOWLIST: Record<string, number> = {
   // 画布缩略图：页面比例里按对象落位画这份文档的真实内容（审计 T04 之后
   // 画布列表与版本列表共用这一份，原来那条豁免在 left/CanvasList.tsx 上）
   '/src/components/CanvasThumb.tsx': 1,
+  // 执行轨迹 waterfall 的交接连线：父智能体泳道到子智能体泳道的肘形曲线，两端按 span 起止时刻现算，不是图标
+  '/src/components/ai/traceWaterfall/Handoffs.tsx': 1,
   '/src/components/inspector/controls/ErrorBarDiagram.tsx': 1, // 误差棒的线 / 端帽示意
   '/src/components/inspector/controls/ProjectionPicker.tsx': 1, // 三维投影小立方体
   '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）
   '/src/components/settings/AgentIcon.tsx': 2, // Claude / OpenAI 两个品牌标
+  '/src/components/settings/VendorIcon.tsx': 1, // 厂商标（lobe-icons 的 path 数据，单色 currentColor）
   '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
   '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
   // 图例位置：子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走）+ 六个
   // 外侧预设的缩略示意，全在同一张 svg 里。画的是这张图自己的几何，不是图标
   '/src/components/inspector/controls/LegendPositionPicker.tsx': 1,
+  // 新手教程的演示图（ADR 0136）：按示例脚本量出来的几何画的那张科研图本身（坐标轴 / 曲线 / 图例 / 标题）
+  '/src/components/onboarding/DemoFigure.tsx': 1,
+  // 新手教程第一步从脚本卡指向投放框的那条虚线弧：两端按卡片与投放框此刻的位置现算，不是图标
+  '/src/components/onboarding/DemoImportStep.tsx': 1,
+  // 标注里的公式（ADR 0152 PR 4）：用户写的 LaTeX 由后端 matplotlib 排出的轮廓，与导出同一份，不是图标
+  '/src/components/ui/MathFormula.tsx': 1,
+  // LaTeX 源码模式下方的公式预览条：同一份排版结果，不是图标
+  '/src/components/ui/MathPreviewStrip.tsx': 1,
+}
+
+/**
+ * 图标 margin-top 微调的豁免表：路径 → 允许的个数。每一条都得说清「为什么 IconSlot 不够」
+ * （例如图标本来就不在文字行里，而是对着一个非文字的块）。目前没有。
+ */
+const NUDGE_ALLOWLIST: Record<string, number> = {}
+
+/** 图标（或图标式加载器）身上不许出现的 margin-top 微调：mt-px / mt-0.5 / mt-1 / mt-1.5 / mt-[Npx] */
+const ICON_NUDGE = /(^|\s)-?mt-(px|0\.5|1|1\.5|\[-?[\d.]+px\])(?=\s|$)/
+const ICON_LIKE_TAGS = new Set(['Icon', 'Spinner'])
+
+function stringsIn(n: ts.Node, out: string[] = []): string[] {
+  if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) out.push(n.text)
+  else if (ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) out.push(n.text)
+  // 回调不能返回值：forEachChild 遇到真值就停
+  ts.forEachChild(n, (c) => {
+    stringsIn(c, out)
+  })
+  return out
 }
 
 /** `size` 是别的意思（外框边长 / 加载器尺寸）的组件，数字字面量放行 */
-const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon'])
+const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon', 'VendorIcon', 'BrandLogo'])
 
 /** 图标集里不是图标、但允许引入的名字 */
-const NON_ICON_EXPORTS = new Set(['ICON_DEFS', 'IconComponent', 'IconProps', 'IconDef', 'IconName'])
+const NON_ICON_EXPORTS = new Set(['ICON_DEFS', 'SMALL_DEFS', 'IconComponent', 'IconProps', 'IconDef', 'IconName'])
 
 /** 第三方图标库：一个都不许出现在 import 里 */
 const FOREIGN_ICON_LIBS = new Set([
@@ -113,6 +153,8 @@ export interface Finding {
     | 'foreign-icon-lib'
     | 'glyph'
     | 'native-summary'
+    | 'icon-nudge'
+    | 'xs-no-small'
   line: number
   detail: string
 }
@@ -133,6 +175,7 @@ export function audit(path: string, src: string): Finding[] {
   const out: Finding[] = []
   const lineOf = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1
   const iconLocals = new Set<string>()
+  const importedName = new Map<string, string>()
 
   const visit = (n: ts.Node) => {
     if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
@@ -146,6 +189,7 @@ export function audit(path: string, src: string): Finding[] {
           for (const el of nb.elements) {
             const imported = (el.propertyName ?? el.name).text
             iconLocals.add(el.name.text)
+            importedName.set(el.name.text, imported)
             if (!(imported in ICON_DEFS) && !NON_ICON_EXPORTS.has(imported)) {
               out.push({ kind: 'alias-import', line: lineOf(el), detail: imported })
             }
@@ -166,6 +210,14 @@ export function audit(path: string, src: string): Finding[] {
       for (const attr of n.attributes.properties) {
         if (!ts.isJsxAttribute(attr)) continue
         const name = attr.name.getText(sf)
+        if (
+          name === 'className' &&
+          attr.initializer &&
+          (iconLocals.has(tag) || ICON_LIKE_TAGS.has(tag)) &&
+          stringsIn(attr.initializer).some((x) => ICON_NUDGE.test(x))
+        ) {
+          out.push({ kind: 'icon-nudge', line: lineOf(attr), detail: `<${tag} className=…mt-*>` })
+        }
         if (name === 'absoluteStrokeWidth' && iconLocals.has(tag)) {
           out.push({ kind: 'absolute-stroke', line: lineOf(attr), detail: `<${tag}>` })
         }
@@ -176,9 +228,14 @@ export function audit(path: string, src: string): Finding[] {
         if (name === 'size' && capitalized && !NON_ICON_SIZED.has(tag)) {
           const numeric =
             (expr && ts.isNumericLiteral(expr)) || (ts.isStringLiteral(init) && /^\d+$/.test(init.text))
-          const isIcon = iconLocals.has(tag)
+          const isIcon = iconLocals.has(tag) || tag === 'Spinner'
           if (numeric || (isIcon && !/^ICON_SIZE(\.(xs|sm|md|lg)|\[.+\])$/.test(text))) {
             out.push({ kind: 'raw-size', line: lineOf(attr), detail: `<${tag} size=${text}>` })
+          }
+          // 12px 只给画了小号字形的图标（ADR 0158）：24 网格的图缩到 12px 线只剩 0.75px、落不到像素上
+          const imported = importedName.get(tag)
+          if (text === 'ICON_SIZE.xs' && imported && imported in ICON_DEFS && !(imported in SMALL_DEFS)) {
+            out.push({ kind: 'xs-no-small', line: lineOf(attr), detail: `<${tag} size=${text}>` })
           }
         }
         // 间接渲染（`icon: Icon`）的描边也不许手写数字：加粗只有 emphasis 一档
@@ -238,6 +295,11 @@ function offenders(kind: Finding['kind']): string[] {
       if (hits.length > allowed) rows.push(`${path}（${hits.length} 处，豁免 ${allowed}）`)
       continue
     }
+    if (kind === 'icon-nudge') {
+      const allowed = NUDGE_ALLOWLIST[path] ?? 0
+      if (hits.length > allowed) rows.push(...hits.map((h) => `${path}:${h.line} ${h.detail}（豁免 ${allowed}）`))
+      continue
+    }
     if (kind === 'native-summary' && path === '/src/components/ui/Details.tsx') continue
     for (const h of hits) rows.push(`${path}:${h.line} ${h.detail}`)
   }
@@ -287,6 +349,13 @@ describe('图标只有一套：components/ui/icons + Icon.tsx 的阶梯', () => 
     expect(offenders('absolute-stroke'), '描边按比例缩放，没有 absoluteStrokeWidth 这回事').toEqual([])
   })
 
+  it('12px 只用画了小号字形的图标（SMALL_DEFS），其余用 16px', () => {
+    expect(
+      offenders('xs-no-small'),
+      '这些图标没有 12px 小号字形：改用 ICON_SIZE.sm，或者在 defs.ts 的 SMALL_DEFS 里给它画一份',
+    ).toEqual([])
+  })
+
   it('从图标集引入的都是图标集里有的名字（别名会让同一张图有两个名字）', () => {
     expect(offenders('alias-import')).toEqual([])
   })
@@ -303,6 +372,21 @@ describe('图标只有一套：components/ui/icons + Icon.tsx 的阶梯', () => 
     expect(offenders('native-summary'), '用 Details / Summary（折叠箭头是图标集的，不是浏览器的三角）').toEqual(
       [],
     )
+  })
+
+  it('图标不靠 margin-top 凑对齐（图标 + 文字行用 IconSlot）', () => {
+    expect(
+      offenders('icon-nudge'),
+      '图标 + 文字行：行容器 items-start，图标包进 <IconSlot>，不要给图标写 mt-*',
+    ).toEqual([])
+  })
+
+  it('图标 margin-top 豁免表里的每个文件都还存在、个数没有虚高', () => {
+    for (const [path, allowed] of Object.entries(NUDGE_ALLOWLIST)) {
+      expect(SOURCES[path], `${path} 已不存在，把它从豁免表里删掉`).toBeDefined()
+      const n = audit(path, SOURCES[path]!).filter((f) => f.kind === 'icon-nudge').length
+      expect(n, `${path} 实际 ${n} 处，豁免却给了 ${allowed}`).toBe(allowed)
+    }
   })
 
   it('图标集里每个名字都渲染得出来（几何定义不缺项）', () => {
@@ -341,6 +425,16 @@ describe('自检：判据认得出每一种违规（不是空门禁）', () => {
     expect(kinds("import { Check } from './icons'\nconst a = <Check size={13} />")).toContain('raw-size')
   })
 
+  it('12px 没有小号字形', () => {
+    expect(kinds("import { Trash2 } from '@/components/ui/icons'\nconst a = <Trash2 size={ICON_SIZE.xs} />")).toContain(
+      'xs-no-small',
+    )
+    expect(kinds(head + 'const a = <Check size={ICON_SIZE.xs} />')).not.toContain('xs-no-small')
+    expect(kinds("import { Trash2 } from '@/components/ui/icons'\nconst a = <Trash2 size={ICON_SIZE.sm} />")).not.toContain(
+      'xs-no-small',
+    )
+  })
+
   it('描边', () => {
     expect(kinds(head + 'const a = <Check strokeWidth={3} />')).toContain('raw-stroke')
     expect(kinds(head + 'const a = <Check strokeWidth={ICON_STROKE.emphasis} />')).not.toContain('raw-stroke')
@@ -357,6 +451,19 @@ describe('自检：判据认得出每一种违规（不是空门禁）', () => {
     expect(kinds("import { X } from 'lucide-react'")).toContain('foreign-icon-lib')
     expect(kinds("import { X } from 'lucide-react/icons/x'")).toContain('foreign-icon-lib')
     expect(kinds("import { X } from '@/components/ui/icons'")).not.toContain('foreign-icon-lib')
+  })
+
+  it('图标 margin-top 微调：直接写、cn() 里写、模板串里写都抓；IconSlot 与别的元素不抓', () => {
+    expect(kinds(head + 'const a = <Check className="mt-0.5 shrink-0" />')).toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className="shrink-0 mt-[3px]" />')).toContain('icon-nudge')
+    expect(kinds(head + "const a = <Check className={cn('shrink-0', on && 'mt-px')} />")).toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className={`mt-1 ${tone}`} />')).toContain('icon-nudge')
+    expect(kinds('const a = <Icon size={s} className="mt-0.5" />')).toContain('icon-nudge')
+    expect(kinds('const a = <Spinner className="mt-px" />')).toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className="mt-4" />')).not.toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className="shrink-0 text-ink-3" />')).not.toContain('icon-nudge')
+    expect(kinds('const a = <p className="mt-0.5" />')).not.toContain('icon-nudge')
+    expect(kinds('const a = <IconSlot><Check /></IconSlot>')).not.toContain('icon-nudge')
   })
 
   it('原生 summary', () => {
@@ -406,12 +513,31 @@ describe('图标组件：默认档、选中态、无障碍', () => {
     expect(plain.getAttribute('stroke-width')).toBe(String(ICON_STROKE.regular))
     expect(plain.getAttribute('class')).toContain('shrink-0')
     expect(plain.getAttribute('class')).toContain('icon-x')
-    // 描边按比例：改了尺寸，属性值不变（viewBox 24 里的 2，画到 16px 上自然是 1.33px）
+    // 描边按比例：改了尺寸，属性值不变（viewBox 24 里的 1.5，画到 16px 上正好 1px）
     const md = m.svg('md')
     expect(md.getAttribute('width')).toBe(String(ICON_SIZE.md))
     expect(md.getAttribute('stroke-width')).toBe(String(ICON_STROKE.regular))
     expect(md.getAttribute('class')).toContain('icon-chevron-right')
     await m.unmount()
+  })
+
+  it('清晰度（ADR 0157）：描边 1.5、默认档 16，几何都落在 0.75 网格上（吸附后再吸一次不变）', () => {
+    expect(ICON_STROKE.regular).toBe(1.5)
+    expect(ICON_SIZE.sm).toBe(16)
+    const off: string[] = []
+    for (const [name, def] of Object.entries(ICON_DEFS) as [string, IconDef][]) {
+      for (const v of [def, def.sel].filter(Boolean) as IconDef[]) {
+        for (const list of ['s', 'f', 'k', 'o'] as const) {
+          for (const p of v[list] ?? []) {
+            const d = typeof p === 'string' ? p : p.d
+            if (snapPathToPixelGrid(d) !== d) off.push(`${name}.${list}: ${d.slice(0, 40)}`)
+          }
+        }
+      }
+    }
+    expect(off).toEqual([])
+    // 反证：没吸附的原值会被抓出来
+    expect(snapPathToPixelGrid('M3.5 7.5h8.75')).not.toBe('M3.5 7.5h8.75')
   })
 
   it('没套 Provider 也是同一套默认档（图标集自己的默认就是阶梯）；Provider 只是根上改默认的地方', async () => {
@@ -429,27 +555,51 @@ describe('图标组件：默认档、选中态、无障碍', () => {
     await m.unmount()
   })
 
-  it('filled 渲染实心孪生（有 mask 挖空 + 填色路径）；没有孪生的图标忽略它', async () => {
+  it('filled 渲染实心孪生；没有孪生的图标忽略它', async () => {
     const m = await mount(
       <>
-        <TriangleAlert data-testid="outline" />
-        <TriangleAlert data-testid="filled" filled />
+        <Circle data-testid="outline" />
+        <Circle data-testid="filled" filled />
         <Type data-testid="type-filled" filled />
       </>,
     )
-    const outline = m.svg('outline')
-    const filled = m.svg('filled')
-    expect(outline.querySelector('mask')).toBeNull()
-    expect(outline.querySelectorAll('path[fill="currentColor"]').length, '描边态只有那颗点是填色的').toBe(1)
-    expect(filled.querySelector('mask'), '实心态用蒙版挖出叹号').not.toBeNull()
-    expect(filled.querySelectorAll('g[mask] path[fill="currentColor"]').length).toBeGreaterThan(0)
-    // 两个实心图标同页，蒙版 id 不能串
-    const m2 = await mount(<TriangleAlert data-testid="filled2" filled />)
-    expect(m2.svg('filled2').querySelector('mask')!.id).not.toBe(filled.querySelector('mask')!.id)
+    expect(m.svg('outline').querySelectorAll('path[fill="currentColor"]').length, '描边态没有填色').toBe(0)
+    expect(m.svg('filled').querySelectorAll('path[fill="currentColor"]').length).toBe(1)
     // Type 没有孪生：filled 与否渲染一样
     expect(m.svg('type-filled').querySelector('mask')).toBeNull()
     expect(m.svg('type-filled').querySelectorAll('path').length).toBe(2)
-    await m2.unmount()
+    await m.unmount()
+  })
+
+  it('状态记号默认就是实心底 + 蒙版挖空符号（ADR 0158），同页两个蒙版 id 不串', async () => {
+    const m = await mount(
+      <>
+        <TriangleAlert data-testid="a" />
+        <TriangleAlert data-testid="b" />
+      </>,
+    )
+    const a = m.svg('a')
+    expect(a.querySelector('mask'), '用蒙版挖出叹号').not.toBeNull()
+    expect(a.querySelectorAll('g[mask] path[fill="currentColor"]').length).toBeGreaterThan(0)
+    expect(a.querySelector('mask')!.id).not.toBe(m.svg('b').querySelector('mask')!.id)
+    await m.unmount()
+  })
+
+  it('12px 换画小号字形、线按 1px 画；16px 仍是 24 网格的大图', async () => {
+    const m = await mount(
+      <>
+        <X data-testid="xs" size={ICON_SIZE.xs} />
+        <X data-testid="sm" size={ICON_SIZE.sm} />
+        <Type data-testid="no-small" size={ICON_SIZE.xs} />
+      </>,
+    )
+    const ds = (id: string) => [...m.svg(id).querySelectorAll('path')].map((p) => p.getAttribute('d'))
+    expect(ds('xs')).toEqual(SMALL_DEFS.X!.s)
+    expect(m.svg('xs').getAttribute('stroke-width')).toBe('2')
+    expect(ds('sm')).toEqual(ICON_DEFS.X.s)
+    expect(m.svg('sm').getAttribute('stroke-width')).toBe(String(ICON_STROKE.regular))
+    // 没有小号的照旧画大图（门禁另外拦着不让这么用）
+    expect(ds('no-small')).toEqual(ICON_DEFS.Type.s)
     await m.unmount()
   })
 

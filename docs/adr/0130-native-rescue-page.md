@@ -20,9 +20,9 @@ Python sidecar 起不来（缺文件、被杀软拦、握手超时、端口 / �
 （多窗口 / 远程窗口 / React 失联时的未保存工作保护是后续项，见下），所以此时页面只说明原因、不提供任何会结束进程或装包的动作
 （`editing_state_unknown`）。**不靠超时推断「干净」。**
 
-### 二、七条命令，三处同步，Rust 端再查调用方
+### 二、八条命令，三处同步，Rust 端再查调用方
 
-`rescue_status` / `rescue_retry` / `rescue_update_check` / `rescue_update_install` / `rescue_diag_preview` / `rescue_diag_send` / `rescue_diag_save`，
+`rescue_status` / `rescue_retry` / `rescue_update_check` / `rescue_update_install` / `rescue_reinstall`（见下「三之二」）/ `rescue_diag_preview` / `rescue_diag_send` / `rescue_diag_save`，
 全在 `src/rescue.rs`；`build.rs`、`generate_handler!`、独立的 `capabilities/rescue-page.json`（`windows:["main"]`、`local:true`、**无 remote**）同步。
 `local:true` 且不含任何 remote URL，所以 `127.0.0.1` 上的引擎页（`main.json`）和远程实例窗口（`remote-*.json`）一条都拿不到。
 ACL 之外 Rust 端再查一道（`rescue::decide`）：窗口 label 必须是 `main`，**当前 URL** 必须是壳自带的 `error.html`
@@ -36,17 +36,43 @@ ACL 之外 Rust 端再查一道（`rescue::decide`）：窗口 label 必须是 `
 页面把用户**看到并确认**的版本号随安装请求带给壳，句柄里的版本对不上就回 `candidate_changed`（不下载、不清句柄、可重新确认）。
 网络 / 清单失败是 `Err`，页面显示「检查失败，可重试」，只有 `Ok(None)` 才说已是最新；验签失败由插件拒绝（`apply` 之前不落盘）。
 
+### 三之二、文件丢失时的「重新安装」（TVD-QMDV 增补）
+
+失败码是 `sidecar_not_found`（`resource_dir/sidecar/Tavotto/Tavotto(.exe)` 不在：杀软隔离或安装不完整）或 `sidecar_spawn_failed`
+（文件在、系统拒绝运行：杀软拦截、文件损坏、权限不对；TVD-JNZE 增补，正文换成「被系统阻止运行」那一句）时，重启修不好，页面主按钮换成
+「重新安装 Tavotto」（`rescue_status.reinstall`，判据只有 `rescue::reinstall_applies`），「重新启动」退到「其他选项」。
+`rescue_reinstall` 走同一个协调器（同一把锁、内置公钥、`run_install_expecting`），区别只有一处：**允许同版本**——`app_update::reinstall_builder`
+在 `UpdaterBuilder` 上设 `version_comparator(remote >= current)`，仅 `run_reinstall` 使用（回退来源重新 check 用的也是这个放宽过的工厂，仍须报同一版本）；
+普通更新路径传进去的 `make` 没有这个判据，「只装更新版本」不变，`reinstall_guard_tests.rs` 用 `syn` AST 钉死：`.version_comparator(..)` 在全部生产源码里只有一处，`run_reinstall` / `update_reinstall` / `reinstall_builder` 的任何引用（含 `use … as` 改名）只许出现在规定的外层 fn。
+放行门禁 `rescue::decide_reinstall` = `decide`（可信页面 + 从未进入编辑态）+ 当前失败码满足 `reinstall_applies`（否则 `reinstall_not_applicable`）。
+清单比当前旧或拿不到：`reinstall_unavailable` / `all_sources_failed`，不降级；清单比当前新则装新版（同样修好）。无论成败，结束时清掉候选句柄，
+同版本候选不会留给 `rescue_update_install`。正文一句话：「Tavotto 的部分文件丢失，重新安装即可恢复。若反复出现，请把 Tavotto 加入杀毒软件的信任列表。」
+
 ### 四、重新尝试 = 重启整个应用
 
 不做同进程重试：收 sidecar（`shutdown_sidecar`，幂等）→ 写 `clean`（`restart()` 不走 `RunEvent::Exit`）→ `restart()`。
 新进程从零开始，不可能有双 sidecar、孤儿 worker、旧 nonce、旧端口页面；重复点击由 `retrying` 旗标幂等。
 `Sidecar::start` 顺带修了一处泄漏：stdin 句柄拿不到时没有 kill 已 spawn 的子进程。
 
+**握手超时后的「重新启动」走安全启动（TVD-DT76 增补）**：sidecar 在写 ready 之前要同步恢复上次项目（`open_registry` / 静态扫描 / 素材扫描 / 起 watcher），
+挂住的系统调用（离线网络盘、OneDrive 按需下载、超大目录）不受扫描预算限制；恢复同一个项目的重启永远同一个结果。失败码满足 `rescue::safe_start_applies`
+（判据只有这一个出处，目前只有 `sidecar_timeout`）时，`rescue_retry` 在收 sidecar 之前（幂等闸之后，只第一次点击）往 `app_config_dir()` 写一个**一次性标记文件**
+`safe-start-once`（内容 = 写入的 Unix 秒）；下一次启动 `boot_engine` 的首次启动路径 `safe_start::take` 读到即删，过期（>10 分钟）或损坏的也删但不生效，
+并在 stdin 首行 hello 里加 `"safe_start": true`。Python 侧 `app.main` 在恢复项目**之前**经 `desktop.read_hello` 读掉首行（再原样交给 `desktop.run`，首行只读一次），
+`safe_start` 时跳过 `engine_config.last_project()`——`--figures` 显式参数不受影响，直接进项目选择页。
+选一次性文件而不是内存标志，是因为重新尝试是整个应用重启，内存带不过去；标记不改「最近项目」、不写 `last_project`、读到即删，不会误留状态。页面文案与按钮不变，只有按钮行为变。
+
 ### 五、shell 最小报告（`src/shell_report.rs`）
 
 * **内容**：`manifest.json`（`source=shell`、`partial=true`、`schema_version` 与引擎 `BUNDLE_SCHEMA_VERSION` 同值）+ `report.json`
   （版本 / build 档、平台 / 架构 / `distribution=desktop`、失败阶段、稳定错误码、退出码）。阶段与错误码是闭集（`rescue::STAGES` / `CODES`），
-  不在闭集里的值写 `unknown`——**自由文本没有任何路径进包**。error.html 的 `msg` / `log` 只显示、不进任何 invoke 参数；
+  不在闭集里的值写 `unknown`——**自由文本没有任何路径进包**。locate 阶段失败时 `failure.install_files` 记 `sidecar_dir` / `internal_dir` / `exe` 三个布尔值
+  （资源目录拿不到整体为 `null`），区分「exe 被隔离」与「安装不完整」；非 locate 失败为 `null`。launch 阶段 spawn 失败时 `failure.spawn_error`
+  记系统错误的类别（闭集 `rescue::SPAWN_ERRORS`：`access_denied` / `virus_detected` / `blocked_by_policy` / `bad_executable` / `file_in_use` / `not_found` / `other`，
+  由 `rescue::spawn_error_kind` 按平台错误号归类；不记错误号以外的任何原文），其余为 `null`。握手超时时 `failure.startup_phase` 记 sidecar 卡在启动的哪一步（闭集 `sidecar::startup_phase::PHASES`：
+  `interpreter` / `imports_done` / `housekeeping` / `pdf_backend` / `project_open` / `serving`，加 `none` = 本次启动没留下任何标记，多半是解释器根本没跑起来、杀软在扫 / 拦）：
+  sidecar 往 fd 2（= `sidecar.log`）写独占一行的 `TAVOTTO_STARTUP_PHASE=<阶段>`，壳 spawn 前记下日志长度，超时后只读**本次新增**的末尾至多 64 KiB、取最后一个合法标记；
+  其余失败码为 `null`，闭集外的值归 `none`。error.html 的 `msg` / `log` 只显示、不进任何 invoke 参数；
   不读项目目录、不依赖 Python；stderr、日志路径、nonce、token、环境变量、堆栈都不在。
 * **协议**：与引擎 `diagsend.py` 同一套外层协议——`init`（`client_request_id` = 每次新生成的 UUIDv4）→ multipart 上传（字段按服务端顺序、文件字段最后）→ `complete`
   （丢响应 / `in_progress` / `upload_missing` 有界重试）→ 回执 `TVD-…`；失败码归并同一张表；上传地址只认 `https://<桶>-<appid>.cos.<区域>.myqcloud.com/`；

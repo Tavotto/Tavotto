@@ -10,7 +10,9 @@ import type { CapturedFigureDescriptor } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { findFigurePanel } from '@/store/documentStore'
 import { takeDeferredEntryOutcome } from '@/store/documentRestore'
-import type { EditRender } from '@/store/projectPreparationStore'
+import { activateCanvas } from '@/store/canvasSession'
+import { useDocumentStore } from '@/store/documentStore'
+import type { EditRender, PlaceIn } from '@/store/projectPreparationStore'
 import { renderKeyOf } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
@@ -41,6 +43,13 @@ export interface EnterEditHost {
    * 不满足就放弃（回 `'stale'`，什么都没做）；用户手点「进入编辑」不传它，中途切走仍按原行为。
    */
   stillWanted?: () => boolean
+  /** 「重建为可编辑版」：新面板摆在当前画布上原图旁边，不新建画布 */
+  beside?: boolean
+  /**
+   * 用户把脚本拖到了这张画布上（`PrepEntry.placeIn`）：图放进它、落在放下的位置，不新建画布。那张画布已经被关掉 / 删掉就当没有，
+   * 按普通「打开」走
+   */
+  placeIn?: PlaceIn
 }
 
 /**
@@ -79,12 +88,32 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   const known = (useRuntimeAssetStore.getState().assets ?? []).some(
     (a) => a.id === d.asset_id && !!a.descriptor && JSON.stringify(a.descriptor) === fresh,
   )
-  if (!known && !findFigurePanel(d.asset_id)) {
-    // 与下面的 `openFastEdit` 同一个守卫：恢复期间两者都是排队的副作用（插入面板 + 取景 / 进入编辑 / 收卡片），切走后一个都不许执行
+  // 「重建为可编辑版」（`beside`）只认**当前画布**：资产 id 是 `runtime:脚本#stem`，另一张画布上同 stem 的旧面板（可能已编辑过）
+  // 不是这次的重画结果——`openFastEdit` 的「换看那一张」会切过去复用它（QA-WIN-22）。当前画布上没有就加一个新的
+  const onActiveCanvas = () =>
+    useDocumentStore.getState().doc.objects.some((o) => o.type === 'panel' && o.fileId === d.asset_id)
+  const missing = host.beside ? !onActiveCanvas() : !known && !findFigurePanel(d.asset_id)
+  // 默认是普通「打开」：描述符交给 `openFastEdit`，它按「换看那一张」的规则新建画布放它。先
+  // `addRuntimePanelToCanvas` 会把第二个脚本的图加进**当前**画布，A、B 同在一张画布上（时间线分不开）。
+  // 只有「重建为可编辑版」（`host.beside`）要把新面板摆在原 PNG 旁边，保留那条加图路径
+  if (missing && host.beside) {
     if (host.stillWanted) addRuntimePanelToCanvas(d, undefined, undefined, { guard: host.stillWanted })
     else addRuntimePanelToCanvas(d)
   }
-  const outcome = host.stillWanted ? openFastEdit(d.asset_id, { guard: host.stillWanted }) : openFastEdit(d.asset_id)
+  // 拖到画布上的脚本：先切回那张画布（AI 修复期间用户可能切走了），这张图不在它上面就放上去（落点 = 放下的位置）；
+  // 之后 `openFastEdit` 先找激活画布，找到的就是刚放的这一块——不会去别的画布上的旧实例，也不新建画布
+  const into = host.placeIn && useDocumentStore.getState().canvases.some((c) => c.id === host.placeIn!.canvasId) ? host.placeIn : null
+  let placed = false
+  if (into && !host.beside) {
+    activateCanvas(into.canvasId)
+    const onIt = useDocumentStore.getState().doc.objects.some((o) => o.type === 'panel' && o.fileId === d.asset_id)
+    if (!onIt) {
+      addRuntimePanelToCanvas(d, into.at?.x, into.at?.y, host.stillWanted ? { guard: host.stillWanted } : undefined)
+      placed = true
+    }
+  }
+  const descriptor = missing && !host.beside && !placed ? d : undefined
+  const outcome = openFastEdit(d.asset_id, { guard: host.stillWanted, descriptor })
   // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
   // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
   const landed = () => {

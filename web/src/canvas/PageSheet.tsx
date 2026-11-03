@@ -1,5 +1,6 @@
 import { perfCount } from '@/perf/core'
 import { mmToWorld } from '@/store/viewportStore'
+import { GridDots } from './GridDots'
 
 /** 纸的默认底色：**页面内容**（导出时就是这个白），不是界面的 surface——`--color-paper` 两套主题同值 */
 const PAPER = 'var(--color-paper)'
@@ -9,12 +10,6 @@ const PAPER = 'var(--color-paper)'
  * 棋盘格就成了黑白相间、盖过透明图的内容（Codex P2，2026-10-07）。
  */
 const CHECKER = 'var(--color-paper-checker)'
-/**
- * 网格线的墨：纸上的墨（`--color-paper-ink`）的 N%。不是 `--color-ink`——那是界面的字色，
- * 暗色里是浅色，画在不变的白纸上就看不见了（2026-10-07 暗色主题）。
- */
-const GRID_INK = (pct: number) => `color-mix(in srgb, var(--color-paper-ink) ${pct}%, transparent)`
-
 interface PageSheetProps {
   w: number
   h: number
@@ -50,8 +45,7 @@ export function PageSheet({
   perfCount('render.PageSheet')
   const wPx = mmToWorld(w)
   const hPx = mmToWorld(h)
-  const cell = mmToWorld(Math.max(gridSize, 0.5))
-  // 世界层被整体缩放，网格线要除以 zoom 才能保持 1px 观感
+  // 世界层被整体缩放，安全区虚线要除以 zoom 才能保持 1px 观感
   const hair = 1 / zoom
 
   return (
@@ -70,16 +64,8 @@ export function PageSheet({
           : (bg ?? PAPER),
       }}
     >
-      {showGrid && (
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            backgroundImage: `linear-gradient(to right, ${GRID_INK(7)} ${hair}px, transparent ${hair}px),
-                              linear-gradient(to bottom, ${GRID_INK(7)} ${hair}px, transparent ${hair}px)`,
-            backgroundSize: `${cell}px ${cell}px`,
-          }}
-        />
-      )}
+      {/* 网格：屏幕空间的 canvas（点 / 小十字，整设备像素；吸附时那一行 / 列短暂亮选中蓝），见 GridDots */}
+      {showGrid && <GridDots w={w} h={h} gridSize={gridSize} />}
       {showSafeArea && margin > 0 && (
         <div
           // 画布层的彩色线只有 --color-sel 一种（2026-09-15 打磨 C2）：安全区与选框同色

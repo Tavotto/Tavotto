@@ -4,12 +4,24 @@
 > （ADR 0070 / 0071）扩到「自报只收这一条会话的」/ 输入观察 / 数据绑定 / 旧计划失效政策 / 阶段轨迹；速查行在
 > `src/tavotto/AGENTS.md`「按改动路径找细则」表里（`engine/preparation.py` / `receipt.py` 那一行）。
 > 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`
+> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
+> `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 320
+改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
+主题: 准备计划、执行回执与源图产物、准备会话 → `preparation-and-receipts.md`
+必守要点: 计划与观测分开；过期不执行
+-->
 
 - **计划与观测分开**：`preparation.PreparationPlan` 是「打算怎么跑」（环境证据 / 依赖意图 /
   LaunchContext / grant / 预算），`PreparationResult` 是「实际发生了什么」（状态 / 现有
   runtime 的事实 / 回执 / 错误 / 取消时刻）。计划**只读**产品自己的决定
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
+- **失败时报告带 `remedy`（智能修复路由，ADR 0148 提议）**：`prepsession.report` 在失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`，把唯一修法放进新字段 `remedy`（闭集 `switch_native / install_packages / change_python / convert_to_matplotlib / ai_fix / connect_ai / feedback`，一次运行最多 3 种，第 4 次 `feedback`）。路由只标注、不执行：safe→native 仍由 `execpolicy.decide_fallback` 做（ADR 0127 不改）。「AI 连没连」由 app 注入 `SESSIONS.ai_connected`（`ai_bridge.capabilities()` 的 `usable`），引擎不探测。诊断包 `detail-runs.json` 的 `fix_journey` 读 `SESSIONS.fix_journeys`。看护 `tests/test_fixrouter*.py`。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
@@ -30,6 +42,14 @@
   `receipt_identity`。默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`；
   `PreparationPlan.to_payload()` 同样：项目外的解释器只给来源标签（路径存私有字段），错误分支的
   `project_env` 只留 `ok / code / module / reason`。
+- **native 执行实例不能只靠 wire generation（X03）**：回执的私有 `instance` 由 native `session_id`
+  与执行 / 屏障 epoch（`snapshot_epoch`）组成，参与不透明 `receipt_id`，不改变公开语义身份或协议里的
+  `generation`。同一 barrier 内重复读取 / 导出回执稳定；成功 continue / released 与新 barrier 都推进 epoch，
+  continue 后直接结束也不能让旧 barrier 的回执继续授权旧快照；
+  重新启动的另一 session 也有不同实例身份，不能把两次用户代码执行的 Figure 当成同一张快照。
+  私有实例值不进公开投影，不为区分执行而记录 / 泄漏 argv；仍沿用已有 argv 计数与占位政策。
+  看护：`tests/test_execution_receipt.py`、`tests/test_run_argv_e2e.py`。文档保存时对回执的明确引用与
+  冷态读取规则见 `layout-versions-and-documents.md`，磁盘 marker 或预览 metadata 不是已观察执行的替身。
 - **LaunchContext 是派生视图**：`execspec.launch_context(spec)` 从 spec 算，`ExecutionSpec`
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
@@ -83,7 +103,8 @@
 - **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
   文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
   一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +
-  `executed=False`，一行不跑；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
+  `executed=False`，一行不跑（**唯一的授权例外**：未决定过 → 本次运行自动采用用户自己的 Python 派生出脚本目录默认授权，
+  `preparation.implied_grant_absorbable` 判定后就地吸收、接着跑，trace `check` 记 `grant_absorbed`；显式授权 / 其他原因变化仍 stale，ADR 0107 §二之补）；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
   **复用热态会话时不一致不是错误**：`ready` + `binding_check.matched=False` + note「旧快照」——不自动重算、不清编辑，
   用户要重算走既有 `/api/engine/invalidate`。`matched=None` = 一条都没观察到（原生读），不冒充核过。导出路的回执与准备
   接口同一份账（`_execution_receipt` 带 grant 与 binding）。
@@ -150,6 +171,10 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   失效 / 是否在等 `input()` 这几件已观察的事实。**`unknown` 不当通过**（有一项判不出就不是 `ready_to_run`，给 `recheck`）；
   provider 状态保留原权威，旧终局 `needs_input` 投影成 `awaiting_configuration` / `awaiting_confirmation`；失败事实永远单列在
   `outcome{kind,code,reason}`。「脚本跑完了但没有图」是 `partial` + `execution_finished_no_figure`，不算首图成功。
+  **部分捕获不得投影成 `completed`（#1134）**：登记收口带 `failed_figures`（逐图隔离里预览捕获失败的图）时，phase 是 `partial`、
+  outcome 仍是 `succeeded`（成功那几张照常在 `captured`），报告顶层 `failed_figures=[{stem,code}]` 点名失败的图；判据只有
+  `prepsession.failed_figures_of`。全部成功仍是 `completed`，全部失败 / 登记被拒走原来的 `failed` 分支。前端 `finishedWithFigures`
+  把 `completed` 与 `partial`+`succeeded` 一并当「跑完且有图」，标题说「只画好了 N/M 张」，不自动进入编辑。
   `scanning`（T02）与 `preparing_environment`（T06）词汇已进闭集，本阶段不产生。前端只存这份投影，不另算。
   **执行线程收尾之前仍是 `running`（T11）**：provider 已写下 `ready` / `error`、但 `_done`（登记 / 缺包差异计划 `_observe_missing`）
   还没做完时，`attempt_running` 与 `_has_active_attempt` 同一判据——否则 `missing_dependency` 会先投影成没有待办的 `failed`、
@@ -192,12 +217,18 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   = runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）；打开项目时静态扫描先登记、条件分支里从没产出过的
   字面量图名被替换掉时不报（那句话对它是假话）。cache 按体积回收过的旧图会漏报——宁可少说不说假话。看护 `tests/test_probe_owner_and_unlinked_stems.py`、
   e2e `registry-center-preparation.spec.ts`。
-- **`no_figure_hint`（跑完没出图的原因）**：outcome 为 `execution_finished_no_figure` 时报告多一个键，`{"kind": "raster_script", "library": pillow|opencv|imageio|skimage}`，
-  其余时候 `null`（老后端没有这个键）。判据 `engine/rasterhint.detect`：**脚本源码**（含 `importscan` 有界跟进的本地模块）里有保存位图的调用
-  （`cv2.imwrite` / `imageio.imwrite…` / `skimage.io.imsave` / 导入了 PIL 的文件里非模块对象的 `.save(...)`，字面量扩展名不是图片格式的不算），
-  且这些文件**没有 import matplotlib 家族**（import 了没建 figure 也不提示——宁可不说）；扫描看不全（截断 / 读不了 / 动态 import）一律 `null`。
-  只是提示：不改 `outcome` / `facts`，不改捕获；不指认具体文件（引擎没有「脚本写了哪些文件」的记录）。界面一句话 + 主按钮「打开素材库」（现成入口），
-  原因说明折叠在详情。看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
+- **`no_figure_hint`（跑完没出图的原因）**：outcome 为 `execution_finished_no_figure` 时报告多一个键，`{"kind": "raster_script", "library": pillow|opencv|imageio|skimage|plotly|root|svg, "in_project": bool, "path": 项目相对路径|null}`，
+  其余时候 `null`（老后端没有这个键）。判据 `engine/rasterhint.detect`：**脚本源码**（含 `importscan` 有界跟进的本地模块）里有保存位图 / 图形的调用
+  （`cv2.imwrite` / `imageio.imwrite…` / `skimage.io.imsave` / 导入了 PIL 的文件里非模块对象的 `.save(...)`；plotly 的 `write_image`（`write_html` 不算）；
+  ROOT 的 `TCanvas.SaveAs` / `.Print`；字面量扩展名不在该库的图片格式里不算，plotly / ROOT 另认 `.pdf` / `.svg` / `.eps`），
+  且这些文件**没有 import matplotlib 家族**（import 了没建 figure 也不提示——宁可不说）；扫描看不全（截断 / 读不了）一律 `null`；有动态 import 时位图库照旧 `null`，
+  只有 plotly / ROOT 例外（RooFit 脚本常动态加载自己生成的参数模块，ADR 0139 修订 2026-10-21）。**文件证据（硬条件）两种**：①字面量输出路径解析出的文件运行后存在且 mtime ≥ 运行开始；
+  ②运行时才定的路径——项目素材盘点（`iter_assets`，带 3 s 预算，不另开全盘扫描）里 mtime ≥ 运行开始（容差 1 s）的新增 / 被改写文件（png / jpg / tiff / pdf；svg / eps 盘点外，只走①）。
+  ②的库归属只看「输出路径运行时才定」的那几处保存（字面量路径已逐个核过）、且扩展名为该库所认：候选库唯一才给，多库都可能（如未调用的 Pillow helper + plotly 都写 PNG）就不说；plotly 的 `to_image` 返回字节不写文件，不算存图调用。`path` 是能确定的输出文件（供「打开素材」定位 / 后续「生成可编辑版本」），不在项目里或判不出为 `null`。
+  只是提示：不改 `outcome` / `facts`，不改捕获。界面一句话 + 主按钮「打开素材库」（现成入口），原因说明折叠在详情；库名映射 `preparationText.RASTER_LIBRARY_NAME` 与 `rasterhint.LIBRARIES` 同源。
+  **Pillow 例外（ADR 0143 修订 2026-10-23）**：上面的“硬条件 / import matplotlib 即沉默”只管文件证据路径；AST 能证明是 Pillow 画图脚本（`ImageDraw.Draw` 对象上的绘制调用，或 `Image.new` 之后 `.save` / `.show`）时，没有文件证据也给 hint（`path: null`、`in_project: false`），同时 import matplotlib 只认强证据（绘制调用）。其它库不变。
+  **手写 SVG（ADR 0143 修订 2026-11-01）**：不用画图库、源码有 `<svg` 字面量且有往 `.svg`（或判不出扩展名的路径）写文本的调用，无 matplotlib / 别的库存图 / 动态 import → `library: svg`、`path: null`，不要求文件证据。
+  看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
   （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
@@ -270,6 +301,12 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   计划私有字段 `input_remap_generation` 冻结检查时的代次，`_fingerprint` 用这份快照；改指表变了 = 新
   `config_revision`，旧失败不再是当前的。认领 `run` 与执行线程起跑前均经 `preparation.stale_reason` 核对代次，
   不一致就 `preparation_plan_stale / data_binding_changed`、`executed=False`，必须重新检查。
+- **沙盒里落空的探路调用（#1254，ADR 0084 §三）**：准备流程是默认的主流程，动态 glob 扫空 → 没捕获到图 / 脚本自己的失败 / 成功但图可能缺数据时，
+  `pool.missing_stem_error` 重建 `extra` 要**保留 `probe_misses`**（不能只留 `known`），失败分支取 `exc.workdir_hint`，成功分支取
+  `pool.workdir_hint_of_build`，一律存进 `PreparationResult.workdir_hint`（与 `missing_input` 同纪律：**不进 `to_payload()`**，取消时清掉）；
+  准备会话在上一次尝试有它时多一项 `requirements[kind=workdir_hint, origin=last_attempt, blocking=False]`（`payload` = 与首开确认框同形的载荷，
+  `source="runtime"`），不改 phase、不改错误码、不改计划判定。回答走既有 `PATCH /api/engine/workdir`。看护
+  `tests/test_preparation_session_e2e.py`（真 worker：动态 glob 扫空 / pyarrow 读 cwd 相对 parquet / 切到脚本目录出图）、`tests/test_runtime_probe_hint.py`。
 - **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
   `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
 - **源码修订绑进计划**（#815 Codex r4220829632）：`script` 目标的计划记 `script_revision`（`scriptargs.source_revision`：脚本字节摘要 +
@@ -304,7 +341,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 
 `POST /api/engine/preparation-sessions` 的脚本目标可带 `reuse_last_success: true`（布尔，别的类型 400 `bad_request`；只对脚本目标；给了 `argv` 时被忽略）。消费端只有
 `launchctx.reusable_run_config`（`app._last_success_selection` 解析此刻的解释器后调用）：上次成功的 `launches[脚本]` 记录里的运行配置引用，**全部依据仍成立**才沿用
-（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功，没有 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
+（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功但没有完整的 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
 不满足一律当没有（无参数），不报错。**只有省略（或 null）argv 才考虑沿用**：显式给的 `argv: []`（明确要无参数运行）与任何显式 argv 都赢，不被上次的参数覆盖。沿用了几个参数在会话报告 `target.argv_count`（值不进公开投影）。省略标志 = 无参数运行，与 P09 之后逐字节一致。
 看护：`tests/test_reuse_last_success.py`（真服务子进程 + 真 worker：执行的 argv 以脚本日志为准）。
 
@@ -318,6 +355,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - **闸门**：`decide_fallback` 固定优先级 开关 → 策略 → 取消 → 过期 → 原因 → `RetryGuard`（native 之后不回 safe、一次 run 至多一次、同执行身份同根因不重复）。回退在锁外规划（只读）、**在锁内最后一刻再核**取消标记 / 闸门，再接第二个 attempt；取消动作落在最新一次尝试上。
 - **只在桌面用户发起的运行里**：`app._desktop_initiated()` = `--desktop-sidecar` 进程 + 无本机凭据 + 窗口 cookie，服务端验证；`SESSIONS.act(desktop_initiated=)` 默认 False，意图创建时记下。`decide_fallback` 默认拒（`not_desktop_initiated`）。会话 safe 尝试开始前上一次桌面 native 会话让位（`_launch_session_attempt`）。
 - **只在会话 `run` / `run_when_ready` 认领之后**：CLI（`runcli`）与 MCP 不 import `execpolicy` / `prepsession`（`tests/test_execution_policy.py` 钉）；旧 `/api/engine/preparation` 不回退；前端永不发 `execution`。
+- **显式 `execution: "native"` 与路由 native 同一道来源闸门**：非桌面来源（浏览器 cookie / 本机凭据 API 客户端 / 无认证入口）显式要 native → 403 `native_requires_desktop`，不降级（客户端明确要求，换语义会误导）；创建会话端点（`app.api_engine_preparation_session_create`）先拒，`prepsession._claim_run` 认领时再核一次（含 `run_when_ready` 推进）。路由 native 在非桌面来源仍静默降 safe 并记 `declined: not_desktop_initiated`。`tests/test_explicit_native_origin_gate.py` 钉。
+- **safe 被拦先换入口（ADR 0127 修订 2026-10-30）**：`prepsession._plan_entry_retry` 复用 `probe.entry_candidates(static_only=True)` / `entry_retry_allowed`（只取静态可解析的出图入口、不盲试），每次运行至多换一次，成功当正常成功；仍被拦才走 native 回退 / 确认卡。与回退共用 `RetryGuard`，总执行次数上限 `execpolicy.MAX_ATTEMPTS_PER_RUN`（3）。`tests/test_entry_retry_session.py` 钉。
+- **浏览器模式的显式确认（ADR 0127 修订 2026-10-30，#1500）**：非桌面来源 safe 被守卫拦下、账本记 `declined: not_desktop_initiated` 时，`_sync_actions` 发 `confirm_native_run`（`_native_confirm_offered`；只用安全运行 / 开关关 / 本次运行已回退过都不发），失败卡 `remedy = switch_native{silent:false}` 优先于 AI 修复。认领 `SESSIONS.act(page_confirmed=, confirm_token=)`：**只认会话 cookie**（`app._page_authenticated()`：cookie 有效且不带本机凭据头，无会话状态 fail closed，403 `native_confirm_requires_page`）+ 服务端为那次失败尝试签发的一次性 token（绑尝试、`hmac.compare_digest`、验证即废、**只随页面认证的报告交出**，403 `native_confirm_invalid`）；通过后走与桌面回退同一套 `_plan_fallback` / `_start_fallback`（`confirmed=True` → `decide_fallback(user_confirmed=True)` 只顶替来源判据，其余闸门不少，同一本账至多一次）。不写 `nativeperm`、不改 `execution_policy`。`page_confirmed` / `user_confirmed` 为真只许由 `app` 的会话动作端点传入（`tests/test_native_confirm_browser.py` 的 AST 扫描钉），MCP / CLI / `engine/fixtools/` 不碰。显式 `execution:"native"` 的 403 不变，这是唯一例外。
 - **解释器沿用 safe 当时那一个**；native 计划算出的解释器 / 源码修订 / 检查项与 safe 当时不一致 → 不回退，闭集理由进 `attempt_history[].declined`。
 - **账本**：`Session.ledger`（有界 16、线程安全、按 run 分组，新的用户运行重算预算）；`attempt_history` 每条 = run · seq · attempt_id · profile · interpreter / launch 摘要 · cause · changed ∈ {profile, interpreter, launch_context} · outcome · code · declined。**无路径 / argv / env 值**。回退不是意图步数（`intent.attempts` 记名下全部尝试）。
 - **诊断**：native 尝试的任务诊断快照多 `retry:{of, cause, changed, execution}`（`PreparationPlan.retry_*`，全是闭集码 / plan id）。
@@ -329,12 +369,14 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 桌面准备会话里，脚本目标不给 `execution` 时是 `auto`：`preparation.plan_for` 调 `runroute.route_for_file`，**静态**（一次 `ast.parse`，零执行）在 safe / native 之间先选一次。裁决处只有 `engine/runroute.py`（纯标准库）。要点：
 
 - **优先级**：`safe_only` 策略 → 运维开关（`TAVOTTO_EXECUTION_FALLBACK=0`，同一个开关也关回退）→ 上次成功沿用（`launchctx` 记录 `profile`，仍成立才算）→ 静态高置信 → 默认 safe。显式 `execution=safe|native`（CLI / MCP / 回退自己的 native 计划）不经路由，`plan.route` 为 None。
-- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982）。
+- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982；`true` 时与 safe 记录一样核 helper / 数据摘要，#1047）。
 - **只有 high 才直达 native**：R1 同函数内 `savefig(P)` 后读 P；R3 写 T → `replace/rename/move(T,F)` → 读 F 且 T 在真实图库内（cwd 相对路径看 cwd 档：`sandbox` 不在）。R2（savefig 后只 `exists`）、R3_partial、跨函数读回是 medium；动态路径 R4 是 low——都走 safe，由 0127 回退兜底。**低、中置信度永不升级**。
+- **不可证明门槛（#1086）**：脚本任何位置出现证明不了调用目标的动态分派（名字非字面的 `getattr` 一族、`exec` / `eval` / `compile` / `__import__` / `importlib.import_module`、`globals()` / `__dict__` / `sys.modules`），R1 / R3 不直达 native，reason `unprovable_dynamic_dispatch`（`ScriptFacts.dynamic_dispatch`）。这是「证明不了就不提升」的一条结构规则，**不要往里加函数名黑名单**；看护 `tests/test_runroute_unprovable.py`。
 - **按 import 绑定解析限定名**（`from os import replace as r`、`import PIL.Image as I` 都认；`cache.replace(...)` / 字符串 `.replace` 不认）；路径折叠规则与 blind spots 见 ADR 0133，`Route.blind_spots` 随结果带出，不得宣称覆盖跨函数 / helper / 反射 / subprocess。
 - **只在用户发起的路径里**：`runroute` 只被 `preparation` / `prepsession` import；被动扫描、CLI、MCP 不 import（`tests/test_runroute_boundary.py` 钉，含零执行：Popen / exec / connect / find_spec / import_module 全炸 + 会写哨兵的脚本）。
 - **`PreparationPlan.route`** = `Route.public()`（闭集原因 / 置信度 / 规则 / 行号 / 耗时，无路径与源码），**不入指纹**；日志 `run route …`；任务诊断 `route:{…}`。没有解释器 → 回 safe 且 `declined: no_interpreter`。
-- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe；`source.basis_observed:false` = 不含 helper / 数据观察依据），由 `prepsession` 在尝试成功后调 `record_native_success`。
+- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe），由 app 的成功收口经 `record_success`（`NativeBasis`）写。
+- **native 的输入依据（#1047）**：桌面拥有的 bridge 带 `--observe-inputs`（`execspec.bridge_argv` 唯一出处，终端拥有的不带），与 safe 同一个 `InputObserver` 在脚本跑完那一刻定格，经 build 响应 `observed_inputs`（`NativeSession.observed_inputs`，不进 `runtime` / 公开状态 / 事件）交给收口：完整 → `basis_observed:true`；收口在 `show()` 屏障上 → 先 `false`，结束屏障上的 build（`app._note_native_inputs`）经 `launchctx.observe_native_basis` 按 `launch_id` 补齐。引擎自己的读（savefig 簿记、屏障）暂停记账（`InputObserver.paused`）。看护：`tests/bridge/test_bridge_input_observation.py`、`tests/test_native_launch_basis.py`、`test_run_routing_e2e.py`。
 - 同源对：`runroute` 的词汇镜像 `worker.REQUIRED_EXECUTION_FILE_SEMANTICS` / `BlockedFileOps.KIND_*` / `execpolicy.MODE_*` / `workdir.MODE_*`（`tests/test_runroute.py` 钉相等）；静态 high ↔ 真 safe worker 被拦、静态 safe ↔ 实跑成功（`tests/test_runroute_consistency.py`）。
 - 看护：`tests/test_runroute.py`（规则向量 / 优先级 / 缓存）、`test_runroute_wiring.py`（假 pool + 假 native：直达 native safe 不跑、动态路径回退、safe_only、开关、上次成功沿用、改脚本失效）、`test_run_routing_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数）。
 

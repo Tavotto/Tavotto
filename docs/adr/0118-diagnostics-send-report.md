@@ -117,3 +117,26 @@
 
 [ADR 0129](0129-abnormal-exit-marker.md)：壳在本机写一个只含版本 / 时间 / 退出类型闭集、**不上传**、启动时读一次的 `session-state.json`，用来在「上次没有正常退出」的下次启动提示一张卡。
 它不违背本 ADR「状态只在内存」的本意——没有自动补发、没有跨启动待发队列、不记用户活动；卡片只打开既有确认框，点之前不 prepare。引擎会话中意外退出的修复卡不受发送开关控制，也不含发送入口。
+
+## 补充（2026-10-30）：「脚本源码」收 R / MATLAB 与转换任务的候选脚本
+
+勾选「脚本源码」时，`optional-source.zip` 的来源再加两路，**勾选项、确认框、`bundle_schema`（8）、manifest 与服务器侧都不变**（文件都在同一个内层 zip 里，`index.json` 的 `reason` 多一个取值）：
+
+- **转换任务的原脚本**：本项目最近（`taskdiag.RETENTION_S`，与 `attempted_scripts` 同一保留期；至多 24 个会话）的 `convert_to_editable` 会话（读 `ai_history`，只读）涉及的原脚本——`.py` / `.R` / `.r` / `.m`（`sourcelang` 接受的后缀）。结局不是 completed 也不是取消的算失败，与失败的运行并列排最前（`failing_attempt`）。路径规则同其它脚本：解析后必须仍在项目目录内。R / MATLAB 以前从不进包，因为它们只出现在转换任务里，不在 `taskdiag` 也不在项目脚本登记表。
+- **候选目录里留着的候选脚本**（`reason: convert_candidate`）：只收该任务**自己**的候选目录（`cache/ai_convert/<sid>/`，`CONVERT_DIR` 的直接子目录、非符号链接）里 `meta.json` 指名（`target_name`）的那一个 `.py`，且 `meta.json` 的 `sid` / `project` 对得上、还没被采用（采用了的已经在项目里，走项目路径）；必须是常规文件（`lstat`，不跟随符号链接）。目录里的原脚本副本、参考图、上下文快照、预览一律不收。成员名与 `index.json` 用虚拟写法 `convert-candidate/<sid>/<文件名>`，不带绝对路径。失败 / 超时的转换会话，候选目录现在保留 6 小时（`state: failed_kept`，不可采用 / 续跑，见 [ADR 0143](0143-convert-to-editable.md) 2026-10-30 修订），专为这一路；用户取消的照旧立即删，所以取消的会话没有候选。
+- **脱敏不变**：非 `.py` 的脚本本来就整份按完整模式（`scrub_script`）处理——家目录 → `~`、用户名 → `<user>`、秘密键值、PEM、令牌；R / MATLAB 不分注释与代码，比 Python 的分区更严。Python 不做邮箱替换（装饰器 `@app.route` 之类要原样）；**只对 `.R` / `.r` / `.m`** 把形如 `local@domain.tld`（域名含点、末段 2–24 个字母、各段有长度上界、线性）的邮箱换成 `<email>`，R 的 `obj@slot`、MATLAB 的 `@(x) x.^2` / `@myfun` 不受影响（R 里 `obj@a.b` 这种带点的 slot 名会被误当邮箱，接受）。理由：R / MATLAB 里不存在装饰器，而作者邮箱常写在脚本头注释里。看护 `tests/test_diag_foreign_source.py`。
+
+## 修订（2026-11-02）：反馈包回信
+
+单独发的反馈包（`TVD-…`）原本没有回信通道，作者只能让用户贴编号到 GitHub。维护者拍板：**服务端给每个新反馈包开一封「关联来信」（普通 `TVM-…`），客户端把它登记进「联系作者」的收件记录，轮询代码不改**（[ADR 0145](0145-contact-the-maker.md) 同日修订）。
+
+- **请求。** `POST /v1/reports/init` 新增可选 `want_reply: true`，**仅当联系作者启用**（`contactsend.enabled()`；`TAVOTTO_NO_CONTACT=1` 或无线路 = 不带）。`contactsend` import 了 `diagsend`，所以 `diagsend` 里函数内延迟 import。
+  它与 `error_summary` 一样是 init 不可变提交的一部分：`SendSession.want_reply` 与 `params` / `summary` 一起决定能否复用 `client_request_id`（两次尝试之间开关变了 = 换新 id，不撞 409）。
+- **部署顺序保险**（同 `error_summary`）：旧服务端 extra=forbid，带 `want_reply` 的 init 被拒为 400/422 `bad_request` → 去掉字段、同一 `client_request_id` 重发一次，本会话此后不再带（`reply_refused`）。可选能力不能让报告失败。
+- **响应。** 可选 `reply: {message_id: "TVM-…", reply_token: <64 位小写 hex>}`（pending / verifying / complete 重放分支都可能带）。形状不合（id 不匹配 `contactinbox.MESSAGE_ID`、令牌不是 64 hex）**只丢回信、不让发送失败，失败码闭集不变**。
+  令牌只在 `SendSession.reply`（`repr=False`，连同它所属的 `report_id`，对账换 id 后不会把旧令牌登记到新报告名下），不进 `public()` / 日志 / 诊断包 / 遥测。
+- **登记。** 发送收尾为 `done`（含 init 回 `complete` 的重放、改参数对账出「其实已送达」、取消竞态里确认已送达）时 `_register_reply`：`contactinbox.add(mid, token, route_label(target), delivered=True, kind="report", report_id=<TVD>, body=<用户写的附言，没写为空>)`；
+  落盘成功才让 `public()` 带 `reply_inbox: true`（界面据此把完成态副标题换成「作者回复会出现在…」）。`unknown` / `failed` / `cancelled` 不登记。登记时再核一次联系作者开关。
+- **保存期。** `kind=report` 且没有任何回信的本机记录 30 天后删（与服务端反馈包保存期一致）；有回信后同来信 365 天。没有任何记录时仍一次网络都不发。
+- **界面。** 确认框完成态把副标题那一行原地换成「已发送。作者回复会出现在「联系作者 › 我的来信」」（不新增行、不预留空白，页脚按钮不跳位 #797）；「我的来信」里该条目带「问题反馈」标签 + 报告编号，附言没写显示「没有附言」。回信渲染 / 小圆点 / 通知胶囊全部复用。
+- **未验证（NOT_RUN）。** 真服务端的 `want_reply` / `reply`（另一路在 infra 实现，客户端对接的是上述契约与本地模拟 `tests/support/diag_fakes.py`）；真机 WebView。

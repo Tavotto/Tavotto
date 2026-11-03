@@ -8,7 +8,7 @@ import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { legendEntryViews, type LegendEntryView } from '@/lib/legendModel'
 import { cn } from '@/lib/utils'
-import { setOverride, setOverrides, unhideElement } from '@/store/actions'
+import { clearLegendFontSize, setOverride, setOverrides, unhideElement } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { msg } from '@/i18n'
@@ -22,13 +22,15 @@ import { INSPECTOR_LABEL_W } from './layout'
 import { MarkerGlyph } from './controls/MarkerPicker'
 import { TypographyControls } from './controls/TypographyControls'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
+import { useElementWriter } from './elementWrite'
+import { withLegendFontSize } from './legendTypography'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 图例卡（ADR 0034）：选中图例时常驻在属性区首屏的两块——
  *
- *   * **文字**：一份 Typography 控件，批量作用于全部图例项（字体 / 字号 /
- *     粗斜 / 颜色），走 `useFigureTypography` 的批量适配器；
+ *   * **文字**：一份 Typography 控件。字体 / 粗斜 / 颜色批量作用于全部图例项（`useFigureTypography`
+ *     的批量适配器）；字号是图例整体的 `fontsize`（原生语义，与浮动栏同一个属性，见 `legendTypography`）；
  *   * **条目**：按显示顺序列出每一项——示意线预览、文字、「跟随 / 自定义」
  *     徽标、显隐、上下移动。点文字即选中那一项（属性页切到它，示意线样式
  *     与绑定在那里改）。
@@ -60,7 +62,13 @@ export function LegendCard({
   useTranslation('inspector')
   const views = legendEntryViews(panel, manifest, legend)
   const entryElements = views.map((v) => v.element)
-  const typography = useFigureTypography(panel, entryElements, FIGURE_TEXT_BATCH_PROPS)
+  const entryTypography = useFigureTypography(panel, entryElements, FIGURE_TEXT_BATCH_PROPS)
+  const legendWriter = useElementWriter(panel, legend)
+  // 字号 = 图例整体的 `fontsize`（原生语义、与浮动栏同一个属性），其余排版批量作用于各项
+  const typography = withLegendFontSize(entryTypography, legendWriter, {
+    legendOverridden: !!effectiveOverride(panel.overrides, legend.gid, 'fontsize'),
+    reset: () => clearLegendFontSize(panel.id, legend.gid, entryElements.map((e) => e.gid)),
+  })
   const hasTypography = FIGURE_TEXT_BATCH_PROPS.some((p) => typography.fieldOf(p))
 
   const order = views.map((v) => v.info.index)
@@ -291,7 +299,7 @@ function LegendEntryRow({
         onPointerDown={onDragStart}
         className="flex h-5 w-3 shrink-0 cursor-grab items-center justify-center text-ink-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
       >
-        <MoveVertical size={ICON_SIZE.xs} />
+        <MoveVertical size={ICON_SIZE.sm} />
       </span>
       <HandleSwatch panel={panel} entry={v} />
       <button

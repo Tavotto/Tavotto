@@ -1,0 +1,55 @@
+{
+  "reviewed_head": "6d8809f03150b762cfafeacdaf89af6c9c9bbc05",
+  "finding": "https://github.com/Tavotto/Tavotto/pull/1161#discussion_r4306424012",
+  "commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "log": "node.txt",
+      "sha256": "b48713f173f8ef3ee89e844429091b9338e16c7de86ea9d59e99113cce1925ea"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "log": "mutations.txt",
+      "sha256": "69733624b7088c6c523470af483965082e26fc9362bfce306454e4618c24c3cb"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "log": "migration.txt",
+      "sha256": "b471e56d24822f31552687c453eeff38457b02271e62df888f46c5ce091610e7"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "log": "typecheck.txt",
+      "sha256": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "log": "build.txt",
+      "sha256": "5491709c8540fbccf45cf7b98f6fead207516c2f77146119f8e58b7458ce7e8b"
+    }
+  ],
+  "passed": 363,
+  "migration_tests": 4,
+  "detected_mutations": 63,
+  "independent_red_exit": 1,
+  "independent_green_exit": 0,
+  "independent_mutant_exits": [
+    1,
+    1
+  ],
+  "source_sha256": {
+    "src/native/delegation.ts": "06010c9961b0036726f2a69e422f8ece0cb0ee223f1c7d36b231ae04964f547e",
+    "tests/historical-revocation.test.mjs": "f9ab18a0fa25b96326c77a92ce67162fe4f331bf919e500996dfe15f262db47b",
+    "tests/historical-revocation-mutation-cases.json": "850e33a2020936480131da7c6f8242b7316d89d2da9457d989532109cb0fc570",
+    "tests/independent-review-mutation-cases.json": "5e375c98ab66eb12efdf5e72b28aa52df62f646e37418f5eccc3678ae3908ec0"
+  },
+  "hosted_on_new_head": "pending; prior exact-head hosted success is historical",
+  "new_external_review": "not_requested; waiting current-head deterministic type/build prerequisite",
+  "default_flags_changed": false,
+  "no_dynamic_success_publication_across_expiry": true
+}

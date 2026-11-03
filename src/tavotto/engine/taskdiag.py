@@ -360,6 +360,18 @@ class Store:
             ]
         return max(hits, key=lambda e: e.recorded_at, default=None)
 
+    def failures(self, project_id, kinds=None) -> list[Entry]:
+        """这个项目还在保留期内的失败条目，新的在前；`kinds` 给了就只要这几类。"""
+        with self._lock:
+            self._expire(time.time())
+            hits = [
+                e
+                for e in self._entries.values()
+                if e.project_id == project_id and e.failed and (kinds is None or e.kind in kinds)
+            ]
+        hits.sort(key=lambda e: -e.recorded_at)
+        return hits
+
     def recent(self, project_id, limit: int = BUNDLE_SNAPSHOTS) -> list[Entry]:
         with self._lock:
             self._expire(time.time())
@@ -367,6 +379,29 @@ class Store:
         # 失败在前，同档新的在前
         mine.sort(key=lambda e: (not e.failed, -e.recorded_at))
         return mine[:limit]
+
+    def attempted_scripts(self, project_id, kinds=None) -> list[tuple[str, bool]]:
+        """这个项目还在保留期内、尝试过的脚本 `[(脚本, 是否有失败的尝试)]`：失败的在前，同档新的在前，按脚本去重。
+
+        读的是 `subject` 里私有的 `("script", 脚本)`——只给进程内的采集方（可选的「附脚本源码」）用来决定**收哪些脚本**，
+        不进任何快照 / 报告；`Entry.subject` 本身仍不出门。"""
+        with self._lock:
+            self._expire(time.time())
+            mine = [
+                e
+                for e in self._entries.values()
+                if e.project_id == project_id and (kinds is None or e.kind in kinds)
+            ]
+        mine.sort(key=lambda e: (not e.failed, -e.recorded_at))
+        out: dict[str, bool] = {}
+        for e in mine:
+            for tag, value in sorted(e.subject, key=repr):
+                if tag != "script" or not isinstance(value, str) or not value:
+                    continue
+                out[value] = out.get(value, False) or e.failed
+        return sorted(
+            out.items(), key=lambda kv: not kv[1]
+        )  # 稳定排序：失败档在前，档内保持上面的新旧序
 
     def later_attempts(self, entry: Entry) -> list[dict]:
         with self._lock:

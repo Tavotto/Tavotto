@@ -1,0 +1,27 @@
+✔ independent historical old key revocation after rotation preserves all personal evidence (50.00113ms)
+✔ independent historical path rejects signed enable (10.760059ms)
+✔ independent historical path rejects signed suspend (9.421466ms)
+✔ independent historical uses registered original key even when current key signs the exact revoke body (10.91225ms)
+✔ independent historical rejects exact control binding {"authorization_id":"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"} (16.8553ms)
+✔ independent historical rejects exact control binding {"grant_sha256":"0000000000000000000000000000000000000000000000000000000000000000"} (11.376796ms)
+✔ independent historical rejects exact control binding {"previous_sha256":"0000000000000000000000000000000000000000000000000000000000000000"} (9.322921ms)
+✔ independent historical rejects exact control binding {"sequence":3} (8.998259ms)
+✔ independent historical rejects exact control binding {"issued_at":1800000001} (9.671385ms)
+✔ independent historical rechecks complete stored chain metadata (11.370754ms)
+✔ independent historical duplicate concurrency commits one terminal control and replay never increments revision (15.414473ms)
+✔ independent historical revision conflict cannot consume predecessor (9.32706ms)
+✔ independent historical database clock is checked again at commit (9.366879ms)
+✔ independent historical revocation retains hold and atomically wakes tracked evidence revision (17.345107ms)
+✔ independent historical enforces real readiness and does not enable a new agreement version (8.194483ms)
+✔ independent historical full100 chain remains an explicit fail-closed boundary (100.360357ms)
+✔ independent historical exact immutable identity {"holderName":"OTHER HOLDER"} (8.933057ms)
+✔ independent historical exact immutable identity {"repositoryId":999} (9.6222ms)
+✔ independent historical exact immutable identity {"repository":"other/repo"} (8.320382ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 490.96411

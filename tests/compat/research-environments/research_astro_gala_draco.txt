@@ -1,0 +1,3 @@
+# S0 additional scientific prerequisites; render-critical pins come from runtime-lock.json.
+astropy==8.0.2
+gala==1.12.0

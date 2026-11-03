@@ -226,6 +226,8 @@ interface NumberFieldProps {
   onScrubCancel?: () => void
   /** 中性的稳定定位属性（data-inspector-prop）——测试与引导用，不进业务逻辑 */
   dataProp?: string
+  /** Esc 还原框内文字并失焦之后通知上层（框自己已 stopPropagation，外层的键盘监听收不到）。缺省无事发生 */
+  onEscape?: () => void
 }
 
 /**
@@ -255,6 +257,7 @@ export function NumberField({
   onScrubEnd,
   onScrubCancel,
   dataProp,
+  onEscape,
 }: NumberFieldProps) {
   const unitText = typeof unit === 'string' && unit ? unit : ''
   const derivedLabel =
@@ -452,6 +455,7 @@ export function NumberField({
               setText(display)
               skipBlurSubmit.current = true
               ;(e.target as HTMLInputElement).blur()
+              onEscape?.()
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault()
               // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
@@ -471,7 +475,7 @@ export function NumberField({
             fill || half ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
-            unit != null ? 'pr-1 text-right' : 'text-center',
+            unit != null ? 'pr-0.5 text-right' : 'text-center',
           )}
         />
         {unit != null && (

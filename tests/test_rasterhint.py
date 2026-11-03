@@ -23,7 +23,9 @@ def _write(root: Path, name: str, body: str) -> None:
     p.write_text(textwrap.dedent(body), encoding="utf-8")
 
 
-_LITERAL = re.compile(r"""['"]([^'"\n]+\.(?:png|jpe?g|bmp|gif|tiff?|webp|ppm|pgm|ico))['"]""", re.I)
+_LITERAL = re.compile(
+    r"""['"]([^'"\n{}]+\.(?:png|jpe?g|bmp|gif|tiff?|webp|ppm|pgm|ico|pdf|svg|eps))['"]""", re.I
+)
 #: 「本次运行开始」：比现在早一点，测试里即时写的文件都算本次写的
 START = time.time() - 30
 
@@ -114,14 +116,25 @@ def test_pil_read_only_script_is_not_flagged(tmp_path):
     assert _lib(tmp_path) is None
 
 
-def test_matplotlib_imported_but_never_used_is_still_silent(tmp_path):
-    """取舍：import 了 matplotlib 就不提示——没出图多半是别的原因，说「是 Pillow 画的」会误导。"""
+def test_matplotlib_imported_but_pillow_draws_still_gets_the_hint(tmp_path):
+    """ADR 0143 修订（2026-10-23）：detect 只在「没捕获到任何 Figure」之后被问，import 了 matplotlib 不再一刀切沉默；
+    Pillow 绘制证据（ImageDraw.Draw + 绘制方法）成立才说。"""
     _write(tmp_path, "make.py", "import matplotlib\n" + textwrap.dedent(PILLOW_SCRIPT))
-    assert _lib(tmp_path) is None
+    assert _lib(tmp_path) == "pillow"
 
 
-def test_matplotlib_family_without_a_direct_import_is_silent(tmp_path):
+def test_matplotlib_family_import_with_pillow_drawing_still_gets_the_hint(tmp_path):
     _write(tmp_path, "make.py", "import seaborn as sns\n" + textwrap.dedent(PILLOW_SCRIPT))
+    assert _lib(tmp_path) == "pillow"
+
+
+def test_matplotlib_imported_with_only_weak_pillow_evidence_stays_silent(tmp_path):
+    """matplotlib + 只有 Image.new + save（无 ImageDraw 绘制）：证据不够强，沉默。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import matplotlib\nfrom PIL import Image\nImage.new('L', (2, 2)).save('o.png')\n",
+    )
     assert _lib(tmp_path) is None
 
 
@@ -164,7 +177,7 @@ def test_a_followed_local_module_that_draws_with_pillow_counts(tmp_path):
     assert _lib(tmp_path) == "pillow"
 
 
-def test_a_followed_local_module_importing_matplotlib_silences_it(tmp_path):
+def test_a_followed_local_module_importing_matplotlib_silences_weak_evidence(tmp_path):
     _write(
         tmp_path,
         "make.py",
@@ -180,14 +193,25 @@ def test_unreadable_or_unparsable_scripts_are_silent_not_errors(tmp_path):
     assert _lib(tmp_path, "missing.py") is None
 
 
-def test_when_the_scan_cannot_see_everything_it_stays_silent(tmp_path):
-    """动态 import 可能装进一个没扫过的 matplotlib——看不全就不说。"""
+def test_when_the_scan_cannot_see_everything_weak_evidence_stays_silent(tmp_path):
+    """动态 import 可能装进一个没扫过的 matplotlib——弱证据（Image.new + save）看不全就不说。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "from PIL import Image\nImage.new('L', (2, 2)).save('o.png')\n"
+        "import importlib\nimportlib.import_module(name)\n",
+    )
+    assert _lib(tmp_path) is None
+
+
+def test_strong_pillow_drawing_survives_dynamic_imports(tmp_path):
+    """强证据（ImageDraw 绘制）在动态 import 下仍可说：「没出 Figure」已是运行事实。"""
     _write(
         tmp_path,
         "make.py",
         textwrap.dedent(PILLOW_SCRIPT) + "\nimport importlib\nimportlib.import_module(name)\n",
     )
-    assert _lib(tmp_path) is None
+    assert _lib(tmp_path) == "pillow"
 
 
 # ---- in_project：素材库按钮只在能确定那张图落进素材盘点范围时才给 ----
@@ -225,7 +249,7 @@ def test_saving_outside_the_project_keeps_the_reason_but_not_the_assets_button(
 
 @pytest.mark.parametrize("target", ["C:/out.png", "\\\\host\\share\\out.png"])
 def test_foreign_system_paths_cannot_be_verified_so_no_hint(tmp_path, target):
-    _write(tmp_path, "make.py", f"from PIL import Image\nImage.new('L', (2, 2)).save({target!r})\n")
+    _write(tmp_path, "make.py", f"from PIL import Image\nImage.open('a.png').save({target!r})\n")
     assert _detect(tmp_path, "make.py", "project") is None
 
 
@@ -238,9 +262,23 @@ def test_a_literal_relative_path_in_project_mode_is_in_project(tmp_path):
 @pytest.mark.parametrize("mode", ["sandbox", None])
 def test_sandbox_without_a_sandbox_dir_or_unknown_mode_has_no_file_evidence(tmp_path, mode):
     """拿不到这次运行实际的 cwd（沙盒目录没给 / 运行目录未知）：项目里恰有同名文件也不能当证据。"""
-    _write(tmp_path, "make.py", "from PIL import Image\nImage.new('L', (2, 2)).save('out.png')\n")
-    (tmp_path / "out.png").write_bytes(b"x")  # 项目里恰有同名旧文件也不能当证据
+    _write(tmp_path, "make.py", "from PIL import Image\nImage.open('a.png').save('out.png')\n")
+    old = tmp_path / "out.png"
+    old.write_bytes(b"x")  # 项目里恰有同名旧文件也不能当证据
+    os.utime(old, (START - 3600, START - 3600))
     assert rasterhint.detect(tmp_path, "make.py", mode, run_started_at=START) is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "from PIL import Image\nImage.open(src).save(path)\n",
+        "from PIL import Image\nImage.open(src).save(f'{name}.png')\n",
+    ],
+)
+def test_a_dynamic_path_without_drawing_evidence_has_no_hint(tmp_path, body):
+    _write(tmp_path, "make.py", body)
+    assert _detect(tmp_path, "make.py", "project") is None
 
 
 @pytest.mark.parametrize(
@@ -250,9 +288,9 @@ def test_sandbox_without_a_sandbox_dir_or_unknown_mode_has_no_file_evidence(tmp_
         "from PIL import Image\nImage.new('L', (2, 2)).save(f'{name}.png')\n",
     ],
 )
-def test_a_dynamic_path_has_no_file_evidence_so_no_hint(tmp_path, body):
+def test_image_new_then_a_dynamic_save_gets_a_hint_without_a_path(tmp_path, body):
     _write(tmp_path, "make.py", body)
-    assert _detect(tmp_path, "make.py", "project") is None
+    assert _detect(tmp_path, "make.py", "project") == _NO_PATH
 
 
 @pytest.mark.parametrize("ext", ["bmp", "gif", "webp", "ppm", "ico", "pgm"])
@@ -376,7 +414,8 @@ def test_a_symlinked_output_directory_is_not_in_project(tmp_path):
 
 # ---- 文件证据：静态上「会存位图」不够，这次运行得真的写出了那个文件 ----
 
-HELPER_ONLY = "from PIL import Image\ndef unused():\n    Image.new('L', (2, 2)).save('out.png')\n"
+HELPER_ONLY = "from PIL import Image\ndef unused():\n    Image.open('a.png').save('out.png')\n"
+_NO_PATH = {"kind": "raster_script", "library": "pillow", "in_project": False, "path": None}
 
 
 def test_an_uncalled_helper_with_no_file_gets_no_hint(tmp_path):
@@ -388,7 +427,7 @@ def test_a_branch_never_taken_with_no_file_gets_no_hint(tmp_path):
     _write(
         tmp_path,
         "make.py",
-        "from PIL import Image\nif False:\n    Image.new('L', (2, 2)).save('out.png')\n",
+        "from PIL import Image\nif False:\n    Image.open('a.png').save('out.png')\n",
     )
     assert rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START) is None
 
@@ -397,7 +436,12 @@ def test_a_file_actually_written_by_this_run_gets_hint_and_button(tmp_path):
     _write(tmp_path, "make.py", HELPER_ONLY)
     (tmp_path / "out.png").write_bytes(b"x")  # mtime = 现在，晚于 START
     hint = rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START)
-    assert hint == {"kind": "raster_script", "library": "pillow", "in_project": True}
+    assert hint == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": True,
+        "path": "out.png",
+    }
 
 
 def test_a_file_older_than_this_run_gets_no_hint(tmp_path):
@@ -426,4 +470,569 @@ def test_sandbox_mode_checks_the_sandbox_dir_and_never_offers_the_button(tmp_pat
     assert rasterhint.detect(root, "make.py", "sandbox", START, str(box)) is None  # 沙盒里没写
     (box / "out.png").write_bytes(b"x")
     hint = rasterhint.detect(root, "make.py", "sandbox", START, str(box))
-    assert hint == {"kind": "raster_script", "library": "pillow", "in_project": False}
+    assert hint == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": False,
+        "path": None,
+    }
+
+
+# ---- 运行时才定输出路径：项目素材盘点里本次运行后新出现 / 被改写的文件 ----
+
+RUNTIME_PILLOW = """
+    import argparse
+    from PIL import Image, ImageDraw
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="force_reports")
+    path = ap.parse_args().out + "/heat.png"
+    image = Image.new("RGB", (24, 24), "white")
+    draw = ImageDraw.Draw(image)
+    image.save(path, format="PNG", dpi=(180, 180))
+"""
+
+
+def _runtime_started() -> float:
+    return time.time() - 60
+
+
+def test_runtime_path_pillow_script_with_a_new_file_in_the_project_gets_hint(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    out = tmp_path / "force_reports" / "heat.png"
+    out.parent.mkdir()
+    out.write_bytes(b"x")  # mtime = 现在，晚于运行开始
+    hint = rasterhint.detect(
+        tmp_path, "make.py", "sandbox", _runtime_started(), str(tmp_path / "box")
+    )
+    assert hint == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": True,
+        "path": "force_reports/heat.png",
+    }
+
+
+def test_runtime_path_with_only_an_old_file_gets_no_hint(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    out = tmp_path / "force_reports" / "heat.png"
+    out.parent.mkdir()
+    out.write_bytes(b"x")
+    os.utime(out, (time.time() - 7200, time.time() - 7200))
+    # 旧文件不是文件证据（不给 path）；但 Image.new + 动态 save 这个 AST 证据仍成立（2026-10-23 修订）
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) == _NO_PATH
+
+
+def test_runtime_path_without_a_run_start_time_has_no_file_evidence(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    (tmp_path / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project") == _NO_PATH
+
+
+def test_a_new_file_does_not_count_when_the_script_has_no_save_call(tmp_path):
+    _write(tmp_path, "make.py", "from PIL import Image\nImage.open('a.png').load()\n")
+    (tmp_path / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_a_new_file_does_not_count_when_matplotlib_is_imported(tmp_path):
+    _write(tmp_path, "make.py", "import matplotlib\n" + textwrap.dedent(RUNTIME_PILLOW))
+    (tmp_path / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_a_new_pdf_is_not_pillow_evidence_but_a_new_png_is(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    (tmp_path / "r.pdf").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) == _NO_PATH
+
+
+def test_inventory_evidence_ignores_pruned_directories(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) == _NO_PATH
+
+
+# ---- plotly / ROOT ----
+
+
+@pytest.mark.parametrize(
+    ("body", "library"),
+    [
+        (
+            "import plotly.graph_objects as go\nfig = go.Figure()\nfig.write_image('o.png')\n",
+            "plotly",
+        ),
+        ("import plotly.io as pio\npio.write_image(fig, 'o.jpg')\n", "plotly"),
+        ("import plotly.express as px\npx.line(df).write_image('o.pdf')\n", "plotly"),
+        ("import ROOT\nc = ROOT.TCanvas()\nc.SaveAs('o.png')\n", "root"),
+        ("import ROOT as rt\nc = rt.TCanvas()\nc.Print('o.svg')\n", "root"),
+        ("from ROOT import TCanvas\nTCanvas('c').SaveAs('o.eps')\n", "root"),
+    ],
+)
+def test_plotly_and_root_static_recognition(tmp_path, body, library):
+    _write(tmp_path, "make.py", body)
+    assert _lib(tmp_path) == library
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "import plotly.graph_objects as go\ngo.Figure().write_html('o.html')\n",
+        "import plotly.graph_objects as go\ngo.Figure().write_image('o.json')\n",
+        "import ROOT\nROOT.TFile('o.root').Print('o.txt')\n",
+        "import numpy as np\nnp.save('o.png', a)\nfig.write_image('o.png')\n",  # 没 import plotly
+        "import matplotlib\nimport plotly\nfig.write_image('o.png')\n",
+    ],
+)
+def test_plotly_and_root_negative_cases(tmp_path, body):
+    _write(tmp_path, "make.py", body)
+    assert _lib(tmp_path) is None
+
+
+FIT_MASS_SHAPE = """
+    import math
+    from importlib import import_module
+    import ROOT as rt
+    from ROOT import RooFit as rf
+    import lhcbStyle
+
+    def fit_mass(isTUNE=False):
+        mode = "_tune" if isTUNE else ""
+        module = import_module("results.para_data".replace("/", "."))
+        can = rt.TCanvas("can", "can", 800, 600)
+        frame.Draw()
+        can.SaveAs(f"results/mass_data{mode}.pdf")
+
+    fit_mass()
+    fit_mass(True)
+"""
+
+
+def test_root_pdf_script_shaped_like_fit_mass_is_recognised_at_runtime(tmp_path):
+    """真实样本结构：`rt.TCanvas` + f-string 的 `.pdf` 路径 + 拼出来的 `import_module`；运行后 results/ 下出现新 PDF。"""
+    _write(tmp_path, "fit_mass.py", FIT_MASS_SHAPE)
+    # 没有任何新文件：不说
+    assert rasterhint.detect(tmp_path, "fit_mass.py", "project", _runtime_started()) is None
+    out = tmp_path / "results" / "mass_data_tune.pdf"
+    out.parent.mkdir()
+    out.write_bytes(b"%PDF-")
+    hint = rasterhint.detect(tmp_path, "fit_mass.py", "project", _runtime_started())
+    assert hint == {
+        "kind": "raster_script",
+        "library": "root",
+        "in_project": True,
+        "path": "results/mass_data_tune.pdf",
+    }
+    # 旧 PDF 不算
+    os.utime(out, (time.time() - 7200, time.time() - 7200))
+    assert rasterhint.detect(tmp_path, "fit_mass.py", "project", _runtime_started()) is None
+
+
+# ---- Codex #1271：plotly 函数形式的第二个位置参数是文件；库与输出路径要成对 ----
+
+
+def test_plotly_function_form_takes_the_file_from_the_second_positional_argument(tmp_path):
+    root = tmp_path / "proj"
+    box = tmp_path / "box"
+    root.mkdir()
+    box.mkdir()
+    _write(
+        root,
+        "make.py",
+        "import plotly.graph_objects as go\nimport plotly.io as pio\n"
+        "fig = go.Figure()\npio.write_image(fig, 'o.png')\n",
+    )
+    assert rasterhint.detect(root, "make.py", "sandbox", _runtime_started(), str(box)) is None
+    (box / "o.png").write_bytes(b"x")  # 沙盒里写出了第二个位置参数指的文件
+    hint = rasterhint.detect(root, "make.py", "sandbox", _runtime_started(), str(box))
+    assert hint == {"kind": "raster_script", "library": "plotly", "in_project": False, "path": None}
+
+
+def test_plotly_function_form_literal_ext_is_judged_on_the_file_argument(tmp_path):
+    # 第一个实参是 fig（Name），第二个是 .html：不算存图
+    _write(
+        tmp_path,
+        "make.py",
+        "import plotly.io as pio\nfig = object()\npio.write_image(fig, 'o.html')\n",
+    )
+    (tmp_path / "o.html").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_library_stays_paired_with_the_path_of_its_own_fresh_file(tmp_path):
+    # 没调用的 Pillow helper 存 unused.png；真正跑到的是 plotly 写 actual.pdf
+    _write(
+        tmp_path,
+        "make.py",
+        "from PIL import Image\nimport plotly.io as pio\n"
+        "def helper():\n    Image.new('L', (2, 2)).save('unused.png')\n"
+        "pio.write_image(object(), 'actual.pdf')\n",
+    )
+    (tmp_path / "actual.pdf").write_bytes(b"%PDF-")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START)
+    assert hint == {
+        "kind": "raster_script",
+        "library": "plotly",
+        "in_project": True,
+        "path": "actual.pdf",
+    }
+
+
+def test_runtime_path_inventory_file_is_attributed_by_extension(tmp_path):
+    # 运行时才定路径：新出现的是 PDF，只有 plotly 认 PDF，不能算成靠前的 Pillow
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nfrom PIL import Image\nimport plotly.io as pio\n"
+        "def helper():\n    Image.new('L', (2, 2)).save(sys.argv[1] + '/a.png')\n"
+        "pio.write_image(object(), sys.argv[1] + '/b.pdf')\n",
+    )
+    (tmp_path / "b.pdf").write_bytes(b"%PDF-")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", _runtime_started())
+    assert hint is not None and hint["library"] == "plotly" and hint["path"] == "b.pdf"
+
+
+# ---- Codex #1271 第二轮：to_image 不写文件；动态路径 PNG 的库归属只在唯一候选时给 ----
+
+
+def test_plotly_to_image_returns_bytes_and_is_not_a_save_call(tmp_path):
+    """`to_image` 返回字节、不写文件：登记它会把运行期间任何新 PNG 安到 plotly 头上。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import plotly.io as pio\nfig = object()\nb = pio.to_image(fig, format='png')\n",
+    )
+    (tmp_path / "unrelated.png").write_bytes(b"x")  # 运行期间恰好被别的东西写过
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_dynamic_png_with_two_possible_libraries_is_not_attributed(tmp_path):
+    """实际写 PNG 的是 plotly（运行时路径），脚本里还有一个没被调用的 Pillow helper（同样动态路径）：
+    PNG 两个库都认、静态上分不出 → 沉默，不能按库表顺序冒名 pillow。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nfrom PIL import Image\nimport plotly.io as pio\n"
+        "def helper():\n    Image.new('L', (2, 2)).save(sys.argv[1] + '/a.png')\n"
+        "pio.write_image(object(), sys.argv[1] + '/b.png')\n",
+    )
+    (tmp_path / "b.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_dynamic_png_with_a_single_possible_library_is_still_attributed(tmp_path):
+    """正对照：候选唯一（只有 plotly 一处动态保存）→ 照常归属。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nimport plotly.io as pio\npio.write_image(object(), sys.argv[1] + '/b.png')\n",
+    )
+    (tmp_path / "b.png").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", _runtime_started())
+    assert hint is not None and hint["library"] == "plotly" and hint["path"] == "b.png"
+
+
+def test_a_stale_literal_save_does_not_claim_an_unrelated_new_inventory_file(tmp_path):
+    """字面量路径的保存已逐个核过没写出新文件，它不是候选：另一个库的动态路径才是唯一候选。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nfrom PIL import Image\nimport plotly.io as pio\n"
+        "def helper():\n    Image.new('L', (2, 2)).save('unused.png')\n"
+        "pio.write_image(object(), sys.argv[1] + '/b.png')\n",
+    )
+    (tmp_path / "b.png").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", _runtime_started())
+    assert hint is not None and hint["library"] == "plotly"
+
+
+# ---- Pillow 画图脚本：不依赖落盘文件（ADR 0143 修订 2026-10-23，「先跑再提示」） ----
+
+
+def _bare(root: Path, body: str, mode: str | None = "project") -> dict | None:
+    """不补任何输出文件：只有 AST 证据。"""
+    _write(root, "make.py", body)
+    return rasterhint.detect(root, "make.py", mode, run_started_at=START)
+
+
+def test_pillow_draw_with_a_dynamic_output_path_gets_a_hint_without_path(tmp_path):
+    body = """
+        import sys
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (200, 100), "white")
+        d = ImageDraw.Draw(im)
+        d.rectangle([10, 10, 90, 90], outline="black")
+        im.save(sys.argv[1])
+    """
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_pillow_draw_that_only_shows_gets_a_hint(tmp_path):
+    body = """
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (200, 100))
+        ImageDraw.Draw(im).ellipse([5, 5, 50, 50], fill="red")
+        im.show()
+    """
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_image_new_then_only_show_gets_a_hint(tmp_path):
+    assert (
+        _bare(tmp_path, "from PIL import Image\nIm = Image.new('L', (4, 4))\nIm.show()\n")
+        == _NO_PATH
+    )
+
+
+def test_pillow_draw_whose_output_file_does_not_exist_yet_gets_a_hint(tmp_path):
+    body = "from PIL import Image, ImageDraw\nim = Image.open('a.png')\nd = ImageDraw.Draw(im)\nd.text((0, 0), 'x')\nim.save('out.png')\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_a_with_bound_draw_object_counts(tmp_path):
+    body = "from PIL import Image, ImageDraw\nim = Image.open('a.png')\nwith ImageDraw.Draw(im) as g:\n    g.line([(0, 0), (5, 5)])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_imagefont_with_a_draw_object_counts_as_drawing_text(tmp_path):
+    body = "from PIL import Image, ImageDraw, ImageFont\nim = Image.open('a.png')\nf = ImageFont.truetype('x.ttf', 12)\nd = ImageDraw.Draw(im)\nrender(d, f)\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_pillow_draw_with_matplotlib_imported_and_no_figure_gets_a_hint(tmp_path):
+    body = """
+        import matplotlib.pyplot as plt
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (50, 50))
+        ImageDraw.Draw(im).polygon([(0, 0), (10, 0), (5, 9)], fill="blue")
+        im.save(out_path)
+    """
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # 普通图片处理不是画图
+        "import sys\nfrom PIL import Image\nImage.open(sys.argv[1]).resize((10, 10)).save(sys.argv[2])\n",
+        "from PIL import Image\nImage.open(src).convert('L').show()\n",
+        # Image.new 但无 save / show / 绘制
+        "from PIL import Image\nim = Image.new('L', (2, 2))\nprint(im.size)\n",
+        # 别的库的 .text / .line 不是 Pillow 绘制
+        "import matplotlib.pyplot as plt\nfrom PIL import Image\nfig, ax = plt.subplots()\nax.text(0, 0, 'x')\nax.plot([0, 1])\n",
+        # plt.show 不是 Pillow 的 show
+        "import matplotlib.pyplot as plt\nfrom PIL import Image\nim = Image.new('L', (2, 2))\nplt.show()\n",
+        # 没 import PIL
+        "d = make()\nd.rectangle([0, 0, 1, 1])\nImage.new('L', (1, 1)).save('o.png')\n",
+    ],
+)
+def test_ordinary_image_processing_or_non_pillow_drawing_gets_no_hint(tmp_path, body):
+    assert _bare(tmp_path, body) is None
+
+
+def test_other_libraries_keep_requiring_file_evidence(tmp_path):
+    """只动 Pillow 分支：opencv 画图无文件证据照旧沉默。"""
+    assert (
+        _bare(
+            tmp_path,
+            "import cv2\nimg = cv2.imread('a.png')\ncv2.rectangle(img, (0, 0), (5, 5), 1)\ncv2.imwrite(out, img)\n",
+        )
+        is None
+    )
+
+
+def test_weak_pillow_evidence_defers_to_another_library_that_saves(tmp_path):
+    body = "import plotly.io as pio\nfrom PIL import Image\ndef h():\n    Image.new('L', (1, 1)).save(p)\npio.write_image(object(), q)\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_annotated_draw_binding_counts(tmp_path):
+    body = (
+        "from PIL import Image, ImageDraw\nim = Image.open('a.png')\n"
+        "draw: ImageDraw.ImageDraw = ImageDraw.Draw(im)\ndraw.line([(0, 0), (5, 5)])\n"
+    )
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_annotated_image_new_with_dynamic_save_gets_a_hint(tmp_path):
+    body = "import sys\nfrom PIL import Image\nim: Image.Image = Image.new('L', (4, 4))\nim.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_weak_evidence_needs_the_image_new_object_itself_to_be_saved(tmp_path):
+    body = "from PIL import Image\nim = Image.new('L', (4, 4))\nmodel.save('weights.bin')\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_chained_image_new_save_gets_a_hint(tmp_path):
+    body = "import sys\nfrom PIL import Image\nImage.new('L', (4, 4)).save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_image_new_name_reassigned_to_something_else_is_not_counted(tmp_path):
+    body = "from PIL import Image\nim = Image.new('L', (4, 4))\nim = load()\nim.save(p)\n"
+    assert _bare(tmp_path, body) is None
+
+
+# ---- 名字匹配按作用域 + 先后（Codex #1340 P2：接收者名字不能是全文件、不分先后的匹配） ----
+
+_PIL = "import sys\nfrom PIL import Image, ImageDraw\n"
+
+
+def test_save_before_the_image_new_binding_in_the_same_function_is_not_counted(tmp_path):
+    body = _PIL + "def f(im):\n    im.show()\n    im = Image.new('L', (2, 2))\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_save_before_the_image_new_binding_at_module_level_is_not_counted(tmp_path):
+    body = _PIL + "im.save(sys.argv[1])\nim = Image.new('L', (2, 2))\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_same_name_in_two_functions_is_not_the_image_new_object(tmp_path):
+    body = (
+        _PIL
+        + "def a():\n    im = Image.new('L', (2, 2))\n    return im\n"
+        + "def b(im):\n    im.save(sys.argv[1])\n"
+    )
+    assert _bare(tmp_path, body) is None
+
+
+def test_image_new_then_save_in_the_same_function_gets_a_hint(tmp_path):
+    body = _PIL + "def f():\n    im = Image.new('L', (2, 2))\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_image_new_then_save_at_module_level_gets_a_hint(tmp_path):
+    body = _PIL + "im = Image.new('L', (2, 2))\nim.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_module_level_binding_is_not_seen_from_inside_a_function(tmp_path):
+    body = _PIL + "im = Image.new('L', (2, 2))\ndef f():\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_function_parameter_shadowing_the_name_is_not_counted(tmp_path):
+    body = _PIL + "im = Image.new('L', (2, 2))\ndef f(im):\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_global_declared_name_is_not_counted(tmp_path):
+    body = (
+        _PIL
+        + "def f():\n    global im\n    im = Image.new('L', (2, 2))\n    im.save(sys.argv[1])\n"
+    )
+    assert _bare(tmp_path, body) is None
+
+
+def test_with_as_image_new_then_save_in_the_with_body_gets_a_hint(tmp_path):
+    body = _PIL + "with Image.new('L', (2, 2)) as im:\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_draw_bound_in_another_function_is_not_the_draw_object(tmp_path):
+    body = (
+        _PIL
+        + "def a(img):\n    d = ImageDraw.Draw(img)\n    return d\n"
+        + "def b(d):\n    d.line([(0, 0), (1, 1)])\n"
+    )
+    assert _bare(tmp_path, body) is None
+
+
+def test_draw_call_before_the_draw_binding_is_not_counted(tmp_path):
+    body = _PIL + "def f(img, d):\n    d.line([(0, 0), (1, 1)])\n    d = ImageDraw.Draw(img)\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_draw_bound_in_the_same_function_before_the_call_gets_a_hint(tmp_path):
+    body = _PIL + "def f(img):\n    d = ImageDraw.Draw(img)\n    d.line([(0, 0), (1, 1)])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_draw_and_font_combination_evidence_is_unchanged_by_scoping(tmp_path):
+    body = "from PIL import Image, ImageDraw, ImageFont\nim = Image.open('a.png')\nf = ImageFont.truetype('x.ttf', 12)\nd = ImageDraw.Draw(im)\nrender(d, f)\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+# ---------------------------------------------------------------- 手写 SVG（ADR 0143 修订 2026-11-01，反馈包 TVD-ZWV6）
+#: 只用标准库拼 SVG 文本再写成 `.svg`：safe 档在项目模式下这次写入被守卫拦下，磁盘上没有任何文件——
+#: 判据只能是 AST（`<svg` 标记 + 往 .svg 写文本），所以这里直接调 `detect`，**不**补出输出文件。
+SVG_PATH_WRITE_TEXT = """
+    from pathlib import Path
+    out = Path(__file__).parent / "results"
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">']
+    for i in range(3):
+        parts.append(f'<rect x="{i * 50}" y="10" width="40" height="80" fill="#336699"/>')
+    parts.append("</svg>")
+    (out / "cycle.svg").write_text("\\n".join(parts), encoding="utf-8")
+"""
+
+SVG_OPEN_DYNAMIC = """
+    import os
+    def render(name):
+        body = f'<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>'
+        with open(os.path.join("out", name + ".svg"), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    render("fig1")
+"""
+
+
+@pytest.mark.parametrize("body", [SVG_PATH_WRITE_TEXT, SVG_OPEN_DYNAMIC])
+@pytest.mark.parametrize("mode", ["project", "project_root", "sandbox", None])
+def test_hand_written_svg_scripts_get_the_svg_hint_without_a_file(tmp_path, body, mode):
+    _write(tmp_path, "make.py", body)
+    hint = rasterhint.detect(tmp_path, "make.py", mode, run_started_at=START)
+    assert hint == {"kind": "raster_script", "library": "svg", "in_project": False, "path": None}
+    assert "svg" in rasterhint.LIBRARIES
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # 有 matplotlib：没出图另有原因，不说「是手写 SVG」
+        "import matplotlib.pyplot as plt\n" + textwrap.dedent(SVG_PATH_WRITE_TEXT),
+        # 有 `<svg` 字样，但从不往 .svg 写（写的是 .txt / 只打印）
+        """
+        from pathlib import Path
+        Path("note.txt").write_text('<svg width="1"></svg>')
+        """,
+        """
+        print('<svg width="1"></svg>')
+        """,
+        # 往 .svg 写，但源码里没有 SVG 标记（拷贝 / 转存别人的文件）
+        """
+        from pathlib import Path
+        Path("copy.svg").write_text(Path("src.svg").read_text())
+        """,
+        # 只读模式打开
+        """
+        data = '<svg/>'
+        with open("a.svg") as fh:
+            fh.read()
+        """,
+    ],
+)
+def test_svg_lookalikes_stay_silent(tmp_path, body):
+    _write(tmp_path, "make.py", body)
+    assert rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START) is None
+
+
+def test_hand_written_svg_with_dynamic_imports_stays_silent(tmp_path):
+    _write(
+        tmp_path,
+        "make.py",
+        "import importlib\nimportlib.import_module('x' + 'y')\n"
+        + textwrap.dedent(SVG_OPEN_DYNAMIC),
+    )
+    assert rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START) is None
+
+
+def test_hand_written_svg_in_a_followed_local_module_counts(tmp_path):
+    _write(
+        tmp_path, "svgout.py", SVG_PATH_WRITE_TEXT.replace("(out /", "def go():\n        (out /", 1)
+    )
+    _write(tmp_path, "make.py", "import svgout\nsvgout.go()\n")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START)
+    assert hint is not None and hint["library"] == "svg"

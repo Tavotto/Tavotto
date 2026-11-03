@@ -19,6 +19,7 @@ import { useRenderStore } from '@/store/renderStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { fontFamilyOptionLabel } from './roles/registry'
+import { fontFamilySelectModel } from './controls/fontFamilySelect'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography, type TypographyAdapter } from './typographyAdapter'
 
 /** 写入会触发一次渲染：像真引擎那样把同一份 manifest（含本机表）再发回来 */
@@ -189,6 +190,29 @@ describe('useFigureTypography：属性页的「未安装」与本机表同一口
 })
 
 describe('useFigureTypography：字体下拉与写入校验拿同一份表', () => {
+  it('中文回退与主字体独立修改并可恢复自动，旧引擎不显示入口', async () => {
+    const el = { ...titleEl, editable: titleEl.editable.map((x) =>
+      x.prop === 'fontfamily' ? { ...x, font_fallback_selection: true } : x,
+    ) } as ManifestElement
+    selected = [el]
+    await mount({ ...manifestOf(MACHINE), font_latin_only_families: ['Arial', 'Avenir'], elements: [el] } as Manifest)
+    expect(adapter.valueOf('fontFallback')).toEqual({ kind: 'uniform', value: '' })
+    await act(async () => adapter.writeOnce('fontFallback', '思源黑体'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    expect(adapter.fontFallbackShadowed).toBe(true)
+    expect(adapter.fieldOf('fontFamily')?.options).toContain('Arial')
+    expect(adapter.fieldOf('fontFamily')?.options).not.toContain('思源黑体')
+    await act(async () => adapter.writeOnce('fontFamily', '思源黑体'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    await act(async () => adapter.writeOnce('fontFamily', 'Arial'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: 'Arial', fallback: '思源黑体' })
+    expect(adapter.fontFallbackShadowed).toBe(false)
+    await act(async () => adapter.writeOnce('fontFallback', null))
+    expect(overrideOf(el.gid, 'fontfamily')).toBe('Arial')
+    await act(async () => adapter.reset('fontFamily'))
+    expect(overrideOf(el.gid, 'fontfamily')).toBeUndefined()
+  })
+
   it('下拉里能看到本机字体，选一个本机才有的字体真的写得下去', async () => {
     await mount(manifestOf(MACHINE))
     const field = adapter.fieldOf('fontFamily')!
@@ -289,3 +313,60 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
 function optionLabelOfSerif(): string {
   return fontFamilyOptionLabel('serif', undefined, [])
 }
+
+describe('字体下拉模型 fontFamilySelectModel（只挑具体字体）', () => {
+  const opts = ['serif', 'sans-serif', 'monospace', 'Arial', 'Times New Roman']
+  const faces = { serif: 'Times New Roman', 'sans-serif': 'Arial', monospace: 'DejaVu Sans Mono' }
+  const model = (value: string, over: Partial<Parameters<typeof fontFamilySelectModel>[0]> = {}) => {
+    const onChange = vi.fn()
+    return { m: fontFamilySelectModel({ value, options: opts, labels: undefined, faces, onChange, ...over }), onChange }
+  }
+
+  it('值是 serif：列表里没有通用族，选中的是画出来的那张脸（不重复），悬停说明来源', () => {
+    const { m } = model('serif')
+    expect(m.value).toBe('Times New Roman')
+    expect(m.options.map((o) => o.value)).toEqual(['Arial', 'Times New Roman'])
+    expect(m.options.some((o) => ['serif', 'sans-serif', 'monospace'].includes(o.value))).toBe(false)
+    expect(m.options.filter((o) => o.value === 'Times New Roman')).toHaveLength(1)
+    expect(m.title).toContain('serif')
+  })
+
+  it('画出来的脸不在选项表里（退到 DejaVu Serif）：补成一行才能显示为选中', () => {
+    const { m } = model('serif', { faces: { ...faces, serif: 'DejaVu Serif' } })
+    expect(m.value).toBe('DejaVu Serif')
+    expect(m.options.map((o) => o.value)).toEqual(['DejaVu Serif', 'Arial', 'Times New Roman'])
+  })
+
+  it('选中正是那张脸的行：空操作，脚本保持 serif；选别的具体字体写显式名字', () => {
+    const { m, onChange } = model('serif')
+    m.onChange('Times New Roman')
+    expect(onChange).not.toHaveBeenCalled()
+    m.onChange('Arial')
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('Arial')
+  })
+
+  it('值是具体字体：不改值、不带说明；选项里同样没有通用族，选自己照常转发', () => {
+    const { m, onChange } = model('Arial')
+    expect(m.value).toBe('Arial')
+    expect(m.title).toBeUndefined()
+    expect(m.options.map((o) => o.value)).toEqual(['Arial', 'Times New Roman'])
+    m.onChange('Times New Roman')
+    expect(onChange).toHaveBeenCalledWith('Times New Roman')
+  })
+
+  it('老引擎没有 option_faces / 这个通用族解析不出：原样平铺，通用族留着当前值才有对应项', () => {
+    const old = model('serif', { faces: undefined })
+    expect(old.m.value).toBe('serif')
+    expect(old.m.options.map((o) => o.value)).toEqual(opts)
+    const partial = model('serif', { faces: { 'sans-serif': 'Arial' } })
+    expect(partial.m.options.map((o) => o.value)).toEqual(['serif', 'monospace', 'Arial', 'Times New Roman'])
+    partial.m.onChange('serif')
+    expect(partial.onChange).toHaveBeenCalledWith('serif')
+  })
+
+  it('多选混合（值空串）：不替换值', () => {
+    const { m } = model('')
+    expect(m.value).toBe('')
+    expect(m.title).toBeUndefined()
+  })
+})

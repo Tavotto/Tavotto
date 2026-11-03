@@ -1,0 +1,80 @@
+{
+  "schema": "tavotto-guardian-family/1",
+  "id": "G1-show-close-zero-figures",
+  "title": "show() then close() without savefig: Tavotto captures zero figures",
+  "affected_script_shapes": [
+    "a script that draws, calls plt.show() and then plt.close(...) and never calls savefig (typical interactive-style script)"
+  ],
+  "root_cause": "The Safe worker only intercepts savefig. A figure that exists only between show() and close() is never registered, so the probe ends with script_no_figure although the user would have seen a figure (GAP-REPORT G1; engine/worker.py patches savefig, engine/figcapture.py collects what was saved).",
+  "category": "figure_capture",
+  "signature": {
+    "behavior_kind": "zero_figures",
+    "call_site": [
+      "figure",
+      "show",
+      "close"
+    ],
+    "tavotto_error": "script_no_figure"
+  },
+  "repro": {
+    "script": "tests/compat_guardian/families/G1-show-close-zero-figures/repro.py",
+    "sha256": "75adc37a6d5bbc8a37ec258f68061ea65368e5efafeae6d58e35580e90419485",
+    "entry": "main",
+    "derived_from": {
+      "parent": {
+        "suite": "compat_engine",
+        "case": "shape_oo_savefig"
+      },
+      "chain": [
+        "show_close"
+      ],
+      "seed": 42
+    },
+    "minimized_by": "compat_guardian.py minimize",
+    "before": {
+      "statements": 11,
+      "lines": 11,
+      "bytes": 349,
+      "files": 1
+    },
+    "after": {
+      "statements": 5,
+      "lines": 5,
+      "bytes": 129,
+      "files": 1
+    },
+    "reproducibility": {
+      "confirmed": 3,
+      "total": 3
+    },
+    "runs": 34
+  },
+  "key_regression_tests": [
+    "tests/test_compat_explore.py::RealDiscovery::test_g1_show_then_close_no_longer_differs_after_the_fix",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g1_minimal_repro_is_fixed",
+    "tests/test_capture_show_then_close.py"
+  ],
+  "environments": {
+    "verified": [
+      {
+        "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+        "python": "3.13.11",
+        "matplotlib": "3.11.2",
+        "route": "Safe engine path via the product discovery chain",
+        "revision": "main at 573943bd5 plus CG-03"
+      }
+    ],
+    "unverified": [
+      "Linux",
+      "Windows",
+      "the desktop (Native) route",
+      "other matplotlib / Python versions",
+      "a real user session through the UI"
+    ]
+  },
+  "recurrence": "11 of 100 candidates in the CG-02 run (seed 42)",
+  "in_corpus": false,
+  "fix_pr": 1138,
+  "promoted": false,
+  "issues": []
+}

@@ -112,7 +112,7 @@ describe('ProjectPicker', () => {
     showAll()
     text = uiText()
     expect(text).toContain('新建项目')
-    expect(text).toContain('浏览目录…')
+    expect(text).toContain('浏览…')
   })
 
   it('英文界面：同样的位置换成英文，且一个汉字都不剩（主页两版 + 全部项目）', async () => {
@@ -129,7 +129,7 @@ describe('ProjectPicker', () => {
     showAll()
     text = uiText()
     expect(text).toContain('New project')
-    expect(text).toContain('Browse folder…')
+    expect(text).toContain('Browse…')
     expect(hasCjk(text)).toBe(false)
   })
 })

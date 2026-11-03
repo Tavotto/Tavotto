@@ -21,13 +21,12 @@ import {
   openLayoutDocument,
   openRecentDocument,
   setDocumentName,
-  toggleTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { dragRegionProps, TRAFFIC_LIGHTS_INSET, windowChrome } from '@/lib/desktop'
+import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -48,11 +47,12 @@ import {
   saveNow,
   useDocumentStore,
 } from '@/store/documentStore'
+import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
-import { Button, IconButton } from './ui/Button'
+import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Popover } from './ui/Popover'
 import { TextInput } from './ui/Input'
@@ -60,6 +60,8 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { BuildMismatchChip } from './BuildMismatchChip'
+import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
+import { ContactButton } from './contact/ContactButton'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
@@ -79,14 +81,17 @@ export function TopBar() {
     // 窄于 900：两段之间的空隙与两侧内边距收紧（12 → 6、12 → 8），段内按钮间距也收到 4——600 宽下仍要放下
     // 首页胶囊 / 面包屑 / 状态芯片 / 时间线 | 撤销重做 / 导出 / 更多（e2e/topbar-narrow.spec.ts）
     // 窗框（`lib/desktop.ts` 的 `windowChrome`）：macOS 的红绿灯就坐在这一行最左——左内边距让给它们
-    // （行内样式压过窄屏那档 px），空白处是拖动区；Windows 的应用菜单是最左那颗「菜单」按钮
+    // （行内样式压过窄屏那档 px），空白处是拖动区；Windows 的应用菜单是最左那颗「菜单」按钮，
+    // 右侧让给右上角的窗口按钮（`WindowControls`，与顶栏同高）
     <header
       data-topbar
       {...dragRegionProps()}
       style={
         windowChrome() === 'overlay' && !fullscreen
           ? { paddingLeft: TRAFFIC_LIGHTS_INSET }
-          : undefined
+          : windowChrome() === 'menu-button'
+            ? { paddingRight: WINDOW_CONTROLS_INSET }
+            : undefined
       }
       className={cn(
         'flex h-11 shrink-0 items-center justify-between gap-3 bg-bg px-3 max-[899px]:gap-1.5 max-[899px]:px-2',
@@ -112,15 +117,18 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
-        <TimelineButton />
       </div>
 
       {/* 撤销 / 重做挨着导出（2026-10-07 设计审计 §10.1 P2）：此前孤零零在顶栏正中，离它撤的东西（左边的文档）
           与紧接着要做的事（导出）都远。缩放在画布标签行、画布工具在画布底部的浮动工具条（2026-09-30 A1）；
           导出是顶栏唯一填色主动作 */}
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 max-[899px]:gap-1">
+        <TutorialChip />
         <BuildMismatchChip />
         <UndoRedo />
+        {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。
+            引擎说关着（`TAVOTTO_NO_CONTACT=1`）就不渲染 */}
+        <ContactButton placement="topbar" />
         <ExportButton />
         <MoreMenu writeBackItem={writeBack.item} />
         {writeBack.dialog}
@@ -295,8 +303,8 @@ function useDocIssue(): DocIssue | null {
  * 顶栏的文档状态芯片（2026-10-07 设计审计 §10.1）。两根轴（ADR 0096）：`saveState` 说本机自动保存走到哪一步；
  * 绑定的项目文件说「项目里那份是不是最新」。
  *
- *   - **落定**：只有一枚图标——✓ = 已保存到项目、硬盘 = 存在本机（项目里那份落后时，文档名旁另有一枚空心环）。
- *     那句话进读屏与悬停气泡，不占顶栏的字宽；
+ *   - **落定**：图标 + 一句短字（≥ 900 宽；更窄只留图标，字进读屏与气泡）——✓ 已保存到项目、硬盘 = 存在本机 /
+ *     未存进项目（项目里那份落后时，文档名旁另有一枚空心环）。整枚芯片是按钮，点击 = ⌘S；已存进项目且最新时空操作；
  *   - **进行中**：持续满 `SAVE_PENDING_REVEAL_MS` 才出字（快的一轮里一直是那枚落定图标），字的格宽按会轮到的
  *     那几句里最宽的那句占位（同格叠放、只有当前那句可见），换字不推邻居；
  *   - **出事**（冲突 / 保存失败 / 未恢复的编辑 / 上次的排版没打开 / 版本过新）：锚点色 24px 胶囊，点开是一块
@@ -333,11 +341,14 @@ export function SaveStateLabel() {
   // 落定时那句话（也是快的一轮里继续显示的那句）
   const settledText = bound
     ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
-    : saveState === 'saved'
-      ? t('topbar.saveLocal')
-      : lastPersisted
-        ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
-        : t('topbar.saveLocal')
+    : projectOpen
+      ? // 开着项目但这份排版只在本机（没有项目文件）：说「未存进项目」，点它走 ⌘S 的「存进项目」命名框
+        t('topbar.saveProjectPending')
+      : saveState === 'saved'
+        ? t('topbar.saveLocal')
+        : lastPersisted
+          ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
+          : t('topbar.saveLocal')
   const text =
     saveState === 'save_error'
       ? t('topbar.saveError')
@@ -386,48 +397,63 @@ export function SaveStateLabel() {
   // 落定那枚图标：项目里那份是最新的才打 ✓；只在本机（或项目里那份落后）是一枚硬盘
   const SettledIcon = bound && !bound.dirty ? Check : HardDrive
   // 占位：会在本机自动保存一轮里轮到的那几句（落定那句 + 两句进行中）。叠在同一格里，
-  // 格宽取最宽那句——只是给宽度，不可见、不给读屏。落定时整格只给读屏（芯片只剩图标）
+  // 格宽取最宽那句——只是给宽度，不可见、不给读屏。窄于 900 时整格只给读屏（芯片只剩图标）
   const localSettled = bound
     ? []
     : [t('topbar.saveLocal'), ...(lastPersisted ? [t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })] : [])]
   const reserve = [...new Set([settledText, ...localSettled, t('topbar.saveDirty'), t('topbar.saveSaving')])].filter(
     (r) => r !== text,
   )
+  // 已经存进项目且最新：点它没有事可做（不禁用——禁用钮会退出 Tab 顺序、气泡也更难出），点击空操作 + aria-disabled
+  const nothingToSave = !!bound && !bound.dirty && settled && !revealPending
+  const textShown = 'max-[899px]:sr-only min-[900px]:truncate'
   return (
+    // 根仍是 span（与出事分支同种元素：播报区 `live` 是早已挂着的同一个节点，Codex #947），里面一颗整枚芯片大的按钮：
+    // 点击 = ⌘S（`runManualSave`：本机那份先写、绑了项目文件就写回、开着项目没文件就弹「存进项目」命名框）。
+    // 窄于 900 只留图标，字进 sr-only 当可达名；悬停气泡说全（2026-10-22 用户裁决：落定时也常驻短字 + 可点）
     <span
       data-save-state
       data-save-destination={bound ? 'project' : 'local'}
       data-save-shown={shownState}
-      className="flex h-6 min-w-0 shrink items-center gap-1 px-1 text-xs text-ink-3"
-      // 落定时字只给读屏，悬停气泡要连状态一起说
+      className="flex h-6 min-w-0 shrink items-center"
       title={`${text} · ${title}`}
     >
-      {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
-          进行中画一颗墨点代替那句字 */}
-      <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
-        {revealPending ? (
-          <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
-        ) : (
-          <SettledIcon size={ICON_SIZE.sm} />
+      <button
+        type="button"
+        data-save-button
+        aria-disabled={nothingToSave || undefined}
+        onClick={() => {
+          if (!nothingToSave) void runManualSave()
+        }}
+        className={cn(
+          'flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs text-ink-3 outline-none focus-visible:focus-ring',
+          !nothingToSave && 'hover:bg-surface-hover hover:text-ink-2',
         )}
-      </span>
-      <span className={cn('grid min-w-0', !revealPending && 'sr-only')}>
-        <span
-          data-save-text
-          className={cn('col-start-1 row-start-1', revealPending && 'max-[899px]:sr-only min-[900px]:truncate')}
-        >
-          {text}
+      >
+        {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
+            进行中画一颗墨点代替那句字 */}
+        <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
+          {revealPending ? (
+            <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
+          ) : (
+            <SettledIcon size={ICON_SIZE.sm} />
+          )}
         </span>
-        {reserve.map((r) => (
-          <span
-            key={r}
-            aria-hidden
-            className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
-          >
-            {r}
+        <span className="grid min-w-0 text-left">
+          <span data-save-text className={cn('col-start-1 row-start-1', textShown)}>
+            {text}
           </span>
-        ))}
-      </span>
+          {reserve.map((r) => (
+            <span
+              key={r}
+              aria-hidden
+              className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
+            >
+              {r}
+            </span>
+          ))}
+        </span>
+      </button>
       {live}
     </span>
   )
@@ -515,7 +541,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
             PILL_TONE[tone],
           )}
         >
-          <Icon size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <Icon size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           <span data-save-text className="truncate max-[899px]:sr-only">
             {text}
           </span>
@@ -639,30 +665,6 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   return null
 }
 
-/**
- * 排版时间线的常驻入口（ADR 0101）：保存状态旁一颗时钟钮。
- *
- * 用户反馈「不知道有这个功能」——它此前只在排版菜单的第六项里。放在保存状态旁边，
- * 是因为两者回答的是同一件事的两半：「存到哪一步了」与「能回到哪一步」。
- * 抽屉开着时按下态（`aria-pressed`），再点一下收起。
- */
-function TimelineButton() {
-  const { t } = useTranslation('workspace')
-  const open = useUiStore((s) => s.versionsOpen)
-  return (
-    <IconButton
-      label={t('topbar.timelineButton')}
-      shortcut={keyOf('timeline')}
-      aria-pressed={open}
-      data-timeline-button
-      className={cn('shrink-0', open && 'bg-selected')}
-      onClick={toggleTimeline}
-    >
-      <RotateCcwClock size={ICON_SIZE.md} className="text-ink-2" />
-    </IconButton>
-  )
-}
-
 export function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
@@ -762,9 +764,6 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)} shortcut={keyOf('timeline')}>
-        {t('topbar.versionTimeline')}
-      </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
 
@@ -830,6 +829,7 @@ function UndoRedo() {
           size="icon"
           disabled={!canUndo}
           onClick={runUndo}
+          data-history-action="undo"
           aria-label={t('workspace:topbar.undo')}
         >
           <Undo2 size={ICON_SIZE.md} />
@@ -847,6 +847,7 @@ function UndoRedo() {
           size="icon"
           disabled={!canRedo}
           onClick={runRedo}
+          data-history-action="redo"
           aria-label={t('workspace:topbar.redo')}
         >
           <Redo2 size={ICON_SIZE.md} />
@@ -874,8 +875,8 @@ function ExportButton() {
   )
 }
 
-/** 低频全局动作收进「更多」：样式 / 版本 / 画布设置 / 帮助 */
-function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
+/** 低频全局动作收进「更多」：刷新 / 接入状态 / 命令面板 / 帮助（样式与画布设置各有唯一的家：左栏「样式」、右栏「画布」页签，审计 A2） */
+export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
   const { t } = useTranslation('workspace')
   const ui = () => useUiStore.getState()
   // 打招呼的是启动时那个 UpdateNoticeDialog（「稍后」按版本记住）；这里只在
@@ -885,6 +886,8 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
   const hasUpdate = !!update?.update_available || !!desktopUpdate
   const latest = desktopUpdate?.version ?? update?.latest
   const tutorialKind = useOnboardingStore((s) => tutorialEntry(s.status))
+  // 顶栏「新手教程」胶囊还在时，菜单里不重复列这一项（同一个判据）
+  const chipVisible = useTutorialChipVisible()
   return (
     <Menu
       width={196}
@@ -908,8 +911,6 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         </Button>
       }
     >
-      {writeBackItem}
-      <MenuSeparator />
       {hasUpdate && (
         <>
           <MenuItem onSelect={() => ui().setSettingsOpen(true, 'about')}>
@@ -921,12 +922,10 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
           <MenuSeparator />
         </>
       )}
-      {/* 分隔线只在真分组之间画（2026-09-15 打磨 T5）：
-          〔论文样式 · 画布设置〕｜〔刷新项目 · 项目接入状态〕｜〔命令面板 · 快捷键帮助 · 教程〕
-          ——七项此前被四条线切成 1/1/2/3 四组，线比组多 */}
-      <MenuItem onSelect={() => ui().setStylesOpen(true)}>{t('topbar.paperStyles')}</MenuItem>
-      <MenuItem onSelect={() => ui().setRightTab('canvas')}>{t('topbar.canvasSettings')}</MenuItem>
-      <MenuSeparator />
+      {/* 按用户目的分两组、各带小标题（2026-10 UI 审计 D2）：文件｜帮助。
+          「论文样式 · 画布设置」已收敛到左栏「样式」与右栏「画布」页签（审计 A2），「视图」组随之没有了 */}
+      <MenuLabel>{t('topbar.moreGroup.file')}</MenuLabel>
+      {writeBackItem}
       {/* 与命令面板同一批 helper：刷新走统一刷新端点，接入状态走 readiness store */}
       <MenuItem onSelect={() => void refreshProjectNow()}>{t('topbar.refreshProject')}</MenuItem>
       <MenuItem
@@ -935,6 +934,7 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t('topbar.readiness')}
       </MenuItem>
       <MenuSeparator />
+      <MenuLabel>{t('topbar.moreGroup.help')}</MenuLabel>
       <MenuItem onSelect={() => usePalette.getState().setOpen(true)} shortcut={keyOf('palette')}>
         {t('topbar.commandPalette')}
       </MenuItem>
@@ -942,9 +942,11 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t('topbar.shortcutHelp')}
       </MenuItem>
       {/* 开始 / 继续 / 重新开始教程：文案与动作都来自 lib/onboarding/tutorial，不在这里判状态 */}
-      <MenuItem onSelect={() => void runTutorialEntry('help')} data-onboarding-anchor="help-tutorial">
-        {t(`topbar.tutorial.${tutorialKind}`)}
-      </MenuItem>
+      {!chipVisible && (
+        <MenuItem onSelect={() => void runTutorialEntry('help')} data-onboarding-anchor="help-tutorial">
+          {t(`topbar.tutorial.${tutorialKind}`)}
+        </MenuItem>
+      )}
     </Menu>
   )
 }
@@ -991,7 +993,7 @@ export function ProjectStatusPill() {
             PILL_TONE[tone],
           )}
         >
-          <Images size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <Images size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           <span className="truncate max-[899px]:sr-only">{text}</span>
         </button>
       }

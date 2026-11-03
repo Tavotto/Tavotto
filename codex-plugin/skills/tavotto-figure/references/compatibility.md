@@ -142,3 +142,73 @@ SVG 尺寸与 viewBox、PNG 像素与 pHYs dpi（TIFF 像素；EPS BoundingBox�
 
 失败结果里的 `requirements` 是「要用户决定什么、用哪个参数答」的索引：`answer_with` 是再调 `tavotto_open_figure` 时带的参数名；
 为 `null` 时看 `where`——`tavotto_app` 要用户在 Tavotto 窗口里操作，`user` 要用户自己处理（例如升级）。
+
+## 大图与多图打开（`tavotto_open_figure` / `tavotto_apply_overrides` 细则）
+
+支持 MCP Apps 的宿主会同时开出一块交互画布，用户可以直接拖；没有画布的宿主用下面同一组
+工具照样走完，不要把外部窗口叫作「内嵌画布」。**图很大时**（几百个
+元素）结果里会带 `elided`，manifest / SVG 没随本次返回——画布会自己取，你只在确实
+要逐元素 gid 时才调 `tavotto_session_state { session_id }`（只读，不重渲染）。
+
+**一个脚本出好几张独立图时不要开 N 次**——`stems` 一次全开，拿回 N 个各自
+可编辑的 `session_id`（不知道有哪些就 `discover_stems: true`，它只认注册表里
+已登记且产物在磁盘上的那些）：
+
+```
+tavotto_open_figure { "project_path": "/absolute/path/to/figures",
+                      "stems": ["XPS_C_Ti_700C", "XPS_C_Ti_800C"] }
+```
+
+批量回的是每张的**摘要 + session_id**（没有 manifest/SVG，也不挂画布——要在
+画布里改哪一张，就用 `stem` 单独开那一张）。结局看 `status`：`done` /
+`partial` / `failed`。**`partial` 是「其余都开着」**，失败那张带自己的
+`stem` 与 code，重试它一张即可，别把整批重开。
+
+* **改图** `tavotto_apply_overrides { session_id, patches, summary: true }`。
+  当前工具 schema 声明 `summary` 时，模型传 true，只读有界变更摘要；完整状态和有界的
+  最近 apply 诊断按需用 `tavotto_session_state { session_id }` 取，别为了读回执再 apply 一次。
+  旧 server 未声明这个参数时省略它；画布和旧程序化调用方仍取同一次渲染的完整响应。
+  `patches` 是 `{gid, prop, value}` 的**全量列表**——列表里没有的 `(gid, prop)`
+  会自动恢复成脚本原始值，所以**每次都要发完整的一份，不要发增量**。
+  gid 与 prop 从 manifest 的 `elements[].editable` 里取，别猜。
+
+## 已有图的规范化：完整话术（技能正文只留摘要）
+
+1. **先识别输入**：`tavotto_open_figure` 开它（脚本必须在产物旁边，否则这张图只是
+   位图 / 轮廓文字，改不了字号字体——如实告诉用户，不要缩放位图冒充「已改字号」）。
+   打开回来的状态就是本次的原图基准 B0。
+3. **它自己会**：只改点名的属性；在真实渲染上检测裁切 / 文字重叠 / 图例压数据；
+   需要时做**有预算的**局部适配（外边距、子图间距、图例在自己子图内换预设位置）；
+   导出并核验**最终文件本身**（PDF 页面尺寸与字体、PNG 像素与 dpi）；四件事同时
+   成立才提交，否则会话回到 B0、不出文件。
+4. **按结果说话**，工具被调用成功 / 文件生成了都不是「任务完成」——看 `exit`：
+   * `done`：向用户说清**明确要求的修改**、**必要的局部调整**（多少 mm）、
+     **保留的原有问题**（`verdict.issues.*.unchanged`，原图本来就有、这次没加重的，
+     不顺手修）、以及规范与用户要求冲突之处（`profile_conflicts`，按用户要求执行了）。
+   * `constraint_conflict` / `budget_exceeded`：装不下。把具体冲突念给用户（哪条文字
+     压了什么、需要多少 mm 只有多少 mm），**列出需要放宽的最小约束**（更大的宽度 /
+     用户允许缩小字号 / 允许把图例移到图外 / 允许改结构），让用户选，**不要自己放宽**。
+   * `font_unavailable`：那个字体这台机器上没装，Tavotto 没有替代。告诉用户装字体或
+     换字体；**不要**自己换一个相近字体再宣称达标。
+   * `requires_authorization` / `protected_changed`：需要用户明确提出新要求。
+   * `acceptance_failed`：文件没过验收，没有交付；把 `failed_files` 的原因如实报告。
+
+## 修改绘图脚本之后：让 Tavotto 自己更新
+
+新建、修改、重命名或删除了绘图脚本（用户要求改数据 / 坐标范围 / 加曲线这类必须回
+代码的改动之后），按这七步收尾——**不要要求用户手动刷新或重启 Tavotto**：
+
+1. 保存代码（脚本与产物同目录，契约不变）；
+2. 调 `tavotto_refresh_project`（有会话就传 `session_id`，否则传 `project_path`）；
+3. 读返回的 `registry`（新增 / 移除 / 变更了哪些脚本）与 `readiness`（每张图的状态）；
+4. 状态是 `editable` 的图：告诉用户 Tavotto 已更新、可以直接在里面改；
+5. 状态是 `needs_probe` 的：说明需要用户在 Tavotto 里点一次「试运行并连接」——**不要猜**
+   它会产出哪张图，也不要替用户跑脚本；
+6. 状态是 `conflict` 的：把候选脚本列给用户，**不自动裁决**；
+7. `delivered: local` 说明 Tavotto 没开着（或是桌面版）：刷新已在本地完成，用户下次打开
+   项目时自动生效；开着的桌面版会由它自己的 watcher 在两秒内跟上。
+
+这条工具**不运行脚本**。开着的 MCP 会话仍然端着改动前的图：要在会话里继续用
+`tavotto_apply_overrides` 改这张图，就 `tavotto_close_session` 再 `tavotto_open_figure`
+重开一次；只是让 Tavotto 界面跟上，则刷新就够了。用户撞上 Tavotto 自身的缺陷时，按
+`references/issue-reporting.md` 写脱敏的 issue 草稿——**用户明确允许才外发**。

@@ -146,6 +146,7 @@ const manifest = (over: { hidden?: boolean } = {}): Manifest =>
         role: 'text',
         label: '文字 “注”',
         bbox: [0.6, 0.6, 0.2, 0.1],
+        paint_order: 9, // 引擎对文字总给次序；缺它就不升 tier 0
         // `f()` 按值的类型猜 type，字符串会猜成 enum —— 双击改字的判据要的是
         // `type === 'text'`，这里必须写死，否则那两条双击用例恒真
         editable: [{ prop: 'text', type: 'text', value: '注' } as never],

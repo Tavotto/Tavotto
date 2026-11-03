@@ -1,0 +1,30 @@
+import hashlib,json,pathlib,shutil,subprocess
+root=pathlib.Path('/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare')
+output=pathlib.Path('/tmp/cla-activation-independent-mutants');output.mkdir(exist_ok=True)
+suite=pathlib.Path('/tmp/cla-activation-independent-review.test.mjs').read_text()
+cases=[
+ ('initial-registry-fence','src/native/agreement-activation.ts','(SELECT count(*) FROM agreements)>2','(SELECT count(*) FROM agreements)>=2','source-only initial anchor'),
+ ('document-byte-hash','src/native/agreement-activation.ts','await sha256(d.content)!==d.digest || ','','tampered prepared fields'),
+ ('runtime-body-hash','src/native/store.ts','if(this.expectedConfig?.agreementActivationEnabled!==true)return;','if(true)return;','stored canonical body corruption'),
+ ('current-packet-tuple','src/native/store.ts','matches=!this.expectedConfig || packetAgreementMatches(this.expectedConfig,p)','matches=true','current store refuses to commit historical tuple for a new subject'),
+ ('current-intent-tuple','src/native/store.ts',"((p.kind='individual' AND p.version=? AND p.digest=?) OR (p.kind='corporate' AND p.version=? AND p.digest=?))",'(? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL)','new store rejects old packet mutation')]
+fixtures=['activation-fixture.mjs','delegation-fixture.mjs','independent-oauth-db.mjs']
+report=[]
+for name,relative,before,after,pattern in cases:
+ target=output/name
+ if target.exists():shutil.rmtree(target)
+ source_hashes={}
+ for src in (root/'src').rglob('*'):
+  if src.is_file():
+   relative_file=src.relative_to(root);data=src.read_bytes();destination=target/relative_file;destination.parent.mkdir(parents=True,exist_ok=True);destination.write_bytes(data);source_hashes[str(relative_file)]=hashlib.sha256(data).hexdigest()
+ for filename in fixtures:
+  destination=target/'tests'/filename;destination.parent.mkdir(parents=True,exist_ok=True);destination.write_bytes((root/'tests'/filename).read_bytes())
+ source=target/relative;original=source.read_text();assert original.count(before)==1,(name,original.count(before));source.write_text(original.replace(before,after,1));assert after in source.read_text()
+ testfile=target/'independent-review.test.mjs';testfile.write_text(suite.replace(str(root),str(target)))
+ result=subprocess.run(['node','--test','--test-name-pattern',pattern,str(testfile)],capture_output=True,text=True)
+ (target/'result.tap').write_text(result.stdout+result.stderr)
+ assert result.returncode==1,(name,result.returncode,result.stdout,result.stderr)
+ assert 'AssertionError' in result.stdout,(name,result.stdout,result.stderr)
+ report.append({'mutation':name,'source':str(root/relative),'source_sha256':source_hashes[relative],'mutated_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'replacement_count':1,'test_pattern':pattern,'exit_code':result.returncode,'failure':'AssertionError','output':str(target/'result.tap')})
+(output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps(report,indent=2))

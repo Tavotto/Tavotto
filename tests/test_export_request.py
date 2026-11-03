@@ -121,9 +121,40 @@ def test_tiff_is_raster_and_eps_is_vector_for_the_ppi_rule():
     assert req.has_raster and req.has_vector
     assert exportreq.FORMAT_TIFF in exportreq.RASTER_FORMATS
     assert exportreq.FORMAT_EPS in exportreq.VECTOR_FORMATS
-    # 引擎直连那条路（MCP）认的集合是画布那条的超集 + svg，两边不许各自漂
-    assert set(exportreq.ENGINE_FORMATS) == set(exportreq.FORMATS) | {exportreq.FORMAT_SVG}
-    assert set(exportreq.FORMATS) | {"svg"} == exportreq.RASTER_FORMATS | exportreq.VECTOR_FORMATS
+    # 两条入口认同一个格式集合，但各自保持已经发布的输出顺序。
+    assert set(exportreq.ENGINE_FORMATS) == set(exportreq.FORMATS)
+    assert set(exportreq.FORMATS) == exportreq.RASTER_FORMATS | exportreq.VECTOR_FORMATS
+
+
+def test_svg_is_appended_without_reordering_existing_formats_or_engine_outputs():
+    assert exportreq.FORMATS == ("pdf", "png", "eps", "tiff", "svg")
+    spec = _canvas_spec(formats=["svg", "tiff", "eps", "png", "pdf", "svg"])
+    assert exportreq.normalize(spec).formats == ("pdf", "png", "eps", "tiff", "svg")
+    assert exportreq.ENGINE_FORMATS == ("pdf", "png", "svg", "eps", "tiff")
+    assert exportreq.normalize(spec, allowed_formats=exportreq.ENGINE_FORMATS).formats == (
+        "pdf",
+        "png",
+        "svg",
+        "eps",
+        "tiff",
+    )
+
+
+@pytest.mark.parametrize("scope", ["canvas", "original"])
+def test_svg_request_is_vector_and_round_trips_with_no_ppi(scope):
+    spec = _canvas_spec(formats=["svg"], filename="Fig 1.SVG", ppi="unused")
+    if scope == "original":
+        spec.update(scope=scope, original={"figure_id": "Fig 1.pdf"})
+        spec.pop("canvas")
+    req = exportreq.normalize(spec)
+    assert req.formats == ("svg",)
+    assert req.has_vector and not req.has_raster
+    assert req.ppi is None
+    assert req.filename == "Fig 1"
+    assert exportreq.output_name(req.filename, "svg") == "Fig 1.svg"
+    assert req.to_payload()["ppi"] is None
+    assert req.to_payload()["formats"] == ["svg"]
+    assert exportreq.normalize(_canvas_spec(formats=["svg", "png"], ppi=300)).ppi == 300
 
 
 def test_tif_alias_typed_by_the_user_is_stripped_too():
@@ -143,7 +174,6 @@ def test_tif_alias_typed_by_the_user_is_stripped_too():
     [
         ({"formats": []}, "no_format"),
         ({"formats": ["docx"]}, "unsupported_format"),
-        ({"formats": ["svg"]}, "unsupported_format"),  # 画布合成给不出 svg（只有引擎直连那条路认）
         ({"ppi": "x"}, "bad_ppi"),
         ({"ppi": 5}, "ppi_out_of_range"),
         ({"ppi": 99999}, "ppi_out_of_range"),
@@ -231,3 +261,30 @@ def test_dedupe_numbering():
     taken = {"Fig 1.pdf", "Fig 1 (2).pdf"}
     assert exportreq.dedupe_name("Fig 1", "pdf", lambda n: n in taken) == "Fig 1 (3).pdf"
     assert exportreq.dedupe_name("Fig 1", "png", lambda n: n in taken) == "Fig 1.png"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_saved_figure_reference_is_a_closed_request_field(scope):
+    reference = {
+        "version": 1,
+        "sourceId": "runtime:plot.py#F",
+        "patchHash": "sha256:" + "1" * 64,
+        "receiptId": "sha256:" + "2" * 64,
+        "snapshotId": "3" * 64,
+    }
+    spec = {"scope": scope, "filename": "saved", "formats": ["svg"]}
+    if scope == "original":
+        source = {"figure_id": reference["sourceId"], "figure_snapshot": reference}
+        spec["original"] = source
+    else:
+        source = {"type": "panel", "id": reference["sourceId"], "figure_snapshot": reference}
+        spec["canvas"] = {"page_w_mm": 100, "page_h_mm": 50, "objects": [source]}
+    req = exportreq.normalize(spec)
+    assert (
+        req.original.figure_snapshot
+        if scope == "original"
+        else req.canvas.objects[0]["figure_snapshot"]
+    ) == reference
+    source["figure_snapshot"] = {**reference, "argv": ["private"]}
+    with pytest.raises(exportreq.ExportRequestError, match="Invalid Figure snapshot"):
+        exportreq.normalize(spec)

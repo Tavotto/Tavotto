@@ -19,7 +19,7 @@ import time
 import pytest
 
 from support import nativekit, procprobe
-from tavotto.engine import nativehandoff, nativesession, runcodes
+from tavotto.engine import executionfact, nativehandoff, nativesession, runcodes
 
 pytestmark = nativekit.needs_user_python
 
@@ -448,7 +448,8 @@ def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
     try:
         native_id = nativekit.wait_for_pending(before)
         session = nativekit.attach_as_desktop(native_id)
-        nativekit.wait_state(session, [nativesession.WAITING_FOR_FIGURE])
+        nativekit.wait_state(session, [nativesession.RUNNING_SCRIPT])
+        assert executionfact.valid_id(session.execution_id)
         child_pid = session.process_pid
         assert child_pid, "没拿到用户 Python 的 pid"
         deadline = time.monotonic() + 90

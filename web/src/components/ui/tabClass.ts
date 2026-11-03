@@ -19,3 +19,13 @@ export const tabClass = (active: boolean) =>
     'relative h-full text-sm outline-none transition-colors focus-visible:focus-ring',
     active ? 'font-semibold text-ink' : 'text-ink-3 hover:text-ink-2',
   )
+
+/**
+ * 分段式页签（`TabList variant="segmented"`）：整格可点；选中字 600 + ink，白色 thumb 由 TabList 画在下面；
+ * 未选中 ink-2（槽是 ink 4% 叠在面板上，ink-3 对比度不够，同 `Segmented`）。字多了在格内省略号截断。
+ */
+export const segmentedTabClass = (active: boolean) =>
+  cn(
+    'relative block min-w-0 truncate rounded-full px-0.5 text-center text-sm outline-none transition-colors duration-fast focus-visible:focus-ring',
+    active ? 'font-semibold text-ink' : 'text-ink-2 hover:text-ink',
+  )

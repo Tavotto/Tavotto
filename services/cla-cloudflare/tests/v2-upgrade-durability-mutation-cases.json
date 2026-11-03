@@ -1,0 +1,11 @@
+[
+  {
+    "name": "v2 upgrade committed WAL result persists before success",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "  db.exec('COMMIT');begun=false;\n  return {status:'upgraded_synthetic_only'",
+    "after": "  begun=false;\n  return {status:'upgraded_synthetic_only'",
+    "pattern": "v2 upgrade synthetic WAL commit survives close reopen and old-plan recognition without DDL",
+    "testFile": "tests/v2-upgrade-durability.test.mjs",
+    "assertionError": true
+  }
+]

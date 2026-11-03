@@ -11,17 +11,22 @@ import {
   FileCodeCorner,
   ImageOff,
   KeyRound,
-  LoaderCircle,
   Minus,
   RotateCcw,
+  Sparkles,
   Unplug,
   X,
 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
+import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import {
   backendCodeMsg,
+  backendErrorText,
   fetchDependencyOffer,
   isNativeTerminal,
+  ignoreImportFolder,
+  repairImportFolder,
   type GuiDialogPayload,
   type PreparationAttempt,
   type PreparationReport,
@@ -31,17 +36,21 @@ import {
 } from '@/lib/api'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import type { RemedyEnv } from '@/lib/fixRemedy'
+import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
-import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { aiRevert, convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { parseRenames } from '@/lib/overrideIdentity'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
@@ -61,11 +70,19 @@ import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderSto
 import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEnterEdit'
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { useAiFixStore } from '@/store/aiFixStore'
+import { useAiStore } from '@/store/aiStore'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
+import { useConvertStore } from '@/store/convertStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useUiStore } from '@/store/uiStore'
+import { aiFixFlow } from './AiFixFlow'
+import { dependencyDecision } from './DependencyDecision'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
 import { OriginReasonCounts } from './OriginDetails'
 import { ScriptArgsForm } from './ScriptArgsForm'
@@ -73,10 +90,11 @@ import { ArgvTokens, PasteCommand } from './ScriptArgvEditor'
 import { isSecret, suggestionText, useScriptInputAnswer, type ScriptInputAnswer } from './ScriptInputForm'
 import { TaskDiagnostic } from './TaskDiagnostic'
 import { SendReportButton } from './SendReportButton'
+import { FailureMenu, errorTextOf } from './PreparationFailureMenu'
 import { CopyButton } from './settings/CopyButton'
 import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
-import { TextInput } from './ui/Input'
+import { TextArea, TextInput } from './ui/Input'
 import { Menu, MenuItem } from './ui/Menu'
 import { ProgressBar } from './ui/ProgressBar'
 import { Radio } from './ui/Radio'
@@ -113,7 +131,7 @@ function useEditReady(renders: Record<string, EditRender>): boolean {
  * 「试运行并连接」——都落在这张卡上。
  *
  * ```text
- * 准备 · 运行 · 编辑                        —  ×
+ * 准备 ▬▭▭                                  —  ×
  * 发现绘图脚本 spectrum.py
  * 详情 ▾                       稍后  [打开并运行]
  * ```
@@ -139,6 +157,7 @@ export function PreparationCard() {
   const forced = useProjectScanStore((s) => s.forced)
   const { hidden } = usePrepSurface()
   const lost = useProjectScanStore((s) => s.pollLost)
+  const foreign = useForeignScriptStore((s) => s.offer !== null)
   const toolbarUp = useCanvasToolbarVisible()
   // 草稿变了要重新渲染（参数改了 → 「继续」）
   const drafts = useScriptArgvStore((s) => s.drafts)
@@ -190,7 +209,8 @@ export function PreparationCard() {
     if (asking && useUiStore.getState().guideCard === 'pill') useUiStore.getState().setGuideCard('card')
   }, [asking])
 
-  if (hidden || mode === 'closed' || (!view && !scanned)) return null
+  // R / MATLAB 入口卡出现时让开别的引导卡：一次只有一张一句话卡片
+  if (foreign || hidden || mode === 'closed' || (!view && !scanned)) return null
   return (
     <div
       data-guide-anchor
@@ -222,17 +242,18 @@ export function PreparationCard() {
 const STEPS = ['prepare', 'run', 'edit'] as const
 
 const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
-  busy: <LoaderCircle size={ICON_SIZE.md} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />,
-  ok: <CircleCheck size={ICON_SIZE.md} className="shrink-0 text-ok" />,
-  bad: <CircleAlert size={ICON_SIZE.md} className="shrink-0 text-danger" />,
-  mute: <CircleQuestionMark size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
+  // 状态图标：颜色 + 实心孪生双重提示（空心环 + 细线记号四种长得太像）；busy 是全产品唯一的 Spinner
+  busy: <Spinner size={ICON_SIZE.md} className="text-accent" />,
+  ok: <CircleCheck playIn size={ICON_SIZE.md} className="shrink-0 text-ok" />,
+  bad: <CircleAlert playIn size={ICON_SIZE.md} className="shrink-0 text-danger" />,
+  mute: <CircleQuestionMark filled size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
 }
 
 function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
   // 几个状态有自己更具体的记号（设计稿 v2）
   if (state === 'no_figure' || state === 'no_figure_raster') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
-  if (state === 'offline') return <Unplug size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
+  if (state === 'offline') return <Unplug playIn size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'restarted') return <RotateCcw size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'input_secret') return <KeyRound size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   return TONE_ICON[tone]
@@ -252,10 +273,14 @@ interface ShellProps {
   more?: ReactNode
   ghost?: ReactNode
   primary?: ReactNode
+  /** 标题与这一步下面那颗显眼的次按钮「✦ 使用你的 AI 来修复」（失败卡；不是横条，不占整行以外的位置） */
+  aiFix?: ReactNode
+  /** 覆盖「×」的去向（默认收起整张引导卡）；R / MATLAB 入口卡的 × 是“不提议了”，并且没有“缩成角标” */
+  onClose?: () => void
 }
 
 /** 卡片外壳：步骤 · 工具（— ⋯ ×）/ 图标 + 标题 / 这一步 / 详情 / 详情 · 稍后 · 主按钮 */
-function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, more, ghost, primary }: ShellProps) {
+function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, more, ghost, primary, aiFix, onClose }: ShellProps) {
   const [open, setOpen] = useState(false)
   const ui = useUiStore.getState()
   return (
@@ -266,38 +291,44 @@ function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, m
       className="pointer-events-auto flex min-h-0 w-full animate-pop-in flex-col gap-3 rounded-panel bg-surface px-5 pb-4 pt-3.5 text-base text-ink shadow-dialog"
     >
       <div className="flex h-6 shrink-0 items-center gap-2">
-        <ol className="flex items-center gap-1.5 text-sm" aria-label={pt('card.steps')}>
-          {STEPS.map((s, i) => (
-            <li
-              key={s}
-              aria-current={i === step ? 'step' : undefined}
-              className={cn(
-                'flex items-center gap-1.5',
-                i === step ? 'font-medium text-ink' : i < step ? 'text-ink-3' : 'text-ink-faint',
-              )}
-            >
-              {i > 0 && <span aria-hidden className="h-[3px] w-[3px] rounded-full bg-ink-faint" />}
-              {pt(`card.step.${s}`)}
-            </li>
-          ))}
-        </ol>
+        {/* 只写当前阶段 + 三小段进度（2026-10-28 精致感审计第二批 #1，方案 B）：此前「准备 • 运行 • 编辑」的 3px 点与待办步骤同为
+            ink-faint（对白 2.5:1），读起来像项目符号。三段：已过 ink-3、当前 ink、待办 border；步骤名与第几步由 sr-only 文字 + aria-current 传达 */}
+        <div className="flex h-6 min-w-0 items-center gap-2 text-sm" data-prep-steps data-prep-step={STEPS[step]}>
+          <span aria-hidden className="font-medium leading-none text-ink" data-prep-stage>
+            {pt(`card.step.${STEPS[step]}`)}
+          </span>
+          <ol className="flex items-center gap-[3px]" aria-label={pt('card.stepOf', { n: step + 1, total: STEPS.length, name: pt(`card.step.${STEPS[step]}`) })}>
+            {STEPS.map((s, i) => (
+              <li
+                key={s}
+                aria-current={i === step ? 'step' : undefined}
+                data-prep-seg={i === step ? 'current' : i < step ? 'done' : 'todo'}
+                className={cn('h-[3px] w-3.5 rounded-xs', i === step ? 'bg-ink' : i < step ? 'bg-ink-3' : 'bg-border')}
+              >
+                <span className="sr-only">{pt(`card.step.${s}`)}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
         <div className="-mr-2 ml-auto flex items-center">
-          <IconButton
-            iconSize="sm"
-            label={pt('card.minimize')}
-            data-prep-minimize
-            className="text-ink-3"
-            onClick={() => ui.setGuideCard('pill')}
-          >
-            <Minus size={ICON_SIZE.sm} />
-          </IconButton>
+          {!onClose && (
+            <IconButton
+              iconSize="sm"
+              label={pt('card.minimize')}
+              data-prep-minimize
+              className="text-ink-3"
+              onClick={() => ui.setGuideCard('pill')}
+            >
+              <Minus size={ICON_SIZE.sm} />
+            </IconButton>
+          )}
           {more}
           <IconButton
             iconSize="sm"
             label={pt('card.close')}
             data-prep-close
             className="text-ink-3"
-            onClick={() => ui.setGuideCard('closed')}
+            onClick={() => (onClose ? onClose() : ui.setGuideCard('closed'))}
           >
             <X size={ICON_SIZE.sm} />
           </IconButton>
@@ -305,12 +336,13 @@ function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, m
       </div>
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto" data-prep-body>
         <div className="flex items-start gap-2.5">
-          {icon}
+          {icon && <IconSlot className="h-5">{icon}</IconSlot>}
           <p className="type-title min-w-0 flex-1 break-words font-medium text-ink" data-prep-line aria-live="polite">
             {title}
           </p>
         </div>
         {slot}
+        {aiFix}
         {details && open && (
           <div
             data-prep-details
@@ -564,7 +596,7 @@ function ScanPill({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
     <Pill
       attrs={attrs}
       label={label}
-      icon={card.kind === 'scanning' ? <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" /> : <CircleQuestionMark size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />}
+      icon={card.kind === 'scanning' ? <Spinner size={ICON_SIZE.sm} className="text-accent" /> : <CircleQuestionMark size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />}
     >
       {label}
     </Pill>
@@ -589,6 +621,7 @@ const ARGS_FOLDED = new Set([
   'no_figure_raster',
   'completed',
   'completed_unlinked',
+  'completed_partial',
   'cancelled',
 ])
 
@@ -638,7 +671,147 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.background')
     case 'dismiss':
       return pt('btn.dismiss')
+    case 'convert':
+      return pt('convert.btn.start')
+    case 'ai_fix':
+      return pt('btn.aiFix')
+    case 'feedback':
+      return pt('btn.send')
+    case 'repair_folder':
+      return pt('btn.repairFolder')
+    case 'skip_folder':
+      return pt('btn.skipFolder')
+    case 'use_builtin_python':
+      return pt('btn.useBuiltinPython', { product: PRODUCT_NAME })
+    case 'switch_python':
+      return pt('btn.switchPython', { name: p.env.name })
+    case 'revert_ai_edit':
+      return pt('btn.revertAiEdit')
   }
+}
+
+/**
+ * 修复项目外文件夹的权限（Windows，ADR 0153 修订）并在成功后重跑一次——准备卡的主按钮与 AI 修复结果卡的按钮共用这一处。
+ * 只把令牌交给后端（弹一次 UAC）；取消 / 没拿到管理员权限 / 没修好都回后端那一句话（调用方放在卡片上），不重试、不再弹。
+ * 重跑沿用卡上「再试一次」同一个动作；挂起期间换了项目就什么都不做。
+ */
+async function repairFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, () => repairImportFolder(token))
+}
+
+/** 「跳过这个文件夹」（ADR 0154）并重跑一次：只把令牌交给后端，之后与「修复权限」同一个重跑动作 */
+async function skipFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  return folderDecisionAndRerun(entry, () => ignoreImportFolder(token))
+}
+
+/**
+ * 「改用自带的 Python」（`interpreter_cache_denied`，TVD-B6MR）并重跑一次：清掉还会选中失败解释器的那几层选择——
+ * `global` 清全局（`setPython(null)`）；`project` 让项目改用默认链条（`setProjectPython(null)`，后端 `remember_default`）；
+ * `both`（全局指定的同时也是项目记住的那条，只清全局下一档还是它）两层都清。清不掉回那一句话、不重跑。
+ *
+ * 重跑走「打开并运行」，但要**等环境变化触发的那次重新检查落定**：envStore 一变，订阅就让空闲会话 `recheck`（`pending`
+ * 置上），此刻立刻 `open(run)` 会被「同目标有动作在飞」挡回、不认领（Codex #1595）。等它落定后 `open` 按新报告认领。
+ */
+async function switchToBuiltinPythonAndRerun(entry: PrepEntry, scope: 'global' | 'project' | 'both'): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const env = useEnvStore.getState()
+  if (scope !== 'project') {
+    const err = await env.setPython(null)
+    if (!guard.still()) return null
+    if (err) return err
+  }
+  if (scope !== 'global') {
+    const err = await env.setProjectPython(null)
+    if (!guard.still()) return null
+    if (err) return err
+  }
+  await actionSettled(entry.key)
+  if (!guard.still()) return null
+  await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
+}
+
+/** 等这条目上在飞的动作（环境变化触发的 `recheck` 之类）落定；条目没了 / 超时也放行（`open` 自己会再检查一次） */
+function actionSettled(key: string, timeoutMs = 30_000): Promise<void> {
+  const busy = () => !!useProjectPreparationStore.getState().entries[key]?.pending
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      unsub()
+      resolve()
+    }
+    const timer = setTimeout(done, timeoutMs)
+    const unsub = useProjectPreparationStore.subscribe(() => {
+      if (!busy()) done()
+    })
+  })
+}
+
+/**
+ * 「改用 <环境名>」（Python 版本不合，后端挑的现成环境）并重跑一次：走既有的候选采用（`adoptCandidate`：后端现场再体检，
+ * 环境代对不上 / 被全局解释器压着就拒绝，原文如实回到卡上、不重跑），采用成功再「打开并运行」——与上面清选择那条同一个重跑模式。
+ * 只在用户点击时发生；用户之前显式挑的环境因此只会被用户自己的这一下换掉。
+ */
+async function switchToEnvAndRerun(entry: PrepEntry, env: RemedyEnv): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const err = await useEnvStore.getState().adoptCandidate({ id: env.id, generation: env.generation }, targetName(entry))
+  if (!guard.still()) return null
+  if (err) return err
+  // 采用会改 envStore，触发空闲会话的 recheck；先等它落定再 open（Codex #1595，同上面清选择那条）
+  await actionSettled(entry.key)
+  if (!guard.still()) return null
+  await useProjectPreparationStore.getState().open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
+}
+
+/**
+ * 「回滚 AI 的修改」（remedy `revert_ai_edit`，TVD-H1M5）并重跑一次：与助手历史里「回滚此次修改」同一个后端动作（`ai_bridge.revert`，
+ * 带版本：脚本之后又变过就 `ai_revert_conflict`，一个字节不动，那句话落在卡上）。助手面板这会儿列着那次会话就经 `aiStore.revert`
+ * （同步它的状态与改名映射）；没列着（换过项目再回来 / 面板没打开过）直接调同一个端点，改名映射照样经 `rebindRenamedIdentities`
+ * 改回旧名字——与助手历史的直接回滚同一处理（ADR 0083 §五），否则画布编辑的身份停在 AI 起的新名字上、被渲染拒掉。
+ *
+ * 重跑**不**认领失败报告里的旧 `run`：那份计划冻结的是 AI 改过的脚本版本（`script_revision`），回滚之后认领会被
+ * `preparation_plan_stale` 拒掉、什么都不跑。先认领 `recheck`（后端按回滚后的源码换新计划），再认领新修订的运行动作。
+ */
+async function revertAiEditAndRerun(entry: PrepEntry, session: string): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  try {
+    const ai = useAiStore.getState()
+    if (ai.sessions.some((x) => x.id === session)) await ai.revert(session)
+    else {
+      const res = await aiRevert(session)
+      if (guard.still()) rebindRenamedIdentities(parseRenames(res?.renamed), 'back')
+    }
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  if (!guard.still()) return null
+  const store = useProjectPreparationStore.getState()
+  await store.act(entry.key, 'recheck')
+  const fresh = useProjectPreparationStore.getState().entries[entry.key]?.report
+  if (!guard.still() || !fresh) return null
+  const can = (kind: 'run_when_ready' | 'run') => fresh.actions.some((a) => a.kind === kind)
+  const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
+  if (rerun) await store.act(entry.key, rerun)
+  return null
+}
+
+async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<unknown>): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  try {
+    await decide()
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  const report = entry.report
+  if (!guard.still() || !report) return null
+  const store = useProjectPreparationStore.getState()
+  const can = (kind: 'run_when_ready' | 'run') => report.actions.some((a) => a.kind === kind)
+  const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
+  if (rerun) await store.act(entry.key, rerun)
+  else await store.open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
 }
 
 /** 主按钮做的事（与 T09 面板同一组真实动作；卡片只换了呈现） */
@@ -672,7 +845,7 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
           return null
         }
         // 进入编辑的实现只有一份（`store/prepEnterEdit`）：与「打开并运行」完成后的自动进入共用
-        await enterEdit(editHost(entry.key), figures[0])
+        await enterEdit({ ...editHost(entry.key), placeIn: entry.placeIn ?? undefined }, figures[0])
         return null
       }
       case 'reopen':
@@ -682,7 +855,7 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
             ? entry.target
             : scriptTarget(entry.target.script, { reuse: entry.target.reuse_last_success === true }),
           // 「继续」不是新的一次「打开并运行」：回到已跑完的同配置会话时复用结果，不重跑（registry-center-preparation e2e）
-          { run: entry.wantsRun, rerun: false },
+          { run: entry.wantsRun, rerun: false, placeIn: entry.placeIn },
         )
         return null
       case 'confirm_origins': {
@@ -712,15 +885,10 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         // 脚本自己写出的图片文件，素材库本来就列（不新造导入入口）；卡片收起让位给素材库
         // 素材库挂载时不重载 `/api/panels`、项目 watcher 又要等轮询+防抖：刚写出的图不主动刷新就要等几秒才出现，
         // 按钮看起来像坏了。走素材库工具栏刷新按钮用的同一条统一刷新（不 await：切标签不等它，失败也不挡路）
-        // 切标签的同一刻素材库就进加载态：`AssetBrowser` 的磁盘素材面板与忙碌态读的是 `useAssetStore.loading`
-        // （不是 runtime 素材库的 `assetsLoading`，那个标志它不订阅），所以置的是它。
-        // 刷新自己结束时会 `refreshAssetsAndSync({ force })` 重取清单并收掉 loading；兜底：刷新抛在重取之前时
-        // loading 仍为真，则在这里补一次强制取清单，不让素材库永远转圈
-        useAssetStore.setState({ loading: true })
+        // 统一刷新自己持有扫描到强制清单结束的忙碌态，旧清单的 finally 不能提前撤下它。
         void refreshProjectNow()
           .catch(() => {})
           .finally(() => {
-            if (useAssetStore.getState().loading) void useAssetStore.getState().load({ force: true })
             void useRuntimeAssetStore.getState().loadAssets()
           })
         ui.setLeftTab('assets')
@@ -732,16 +900,395 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'dismiss':
         ui.setGuideCard('closed')
         return null
+      case 'convert':
+        // 不 await：生成要几十秒，进度与结果由卡片读 convertStore；失败也落在 store 里
+        void useConvertStore.getState().start(p.script, p.library, p.path, p.language)
+        return null
+      case 'ai_fix':
+        // 没连 AI：去设置的 AI 页连，连好回来自动接着修；已连：开始修复（aiFixStore 管，ADR 0148）。不 await：修复是后台任务
+        if (report) {
+          void useAiFixStore.getState().request(entry.key, {
+            session_id: report.session_id,
+            script: report.target.script ?? '',
+            attemptId: report.provider.attempt_id,
+          })
+        }
+        return null
+      case 'feedback':
+        // 打开发送问题反馈对话框（本机备包，逐次确认；源码复选框默认不勾——ADR 0118）
+        useDiagSendStore.getState().setOpen(true)
+        return null
+      case 'repair_folder':
+        return repairFolderAndRerun(entry, p.token)
+      case 'skip_folder':
+        return skipFolderAndRerun(entry, p.token)
+      case 'use_builtin_python':
+        return switchToBuiltinPythonAndRerun(entry, p.scope)
+      case 'switch_python':
+        return switchToEnvAndRerun(entry, p.env)
+      case 'revert_ai_edit':
+        return revertAiEditAndRerun(entry, p.session)
     }
   }
 }
 
-function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
+/** 对照视图：左原图、右新版（SVG 预览）；版式数据（宽高比差）只当提示，不替用户判 */
+function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]> }) {
+  const st = entry.status
+  const cmp = st?.comparison
+  const orig = cmp?.original?.path
+  return (
+    <div data-convert-compare className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2">
+        <figure className="m-0 flex min-w-0 flex-col gap-1">
+          <div className="flex h-32 items-center justify-center overflow-hidden rounded-xs border border-border bg-surface-2">
+            {orig ? <img data-convert-original src={convertOriginalUrl(orig)} alt={pt('convert.original')} className="max-h-full max-w-full object-contain" /> : null}
+          </div>
+          <figcaption className="text-sm text-ink-3">{pt('convert.original')}</figcaption>
+        </figure>
+        <figure className="m-0 flex min-w-0 flex-col gap-1">
+          <div className="flex h-32 items-center justify-center overflow-hidden rounded-xs border border-border bg-surface-2">
+            {st?.has_preview && entry.session ? (
+              <img data-convert-new src={convertPreviewUrl(entry.session)} alt={pt('convert.redrawn')} className="max-h-full max-w-full object-contain" />
+            ) : (
+              <span className="px-2 text-center text-sm text-ink-3">{pt('convert.noPreview')}</span>
+            )}
+          </div>
+          <figcaption className="text-sm text-ink-3">{pt('convert.redrawn')}</figcaption>
+        </figure>
+      </div>
+      {cmp?.aspect_delta != null && cmp.aspect_delta > 0.02 ? (
+        <p data-convert-aspect className="text-sm text-ink-3">
+          {pt('convert.aspectDiffers', { pct: Math.round(cmp.aspect_delta * 100) })}
+        </p>
+      ) : null}
+      {/* R / MATLAB 来源从不被运行：没有原图可对照就如实说“未对照验证”，让用户并排看一眼再采用 */}
+      {st?.source_language && st.source_language !== 'python' && cmp?.verification === 'unknown' ? (
+        <p data-convert-unverified className="text-sm text-ink-2">
+          {pt('convert.unverified', { product: PRODUCT_NAME })}
+        </p>
+      ) : null}
+      {st?.adopt_adds && st.adopt_adds.length > 0 ? (
+        <p data-convert-adopt-adds className="text-sm text-ink-3">
+          {pt('convert.adoptAdds', { files: listJoin(st.adopt_adds) })}
+        </p>
+      ) : null}
+      {st?.installed && st.installed.length > 0 ? (
+        <p data-convert-installed className="text-sm text-ink-3">
+          {pt('convert.installed', { names: listJoin(st.installed) })}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** 转换在跑时每 30 秒让卡片重绘一次，「已用 X 分钟」才会走 */
+function useConvertTick(active: boolean): void {
+  const [, setN] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const id = window.setInterval(() => setN((n) => n + 1), 30_000)
+    return () => window.clearInterval(id)
+  }, [active])
+}
+
+/** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
+function convertFlow(
+  c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
+  p: Extract<PrepPrimary, { kind: 'convert' }>,
+  entry: PrepEntry | undefined,
+): { title: string; slot?: ReactNode; primary?: ReactNode; ghost?: ReactNode } {
+  const store = useConvertStore.getState()
+  const retry = () => void store.start(p.script, p.library, p.path, p.language)
+  switch (c.phase) {
+    case 'running':
+      if (c.stopping) {
+        // 停止被拒 / 只转交给别的进程：结局未定，等对账——只有一句话、没有按钮（候选可能马上 ready）
+        return { title: pt('convert.deps.stopping'), slot: <Progress /> }
+      }
+      // 转换要几分钟：满一分钟起说「已用 X 分钟」（卡片每 30 秒重绘一次，见 `useConvertTick`）
+      const minutes = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 60_000) : 0
+      const long = c.activity === 'writing_long'
+      return {
+        title: long
+          ? minutes >= 1
+            ? pt('convert.writingLongElapsed', { minutes })
+            : pt('convert.writingLong')
+          : minutes >= 1
+            ? pt('convert.runningElapsed', { minutes })
+            : pt('convert.running'),
+        slot: <Progress />,
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
+            {pt('btn.stop')}
+          </Button>
+        ),
+      }
+    case 'deps': {
+      if (!c.card) return { title: pt('convert.fail.unknown') }
+      return dependencyDecision(c.card, {
+        install: () => void store.resolveDeps(p.script),
+        decline: () => void store.discard(p.script),
+        chooseEnv: () => store.chooseEnv(p.script),
+      })
+    }
+    case 'resuming':
+      if (c.stopping) {
+        // 停止可能来得太晚：等后端回话再决定清卡还是显示「依赖已装好」，期间只有一句话、没有可点的按钮
+        return { title: pt('convert.deps.stopping'), slot: <Progress /> }
+      }
+      return {
+        title: c.replanning
+          ? pt('convert.deps.replanning')
+          : c.card?.packages.length
+            ? pt('convert.deps.resuming', { names: listJoin(c.card.packages) })
+            : pt('convert.deps.continuing'),
+        slot: <Progress />,
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
+            {pt('btn.stop')}
+          </Button>
+        ),
+      }
+    case 'installed':
+      // 停止来得太晚：依赖已经装好（撤不回），候选保留；不自动往下跑，由用户点「继续」
+      return {
+        title: pt('convert.deps.installedLate'),
+        primary: (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-continue
+            data-prep-primary="convert_continue"
+            onClick={() => void store.continueAfterInstall(p.script)}
+          >
+            {pt('convert.deps.btn.continue')}
+          </Button>
+        ),
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" onClick={() => void store.discard(p.script)}>
+            {pt('convert.btn.discard')}
+          </Button>
+        ),
+      }
+    case 'ready':
+    case 'adopting':
+      return {
+        title: pt(c.stoppedLate ? 'convert.stoppedLate' : 'convert.ready'),
+        slot: <ConvertCompare entry={c} />,
+        primary: (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-adopt
+            data-prep-primary="convert_adopt"
+            loading={c.phase === 'adopting'}
+            disabled={c.phase === 'adopting'}
+            onClick={async () => {
+              const made = await store.adopt(p.script)
+              if (!made) return
+              // 采用规则（ADR 0139 PR1 同款）：新脚本另起面板，原位图面板不动——用既有的「打开并运行」接进画布
+              void useProjectPreparationStore.getState().open(scriptTarget(made), { run: true, rerun: false })
+              store.clear(p.script)
+            }}
+          >
+            {pt('convert.btn.adopt')}
+          </Button>
+        ),
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" disabled={c.phase === 'adopting'} onClick={() => void store.discard(p.script)}>
+            {pt('convert.btn.discard')}
+          </Button>
+        ),
+      }
+    case 'failed': {
+      // Missing evidence needs an explicit reference selection before another attempt.
+      const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
+      const multiline = needsInput && c.detail?.includes('\n')
+      // 路径太长：重试不会变好，主按钮只给「关闭」（一句话 + 一个按钮）
+      const dismissOnly = needsInput || c.reason === 'workspace_path_too_long'
+      return {
+        title:
+          c.error ??
+          (needsInput && c.detail && !multiline
+            ? pt('convert.fail.needs_input_reason', { reason: c.detail })
+            : pt(`convert.fail.${c.reason}`, { defaultValue: pt('convert.fail.unknown') })),
+        slot: multiline ? (
+          <p data-convert-input-reason className="whitespace-pre-wrap break-words text-sm text-ink-2">
+            {c.detail}
+          </p>
+        ) : undefined,
+        primary: dismissOnly ? (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-dismiss
+            data-prep-primary="convert_dismiss"
+            onClick={() => {
+              store.clear(p.script)
+              useForeignScriptStore.getState().clear()
+            }}
+          >
+            {pt('btn.dismiss')}
+          </Button>
+        ) : (
+          <Button variant="primary" size="md" data-convert-retry data-prep-primary="convert_retry" onClick={retry}>
+            {pt('convert.btn.retry')}
+          </Button>
+        ),
+        ghost: dismissOnly ? undefined : <SendReportButton variant="ghost" size="md" />,
+      }
+    }
+    case 'adopted':
+      return { title: pt('convert.adopted') }
+  }
+  void entry
+}
+
+/** Reference input is shared by Python and foreign conversions, and stays local until retry. */
+function useConvertFlow(
+  c: Parameters<typeof convertFlow>[0] | undefined,
+  p: Parameters<typeof convertFlow>[1] | null,
+  entry: PrepEntry | undefined,
+  identity: unknown,
+): ReturnType<typeof convertFlow> | null {
+  const [draft, setDraft] = useState<{ identity: unknown; text: string } | null>(null)
+  useConvertTick(c?.phase === 'running')
+  const flow = c && p ? convertFlow(c, p, entry) : null
+  if (!flow || !p || c?.phase !== 'failed' || !['needs_input', 'convert_reference_invalid'].includes(c.reason ?? '')) return flow
+  const text = draft && draft.identity === identity ? draft.text : ''
+  const files = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  return {
+    ...flow,
+    slot: (
+      <div className="flex flex-col gap-2">
+        {flow.slot}
+        <label className="type-caption text-ink-2">
+          {pt('convert.references.label')}
+          <TextArea
+            aria-label={pt('convert.references.label')}
+            data-convert-references
+            rows={2}
+            value={text}
+            onChange={(e) => setDraft({ identity, text: e.target.value })}
+            placeholder={pt('convert.references.placeholder')}
+          />
+        </label>
+        <p className="type-caption text-ink-3">{pt('convert.references.disclosure')}</p>
+      </div>
+    ),
+    primary: files.length ? (
+      <Button
+        variant="primary"
+        size="md"
+        data-convert-references-retry
+        onClick={() => void useConvertStore.getState().start(p.script, p.library, p.path, p.language, files)}
+      >
+        {pt('convert.references.retry')}
+      </Button>
+    ) : flow.primary,
+  }
+}
+
+/**
+ * R / MATLAB 脚本的入口卡（ADR 0143 修订）：项目里 / 拖入 / 打开的是 `.R` / `.r` / `.m` 时，一句话 + 一个主按钮。
+ * 点「生成可编辑版本」后同一张卡接着走既有的生成 / 对照 / 采用流水（`convertFlow`）；原脚本不动。
+ * 它不是准备会话的一部分（Tavotto 不运行 R / MATLAB，没有报告可读），所以单独摆在画布右下，并在它出现时让开别的引导卡。
+ */
+export function ForeignScriptCard() {
+  useTranslation('workspace')
+  const offer = useForeignScriptStore((s) => s.offer)
+  const convert = useConvertStore((s) => (offer ? s.entries[offer.script] : undefined))
+  const toolbarUp = useCanvasToolbarVisible()
+  const { hidden } = usePrepSurface()
+  // 采用完成：提议到此为止（否则卡片会退回“生成可编辑版本”再提议一遍）
+  useEffect(() => {
+    if (convert?.phase === 'adopted') useForeignScriptStore.getState().clear()
+  }, [convert?.phase])
+  /**
+   * 续跑中点 ×：提议不能先清（卡片是 store 条目唯一的展示处，先卸载了，后端回 `deps_installed` 时「继续」无处可显）。
+   * 只记一个「用户要关」，等 store 条目因对账而消失（候选已删）这一处才清提议；回到「继续」等卡则撤销这个意图。
+   */
+  const [closing, setClosing] = useState(false)
+  useEffect(() => {
+    if (!closing) return
+    if (!convert) {
+      useForeignScriptStore.getState().clear()
+      setClosing(false)
+    } else if (!convert.stopping) setClosing(false)
+  }, [closing, convert])
+  const p: Extract<PrepPrimary, { kind: 'convert' }> | null = offer ? { kind: 'convert', script: offer.script, library: null, path: null, language: offer.language } : null
+  const flow = useConvertFlow(convert, p, undefined, offer)
+  if (!offer || hidden) return null
+  const language = offer.language
+  const title = flow?.title ?? pt(`convert.foreign.${language}`, { product: PRODUCT_NAME })
+  return (
+    <div
+      data-guide-anchor
+      className={cn(
+        'pointer-events-none absolute right-3 z-drawer flex max-h-[calc(100%-1.5rem)] w-[400px] max-w-[calc(100%-1.5rem)] flex-col items-end',
+        toolbarUp ? 'bottom-16' : 'bottom-3',
+      )}
+    >
+      <Shell
+        label={pt('aria', { script: offer.script })}
+        step={1}
+        icon={flow ? undefined : <FileCodeCorner size={ICON_SIZE.md} className="shrink-0 text-ink-3" />}
+        title={title}
+        attrs={{ 'data-foreign-card': language, 'data-convert-phase': convert?.phase ?? 'offer' }}
+        slot={flow?.slot}
+        ghost={flow?.ghost}
+        primary={
+          flow?.primary ?? (
+            <Button
+              variant="primary"
+              size="md"
+              data-foreign-start
+              data-prep-primary="convert"
+              onClick={() => void useConvertStore.getState().start(offer.script, null, null, language)}
+            >
+              {pt('convert.btn.start')}
+            </Button>
+          )
+        }
+        onClose={() => {
+          // 「暂时连不上」（failed + lost）后端可能仍在装 / 校验：和续跑中同一条停止 + 对账路径，不只清提议
+          if (
+            convert?.phase === 'resuming' ||
+            (convert?.phase === 'running' && convert.session) ||
+            (convert?.phase === 'failed' && convert.lost && convert.session)
+          ) {
+            // 对账期间不清提议：由上面的 effect 在条目消失时清（见 closing）
+            if (!convert.stopping) {
+              setClosing(true)
+              void useConvertStore.getState().stop(offer.script)
+            }
+            return
+          }
+          if (convert?.phase === 'running' || convert?.phase === 'deps' || convert?.phase === 'installed')
+            void useConvertStore.getState().stop(offer.script)
+          useForeignScriptStore.getState().clear()
+        }}
+      />
+    </div>
+  )
+}
+
+function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
+  // 点过「✦ 使用你的 AI 来修复」：AI 暂时修不了（`ai_unavailable`）就落成反馈卡；只对点的那一次尝试有效，重新运行后换回原卡
+  const fix = useAiFixStore((s) => s.entries[entry.key])
+  const view =
+    fix?.phase === 'unavailable' && fix.ref.attemptId === (report?.provider.attempt_id ?? null)
+      ? withAiUnavailable(baseView)
+      : baseView
   const script = targetName(entry)
   const [localError, setLocalError] = useState<string | null>(null)
   const [resultsOpen, setResultsOpen] = useState(false)
+  // 失败卡（主按钮是「使用你的 AI 来修复」）里「⋯」菜单原位展开的那一块：原样参数 / 全部详情；同一时刻只开一个
+  const [panel, setPanel] = useState<'args' | 'details' | null>(null)
+  const argvDraft = useScriptArgvStore((s) => ('id' in entry.target ? undefined : s.drafts[entry.target.script]))
   const workdirReq = report?.requirements.find((r) => r.kind === 'workdir_choice')
   const workdirPayload = workdirReq?.kind === 'workdir_choice' ? workdirReq.payload : null
   const [workdir, setWorkdir] = useState<WorkdirMode | null>(workdirPayload?.recommended ?? null)
@@ -761,7 +1308,8 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     localError ??
     // 跑完没出 Matplotlib 图、但脚本自己用位图库写了图片：这句话独立成一组键（`prep.rasterHint.*`）
     (view.state === 'no_figure_raster'
-      ? pt('rasterHint.line', view.sentence.values)
+      ? // 没有落盘文件（动态路径 / 只 show / 文件还没出现）：不说「画成图片」，说「画的、不能直接编辑」（ADR 0143 修订 2026-10-23）
+        pt(report?.no_figure_hint?.path ? 'rasterHint.line' : 'rasterHint.lineNoFile', view.sentence.values)
       : pt(`line.${view.sentence.key}`, view.sentence.values))
   const originView = localError ? null : originViewOfCard(view.state)
   const attrs = {
@@ -773,12 +1321,20 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   }
   const scriptTargetName = 'id' in entry.target ? null : entry.target.script
 
-  const primary = p && (
+  // 反馈卡的主按钮：复用设置页同一个入口（开关关着时不渲染）；其余主按钮是下面那颗普通 Button
+  const feedbackPrimary = p?.kind === 'feedback' ? <SendReportButton variant="primary" size="md" label={pt('btn.send')} /> : null
+  const fixBusy = fix?.phase === 'starting'
+  const fixAction = async () => {
+    setLocalError(null)
+    const err = await runPrimary({ kind: 'ai_fix' }, workdir)
+    if (err) setLocalError(err)
+  }
+  const primary = p && p.kind !== 'feedback' && (
     <Button
       variant="primary"
       size="md"
       data-prep-primary={primaryId(p)}
-      loading={pending}
+      loading={pending || (p.kind === 'ai_fix' && fixBusy)}
       disabled={pending || disabled}
       onClick={async () => {
         setLocalError(null)
@@ -786,6 +1342,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         if (err) setLocalError(err)
       }}
     >
+      {p.kind === 'ai_fix' && <Sparkles size={ICON_SIZE.sm} />}
       {primaryLabel(p, workdir)}
     </Button>
   )
@@ -794,6 +1351,21 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const failedNoAction =
     !p && report?.outcome.kind === 'failed' && report.outcome.reason !== 'dependency_preparation'
   const fallbackPrimary = failedNoAction ? <SendReportButton variant="primary" size="md" /> : null
+  // 显眼的次按钮（维护者裁决：每次失败都出）：蓝色描边 + 图标集的 Sparkles（不拿 ✦ 字符当图标，iconography 门禁），颜色全走语义 token；主按钮仍只有一个
+  const aiFix = view.aiFix ? (
+    <Button
+      variant="ghost"
+      size="md"
+      data-prep-ai-fix
+      className="self-start text-accent inset-ring inset-ring-accent hover:bg-accent-subtle"
+      loading={fixBusy}
+      disabled={pending}
+      onClick={fixAction}
+    >
+      <Sparkles size={ICON_SIZE.sm} />
+      {pt('btn.aiFix')}
+    </Button>
+  ) : null
   const ghost =
     view.ghost === 'later' ? (
       <Later />
@@ -813,8 +1385,15 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   // 「这一步」：参数块按 key 摆在固定位置——在 ready 与参数卡之间切换时输入框不重建、焦点不丢
   const slot: ReactNode[] = []
   if (view.slot === 'progress') slot.push(<Progress key="progress" />)
+  if (view.slot === 'python_change') slot.push(<PythonChangeLine key="python-change" report={report} />)
   if (view.slot === 'workdir' && workdirPayload) {
     slot.push(<WorkdirChoice key="workdir" payload={workdirPayload} choice={workdir} onChoose={setWorkdir} />)
+  }
+  // 上一次尝试在沙盒里落空、脚本目录里找得到（#1254）：不论卡片是哪种失败 / 没出图的状态，都多一个「选择运行目录…」入口
+  // （同一个确认框；提示句按 decided / source 选，逻辑在 WorkdirChooseButton 一处）
+  const hintReq = report?.requirements.find((r) => r.kind === 'workdir_hint')
+  if (hintReq?.kind === 'workdir_hint' && report?.outcome.kind !== 'pending') {
+    slot.push(<WorkdirChooseButton key="workdir-hint" confirmation={hintReq.payload} />)
   }
   if (view.slot === 'install') slot.push(<InstallLine key="install" report={report} />)
   if (view.slot === 'ready') slot.push(<ReadyLine key="ready" entry={entry} />)
@@ -824,12 +1403,104 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   if (view.input && report?.runtime_input) {
     slot.push(<EmbeddedInput key="input" requestId={report.runtime_input.id} answer={answer} />)
   }
-  const argsHere = scriptTargetName !== null && (view.argsOpen || ARGS_FOLDED.has(view.state))
+  // 失败卡（版式 1）：一句话 + 一个主按钮，参数 / 详情 / 稍后全进页眉的「⋯」，点开才在卡体里原位展开
+  const compactFail = p?.kind === 'ai_fix' && !ownsInput
+  const argsHere = scriptTargetName !== null && (view.argsOpen || (!compactFail && ARGS_FOLDED.has(view.state)) || (compactFail && panel === 'args'))
   if (argsHere) {
-    slot.push(<ArgsBlock key="args" script={scriptTargetName} schema={argsSchemaOf(report)} expanded={view.argsOpen} />)
+    slot.push(
+      <ArgsBlock key="args" script={scriptTargetName} schema={argsSchemaOf(report)} expanded={view.argsOpen} rawOpen={compactFail && panel === 'args'} />,
+    )
   }
+  if (compactFail && panel === 'details') {
+    slot.push(
+      <div key="details" data-prep-details className="flex flex-col gap-1.5 border-t border-border pt-2.5 text-sm text-ink-2">
+        <SessionDetails entry={entry} view={view} />
+      </div>,
+    )
+  }
+  const failMenu = compactFail && (
+    <FailureMenu
+      argsPreview={
+        scriptTargetName === null
+          ? null
+          : argvDraft?.sensitive || ('argv_sensitive' in entry.target && entry.target.argv_sensitive)
+            ? pt('detail.argsHidden', { count: (argvDraft?.tokens ?? ('id' in entry.target ? [] : (entry.target.argv ?? []))).length })
+            : (argvDraft?.tokens ?? ('id' in entry.target ? [] : (entry.target.argv ?? [])))
+                .map((t) => (/[\s"']/.test(t) || t === '' ? JSON.stringify(t) : t))
+                .join(' ')
+      }
+      error={errorTextOf(report)}
+      onOpenArgs={() => setPanel((v) => (v === 'args' ? null : 'args'))}
+      onOpenDetails={() => setPanel((v) => (v === 'details' ? null : 'details'))}
+      onLater={() => useUiStore.getState().setGuideCard('pill')}
+    />
+  )
 
   const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
+  // 脚本能跑、只是用位图库画的图：AI 修复会话交接给「生成可编辑版本」（ADR 0149 §七）——同一张卡接上既有的进度 / 对照 / 采用
+  const handoff = useAiFixStore((s) => s.handoffs[entry.key])
+  // 交接优先于卡片原有的 convert 目标：AI 交接的可能是另一个脚本，用户要看的是刚发起的那条转换
+  const convertPrimary: Extract<PrepPrimary, { kind: 'convert' }> | null = handoff
+    ? { kind: 'convert', script: handoff.script, library: handoff.library, path: handoff.path ?? null, language: 'python' }
+    : p?.kind === 'convert'
+      ? p
+      : null
+  const convertScript = convertPrimary?.script ?? null
+  const convert = useConvertStore((s) => (convertScript ? s.entries[convertScript] : undefined))
+  const convertUi = useConvertFlow(convert, convertPrimary, entry, entry)
+  if (convertUi) {
+    return (
+      <Shell
+        label={pt('aria', { script })}
+        step={view.step}
+        icon={toneIcon(view.tone, view.state)}
+        title={convertUi.title}
+        attrs={{ ...attrs, 'data-convert-phase': convert!.phase }}
+        slot={convertUi.slot}
+        details={details}
+        ghost={convertUi.ghost}
+        primary={convertUi.primary}
+      />
+    )
+  }
+  // AI 修复会话在跑 / 在等用户点 / 刚结束（ADR 0149）：同一张卡换内容——一句话 + 一个主按钮，其余折叠
+  const fixUi = fix ? aiFixFlow(entry.key, fix, (token) => repairFolderAndRerun(entry, token)) : null
+  if (fix && fixUi) {
+    return (
+      <Shell
+        label={pt('aria', { script })}
+        step={view.step}
+        icon={
+          fix.phase === 'running'
+            ? toneIcon('busy', 'ai_fix')
+            : fix.phase === 'done' || fix.phase === 'busy'
+              ? toneIcon('bad', 'ai_fix')
+              : <Sparkles size={ICON_SIZE.md} className="shrink-0 text-accent" />
+        }
+        title={fixUi.title}
+        attrs={{ ...attrs, 'data-ai-fix-phase': fix.phase, 'data-ai-fix-card': fix.card?.kind ?? '' }}
+        slot={fixUi.slot}
+        details={fixUi.details}
+        ghost={fixUi.ghost}
+        primary={fixUi.primary}
+      />
+    )
+  }
+  const secondary =
+    view.secondary && (
+      <Button
+        variant="ghost"
+        size="md"
+        data-prep-alt={primaryId(view.secondary)}
+        className="text-ink-2"
+        onClick={async () => {
+          const err = await runPrimary(view.secondary!, workdir)
+          if (err) setLocalError(err)
+        }}
+      >
+        {primaryLabel(view.secondary, workdir)}
+      </Button>
+    )
   return (
     <>
       <Shell
@@ -839,11 +1510,12 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         title={title}
         attrs={attrs}
         slot={slot.length ? slot : undefined}
-        details={details}
+        details={compactFail ? undefined : details}
         detailsLabel={ownsInput ? pt('card.allOutput') : undefined}
-        more={ownsInput ? <InputMore answer={answer} /> : undefined}
-        ghost={ghost}
-        primary={ownsInput ? <AnswerButton answer={answer} /> : (primary ?? fallbackPrimary)}
+        more={ownsInput ? <InputMore answer={answer} /> : failMenu || undefined}
+        ghost={compactFail ? undefined : secondary || ghost}
+        aiFix={aiFix}
+        primary={ownsInput ? <AnswerButton answer={answer} /> : (feedbackPrimary ?? primary ?? fallbackPrimary)}
       />
       {report && (report.captured ?? []).length > 1 && (
         <ProbeResultsDialog
@@ -851,6 +1523,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           descriptors={report.captured ?? []}
           dropped={0}
           open={resultsOpen}
+          canvasId={entry.placeIn?.canvasId}
           onAdded={(d, added) => noteAddedPanelFor(editHost(entry.key), d.asset_id, added)}
           onOpenChange={(v) => {
             setResultsOpen(v)
@@ -872,11 +1545,11 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const icon = (() => {
     switch (view.tone) {
       case 'busy':
-        return <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
+        return <Spinner size={ICON_SIZE.sm} className="text-accent" />
       case 'ok':
-        return <CircleCheck size={ICON_SIZE.sm} className="shrink-0 text-ok" />
+        return <CircleCheck playIn size={ICON_SIZE.sm} className="shrink-0 text-ok" />
       case 'bad':
-        return <CircleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+        return <CircleAlert playIn size={ICON_SIZE.sm} className="shrink-0 text-danger" />
       default:
         return <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
     }
@@ -988,6 +1661,42 @@ function WorkdirChoice({
   )
 }
 
+/**
+ * 自动换 Python 版本时卡片里的那一行进度（ADR 0114 修订 2026-10-23）：下载那一段说字节数并画一根确定的进度条，其余阶段
+ * 一句话 + 不定态的条。完成后不留（主句已经换成出图的句子），「换成了 Python x」在详情里。
+ */
+const PYTHON_CHANGE_STAGES = new Set([
+  'downloading',
+  'verifying',
+  'extracting',
+  'launching',
+  'preparing',
+  'creating',
+  'installing',
+  // 等这个项目上另一个依赖安装结束（pyversionfix.STAGE_WAITING，TVD-22EY）
+  'waiting',
+])
+
+function PythonChangeLine({ report }: { report: PreparationReport | null }) {
+  useTranslation('workspace')
+  const pc = report?.python_change
+  if (!pc || pc.state !== 'running') return null
+  const MB = 1048576
+  const downloading = pc.stage === 'downloading' && pc.total > 0
+  const pct = downloading ? Math.min(100, Math.round((pc.done / pc.total) * 100)) : null
+  const text = downloading
+    ? pt('pythonChange.downloadBytes', { done: Math.round(pc.done / MB), total: Math.round(pc.total / MB) })
+    : pt(`pythonChange.stage.${PYTHON_CHANGE_STAGES.has(pc.stage) ? pc.stage : 'preparing'}`)
+  return (
+    <div className="flex flex-col gap-1.5" data-prep-python-change data-python-change-stage={pc.stage}>
+      <p className="text-sm tabular-nums text-ink-2" data-python-change-line>
+        {text}
+      </p>
+      <ProgressBar pct={pct} label={pt('progress')} data-prep-progress />
+    </div>
+  )
+}
+
 /** 要装的东西一行：装什么 · 装到哪（包名、来源细节在详情） */
 function InstallLine({ report }: { report: PreparationReport | null }) {
   useTranslation('workspace')
@@ -1073,7 +1782,18 @@ function Figures({ report }: { report: PreparationReport | null }) {
  * 参数：必填项直接摆出来（脚本写了 help 就随字段显示）；其余参数、原样 token 列表与粘贴命令收在折叠里。
  * 参数 schema 是后端报告给的；没有 schema 时只有「原样参数 / 粘贴命令」（需要参数时默认展开）。
  */
-function ArgsBlock({ script, schema, expanded }: { script: string; schema: ScriptArgsSchema | null; expanded: boolean }) {
+function ArgsBlock({
+  script,
+  schema,
+  expanded,
+  rawOpen,
+}: {
+  script: string
+  schema: ScriptArgsSchema | null
+  expanded: boolean
+  /** 从失败卡的「⋯ → 原样参数」进来：原样参数 / 粘贴命令那一块直接展开 */
+  rawOpen?: boolean
+}) {
   useTranslation('workspace')
   const visible = schema?.arguments.filter((a) => !a.hidden) ?? []
   const required = visible.filter((a) => a.required === true)
@@ -1091,7 +1811,7 @@ function ArgsBlock({ script, schema, expanded }: { script: string; schema: Scrip
           </div>
         </Details>
       )}
-      <Details data-testid={`argv-raw-${script}`} open={expanded && !schema ? true : undefined}>
+      <Details data-testid={`argv-raw-${script}`} open={(expanded && !schema) || rawOpen ? true : undefined}>
         <Summary className="type-body h-6 gap-1 text-ink-2">
           {pt('card.rawArgs')}
         </Summary>
@@ -1143,6 +1863,7 @@ const HISTORY_DECLINED = [
   'interpreter_changed',
   'plan_unavailable',
   'launch_failed',
+  'attempt_cap',
 ]
 
 /** 闭集码翻成人话；后端以后新增的码（旧前端不认识）原样显示，不丢也不猜 */
@@ -1186,6 +1907,8 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const originFacts = originFactsOf(report)
   const fallbackNote = nativeFallbackNote(report ?? null)
   const env = report?.environment
+  const overlayLabel = env?.overlay?.label ?? ''
+  const notUsed = visibleNotUsed(env?.not_used)
   const primaryAction = view.primary?.kind === 'action' ? view.primary.action : null
   const recheck = primaryAction !== 'recheck' && report?.actions.some((a) => a.kind === 'recheck')
   const target = entry.target
@@ -1244,18 +1967,60 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         <TaskDiagnostic key={dep.plan_id} kind="dependency" refId={dep.plan_id} folded={false} />
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
-      {view.state === 'no_figure_raster' && <p data-prep-nofigure-raster-why>{pt('rasterHint.why')}</p>}
-      {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
+      {view.state === 'no_figure_raster' && (
+        <p data-prep-nofigure-raster-why>
+          {pt(report?.no_figure_hint?.path ? 'rasterHint.why' : 'rasterHint.whyNoFile')}
+        </p>
+      )}
+      {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
+        <p data-prep-failed-figures>
+          {pt('detail.failedFigures', {
+            names: listJoin((report.failed_figures ?? []).map((f) => f.stem)),
+            codes: listJoin([...new Set((report.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]),
+          })}
+        </p>
+      )}
+      {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
-      {(report?.attempt_history?.length ?? 0) > 0 && <RunHistory history={report?.attempt_history ?? []} />}
+      {report?.python_change && report.python_change.state === 'done' && (
+        <Row
+          k={pt('detail.pythonChanged')}
+          v={pt('detail.pythonChangedTo', { version: report.python_change.to })}
+          attr="python-changed"
+        />
+      )}
+      {runAttempts(report).length > 0 && <RunHistory history={runAttempts(report)} />}
       {report?.target.script && <Row k={pt('detail.script')} v={<span className="font-mono">{report.target.script}</span>} attr="script" />}
       {env?.kind && (
         <Row
           k={pt('detail.usedBy')}
-          v={pt(`env.${env.kind}`) + (env.switched && env.replaced ? ` ${pt('env.switched')}` : '')}
+          v={
+            pt(`env.${env.kind}`) +
+            (overlayLabel ? ` + ${overlayLabel}` : '') +
+            (env.switched && env.replaced ? ` ${pt('env.switched')}` : '')
+          }
           attr="environment"
         />
+      )}
+      {notUsed.length > 0 && (
+        <div className="flex flex-col gap-1" data-prep-env-not-used>
+          <span className="text-ink-3">{pt('detail.notUsedTitle')}</span>
+          {notUsed.map((r) => (
+            <p key={`${r.reason}|${r.label}|${r.root_version ?? ''}`} data-prep-env-not-used-reason={r.reason}>
+              {envNotUsedSentence(r)}
+            </p>
+          ))}
+          <Button
+            variant="secondary"
+            size="sm"
+            className="self-start"
+            data-prep-open-environment
+            onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
+          >
+            {translate('scripts.openEnvSettings', { ns: 'workspace' })}
+          </Button>
+        </div>
       )}
       {mode && !wdReq && <Row k={pt('detail.workdir')} v={pt(WORKDIR_LABEL[mode as WorkdirMode] ?? 'workdir.project_root')} attr="workdir" />}
       {report?.target.kind === 'script' && (

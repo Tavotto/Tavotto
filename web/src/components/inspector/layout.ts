@@ -1,4 +1,5 @@
 import type { RowLabelWidth } from '../ui/Field'
+import { cn } from '@/lib/utils'
 
 /**
  * 检查器的行版式常量。
@@ -30,5 +31,15 @@ export const INSPECTOR_HALF = 'w-[calc((100%-0.375rem)/2)] shrink-0'
 /** 标签列同宽的类名，给不走 `Row`（自己排的开关行 / 列表行）的地方用 */
 export const INSPECTOR_LABEL_COL = 'w-[var(--insp-label,88px)]'
 
-/** 属性栏容器上的变量定义（`Inspector` 内层 div 挂它；用例单独渲染某一页时可以自己包一层） */
-export const INSPECTOR_CONTAINER = '@container [--insp-label:clamp(88px,28cqi,112px)]'
+/**
+ * 属性栏容器上的变量定义（`Inspector` 内层 div 挂它；用例单独渲染某一页时可以自己包一层）。
+ * 字号：本子树里 12px 的角色（`text-sm` / type-body / type-control / type-caption / type-number：行标签、
+ * 控件里的值、摘要行、说明）整体映射到 13px——只重映射这棵子树的 `--text-sm`，token 值不动
+ * （2026-10-31 UI 审计「读得清」）；11px 的 meta / 单位 / 快捷键留原档。标签列相应放宽到 96–120。
+ */
+export const INSPECTOR_CONTAINER = cn(
+  '@container [--insp-label:clamp(96px,28cqi,120px)]',
+  '[--text-sm:var(--text-base)] [--text-sm--line-height:var(--text-base--line-height)]',
+  // 说明文字（type-caption）与 ink-3 元信息不跟着变：钉回 12px
+  '[--caption-size:12px]',
+)

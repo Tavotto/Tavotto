@@ -21,6 +21,7 @@
  * 写在 ADR 里的，不是漂移。
  */
 import doc from '@profiles'
+import { JOURNAL_BASE_PROFILE_ID, type JournalFieldSource } from './journals'
 import {
   DEFAULT_PROFILE_ID,
   loadProfile,
@@ -36,6 +37,28 @@ export interface SpecBinding {
   snapshot?: Record<string, unknown>
   snapshotVersion?: string
   follow?: boolean
+  /** 选期刊那一刻的出处（ADR 0155 §4）：库后来更新也不改已定稿项目的结论；缺省 = 没按期刊选过 */
+  journalRef?: JournalRef
+  /** 生效字段出处的精简版（value / quote / link / retrieved / 两种 scope），出处卡离线也读得到它 */
+  journalSources?: Record<string, JournalFieldSource>
+  /** 选期刊之前的规范绑定与页宽：「不按期刊」据此退回；没有 = 退回默认规范 */
+  journalPrev?: JournalPrev
+}
+
+/** 选期刊之前项目用的规范（`profile` 为 null = 那时没有绑定）与页宽（mm） */
+export interface JournalPrev {
+  profile: Omit<SpecBinding, 'journalPrev' | 'journalRef' | 'journalSources'> | null
+  pageW: number
+  /** 选期刊那一刻期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回 pageW（用户手改过就保留） */
+  setW?: number
+}
+
+export interface JournalRef {
+  id: string
+  catalogRev: number
+  retrieved: string
+  /** 选那一刻的期刊名（出处卡与检查结论的主语；库后来改名也不动） */
+  label: string
 }
 
 /** 全局清单里的一条规范（内置或用户自建）。形状与 `/api/profiles/spec` 一致。 */
@@ -95,17 +118,40 @@ interface ProfileDoc {
   profiles: Record<string, PublicationProfile>
 }
 
-/** 内置规范的清单（没有后端时也拿得到——浏览器演练场 / MCP 内嵌画布都靠它）。 */
+const entryOf = (p: PublicationProfile): SpecCatalogEntry => ({
+  id: p.profile_id,
+  display_name: p.label,
+  name_key: `builtin.spec.${p.profile_id}`,
+  version: p.version,
+  built_in: true,
+  data: p as unknown as Record<string, unknown>,
+})
+
+/** 内置规范的清单（没有后端时也拿得到——浏览器演练场 / MCP 内嵌画布都靠它）。
+ *  `listed: false` 的底（如期刊底 journal-base-v1）不在清单里——与后端 `list_profiles` /
+ *  `builtins` 同判据；它们按 id 仍可解析（`isHiddenBuiltin`），见 `resolveDocumentSpec`。 */
 export function builtinCatalog(): SpecCatalogEntry[] {
   const d = doc as unknown as ProfileDoc
-  return Object.values(d.profiles).map((p) => ({
-    id: p.profile_id,
-    display_name: p.label,
-    name_key: `builtin.spec.${p.profile_id}`,
-    version: p.version,
-    built_in: true,
-    data: p as unknown as Record<string, unknown>,
-  }))
+  return Object.values(d.profiles)
+    .filter((p) => p.listed !== false)
+    .map(entryOf)
+}
+
+/** 是不是「可解析但不可列出」的内置底。同源对：后端 `profiles.all_profile_ids()` 对
+ *  `resolve_spec` 的分流。绑定到它不算「全局规范已被删除」。 */
+export function isHiddenBuiltin(id: string | null | undefined): boolean {
+  const d = doc as unknown as ProfileDoc
+  return !!id && d.profiles[id]?.listed === false
+}
+
+/** 内置规范（含不可列出的底）按 id 取一条清单项；没有返回 undefined。选期刊绑定中性底时用。 */
+export function builtinEntryById(id: string): SpecCatalogEntry | undefined {
+  const p = (doc as unknown as ProfileDoc).profiles[id]
+  return p ? entryOf(p) : undefined
+}
+
+function hiddenBuiltinEntry(id: string): SpecCatalogEntry {
+  return entryOf((doc as unknown as ProfileDoc).profiles[id])
 }
 
 /** 快照 / 全局那份 + 期刊覆盖 → 可直接喂给预检的规范。
@@ -137,7 +183,10 @@ export function resolveDocumentSpec(
   catalog: SpecCatalogEntry[],
 ): ResolvedSpec {
   const journal = binding?.journal as JournalOverride | undefined
-  const global = binding?.id ? catalog.find((e) => e.id === binding.id) : undefined
+  const global = binding?.id
+    ? (catalog.find((e) => e.id === binding.id) ??
+      (isHiddenBuiltin(binding.id) ? hiddenBuiltinEntry(binding.id) : undefined))
+    : undefined
   const snapshot = binding?.snapshot
   const follow = binding?.follow === true
   const globalMissing = !!binding?.id && !global
@@ -199,14 +248,46 @@ export function resolveDocumentSpec(
  */
 export function bindingFor(
   entry: SpecCatalogEntry,
-  options?: { journal?: Record<string, unknown>; follow?: boolean },
+  options?: {
+    journal?: Record<string, unknown>
+    journalRef?: JournalRef
+    journalSources?: Record<string, JournalFieldSource>
+    journalPrev?: JournalPrev
+    follow?: boolean
+  },
 ): SpecBinding {
   const journal = options?.journal
   return {
     id: entry.id,
     ...(journal && Object.keys(journal).length ? { journal: structuredClone(journal) } : {}),
+    ...(options?.journalRef ? { journalRef: structuredClone(options.journalRef) } : {}),
+    ...(options?.journalRef && options.journalSources
+      ? { journalSources: structuredClone(options.journalSources) }
+      : {}),
+    ...(options?.journalRef && options.journalPrev
+      ? { journalPrev: structuredClone(options.journalPrev) }
+      : {}),
     snapshot: structuredClone(entry.data),
     ...(entry.version ? { snapshotVersion: entry.version } : {}),
     ...(options?.follow ? { follow: true } : {}),
+  }
+}
+
+/**
+ * 换规范时带走的期刊字段。按期刊选的绑定（有 `journalRef`）是「中性底 + 该期刊的覆盖」：换成别的规范就
+ * **整套放下**——否则期刊覆盖会叠在课题组规范上，期刊没写的项又被课题组的数补上（ADR 0155 §2 禁止的事）。
+ * 没有 `journalRef` 的旧绑定里手写的 `journal` 覆盖照旧带过去。
+ */
+export function journalCarry(
+  profile: SpecBinding | null | undefined,
+  nextId: string,
+): Pick<NonNullable<Parameters<typeof bindingFor>[1]>, 'journal' | 'journalRef' | 'journalSources' | 'journalPrev'> {
+  if (!profile) return {}
+  if (profile.journalRef && nextId !== JOURNAL_BASE_PROFILE_ID) return {}
+  return {
+    journal: profile.journal,
+    journalRef: profile.journalRef,
+    journalSources: profile.journalSources,
+    journalPrev: profile.journalPrev,
   }
 }

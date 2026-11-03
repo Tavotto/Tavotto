@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link2, TriangleAlert } from '@/components/ui/icons'
+import { Link2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import {
   materializePaste,
   materializeRelink,
@@ -92,18 +93,22 @@ export function RelinkDialog() {
           const thumb = target ? panelSrc(target.id, target.kind, 160, target.mtime) : null
           return (
             <li key={m.fileId} className="flex items-center gap-3 rounded-md py-1.5" data-relink-row={m.fileId}>
-              {/* 选中的替代素材的缩略图；还没选（或保持缺失）时是一块带警示图标的空格——
-                  缺件是**警告**不是阻断（全面打磨 D47） */}
-              <span className="flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-surface-2 ring-1 ring-inset ring-border">
-                {thumb ? (
+              {/* 选中的替代素材的缩略图；还没选（或保持缺失）时是一块发丝框 + 45° 排线的空格
+                  （手帐线稿，与进度条同一种排线；不画图标）。缺件是**警告**不是阻断（全面打磨 D47），警告在行文字里 */}
+              <span
+                data-relink-thumb-box
+                className={cn(
+                  'flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-sm',
+                  thumb ? 'bg-surface-2 ring-1 ring-inset ring-border' : 'hatch-box',
+                )}
+              >
+                {thumb && (
                   <RetryImg
                     src={thumb}
                     alt=""
                     className="h-full w-full bg-surface object-contain"
                     data-relink-thumb
                   />
-                ) : (
-                  <TriangleAlert size={ICON_SIZE.sm} className="text-warn" aria-hidden />
                 )}
               </span>
               <div className="min-w-0 flex-1">

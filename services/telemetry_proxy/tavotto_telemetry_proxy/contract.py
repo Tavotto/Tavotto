@@ -45,8 +45,22 @@ AUTO_PROPS: dict[str, dict] = {
 # 代理白名单里比当前客户端多出的枚举值：只收不发的旧值，逐条写死、写明来由。
 # 跨侧对拍测试（tests/test_telemetry_proxy.py）把它当唯一放行清单——代理多出这里以外的任何值都会红。
 LEGACY_ENUM_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
-    # 2026-09-30 教程取消欢迎步骤；0.17.0 及更早的客户端仍会发 welcome
-    "tutorial_step_completed": {"step_id": ("welcome",)},
+    # 2026-09-30 教程取消欢迎步骤；0.17.0 及更早的客户端仍会发 welcome。
+    # 2026-10-19（ADR 0136）八步 coachmark 教程换成三步原生教程：flow v2 的八个步骤 id
+    # 已发布的客户端仍会发（tutorial_version=2），代理照收；新客户端只发 demo_* 与 done
+    "tutorial_step_completed": {
+        "step_id": (
+            "welcome",
+            "open_fast_edit",
+            "select_text",
+            "change_typography",
+            "locate_problem",
+            "export_original",
+            "add_to_layout",
+            "multi_select_align",
+            "export_canvas",
+        )
+    },
 }
 
 EVENTS: dict[str, dict[str, dict]] = {
@@ -71,7 +85,54 @@ EVENTS: dict[str, dict[str, dict]] = {
         "with_proof": BOOL,
         "panel_count": integer(1000),
     },
+    # 导出终态（2026-10-15）：与客户端表逐字对拍。stage / error_class 只在非 done / 出错时才带
+    "export_result": {
+        "outcome": enum("done", "partial", "failed", "cancelled"),
+        "scope": enum("canvas", "original"),
+        "pdf": BOOL,
+        "png": BOOL,
+        "eps": BOOL,
+        "tiff": BOOL,
+        "svg": BOOL,
+        "with_report": BOOL,
+        "delivered": integer(8),
+        "stage": enum(
+            "prepare", "source", "compile", "compose", "raster", "inspect", "publish", "report"
+        ),
+        "error_class": enum(
+            "request",
+            "environment",
+            "backend",
+            "artifact_rejected",
+            "source_changed",
+            "report",
+            "other",
+        ),
+    },
     "ai_assistant_invoked": {"agent": enum("codex", "claude", "other")},
+    # MCP 工具调用（客户端 CONSENT_VERSION 3，ADR 0134 §MCP）：与客户端表逐字对拍，没有参数与返回内容
+    "mcp_tool_call": {
+        "tool": enum(
+            "tavotto_health",
+            "tavotto_open_figure",
+            "tavotto_apply_overrides",
+            "tavotto_normalize_figure",
+            "tavotto_preflight",
+            "tavotto_export",
+            "tavotto_verify_replay",
+            "tavotto_refresh_project",
+            "tavotto_session_state",
+            "tavotto_close_session",
+            "other",
+        ),
+        "outcome": enum("ok", "tool_error", "protocol_error", "internal_error"),
+        "error_class": enum(
+            "none", "workspace", "needs_input", "request", "environment", "render", "other"
+        ),
+        "duration_bucket": enum("lt_1s", "1_5s", "5_30s", "30_120s", "gt_120s"),
+        "host": enum("codex", "claude", "other"),
+        "elided": BOOL,
+    },
     "update_completed": {"update_kind": enum("desktop", "pip", "pipx"), "target_version": VERSION},
     # ---- 客户端 CONSENT_VERSION 2（Session 22）新增的九条；与客户端表逐字对拍 ----
     "project_refresh_completed": {
@@ -83,14 +144,14 @@ EVENTS: dict[str, dict[str, dict]] = {
         "status_bucket": enum("all_editable", "mixed", "layout_only"),
     },
     "tutorial_started": {
-        "source": enum("picker", "help", "settings", "palette", "canvas"),
+        "source": enum("picker", "help", "settings", "palette", "canvas", "replay"),
         "tutorial_version": integer(1000),
     },
     "tutorial_step_completed": {
         "step_id": enum(
-            # 只收不发：客户端自 2026-09-30 起没有欢迎步骤（不再发 welcome），但代理要服务
-            # 已发布的旧客户端（0.17.0 等），删掉它们的教程漏斗数据会一直被丢到升级为止。
-            # 见 LEGACY_ENUM_VALUES；跨侧对拍只放行那张显式清单
+            # 只收不发：客户端自 2026-09-30 起没有欢迎步骤（不再发 welcome）、自 2026-10-19 起
+            # 没有八步 coachmark 教程（ADR 0136），但代理要服务已发布的旧客户端，删掉它们的教程
+            # 漏斗数据会一直被丢到升级为止。见 LEGACY_ENUM_VALUES；跨侧对拍只放行那张显式清单
             "welcome",
             "open_fast_edit",
             "select_text",
@@ -100,6 +161,10 @@ EVENTS: dict[str, dict[str, dict]] = {
             "add_to_layout",
             "multi_select_align",
             "export_canvas",
+            # 当前客户端（flow v3，ADR 0136）
+            "demo_import",
+            "demo_move_legend",
+            "demo_change_title",
             "done",
         ),
         "tutorial_version": integer(1000),

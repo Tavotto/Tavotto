@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 /**
  * 顶栏在窄窗口下元素两两不重叠（#677 集成时 600 宽实测：保存状态与时间线的时钟 / 书签钮
@@ -46,16 +46,15 @@ for (const width of [600, 780, 920, 1024]) {
     const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
     await expect(card).toHaveCount(1, { timeout: 30_000 })
     await card.dblclick()
-    const back = page.locator('[data-context-back]')
-    await expect(back).toHaveCount(1)
-    await back.click()
+    await addSecondFigure(page)
     await expect(page.locator('[data-topbar] [data-save-state]')).toHaveCount(1)
-    await expect(page.locator('[data-topbar] [data-timeline-button]')).toHaveCount(1)
-    await expect(page.locator('[data-topbar] [data-timeline-button]')).toBeVisible()
+    // 时间线入口只在右栏「时间线」页签（审计 A2）：顶栏不再有时钟钮
+    await expect(page.locator('[data-topbar] [data-timeline-button]')).toHaveCount(0)
     // 书签钮已并入时间线抽屉（2026-10-01）：顶栏不再有它
     await expect(page.locator('[data-topbar] [data-timeline-name-button]')).toHaveCount(0)
     const m = await overlaps(page)
-    expect(m.count, JSON.stringify(m)).toBeGreaterThan(8)
+    // 量到的框数下限：时钟钮去掉后（审计 A2）顶栏剩 8 个，少于它说明有按钮没量到
+    expect(m.count, JSON.stringify(m)).toBeGreaterThanOrEqual(8)
     expect(m.hits, JSON.stringify(m)).toEqual([])
     expect(m.off, JSON.stringify(m)).toEqual([])
   })

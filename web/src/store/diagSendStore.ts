@@ -11,13 +11,31 @@ interface DiagSendState {
   /** 「发送问题反馈」对话框是否开着（全应用唯一一个，由 `DiagnosticsSendHost` 挂载；入口只是把它打开） */
   open: boolean
   setOpen: (open: boolean) => void
+  /** AI 修复会话替用户起草的说明：只预填进说明框，由用户看过、改过、点「发送」才发（ADR 0118 / 0149）；打开时被对话框取走并清空 */
+  presetNote: string
+  /** 带着 AI 起草的说明打开对话框（仍是本机备包，不发送） */
+  openWithNote: (note: string) => void
+  /** 取走预填的说明（对话框打开时调） */
+  takePresetNote: () => string
+  /** 本页累计发送成功的次数：AI 修复的「发送」卡据此知道用户真的点了发送 */
+  sentCount: number
+  markSent: () => void
   load: () => Promise<void>
 }
 
-export const useDiagSendStore = create<DiagSendState>((set) => ({
+export const useDiagSendStore = create<DiagSendState>((set, get) => ({
   capability: null,
   open: false,
   setOpen: (open) => set({ open }),
+  presetNote: '',
+  openWithNote: (note) => set({ open: true, presetNote: note }),
+  takePresetNote: () => {
+    const note = get().presetNote
+    if (note) set({ presetNote: '' })
+    return note
+  },
+  sentCount: 0,
+  markSent: () => set((s) => ({ sentCount: s.sentCount + 1 })),
   load: async () => {
     try {
       const c = await fetchDiagSendCapability()

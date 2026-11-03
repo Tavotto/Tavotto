@@ -303,7 +303,8 @@ def test_colorbar_and_its_mappable_are_one_alias_group(hot):
     cbar = next(g for g in _gids(base) if g.endswith(".colorbar"))
     orig = _fields(base, img)["cmap"]["value"]
 
-    # 两条都设：图元自己那条说了算（组内次序由 _rank 定死）
+    # 两条都设：色阶组整组换色（用户裁决 2026-10-18，ADR 0135 修订），文档序靠后的赢——
+    # 这里色条排在后面，所以整组是 cividis（原先是「图元自己那条压过色条」）
     man = _man(
         hot,
         "FamCbar",
@@ -312,7 +313,8 @@ def test_colorbar_and_its_mappable_are_one_alias_group(hot):
             {"gid": cbar, "prop": "cmap", "value": "cividis"},
         ],
     )
-    assert _fields(man, img)["cmap"]["value"] == "plasma"
+    assert _fields(man, img)["cmap"]["value"] == "cividis"
+    assert _fields(man, cbar)["cmap"]["value"] == "cividis"
 
     # 只撤掉图元那条：色条那条必须重放，不能退回脚本原样
     man = _man(hot, "FamCbar", [{"gid": cbar, "prop": "cmap", "value": "cividis"}])

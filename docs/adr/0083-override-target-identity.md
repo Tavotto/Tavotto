@@ -112,6 +112,47 @@ worker warning，按写回事务的既有规矩**一条即阻断**（409 `write_
 身份对不上」也算进去（`isStaleIdentityOverride`，与引擎同一条判据）；导出结果区照旧列出
 引擎 warnings；写回 409 照旧列出 warnings。
 
+### 五、改名不是顶替：数据检查与 override 重放对“身份变了”的两种读法（2026-10-26 修订）
+
+身份 = 显式 label 的摘要，所以同一个 gid 上“身份变了”有两种来源：**重编号**（前面删了一条，后面的对象顶上来，数据也变）
+和**改名**（用户或 AI 改了 `label=`，数据一个字节没动）。§一的 override 重放分不开这两者——它只比身份，宁可拒绝
+（拒绝是可见的、可清除的）。但 AI 改图的数据检查不该照抄：用户明确说“把 B 曲线的图例改成 …”，改 `label=` 是合法的，
+把它判成 `subject_removed` 会让所有改图例的请求都过不了数据检查（实测 `multi_panel` 只改 B 的 `label=` 即得
+`data.axes_1.lines_0 failed subject_removed`）。
+
+**数据检查（`figureverify.data_unchanged`，提交后 L2 / 内置执行器 `check` 共用这一个函数）**：数据指纹是把两者分开的
+独立证据。同 gid、两侧身份都有且不同时：
+
+| 数据指纹（两侧都量到） | 新身份是不是改前**另一个数据元素**的旧身份 | 结论 |
+| --- | --- | --- |
+| 逐部件相同 | 否 | **verified**，`observed.relabeled = {from_identity, to_identity}`（改名，只有摘要） |
+| 逐部件相同 | 是（名字对调 / 抢了别人的名字） | **failed `label_swapped`**（`observed.taken_from`）：数据顶着别人的名字，是贴错标签 |
+| 不同，或任一侧没量到 | — | failed `subject_removed`（与改动前相同：保守） |
+
+gid 没了仍是 `subject_removed`；身份相同数据变仍是 `data_changed`；任一侧缺身份不比（§二已知边界）。按序号定位的断言
+（`line_label` / `line_data_unchanged`，FigureBench FB-S10 / FB-S11）同样把“只改名”当主体还在；其余断言（按 label 找
+曲线、按位置的样式 / 文字断言）身份一变仍算顶替，行为不变。**不判意图**：把 B 改成与任何旧名字都不冲突的新名字、
+但用户其实没要求改——数据检查放行；内置执行器 `check` 的报告会列出每一处可见文字变化让模型自己核对该不该留
+（`ai_figure_edit.text_changes_note`），不做“目标范围”之类的机械判据（用户裁决）。
+
+**override 重放仍是 §一的读法（身份对不上就拒绝）**——改名之后，画布上写在旧身份上的编辑会被拒，一条改图例的请求就让这条线的
+全部编辑静默失效。所以**后端报改名、前端改写身份**：
+
+- 后端：提交后 L2 里 verified 且带 `relabeled` 的数据检查，收成 `task.renamed = [{stem, gid, from_identity, to_identity}]`
+  （闭集形状、只有身份摘要，`ai_figure_edit.renamed_from_verification`；`ai.done.task` 与会话详情带它，历史库的验证段里存着同一份，
+  所以后端重启后 `get()` 仍能重建）。撤销（`POST /api/ai/sessions/<sid>/revert`）的回应带同样的 `renamed`。名字对调 /
+  数据也变的不在其中——那些身份对不上本来就该被用户看见。
+- 前端（`store/aiRenameRebind.ts` + `lib/overrideIdentity.rebindOverrideIdentities`）：`ai.done`（状态 done 且 changed）时把该 stem 的
+  面板上、该 gid 处 `identity == from_identity` 的 override 改写成 `to_identity`（激活画布一条历史、`commit(…, {overrides:'restored'})`
+  不让抄写器重抄；非激活画布直接写快照，同 `renameCanvas` 的先例）；撤销成功后（`aiStore.revert` / 历史列表的撤销）反向改回。
+  **两个方向都幂等**：只改身份恰好等于起点的条目，没带身份的、带着别的身份的、已经是目标身份的一律不动，所以重放 / 另一窗口
+  先改过 / 重复事件都无副作用；已被撤销的会话（状态 `reverted`）不会再被前向改写。
+- 渲染：改写的是 `overrides` 内容，`useEngineSync` 自己渲染一次；撤销时改写先于 `markStale`，合并成一次。AI 提交后随
+  `panel.file_changed` 来的重建先于 `ai.done`，所以前向改写前会有一次按旧身份的渲染（带“编辑的对象已找不到”warning），改写后
+  再渲染一次；这是事件顺序决定的，不为省这一次把渲染挪到 `ai.done` 之后。
+- 已知边界：存下来的布局版本 / 写回历史里的 override 仍是写下那一刻的身份（§四“恢复”不重抄），恢复到改名之后的脚本上会被拒、
+  走既有的“清除失效修改”；只改名的数据检查依赖数据指纹量到（`over_budget` / `unavailable` 时保守按 `subject_removed`）。
+
 ## 看护
 
 - `tests/test_override_identity.py`（真 matplotlib）：QA 的四个变体按 label 找洋红，只许在
@@ -122,6 +163,10 @@ worker warning，按写回事务的既有规矩**一条即阻断**（409 `write_
 - `web/src/lib/overrideIdentity.test.ts`：抄写四条规则 + 真实写入口（`setOverride` / `setOverrides`
   经 `useEngineSync` 登记的抄写）+ 撤销一次连身份一起回去 + 两条真实恢复入口在「同一身份、
   值不同」时原样保留存下的身份（带普通编辑的对照）。
+- `tests/test_figure_verifier.py`（改名 / 改名且数据变 / 名字对调 / 抢名字 / gid 没了，合成 manifest + 真 worker）、
+  `tests/test_ai_figure_edit_app.py`（`task.renamed`、重启后重建、撤销回应）、`tests/test_override_identity.py::
+  test_rebinding_the_identity_after_an_ai_relabel_keeps_the_edits_applying`（引擎：改写后的身份照常应用、旧身份被拒）、
+  `web/src/store/aiRenameRebind.test.ts`（前后向改写、一条历史、幂等、多画布、`ai.done` 与撤销接线）。
 
 ## 已定（2026-09-25 用户拍板）
 

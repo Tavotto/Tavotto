@@ -9,7 +9,10 @@
     "delete": "Delete",
     "refresh": "Refresh",
     "reload": "Reload",
-    "save": "Save"
+    "save": "Save",
+    "windowMaximize": "Maximize",
+    "windowMinimize": "Minimize",
+    "windowRestore": "Restore"
   },
   "colorField": {
     "picker": "{{label}}: colour picker",
@@ -29,12 +32,12 @@
   },
   "literal": "{{text}}",
   "measure": {
-    "cmSize": "{{w}} × {{h}} cm",
-    "mm": "{{value}} mm",
-    "mmPair": "{{a}}, {{b}} mm",
-    "mmSize": "{{w}} × {{h}} mm",
-    "ppi": "{{value}} ppi",
-    "pxSize": "{{w}} × {{h}} px"
+    "cmSize": "{{w}} × {{h}} cm",
+    "mm": "{{value}} mm",
+    "mmPair": "{{a}}, {{b}} mm",
+    "mmSize": "{{w}} × {{h}} mm",
+    "ppi": "{{value}} dpi",
+    "pxSize": "{{w}} × {{h}} px"
   },
   "mixed": "Mixed",
   "notice": {

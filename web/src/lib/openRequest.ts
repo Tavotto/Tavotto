@@ -25,10 +25,16 @@ import { useAssetStore } from '@/store/assetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
+import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
-import { backendErrorText } from '@/lib/api'
+import { backendErrorText, postHandoffDisplayAck } from '@/lib/api'
+import type { HandoffDisplayAck } from '@/lib/api'
 import type { PanelInfo, RuntimeAssetInfo } from '@/lib/api'
+import { panelStemOf } from '@/lib/panelStem'
+
+// 「这个磁盘文件属于哪张图」的判据只在 `lib/panelStem.ts`；这里转出给老的 import 路径
+export { panelStemOf, panelStemOfFileId, stemOf } from '@/lib/panelStem'
 
 export interface OpenRequest {
   /** 图库目录绝对路径；桌面事件才有，URL 形态下项目由后端认领 */
@@ -58,17 +64,11 @@ export type OpenOutcome =
   | 'no-project'       // 没有项目可落
   | 'failed'
 
-/** 素材 id 是图库相对路径（可能带子目录）；stem = 去目录去扩展名。 */
-export function stemOf(fileId: string): string {
-  const base = fileId.split(/[/\\]/).pop() ?? fileId
-  const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(0, dot) : base
-}
-
 function findByStem(panels: PanelInfo[], stem: string): PanelInfo | undefined {
-  // 同 stem 的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
-  // 它才是能进图内编辑、能导出真矢量的那一份。
-  const hits = panels.filter((p) => stemOf(p.id) === stem)
+  // 同一张图的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
+  // 它才是能进图内编辑、能导出真矢量的那一份。「同一张图」按 `panelStemOf`——同脚本里另一张图写的
+  // `panel.pdf`（stem `panel-2`）不是 `?open=panel` 要的那张。
+  const hits = panels.filter((p) => panelStemOf(p) === stem)
   return hits.find((p) => p.kind === 'pdf') ?? hits[0]
 }
 
@@ -135,6 +135,36 @@ function landFigure(fileId: string): OpenOutcome {
   const outcome = openFastEdit(fileId)
   if (outcome === 'deferred' || outcome === 'blocked') return 'deferred'
   return outcome === 'missing' ? 'missing' : existed ? 'selected' : 'placed'
+}
+
+/**
+ * 重复交接命中已显示的面板（只选中、不会触发 `/api/engine/render`）：把这张图**此刻的渲染状态**回给后端，
+ * 否则 CLI 在结论表里等不到 `since` 之后的新结论，白等满预算再报 `unverified/timeout`（#1154）。
+ *
+ *   * 正在渲染 / 还没渲染过：不发——那次渲染自己会记结论，别抢在它前面下一个「未验证」；
+ *   * 渲染失败：`failed` + 稳定 code；**但 `stale` 的错误不发**——`markStale` 故意保留 `status: 'error'` 直到替换渲染开始，
+ *     那是上一版的结论；后端只取 since 之后的第一条，抢发一个旧失败就把随后修好的成功渲染挡死；
+ *   * 这一版的精确渲染（`exactPanelRender`，与 overrides 对得上、没过期）：`ok` + manifest 元素数；
+ *   * 其余（有渲染但过期 / 不是这一版）：`displayed`，后端记 `unverified/already_displayed`。
+ * `verified` 与 `registry_match` 都不在这里判：后端自己查注册表、`summarize` 是唯一判据。
+ */
+function ackRepeatHandoff(fileId: string): void {
+  const found = findFigurePanel(fileId)
+  if (!found) return
+  const state = useRenderStore.getState()
+  const own = state.byKey[renderKeyOf(found.panel)]
+  if (!own || own.status === 'rendering' || own.status === 'idle') return
+  let ack: HandoffDisplayAck
+  if (own.status === 'error') {
+    if (own.stale) return
+    ack = { id: fileId, status: 'failed', code: own.code || 'render_failed' }
+  } else {
+    const exact = exactPanelRender(state, found.panel)
+    ack = exact?.manifest
+      ? { id: fileId, status: 'ok', manifest_elements: exact.manifest.elements.length }
+      : { id: fileId, status: 'displayed' }
+  }
+  void postHandoffDisplayAck(ack)
 }
 
 /** 执行一次交接。返回值给测试与调用方看，用户看到的是选中的面板或一条 toast。 */
@@ -262,6 +292,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
       msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: asset.stem }, 'project'),
       'done',
     )
+    if (landed === 'selected') ackRepeatHandoff(asset.id)
     return landed
   }
 
@@ -276,5 +307,6 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: info.name }, 'project'),
     'done',
   )
+  if (landed === 'selected') ackRepeatHandoff(info.id)
   return landed
 }

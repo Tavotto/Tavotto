@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from './ui/Badge'
 import { Checkbox } from './ui/Checkbox'
 import { backendCodeMsg } from '@/lib/api'
@@ -128,7 +128,7 @@ export function NativeConfirmDialog() {
       {settled ? (
         head.loading ? (
           <p data-native-loading className="flex items-center gap-2 text-ink-3">
-            <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
+            <Spinner size={ICON_SIZE.sm} />
             <span className="text-shimmer">{nr('loading')}</span>
           </p>
         ) : (

@@ -2,6 +2,16 @@
 
 > 原文出自 `web/AGENTS.md`「图内属性的展示注册表（2026-09-06，UI/UX 审计 P1 / P2）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`presentation/registry.test.ts`、`controls/pickers.test.tsx`、`colorScalePanels.test.tsx`、`figureFontFamilies.test.tsx`、`tickTaskCard.test.tsx`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：排版决策唯一出处；条件展开只有 `registry.fieldVisible`；低频项一律是摘要行（`ui/SummaryRow`，模板 `folds` 认领，右值只写当前值或项数）
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 90
+改到: `components/inspector/presentation/`、`MarkerPicker`、`ColormapPicker`、字体下拉并表
+主题: 图内属性的展示注册表 → `inspector-presentation-registry.md`
+必守要点: 排版决策唯一出处；条件展开只有 `registry.fieldVisible`；低频项一律是摘要行（`ui/SummaryRow`，模板 `folds` 认领）
+-->
 
 `components/inspector/presentation/` 是**排版决策的唯一出处**：manifest 是能力
 权威，这里只决定「摆在哪一桶、此刻显不显示、长成哪种控件」，**字段进来多少
@@ -114,6 +124,15 @@
     两份文案 + 在 `foldSummary.foldValue` 里点名右值（没有可说的当前值就留空，别编一个）。
   * 摘要行默认收起、收起时内容不挂载：量里面控件的测试要先点开（`[data-fold="<id>"] > button`；
     `data-fold` 是它的稳定锚点）。展开状态是模块级 store，`src/test/setup.ts` 每条用例前清掉 `foldOpen`。
+  * 文字角色（title / text / axis_label / legend_text 共用 `TEXT_PROFILE`）的「背景细项」摘要行（`bboxDetail`）认领
+    `bbox_linewidth` / `bbox_pad` / `bbox_rounded`；背景开关、背景色、不透明度、边框色仍在首屏（2026-09-11 反馈）。
+    它只在背景开着时出现（沿用 `visibleWhen`）；背景关着而细项被改过时，行仍出现，右值报「n 项已修改」
+    （`foldValue` 的 `isOverridden` 档，同「更多」）——改过的字段在收起的行里，不是不可见。问题面板的 `focusField`
+    按 `data-prop` 找字段、没有「定位时先展开」的机制：折叠行里的字段**不得**成为预检问题的 `prop`
+    （现在 `lib/preflight.ts` 里没有 `bbox_*`）；将来要加，先给 `focusField` 加展开再加问题。
+  * 图例条目（`legend_text`）首屏顺序：文字样式 → `binding`（链接）→ 背景 → 示意线样式；链接开关在背景参数之前。
+  * 箭头的「位置与尺寸」用 `TransformSection` 的 `foldKey="arrow-transform"` 折叠（文字是 `text-transform`，T27），
+    排在 `ArrowSection` 之后；形状的 W / H 是常改项，不折叠。
   * 子图的网格 X / Y 开关（`grid_x` / `grid_y`）属于「网格线」摘要行，**不在**四边状态图下面（图只预览它们的状态）；
     刻度组页两段叫「刻度线 / 刻度数字」。
   * 刻度组页的「小刻度」一行不全是注册表认领的：开关与长 / 宽在刻度卡里（`TickMinorBlock`，同一份控件换了

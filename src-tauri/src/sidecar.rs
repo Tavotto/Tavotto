@@ -10,6 +10,8 @@
 //!   origin（进而 localStorage）跨重启稳定；记忆策略在 [`port_memory`]（ADR 0108）。
 
 mod port_memory;
+pub mod safe_start;
+pub mod startup_phase;
 
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -42,6 +44,21 @@ pub struct StartError {
 }
 
 impl StartError {
+    fn with_install_files(mut self, files: Option<crate::rescue::InstallFiles>) -> Self {
+        self.info = self.info.with_install_files(files);
+        self
+    }
+
+    fn with_spawn_error(mut self, kind: &'static str) -> Self {
+        self.info = self.info.with_spawn_error(kind);
+        self
+    }
+
+    fn with_startup_phase(mut self, phase: &'static str) -> Self {
+        self.info = self.info.with_startup_phase(phase);
+        self
+    }
+
     fn new(stage: &'static str, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -54,6 +71,25 @@ pub struct Sidecar {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     pub log_path: PathBuf,
+}
+
+fn bundled_exe_name() -> &'static str {
+    if cfg!(windows) {
+        "Tavotto.exe"
+    } else {
+        "Tavotto"
+    }
+}
+
+/// 打包 sidecar 的三样东西在不在：`sidecar/Tavotto` 目录、其下 `_internal`、可执行文件。只回布尔值
+/// （不含路径 / 文本），进启动诊断区分「exe 被杀软隔离」与「安装不完整」。资源目录拿不到 → `None`。
+pub fn probe_install_files(resource_dir: Option<&Path>) -> Option<crate::rescue::InstallFiles> {
+    let dir = resource_dir?.join("sidecar").join("Tavotto");
+    Some(crate::rescue::InstallFiles {
+        sidecar_dir: dir.is_dir(),
+        internal_dir: dir.join("_internal").is_dir(),
+        exe: dir.join(bundled_exe_name()).is_file(),
+    })
 }
 
 /// 解析 sidecar 可执行文件。优先级：
@@ -78,11 +114,7 @@ fn resolve_command(
         return Ok((p, args));
     }
 
-    let exe_name = if cfg!(windows) {
-        "Tavotto.exe"
-    } else {
-        "Tavotto"
-    };
+    let exe_name = bundled_exe_name();
     if let Some(res) = resource_dir {
         let bundled = res.join("sidecar").join("Tavotto").join(exe_name);
         if bundled.is_file() {
@@ -170,6 +202,68 @@ fn fill2(template: &str, path: &str, err: &str) -> String {
     template.replace("{path}", path).replace("{err}", err)
 }
 
+/// 写 hello 失败后，等子进程退出的上限。
+const EXIT_GRACE: Duration = Duration::from_secs(2);
+
+/// 握手阶段发现 sidecar 已退出：带退出码，stderr 尾巴只进 message。
+fn exited_error(
+    status: std::process::ExitStatus,
+    log_path: &Path,
+    m: &crate::i18n::ShellText,
+) -> StartError {
+    use crate::rescue::{code, stage};
+    let tail = log_tail(log_path, 2000);
+    let mut e = StartError::new(
+        stage::HANDSHAKE,
+        code::SIDECAR_EXITED,
+        m.sidecar_exited
+            .replace("{status}", &status.to_string())
+            .replace("{tail}", &tail),
+    );
+    e.info.exit_code = status.code();
+    e
+}
+
+/// 把 hello 行写进 sidecar 的 stdin。
+///
+/// 写失败（EPIPE）多半是 sidecar 在父进程写之前就退出了（Python 一启动 import 失败等）：
+/// 此时报 `handshake / sidecar_exited` + 退出码，与握手循环里发现退出走同一条路径；
+/// 只有子进程仍在运行时才是真正的「stdin 写不进去」。
+fn send_hello(
+    child: &mut Child,
+    stdin: &mut ChildStdin,
+    line: &str,
+    log_path: &Path,
+    m: &crate::i18n::ShellText,
+) -> Result<(), StartError> {
+    use crate::rescue::{code, stage};
+    let err = match stdin
+        .write_all(line.as_bytes())
+        .and_then(|()| stdin.flush())
+    {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    // 管道断了但进程还没被回收：短暂轮询，给它一点时间把退出状态交出来
+    let deadline = Instant::now() + EXIT_GRACE;
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(exited_error(status, log_path, m));
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    Err(StartError::new(
+        stage::LAUNCH,
+        code::SIDECAR_STDIN_FAILED,
+        m.sidecar_stdin_write_failed
+            .replace("{err}", &err.to_string()),
+    ))
+}
+
 fn log_tail(path: &Path, max: u64) -> String {
     let Ok(mut f) = std::fs::File::open(path) else {
         return String::new();
@@ -196,11 +290,39 @@ impl Sidecar {
         config_dir: Option<&Path>,
         // 起不来时这些话会显示在 error.html 上，得说用户选的那门语言
         locale: crate::i18n::Locale,
+        // 安全启动（握手超时后的「重新启动」，[`safe_start`]）：hello 里带 `safe_start`，这次不恢复上次项目
+        safe: bool,
+    ) -> Result<(Sidecar, u16), StartError> {
+        Self::start_with(
+            resource_dir,
+            log_dir,
+            nonce,
+            project,
+            config_dir,
+            locale,
+            safe,
+            HANDSHAKE_TIMEOUT,
+        )
+    }
+
+    /// [`Sidecar::start`] 的本体；握手超时可注入，测试不必真等 60 秒。
+    #[allow(clippy::too_many_arguments)]
+    fn start_with(
+        resource_dir: Option<PathBuf>,
+        log_dir: &Path,
+        nonce: &str,
+        project: Option<&str>,
+        config_dir: Option<&Path>,
+        locale: crate::i18n::Locale,
+        safe: bool,
+        handshake_timeout: Duration,
     ) -> Result<(Sidecar, u16), StartError> {
         use crate::rescue::{code, stage};
         let m = crate::i18n::text(locale);
-        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale)
-            .map_err(|e| StartError::new(stage::LOCATE, code::SIDECAR_NOT_FOUND, e))?;
+        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale).map_err(|e| {
+            StartError::new(stage::LOCATE, code::SIDECAR_NOT_FOUND, e)
+                .with_install_files(probe_install_files(resource_dir.as_deref()))
+        })?;
 
         std::fs::create_dir_all(log_dir).map_err(|e| {
             StartError::new(
@@ -229,6 +351,8 @@ impl Sidecar {
                     ),
                 )
             })?;
+        // 本次启动的日志从这里开始：超时后只在这之后新增的部分里找启动阶段标记（上一次启动留下的不算）
+        let log_start = startup_phase::log_len(&log_path);
         let log_err = log_out.try_clone().map_err(|e| {
             StartError::new(
                 stage::LAUNCH,
@@ -249,8 +373,15 @@ impl Sidecar {
         if let Some(dir) = project {
             cmd.arg("--figures").arg(dir);
         }
+        // 「联系作者」（ADR 0145）选线路要用“大陆环境”的结论；判据只有一处（`app_update::source_order`，ADR 0121），
+        // 引擎读这个环境变量，不在 Python 里再抄一份时区 / 语言表。界面语言此刻还不知道——引擎侧另有 zh-CN 兜底。
+        let region = match crate::app_update::detect_order(None).first() {
+            Some(crate::app_update::Source::Mirror) => "cn",
+            _ => "global",
+        };
         cmd.arg("--desktop-sidecar")
             .env("TAVOTTO_DESKTOP_HANDSHAKE", &handshake)
+            .env("TAVOTTO_NETWORK_REGION", region)
             .stdin(Stdio::piped())
             .stdout(Stdio::from(log_out))
             .stderr(Stdio::from(log_err));
@@ -271,6 +402,11 @@ impl Sidecar {
                     &e.to_string(),
                 ),
             )
+            .with_spawn_error(crate::rescue::spawn_error_kind(
+                e.raw_os_error(),
+                e.kind(),
+                cfg!(windows),
+            ))
         })?;
 
         // 凭据走 stdin 首行；这条管道随后保持打开作为「父进程还活着」的信号。
@@ -291,20 +427,12 @@ impl Sidecar {
             "parent_pid": std::process::id(),
         });
         hello[port_memory::HELLO_FIELD] = serde_json::json!(preferred);
-        stdin
-            .write_all(format!("{hello}\n").as_bytes())
-            .and_then(|()| stdin.flush())
-            .map_err(|e| {
-                let _ = child.kill();
-                StartError::new(
-                    stage::LAUNCH,
-                    code::SIDECAR_STDIN_FAILED,
-                    m.sidecar_stdin_write_failed
-                        .replace("{err}", &e.to_string()),
-                )
-            })?;
+        if safe {
+            hello[safe_start::HELLO_FIELD] = serde_json::json!(true);
+        }
+        send_hello(&mut child, &mut stdin, &format!("{hello}\n"), &log_path, m)?;
 
-        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+        let deadline = Instant::now() + handshake_timeout;
         let port = loop {
             if let Ok(text) = std::fs::read_to_string(&handshake) {
                 if let Ok(hs) = serde_json::from_str::<Handshake>(&text) {
@@ -331,16 +459,7 @@ impl Sidecar {
                 }
             }
             if let Ok(Some(status)) = child.try_wait() {
-                let tail = log_tail(&log_path, 2000);
-                let mut e = StartError::new(
-                    stage::HANDSHAKE,
-                    code::SIDECAR_EXITED,
-                    m.sidecar_exited
-                        .replace("{status}", &status.to_string())
-                        .replace("{tail}", &tail),
-                );
-                e.info.exit_code = status.code();
-                return Err(e);
+                return Err(exited_error(status, &log_path, m));
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
@@ -348,7 +467,9 @@ impl Sidecar {
                     stage::HANDSHAKE,
                     code::SIDECAR_TIMEOUT,
                     m.sidecar_timeout,
-                ));
+                )
+                // 卡在启动的哪一步：闭集值，不含日志原文（TVD-DT76）
+                .with_startup_phase(startup_phase::from_log(&log_path, log_start)));
             }
             std::thread::sleep(Duration::from_millis(100));
         };
@@ -421,7 +542,7 @@ mod tests {
         #[cfg(windows)]
         cmd.arg("/C");
         cmd.args(args).stdin(Stdio::piped());
-        let mut child = cmd.spawn().unwrap();
+        let mut child = spawn_gate(|| cmd.spawn()).unwrap();
         let stdin = child.stdin.take();
         Sidecar {
             child: Mutex::new(Some(child)),
@@ -492,8 +613,25 @@ mod tests {
         d
     }
 
+    /// 测试里「写出可执行脚本」与「任何 fork」互斥。
+    ///
+    /// 并行用例里一个线程在写假 sidecar（fd 以写方式开着）时，另一个线程 fork 出的子进程会在 exec 之前
+    /// 继承这个 fd；写线程关掉 fd 后立刻 exec 那份脚本，就撞上 ETXTBSY（"Text file busy"），
+    /// 被误判成 `sidecar_spawn_failed`（偶发红，见 lessons）。锁住「写」与「spawn」两类操作：
+    /// `spawn()` 返回时子进程必已 exec（CLOEXEC 管道），所以写的窗口里不会有人带着那个 fd 在途。
+    /// 产品里不写正在启动的 exe，没有这个竞态。
+    fn spawn_gate<T>(f: impl FnOnce() -> T) -> T {
+        static GATE: Mutex<()> = Mutex::new(());
+        let _held = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        f()
+    }
+
     /// 在假资源目录里放一个「打包的 sidecar」。
     fn bundled(res: &Path, body: &[u8]) {
+        spawn_gate(|| write_bundled(res, body));
+    }
+
+    fn write_bundled(res: &Path, body: &[u8]) {
         let exe = res.join("sidecar").join("Tavotto").join(if cfg!(windows) {
             "Tavotto.exe"
         } else {
@@ -509,17 +647,68 @@ mod tests {
     }
 
     fn start_in(res: &Path, log_dir: &Path) -> StartError {
-        match Sidecar::start(
-            Some(res.to_path_buf()),
-            log_dir,
-            "n",
-            None,
-            None,
-            crate::i18n::DEFAULT_LOCALE,
-        ) {
+        let started = spawn_gate(|| {
+            Sidecar::start(
+                Some(res.to_path_buf()),
+                log_dir,
+                "n",
+                None,
+                None,
+                crate::i18n::DEFAULT_LOCALE,
+                false,
+            )
+        });
+        match started {
             Ok(_) => panic!("must not start"),
             Err(e) => e,
         }
+    }
+
+    #[test]
+    fn the_install_probe_reports_which_of_the_three_pieces_exist() {
+        use crate::rescue::InstallFiles;
+        let facts = |sidecar_dir, internal_dir, exe| {
+            Some(InstallFiles {
+                sidecar_dir,
+                internal_dir,
+                exe,
+            })
+        };
+        // 资源目录拿不到：整体 None（与「三项都缺」区分）
+        assert_eq!(probe_install_files(None), None);
+        // 整个 sidecar 目录不在
+        let res = scratch("res");
+        assert_eq!(probe_install_files(Some(&res)), facts(false, false, false));
+        // 全在
+        bundled(&res, b"x");
+        std::fs::create_dir_all(res.join("sidecar").join("Tavotto").join("_internal")).unwrap();
+        assert_eq!(probe_install_files(Some(&res)), facts(true, true, true));
+        // 缺 exe（杀软隔离的形状）：目录与 _internal 还在
+        std::fs::remove_file(res.join("sidecar").join("Tavotto").join(bundled_exe_name())).unwrap();
+        assert_eq!(probe_install_files(Some(&res)), facts(true, true, false));
+        // 同名目录不算 exe（is_file，不是 exists）
+        std::fs::create_dir(res.join("sidecar").join("Tavotto").join(bundled_exe_name())).unwrap();
+        assert_eq!(probe_install_files(Some(&res)), facts(true, true, false));
+    }
+
+    #[test]
+    fn a_missing_bundled_sidecar_is_a_locate_failure_that_carries_the_install_facts() {
+        if source_tree_venv_bin().is_some() {
+            return; // 开发机上源码树回退会找到 .venv 里的入口，locate 不会失败
+        }
+        let res = scratch("res");
+        let dir = res.join("sidecar").join("Tavotto");
+        std::fs::create_dir_all(dir.join("_internal")).unwrap();
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!((e.info.stage, e.info.code), ("locate", "sidecar_not_found"));
+        assert_eq!(
+            e.info.install_files,
+            Some(crate::rescue::InstallFiles {
+                sidecar_dir: true,
+                internal_dir: true,
+                exe: false
+            })
+        );
     }
 
     #[test]
@@ -544,7 +733,12 @@ mod tests {
     #[test]
     fn a_sidecar_that_dies_during_the_handshake_reports_its_exit_code_not_its_stderr() {
         let res = scratch("res");
-        bundled(&res, b"#!/bin/sh\necho SECRET_STDERR_TEXT >&2\nexit 3\n");
+        // Enter the handshake only after the parent has delivered its bootstrap line.
+        // Exiting before that races the separate launch-stage stdin failure path.
+        bundled(
+            &res,
+            b"#!/bin/sh\nIFS= read -r hello\necho SECRET_STDERR_TEXT >&2\nexit 3\n",
+        );
         let logs = scratch("logs");
         let e = start_in(&res, &logs);
         assert_eq!(
@@ -555,6 +749,63 @@ mod tests {
         assert!(e.message.contains("SECRET_STDERR_TEXT"));
         let facts = serde_json::to_string(&e.info).unwrap();
         assert!(!facts.contains("SECRET_STDERR_TEXT"));
+    }
+
+    /// 起一个 `sh -c body` 子进程，返回 (child, stdin)。
+    #[cfg(unix)]
+    fn spawn_sh(body: &str) -> (Child, ChildStdin) {
+        let mut child = spawn_gate(|| {
+            Command::new("sh")
+                .args(["-c", body])
+                .stdin(Stdio::piped())
+                .spawn()
+        })
+        .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        (child, stdin)
+    }
+
+    /// 写 hello 失败且子进程已退出（确定性：先等它退出、读端必已关闭）→ sidecar_exited + 退出码。
+    #[cfg(unix)]
+    #[test]
+    fn a_hello_write_to_an_already_dead_sidecar_reports_its_exit_code() {
+        let (mut child, mut stdin) = spawn_sh("echo SECRET_STDERR_TEXT >&2; exit 3");
+        while child.try_wait().unwrap().is_none() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let log = scratch("log").join("sidecar.log");
+        std::fs::write(&log, b"SECRET_STDERR_TEXT\n").unwrap();
+        let m = crate::i18n::text(crate::i18n::DEFAULT_LOCALE);
+        let e = send_hello(&mut child, &mut stdin, "{}\n", &log, m).unwrap_err();
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.exit_code),
+            ("handshake", "sidecar_exited", Some(3))
+        );
+        assert!(e.message.contains("SECRET_STDERR_TEXT"));
+    }
+
+    /// 写失败而子进程仍在跑（自己关了 stdin 读端）→ 仍是 sidecar_stdin_failed，且不留孤儿。
+    #[cfg(unix)]
+    #[test]
+    fn a_hello_write_to_a_live_sidecar_with_closed_stdin_is_a_stdin_failure() {
+        let (mut child, mut stdin) = spawn_sh("exec 0<&-; sleep 30");
+        let log = scratch("log").join("sidecar.log");
+        let m = crate::i18n::text(crate::i18n::DEFAULT_LOCALE);
+        // 等 sh 真把 stdin 关掉：写到失败为止（sh 启动前管道缓冲区能吃下小写入）
+        let mut last = Ok(());
+        for _ in 0..200 {
+            last = send_hello(&mut child, &mut stdin, "{}\n", &log, m);
+            if last.is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let e = last.unwrap_err();
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.exit_code),
+            ("launch", "sidecar_stdin_failed", None)
+        );
+        assert!(child.wait().is_ok(), "killed, no orphan");
     }
 
     #[cfg(unix)]
@@ -573,6 +824,95 @@ mod tests {
             (e.info.stage, e.info.code),
             ("launch", "sidecar_spawn_failed")
         );
+        // 没有执行权限 = EACCES：报告里记闭集类别，不记原文
+        assert_eq!(e.info.spawn_error, Some("access_denied"));
+    }
+
+    /// 起一个会在握手前卡住的假 sidecar：读完 hello 后把它回显到 stderr（= 日志）、写若干阶段标记，然后睡着。
+    #[cfg(unix)]
+    fn start_hanging(res: &Path, logs: &Path, safe: bool, script_body: &str) -> StartError {
+        bundled(
+            res,
+            format!("#!/bin/sh\nIFS= read -r hello\n{script_body}\nsleep 30\n").as_bytes(),
+        );
+        let started = spawn_gate(|| {
+            Sidecar::start_with(
+                Some(res.to_path_buf()),
+                logs,
+                "n",
+                None,
+                None,
+                crate::i18n::DEFAULT_LOCALE,
+                safe,
+                Duration::from_millis(800),
+            )
+        });
+        match started {
+            Ok(_) => panic!("must not start"),
+            Err(e) => e,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_handshake_timeout_records_the_last_startup_phase_of_this_launch_only() {
+        let res = scratch("res");
+        let logs = scratch("logs");
+        // 上一次启动留在日志里的标记不算本次
+        std::fs::write(
+            logs.join("sidecar.log"),
+            "TAVOTTO_STARTUP_PHASE=serving\nold run\n",
+        )
+        .unwrap();
+        let e = start_hanging(
+            &res,
+            &logs,
+            false,
+            "echo TAVOTTO_STARTUP_PHASE=interpreter >&2\necho TAVOTTO_STARTUP_PHASE=housekeeping >&2\necho 'free text /home/u/secret' >&2\necho TAVOTTO_STARTUP_PHASE=bogus >&2",
+        );
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.startup_phase),
+            ("handshake", "sidecar_timeout", Some("housekeeping"))
+        );
+        let facts = serde_json::to_string(&e.info).unwrap();
+        assert!(
+            !facts.contains("secret"),
+            "no log text in the structured facts"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_handshake_timeout_without_any_marker_in_this_launch_is_none() {
+        let res = scratch("res");
+        let logs = scratch("logs");
+        std::fs::write(logs.join("sidecar.log"), "TAVOTTO_STARTUP_PHASE=serving\n").unwrap();
+        let e = start_hanging(&res, &logs, false, "true");
+        assert_eq!(e.info.code, "sidecar_timeout");
+        assert_eq!(e.info.startup_phase, Some("none"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_safe_start_puts_the_field_in_the_hello_line() {
+        for (safe, want) in [(true, true), (false, false)] {
+            let res = scratch("res");
+            let logs = scratch("logs");
+            // 把收到的 hello 原样回显进日志
+            start_hanging(&res, &logs, safe, "echo \"HELLO:$hello\" >&2");
+            let log = std::fs::read_to_string(logs.join("sidecar.log")).unwrap();
+            let line = log
+                .lines()
+                .find(|l| l.starts_with("HELLO:"))
+                .expect("hello echoed");
+            let hello: serde_json::Value = serde_json::from_str(&line["HELLO:".len()..]).unwrap();
+            let expected = serde_json::json!(true);
+            assert_eq!(
+                hello.get(safe_start::HELLO_FIELD),
+                want.then_some(&expected)
+            );
+            assert_eq!(hello["nonce"], "n", "credentials are still sent");
+        }
     }
 
     #[test]

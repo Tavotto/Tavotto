@@ -15,6 +15,7 @@
  * 草稿按后端 schema 还差几个必填参数（`missingArgs`）、加进画布的图首次编辑渲染好了没有（`editReady`）。
  */
 import type {
+  ConvertSourceLanguage,
   EnvCandidate,
   GuiDialogPayload,
   MissingInputOffer,
@@ -24,6 +25,8 @@ import type {
   PreparationRequirement,
   WorkdirConfirmation,
 } from '@/lib/api'
+import { listJoin } from '@/i18n/format'
+import { isRemedy, type Remedy, type RemedyEnv } from '@/lib/fixRemedy'
 import { originFactsOf } from '@/lib/importOrigin'
 import type { PrepEntry } from '@/store/projectPreparationStore'
 
@@ -46,15 +49,46 @@ export type PrepPrimary =
   | { kind: 'background' }
   /** 跑完没图：知道了，收起卡片 */
   | { kind: 'dismiss' }
+  /** 位图库画的图：让改图助手另写一份 Matplotlib 版新脚本（ADR 0143）；原脚本不动，用户对照后才采用 */
+  | { kind: 'convert'; script: string; library: string | null; path: string | null; language?: ConvertSourceLanguage }
+  /** 智能修复（ADR 0148）：「✦ 使用你的 AI 来修复」。remedy 是 `ai_fix` / `connect_ai` 时它就是主按钮；没连 AI 时点它先去连 */
+  | { kind: 'ai_fix' }
+  /** 反馈卡（remedy `feedback`）：「发送」——发送问题反馈（ADR 0118，逐次确认、源码默认不勾） */
+  | { kind: 'feedback' }
+  /** 项目外文件夹读不了（Windows，ADR 0153 修订）：「修复权限」。`token` 是后端一次性的不透明令牌，前端不持有路径 */
+  | { kind: 'repair_folder'; token: string }
+  /** 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：「跳过这个文件夹重跑」。`token` 同上是不透明令牌 */
+  | { kind: 'skip_folder'; token: string }
+  /**
+   * 解释器在 {{product}} 的缓存里建不了目录（`interpreter_cache_denied`，TVD-B6MR）：「改用自带的 Python」并重跑一次。
+   * `scope` 来自后端 `params.switch`——失败的解释器是在全局设置里指定的就清全局，为这个项目挑的就让项目改用默认链条，两层都选中它（`both`）就两层都清
+   */
+  | { kind: 'use_builtin_python'; scope: 'global' | 'project' | 'both' }
+  /**
+   * Python 版本不合、后端已发现一个满足的现成环境（`remedy.change_python.env`，ADR 0148 修订 2026-11-01）：「改用 <环境名>」并重跑一次。
+   * 只在用户点击时切；采用走既有的候选采用端点（现场再体检、环境代对不上会拒绝）
+   */
+  | { kind: 'switch_python'; env: RemedyEnv }
+  /** 脚本正是改图助手刚改出来、改前跑通过的那一版（remedy `revert_ai_edit`，TVD-H1M5）：「回滚 AI 的修改」并重跑。`session` = 那次 AI 会话 */
+  | { kind: 'revert_ai_edit'; session: string }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
-export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
+export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
 
 /** 卡片的视觉语气：标题左边那个小图标（`busy` 转圈、`ok` 勾、`bad` 叹号、`mute` 灰） */
 export type PrepTone = 'busy' | 'ok' | 'bad' | 'mute' | null
 
 /** 卡片主区里除标题外要摆出来的那一块（它就是这一步要做的事，不是收起的详情） */
-export type PrepSlot = 'workdir' | 'args' | 'install' | 'progress' | 'input' | 'figures' | 'ready' | null
+export type PrepSlot =
+  | 'workdir'
+  | 'args'
+  | 'install'
+  | 'progress'
+  | 'python_change'
+  | 'input'
+  | 'figures'
+  | 'ready'
+  | null
 
 export interface PrepView {
   /** 稳定的状态名（`data-prep-state`）：e2e / 单测按它断言，不按文案 */
@@ -62,6 +96,8 @@ export interface PrepView {
   /** 卡片标题：`workspace:prep.line.<key>`（一句话，不带句号） */
   sentence: { key: string; values: Record<string, unknown> }
   primary: PrepPrimary | null
+  /** 主按钮旁边保持原样的次按钮（位图提示卡：只当图片用 / 打开素材库）；多数卡没有 */
+  secondary: PrepPrimary | null
   /** 主按钮在但还不能按（必填参数没填齐 / 运行目录还没选） */
   primaryDisabled: boolean
   /** 主按钮旁边那颗：`later` = 稍后（缩成角标）、`stop` = 停止（会话的 cancel，文字按钮） */
@@ -70,6 +106,13 @@ export interface PrepView {
   step: 0 | 1 | 2
   tone: PrepTone
   slot: PrepSlot
+  /**
+   * 这张失败卡要不要摆一颗显眼的次按钮「✦ 使用你的 AI 来修复」（ADR 0148，维护者裁决：每次失败都出，不管 remedy 是什么；
+   * 例外：`switch_native` 是静默回退、正在运行、教程层激活）。主按钮已经是它自己时为 false（不重复摆）
+   */
+  aiFix: boolean
+  /** 本卡对应的 remedy（报告里认得的形状）；没有 = null。只给测试与详情读，按钮已经体现在 `primary` 里 */
+  remedy: Remedy | null
   /** 嵌入正在等的那一问（同一请求只有一个展示面，卡片认领期间原对话框让开） */
   input: boolean
   /** 参数表单要直接摆出来（这一步要填的内容，不是收起的详情） */
@@ -91,6 +134,8 @@ export interface PrepContext {
    * 要用户点通知轨上的「重新启动」。其它原因的断线（网络暂断）这一位是 false，提示保持原样。
    */
   engineExited?: boolean
+  /** 教程层 / 教程项目激活：任何「连接 AI」相关 UI 都不出现（ADR 0136） */
+  tutorial?: boolean
 }
 
 const has = (report: PreparationReport, kind: PreparationActionKind) =>
@@ -115,9 +160,13 @@ const find = <K extends PreparationRequirement['kind']>(
 ): Extract<PreparationRequirement, { kind: K }> | undefined =>
   report.requirements.find((r) => r.kind === kind) as Extract<PreparationRequirement, { kind: K }> | undefined
 
+/** 账本里的执行尝试（去掉「自动换 Python」那种非执行条目） */
+export const runAttempts = (report: PreparationReport | null | undefined): PreparationAttempt[] =>
+  (report?.attempt_history ?? []).filter((a): a is PreparationAttempt => a.kind !== 'python_changed')
+
 /** 当前这一次尝试在账本里的那一条（没有就取最后一条）；老后端没有账本 = undefined */
 export const currentAttempt = (report: PreparationReport): PreparationAttempt | undefined => {
-  const all = report.attempt_history ?? []
+  const all = runAttempts(report)
   return all.find((a) => a.attempt_id === report.provider.attempt_id) ?? all[all.length - 1]
 }
 
@@ -125,12 +174,12 @@ export const currentAttempt = (report: PreparationReport): PreparationAttempt | 
 export const fellBack = (report: PreparationReport): boolean => {
   const current = currentAttempt(report)
   // 只看**本次运行**（账本按 run 分组，历史里更早一次运行的回退不算）
-  return (report.attempt_history ?? []).some(
+  return runAttempts(report).some(
     (a) => current !== undefined && a.run === current.run && a.profile === 'native' && a.changed.includes('profile'),
   )
 }
 
-type Extra = Partial<Pick<PrepView, 'input' | 'argsOpen' | 'primaryDisabled' | 'ghost' | 'step' | 'tone' | 'slot'>>
+type Extra = Partial<Pick<PrepView, 'secondary' | 'input' | 'argsOpen' | 'primaryDisabled' | 'ghost' | 'step' | 'tone' | 'slot'>>
 
 /** 有主按钮、又不是正在跑的卡，旁边都给一颗「稍后」（缩成角标） */
 const view = (
@@ -143,11 +192,14 @@ const view = (
   state,
   sentence: { key, values },
   primary,
+  secondary: extra?.secondary ?? null,
   primaryDisabled: extra?.primaryDisabled ?? false,
   ghost: extra && 'ghost' in extra ? (extra.ghost ?? null) : primary ? 'later' : null,
   step: extra?.step ?? 0,
   tone: extra?.tone ?? null,
   slot: extra?.slot ?? null,
+  aiFix: false,
+  remedy: null,
   input: extra?.input ?? false,
   argsOpen: extra?.argsOpen ?? false,
 })
@@ -172,13 +224,126 @@ const RASTER_LIBRARY_NAME: Record<string, string> = {
   opencv: 'OpenCV',
   imageio: 'imageio',
   skimage: 'scikit-image',
+  plotly: 'Plotly',
+  root: 'ROOT',
+  // 手写 SVG（不用画图库、自己拼 SVG 文本）：卡片读作「这张图是用 SVG 画的…」（ADR 0143 修订 2026-11-01）
+  svg: 'SVG',
 }
 
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])
 /** 这几种状态下「运行」的前提是参数：必填参数没填齐就换成参数卡（任何卡都不说「可以运行」） */
 const ARGS_GATED = new Set(['ready', 'gui_dialog', 'restarted', 'needs_args', 'args_changed', 'origin_unknown'])
 
+/**
+ * 失败卡：下面这些状态都是「跑不了 / 没出图 / 走不通」的结局（`prepView` 的 `state`）。智能修复的次按钮只摆在它们上面；
+ * 还没跑（ready）、在跑（running…）、要先答的事（workdir / args / missing_data）、成功的卡都不在内。
+ */
+const FAILURE_STATES = new Set([
+  'failed',
+  'deps_failed',
+  'deps_runtime',
+  'deps_platform',
+  'deps_stdlib',
+  'deps_unknown',
+  'env_blocked',
+  'blocked',
+  'file_ops_blocked',
+  'folder_unreadable',
+  'folder_abi',
+  'no_figure',
+  'no_figure_raster',
+  'not_registered',
+])
+/** remedy 是 `ai_fix` / `connect_ai` 时，这几张卡的主按钮换成「使用你的 AI 来修复」（其余失败卡的主按钮是它自己的修法，照旧） */
+/**
+ * 不是失败卡、但也摆 AI 次按钮的状态：找不到要读的数据（`missing_data`）。主按钮仍是确定的「指认数据」，
+ * AI 只是次选（它会在可读范围里找文件、经用户确认后接上，不改脚本）。不并进 FAILURE_STATES：那会改掉它的 remedy / 主按钮行为。
+ */
+const AI_SECONDARY_ONLY_STATES = new Set(['missing_data'])
+const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figure', 'not_registered'])
+/** Python 版本不合时主按钮换成「改用 <环境名>」/「选择运行环境」的卡（其余失败卡的主按钮照旧） */
+const PYTHON_FIX_STATES = new Set(['failed', 'blocked'])
+
+/**
+ * 智能修复（ADR 0148）：在卡片之上读后端选好的 `report.remedy`，只翻译、不判定。
+ * 装包 / 转写 / 选环境三种确定修法的主按钮就是卡片原来的那一颗（后端 remedy 与这些卡的来源是同一份事实）；
+ * `ai_fix` / `connect_ai` 把主按钮换成 AI 修复；`feedback` 换成一句话 +「发送」；`switch_native` 不动（静默）。
+ */
+function withRemedy(view: PrepView, report: PreparationReport | null | undefined, ctx: PrepContext): PrepView {
+  const remedy = report && isRemedy(report.remedy) ? report.remedy : null
+  if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
+  // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
+  // 解释器写不了 Tavotto 自己的缓存：用户代码一行没跑，改脚本没用——同样只留确定的那一颗主按钮，不摆 AI 入口
+  if (view.state === 'folder_unreadable' || view.state === 'folder_abi' || view.state === 'cache_denied') {
+    return { ...view, remedy, aiFix: false }
+  }
+  if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
+  let out: PrepView = { ...view, remedy }
+  if (remedy?.kind === 'revert_ai_edit' && view.state === 'failed') {
+    // 脚本自己报错、而它正是 AI 刚改出来的那一版：一句话说清是在 AI 改过之后坏的，主按钮把那次修改退回去再跑一次。
+    // 「使用你的 AI 来修复」仍是次按钮（用户想保留那次修改、让 AI 接着改时走它）
+    out = {
+      ...out,
+      sentence: { key: 'aiEditBroke', values: view.sentence.values },
+      primary: { kind: 'revert_ai_edit', session: remedy.session },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+    }
+  } else if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
+    out = { ...out, primary: { kind: 'ai_fix' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy?.kind === 'choose_environment' && AI_PRIMARY_STATES.has(view.state)) {
+    // 缺的包装不了（私有库 / 本地模块 / conda-only）：确定的出路是指向装了它的 Python；AI 只是次入口（`aiFix` 照常摆），
+    // 没连 AI 时也不以「连接 AI」为主按钮（ADR 0148 修订 2026-11-01）
+    out = { ...out, primary: { kind: 'pick_environment' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy?.kind === 'change_python' && remedy.to !== null && PYTHON_FIX_STATES.has(view.state)) {
+    // 版本不合：后端发现了满足的现成环境就一键「改用它」（用户点了才切），没有才进选择器
+    out = {
+      ...out,
+      primary: remedy.env ? { kind: 'switch_python', env: remedy.env } : { kind: 'pick_environment' },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+    }
+  } else if (remedy?.kind === 'feedback') {
+    out = {
+      ...out,
+      state: 'feedback',
+      sentence: { key: 'feedback', values: view.sentence.values },
+      primary: { kind: 'feedback' },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+      slot: null,
+    }
+  }
+  return { ...out, aiFix: remedy?.kind !== 'switch_native' && out.primary?.kind !== 'ai_fix' }
+}
+
+/**
+ * AI 环境修复暂时做不了（`ai_fix_unavailable`，点过「使用你的 AI 来修复」之后）：同一张卡落成一句话
+ * 「这个问题 AI 暂时还不会修」+ 主按钮「发送」。次按钮不再摆（刚说完不会修）；下一次运行出新尝试后卡片自然换回。
+ */
+export function withAiUnavailable(view: PrepView): PrepView {
+  return {
+    ...view,
+    state: 'ai_unavailable',
+    sentence: { key: 'aiUnavailable', values: view.sentence.values },
+    primary: { kind: 'feedback' },
+    secondary: null,
+    primaryDisabled: false,
+    ghost: 'later',
+    slot: null,
+    aiFix: false,
+    tone: 'bad',
+  }
+}
+
 export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
+  return withRemedy(prepViewBase(entry, ctx), entry.report, ctx)
+}
+
+function prepViewBase(entry: PrepEntry, ctx: PrepContext): PrepView {
   const script = targetName(entry)
   const v = { script }
   if (entry.failure) return view('check_failed', 'checkFailed', v, { kind: 'reopen', label: 'retry' }, { tone: 'bad' })
@@ -237,12 +402,25 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         step: 1,
         tone: 'mute',
       })
-    case 'preparing_environment':
+    case 'preparing_environment': {
+      // 版本不合、正在自动另建合适版本的环境（ADR 0114 修订 2026-10-23）：一句话 + 进度 + 停止，不问用户
+      const pc = report.python_change
+      if (pc && pc.state === 'running') {
+        const download = pc.base === 'private' && pc.download_bytes > 0
+        return view(
+          'python_change',
+          download ? 'pythonChangeDownload' : 'pythonChange',
+          { ...v, version: pc.to, size: Math.max(1, Math.round(pc.download_bytes / 1048576)) },
+          { kind: 'background' },
+          { ghost: has(report, 'cancel') ? 'stop' : null, tone: 'busy', slot: 'python_change' },
+        )
+      }
       return view('preparing', 'preparing', v, { kind: 'background' }, {
         ghost: has(report, 'cancel') ? 'stop' : null,
         tone: 'busy',
         slot: 'progress',
       })
+    }
     case 'ready_to_run': {
       // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
       // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
@@ -277,12 +455,16 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
     case 'completed':
       return completed(report, entry, ctx, script)
     case 'partial':
+      // 部分捕获（#1134）：成功那几张照常可进入编辑，失败的图在标题里点名；不是 completed，也不是没出图
+      if (report.outcome.kind === 'succeeded') return completed(report, entry, ctx, script)
       if (report.outcome.kind === 'execution_finished_no_figure') {
         const raster = report.no_figure_hint?.kind === 'raster_script' ? report.no_figure_hint : null
         if (raster) {
           // 脚本自己用位图库画成了图片：说出原因；后端确认那张图落在素材库盘点范围内（in_project）才给「打开素材库」，
           // 否则（绝对路径 / 沙盒 / 盘点不认的格式 / 判不出）素材库里找不到它，只给「知道了」。其余折叠进详情
-          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, raster.in_project === true ? { kind: 'open_assets' } : { kind: 'dismiss' }, {
+          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, { kind: 'convert', script: report.target.script ?? '', library: raster.library, path: raster.path ?? null }, {
+            // 次按钮保持现有：素材库里找得到就「打开素材库」，否则「只当图片用」（收起卡片）
+            secondary: raster.in_project === true ? { kind: 'open_assets' } : { kind: 'dismiss' },
             ghost: null,
             tone: 'mute',
             step: 1,
@@ -311,6 +493,16 @@ function completed(report: PreparationReport, entry: PrepEntry, ctx: PrepContext
   if (count === 0) return view('completed', 'completedNoList', v, null, { tone: 'ok', step: 2 })
   // 无参数运行整条替换了这个脚本的图名（T03 已知缺口，T09b）：标题照旧，详情里说清哪些旧图不再关联、怎么恢复。
   // 名字来自后端报告（`unlinked_stems`），这里不比对任何清单
+  const failed = (report.failed_figures ?? []).map((f) => f.stem)
+  if (failed.length > 0) {
+    return view(
+      'completed_partial',
+      'completedPartial',
+      { script, done: count, total: count + failed.length, names: listJoin(failed) },
+      { kind: 'enter_edit', count },
+      { tone: 'bad', slot: 'figures', step: 2 },
+    )
+  }
   const unlinked = (report.unlinked_stems ?? []).length > 0
   return view(unlinked ? 'completed_unlinked' : 'completed', 'completed', { script, count }, { kind: 'enter_edit', count }, {
     tone: 'ok',
@@ -389,6 +581,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   // 后端没有回退（项目设成只用安全运行 / 运维关了回退 / 老后端）——如实说为什么，不替用户换环境重跑，没有主按钮。
   // 原因来自账本里的闭集理由码（`declined`），前端不另判
   if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
+    // 浏览器模式（ADR 0127 修订 2026-10-30）：后端没静默回退，但给了一张「用户点一次才换」的确认——一句话 + 一个主按钮，
+    // 不进 AI 修复（`withRemedy` 看到 remedy 是 `switch_native` 就不摆 AI 次按钮）。按钮来自报告里的动作，前端不判
+    if (has(report, 'confirm_native_run')) {
+      return view('file_ops_confirm', 'fileOpsConfirm', v, act('confirm_native_run', 'allowRun'), { tone: 'bad', step: 1 })
+    }
     const declined = currentAttempt(report)?.declined
     const key =
       declined === 'policy_safe_only'
@@ -422,6 +619,31 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           tone: 'bad',
           step: 1,
         })
+      }
+      if (code === 'interpreter_cache_denied') {
+        // 这个 Python 在 Tavotto 的缓存里建不了目录（脚本还没开始跑）：后端说得出该清哪一层选择就给「改用自带的 Python」，
+        // 说不出（失败的本来就是 Tavotto 自己的解释器）就只说这句事实 + 再试一次
+        const sw = report.result?.error?.params?.switch
+        const primary: PrepPrimary | null =
+          sw === 'global' || sw === 'project' || sw === 'both' ? { kind: 'use_builtin_python', scope: sw } : (runPrimary(report, 'retry') ?? fallback)
+        return view('cache_denied', 'cacheDenied', v, primary, { tone: 'bad', step: 1 })
+      }
+      if (code === 'import_folder_unreadable') {
+        // 有令牌 = 后端认定这台机器上能一键修（只有 Windows 才发）：主按钮「修复权限」；没有令牌保持原来的通用失败卡
+        const token = report.result?.error?.params?.repair_token
+        if (typeof token === 'string' && token) {
+          const folder = String(report.result?.error?.params?.folder ?? '')
+          return view('folder_unreadable', 'folderUnreadable', { script, folder }, { kind: 'repair_folder', token }, { tone: 'bad', step: 1 })
+        }
+      }
+      if (code === 'import_folder_abi_mismatch') {
+        // 有令牌 = 后端登记了这个文件夹：主按钮「跳过这个文件夹重跑」；没有令牌（没打开项目 / 老后端）保持通用失败卡
+        const params = report.result?.error?.params
+        const token = params?.ignore_token
+        if (typeof token === 'string' && token) {
+          const values = { script, folder: String(params?.folder ?? ''), abi: String(params?.abi ?? ''), current: String(params?.current ?? '') }
+          return view('folder_abi', 'folderAbi', values, { kind: 'skip_folder', token }, { tone: 'bad', step: 1 })
+        }
       }
       // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次
       return view('failed', fellBack(report) ? 'failedAfterFallback' : 'failed', v, runPrimary(report, 'retry') ?? fallback, {
@@ -462,6 +684,10 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
         ? { key: 'captured', values: { count: (report.captured ?? []).length } }
         : { key: 'static', values: {} }
     case 'partial':
+      if (report.outcome.kind === 'succeeded') {
+        const done = (report.captured ?? []).length
+        return { key: 'capturedPartial', values: { done, total: done + (report.failed_figures ?? []).length } }
+      }
       return { key: report.outcome.kind === 'execution_finished_no_figure' ? 'noFigure' : 'attention', values: {} }
     case 'cancelled':
       return { key: 'cancelled', values: {} }
@@ -471,13 +697,20 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
 }
 
 /**
+ * 这次运行跑完并捕获到了图：`completed`（全部拿到），或 `partial` + `succeeded`（部分捕获：成功那几张照常可用，失败的在
+ * `failed_figures` 里——后端 #1134 起不再把它投影成 completed）。其余 partial（没出图 / 登记被拒）不算
+ */
+export const finishedWithFigures = (report: PreparationReport | null | undefined): report is PreparationReport =>
+  !!report && (report.phase === 'completed' || report.phase === 'partial') && report.outcome.kind === 'succeeded'
+
+/**
  * safe → native 静默回退**成功**之后，详情里补的那一行（默认句子与主按钮不变，ADR 0127 裁决静默）。
  * 事实全在后端：账本（`attempt_history`）里本次 run 最后一次尝试是 native 且相对上一次换了执行语义，且这次捕获到的图确实是
  * native 的；`noWriteback` 读描述符自己的 `can_writeback_source`，不在前端推。老后端没有账本 = 不说。
  */
 export function nativeFallbackNote(report: PreparationReport | null): { noWriteback: boolean } | null {
-  if (!report || report.phase !== 'completed' || report.outcome.kind !== 'succeeded') return null
-  const history = report.attempt_history ?? []
+  if (!finishedWithFigures(report)) return null
+  const history = runAttempts(report)
   if (history.length === 0) return null
   const run = Math.max(...history.map((a) => a.run))
   const last = history.filter((a) => a.run === run).at(-1)

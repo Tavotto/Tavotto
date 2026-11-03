@@ -685,6 +685,8 @@ class PdfWriter:
                 pen += g.x_advance * run.size / face.upem
 
             glyphs = run.glyphs
+            if run.invisible:
+                out.append("3 Tr")  # 不画、只进文本层（ADR 0152 §七）；本段末尾 `0 Tr` 还原
             if run.actual_text is not None:
                 # run 级 ActualText（合成上下标）：整段一个 TJ，基线 = run.rise
                 set_rise(run.rise)
@@ -695,6 +697,8 @@ class PdfWriter:
                     put(g)
                 flush()
                 out.append("EMC")
+                if run.invisible:
+                    out.append("0 Tr")
                 continue
             i = 0
             while i < len(glyphs):
@@ -718,6 +722,8 @@ class PdfWriter:
                         put(g)
                 i = j
             flush()
+            if run.invisible:
+                out.append("0 Tr")
         out += ["ET", "Q"]
         return "\n".join(out)
 

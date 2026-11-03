@@ -1,0 +1,25 @@
+✖ independent historical database clock is checked again at commit (28.782637ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 200.726408
+
+✖ failing tests:
+
+test at tests/independent-historical-revocation.test.mjs:40:1
+✖ independent historical database clock is checked again at commit (28.782637ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-historical-revocation-review/mutants/historical-commit-clock/tests/independent-historical-revocation.test.mjs:42:2
+      at async iso (file:///tmp/cla-historical-revocation-review/mutants/historical-commit-clock/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

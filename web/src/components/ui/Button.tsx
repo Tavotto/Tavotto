@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useRef, useState, type ButtonHTMLAttributes } from 'react'
-import { LoaderCircle } from './icons'
 import { ICON_SIZE, type IconSizeStep } from './Icon'
+import { Spinner } from './Spinner'
 import { cn } from '@/lib/utils'
 import { BUTTON_SIZES, buttonClass, type Size, type Variant } from './buttonClass'
 import { Tip } from './Tooltip'
@@ -86,13 +86,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         )}
         aria-hidden={!busy}
       >
-        <LoaderCircle size={ICON_SIZE[SPINNER[size]]} className="animate-spin" />
+        <Spinner size={ICON_SIZE[SPINNER[size]]} />
         {loadingLabel}
       </span>
     </span>
   ) : (
     <>
-      {busy && <LoaderCircle size={ICON_SIZE[SPINNER[size]]} className="animate-spin" />}
+      {busy && <Spinner size={ICON_SIZE[SPINNER[size]]} />}
       {children}
     </>
   )

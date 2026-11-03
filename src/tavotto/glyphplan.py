@@ -122,25 +122,44 @@ def substituted_chars(text: str, cov: Coverage) -> list[str]:
     return list(seen)
 
 
-def text_diagnostics(text: str, cov: Coverage, interpretation: str | None = None):
+def text_diagnostics(
+    text: str,
+    cov: Coverage,
+    interpretation: str | None = None,
+    text_format: str | None = None,
+    styled_cov: Callable[[tuple[bool, bool]], Coverage] | None = None,
+):
     """一段画布文字**最终画出来**的字里，哪些是方框、哪些换了脸。
 
     量的是渲染表示，不是原文：行内标记（`^{…}`）在这一步已经被拆掉，
     Unicode 上下标该合成的已经合成——拿原文去问会报出一批不会发生的方框，
     而假红比假绿更难查（用户会去修一个不存在的问题）。
 
+    行内样式片段（LaTeX 写法的 `\\textit{}` 等）由另一张脸落笔，按 `styled_cov((斜, 粗))` 问；
+    缺席时同 `cov`。前端那份覆盖表本来就是十二张脸的交集、不分样式，所以那一侧不需要它。
+    公式片段不在这里问——它不是按字落笔的（ADR 0152）。
+
     与 `web/src/lib/glyphPlan.ts` 的 `textDiagnostics` 严格同源。
     """
     from . import richtext
 
-    runs = richtext.interpret_runs(
-        richtext.parse_runs(text),
-        is_primary=cov.primary,
-        is_drawable=lambda cp: layer_of(cp, cov) != "missing",
-        mode=interpretation or richtext.DEFAULT_INTERPRETATION,
-    )
-    body = "".join(r.text for r in runs)
-    return missing_chars(body, cov), substituted_chars(body, cov)
+    missing: dict[str, None] = {}
+    substituted: dict[str, None] = {}
+    for run in richtext.parse_runs(text, text_format):
+        if run.math:
+            continue
+        style = (run.italic, run.bold)
+        c = styled_cov(style) if styled_cov is not None and style != (False, False) else cov
+        rendered = richtext.interpret_runs(
+            [run],
+            is_primary=c.primary,
+            is_drawable=lambda cp, c=c: layer_of(cp, c) != "missing",
+            mode=interpretation or richtext.DEFAULT_INTERPRETATION,
+        )
+        body = "".join(r.text for r in rendered)
+        missing.update(dict.fromkeys(missing_chars(body, c)))
+        substituted.update(dict.fromkeys(substituted_chars(body, c)))
+    return list(missing), list(substituted)
 
 
 def ranges_of(pred: Callable[[int], bool], lo: int, hi: int) -> list[list[int]]:

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "revert-terminal-summary-priority",
+    "location_count": 1,
+    "selected_exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-audit-review/revert-terminal-summary-priority.txt"
+  },
+  {
+    "name": "revocation-must-remain-inactive",
+    "location_count": 1,
+    "selected_exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-audit-review/revocation-must-remain-inactive.txt"
+  }
+]

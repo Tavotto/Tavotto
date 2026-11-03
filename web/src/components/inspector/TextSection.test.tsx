@@ -1,29 +1,28 @@
 /**
- * 属性面板文字框的上下标快捷键（Mod+↑ / Mod+↓）。
+ * 属性面板的标注文字框：所见即所得（ADR 0152）。
  *
- * 背景：上/下标按钮的 tooltip 长期写着「快捷键 ⌘/Ctrl+↑」，但这个绑定从来
- * 没接过——textarea 的 onKeyDown 只有一句 stopPropagation，全局键盘钩子也
- * 收不到。现在键位真接上了，这批用例守住三件事：
- *   1. 键盘和按钮走**同一条路**（同一个 toggleScript + 同一套光标复位）；
- *   2. 键盘路径不绕开 onFocus 开的事务——绕开的话一次编辑会碎成好几条历史；
- *   3. 只认干净的 Mod+方向键，裸 ↑/↓ 与带 ⌥/⇧ 的组合原样交给浏览器。
+ * 守住四件事：
+ *   1. 框里直接显示样式（老标注 `cm^{-1}` 显示成上标），打开不改写字符串；
+ *   2. 角上的钮与快捷键作用在**选区**上，写回的是 LaTeX 子集并标 `textFormat`；
+ *   3. 编辑并入 onFocus 开的事务：一次编辑在文档历史里只是一条；
+ *   4. 外部改了字符串（撤销）框跟着换。
  *
- * jsdom 说明：jsdom 不实现 textarea 的光标移动（裸 ↑ 不会真的换行），所以
- * 第 3 条断言的是「事件没被认领」（defaultPrevented=false + 文本不变），
- * 光标真移动那一半由浏览器自己保证。
+ * 选区经 `richViewOf` 直接设在编辑器上：jsdom 不实现 contenteditable 的选区同步。
  */
 import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { TextSelection } from 'prosemirror-state'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { richViewOf } from '@/components/ui/RichTextField'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { emptyProject, type TextObject } from '@/types/document'
 import { propertyPathOf } from '@/lib/typography'
 import { CANVAS_TEXT_PRIMARY_PROPS } from './typographyAdapter'
-import { TextSection, scriptHotkey } from './TextSection'
+import { TextSection } from './TextSection'
 
 /** 自动保存会 PUT 到后端；这里只要不抛就行 */
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -49,7 +48,7 @@ const textObj = (over: Partial<TextObject> = {}): TextObject => ({
   ...over,
 })
 
-/** 面板取的是 store 里的当前值，改完文本后 textarea 会跟着重渲染 */
+/** 面板取的是 store 里的当前值 */
 function Harness() {
   const objects = useDocumentStore((s) => s.doc.objects)
   // 按钮的 tooltip 是 Radix 的，缺 Provider 直接抛——App 里也是全局包一层
@@ -64,8 +63,9 @@ let container: HTMLDivElement
 let root: Root
 
 const s = () => useDocumentStore.getState()
-const ta = () => container.querySelector('textarea')!
-const currentText = () => (s().doc.objects[0] as TextObject).text
+const current = () => s().doc.objects[0] as TextObject
+const editorDom = () => container.querySelector('[data-rich-text="field"]')!
+const view = () => richViewOf(editorDom())!
 
 beforeEach(async () => {
   localStorage.clear()
@@ -85,145 +85,75 @@ afterEach(() => {
   container.remove()
 })
 
-/** 选中 [start, end)——按钮和快捷键都是按 textarea 的实时选区干活的 */
-const select = (start: number, end: number) => {
-  ta().setSelectionRange(start, end)
-}
-
-const press = (key: string, init: KeyboardEventInit = {}) => {
-  const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
+/** 选中 [from, to)（文档顶层就是行内内容：位置 = 字符偏移） */
+const select = (from: number, to: number) =>
   act(() => {
-    ta().dispatchEvent(ev)
-  })
-  return ev
-}
-
-/** 光标复位排在 rAF 里（等补丁重渲染完），断言前先放过一帧 */
-const nextFrame = async () => {
-  await act(async () => {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  })
-}
-
-const clickButton = (label: string) => {
-  const btn = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
-  act(() => btn.click())
-}
-
-describe('scriptHotkey', () => {
-  const ev = (over: Partial<KeyboardEvent>): KeyboardEvent =>
-    ({ key: 'ArrowUp', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...over }) as KeyboardEvent
-
-  it('⌘/Ctrl + ↑↓ 认领为上/下标', () => {
-    expect(scriptHotkey(ev({ metaKey: true }))).toBe('sup')
-    expect(scriptHotkey(ev({ ctrlKey: true }))).toBe('sup')
-    expect(scriptHotkey(ev({ key: 'ArrowDown', metaKey: true }))).toBe('sub')
-    expect(scriptHotkey(ev({ key: 'ArrowDown', ctrlKey: true }))).toBe('sub')
+    const v = view()
+    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, from, to)))
   })
 
-  it('裸方向键、其它按键、以及带 ⌥/⇧ 的组合一律不认领', () => {
-    expect(scriptHotkey(ev({}))).toBeNull()
-    expect(scriptHotkey(ev({ key: 'ArrowDown' }))).toBeNull()
-    expect(scriptHotkey(ev({ key: 'ArrowLeft', metaKey: true }))).toBeNull()
-    expect(scriptHotkey(ev({ key: 'z', metaKey: true }))).toBeNull()
-    // ⌥↑ 按段移动、⇧⌘↑ 选到开头，都是系统键位，抢了就选不了文本
-    expect(scriptHotkey(ev({ metaKey: true, altKey: true }))).toBeNull()
-    expect(scriptHotkey(ev({ metaKey: true, shiftKey: true }))).toBeNull()
-    expect(scriptHotkey(ev({ ctrlKey: true, shiftKey: true }))).toBeNull()
-  })
-})
+const click = (action: string) =>
+  act(() => container.querySelector<HTMLButtonElement>(`[data-rich-action="${action}"]`)!.click())
 
-describe('Mod+↑ / Mod+↓ 在文字框里', () => {
-  it('给选区加上上标标记，并把光标放回标记内部', async () => {
-    select(1, 2) // 选中 H2O 的 "2"
-    const ev = press('ArrowUp', { metaKey: true })
-
-    expect(ev.defaultPrevented).toBe(true) // 不拦的话光标先跳行
-    expect(currentText()).toBe('H^{2}O')
-    await nextFrame()
-    expect([ta().selectionStart, ta().selectionEnd]).toEqual([3, 4])
+const press = (key: string, init: KeyboardEventInit = {}) =>
+  act(() => {
+    editorDom().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
   })
 
-  it('Mod+↓ 是下标', async () => {
-    select(1, 2)
-    press('ArrowDown', { ctrlKey: true })
-    expect(currentText()).toBe('H_{2}O')
-    await nextFrame()
-    expect([ta().selectionStart, ta().selectionEnd]).toEqual([3, 4])
+describe('所见即所得的标注文字框', () => {
+  it('老标注照样式显示，打开不改写字符串', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1}')))
+    expect(editorDom().textContent).toBe('cm-1')
+    expect(editorDom().querySelector('[data-rt="sup"]')?.textContent).toBe('-1')
+    expect(current().text).toBe('cm^{-1}')
+    expect(current().textFormat).toBeUndefined()
   })
 
-  it('再按一次就是取消（与按钮同一套切换语义）', async () => {
-    select(1, 2)
-    press('ArrowUp', { metaKey: true })
-    await nextFrame()
-    press('ArrowUp', { metaKey: true })
-    expect(currentText()).toBe('H2O')
-  })
-
-  it('没有选区时插入一对空标记，光标落在里面可以直接打字', async () => {
-    select(3, 3) // 光标在末尾
-    press('ArrowUp', { metaKey: true })
-    expect(currentText()).toBe('H2O^{}')
-    await nextFrame()
-    expect([ta().selectionStart, ta().selectionEnd]).toEqual([5, 5])
-  })
-
-  it('结果与点按钮完全一致——键盘走的就是按钮那个处理函数', async () => {
-    select(1, 2)
-    press('ArrowUp', { metaKey: true })
-    await nextFrame()
-    const byKey = { text: currentText(), start: ta().selectionStart, end: ta().selectionEnd }
-
-    // 退回原文再用按钮走一遍
-    act(() => {
-      s().commit(literal('复位'), (d) => {
-        const o = d.objects[0]
-        if (o.type === 'text') o.text = 'H2O'
-      })
-    })
-    select(1, 2)
-    clickButton('上标')
-    await nextFrame()
-
-    expect({ text: currentText(), start: ta().selectionStart, end: ta().selectionEnd }).toEqual(byKey)
-  })
-
-  it('裸 ↑ 不受影响：事件不被认领、文本一个字不动', () => {
-    select(1, 2)
-    const up = press('ArrowUp')
-    const down = press('ArrowDown')
-
-    expect(up.defaultPrevented).toBe(false)
-    expect(down.defaultPrevented).toBe(false)
-    expect(currentText()).toBe('H2O')
-  })
-
-  it('⌥⌘↑ / ⇧⌘↑ 同样放行（系统的选择与移动键位）', () => {
-    select(1, 2)
-    expect(press('ArrowUp', { metaKey: true, altKey: true }).defaultPrevented).toBe(false)
-    expect(press('ArrowUp', { metaKey: true, shiftKey: true }).defaultPrevented).toBe(false)
-    expect(currentText()).toBe('H2O')
-  })
-
-  it('并入 onFocus 开的事务：连按两次只留一条历史，撤销一次回到原文', async () => {
-    const before = s().past.length
-    act(() => ta().focus())
-
-    select(1, 2)
-    press('ArrowUp', { metaKey: true })
-    await nextFrame()
+  it('选中一段点斜体：只有那段斜体，写回 LaTeX 子集并标 textFormat', () => {
     select(0, 1)
-    press('ArrowDown', { metaKey: true })
-    await nextFrame()
-    expect(currentText()).toBe('_{H}^{2}O')
+    click('italic')
+    expect(current().text).toBe('\\textit{H}2O')
+    expect(current().textFormat).toBe('latex')
+    expect(editorDom().querySelector('em')?.textContent).toBe('H')
+    expect(container.querySelector('[data-rich-action="italic"]')!.getAttribute('aria-pressed')).toBe('true')
+  })
 
-    act(() => ta().blur())
+  it('⌘I / ⌘B / ⌘↑ / ⌘↓ 与按钮同一条路', () => {
+    select(1, 2)
+    // jsdom 的 platform 不是 Mac：ProseMirror 的 Mod 解析成 Ctrl
+    press('ArrowDown', { ctrlKey: true })
+    expect(current().text).toBe('H\\textsubscript{2}O')
+    select(0, 1)
+    press('b', { ctrlKey: true })
+    expect(current().text).toBe('\\textbf{H}\\textsubscript{2}O')
+  })
+
+  it('再点一次就是取消', () => {
+    select(0, 1)
+    click('bold')
+    click('bold')
+    expect(current().text).toBe('H2O')
+  })
+
+  it('并入 onFocus 开的事务：连改两次只留一条历史，撤销一次回到原文', () => {
+    const before = s().past.length
+    act(() => (editorDom() as HTMLElement).focus())
+    select(0, 1)
+    click('italic')
+    select(2, 3)
+    click('sup')
+    act(() => (editorDom() as HTMLElement).blur())
     expect(s().past.length).toBe(before + 1)
+    act(() => s().undo())
+    expect(current().text).toBe('H2O')
+    // 外部改回（撤销）后框跟着换
+    expect(editorDom().querySelector('em')).toBeNull()
+  })
 
-    act(() => {
-      s().undo()
-    })
-    expect(currentText()).toBe('H2O')
+  it('换行钮插入换行', () => {
+    select(1, 1)
+    click('break')
+    expect(current().text).toBe('H\n2O')
   })
 })
 
@@ -310,5 +240,153 @@ describe('科学文本与字形提示', () => {
     setText('×10⁵')
     expect(container.textContent?.includes('导出后是方框')).toBe(false)
     expect(container.textContent?.includes('另一种字体')).toBe(false)
+  })
+})
+
+describe('换了写法、字符串不变（Codex #1489）', () => {
+  it('同一串字从旧标记换成 LaTeX 子集：框按新写法重读', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = '\\textit{x}')))
+    expect(editorDom().textContent).toBe('\\textit{x}')
+    act(() => s().commit(literal('换写法'), (d) => void ((d.objects[0] as TextObject).textFormat = 'latex')))
+    expect(editorDom().textContent).toBe('x')
+    expect(editorDom().querySelector('em')?.textContent).toBe('x')
+  })
+})
+
+describe('LaTeX 模式与粘贴（ADR 0152 PR 3）', () => {
+  const source = () => container.querySelector<HTMLTextAreaElement>('[data-rich-source]')
+  const typeSource = (v: string) =>
+    act(() => {
+      const ta = source()!
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(ta, v)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('切到 LaTeX：老标注显示成 LaTeX 子集规范形，不改就不写', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1}')))
+    click('mode')
+    expect(source()!.value).toBe('cm\\textsuperscript{-1}')
+    expect(current().text).toBe('cm^{-1}')
+    expect(current().textFormat).toBeUndefined()
+  })
+
+  it('在源码里改：直接写回并标 textFormat；切回所见即所得显示样式', () => {
+    click('mode')
+    typeSource('Temperature \\textit{T} (K)')
+    expect(current().text).toBe('Temperature \\textit{T} (K)')
+    expect(current().textFormat).toBe('latex')
+    click('mode')
+    expect(source()).toBeNull()
+    expect(editorDom().querySelector('em')?.textContent).toBe('T')
+  })
+
+  it('源码有错：说出错在第几个字符，不许切回；改对了再切', () => {
+    click('mode')
+    typeSource('\\textit{T')
+    click('mode')
+    expect(source()).not.toBeNull()
+    expect(container.querySelector('[data-rich-source-error]')?.textContent).toContain('8')
+    typeSource('\\textit{T}')
+    expect(container.querySelector('[data-rich-source-error]')).toBeNull()
+    click('mode')
+    expect(source()).toBeNull()
+  })
+
+  it('粘贴论文里的公式：变成公式块；「$5 and $10」原样是字', () => {
+    select(3, 3)
+    act(() => void view().pasteText(' with $k = A e^{-E}$'))
+    expect(current().text).toBe('H2O with $k = A e^{-E}$')
+    expect(editorDom().querySelector('[data-rt-math]')?.getAttribute('data-rt-math')).toBe('k = A e^{-E}')
+    act(() => void view().pasteText(' costs $5 and $10'))
+    expect(current().text).toBe('H2O with $k = A e^{-E}$ costs \\$5 and \\$10')
+  })
+
+  it('双击公式块进入 LaTeX 模式', () => {
+    act(() => s().commit(literal('换文字'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'k = $A$'
+      o.textFormat = 'latex'
+    }))
+    const math = editorDom().querySelector('[data-rt-math]')!
+    act(() => {
+      const v = view()
+      const pos = v.posAtDOM(math, 0)
+      v.someProp('handleDoubleClickOn', (f) => f(v, pos, v.state.doc.nodeAt(pos)!, pos, new MouseEvent('dblclick'), true))
+    })
+    expect(source()?.value).toBe('k = $A$')
+  })
+})
+
+describe('LaTeX 模式的同步与撤销（Codex #1492）', () => {
+  const source = () => container.querySelector<HTMLTextAreaElement>('[data-rich-source]')
+  const typeSource = (v: string) =>
+    act(() => {
+      const ta = source()!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, v)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('停在源码模式时换成老标注：源码框是它的 LaTeX 规范形，切回后上标还在、钱数不是公式', () => {
+    click('mode')
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1} costs $5 and $10')))
+    expect(source()!.value).toBe('cm\\textsuperscript{-1} costs \\$5 and \\$10')
+    click('mode')
+    expect(editorDom().querySelector('[data-rt="sup"]')?.textContent).toBe('-1')
+    expect(editorDom().querySelector('[data-rt-math]')).toBeNull()
+    expect(current().text).toBe('cm^{-1} costs $5 and $10') // 没改就没写
+  })
+
+  it('源码里的改动切回后能 ⌘Z 撤掉', () => {
+    click('mode')
+    typeSource('\\textit{H}2O')
+    click('mode')
+    expect(editorDom().querySelector('em')?.textContent).toBe('H')
+    act(() => (editorDom() as HTMLElement).focus())
+    press('z', { ctrlKey: true })
+    expect(editorDom().querySelector('em')).toBeNull()
+    expect(current().text).toBe('H2O')
+  })
+})
+
+describe('第一次改老标注：写法换了也不重读（Codex #1492 复核）', () => {
+  it('所见即所得里打第一个字：光标留在原处，不被甩到末尾', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1} long tail')))
+    select(1, 1)
+    act(() => view().dispatch(view().state.tr.insertText('X')))
+    expect(current().textFormat).toBe('latex')
+    expect(view().state.selection.from).toBe(2)
+  })
+
+  it('停在源码模式时换成字符串相同、写法不同的标注：照常重读', () => {
+    act(() => s().commit(literal('换文字'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'a $x$'
+      o.textFormat = 'latex'
+    }))
+    click('mode')
+    act(() => s().commit(literal('换写法'), (d) => void delete (d.objects[0] as TextObject).textFormat))
+    // 旧标记里 $ 是字：源码框写成转义的规范形，切回后没有公式块
+    expect(container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!.value).toBe('a \\$x\\$')
+    click('mode')
+    expect(editorDom().querySelector('[data-rt-math]')).toBeNull()
+  })
+})
+
+describe('陈旧的回声不挡后来的重读', () => {
+  it('源码里写出一串（写法没变，回声没被用掉），随后同一串换成旧标记：照常重读', () => {
+    act(() => s().commit(literal('标 LaTeX'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'b'
+      o.textFormat = 'latex'
+    }))
+    click('mode')
+    act(() => {
+      const ta = container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, 'a $x$')
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => s().commit(literal('换写法'), (d) => void delete (d.objects[0] as TextObject).textFormat))
+    expect(container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!.value).toBe('a \\$x\\$')
   })
 })

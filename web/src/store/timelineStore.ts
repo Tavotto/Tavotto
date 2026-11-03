@@ -43,6 +43,11 @@ interface TimelineState {
    * （Codex #831 P1）。摘锁只认凭据。
    */
   restoreToken: number | null
+  /**
+   * 恢复把当前这张图换成了别的图（同一张画布上先后放过几张图）时 +1：打开着的时间线据此把
+   * 范围切到「全部图」——刚存下的「恢复前」属于被换掉的那张，留在「这张图」里就看不见了。
+   */
+  revealAll: number
   bump: () => void
   setPreview: (p: TimelinePreview | null) => void
   setNamingOpen: (v: boolean) => void
@@ -65,6 +70,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   namingOpen: false,
   restoring: null,
   restoreToken: null,
+  revealAll: 0,
   bump: () => set((s) => ({ rev: s.rev + 1 })),
   setPreview: (preview) => set({ preview }),
   setNamingOpen: (namingOpen) => set({ namingOpen }),

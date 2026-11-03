@@ -39,7 +39,7 @@ import { readProjectFile } from '@/lib/projectFile'
 import { setCurrentProjectId } from '@/lib/session'
 import { formatMessage } from '@/i18n'
 import { setProjectFile, useDocumentStore } from '@/store/documentStore'
-import type { ProjectDocument } from '@/types/document'
+import type { FigureSnapshot, PanelObject, ProjectDocument } from '@/types/document'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -709,5 +709,46 @@ describe('冲突岔口「仍然覆盖」', () => {
     expect(useUiStore.getState().layoutOpen).toBe(true)
     expect(dialog().querySelector('[data-layout-conflict]')).toBeNull()
     expect(dialog().querySelector('[data-layout-save]')).not.toBeNull()
+  })
+})
+
+
+describe('SVG snapshot gaps stay silent on Save As', () => {
+  it('Save As closes with the plain done message even when the backend reports snapshot gaps', async () => {
+    useUiStore.setState({ layoutConflict: null, layoutName: null })
+    await useDocumentStore.getState().switchDocument(LAYOUT as ProjectDocument, 'd_svg_save')
+    mockSave.mockResolvedValueOnce({ ok: true, revision: 'rev-svg', svg_snapshot_warnings: ['source.pdf'] } as never)
+    await open()
+    await clickSave()
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+    expect(useUiStore.getState().statusTone).toBe('done')
+    const message = formatMessage(useUiStore.getState().status)
+    expect(message).not.toContain('source.pdf')
+    expect(message).not.toContain('SVG')
+    expect(knownLayoutRevision(mockSave.mock.calls[0][0])).toBe('rev-svg')
+  })
+})
+
+
+describe('Save As immutable Figure references', () => {
+  it('attaches returned panel snapshots to the live document without adding a user edit', async () => {
+    const snapshot: FigureSnapshot = {
+      version: 1, sourceId: 'source.pdf', patchHash: 'patch', receiptId: 'receipt', snapshotId: 'snapshot',
+    }
+    const panel: PanelObject = {
+      id: 'snapshot-panel', type: 'panel', fileId: 'source.pdf', fileKind: 'pdf', figureFrame: 1,
+      nativeW: 20, nativeH: 10, x: 0, y: 0, w: 20, h: 10, overrides: [],
+    }
+    const doc = structuredClone(LAYOUT) as ProjectDocument
+    doc.canvases[0].objects = [panel]
+    useUiStore.setState({ layoutConflict: null, layoutName: null })
+    await useDocumentStore.getState().switchDocument(doc, 'd_figure_snapshot_save')
+    mockSave.mockResolvedValueOnce({ ok: true, revision: 'ref-rev', figure_snapshots: { 'snapshot-panel': snapshot } })
+    await open()
+    const past = useDocumentStore.getState().past
+    await clickSave()
+    expect((useDocumentStore.getState().doc.objects[0] as PanelObject).figureSnapshot).toEqual(snapshot)
+    expect(useDocumentStore.getState().past).toBe(past)
+    expect(useUiStore.getState().layoutOpen).toBe(false)
   })
 })

@@ -5,7 +5,7 @@
 名字」——调用点按 **符号** 锚定（`symbol` = 所在函数 / 方法的 AST 限定名，模块级
 `<module>`），不按绝对行号：行号量的是「第 N 行」不是「这个调用点」，别的 PR 在文件
 前面插几行它就红（2026-09-21 一天让三个 PR 红过），而真正该红的「调用被删了 / 挪进了
-别的函数」它反而看不见。`line` 只作信息，重生成时照填。派生的 Markdown 必须与 JSON
+别的函数」它反而看不见。清单不记行号（`line` 字段已移除，另有用例防回潮）。派生的 Markdown 必须与 JSON
 一致（一个真值、一个派生）。
 
 这不是产品测试：它守的是 U08 / U10 迁移用的清单不腐烂。
@@ -175,37 +175,54 @@ def test_every_cited_test_symbol_still_contains_its_snippet():
             )
 
 
-def test_cited_lines_are_information_only_but_inside_the_symbol():
-    """`line` 不参与判定，但作为信息它得指在那个符号的范围里（重生成脚本照填）；
-    否则读清单的人会被带到一行不相干的代码。"""
-    d = _ledger()
-    cites = [(c["file"], c["symbol"], c["line"]) for e in d["exports"] for c in e["callers"]]
+def _all_citations(d: dict) -> list[tuple[str, str, dict]]:
+    cites = [(c["file"], c["symbol"], c) for e in d["exports"] for c in e["callers"]]
     cites += [
-        (c["file"], c["symbol"], c["line"])
-        for m in d["canvas_methods"]["methods"]
-        for c in m["callers"]
+        (c["file"], c["symbol"], c) for m in d["canvas_methods"]["methods"] for c in m["callers"]
     ]
-    cites += [(t["file"], t["symbol"], t["line"]) for e in d["exports"] for t in e["tests"]]
+    cites += [(t["file"], t["symbol"], t) for e in d["exports"] for t in e["tests"]]
+    return cites
+
+
+def _qualified_defs(path: str) -> dict[str, int]:
+    """`path` 里每个函数 / 方法 / 类的 AST 限定名 → 出现次数（同名重复定义要被看见）。"""
+    tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
+    counts: dict[str, int] = {}
+
+    def walk(body, prefix):
+        for node in body:
+            if isinstance(node, (*_DEFS, ast.ClassDef)):
+                q = f"{prefix}{node.name}"
+                counts[q] = counts.get(q, 0) + 1
+                walk(node.body, f"{q}.")
+
+    walk(tree.body, "")
+    return counts
+
+
+def test_every_cited_symbol_exists_exactly_once_in_its_file():
+    """结构性定位：引用 = `file` + `symbol`，符号在文件里必须真实存在且唯一（`Class.method` /
+    `outer.inner` 限定名；模块级 `<module>` 只要求文件在）。**不记行号**——行号随无关 PR 漂移，
+    每个改 app.py 的 PR 都得改清单，合并队列里两个这样的 PR 必撞。"""
+    cites = _all_citations(_ledger())
     assert len(cites) >= 80, "引用少于 80 条，判据多半量在空集合上"
-    for path, symbol, line in cites:
-        src = (REPO / path).read_text(encoding="utf-8")
-        tree = ast.parse(src)
+    for path, symbol, _ in cites:
+        assert (REPO / path).is_file(), (path, symbol)
         if symbol == "<module>":
-            assert 1 <= line <= len(src.splitlines()), (path, symbol, line)
             continue
-        spans = []
-
-        def walk(body, prefix):
-            for node in body:
-                if isinstance(node, (*_DEFS, ast.ClassDef)):
-                    if f"{prefix}{node.name}" == symbol:
-                        spans.append(_span(node))
-                    walk(node.body, f"{prefix}{node.name}.")
-
-        walk(tree.body, "")
-        assert spans and spans[0][0] <= line <= spans[0][1], (
-            f"{path}:{line} 不在 `{symbol}` 的范围 {spans} 里——重生成清单把行号填回去"
+        n = _qualified_defs(path).get(symbol, 0)
+        assert n == 1, (
+            f"{path} 里 `{symbol}` 出现 {n} 次——清单指着的符号不在了（0）或限定名不唯一（>1，补全 Class.method）"
         )
+
+
+def test_no_cited_entry_carries_a_line_number():
+    """防回潮：`line` 是会随无关改动漂移的字段，清单里任何引用条目都不许再带它。"""
+    cites = _all_citations(_ledger())
+    assert len(cites) >= 80, "引用少于 80 条，判据多半量在空集合上"
+    for path, symbol, entry in cites:
+        assert "line" not in entry, f"{path} 的 `{symbol}` 又带了 `line`：清单按符号定位，不记行号"
+        assert set(entry) >= {"file", "symbol"}, entry
 
 
 def test_canvas_methods_exist_on_the_real_canvas_object():

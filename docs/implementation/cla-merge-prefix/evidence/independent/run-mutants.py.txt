@@ -1,0 +1,12 @@
+from pathlib import Path
+import shutil,subprocess,tempfile,json,hashlib
+root=Path('/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare');out=Path('/tmp/cla-merge-prefix-independent');cases=json.loads((root/'tests/independent-merge-prefix-mutation-cases.json').read_text());results=[]
+with tempfile.TemporaryDirectory(prefix='cla-prefix-independent-mutations-') as td:
+ tree=Path(td)
+ for part in ['src','tests','scripts'] :shutil.copytree(root/part,tree/part)
+ shutil.copy2(root/'package.json',tree/'package.json')
+ for i,c in enumerate(cases):
+  p=tree/c['file'];before=p.read_text();assert before.count(c['before'])==1,(c['name'],before.count(c['before']));after=before.replace(c['before'],c['after']);p.write_text(after);assert p.read_text()==after and after!=before
+  command=['node','--test','--test-name-pattern='+c['pattern'],c['testFile']];r=subprocess.run(command,cwd=tree,text=True,capture_output=True);log=out/f'mutation-{i+1:02}.log';log.write_text(r.stdout+r.stderr)
+  m={'name':c['name'],'unique_location_count':1,'command':command,'selectedTitle':c['selectedTitle'],'exit_code':r.returncode,'actual_assertion_error':'AssertionError' in r.stdout+r.stderr,'selected_test_executed':c['selectedTitle'] in r.stdout+r.stderr,'source_before_sha256':hashlib.sha256(before.encode()).hexdigest(),'source_after_sha256':hashlib.sha256(after.encode()).hexdigest(),'log':str(log)};m['detected']=m['exit_code']==1 and m['actual_assertion_error'] and m['selected_test_executed'];results.append(m);p.write_text(before);print(i+1,c['name'],'exit',r.returncode,'AssertionError',m['actual_assertion_error'],'detected',m['detected'],flush=True)
+(out/'mutations.json').write_text(json.dumps(results,indent=2)+'\n');assert all(m['detected'] for m in results),'Preserve survivors/tool errors; never count them as detected';print('ALL DETECTED',len(results))

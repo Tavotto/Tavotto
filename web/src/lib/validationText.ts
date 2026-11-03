@@ -72,26 +72,31 @@ export interface IssueValues {
   current: string | null
   expected: string | null
   /**
-   * 「要求」在**一行里**的写法：边界那几句（`…AtBoundary`）在要求后面补了一句解释（「，正好等于不算通过。」），
-   * 行内只留要求本身（`above` / `atLeast` / `atMost` 那条裸文案），整句留给 title / 技术详情。
+   * 「要求」在**一行里**的写法：边界那几句（`…AtBoundary`）在要求后面补了一句解释（「，当前值实际略低，显示已四舍五入。」），
+   * 行内只留要求本身（`atLeast` / `atMost` 那条裸文案），整句留给 title / 技术详情。
    * **由来源处的比较词模板直接算出**（`comparatorKey` 的裸档），不是对整句按标点截——规范值本身可以带逗号、分号
    * （坐标轴标签格式「Surname, year」）。没有比较词的规则它就等于 `expected`。
    */
   expectedHead: string | null
+  /**
+   * 「要求」是一张档位表（线宽）时：行内 `expected` 只写**这一个对象会被修到的那一档**（就近取档），
+   * 整张表留在这里给 title / tooltip；其余规则没有这个字段。
+   */
+  expectedAll?: string
 }
 
 /**
  * 「要求」那半句用得到的**全部比较词**，闭集。
  *
  * 它同时是 `errors:problems.cmp.*` 子键的唯一出处：**每个比较词恰好两条文案**
- * ——裸的那条（`above`）与就在边界上的那条（`aboveAtBoundary`，见
+ * ——裸的那条（`atLeast`）与就在边界上的那条（`atLeastAtBoundary`，见
  * `comparatorKey`）。`tests/test_i18n_dead_keys.py` 现读这一行核对两种语言的
- * 文案表，多一条少一条都红：边界那三条只由模板串拼出来，逐键的字面量扫描
+ * 文案表，多一条少一条都红：边界那几条只由模板串拼出来，逐键的字面量扫描
  * 看不见它们，整片放行又会让某个比较词被删掉之后文案静默变成死键。
  *
  * 加一个比较词 = 这里加一项 + 两种语言各加两条文案，缺一门禁就红。
  */
-export const COMPARATORS = ['above', 'atLeast', 'atMost'] as const
+export const COMPARATORS = ['atLeast', 'atMost'] as const
 
 export type Comparator = (typeof COMPARATORS)[number]
 
@@ -101,7 +106,7 @@ const VALUES: Record<
   { current?: string; expected?: string; unit?: string; cmp?: Comparator }
 > = {
   'font-too-small': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
-  'font-below-absolute-floor': { current: 'effective', expected: 'floor', unit: 'pt', cmp: 'above' },
+  'font-below-absolute-floor': { current: 'effective', expected: 'floor', unit: 'pt', cmp: 'atLeast' },
   'font-too-large': { current: 'effective', expected: 'max', unit: 'pt', cmp: 'atMost' },
   'legend-font-size': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
   'line-width-off-preset': { current: 'effective', expected: 'presets', unit: 'pt' },
@@ -133,8 +138,24 @@ export function issueValues(issue: ValidationIssue): IssueValues {
   const withUnit = (v: string | null) => (v == null ? null : formatQuantity(v, unit))
   const currentRaw = read(spec.current)
   const expectedRaw = read(spec.expected)
-  const expected = withUnit(expectedRaw)
+  let expected = withUnit(expectedRaw)
+  let expectedAll: string | undefined
+  if (issue.ruleCode === 'line-width-off-preset' && expectedRaw?.includes('/') && currentRaw != null) {
+    // 档位表（「0.5/0.75/1」）：行内只写修复会吸到的那一档（`specfix._plan_line_width`），整张表给 tooltip
+    // 与后端 `specfix._plan_line_width` 同一把尺：`min(presets, key=(|p − eff|, p))`——就近、等距取更细的一档。
+    // 但这里拿到的 `effective` 只有两位小数（预检的 `toFixed(2)`），离两档几乎等距时（差 < 0.011）
+    // 取哪档由被舍掉的那一位决定、前端算不准：这种行不猜，要求留空（行内只写当前值），整张表在 tooltip
+    const cur = Number(currentRaw)
+    const ranked = expectedRaw
+      .split('/')
+      .map((v) => ({ v, d: Math.abs(Number(v) - cur) }))
+      .sort((a, b) => a.d - b.d || Number(a.v) - Number(b.v))
+    const ambiguous = ranked.length > 1 && ranked[1].d - ranked[0].d < 0.011
+    expected = ambiguous ? null : withUnit(ranked[0].v)
+    expectedAll = withUnit(expectedRaw) ?? undefined
+  }
   return {
+    expectedAll,
     current: withUnit(currentRaw),
     expected:
       expected == null
@@ -147,13 +168,26 @@ export function issueValues(issue: ValidationIssue): IssueValues {
 }
 
 /**
+ * 一组命中是否共用同一个要求（「线宽 → 0.75 pt」「≥ 8 pt」）。是：返回那个要求（行内写法），组头说一次，
+ * 对象行只剩当前值；否（要求因对象而异，或有的规则根本没有要求）：返回 null，每行各说各的「当前 → 要求」。
+ */
+export function sharedTarget(issues: readonly ValidationIssue[]): string | null {
+  let target: string | null = null
+  for (const issue of issues) {
+    const head = issueValues(issue).expectedHead
+    if (head == null || (target != null && head !== target)) return null
+    target = head
+  }
+  return target
+}
+
+/**
  * 「要求」那半句用哪个说法（审计 T41）。
  *
  * 边界的包含性**只有一个出处**：上面那张 `VALUES` 表里的 `cmp`，它照抄两侧
- * 求值器的判据形状——`font-below-absolute-floor` 是 `eff <= floor`（所以要求
- * 是**大于**，等于不算通过），`font-too-small` 是 `eff < strict`（所以要求是
- * **≥**）。2026-09-06 用真实样本在 `engine/preflight.run()` 上逐个跑过 7.99 /
- * 7.995 / 8.00 / 8.005：8.00 命中绝对下限、8.005 通过，等号确实不含在内。
+ * 求值器的判据形状——`font-below-absolute-floor` 与 `font-too-small` 现在都是
+ * 含等号（`eff < floor - 容差` 才违规，要求是 **≥**；ADR 0029 修订 2026-10-28，
+ * 容差 0.005 pt）。2026-09-06 的旧实测（8.00 命中绝对下限）已作废。
  *
  * 剩下的问题是**显示舍入**：图内文字的 `effective` 是 `toFixed(2)` 的结果，
  * 阈值却是 `%g`，于是 7.996pt 与 8.000pt 都显示成 `8.00`，配上「要求 大于 8pt」

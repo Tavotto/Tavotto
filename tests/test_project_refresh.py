@@ -865,3 +865,56 @@ def test_registry_snapshot_is_not_a_live_view(tmp_path):
     snapshot = engine_refresh.registry_snapshot(reg)
     reg.entries()["a.py"]["stems"].append("S3")
     assert snapshot["a.py"]["stems"] == ["S1", "S2"], "快照跟着注册表一起变了 = 它是活视图"
+
+
+class TestExecutionPublicationIsSelfWritten:
+    def test_a_watcher_poll_between_registration_and_refresh_does_not_static_merge_it_back(
+        self, client, tmp_path
+    ):
+        """执行登记整条替换 stems 之后、统一刷新装载之前，watcher 轮询到这份注册表：它是我们自己写的。
+
+        否则 watcher 会跑一次带静态合并的刷新，把脚本里字面量写着、这次运行没产出的图名（`Extra`）又并回注册表——
+        Windows CI 上偶发 `['Runtime', 'Extra'] != ['Runtime']`，而报告里早已说它被 unlink 了。"""
+        figs = _project(tmp_path)
+        (figs / "two.py").write_text(
+            'def main():\n    fig.savefig("Runtime.pdf")\n    fig.savefig("Extra.pdf")\n',
+            encoding="utf-8",
+        )
+        ctx = _open(client, figs)
+        m.refresh_project(ctx, reason="manual")
+        assert sorted(_registry_file(figs)["scripts"]["two.py"]["stems"]) == ["Extra", "Runtime"]
+
+        calls: list[list[str]] = []
+
+        def _refresh(paths):
+            calls.append(paths)
+            m.refresh_project(ctx, reason="watcher", changed_paths=paths)
+
+        now = [0.0]
+        watcher = engine_watch.ProjectWatcher(
+            ctx,
+            sink=engine_watch.WatchSink(refresh=_refresh),
+            debounce=0.0,
+            clock=lambda: now[0],
+        )
+        watcher.prime()
+        # 运行登记：整条替换，写盘后统一刷新还没跑
+        registered = m._register_probed_execution(
+            ctx,
+            "two.py",
+            {"stems": ["Runtime"], "entry": "main", "remap_generation": None, "descriptors": []},
+            None,
+            None,
+        )
+        assert registered["registered"] is True
+        assert _registry_file(figs)["scripts"]["two.py"]["stems"] == ["Runtime"]
+        assert engine_refresh.is_self_written(ctx) is True
+        for _ in range(3):
+            now[0] += 1.0
+            watcher.poll()
+        assert calls == []
+        assert _registry_file(figs)["scripts"]["two.py"]["stems"] == ["Runtime"]
+        # 随后的统一刷新照常装载，之后外部改写仍然认得出来
+        m.refresh_project(ctx, reason="probe", allow_static_merge=False)
+        assert engine_refresh.is_self_written(ctx) is True
+        assert engine_refresh.state_of(ctx).publication_revision is None

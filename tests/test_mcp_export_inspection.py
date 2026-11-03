@@ -155,10 +155,10 @@ def test_a_broken_worker_output_is_rejected_before_publish_and_the_good_one_ship
 
 
 def test_unknown_is_reported_as_unknown_not_verified(project, fake_pool, tmp_path):
-    """RC-088：SVG 没有读取器 → `integrity: unknown`；standard 照常交付，但文字与回执都不说「已核验」。"""
+    """RC-088：EPS 没有读取器；unknown 照实报告，不因 SVG 新增读取器失去这一条守卫。"""
     sid = _open(project)
     out_dir = tmp_path / "out"
-    res = _call("tavotto_export", {"session_id": sid, "formats": ["svg"], "out_dir": str(out_dir)})
+    res = _call("tavotto_export", {"session_id": sid, "formats": ["eps"], "out_dir": str(out_dir)})
     assert not res.get("isError"), _body(res)
     done = _body(res)
     assert done["status"] == "done"
@@ -319,3 +319,123 @@ def test_a_real_mcp_export_carries_identities_receipt_facts_and_the_data_binding
     # 回执 / 来源段本身就不带路径（进 manifest 的是公开事实）：临时目录 / 项目目录 / 数据目录一个都没有
     prov_text = json.dumps(pdf["provenance"], ensure_ascii=False)
     assert str(tmp_path) not in prov_text and str(figures) not in prov_text
+
+
+def test_mcp_worker_svg_is_normalized_then_inspected_before_publication(
+    project, fake_pool, tmp_path
+):
+    real_export = fake_pool.export
+    stock_dtd = (
+        b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
+        b'  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
+    )
+
+    def worker_svg(stem, patches, path, fmt="pdf", dpi=600):
+        result = real_export(stem, patches, path, fmt, dpi)
+        if fmt == "svg":
+            Path(path).write_bytes(stock_dtd + Path(path).read_bytes())
+        return result
+
+    fake_pool.export = worker_svg
+    sid = _open(project)
+    result = _call(
+        "tavotto_export", {"session_id": sid, "formats": ["svg"], "out_dir": str(tmp_path / "out")}
+    )
+    assert not result.get("isError"), _body(result)
+    output = _body(result)["files"][0]
+    published = Path(output["path"]).read_bytes()
+    manifest = output["manifest"]
+    assert b"<!DOCTYPE" not in published
+    assert manifest["sha256"] == hashlib.sha256(published).hexdigest()
+    assert manifest["checks"]["integrity"] == "verified"
+    assert manifest["checks"]["size"] == "verified"
+    assert manifest["checks"]["structure"] == "verified"
+    assert manifest["checks"]["carrier"] == "verified"
+    assert manifest["carrier"] == "vector" and output["vector"] is True
+    assert manifest["checks"]["text_layer"] == "not_applicable"
+    assert manifest["checks"]["fonts_embedded"] == "not_applicable"
+    # The same final bytes also pass strict inspection with the original dimensions.
+    from tavotto.rendercore import inspector
+
+    strict = inspector.inspect(
+        Path(output["path"]),
+        "svg",
+        policy="strict",
+        plan={"page_pt": [80 / 25.4 * 72, 60 / 25.4 * 72], "vector": True},
+    )
+    assert strict["policy"]["verdict"] == "accepted"
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        b'<!DOCTYPE svg SYSTEM "https://evil.test/evil.dtd"><svg/>',
+        b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    ],
+)
+def test_mcp_unsafe_svg_fails_only_that_format_and_never_publishes(
+    project, fake_pool, tmp_path, unsafe
+):
+    real_export = fake_pool.export
+
+    def worker_svg(stem, patches, path, fmt="pdf", dpi=600, *, svg_path=None):
+        result = real_export(stem, patches, path, fmt, dpi)
+        assert fmt == "pdf" and svg_path is not None
+        Path(svg_path).write_bytes(unsafe)
+        result["svg"] = {
+            "path": svg_path,
+            "sha256": hashlib.sha256(unsafe).hexdigest(),
+            "size_bytes": len(unsafe),
+        }
+        return result
+
+    fake_pool.export = worker_svg
+    sid = _open(project)
+    out_dir = tmp_path / "out"
+    result = _call(
+        "tavotto_export", {"session_id": sid, "formats": ["svg", "pdf"], "out_dir": str(out_dir)}
+    )
+    assert not result.get("isError"), _body(result)
+    done = _body(result)
+    assert done["status"] == "partial"
+    outputs = {item["format"]: item for item in done["files"]}
+    assert outputs["svg"]["error"]["code"] == "artifact_rejected"
+    assert outputs["svg"]["path"] is None and not list(out_dir.glob("*.svg"))
+    assert outputs["pdf"]["status"] == "done" and Path(outputs["pdf"]["path"]).is_file()
+
+
+def test_mcp_image_only_original_svg_preserves_raster_carrier_truth(project, fake_pool, tmp_path):
+    import base64
+
+    real_export = fake_pool.export
+    pixel = base64.b64encode(artifactbytes.solid_png(2, 2)).decode()
+
+    def image_svg(stem, patches, path, fmt="pdf", dpi=600):
+        result = real_export(stem, patches, path, fmt, dpi)
+        if fmt == "svg":
+            Path(path).write_text(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60">'
+                f'<image width="80" height="60" href="data:image/png;base64,{pixel}"/></svg>',
+                encoding="utf-8",
+            )
+        return result
+
+    fake_pool.export = image_svg
+    sid = _open(project)
+    result = _call(
+        "tavotto_export", {"session_id": sid, "formats": ["svg"], "out_dir": str(tmp_path / "out")}
+    )
+    assert not result.get("isError"), _body(result)
+    output = _body(result)["files"][0]
+    assert output["vector"] is False
+    assert output["manifest"]["carrier"] == "raster"
+    assert output["manifest"]["checks"]["carrier"] == "verified"
+    from tavotto.rendercore import inspector
+
+    strict = inspector.inspect(
+        Path(output["path"]),
+        "svg",
+        policy="strict",
+        plan={"page_pt": [80 / 25.4 * 72, 60 / 25.4 * 72], "vector": False},
+    )
+    assert strict["policy"]["verdict"] == "accepted"

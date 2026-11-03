@@ -92,9 +92,18 @@
   {
     "name": "timing SQL reserve",
     "file": "scripts/timing-plan.mjs",
-    "before": "confirmationWork=16+q*n+s.confirmation_work;",
-    "after": "confirmationWork=14+q*n+s.confirmation_work;",
+    "before": "confirmationWork=CONFIRMATION_FIXED_SQL+q*n+s.confirmation_work;",
+    "after": "confirmationWork=CONFIRMATION_FIXED_SQL-2+q*n+s.confirmation_work;",
     "pattern": "timing extra coordination SQL must fit both invocation phases",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing dispatch slot reserve",
+    "file": "scripts/timing-plan.mjs",
+    "before": "newHeadReservedSQL({automaticPublishingEnabled:true,confirmationSlotEnabled:true})",
+    "after": "newHeadReservedSQL({automaticPublishingEnabled:true,confirmationSlotEnabled:false})",
+    "pattern": "timing planner only models fixed assumptions and never grants runtime eligibility",
     "testFile": "tests/timing-plan.test.mjs",
     "assertionError": true
   },

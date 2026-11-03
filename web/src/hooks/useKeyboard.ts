@@ -15,31 +15,24 @@ import {
   selectAll,
   startNamedNode,
   toggleTimeline,
+  closeTimeline,
 } from '@/store/actions'
 import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
 import {
   cancelActivePointerGesture,
   finishActiveGesture,
+  finishFocusedRichText,
   yieldsCanvasShortcuts,
 } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useTimelineStore } from '@/store/timelineStore'
-import { useUiStore, type Tool } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
-import { useWorkspaceStore } from '@/store/workspace'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 
-/**
- * 快速编辑里**只有这一张图**：页面纸、网格、别的对象全部让开。
- *
- * 版面动作在这一屏上没有可见的对应物——推 x/y 看不见、画一个矩形也看不见，
- * 而两者都会进文档、进历史、跟着导出。顶栏把这组按钮藏了起来，快捷键必须
- * 走同一条判据，否则藏的只是入口不是能力。
- */
-export const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: 'select',
@@ -175,6 +168,18 @@ export function runUndoRedo(redo: boolean) {
 
 export function useKeyboard() {
   useEffect(() => {
+    // 保存是应用级动作：富文本编辑器会截住冒泡阶段的键，必须在捕获阶段认领。
+    const onSaveKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== 's') return
+      e.preventDefault()
+      e.stopPropagation()
+      finishNudge()
+      if (e.shiftKey) {
+        finishFocusedRichText()
+        finishActiveGesture()
+        useUiStore.getState().setLayoutOpen(true, 'save')
+      } else void runManualSave()
+    }
     const onKeyDown = (e: KeyboardEvent) => {
       const ui = useUiStore.getState()
 
@@ -200,14 +205,9 @@ export function useKeyboard() {
 
       const mod = e.metaKey || e.ctrlKey
 
-      // ⌘S 在**输入框和对话框里也要拦**：那才是用户最想按它的时刻（刚给
-      // 画布改完名、刚在对话框里填完东西）。不拦的话浏览器弹出「保存网页」
-      // 另存对话框——用户以为自己存了文档，存下来的是一张 HTML。
-      // 这是 inEditableTarget 之前**唯一**的例外：其余快捷键在输入框里都该
-      // 让位给原生编辑行为。
       // ⌥⌘S = 把现在存为命名节点（ADR 0101）。按 `code` 判：⌥ 会把 macOS 上的
-      // `key` 变成 ß；必须排在 ⌘S 前面——Windows 上 Ctrl+Alt+S 的 `key` 仍是 s，
-      // 落进下一条就成了「保存」。它**不是**上面那个例外：在输入框 / 对话框里与
+      // `key` 变成 ß；捕获阶段的保存处理器明确排除 Alt，避免 Windows 上 Ctrl+Alt+S
+      // 落进「保存」。它不是应用级保存：在输入框 / 对话框里与
       // 其余快捷键一样让位，这里只是提前认领这组按键、让位时落空而不是落进 ⌘S。
       // Windows 上 AltGr 报成 Ctrl+Alt（波兰语 AltGr+S = ś）：那是在打字，同样落空
       if (mod && e.altKey && !e.shiftKey && e.code === 'KeyS') {
@@ -216,16 +216,6 @@ export function useKeyboard() {
         startNamedNode()
         return
       }
-      // 带 ⌥ 的不认（`lib/keymap` 的 save / saveAs 都登记 `alt: false`）：⌥⇧⌘S 不是「另存为」，Windows 上
-      // Ctrl+Alt+Shift+S 还是 AltGr+⇧S（波兰语 Ś），这一条排在输入框让位之前，认了就是吞掉用户在打的字
-      if (mod && !e.altKey && e.key.toLowerCase() === 's') {
-        e.preventDefault()
-        // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
-        if (e.shiftKey) useUiStore.getState().setLayoutOpen(true, 'save')
-        else void runManualSave()
-        return
-      }
-
       if (inEditableTarget(e)) return
       const doc = useDocumentStore.getState()
 
@@ -318,15 +308,17 @@ export function useKeyboard() {
       if (e.key === 'Escape') {
         e.preventDefault()
         // 最上层浮层优先：时间线在预览就先退预览，再关抽屉
-        if (ui.versionsOpen && useTimelineStore.getState().preview) {
+        if (isTimelineOpen(ui) && useTimelineStore.getState().preview) {
           useTimelineStore.getState().setPreview(null)
-        } else if (ui.versionsOpen) ui.setVersionsOpen(false)
+        } else if (isTimelineOpen(ui)) closeTimeline()
         else if (ui.editingTextId) ui.setEditingText(null)
         else if (ui.elementPanelId) {
           // 先退选中的图内元素，再退整个图内编辑态；
           // 退出后选中该面板——属性页落在面板上，「写回原始文件」就在手边
           if (ui.selectedGids.length) ui.setSelectedGid(null)
           else {
+            // 选区退完，下一下 Esc 退出整个图内编辑（单图编辑里同样：画布上只有这一张图，没有「排版」可回，
+            // 退出后仍是单图编辑）；与上下文栏那颗出口按钮同一件事
             const pid = ui.elementPanelId
             ui.setElementPanel(null)
             useSelectionStore.getState().set([pid])
@@ -383,12 +375,6 @@ export function useKeyboard() {
 
       const tool = TOOL_KEYS[e.key.toLowerCase()]
       if (tool) {
-        // 快速编辑里没有画布标注。`openFastEdit()` 进来时把工具收回 `select`
-        // 正是因为这一屏上根本没有它们的位置；顶栏也把这组按钮藏了起来。
-        // **只藏按钮不挡快捷键等于没挡**：按一下 R，`CanvasStage` 照样
-        // `startDraw()`，用户在一个只显示这张图的画面里画出一个看不见的矩形，
-        // 而它进了文档、进了历史、还会跟着导出。
-        if (tool !== 'select' && inFastEdit()) return
         e.preventDefault()
         ui.setTool(tool)
       }
@@ -402,12 +388,14 @@ export function useKeyboard() {
     const onCopy = (e: ClipboardEvent) => void handleCopyEvent(e)
     const onPaste = (e: ClipboardEvent) => void handlePasteEvent(e)
 
+    window.addEventListener('keydown', onSaveKey, true)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
     document.addEventListener('copy', onCopy)
     document.addEventListener('paste', onPaste)
     return () => {
+      window.removeEventListener('keydown', onSaveKey, true)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)

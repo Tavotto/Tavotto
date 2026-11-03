@@ -21,7 +21,8 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   `pad_inches` / `dpi` / `transparent` / 底色 / 格式）按 matplotlib 自己的解析顺序
   记成 JSON（`savefig_calls` 进描述符，见函数 docstring）；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
-  捕获表（去重、命名、保序）；
+  捕获表（去重、命名、保序）；`adopt_displaced_writers()` —— 写了文件却因 stem 被别的图持有而没认领的图
+  （在它之前调用）；
 * `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
@@ -145,6 +146,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import dataclasses
+import glob
 import hashlib
 import inspect
 import io
@@ -154,6 +156,7 @@ import math
 import ntpath
 import os
 import pathlib
+import pickle
 import posixpath
 import re
 import shutil
@@ -161,17 +164,25 @@ import stat
 import sys
 import threading
 import time
+import types
+import unicodedata
 import weakref
 
 if __package__:
-    from . import patchspec
+    from . import axestraversal, patchspec
 else:
+    import axestraversal
     import patchspec
 
 __all__ = [
     "savefig_stem",
     "savefig_call",
     "record_savefig_call",
+    "savefig_target_key",
+    "savefig_verify_render",
+    "savefig_verifier",
+    "note_savefig_writer",
+    "MAX_SAVEFIG_WRITERS",
     "savefig_calls_of",
     "SavefigObservations",
     "savefig_metadata_reader",
@@ -193,6 +204,10 @@ __all__ = [
     "INPUT_OBSERVER_MAX_FILES",
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
+    "ShownFigures",
+    "PdfPagesLedger",
+    "MAX_PDF_PAGES_LEDGER",
+    "adopt_pdf_pages",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
     "PROFILE_SAFE",
@@ -211,6 +226,7 @@ __all__ = [
     "runtime_asset_id",
     "source_fingerprint",
     "size_mm_of",
+    "find_artifacts",
     "find_original_artifact",
     "project_relative_stem",
     "SOURCE_ARTIFACT_VERSION",
@@ -302,7 +318,8 @@ ARTIFACT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff
 #: 捕获描述符的 schema 版本。**捕获语义改变时才升**（stem 取法、去重、
 #: fingerprint 构成……）；它参与 fingerprint，所以升版 = 所有旧 fingerprint
 #: 自然失配 = 「按旧语义捕的图可能已过时」这句 stale hint 如实成立。
-DESCRIPTOR_VERSION = 1
+#: v2（2026-10-24）：写进 `PdfPages` 的图也被认领，stem 取 PDF 文件名（见 `PdfPagesLedger`）。
+DESCRIPTOR_VERSION = 2
 
 #: 预览发布账本（P01b，EX12）：会话产物目录里的这份文件逐 stem 记着
 #: 「**本次运行**已经完整发布过的预览」。`<stem>.svg` 文件存在**不是**完成事实——
@@ -485,6 +502,47 @@ def preview_invalid(out_dir, stem: str) -> bool:
     return os.path.exists(_invalid_marker(out_dir, stem))
 
 
+#: worker 直出位图（`figsession.do_export` → `Figure.savefig`）的像素预算——**唯一出处**。
+#:
+#: 判据的主语是「即将分配的那块 Agg 栅格」的像素数（宽×高，bbox_inches 生效后的真实尺寸），
+#: 不是 figsize×dpi 的名义值。Agg 整幅 RGBA（4 B/px）一次分配，PNG / TIFF / JPEG 的编码器再各拷一份，
+#: 峰值约 3 倍：1 亿像素 ≈ 400 MB 栅格、峰值约 1.2 GB——worker 在这个量级仍能正常收尾，再往上
+#: 被系统 OOM 杀掉的风险就由「说不清的 session_dead」变成真实概率。
+#: 这与 RenderCore 最终导出的预算（`rendercore/renderchild.py` 的 `DEFAULT_MAX_PIXELS` /
+#: `DEFAULT_MAX_TOTAL_PIXELS`）是**两条路径、两种内存模型**：那边 PDFium 条带栅格、整页不落内存，
+#: 所以上限更高；这边没有条带，互不替代。超预算一律报错，**不降 dpi、不缩尺寸、不写文件**。
+EXPORT_RASTER_TOO_LARGE_CODE = "export_raster_too_large"
+MAX_EXPORT_RASTER_PIXELS = 100_000_000
+#: 走 Agg 整幅栅格的格式（`savefig` 的 `format`，小写）；pdf / svg / eps / ps / pgf 是矢量，不在此列。
+RASTER_EXPORT_FORMATS = frozenset(
+    {"png", "tif", "tiff", "jpg", "jpeg", "webp", "bmp", "gif", "raw", "rgba"}
+)
+
+
+class ExportRasterTooLarge(ValueError):
+    """worker 直出的位图超过像素预算。`params` 是线格式里平铺进错误信封的字段（宽 / 高 / 上限）。"""
+
+    code = EXPORT_RASTER_TOO_LARGE_CODE
+
+    def __init__(self, width: int, height: int, max_pixels: int):
+        super().__init__(
+            f"位图导出 {width}×{height} 像素（{width * height} 个），超过上限 {max_pixels} 个像素；"
+            "请降低导出分辨率或缩小图幅"
+        )
+        self.params = {"width": width, "height": height, "max_pixels": max_pixels}
+
+
+def check_export_raster(fmt: str, width_px: int, height_px: int) -> None:
+    """位图格式且宽×高超预算 → `ExportRasterTooLarge`；其余原样放行。必须在分配栅格**之前**调用。
+
+    预算在调用时读模块常量（测试可调小；产品没有对外的调参入口）。
+    """
+    if str(fmt).lower() not in RASTER_EXPORT_FORMATS:
+        return
+    if int(width_px) * int(height_px) > MAX_EXPORT_RASTER_PIXELS:
+        raise ExportRasterTooLarge(int(width_px), int(height_px), MAX_EXPORT_RASTER_PIXELS)
+
+
 #: 失效标记都写不下去时的最后一道（`PREVIEW_POISONED_CODE`，规则 worker-protocol-and-lifecycle §预览失效四级）：
 #: 写预览的是 worker / native 子进程，读的是 app 进程——磁盘标记写不下去，worker 进程内的任何
 #: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
@@ -501,7 +559,7 @@ _poison_lock = threading.Lock()
 
 
 def _dir_key(out_dir) -> str:
-    return os.path.normcase(os.path.abspath(os.fspath(out_dir)))
+    return os.path.normcase(os.path.realpath(os.fspath(out_dir)))
 
 
 def poison_preview_dir(out_dir) -> None:
@@ -895,19 +953,95 @@ def project_relative_stem(stem: object) -> bool:
     return ".." not in stem.replace("\\", "/").split("/")
 
 
-def find_original_artifact(project_root: str, stem: str, *, isfile=os.path.isfile) -> str | None:
+#: 默认的磁盘探测谓词（import 时的那个函数对象）：worker 里用户脚本沙箱可能替换 `os.path.isfile`，
+#: 判「是不是真磁盘」不能拿模块属性比（那会让沙箱里恒走合成路径探测，丢掉真实大小写）
+_DISK_ISFILE = os.path.isfile
+#: 同理的真 `os.scandir`：worker 里 `install_probe_observer` 会把 `os.scandir` / `os.listdir` 换成记账版（脚本读了哪些路径的诊断）。
+#: Tavotto 自己的列目录（`find_artifacts`）不是用户脚本的探测，不能被记进缺失输入诊断 / rasterhint——直接用 import 时的真函数
+_DISK_SCANDIR = os.scandir
+
+
+def find_artifacts(project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None) -> list[str]:
+    """项目根下 stem 的**所有**产物（相对路径，POSIX，按 `ARTIFACT_EXTS` 顺序）；没有回 `[]`。
+
+    `formats`（这张图自己 savefig 过的格式）给了就只认这些扩展名，且**每个存在的都收**：同一张图存了
+    `panel.pdf` 与 `panel.svg` 时两个文件都是它的（#1251：打开哪个都该是这张图）。不给（不知道它存过什么）
+    = 旧判据，只回第一个存在的——不知道格式时不能把同 stem 下别的图的文件算进来。
+    """
+    if not project_relative_stem(stem):
+        return []  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
+    allowed = None if formats is None else {_norm_format(f) for f in formats if f}
+    out: list[str] = []
+    if isfile is _DISK_ISFILE:
+        # 真磁盘：列目录取**真实文件名**（含扩展名大小写，`panel.PDF`）——合成 `stem + ".pdf"` 去探测，在 Windows / macOS
+        # 上记下的是小写的合成路径，在区分大小写的文件系统上什么都找不到；而素材盘点的 id 是真实文件名，
+        # 注册表 `artifacts` 的键必须与它逐字相同（#1251）
+        by_ext = _real_files_with_stem(project_root, stem)
+        for ext in ARTIFACT_EXTS:
+            if allowed is not None and _norm_format(ext[1:]) not in allowed:
+                continue
+            for name in by_ext.get(ext, ()):
+                out.append(name)
+                if allowed is None:
+                    return out
+        return out
+    for ext in ARTIFACT_EXTS:  # 注入的 isfile（测试 / handoff 的 dry 场景）：合成路径探测，保持原样
+        if allowed is not None and _norm_format(ext[1:]) not in allowed:
+            continue
+        if isfile(os.path.join(project_root, stem + ext)):
+            out.append(stem + ext)
+            if allowed is None:
+                break
+    return out
+
+
+def _real_files_with_stem(project_root: str, stem: str) -> dict[str, list[str]]:
+    """`{小写扩展名: [项目相对真实路径（POSIX）]}`：`stem` 所在目录里，文件名主干 == stem 的普通文件。
+    扩展名大小写不敏感（`.PDF` 归 `.pdf`），主干按原样比；读不了目录 = 空。"""
+    rel_dir, _, base = stem.replace("\\", "/").rpartition("/")
+    try:
+        entries = list(
+            _DISK_SCANDIR(os.path.join(project_root, rel_dir) if rel_dir else project_root)
+        )
+    except OSError:
+        return {}
+    out: dict[str, list[str]] = {}
+    for entry in sorted(entries, key=lambda e: e.name):
+        root_name, ext = os.path.splitext(entry.name)
+        if root_name != base or not ext:
+            continue
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
+            continue
+        out.setdefault(ext.lower(), []).append(f"{rel_dir}/{entry.name}" if rel_dir else entry.name)
+    return out
+
+
+def find_original_artifact(
+    project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None
+) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
     判据与 handoff 交接找产物是同一份（它现在就调这里）：只看项目根一层、
     按 `ARTIFACT_EXTS` 的顺序取第一个存在的。`isfile` 可注入是给测试与
     handoff 的 dry 场景用的。
+
+    `formats`（这张图自己 savefig 过的格式，取自它的调用表）给了就只认这些扩展名：同一 stem 下别的图写的
+    文件不是它的原件——`panel.png` 甲 / `panel.pdf` 乙时，甲的原件若按扩展名顺序取成 `panel.pdf`，写回就会
+    拿甲去覆盖乙的产物。不给（不知道它存过什么）= 旧判据。「全部产物」是 `find_artifacts`，这里取它的首个。
     """
-    if not project_relative_stem(stem):
-        return None  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
-    for ext in ARTIFACT_EXTS:
-        if isfile(os.path.join(project_root, stem + ext)):
-            return stem + ext
-    return None
+    found = find_artifacts(project_root, stem, isfile=isfile, formats=formats)
+    return found[0] if found else None
+
+
+def saved_formats(calls) -> list[str] | None:
+    """调用表（`savefig_calls[stem]`）里出现过的格式；调用表是 None（没观察到）或空回 None = 不知道。"""
+    if not calls:
+        return None
+    out = [c.get("format") for c in calls if isinstance(c, dict) and c.get("format")]
+    return out or None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -938,11 +1072,20 @@ class CapturedFigureDescriptor:
     #: 产出这张图的运行配置引用（T03；本机不透明 id，不是 argv）。空 = 没给参数——此时 payload 里**没有**
     #: 这个键，旧描述符与对拍用例一个字节不变。
     run_config: str = ""
+    #: 这张图写过的**所有**磁盘文件（项目相对路径，POSIX；#1251）：按它自己存过的格式绑定，含 `original_artifact`。
+    #: `original_artifact` 语义不变（首选原件、写回目标）；这里是「打开其中任何一个文件都是这张图」的证据，
+    #: 由 `probe.descriptor_artifacts` 登记进注册表。空 = 没有（pyplot 捕获 / playground / 不知道）——此时 payload 里
+    #: **没有**这个键，旧描述符与对拍用例一个字节不变。
+    artifacts: tuple[str, ...] = ()
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
         if not self.run_config:
             out.pop("run_config")
+        if self.artifacts:
+            out["artifacts"] = list(self.artifacts)
+        else:
+            out.pop("artifacts")
         out["size_mm"] = [float(v) for v in self.size_mm]
         out["savefig_calls"] = (
             None if self.savefig_calls is None else [dict(c) for c in self.savefig_calls]
@@ -962,6 +1105,7 @@ def build_descriptor(
     original_artifact: str | None = None,
     savefig_calls=None,
     run_config: str = "",
+    artifacts=(),
 ) -> CapturedFigureDescriptor:
     """描述符工厂——**writeback 能力只能派生，不能指定**。
 
@@ -997,6 +1141,15 @@ def build_descriptor(
         )
     if original_artifact is not None:
         original_artifact = original_artifact.replace("\\", "/")
+    if artifacts is None:
+        artifacts = ()
+    if not isinstance(artifacts, (list, tuple)) or not all(
+        isinstance(a, str) and a for a in artifacts
+    ):
+        raise ValueError(f"artifacts 必须是非空字符串列表: {artifacts!r}")
+    artifacts = tuple(dict.fromkeys(a.replace("\\", "/") for a in artifacts))
+    if capture_source == SOURCE_PYPLOT and artifacts:
+        raise ValueError(f"pyplot 捕获的 Figure 没有产物文件，artifacts 必须为空: {artifacts!r}")
     if savefig_calls is not None:
         if not isinstance(savefig_calls, (list, tuple)) or not all(
             isinstance(c, dict) for c in savefig_calls
@@ -1019,6 +1172,7 @@ def build_descriptor(
         can_writeback_source=False,
         savefig_calls=savefig_calls,
         run_config=run_config,
+        artifacts=artifacts,
     )
 
 
@@ -1041,6 +1195,7 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
         original_artifact=data.get("original_artifact"),
         savefig_calls=data.get("savefig_calls"),
         run_config=data.get("run_config") or "",
+        artifacts=data.get("artifacts") or (),
     )
     for key in ("asset_id", "can_writeback_artifact", "can_writeback_source"):
         if key in data and data[key] != getattr(desc, key):
@@ -1072,7 +1227,15 @@ ORIGIN_STATIC = "static"
 _ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
 SELECTED_ARTIFACT_POLICY = "selected-artifact-v1"
 SELECTED_FIGSIZE_POLICY = "selected-figsize-v1"
-SELECTED_ARTIFACT_POLICIES = (SELECTED_ARTIFACT_POLICY, SELECTED_FIGSIZE_POLICY)
+#: 来源驱动采用（ADR 0139）：编辑档安全条件 + 准入结论（exact / needs_confirmation），与上面两条永不共享 worker / 缓存 / witness。
+SCRIPT_BACKED_POLICY = "script-backed-figure-v1"
+SELECTED_ARTIFACT_POLICIES = (
+    SELECTED_ARTIFACT_POLICY,
+    SELECTED_FIGSIZE_POLICY,
+    SCRIPT_BACKED_POLICY,
+)
+#: 要求「整图 figsize 图幅」的两条策略：编辑请求必须带 `figure.frame == "figsize"`，且只收 PNG。
+FIGSIZE_FRAME_POLICIES = (SELECTED_FIGSIZE_POLICY, SCRIPT_BACKED_POLICY)
 ARTIFACT_VALIDATION_MAX_BYTES = 32 * 1024 * 1024
 ARTIFACT_VALIDATION_MAX_PIXELS = 16_000_000
 
@@ -1097,7 +1260,7 @@ def artifact_request(policy, expected_source=None, patches=()):
         return None
     if policy not in SELECTED_ARTIFACT_POLICIES:
         raise ArtifactContextError("unsupported_render_state", "Unsupported source policy.")
-    if policy == SELECTED_FIGSIZE_POLICY and patches:
+    if policy in FIGSIZE_FRAME_POLICIES and patches:
         frame = next(
             (
                 p["value"]
@@ -1149,7 +1312,7 @@ def selected_artifact_context(value):
     if artifact.kind not in ("pdf", "png"):
         raise ValueError("selected artifact rendering supports PDF and PNG")
     policy = value["render_policy"]
-    if policy == SELECTED_FIGSIZE_POLICY and artifact.kind != "png":
+    if policy in FIGSIZE_FRAME_POLICIES and artifact.kind != "png":
         raise ArtifactContextError(
             "unsupported_render_state", "Selected figsize requires a PNG source."
         )
@@ -1306,6 +1469,29 @@ def savefig_stem(fname) -> str:
     return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
 
 
+#: 「先写临时文件再改名」的临时后缀（#1124）
+TEMP_SAVE_SUFFIXES = (".tmp", ".temp", ".part")
+
+
+def temp_save_target(fname) -> tuple[str, str] | None:
+    """`savefig("final.png.tmp")` 这种「先写临时文件、再改名成产物」的名字 → `(最终文件名, 最终 stem)`，
+    即 `("final.png", "final")`；不是这种形状回 None。
+
+    **只是形状判断，不是事实**：脚本可能根本没改名、而磁盘上躺着一份旧的 `final.png`。拿它改 stem 之前，
+    调用方必须确认这次执行真的把这个临时文件改名成了那个最终文件、内容就是这次写的（#1124，
+    Codex #1126 P1）——否则会把这张图关联到一份它没产出的原件上，编辑写回就覆盖了别人的文件。
+    """
+    if not savefig_targets_path(fname):
+        return None
+    root, ext = os.path.splitext(os.path.basename(os.fsdecode(fname)))
+    if ext.lower() not in TEMP_SAVE_SUFFIXES:
+        return None
+    inner, inner_ext = os.path.splitext(root)
+    if not inner or inner_ext.lower() not in ARTIFACT_EXTS:
+        return None
+    return root, inner
+
+
 def savefig_effective_names(fname, kwargs: dict, canvas=None) -> list:
     """`savefig(fname, **kwargs)` 真正会写（被拦截时就是没写）的文件名，供 `BlockedFileOps` 记账（P01a）。
 
@@ -1454,6 +1640,1528 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
     return True
 
 
+_CASE_FOLD_CACHE: dict = {}
+
+
+#: 模块加载时的 `os.listdir`：大小写探测是 Tavotto 自己的簿记，不能经保真度账本的 `watched_listdir`
+#: （否则自己的探测会把图标成「脚本列过受影响目录」= suspect）
+_UNWATCHED_LISTDIR = os.listdir
+
+
+def _dir_folds_case(directory: str) -> bool:
+    """这个目录所在的文件系统是否不区分大小写：目录存在时探测——翻转路径里最后一个有大小写的字母所在的那一级名字，
+    父目录的 `os.listdir` 里**字面存在**这个变体名 → 它是独立条目（符号链接别名或另一个目录）→ 区分大小写；
+    不存在，而翻转后的路径存在且 `samefile` → 不区分。探测不了（目录不存在 / 路径里没有大小写字母 / 出错）按平台默认
+    （darwin / win32 不区分，其余区分；Pyodide 虚拟 FS 区分）。结果按目录缓存。"""
+    if directory in _CASE_FOLD_CACHE:
+        return _CASE_FOLD_CACHE[directory]
+    result = sys.platform in ("darwin", "win32")
+    try:
+        if os.path.isdir(directory):
+            parts = os.path.normpath(directory).split(os.sep)
+            for k in range(len(parts) - 1, -1, -1):
+                name = parts[k]
+                if name.lower() == name.upper():
+                    continue
+                flipped_name = name.swapcase()
+                parent = os.sep.join(parts[:k]) or os.sep
+                if flipped_name in _UNWATCHED_LISTDIR(parent):
+                    result = False
+                else:
+                    flipped = os.sep.join(parts[:k] + [flipped_name] + parts[k + 1 :]) or os.sep
+                    result = os.path.exists(flipped) and os.path.samefile(flipped, directory)
+                break
+    except OSError:
+        pass
+    _CASE_FOLD_CACHE[directory] = result
+    return result
+
+
+_UNICODE_FOLD_CACHE: dict = {}
+
+#: 探测 NFC / NFD 时最多扫目录里多少个条目找证据（只看非 ASCII 的名字）
+_UNICODE_PROBE_SCAN = 200
+
+
+def _unicode_evidence(directory: str, name: str, listing=None) -> bool | None:
+    """用目录里一个**真实存在**的名字当证据：它的另一种归一形式（NFC <-> NFD）是不是**同一个名字**。
+    True = 是；False = 不是（另一种写法不存在，或是独立的目录项）；None = 没有证据（名字是纯 ASCII、两种形式相同、
+    或这个名字本身在盘上不存在）。
+
+    `samefile` 只能证明同一个 inode——硬链接 / 符号链接别名也满足，区分归一化的文件系统上 NFC / NFD 两个
+    名字互为硬链接时同样为真，那不是「文件系统把两种写法当同一个名字」。所以要同时满足：另一种写法能 `lstat` 到
+    同一个目录项、**且目录列表里只出现一种写法**（归一化的文件系统一个文件只有一个目录项；
+    两种写法都作为独立目录项出现 = 别名，不归一）；比较用 `lstat`（目录项本身，不跟随符号链接）。不在用户目录里写探针文件。"""
+    nfc, nfd = (unicodedata.normalize(f, name) for f in ("NFC", "NFD"))
+    if nfc == nfd:
+        return None
+    here = os.path.join(directory, name)
+    if not os.path.lexists(here):
+        return None
+    other_name = nfd if name != nfd else nfc
+    other = os.path.join(directory, other_name)
+    if not os.path.lexists(other):
+        return False
+    listing = set(_UNWATCHED_LISTDIR(directory)) if listing is None else listing
+    if (nfc in listing) and (nfd in listing):
+        return False  # 两种写法都是独立目录项：别名，不是归一化
+    # 比**目录项本身**（lstat，不跟随链接）：归一卷上一个名字可分解的单个符号链接，两种写法 lstat 到同一项，
+    # 是有效证据；两个独立的链接 / 硬链接是两个目录项，已被上面「列出两种写法」排除，lstat 也不同
+    return os.path.samestat(os.lstat(here), os.lstat(other))
+
+
+def _dir_folds_unicode(directory: str, base: str | None = None) -> bool:
+    """这个目录所在的文件系统是否把 Unicode 的 NFC / NFD 写法当同一个文件名——**只在能证明时才算是**。
+
+    APFS 比较时不区分 NFC / NFD（HFS+ 直接存成 NFD），NTFS、ext4、exFAT、多数网络卷按码点比较。误并 =
+    把两个不同的文件当成一个（编辑到另一张图），比漏并更坏，所以不按平台猜：先拿 `base`（这次要写的名字，
+    它已经在盘上时）当证据，再扫目录里的非 ASCII 条目；探测不了（目录不存在 / 没有这样的条目 / 出错）按
+    「不归一」。native 保存成功后另有 samefile 对账兜底（`_canonical_target`）。结论按目录缓存（只缓存有证据的）。"""
+    if directory in _UNICODE_FOLD_CACHE:
+        return _UNICODE_FOLD_CACHE[directory]
+    try:
+        if not os.path.isdir(directory):
+            return False
+        verdict = _unicode_evidence(directory, base) if base else None
+        if verdict is None:
+            seen = 0
+            listing = set(_UNWATCHED_LISTDIR(directory))
+            for entry in listing:
+                if entry.isascii():
+                    continue
+                verdict = _unicode_evidence(directory, entry, listing)
+                seen += 1
+                if verdict is not None or seen >= _UNICODE_PROBE_SCAN:
+                    break
+    except OSError:
+        return False
+    if verdict is None:
+        return False
+    _UNICODE_FOLD_CACHE[directory] = verdict
+    return verdict
+
+
+def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
+    """`savefig(fname)` 真正写的那个**磁盘文件**的可比较身份；写不出路径（缓冲区 / 认不出文件名）时 None。
+
+    「同一路径多个写入者」（`note_savefig_writer`）的键。文件名经 `savefig_effective_names`（显式 `format=`
+    不改文件名、无后缀补 canvas 缺省格式——与 matplotlib 一致），所以 `savefig("a.pdf")` 与
+    `savefig("a.pdf", format="png")` 是同一个文件，`a.pdf` 与 `a.svg` 不是。
+
+    * 三条入口同一个**路径**键（不用 inode：脚本删掉再重建同一路径时 inode 会变，而磁盘上那个路径留下的仍是
+      最后写入者——Codex #1141 r4305717514）：路径取 `realpath`（符号链接解到目标），文件名是否折叠大小写按**该目录所在文件系统**
+      判（`_dir_folds_case`），不是一刀切的 `normcase`——macOS 默认卷上 `Plot.pdf` / `plot.pdf` 是同一个文件，
+      区分大小写的卷（Linux、Windows 的区分目录）上是两个。
+    * 目录里能**证明** NFC / NFD 是同一个名字（`_dir_folds_unicode`：拿真实存在的名字试另一种写法）时先归一成 NFC 再比；证明不了不归一。
+    * 硬链接别名（两个路径同一个 inode）键里认不出，由 native 保存成功后的 `_canonical_target` 用 samefile 对账。
+    """
+    names = savefig_effective_names(fname, kwargs, canvas)
+    if len(names) != 1:
+        return None
+    try:
+        path = os.path.abspath(os.fsdecode(names[0]))
+        directory, base = os.path.split(os.path.realpath(path))
+        if _dir_folds_unicode(directory, base):
+            directory, base = (unicodedata.normalize("NFC", part) for part in (directory, base))
+        if _dir_folds_case(directory):
+            # 只折叠大小写（`lower`），不做 `casefold` 的全 Unicode 折叠：NTFS / APFS 的不区分大小写比较不把
+            # `ß` 当 `ss`（Codex #1141 r4305745044）；NTFS 的大写表等更细的排序规则不模拟（见细则「已知未覆盖」，#1150）
+            base = base.lower()
+        return os.path.join(directory, base)
+    except Exception:  # noqa: BLE001 —— 簿记尽力而为：认不出路径就不参与顶替，绝不改变用户 savefig 的结果
+        return None
+
+
+def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
+    """用**未打补丁**的 `Figure.savefig` 把这次保存同一组参数不落盘地真渲染进 `io.BytesIO()`：成功 = 原生下这次保存
+    不会抛。safe worker / 浏览器不真写盘，拿不到成败，又没法穷举所有会让 savefig 抛的参数（格式 × backend ×
+    dpi × …），所以只在**这次写入会改变捕获**（`note_savefig_writer` 要顶替）的那一刻交给 matplotlib 自己判。
+    格式取显式 `format=`，否则取 `savefig_effective_names` 解出的后缀；解不出格式按成功算。Figure 的状态
+    （dpi / 尺寸 / 布局）matplotlib 的 savefig 自己会还原。抛任何异常 = 失败。"""
+    try:
+        kw = dict(kwargs)
+        if kw.get("format") is None:
+            names = savefig_effective_names(fname, kwargs, getattr(fig, "canvas", None))
+            ext = os.path.splitext(os.fsdecode(names[0]))[1][1:].lower() if names else ""
+            if not ext:
+                return True
+            kw["format"] = ext
+        # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
+        # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
+        # 验证渲染是我们的动作、不是脚本改图（它发生在**另一张图**保存时）：用户可见的 `fig.stale` 与「存后被改过」的
+        # 私有标记都原样还回去。先还 stale（置 True 会经 `_StaleRecorder` 弄脏标记），再还标记
+        stale = getattr(fig, "stale", None)
+        dirty = getattr(fig, DIRTY_SINCE_SAVE, None)
+        try:
+            real_savefig(fig, io.BytesIO(), *args, **kw)
+        finally:
+            try:
+                if stale is not None:
+                    fig.stale = stale
+                if dirty is not None:
+                    setattr(fig, DIRTY_SINCE_SAVE, dirty)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
+        return False
+    return True
+
+
+def _replayable_on_blank(args, kwargs: dict) -> bool:
+    """这组保存参数能不能在空白 Figure 上**原样**复现。引用原 Figure 内对象的参数（`bbox_extra_artists`，以及任何值里
+    带 Artist 的参数）在空白 Figure 上没法复现：不能原样复现就不能拿空白 Figure 的成功当「失败只来自内容」的证据。
+    不含 Artist 的值（None、空容器、数、非法值）原样传过去：合法的照常复现，非法的在空白 Figure 上同样失败 -> 判 False。"""
+    from matplotlib.artist import Artist
+
+    def refers_to_figure(value, depth=0) -> bool:
+        if isinstance(value, Artist):
+            return True
+        if depth < 2 and isinstance(value, (list, tuple, set, frozenset)):
+            return any(refers_to_figure(v, depth + 1) for v in value)
+        if depth < 2 and isinstance(value, dict):
+            return any(refers_to_figure(v, depth + 1) for v in value.values())
+        return False
+
+    return not any(refers_to_figure(v) for v in (*args, *kwargs.values()))
+
+
+def _content_only_failure(real_savefig, fname, args, kwargs: dict) -> bool:
+    """同一组保存参数在**空白 Figure** 上能原样渲染：此时 Figure 那一次渲染不出，原因只在它的内容。
+    参数不能原样复现（`_replayable_on_blank`）一律 False；不碰用户的 Figure、不进 pyplot 的图表
+    （`Figure()` 直接建，不经 `plt.figure`）。任何异常按「不是」算（保持原有的失败判定）。"""
+    try:
+        from matplotlib.figure import Figure
+
+        if not _replayable_on_blank(args, kwargs):
+            return False
+        return savefig_verify_render(real_savefig, Figure(), fname, args, dict(kwargs))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+#: 「这张图被观察到存过盘」的标记；与 `DIRTY_SINCE_SAVE` 一起判「存完之后脚本又改过它」（ADR 0139 §八 的告知）
+_SAVED_MARK = "_mm_saved_once"
+#: 最近一次保存之后，这张 Figure 是否被改过（私有记录，由 `_StaleRecorder` 写、`mark_saved` 清）
+DIRTY_SINCE_SAVE = "_mm_dirty_since_save"
+#: 记录包装之下的原 `stale_callback`（可能是 None，也可能是 pyplot 的 `_auto_draw_if_interactive`）
+_ORIG_STALE_CALLBACK = "_mm_orig_stale_callback"
+#: 已连上 `draw_event` 清标记回调的记号（只连一次）
+_DRAW_HOOK = "_mm_draw_hook_cid"
+#: 判过一次的结论（True = 存盘后被脚本改过）；只判一次——之后 Tavotto 自己的编辑也会让标记变 True
+MODIFIED_AFTER_SAVE = "_mm_modified_after_save"
+
+
+class _StaleRecorder:
+    """`Figure.stale_callback` 的透明包装：被以真值调用时在 Figure 上记 `DIRTY_SINCE_SAVE`，然后**原样**转调原回调。
+    不碰 `fig.stale` 的值，用户脚本观察到的 stale 与原生 matplotlib 完全一致。"""
+
+    def __init__(self, orig):
+        self.orig = orig
+
+    def __call__(self, artist, val):
+        if val:
+            try:
+                setattr(artist, DIRTY_SINCE_SAVE, True)
+            except Exception:  # noqa: BLE001 —— 记账尽力而为
+                pass
+        if self.orig is not None:
+            return self.orig(artist, val)
+        return None
+
+
+def _hook_draw_event(fig) -> None:
+    """连一个 `draw_event` 回调（只连一次）：Figure 每画完一次，把 `DIRTY_SINCE_SAVE` 清成 False。
+    draw 过程中 matplotlib 自己会多次置 stale（`Axes.apply_aspect` 等），那些噪声先弄脏标记、画完被这里清掉；
+    `draw_event` 在 `Figure.draw` 画完之后才发，回调注册表在 figure 上，`print_figure` 换临时 canvas 时照样触发
+    （matplotlib 3.11 实测）。闭包只持 weakref，不拖住 Figure。"""
+    if getattr(fig, _DRAW_HOOK, None) is not None:
+        return
+    import weakref
+
+    ref = weakref.ref(fig)
+
+    def _on_draw(_event):
+        f = ref()
+        if f is not None:
+            try:
+                setattr(f, DIRTY_SINCE_SAVE, False)
+            except Exception:  # noqa: BLE001
+                pass
+
+    try:
+        setattr(fig, _DRAW_HOOK, fig.canvas.mpl_connect("draw_event", _on_draw))
+    except Exception:  # noqa: BLE001 —— 连不上就退化成不清（只会多报，不抛）
+        pass
+
+
+def _unhook(fig) -> None:
+    """卸掉 `mark_saved` 装的两个钩子：`stale_callback` 若仍是我们的 `_StaleRecorder` 就还原成它记住的原回调
+    （用户换成自己的就不动），`draw_event` 回调断开并清掉记号。不抛。"""
+    try:
+        cb = getattr(fig, "stale_callback", None)
+        if isinstance(cb, _StaleRecorder):
+            fig.stale_callback = cb.orig
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cid = getattr(fig, _DRAW_HOOK, None)
+        if cid is not None:
+            fig.canvas.mpl_disconnect(cid)
+            setattr(fig, _DRAW_HOOK, None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def mark_saved(fig) -> None:
+    """一次 savefig 记完账之后调用：把 `DIRTY_SINCE_SAVE` 清成 False，打上「存过盘」的标记，并保证 Figure 的
+    `stale_callback` 外面套着一层只记录的 `_StaleRecorder`（只套一次；重复保存不叠层）。
+
+    判据来自 matplotlib 自己的 stale 传播：`Artist.stale` setter 在值为 True 时调 `stale_callback(self, val)`，子 artist
+    经 `_stale_figure_callback` / `_stale_axes_callback` 把 `figure.stale = True` 一路传到 Figure，所以 Figure 的
+    回调在每次画面相关改动时都会被调。实测（matplotlib 3.11）：savefig 之后 `ax.set_title` / `line.set_color` /
+    `fig.set_size_inches` / `fig.text` / `ax.cla` 都触发（True）；只改 rcParams、`plt.close` 不触发。
+    `bbox_inches="tight"` 保存过程中的临时改动发生在本函数**之前**，不会误报。回调调用不看 stale 原值，
+    而 `print_figure` 收尾本来就把 stale 置 True，所以不需要（也不能）去清 `fig.stale`——
+    那会让存盘后读 `fig.stale` 的用户脚本在 Tavotto 下走不同分支。
+    语义与旧的「清 `stale`」一致：从**最后一次保存或最后一次重绘（`draw_event`）之后**被改过才算——存后脚本自己
+    `fig.canvas.draw()` 不报告；已知盲区：存后改了又重绘（`plt.pause`）一次，也不再报告。
+    **两个钩子只在脚本运行期存在**：`note_modified_after_save` 判定时一并卸掉，之后 Figure 与原生无异
+    （采纳检查 `figsession._require_artifact_figure` 看不到它们）；已判过的图不再装。
+    用户脚本若自己替换 `fig.stale_callback`：记录随之丢失（下次保存时重新套）；尽力而为、绝不抛错。
+    本函数只报事实、不额外渲染、不复制 Figure；保存瞬间的快照是另一件事（`SaveMomentLedger`，ADR 0139 §九，只在 safe worker 的 `note_savefig` 里拍）。"""
+    if hasattr(fig, MODIFIED_AFTER_SAVE):
+        # 已经判过（例如 native 在 show 屏障判过、之后脚本又存盘）：钩子早已卸掉，不再装
+        try:
+            setattr(fig, _SAVED_MARK, True)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    try:
+        cb = getattr(fig, "stale_callback", None)
+        if not isinstance(cb, _StaleRecorder):
+            setattr(fig, _ORIG_STALE_CALLBACK, cb)
+            fig.stale_callback = _StaleRecorder(cb)
+        _hook_draw_event(fig)
+        setattr(fig, DIRTY_SINCE_SAVE, False)
+        setattr(fig, _SAVED_MARK, True)
+    except Exception:  # noqa: BLE001 —— 记账尽力而为，绝不影响用户的 savefig
+        pass
+
+
+def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
+    """脚本跑完（或 native 第一次把图交出去）时，给存过盘、之后又被脚本改过的 savefig 图打上
+    `MODIFIED_AFTER_SAVE`；返回这些 stem。每张图只判一次：判过之后 Tavotto 自己的编辑同样会把标记置真，
+    再判就是把我们的改动算到脚本头上。三条入口在 `adopt_displaced_writers` 之后各调一次；manifest 读这个标记。"""
+    out = []
+    for stem, fig in capture.items():
+        if capture_source.get(stem) != SOURCE_SAVEFIG or not getattr(fig, _SAVED_MARK, False):
+            continue
+        _unhook(fig)  # 钩子只活到判定这一刻（不论这次是否新判、不论结论）
+        if not hasattr(fig, MODIFIED_AFTER_SAVE):
+            try:
+                setattr(fig, MODIFIED_AFTER_SAVE, bool(getattr(fig, DIRTY_SINCE_SAVE, False)))
+            except Exception:  # noqa: BLE001
+                continue
+        if getattr(fig, MODIFIED_AFTER_SAVE, False):
+            out.append(stem)
+    return out
+
+
+#: 保存瞬间快照（ADR 0139 §九）。只在 safe worker 里、只活在本进程内存里：**不落盘、不跨进程、不读项目文件里的任何 pickle**。
+#: 记在 Figure 上的结论属性（manifest 读它；`manifest.SAVE_MOMENT_ATTR` 是同源对，`tests/test_save_moment.py` 钉相等）
+SAVE_MOMENT = "_mm_save_moment"
+#: 结论取值：`SAVE_MOMENT_RESTORED`，或下面闭集里的一个失败原因（编辑基础退回脚本跑完的最终态，照旧只告知）
+SAVE_MOMENT_RESTORED = "restored"
+SAVE_MOMENT_REASONS = frozenset(
+    {
+        "unpicklable",  # pickle.dumps 抛了（lambda 格式化器、不可序列化的 artist……）
+        "too_large",  # 单张快照超过 SAVE_MOMENT_MAX_BYTES
+        "budget_exceeded",  # 本次执行累计超过 SAVE_MOMENT_TOTAL_BYTES
+        "bbox_extra_artists",  # 保存带 bbox_extra_artists：那批 artist 属于原件，复制品对不上
+        "restore_failed",  # 还原失败（含白名单外的类：用户自定义的 artist / 格式化器 / 变换）
+        "structure_mismatch",  # 还原出的 Figure 与拍快照时的结构签名对不上
+        "multi_stem",  # 同一张图以多个 stem 被捕获：快照只对应它最后一次保存，说不清是哪个 stem 的
+        "not_selected_save",  # 选定原件对应的那次保存不是这张图的最后一次保存（快照取的是最后一次）
+        "matplotlib_patched",  # 脚本改了 matplotlib 的方法面（patch 过类 / 函数）：拍摄与还原都会走被改过的代码，一律放弃
+    }
+)
+#: 单张快照 / 本次执行累计的字节上限。**只用字节数当预算，不用墙钟**：热会话与写回的一次性重放必须在同一处同样地
+#: 放弃，否则「热态所见 == 重放所得」会被计时抖动破坏
+SAVE_MOMENT_MAX_BYTES = 32 * 1024 * 1024
+SAVE_MOMENT_TOTAL_BYTES = 128 * 1024 * 1024
+#: 关掉快照（只告知，行为与 #1250 相同）：环境变量值为 "0"。worker 由同一个父进程拉起，热会话与一次性重放读到同一个值
+SAVE_MOMENT_ENV = "TAVOTTO_SAVE_MOMENT_SNAPSHOT"
+#: 还原时允许解析的全局：matplotlib / mpl_toolkits / numpy 本体（名字不含点、对象自己的 `__module__` 也在这些包里），
+#: 加下面几个精确名字。用户自己的类 / 函数 / 模块一律拒绝——还原不执行用户代码、不 import 用户模块。
+#: 这是纵深防御，不是边界：边界是快照字节只在产生它的进程里存在，从不落盘、从不来自项目文件（ADR 0139 §九）
+_SAVE_MOMENT_PACKAGES = ("matplotlib", "mpl_toolkits", "numpy")
+_SAVE_MOMENT_EXACT = frozenset(
+    {
+        ("builtins", "object"),
+        ("builtins", "getattr"),
+        ("builtins", "set"),
+        ("builtins", "frozenset"),
+        ("builtins", "slice"),
+        ("builtins", "complex"),
+        ("builtins", "bytearray"),
+        ("builtins", "range"),
+        ("collections", "OrderedDict"),
+        ("collections", "defaultdict"),
+        ("collections", "deque"),
+        ("functools", "partial"),
+        ("itertools", "count"),
+        ("itertools", "cycle"),
+        ("copyreg", "_reconstructor"),
+    }
+)
+#: 拍快照时从复制品上抹掉的、属于 `mark_saved` 的私有记账（复制品没有这些钩子）
+_SAVE_MOMENT_STRIP = (_SAVED_MARK, DIRTY_SINCE_SAVE, _ORIG_STALE_CALLBACK, _DRAW_HOOK)
+
+
+def save_moment_enabled() -> bool:
+    return os.environ.get(SAVE_MOMENT_ENV, "1").strip() != "0"
+
+
+# ---- 静态读取原语（Codex #1314 P1-e）：拍摄 / 指纹 / 白名单把关全程**不许触发用户代码** ----
+# 被检查的对象可能带自定义 `__getattr__` / `__getattribute__` / `__eq__` / `__hash__` / `__bool__`，或元类的 `__instancecheck__`。
+# 所以这一段只用：`type(x)` + `is`、`id`、直接从 `type` / `function` / `code` / `staticmethod` 等**内建类型的 `__dict__` 里取出来的描述符**
+# 去读对象（描述符是 C 实现，不经过对象自己的属性查找），以及精确 `str` / `dict` 上的读取。不用 `getattr` / `hasattr` / `isinstance` /
+# `callable` / `==` / `hash` / `bool` / `str` / `repr` 去碰被检查的对象。
+_T_DICT = type.__dict__["__dict__"]
+_T_MRO = type.__dict__["__mro__"]
+_T_MODULE = type.__dict__["__module__"]
+_T_QUALNAME = type.__dict__["__qualname__"]
+_FN_CODE = types.FunctionType.__dict__["__code__"]
+_FN_MODULE = types.FunctionType.__dict__["__module__"]
+_FN_QUALNAME = types.FunctionType.__dict__["__qualname__"]
+_CODE_FILENAME = types.CodeType.__dict__["co_filename"]
+_BF_MODULE = types.BuiltinFunctionType.__dict__["__module__"]
+_BF_QUALNAME = types.BuiltinFunctionType.__dict__["__qualname__"]
+_BF_SELF = types.BuiltinFunctionType.__dict__["__self__"]
+_SM_FUNC = staticmethod.__dict__["__func__"]
+_CM_FUNC = classmethod.__dict__["__func__"]
+_PROP_PARTS = tuple(property.__dict__[n] for n in ("fget", "fset", "fdel"))
+_MOD_DICT = types.ModuleType.__dict__["__dict__"]
+#: 值本身不可能是钩子的简单数据：这些类型的「重新绑定」不记进指纹（原地改容器不换 id，本来也看不出）
+_SIMPLE_TYPES = (
+    int,
+    float,
+    complex,
+    str,
+    bytes,
+    bool,
+    type(None),
+    tuple,
+    frozenset,
+    range,
+    slice,
+    type(Ellipsis),
+    type(NotImplemented),
+    list,  # 如 copyreg 在首次 pickle 时写入的 `__slotnames__` 缓存
+    dict,
+    set,
+)
+
+
+def _is_class_type(t) -> bool:
+    """`t`（某个对象的类型）的 MRO 里有 `type` = 那个对象本身是个类。只用 `is`。"""
+    for c in _T_MRO.__get__(t):
+        if c is type:
+            return True
+    return False
+
+
+def _is_simple(v) -> bool:
+    t = type(v)
+    for c in _SIMPLE_TYPES:
+        if t is c:
+            return True
+    return False
+
+
+def _static_type_names(t):
+    return _T_MODULE.__get__(t), _T_QUALNAME.__get__(t)
+
+
+def save_moment_module_allowed(module, name) -> bool:
+    """白名单的第一关（还原侧与拍摄侧共用）：精确名单里的 `(模块, 名字)`，或模块顶层包是 matplotlib / mpl_toolkits / numpy。
+    只看名字、不 import、不解析、不执行任何东西（名字必须是精确的 `str`，其它一律拒绝）。用户模块（含用户继承 matplotlib 的子类，
+    它们的 `__module__` 是用户模块）在这里被拒。
+    威胁模型是「诚实的用户钩子意外改了图」，不是蓄意把自己的类的 `__module__` 伪装成 numpy——后者本来就能直接改 Figure。"""
+    if type(module) is not str or type(name) is not str:
+        return False
+    return (module, name) in _SAVE_MOMENT_EXACT or module.split(".", 1)[0] in _SAVE_MOMENT_PACKAGES
+
+
+def _snapshot_type_allowed(t) -> bool:
+    """`t`（一个类）能不能出现在快照里：按它的 `__module__` / `__qualname__`（静态读）查共用白名单的第一关。"""
+    return save_moment_module_allowed(*_static_type_names(t))
+
+
+def save_moment_global_allowed(module, name, resolve) -> bool:
+    """还原侧（`find_class`）的完整判据：第一关 `save_moment_module_allowed`（拍摄侧同用这一关），再要求名字不含点或点前是类
+    （`BoxStyle.Round` 这种嵌套类）、解析到的对象自己的 `__module__` 也在这些包里。`resolve(module, name)` 是 `Unpickler.find_class`。
+    用户模块在第一关就被拒，不会走到 `resolve`（不 import 用户模块）。"""
+    if not save_moment_module_allowed(module, name):
+        return False
+    if (module, name) in _SAVE_MOMENT_EXACT:
+        return True
+    if "." in name and not _is_class_type(type(resolve(module, name.split(".")[0]))):
+        # 带点的名字只许是类的嵌套类（`BoxStyle.Round`），不许沿模块属性链走到别的模块去
+        return False
+    found = resolve(module, name)
+    tf = type(found)
+    if _is_class_type(tf):
+        owner = _T_MODULE.__get__(found)
+    elif tf is types.FunctionType:
+        owner = _FN_MODULE.__get__(found)
+    elif tf is types.BuiltinFunctionType:
+        owner = _BF_MODULE.__get__(found)
+    else:
+        owner = _T_MODULE.__get__(tf)
+    return type(owner) is str and owner.split(".", 1)[0] in _SAVE_MOMENT_PACKAGES
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if not save_moment_global_allowed(module, name, super().find_class):
+            raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
+        return super().find_class(module, name)
+
+
+# ---- 可信方法面指纹（Codex #1314 P1-d；用户裁决：检测到 matplotlib 被 patch 就放弃快照，不逐个封堵） ----
+#: 指纹范围：matplotlib / mpl_toolkits 已导入模块里每个类 `__dict__` 中的非简单数据值（函数、描述符、嵌套类、其它对象）和模块级的类 / 函数，
+#: 再加还原路径实测会解析到的标准库与 numpy 入口（见 `_SURFACE_EXTRA_MODULES`）。值记 `id`，同时握住对象本身（防地址复用漏报）。
+#: **全程静态读取**（见上面的原语）：被改过的对象可能带自定义 `__getattr__` 等，比对本身不能把它们的代码跑起来。
+_SURFACE_PACKAGES = ("matplotlib", "mpl_toolkits")
+_SURFACE_EXTRA_MODULES = (
+    "copyreg",
+    "enum",
+    "collections",
+    "functools",
+    "numpy.ma.core",
+    "numpy._core.multiarray",
+    "numpy._core.numeric",
+    "numpy.core.multiarray",
+    "numpy.core.numeric",
+)
+_surface_lock = threading.Lock()
+_surface_base: dict[str, tuple[dict, list]] | None = None
+_surface_roots: tuple[str, ...] = ()
+#: 仅 matplotlib / mpl_toolkits 自己的包目录：变化条目复核（`_changed_entries_are_library`）只认这里的函数
+_surface_mpl_roots: tuple[str, ...] = ()
+_realpath_cache: dict[str, tuple[str, str]] = {}
+_STDLIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
+_LIB_TOPS = (
+    frozenset(_SURFACE_PACKAGES) | {"numpy"} | frozenset(getattr(sys, "stdlib_module_names", ()))
+)
+
+
+def _module_dict(mod):
+    """精确 `ModuleType` 的命名空间（静态读）；模块子类 / 别的对象一律 None（不碰）。"""
+    if type(mod) is not types.ModuleType:
+        return None
+    d = _MOD_DICT.__get__(mod)
+    return d if type(d) is dict else None
+
+
+def _defined_in(cls, name: str) -> bool:
+    module = _T_MODULE.__get__(cls)
+    return type(module) is str and module == name
+
+
+def _record_class_value(v) -> bool:
+    """类字典里的这个值要不要进指纹：函数 / 内建 / 描述符 / 嵌套类一律记；其余对象只记「类型不是库的」（用户对象）。
+    库类型的实例（如 `Path._unit_circle` 这种首次使用才写入的缓存）会合法地被重新绑定，不记。
+    它们若被当成序列化钩子，`_class_hooks_trusted` 另有一层拦。"""
+    t = type(v)
+    if (
+        t is types.FunctionType
+        or t is types.BuiltinFunctionType
+        or t is staticmethod
+        or t is classmethod
+        or t is property
+        or _is_class_type(t)
+    ):
+        return True
+    if _is_simple(v):
+        return False
+    if not _owner_module_ok(t):
+        return True
+    # 库类型的实例里，**可调用的 / 描述符**（`functools.partial(用户函数)`、绑定方法、`cached_property` 之类）也要记：
+    # 它们一被取用 / 调用就可能跑到用户代码。不可调用的普通数据（首次使用才写入的缓存）仍不记
+    for c in _T_MRO.__get__(t):
+        cd = _T_DICT.__get__(c)
+        if (
+            _dict_get(cd, "__call__", _MISSING) is not _MISSING
+            or _dict_get(cd, "__get__", _MISSING) is not _MISSING
+        ):
+            return True
+    return False
+
+
+_MISSING = object()
+
+
+def _dict_get(d, name: str, default=None):
+    """精确 dict / mappingproxy 里取 `name`：逐项只比精确 `str` 键。不用 `in` / `[]` / `.get`——非 `str` 键可能带自定义
+    `__hash__` / `__eq__`，哈希碰撞时会被调用。"""
+    for k, v in d.items():
+        if type(k) is str and k == name:
+            return v
+    return default
+
+
+def _loaded_module_dict(name: str):
+    """`sys.modules` 里 `name` 的命名空间（静态读）；`sys.modules` 被换成别的容器类型就当不可信（None）。"""
+    mods = sys.modules
+    if type(mods) is not dict:
+        return None
+    return _module_dict(mods.get(name))
+
+
+def _surface_module_map(name: str, mod) -> tuple[dict, dict]:
+    """(条目 -> 对象 id, 条目 -> 对象本身)。对象本身既握住（防地址复用），也供「变了的条目来源是不是库」复核用。"""
+    out: dict = {}
+    objs: dict = {("!mod", None): mod}
+    d = _module_dict(mod)
+    if d is None:
+        out[("!nonstd", None)] = id(type(mod))
+        return out, objs
+
+    def put(key, obj) -> None:
+        out[key] = id(obj)
+        objs[key] = obj
+
+    for attr, val in list(d.items()):
+        if type(attr) is not str:
+            put(("!key", id(attr)), val)
+            continue
+        t = type(val)
+        if _is_class_type(t):
+            if not _defined_in(val, name):
+                # 别的模块定义的类由它自己的模块登记；库里的类在模块间被惰性重新绑定是正常的（如 pyplot 的 `_backend_mod`），
+                # 只有「用户的类被塞进库模块」才记
+                if not _owner_module_ok(val):
+                    put((attr, "!foreign"), val)
+                continue
+            qualname = _T_QUALNAME.__get__(val)
+            if type(qualname) is str and "<locals>" in qualname:
+                continue  # 函数里现造的类（pyplot 每次切后端重新建的 `_backend_mod`）：库自己的惰性状态
+            put((attr, None), val)
+            for k, v in list(_T_DICT.__get__(val).items()):
+                if type(k) is not str:
+                    put(("!key", id(k)), v)
+                elif _record_class_value(v):
+                    put((attr, k), v)
+        elif t is types.FunctionType or t is types.BuiltinFunctionType:
+            put((attr, None), val)
+    return out, objs
+
+
+def _surface_modules() -> dict:
+    out = {}
+    mods = sys.modules
+    if type(mods) is not dict:
+        raise TypeError("sys.modules is not a plain dict")  # 外层兜底成「被改过」
+    for k, m in list(mods.items()):
+        if type(k) is not str or m is None:
+            continue
+        if k.split(".", 1)[0] in _SURFACE_PACKAGES or k in _SURFACE_EXTRA_MODULES:
+            out[k] = m
+    return out
+
+
+def _owner_module_ok(cls) -> bool:
+    """类（或某个对象的类型）定义在库里：matplotlib / mpl_toolkits / numpy / 标准库，或装在 site-packages 里的依赖
+    （cycler / pyparsing / PIL / dateutil / kiwisolver……，按该模块的文件位置判）。用户脚本 / 用户项目里的模块不算。"""
+    module = _T_MODULE.__get__(cls)
+    if type(module) is not str:
+        return False
+    top = module.split(".", 1)[0]
+    if top in _LIB_TOPS:
+        return True
+    d = _loaded_module_dict(top)
+    if d is None:
+        return False
+    loc = _dict_get(d, "__file__")
+    if type(loc) is str:
+        return _path_under_roots(loc, _surface_roots)
+    # 包：`__path__` 只认精确的 list / tuple（里面全是精确 str）。命名空间包的 `_NamespacePath` 一迭代就会重算——走
+    # `sys.meta_path` / `path_hooks`，那是用户可注入的代码——所以其它类型一律当「非库来源」
+    paths = _dict_get(d, "__path__")
+    if type(paths) is list or type(paths) is tuple:
+        return bool(paths) and all(
+            type(x) is str and _path_under_roots(x, _surface_roots) for x in paths
+        )
+    return False
+
+
+def _path_under_roots(filename: str, roots) -> bool:
+    """`filename` 在 `roots` 之下（先按原样规整比，再按 realpath 比；Windows 的大小写 / 短路径 / 符号链接差异都不该造成误判）。
+    `<…>` 形式的合成文件名（`<string>`、`<frozen …>` 等）一律不算：`exec` 生成的用户函数就是 `<string>`；
+    冻结的标准库函数由 `_function_origin_ok` 按 `__module__` 另判。"""
+    if filename.startswith("<"):
+        return False
+    cached = _realpath_cache.get(filename)
+    if cached is None:
+        raw = os.path.normcase(os.path.normpath(filename))
+        try:
+            real = os.path.normcase(os.path.realpath(filename))
+        except Exception:  # noqa: BLE001
+            real = raw
+        cached = _realpath_cache[filename] = (raw, real)
+    for candidate in cached:
+        for root in roots:
+            if candidate == root or candidate.startswith(root + os.sep):
+                return True
+    return False
+
+
+def _function_origin_ok(fn, roots) -> bool:
+    filename = _CODE_FILENAME.__get__(_FN_CODE.__get__(fn))
+    module = _FN_MODULE.__get__(fn)
+    if type(filename) is not str:
+        return False
+    if filename.startswith("<"):
+        # 合成文件名：`<string>` 等一律不算库来源；`<frozen X>` 只在 X 精确等于该函数的 `__module__` 且它是标准库模块时才认
+        if filename.startswith("<frozen ") and filename.endswith(">"):
+            return (
+                type(module) is str
+                and filename[len("<frozen ") : -1] == module
+                and module.split(".", 1)[0] in _STDLIB_NAMES
+            )
+        return False
+    if _path_under_roots(filename, roots):
+        return True
+    # 路径对不上时（打包 runtime 的目录布局各异）再看函数声明的所属模块：库的函数 `__module__` 是库的模块，
+    # 用户脚本里写的 patch 函数是用户的模块。威胁模型同上（防诚实的用户钩子，不防蓄意伪装 `__module__`）
+    return type(module) is str and module.split(".", 1)[0] in _LIB_TOPS
+
+
+def _origin_value_ok(v, roots, depth: int = 0) -> bool:
+    """类字典里的一个值，来源是库吗？函数看定义文件，描述符拆开看里面的函数，其它对象看它的类型定义在哪。"""
+    if depth > 4:
+        return False
+    if _is_simple(v):
+        return True
+    t = type(v)
+    if t is types.FunctionType:
+        return _function_origin_ok(v, roots)
+    if t is types.BuiltinFunctionType:
+        return True
+    if t is staticmethod:
+        return _origin_value_ok(_SM_FUNC.__get__(v), roots, depth + 1)
+    if t is classmethod:
+        return _origin_value_ok(_CM_FUNC.__get__(v), roots, depth + 1)
+    if t is property:
+        for part in _PROP_PARTS:
+            if not _origin_value_ok(part.__get__(v), roots, depth + 1):
+                return False
+        return True
+    return _owner_module_ok(v if _is_class_type(t) else t)
+
+
+def _module_origin_ok(mod, name: str, roots) -> bool:
+    """首次才见到的模块（脚本运行期间才导入，如 `mpl_toolkits.mplot3d`）：没有「启动时」的基线可比，
+    所以从严——它的 Python 函数必须定义在 matplotlib / mpl_toolkits 自己的目录（或标准库 / numpy）里，其它对象的类型也必须是库的。"""
+    d = _module_dict(mod)
+    if d is None:
+        return False
+    for attr, val in list(d.items()):
+        if type(attr) is not str:
+            return False
+        t = type(val)
+        if _is_class_type(t):
+            if not _owner_module_ok(val):
+                return False
+            if _defined_in(val, name):
+                for k, v in list(_T_DICT.__get__(val).items()):
+                    if type(k) is not str or not _origin_value_ok(v, roots):
+                        return False
+        elif t is types.FunctionType and not _function_origin_ok(val, roots):
+            return False
+    return True
+
+
+def freeze_trusted_surface() -> None:
+    """进程内只拍一次（同 worker 重试不重拍——否则脚本上一轮的 patch 会被当成基线）。safe worker 在跑用户脚本之前调。"""
+    global _surface_base, _surface_roots, _surface_mpl_roots
+    with _surface_lock:
+        if _surface_base is not None:
+            return
+        roots: list[str] = []
+
+        def add(path) -> None:
+            if type(path) is str and path:
+                for form in (os.path.normpath(path), os.path.realpath(path)):
+                    form = os.path.normcase(form)
+                    if form not in roots:
+                        roots.append(form)
+
+        for pkg in _SURFACE_PACKAGES:
+            d = _loaded_module_dict(pkg)
+            paths = _dict_get(d, "__path__") if d is not None else None
+            # 只读精确的 list / tuple；命名空间包（mpl_toolkits）的 `_NamespacePath` 不迭代（迭代会重算、走 meta_path / path_hooks），
+            # 改取它已算好的内部 `_path` 列表，再不行就用 matplotlib 目录的兄弟目录
+            if type(paths) is not list and type(paths) is not tuple and paths is not None:
+                try:
+                    inner = object.__getattribute__(paths, "_path")
+                except Exception:  # noqa: BLE001
+                    inner = None
+                paths = inner if type(inner) is list or type(inner) is tuple else None
+            for p in paths or ():
+                add(p)
+        if roots and not any(os.path.basename(r) == "mpl_toolkits" for r in roots):
+            add(os.path.join(os.path.dirname(roots[0]), "mpl_toolkits"))
+        _surface_mpl_roots = tuple(roots)
+        # 「库来源」还包括：matplotlib 所在的 site-packages（它的依赖）、解释器安装前缀（标准库、嵌入式发行版的 python3xx.zip、
+        # 各平台 site-packages）、Tavotto 引擎目录（worker 对 `plt.show` 等的自家 patch）。被用户脚本里的函数顶替才是 patch
+        import site  # noqa: PLC0415
+        import sysconfig  # noqa: PLC0415
+
+        if roots:
+            add(os.path.dirname(roots[0]))
+        for path in (
+            sysconfig.get_paths().get("stdlib"),
+            sysconfig.get_paths().get("platstdlib"),
+            sys.prefix,
+            sys.base_prefix,
+            sys.exec_prefix,
+            os.path.dirname(os.path.abspath(__file__)),
+        ):
+            add(path)
+        try:
+            for path in site.getsitepackages():
+                add(path)
+        except Exception:  # noqa: BLE001
+            pass
+        _surface_roots = tuple(roots)
+        _surface_base = {k: _surface_module_map(k, m) for k, m in _surface_modules().items()}
+
+
+def _reset_trusted_surface_for_tests() -> None:
+    global _surface_base
+    with _surface_lock:
+        _surface_base = None
+
+
+def trusted_surface_diff() -> list:
+    """诊断用：与基线不一致的条目（不补登记新模块）。"""
+    base = _surface_base or {}
+    out = []
+    for name, mod in _surface_modules().items():
+        known = base.get(name)
+        if known is None:
+            continue
+        cur = _surface_module_map(name, mod)[0]
+        out += [(name, k) for k in set(cur) | set(known[0]) if cur.get(k) != known[0].get(k)]
+    return out
+
+
+_surface_reported: set = set()
+
+
+def _report_patched(why: str) -> None:
+    """只记一次、只写 stderr（worker.log）：下次再有环境差异造成的误判，能直接看到是哪个模块的哪一项。"""
+    if why in _surface_reported:
+        return
+    _surface_reported.add(why)
+    try:
+        print(f"[snapshot] matplotlib_patched: {why[:300]}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _is_mpl_own_function(obj) -> bool:
+    """变化条目复核唯一接受的新对象：matplotlib / mpl_toolkits **自己**的函数——精确类型 `FunctionType`（文件在 matplotlib /
+    mpl_toolkits 的包目录下，`__module__` 顶层也是它们），或 C 层 builtin（`__module__` 属于它们）。
+    partial / 绑定方法 / 描述符包装 / 库类型的实例 / 别的第三方包（scienceplots、seaborn……）/ 标准库的函数一律不是。"""
+    t = type(obj)
+    if t is types.FunctionType:
+        module = _FN_MODULE.__get__(obj)
+        filename = _CODE_FILENAME.__get__(_FN_CODE.__get__(obj))
+        return (
+            type(module) is str
+            and module.split(".", 1)[0] in _SURFACE_PACKAGES
+            and type(filename) is str
+            and not filename.startswith("<")
+            and _path_under_roots(filename, _surface_mpl_roots)
+        )
+    if t is types.BuiltinFunctionType:
+        module = _BF_MODULE.__get__(obj)
+        return type(module) is str and module.split(".", 1)[0] in _SURFACE_PACKAGES
+    return False
+
+
+def _changed_entries_are_library(name: str, cur_ids: dict, cur_objs: dict, known_ids: dict) -> bool:
+    """基线之后有变化的条目：只有新对象是 matplotlib / mpl_toolkits 自己的函数（它们自己的惰性重绑定，如 pyplot 的
+    `switch_backend`）才接受并更新基线；其余一律是被改过（用户裁决：matplotlib 被任何东西改过就放弃快照）。被移除的条目不算。"""
+    for key in set(cur_ids) | set(known_ids):
+        if cur_ids.get(key) == known_ids.get(key) or key not in cur_ids:
+            continue
+        if not _is_mpl_own_function(cur_objs.get(key)):
+            _report_patched(f"{name}.{key[0]}.{key[1]}")
+            return False
+    return True
+
+
+def trusted_surface_intact() -> bool:
+    """此刻 matplotlib（及还原路径上的几个入口）的方法面与基线一致吗？每次都按真实值重算，不缓存。
+    基线里有的模块逐项比对；基线之后才导入的模块首次见到时按来源从严检查、通过则补登记（之后的 patch 靠 id 比对发现）。
+    与基线不一致的条目再复核一次：只有 matplotlib / mpl_toolkits 自己的函数重绑定才接受并更新基线。
+    全程静态读取；任何意外异常都按「被改过」处理（返回 False），绝不向调用方抛。"""
+    try:
+        if _surface_base is None:
+            freeze_trusted_surface()
+        base = _surface_base
+        if base is None:
+            return False
+        with _surface_lock:
+            for name, mod in _surface_modules().items():
+                known = base.get(name)
+                if known is None:
+                    if name.split(".", 1)[0] in _SURFACE_PACKAGES and not _module_origin_ok(
+                        mod, name, _surface_roots
+                    ):
+                        _report_patched(f"{name}: 首次见到的模块里有非库来源的函数 / 对象")
+                        return False
+                    base[name] = _surface_module_map(name, mod)
+                    continue
+                cur = _surface_module_map(name, mod)
+                if cur[0] != known[0]:
+                    if not _changed_entries_are_library(name, cur[0], cur[1], known[0]):
+                        return False
+                    base[name] = cur
+        return True
+    except Exception as exc:  # noqa: BLE001 —— 比对失败本身就是不可信
+        _report_patched(f"异常 {type(exc).__name__}")
+        return False
+
+
+_SERIALISATION_HOOKS = ("__reduce_ex__", "__reduce__", "__getstate__", "__setstate__")
+_C_HOOK_TYPES = (
+    types.WrapperDescriptorType,
+    types.MethodDescriptorType,
+    types.BuiltinFunctionType,
+    types.ClassMethodDescriptorType,
+)
+
+
+#: 标准库里自带 Python 级序列化钩子的模块（`enum.Enum.__reduce_ex__` 等；matplotlib 的枚举 / 集合类型会用到）
+_TRUSTED_HOOK_MODULES = frozenset({"enum", "copyreg", "collections", "functools"})
+
+
+def _class_hooks_trusted(t) -> bool:
+    """纵深层（Codex #1314 P1-c）：`t` 沿 MRO 解析出的类级序列化钩子必须出自白名单包或是 C 实现（`object` 自带的槽）。
+    脚本可以 patch `Line2D.__reduce__` / `Figure.__getstate__`——类型名仍是 matplotlib，只看模块拦不住。
+    只静态读各类的 `__dict__`，不调用、不触发描述符；每次 dump 重新判，不跨快照缓存。"""
+    for name in _SERIALISATION_HOOKS:
+        for klass in _T_MRO.__get__(t):
+            attr = _dict_get(_T_DICT.__get__(klass), name, _MISSING)
+            if attr is _MISSING:
+                continue
+            ta = type(attr)
+            if ta is staticmethod:
+                attr = _SM_FUNC.__get__(attr)
+            elif ta is classmethod:
+                attr = _CM_FUNC.__get__(attr)
+            ta = type(attr)
+            if any(ta is c for c in _C_HOOK_TYPES):
+                break
+            if ta is types.FunctionType:
+                module, qualname = _FN_MODULE.__get__(attr), _FN_QUALNAME.__get__(attr)
+                if (type(module) is str and module in _TRUSTED_HOOK_MODULES) or (
+                    save_moment_module_allowed(module, qualname)
+                ):
+                    break
+            return False
+    return True
+
+
+class _SnapshotPickler(pickle.Pickler):
+    """拍摄侧的守门：**任何用户的 `__reduce__` / `__reduce_ex__` / `__getstate__` 被调用之前**先按类型把关。
+
+    `reducer_override` 先于 `__reduce_ex__` 被调用（C 实现里 int / str / bytes / float / bool / None 与精确的 list / tuple /
+    dict / set / frozenset / bytearray 走快速通道、不经过它——它们没有用户代码，容器里的元素仍逐个经过这里）。
+    不在白名单里的类型（用户类、用户继承 matplotlib 的子类、函数、lambda……）立刻抛 `PicklingError`，
+    所以拍快照绝不执行用户的序列化代码，也就不可能借它改活 Figure。允许的返回 `NotImplemented`，交给默认机制。
+    判断本身只做静态读取（`type(obj)` + 内建类型的描述符），不对 `obj` 调 `isinstance` / `getattr`，所以带自定义属性钩子的对象也跑不起来。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: id(类型) -> 类级序列化钩子是否都出自白名单。只活在这一次 dump 里：脚本在两次快照之间 patch 类方法，下一次重新判
+        self._hooks_ok: dict[int, bool] = {}
+
+    def _class_hooks_ok(self, t) -> bool:
+        key = id(t)
+        ok = self._hooks_ok.get(key)
+        if ok is None:
+            ok = self._hooks_ok[key] = _class_hooks_trusted(t)
+        return ok
+
+    def reducer_override(self, obj):
+        t = type(obj)
+        if _is_class_type(t):
+            # 类对象一律按全局名存（元类的 `__reduce__` 不会被调用，已实测），只看类自己在不在名单里
+            ok = _snapshot_type_allowed(obj)
+        elif t is types.BuiltinFunctionType:
+            owner = _BF_SELF.__get__(obj)
+            if owner is None or type(owner) is types.ModuleType:
+                # 模块级内建函数按全局名存
+                ok = save_moment_module_allowed(_BF_MODULE.__get__(obj), _BF_QUALNAME.__get__(obj))
+            else:
+                # 内建对象的绑定方法（`list.remove` 的 bound 形态）存成 `getattr(self, 名字)`，`self` 之后逐个过这里
+                ok = True
+        elif t is types.FunctionType:
+            # 函数按全局名存（`copyreg._reconstructor`、numpy 的重建函数……）；lambda / 用户函数 / 内部函数都不在名单里
+            ok = save_moment_module_allowed(_FN_MODULE.__get__(obj), _FN_QUALNAME.__get__(obj))
+        elif t is types.MethodType:
+            # 绑定方法存成 `getattr(self, 名字)`：`__reduce__` 是 C 实现、不跑用户代码；`self` 之后仍逐个经过这里
+            ok = True
+        else:
+            ok = _snapshot_type_allowed(t) and self._class_hooks_ok(t)
+            if ok:
+                # 实例上挂着的序列化钩子（`obj.__reduce_ex__ = ...`）也是用户代码；实例字典只在库类型上静态读
+                try:
+                    inst = object.__getattribute__(obj, "__dict__")
+                except AttributeError:
+                    inst = None
+                if type(inst) is dict:
+                    for k in inst:
+                        if type(k) is str and k in ("__reduce__", "__reduce_ex__", "__getstate__"):
+                            ok = False
+                            break
+        if not ok:
+            module, qualname = _static_type_names(t)
+            raise pickle.PicklingError(f"not snapshot-safe: {module}.{qualname}")
+        return NotImplemented
+
+
+def _snapshot_dumps(fig) -> bytes:
+    buf = io.BytesIO()
+    _SnapshotPickler(buf, protocol=pickle.HIGHEST_PROTOCOL).dump(fig)
+    return buf.getvalue()
+
+
+def _structure_signature(fig) -> tuple:
+    """还原前后都能算的廉价结构签名：图幅 + 每个 Axes 的 artist 计数。不渲染、不改 Figure。
+
+    轴的清单走 `axestraversal.ordered_axes`（全产品唯一的遍历权威，含 `inset_axes` / `secondary_[xy]axis` / 寄生轴）。
+    静态读纪律：只在**已通过类型白名单的库对象图**上调用——拍摄侧排在序列化成功之后（图里全是库类型），还原侧算在刚还原出的复制品上；
+    `ordered_axes` 只按属性名 `axes` / `child_axes` / `parasites` 走对象图。"""
+    axes = tuple(
+        (
+            type(ax).__name__,
+            len(ax.lines),
+            len(ax.collections),
+            len(ax.patches),
+            len(ax.texts),
+            len(ax.images),
+            len(ax.containers),
+        )
+        for ax in axestraversal.ordered_axes(fig)[0]
+    )
+    w, h = fig.get_size_inches()
+    return (round(float(w), 6), round(float(h), 6), len(fig.texts), len(fig.artists), axes)
+
+
+class SaveMomentLedger:
+    """保存瞬间快照账（一个 `FigureSession` 一份，ADR 0139 §九）。
+
+    每张 Figure 只留**最近一次**保存的快照（与「改动判据是最近一次保存之后」同一时刻）。快照是 `pickle.dumps(fig)`
+    ——matplotlib 文档化的 Figure 持久化——的字节串，只握在本进程内存里，随会话消亡；绝不写盘、不发给别的进程。
+    """
+
+    def __init__(self):
+        #: id(fig) -> {"ref", "blob", "occurrence", "signature", "reason", "stems"}
+        self._rows: dict[int, dict] = {}
+        self._total = 0
+
+    def _drop(self, key: int) -> None:
+        row = self._rows.pop(key, None)
+        if row is not None and row["blob"] is not None:
+            self._total -= len(row["blob"])
+
+    def take(self, fig, occurrence, extra_artists=None) -> None:
+        """一次 savefig 记完账之后调用：给 `fig` 拍快照（替换它上一次的）。绝不抛，也不改 Figure。"""
+        for key in [k for k, r in self._rows.items() if r["ref"]() is None]:
+            self._drop(key)
+        key = id(fig)
+        self._drop(key)
+        row = {
+            "ref": weakref.ref(fig),
+            "blob": None,
+            "occurrence": occurrence,
+            "signature": None,
+            "reason": None,
+        }
+        self._rows[key] = row
+        if extra_artists:
+            row["reason"] = "bbox_extra_artists"
+            return
+        # 结构层（Codex #1314 P1-c）：拍摄期间 Figure 若被置脏（任何途径改了图，含被 patch 过的类级钩子），
+        # 这次改动必须留在 `DIRTY_SINCE_SAVE` 里如实报成 `modified_after_save`——这里绝不清标记，快照作废。
+        # 兜底：下面任何一步（含指纹比对）出了意外都只是放弃快照、退回只告知，绝不让 build 失败
+        try:
+            if not trusted_surface_intact():
+                row["reason"] = "matplotlib_patched"
+                return
+            # 先看类型再碰对象：Figure 若是用户子类，读它的任何属性都可能是用户代码
+            if not _snapshot_type_allowed(type(fig)):
+                row["reason"] = "unpicklable"
+                return
+            dirty_before = bool(getattr(fig, DIRTY_SINCE_SAVE, False))
+            try:
+                self._take_into(row, fig)
+            finally:
+                if not dirty_before and getattr(fig, DIRTY_SINCE_SAVE, False):
+                    row["blob"], row["signature"], row["reason"] = None, None, "unpicklable"
+        except Exception:  # noqa: BLE001
+            row["blob"], row["signature"], row["reason"] = None, None, "unpicklable"
+        if row["blob"] is None:
+            return
+        blob = row["blob"]
+        row["blob"] = None
+        if len(blob) > SAVE_MOMENT_MAX_BYTES:
+            row["reason"] = "too_large"
+        elif self._total + len(blob) > SAVE_MOMENT_TOTAL_BYTES:
+            row["reason"] = "budget_exceeded"
+        else:
+            row["blob"] = blob
+            self._total += len(blob)
+
+    @staticmethod
+    def _take_into(row, fig) -> None:
+        """序列化 `fig` 进 `row["blob"]`；失败写 `row["reason"]`。绝不抛。"""
+        canvas = manager = None
+        try:
+            # 先看类型再碰对象：Figure / canvas 若是用户子类，读它们的属性（`fig.axes`、`canvas.manager = None`）就可能是用户代码
+            if not _snapshot_type_allowed(type(fig)):
+                raise pickle.PicklingError("user Figure subclass")
+            canvas = fig.canvas
+            if canvas is not None and not _snapshot_type_allowed(type(canvas)):
+                canvas = None
+                raise pickle.PicklingError("user canvas")
+            # 复制品不能带「还原时挂回 pyplot」：临时摘掉 canvas.manager（matplotlib 据此写 `_restore_to_pylab`），用完放回
+            manager = getattr(canvas, "manager", None)
+            canvas.manager = None
+            row["blob"] = _snapshot_dumps(fig)
+            # 签名最后算：序列化通过 = 图里全是库类型，读 `ax.lines` 之类不会落到用户重写的属性上
+            row["signature"] = _structure_signature(fig)
+        except Exception:  # noqa: BLE001 —— 快照尽力而为：失败只是退回「告知」
+            row["blob"], row["reason"] = None, "unpicklable"
+        finally:
+            if manager is not None:
+                canvas.manager = manager
+
+    def restore(self, fig, selected_occurrence=None):
+        """还原 `fig` 最近一次保存时的复制品；返回 `(restored, None)` 或 `(None, 原因)`。绝不抛。"""
+        row = self._rows.get(id(fig))
+        if row is None or row["ref"]() is not fig:
+            return None, "unpicklable"
+        if row["reason"] is not None:
+            return None, row["reason"]
+        if selected_occurrence is not None and selected_occurrence != row["occurrence"]:
+            return None, "not_selected_save"
+        # 还原会走 `__setstate__` 等类级钩子：脚本在拍摄之后才 patch 的也要拦住（拍摄前的那次比对管不到）
+        try:
+            if not trusted_surface_intact():
+                return None, "matplotlib_patched"
+        except Exception:  # noqa: BLE001 —— 比对本身出意外 = 不可信
+            return None, "matplotlib_patched"
+        try:
+            restored = _RestrictedUnpickler(io.BytesIO(row["blob"])).load()
+            if _structure_signature(restored) != row["signature"]:
+                return None, "structure_mismatch"
+        except Exception:  # noqa: BLE001
+            return None, "restore_failed"
+        for name in _SAVE_MOMENT_STRIP:
+            restored.__dict__.pop(name, None)
+        return restored, None
+
+    def release(self) -> None:
+        """判定完（采用或放弃）之后释放所有快照字节。"""
+        self._rows.clear()
+        self._total = 0
+
+
+def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):
+    """`note_savefig_writer` 的 `verify` 闭包：只持有 Figure 的弱引用与 args / kwargs 的浅拷贝（登记会活得比这次调用久，
+    不能把 Figure 或调用方后来改动的 kwargs 拖住）；Figure 已死 = 失败。
+
+    闭包本身 `verify()` 是**当场**验证（外来写入：Figure 此刻的内容就是保存时的内容，成败是真值）。
+    `verify.deferred()` 给持有者的**惰性**验证用，三值：True 成功、False 失败、None 未知——保存早已发生，
+    Figure 此后可能被脚本改坏，所以「Figure 此刻渲染不出、但同一组参数在空白 Figure 上能渲染」说不清当时成败，
+    记 None（ADR 0113 的 `intercepted` 语义：safe 没有磁盘，拿不到真值），调用方按已保存算、不推翻选择。
+    参数本身造成的失败（与内容无关）仍是 False。"""
+    ref, a, kw = weakref.ref(fig), tuple(args), dict(kwargs)
+
+    def verify() -> bool:
+        target = ref()
+        return target is not None and savefig_verify_render(real_savefig, target, fname, a, kw)
+
+    def deferred():
+        target = ref()
+        if target is None:
+            return False
+        if savefig_verify_render(real_savefig, target, fname, a, kw):
+            return True
+        return None if _content_only_failure(real_savefig, fname, a, kw) else False
+
+    verify.deferred = deferred
+    return verify
+
+
+class _FileEntry:
+    """`writers[stem]["files"][目标键]`：最近写它的 Figure（弱引用，调用即取）+ 这次保存是否已确认真能成功。
+    持有者自己的写入先不验证（常规路径零渲染），带上 `thunk` 惰性验证；native 与已验证过的 `verified=True`。
+    未验证的登记保留它覆盖掉的那条（`prev`）作后备：验证失败 = 那次保存从未落盘，磁盘上仍是上一条的产物
+    （Codex #1141 r4306209189）。后备链有界（`_MAX_PREV`），已验证的登记之后不再需要更早的后备。"""
+
+    __slots__ = ("ref", "thunk", "verified", "prev")
+
+    def __init__(self, fig, thunk=None, prev=None):
+        self.ref = weakref.ref(fig)
+        self.thunk = thunk
+        self.verified = thunk is None
+        self.prev = None if self.verified else _bounded_prev(prev)
+
+    def __call__(self):
+        return self.ref()
+
+
+_MAX_PREV = 8
+
+
+def _bounded_prev(prev):
+    """截断后备链：遇到已验证的登记就到此为止；未验证的最多留 `_MAX_PREV` 层。"""
+    head, node, depth = prev, prev, 0
+    while node is not None:
+        depth += 1
+        if node.verified or depth >= _MAX_PREV:
+            node.prev = None
+            break
+        node = node.prev
+    return head
+
+
+def _resolve_entry(entry):
+    """把一条（可能未验证的）登记解析成磁盘上真实的那条：未验证就跑 thunk，失败退到 `prev`；全都不成立 = None。"""
+    while entry is not None:
+        if entry() is None:
+            return None
+        if entry.verified:
+            return entry
+        # None = 未知（保存后 Figure 被改坏，说不清当时成败）：按已保存算，不推翻一次可能成功的保存
+        if getattr(entry.thunk, "deferred", entry.thunk)() is not False:
+            entry.verified, entry.thunk, entry.prev = True, None, None
+            return entry
+        entry = entry.prev
+    return None
+
+
+def _canonical_target(files: dict, target: str) -> str:
+    """native 保存成功之后：这个目标若与某个已登记目标是磁盘上的同一个文件（硬链接别名、符号链接之外的
+    同 inode 写法），并入那个已登记的键。**不替代路径键**——删掉再重建同一路径仍是同一目标，所以只在
+    两个键都还对应着存在的文件时才合并；任一 stat 出错 = 不合并。"""
+    if target in files:
+        return target
+    for known in list(files):
+        try:
+            if os.path.samefile(known, target):
+                return known
+        except OSError:
+            continue
+    return target
+
+
+def _held_still_on_disk(files: dict, held, target) -> bool:
+    """持有者在**别的**目标文件上是否仍是最近成功写入者。未验证的登记只在它要挡住一次顶替时才验证
+    （`_resolve_entry`）：失败退回它覆盖掉的那条，再看磁盘上的那条是不是持有者。"""
+    for t, entry in list(files.items()):
+        if t == target:
+            continue
+        if entry() is not held and entry.verified:
+            continue
+        real = _resolve_entry(entry)
+        if real is None:
+            del files[t]
+            continue
+        files[t] = real
+        if real() is held:
+            return True
+    return False
+
+
+#: 每个 stem 最多同时记几个写入者的调用表；超出时先淘汰不是持有者、也不是任何目标最近成功写入者的（或已死的）
+MAX_SAVEFIG_WRITERS = 16
+
+
+def note_savefig_writer(
+    writers: dict,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    stem: str,
+    fig,
+    target: str | None,
+    call: dict | None = None,
+    extra=None,
+    locked: bool = False,
+    verify=None,
+) -> bool:
+    """一次 savefig 的写入者记账与「同一路径最后写入者胜」——三条入口（safe worker、native bridge、浏览器）的同一份
+    实现，也是 `calls` / `extras`（`savefig_calls[stem]` / `savefig_extras[stem]`）的唯一写入点。调用方须在
+    `capture` 已按先到先得认领之后调用。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用（失败的保存不进任何表）；
+    safe / 浏览器不真写盘、拿不到成败，传 `verify`（`savefig_verify_render` 的闭包）：本函数对每次**非持有者**
+    的写入（`fig` 不是 `capture[stem]`，且 `target` / `call` 都非 None——不管最终顶不顶替，它都会更新 `files`）
+    先调用它，返回 False（原生下这次保存会抛）就整次忽略——不顶替、不更新 `files`、不记该写入者的调用。持有者
+    自己的写入照常记账、不立刻验证，但它在 `files` 里的登记带着 `verify` 作为惰性验证：只有当它要**挡住一次顶替**
+    （持有者在别的目标上「仍是最近写入者」）时才对挡路的登记验证，成功 = 确认落盘，失败 = 从未落盘，删掉登记。
+    所以常规路径零渲染，只有同 stem 多图时才有额外渲染。
+
+    每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）},
+    "by": {id(fig) -> [弱引用, 该写入者自己的调用表（None = 不知道）, extras]}}`：
+
+    * 调用按**写入者**分表记，规则与 `record_savefig_call` 完全一致（上限、新格式第一次照记、
+      `call is None` 整份变「不知道」），与其它写入者交替多少次互不影响；
+    * 持有者（`capture[stem]`）的调用表同步成 `calls[stem]` / `extras[stem]` 的副本；
+    * 顶替：`fig` 不是持有者，且持有者**不是本 stem 任何目标文件的最近写入者**（含持有者从未写过）。
+      护栏（任一不满足都不顶）：`target` 或 `call` 为 None（不知道写的是哪个文件）、`locked`（stem 已进入编辑或已记
+      失败）、来源不是 savefig（pyplot 认领永不被顶）、持有者在别的目标文件上仍是最近写入者（它的文件还在磁盘上）；
+    * 有界：最多 `MAX_SAVEFIG_WRITERS` 个写入者表，被淘汰者日后重新成为写入者就从新调用开始。
+
+    返回是否顶替了。
+    """
+    if not stem:
+        return False
+    entry = writers.setdefault(stem, {"files": {}, "by": {}})
+    files, by = entry["files"], entry["by"]
+    if target is not None and verify is None:
+        target = _canonical_target(files, target)  # native：保存已落盘，磁盘上的真值胜过路径字符串
+    held = capture.get(stem)
+    foreign = target is not None and call is not None and held is not None and held is not fig
+    if foreign and verify is not None and not verify():
+        return False
+    takes = (
+        foreign
+        and not locked
+        and capture_source.get(stem) == SOURCE_SAVEFIG
+        and not _held_still_on_disk(files, held, target)
+    )
+    mine = by.get(id(fig))
+    if mine is None or mine[0]() is not fig:
+        mine = by[id(fig)] = [weakref.ref(fig), [], []]
+    _record_writer_call(mine, call, extra)
+    if target is not None and call is not None:
+        # 外来写入前面已验证；持有者自己的写入带上 thunk 惰性验证（verify 为 None = native，保存已成功）
+        files[target] = _FileEntry(fig, None if foreign else verify, prev=files.get(target))
+    if takes:
+        capture[stem] = held = fig
+    if held is fig:
+        calls[stem] = None if mine[1] is None else list(mine[1])
+        if mine[1] is None:
+            extras.pop(stem, None)
+        else:
+            extras[stem] = list(mine[2])
+    _trim_writers(entry, held)
+    _keep_displaced(entry, held)
+    return takes
+
+
+def _keep_displaced(entry: dict, held) -> None:
+    """强引用「仍是本 stem 某个目标文件的最近写入者、却没持有 stem」的图（`entry["kept"]`）。
+
+    写入者表只握弱引用：`a.png` 甲 / `a.pdf` 乙、乙随后 `plt.close` 且出了作用域，乙就被回收——原生两个文件
+    都在，捕获里却只剩甲，乙**整张丢了**。留住它，脚本跑完由 `adopt_displaced_writers` 以自己的名字补进来。
+    有界：跟着 `_trim_writers`（每 stem 至多 `MAX_SAVEFIG_WRITERS` 个写入者），不再是最近写入者的立即放掉。"""
+    latest = {}
+    for ref in entry["files"].values():
+        fig = ref()
+        if fig is not None and fig is not held and id(fig) in entry["by"]:
+            latest.setdefault(id(fig), fig)
+    entry["kept"] = latest
+
+
+def adopt_displaced_writers(
+    writers: dict,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    file_stems: dict | None = None,
+) -> list[str]:
+    """把「写了某个文件、因为 stem 已被别的图持有而没被认领」的图补进捕获表；返回新 stem（产出顺序）。
+
+    不同的图写同一 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙）是两张图，不是同一张图的两种格式：
+    先认领者持有 `panel`（`note_savefig_writer` 的既有契约，不变），乙以 `fallback_stems` 的规则编号成
+    `panel-2`，来源仍是 savefig，带**它自己**的调用表（图幅 / 原件格式按它自己的保存定，ADR 0098）。
+    已被认领的（同一张图也持有别的 stem，或 pyplot 兜底已收）按 `claimed_ids` 跳过。三条入口在 pyplot 兜底
+    **之前**各调一次，同一个脚本在 safe / native / 浏览器产出同样的 stem。`file_stems`（给了就填）记新 stem →
+    它写的文件用的 stem（`panel-2` → `panel`），找原件用（`find_original_artifact(formats=…)`）。"""
+    added: list[str] = []
+    for stem, entry in list(writers.items()):
+        for key, fig in list((entry.get("kept") or {}).items()):
+            if id(fig) in claimed_ids(capture):
+                continue
+            mine = entry["by"].get(key)
+            if mine is None or mine[0]() is not fig:
+                continue
+            name = fallback_stems(capture.keys(), stem, 1)[0]  # stem 已被持有 → `stem-2`、`stem-3`…
+            capture[name] = fig
+            capture_source[name] = SOURCE_SAVEFIG
+            if file_stems is not None:
+                file_stems[name] = stem
+            if mine[1] is None:
+                calls[name] = None
+                extras.pop(name, None)
+            else:
+                calls[name] = list(mine[1])
+                extras[name] = list(mine[2])
+            added.append(name)
+    return added
+
+
+#: 分开登记的图名里，原图名与脚本文件名之间的分隔（ADR 0162）：`sensemakr@plot_新样本`
+ALIAS_SEPARATOR = "@"
+
+
+def aliased_stem(raw: str, script: str, taken) -> str:
+    """同名不同脚本时给后登记的那份起的登记图名：`原图名@脚本文件名`，再撞就 `-2`、`-3`…（ADR 0162）。
+
+    只由 (原图名, 脚本相对路径) 与「已经被占用的图名」决定；`taken` 是项目里此刻已登记的全部图名。
+    脚本文件名取不带扩展名的末段（子目录不进名字：界面显示原图名，这里只要可读且不撞）。"""
+    name = os.path.basename(str(script).replace("\\", "/"))
+    base = f"{raw}{ALIAS_SEPARATOR}{os.path.splitext(name)[0] or 'script'}"
+    used = set(taken)
+    if base not in used:
+        return base
+    n = 2
+    while f"{base}-{n}" in used:
+        n += 1
+    return f"{base}-{n}"
+
+
+def parse_stem_aliases(raw) -> dict[str, str]:
+    """`--stem-aliases` 的 JSON（`[[原图名, 登记图名], …]`）→ `{原图名: 登记图名}`；没给 = 空。
+
+    worker 与 native bridge 共用。父进程只会给 `execspec` 编出来的合法形状，坏了就抛 `ValueError`：
+    静默当没有的话，产出的图名对不上注册表，用户打开的是「图不存在」而不是一句真话。"""
+    if not raw:
+        return {}
+    pairs = json.loads(raw)
+    if not isinstance(pairs, list) or not all(
+        isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) and x for x in p)
+        for p in pairs
+    ):
+        raise ValueError(f"--stem-aliases 形状不对: {raw!r}")
+    out = {a: b for a, b in pairs}
+    if len(out) != len(pairs) or len(set(out.values())) != len(out):
+        raise ValueError(f"--stem-aliases 必须一对一: {raw!r}")
+    return out
+
+
+def renamed_artifact_save(save, renames: dict):
+    """选中原件那次保存的记录 `(row, stem, fig, extras)` 跟着收图后的改名换 stem；没有记录 / 没改名原样返回。"""
+    if save is None or save[1] not in renames:
+        return save
+    row, stem, fig, extras = save
+    return (row, renames[stem], fig, extras)
+
+
+def apply_stem_aliases(
+    aliases,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    file_stems: dict | None = None,
+    renames: dict | None = None,
+) -> list[str]:
+    """按登记的别名表把捕获表里的原图名换成登记图名（ADR 0162）；返回换过的登记图名（捕获顺序）。
+    `renames`（给了就填）记这次实际的 `{原图名: 新名}`——会话里别处按原图名记着的引用（选中原件的那次保存）跟着换。
+
+    三条入口（safe worker、native bridge 的每个收图时刻）在 pyplot 兜底**之后**、图进入编辑会话**之前**各调一次，
+    之后的一切（instrument、描述符、预览产物、编辑请求、runtime 身份）只见登记图名。`file_stems`（给了就填）记
+    登记图名 → 它写文件时用的名字，找原件用（与 `adopt_displaced_writers` 的 `panel-2` → `panel` 同一张表；
+    原图名本身已是补认领名时沿着链取到真正的文件名）。
+
+    捕获顺序保持不变（dict 原地重建）。登记图名已被**同一张** Figure 占着（native 第二个屏障上脚本又存了一次原名）
+    就只摘掉原名；被**另一张**图占着时，原名这张按 `-2` 规则另起名字，绝不覆盖。`aliases` 为空时零改动。"""
+    table = dict(aliases or ())
+    if not table or not any(stem in table for stem in capture):
+        return []
+    renamed: list[str] = []
+    order = list(capture.items())
+    out: dict = {}
+    for stem, fig in order:
+        target = table.get(stem)
+        if target is None:
+            if stem not in out:
+                out[stem] = fig
+            continue
+        held = out.get(target, capture.get(target))
+        if held is fig:
+            out.setdefault(target, fig)
+            name = None
+        else:
+            name = target if held is None else fallback_stems(set(capture) | set(out), target, 1)[0]
+            out[name] = fig
+        if name is not None:
+            if stem in capture_source:
+                capture_source[name] = capture_source[stem]
+            if stem in calls:
+                calls[name] = calls[stem]
+            if stem in extras:
+                extras[name] = extras[stem]
+            if file_stems is not None:
+                file_stems[name] = file_stems.get(stem, stem)
+            renamed.append(name)
+        if renames is not None:
+            renames[stem] = target if name is None else name
+        capture_source.pop(stem, None)
+        calls.pop(stem, None)
+        extras.pop(stem, None)
+        if file_stems is not None:
+            file_stems.pop(stem, None)
+    capture.clear()
+    capture.update(out)
+    return renamed
+
+
+def _record_writer_call(mine: list, call: dict | None, extra) -> None:
+    """把一次调用记进某个写入者自己的表（`record_savefig_call` 同一条规则，`mine[1] is None` = 不知道）。"""
+    if mine[1] is None:
+        return
+    if call is None:
+        mine[1], mine[2] = None, []
+        return
+    tmp = {"k": mine[1]}
+    if record_savefig_call(tmp, {"k": mine[0]()}, "k", mine[0](), call):
+        mine[2].append(extra)
+
+
+def _trim_writers(entry: dict, held) -> None:
+    """写入者表有界：先淘汰已死的、不是持有者也不是任何目标最近写入者的；还超就按先来后到淘汰非持有者
+    （连同它名下的目标记录——有界的代价：它的文件之后算「没人写过」）。持有者永不淘汰。"""
+    by, files = entry["by"], entry["files"]
+    if len(by) <= MAX_SAVEFIG_WRITERS:
+        return
+    latest = {id(ref()) for ref in files.values() if ref() is not None}
+    for hard in (False, True):
+        for key in list(by):
+            if len(by) <= MAX_SAVEFIG_WRITERS:
+                return
+            fig = by[key][0]()
+            if fig is None or (fig is not held and (hard or id(fig) not in latest)):
+                del by[key]
+                for t in [t for t, ref in files.items() if ref() is fig]:
+                    del files[t]
+
+
 def _norm_format(fmt) -> str:
     """格式名的同一性：大小写与 jpeg/jpg、tif/tiff 两对别名不算不同的格式。"""
     fmt = str(fmt or "").lower()
@@ -1580,6 +3288,9 @@ class SavefigObservations:
         self._records: list[dict] = []
         self._figures: list = []
         self._observed_count = 0
+        #: 所有记录（含 PdfPages 的页）共用的次序号；`_observed_count` 只数 savefig 自己的，PdfPages 的页有自己的预算
+        self._occurrences = 0
+        self._pdf_files: list[dict] = []
         self._complete = True
         #: 记录下标 -> 保存完成那一刻的事实（时刻、字节数、mtime）。**不进 `report()`**：
         #: 观察报告的形状是既有合同，这是 P08a 给「只读原件」做核对用的内部旁证。
@@ -1591,24 +3302,21 @@ class SavefigObservations:
         call 是已有 savefig_call 生成的 JSON 值；不再次解析用户参数或调用 repr。
         stream 不算磁盘产物。native 调用后再 complete，safe 拦截后标 intercepted。
         """
+        if is_pdf_pages(fname):
+            return self._record_pdf_page(fig, fname, call)
         if not savefig_targets_path(fname):
             return None
         self._observed_count += 1
         if self._observed_count > MAX_SAVEFIG_OBSERVATIONS:
             self._complete = False
             return None
+        self._occurrences += 1
         if call is None:
             self._complete = False  # 旧入口没有解析参数；不为观察而新增任意 repr / 用户代码调用
         try:
             options = dict(call or {})  # 下方 JSON 往返复制嵌套值；目的地判据只修正这份格式事实
-            try:
-                values = self.metadata(fig) if self.metadata is not None else None
-                if values is None:
-                    raise ValueError("unknown figure metadata")
-                size = [self._number(value) for value in values[0]]
-                dpi, original_dpi = (self._number(value) for value in values[1:])
-            except Exception:  # noqa: BLE001 - custom metadata must not affect a native save
-                size = dpi = original_dpi = None
+            size, dpi, original_dpi = self._figure_metadata(fig)
+            if size is None:
                 self._complete = False
             resolved_dpi = original_dpi if options.get("dpi") == "figure" else options.get("dpi")
             figure_ordinal = next(
@@ -1619,7 +3327,7 @@ class SavefigObservations:
                 self._figures.append(weakref.ref(fig))
             destination = self._destination(fname, options, explicit_format)
             record = {
-                "occurrence": self._observed_count,
+                "occurrence": self._occurrences,
                 "figure_ordinal": figure_ordinal,
                 "stem": None
                 if destination["scope"] == "unresolved"
@@ -1645,6 +3353,105 @@ class SavefigObservations:
         except Exception:  # noqa: BLE001 - 观察失败不能改变用户保存的行为，也不记录用户对象 / 路径
             self._complete = False
             return None
+
+    def _figure_metadata(self, fig):
+        """`(size_inches, dpi, original_dpi)`；读不到 = `(None, None, None)`（自定义 metadata 不许影响一次原生保存）。"""
+        try:
+            values = self.metadata(fig) if self.metadata is not None else None
+            if values is None:
+                raise ValueError("unknown figure metadata")
+            size = [self._number(value) for value in values[0]]
+            dpi, original_dpi = (self._number(value) for value in values[1:])
+            return size, dpi, original_dpi
+        except Exception:  # noqa: BLE001
+            return None, None, None
+
+    def _pdf_entry(self, pdf):
+        """这份 `PdfPages` 的账（找不到就新建；超过 `MAX_PDF_PAGES_FILES` 份返回 None）。"""
+        for entry in self._pdf_files:
+            if entry["ref"]() is pdf:
+                return entry
+        if len(self._pdf_files) >= MAX_PDF_PAGES_FILES:
+            return None
+        entry = {
+            "ref": weakref.ref(pdf),
+            "destination": None,
+            "recorded": 0,
+            "complete": True,
+        }
+        self._pdf_files.append(entry)
+        return entry
+
+    def _record_pdf_page(self, fig, pdf, call):
+        """写进 `PdfPages` 的一页，记成**那份 PDF 路径**的一次 occurrence（带页号 = 这份 PDF 的第几次写入，从 1 起；ADR 0113 补充条款）。
+        与 savefig 的记录一样在真写之前建、由入口按自己的语义补结果（safe `intercepted` / native `saved`、`failed`）。
+
+        目的地的解析规则与 savefig 的完全相同（`_destination`，按此刻的 cwd、scope 取 project / execution /
+        unresolved，根外路径不外发），且**以这份 PDF 的第一页为准**（matplotlib 在第一次 savefig 才真正打开文件）。
+        缓冲区目标（没有文件名）不记。页自己的预算（`MAX_PDF_PAGES_LEDGER`）与 savefig 的 128 分开：
+        一份多页 PDF 不能把别的图的观察挤成不完整（`report()["complete"]` 只管 savefig 自己的）；超出的页只让这份 PDF
+        的 `pdf_file_facts()["complete"]` 变假。是**页**的次序事实，不是 Figure 快照，也不是原件：`saved_originals` 不认它。
+        """
+        name = pdf_pages_filename(pdf)
+        if name is None:
+            return None
+        entry = self._pdf_entry(pdf)
+        if entry is None:
+            return None
+        if entry["recorded"] >= MAX_PDF_PAGES_LEDGER:
+            entry["complete"] = False
+            return None
+        try:
+            options = dict(call or {})
+            options["format"] = "pdf"  # PdfPages 恒写 pdf
+            size, dpi, original_dpi = self._figure_metadata(fig)
+            if size is None:
+                entry["complete"] = False
+            if entry["destination"] is None:
+                entry["destination"] = self._destination(name, options, True)
+            resolved_dpi = original_dpi if options.get("dpi") == "figure" else options.get("dpi")
+            figure_ordinal = next(
+                (i + 1 for i, ref in enumerate(self._figures) if ref() is fig), None
+            )
+            if figure_ordinal is None:
+                figure_ordinal = len(self._figures) + 1
+                self._figures.append(weakref.ref(fig))
+            self._occurrences += 1
+            record = {
+                "occurrence": self._occurrences,
+                "figure_ordinal": figure_ordinal,
+                "stem": None,
+                "pdf_page": entry["recorded"] + 1,
+                "destination": dict(entry["destination"]),
+                "options": options,
+                "figure_size_inches": size,
+                "figure_dpi": dpi,
+                "resolved_dpi": resolved_dpi,
+                "backend": "default",  # PdfPages 自己传 backend="pdf"，不是用户选了别的后端
+                "result": "pending",
+            }
+            encoded = json.dumps(record, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if len(encoded) + 4 > MAX_SAVEFIG_OBSERVATION_BYTES:
+                entry["complete"] = False
+                return None
+            self._records.append(json.loads(encoded))
+            entry["recorded"] += 1
+            return len(self._records) - 1
+        except Exception:  # noqa: BLE001 - 观察失败不能改变用户保存的行为，也不记录用户对象 / 路径
+            entry["complete"] = False
+            return None
+
+    def pdf_file_facts(self, pdf) -> dict | None:
+        """这份 `PdfPages` 的观察事实 `{scope, path, recorded, complete}`（没有记录过 = None）。给 `PdfPagesLedger.summary`。"""
+        for entry in self._pdf_files:
+            if entry["ref"]() is pdf and entry["destination"] is not None:
+                return {
+                    "scope": entry["destination"]["scope"],
+                    "path": entry["destination"]["path"],
+                    "recorded": entry["recorded"],
+                    "complete": bool(entry["complete"]),
+                }
+        return None
 
     @staticmethod
     def _number(value):
@@ -1687,7 +3494,7 @@ class SavefigObservations:
     def complete(self, index, result):
         if index is not None:
             self._records[index]["result"] = result
-            if result == "saved":
+            if result == "saved" and "pdf_page" not in self._records[index]:
                 self._saved_facts[index] = self._stat_saved(self._records[index])
 
     def _original_path(self, record):
@@ -1723,8 +3530,8 @@ class SavefigObservations:
         out = []
         for index, record in enumerate(self._records):
             facts = self._saved_facts.get(index)
-            if record.get("result") != "saved" or facts is None:
-                continue
+            if record.get("result") != "saved" or facts is None or "pdf_page" in record:
+                continue  # PdfPages 的页不是这张图的原件
             ordinal = record.get("figure_ordinal")
             if type(ordinal) is not int or not 0 < ordinal <= len(self._figures):
                 continue
@@ -1794,10 +3601,71 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
+def claimed_ids(capture) -> set[int]:
+    """已被 savefig（或别的来源）认领进 `capture` 的 Figure 的 id——`collect_pyplot_figures` 去重与
+    `ShownFigures` 执行上限用的是**同一个**判据。"""
+    return {id(f) for f in (capture or {}).values()}
+
+
+class ShownFigures:
+    """`plt.show()` 那一刻还开着的 pyplot Figure 的账（有界）。
+
+    兜底（`collect_pyplot_figures`）只看脚本**跑完**时还活着的 Figure；而 `plt.show(); plt.close()`
+    （或循环里逐张 show + close）的脚本在跑完时一张都不剩——交互用户明明看到过每一张。
+    show 是「我画完了，看看吧」，所以 show 当时开着的图记下来，兜底时与跑完仍活着的一起补进去。
+
+    有界：最多强引用 `limit` 张（超出的只在 `overflow` 里计数，Figure 本身不留——
+    `for i in range(10000): ...; plt.show(); plt.close()` 不能把内存烧光）；身份判重用弱引用集合，
+    同一张图 show 多次只记一次。上限只限 pyplot 兜底：此刻已被 savefig 认领的图不占名额（`note(capture=)`，
+    判据 `claimed_ids`），之后才认领的会在下一次 show 时腾出名额。不改 Gcf 的活动图（不碰 `plt.figure(num)`），脚本之后的 `plt.gcf()` 不变。
+    """
+
+    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
+        import weakref
+
+        self.limit = max(0, int(limit))
+        self.kept: list = []
+        #: 超出上限、没留引用的张数（含此刻仍开着的）；跑完时仍开着的那些由 `collect_pyplot_figures` 自己数，
+        #: 用 `overflow_closed` 从这里扣掉，免得同一张图丢两次。
+        self.overflow = 0
+        self._seen = weakref.WeakSet()
+        self._overflowed = weakref.WeakSet()
+
+    def note(self, plt, capture: dict | None = None) -> None:
+        """记下此刻 Gcf 里所有开着的 Figure（show 调用时）。`capture` 是 savefig 已认领的图（见 `claimed_ids`）。"""
+        claimed = claimed_ids(capture)
+        # 已被 savefig 认领的不必再留强引用（capture 自己握着），腾出名额给兜底的图
+        self.kept = [f for f in self.kept if id(f) not in claimed]
+        for manager in list(plt._pylab_helpers.Gcf.get_all_fig_managers()):
+            fig = manager.canvas.figure
+            if fig in self._seen:
+                continue
+            self._seen.add(fig)
+            if id(fig) in claimed:
+                continue
+            if len(self.kept) < self.limit:
+                self.kept.append(fig)
+            else:
+                self.overflow += 1
+                self._overflowed.add(fig)
+
+    def overflow_closed(self, plt, capture: dict | None = None) -> int:
+        """超出上限、且跑完时已经关掉、也没被 savefig 认领的张数
+        （仍开着的归 `collect_pyplot_figures` 数，认领了的已经在 `capture` 里）。"""
+        claimed = claimed_ids(capture)
+        open_ids = {id(m.canvas.figure) for m in plt._pylab_helpers.Gcf.get_all_fig_managers()}
+        accounted = sum(1 for f in list(self._overflowed) if id(f) in open_ids or id(f) in claimed)
+        return max(0, self.overflow - accounted)
+
+
 def collect_pyplot_figures(
-    capture: dict, script_stem: str, plt, limit: int = MAX_PYPLOT_FALLBACK
+    capture: dict,
+    script_stem: str,
+    plt,
+    limit: int = MAX_PYPLOT_FALLBACK,
+    shown: ShownFigures | None = None,
 ) -> tuple[list[str], int]:
-    """把脚本跑完仍活着、且没被 savefig 认领的 pyplot Figure 补进 `capture`。
+    """把脚本里 show 过或跑完仍活着、且没被 savefig 认领的 pyplot Figure 补进 `capture`。
 
     就地修改 `capture`（stem → Figure，保持产出顺序），返回
     `(新增的 stem 列表, 因上限被丢掉的张数)`——调用方据此分辨「这张图有没有
@@ -1809,9 +3677,18 @@ def collect_pyplot_figures(
 
     `plt.get_fignums()` 的顺序即产出顺序（pyplot 的 Gcf 按创建先后维护），
     stem 的序号只由「本次捕获里的第几张」决定，与 figure 号无关。
+
+    `shown`（safe worker 传；见 `ShownFigures`）：`plt.show()` 时开着、之后被 `plt.close()` 的图排在
+    跑完仍活着的图**之前**（它们先于脚本结尾出现），同一张图仍只一个 stem、仍受同一个上限。
+    不传 = 只看跑完仍活着的（浏览器 playground 与 native 的既有行为）。
     """
-    seen = {id(f) for f in capture.values()}
+    seen = claimed_ids(capture)
     pending = []
+    for fig in shown.kept if shown is not None else ():
+        if id(fig) in seen:
+            continue
+        seen.add(id(fig))
+        pending.append(fig)
     for num in plt.get_fignums():
         fig = plt.figure(num)
         if id(fig) in seen:
@@ -1821,10 +3698,209 @@ def collect_pyplot_figures(
     dropped = max(0, len(pending) - max(0, int(limit)))
     if dropped:
         pending = pending[: max(0, int(limit))]
+    if shown is not None:
+        dropped += shown.overflow_closed(plt, capture)
     stems = fallback_stems(capture.keys(), script_stem, len(pending))
     for stem, fig in zip(stems, pending):
         capture[stem] = fig
     return stems, dropped
+
+
+#: `PdfPages` 账本的强引用上限（张）。与 pyplot 兜底的 8 张分开设：一份多页 PDF 动辄几十页，
+#: 8 张会把「三十页的 all_samples.pdf」截成一个令人困惑的前八页。超出的只计数、不留 Figure。
+MAX_PDF_PAGES_LEDGER = 64
+#: 账本里最多同时记几份不同的 PdfPages（每份有一个强引用的 PdfPages 对象；同样有界）。
+MAX_PDF_PAGES_FILES = 32
+
+
+def pdf_pages_filename(pdf) -> str | None:
+    """`PdfPages` 实例写的那个文件名（str，原样）；缓冲区 / 取不到 / 不是 PdfPages 返回 None。
+
+    读 PdfPages 的私有 `_filename`，不包 `PdfPages.__init__`：包 `__init__` 要在用户 import
+    `matplotlib.backends.backend_pdf` 那一刻装 import 钩子（native bridge 启动阶段绝不 import matplotlib，
+    钩子要另装一套），而 `_filename` 在 matplotlib 3.8–3.11 都是 `__init__` 的第一行赋值；
+    读不到就退回脚本名——`tests/test_capture_pdfpages.py` 在 CI 的每个 matplotlib 版本上钉着这个属性仍在。
+    """
+    mod = sys.modules.get("matplotlib.backends.backend_pdf")
+    cls = getattr(mod, "PdfPages", None)
+    if cls is None or not isinstance(pdf, cls):
+        return None
+    name = getattr(pdf, "_filename", None)
+    if isinstance(name, (str, bytes, os.PathLike)):
+        try:
+            return os.fsdecode(name)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def is_pdf_pages(obj) -> bool:
+    """`obj` 是不是 matplotlib 的 `PdfPages`（只看已经载入的模块，不主动 import matplotlib）。"""
+    cls = getattr(sys.modules.get("matplotlib.backends.backend_pdf"), "PdfPages", None)
+    return cls is not None and isinstance(obj, cls)
+
+
+class PdfPagesLedger:
+    """写进 `PdfPages`（`pdf.savefig(fig)` → `fig.savefig(<PdfPages>, format="pdf")`）的 Figure 的账（有界）。
+
+    `plt.close(fig)` 之后图就不在 pyplot 里，而 `savefig` 的第一个参数不是路径，stem 取不出来：
+    三种常见写法（逐页关图、结尾 `plt.close("all")`、一直开着）里前两种以前一张都捕获不到。
+    保存那一刻记下来，脚本结束时由 `adopt_pdf_pages` 一起补进捕获表。
+
+    * 按 PdfPages 实例分组，组内按写入顺序；**同一张 Figure 只认一次**（多页写同一张、写进两份 PDF 都只留第一次）。
+    * 有界：强引用 Figure ≤ `limit`，PdfPages 实例 ≤ `MAX_PDF_PAGES_FILES`；超出的只在 `omitted` 里计数。
+    * 来源仍是 pyplot：多页 PDF **不是**任何一张图的原件，绝不能被当成写回目标（见 `adopt_pdf_pages`）。
+    """
+
+    def __init__(self, limit: int = MAX_PDF_PAGES_LEDGER):
+        self.limit = max(0, int(limit))
+        #: 每份 PdfPages 一组：{"pdf", "name", "pages", "figs", "adopted", "stems", "omitted"}
+        self.groups: list[dict] = []
+        self._kept_ids: set[int] = set()
+        #: 超出上限、没留引用的（不同的）Figure 张数
+        self.omitted = 0
+        #: 其中属于「第 `MAX_PDF_PAGES_FILES` 份之后的 PdfPages」的（每次写入算一次，不判重：没有组可挂）
+        self.unlisted = 0
+
+    def _group(self, pdf) -> dict | None:
+        for group in self.groups:
+            if group["pdf"] is pdf:
+                return group
+        if len(self.groups) >= MAX_PDF_PAGES_FILES:
+            return None
+        group = {
+            "pdf": pdf,
+            "name": pdf_pages_filename(pdf),
+            "pages": 0,
+            "figs": [],
+            #: 按页序：每一页写的是哪张 Figure（`id`，已留强引用的才有；超出上限没留的页是 None）
+            "page_ids": [],
+            #: 按页序的 stem（`adopt_pdf_pages` 认领后才填；同一张图写多页时 stem 重复；没留的页是 None）
+            "page_stems": [],
+            "adopted": 0,
+            "stems": [],
+            "omitted": 0,
+        }
+        self.groups.append(group)
+        return group
+
+    def note(self, pdf, fig) -> int | None:
+        """一次**成功**写进 `pdf` 的保存（失败的保存没有这一页，不记）。返回这一页的页号（从 1 起）；账满了没地方记返回 None。"""
+        group = self._group(pdf)
+        if group is None:
+            # 超过 PdfPages 份数上限：没有组可挂，计进「不点名」的溢出（summary 里单列一条）
+            self.omitted += 1
+            self.unlisted += 1
+            return None
+        group["pages"] += 1
+        page = group["pages"]
+        if id(fig) in self._kept_ids:
+            group["page_ids"].append(id(fig))
+            return page
+        if sum(len(g["figs"]) for g in self.groups) >= self.limit:
+            self.omitted += 1
+            group["omitted"] += 1
+            group["page_ids"].append(None)
+            return page
+        self._kept_ids.add(id(fig))
+        group["figs"].append(fig)
+        group["page_ids"].append(id(fig))
+        return page
+
+    def summary(self, observations: "SavefigObservations | None" = None) -> list[dict]:
+        """`[{name, pages, captured, stems, path, scope, page_stems, complete, omitted?}]`，每份写过页的 PDF 一项
+        （包括它的图都已被 savefig 认领、`captured == 0` 的：写回守卫要知道**所有**脚本写过的多页 PDF；界面那句话
+        只提 `captured > 0` 或有省略的）。
+
+        `name` / `pages` / `captured` / `stems` / `omitted` 是界面那句话用的（PR1）；`path` / `scope` 是这份 PDF 的
+        目的地（`observations` 按 ADR 0113 的规则解出：项目相对路径，`unresolved` 时 `path` 为 null、不外发根外路径），
+        `page_stems` 按页序（同一张图写多页时 stem 重复，没收进来的页是 null），`complete` = 每一页都有 stem 且都记上了观察。
+        写回守卫（`app._own_write_back_targets`）认 `project` 与 `execution` 的 `path`（按项目目录里的同名位置核对）。
+        """
+        out = []
+        for g in self.groups:
+            facts = observations.pdf_file_facts(g["pdf"]) if observations is not None else None
+            item = {
+                "name": os.path.basename(g["name"]) if g["name"] else None,
+                "pages": g["pages"],
+                "captured": len(g["stems"]),
+                "stems": list(g["stems"]),
+                "path": facts["path"] if facts else None,
+                "scope": facts["scope"] if facts else "unresolved",
+                "page_stems": list(g["page_stems"]),
+                # 缓冲区目标没有文件，不要求有观察；有文件名的要每一页都记上
+                "complete": not g["omitted"]
+                and (
+                    g["name"] is None
+                    or (facts is not None and facts["complete"] and facts["recorded"] == g["pages"])
+                ),
+            }
+            if g["omitted"]:
+                item["omitted"] = g["omitted"]
+            out.append(item)
+        if self.unlisted:
+            # 份数超限的 PDF 没有组：不点名的一条，只报省略数
+            out.append(
+                {
+                    "name": None,
+                    "pages": self.unlisted,
+                    "captured": 0,
+                    "stems": [],
+                    "path": None,
+                    "scope": "unresolved",
+                    "page_stems": [],
+                    "complete": False,
+                    "omitted": self.unlisted,
+                }
+            )
+        return out
+
+
+def adopt_pdf_pages(
+    capture: dict, capture_source: dict, ledger: PdfPagesLedger | None, script_stem: str
+) -> list[str]:
+    """把 `ledger` 里还没被认领的 Figure 补进 `capture`（就地），返回新增的 stem（保序）。
+
+    先于 pyplot 兜底调用（三条入口同一个位置）：一张图既写进了 PdfPages、又还开在 pyplot 里时，
+    只有一个 stem，而且是 PDF 文件名而不是脚本名。stem 取 PDF 的文件名（`all_samples.pdf` →
+    `all_samples`、`all_samples-2`…按页序，重名的第二份 PDF 接着往下编）；缓冲区 / 取不到文件名
+    退回 `script_stem`。来源一律 `SOURCE_PYPLOT`：**多页 PDF 不是这些图的原件**，
+    `find_original_artifact` / 写回只对 savefig 来源的 stem 查，这里绝不登记 savefig 来源。
+    """
+    if ledger is None:
+        return []
+    claimed = claimed_ids(capture)
+    added: list[str] = []
+    for group in ledger.groups:
+        fresh = []
+        for fig in group["figs"][group["adopted"] :]:
+            if id(fig) in claimed:
+                continue
+            claimed.add(id(fig))
+            fresh.append(fig)
+        group["adopted"] = len(group["figs"])
+        if not fresh:
+            _fill_page_stems(group, capture)
+            continue
+        base = ""
+        if group["name"]:
+            base = os.path.splitext(os.path.basename(group["name"]))[0]
+        stems = fallback_stems(capture.keys(), base or script_stem, len(fresh))
+        for stem, fig in zip(stems, fresh):
+            capture[stem] = fig
+            capture_source[stem] = SOURCE_PYPLOT
+        group["stems"].extend(stems)
+        added.extend(stems)
+        _fill_page_stems(group, capture)
+    return added
+
+
+def _fill_page_stems(group: dict, capture: dict) -> None:
+    """页序的 stem：每一页写的那张 Figure 现在在捕获表里叫什么（别处先认领的图用它自己的 stem）。"""
+    by_id: dict[int, str] = {}
+    for stem, fig in capture.items():
+        by_id.setdefault(id(fig), stem)
+    group["page_stems"] = [None if i is None else by_id.get(i) for i in group["page_ids"]]
 
 
 #: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open`（与 numpy 的 `DataSource.open`）读到的项目内文件最多记这么多条；
@@ -1911,6 +3987,12 @@ class InputObserver:
         self._uninstall = None
         #: 实际装上了的观察通道（`report()` 的 `channels`）：numpy 没载入时就没有 `numpy_datasource`
         self._channels: list[str] = []
+        #: numpy 通道的还原（装上了才有）：`install()` 时已载入就当场装，否则由调用方在 numpy 载入那一刻补
+        #: （`observe_numpy_datasource`，native bridge 的 import 钩子）
+        self._restore_numpy = None
+        #: `paused()` 的嵌套深度，按线程记：只有进入 `paused()` 的那个线程自己的读（savefig 簿记算摘要、
+        #: 屏障里出预览）不是脚本的输入；屏障期间用户脚本自己起的后台线程仍在跑，它的读是输入，不能一并压掉
+        self._pause = threading.local()
         #: 解释器自己落在项目根里的目录（项目 `.venv`）：库文件不是数据输入，也不占预算（PATH-B2）
         try:
             self._interpreter_dirs = interpreter_dirs_within(os.path.realpath(self.project_root))
@@ -1919,6 +4001,8 @@ class InputObserver:
 
     # ---- 记账 ----
     def _note(self, file) -> None:
+        if getattr(self._pause, "depth", 0):
+            return
         try:
             if not isinstance(file, (str, os.PathLike)):
                 return
@@ -1968,12 +4052,34 @@ class InputObserver:
         io.open = _wrap(real_io_open)
         pathlib.Path.open = observed_path_open
 
-        # numpy 的 `DataSource.open`（`np.loadtxt` / `np.genfromtxt`）：它的文件打开器在 numpy
-        # 载入时就绑好了**原来的** `io.open`，上面三处包装都看不见它读了什么。记的是它**实际
-        # 打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的
-        # destpath 解，拿请求里的字符串去猜会记错文件。只包已载入的 numpy，不替脚本 import。
-        datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+        self._channels = ["python_open"]
+        self.observe_numpy_datasource(sys.modules.get("numpy.lib._datasource"))
+
+        def uninstall() -> None:
+            builtins.open = real_open
+            io.open = real_io_open
+            pathlib.Path.open = real_path_open
+            if self._restore_numpy is not None:
+                self._restore_numpy()
+                self._restore_numpy = None
+
+        self._uninstall = uninstall
+        return uninstall
+
+    def observe_numpy_datasource(self, module) -> None:
+        """装上 numpy 的 `DataSource.open` 通道（`np.loadtxt` / `np.genfromtxt`）；`module` 是 `numpy.lib._datasource`，None / 已装 = 什么都不做。
+
+        它的文件打开器在 numpy 载入时就绑好了**原来的** `io.open`，三处 open 包装都看不见它读了什么。记的是它**实际
+        打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的 destpath 解，拿请求里的字符串去猜
+        会记错文件。只包已载入的 numpy，不替脚本 import：safe worker 装观察器时 numpy 早已载入；native bridge 装在用户代码
+        之前，由 import 钩子在 numpy 载入那一刻调这里。"""
+        if self._restore_numpy is not None:
+            return
+        datasource = getattr(module, "DataSource", None)
         real_ds_open = getattr(datasource, "open", None)
+        if real_ds_open is None:
+            return
+        observer = self
 
         def observed_datasource_open(self_ds, path, mode="r", *args, **kwargs):
             fh = real_ds_open(self_ds, path, mode, *args, **kwargs)
@@ -1981,25 +4087,29 @@ class InputObserver:
                 observer._note(getattr(fh, "name", None))
             return fh
 
-        self._channels = ["python_open"]
-        if real_ds_open is not None:
-            datasource.open = observed_datasource_open
-            self._channels.append("numpy_datasource")
+        datasource.open = observed_datasource_open
+        self._channels.append("numpy_datasource")
 
-        def uninstall() -> None:
-            builtins.open = real_open
-            io.open = real_io_open
-            pathlib.Path.open = real_path_open
-            if real_ds_open is not None:
-                datasource.open = real_ds_open
+        def restore() -> None:
+            datasource.open = real_ds_open
 
-        self._uninstall = uninstall
-        return uninstall
+        self._restore_numpy = restore
 
     def uninstall(self) -> None:
         if self._uninstall is not None:
             self._uninstall()
             self._uninstall = None
+
+    @contextlib.contextmanager
+    def paused(self):
+        """这一段里的打开不记账：引擎自己读文件（不是脚本的输入）。可嵌套；只影响记账，open 照常。
+
+        按线程生效：只压掉进入本上下文的这个线程；用户脚本的其他线程在此期间的读照常记账。"""
+        self._pause.depth = getattr(self._pause, "depth", 0) + 1
+        try:
+            yield
+        finally:
+            self._pause.depth -= 1
 
     # ---- 报告 ----
     def report(self, *, local_modules: list[dict] | None = None) -> dict:
@@ -2220,6 +4330,121 @@ def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
 
     try:
         return walk(tree, exit_line)
+    except RecursionError:
+        return False
+
+
+def exit_controlled_by_argv(source: str, exit_lines) -> bool:
+    """脚本的非零退出是不是**手写的参数检查**（TVD-VB36）。纯函数，只做 `ast.parse`，永不抛。
+
+    `exit_lines` 是回溯里每一个用户脚本帧的行号（抛出点、以及调用它的那几层：`usage()` 写在别处时，调用点才在
+    检查之下）。任一行满足下面之一即成立：
+    * 位于某个 `if` / `while` / 三元的**条件为真那一侧**之下，且条件里读了 `sys.argv`
+      （`if len(sys.argv) < 11: raise SystemExit("Usage: …")`）；
+    * 位于某个 `except` 处理块之下，该块只接 `IndexError` / `LookupError`（`argv[i]` 越界那一类），且对应的 `try`
+      主体里读了 `sys.argv`（`try: argv[1] except IndexError: exit(…)`）。裸 `except` / `Exception` / `OSError` 不算：
+      同一个 try 里读数据文件失败也会走进去，补参数修不好（Codex #1605 P2）。
+    「读 `sys.argv`」只认解析得到标准库 `sys` 的写法：`import sys [as s]` 的 `s.argv`、`from sys import argv [as a]`；
+    名字被用户自己赋值 / 定义 / 当参数时不算。不成立：`else` 侧（条件为假才走到，空 argv 下与参数的关系说不清）、
+    条件不读 argv、无条件退出、语法错、没有行号。判不出一律 False——保留 `script_exited`，宁可不归因。"""
+    if not isinstance(source, str):
+        return False
+    lines = [n for n in (exit_lines or ()) if isinstance(n, int)]
+    if not lines:
+        return False
+    try:
+        import ast  # noqa: PLC0415
+
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+    sys_names: set[str] = set()
+    argv_names: set[str] = set()
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for al in node.names:
+                if al.name == "sys":
+                    sys_names.add(al.asname or "sys")
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "sys":
+            for al in node.names:
+                if al.name == "argv":
+                    argv_names.add(al.asname or "argv")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+            if not isinstance(node, ast.ClassDef):
+                shadowed.update(a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadowed.add(node.id)
+    sys_names -= shadowed
+    argv_names -= shadowed
+    if not sys_names and not argv_names:
+        return False
+
+    def reads_argv(node) -> bool:
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Attribute)
+                and sub.attr == "argv"
+                and isinstance(sub.value, ast.Name)
+                and sub.value.id in sys_names
+            ):
+                return True
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load) and sub.id in argv_names:
+                return True
+        return False
+
+    try_nodes = tuple(t for t in (ast.Try, getattr(ast, "TryStar", None)) if t is not None)
+
+    def contains(node, line: int) -> bool:
+        return getattr(node, "lineno", 0) <= line <= getattr(node, "end_lineno", 0)
+
+    def catches_only_index_errors(handler) -> bool:
+        """`except IndexError` / `except LookupError` / 只由它们组成的元组：接的就是 `argv[i]` 越界。
+        裸 `except`、`Exception`、`OSError`… 也接住了与参数无关的错误（Codex #1605 P2：同一个 try 里还读了数据文件）。"""
+        typ = handler.type
+        elts = typ.elts if isinstance(typ, ast.Tuple) else [typ]
+        if not elts or any(e is None for e in elts):
+            return False
+
+        def name(e) -> str | None:
+            if isinstance(e, ast.Name):
+                return None if e.id in shadowed else e.id
+            if isinstance(e, ast.Attribute) and isinstance(e.value, ast.Name):
+                return e.attr if e.value.id == "builtins" else None
+            return None
+
+        # 元组里可以混别的「越界类」查找错误（KeyError 等同属 LookupError），但每一项都必须是这一族
+        return all(name(e) in ("IndexError", "LookupError", "KeyError") for e in elts) and any(
+            name(e) in ("IndexError", "LookupError") for e in elts
+        )
+
+    def walk(node, line: int) -> bool:
+        for child in ast.iter_child_nodes(node):
+            if not contains(child, line):
+                continue
+            if (
+                isinstance(node, (ast.If, ast.While))
+                and child in node.body
+                and reads_argv(node.test)
+            ):
+                return True
+            if isinstance(node, ast.IfExp) and child is node.body and reads_argv(node.test):
+                return True
+            if (
+                isinstance(node, try_nodes)
+                and child in node.handlers
+                and catches_only_index_errors(child)
+                and any(reads_argv(stmt) for stmt in node.body)
+            ):
+                return True
+            if walk(child, line):
+                return True
+        return False
+
+    try:
+        return any(walk(tree, line) for line in lines)
     except RecursionError:
         return False
 
@@ -3161,6 +5386,20 @@ def install_relative_read_fallback(
         rel = os.path.relpath(real, box)
         return None if rel.startswith("..") or rel == "." else rel
 
+    def _present(path) -> bool:
+        """回退自己的「这条路径在不在」——走 `os.stat`，**不经** `os.path.exists`。
+
+        `os.path.exists` 在沙盒会话里已被 `install_probe_observer` 换成记账版（观察器先装、回退后装）：
+        回退每问一次「沙盒里有没有这份」就会被记成脚本在沙盒里落空了一次探路，哪怕随后正是回退把读救回来、
+        脚本读到了数据——于是「在脚本目录里运行」的引导会挂到与目录无关的失败上（读到的文件内容不对 →
+        ValueError，准备卡标题「运行出错了」却问选运行目录）。证据必须只来自**脚本自己**的探路。
+        """
+        try:
+            os.stat(path)
+        except (OSError, ValueError):
+            return False
+        return True
+
     def _fallback_path(file) -> str | None:
         if not isinstance(file, (str, os.PathLike)):
             return None  # 已经是 fd / 文件对象
@@ -3184,7 +5423,7 @@ def install_relative_read_fallback(
         # 存在性**按真正的 open 会用的那条路径判**：相对的按 cwd 解（脚本
         # 可能 `os.chdir()` 进了子目录），绝对的就用它自己。拿沙盒根去拼的话，
         # chdir 之后脚本自己写出来的那份会被无视、读到项目里的原件。
-        if os.path.exists(name):
+        if _present(name):
             return None  # 已经有了——脚本自己写出来的那份优先
         cand = os.path.abspath(os.path.join(script_dir, rel))
         try:
@@ -3269,7 +5508,7 @@ def install_relative_read_fallback(
             names = _datasource_candidates(self, path)
             # 这串名字里只要有一个在 cwd（沙盒）下存在，numpy 自己就会读到它——不改道
             # （`_fallback_path` 对单个名字已经是这条判据，这里把它扩到整串）
-            if not any(isinstance(n, str) and os.path.exists(n) for n in names):
+            if not any(isinstance(n, str) and _present(n) for n in names):
                 for n in names:
                     alt = _fallback_path(n)
                     if alt is not None:
@@ -3440,6 +5679,21 @@ def remap_target(rules, name: str, *, whole: bool = False) -> str | None:
                     target += "/"  # glob 的末尾分隔符表示只匹配目录，不能丢
                 best = (n, target)
     return best[1] if best else None
+
+
+def _is_sys_path_entry(name: str) -> bool:
+    """`name` 就是 `sys.path` 的某个条目（如 Homebrew 的 `.../lib/python313.zip`）。
+
+    `importlib.metadata` 扫已安装分发时对每个条目试 `zipfile.ZipFile(条目)`——不存在的条目 `io.open` 抛
+    `FileNotFoundError`，被它自己吞掉；但打开入口的包装已经记了一笔，占掉 `MAX_INPUT_MISSES` 的名额
+    （#1253）。解释器自己的搜索路径条目永远不是用户数据，不记。
+    """
+    if not os.path.isabs(name):
+        return False
+    key = os.path.normcase(os.path.normpath(name))
+    return any(
+        isinstance(p, str) and p and os.path.normcase(os.path.normpath(p)) == key for p in sys.path
+    )
 
 
 class InputMisses:
@@ -3644,6 +5898,8 @@ def install_input_remap(
         # 绝对路径换成了相对 base 的那一段：它相对的是 base，不是此刻的 cwd——脚本 chdir 过之后
         # 两者不同，按 cwd 拼回去是 base/sub/sub/x.csv，分类对不上（Codex 评 #716 P2）
         raw = os.fspath(file) if isinstance(file, (str, os.PathLike)) else None
+        if isinstance(raw, str) and _is_sys_path_entry(raw):
+            return  # import 机制探测不存在的 sys.path 条目（importlib.metadata 的 zipfile 打开），不是脚本的输入
         misses.note(shown, cwd=base if isinstance(raw, str) and shown != raw else None)
 
     def _readonly(mode) -> bool:
@@ -3710,6 +5966,265 @@ def install_input_remap(
     return uninstall
 
 
+#: 一次 build 里最多记几条落空的探路调用（去重后）。
+MAX_PROBE_MISSES = 16
+PROBE_GLOB, PROBE_DIR, PROBE_PATH = "glob", "dir", "path"
+
+
+class ProbeMisses:
+    """一次 build 里**沙盒 cwd 下落空的相对探路调用**：`glob` 回空、`listdir` 的目录不存在、`exists` 为假……
+
+    只记「问了什么」（`{kind, target, recursive, hidden}`，脚本写的那串相对目标），**不改任何返回值**；
+    它在脚本目录里到底找不找得到由父进程判（`workdir.probe_hint`，与 ADR 0084 首开的 `databinding._probe_hit`
+    同一把尺子）。探路调用的目标是参数、不是写在调用里的常量时，首开的静态探测（`probe_literals`）认不出来，
+    这是它唯一的证据来源（#1254）。
+    """
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def note(self, kind: str, target, *, recursive: bool = False, hidden: bool = False) -> None:
+        if isinstance(target, os.PathLike):
+            target = os.fspath(target)
+        if not isinstance(target, str) or not target or len(target) > 512:
+            return
+        if target.startswith("~") or os.path.isabs(target) or ntpath.isabs(target):
+            return  # 绝对路径不依赖 cwd
+        norm = target.replace("\\", "/")
+        if all(part in ("", ".") for part in norm.split("/")):
+            return  # 列 cwd 本身不指名任何东西：脚本目录里恒有东西，说明不了什么（ADR 0084）
+        entry = {"kind": kind, "target": norm, "recursive": bool(recursive), "hidden": bool(hidden)}
+        if entry in self.items or len(self.items) >= MAX_PROBE_MISSES:
+            return
+        self.items.append(entry)
+
+
+def install_probe_observer(misses: ProbeMisses, base_dir: str):
+    """装上沙盒里落空的探路调用记账（只记不改）；返回卸载函数。只在 cwd 是沙盒的会话里装。
+
+    包的是 `glob.glob|iglob` / `os.listdir|scandir` / `os.path.exists|isfile|isdir` / `pathlib.Path.glob|rglob|iterdir|
+    exists|is_file|is_dir`。纪律：
+
+    * **返回值原样**：同一个对象（`glob.glob` / `listdir` 的 list、`exists` 的 bool）；返回迭代器的（`iglob` /
+      `Path.glob` / `iterdir`）换成逐项转发的生成器，吐出的元素与异常一模一样，耗尽时若一项都没吐才记账；
+    * 只记相对目标、且调用时的 cwd 还是装的那一刻的沙盒（脚本 `chdir` 走了就不是沙盒里的事实了）；
+    * stdlib 自己的内部探路（`glob` 里逐段 `isdir`、`Path.glob` 里的 `scandir`）不记：线程内重入时直接放行；
+    * `os.scandir` 只在目录不存在（`FileNotFoundError`）时记，返回的迭代器不包；
+    * 名额有限（`MAX_PROBE_MISSES`），去重。
+    """
+    base = os.path.realpath(base_dir)
+    state = threading.local()
+
+    def _in_base() -> bool:
+        try:
+            return os.path.realpath(os.getcwd()) == base
+        except OSError:
+            return False
+
+    def _note(kind, target, **flags) -> None:
+        if getattr(state, "depth", 0) == 0 and _in_base():
+            misses.note(kind, target, **flags)
+
+    class _Guard:
+        def __enter__(self):
+            state.depth = getattr(state, "depth", 0) + 1
+
+        def __exit__(self, *exc):
+            state.depth -= 1
+
+    def _busy() -> bool:
+        return getattr(state, "depth", 0) > 0
+
+    def _watched(iterator, kind, target, **flags):
+        """逐项转发；一项都没吐就耗尽（或目录不存在）→ 记账。"""
+        it = iter(iterator)
+        empty = True
+        while True:
+            try:
+                with _Guard():
+                    item = next(it)
+            except StopIteration:
+                break
+            except (FileNotFoundError, NotADirectoryError):
+                _note(kind, target, **flags)
+                raise
+            empty = False
+            yield item
+        if empty:
+            _note(kind, target, **flags)
+
+    def _glob_target(pathname, root_dir, dir_fd):
+        if dir_fd is not None or not isinstance(pathname, (str, os.PathLike)):
+            return None
+        pathname = os.fspath(pathname)
+        if not isinstance(pathname, str):
+            return None
+        if root_dir is None:
+            return pathname
+        if not isinstance(root_dir, (str, os.PathLike)):
+            return None
+        root_dir = os.fspath(root_dir)
+        if not isinstance(root_dir, str) or os.path.isabs(root_dir):
+            return None
+        return root_dir.rstrip("/\\") + "/" + pathname
+
+    real_glob, real_iglob = glob.glob, glob.iglob
+    real_listdir, real_scandir = os.listdir, os.scandir
+    real_exists, real_isfile, real_isdir = os.path.exists, os.path.isfile, os.path.isdir
+    real_p_glob, real_p_rglob = pathlib.Path.glob, pathlib.Path.rglob
+    real_p_iterdir = pathlib.Path.iterdir
+    real_p_exists, real_p_is_file, real_p_is_dir = (
+        pathlib.Path.exists,
+        pathlib.Path.is_file,
+        pathlib.Path.is_dir,
+    )
+
+    def glob_glob(pathname, *args, **kwargs):
+        if _busy():
+            return real_glob(pathname, *args, **kwargs)
+        with _Guard():
+            result = real_glob(pathname, *args, **kwargs)
+        if not result:
+            target = _glob_target(pathname, kwargs.get("root_dir"), kwargs.get("dir_fd"))
+            if target is not None:
+                _note(
+                    PROBE_GLOB,
+                    target,
+                    recursive=kwargs.get("recursive", False),
+                    hidden=kwargs.get("include_hidden", False),
+                )
+        return result
+
+    def glob_iglob(pathname, *args, **kwargs):
+        if _busy():
+            return real_iglob(pathname, *args, **kwargs)
+        with _Guard():
+            result = real_iglob(pathname, *args, **kwargs)
+        target = _glob_target(pathname, kwargs.get("root_dir"), kwargs.get("dir_fd"))
+        if target is None:
+            return result
+        return _watched(
+            result,
+            PROBE_GLOB,
+            target,
+            recursive=kwargs.get("recursive", False),
+            hidden=kwargs.get("include_hidden", False),
+        )
+
+    def os_listdir(path=None):
+        if _busy():
+            return real_listdir() if path is None else real_listdir(path)
+        try:
+            with _Guard():
+                result = real_listdir() if path is None else real_listdir(path)
+        except (FileNotFoundError, NotADirectoryError):
+            if path is not None:
+                _note(PROBE_DIR, path)
+            raise
+        if not result and path is not None:
+            _note(PROBE_DIR, path)
+        return result
+
+    def os_scandir(path=None):
+        if _busy():
+            return real_scandir() if path is None else real_scandir(path)
+        try:
+            with _Guard():
+                return real_scandir() if path is None else real_scandir(path)
+        except FileNotFoundError:
+            if path is not None:
+                _note(PROBE_DIR, path)
+            raise
+
+    def _bool_probe(real, kind):
+        def probe(path):
+            if _busy():
+                return real(path)
+            with _Guard():
+                ok = real(path)
+            if not ok:
+                _note(kind, path)
+            return ok
+
+        return probe
+
+    def path_glob(self, pattern, *args, **kwargs):
+        if _busy():
+            return real_p_glob(self, pattern, *args, **kwargs)
+        with _Guard():
+            result = real_p_glob(self, pattern, *args, **kwargs)
+        return _watched(
+            result, PROBE_GLOB, _join_target(self, pattern), recursive=True, hidden=True
+        )
+
+    def path_rglob(self, pattern, *args, **kwargs):
+        if _busy():
+            return real_p_rglob(self, pattern, *args, **kwargs)
+        with _Guard():
+            result = real_p_rglob(self, pattern, *args, **kwargs)
+        return _watched(
+            result,
+            PROBE_GLOB,
+            _join_target(self, "**/" + str(pattern)),
+            recursive=True,
+            hidden=True,
+        )
+
+    def path_iterdir(self):
+        if _busy():
+            return real_p_iterdir(self)
+        with _Guard():
+            result = real_p_iterdir(self)
+        return _watched(result, PROBE_DIR, str(self))
+
+    def _path_bool(real, kind):
+        def probe(self, *args, **kwargs):
+            if _busy():
+                return real(self, *args, **kwargs)
+            with _Guard():
+                ok = real(self, *args, **kwargs)
+            if not ok:
+                _note(kind, str(self))
+            return ok
+
+        return probe
+
+    def _join_target(receiver, pattern):
+        head = str(receiver)
+        return str(pattern) if head in ("", ".") else head.rstrip("/\\") + "/" + str(pattern)
+
+    glob.glob, glob.iglob = glob_glob, glob_iglob
+    os.listdir, os.scandir = os_listdir, os_scandir
+    os.path.exists = _bool_probe(real_exists, PROBE_PATH)
+    os.path.isfile = _bool_probe(real_isfile, PROBE_PATH)
+    os.path.isdir = _bool_probe(real_isdir, PROBE_DIR)
+    pathlib.Path.glob, pathlib.Path.rglob, pathlib.Path.iterdir = (
+        path_glob,
+        path_rglob,
+        path_iterdir,
+    )
+    pathlib.Path.exists = _path_bool(real_p_exists, PROBE_PATH)
+    pathlib.Path.is_file = _path_bool(real_p_is_file, PROBE_PATH)
+    pathlib.Path.is_dir = _path_bool(real_p_is_dir, PROBE_DIR)
+
+    def uninstall() -> None:
+        glob.glob, glob.iglob = real_glob, real_iglob
+        os.listdir, os.scandir = real_listdir, real_scandir
+        os.path.exists, os.path.isfile, os.path.isdir = real_exists, real_isfile, real_isdir
+        pathlib.Path.glob, pathlib.Path.rglob, pathlib.Path.iterdir = (
+            real_p_glob,
+            real_p_rglob,
+            real_p_iterdir,
+        )
+        pathlib.Path.exists, pathlib.Path.is_file, pathlib.Path.is_dir = (
+            real_p_exists,
+            real_p_is_file,
+            real_p_is_dir,
+        )
+
+    return uninstall
+
+
 def _file_not_found_in(exc: BaseException | None) -> BaseException | None:
     """异常链（`__cause__` / `__context__`）里第一个「文件不存在」：`FileNotFoundError`，
     或 errno 是 ENOENT 的 `OSError`（h5py 之类包过一层的）。"""
@@ -3765,9 +6280,34 @@ def enoent_fact(exc: BaseException) -> dict | None:
         cwd = ""
     return {
         "filename": filename,
-        "named": None if filename else quoted_name_in(fnf),
+        # pyarrow 的 `FileNotFoundError("cg_data.parquet")`：整条消息就是路径，没有引号也没有 filename
+        "named": None if filename else (quoted_name_in(fnf) or _message_of(fnf)),
         "cwd": cwd,
     }
+
+
+def _message_of(exc: BaseException) -> str | None:
+    """`FileNotFoundError("<路径>")` 这类只有一个字符串实参的异常消息；有 errno 的二元形态、多行、空的回 None。"""
+    args = getattr(exc, "args", ())
+    if len(args) != 1 or not isinstance(args[0], str):
+        return None
+    text = args[0]
+    return text if text and "\n" not in text and len(text) <= 4096 else None
+
+
+def _named_miss(fnf: BaseException, misses: InputMisses) -> str | None:
+    """异常消息里点了名的那次落空（从最近的往前找）；没点名回 None。点名按路径段边界：
+    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。"""
+    text = _message_of(fnf)
+    if text is None:
+        return None
+    text = text.replace("\\", "/")
+    for item in reversed(misses.items):
+        needle = item["requested"].replace("\\", "/")
+        # 路径分隔符同样不是边界：`data` 不算点了 `data/file.parquet`，`file.parquet` 也不算（Codex #1297）
+        if re.search(rf"(?<![\w.\-/]){re.escape(needle)}(?![\w\-/]|\.\w)", text):
+            return item["requested"]
+    return None
 
 
 def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
@@ -3775,8 +6315,9 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
 
     **只在异常与记账对得上时才说**（ADR 0106 §一.2）：异常链里要有「文件不存在」，而且缺的
     那一串要么就是 `exc.filename` 且它确实作为只读打开落空过（写模式的「目录不存在」不算——
-    那不是输入），要么异常没带文件名、用最近一次落空的读。两样都没有就不判，调用方照旧报
-    `script_error`。
+    那不是输入），要么异常没带文件名、但消息里点了名某次落空的那一串（`_named_miss`）。两样都没有就不判，
+    调用方照旧报 `script_error`（C++ 读取器再走 `enoent_fact` → `native_miss`）。**不再退到「最近一次
+    落空的」**——那会指认与这次异常无关的路径（#1253）。
     """
     fnf = _file_not_found_in(exc)
     if fnf is None or not misses.items:
@@ -3806,7 +6347,13 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
             if requested is None:
                 return None  # 带了文件名却不是一次只读打开落空的：不判
     else:
-        requested = names[-1]
+        # 没文件名、消息里也没有引号括着的路径：只认**消息里点名了的**那次落空（numpy 的
+        # `"d.txt not found."`、pyarrow 的 `FileNotFoundError("cg_data.parquet")`）。点不了名就不判——
+        # 不能拿「最近一次落空的」凑数：被 try 吞掉的可选读、import 机制探测不存在的 sys.path 条目
+        # （importlib.metadata 的 zipfile 打开）都会排在后面，指认一个与这次异常无关的路径（#1253）。
+        requested = _named_miss(fnf, misses)
+        if requested is None:
+            return None
     entry = next(m for m in reversed(misses.items) if m["requested"] == requested)
     parsed = remap_parts(requested)
     return {

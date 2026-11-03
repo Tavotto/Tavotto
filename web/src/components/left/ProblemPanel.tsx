@@ -5,10 +5,8 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  CircleCheck,
   ClipboardList,
   Ellipsis,
-  OctagonAlert,
   RefreshCw,
   X,
 } from '@/components/ui/icons'
@@ -446,7 +444,7 @@ export function ProblemPanel() {
 
       {failed && !retained ? (
         <EmptyState
-          icon={OctagonAlert}
+          art="warn"
           title={pr('failedTitle')}
           /* 「查不了」与「没问题」是两个答案：压成一个的话用户会带着一屏静悄悄的绿去投稿 */
           hint={pr(ready ? 'failedKeptHint' : 'failedHint')}
@@ -466,7 +464,7 @@ export function ProblemPanel() {
         ) : issues.length === 0 ? (
           /* 范围裁掉了：整份排版里有问题、这张图上没有——是两句不同的话 */
           <EmptyState
-            icon={CircleCheck}
+            art="ok"
             // 按范围说：当前图 =「这张图上」、当前画布 =「画布「X」上」——范围选了画布、清单是空的，却说「这张图」是自相矛盾
             title={scope === 'canvas' ? pr('noneInCanvas', { name: canvasName }) : pr('noneInScope')}
             hint={pr('noneInScopeHint', { count: all.length })}
@@ -478,7 +476,7 @@ export function ProblemPanel() {
         ) : (
           /* 被等级筛选筛空了：不是「修完了」（#690 评审） */
           <EmptyState
-            icon={CircleCheck}
+            art="ok"
             title={pr('noneInFilter')}
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
@@ -827,7 +825,7 @@ function NoneEvidence() {
     : names.length === 1
       ? pr('noneEvidence', { spec: names[0], count: figures, when })
       : pr('noneEvidenceMulti', { specs: listJoin(names), specCount: names.length, count: figures, when })
-  return <EmptyState icon={CircleCheck} title={pr('none')} hint={hint} data-problem-evidence />
+  return <EmptyState art="ok" title={pr('none')} hint={hint} data-problem-evidence />
 }
 
 /* ------------------------------- 游标 ------------------------------------- */

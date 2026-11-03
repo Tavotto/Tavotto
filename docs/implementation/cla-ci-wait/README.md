@@ -1,95 +1,115 @@
-# Bounded read-only CI waiting candidate
+# Bounded read-only CI waiting: runtime integration
 
-Base: d2b0ba59340761b61f7ac5b8b534d43bcdd731f4, the reviewed head of
-draft #1151. This followup is stacked on that branch. It changes only the inactive
-CI consumer/entry, disabled CI configuration, tests and this audit. Worker,
-signing, publication, D1 schema, schedules, policy and live workflows are unchanged.
+This change integrates the existing CI runtime from #1160 source
+`907af3f3920a62bbc52712c1e9fcf9da371f54d5` with the newer native service stack.
+The final integration base is the independent negative-owner recovery commit
+`56aca50844ecd85aefe9818d8f9e4be0df063d8c`, built on #1169 head
+`7324a2d0541d79b90f106aed74991b22b8af60ae`. It imports no #1163 timing planner.
+No workflow, permission, agreement, signing operation, resource or flag is enabled.
 
-## Evidence and classification of the remaining work
+The validation uses synthetic GET transports and the actual local native
+verification function. **It is not real GitHub end-to-end validation.** No hosted
+CI result for this integrated source tree is claimed; successful checks for a
+parent or donor commit validate only that earlier tree.
 
-These are engineering boundaries, not a claim that approval alone completes the
-automatic flow. No new fail-open defect was established by this audit.
+## Source boundary
 
-| Area | Concrete evidence at the base | Classification and necessary followup |
-| --- | --- | --- |
-| Agreement version migration | [policy.ts:18](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/core/policy.ts#L18) rejects versions other than 1.0; [store.ts:34](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/native/store.ts#L34) requires exactly two immutable agreement rows. | Deliberate compatibility limit. A separate change must define active versus historical agreement mappings, source/hash validation, atomic revision changes, archival reads, and new-version personal consent/grants. Simply relaxing the checks is unsafe. Synthetic version tests can be developed without real legal terms; deployment needs approved texts and migration acceptance. |
-| Dispatch, confirmation and throughput | [automatic.ts:12](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/native/automatic.ts#L12) reserves a 15-minute automatic schedule; its claim at line 42 selects one head. [deployment-plan.mjs:15](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/scripts/deployment-plan.mjs#L15) proposes recovery every two minutes. [background.ts:19-25](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/native/background.ts#L19) confirms only an unexpired, freshly requalified proof. | Availability/design gap. These separate invocations provide no accepted end-to-end latency or throughput guarantee within the 120-second proof. A later design must coordinate dispatch and recovery with bounded admission while preserving original SQL/external/time ceilings, manual recovery and no replay. This followup does not change schedules or validate successful publication. |
-| Early CI reads | [ci-candidate.mjs:12](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/scripts/ci-candidate.mjs#L12) performs one verification; [consumer.ts:72](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/ci/consumer.ts#L72) rejects an absent Check Run. [verification.ts:11](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/native/verification.ts#L11) rejects an unconfirmed attempt; [worker.ts:181](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/native/worker.ts#L181) maps that rejection to 403. | Fail-closed but premature availability failure. This followup adds optional bounded waiting for precisely those two early states; it does not turn every 403 or service outage into a retry. |
-| Trusted CI and merge-group | [ci-proposal.md](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/deployment/ci-proposal.md) requires trusted source to land before wiring; [proof.ts:9](https://github.com/Tavotto/Tavotto/blob/d2b0ba59340761b61f7ac5b8b534d43bcdd731f4/services/cla-cloudflare/src/core/proof.ts#L9) accepts PR proofs only, and the CLI rejects merge_group before requests. | Trusted-main wiring is intentionally deferred until the reviewed consumer closure is merged. Merge-group support is missing engineering, requiring a distinct queue-head/member/contributor binding and independent recovery/authority contract. PR proofs must not satisfy it. Neither workflow nor gate is changed here. |
+Nine files are byte-for-byte copies of that source commit:
 
-The version, scheduling and merge-group work remain separate engineering tasks;
-none are silently enabled or treated as completed by adding a CI wait loop.
-Cloudflare's [Cron Triggers documentation](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
-describes scheduling configuration; this audit does not infer a platform timing
-guarantee or deployed acceptance from a cron expression.
+* `services/cla-cloudflare/deployment/ci-proposal.md`
+* `services/cla-cloudflare/deployment/ci.disabled.json`
+* `services/cla-cloudflare/scripts/ci-candidate.mjs`
+* `services/cla-cloudflare/src/ci/consumer.ts`
+* `services/cla-cloudflare/src/ci/wait.ts`
+* `services/cla-cloudflare/tests/ci-candidate.test.mjs`
+* `services/cla-cloudflare/tests/ci-fixture.mjs`
+* `services/cla-cloudflare/tests/ci-wait-mutation-cases.json`
+* `services/cla-cloudflare/tests/ci-wait.test.mjs`
 
-## Waiting contract
+The tenth file, `tests/mutation-smoke.mjs`, retains every existing base case,
+including both negative-recovery case imports, and adds only the CI wait import.
+The final base already carries the necessary literal-title witness,
+`selectedTitle ?? pattern`: an escaped regular expression used to select a test
+is not the literal title printed when the assertion fails. Its existing nonzero
+exit and requested AssertionError requirements remain intact. Exact source
+and integrated SHA-256 values are recorded in [the manifest](evidence/verification.json).
 
-The trusted CI config may explicitly contain:
+## Runtime behavior
 
-```json
-"wait": {"enabled": true, "maxAttempts": 3, "intervalMs": 1000, "timeoutMs": 10000}
-```
+Absent waiting or `wait.enabled=false` retains immediate verification. The
+checked-in CI configuration has both `enabled=false` and `wait.enabled=false`;
+the provider policy remains disabled. Trusted configuration alone may select
+2–8 attempts, a 1–10 second interval and a 1–60 second overall timeout.
 
-The checked-in example has wait.enabled=false and provider enabled=false. Absent
-or false preserves single-attempt behavior. Event data cannot configure waiting.
-Enabled configuration must have exactly these fields: 2-8 attempts, a 1-10 second
-interval, and an overall timeout of 1-60 seconds. These are hard bounds, not an
-automatic-completion or quota claim.
+Only a complete unambiguous missing owned Check Run, or the first authority read
+with exactly HTTP 403 and `{error:proof_not_confirmed}`, permits another attempt.
+Every attempt repeats source, policy, document, head/base, owned run and current
+authority checks. The first trusted source stays pinned. Once observed, the run,
+attempt and proof hash stay pinned. A second-authority failure is terminal.
 
-Only complete, unambiguous enumeration with no owned Check Run, or the first live
-authority response with exactly status 403 and {error:proof_not_confirmed}, can
-wait. The latter must follow a fresh, valid success proof and all current trust
-checks. A typed internal pending result carries the verified source and candidate
-anchor. Another authority state, malformed response, redirect, 429, 503, transport
-failure or failure on the second authority read terminates immediately.
+The monotonic deadline covers GET, body reading, pauses and final return. Before
+the first authority request, the original proof's remaining milliseconds narrow
+that deadline without renewal. Cancellation, wall/monotonic rollback, invalid
+clock samples and expiry reject. No earlier eligible response is cached.
 
-Every attempt repeats trusted policy/documents, head/base and Check Run reads,
-and both live authority checks before success. The first trusted-main SHA stays
-pinned. Once observed, run ID, attempt and proof hash stay pinned, including if
-the candidate later disappears. Config and event locator are captured once.
-No earlier eligible response is cached or reused.
+All transport is GET-only and confines the GitHub credential to GitHub.
+`merge_group` remains rejected before constructing a reader. Native queue binding,
+queue permissions and trusted-main workflow wiring remain separate dependencies;
+PR proofs cannot qualify queue heads. Existing required gates are unchanged.
 
-The overall monotonic deadline covers every GET, response body, pause and final
-return, including a transport/body that ignores cancellation. Abort is propagated
-to the request and body reader. Before the first authority read, remaining proof life
-also fixes a monotonic deadline that cannot be extended. The default clock retains
-the fractional wall second; a custom seconds-only test clock uses the conservative
-end of its reported second. Initial samples are validated. Deadline mapping and
-timer arming use validated snapshots rather than extra unchecked clock samples.
-Wall/monotonic rollback,
-either deadline and proof expiry all reject before another read or success.
+## Fresh combination evidence
 
-## Validation and acceptance
+At the initial `7324a2d0` base, actual local execution passed 550 Node tests,
+four migration tests and 166 mutation cases, all with exit 0. The focused CI run
+passed 51 tests. These are new combination results, not copied source-head success.
+Raw logs remain byte-for-byte under `/tmp/tavotto-cla-ci-integration/`; their exact
+commands, exits and hashes are recorded in the manifest. Final original log bytes
+are also preserved as UTF-8 JSON string members in
+[raw-logs.json](evidence/raw-logs.json); each member carries its original byte
+length and SHA-256. Manifest log names refer to those members.
 
-Tests use local SQLite, ephemeral synthetic signatures and an in-memory GET
-transport. Successful cases consume a pre-existing synthetic confirmed record at
-a fixed clock; no Check Run is sent and no successful-publication transition
-across proof expiry is executed. Expiry/deadline scenarios assert rejection.
-The current Worker 403 response is exercised through its actual fetch handler
-without HTTP or remote calls. Source mutations are isolated, uniquely located
-and must make the selected test actually fail.
+An additional actual escaped-regex probe mutates the pending-response shape guard
+at its unique source location in a disposable copy. The selected test exits 1
+with AssertionError. The old escaped-pattern title witness is false; the literal
+selectedTitle witness is true. This probe changes no integrated source file.
 
-The first external code/security review covered exact head
-`830bd89cc905d28b41f690c7aa6c0236a06aec84` after its [hosted typecheck,
-build and offline checks succeeded](https://github.com/Tavotto/Tavotto/actions/runs/39112917441/job/117632653129).
-Security reported no findings; code review found subsecond cancellation overrun.
-The fix and an independent review also closed unchecked initial/extra clock-sample
-paths found while reproducing it. [Current evidence](evidence/p2-subsecond/verification.json)
-records 358 Node tests, four migration tests and 73 detected mutations, all exit 0.
-The original two subsecond regressions fail with AssertionError / exit 1. Independent
-default-clock tests, 240 clock-fault invocations and seven actual AssertionError / exit 1
-mutants are archived with source hashes and the intermediate red evidence.
+CI success cases consume pre-existing synthetic confirmed records at a fixed
+clock. Pending failures and expiry/deadline cases assert rejection. No HTTP,
+publication, real signature, credential exchange, deployment or successful
+publication transition across proof expiry is performed. The existing migration
+and native suites retain their original test boundaries.
 
-Local typecheck still exits 127 (tsc absent) and build exits 1 (esbuild absent).
-No dependency-download retry, proxy, mirror or alternate environment was used.
-The earlier hosted success belongs only to its original head. New-head hosted
-verification and the one permitted targeted followup remain pending; no further
-review is requested before deterministic prerequisites pass. No extra #1151 review,
-workflow, permission, gate or deployment is triggered by this fix.
+Local TypeScript and esbuild dependencies are absent. Their availability check is
+recorded separately from compiler/build success. No install, download, proxy,
+mirror or alternate environment is attempted after the earlier npm E403.
 
-Real legal approval/signatures, identity-key registration, secret/resource
-custody, single-authority migration, full CI and live platform acceptance remain
-outstanding. A 60-second read-only wait cannot guarantee a 15-minute dispatch or
-two-minute recovery schedule will complete in time. This is one independently
-reviewable improvement, not acceptance of the full automatic loop.
+The initial CI tree and documentation were saved as an exact patch and per-file
+hashes before updating the branch to the completed negative-owner recovery base.
+The nine source files were replayed unchanged. The final mutation harness is the
+new base plus only the CI wait import. Final combined verification and independent
+reverse checks are recorded separately below and in the manifest; earlier results
+remain attributed to their original base.
+
+On the final `56aca508` base, fresh execution passes **582 Node tests, four
+migration tests, 187 mutation cases and 51 focused CI tests**, all exit 0. The
+independent author of [the composition review](evidence/independent/review.md)
+then reran the same independently written 14-test suite on a new snapshot of
+this final base: 14 passed, exit 0. Its four uniquely located reverse mutants
+each exit exactly 1 with actual AssertionError; the mutation runner exits 0.
+No source-head or earlier `7324` result is credited to this final combination.
+
+The independent successful authority reads each use 11 actual outer SQL
+statements and one synthetic owned-run GET. They leave the fixed, pre-existing
+confirmed proof and slot unchanged. Static manual/unknown phases exhaust bounded
+waiting without confirmation or replay. An independent fresh-negative GET
+recovery releases the exact owner and invalidates an in-flight CI read. These
+observations remain local synthetic verification, not live GitHub or Cloudflare
+acceptance or a timely confirmation guarantee. The independent report, original
+test source, source pins and four mutation records are preserved alongside the
+log bundle; no runtime snapshot is committed as evidence.
+
+#1163's current-head formal coverage gap remains outstanding. #1169's full and
+targeted external review allowance remains exhausted; this integration triggers
+neither another external review nor a workflow dispatch. Real platform acceptance,
+native merge-group, trusted-main landing/wiring, legal decisions and final
+activation remain outstanding.

@@ -1,4 +1,6 @@
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useContext, type HTMLAttributes, type ReactNode } from 'react'
+
+import { cn } from '@/lib/utils'
 
 /**
  * 图标体系的唯一出处（`docs/ux/ICONOGRAPHY.md` 是它的说明书，决策在 ADR 0052）。
@@ -9,27 +11,28 @@ import { createContext, useContext, type ReactNode } from 'react'
  * （门禁在 `iconography.test.tsx`）。
  *
  * 尺寸阶梯只有四档，按用途选，不按「旁边那个多大」凑：
- *   - xs 12：装饰性折叠箭头、徽标 / 角标里的小记号、11px 说明文字旁；
- *   - sm 14（默认）：与 12–13px 界面文字并排——菜单项、按钮里的图标、
- *     检查器行首、树行状态标记、横幅提示；
+ *   - xs 12：装饰性折叠箭头、徽标 / 角标里的小记号、11px 说明文字旁；只给 `SMALL_DEFS` 里另画了
+ *     小号字形的图标（ADR 0158：12 格整像素、线 1px），别的图标在 12px 上糊，用 16；
+ *   - sm 16（默认）：与 12–13px 界面文字并排——菜单项、按钮里的图标、
+ *     检查器行首、树行状态标记、横幅提示。2026-10-31 起由 14 改为 16（ADR 0157，用户选定）：
+ *     几何按 16px 对齐像素，14px 上对不齐、看着糊。档名保留，与 md 同值；
  *   - md 16：**只有图标**的按钮（28px 点击区）、顶栏工具、左侧图标轨道、
  *     对话框标题栏的关闭钮；
  *   - lg 20：空状态、引导卡片、对话框级别的强调图。
  * 更大的「展示级」尺寸不是图标：品牌标 `BrandMark` 与 Agent 头像框
  * `AgentIcon` 各管各的。
  *
- * 描边 2，**按比例缩放**：默认档 14px 上画成 1.17px、16px 上 1.33px、20px 上
- * 1.67px、12px 上正好 1px——比 13px 正文的笔画略重而不是更轻（1.75 时 14px 只有
- * 1.02px，比旁边的字还细，整套图标就像线框稿）。2 / 24 也是 OpenAI 图标集的比例。
- * 图形在 24 网格上留的最小净空是 2 单位，12px 档上只剩 1px，所以描边不能固定
- * 成绝对像素，只能按比例。
+ * 描边 1.5，**按比例缩放**：16px 上正好 1px（2 倍屏 2 个物理像素），20px 上 1.25px；12px 的小号字形
+ * 按 1px 画（ADR 0158）。2026-10-31 由 2 改为 1.5（ADR 0157）：2 在 16px 上是 1.33px，小图标里的空隙被挤没、
+ * 读着「糊」；同时几何上每个落在线上的点都吸到 0.75 网格（`defs.ts` 的 `snapToPixelGrid`），
+ * 16px 上边缘落在整像素上。
  *
  * 加粗档只留给一种场景：填色小方块里的对勾（复选框选中态），1px 的勾在
  * 14px 的蓝底上看不见。
  */
 export const ICON_SIZE = {
   xs: 12,
-  sm: 14,
+  sm: 16,
   md: 16,
   lg: 20,
 } as const
@@ -37,8 +40,8 @@ export const ICON_SIZE = {
 export type IconSizeStep = keyof typeof ICON_SIZE
 
 export const ICON_STROKE = {
-  regular: 2,
-  emphasis: 2.5,
+  regular: 1.5,
+  emphasis: 2,
 } as const
 
 export interface IconDefaults {
@@ -70,4 +73,23 @@ export function IconProvider({
 }: { children: ReactNode } & Partial<IconDefaults>) {
   const value = { ...DEFAULTS, ...overrides }
   return <IconDefaultsContext.Provider value={value}>{children}</IconDefaultsContext.Provider>
+}
+
+/**
+ * 图标槽：「图标 + 文字」行里图标的唯一对齐手段。槽高 = 这一行文字的行高（`h-lh`，
+ * 即 CSS `1lh`，取槽所在行容器继承到的 line-height），图标在槽里居中，所以图标中心 =
+ * 第一行文字的中心——单行、折成两行、换字号 / 图标档都不用调；行容器写 `items-start`，
+ * 不许再给图标手写 `mt-px / mt-0.5 / mt-[3px]`（`iconography.test.tsx`「图标不靠
+ * margin-top 凑对齐」守着）。
+ *
+ * 槽的行高是**行容器**的，不是兄弟文字的：文字自己带 `type-title` 之类的行高时（图标在
+ * 容器上、文字在兄弟元素上），给槽写同一个行高 `className="h-5"`，不要回到 margin。
+ * 桌面最低 macOS 14（Safari 17）/ WebView2，`lh` 单位可用。
+ */
+export function IconSlot({ className, children, ...rest }: HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span data-icon-slot className={cn('inline-flex h-lh shrink-0 items-center justify-center', className)} {...rest}>
+      {children}
+    </span>
+  )
 }

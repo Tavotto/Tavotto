@@ -135,6 +135,8 @@ Session 7 比较后定稿）。约束：
   "用用户自己的（任意版本的）环境"；
 - 架构原则 2：Figure 留在创建它的进程里，跨进程只走控制命令 + manifest +
   SVG/PNG/PDF——现有 worker 协议已经是这个形状，native 只是换了 spawn 方式。
+- 本节防的是 Figure **跨进程**。唯一登记的例外是 safe worker 在**本进程内存**里为「存后又改过的图」拍的保存瞬间快照（ADR 0139 §九）：
+  字节不写盘、不进 IPC、不进 worker 协议，门禁按类/函数登记并用 AST 断言字节流向（`tests/bridge/test_bridge_thread_model.py`）。
 
 ### 7. 为什么 v1 只支持 Python invocation
 

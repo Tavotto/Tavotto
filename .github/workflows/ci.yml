@@ -17,6 +17,9 @@ name: CI
 #                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
 #                   全部快线 + 全部重型资格在它上面真实跑一遍，
 #                   三个 Gate 全绿才允许合入 main。
+#   docs-only       只改 docs/release-notes/**.md（不含 UNRELEASED.md）的 PR / 队列候选：
+#                   `docs-scope` 分类 job 输出 docs_only，七个快线与五个重型 job skipped，
+#                   Gate 凭分类 job 的 success + 输出放行（见 docs-scope 段与 aggregate_gate.py）。
 #   push main       轻量落地审计（main-landing-audit）：结构契约 + 受管生成物
 #                   一致性 + 落地信息。**不重复打包、不重复真产物冒烟**——
 #                   合进来的树就是 merge_group 上刚验过的那棵（squash 由队列
@@ -36,8 +39,8 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前 backend-fast 为 `[1, 2, 3, 4]`（`--shard=K/4`）、backend-platforms 为
-# `[1, 2, 3]`（`--shard=K/3`），每档全量 pytest 拆成并行 job（按文件分、不拆文件、
+# `shard` 轴，目前 backend-fast 是 `[1..6]`（`--shard=K/6`）、backend-platforms 是 `[1..8]`（`--shard=K/8`），
+# 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
 # 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
 # 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab 常规套件同机跑齐全部分片；
@@ -102,6 +105,13 @@ on:
 # **cancel-in-progress 只对 PR 开**：push 到 main 的每一次 run 都是那个 commit
 # 的唯一验证记录，连着合两个 PR 时把前一个取消掉，main 上就留了一段没验过的
 # 历史；merge_group run 是队列候选的资格验证，被取消 = 候选白等 90 分钟超时。
+#
+# 这里说的是**外部取消**（新 push / 人手取消，没有任何 Gate 给出结论）。与之不同的是
+# **自身判红后的收尾**：merge_group 里五条重腿任一红了，它最后一步 `gh run cancel` 取消
+# 本 run 其余 job，而 `CI integration gate` / `CI fast gate` 都是 `if: always()`——
+# 官方 workflow-cancellation 文档：取消开始时服务端重新求值条件，`always()` 为真的 job
+# 「continues to run」——于是 Gate 照跑并以 failure 结论完成（上游 cancelled 一律红），
+# required check 不会缺席。规则与看护见 docs/rules/ci/ci-lanes.md「合并组快速失败」。
 # tag / release 工作流不在这个文件里，天然不受影响。
 #
 # group 里带 `github.workflow`（codeql.yml 各有各的槽）+ `github.event_name`
@@ -396,6 +406,9 @@ jobs:
       - name: 判定
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          # 不可变账号 id：线下签署按它认 PR 作者（login 能改名、能被抢注）。
+          # 用环境变量而不是参数传——判定器取自默认分支，参数要等它先落 main 才认得。
+          CLA_PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
         run: |
           set -euo pipefail
           # provider.configured=true 之后这里还要多传 --provider-checks-json，
@@ -410,6 +423,199 @@ jobs:
                    --expected-commits "$CLA_EXPECTED_COMMITS")
           fi
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
+
+  # ────────────────────────────────────────────────────────────────
+  # 发行说明闸：用户可见的 PR 必须往 docs/release-notes/UNRELEASED.md 新增一个
+  # `## ` 待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
+  # docs/RELEASING.md；判定逻辑与「用户可见路径」清单在
+  # scripts/ci/release_note_gate.py，看护在 tests/test_release_note_gate.py）。
+  #
+  # 为什么存在：发行说明以前是发版当天回头补的，补一个纯文档 PR 要跑满整条 CI
+  # 加合并队列（v0.19.2 两个，约 3 小时）。
+  #
+  # * **merge_group 上必须跑并且成功，不能 skipped。** fast gate 把 skipped 一律
+  #   当失败，这一格在队列候选上被跳过 = `CI fast gate` 永久红。脚本在
+  #   merge_group 上直接判 not_applicable 退出 0，理由：判据的输入是 PR 的文件列表
+  #   与标签，候选提交上两样都没有，PR 阶段已验过。
+  # * 判定器取自默认分支（与 cla-check / 两个 Gate 同一条纪律：PR 不能改写审判
+  #   自己的尺子）。默认分支上还没有这份脚本时（bootstrap 空窗，只存在于引入它的
+  #   PR 合并之前）才 sparse checkout 本次 revision 的那一份脚本作后备并 notice。
+  # * 只读元数据：不装依赖、几秒跑完。权限 contents: read + pull-requests: read。
+  # * push main 上不跑（与其它快线一致；Gate 也只在 PR / merge_group 上有意义）。
+  # * 标签取自事件 payload；`labeled` / `unlabeled` 本来就在 pull_request 的 types
+  #   里，打上 `no-release-note` 会起新 run，这一格重判。
+  # ────────────────────────────────────────────────────────────────
+  release-note-gate:
+    name: Release note (UNRELEASED)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: 取默认分支上的可信判定器
+        id: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/trusted-release-note/scripts/ci"
+          mkdir -p "$TRUSTED"
+          if gh api "repos/$REPO/contents/scripts/ci/release_note_gate.py?ref=$REF" \
+               --jq .content 2>/dev/null | base64 -d > "$TRUSTED/release_note_gate.py" \
+             && [ -s "$TRUSTED/release_note_gate.py" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "判定器取自默认分支"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::默认分支上还没有 release_note_gate.py（bootstrap 空窗）——退回本仓库副本"
+          fi
+          echo "TRUSTED=$RUNNER_TEMP/trusted-release-note" >> "$GITHUB_ENV"
+
+      # bootstrap 空窗的后备：只 sparse checkout 判定器这一个文件（"判定"步里复制）。
+      - if: steps.trusted.outputs.found != 'true'
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/ci/release_note_gate.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # 文件列表：`pulls/{n}/files` 逐页取全（封顶 3000 个文件），条数用 PR 自己
+      # 声明的 changed_files 对账——列表不全就红，绝不拿不完整的列表判通过。
+      - name: 收集这个 PR 的改动文件
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr-files.json"
+          want=$(gh api "repos/$REPO/pulls/$PR" --jq .changed_files)
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
+            --jq '[.[] | {filename, status, previous_filename, patch}]' > "$out"
+          test -s "$out"
+          echo "RN_EXPECTED_FILES=$want" >> "$GITHUB_ENV"
+
+      - name: 判定
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.trusted.outputs.found }}" != "true" ]; then
+            cp scripts/ci/release_note_gate.py "$TRUSTED/scripts/ci/release_note_gate.py"
+          fi
+          ARGS=(--event "${{ github.event_name }}")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS+=(--pr-author "$PR_AUTHOR"
+                   --labels-json "$PR_LABELS"
+                   --files-json "$RUNNER_TEMP/pr-files.json"
+                   --expected-files "$RN_EXPECTED_FILES")
+          fi
+          python3 -I "$TRUSTED/scripts/ci/release_note_gate.py" "${ARGS[@]}"
+
+  # ────────────────────────────────────────────────────────────────
+  # docs-only 快车道的分类 job：这次改动是不是**只**碰了 docs/release-notes/ 下的发行说明
+  # （不含 UNRELEASED.md——有测试读它）。判据与理由在 scripts/ci/docs_scope.py，
+  # 看护在 tests/test_docs_scope.py 与 tests/test_merge_queue_workflows.py::TestDocsOnlyFastLane。
+  #
+  # 为什么存在：发版当天补发行说明的纯文档 PR 以前要跑满整条 CI 加合并队列（v0.19.2
+  # 两个，约 3 小时）。现在 invariants / backend-fast / frontend / plugin-candidate /
+  # workerd / desktop-shell / compat-smoke 和五个重型资格在 `docs_only=true` 时 skipped；
+  # python-lint / cla-check / release-note-gate / 本 job 照跑。
+  #
+  # **为什么 Gate 不会把这些 skipped 判红**（CI01 §4 ① 说的「前置 filter + 短路会让 Gate
+  # 判红」在这里的解法）：两个 Gate 仍以闭集判定，`docs-scope` 本身在 fast gate 的
+  # --required 里（失败 / 被跳过 = Gate 红）；只有它 `success` **且** 输出 docs_only == "true"
+  # 时，Gate 才用 `--classifier docs-scope --docs-only-skippable …` 放行那份**写死的**重型
+  # 名单的 skipped（证据取自 toJSON(needs)，判定器仍取自默认分支，见 aggregate_gate.py）。
+  # 其余任何情形（false / 空 / 分类失败）参数根本不传，Gate 仍是旧的严格规则。
+  #
+  # * PR：文件列表取法与 release-note-gate 同源（pulls/{n}/files，条数与 changed_files 对账）；
+  # * merge_group：`merge_group.base_sha` → `head_sha` 的 git diff（--no-renames，改名拆成
+  #   删旧 + 加新两条）。队列里多个 PR 组合出的候选，任一文件在范围外就不是 docs-only。
+  # * docs_only=true 时本 job 再跑 tests/test_docs_references.py（发行说明里的相对链接
+  #   要指得到，backend 里原本替它兜这一条）；这一步红 = 本 job 红 = Gate 红。
+  # * 分类脚本取自默认分支（PR 不能改写审判自己的尺子）；默认分支上还没有它时
+  #   （bootstrap 空窗）才用本 revision 的那份并 notice。
+  # ────────────────────────────────────────────────────────────────
+  docs-scope:
+    name: Docs-only scope
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # merge_group 要 base_sha 与 head_sha 两端的树（取字符串 '0'：数字 0 在表达式里是假值，`&& 0 || 1` 会得到 1）；blob:none 只取提交与树（diff --name-status 不需要内容）
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '1' }}
+          filter: blob:none
+          persist-credentials: false
+      - name: 取默认分支上的可信分类器
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/trusted-docs-scope"
+          mkdir -p "$TRUSTED"
+          if gh api "repos/$REPO/contents/scripts/ci/docs_scope.py?ref=$REF" \
+               --jq .content 2>/dev/null | base64 -d > "$TRUSTED/docs_scope.py" \
+             && [ -s "$TRUSTED/docs_scope.py" ]; then
+            echo "分类器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 docs_scope.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/docs_scope.py "$TRUSTED/docs_scope.py"
+          fi
+          echo "TRUSTED=$TRUSTED" >> "$GITHUB_ENV"
+      - name: 收集这个 PR 的改动文件
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr-files.json"
+          want=$(gh api "repos/$REPO/pulls/$PR" --jq .changed_files)
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
+            --jq '[.[] | {filename, status, previous_filename}]' > "$out"
+          test -s "$out"
+          echo "DS_EXPECTED_FILES=$want" >> "$GITHUB_ENV"
+      - name: 校验 docs-only 范围（分类）
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          ARGS=(--event "$EVENT")
+          if [ "$EVENT" = "pull_request" ]; then
+            ARGS+=(--files-json "$RUNNER_TEMP/pr-files.json" --expected-files "$DS_EXPECTED_FILES")
+          else
+            ARGS+=(--base-sha "$BASE_SHA" --head-sha "$HEAD_SHA")
+          fi
+          python3 -I "$TRUSTED/docs_scope.py" "${ARGS[@]}"
+      - name: 校验 发行说明里的相对链接（docs-only 的最小说明检查）
+        if: steps.classify.outputs.docs_only == 'true'
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest -q tests/test_docs_references.py
 
   # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
@@ -429,9 +635,13 @@ jobs:
     # 快线只在 PR 与 merge_group 上跑：push main 的树就是 merge_group 上
     # 刚验过的那棵，main 侧只留 main-landing-audit 与非门禁的 cache-seed
     # （见文件抬头的分工表）。
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 而不是 20：语料加了三张 3D 图（ADR 0135）后「结构性不变式」一步在 ubuntu
+    # runner 上 12–19 分钟，20 分钟的整 job 上限会把后面的 U01 harness 砍成 cancelled
+    # （#1159 合并组）。超时只防挂死，不是速度预算。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -514,6 +724,8 @@ jobs:
             --report-dir "$RUNNER_TEMP/foundation/report"
       - name: 首开 / 输出 harness 证据（JSON + JUnit + 摘要，只作证据不作判定输入）
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: foundation-harness-pr-${{ github.run_id }}
@@ -544,7 +756,7 @@ jobs:
   #   * 为什么 4 片：2026-10-09 两个合并组（#853，run 37900187745 / 37906698476）
   #     的 Linux 3.10 / 3.14 分片 1 分别撞上 60 分钟，当时由 2 片改为 3 片；3 片后合并组
   #     每片仍实测 46–59.5 分钟（#896），2026-10-12 再加到 4 片。不加 -n。
-  #   * 自验做了什么：`--shard=K/4` 在**同一进程 collection 之后**做（tests/conftest.py
+  #   * 自验做了什么：`--shard=K/6` 在**同一进程 collection 之后**做（tests/conftest.py
   #     → tests/support/shard.py），每个进程都算出全部四片，断言 nodeid 集合的并集 ==
   #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
   #     静默跑空集。
@@ -559,14 +771,15 @@ jobs:
   #   * 回退：去掉 `shard` 轴 + 命令里去掉 `--shard …`（钩子留着无害，不带参数时不动
   #     collection）。
   backend-fast:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     strategy:
       fail-fast: false
       # 写成轴（GitHub 对 `include` 里的条目不做笛卡尔积，所以 shard 不能塞进 include）。
       # os 固定 ubuntu-24.04，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
         python: ["3.10", "3.13", "3.14"]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     # 分片后每片实测 10–20 分钟（合入后三个真实合并组 35061049078 / 35069266028 /
     # 35073686963 的 18 片：610–1201s）；分片前整档中位 29–35 分钟、max 36。
     # 2026-09-25 用例增长后分片 1 在 hosted runner 上实测 35–40 分钟，两个合并组
@@ -581,6 +794,10 @@ jobs:
     # #882 / #860 的 3.14 / 3.10 分片 1 在 57–60 分钟处撞点被取消（日志里没有失败用例，只是超时）。
     # 加片摊薄每片总量；超时**暂不收回**，等四片在 main 合并组上有实测再定（目标是每片落在
     # 45 分钟内再降到 60）。按 runner 实测重算权重表（#636）仍是下一步。
+    # 2026-10-24 由 4 片加到 6 片（与 backend-platforms 改 8 片、权重表改按 Windows 中位重算同一 PR）：
+    # backend-platforms 压到约 38 分钟后，合并组最长腿是这里（4 片实测 62–63 分钟 / 片）。按三个合并组
+    # 的 junit 用新表模拟最重片：3.10 4 片 38/52/54 → 6 片 28/38/35，3.14 49/56/50 → 34/38/34，与 Windows
+    # 8 片持平；再加到 8 片（~30）就被 Windows 那条腿盖住、只多耗 runner。超时仍不收回，等实测。
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
@@ -626,7 +843,7 @@ jobs:
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
-      # `--shard=K/4` 的 4 与上面 matrix.shard 的长度必须是同一个数
+      # `--shard=K/6` 的 6 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
       # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
@@ -635,9 +852,16 @@ jobs:
       # conftest，tests/conftest.py 没加载，选项就「unrecognized」。`=` 形式让整个 token
       # 进 extras，不产生假路径。托管 runner 上 RUNNER_TEMP 每次都是新的，这个坑在 CI 上
       # 不会自己露头——所以合同测试钉 `=` 形式，别等 self-hosted 复用目录时才发现。
+      # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
+      # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
+      # 是 native 真 spawn 那批（自带 300 秒上限），留 3 倍余量；本 lane 本来就排除 slow。
+      # 同一开关让 ≥60 秒的用例结束时往 stderr 写一行（`[slow-test …]`），取消的 job 也留得下时间线。
+      # 机制与合同：tests/support/hang_watchdog.py、tests/test_hang_watchdog.py。
       - name: pytest
+        env:
+          TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/4
+          python -m pytest --shard=${{ matrix.shard }}/6
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
@@ -645,6 +869,8 @@ jobs:
       # **只作证据与日后重平衡的数据，不作任何判定输入**——Gate 读的是 needs 结论。
       - name: 分片证据
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: pytest-backend-fast-ubuntu-latest-${{ matrix.python }}-shard${{ matrix.shard }}
@@ -669,17 +895,37 @@ jobs:
   # 47:45（#694 job 109764360587），余量已经很薄。上限本身是防挂死的止血阀
   # （2026-08-28 没有上限时堵过合并队列 8 小时 20 分），不该靠抬数字续命；按分片给
   # 余量，上限继续钉在 60。
+  #
+  # **2026-10-21 从 3 片改到 4 片（90 分钟上限不动）**：#1219 合入后的 6 个合并组（run
+  # 39494740923 … 39517350361）Windows 三片 46–80 分钟、单组 junit 合计 171–221 分钟，同一个
+  # 文件在不同 runner 上能差一倍（test_invariants_engine 654 s vs 1261 s）；#1219 自己的合并组
+  # Windows 1 片 82 分钟，离上限 8 分钟。按权重表重平衡只能把中位的最重片从 73.6 压到 67，
+  # 压不住 runner 快慢；runner 排队等待实测 0 分钟、每片固定开销 2–3 分钟，加片是余量最大的
+  # 做法：4 片按 Windows 中位 ≈ 50 分钟 / 片、macOS ≈ 44。
+  #
+  # **2026-10-24 从 4 片改到 8 片，权重表改按 Windows 8 次合并组的中位重算（90 分钟上限不动）**：
+  # 10-23～24 的 10 个合并组里 Windows 四片 39–88 分钟，最慢片中位 74；Windows 套件中位 256 分钟
+  # （10-21 时 171–221），合并组整体被这一片拖到 75–80 分钟，其余 job 早已跑完、runner 空着。按 8 次运行
+  # 留一法交叉验证（用其余 7 次的中位权重分片、拿第 8 次的真实耗时量）：Windows 最重片 pytest
+  # 4 片现表 74 / 新表 68、8 片新表 38（最坏 39）；macOS 8 片新表 21。macOS 与 Windows 共用一个片数，
+  # 合同测试与基线解析器都按「一个 job 一个 N」写。公开仓库 + Enterprise，并发不是约束。
   backend-platforms:
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     strategy:
       fail-fast: false
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
         os: [macos-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: ${{ matrix.os }}
     # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
     # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
@@ -728,17 +974,26 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/3` 的 3 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/8` 的 8 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
+      # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
+      # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
+      # 是 native 真 spawn 那批（自带 300 秒上限），留 3 倍余量；本 lane 本来就排除 slow。
+      # 同一开关让 ≥60 秒的用例结束时往 stderr 写一行（`[slow-test …]`），取消的 job 也留得下时间线。
+      # 机制与合同：tests/support/hang_watchdog.py、tests/test_hang_watchdog.py。
       - name: pytest
+        env:
+          TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/3
+          python -m pytest --shard=${{ matrix.shard }}/8
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
-          --durations=50 -rs
+          --durations=50 -rs -vv
       # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
       - name: 分片证据
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: pytest-backend-platforms-${{ matrix.os }}-3.13-shard${{ matrix.shard }}
@@ -747,6 +1002,19 @@ jobs:
             ${{ runner.temp }}/junit.xml
           retention-days: 7
           if-no-files-found: warn
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   # ────────────────────────────────────────────────────────────────
   # Matplotlib 兼容性冒烟（CompatBench 的 PR 档）
@@ -761,7 +1029,8 @@ jobs:
   # 单跑一台 Linux：兼容性是引擎语义，没有平台分支；跨平台由 backend 矩阵盖。
   # ────────────────────────────────────────────────────────────────
   compat-smoke:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     timeout-minutes: 20  # 实测 2.4 分钟；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-24.04
     steps:
@@ -811,7 +1080,8 @@ jobs:
           if-no-files-found: warn
 
   frontend:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     # 实测中位 4.2 分钟（CI00 的 29 个合并组，CI_BASELINE.md §12；合入后三个合并组
     # 166–276s）；没有上限的 job 会堵死合并队列
     timeout-minutes: 20
@@ -920,8 +1190,8 @@ jobs:
   # 它经 `CI fast gate` 参与合并资格（needs 与 --required 闭集都有它）：红了 Gate 就红。
   # ────────────────────────────────────────────────────────────────
   plugin-candidate:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    needs: [frontend]
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope, frontend]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -1036,7 +1306,8 @@ jobs:
   #
   # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
   workerd:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     timeout-minutes: 25  # 实测 1.2 分钟（cargo 三件 0.3 + 装科学栈 + 12 条 workerd 等价用例 0.9，#409 首跑）；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-24.04
     defaults:
@@ -1146,7 +1417,8 @@ jobs:
   # `cargo fmt` 不吃 cfg（rustfmt 解析整个文件），所以它本来就两支都看得见；
   # 真正需要第二条腿的是 clippy 与 cargo test。
   desktop-shell:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
     # 本机（macOS）冷编译 37 秒；CI 上 2.3–4.7 分钟（合并组永远冷：三个合并组 141–280s），
     # 同一 PR 第二次 run 命中 rust-cache 时 41s（CI05_COMPARISON.md §4.6）。上限是防挂死、不是性能预算
     timeout-minutes: 20
@@ -1169,15 +1441,28 @@ jobs:
           # （实测 v0-rust-<key>-<job>-Linux-x64-…），原先那条 `key: ${{ matrix.os }}`
           # 是冗余的字面量（CI02 §4）。改成与 cache-seed 的两条 desktop-shell 腿同键。
           shared-key: desktop-shell
-      - name: 装 Tauri 在 Linux 上的系统依赖
+      # 这三步（识别镜像 / 缓存 .deb / 安装）三处必须逐字相同，只有 `if:` 不同（看护：
+      # tests/test_merge_queue_workflows.py::TestTauriAptCache）。Ubuntu 镜像偶发极慢（实测约 7% 吃满
+      # job 的 20 分钟），所以下载的 .deb 按 runner 镜像版本缓存，命中时不跑 apt-get update；
+      # 未命中时脚本自己限时、重试、换镜像。包列表只在 scripts/ci/tauri-linux-apt-packages.txt。
+      - name: 装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像
         # macOS 腿不需要：WebKit 由系统提供，Tauri 直接用 WKWebView。
         if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+        run: echo "APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+      - name: 缓存 Tauri 系统依赖的 .deb 下载
+        if: runner.os == 'Linux'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/tauri-apt-debs/*.deb
+          key: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}
+          restore-keys: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-
+        id: tauri-apt-cache
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        if: runner.os == 'Linux'
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}
+        run: scripts/ci/install_tauri_linux_deps.sh "${RUNNER_TEMP}/tauri-apt-debs"
       - name: 摆一个空的 sidecar 产物目录
         # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，
         # tauri-build 校验它存在才肯生成命令清单。**空目录就够**——这一格不打包，
@@ -1226,10 +1511,11 @@ jobs:
     #   tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies 钉住这两条决定；
     #   回退 = 把四行 needs 改回 `[backend-fast, frontend]`，别的什么都不用动。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    needs: [frontend]
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope, frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -1242,6 +1528,10 @@ jobs:
           - { os: macos-latest,   python: "3.13" }
           - { os: windows-latest, python: "3.13" }
     timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -1381,6 +1671,19 @@ jobs:
             ${{ runner.temp }}/smoke-run/attempt-*/server.log
           retention-days: 7
           if-no-files-found: ignore
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   windows-exe-smoke:
     # 「只在别人电脑上发生」的问题基本都在这一段：打包后的 .exe、隔离的
@@ -1402,12 +1705,13 @@ jobs:
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
-    # **Playwright 按 project 分到两台机器**（CI03c，2026-09-16）。这条腿是 CI01 删边之后
+    needs: [docs-scope, frontend]
+    # **Playwright 分到三台机器**（CI03c，2026-09-16 按 project 分两片；2026-10-19 chromium 再拆一刀成三片，见下）。这条腿是 CI01 删边之后
     # 合并资格里第二长的一条（CI00：Playwright 步 1124s 中位，其中 chromium 89 条 505s、
     # webkit 23 条 267s、chromium-en 16 条 111s）。按 project 切而不是按文件切或 `--shard`：
     # Playwright 自带的 `--shard` 按 group 顺序等分、不看时长，跨 project 平衡要自写分区器；
@@ -1419,23 +1723,45 @@ jobs:
     #      Playwright 自己的 `--list` 再比一次集合（本片 == 全集里属于本片 project 的那些、
     #      本片 ∪ 另一片 == 全集的 project 集），不成立就红在 e2e 之前；
     #   ③ matrix 语义：任一片不 success，`needs.windows-exe-smoke.result` 就不是 success，
-    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)`（下面 `name:`），
+    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)` / `(3)`（下面 `name:`），
     #      required contexts 仍只有三个 Gate，仓库设置不用重登记。
-    # 两片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
+    # **chromium 再拆两半（2026-10-19）**：chromium 一个 project 涨到 ~292 条、片 1 的 e2e 一步 36–49 分钟
+    # （合并组里 5 次在 50 分钟被 interrupted，不同用例轮流被中断），按 project 切已经切不动。
+    # 做法是同一 project 内用 Playwright 原生 `--shard=i/2`（片 1 = 前半、片 3 = 后半；片 2 不变，所以
+    # 现有片号 1 / 2 的名字与含义不动，只新增片 3）。选原生 `--shard` 而不是显式文件清单 / grep 分区：
+    # 新增 spec 不需要人工维护清单；本配置 `workers: 1` + `fullyParallel: false`，分组 == 文件，原生
+    # 按文件顺序等分到「前半 151 条 / 32 个文件、后半 141 条 / 43 个文件」。拿 run 39235718807 片 1 的
+    # 日志逐文件累加用例耗时：前半 ≈ 23.4 分钟、后半 ≈ 20.0 分钟（54% / 46%，e2e 步合计 43.4 分钟 → 每片 ≈ 一半），
+    # 目标 ≤ 30 分钟。跨 project 平衡的担忧在这里不成立（只在 chromium 一个 project 内切）。
+    # 代价：`--shard` 按条数等分、不看时长，新增 / 改动的 spec 会让两半慢慢偏；偏到某半 e2e 逼近 30 分钟
+    # 再重估（回头看 playwright-shard-check 证据里的两份 `--list`）。
+    # 每片的 `projects` 现在可以带一个 `--shard=i/n`；`others` 是**其余每一片**的 `projects`，用 `|` 隔开
+    # （值里不能有逗号，`|` 可以）。自验脚本对着真 `--list` 验：各片并集 == 全集、两两不交、同一 project
+    # 的 `--shard` 是 1/n..n/n 各一次；合同测试在源码层钉同样的事。
+    # 三片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
     # **都跑**三条断言与冒烟①②③（合计约 1 分钟）——不用 `if:` 把它们收窄到一片上：
-    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是两片各自独立成立。
-    # 浏览器按片装：片 1 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
+    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是每片各自独立成立。
+    # 浏览器按片装：片 1、3 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
     # 值里不能有逗号（scripts/ci/ci_baseline.py 的 matrix 解析按逗号切）；`projects` /
     # `others` 是 `--project=` 参数的字面形状，直接进 `pnpm e2e` 与自验脚本的命令行。
-    # 回退：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
-    # 片号；自验步骤与 step 级 timeout 留着也无害。
+    # 回退：
+    #   · 只撤销 chromium 拆分：删掉 matrix 里 shard 3 那一行，片 1 的 `projects` 改回 `--project=chromium`、
+    #     `others` 改回 `--project=webkit --project=chromium-en`，片 2 的 `others` 改回 `--project=chromium`
+    #     （合同测试与自验都认单 project 整片的形状；片 3 的 check 名消失前，先把它从必需检查里移除）；
+    #   · 全部撤销：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
+    #     片号；自验步骤与 step 级 timeout 留着也无害。
     name: windows-exe-smoke (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { shard: 1, browsers: "chromium",        projects: "--project=chromium",                    others: "--project=webkit --project=chromium-en" }
-          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium" }
+          - { shard: 1, browsers: "chromium",        projects: "--project=chromium --shard=1/2",         others: "--project=webkit --project=chromium-en|--project=chromium --shard=2/2" }
+          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium --shard=1/2|--project=chromium --shard=2/2" }
+          - { shard: 3, browsers: "chromium",        projects: "--project=chromium --shard=2/2",         others: "--project=chromium --shard=1/2|--project=webkit --project=chromium-en" }
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: windows-latest
     # 分片 + 去 --with-deps 后整个 job 实测 11–14 分钟（663–824s，合并组 35069266028 /
     # 35073686963）；分片前中位 23.5 分钟（1411s，CI00）。2026-10-07 片 1 已到 34–35 分钟、
@@ -1456,11 +1782,12 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
-      - name: 构建画布产物给 e2e 用
+      - name: 构建画布产物（e2e 与进包共用）
         # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
         # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
         # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
         # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        # 下面 PyInstaller 也收这一份（tavotto.spec：缺了或过期拒绝打包）。
         run: python scripts/build_mcp_widget.py
 
       # Rust supervisor：tavotto.spec 从 workerd/target/release/ 取，取不到直接
@@ -1732,9 +2059,10 @@ jobs:
       - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）
         # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`
         # （全量 + 本片），按 (project, file:line:col, title) 的**集合**比——不是条数。
-        # 本片 ∪ 另一片 ≠ 全集的 project 集、两片有交集、本片 ≠ 全集里属于本片的那些、
-        # 清单读不懂，都在这里退非零，job 红在 e2e 之前。`--projects` / `--others` 的值以
-        # `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）。
+        # 各片并集 ≠ 全集、两片有交集、同一 project 的 `--shard=i/n` 没凑齐 1..n、清单读不懂，
+        # 都在这里退非零，job 红在 e2e 之前（脚本对本片与其余每一片各跑一次 `--list`）。`--projects` /
+        # `--others` 的值以 `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）；
+        # `--others` 里各片用 `|` 隔开。
         # 两份清单 + check.json 写进 RUNNER_TEMP，下面上传作证据——只作证据，不作判定输入。
         run: >-
           python scripts/ci/playwright_shard_check.py
@@ -1754,6 +2082,8 @@ jobs:
         # PR #828 / #833 在 30.0 分钟被 step 级上限误杀（190–194 条过、约 17 条没跑到）。
         # 按 project 切的片已经切不动了（片 1 只有 chromium 一个 project），所以放到 45：
         # 约 1.5 倍余量，加上前后 ~6 分钟的构建与冒烟仍在 job 级 60 之内（挂起照样带日志失败）。
+        # 2026-10-19 chromium 再拆两半（片 1 / 片 3，各 ≈ 20–23 分钟），这一步的预期时长腰斩；
+        # 45 / 60 的上限刻意不动（它们是防挂死，不是性能预算），要不要收紧等新数据攒够再说。
         # 为什么要有 step 级：
         # PR #373 的 run 34994534095 attempt 1，这一步从 16:30:58Z 起挂着，直到 job 级上限在
         # 17:31:10Z 把整个 job 硬杀——step 停在 in_progress，后面的「大图预览内存基准」「上传」
@@ -1775,6 +2105,8 @@ jobs:
       - name: 上传分片自验证据
         # 两份 `--list` 清单 + check.json：日后重平衡与复核用，不是判定输入
         if: always()
+        # 证据上传只作数据、不作判定输入：上传失败（如 artifact 服务 ETIMEDOUT）不得把 job 打红、把整组踢出队列。
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: playwright-shard-check-windows-shard${{ matrix.shard }}
@@ -1822,7 +2154,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
-          # 按片唯一：upload-artifact v4 同名会失败。两片都出一份（基准本来就只出数据、
+          # 按片唯一：upload-artifact v4 同名会失败。每片都出一份（基准本来就只出数据、
           # 不阻塞；仓库里没有它的消费者，grep 过）。
           name: bench-large-preview-windows-shard${{ matrix.shard }}
           path: ${{ runner.temp }}/bench-large-preview-windows.json
@@ -1843,6 +2175,19 @@ jobs:
             web/test-results/**
           if-no-files-found: warn
           retention-days: 7
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   macos-app-smoke:
     # windows-exe-smoke 的 macOS 对应物（2026-08-18 起）。
@@ -1866,11 +2211,16 @@ jobs:
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [docs-scope, frontend]
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: macos-latest        # 只有 Apple Silicon 一档；Intel 在发行链的 desktop-tauri 上构建（ADR 0076）
     timeout-minutes: 60
     steps:
@@ -1887,6 +2237,11 @@ jobs:
 
       - name: 构建前端进包
         run: python scripts/build_frontend.py
+
+      - name: 构建画布产物进包
+        # tavotto.spec 只收与本次源码一致的 codex-plugin/mcp/widget/canvas.html（不进库，ADR 0043），
+        # 缺了拒绝打包；`tavotto-cli mcp` 靠它给宿主内嵌画布（上一步已装好 web 依赖）
+        run: python scripts/build_mcp_widget.py
 
       # **不设 TAVOTTO_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
       - uses: dtolnay/rust-toolchain@stable
@@ -2051,6 +2406,19 @@ jobs:
             build/**/warn-*.txt
           if-no-files-found: warn
           retention-days: 7
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   posix-e2e:
     name: posix-e2e (${{ matrix.shard }}/3)
@@ -2075,17 +2443,22 @@ jobs:
     # `full-ci` 标签的 PR）上跑，PR 快线不受影响。显式按事件分支，不写
     # `!= 'pull_request'` 那种过宽的否定条件。
     if: >-
-      github.event_name == 'merge_group'
+      (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+      && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [docs-scope, frontend]
     # #768：三台独立 GitHub 托管 Runner 通过 Playwright 原生 --shard 划分测试。
     # Gate 原有 posix-e2e id 不变；任一矩阵副本失败整个 needs 都失败。
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
+    # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -2189,6 +2562,19 @@ jobs:
             web/test-results/**
           if-no-files-found: warn
           retention-days: 7
+      # **merge_group 快速失败（最后一步，ci-lanes.md「合并组快速失败」）**：这条腿红了，
+      # 本组已经不可能合格，别让其余重腿白跑到底。放在最后是为了上传诊断产物等
+      # `if: failure()` / `always()` 步骤先做完；取消只发这一条请求，判红仍由
+      # CI integration gate（`if: always()`，取消后继续跑，见 workflow-cancellation 文档）
+      # 经 aggregate_gate.py 给出，这里不写判定。`|| true`：取消请求失败不改变本 job 已红的事实。
+      - name: merge_group 快速失败（取消本 run 的其余 job）
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::本腿失败，merge_group 快速失败：取消本 run 其余 job，由 CI integration gate 判红"
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   # ────────────────────────────────────────────────────────────────
   # 稳定 Gate（Merge Queue 迁移的落点，判定逻辑在 scripts/ci/aggregate_gate.py）
@@ -2207,7 +2593,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
+    needs: [python-lint, cla-check, release-note-gate, docs-scope, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2238,23 +2624,51 @@ jobs:
       - name: 聚合判定
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
         # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
         # 双保险挡住 stdlib 遮蔽注入
+        #
+        # docs-only 快车道：分类 job 说 docs_only=true 时才多传两个参数（名单写死在这里，
+        # 由 tests/test_merge_queue_workflows.py::TestDocsOnlyFastLane 钉成「required 去掉
+        # 四个照跑的 job」）。判定器会用 needs 里分类 job 的 result 与 outputs **再核一遍**，
+        # 这里的 shell 变量只决定「传不传参数」——不传就是旧的严格规则，所以也不依赖
+        # 默认分支上的判定器已经认识这两个参数（bootstrap 空窗：docs_only 恒 false）。
         run: |
+          EXTRA=()
+          if [ "$DOCS_ONLY" = "true" ]; then
+            EXTRA=(--classifier docs-scope
+                   --docs-only-skippable invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke)
+          fi
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
-            --needs-json "$NEEDS_JSON"
+            --required python-lint,cla-check,release-note-gate,docs-scope,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
+            --needs-json "$NEEDS_JSON" \
+            ${EXTRA[@]+"${EXTRA[@]}"}
 
   ci-integration-gate:
     name: CI integration gate
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
+    needs: [docs-scope, backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # actions: read 只为「快速失败归因」读本 run 各 job 的步骤结论；不给 write（Gate 不取消任何东西）。
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v5
+      # **快速失败归因**（只在 merge_group）：重腿的快速失败步骤取消的是整个 run，红腿自己的
+      # job 结论也成了 cancelled，needs 里看不出谁真红。步骤结论不受取消影响——这里把各 job 的
+      # 失败步骤取下来交给判定器写进 summary / verdict。只用于归因，取不到就留空，不改变结论。
+      - name: 快速失败归因：读本 run 各 job 的失败步骤
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --paginate --jq '.jobs[] | {name, failed_steps: [.steps[]? | select(.conclusion == "failure") | .name]} | tojson' \
+            > "$RUNNER_TEMP/run-jobs.ndjson" || : > "$RUNNER_TEMP/run-jobs.ndjson"
       # 与 fast gate 同一条纪律：判定器取默认分支（理由见上面那段注释）
       - name: 取默认分支上的可信判定器
         env:
@@ -2289,8 +2703,19 @@ jobs:
         # （merge_group payload 里没有它们；tests/test_merge_queue_workflows.py 钉住）。
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          # 归因输入经环境变量（判定器取自默认分支，新参数会让旧判定器报错；环境变量它只会忽略）
+          RUN_JOBS_FILE: ${{ github.event_name == 'merge_group' && format('{0}/run-jobs.ndjson', runner.temp) || '' }}
           GATE_EVENT: ${{ github.event_name }}
           GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
+          DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
+          DOCS_SCOPE_RESULT: ${{ needs.docs-scope.result }}
+        # **docs-only 快车道**（`docs-scope` 在这个 Gate 的 needs 里，但不在 required 闭集里）：
+        #   * docs_only=true：多传 `--classifier docs-scope --docs-only-skippable <五个重型>`，
+        #     判定器核对分类 job 的 success + 输出后才放行 skipped（merge_group 上同样生效）；
+        #   * 分类 job success 且 docs_only!=true（绝大多数 run，含引入本机制的 PR 自己）：
+        #     把它从 needs JSON 里剔掉，参数与引入前**逐字相同**——默认分支上的判定器还是旧版
+        #     时（bootstrap 空窗）不会因为多出一个 needs 条目把正常 PR 判成 contract_violation；
+        #   * 分类 job 没 success：不剔，闭集里多出一个条目 → 判定器判失败（fast gate 也红）。
         run: |
           set -euo pipefail
           FLAGS="--allow-deferred"
@@ -2299,13 +2724,21 @@ jobs:
           elif [ "$GATE_FULL_CI" = "true" ]; then
             FLAGS="--require-heavy --full-ci"
           fi
+          EXTRA=()
+          if [ "$DOCS_ONLY" = "true" ]; then
+            EXTRA=(--classifier docs-scope
+                   --docs-only-skippable backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e)
+          elif [ "$DOCS_SCOPE_RESULT" = "success" ]; then
+            NEEDS_JSON=$(printf '%s' "$NEEDS_JSON" | jq -c 'del(.["docs-scope"])')
+          fi
           # shellcheck disable=SC2086
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode integration \
             --event "$GATE_EVENT" \
             $FLAGS \
             --required backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e \
-            --needs-json "$NEEDS_JSON"
+            --needs-json "$NEEDS_JSON" \
+            ${EXTRA[@]+"${EXTRA[@]}"}
 
   # ────────────────────────────────────────────────────────────────
   # main 落地审计——push main 上两个 job 里产出结论的那一个（另一个是下面的
@@ -2476,15 +2909,28 @@ jobs:
         with:
           workspaces: ${{ matrix.workspace }}
           shared-key: ${{ matrix.rust }}
-      - name: 装 Tauri 在 Linux 上的系统依赖
-        # 与 desktop-shell 那一步逐字相同；macOS 腿不需要（WKWebView 由系统提供）。
+      # 这三步（识别镜像 / 缓存 .deb / 安装）三处必须逐字相同，只有 `if:` 不同（看护：
+      # tests/test_merge_queue_workflows.py::TestTauriAptCache）。Ubuntu 镜像偶发极慢（实测约 7% 吃满
+      # job 的 20 分钟），所以下载的 .deb 按 runner 镜像版本缓存，命中时不跑 apt-get update；
+      # 未命中时脚本自己限时、重试、换镜像。包列表只在 scripts/ci/tauri-linux-apt-packages.txt。
+      - name: 装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像
+        # macOS 腿不需要（WKWebView 由系统提供）。
         if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+        run: echo "APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+      - name: 缓存 Tauri 系统依赖的 .deb 下载
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/tauri-apt-debs/*.deb
+          key: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}
+          restore-keys: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-
+        id: tauri-apt-cache
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}
+        run: scripts/ci/install_tauri_linux_deps.sh "${RUNNER_TEMP}/tauri-apt-debs"
       - name: 摆一个空的 sidecar 产物目录
         # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，tauri-build 校验它
         # 存在才肯生成命令清单（与 desktop-shell 那一步同形；空目录就够）。

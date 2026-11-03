@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, Download, Ellipsis, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from '@/components/ui/icons'
+import { Copy, Download, Ellipsis, Plus, RotateCcw, Trash2, Upload, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from '../ui/Badge'
 import { msg, t as translate } from '@/i18n'
@@ -29,7 +29,10 @@ import {
   profileTechnicalDetail,
   profileWarningText,
 } from '@/lib/profileText'
-import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
+import { bindingFor, journalCarry, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { JournalPicker } from '../journal/JournalPicker'
+import { JournalRequirements } from '../journal/JournalRequirements'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
 import { isLegacyBasis, withPageBasis } from '@/lib/stylePresets'
@@ -88,14 +91,14 @@ const SPEC_FIELDS: NumField[] = [
   { path: 'widths_mm.single', labelKey: 'singleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
   { path: 'widths_mm.double', labelKey: 'doubleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
   { path: 'widths_mm.tolerance_mm', labelKey: 'widthTolerance', min: 0, max: 50, step: 0.1, unit: 'mm', group: 'page' },
-  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'ppi', group: 'raster', rule: 'raster-dpi' },
+  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'dpi', group: 'raster', rule: 'raster-dpi' },
   {
     path: 'preferred_formats.export_dpi_default',
     labelKey: 'exportDpi',
     min: 1,
     max: 4800,
     step: 50,
-    unit: 'ppi',
+    unit: 'dpi',
     group: 'raster',
   },
 ]
@@ -378,7 +381,7 @@ export function ProfilesSettings({
     if (!selected || kind !== 'spec') return
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
       d.profile = bindingFor(asCatalogEntry(selected), {
-        journal: doc.profile?.journal,
+        ...journalCarry(doc.profile, selected.id),
         // 跟随的表态跟着项目走：换一套规范不该把它悄悄关掉
         follow: doc.profile?.follow,
       })
@@ -399,7 +402,7 @@ export function ProfilesSettings({
     if (!target || kind !== 'spec') return
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
       d.profile = bindingFor(asCatalogEntry(target), {
-        journal: doc.profile?.journal,
+        ...journalCarry(doc.profile, target.id),
         follow: on,
       })
     })
@@ -417,6 +420,8 @@ export function ProfilesSettings({
   }
 
   const boundId = doc.profile?.id
+  /** 期刊入口开关（`lib/journalUi`）：关着时设置页与此 PR 之前一样 */
+  const journalOn = journalCatalogUi()
 
   /**
    * 规范页顶部那一行：本项目按哪套检查、用的是快照还是全局。判据只有
@@ -435,7 +440,7 @@ export function ProfilesSettings({
     if (!boundRecord) return
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
       d.profile = bindingFor(asCatalogEntry(boundRecord), {
-        journal: doc.profile?.journal,
+        ...journalCarry(doc.profile, boundRecord.id),
         follow: doc.profile?.follow,
       })
     })
@@ -475,28 +480,41 @@ export function ProfilesSettings({
       {resolved && (
         <FormSection title={st('binding.current')} data-spec-binding data-settings-anchor="spec.inUse">
           <FieldGroup>
-            <SettingRow
-              label={
-                boundRecord
-                  ? profileName(boundRecord)
-                  : resolved.source === 'builtin'
-                    ? st('binding.builtinDefault')
-                    : (boundId ?? '')
-              }
-              status={
-                <>
-                  {st(`binding.source.${resolved.source}`)}
-                  {resolved.globalMissing && <span className="block">{st('binding.globalMissing')}</span>}
-                  {resolved.updateAvailable && <span className="block">{st('binding.updateAvailable')}</span>}
-                </>
-              }
-            >
-              {resolved.updateAvailable && (
-                <Button variant="secondary" size="sm" onClick={syncToGlobal}>
-                  {st('binding.sync')}
-                </Button>
-              )}
-            </SettingRow>
+            {/* 按期刊选的绑定：底是不列出的中性底，名字就是下面「期刊」那一行，不再另起一行说 id */}
+            {!(journalOn && doc.profile?.journalRef) && (
+              <SettingRow
+                label={
+                  boundRecord
+                    ? profileName(boundRecord)
+                    : resolved.source === 'builtin'
+                      ? st('binding.builtinDefault')
+                      : (boundId ?? '')
+                }
+                status={
+                  <>
+                    {st(`binding.source.${resolved.source}`)}
+                    {resolved.globalMissing && <span className="block">{st('binding.globalMissing')}</span>}
+                    {resolved.updateAvailable && <span className="block">{st('binding.updateAvailable')}</span>}
+                  </>
+                }
+              >
+                {resolved.updateAvailable && (
+                  <Button variant="secondary" size="sm" onClick={syncToGlobal}>
+                    {st('binding.sync')}
+                  </Button>
+                )}
+              </SettingRow>
+            )}
+            {journalOn && (
+              <SettingRow label={translate('journal.title', { ns: 'dialogs' })} controlId="journal-picker" data-settings-anchor="spec.journal">
+                <JournalPicker />
+              </SettingRow>
+            )}
+            {journalOn && doc.profile?.journalRef && (
+              <DiagnosticDisclosure variant="row" data-journal-disclosure title={translate('journal.requirements', { ns: 'dialogs' })}>
+                <JournalRequirements />
+              </DiagnosticDisclosure>
+            )}
             <div>
               <KeyRules profile={resolved.profile as unknown as Record<string, unknown>} />
             </div>
@@ -673,7 +691,7 @@ export function ProfilesSettings({
                   </Button>
                 )}
                 {!editable && (
-                  <Button variant="ghost" size="sm" onClick={duplicate} loading={busy}>
+                  <Button variant="ghost" size="sm" onClick={duplicate} loading={busy} data-profile-duplicate>
                     <Copy size={ICON_SIZE.sm} aria-hidden />
                     {st('duplicateToEdit')}
                   </Button>
@@ -692,7 +710,7 @@ export function ProfilesSettings({
            还没加载完时什么都不画——那不是空，是"还不知道"。 */
         loaded && (
           <EmptyState
-            icon={FileSliders}
+            art="sheet"
             title={st('empty')}
             action={{ label: st('import'), onClick: () => fileRef.current?.click() }}
           />

@@ -37,7 +37,15 @@ Without a configured SignPath subscription, a release build fails instead of
 attaching an unsigned Windows installer. The gate emits a `::error` annotation,
 writes the reason to the job summary, and exits non-zero — the release is
 stopped, not shipped. The temporary exception granted on 2026-08-22 has been
-revoked: shipping unsigned is no longer permitted.
+revoked: shipping unsigned is no longer permitted by default.
+
+The only exception is a maintainer waiver that names one exact release tag:
+when the repository variable `WINDOWS_UNSIGNED_WAIVER_TAG` equals the tag
+being built (for example `v0.19.0`) and SignPath is not enabled, the gate
+emits a `::warning` instead of failing, for that version only. The next
+version no longer matches and is stopped again. A waived release is published
+with the "not code signed" disclosure, and the waiver does not relax the
+minisign or Apple requirements below.
 The hard requirements are unchanged: the minisign key that signs update packages
 and the Apple Developer ID certificate remain hard requirements — a release
 build missing either still fails.

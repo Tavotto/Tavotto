@@ -11,10 +11,23 @@ export interface LiveConfig extends Config {
   holderAuthorizationId?: string;
   automaticVerificationEnabled?: boolean;
   automaticPublishingEnabled?: boolean;
+  agreementActivationEnabled?: boolean;
+  agreementActivationHash?: string;
+  confirmationSlotEnabled?: boolean;
+  mergePrefixAssessmentEnabled?: boolean;
+  mergePrefixReadSessionEnabled?: boolean;
 }
 export interface Secrets { clientSecret: string; pkcs8: string; evidenceKey: string }
 export function validateLive(c: LiveConfig): void {
-  validateConfig(c);
+  if(c.mergePrefixReadSessionEnabled!==undefined && typeof c.mergePrefixReadSessionEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.mergePrefixReadSessionEnabled===true && c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
+  if(c.mergePrefixAssessmentEnabled!==undefined && typeof c.mergePrefixAssessmentEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.mergePrefixAssessmentEnabled===true && !c.githubEnabled)throw new Rejected('network_disabled');
+  if(c.confirmationSlotEnabled!==undefined && typeof c.confirmationSlotEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.confirmationSlotEnabled===true && (!c.backgroundEnabled || !c.checkPublishingEnabled))throw new Rejected('confirmation_slot_recovery_required');
+  if(c.agreementActivationEnabled!==undefined && typeof c.agreementActivationEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.agreementActivationEnabled===true && !/^[0-9a-f]{64}$/.test(c.agreementActivationHash ?? ''))throw new Rejected('agreement_activation_pin_required');
+  validateConfig(c,c.agreementActivationEnabled===true);
   if(c.automaticPublishingEnabled!==undefined && typeof c.automaticPublishingEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
   if(c.automaticPublishingEnabled===true && (!c.automaticVerificationEnabled || !c.checkPublishingEnabled || !c.backgroundEnabled))throw new Rejected('automatic_publication_recovery_required');
   if(c.delegatedCountersigningEnabled!==undefined && typeof c.delegatedCountersigningEnabled!=='boolean' ||

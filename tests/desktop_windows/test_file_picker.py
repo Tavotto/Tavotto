@@ -31,6 +31,19 @@ def test_open_a_script_through_the_system_file_dialog(desktop_app, project_dir, 
 
     d = desktop_app.launch(expect="home")  # 全新配置目录：没有上次的项目，落在主页
     pid = desktop_app.proc.pid
+    # 全新配置目录的第一屏是新手教程欢迎页（aria-modal 的整屏层，盖着主页）：用户要先点
+    # 「打开工作区」才点得到主页的按钮。用例走用户走的这条路，而不是绕过那层去点底下的按钮
+    d.wait_js(
+        "return !!document.querySelector('[data-tutorial-open-workspace]')",
+        timeout=30,
+        what="全新配置目录的第一屏：教程欢迎页的「打开工作区」",
+    )
+    d.click(d.find("[data-tutorial-open-workspace]"))
+    d.wait_js(
+        "return !document.querySelector('[data-native-tutorial]')",
+        timeout=30,
+        what="教程欢迎页收起，主页露出来",
+    )
     assert _dialogs(win32, pid) == [], "点按钮之前就已经有系统对话框了"
     variant = d.js(
         "return document.querySelector('[data-home-variant]').getAttribute('data-home-variant')"

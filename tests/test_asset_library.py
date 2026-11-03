@@ -149,7 +149,7 @@ class TestCancelSemantics:
         write(figs, "show_only.py", SHOW_ONLY)
         key = (engine_pool._norm_dir(str(figs)), "show_only.py")
         monkeypatch.setattr(engine_pool, "_workers", {})
-        monkeypatch.setattr(engine_probe, "entry_candidates", lambda *a: ["__main__"])
+        monkeypatch.setattr(engine_probe, "entry_candidates", lambda *a, **k: ["__main__"])
         cancelled = threading.Event()
         events = []
 

@@ -29,9 +29,11 @@ For the conservative one-slot/at-most-one-non-exempt-person model:
 Unknown wakeup/backlog/external bounds refuse. The model separately reserves
 withdrawal work in a declared load window, refuses an occupied slot, counts
 coordination SQL overhead, and preserves the existing work/total SQL, external
-request and invocation-time ceilings. Fixed source accounting is 13+qN dispatch
-work plus four settlement statements; confirmation is 14+qN plus two reserved
-withdrawal reads. These are audited candidate-path counts, not a measurement of
+request and invocation-time ceilings. Fixed source accounting is imported from
+`src/native/budget.ts` (the constants the Worker reserves with): on the
+single-slot path dispatch work is 5 pre-evaluate statements + qN + 1 + 8 reserved
+= 14+qN, plus four settlement statements; confirmation is 14+qN plus two reserved
+withdrawal reads (`CONFIRMATION_FIXED_SQL` = 16). These are audited candidate-path counts, not a measurement of
 an implemented slot/wakeup adapter. Such an adapter must provide its additional
 costs and actual stage measurements before use. The load window models recovery
 time only. It does not model the verification limiter's per-location request

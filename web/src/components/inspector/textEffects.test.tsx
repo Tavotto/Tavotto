@@ -9,7 +9,7 @@
  *   4. 用户改过的从属字段在开关关着时照旧可见（override 不因折叠而不可发现），
  *      关掉动作把它清掉之后才收起——两条规则各说各的，不互相压扁。
  */
-import { literal } from '@/i18n'
+import { i18n, literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -141,6 +141,13 @@ const addButtons = () =>
 const switchOf = (label: string) =>
   host.querySelector(`[role="switch"][aria-label="${label}"]`) as HTMLButtonElement | null
 const propRow = (prop: string) => host.querySelector(`[data-prop="${prop}"]`)
+const detailFold = () => host.querySelector('[data-fold="bboxDetail"]')
+const openDetail = async () => {
+  await act(async () => {
+    useInspectorPrefs.getState().setFoldOpen('title:bboxDetail', true)
+  })
+}
+const DETAIL = ['bbox_linewidth', 'bbox_pad', 'bbox_rounded']
 
 async function click(el: Element | null) {
   ;(document.activeElement as HTMLElement | null)?.blur()
@@ -209,11 +216,35 @@ describe('添加：一条 override、一条历史，参数随即铺开', () => {
     // 开了就是一个真开关
     expect(switchOf('背景')).not.toBeNull()
     expect(switchOf('背景')!.getAttribute('aria-checked')).toBe('true')
-    for (const dep of ['bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor', 'bbox_linewidth', 'bbox_pad', 'bbox_rounded']) {
+    // 常用三项在面上；线宽 / 内边距 / 圆角收进「背景细项」摘要行，默认收起
+    for (const dep of ['bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor']) {
       expect(propRow(dep), dep).not.toBeNull()
     }
+    expect(detailFold()).not.toBeNull()
+    for (const dep of DETAIL) expect(propRow(dep), dep).toBeNull()
+    // 展开 = 同一批字段，且不写文档、不进历史
+    const before = past()
+    await click(detailFold()!.querySelector(':scope > button'))
+    expect(useInspectorPrefs.getState().foldOpen['title:bboxDetail']).toBe(true)
+    for (const dep of DETAIL) expect(propRow(dep), dep).not.toBeNull()
+    await click(detailFold()!.querySelector(':scope > button'))
+    expect(useInspectorPrefs.getState().foldOpen['title:bboxDetail']).toBe(false)
+    expect(past()).toBe(before)
     expect(propRow('stroke_color')).toBeNull()
     expect(addButtons()).toEqual(['添加描边'])
+  })
+
+  it('背景细项摘要行：右值是内边距的当前值；改过后报「n 项已修改」', async () => {
+    await mount()
+    await act(async () => {
+      setOverride('p1', 'axes_0.title', 'bbox_visible', true)
+    })
+    expect(detailFold()!.textContent).toContain('0.3')
+    await act(async () => {
+      setOverride('p1', 'axes_0.title', 'bbox_pad', 1.2)
+      setOverride('p1', 'axes_0.title', 'bbox_rounded', true)
+    })
+    expect(detailFold()!.textContent).toContain('2 项已修改')
   })
 
   it('点「添加描边」只动描边那一组', async () => {
@@ -228,6 +259,26 @@ describe('添加：一条 override、一条历史，参数随即铺开', () => {
   })
 })
 
+describe('背景细项：英文标签', () => {
+  it('en-US 下摘要行叫 Background details，不是 key 也不是中文', async () => {
+    await mount()
+    await act(async () => {
+      setOverride('p1', 'axes_0.title', 'bbox_visible', true)
+    })
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('en-US')
+      })
+      expect(detailFold()!.textContent).toContain('Background details')
+      expect(detailFold()!.textContent).not.toContain('背景细项')
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage('zh-CN')
+      })
+    }
+  })
+})
+
 describe('关掉：开关写 false + 从属字段的 override 一并清掉，一条历史', () => {
   it('改过内边距再关背景 → bbox_visible=false、bbox_pad 的 override 没了、参数收起', async () => {
     await mount()
@@ -235,6 +286,7 @@ describe('关掉：开关写 false + 从属字段的 override 一并清掉，一
       setOverride('p1', 'axes_0.title', 'bbox_visible', true)
       setOverride('p1', 'axes_0.title', 'bbox_pad', 1.2)
     })
+    await openDetail()
     expect(propRow('bbox_pad')).not.toBeNull()
     // 内容框在挂载时自动聚焦、开着一条「修改内容」事务，上面两条 setOverride 都
     // 落在它里面；先把它收掉再数历史，否则数到的是那条事务的收尾
@@ -247,6 +299,7 @@ describe('关掉：开关写 false + 从属字段的 override 一并清掉，一
     // 参数收起、入口回来
     expect(propRow('bbox_pad')).toBeNull()
     expect(propRow('bbox_facecolor')).toBeNull()
+    expect(detailFold()).toBeNull()
     expect(addButtons()).toEqual(['添加背景', '添加描边'])
   })
 
@@ -268,7 +321,12 @@ describe('关掉：开关写 false + 从属字段的 override 一并清掉，一
     await act(async () => {
       setOverride('p1', 'axes_0.title', 'bbox_pad', 1.2)
     })
+    // 摘要行在、右值说它被改过；展开后那一条可达
+    expect(detailFold()!.textContent).toContain('1 项已修改')
+    expect(propRow('bbox_pad')).toBeNull()
+    await openDetail()
     expect(propRow('bbox_pad')).not.toBeNull()
+    expect(propRow('bbox_linewidth')).toBeNull()
     expect(propRow('bbox_facecolor')).toBeNull()
     expect(addButtons()).toEqual(['添加背景', '添加描边'])
   })

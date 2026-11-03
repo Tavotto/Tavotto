@@ -958,6 +958,24 @@ Section Uninstall
   ${EndIf}
   ; TAVOTTO PATCH END ----------------------------------------------------
 
+  ; TAVOTTO PATCH: 卸载记号（卸载后重装 → 当新手，ADR 0136 修订 2026-10-21）--
+  ; 卸载默认不删 EBWebView（前端 localStorage 里记着「教程已完成」）和配置目录，
+  ; 重装后用户会被当成老手。这里在配置目录（与 engine/config.py 的 Windows
+  ; config_dir() 同址：%APPDATA%\Tavotto）留一个记号，下次启动后端告诉前端、前端
+  ; 把 onboarding 迁回新手态后 ack 删除。应用内更新以 /UPDATE 跑本卸载器
+  ; （$UpdateMode = 1）——更新不是重装，不写。写不出来不影响卸载（静默忽略）。
+  ${If} $UpdateMode <> 1
+    SetShellVarContext current
+    CreateDirectory "$APPDATA\Tavotto"
+    ClearErrors
+    FileOpen $R9 "$APPDATA\Tavotto\reinstall-marker" w
+    ${IfNot} ${Errors}
+      FileWrite $R9 "uninstalled"
+      FileClose $R9
+    ${EndIf}
+  ${EndIf}
+  ; TAVOTTO PATCH END ----------------------------------------------------
+
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"

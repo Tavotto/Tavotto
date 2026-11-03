@@ -50,8 +50,8 @@ AVAILABLE_FONT = "DejaVu Serif"
 MISSING_FONT = "Tavotto Nonexistent Serif 9x"
 
 #: 故意不合规的图：刻度 / 图例 7 pt（低于 8 pt 绝对下限）、轴标题 8.2 pt（**合规**，
-#: 所以不会被点名——刻度被抬到 8.5 之后它比刻度还小，只有「按层级补齐」能把它
-#: 带上来）、标题 9 pt；曲线 1.2 pt、边框 0.6 pt 不在档位上；刻度朝外、
+#: 不会被点名；刻度被抬到 8 之后层级仍在。「按层级补齐」的单元看护在
+#: `test_specfix.py::test_raising_ticks_lifts_the_axis_label_but_never_past_its_own_ceiling`）、标题 9 pt；曲线 1.2 pt、边框 0.6 pt 不在档位上；刻度朝外、
 #: 缺上右两边、图例带框；字体是 DejaVu Sans（规范的替代品名单里）。
 SCRIPT = """\
 from pathlib import Path
@@ -227,7 +227,7 @@ def test_fix_all_really_passes_and_keeps_the_hierarchy(render, scale):
     ticks, labels, titles = (_eff(after, r, scale) for r in ("ticks", "axis_label", "title"))
     assert ticks and labels and titles
     assert max(ticks) <= min(labels) + 1e-6 <= min(titles) + 2e-6
-    assert min(ticks) > profile["absolute_min_font_size_pt"]
+    assert min(ticks) >= profile["absolute_min_font_size_pt"]
     # 建议档不进「全部处理」：轴标题没被顺手加粗
     assert _weight(after, "axis_label") == {"normal"}
     # 字体真的换了（刻度也换了，不止标题）

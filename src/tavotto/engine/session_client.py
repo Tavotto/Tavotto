@@ -33,12 +33,11 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import stat
 import time
-import urllib.error
-import urllib.request
 
 from . import config
 
@@ -111,21 +110,57 @@ def auth_headers(port: int) -> dict:
     return {AUTH_HEADER: secret} if secret else {}
 
 
+#: `relaunch_nonce` 的响应体上限：只有一枚 nonce。其余调用方（refresh / readiness / probe 的响应随项目里
+#: 脚本、素材数量增长）不设上限，与原来 `urlopen` 的完整读取一致，截断会让合法 JSON 解不开
+RELAUNCH_MAX_RESPONSE_BYTES = 64 * 1024
+
+
+def loopback_request(
+    port: int,
+    path: str,
+    *,
+    payload: bytes | None = None,
+    headers: dict | None = None,
+    timeout: float,
+    max_bytes: int | None = None,
+) -> tuple[int, bytes]:
+    """对 `127.0.0.1:<port>` 发一次请求，返回 (状态码, 响应体)；`payload` 非 None 为 POST，否则 GET。
+
+    带 `X-Tavotto-Auth` / 会话 secret 的本机请求一律走这里，**不用 `urlopen`**：后者按
+    `HTTP_PROXY` / `ALL_PROXY` / 系统设置走代理，凭据会连同请求发给代理（#1132）。`HTTPConnection`
+    不读任何代理设置；也不跟随重定向（3xx 原样交给调用方）。`max_bytes=None` 完整读取，给了就最多读这么多。失败抛 `http.client.HTTPException` /
+    `OSError` / `ValueError`，由调用方按自己的「连不上」语义收敛。
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=timeout)
+    try:
+        conn.request(
+            "GET" if payload is None else "POST", path, body=payload, headers=headers or {}
+        )
+        resp = conn.getresponse()
+        return resp.status, resp.read(max_bytes)
+    finally:
+        conn.close()
+
+
 def relaunch_nonce(port: int, timeout: float = 3.0) -> str | None:
     """向已在运行的实例换一枚一次性浏览器 nonce。任何失败都返回 None：
     调用方退回「打开不带 fragment 的地址」，页面侧会给出可操作的提示。"""
     secret = read_secret(port)
     if not secret:
         return None
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{RELAUNCH_PATH}",
-        data=json.dumps({"secret": secret}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, ValueError):
+        status, raw = loopback_request(
+            port,
+            RELAUNCH_PATH,
+            payload=json.dumps({"secret": secret}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+            max_bytes=RELAUNCH_MAX_RESPONSE_BYTES,
+        )
+        if not 200 <= status < 300:
+            return None
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except (http.client.HTTPException, OSError, ValueError):
         return None
     nonce = data.get("nonce") if isinstance(data, dict) else None
     return nonce if isinstance(nonce, str) and nonce else None

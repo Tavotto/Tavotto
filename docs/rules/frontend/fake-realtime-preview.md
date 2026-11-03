@@ -2,6 +2,17 @@
 
 > 原文出自 `web/AGENTS.md`「假实时预览：预览平面与历史平面严格分开（2026-08-18，Phase G）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/svgStyle.test.ts`、`store/svgPreviewStore.test.ts`、`canvas/fakeRealtimeDrag.test.tsx`、`e2e/fake-realtime.spec.ts`、`canvas/renderSwapFeel.test.tsx`、`canvas/dragGestureLifecycle.test.tsx`、`e2e/drag-gesture-lifecycle.spec.ts`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`；手势不许比它的依据活得更久（拖动中 Esc 先 `cancelActivePointerGesture()`、等图时依据不在文档里就 `settleUnbackedCommit` 还原、改倍率重建基准）
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`；手势不许比它的依据活得更久
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 60
+改到: `store/svgPreviewStore.ts`、`lib/svgStyle.ts`、`trackPointer`、`useFieldGesture`
+主题: 假实时预览：预览平面与历史平面严格分开 → `fake-realtime-preview.md`
+必守要点: 临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`
+-->
 
 预览平面（`web/src/store/svgPreviewStore.ts` + `lib/svgStyle.ts`）只活在内存与
 SVG DOM 里，rAF 合并成一帧，**不 commit、不进历史、不发后端**；历史平面照旧
@@ -9,6 +20,10 @@ SVG DOM 里，rAF 合并成一帧，**不 commit、不进历史、不发后端**
 数据流：`pointerdown → beginPreview`（只记账）→ `pointermove → previewTransform /
 previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElementPreview`
 （一条历史 + 一次权威渲染）→ 权威 SVG 换上来时 `reattachPreview` 收工。
+
+连续拖同一个刚提交的单元素时，权威尚未到达的后续手势只暂存相对位移并在预览平面显示；
+权威到达并挂载后按当前身份、几何与吸附重算，每个完成的手势单独提交。撤销、取消、
+项目 / 文档变更或渲染失败不能让没有依据的预览留在画布；异步提交也不能并入另一条手势。
 
 * **临时 transform 必须写成 `translate(…) <原始 transform>`，永远从 base 现算**
   ——旧实现直接 `setAttribute('transform', 'translate(…)')` 把 matplotlib 自己的

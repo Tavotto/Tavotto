@@ -290,6 +290,16 @@ ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个�
 绑定回来的计划超出 offer 里的清单同样不执行、重新披露。已知的旧局限（不在本次修订内）：账目（`environment.json` 的 installed）只记「缺的」，内置 runtime 里本来就有的
 那几个包随本代装进去但不进账，重建时不会自动带回，重建后再跑会再问一次跑前门。
 
+**2026-11-02 修订（§五，反馈包 TVD-22EY）：从内置 runtime 起第一代、而静态扫描没看全时，带上内置 runtime 的顶层科学包。**
+Windows 用户的脚本经 `sys.path` 引入项目外的本地模块，那个模块用着 sklearn（内置没有）与 pandas（内置有）。扫描看不到那个模块，
+联合求解只给出 matplotlib / numpy，新一代只装了 sklearn；重跑立刻「缺 pandas」，再修一轮换一代，修复轮数很快用完。修法：
+`create_plan` 新建第一代时，若此刻跑脚本的是内置 runtime（`pool.SOURCE_BUNDLED`），且联合计划有映射不到的名字（`unknown`）、
+留到运行时再看的名字（`deferred_unverified`）或本地模块跟进被截断（`deprepair._scan_sees_everything`），就把内置 runtime
+manifest 的 `top_level`（adapter 已带的除外）并进 `widened`：进 delta、进账、进装后核验的关键 import——新一代不比原来能跑到
+这一步的环境少。只看 `search_complete` 不够：脚本一改 `sys.path` 它就恒为 False，绝大多数这类脚本其实都认全了。看全了就不带；
+此刻不在内置 runtime 里跑也不带（内置的包与这个脚本无关）。界面不改：确认页照旧按计划里的全部包说。
+看护 `test_fresh_generation_from_bundled_runtime_carries_its_packages_when_scan_is_incomplete`。
+
 ### 六、计划绑定与有界重计划；取消的接受时刻（D11）（落地：PR B / PR C）
 
 联合计划绑定：项目 / 脚本 / 完整需求集合（规范串）/ 约束 / hash / 目标类型 / 目标解释器指纹 / 目标事实 digest /
@@ -350,3 +360,45 @@ MCP `tavotto_open_figure(prepare_dependencies=tavotto_managed | project_venv | s
   升级为「唯一的无损读法」（旧安装路径的窄解析仍在，只服务 `user_specified` 与单包路径）。
 * U05 拿走：§四的接入规则、§五的代目录与指针形状（与 ADR 0056 的 runtime 目录同一种纪律）。
 * U09 拿走：`JointPlan` / 代身份进回执的语义身份（`plan_identity` 应包含 `identity`）。
+
+### 十、修订（2026-10-21）：声明的读取边界、不可 pip 安装的包、本地模块缺失、找不到的包点名
+
+起因是一份真实 Windows 诊断包：用户把整个桌面当项目打开，脚本是 `fit_mass.py`；联合计划把 `root, lhcbstyle,
+pdf-minus-bin1-m … pdf-plus-bin8-r` 一并送进一次 pip，`dependency_not_found` 拖垮整批，界面只说「软件源里没有该包」。
+复现（脚本原件，只读）结论：这些名字**不是**声明 roots 也不是 `importscan` 把它们当待装——`plan()` 对它们给出的是
+`unknown` / `origins`，`requirements` 为空。它们是 `origins[].suggested_distribution` 的**预填**（规范化的 import 名），
+确认界面把预填整批提交成了 `user_specified`。`pdf_*` 是脚本用
+`sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))` 加进搜索路径的本地模块，`importscan` 不认这种写法，
+于是把它们当成「表外名」去预填。因此本节改四处：
+
+1. **声明读取边界**（`depresolve._decl_dirs`）：从脚本目录往上，到**最近的项目标志**（`.git` / `pyproject.toml` /
+   `setup.cfg` / `setup.py`，`depresolve.PROJECT_MARKERS`）所在目录为止（含）；没有标志才一路读到项目根（旧行为）。
+   **大文件夹不读**（`is_broad_folder`）：家目录本身、其下的 Desktop / 桌面 / Documents / 文档 / Downloads / 下载（含 OneDrive
+   重定向）与文件系统根——遍历到它们就停，不越过家目录。仓库里此前没有「大文件夹」判定，这是第一份，放在 `depresolve`。
+   PEP 723 仍只看脚本本身。`project_declared()` 与 `declared_intents()` 共用同一函数，边界只有一处。
+2. **字面量 `sys.path` 搜索根**（`importscan`）：`sys.path.append/insert(0, …)` 的实参若只由 `__file__` 所在目录与字符串字面量拼成
+   （`os.path.dirname(__file__)`、`os.path.join`、`Path(__file__).parent`、`/` 运算、abspath/realpath/resolve 包装），该目录加进本地模块
+   搜索根（标签 `sys_path_literal`，至多 8 个，词法钉在项目内，变量 / 环境 / cwd 相关一律不认）。
+   补充（2026-11-01，反馈包 TVD-705N）：模块层顶层无条件、全文只绑定一次、绑定在调用之前、值本身也只由 `__file__` 目录与字面量拼成的
+   名字（`ROOT = Path(__file__).resolve().parent`）按它的值认——它不是「变量」意义上的未知量；再绑定过、条件绑定、`global` 改写过的照旧不认。
+   补充（2026-11-02，反馈包 TVD-22EY，维护者裁决）：认 `Path(…).parents[N]`（N ≤ 8）；同一行分号连写的绑定按（行, 列）分先后
+   （`O=Path(__file__).resolve().parent;ROOT=O.parents[1];sys.path.insert(0,str(ROOT))`）。**这类目录落在项目外时也认**：读的边界
+   （链接 / 越界判据的主语，`_Scanner.bound`）放宽到项目根与该目录的公共祖先，最多往上 `_MAX_OUTSIDE_LEVELS`（3）级；那一级是
+   大文件夹（`depresolve.is_broad_folder`）、家目录或它的祖先、盘符根、跨盘符时照旧不认；项目外的目录此刻不存在时也不认（多半是运行时才建的，照旧「先跑一次」`deferred_unverified`，不判本地模块缺失）。项目相对的记录路径不变（项目外的只记文件名）；
+   链接 / 路径替身的闸门、读预算不变。理由：路径是脚本自己由 `__file__` 写死的，Python 运行时一定会去那里找；不读，缺包就只能靠运行时
+   一轮轮撞出来（见 §五 同日修订）。仍记 `sys_path_modified`，
+   搜索面照旧不算「完整」。脚本加了这类目录、里面却找不到的 import = **本地模块缺失**：`origins[].local_module_missing`，
+   **不预填、不接受 `user_specified`（`UserSpecifiedRejected`）、不送 pip**。
+3. **不可 pip 安装表**（`depresolve.NOT_PIP_INSTALLABLE`，首条 `ROOT`）：计划阶段点名（`origins[].not_pip_installable`；声明里出现
+   的同名发行包进 `JointPlan.not_pip_installable`，带来源声明文件与 import），**不预填、不进 `requirements`**；以后加 Geant4 之类
+   只加一行。界面一句话：「这个脚本需要 ROOT，内置 Python 装不了，请用装有它的环境」。
+4. **找不到的包点名**（`deprepair.not_found_detail`）：pip 报 `dependency_not_found` 时，从输出解析分发名，对着
+   `declared_intents` 找出处，终态进度带 `not_found: {name, import_name, source}`；界面「软件源里找不到 X（来自 Y）」。
+
+**为什么不「剔除该包后重试其余」**：§五的代是原子的（`generation_atomic`）——装前用户确认的是一份完整计划
+（`identity` / 影响摘要 / 账），装后核验要求计划里**每个** `needed_imports` 都能 import、每个发行包都在。剔除一个再装其余，
+得到的是一份用户没确认过、且必然过不了装后核验的代，要么放宽核验（违反「所见 == 所装」），要么白装一遍再失败。
+pip 本身先解析、后安装，`No matching distribution` 发生在任何包落盘之前，所以它已经是一次「不装」的预检——我们不再另跑
+`--dry-run` 或索引查询（那是同一次解析再付一次网络往返）。取而代之的是**点名**：整批仍停在切 active 之前（旧代不动），
+但用户看到的是哪个包、哪份文件，去改声明或换环境后重新形成计划。上面 1–3 把「不该送 pip 的名字」挡在计划阶段，
+剩下送去 pip 的都是有声明或可信映射的包。

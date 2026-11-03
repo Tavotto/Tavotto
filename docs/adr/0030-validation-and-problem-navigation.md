@@ -167,7 +167,8 @@ issue → 画布 → 工作流模式 → 对象 → 视口 → 选中 → Inspec
 
 1. **目标值算得出来且唯一。** 要用户在两个同样合理的答案里挑的，是
    `user_choice`（目前只有页宽：单栏还是双栏是用户的排版决定）。
-2. **修完真的能过。** 绝对下限那条判据是 `eff <= floor`，**不含等号**——
+2. **修完真的能过。** 绝对下限那条判据是 `eff <= floor`，**不含等号**（ADR 0029 §6b 起改为含等号、
+   目标随之是 8；下面是当时的推理）——
    所以"把 7.5 提到规范的 8 pt"根本过不了。目标值取**大于下限的最小 0.5 档**，
    并且换算回脚本坐标系（面板缩到 60% 时 `eff = size × scale`，直接写 8.5
    的话读者量到 5.1pt，修复反而制造了一条新的违规）。
@@ -225,5 +226,6 @@ gid、对象 id、属性名、量化字段只出现在每行**默认收起**的�
 | 修完真的能过 / 事务 / 跨画布 | `lib/issueFix.test.ts` |
 | 界面不出现内部标识 / 空态 / 筛选 / 键盘 / 角标 | `components/left/problemPanel.test.tsx` |
 | 措辞与双语 | `lib/validationText.test.ts` |
+| 原图范围按原图口径求值（scale 1、页面 = 图幅；2026-10-19 补：此前裁的是画布那份，缩小摆放的图被假阻断） | `lib/validation.test.ts`「原图范围检查的是原图那份产物」、`components/ExportDialog.test.tsx`「画布上缩小摆放的图」 |
 | 导出上下文跨语言同源 | `tests/test_preflight.py::test_the_export_context_rule_is_one_rule_on_both_sides` |
 | 求值器 / 界面不写字号字面量 | `tests/test_profile_store.py::test_no_evaluator_or_ui_hardcodes_a_minimum_font_size`（本轮新增四个消费点） |

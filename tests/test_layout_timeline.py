@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import app as m
+from tests.support import versionfiles
 
 
 @pytest.fixture
@@ -110,17 +111,93 @@ def test_an_unknown_moment_is_refused_not_silently_downgraded(client):
     resp = client.post("/api/versions/d1", json={"doc": _doc(), "auto": True, "moment": "exprot"})
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "version_moment_invalid"
-    assert not _file().exists()
+    assert not _file().exists() and not versionfiles.store_root().exists()
 
 
-def test_key_moments_are_not_deduplicated_against_the_previous_node(client):
-    """导出成功那一刻内容没变也是一件发生过的事；普通自动检查点照旧去重。"""
+def test_export_save_writeback_are_kept_even_when_nothing_changed(client):
+    """导出 / 保存 / 写回那一刻内容没变也是一件发生过的事；普通自动检查点照旧去重。"""
     doc = _doc("same")
     _create(client, doc=doc, auto=True)
     again = client.post("/api/versions/d1", json={"doc": doc, "auto": True}).get_json()
     assert again.get("skipped") is True
-    _create(client, doc=doc, auto=True, moment="export")
-    assert [v["kind"] for v in _list(client)["versions"]] == ["auto", "moment"]
+    for moment in ("export", "save", "writeback"):
+        _create(client, doc=doc, auto=True, moment=moment)
+    assert [v.get("moment") for v in _list(client)["versions"]] == [
+        None,
+        "export",
+        "save",
+        "writeback",
+    ]
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_open_close_before_restore_are_skipped_when_nothing_changed(client, moment):
+    """用户 2026-10-31：反复打开项目、内容没变，时间线上一串一模一样的「打开项目」。"""
+    doc = _doc("same")
+    first = _create(client, doc=doc, auto=True, moment="open")
+    again = client.post(
+        "/api/versions/d1", json={"doc": doc, "auto": True, "moment": moment}
+    ).get_json()
+    assert again.get("skipped") is True and again["version"]["id"] == first["id"]
+    # 内容变了照记
+    _create(client, doc=_doc("changed"), auto=True, moment=moment)
+    assert len(_list(client)["versions"]) == 2
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_unchanged_moment_after_a_named_node_is_skipped(client, moment):
+    doc = _doc("same")
+    _create(client, doc=doc, auto=False, name="投稿前", named=True)
+    again = client.post(
+        "/api/versions/d1", json={"doc": doc, "auto": True, "moment": moment}
+    ).get_json()
+    assert again.get("skipped") is True
+
+
+@pytest.mark.parametrize("moment", ["open", "close", "before_restore"])
+def test_unchanged_moment_after_a_plain_auto_checkpoint_is_still_recorded(client, moment):
+    """e2e（#1575 合并组）：改完停 300ms 记下普通自动检查点，紧接着恢复——「恢复前」与它
+    内容相同。普通自动检查点在「命名」视图里看不见、容量不够时最先牺牲，顶替不了「恢复前」。"""
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True)
+    _create(client, doc=doc, auto=True, moment=moment)
+    got = [(v["kind"], v.get("moment")) for v in _list(client)["versions"]]
+    assert got == [("auto", None), ("moment", moment)]
+
+
+def test_unchanged_moment_on_another_canvas_is_still_recorded(client):
+    """两张画布内容恰好相同：另一张画布的「打开」不算重复。"""
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True, moment="open", canvasId="c_a")
+    _create(client, doc=doc, auto=True, moment="open", canvasId="c_b")
+    assert len(_list(client)["versions"]) == 2
+
+
+def test_named_node_is_never_skipped(client):
+    doc = _doc("same")
+    _create(client, doc=doc, auto=True)
+    _create(client, doc=doc, auto=False, name="投稿前", named=True)
+    assert len(_list(client)["versions"]) == 2
+
+
+def test_list_marks_old_unchanged_moments_but_keeps_them(client, monkeypatch):
+    """规则之前记下的重复条：列表标 `unchanged`（界面不显示），数据原样留着。导出不标。"""
+    doc = _doc("same")
+    with monkeypatch.context() as mp:
+        mp.setattr(m, "_skippable_when_unchanged", lambda v: False)
+        for moment in (None, "open", "open", "export", "close", "before_restore"):
+            _create(client, doc=doc, auto=True, **({"moment": moment} if moment else {}))
+        _create(client, doc=_doc("changed"), auto=True, moment="open")
+    got = [(v.get("moment"), v.get("unchanged", False)) for v in _list(client)["versions"]]
+    assert got == [
+        (None, False),
+        ("open", False),  # 上一条只是普通自动检查点：顶替不了
+        ("open", True),
+        ("export", False),
+        ("close", True),
+        ("before_restore", True),
+        ("open", False),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -249,7 +326,7 @@ def test_sacrifice_order_is_auto_then_moment_then_manual(client, monkeypatch):
     _create(client, auto=True, moment="open", name="moment-0")
     _create(client, auto=True, name="auto-0")
     _create(client, name="newest")
-    versions = json.loads(_file().read_text(encoding="utf-8"))["versions"]
+    versions = versionfiles.versions()
     order = [versions[i]["name"] for i in m._sacrifice_order(versions)]
     assert order == ["auto-0", "moment-0", "manual-0"]
 
@@ -257,7 +334,7 @@ def test_sacrifice_order_is_auto_then_moment_then_manual(client, monkeypatch):
 def test_named_nodes_are_not_in_the_sacrifice_order_at_all(client):
     _create(client, name="投稿前", named=True)
     _create(client, auto=True)
-    versions = json.loads(_file().read_text(encoding="utf-8"))["versions"]
+    versions = versionfiles.versions()
     assert m._sacrifice_order(versions) == []
 
 
@@ -269,7 +346,7 @@ def test_naming_past_the_byte_cap_is_refused_and_the_file_is_untouched(client, m
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 2.5))
     _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
     _create(client, doc=_doc("n1", pad=2000), name="二", named=True)
-    before = _file().read_bytes()
+    before = versionfiles.snapshot()
     resp = client.post(
         "/api/versions/d1", json={"doc": _doc("n2", pad=2000), "name": "三", "named": True}
     )
@@ -277,7 +354,7 @@ def test_naming_past_the_byte_cap_is_refused_and_the_file_is_untouched(client, m
     body = resp.get_json()
     assert body["code"] == "named_budget_exceeded"
     assert set(body["params"]) == {"used", "limit"}
-    assert _file().read_bytes() == before  # 写回事务不变式：拒了就零改动
+    assert versionfiles.snapshot() == before  # 写回事务不变式：拒了就零改动
 
 
 def test_renaming_past_the_byte_cap_is_refused_too(client, monkeypatch):
@@ -285,10 +362,10 @@ def test_renaming_past_the_byte_cap_is_refused_too(client, monkeypatch):
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 1.5))
     _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
     v = _create(client, doc=_doc("a0", pad=2000), auto=True)
-    before = _file().read_bytes()
+    before = versionfiles.snapshot()
     resp = client.patch(f"/api/versions/d1/{v['id']}", json={"name": "二"})
     assert resp.status_code == 409 and resp.get_json()["code"] == "named_budget_exceeded"
-    assert _file().read_bytes() == before
+    assert versionfiles.snapshot() == before
 
 
 def test_renaming_a_named_node_to_a_longer_name_past_the_cap_is_refused(client, monkeypatch):
@@ -297,10 +374,10 @@ def test_renaming_a_named_node_to_a_longer_name_past_the_cap_is_refused(client, 
     a = _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
     # 上限卡在「现在正好装得下」：再长一点就超
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 1.05))
-    before = _file().read_bytes()
+    before = versionfiles.snapshot()
     resp = client.patch(f"/api/versions/d1/{a['id']}", json={"name": "一" * 90})
     assert resp.status_code == 409 and resp.get_json()["code"] == "named_budget_exceeded"
-    assert _file().read_bytes() == before
+    assert versionfiles.snapshot() == before
 
 
 def test_renaming_a_named_node_to_a_shorter_name_is_allowed_even_over_the_cap(client, monkeypatch):
@@ -665,7 +742,7 @@ def test_concurrent_writers_do_not_lose_named_nodes(client):
     assert sorted(v["name"] for v in listed if v["named"]) == [f"命名{k}" for k in range(6)]
     assert len(listed) == 30
     # 文件仍是一份合法的时间线，每张图都有主人
-    ids = {v["id"] for v in json.loads(_file().read_text(encoding="utf-8"))["versions"]}
+    ids = {v["id"] for v in versionfiles.versions()}
     assert {p.stem for p in _thumbs_dir().iterdir()} <= ids
 
 
@@ -683,3 +760,86 @@ def test_key_moments_are_the_same_closed_set_on_both_sides():
     front = ast.literal_eval(hit.group(1))
     assert len(front) == len(set(front))
     assert set(front) == set(m.VERSION_MOMENTS)
+
+
+# ------------------------------------------- 缩略图只拍内容区域（`?box=`，beta 0.19.3b4 反馈）
+
+
+def test_a_cropped_thumbnail_records_its_box_and_the_list_reports_it(client):
+    v = _create(client, auto=True)
+    r = client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=70.5,20,80,45.25",
+        data=b"png",
+        content_type="image/png",
+    )
+    assert r.status_code == 200
+    got = _list(client)["versions"][0]
+    assert got["thumb"] == "png"
+    assert got["thumbBox"] == {"x": 70.5, "y": 20.0, "w": 80.0, "h": 45.25}
+
+
+def test_a_whole_page_thumbnail_drops_the_old_box(client):
+    """重拍成整页图（不带 box）：旧框必须一起走，不然整页图会按旧框裁。"""
+    v = _create(client, auto=True)
+    client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+    )
+    client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"webp", content_type="image/webp")
+    got = _list(client)["versions"][0]
+    assert got["thumb"] == "webp" and "thumbBox" not in got
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [f"{v['id']}.webp"]
+
+
+@pytest.mark.parametrize(
+    "box",
+    ["1,2,3", "1,2,3,0", "1,2,-3,4", "a,b,c,d", "nan,1,2,3", "1,2,inf,4", "1,2,3,4,5", "1,2,3,1e9"],
+)
+def test_bad_thumbnail_boxes_are_refused_and_nothing_is_written(client, box):
+    v = _create(client, auto=True)
+    r = client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box={box}", data=b"png", content_type="image/png"
+    )
+    assert r.status_code == 400 and r.get_json()["code"] == "version_thumb_invalid"
+    assert not _thumbs_dir().exists() or not any(_thumbs_dir().iterdir())
+
+
+def test_the_box_goes_with_its_node(client):
+    v = _create(client, auto=True)
+    keep = _create(client, auto=True)
+    for x in (v, keep):
+        client.put(
+            f"/api/versions/d1/{x['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+        )
+    assert client.delete(f"/api/versions/d1/{v['id']}").status_code == 200
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [
+        f"{keep['id']}.box",
+        f"{keep['id']}.png",
+    ]
+
+
+def test_an_unreadable_box_file_falls_back_to_whole_page(client):
+    v = _create(client, auto=True)
+    client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+    )
+    (_thumbs_dir() / f"{v['id']}.box").write_text("{not json", encoding="utf-8")
+    got = _list(client)["versions"][0]
+    assert got["thumb"] == "png" and "thumbBox" not in got
+
+
+def test_when_the_box_cannot_be_written_the_new_image_is_withdrawn(client, monkeypatch):
+    """图写上了、框写不上：宁可没有缩略图，也不让局部图按整页摆。"""
+    v = _create(client, auto=True)
+    real = m.engine_atomicio.write_bytes
+
+    def flaky(path, data, *a, **kw):
+        if str(path).endswith(".box"):
+            raise OSError("disk full")
+        return real(path, data, *a, **kw)
+
+    monkeypatch.setattr(m.engine_atomicio, "write_bytes", flaky)
+    r = client.put(
+        f"/api/versions/d1/{v['id']}/thumb?box=1,2,3,4", data=b"png", content_type="image/png"
+    )
+    assert r.status_code == 500 and r.get_json()["code"] == "version_thumb_write_failed"
+    assert "thumb" not in _list(client)["versions"][0]

@@ -332,7 +332,20 @@ class BridgeSession:
         self.rev += 1
         return self.request({"cmd": "override", "stem": stem, "patches": patches, **kw})
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
+    ) -> dict:
         return self.request(
             {
                 "cmd": "export",
@@ -341,6 +354,11 @@ class BridgeSession:
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
             },
             BARRIER_TIMEOUT,
         )
@@ -414,6 +432,7 @@ def spec_for(
     target_kind: str = execspec.TARGET_SCRIPT,
     cwd: str = "",
     project_root: str = "",
+    ignored_paths: tuple[str, ...] = (),
 ) -> execspec.ExecutionSpec:
     """把一次调用化成 native ExecutionSpec（默认值只写在这里）。
 
@@ -435,4 +454,5 @@ def spec_for(
         project_root=project_root,
         target_kind=target_kind,
         argv=argv,
+        ignored_paths=ignored_paths,
     )

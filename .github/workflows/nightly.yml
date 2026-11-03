@@ -251,6 +251,10 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      - name: 构建画布产物进包
+        # tavotto.spec 只收与本次源码一致的 codex-plugin/mcp/widget/canvas.html（不进库，ADR 0043）
+        run: python scripts/build_mcp_widget.py
+
       # tavotto.spec 从 workerd/target/release/ 取 Rust supervisor，取不到直接
       # 失败（桌面产物必须自带它）
       - uses: dtolnay/rust-toolchain@stable
@@ -354,9 +358,15 @@ jobs:
           # Rust supervisor 都必须被自动找到并真的用上——回退到 Python 池
           # 功能全在、只是慢、零报错，不断言就永远发现不了。
           # 这里**不设 TAVOTTO_WORKERD**：要验的正是自动发现。
+          # conda 腿例外：需要 Conda 激活的解释器按设计只走 Python 渲染池
+          # （workerd 的 spawn 规格不带激活增量，pool.py 会回退并打一条 WARNING，渲染本身成功），
+          # 所以这一腿断言 conda-fallback：二进制在（selected=workerd）、会话只有 python；
+          # 不能用 python——打包产物里 selected 恒为 workerd，python 期望会先在 selected 上红。
+          # 其余腿仍断言 workerd。
+          $plane = if ("${{ matrix.python }}" -eq "conda") { "conda-fallback" } else { "workerd" }
           python scripts/smoke_app.py --exe dist\Tavotto\Tavotto.exe `
             --figures "$dst" --expect-source $expect `
-            --expect-control-plane workerd
+            --expect-control-plane $plane
 
       - name: 无 Python：确认整套内置科学栈都能用
         # 装完即用是产品承诺的全部内容。这里不只看「起得来」，而是逐个 import
@@ -1104,7 +1114,7 @@ jobs:
           $skipped = @($cases | Where-Object { $_.skipped })
           if ($skipped.Count) { throw "真窗口用例里有 $($skipped.Count) 条被 skip / xfail：$(($skipped | ForEach-Object name) -join ', ')" }
           Write-Host "执行 $($cases.Count) 条"
-          if ($cases.Count -ne 13) { throw "真窗口用例执行了 $($cases.Count) 条，预期 13 条（加减用例时同步这里）" }
+          if ($cases.Count -ne 21) { throw "真窗口用例执行了 $($cases.Count) 条，预期 21 条（加减用例时同步这里）" }
 
       - name: 真窗口用例的取证（失败时）
         if: failure() && matrix.python == 'none'

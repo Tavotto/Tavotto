@@ -1,6 +1,6 @@
 /**
- * Project Picker（审计 T02）：主入口固定、最近项目独立滚动、同名可辨认、
- * 失效项分组可移除、输入框兼作筛选。
+ * Project Picker「全部项目」（审计 T02；手帐索引页 redesign-3 A3）：主入口固定、索引 + 详情独立滚动、同名可辨认、
+ * 失效项成组可移除、输入框兼作筛选 / 路径打开、选中 + 详情卡。
  *
  * jsdom 没有布局引擎，「30 条时新建 / 打开仍在视口里」量不出来；这里守的是
  * **结构**（固定区 `shrink-0`、只有列表容器 `overflow-y-auto`），真实高度在
@@ -80,7 +80,11 @@ const submit = (form: HTMLFormElement) =>
 
 const openButtons = () => [...host.querySelectorAll<HTMLButtonElement>('button[aria-label^="打开项目 "]')]
 const pathInput = () => host.querySelector<HTMLInputElement>('input[aria-label="项目路径"]')!
-const submitButton = () => host.querySelector<HTMLButtonElement>('form[role="search"] button[type="submit"]')!
+const submitButton = () => host.querySelector<HTMLButtonElement>('form[role="search"] button[type="submit"]')
+const rowOf = (name: string) => openButtons().find((b) => b.getAttribute('aria-label') === `打开项目 ${name}`)!
+const MISSING = 'section[aria-label="已不存在的目录"]'
+const detail = () => host.querySelector<HTMLElement>('[data-picker-detail]')
+const click = (el: Element) => act(() => (el as HTMLElement).click())
 
 beforeEach(async () => {
   open.mockClear()
@@ -112,7 +116,7 @@ describe('版式：主入口固定，列表独立滚', () => {
     expect(header.className).toContain('shrink-0')
     // 主入口都在固定区里
     expect(header.textContent).toContain('新建项目')
-    expect(header.textContent).toContain('浏览目录')
+    expect(header.textContent).toContain('浏览…')
     expect(header.contains(pathInput())).toBe(true)
     const scroll = host.querySelector<HTMLElement>('[data-recent-scroll]')!
     expect(scroll.className).toContain('overflow-y-auto')
@@ -123,8 +127,8 @@ describe('版式：主入口固定，列表独立滚', () => {
     expect(section.className).toContain('flex-1')
     // 页面外层不再整页滚动
     expect(host.firstElementChild!.className).not.toContain('overflow-y-auto')
-    // 30 条都装进去了：26 条可打开 + 4 条失效
-    expect(host.textContent).toContain('最近项目')
+    // 30 条都装进去了：26 条可打开 + 4 条失效（成组放在索引末尾）
+    expect(host.textContent).toContain('全部项目')
     expect(host.textContent).toContain('30 个')
   })
 
@@ -135,82 +139,107 @@ describe('版式：主入口固定，列表独立滚', () => {
 })
 
 describe('同名项目', () => {
-  it('六个 figs 各自带能区分的父目录；不同名的显示整条路径', () => {
+  it('六个 figs 各自带能区分的父目录；不同名的路径在选中后的详情卡里', () => {
     const rows = openButtons()
     const figs = rows.filter((b) => b.getAttribute('aria-label') === '打开项目 figs')
-    // 两个还在的 figs 在主列表里
-    expect(figs).toHaveLength(2)
+    // 两个还在的 figs 在前面，四个失效的成组在后面
+    expect(figs).toHaveLength(6)
     expect(figs[0].textContent).toContain('…/pytest-0/figs')
     expect(figs[1].textContent).toContain('…/pytest-1/figs')
     expect(figs[0].getAttribute('title')).toBe('/private/var/folders/T/pytest-of-jiaqi/pytest-0/figs')
-    const polish = rows.find((b) => b.getAttribute('aria-label') === '打开项目 polish-mech')!
-    expect(polish.textContent).toContain('/Users/jiaqi/Desktop/polish-mech')
-    // 尾部保留：路径那一行是 rtl 裁切
-    expect(polish.querySelector('[dir="rtl"]')).not.toBeNull()
-    // 教程副本显示徽标而不是路径
-    const tut = rows.find((b) => b.getAttribute('aria-label') === '打开项目 Tutorial')!
-    expect(tut.textContent).toContain('教程项目')
-    expect(tut.textContent).not.toContain('/data/tutorial')
+    // 不同名的行不带后缀；整条路径在详情卡里
+    const polish = rowOf('polish-mech')
+    expect(polish.textContent).not.toContain('/Users/jiaqi')
+    click(polish)
+    expect(detail()!.textContent).toContain('/Users/jiaqi/Desktop/polish-mech')
+    // 教程副本：详情卡显示徽标而不是路径
+    click(rowOf('Tutorial'))
+    expect(detail()!.textContent).toContain('教程项目')
+    expect(detail()!.textContent).not.toContain('/data/tutorial')
   })
 })
 
-/** Radix 的 DropdownMenu 开在 pointerdown 上，jsdom 里 .click() 打不开它 */
-function openMenu(trigger: Element) {
-  act(() => {
-    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
-    trigger.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }))
-  })
-}
-
 describe('已不存在的目录', () => {
-  it('收成一组、默认折叠、能全部移除、展开后各自能移除', () => {
+  it('成组放在索引末尾（×、删除线），能全部移除；选中后详情卡的主按钮是「从列表移除」', () => {
     // 主列表里没有失效项
-    expect(openButtons().some((b) => b.disabled)).toBe(false)
+    expect(openButtons().filter((b) => !b.closest(MISSING)).some((b) => b.disabled)).toBe(false)
     const group = host.querySelector<HTMLElement>('section[aria-label="已不存在的目录"]')!
-    expect(group.textContent).toContain('4 个')
-    const toggle = group.querySelector<HTMLButtonElement>('button[aria-expanded]')!
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(group.querySelectorAll('li')).toHaveLength(0)
-
-    act(() => toggle.click())
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(group.textContent).toContain('已不存在 4')
     const rows = group.querySelectorAll('li')
     expect(rows).toHaveLength(4)
-    expect(rows[0].textContent).toContain('目录不存在')
+    expect(rows[0].textContent).toContain('×')
     expect(rows[0].textContent).toContain('…/pytest-2/figs')
-    // 打不开：主按钮 aria-disabled（不是 disabled——焦点还要落得进来，⋯ 才够得着，Codex #832）；
-    // 只剩「移除」一个动作，所以行的「⋯」常驻（不藏在悬停后面）
+    expect(rows[0].querySelector('.line-through')).not.toBeNull()
+    // 目录不在了是常态：行仍是漫游的一站（不 disabled），Enter / 双击不打开
     const opener = rows[0].querySelector<HTMLButtonElement>('[data-picker-open]')!
     expect(opener.disabled).toBe(false)
-    expect(opener.getAttribute('aria-disabled')).toBe('true')
-    const more = rows[0].querySelector<HTMLButtonElement>('[data-row-menu-trigger]')!
-    expect(more.className).not.toContain('opacity-0')
-    openMenu(more)
-    act(() => document.querySelector<HTMLElement>('[data-project-remove]')!.click())
+    click(opener)
+    const card = detail()!
+    expect(card.textContent).toContain('目录不存在')
+    expect(card.querySelector('[data-picker-detail-open]')).toBeNull()
+    click(card.querySelector('[data-picker-detail-remove]')!)
     expect(remove).toHaveBeenCalledWith('/private/var/folders/T/pytest-of-jiaqi/pytest-2/figs')
 
     const all = [...group.querySelectorAll('button')].find((b) => b.textContent === '全部移除')!
-    act(() => all.click())
+    click(all)
     expect(removeMany).toHaveBeenCalledTimes(1)
     expect(removeMany.mock.calls[0][0]).toEqual([2, 3, 4, 5].map((i) => `/private/var/folders/T/pytest-of-jiaqi/pytest-${i}/figs`))
   })
 })
 
-describe('一列一个 Tab 停靠点：失效组展开后也是', () => {
-  it('展开「已不存在的目录」只重渲染那一组：新挂上的行照样归进漫游，整列恰好一个 tabIndex=0（Codex #832）', async () => {
-    const stops = () =>
-      [...host.querySelectorAll<HTMLElement>('[data-roving]')].filter((el) => el.tabIndex === 0)
-    expect(stops()).toHaveLength(1)
-    const group = host.querySelector<HTMLElement>('section[aria-label="已不存在的目录"]')!
-    await act(async () => {
-      group.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click()
-      // MutationObserver 的回调是微任务
-      await Promise.resolve()
+describe('选中 + 详情卡', () => {
+  it('默认选第一个；单击选中，详情卡翻页；双击或 Enter 才打开', () => {
+    // 第一个是教程副本：详情卡说「教程项目」，不露数据目录里的路径
+    expect(detail()!.textContent).toContain('Tutorial')
+    expect(detail()!.textContent).toContain('教程项目')
+    expect(detail()!.textContent).not.toContain('/data/tutorial')
+    expect(rowOf('Tutorial').closest('li')!.hasAttribute('data-selected')).toBe(true)
+
+    click(rowOf('polish-mech'))
+    expect(rowOf('polish-mech').closest('li')!.hasAttribute('data-selected')).toBe(true)
+    expect(rowOf('Tutorial').closest('li')!.hasAttribute('data-selected')).toBe(false)
+    expect(detail()!.textContent).toContain('/Users/jiaqi/Desktop/polish-mech')
+    expect(open).not.toHaveBeenCalled()
+
+    act(() => {
+      rowOf('polish-mech').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
     })
-    const missingRows = [...group.querySelectorAll<HTMLElement>('[data-roving]')]
-    expect(missingRows).toHaveLength(4)
-    expect(missingRows.every((el) => el.tabIndex === -1)).toBe(true)
-    expect(stops()).toHaveLength(1)
+    expect(open).toHaveBeenCalledWith('/Users/jiaqi/Desktop/polish-mech', false)
+
+    open.mockClear()
+    const key = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    act(() => {
+      rowOf('2d 处理').dispatchEvent(key)
+    })
+    expect(key.defaultPrevented).toBe(true)
+    expect(open).toHaveBeenCalledWith('/Volumes/T7 Touch/project/2d 处理', false)
+
+    // 详情卡的黑色「打开」打开的是选中的那一个
+    open.mockClear()
+    click(rowOf('polish-mech'))
+    click(detail()!.querySelector('[data-picker-detail-open]')!)
+    expect(open).toHaveBeenCalledWith('/Users/jiaqi/Desktop/polish-mech', false)
+  })
+
+  it('键盘聚焦也选中（↑↓ 漫游时详情跟着翻页）', () => {
+    act(() => rowOf('polish-mech').focus())
+    expect(detail()!.textContent).toContain('/Users/jiaqi/Desktop/polish-mech')
+  })
+
+  it('筛选把选中项筛掉后回到第一个；框里回车打开选中的那一个', () => {
+    click(rowOf('polish-mech'))
+    typeInto(pathInput(), 'project-')
+    expect(detail()!.querySelector('h2')!.textContent).toBe('project-10')
+    submit(host.querySelector('form[role="search"]')!)
+    expect(open).toHaveBeenCalledWith('/Users/jiaqi/work/project-10', false)
+  })
+})
+
+describe('一列一个 Tab 停靠点', () => {
+  it('索引（含末尾失效组）整列恰好一个 tabIndex=0', () => {
+    const stops = [...host.querySelectorAll<HTMLElement>('[data-roving]')].filter((el) => el.tabIndex === 0)
+    expect(stops).toHaveLength(1)
+    expect(host.querySelectorAll('[data-roving]')).toHaveLength(30)
   })
 })
 
@@ -219,33 +248,44 @@ describe('输入框：路径打开 / 名字筛选', () => {
     typeInto(pathInput(), 'polish')
     expect(openButtons()).toHaveLength(1)
     expect(host.querySelector('section[aria-label="已不存在的目录"]')).toBeNull()
-    expect(submitButton().disabled).toBe(false)
-    expect(submitButton().getAttribute('aria-label')).toBe('打开 polish-mech')
+    // 名字态：框尾是「新建项目 · 浏览…」，没有提交钮；回车打开唯一匹配项
+    expect(submitButton()).toBeNull()
     submit(host.querySelector('form[role="search"]')!)
     expect(open).toHaveBeenCalledWith('/Users/jiaqi/Desktop/polish-mech', false)
   })
 
-  it('多个匹配时没有目标；筛不到时说出来', () => {
+  it('多个匹配时回车打开选中的（默认第一个）；筛不到时说出来，回车什么也不开', () => {
     typeInto(pathInput(), 'figs')
-    expect(openButtons()).toHaveLength(2)
-    expect(host.querySelector('section[aria-label="已不存在的目录"]')!.textContent).toContain('4 个')
-    expect(submitButton().disabled).toBe(true)
+    expect(openButtons().filter((b) => !b.closest(MISSING))).toHaveLength(2)
+    expect(host.querySelector('section[aria-label="已不存在的目录"]')!.textContent).toContain('已不存在 4')
+    submit(host.querySelector('form[role="search"]')!)
+    expect(open).toHaveBeenCalledWith('/private/var/folders/T/pytest-of-jiaqi/pytest-0/figs', false)
+    open.mockClear()
     typeInto(pathInput(), 'nothing-like-this')
     expect(openButtons()).toHaveLength(0)
-    expect(host.textContent).toContain('没有与“nothing-like-this”匹配的最近项目')
-    expect(submitButton().disabled).toBe(true)
+    expect(host.querySelector('[data-picker-no-match]')!.textContent).toContain('没有与“nothing-like-this”匹配的最近项目')
+    expect(detail()).toBeNull()
+    submit(host.querySelector('form[role="search"]')!)
+    expect(open).not.toHaveBeenCalled()
   })
 
-  it('像路径就直接打开那条路径', () => {
+  it('像路径就直接打开那条路径：框尾换成「打开 ↵」（含 ~ 与 Windows 盘符）', () => {
     typeInto(pathInput(), '/Users/jiaqi/elsewhere/figs')
-    expect(submitButton().disabled).toBe(false)
+    expect(submitButton()!.disabled).toBe(false)
+    expect(submitButton()!.textContent).toBe('打开')
+    expect(host.querySelector('form[role="search"]')!.textContent).not.toContain('新建项目')
+    typeInto(pathInput(), '~/figs')
+    expect(submitButton()).not.toBeNull()
+    typeInto(pathInput(), 'C:\\Users\\me\\figs')
+    expect(submitButton()).not.toBeNull()
+    typeInto(pathInput(), '/Users/jiaqi/elsewhere/figs')
     submit(host.querySelector('form[role="search"]')!)
     expect(open).toHaveBeenCalledWith('/Users/jiaqi/elsewhere/figs', false)
   })
 })
 
 describe('切换进行中（Codex #550）', () => {
-  it('打开 / 新建 / 返回 / 回车提交 / 最近项目行一起置灰；移除仍可用', async () => {
+  it('打开 / 新建 / 返回 / 回车提交 / 最近项目行一起置灰', async () => {
     await act(async () => {
       useProjectStore.setState({
         project: { open: true, id: 'p_cur', name: 'cur', figures_dir: '/cur' },
@@ -255,18 +295,20 @@ describe('切换进行中（Codex #550）', () => {
     const buttons = [...host.querySelectorAll<HTMLButtonElement>('header button')]
     const byText = (t: string) => buttons.find((b) => b.textContent?.includes(t))!
     expect(byText('新建项目').disabled).toBe(true)
-    expect(byText('浏览目录').disabled).toBe(true)
+    expect(byText('浏览…').disabled).toBe(true)
     expect(byText('返回当前项目').disabled).toBe(true)
-    expect(submitButton().disabled).toBe(true)
     expect(openButtons().length).toBeGreaterThan(20)
-    expect(openButtons().every((b) => b.disabled)).toBe(true)
-    // 移除只动列表，不是切换：行的「⋯」（移除在里面）不跟着灰
-    const menus = [...host.querySelectorAll<HTMLButtonElement>('[data-picker-row] [data-row-menu-trigger]')]
-    expect(menus.length).toBeGreaterThan(0)
-    expect(menus.every((b) => !b.disabled)).toBe(true)
+    // 可打开的行 + 详情卡的「打开」一起置灰；目录不在了的行不灰（能选中、能移除）
+    expect(openButtons().filter((b) => !b.closest(MISSING)).every((b) => b.disabled)).toBe(true)
+    expect(detail()!.querySelector<HTMLButtonElement>('[data-picker-detail-open]')!.disabled).toBe(true)
+    // 路径态的提交钮也灰
+    typeInto(pathInput(), '/x/y')
+    expect(submitButton()!.disabled).toBe(true)
+    typeInto(pathInput(), '')
 
     await act(async () => useProjectStore.setState({ switching: false }))
     expect(byText('返回当前项目').disabled).toBe(false)
     expect(openButtons().some((b) => !b.disabled)).toBe(true)
+    expect(detail()!.querySelector<HTMLButtonElement>('[data-picker-detail-open]')!.disabled).toBe(false)
   })
 })

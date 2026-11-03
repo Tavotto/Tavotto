@@ -10,6 +10,8 @@
 //!   在飞的那条不抢占——worker 没有协作中断（ADR 0003 §6），抢占只能靠杀进程。
 //! * **淘汰 = kill**：关会话从不等锁。Python 池的 `shutdown()` 要抢 `w.lock`，
 //!   正在渲染时就一起卡住；这里 kill 是任何线程都能立刻做到的事。
+//!   但**只杀闲着的**（`evictable`）：在飞 / 排着活的、刚交出去还没收到第一条请求的
+//!   （租约内）不杀，宁可暂时超出上限（ADR 0004 §淘汰，2026-10-27 修订）。
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,6 +62,10 @@ struct State {
     close: Option<CloseRequest>,
     accepting: bool,
     last_used: Instant,
+    /// 刚交给调用方（open / 复用）、还没收到第一条 worker 请求时的租约截止。
+    /// 调用方手里已经拿着 session_id，下一步就是 build：这段空档里淘汰它，
+    /// 冷启动多张图时被杀的正好是最早开始、还没轮到发请求的那张。
+    lease_until: Option<Instant>,
 }
 
 struct Inner {
@@ -69,6 +75,8 @@ struct Inner {
     state: Mutex<State>,
     cv: Condvar,
     max_queue: usize,
+    /// 租约时长（Flask 在 hello 里给，对齐 `pool.ACQUIRE_LEASE`）。
+    lease: Duration,
     generation: AtomicU64,
     revision: AtomicU64,
     /// 当前子进程。**任何线程**都能锁上它把进程杀掉（取消 / 淘汰 / 关闭三条路）。
@@ -94,6 +102,7 @@ impl Session {
         spec: SpawnSpec,
         out: Sender<Response>,
         max_queue: usize,
+        lease: Duration,
         open_request_id: String,
     ) -> std::io::Result<Arc<Session>> {
         let (events_tx, events_rx) = std::sync::mpsc::channel::<WorkerEvent>();
@@ -110,9 +119,11 @@ impl Session {
                 close: None,
                 accepting: true,
                 last_used: Instant::now(),
+                lease_until: None,
             }),
             cv: Condvar::new(),
             max_queue,
+            lease,
             generation: AtomicU64::new(0),
             revision: AtomicU64::new(0),
             proc: Mutex::new(None),
@@ -148,7 +159,20 @@ impl Session {
         self.inner.state.lock().unwrap().last_used
     }
 
+    /// LRU 淘汰可以挑它吗：没有在飞 / 排队的活，也不在租约内。
+    /// 握手中的会话队列里排着 `Open`，所以同样算忙。
+    pub fn evictable(&self) -> bool {
+        let state = self.inner.state.lock().unwrap();
+        state.in_flight.is_none()
+            && state.queue.is_empty()
+            && state
+                .lease_until
+                .map_or(true, |until| until <= Instant::now())
+    }
+
     pub fn retain(&self) -> usize {
+        // 复用 = 又一个调用方刚拿到它，同样要等到它发出第一条请求
+        self.inner.state.lock().unwrap().lease_until = Some(Instant::now() + self.inner.lease);
         let mut refs = self.refs.lock().unwrap();
         *refs += 1;
         *refs
@@ -173,6 +197,9 @@ impl Session {
             ));
         }
         state.last_used = Instant::now();
+        if matches!(job.kind, JobKind::Worker { .. }) {
+            state.lease_until = None; // 调用方的请求已经到手：租约完成使命
+        }
 
         if let JobKind::Worker {
             merge_key: Some(key),
@@ -318,11 +345,17 @@ fn run(inner: Arc<Inner>, events_tx: Sender<WorkerEvent>, events_rx: Receiver<Wo
         let Some(job) = job else { break };
 
         let request_id = job.client_request_id.clone();
+        let opened = matches!(job.kind, JobKind::Open);
         let outcome = execute(&inner, &events_tx, &events_rx, job);
         {
             let mut state = inner.state.lock().unwrap();
             state.in_flight = None;
             state.last_used = Instant::now();
+            // 握手刚完成、open_session 的响应正要交给调用方：租约从这一刻起算
+            // （握手本身可能要几十秒，从建会话时算会在调用方拿到之前就过期）
+            if opened && outcome.is_ok() && state.queue.is_empty() {
+                state.lease_until = Some(Instant::now() + inner.lease);
+            }
         }
         let response = match outcome {
             Ok(result) => Response::ok(&request_id, result),
@@ -923,9 +956,11 @@ mod tests {
                 close: None,
                 accepting: true,
                 last_used: Instant::now(),
+                lease_until: None,
             }),
             cv: Condvar::new(),
             max_queue: 8,
+            lease: Duration::from_secs(30),
             generation: AtomicU64::new(generation),
             revision: AtomicU64::new(0),
             proc: Mutex::new(None),

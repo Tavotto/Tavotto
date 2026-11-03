@@ -80,6 +80,8 @@ def _publish_fixture_wheel(python: str) -> None:
         ("yaml", "PyYAML"),
         ("bs4", "beautifulsoup4"),
         ("dateutil", "python-dateutil"),
+        ("fitz", "PyMuPDF"),
+        ("pymupdf", "PyMuPDF"),
     ],
 )
 def test_import_names_are_not_distribution_names(tmp_path, import_name, distribution):
@@ -487,8 +489,9 @@ class _FakeWorker:
     def alive(self) -> bool:
         return not self.closed
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> bool:
         self.closed = True
+        return True
 
 
 def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
@@ -502,10 +505,11 @@ def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
     other = _FakeWorker("/env/b/bin/python", "another.py")
     monkeypatch.setitem(engine_pool._workers, ("/p1", "figure.py"), mine)
     monkeypatch.setitem(engine_pool._workers, ("/p2", "another.py"), other)
+    monkeypatch.setattr(engine_pool, "_pending_retirements", {})
     monkeypatch.setattr(
         engine_pool.threading,
         "Thread",
-        lambda target, **kw: type("T", (), {"start": lambda s: target()})(),
+        lambda target, args=(), **kw: type("T", (), {"start": lambda s: target(*args)})(),
     )
 
     with engine_pool.mutating_environment(

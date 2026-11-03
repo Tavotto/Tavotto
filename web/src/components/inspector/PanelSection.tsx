@@ -45,7 +45,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { overrideCounts } from '@/lib/overrideCounts'
-import type { PanelObject, PanelRotation } from '@/types/document'
+import { isVectorFileKind, type PanelObject, type PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
   panelFullSize,
@@ -244,6 +244,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           label="W"
           historyLabel={hist('setWidth')}
           min={1}
+          dataProp="panel.w"
           value={sharedPanel(objs, (o) => o.w)}
           onChange={(v) =>
             setEach(hist('setWidth'), (o) => {
@@ -255,6 +256,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         />
         {/* 锁是个小 ghost 图标钮：名字是动作，气泡讲当前状态；锁上时轻 tint */}
         <IconButton
+          data-panel-aspect-lock=""
           label={pn('lockAspect')}
           tip={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}
           iconSize="sm"
@@ -537,9 +539,9 @@ interface Quality {
   bad: boolean
 }
 
-function qualityOf(o: PanelObject): Quality {
+export function qualityOf(o: PanelObject): Quality {
   const fullW = panelFullSize(o).w
-  if (o.fileKind === 'pdf') {
+  if (isVectorFileKind(o.fileKind)) {
     const pt = effectivePt(fullW, o.nativeW)
     const bad = pt < 6
     return {

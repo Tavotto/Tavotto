@@ -8,7 +8,7 @@ test('timing planner only models fixed assumptions and never grants runtime elig
   const input=assumptions(),original=structuredClone(input),plan=timingPlan(input);assert.equal(plan.model_feasible,true);assert.deepEqual(plan.reasons,[]);
   for(const k of ['ready_to_deploy','live_accepted','execution_supported','runtime_eligibility'])assert.equal(plan[k],false);
   assert.equal(plan.network_operations,0);assert.equal(plan.assumptions_assurance,'caller_supplied_not_platform_verified');assert.deepEqual(input,original);
-  assert.deepEqual(plan.budget.non_exempt_contributors,1);assert.equal(plan.budget.dispatch_work_sql,16);assert.equal(plan.budget.dispatch_total_sql,20);assert.equal(plan.budget.confirmation_work_with_withdrawal_sql,19);
+  assert.deepEqual(plan.budget.non_exempt_contributors,1);assert.equal(plan.budget.dispatch_work_sql,17);assert.equal(plan.budget.dispatch_total_sql,21);assert.equal(plan.budget.confirmation_work_with_withdrawal_sql,19);
   assert.equal(plan.time_ms.remaining_proof,110000);assert.equal(plan.time_ms.critical_path_with_margin,5000);
   assert.equal(plan.time_ms.dispatch_work,1000);assert.equal(plan.time_ms.send_settle,1000);
   const {plan_sha256,...body}=plan;assert.equal(plan_sha256,createHash('sha256').update(canonical(body)).digest('hex'));

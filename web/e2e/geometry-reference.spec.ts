@@ -144,7 +144,8 @@ test.describe('DPR 2', () => {
 test('GEO-02 多选：标题 + y 轴标签一起拖，两者各平移 Δs 一次，未选中的图例不动', async ({ app, page }) => {
   const a = await app()
   await openFigure(page, a.baseURL)
-  await zoomTo(page, 'Control+=')
+  // 缩小一档（不放大）：单图编辑打开时取景已经放大铺满舞台，再放大 y 轴标签会被推到左侧栏底下，⇧ 点击落在侧栏上
+  await zoomTo(page, 'Control+-')
   const tA = (await boxOf(page, 'axes_0.title'))!
   const yA = (await boxOf(page, 'axes_0.ylabel'))!
   // 点标题选中，⇧ 点 y 轴标签加选（PanelView 的加选语义）

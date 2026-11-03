@@ -1,0 +1,31 @@
+✖ activation new agreement needs fresh personal contributor and holder consent (50.821178ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 237.689178
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:207:1
+✖ activation new agreement needs fresh personal contributor and holder consent (50.821178ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'success'
+  - 'failure'
+
+      at file:///tmp/cla-agreement-activation-formal-review/mutants/activation-prior-personal-consent-is-not-inherited/tests/agreement-activation.test.mjs:209:54
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-prior-personal-consent-is-not-inherited/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'success',
+    expected: 'failure',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

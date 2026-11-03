@@ -1,0 +1,61 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {iso} from './delegation-fixture.mjs';import {LiveStore} from '../src/native/store.ts';import {LiveService} from '../src/native/service.ts';import {randomToken,canonical,sha256,bytes,base64url} from '../src/core/crypto.ts';
+globalThis.fetch=async()=>{throw Error('NETWORK_FORBIDDEN');};
+const snap=f=>Object.fromEntries(['state','delegated_grants','delegated_controls','delegated_receipts','packets','signatures','eligibility_blocks','outbox','head_requests'].map(t=>[t,f.sql.prepare('SELECT * FROM cla_native_v2_'+t+' ORDER BY rowid').all().map(r=>({...r}))]));
+function rotated(f,change={}){const c={...structuredClone(f.c),holderAuthorizationId:randomToken(),holderAuthorizationKey:randomToken(),signingEnabled:false,delegatedCountersigningEnabled:false,...change};return new LiveService(c,new LiveStore(f.db,undefined,c),f.gh,f.key);}
+async function denied(f,fn,code){const before=snap(f);await assert.rejects(fn,code?e=>e.code===code:undefined);assert.deepEqual(snap(f),before);}
+test('independent historical old key revocation after rotation preserves all personal evidence',()=>iso(async f=>{
+ await f.install();const p=await f.create();await f.sign(p);const s=rotated(f),before=snap(f),rev=await f.store.revision(),record=await f.control('revoke');
+ await assert.rejects(s.delegation.append(record));await s.delegation.appendHistoricalRevocation(f.grant.id,record);
+ const after=snap(f);assert.equal(after.delegated_controls.length,before.delegated_controls.length+1);assert.equal(after.delegated_controls.at(-1).action,'revoke');assert.equal(await f.store.revision(),rev+1);
+ for(const t of ['delegated_grants','delegated_receipts','packets','signatures','eligibility_blocks'])assert.deepEqual(after[t],before[t]);
+ await assert.rejects(f.s.delegation.qualified(p,(await f.store.signatures(p.id))[0],f.now()));
+ const a=await s.audit(f.args('contributor')[0],p.id);assert.equal(a.delegated.current,false);assert.equal(JSON.parse(a.delegated.controls.at(-1).body).action,'revoke');
+}));
+for(const action of ['enable','suspend'])test('independent historical path rejects signed '+action,()=>iso(async f=>{
+ await f.install();const s=rotated(f),record=await f.control(action);await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record),'authorization_terminal_revocation_required');
+}));
+test('independent historical uses registered original key even when current key signs the exact revoke body',()=>iso(async f=>{
+ await f.install();const pair=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']),key=base64url(new Uint8Array(await crypto.subtle.exportKey('raw',pair.publicKey))),s=rotated(f,{holderAuthorizationKey:key});
+ const record=await f.control('revoke'),bad={body:record.body,signature:base64url(new Uint8Array(await crypto.subtle.sign('Ed25519',pair.privateKey,bytes(record.body))))};
+ await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,bad),'authorization_signature_invalid');
+}));
+for(const change of [{authorization_id:'z'.repeat(43)},{grant_sha256:'0'.repeat(64)},{previous_sha256:'0'.repeat(64)},{sequence:3},{issued_at:1800000001}])test('independent historical rejects exact control binding '+JSON.stringify(change),()=>iso(async f=>{
+ await f.install();const s=rotated(f),record=await f.control('revoke',change);await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record));
+}));
+test('independent historical rechecks complete stored chain metadata',()=>iso(async f=>{
+ await f.install();await f.s.delegation.append(await f.control('suspend'));f.sql.exec('DROP TRIGGER cla_native_v2_delegated_controls_update');await f.store.stmt('UPDATE delegated_controls SET issued_at=issued_at+1 WHERE sequence=1').run();
+ const s=rotated(f),record=await f.control('revoke');await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record),'authorization_control_order');
+}));
+test('independent historical duplicate concurrency commits one terminal control and replay never increments revision',()=>iso(async f=>{
+ await f.install();const s=rotated(f),record=await f.control('revoke'),rev=await f.store.revision();const result=await Promise.allSettled([s.delegation.appendHistoricalRevocation(f.grant.id,record),s.delegation.appendHistoricalRevocation(f.grant.id,record)]);
+ assert.equal(result.filter(r=>r.status==='fulfilled').length,1);assert.equal(await f.store.revision(),rev+1);assert.equal((await f.store.stmt('SELECT count(*) n FROM delegated_controls').first()).n,2);
+ await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record));const next=await f.control('revoke');await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,next));
+}));
+test('independent historical revision conflict cannot consume predecessor',()=>iso(async f=>{
+ await f.install();const s=rotated(f),record=await f.control('revoke'),rev=await f.store.revision(),original=s.store.batch.bind(s.store);let raced=false;
+ s.store.batch=async statements=>{if(!raced){raced=true;await f.store.stmt('UPDATE state SET revision=revision+1').run();}return original(statements);};
+ await assert.rejects(s.delegation.appendHistoricalRevocation(f.grant.id,record),e=>e.code==='transaction_rejected');assert.equal(await f.store.revision(),rev+1);assert.equal((await f.store.stmt('SELECT count(*) n FROM delegated_controls').first()).n,1);
+}));
+test('independent historical database clock is checked again at commit',()=>iso(async f=>{
+ await f.install();const s=rotated(f),record=await f.control('revoke'),original=s.store.batch.bind(s.store),before=snap(f);s.store.batch=async statements=>{f.advance(-1);return original(statements);};
+ await assert.rejects(s.delegation.appendHistoricalRevocation(f.grant.id,record),e=>e.code==='transaction_rejected');assert.deepEqual(snap(f),before);
+}));
+test('independent historical revocation retains hold and atomically wakes tracked evidence revision',()=>iso(async f=>{
+ await f.install();const p=await f.create();await f.sign(p);await f.s.hold(...f.args('contributor'),p.id,await f.s.intent(...f.args('contributor'),p.id,'hold'));const key=await f.store.track(707,{kind:'pr',number:9});
+ await f.store.stmt("INSERT INTO head_requests VALUES(?,?,?,'done','',0,?,'OLD OBSERVATION')",'head',9,f.gh.head,f.now()).run();
+ const s=rotated(f),record=await f.control('revoke'),before=snap(f);await s.delegation.appendHistoricalRevocation(f.grant.id,record);
+ assert.deepEqual(snap(f).eligibility_blocks,before.eligibility_blocks);const head=await f.store.stmt('SELECT status,result FROM head_requests').first();assert.equal(head.status,'pending');assert.equal(head.result,'');assert.equal((await f.store.stmt('SELECT due FROM outbox WHERE target_key=?',key).first()).due,0);
+}));
+test('independent historical enforces real readiness and does not enable a new agreement version',()=>iso(async f=>{
+ await f.install();const s=rotated(f);s.c.policy.agreements.individual.sha256='f'.repeat(64);const record=await f.control('revoke');await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record),'database_configuration_uninitialized_or_mismatched');
+ assert.throws(()=>rotated(f,{policy:{...structuredClone(f.c.policy),agreements:{...structuredClone(f.c.policy.agreements),individual:{...f.c.policy.agreements.individual,version:'2.0'}}}}));
+}));
+test('independent historical full100 chain remains an explicit fail-closed boundary',()=>iso(async f=>{
+ await f.install();for(let sequence=2;sequence<=100;sequence++){const record=await f.control('enable'),obj=JSON.parse(record.body);await f.store.stmt('INSERT INTO delegated_controls VALUES(?,?,?,?,?,?,?)',f.grant.id,sequence,record.body,record.signature,await sha256(record.body),obj.action,obj.issued_at).run();}
+ const s=rotated(f),record=await f.control('revoke');await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record),'authorization_control_invalid');
+}));
+
+for(const change of [{holderName:'OTHER HOLDER'},{repositoryId:999},{repository:'other/repo'}])test('independent historical exact immutable identity '+JSON.stringify(change),()=>iso(async f=>{
+ await f.install();const s=rotated(f,change),record=await f.control('revoke');await denied(f,()=>s.delegation.appendHistoricalRevocation(f.grant.id,record),'authorization_scope_invalid');
+}));

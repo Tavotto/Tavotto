@@ -70,7 +70,21 @@ type TreeRow =
   | { kind: 'object'; obj: CanvasObject; depth: 0 | 1; pos: number; size: number }
   | { kind: 'group'; gid: string; members: CanvasObject[]; pos: number; size: number }
 
-export function LayerTree() {
+/**
+ * `embedded`（2026-10 审计 A3）：坐在「大纲」里、挂在当前画布那一行下面——不自己滚动（外层滚），
+ * 行整体缩进 `baseDepth` 层；
+ * 缺省是独立一棵树（`data-tree="layers"` 与键位、拖放全部不变）。
+ */
+export function LayerTree({
+  embedded = false,
+  baseDepth = 0,
+  onEdge,
+}: {
+  embedded?: boolean
+  baseDepth?: number
+  /** 嵌入时树到边界的键：首行 ↑ / 末行 ↓ / 根层行 ← 交给外层（大纲回画布行、去下一张画布） */
+  onEdge?: (edge: 'up' | 'down' | 'parent') => void
+} = {}) {
   useTranslation('workspace')
   const objects = useDocumentStore((s) => s.doc.objects)
   const layoutGroups = useDocumentStore((s) => s.doc.layoutGroups)
@@ -121,7 +135,8 @@ export function LayerTree() {
   // 侧栏不再各配一颗按钮
   if (!zOrder.length) {
     // 画布空时工作台的起步动作只有画布中央的「添加图」：抽屉空态是纯占位，不配按钮 / 链接（审计 T03）
-    return <EmptyLine>{lt('emptyTitle')}</EmptyLine>
+    const empty = <EmptyLine>{lt('emptyTitle')}</EmptyLine>
+    return embedded ? <li role="none">{empty}</li> : empty
   }
 
   // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
@@ -170,7 +185,24 @@ export function LayerTree() {
       ),
       rows.findIndex((r) => keyOf(r) === from),
     )
-    if (!action) return false
+    if (!action) {
+      if (key === 'ArrowLeft' && onEdge) {
+        onEdge('parent')
+        return true
+      }
+      return false
+    }
+    if (onEdge && action.type === 'focus') {
+      const at = rows.findIndex((r) => keyOf(r) === from)
+      if (key === 'ArrowUp' && at === 0) {
+        onEdge('up')
+        return true
+      }
+      if (key === 'ArrowDown' && at === rows.length - 1) {
+        onEdge('down')
+        return true
+      }
+    }
     if (action.type === 'focus') focusRow(keyOf(rows[action.index]))
     else if (from.startsWith('g:')) {
       const gid = from.slice(2)
@@ -207,6 +239,7 @@ export function LayerTree() {
               pos={r.pos}
               size={r.size}
               tabbable={focusKey === `g:${r.gid}`}
+              baseDepth={baseDepth}
               allSelected={r.members.every((m) => selectedIds.includes(m.id))}
               onToggle={() => setCollapsed((s) => ({ ...s, [r.gid]: !s[r.gid] }))}
               onNavKey={(k) => navKey(`g:${r.gid}`, k)}
@@ -221,7 +254,7 @@ export function LayerTree() {
           <LayerRow
             key={o.id}
             obj={o}
-            depth={r.depth}
+            depth={r.depth + baseDepth}
             pos={r.pos}
             size={r.size}
             selected={selected}
@@ -257,22 +290,23 @@ export function LayerTree() {
     return out
   }
 
-  return (
+  const list = (
     <ul
       ref={listRef}
-      role="tree"
+      role={embedded ? 'group' : 'tree'}
       data-tree="layers"
       onKeyDownCapture={markTreeDriven}
       onPointerDownCapture={markTreeDriven}
       aria-label={lt('listLabel')}
-      aria-multiselectable
-      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+      aria-multiselectable={embedded ? undefined : true}
+      className={embedded ? undefined : 'min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1'}
       onDragLeave={() => setDropHint(null)}
       onDrop={() => setDropHint(null)}
     >
       {renderTree()}
     </ul>
   )
+  return embedded ? <li role="none">{list}</li> : list
 }
 
 /** 组标题行：点击选中整组；箭头折叠 / 展开；显示布局约束徽标 */
@@ -284,6 +318,7 @@ function GroupRow({
   pos,
   size,
   tabbable,
+  baseDepth,
   allSelected,
   onToggle,
   onNavKey,
@@ -295,6 +330,7 @@ function GroupRow({
   pos: number
   size: number
   tabbable: boolean
+  baseDepth: number
   allSelected: boolean
   onToggle: () => void
   /** 树键位：true = 已处理 */
@@ -308,7 +344,7 @@ function GroupRow({
       role="treeitem"
       aria-selected={allSelected}
       aria-expanded={!collapsed}
-      aria-level={1}
+      aria-level={1 + baseDepth}
       aria-posinset={pos}
       aria-setsize={size}
       aria-label={
@@ -337,7 +373,7 @@ function GroupRow({
           selectAllMembers()
         }
       }}
-      style={treeIndent(0)}
+      style={treeIndent(baseDepth)}
       className={cn(listRowClass({ tree: true, group: true, selected: allSelected }), 'pr-2')}
     >
       <TreeChevron
@@ -356,7 +392,7 @@ function GroupRow({
 
 interface RowProps {
   obj: CanvasObject
-  depth?: 0 | 1
+  depth?: number
   pos: number
   size: number
   selected: boolean
@@ -535,7 +571,7 @@ function LayerRow({
           className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
           title={lt('editableBadge')}
         >
-          <EditableFigureIcon size={ICON_SIZE.xs} aria-hidden />
+          <EditableFigureIcon size={ICON_SIZE.sm} aria-hidden />
         </span>
       )}
       {/* 「基准」是一个词不是取值代号：type-meta，不用等宽（左栏审计 L29） */}
@@ -550,7 +586,7 @@ function LayerRow({
         <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('lockedState')} />
       )}
       {obj.hidden && (
-        <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
+        <EyeOff size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
       )}
 
       {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}

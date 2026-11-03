@@ -392,7 +392,8 @@ def test_termination_leaves_neither_the_server_nor_its_worker(tmp_path):
     assert _wait_gone(pids["worker"]), "桩起的 worker 成了孤儿"
     term = res["history"][0]["terminate"]
     if os.name == "nt":
-        assert term["how"] == "taskkill", term
+        assert term["how"] in ("job", "snapshot"), term
+        assert term["group_gone"] is True, term
     else:
         # 恰好一次 SIGTERM 就退，组里也没剩人——`+kill` / `+kill-group` 出现说明有人不理 SIGTERM
         assert term == {
@@ -591,3 +592,46 @@ def test_a_launch_template_without_the_port_placeholder_is_a_usage_error(tmp_pat
     out = _usage("--workdir", str(tmp_path), "--launch", "python stub.py --port 5099")
     assert out.returncode == 2 and "{port}" in out.stderr
     assert not (tmp_path / "attempt-1").exists(), "用法错误不该起任何进程"
+
+
+def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_already_exited(
+    tmp_path, monkeypatch
+):
+    """Windows lifetime tracking: a Job Object outlives the direct child, so descendants are
+    killed after it exits. Only the call order is proved here (POSIX); the real Job Object
+    behaviour can only be verified on the Windows CI leg."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+
+    events = []
+
+    class FakeJob:
+        def kill(self):
+            events.append("job-kill")
+            return True
+
+    def fake_open(proc):
+        events.append("job-open")
+        return FakeJob()
+
+    real_terminate = ps.terminate
+
+    def spy_terminate(proc):
+        events.append("terminate")
+        return real_terminate(proc)
+
+    monkeypatch.setattr(ps, "IS_WINDOWS", True)
+    monkeypatch.setattr(ps, "_open_kill_on_close_job", fake_open)
+    monkeypatch.setattr(ps, "terminate", spy_terminate)
+    result = ps.run_isolated_command(
+        [sys.executable, "-c", "pass"],
+        env=dict(os.environ),
+        cwd=tmp_path,
+        evidence=tmp_path,
+        timeout=30,
+    )
+    assert events == ["job-open", "terminate", "job-kill"]
+    assert result["cleanup"]["how"] == "already-exited"
+    assert result["cleanup"]["job_killed"] is True

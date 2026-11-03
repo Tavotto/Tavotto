@@ -124,7 +124,9 @@ def test_a_third_agent_needs_no_new_branch(monkeypatch):
         "effort_selection": False,
         "wire_api_selection": False,
         "readiness_probe": False,
+        "login": False,
     }
+    assert fake["login_account"] is None
     # 不声明 install spec 就没有安装入口（界面据此不画那个按钮）
     assert "install" not in fake
     # 第三方接口的白名单也跟着注册表走，不是第二份手写清单
@@ -542,15 +544,15 @@ def test_endpoint_backed_agent_stays_usable_without_cli_login(monkeypatch):
 
     ai_providers.save(
         {
-            "id": "deepseek-oai",
-            "label": "DeepSeek",
+            "id": "oai-gw",
+            "label": "OpenAI 兼容网关",
             "agent": "codex",
-            "base_url": "https://api.deepseek.com/v1",
+            "base_url": "https://gw.example/v1",
             "api_key": "sk-x",
-            "wire_api": "chat",
+            "wire_api": "responses",
         }
     )
-    ai_providers.set_active("codex", "deepseek-oai")
+    ai_providers.set_active("codex", "oai-gw")
     ai_bridge.invalidate_capabilities()
     entry = _codex(ai_bridge.capabilities(refresh=True))
     assert entry["state"] == "installed"  # 不再是 needs_auth
@@ -814,6 +816,7 @@ def test_install_package_comes_only_from_the_adapter(monkeypatch):
         ran.append(list(argv))
         return subprocess.CompletedProcess(argv, 0, "ok", "")
 
+    monkeypatch.setattr(ai_bridge.managedcli, "offered", lambda name: False)  # 本组钉 npm 回落路径
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: ["/usr/bin/npm"])
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     monkeypatch.setattr(ai_bridge.subprocess, "run", fake_run)
@@ -831,6 +834,7 @@ def test_install_package_comes_only_from_the_adapter(monkeypatch):
 
 def test_npm_success_still_requires_a_real_launch(monkeypatch):
     """npm 说成了不算数：CLI 仍然起不来就如实报「装完还是不可用」。"""
+    monkeypatch.setattr(ai_bridge.managedcli, "offered", lambda name: False)
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: ["/usr/bin/npm"])
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     monkeypatch.setattr(
@@ -921,3 +925,44 @@ def test_real_cli_detection_smoke():
             continue
         assert res.version and res.source in ai_agents.SOURCES
         assert res.readiness.state in ("ready", "needs_auth", "unknown")
+
+
+# ---------------- Windows 上 Codex 的沙盒级别（TVD-BCZ0）-------------------------------
+_WIN_SANDBOX = 'windows.sandbox="unelevated"'
+
+
+def _codex_argvs(monkeypatch, name, endpoint_args=()):
+    monkeypatch.setattr(ai_agents.os, "name", name)
+    run = ai_agents.RunContext(
+        argv=["codex"], prompt="p", cwd="/w", endpoint_args=list(endpoint_args)
+    )
+    fix = ai_agents.FixRunContext(
+        argv=["codex"],
+        prompt="p",
+        cwd="/w",
+        mcp_command=["m", "fix-mcp"],
+        mcp_name="tavotto_fix",
+        token_env="TAVOTTO_FIX_TOKEN",
+        tool_timeout_s=10,
+        endpoint_args=list(endpoint_args),
+    )
+    codex = ai_agents.CodexAgent()
+    return codex.build_command(run).argv, codex.build_fix_command(fix).argv
+
+
+def test_codex_argv_pins_unelevated_windows_sandbox_on_windows(monkeypatch):
+    for argv in _codex_argvs(monkeypatch, "nt"):
+        assert argv.count(_WIN_SANDBOX) == 1
+        assert argv[argv.index(_WIN_SANDBOX) - 1] == "-c"
+
+
+def test_codex_argv_has_no_windows_sandbox_override_elsewhere(monkeypatch):
+    for argv in _codex_argvs(monkeypatch, "posix"):
+        assert not any("windows.sandbox" in a for a in argv)
+
+
+def test_codex_argv_does_not_override_explicit_windows_sandbox(monkeypatch):
+    explicit = ["-c", 'windows.sandbox="elevated"']
+    for argv in _codex_argvs(monkeypatch, "nt", explicit):
+        assert _WIN_SANDBOX not in argv
+        assert argv.count('windows.sandbox="elevated"') == 1

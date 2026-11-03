@@ -3,6 +3,16 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「MCP server 与内嵌画布」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；会话不抱 worker 引用、渲染成功后才登记
+
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 120
+改到: `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()`
+主题: 批量打开与会话账本 → `sessions-and-batch-open.md`
+必守要点: 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；渲染成功后才登记
+-->
 
 - **批量打开（issue #174）**：`tavotto_open_figure` 的 `stems` / `discover_stems`
   一次开 N 张独立图，每张仍走 `open_figure` 那条路（`_resolve_project` 是单图与
@@ -26,6 +36,6 @@
   沿用带 patch 的会话会让画布账本与引擎状态对不上。这条同时堵掉「批量填满预算 →
   照指引再单独开一张看画布 → 静默挤掉这批里先开的那个」。真发生淘汰时
   `_evict_if_needed()` 返回被淘汰的 id，open 的文字里**必须说出口**。
-- **会话不抱 worker 引用**：池的 `MAX_ALIVE` 与桥的 `MAX_SESSIONS` 是两个数，
+- **会话不抱 worker 引用**：池的上限（`pool.max_alive()`）与桥的 `MAX_SESSIONS` 是两个数，
   必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
   会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。

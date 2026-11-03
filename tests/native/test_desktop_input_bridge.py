@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from support import desktopkit as dk, nativekit
-from tavotto.engine import config, execspec, nativesession, runcodes
+from tavotto.engine import config, execspec, executionfact, nativesession, runcodes
 from tavotto.engine.runcodes import RunError
 
 pytestmark = nativekit.needs_user_python
@@ -237,8 +237,13 @@ json.dump([a, b], open("ab.json", "w"))
 
 def test_no_pending_means_nothing_to_answer(tmp_path):
     """没有在等的提问：答复当场被拒，不排队、不留着等下一次提问。"""
-    session = start(tmp_path, dk.FIGURE_HEADER + "import time; time.sleep(30)\n")
-    dk.wait_until(lambda: session.state == nativesession.WAITING_FOR_FIGURE, what="脚本在跑")
+    session = start(
+        tmp_path,
+        dk.FIGURE_HEADER + "import time\nprint('NO_INPUT_READY', flush=True)\ntime.sleep(30)\n",
+    )
+    nativekit.wait_state(session, [nativesession.RUNNING_SCRIPT])
+    assert executionfact.valid_id(session.execution_id)
+    dk.wait_until(lambda: "NO_INPUT_READY" in dk.tail(session), what="脚本到达无提问前哨")
     with pytest.raises(RunError) as exc:
         session.answer_input("in-1", text="early")
     assert exc.value.code == runcodes.NATIVE_INPUT_NOT_PENDING

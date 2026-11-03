@@ -5,6 +5,8 @@ import { expect, openElementsTab, test, writeRuntimeNamedProject, type RunningAp
 import type { Page } from '@playwright/test'
 import { horizontalOffenders } from './overflow'
 
+import { autosavePanelEvidence } from './autosaveEvidence'
+
 // 这一组钉的是**旧**的同步试运行路径（T09 起它只在本地开关关闭时走；默认的准备面板路径见
 // `preparation-card.spec.ts`）。开关是本机 localStorage 偏好，在页面脚本之前写好
 test.beforeEach(async ({ page }) => {
@@ -128,8 +130,8 @@ test('show-only 项目：素材库普通入口 → Runtime Figure → 画布 →
 
   // undo 两次（线宽、字号各一条历史）→ redo 两次回来（当前面板显示的是
   // 曲线：第一次 redo 恢复的是标题字号，第二次才轮到曲线的线宽）
-  await page.getByRole('button', { name: '撤销' }).click()
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
   await page.getByRole('button', { name: '重做' }).click()
   await page.getByRole('button', { name: '重做' }).click()
@@ -188,14 +190,38 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   await width.press('Enter')
   await expect(panel.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
   // undo/redo 一轮（结束时两条编辑都在）
-  await page.getByRole('button', { name: '撤销' }).click()
+  await page.locator('[data-history-action="undo"]').click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
+  // 这份夹具只有一个面板。对象身份来自实际画布；首次防抖前恢复索引可能尚不存在，
+  // 也可能仍指向另一份排版，不能拿它猜当前文档的写盘槽位。
+  const currentObject = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(currentObject).toHaveCount(1)
+  await expect(currentObject).toBeVisible()
+  const panelId = await currentObject.getAttribute('data-object-id')
+  expect(panelId).toBeTruthy()
+  const saveTarget = {
+    panelId: panelId!, fileId: 'runtime:show_only.py#show_only',
+    requiredOverrides: [{ gid: 'axes_0.title', prop: 'fontsize' }, { prop: 'linewidth' }],
+  }
+  // 只认当前对象的两条最终编辑；文档 id 取这条真实 PUT 的路径，不读恢复索引。
+  const savedEdits = page.waitForResponse((response) => autosavePanelEvidence(response, saveTarget) !== null)
   await page.getByRole('button', { name: '重做' }).click()
   await expect(panel.getByText('1 项已修改')).toBeVisible()
+  // 未绑定项目文件的排版：正式保存先等本机写队列排空，才打开命名框。
+  // 单独一个同内容的迟到 200 仍可能早于队列里更旧的正文，不能据此关页。
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-layout-save]')).toBeVisible()
+  const written = await savedEdits
+  expect(await written.finished()).toBeNull()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-layout-save]')).toBeHidden()
+  const evidence = autosavePanelEvidence(written, saveTarget)
+  expect(evidence).not.toBeNull()
+  const { docId, panel: writtenPanel } = evidence!
 
-  // reload = beforeunload 冲刷自动保存；顺带验证同实例内的恢复
+  // 同实例恢复也必须等真实面板装好；空 root 同样没有「画布是空的」文案。
   await page.reload()
-  await expect(page.getByText('画布是空的')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.locator(`[data-object-id="${writtenPanel.id}"]`)).toBeVisible({ timeout: 30_000 })
   // 恢复索引在 localStorage（按 origin）：重启后端口会变，索引要原样带走
   const stored: Record<string, string> = await page.evaluate(() =>
     Object.fromEntries(
@@ -206,9 +232,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
 
   // 「保存文档」的证据在磁盘上：自动保存文件里 runtime 面板带着两条 override
   const autosaveDir = path.join(env.TAVOTTO_DATA_DIR, 'layouts', '_autosave')
-  const saved = readdirSync(autosaveDir).filter((f) => f.endsWith('.json'))
-  expect(saved.length).toBeGreaterThan(0)
-  const pd = JSON.parse(readFileSync(path.join(autosaveDir, saved[0]), 'utf-8'))
+  const pd = JSON.parse(readFileSync(path.join(autosaveDir, `${docId}.json`), 'utf-8'))
   const objects = pd.canvases[0].objects as {
     type: string
     fileId?: string
@@ -217,6 +241,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   }[]
   const rt = objects.find((o) => o.type === 'panel' && o.fileId?.startsWith('runtime:'))!
   expect(rt).toBeTruthy()
+  expect(rt.overrides).toEqual(writtenPanel.overrides)
   const props = (rt.overrides ?? []).map((o) => `${o.gid}.${o.prop}`)
   expect(props).toContain('axes_0.title.fontsize')
   expect(props).toEqual(expect.arrayContaining([expect.stringMatching(/linewidth$/)]))
@@ -229,9 +254,8 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
     for (const [k, v] of Object.entries(entries)) localStorage.setItem(k, v)
   }, stored)
   await page.goto(a2.baseURL)
-  await expect(page.getByText('画布是空的')).toHaveCount(0, { timeout: 30_000 })
-  const obj = page.locator('[data-object-id]').first()
-  await expect(obj).toBeVisible()
+  const obj = page.locator(`[data-object-id="${writtenPanel.id}"]`)
+  await expect(obj).toBeVisible({ timeout: 30_000 })
 
   // lazy rehydrate → 重新运行 → override 恢复（字号 13 还在）。
   // **这一条走的是画布上的对象**（重开项目后从版上点进去），不是素材卡——
@@ -247,8 +271,12 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
 
   // 出版预检（导出面板只给摘要，完整清单在左侧问题面板 —— ADR 0031 §四）
   await page.getByRole('button', { name: '导出' }).first().click()
+  // 检查摘要（认 data-* 锚点，不认文字：问题多时同时有「要改」「留意」几颗计数芯片，文字会命中多个）
   await expect(
-    page.getByText(/导出前检查通过|\d+ (项要改|项留意|条建议|项无法核验)/),
+    page
+      .locator('[data-export-group="checks"]')
+      .locator('[data-export-check-ok], [data-count-chip]')
+      .first(),
   ).toBeVisible({ timeout: 30_000 })
   await page.keyboard.press('Escape')
 
@@ -351,6 +379,46 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
   expect(panels).toHaveLength(1)
   expect(panels[0].fileId).toBe(`runtime:show_two.py#${stems[1]}`)
   expect(panels[0].fileId).toContain(secondStem)
+})
+
+test('捕获结果弹层：每一行都有真实缩略图（非空），添加到画布不受影响', async ({ app, page }) => {
+  const dir = path.join(os.tmpdir(), `tavotto-e2e-capthumb-${Date.now()}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    path.join(dir, 'show_two.py'),
+    [
+      'import matplotlib',
+      'matplotlib.use("Agg")',
+      'import matplotlib.pyplot as plt',
+      '',
+      'plt.figure()',
+      'plt.plot([1, 2], [3, 4])',
+      'plt.figure()',
+      'plt.plot([2, 1], [4, 3])',
+      'plt.show()',
+      '',
+    ].join('\n'),
+    'utf-8',
+  )
+  writeFileSync(path.join(dir, 'tavotto_registry.json'),
+                JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
+  const a = await app({ figures: dir })
+  await page.goto(a.baseURL)
+  await page.locator('[data-script-run="show_two.py"]').click()
+  const open = page.locator('[data-capture-results-open="show_two.py"]')
+  await expect(open).toBeVisible({ timeout: 120_000 })
+  await open.click()
+  const dialog = page.locator('[data-dialog="capture-results"]')
+  const rows = dialog.locator('[data-capture-row]')
+  await expect(rows).toHaveCount(2)
+  for (let i = 0; i < 2; i++) {
+    const row = rows.nth(i)
+    await expect(row.locator('[data-capture-thumb="ready"]')).toBeVisible({ timeout: 30_000 })
+    // 真的解出了像素，不是 0×0 的空图
+    const natural = await row.locator('img').evaluate((el: HTMLImageElement) => el.naturalWidth)
+    expect(natural).toBeGreaterThan(0)
+    await expect(row.locator('[data-capture-add]')).toBeEnabled()
+  }
 })
 
 /**

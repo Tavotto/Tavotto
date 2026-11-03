@@ -10,9 +10,11 @@ import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/l
 import { drillKey } from '@/lib/drillKey'
 import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
-export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
+export type LeftTab = 'workspace' | 'assets' | 'outline' | 'elements' | 'style' | 'problems'
+/** 2026-10 审计 A3：画布 + 图层合成一棵「大纲」（图内元素仍是独立的「图内」页签）；旧版本机偏好里的 canvases / layers 落到它上面 */
+const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
-export type RightTab = 'properties' | 'assistant' | 'canvas'
+export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
@@ -94,6 +96,30 @@ export const MEDIUM = 1024
 export const layoutFor = (w: number): WorkspaceLayout =>
   w >= WIDE ? 'wide' : w >= MEDIUM ? 'medium' : 'narrow'
 
+/**
+ * 左栏此刻算不算「固定」（选中对象 / 加完图后不自动收起素材抽屉）。只在 wide 成立：
+ * 用户没表过态（`null`）时 ≥1280 默认固定，< 1280 的窗口放不下两栏并排。
+ */
+export const isLeftPinned = (s: Pick<Persisted, 'leftPinned'> & { layout: WorkspaceLayout }): boolean =>
+  s.layout === 'wide' && (s.leftPinned ?? true)
+
+/**
+ * 属性栏算不算「固定」：没表过态时 ≥1280 默认固定、更窄默认不固定（见 `isRightOverlay`）；
+ * 用户显式选过的值永远优先。
+ */
+export const isRightPinned = (s: Pick<Persisted, 'rightPinned'> & { layout: WorkspaceLayout }): boolean =>
+  s.rightPinned ?? s.layout === 'wide'
+
+/**
+ * 属性栏是不是盖在画布上的覆盖层（不挤占画布）：< 1024 一律是；1024–1279 只在没固定时是
+ * （2026-10 UI 审计 G1：1093×614 下 360px 的右栏把画布挤掉一半）。固定了照旧挤占。
+ */
+export const isRightOverlay = (s: Pick<Persisted, 'rightPinned'> & { layout: WorkspaceLayout }): boolean =>
+  s.layout === 'narrow' || (s.layout === 'medium' && !isRightPinned(s))
+
+/** 窗口窄于此值，左轨只留图标（标签文字进气泡 / 可达名） */
+export const RAIL_ICON_ONLY = 1180
+
 interface Persisted {
   /**
    * 偏好版本号。默认值改动过一次（右栏由「等选中再弹」改成常驻），老用户
@@ -105,9 +131,13 @@ interface Persisted {
   leftWidth: number
   /** 右栏宽度（px） */
   rightWidth: number
-  /** 钉住：宽屏下选中对象时不自动收起该侧 */
-  leftPinned: boolean
-  rightPinned: boolean
+  /**
+   * 钉住：宽屏下选中对象时不自动收起该侧。**三态**：`null` = 用户没表过态，按窗口宽度取默认
+   * （`isLeftPinned` / `isRightPinned`）；`true` / `false` = 用户在设置或面板头亲手选的，永远优先。
+   * 此前默认值直接写成 false / true 并随每次 persist 落进本机，「没设过」与「设为关」分不出来。
+   */
+  leftPinned: boolean | null
+  rightPinned: boolean | null
   /** 网格间距（mm） */
   gridSize: number
   /** 吸附总开关与三类吸附目标 */
@@ -126,6 +156,11 @@ interface Persisted {
    * 以及色条轴、twinx 的孪生轴。关掉就只动子图本身。
    */
   dragAxesWithCompanions: boolean
+  /**
+   * 多图排版里等比缩放面板时，叠在它上面的标注一起缩放（ADR 0161「连同标注」）。
+   * 默认开；浮动胶囊里的按钮切换。本机偏好，不进文档。
+   */
+  scaleWithAnnotations: boolean
   rightOpen: boolean
   leftTab: LeftTab
   rightTab: RightTab
@@ -138,7 +173,7 @@ interface Persisted {
   theme: ThemePref
 }
 
-export const PREFS_VERSION = 2
+export const PREFS_VERSION = 3
 
 const DEFAULTS: Persisted = {
   prefsVersion: PREFS_VERSION,
@@ -146,8 +181,8 @@ const DEFAULTS: Persisted = {
   leftOpen: true,
   leftWidth: LEFT_DEFAULT,
   rightWidth: RIGHT_DEFAULT,
-  leftPinned: false,
-  rightPinned: true,
+  leftPinned: null,
+  rightPinned: null,
   gridSize: 10,
   snapEnabled: true,
   snapToGrid: false,
@@ -157,6 +192,7 @@ const DEFAULTS: Persisted = {
   showSafeArea: false,
   recentCommands: [],
   dragAxesWithCompanions: true,
+  scaleWithAnnotations: true,
   rightOpen: true,
   leftTab: 'assets',
   rightTab: 'properties',
@@ -205,14 +241,24 @@ function readPersisted(): Persisted {
     if (from < 2 && (state.rightWidth ?? 0) <= 320) {
       state = { ...state, rightWidth: RIGHT_DEFAULT }
     }
+    // v2 → v3：钉住改三态。右栏旧默认 true 一直随 persist 落盘，与「用户亲手钉住」分不出来，
+    // 而它决定 < 1280 时右栏是否挤占画布——等于旧默认的 true 当「没表过态」（null）；
+    // 不同于旧默认的值（false）必是亲手选的，原样保留。左栏旧默认 false 同理分不出来，
+    // 但把它改成 null 会把宽屏用户亲手关掉的固定翻成开，宁可不动（新装才享受新默认）。
+    if (from < 3 && saved.rightPinned === true) state = { ...state, rightPinned: null }
     state = { ...state, prefsVersion: PREFS_VERSION }
   }
+  // 时间线页签依赖「打开了哪份排版」，是会话态：刷新后不带着它启动（落回属性页）
+  if (state.rightTab === 'timeline') state = { ...state, rightTab: 'properties' }
   // 版本号相同也要收进合法区间：手工改过 localStorage / 未来回滚都不该让
   // 界面拿到一个画不出来的宽度
   state = {
     ...state,
     // 手改过 / 未来版本写进来的未知外观值当「跟随系统」
     theme: isThemePref(state.theme) ? state.theme : DEFAULTS.theme,
+    leftTab: LEGACY_OUTLINE_TABS.includes(state.leftTab as string) ? 'outline' : state.leftTab,
+    leftPinned: typeof state.leftPinned === 'boolean' ? state.leftPinned : null,
+    rightPinned: typeof state.rightPinned === 'boolean' ? state.rightPinned : null,
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
     leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, state.leftWidth)),
   }
@@ -221,7 +267,8 @@ function readPersisted(): Persisted {
   prefOpen = { left: state.leftOpen, right: state.rightOpen }
   // 窄屏下右栏是盖在画布上的覆盖层，开机就铺满等于把画布藏了；常驻标记留着，
   // 拉宽窗口自然生效。
-  if (typeof window !== 'undefined' && layoutFor(window.innerWidth) === 'narrow') {
+  // 1024–1279 里没固定的右栏同样是覆盖层（G1），开机同样不铺。
+  if (typeof window !== 'undefined' && isRightOverlay({ ...state, layout: layoutFor(window.innerWidth) })) {
     state = { ...state, rightOpen: false }
   }
   return state
@@ -289,6 +336,7 @@ interface UiState extends Persisted {
   /**
    * 这条 toast 的一个动作（可选，`setStatus` 的 `action`）：通知轨里的「查看」。带动作的 toast 是要用户回头处理的
    * 一句话（导出关窗后失败 / 等你决定），所以**不自己消失**，和错误一样挂到用户点 × 或主人撤掉。
+   * 例外：声明了 `dismissMs` 的（导出全部成功的「已导出 … · 在文件夹中显示」）带动作也到点自己走，悬停 / 聚焦时暂停。
    */
   statusAction: StatusAction | null
   /** 正在双击编辑的文字对象 */
@@ -315,6 +363,13 @@ interface UiState extends Persisted {
    * 静静地显示同样长的时间）。
    */
   issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
+  /**
+   * 定位还**欠着**的那个属性字段（`lib/issueFocus.focusField` 写、找到落点或放弃时清）。
+   *
+   * 属性页据此把字段所在的「更多」/ 摘要行打开（`inspector/useLocateReveal`）：收起的折里不挂控件，
+   * 落点根本不在 DOM 里。`gid` 为 null = 画布对象的属性页。
+   */
+  fieldLocate: { gid: string | null; prop: string; token: number } | null
   /**
    * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
    * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
@@ -365,8 +420,6 @@ interface UiState extends Persisted {
   tool: Tool
   exportOpen: boolean
   layoutOpen: boolean
-  /** 布局版本时间线抽屉 */
-  versionsOpen: boolean
   /** 论文样式弹窗 */
   stylesOpen: boolean
   /**
@@ -438,7 +491,7 @@ interface UiState extends Persisted {
   /** 点图标轨道：同一项再点一次关抽屉，否则换页并打开 */
   railClick: (tab: LeftTab) => void
   /** 选中对象时的自动路由：素材抽屉让位、右栏进属性；停在助手时不抢 */
-  autoShowProperties: () => void
+  autoShowProperties: (opts?: { holdAssets?: boolean }) => void
   /** 选择清空：未钉住的属性栏不再占位 */
   autoHideProperties: () => void
   setCanvasPref: (patch: Partial<Persisted>) => void
@@ -455,7 +508,16 @@ interface UiState extends Persisted {
   setStatus: (
     msg: UiMessage | null,
     tone?: StatusTone,
-    opts?: { passive?: boolean; owner?: string; action?: StatusAction },
+    opts?: {
+      passive?: boolean
+      owner?: string
+      action?: StatusAction
+      /**
+       * 带动作却仍自己走的那种（导出成功的「已导出 … · 在文件夹中显示」）：给了它就按这个毫秒数收起，
+       * 指针停在上面 / 焦点在它的按钮上照样不走表（`statusDismissTimer`）。错误语气不受它影响，仍常驻。
+       */
+      dismissMs?: number
+    },
   ) => void
   /**
    * 撤掉**这个主人**挂上的 toast；此刻挂着的不是它的（换成了别的图 / 别的类别的提示、或已被关掉）
@@ -469,6 +531,7 @@ interface UiState extends Persisted {
   clearStatusOwnedByPrefix: (prefix: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setFieldLocate: (v: { gid: string | null; prop: string } | null) => void
   setIssueHover: (v: IssueHover | null) => void
   /** 比对后再清：此刻的 `issueHover` 还是 `v` 这个对象（同一身份）才撤，别的行写下的不动 */
   releaseIssueHover: (v: IssueHover) => void
@@ -500,7 +563,6 @@ interface UiState extends Persisted {
   ) => void
   /** 弹窗预填的名字（⌘S 写回撞上冲突时是绑定的那个文件名）；null = 用排版名 */
   layoutName: string | null
-  setVersionsOpen: (v: boolean) => void
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
@@ -526,7 +588,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands', 'theme',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'scaleWithAnnotations', 'recentCommands', 'theme',
   ]
   try {
     localStorage.setItem(
@@ -540,6 +602,9 @@ function persist(state: UiState) {
 
 /** 普通状态自己走的时长；错误保留到用户关闭 */
 export const STATUS_AUTO_DISMISS_MS = 4000
+
+/** 导出成功胶囊（带「在文件夹中显示」）的停留时长：比普通状态长，给用户伸手点的时间；悬停 / 聚焦时暂停 */
+export const EXPORT_DONE_DISMISS_MS = 6000
 
 /**
  * 状态的自动收起计时器：指针停在 toast 上、焦点在它的按钮上、页面不可见时都不走表
@@ -579,6 +644,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
+  fieldLocate: null,
   issueHover: null,
   problemPins: false,
   problemFilter: null,
@@ -591,7 +657,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   tool: 'select',
   exportOpen: false,
   layoutOpen: false,
-  versionsOpen: false,
   stylesOpen: false,
   stylesPresetId: null,
   dialogStack: [],
@@ -658,8 +723,17 @@ export const useUiStore = create<UiState>((set, get) => ({
     prefOpen.right = get().rightOpen
     persist(get())
   },
-  autoShowProperties: () => {
+  autoShowProperties: (opts) => {
     const s = get()
+    // 指针还在素材抽屉里（正从里面连着加图 / 拖图）：抽屉不收。互斥断点上开右栏本身就会收左栏，
+    // 所以那里整个推迟；宽屏只是不让位。指针离开抽屉后调用方再不带 holdAssets 调一次
+    if (opts?.holdAssets && s.leftOpen && s.leftTab === 'assets') {
+      if (exclusive(s)) return
+      set({ rightOpen: true, rightTab: 'properties' })
+      prefOpen.right = true
+      persist(get())
+      return
+    }
     // 选中对象时一律回到属性页：属性属于「当前选中的对象」，助手属于独立
     // 工作流——用户点了一个对象却对着助手页，是上下文错位（重构前的
     // 「停在助手时不抢」正是这么表现的）。助手会话状态在 aiStore 里，
@@ -669,7 +743,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     // 下面写偏好时直接复用——写两遍的话两份迟早分叉，而分叉的表现是
     // 「关掉的抽屉过一会儿自己回来了」。
     const assetsYield =
-      s.leftOpen && s.leftTab === 'assets' && !(s.leftPinned && s.layout === 'wide')
+      s.leftOpen && s.leftTab === 'assets' && !isLeftPinned(s)
     if (assetsYield || exclusive(s)) patch.leftOpen = false
     set(patch)
     prefOpen.right = true
@@ -683,7 +757,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     if (!s.rightOpen || s.rightTab !== 'properties') return
     // 常驻在 wide 与 medium 都生效（medium 靠互斥保证画布空间）；
     // narrow 是覆盖层，物理上无法常驻
-    if (s.rightPinned && s.layout !== 'narrow') {
+    if (isRightPinned(s) && s.layout !== 'narrow') {
       // 常驻的右栏在没有选中对象时**给画布**，不留一整栏「没有选中对象」的占位
       // （2026-09-13 审计 B02 / B57：无选中 → 画布设置，选中 → 对象属性；Figma
       // 的右栏也是这么分工的）。选中一出现 `autoShowProperties` 就切回属性页。
@@ -729,12 +803,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     const s = get()
     // 两侧开合按此刻的窗口裁一次（与开机读偏好同一条规矩：偏好是默认值，排布跟着窗口走）
     const layout = s.layout
-    const open =
-      layout === 'narrow'
-        ? { leftOpen: DEFAULTS.leftOpen, rightOpen: false }
-        : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
-          ? { leftOpen: false, rightOpen: true }
-          : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
+    const open = isRightOverlay({ rightPinned: DEFAULTS.rightPinned, layout })
+      ? { leftOpen: DEFAULTS.leftOpen, rightOpen: false }
+      : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
+        ? { leftOpen: false, rightOpen: true }
+        : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
     // 外观不算排布：保留用户选的那一套（否则「重置布局」顺手把深色切回跟随系统）
     set({ ...DEFAULTS, ...open, theme: s.theme })
     persist(get())
@@ -755,9 +828,9 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusAction: status ? (opts?.action ?? null) : null,
     })
     statusDismissTimer.cancel()
-    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）
-    if (status && statusTone !== 'error' && !opts?.action) {
-      statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
+    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）——带动作但声明了 `dismissMs` 的例外
+    if (status && statusTone !== 'error' && (!opts?.action || opts.dismissMs)) {
+      statusDismissTimer.start(opts?.dismissMs ?? STATUS_AUTO_DISMISS_MS, () =>
         set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null }),
       )
     }
@@ -786,6 +859,8 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? { ...v, token: (s.issueHighlight?.token ?? 0) + 1 }
         : null,
     })),
+  setFieldLocate: (v) =>
+    set((s) => ({ fieldLocate: v ? { ...v, token: (s.fieldLocate?.token ?? 0) + 1 } : null })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
   // 用户显式换范围 / 换切法：退回总览、放下游标。现场键里本来就有这两项，这里再清一次
   // 是为了**换回来时**不复活上一次点进的那张卡片（那是用户已经离开的地方）
@@ -866,7 +941,6 @@ export const useUiStore = create<UiState>((set, get) => ({
       layoutConflict: layoutOpen ? (opts?.conflict ?? null) : null,
       layoutName: layoutOpen ? (opts?.name ?? null) : null,
     }),
-  setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
   setStylesOpen: (stylesOpen, opts = undefined) =>
     set((s) => ({
       stylesOpen,
@@ -909,3 +983,7 @@ export function askConfirm(
     useUiStore.getState().setConfirm({ ...req, resolve })
   })
 }
+
+/** 排版时间线此刻是否在右栏里亮着（ADR 0101 2026-10-21 修订：它是右栏的一个页签，不再是浮卡） */
+export const isTimelineOpen = (s: Pick<UiState, 'rightOpen' | 'rightTab'>): boolean =>
+  s.rightOpen && s.rightTab === 'timeline'

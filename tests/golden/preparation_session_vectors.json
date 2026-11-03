@@ -570,6 +570,64 @@
       }
     },
     {
+      "name": "captured one figure, another one failed its preview capture (partial, not completed)",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": {
+            "registered": true,
+            "partial": true,
+            "failed_figures": [
+              {
+                "stem": "bad",
+                "code": "preview_capture_failed"
+              }
+            ]
+          },
+          "captured_count": 1,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "partial",
+        "outcome": {
+          "kind": "succeeded"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": true
+      }
+    },
+    {
       "name": "asset target ready",
       "facts": {
         "target_kind": "asset",

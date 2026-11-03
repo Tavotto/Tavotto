@@ -1,8 +1,8 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bold, ChevronRight, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
+import { Bold, ChevronRight, Italic, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { profileName } from '@/lib/profileText'
@@ -26,8 +26,10 @@ import {
   styleMismatchCount,
 } from '@/store/styleBinding'
 import { useDocumentStore } from '@/store/documentStore'
+import { queueFontSize } from './queuedFontSize'
 import { useProfileStore } from '@/store/profileStore'
 import {
+  exactPanelManifest,
   panelRender,
   useExactPanelManifest,
   usePanelDisplayManifest,
@@ -117,7 +119,8 @@ function StylePanelBody() {
   })
   const manifest = usePanelDisplayManifest(panel)
   const exact = useExactPanelManifest(panel)
-  const rendering = usePanelRender(panel)?.status === 'rendering'
+  const render = usePanelRender(panel)
+  const rendering = render?.status === 'rendering'
   const figureKey = useDocumentStore((s) => (panel ? figureScope(s, panel) : ''))
 
   if (!panel) {
@@ -125,9 +128,9 @@ function StylePanelBody() {
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-style-panel-empty>
         <EmptyState
-          icon={Paintbrush}
+          art="pencil"
           title={sp('emptyTitle')}
-          action={{ label: sp('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('layers') }}
+          action={{ label: sp('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('outline') }}
         />
         <ApplyStyle />
       </div>
@@ -138,16 +141,22 @@ function StylePanelBody() {
       <p className="shrink-0 truncate px-3 text-sm text-ink" data-style-figure title={figure.name ?? ''}>
         {figure.name}
       </p>
+      {manifest && !exact && (
+        <p data-style-sync-status={render?.status === 'error' ? 'error' : 'pending'} role="status"
+          className="shrink-0 px-3 py-1 text-xs text-ink-2">
+          {sp(render?.status === 'error' ? 'previewFailed' : 'previewPending')}
+        </p>
+      )}
       {/* 「跟随样式」是滚动区里最后一节（可折叠），不再是钉在底部的约 150px 页脚（2026-10-07 设计审计 §10.3） */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div data-style-scroll className={cn('min-h-0 flex-1 overflow-y-auto', STYLE_CONTAINER)}>
         {manifest ? (
-          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} />
+          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} canQueueSize={render?.status !== 'error'} />
         ) : panel.script ? (
           /* 可编辑、但这一会话还没渲染过：值要引擎读出来。**不自动跑脚本**（「只带基线、
              还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
              由用户点一下，与元素树的「加载元素清单」同一个动作；左栏留在这里 */
           <EmptyState
-            icon={Paintbrush}
+            art="pencil"
             title={sp('needRender')}
             hint={rendering ? sp('building') : undefined}
             action={
@@ -166,7 +175,7 @@ function StylePanelBody() {
   )
 }
 
-function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest: Manifest; exact: boolean }) {
+function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObject; manifest: Manifest; exact: boolean; canQueueSize: boolean }) {
   const bound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
   const locked = !bound && !exact
   const texts = useDocumentStore((s) => s.doc.objects)
@@ -189,6 +198,7 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             faceRole={row.faceRole}
             bound={bound}
             locked={locked}
+            canQueueSize={canQueueSize}
           />
         ))}
         {annotations.length > 0 && (
@@ -228,11 +238,11 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
 function StyleRow({ id, children }: { id: string; children: ReactNode }) {
   const label = ROW_LABEL[id]()
   return (
-    <div data-style-row={id} className={cn(STYLE_ROW_GRID, 'items-start py-0.5')}>
+    <div data-style-row={id} className={cn(STYLE_ROW_GRID, WIDE_COLS, NARROW_COLS, 'items-start py-0.5')}>
       <span className="h-7 truncate text-xs leading-7 text-ink-2" title={label}>
         {label}
       </span>
-      <div className="flex min-w-0 flex-col gap-1">{children}</div>
+      <div className={cn('flex min-w-0 flex-col gap-1', WIDE_FLATTEN)}>{children}</div>
     </div>
   )
 }
@@ -244,10 +254,30 @@ function StyleRow({ id, children }: { id: string; children: ReactNode }) {
  */
 const STYLE_ROW_GRID = 'grid grid-cols-[var(--insp-label,clamp(88px,28%,112px))_minmax(0,1fr)] gap-x-2'
 
+/**
+ * 样式面板按**侧栏自己的宽度**分三档（容器查询，不跟窗口；2026-10-31 UI 审计 C3）：
+ *
+ * * 宽（≥ 350px）：一行 `标签 | 字体 | 字号 | B | I`。线条行的数值框落在字号那一列，没有 B / I 的行那两格留空，各行等高；
+ * * 中：标签一列，字体一行、字号 + B I 在下一行，各行的字号框从控件列左缘起排，在同一条竖线上；
+ * * 窄（< 262px）：标签放到上面，控件占满一行宽。
+ *
+ * 宽档的阈值按真实列宽算：标签 4rem + 字体至少 ≈100 + 字号 5.5rem + B / I 各 1.75rem + 列间 4。
+ */
+const STYLE_CONTAINER = '@container'
+/* Tailwind 只认完整类名：阈值（宽 350 / 窄 262）写死在下面每个字面量里，不拼接 */
+/** 宽档里「控件列 / 控件行」不再是盒子，控件直接落在行网格的列上 */
+const WIDE_FLATTEN = '@min-[350px]:contents'
+/** 宽档的列：标签 | 字体 | 字号 | 粗 | 斜 */
+const WIDE_COLS = '@min-[350px]:grid-cols-[4rem_minmax(0,1fr)_5.5rem_1.75rem_1.75rem] @min-[350px]:gap-x-1'
+/** 窄档：标签在上，控件占满一行 */
+const NARROW_COLS = '@max-[262px]:grid-cols-1'
+/** 宽档里字体格所在的列（数值格的列写在 `VALUE_W` 里） */
+const WIDE_FAMILY_COL = '@min-[350px]:col-start-2'
+
 /** 控件列里的一行：高 28，控件从左缘起排 */
 function ControlLine({ line, children }: { line: string; children: ReactNode }) {
   return (
-    <div data-style-line={line} className="flex h-7 min-w-0 items-center gap-1">
+    <div data-style-line={line} className={cn('flex h-7 min-w-0 items-center gap-1', WIDE_FLATTEN)}>
       {children}
     </div>
   )
@@ -257,7 +287,7 @@ function ControlLine({ line, children }: { line: string; children: ReactNode }) 
  * 「值」那一格的宽度：字号 / 线宽的数字框与刻度方向的下拉**同一个宽**。放得下「多个值 pt」
  * 与英文的「Outward」；280 px 的最窄侧栏里「值 + 粗体 + 斜体」仍排得下一行。
  */
-const VALUE_W = 'w-[5.5rem] shrink-0'
+const VALUE_W = 'w-[5.5rem] shrink-0 @min-[350px]:col-start-3'
 
 /**
  * 一格的读数：图内那侧是 `ControlValue`（uniform / mixed / unavailable），画布标注那侧是
@@ -448,7 +478,7 @@ interface FigureRowProps {
    * 没绑样式时直接往这张图上写 override，gid 取自显示用的 manifest——那可能是**上一版**（脚本 /
    * override 刚变、这一版还在渲染）。拿过期的 gid 写 override 会写到已经不存在的元素上
    * （Codex #547 P1，与 styleBinding 只认 `exactPanelManifest` 同一条纪律），所以这一版没回来之前
-   * 控件置灰、说原因。绑着样式时写的是样式本身，不经这里的 gid，不锁。
+   * 普通控件置灰；字号可排队，等精确清单到达后重新按角色取目标。绑着样式时写的是样式本身，不经这里的 gid。
    */
   locked: boolean
   panel: PanelObject
@@ -469,7 +499,8 @@ const FigureTextRow = memo(function FigureTextRow({
   faceRole,
   bound,
   locked,
-}: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null }) {
+  canQueueSize,
+}: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null; canQueueSize: boolean }) {
   // memo 的行 props 不随语言变：自己订阅，切语言时行名 / 选项名跟着换（Codex #547）
   useTranslation(['workspace', 'inspector'])
   const sizeEls = useMemo(() => elementsWith(manifest, sizeRole, 'fontsize'), [manifest, sizeRole])
@@ -490,6 +521,7 @@ const FigureTextRow = memo(function FigureTextRow({
   const weight = useTextStyleAdapter(panel, weightEls, WEIGHT_PROPS)
   const style = useTextStyleAdapter(panel, styleEls, STYLE_PROPS)
   const pw = usePendingWrites()
+  const ownerScope = figureScope(useDocumentStore.getState(), panel)
   if (!sizeEls.length && !familyEls.length) return null
 
   const label = ROW_LABEL[id]()
@@ -507,12 +539,27 @@ const FigureTextRow = memo(function FigureTextRow({
         ? editBoundStyle({ kind: 'element', role: faceRole, prop, value: v })
         : (prop === 'weight' ? weight : style).writeOnce(prop, v),
     )
+  const writeSize = (v: number) => {
+    if (bound) return editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
+    const ds = useDocumentStore.getState()
+    const live = ds.doc.objects.find((o) => o.id === panel.id)
+    if (live?.type !== 'panel' || figureScope(ds, live) !== ownerScope) {
+      useUiStore.getState().setStatus(msg('stylePanel.pendingSizeCancelled', undefined, 'workspace'), 'error')
+      return
+    }
+    // 捕获阶段的别的动作可能刚改了文档，React 还没来得及把这一行重画成同步态。
+    // 此时不能用闭包里的旧元素；连已经缓存好新清单的情形也重新按角色取目标。
+    if (live.overrides !== panel.overrides || !exactPanelManifest(useRenderStore.getState(), live)) {
+      return queueFontSize(live, sizeRole, v)
+    }
+    size.writeOnce('fontsize', v)
+  }
 
   return (
     <StyleRow id={id}>
       {familyField && (
         <ControlLine line={`${id}.family`}>
-          <div data-style-cell={`${id}.family`} className="flex min-w-0 flex-1">
+          <div data-style-cell={`${id}.family`} className={cn("flex min-w-0 flex-1", WIDE_FAMILY_COL)}>
             <FamilySelect
               label={sp('familyOf', { row: label })}
               value={pw.shown('fontfamily', family.valueOf('fontfamily'))}
@@ -539,14 +586,8 @@ const FigureTextRow = memo(function FigureTextRow({
                 value={pw.shown('fontsize', size.valueOf('fontsize'))}
                 field={sizeField}
                 step={0.5}
-                locked={locked}
-                onChange={(v) =>
-                  pw.write('fontsize', v, () =>
-                    bound
-                      ? editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
-                      : size.writeOnce('fontsize', v),
-                  )
-                }
+                locked={locked && !canQueueSize}
+                onChange={(v) => pw.write('fontsize', v, () => writeSize(v))}
               />
             </div>
           )}
@@ -638,7 +679,7 @@ function AnnotationRow({
   return (
     <StyleRow id="annotation">
       <ControlLine line="annotation.family">
-        <div data-style-cell="annotation.family" className="flex min-w-0 flex-1">
+        <div data-style-cell="annotation.family" className={cn("flex min-w-0 flex-1", WIDE_FAMILY_COL)}>
           <FamilySelect
             label={sp('familyOf', { row: label })}
             value={pw.shown('fontFamily', adapter.valueOf('fontFamily'))}

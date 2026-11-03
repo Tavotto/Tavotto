@@ -2,7 +2,7 @@ import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { RotateCcw, TriangleAlert } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import {
   backendErrorText,
@@ -304,7 +304,7 @@ function RestoreDialog({
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-          <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
+          <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
           <p className="text-xs leading-relaxed text-ink-2">
             {vh('warnBody')}
             <span className="mt-1 block text-ink-3">{vh('warnForward')}</span>
@@ -313,7 +313,7 @@ function RestoreDialog({
 
         {version?.n === -1 && (
           <div className="flex items-start gap-1.5 rounded-sm bg-danger-surface p-2">
-            <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
+            <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
             <p className="text-xs leading-relaxed text-danger-content">
               {/* 句中有 <b> 强调，走 Trans 保留标签而不是把句子切三段 */}
               <Trans

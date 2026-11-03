@@ -32,7 +32,6 @@ import { i18n } from '@/i18n'
 import { WECOM_CONTACT_URL } from '@/lib/contact'
 import { DiagnosticsSendDialog } from './DiagnosticsSendDialog'
 import { DiagnosticsSettings } from './DiagnosticsSettings'
-import { WeComContactNote } from './WeComContact'
 import { TooltipProvider } from '../ui/Tooltip'
 import { useEnvStore } from '@/store/envStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -111,88 +110,30 @@ async function dialogAt(state: 'ready' | 'done' | 'unknown' | 'failed') {
 }
 
 describe('发送问题反馈确认框', () => {
-  it.each(['done', 'unknown', 'failed'] as const)('zh-CN %s：出现联系行，链接是常量地址的外链', async (state) => {
-    await dialogAt(state)
-    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe(state)
-    expect(q('[data-wecom-contact="active"]')).not.toBeNull()
-    expect(q('[data-wecom-contact="reserved"]')).toBeNull()
-    const a = q<HTMLAnchorElement>('[data-wecom-link]')!
+  it('zh-CN done（没有回信通道）：副标题位置换成「已发送 · 想直接沟通？」，链接是常量地址的外链', async () => {
+    await dialogAt('done')
+    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('done')
+    const line = q('[data-diag-send-sentence]')!
+    expect(line.textContent).toContain(i18n.t('settings.diagnostics.send.doneTitle', { ns: 'dialogs' }))
+    const a = line.querySelector<HTMLAnchorElement>('[data-wecom-link]')!
     expect(a.getAttribute('href')).toBe(WECOM_CONTACT_URL)
     expect(a.target).toBe('_blank')
     expect(a.rel).toContain('noreferrer')
   })
 
-  it('zh-CN preparing：只占位（不可见、inert、无可聚焦链接内容对外）', async () => {
-    vi.mocked(prepareDiagSend).mockReturnValue(new Promise(() => {}))
-    await render(<DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />)
-    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('preparing')
-    expect(q('[data-wecom-contact="active"]')).toBeNull()
-    expect(q('[data-wecom-contact="reserved"]')).not.toBeNull()
-  })
-
-  it.each(['ready', 'done', 'unknown', 'failed'] as const)(
-    'zh-CN %s：隐形尺寸副本恒为最长文案（带编号那句），各态取同一最大高度',
-    async (state) => {
-      await dialogAt(state)
-      const sizer = q('[data-wecom-contact-sizer]')!
-      expect(sizer.getAttribute('aria-hidden')).toBe('true')
-      expect(sizer.className).toContain('invisible')
-      const hint = i18n.t('settings.diagnostics.send.contact.hint', { ns: 'dialogs' })
-      const noId = i18n.t('settings.diagnostics.send.contact.hintNoId', { ns: 'dialogs' })
-      expect(hint.length).toBeGreaterThanOrEqual(noId.length)
-      expect(sizer.textContent).toContain(hint)
-      // 可见那句与尺寸副本叠在同一个网格格子里，高度取两者最大
-      const shown = sizer.parentElement!.querySelector('p:not([data-wecom-contact-sizer])')!
-      expect(shown.className).toContain('[grid-area:1/1]')
-      expect(sizer.className).toContain('[grid-area:1/1]')
-      expect(sizer.textContent!.length).toBeGreaterThanOrEqual(shown.textContent!.length)
-    },
-  )
-
-  it('zh-CN ready：不出现', async () => {
-    await dialogAt('ready')
-    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
-    expect(q('[data-wecom-contact="active"]')).toBeNull()
-    const r = q('[data-wecom-contact="reserved"]')!
-    expect(r.getAttribute('aria-hidden')).toBe('true')
-    expect(r.hasAttribute('inert')).toBe(true)
-    expect(r.className).toContain('invisible')
-  })
-
-  it.each(['done', 'unknown', 'failed'] as const)('en-US %s：元素根本不存在', async (state) => {
-    await i18n.changeLanguage('en-US')
+  it.each(['ready', 'unknown', 'failed'] as const)('zh-CN %s：确认框里不出现联系链接（也不占位）', async (state) => {
     await dialogAt(state)
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe(state)
-    expect(q('[data-wecom-contact]')).toBeNull() // 含占位：英文界面不渲染任何元素
     expect(q('[data-wecom-link]')).toBeNull()
-    expect(q('[data-wecom-qr-toggle]')).toBeNull()
+    expect(q('[data-wecom-contact]')).toBeNull()
   })
 
-  it('二维码默认折叠（无 img），展开后出现 img 且 alt 有意义', async () => {
+  it('en-US done：只写「已发送」对应的英文，没有联系链接', async () => {
+    await i18n.changeLanguage('en-US')
     await dialogAt('done')
-    expect(q('[data-wecom-qr-toggle]')).not.toBeNull()
-    expect(q('[data-wecom-qr-img]')).toBeNull()
-    const b = q<HTMLButtonElement>('[data-wecom-qr-toggle]')!
-    expect(b.getAttribute('aria-expanded')).toBe('false')
-    await act(async () => b.click())
-    expect(b.getAttribute('aria-expanded')).toBe('true')
-    const img = q<HTMLImageElement>('[data-wecom-qr-img]')!
-    expect(img).not.toBeNull()
-    expect(img.alt.length).toBeGreaterThan(8)
-    expect(img.alt).toContain('企业微信')
-  })
-})
-
-describe('联系行的二维码折叠', () => {
-  it('离开结果态再回来，二维码从折叠开始（重试 / 重新备包后不自己展开）', async () => {
-    await render(<WeComContactNote active withReportId />)
-    await act(async () => q<HTMLButtonElement>('[data-wecom-qr-toggle]')!.click())
-    expect(q('[data-wecom-qr-img]')).not.toBeNull()
-    await act(async () => root.render(<TooltipProvider><WeComContactNote active={false} withReportId={false} /></TooltipProvider>))
-    expect(q('[data-wecom-qr-img]')).toBeNull()
-    await act(async () => root.render(<TooltipProvider><WeComContactNote active withReportId /></TooltipProvider>))
-    expect(q('[data-wecom-qr-img]')).toBeNull()
-    expect(q('[data-wecom-qr-toggle]')!.getAttribute('aria-expanded')).toBe('false')
+    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('done')
+    expect(q('[data-wecom-link]')).toBeNull()
+    expect(q('[data-diag-send-sentence]')!.textContent).toBe(i18n.t('settings.diagnostics.send.doneTitle', { ns: 'dialogs' }))
   })
 })
 
@@ -208,13 +149,16 @@ describe('帮助与诊断页', () => {
     await render(<DiagnosticsSettings />)
   }
 
-  it('zh-CN：发送功能开着时出现，并排在发送行之前（发送行仍是组的最后一行）', async () => {
+  it('zh-CN：发送功能开着时出现，在摘要之后、诊断包之前（发送第一行、诊断包最后一行）', async () => {
     await settings(CAP)
     const row = q('[data-diagnostics-contact]')!
     expect(row).not.toBeNull()
     expect(q<HTMLAnchorElement>('[data-diagnostics-contact] [data-wecom-link]')!.getAttribute('href')).toBe(WECOM_CONTACT_URL)
     expect(q('[data-diagnostics-contact] [data-wecom-qr-img]')).toBeNull()
-    expect(q('[data-diagnostics-send]')!.parentElement!.lastElementChild).toBe(q('[data-diagnostics-send]'))
+    const rows = Array.from(q('[data-diagnostics-send]')!.parentElement!.children)
+    expect(rows[0]).toBe(q('[data-diagnostics-send]'))
+    expect(rows[rows.length - 2]).toBe(row)
+    expect(rows[rows.length - 1]).toBe(q('[data-diagnostics-bundle]'))
   })
 
   it('zh-CN：发送功能关闭（capability null）也出现', async () => {

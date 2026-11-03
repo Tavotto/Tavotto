@@ -58,8 +58,8 @@
       "given": "用户说「帮我安装 Tavotto」，没有要求修改源码",
       "expect": "按 README 首用章节走普通安装；不 clone、不 pnpm/npm/cargo/Tauri/测试/editable install",
       "anchors": [
-        {"doc": "README.zh-CN.md", "must": ["普通用户不要克隆或构建这个仓库", "在 Codex 中第一次使用 Tavotto"]},
-        {"doc": "README.md", "must": ["do not clone or build this repository", "Using Tavotto with Codex for the first time"]},
+        {"doc": "README.zh-CN.md", "must": ["普通用户不要克隆或构建这个仓库", "在 Codex 里用 Tavotto（插件）"]},
+        {"doc": "README.md", "must": ["do not clone or build this repository", "Using Tavotto in Codex (plugin)"]},
         {"doc": "AGENTS.md", "must": ["用户安装任务", "不得构建仓库、安装开发依赖或运行完整测试"]}
       ]
     },

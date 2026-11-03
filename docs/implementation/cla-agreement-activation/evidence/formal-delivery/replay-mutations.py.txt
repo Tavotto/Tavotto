@@ -1,0 +1,17 @@
+import pathlib,shutil,json,hashlib,subprocess
+root=pathlib.Path('/tmp/cla-agreement-activation-formal-review');src=pathlib.Path('/workspace/Tavotto-cla-agreement-activation/services/cla-cloudflare');baseline=root/'service';baseline.mkdir(parents=True,exist_ok=True)
+for part in ['src','tests','scripts','deployment','migrations']:shutil.copytree(src/part,baseline/part,dirs_exist_ok=True)
+shutil.copy2(src/'package.json',baseline/'package.json')
+cases=json.loads((src/'tests/agreement-activation-mutation-cases.json').read_text());results=[]
+for case in cases:
+ dst=root/'mutants'/case['name'].replace(' ','-');dst.mkdir(parents=True,exist_ok=True)
+ for part in ['src','tests','scripts']:shutil.copytree(baseline/part,dst/part,dirs_exist_ok=True)
+ file=dst/case['file'];content=file.read_text();assert content.count(case['before'])==1,(case['name'],content.count(case['before']))
+ file.write_text(content.replace(case['before'],case['after'],1));assert file.read_text()!=content
+ argv=['node','--test','--test-name-pattern='+case['pattern'],case['testFile']]
+ result=subprocess.run(argv,cwd=dst,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+ log=root/(case['name'].replace(' ','-')+'.txt');log.write_text(result.stdout)
+ record={**case,'location_count':1,'source_sha256':hashlib.sha256(content.encode()).hexdigest(),'mutant_sha256':hashlib.sha256(file.read_bytes()).hexdigest(),'argv':argv,'exit_code':result.returncode,'actual_assertion_error':'AssertionError' in result.stdout,'log':str(log)}
+ results.append(record);(root/'mutation-results.json').write_text(json.dumps(results,indent=2)+'\n')
+ print(json.dumps({k:record[k] for k in ['name','location_count','exit_code','actual_assertion_error']}),flush=True)
+ if result.returncode!=1 or not record['actual_assertion_error']:raise SystemExit(1)

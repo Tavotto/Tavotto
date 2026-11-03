@@ -12,6 +12,7 @@
 
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS, type FigureLineRowId, type FigureTextRowId } from './stylePanelModel'
 import { styleIsItalic, weightIsBold, weightNumber } from './typography'
+import { figureFontChoice } from './figureFontChoice'
 
 /** 示例图默认值（一张 9 pt / 0.5 pt 的典型论文图） */
 export const SAMPLE_DEFAULTS = {
@@ -88,7 +89,8 @@ const readString = (obj: unknown, path: string[]): string | null => {
 
 /** 样式里的字体：一个名字，或 matplotlib 的候选列表（取第一个——matplotlib 也是先试它） */
 const familyOf = (v: unknown): string | null => {
-  const first = Array.isArray(v) ? v[0] : v
+  const primary = figureFontChoice(v)?.primary ?? v
+  const first = Array.isArray(primary) ? primary[0] : primary
   return typeof first === 'string' && first.trim() ? first.trim() : null
 }
 

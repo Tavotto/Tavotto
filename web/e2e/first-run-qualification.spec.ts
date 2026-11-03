@@ -318,12 +318,13 @@ test(
     await expectHittable(titleItem, '元素树里的「标题」')
     await titleItem.click()
     const inspector = page.getByLabel('右侧面板', { exact: true })
-    const titleField = inspector.locator('[data-prop="text"] textarea')
+    // 内容框是所见即所得文字框（ADR 0152）：显示的字就是内容
+    const titleField = inspector.locator('[data-prop="text"] [data-rich-text]')
     await expect(titleField).toBeVisible()
-    await expect(titleField).toHaveValue('峰 值 A [smooth]') // 脚本自己的标题：label + 模式
+    await expect(titleField).toHaveText('峰 值 A [smooth]') // 脚本自己的标题：label + 模式
     await titleField.fill(NEW_TITLE)
     await titleField.press('Enter')
-    await expect(titleField).toHaveValue(NEW_TITLE)
+    await expect(titleField).toHaveText(NEW_TITLE)
     await expect(inspector.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
     // 编辑渲染请求里带着这条 patch，响应里标题文字就是新值
     await expect
@@ -340,8 +341,7 @@ test(
       .toBe(true)
     expect(execs(project)).toHaveLength(1) // 编辑是热态渲染，不重跑脚本
 
-    // ---- ⌘S 存进项目：回到画布，命名「T11 首跑」
-    await page.locator('[data-context-back]').first().click()
+    // ---- ⌘S 存进项目：画布上只有这一张图（单图编辑，不需要回排版），命名「T11 首跑」
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     await page.keyboard.press('ControlOrMeta+s')
     const dialog = page.getByRole('dialog', { name: '存进项目' })
@@ -412,8 +412,8 @@ test(
     await openElementsTab(page)
     await (await expandTreeUntil(page, /^标题/)).click()
     await expect(
-      page.getByLabel('右侧面板', { exact: true }).locator('[data-prop="text"] textarea'),
-    ).toHaveValue(NEW_TITLE)
+      page.getByLabel('右侧面板', { exact: true }).locator('[data-prop="text"] [data-rich-text]'),
+    ).toHaveText(NEW_TITLE)
     // 冷重放：冻结配置 + 那一次执行的回答转录；没有再弹输入框
     const replays = execs(project).slice(before)
     expect(replays.length).toBeGreaterThanOrEqual(1)
@@ -427,8 +427,7 @@ test(
     await expect(page.locator('[data-script-input-answer]')).toHaveCount(0)
     await expect(card(page)).toHaveCount(0)
 
-    // ---- 导出 PDF（界面）：文件真的落盘、%PDF- 开头
-    await page.locator('[data-context-back]').first().click()
+    // ---- 导出 PDF（界面）：文件真的落盘、%PDF- 开头（单图编辑下导出，不需要回排版）
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     await page.keyboard.press('ControlOrMeta+e')
     const exp = page.getByRole('dialog')
@@ -439,8 +438,8 @@ test(
     }
     const pdfBox = exp.getByRole('checkbox', { name: 'PDF', exact: true })
     if (!(await pdfBox.isChecked())) await pdfBox.check()
-    const confirm = exp.locator('input[data-export-confirm]')
-    if (await confirm.count()) await confirm.check()
+    // 单图编辑固定按原图导出，没有范围可选、也没有知情确认；检查结果是异步到的，「开始导出」可点才往下走
+    await expect(exp.getByRole('button', { name: /开始导出/ })).toBeEnabled({ timeout: 60_000 })
     const started = page.waitForResponse(
       (r) => new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST',
     )
@@ -448,7 +447,7 @@ test(
     await exp.getByRole('button', { name: /开始导出/ }).click()
     const job = (await (await started).json()) as { export_dir?: string }
     expect(job.export_dir, 'start 回包里应当有导出目录').toBeTruthy()
-    await expect(exp.getByText(/已保存到/)).toBeVisible({ timeout: 240_000 })
+    await expect(exp.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
     const exportDir = job.export_dir!
     const pdfs = () =>
       (existsSync(exportDir) ? readdirSync(exportDir) : []).filter(

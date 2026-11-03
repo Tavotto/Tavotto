@@ -42,7 +42,7 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
   const lay = sampleLayout(g)
   const { box, bottom, tickIn, tickOut, legend } = lay
   return (
-    <figure data-style-preview className="m-0 flex flex-col gap-1">
+    <figure data-style-preview className="m-0 flex flex-col items-center gap-1">
       <svg
         role="img"
         aria-label={label}

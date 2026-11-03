@@ -1,0 +1,26 @@
+✖ stored canonical body corruption is rejected by runtime hash validation (39.658418ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 268.358996
+
+✖ failing tests:
+
+test at ../../tmp/cla-activation-independent-mutants/runtime-body-hash/independent-review.test.mjs:26:1
+✖ stored canonical body corruption is rejected by runtime hash validation (39.658418ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-activation-independent-mutants/runtime-body-hash/independent-review.test.mjs:26:330
+      at async iso (file:///tmp/cla-activation-independent-mutants/runtime-body-hash/independent-review.test.mjs:10:52)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -218,17 +218,6 @@ describe('文案与计数', () => {
   })
 })
 
-describe('结构列表的计数也带单位（T07）', () => {
-  it('对象数说的是「对象」，与元素数不会看混', async () => {
-    useUiStore.setState({ leftTab: 'layers' })
-    await mount()
-    expect(heading()).toContain(t('layerTree.count', { ns: 'workspace', count: 1 }))
-    expect(t('layerTree.count', { ns: 'workspace', count: 1 })).not.toBe(
-      t('elementTree.count', { ns: 'workspace', count: 1 }),
-    )
-  })
-})
-
 /**
  * 键盘可连续浏览父子层级（审计 T08 验收后半句）。树是 `role="tree"` +
  * `role="treeitem"`，焦点靠 roving tabindex 走，不靠 Tab 一格一格穿。
@@ -470,13 +459,15 @@ describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
     expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
   })
 
-  it('有可编辑的图但没选中：一行灰字 + 「选中一张可编辑的图」', async () => {
+  it('有可编辑的图但没选中：与改图面板同一幅「选图」线稿 + 「选中一张可编辑的图」', async () => {
     useUiStore.getState().setElementPanel(null)
     useSelectionStore.getState().set([])
     await mount()
-    const line = emptyLine()!
-    expect(line.textContent).toContain(t('elementTree.noPanelTitle', { ns: 'workspace' }))
-    await act(async () => line.querySelector('button')!.click())
+    expect(emptyLine()).toBeNull()
+    const es = host.querySelector<HTMLElement>('[data-empty-state]')!
+    expect(es.querySelector('[data-sketch="select"]')).not.toBeNull()
+    expect(es.textContent).toContain(t('elementTree.noPanelTitle', { ns: 'workspace' }))
+    await act(async () => es.querySelector('button')!.click())
     expect(useSelectionStore.getState().ids).toEqual(['p1'])
   })
 
@@ -513,5 +504,45 @@ describe('选中项滚入视野与折叠中的子树', () => {
     } finally {
       Element.prototype.scrollIntoView = orig
     }
+  })
+})
+
+describe('存盘后脚本又改过这张图（ADR 0139 §八）', () => {
+  it('manifest 报 modified_after_save 时搜索行里出现一枚胶囊，悬停给出原因', async () => {
+    seedExactRender(panel, { ...manifest, modified_after_save: true } as never)
+    await mount()
+    const chip = host.querySelector('[data-modified-after-save]') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.getAttribute('role')).toBe('note')
+    expect(chip.textContent).toMatch(/与存盘文件不同|Differs from the saved file/)
+    expect(chip.getAttribute('title')).toMatch(/保存这张图之后|after saving it/)
+  })
+
+  it('manifest 同时报 save_moment: restored 时胶囊改说「按存盘时的样子编辑」，不再说与文件不同', async () => {
+    seedExactRender(
+      panel,
+      { ...manifest, modified_after_save: true, save_moment: 'restored' } as never,
+    )
+    await mount()
+    const chip = host.querySelector('[data-modified-after-save]') as HTMLElement
+    expect(chip.getAttribute('data-save-moment')).toBe('restored')
+    expect(chip.textContent).toMatch(/按存盘时的样子编辑|Edited as saved/)
+    expect(chip.textContent).not.toMatch(/与存盘文件不同|Differs from the saved file/)
+    expect(chip.getAttribute('title')).toMatch(/保存那一刻|moment of that save/)
+  })
+
+  it('没拍到快照（save_moment_unavailable）时仍是原来的「与存盘文件不同」', async () => {
+    seedExactRender(
+      panel,
+      { ...manifest, modified_after_save: true, save_moment_unavailable: 'unpicklable' } as never,
+    )
+    await mount()
+    const chip = host.querySelector('[data-modified-after-save]') as HTMLElement
+    expect(chip.textContent).toMatch(/与存盘文件不同|Differs from the saved file/)
+  })
+
+  it('不报时没有胶囊', async () => {
+    await mount()
+    expect(host.querySelector('[data-modified-after-save]')).toBeNull()
   })
 })

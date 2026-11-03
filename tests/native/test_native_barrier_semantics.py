@@ -441,3 +441,119 @@ def test_editing_is_refused_while_the_script_runs(tmp_path):
                 session.ensure_built()
             assert exc.value.code == runcodes.NATIVE_SESSION_NOT_AT_BARRIER
         nativekit.finish(session, proc)
+
+
+TEX_CJK_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+title = ax.set_title("Script")
+ax.text(0.5, 0.5, "", usetex=True)   # 图上有 TeX 文字：rcParams 不补回退尾巴（空串不触发 TeX）
+plt.show()                           # ← 屏障 1
+
+late = ax.text(0.2, 0.2, "中文")       # 屏障之间新加的默认族文字
+plt.show()                           # ← 屏障 2：rebase 必须逐 Text 补上回退尾巴
+print("FAMS", len(title.get_fontfamily()), len(late.get_fontfamily()))
+"""
+
+
+def test_rebase_adds_cjk_fallback_to_text_created_between_barriers_on_a_tex_figure(tmp_path):
+    """图上有 usetex 文字时 rcParams 不补尾巴；屏障后新加的文字只能靠 rebase 里逐 Text 补。"""
+    nativekit.write(tmp_path / "figure.py", TEX_CJK_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        code, out, err = nativekit.finish(session, proc)
+
+    assert code == 0, err
+    line = next(ln for ln in out.splitlines() if ln.startswith("FAMS"))
+    _, old, new = line.split()
+    if int(old) == 1:
+        pytest.skip("这台机器没有可用的中日韩候选字体")
+    assert int(new) > 1, f"屏障后新加的文字没有回退尾巴: {line}"
+
+
+TEX_LATER_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.texmanager import TexManager
+
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.set_title("Script")
+plt.show()                           # ← 屏障 1：没有 TeX，rcParams 补了回退尾巴
+
+ax.text(0.5, 0.5, "", usetex=True)   # 之后才出现 TeX 文字（空串不触发 TeX）
+plt.show()                           # ← 屏障 2：rebase 必须把我们补的尾巴撤回
+print("FAMILY", list(matplotlib.rcParams["font.family"]), TexManager._get_font_family_and_reduced())
+"""
+
+
+def test_rebase_removes_injected_family_tail_when_tex_appears_later(tmp_path):
+    """屏障 1 无 TeX（尾巴已补）、屏障 2 前脚本开了 usetex 文字：`font.family` 恢复脚本原值。"""
+    nativekit.write(tmp_path / "figure.py", TEX_LATER_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        code, out, err = nativekit.finish(session, proc)
+
+    assert code == 0, err
+    line = next(ln for ln in out.splitlines() if ln.startswith("FAMILY"))
+    assert line == "FAMILY ['sans-serif'] ('sans-serif', False)", line
+
+
+TAIL_ONLY_IN_BARRIER_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+plt.show()                           # ← 屏障 1：无 TeX，屏障内 rcParams 带尾巴
+print("BETWEEN", list(matplotlib.rcParams["font.family"]))
+plt.show()                           # ← 屏障 2：仍无 TeX，尾巴重新补上
+print("DONE")
+"""
+
+
+def test_family_tail_exists_only_inside_barriers(tmp_path):
+    """放行后脚本看到自己的 `font.family`；下一个屏障按当时有无 TeX 重新判定（这里无 TeX → 补上）。"""
+    nativekit.write(tmp_path / "figure.py", TAIL_ONLY_IN_BARRIER_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        code, out, err = nativekit.finish(session, proc)
+
+    assert code == 0, err
+    line = next(ln for ln in out.splitlines() if ln.startswith("BETWEEN"))
+    assert line == "BETWEEN ['sans-serif']", line

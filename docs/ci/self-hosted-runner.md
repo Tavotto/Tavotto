@@ -488,7 +488,39 @@ ci-infra 的实例 checkout `Tavotto/Tavotto` 也靠它（第 5 节）。
 
 ---
 
-## 10. 相关文档
+## 10. release 档的按需竞价机
+
+只有 `mode=release` 的 lab 不再排在常驻 VM 后面：`_lab-qualification.yml::qualify` 的 `runs-on`
+按档位选（`fromJSON(inputs.mode == 'release' && …)`）——release 用标签 `tavotto-lab-spot`，
+main / nightly / weekly 仍是 `tavotto-lab`（本文前 9 节那台常驻 VM，一个字没变）。
+合同：`tests/test_merge_queue_workflows.py::TestRunnerTrustZones`（真假两支各是哪组标签、
+`actionlint.yaml` 登记的标签 == 实际用到的）。
+
+**机器不在这个仓库里管。** 它由私有仓库 `Tavotto/ci-infra` 的 `lab-qualification.yml` 管：
+
+| 阶段 | 谁 | 做什么 |
+| --- | --- | --- |
+| 开机 | `machine-up`（托管机，仅 `mode=release` 真开机） | 腾讯云香港开一台竞价机（SPOTPAID，机型 × 可用区依次回退，全部售罄再按量计费），用 `generate-jitconfig` 注册 JIT runner（标签 `self-hosted,linux,x64,tavotto-lab-spot`），等它 online |
+| 状态 | runner 的 `JOB_STARTED` / `JOB_COMPLETED` 钩子 | 开跑前从 COS 桶拉 `/srv/tavotto-ci` 的 `baselines/ upgrade/ reports/`（约 2 MB），跑完推回去；`tmp/ cache/ locks/` 不同步 |
+| 跑 | 本仓库的 `_lab-qualification.yml` | 步骤定义不变，只有 runner 不同；JIT runner 跑完一个 job 即自动注销 |
+| 释放 | `machine-down`（`if: always()`）+ `lab-reaper.yml`（每 30 分钟） | 按实例标签 `lab-run=<run_id>` 释放；兜底：开机超 4 小时、或对应 run 已结束的实例也释放 |
+| 被回收 | `lab-retry.yml` | 竞价机被腾讯云回收导致 qualify 失败时，自动重跑**一次**（`run_attempt == 1`） |
+
+与常驻 VM 的差别（读 release 档 lab 结论时要知道）：
+
+- 每次都是**干净的机器**：`tmp/ cache/` 冷启动，`benchmark` 用的是同一机型族但不是同一台宿主机——
+  性能基线若要跨档位比较，只比同一档位的历史。
+- 基线（`baselines/ upgrade/ reports/`）在 COS 桶里是**唯一的真相**；常驻 VM 的 `/srv/tavotto-ci`
+  与它**不互通**。要手工改基线，改桶里的对象，别改 VM。
+- 机器被回收 = **没验**，不是「验了没过」：重跑一次仍被回收则按失败处理（`lab/release` = failure）。
+- 竞价机的密钥 / 云凭据不在本仓库：全部在 ci-infra 的 secret 里，只有它的托管机 job 读得到；
+  机器上只有 JIT 配置（一次性）和实例角色签发的临时凭证（只能读写那一个桶的 `lab-state/` 前缀）。
+
+标签、桶、网络、镜像的设置清单与排障见 ci-infra 仓库的 README「竞价机」一节（私有）。
+
+---
+
+## 11. 相关文档
 
 - [`release-qualification.md`](release-qualification.md) — 各环节验什么、怎么判、失败了怎么读
 - `.github/workflows/lab-ci.yml` — 实验室 CI 本体

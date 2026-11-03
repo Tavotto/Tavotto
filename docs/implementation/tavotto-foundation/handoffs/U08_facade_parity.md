@@ -85,7 +85,7 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 
 | ID | 处置 | 证据 |
 |---|---|---|
-| RC-001 每个导出项有迁移实现和契约测试 | 做了（19 项 facade + 八个 probe 调用点经契约层一处切换） | ledger 19 项 `migration_evidence`（U08）；`test_the_contract_names_in_all_are_the_ledger_nineteen` |
+| RC-001 每个导出项有迁移实现和契约测试 | 做了（19 项 facade + 八个 probe 调用点经契约层一处切换） | ledger 19 项 `migration_evidence`（U08）；`test_the_contract_names_in_all_are_the_ledger_names` |
 | RC-002 Canvas 面契约 | 做了（同实例多格式出自同一 Canonical PDF；save_png 不重新解析；重复 close 幂等） | `test_the_canvas_face_saves_png_and_tiff_from_one_canonical_pdf` |
 | RC-003 原图与画布尺寸 / 变换隔离 | 做了（`scope=original` 路不动，契约层切换；候选 `original_pdf` 只搬第一页不吃 canvas x/y/w/h） | `test_export_pipeline.py::test_original_export_ignores_the_layout_scale` 在候选下逐字过（parity） |
 | RC-004 annotation / legacy 字段语义 | 做了（`test_compose_annotations.py` / `test_compose_switched_shapes.py` 在候选下逐字过） | parity.json |

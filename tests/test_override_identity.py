@@ -265,6 +265,33 @@ def test_renaming_the_curve_does_not_invalidate_its_own_edits(tmp_path):
         pool.discard(w)
 
 
+def test_rebinding_the_identity_after_an_ai_relabel_keeps_the_edits_applying(base, tmp_path):
+    """AI 改名（ADR 0083 §五）：脚本里 alpha 的 label 改了、数据没动。画布上写在旧身份上的编辑被引擎拒绝（身份是 label 的
+    摘要）；前端按后端报的 `task.renamed` 把这些编辑的 `identity` 改写成新身份之后，同一份 patches 在改名后的脚本上照常应用，
+    撤销时改回旧身份、在还原的脚本上同样照常应用。"""
+    patches, gid = _stamped_patches(base)
+    old_id = patches[0]["identity"]
+    relabeled = BASE.replace('label="alpha"', 'label="alpha (n=4)"')
+    figs = _library(tmp_path / "relabeled", relabeled)
+    plain, _ = _replay(figs, [])
+    new_id = plain["elements"][[e["gid"] for e in plain["elements"]].index(gid)]["identity"]
+    assert new_id and new_id != old_id
+    # 没改写：旧身份的编辑被拒（不会静默落到别的对象，也不再跟着 alpha 走）
+    manifest, warnings = _replay(figs, patches)
+    assert any(REFUSED.search(w) for w in warnings), warnings
+    assert all(v["color"] != MAGENTA for v in _lines(manifest).values())
+    # 改写旧 → 新（只改 identity 等于旧值的条目）：照常应用、无 warning
+    rebound = [dict(p, identity=new_id) if p["identity"] == old_id else p for p in patches]
+    manifest, warnings = _replay(figs, rebound)
+    assert warnings == []
+    assert _lines(manifest)["alpha (n=4)"]["color"] == MAGENTA
+    # 撤销这次 AI 修改：脚本回到原样，身份改回旧值，照常应用；没改回就是被拒
+    manifest, warnings = _replay(_library(tmp_path / "reverted", BASE), patches)
+    assert warnings == [] and _lines(manifest)["alpha"]["color"] == MAGENTA
+    _, warnings = _replay(_library(tmp_path / "reverted2", BASE), rebound)
+    assert any(REFUSED.search(w) for w in warnings), warnings
+
+
 # ---------------- 写回：同一道核对在一次性重放里拦下 ----------------
 
 REGISTRY = {

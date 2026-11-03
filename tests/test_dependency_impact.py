@@ -489,6 +489,14 @@ class TestAdoptionFence:
         venv = real_venv(project)
         _adopt(project, venv)  # 确认期间用户采用了自己的 .venv
         assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
+        # 等终态，不等「不在跑」：`prepare` 的 finally 先释放认领，`_prepare_guarded` 之后才写 failed，
+        # 两步之间读 `progress` 还是 idle（#1559，macOS 慢腿上整片跑时出现）
+        _wait_until(
+            lambda: (
+                deprepair.progress(plan.plan_id)["state"]
+                in (deprepair.STATE_FAILED, deprepair.STATE_DONE, deprepair.STATE_CANCELLED)
+            )
+        )
         _wait_until(lambda: not deprepair.is_running(plan.plan_id))
         rec = deprepair.progress(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED and rec["code"] == deprepair.ERROR_PLAN_STALE

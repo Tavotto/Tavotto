@@ -3,7 +3,6 @@ import {
   Check,
   Download,
   FileCodeCorner,
-  LoaderCircle,
   Redo2,
   Undo2,
   ShieldAlert,
@@ -19,6 +18,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Notice } from '@/components/ui/Notice'
 import { Tip } from '@/components/ui/Tooltip'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { ElementTree } from '@/components/left/ElementTree'
@@ -826,7 +826,7 @@ function IntegrityBadge({ integrity }: { integrity: SourceIntegrity }) {
         verdict === 'changed' ? 'text-danger' : 'text-ink-3',
       )}
     >
-      {verdict === 'changed' && <ShieldAlert size={ICON_SIZE.xs} aria-hidden />}
+      {verdict === 'changed' && <ShieldAlert size={ICON_SIZE.sm} aria-hidden />}
       · {label}
     </span>
   )
@@ -922,7 +922,7 @@ function RenderState({
   if (rendering || pending) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-        <LoaderCircle size={ICON_SIZE.sm} className={rendering ? 'animate-spin' : ''} />
+        <Spinner size={ICON_SIZE.sm} className={rendering ? undefined : 'animate-none'} />
         {rendering ? pg('rendering') : pg('pendingEdits')}
       </span>
     )

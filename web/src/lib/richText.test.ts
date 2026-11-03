@@ -5,6 +5,7 @@ import {
   interpretRuns,
   parseRuns,
   plainText,
+  runLines,
   serializeRuns,
   toggleMathScript,
   toggleScript,
@@ -234,5 +235,43 @@ describe('interpretRuns', () => {
     expect(hasScientificChars('H₂O')).toBe(true)
     expect(hasScientificChars('m²')).toBe(true)
     expect(hasScientificChars('Sample A 样品')).toBe(false)
+  })
+})
+
+describe('LaTeX 写法（ADR 0152）的画布 / 大小写约定', () => {
+  it('runLines：样式跨换行时两行都带着；旧标记照旧先切行再解析', () => {
+    expect(runLines('\\textit{ab\ncd} e', 'latex')).toEqual([
+      [{ text: 'ab', script: '', italic: true }],
+      [{ text: 'cd', script: '', italic: true }, { text: ' e', script: '' }],
+    ])
+    expect(runLines('a^{2}\nb')).toEqual([
+      [{ text: 'a', script: '' }, { text: '2', script: 'sup' }],
+      [{ text: 'b', script: '' }],
+    ])
+  })
+
+  it('runLines：读不懂的命令跨行时两半都留着外层样式（与导出 _run_lines 同一约定）', () => {
+    expect(runLines('\\textit{\\textsc{ab\ncd}}', 'latex')).toEqual([
+      [{ text: '\\textsc{ab', script: '', italic: true, raw: true }],
+      [{ text: 'cd}', script: '', italic: true, raw: true }],
+    ])
+  })
+
+  it('大小写只动字，不动命令与公式源码', () => {
+    expect(transformCase('\\textit{temp} $\\alpha_{ij}$', 'upper', false, 'latex')).toBe(
+      '\\textit{TEMP} $\\alpha_{ij}$',
+    )
+  })
+
+  it('没有 format 时 LaTeX 命令就是字（老标注逐字不变）', () => {
+    expect(parseRuns('\\textit{T} $x$')).toEqual([{ text: '\\textit{T} $x$', script: '' }])
+  })
+})
+
+describe('displayText：名字 / 列表里显示的那串字（ADR 0152 PR 4）', () => {
+  it('LaTeX 写法去掉命令（公式留源码），旧标记原样', async () => {
+    const { displayText } = await import('./richText')
+    expect(displayText('Rate \\textit{k} = $A e^{-E}$', 'latex')).toBe('Rate k = A e^{-E}')
+    expect(displayText('cm^{-1}')).toBe('cm^{-1}')
   })
 })

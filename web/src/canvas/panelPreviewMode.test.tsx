@@ -136,9 +136,13 @@ async function mount() {
 }
 
 const inlineSvg = () => container.querySelector('[data-element-svg]')
+const latestPng = () => {
+  const url = vi.mocked(URL.createObjectURL).mock.results.at(-1)?.value
+  return [...container.querySelectorAll('img')].find((img) => img.getAttribute('src') === url)!
+}
 async function loadCurrentPng() {
   await act(async () => {
-    container.querySelector('img:not([aria-hidden])')!.dispatchEvent(new Event('load'))
+    latestPng().dispatchEvent(new Event('load'))
   })
 }
 
@@ -168,7 +172,7 @@ describe('PanelView：三档预览表示法', () => {
 
     // 一个 dangerouslySetInnerHTML 都没有——这正是不变量 3 要的结果
     expect(inlineSvg()).toBeNull()
-    const img = container.querySelector('img')
+    const img = latestPng()
     expect(img?.getAttribute('src')).toBe('blob:mock/1')
     // 位图按**这个面板自己的 patches** 出（状态中立的既有链路）
     expect(previewPng).toHaveBeenCalledWith('Fig1.pdf', PANEL.overrides, expect.any(Number))
@@ -187,7 +191,7 @@ describe('PanelView：三档预览表示法', () => {
     await mount()
 
     expect(inlineSvg()).toBeNull()
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    expect(latestPng().getAttribute('src')).toBe('blob:mock/1')
     expect(previewPng).toHaveBeenCalledWith('Fig1.pdf', PANEL.overrides, expect.any(Number))
     await loadCurrentPng()
     // 几何权威一个字都不放松（不变量 4）
@@ -579,7 +583,7 @@ describe('性能探针：位图这一格的「图落定」', () => {
     recordApplied(PANEL)
     await mount()
 
-    const img = container.querySelector('img')!
+    const img = latestPng()
     expect(img.getAttribute('src')).toBe('blob:mock/1')
     const r = perfStop()!.renders[0]
     // 位图已经取回来了，但还没加载完：不许提前收口
@@ -593,7 +597,7 @@ describe('性能探针：位图这一格的「图落定」', () => {
     recordApplied(PANEL)
     await mount()
 
-    await fireLoad(container.querySelector('img')!)
+    await fireLoad(latestPng())
     const r = perfStop()!.renders[0]
     expect(r.painted).not.toBeNull()
     expect(r.painted!).toBeGreaterThanOrEqual(r.applied!)
@@ -604,7 +608,8 @@ describe('性能探针：位图这一格的「图落定」', () => {
   it('上一变体的位图（新图还在路上时的替身）加载完，不算这一版落定', async () => {
     seed({ svg: null, preview: RASTER })
     await mount() // 旧变体的位图已经挂上
-    const img = container.querySelector('img')!
+    await loadCurrentPng()
+    const img = latestPng()
     expect(img.getAttribute('src')).toBe('blob:mock/1')
 
     // 用户改了一下：新变体的渲染已写进 store，它的位图永不落地
@@ -625,15 +630,16 @@ describe('性能探针：位图这一格的「图落定」', () => {
       root.render(<PanelView obj={next} />)
     })
     // 画布上仍暂挂着上一变体那张：它此刻加载完，也不是新变体上屏
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
-    await fireLoad(container.querySelector('img')!)
+    expect(latestPng().getAttribute('src')).toBe('blob:mock/1')
+    await fireLoad(latestPng())
     expect(perfStop()!.renders[0].painted).toBeNull()
   })
 
   it('同一变体的上一 rev 那张（新一版渲染后重取还在路上）加载完，不算这一版落定', async () => {
     seed({ svg: null, preview: RASTER })
     await mount() // rev 3 的位图已经挂上
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    await loadCurrentPng()
+    expect(latestPng().getAttribute('src')).toBe('blob:mock/1')
 
     // 同一变体重新渲染了一版（rev 4，比如脚本改了）：按 rev 重取的位图永不落地
     previewPngImpl = () => new Promise<Blob>(() => {})
@@ -642,8 +648,8 @@ describe('性能探针：位图这一格的「图落定」', () => {
       seed({ svg: null, preview: RASTER, rev: 4 })
       recordApplied(PANEL)
     })
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
-    await fireLoad(container.querySelector('img')!)
+    expect(latestPng().getAttribute('src')).toBe('blob:mock/1')
+    await fireLoad(latestPng())
     expect(perfStop()!.renders[0].painted).toBeNull()
   })
 })
@@ -748,7 +754,7 @@ describe('PNG geometry is paired with the image that loaded', () => {
     await mount()
     await loadCurrentPng()
     await act(async () => {
-      container.querySelector('img')!.dispatchEvent(new Event('error'))
+      latestPng().dispatchEvent(new Event('error'))
     })
     expect(exact()).toBeNull()
   })

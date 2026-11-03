@@ -1,0 +1,97 @@
+[
+  {
+    "name": "historical-only-terminal",
+    "before": "if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');",
+    "after": "",
+    "pattern": "independent historical path rejects signed enable",
+    "file": "src/native/delegation.ts",
+    "method": "appendHistoricalRevocation",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent historical path rejects signed enable",
+      "tests/independent-historical-revocation.test.mjs"
+    ],
+    "exit_code": 1,
+    "assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-review/historical-only-terminal.txt",
+    "sha256": "221814ea9f277293f259f80a7eb17971553050ab68b22f0a717759f8fd8dff47"
+  },
+  {
+    "name": "historical-original-key",
+    "before": "event=await this.control(record,grant,g.hash,now,g.public_key);",
+    "after": "event=await this.control(record,grant,g.hash,now);",
+    "pattern": "independent historical uses registered original key even when current key signs the exact revoke body",
+    "file": "src/native/delegation.ts",
+    "method": "appendHistoricalRevocation",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent historical uses registered original key even when current key signs the exact revoke body",
+      "tests/independent-historical-revocation.test.mjs"
+    ],
+    "exit_code": 1,
+    "assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-review/historical-original-key.txt",
+    "sha256": "584fce18515c032a1272d54a37882747f8666aec03312419746709df86377330"
+  },
+  {
+    "name": "historical-full-chain",
+    "before": "const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=",
+    "after": "const grant=original,event=",
+    "pattern": "independent historical rechecks complete stored chain metadata",
+    "file": "src/native/delegation.ts",
+    "method": "appendHistoricalRevocation",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent historical rechecks complete stored chain metadata",
+      "tests/independent-historical-revocation.test.mjs"
+    ],
+    "exit_code": 1,
+    "assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-review/historical-full-chain.txt",
+    "sha256": "5ed413a98ad2a1a2171140cd351b4eca2681130c419dd58659971d5a69b24f70"
+  },
+  {
+    "name": "historical-commit-revision",
+    "before": "...this.s.store.cas(revision),",
+    "after": "...this.s.store.guard('1'),",
+    "pattern": "independent historical revision conflict cannot consume predecessor",
+    "file": "src/native/delegation.ts",
+    "method": "appendHistoricalRevocation",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent historical revision conflict cannot consume predecessor",
+      "tests/independent-historical-revocation.test.mjs"
+    ],
+    "exit_code": 1,
+    "assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-review/historical-commit-revision.txt",
+    "sha256": "8bfb5df264bd6842cfdece809c34b16a7a9fbd8ec6d47ae2e648ff8f9b45a917"
+  },
+  {
+    "name": "historical-commit-clock",
+    "before": "${DB_NOW}>=? AND",
+    "after": "(? IS NOT NULL) AND",
+    "pattern": "independent historical database clock is checked again at commit",
+    "file": "src/native/delegation.ts",
+    "method": "appendHistoricalRevocation",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent historical database clock is checked again at commit",
+      "tests/independent-historical-revocation.test.mjs"
+    ],
+    "exit_code": 1,
+    "assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-review/historical-commit-clock.txt",
+    "sha256": "0e021c955484015f88ba4d001522bc6504d7decba2df0e7f02882992b6d67f19"
+  }
+]

@@ -55,6 +55,8 @@ INIT_FIELDS = {
     "sha256",
     "note",
 }
+#: 可选字段（尚未部署的旧服务端 extra=forbid 会拒收）：error_summary（infra #28）、want_reply（反馈包回信）
+INIT_OPTIONAL_NEW = {"error_summary": "accepts_error_summary", "want_reply": "accepts_want_reply"}
 INIT_REQUIRED = {
     "client_request_id",
     "tavotto_version",
@@ -97,6 +99,7 @@ class Report:
     note: str | None = None
     complete_runs: int = 0
     key: str = ""
+    reply: dict | None = None
 
 
 class FakeDiagServer:
@@ -108,6 +111,12 @@ class FakeDiagServer:
         self.tls = tls
         self.max_bytes = max_bytes
         self.notes_enabled = notes_enabled
+        #: 服务端是否已升级到认识可选字段 `error_summary`（infra #28）；False = 尚未部署的旧版（extra=forbid）
+        self.accepts_error_summary = False
+        #: 服务端是否已升级到认识可选字段 `want_reply`（反馈包回信）；False = 旧版（extra=forbid）
+        self.accepts_want_reply = False
+        #: 非 None = 覆盖 init 响应里的 `reply`（坏形状用例）；None = 按 want_reply 开一封合规的关联来信
+        self.reply_override: object = None
         self.api_header: str | None = API_VERSION
         self.upload_url: str | None = None  # 覆盖 init 响应里的 upload.url（SSRF 用例）
         self.extra_response_fields: dict = {}
@@ -328,7 +337,11 @@ class FakeDiagServer:
 
     # -- init
     def _do_init(self, req: dict) -> tuple[int, dict]:
-        extra = set(req) - INIT_FIELDS
+        extra = (
+            set(req)
+            - INIT_FIELDS
+            - {f for f, flag in INIT_OPTIONAL_NEW.items() if getattr(self, flag)}
+        )
         if extra:
             return 422, {
                 "ok": False,
@@ -371,7 +384,12 @@ class FakeDiagServer:
                 if rep.fingerprint != fingerprint:
                     return 409, {"ok": False, "code": "idempotency_conflict"}
                 if rep.state == "complete":
-                    return 200, {"ok": True, "report_id": rid, "state": "complete"}
+                    return 200, {
+                        "ok": True,
+                        "report_id": rid,
+                        "state": "complete",
+                        **self._reply_part(rep),
+                    }
                 if rep.state == "cancelled":
                     return 409, {"ok": False, "code": "session_closed"}
                 return 200, self._init_body(rep)
@@ -381,9 +399,22 @@ class FakeDiagServer:
             rep = Report(
                 rid, secrets.token_hex(32), fingerprint, size, req.get("sha256"), note=note
             )
+            if req.get("want_reply") is True:
+                rep.reply = {
+                    "message_id": "TVM-"
+                    + "-".join(
+                        "".join(secrets.choice(_CROCKFORD) for _ in range(4)) for _ in range(4)
+                    ),
+                    "reply_token": secrets.token_hex(32),
+                }
             self.reports[rid] = rep
             self.by_idem[req["client_request_id"]] = rid
             return 201, self._init_body(rep)
+
+    def _reply_part(self, rep: Report) -> dict:
+        if self.reply_override is not None:
+            return {"reply": self.reply_override}
+        return {"reply": rep.reply} if rep.reply else {}
 
     def _init_body(self, rep: Report) -> dict:
         fields = {
@@ -409,6 +440,7 @@ class FakeDiagServer:
                 "max_bytes": rep.size,
                 "expires_at": int(time.time()) + 900,
             },
+            **self._reply_part(rep),
         }
 
     def _auth(self, req: dict) -> Report | None:

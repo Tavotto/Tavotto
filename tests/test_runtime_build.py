@@ -947,6 +947,26 @@ def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fon
             frozen.frozen = saved
 
 
+def _engine_source_datas():
+    """Evaluate the actual spec datas loop, never filenames in comments/other lists."""
+    path = REPO / "packaging" / "tavotto.spec"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    loops = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "name"
+    ]
+    assert len(loops) == 1, "spec must have one explicit external-interpreter source datas loop"
+    namespace = {"PKG": REPO / "src" / "tavotto", "datas": []}
+    exec(compile(ast.Module(body=loops, type_ignores=[]), str(path), "exec"), namespace)
+    datas = namespace["datas"]
+    assert datas and all(destination == "tavotto/engine" for _, destination in datas)
+    assert all(Path(source).is_file() and Path(source).suffix == ".py" for source, _ in datas)
+    return datas
+
+
 def test_spec_ships_every_module_the_worker_imports():
     """worker 平铺 import 的**整条传递闭包**都必须作为真 .py 进包。
 
@@ -995,11 +1015,11 @@ def test_spec_ships_every_module_the_worker_imports():
         assert out, f"用例前提：{path.name} 里确实有 {names} 装载清单"
         return out
 
-    # **两个根**：safe worker 与 native bridge runner 是两条各自独立起进程的
-    # 入口（后者由用户自己的解释器按绝对路径执行，见 ADR 0020）。只查一个根
-    # 就是这条用例 docstring 里说的「只查半条链」的同款缺陷，换了个位置。
-    # 两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
-    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot"]
+    # **三个根**：safe worker、native bridge runner 与公式排版子进程是各自独立起进程的
+    # 入口（bridge 由用户自己的解释器按绝对路径执行，见 ADR 0020；公式排版由内置 runtime
+    # 按绝对路径执行，ADR 0152 PR 4）。只查一个根就是这条用例 docstring 里说的「只查半条链」
+    # 的同款缺陷，换了个位置。两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
+    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot", "mathtext_child"]
     todo += list(load_lists(engine / "worker.py", ("_ENGINE_MODULES",)))
     todo += list(load_lists(engine / "bridge_runner.py", ("_PHASE1", "_PHASE2")))
     while todo:
@@ -1017,11 +1037,171 @@ def test_spec_ships_every_module_the_worker_imports():
         "用例前提：worker 确实经 figsession / wireproto 复用编辑语义与信封"
     )
     assert "bridgeboot.py" in siblings, "用例前提：两个根都按文件路径装 bridgeboot"
+    assert "mathtext_child.py" in siblings, "用例前提：公式排版子进程是第三个根"
 
-    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
-    shipped = set(re.findall(r'"(\w+\.py)"', spec))
+    shipped = {Path(source).name for source, _ in _engine_source_datas()}
     missing = siblings - shipped
     assert not missing, f"packaging/tavotto.spec 漏了 worker 要用的模块: {missing}"
+
+
+@pytest.fixture(scope="module")
+def _scientific_interpreter():
+    from support.bridgekit import USER_PYTHON
+
+    if USER_PYTHON is None:
+        pytest.skip("cold source-datas execution requires a scientific interpreter")
+    # Discover dependency directories only. The actual test uses -S so editable
+    # install .pth files cannot silently restore this checkout to sys.path.
+    result = subprocess.run(
+        [
+            USER_PYTHON,
+            "-I",
+            "-c",
+            "import json,sys; print(json.dumps([p for p in sys.path "
+            "if p.endswith(('site-packages', 'dist-packages'))]))",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=30,
+    )
+    return USER_PYTHON, json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("entry", ["worker", "bridge_runner"])
+@pytest.mark.parametrize("omit", [None, "executionfact.py", "figsession.py"])
+def test_packaged_engine_sources_execute_without_checkout_fallback(
+    tmp_path, _scientific_interpreter, entry, omit
+):
+    """Cold artifact-shaped execution, including phase-one and phase-two mutations.
+
+    This is the spec's actual source datas, not a copy of the engine directory.
+    It exercises the separate scientific process, not a PyInstaller bootloader
+    or the target-platform native libraries (those remain the exe smoke jobs).
+    """
+    internal = tmp_path / "dist" / "_internal"
+    for source, destination in _engine_source_datas():
+        target = internal / destination / Path(source).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    engine = internal / "tavotto" / "engine"
+    if omit:
+        assert (engine / omit).is_file(), "mutation must remove a genuinely shipped module"
+        (engine / omit).unlink()
+    project = tmp_path / "project"
+    project.mkdir()
+    script = project / "figure.py"
+    script.write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(figsize=(2, 1))\n"
+        "ax.plot([0, 1], [1, 0])\nfig.savefig('Packaged.pdf')\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    python, dependencies = _scientific_interpreter
+    # No site initialization, repository path, or installed Tavotto fallback.
+    # The private namespace must resolve exclusively to the staged source datas.
+    bootstrap = dedent(
+        f"""\
+        import importlib.abc, runpy, sys
+        from pathlib import Path
+        sys.path.extend({dependencies!r})
+        class NoInstalledTavotto(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == 'tavotto' or fullname.startswith('tavotto.'):
+                    raise ModuleNotFoundError('installed Tavotto fallback forbidden')
+        sys.meta_path.insert(0, NoInstalledTavotto())
+        assert {str(REPO / "src")!r} not in sys.path
+        sys.argv = sys.argv[1:]
+        try:
+            runpy.run_path(sys.argv[0], run_name='__main__')
+        except SystemExit as exc:
+            if exc.code not in (None, 0):
+                raise
+        loaded = {{name: mod for name, mod in sys.modules.items()
+                  if name.startswith('tavotto_bridge_runtime.')}}
+        assert 'tavotto_bridge_runtime.executionfact' in loaded
+        assert 'tavotto_bridge_runtime.figsession' in loaded
+        for mod in loaded.values():
+            assert Path(mod.__file__).resolve().parent == Path({str(engine)!r})
+        """
+    )
+    command = [python, "-I", "-S", "-B", "-c", bootstrap, str(engine / f"{entry}.py")]
+    report = tmp_path / "report.json"
+    if entry == "worker":
+        command += [
+            "--script",
+            str(script),
+            "--figures-dir",
+            str(project),
+            "--out-dir",
+            str(out),
+            "--sandbox",
+            str(tmp_path / "sandbox"),
+            "--entry",
+            "__main__",
+        ]
+        requests = [
+            {"cmd": "build", "payload": {"execution_watch": "1" * 32}},
+            {
+                "cmd": "export",
+                "stem": "Packaged",
+                "payload": {
+                    "path": str(out / "pair.pdf"),
+                    "format": "pdf",
+                    "svg_path": str(out / "pair.svg"),
+                    "require_built": True,
+                },
+            },
+        ]
+        wire = "".join(
+            json.dumps({"protocol_version": 1, "request_id": str(i), **request}) + "\n"
+            for i, request in enumerate(requests)
+        )
+    else:
+        command += [
+            "--target-kind",
+            "script",
+            "--target",
+            str(script),
+            "--out-dir",
+            str(out),
+            "--report",
+            str(report),
+            "--",
+        ]
+        wire = ""
+    result = subprocess.run(
+        command,
+        input=wire,
+        cwd=project,
+        env={**os.environ, "MPLCONFIGDIR": str(tmp_path / "mpl"), "MPLBACKEND": "Agg"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if omit:
+        assert result.returncode != 0, result.stdout
+        assert "ModuleNotFoundError" in result.stderr and omit[:-3] in result.stderr
+        return
+    assert result.returncode == 0, result.stderr
+    if entry == "worker":
+        responses = [json.loads(line) for line in result.stdout.splitlines()]
+        assert len(responses) == 2 and all(r["ok"] for r in responses), responses
+        assert re.fullmatch(r"[0-9a-f]{48}", responses[0]["execution_id"])
+        assert responses[1]["svg"]["path"] == str(out / "pair.svg")
+        assert (out / "pair.pdf").read_bytes().startswith(b"%PDF-")
+        assert b"<svg" in (out / "pair.svg").read_bytes()
+    else:
+        facts = json.loads(report.read_text(encoding="utf-8"))
+        assert facts["stems"] == ["Packaged"] and facts["script_error"] is None
+        assert facts["tavotto_importable"] is False
+        assert facts["owner_thread"] == facts["main_thread"]
 
 
 def test_spec_ships_every_backend_the_contract_layer_can_select():
@@ -1238,6 +1418,40 @@ def test_unsigned_windows_release_is_fail_closed(run_release_signing_gate, enabl
     assert "已拦停" in summary and "Authenticode" in summary
 
 
+@pytest.mark.parametrize(
+    ("waiver", "tag"),
+    [("", "v0.19.0"), ("v0.18.0", "v0.19.0"), ("v0.19.0", ""), ("", "")],
+)
+def test_unsigned_waiver_must_name_this_exact_tag(run_release_signing_gate, waiver, tag):
+    """豁免只认点名的这一个 tag：空、旧版本号、读不到 RELEASE_TAG 都照样拦停。"""
+    result, summary = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG=waiver, RELEASE_TAG=tag
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "已拦停" in summary
+
+
+def test_unsigned_waiver_for_this_tag_passes_with_warning(run_release_signing_gate):
+    result, summary = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0", RELEASE_TAG="v0.19.0"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning" in result.stdout and "::error" not in result.stdout
+    assert "维护者豁免" in summary and "v0.19.0" in summary
+
+
+def test_unsigned_waiver_does_not_relax_updater_key(run_release_signing_gate):
+    """豁免只管 Authenticode：缺 minisign 更新包密钥照样失败。"""
+    result, _ = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="",
+        WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0",
+        RELEASE_TAG="v0.19.0",
+        TAURI_SIGNING_PRIVATE_KEY="",
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "TAURI_SIGNING_PRIVATE_KEY" in result.stdout
+
+
 @pytest.mark.parametrize("platform", ["Windows", "macOS"])
 def test_non_release_signing_gate_allows_unsigned_trials(run_release_signing_gate, platform):
     result, summary = run_release_signing_gate(
@@ -1291,6 +1505,7 @@ def test_late_unsigned_windows_gate_only_blocks_releases():
     condition = re.search(r"(?m)^        if: (.+)$", step)
     assert condition and condition.group(1) == (
         "runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'"
+        " && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG"
     )
     assert re.search(r"(?m)^        shell: pwsh$", step)
     assert re.search(r"(?m)^        run: throw ", step)

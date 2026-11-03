@@ -1,0 +1,282 @@
+{
+  "_comment": "「这个缺包怎么认」的失败形态闭集表（docs/rules/backend/dependency-repair-and-packages.md「缺包形态向量表」）。每条 = 一种缺包失败形态 + 当时修复里的真实最小夹具 + 现有判定入口给出的结论。tests/test_missing_package_shapes.py 逐条驱动 entry 指向的公共函数并断言 expect；新的缺包工单先在这里加一条向量。占位符：{root}=夹具项目根，{pkg}=本次随机包名，{foreign_abi}=别的 Python 小版本标签（如 315）。",
+  "vectors": [
+    {
+      "id": "plain-missing-listed-package",
+      "shape": "plain_missing",
+      "summary": "脚本 import 了环境里没有的常见包：认成可一键安装的缺依赖",
+      "source": { "pr": null, "ticket": "baseline" },
+      "entry": "pool._worker_error",
+      "input": {
+        "message": "No module named 'scipy'",
+        "code": "script_error",
+        "traceback": "Traceback (most recent call last):\n  File \"fig.py\", line 1, in <module>\n    import scipy\nModuleNotFoundError: No module named 'scipy'"
+      },
+      "expect": { "code": "missing_dependency", "module": "scipy" }
+    },
+    {
+      "id": "shadow-script-dir-half-package",
+      "shape": "project_package_shadow",
+      "summary": "脚本目录里躺着半份同名包源码（先于已装的包）：认成遮蔽，不叫用户安装",
+      "source": { "pr": 1418, "ticket": "dfm/celerite 语料" },
+      "entry": "importshadow.detect",
+      "files": { "paper/figures/celerite/__init__.py": "from .celerite_version import __version__\n" },
+      "input": {
+        "text": "ModuleNotFoundError: No module named 'celerite.celerite_version'",
+        "roots": ["paper/figures"],
+        "late_roots": []
+      },
+      "expect": { "shadow": true, "search_order": "before_site", "project_path": "celerite/", "do_not_install": true }
+    },
+    {
+      "id": "shadow-project-root-without-frame-evidence",
+      "shape": "project_package_shadow",
+      "summary": "同名包只在项目根（排在 site-packages 之后），报错只有一句消息：不能断言是遮蔽",
+      "source": { "pr": 1426, "ticket": "dfm/celerite 语料" },
+      "entry": "importshadow.detect",
+      "files": { "celerite/__init__.py": "from .celerite_version import __version__\n" },
+      "input": {
+        "text": "ModuleNotFoundError: No module named 'celerite.celerite_version'",
+        "roots": ["paper/figures"],
+        "late_roots": ["."]
+      },
+      "expect": { "shadow": false }
+    },
+    {
+      "id": "shadow-project-root-with-frame-evidence",
+      "shape": "project_package_shadow",
+      "summary": "traceback 有一帧落在项目根的包目录内：认成遮蔽，但说明里是「已装的包优先」，不写「别装」",
+      "source": { "pr": 1426, "ticket": "dfm/celerite 语料" },
+      "entry": "importshadow.detect",
+      "files": { "celerite/__init__.py": "from .celerite_version import __version__\n" },
+      "input": {
+        "text": "Traceback (most recent call last):\n  File \"{root}/paper/figures/sho.py\", line 8, in <module>\n    import celerite\n  File \"{root}/celerite/__init__.py\", line 3, in <module>\n    from .celerite_version import __version__\nModuleNotFoundError: No module named 'celerite.celerite_version'",
+        "roots": ["paper/figures"],
+        "late_roots": ["."]
+      },
+      "expect": { "shadow": true, "search_order": "after_site", "project_path": "celerite/", "do_not_install": false }
+    },
+    {
+      "id": "shadow-script-dir-beats-project-root",
+      "shape": "project_package_shadow",
+      "summary": "脚本目录与项目根都有同名包：以脚本目录那份为准（与 python 脚本.py 的 sys.path[0] 一致）",
+      "source": { "pr": 1426, "ticket": "dfm/celerite 语料" },
+      "entry": "importshadow.detect",
+      "files": {
+        "celerite/__init__.py": "from .celerite_version import __version__\n",
+        "paper/figures/celerite/__init__.py": "from .celerite_version import __version__\n"
+      },
+      "input": {
+        "text": "ModuleNotFoundError: No module named 'celerite.celerite_version'",
+        "roots": ["paper/figures"],
+        "late_roots": ["."]
+      },
+      "expect": { "shadow": true, "search_order": "before_site", "project_path": "celerite/", "do_not_install": true }
+    },
+    {
+      "id": "scan-project-root-file-cannot-shadow-stdlib",
+      "shape": "project_package_shadow",
+      "summary": "项目根里的 sched.py 盖不住标准库 sched；脚本目录里的才算本地模块",
+      "source": { "pr": 1426, "ticket": "dfm/celerite 语料" },
+      "entry": "importscan.scan",
+      "files": { "sched.py": "x = 1\n", "paper/fig.py": "import sched\n" },
+      "input": { "script": "paper/fig.py" },
+      "expect": { "buckets": { "sched": "stdlib" }, "sys_path_literal_root": false }
+    },
+    {
+      "id": "scan-script-dir-file-shadows-stdlib",
+      "shape": "project_package_shadow",
+      "summary": "脚本目录里的 sched.py 先于标准库：算本地模块",
+      "source": { "pr": 1426, "ticket": "dfm/celerite 语料" },
+      "entry": "importscan.scan",
+      "files": { "sched.py": "x = 1\n", "paper/sched.py": "x = 1\n", "paper/fig.py": "import sched\n" },
+      "input": { "script": "paper/fig.py" },
+      "expect": { "buckets": { "sched": "local" }, "sys_path_literal_root": false }
+    },
+    {
+      "id": "runtime-lazy-import-without-observation",
+      "shape": "runtime_lazy_import",
+      "summary": "pandas.read_excel 惰性 import openpyxl，脚本里没有 import 它：静态计划看不见",
+      "source": { "pr": 1494, "ticket": "TVD-82B9" },
+      "entry": "depplan.plan",
+      "files": { "s.py": "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_excel('a.xlsx')\n" },
+      "input": { "script": "s.py", "extra_imports": [] },
+      "expect": { "status": "nothing_needed", "requirements": [], "local_module_missing": {}, "prefilled": [] }
+    },
+    {
+      "id": "runtime-lazy-import-observed-module",
+      "shape": "runtime_lazy_import",
+      "summary": "运行报缺 openpyxl 并点名：并入同一棵决定树，得到可装的 openpyxl 需求",
+      "source": { "pr": 1494, "ticket": "TVD-82B9" },
+      "entry": "depplan.plan",
+      "files": { "s.py": "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_excel('a.xlsx')\n" },
+      "input": { "script": "s.py", "extra_imports": ["openpyxl"] },
+      "expect": { "status": "ready", "requirements": ["openpyxl"], "local_module_missing": {}, "prefilled": [] }
+    },
+    {
+      "id": "foreign-abi-private-folder",
+      "shape": "foreign_abi_private_folder",
+      "summary": "脚本插进 sys.path 的私有依赖目录里，编译扩展是为别的 Python 小版本编的：点名文件夹，不当缺包",
+      "source": { "pr": 1564, "ticket": "TVD-ZCR4" },
+      "entry": "bridgeboot.foreign_abi_facts",
+      "files": {
+        "vendor/{pkg}/__init__.py": "from . import _native\n",
+        "vendor/{pkg}/_native.cpython-{foreign_abi}-x86_64-linux-gnu.so": ""
+      },
+      "input": { "sys_path": ["vendor"], "error_path": "vendor/{pkg}/__init__.py", "project_roots": ["."] },
+      "expect": { "folder": "vendor", "foreign": true }
+    },
+    {
+      "id": "foreign-abi-abi3-is-compatible",
+      "shape": "foreign_abi_private_folder",
+      "summary": "同一目录里是 abi3 扩展：兼容，不误判成换 Python 版本",
+      "source": { "pr": 1564, "ticket": "TVD-ZCR4" },
+      "entry": "bridgeboot.foreign_abi_facts",
+      "files": { "vendor/{pkg}/__init__.py": "from . import _native\n", "vendor/{pkg}/_native.abi3.so": "" },
+      "input": { "sys_path": ["vendor"], "error_path": "vendor/{pkg}/__init__.py", "project_roots": ["."] },
+      "expect": { "folder": null, "foreign": false }
+    },
+    {
+      "id": "foreign-abi-classified-before-missing-dependency",
+      "shape": "foreign_abi_private_folder",
+      "summary": "报错文字是 No module named，但 worker 带了换 ABI 事实：失败码是文件夹 ABI 不符，不是缺依赖",
+      "source": { "pr": 1564, "ticket": "TVD-ZCR4" },
+      "entry": "pool._worker_error",
+      "input": {
+        "message": "No module named 'fakepkg._native'",
+        "code": "script_error",
+        "traceback": "tb",
+        "extra": {
+          "foreign_abi_folder": { "folder": "vendor", "abi": "3.12", "current": "3.14", "module": "fakepkg" },
+          "foreign_abi_folder_private": { "path": "/abs/secret/vendor" }
+        }
+      },
+      "expect": { "code": "import_folder_abi_mismatch", "module": null }
+    },
+    {
+      "id": "sys-path-variable-dir-present",
+      "shape": "sys_path_dir_variable",
+      "summary": "ROOT = Path(__file__).resolve().parent 再 sys.path.insert(0, str(ROOT / 'source'))）：source/ 在时，配套模块是本地模块",
+      "source": { "pr": 1582, "ticket": "TVD-705N" },
+      "entry": "importscan.scan",
+      "files": {
+        "gen.py": "from pathlib import Path\nimport sys\nROOT = Path(__file__).resolve().parent\nsys.path.insert(0, str(ROOT / 'source'))\nimport config as c\nfrom yard_map import YardMap\n",
+        "source/config.py": "X = 1\n",
+        "source/yard_map.py": "class YardMap: ...\n"
+      },
+      "input": { "script": "gen.py" },
+      "expect": { "buckets": { "config": "local", "yard_map": "local" }, "sys_path_literal_root": true }
+    },
+    {
+      "id": "sys-path-variable-dir-missing",
+      "shape": "sys_path_dir_variable",
+      "summary": "同一脚本但 source/ 没了、运行报缺 config / yard_map：本地模块缺失，不预填同名 PyPI 包、不产生安装需求",
+      "source": { "pr": 1582, "ticket": "TVD-705N" },
+      "entry": "depplan.plan",
+      "files": {
+        "gen.py": "from pathlib import Path\nimport sys\nROOT = Path(__file__).resolve().parent\nsys.path.insert(0, str(ROOT / 'source'))\nimport config as c\nfrom yard_map import YardMap\n"
+      },
+      "input": { "script": "gen.py", "extra_imports": ["config", "yard_map"] },
+      "expect": {
+        "status": "nothing_needed",
+        "requirements": [],
+        "local_module_missing": { "config": ["source"], "yard_map": ["source"] },
+        "prefilled": []
+      }
+    },
+    {
+      "id": "sys-path-variable-rebound-not-trusted",
+      "shape": "sys_path_dir_variable",
+      "summary": "ROOT 被再绑定：不推断目录（保守不认，不能把路径猜错）",
+      "source": { "pr": 1582, "ticket": "TVD-705N" },
+      "entry": "importscan.scan",
+      "files": {
+        "source/mymod.py": "x = 1\n",
+        "a.py": "import os, sys\nfrom pathlib import Path\nROOT = Path(__file__).parent\nROOT = Path('/elsewhere')\nsys.path.append(str(ROOT / 'source'))\nimport mymod\n"
+      },
+      "input": { "script": "a.py" },
+      "expect": { "buckets": {}, "sys_path_literal_root": false }
+    },
+    {
+      "id": "sys-path-variable-star-import-not-trusted",
+      "shape": "sys_path_dir_variable",
+      "summary": "星号导入能悄悄改写 ROOT：不推断目录",
+      "source": { "pr": 1582, "ticket": "TVD-705N（Codex P2）" },
+      "entry": "importscan.scan",
+      "files": {
+        "source/mymod.py": "x = 1\n",
+        "a.py": "import os, sys\nfrom pathlib import Path\nROOT = Path(__file__).parent\nfrom settings import *\nsys.path.append(str(ROOT / 'source'))\nimport mymod\n"
+      },
+      "input": { "script": "a.py" },
+      "expect": { "buckets": {}, "sys_path_literal_root": false }
+    },
+    {
+      "id": "unreadable-folder-installable-module",
+      "shape": "unreadable_import_folder",
+      "summary": "脚本塞进 sys.path 的项目外目录读不了，被点名的 tzdata 有可信包名：仍是缺依赖（可装），并带上文件夹",
+      "source": { "pr": 1507, "ticket": "TVD-HZ0A" },
+      "entry": "pool._worker_error",
+      "input": {
+        "message": "No module named 'tzdata'",
+        "code": "script_error",
+        "traceback": "ModuleNotFoundError: No module named 'tzdata'",
+        "extra": { "unreadable_folder": { "folder": ".deps", "module": "tzdata" } }
+      },
+      "expect": { "code": "missing_dependency", "module": "tzdata" }
+    },
+    {
+      "id": "unreadable-folder-unmappable-module",
+      "shape": "unreadable_import_folder",
+      "summary": "被点名的模块映射不到可信包名（ROOT）：不叫用户安装，失败卡只点名文件夹",
+      "source": { "pr": 1507, "ticket": "TVD-HZ0A" },
+      "entry": "pool._worker_error",
+      "input": {
+        "message": "m",
+        "code": "script_error",
+        "traceback": "ModuleNotFoundError: No module named 'x'",
+        "extra": { "unreadable_folder": { "folder": ".deps", "module": "ROOT" } }
+      },
+      "expect": { "code": "import_folder_unreadable", "module": null }
+    },
+    {
+      "id": "unreadable-folder-fact-script-added-outside",
+      "shape": "unreadable_import_folder",
+      "summary": "脚本运行期间加进 sys.path 的项目外目录里模块文件读不了（查找器登记过）：事实只有目录名与顶层模块名",
+      "source": { "pr": 1507, "ticket": "TVD-HZ0A" },
+      "entry": "bridgeboot.unreadable_folder_fact",
+      "input": { "sys_path_added": [".work_deps"], "blocked_file": ".work_deps/tzdata/__init__.py", "project_roots": ["proj"] },
+      "expect": { "fact": { "folder": ".work_deps", "module": "tzdata" } }
+    },
+    {
+      "id": "unreadable-folder-fact-data-file-not-import",
+      "shape": "unreadable_import_folder",
+      "summary": "同一目录里读数据文件撞权限错误（不是 import 失败）：不出事实",
+      "source": { "pr": 1507, "ticket": "TVD-HZ0A" },
+      "entry": "bridgeboot.unreadable_folder_fact",
+      "input": { "sys_path_added": ["external"], "blocked_file": "external/pandas/__init__.py", "error_file": "external/pandas/data.csv", "project_roots": ["proj"] },
+      "expect": { "fact": {} }
+    },
+    {
+      "id": "pip-no-package-in-index",
+      "shape": "install_failure_kind",
+      "summary": "pip 输出 (from versions: none)：索引上根本没有这个包",
+      "source": { "pr": 1418, "ticket": "修复会话区分没有轮子 / 没有这个包" },
+      "entry": "deprepair.classify_pip_failure",
+      "input": {
+        "text": "ERROR: Could not find a version that satisfies the requirement nopkg-xyz (from versions: none)\nERROR: No matching distribution found for nopkg-xyz"
+      },
+      "expect": { "code": "dependency_not_found" }
+    },
+    {
+      "id": "pip-versions-exist-but-no-wheel",
+      "shape": "install_failure_kind",
+      "summary": "pip 列出了版本却装不上：有源码没轮子，要构建",
+      "source": { "pr": 1418, "ticket": "修复会话区分没有轮子 / 没有这个包" },
+      "entry": "deprepair.classify_pip_failure",
+      "input": {
+        "text": "ERROR: Could not find a version that satisfies the requirement oldext (from versions: 1.0.tar.gz)\nERROR: No matching distribution found for oldext"
+      },
+      "expect": { "code": "dependency_requires_build" }
+    }
+  ]
+}

@@ -12,5 +12,5 @@ export function runtimeSiblingOf(
   asset: RuntimeAssetInfo,
   panels: readonly PanelInfo[],
 ): PanelInfo | null {
-  return panels.find((p) => p.script === asset.script && p.name === asset.stem) ?? null
+  return panels.find((p) => p.script === asset.script && (p.stem ?? p.name) === asset.stem) ?? null
 }

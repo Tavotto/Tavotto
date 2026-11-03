@@ -151,10 +151,20 @@ describe('两个选择', () => {
     expect(document.body.textContent).toContain(dlg('title'))
   })
 
+  it('重新同意时多一句「比上次多了什么」，首启不显示', () => {
+    const q = () => document.querySelector('[data-telemetry-reconsent-delta]')
+    useTelemetryStore.setState({ settings: settings({ consent: 'unset' }), askOpen: true })
+    expect(q()).toBeNull()
+    act(() => useTelemetryStore.setState({
+      settings: settings({ consent: 'enabled', saved_consent_version: 2, needs_reconsent: true }),
+    }))
+    expect(q()!.textContent).toBe(dlg('reconsentDelta'))
+  })
+
   it('说清楚发什么、不发什么', () => {
     const text = document.body.textContent ?? ''
     for (const key of ['sendsTitle', 'sendsVersion', 'sendsPlatform', 'sendsFeatures',
-                       'sendsOutcome', 'neverTitle', 'neverFigures', 'neverScripts',
+                       'sendsOutcome', 'sendsErrorSummary', 'neverTitle', 'neverFigures', 'neverScripts',
                        'neverPaths', 'neverData', 'neverPrompts', 'later']) {
       expect(text).toContain(dlg(key))
     }

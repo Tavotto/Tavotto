@@ -53,6 +53,7 @@
 |---|---|---|
 | `wall` | bench 客户端 | 整次 HTTP 往返 |
 | `worker_get` | `app.py` | 取（必要时 spawn）会话——**既不属于 worker 也不属于 build** |
+| `worker_get` 分段 | `pool.acquire` | `resolve_python_ms` / `env_decide_ms` / `launcher_prewarm_ms` / `watch_sync_ms` / `retire_wait_ms` / `pool_wait_ms` / `spawn_gate_ms` / `env_probe_ms` / `fingerprint_ms` / `spawn_ms`（Python 池）/ `handshake_ms`（workerd）/ `evict_ms`，只有进过那一段才有键；`worker_get_ms` 仍是总数，分段是加法 |
 | `build 往返` | `pool` | 整条 build 命令（含子解释器启动与 `import matplotlib`） |
 | `script_build` | worker | build 里 worker 自己那一段（跑脚本 + instrument + 首次预览） |
 | `queue_wait` | `pool` | 请求发出去之前排了多久（Python 池 = 抢 `w.lock`；workerd 侧口径见下） |
@@ -393,7 +394,25 @@ JSON 只多几百字节。合成的重图上是 +26ms —— 但那张图本身�
 6. **manifest 的逐元素 `get_window_extent`（8.5ms / 26 元素）**：目前占热态约
    30%，但它是「量每个元素在哪」这件事本身的成本，没有明显的重复计算可砍。
    真要动得先有更大的图库样本（本基线只有 25–68 个元素的小图）。**归属：待定，
-   证据不足。**
+   证据不足。** 2026-10-30 补测发现最终 SVG 清单之外还有一份前置完整清单会被丢弃；
+   下面只去掉这份被丢弃的测量，最终清单与必要的前置布局仍保留。
+
+### 补测：前置清单测量（2026-10-30）
+
+同一台 macOS 机器、同一 Python 3.13.16 / Matplotlib 3.11.2 进程：合成图包含
+6 个子图、72 条线、6 个图例、18 个标注，使用 constrained layout。每种路径先
+预热 2 次，再交替测 7 次；每对样本的完整 manifest 和 SVG 字节均相同。
+这量的是进程内的参数应用、布局、SVG 绘制和最终清单，**不含 HTTP、浏览器与上屏**，
+不能与上面的端到端 wall 数字直接比较，也不能推断所有图的收益。
+
+| 中位数（范围，ms） | 原路径 | 优化后 | 中位数变化 |
+|---|---:|---:|---:|
+| 前置准备 | 302.4（294.0–312.2） | 222.6（220.3–249.0） | −26.4% |
+| 进程内整次绘制 | 631.5（620.3–647.0） | 569.3（550.7–587.9） | −9.8% |
+
+前置阶段继续做 Agg 布局、图例布局、隐藏 3D 投影和刻度登记；最终清单仍由
+SVG renderer 测量。`tests/test_preview_prepare_equivalence.py` 对普通布局、
+tight / constrained 布局、裁切图幅、3D、公式与位图组合检查警告、清单及 SVG 等价。
 
 ## 大图预览基线（issue #181，修复前）
 

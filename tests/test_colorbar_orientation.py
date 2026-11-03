@@ -286,7 +286,13 @@ def test_flip_twice_is_idempotent_and_reversible(library):
 # 热 / 清空重放 / 全新 worker
 # ---------------------------------------------------------------------------
 def _bboxes(man):
-    return {e["gid"]: e["bbox"] for e in man["elements"] if "ticklabels_" not in e["gid"]}
+    # pytest 9.2 的 approx 不收「值为序列」的字典：拍平成 {(gid, 下标): 数值}
+    return {
+        (e["gid"], i): v
+        for e in man["elements"]
+        if "ticklabels_" not in e["gid"]
+        for i, v in enumerate(e["bbox"])
+    }
 
 
 def test_hot_replay_and_fresh_worker_agree(library):

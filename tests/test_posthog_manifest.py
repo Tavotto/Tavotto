@@ -149,7 +149,8 @@ def test_manifest_is_not_empty(manifest):
     """空集合上的断言恒真：先钉住 manifest 里有图、有告警、有订阅、有待发布事件。"""
     assert len(manifest["insights"]) >= 15
     assert manifest["alerts"] and manifest["subscriptions"] and manifest["dashboards"]
-    assert "export_result" in manifest["pending_events"]
+    # export_result 随 #1103 / CONSENT_VERSION 3 进了 EVENTS：不再是待发布事件（线上上线前仍无数据，见 posthog-dashboard.md）
+    assert "export_result" in telemetry.EVENTS and "export_result" not in manifest["pending_events"]
     assert any(i["query"]["kind"] == "HogQLQuery" for i in manifest["insights"])
     assert any(i["query"]["kind"] == "TrendsQuery" for i in manifest["insights"])
 

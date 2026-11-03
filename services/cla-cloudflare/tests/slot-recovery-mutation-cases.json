@@ -1,0 +1,65 @@
+[
+  {
+    "name": "slot recovery owner-only retry-cap exception",
+    "file": "src/native/store.ts",
+    "before": "AND (attempts<3 OR EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1)))",
+    "after": "AND attempts<3",
+    "pattern": "slot exhausted owner drains through fresh failure GET manual",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot recovery manual SQL eligibility",
+    "file": "src/native/store.ts",
+    "before": "const negativeOnly=this.negativeRecoverySQL(job);",
+    "after": "const negativeOnly='0';",
+    "pattern": "slot exhausted owner drains through fresh failure GET manual",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot recovery strict persisted backoff",
+    "file": "src/native/store.ts",
+    "before": "${negativeOnly} AND coalesce(p.reconcile_due,0)<=${DB_NOW}",
+    "after": "${negativeOnly}",
+    "pattern": "slot missing exhausted owner persists strict backoff and never retries a send",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot recovery cannot reconfirm manual success",
+    "file": "src/native/background.ts",
+    "before": "!slotRecoveryOnly(job,p) && p.conclusion",
+    "after": "p.conclusion",
+    "pattern": "slot manual observed success only withdraws and never restores confirmation",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot recovery retains target exhaustion",
+    "file": "src/native/store.ts",
+    "before": "THEN attempts ELSE 0 END",
+    "after": "THEN 0 ELSE 0 END",
+    "pattern": "slot missing exhausted owner persists strict backoff and never retries a send",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot recovery persists manual phase",
+    "file": "src/native/store.ts",
+    "before": "SET phase='manual',observation=?,updated=${DB_NOW}",
+    "after": "SET phase=phase,observation=?,updated=${DB_NOW}",
+    "pattern": "slot unknown observation becomes manual while retaining durable owner",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot recovery durable sixty-second deferral",
+    "file": "src/native/store.ts",
+    "before": "reconcile_due=${DB_NOW}+60,reconcile_attempts=min(3,reconcile_attempts+1)",
+    "after": "reconcile_due=${DB_NOW},reconcile_attempts=min(3,reconcile_attempts+1)",
+    "pattern": "slot missing exhausted owner persists strict backoff and never retries a send",
+    "testFile": "tests/independent-slot-budget.test.mjs",
+    "assertionError": true
+  }
+]

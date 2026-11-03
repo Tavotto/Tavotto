@@ -1,8 +1,13 @@
-import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
+import { classifyArtifactFailure } from '@/lib/artifactReason'
+import type { RenderPurpose } from '@/lib/renderPurpose'
+import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
-import type { FigureDocument, ProjectDocument } from '@/types/document'
+import type { ExportRoute } from '@/lib/exportRoute'
+import type { Remedy } from '@/lib/fixRemedy'
+import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
+import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
@@ -10,8 +15,14 @@ import type { ThumbObject, ThumbPage } from '@/types/thumb'
 export interface PanelInfo {
   id: string
   name: string
+  /**
+   * 注册表认的「这个文件是哪张图」（后端 `Registry.artifact_stem`，#1251）。只在与文件名 stem 不同时才发：
+   * 同脚本里 `panel.png`（甲）与 `panel.pdf`（乙，登记为 `panel-2`）时，pdf 面板的 `stem` 是 `panel-2`。
+   * 交接 `?open=<stem>` 与「runtime 素材 ↔ 磁盘图」的配对都按它；缺省 = 文件名 stem（老项目 / 老后端）。
+   */
+  stem?: string
   folder: string
-  kind: 'pdf' | 'raster'
+  kind: 'pdf' | 'raster' | 'svg'
   native_w_mm: number
   native_h_mm: number
   px_w?: number
@@ -134,6 +145,17 @@ export interface PanelCapability {
   can_probe: boolean
   /** 界面可以提供「手工关联」；只读项目上为 false（登记要落盘） */
   can_manual_link: boolean
+  /**
+   * 这张图旁边同主干名的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。**后端判的**（同目录、`sourcelang.detect`
+   * 认得出语言、无歧义），前端只翻译，不自己按后缀配对。老后端没有这个字段（= 没有入口）。
+   */
+  foreign_source?: ForeignSource | null
+}
+
+export interface ForeignSource {
+  /** 脚本（项目相对路径） */
+  script: string
+  language: 'r' | 'matlab'
 }
 
 export interface ReadinessPanel extends PanelCapability {
@@ -237,18 +259,14 @@ export function backendErrorText(e: unknown): string {
  * 原文，按 i18n 纪律不翻，也不依赖后端消息的中文前缀格式）；没有文案的
  * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
  */
-function artifactErrorMsg(reason: unknown): UiMessage {
-  if (reason === 'background_visibility_required') return msg('artifact.backgroundVisibilityRequired', undefined, 'errors')
-  if (reason === 'source_changed') return msg('artifact.sourceChanged', undefined, 'errors')
-  if (reason === 'frame_changed' || reason === 'invalid_guard') return msg('artifact.frameChanged', undefined, 'errors')
-  if (reason === 'writeback_not_supported') return msg('artifact.writebackUnsupported', undefined, 'errors')
-  if (reason === 'not_untouched') return msg('artifact.legacyEdits', undefined, 'errors')
-  return msg('artifact.unsupported', undefined, 'errors')
+function artifactErrorMsg(err: unknown): UiMessage {
+  // reason → 文案 key 的映射只在 `artifactReason.ts` 的那张表里
+  return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
-    return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
+    return artifactErrorMsg(err)
   }
   if (err instanceof EngineError && err.installRoute === 'unsupported_platform') {
     return msg('prep.line.depsPlatform', { module: err.module }, 'workspace')
@@ -262,7 +280,9 @@ export function engineErrorMsg(err: unknown): UiMessage {
       i18n.getResource(i18n.language, 'errors', `backend.${err.code}`) ?? '',
     )
     if (detail || !template.includes('{{error}}')) {
-      return msg(`backend.${err.code}`, { error: detail }, 'errors')
+      // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
+      // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
+      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))
@@ -291,7 +311,7 @@ export function backendCodeMsg(
   // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
-  if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
+  if (code === 'artifact_source_unavailable') return artifactErrorMsg({ params })
   // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
   if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
@@ -393,6 +413,10 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
 }
 
 export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
+
+/** 磁盘素材文件 id → 注册表认的 stem（后端 `Registry.artifact_stem`，#1251）：权威值，清单里没有这个文件也答得出。 */
+export const fetchPanelStem = (id: string) =>
+  jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
 /**
  * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
@@ -552,9 +576,17 @@ export interface ProjectStatus {
   exists?: boolean
   writable?: boolean
   scripts?: number
-  settings?: { export_dir?: string; backup_dir?: string; allow_write_back?: boolean }
+  settings?: {
+    export_dir?: string
+    backup_dir?: string
+    allow_write_back?: boolean
+    /** 用户对「没有写入权限的项目要不要另存一份」选了继续只读：按项目路径记住，之后打开不再问 */
+    readonly_save_as_declined?: boolean
+  }
   export_dir?: string
   backup_dir?: string
+  /** 本机真实家目录（后端 `Path.home()`）：界面缩写 `~` 只认它，不按路径形状猜 */
+  home_dir?: string
   /**
    * 「另存为」把文档写到哪（审计 T04）。规则的唯一出处是后端
    * `app.project_layout_dir()`——界面自己拼 `<项目>/tavottofile` 抄不到
@@ -662,7 +694,17 @@ export interface TutorialStatus {
   problems: string[]
   tutorial_version?: number
   metadata?: TutorialMetadata
-  copy?: { exists: boolean; complete: boolean; missing: string[]; registry_ok: boolean }
+  copy?: {
+    exists: boolean
+    complete: boolean
+    missing: string[]
+    registry_ok: boolean
+    /**
+     * 副本里用户另存的画布名（不含教程画布本身）；重置会一并删掉。`null` = 清点不全（遍历 / stat 出错），
+     * 老后端没有这个字段——两者都是「不知道」，不是「没有」
+     */
+    layouts?: string[] | null
+  }
   project?: { open: boolean; id: string | null }
 }
 
@@ -686,8 +728,10 @@ export const openTutorialApi = (opts: { default?: boolean } = {}) =>
     body: JSON.stringify(opts),
   })
 
-/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。 */
-export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
+/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。
+ * `expected_layouts` = 确认框里列给用户看的另存排版清单（后端原样的 `copy.layouts`）；后端持锁后重核，
+ * 确认之后又变了就 409 `tutorial_layouts_changed`、什么都不动。 */
+export const resetTutorialApi = (opts: { default?: boolean; expected_layouts?: string[] } = {}) =>
   jsonFetch<TutorialOpenResult>('/api/tutorial/reset', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -716,19 +760,28 @@ export interface BrowseResult {
   /** 当前列的是「驱动器」那一层虚拟根 */
   is_roots: boolean
   writable?: boolean
+  /** 请求带了 `has_file` 才有：该叶子名在这个目录里确是一个文件 */
+  has_file?: boolean
 }
 
 /** 目录列举。`'@roots'` = 列驱动器（Windows 靠它跨到 D 盘）。 */
-export const browseDirs = (path?: string) =>
-  jsonFetch<BrowseResult>(
-    `/api/projects/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`,
-  )
+export const browseDirs = (path?: string, hasFile?: string) => {
+  const q = [path ? `path=${encodeURIComponent(path)}` : '', hasFile ? `has_file=${encodeURIComponent(hasFile)}` : '']
+    .filter(Boolean)
+    .join('&')
+  return jsonFetch<BrowseResult>(`/api/projects/browse${q ? `?${q}` : ''}`)
+}
 
-export const patchProjectSettings = (patch: {
-  export_dir?: string
-  backup_dir?: string
-  allow_write_back?: boolean
-}) =>
+export const patchProjectSettings = (
+  patch: {
+    export_dir?: string
+    backup_dir?: string
+    allow_write_back?: boolean
+    readonly_save_as_declined?: boolean
+  },
+  /** 显式指定项目（发起时的那个）；不给 = 此刻的项目 */
+  pj?: string | null,
+) =>
   jsonFetch<{ settings: ProjectStatus['settings']; export_dir: string; backup_dir: string }>(
     '/api/project/settings',
     {
@@ -736,6 +789,29 @@ export const patchProjectSettings = (patch: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     },
+    pj,
+  )
+
+/**
+ * 把当前项目文件夹另存为 `parent` 下的一份可写副本（后端 `engine/projectcopy`），回副本路径。
+ * 打开副本是调用方的事（`useProjectStore.open`）；体量超限等失败是带 code 的 `ApiError`。
+ */
+export const saveProjectAs = (parent: string, pj?: string | null) =>
+  jsonFetch<{
+    path: string
+    files: number
+    bytes: number
+    skipped: number
+    /** 被跳过的文件（相对项目根），至多 5 个；总数看 `skipped` */
+    skipped_paths?: string[]
+  }>(
+    '/api/project/save-as',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent }),
+    },
+    pj,
   )
 
 /**
@@ -756,6 +832,29 @@ export const fileUrl = (id: string, mtime?: number) =>
  * 的 <img> 不会自己重取，重新运行刷新了 cache 之后靠它换 src。 */
 export const runtimePreviewUrl = (id: string, nonce?: number) =>
   apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
+
+/**
+ * **这个文档状态**的 runtime 预览（QA-WIN-21）。`runtimePreviewUrl` 给的是后端「最近一次渲染」的
+ * 预览——撤销回一个前端自己已画过的变体时不会再发渲染请求，「最近一次」停在撤销前，
+ * 重开文档 / 导出预览读它就是旧图。这里带着面板此刻的 overrides 去问：
+ * `exact` = 后端有按这组 overrides 画的那一份；`false` = 只有别的状态的图，调用方必须标「近似预览」。
+ * cache 不存在（404）回 `null`（占位语义，同 GET 版）；别的失败抛出。
+ */
+export async function fetchRuntimePreviewForState(
+  id: string,
+  patches: unknown[],
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; exact: boolean } | null> {
+  const res = await fetch(apiUrl('/api/runtime/preview'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches }),
+    signal,
+  }))
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`runtime preview ${res.status}`)
+  return { blob: await res.blob(), exact: res.headers.get('X-Tavotto-Preview-Exact') === '1' }
+}
 
 /**
  * 浏览器 `<img>` 在所有桌面壳里都解得开的位图扩展名（小写、不带点）。**这是浏览器的
@@ -788,6 +887,7 @@ export const panelSrc = (
 ): string | null => {
   if (kind === 'raster')
     return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
+  if (kind === 'svg') return fileUrl(id, mtime)
   if (kind === 'pdf') return renderUrl(id, bucket, mtime)
   if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
   return null
@@ -840,6 +940,8 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
+  /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
+  figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
   revision: string | null
   /** 落盘的文件名（去掉 `.json`，经后端净化）；旧后端不给 */
@@ -909,6 +1011,8 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
+  figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
   saved_at: number
   revision: string | null
@@ -1353,6 +1457,16 @@ export interface LayoutVersionMeta {
   moment?: LayoutMoment
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
+  /**
+   * 这张缩略图拍的是页面的哪一块（mm）。新节点只拍内容区域（`lib/timelineThumb`），旁边记这块；
+   * 缺席 = 整页（旧节点）。后端校验过才发（`_version_thumb_box`）。
+   */
+  thumbBox?: { x: number; y: number; w: number; h: number }
+  /**
+   * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
+   * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
+   */
+  damaged?: boolean
   description: string
   objects: number
   page?: { w: number; h: number }
@@ -1365,6 +1479,16 @@ export interface LayoutVersionMeta {
    */
   canvasId?: string
   canvasName?: string
+  /**
+   * 这一版那张画布上有哪些图（面板的 `fileId`，后端读时从整份文档派生，不落盘；旧节点同样有）。
+   * 时间线按「当前这张图」分开靠它；缺席 = 没有图 / 老后端，不猜。
+   */
+  figures?: string[]
+  /**
+   * 与上一条同一张画布、同一份内容的打开 / 关闭 / 恢复前（以及普通自动节点）：照今天的规则本不会
+   * 记下（后端读时派生，不落盘）。时间线不显示它，数据原样留着。
+   */
+  unchanged?: boolean
   /**
    * 够画一行缩略图的**草图**，只有请求里要了才有（见 `fetchVersions`）。
    * 画不出来的那些版本**没有这个字段**——空草图与「这一版真的什么都没有」
@@ -1433,6 +1557,96 @@ export async function fetchTaskDiagnostic(
   return { available: true, blob: await res.blob(), filename: match?.[1] ?? 'tavotto-task-diagnostic.json' }
 }
 
+/** 执行追踪快照（ADR 0151）：后端 `engine/exectrace.py` 的公开投影，字段全是闭集 / 数字 / 不透明 id */
+export type ExecTraceOperation = 'ai_task' | 'fix_session' | 'preparation' | 'export'
+export type ExecTraceEndStatus = 'ok' | 'failed' | 'cancelled' | 'timeout' | 'interrupted' | 'unknown'
+export interface ExecTraceUsage {
+  source: 'reported' | 'estimated'
+  input_tokens: number | null
+  output_tokens: number | null
+  cached_input_tokens: number | null
+  cost: { amount: number; currency: string; pricing_version: string; estimated: true } | null
+}
+export interface ExecTraceSpanDto {
+  span_id: string
+  parent_span_id: string | null
+  name: string
+  kind: string
+  start_offset_ms: number
+  end_offset_ms: number | null
+  duration_ms: number | null
+  status: ExecTraceEndStatus | 'running'
+  error_code: string | null
+  attempt: number
+  timing: 'measured' | 'reported' | 'point' | 'unmeasured'
+  attributes: Record<string, string | number | boolean>
+  usage: ExecTraceUsage | null
+}
+export interface ExecTraceEventDto {
+  seq: number
+  name: string
+  span_id: string
+  at_offset_ms: number
+  attributes?: Record<string, string | number | boolean>
+}
+export interface ExecTraceDto {
+  schema_version: number
+  trace_id: string
+  operation_kind: ExecTraceOperation
+  started_at: number
+  ended_at: number | null
+  status: ExecTraceEndStatus | 'running' | 'interrupted'
+  error_code: string | null
+  root_span_id: string
+  first_failure: { span_id: string; name: string; error_code: string | null; attempt: number } | null
+  truncated: boolean
+  dropped_count: number
+  complete: boolean
+  spans: ExecTraceSpanDto[]
+  events: ExecTraceEventDto[]
+  last_seq: number
+}
+export type ExecTraceResult =
+  | { available: true; trace: ExecTraceDto }
+  | { available: false; reason: 'not_found' | 'disabled' }
+
+/**
+ * 读一次任务的执行追踪（权威快照；SSE 会丢，断线后以这里为准）。`ref` 是任务引用：AI 会话 id、修复会话的准备会话 id……
+ * `pj` 取调用这一刻的项目——追踪按项目认领，别的项目的 id 读作「没有」。
+ */
+export async function fetchExecTrace(
+  kind: ExecTraceOperation,
+  ref: string,
+  pj: string | null = currentProjectId(),
+): Promise<ExecTraceResult> {
+  const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`
+  const res = await fetch(apiUrlFor(`/api/exec-trace?${qs}`, pj), withProjectFor(undefined, pj))
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => ({}))) as { reason?: string }
+    return { available: false, reason: body.reason === 'disabled' ? 'disabled' : 'not_found' }
+  }
+  if (!res.ok) throw new ApiError(`exec_trace_${res.status}`, res.status, {})
+  const body = (await res.json()) as { trace: ExecTraceDto }
+  return { available: true, trace: body.trace }
+}
+
+/**
+ * 用户主动导出一次任务的执行追踪诊断（ADR 0151 PR4）：后端出门投影 + 归因摘要，下载到本机，不上传。
+ * 找不到（过期 / 别的项目 / 追踪关闭）= `available: false`，调用方如实说，不拿别的东西冒充。
+ */
+export async function fetchExecTraceDiagnostic(
+  kind: ExecTraceOperation,
+  ref: string,
+  pj: string | null = currentProjectId(),
+): Promise<{ available: true; blob: Blob; filename: string } | { available: false }> {
+  const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`
+  const res = await fetch(apiUrlFor(`/api/exec-trace/diagnostic?${qs}`, pj), withProjectFor(undefined, pj))
+  if (res.status === 404) return { available: false }
+  if (!res.ok) throw new ApiError(`exec_trace_diagnostic_${res.status}`, res.status, {})
+  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')
+  return { available: true, blob: await res.blob(), filename: match?.[1] ?? 'tavotto-exec-trace.json' }
+}
+
 /**
  * 版本列表。`sketch` 给了才带草图 —— **默认不带**。
  *
@@ -1463,7 +1677,15 @@ export const fetchTimeline = (
   sketch?: { objects: number; textChars: number },
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{ versions: LayoutVersionMeta[]; budget?: TimelineBudget }>(
+  return jsonFetch<{
+    versions: LayoutVersionMeta[]
+    budget?: TimelineBudget
+    /**
+     * 旧时间线文件读不出来（#264）：后端已开一份空历史、旧文件原样保留。只有文件名与大小，
+     * 没有路径。本版本只认下字段、不画 UI（也不据此删任何东西）。
+     */
+    legacy_unreadable?: { name: string; size: number | null }
+  }>(
     `/api/versions/${encodeURIComponent(docId)}${q}`,
   )
 }
@@ -1478,11 +1700,12 @@ export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' |
 export const putVersionThumb = (
   docId: string,
   vid: string,
-  thumb: { blob: Blob; type: string },
+  thumb: { blob: Blob; type: string; box?: { x: number; y: number; w: number; h: number } },
   pj?: string | null,
 ) =>
   jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
-    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb`,
+    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb` +
+      (thumb.box ? `?box=${[thumb.box.x, thumb.box.y, thumb.box.w, thumb.box.h].join(',')}` : ''),
     { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
     pj,
   )
@@ -1656,6 +1879,7 @@ interface ExportBox {
 export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
+      figure_snapshot?: FigureSnapshot
       id: string
       overrides?: { gid: string; prop: string; value: unknown }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
@@ -1680,6 +1904,8 @@ export type ExportObject =
       font_family?: 'serif' | 'sans-serif' | 'monospace'
       /** 科学文本解释；缺席 = auto，后端缺省与它一致 */
       interpretation?: 'auto' | 'scientific'
+      /** 文字写法；缺席 = 旧标记，后端缺省与它一致（ADR 0152） */
+      text_format?: 'latex'
       underline?: boolean
       line_height?: number
       padding_mm?: number
@@ -1723,6 +1949,33 @@ export type ExportObject =
  * 也不许在第二个 API 上把同一批参数再抄一遍——那正是"预检按一套规矩、
  * 导出按另一套"的来源。
  */
+/** `scope=original` 的一张图的来源（`original` 段，以及多页 PDF 里每一页）。**没有 x/y/w/h，也没有页面尺寸** */
+export type ExportOriginalSource = ArtifactRequestFields & {
+  figure_id: string
+  figure_snapshot?: FigureSnapshot
+  overrides?: { gid: string; prop: string; value: unknown }[]
+  w_mm?: number | null
+  h_mm?: number | null
+  px_w?: number | null
+  px_h?: number | null
+  source_kind?: string
+  /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
+  ignored?: string[]
+  /**
+   * 画布上的标注（text / arrow / shape，QA-WIN-20）：坐标已换算到原图图幅（图左上角为原点、mm），后端用整版导出
+   * 那条合成路径画在原图上。缺省 / 空 = 纯原图导出（载荷与从前逐字节相同）；非空时 `w_mm` / `h_mm` 必填。
+   */
+  objects?: ExportObject[]
+  /** `objects` 里前几个画在图的下面（图层树里放在图之下的标注）；缺省 0 = 都在图上 */
+  objects_below?: number
+  /**
+   * 单图留白（ADR 0161 §3）：`[左, 上, 右, 下]`，mm，可为负（负值 = 裁进图幅）。缺席或全 0 = 与从前逐字节相同。
+   * 非零时后端走带标注的合成路径（没有标注也走）：页面 = `w_mm + 左 + 右` × `h_mm + 上 + 下`，面板落在 `(左, 上)`，
+   * `objects` 的坐标以**页面**左上为原点；非零时 `w_mm` / `h_mm` 必填；页面不再为正则 `bad_pad`。
+   */
+  pad_mm?: [number, number, number, number]
+}
+
 export interface ExportRequest {
   scope: 'original' | 'canvas'
   formats: string[]
@@ -1740,17 +1993,12 @@ export interface ExportRequest {
   /** `scope=canvas`：页面 + z 序对象（底 → 顶） */
   canvas?: { page_w_mm: number; page_h_mm: number; objects: ExportObject[] }
   /** `scope=original`：那一张图自己。**没有 x/y/w/h，也没有页面尺寸** */
-  original?: ArtifactRequestFields & {
-    figure_id: string
-    overrides?: { gid: string; prop: string; value: unknown }[]
-    w_mm?: number | null
-    h_mm?: number | null
-    px_w?: number | null
-    px_h?: number | null
-    source_kind?: string
-    /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
-    ignored?: string[]
-  }
+  original?: ExportOriginalSource
+  /**
+   * `scope=original` 且格式恰为 `pdf`：把若干张图合成**一个多页 PDF**（#1370，PdfPages 导出）。`pages` 按页序给每一页
+   * 的来源（形状同 `original`；同一张图出现多次 = 这一页重复放）。此时**不带** `original`（第一页的来源只有 `pages[0]` 一处）。
+   */
+  merge_pdf?: { pages: ExportOriginalSource[] }
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   style_check_report?: Record<string, unknown>
   /**
@@ -1912,7 +2160,7 @@ async function requireExportArtifactAck(req: ExportRequest, pj: string | null): 
   if (!guarded.length) return
   const checked = await validateExport(req, pj)
   for (const s of guarded) {
-    const context = validationFromSource(checked.artifact_sources?.[s.id],s.id)
+    const context = verifiedSource(checked.artifact_sources?.[s.id], s.id, s.source_policy ?? FIGSIZE_SOURCE_POLICY)
     if (!s.expected_source || context.bytesSha256 !== s.expected_source.bytes_sha256 || context.sizeBytes !== s.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
 }
@@ -1952,6 +2200,8 @@ export const cancelExport = (jobId: string) =>
   })
 
 export interface ExportValidation {
+  /** 每个面板 × 每种格式的来源（后端 `engine/exportroute.py`）；旧后端 / 算不出时缺 */
+  route?: ExportRoute
   artifact_sources?: Record<string, unknown>
   ok: boolean
   /** 会撞上的已有文件名 */
@@ -1969,6 +2219,31 @@ export const validateExport = (req: ExportRequest, pj?: string | null) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   }, pj)
+
+/* --------------------------- 标注公式排版（ADR 0152 PR 4） --------------------------- */
+
+/**
+ * 一个公式的排版结果：em 单位、基线 y = 0、**y 向上**的轮廓段（M / L / C / Z）与盒子；
+ * 或排不出来的原因。与导出读同一份（`engine/mathtypeset.py`），所以画布与 PDF 逐点相同。
+ */
+export interface MathBox {
+  ok: boolean
+  width?: number
+  ascent?: number
+  descent?: number
+  segments?: (string | number)[][]
+  error?: string
+}
+
+/** 一次最多排几条（与后端 `MATHTEXT_MAX_ITEMS` 同值） */
+export const MATHTEXT_MAX_ITEMS = 64
+
+export const typesetMath = (items: { src: string; family: string }[]) =>
+  jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  })
 
 /* --------------------------- 可复现项目包 ---------------------------------- */
 
@@ -2050,6 +2325,8 @@ export type MarkerShape =
 /** manifest 里一个可编辑字段；ElementInspector 完全由它驱动，前端不硬编码属性名 */
 export interface EditableField {
   prop: string
+  /** Worker supports an explicit glyph fallback in the fontfamily override. */
+  font_fallback_selection?: boolean
   /**
    * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
    * number_list：一串数（固定刻度位置），value 为 number[]。
@@ -2085,6 +2362,12 @@ export interface EditableField {
    * 写入的仍是 `options` 里的原名（matplotlib 按名字找得到的是它）。
    */
   option_labels?: Record<string, string>
+  /**
+   * 字体族字段专有：当前值是通用族（`serif`）时，matplotlib 此刻真正用来画它的那张脸
+   * （`{serif: 'Times New Roman'}`）。**只用于显示**——`value` 与写回脚本的仍是 `serif`。
+   * 老引擎不发它，下拉照旧只写通用族。
+   */
+  option_faces?: Record<string, string>
   /**
    * marker 一族字段专有的**只读事实**：图上此刻画的是什么形状（见
    * `MarkerShape`）。`value` 说的是「选中的是哪个取值」，它说的是形状。
@@ -2166,6 +2449,19 @@ export interface ElementGeometry {
   stroke_pt?: number
   /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
   clip?: [number, number, number, number]
+  /**
+   * 真实绘制次序（ADR 0086 修订）：越大越晚画、越在上层，跨 axes 也可比。主语是 manifest 测量那一刻
+   * 的 figure 对象（`pathgeom.paint_ranks`：Figure/Axes 的 children 按 zorder 稳定升序，与
+   * matplotlib draw 同一规则），不是 zorder 字面值也不是登记序。伪元素取成员里最晚画的，成员被别的 artist 隔开则不给。
+   * 缺席 = 次序未知（老引擎、3D 子轴），前端不据此判遮挡。
+   */
+  paint_order?: number
+  /**
+   * 填充此刻画出来的有效不透明度（0..1）；只有 `fill` 的 geometry 才有。matplotlib 的 artist alpha
+   * 是**替换**颜色里的 alpha 而非相乘，所以这就是 `get_facecolor()` 的 alpha；逐元素色取最小
+   * （保守：宁可认为盖不住）。缺席 = 未知，前端按「盖不住」处理。
+   */
+  fill_alpha?: number
 }
 
 /**
@@ -2224,6 +2520,14 @@ export interface ManifestElement {
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
   /**
+   * 只有 `gid === 'figure'` 的元素有（ADR 0161 §2）：图的内容边缘 `[x0, y0, x1, y1]`（**两个角点**，不是 `bbox` 的 `[x, y, w, h]`）——
+   * `fig.get_tightbbox(renderer)`，即 matplotlib `bbox_inches="tight"` 用的同一个框，**不含 pad**；换成相对
+   * manifest 对外报的图幅（有 savefig frame 时是 frame，ADR 0098，否则 figsize）的分数，y 向下，与 `bbox` 同一套坐标。
+   * 可以略伸出 [0, 1]（内容被图幅切掉的那部分）。**缺席**（旧后端 / 引擎量不出）= 没有「紧凑」停靠点，不猜。
+   * 产生者只有 `engine/manifest._ink_bbox()`；前端读它只经 `exactPanelManifest`（ADR 0017）。
+   */
+  ink_bbox?: [number, number, number, number]
+  /**
    * matplotlib 会在这个框处把这个元素切掉，框外一笔都不画（figure 分数、
    * y 向下，与 `bbox` 同一套坐标）。**缺席 = 不裁 / 裁不掉任何东西。**
    *
@@ -2259,6 +2563,13 @@ export interface ManifestElement {
   glyphs_missing?: string[]
   /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
   glyphs_fallback?: string[]
+  /** 正文真正由哪张脸画出来（族名）。产生者只有 `engine/manifest.font_faces`。 */
+  face?: string
+  /**
+   * 文字里有 `$…$` 时，公式真正由哪张脸画出来（族名；内置公式字体集报它那张脸，`custom` 报 `mathtext.rm` 解析到的族）。
+   * 编辑框里的公式预览按它排（`lib/figureMathFont.figureMathFamily`）。无公式的文字缺席。
+   */
+  math_face?: string
   /**
    * 这段文字里的汉字由回退链上哪张脸画出来的（ADR 0045）。正文族自己画得
    * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。
@@ -2308,6 +2619,28 @@ export interface ManifestElement {
    */
   scale_gids?: string[]
   /**
+   * 色阶组的**结构性**成员（引擎 `_cmap_alias_gids`，唯一出处）：与这个元素共用同一份色图状态的其它
+   * gid——它的 mappable / 共用 norm 的兄弟（不看此刻是否在映射）/ 给这组上色的全部色条（含独立
+   * `ScalarMappable` 色条之间）。任一成员改 cmap = 整组改，写 cmap 时同一次 commit 清掉这些 gid 上的旧
+   * cmap override（ADR 0135）。可选：组里只有自己就不发。
+   */
+  cmap_group_gids?: string[]
+  /**
+   * 广播型字段**会盖掉谁**（引擎 `overrides.alias_covers`，唯一出处）：`{ 广播 prop: { 窄 prop: [窄 gid, ...] } }`，
+   * 如图例 `title_fontsize → { fontsize: ['axes_0.legend.title'] }`、`fontsize → { fontsize: [每条图例项] }`、
+   * 色条 `tick_fontsize` → 色条轴刻度组、柱形系列样式 → 每根柱。引擎里窄端永远排在广播之后应用，所以一个量有两个
+   * override 地址时广播端那条被盖、控件却显示它的旧值——写入口（`lib/aliasOverrides.ts`）据此让一个量只留一个
+   * 地址。不含同一元素上的别名（`fill → facecolor` 等）与 `cmap`（色阶组走 `cmap_group_gids`）。可选：没有就不发，
+   * 旧引擎也不发（前端退化为只 upsert）。
+   */
+  alias_covers?: Record<string, Record<string, string[]>>
+  /**
+   * `alias_covers` 里**纯别名**的广播 prop（引擎 `overrides.ALIAS_PURE`，逐个读过 setter 才进）：广播端没有任何
+   * 窄端存不下的额外状态，两个地址可互换。只有这些才能在写窄端时反向删掉广播端那条 override；图例整体字号
+   * （还改 `Legend._fontsize` 并重建布局）等不纯的不在其中，窄端写入不许动它们。可选。
+   */
+  alias_pure?: string[]
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，
@@ -2319,6 +2652,11 @@ export interface ManifestElement {
    * （写了 position）钉在图幅上，拖宿主时要作为随行元素一起写（`axesCompanions`，ADR 0100）。
    */
   inset_of?: string
+  /**
+   * 框（`AnnotationBbox` / `AnchoredText` …）里的文字：外框的 gid。文字自己的落位归打包器、不可拖，
+   * 按住它拖起来时改拖外框（`inFigureMoveOf`）；点一下仍是选中这段字。
+   */
+  drag_host?: string
   /**
    * 带文字的标注的箭头：它所属的那段标注文字的 gid。箭头的位置归文字（尾巴跟着文字、尖钉在
    * 数据点上），拖它时提示「拖文字」；没有这个字段的箭头（独立箭头、纯箭头注释）不是这回事（ADR 0100）。
@@ -2338,6 +2676,11 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
+   * 缺席 = 次序未知，不判遮挡。
+   */
+  paint_order?: number
   /**
    * 直角坐标轴四条边框**画出来的那条线**（figure 分数、y 向下），供画布建立
    * 「边框内侧 / 外侧」的语义命中区（Prompt 16，`lib/tickSides.ts`）。
@@ -2395,6 +2738,8 @@ export interface Manifest {
    * 字体下拉把它并在首选项（`options`）之后；老引擎不发它，下拉照旧只有首选项。
    */
   font_families?: string[]
+  /** Families proven not to cover the Chinese-font character ranges. */
+  font_latin_only_families?: string[]
   /**
    * `font_families` 里有中文名的那些：{族名: 中文名}（引擎读 name 表，`Songti SC` →
    * `宋体-简`）。只给下拉显示用，值仍是族名；老引擎不发它，下拉照旧显示族名。
@@ -2410,10 +2755,29 @@ export interface Manifest {
    * figsize 出图、可能切边。有它才分得清「算不出」与「脚本本来就不裁」；缺席 = 两者之外。
    */
   frame_unavailable?: string
+  /**
+   * 脚本存完盘之后又改过这张图（ADR 0139 §八）：编辑的是脚本跑完时的最终态，与磁盘上的文件不同。
+   * 只在为真时出现；老引擎不发它。
+   */
+  modified_after_save?: boolean
+  /**
+   * 与 `modified_after_save` 同时出现（ADR 0139 §九）：编辑基础是保存那一刻的 Figure 复制品，与磁盘上的文件对应；
+   * 脚本后来的改动不在其中。缺席 = 没拍到快照，编辑的仍是脚本跑完时的最终态。
+   */
+  save_moment?: 'restored'
+  /** 快照没用上的原因（闭集，`figcapture.SAVE_MOMENT_REASONS`）；只用来区分文案之外的诊断，界面照旧说「与存盘文件不同」。 */
+  save_moment_unavailable?: string
 }
 
 export interface EngineRenderResponse {
+  /** build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）；出图结果与状态码不变 */
+  workdir_hint?: WorkdirConfirmation
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   artifact_source?: unknown
+  /** 来源驱动策略（`script-backed-figure-v1`）的准入结论：状态、重画摘要、差异度量（ADR 0139） */
+  source_backed?: unknown
+  /** 无 source_policy 的 PNG 渲染：产物未与已存字节核对（#1145，只标记不拒绝） */
+  source_unverified?: { reason: string; kind: string }
   rev: number
   manifest: Manifest
   warnings?: string[]
@@ -2459,6 +2823,7 @@ export interface EngineRenderResponse {
 }
 
 export class EngineError extends Error {
+  figureSnapshotInvalidation?: FigureSnapshotInvalidation
   params?: Record<string, unknown>
   retryable?: boolean
   traceback: string
@@ -2502,6 +2867,11 @@ export class EngineError extends Error {
    * 此刻哪儿都找不到的路径——一次「指认数据位置」的对话框（`MissingInputDialog`），不是错误文字。
    */
   missingInput?: MissingInputOffer
+  /**
+   * 沙盒里 glob / listdir / exists / C++ 读取器落空、同一个相对目标在脚本目录里找得到（#1254，ADR 0084 运行时证据）：
+   * 与首开确认框同形的「在脚本目录里运行」引导。只诊断——不是 `confirmation`（那是起会话前要先答的门），码不变。
+   */
+  workdirHint?: WorkdirConfirmation
   constructor(
     message: string,
     traceback = '',
@@ -2510,6 +2880,7 @@ export class EngineError extends Error {
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
     extra?: {
+      figureSnapshotInvalidation?: FigureSnapshotInvalidation
       params?: Record<string, unknown>
       retryable?: boolean
       installRoute?: string
@@ -2517,9 +2888,11 @@ export class EngineError extends Error {
       explicit?: ExplicitInterpreterFailure
       dependencyPreparation?: DependencyPreparationOffer
       missingInput?: MissingInputOffer
+      workdirHint?: WorkdirConfirmation
     },
   ) {
     super(message)
+    this.figureSnapshotInvalidation = extra?.figureSnapshotInvalidation
     this.params = extra?.params
     this.retryable = extra?.retryable
     this.installRoute = extra?.installRoute
@@ -2532,6 +2905,7 @@ export class EngineError extends Error {
     this.explicit = extra?.explicit
     this.dependencyPreparation = extra?.dependencyPreparation
     this.missingInput = extra?.missingInput
+    this.workdirHint = extra?.workdirHint
   }
 }
 
@@ -2551,6 +2925,51 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
    * 四分之三传输；纯矢量图上一分钱都不值（docs/perf-baseline.md）。
    */
   previewDpi?: number
+  /**
+   * 这次渲染的意图（后端闭集，缺省 = foreground）。`neighbour` = 同步器「顺手补渲染」视口里别的图
+   * （跨图对齐，ADR 0128）：后端不为它刷新 LRU、需要冷启动而会话池已满时回 409
+   * `background_render_deferred`（见 `lib/renderPurpose`），**不是失败**。
+   */
+  purpose?: RenderPurpose
+}
+
+/**
+ * 重复交接命中已显示面板时回给后端的「当前渲染状态」（ADR 0131 第六节修订 2026-10-18）。
+ * 形状与 `handoffreceipt.parse_ack` 同源：`ok` 带 manifest 元素数、`failed` 带稳定 code、
+ * `displayed` = 显示着但拿不出这一版的精确渲染。走会话 cookie，不新造凭据。
+ */
+export type HandoffDisplayAck =
+  | { id: string; status: 'ok'; manifest_elements: number }
+  | { id: string; status: 'failed'; code: string }
+  | { id: string; status: 'displayed' }
+
+/** 旁路：失败（老后端 404 / 网络）一律吞掉——CLI 那头回落到等超时，与没有这条确认时一样。 */
+export async function postHandoffDisplayAck(ack: HandoffDisplayAck): Promise<void> {
+  try {
+    await fetch(apiUrl('/api/handoff/display-ack'), withProject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ack),
+    }))
+  } catch {
+    /* 旁路 */
+  }
+}
+
+/**
+ * 后台预热（ADR 0160）：让后端提前为这张图**取渲染会话**（不 build、不出图、不写盘、不发事件）。
+ * 纯旁路：任何失败（老后端 404 / 网络）一律吞掉，界面什么都不显示。
+ */
+export async function postEnginePrewarm(id: string): Promise<void> {
+  try {
+    await fetch(apiUrl('/api/engine/prewarm'), withProject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }))
+  } catch {
+    /* 旁路 */
+  }
 }
 
 export async function engineRender(
@@ -2568,7 +2987,9 @@ export async function engineRender(
       inline_svg: true,
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
+      ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
+      ...(opts.purpose && opts.purpose !== 'foreground' ? { purpose: opts.purpose } : {}),
     }),
     signal: opts.signal,
   }))
@@ -2583,6 +3004,7 @@ export async function engineRender(
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
       {
+        figureSnapshotInvalidation: body.figure_snapshot_invalidation as FigureSnapshotInvalidation | undefined,
         params: body.params as Record<string, unknown> | undefined,
         retryable: body.retryable as boolean | undefined,
         installRoute: body.install_route as string | undefined,
@@ -2592,11 +3014,12 @@ export async function engineRender(
           | DependencyPreparationOffer
           | undefined,
         missingInput: body.missing_input as MissingInputOffer | undefined,
+        workdirHint: body.workdir_hint as WorkdirConfirmation | undefined,
       },
     )
   }
   if (opts.source_policy) {
-    const g = validationFromSource(body.artifact_source, id)
+    const g = verifiedSource(body.artifact_source, id, opts.source_policy)
     if (opts.expected_source && (g.bytesSha256 !== opts.expected_source.bytes_sha256 || g.sizeBytes !== opts.expected_source.size_bytes)) throw new ArtifactValidationError('source_changed')
   }
   return body as EngineRenderResponse
@@ -2673,6 +3096,9 @@ export async function engineSpecfix(
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
+      undefined,
+      undefined,
+      { params: body.params as Record<string, unknown> | undefined },
     )
   }
   // 形状不对 = 没拿到（代理页、别的服务占了端口、半截的响应），不是「修好了」
@@ -2725,14 +3151,15 @@ export async function enginePreviewPng(
 
 export async function enginePreviewPngSnapshot(
   id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: ArtifactRequestFields = {},
-): Promise<{ url: string; manifest: Manifest }> {
+): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown }> {
   const res = await previewPngResponse(id, patches, bucket, signal, true, source)
-  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown }
+  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown }
   if (source.source_policy) {
-    const g = validationFromSource(frame.artifact_source, id)
+    const g = verifiedSource(frame.artifact_source, id, source.source_policy)
     if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
-  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest }
+  // 来源驱动策略：这次响应自己的准入结论（对照确认绑定的是**显示给用户的这一份**，不是更早那次 render 的）
+  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed }
 }
 
 async function previewPngResponse(
@@ -2865,6 +3292,17 @@ export interface AiAgentDiagnostics {
   readiness_detail: string | null
 }
 
+export interface AiModelDetail {
+  id: string
+  display_name: string
+  description: string
+  /** 型号自己的档位。`efforts_known` 不为 true 时空只表示“不知道”，回落到 Agent 级 `efforts` */
+  efforts: string[]
+  /** 加字段：true = 目录明确给了该型号，`efforts` 空 = 明确没有档位（不显示强度选择、不传 effort）；缺省 / false = 未知 */
+  efforts_known?: boolean
+  default_effort: string | null
+}
+
 export interface AiAgentCaps {
   id: AiAgentId
   display_name: string
@@ -2888,6 +3326,11 @@ export interface AiAgentCaps {
 
   models: string[]
   default_model: string | null
+  /**
+   * 与 `models` 并行的型号详情（显示名 / 说明 / 该型号自己支持的强度档位）。
+   * 加字段协议：旧后端不带（缺省 = 只有 id），第三方接口接管时为空。
+   */
+  model_details?: AiModelDetail[]
   efforts: string[]
   default_effort: string | null
 
@@ -2899,10 +3342,14 @@ export interface AiAgentCaps {
     third_party_endpoints: boolean
     model_selection: boolean
     effort_selection: boolean
-    /** 第三方接口要不要选 wire api（OpenAI 兼容那一族才有 responses/chat） */
+    /** 第三方接口属 OpenAI 族（Codex，只认 Responses 协议，界面不再让选协议） */
     wire_api_selection: boolean
     readiness_probe: boolean
+    /** 有官方登录命令（设置页在 needs_auth 时给「登录 …」按钮） */
+    login: boolean
   }
+  /** 登录按钮上的账号名（「登录 ChatGPT」）；不支持登录 = null */
+  login_account: string | null
 
   diagnostics: AiAgentDiagnostics
 
@@ -2913,8 +3360,25 @@ export interface AiAgentCaps {
 /** `npm install -g` 的进度（后台线程，前端轮询） */
 export interface AiInstallState {
   status: 'idle' | 'running' | 'done' | 'error'
-  code?: 'npm_missing' | 'npm_failed' | 'installed_but_not_found' | 'timeout' | 'spawn_failed'
+  code?:
+    | 'npm_missing'
+    | 'npm_failed'
+    | 'installed_but_not_found'
+    | 'timeout'
+    | 'spawn_failed'
+    | 'managed_cli_offline'
+    | 'managed_cli_tls'
+    | 'managed_cli_source_unavailable'
+    | 'managed_cli_hash_mismatch'
+    | 'managed_cli_unsupported_platform'
+    | 'managed_cli_disk_full'
+    | 'managed_cli_invalid_archive'
+    | 'managed_cli_write_failed'
+    | 'managed_cli_launch_failed'
+    | 'managed_cli_cancelled'
   log?: string
+  /** 应用内下载安装的进度 0–1；没有就只显示「正在安装…」 */
+  progress?: number
 }
 
 /** 第三方 API 接入。密钥永远不回传，只给「有没有」和尾四位。 */
@@ -2925,19 +3389,83 @@ export interface AiEndpoint {
   base_url: string
   models: string[]
   default_model: string | null
-  wire_api: 'responses' | 'chat'
+  wire_api: 'responses'
   has_key: boolean
   key_hint: string
+  /** 后端判定这条记录现在不能用（唯一判据在 `ai_providers.incompatibility`）；null = 可用 */
+  incompatible: 'codex_chat_removed' | null
+  /** 不能用、且能对上已知厂商 → 可一步迁移：`codex_responses` = 该厂商支持 Responses，原地改协议；
+   *  `claude` = 只有 Anthropic 端点，改由 Claude Code 接入；null = 对不上，只能手动编辑 */
+  migratable: 'codex_responses' | 'claude' | null
+  /** 图标键：地址对上厂商目录某一行就是那家，否则 'custom'（通用图标）；老后端缺省 */
+  icon_key?: string
+  /** 账号登录（设备码 OAuth）的记录：只有这些字段，令牌一个字节都不回传 */
+  auth?: 'oauth'
+  signed_in?: boolean
+  oauth_expires_ms?: number | null
+  oauth_provider?: string | null
+  oauth_region?: string | null
+}
+
+/** 一家支持账号登录的厂商。`oauth_available=false`（Tavotto 还没有它的 client_id）时界面不出现入口 */
+export interface AiOauthProvider {
+  label: string
+  oauth_available: boolean
+  regions: string[]
+  default_region: string
+}
+
+export type AiOauthFlowState = 'waiting' | 'signed_in' | 'expired' | 'denied' | 'cancelled' | 'failed'
+
+export interface AiOauthFlow {
+  flow_id: string
+  provider: string
+  region: string
+  state: AiOauthFlowState
+  user_code: string
+  verification_uri_complete: string
+  /** 绝对毫秒 */
+  expires_at: number
+  /** 轮询间隔（秒） */
+  interval: number
+  endpoint_id?: string
 }
 
 export interface AiEndpointPreset {
   id: string
+  /** 品牌名（存成接口时的默认名）；界面显示的名字走 `label_key`（`dialogs:settings.agents.<label_key>`） */
   label: string
+  /** 厂商目录（`engine/ai_catalog.json`）的 i18n 键；老后端 / 测试夹具可缺省 → 回退 `label` */
+  label_key?: string
+  /** 厂商图标键（`VendorIcon`）；表外 / 缺省 = 通用图标 */
+  icon_key?: string
   agent: AiAgentId
+  /** 'custom' = 官方登录态 / 自定义两类「用户自填」行；老后端缺省 → 不分组 */
+  region?: 'cn' | 'global' | 'custom'
   base_url: string
+  /** 申请 Key 的页面（https）；空 = 没有 */
+  key_url?: string
+  /** 申请 Key 的补充一句话（i18n 键，同 `label_key` 的解析方式） */
+  key_hint_key?: string
   models: string[]
-  wire_api?: 'responses' | 'chat'
+  wire_api?: 'responses'
   note?: string
+}
+
+export type AiModelsFetchReason =
+  | 'no_key'
+  | 'key_origin_mismatch'
+  | 'insecure_url'
+  | 'timeout'
+  | 'unauthorized'
+  | 'bad_response'
+  | 'network'
+
+export interface AiModelsFetchResult {
+  models: string[]
+  /** 'none' = 没取到（看 `reason`），界面保持预设 / 手填的列表不变 */
+  source: 'live' | 'cache' | 'none'
+  reason: AiModelsFetchReason | null
 }
 
 export interface AiCapabilities {
@@ -2945,9 +3473,238 @@ export interface AiCapabilities {
   agents: AiAgentCaps[]
   endpoints: AiEndpoint[]
   presets: AiEndpointPreset[]
+  /** 账号登录：厂商 id → 可用性；老后端没有，缺省 = 没有入口 */
+  oauth?: Record<string, AiOauthProvider>
   /** 上次探测完成的时刻（毫秒；与 AiHistoryEntry 的 *_ms 同一约定） */
   checked_at_ms: number
+  /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
+  taf_enabled?: boolean
+  /**
+   * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（ADR 0148 / 0149）。老后端没有；`false` = 没有内置执行器能用的 API 连接
+   * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
+   */
+  ai_fix_available?: boolean
+  /** 「连接 AI」视图（老后端没有 → 退回 `agents` 的旧界面） */
+  vendors?: AiVendor[]
+  connections?: AiConnection[]
+  /** 后端按系统语言给的排序提示；前端以界面语言为准 */
+  locale_region?: 'cn' | 'global'
 }
+
+/* --- 「连接 AI」：厂商目录与连接视图（接口约定见 docs/implementation 的连接 AI 方案；旧后端没有这些字段 → 沿用旧界面） --- */
+
+/** 一家厂商的一种连接方式（同一厂商的 API Key 与订阅登录合并成一个厂商时有多种） */
+export interface AiVendorMethod {
+  id: string
+  kind: 'key' | 'login' | 'oauth'
+  /** 方式名的 i18n 键（`method.subscription` / `method.apiKey` / `method.kimiCode` / `method.codingPlan` / `method.account`） */
+  label_key?: string | null
+  /** key 类：对应的目录行 id（保存连接时作为厂商 id） */
+  catalog_id?: string
+  /** login 类：登录用的家族（codex / claude） */
+  agent?: string
+  /** login / oauth 类：这种方式对应的连接 id（`sub:codex` / `sub:claude` / `minimax-oauth`） */
+  connection_id?: string
+  key_url?: string
+  key_hint_key?: string
+  needs_base_url?: boolean
+  available: boolean
+}
+
+/** 可连接的厂商（设置页 / 连接弹窗的一行）。`connect`：key = 填 API Key；login = 订阅登录；oauth = 账号登录（设备码） */
+export interface AiVendor {
+  id: string
+  /** 英文品牌名兜底；界面显示名走 `label_key`（`dialogs:settings.agents.<label_key>`），订阅类 / 自定义为 null */
+  label: string
+  label_key?: string | null
+  /** Key 提示的 i18n 键（同 `label_key` 的解析方式） */
+  key_hint_key?: string
+  /** 只有自定义为 true */
+  needs_base_url?: boolean
+  /** 这家厂商的连接方式；缺省（老后端）= 只有 `connect` 那一种 */
+  methods?: AiVendorMethod[]
+  /** 彩色标志的键（`BrandLogo`）；表外 = 通用图标 */
+  logo: string
+  region: 'cn' | 'global' | 'custom'
+  connect: 'key' | 'login' | 'oauth'
+  /** 「去申请 Key」页面（https） */
+  key_url?: string
+  /** login 类：对应 CLI 已安装才 true；oauth 类：client_id 已配置才出现 */
+  available: boolean
+}
+
+/** 已连接 / 需要重新登录的连接（模型选择器的一级）。订阅类 id = `sub:codex` / `sub:claude`；Key / OAuth 类 = provider id */
+export interface AiConnection {
+  id: string
+  vendor: string
+  label: string
+  logo: string
+  state: 'ready' | 'needs_auth' | 'error'
+  models: string[]
+  model_details?: AiModelDetail[]
+  default_model: string | null
+  efforts?: string[]
+  default_effort?: string | null
+  /** key 类连接对应的连接方式 id（`AiVendorMethod.id`，如 `openai-api:key`）；老后端没有，前端按 catalog_id / vendor + 类型推断 */
+  method?: string
+  /** key 类连接对应的目录行 id（同 `AiVendorMethod.catalog_id`） */
+  catalog_id?: string
+  /** 连的是明文 http 的局域网模型服务器（只放行、界面提示一句） */
+  insecure_lan?: boolean
+  /** state=error 时的原因码（unauthorized / network / timeout / …） */
+  error?: string
+  /** 只给诊断 / 测试看，界面不显示 */
+  route?: 'cli:codex' | 'cli:claude' | 'builtin'
+}
+
+export interface AiConnectBody {
+  /** 带已有连接 id = 换 Key / 换型号 */
+  id?: string
+  vendor: string
+  api_key: string
+  base_url?: string
+  model?: string
+  label?: string
+  wire?: 'anthropic' | 'openai-responses'
+}
+
+export interface AiConnectResult {
+  ok: boolean
+  connection?: AiConnection
+  /** 稳定原因码（ok=false 或保存了但试取型号失败时） */
+  reason?: string
+}
+
+/** 连接一个 Key 类厂商（保存前后端会试取一次型号清单） */
+export const connectAi = (body: AiConnectBody) =>
+  jsonFetch<AiConnectResult>('/api/ai/connections', jsonPost(body))
+
+/** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
+export const disconnectAi = (id: string) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+/** 订阅类 / 账号登录类连接发起登录；进度沿用 `fetchAiLoginStatus` / 设备码流程的轮询 */
+export const loginAiConnection = (id: string) =>
+  jsonFetch<{ ok?: boolean; flow_id?: string }>(`/api/ai/connections/${encodeURIComponent(id)}/login`, jsonPost())
+
+/** 后端是否已给出连接视图（旧后端没有 → 界面退回旧的执行器清单） */
+export const hasConnectionView = (caps: AiCapabilities | null | undefined): boolean =>
+  !!caps && Array.isArray(caps.vendors) && Array.isArray(caps.connections)
+
+/** 可以派活的连接（state=ready），顺序沿用后端 */
+export const readyConnections = (caps: AiCapabilities | null | undefined): AiConnection[] =>
+  caps?.connections?.filter((c) => c.state === 'ready') ?? []
+
+/** 此刻有没有任何能用的 AI：有连接视图看连接，否则看旧的可用执行器 */
+export const hasUsableAi = (caps: AiCapabilities | null | undefined): boolean =>
+  hasConnectionView(caps) ? readyConnections(caps).length > 0 : usableAgents(caps ?? null).length > 0
+
+/** 这一刻该用哪个连接：首选仍 ready 就用它，否则第一个 ready；不改用户存着的首选值 */
+export const effectiveConnection = (
+  preferred: string | null | undefined,
+  caps: AiCapabilities | null | undefined,
+): AiConnection | null => {
+  const list = readyConnections(caps)
+  return list.find((c) => c.id === preferred) ?? list[0] ?? null
+}
+
+/** 连接对应的内部执行器家族（只用于旧字段 `agent`；builtin 路由没有） */
+export const connectionAgent = (c: AiConnection | null | undefined): AiAgentId | null => {
+  if (!c) return null
+  if (c.route === 'cli:codex') return 'codex'
+  if (c.route === 'cli:claude') return 'claude'
+  if (c.id.startsWith('sub:')) return c.id.slice(4)
+  return null
+}
+
+/**
+ * 厂商目录的显示顺序：按界面语言分「国内 / 海外」——中文界面国内在前，其余海外在前；
+ * 「自定义」类永远最后；组内保持后端给的顺序。已订阅登录类（`login`）在各自分组内不特殊提前。
+ */
+export const sortVendors = (vendors: AiVendor[], cnFirst: boolean): AiVendor[] => {
+  const rank = (v: AiVendor) =>
+    v.region === 'custom' ? 2 : (v.region === 'cn') === cnFirst ? 0 : 1
+  return vendors
+    .map((v, i) => ({ v, i }))
+    .sort((a, b) => rank(a.v) - rank(b.v) || a.i - b.i)
+    .map((x) => x.v)
+}
+
+/** `POST /api/ai/fix` 的响应：成功给修复会话 id；`ok: false` + 稳定原因码（`ai_fix_unavailable` 没有可用的 API 连接 / `ai_fix_busy` 已有别的修复在跑） */
+export type AiFixResponse = { ok: true; fix_id: string } | { ok: false; reason: string }
+
+/** 请求 AI 环境修复（ADR 0148 / 0149）。body：准备会话 id 与脚本（项目相对路径）；带上界面语言，AI 写给用户的话用它 */
+export const requestAiFix = (body: { session_id: string; script: string }) =>
+  jsonFetch<AiFixResponse>('/api/ai/fix', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, locale: i18n.language }),
+  })
+
+/**
+ * 修复会话等用户点的那张卡（ADR 0149「问与报」）。`kind`：`approve` 一句话方案 + 确认 / `choice` 选择题 / `pick` 选文件或文件夹 /
+ * `send` 发送诊断包。内容都是后端已脱敏的文字；`reads` 是主目录写法（`~/…`）的相对路径，不带本机用户名。
+ */
+export interface AiFixCard {
+  id: string
+  kind: 'approve' | 'choice' | 'pick' | 'send'
+  /** 触发这张卡的工具名（后端已有；`run_command` 的卡按它渲染完整命令） */
+  tool?: string
+  summary: string
+  details?: string
+  reads?: string[]
+  not_read?: string
+  /** `propose_fix` 说明将要安装的包（规范名 + 版本约束）；用户确认后同名的包不再二次确认 */
+  packages?: string[]
+  options?: { id: string; label: string }[]
+  allow_other?: boolean
+  pick?: 'file' | 'dir'
+  wants_source?: boolean
+  /** `run_command` 的卡：完整命令（后端已脱敏）；`danger` = 第②档（沙盒外执行，红色强调）；`reason` 是模型给的理由；
+   *  `cwd` 命令的工作目录；`scripts` 第②档会备份的脚本个数 */
+  command?: string
+  danger?: boolean
+  reason?: string
+  cwd?: 'scratch' | 'project'
+  scripts?: number
+}
+
+export interface AiFixState {
+  fix_id: string
+  state: 'running' | 'waiting' | 'finished'
+  script: string
+  session_id: string
+  card: AiFixCard | null
+  /** 结束后：`fixed | not_fixed`（AI 自己的说法，要由重跑准备会话验证）/ `convert`（交接给「生成可编辑版本」，带 `handoff`）/ `cancelled` / `failed` */
+  outcome: 'fixed' | 'not_fixed' | 'convert' | 'cancelled' | 'failed' | null
+  /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）、画图用的位图库与报告里的原输出图（项目相对，可缺；ADR 0143 / 0149 §七） */
+  handoff?: { kind: 'convert'; script: string; library: string; path: string | null }
+  summary: string
+  /** 没修好、而最后的错误是「项目外文件夹读不了」（仅 Windows）：结果卡上「修复权限」的一次性不透明令牌（ADR 0153 修订）；没有就不出 */
+  repair_token?: string
+  /** `failed` 时 runner 的闭集原因码（`budget` / `auth` / `quota` / `network` …） */
+  reason: string
+  steps: number
+  seq: number
+  /** 最近一次工具活动（界面按 tool 映射成一句话）；还没有 = null。`detail` 只可能是包名 / 模块名 */
+  activity?: { tool: string; phase: 'start' | 'end' | 'denied'; detail: string; at_ms: number } | null
+  /** 现在卡住了：`reason` 闭集；没卡住 = null */
+  stalled?: { reason: 'cli_waiting_approval' | 'cli_tool_not_delivered' | 'stalled'; detail: string } | null
+}
+
+/** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
+export const fetchAiFix = (fixId: string, pj?: string | null) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}`, { cache: 'no-store' }, pj)
+
+export const answerAiFix = (fixId: string, body: { card_id: string; answer: string; text?: string }, pj?: string | null) =>
+  jsonFetch<AiFixState>(
+    `/api/ai/fix/${encodeURIComponent(fixId)}/answer`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+export const cancelAiFix = (fixId: string, pj?: string | null) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}/cancel`, { method: 'POST' }, pj)
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
 
@@ -2996,13 +3753,48 @@ export const saveAiEndpoint = (rec: {
   api_key?: string
   models?: string[]
   default_model?: string | null
-  wire_api?: 'responses' | 'chat'
+  wire_api?: 'responses'
 }) =>
   jsonFetch<AiCapabilities>('/api/ai/endpoints', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rec),
   })
+
+/** 「从服务商获取」型号：`id` 指向已存接口时缺的地址 / 密钥由后端补；永远 200，拿不到看 `reason` */
+export const fetchAiEndpointModels = (rec: {
+  id?: string
+  base_url?: string
+  api_key?: string
+  refresh?: boolean
+}) =>
+  jsonFetch<AiModelsFetchResult>('/api/ai/endpoints/models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec),
+  })
+
+/** 旧的不兼容 codex 接口一步迁移（按厂商：原地改 Responses，或改由 Claude Code 接入；保留密钥；不替用户切换执行器） */
+export const migrateAiEndpoint = (id: string) =>
+  jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}/migrate`, { method: 'POST' })
+
+/** 账号登录：发起设备授权（同一厂商同时只有一个流程，重复点击拿回同一个） */
+export const startAiOauth = (provider: string, region?: string) =>
+  jsonFetch<AiOauthFlow>(`/api/ai/oauth/${encodeURIComponent(provider)}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ region }),
+  })
+
+export const fetchAiOauthFlow = (flowId: string) =>
+  jsonFetch<AiOauthFlow>(`/api/ai/oauth/flows/${encodeURIComponent(flowId)}`)
+
+export const cancelAiOauthFlow = (flowId: string) =>
+  jsonFetch<AiOauthFlow>(`/api/ai/oauth/flows/${encodeURIComponent(flowId)}/cancel`, { method: 'POST' })
+
+/** 退出账号登录：只删这条记录的令牌 */
+export const logoutAiEndpoint = (id: string) =>
+  jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}/logout`, { method: 'POST' })
 
 export const deleteAiEndpoint = (id: string) =>
   jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' })
@@ -3043,8 +3835,33 @@ export const startAiInstall = (agent: AiAgentId) =>
 export const fetchAiInstallStatus = (agent: AiAgentId) =>
   jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`)
 
+/** 官方登录按钮：只启动官方命令，Tavotto 不读不存任何登录凭据 */
+export interface AiLoginStart {
+  started: boolean
+  /** background = 官方命令自己开浏览器；terminal = 在系统终端里交互 */
+  mode: 'background' | 'terminal'
+  already_running?: boolean
+  /** 找不到终端：started=false，界面请用户自己运行 `command` */
+  reason?: 'terminal_unavailable'
+  command?: string
+}
+
+export const startAiLogin = (agent: AiAgentId) =>
+  jsonFetch<AiLoginStart>(`/api/ai/agents/${encodeURIComponent(agent)}/login`, { method: 'POST' })
+
+export interface AiLoginStatus {
+  status: 'idle' | 'running'
+  /** 官方命令打出来的授权地址（只含 state / PKCE，不是凭据）；浏览器没自动打开时给用户点 */
+  auth_url?: string
+}
+
+export const fetchAiLoginStatus = (agent: AiAgentId) =>
+  jsonFetch<AiLoginStatus>(`/api/ai/agents/${encodeURIComponent(agent)}/login`)
+
 export interface AiHistoryEntry {
   id: string
+  /** 发起它的请求 id（点发送时生成）；老记录 / 老前端发起的没有 */
+  client_request_id?: string | null
   provider: AiAgentId
   model: string | null
   effort: string | null
@@ -3080,7 +3897,7 @@ export const fetchAiHistory = (
   if (opts.pinned) params.set('pinned', '1')
   params.set('limit', String(opts.limit ?? 20))
   params.set('offset', String(opts.offset ?? 0))
-  return jsonFetch<{ total: number; sessions: AiHistoryEntry[] }>(
+  return jsonFetch<{ total: number; sessions: AiHistoryEntry[]; truncated?: boolean }>(
     `/api/ai/history?${params}`,
     undefined,
     pj,
@@ -3107,6 +3924,8 @@ export const pinAiHistory = (sid: string, pinned: boolean, pj: string | null) =>
 
 export interface AiRunRequest {
   agent: AiAgentId
+  /** 「连接 AI」视图下选中的连接 id（后端以它为准解析家族与接口）；旧后端 / 旧界面不带 */
+  connection?: string
   id: string
   prompt: string
   gid?: string | null
@@ -3117,25 +3936,291 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /**
+   * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
+   * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
+   * 用户有意的新任务（含明确失败后的重试）换新 id。
+   */
+  client_request_id?: string
 }
+
+/** 发送请求的等待上限：超时 = 「已发出、未收到确认」，不是失败（后端可能已经接受了） */
+export const AI_RUN_TIMEOUT_MS = 30_000
 
 /**
  * `pj`：会话**所属**的项目（#589）。发起、撤销、中止都钉在它上面，不跟着「此刻认领的项目」走——
  * 切项目之后还能摸到的旧会话按钮，请求也绝不发往新项目。
+ *
+ * 带 `AbortController` 超时：超时与网络错误一样抛**非 `ApiError`**——调用方据此区分「后端明确拒绝了」
+ * （`ApiError`，一定没执行）与「不知道后端收到没有」（其余，不得静默重发，见 `aiStore.start`）。
  */
-export const aiRun = (req: AiRunRequest, pj: string | null) =>
-  jsonFetch<{ session: string; script: string }>(
+export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = AI_RUN_TIMEOUT_MS) => {
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), timeoutMs)
+  return jsonFetch<{ session: string; script: string; deduped?: boolean }>(
     '/api/ai/run',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
+      signal: ctl.signal,
+    },
+    pj,
+  ).finally(() => clearTimeout(timer))
+}
+
+/** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
+export interface AiRequestStatus {
+  session: string
+  status: string
+  changed: boolean
+  script: string
+}
+
+/**
+ * 「这条请求后端到底接受了没有」。404 + `ai_request_not_found` 是**明确结论**（后端没登记过）；
+ * 其余失败（网络、老后端没这个端点、5xx）都不是结论——调用方不得把它们当「没发过」。
+ */
+export const fetchAiRequest = (requestId: string, pj: string | null) =>
+  jsonFetch<AiRequestStatus>(`/api/ai/requests/${encodeURIComponent(requestId)}`, undefined, pj)
+
+export const AI_REQUEST_NOT_FOUND = 'ai_request_not_found'
+
+/* ------------------- 助手草稿与待确认账本（ADR 0132：存后端，不存浏览器） ------------------- */
+
+export interface AiDraftDoc {
+  draft: { text: string; revision: number; updated_ms: number; stamp: number } | null
+  /** 这一行（含墓碑）的写入戳：读到就抬高本页的戳下限 */
+  stamp?: number
+  /** 未落定的提交（按 rid 一条，由老到新） */
+  pendings: { rid: string; text: string; sent: unknown; created_ms: number }[]
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' }
+
+export const fetchAiDraft = (file: string, pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<AiDraftDoc>(`/api/ai/drafts?file=${encodeURIComponent(file)}`, signal ? { signal } : undefined, pj)
+
+/**
+ * 全文覆盖（最后写入为准）；空文本 = 删。`keepalive`：页面正在关 / 刷新（pagehide）时用，浏览器会在
+ * 页面销毁后继续把这个请求发完（正文有 64 KB 的 keepalive 上限，草稿 ≤ 20 KB 够用）。
+ */
+export const putAiDraft = (file: string, text: string, pj: string | null, keepalive = false, stamp?: number) =>
+  jsonFetch<{ revision: number; stamp: number; stale?: boolean; text_hash?: string }>(
+    '/api/ai/drafts',
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, stamp }), keepalive },
+    pj,
+  )
+
+/** 条件删除：只有后端的文本仍等于 `ifText` 才删（不删另一个标签页的新稿） */
+export const deleteAiDraftIf = (file: string, ifText: string, pj: string | null) =>
+  jsonFetch<{ deleted: boolean }>(
+    '/api/ai/drafts',
+    { method: 'DELETE', headers: JSON_HEADERS, body: JSON.stringify({ file, if_text: ifText }) },
+    pj,
+  )
+
+export const putAiPending = (
+  rid: string,
+  file: string,
+  text: string,
+  sent: unknown,
+  pj: string | null,
+  script: string | null = null,
+  draftStamp: number | null = null,
+  supersedes: string[] = [],
+) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
+    {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      // `supersedes`：放弃的旧等待，后端在写这条的同一个事务里删它们（客户端不单方面 DELETE）
+      body: JSON.stringify({ file, text, sent, script, draft_stamp: draftStamp, ...(supersedes.length ? { supersedes } : {}) }),
     },
     pj,
   )
 
-export const aiRevert = (sid: string, pj: string | null) =>
-  jsonFetch<{ ok: boolean; script: string }>(
+/** 本项目全部未落定的提交（跨面板，带 script）：发起它的面板已不在时也找得回来 */
+export const fetchAiPendings = (pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<{
+    pendings: { file: string; rid: string; text: string; sent: unknown; script: string | null; created_ms: number }[]
+  }>('/api/ai/drafts/pending', signal ? { signal } : undefined, pj)
+
+/** 请求已被接受：清这条账本；草稿文本仍等于提交时的原文才一并删（后端一个事务里判与删） */
+export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
+  jsonFetch<{ cleared: boolean; draft_deleted: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}/accept`,
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ file }) },
+    pj,
+  )
+
+/**
+ * 改图任务的结局（TAF，ADR 0138）。**与 `status` 分开记**：`status: 'done'` + `outcome: 'partial' | 'failed'`
+ * 是「脚本确实改了，但核对没通过」。前端只翻译这里的值，不判断检查本身。
+ * 老后端 / `ai.taf.enabled` 关着时整个字段都没有（`undefined`），界面照旧逻辑。
+ */
+export interface AiTaskSummary {
+  task_type: string
+  outcome: 'completed' | 'partial' | 'needs_input' | 'failed' | 'cancelled' | 'interrupted' | null
+  /** 没满足的检查（技术 id + 稳定原因码）；界面只在详情里列 id */
+  unmet?: { constraint_id: string; reason_code: string; detail?: string; data?: ConvertDependencyCard }[]
+  explain?: { message_key: string; params: Record<string, unknown> }
+  /** 进行中的阶段：只在 Agent 正在自动修正上一版时为 `correcting`（有界修正，Phase 4）；终态没有 */
+  phase?: 'correcting' | null
+  /** 转换进行中的活动（后端闭集）：`writing_long` = 事件流静默已久、模型在生成较长的文件；事件一来后端就不再给。其它任务没有 */
+  activity?: 'writing_long' | null
+  /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
+  corrections?: number
+  /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
+  suggestions?: AiTaskSuggestion[]
+  /**
+   * 改图任务里“数据没动、只是显式 label 变了”的元素（ADR 0083 §五）：只有身份摘要，没有 label 原文。前端据此把画布上
+   * 已有的编辑改写到新身份（`store/aiRenameRebind`）；没有改名（或老后端）时没有这个键。
+   */
+  renamed?: IdentityRename[]
+  /** 数据出图（`data_to_figure`）：新建的脚本（项目相对路径）；没写回（needs_input / failed）时没有 */
+  script?: string
+  /** 数据出图 needs_input：后端给的中性默认映射（x / y 列名），用来举例，不当结论 */
+  preview?: AiDataFigurePreview
+}
+
+/**
+ * 改图任务的跟进建议：`legend_label` = 刚才没改的曲线（`gid`，在图 `stem` 里）的 `label` 同时是图例里（`legend_gid` 那一项）显示的文字；
+ * `to` 是 Agent 试过的新文字、`from` 是现在的原文。形状是闭集，只含这两段已经画在图上的文字。
+ */
+export interface AiTaskSuggestion {
+  kind: 'legend_label'
+  stem: string
+  /** 曲线（label 的主人）的 gid */
+  gid: string
+  /** 图例里绑定这条曲线、显示原文的那一项的 gid：按钮写它的 `text`（写曲线 `label` 不会动图例） */
+  legend_gid: string
+  from: string
+  to: string
+}
+
+/** 数据出图的默认映射预览（`ai_data_figure.NeedsInput.preview.to_dict()`）；只读展示 */
+export interface AiDataFigurePreview {
+  x?: string
+  y?: string[]
+  [k: string]: unknown
+}
+
+/** 项目内一份可选的 CSV 数据文件（`GET /api/ai/data-files`） */
+export interface AiDataFile {
+  /** 项目相对 POSIX 路径 */
+  path: string
+  size: number
+}
+
+/** `POST /api/ai/data-figure` 的回应：`task` 是任务结局（同 `ai.done` 里的 task） */
+export interface AiDataFigureResult {
+  task: {
+    task_id?: string
+    outcome: AiTaskSummary['outcome']
+    verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
+    error?: string | null
+    deduped?: boolean
+    [k: string]: unknown
+  }
+  script?: string
+  stem?: string
+  summary?: Record<string, unknown>
+  preview?: AiDataFigurePreview
+}
+
+/** 项目内的 CSV 列表（只读；开关关着 404 `taf_disabled`）。`pj`：发起那一刻的项目，钉住不跟着此刻的项目走 */
+export const aiDataFiles = (pj?: string | null) =>
+  jsonFetch<{ files: AiDataFile[]; truncated: boolean }>('/api/ai/data-files', undefined, pj)
+
+/** 从数据出图：同步回任务结局。数据问题 400 + 稳定 code（`ApiError.body.code`），文案走 `backendErrorMsg` */
+export const aiDataFigure = (
+  body: { data: string; instruction: string; client_request_id?: string },
+  pj?: string | null,
+) =>
+  jsonFetch<AiDataFigureResult>(
+    '/api/ai/data-figure',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+/** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
+export interface AiSessionDetail {
+  /** 任务结局；老后端没有 */
+  task?: AiTaskSummary
+  agent?: string
+  /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
+  refresh?: AiRefreshOutcome | null
+  status: string
+  /** 后端写下的结束时刻（`_pump` 收尾之后）；`cancelled` 但没有它 = 取消已被接受、结果还没算出来，不是终态快照 */
+  ended_ms?: number | null
+  /**
+   * 后端明确说这是不是终态快照：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true。
+   * `cancel` 之后 status 立刻是 `cancelled`，但 changed / diff / refresh 还没算出来——**不是 final**。
+   * 老后端没有这个字段（`undefined`）：退回按 `status !== 'running'` 判。
+   */
+  final?: boolean
+  /** 失败 / 超时的原因（后端给的一句话）；失败的会话没有它，恢复后的失败提示就是空白的 */
+  error?: string | null
+  changed: boolean | null
+  diff: string
+  transcript: { kind: string; text: string }[]
+}
+export const fetchAiSession = (sid: string, pj: string | null) =>
+  jsonFetch<AiSessionDetail>(`/api/ai/sessions/${encodeURIComponent(sid)}`, undefined, pj)
+
+/**
+ * 增量对账里的一个会话（`GET /api/ai/sessions/changes`）：判终态 + 建只读占位的摘要列，**不含**转录 / diff / refresh——
+ * 终态详情仍用 `fetchAiSession`（后端 `CHANGE_DTO_KEYS`，不是第二份 DTO 权威）。
+ */
+export interface AiSessionChange {
+  id: string
+  /** 这个会话最后一次写的版本号（全表单调） */
+  rev: number
+  status: string
+  /** 与会话详情同一个判据：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true */
+  final: boolean
+  changed: boolean
+  error: string | null
+  started_ms: number
+  ended_ms: number | null
+  client_request_id: string | null
+  provider: AiAgentId
+  scope: string | null
+  target: string | null
+  /** AI 面板发起的会话都有脚本；没有 = TAF 任务等不进助手面板的会话 */
+  script: string | null
+  prompt: string
+  cancel_requested: boolean
+}
+
+/**
+ * 项目里版本号 > `since` 的会话（#1115）。`since` 为 `null` = 只要此刻的水位（起点）。
+ * 回 `head`：下一次的水位（全局版本号；`more` 为真时只推进到本页最后一行）。
+ */
+export const fetchAiChanges = (since: number | null, pj: string | null) =>
+  jsonFetch<{ head: number; more: boolean; sessions: AiSessionChange[] }>(
+    `/api/ai/sessions/changes${since === null ? '' : `?since=${since}`}`,
+    undefined,
+    pj,
+  )
+
+/**
+ * 发送失败是不是「后端明确拒绝」：有 HTTP 响应，且 4xx、或 5xx 但带着我们自己的稳定 `code`
+ * （后端处理过的失败）。网关式 5xx（502/503/504，没有 code）、超时、断网、200 但读不出体——
+ * 都不确定后端收到没有。
+ */
+export function isDefiniteRunFailure(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false
+  // 后端拒绝了、但清它的待确认行也失败了（503 `ai_request_unresolved`）：状态不确定，不是「明确拒绝」——保持同一个 rid
+  if (e.body?.code === 'ai_request_unresolved') return false
+  if (e.status < 500) return true
+  return typeof e.body?.code === 'string' && e.body.code !== ''
+}
+
+export const aiRevert = (sid: string, pj?: string | null) =>
+  jsonFetch<{ ok: boolean; script: string; renamed?: IdentityRename[] }>(
     `/api/ai/sessions/${sid}/revert`,
     { method: 'POST' },
     pj,
@@ -3143,6 +4228,144 @@ export const aiRevert = (sid: string, pj: string | null) =>
 
 export const aiCancel = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' }, pj)
+
+export const resumeAiEditDependencies = (sid: string, pj: string | null, action: 'install' | 'replan', impactDigest?: string) =>
+  jsonFetch<{ session: string }>(`/api/ai/sessions/${encodeURIComponent(sid)}/dependencies`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...(impactDigest ? { impact_digest: impactDigest } : {}) }),
+  }, pj)
+
+export const discardAiEditDependencies = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${encodeURIComponent(sid)}/dependencies/discard`, { method: 'POST' }, pj)
+
+/* ----------------- 生成可编辑版本（ADR 0143，`/api/ai/convert*`） ----------------- */
+
+/** 对照数据（`ai_convert.comparison_of`）：不含像素差（`pixel_diff` 恒 null——位图与矢量重画没有可辩护的逐像素差） */
+export interface ConvertComparison {
+  original: { path: string; bytes: number; sha256: string; width_px: number | null; height_px: number | null } | null
+  candidate: { figures: number; width_mm: number | null; height_mm: number | null }
+  aspect_delta: number | null
+  pixel_diff: null
+  /** 参照的原图（项目相对路径）；没有原图 = null（R / MATLAB 来源：Tavotto 不运行它们，没有原图就无从对照）。老后端没有 */
+  reference?: string | null
+  /** `unknown` = 未对照验证（没有原图）；`side_by_side` = 并排给人看（不是判定）。老后端没有 */
+  verification?: 'unknown' | 'side_by_side'
+}
+
+/** 「生成可编辑版本」的来源语言（后端 `sourcelang.LANGUAGES`）：`python` = 位图库出的图；`r` / `matlab` = 转写 */
+export type ConvertSourceLanguage = 'python' | 'r' | 'matlab'
+
+/**
+ * 校验前缺 Python 包、要用户先决定时的卡片事实（后端 `convertdeps` 的 card；任务以 `needs_input` 终局，候选留着等用户）。
+ * `ask_once` = 这个环境第一次要装（主按钮：装，以后这个环境都自动装）；`uncommon` = 名单外的包，点名；
+ * `system` = 系统自带 Python，不装（主按钮：打开「选择运行环境」）。内置 runtime 不再出这张卡：它是 `ask_once` +
+ * `install_managed`（给本项目准备受管环境并装上，必要时先下私有 Python）。没有机器路径。
+ */
+export interface ConvertDependencyCard {
+  kind: 'ask_once' | 'uncommon' | 'system'
+  packages: string[]
+  outside_list: string[]
+  /** 环境的种类 + 可读名（`conda: myenv`）；不含路径 */
+  env: { kind: 'project_venv' | 'managed' | 'builtin' | 'system' | 'conda' | 'other'; name: string }
+  action: 'install' | 'install_managed' | 'choose_env'
+  /** 用户点主按钮时要原样回传的影响摘要（前端回显它看到的） */
+  impact_digest: string
+  target: string
+  creates_environment: boolean
+  downloads_python: boolean
+  /** 要下载的私有 Python 的字节数（授权要说出大小）；安装包自带 / 已缓存 / 不下载为 0；老后端没有 */
+  download_bytes?: number
+  modifies_user_environment: boolean
+  /** 上一次点击时摘要对不上（环境在期间变了），这是换新的卡片 */
+  notice?: string
+}
+
+export interface ConvertStatus {
+  session: string
+  state: 'ready' | 'adopted' | 'discarded' | 'awaiting_dependencies' | 'resuming' | 'failed' | 'deps_installed'
+  /** `state === 'awaiting_dependencies'` 时的卡片事实 */
+  dependency_card?: ConvertDependencyCard | null
+  /** `state === 'failed'`（续跑失败）时的原因 */
+  failure?: { reason: string; installer_code?: string; packages?: string[]; code?: string; files?: string[]; total?: number; sync_folder?: boolean } | null
+  script: string
+  target_name: string
+  /** 位图库名；R / MATLAB 来源没有（null） */
+  library: string | null
+  /** 老后端没有这个字段（= python） */
+  source_language?: ConvertSourceLanguage
+  /** 校验前自动装进用户环境的 Python 包 */
+  installed?: string[]
+  comparison: ConvertComparison | null
+  has_preview: boolean
+  adopted_script?: string | null
+  /** `state === 'ready'`：采用会在项目里新增的文件（项目相对路径，原脚本不动）；老后端没有 */
+  adopt_adds?: string[]
+}
+
+const jsonPost = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
+
+export const startConvert = (
+  req: {
+    script: string
+    /** Python 来源必填；R / MATLAB 来源必须缺省 */
+    library?: string
+    /** 缺省 = python */
+    source_language?: Exclude<ConvertSourceLanguage, 'python'>
+    reference_files?: string[]
+    path?: string | null
+    agent?: string
+    model?: string | null
+    effort?: string | null
+    client_request_id?: string
+  },
+  pj: string | null,
+) => jsonFetch<{ session: string; script: string; deduped?: boolean }>('/api/ai/convert', jsonPost(req), pj)
+
+export const fetchConvert = (sid: string, pj: string | null) =>
+  jsonFetch<ConvertStatus>(`/api/ai/convert/${encodeURIComponent(sid)}`, undefined, pj)
+
+export const adoptConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ script: string; name: string }>(`/api/ai/convert/${encodeURIComponent(sid)}/adopt`, jsonPost(), pj)
+
+export const discardConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/discard`, jsonPost(), pj)
+
+/** 依赖卡片的主按钮：`impact_digest` 是前端回显它看到的卡片摘要；后端起作业（装 + 接着校验同一个候选），前端轮询 `fetchConvert` */
+export const resolveConvertDependencies = (sid: string, impactDigest: string, pj: string | null) =>
+  jsonFetch<{ session: string; state: 'resuming' }>(
+    `/api/ai/convert/${encodeURIComponent(sid)}/dependencies`,
+    jsonPost({ action: 'install', impact_digest: impactDigest }),
+    pj,
+  )
+
+/** 换了环境后：按此刻的项目解释器重新判定**同一个**候选（不带摘要、不重跑 Agent）；后端起作业，前端轮询 `fetchConvert` */
+export const replanConvertDependencies = (sid: string, pj: string | null) =>
+  jsonFetch<{ session: string; state: 'resuming' }>(
+    `/api/ai/convert/${encodeURIComponent(sid)}/dependencies`,
+    jsonPost({ action: 'replan' }),
+    pj,
+  )
+
+/** 设置页：已允许自动装包的环境（种类 + 名字 + 键，没有路径） */
+export interface ConvertAutoInstallEnv {
+  key: string
+  kind: string
+  name: string
+}
+export const fetchConvertAutoInstallEnvs = () =>
+  jsonFetch<{ envs: ConvertAutoInstallEnv[] }>('/api/ai/convert/auto-install-envs')
+export const revokeConvertAutoInstallEnv = (key: string) =>
+  jsonFetch<{ envs: ConvertAutoInstallEnv[] }>('/api/ai/convert/auto-install-envs/revoke', jsonPost({ key }))
+
+/** 新版的 SVG 预览（只给 `<img>`：后端回沙盒 CSP） */
+export const convertPreviewUrl = (sid: string) => apiUrl(`/api/ai/convert/${encodeURIComponent(sid)}/preview.svg`)
+
+/** 原输出图的原字节（项目相对路径，与 `/api/file` 同一个出口） */
+export const convertOriginalUrl = (path: string) => fileUrl(path)
 
 /* ------------------------- 项目刷新（统一入口） ---------------------------- */
 
@@ -3206,7 +4429,9 @@ interface ProjectScoped {
 }
 
 export type ServerEvent =
+  | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
   | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
@@ -3218,6 +4443,11 @@ export type ServerEvent =
       kind: 'panel.file_changed'
       scripts?: string[]
       stems?: string[]
+      /**
+       * 受影响的**磁盘素材文件 id**（与 `/api/panels` 的 `id` 相同；后端 `Registry.artifact_stem` 算出，#1251）。
+       * 有它就按 fileId 精确匹配非 runtime 面板，不依赖素材清单；老后端没有 = 退回按文件名 stem。
+       */
+      files?: string[]
       reason?: 'watcher' | 'ai' | 'script_input'
     } & ProjectScoped)
   /**
@@ -3262,6 +4492,8 @@ export type ServerEvent =
   | ({ kind: 'project.scan'; scan_id: string; epoch: number } & ProjectScoped)
   /** 准备会话可能有新事实：只是「重读报告」的提示，不带 phase 与序号（以 GET 为准，T01 / T09） */
   | ({ kind: 'preparation.session'; session_id: string; config_revision: number } & ProjectScoped)
+  /** AI 修复会话状态变了（新卡片 / 步骤 / 结束）：只是「重读」提示，不带内容；状态以 `GET /api/ai/fix/<fix_id>` 为准 */
+  | ({ kind: 'ai.fix'; fix_id: string } & ProjectScoped)
   /** 素材（PDF/PNG/JPG）变了：`ids` = 三类的并集，够用时不必再看细分 */
   | ({
       kind: 'assets.changed'
@@ -3309,11 +4541,38 @@ export type ServerEvent =
   | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
-  | { kind: 'ai.delta'; pj?: string; session: string; text: string; kindOf?: AiDeltaKind }
+  | {
+      kind: 'ai.delta'
+      pj?: string
+      /** 发起这次任务的请求 id；老后端 / 老前端发起的没有 */
+      client_request_id?: string
+      session: string
+      text: string
+      kindOf?: AiDeltaKind
+    }
+  /** 任务进入新阶段（TAF 有界修正：上一版没过写回前检查，Agent 正在副本里修正）；老后端不发 */
+  | ({
+      kind: 'ai.task'
+      pj?: string
+      client_request_id?: string
+      session: string
+      task_type: string
+      phase: 'correcting'
+    } & ProjectScoped)
+  /** CLI 一段时间没有任何输出（`stalled: true`，`idle_s` = 已静默秒数）/ 又有输出了（`stalled: false`）；只提示，后端不杀进程；老后端不发 */
+  | ({
+      kind: 'ai.stalled'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stalled: boolean
+      idle_s: number
+    } & ProjectScoped)
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
       pj?: string
+      client_request_id?: string
       session: string
       status: string
       changed: boolean
@@ -3322,6 +4581,10 @@ export type ServerEvent =
       error?: string
       /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
       refresh?: AiRefreshOutcome
+      /** 任务结局（TAF）；与 `status` 分开记，老后端没有这个字段 */
+      task?: AiTaskSummary
+      /** 这条终态事实在历史库里的版本号（#1115）：只是"该去对账了"的提示，事实以 `fetchAiChanges` 为准；老后端没有 */
+      rev?: number | null
     } & ProjectScoped)
 
 /**
@@ -3340,7 +4603,9 @@ export interface AiRefreshOutcome {
 }
 
 const EVENT_KINDS = [
+  'figure.snapshot_invalidated',
   'render.preparing',
+  'render.progress',
   'render.started',
   'render.done',
   'render.failed',
@@ -3349,6 +4614,7 @@ const EVENT_KINDS = [
   'assets.changed',
   'project.scan',
   'preparation.session',
+  'ai.fix',
   'project.error',
   'probe.started',
   'native.session',
@@ -3358,6 +4624,8 @@ const EVENT_KINDS = [
   'engine.package',
   'export.progress',
   'ai.delta',
+  'ai.task',
+  'ai.stalled',
   'ai.done',
   'script.input_requested',
   'script.input_closed',
@@ -3403,6 +4671,11 @@ export function affectedStemsOf(event: ServerEvent): string[] {
     return union(event.stems)
   }
   return []
+}
+
+/** `panel.file_changed` 直接带的磁盘素材文件 id；没有（老后端 / 后端算不出）= undefined */
+export function affectedFilesOf(event: ServerEvent): string[] | undefined {
+  return event.kind === 'panel.file_changed' && Array.isArray(event.files) ? event.files : undefined
 }
 
 /** 这条事件牵涉到的**素材 id**（新增 / 删除 / 内容变化的并集） */
@@ -3490,6 +4763,19 @@ export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
 
 /** 服务器上 dist/index.html 当前引用的 bundle 名（如 index-DaQsrMg2） */
 export const fetchBuildVersion = () => jsonFetch<{ build: string; version?: string }>('/api/version')
+
+/**
+ * 「按脚本重画并编辑 PNG」实验开关（ADR 0139 PR2）是否开着：问后端、不缓存（用户改 config.json 后不必重启）。
+ * 只认显式 `true`；老后端没有这个端点、请求失败都当关着——此时前端不尝试来源驱动策略，行为与 PR1 一致。
+ */
+export async function fetchScriptBackedEnabled(): Promise<boolean> {
+  try {
+    const v = await jsonFetch<{ script_backed_figure?: unknown }>('/api/experiments')
+    return v.script_backed_figure === true
+  } catch {
+    return false
+  }
+}
 
 /**
  * 本页面自己跑的是哪个 bundle——直接从 <script src> 提取，
@@ -3601,6 +4887,16 @@ export interface TelemetrySettings {
   needs_reconsent: boolean
 }
 
+/**
+ * Windows 卸载后重装的记号（NSIS 卸载器写、后端读，ADR 0136 修订 2026-10-21）。GET 只回布尔；
+ * 前端把 onboarding 迁回新手态之后再 ack 让后端删记号（读不删，处理失败下次启动接着来）。
+ */
+export const fetchReinstallMarker = () =>
+  jsonFetch<{ reinstalled: boolean }>('/api/onboarding/reinstall')
+
+export const ackReinstallMarker = () =>
+  jsonFetch<{ consumed: boolean }>('/api/onboarding/reinstall/ack', { method: 'POST' })
+
 export const fetchTelemetrySettings = () =>
   jsonFetch<TelemetrySettings>('/api/telemetry/settings')
 
@@ -3710,6 +5006,8 @@ export interface WorkdirConfirmation {
   reads: string[]
   /** 探路调用的目标（glob 模式 / 列的目录 / 问的路径，ADR 0084）；老后端没有这个字段 */
   probes?: string[]
+  /** `runtime` = 运行时证据（#1254，`workdir_hint`）；首开的确认框载荷没有这个字段 */
+  source?: 'runtime'
 }
 
 /**
@@ -3886,6 +5184,8 @@ export interface ProjectEnvironment {
   python?: string
   /** true = 自动接手的结果，而不是用户挑的 */
   automatic?: boolean
+  /** 解释器带着的叠加环境（ROOT，ADR 0079 修订）：只读事实，只有种类 / 版本 / 标签，不带安装路径；没有叠加 = 没这个键 */
+  env_overlay?: { kind: string; version: string; label: string }
   /** 自动接手的触发原因（目前只有 `missing_dependency`） */
   trigger?: string
   /** 因为缺哪个包才切的 */
@@ -4293,6 +5593,29 @@ export const setProjectWorkdir = (mode: WorkdirMode) =>
     },
   )
 
+/**
+ * 「修复权限」（Windows，ADR 0153 修订 2026-10-30）：失败卡 `import_folder_unreadable` 的 `params.repair_token`
+ * 是服务端一次性的不透明令牌；接口只收它，路径不出后端。用户在 UAC 上取消 / 没拿到管理员权限 / 修复没成功都以
+ * 稳定 code 抛 `ApiError`（文案走 `backendErrorText`）。成功后调用方负责重跑脚本。
+ */
+export const repairImportFolder = (token: string) =>
+  jsonFetch<{ ok: boolean; repaired: boolean }>('/api/engine/folder-repair', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+
+/**
+ * 「跳过这个文件夹」（ADR 0154）：失败卡 `import_folder_abi_mismatch` 的 `params.ignore_token` 是服务端的不透明令牌，
+ * 接口只收它，路径不出后端。后端记住「这个项目别让脚本去那个文件夹 import」并关掉这个项目的会话；成功后调用方负责重跑脚本。
+ */
+export const ignoreImportFolder = (token: string) =>
+  jsonFetch<{ ok: boolean; path_ignore: { paths: string[] } }>('/api/engine/path-ignore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+
 // ---------------------------------------------------------------------------
 // 受控依赖修复（ADR 0019）
 //
@@ -4398,6 +5721,8 @@ export interface DependencyRepairOffer {
   managed?: ManagedEnvironment
   /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
   system_rejected?: SystemInterpreterRejection[]
+  /** 缺的是已知装不了的包（例 ROOT，后端 `depresolve.NOT_PIP_INSTALLABLE`）：此时 `requirement` 为 null，要用户自己的环境；界面不给安装 */
+  not_pip_installable?: { label: string; hint: string }
   /** 支持的 Python 次版本范围（`docs/support-matrix.json` 的运行时镜像）；文案不手写版本号 */
   python_supported: { min: string; max: string }
   /** dependency_unresolved / dependency_repair_rounds_exhausted / dependency_interpreter_pinned */
@@ -4482,11 +5807,15 @@ export interface DependencyProgress {
   retryable?: boolean
   /** 连不上默认包源、这次改用了 PyPI 镜像：镜像地址（此后每个快照都带；没用镜像时没有这个键） */
   pypi_mirror?: string
+  /** 终态 failed 且 code 是联网类（下载失败 / 超时）时的原因：官方源和镜像都没连上 / 用户自配的源连不上；说不清时没有这个键 */
+  net_cause?: 'official_and_mirror' | 'user_source'
   /**
    * 终态 failed 且 `code = dependency_import_still_failed`、是装后「发行包与版本」核验没过时：原因码（`DIST_FAILURE_REASONS` 的子集，
    * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
    */
   dist_reasons?: DistFailureReason[]
+  /** 终态 failed 且 `code = dependency_not_found`：pip 找不到的那个包（分发名 / 来自哪个 import / 哪份声明文件，相对项目路径）。认不出名字时没有这个键 */
+  not_found?: { name?: string; import_name?: string; source?: string }
 }
 
 export const createDependencyPlan = (body: {
@@ -4579,6 +5908,10 @@ export interface JointOrigin {
    * 没有这个字段 = 不给预填（curated 已有映射 / 撞上 curated 名或易混名 / 有别的来源证据 / 环境没读全）
    */
   suggested_distribution?: string
+  /** 已知装不了的包（后端 `depresolve.NOT_PIP_INSTALLABLE`，例 ROOT）：内置 Python 装不了，要用户自己装有它的环境。不预填、不送 pip */
+  not_pip_installable?: { label: string; hint: string }
+  /** 脚本把这些目录加进了 `sys.path`、里面却没有这个模块：本地模块缺失，不是缺 PyPI 包。不预填、不送 pip */
+  local_module_missing?: { search_dirs: string[] }
 }
 
 /**
@@ -4832,11 +6165,22 @@ export const setDependencyGroups = (groups: string[]) =>
  * 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作）。`progressId` 是这次重建的进度 id，
  * 由调用方在发请求**之前**生成（`depRepairStore.newRebuildProgressId()`，与后端 `REBUILD_PROGRESS_ID_RE` 同源，#606）
  */
-export const rebuildManagedEnvironment = (progressId: string) =>
+export const rebuildManagedEnvironment = (progressId: string, seen?: PrivatePythonOffer) =>
   jsonFetch<{ started: boolean; progress_id: string }>('/api/engine/environment/managed/rebuild', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ progress_id: progressId }),
+    // 用户看过的那份私有 Python 载荷（没有基础解释器时才有）：授权绑在 id + 来源 + 下载量上，后端逐项比对，
+    // 点击前来源变了（缓存被清 → 要下载）就拒绝要求重新确认（ADR 0111 §一）
+    body: JSON.stringify({
+      progress_id: progressId,
+      ...(seen
+        ? {
+            private_python_id: seen.id,
+            private_python_origin: privatePythonOrigin(seen),
+            private_python_download_bytes: seen.download_bytes,
+          }
+        : {}),
+    }),
   })
 
 /** 某个计划 / 作业此刻的进度（SSE 断了、或发起请求本身失败之后问实况；没到过后端的 id 回 `idle`） */
@@ -4875,8 +6219,27 @@ export interface UserPackage {
   installed_at: number
 }
 
+/** 装着的 Python 因版本在支持区间之外被拒（后端 `deprepair._rejected_python`） */
+export interface RejectedPython {
+  version: string
+  direction: 'newer' | 'older'
+  min: string
+  max: string
+}
+
+/** 设置 → 包管理能不能动手；没有基础解释器时带「还有什么路」 */
+export interface PackagesCapability {
+  available: boolean
+  reason: string
+  /** 基础解释器还在后台探：界面说「正在检查」，探完再取一次 */
+  checking?: boolean
+  /** 没有合格的基础解释器但提供私有 Python：首装 / 重建 / 「自动准备」凭它授权 */
+  private_python?: PrivatePythonOffer
+  rejected_python?: RejectedPython
+}
+
 export interface ManagedPackages {
-  capability: { available: boolean; reason: string }
+  capability: PackagesCapability
   environment: (ManagedEnvironment & { in_use: boolean }) | null
   builtin: BuiltinPackage[]
   /** managed_env（受管环境现算）/ bundled_runtime（内置 runtime 清单）/ planned（都还没有） */
@@ -4898,6 +6261,8 @@ export interface PackageJob {
   dependents: string[]
   network_required: boolean
   expires_at: number
+  /** 首装且没有基础解释器：这次授权包含的私有 Python（界面必须把大小说出口） */
+  private_python?: PrivatePythonOffer | null
 }
 
 /** 作业进度。前端**按 state 换文案，不解析日志**。 */
@@ -5016,6 +6381,8 @@ export interface DiagSendStatus {
   report_id?: string
   /** 用户取消时报告其实已送达（引擎收到 409 already_complete）：按成功展示，如实说明 */
   cancel_raced?: boolean
+  /** 随报告开的关联来信已登记进本机「我的来信」（作者的回复会出现在那里）；没有就不带 */
+  reply_inbox?: boolean
   /** 失败码（引擎 `diagsend.FAILURES` 的键） */
   code?: string
   retryable?: boolean
@@ -5063,7 +6430,11 @@ export async function fetchDiagSendBundle(id: string): Promise<Blob> {
 }
 
 /** **用户点了「发送」**：唯一会让引擎去连诊断服务的调用。 */
-export const startDiagSend = (id: string, body: { category: string; note: string; gen?: number }) =>
+/** `reply: false` = 这次不开回信通道（联系作者窗口随信附带的包：回信走那封信）；缺省 true。 */
+export const startDiagSend = (
+  id: string,
+  body: { category: string; note: string; gen?: number; reply?: boolean },
+) =>
   jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5083,6 +6454,112 @@ export const cancelDiagSend = (id: string) =>
  */
 export const discardDiagSend = (id: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/diagnostics/send/${encodeURIComponent(id)}/discard`, { method: 'POST' }, pj)
+
+/* ------------------- 联系作者（ADR 0145） -------------------
+ * 用户在应用里写信，由**本机引擎**经 Tavotto 服务器代发（WebView 不碰远程）：这里只是本机遥控器。
+ * 用户不需要登录、不需要配置自己的邮箱——所以这里没有（全产品也没有）邮件协议链接，失败时界面只给「复制内容 / 复制地址」。
+ * 会引出远程请求的只有 `sendContact`（用户点「发送」）与 `refreshContactMessages`（用户点「检查回信」）；
+ * 其余都是读本机状态。状态 / 列表对象里没有令牌、邮箱、正文。引擎侧见 `engine/contactsend.py`。*/
+
+export interface ContactCapability {
+  enabled: boolean
+  /** 收件地址（展示与「复制地址」用；与 `brand.FEEDBACK_EMAIL` 同源） */
+  recipient?: string
+  subject_max?: number
+  body_max?: number
+  email_max?: number
+  max_attachments?: number
+  max_total_bytes?: number
+  /** 附件允许的扩展名（带点、小写） */
+  extensions?: string[]
+  /** 未读回信数（本机记录，不联网） */
+  unread?: number
+  retention_days?: number
+}
+
+export type ContactSendState = 'idle' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled'
+export type ContactStage = 'init' | 'upload' | 'complete' | 'cancel'
+
+export interface ContactStatus {
+  state: ContactSendState
+  stage?: ContactStage | null
+  sent?: number
+  total?: number
+  gen: number
+  /** 成功后的编号（TVM-XXXX-XXXX-XXXX-XXXX），给用户复制 */
+  message_id?: string
+  /** 成功的那条线路：cn / global（只用于说明，不是可操作项） */
+  route?: 'cn' | 'global'
+  /** 成功时：false = 信已送达但回信令牌没能存进本机，应用里收不到回信 */
+  inbox_saved?: boolean
+  /** 失败码（引擎 `contactsend.FAILURES` 的键，或本机输入校验码 `contact_*`） */
+  code?: string
+  retryable?: boolean
+  retry_after?: number | null
+}
+
+export interface ContactReply {
+  id: string
+  created_at: string
+  body: string
+  /** 有清洗过的 HTML 版本：用 `fetchContactReplyDoc` 取信纸文档；没有就只显示 `body` 纯文字 */
+  has_html: boolean
+  read: boolean
+}
+
+export interface ContactMessage {
+  message_id: string
+  sent_at: number
+  route: 'cn' | 'global'
+  /** `report` = 发送「问题反馈」时随报告开的关联来信（带 `report_id`）；旧引擎不带 = 普通来信 */
+  kind?: 'letter' | 'report'
+  report_id?: string
+  state: 'new' | 'replied' | 'closed'
+  unread: number
+  /** 用户自己写的主题 / 正文 / 附件文件名（本机存的那一份；旧记录没有就是空） */
+  subject: string
+  body: string
+  attachment_names: string[]
+  /** 这一轮没取全回信的原因（引擎写，下一轮重试成功即清）；空串 = 正常 */
+  poll_error?: '' | 'too_large' | 'bad_response'
+  replies: ContactReply[]
+}
+
+export interface ContactSendMeta {
+  locale: string
+  subject: string
+  body: string
+  reply_email: string
+  /** 已送达的诊断包编号（TVD-…）；没附诊断就不带 */
+  report_id?: string
+}
+
+export const fetchContactCapability = () => jsonFetch<ContactCapability>('/api/contact')
+export const fetchContactStatus = () => jsonFetch<ContactStatus>('/api/contact/status')
+
+/** **用户点了「发送」**：multipart（`meta` JSON + 0..5 个 `file`）。立即回状态，真正的发送在引擎后台线程里。 */
+export const sendContact = (meta: ContactSendMeta, files: File[]) => {
+  const form = new FormData()
+  form.append('meta', JSON.stringify(meta))
+  for (const f of files) form.append('file', f, f.name)
+  return jsonFetch<ContactStatus>('/api/contact/send', { method: 'POST', body: form })
+}
+export const cancelContact = () => jsonFetch<ContactStatus>('/api/contact/cancel', { method: 'POST' })
+export const dismissContact = () => jsonFetch<ContactStatus>('/api/contact/dismiss', { method: 'POST' })
+export const fetchContactMessages = () =>
+  jsonFetch<{ messages: ContactMessage[]; unread: number }>('/api/contact/messages')
+/** 用户点了「检查回信」：引擎立刻问一遍服务器（至多每 30 秒一次；没有已发的信时不联网）。 */
+/** 一封 HTML 回信的完整文档（引擎拼：CSP + 基础样式 + 附图已内联），给沙盒 iframe 的 srcDoc；纯本机读盘，不联网。 */
+export const fetchContactReplyDoc = (messageId: string, replyId: string) =>
+  jsonFetch<{ doc: string }>(
+    `/api/contact/replies/${encodeURIComponent(messageId)}/${encodeURIComponent(replyId)}/doc`,
+  )
+export const refreshContactMessages = () =>
+  jsonFetch<{ polled: number; throttled?: boolean; unread: number }>('/api/contact/refresh', { method: 'POST' })
+export const markContactRead = (id: string) =>
+  jsonFetch<{ unread: number }>(`/api/contact/messages/${encodeURIComponent(id)}/read`, { method: 'POST' })
+export const forgetContactMessage = (id: string) =>
+  jsonFetch<{ unread: number }>(`/api/contact/messages/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**
@@ -5140,6 +6617,8 @@ export interface RegistryView {
   conflicts: Record<string, string[]>
   /** 项目内全部合理 .py（含 show-only 与基础设施脚本；被 prune 的目录不列） */
   all_scripts: ScriptInventoryEntry[]
+  /** 项目内后端认得出语言的 R / MATLAB 脚本（只能“生成可编辑版本”，不能运行；老后端没有） */
+  foreign_scripts?: ForeignSource[]
 }
 
 export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')
@@ -5150,6 +6629,16 @@ export const scanRegistry = () =>
     conflicts: Record<string, string[]>
     scripts: Record<string, RegistryEntry>
   }>('/api/registry/scan', { method: 'POST' })
+
+/** Backend-witnessed execution retires this owner's previous output set, even on partial failure. */
+export interface FigureSnapshotInvalidation {
+  scope: 'owner' | 'sources'
+  script: string
+  run_config: string | null
+  source_ids: string[]
+  receipt_ids?: string[]
+  execution_id: string
+}
 
 /** 一张捕获 Figure 的结构化描述（`engine/figcapture.py` 的唯一实现，原样透传） */
 export interface CapturedFigureDescriptor {
@@ -5213,9 +6702,34 @@ export interface ProbeError {
   confirmation?: WorkdirConfirmation
   /** 数据找不到（ADR 0106）：与渲染入口同一份「指认数据位置」载荷（`missing_input` / 没出图时可能有） */
   missing_input?: MissingInputOffer
+  /** 沙盒里落空、脚本目录里找得到（#1254）：与渲染入口同一份「在脚本目录里运行」引导 */
+  workdir_hint?: WorkdirConfirmation
+}
+
+/**
+ * 脚本把图写进了多页 PDF（`PdfPages`）：每页被认领成一张图（#1370）。`captured` = 认领的张数；`pages` = 写进去的页数
+ * （同一张图写多页只认一次，所以可以更大）；`omitted` = 超出账本上限没收的张数。没写过时整个字段不出现
+ */
+export interface PdfPagesCapture {
+  /** PDF 的文件名；写进缓冲区 / 取不到文件名时为 null */
+  name: string | null
+  pages: number
+  captured: number
+  stems: string[]
+  omitted?: number
+  /** 这份 PDF 的目的地：项目相对路径（`scope` 为 `unresolved` 时为 null，根外路径不外发） */
+  path?: string | null
+  scope?: 'project' | 'execution' | 'unresolved'
+  /** 按页序的 stem（同一张图写多页时重复；没收进来的页是 null） */
+  page_stems?: (string | null)[]
+  /** 每一页都有 stem 且都记上了观察 */
+  complete?: boolean
 }
 
 export interface ProbeResult {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
+  /** 跑通且有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254） */
+  workdir_hint?: WorkdirConfirmation
   script: string
   entry: string | null
   stems: string[]
@@ -5226,6 +6740,8 @@ export interface ProbeResult {
   timings?: Record<string, number>
   /** pyplot 兜底超过上限被丢掉的张数（0 = 没丢） */
   dropped_figures?: number
+  /** 写进多页 PDF 而被逐页认领的图（没有时不出现；#1370） */
+  pdf_pages?: PdfPagesCapture[]
   /** multiple_stem_conflict 时：stem → 现登记的归属脚本 */
   stem_conflicts?: Record<string, string>
   /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */
@@ -5415,6 +6931,11 @@ export type PreparationRequirement =
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
   | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
+  /**
+   * 沙盒里 glob / listdir / exists / C++ 读取器落空、脚本目录里找得到（#1254）：上一次尝试留下的不阻塞引导，
+   * 载荷与首开确认框同形（`source: 'runtime'`）。卡片复用 `WorkdirChooseButton`，不改 phase、不改错误码
+   */
+  | { id: 'data'; kind: 'workdir_hint'; code: string; origin: 'last_attempt'; blocking: false; payload: WorkdirConfirmation }
   /** 脚本源码里有弹窗选文件 / 询问的写法（`engine/dialogscan`）：不阻塞的提示，运行照样可用 */
   | { id: 'interaction'; kind: 'gui_dialog'; code: string; blocking: false; payload: GuiDialogPayload }
   | {
@@ -5425,7 +6946,14 @@ export type PreparationRequirement =
       payload: { schema: ScriptArgsSchema; argv_count: number; run_config: string | null }
     }
 
-export type PreparationActionKind = 'run' | 'cancel' | 'recheck' | 'prepare_dependencies' | 'run_when_ready'
+export type PreparationActionKind =
+  | 'run'
+  | 'cancel'
+  | 'recheck'
+  | 'prepare_dependencies'
+  | 'run_when_ready'
+  /** 浏览器模式：被拦下的脚本经用户在页面上点一次，这一次改用原样运行（ADR 0127 修订 2026-10-30，#1500） */
+  | 'confirm_native_run'
 
 /**
  * 「打开并运行」授权的安装范围合同（P05b，ADR 0124；动作 `run_when_ready` 的 `impact.run_intent`）。
@@ -5483,6 +7011,8 @@ export interface PreparationAction {
   kind: PreparationActionKind
   config_revision: number
   impact: PreparationImpact
+  /** 仅 `confirm_native_run`：服务端为那次失败尝试签发的一次性标识，认领时原样回显（只随页面 cookie 认证的报告来） */
+  confirm_token?: string
 }
 
 /**
@@ -5490,6 +7020,8 @@ export interface PreparationAction {
  * 触发它的原因码 · 与上次相比变了什么 · 结局 · 本可回退却没回退的理由。全是闭集码与不可还原的摘要，没有路径 / argv / 环境值。
  */
 export interface PreparationAttempt {
+  /** 执行尝试没有 `kind`（与账本里的 `PythonChangeEntry` 区分的判别键） */
+  kind?: undefined
   /** 第几次用户发起的运行（新的运行动作重算预算） */
   run: number
   /** 在这次运行里的序号，从 1 起 */
@@ -5510,18 +7042,48 @@ export interface PreparationAttempt {
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
-export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
+export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage' | 'plotly' | 'root' | 'svg'
 
 /**
  * 会话里一次真实执行尝试的账本条目（`engine/execpolicy.AttemptRecord.public()`，ADR 0127）：执行语义 · 解释器摘要 ·
  * 启动上下文摘要 · 触发原因码 · 与上次相比变了哪几维（`profile` / `interpreter` / `launch_context`）· 结局。
  * 只有摘要与闭集码，没有路径 / argv / 环境值。老后端没有 `attempt_history`。
  */
+/**
+ * 账本里「自动换 Python 版本」的一条（`execpolicy.AttemptLedger.note_python_change`，ADR 0114 修订 2026-10-23）：
+ * 不是一次执行，没有 `profile` / `attempt_id`；有 `kind` 区分。版本号只到 `主.次`，`base` 是基础解释器的来源类别。
+ */
+export interface PythonChangeEntry {
+  kind: 'python_changed'
+  run: number
+  from: string
+  to: string
+  base: 'system' | 'private'
+  download_bytes: number
+  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
+  code: string
+}
+
+/** 报告顶层的 `python_change`：版本不合时自动另建合适版本的受管环境（进度 + 结局）。没有路径 */
+export interface PythonChange {
+  from: string
+  to: string
+  base: 'system' | 'private'
+  download_bytes: number
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  /** `downloading` | `verifying` | `extracting` | `launching`（私有 Python）· `preparing` | `creating` | `installing` | `verifying`（受管环境） */
+  stage: string
+  done: number
+  total: number
+  code: string
+}
+
 /** #1097 起的同一份账本记录（与 `PreparationAttempt` 同形） */
 export type PreparationAttemptRecord = PreparationAttempt
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_version: number
   session_id: string
   project_id: string
@@ -5564,17 +7126,29 @@ export interface PreparationReport {
   /** 运行意图（P05b）；老后端没有这个键 */
   intent?: PreparationRunIntent | null
   /** 这个会话里每次真实执行尝试的账本（V2，ADR 0127，有界）；老后端没有这个键 */
-  attempt_history?: PreparationAttempt[]
+  attempt_history?: (PreparationAttempt | PythonChangeEntry)[]
+  /** 版本不合时自动换 Python（ADR 0114 修订 2026-10-23）；没发生过 / 老后端 = null 或缺省 */
+  python_change?: PythonChange | null
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
   environment?: PreparationEnvironmentFact | null
   /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
   runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
   /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
   captured?: CapturedFigureDescriptor[]
+  /** 部分捕获（phase `partial` + outcome `succeeded`）：这次运行里预览捕获失败的图，`code` 是稳定码；全部成功 / 老后端没有 = 空或缺省 */
+  failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
+  remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
-  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary; in_project?: boolean } | null
+  no_figure_hint?: {
+    kind: 'raster_script'
+    library: RasterLibrary
+    in_project?: boolean
+    /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
+    path?: string | null
+  } | null
   result: {
     status: string
     error?: PreparationResultError | null
@@ -5600,6 +7174,15 @@ export interface PreparationResultError {
     reason?: 'no_interactive_client' | 'replay_missing' | 'secret_required' | 'transcript_mismatch' | string
     /** 输入类的读取方式（闭集）：getpass = 口令——首问无人应答时口令性质只在这里 */
     input_kind?: 'input' | 'readline' | 'read' | 'getpass' | string
+    /** `import_folder_unreadable`：目录名（不是路径）+ 仅 Windows 才有的一次性修复令牌（不透明，推不出路径） */
+    folder?: string
+    repair_token?: string
+    /** `import_folder_abi_mismatch`（`folder` 同上，是显示名）：目录里扩展的 Python 版本、当前版本，与「跳过这个文件夹」的一次性令牌 */
+    abi?: string
+    current?: string
+    ignore_token?: string
+    /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
+    switch?: 'global' | 'project' | 'both' | string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string
@@ -5610,6 +7193,25 @@ export interface PreparationResultError {
  * 准备报告里关于环境的那一个事实（后端 `envadvice.adoption_fact`）。界面按 `kind` 说一句人话（不出现「环境 /
  * 解释器 / venv / Python 版本」这类词），不据此自算「能不能跑」——要用户动手的只有依赖检查项与 `prepare_dependencies`。
  */
+/**
+ * 一个没被采用的候选环境的落选原因（后端 `userenvs.rejection_reason` 的公开形状）：稳定码 + 标签 + 缺的包名，
+ * **不带路径**（ADR 0053 §二）。码是闭集 `userenvs.REJECT_CODES`，界面只翻译（`lib/envRejectionText.ts`）。
+ */
+export interface EnvironmentNotUsed {
+  source: string
+  label: string
+  reason: string
+  /** `missing_imports`：缺的分发名 / import 名（如 `ROOT`） */
+  missing?: string[]
+  /** `import_failed`：装了但载入出错的名字 */
+  import_failed?: string[]
+  /** 叠加候选（ROOT）才有：ROOT 的版本，只有版本 */
+  root_version?: string
+  /** `root_python_mismatch` 且两边都读得出时：ROOT 为哪个 Python 编译（`3.14`）、这个环境是哪个（`3.12`） */
+  root_python?: string
+  env_python?: string
+}
+
 export interface PreparationEnvironmentFact {
   mode: 'detect' | 'confirm' | 'legacy'
   /** 用的是哪一类：Tavotto 自带 / 项目自己带的 / 这台电脑上已有的 / Tavotto 为这个项目装好的 / 全局指定；null = 还没有可用的 */
@@ -5618,6 +7220,10 @@ export interface PreparationEnvironmentFact {
   decided_by: 'user' | 'auto' | 'default' | 'locked'
   /** 这次检查是不是刚自动换了一个 */
   switched: boolean
+  /** 这一轮检测里评估过、没被采用的候选各自为什么落选（后端 `envadvice.adoption_fact`；没有就没这个键 / 老后端没有） */
+  not_used?: EnvironmentNotUsed[]
+  /** 这次采用的叠加环境（ROOT）的快照，随报告冻结；只有种类 / 版本 / 标签，不带路径；没有叠加 / 老后端 = 没这个键 */
+  overlay?: { kind: string; version: string; label: string }
   /** 换之前用的那个为什么不能用了（被删 / 被重建 / 起不来 / 跑不了这个脚本）；没换 = null */
   replaced: { reason: string } | null
 }
@@ -5689,6 +7295,8 @@ export const actOnPreparationSession = (
     action_id: string
     expected_config_revision: number
     impact_digest?: string
+    /** 只跟 `confirm_native_run` 一起给：报告里那个动作带的一次性 token */
+    confirm_token?: string
     /** 只跟 `run_when_ready` 一起给：argv 换了，把旧运行配置会话里还没认领任何执行的意图原子转移过来 */
     transfer_from?: string
   },
@@ -5904,11 +7512,31 @@ export interface RuntimeAssetInfo {
   size_mm: [number, number] | null
   capture_source: 'savefig' | 'pyplot' | null
   descriptor: CapturedFigureDescriptor | null
+  /** 按参数配置跑出的变体素材才有（本机不透明引用，不含参数值）；无参数的那张没有 */
+  run_config?: string
+  /** 同名不同脚本、分开登记的图（ADR 0162）：脚本保存时的原图名，界面显示它；身份仍是 `stem` */
+  display_name?: string
 }
+
+/** 界面上显示的图名：分开登记的图显示原图名，其余就是 `stem`（ADR 0162） */
+export const runtimeAssetName = (asset: Pick<RuntimeAssetInfo, 'stem' | 'display_name'>): string =>
+  asset.display_name || asset.stem
 
 /** runtime 素材清单。**只读**：后端绝不因此执行脚本。 */
 export const fetchRuntimeAssets = () =>
   jsonFetch<{ assets: RuntimeAssetInfo[] }>('/api/runtime/assets')
+
+/**
+ * 「从素材中移除」：脚本已不在磁盘上的 runtime 素材，摘掉它的登记与物化 cache（绝不动用户文件）。
+ * `usedIds` = 当前画布 / 排版里全部面板的 fileId（文档状态在前端，后端据此防守「在用」）。
+ * 失败是带稳定 code 的 ApiError：`runtime_asset_in_use` / `runtime_asset_source_present` / `runtime_asset_unknown`。
+ */
+export const removeRuntimeAsset = (id: string, usedIds: string[]) =>
+  jsonFetch<{ removed: boolean; id: string }>('/api/runtime/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, used_ids: usedIds }),
+  })
 
 /* ------------------ Tavotto Run · native 会话（ADR 0021） ------------------ */
 
@@ -5966,6 +7594,7 @@ export interface NativePending {
 
 /** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
 export interface NativeSessionInfo {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_id: string
   project_root: string
   interpreter: string
@@ -6013,6 +7642,7 @@ export interface NativePendingInput {
 
 /** 一次 build 的结果：stems + 描述符 + （如实报的）冲突。 */
 export interface NativeBuildResult {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session: NativeSessionInfo
   stems: Record<string, unknown>
   descriptors: CapturedFigureDescriptor[]
@@ -6042,7 +7672,7 @@ export const fetchNativePending = (nativeId: string) =>
  * （「请求体不能替换 invocation」由后端用例看护）。
  */
 export const approveNativePending = (nativeId: string, remember: boolean) =>
-  jsonFetch<{ session: NativeSessionInfo }>(
+  jsonFetch<{ session: NativeSessionInfo; pj?: string | null }>(
     `/api/native/pending/${encodeURIComponent(nativeId)}/approve`,
     {
       method: 'POST',

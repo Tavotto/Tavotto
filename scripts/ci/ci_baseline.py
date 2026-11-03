@@ -304,14 +304,15 @@ def display_to_job_id(name: str, workflow_jobs: dict[str, dict]) -> str:
 # ---------------------------------------------------------------- step 分类
 
 _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("overhead", re.compile(r"^(Set up job|Complete job)$")),
+    # merge_group 快速失败收尾（只发一条取消请求）算 job 自身的开销，不是测试 / 构建时间。
+    ("overhead", re.compile(r"^(Set up job|Complete job)$|^merge_group 快速失败|^快速失败归因")),
     ("post", re.compile(r"^Post ")),
     ("checkout", re.compile(r"^Run actions/checkout@")),
     (
         "setup",
         re.compile(
             r"^Run (actions/setup-python@|actions/setup-node@|pnpm/action-setup@|"
-            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体|"
+            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体|^缓存 Tauri|"
             r"^缓存批准字体归档"
         ),
     ),

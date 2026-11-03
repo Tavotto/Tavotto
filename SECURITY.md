@@ -40,6 +40,18 @@ overwriting files as a side effect of being run by a tool. **It is not a securit
 boundary against a hostile script.** Treat a figure library the way you'd treat
 any other directory of executable code.
 
+When a script is run on behalf of an AI agent through the MCP plugin, the worker
+additionally installs a *write-root tripwire* (ADR 0141): a Python audit hook that
+refuses file writes outside the workspace roots the user authorized, so a
+well-meaning script that does `os.chdir(...)` and then writes a relative path
+fails with `write_outside_roots` instead of silently landing elsewhere. **This is
+a tripwire, not a sandbox.** It does not see `ctypes` calls, child processes
+(`subprocess`, `os.system`), C-level file opens, `dir_fd`-relative opens, writes
+after the script's build window, or a script that switches it off; it does not
+defend against a hostile script, and it does not stop an agent that edits a script
+inside an authorized root and then runs it. It is not installed for runs started
+from the Tavotto window or the command line.
+
 **Your content is never uploaded.** Rendering, composition and export are local
 processes. Outbound requests are limited to: the once-a-day release check (and
 the update download, if you accept one in the desktop app); the AI assistant you

@@ -40,6 +40,7 @@ import {
 } from './styleBinding'
 import { useUiStore } from './uiStore'
 import { hasPendingStyleWork, styleWork } from './styleWork'
+import { renderTargets } from '@/hooks/useEngineSync'
 
 // 渲染请求**永远不回来**（中止时才落定）：这里的 manifest 一律由用例自己挂（`seedExactRender`）。
 // 回一个空的 `{}` 的话，那次渲染会以「就绪、没有 manifest」落地，把用例刚挂好的精确 manifest 冲掉——
@@ -2051,6 +2052,27 @@ describe('artifact admission reads the style writer’s own work state', () => {
     expect(panelById('a').artifactValidation).toBeUndefined()
     resetStyleBindingSession()
     expect(hasPendingStyleWork(p)).toBe(false)
+  })
+
+  it('style-bound canvas + untouched manifest-less PNG: sync still renders it, debt settles, entry is no longer stuck (Codex #1179 r4313254705)', async () => {
+    const p = { ...panel('a', 'plot.png'), fileKind: 'raster' as const }
+    await seed([p])
+    useRenderStore.getState().clear()
+    useUiStore.getState().setElementPanel(null)
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    // 绑定那一刻它没有 manifest：记为样式债；挂着样式时 admitPngEntry 拒绝进入
+    expect(hasPendingStyleWork(p)).toBe(true)
+    expect(await enterElementEdit('a')).toBe(false)
+    // 同步器必须仍把它排进渲染（否则债永远结不了）
+    expect(renderTargets([panelById('a')], null, {}, {}, {}, true).map((o) => o.id)).toEqual(['a'])
+    // 渲染回来 → alignNewFigures 结债并按样式对齐
+    seedExactRender(panelById('a'), manifest('plot.png') as never)
+    expect(hasPendingStyleWork(panelById('a'))).toBe(false)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+    // 带样式 override 的 PNG 走既有的 legacy 进入路径：不再被债 / 样式卡死
+    expect(await enterElementEdit('a')).toBe(true)
+    expect(useUiStore.getState().elementPanelId).toBe('a')
   })
 
   it('counts both queued and running writers until the final writer settles', async () => {

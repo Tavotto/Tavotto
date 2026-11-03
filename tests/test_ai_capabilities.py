@@ -8,7 +8,9 @@ account.`，用户在面板里只能看到一个不能用的下拉项。
 `tests/test_ai_agents.py`；这里盯的是 capabilities 这层的输出。
 """
 
+import json
 import os
+import sys
 
 import pytest
 
@@ -16,7 +18,7 @@ from tavotto.engine import ai_agents, ai_bridge
 
 
 @pytest.fixture(autouse=True)
-def _fake_cli(monkeypatch):
+def _fake_cli(monkeypatch, tmp_path_factory):
     """假装两个 CLI 都装了，并清掉能力缓存（模块级全局，会串味）。
 
     候选枚举 + 启动验证是探测的新缝隙：candidates 给一个假路径、
@@ -29,6 +31,8 @@ def _fake_cli(monkeypatch):
     )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "test 0.0.0")
     monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
+    # 默认把 Claude Code 家目录指向空目录：不读这台机器真实的 ~/.claude
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-home")))
     ai_bridge.invalidate_capabilities()
     yield
     ai_bridge.invalidate_capabilities()
@@ -88,12 +92,317 @@ def test_broken_config_does_not_break_the_panel(tmp_path, monkeypatch):
     assert caps["models"] == []  # 退化解析取不到带引号的值
 
 
-def test_claude_side_reports_no_effort_switch(tmp_path, monkeypatch):
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
-    caps = _agent(ai_bridge.capabilities(refresh=True), "claude")
+def _level(effort):
+    return {"effort": effort, "description": f"{effort} desc"}
+
+
+def _write_cache(home, models):
+    (home / "models_cache.json").write_text(
+        json.dumps(
+            {"fetched_at": "2026-10-22T00:00:00Z", "client_version": "0.163.0", "models": models}
+        ),
+        encoding="utf-8",
+    )
+
+
+def _cache_model(slug, *, visibility="list", priority=1, levels=("low", "medium", "high"), **extra):
+    return {
+        "slug": slug,
+        "display_name": slug.upper(),
+        "description": f"about {slug}",
+        "visibility": visibility,
+        "priority": priority,
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": [_level(e) for e in levels],
+        **extra,
+    }
+
+
+def test_catalog_adds_listed_models_after_the_config_model(tmp_path, monkeypatch):
+    """models_cache.json 里 visibility=list 的型号并入清单：config 当前模型在首位且是默认，
+    hide 的不列，其余按 priority 升序；每个型号带自己的显示名与强度档位。"""
+    _write_cache(
+        tmp_path,
+        [
+            _cache_model("b-model", priority=5, levels=("low", "medium")),
+            _cache_model("hidden", visibility="hide", priority=0),
+            _cache_model(
+                "a-model",
+                priority=2,
+                levels=("low", "xhigh", "ultra"),
+                default_reasoning_level="low",
+            ),
+            _cache_model("cfg-model", priority=9),
+        ],
+    )
+    caps = _codex_caps(
+        tmp_path, monkeypatch, 'model = "cfg-model"\nmodel_reasoning_effort = "high"\n'
+    )
+    assert caps["models"] == ["cfg-model", "a-model", "b-model"]
+    assert caps["default_model"] == "cfg-model"
+    by_id = {d["id"]: d for d in caps["model_details"]}
+    assert list(by_id) == caps["models"]  # 与 models 并行
+    assert by_id["a-model"] == {
+        "id": "a-model",
+        "display_name": "A-MODEL",
+        "description": "about a-model",
+        "efforts": ["low", "xhigh", "ultra"],
+        "efforts_known": True,
+        "default_effort": "low",
+    }
+    assert by_id["b-model"]["efforts"] == ["low", "medium"]
+    # Agent 级档位是并集（旧前端与 prunePrefs 用），不丢 xhigh / ultra
+    assert {"xhigh", "ultra", "medium"} <= set(caps["efforts"])
+
+
+def test_config_model_missing_from_catalog_still_listed_without_levels(tmp_path, monkeypatch):
+    _write_cache(tmp_path, [_cache_model("x")])
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "mine"\n')
+    d = {d["id"]: d for d in caps["model_details"]}["mine"]
+    assert d["display_name"] == "mine" and d["efforts"] == [] and d["default_effort"] is None
+    assert d["efforts_known"] is False  # config 里有、目录里没有 = 未知
+
+
+def test_catalog_works_without_config_toml(tmp_path, monkeypatch):
+    _write_cache(tmp_path, [_cache_model("only")])
+    caps = _codex_caps(tmp_path, monkeypatch)
+    assert caps["models"] == ["only"]
+    assert caps["default_model"] is None  # 默认仍是 CLI 自己的，不替它猜
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        None,  # 缺失
+        "{不是 json",
+        "[]",
+        '{"models": "nope"}',
+        '{"models": [1, "x", null, {"slug": 3}, {"visibility": "list"}]}',
+        '{"models": [{"slug": "ok", "visibility": "list", "supported_reasoning_levels": 7}]}',
+    ],
+)
+def test_bad_cache_degrades_to_config_only(tmp_path, monkeypatch, content):
+    if content is not None:
+        (tmp_path / "models_cache.json").write_text(content, encoding="utf-8")
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "cfg"\n')
+    assert caps["installed"] is True
+    ids = caps["models"]
+    assert ids[0] == "cfg"
+    assert set(ids) <= {"cfg", "ok"}  # 坏条目被丢，好条目（若有）仍在，不报错
+
+
+def test_catalog_survives_without_tomllib(tmp_path, monkeypatch):
+    """py3.10 没有 tomllib：config 走逐行退化解析，目录缓存（JSON）照常并入。"""
+    monkeypatch.setitem(sys.modules, "tomllib", None)  # import tomllib -> ImportError
+    _write_cache(tmp_path, [_cache_model("cat")])
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "cfg"\nmodel_reasoning_effort = "low"\n')
+    assert caps["models"] == ["cfg", "cat"]
+    assert caps["default_model"] == "cfg"
+    assert caps["default_effort"] == "low"
+
+
+def _model(mid, name, section="main", family=None, efforts=("low", "high"), default="high"):
+    rt = {"family": family or mid.split("-")[1]}
+    if efforts is not None:
+        rt["effort_levels"] = list(efforts)
+        rt["default_effort"] = default
+    return {"id": mid, "name": name, "description": f"{name} d", "section": section, "runtime": rt}
+
+
+def _write_catalog(home, models, *, fetched=1000, name="a-cc.json", targets=None, settings=None):
+    d = home / "cache" / "model-catalog"
+    d.mkdir(parents=True, exist_ok=True)
+    cfg = {"id": "cc", "models": models}
+    if targets is not None:
+        cfg["provider_alias_targets"] = targets
+    (d / name).write_text(
+        json.dumps({"version": 2, "fetchedAt": fetched, "catalog": {"config": cfg}}),
+        encoding="utf-8",
+    )
+    if settings is not None:
+        (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+def _claude(home, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    return _agent(ai_bridge.capabilities(refresh=True), "claude")
+
+
+_CATALOG = [
+    _model("claude-opus-5-5", "Opus 5.5", default="medium"),
+    _model("claude-sonnet-5-5", "Sonnet 5.5", efforts=("low", "medium", "high"), default="medium"),
+    _model("claude-opus-4-8", "Opus 4.8", section="overflow"),
+]
+
+
+def test_claude_without_catalog_falls_back_to_aliases(tmp_path, monkeypatch):
+    caps = _claude(tmp_path, monkeypatch)
     assert caps["models"] == ["sonnet", "opus", "haiku"]
-    assert caps["efforts"] == []  # claude CLI 没有强度开关，不假装有
+    assert caps["default_model"] == "sonnet"
+    assert [d["display_name"] for d in caps["model_details"]] == ["Sonnet", "Opus", "Haiku"]
+    assert caps["efforts"] == []
     assert caps["default_effort"] is None
+
+
+def test_claude_lists_only_main_section_in_file_order(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, _CATALOG)
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["models"] == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    d = caps["model_details"][0]
+    assert (d["id"], d["display_name"], d["description"]) == (
+        "claude-opus-5-5",
+        "Opus 5.5",
+        "Opus 5.5 d",
+    )
+    assert d["efforts"] == ["low", "high"] and d["default_effort"] == "medium"
+    assert caps["efforts"] == ["low", "high", "medium"]  # 各型号并集，保序
+
+
+def test_claude_default_is_first_without_user_model(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, _CATALOG)
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["default_model"] == "claude-opus-5-5"
+    assert caps["default_effort"] == "medium"
+
+
+@pytest.mark.parametrize(
+    "setting,expected",
+    [
+        ("sonnet", "claude-sonnet-5-5"),  # 家族名
+        ("sonnet[1m]", "claude-sonnet-5-5"),  # 去掉后缀
+        ("claude-sonnet-5-5", "claude-sonnet-5-5"),  # 完整 id
+        ("haiku", "claude-opus-5-5"),  # 目录里没有该家族：取第一项
+        ("claude-opus-4-8", "claude-opus-5-5"),  # overflow 型号：不在列表里，取第一项
+    ],
+)
+def test_claude_default_maps_user_setting(tmp_path, monkeypatch, setting, expected):
+    _write_catalog(tmp_path, _CATALOG, settings={"model": setting})
+    assert _claude(tmp_path, monkeypatch)["default_model"] == expected
+
+
+def test_claude_alias_targets_take_priority(tmp_path, monkeypatch):
+    _write_catalog(
+        tmp_path,
+        _CATALOG,
+        targets={"best": {"default": "claude-sonnet-5-5"}},
+        settings={"model": "best"},
+    )
+    assert _claude(tmp_path, monkeypatch)["default_model"] == "claude-sonnet-5-5"
+
+
+def test_claude_newest_parseable_catalog_wins(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, [_model("claude-old-1", "Old")], fetched=1, name="a.json")
+    _write_catalog(tmp_path, [_model("claude-new-1", "New")], fetched=9, name="b.json")
+    d = tmp_path / "cache" / "model-catalog"
+    (d / "c.json").write_text("{not json", encoding="utf-8")
+    (d / "d.json").write_text(
+        json.dumps({"fetchedAt": 99, "catalog": {"config": {"models": "oops"}}}), encoding="utf-8"
+    )
+    assert _claude(tmp_path, monkeypatch)["models"] == ["claude-new-1"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        "[]",
+        '{"catalog": {}}',
+        '{"fetchedAt": 1, "catalog": {"config": {"models": []}}}',
+    ],
+)
+def test_claude_broken_catalog_falls_back(tmp_path, monkeypatch, content):
+    d = tmp_path / "cache" / "model-catalog"
+    d.mkdir(parents=True)
+    (d / "x.json").write_text(content, encoding="utf-8")
+    assert _claude(tmp_path, monkeypatch)["models"] == ["sonnet", "opus", "haiku"]
+
+
+def test_claude_catalog_without_main_models_falls_back(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, [_model("claude-opus-4-8", "Opus 4.8", section="overflow")])
+    assert _claude(tmp_path, monkeypatch)["models"] == ["sonnet", "opus", "haiku"]
+
+
+def test_claude_model_without_effort_data_exposes_none(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, [_model("claude-haiku-5", "Haiku 5", efforts=None)])
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["efforts"] == [] and caps["model_details"][0]["efforts"] == []
+
+
+def test_claude_catalog_model_without_levels_is_explicitly_none(tmp_path, monkeypatch):
+    _write_catalog(
+        tmp_path,
+        [_model("claude-opus-5-5", "Opus 5.5"), _model("claude-haiku-5", "Haiku 5", efforts=None)],
+    )
+    caps = _claude(tmp_path, monkeypatch)
+    by_id = {d["id"]: d for d in caps["model_details"]}
+    assert by_id["claude-opus-5-5"]["efforts_known"] is True
+    assert (
+        by_id["claude-haiku-5"]["efforts"] == []
+        and by_id["claude-haiku-5"]["efforts_known"] is True
+    )
+    assert caps["efforts"] == ["low", "high"]  # Agent 级仍是并集
+    # 回落别名（无目录）与 config.toml-only 型号 = 未知
+    assert ai_agents.ModelDetail(id="x", display_name="x").efforts_known is False
+
+
+def test_claude_build_command_skips_effort_for_no_effort_model(tmp_path, monkeypatch):
+    _write_catalog(
+        tmp_path,
+        [_model("claude-opus-5-5", "Opus 5.5"), _model("claude-haiku-5", "Haiku 5", efforts=None)],
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def argv(model, effort):
+        ctx = ai_agents.RunContext(
+            argv=["claude"], prompt="p", cwd=str(tmp_path), model=model, effort=effort
+        )
+        return ai_agents.ClaudeAgent().build_command(ctx).argv
+
+    assert "--effort" not in argv("claude-haiku-5", "high")  # 明确无档位
+    assert "--effort" not in argv("claude-opus-5-5", "max")  # 不在该型号档位内
+    assert argv("claude-opus-5-5", "high")[-2:] == ["--effort", "high"]
+    assert "--effort" in argv("unlisted-model", "high")  # 目录里没有 = 未知，沿用
+
+
+def test_claude_gateway_hides_efforts_and_skips_flag(tmp_path, monkeypatch):
+    from tavotto.engine import ai_providers
+
+    _write_catalog(tmp_path, _CATALOG)
+    ai_providers.save(
+        {
+            "id": "gw",
+            "label": "GW",
+            "agent": "claude",
+            "api_key": "sk-x",
+            "base_url": "https://gw.example/anthropic",
+            "models": ["glm-x"],
+        }
+    )
+    ai_providers.set_active("claude", "gw")
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["models"] == ["glm-x"] and caps["model_details"] == []
+    assert caps["efforts"] == [] and caps["default_effort"] is None
+    assert caps["features"]["effort_selection"] is False
+    ctx = ai_agents.RunContext(
+        argv=["claude"],
+        prompt="p",
+        cwd=str(tmp_path),
+        model="glm-x",
+        effort="high",
+        endpoint_env={"ANTHROPIC_BASE_URL": "https://gw.example/anthropic"},
+    )
+    assert "--effort" not in ai_agents.ClaudeAgent().build_command(ctx).argv
+
+
+def test_claude_build_command_passes_effort(tmp_path):
+    ctx = ai_agents.RunContext(
+        argv=["claude"], prompt="p", cwd=str(tmp_path), model="claude-opus-5-5", effort="high"
+    )
+    cmd = ai_agents.ClaudeAgent().build_command(ctx).argv
+    assert cmd[cmd.index("--model") + 1] == "claude-opus-5-5"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    ctx2 = ai_agents.RunContext(argv=["claude"], prompt="p", cwd=str(tmp_path))
+    assert "--effort" not in ai_agents.ClaudeAgent().build_command(ctx2).argv
 
 
 def test_spawn_env_appends_cli_dir_and_common_bins(tmp_path, monkeypatch):
@@ -170,7 +479,7 @@ def test_capabilities_echo_the_saved_path_override_and_leak_nothing(monkeypatch)
 
     blob = json.dumps(caps, ensure_ascii=False)
     assert "sk-secret-abcdef" not in blob  # 密钥永不整串回传
-    assert "api_key" not in blob
+    assert '"api_key"' not in blob  # 字段名；厂商目录的 key_url 里合法地含 api_keys 字样
     assert '"argv"' not in blob  # 前端没有消费者，就不公开
 
 
@@ -221,3 +530,27 @@ def test_a_resolve_started_before_clear_cache_does_not_publish(monkeypatch):
         t.join(10)
     assert old[0].path == "/old/codex"
     assert ai_agents._RESOLVE_CACHE["codex"].path == "/new/codex"
+
+
+def test_codex_build_command_filters_unsupported_effort(tmp_path, monkeypatch):
+    """Codex 与 Claude 共用同一兜底：目录明确的型号不支持的档位不传；未知型号照传。"""
+    _write_cache(
+        tmp_path,
+        [
+            _cache_model("plain", levels=()),
+            _cache_model("limited", levels=("low", "medium")),
+            _cache_model("rich", levels=("low", "xhigh")),
+        ],
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+
+    def argv(model, effort):
+        ctx = ai_agents.RunContext(
+            argv=["codex"], prompt="p", cwd=str(tmp_path), model=model, effort=effort
+        )
+        return ai_agents.CodexAgent().build_command(ctx).argv
+
+    assert not any("model_reasoning_effort" in a for a in argv("plain", "high"))  # 明确无档位
+    assert not any("model_reasoning_effort" in a for a in argv("limited", "xhigh"))  # 兄弟独有
+    assert "model_reasoning_effort=low" in argv("limited", "low")  # 合法
+    assert "model_reasoning_effort=high" in argv("unlisted", "high")  # 未知照传

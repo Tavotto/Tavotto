@@ -370,3 +370,43 @@ describe('品牌名：生成点把 PRODUCT_NAME 传进插值', () => {
     expect(document.body.textContent).not.toContain('{{')
   })
 })
+
+// ---------------------------------------------------------------- 用户自选环境失败 ≠ 安装文件不完整
+describe('桌面版里用户自选的环境用不了：说真实原因，不说「安装文件不完整」', () => {
+  const failing = (code: string): EngineEnvironment =>
+    ({
+      ok: false,
+      python: null,
+      source: '',
+      matplotlib: null,
+      managed: false,
+      bundled: false,
+      runtime: { present: true, valid: true, expected: true, code: '' } as never,
+      state: 'idle',
+      code,
+      error: 'x',
+    }) as never
+
+  for (const code of ['explicit_python_unusable', 'conda_launcher_unavailable']) {
+    for (const compact of [false, true]) {
+      it(`${code}${compact ? '（紧凑）' : ''}`, async () => {
+        useEnvStore.setState({ env: failing(code) })
+        await render(<EngineEnvironmentCard compact={compact} />)
+        expect(text()).toContain(en('unusableTitle'))
+        expect(text()).not.toContain(en('incompleteTitle'))
+        expect(text()).not.toContain(en('missingTitle'))
+      })
+    }
+  }
+
+  it('内置环境真的缺了：仍说安装文件不完整', async () => {
+    useEnvStore.setState({
+      env: {
+        ...failing('bundled_runtime_missing'),
+        runtime: { present: false, valid: false, expected: true, code: 'bundled_runtime_missing' },
+      } as never,
+    })
+    await render(<EngineEnvironmentCard compact />)
+    expect(text()).toContain(en('incompleteTitle'))
+  })
+})

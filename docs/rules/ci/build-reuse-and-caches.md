@@ -2,6 +2,16 @@
 
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches` / `::TestCacheSeed` / `::TestLandingAudit`、`tests/test_ci_baseline.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：缓存是枚举（多一条就红）；字体仅归档、精确键、命中不跳校验；Tauri apt 只缓存 .deb；唯一数据边 `frontend → plugin-candidate` 按 content_digest 核；rust-cache 一条腿一把 `shared-key`；`cache-seed` 不是门禁、`full-ci` PR 上是首验
+
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 90
+改到: 任何 `actions/cache` / setup-node / rust-cache、`cache-seed` job、artifact 传递、`scripts/ci/ci_baseline.py`
+主题: 构建复用与缓存（CI02）→ `build-reuse-and-caches.md`
+必守要点: 缓存是枚举（多一条就红）；字体仅归档、命中不跳校验；Tauri apt 只缓存 .deb；跨 job 数据边按 content_digest 核
+-->
 
 - **构建产物不跨 job 抽取、缓存按下载 / 编译分类（CI02，2026-09-16；字体归档补充见下）**：九种 recipe（web 应用 / MCP 画布 / 插件候选 / playground /
   wheel / workerd / 内置 runtime / PyInstaller / .app）逐行量过——0 行值得新抽取，唯一的数据边仍是 `frontend → plugin-candidate`
@@ -62,3 +72,20 @@
   合同：`TestApprovedFontArchiveCaches`、原缓存枚举与 `tests/test_fetch_fonts_cache.py`；
   首验看 full-ci 三 OS 的 restore/save，再看后续同 ref run 的 hit；默认分支复用只能在合入后的种子 / 消费者上验。
   变异反证与来源记录见 `docs/implementation/ci-foundation/CI02_BUILD_REUSE.md` §4.2。
+
+- **Tauri 的 Linux 系统依赖只缓存 .deb（2026-10-24）**：`desktop-shell` 与 `cache-seed` 的 src-tauri 腿原先各跑一句
+  `apt-get update && apt-get install`，实测 10-20 以来 57 次：中位 0.6 分钟，约 12% 慢到 7–16 分钟（azure 镜像慢，
+  单个 25 MB 的 libwebkit2gtk 卡 9 分钟），约 7% 吃满 job 的 20 分钟被取消、快速检查聚合门判红。仍属第一类「下载 bytes」，
+  `actions/cache` 枚举由此多 **2 个** step（`desktop-shell`、`cache-seed`），path 严格为 `${{ runner.temp }}/tauri-apt-debs/*.deb`，
+  不缓存 `/var/lib/apt/lists`（索引随镜像漂移，命中路径靠本地 .deb 不需要它）。key = `tauri-apt-debs-v1-` + `ImageOS-ImageVersion`
+  （由前一步写进 `APT_IMAGE_KEY`，runner 的这两个变量不在 `env` 上下文里）+ `hashFiles('scripts/ci/tauri-linux-apt-packages.txt')`；
+  `restore-keys` 只回落到同一 `ImageOS`、`ImageVersion` 之前的前缀。包列表唯一出处是那个文本文件，ci.yml 不再点名包。
+  三步（识别镜像 / 缓存 / 安装）两处逐字相同、只有 `if:` 不同；逻辑在 `scripts/ci/install_tauri_linux_deps.sh`：**精确命中**
+  （`cache-hit == 'true'`）→ `apt-get install --no-download ./*.deb`，不 update、不碰网络，装不上（镜像升级后版本冲突等）退回网络路径；
+  **未命中** → 三个镜像（runner 默认 / archive.ubuntu.com / mirrors.edge.kernel.org）各给一份 180 s 总预算（update 与下载共用，3 × 180 s < 安装步的 12 分钟），`Acquire::Retries=3`、
+  `Acquire::http(s)::Timeout=30`，先 `--download-only` 进缓存目录再 `--no-download` 安装，装完剪掉版本 != 已装版本的旧 .deb
+  （restore-keys 带回的旧版本会让命中路径同包装两版）；安装步自己 `timeout-minutes: 12`，慢下载早失败，不吃满 job 的 20 分钟。
+  **缓存不是信任来源**：网络路径由 apt 按签名索引校验；PR / merge_group 读 push main 上 `cache-seed` 种的条目（默认分支作用域），
+  精确键命中不再保存，所以不会像合并候选那样每个 ref 各 save 一份。合同：`tests/test_merge_queue_workflows.py::TestTauriAptCache`
+  （两处逐字相同 / key / 超时 / 脚本桩跑三条路径）与 `TestBuildReuseAndCaches` 的枚举。**验法**：首次运行 miss 并保存；
+  第二次起日志出现 `Cache restored from key: tauri-apt-debs-v1-…` 且安装步输出「已用缓存的 N 个 .deb 装好，未访问网络」。

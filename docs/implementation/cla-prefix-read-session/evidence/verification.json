@@ -1,0 +1,349 @@
+{
+  "generated_utc": "2026-10-19T04:06:08.639975+00:00",
+  "base_sha": "6f309ec896e0a4a786cc2775e79e76210abe480a",
+  "base_pr": 1172,
+  "source_sha256": {
+    "services/cla-cloudflare/src/ci/consumer.ts": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+    "services/cla-cloudflare/src/ci/wait.ts": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "services/cla-cloudflare/src/core/crypto.ts": "17baac97c94bd6f5c892bf013dc876711b52c1538ab6b1f11a3b1d704cd4242e",
+    "services/cla-cloudflare/src/core/identity.ts": "e664243f4485e76ff185db834853fde7ab5ba682689620464df6ca7bbe49cdcf",
+    "services/cla-cloudflare/src/core/policy.ts": "c399ff69da0a36c7ac3a2299a61b1b2a9136b5d7110792e32efb4af738d96d2e",
+    "services/cla-cloudflare/src/core/proof.ts": "9775610725f0550110e9691fc2c63dd0df581952c0bae16452592c583f42b8d5",
+    "services/cla-cloudflare/src/core/store.ts": "9d142e35e903f2d822f7fa9947a36f42e309ae7c14620cda6a092b189dd75403",
+    "services/cla-cloudflare/src/core/types.ts": "e17c6bdd86d9c6dbd99d0e7cfd1e68f2b336f69351751b1cdd8a83b7c7dab92b",
+    "services/cla-cloudflare/src/entry.ts": "5dc8b5dbf3ac262cee252de3861a6a0372d1fb0fbd6e56fa5b1f55469615f0c0",
+    "services/cla-cloudflare/src/native/activation-record.ts": "0f47b6adc0e70104b112e83cf1766ed457488ad297db4362a4cf96c84032d279",
+    "services/cla-cloudflare/src/native/agreement-activation.ts": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "services/cla-cloudflare/src/native/automatic.ts": "13e38d5ea456a627e9f898a875b83e3be639c09d3095bbb6d8504bec5f1164b5",
+    "services/cla-cloudflare/src/native/background.ts": "e1b81a05194976b60096feff27c5ab012031f9b153ddc68eeae0c2951221155d",
+    "services/cla-cloudflare/src/native/budget.ts": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "services/cla-cloudflare/src/native/config.ts": "6cd260a20d14453f2b1d4f690b915038d144e331d088c9d8454c973af4d251c6",
+    "services/cla-cloudflare/src/native/delegation.ts": "06010c9961b0036726f2a69e422f8ece0cb0ee223f1c7d36b231ae04964f547e",
+    "services/cla-cloudflare/src/native/github.ts": "df166c5796731a39baeeb541c7d698cd753450eb1bafd28b696dbd9c849afc09",
+    "services/cla-cloudflare/src/native/merge-prefix.ts": "b8b9b598ac999bb3f0270f5699086d9d425757cc8a20a1cb9503c4768625f895",
+    "services/cla-cloudflare/src/native/service.ts": "2b5092cdef2f9999ea7f6cc9a84be5a52e62a9116363cae92ab0d0f49f3712bc",
+    "services/cla-cloudflare/src/native/store.ts": "a6c8eccd380c059dfa58dfde43404b0f04be68262c41d0ce296c4b2441fa9b23",
+    "services/cla-cloudflare/src/native/ui-client.ts": "5b1dc8f125f3f47ebcef86a45315efff5249df0ef277b5a06f924a0b0be003e9",
+    "services/cla-cloudflare/src/native/ui.ts": "ca19a46d246dc6f977efc5a2cb9fd821086b320c3cce1eac8f099414938a0a40",
+    "services/cla-cloudflare/src/native/verification.ts": "fed366829694544af6893a1ef3de01ce4309f9eba47d9f76c6c2c6e68a2adb9e",
+    "services/cla-cloudflare/src/native/worker.ts": "f7bb2c43933eb135f29cc1be162a64dc44a013ad1246dd5651d850a8246fcb31",
+    "services/cla-cloudflare/tests/activation-boundaries.test.mjs": "0b3f8d494f3cbab2faeabb5768f424fd8c7f570356d35d05a4d97a0698f6f776",
+    "services/cla-cloudflare/tests/activation-fixture.mjs": "673439c52dc1c90a150f9035caa680a91c2bf1985fe17325122126f49aeadd5d",
+    "services/cla-cloudflare/tests/agreement-activation-mutation-cases.json": "2af174f409b0e9ae6f3b517ff340ddfb9222af0626c62c074488cfd9af767376",
+    "services/cla-cloudflare/tests/agreement-activation.test.mjs": "5b34aa5f9b5b878c2666800f39aed26e688dbfc47a96bfd80addd5cdcd79ebbd",
+    "services/cla-cloudflare/tests/audit.test.mjs": "2e374df46a5e9ff70a9400dbea6ca99e7e55339b2dfee143dd14beca258f5098",
+    "services/cla-cloudflare/tests/automatic-publication.test.mjs": "b7f479f556ae3d0b876865ec434bcc0c7a7e2de1bd3ebdaa40af18d397bc2496",
+    "services/cla-cloudflare/tests/automatic.test.mjs": "445e485458ca4e583f09a111ed800e59a456b0172a4dcb56c1c00072c5754825",
+    "services/cla-cloudflare/tests/build-production.mjs": "3ca85040d1ee2c7fa3d99e546608fac8e8ba2baf1a86c1df088b2d139c04c6e6",
+    "services/cla-cloudflare/tests/ci-candidate.test.mjs": "29e6d5f3626a025c4b58a0bf0b5c6a9a7dd0a4ff5cf8f078128614b7da0f6ba2",
+    "services/cla-cloudflare/tests/ci-fixture.mjs": "686f31617dd30e168e2726ba058e9a70fe16d46a3a6a5d79d387edc8b1a936d6",
+    "services/cla-cloudflare/tests/ci-wait-mutation-cases.json": "72a236150278497a71b483ebb4631db4b520838b993eaaba2274bbd6a1ba8e15",
+    "services/cla-cloudflare/tests/ci-wait.test.mjs": "07eeef9f8b1af601f11783b03e547e70149c305db0f89bb2ec9dd50491012ef0",
+    "services/cla-cloudflare/tests/confirmation-slot-config.test.mjs": "782b0d23eae7422c11d0aa2ee9132fb414459a6b099383e05d54d9a2d853c67b",
+    "services/cla-cloudflare/tests/confirmation-slot-mutation-cases.json": "a328e15fb407655ace8551102284dbd3abf733f0f068d1b39c09a931a102c207",
+    "services/cla-cloudflare/tests/delegation-fixture.mjs": "8f142a2f31a125fec60008d8e91cfbfeab51d2c8b07802bfd487774e77fd033d",
+    "services/cla-cloudflare/tests/delegation.test.mjs": "06f84732ac96d3c4dcce9f81ec745b29352624ba6926a0f87d0dfaf19d425a2c",
+    "services/cla-cloudflare/tests/deployment-plan.test.mjs": "3142d5132c7053c3fb7265f70880d252a11a669fb9f5b8250a3508f4a47a1a91",
+    "services/cla-cloudflare/tests/github-installation-token.test.mjs": "f2a94552df10beea19cd85bcd1efe199542dc939658137710a92e761118f879c",
+    "services/cla-cloudflare/tests/historical-revocation-mutation-cases.json": "850e33a2020936480131da7c6f8242b7316d89d2da9457d989532109cb0fc570",
+    "services/cla-cloudflare/tests/historical-revocation.test.mjs": "f9ab18a0fa25b96326c77a92ce67162fe4f331bf919e500996dfe15f262db47b",
+    "services/cla-cloudflare/tests/independent-authority-contract.test.mjs": "22aca5187f93c960fcef49ab1ba89913786b9ea7b726c293ab29ee05698b2f0d",
+    "services/cla-cloudflare/tests/independent-bootstrap-budget.test.mjs": "eb2308c50d15bb19eb7652cf58434aa5ee057c38bd4f01c7f7b0540c14aaef47",
+    "services/cla-cloudflare/tests/independent-confirmation-slot.test.mjs": "6c1f349fcaa53c86a8cb2fc20e8ebab37ba159404f4434ad88f08e5c4c7e03c0",
+    "services/cla-cloudflare/tests/independent-create-worker.mjs": "668aba8df19806c5af1f672f16a5c42adb1267a0ec91d2cc31c55782efddc419",
+    "services/cla-cloudflare/tests/independent-http-boundaries.test.mjs": "1488a77df7d1597ac0598779248b16df26a3979bb48bd72109a82e5b9460e36b",
+    "services/cla-cloudflare/tests/independent-identity-admission.test.mjs": "6a886b18ddc900d37cb33dd9d4d08f272525bcec2ff111c3d380c987a7756571",
+    "services/cla-cloudflare/tests/independent-lifecycle.test.mjs": "d3a83b1a65a2cffbfcc660314b834554b41563c6d29857aaac08a4f3a43f79ef",
+    "services/cla-cloudflare/tests/independent-merge-prefix-mutation-cases.json": "203d45028803fe26e78f33b18e12c0b9603afff57d569a7278ec7b526c291467",
+    "services/cla-cloudflare/tests/independent-merge-prefix.test.mjs": "c6f6d34e26a9440b502c3e92b53424202492a624bbc619d053e68e9e6deb9477",
+    "services/cla-cloudflare/tests/independent-oauth-db.mjs": "14e1882935a149240dd33694e2e8524a5749ee614af92925edfddd8c9946f004",
+    "services/cla-cloudflare/tests/independent-oauth-worker.mjs": "fd984609e7e197ace5daa16009887bae8cfc20f2b7042da17d3ff4567a39cda6",
+    "services/cla-cloudflare/tests/independent-optimized-authority.test.mjs": "9c56c5ae7bd7b924a3425a7561d5a2210479cd4b8d5ef4b55c925ad85fd314e8",
+    "services/cla-cloudflare/tests/independent-packet-pagination.test.mjs": "cc3f034c888b2a331e257461b41b59a5550c91050271105fc77ee4887363a149",
+    "services/cla-cloudflare/tests/independent-prefix-read-session-fixture.mjs": "e695a481a782d988436cc8784b9120dd787dbcd68c561c988036856714876640",
+    "services/cla-cloudflare/tests/independent-prefix-read-session-mutation-cases.json": "d099a6922e1383d52186840a7483390b3a00ae50e1f872d9890a22bab1e51664",
+    "services/cla-cloudflare/tests/independent-prefix-read-session.test.mjs": "9b1fcca7a97425d3f6270d30b488cfefad273bde96502a3cea2c02bc5efb7cba",
+    "services/cla-cloudflare/tests/independent-public-abuse.test.mjs": "b9325e7e0aa765b764da88a58601022417899ea2c5b2865579c65c863234107e",
+    "services/cla-cloudflare/tests/independent-refresh-boundaries.test.mjs": "461f417fdb6793e16af18c84cddd96efc52999661d687cfcf27dbb2f54a59a8c",
+    "services/cla-cloudflare/tests/independent-review-boundaries.test.mjs": "257e4546c320643035e1820631b27a15e000da753a1da10a4cdf6aa7365b85bd",
+    "services/cla-cloudflare/tests/independent-review-mutation-cases.json": "5e375c98ab66eb12efdf5e72b28aa52df62f646e37418f5eccc3678ae3908ec0",
+    "services/cla-cloudflare/tests/independent-slot-budget.test.mjs": "22ef76d13c97380450939309ed501b091a7bf8f40091fef182da10187140b887",
+    "services/cla-cloudflare/tests/independent-slot-recovery-mutation-cases.json": "28fca35d27e0f2e604a67bc976e901929a772b5f1eecce3e55c4d17634305ef1",
+    "services/cla-cloudflare/tests/independent-slot-recovery.test.mjs": "e777e7976f73717adef6909be9e9b9f1042738698710ad4b452e997700b81888",
+    "services/cla-cloudflare/tests/independent-ui-packets.test.mjs": "90d9470f7c0d26d43f6c6efe5ab6241ebce252942acc2c67edeef02b7ec67389",
+    "services/cla-cloudflare/tests/independent-v2-upgrade.test.mjs": "32ecdb861fbd8b36fa4c7c05cb9ff2a5a516f7ce7f0fa51a899dfbd780f81e70",
+    "services/cla-cloudflare/tests/inflight-mutation-cases.json": "96a98bcd77b223d86b38aee5f704519d5667caf7e9d2d4e85681553ac43026de",
+    "services/cla-cloudflare/tests/inflight-publication.test.mjs": "2d1b9c6372e0a0589a024569219a3bf5494c6330dc6aa14a1133204aa2e43b0a",
+    "services/cla-cloudflare/tests/merge-prefix-adapter-mutation-cases.json": "975fd4a3fa1243b85ce75a4a9950c1a6651ee4cbd3fe59d5e9b06c6866b768e1",
+    "services/cla-cloudflare/tests/merge-prefix-fixture.mjs": "08a5e754aab09ea5938873539d2c81d82c05ff101c9c6660d34fc13570a5072d",
+    "services/cla-cloudflare/tests/merge-prefix.test.mjs": "22863cc979e43029b74042e38dc19c2cafa8b0348e0771504db72b31ff1a994f",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "c4aee655e11f3ef9b59ec0a662fcd33e77c2b7ac93bb6f92f3688c04faebeeb8",
+    "services/cla-cloudflare/tests/prefix-read-session-fixture.mjs": "93aa78e885251983b47d7c1d498c0baa4d580aa19dd9e384d61597f1fed21e08",
+    "services/cla-cloudflare/tests/prefix-read-session-mutation-cases.json": "f80524aabd879e59164bf02fc27b73390b0f0c587e8e841ed0aec6c13c5beefc",
+    "services/cla-cloudflare/tests/prefix-read-session.test.mjs": "afe3c7e0df96a6c24b8a224fb5909665ddda7487a75e755fab7f4618cbe912a2",
+    "services/cla-cloudflare/tests/slot-budget-mutation-cases.json": "bafa76ed6967faf0fe9944ce3d8755da7db9400591193cba9e33f41f439d5007",
+    "services/cla-cloudflare/tests/slot-config-mutation-cases.json": "a507d826ee8493e0b95d60ab9ce0c5ceda04f65b99ad480232c60801982a9eca",
+    "services/cla-cloudflare/tests/slot-recovery-mutation-cases.json": "3a96009995bfb9d967b52650648afb832ab817d7dfdf75f26d13285f6bc1cb18",
+    "services/cla-cloudflare/tests/v2-upgrade-cli-mutation-cases.json": "5ef1ce68ec0c6d66bd1de8776938111f488899148e28dba4848fd43c76390446",
+    "services/cla-cloudflare/tests/v2-upgrade-cli.test.mjs": "0e1fd0e3d6b09a4308bc1772358f65d52887fa501e9d2be1d6e76608ccfb344b",
+    "services/cla-cloudflare/tests/v2-upgrade-durability-mutation-cases.json": "3acc9a2083d8161c2efa90fc5919be34301aba85768d0675b0e629bfb14f1969",
+    "services/cla-cloudflare/tests/v2-upgrade-durability.test.mjs": "14377eda7127d05d49a3bce5b6c1492f4bdc28dd62a5def115f6b5709ec8d1bb",
+    "services/cla-cloudflare/tests/v2-upgrade-mutation-cases.json": "39a9190ac468d0ca146f803e1e61d99a8ca00da09617546ea7e37d28fb8a80b9"
+  },
+  "command_results": {
+    "node": {
+      "argv": [
+        "node",
+        "--test",
+        "tests/activation-boundaries.test.mjs",
+        "tests/agreement-activation.test.mjs",
+        "tests/audit.test.mjs",
+        "tests/automatic-publication.test.mjs",
+        "tests/automatic.test.mjs",
+        "tests/ci-candidate.test.mjs",
+        "tests/ci-wait.test.mjs",
+        "tests/confirmation-slot-config.test.mjs",
+        "tests/delegation.test.mjs",
+        "tests/deployment-plan.test.mjs",
+        "tests/github-installation-token.test.mjs",
+        "tests/historical-revocation.test.mjs",
+        "tests/independent-authority-contract.test.mjs",
+        "tests/independent-bootstrap-budget.test.mjs",
+        "tests/independent-confirmation-slot.test.mjs",
+        "tests/independent-http-boundaries.test.mjs",
+        "tests/independent-identity-admission.test.mjs",
+        "tests/independent-lifecycle.test.mjs",
+        "tests/independent-merge-prefix.test.mjs",
+        "tests/independent-optimized-authority.test.mjs",
+        "tests/independent-packet-pagination.test.mjs",
+        "tests/independent-prefix-read-session.test.mjs",
+        "tests/independent-public-abuse.test.mjs",
+        "tests/independent-refresh-boundaries.test.mjs",
+        "tests/independent-review-boundaries.test.mjs",
+        "tests/independent-slot-budget.test.mjs",
+        "tests/independent-slot-recovery.test.mjs",
+        "tests/independent-ui-packets.test.mjs",
+        "tests/independent-v2-upgrade.test.mjs",
+        "tests/inflight-publication.test.mjs",
+        "tests/merge-prefix.test.mjs",
+        "tests/prefix-read-session.test.mjs",
+        "tests/v2-upgrade-cli.test.mjs",
+        "tests/v2-upgrade-durability.test.mjs"
+      ],
+      "exit": 0,
+      "tests": 767,
+      "pass": 767,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "migration": {
+      "argv": [
+        "python3",
+        "tests/migration.test.py"
+      ],
+      "exit": 0,
+      "tests": 4
+    },
+    "mutation": {
+      "argv": [
+        "node",
+        "tests/mutation-smoke.mjs"
+      ],
+      "exit": 0,
+      "detected": 260,
+      "original": 224,
+      "new_independent": 21,
+      "new_adapter": 15
+    },
+    "independent": {
+      "tests": 37,
+      "test_exit": 0,
+      "unique_mutations": 21,
+      "every_selected_exit": 1,
+      "actual_assertion_error": true,
+      "runner_exit": 0
+    },
+    "adapter": {
+      "tests": 37,
+      "test_exit": 0,
+      "unique_mutations": 15,
+      "every_selected_exit": 1,
+      "actual_assertion_error": true,
+      "runner_exit": 0
+    }
+  },
+  "raw_execution": "execution.json",
+  "measured_synthetic_scenarios": [
+    {
+      "prefix": 2,
+      "withCoauthor": false,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 6,
+        "external": 28
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0
+    },
+    {
+      "prefix": 3,
+      "withCoauthor": false,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 6,
+        "external": 34
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0
+    },
+    {
+      "prefix": 4,
+      "withCoauthor": false,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 5,
+        "external": 35
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0
+    },
+    {
+      "prefix": 2,
+      "withCoauthor": true,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 7,
+        "external": 32
+      },
+      "installationGET": 4,
+      "tokenPOST": 1,
+      "identityGET": 2,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0
+    },
+    {
+      "prefix": 3,
+      "withCoauthor": true,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 6,
+        "external": 35
+      },
+      "installationGET": 3,
+      "tokenPOST": 1,
+      "identityGET": 1,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0
+    },
+    {
+      "prefix": 2,
+      "withCoauthor": false,
+      "personalContributors": 2,
+      "budget": {
+        "sql": 7,
+        "external": 28
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0
+    }
+  ],
+  "old_mutation_locator_changes": [
+    "shared budget guard moved into extracted facts helper; same mismatch predicate/test, one guard before SQL",
+    "final work check uses captured nonoptional budget; same selected deadline test"
+  ],
+  "unverified": [
+    "New head TypeScript typecheck and esbuild production build: dependencies unavailable locally; prior denied download not retried. npm run check is not claimed locally.",
+    "New head hosted checks and first external reviews pending after publication; parent #1172 evidence is not evidence for changed source.",
+    "Real GitHub GraphQL schema and queue read permission; installation token permissions unchanged, no merge_queues.",
+    "Cloudflare/D1, group journal/send/unknown/recovery, dedicated proof/authority/CI integration, trusted-main wiring and wakeup/deadline acceptance.",
+    "Rights-holder identity/legal authority, actual signed limited grant and enable/suspend/revoke controls, resource deployment and activation."
+  ],
+  "restrictions_observed": [
+    "No merge/deploy/activation, real signature/grant/credential/App/OAuth/resource/protection changes",
+    "No rejected dependency-download retry/proxy/mirror/environment switch",
+    "No successful-publication-across-proof-expiry test or renamed variant",
+    "No quota rejection observed; normal connector reads succeeded",
+    "No new review request for #1169; #1163 current-head formal coverage gap retained"
+  ],
+  "artifacts": {
+    "adapter/accounting.mjs.txt": {
+      "byte_length": 1252,
+      "sha256": "be51890599bedcb692ae7cc2191a7c03047b80c92289bac51d4a79b6b0081b96"
+    },
+    "adapter/commands.json": {
+      "byte_length": 684,
+      "sha256": "cfae12ccb59c2dae670c2423c8866ea1db2eff2d38bb1c24bce516f65ccb5d98"
+    },
+    "adapter/final-manifest.json": {
+      "byte_length": 9724,
+      "sha256": "e53ff329c324d1e89153a330698ed175a18ae291acecb3a4c7fb2a9e05690a90"
+    },
+    "adapter/mutations.json": {
+      "byte_length": 11631,
+      "sha256": "ddf72ede35bc0dfc84cce305f887e3dbffd82b5a71d62bcaee2f91284216e5a3"
+    },
+    "adapter/raw-logs.json": {
+      "byte_length": 210098,
+      "sha256": "8b4c461682707c5899edde680fef9d8c6bc4e1ad6db65f3bf4448a843055f843"
+    },
+    "adapter/review.md": {
+      "byte_length": 4638,
+      "sha256": "8d2abfb66f426173fb5fa7057fbdc2ff53be88e3f3785d031701ee182aa0e18b"
+    },
+    "adapter/run-mutations.mjs.txt": {
+      "byte_length": 2076,
+      "sha256": "a1888394d8c7d9f5e5e97acdf031e0b7effadd1a5b88209b12b6a3ffd6404595"
+    },
+    "adapter/source-manifest.json": {
+      "byte_length": 3993,
+      "sha256": "bd8061372c720ecbe03861cb581d4207b30a7867488cfe10cf35902ed98d0c5b"
+    },
+    "audit.json": {
+      "byte_length": 10345,
+      "sha256": "177dec37f66fae22e7e49ce54f57fbcb9448fd877de20d46b91343168260c76f"
+    },
+    "execution.json": {
+      "byte_length": 171687,
+      "sha256": "4447c100a5a82c5c373ef9de7d8bdc6dbd1934b1f2f2108fa9435198738c11be"
+    },
+    "independent/manifest.json": {
+      "byte_length": 8096,
+      "sha256": "8f2c86c858445ddc440c63ee16aa0878e5f0659a47d471129cd5ff74029a0b66"
+    },
+    "independent/mutations.json": {
+      "byte_length": 16391,
+      "sha256": "e88a0044b1464e4caf7efd911d367cfd741b04f440b64f29b20148f3ec06e71d"
+    },
+    "independent/raw-logs.json": {
+      "byte_length": 37284,
+      "sha256": "2fe5b4d897bffa3ba73eb9d835cd490987ccc9d05a1973648dd937e8ef3a8997"
+    },
+    "independent/review.md": {
+      "byte_length": 5314,
+      "sha256": "5c1e0dc477f54dbbcc733c49533f3961f33484e31809daa71bfbfb2ea5d1c667"
+    },
+    "independent/run-mutants.py.txt": {
+      "byte_length": 1850,
+      "sha256": "0d7911ae73860ec6fe24b66849efe53094ac587400a8ce6b602a0d0b6990fe77"
+    }
+  }
+}

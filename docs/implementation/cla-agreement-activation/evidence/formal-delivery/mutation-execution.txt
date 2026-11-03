@@ -1,0 +1,19 @@
+{"name": "activation real legacy binary fence", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation whole call SQL budget", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation legacy anchor exclusion", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation configuration pin binding", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation runtime canonical record verification", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation new document bytes", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation new version marker", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation exact repeat is no operation", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation identical concurrency confirmation", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation consumes its own evidence revision", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation complete transaction rollback", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation packet supplied tuple", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation final current packet predicate", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation subsequent evidence revisions", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation snapshot packet write guard", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation snapshot intent write guard", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation prior personal consent is not inherited", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation environment capability override", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}
+{"name": "activation explicit current hash pin", "location_count": 1, "exit_code": 1, "actual_assertion_error": true}

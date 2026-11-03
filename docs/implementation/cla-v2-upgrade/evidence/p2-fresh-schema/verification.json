@@ -1,0 +1,90 @@
+{
+  "reviewed_head": "a19e88f00e959d29dc0ca391774b884a59ce2acb",
+  "base": "a5cf3549818f14c97c9c05f7aff6f14853a27f91",
+  "finding": "https://github.com/Tavotto/Tavotto/pull/1169#discussion_r4307417544",
+  "old_hosted_run": 39135502966,
+  "old_hosted_valid_only_for_reviewed_head": true,
+  "subject": "Old prepared source plan presented to an independently created fresh target with identical old data, after BEGIN and before uncertain-commit recognition.",
+  "fix": "Require current schema_sha256 to equal hash(m.upgraded), derived from pinned trusted DDL, before original-data projection. Fresh target keeps only its own already_target plan.",
+  "commands": [
+    {
+      "command": "node --test --test-name-pattern='old source plan rejects unrelated fresh target' tests/independent-v2-upgrade.test.mjs",
+      "source": "reviewed module plus new regression",
+      "exit_code": 1,
+      "count": 2,
+      "log": "red.log"
+    },
+    {
+      "command": "node --test --test-name-pattern='old source plan rejects unrelated fresh target|lost COMMIT reply|uncertain commit|repeat application' tests/independent-v2-upgrade.test.mjs",
+      "exit_code": 0,
+      "count": 5,
+      "log": "green-targeted.log"
+    },
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "count": 509,
+      "log": "full-node.log"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "count": 4,
+      "log": "migration.log"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "count": 147,
+      "log": "mutation.log"
+    },
+    {
+      "command": "node --check scripts/v2-upgrade-offline.mjs",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "independent": {
+    "original": "3 tests: one actual AssertionError / exit 1",
+    "fixed": "3 pass / exit 0",
+    "guard_deletion": "one unique location, actual AssertionError / exit 1, harness exit 0",
+    "report": "independent-fix-verification.json"
+  },
+  "source_sha256": {
+    "services/cla-cloudflare/scripts/v2-upgrade-offline.mjs": "9d25c79822f472b9fcfff64bc107fb08afdb2a11831c1485c61267823bd45aa4",
+    "services/cla-cloudflare/tests/independent-v2-upgrade.test.mjs": "32ecdb861fbd8b36fa4c7c05cb9ff2a5a516f7ce7f0fa51a899dfbd780f81e70",
+    "services/cla-cloudflare/tests/v2-upgrade-mutation-cases.json": "39a9190ac468d0ca146f803e1e61d99a8ca00da09617546ea7e37d28fb8a80b9",
+    "services/cla-cloudflare/src/native/store.ts": "35c694576c1a8e4b6630ed6337f26a5a9e39fe55ddaa38dc46e31a50b672d140",
+    "services/cla-cloudflare/src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08"
+  },
+  "artifact_sha256": {
+    "full-node.log": "33cece5c8e2fa99392da5406adf0d64bab76615b1d4f26b8d756d47c3affcaec",
+    "green-targeted.log": "7734ede2038718c6b3734cd90a11400bfa2e612a03f8dd42e0c1d9251d073778",
+    "independent-baseline-source.json": "dd019267bf5a2311dd5406fad8bb5174ac32072522e83faec966a73cfed63da4",
+    "independent-fix-verification.json": "5dff1a50557345c224fe797ba46984f276cf2ad39c56ef1fb71fd4b4e76a913a",
+    "independent-fresh-provenance.test.mjs": "905bc493059891cc6ac5083700dc728cd69744b6cc18defe6491bd3adf2f8a95",
+    "independent-green.log": "99a985aa62c499d1750126a20b92a99cf06b0c9a0f84ccd16ee1b3af70ca8e06",
+    "independent-manifest.json": "14bbd3eed9ae1ae84459ba213477c030776a88cce13f6d24efec423a6139ae81",
+    "independent-red.log": "046e9033c9397c6876402d8d0cf7bda16bb1e403c3e1e6c85c3a5c7d703029d8",
+    "independent-reverse-mutant.log": "bcfcddbb1db9ccc0cf893860df56400e42918a7efe2e91527834523a22542be8",
+    "independent-review.md": "26352fc21a16f416e977e80f43e8982ff24326d7f666be4e638f8762afb959a0",
+    "independent-verify-fix.log": "751f7e82187e5f98824dae087d9d96d00da5db9af58cd66d66a5eecfaf48eac4",
+    "independent-verify-fix.py": "3765d8a23038783cf3fc29b6e57eee478dff86c5cd7faaa3bfcd9e69446b6628",
+    "migration.log": "501137fa7323a7b88c92baeefdaefdeea4570af24c131fc145b60205a03c7e70",
+    "mutation.log": "f18b45950b9f18353a4681e172fa7e6f0b72e0bd46266c74a09229d5631be565",
+    "red.log": "84503218a1c2f6d16f7e0a802a7bbf4247fbe2414486aa632a312d7d50b554ce"
+  },
+  "current_fix_hosted": "pending: previous hosted result belongs only to a19e88f0",
+  "targeted_followup": "not requested; await current-head deterministic hosted checks",
+  "limits": [
+    "All actual database execution uses disposable synthetic SQLite.",
+    "No production D1 access, signing, publication, credentials, deployment or enablement.",
+    "Earlier npm E403 and forbidden cross-proof-expiry successful-publication test were not retried or bypassed.",
+    "Full main/full CI, real D1 acceptance and human thread resolution remain separate."
+  ],
+  "artifact_encoding": "Filenames in log/report fields refer to UTF-8 JSON string members of raw-logs.json. Each member retains the exact original bytes and SHA256.",
+  "raw_bundle_sha256": "a58d468265211d737cd5fa1c247ba4403c005c9df61f9061ead0b1cafc88f498"
+}

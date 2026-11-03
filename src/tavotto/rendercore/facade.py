@@ -1,4 +1,4 @@
-"""RenderCore 面的 pdfbackend 契约实现——19 个导出项 + Canvas 面，同签名同返回结构（统一实施包 U08 候选、
+"""RenderCore 面的 pdfbackend 契约实现——20 个导出项 + Canvas 面，同签名同返回结构（统一实施包 U08 候选、
 U10 起唯一实现，ADR 0067 / 0072）。
 
 `pdfbackend/__init__.py` 是契约层：它按 `TAVOTTO_RENDER_BACKEND` 选实现（今天闭集里只有本模块；U08–U09 时
@@ -17,6 +17,7 @@ U10 起唯一实现，ADR 0067 / 0072）。
 | `render_preview_png` | `RenderHost.render(width_px=…)` + `raster.encode_png` | 栅格器换成 PDFium（像素按平台分基线） |
 | `compare_png` | `rasterio.decode` → RGBA → `pixelmetrics.rgba_metrics` | 尺子同一份，只换解码器 |
 | `compose()` → `Canvas` | `plan.compile_page` → `pdfwriter`（Canonical PDF）→ child 栅格一次 → PNG / TIFF 同一 buffer | opacity < 1 / flip 保矢量；文字基线按批准度量（ADR 0060 §4） |
+| `concat_pdf` | pikepdf 把若干单页 PDF 按给定顺序 `pages.extend` 成一个多页文件（不重画；字体每页各嵌一份；输入必须恰好一页）；同一输入重复 = 该页重复（#1370） | 无 |
 | `original_pdf` | 矢量：pikepdf 整页搬第一页（copy_foreign，不重画）；位图：一页 Image XObject 铺满 `page_pt` | 无 |
 | `original_png` | PNG 源逐字节 `copyfile`；JPEG 转码不重采样；矢量源 child 按 ppi 栅格 | 矢量源的 PNG 写真实 ppi 的 pHYs（旧后端写 96） |
 | `original_tiff` | 同上，容器换 `raster.write_tiff`；位图源只写 `dpi_meta` | 无 |
@@ -69,6 +70,7 @@ __all__ = [
     "host",
     "missing_glyphs",
     "mm2pt",
+    "concat_pdf",
     "original_pdf",
     "original_png",
     "original_tiff",
@@ -371,6 +373,16 @@ def compare_png(baseline: Path, candidate: Path) -> dict:
     return pixelmetrics.rgba_metrics(a, b, size_a, size_b)
 
 
+def compare_png_extent(baseline: Path, candidate: Path) -> dict:
+    """两张 PNG 的逐字节差异范围（差异像素数 / 比例 / 包围框，无底噪无阈值）；尺寸不同回 `ok: False`。
+    来源驱动采用（ADR 0139）用它回答「重画与原件是不是同一个像素」，判定归调用方。"""
+    a, size_a = _rgba_of(baseline)
+    b, size_b = _rgba_of(candidate)
+    if size_a != size_b:
+        return {"ok": False, "reason": "size_mismatch"}
+    return {"ok": True, **pixelmetrics.diff_extent(a, b, size_a)}
+
+
 # ---------------------------------------------------------------------------
 # Canvas 面（RC-002）
 # ---------------------------------------------------------------------------
@@ -558,6 +570,51 @@ def _file_resource(path: Path, source_id: str) -> tuple[str, ir.FileResource, by
     return key, res, data
 
 
+class PdfConcatError(ValueError):
+    """`concat_pdf` 的输入不是「恰好一页的可读 PDF」，或没有输入。"""
+
+
+def concat_pdf(singles, out: Path) -> int:
+    """按 `singles` 的顺序把每个单页 PDF 的那一页拼进 `out`，回总页数（#1370，PdfPages 导出）。
+
+    **不重画**：每页由 pikepdf 原样搬进新文件（页面尺寸 / 路径 / 文字一个字节不动）。已知代价：字体每页各嵌一份
+    （每个单页文件自带子集字体，搬运不跨页去重，去重要重写字体资源，那是另一个有风险的改动）。
+    每个输入必须恰好一页，否则 `PdfConcatError`——悄悄只取第一页会让页数与页序对不上请求。
+    同一个输入文件出现多次 = 这一页按页序重复放。`out` 的父目录不存在时创建。
+    """
+    import contextlib
+
+    import pikepdf
+
+    singles = [Path(p) for p in singles]
+    if not singles:
+        raise PdfConcatError("no pages to merge")
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.ExitStack() as stack:
+        dest = stack.enter_context(pikepdf.new())
+        opened: dict[str, pikepdf.Pdf] = {}
+        for path in singles:
+            src = opened.get(str(path))
+            if src is None:
+                try:
+                    src = stack.enter_context(pikepdf.open(str(path)))
+                except Exception as exc:  # noqa: BLE001 —— 打不开 = 这一页没有，不是空页
+                    raise PdfConcatError(f"unreadable single-page PDF: {path.name}") from exc
+                if len(src.pages) != 1:
+                    raise PdfConcatError(f"{path.name} has {len(src.pages)} pages, expected 1")
+                opened[str(path)] = src
+            dest.pages.extend(src.pages)  # 源文件保持打开到 save 之后：pikepdf 要求
+        count = len(dest.pages)
+        dest.save(
+            str(out),
+            compress_streams=True,
+            object_stream_mode=pikepdf.ObjectStreamMode.disable,
+            deterministic_id=True,
+        )
+    return count
+
+
 def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = None) -> dict:
     """矢量源：**整页搬运第一页**（pikepdf copy_foreign，不重画，页面尺寸 / 字体 / 路径一个字节不动）；
     位图源：新建一页 `page_pt` 大小、整页铺一个 Image XObject（不声称矢量）。回同旧后端的事实。"""
@@ -711,7 +768,12 @@ class _NoPanels:
 
 
 def annotate_asset(
-    pdf_path: Path, png_path: Path | None, objects: list[dict], dpi: int = 600
+    pdf_path: Path,
+    png_path: Path | None,
+    objects: list[dict],
+    dpi: int = 600,
+    *,
+    math: dict | None = None,
 ) -> None:
     """把画布标注（坐标为**该图自身的 mm**）画进单图文件：标注编成一页 IR、写成 Canonical 覆盖页，经
     pikepdf `add_overlay` 叠到原 PDF 首页之上（原内容流与资源不动，仍是矢量、文字层在）；PNG 由注好的
@@ -732,6 +794,7 @@ def annotate_asset(
         sources=_NoPanels(),
         faces=provider(),
         background=None,
+        math=math,
     )
     tmp_dir = Path(tempfile.mkdtemp(prefix="tavotto-annotate-"))
     try:

@@ -173,6 +173,17 @@ def test_a_session_without_a_record_still_reverts(env, monkeypatch):
     assert env["script"].read_bytes() == BEFORE_AI
 
 
+def test_a_session_known_only_from_its_sidecar_is_a_final_interrupted_snapshot(env, monkeypatch):
+    """后端重启、历史库没有这一行、只剩 sidecar：拼出来的 `interrupted` 详情必须带 `ended_ms`——`interrupted` 与 `cancelled`
+    一样，没有 `ended_ms` 的快照前端不当终态（进程可能还在退出），这一份会永远停在「没结束」（Codex #1098 P2）。"""
+    sid = _ai_session(env, monkeypatch, AFTER_AI)
+    ai_bridge.SESSIONS.pop(sid)
+    monkeypatch.setattr(ai_bridge.ai_history, "get", lambda *_a, **_k: None)
+    d = ai_bridge.get(sid)
+    assert d is not None and d["status"] == "interrupted"
+    assert isinstance(d.get("ended_ms"), int)
+
+
 def test_the_http_endpoint_answers_409_with_the_stable_code(env, monkeypatch):
     sid = _ai_session(env, monkeypatch, AFTER_AI)
     env["script"].write_bytes(HUMAN_LATER)

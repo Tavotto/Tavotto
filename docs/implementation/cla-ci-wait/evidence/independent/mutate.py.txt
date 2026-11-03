@@ -1,0 +1,19 @@
+from pathlib import Path
+import json,hashlib,shutil,subprocess
+art=Path('/tmp/cla-ci-composition-56aca'); snapshot=art/'snapshot'
+cases=[
+ {'name':'manual phase cannot qualify as confirmed','file':'src/native/store.ts','before':"AND id=? AND phase='confirmed'",'after':"AND id=? AND phase IN ('confirmed','manual')",'pattern':'composition manual held owner exhausts pending without confirmation or replay'},
+ {'name':'second authority pending cannot restart confirmation wait','file':'src/ci/consumer.ts','before':"if(error instanceof CIPending)throw new Rejected('ci_live_state_changed');",'after':"if(error instanceof CIPending)throw new CIPending('confirmation_pending',{source:branch.sha,candidate:identity,expiresAt:proof.expires_at});",'pattern':'composition second authority manual pending is terminal and retains owner'},
+ {'name':'original short proof clamps monotonic deadline','file':'src/ci/wait.ts','before':'deadline=Math.min(deadline,now+anchor.expiresAt*1000-milliseconds);','after':'void 0;','pattern':'composition short original proof cancels before another GET at monotonic boundary'},
+ {'name':'authority whole verification statement cost','file':'src/native/verification.ts','before':'  const current=await s.evaluate(pr,VERIFICATION_FINAL_SQL);','after':'  await s.store.databaseNow();const current=await s.evaluate(pr,VERIFICATION_FINAL_SQL);','pattern':'composition fixed confirmed held slot verifies twice with actual11 SQL authority budgets'},
+]
+records=[]
+for i,c in enumerate(cases,1):
+ dest=art/('mutant-'+str(i));shutil.rmtree(dest,ignore_errors=True);shutil.copytree(snapshot,dest)
+ f=dest/c['file'];old=f.read_text();assert old.count(c['before'])==1,(c['name'],old.count(c['before']))
+ offset=old.index(c['before']);new=old.replace(c['before'],c['after']);f.write_text(new);assert f.read_text()[offset:offset+len(c['after'])]==c['after']
+ args=['node','--test','--test-name-pattern='+c['pattern'],'tests/independent-wait-slot.test.mjs']
+ p=subprocess.run(args,cwd=dest,capture_output=True,text=True);output=p.stdout+p.stderr;log=art/('mutant-'+str(i)+'.log');log.write_text(output)
+ assert p.returncode==1,(c['name'],p.returncode,output);assert 'AssertionError' in output,(c['name'],output);assert c['pattern'] in output
+ records.append({**c,'unique_locations':1,'offset':offset,'exit':p.returncode,'assertionError':True,'source_sha256':hashlib.sha256(old.encode()).hexdigest(),'mutant_sha256':hashlib.sha256(new.encode()).hexdigest(),'command':args,'cwd':str(dest),'log':str(log)})
+(art/'mutants.json').write_text(json.dumps(records,indent=2)+'\n');print(json.dumps([{'name':r['name'],'exit':r['exit'],'assertionError':r['assertionError']} for r in records],indent=2))

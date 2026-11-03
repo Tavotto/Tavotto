@@ -1,0 +1,68 @@
+[
+  {
+    "command": "node --test tests/independent-wait-slot.test.mjs",
+    "cwd": "/tmp/cla-ci-composition-56aca/snapshot",
+    "exit": 0,
+    "tests": 14,
+    "log": "independent-tests.log"
+  },
+  {
+    "command": "python3 /tmp/cla-ci-composition-56aca/mutate.py",
+    "cwd": "/workspace",
+    "exit": 0,
+    "mutants": 4,
+    "log": "mutation-run.log"
+  },
+  {
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition manual held owner exhausts pending without confirmation or replay",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-1",
+    "exit": 1,
+    "assertionError": true,
+    "unique_locations": 1,
+    "log": "mutant-1.log"
+  },
+  {
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition second authority manual pending is terminal and retains owner",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-2",
+    "exit": 1,
+    "assertionError": true,
+    "unique_locations": 1,
+    "log": "mutant-2.log"
+  },
+  {
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition short original proof cancels before another GET at monotonic boundary",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-3",
+    "exit": 1,
+    "assertionError": true,
+    "unique_locations": 1,
+    "log": "mutant-3.log"
+  },
+  {
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition fixed confirmed held slot verifies twice with actual11 SQL authority budgets",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-4",
+    "exit": 1,
+    "assertionError": true,
+    "unique_locations": 1,
+    "log": "mutant-4.log"
+  }
+]

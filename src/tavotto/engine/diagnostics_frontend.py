@@ -246,6 +246,8 @@ _ENUM_FIELDS: dict[str, frozenset[str]] = {
     "render_status": frozenset({"idle", "rendering", "ready", "error"}),
     "selection_kind": frozenset({"none", "element", "object", "mixed"}),
     "history_mode": frozenset({"gesture", "granular"}),
+    # 新手教程状态（`tavotto.onboarding`）：与前端 `OnboardingStatus` 严格同源
+    "status": frozenset({"not_started", "active", "paused", "completed", "skipped"}),
     # `ui.unexpected_error`（ADR 0118 补充 2026-10-14）：来源与内建错误名都是闭集，
     # 与前端 `UNEXPECTED_ERROR_SOURCES` / `UNEXPECTED_ERROR_NAMES` 严格同源（test_unexpected_error_enums_match_frontend）
     "source": frozenset({"boundary", "window_error", "unhandled_rejection", "engine_500"}),
@@ -546,6 +548,15 @@ _SNAPSHOT_SHAPE = {
     },
     # issue #181 Session 05：JS 侧驻留的 SVG payload 与三档表示法的分布。
     # 全是计数与常量，没有一个字段带用户内容。
+    # 新手教程状态的**结构摘要**（排查「为什么没弹新手教程」）：状态机取值、步骤内容版本、走过的步骤 id、欢迎页出现过没有、
+    # 看过哪几类提示的**键名**（闭集 id，不带时间戳）。没有任何用户内容。
+    "onboarding": {
+        "status": "enum",
+        "flow_version": "int",
+        "completed_steps": "closed_list",
+        "welcome_seen": "scalar",
+        "hint_seen_keys": "closed_list",
+    },
     "preview_memory": {
         "resident_svg_bytes": "int",
         "resident_svg_count": "int",
@@ -556,6 +567,23 @@ _SNAPSHOT_SHAPE = {
         "budget_per_file": "int",
         "budget_global": "int",
     },
+}
+
+#: `closed_list` 字段的元素闭集（按字段名）：与前端 `STEP_IDS`（lib/onboarding/stepIds.ts）/ `HINT_KINDS`
+#: （store/onboardingStore.ts）严格同源（test_onboarding_closed_sets_match_frontend）。不在闭集里的元素**逐个丢掉**：
+#: 通用 `list` 只挡「像内容的串」，挡不住 `patient_123` 这种长得像技术标识的内容——第二道隐私边界要自己认得全集。
+_CLOSED_LISTS: dict[str, frozenset[str]] = {
+    "completed_steps": frozenset({"demo_import", "demo_move_legend", "demo_change_title", "done"}),
+    "hint_seen_keys": frozenset(
+        {
+            "panel_editable",
+            "panel_layout_only",
+            "fast_edit_entered",
+            "multi_select",
+            "problem_found",
+            "layout_page_bounds",
+        }
+    ),
 }
 
 _PANEL_SHAPE = {
@@ -620,10 +648,16 @@ def _pull(src, shape, redact):
                 ]
             elif spec == "list":
                 out[key] = _value(raw, redact) if isinstance(raw, list) else []
+            elif spec == "closed_list":
+                allowed = _CLOSED_LISTS[key]
+                rows = raw[:MAX_LIST] if isinstance(raw, list) else []
+                out[key] = [v for v in rows if isinstance(v, str) and v in allowed]
             else:
                 out[key] = _scalar(raw, redact)
         except _Reject:
-            out[key] = 0 if spec == "int" else ([] if spec in ("list", "gids") else None)
+            out[key] = (
+                0 if spec == "int" else ([] if spec in ("list", "gids", "closed_list") else None)
+            )
     return out
 
 

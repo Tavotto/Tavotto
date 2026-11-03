@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_write_back.py`、`test_worker_roundtrip.py` 末节、`web` 的 `WriteBackDialog.test.tsx`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 300
+改到: `_write_source_files`、`pool.one_shot()`、`REPLAY_PIXEL_TOL`、`/api/update_source`、`history/restore`
+主题: 写回事务 → `writeback-transaction.md`
+必守要点: prepare 两道校验；verify 全量重放 + 几何 + 像素；热态不是这组 patches 就报 `fresh_only`
+-->
 
 - 「写回原始文件」撞上 Windows 独占锁（PDF 被阅读器打开）回 409
   `code=file_locked`，带上是哪个文件、回滚结果如何，并清掉 `.updating`
@@ -89,6 +98,33 @@
   * 看护：`tests/test_write_back.py`（假 worker，全部分支）+
     `tests/test_worker_roundtrip.py` 末节（真 matplotlib + Flask 全链路，
     含 workerd 路径的一次性会话不泄漏）+ `web` 的 `WriteBackDialog.test.tsx`。
+
+## 不写别的图写的文件
+
+写回目标原本是「`src` 同名、`WRITE_BACK_EXT` 里存在的那几个」。同一 stem 下两张**不同**的图（`panel.png` 甲 /
+`panel.pdf` 乙）时，这会拿甲去覆盖乙的产物。`app._own_write_back_targets` 按 verify 段一次性 worker（刚 build）的
+描述符，从目标里去掉**另一张捕获图的原件**（`original_artifact`，补认领的乙即 `panel.pdf`）；`src` 本身是别的图的原件 →
+409 `write_back_foreign_file`（`{file}`），在任何临时文件产生之前、原件零改动。判据的主语是「别的图在这次运行里写的」，
+不是「这张图没存过的格式」：磁盘上同名、这次运行没有任何图写过的文件（手工导出 / 旧脚本留下的）照旧是目标——
+曾按格式收窄，把这类项目的写回误拦成 409（`tests/test_hatch_rc_context_writeback.py`）。
+看护 `tests/test_same_stem_other_figure.py`。
+
+## 不写脚本用 PdfPages 写的 PDF（#1370 PR2）
+
+多页 PDF 不是任何一张图的 savefig 原件，写回只能把**一张图**刻进文件，覆盖它会丢掉其余各页。`app._pdf_pages_paths` 从 build
+响应的 `pdf_pages` 摘要（pool 存为 `last_build_pdf_pages`）取这次运行里 PdfPages 写过的位置（`scope` 为 `project` / `execution`
+的相对路径，换算到项目目录里的同名位置——safe 档的 PdfPages 写在沙盒里，而用户自己跑同一份脚本写出的就是项目里这个路径；
+`unresolved` 不外发路径、也就不核）。`src` 是它 → 409 `write_back_multipage_pdf`（`{file}`，`WriteBackMultipagePdfError`，
+`WriteBackForeignFileError` 的子类、响应先于父类判），对**所有 stem** 一视同仁（包括认领了它某一页的 stem）；其余目标里
+是它的被去掉，同目录的普通 savefig 原件照常写回。两道：`_write_source_files` 在 `_write_back_prepare` 之后用**热会话**的摘要
+早拒（连一次性 worker 都不起，不必把脚本全量重放），`_own_write_back_targets` 用重放 worker 的摘要再核（热会话没有摘要的情形），
+都在任何临时文件产生之前、原件零改动。**只写了 1 页的 PdfPages 同样拒绝**：它不是任何图的 savefig 原件，覆盖它抹掉的是脚本的整份输出。
+带画布标注的写回要先画在 PDF 上、PNG 再由它栅格化：同名 PDF 被守卫（或「别的图的原件」那条）去掉后没有载体，
+`_own_write_back_targets(need_pdf=True)` 抛对应的 409（`write_back_multipage_pdf` / `write_back_foreign_file`，指向被去掉的 PDF），
+**不是**只写 PNG 并丢标注——前端写回成功后会把标注对象从画布摘掉，等于静默丢编辑；以前这里走到 `assert pdf_tmp is not None` 成 500（Codex #1394 P2）。
+保守取舍：不分辨「PdfPages 之后又被同路径 savefig 覆盖」的病态顺序，一律拒（引导去导出，不丢数据）。前端在 `UpdateSourceButton`
+的失败出口挂一条通知轨胶囊（`lib/writeBackMultipageNotice.ts`：一句话 + 「导出」，打开现有导出对话框；不是横条）。
+看护 `tests/test_pdfpages_record_pages.py`、`web/src/lib/writeBackMultipageNotice.test.ts`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

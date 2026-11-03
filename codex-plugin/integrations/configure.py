@@ -196,7 +196,7 @@ HOSTS: "dict[str, dict]" = {
             "单次：dsh web --patch tavotto.cordis.yml",
             "长期：合并进 $DSH_HOME/profiles/<名字>/cordis.patch.yml（或 $DSH_HOME/cordis.patch.yml；"
             "$DSH_HOME 默认 ~/.dsh）",
-            "已有可用 pnpm 时可装 bundle（README「Using Tavotto with DeepSeek Harness」的 dsh plugin 命令）；"
+            "已有可用 pnpm 时可装 bundle（宿主接入指南 docs/guide/ai-hosts.md「Using Tavotto with DeepSeek Harness」的 dsh plugin 命令）；"
             "没有 pnpm 就用当前 YAML 配置，无需为 Tavotto 安装 Node.js 或 pnpm；"
             "二选一——同名 serverName 的第二行会加载失败",
         ],
@@ -221,7 +221,7 @@ HOSTS: "dict[str, dict]" = {
         "target": [
             "WorkBuddy：插件 → MCP Server → 配置 MCP（编辑 mcp.json），只合并 tavotto 这一项",
             "（不要改 CodeBuddy 的 ~/.codebuddy/mcp.json——那是另一个产品）",
-            "更省事的是装插件（README「Using Tavotto with WorkBuddy」的插件市场步骤），就不需要这段配置；"
+            "更省事的是装插件（宿主接入指南 docs/guide/ai-hosts.md「Using Tavotto with WorkBuddy」的插件市场步骤），就不需要这段配置；"
             "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": ["WorkBuddy 的 MCP 列表里 tavotto 为已连接，对话里调用 tavotto_health"],
@@ -239,7 +239,7 @@ HOSTS: "dict[str, dict]" = {
         "target": [
             "<项目>/.mcp.json（project 作用域；交互会话里第一次用会请你批准）",
             "不要同时再用 claude mcp add 登记同名 tavotto：local / user 作用域会遮蔽它",
-            "更省事的是装插件（README「Using Tavotto with Claude Code」的两条命令），就不需要这段配置；"
+            "更省事的是装插件（宿主接入指南 docs/guide/ai-hosts.md「Using Tavotto with Claude Code」的两条命令），就不需要这段配置；"
             "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": [

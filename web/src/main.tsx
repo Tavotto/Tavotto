@@ -4,9 +4,12 @@ import { App } from './App'
 import { installConsoleCapture } from './diagnostics/detail'
 import { installUnexpectedErrorCapture } from './lib/unexpectedErrors'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { WindowControls } from './components/WindowControls'
 import { IconProvider } from './components/ui/Icon'
-import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale } from './lib/desktop'
+import { installIconMotion } from './components/ui/iconMotion'
+import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale, windowChrome } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
+import { installInputModality } from './lib/inputModality'
 import { applyTheme } from './lib/theme'
 import { useUiStore } from './store/uiStore'
 import './index.css'
@@ -17,6 +20,8 @@ import './index.css'
 installConsoleCapture()
 // 意外错误卡的来源（订阅上面那一份 window 监听 + 引擎 500 出口）；卡片只在「发送问题反馈」开着时才会出现
 installUnexpectedErrorCapture()
+// 图标微动效（ADR 0156）：点按钮 / 指针进按钮时播按钮里那枚图标的动作，委托在 document 上只装一次
+installIconMotion()
 initI18n()
 document.documentElement.lang = currentLocale()
 
@@ -24,6 +29,8 @@ document.documentElement.lang = currentLocale()
 // 跑到这里时浏览器可能已经画过一帧）；这里是对账——以 uiStore 读出的偏好为准再落一次。
 // 下面那个不经 React 的「会话建立失败」页也读同一套 CSS 变量（宪法第二十八节）
 applyTheme(useUiStore.getState().theme)
+// 输入方式：指针操作之后程序化挪焦点不画键盘焦点环（`lib/inputModality`、index.css）
+installInputModality()
 
 // 原生菜单的文案在壳里另有一份（Rust 在 webview 起来之前就要建菜单）。
 // 这条通知**放在这儿而不是放进 `@/i18n`**：i18n 模块被 store / lib / 单测到处
@@ -36,6 +43,20 @@ i18n.on('languageChanged', (lng) => void setDesktopMenuLocale(lng, true))
 
 const rootEl = document.getElementById('root')!
 
+// Windows 无框窗口（窗框 menu-button）右上角的窗口按钮：单独一个根——会话失败页 / 崩溃页取代
+// #root 里的整棵树时，最小化 / 关闭也得还在
+if (windowChrome() === 'menu-button') {
+  const controlsEl = document.createElement('div')
+  document.body.append(controlsEl)
+  createRoot(controlsEl).render(
+    <StrictMode>
+      <IconProvider>
+        <WindowControls />
+      </IconProvider>
+    </StrictMode>,
+  )
+}
+
 // 桌面模式先换会话（fragment nonce → HttpOnly cookie）再挂载：store 一挂载就会
 // 发 API，会话没建立时全是 401。浏览器模式下 bootstrap 立即返回 skipped。
 void bootstrapDesktopSession().then((r) => {
@@ -46,7 +67,7 @@ void bootstrapDesktopSession().then((r) => {
     // 与崩溃页同一副——panel 圆角、对话框投影、17 / 600 标题、13 正文、一颗主按钮「重新加载」
     const div = document.createElement('div')
     div.setAttribute('data-boot-failure', '')
-    // macOS 的系统标题栏叠在页面上（窗框 overlay）：这一页取代了整棵树，空白处得是拖动区，否则窗口拖不动（Codex #994）
+    // 桌面主窗口没有可拖的系统标题栏（窗框 overlay / menu-button）：这一页取代了整棵树，空白处得是拖动区，否则窗口拖不动（Codex #994）
     for (const [k, v] of Object.entries(dragRegionProps('self'))) div.setAttribute(k, v)
     div.setAttribute(
       'style',

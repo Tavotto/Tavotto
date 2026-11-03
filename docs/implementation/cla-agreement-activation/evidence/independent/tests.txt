@@ -1,0 +1,25 @@
+✔ whole first apply uses 13 SQL; current ready and original binary denied (39.664636ms)
+✔ source-only initial anchor rejects and rolls back; no sentinel is left (12.780972ms)
+✔ JSON cannot enable flag; toggled-off legacy config rejects anchored DB (12.256968ms)
+✔ immutable old source survives newer observation; anchor body and columns bind (11.882631ms)
+✔ tampered prepared fields and content reject without any DB change (14.126466ms)
+✔ late anchor INSERT failure rolls back inserted registry, documents and CAS effects (15.765536ms)
+✔ identical retry is no-op; newer activation supersedes original proposal (17.003664ms)
+✔ concurrent identical proposals commit once; different proposals have one winner (23.219794ms)
+✔ new store rejects old packet mutation but historical hold remains possible (17.229769ms)
+✔ old receipts and personal evidence stay immutable, historical audit and revocation survive (38.540655ms)
+✔ activation after stale sign pre-read causes CAS rejection with no consent copy (14.468996ms)
+✔ all independent activation checks use zero outbound calls (0.205774ms)
+✔ current store refuses to commit historical tuple for a new subject (10.808676ms)
+✔ stored canonical body corruption is rejected by runtime hash validation (10.402215ms)
+✔ same current tuples cannot mask a wrong configured anchor hash (11.336239ms)
+✔ old completed personal consent cannot qualify fresh current agreement (31.389296ms)
+✔ activation racing before packet and intent commit is rejected by final guard (23.842062ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 478.728871

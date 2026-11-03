@@ -11,6 +11,7 @@
 
 import { currentLocale, t } from '@/i18n'
 import { CodexShellError } from '@/lib/codexInstall'
+import { HostShellError } from '@/lib/hostConnect'
 
 /**
  * 运行在 Tavotto 桌面壳里（Tauri 2 注入的 IPC 标记在）——不管引擎在哪台机器上。
@@ -174,6 +175,8 @@ export async function onDesktopOpen(
  */
 export type NativeFileDrop =
   | { kind: 'script'; folder: string; script: string; name: string; ignored: number }
+  /** R / MATLAB 脚本（`.R` / `.r` / `.m`，ADR 0143 修订二）：打开 `folder`，由页面提议「生成可编辑版本」；语言由页面按文件名后缀判 */
+  | { kind: 'foreign_script'; folder: string; script: string; name: string; ignored: number }
   | { kind: 'folder'; folder: string; name: string; ignored: number }
   | { kind: 'unsupported'; name: string }
 
@@ -193,7 +196,8 @@ export async function nativeFileDropAvailable(): Promise<boolean> {
 
 /**
  * 订阅系统拖放（`tavotto:file-drop`）。壳在每次有文件放进窗口、页面又接受了这次拖动时
- * 都发；**只有主页订阅**——编辑器不订阅，事件落空，画布的 HTML5 拖放照旧。浏览器模式是空订阅。
+ * 都发。订阅的是主页，以及编辑器的画布（`canvas/useCanvasScriptDrop`：只认与画布 DOM `drop` 配上对的那一条，
+ * ADR 0092 修订 2026-10-27）；画布的 HTML5 拖放照旧。浏览器模式是空订阅。
  */
 export async function onNativeFileDrop(
   handler: (drop: NativeFileDrop) => void,
@@ -346,7 +350,8 @@ export async function pickDirectory(title?: string): Promise<string | null> {
 }
 
 /**
- * 原生文件选择器，只收 `.py`（主页「导入我的脚本」用）。取消返回 null；
+ * 原生文件选择器，收 `.py`，以及 R / MATLAB 脚本 `.R` / `.r` / `.m`（ADR 0143 修订：这些会走“生成可编辑版本”的入口卡，
+ * 不会被当成可运行脚本）。主页「导入我的脚本」用。取消返回 null；
  * 浏览器模式返回 null，调用方回退到服务器端目录浏览器（选脚本所在的文件夹）。
  * 与 `pickDirectory` 同一条 `dialog:allow-open` 权限，壳侧不用加 ACL。
  */
@@ -357,7 +362,7 @@ export async function pickScriptFile(title?: string): Promise<string | null> {
     directory: false,
     multiple: false,
     title,
-    filters: [{ name: 'Python', extensions: ['py'] }],
+    filters: [{ name: 'Python / R / MATLAB', extensions: ['py', 'R', 'r', 'm'] }],
   })
   return typeof picked === 'string' ? picked : null
 }
@@ -386,6 +391,25 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
   } catch {
     return false
   }
+}
+
+/** 项目根 + 相对路径（`/` 分隔）→ 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
+export function joinProjectPath(root: string, rel: string): string {
+  const win = root.includes('\\') && !root.includes('/')
+  const sep = win ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
+}
+
+/**
+ * 在系统文件管理器里选中项目里的一个文件（`rel` 相对项目根；`/` 与 `\` 两种分隔符都认——后端在 Windows 上给的图 id 是反斜杠分隔）。
+ * 走 `reveal_export` 同一条壳命令（目录 + 纯文件名，只 reveal 不 open），壳侧不加 ACL。
+ * 成功返回 true；浏览器模式或失败返回 false——调用方把完整路径告诉用户。
+ */
+export async function revealProjectFile(root: string, rel: string): Promise<boolean> {
+  if (!root || !rel) return false
+  const cut = Math.max(rel.lastIndexOf('/'), rel.lastIndexOf('\\'))
+  const dir = cut < 0 ? root : joinProjectPath(root, rel.slice(0, cut))
+  return revealExportedFile(dir, rel.slice(cut + 1))
 }
 
 /**
@@ -460,7 +484,7 @@ export async function setDesktopMenuLocale(
 }
 
 /* -------------------------------------------------------------------------- */
-/*  窗框：系统标题栏 / 菜单栏与页面顶栏融成一片（2026-10-13）                        */
+/*  窗框：系统标题栏 / 菜单栏与页面顶栏融成一片（2026-10-13；Windows 10-21 改无框）   */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -469,8 +493,9 @@ export async function setDesktopMenuLocale(
  *
  * - `overlay`（macOS）：系统标题栏透明叠在页面上，红绿灯在页面顶栏那一行——顶栏让出左侧
  *   `TRAFFIC_LIGHTS_INSET`，空白处是拖动区。
- * - `menu-button`（Windows）：菜单栏藏起来，页面顶栏给一个「菜单」按钮弹出同一份菜单；
- *   标题栏底色随页面主题。
+ * - `menu-button`（Windows）：没有系统标题栏——页面右上角画最小化 / 最大化 / 关闭
+ *   （`WindowControls`，各页顶部右侧让出 `WINDOW_CONTROLS_INSET`），空白处是拖动区；菜单栏
+ *   藏起来，页面顶栏给一个「菜单」按钮弹出同一份菜单。
  * - `native`：浏览器、远程实例窗口（不注入标记）、以及不认这个标记的旧壳——一切照旧。
  */
 export type WindowChrome = 'overlay' | 'menu-button' | 'native'
@@ -486,6 +511,12 @@ export function windowChrome(): WindowChrome {
  * 三颗按钮右缘实测在 76）配套，再留 12：主页胶囊的悬停底色不贴着绿灯。
  */
 export const TRAFFIC_LIGHTS_INSET = 88
+
+/**
+ * `menu-button` 下右上角三颗窗口按钮（`WindowControls`，每颗 46 宽、与顶栏同高 44，Windows 的
+ * 标题栏按钮尺寸）占的宽度，CSS 像素。顶部一行有内容的页面右侧至少让出这么多。
+ */
+export const WINDOW_CONTROLS_INSET = 138
 
 /** 壳在主窗口进 / 出全屏时发的事件，载荷 `{fullscreen: boolean}`（`window_chrome.rs` 的 `FULLSCREEN_EVENT`，两侧严格同源）。 */
 export const FULLSCREEN_EVENT = 'tavotto:fullscreen'
@@ -519,10 +550,11 @@ export async function getFullscreen(): Promise<boolean> {
 
 /**
  * 拖动区标记（Tauri 的 `data-tauri-drag-region`）：`deep` = 子树里非交互的地方都能拖，按钮 /
- * 输入框 / 带 tabindex 的元素照常点击。只在 `overlay` 下给——别的窗框有系统标题栏可拖。
+ * 输入框 / 带 tabindex 的元素照常点击。`overlay` 与 `menu-button` 都没有可拖的系统标题栏，都给；
+ * `native` 有系统标题栏（浏览器、远程实例窗口），不给。
  */
 export function dragRegionProps(mode: 'deep' | 'self' = 'deep'): Record<string, string> {
-  if (windowChrome() !== 'overlay') return {}
+  if (windowChrome() === 'native') return {}
   return { 'data-tauri-drag-region': mode === 'deep' ? 'deep' : '' }
 }
 
@@ -541,29 +573,42 @@ export async function showDesktopAppMenu(x: number, y: number): Promise<boolean>
   }
 }
 
-/** `rgb(r, g, b)` / `rgba(...)` / `#rrggbb` → `#rrggbb`；认不出来回 null */
-export function cssColorToHex(value: string): string | null {
-  const v = value.trim().toLowerCase()
-  if (/^#[0-9a-f]{6}$/.test(v)) return v
-  const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+\s*)?\)$/.exec(v)
-  if (!m) return null
-  const parts = m.slice(1, 4).map(Number)
-  if (parts.some((n) => n > 255)) return null
-  return '#' + parts.map((n) => n.toString(16).padStart(2, '0')).join('')
-}
+/** `menu-button` 窗框的三颗窗口按钮要做的事（关闭照旧发 CloseRequested，走关窗询问闸）。 */
+export type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 
-/**
- * Windows：系统标题栏与页面顶栏同色（底色 / 文字色，`#rrggbb`）。Windows 10 上壳照收、系统不认，
- * 标题栏维持原样。不在 `menu-button` 窗框里返回 false。
- */
-export async function setDesktopTitlebarColors(background: string, text: string): Promise<boolean> {
+/** 当前窗口最小化 / 最大化切换 / 请求关闭。不在 `menu-button` 窗框里返回 false。 */
+export async function windowControl(action: WindowControlAction): Promise<boolean> {
   if (windowChrome() !== 'menu-button') return false
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('set_titlebar_colors', { background, text })
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    if (action === 'minimize') await win.minimize()
+    else if (action === 'toggle-maximize') await win.toggleMaximize()
+    else await win.close()
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * 订阅当前窗口是否最大化（最大化按钮据它换「还原」图标）：先回读一次，之后每次窗口尺寸变化
+ * 再回读——拖到顶边吸附、双击顶栏、Win+↑ 都只表现为一次 resize。不在 `menu-button` 窗框里
+ * 什么都不做。返回取消订阅。
+ */
+export async function onWindowMaximizedChange(cb: (maximized: boolean) => void): Promise<() => void> {
+  if (windowChrome() !== 'menu-button') return () => {}
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    const read = () => {
+      win.isMaximized().then(cb, () => {})
+    }
+    const off = await win.onResized(read)
+    read()
+    return off
+  } catch {
+    return () => {}
   }
 }
 
@@ -593,6 +638,31 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
     // 一律当 spawn_failed——**不把它当句子显示给用户**。
     const code = typeof e === 'string' ? e : ''
     throw new CodexShellError(code || 'spawn_failed')
+  }
+}
+
+/**
+ * 「接入 AI 编辑器」（用户 2026-10-27）：壳命令 `host_integration` spawn `tavotto-cli hosts … --json`，原样交回那一行
+ * JSON。宿主名与 action 在壳里是闭集；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
+ * 壳回的是稳定 code（cli_not_found / spawn_failed / bad_output / bad_args / bad_host / bad_action），其余一律当
+ * spawn_failed——**不把它当句子显示给用户**。
+ */
+export async function runHostIntegration(
+  action: 'list' | 'connect' | 'disconnect',
+  host?: string,
+  projectRoot?: string,
+): Promise<string> {
+  if (!isDesktop()) throw new HostShellError('not_desktop')
+  const { invoke } = await import('@tauri-apps/api/core')
+  try {
+    return await invoke<string>('host_integration', {
+      action,
+      host: host ?? null,
+      projectRoot: projectRoot ?? null,
+    })
+  } catch (e) {
+    const code = typeof e === 'string' ? e : ''
+    throw new HostShellError(code || 'spawn_failed')
   }
 }
 

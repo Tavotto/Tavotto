@@ -1,0 +1,173 @@
+[
+  {
+    "name": "v2 upgrade uncertain-commit fresh-schema provenance",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "   if(current.schema_sha256!==hash(m.upgraded))deny('uncertain_commit_schema_mismatch');",
+    "after": "   // mutation: attribute an unrelated fresh target to the old source plan",
+    "pattern": "old source plan rejects unrelated fresh target",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade default-off pre-database gate",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(execute!==true || syntheticFixture!==true)return {status:'disabled',offline_only:true,production_authorized:false};",
+    "after": "if(false)return {status:'disabled',offline_only:true,production_authorized:false};",
+    "pattern": "v2 upgrade default off never inspects a database or a plan",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade precise internal-name exclusion",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "name NOT GLOB 'sqlite_*'",
+    "after": "name NOT LIKE 'sqlite_%'",
+    "pattern": "v2 upgrade exact source rejects sqliteX names instead of treating underscore as wildcard",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade temporary-schema isolation",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "db.prepare('SELECT 1 FROM temp.sqlite_schema WHERE sql IS NOT NULL LIMIT 1').get()",
+    "after": "false",
+    "pattern": "v2 upgrade rejects temporary or attached objects CREATE TEMP TABLE",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade attached-schema isolation",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "db.prepare('PRAGMA database_list').all().some(row=>!['main','temp'].includes(row.name))",
+    "after": "false",
+    "pattern": "v2 upgrade rejects temporary or attached objects ATTACH",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade issued and unknown refusal",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "WHERE phase IN ('issued','unknown') LIMIT 1",
+    "after": "WHERE phase IN ('__never__') LIMIT 1",
+    "pattern": "v2 upgrade quiescence rejects unknown failure",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade zero deadline quiescence",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "WHERE lease!='' OR lease_until!=0 LIMIT 1",
+    "after": "WHERE lease!='' LIMIT 1",
+    "pattern": "v2 upgrade quiescence rejects mismatched or stale lease  999999",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade arbitrary guard refusal",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "db.prepare(`SELECT 1 FROM ${PREFIX}_guards LIMIT 1`).get()",
+    "after": "false",
+    "pattern": "v2 upgrade quiescence rejects arbitrary guards without cleaning them",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade raw TEXT byte identity",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": ",row['__migration_bytes_'+i]",
+    "after": "",
+    "pattern": "v2 upgrade differing invalid UTF8 bytes cannot collide in a stale plan",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade full int64 storage reads",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "statement.setReadBigInts(true);const rows=statement.all();",
+    "after": "const rows=statement.all();",
+    "pattern": "v2 upgrade preserves every old typed cell rowid tuple and manual cursor with31 DDL",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade prepared plan exact comparison",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(canonical(plan)!==canonical(current))deny('prepared_plan_changed');",
+    "after": "// mutation: no comparison to prepared state",
+    "pattern": "v2 upgrade stale prepared data is rechecked inside its actual transaction",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade caller transaction ownership",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(db.isTransaction)deny('caller_transaction_must_remain_untouched');",
+    "after": "// mutation: enter a caller transaction",
+    "pattern": "v2 upgrade never owns or rolls back a caller transaction",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade transactional DDL rollback",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(begun && db.isTransaction)db.exec('ROLLBACK');",
+    "after": "",
+    "pattern": "v2 upgrade late ALTER failure restores complete schema rows and revision",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade full original-cell preservation",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(canonical(data(db,m.originalTables))!==canonical(current.data))deny('original_rows_changed');",
+    "after": "// mutation: ignore changed old rows",
+    "pattern": "v2 upgrade final verification detects unexpected old row writes and rolls them back",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade exact upgraded schema",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(canonical(schema(db))!==canonical(m.upgraded))deny('upgraded_schema_mismatch');",
+    "after": "// mutation: ignore unexpected schema",
+    "pattern": "v2 upgrade final verification rejects an unexpected schema write during DDL",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade reviewed zero fence default",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(db.prepare(`SELECT 1 FROM ${PUBLICATIONS} WHERE send_until!=0 LIMIT 1`).get())deny('historical_send_fence_changed');",
+    "after": "// mutation: accept a nonzero historical fence",
+    "pattern": "v2 upgrade final verification rejects a nonzero historical fence",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade empty new mechanisms",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "for(const name of m.newTables)if(db.prepare(`SELECT 1 FROM ${identifier(name)} LIMIT 1`).get())deny('new_capability_data_must_remain_empty');",
+    "after": "// mutation: accept synthesized capability data",
+    "pattern": "v2 upgrade final verification rejects synthesized capability data",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade uncertain-commit exact old data",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "if(canonical(plan)!==canonical(original))deny('prepared_plan_changed');",
+    "after": "// mutation: accept changed data after uncertain commit",
+    "pattern": "v2 upgrade uncertain commit retry rejects changed old data without repair",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "v2 upgrade BEGIN reply ownership timing",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "begun=true;db.exec('BEGIN IMMEDIATE');",
+    "after": "db.exec('BEGIN IMMEDIATE');begun=true;",
+    "pattern": "v2 upgrade lost BEGIN reply rolls back its newly acquired transaction",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  }
+]

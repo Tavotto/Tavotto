@@ -706,3 +706,72 @@ describe('图内拖动：修饰键变化重算吸附', () => {
     expect(overrideOf('axes_0.legend', 'loc_frac')![1]).toBeCloseTo(unsnapped, 3)
   })
 })
+
+/* ======================== 锁比例子图的缩放手柄 ======================== */
+
+describe('图内子图缩放手柄：锁比例的子图（imshow / equal）等比缩放', () => {
+  // 宣传片测试页：上柄吸到参考线，重渲后上边没落在线上、下边也跟着挪——自由缩放改了比例，
+  // matplotlib 的 apply_aspect 把框缩回去并居中。等比写下的框比例不变，看到的就是结果
+  const locked: ManifestElement = {
+    ...axes0,
+    editable: [...axes0.editable, { prop: 'aspect', type: 'text', value: '1.0' }],
+  }
+  const ratio0 = 0.4 / 0.35
+
+  it('上柄吸参考线：上边正好在线上、下边与左边不动、宽高比不变', async () => {
+    await setup()
+    // 子图上沿（top-origin）0.10；参考线比它高 2px
+    const guideY = (0.1 - 2 * PX_Y) * H
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'y', pos: guideY })
+    })
+    startAxesDrag(down(), livePanel(), locked, layout, 'n')
+    dragTo(0, -3)
+    const pos = overrideOf('axes_0', 'position')!
+    expect(Math.abs((1 - (pos[1] + pos[3])) * H - guideY)).toBeLessThan(0.01)
+    expect(pos[1]).toBeCloseTo(0.5, 4)
+    expect(pos[0]).toBeCloseTo(0.1, 4)
+    expect(pos[3] / pos[2]).toBeCloseTo(ratio0, 3)
+  })
+
+  it('线框（预览）与提交的是同一个等比框', async () => {
+    await setup()
+    startAxesDrag(down(), livePanel(), locked, layout, 'e')
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (8 * i) / 10, 0)
+      flushPreviewFrame()
+    }
+    const box = useInteractionStore.getState().elementPreview!.boxes!.axes_0!
+    fire('pointerup', 8, 0)
+    const pos = overrideOf('axes_0', 'position')!
+    // 预览框是 top-origin：上边不动 = 0.10
+    expect(box[1]).toBeCloseTo(0.1, 6)
+    expect(box[3] / box[2]).toBeCloseTo(ratio0, 6)
+    expect(pos[2]).toBeCloseTo(box[2], 4)
+    expect(pos[3]).toBeCloseTo(box[3], 4)
+  })
+
+  it('角柄两轴都吸上：取修正小的那一轴，比例不变', async () => {
+    // p2 子图的右边比 p1 右边多 2px、上边比 p1 上边高 2px
+    await setup({ p2: manifestOf(axesAt('axes_0', [0.3, 0.5, (0.45 * W + 2 * MM_PER_PX - P2_X) / W - 0.3, 0.4 + 2 * PX_Y])) })
+    startAxesDrag(down(), livePanel(), locked, layout, 'ne')
+    dragTo(3, -3)
+    const pos = overrideOf('axes_0', 'position')!
+    expect(pos[0]).toBeCloseTo(0.1, 4)
+    expect(pos[1]).toBeCloseTo(0.5, 4)
+    expect(pos[3] / pos[2]).toBeCloseTo(ratio0, 3)
+  })
+
+  it('aspect = auto 的子图照旧自由缩放（只改正在动的那条边）', async () => {
+    await setup()
+    const free: ManifestElement = {
+      ...axes0,
+      editable: [...axes0.editable, { prop: 'aspect', type: 'text', value: 'auto' }],
+    }
+    startAxesDrag(down(), livePanel(), free, layout, 'e')
+    dragTo(8, 0)
+    const pos = overrideOf('axes_0', 'position')!
+    expect(pos[2]).toBeCloseTo(0.35 + 8 * PX_X, 3)
+    expect(pos[3]).toBeCloseTo(0.4, 6)
+  })
+})

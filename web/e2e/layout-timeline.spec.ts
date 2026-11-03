@@ -43,7 +43,7 @@ async function settleInspectorMotion(page: Page) {
   })
 }
 
-/** 素材卡上画布，再回到排版 */
+/** 素材卡上画布（画布上只有这一张 = 单图编辑），再退出图内编辑（出口按钮只在图内编辑时有） */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
   await (await only(page.locator('[data-context-back]'))).click()
@@ -141,18 +141,15 @@ async function checkPanelRestoreActions(page: Page) {
     Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)
   expect(overlaps, JSON.stringify(layout)).toBe(false)
 
-  // 边柄默认只改宽（角柄才跟宽高比锁），先把两个恢复动作的非空前提摆出来。
-  const east = await only(page.locator('[data-canvas-stage] [data-handle="e"]'))
-  const handle = (await east.boundingBox())!
-  const x = handle.x + handle.width / 2
-  const y = handle.y + handle.height / 2
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  try {
-    await page.mouse.move(x + 36, y, { steps: 6 })
-  } finally {
-    await page.mouse.up()
-  }
+  // 先把两个恢复动作的非空前提摆出来：把图的宽高比弄歪。单图编辑里拖图的边 / 角改的是画布留白 / 图幅（ADR 0161），
+  // 选区缩放手柄不再画，所以走属性栏：解开宽高比锁，再把 W 改宽（只改宽、高不跟）。
+  const lock = await only(inspector.locator('[data-panel-aspect-lock]'))
+  if ((await lock.getAttribute('aria-pressed')) === 'true') await lock.click()
+  await expect(lock).toHaveAttribute('aria-pressed', 'false')
+  const wField = await only(inspector.locator('[data-inspector-prop="panel.w"]'))
+  const w0 = Number.parseFloat((await wField.inputValue()).replace(/[^\d.]/g, ''))
+  await wField.fill(String(Math.round((w0 + 12) * 10) / 10))
+  await wField.press('Enter')
   const distorted = await nameAndReadNow(page, 'restore-before')
   expect(distorted.objects).toHaveLength(1)
   const before = distorted.objects[0]
@@ -250,17 +247,17 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await placeFigureAndBack(page)
   await addText(page, '甲版标注', 420, 240)
 
-  // ── 顶栏时钟钮打开时间线；等第一个自动节点 ──────────────────────────
-  const clock = await only(page.locator('[data-timeline-button]'))
-  await clock.click()
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  // ── 右栏「时间线」页签打开时间线（顶栏时钟钮已并入，审计 A2）；等第一个自动节点 ──
+  await expect(page.locator('[data-timeline-button]')).toHaveCount(0)
+  await (await only(page.locator('[data-inspector-tab="timeline"]'))).click()
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   await expect(drawer).toBeVisible()
   const nodes = drawer.locator('[data-timeline-node]')
   await expect.poll(() => nodes.count(), { timeout: 30_000 }).toBeGreaterThan(0)
   await expect(drawer.locator('[data-timeline-kind="auto"]')).not.toHaveCount(0)
 
   // ── ⌥⌘S 命名「投稿前」：就地小框，不打开抽屉 ──────────────────────
-  await clock.click() // 先收起抽屉：命名不该依赖它先开着
+  await (await only(page.locator('[data-inspector-tab="properties"]'))).click() // 先收起时间线：命名不该依赖它先开着
   await expect(drawer).toHaveCount(0)
   await page.keyboard.press('ControlOrMeta+Alt+S')
   const quick = await only(page.locator('[data-timeline-quick-name-input]'))
@@ -325,7 +322,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(leftOpen).toHaveCount(0)
   await expectCentered()
   // 抽屉里的按钮照旧：点开展开，Esc 只收输入
-  await clock.click()
+  await page.locator('[data-inspector-tab="timeline"]').click()
   await expect(drawer).toBeVisible()
   await (await only(drawer.locator('[data-timeline-name-open]'))).click()
   const again = await only(drawer.locator('[data-timeline-name-input]'))
@@ -336,7 +333,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-name-collapsed.png') })
 
   // ── 「命名」视图里找得到它（抽屉一直开着）──────────────────────────
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="all"]'))).click()
   // 命名节点只有这一个；名字是用户起的，按名字核对的是数据，不是定位
   const named = await only(drawer.locator('[data-timeline-node][data-timeline-named]'))
   await expect(named.locator('[data-timeline-name]')).toHaveText('投稿前')
@@ -368,7 +365,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-named-view.png') })
 
   // ── 继续改：再加一段文字 ───────────────────────────────────────────
-  await clock.click() // 收起抽屉，腾出画布
+  await page.locator('[data-inspector-tab="properties"]').click() // 收起时间线，腾出画布
   await expect(drawer).toHaveCount(0)
   await addText(page, '乙版标注', 420, 320)
   await expect(canvasText(page, '甲版标注')).toBeVisible()
@@ -376,10 +373,20 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 预览「投稿前」：模态对话框，画布一个字都不动 ────────────────────
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
-  // 「预览」在选中行下面的内联条上（2026-10-07 设计审计 §10.2）：先选中这一行
+  await (await only(drawer.locator('[data-timeline-filter="all"]'))).click()
+  // 点一行弹出对比小卡片：左「那一刻」右「现在」自动并排；卡片角上的「放大查看」才开模态
   await (await only(named.locator('[data-timeline-row]'))).click()
-  await (await only(named.locator('[data-timeline-preview-button]'))).click()
+  const card = await only(page.locator('[data-timeline-card]'))
+  await expect(card.locator('[data-timeline-card-frame="moment"]')).toBeVisible()
+  await expect(card.locator('[data-timeline-card-frame="current"]')).toBeVisible()
+  // 那一刻只有甲；当前（甲 + 乙）那一格里才有乙
+  const momentFrame = card.locator('[data-timeline-card-frame="moment"]')
+  const currentFrame = card.locator('[data-timeline-card-frame="current"]')
+  await expect(momentFrame.getByText('甲版标注', { exact: true })).toHaveCount(1)
+  await expect(momentFrame.getByText('乙版标注', { exact: true })).toHaveCount(0)
+  await expect(currentFrame.getByText('乙版标注', { exact: true })).toHaveCount(1)
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-compare-card.png') })
+  await (await only(card.locator('[data-timeline-card-enlarge]'))).click()
   const preview = await only(page.locator('[data-dialog="timeline-preview"]'))
   await expect(preview).toBeVisible()
   await expect(preview).toContainText('投稿前')
@@ -410,14 +417,14 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(canvasText(page, '甲版标注')).toBeVisible()
 
   // ── 时间线里出现「恢复前」节点；用它恢复回来 ──────────────────────
-  await (await only(drawer.locator('[data-timeline-filter] [data-value="all"]'))).click()
+  await (await only(drawer.locator('[data-timeline-filter="named"]'))).click()
   const before = drawer.locator('[data-timeline-node]', {
     has: page.locator('[data-timeline-moment="before_restore"]'),
   })
   await expect(before).toHaveCount(1, { timeout: 15_000 })
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-before-restore.png') })
   await (await only(before.locator('[data-timeline-row]'))).click()
-  await (await only(before.locator('[data-timeline-preview-button]'))).click()
+  await (await only(page.locator('[data-timeline-card-enlarge]'))).click()
   await expect(preview).toBeVisible()
   await expect(preview.getByText('乙版标注', { exact: true })).toBeVisible()
   await (await only(preview.locator('[data-timeline-preview-restore]'))).click()
@@ -437,10 +444,14 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 重开（启动时恢复上次的项目）：时间线里多一个「打开项目」节点 ──────────
   // Workspace 挂上、文档恢复完之后才打这个点；在 projectStore 里打的那一下发生在
   // 时间线开始跑之前，是空的（Codex #679 P2）
+  // 重开前先改一处：内容与上一个关键时刻相同的「打开」不记（#1575，用户 2026-10-31 拍板），
+  // 撤销后的内容正好等于第二次恢复前那一条
+  await addText(page, '丙版标注', 420, 400)
   await expect(await only(page.locator('[data-topbar] [data-save-state]'))).toBeVisible()
   await page.waitForTimeout(1500) // 让撤销之后那次自动保存落盘
   await page.reload()
   await expect(canvasText(page, '甲版标注')).toBeVisible({ timeout: 30_000 })
+  await expect(canvasText(page, '丙版标注')).toBeVisible()
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
   // 两个「打开」：第一次启动那一次（那时画布还是空的——关键时刻空画布也打，Codex #679）
@@ -637,7 +648,7 @@ test('同一 SVG、同一几何只差水平翻转：节点缩略图是左右镜�
   await expect(flip).toHaveAttribute('data-active', 'true')
   await expect(display).toHaveAttribute('data-display-key', sourceKey!)
   await page.keyboard.press('ControlOrMeta+Shift+H')
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   const thumbOf = (name: string) =>
     drawer.locator('[data-timeline-node][data-timeline-named]', {
       has: page.locator('[data-timeline-name]', { hasText: name }),
@@ -801,7 +812,7 @@ for (const locale of ['zh-CN', 'en-US']) {
           return { x: r.x, y: r.y, w: r.width, h: r.height }
         }
         const status = root.querySelector('[data-panel-engine-status]')!
-        // 身份头路径行右端的状态胶囊（「n 个问题 ›」随检查结果到来）在固定高的那一行里出现 / 消失，
+        // 身份头路径行右端的状态胶囊（如「已锁定」）在固定高的那一行里出现 / 消失，
         // 不挪动任何东西；这把尺子量的是属性表本身（2026-10-07 §9.2 身份头固定两行）
         const controls = [...root.querySelectorAll('button, input')].filter((el) => !el.closest('[data-identity]'))
         return { status: rect(status), controls: controls.map(rect) }

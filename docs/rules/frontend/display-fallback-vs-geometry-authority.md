@@ -2,6 +2,15 @@
 
 > 原文出自 `web/AGENTS.md`「显示回退 ≠ 几何权威（2026-08-26，issue #131；ADR 0017）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、`canvas/alignUndoConvergence.test.tsx`、`test/renderFixtures.ts` 的 `seedExactRender()`
+
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 30
+改到: 任何读 manifest 几何后写文档的动作、`panelDisplayView`、override upsert
+主题: 显示回退 ≠ 几何权威 → `display-fallback-vs-geometry-authority.md`
+必守要点: 显示 API 与权威 API 分开；没有视觉位移就不写 override；重复 (gid, prop) 读写都取最后一条（`effectiveOverride`）
+-->
 
 **旧 SVG 可以继续显示；旧 manifest 不得作为几何写操作的权威输入。**
 细则与理由在 `docs/adr/0017-display-fallback-vs-geometry-authority.md`，
@@ -20,9 +29,13 @@
 * `panelDisplayView` 是**判别联合**：`fallback` / `empty` 分支在类型上就没有
   `manifest` 字段。别把它改回「一个可选字段 + 一句注释」——issue #131 之前
   正是靠注释提醒的，没拦住。
-* 权威缺席时**不是禁用一切**：画布照常显示上一张（不闪白）、命中层停摆、
-  一个选择框都不画、`selectedGids` 不清空、入口置灰并说明「正在同步」，
-  精确 manifest 回来后自动恢复。纯样式类（颜色/线宽/线型/alpha/visible）
+* 权威缺席时**不是禁用一切**：画布照常显示上一张（不闪白）、正常几何命中停摆、
+  一个选择框都不画、`selectedGids` 不清空，精确 manifest 回来后自动恢复。
+  刚提交的单元素平移可以接着拖：只用已选元素的 SVG 识别身份并暂存相对位移，
+  不拿旧清单做几何写入；待当前 SVG 与精确 manifest 都挂好、身份与文档范围仍一致时，
+  用新几何计算吸附并逐次提交；取消 / 失败 / 撤销作废时还原未提交预览，失败或依据改变时告知。
+  未绑定样式的统一字号可暂存每种角色的最新输入，等当前精确清单到达后重新选目标，
+  失败或文档版本作废时取消并说明。纯样式类（颜色/线宽/线型/alpha/visible）
   不依赖 bbox，继续走局部 SVG 预览，不受这道闸影响。
 * **离散动作不许被连续手势吞掉**：`documentStore.commit` 在 `state.txn` 存在时
   会静默并入当前事务。对齐、分布、等宽等高、重置元素、清理 orphan、版本
@@ -42,13 +55,21 @@
   不渲染）。旧文档里重复的 (gid, prop) 按引擎的 last-wins：改的、比的、读的都是最后那条——
   判据只有 `lib/effectiveOverride.ts` 一份，按 (gid, prop) 取 override 值不许再写 `overrides.find(...)`
   （那回的是第一条：控件显示过期值、下一次拖动从过期值起跳）。
+* **一个量只留一个 override 地址**：引擎里同一个量可有广播端与窄端两个地址（图例「标题字号」
+  `(legend, title_fontsize)` 与图例标题元素 `(legend.title, fontsize)`；图例整体字号 vs 单条；色条刻度；
+  柱 / stem 系列），窄端永远排在广播之后应用——两条并存时改广播端画面不变、控件却读着自己那条显示新值。
+  `upsertOverrides` 是唯一写入口，同一次 commit 里按引擎 manifest 元素的 `alias_covers`（`overrides.alias_covers`
+  唯一出处，不排同元素别名与 `cmap`）清掉另一端：写广播端 → 删它盖着的窄端；写窄端且某广播端**只**盖着它
+  （1:1）**且引擎声明它是纯别名**（manifest `alias_pure`，`overrides.ALIAS_PURE`：setter 与窄端同一个调用、无额外状态）
+  → 删广播端；1:多或不纯（如图例整体字号，还改 `Legend._fontsize` 并重建布局）保留。事实取 `structuralPanelManifest`（结构事实，不要求这一版已画好，**不许**拿它做
+  几何写）；拿不到 / 旧引擎不发 = 只 upsert。判据在 `lib/aliasOverrides.ts` 一份，别在控件里另写清理。
 * 撤销的落点要还在：每个文件保留最近 4 档成功变体（有界），`latest` 按**请求
   序号**推进——乱序返回时旧变体只入库、不挪 `latest`，也不丢弃（同文件的另一个
   副本可能还等着它）。
 * 布局版本预览按**版本自己的 overrides** 出图（`useVariantPng` →
   `preview_png`），出不来就退回磁盘图并明确标「近似预览」，**不许无提示地拿
   磁盘原图冒充版本视觉状态**。只给用户当前展开的那一份渲染。
-* 看护：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、
+* 看护：`store/aliasOverrideWrites.test.ts`（别名地址归一）、`tests/test_alias_covers.py`、`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、
   `canvas/alignUndoConvergence.test.tsx`、`canvas/inFigureDragNoop.test.tsx`、`diagnostics/store.test.ts`（追踪环已并入
   诊断模块，ADR 0016）。
   测试里「这一版已经精确画好」用 `test/renderFixtures.ts` 的 `seedExactRender()`

@@ -1,0 +1,38 @@
+{
+  "deployment/ci-proposal.md": {
+    "sha256": "ae1aff01db11d11592edc21439e84742c2223b7d366af730a0d8340417d02060",
+    "donor907_identical": true
+  },
+  "deployment/ci.disabled.json": {
+    "sha256": "7a0498856b503b846b59703349369fec5cb9f1a03fba92caf2d3c6dacee0eb2e",
+    "donor907_identical": true
+  },
+  "scripts/ci-candidate.mjs": {
+    "sha256": "86f27446ed18b4a181dff2db488c414c1bc85b36165863d4fac29ac7875d8e01",
+    "donor907_identical": true
+  },
+  "src/ci/consumer.ts": {
+    "sha256": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+    "donor907_identical": true
+  },
+  "src/ci/wait.ts": {
+    "sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "donor907_identical": true
+  },
+  "tests/ci-candidate.test.mjs": {
+    "sha256": "29e6d5f3626a025c4b58a0bf0b5c6a9a7dd0a4ff5cf8f078128614b7da0f6ba2",
+    "donor907_identical": true
+  },
+  "tests/ci-fixture.mjs": {
+    "sha256": "686f31617dd30e168e2726ba058e9a70fe16d46a3a6a5d79d387edc8b1a936d6",
+    "donor907_identical": true
+  },
+  "tests/ci-wait-mutation-cases.json": {
+    "sha256": "72a236150278497a71b483ebb4631db4b520838b993eaaba2274bbd6a1ba8e15",
+    "donor907_identical": true
+  },
+  "tests/ci-wait.test.mjs": {
+    "sha256": "07eeef9f8b1af601f11783b03e547e70149c305db0f89bb2ec9dd50491012ef0",
+    "donor907_identical": true
+  }
+}

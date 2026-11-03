@@ -33,7 +33,7 @@
     },
     {
       "id": "mainland_china",
-      "text": "大陆网络不可达，大陆安装缺席而非少报（yc-metrics.md）"
+      "text": "大陆网络可达（2026-10-20 实测），慢网络会静默丢事件，大陆安装可能少报（yc-metrics.md）"
     },
     {
       "id": "macos_desktop_le_0_16_0",
@@ -64,77 +64,7 @@
     "ci_suspected_exclusion_hogql": "distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source')",
     "ci_suspected_note": "规则出自 yc-dashboard.json ci_phantom_installs。缺来源证据，所以称疑似 CI；a6 给出含/不含的敏感性对照；不删除原始数据，也不排除所有 source 用户。"
   },
-  "pending_events": {
-    "export_result": {
-      "depends_on": "#1103 + CONSENT_VERSION 3",
-      "pr": "https://github.com/Tavotto/Tavotto/pull/1103 (draft)",
-      "schema_source": "PR #1103 head aadb10ce3d442c5451b8553dfe5018675d41eb68 的 engine/telemetry.py；草稿仍可能变，合并前必须对照 main 复核",
-      "not_on_main": true,
-      "properties": {
-        "outcome": {
-          "kind": "enum",
-          "values": [
-            "done",
-            "partial",
-            "failed",
-            "cancelled"
-          ]
-        },
-        "scope": {
-          "kind": "enum",
-          "values": [
-            "canvas",
-            "original"
-          ]
-        },
-        "pdf": {
-          "kind": "bool"
-        },
-        "png": {
-          "kind": "bool"
-        },
-        "eps": {
-          "kind": "bool"
-        },
-        "tiff": {
-          "kind": "bool"
-        },
-        "with_report": {
-          "kind": "bool"
-        },
-        "delivered": {
-          "kind": "int",
-          "max": 8
-        },
-        "stage": {
-          "kind": "enum",
-          "values": [
-            "prepare",
-            "source",
-            "compile",
-            "compose",
-            "raster",
-            "inspect",
-            "publish",
-            "report"
-          ]
-        },
-        "error_class": {
-          "kind": "enum",
-          "values": [
-            "request",
-            "environment",
-            "backend",
-            "artifact_rejected",
-            "source_changed",
-            "report",
-            "other"
-          ]
-        }
-      },
-      "current_data_fallback": "export_completed：done 或 partial 时发送，pdf/png 表示该格式真的写出；不是『请求的文件全部成功』，没有 failed/cancelled。"
-    }
-  },
+  "pending_events": {},
   "dashboards": [
     {
       "logical_name": "tavotto-main-v2",
@@ -232,7 +162,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_started 不等于 UI 就绪；sidecar 挂掉时该事件和错误事件都发不出，所以数字下降不能区分『没人用』与『链路断了』；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_started 不等于 UI 就绪；sidecar 挂掉时该事件和错误事件都发不出，所以数字下降不能区分『没人用』与『链路断了』；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -270,7 +200,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；当前未结束周被刻意排除，避免半周低估；preflight_completed.errors 是图表检查结果不是运行时异常；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；当前未结束周被刻意排除，避免半周低估；preflight_completed.errors 是图表检查结果不是运行时异常；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "engaged_wau",
       "version": 1,
       "status": "not_created",
@@ -320,7 +250,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；partial 与 done 在此混在一起（旧事件无法区分），不得当作『全部成功』；失败和取消没有事件，缺失不是零；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；partial 与 done 在此混在一起（旧事件无法区分），不得当作『全部成功』；失败和取消没有事件，缺失不是零；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "weekly_successful_exporters",
       "version": 1,
       "status": "not_created",
@@ -377,7 +307,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；类型化漏斗按『窗口内任一次 app_started』入队，不是严格的『首次观察』；严格口径见 yc-metrics E 节（需 HogQL），如要对外引用请注明变体。『首次观察』不等于首次安装；opt-in 较晚的安装会被抬高转化；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；类型化漏斗按『窗口内任一次 app_started』入队，不是严格的『首次观察』；严格口径见 yc-metrics E 节（需 HogQL），如要对外引用请注明变体。『首次观察』不等于首次安装；opt-in 较晚的安装会被抬高转化；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "activation_rate_7d",
       "version": 1,
       "status": "not_created",
@@ -448,7 +378,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；同 a4 的『首次观察』限制；figure_edit_completed 是一次历史事务一条事件，不是编辑次数的度量；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；同 a4 的『首次观察』限制；figure_edit_completed 是一次历史事务一条事件，不是编辑次数的度量；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "activation_funnel",
       "version": 1,
       "status": "not_created",
@@ -480,7 +410,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；一次性规则只能全历史评估，不能只看窗口；'首次观察'不是首次安装；#440 修复前后的疑似 CI 数量不同，历史观察数不能当实时数；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；一次性规则只能全历史评估，不能只看窗口；'首次观察'不是首次安装；#440 修复前后的疑似 CI 数量不同，历史观察数不能当实时数；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "opted_in_install",
       "version": 1,
       "status": "not_created",
@@ -541,7 +471,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_version 不是 build 标识：同一版本号可能对应多个未发布提交；没有 failed/cancelled 事件，不能由此推失败率；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_version 不是 build 标识：同一版本号可能对应多个未发布提交；没有 failed/cancelled 事件，不能由此推失败率；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -599,10 +529,9 @@
       "missing_data_note": "该事件上线前整段无数据，必须显示『无数据』而不是 100% 成功或 0 失败；离线/丢事件/客户端关闭统计时终态事件不会到达，比例有偏",
       "governed_metric_id": null,
       "version": 1,
-      "status": "pending_event",
+      "status": "not_created",
       "remote_id": null,
       "url": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3",
       "fallback": "当前可用：b1（export_completed，done 或 partial 才发，无失败/取消）。不得把 export_completed 数当作『全部成功』。"
     },
     {
@@ -669,10 +598,9 @@
       "missing_data_note": "上线前整段无数据，显示『无数据』而不是 100%；opt-in、离线与丢事件使比例可能有偏，方向未知，不称保守下界",
       "governed_metric_id": null,
       "version": 1,
-      "status": "pending_event",
+      "status": "not_created",
       "remote_id": null,
       "url": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3",
       "fallback": "当前无等价比例；只能看 b1 的次数趋势，且不得推失败率。"
     },
     {
@@ -737,10 +665,9 @@
       "missing_data_note": "上线前整段无数据，不是零失败；app_version 不是 build 标识；sidecar 或代理不可达时失败事件本身也可能发不出，没有失败事件不能证明没有 P0",
       "governed_metric_id": null,
       "version": 1,
-      "status": "pending_event",
+      "status": "not_created",
       "remote_id": null,
       "url": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3",
       "fallback": "当前无导出失败事件；只能用 d3 看保存失败与包操作失败，导出方面为未知。"
     },
     {
@@ -800,7 +727,7 @@
       "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；次数会被自动保存与重试放大，不能直接当失败率；客户端关闭统计或离线时事件丢失；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；次数会被自动保存与重试放大，不能直接当失败率；客户端关闭统计或离线时事件丢失；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -883,7 +810,7 @@
       "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；只统计成功送达的安装；安装在同一窗口可能既有 ok 也有 failed，所以 B 与 A 的差不是『未受影响』的补集；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；只统计成功送达的安装；安装在同一窗口可能既有 ok 也有 failed，所以 B 与 A 的差不是『未受影响』的补集；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -948,7 +875,7 @@
       "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；不同 tutorial_version 的流程不同，不得跨版本合并；恢复/续做不算开始；样本很小时只看绝对数；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；不同 tutorial_version 的流程不同，不得跨版本合并；恢复/续做不算开始；样本很小时只看绝对数；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -959,7 +886,7 @@
       "logical_name": "c2_tutorial_steps_by_step_id",
       "group": "引导与回访",
       "title": "教程各步骤到达（当前版本）",
-      "description": "tutorial_step_completed 按 step_id 的唯一安装数，限定 tutorial_version = 2（对应当前流程）。跳过的步骤不发事件，所以相邻步骤数量不单调正常，缺口即跳步或流失，不能区分。",
+      "description": "tutorial_step_completed 按 step_id 的唯一安装数，限定 tutorial_version = 3（对应当前流程：三步原生教程，ADR 0136）。跳过的步骤不发事件，所以相邻步骤数量不单调正常，缺口即跳步或流失，不能区分。",
       "population": "opted_in_install",
       "kind": "TrendsQuery",
       "query": {
@@ -975,7 +902,7 @@
                 "key": "tutorial_version",
                 "operator": "exact",
                 "value": [
-                  2
+                  3
                 ],
                 "type": "event"
               }
@@ -1065,7 +992,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；未成熟的队列/周期格不得进入平均行（不要读 mean 行，它混了成熟与未成熟）；opt-in 较晚的安装『首次导出』被后移；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；未成熟的队列/周期格不得进入平均行（不要读 mean 行，它混了成熟与未成熟）；opt-in 较晚的安装『首次导出』被后移；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "retention_core_value",
       "version": 1,
       "status": "not_created",
@@ -1104,7 +1031,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；精确日 D7 对研究者偏苛刻（投稿期集中），同时看 c3 的周回访；『首次观察』不是首次安装；队列周内样本很小时只读绝对数；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；精确日 D7 对研究者偏苛刻（投稿期集中），同时看 c3 的周回访；『首次观察』不是首次安装；队列周内样本很小时只读绝对数；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "retention_engagement",
       "version": 1,
       "status": "not_created",
@@ -1160,7 +1087,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_version 不是 build 标识；app_started 不是 UI 就绪；自动更新延迟、离线与 opt-in 偏差都会让版本构成失真；macOS desktop 在 v0.16.0 及更早版本因缺 CA 整体没有事件（#439），那段时间的平台/版本构成不可比；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_version 不是 build 标识；app_started 不是 UI 就绪；自动更新延迟、离线与 opt-in 偏差都会让版本构成失真；macOS desktop 在 v0.16.0 及更早版本因缺 CA 整体没有事件（#439），那段时间的平台/版本构成不可比；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -1198,7 +1125,7 @@
       "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；macOS desktop 在 v0.16.0 及更早版本整体缺席（#439），跨期比较需排除；大陆缺席；与下载量人群不同，不得并列相加；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；macOS desktop 在 v0.16.0 及更早版本整体缺席（#439），跨期比较需排除；大陆缺席；与下载量人群不同，不得并列相加；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": "platform_mix",
       "version": 1,
       "status": "not_created",
@@ -1239,7 +1166,7 @@
       "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
       "data_start_value": null,
       "data_start_verified": false,
-      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；sidecar 挂掉时错误事件也发不出，没有故障行不能证明没有 P0；导出失败待 export_result（b4）；app_version 不是 build 标识；同一安装跨版本升级会出现在多行；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；sidecar 挂掉时错误事件也发不出，没有故障行不能证明没有 P0；导出失败待 export_result（b4）；app_version 不是 build 标识；同一安装跨版本升级会出现在多行；大陆网络可达但慢网络会丢事件，大陆安装可能少报，比例也可能有偏，偏向方向未知",
       "governed_metric_id": null,
       "version": 1,
       "status": "not_created",
@@ -1306,7 +1233,7 @@
       "threshold_label": "建议值，待真实基线校准；不是 SLO",
       "recovery_and_dedup": "连续 2 个完整周回到阈值以上视为恢复；同一周只通知一次",
       "observation_scope": "全部渠道的 export_result；partial 不算 done；不含被拒请求与覆盖冲突",
-      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆慢网络超时、sidecar 挂掉都会少报；没有告警不等于没有故障",
       "channel": "UNSET",
       "recipient": "UNSET",
       "frequency": "daily",
@@ -1318,9 +1245,8 @@
       "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
       "enabled": false,
       "version": 1,
-      "status": "pending_event",
-      "remote_id": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3"
+      "status": "not_created",
+      "remote_id": null
     },
     {
       "logical_name": "alert_export_failed_installs_by_version",
@@ -1342,7 +1268,7 @@
       "threshold_label": "建议值，待真实基线校准；不是 SLO",
       "recovery_and_dedup": "该版本降到阈值以下一整周视为恢复；同版本同周一次",
       "observation_scope": "按版本拆分后各版本单独评估；同一版本号可能含多个提交",
-      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆慢网络超时、sidecar 挂掉都会少报；没有告警不等于没有故障",
       "channel": "UNSET",
       "recipient": "UNSET",
       "frequency": "daily",
@@ -1354,9 +1280,8 @@
       "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
       "enabled": false,
       "version": 1,
-      "status": "pending_event",
-      "remote_id": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3"
+      "status": "not_created",
+      "remote_id": null
     },
     {
       "logical_name": "alert_document_save_failed_installs",
@@ -1378,7 +1303,7 @@
       "threshold_label": "建议值，待真实基线校准；不是 SLO",
       "recovery_and_dedup": "降到阈值以下并持续 3 日视为恢复；告警冷却 7 日去重",
       "observation_scope": "仅 failed，conflict 单独看不告警；自动保存重试不放大唯一安装数",
-      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆慢网络超时、sidecar 挂掉都会少报；没有告警不等于没有故障",
       "channel": "UNSET",
       "recipient": "UNSET",
       "frequency": "daily",
@@ -1413,7 +1338,7 @@
       "threshold_label": "建议值，待真实基线校准；不是 SLO",
       "recovery_and_dedup": "回到 1 以上视为恢复；冷却 3 日",
       "observation_scope": "这是『收不到数据』而非『没故障』：断流可能是 sidecar、代理或 PostHog 摄取问题，需先查代理和采集器 workflow 再下结论",
-      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆慢网络超时、sidecar 挂掉都会少报；没有告警不等于没有故障",
       "channel": "UNSET",
       "recipient": "UNSET",
       "frequency": "daily",

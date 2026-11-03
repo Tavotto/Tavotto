@@ -66,15 +66,18 @@ from . import (
     envadvice,
     execpolicy,
     execspec,
+    exectrace,
     figcapture,
     inputbroker,
     inputremap,
     launchctx,
     launcher,
     nativesession,
+    pathignore,
     pool,
     projectenv,
     receipt,
+    rootenv,
     runconfig,
     runroute,
     scriptargs,
@@ -146,6 +149,19 @@ class _StaleBeforeRetry(Exception):
         self.detail = detail or {}
 
 
+_NEEDS_INPUT_AFTER_REPLAN_NOTE = (
+    "自动采用用户的 Python 后，新环境需要先答一件事；没有执行任何脚本，答完后重新准备"
+)
+
+
+class _NeedsInputBeforeRetry(Exception):
+    """缺包后自动接手换了解释器、就地重算出的计划要用户先答一件事（依赖准备 / 运行目录）：第二次执行不能跑。"""
+
+    def __init__(self, required_input: dict) -> None:
+        super().__init__("needs_input")
+        self.required_input = dict(required_input)
+
+
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
 _TTL_S = 15 * 60
 
@@ -214,6 +230,10 @@ class PreparationPlan:
     #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
     #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
     environment_state: str = ""
+    #: 计划那一刻解释器要带的叠加环境（ROOT，`rootenv.overlay_spec`）。私有：含安装路径，不进 `to_payload()`。
+    #: 起会话的钉下决定（`app._plan_pin`）只认它——漏了它，计划钉的 `EnvironmentDecision` 没有叠加层，worker 在同一条
+    #: 解释器里裸起、脚本报缺 ROOT（Win11 真机 2026-10-21）；执行前 `_stale_reason` 比它与项目记录此刻的那份
+    environment_overlay: dict | None = None
     #: 这份计划是对上一次尝试的**重试**（V2，ADR 0127）：上一次尝试的 plan_id / 触发它的稳定错误码 / 相对上一次变了哪几维
     #: （`execpolicy.CHANGED_DIMENSIONS`）。三者都是诊断事实：不含路径 / argv。第一次尝试全为空。
     retry_of: str | None = None
@@ -296,7 +316,7 @@ def _last_success_profile(
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
     ):
-        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
         return None
     return profile
 
@@ -429,6 +449,11 @@ def plan_for(
         if python
         else ""
     )
+    environment_overlay = (
+        (decision.env_overlay if decision.pinned else projectenv.remembered_overlay(root, python))
+        if python
+        else None
+    )
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -483,7 +508,13 @@ def plan_for(
         "error": env_error,
         # 给用户看的那一个事实（ADR 0114 §六）：用的是哪一类、谁定的、这次是不是刚自动换了一个——不要求用户动作
         "adoption": envadvice.adoption_fact(
-            root, source, adopted=adopted, invalidated=invalidated, effective=python
+            root,
+            source,
+            adopted=adopted,
+            invalidated=invalidated,
+            effective=python,
+            rejected=decision.rejected,
+            overlay=environment_overlay,
         ),
     }
     grant = workdir.grant_for(root)
@@ -534,6 +565,8 @@ def plan_for(
             stdin=execspec.STDIN_BRIDGE,
             # 无缓冲：stdout 管道对 Python 默认块缓冲，不设的话界面看不到实时输出（ADR 0125 残余）
             env={"PYTHONUNBUFFERED": "1"},
+            # ADR 0154：用户选了「跳过这个文件夹」的目录，native bridge 的顶层导入不再去那里找
+            ignored_paths=pathignore.paths_for(root),
             **execspec.run_kwargs(run),
         )
         native_spec = spec
@@ -635,6 +668,7 @@ def plan_for(
         script_revision=script_revision,
         native_spec=native_spec,
         environment_state=environment_state,
+        environment_overlay=environment_overlay,
     )
 
 
@@ -650,6 +684,38 @@ def _kill_owned_worker(worker) -> None:
         worker.cancel_owned()
     else:
         worker.force_kill()
+
+
+def implied_grant_absorbable(project_root: str, old: dict, new: dict) -> bool:
+    """授权从 `old`（计划记下的）变成 `new`（此刻重算的），是不是**只**因为本次运行自动采用了用户自己的 Python
+    （ADR 0107 §二修订，2026-10-22 用户裁决）——是才可以就地吸收，不让用户再点一次。
+
+    四条同时成立，缺一不可：① 计划时没决定过、没有任何授权、也没有派生理由（用户从未表过态）；② 此刻仍没决定过
+    （没人在这期间设过工作目录）；③ 此刻的授权恰是派生默认：`granted=True / granted_at=None / mode=project`、
+    `implied_by=user_interpreter`——范围与用户第一次手动点同一个环境时 `workdir.grant_for` 给出的一字不差；
+    ④ 吸收的只是这一种变化，别的（用户改了设置、别的会话改了）一律不吸收，照旧 `grant_changed`。"""
+    zero = {"granted": False, "granted_at": None, "mode": None}
+    if (
+        old.get("decided") is not False
+        or old.get("implied_by") is not None
+        or old.get("cwd_write") != zero
+    ):
+        return False
+    if workdir.decided(project_root):
+        return False
+    derived = {
+        "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
+        "decided": False,
+        "implied_by": workdir.IMPLIED_BY_USER_INTERPRETER,
+    }
+    return new == derived and workdir.grant_for(project_root) == derived
+
+
+def _binding_sans_mode(binding: dict | None) -> dict | None:
+    """数据绑定去掉随 cwd 档变的 `mode` / `revision` 之后的内容（吸收派生授权时比「数据是否真变了」）。"""
+    if binding is None:
+        return None
+    return {k: v for k, v in binding.items() if k not in ("mode", "revision")}
 
 
 def _script_revision(root: str, script: str | None) -> str | None:
@@ -740,6 +806,9 @@ class PreparationResult:
     note: str = ""
     #: 阶段轨迹（U09，ADR 0071）：plan → check → spawn → execute → receipt，坏在哪一步就停在哪一步。
     trace: tracemod.Trace = dataclasses.field(default_factory=tracemod.Trace)
+    #: 执行追踪（ADR 0151，只观察；**不进 `to_payload()`**）：执行线程开始时开、终局时把上面的阶段轨迹只读映射进来再冻结
+    exec_trace: object = dataclasses.field(default_factory=exectrace.NullTrace, repr=False)
+    exec_span: str | None = dataclasses.field(default=None, repr=False)
     #: 这次 build 捕获到的东西（T01）：`{"stems", "descriptors", "remap_generation"}`——执行之后要登记 /
     #: 物化的调用方（`prepsession`）从这里拿，不必再问 worker。**不进 `to_payload()`**（描述符里有路径）。
     captured: dict | None = None
@@ -747,6 +816,9 @@ class PreparationResult:
     #: T07：准备会话把它当一项待答的需求（回答走既有的 `/api/engine/input-remap`）。**不进 `to_payload()`**：
     #: 里面是脚本里写的路径串，诊断快照与回执都不带它。
     missing_input: dict | None = None
+    #: 沙盒里落空的探路调用、而脚本目录里找得到（#1254，`workdir.probe_hint`）：失败 / 没出图 / 成功但图可能缺数据时的引导。
+    #: 与 `missing_input` 同纪律：**不进 `to_payload()`**（里面是脚本里写的路径串）；准备会话把它当一项不阻塞的需求。
+    workdir_hint: dict | None = None
     #: 这次执行里每一问 input 的去向（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由，只给
     #: 诊断快照的白名单投影。**不进 `to_payload()`**。
     input_facts: dict | None = None
@@ -885,11 +957,20 @@ class PreparationService:
             **({"run": plan.run} if plan.run is not None else {}),
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
-        # 换计划（交回 None，由对账给出过期结局）
+        # 换计划（交回 None，由对账给出过期结局）。唯一的授权例外：「没决定过 → 自动采用用户自己的 Python 派生出的
+        # 默认授权（脚本目录）」（ADR 0107 §二修订，2026-10-22 用户裁决），见 `implied_grant_absorbable`
+        absorbed = fresh.grant != plan.grant
+        if absorbed:
+            if not implied_grant_absorbable(plan.project_root, plan.grant, fresh.grant):
+                return None
+            # 授权档变了，绑定里的 `mode`（及随它变的 `revision`）必然跟着变；其余（读哪些文件、内容 sha、
+            # 基准目录）一字不差才算同一份数据——数据真变了仍是别的过期原因
+            if _binding_sans_mode(fresh.binding) != _binding_sans_mode(plan.binding):
+                return None
+        elif (fresh.binding or {}).get("revision") != (plan.binding or {}).get("revision"):
+            return None
         if (
-            fresh.grant != plan.grant
-            or (fresh.binding or {}).get("revision") != (plan.binding or {}).get("revision")
-            or fresh.script_revision != plan.script_revision
+            fresh.script_revision != plan.script_revision
             or fresh.input_remap_generation != plan.input_remap_generation
         ):
             return None
@@ -902,12 +983,20 @@ class PreparationService:
             launch_order=plan.launch_order,
         )
         entry.plan = fresh
+        if absorbed:
+            # 审计：这次运行吸收了一次派生授权（不是用户点头的授权）。facts 只收标量，随 `trace` 进回执旁的诊断
+            entry.result.trace.mark(
+                "check",
+                grant_absorbed=workdir.IMPLIED_BY_USER_INTERPRETER,
+                grant_mode=(fresh.grant.get("cwd_write") or {}).get("mode"),
+            )
         return fresh
 
     def _execute(self, entry: _Entry, runner) -> None:
         plan, result = entry.plan, entry.result
         tr = result.trace
         result.started_at = time.time()
+        _trace_begin(plan, result)
         tr.mark("plan", plan_id=plan.plan_id)
         existing = pool.peek(
             plan.script, plan.project_root, **({"run": plan.run} if plan.run is not None else {})
@@ -923,6 +1012,21 @@ class PreparationService:
             tr.cancel("check")
             self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
             return
+        if plan.script is not None:
+            # An explicit preparation may reuse via peek without calling acquire.
+            # Settle source/style notifications before accepting that cached build.
+            from . import project_watch
+
+            project_watch.before_acquire(plan.project_root, plan.script)
+            if entry.cancel.is_set():
+                tr.cancel("check")
+                self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
+                return
+            existing = pool.peek(
+                plan.script,
+                plan.project_root,
+                **({"run": plan.run} if plan.run is not None else {}),
+            )
         # 过期计划（FO-007 / FO30，ADR 0071）：计划之后用户撤销 / 改了工作目录决定、项目的解释器决策变了、
         # 或预检记下的数据绑定变了——计划记下的与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可 /
         # 旧数据的判断执行，按新设置跑等于回执与计划两张嘴。报 `preparation_plan_stale` + `reason`，
@@ -942,9 +1046,20 @@ class PreparationService:
                 return
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
-                if before is None or before[0] == STALE_ENVIRONMENT:
-                    # 只吸收环境变化。工作目录授权档（用户确认过的）变了不吸收：照旧走下面的过期结局，让用户重新检查、看到新档
+                if before is None or before[0] in (STALE_ENVIRONMENT, STALE_GRANT):
+                    # 吸收环境变化，以及「没决定过 → 派生默认授权」那一种授权变化（`_replan_in_place` 里逐条核；
+                    # 用户确认过的授权档变了、或授权因别的原因变了，它交回 None，下面照旧报过期）
                     plan = self._replan_in_place(entry, plan) or plan
+                    if plan.required_input:
+                        # 吸收后的新计划要用户先答一件事：发布的计划就是这份，不跑（与计划期的「需要输入」同终局）
+                        result.required_input = dict(plan.required_input)
+                        tr.mark("check", code=str(plan.required_input.get("code") or ""))
+                        self._finish(
+                            entry,
+                            STATUS_NEEDS_INPUT,
+                            note=_NEEDS_INPUT_AFTER_REPLAN_NOTE,
+                        )
+                        return
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale
@@ -985,6 +1100,7 @@ class PreparationService:
                 note += "；它读到的数据与此刻预检记下的不同（图是旧快照，重算请重建会话）"
             if self._stem_missing(entry, existing, _captured_stems(reusable)):
                 return
+            result.workdir_hint = pool.workdir_hint_of_build(existing)
             self._finish(entry, STATUS_READY, note=note)
             return
         tr.mark("spawn")
@@ -993,7 +1109,15 @@ class PreparationService:
             # 缺包后自动接手换了解释器（项目 venv / ADR 0107 的系统解释器，后者还把默认工作目录改成脚本
             # 目录）：计划记下的授权 / 解释器 / 数据绑定与此刻再比一次——与起会话之前同一份判据。第二次执行
             # 会在计划没写过的解释器或 cwd 里跑、回执却挂在这份不可变计划上——不跑，作废（Codex #713 P1 ×2）
+            nonlocal plan
             stale = self._stale_reason(plan)
+            if stale is not None and stale[0] == STALE_GRANT:
+                # 缺包后自动接手了用户自己的 Python：同一种「本次运行自己带来的派生授权」，同样就地吸收
+                plan = self._replan_in_place(entry, plan) or plan
+                if plan.required_input:
+                    # 新计划（目标解释器上另一个静态依赖也缺）要先问用户：不跑第二次，回到需要用户动作的结局
+                    raise _NeedsInputBeforeRetry(plan.required_input)
+                stale = self._stale_reason(plan)
             if stale is not None:
                 raise _StaleBeforeRetry(*stale)
 
@@ -1003,6 +1127,18 @@ class PreparationService:
                 # asynchronous retirement is pending. Refuse if close is unknown.
                 pool.invalidate(plan.script, plan.project_root, plan.run, only_run=True, force=True)
             worker, resp, created = runner(plan, before_retry=before_retry)
+        except _NeedsInputBeforeRetry as exc:
+            if result.status in TERMINAL:
+                return  # 等待者已被取消放手（T09）：迟到的结局不写
+            tr.mark("execute", code=str(exc.required_input.get("code") or ""))
+            result.required_input = dict(exc.required_input)
+            self._finish(
+                entry,
+                STATUS_NEEDS_INPUT,
+                note="缺包后自动换了解释器，新环境还需要先授权依赖准备 / 选择运行目录；"
+                "没有按新环境重跑，答完后重新准备",
+            )
+            return
         except _StaleBeforeRetry as exc:
             if result.status in TERMINAL:
                 return  # 等待者已被取消放手（T09）：迟到的结局不写
@@ -1060,6 +1196,14 @@ class PreparationService:
             _attach_local_detail(
                 error, exc, sensitive=bool(plan.run is not None and plan.run.sensitive)
             )
+            if error["code"] == pool.INTERPRETER_CACHE_DENIED_CODE:
+                switch = cache_denied_switch(
+                    (plan.environment or {}).get("source", ""),
+                    project_root=plan.project_root,
+                    python=plan.interpreter,
+                )
+                if switch:
+                    error.setdefault("params", {})["switch"] = switch
             # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
             # 修复 offer 与试运行路径（probe.py）同一个函数、同样的入参：只读判断，不起解释器、不联网，
             # 复用异常里已体检好的 project_env；算不出来不许盖掉原始错误（线程里不能抛）
@@ -1088,6 +1232,9 @@ class PreparationService:
             missing_input = getattr(exc, "missing_input", None)
             if isinstance(missing_input, dict):
                 result.missing_input = dict(missing_input)
+            hint = getattr(exc, "workdir_hint", None)
+            if isinstance(hint, dict):
+                result.workdir_hint = dict(hint)
             result.input_facts = getattr(exc, "input_facts", None)
             result.error = error
             # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
@@ -1104,6 +1251,7 @@ class PreparationService:
         if result.status in TERMINAL:
             # 本计划是共享会话的等待者、已被取消放手（T09）：会话不是我们的，回执 / 捕获都不归这份计划
             return
+        plan = entry.plan  # before_retry 可能就地换过计划（吸收派生授权）：回执挂换后的那份
         tr.mark("execute", created=bool(created))
         result.created_runtime = bool(created)
         result.input_facts = getattr(worker, "last_input_facts", None)
@@ -1134,11 +1282,12 @@ class PreparationService:
                     expected_worker=worker,
                     **({"run": plan.run} if plan.run is not None else {}),
                 )
-                note = (
-                    "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
-                    if closed
-                    else "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
-                )
+                if closed:
+                    note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                elif pool.is_fenced(worker):
+                    note = "build 期间取消：会话的强制关闭尚未确认，已围栏、下次使用前会重试；脚本可能仍在运行，已产生的外部副作用不撤销"
+                else:
+                    note = "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
 
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"
@@ -1149,6 +1298,8 @@ class PreparationService:
             return
         if self._stem_missing(entry, worker, _captured_stems(resp)):
             return
+        # build 成功、图也捕获到了，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）
+        entry.result.workdir_hint = pool.workdir_hint_of_build(worker)
         self._finish(entry, STATUS_READY)
 
     def _stem_missing(self, entry: _Entry, worker, known) -> bool:
@@ -1165,6 +1316,9 @@ class PreparationService:
             return False
         entry.result.trace.fail("execute", err.code)
         entry.result.error = {"code": err.code, "message": str(err)}
+        hint = getattr(err, "workdir_hint", None)
+        if isinstance(hint, dict):
+            entry.result.workdir_hint = dict(hint)
         self._finish(entry, STATUS_ERROR, note="脚本跑完了，但这张面板没有被捕获")
         return True
 
@@ -1196,6 +1350,11 @@ class PreparationService:
             # 路径没变、环境换了一代（删了重建）：计划确认的是上一代（ADR 0114 §四）
             planned = (plan.environment or {}).get("generation")
             if planned and projectenv.environment_generation(plan.interpreter) != planned:
+                return STALE_ENVIRONMENT, {}
+            # 叠加环境（ROOT）换了 / 清了：同一个解释器带不带 ROOT 不是同一个环境（与起会话的 `_overlay_for` 同一判据）
+            if rootenv.key_of(getattr(plan, "environment_overlay", None)) != rootenv.key_of(
+                projectenv.remembered_overlay(root, plan.interpreter)
+            ):
                 return STALE_ENVIRONMENT, {}
             # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：代没变，激活后的环境变了
             if plan.environment_state and (
@@ -1286,6 +1445,7 @@ class PreparationService:
                 entry.result.error = None
                 entry.result.required_input = None
                 entry.result.missing_input = None
+                entry.result.workdir_hint = None
                 entry.result.trace.cancel("receipt")
             entry.result.finished_at = time.time()
             if note:
@@ -1497,8 +1657,51 @@ class PreparationService:
                 entry.thread.join(join_timeout)
 
 
+exectrace.register_vocabulary(
+    "outcome", (STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_NEEDS_INPUT, STATUS_STATIC)
+)
+_PREP_TRACE_END = {
+    STATUS_READY: "ok",
+    STATUS_NEEDS_INPUT: "ok",
+    STATUS_STATIC: "ok",
+    STATUS_ERROR: "failed",
+    STATUS_CANCELLED: "cancelled",
+}
+
+
+def _trace_begin(plan, result: PreparationResult) -> None:
+    """执行线程开头开 Trace。采集代码永不让准备失败：计划缺字段（替身 / 旧调用方）就不开。"""
+    try:
+        result.exec_trace = exectrace.begin(
+            "preparation",
+            task_ref=getattr(plan, "plan_id", None),
+            scope=exectrace.scope_for(getattr(plan, "project_id", None)),
+        )
+        result.exec_span = result.exec_trace.start_span(
+            "script_run", "process", attributes={"execution": getattr(plan, "execution", None)}
+        )
+    except Exception:  # noqa: BLE001
+        result.exec_trace, result.exec_span = exectrace.NullTrace(), None
+
+
+def _trace_terminal(result: PreparationResult) -> None:
+    """执行追踪收尾：阶段事实只读映射（不读 facts、不造区间）→ 执行区间按真实终局结束 → 冻结。永不抛。"""
+    try:
+        xt = result.exec_trace
+        status = _PREP_TRACE_END.get(result.status, "unknown")
+        code = (result.error or {}).get("code") if status == "failed" else None
+        exectrace.observe_stage_trace(
+            xt, result.trace.to_payload(), parent=result.exec_span, legacy_t0=result.trace._t0
+        )
+        xt.end_span(result.exec_span, status, error_code=code)
+        xt.finish(status, error_code=code, attributes={"outcome": result.status})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _record_terminal(plan: PreparationPlan, result: PreparationResult) -> None:
     """终局那一刻冻结一份诊断快照（T04）。只收这一次尝试自己的事实；记录失败不影响准备本身。"""
+    _trace_terminal(result)
     if result.status not in (STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_NEEDS_INPUT):
         return
     try:
@@ -1523,6 +1726,36 @@ def _elapsed_ms(started_at, finished_at) -> int | None:
     ):
         return round((finished_at - started_at) * 1000)
     return None
+
+
+#: `interpreter_cache_denied`（TVD-B6MR）的一键出口要清掉哪一层选择：失败的解释器是计划那一刻按什么来源选中的。
+#: 全局设置里指定的（`configured`）→ 清全局；为这个项目挑的 / 记住的用户环境 → 项目改用默认链条（`remember_default`）。
+#: Tavotto 自己的解释器（内置 / 自身 / 自建）与环境变量不在表里：清掉选择换不出别的，失败卡不给这个按钮。
+_CACHE_DENIED_SWITCH = {
+    pool.SOURCE_CONFIGURED: "global",
+    pool.SOURCE_SYSTEM: "project",
+    pool.SOURCE_PROJECT_VENV: "project",
+}
+
+
+def cache_denied_switch(source: str, *, project_root: str = "", python: str = "") -> str:
+    """失败解释器的来源 → `global` / `project` / `both` / `""`（不给一键换回）。
+
+    `both`：失败的那条是全局指定的、**同时**也是这个项目记住的解释器（项目早先采用过自己的 `.venv`，后来又在
+    全局设置里指定了同一路径）。只清全局的话 `pool.resolve_worker_python` 下一档就是项目记住的那条——还是它，
+    按钮等于没换（Codex #1595）。所以两层都清：全局清掉、项目改用默认链条。项目记住的是**别的**解释器时只清全局，
+    那是用户为这个项目的另一个决定，不替他抹掉；它若同样写不了缓存，下一次失败会给 `project`。"""
+    switch = _CACHE_DENIED_SWITCH.get(str(source or ""), "")
+    if switch == "global" and project_root and python:
+        record = projectenv.remembered_record(project_root)
+        remembered = (record or {}).get("path") if isinstance(record, dict) else None
+        if (
+            remembered
+            and record.get("mode") != projectenv.MODE_DEFAULT_CHAIN
+            and pool.same_python(str(remembered), python)
+        ):
+            return "both"
+    return switch
 
 
 def _attach_local_detail(error: dict, exc: BaseException, *, sensitive: bool) -> None:

@@ -13,6 +13,7 @@ import os
 import posixpath
 import sys
 import sysconfig
+import threading
 import types
 
 import pytest
@@ -166,3 +167,26 @@ def test_an_interpreter_prefix_that_is_or_contains_the_root_excludes_nothing(
     obs = figcapture.InputObserver(str(proj))
     obs._note(str(proj / "analysis" / "points.csv"))
     assert list(obs._seen.values()) == ["analysis/points.csv"]
+
+
+def test_paused_only_suppresses_the_pausing_thread(tmp_path):
+    """`paused()` 按线程：屏障期间用户的后台线程读项目数据仍是输入（Codex 评 #1180 P2）。"""
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+    obs = figcapture.InputObserver(str(tmp_path))
+    obs.install()
+    try:
+        with obs.paused():
+            with open(tmp_path / "a.txt", encoding="utf-8") as fh:
+                fh.read()
+
+            def _bg():
+                with open(tmp_path / "b.txt", encoding="utf-8") as fh:
+                    fh.read()
+
+            t = threading.Thread(target=_bg)
+            t.start()
+            t.join()
+    finally:
+        obs.uninstall()
+    assert {f["path"] for f in obs.report()["files"]} == {"b.txt"}

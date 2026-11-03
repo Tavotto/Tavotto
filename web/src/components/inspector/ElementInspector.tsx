@@ -1,6 +1,5 @@
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import { EditableFigureIcon } from '../ui/semanticIcons'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -61,8 +60,11 @@ import {
   detachLegendEntry,
   disableTextEffect,
   setLegendPlacement,
+  setColormapOverride,
+  setColormapOverrides,
   setOverride,
   setOverrides,
+  setFigureFontChoice,
   unhideElement,
 } from '@/store/actions'
 import { readAxesTickModel, type SidePlan } from '@/lib/tickSides'
@@ -95,10 +97,10 @@ import {
 import type { PanelObject } from '@/types/document'
 import {
   engineLabel,
-  fontFamilyOptionLabel,
   groupLabel,
   groupRank,
   optionLabel,
+  fontFamilyOptionLabel,
   propLabel,
   roleName,
   unsupportedOf,
@@ -111,7 +113,8 @@ import { OriginalFileActions } from './OriginalFileActions'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { Notice } from '../ui/Notice'
-import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
+import { ColorField, NumberField, TextInput } from '../ui/Input'
+import { RichTextField } from '../ui/RichTextField'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -166,10 +169,13 @@ import { useElementWriter } from './elementWrite'
 import { TypographyControls } from './controls/TypographyControls'
 import { isTextLikeSelection } from './textStyleModel'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
-import { fontStackOf } from './controls/fontStack'
+import { fontFamilySelectModel } from './controls/fontFamilySelect'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
-import { TextActionRow } from './TextActions'
+import { useLocateReveal } from './useLocateReveal'
+import { TextCaseMenu } from './TextActions'
+import { figureTextCodec } from '@/lib/richEditor'
+import { figureMathFamily, mathFontFollow } from '@/lib/figureMathFont'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
@@ -186,6 +192,7 @@ import {
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figureFontChoice, figurePrimaryValue } from '@/lib/figureFontChoice'
 import { patchBoundsOf } from '@/lib/patchResize'
 import { PatchSizeControls } from './PatchSizeControls'
 import { useRenderProgress } from '@/hooks/useRenderProgress'
@@ -214,6 +221,13 @@ function ElementBuildMessage({ fileId, rendering }: { fileId: string; rendering:
  * 决定（presentation/registry）：primary 永远展开，「更多」是唯一的中频折叠区
  * （展开状态按角色持久化），「源文件与高级」收纳写回/历史/诊断与低频字段。
  */
+/** Enter / Esc 提交图内文字：失焦即结束编辑事务（与画布文字同一契约） */
+const blurActive = () => {
+  const ae = document.activeElement
+  if (ae instanceof HTMLElement) ae.blur()
+  return true
+}
+
 export function ElementInspector({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
@@ -406,6 +420,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             confirmation={render.confirmation}
             dependencyPreparation={render.dependencyPreparation}
             missingInput={render.missingInput}
+            workdirHint={render.workdirHint}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -426,6 +441,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         <AlignSection panel={panel} items={alignGroup ?? []} syncing={syncing} />
       )}
       {alignGroup || syncing || batch || styleBatch ? null : (
+      /* `data-inspector-gid`：这一页属于哪个元素。定位（`issueFocus.focusField`）认锚点的主人——
+         从一个元素跳到另一个时旧页还挂着，同名字段（都叫 `fontsize`）不认主人就会落到上一个元素上 */
+      <div className="contents" data-inspector-gid={element?.gid}>
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {/* 色条与它上色的图像共用一份色阶（审计 T22 / T23）：关系说出口，
@@ -536,6 +554,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('alignSyncing')}</p>
         )}
       </Section>
+      </div>
       )}
 
       <HiddenElements panel={panel} manifest={manifest} />
@@ -654,7 +673,7 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
     setOpen(false)
   }
   return <>
-    <EmptyState icon={EditableFigureIcon} title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
+    <EmptyState art="select" title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
       action={{ label: t('artifact.chooseBackground', { ns: 'errors' }), onClick: () => setOpen(true) }} />
     <Dialog open={open} onOpenChange={setOpen} anchor="artifact-background" size="sm"
       title={t('artifact.chooseBackground', { ns: 'errors' })} description={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
@@ -667,13 +686,14 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
   </>
 }
 
-function ErrorBlock({
+export function ErrorBlock({
   error,
   traceback,
   code,
   confirmation,
   dependencyPreparation,
   missingInput,
+  workdirHint,
   onRetry,
 }: {
   error: UiMessage
@@ -682,6 +702,7 @@ function ErrorBlock({
   confirmation?: WorkdirConfirmation | null
   dependencyPreparation?: DependencyPreparationOffer | null
   missingInput?: MissingInputOffer | null
+  workdirHint?: WorkdirConfirmation | null
   onRetry?: () => void
 }) {
   return (
@@ -713,6 +734,8 @@ function ErrorBlock({
         )}
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
+        {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}
+        {code !== WORKDIR_CONFIRMATION_CODE && <WorkdirChooseButton confirmation={workdirHint ?? null} />}
         <p className="text-xs">{el('keptPrevious')}</p>
       </Notice>
     </Section>
@@ -875,7 +898,9 @@ function PairRow({
     panel.overrides.some((o) => o.gid === element.gid && o.prop === prop)
   const byProp = (prop: string) => (a.prop === prop ? a : b)
   const cell = (field: EditableField, prefix: string) => {
-    const label = propLabel(field.prop, element.role)
+    const label = field.prop === 'fontfamily' && field.font_fallback_selection
+    ? translate('textBar.latinFont', { ns: 'inspector' })
+    : propLabel(field.prop, element.role)
     return (
       <div key={field.prop} data-prop={field.prop} className={cn('flex min-w-0 items-center', INSPECTOR_HALF)}>
         <NumberField
@@ -1056,6 +1081,7 @@ function FieldList({
       const f = element.editable.find((x) => x.prop === prop)
       return f ? currentValue(panel, element.gid, f) : undefined
     },
+    isOverridden: (prop) => panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
   }
 
   const rows = (fields: PresentedField[], heads?: Map<string, string>) => {
@@ -1098,6 +1124,18 @@ function FieldList({
     if (last && last[0] === pf.field.group) last[1].push(pf)
     else restGroups.push([pf.field.group, [pf]])
   }
+
+  // 定位要找的字段收在「更多」/ 某一折里：先把那一折打开，落点才进得了 DOM（`useLocateReveal`）
+  useLocateReveal(element.gid, buckets.more.map((pf) => pf.field.prop), moreOpen, () => setMoreOpen(role, true))
+  const foldProps = buckets.folds.flatMap((f) => f.fields.map((pf) => pf.field.prop))
+  const locate = useUiStore((s) => s.fieldLocate)
+  const locateFold = buckets.folds.find((f) => f.fields.some((pf) => pf.field.prop === locate?.prop))
+  useLocateReveal(
+    element.gid,
+    foldProps,
+    !locateFold || (foldOpen[`${role}:${locateFold.spec.id}`] ?? false),
+    () => locateFold && setFoldOpen(`${role}:${locateFold.spec.id}`, true),
+  )
 
   const modifiedInMore = buckets.more.filter((pf) =>
     panel.overrides.some((o) => o.gid === element.gid && o.prop === pf.field.prop),
@@ -1301,6 +1339,12 @@ function AxesRangeCard({
   const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  useLocateReveal(
+    element.gid,
+    [...scale.map((f) => f.prop), ...invert, ...(aspect ? ['aspect'] : [])],
+    foldOpen['axes:coords'] ?? false,
+    () => setFoldOpen('axes:coords', true),
+  )
   if (!range.length && !scale.length && !invert.length && !aspect) return null
   // 右边只写当前值：X 轴的缩放方式 · 纵横比（反转了就说「反转」）
   const coordsValue = [
@@ -1484,6 +1528,15 @@ function TickPage({
     )
   }
   const foldOf = (id: string) => buckets.folds.find((f) => f.spec.id === id)
+  // 定位要找的字段收在某一折里：打开那一折（与 `FieldList` 同一个钩子）
+  const locate = useUiStore((s) => s.fieldLocate)
+  const locateFold = buckets.folds.find((f) => f.fields.some((pf) => pf.field.prop === locate?.prop))
+  useLocateReveal(
+    element.gid,
+    buckets.folds.flatMap((f) => f.fields.map((pf) => pf.field.prop)),
+    !locateFold || (foldOpen[`ticks:${locateFold.spec.id}`] ?? false),
+    () => locateFold && setFoldOpen(`ticks:${locateFold.spec.id}`, true),
+  )
   const minorFields = foldFields('minor')
   // 小刻度：开关 + 长 / 宽在卡里（`TickMinorBlock`），方式 / 间距 / 格式是认领来的字段。
   // 引擎一条次刻度能力都没发（Z 轴）时整行不出现——计数为 0 的节不显示
@@ -1545,11 +1598,12 @@ function TickPage({
           状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路，放最后
           （设计稿 A5：写成一句话）。-ml-2 与「原始比例」「全部清除」那些 ghost 文字键同一写法：
           钮内文字与上面的分区头对齐；按钮字 12 之后英文整句在 320px 的 DejaVu Sans 下是
-          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内 */}
+          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内。中文主力字号提到 13px 之后
+          连这一点余量也没了：整句允许折成两行（h-auto + whitespace-normal），不截断、不撑破栏宽 */}
       <Button
         size="sm"
         data-tick-spines-link
-        className="-ml-2 w-fit text-ink-2"
+        className="-ml-2 h-auto min-h-7 w-fit max-w-full shrink whitespace-normal py-1 text-start text-ink-2"
         onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
       >
         {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
@@ -1789,12 +1843,26 @@ function BatchFieldRow({
     }
     // 只要有一个成员没预览成功就照旧走后端：宁可多渲染一次，
     // 也不能让画布上一部分元素显示新值、另一部分停在旧值
-    setOverrides(
-      panel.id,
-      elMsg('batchEdit', { label }),
-      elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
-      previewed ? 'none' : immediate,
-    )
+    if (field.prop === 'cmap') {
+      // 色阶组整组换色：每个被写的元素清掉它所在组里其它成员的 cmap override（同一次 commit）
+      setColormapOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({
+          gid: item.gid,
+          value: v,
+          aliasGids: colormapAliasGids(batchManifest, item),
+        })),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
+        previewed ? 'none' : immediate,
+      )
+    }
     gesture.touch()
   }
 
@@ -1966,20 +2034,21 @@ function BatchFieldRow({
                   batchManifest?.font_family_names,
                 )
                 const fontOpts = merged?.options ?? opts
+                const fm = fontFamilySelectModel({
+                  value: mixed ? '' : String(first ?? ''),
+                  options: fontOpts,
+                  labels: merged?.option_labels,
+                  faces: merged?.option_faces,
+                  onChange: writeOnce,
+                })
                 return (
                   <Select
                     className="min-w-0 flex-1"
-                    value={mixed ? '' : String(first ?? '')}
+                    value={fm.value}
                     placeholder={el('mixedValues')}
-                    onChange={(x) => writeOnce(x)}
-                    options={fontOpts.map((o) => ({
-                      value: o,
-                      label: (
-                        <span style={{ fontFamily: fontStackOf(o) }}>
-                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
-                        </span>
-                      ),
-                    }))}
+                    onChange={fm.onChange}
+                    options={fm.options}
+                    title={fm.title}
                     ariaLabel={label}
                   />
                 )
@@ -2025,7 +2094,12 @@ function BatchFieldRow({
                 clearOverrides(
                   panel.id,
                   elMsg('resetProp', { label }),
-                  overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
+                  field.prop === 'cmap'
+                    ? // 色阶组：与色图选择器的「恢复到脚本」同一口径，整组清
+                      elements
+                        .flatMap((item) => colormapAliasGids(batchManifest, item))
+                        .map((gid) => ({ gid, prop: field.prop }))
+                    : overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
                 )
               }
             />
@@ -2041,7 +2115,7 @@ function BatchFieldRow({
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   const ov = effectiveOverride(panel.overrides, gid, field.prop)
-  return ov ? ov.value : field.value
+  return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
 }
 
 /**
@@ -2095,9 +2169,8 @@ function FieldRow({
   const rowManifest = usePanelRender(panel)?.manifest
   const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
   const gidRef = useRef<string>('')
-  const taRef = useRef<HTMLTextAreaElement | null>(null)
   const autoFocus = useCallback(
-    (el: HTMLInputElement | HTMLTextAreaElement | null) => {
+    (el: { focus(): void; select(): void } | null) => {
       // 只在切到新元素的那一次抢焦点，后续重渲染不打断用户
       if (!el || gidRef.current === element.gid) return
       gidRef.current = element.gid
@@ -2140,6 +2213,15 @@ function FieldRow({
   const resettable = !(element.gid === 'figure' && field.prop === 'transparent' &&
     backgroundOriginal !== undefined && value === backgroundOriginal)
   const resetOwned = () => {
+    // 色阶组整组换色：回到脚本原样也要整组清——同组别的成员（例如多选时一起写过的那个）还留着
+    // cmap override 的话，它会立刻把改过的色图广播回来，重置看起来没生效（#1159 评审）
+    if (field.prop === 'cmap') {
+      return clearOverrides(
+        panel.id,
+        elMsg('resetProp', { label }),
+        colormapAliasGids(rowManifest, element).map((gid) => ({ gid, prop: 'cmap' })),
+      )
+    }
     if (ownedProps.length === 1) return clearOverride(panel.id, element.gid, field.prop)
     clearOverrides(
       panel.id,
@@ -2174,7 +2256,18 @@ function FieldRow({
     const v = lens.toScript(field.prop, pageValue)
     if (previewable && !gesture.isOpen()) gesture.start()
     const previewed = previewable && previewStyle(element.gid, element.role, field.prop, v)
-    setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    if (field.prop === 'cmap') {
+      // 色阶组任一成员改 cmap = 整组改：同一次 commit 清掉同组其它成员的 cmap override（文档里只留一条）
+      setColormapOverride(
+        panel.id,
+        element.gid,
+        v,
+        colormapAliasGids(rowManifest, element),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    }
     gesture.touch()
   }
 
@@ -2332,31 +2425,41 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
-    case 'font':
-      // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
-      {
-        const merged = withMachineFamilies(
-          field,
-          rowManifest?.font_families,
-          rowManifest?.font_family_names,
-        )
-        const fontOpts = merged?.options ?? enumOptions
-        return wrap(
+    case 'font': {
+      const merged = withMachineFamilies(field, rowManifest?.font_families, rowManifest?.font_family_names)
+      const fontOpts = merged?.options ?? enumOptions
+      const selection = figureFontChoice(effectiveOverride(panel.overrides, element.gid, 'fontfamily')?.value)
+      const latinOnly = new Set(rowManifest?.font_latin_only_families ?? [])
+      const allowedOptions = selection ? fontOpts.filter((o) => latinOnly.has(o) || o === enumValue) : fontOpts
+      const fm = fontFamilySelectModel({
+        value: enumValue,
+        options: allowedOptions,
+        labels: merged?.option_labels,
+        faces: merged?.option_faces,
+        onChange: (v) => {
+          if (selection && !latinOnly.has(v)) return
+          setFigureFontChoice(panel.id, [element.gid], 'primary', v, elMsg('editProp', { label }))
+        },
+      })
+      const fallbackNames = selection && !fontOpts.includes(selection.fallback) ? [selection.fallback, ...fontOpts] : fontOpts
+      return <>
+        {field.font_fallback_selection && <Row label={translate('textBar.cjkFallback', { ns: 'inspector' })} labelWidth={LABEL_W}>
           <Select
-            value={enumValue}
-            onChange={(v) => writeOnce(v)}
-            options={fontOpts.map((o) => ({
-              value: o,
-              label: (
-                <span style={{ fontFamily: fontStackOf(o) }}>
-                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
-                </span>
-              ),
-            }))}
-            ariaLabel={label}
-          />,
-        )
-      }
+            ariaLabel={translate('textBar.cjkFallback', { ns: 'inspector' })}
+            value={selection?.fallback ?? '__auto__'}
+            onChange={(v) => setFigureFontChoice(panel.id, [element.gid], 'fallback', v === '__auto__' ? null : v, elMsg('editProp', { label: translate('textBar.cjkFallback', { ns: 'inspector' }) }))}
+            options={[
+              { value: '__auto__', label: translate('textBar.cjkFallbackAuto', { ns: 'inspector' }) },
+              ...fallbackNames.map((v) => ({ value: v, label: fontFamilyOptionLabel(v, merged?.option_labels, fallbackNames) })),
+            ]}
+          />
+          {selection && !latinOnly.has(enumValue) && <Tip label={<span className="block max-w-40 whitespace-normal">{translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}</span>} side="left">
+            <button type="button" className="shrink-0 text-xs text-ink-3" aria-label={translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}>ⓘ</button>
+          </Tip>}
+        </Row>}
+        {wrap(<Select value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title} ariaLabel={label} />)}
+      </>
+    }
     case 'aspect':
       // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。
       // 自定义档是两行（分段控件 + 数字框），标签对齐第一行，不悬在两行中间
@@ -2409,47 +2512,32 @@ function FieldRow({
       const text = String(value ?? '')
       return wrap(
         <>
-          {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
-          <div className="flex w-full min-w-0 flex-col gap-1">
-            <TextArea
-              // 名字 = 标签列那句可见文字，同一个表达式（axe `label`，见 TextArea 的注释）
-              aria-label={label}
-              // 选中带文字的元素就直接可以打字，不用再点一次输入框
-              ref={(el) => {
-                taRef.current = el
-                autoFocus(el)
-              }}
-              maxRows={4}
-              value={text}
-              onFocus={beginTxn}
-              onBlur={endTxn}
-              onChange={(e) => write(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation()
-                if (e.key === 'Escape') {
-                  e.currentTarget.blur()
-                } else if (e.key === 'Enter') {
-                  // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行
-                  e.preventDefault()
-                  if (e.altKey || e.metaKey || e.ctrlKey) {
-                    const ta = e.currentTarget
-                    const a = ta.selectionStart ?? text.length
-                    const b = ta.selectionEnd ?? text.length
-                    write(text.slice(0, a) + '\n' + text.slice(b))
-                    requestAnimationFrame(() => {
-                      ta.focus()
-                      ta.setSelectionRange(a + 1, a + 1)
-                    })
-                  } else e.currentTarget.blur()
-                }
-              }}
-            />
-            <TextActionRow
-              text={text}
-              taRef={taRef}
-              onChange={(next, immediate) => write(next, immediate)}
-            />
-          </div>
+          {/* 所见即所得（ADR 0152）：粗斜体 / 上下标在框里直接显示，存储仍是 mathtext 字符串 */}
+          <RichTextField
+            // 名字 = 标签列那句可见文字，同一个表达式（axe `label`）
+            aria-label={label}
+            // 选中带文字的元素就直接可以打字，不用再点一次输入框
+            ref={autoFocus}
+            maxRows={4}
+            value={text}
+            codec={figureTextCodec}
+            // 公式块按图上画它的那张脸排（含这次编辑会让公式跟正文的情形）；源码模式下方出预览条
+            mathFamily={figureMathFamily(panel, element, text)}
+            sizePx={13}
+            onFocus={beginTxn}
+            onBlur={endTxn}
+            onChange={(next) => {
+              // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）
+              const follow = mathFontFollow(panel, element, next)
+              if (follow) setOverride(panel.id, element.gid, 'fontfamily', follow, false)
+              write(next)
+            }}
+            // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行；Esc 也是提交
+            onEnter={blurActive}
+            onEscape={blurActive}
+            testId="figure-text-content"
+            extra={<TextCaseMenu text={text} onChange={(next) => write(next, true)} />}
+          />
         </>,
         // 标签与多行输入框顶对齐（2026-09-11 用户反馈）：居中会让「内容」悬在框的半腰
         'start',
@@ -2566,7 +2654,7 @@ function FieldRow({
                   onClick={() => move(i, -1)}
                   aria-label={el('moveUp')}
                 >
-                  <MoveUp size={ICON_SIZE.xs} />
+                  <MoveUp size={ICON_SIZE.sm} />
                 </Button>
                 <Button
                   size="icon-sm"
@@ -2574,7 +2662,7 @@ function FieldRow({
                   onClick={() => move(i, 1)}
                   aria-label={el('moveDown')}
                 >
-                  <MoveDown size={ICON_SIZE.xs} />
+                  <MoveDown size={ICON_SIZE.sm} />
                 </Button>
               </li>
             ))}
@@ -2909,7 +2997,7 @@ function AxesSizeMm({
            来源入口回答「是哪一个」，联动的原理进那个按钮的悬停提示——提示挂在
            按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
         <div className="flex min-w-0 items-center gap-1.5">
-          <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+          <Link2 size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           <p className="min-w-0 flex-1 truncate type-section">
             {el('proxiedSizeHead', { label: engineLabel(element.label) })}
           </p>

@@ -23,8 +23,17 @@ import {
   type Rect,
   type ResizeDir,
 } from '@/lib/geometry'
-import type { Manifest, ManifestElement } from '@/lib/api'
-import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import type { ElementGeometry, Manifest, ManifestElement } from '@/lib/api'
+import {
+  axesAspectLocked,
+  flipY,
+  lockedAxesResize,
+  resizeGroup,
+  round4,
+  sameAfterRound4,
+  unionBox,
+  type Rect4,
+} from '@/lib/axesLayout'
 import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import {
   anchorOf,
@@ -67,6 +76,8 @@ import {
   geomDistMm,
   geomHitTolMm,
   geomInkAreaFrac,
+  geomIsOpaqueFill,
+  strokeDistBucket,
 } from '@/lib/pathGeom'
 import {
   createScaleHold,
@@ -77,15 +88,21 @@ import {
   scaledAnchorRect,
   snapScaleNearest,
 } from '@/lib/scaleSnap'
+import { scaleDragStatus } from '@/lib/dragStatus'
+import { applyAnnotationScale, annotationsOver, captureOrigins } from '@/lib/annotationScale'
+import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
+import { resolveDocumentSpec } from '@/lib/specBinding'
+import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
-import { registerPointerCancel } from '@/store/gestureCoordinator'
+import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
 import { feedbackFor } from '@/lib/snapFeedback'
 import { displayedExactManifest } from '@/store/mountedSvgStore'
-import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
   clientToMm,
@@ -97,7 +114,12 @@ import {
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
 import { resizePatch } from '@/store/patchResizeAction'
-import { previewLine, previewScale, previewTransform } from '@/store/svgPreviewStore'
+import {
+  cancelQueuedTranslation, captureQueuedTranslationCommit, findGidNode, findPanelSvg,
+  flushPreviewFrame, flushQueuedTranslation, markPreviewMove, prepareQueuedTranslationCommit,
+  previewLine, previewScale, previewSession, previewTransform, queuedTranslation,
+  rebaseQueuedTranslation, updateQueuedTranslation, type QueuedTranslation,
+} from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
   cancelElementPreview,
@@ -356,6 +378,51 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
 /*  缩放                                                                       */
 /* -------------------------------------------------------------------------- */
 
+const isCornerDir = (dir: ResizeDir) =>
+  (dir.includes('e') || dir.includes('w')) && (dir.includes('n') || dir.includes('s'))
+
+/** 当前期刊 / 规范的"图内文字最小有效字号"（pt）；规范库没载入、或这一项读不到 = null（不判） */
+function minEffectiveFontPt(): number | null {
+  const ps = useProfileStore.getState()
+  if (!ps.loaded) return null
+  const { profile } = resolveDocumentSpec(doc().profile, toCatalog(ps.specs))
+  const v = profile.min_effective_font_size_pt
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/**
+ * 面板角缩放的状态句数据（`interaction.dragStatus`）：缩放 a% → b%、图内文字等效 pt、是否低于规范下限。
+ * 缩放比 = `preflight.panelScale`；图内文字 = 图里**真实画出来的最小字号**（`preflight.drawnMinFontPt`，
+ * 起手从 manifest 取一次）× 缩放比，下限判的也是它——与预检同一来源，不按固定 9 pt 估；
+ * 读不到 manifest / 图里没有文字就不报 pt（只说缩放百分比），也不判下限，不拿估计值冒充事实；
+ * `box` 是此刻的包围盒，其余字段取 `panel` 起手时的样子。位图源（按 dpi 评质量）不报 pt。
+ */
+function scaleReadout(
+  panel: PanelObject,
+  box: Rect,
+  followOn: boolean,
+  followCount: number,
+  minSrcPt: number | null,
+) {
+  const at = (r: { w: number; h: number }) => {
+    const p = { ...panel, w: r.w, h: r.h } as PanelObject
+    const pt = panel.fileKind === 'raster' || minSrcPt == null ? null : scaledFontPt(minSrcPt, p)
+    return { pct: Math.round(panelScale(p) * 100), pt }
+  }
+  const from = at(panel)
+  const to = at(box)
+  const floorPt = minEffectiveFontPt()
+  return scaleDragStatus({
+    fromPct: from.pct,
+    toPct: to.pct,
+    fromPt: from.pt,
+    toPt: to.pt,
+    low: floorPt != null && to.pt != null && to.pt < floorPt - FONT_FLOOR_TOL_PT,
+    follow: { on: followOn, count: followCount },
+    box: { x: box.x, y: box.y, w: box.w, h: box.h },
+  })
+}
+
 /**
  * 拖八个缩放手柄。对象可能带任意角度 rotationDeg（x/y/w/h 恒为未旋转包围盒，
  * 旋转只由 ObjectView 的 CSS rotate 呈现），所以：
@@ -371,7 +438,17 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const target = doc().objects.find((o) => o.id === objectId)
   if (!target || target.locked) return
   const orig: Rect = { x: target.x, y: target.y, w: target.w, h: target.h }
-  const excluded = new Set([objectId])
+  // 多图排版里拖面板的角：「连同标注」（ADR 0161）——叠在它上面的标注按同一固定点、同一比例一起缩。
+  // 起手定下跟随的集合与它们的起手快照（整个手势里不变）；它们随面板一起动，所以不当吸附候选
+  const layoutCorner =
+    target.type === 'panel' &&
+    isCornerDir(dir) &&
+    useWorkspaceStore.getState().mode === 'layout'
+  const followEnabled = layoutCorner && useUiStore.getState().scaleWithAnnotations
+  const followOrigins = followEnabled
+    ? captureOrigins(annotationsOver(doc().objects, target as PanelObject))
+    : []
+  const excluded = new Set([objectId, ...followOrigins.map((f) => f.id)])
   const cands = candidatesFor(excluded)
   const isText = target.type === 'text'
   const rot = objectRotation(target)
@@ -401,6 +478,15 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       : null
 
   interaction().begin('resize')
+  const minSrcPt =
+    layoutCorner && target.type === 'panel'
+      ? drawnMinFontPt(exactPanelManifest(useRenderStore.getState(), target))
+      : null
+  if (layoutCorner) {
+    interaction().setDragStatus(
+      scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length, minSrcPt),
+    )
+  }
   store.beginTxn(hist('resizeObjects'))
   // 被拖手柄的对侧手柄：图幅在手势中途变了时，收尾换算绕这一点伸缩（面板恒无任意角
   // 旋转）。角柄 = 对角；边柄只提到一个轴，另一轴取中点（对边手柄的中心）——取
@@ -490,6 +576,20 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       interaction().setSnap(snapX, snapY, feedback)
 
       const placed = anchoredRect(orig, next, dir, rot)
+      // 标注只在等比缩放时跟着走（一个比例才说得清）；这一帧非等比（面板解锁比例）就留在原处
+      const following = followEnabled && proportional && orig.w > 0
+      const factor = following ? placed.w / orig.w : 1
+      if (layoutCorner) {
+        interaction().setDragStatus(
+          scaleReadout(
+            target as PanelObject,
+            placed,
+            following,
+            followOrigins.length,
+            minSrcPt,
+          ),
+        )
+      }
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o) return
@@ -497,6 +597,10 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
         o.y = placed.y
         o.w = placed.w
         if (!isText) o.h = placed.h
+        if (followOrigins.length) {
+          // 固定点 = 被拖角的对角（面板恒无任意角旋转，anchoredRect 与 scaleFixedPoint 同口径）
+          applyAnnotationScale(d.objects, followOrigins, scaleFixedPoint(orig, dir), factor)
+        }
       })
     },
     onEnd: (moved, _ev, end) => {
@@ -1061,21 +1165,56 @@ export function pickElementStack(
 ): ManifestElement[] {
   if (!manifest) return []
   const PAD = 0.004
-  const hits: { el: ManifestElement; score: number; i: number }[] = []
+  /**
+   * 分层（ADR 0086 修订，「看得见的墨迹在哪，就选谁」）：
+   *  0 = 描边命中——在容差内的曲线 / 空心路径 / 填充元素的边线 / 箭头 / 字（字本身就是墨迹），
+   *      且没有被画在它上面的**不透明**填充盖住；
+   *  1 = 其余按旧规则（面积评分）：仅落在填充内部、bbox 命中的背景类元素（子图、图像、色条…）；
+   *  2 = 被上层不透明填充盖住的候选（线或填充）：看不见，只留给 ⌥ 轮换。
+   */
+  type Tier = 0 | 1 | 2
+  interface Hit {
+    el: ManifestElement
+    i: number
+    tier: Tier
+    /** 旧评分（面积），tier 1/2 用它排；tier 0 里作为墨迹面积 */
+    score: number
+    /** tier 0：光标离可见墨迹边缘的量化档（mm 档，0 = 落在墨迹上） */
+    bucket: number
+    /** 真实绘制次序；未知 = -1 */
+    order: number
+    /** 被盖判据的两个输入：是否参与遮挡检查，以及有效的盖住者 */
+    geom?: ElementGeometry
+    inside: boolean
+  }
+  const hits: Hit[] = []
+  // 能盖住别人的不透明填充：光标落在它里面。锁定的也算——它在画面上照样盖着
+  // （只是不参与被选）；隐藏的不算（画面上没有）
+  const covers: { gid: string; order: number }[] = []
   for (const [i, el] of manifest.elements.entries()) {
     if (el.gid === 'figure') continue
     if (isElementHidden(el)) continue // 隐藏的元素不该再挡住点击
-    if (lockedGids?.includes(el.gid)) continue // 锁定元素只能从元素树选中
+    const locked = lockedGids?.includes(el.gid) ?? false // 锁定元素只能从元素树选中
     // 图内独立箭头按线本身命中（与画布箭头同语义，见 hitTest.test 的沿线命中）：
     // 斜箭头的 bbox 是一大块空白矩形，按矩形命中会让远离线的点击也选中箭头、
     // 还把底下元素的点击偷走。评分用线的「墨迹面积」（长 × 2×容差，换算回
     // 分数系），与其余元素的 bbox 面积同一量纲。
     if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
+      if (locked) continue
       const [a, b] = el.arrow_endpoints
       const [sw, sh] = manifest.size_mm
-      if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > PATH_HIT_MM) continue
+      const d = arrowDistMm(manifest.size_mm, fx, fy, a, b)
+      if (d > PATH_HIT_MM) continue
       const lenMm = Math.hypot((b[0] - a[0]) * sw, (b[1] - a[1]) * sh)
-      hits.push({ el, score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh), i })
+      hits.push({
+        el,
+        i,
+        tier: 0,
+        score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh),
+        bucket: strokeDistBucket(null, d),
+        order: el.paint_order ?? -1,
+        inside: false,
+      })
       continue
     }
     // 有真实路径的元素（曲线 / 填充 / 独立形状）按**路径**命中，不用 bbox：
@@ -1088,26 +1227,87 @@ export function pickElementStack(
       // 粗线的边缘像素会落在容差之外（geomHitTolMm 的注释里有账）
       const tol = geomHitTolMm(geom, PATH_HIT_MM)
       const inside = geomContains(geom, fx, fy)
-      const dist = inside ? 0 : geomDistMm(geom, manifest.size_mm, fx, fy)
-      if (!inside && dist > tol) continue
-      // 评分与 bbox 面积同一量纲：填充按真实面积（小的赢），空心按墨迹面积
-      // （一条线的墨迹极小，因此总能从子图容器手里把点击拿回来）
-      const score = inside
-        ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
-        : geomInkAreaFrac(geom, manifest.size_mm, tol)
-      hits.push({ el, score, i })
+      const order = geom.paint_order ?? -1
+      if (inside && geomIsOpaqueFill(geom) && order >= 0) covers.push({ gid: el.gid, order })
+      if (locked) continue
+      // 离路径多远：填充内部且自己没画边线的，不需要算（只有 `inside` 才是命中）
+      const dist =
+        inside && geom.fill && !geom.stroke ? Infinity : geomDistMm(geom, manifest.size_mm, fx, fy)
+      const near = dist <= tol
+      if (!inside && !near) continue
+      // 描边命中：空心路径靠近路径；填充元素只有**自己画了边线**才算（没边线的半透明幕墙，
+      // 边界上什么也看不到）。填充外沿的容差带照旧是命中，但只算「填充类」（tier 1，
+      // 旧的墨迹面积评分），不升到描边层
+      if (near && (!geom.fill || geom.stroke)) {
+        // 描边命中：墨迹面积评分（一条线的墨迹极小，因此总能从子图容器手里把点击拿回来），
+        // 同一量纲；再按离墨迹的远近分档
+        hits.push({
+          el,
+          i,
+          tier: 0,
+          score: geomInkAreaFrac(geom, manifest.size_mm, tol),
+          bucket: strokeDistBucket(geom, dist),
+          order,
+          geom,
+          inside,
+        })
+      } else {
+        // 仅落在填充内部（或外沿容差带）：评分用真实面积（小的赢），沿用旧规则
+        hits.push({
+          el,
+          i,
+          tier: 1,
+          score: inside
+            ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
+            : geomInkAreaFrac(geom, manifest.size_mm, tol),
+          bucket: 0,
+          order,
+          geom,
+          inside,
+        })
+      }
       continue
     }
+    if (locked) continue
     const [x, y, w, h] = el.bbox
     if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
-    hits.push({ el, score: w * h * (HIT_PENALTY[el.role] ?? 1), i })
+    // 字 / 图例本身就是墨迹：命中它的框 = 点在可见的东西上，和线同一层（落在 0 档、按面积比，
+    // 与旧评分逐位相同）。背景类（子图、图像、色条、刻度外壳、散点退回的 bbox…）留在 tier 1
+    // 只有**次序已知**的字 / 图例才升到 tier 0：次序未知就没法判它是否被后画的不透明填充
+    // 盖住，留在 tier 1 按旧面积评分（逐位回到旧行为）
+    const order = el.paint_order ?? -1
+    hits.push({
+      el,
+      i,
+      tier: INK_BBOX_ROLES.has(el.role) && order >= 0 ? 0 : 1,
+      score: w * h * (HIT_PENALTY[el.role] ?? 1),
+      bucket: 0,
+      order,
+      inside: false,
+    })
   }
-  // 评分打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
+  // 被上层不透明填充盖住的候选（几何元素与端点箭头）降到 tier 2（次序未知不判遮挡）
+  for (const h of hits) {
+    if (h.order < 0 || h.tier === 2) continue
+    if (covers.some((c) => c.gid !== h.el.gid && c.order > h.order)) h.tier = 2
+  }
+  // 次序：先分层。tier 0 里先比离墨迹的远近档，再比墨迹面积（短网格段不能因为面积小就
+  // 抢走正落在长曲线上的点击），同档再看谁画在上层；其余层按旧面积评分。
+  // 全部打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
   // 的兑现点。别改成纯 `a.score - b.score` 靠 sort 的稳定性兜着——那是隐含依赖，
   // 而这里正是重叠候选唯一的次序来源。
-  hits.sort((a, b) => a.score - b.score || a.i - b.i)
+  hits.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier
+    if (a.tier === 0) {
+      return a.bucket - b.bucket || a.score - b.score || b.order - a.order || a.i - b.i
+    }
+    return a.score - b.score || a.i - b.i
+  })
   return hits.map((h) => h.el)
 }
+
+/** 本身就是墨迹的 bbox 元素（字、图例）：点中它们的框就是点在可见的东西上 */
+const INK_BBOX_ROLES = new Set(['text', 'title', 'axis_label', 'legend', 'legend_text'])
 
 export function pickElement(
   manifest: Manifest | null | undefined,
@@ -1395,6 +1595,12 @@ export function inFigureMoveOf(
   if (el.resizable) return axesMove(panel, geomTarget(manifest, el))
   if (el.arrow_endpoints) return arrowMove(panel, el)
   if (el.draggable && el.anchor) return elementMove(panel, el)
+  // 框里的文字：拖的是外框（引擎报的 `drag_host`）；外框自己拖不动（像素坐标的插框）就照旧说「拖不动」；
+  // 外框在元素树里锁了就不借道拖它（文字自己没锁，指针与方向键都会走到这里，不拦就绕过了锁）
+  if (el.drag_host && !panel.lockedGids?.includes(el.drag_host)) {
+    const host = manifest?.elements.find((m) => m.gid === el.drag_host)
+    if (host && host.gid !== el.gid && !host.drag_host) return inFigureMoveOf(panel, manifest, host)
+  }
   return null
 }
 
@@ -1629,6 +1835,214 @@ function trackInFigureMove(
   })
 }
 
+type DeferredIntent = {
+  delta: [number, number]
+  shift: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+  complete: boolean
+}
+
+type DeferredMove = {
+  panelId: string
+  gid: string
+  role: string
+  dragProp: string
+  identity: string
+  expectedKey: string
+  documentId: string | null
+  loadSeq: number
+  canvasId: string
+  basis: string
+  layout: { width: number; height: number }
+  intents: DeferredIntent[]
+  committed: boolean
+  internal: boolean
+  preview: QueuedTranslation
+  cleanups: (() => void)[]
+}
+
+let deferredMove: DeferredMove | null = null
+
+const deferredBasis = (panel: PanelObject) => JSON.stringify([
+  panel.x, panel.y, panel.w, panel.h, panel.crop, panelContentTransform(panel),
+])
+
+function deferredContextValid(d: DeferredMove): boolean {
+  const ds = useDocumentStore.getState()
+  const panel = ds.doc.objects.find((o) => o.id === d.panelId)
+  const ui = useUiStore.getState()
+  return ds.documentId === d.documentId && ds.loadSeq === d.loadSeq && ds.activeCanvasId === d.canvasId &&
+    panel?.type === 'panel' && renderKeyOf(panel) === d.expectedKey &&
+    !panel.hidden && !panel.locked && deferredBasis(panel) === d.basis &&
+    ui.elementPanelId === d.panelId && ui.selectedGids.length === 1 && ui.selectedGids[0] === d.gid
+}
+
+/** DOM 只是位移预览；正式锚点和吸附候选都在对应版本渲染完后重取。 */
+function drawDeferredMove(d: DeferredMove) {
+  const [dx, dy] = d.intents.reduce<[number, number]>(
+    (sum, intent) => [sum[0] + intent.delta[0], sum[1] + intent.delta[1]], [0, 0],
+  )
+  updateQueuedTranslation(d.preview, [dx, dy])
+}
+
+function endDeferredMove(d: DeferredMove, explain = false) {
+  if (deferredMove !== d) return
+  deferredMove = null
+  for (const cleanup of d.cleanups) cleanup()
+  cancelQueuedTranslation(d.preview)
+  if (explain && d.intents.some((i) => i.complete)) {
+    useUiStore.getState().setStatus(msg('status.dragSyncCancelled', undefined, 'workspace'), 'error')
+  }
+}
+
+/** 在 SVG 挂载、前一预览认领之后执行；每次只用当前权威提交一条手势。 */
+export function resumeDeferredInFigureDrag(panelId: string) {
+  const d = deferredMove
+  if (!d || d.panelId !== panelId || d.internal) return
+  const ds = useDocumentStore.getState()
+  const panel = ds.doc.objects.find((o) => o.id === d.panelId)
+  if (!deferredContextValid(d) || panel?.type !== 'panel') {
+    endDeferredMove(d, true)
+    return
+  }
+  const own = useRenderStore.getState().byKey[d.expectedKey]
+  if (own?.status === 'error') {
+    endDeferredMove(d, true)
+    return
+  }
+  const manifest = displayedExactManifest(panel)
+  if (!manifest) return
+  const el = manifest.elements.find((entry) => entry.gid === d.gid)
+  if (!el || el.role !== d.role || el.drag_prop !== d.dragProp ||
+      JSON.stringify(el.identity ?? null) !== d.identity || panel.lockedGids?.includes(d.gid)) {
+    endDeferredMove(d, true)
+    return
+  }
+  if (d.committed) {
+    // 同一 SVG 字符串可能复用同一个节点；复位那次已被权威接管的预览。
+    rebaseQueuedTranslation(d.preview)
+    d.committed = false
+  }
+  const next = d.intents[0]
+  if (!next) return endDeferredMove(d)
+  if (!next.complete) return drawDeferredMove(d)
+  // 这次提交来自渲染回包，不得结束或并入另一个正在进行的用户手势。
+  if (ds.txn || hasActiveGesture() || hasActivePointerGesture() || interaction().kind !== 'none') {
+    return drawDeferredMove(d)
+  }
+
+  // 已挂的临时位移不能成为新预览的 base，否则每次交接都会翻倍。
+  prepareQueuedTranslationCommit(d.preview)
+  const mv = inFigureMoveOf(panel, manifest, el)
+  if (!mv) return endDeferredMove(d, true)
+  let [dx, dy] = next.delta
+  const mods = { metaKey: next.metaKey, ctrlKey: next.ctrlKey, shiftKey: next.shift }
+  if (mv.snapBox) {
+    const box = mv.snapBox
+    const snapper = inFigureSnapper(panel, mv.moving, mv.snapKind, mv.clampedToPanel)
+    if (snapper) {
+      const [sx, sy] = snapper([box[0] + dx, box[1] + dy, box[2], box[3]], mods, [dx, dy])
+      dx += sx
+      dy += sy
+    }
+  }
+  mv.preview(dx, dy, carriesContents(mods))
+  flushPreviewFrame()
+  interaction().end()
+  d.internal = true
+  const changed = mv.commit(dx, dy, carriesContents(mods))
+  d.intents.shift()
+  const current = useDocumentStore.getState().doc.objects.find((o) => o.id === d.panelId)
+  if (current?.type === 'panel') d.expectedKey = renderKeyOf(current)
+  d.internal = false
+  captureQueuedTranslationCommit(d.preview)
+  if (changed) {
+    d.committed = true
+    drawDeferredMove(d)
+  } else {
+    rebaseQueuedTranslation(d.preview)
+    resumeDeferredInFigureDrag(panelId)
+  }
+}
+
+/** 同步中只接已经精确命中过的同一元素，保存指针位移而不读取旧 manifest。 */
+export function startDeferredInFigureDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  layout: { width: number; height: number },
+): boolean {
+  const ui = useUiStore.getState()
+  const prior = previewSession()
+  let d = deferredMove
+  const move = prior?.move
+  const gid = d?.panelId === panel.id ? d.gid : move?.gid
+  const node = gid ? findGidNode(findPanelSvg(panel.id), gid) : null
+  const rect = node?.getBoundingClientRect()
+  if (!gid || !rect || e.clientX < rect.left || e.clientX > rect.right ||
+      e.clientY < rect.top || e.clientY > rect.bottom || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
+  if (!d) {
+    if (!move || !prior?.pendingCommit?.some((p) => p.gid === gid && p.prop === move.dragProp) ||
+        prior.awaitKey !== renderKeyOf(panel)) return false
+    const ds = useDocumentStore.getState()
+    d = {
+      panelId: panel.id, gid, role: move.role, dragProp: move.dragProp,
+      identity: JSON.stringify(move.identity ?? null), expectedKey: prior.awaitKey,
+      documentId: ds.documentId, loadSeq: ds.loadSeq, canvasId: ds.activeCanvasId,
+      basis: deferredBasis(panel),
+      layout, intents: [], committed: false, internal: false,
+      preview: queuedTranslation(panel.id, gid), cleanups: [],
+    }
+    deferredMove = d
+    const mine = d
+    const check = () => {
+      if (mine.internal || deferredMove !== mine) return
+      // 撤销时先收排队预览，再让既有账本还原已提交的上一笔。
+      if (!deferredContextValid(mine)) return endDeferredMove(mine, true)
+      queueMicrotask(() => resumeDeferredInFigureDrag(mine.panelId))
+    }
+    d.cleanups.push(useDocumentStore.subscribe(check), useRenderStore.subscribe(check),
+      useUiStore.subscribe(check), useInteractionStore.subscribe(check), subscribeGestureCoordinator(check))
+  }
+  if (d.panelId !== panel.id || d.gid !== gid || d.intents.some((i) => !i.complete)) return false
+  e.stopPropagation()
+  e.preventDefault()
+  const intent: DeferredIntent = { delta: [0, 0], shift: false, metaKey: false, ctrlKey: false, complete: false }
+  d.intents.push(intent)
+  const mine = d
+  const toContent = contentDelta(panel, layout)
+  interaction().begin('element')
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      if (deferredMove !== mine) return
+      let [dx, dy] = toContent(dxPx, dyPx)
+      if (ev.shiftKey) [dx, dy] = contentAxisLock(layout, dx, dy)
+      intent.delta = [dx, dy]
+      intent.shift = ev.shiftKey
+      intent.metaKey = ev.metaKey
+      intent.ctrlKey = ev.ctrlKey
+      drawDeferredMove(mine)
+    },
+    onEnd: (moved, ev, end) => {
+      interaction().end()
+      if (deferredMove !== mine) return
+      if (!moved || end.cancelled) {
+        mine.intents = mine.intents.filter((i) => i !== intent)
+        drawDeferredMove(mine)
+        flushQueuedTranslation(mine.preview)
+        if (!mine.intents.length && !mine.committed) endDeferredMove(mine)
+        return
+      }
+      intent.metaKey = ev.metaKey
+      intent.ctrlKey = ev.ctrlKey
+      intent.complete = true
+      flushQueuedTranslation(mine.preview)
+      resumeDeferredInFigureDrag(mine.panelId)
+    },
+  })
+  return true
+}
+
 /** 可拖的图内文字 / 图例 / 形状：挪锚点（`drag_prop`，pos_frac / loc_frac …） */
 export function elementMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
   if (!element.anchor || !element.drag_prop) return null
@@ -1642,6 +2056,7 @@ export function elementMove(panel: PanelObject, element: ManifestElement): InFig
   const carried = manifest ? patchContents(panel, manifest, [element.gid]) : []
 
   beginElementPreview(panel)
+  markPreviewMove({ gid: element.gid, role: element.role, dragProp, identity: element.identity })
   noteDragBegin(
     'element.drag.begin',
     panel,
@@ -2239,7 +2654,13 @@ export function startAxesDrag(
 
   const snapper = axesResizeSnapper(panel, element, mode)
 
-  const compute = (dfx: number, dfy: number): Rect4 => {
+  // 锁比例的子图（imshow / equal）：宽高同比缩放，否则重渲时 apply_aspect 把框缩回原比例、
+  // 线框与吸附都对不上结果（见 `lockedAxesResize`）
+  const locked = axesAspectLocked(element)
+  const full = panelFullRect(panel)
+
+  const compute = (dfx: number, dfy: number, by?: 'x' | 'y'): Rect4 => {
+    if (locked) return lockedAxesResize(start, mode, dfx, dfy, MIN, by)
     let [x, y, w, h] = start
     if (mode.includes('e')) w = clamp(w + dfx, MIN, 1 - x)
     else if (mode.includes('w')) {
@@ -2268,7 +2689,18 @@ export function startAxesDrag(
     // 吸附只改最终框（写法不变：仍是一条 position）；吸的是钳位后正在动的那条边
     if (snapper) {
       const [sx, sy] = snapper(rect, mods)
-      if (sx || sy) {
+      if (locked && (sx || sy)) {
+        // 等比：倍数只能由一轴定——角柄两轴都吸上时取修正小的那一轴（mm），另一轴跟着比例走
+        // （够不着的那条线 report 不发）。修正是相对**等比框**的边，不是相对原始位移
+        const by = sx && (!sy || Math.abs(sx * full.w) <= Math.abs(sy * full.h)) ? 'x' : 'y'
+        const dw = rect[2] - start[2]
+        const dh = rect[3] - start[3]
+        rect = compute(
+          (mode.includes('w') ? -dw : dw) + sx,
+          (mode.includes('n') ? -dh : dh) + sy,
+          by,
+        )
+      } else if (sx || sy) {
         dfx += sx
         dfy += sy
         rect = compute(dfx, dfy)

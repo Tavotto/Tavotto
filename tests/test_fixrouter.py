@@ -1,0 +1,217 @@
+"""智能修复路由（ADR 0148）：失败类型 -> 唯一修法。纯函数，闭集，顺序即优先级，一次运行最多 3 种。"""
+
+from __future__ import annotations
+
+import pytest
+
+from tavotto.engine import fixrouter
+from tavotto.engine.fixrouter import Ctx, choose
+
+
+def _hist(*changed: tuple[str, ...], run: int = 1) -> tuple[dict, ...]:
+    return tuple({"run": run, "seq": i + 1, "changed": list(c)} for i, c in enumerate(changed))
+
+
+def test_safe_guard_block_is_switch_native_only_when_native_is_allowed():
+    assert choose("safe_file_operation_blocked", Ctx(native_allowed=True)) == {
+        "kind": "switch_native",
+        "silent": True,
+    }
+    # 不允许 native（只用安全运行 / 运维关了回退）：不标注，落到后面的 AI 修法
+    assert choose("safe_file_operation_blocked", Ctx(native_allowed=False))["kind"] == "connect_ai"
+
+
+def test_missing_dependency_installs_the_named_packages():
+    ctx = Ctx(missing_installable=True, packages=("scipy",), auto_install_allowed=True)
+    assert choose("missing_dependency", ctx) == {
+        "kind": "install_packages",
+        "packages": ["scipy"],
+        "ask": False,
+    }
+
+
+def test_listed_package_in_an_allowed_environment_is_not_asked_but_everything_else_is():
+    def ask(packages, allowed):
+        ctx = Ctx(missing_installable=True, packages=packages, auto_install_allowed=allowed)
+        return choose("missing_dependency", ctx)["ask"]
+
+    assert ask(("scipy",), True) is False  # 名单内 + 环境允许 -> 不问
+    assert ask(("scipy",), False) is True  # 名单内 + 环境不允许（第一次要问）-> 问
+    assert ask(("totally-unlisted-pkg",), True) is True  # 名单外 -> 仍然点名确认
+    assert ask(("scipy", "totally-unlisted-pkg"), True) is True  # 多个里有一个在名单外 -> 问
+
+
+def test_missing_dependency_that_cannot_be_installed_points_at_an_environment_not_ai():
+    """装不了的缺包（私有库 / 本地模块 / conda-only）：主修法是确定的「选择运行环境」，不论 AI 连没连（ADR 0148 修订 2026-11-01）"""
+    for connected in (True, False):
+        ctx = Ctx(missing_installable=False, missing_named=True, ai_connected=connected)
+        assert choose("missing_dependency", ctx) == {"kind": "choose_environment"}
+    # 可装但认不出包名：不拿 import 名去装，同样指向选环境
+    got = choose(
+        "missing_dependency", Ctx(missing_installable=True, packages=(), missing_named=True)
+    )
+    assert got == {"kind": "choose_environment"}
+    # 连缺的是什么都说不出：没有可指给用户的东西 -> 反馈
+    assert choose("missing_dependency", Ctx(ai_connected=True)) == {"kind": "feedback", "tried": []}
+
+
+def test_a_failed_install_is_not_rerouted_to_choose_environment():
+    """装过一次包还缺：这条规则只管「装不了」，装过之后的走法不变（仍落到 AI）"""
+    ctx = Ctx(missing_named=True, installed_this_run=True, ai_connected=True)
+    assert choose("missing_dependency", ctx) == {"kind": "ai_fix"}
+
+
+def test_non_dependency_failures_still_go_to_ai():
+    assert choose("script_error", Ctx(ai_connected=True, missing_named=True)) == {"kind": "ai_fix"}
+    assert choose("script_error", Ctx(missing_named=True)) == {"kind": "connect_ai"}
+
+
+@pytest.mark.parametrize("code", sorted(fixrouter.PYTHON_VERSION_CODES))
+def test_python_version_failures_route_to_change_python(code):
+    got = choose(code, Ctx(python_from="3.9.1", python_to="3.12"))
+    assert got == {"kind": "change_python", "from": "3.9.1", "to": "3.12", "env": None}
+    assert choose(code, Ctx(python_from="3.9.1"))["to"] is None
+
+
+@pytest.mark.parametrize("code", sorted(fixrouter.PYTHON_VERSION_CODES))
+def test_a_discovered_environment_rides_along_only_with_a_target_version(code):
+    env = {"id": "e1", "generation": "g", "name": "sci", "version": "3.12.4"}
+    got = choose(code, Ctx(python_from="3.9.1", python_to="3.12", python_env=env))
+    assert got["env"] == env
+    # 没有目标版本就不带环境：候选是按目标版本挑的，没有目标就没有依据
+    assert choose(code, Ctx(python_from="3.9.1", python_env=env))["env"] is None
+
+
+def test_python_version_codes_include_the_known_stable_codes():
+    assert {
+        "project_env_unsupported_python",
+        "root_python_mismatch",
+    } <= fixrouter.PYTHON_VERSION_CODES
+
+
+def test_raster_script_and_foreign_sources_convert():
+    raster = {"kind": "raster_script", "library": "pillow"}
+    assert choose("no_figures_captured", Ctx(no_figure_hint=raster)) == {
+        "kind": "convert_to_matplotlib",
+        "source": "python",
+    }
+    assert choose("anything", Ctx(source_language="r")) == {
+        "kind": "convert_to_matplotlib",
+        "source": "r",
+    }
+    assert choose("anything", Ctx(source_language="matlab"))["source"] == "matlab"
+    # python 来源且没有位图提示：不转写
+    assert choose("anything", Ctx(source_language="python"))["kind"] == "connect_ai"
+
+
+def test_everything_else_is_ai_fix_when_connected_and_connect_ai_when_not():
+    assert choose("script_error", Ctx(ai_connected=True)) == {"kind": "ai_fix"}
+    assert choose("script_error", Ctx(ai_connected=False)) == {"kind": "connect_ai"}
+    assert choose("", Ctx()) == {"kind": "connect_ai"}
+
+
+def test_ai_rounds_exhausted_is_feedback():
+    assert choose("script_error", Ctx(ai_connected=True, ai_rounds_exhausted=True)) == {
+        "kind": "feedback",
+        "tried": [],
+    }
+
+
+def test_priority_order_first_matching_rule_wins():
+    everything = dict(
+        native_allowed=True,
+        missing_installable=True,
+        packages=("scipy",),
+        no_figure_hint={"kind": "raster_script"},
+        source_language="r",
+        ai_connected=True,
+    )
+    # 同一份事实、不同失败码：每个码只被它自己的规则接走
+    assert choose("safe_file_operation_blocked", Ctx(**everything))["kind"] == "switch_native"
+    assert choose("missing_dependency", Ctx(**everything))["kind"] == "install_packages"
+    assert choose("project_env_unsupported_python", Ctx(**everything))["kind"] == "change_python"
+    # 转写在 AI 之前
+    assert choose("script_error", Ctx(**everything))["kind"] == "convert_to_matplotlib"
+
+
+def test_a_remedy_is_not_repeated_within_one_run():
+    # 本次运行里已经 safe -> native 过：同一个码不再标 switch_native
+    ctx = Ctx(native_allowed=True, history=_hist((), ("profile",)), ai_connected=True)
+    assert fixrouter.tried_in_run(ctx) == ("switch_native",)
+    assert choose("safe_file_operation_blocked", ctx) == {"kind": "ai_fix"}
+    # 装过包之后又缺：不再装第二遍
+    ctx2 = Ctx(
+        missing_installable=True, packages=("scipy",), installed_this_run=True, ai_connected=True
+    )
+    assert choose("missing_dependency", ctx2) == {"kind": "ai_fix"}
+
+
+def test_fourth_remedy_in_one_run_is_feedback():
+    ctx = Ctx(
+        history=_hist((), ("profile",), ("interpreter",)),
+        installed_this_run=True,
+        ai_connected=True,
+        missing_installable=True,
+        packages=("scipy",),
+    )
+    tried = ["install_packages", "switch_native", "change_python"]
+    assert list(fixrouter.tried_in_run(ctx)) == tried
+    assert choose("missing_dependency", ctx) == {"kind": "feedback", "tried": tried}
+    # 两种修法还没到上限
+    two = Ctx(history=_hist((), ("profile",)), installed_this_run=True, ai_connected=True)
+    assert choose("script_error", two) == {"kind": "ai_fix"}
+
+
+def test_only_the_current_run_counts_toward_the_cap():
+    old = tuple({"run": 1, "seq": i, "changed": ["profile"]} for i in (1, 2, 3))
+    new = ({"run": 2, "seq": 1, "changed": []},)
+    ctx = Ctx(history=old + new, ai_connected=True)
+    assert fixrouter.tried_in_run(ctx) == ()
+    assert choose("script_error", ctx) == {"kind": "ai_fix"}
+
+
+def test_every_remedy_kind_is_reachable_and_in_the_closed_set():
+    seen = {
+        choose("safe_file_operation_blocked", Ctx(native_allowed=True))["kind"],
+        choose("missing_dependency", Ctx(missing_installable=True, packages=("scipy",)))["kind"],
+        choose("root_python_mismatch", Ctx())["kind"],
+        choose("x", Ctx(source_language="r"))["kind"],
+        choose("missing_dependency", Ctx(missing_named=True))["kind"],
+        choose("x", Ctx(ai_connected=True))["kind"],
+        choose("x", Ctx())["kind"],
+        choose("x", Ctx(ai_rounds_exhausted=True))["kind"],
+        choose("script_error", Ctx(revertible_ai_edit="s1"))["kind"],
+    }
+    assert seen == set(fixrouter.REMEDY_KINDS)
+
+
+def test_revert_ai_edit_only_for_the_scripts_own_error():
+    """TVD-H1M5：脚本自己报错、而它正是 AI 刚改出来且改前跑通过的那一版 → 撤销那次修改；
+    其他失败码不归给 AI 修改（守卫 / 缺包 / 版本 / 别的码都有自己更确定的出路），没有这条事实时行为照旧。"""
+    edit = Ctx(ai_connected=True, revertible_ai_edit="s1")
+    assert choose("script_error", edit) == {"kind": "revert_ai_edit", "session": "s1"}
+    assert choose("no_figure", edit)["kind"] == "ai_fix"
+    assert choose("script_exited", edit)["kind"] == "ai_fix"
+    assert choose("script_error", Ctx(ai_connected=True))["kind"] == "ai_fix"
+    # 轮数用完照样先给撤销：它不是又一轮 AI 修复，而是把 AI 的上一轮退回去
+    assert choose("script_error", Ctx(revertible_ai_edit="s1", ai_rounds_exhausted=True))[
+        "kind"
+    ] == ("revert_ai_edit")
+
+
+def test_dist_name_reads_the_distribution_from_a_requirement():
+    assert fixrouter.dist_name("scipy>=1.2") == "scipy"
+    assert fixrouter.dist_name("  scikit-learn[extra]==1") == "scikit-learn"
+    assert fixrouter.dist_name("") == ""
+
+
+def test_stem_ownership_conflict_is_never_routed_to_ai():
+    """`multiple_stem_conflict`（TVD-TZQ9）：脚本已经跑完、图也捕获到了，只是图名已登记给另一份仍在的脚本。
+    AI 修不了（脚本不许改，冲突也不在脚本里），转写 / 换环境同样无关——给反馈，不让用户白跑一轮 AI。"""
+    for ctx in (
+        Ctx(ai_connected=True),
+        Ctx(ai_connected=False),
+        Ctx(ai_connected=True, source_language="r"),
+        Ctx(ai_connected=True, no_figure_hint={"kind": "raster_script"}),
+    ):
+        assert choose("multiple_stem_conflict", ctx) == {"kind": "feedback", "tried": []}

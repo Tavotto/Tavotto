@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hmac
 import json
 import logging
+import secrets
 import threading
 import time
 import uuid
@@ -44,15 +46,22 @@ from . import (
     depplan,
     deprepair,
     dialogscan,
+    entryfresh,
+    envadvice,
     execpolicy,
     execspec,
+    fixrouter,
     nativesession,
     pool,
     preparation,
+    projectenv,
+    pyversionfix,
     rasterhint,
     registry,
     scriptargs,
+    sourcelang,
     taskdiag,
+    userenvs,
 )
 from .preparation import TARGET_SCRIPT
 
@@ -132,7 +141,18 @@ ACTION_PREPARE = "prepare_dependencies"
 #: 「打开并运行」（P05b）：用户明确授权一次有界的持续意图——把用户代码**首次执行之前**的准备（授权范围内的受管安装、
 #: 必要的目录 / 环境回答之后的重核）连续推进，然后执行恰一次。认领它必须回显 `InstallGrant` 的摘要。
 ACTION_ARM = "run_when_ready"
-ACTION_KINDS = (ACTION_RUN, ACTION_CANCEL, ACTION_RECHECK, ACTION_PREPARE, ACTION_ARM)
+#: 浏览器模式的显式确认（ADR 0127 修订 2026-10-30，#1500）：safe 被自己的守卫拦下、而这次运行不是桌面窗口发起的（没有静默回退）
+#: 之后，失败卡上的「允许并运行」。认领 = **用户在页面上点了一次**，授权**这一次**以 native 重跑。只有同时满足两件服务端核得到的事
+#: 才生效：请求靠**会话 cookie** 认证（本机凭据头不算）、请求回显的 `confirm_token` 对得上服务端为那次失败尝试签发的那一枚。
+ACTION_CONFIRM_NATIVE = "confirm_native_run"
+ACTION_KINDS = (
+    ACTION_RUN,
+    ACTION_CANCEL,
+    ACTION_RECHECK,
+    ACTION_PREPARE,
+    ACTION_ARM,
+    ACTION_CONFIRM_NATIVE,
+)
 
 # 稳定错误码（协议契约：code 不许改，文案随便改）
 ERROR_NOT_FOUND = "preparation_session_not_found"
@@ -145,6 +165,13 @@ ERROR_IMPACT_CHANGED = "preparation_impact_changed"
 #: 会改用户自己环境的动作必须回显它看到的 `impact_digest`（不能只靠"点了一下"）
 ERROR_IMPACT_UNCONFIRMED = "preparation_impact_unconfirmed"
 ERROR_BAD_REQUEST = "bad_request"
+#: 显式要 native 的动作 / 会话不是桌面窗口发起的（ADR 0127 D1：native 的授权边界是桌面用户）。路由选的 native 在同一来源判据下
+#: 静默降 safe（路由只是偏好）；显式 native 是客户端明确的要求，换语义会误导，所以拒绝
+ERROR_NATIVE_REQUIRES_DESKTOP = "native_requires_desktop"
+#: 确认「允许并运行」的请求不是页面（会话 cookie）发来的——本机凭据头、MCP、CLI、AI 修复工具链都过不了这一关
+ERROR_CONFIRM_REQUIRES_PAGE = "native_confirm_requires_page"
+#: 确认 token 缺失 / 对不上 / 已用过：零副作用
+ERROR_CONFIRM_INVALID = "native_confirm_invalid"
 #: 同一脚本在本项目里已有另一个在等的运行意图（别的运行配置）：两条意图并存会让合计多跑一次，要显式 `transfer_from`
 ERROR_INTENT_CONFLICT = "preparation_run_intent_conflict"
 #: 想转移的旧意图不在「还没认领任何执行」的状态（已执行 / 在执行 / 已取消 / 已撤销 / 不存在）：零副作用
@@ -193,6 +220,8 @@ _ENVIRONMENT_CODE = "environment_choice_required"
 _ARGUMENTS_CODE = "script_arguments_available"
 #: 上一次尝试读不到数据（ADR 0106 的 `missing_input` 载荷）：回答走既有 `/api/engine/input-remap`，答完 `recheck`
 _MISSING_INPUT_CODE = "missing_input"
+#: 沙盒里落空的探路调用、脚本目录里找得到（#1254）：不阻塞的提示，载荷与首开确认框同形，前端复用 `WorkdirChooseButton`
+_WORKDIR_HINT_CODE = "workdir_hint"
 #: 脚本源码里有弹窗选文件 / 询问的写法（`dialogscan`）：不阻塞的提示，运行照样可用
 _GUI_DIALOG_CODE = "script_uses_gui_dialog"
 
@@ -205,6 +234,19 @@ _MAX_CONSUMED_ACTIONS = 32
 _MAX_DEP_ATTEMPTS = 16
 #: 依赖装好之后等环境租约放掉再重新检查的上限（秒）；超了照样检查（租约只影响 `plan_for` 读到的瞬时状态）。
 _REPLAN_WAIT_S = 30.0
+
+
+def _user_chose_project_env(root: str) -> bool:
+    """本项目的解释器是用户显式挑的某个环境（`projectenv` 记录的授权来源 = confirmed、且不是默认链条）。自动换版本不许碰它。"""
+    try:
+        record = projectenv.remembered_record(Path(root))
+        # 「改用默认链条」不是挑了某个环境（那一条没有可被覆盖的解释器），不算
+        if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+            return False
+        return projectenv.consent_of(record) == projectenv.CONSENT_CONFIRMED
+    except Exception:  # noqa: BLE001 — 读不出记录按「没有显式选择」处理会误伤用户的选择：保守按显式算
+        LOG.exception("读取项目环境记录失败")
+        return True
 
 
 class SessionError(Exception):
@@ -244,7 +286,10 @@ def origin_facts(offer: dict | None) -> dict:
     只带计数与闭集原因码（`depplan.ORIGIN_REASONS`）：不出包名、不出路径、不出源码——名字在计划载荷里，展示归前端
     （PR6），诊断白名单另算。来源事实**不改检查项的状态**：它们不让计划不完整（不新增 `blocked` 理由），只说明
     「这几个 import 装不了 / 不该猜」。"""
-    rows = ((offer or {}).get("plan") or {}).get("origins") or ()
+    plan_ = (offer or {}).get("plan") or {}
+    rows = plan_.get("origins") or ()
+    # 脚本会改 `sys.path`、表外名字先跑一次再说（`depplan.JointPlan.deferred_unverified`）：只列 import 名，留痕给诊断
+    deferred = [str(n) for n in plan_.get("deferred_unverified") or () if str(n).isidentifier()]
     by_reason: dict[str, int] = {}
     confirmable = 0
     for row in rows:
@@ -254,13 +299,13 @@ def origin_facts(offer: dict | None) -> dict:
             if row.get("suggested_distribution"):
                 confirmable += 1
     if not by_reason:
-        return {}
+        return {"deferred_unverified": deferred} if deferred else {}
     origins = {"count": sum(by_reason.values()), "by_reason": dict(sorted(by_reason.items()))}
     if confirmable:
         # 其中带预填（`suggested_distribution`）、可以由用户指定包名的个数（PR6）：界面据此区分「需要确认」与「尚无法确定」，
         # 不必为了一个计数再取一遍整份计划。没有就不出这个键（检查项的形状与以前一字不差）
         origins["confirmable"] = confirmable
-    return {"origins": origins}
+    return {"origins": origins, **({"deferred_unverified": deferred} if deferred else {})}
 
 
 def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
@@ -367,6 +412,7 @@ def requirements_of(
     *,
     runtime_missing: dict | None = None,
     missing_input: dict | None = None,
+    workdir_hint: dict | None = None,
 ) -> list[dict]:
     """要用户先答的事（`needs_action` 的检查项）。载荷原样是既有的 `required_input`——回答走既有端点，
     答完 `recheck`；会话不复制那两条回答协议。
@@ -468,6 +514,19 @@ def requirements_of(
                 "payload": dict(missing_input),
             }
         )
+    if workdir_hint is not None:
+        # #1254：上一次尝试在沙盒 cwd 下 glob / listdir / exists / C++ 读取器落空，同一个相对目标在脚本目录里找得到。
+        # 不阻塞、不改任何 phase；回答走既有 `PATCH /api/engine/workdir`（前端复用首开的确认框）
+        out.append(
+            {
+                "id": "data",
+                "kind": "workdir_hint",
+                "origin": "last_attempt",
+                "code": _WORKDIR_HINT_CODE,
+                "blocking": False,
+                "payload": dict(workdir_hint),
+            }
+        )
     if any(c["id"] == "arguments" for c in checks):
         schema = arguments_schema(plan)
         if schema is not None:
@@ -527,6 +586,7 @@ def derive(facts: dict) -> dict:
         awaiting_input 这次尝试的脚本此刻有没有在等一个 `input()` 的回答
         dependency     None | {running, state, code, joined, reason}（T06）：比最近一次执行尝试更晚的那次
                        依赖准备；`running` 含「装完了、正在按新环境重新检查」
+        python_change  None | {running}：版本不合、正在自动另建合适版本的受管环境（`pyversionfix`）
 
     纯函数、不读时钟、不读 provider：黄金向量 `tests/golden/preparation_session_vectors.json`
     逐条钉它的输出。provider 的状态保留原权威——这里只**投影**，不另造一份可运行判据。
@@ -550,6 +610,11 @@ def derive(facts: dict) -> dict:
                 code=str(dep.get("code") or "") or "dependency_install_failed",
                 reason="dependency_preparation",
             )
+    change = facts.get("python_change")
+    if change is not None and change["running"]:
+        # 版本不合：正在另建一个合适版本的受管环境（ADR 0114 修订 2026-10-23）。这次尝试已经失败、收尾还没做完，
+        # 但用户看到的不是「失败」而是「正在换成 Python x」
+        return _result(PHASE_PREPARING_ENVIRONMENT, OUTCOME_RUNNING, reason="python_change")
     attempt = facts.get("attempt")
     if attempt is None or (facts.get("stale") and not attempt_running(attempt)):
         # 没有（当前修订的）尝试，或检查那一刻的世界已经变了而没有尝试在跑：phase 由检查 / 失效决定，
@@ -622,7 +687,23 @@ def derive(facts: dict) -> dict:
         )
     if facts.get("target_kind") == TARGET_SCRIPT and int(attempt.get("captured_count") or 0) == 0:
         return _result(PHASE_PARTIAL, OUTCOME_NO_FIGURE, finished=True, captured=False)
+    if failed_figures_of(finalize):
+        # 逐图隔离：捕获到了一部分图、另一些图预览捕获失败。保留成功的图（outcome 仍是 succeeded，captured 照给），
+        # 但不能叫 `completed`——那等于告诉用户「全拿到了」，少的那张图在报告里不可见
+        return _result(PHASE_PARTIAL, OUTCOME_SUCCEEDED, finished=True, captured=True)
     return _result(PHASE_COMPLETED, OUTCOME_SUCCEEDED, finished=True, captured=True)
+
+
+def failed_figures_of(finalize: object) -> list[dict]:
+    """登记收口里带出的逐图失败（`_finalize_script_attempt` 的 `failed_figures`）→ 只留 `{stem, code}`（稳定码，不带原因文字 /
+    路径）。没有失败 = 空表；`partial` 的判据只有这一处，phase 投影与报告字段读同一份。"""
+    if not isinstance(finalize, dict) or finalize.get("registered") is False:
+        return []
+    out: list[dict] = []
+    for f in finalize.get("failed_figures") or ():
+        if isinstance(f, dict) and f.get("stem"):
+            out.append({"stem": str(f["stem"]), "code": str(f.get("code") or "")})
+    return out
 
 
 def attempt_running(attempt: dict) -> bool:
@@ -713,6 +794,9 @@ class _Action:
     module: str = ""
     target_kind: str = ""
     scope_policy: str = ""
+    #: confirm_native_run：服务端为「那一次」失败尝试签发的一次性确认 token（私有；只经页面 cookie 认证的报告读得到）与它绑定的尝试
+    confirm_token: str = ""
+    bound_attempt: str = ""
 
 
 @dataclasses.dataclass
@@ -734,6 +818,31 @@ class _DepAttempt:
     absorbed: bool = False
     #: 上一次通知过的（状态, 阶段）：pip 每一行输出都会来一个进度事件，只有阶段变了才值得提示"重新读报告"
     last_notified: tuple = ()
+
+
+@dataclasses.dataclass
+class _PyChange:
+    """一次「版本不合自动换 Python」（`pyversionfix`）：会话里至多一份进行中的；终局保留到本次运行结束，报告据此说
+    「换成了 Python 3.12」。进度字段只有闭集阶段与字节数，没有路径。"""
+
+    plan: pyversionfix.PythonChangePlan
+    state: str = "running"  # running | done | failed | cancelled
+    stage: str = ""
+    done: int = 0
+    total: int = 0
+    code: str = ""
+    #: 会话上的 `python_change_cancel`（规划之前就挂好，用户点取消时置上）；`pyversionfix.apply_python_change` 轮询它
+    cancel: threading.Event = dataclasses.field(default_factory=threading.Event, repr=False)
+
+    def public(self) -> dict:
+        return {
+            **self.plan.public(),
+            "state": self.state,
+            "stage": self.stage,
+            "done": self.done,
+            "total": self.total,
+            "code": self.code,
+        }
 
 
 @dataclasses.dataclass
@@ -765,6 +874,12 @@ class _Attempt:
     #: 这次运行开始（认领）那一刻项目的关闭代次（`nativesession.REGISTRY.project_epoch`）。回退的最后一刻与此刻比：
     #: 关闭再重开会升代次，关闭之前开始的运行不得在重开后的项目里起 native 进程（#1022 的代次合同延伸到回退）
     epoch: int | None = None
+    #: 这是 safe 下「换入口」重跑时：被换掉的那次尝试（`blocked`）的 attempt_id 与它的稳定码。换入口失败时，
+    #: 后续 native 回退 / 确认卡 / 失败卡都按**原来的 blocked 原因**走，不被换入口自己的新错误顶替（Codex #1504 P2）
+    entry_origin: str = ""
+    entry_origin_code: str = ""
+    #: 换入口那次**失败收场**后落定：等于 `entry_origin_code`（账本里它自己的码照实保留）；空 = 不适用
+    cause_override: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -904,12 +1019,32 @@ class Session:
     signature: tuple = ()
     #: 「跑完没出图」的原因提示缓存（`rasterhint.detect`）：按尝试 id 记，一次尝试只读一遍源码
     no_figure_hint: dict = dataclasses.field(default_factory=dict)
+    #: 最近一次报告里智能修复路由给出的 remedy（ADR 0148）：只给诊断包「修复经过」读，不参与任何判断。
+    #: 连同它是为哪次尝试算的（`last_remedy_attempt`）一起记；`fix_journeys` 只在两者对得上当前尝试时才读，
+    #: 所以后来的重跑 / 成功 / 取消不会把上一次失败的 remedy 带进「最后一次」
+    last_remedy: dict | None = None
+    last_remedy_attempt: str = ""
+    #: 可撤销的 AI 修改这一事实（`_ai_edit_fact`），连同它是按哪次尝试 + 脚本哪个签名算的（`last_ai_edit_key`）。
+    #: 报告每次轮询都要它：签名不变就不重查库、不重读脚本
+    last_ai_edit: dict | None = None
+    last_ai_edit_key: tuple | None = None
     #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
     intent: RunIntent | None = None
     #: 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：原因码 · 与上次相比变了什么 · 结局
     ledger: execpolicy.AttemptLedger = dataclasses.field(default_factory=execpolicy.AttemptLedger)
     #: 用户在本次运行里点过取消：之后到的失败不再触发任何额外执行（回退也不）
     cancel_requested: bool = False
+    #: 最近一次自动换 Python 版本（`pyversionfix`）；None = 没发生过
+    python_change: _PyChange | None = None
+    #: 已经在 safe 下换过入口的那次运行（`ledger.run`）：每次运行至多换一次入口（ADR 0127 修订 2026-10-30）
+    entry_retry_run: int = 0
+    #: 已经自动换过版本的那次运行（`ledger.run`）：每次运行至多换一次，防循环
+    python_change_run: int = 0
+    #: 本次运行的「换 Python」取消事件：**会话建立 / 每次新运行时就挂好**，早于规划（规划要探测系统解释器，可能很慢）。
+    #: 取消处理器总能 set 它，不用等 `python_change` 出现；`_PyChange.cancel` 就是同一个对象（ADR 0114 §七）
+    python_change_cancel: threading.Event = dataclasses.field(
+        default_factory=threading.Event, repr=False
+    )
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -1067,6 +1202,24 @@ def spec_key_of(plan: preparation.PreparationPlan) -> execpolicy.SpecKey:
     )
 
 
+#: 换入口那次「入口不对」一类的脚本级失败码：脚本代码真的跑过、因为入口选得不对而坏（函数单独调用缺全局变量 / 没出图）。
+#: 只有这些才让原来的 blocked 原因继续作数；过期 / 取消 / 超时 / 缺依赖 / 要用户先答的门 / 没执行的失败都不在内，
+#: 按它们自己的码收场（不回退、不出确认卡）。这是「换入口失败覆盖原因」的唯一判据，`_done` 算一次、落在 `cause_override`，
+#: `_native_confirm_offered` / `_claim_confirm_native` / `_shown_attempt` 都只读那一个字段。
+_WRONG_ENTRY_CODES = frozenset(
+    {pool.SCRIPT_ERROR_CODE, pool.NO_FIGURES_CODE, pool.NO_FIGURES_SILENT_CODE}
+)
+
+
+def _wrong_entry_failure(result: preparation.PreparationResult) -> bool:
+    """换入口那次是不是「真的执行了用户代码、以入口不对的脚本级失败收场」。"""
+    if result.status != preparation.STATUS_ERROR or not result.error:
+        return False
+    if result.error.get("executed") is False:
+        return False
+    return str(result.error.get("code") or "") in _WRONG_ENTRY_CODES
+
+
 def _outcome_of(result: preparation.PreparationResult, fin: dict | None) -> tuple[str, str]:
     """一次尝试的终局 → `(账本结局, 稳定码)`。只用已有的稳定码。"""
     status = result.status
@@ -1107,6 +1260,11 @@ class SessionService:
         #: app 注入：`notifier({"session_id", "project_id", "target", "config_revision"})`（只是「重新读报告」的提示）。
         #: 在会话锁**之外**调；它抛出的异常只记日志。
         self.notifier: Callable[[dict], None] | None = None
+        #: app 注入：「本机有没有可用的 AI」（`ai_bridge.capabilities()` 里有 `usable` 的 agent）。没注入 = 当作没连——
+        #: 智能修复路由（`fixrouter`，ADR 0148）只用它在 `ai_fix` / `connect_ai` 之间选，不在引擎里探测本机
+        self.ai_connected: Callable[[], bool] | None = None
+        #: 可撤销的 AI 修改（`ai_bridge.revertible_edit(project_root, script)`），由 app 注入（同 `ai_connected`）；None = 不查
+        self.ai_edit_lookup: Callable[[str, str], dict | None] | None = None
         self._prep.project_cancel_listeners.append(self._on_project_cancel)
 
     def _on_project_cancel(
@@ -1127,6 +1285,7 @@ class SessionService:
             ]
         for sess in mine:
             sess.cancel_requested = True
+            sess.python_change_cancel.set()
 
     # ---- 检查（不执行任何用户代码）----
     def check(
@@ -1169,8 +1328,17 @@ class SessionService:
         with sess.lock:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
-                if sess.stale or fingerprint != sess.fingerprint:
-                    old_plan, old_stale = sess.plan, sess.stale
+                # `recheck`（force）：计划按认领时的同一条判据已经不成立（典型：跑过一次之后脚本被改写——
+                # `_note_source_change` 对已跑过的修订不提前标失效），就当它失效换新计划；否则「重新检查」之后的
+                # `run` 仍冻结着旧源码修订，认领必然 `preparation_plan_stale`（TVD-H1M5 / Codex #1608）
+                forced = (
+                    preparation.stale_reason(sess.plan)
+                    if force and not sess.stale and fingerprint == sess.fingerprint
+                    else None
+                )
+                if sess.stale or forced is not None or fingerprint != sess.fingerprint:
+                    old_plan = sess.plan
+                    old_stale = sess.stale or ({"reason": forced[0]} if forced else None)
                     sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
@@ -1188,13 +1356,21 @@ class SessionService:
 
     @staticmethod
     def _plan_of(project_id: str, project_root: str, target: dict) -> preparation.PreparationPlan:
+        entry = target.get("entry")
+        if target.get("kind") == TARGET_SCRIPT and target.get("script") and entry:
+            # 会话的目标在脚本被改写之前就定了入口：登记的入口已不在脚本里时，规划用纠正后的（判据与改写只在 entryfresh）
+            fixed = entryfresh.effective_entry(project_root, str(target["script"]), entry)
+            if fixed != entry:
+                # 纠正要跨重新规划留住：会话的 target 还记着被删的旧入口，下一次 recheck 拿它去对注册表
+                # （已是新入口）就认不出「登记的那个」而原样放回旧名。target_key 不含 entry，原地改不换会话
+                target["entry"] = entry = fixed
         return preparation.plan_for(
             project_id=project_id,
             project_root=project_root,
             asset_id=target.get("asset_id") or "",
             stem=target.get("stem") or "",
             script=target.get("script"),
-            entry=target.get("entry"),
+            entry=entry,
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
@@ -1218,6 +1394,8 @@ class SessionService:
         prepare: Callable[..., dict] | None = None,
         transfer_from: str | None = None,
         desktop_initiated: bool = False,
+        page_confirmed: bool = False,
+        confirm_token: str | None = None,
     ) -> tuple[Session, bool, str]:
         """认领一个动作。回 `(会话, claimed, 动作 kind)`：`claimed=False` = 这个动作早已被认领（重复点击 / 另一个
         标签页），返回的是当初那次尝试，**没有任何新副作用**。
@@ -1235,6 +1413,9 @@ class SessionService:
         `desktop_initiated`（ADR 0127）：调用方（app）**服务端验证过**的事实——这次动作来自桌面窗口，而不是浏览器 / 本机凭据
         的 API 客户端 / 无认证入口。只有它为真，这次运行里 safe 被拦下后才可能回退 native；默认 False（fail closed）。
         `run_when_ready` 在创建意图时记下它，之后自动推进的执行沿用。
+        `page_confirmed` / `confirm_token`（只对 `confirm_native_run` 有意义，ADR 0127 修订 2026-10-30）：前者是调用方（app）
+        **服务端验证过**的事实——这个请求靠会话 cookie 认证（不是本机凭据头）；后者是请求回显的、服务端为那次失败尝试签发的
+        一次性 token。两者缺一不可；别的动作忽略它们。
         `transfer_from`（只许跟 `run_when_ready` 一起给）：另一个运行配置（argv 换了）的旧会话 id——把它**还没认领
         任何执行**的意图原子地转移过来；旧意图及其未认领动作当场退役，已认领的一切保留。
         """
@@ -1310,6 +1491,21 @@ class SessionService:
                     desktop=desktop_initiated,
                 )
                 claimed = arming = True
+            elif action.kind == ACTION_CONFIRM_NATIVE:
+                if action.attempt_id is not None:
+                    return (
+                        sess,
+                        False,
+                        action.kind,
+                    )  # 幂等认领：同一个确认 → 同一次 native 尝试，没有新副作用
+                claimed = self._claim_confirm_native(
+                    sess,
+                    action,
+                    page_confirmed=page_confirmed,
+                    token=confirm_token,
+                    launch=launch,
+                    finalize=finalize,
+                )
             elif action.kind == ACTION_CANCEL:
                 # 取消先撤销持续意图（吸收态：之后到的 done / ready 复活不了它），再只退役**这次会话拥有的**工作；
                 # 共享 worker / 别人起的会话的所有权判断在 `PreparationService.cancel` 与 `pool.build_owned` 的
@@ -1321,6 +1517,8 @@ class SessionService:
                     # 取消之后不再有任何额外执行（ADR 0127）：标记先于取消落下，回退的最后一刻核对它；
                     # 回退可能已经把第二次尝试接上了，取消要落在**最新**的那次上，不是动作当初指着的那次
                     sess.cancel_requested = True
+                    # 规划（探测系统解释器）期间 `python_change` 还不存在：事件在会话上，总能置上
+                    sess.python_change_cancel.set()  # 另建环境：停在能停的地方（代事务提交点之前）
                     for aid in dict.fromkeys(
                         [action.attempt_id]
                         + (
@@ -1580,6 +1778,119 @@ class SessionService:
         )
         return info
 
+    def _native_confirm_offered(self, sess: Session) -> bool:
+        """此刻该不该在失败卡上给「允许并运行」。只读判据，报告与认领共用：
+
+        * 最近一次尝试是 safe、脚本目标，已收尾，以 `blocked`（safe 自己的守卫）收场；
+        * 账本记的「没回退」理由**恰是** `not_desktop_initiated`——桌面来源的 safe_only / 开关 / 取消等否决不在此列；
+        * 把「这一步已经由用户确认」代入 `decide_fallback`，其余闸门（开关 / 策略 / 账本）全部放行——
+          所以「只用安全运行」、运维开关、本次运行已经回退过一次，都不给按钮。"""
+        if not sess.attempts or sess.stale or sess.cancel_requested:
+            return False
+        last = sess.attempts[-1]
+        if not last.finalized or self._has_active_attempt(sess):
+            return False
+        cur = sess.ledger.current()
+        rec = cur[-1] if cur else None
+        if (
+            rec is None
+            or rec.attempt_id != last.attempt_id
+            or rec.spec.profile != execspec.PROFILE_SAFE
+            # 换入口那次失败时按原来的 blocked 原因算（`cause_override`），不看它自己的新错误码
+            or (rec.outcome != execpolicy.OUTCOME_BLOCKED and not last.cause_override)
+            or rec.declined != execpolicy.REASON_NOT_DESKTOP
+            or sess.plan.target != TARGET_SCRIPT
+        ):
+            return False
+        return bool(
+            execpolicy.decide_fallback(
+                mode=execpolicy.mode_for(sess.project_root),
+                enabled=execpolicy.fallback_enabled(),
+                ledger=sess.ledger,
+                cause_code=last.cause_override or rec.code,
+                nxt=execpolicy.SpecKey(execpolicy.PROFILE_NATIVE, rec.spec.interpreter, ""),
+                user_confirmed=True,
+            )
+        )
+
+    def _claim_confirm_native(
+        self,
+        sess: Session,
+        action: _Action,
+        *,
+        page_confirmed: bool,
+        token: str | None,
+        launch,
+        finalize,
+    ) -> bool:
+        """会话锁内：用户在失败卡上确认「这一次用 native 重跑」（ADR 0127 修订 2026-10-30）。
+
+        顺序即防线：来源（只认页面 cookie）→ token（绑定那次失败尝试、常量时间比较、验证过一次就废，成败都不再可用）→
+        状态（失败尝试仍是最新、闸门仍放行）→ 与桌面回退**同一套**规划与最后一刻复核（`_plan_fallback` / `_start_fallback`，
+        同一本账，一次运行至多一次）。任何一环不过都是零执行。"""
+        if not page_confirmed:
+            raise SessionError(
+                ERROR_CONFIRM_REQUIRES_PAGE, "这个确认只能在页面上由用户点击完成", 403
+            )
+        expected = action.confirm_token
+        if not expected or not isinstance(token, str) or not hmac.compare_digest(expected, token):
+            raise SessionError(ERROR_CONFIRM_INVALID, "确认已失效，请重新查看再确认", 403)
+        action.confirm_token = ""  # 用过即废：无论后面成不成都不能再拿这一枚试
+        last = sess.attempts[-1] if sess.attempts else None
+        if last is None or last.attempt_id != action.bound_attempt:
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_CONFIRM_INVALID, "确认已失效，请重新查看再确认", 403)
+        if self._has_active_attempt(sess):
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
+        if not self._native_confirm_offered(sess):
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
+        found = self._prep.get(last.attempt_id, sess.project_id)
+        if found is None:
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
+        done_plan, done_result = found
+        code = last.cause_override or str(sess.ledger.current()[-1].code)
+        fallback = self._plan_fallback(
+            sess,
+            last,
+            done_plan,
+            done_result,
+            code,
+            desktop=False,
+            confirmed=True,
+            entry=self._origin_entry(sess, last),
+        )
+        if fallback is None:
+            sess.actions.pop(action.id, None)
+            raise SessionError(
+                ERROR_NOT_RUNNABLE,
+                "现在不能这样运行",
+                409,
+                {"reason": sess.ledger.current()[-1].declined, "executed": False},
+            )
+        self._start_fallback(
+            sess,
+            last,
+            fallback,
+            code,
+            launch=launch,
+            finalize=finalize,
+            desktop=False,
+            confirmed=True,
+        )
+        if sess.attempts[-1] is last:
+            sess.actions.pop(action.id, None)
+            raise SessionError(
+                ERROR_NOT_RUNNABLE,
+                "现在不能这样运行",
+                409,
+                {"reason": sess.ledger.current()[-1].declined, "executed": False},
+            )
+        action.attempt_id = sess.attempts[-1].attempt_id
+        return True
+
     def _claim_run(
         self, sess: Session, action: _Action, *, launch, finalize, desktop: bool = False
     ) -> bool:
@@ -1602,6 +1913,13 @@ class SessionService:
                 {"reason": stale[0], "executed": False},
             )
         base = sess.plan
+        if base.execution == execspec.PROFILE_NATIVE and not base.route and not desktop:
+            # 显式 native（无路由决定）与路由 native 同一道来源闸门：非桌面来源拿不到 native。拒绝而不降级——一行用户代码都不跑
+            raise SessionError(
+                ERROR_NATIVE_REQUIRES_DESKTOP,
+                "native 执行只能由桌面窗口发起",
+                403,
+            )
         if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
             # 路由（ADR 0133）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
             # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
@@ -1636,6 +1954,7 @@ class SessionService:
         # 新的一次用户发起的运行：回退预算与取消标记都从头算（ADR 0127）
         sess.ledger.begin_run()
         sess.cancel_requested = False
+        sess.python_change_cancel = threading.Event()  # 新的一次运行用新事件：上次的取消不带过来
         sess.ledger.record(plan.plan_id, spec_key_of(plan))
         done = self._done_callback(sess, attempt, launch=launch, finalize=finalize, desktop=desktop)
 
@@ -1728,10 +2047,38 @@ class SessionService:
                     LOG.exception("运行后重新检查失败 %s", done_plan.script)
             outcome, code = _outcome_of(done_result, fin)
             fallback = None
+            entry_retry = None
+            # 换入口那次失败（不论它自己的码是什么）：回退的判断按原来的 blocked 原因、用原来被拦的入口
+            cause = code
+            origin_entry = None
+            override = bool(attempt.entry_origin) and _wrong_entry_failure(done_result)
+            if override:
+                cause = attempt.entry_origin_code
+                origin_entry = self._origin_entry(sess, attempt)
             try:
-                fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
+                # 先在 safe 下换一个静态可解析的出图入口再跑一次；换入口也被拦才走 native 回退 / 确认卡
+                entry_retry = self._plan_entry_retry(sess, attempt, done_plan, done_result, code)
+                if entry_retry is None:
+                    fallback = self._plan_fallback(
+                        sess, attempt, done_plan, done_result, cause, desktop, entry=origin_entry
+                    )
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
+            # 版本不合（ADR 0114 修订 2026-10-23）：不问，直接另建合适版本的受管环境并重跑一次。调用点只有这一处——
+            # 将来 fixrouter 的 `remedy.kind == 'change_python'` 也从这里接（`_plan_python_change` 换个入口即可）
+            rerun = None
+            try:
+                with sess.lock:
+                    change_cancel = (
+                        sess.python_change_cancel
+                    )  # 规划之前取定：探测期间的取消也落在它上
+                change = self._plan_python_change(sess, done_plan, done_result, desktop)
+                if change is not None:
+                    rerun = self._change_python_and_replan(
+                        sess, attempt, change, done_plan, change_cancel
+                    )
+            except Exception:  # noqa: BLE001 — 换版本出错不能改写这次尝试已经发生的终局
+                LOG.exception("自动换 Python 版本失败 %s", done_plan.script)
             # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
             with sess.lock:
                 sess.ledger.close(attempt.attempt_id, outcome, code)
@@ -1742,12 +2089,34 @@ class SessionService:
                     sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
+                if override:
+                    attempt.cause_override = cause  # 账本里 `close` 记的仍是它自己的码
+                if entry_retry is not None:
+                    self._start_fallback(
+                        sess,
+                        attempt,
+                        entry_retry,
+                        code,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                        entry_change=True,
+                    )
                 if fallback is not None:
                     self._start_fallback(
                         sess,
                         attempt,
                         fallback,
-                        code,
+                        cause,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                    )
+                if rerun is not None:
+                    self._start_python_rerun(
+                        sess,
+                        attempt,
+                        rerun,
                         launch=launch,
                         finalize=finalize,
                         desktop=desktop,
@@ -1780,8 +2149,11 @@ class SessionService:
         done_result,
         code: str,
         desktop: bool = False,
+        confirmed: bool = False,
+        entry: str | None = None,
     ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
         """锁外：safe 尝试以 `code` 收场后，要不要接一次 native。回 `(native 计划, 它的执行身份)`；不回退回 None。
+        `entry`：换入口失败后回退时，native 用**原来被拦的那个入口**（不是换过的函数入口）。
 
         只有 `blocked` 类原因才会走到重新规划（便宜的否决先做）；规划只读，不执行用户代码。"""
         if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
@@ -1798,16 +2170,16 @@ class SessionService:
             nxt=provisional,
             cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
             desktop_initiated=desktop,
+            user_confirmed=confirmed,
         )
         if not decision:
             self._decline(sess, attempt, decision.reason)
             return None
         try:
-            nplan = self._plan_of(
-                sess.project_id,
-                sess.project_root,
-                {**sess.target, "execution": execspec.PROFILE_NATIVE},
-            )
+            target = {**sess.target, "execution": execspec.PROFILE_NATIVE}
+            if entry:
+                target["entry"] = entry
+            nplan = self._plan_of(sess.project_id, sess.project_root, target)
         except Exception:  # noqa: BLE001 — 规划失败 = 这次不回退，原结局保留
             LOG.exception("native 回退计划失败 %s", done_plan.script)
             self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
@@ -1837,6 +2209,7 @@ class SessionService:
             nxt=key,
             cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
             desktop_initiated=desktop,
+            user_confirmed=confirmed,
         )
         if not again:
             self._decline(sess, attempt, again.reason)
@@ -1852,6 +2225,83 @@ class SessionService:
         )
         return nplan, key
 
+    def _origin_entry(self, sess: Session, attempt: _Attempt) -> str | None:
+        """换入口那次尝试所替换的、原来被拦的入口；不是换入口的尝试回 None。"""
+        if not attempt.entry_origin:
+            return None
+        found = self._prep.get(attempt.entry_origin, sess.project_id)
+        return found[0].entry if found is not None else None
+
+    def _plan_entry_retry(
+        self, sess: Session, attempt: _Attempt, done_plan, done_result, code: str
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """锁外：safe 尝试以 `blocked` 收场后，先**留在 safe** 里换一个入口再跑一次（ADR 0127 修订 2026-10-30）。
+
+        被拦的操作可能只在某个入口函数里（`main()` 里 `savefig` 又读回），而另一个只建图的出图函数在 safe 下就能出图——
+        旧的素材栏探测（`probe.entry_candidates` / `entry_retry_allowed`）早有这一步，准备会话补上。候选与「值不值得换」
+        的判据只复用 probe 那一份；**只取静态能解析出的出图函数**（`static_only`，不盲试），去掉已试过的，取第一个；
+        每次运行至多换一次，与 native 回退共用 `RetryGuard` 账本和总次数上限。"""
+        if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR or not execpolicy.may_fall_back(code):
+            return None
+        if sess.entry_retry_run == sess.ledger.run or sess.cancel_requested:
+            return None
+        if done_result.cancel_requested_at is not None or not done_plan.script:
+            return None
+        from . import probe  # 延迟：probe 依赖面大，只在需要换入口时才拉
+
+        if not probe.entry_retry_allowed(pool.WorkerError(code, code=code)):
+            return None
+        tried = {done_plan.entry}
+        for rec in sess.ledger.current():  # 只算本次运行已经试过的入口
+            found = self._prep.get(rec.attempt_id, sess.project_id)
+            if found is not None:
+                tried.add(found[0].entry)
+        try:
+            cands = [
+                e
+                for e in probe.entry_candidates(
+                    sess.project_root, done_plan.script, static_only=True
+                )
+                # 只取函数入口：`__main__`（INLINE_ENTRY）会把顶层代码整段重跑，换过去多半还是同一个拦截，白用掉唯一一次换入口
+                if e not in tried and e != registry.INLINE_ENTRY
+            ]
+        except Exception:  # noqa: BLE001 — 候选算不出来 = 不换，走原分支
+            LOG.exception("换入口候选失败 %s", done_plan.script)
+            return None
+        if not cands:
+            return None
+        try:
+            nplan = self._plan_of(
+                sess.project_id, sess.project_root, {**sess.target, "entry": cands[0]}
+            )
+        except Exception:  # noqa: BLE001
+            LOG.exception("换入口计划失败 %s", done_plan.script)
+            return None
+        if (
+            nplan.execution != execspec.PROFILE_SAFE
+            or nplan.script != done_plan.script
+            or nplan.interpreter != done_plan.interpreter
+            or nplan.script_revision != done_plan.script_revision
+            or nplan.required_input
+            or any(c["status"] != CHECK_OK for c in checks_of(nplan))
+            or preparation.stale_reason(nplan) is not None
+        ):
+            return None
+        key = spec_key_of(nplan)
+        if not execpolicy.RetryGuard.admit(sess.ledger, key, code):
+            return None
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause=code,
+            retry_changed=execpolicy.changed_between(spec_key_of(done_plan), key),
+        )
+        return nplan, key
+
     def _start_fallback(
         self,
         sess: Session,
@@ -1862,8 +2312,10 @@ class SessionService:
         launch,
         finalize,
         desktop: bool = False,
+        confirmed: bool = False,
+        entry_change: bool = False,
     ) -> None:
-        """会话锁内：把 native 回退作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
+        """会话锁内：把 native 回退（`entry_change=True` 时是 safe 下换入口的重跑，同一套最后一刻复核）作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
         （锁外规划期间用户可能点了取消）；任何一项不成立就保持原结局，一行用户代码都不再跑。"""
         nplan, key = fallback
         if sess.attempts[-1] is not attempt:
@@ -1883,15 +2335,22 @@ class SessionService:
         if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
             self._decline(sess, attempt, execpolicy.REASON_PROJECT_REOPENED)
             return
-        decision = execpolicy.decide_fallback(
-            mode=execpolicy.mode_for(sess.project_root),
-            enabled=execpolicy.fallback_enabled(),
-            ledger=sess.ledger,
-            cause_code=code,
-            nxt=key,
-            cancelled=False,
-            desktop_initiated=desktop,
-        )
+        if entry_change:
+            # 留在 safe：不受「只用安全运行」/ 运维回退开关 / 来源约束（没换执行语义），只过通用闸门（含总次数上限）
+            decision = execpolicy.RetryGuard.admit(sess.ledger, key, code)
+            if decision and sess.entry_retry_run == sess.ledger.run:
+                decision = execpolicy.Decision(False, execpolicy.REASON_NO_NEW_ROOT_CAUSE)
+        else:
+            decision = execpolicy.decide_fallback(
+                mode=execpolicy.mode_for(sess.project_root),
+                enabled=execpolicy.fallback_enabled(),
+                ledger=sess.ledger,
+                cause_code=code,
+                nxt=key,
+                cancelled=False,
+                desktop_initiated=desktop,
+                user_confirmed=confirmed,
+            )
         if not decision:
             self._decline(sess, attempt, decision.reason)
             return
@@ -1902,6 +2361,8 @@ class SessionService:
             created_at=self._clock(),
             profile=nplan.execution,
             epoch=attempt.epoch,
+            entry_origin=attempt.attempt_id if entry_change else "",
+            entry_origin_code=code if entry_change else "",
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan, project_epoch=attempt.epoch)
@@ -1923,6 +2384,8 @@ class SessionService:
             return
         sess.attempts.append(second)
         done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
+        if entry_change:
+            sess.entry_retry_run = sess.ledger.run
         found = self._prep.get(nplan.plan_id, sess.project_id)
         try:
             if found is None or found[1].status != preparation.STATUS_PENDING:
@@ -1937,6 +2400,170 @@ class SessionService:
         if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
             sess.intent.attempts.append(nplan.plan_id)
             sess.intent.note("fallback", nplan.plan_id, self._clock())
+        sess.dependency_delta = None
+
+    # ---- 版本不合：自动换 Python（ADR 0114 修订 2026-10-23）----
+    def _plan_python_change(
+        self, sess: Session, done_plan, done_result, desktop: bool
+    ) -> "pyversionfix.PythonChangePlan | None":
+        """锁外、只读：这次失败是不是「版本不合」且推得出要换成哪个版本。每次运行至多一次；非桌面窗口发起的运行
+        不换（改磁盘上的环境是桌面用户的授权边界，同 native 的来源闸门）；用户已取消不换。"""
+        if not desktop or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR:
+            return None
+        if sess.cancel_requested or done_result.cancel_requested_at is not None:
+            return None
+        if sess.python_change_run == sess.ledger.run:
+            return None
+        if _user_chose_project_env(sess.project_root):
+            # 用户显式给本项目挑过环境：不替他换（自动换会把「记住的解释器」改成受管环境）。失败卡上的
+            # `change_python` 按钮仍在，由用户点了才切（ADR 0148 修订 2026-11-01）
+            return None
+        adoption = (done_plan.environment or {}).get("adoption") or {}
+        failure = pyversionfix.failure_from_report(
+            script=str(done_plan.script or ""),
+            error=done_result.error,
+            not_used=adoption.get("not_used"),
+        )
+        if failure is None:
+            return None
+        return pyversionfix.plan_python_change(failure, sess.project_root)
+
+    def _change_python_and_replan(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        change,
+        done_plan,
+        cancel: threading.Event | None = None,
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """执行线程上、锁外：把会话标成「正在换版本」（这次尝试保持未收尾，phase = preparing_environment）→ 阻塞执行
+        `pyversionfix.apply_python_change`（进度写回会话并通知）→ 成功就按新环境重新规划，回 `(新计划, 它的执行身份)`；
+        失败 / 取消 / 重新规划不可用回 None（原失败结局保留，一行用户代码都不再跑）。"""
+        cancel = cancel if cancel is not None else sess.python_change_cancel
+        state = _PyChange(plan=change, cancel=cancel)
+        with sess.lock:
+            sess.python_change = state
+            sess.python_change_run = sess.ledger.run
+            sess.ledger.note_python_change(
+                from_version=change.from_version,
+                to_version=change.to_version,
+                base=change.base,
+                download_bytes=change.download_bytes,
+                outcome=execpolicy.OUTCOME_PENDING,
+            )
+        self._notify(sess)
+
+        def progress(snap: dict) -> None:
+            with sess.lock:
+                state.stage = str(snap.get("stage") or "")
+                state.done = int(snap.get("done") or 0)
+                state.total = int(snap.get("total") or 0)
+            self._notify(sess)
+
+        try:
+            if cancel.is_set() or sess.cancel_requested:
+                # 规划（探测）期间用户点了停止：一个字节都不下、不建环境，结局记成取消
+                result = {"ok": False, "code": pyversionfix.ERROR_CANCELLED}
+            else:
+                result = pyversionfix.apply_python_change(change, progress, cancel)
+        except Exception:  # noqa: BLE001 — 换版本的事务不许让执行线程静默死掉
+            LOG.exception("自动换 Python 版本异常 %s", done_plan.script)
+            result = {"ok": False, "code": pyversionfix.ERROR_FAILED}
+        ok = bool(result.get("ok"))
+        code = str(result.get("code") or "")
+        cancelled = state.cancel.is_set() or code == pyversionfix.ERROR_CANCELLED
+        with sess.lock:
+            state.state = "done" if ok else ("cancelled" if cancelled else "failed")
+            state.code = code
+            sess.ledger.note_python_change(
+                from_version=change.from_version,
+                to_version=change.to_version,
+                base=change.base,
+                download_bytes=change.download_bytes,
+                outcome=(
+                    execpolicy.OUTCOME_SUCCEEDED
+                    if ok
+                    else (execpolicy.OUTCOME_CANCELLED if cancelled else execpolicy.OUTCOME_FAILED)
+                ),
+                code=code,
+            )
+        if not ok:
+            return None
+        try:
+            nplan = self._plan_of(sess.project_id, sess.project_root, sess.target)
+        except Exception:  # noqa: BLE001 — 规划失败 = 这次不重跑，原结局保留
+            LOG.exception("换 Python 之后重新规划失败 %s", done_plan.script)
+            return None
+        if nplan.script != done_plan.script or nplan.script_revision != done_plan.script_revision:
+            return None
+        if nplan.required_input or any(c["status"] != CHECK_OK for c in checks_of(nplan)):
+            return None
+        if preparation.stale_reason(nplan) is not None:
+            return None
+        key = spec_key_of(nplan)
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause="python_changed",
+            retry_changed=(execpolicy.CHANGED_INTERPRETER,),
+        )
+        return nplan, key
+
+    def _start_python_rerun(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        rerun,
+        *,
+        launch,
+        finalize,
+        desktop: bool = False,
+    ) -> None:
+        """会话锁内：换完 Python 之后把重跑作为**同一会话的下一个 attempt** 交出去，最后一刻的复核（取消 / 取代 / 项目
+        重开）与 `_start_fallback` 同一套——任何一项不成立就保持原结局，一行用户代码都不再跑。"""
+        nplan, key = rerun
+        if sess.attempts[-1] is not attempt or sess.cancel_requested:
+            return
+        intent = sess.intent
+        if intent is not None and intent.status == INTENT_CANCELLED:
+            return
+        if self._prep.superseded(attempt.attempt_id):
+            return
+        if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+            return
+        second = _Attempt(
+            attempt_id=nplan.plan_id,
+            action_id=attempt.action_id,
+            config_revision=sess.config_revision,
+            created_at=self._clock(),
+            profile=nplan.execution,
+            epoch=attempt.epoch,
+        )
+        sess.ledger.record(nplan.plan_id, key, cause="python_changed")
+        self._prep.register(nplan, project_epoch=attempt.epoch)
+        sess.plan = (
+            nplan  # 会话的计划跟上（不加修订，同"点运行时采用了项目环境"）：报告里的环境是换后的
+        )
+        sess.fingerprint = _fingerprint(nplan)
+        sess.attempts.append(second)
+        done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
+        found = self._prep.get(nplan.plan_id, sess.project_id)
+        try:
+            if found is None or found[1].status != preparation.STATUS_PENDING:
+                raise RuntimeError("换 Python 之后的重跑没有进入待执行")
+            launch(nplan, done)
+        except Exception:  # noqa: BLE001 — 没交出去：撤回这次尝试，原结局保留
+            LOG.exception("换 Python 之后的重跑没能交给执行线程 %s", nplan.script)
+            sess.attempts.remove(second)
+            sess.ledger.discard(nplan.plan_id)
+            return
+        if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
+            sess.intent.attempts.append(nplan.plan_id)
+            sess.intent.note("python_changed", nplan.plan_id, self._clock())
         sess.dependency_delta = None
 
     # ---- 持续运行意图（P05b，ADR 0124）----
@@ -2243,7 +2870,12 @@ class SessionService:
 
     # ---- 报告 ----
     def report(
-        self, sess: Session, *, awaiting_input: bool = False, runtime_input: dict | None = None
+        self,
+        sess: Session,
+        *,
+        awaiting_input: bool = False,
+        runtime_input: dict | None = None,
+        expose_confirm: bool = False,
     ) -> dict:
         """会话的投影：目标 / 修订 / 观察序号 / phase / outcome / checks / requirements / actions / provider
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
@@ -2270,11 +2902,26 @@ class SessionService:
                 (sess.intent.status, sess.intent.reason, sess.intent.waiting_on)
                 if sess.intent is not None
                 else None,
+                # 换 Python 版本的阶段与下载进度（按 5% 分桶：不让每个下载块都推进一次序号）
+                (
+                    sess.python_change.state,
+                    sess.python_change.stage,
+                    (sess.python_change.done * 20 // sess.python_change.total)
+                    if sess.python_change.total
+                    else 0,
+                )
+                if sess.python_change is not None
+                else None,
             )
             if signature != sess.signature:
                 sess.signature = signature
                 sess.observation_seq += 1
             plan, result = found if found else (None, None)
+            no_figure_hint = (
+                self._no_figure_hint(sess, plan, result)
+                if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
+                else None
+            )
             return {
                 "session_version": SESSION_VERSION,
                 "session_id": sess.session_id,
@@ -2300,9 +2947,16 @@ class SessionService:
                         and result.status == preparation.STATUS_ERROR
                         else None
                     ),
+                    workdir_hint=(
+                        result.workdir_hint
+                        if result is not None and attempt_fact is not None
+                        else None
+                    ),
                 ),
                 "actions": [
-                    self._action_payload(a) for a in sess.actions.values() if self._open(a)
+                    self._action_payload(a)
+                    for a in sess.actions.values()
+                    if self._open(a) and (expose_confirm or a.kind != ACTION_CONFIRM_NATIVE)
                 ],
                 "provider": {
                     "plan_id": sess.plan.plan_id,
@@ -2344,16 +2998,30 @@ class SessionService:
                 ),
                 # 跑完没出图时的原因（`rasterhint`）：脚本自己把图片写成了文件（Pillow / OpenCV …），不是 Matplotlib 图。
                 # 只是提示——不改 outcome / facts；None = 不适用或判不出（老后端没有这个键）
-                "no_figure_hint": (
-                    self._no_figure_hint(sess, plan, result)
-                    if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
-                    else None
+                "no_figure_hint": no_figure_hint,
+                # 智能修复路由（ADR 0148）：失败 / 没出图 / 走不通时按失败类型选的唯一修法（`fixrouter.REMEDY_KINDS`）。
+                # 新增字段，None = 不适用（没失败 / 还在跑）；旧前端读不到也不坏
+                "remedy": self._remedy(sess, derived, plan, result, missing, no_figure_hint),
+                # 可撤销的 AI 修改（TVD-H1M5）：脚本此刻正是改图助手刚改出来的那一版、还能原样撤销——`{session, succeeded_before}`。
+                # 只在失败类结局上算（随 remedy 一起）；给修复助手看的事实（`runreport`），界面只读 remedy。None = 不适用
+                "ai_edit": sess.last_ai_edit if sess.last_remedy is not None else None,
+                # 部分捕获：这次成功的尝试里预览捕获失败的图（`{stem, code}`，稳定码）。phase 是 `partial` 而 outcome 仍是
+                # `succeeded`（成功那几张照常在 `captured` 里）；全部成功 / 全部失败时是空表
+                "failed_figures": (
+                    failed_figures_of(attempt_fact.get("finalize"))
+                    if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
                 ),
                 # 运行意图（P05b）：None = 从没有过；终结后保留，说明是怎么结束的（reason 是闭集码，不带路径与参数）
                 "intent": sess.intent.public() if sess.intent is not None else None,
                 # 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：执行语义 · 原因码 · 与上次相比变了什么 · 结局。
                 # 只有摘要与闭集码，没有路径 / argv / 环境值
                 "attempt_history": sess.ledger.history(),
+                # 版本不合时自动换 Python（ADR 0114 修订 2026-10-23）：换成了什么 / 基础来源 / 下载字节 / 进度 / 结局；
+                # None = 这个会话里没发生过。没有路径
+                "python_change": (
+                    sess.python_change.public() if sess.python_change is not None else None
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
@@ -2361,7 +3029,7 @@ class SessionService:
     def _observe_locked(self, sess: Session, *, awaiting_input: bool = False) -> "_Observation":
         """会话锁内：读出此刻的事实 → 派生 phase → 补齐 / 撤掉未认领动作。`report` 与意图的推进共用这一份，
         所以意图看到的世界与用户在报告里看到的是同一个。"""
-        found = self._current_attempt(sess)
+        found = self._shown_attempt(sess, self._current_attempt(sess))
         checks = checks_of(sess.plan)
         # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
         # （它仍在 provider 引用与历史里）
@@ -2384,6 +3052,11 @@ class SessionService:
             "attempt": attempt_fact,
             "awaiting_input": bool(awaiting_input) and attempt_fact is not None,
             "dependency": dep_fact,
+            "python_change": (
+                {"running": True}
+                if sess.python_change is not None and sess.python_change.state == "running"
+                else None
+            ),
         }
         derived = derive(facts)
         if attempt_gone:
@@ -2416,6 +3089,297 @@ class SessionService:
         if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
             sess.stale = {"reason": preparation.STALE_SOURCE}
             sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+
+    def _remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
+        """失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`（会话锁内，只读：不起进程、不探测）。"""
+        remedy = self._choose_remedy(sess, derived, plan, result, missing, no_figure_hint)
+        # 随当前尝试一起记（含「没有 remedy」）：诊断包只读与当前尝试对得上的那一份
+        sess.last_remedy = remedy
+        sess.last_remedy_attempt = sess.attempts[-1].attempt_id if sess.attempts else ""
+        return remedy
+
+    def _choose_remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
+        outcome = derived["outcome"]
+        # needs_dependencies：运行期才发现缺包（动态 import），同样是「走不通」，且正是 `install_packages` 的主场
+        if outcome.get("kind") not in (
+            OUTCOME_FAILED,
+            OUTCOME_NO_FIGURE,
+            OUTCOME_BLOCKED,
+            OUTCOME_NEEDS_DEPENDENCIES,
+        ):
+            return None
+        if derived["phase"] in (PHASE_RUNNING, PHASE_AWAITING_RUNTIME_INPUT):
+            return None
+        code = str(
+            outcome.get("code") or ((result.error or {}).get("code") if result else "") or ""
+        )
+        if not code and outcome.get("kind") == OUTCOME_NO_FIGURE:
+            code = "no_figure"
+        env = sess.plan.environment or {}
+        packages: tuple[str, ...] = ()
+        installable = bool(missing and missing.get("installable"))
+        if installable:
+            # `missing["requirement"]` 是 `depresolve` 的需求载荷（dict：distribution / requirement / …），不是字符串
+            req = missing.get("requirement")
+            if isinstance(req, dict):
+                name = str(req.get("distribution") or "") or fixrouter.dist_name(
+                    str(req.get("requirement") or "")
+                )
+            else:
+                name = fixrouter.dist_name(str(req or ""))
+            packages = (name,) if name else ()
+        auto_ok = False
+        if packages:
+            auto_ok = self._auto_install_allowed(
+                sess.plan.interpreter, str(env.get("source") or "")
+            )
+        connected = False
+        probe = self.ai_connected
+        if probe is not None:
+            try:
+                connected = bool(probe())
+            except Exception:  # noqa: BLE001 — 探测失败当作没连：只影响 ai_fix / connect_ai 二选一
+                LOG.exception("判断 AI 是否已连接失败")
+        run_start = None
+        cur = sess.ledger.current()
+        if cur:
+            run_start = next(
+                (a.created_at for a in sess.attempts if a.attempt_id == cur[0].attempt_id), None
+            )
+        installed = run_start is not None and any(
+            d.created_at >= run_start
+            and d.finished is not None
+            and d.finished.get("state") == deprepair.STATE_DONE
+            for d in sess.dep_attempts
+        )
+        script = sess.plan.script or ""
+        history = tuple(sess.ledger.history())
+        ai_edit = self._ai_edit_fact(sess, history)
+        # 本可回退却没回退（账本记了理由：不是桌面发起的运行 / 用户只要 safe / 取消了…）：不能再标「静默换成原样运行」
+        declined = any(r.get("declined") for r in history[-1:])
+        python_to, python_env = self._python_switch_target(sess, code, result)
+        ctx = fixrouter.Ctx(
+            ai_connected=connected,
+            native_allowed=(
+                execpolicy.fallback_enabled()
+                and execpolicy.mode_for(sess.project_root) != execpolicy.MODE_SAFE_ONLY
+                and not declined
+            ),
+            confirm_native=self._native_confirm_offered(sess),
+            missing_installable=installable,
+            packages=packages,
+            auto_install_allowed=auto_ok,
+            python_from=str(env.get("python_version") or ""),
+            python_to=python_to,
+            python_env=python_env,
+            missing_named=bool(
+                str(
+                    (missing or {}).get("module")
+                    or ((result.error or {}).get("module") if result else "")
+                    or ""
+                )
+            ),
+            no_figure_hint=no_figure_hint,
+            source_language=sourcelang.extension_hint(script) if script else None,
+            history=history,
+            installed_this_run=installed,
+            revertible_ai_edit=(
+                ai_edit["session"] if ai_edit and ai_edit.get("succeeded_before") else None
+            ),
+        )
+        return fixrouter.choose(code, ctx)
+
+    def _python_switch_target(
+        self, sess: Session, code: str, result
+    ) -> tuple[str | None, dict | None]:
+        """Python 版本类失败 -> `(目标版本主.次, 现成环境或 None)`（ADR 0148 修订 2026-11-01）。只读：范围来自
+        `pyversionfix.required_span`（读声明文件），候选来自 `envadvice.recommend`（落盘线索 + 已有体检结论，不起解释器）。
+
+        现成环境 = 体检**确认健康**、版本落在范围内、不是内置 runtime、不是当前环境的那一个，按 `userenvs.rank`（来源 → 官方
+        验证 → 版本新）挑第一个。全局显式解释器压着时（采用会 409）不给。算不出范围 / 没有候选 -> 目标版本照给、环境 None（前端走选择器）。"""
+        if code not in fixrouter.PYTHON_VERSION_CODES:
+            return None, None
+        try:
+            adoption = (sess.plan.environment or {}).get("adoption") or {}
+            failure = pyversionfix.failure_from_report(
+                script=str(sess.plan.script or ""),
+                error=result.error if result else None,
+                not_used=adoption.get("not_used"),
+            )
+            if failure is None:
+                return None, None
+            span = pyversionfix.required_span(failure, sess.project_root)
+            if span is None:
+                return None, None
+            minors = span.minors()
+            to = f"{minors[0][0]}.{minors[0][1]}"  # minors 由高到低
+            rec = envadvice.recommend(sess.project_root, sess.plan.script)
+            if (rec.get("decision") or {}).get("locked_by"):
+                return to, None
+            picked = []
+            for c in rec.get("candidates") or ():
+                health = c.get("health") or {}
+                version = str(health.get("python_version") or "")
+                parts = version.split(".")
+                if (
+                    c.get("id") in (envadvice.BUILTIN_ID, None)
+                    or c.get("current")
+                    or c.get("status") != envadvice.STATUS_HEALTHY
+                    or len(parts) < 2
+                    or not (parts[0].isdigit() and parts[1].isdigit())
+                    or (int(parts[0]), int(parts[1])) not in minors
+                    or not pyversionfix._full_version_ok(version, span.patch_spec())
+                ):
+                    continue
+                picked.append(
+                    (
+                        userenvs.rank(
+                            {
+                                "satisfies": True,
+                                "source": (c.get("sources") or [""])[0],
+                                "label": c.get("name") or "",
+                                "support": health.get("support"),
+                                "python_version": version,
+                            }
+                        ),
+                        c,
+                    )
+                )
+            if not picked:
+                return to, None
+            best = min(picked, key=lambda t: t[0])[1]
+            version = str(best["health"]["python_version"])
+            name = str(best.get("name") or best.get("python_relative") or "")
+            return ".".join(version.split(".")[:2]), {
+                "id": best["id"],
+                "generation": best["generation"],
+                "name": name or f"Python {'.'.join(version.split('.')[:2])}",
+                "version": version,
+            }
+        except Exception:  # noqa: BLE001 — 找不到现成环境只意味着回到「选择运行环境」，不能让路由本身失败
+            LOG.exception("挑选满足版本的现成环境失败")
+            return None, None
+
+    def _ai_edit_fact(self, sess: Session, history: tuple[dict, ...]) -> dict | None:
+        """这份脚本此刻是不是改图助手刚改出来、还能原样撤销的那一版（TVD-H1M5）——是就回
+        `{session, succeeded_before}`，`succeeded_before` = 那次修改开始之前，这个会话里有过跑通的尝试。
+
+        主语：此刻磁盘上的脚本（`ai_edit_lookup` 里按字节比对 AI 留下的版本）+ 本会话账本里成功尝试的创建时刻。
+        后端重启后账本是空的，`succeeded_before` 为 False——只少一个确定的建议，不会错给。按（当前尝试, 脚本签名）缓存：
+        报告轮询不反复查库读文件。查不了 / 出错一律 None。"""
+        lookup = self.ai_edit_lookup
+        script = sess.plan.script or ""
+        if lookup is None or not script:
+            return None
+        current = sess.attempts[-1].attempt_id if sess.attempts else ""
+        try:
+            st = (Path(sess.project_root) / script).stat()
+            sig: tuple = (current, script, st.st_size, st.st_mtime_ns)
+        except OSError:
+            sig = (current, script, None, None)
+        if sess.last_ai_edit_key == sig:
+            return sess.last_ai_edit
+        fact = None
+        try:
+            edit = lookup(str(sess.project_root), script)
+        except Exception:  # noqa: BLE001 — 只少一个建议，不该让失败卡出不来
+            LOG.exception("查可撤销的 AI 修改失败")
+            edit = None
+        if edit and edit.get("session"):
+            started = float(edit.get("started_ms") or 0) / 1000.0
+            ok_ids = {
+                r.get("attempt_id")
+                for r in history
+                if isinstance(r, dict) and r.get("outcome") == execpolicy.OUTCOME_SUCCEEDED
+            }
+            before = any(a.attempt_id in ok_ids and a.created_at < started for a in sess.attempts)
+            fact = {"session": str(edit["session"]), "succeeded_before": before}
+        sess.last_ai_edit, sess.last_ai_edit_key = fact, sig
+        return fact
+
+    def fix_journeys(self, project_id: str) -> list[dict]:
+        """诊断包「修复经过」（ADR 0148）：这个项目每个有过执行尝试的会话——走过哪些修法（账本 + 路由）、各自的结局码、
+        最后一次的报错原文。只读；原文里的路径 / 密钥形状由诊断包的统一脱敏（`diagdetail.Scrubber`）处理，这里不自己抹。"""
+        with self._lock:
+            mine = [s for s in self._by_id.values() if s.project_id == project_id]
+        out: list[dict] = []
+        for sess in mine:
+            with sess.lock:
+                history = sess.ledger.history()
+                if not history:
+                    continue
+                found = self._current_attempt(sess)
+                err = (found[1].error or {}) if found else {}
+                out.append(
+                    {
+                        "script": sess.plan.script or "",
+                        "tried": list(
+                            fixrouter.tried_in_run(fixrouter.Ctx(history=tuple(history)))
+                        ),
+                        "remedy": (
+                            dict(sess.last_remedy)
+                            if sess.last_remedy
+                            and found is not None
+                            and sess.last_remedy_attempt == found[0].plan_id
+                            else None
+                        ),
+                        "attempts": [
+                            {
+                                k: r.get(k)
+                                for k in (
+                                    "run",
+                                    "seq",
+                                    "profile",
+                                    "changed",
+                                    "cause",
+                                    "outcome",
+                                    "code",
+                                )
+                            }
+                            for r in history
+                        ],
+                        "last_error": {
+                            "code": str(err.get("code") or ""),
+                            "message": str(err.get("message") or "")[:4000],
+                        }
+                        if err
+                        else None,
+                    }
+                )
+        return out
+
+    @staticmethod
+    def _auto_install_allowed(interpreter: str, source: str) -> bool:
+        """环境允许不问就装：自动安装开关开着，且环境是 Tavotto 自管的（项目 venv / 受管）或用户已按环境同意过
+        （`convertdeps` 的「每环境问一次」口径，不另写一份）。读不出来一律当不允许。"""
+        if not interpreter:
+            return False
+        try:
+            from . import convertdeps  # 延迟：见 fixrouter
+
+            if not convertdeps.enabled():
+                return False
+            env = convertdeps.describe_env(interpreter, source)
+            return env["kind"] in convertdeps.DIRECT_KINDS or convertdeps.has_consent(env["key"])
+        except Exception:  # noqa: BLE001
+            LOG.exception("判断环境是否允许直接装包失败")
+            return False
 
     @staticmethod
     def _no_figure_hint(
@@ -2456,6 +3420,18 @@ class SessionService:
                 {"id": session_id, "reason": "unknown_or_restarted"},
             )
         return sess
+
+    def _shown_attempt(self, sess: Session, found):
+        """报告给用户看的那次尝试：换入口那次失败收场（`cause_override` 落定）时，用户看到的是原来被拦的那次
+        （「这个脚本要真的把文件写到磁盘上才能跑完」+「允许并运行」），不是换入口自己的新错误；
+        那次失败如实留在账本与执行记录里。"""
+        if found is None or not sess.attempts:
+            return found
+        last = sess.attempts[-1]
+        if not (last.entry_origin and last.cause_override and last.finalized):
+            return found
+        origin = self._prep.get(last.entry_origin, sess.project_id)
+        return origin if origin is not None else found
 
     def _current_attempt(self, sess: Session):
         if not sess.attempts:
@@ -2698,6 +3674,7 @@ class SessionService:
             ACTION_RECHECK: not attempt_active and not dependency_busy,
             ACTION_PREPARE: prep is not None,
             ACTION_ARM: armable,
+            ACTION_CONFIRM_NATIVE: self._native_confirm_offered(sess),
         }
         for kind, wanted in want.items():
             open_ones = [a for a in sess.actions.values() if a.kind == kind and self._open(a)]
@@ -2707,6 +3684,13 @@ class SessionService:
                     if a.attempt_id != current:
                         sess.actions.pop(a.id, None)
                 open_ones = [a for a in open_ones if a.attempt_id == current]
+            if kind == ACTION_CONFIRM_NATIVE:
+                # 确认绑那一次失败尝试：尝试换了（重跑 / 重新检查），旧的确认连同它的 token 一起作废
+                last_id = sess.attempts[-1].attempt_id if sess.attempts else ""
+                for a in open_ones:
+                    if a.bound_attempt != last_id:
+                        sess.actions.pop(a.id, None)
+                open_ones = [a for a in open_ones if a.bound_attempt == last_id]
             if kind == ACTION_PREPARE and prep is not None:
                 # 影响摘要变了：旧的未认领动作不再是用户看到的那一份，作废重发（认领时本也会被拒）
                 for a in open_ones:
@@ -2728,6 +3712,10 @@ class SessionService:
                 )
                 if kind == ACTION_ARM:
                     action.impact_digest = GRANT.digest()
+                if kind == ACTION_CONFIRM_NATIVE:
+                    # 服务端为这一次失败尝试签发的一次性 token：不可猜、不落盘、不进诊断，只随页面 cookie 认证的报告交出
+                    action.confirm_token = secrets.token_urlsafe(32)
+                    action.bound_attempt = sess.attempts[-1].attempt_id
                 if kind == ACTION_PREPARE and prep is not None:
                     action.impact_digest = prep["impact_digest"]
                     action.impact_core = dict(prep["impact"])
@@ -2738,7 +3726,8 @@ class SessionService:
         consumed = [
             a
             for a in sess.actions.values()
-            if a.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and a.attempt_id
+            if a.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM, ACTION_CONFIRM_NATIVE)
+            and a.attempt_id
         ]
         for stale_action in consumed[:-_MAX_CONSUMED_ACTIONS]:
             sess.actions.pop(stale_action.id, None)
@@ -2820,7 +3809,7 @@ class SessionService:
                 "run_intent": GRANT.contract(),
                 "impact_digest": GRANT.digest(),
             }
-        if kind == ACTION_RUN:
+        if kind in (ACTION_RUN, ACTION_CONFIRM_NATIVE):
             return {
                 "executes_user_script": True,
                 "installs_packages": False,
@@ -2862,6 +3851,12 @@ class SessionService:
             "kind": action.kind,
             "config_revision": action.config_revision,
             "impact": dict(action.impact),
+            # 确认 token 只在这一份载荷里出现，且只对页面 cookie 认证的读者交出（`report(expose_confirm=True)`）
+            **(
+                {"confirm_token": action.confirm_token}
+                if action.kind == ACTION_CONFIRM_NATIVE
+                else {}
+            ),
         }
 
     def _notify(self, sess: Session) -> None:

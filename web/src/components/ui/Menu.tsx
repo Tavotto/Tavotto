@@ -1,6 +1,7 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
+import { ShortcutText } from './Kbd'
 import { useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -194,16 +195,21 @@ export function MenuItem({
   children,
   shortcut,
   onSelect,
+  onFocus,
   disabled,
   danger,
   reason,
+  tip,
   hint,
   icon: Icon,
   ...rest
 }: {
   children: ReactNode
   shortcut?: string
-  onSelect?: () => void
+  /** 项被选中（Radix 默认选中即关菜单；要留着菜单就在这里 `e.preventDefault()`） */
+  onSelect?: (e: Event) => void
+  /** 项获得焦点——指针悬停与方向键高亮都会走到这里（侧边预览用它知道「现在指着哪一项」） */
+  onFocus?: () => void
   disabled?: boolean
   danger?: boolean
   /**
@@ -211,6 +217,11 @@ export function MenuItem({
    * 而且 tooltip 不能是唯一的可访问说明）。给了它通常也给 `disabled`。
    */
   reason?: string
+  /**
+   * 不可用的原因，只放在悬停提示（`title`）里、不占第二行；读屏取 `aria-description`。
+   * 禁用项靠 DOM 原生 `title`（不经 Tip：禁用项收不到指针事件）。
+   */
+  tip?: string
   /**
    * 第二行的**辨认信息**（同名项目的父目录之类）：与 `reason` 同一个位置、
    * 同一种字号，但它不意味着不可用。两者都给时先 reason 后 hint。
@@ -223,6 +234,9 @@ export function MenuItem({
       {...rest}
       disabled={disabled}
       onSelect={onSelect}
+      onFocus={onFocus}
+      title={tip}
+      aria-description={tip}
       className={cn(ITEM_CLASS, danger ? 'text-danger' : 'text-ink')}
     >
       {/* 菜单项图标一律 ink-2（2026-10-07 设计审计 §3.4）——比字淡一档，危险项跟着字走红；
@@ -233,7 +247,7 @@ export function MenuItem({
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
         {hint && <span className="truncate font-mono text-xs leading-4 text-ink-3">{hint}</span>}
       </span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </DM.Item>
   )
 }
@@ -247,12 +261,15 @@ export function MenuSub({
   children,
   icon: Icon,
   disabled,
+  width,
   ...rest
 }: {
   label: ReactNode
   children: ReactNode
   icon?: ComponentType<{ size?: number; className?: string }>
   disabled?: boolean
+  /** 子菜单的确定宽度（带说明的单选项要折行而不是撑宽）；不给就是 184 的最小宽 */
+  width?: number
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
     <DM.Sub>
@@ -271,7 +288,7 @@ export function MenuSub({
           alignOffset={-5}
           collisionPadding={8}
           loop
-          style={{ minWidth: 184 }}
+          style={width ? { width } : { minWidth: 184 }}
           className={CONTENT_CLASS}
           onKeyDown={(e) => e.stopPropagation()}
           // Esc 落在子菜单上时是子菜单那一层在处理（Radix 只让最上层的 layer 接 Esc，
@@ -384,7 +401,7 @@ export function MenuRadioItem({
         {description && <span className="text-xs leading-4 text-ink-3">{description}</span>}
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
       </span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </DM.RadioItem>
   )
 }
@@ -492,7 +509,7 @@ export function MenuButton({
     >
       {Icon && <Icon size={ICON_SIZE.sm} aria-hidden className={cn('shrink-0', danger ? 'text-danger' : 'text-ink-2')} />}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </button>
   )
 }
@@ -502,7 +519,7 @@ export function MenuButton({
  * 是这么排的）。此前是 type-section（12/500/ink）压在 11px 的项上，组头比项还重（2026-09-15 审计 A03）。
  * `MenuHeading` 是同一样式带截断的版本，给对象名 / 「已选 N 个」这类用户内容。
  */
-const LABEL_CLASS = 'px-2 py-1 text-sm text-ink-3'
+const LABEL_CLASS = 'px-2 py-1 text-xs font-medium text-ink-2'
 
 export const MenuLabel = ({ children }: { children: ReactNode }) => (
   <DM.Label className={LABEL_CLASS}>{children}</DM.Label>

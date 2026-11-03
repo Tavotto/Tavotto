@@ -59,6 +59,8 @@ class RasterBuffer:
     bit_depth: int = 8
     colorspace: str = "srgb"
     premultiplied: bool = False
+    #: 纵向密度；None = 与 `dpi` 相同。只有横纵密度不同的位图（重采样到源像素宽高）才给。
+    dpi_y: float | None = None
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
@@ -144,14 +146,17 @@ def _png_rows_per_block(row_bytes: int) -> int:
     return max(1, deflate.BLOCK // (row_bytes + 1))
 
 
-def _png_head(width: int, height: int, channels: int, dpi: float | None) -> bytes:
+def _png_head(
+    width: int, height: int, channels: int, dpi: float | None, dpi_y: float | None = None
+) -> bytes:
     color_type = 6 if channels == 4 else 2
     head = PNG_SIGNATURE + _png_chunk(
         b"IHDR", struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
     )
     if dpi is not None and dpi > 0:
         ppm = int(round(dpi / 0.0254))
-        head += _png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1))
+        ppm_y = int(round(dpi_y / 0.0254)) if dpi_y is not None and dpi_y > 0 else ppm
+        head += _png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm_y, 1))
     return head
 
 
@@ -177,7 +182,7 @@ def encode_png(buf: RasterBuffer) -> bytes:
     idat = deflate.zlib_stream(_png_scanline_blocks(buf), PNG_DEFLATE_LEVEL)
     return b"".join(
         (
-            _png_head(buf.width, buf.height, buf.channels, buf.dpi),
+            _png_head(buf.width, buf.height, buf.channels, buf.dpi, buf.dpi_y),
             _png_chunk(b"IDAT", idat),
             _png_chunk(b"IEND", b""),
         )
@@ -250,11 +255,94 @@ def write_tiff(buf: RasterBuffer, path) -> dict:
     from ..tiffwrite import write_tiff as _write_tiff
 
     return _write_tiff(
-        path, buf.width, buf.height, buf.samples, buf.channels, stride=buf.stride, dpi=buf.dpi
+        path,
+        buf.width,
+        buf.height,
+        buf.samples,
+        buf.channels,
+        stride=buf.stride,
+        dpi=buf.dpi,
+        dpi_y=buf.dpi_y,
     )
 
 
+#: 重采样的源像素上限：纯标准库逐像素做，超过就拒绝（调用方逐项报错），不让一次导出把进程拖死。
+RESAMPLE_MAX_SOURCE_PIXELS = 16_000_000
+
+
+def _axis_weights(n_src: int, n_dst: int) -> list[list[tuple[int, float]]]:
+    """面积平均：目标像素 i 覆盖源区间 [i·s, (i+1)·s)（s = n_src / n_dst），权重 = 与各源像素的重叠长度 / s。"""
+    s = n_src / n_dst
+    out: list[list[tuple[int, float]]] = []
+    for i in range(n_dst):
+        lo, hi = i * s, (i + 1) * s
+        j0, j1 = int(lo), min(n_src, int(hi) + (0 if hi == int(hi) else 1))
+        out.append(
+            [
+                (j, (min(hi, j + 1) - max(lo, j)) / s)
+                for j in range(j0, j1)
+                if min(hi, j + 1) > max(lo, j)
+            ]
+        )
+    return out
+
+
+def resample_area(
+    buf: RasterBuffer, width: int, height: int, *, dpi: float | None, dpi_y: float | None
+) -> RasterBuffer:
+    """整张位图按**面积平均**重采样到恰好 `width × height`（只用于下采样；纯标准库，RGBA 按预乘权重平均再还原）。
+    横纵密度不同的位图带标注导出：先按逻辑图幅各向同性画对，再缩到源像素宽高（QA-WIN-20）。"""
+    if width <= 0 or height <= 0 or width > buf.width or height > buf.height:
+        raise RasterError(f"只支持下采样：{buf.width}×{buf.height} → {width}×{height}")
+    if buf.width * buf.height > RESAMPLE_MAX_SOURCE_PIXELS:
+        raise RasterError(
+            f"重采样源 {buf.width}×{buf.height} 超过 {RESAMPLE_MAX_SOURCE_PIXELS} 像素"
+        )
+    ch = buf.channels
+    alpha = ch == 4
+    wy, wx = _axis_weights(buf.height, height), _axis_weights(buf.width, width)
+    src_rows = [r for r in buf.rows()]
+    # 纵向：逐目标行，对每个源行按权重累加（先转成每像素 ch 个浮点；RGBA 乘上 alpha）
+    mid: list[list[float]] = []
+    for taps in wy:
+        acc = [0.0] * (buf.width * ch)
+        for j, w in taps:
+            row = src_rows[j]
+            if alpha:
+                a = row[3::4]
+                for k in range(buf.width):
+                    ak = a[k] / 255.0
+                    base = k * 4
+                    acc[base] += row[base] * ak * w
+                    acc[base + 1] += row[base + 1] * ak * w
+                    acc[base + 2] += row[base + 2] * ak * w
+                    acc[base + 3] += a[k] * w
+            else:
+                for k in range(buf.width * ch):
+                    acc[k] += row[k] * w
+        mid.append(acc)
+    out = bytearray()
+    for acc in mid:
+        for taps in wx:
+            vals = [0.0] * ch
+            for j, w in taps:
+                for c in range(ch):
+                    vals[c] += acc[j * ch + c] * w
+            if alpha:
+                a = vals[3]
+                if a > 0:
+                    k = 255.0 / a
+                    out += bytes(min(255, int(round(v * k))) for v in vals[:3])
+                else:
+                    out += b"\x00\x00\x00"
+                out.append(min(255, int(round(a))))
+            else:
+                out += bytes(min(255, int(round(v))) for v in vals)
+    return RasterBuffer(width, height, ch, bytes(out), width * ch, dpi=dpi, dpi_y=dpi_y)
+
+
 __all__ = [
+    "resample_area",
     "DOCUMENT_MAX_PIXELS",
     "SOURCE_MAX_PIXELS",
     "RasterBuffer",

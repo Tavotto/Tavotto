@@ -6,6 +6,147 @@
     "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
     "title": "有未保存的修改"
   },
+  "contact": {
+    "buttonLabel": "联系作者",
+    "title": "联系作者",
+    "subjectLabel": "主题（选填）",
+    "subjectPlaceholder": "一句话说明想聊什么",
+    "bodyLabel": "想说的话",
+    "bodyPlaceholder": "遇到的问题、想要的功能、使用中的困惑，都可以写在这里。",
+    "bodyCount": "{{count}} / {{max}}",
+    "attachPick": "添加截图/文件",
+    "attachRemove": "移除 {{name}}",
+    "fileError": {
+      "type": "只支持图片、PDF、Word、Excel、PowerPoint。",
+      "empty": "空文件不能作为附件。",
+      "count": "最多 {{max}} 个附件。",
+      "total": "附件合计不能超过 {{size}}。"
+    },
+    "diagLabel": "附上诊断信息",
+    "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
+    "diagPreparing": "正在准备诊断包…",
+    "diagReady": "诊断包 · {{size}}",
+    "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",
+    "diagTooLarge": "诊断包太大了，没法一起发送，请取消勾选。",
+    "diagContents": "查看会发送的内容",
+    "diagKindsTitle": "包含",
+    "emailLabel": "回信邮箱（选填）",
+    "emailPlaceholder": "留邮箱，回信也会发到这里",
+    "send": "发送",
+    "retry": "再试一次",
+    "cancelSending": "取消发送",
+    "close": "关闭",
+    "done": "完成",
+    "stage": {
+      "diag": "正在发送诊断包…",
+      "init": "正在连接服务器…",
+      "upload": "正在上传附件… {{pct}}%",
+      "complete": "正在完成…",
+      "cancel": "正在取消…",
+      "cancelling": "正在取消…"
+    },
+    "cancelledNote": "已取消，没有发送。",
+    "sentTitle": "已发送",
+    "sentNumber": "编号 {{id}}",
+    "sentCopyNumber": "复制编号",
+    "sentReplyHere": "回信会出现在「我的来信」里。",
+    "sentNoInboxEmail": "回信将发到你的邮箱。",
+    "sentNoInboxNoEmail": "这台电脑存不下回信；想收到回复，请留邮箱再发一次。",
+    "sentAnother": "再写一封",
+    "failedTitle": "没有发送出去",
+    "copyContent": "复制内容",
+    "copyAddress": "复制地址",
+    "addressCopied": "已复制 {{address}}",
+    "contentCopied": "已复制内容",
+    "numberCopied": "已复制编号",
+    "retryInMinutes": "请在 {{n}} 分钟后再试。",
+    "retryInHours": "请在 {{n}} 小时后再试。",
+    "diagFailure": "诊断信息没发出去：{{reason}}",
+    "error": {
+      "bodyRequired": "请先写点内容。",
+      "bodyTooLong": "内容太长了。",
+      "subjectTooLong": "主题太长了。",
+      "emailInvalid": "回信邮箱的格式不对，请检查，或者留空。",
+      "body_required": "请先写点内容。",
+      "body_too_long": "内容太长了。",
+      "subject_too_long": "主题太长了。",
+      "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
+      "report_invalid": "诊断包编号不对，请取消勾选「附上诊断信息」后再试。",
+      "attachments_limit": "附件太多了。",
+      "attachments_too_large": "附件合计太大了。",
+      "attachment_type": "有附件的类型不受支持。",
+      "attachment_empty": "有附件是空文件。",
+      "attachment_mismatch": "有附件的内容与它的扩展名对不上。",
+      "meta_invalid": "内容格式不对，请重新打开窗口再试。",
+      "disabled": "「联系作者」已被关闭。",
+      "send_in_progress": "上一封还在发送中。"
+    },
+    "failure": {
+      "network": "连不上服务器。请检查网络后再试。",
+      "timeout": "服务器没有及时回应。请稍后再试。",
+      "tls": "和服务器的加密连接没建立起来（证书校验失败）。请检查系统时间与网络代理。",
+      "bad_response": "服务器的回复读不懂。请稍后再试。",
+      "api_incompatible": "这个版本的 Tavotto 与服务器不兼容，请先更新。",
+      "rate_limited": "发得太频繁了，请稍后再试。",
+      "storage_unavailable": "服务器暂时收不了信，请稍后再试。",
+      "too_large": "内容太大了，请减少附件。",
+      "expired": "这次发送已过期，请再试一次。",
+      "session_closed": "这次发送已被关闭，请再试一次。",
+      "not_found": "服务器里找不到这次发送，请再试一次。",
+      "upload_denied": "附件上传没有被允许，请再试一次。",
+      "upload_rejected": "附件被服务器拒收，请换一个文件。",
+      "upload_unavailable": "附件存储暂时不可用，请稍后再试。",
+      "upload_missing": "附件没有传完，请再试一次。",
+      "upload_url_rejected": "服务器给的上传地址不安全，已拒绝上传。",
+      "redirect_blocked": "服务器想把请求转到别处，已拒绝。",
+      "client_error": "服务器认为这封信有问题。请检查内容后再试。",
+      "unexpected_response": "服务器给了意外的回复。请稍后再试。",
+      "internal": "出了点内部错误，没有发送。",
+      "invalid_email": "回信邮箱的格式不对，请检查，或者留空。",
+      "attachment_invalid": "服务器检查附件没通过，请换一个文件再试。",
+      "report_not_found": "诊断包没有送到服务器，请取消勾选「附上诊断信息」后再试。"
+    },
+    "diagFailureCode": {
+      "prepare_failed": "诊断包没准备好。",
+      "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
+    },
+    "letters": "我的来信",
+    "write": "写信",
+    "lettersEmpty": "还没有写过信。发出的信会记在这里，作者的回信也会出现在这里。",
+    "lettersCheck": "检查回信",
+    "lettersChecking": "正在检查…",
+    "lettersNumber": "编号 {{id}}",
+    "lettersReportTag": "问题反馈",
+    "lettersReportNumber": "报告编号 {{id}}",
+    "lettersNoNote": "没有附言",
+    "lettersSentAt": "{{time}} 发出",
+    "lettersState": {
+      "new": "等待回信",
+      "replied": "已回复",
+      "closed": "已结束"
+    },
+    "replyFrom": "作者的回信",
+    "replyNew": "新",
+    "lettersYouWrote": "你写的",
+    "lettersExpand": "展开",
+    "lettersCollapse": "收起",
+    "lettersAttachments": "附件：{{names}}",
+    "replyPaperTitle": "作者的回信（排版版）",
+    "replyLoading": "正在打开回信…",
+    "replyPaperFailed": "这封回信的排版没能打开，下面是纯文字版本。",
+    "lettersForget": "从本机删除",
+    "pollTooLarge": "回信太多，暂时取不全，稍后会再试。",
+    "pollBad": "暂时取不到回信，稍后会再试。",
+    "unreadDot": "有新回信",
+    "capsule": "作者回信了",
+    "capsuleOpen": "查看",
+    "capsuleClose": "收起回信提醒",
+    "wecom": "企业微信",
+    "wecomLead": "也可以",
+    "wecomLink": "加企业微信",
+    "wecomTail": "直接聊",
+    "wecomScan": "微信扫码添加"
+  },
   "draftGuard": {
     "body": "还没保存的修改会丢掉。",
     "discard": "放弃修改",
@@ -17,34 +158,47 @@
     "title": "渲染环境"
   },
   "export": {
+    "contentLabel": "导出内容",
+    "contentWhole": "整版",
+    "contentEach": "每张图单独导出",
+    "exportedCount_other": "已导出 {{count}} 个文件",
+    "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
+    "resultWarnings_other": "有 {{count}} 条提示，见详情",
+    "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
+    "previewFit": "适合大小",
+    "previewTabs": "预览",
+    "previewWhole": "整版",
+    "previewFlagged": "有要改的项",
+    "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
+    "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
+    "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
+    "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",
-    "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
-    "blockingListLabel": "阻断性问题",
     "cancelExport": "取消导出",
     "cancelled": "已取消导出",
     "cancelledNote": "已取消，没有写出任何文件。",
     "canvasObjects_other": "{{count}} 个对象",
     "checkLabel": "检查",
-    "checksMore_other": "还有 {{count}} 项 · 在问题面板中查看全部",
     "chipError_other": "项要改",
     "chipNotVerifiable_other": "项无法核验",
     "chipSuggestion_other": "条建议",
     "chipWarn_other": "项留意",
-    "checkScopeCanvas": "整个画布",
-    "checkScopeFigure": "仅此图",
-    "confirmBoth": "知悉上述 {{errors}} 条阻断问题与 {{notVerifiable}} 类无法核验的项，仍要导出",
-    "confirmCheckFailed": "预检没完成，我已自行确认此图可以导出。",
-    "confirmErrors": "知悉上述 {{errors}} 条阻断问题，仍要导出",
-    "confirmNotVerifiable": "知悉上述 {{notVerifiable}} 类无法核验的项，仍要导出",
+    "checkScopeCanvasNamed": "查整个画布「{{name}}」",
+    "checkScopeFigureNamed": "仅查原图「{{name}}」",
+    "checkScopeOffCanvas": "「{{name}}」不在画布上，这次导出不做规范检查",
+    "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
+    "exportAsCanvas": "改按画布导出",
+    "checkingFigure": "正在确认这张图……",
     "conflict": "导出目录里已经有 {{files}}。",
     "conflictRename": "另存一份",
     "conflictReplace": "覆盖",
     "editedDuringExport": "导出期间排版又改了。文件里是点「导出」时的内容。",
     "epsHint": "矢量 · 不支持透明度",
     "epsUnavailable": {
-      "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
+      "canvas_scope": "EPS 只支持导出单张图：在单图编辑里导出，或选「每张图单独导出」。",
+      "figure_not_ready": "这张图现在还不能导出 EPS：它需要由脚本重新画一遍。请先运行这张图的脚本，再回来导出。",
       "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
     },
     "exported": "导出完成：{{files}}",
@@ -60,24 +214,12 @@
     },
     "filenameLabel": "文件名",
     "filenamePlaceholder": "图 1",
-    "figureListLabel": "要按原图尺寸导出的图",
     "formatLabel": "格式",
-    "ignored": {
-      "crop": "裁剪",
-      "flip": "翻转",
-      "opacity": "透明度",
-      "rotation": "旋转",
-      "scale": "缩放"
-    },
     "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
-    "locate": "定位",
-    "locateAria": "定位到{{subject}}：{{title}}",
-    "locatedHint": "再点「导出」回到导出面板，设置还在。",
-    "mmSize": "{{w}} × {{h}} mm",
+    "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "在问题面板中查看",
     "operationFailed": "无法完成：{{error}}",
     "outputFailed": "无法导出 {{format}}：{{reason}}",
-    "partialSummary": "已保存 {{ok}} 个，{{failed}} 个失败",
     "pdfHint": "矢量",
     "phase": {
       "cancelled": "已取消",
@@ -98,10 +240,9 @@
     "ppiSelectLabel": "位图分辨率",
     "preflightFailed": "无法完成预检。导出前请自行确认。",
     "preflightFailedKept": "无法完成预检。下面的结论来自更早一次，可能已过时。",
-    "preflightOk": "导出前检查通过",
+    "preflightCoverage": "只查识别出的文字、线条与版面；图里没被识别的内容（如嵌入的图像）不在检查之内",
+    "preflightOk": "按「{{spec}}」未发现问题",
     "profileAria": "出版规范",
-    "profileEdit": "编辑",
-    "profileEditAria": "编辑规范",
     "profileLabel": "规范",
     "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
     "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",
@@ -115,7 +256,6 @@
     "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
     "savedTo": "已保存到 {{dir}}",
     "scopeCanvas": "当前画布",
-    "scopeIgnored": "画布上的{{list}}不会带进导出。",
     "scopeLabel": "输出范围",
     "scopeOriginal": "原图尺寸",
     "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是占位值——导出后请核对。",
@@ -125,16 +265,17 @@
       "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
       "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
     },
-    "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
+    "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
-    "thumbNote": "缩略图仅为示意 · 非最终文件",
+    "svgHint": "矢量 · 文字默认保留为文字",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
+    "advancedLabel": "高级",
     "strictToggle": "严格核验产物",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
@@ -165,6 +306,8 @@
     "groupOutput": "输出",
     "groupFormat": "格式",
     "groupChecks": "检查",
+    "locationUpdating": "正在更新…",
+    "locationPickTitle": "选择导出文件夹",
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",
@@ -227,9 +370,6 @@
     "rename": "改名"
   },
   "mcp": {
-    "confirmBoth": "仍要导出：已知悉 {{errors}} 条阻断项与 {{notVerifiable}} 条无法核验的项。确认会记入 proof report。",
-    "confirmErrors": "仍要导出：已知悉 {{errors}} 条阻断项。确认会记入 proof report。",
-    "exportBlockedTitle": "有阻断项或无法核验项：先在下方勾选确认",
     "exportBoth": "导出 PDF+PNG",
     "exportPendingTitle": "还有改动没画上，等这一版渲染完再导出",
     "exported": "已导出 {{files}}",
@@ -370,7 +510,7 @@
       },
       "sub-labels": {
         "keywords": "label abc xhbq xuhao",
-        "label": "添加 (a)(b)(c) 标签"
+        "label": "添加序号 (a)(b)(c)"
       },
       "ungroup": {
         "keywords": "ungroup qxcz",
@@ -389,8 +529,8 @@
         "keywords": "tutorial onboarding resume jc jiaocheng 继续"
       },
       "tutorial-reset": {
-        "label": "重置教程项目",
-        "keywords": "tutorial onboarding reset restart jc jiaocheng 重置 重新开始"
+        "label": "重置示例项目",
+        "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置"
       },
       "refresh-project": {
         "label": "刷新项目",
@@ -639,7 +779,7 @@
       "builtin": "内置",
       "user": "自定义"
     },
-    "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
+    "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
     "previewTitle": "示例",
     "readOnlyBadge": "只读",
     "readOnlyBuiltinBadge": "内置 · 只读",
@@ -739,6 +879,10 @@
     "reprobe": "重新试运行",
     "rescan": "重新扫描",
     "retry": "重试",
+    "revealFailed": "没能打开文件管理器。这张图在：{{path}}",
+    "revealInExplorer": "在文件资源管理器中显示",
+    "revealInFileManager": "在文件管理器中显示",
+    "revealInFinder": "在 Finder 中显示",
     "running": "运行中…",
     "scanUnavailable": "没能读完项目里的脚本，状态可能不完整。",
     "scope": {
@@ -890,6 +1034,7 @@
       "telemetry": {
         "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
         "detailsTitle": "会发送哪些数据",
+        "errorSummary": "你主动点“发送问题反馈”时，若已同意匿名统计，会另附一条不含内容的错误摘要：出错的内部环节与固定错误码，不含文字、路径、附言或匿名标识。点发送不代表同意今后自动上报。",
         "hardDisabled": "已由本机配置关闭，此开关不可用",
         "needsReconsent": "采集范围有变化，待重新确认",
         "never": "图、脚本、文件名、路径、科研数据、图内文字与助手提示词。",
@@ -897,11 +1042,13 @@
         "policy": "隐私政策",
         "sends": {
           "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他 Agent。",
+          "mcp_tool_call": "AI Agent 调用 Tavotto 工具：哪个工具、成功与否、错误的大类、耗时分档、宿主是 Codex、Claude 还是其他；不含工具的参数与返回内容（路径、脚本名、图内文字）。",
           "app_started": "应用启动：桌面版还是浏览器版。",
           "canvas_created": "新建画布：空白、来自项目还是复制。",
           "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
           "document_saved": "排版保存：手动还是自动、结果如何。",
           "export_completed": "导出完成：格式、是否带报告、图的数量。",
+          "export_result": "导出结果：成功、部分成功、失败或取消，请求的格式、写成几个文件、停在哪一步与错误的大类；不含文件名、路径与错误原文。",
           "figure_edit_completed": "完成编辑：改动类别与数量。",
           "figure_opened": "打开图内编辑：PDF 还是位图、是否可编辑。",
           "package_action": "包操作：类型与结果，不含包名。",
@@ -912,7 +1059,7 @@
           "telemetry_enabled": "首次开启统计：来自首启询问还是设置页。",
           "tutorial_completed": "教程完成：流程版本号。",
           "tutorial_started": "教程开始：入口与流程版本号。",
-          "tutorial_step_completed": "教程完成一步：步骤编号与流程版本号。",
+          "tutorial_step_completed": "教程完成一步：是四个步骤（三步演示与完成页）中的哪一步，以及流程版本号。",
           "update_completed": "更新完成：通道（桌面 / pip / pipx）与版本号。"
         },
         "sendsAfter": "的 UUID，不关联账号或设备硬件。",
@@ -924,7 +1071,8 @@
         "unset": "尚未选择",
         "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用"
       },
-      "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。"
+      "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
+      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。"
     },
     "agents": {
       "announce": {
@@ -992,6 +1140,7 @@
       "codexIntegrationName": "{{product}} for Codex",
       "defaultButton": "默认",
       "detail": {
+        "account": "账号",
         "addEndpoint": "添加服务…",
         "advanced": "高级设置",
         "autoDetected": "自动检测",
@@ -1005,12 +1154,18 @@
         "customExecutable": "自定义可执行文件",
         "customPath": "自定义路径",
         "delete": "删除",
+        "deleteBody": "密钥不会回显，删除后需要重新填写。",
         "deleteConfirm": "删除「{{label}}」？",
         "diagnostics": "诊断信息",
         "edit": "编辑",
+        "endpointActions": "{{label}}的更多操作",
         "executable": "可执行文件",
+        "incompatible": "Codex 已不再支持这种接口协议。",
+        "incompatibleEdit": "Codex 已不再支持这种接口协议，请改用 Responses 协议的地址。",
         "install": "安装",
         "loginAndModels": "登录与模型",
+        "migrateToClaude": "改由 Claude Code 接入",
+        "migrateToResponses": "改用 Responses 协议",
         "modelService": "模型服务",
         "noKeySuffix": "（未填密钥）",
         "none": "—",
@@ -1028,12 +1183,11 @@
         "useCustomExecutable": "使用自定义可执行文件",
         "useCustomService": "自定义或第三方模型服务",
         "validateAndSave": "验证并保存",
-        "version": "版本",
-        "deleteBody": "密钥不会回显，删除后需要重新填写。",
-        "endpointActions": "{{label}}的更多操作"
+        "version": "版本"
       },
       "endpoint": {
         "addTitle": "为 {{name}} 添加模型服务",
+        "addTitleGeneric": "添加模型服务",
         "apiKey": "密钥",
         "apiKeySaved": "已保存 {{hint}}，留空则不改",
         "baseUrl": "接口地址",
@@ -1054,13 +1208,27 @@
         "nameRequired": "给这个服务起个名字。",
         "preset": "预设",
         "presetAria": "模型服务预设",
-        "presetFilled": "预设已填好：地址、模型、协议",
+        "presetFilled": "预设已填好：地址、模型",
         "presetPlaceholder": "选一个预设填好地址…",
+        "getKey": "去申请 Key",
+        "regionCn": "国内",
+        "regionGlobal": "海外",
+        "regionCustom": "其他",
+        "fetchModels": "从服务商获取",
+        "fetchingModels": "获取中…",
+        "fetchedHint": "点一下加入上面的模型列表",
+        "fetchedEmpty": "服务商没有返回可用型号",
+        "fetchReason": {
+          "no_key": "先填好接口地址和密钥，再获取。",
+          "key_origin_mismatch": "地址改了，请重新填写密钥。",
+          "insecure_url": "明文 http 地址不会带着密钥联网，请改用 https。",
+          "timeout": "服务商没有及时回应，可稍后重试。",
+          "unauthorized": "服务商拒绝了这个密钥。",
+          "bad_response": "服务商返回的内容看不懂，请手动填写型号。",
+          "network": "连不上服务商，请检查网络或手动填写型号。"
+        },
         "requiredAria": "必填",
-        "wire": "协议",
-        "wireAria": "接口协议",
-        "wireChat": "chat（OpenAI Chat Completions 兼容，多数网关）",
-        "wireResponses": "responses（OpenAI Responses 原生）"
+        "insecureLan": "这个地址不加密，请只在可信的局域网里使用。"
       },
       "install": {
         "action": "用 npm 安装 {{name}}",
@@ -1078,7 +1246,42 @@
         "running": "正在安装…"
       },
       "lastChecked": "最近检测 {{time}}",
+      "login": {
+        "action": "登录 {{account}}",
+        "browserHint": "浏览器没打开？",
+        "done": "我已登录",
+        "manualHint": "没找到可用的终端。请自己打开终端，运行：{{command}}",
+        "openLink": "点这里打开登录页",
+        "refreshFailed": "没能刷新登录状态。",
+        "retry": "重试",
+        "terminalHint": "在打开的终端里完成登录后回到这里。",
+        "waiting": "等待登录…"
+      },
       "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
+      "oauth": {
+        "action": "用 {{name}} 账号登录",
+        "title": "登录 {{name}}",
+        "region": {
+          "cn": "国内",
+          "global": "海外"
+        },
+        "instruction": "在打开的网页里确认下面的验证码，登录就完成了。",
+        "codeAria": "验证码",
+        "reopen": "重新打开网页",
+        "cancel": "取消",
+        "again": "再试一次",
+        "state": {
+          "expired": "验证码已过期。",
+          "denied": "你在网页里拒绝了授权。",
+          "failed": "登录没有完成，请稍后再试。",
+          "cancelled": "登录已取消。"
+        },
+        "signedIn": "已登录",
+        "signedOut": "未登录",
+        "logout": "退出",
+        "relogin": "重新登录",
+        "logoutAria": "退出“{{label}}”的登录"
+      },
       "readiness": {
         "needs_auth": "需要登录",
         "ready": "已登录",
@@ -1093,6 +1296,7 @@
         "common_location": "常见安装位置",
         "custom": "自定义路径",
         "homebrew": "Homebrew",
+        "managed": "Tavotto 应用内安装",
         "npm_global": "npm 全局目录",
         "package_binary": "npm 包内的可执行文件",
         "path": "系统 PATH",
@@ -1116,6 +1320,33 @@
       "toggleAria": "在 {{product}} 中启用 {{name}}",
       "useFromAgents": "连接外部工具",
       "useInProduct": "配置改图助手",
+      "vendor": {
+        "anthropic": "Anthropic 官方",
+        "deepseek": "DeepSeek",
+        "moonshot": "Kimi 开放平台",
+        "kimiCode": "Kimi Code 会员",
+        "zhipu": "智谱 GLM",
+        "minimax": "MiniMax（国内）",
+        "minimaxGlobal": "MiniMax（海外）",
+        "dashscope": "阿里云百炼（按量）",
+        "dashscopeCoding": "阿里云百炼 Coding Plan",
+        "zai": "Z.AI（GLM 海外）",
+        "synthetic": "Synthetic",
+        "vercelAiGateway": "Vercel AI Gateway",
+        "opencodeGo": "OpenCode Go",
+        "openai": "OpenAI 官方",
+        "customClaude": "自定义（Anthropic 兼容）",
+        "customCodex": "自定义（OpenAI Responses 兼容）",
+        "kimi": "Kimi",
+        "bailian": "百炼"
+      },
+      "vendorKey": {
+        "kimiCode": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
+        "dashscopeCoding": "Coding Plan 专属 Key（sk-sp- 开头），与按量 Key 不通用",
+        "officialLogin": "留空 = 用这个 CLI 自己的登录态",
+        "zai": "需要 Z.AI Coding Plan 订阅的 Key",
+        "opencodeGo": "需要 OpenCode Go 订阅的 Key"
+      },
       "viewGuide": "查看使用指南",
       "defaultLabel": "默认助手",
       "defaultNone": "没有可用的助手"
@@ -1123,8 +1354,6 @@
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
       "dragCompanions": "移动子图时，同步移动标题和图例",
-      "more": "画布设置",
-      "openCanvasSettings": "打开画布设置",
       "diagramOn": "示意：拖动子图时，标题与图例随之移动",
       "diagramOff": "示意：只移动子图，标题与图例留在原地"
     },
@@ -1162,7 +1391,7 @@
       "summaryLabel": "诊断摘要",
       "send": {
         "row": "发送问题反馈",
-        "rowHint": "把诊断包发给 Tavotto 维护者。只有你在确认框里点「发送」之后才会上传。",
+        "rowHint": "把诊断包发给维护者；点「发送」后才会上传。",
         "open": "发送…",
         "title": "发送问题反馈",
         "includedTitle": "将发送的内容",
@@ -1170,9 +1399,10 @@
           "environment": "运行环境与版本信息（用户名、路径已脱敏）",
           "log": "应用日志（只留事件类型与数字，不含报错原文、脚本名、路径）",
           "settings": "应用设置（密钥已替换）",
-          "ui_state": "界面状态快照（不含图内文字与文件名）",
+          "ui_state": "界面状态快照（不含图内文字与文件名；含新手教程进度：状态、步骤 id、看过哪几类提示）",
           "ui_trace": "最近的界面操作轨迹（只有操作类型）",
           "task": "最近几次失败任务的分类结果",
+          "exec_traces": "最近几次任务的执行步骤与耗时（只有阶段、状态与错误码，不含提示词、脚本、文件名、路径）",
           "manifest": "包的版本说明",
           "readme": "包内说明文件",
           "other": "其他诊断文件",
@@ -1188,12 +1418,11 @@
           "detail_console": "界面控制台的最近报错与警告",
           "detail_display": "显示环境（缩放、窗口、语言、主题）",
           "detail_network": "网络概况（代理、解析结果、时区）",
-          "detail_source": "脚本源码（你勾选了）",
+          "detail_source": "脚本源码与依赖声明文件（你勾选了）",
           "detail_crash_reports": "系统崩溃报告（你勾选了）",
           "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）"
         },
-        "notIncluded": "默认不含：你的脚本文件、数据文件，也不含匿名统计用的标识。报错原文、日志里可能出现项目文件夹名、文件名和脚本打印出的内容。",
-        "size": "大小 {{size}}",
+        "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
         "save": "保存这份诊断包",
         "saved": "已保存",
         "saveFailed": "没能保存",
@@ -1209,9 +1438,8 @@
           "other": "其他"
         },
         "noteLabel": "补充说明（可选）",
-        "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
         "noteCount": "{{count}} / {{max}}",
-        "retention": "报告保存 {{days}} 天，只有 Tavotto 维护者能读取，与匿名统计的标识没有关联。",
+        "retention": "报告保存 {{days}} 天，仅维护者可读，与匿名统计标识无关。",
         "preparing": "正在生成诊断包…",
         "prepareFailed": "没能生成诊断包。可以关闭后重试，或改用「导出诊断包」保存到本地。",
         "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}（附加内容已尽量截短）。请保存到本地，再另行发给维护者。",
@@ -1224,7 +1452,7 @@
         "cancelled": "已取消，没有发送任何内容。",
         "doneTitle": "已发送",
         "reportId": "报告编号",
-        "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
+        "replyInbox": "已发送。作者回复会出现在「联系作者 › 我的来信」",
         "copyId": "复制报告编号",
         "send": "发送",
         "retry": "重试",
@@ -1262,25 +1490,27 @@
           "internal": "发送过程中出了内部错误，没有发送。请保存诊断包并反馈。"
         },
         "packageGone": "这份诊断包已经不在引擎里了（应用可能重启过）。请重新准备后再发送；也可以用设置里的「导出诊断包」保存到本地。",
-        "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。",
-        "details": "查看详情",
-        "bestEffort": "脱敏是尽力而为，不保证绝对；发送前可以保存并查看这份包。",
-        "noteAttached": "你在这里写的说明会原样随诊断包一起发送。",
+        "sentence": "附报错和日志（可能含脚本打印的内容），不含脚本和数据",
+        "details": "查看内容",
+        "bestEffort": "脱敏尽力而为，不保证绝对；发送前可保存查看。",
+        "errorSummaryNote": "若已同意匿名统计，另附一条不含内容的错误摘要。",
         "policy": "隐私政策",
         "cardButton": "发送问题反馈",
         "reprepare": "重新准备",
         "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
         "unknownOutcome": "无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号",
-        "extrasTitle": "额外内容（默认不发送）",
+        "extrasTitle": "额外内容",
+        "extrasSelectAll": "全选",
+        "extrasSelectNone": "全不选",
         "extra": {
           "source": "脚本源码",
           "crash_reports": "系统崩溃报告",
           "corrupt_sessions": "会话损坏副本的内容"
         },
         "extraHint": {
-          "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。",
-          "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
-          "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。"
+          "source": "原样附上脚本和依赖文件，密钥可能抹不干净，有密钥别勾。",
+          "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。",
+          "corrupt_sessions": "默认只有名字和大小；勾选附上内容。"
         },
         "filesTitle": "包内文件（{{count}} 个）",
         "truncated": "体积超过上限，已按优先级截短：{{kinds}}。",
@@ -1303,21 +1533,17 @@
           "corrupt_sessions": "损坏副本"
         },
         "optionsLost": "附加内容太大，这次没能附上。",
-        "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），并附带你勾选的：{{items}}。",
-        "sentenceItem": {
-          "source": "脚本源码",
-          "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
-          "corrupt_sessions": "会话损坏副本的内容"
-        },
+        "sentenceExtras": "附报错和日志（可能含脚本打印的内容）及你勾选的额外内容",
         "contact": {
-          "hint": "想直接沟通？发消息时附上报告编号：",
           "hintNoId": "想直接沟通？",
           "link": "加企业微信联系我们",
           "showQr": "显示二维码",
           "qrAlt": "Tavotto 维护者的企业微信二维码，用手机微信扫码添加",
           "row": "联系维护者",
           "rowHint": "想直接沟通，可以加企业微信。"
-        }
+        },
+        "attachmentTitle": "附带诊断包",
+        "notePlaceholder": "发生了什么？请不要填姓名、邮箱、路径或数据。"
       }
     },
     "export": {
@@ -1327,7 +1553,7 @@
     },
     "general": {
       "language": "界面语言",
-      "layout": "界面乱了？",
+      "layout": "重置界面布局",
       "layoutReset": "界面布局已恢复默认",
       "resetLayout": "恢复默认",
       "groupLanguage": "外观、语言与布局",
@@ -1336,7 +1562,7 @@
       "groupLearning": "学习",
       "layoutDesc": "侧栏宽度、开合与画布偏好回到默认，当场生效",
       "theme": "外观",
-      "themeDesc": "画布上的页面与图保持印刷时的颜色",
+      "themeDesc": "深色模式下画布纸面仍为白色，与导出一致",
       "themeSystem": "跟随系统",
       "themeLight": "浅色",
       "themeDark": "深色"
@@ -1356,10 +1582,13 @@
         "uninstallTitle": "卸载 {{name}}？",
         "rebuildTitle": "重建这个项目的环境？",
         "rebuildBody": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。",
-        "rebuildAction": "重建"
+        "rebuildAction": "重建",
+        "rebuildBodyPython": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。{{python}}",
+        "privatePythonTitle": "先准备 Python？",
+        "privatePythonAction": "继续"
       },
       "disabled": {
-        "noBasePython": "没有找到可用的 Python。请安装 3.10 或以上版本后回到这里。",
+        "noBasePython": "这台电脑没有 {{product}} 能用的 Python（需要 {{min}}–{{max}}），也没法自动准备。请安装后回到这里。",
         "noProject": "打开一个项目后才能管理它的 {{product}} 环境。",
         "other": "包管理暂时不可用。"
       },
@@ -1390,7 +1619,8 @@
         "log": "详细日志",
         "preparing": "正在准备{{op}} {{name}}…",
         "progressAria": "包操作进度",
-        "verifying": "正在验证环境…"
+        "verifying": "正在验证环境…",
+        "downloading_python": "正在准备 Python…"
       },
       "loading": "正在读取…",
       "network": {
@@ -1450,7 +1680,23 @@
       "envSection": "环境",
       "builtinCountMeta": "{{count}} 个 · 只读",
       "backgroundTitle": "背景信息",
-      "moreAria": "{{name}} 的更多操作"
+      "moreAria": "{{name}} 的更多操作",
+      "autoInstall": {
+        "title": "已允许自动装包的环境",
+        "empty": "还没有环境被允许自动装包。",
+        "loading": "正在读取…",
+        "revoke": "撤销"
+      },
+      "python": {
+        "checking": "正在检查 Python…",
+        "none": "这台电脑上没有可用的 Python，{{product}} 可以自动准备一个{{size}}",
+        "tooNew": "你装的 Python {{version}} 比 {{product}} 支持的新（支持 {{min}}–{{max}}），可以让 {{product}} 自动准备一个{{size}}",
+        "tooOld": "你装的 Python {{version}} 比 {{product}} 支持的旧（支持 {{min}}–{{max}}），可以让 {{product}} 自动准备一个{{size}}",
+        "tooNewManual": "你装的 Python {{version}} 比 {{product}} 支持的新（支持 {{min}}–{{max}}）。请另装一个 {{min}}–{{max}} 的版本后回到这里。",
+        "tooOldManual": "你装的 Python {{version}} 比 {{product}} 支持的旧（支持 {{min}}–{{max}}）。请另装一个 {{min}}–{{max}} 的版本后回到这里。",
+        "downloadSize": "（需下载约 {{mb}} MB）",
+        "prepare": "自动准备"
+      }
     },
     "project": {
       "backupDir": "原始文件备份",
@@ -1568,7 +1814,7 @@
       "start": "开始教程",
       "resume": "继续教程",
       "restart": "再看一遍教程",
-      "reset": "重置教程项目",
+      "reset": "重置示例项目",
       "hints": "操作提示",
       "resetHints": "重新显示操作提示",
       "more": "更多教程操作"
@@ -1585,7 +1831,7 @@
       "style": "图长什么样：字体、字号与线宽。",
       "spec": "图要满足什么：投稿前检查用的规则。",
       "export": "导出对话框打开时的默认选择。",
-      "ai": "本机的改图助手，以及在 Codex 里用 Tavotto。",
+      "ai": "连接一个 AI，就能用它改图和修复脚本。",
       "packages": "这个项目的 Python 环境里装了什么。",
       "diagnostics": "运行环境是否正常，以及给我们的诊断报告。",
       "about": "版本、更新与隐私。"
@@ -1599,7 +1845,6 @@
         "language": "语言 中文 英文 locale",
         "layout": "布局 重置 恢复 侧栏宽度 界面",
         "shortcuts": "快捷键 键盘 速查表",
-        "canvas": "画布 网格 吸附 标尺 参考线",
         "tutorial": "教程 新手 提示 引导",
         "scripts": "脚本 来源 注册",
         "python": "python 解释器 环境 conda venv",
@@ -1615,6 +1860,131 @@
         "updates": "更新 版本 升级",
         "telemetry": "隐私 统计 遥测 数据",
         "theme": "主题 深色 浅色 暗色 夜间 外观 模式 颜色"
+      }
+    },
+    "connectAi": {
+      "title": "连接一个 AI",
+      "titleFix": "连接一个 AI 来修复",
+      "regionCn": "国内",
+      "regionGlobal": "海外",
+      "connect": "连接",
+      "signIn": "登录",
+      "connected": "已连接",
+      "needsAuth": "需要重新登录",
+      "error": "连接异常",
+      "later": "稍后",
+      "more": "更多 AI…",
+      "other": "其他兼容接口…",
+      "getKey": "去 {{name}} 获取 ↗",
+      "keyLabel": "API Key",
+      "keyPlaceholder": "粘贴 API Key",
+      "needsInstall": "需先安装",
+      "failed": "没能连上，请检查 Key 后重试。",
+      "changeKey": "换 Key",
+      "saveKey": "保存",
+      "defaultModel": "默认型号",
+      "disconnect": "断开",
+      "disconnectTitle": "断开 {{name}}？",
+      "disconnectBody": "本机保存的 Key 会被删除。",
+      "advanced": "高级",
+      "loading": "正在读取…",
+      "err": {
+        "unauthorized": "Key 无效或已过期。",
+        "network": "连不上服务商。",
+        "timeout": "连接超时。"
+      },
+      "subtitle": "连接一个 AI，用于改图或修复环境。",
+      "method": {
+        "subscription": "订阅登录",
+        "apiKey": "API Key",
+        "kimiCode": "Kimi Code 会员",
+        "codingPlan": "Coding Plan",
+        "account": "账号登录",
+        "hintKey": "填写 {{name}} API Key",
+        "hintLogin": "用 {{name}} 登录",
+        "hintKimiCode": "用 Kimi Code 会员的 Key",
+        "hintCodingPlan": "用 Coding Plan 的 Key",
+        "hintAccount": "用 {{name}} 账号登录",
+        "hintChatgpt": "用 ChatGPT 订阅登录",
+        "hintClaude": "用 Claude 订阅登录"
+      },
+      "back": "返回",
+      "savedRefreshFailed": "已保存，但没能刷新状态。",
+      "retryRefresh": "重试刷新",
+      "titleConvert": "连接一个 AI 来转换",
+      "subtitleConvert": "把 {{name}} 转成可编辑版本需要一个 AI。连上后会自动开始。",
+      "starter": {
+        "subscription": "有 ChatGPT 订阅：用 ChatGPT 账号登录",
+        "key": "没有订阅：填一个 API Key",
+        "other": "其他方式"
+      },
+      "step": {
+        "notInstalled": "没装 {{product}}",
+        "installToEnable": "安装 {{product}} CLI 以启用",
+        "reinstallToEnable": "重新安装 {{product}} CLI 以启用",
+        "broken": "找到了 {{product}}，但打不开",
+        "needsAuth": "还没登录",
+        "disabled": "已在设置里关闭",
+        "install": "安装并登录",
+        "reinstall": "重新安装",
+        "enable": "打开",
+        "installingPct": "正在安装… {{pct}}%"
+      }
+    },
+    "hosts": {
+      "title": "接入 AI 编辑器",
+      "connect": "接入",
+      "retry": "重试",
+      "chooseFolder": "选择文件夹",
+      "running": "接入中…",
+      "connected": "已接入",
+      "notDetected": "未检测到",
+      "disconnected": "已断开",
+      "doneNewSession": "接好了。请在 {{host}} 里新开一个会话。",
+      "more": "{{host}} 的更多操作",
+      "changeFolder": "更改文件夹",
+      "disconnect": "断开",
+      "pickFolderTitle": "让 {{host}} 用 Tavotto 处理哪个文件夹里的图？",
+      "stepsTitle": "详情",
+      "announce": {
+        "ok": "完成。",
+        "failed": "没有接好。"
+      },
+      "stepState": {
+        "done": "完成",
+        "skipped": "无需改动",
+        "failed": "失败"
+      },
+      "step": {
+        "project_root": "项目文件夹",
+        "detect": "检测",
+        "config": "写配置",
+        "trust": "信任 Tavotto",
+        "register": "登记",
+        "unregister": "移除登记",
+        "health": "启动检查",
+        "server": "MCP 服务",
+        "host": "编辑器"
+      },
+      "error": {
+        "host_not_installed": "没检测到 {{host}}。装好并至少打开一次后再试。",
+        "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
+        "project_root_missing": "先选一个项目文件夹。",
+        "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
+        "config_unreadable": "{{host}} 的配置文件读不懂（可能带注释），为免弄坏，没有改它。展开详情看是哪个文件。",
+        "config_write_failed": "写不进 {{host}} 的配置文件。展开详情看是哪个文件。",
+        "host_cli_failed": "{{host}} 的命令行没能完成登记。展开详情看原文。",
+        "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
+        "codex_install_failed": "Codex 没接好。展开详情看卡在哪一步。",
+        "unknown_host": "不认识这个编辑器。",
+        "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。安装包可能不完整，重装桌面版即可。",
+        "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",
+        "bad_output": "命令跑完了，但没有可读结果。再试一次。",
+        "bad_args": "参数不对。",
+        "bad_host": "不认识这个编辑器。",
+        "bad_action": "不允许此操作。",
+        "not_desktop": "此操作仅在桌面版可用。",
+        "other": "没有接好。展开详情看命令的原话。"
       }
     }
   },
@@ -1642,7 +2012,7 @@
     "needPanel": "先选中一张已渲染、可编辑的图",
     "newStyle": "新建样式",
     "noSavedStyles": "还没有保存的样式",
-    "pageSizeSuffix": "（{{w}} × {{h}} mm）",
+    "pageSizeSuffix": "（{{w}} × {{h}} mm）",
     "paletteSwatchAria": "配色第 {{index}} 色",
     "paletteTitle": "系列配色，按出现顺序循环。",
     "removeColor": "移除颜色",
@@ -1679,7 +2049,7 @@
       "page": "页面尺寸",
       "on": "开",
       "off": "关",
-      "pageSize": "{{w}} × {{h}} mm",
+      "pageSize": "{{w}} × {{h}} mm",
       "following_other": "这份排版里有 {{count}} 张画布跟随这套样式，存下的改动会自动跟上。",
       "unsavedDraft": "还没存下：存下之后才能让画布跟随它。"
     }
@@ -1689,6 +2059,7 @@
     "decline": "暂不",
     "intro": "可发送匿名用量统计，了解哪些功能有人用。默认关闭，与账号无关。",
     "later": "随时可在设置里改。",
+    "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
     "neverData": "科研数据与图内文字",
     "neverFigures": "你的图与项目文件",
     "neverPaths": "文件名与路径",
@@ -1697,7 +2068,8 @@
     "neverTitle": "绝不发送",
     "policy": "隐私政策",
     "sendsFeatures": "你使用了哪些功能",
-    "sendsOutcome": "预检与导出是否成功",
+    "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
+    "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
     "sendsPlatform": "操作系统与处理器架构",
     "sendsTitle": "会发送",
     "sendsVersion": "Tavotto 的版本号",
@@ -1726,7 +2098,6 @@
   },
   "versions": {
     "beforeRestore": "恢复前（{{time}}）",
-    "close": "关闭排版时间线",
     "delete": "删除节点",
     "deleteBody": "删除后无法找回，当前排版不受影响。",
     "deleteTitle": "删除节点「{{name}}」？",
@@ -1737,13 +2108,13 @@
       "guides": "参考线：{{from}} → {{to}} 条",
       "hidden": "{{name}}：已隐藏",
       "locked": "{{name}}：已锁定",
-      "moved": "{{name}}：移动 {{dx}}, {{dy}} mm",
+      "moved": "{{name}}：移动 {{dx}}, {{dy}} mm",
       "movedAndResized": "{{name}}：位置与尺寸已变",
       "overridesDetail": "{{name}}：{{elements}} 个图内元素有变化（位置 {{pos}}、文字 {{text}}、子图布局 {{axes}}、其他 {{other}}）",
       "overridesSample": "涉及：{{list}}",
       "pageBackground": "页面背景设置不同",
-      "pageMargin": "安全区页边距：{{a}} → {{b}} mm",
-      "pageSize": "页面尺寸：{{aw}} × {{ah}} → {{bw}} × {{bh}} mm",
+      "pageMargin": "安全区页边距：{{a}} → {{b}} mm",
+      "pageSize": "页面尺寸：{{aw}} × {{ah}} → {{bw}} × {{bh}} mm",
       "removed": "当前已删除：{{name}}",
       "resized": "{{name}}：尺寸已变",
       "rotationChanged": "{{name}}：旋转 {{from}}° → {{to}}°",
@@ -1764,7 +2135,7 @@
     "nameHint": "给现在的排版起个名字，它就不会被自动清理。",
     "nameNow": "给现在存个名字…",
     "noDiff": "与当前画布没有差异",
-    "preview": "预览",
+    "enlarge": "放大查看",
     "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
     "rename": "改名…",
     "restore": "恢复到这里",
@@ -1773,6 +2144,14 @@
     "restoreMissingCanvasTitle": "原画布已不存在",
     "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
     "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
+    "restoreReplaceFigureTitle": "换成图「{{name}}」？",
+    "restoreLayoutTitle": "恢复成 {{n}} 张图的排版？",
+    "restoreLayoutBody": "画布上会换成这一版的 {{n}} 张图（{{names}}），现在的内容先存成「恢复前」，可以按 {{undo}} 撤销。",
+    "restoreLayoutBodyMore": "画布上会换成这一版的 {{n}} 张图（{{names}} 等），现在的内容先存成「恢复前」，可以按 {{undo}} 撤销。",
+    "restoreReplaceFiguresBody": "画布上现在的 {{m}} 张图会先存成「恢复前」，再换成这一张，可以按 {{undo}} 撤销。",
+    "restoreReplaceFigureBody": "当前的图「{{to}}」会先存成「恢复前」再被换掉，可以按 {{undo}} 撤销。",
+    "restoreOtherFigureTitle": "恢复图「{{name}}」？",
+    "restoreOtherFigureBody": "这一版属于图「{{from}}」。恢复会切到「{{from}}」，不动当前这张图「{{to}}」。",
     "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreUnknownCanvasTitle": "这个节点没有来源画布",
     "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
@@ -1781,12 +2160,11 @@
     "summary": {
       "added_other": "新增 {{count}} 个对象",
       "baseline_other": "{{count}} 个对象",
-      "page": "{{w}} × {{h}} mm",
+      "page": "{{w}} × {{h}} mm",
       "removed_other": "删除 {{count}} 个对象",
-      "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
+      "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
       "sameMetrics": "对象数与图幅未变"
     },
-    "title": "排版时间线",
     "versionName": "节点名称",
     "viewLabel": "怎么看",
     "emptyBody": "编辑停顿后，最多每 2 分钟会自动留一个节点；导出、写回、保存、打开和离开项目时也会留一个。",
@@ -1813,9 +2191,20 @@
     "loadingList": "正在读取这份排版的时间线…",
     "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
     "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
+    "scopeFigure": "这张图",
+    "scopeAllFigures": "全部图",
+    "scopeLayout": "这个排版",
+    "noneHereFigure": "这张图还没有节点",
+    "noneHereLayout": "这个排版还没有节点",
+    "scopeLabel": "显示哪张画布的节点",
+    "scopeCanvas": "这张画布",
+    "scopeAll": "全部画布",
+    "noneHere": "这张画布还没有节点",
+    "noneHereHint": "项目里另有 {{n}} 个节点（来自其他画布或来源未知），切到「全部画布」可以看到。",
     "filterLabel": "显示哪些节点",
     "filterAll": "全部",
     "filterNamed": "命名",
+    "compareLabel": "对比这一版与现在",
     "previewTitle": "预览：{{time}} {{name}}",
     "viewMoment": "这一刻",
     "viewSide": "并排对比",
@@ -1827,122 +2216,121 @@
     "zoomOut": "缩小",
     "zoomFit": "适配",
     "diffTitle": "与当前画布相比",
-    "quickNameTitle": "把现在存为命名节点"
+    "quickNameTitle": "把现在存为命名节点",
+    "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开"
   },
   "onboarding": {
-    "pause": "暂停教程",
-    "back": "返回",
-    "skipStep": "跳过此步",
-    "explore": "继续探索",
-    "openOwnProject": "打开自己的项目",
-    "resolvedContinue": "问题已解决，继续",
-    "targetWaiting": "正在等待目标出现…",
-    "targetMissing": "找不到这一步的目标。",
-    "precondition": {
-      "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里，先把它打开。",
-      "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行，先打开它。",
-      "noTextSelected": "先选中图里的一段文字（标题或坐标轴标签）。",
-      "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果，先打开它一次。",
-      "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张，先把 {{name}} 加进来。",
-      "notInLayout": "多选要在画布上进行，先回到画布。"
-    },
-    "action": {
-      "openFigure": "打开 {{name}}",
-      "selectText": "选中一段文字",
-      "addToLayout": "加入 {{name}}",
-      "returnToLayout": "回到画布"
-    },
-    "progress": "第 {{n}} 步，共 {{total}} 步",
     "hintsReset": "情境提示已重置，会再各出现一次",
     "landed": {
-      "started": "教程已开始",
-      "resumed": "从上次停下的地方继续",
-      "restarted": "教程已重新开始",
+      "restarted": "示例项目已重置",
       "opened": "已打开示例项目"
     },
     "failure": {
-      "unavailable": "教程资源不完整。请重新安装 Tavotto。",
-      "open_failed": "教程项目打不开。再试一次，或打开自己的项目。",
-      "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
-      "document_failed": "教程排版读不出来，版本不兼容或文件缺失。试试「重置教程项目」。",
+      "unavailable": "示例项目资源不完整。请重新安装 Tavotto。",
+      "open_failed": "示例项目打不开。再试一次，或打开自己的项目。",
+      "locked": "示例项目里有文件正被其他程序占用，关掉后再试。",
+      "layouts_changed": "示例项目里刚有新的排版，重置没有执行。请重新打开「重置示例项目」再确认一次。",
+      "document_failed": "示例排版读不出来，版本不兼容或文件缺失。试试「重置示例项目」。",
       "cancelled": "已取消。",
-      "no_api": "这个环境没有提供教程。"
+      "no_api": "这个环境没有提供示例项目。"
     },
     "reset": {
-      "title": "重置教程项目？",
-      "body": "教程项目恢复成刚安装的样子。你的改动、写回的图和进度都会清除，别的项目不受影响。",
-      "bodyWithLayouts": "教程项目恢复成刚安装的样子。你在里面另存的排版也会清除：{{names}}；要保留请先导出，别的项目不受影响。",
-      "confirm": "重置并重新开始"
+      "title": "重置示例项目？",
+      "body": "示例项目恢复成刚安装的样子，你在里面的改动和写回的图都会清除，别的项目不受影响。",
+      "bodyWithLayouts": "示例项目恢复成刚安装的样子。你在里面另存的排版也会清除：{{names}}；要保留请先导出，别的项目不受影响。",
+      "confirm": "重置示例项目"
     },
-    "steps": {
-      "open_fast_edit": {
-        "title": "双击这张图",
-        "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。这是教程副本，随便改，不影响你的项目。",
-        "canvas": {
-          "title": "双击这张图",
-          "body": "双击画布上的 Fig2_correlation 进入图内编辑。左侧「素材」里它的卡片也可以。这是教程副本，随便改，不影响你的项目。"
-        }
+    "shell": {
+      "label": "{{product}} 新手教程",
+      "progress": "教程进度：第 {{n}} 步，共 {{total}} 步",
+      "count": "{{n}} / {{total}}",
+      "skip": "跳过教程",
+      "back": "返回上一步",
+      "backToWelcome": "返回欢迎页",
+      "waitImport": "拖入脚本后继续",
+      "waitLegend": "拖动图例后继续",
+      "waitTitle": "调大标题字号后继续",
+      "next": "下一步",
+      "finish": "完成教程",
+      "externalFile": "当前为示例教程，完成后可以导入自己的脚本。"
+    },
+    "welcome": {
+      "title": "直接在图上改",
+      "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
+      "features": "图例、坐标轴、色条、文字、对齐、整体布局都能直接改",
+      "demoLabel": "从绘图脚本到可以直接调整的科研图",
+      "codeLabel": "示例脚本 {{name}}（节选）",
+      "figureLabel": "这份脚本画出的反应动力学图：标题、图例和位置都可以直接调整",
+      "callout": {
+        "title": "修改文字",
+        "legend": "调整图例",
+        "position": "拖动位置"
       },
-      "select_text": {
-        "title": "选中文字",
-        "body": "点击图里的标题或坐标轴标签，把它选中。"
-      },
-      "change_typography": {
-        "title": "改字号或字体",
-        "body": "在右侧属性里改字号或字体，比如调大一点。每次修改都进撤销历史。"
-      },
-      "locate_problem": {
-        "title": "从「问题」定位",
-        "body": "打开左侧「问题」，里面列着图里不合规范的地方。",
-        "row": {
-          "title": "从「问题」定位",
-          "body": "点击问题，Tavotto 会选中对象并把焦点落到对应的属性字段。问题在卡片里时，先点开那张卡片。"
-        }
-      },
-      "export_original": {
-        "title": "看看原图导出",
-        "body": "打开「导出」，确认输出范围是「原图尺寸」，然后关闭面板。",
-        "scope": {
-          "title": "看看原图导出",
-          "body": "「原图尺寸」按图本身的尺寸输出，不受画布缩放影响。确认后关闭面板继续。"
-        }
-      },
-      "add_to_layout": {
-        "title": "加入画布",
-        "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
-        "missing": {
-          "title": "加入画布",
-          "body": "画布上还缺 {{name}}。从左侧「素材」把它加进画布，两张图都在版面上才算完成。"
-        }
-      },
-      "multi_select_align": {
-        "title": "Shift 多选",
-        "body": "按住 Shift 点第二张图，把两张图一起选中。",
-        "bar": {
-          "title": "对齐",
-          "body": "选区旁边的浮动栏里点一个对齐，比如顶对齐。"
-        }
-      },
-      "export_canvas": {
-        "title": "看看画布导出",
-        "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
-        "scope": {
-          "title": "看看画布导出",
-          "body": "「画布」按页面尺寸和摆放输出整个版面。确认后关闭面板继续。"
-        }
-      },
-      "done": {
-        "title": "教程完成",
-        "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。随时可在「更多」菜单重新打开教程。",
-        "partial": {
-          "title": "教程结束",
-          "body": "完成 {{done}} 步，跳过 {{skipped}} 步，共 {{total}} 步。跳过的部分随时可在「更多」菜单重新打开教程。"
-        },
-        "allSkipped": {
-          "title": "教程已结束",
-          "body": "你跳过了全部 {{total}} 步，快速编辑、问题定位、导出和多选对齐都还没试过。想走一遍，可在「更多」菜单重新打开教程。"
-        }
-      }
+      "begin": "开始新手教程",
+      "openWorkspace": "直接进入工作台"
+    },
+    "import": {
+      "task": "第一步：把示例脚本拖进来",
+      "cardLabel": "拖动 {{name}} 到投放框",
+      "cardHint": "内置示例，无需准备文件",
+      "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
+      "zoneLabel": "脚本投放框",
+      "zoneTitle": "拖拽脚本到这里",
+      "zoneBody": "{{product}} 会打开它画出的图",
+      "picked": "已拿起 {{name}}，用方向键移到投放框上，回车放下。",
+      "overZone": "在投放框上方，回车放下。",
+      "leftZone": "离开了投放框。",
+      "cancelled": "已取消，卡片放回原处。",
+      "missed": "没有放进投放框，卡片已放回。再试一次。",
+      "renderingTitle": "正在生成示例图…",
+      "rendering": "正在渲染图表…",
+      "renderProgress": "示例图渲染进度",
+      "builtin": "内置示例",
+      "figureLabel": "{{name}} 画出的反应动力学图",
+      "success": "编译完成"
+    },
+    "legend": {
+      "task": "拖动图例，换个位置",
+      "tip": "拖动这里",
+      "legendLabel": "图例：{{entries}}。拖动它，或按空格拿起",
+      "keyboardHelp": "按空格拿起图例，方向键移动（按住 Shift 微调），回车放下，Esc 取消。",
+      "picked": "已拿起图例，用方向键移动，回车放下。",
+      "dropped": "图例已放下。",
+      "cancelled": "已取消，图例回到原处。",
+      "farther": "再拖远一点试试。",
+      "figureLabel": "反应动力学图，图例可以拖动",
+      "success": "漂亮！图里的元素能直接拖动。"
+    },
+    "title": {
+      "task": "点击标题，把文字调大一点",
+      "taskSelected": "把字号调大一点",
+      "tip": "点击标题",
+      "controlTip": "点 + 或输入更大的字号",
+      "controlsLabel": "标题字号",
+      "sizeLabel": "字号",
+      "sizeAria": "标题字号（{{min}} 到 {{max}} pt）",
+      "decrease": "减小字号",
+      "increase": "增大字号",
+      "titleLabel": "图标题「{{text}}」，{{size}} pt。点击选中后可以改字号",
+      "figureLabel": "反应动力学图，标题可以选中",
+      "success": "太棒了！不用改代码，也能调整文字。"
+    },
+    "finish": {
+      "title": "{{product}}，直接在图上改",
+      "compareLabel": "调整前后对比",
+      "before": "调整前",
+      "after": "你的调整成果",
+      "beforeAlt": "调整前：脚本原样画出的图，图例在右下角，标题 {{size}} pt",
+      "afterAlt": "你的调整成果：同一组数据，图例换了位置，标题 {{size}} pt",
+      "afterAltUnmoved": "你的调整成果：同一组数据，标题 {{size}} pt",
+      "nextHint": "已经学会直接编辑科研图。现在可以试试自己的 Python 绘图脚本。",
+      "demoNote": "教程里的改动只在这个演示中，不会写进任何文件。",
+      "start": "开始使用 {{product}}",
+      "replay": "重新体验"
+    },
+    "figureFailed": {
+      "body": "示例图没有显示出来。可以重新加载，或者先跳过教程。",
+      "retry": "重新加载示例"
     }
   },
   "perfProbe": {
@@ -2014,5 +2402,91 @@
     "hint": "只含这一次的步骤、阶段和错误码，不含文件名、路径或参数。",
     "notFound": "找不到这次的记录（应用可能重启过），没法生成当时的诊断。",
     "title": "本次问题的诊断"
+  },
+  "sourceReview": {
+    "title": "对照原图与重画",
+    "description": "重画与原图有 {{percent}}% 像素不同。确认后以重画为编辑基础；原 PNG 不会被改动。",
+    "descriptionChanged": "脚本、数据或环境变了：重画与原图有 {{percent}}% 像素不同。确认后以新的重画为基础，你的修改会保留；原 PNG 不会被改动。",
+    "original": "原图",
+    "redrawn": "重画",
+    "originalAlt": "磁盘上的原 PNG",
+    "redrawnAlt": "按脚本重画的图",
+    "confirm": "以重画为基础编辑",
+    "keepOriginal": "保留原图",
+    "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。"
+  },
+  "journal": {
+    "title": "期刊",
+    "pick": "选择期刊",
+    "search": "搜索名称、缩写或 ISSN",
+    "searchAria": "搜索期刊",
+    "listAria": "期刊列表",
+    "none": "没有可选的期刊",
+    "noMatch": "没有匹配的期刊",
+    "current": "按「{{name}}」检查",
+    "requirements": "期刊要求",
+    "unspecified": "该期刊未规定",
+    "unset": "本刊不适用",
+    "noJournal": "不按期刊",
+    "cleared": "已不按期刊检查",
+    "yes": "是",
+    "no": "否",
+    "noLimit": "不限",
+    "source": "出处",
+    "sourceOf": "{{name}}的出处",
+    "picked": "已按「{{name}}」检查",
+    "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
+    "card": {
+      "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
+      "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
+      "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
+      "open": "打开原网页",
+      "archive": "存档",
+      "aria": "出处"
+    },
+    "field": {
+      "page_columns": "栏宽",
+      "widths_mm_single": "单栏",
+      "widths_mm_double": "双栏",
+      "widths_mm_tolerance_mm": "栏宽容差",
+      "allowed_aspect_ratios": "宽高比",
+      "min_effective_font_size_pt": "最小字号",
+      "absolute_min_font_size_pt": "字号下限",
+      "max_font_size_pt": "最大字号",
+      "min_script_font_size_pt": "上下标最小字号",
+      "min_raster_dpi": "位图分辨率",
+      "line_widths_pt": "线宽",
+      "font_family_latin_accepted": "字体",
+      "preferred_formats_export_default": "默认导出格式",
+      "axis_policy_tick_direction": "刻度方向",
+      "axis_policy_enclosed_spines": "坐标轴封闭",
+      "axis_policy_label_format": "坐标轴标签格式",
+      "axis_policy_label_format_regex": "坐标轴标签格式",
+      "axis_policy_max_tick_labels": "刻度标签数量上限",
+      "legend_policy_frame": "图例边框",
+      "legend_policy_min_font_size_pt": "图例最小字号",
+      "legend_policy_max_font_size_pt": "图例最大字号",
+      "text_weight_policy": "字重",
+      "cjk_fallback_required": "中日韩字体回退",
+      "info_one_half_mm": "1.5 栏",
+      "info_max_height_mm": "最大高度",
+      "info_width_range_mm": "宽度范围",
+      "info_width_range_single_mm": "单栏宽范围",
+      "info_width_range_double_mm": "双栏宽范围",
+      "info_width_single_mm": "单栏宽（仅展示）",
+      "info_width_double_mm": "双栏宽（仅展示）",
+      "info_min_width_mm": "最小宽度",
+      "info_min_line_width_pt": "最小线宽",
+      "info_dpi_by_kind": "分辨率（按图类）",
+      "info_dpi_photo": "照片分辨率",
+      "info_dpi_halftone": "半色调分辨率",
+      "info_dpi_combination": "组合图分辨率",
+      "info_color_mode": "色彩模式",
+      "info_formats_raw": "文件格式",
+      "info_formats_images_raw": "图片格式",
+      "info_font_names_raw": "字体名",
+      "info_text_height_mm": "文字高度",
+      "info_panel_label": "子图标签"
+    }
   }
 }

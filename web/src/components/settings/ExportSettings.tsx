@@ -29,7 +29,7 @@ const ex = (key: string, values?: Record<string, unknown>) =>
  * 分辨率只对位图有意义，所以只选了矢量格式时那一行停用，并在行内就近说明为什么——ADR 0031 的
  * 「PPI 只在有位图格式时是数字」在界面这一侧的样子。
  *
- * 格式一行是 `balanced`（4 : 6）：四个复选框放不进 240 的控件列，标签 12px（此前 11px），从控件列左缘起排。
+ * 格式一行是 `balanced`（4 : 6）：五个复选框放不进 240 的控件列，标签 12px（此前 11px），从控件列左缘起排。
  * `readExportDefaults` / `writeExportDefaults` 的合同一个字没动。
  */
 export function ExportSettings() {
@@ -55,7 +55,7 @@ export function ExportSettings() {
             {FORMATS.map((f) => (
               <label key={f} data-export-format={f} className="flex h-7 items-center gap-1.5 text-sm text-ink">
                 <Checkbox checked={defaults.formats.includes(f)} onChange={() => toggleFormat(f)} />
-                {/* 只列格式名；格式清单来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
+                {/* 只列格式名；格式清单来自 `FORMATS`（唯一出处），新增格式自动跟上 */}
                 {f.toUpperCase()}
               </label>
             ))}

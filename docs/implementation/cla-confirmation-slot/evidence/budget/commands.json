@@ -1,0 +1,85 @@
+[
+  {
+    "name": "independent-tests",
+    "args": [
+      "node",
+      "--test",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/snapshot",
+    "exit": 0,
+    "log": "/tmp/cla-slot-budget-independent/independent-tests.log"
+  },
+  {
+    "name": "mutant-1",
+    "args": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot new-head one delegated person actual issued and unknown settlement SQL",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/mutant-1",
+    "exit": 1,
+    "log": "/tmp/cla-slot-budget-independent/mutant-1.log"
+  },
+  {
+    "name": "mutant-2",
+    "args": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot busy queues stay pending without consuming refresh retries",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/mutant-2",
+    "exit": 1,
+    "log": "/tmp/cla-slot-budget-independent/mutant-2.log"
+  },
+  {
+    "name": "mutant-3",
+    "args": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot expired confirmed owner retains every-phase live send fence",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/mutant-3",
+    "exit": 1,
+    "log": "/tmp/cla-slot-budget-independent/mutant-3.log"
+  },
+  {
+    "name": "mutant-4",
+    "args": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot restart flagfalse fences new positives and recovers exact owner by GET witness",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/mutant-4",
+    "exit": 1,
+    "log": "/tmp/cla-slot-budget-independent/mutant-4.log"
+  },
+  {
+    "name": "mutant-5",
+    "args": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot withdrawal has target and within-target priority over older ordinary work",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/mutant-5",
+    "exit": 1,
+    "log": "/tmp/cla-slot-budget-independent/mutant-5.log"
+  },
+  {
+    "name": "mutant-6",
+    "args": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot withdrawal has target and within-target priority over older ordinary work",
+      "tests/independent-slot-budget.test.mjs"
+    ],
+    "cwd": "/tmp/cla-slot-budget-independent/mutant-6",
+    "exit": 1,
+    "log": "/tmp/cla-slot-budget-independent/mutant-6.log"
+  }
+]

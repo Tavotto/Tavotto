@@ -1,0 +1,83 @@
+[
+  {
+    "name": "terminal revocation audit priority after rotation",
+    "file": "src/native/delegation.ts",
+    "before": "const state=e.action==='revoke'?'revoked':blocked?'blocked':",
+    "after": "const state=blocked?'blocked':",
+    "pattern": "historical terminal revocation remains visible in current caller audit disabled-rotated",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical terminal only",
+    "file": "src/native/delegation.ts",
+    "before": "    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');",
+    "after": "",
+    "pattern": "historical path refuses nonterminal enable",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical registry existence",
+    "file": "src/native/delegation.ts",
+    "before": "    const agreement=await this.s.store.stmt(\"SELECT kind,version,digest FROM agreements WHERE kind='individual' AND version=? AND digest=?\",\n      original.agreement_version,original.agreement_sha256).first<ArchiveBinding['agreement']>();",
+    "after": "    const agreement={kind:'individual' as const,version:original.agreement_version,digest:original.agreement_sha256};",
+    "pattern": "historical revoke requires exact historical agreement tuple",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical full chain authentication",
+    "file": "src/native/delegation.ts",
+    "before": "    const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=await this.control(record,grant,g.hash,now,g.public_key);",
+    "after": "    const grant=original,event=await this.control(record,grant,g.hash,now,g.public_key);",
+    "pattern": "historical revoke authenticates every prior control signature",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical registered key for new control",
+    "file": "src/native/delegation.ts",
+    "before": "    const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=await this.control(record,grant,g.hash,now,g.public_key);",
+    "after": "    const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=await this.control(record,grant,g.hash,now,this.s.c.holderAuthorizationKey);",
+    "pattern": "historical revoke refuses the current rotated key signing an old grant control",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical final revision CAS",
+    "file": "src/native/delegation.ts",
+    "before": "    await this.s.store.batch([...this.s.store.cas(revision),...this.s.store.guard(`${DB_NOW}>=? AND\n      coalesce((SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1),?)=?`,event.issued_at,g.id,g.hash,event.previous_sha256),\n      this.s.store.stmt('INSERT INTO delegated_controls VALUES(?,?,?,?,?,?,?)',g.id,event.sequence,record.body,record.signature,await sha256(record.body),event.action,event.issued_at)]);\n  }\n  private async active",
+    "after": "    await this.s.store.batch([...this.s.store.guard(`${DB_NOW}>=? AND\n      coalesce((SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1),?)=?`,event.issued_at,g.id,g.hash,event.previous_sha256),\n      this.s.store.stmt('INSERT INTO delegated_controls VALUES(?,?,?,?,?,?,?)',g.id,event.sequence,record.body,record.signature,await sha256(record.body),event.action,event.issued_at)]);\n  }\n  private async active",
+    "pattern": "historical revoke fails transaction when evidence revision changes after validation",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical commit clock",
+    "file": "src/native/delegation.ts",
+    "before": "    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');\n    if(event.sequence!==(e?.sequence ?? 0)+1 || event.previous_sha256!==(e?.hash ?? g.hash) ||\n      e?.action==='revoke' || e && event.issued_at<e.issued_at)throw new Rejected('authorization_control_order');\n    await this.s.store.batch([...this.s.store.cas(revision),...this.s.store.guard(`${DB_NOW}>=? AND",
+    "after": "    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');\n    if(event.sequence!==(e?.sequence ?? 0)+1 || event.previous_sha256!==(e?.hash ?? g.hash) ||\n      e?.action==='revoke' || e && event.issued_at<e.issued_at)throw new Rejected('authorization_control_order');\n    await this.s.store.batch([...this.s.store.cas(revision),...this.s.store.guard(`? IS NOT NULL AND",
+    "pattern": "historical revoke rechecks database clock in the commit transaction",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical current holder boundary",
+    "file": "src/native/delegation.ts",
+    "before": "g.holder_name!==c.holderName ||",
+    "after": "",
+    "pattern": "historical revoke retains current identity boundary",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "historical control monotonic time",
+    "file": "src/native/delegation.ts",
+    "before": "    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');\n    if(event.sequence!==(e?.sequence ?? 0)+1 || event.previous_sha256!==(e?.hash ?? g.hash) ||\n      e?.action==='revoke' || e && event.issued_at<e.issued_at)throw new Rejected('authorization_control_order');",
+    "after": "    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');\n    if(event.sequence!==(e?.sequence ?? 0)+1 || event.previous_sha256!==(e?.hash ?? g.hash) ||\n      e?.action==='revoke')throw new Rejected('authorization_control_order');",
+    "pattern": "historical revoke rejects nonmonotonic control time after a later existing control",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  }
+]

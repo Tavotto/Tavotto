@@ -285,3 +285,348 @@ class TestCli:
             capsys,
         )
         assert rc == 1 and v["status"] == "failure"
+
+
+# ============================================================ docs-only 快车道（--classifier）
+KEPT = ["python-lint", "cla-check", "release-note-gate", "docs-scope"]
+SKIPPABLE = ["invariants", "backend-fast", "frontend", "workerd"]
+DOCS_REQ = KEPT + SKIPPABLE
+CLS = "docs-scope"
+
+
+def _docs_results(**over: str) -> dict[str, str]:
+    r = {j: "success" for j in KEPT}
+    r.update({j: "skipped" for j in SKIPPABLE})
+    r.update(over)
+    return r
+
+
+def _outputs(value="true") -> dict:
+    return {CLS: {"docs_only": value}}
+
+
+def _docs(results, *, outputs=None, event="pull_request", skippable=SKIPPABLE, required=DOCS_REQ):
+    return AG.decide(
+        "fast",
+        event,
+        required,
+        results,
+        outputs=_outputs() if outputs is None else outputs,
+        classifier=CLS,
+        docs_only_skippable=skippable,
+    )
+
+
+class TestDocsOnlyFastLane:
+    @pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+    def test_docs_only_with_evidence_accepts_the_listed_skips(self, event):
+        v = _docs(_docs_results(), event=event)
+        assert v["status"] == "success"
+        assert v["reason"] == "docs_only_fast_path"
+        assert v["docs_only_skipped"] == SKIPPABLE
+
+    @pytest.mark.parametrize("cls_result", ["failure", "skipped", "cancelled"])
+    def test_classifier_that_did_not_succeed_gives_no_exemption(self, cls_result):
+        v = _docs(_docs_results(**{CLS: cls_result}))
+        assert v["status"] == "failure"
+
+    @pytest.mark.parametrize("value", ["false", "", "TRUE", "True", "1", "yes"])
+    def test_only_the_literal_true_counts_as_evidence(self, value):
+        v = _docs(_docs_results(), outputs=_outputs(value))
+        assert v["status"] == "failure"
+        assert any("invariants" in p for p in v["problems"])
+
+    def test_missing_outputs_give_no_exemption(self):
+        for outputs in ({}, {CLS: {}}, {"other": {"docs_only": "true"}}):
+            assert _docs(_docs_results(), outputs=outputs)["status"] == "failure"
+
+    def test_caller_flag_cannot_substitute_for_the_evidence(self):
+        """参数只列名单；是否成立只看 needs 里分类 job 的 result 与 outputs。"""
+        v = AG.decide(
+            "fast",
+            "pull_request",
+            DOCS_REQ,
+            _docs_results(),
+            outputs=None,
+            classifier=CLS,
+            docs_only_skippable=SKIPPABLE,
+        )
+        assert v["status"] == "failure"
+
+    def test_kept_jobs_must_still_succeed(self):
+        for job in ("python-lint", "cla-check", "release-note-gate"):
+            for bad in ("failure", "skipped", "cancelled"):
+                assert _docs(_docs_results(**{job: bad}))["status"] == "failure", (job, bad)
+
+    def test_a_skippable_job_that_ran_and_failed_still_fails(self):
+        v = _docs(_docs_results(frontend="failure"))
+        assert v["status"] == "failure"
+        assert any("frontend: failure" in p for p in v["problems"])
+
+    def test_skippable_job_that_ran_and_succeeded_is_fine(self):
+        assert _docs(_docs_results(frontend="success"))["status"] == "success"
+
+    def test_a_job_outside_the_skippable_list_cannot_be_skipped(self):
+        r = _docs_results()
+        r["compat-smoke"] = "skipped"
+        v = _docs(r, required=DOCS_REQ + ["compat-smoke"])
+        assert v["status"] == "failure"
+        assert any("compat-smoke" in p for p in v["problems"])
+
+    def test_without_evidence_the_old_strict_rule_is_unchanged(self):
+        v = AG.decide("fast", "pull_request", DOCS_REQ, _docs_results())
+        assert v["status"] == "failure"
+
+    def test_closed_set_still_applies_in_docs_only_mode(self):
+        v = _docs(dict(_docs_results(), extra="success"))
+        assert v["status"] == "failure" and v["reason"] == "contract_violation"
+        r = _docs_results()
+        del r["invariants"]
+        assert _docs(r)["reason"] == "contract_violation"
+
+    @pytest.mark.parametrize(
+        "kw",
+        [
+            {"classifier": CLS, "docs_only_skippable": []},
+            {"classifier": None, "docs_only_skippable": ["invariants"]},
+            {"classifier": CLS, "docs_only_skippable": [CLS, "invariants"]},
+            {"classifier": CLS, "docs_only_skippable": ["not-required"]},
+        ],
+    )
+    def test_bad_flag_combinations_are_config_errors(self, kw):
+        with pytest.raises(AG.ConfigError):
+            AG.decide("fast", "pull_request", DOCS_REQ, _docs_results(), outputs=_outputs(), **kw)
+
+    # ---- integration gate：分类 job 在 needs 里、不在 required 里 ----
+    def _int(self, heavy, cls, *, event="merge_group", deferred=False, outputs=None, flags=True):
+        results = dict(heavy, **({CLS: cls} if cls else {}))
+        kw = {}
+        if flags:
+            kw = dict(
+                outputs=_outputs() if outputs is None else outputs,
+                classifier=CLS,
+                docs_only_skippable=HEAVY_REQ,
+            )
+        return AG.decide(
+            "integration",
+            event,
+            HEAVY_REQ,
+            results,
+            require_heavy=not deferred,
+            allow_deferred=deferred,
+            **kw,
+        )
+
+    def test_merge_group_docs_only_accepts_skipped_heavy(self):
+        v = self._int(_all("skipped", HEAVY_REQ), "success")
+        assert v["status"] == "success" and v["reason"] == "docs_only_fast_path"
+
+    def test_plain_pr_docs_only_is_a_real_success_not_deferred(self):
+        """deferred 的话术是「推迟到 merge_group」，docs-only 在 merge_group 上也不跑重型。"""
+        v = self._int(_all("skipped", HEAVY_REQ), "success", event="pull_request", deferred=True)
+        assert v["status"] == "success" and v["reason"] == "docs_only_fast_path"
+
+    def test_merge_group_without_evidence_still_fails_on_skipped_heavy(self):
+        v = self._int(_all("skipped", HEAVY_REQ), "success", outputs=_outputs("false"))
+        assert v["status"] == "failure"
+
+    def test_classifier_failure_fails_the_integration_gate_too(self):
+        for res in ("failure", "skipped", "cancelled"):
+            v = self._int(_all("skipped", HEAVY_REQ), res)
+            assert v["status"] == "failure", res
+
+    def test_failed_classifier_beside_real_heavy_results_still_fails(self):
+        """分类 job 红了就红，哪怕重型 job 碰巧都 success（证据自己坏了不能当没看见）。"""
+        for res in ("failure", "skipped", "cancelled"):
+            v = self._int(_all("success", HEAVY_REQ), res)
+            assert v["status"] == "failure", res
+            assert any(CLS in p for p in v["problems"]), v
+
+    def test_classifier_extra_without_flags_is_a_contract_violation(self):
+        """为什么 ci.yml 在非 docs-only 时把 docs-scope 从 needs JSON 里剔掉：不剔，
+        旧判定器（bootstrap 空窗）和新判定器都会把多出来的条目判成 contract_violation。"""
+        v = self._int(_all("success", HEAVY_REQ), "success", flags=False)
+        assert v["status"] == "failure" and v["reason"] == "contract_violation"
+
+    def test_other_unexpected_jobs_are_still_rejected_next_to_the_classifier(self):
+        v = self._int(dict(_all("skipped", HEAVY_REQ), sneaky="success"), "success")
+        assert v["status"] == "failure" and v["reason"] == "contract_violation"
+
+    def test_summary_lists_the_skipped_jobs(self):
+        v = _docs(_docs_results())
+        text = AG.render_summary(v, DOCS_REQ)
+        assert "docs-only" in text and "`invariants`" in text
+
+
+class TestDocsOnlyCli:
+    def _run(self, capsys, needs, *extra):
+        rc = AG.main(
+            [
+                "--mode",
+                "fast",
+                "--event",
+                "merge_group",
+                "--required",
+                ",".join(DOCS_REQ),
+                "--needs-json",
+                json.dumps(needs),
+                *extra,
+            ]
+        )
+        return rc, json.loads(capsys.readouterr().out.splitlines()[0])
+
+    def _needs(self, value="true", **over):
+        r = _docs_results(**over)
+        needs = {j: {"result": res} for j, res in r.items()}
+        needs[CLS]["outputs"] = {"docs_only": value}
+        return needs
+
+    FLAGS = ("--classifier", CLS, "--docs-only-skippable", ",".join(SKIPPABLE))
+
+    def test_exit_zero_when_evidence_holds(self, capsys):
+        rc, out = self._run(capsys, self._needs(), *self.FLAGS)
+        assert rc == 0 and out["reason"] == "docs_only_fast_path"
+
+    def test_exit_one_when_docs_only_is_false(self, capsys):
+        rc, out = self._run(capsys, self._needs("false"), *self.FLAGS)
+        assert rc == 1 and out["status"] == "failure"
+
+    def test_exit_one_without_the_flags(self, capsys):
+        rc, _ = self._run(capsys, self._needs())
+        assert rc == 1
+
+    def test_flags_that_name_a_job_outside_required_exit_two(self, capsys):
+        rc, out = self._run(
+            capsys, self._needs(), "--classifier", CLS, "--docs-only-skippable", "ghost"
+        )
+        assert rc == 2 and out["reason"] == "config_error"
+
+    def test_outputs_may_be_absent_from_needs_json(self, capsys):
+        needs = {j: {"result": r} for j, r in _docs_results().items()}
+        rc, _ = self._run(capsys, needs, *self.FLAGS)
+        assert rc == 1
+
+
+# ============================================================ merge_group 快速失败归因
+class TestMergeGroupFailFastAttribution:
+    """重腿红 → workflow 取消其余 job → 它们的结论是 cancelled。判红规则不变，只多归因。"""
+
+    HEAVY = ["backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e"]
+
+    def _mg(self, **overrides):
+        r = {j: "success" for j in self.HEAVY}
+        r.update(overrides)
+        return AG.decide("integration", "merge_group", self.HEAVY, r, require_heavy=True)
+
+    def test_a_red_leg_with_cancelled_siblings_is_red_and_names_the_root(self):
+        v = self._mg(
+            **{"windows-exe-smoke": "failure", "package": "cancelled", "posix-e2e": "cancelled"}
+        )
+        assert v["status"] == "failure" and v["reason"] == "upstream_not_success"
+        assert v["root_failures"] == ["windows-exe-smoke"]
+        assert v["cancelled_by_fail_fast"] == ["package", "posix-e2e"]
+
+    def test_cancelled_without_any_failure_is_still_red_and_not_blamed_on_fail_fast(self):
+        """外部取消（新 push / 人手点取消）没有 failure：保持裸 cancelled，不得冒充快速失败。"""
+        v = self._mg(**{"package": "cancelled", "posix-e2e": "cancelled"})
+        assert v["status"] == "failure"
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_all_cancelled_after_a_failure_can_never_pass(self):
+        """快速失败后哪怕其余全是 cancelled，也不能因为『没有别的红』被放过。"""
+        v = self._mg(
+            **{
+                "backend-platforms": "failure",
+                "package": "cancelled",
+                "windows-exe-smoke": "cancelled",
+                "macos-app-smoke": "cancelled",
+                "posix-e2e": "cancelled",
+            }
+        )
+        assert v["status"] == "failure"
+
+    def test_attribution_is_merge_group_only(self):
+        r = {j: "success" for j in self.HEAVY}
+        r.update({"package": "failure", "posix-e2e": "cancelled"})
+        v = AG.decide("integration", "pull_request", self.HEAVY, r, require_heavy=True)
+        assert v["status"] == "failure"
+        assert v["cancelled_by_fail_fast"] == [], "PR / full-ci 的语义不变：不归因快速失败"
+
+    def test_all_success_carries_no_attribution_and_still_passes(self):
+        v = self._mg()
+        assert v["status"] == "success" and "root_failures" not in v
+
+    def test_summary_points_at_the_root_failure(self):
+        v = self._mg(**{"package": "failure", "posix-e2e": "cancelled"})
+        text = AG.render_summary(v, self.HEAVY)
+        assert "快速失败" in text and "`package`" in text and "`posix-e2e`" in text
+
+
+class TestFailFastRootFromRunJobs:
+    """快速失败取消的是整个 run，红腿自己的 job 结论也是 cancelled（#1655 合入前第一个红组实测：
+    backend-platforms (macos-latest, 6) 的 pytest 红，job 却显示 cancelled）。归因改读步骤结论。"""
+
+    HEAVY = TestMergeGroupFailFastAttribution.HEAVY
+    RUN_JOBS = [
+        {"name": "backend-platforms (macos-latest, 6)", "failed_steps": ["pytest"]},
+        {"name": "backend-platforms (macos-latest, 5)", "failed_steps": []},
+        {"name": "posix-e2e (1/3)", "failed_steps": []},
+        {"name": "CI fast gate", "failed_steps": ["聚合判定"]},
+        {"name": "CI integration gate", "failed_steps": ["聚合判定"]},
+    ]
+
+    def _all_cancelled(self, event="merge_group", run_jobs=None):
+        r = {j: "cancelled" for j in self.HEAVY}
+        return AG.decide("integration", event, self.HEAVY, r, require_heavy=True, run_jobs=run_jobs)
+
+    def test_root_is_found_in_step_conclusions_when_every_leg_shows_cancelled(self):
+        v = self._all_cancelled(run_jobs=self.RUN_JOBS)
+        assert v["status"] == "failure"
+        assert v["root_failures"] == ["backend-platforms (macos-latest, 6) · pytest"]
+        assert v["cancelled_by_fail_fast"] == sorted(self.HEAVY)
+
+    def test_gates_own_failed_steps_are_never_the_root(self):
+        only_gates = [j for j in self.RUN_JOBS if j["name"].startswith("CI ")]
+        assert AG.root_failures_from_run_jobs(only_gates) == []
+        v = self._all_cancelled(run_jobs=only_gates)
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_without_run_jobs_all_cancelled_stays_external(self):
+        v = self._all_cancelled(run_jobs=None)
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_run_jobs_are_ignored_outside_merge_group(self):
+        v = self._all_cancelled(event="pull_request", run_jobs=self.RUN_JOBS)
+        assert v["status"] == "failure"
+        assert v["root_failures"] == [] and v["cancelled_by_fail_fast"] == []
+
+    def test_run_jobs_never_turn_red_into_green(self):
+        r = {j: "success" for j in self.HEAVY}
+        r["package"] = "cancelled"
+        v = AG.decide("integration", "merge_group", self.HEAVY, r, require_heavy=True, run_jobs=[])
+        assert v["status"] == "failure"
+
+    def test_main_reads_run_jobs_from_env_and_tolerates_bad_lines(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        f = tmp_path / "run-jobs.ndjson"
+        f.write_text(
+            "not json\n"
+            + "\n".join(json.dumps(j, ensure_ascii=False) for j in self.RUN_JOBS)
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("RUN_JOBS_FILE", str(f))
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        needs = json.dumps({j: {"result": "cancelled", "outputs": {}} for j in self.HEAVY})
+        rc = AG.main(
+            ["--mode", "integration", "--event", "merge_group", "--required", ",".join(self.HEAVY),
+             "--needs-json", needs, "--require-heavy"]
+        )  # fmt: skip
+        assert rc == 1
+        verdict = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert verdict["root_failures"] == ["backend-platforms (macos-latest, 6) · pytest"]
+
+    def test_missing_run_jobs_file_is_not_an_error(self, tmp_path):
+        assert AG._read_run_jobs(str(tmp_path / "nope.ndjson")) is None
+        assert AG._read_run_jobs("") is None

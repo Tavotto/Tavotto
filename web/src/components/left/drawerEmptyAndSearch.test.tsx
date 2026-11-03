@@ -10,14 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectStatus, RecentProject } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { SEARCH_MIN_ITEMS } from '@/components/ui/searchThreshold'
-import { useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useProjectStore } from '@/store/projectStore'
-import { emptyProject } from '@/types/document'
 import { AssetBrowser } from './AssetBrowser'
-import { CanvasList } from './CanvasList'
 import { WorkspaceList } from './WorkspaceList'
 
 declare global {
@@ -51,49 +48,6 @@ afterEach(async () => {
 })
 
 const search = () => host.querySelector<HTMLInputElement>('input')
-const type = (el: HTMLInputElement, v: string) =>
-  act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, v)
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-  })
-
-describe('画布抽屉', () => {
-  const seed = async (n: number) => {
-    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_drawer_empty')
-    for (let i = 1; i < n; i++) useDocumentStore.getState().addCanvas()
-  }
-  beforeEach(() => {
-    localStorage.clear()
-    document.body.innerHTML = ''
-  })
-
-  it('阈值是 6：5 张没有搜索框，6 张有', async () => {
-    expect(SEARCH_MIN_ITEMS).toBe(6)
-    await seed(SEARCH_MIN_ITEMS - 1)
-    await mount(<CanvasList />)
-    expect(search()).toBeNull()
-    await act(async () => root.unmount())
-    host.remove()
-    await seed(SEARCH_MIN_ITEMS)
-    await mount(<CanvasList />)
-    expect(search()).not.toBeNull()
-  })
-
-  it('搜不到：一行灰字 + 「清除搜索」文字动作，点它清空且搜索框保留；没有图标底座', async () => {
-    await seed(SEARCH_MIN_ITEMS)
-    await mount(<CanvasList />)
-    await type(search()!, 'zzz-no-such')
-    const line = host.querySelector<HTMLElement>('[data-empty-line]')!
-    expect(line).toBeTruthy()
-    expect(host.querySelector('[data-empty-state]')).toBeNull()
-    expect(line.querySelector('svg')).toBeNull()
-    const act1 = line.querySelector<HTMLButtonElement>('button')!
-    expect(act1.className).toContain('text-info-content')
-    await act(async () => act1.click())
-    expect(host.querySelector('[data-empty-line]')).toBeNull()
-    expect(search()!.value).toBe('')
-  })
-})
 
 describe('项目抽屉', () => {
   const entryOf = (path: string): RecentProject => ({

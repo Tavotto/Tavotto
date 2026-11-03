@@ -4,6 +4,7 @@
  * （`types/document.migrateToProject`）要调它，而 `figureFrame` 要从 `types/document` 取换算。
  */
 import type { CanvasObject, PanelObject, PanelOverride } from '@/types/document'
+import { isAdoptedPanel } from '@/lib/artifactValidation'
 
 /** 面板上的记号：这个面板按 ADR 0098 的图幅语义放上来 / 迁移过 */
 export const FIGURE_FRAME_VERSION = 1
@@ -29,7 +30,7 @@ function renderedByEngine(panel: PanelObject): boolean {
 export function migrateFigureFrames(objects: CanvasObject[]): CanvasObject[] {
   let changed = false
   const out = objects.map((o) => {
-    if (o.type !== 'panel' || Object.hasOwn(o, 'artifactValidation') || o.figureFrame === FIGURE_FRAME_VERSION) return o
+    if (o.type !== 'panel' || isAdoptedPanel(o) || o.figureFrame === FIGURE_FRAME_VERSION) return o
     changed = true
     const next: PanelObject = { ...o, figureFrame: FIGURE_FRAME_VERSION }
     if (renderedByEngine(o) && !hasLegacyFrame(o)) {

@@ -1,0 +1,115 @@
+{
+  "base_sha": "a4695f830d321ffa03184595afd895d2055db3b3",
+  "latest_observed_main": "0991bb9501489395a38542c94867fcfeffbdf196",
+  "branch": "feat/cla-confirmation-slot-20261018",
+  "default_enabled": false,
+  "commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "log": "node.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "log": "typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "log": "build.txt"
+    }
+  ],
+  "node_passed": 456,
+  "migration_passed": 4,
+  "detected_mutations": 124,
+  "new_mutations": 31,
+  "new_mutant_unique_locations": 1,
+  "new_mutant_required_exit": 1,
+  "new_mutant_required_error": "AssertionError",
+  "independent_contract_tests": 39,
+  "independent_contract_mutants": 22,
+  "independent_budget_tests": 14,
+  "independent_budget_mutants": 6,
+  "config_tests": 4,
+  "config_mutants": 3,
+  "sql_measurements": {
+    "new_head_unsent_N1": {
+      "work": 17,
+      "total": 21
+    },
+    "same_head_unsent_N1": {
+      "work": 17,
+      "total": 21
+    },
+    "conservative_qualification_withdrawal_prefix_and_negative_release": {
+      "work": 19,
+      "total": 36
+    },
+    "actual_negative_GET_recovery": {
+      "total": 27,
+      "synthetic_gets": 2
+    }
+  },
+  "source_sha256": {
+    "docs/adr/0134-limited-cla-countersigning-authority.md": "d669196b6edb96bff19fe8620c3f7e65b20cdd28dcfd44de20bf2c83b777d6c1",
+    "docs/implementation/cla-confirmation-slot/README.md": "93963a5d01c90d0e47267c1dbc83c7671d85a714611ec390ea21316acac2db8b",
+    "services/cla-cloudflare/deployment/wrangler.disabled.json": "32f8c8850783743bf64c8499e732795b39c06da2f22003742fb948caf345d2d0",
+    "services/cla-cloudflare/scripts/deployment-plan.mjs": "a7163ab781811384503fc3ece88b02ab1585c03344c88392a28ad8947e59db9e",
+    "services/cla-cloudflare/src/native/automatic.ts": "13e38d5ea456a627e9f898a875b83e3be639c09d3095bbb6d8504bec5f1164b5",
+    "services/cla-cloudflare/src/native/background.ts": "cf0aec0bcfe02c8c8d51d3e2a4d512625ac9b2d9d10d1a78a92743af7949fb41",
+    "services/cla-cloudflare/src/native/config.ts": "00f997e6a66a8d04c1d0fa189980143e0223253b7d952554fcf531cc2b7709af",
+    "services/cla-cloudflare/src/native/github.ts": "7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5",
+    "services/cla-cloudflare/src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "services/cla-cloudflare/src/native/store.ts": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "services/cla-cloudflare/src/native/worker.ts": "6b7f1b3c0a03863c99965659f0d7a3d483006dc7ddb36e853836010129731678",
+    "services/cla-cloudflare/tests/confirmation-slot-config.test.mjs": "782b0d23eae7422c11d0aa2ee9132fb414459a6b099383e05d54d9a2d853c67b",
+    "services/cla-cloudflare/tests/confirmation-slot-mutation-cases.json": "f8fd6660fad49a9cb337020b57e467cae64fa3774e5885ef5178af409c08ff1e",
+    "services/cla-cloudflare/tests/independent-confirmation-slot.test.mjs": "6c1f349fcaa53c86a8cb2fc20e8ebab37ba159404f4434ad88f08e5c4c7e03c0",
+    "services/cla-cloudflare/tests/independent-slot-budget.test.mjs": "1f45a5241e439c1a99e4e36edbc9a323417eb7bf8f66d5d65f110ce550f71a67",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "a5bebb90a88436d314a6d9a9f5d38894f3181fee2f514318ced3a41d174c3eb1",
+    "services/cla-cloudflare/tests/slot-budget-mutation-cases.json": "bafa76ed6967faf0fe9944ce3d8755da7db9400591193cba9e33f41f439d5007",
+    "services/cla-cloudflare/tests/slot-config-mutation-cases.json": "a507d826ee8493e0b95d60ab9ce0c5ceda04f65b99ad480232c60801982a9eca"
+  },
+  "artifact_sha256": {
+    "budget/commands.json": "a1a25114f17c7b1daf2a4ad8d5f91ef81b28b4af8e39413d002cb9dc904722b0",
+    "budget/final-manifest.json": "b3c108ce25440d57592050773b3520d316b324b523a03837a0d9644737cee011",
+    "budget/mutants.json": "1377aab23e33ce9922ad3cc97ac47caa1b14c887853661f493e0bdd3be19727d",
+    "budget/raw-logs.json": "1ee17a0456372867d7cdbdcdc12bbcbfd43aefa23ea0d8adb29664812ccd40a4",
+    "budget/report.md": "87013246937189558b1a3fc713d9556be29341bd00d937dbdd686d722bd6a8b8",
+    "budget/snapshot-source.json": "3431a8521aca8bc2b30f7fe8c8cb4c35a94ad9a6704617351e069f8e0bc6ca21",
+    "build.txt": "c5cddfd6d56e5c1df1cc453bb982a055a9d996f679be142aed8e7d13f2d77b61",
+    "cla-slot-pointer-contract-a4695f83.md": "588921cff2da9452bbdbe50c91f95a355af6b3a4d9b213fece1a6f9e4dd09ce9",
+    "contract/manifest.json": "e89a07dd92d47550d543bd808457f46db743415b9c7e56b63670c63fa58256bd",
+    "contract/mutations.json": "f7d74146fc9dbd9c1821aef4ecdcad7c7374e6aefd41651c64875436c6c925c4",
+    "contract/raw-logs.json": "69e2d0bbe7ba692d86f328edc1138a6feb35065668900b113e359d2b14e7f1ee",
+    "contract/review.md": "5f43a367a90c21e2a6356fc8927a7b9e515949e0dc14bba8376a00a583fe7342",
+    "discarded-column-migration.txt": "05047b786d7f37b4b1e1b65caf36ed591ff6354e56561b8c79378a57aac36b81",
+    "migration.txt": "88b56a305437d17a8a53a5505169a8746c28031669b9c600c9a352580bb29cde",
+    "mutations.txt": "12d8248dc0e9aaf4d7dcb9ea09c7686012e122736f11a01505a4c53e748aa967",
+    "node.txt": "a25b21da338cdaab6c863dfaf2133091350bc270b507d745312ac172e23a6bc8",
+    "singleton-followup.md": "e2beb46799983d09668600281f421b804cb3bb402cfa86bd1fc8a8e22b522256",
+    "static-negative-probe.json": "409211fb302b0dd34491e9677f0ca69e6bad2b0a309be56a9573d7e0528c7349",
+    "static-review.md": "11a621a4f56e1c573bfbd78d87717591b72c8daeec7076f5da2a896fda34ef46",
+    "typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50"
+  },
+  "limits": [
+    "Only new suites use fixed synthetic unsent journals, negative/unknown settlement and GET-only synthetic transport. Full baseline has its pre-existing tests.",
+    "No real signing, authority, credentials, HTTP publication, Worker endpoint, deployment or expiry-crossing successful publication in new suites.",
+    "Actual D1 charging/trigger cost/distributed load and platform timing unverified.",
+    "Local tsc/esbuild missing; earlier npm E403 not retried or bypassed. Current-head hosted type/build and external review pending.",
+    "Snapshot migration is not a production in-place v2 upgrade.",
+    "The discarded two-column candidate was rejected by unchanged migration default allowlist (exit 1); final pointer representation passes without weakening it."
+  ],
+  "independent_log_encoding": "budget/raw-logs.json and contract/raw-logs.json preserve original log bytes as JSON strings and original SHA256; names in independent manifests refer to bundle members."
+}

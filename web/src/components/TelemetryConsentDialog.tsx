@@ -28,6 +28,7 @@ export function TelemetryConsentDialog() {
   useTranslation('dialogs')
   const askOpen = useTelemetryStore((s) => s.askOpen)
   const choose = useTelemetryStore((s) => s.choose)
+  const reconsent = useTelemetryStore((s) => s.settings?.needs_reconsent === true)
 
   return (
     <Dialog
@@ -58,6 +59,8 @@ export function TelemetryConsentDialog() {
       }}
     >
       <div className="flex flex-col gap-3">
+        {/* 重新同意（升版后）：只补一句「比上次多了什么」；首启不显示 */}
+        {reconsent && <p data-telemetry-reconsent-delta className="text-ink-2">{tt('reconsentDelta')}</p>}
         {/* 发什么 / 绝不发什么：两张并排的浅底卡，一眼对照（2026-10-07 设计审计 §10.2） */}
         <div className="grid grid-cols-2 gap-2">
           <Card appearance="subtle" data-telemetry-sends>
@@ -67,6 +70,7 @@ export function TelemetryConsentDialog() {
               <li>{tt('sendsPlatform')}</li>
               <li>{tt('sendsFeatures')}</li>
               <li>{tt('sendsOutcome')}</li>
+              <li>{tt('sendsErrorSummary')}</li>
             </ul>
           </Card>
           <Card appearance="subtle" data-telemetry-never>

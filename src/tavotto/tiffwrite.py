@@ -100,7 +100,13 @@ def _strips(samples, height: int, row_bytes: int, stride: int, rows_per_strip: i
 
 
 def _entries(
-    width: int, height: int, channels: int, rows_per_strip: int, byte_counts: list[int], dpi
+    width: int,
+    height: int,
+    channels: int,
+    rows_per_strip: int,
+    byte_counts: list[int],
+    dpi,
+    dpi_y=None,
 ) -> list[tuple[int, int, int, bytes]]:
     """IFD 条目（tag, type, count, payload），标签升序；StripOffsets 的 payload 留空，排版时填。"""
     n_strips = len(byte_counts)
@@ -119,7 +125,14 @@ def _entries(
     known_dpi = dpi is not None and float(dpi) > 0
     entries += [
         (_X_RESOLUTION, _RATIONAL, 1, _rational(dpi if known_dpi else 1)),
-        (_Y_RESOLUTION, _RATIONAL, 1, _rational(dpi if known_dpi else 1)),
+        (
+            _Y_RESOLUTION,
+            _RATIONAL,
+            1,
+            _rational(
+                (dpi_y if dpi_y is not None and float(dpi_y) > 0 else dpi) if known_dpi else 1
+            ),
+        ),
         (_PLANAR_CONFIG, _SHORT, 1, struct.pack("<H", 1)),
         (
             _RESOLUTION_UNIT,
@@ -188,6 +201,7 @@ def write_tiff(
     *,
     stride: int | None = None,
     dpi: float | None = None,
+    dpi_y: float | None = None,
 ) -> dict:
     """把 8 bit RGB / RGBA 像素写成一个 Deflate 压缩的 TIFF 文件。
 
@@ -195,6 +209,7 @@ def write_tiff(
     * `channels`：3（RGB）或 4（RGBA，非预乘）；
     * `stride`：一行占多少字节（缺省 `width × channels`，PyMuPDF 给 `Pixmap.stride`）；
     * `dpi`：物理分辨率；`None` = 不知道，写成「没有绝对单位」而不是编一个数。
+    * `dpi_y`：纵向分辨率；缺省 = 与 `dpi` 相同（横纵密度不同的位图才给，QA-WIN-20）。
 
     回 `{px_w, px_h, channels, strips, compression, dpi}`——都是写进文件的事实。
     """
@@ -220,7 +235,9 @@ def write_tiff(
         )
     )
     n_strips = len(strips)
-    entries = _entries(width, height, channels, rows_per_strip, [len(x) for x in strips], dpi)
+    entries = _entries(
+        width, height, channels, rows_per_strip, [len(x) for x in strips], dpi, dpi_y
+    )
     known_dpi = dpi is not None and float(dpi) > 0
 
     # ---- 布局：头(8) → IFD → 内联放不下的值 → strip 数据 ----

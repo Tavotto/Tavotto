@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { OVERSIZE_CAP, PLACE_GAP, placePanelInPage, softCap } from './panelPlacement'
+import { MIN_FIT_SCALE, OVERSIZE_CAP, PLACE_GAP, placePanelInPage, softCap } from './panelPlacement'
 import { visualBounds } from './geometry'
 import type { CanvasObject } from '@/types/document'
 
@@ -147,9 +147,34 @@ describe('placePanelInPage 避开已有对象', () => {
     expect(r.x).toBeCloseTo(0)
   })
 
-  it('页面放不下：退回居中（并保持页面内的钳位）', () => {
+  it('整页被占满：级联偏移，至少不与它完全重合，仍在页面内', () => {
     const full = { x: 0, y: 0, w: 200, h: 100 }
-    expect(placePanelInPage(40, 30, P, undefined, [full])).toEqual({ x: 80, y: 35, w: 40, h: 30 })
+    const r = placePanelInPage(40, 30, P, undefined, [full])
+    expect(r.w).toBe(40)
+    expect(Math.abs(r.x - full.x) >= 8 || Math.abs(r.y - full.y) >= 8).toBe(true)
+    expect(r.x + r.w).toBeLessThanOrEqual(P.w)
+    expect(r.y + r.h).toBeLessThanOrEqual(P.h)
+  })
+
+  it('B1：150×100 页上 73.3×57.8 + 58×47 + 59×52 三张互不重叠、都在页面内、不移动已有的', () => {
+    const page = { w: 150, h: 100 }
+    const placed: Box[] = []
+    for (const [w, h] of [
+      [73.3, 57.8],
+      [58, 47],
+      [59, 52],
+    ]) {
+      const r = placePanelInPage(w, h, page, undefined, placed)
+      expect(placed.some((o) => overlaps(r, o))).toBe(false)
+      expect(r.x).toBeGreaterThanOrEqual(-1e-9)
+      expect(r.y).toBeGreaterThanOrEqual(-1e-9)
+      expect(r.x + r.w).toBeLessThanOrEqual(page.w + 1e-9)
+      expect(r.y + r.h).toBeLessThanOrEqual(page.h + 1e-9)
+      expect(r.w / w).toBeGreaterThanOrEqual(MIN_FIT_SCALE - 1e-9) // 等比缩小，不低于下限
+      expect(r.w / r.h).toBeCloseTo(w / h)
+      placed.push(r)
+    }
+    expect(placed[0]).toMatchObject({ w: 73.3, h: 57.8 }) // 第一张原样居中
   })
 
   it('比页面大的图不找空位：仍居中、两边均匀伸出', () => {

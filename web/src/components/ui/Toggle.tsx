@@ -72,15 +72,18 @@ export function Toggle({
       <span
         className={cn(
           'relative h-4 w-7 rounded-full transition-colors duration-base',
-          // 关态轨道：border-control（对白 3.48:1）。border-strong 的 1.57:1 让关着的开关在 48px 设置行里几乎看不见
-          mixed || checked ? 'bg-ink' : 'bg-border-control',
+          // 关态：透明轨道 + 1.5px 内描边（border-control，对白 3.48:1；border-strong 的 1.57:1 让关着的开关几乎看不见）
+          // 内描边与关态滑块同色，实心轨道的「灰块」感去掉，开关读起来是「空 / 满」而不是「灰 / 黑」
+          mixed || checked ? 'bg-ink' : 'bg-transparent ring-[1.5px] ring-inset ring-border-control',
         )}
       >
         {/* 滑块动 transform 不动 left：布局属性每帧重排（二审 E4）；开关的来回用对称曲线。
             白钮带 shadow-thumb（与分段选择器的 thumb 同一份）：两家的 thumb 都有 0 1px 2px 的投影，白钮才浮得起来 */}
         <span
           className={cn(
-            'absolute left-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-thumb shadow-thumb transition-transform duration-base',
+            'absolute left-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded-full transition-transform duration-base',
+            // 开 / mixed：白钮 + 投影；关：缩到 .75 的 border-control 实心点（与描边同色，无投影）
+            mixed || checked ? 'bg-thumb shadow-thumb' : 'scale-75 bg-border-control',
             // mixed：停在正中（开 / 关两端的中点），里面一道短横
             mixed ? 'translate-x-1.5' : checked ? 'translate-x-3' : 'translate-x-0',
           )}

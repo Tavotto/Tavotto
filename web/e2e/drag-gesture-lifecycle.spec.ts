@@ -58,7 +58,7 @@ const dist = (a: Probe, b: Probe) => Math.hypot(a.x - b.x, a.y - b.y)
 
 async function openTitle(page: Page, baseURL: string): Promise<Opened> {
   await page.goto(baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   // 图内编辑态只给正在编辑的那块面板挂内联 SVG：必须恰好一块，它的 id 就是被测面板
   const editing = page.locator('[data-element-svg]')
   await expect(editing.locator('svg')).toHaveCount(1, { timeout: 60_000 })

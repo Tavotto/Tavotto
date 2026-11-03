@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
-import { Ban, Copy, CornerDownLeft, Play, SearchX, Settings, Square } from '@/components/ui/icons'
+import { Ban, Copy, CornerDownLeft, Play, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
+import { joinProjectPath } from '@/lib/desktop'
 import { Details, Summary } from '@/components/ui/Details'
-import { ICON_SIZE } from '@/components/ui/Icon'
-import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import {
+  backendCodeMsg,
+  runtimePreviewUrl,
+  type CapturedFigureDescriptor,
+  type ForeignSource,
+  type ScriptInventoryEntry,
+} from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
+import { offerForeignConvert } from '@/lib/foreignEntry'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
+import { activateCanvas } from '@/store/canvasSession'
+import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey } from '@/lib/preparationText'
@@ -39,6 +49,7 @@ import { Notice } from '../ui/Notice'
 import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
 import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useProjectStore } from '@/store/projectStore'
 import { DependencyRepairCard } from '../DependencyRepairCard'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
@@ -136,6 +147,9 @@ export function ScriptLibrary({ query }: { query: string }) {
     repairCards.add(entry.script)
   }
 
+  // R / MATLAB 脚本（后端 `foreign_scripts`，ADR 0143 修订「项目内入口」）：只能“生成可编辑版本”，不进下面的运行分组
+  const foreign = (view?.foreign_scripts ?? []).filter((f) => !q || f.script.toLowerCase().includes(q))
+
   const groups = new Map<Group, ScriptInventoryEntry[]>()
   for (const entry of scripts) {
     const g = groupOf(entry, runStates[entry.script], prepEntries[`script:${entry.script}`], registryAt)
@@ -163,12 +177,12 @@ export function ScriptLibrary({ query }: { query: string }) {
   if (!view) {
     return loading ? <ScriptSkeleton /> : null
   }
-  if (scripts.length === 0) {
+  if (scripts.length === 0 && foreign.length === 0) {
     return q ? (
-      <EmptyState icon={SearchX} title={sc('noMatch')} data-script-no-match />
+      <EmptyState art="search" title={sc('noMatch')} data-script-no-match />
     ) : (
       <div className="px-3">
-        <EmptyState icon={Play} title={sc('emptyTitle')} />
+        <EmptyState art="code" title={sc('emptyTitle')} />
       </div>
     )
   }
@@ -200,7 +214,42 @@ export function ScriptLibrary({ query }: { query: string }) {
           </section>
         )
       })}
+      {foreign.length > 0 && (
+        <section className="mt-1">
+          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="foreign">
+            <span className="type-section">{sc('group_foreign')}</span>
+            <span className="type-meta">{foreign.length}</span>
+          </h4>
+          <ul aria-label={sc('group_foreign')}>
+            {foreign.map((f) => (
+              <ForeignScriptRow key={f.script} source={f} />
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
+  )
+}
+
+/**
+ * 一行 R / MATLAB 脚本：文件名 + 语言。点开 = 出主页那张“生成可编辑版本”卡（同一个入口）。
+ * 它不是可运行脚本：没有 ▶、没有状态点、不进准备会话 / 运行状态机 / 依赖修复。
+ */
+function ForeignScriptRow({ source }: { source: ForeignSource }) {
+  useTranslation('workspace')
+  return (
+    <li data-foreign-script-row={source.script} data-foreign-language={source.language}>
+      <button
+        type="button"
+        onClick={() => offerForeignConvert(source)}
+        className={cn(listRowClass(), 'w-full gap-1.5 pl-3 pr-2 text-left')}
+      >
+        <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink" title={source.script}>
+          {source.script}
+        </span>
+        <span className="shrink-0 type-meta text-ink-3">{sc(`foreignLang.${source.language}`)}</span>
+      </button>
+    </li>
   )
 }
 
@@ -234,13 +283,6 @@ function SecondRow({ children, ...rest }: { children: React.ReactNode } & Record
   )
 }
 
-/** 项目根 + 相对脚本名 → 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
-function joinProjectPath(root: string, rel: string): string {
-  const win = root.includes('\\') && !root.includes('/')
-  const sep = win ? '\\' : '/'
-  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
-}
-
 /**
  * 一行脚本（Tavotto File Row）：状态点 | 文件名 | 状态一句话 | 运行图标钮。
  *
@@ -267,6 +309,8 @@ function ScriptRow({
   const run = useScriptRunStore((s) => s.byScript[entry.script])
   const prep = useProjectPreparationStore((s) => s.entries[`script:${entry.script}`])
   const busy = !!run && isBusyPhase(run.phase)
+  // 状态一句话只是陈述（已关联 N 张图 / 没跑过）时，悬停换成「运行」；有动作的状态句（查看结果、错误……）不换
+  const plain = rowStatusIsPlain(run, prep)
   const [resultsOpen, setResultsOpen] = useState(false)
   const hasAnswers = useScriptInputStore((s) => (s.answers?.[entry.script]?.length ?? 0) > 0)
   // T09（ADR 0116）：默认这颗钮打开准备面板（后端会话：检查 → 确认 → 运行 → 进入编辑），不直接执行；
@@ -304,20 +348,22 @@ function ScriptRow({
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
       <div {...menu.rowProps} className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
-        <StatusDot entry={entry} run={run} prep={prep} />
-        {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
-            与右侧 11px 的状态一句话差一个台阶（左栏审计 L02） */}
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-sm text-ink"
-          title={entry.script}
-        >
-          {entry.script}
+        {/* 脚本名是这一行的主文字：正常字体（不用等宽，2026-10-31 UI 审计 C6），字号跟正文走，
+            与右侧 11px 的状态一句话差一个台阶（左栏审计 L02）。状态点与脚本名同属一个基线组
+            （items-baseline）：点用 `vertical-align: middle`（= 基线上抬半个 x 高）对准小写字母
+            的视觉中心，不靠 margin 凑，换字体 / 字号也跟着走 */}
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm">
+          <StatusDot entry={entry} run={run} prep={prep} />
+          <span className="min-w-0 flex-1 truncate text-ink" title={entry.script}>
+            {entry.script}
+          </span>
         </span>
         <StatusLine
           entry={entry}
           stems={stems}
           run={run}
           prep={prep}
+          plain={plain}
           onViewResults={() => setResultsOpen(true)}
         />
         {/* 脚本 input() 记住的答案（ADR 0099）：只在这个脚本真有答案时出现，其余行一个像素不变 */}
@@ -352,9 +398,14 @@ function ScriptRow({
           disabled={!!run?.cancelRequested}
           data-script-run={entry.script}
           onClick={onRunOrCancel}
-          className={cn(!busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink')}
+          className={cn(
+            !busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink',
+            // 同一颗钮（焦点不丢）：陈述句状态下常态不可见，悬停 / 键盘聚焦才在原位换成文字「运行」
+            plain &&
+              'absolute right-8 w-auto px-2.5 text-sm opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100',
+          )}
         >
-          {busy ? <Square size={ICON_SIZE.sm} /> : <Play size={ICON_SIZE.sm} />}
+          {busy ? <Square size={ICON_SIZE.sm} /> : plain ? sc('runShort') : <Play size={ICON_SIZE.sm} />}
         </IconButton>
         <RowMenu state={menu} label={sc('rowActions', { script: entry.script })} width={200} data-script-menu={entry.script}>
           <MenuItem
@@ -386,6 +437,7 @@ function ScriptRow({
       <GateReopen run={run} />
       <FailureRecovery script={entry.script} run={run} />
       <MissingInputRecovery run={run} />
+      <WorkdirHintRecovery run={run} />
 
       {run && run.descriptors.length > 0 && (
         <ProbeResultsDialog
@@ -532,21 +584,30 @@ function StatusDot({
   // 停在门上不是失败（缺的是一个决定），不标红
   const failed = !running && !!run?.error && !isGatePhase(phase)
   return (
-    <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden data-script-dot={running ? 'running' : undefined}>
+    <span className="block w-4 shrink-0 text-center" aria-hidden data-script-dot={running ? 'running' : undefined}>
       <span
         className={cn(
-          'h-1.5 w-1.5 rounded-full',
+          'inline-block size-1.5 rounded-full align-middle',
           running
             ? 'bg-accent'
             : failed
               ? 'bg-danger'
               : isLinked(entry)
                 ? 'bg-ink-2'
-                : 'border border-ink-faint',
+                : 'border-[1.5px] border-ink-3',
         )}
       />
     </span>
   )
+}
+
+/** 状态一句话是不是纯陈述（与 `StatusLine` 的分支同序：准备 / 运行中 / 捕获结果 / 取消 / 错误都是有话要说或有动作的） */
+function rowStatusIsPlain(run: ScriptRunState | undefined, prep: PrepEntry | undefined): boolean {
+  const phase = run?.phase ?? 'idle'
+  if (isBusyPhase(phase)) return false
+  if (prepRowKey(prep)) return false
+  if (phase === 'captured_one' || phase === 'captured_many' || phase === 'cancelled') return false
+  return !run?.error
 }
 
 /**
@@ -558,12 +619,15 @@ function StatusLine({
   stems,
   run,
   prep,
+  plain = false,
   onViewResults,
 }: {
   entry: ScriptInventoryEntry
   stems: string[]
   run: ScriptRunState | undefined
   prep?: PrepEntry
+  /** 陈述句状态（见 `rowStatusIsPlain`）：行悬停 / 聚焦时让位给「运行」 */
+  plain?: boolean
   onViewResults: () => void
 }) {
   useTranslation('workspace')
@@ -594,6 +658,7 @@ function StatusLine({
       // 可见的是结果本身（「已发现 3 张图」），动作名「查看捕获结果」给读屏与气泡
       <button
         onClick={onViewResults}
+        data-capture-results-open={entry.script}
         className="max-w-full truncate rounded-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
         title={sc('viewResults')}
       >
@@ -624,10 +689,27 @@ function StatusLine({
     <span
       aria-live="polite"
       title={title}
-      className="flex min-w-0 max-w-[55%] shrink items-center truncate type-meta"
+      className={cn(
+        'flex min-w-0 max-w-[55%] shrink items-center truncate type-meta',
+        plain && 'group-focus-within:invisible group-hover:invisible',
+      )}
     >
       {body}
     </span>
+  )
+}
+
+/**
+ * 沙盒里 glob / listdir / exists 落空、脚本目录里找得到（#1254）：试运行失败 / 没出图的这一行多一个
+ * 「在脚本目录里运行」入口，载荷就是这次运行留下的 `workdir_hint`（与首开确认框同形）。
+ */
+export function WorkdirHintRecovery({ run }: { run: ScriptRunState | undefined }) {
+  const hint = run?.error?.workdir_hint
+  if (!hint || isBusyPhase(run!.phase)) return null
+  return (
+    <SecondRow data-script-workdir-hint>
+      <WorkdirChooseButton confirmation={hint} />
+    </SecondRow>
   )
 }
 
@@ -741,6 +823,71 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
   )
 }
 
+/** 缩略图槽：64×48，图按真实图幅比例在槽里 contain（白底细边的是图自己那一块纸，不是槽） */
+const THUMB_W = 64
+const THUMB_H = 48
+
+/**
+ * 捕获结果行首的缩略图。数据来源与素材库 runtime 卡片是同一条：`/api/runtime/preview?id=<asset_id>`
+ * （materialized cache 的预览 SVG，`runtimePreviewUrl`），不新起渲染、不新开 worker 协议。
+ *
+ * - 加载中：骨架占位；加载失败（cache 被清 / 404）：中性图标——都不挡右边的「添加到画布」；
+ * - `loading="lazy"`：浏览器只取滚进视口的那几张，几十张图的对话框不会一次并发几十个请求；
+ * - 项目代际：挂载时取 `captureProjectEpoch()`，切项目后（对话框还没卸载的空窗）既不再渲染 `<img>`、
+ *   也丢弃迟到的 load / error 回调——A 项目的 id 绝不拿去 B 项目里取图。
+ */
+export function CaptureThumb({ d }: { d: CapturedFigureDescriptor }) {
+  const nonce = useRuntimeAssetStore((s) => s.previewNonce[d.asset_id])
+  const guard = useRef<ProjectEpochGuard | null>(null)
+  if (guard.current === null) guard.current = captureProjectEpoch()
+  const src = runtimePreviewUrl(d.asset_id, nonce)
+  // 状态按 src 记：重跑后 nonce 换了，src 变了就回到「加载中」
+  const [state, setState] = useState<{ src: string; status: 'loading' | 'ready' | 'failed' }>({
+    src,
+    status: 'loading',
+  })
+  const status = state.src === src ? state.status : 'loading'
+  const live = guard.current.still()
+  const settle = (next: 'ready' | 'failed') => {
+    if (!guard.current!.still()) return // 迟到的响应：项目已换，丢弃
+    setState({ src, status: next })
+  }
+  const [w, h] = d.size_mm
+  const scale = w > 0 && h > 0 ? Math.min(THUMB_W / w, THUMB_H / h) : 0
+  const fw = scale ? Math.max(1, Math.round(w * scale)) : THUMB_W
+  const fh = scale ? Math.max(1, Math.round(h * scale)) : THUMB_H
+  return (
+    <span
+      data-capture-thumb={!live ? 'failed' : status}
+      className="flex shrink-0 items-center justify-center"
+      style={{ width: THUMB_W, height: THUMB_H }}
+    >
+      {live && status !== 'failed' ? (
+        <span
+          className={cn(
+            'relative block overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border',
+            status === 'loading' && 'bg-surface-hover opacity-65',
+          )}
+          style={{ width: fw, height: fh }}
+        >
+          <img
+            loading="lazy"
+            decoding="async"
+            src={src}
+            alt={d.stem}
+            draggable={false}
+            onLoad={() => settle('ready')}
+            onError={() => settle('failed')}
+            className={cn('absolute inset-0 h-full w-full object-contain', status === 'loading' && 'opacity-0')}
+          />
+        </span>
+      ) : (
+        <span data-capture-thumb-fallback className="hatch-box size-full rounded-xs" />
+      )}
+    </span>
+  )
+}
+
 /**
  * 捕获结果弹层：一次运行发现的**每一张**图都在这里（多 Figure 绝不只显示
  * 第一张——负向反证 #4 的看护对象），各自可添加到画布。Dialog 自带
@@ -753,6 +900,7 @@ export function ProbeResultsDialog({
   open,
   onOpenChange,
   onAdded,
+  canvasId,
 }: {
   script: string
   descriptors: CapturedFigureDescriptor[]
@@ -761,6 +909,8 @@ export function ProbeResultsDialog({
   onOpenChange: (v: boolean) => void
   /** 加进画布之后，带上**刚新建的那个面板**（准备面板据此观察它的首次编辑渲染，T09；不能按素材 id 回找——文档里可能已有同素材的旧实例） */
   onAdded?: (d: CapturedFigureDescriptor, panel: PanelObject) => void
+  /** 脚本是拖到这张画布上运行的（`PrepEntry.placeIn`）：加图前先切回它，不加到此刻激活的那张；画布已不在就加到激活画布 */
+  canvasId?: string
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
@@ -775,25 +925,32 @@ export function ProbeResultsDialog({
       onOpenChange={onOpenChange}
       title={sc('resultsTitle', { script })}
       description={sc('captured', { count: descriptors.length })}
+      anchor="capture-results"
       size="md"
     >
       <ul className="flex flex-col divide-y divide-border" aria-label={sc('resultsListAria')}>
         {descriptors.map((d) => (
-          <li key={d.asset_id} className="flex items-center gap-2 py-1">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={d.stem}>
-              {d.stem}
-            </span>
-            <span className="shrink-0 type-meta tabular-nums">
-              {translate('measure.cmSize', {
-                w: formatCm(d.size_mm[0]),
-                h: formatCm(d.size_mm[1]),
-              })}
-            </span>
+          <li key={d.asset_id} data-capture-row={d.stem} className="flex items-center gap-3 py-1.5">
+            <CaptureThumb d={d} />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-xs text-ink" title={d.stem}>
+                {d.stem}
+              </span>
+              <span className="mt-0.5 block type-meta tabular-nums">
+                {translate('measure.cmSize', {
+                  w: formatCm(d.size_mm[0]),
+                  h: formatCm(d.size_mm[1]),
+                })}
+              </span>
+            </div>
             <Button
               variant="secondary"
               size="sm"
+              className="shrink-0"
+              data-capture-add={d.stem}
               onClick={() => {
                 if (guard.current && !guard.current.still()) return
+                if (canvasId && useDocumentStore.getState().canvases.some((c) => c.id === canvasId)) activateCanvas(canvasId)
                 const added = addRuntimePanelToCanvas(d)
                 if (!added) return // 上次的排版还在恢复：已排队 / 被拒，不说"已加入"
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
@@ -807,7 +964,7 @@ export function ProbeResultsDialog({
       </ul>
       {dropped > 0 && (
         <p className="mt-1.5 flex items-start gap-1 type-meta">
-          <Ban size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
+          <IconSlot><Ban size={ICON_SIZE.sm} className="shrink-0" /></IconSlot>
           {sc('dropped', { count: dropped })}
         </p>
       )}

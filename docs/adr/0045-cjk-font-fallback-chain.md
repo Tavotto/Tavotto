@@ -11,7 +11,7 @@
 | 图内文字（matplotlib）里的汉字 | 每段文字的族列表后面接一条**按平台探测**的中日韩尾巴，matplotlib 逐字形退过去（`overrides.cjk_fallback_tail()`） |
 | 候选名单 | `overrides.CJK_FALLBACK_CANDIDATES`：macOS PingFang SC → Hiragino Sans GB → STHeiti → Heiti SC → Songti SC → Arial Unicode MS；Windows Microsoft YaHei → SimHei → DengXian → SimSun → KaiTi；Linux Noto Sans CJK SC → Source Han Sans → WenQuanYi → Noto Serif CJK SC → Droid Sans Fallback → AR PL UMing。本平台那组在前，其它平台的跟在后 |
 | 进链的条件 | `findfont(fallback_to_default=False)` 真解析得到。**只有装了的才进链**，所以链上没有 matplotlib 会 warn "not found" 的名字 |
-| 什么时候接 | **脚本跑完之后、采 baseline 之前**（`figsession.instrument_all()`）：逐个 Text 补（脚本给单个 Text 传的 `fontfamily=`、脚本整个覆盖掉的 `rcParams['font.family']` 都只有事后补才管用），再把 rcParams 补齐给之后才创建的文字（懒建的刻度标签、override 新加的标注） |
+| 什么时候接 | **脚本跑完之后、采 baseline 之前**（`figsession.instrument_all()`）：逐个 Text 补（脚本给单个 Text 传的 `fontfamily=`、脚本整个覆盖掉的 `rcParams['font.family']` 都只有事后补才管用），再把 rcParams 补齐给之后才创建的文字（懒建的刻度标签、override 新加的标注）。**有 TeX 文字时不补 rcParams**（`text.usetex` 开着，或图上任何 Text 的 `get_usetex()` 为真）：TexManager 只认长度为 1 的 `font.family`，补了会退成 serif、TeX 文字度量变、零编辑导出的布局漂移（Celerite `sho.py`，2026-10-23）；同图 `usetex=False` 的文字仍逐个补；先补了、之后（native 两个屏障之间）才出现 TeX 文字的，`rebase()` 每个屏障重判并**撤回我们追加的那段**（记补前/补后的值，现值恰好等于补后才撤，脚本自己改的值不碰）；**native 里尾巴只存在于屏障内**：`release_barrier` 放行前撤回（放行被拒则留着），下一个屏障按当时有无 TeX 重新判定 |
 | 「当前值」 | 用户 / 脚本设的族仍在最前，`get_fontfamily()[0]` 不变，manifest 与预检报的都是它；下拉里能钉住的中文字体与自动回退的候选是**同一张表** |
 | 汉字由尾巴画出算不算「换了脸」 | **不算**（与画布侧 `glyphplan.substituted_chars` 同一个裁决）：那张脸对整台机器恒定、是唯一画得出它的，逐条挂建议只会训练用户忽略问题面板。值得说的是**由谁画的**：manifest 新增 `cjk_family` |
 | `cjk-fallback-missing` 的主语 | **真正画出汉字的那张脸**（`cjk_family`，没有就是正文族）对出版规范 `cjk_fallback.accepted`。接手的脸在白名单里就不响；不在就报**那张脸**（`cjkFallbackUnaccepted`），不再说「会是方框」 |
@@ -83,6 +83,39 @@
 | 放开时 `addfont` 了新字体 | 以 `fontManager` 为数据源的派生缓存（`_FONT_PRESENT`、`_CJK_TAIL`、`_FILE_FACE`、`manifest.installed_font_families`）只有一个失效点 `overrides.sync_font_caches`：注册表代次（对象 + 登记的脸数）变了就全部作废——脚本自己 `addfont`、native 会话两次 `plt.show()` 之间引入项目字体同样覆盖 |
 | 什么时候不换 | 反查解析不回**同一个文件（或字节相同的拷贝）的第 0 张脸**时原样不动：同名不同版本、字重对不上的兄弟文件（同族有 Regular 的 Light 归一成 normal 后找回的是 Regular）都会换掉拉丁字的脸，宁可留着方框也不改正文 |
 | 换不开时 manifest 怎么报 | `_resolved_font_paths(families, file)`：有 fname 就只报那一个文件——`face` 是它、缺的汉字进 `glyphs_missing`，不再按族列表说「画出来了」 |
-| 提示词 | `ai_bridge._build_prompt` 第 4 条：字体用族名设，不用 fname |
+| 提示词 | `ai_prompt_pack.V1` 的 `rule_fonts`（`ai_bridge._build_prompt` 第 4 条）：字体用族名设，不用 fname |
 
 看护：`tests/test_cjk_figure_text.py` 的 `test_fname_*` 两条（worker 端到端 + 拉丁字换前换后 PNG 逐字节相同 / 字节相同拷贝 / Oblique·Light·Black 归一后仍同一文件 / 同族有 Regular 的 Light 不换 / 相对 fname 换 cwd / `.otc` 字体集 / FontPath 第 N 张脸（mpl ≥ 3.11 真实覆盖）/ addfont 后派生缓存失效 / 换不开时照实报缺字）。
+
+## 6. 补充（2026-10-31）：中文与英文字体选择
+
+用户确认图内文字的「中文字体」「英文字体」两行，以及设置 › 样式的同一入口。
+中文为自动时不增加 override，旧项目的族链与渲染不变：旧西文族或中文族均显示在
+英文字体行，中文显示自动。显式中文字体按 Matplotlib 原生逐字缺字回退插在正文族后：
+`[英文, 中文, …原有尾链]`。不修改字体文件、不派生字体、不拆分 Text。
+
+**筛选判据**：中文非自动时，英文字体选项只列可以证明不会覆盖以下范围的族；一个族
+所有注册字重 / 字形都检查，任何一面覆盖或读取失败则排除。判定读取 FreeType 字体的
+Unicode cmap，按文件身份与面缓存，字体注册表代次和通用族 rcParams 变化使族集合失效。
+通用族的候选脸都须合格。具体范围为 U+2E80–2FFF、3000–303F、3100–312F、
+31A0–31EF、3400–4DBF、4E00–9FFF、F900–FAFF、FE30–FE4F、FF01–FF0F、
+FF1A–FF20、FF3B–FF40、FF5B–FF60、FFE0–FFE6、20000–2EE5F、2F800–2FA1F、
+30000–3347F；包含汉字、部首、注音、中文标点与全角符号。全角数字 U+FF10–FF19 与
+全角拉丁字母 U+FF21–FF3A / FF41–FF5A 不排除，与数字、拉丁字母、°、μ 一同由
+英文主族优先绘制。字符不做半角转换。范围保守覆盖部分未分配码位，避免未来扩展漏判。
+
+不丢当前选择：已有正文族若不合格（或无法判断），保留原值并提示改选；在改选前
+仍按原链绘制，中文字体可能不能接管。不能把这档称为已满足严格分配。选定中文族自身
+缺某个字、或者英文族缺全角字母数字等字形时，仍依次落到后续族；没有覆盖就缺字。
+数学公式 mathtext、usetex 不在本次严格字符分配范围，fname 未释放与 usetex 不提供
+此控件。保留任意含汉字英文主族的分段方案另见 #1530。
+
+图内覆盖使用 `fontfamily` 的 `{primary, fallback}` 原子值；`primary: null` 保留脚本
+正文族。恢复自动时移除回退选择；没有正文覆盖时移除 override。热态和全量重放都基于
+脚本原始链；旧字符串与列表语义不变。不存在的族保留名字并提示；旧 worker 不发能力
+标记时不提供新选择，也不让样式发送新值。
+
+ADR 0152 的文字编辑器仍以原字符串为权威，公式沿用既有 mathtext 规则，本次不改编辑
+模型。ADR 0144 的可编辑 SVG 使用原字体族名，不嵌字体；接收端缺字体可能替换。PDF
+由 worker 子集嵌入。macOS 用户自带 Matplotlib 3.10.8 的宋体 TTC 可能匹配 Black；
+内置运行时 3.11.1 可识别多面，本次不改写系统字体。

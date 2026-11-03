@@ -1,0 +1,109 @@
+{
+  "collection_a": [
+    {
+      "repository": "chakra34/SphericalOrientations",
+      "reason": "Primary original scripts generate crystallographic/TikZ/LaTeX outputs; inspected candidate is not a Matplotlib plotting entry."
+    },
+    {
+      "repository": "compgeolab/eqs-magnetic-dual-layer",
+      "reason": "Original execution/figure workflows are notebooks; .py files are supporting modules, not standalone plotting entries."
+    },
+    {
+      "repository": "kaustubhhakim/ocra",
+      "reason": "Reaktoro-specific scientific environment and full large equilibrium sweep; no verified CPython 3.13-compatible standalone plotting-data path identified during static intake."
+    },
+    {
+      "repository": "santiago-schnell/Error-Estimates-for-MM-Progress-Curves",
+      "reason": "Original files include Python 2 print syntax and removed numerical APIs; no source adaptation permitted."
+    },
+    {
+      "repository": "epifanio/geosciences-250279",
+      "reason": "Notebook/GIS environment workflow, no standalone Matplotlib research plotting .py entry identified."
+    },
+    {
+      "repository": "clberube/ip-vae",
+      "reason": "Packaged ML implementation and examples embedded in documentation; no standalone original paper-figure .py entry with raw plotting data identified."
+    },
+    {
+      "repository": "perlinm/spin_qudit_tomography",
+      "paths": [
+        "plot_opt_angles.py",
+        "plot_axis_num_data.py"
+      ],
+      "reason": "These candidate entries require angle_scales_d*.txt absent from the pinned repository; selected plot_tomo_times.py is an independently documented paper Figure 2 entry with all five required data files present. This selection occurred before any execution."
+    },
+    {
+      "repository": "cantera/cantera",
+      "path": "samples/python/kinetics/shock_tube.py",
+      "reason": "Required example-data submodule explicitly does not grant a license to third-party mechanisms. Candidate retained, excluded from active manifest; pre-execution license-qualification correction authorized by parent.",
+      "evidence_path": "evidence/cantera-example-data-LICENSING-NOTICE.md",
+      "correction_path": "selection-correction.json"
+    }
+  ],
+  "collection_b": [
+    {
+      "repo": "hogg/heteroscedastic-data",
+      "reason": "Requested public repository URL returned GitHub 404; no artifact acquired.",
+      "phase": "discovery"
+    },
+    {
+      "repo": "neurodynamics/CompNeuro",
+      "reason": "Requested public repository URL returned GitHub 404; no artifact acquired.",
+      "phase": "discovery"
+    },
+    {
+      "repo": "dfm/george",
+      "reason": "Inspected current tree did not surface a suitable standalone paper figure .py plus small input closure; celerite paper figure was selected in this astronomy-method area.",
+      "phase": "static screening"
+    },
+    {
+      "repo": "birnstiel/Birnstiel2015_scripts",
+      "commit_sha": "d07f81e76aefc86bf97b321c7a5928e042c266fb",
+      "reason": "Scientific scripts and data exist, but no explicit license file or license grant was located in inspected tree/README. Not collected as redistributable licensed sample.",
+      "phase": "license screening"
+    },
+    {
+      "repo": "voytekresearch/EISlope",
+      "commit_sha": "4f4f780613cafd963a6bee074416946c0649f94a",
+      "reason": "No license surfaced in inspected repository tree; primary workflows are MATLAB, not standalone CPython .py.",
+      "phase": "license and entry screening"
+    },
+    {
+      "repo": "ReScience-Archives/Detorakis-2016",
+      "commit_sha": "76b950a8b4b39b896216f2a2a9b13268860c009e",
+      "reason": "plot_figures.py requires many simulation .npy files absent from tree. The original run_all.py starts child Python processes, and simulations.py performs 100x100 frequency-duration sweep before other simulations. Cannot present this as small ready-data plotting closure; excluded before formal selection-frozen.json.",
+      "phase": "input closure screening",
+      "additional_static_risks": [
+        "Original savefig calls use axis='tight' keyword; newer Matplotlib compatibility not established."
+      ]
+    },
+    {
+      "repo": "ReScience-Archives/Rougier-2017",
+      "commit_sha": "1856a435c490d867885b1911d63cbfc107b963b5",
+      "reason": "Weighted Voronoi image stippling paper falls outside the allocated astronomy/biology domain slots.",
+      "phase": "domain screening"
+    },
+    {
+      "repo": "a3609640/pyEIF",
+      "reason": "README describes external TCGA/GTEx/DepMap data, author absolute paths and interleaved R scripts. Small self-contained unmodified CPython closure unavailable.",
+      "phase": "web discovery"
+    },
+    {
+      "repo": "j-friedrich/multi-scale",
+      "reason": "README describes Python2.7 and historical CaImAn branch plus missing/heavy preprocessing for some figures; not accepted without reconstructing a documented dependency/data closure.",
+      "phase": "web discovery"
+    },
+    {
+      "repo": "ReScience-Archives/Vitay-2016",
+      "entry": "code/Fig2.py",
+      "reason": "README explicitly says handwriting source data copyright lacks a free license. Figure2 not acquired; formally selected Figure3-Load uses repository data licensed CC0 instead.",
+      "phase": "license screening"
+    },
+    {
+      "repo": "pybamm-team/PyBaMM",
+      "commit_sha": "1495fe3f8f56ed5c12c4d8dad97fd734a682d775",
+      "reason": "Not rejected for quality; engineering quota filled by ORNL measured battery data and full nonlinear cruise-control workflow.",
+      "phase": "quota choice"
+    }
+  ]
+}

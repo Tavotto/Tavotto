@@ -1,0 +1,25 @@
+✖ independent historical revision conflict cannot consume predecessor (29.644441ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 194.522356
+
+✖ failing tests:
+
+test at tests/independent-historical-revocation.test.mjs:35:1
+✖ independent historical revision conflict cannot consume predecessor (29.644441ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-historical-revocation-review/mutants/historical-commit-revision/tests/independent-historical-revocation.test.mjs:38:2
+      at async iso (file:///tmp/cla-historical-revocation-review/mutants/historical-commit-revision/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

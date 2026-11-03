@@ -2,6 +2,15 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`
+
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 260
+改到: `profiles/publication.json`、`profiles/journals.json`、`engine/profiles.py`、`engine/journals.py`、`preflight.py`、`profilestore.py`
+主题: 出版规范 profile 与预检、内置期刊库 → `profiles-and-preflight.md`
+必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐；期刊 = 对 journal-base-v1 的覆盖 + 逐条出处，未规定不补
+-->
 
 - **规则的唯一权威文件是 `src/tavotto/profiles/publication.json`**（随 wheel 分发）。
   Python 走 `engine/profiles.py`（`importlib.resources` 定位，装成 wheel 后源码树的
@@ -14,12 +23,21 @@
   两份靠 `tests/golden/preflight_vectors.json` 对齐：**pytest 与 vitest 各跑一遍同一份
   向量**（与 patchspec ↔ Rust 同一套纪律），只比 `id/severity/object_ids/gids/detail`，
   不比中文措辞。改任一侧跑 `python scripts/gen_preflight_vectors.py --write` 并人工读 diff。
+- **面板 `kind`（矢量 / 位图）的主语是「本次导出嵌入的产物」**，不是文件后缀（#477）：
+  带 override 且有脚本的 PNG 会被脚本重画成矢量，按 pdf 档判，不报
+  `raster-text-not-verifiable`。前端造输入时的唯一判据是 `web/src/lib/exportRoute.ts`
+  的 `embedsDiskBitmap(panel, assets, scope, formats)`，它与后端真值（原图范围
+  `app._resolve_panel_source`，**受所选格式影响**：要 EPS 且不要 SVG 时 `app._original_rerender`
+  让有脚本的图哪怕未编辑也重画成矢量，所以格式必须一路传到预检——`OriginalTarget.formats`；、画布范围 `rendercore.sources.needs_execution`）是严格同源对，
+  靠 `tests/golden/export_route_vectors.json` 对拍（`tests/test_export_route_vectors.py` 驱动
+  后端真实代码求期望，`exportRoute.test.ts` 比前端）。Python 求值器与 `PreflightPanelSpec`
+  不变；Python 产品代码里 `kind` 一直是 `pdf`（MCP 入口）。
 - 输入是**规范化的 figure spec**（页面 + 面板 + 文字 + 对象几何），不是画布文档也不是
   manifest 本身：同一套规则同时服务「一张图」（MCP，scale=1）与「多面板拼版」
   （画布，每面板带自己的 scale）。
 - **字号按最终物理尺寸判**：manifest 的 `fontsize` 是脚本坐标系里的 pt，面板缩到 60%
   时读者量到的是 `fontsize × scale`。只看原始值 = 「缩一缩就放行」。默认规范里字号下限
-  **只有一个数 8.0pt**（绝对下限，**正好 8.0 不算过**；ADR 0029 删掉了比它更严的那条
+  **只有一个数 8.0pt**（绝对下限，**含等号**：正好 8.0 通过，ADR 0029 §6b；ADR 0029 删掉了比它更严的那条
   8.5pt）。两条检查仍然是两条——规范把两档设成不同值时（`free-form-v1` 6.0/5.0、
   期刊覆盖）各自出场。**阈值一个字都不许写进求值器**，缺键时的兜底只有
   `profiles.FALLBACK_MIN_FONT_SIZE_PT` 一处（TS 侧同名，严格同源对）。
@@ -57,6 +75,31 @@
   `_read_user()` 对「读不懂」与「一条都没有」回的是同一个空清单。
 - 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
   MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
+
+## 内置期刊标准库（ADR 0155）
+
+- **期刊 = 对中性底 `journal-base-v1` 的一份覆盖 + 每条规则的原文出处**，数据唯一权威是
+  `src/tavotto/profiles/journals.json`（与 `publication.json` 同目录，随 wheel / PyInstaller `profiles/` 分发）。
+  Python `engine/journals.py`（`list_journals` / `journal_override` / `journal_profile` / `journal_sources`）
+  与 TS `web/src/lib/journals.ts`（同名 camelCase，经 **`@journals` 别名**读同一个 JSON，
+  `vite.config.ts` / `vitest.config.ts` / `vite.mcp.config.ts` / `vite.playground.config.ts` / `tsconfig.app.json` 各配一次）
+  是**严格同源对**，看护 `tests/golden/journal_vectors.json`（`scripts/gen_journal_vectors.py --write`；pytest 与 vitest 各跑一遍）。
+  失败码闭集 `ERROR_CODES` ↔ `JOURNAL_ERROR_CODES` 逐字相同，每个校验码至少一条失败向量。
+- **期刊没写的项不补**：覆盖叠在 `journal-base-v1`（无宽高比限制、不限定拉丁字体、不要求 CJK、字号下限 0、线宽预设 / 坐标轴 / 图例策略全空，
+  只留越界 error、缺字形 warn、DPI 300、字号上限 72 的安全兜底）上，**绝不叠在 `lab-publication-v1` 上**，也不拿任何别的规范去填空。
+  `journal-base-v1` 带 `"listed": false`：`list_profiles()` / `listProfiles()` / `builtinCatalog()` 过滤它（不进规范下拉与 `profilestore` 内置记录），但**可解析**：`load()`、`profilestore.resolve_spec()`（判内置用 `profiles.all_profile_ids()`，**不许**用 `builtins()`/`list_profiles()`）照取，前端 `resolveDocumentSpec` 对它不报 `globalMissing`（`specBinding.isHiddenBuiltin`）。栏宽 `widths_mm.single/double` 为 null = 没规定（`_validate` 两侧放宽为「正数或 null」）。
+- **加载即校验，没出处的数值进不了库**：每条 rule 要有 `value`、`src`（在可见 sources 里）、非空 `quote`（只存一两句短摘录，不存整页）；键路径必须是
+  merge 能精确落到的 `journal-base-v1` 字段（深合并子对象写 `<子对象>.<键>`，其余顶层单段，身份 / 展示字段不可覆盖）；`value` 类型须与底一致；
+  折叠后整份过 `validate_spec`（TS `profile.validateSpecShape` 是 `_validate` 的镜像，严格同源对，同一批向量看护）。出版社 rules 先、期刊 rules 后覆盖。
+- **schema 扩展位**（全文 ADR 0155 §3b）：顶层 `catalog_rev`；`info.<闭集 id>` 展示项（同样强制 src/quote，不折进 override）；规则的 `qualifier` / `value_alt` / `stage` / `mark` / `derivation` / `unset`；
+  来源 `coverage`（`single_journal_sample` 不得被出版社 rules 引用）；`journal_sources()` 返回 `rule_scope` + `source_scope` + `overrides` + `affects`。期刊填了值的检查按 `SEVERITY_BUMP` 从 suggestion 抬到 warn（只抬不降、显式优先）。
+  闭集常量（`INFO_IDS` / `QUALIFIERS` / `STAGES` / `COVERAGES` / `EXACT_ONLY_PATHS` / `SEVERITY_BUMP` / `KIND_OVERRIDES` / 错误码）两侧逐项相同，随 golden 向量的 `constants` 一起比。
+  链接安全：url/archive_url `https://`、anchor `#:~:text=`、retrieved ISO 日期；别名撞名 NFKC+小写。
+- **栏位与建议**（ADR 0155 §3b）：下游读栏位只读 `derive_page_columns`/`derivePageColumns`（`page_columns`，没写由 `widths_mm` 派生单栏 / 双栏）；`page-width` 命中任一 exact 栏位即过。
+  `recommended`/`typical` 的字号与 `min_script_font_size_pt` 折成 `advisories`，只产生 suggestion 级 `font-size-recommended`（带期刊名与原话），不是判据；`affects` 为 `advice`。两侧同源，向量见 `journal_vectors.json` 与 `preflight_vectors.json`（`journal-columns-*` / `journal-advice-*`）。
+- **选择器与出处卡（PR 2，前端）——PR 2 合入但入口默认关闭，数据就绪后再开（2026-11-01 用户决定）**：所有界面入口由 `web/src/lib/journalUi.ts` 的 `JOURNAL_CATALOG_UI`（默认 false）总控，测试用 localStorage 键 `tavotto.dev.journalCatalogUi='1'`；关着时界面与此 PR 之前相同（`journalUiOff.test.tsx` 看护），带期刊绑定的旧文档照旧按绑定预检。选期刊的唯一写入口 `store/actions.selectJournal`——**一次 commit** 写绑定（中性底 `journal-base-v1` + `journalOverride` + `journalRef {id, catalogRev, retrieved, label}` + 精简出处 `journalSources`）并把页宽跟到该期刊栏位里**离当前页宽最近**的一栏（`derivePageColumns`，只读这一种形状）；没规定栏宽 = 页宽不动，`info.*`（如 174 mm 只展示）不参与；撤销一步全回去，确认只用胶囊 toast。判据层 `lib/journalPick.ts`（搜索 / 分组 / `pickJournal` / 出处卡文字 / `highlightQuote` / `requirementRows`），组件在 `components/journal/`（选择器放在设置 › 期刊规范「正在使用」组；`SourceButton` 同时挂在要求清单与问题树的行尾，`sourcesForCheck` 按检查 id 反查规则，不另起第二套）。换成别的规范时 `specBinding.journalCarry` 整套放下期刊字段（期刊覆盖不得叠在课题组规范上）。目录读取只经 `store/journalCatalogStore`：本地缓存槽 `tavotto.journalCatalog`（整份过 `loadCatalog`，不过整份弃用退回种子），远程拉取 PR 把拉到的目录交给 `setCatalog`。`typical` / `recommended` / `range` 显示原话；期刊没写的要紧项说「该期刊未规定」。出处卡有快照图（`snapshot`，ADR 0155 §6：内容寻址 `snapshots/<sha256>.webp`、相对 `journalCatalogStore` 的资产根解析，缺失 / 加载失败退回摘录框）；列表最上面「不按期刊」经 `actions.clearJournal` 退回 `journalPrev`（§7）。看护：`lib/journalPick.test.ts`、`store/journalSelect.test.ts`、`components/journal/journal.test.tsx`、`e2e/journal-picker.spec.ts`（`@feature:settings.journal-picker`）。
+- **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
+  项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

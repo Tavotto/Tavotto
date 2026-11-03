@@ -53,8 +53,9 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 
-from . import execspec, figcapture
+from . import execspec, executionfact, figcapture
 
 #: 回执形态的版本。加可选字段不升；改语义 / 删字段才升。
 RECEIPT_VERSION = 1
@@ -114,6 +115,33 @@ _FIDELITY_ROW_SCHEMA = {
 _FIDELITY_UNOBSERVED = tuple(figcapture.INPUT_OBSERVER_UNOBSERVED)
 _FIDELITY_MAX_ROWS = 32
 _FIDELITY_MAX_COUNT = 9999
+
+
+#: 跳过记录里模块名的形状（点分标识符）与条数上限；不合形状的行整行丢弃
+_IMPORT_SKIP_MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,8}\Z")
+_IMPORT_SKIP_MAX_ROWS = 64
+
+
+def project_import_skips(raw, *, include_private: bool = False) -> list[dict]:
+    """worker 自报的 `import_skips`（ADR 0153：查找器跳过「找到了但读不了」的 import 位置）→ 投影。
+
+    公开面只有 `module`（点分标识符）与 `error`（闭集：`PermissionError`）；被跳过的位置是机器路径，
+    只在 `include_private`（诊断包）里带，且限长。自报是不可信输入：非 list / 非 dict 行 / 畸形模块名一律丢，不抛。"""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for row in raw[:_IMPORT_SKIP_MAX_ROWS]:
+        if not isinstance(row, dict):
+            continue
+        module = row.get("module")
+        if not isinstance(module, str) or not _IMPORT_SKIP_MODULE.match(module):
+            continue
+        item = {"module": module, "error": "PermissionError"}
+        entry = row.get("entry")
+        if include_private and isinstance(entry, str):
+            item["entry"] = entry[:1024]
+        out.append(item)
+    return out
 
 
 def project_fidelity(raw) -> dict | None:
@@ -197,8 +225,8 @@ class ExecutionReceipt:
     launcher: dict | None = None
     #: 起会话那一刻的环境事实（P09）：`{"generation": …, "env_state": …}`。成功记录用它而不是收口时的值。私有，不进公开投影。
     session_env: dict | None = None
-    #: 这一次启动实例的唯一键（桌面拥有的会话 id）。空 = 不参与（safe / terminal native 的回执逐字节不变）。
-    #: 私有：两次参数完全相同的桌面启动是两次执行，不能得到同一个 `receipt_id`。
+    #: 执行实例的私有键：native 会话 id + 屏障代次；safe 实际执行 id（旧 worker 留空）。
+    #: 两次启动或用户代码续跑后的不同 Figure 不能得到同一个 `receipt_id`。
     instance: str = ""
 
     def __post_init__(self) -> None:
@@ -378,6 +406,13 @@ class ExecutionReceipt:
         rt = self.runtime
         if rt is not None and "fidelity" in rt:
             rt = {**rt, "fidelity": self.fidelity}  # 自报的原样段不外泄：只出过滤后的闭集
+        if rt is not None and "import_skips" in rt:
+            rt = {
+                **rt,
+                "import_skips": project_import_skips(
+                    rt["import_skips"], include_private=include_private
+                ),
+            }
         if rt is not None and not include_private:
             rt = {
                 k: v
@@ -467,6 +502,12 @@ def from_worker(
         if isinstance(build_resp, dict)
         else ()
     )
+    # Supervisor child restarts and retries can reuse the pool generation.
+    execution_id = (
+        build_resp["execution_id"]
+        if isinstance(build_resp, dict) and "execution_id" in build_resp
+        else getattr(worker, "execution_id", None)
+    )
     return ExecutionReceipt(
         profile=spec.profile,
         control_plane=control_plane,
@@ -484,6 +525,7 @@ def from_worker(
         binding=dict(binding) if isinstance(binding, dict) else None,
         launcher=_launcher_public(worker),
         session_env=_session_env(worker),
+        instance=execution_id if executionfact.valid_id(execution_id) else "",
     )
 
 
@@ -569,7 +611,11 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         descriptors=descriptors,
         runtime_rejected=rejected,
         pid_check=pid_check,
-        instance=(str(getattr(session, "session_id", "") or "") if spec is owned_spec else ""),
+        instance=(
+            str(getattr(session, "session_id", "") or "")
+            + ":"
+            + str(getattr(session, "snapshot_epoch", 0))
+        ),
     )
 
 

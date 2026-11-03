@@ -18,3 +18,6 @@ self-hosted-runner:
     # （被 ci-infra 跨仓库调用时才解析）；lab-ci.yml / release.yml 都改成派发，
     # 公开仓库里不再有直接 `uses` 它的 job（F 组）。
     - tavotto-lab
+    # 发行档（mode=release）的按需竞价机：ci-infra 的 machine-up 开机、注册成 JIT runner，
+    # 跑完一个 job 即注销并释放。同样只有 _lab-qualification.yml 的 `runs-on` 用它。
+    - tavotto-lab-spot

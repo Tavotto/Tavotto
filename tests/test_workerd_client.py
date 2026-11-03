@@ -102,6 +102,28 @@ def client(tmp_path):
 
 
 # ------------------------------ 二进制发现 ------------------------------
+def test_startup_failure_proves_request_was_not_sent(client, monkeypatch):
+    def fail():
+        raise workerd_client.WorkerdError("startup failed", code="workerd_unavailable")
+
+    monkeypatch.setattr(client, "ensure_started", fail)
+    with pytest.raises(workerd_client.WorkerdError) as caught:
+        client.call("build")
+    assert caught.value.extra["request_sent"] is False
+
+
+def test_partial_write_failure_is_not_claimed_as_unsent(client, monkeypatch):
+    client.ensure_started()
+
+    def fail(*args):
+        raise OSError("partial write")
+
+    monkeypatch.setattr(client, "_write", fail)
+    with pytest.raises(workerd_client.WorkerdError) as caught:
+        client.call("build")
+    assert caught.value.extra["request_sent"] is None
+
+
 def test_the_env_switch_can_disable_workerd_entirely(monkeypatch):
     """`TAVOTTO_WORKERD=0` 一律走 Python 池——排障时要能一键切回参考实现。"""
     for value in ("0", "off", "FALSE", "No"):
@@ -131,6 +153,19 @@ def test_a_bad_explicit_path_falls_back_instead_of_crashing(monkeypatch, caplog)
 def test_hello_negotiates_the_protocol_version(client):
     client.ensure_started(max_sessions=2, max_queue=8)
     assert client.hello["supervisor_protocol_version"] == 1
+    # 策略在 Python：上限与淘汰租约都随 hello 交给 workerd（假 supervisor 把 payload 原样回显）
+    assert client.hello["payload"] == {
+        "max_sessions": 2,
+        "max_queue": 8,
+        "acquire_lease_ms": workerd_client.ACQUIRE_LEASE_MS,
+    }
+
+
+def test_the_workerd_lease_is_the_python_pool_lease():
+    """两条控制面的「刚交出去、还没发第一条请求」租约是同一件事、同一个数（ADR 0004 §7）。"""
+    from tavotto.engine import pool
+
+    assert workerd_client.ACQUIRE_LEASE_MS == round(pool.ACQUIRE_LEASE * 1000)
 
 
 def test_a_foreign_supervisor_version_is_refused(tmp_path):
@@ -295,6 +330,7 @@ def test_a_wedged_supervisor_times_out_with_its_own_code(client, monkeypatch):
     with pytest.raises(workerd_client.WorkerdError) as e:
         client.call("never", timeout=0.2)
     assert e.value.code == "workerd_unavailable"
+    assert e.value.extra["request_sent"] is True
 
 
 def test_the_request_envelope_matches_the_supervisor_protocol(client):

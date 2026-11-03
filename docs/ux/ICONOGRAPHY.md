@@ -9,7 +9,7 @@
 
 ## 一、结论先行
 
-- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 144 个（2026-10-07 补画 `ListChecks`，2026-10-13 补画 `Menu`）。名字与 lucide 时代
+- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 149 个（2026-10-23 为联系作者附件方块补画通用文件 `File`，2026-10-22 补画设置页「支持」钮的实心红心 `Heart` 与「联系作者」的信封 `Mail`，2026-10-07 补画 `ListChecks`，2026-10-13 补画 `Menu`，2026-10-19 为新手教程补画 `ArrowRight` 与拖动把手 `GripVertical`）。名字与 lucide 时代
   一一相同，同一语义只用一个名字（第四节的表不动）。**任何第三方图标库都不许再
   import**（门禁按 import 路径判）。
 - 画法：24 网格；所有线条 2 单位描边、圆头圆角，按比例缩放；闭合外形外角 ≥ 2.5、
@@ -52,20 +52,36 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 
 | 档 | px | 用途 |
 | --- | --- | --- |
-| `xs` | 12 | 折叠 / 下拉的箭头（一律 xs，它们是从属指示物）、徽标 / 角标里的小记号、11px 说明文字旁 |
-| `sm` | 14（默认） | 与 12–13px 界面文字并排：菜单项、带文字的按钮、检查器行首、树行状态标记、横幅提示 |
+| `xs` | 12 | 折叠 / 下拉的箭头（一律 xs，它们是从属指示物）、徽标 / 角标里的小记号、11px 说明文字旁；**只给画了小号字形的 13 个图标**（ADR 0158，下文「小号字形」） |
+| `sm` | 16（默认；2026-10-31 前是 14） | 与 12–13px 界面文字并排：菜单项、带文字的按钮、检查器行首、树行状态标记、横幅提示 |
 | `md` | 16 | **只有图标**的按钮（28px 点击区）、顶栏工具、左侧图标轨道、对话框标题栏的关闭钮 |
 | `lg` | 20 | 空状态、引导卡片、对话框级别的强调图 |
 
-界面字号 11–14px、控件高 28px，密度比通常的 web app 高一档；14 是与 12–13px 正文并排
-时视觉体量相当的尺寸，16 在 28px 点击区里留有 6px 呼吸，12 给箭头与徽标。
+界面字号 11–14px、控件高 28px，密度比通常的 web app 高一档；16 在 28px 点击区里留有 6px 呼吸，12 给箭头与徽标。
+**2026-10-31 起 sm 与 md 同为 16**（ADR 0157，用户在清晰度演示页上选定）：几何按 16px 对齐像素，14px 上对不齐、
+边缘发灰；描边变细之后 16px 与 12–13px 正文并排也不显重。档名保留，调用方不用改。
 
 ### 描边
 
-`strokeWidth = 2`，按比例缩放：12 / 14 / 16 / 20 上 1.0 / 1.17 / 1.33 / 1.67px。不能固定成
-绝对像素——图形在 24 网格上留的最小净空是 2 单位，12px 档上只剩 1px，描边一固定到
-1.5px 以上细节就糊成一团。`ICON_STROKE.emphasis = 2.5` 只给一种场景：填色小方块里的
-对勾（复选框选中态）。
+`strokeWidth = 1.5`（2026-10-31 前是 2，ADR 0157），按比例缩放：12 / 16 / 20 上 0.75 / 1.0 / 1.25px。
+2 在 16px 上是 1.33px，小图标里的空隙（文件夹的标签、图层之间的缝、复制两张卡之间）被挤没，读着「糊」——
+对照 Phosphor（16px 上 1px）量出来的差别。几何上每个落在线上的点统一吸到 0.75 网格
+（`defs.ts` 的 `snapPathToPixelGrid`；圆弧半径随弦长等比缩放，整圆不变形）：16px 在 2 倍屏上 0.75 单位
+= 1 个物理像素、描边 = 2 个物理像素，边缘落在整像素上。画新图标照常写原值，吸附统一做；
+`iconography.test` 守着「吸附后的几何再吸一次不变」。个别挖口 / 加粗路径的宽度同比缩到 ¾
+（`EyeOff` / `ImageOff` 挖口 4.5、`SquareMousePointer` 选中挖口 3、`Bold` 2.1）。
+`ICON_STROKE.emphasis = 2` 只给一种场景：填色小方块里的对勾（复选框选中态）。
+
+### 小号字形（12px）与实心状态记号
+
+ADR 0158（2026-11-01 用户选定）：24 网格的图缩到 12px 线只剩 0.75px、怎么吸附都糊，所以 12px 不缩小大图，而是
+`defs.ts` 的 `SMALL_DEFS` 另画一份——ChevronRight / ChevronDown / X / Check / Plus / RotateCcw / Download / ExternalLink /
+Circle / Lock / TriangleAlert / Info / CircleCheck。坐标仍在 24 单位里（与大图共用动作），只用 12px 上的整像素：线 2 单位 = 1px、
+横竖线中心落半像素、斜线只用 45°，路径条数与顺序与大图一一对应。`createIcon` 在 `size <= ICON_SIZE.xs` 时自动换画。
+别的图标不用 12px，用 16px；`iconography.test` 拦着。
+
+**状态记号一律实心**：警告 / 提示 / 出错 / 完成 / 盾牌警告（TriangleAlert、Info、CircleAlert、CircleX、CircleCheck、ShieldAlert）
+默认就是实心底 + 挖空符号，没有线条版。「现在是什么状态」用实心，「点了会做什么」用线条。
 
 ### 画一个新图标
 
@@ -89,6 +105,11 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 - 无障碍：没有 `aria-label` / `aria-labelledby` / 子元素时自动 `aria-hidden`；类名
   `icon icon-<kebab>`，用例按它认形状（`svg.icon-triangle-alert`）。
 - 折叠块：`ui/Details` 的 `Details` / `Summary`（原生 `<details>` 加图标集的箭头）。
+- 微动效（ADR 0156，2026-10-31）：46 枚图标登记在 `icons/motion.ts`（触发 · 时长 · 每条路径的角色），
+  关键帧在 `icons/motion.css`，播放端 `ui/iconMotion.ts`——点按钮播 `press`、指针进按钮播 `hover`，
+  状态图标只在调用方写 `playIn` 时于出现那一下播。一次性、播完回静止形、减少动态效果时不播；几何不改
+  （唯一例外：属性旋钮两段线反向画、加两条静止不画的延长线 `ghost`，静止逐像素同形，好让轨道跟着旋钮伸缩）。改有动作图标的路径条数要同步角色表，
+  `icons/motion.test.tsx` 守着两侧同源与条数。
 
 ### 门禁（`web/src/components/ui/iconography.test.tsx`，TypeScript AST）
 
@@ -104,6 +125,15 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 
 每条规则都有正反两组自检样例。
 
+## 三·补、不套底座，空状态用手帐线稿（2026-10-28）
+
+图标不放进灰底座 / 圆盘里（底座让每个图标多出一块没有信息的色块，且与进度条的「发丝框 + 铅笔排线」语言不一致）：
+行首与标题行首是无框 16px `IconSlot`，居中在第一行文字上；空状态是 `ui/Sketch` 的 54×42 线稿
+（1px、.5 坐标、45° 整像素排线、ink-faint）。线稿不是图标：图标集管小控件里的符号，线稿管一屏的主图，
+封闭集 11 幅（select / canvas / history / versions / ok / code / search / warn / pencil / sheet / drop）。
+缩略图占位用 `.hatch-box`，不画图标。
+尺寸例外只有一处：首页拖放区的 `drop`（文件卡落进托盘）是整屏主图，画布 96×72（`SKETCH_SIZE_OVERRIDE`），线宽与排线不变。
+
 ## 四、语义统一表（同一含义只用一个图标）
 
 | 语义 | 图标 | 曾经的并存者 |
@@ -116,6 +146,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 外部链接 / 在文件管理器里显示 | `ExternalLink` | `SquareArrowOutUpRight` |
 | 打开设置对话框 | `Settings` | `Settings2` |
 | 编辑（改名、改规范） | `Pencil` | `PenLine`、`Settings2` |
+| 联系作者（顶栏 / 主页入口，2026-10-22） | `Mail`（信封：外框 + 封口折线） | 起初借用的 `Pencil`——读起来是「编辑」 |
 | 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2` |
 | 警告 | `TriangleAlert` | 别名 `AlertTriangle`；`ShieldAlert` 只留给「来源已分叉」 |
 | 阻断（问题等级 error） | `OctagonAlert`（停车牌的形状） | 此前与警告共用 `TriangleAlert`、只靠红 / 琥珀色区分（2026-09-14 二审 C1）；表在 `lib/validationText.SEVERITY_ICON`，问题面板与导出清单同一份 |
@@ -123,7 +154,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 问题清单入口（左轨「问题」） | `ListChecks`（左列两枚对勾 + 右列两道，与 `LayoutList` 同骨架；有实心孪生） | 此前是 `TriangleAlert`——入口与「警告」同形，轨上一枚警告三角一直在余光里报警（2026-10-07 设计审计 §9.4） |
 | 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg、浏览器 `<details>` 三角 |
 | 下拉 | `ChevronDown` | — |
-| 加载中 | `LoaderCircle` | 别名 `Loader2` |
+| 加载中 | `ui/Spinner`（底环 + 短弧；不在图标集里，`LoaderCircle` 只剩集内几何、界面不再引用） | 别名 `Loader2`；3/4 弧的 `LoaderCircle`（2026-10-28 换掉） |
 | 帮助 | `CircleQuestionMark` | 别名 `CircleHelp` |
 | 成功 | `CircleCheck`（状态）/ `Check`（选中标记） | 别名 `CheckCircle2` |
 | 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces` |

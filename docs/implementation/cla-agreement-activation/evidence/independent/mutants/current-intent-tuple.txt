@@ -1,0 +1,26 @@
+✖ new store rejects old packet mutation but historical hold remains possible (37.869651ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 237.829404
+
+✖ failing tests:
+
+test at ../../tmp/cla-activation-independent-mutants/current-intent-tuple/independent-review.test.mjs:21:1
+✖ new store rejects old packet mutation but historical hold remains possible (37.869651ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-activation-independent-mutants/current-intent-tuple/independent-review.test.mjs:21:359
+      at async iso (file:///tmp/cla-activation-independent-mutants/current-intent-tuple/independent-review.test.mjs:10:52)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

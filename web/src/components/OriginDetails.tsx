@@ -45,7 +45,15 @@ export function OriginEntryList({ origins, title }: { origins: JointOrigin[]; ti
       <ul className="flex flex-col gap-0.5">
         {origins.map((o) => (
           <li key={o.import_name} data-origin-entry={o.import_name} data-origin-reason={o.reason}>
-            <span className="font-mono text-ink-2">{o.import_name}</span> · {originReasonText(o.reason)}
+            <span className="font-mono text-ink-2">{o.import_name}</span> ·{' '}
+            {o.not_pip_installable
+              ? og('detail.notPip', { name: o.not_pip_installable.label })
+              : o.local_module_missing
+                ? og('detail.localMissing', {
+                    name: o.import_name,
+                    dirs: o.local_module_missing.search_dirs.map((d) => `${d}/`).join('、'),
+                  })
+                : originReasonText(o.reason)}
           </li>
         ))}
       </ul>

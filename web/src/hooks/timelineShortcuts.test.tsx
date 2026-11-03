@@ -25,7 +25,7 @@ import { useKeyboard } from './useKeyboard'
 import { runManualSave } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
 
 declare global {
@@ -49,7 +49,7 @@ const press = (init: KeyboardEventInit) => {
 
 beforeEach(async () => {
   vi.clearAllMocks()
-  useUiStore.setState({ versionsOpen: false })
+  useUiStore.setState({ rightTab: 'properties' })
   useTimelineStore.setState({ preview: null, namingOpen: false })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_keys')
   const el = document.createElement('div')
@@ -66,19 +66,19 @@ afterEach(() => {
 describe('⇧⌘H：开 / 关排版时间线', () => {
   it('按一次开，再按一次关', () => {
     press({ key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
     press({ key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
   })
 
   it('Windows / Linux 的 Ctrl+Shift+H 同一条', () => {
     press({ key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true })
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
   })
 
   it('对照：⌥⌘H 不碰时间线（那是系统的「隐藏其他」）', () => {
     press({ key: '˙', code: 'KeyH', metaKey: true, altKey: true })
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
   })
 
   it('对照：⇧⌘Y 仍是重做，不开时间线', () => {
@@ -89,7 +89,7 @@ describe('⇧⌘H：开 / 关排版时间线', () => {
     s.undo()
     expect(useDocumentStore.getState().doc.guides).toHaveLength(0)
     press({ key: 'Y', code: 'KeyY', metaKey: true, shiftKey: true })
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
     expect(useDocumentStore.getState().doc.guides).toHaveLength(1)
   })
 })
@@ -98,7 +98,7 @@ describe('⌥⌘S：把现在存为命名节点', () => {
   it('macOS：key 是 ß，按 code 认出来；打开顶部命名小框（不开抽屉），不触发保存', () => {
     press({ key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
     expect(useTimelineStore.getState().namingOpen).toBe(true)
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
     expect(runManualSave).not.toHaveBeenCalled()
   })
 
@@ -176,7 +176,7 @@ describe('⌥⌘S：把现在存为命名节点', () => {
 
 describe('Esc：先退预览，再关抽屉', () => {
   it('预览中按 Esc 只退预览；再按一次才关抽屉', () => {
-    useUiStore.setState({ versionsOpen: true })
+    useUiStore.setState({ rightOpen: true, rightTab: 'timeline' })
     useTimelineStore.setState({
       preview: {
         docId: 'd_keys',
@@ -186,8 +186,8 @@ describe('Esc：先退预览，再关抽屉', () => {
     })
     press({ key: 'Escape', code: 'Escape' })
     expect(useTimelineStore.getState().preview).toBeNull()
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
     press({ key: 'Escape', code: 'Escape' })
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
   })
 })

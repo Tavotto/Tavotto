@@ -1,0 +1,175 @@
+[
+  {
+    "name": "activation real legacy binary fence",
+    "file": "src/native/agreement-activation.ts",
+    "before": "...store.guard(`(SELECT count(*) FROM agreements)>2 AND (${docs.sql})`,...docs.values)",
+    "after": "...store.guard(`(SELECT count(*) FROM agreements)>=2 AND (${docs.sql})`,...docs.values)",
+    "pattern": "activation cannot replace a real version transition with source only",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation whole call SQL budget",
+    "file": "src/native/agreement-activation.ts",
+    "before": "      ...store.cas(r.activation_revision-1),",
+    "after": "      store.stmt('SELECT 1'),...store.cas(r.activation_revision-1),",
+    "pattern": "activation first real version fences legacy binaries within13 SQL",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation legacy anchor exclusion",
+    "file": "src/native/store.ts",
+    "before": " AND NOT EXISTS(SELECT 1 FROM agreement_activations)',values};",
+    "after": "',values};",
+    "pattern": "activation legacy mode rejects a journal even with two registry rows",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation configuration pin binding",
+    "file": "src/native/activation-record.ts",
+    "before": "if(c && (c.agreementActivationEnabled!==true",
+    "after": "if(c && false && (c.agreementActivationEnabled!==true",
+    "pattern": "activation current config binds",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation runtime canonical record verification",
+    "file": "src/native/store.ts",
+    "before": "    await verifyActivationRecord(JSON.parse(activation),this.expectedConfig);",
+    "after": "    // mutation: bypass canonical record verification",
+    "pattern": "activation runtime verifies stored canonical bytes beyond mirrored columns",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation new document bytes",
+    "file": "src/native/agreement-activation.ts",
+    "before": " || await sha256(d.content)!==d.digest",
+    "after": "",
+    "pattern": "activation rejects altered fresh individual bytes",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation new version marker",
+    "file": "src/native/agreement-activation.ts",
+    "before": " || markers[0]![1]!==d.version",
+    "after": "",
+    "pattern": "activation requires a version marker matching the selected new agreement",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation exact repeat is no operation",
+    "file": "src/native/agreement-activation.ts",
+    "before": "if(current?.hash===r.hash){",
+    "after": "if(false && current?.hash===r.hash){",
+    "pattern": "activation replay is an exact read only noop",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation identical concurrency confirmation",
+    "file": "src/native/agreement-activation.ts",
+    "before": "if(await confirmCurrent(store,c,p))return {status:'already_active',hash:r.hash};throw error;",
+    "after": "if(false && await confirmCurrent(store,c,p))return {status:'already_active',hash:r.hash};throw error;",
+    "pattern": "activation identical concurrent proposals recover the committed winner without another write",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation consumes its own evidence revision",
+    "file": "src/native/agreement-activation.ts",
+    "before": "      ...store.cas(r.activation_revision-1),",
+    "after": "",
+    "pattern": "activation cannot consume an unrelated later evidence revision",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation complete transaction rollback",
+    "file": "src/native/store.ts",
+    "before": "try{const results=await this.db.batch(stmts);if(results.some(r=>!r.success))throw new Error();}",
+    "after": "try{for(const stmt of stmts)await stmt.run();}",
+    "pattern": "activation final insert failure rolls back every row and invalidation",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation packet supplied tuple",
+    "file": "src/native/store.ts",
+    "before": "const ready=this.readiness(),matches=!this.expectedConfig || packetAgreementMatches(this.expectedConfig,p);",
+    "after": "const ready=this.readiness(),matches=true;",
+    "pattern": "activation current store rejects old tuple for a new subject before commit",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation final current packet predicate",
+    "file": "src/native/store.ts",
+    "before": "sql:\"((p.kind='individual' AND p.version=? AND p.digest=?) OR (p.kind='corporate' AND p.version=? AND p.digest=?))\"",
+    "after": "sql:\"(? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL)\"",
+    "pattern": "activation current store rejects old signing intent",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation subsequent evidence revisions",
+    "file": "src/native/store.ts",
+    "before": "AND a.activation_revision<=(SELECT revision FROM state WHERE id=1)",
+    "after": "AND a.activation_revision=(SELECT revision FROM state WHERE id=1)",
+    "pattern": "activation historic hold remains available and later evidence revisions stay ready",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+
+  {
+    "name": "activation snapshot packet write guard",
+    "file": "src/native/store.ts",
+    "before": "AND (${ready.sql}) AND ?=1",
+    "after": "AND (? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL) AND ?=1",
+    "pattern": "activation after packet or intent preread rejects the final stale write",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation snapshot intent write guard",
+    "file": "src/native/store.ts",
+    "before": "WHERE (${ready.sql}) AND (?='hold'",
+    "after": "WHERE (? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL) AND (?='hold'",
+    "pattern": "activation after packet or intent preread rejects the final stale write",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation prior personal consent is not inherited",
+    "file": "src/native/service.ts",
+    "before": "if(this.c.delegatedCountersigningEnabled===true) {\n      const candidate=",
+    "after": "if(this.c.delegatedCountersigningEnabled===true) {\n      const old=await this.store.stmt('SELECT id FROM packets WHERE subject=? ORDER BY created LIMIT 1',subject).first<{id:string}>();\n      if(old && await this.store.completed(old.id))return true;\n      const candidate=",
+    "pattern": "activation new agreement needs fresh personal contributor and holder consent",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation environment capability override",
+    "file": "src/native/worker.ts",
+    "before": "agreementActivationEnabled:env.CLA_AGREEMENT_ACTIVATION_ENABLED==='true'",
+    "after": "agreementActivationEnabled:c.agreementActivationEnabled===true",
+    "pattern": "activation capability requires an environment flag and an explicit hash pin",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "activation explicit current hash pin",
+    "file": "src/native/config.ts",
+    "before": "  if(c.agreementActivationEnabled===true && !/^[0-9a-f]{64}$/.test(c.agreementActivationHash ?? ''))throw new Rejected('agreement_activation_pin_required');",
+    "after": "",
+    "pattern": "activation capability requires an environment flag and an explicit hash pin",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true
+  }
+
+]

@@ -440,6 +440,44 @@ def test_deleting_a_missing_path_is_not_a_blocked_operation(figs):
     assert "[guard]" not in worker._log_tail()
 
 
+#: 3.12 的非 strict `Path.resolve()` 末尾多 `self.stat()` 一次（3.13 去掉了）。脚本自己把它装回去，
+#: 3.13 上也能复现：守卫若用 `resolve()` 判「在不在真实图库」，第二次删除时的那一下 stat
+#: 就被账本记成「脚本回读了刚被拦下的路径」——发行档 lab（3.12）上 test_workdir_mode 三条红过。
+RESOLVE_STATS_LIKE_312 = """\
+import os
+import pathlib
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+_resolve = pathlib.Path.resolve
+
+
+def resolve(self, strict=False):
+    out = _resolve(self, strict)
+    if not strict:
+        try:
+            out.stat()
+        except OSError:
+            pass
+    return out
+
+
+pathlib.Path.resolve = resolve
+Path("stale.csv").unlink()
+os.remove("stale.csv")
+fig, ax = plt.subplots()
+ax.plot([0, 1])
+"""
+
+
+@needs_worker
+def test_the_guards_own_path_check_is_not_a_readback_on_312(figs):
+    worker, resp = _build(figs, "resolve312.py", RESOLVE_STATS_LIKE_312, project_mode=True)
+    assert resp["stems"], resp
+    assert worker._log_tail().count("[guard]") == 2  # 两次删除都被拦下
+    assert (figs / "stale.csv").is_file()
+
+
 @needs_worker
 def test_a_blocked_path_the_script_rewrote_itself_is_not_a_divergence(figs):
     worker, resp = _build(figs, "rewritten.py", BLOCKED_THEN_REWRITTEN, project_mode=True)

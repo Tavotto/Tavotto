@@ -37,9 +37,8 @@ test(`同一个 origin 先后打开两个项目：B 不显示 A 的排版，B �
       (r) => r.request().method() === 'PUT' && r.url().includes('/api/layout-session/last') && ok(r),
       { timeout: 30_000 },
     )
-    // 与验收现场同一个动作：双击素材卡放上画布（进图内编辑），再回到排版量对象
+    // 与验收现场同一个动作：双击素材卡放上画布（画布上只有这一张 = 单图编辑），量画布上的对象
     await card(tabF).dblclick({ timeout: 30_000 })
-    await tabF.locator('[data-context-back]').click()
     await expect(tabF.locator('[data-object-id]')).toHaveCount(1)
     await autosaved
     await remembered

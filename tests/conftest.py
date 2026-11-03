@@ -18,7 +18,12 @@ import urllib.request
 
 import pytest
 
-from support import shard as _shard
+from support import (
+    hang_watchdog as _hang,
+    render_children as _render_children,
+    shard as _shard,
+    system_fonts_shim as _system_fonts_shim,
+)
 
 # 模块级设置：app / engine 的路径常量在 import 时求值，必须先于用例模块被
 # import 就位，否则测试会写到真实的用户数据目录。单个用例仍各自 monkeypatch
@@ -63,6 +68,15 @@ os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 # 诊断发送自己的用例（tests/test_diag_send*.py）在 fixture 里摘掉它，再用下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_DIAG_UPLOAD"] = "1"
 
+# 「联系作者」（ADR 0145）同理：线路是内置的两个生产主机，测试进程里硬关；它的用例（tests/test_contact_send*.py）自己摘掉
+# 开关并指向回环模拟端，生产主机由下面的会话级探针兜底。
+os.environ["TAVOTTO_NO_CONTACT"] = "1"
+
+# macOS：出图子进程共用一份 `system_profiler SPFontsDataType` 输出。每个用例给子进程的新
+# `MPLCONFIGDIR` 都会让 matplotlib 重建字体缓存，而重建的开销几乎全在这一条命令上（单次约 12 s
+# CPU）；同样必须在 collection 之前就位，模块级 spawn 的子进程也要继承到。原理与边界见模块文档。
+_SYSTEM_FONTS_SHIM_DIR = _system_fonts_shim.install()
+
 # ---------------------------------------------------------------------------
 # 会话级零网络断言：遥测 endpoint 一次都不许被真的请求（#440）
 # ---------------------------------------------------------------------------
@@ -90,14 +104,15 @@ _DIAG_LEAKS: list[str] = []
 
 
 def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
+    from tavotto.engine.contactsend import CONTACT_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.diagsend import PRODUCTION_ENDPOINT  # 地址唯一出处；调用时才 import
     from tavotto.engine.telemetry import DEFAULT_ENDPOINT  # 地址唯一出处；调用时才 import
 
     target = fullurl.full_url if isinstance(fullurl, urllib.request.Request) else str(fullurl)
-    if (
-        urllib.parse.urlsplit(target).hostname
-        == urllib.parse.urlsplit(PRODUCTION_ENDPOINT).hostname
-    ):
+    if urllib.parse.urlsplit(target).hostname in {
+        urllib.parse.urlsplit(PRODUCTION_ENDPOINT).hostname,
+        *CONTACT_HOSTS,
+    }:
         current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
         _DIAG_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
         raise urllib.error.URLError("测试进程不许请求生产诊断接收端（tests/conftest.py，ADR 0118）")
@@ -190,6 +205,42 @@ def _isolated_system_pythons(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _offline_api_root_probe(monkeypatch):
+    """接口地址探测（`ai_catalog.api_root_fix`：保存连接 / spawn 之前核地址少没少 `/v1`）会真去请求服务商。用例里存的是
+    真实厂商地址（api.deepseek.com …），不桩就会在测试进程里联网。默认「判不了」（不联网、记录不改，与改动前的行为一致）；
+    测它本身的用例自己注入 `_probe_kind`。"""
+    from tavotto.engine import ai_catalog
+
+    monkeypatch.setattr(ai_catalog, "_probe_kind", lambda *_a, **_k: None)
+
+
+@pytest.fixture(autouse=True)
+def _pinned_pool_cap(monkeypatch):
+    """worker 池上限按本机可用内存自适应（`pool.max_alive()`，ADR 0159）：测试机内存不同，淘汰 / 容量用例的
+    结果就不同。默认钉成下限 3；测自适应本身的用例自己把 `pool.MAX_ALIVE` 置回 None。"""
+    from tavotto.engine import pool
+
+    monkeypatch.setattr(pool, "MAX_ALIVE", pool.MIN_ALIVE)
+    monkeypatch.setattr(pool, "_cap_cache", None)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_windows_registry(monkeypatch):
+    """PEP 514 注册表是 Windows 机器级来源（`userenvs._windows_registry_pythons`）：CI 的 Windows runner 上真有
+    `PythonCore\\3.x`，「候选应为空 / 机器线索只有两条」的用例会多出五条。默认读空注册表；需要内容的用例自己注入 `reader`。"""
+    from tavotto.engine import userenvs
+
+    class _EmptyRegistry:
+        def subkeys(self, *a, **k):
+            return []
+
+        def values(self, *a, **k):
+            return {}
+
+    monkeypatch.setattr(userenvs, "_WinregReader", _EmptyRegistry)
+
+
+@pytest.fixture(autouse=True)
 def _stub_diag_detail_probes(monkeypatch):
     """发送包 `detail/` 里两处会碰外部世界的采集默认换成桩：对渲染解释器起子进程（import matplotlib，秒级）与
     对 tavotto.cn / github.com 的系统名字解析。`prepare` 在很多用例里都会走，不该每次都真探测一遍、
@@ -250,6 +301,29 @@ def _stop_project_watchers_started_by_this_test():
 
 
 @pytest.fixture(autouse=True)
+def _render_children_reaped():
+    """用例 teardown：**本用例自建**的 `RenderHost`（不是进程级共享实例）起的 render child 必须已经退出。
+
+    #1285：CI 上 `describe_children()` 在同片里撞见存活数分钟的 `python -m tavotto.rendercore.renderchild`。
+    判据的主语：本用例期间新建的非共享宿主的 child；时刻是用例 teardown。没 `close()` 就失败，打出 pid 与完整
+    命令行，随后只杀登记过的 PID。进程级共享实例按模块收，见 `_render_shared_host_reaped_per_module`。"""
+    _render_children.install()
+    mark = _render_children.mark()
+    yield
+    _render_children.reap(mark)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _render_shared_host_reaped_per_module():
+    """模块 teardown：收掉进程级共享 render child（`renderhost.shared()`，懒建、合法的会话级资源）。
+    不按用例收：每条都关会让下一条重起 child，用共享宿主多的文件慢两成左右。按模块收同样保证它不跨模块
+    活下去——这就是 #1285 里看门狗那条「此刻没有子进程」用例要的：进入它的模块之前，前一个模块的共享 child 已经收掉。"""
+    yield
+    if "tavotto.rendercore.renderhost" in sys.modules:
+        _render_children.reap_shared()
+
+
+@pytest.fixture(autouse=True)
 def _native_registry_reopened():
     """`REGISTRY.shutdown_all()` 会把进程单例置为 closing（sidecar 退出语义）；用例之间必须重新打开，
     否则一条关停用例之后，同进程里所有桌面拥有的启动都被拒。"""
@@ -288,6 +362,50 @@ def telemetry_sent(_isolated_user_config, monkeypatch):
     box.clear()  # 同意本身那两条不参与产品埋点的断言
     yield box
     telemetry.reset_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# 用例级挂死看门狗（issue #1226）：默认关闭，CI 用环境变量打开
+# ---------------------------------------------------------------------------
+# 机制与取值理由见 `tests/support/hang_watchdog.py`。这里只是把它挂到每条用例的整个
+# 生命周期（setup + call + teardown）上。
+
+
+def _write_past_capture(config, text: str, *, resume: bool) -> None:
+    """绕过 pytest 的 fd 捕获往真正的 stderr 写——否则报告进了捕获缓冲，进程一退就丢。"""
+    capman = config.pluginmanager.getplugin("capturemanager")
+    try:
+        if capman is not None:
+            capman.suspend_global_capture(in_=False)
+        _hang._stderr_write(text)
+    finally:
+        if capman is not None and resume:
+            capman.resume_global_capture()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    limit = _hang.hang_seconds()
+    if limit is None:
+        return (yield)
+    config = item.config
+    dog = _hang.Watchdog(
+        item.nodeid,
+        limit,
+        lambda nodeid, lim: _hang.report_and_exit(
+            nodeid, lim, write=lambda t: _write_past_capture(config, t, resume=False)
+        ),
+    )
+    started = time.monotonic()
+    dog.start()
+    try:
+        return (yield)
+    finally:
+        dog.cancel()
+        took = time.monotonic() - started
+        note = _hang.slow_note_seconds()
+        if note is not None and took >= note:
+            _write_past_capture(config, _hang.format_slow_note(item.nodeid, took), resume=True)
 
 
 # ---------------------------------------------------------------------------
@@ -597,3 +715,15 @@ def _write_shard_manifest(path: str, plan, config) -> None:
     target = pathlib.Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dns_for_plain_http_policy(monkeypatch):
+    """明文 http 的放行判据（`netpolicy`）对主机名会做 DNS。测试里一律不查真 DNS：默认解析不出（= 拒绝）；
+    需要的用例自己 monkeypatch `netpolicy.resolve_host`。判定缓存每条用例前后清掉。"""
+    from tavotto.engine import netpolicy
+
+    monkeypatch.setattr(netpolicy, "resolve_host", lambda host: [])
+    netpolicy.clear_cache()
+    yield
+    netpolicy.clear_cache()

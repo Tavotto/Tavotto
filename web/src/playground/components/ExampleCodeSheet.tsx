@@ -76,7 +76,7 @@ export function ExampleCodeSheet({
       footer={{
         secondary: (
           <Button variant="secondary" size="lg" onClick={() => void copy()}>
-            {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
+            {copied ? <Check playIn size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
             {copied ? pg('copied') : pg('copyCode')}
           </Button>
         ),

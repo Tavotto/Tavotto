@@ -1,4 +1,4 @@
-import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, artifactEditIntentChanged } from '@/lib/artifactValidation'
+import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, artifactEditIntentChanged, isAdoptedPanel, isSourceBackedZeroEdit } from '@/lib/artifactValidation'
 /**
  * 引擎渲染的**订阅与生命周期装配**。调度（防抖 / 立即 / 占位 / 定稿）在
  * `store/renderScheduler.ts`，「只带基线、还没动过」的判据在 `lib/bakedBaseline.ts`；
@@ -25,6 +25,7 @@ import { panelRotation } from '@/types/document'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
+import type { RenderPurpose } from '@/lib/renderPurpose'
 
 /**
  * 需要引擎渲染的面板，**按 (fileId, overrides) 去重**。
@@ -68,6 +69,16 @@ export function renderTargets(
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
     // 才 build 并重放。tracked（脚本变更）对 runtime 只表达 stale 提示，
     // 不构成自动重跑的理由。
+    // 未采用的 PNG 源图（#1145）：邻居（`crossFigureNeighbours` 已剔）与 tracked 这两条「顺手补渲染」只能发
+    // 无 source_policy 的 patches=[]，让脚本重跑出一张没对过字节的图；它的唯一合法首渲染是 admitPngEntry
+    // 的带策略采用请求（进编辑才走）。**styleBound 例外，照旧渲染**（Codex #1179 r4313254705）：
+    // 绑定画布上 admitPngEntry 因「挂着样式 / 有样式债」拒绝进入，采用请求永远发不出；而样式债只有
+    // 这张图拿到 manifest 才能由 `alignNewFigures` 结清——这次渲染是它唯一的 manifest 来源。后端对缺
+    // policy 的 PNG 渲染只标 `source_unverified`、不拒绝（旧请求语义不变），所以这条路本来合法。
+    const unadopted = !isAdoptedPanel(o) && isUnadoptedPngSource(o)
+    // 来源驱动采用且零编辑（ADR 0139 §五.1）：显示的是磁盘原像素，重开文档 / 脚本变更 / 邻居补渲染都不去跑脚本；
+    // 只有正在编辑它（需要几何权威）才渲染。有真实编辑的面板照常渲染（与别的带 override 的面板一致）。
+    if (isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
     const wants =
       o.fileKind === 'runtime'
         ? o.id === editingId || latest[o.fileId] != null
@@ -76,8 +87,7 @@ export function renderTargets(
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
           styleBound ||
-          neighbours.has(o.id) ||
-          !!tracked[o.fileId] ||
+          (!unadopted && (neighbours.has(o.id) || !!tracked[o.fileId])) ||
           (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
     if (!wants) continue
     const key = renderKeyOf(o)
@@ -108,7 +118,7 @@ export function crossFigureNeighbours(
     if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
     // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
     // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
-    if (!Object.hasOwn(o, 'artifactValidation') && isUnadoptedPngSource(o)) continue
+    if (!isAdoptedPanel(o) && isUnadoptedPngSource(o)) continue
     if (panelRotation(o) || o.flipH || o.flipV) continue
     if (
       visible &&
@@ -121,6 +131,63 @@ export function crossFigureNeighbours(
     ids.add(o.id)
   }
   return ids
+}
+
+/**
+ * 这次渲染请求的意图（后端闭集，见 `lib/renderPurpose`）。**只有**「纯邻居补渲染」是 `neighbour`：
+ * 进了 `neighbours`、且没有任何别的渲染理由（不是正在编辑、没绑样式、脚本没领先磁盘、没有真实的图内修改）。
+ * 这种渲染没有人在等——后端不为它刷新会话池 LRU，池满时它让位而不是挤掉前台会话。其余一律 foreground。
+ */
+export function renderPurposeOf(
+  panel: PanelObject,
+  editingId: string | null,
+  neighbours: ReadonlySet<string>,
+  tracked: Record<string, boolean | undefined>,
+  styleBound: boolean,
+  assets: Record<string, BakedBaselineFacts | undefined>,
+  /** `foregroundRenderKeys` 的结果：同一渲染键下别的面板（`renderTargets` 去重时被合并掉的副本）的前台理由。 */
+  foregroundKeys: ReadonlySet<string> = NO_NEIGHBOURS,
+): RenderPurpose {
+  if (hasForegroundReason(panel, editingId, tracked, styleBound, assets)) return 'foreground'
+  if (!neighbours.has(panel.id) || foregroundKeys.has(renderKeyOf(panel))) return 'foreground'
+  return 'neighbour'
+}
+
+/** 这张面板自己有没有「用户在等 / 真实需要」的渲染理由（与 `renderTargets` 的 wants 判据同源）。 */
+function hasForegroundReason(
+  panel: PanelObject,
+  editingId: string | null,
+  tracked: Record<string, boolean | undefined>,
+  styleBound: boolean,
+  assets: Record<string, BakedBaselineFacts | undefined>,
+): boolean {
+  return (
+    panel.id === editingId ||
+    styleBound ||
+    !!tracked[panel.fileId] ||
+    (panel.overrides.length > 0 && !isJustBakedBaselineOf(panel.overrides, assets[panel.fileId]))
+  )
+}
+
+/**
+ * 有前台理由的面板的渲染键集合。`renderTargets` 把「同文件同 overrides」的副本去重成一次渲染，
+ * 这次共享的渲染只要有**任一**副本是前台（比如用户编辑的是后一张），就必须按前台发——
+ * 否则池满时被暂缓，被编辑的那张永远拿不到 manifest。
+ */
+export function foregroundRenderKeys(
+  objects: readonly CanvasObject[],
+  editingId: string | null,
+  tracked: Record<string, boolean | undefined>,
+  styleBound: boolean,
+  assets: Record<string, BakedBaselineFacts | undefined>,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const o of objects) {
+    if (o.type === 'panel' && hasForegroundReason(o, editingId, tracked, styleBound, assets)) {
+      keys.add(renderKeyOf(o))
+    }
+  }
+  return keys
 }
 
 /** 文档里现存（含其它画布）的全部面板变体键——prune 的保留名单 */
@@ -156,6 +223,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     useWorkspaceStore.getState().mode,
     currentVisibleRectMm(),
   )
+  const foregroundKeys = foregroundRenderKeys(objects, editingId, store.tracked, styleBound, assets)
   for (const panel of renderTargets(
     objects,
     editingId,
@@ -177,7 +245,20 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     if (state && !state.svgEvicted && (state.lastPatches === want || state.wantPatches === want))
       continue
     // 进入编辑态的首次渲染立即发出，其余（打字等）走防抖
-    requestRender(panel, !state)
+    const purpose = renderPurposeOf(
+      panel,
+      editingId,
+      neighbours,
+      store.tracked,
+      styleBound,
+      assets,
+      foregroundKeys,
+    )
+    // 后端对这一版的后台补渲染说过「暂缓」（会话池已满）：不以后台身份重发同一版。用户进编辑 / 改值 /
+    // 脚本变更后它不再是「纯邻居」或不再是这一版，上面的判断自然放行
+    if (purpose === 'neighbour' && state?.deferredPatches === want) continue
+    if (purpose === 'neighbour') requestRender(panel, !state, purpose)
+    else requestRender(panel, !state)
   }
   // 编辑期每改一个值就多一条变体（各带一份 SVG）：没人再引用的当场清掉
   useRenderStore.getState().prune(liveRenderKeys(objects))

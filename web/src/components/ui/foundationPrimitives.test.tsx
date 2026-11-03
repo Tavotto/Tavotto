@@ -20,6 +20,8 @@ import { MenuItem } from './Menu'
 import { Notice } from './Notice'
 import { RowMenu } from './RowMenu'
 import { StatusPill } from './StatusPill'
+import { Toggle } from './Toggle'
+import { UNIT_GAP } from '@/lib/units'
 import { TooltipProvider } from './Tooltip'
 import { useRowMenu } from './useRowMenu'
 
@@ -204,7 +206,7 @@ describe('Notice / StatusPill', () => {
 })
 
 describe('FormSection + FieldGroup + SettingRow', () => {
-  it('组里的 SettingRow 不再自带上下留白（内边距交给组），组外的照旧；balanced 是 4 : 6 两列、控件左起', async () => {
+  it('组里的 SettingRow 不再自带上下留白（内边距交给组），组外的照旧；balanced 是 4 : 6 两列、控件贴控件列右缘', async () => {
     await render(
       <FormSection title={T} description={T} data-fs>
         <FieldGroup data-fg>
@@ -225,19 +227,23 @@ describe('FormSection + FieldGroup + SettingRow', () => {
     const bal = q('[data-row="bal"]')!
     expect(bal.getAttribute('data-layout')).toBe('balanced')
     expect(bal.className).toContain('grid-cols-[minmax(0,4fr)_minmax(0,6fr)]')
-    expect(bal.lastElementChild!.className).not.toMatch(/justify-end/)
+    expect(bal.lastElementChild!.className).toMatch(/justify-end/)
+    expect(bal.lastElementChild!.className).not.toMatch(/justify-self-end/)
   })
 })
 
 describe('EmptyState v2', () => {
-  it('40px lg 圆角图标底座 + type-title 标题 + type-caption 说明（42ch）+ 32px 主动作', async () => {
+  it('54×42 手帐线稿（无底座）+ type-title 标题 + type-caption 说明（42ch）+ 32px 主动作', async () => {
     const onClick = vi.fn()
-    await render(<EmptyState icon={Pencil} title={T} hint={T} action={{ label: T, onClick }} data-es />)
+    await render(<EmptyState art="pencil" title={T} hint={T} action={{ label: T, onClick }} data-es />)
     const es = q('[data-es]')!
     expect(es.hasAttribute('data-empty-state')).toBe(true)
-    const tile = es.firstElementChild!
-    expect(tile.className).toMatch(/\bsize-10\b/)
-    expect(tile.className).toMatch(/\brounded-lg\b/)
+    const art = es.firstElementChild!
+    expect(art.className).not.toMatch(/\bbg-/)
+    expect(art.className).toMatch(/\btext-ink-faint\b/)
+    const svg = art.querySelector('svg')!
+    expect(svg.getAttribute('data-sketch')).toBe('pencil')
+    expect([svg.getAttribute('width'), svg.getAttribute('height')]).toEqual(['54', '42'])
     expect(es.querySelector('.type-title')).not.toBeNull()
     expect(es.querySelector('.type-caption')!.className).toContain('max-w-[42ch]')
     const btn = es.querySelector<HTMLButtonElement>('button[data-variant]')!
@@ -260,6 +266,8 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
     expect(listRowClass({ tree: true })).toMatch(/\brounded-sm\b/)
     expect(listRowClass({ tree: true })).toMatch(/\btext-ink-2\b/)
     expect(listRowClass({ tree: true, group: true })).toMatch(/\bfont-medium\b.*\btext-ink\b|\btext-ink\b.*\bfont-medium\b/)
+    // 行里的名字一律 13
+    for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\btext-base\b/)
     expect(listRowClass({ tree: true, selected: true })).toMatch(/\bfont-semibold\b/)
     expect(listRowClass({ tree: true, selected: true })).not.toMatch(/text-ink-2/)
     expect(listRowClass()).toMatch(/\brounded-md\b/)
@@ -371,5 +379,32 @@ describe('RowMenu：⋯ / 右键 / ⇧F10 同一份菜单', () => {
     const pm = q('[data-row-point-menu]')!
     expect(pm).not.toBeNull()
     expect(pm.querySelector('[data-mi="rename"]')).not.toBeNull()
+  })
+})
+
+describe('Toggle：关态是空心描边轨道 + 缩小的同色滑块（精致感审计第二批 #3）', () => {
+  it('关：透明轨道 + 1.5px 内描边 border-control，滑块 scale-75 同色无投影；开：黑轨 + 白钮 + 投影', async () => {
+    await render(<Toggle checked={false} onChange={() => {}} aria-label="x" />)
+    const track = q('[role=switch] > span')!
+    const thumb = track.firstElementChild!
+    expect(track.className).toContain('bg-transparent')
+    expect(track.className).toContain('ring-[1.5px]')
+    expect(track.className).toContain('ring-border-control')
+    expect(track.className).not.toContain('bg-ink')
+    expect(thumb.className).toContain('scale-75')
+    expect(thumb.className).toContain('bg-border-control')
+    expect(thumb.className).not.toContain('shadow-thumb')
+    await render(<Toggle checked onChange={() => {}} aria-label="x" />)
+    const on = q('[role=switch] > span')!
+    expect(on.className).toContain('bg-ink')
+    expect(on.className).not.toContain('ring-')
+    expect(on.firstElementChild!.className).toContain('bg-thumb')
+    expect(on.firstElementChild!.className).not.toContain('scale-75')
+  })
+})
+
+describe('数字与单位的间隔', () => {
+  it('全产品一个字符：U+2009 细空格', () => {
+    expect(UNIT_GAP).toBe('\u2009')
   })
 })

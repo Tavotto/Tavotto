@@ -86,6 +86,9 @@ CURATED: dict[str, str] = {
     "docx": "python-docx",
     "pptx": "python-pptx",
     "fitz": "PyMuPDF",
+    # PyMuPDF ≥1.24 官方推荐的写法；与包名只差大小写，不登记就会被 `suggest_distribution` 当成撞 curated
+    # 包名的保留名，连「指定安装包」的预填都没有（反馈包 TVD-MDBH）
+    "pymupdf": "PyMuPDF",
     "netCDF4": "netCDF4",
     "mpl_toolkits": "matplotlib",
     # 科研常见的「名字对不上」
@@ -111,6 +114,8 @@ SAME_NAME: frozenset[str] = frozenset(
         "numba",
         "xarray",
         "statsmodels",
+        # pandas 的时区数据依赖（Windows 上 `pip --target` 依赖夹里最常见的读不了的包，ADR 0153）
+        "tzdata",
         "h5py",
         "netcdf4",
         "zarr",
@@ -350,6 +355,73 @@ MAX_DECL_FILES = 12
 MAX_DECL_BYTES = 512 * 1024
 
 
+#: 项目标志：声明文件的向上遍历到最近的含其一的目录为止（含该目录）。ADR 0061 修订（2026-10-21）
+PROJECT_MARKERS: tuple[str, ...] = (".git", "pyproject.toml", "setup.cfg", "setup.py")
+
+#: 家目录下「大文件夹」的目录名（英文 / 中文系统各一套）：把它们当项目根打开时，里面常年躺着不相干的 requirements 与脚本。
+BROAD_HOME_SUBDIRS: tuple[str, ...] = (
+    "Desktop",
+    "桌面",
+    "Documents",
+    "文档",
+    "Downloads",
+    "下载",
+)
+
+
+def broad_folders() -> frozenset[str]:
+    """不读依赖声明的「大文件夹」（规范化后的绝对路径）：家目录本身、其下的桌面 / 文档 / 下载（含 OneDrive 重定向）。"""
+    try:
+        home = Path.home()
+    except (RuntimeError, OSError):
+        return frozenset()
+    out = {home}
+    for sub in BROAD_HOME_SUBDIRS:
+        out.add(home / sub)
+        out.add(home / "OneDrive" / sub)
+    return frozenset(os.path.normcase(os.path.abspath(p)) for p in out)
+
+
+def is_broad_folder(path: Path) -> bool:
+    """`path` 是不是大文件夹：上面那组、或文件系统根（盘符根）。家目录的**祖先**同样不读（遍历不会越过家目录）。"""
+    try:
+        key = os.path.normcase(os.path.abspath(path))
+    except (OSError, ValueError):
+        return True
+    if key in broad_folders():
+        return True
+    return Path(key).parent == Path(key)
+
+
+def _marker_present(path: Path, no_follow: bool) -> bool:
+    if not no_follow:
+        return path.exists()
+    try:
+        os.lstat(path)
+    except OSError:
+        return False
+    return True
+
+
+def _bound_decl_dirs(dirs: list[Path], *, no_follow: bool = False) -> list[Path]:
+    """把「脚本目录 → 项目根」的目录列表按用户裁决（2026-10-21）收窄：到最近的项目标志（含）为止；
+    大文件夹一律不读（它们之后的目录也不读——遍历到这里就停）。
+
+    `no_follow`（默认静态扫描）下探测标志用 `lstat`：标志是符号链接时只看链接本身存在，不解引用——
+    否则指向外部 / UNC 的 `.git`、`pyproject.toml` 会在读取守卫之前被 stat（Codex #1276 P2）。"""
+    out: list[Path] = []
+    for d in dirs:
+        if is_broad_folder(d):
+            break
+        out.append(d)
+        try:
+            if any(_marker_present(d / m, no_follow) for m in PROJECT_MARKERS):
+                break
+        except OSError:
+            continue
+    return out
+
+
 def _decl_dirs(
     figures_dir: str | Path, script: str | None, *, no_follow: bool = False
 ) -> list[Path]:
@@ -370,7 +442,7 @@ def _decl_dirs(
         dirs = [start]
         while dirs[-1] != root_real and dirs[-1].parent != dirs[-1]:
             dirs.append(dirs[-1].parent)
-        return dirs
+        return _bound_decl_dirs(dirs, no_follow=no_follow)
     try:
         root_real = root.resolve(strict=False)
         start = ((root / script).parent if script else root).resolve(strict=False)
@@ -386,7 +458,7 @@ def _decl_dirs(
         if cur == root_real or cur.parent == cur:
             break
         cur = cur.parent
-    return dirs
+    return _bound_decl_dirs(dirs, no_follow=no_follow)
 
 
 def _read_text(path: Path) -> str:
@@ -1080,6 +1152,9 @@ class _Walk:
         self.no_follow = no_follow
         self.files = 0
         self.seen: set[tuple[str, str, str]] = set()
+        #: 真正**读成功**的声明文件（相对路径，按首次读到的顺序）。没产出 intent 的空文件 / 只有 `-r` 的父文件也在内；
+        #: 被拒读（链接 / 替身 / 根外）与读失败的不在。诊断包附件照这份清单取，不从 intent 的 source 反推。
+        self.visited: list[str] = []
 
     def rel(self, path: Path) -> str:
         if self.no_follow:
@@ -1130,6 +1205,7 @@ def _read_declaration_file(
     text, why = walk.read(path)
     if text is None:
         return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
+    walk.visited.append(source)
     out: list[DependencyIntent] = []
     for line in _logical_lines(text):
         body = line.split("#", 1)[0].strip()
@@ -1193,7 +1269,11 @@ def _read_declaration_file(
 
 
 def declared_intents(
-    figures_dir: str | Path, script: str | None = None, *, no_follow: bool = False
+    figures_dir: str | Path,
+    script: str | None = None,
+    *,
+    no_follow: bool = False,
+    visited: list[str] | None = None,
 ) -> list[DependencyIntent]:
     """项目声明过的**全部**依赖意图（无损）：requirements 各文件（含有界跟进的 `-r` / `-c`）
     + constraints.txt + pyproject（PEP 621 / 735 / Poetry 表）+ 脚本的 PEP 723 + 管理器锁文件
@@ -1205,6 +1285,9 @@ def declared_intents(
     `no_follow=True`（导入即扫描传）：声明文件不跟随符号链接 / 路径替身（UNC 目标会触发 SMB 访问），
     且只读有上限的普通文件（FIFO 不会挂住）；被拒的记 `unsupported(unreadable)`，不是「没有依赖」。
     默认形态（准备 / 依赖门）保持跟随用户自己的符号链接，但读法同样只认有上限的普通文件。
+
+    `visited`（可选出参）：追加遍历中**读成功**的声明文件相对路径（requirements 系含 `-r` / `-c` 跟进、pyproject；
+    不含脚本的 PEP 723）。与返回的 intents 不同，没产出任何 intent 的文件（空 / 只有注释 / 只有 `-r`）也在内。
     """
     root = Path(figures_dir)
     walk = _Walk(root, no_follow=no_follow)
@@ -1291,6 +1374,8 @@ def declared_intents(
                 if path.name == PYPROJECT_NAME:
                     walk.files += 1
                     text, why = walk.read(path)
+                    if text is not None:
+                        walk.visited.append(walk.rel(path))
                     if text is None:
                         rel = walk.rel(path)
                         out.append(
@@ -1310,6 +1395,8 @@ def declared_intents(
             except (ValueError, TypeError, RecursionError) as exc:
                 LOG.debug("依赖声明解析失败（忽略）: %s: %s", path, exc)
                 continue
+    if visited is not None:
+        visited.extend(walk.visited)
     return out
 
 
@@ -1516,7 +1603,7 @@ def suggest_distribution(import_name: str) -> str:
     name = str(import_name or "")
     if not valid_import_name(name) or name.split(".")[0] in _STDLIB_NAMES:
         return ""
-    if curated_distribution(name):
+    if curated_distribution(name) or not_pip_installable(name) is not None:
         return ""
     key = normalize_distribution(name)
     reserved = {normalize_distribution(k) for k in CURATED}
@@ -1537,6 +1624,34 @@ def suggest_distribution(import_name: str) -> str:
 # 知道「这个 import 名有不止一个发行包可以提供」，从而把候选全留着、状态报 `ambiguous`，不替用户挑。
 # 每一条都要能一眼看懂：这些发行包在 PyPI 上互相排斥地提供同一个顶级包。
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 已知「装不了」的 import（ADR 0061 修订，2026-10-21）：这些名字的真身不在 PyPI（或 PyPI 上同名的是另一个东西），
+# 内置 Python 用 pip 装不出来，**计划阶段就标出来、不送 pip**。键 = 顶级 import 名（区分大小写）；
+# `dists` = 声明里出现这些规范化名字时同样不送 pip；`hint` 是给人看的出路类别（前端文案按它选句）。
+# 以后加 Geant4 之类，只加一行。
+# ---------------------------------------------------------------------------
+NOT_PIP_HINT_OWN_ENV = "own_env"  # 需要用户自己的（conda）环境
+
+NOT_PIP_INSTALLABLE: dict[str, dict] = {
+    # CERN ROOT：conda-forge 的 `root` 包；PyPI 上没有可用的同名发行包
+    "ROOT": {"label": "ROOT", "dists": ("root",), "hint": NOT_PIP_HINT_OWN_ENV},
+}
+
+
+def not_pip_installable(import_name: str) -> dict | None:
+    """这个顶级 import 名在「装不了」表里吗？是则回表项（含 `label` / `dists` / `hint`）。"""
+    return NOT_PIP_INSTALLABLE.get(str(import_name or "").split(".")[0])
+
+
+def not_pip_for_distribution(dist: str) -> dict | None:
+    """规范化后的发行包名撞上「装不了」表里的某个发行包名 → 表项；否则 None。"""
+    key = normalize_distribution(dist)
+    for entry in NOT_PIP_INSTALLABLE.values():
+        if key in entry["dists"]:
+            return entry
+    return None
+
+
 ALTERNATIVE_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
     "cv2": (
         "opencv-python",

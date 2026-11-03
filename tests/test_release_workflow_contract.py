@@ -807,6 +807,92 @@ def test_the_release_attaches_everything_in_one_go():
         assert role in validate, f"validate_artifacts 的 --require 里少了 {role}"
 
 
+_ALIASES = {
+    "macos-installer": "Tavotto-macOS.dmg",
+    "macos-intel-installer": "Tavotto-macOS-Intel.dmg",
+    "windows-installer": "Tavotto-Windows-Setup.exe",
+}
+
+
+def _alias_step() -> str:
+    steps = [
+        s for s in _wf(PUBLISH).steps("github_release") if "assets/alias" in s and "cp --" in s
+    ]
+    assert len(steps) == 1, "github_release 里该有且只有一步造不带版本号的别名"
+    return steps[0]
+
+
+def test_the_release_attaches_unversioned_aliases_of_the_verified_installers():
+    """README「下载最新版」直链 `releases/latest/download/<固定名>` 的前提（三份副本）。
+
+    别名必须与带版本号的原件**同源**：按产物清单的 role 解出那一个文件 cp 而来，
+    不是另一次构建；放在 assets/alias/ 而不是 dist/（dist/* 是清单与校验的输入）；
+    原件仍由 `assets/dist/*` 挂上，别名由独立的 `assets/alias/*` 挂上。
+    """
+    step = _alias_step()
+    for role, alias in _ALIASES.items():
+        assert f"{role}:{alias}" in step, f"{alias} 没有按 role={role} 取源"
+    assert "artifact_manifest.py path" in step and "cmp --" in step
+    assert "assets/dist/artifact-manifest.json" in step
+    attach = [s for s in _wf(PUBLISH).steps("github_release") if "action-gh-release" in s]
+    assert len(attach) == 1
+    assert re.search(r"^\s+assets/alias/\*\s*$", attach[0], re.M), "files 里没有 assets/alias/*"
+    assert re.search(r"^\s+assets/dist/\*\s*$", attach[0], re.M), "带版本号的原件不能不挂"
+    # 别名只在挂载 job 里造：validate_artifacts 的 dist/ 与清单里不许出现它们
+    validate = "\n".join(_wf(PUBLISH).steps("validate_artifacts"))
+    for alias in _ALIASES.values():
+        assert alias not in validate, (
+            f"{alias} 不该进 validate_artifacts（会进 dist / 清单 / 溯源）"
+        )
+    order = _wf(PUBLISH).steps("github_release")
+    assert order.index(step) < order.index(attach[0]), "别名必须在挂载之前造出来"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="步骤是 bash 脚本")
+def test_the_alias_step_copies_the_manifests_files_byte_for_byte(tmp_path):
+    """真跑那一步：副本与原件逐字节相同、SHA256SUMS 追加三行、清单不被改动。"""
+    import hashlib
+    import json
+
+    work = tmp_path / "w"
+    (work / "assets" / "dist").mkdir(parents=True)
+    (work / "assets" / "out").mkdir()
+    (work / "scripts").symlink_to(ROOT / "scripts")
+    names = {
+        "macos-installer": "Tavotto-1.2.3-macOS.dmg",
+        "macos-intel-installer": "Tavotto-1.2.3-macOS-Intel.dmg",
+        "windows-installer": "Tavotto-1.2.3-Windows-Setup.exe",
+    }
+    arts = []
+    for role, name in names.items():
+        (work / "assets" / "dist" / name).write_bytes(role.encode() * 100)
+        arts.append(
+            {"role": role, "path": f"dist/{name}", "sha256": "0" * 64, "size": 1, "platform": "x"}
+        )
+    manifest = work / "assets" / "dist" / "artifact-manifest.json"
+    manifest.write_text(json.dumps({"schema": 1, "artifacts": arts}), encoding="utf-8")
+    before = manifest.read_bytes()
+    (work / "assets" / "out" / "SHA256SUMS.txt").write_text("orig  line\n", encoding="utf-8")
+
+    m = re.search(r"run: \|\n(.*)", _alias_step(), re.S)
+    assert m
+    script = "\n".join(ln[10:] for ln in m.group(1).splitlines())
+    r = subprocess.run(
+        ["bash", "-c", script], cwd=work, capture_output=True, text=True, encoding="utf-8"
+    )
+    assert r.returncode == 0, r.stderr
+    sums = (work / "assets" / "out" / "SHA256SUMS.txt").read_text(encoding="utf-8")
+    assert sums.startswith("orig  line\n")
+    for role, alias in _ALIASES.items():
+        got = (work / "assets" / "alias" / alias).read_bytes()
+        assert got == (work / "assets" / "dist" / names[role]).read_bytes()
+        assert f"{hashlib.sha256(got).hexdigest()}  {alias}" in sums
+    assert manifest.read_bytes() == before
+    assert sorted(p.name for p in (work / "assets" / "dist").iterdir()) == sorted(
+        [*names.values(), "artifact-manifest.json"]
+    )
+
+
 def test_the_release_carries_the_project_licence():
     """Release 资产里要有项目 `LICENSE`（AGPL 全文），与 SHA256SUMS 同路（#182）。
 
@@ -1961,3 +2047,27 @@ def test_a_job_that_configures_global_credentials_keeps_no_local_copy():
                     f"{wf.path.name}/{job}: checkout 还留着本地凭据，发布器会发两份 Authorization"
                 )
     assert seen == 2, f"配全局凭据的 job 数 {seen} != 2"
+
+
+def test_the_diag_contract_gate_runs_on_the_resolved_sha_for_every_trigger():
+    """诊断包条目门禁（`scripts/ci/diag_contract.py`）：在第一段 `trust`、resolve 之后、对两条触发路径都跑，
+    读的是待发布 SHA 的客户端源码。按**整个步骤块**判（Codex #1544 P1：在步骤名处切文本，`- if: false` 写在
+    `name:` 前面会被切掉，判据假绿）。"""
+    wf = _wf(RELEASE)
+    assert "ack_diag_contract:" in wf.text.split("\njobs:")[0], (
+        "workflow_dispatch 少了 ack_diag_contract 输入"
+    )
+    steps = wf.steps("trust")
+    gates = [i for i, s in enumerate(steps) if "scripts/ci/diag_contract.py" in s]
+    assert len(gates) == 1, f"trust 里诊断包条目门禁应恰有一步，实际 {len(gates)}"
+    resolve = [i for i, s in enumerate(steps) if _Workflow.field(s, "id") == "resolve"]
+    assert resolve and resolve[0] < gates[0], "门禁要在 resolve 之后（用它解析出的 SHA）"
+    gate = steps[gates[0]]
+    for key in ("if", "continue-on-error"):
+        assert _Workflow.field(gate, key) is None, f"门禁步骤带了 {key}:——某条触发路径会无声绕过它"
+    assert re.search(r"^\s+SHA:\s*\$\{\{\s*steps\.resolve\.outputs\.sha\s*\}\}\s*$", gate, re.M)
+    assert re.search(r"^\s+ACK:\s*\$\{\{\s*inputs\.ack_diag_contract\s*\}\}\s*$", gate, re.M)
+    run = gate.split("run:", 1)[1]
+    assert 'git show "$SHA:src/tavotto/engine/diagsend.py"' in run
+    last = [ln for ln in run.splitlines() if ln.strip()][-1]
+    assert '--ack "${ACK:-}"' in last and "||" not in last, "判定那一行的退出码必须原样决定这一步"

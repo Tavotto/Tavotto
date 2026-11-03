@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { EditableField, ManifestElement } from '@/lib/api'
-import { msg, type UiMessage } from '@/i18n'
-import { updateObjects } from '@/store/actions'
+import { msg, t as translate, type UiMessage } from '@/i18n'
+import { setFigureFontChoice, updateObjects } from '@/store/actions'
+import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figureFontChoice } from '@/lib/figureFontChoice'
 import { useDocumentStore } from '@/store/documentStore'
 import { registerGesture } from '@/store/gestureCoordinator'
 import { usePanelDisplayManifest } from '@/store/renderStore'
@@ -44,6 +46,8 @@ import type { OverrideState } from './textStyleModel'
 export interface TypographyAdapter {
   /** 目标数量；> 1 时控件用批量文案 */
   count: number
+  /** A selected primary is not proven safe for the requested Chinese font. */
+  fontFallbackShadowed?: boolean
   /** 目标涉及的对象类别（排序去重后）；property path 按它取 */
   kinds: TypographyKind[]
   /** 这条属性此刻的值域；`undefined` = 不可用，理由问 `unsupportedReason` */
@@ -79,6 +83,7 @@ const EMPTY: readonly string[] = []
  */
 export const FIGURE_TEXT_BATCH_PROPS: readonly TypographyProp[] = [
   'fontFamily',
+  'fontFallback',
   'sizePt',
   'weight',
   'style',
@@ -106,6 +111,7 @@ export const CANVAS_TEXT_PRIMARY_PROPS: readonly TypographyProp[] = [
 /** 规范属性名 → manifest 的 prop 名（表在 `lib/typography`，这里只做投影） */
 const FIGURE_PROP: Record<TypographyProp, string | null> = {
   fontFamily: 'fontfamily',
+  fontFallback: 'fontfamily',
   sizePt: 'fontsize',
   weight: 'weight',
   style: 'style',
@@ -153,11 +159,42 @@ export function useFigureTypography(
   /** 字段表：字体族并上本机字体，其余原样（`coerceTypography` 与控件拿同一份） */
   const fieldFor = (m: string) => (m === 'fontfamily' ? mergedFamily : inner.fieldOf(m))
 
+  const fontValues = (part: 'primary' | 'fallback') => elements.map((element) => {
+    const raw = effectiveOverride(panel.overrides, element.gid, 'fontfamily')?.value
+    const choice = figureFontChoice(raw)
+    if (part === 'fallback') return choice?.fallback ?? ''
+    const primary = choice?.primary ?? raw
+    if (Array.isArray(primary)) return primary[0] ?? ''
+    return typeof primary === 'string' ? primary : element.editable.find((f) => f.prop === 'fontfamily')?.value
+  })
+  const fontValue = (part: 'primary' | 'fallback'): TypographyValue => {
+    const values = fontValues(part)
+    if (!values.length || !mergedFamily) return { kind: 'unsupported', reason: 'not_in_manifest' }
+    if (values.some((v) => v !== values[0])) return { kind: 'mixed' }
+    return { kind: 'uniform', value: values[0] }
+  }
+  const latinOnly = new Set(displayManifest?.font_latin_only_families ?? [])
+  const fallbackSelected = fontValues('fallback').some(Boolean)
+  const primarySafe = (name: unknown) => typeof name === 'string' && latinOnly.has(name)
+  const writeFont = (part: 'primary' | 'fallback', value: unknown) => {
+    if (part === 'fallback' && !elements.every((e) => e.editable.find((f) => f.prop === 'fontfamily')?.font_fallback_selection)) return
+    if (value !== null && (typeof value !== 'string' || !mergedFamily?.options?.includes(value))) return
+    if (part === 'primary' && fallbackSelected && value !== null && !primarySafe(value)) return
+    setFigureFontChoice(panel.id, elements.map((e) => e.gid), part, value as string | null,
+      msg('element.editProp', { label: translate(part === 'primary' ? 'textBar.latinFont' : 'textBar.cjkFallback', { ns: 'inspector' }) }, 'inspector'))
+  }
+
   return {
     count: inner.count,
+    fontFallbackShadowed: fallbackSelected && fontValues('primary').some((v) => !primarySafe(v)),
     kinds: ['figureText'],
     fieldOf: (prop) => {
       const m = mp(prop)
+      if (prop === 'fontFallback' && !elements.every((e) => e.editable.find((f) => f.prop === 'fontfamily')?.font_fallback_selection)) return undefined
+      if (prop === 'fontFamily' && fallbackSelected && mergedFamily) {
+        const current = new Set(fontValues('primary'))
+        return { ...mergedFamily, options: (mergedFamily.options ?? []).filter((o) => latinOnly.has(o) || current.has(o)) }
+      }
       return m ? fieldFor(m) : undefined
     },
     valueOf: (prop) => {
@@ -168,6 +205,7 @@ export function useFigureTypography(
           reason: supportsTypography('figureText', prop) ? 'not_in_manifest' : 'kind_unsupported',
         }
       }
+      if (prop === 'fontFamily' || prop === 'fontFallback') return fontValue(prop === 'fontFamily' ? 'primary' : 'fallback')
       const v = inner.valueOf(m)
       if (v.kind === 'unavailable') return { kind: 'unsupported', reason: 'not_in_manifest' }
       return v
@@ -175,6 +213,10 @@ export function useFigureTypography(
     write: (prop, value, immediate) => {
       const m = mp(prop)
       if (!m) return
+      if (prop === 'fontFamily' || prop === 'fontFallback') {
+        writeFont(prop === 'fontFamily' ? 'primary' : 'fallback', value)
+        return
+      }
       const ok = coerceTypography(prop, value, fieldFor(m))
       if (!ok.ok) return
       inner.write(m, ok.value, immediate)
@@ -182,6 +224,11 @@ export function useFigureTypography(
     writeOnce: (prop, value) => {
       const m = mp(prop)
       if (!m) return
+      if (prop === 'fontFamily' || prop === 'fontFallback') {
+        writeFont(prop === 'fontFamily' ? 'primary' : 'fallback', value)
+        inner.endGesture()
+        return
+      }
       const ok = coerceTypography(prop, value, fieldFor(m))
       if (!ok.ok) return
       inner.writeOnce(m, ok.value)
@@ -190,10 +237,22 @@ export function useFigureTypography(
     endGesture: inner.endGesture,
     overrideStateOf: (prop) => {
       const m = mp(prop)
+      if (m && (prop === 'fontFamily' || prop === 'fontFallback')) {
+        const count = elements.filter((e) => {
+          const raw = effectiveOverride(panel.overrides, e.gid, 'fontfamily')?.value
+          const choice = figureFontChoice(raw)
+          return prop === 'fontFallback' ? !!choice : choice ? choice.primary !== null : raw !== undefined
+        }).length
+        return count === 0 ? 'none' : count === elements.length ? 'all' : 'some'
+      }
       return m ? inner.overrideStateOf(m) : 'none'
     },
     reset: (prop) => {
       const m = mp(prop)
+      if (prop === 'fontFamily' || prop === 'fontFallback') {
+        writeFont(prop === 'fontFamily' ? 'primary' : 'fallback', null)
+        return
+      }
       if (m) inner.reset(m)
     },
     pathOf: (prop) => propertyPathOf('figureText', prop),
@@ -205,6 +264,10 @@ export function useFigureTypography(
     unavailableOptions: (prop) => {
       const m = mp(prop)
       if (!m) return EMPTY
+      if (prop === 'fontFallback' && families) {
+        const selected = fontValues('fallback').filter((v): v is string => typeof v === 'string' && !!v)
+        return selected.filter((v) => !families.includes(v) && !['serif', 'sans-serif', 'monospace'].includes(v))
+      }
       // 读并过本机表的那一份：本机表里有的不算不可用（`withMachineFamilies`，与设置 › 样式页同一口径）
       return fieldFor(m)?.options_unavailable ?? EMPTY
     },
@@ -285,6 +348,7 @@ const CANVAS_INHERITABLE = new Set<TypographyProp>([
 /** 规范属性名 → 历史标题。**改哪一条就说哪一条**，不共用一句「编辑文字」。 */
 const CANVAS_HISTORY: Record<TypographyProp, string> = {
   fontFamily: 'setFontFamily',
+  fontFallback: 'setFontFamily',
   sizePt: 'setFontSize',
   weight: 'toggleBold',
   style: 'toggleItalic',

@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "catalog_rev": 1,
+  "comment": "内置期刊标准库（ADR 0155）：每本期刊 = 对 journal-base-v1 的一份覆盖 + 每条规则的原文出处。仓库里只放一小份种子（ADR 0155 §4b：完整目录由服务端提供，不进仓库），PR 1 只落结构，publishers / journals 刻意留空；真实数据必须逐条带 src + quote，经人工核对后才进来，严禁凭记忆写数值。",
+  "publishers": {},
+  "journals": {}
+}

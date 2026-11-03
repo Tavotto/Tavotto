@@ -1,33 +1,31 @@
-import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CaseSensitive, ChevronDown, CornerDownLeft, Subscript, Superscript, Underline } from '@/components/ui/icons'
+import { CaseSensitive, ChevronDown, Underline } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   DEFAULT_INTERPRETATION,
   hasScientificChars,
   TEXT_INTERPRETATIONS,
-  toggleScript,
   transformCase,
   type CaseMode,
   type TextInterpretation,
 } from '@/lib/richText'
 import { textDiagnostics } from '@/lib/glyphPlan'
+import { annotationCodec } from '@/lib/richEditor'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { BASE_FONT_PT, effectivePt, round1 } from '@/lib/units'
-import { ALT, combo, modKey } from '@/lib/utils'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { useUiStore } from '@/store/uiStore'
 import { panelFullSize, type PanelObject, type TextObject } from '@/types/document'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
-import { ColorField, NumberField, TextArea } from '../ui/Input'
+import { ColorField, NumberField } from '../ui/Input'
+import { RichTextField } from '../ui/RichTextField'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
-import { canvasFieldOf, coerceTypography, displayValueOf } from '@/lib/typography'
+import { canvasFieldOf, coerceTypography, displayValueOf, effectiveCanvasFamily } from '@/lib/typography'
 import { EffectToggle } from './controls/EffectToggle'
 import { TypographyControls } from './controls/TypographyControls'
 import { useCanvasTypography } from './typographyAdapter'
@@ -37,22 +35,6 @@ import { shared } from './common'
 const tx = (key: string, values?: Record<string, unknown>) =>
   translate(`text.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
-
-/**
- * 上下标快捷键：Mod+↑ = 上标、Mod+↓ = 下标（Mod = ⌘ / Ctrl，两边都认）。
- *
- * 带 ⌥ / ⇧ 的组合**不认领**——那些是系统自带的「按段移动 / 选到开头」，
- * 抢过来用户就没法在文本框里选词了；只有干净的 Mod+方向键才是我们的键位。
- * 单独抽出来是为了能直接对它写用例，不必为每种组合去挂一次组件。
- */
-export function scriptHotkey(
-  e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
-): 'sup' | 'sub' | null {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return null
-  if (e.key === 'ArrowUp') return 'sup'
-  if (e.key === 'ArrowDown') return 'sub'
-  return null
-}
 
 /**
  * 大小写是一次性动作而不是状态：转换完就没有「当前处于大写」这回事——所以它
@@ -66,7 +48,6 @@ const caseLabel = (mode: CaseMode) =>
 
 export function TextSection({ objs }: { objs: TextObject[] }) {
   useTranslation('inspector')
-  const taRef = useRef<HTMLTextAreaElement>(null)
   const ids = objs.map((o) => o.id)
   const one = objs.length === 1 ? objs[0] : null
   const typography = useCanvasTypography(objs)
@@ -87,50 +68,9 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
   const beginTxn = () => useDocumentStore.getState().beginTxn(hist('editText'))
   const endTxn = () => useDocumentStore.getState().endTxn()
 
-  /** 改完文本后把光标放回去——不复位的话每点一次按钮光标就跳到末尾。 */
-  const restoreCaret = (start: number, end: number) => {
-    requestAnimationFrame(() => {
-      const el = taRef.current
-      if (!el) return
-      el.focus()
-      el.setSelectionRange(start, end)
-    })
-  }
-
-  /**
-   * 给选中的一段套上/去掉上下标标记（`^{…}` / `_{…}`）。
-   * 没有选区就插入一对空标记并把光标放进去，可以直接开始打字。
-   */
-  const wrapScript = (kind: 'sup' | 'sub') => {
-    if (!one) return
-    const ta = taRef.current
-    const start = ta?.selectionStart ?? one.text.length
-    const end = ta?.selectionEnd ?? one.text.length
-    const next = toggleScript(one.text, start, end, kind)
-    patch(hist(kind === 'sup' ? 'setSuperscript' : 'setSubscript'), (o) => (o.text = next.text))
-    restoreCaret(next.start, next.end)
-  }
-
   /** 大小写：直接改文本内容（可撤销），不新增字段，导出零改动。 */
   const applyCase = (mode: CaseMode) =>
-    patch(hist('transformCase'), (o) => (o.text = transformCase(o.text, mode)))
-
-  /** 在光标处插入换行；textarea 没聚焦过就接在末尾。补丁重渲染后恢复光标。 */
-  const insertNewline = () => {
-    if (!one) return
-    const ta = taRef.current
-    const start = ta?.selectionStart ?? one.text.length
-    const end = ta?.selectionEnd ?? one.text.length
-    const next = one.text.slice(0, start) + '\n' + one.text.slice(end)
-    patch(hist('insertNewline'), (o) => (o.text = next))
-    requestAnimationFrame(() => {
-      const el = taRef.current
-      if (el) {
-        el.focus()
-        el.setSelectionRange(start + 1, start + 1)
-      }
-    })
-  }
+    patch(hist('transformCase'), (o) => (o.text = transformCase(o.text, mode, false, o.textFormat)))
 
   const moreOpen = useInspectorPrefs((st) => st.moreOpen['text-object'] ?? false)
   const setMoreOpen = useInspectorPrefs((st) => st.setMoreOpen)
@@ -142,68 +82,31 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
   return (
     <Section title={tx('title')}>
       {one && (
-        // 上标 / 下标 / 换行是 20px 的图标钮，坐在文本框右下角（2026-10-07 设计审计 §9.2）：
-        // 它们只对这段文字起作用，就该长在框里；此前是框下面单独一行 28px 的三颗钮
-        <div className="relative mb-2" data-text-content>
-        <TextArea
-          ref={taRef}
-          // 名字 = 分区标题那句可见文字，同一个表达式（此前这格没有可达名）
-          aria-label={tx('title')}
-          value={one.text}
-          maxRows={6}
-          onFocus={beginTxn}
-          onBlur={endTxn}
-          onChange={(e) => patch(hist('editText'), (o) => (o.text = e.target.value))}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            const kind = scriptHotkey(e)
-            if (!kind) return
-            // 不拦默认行为的话光标会先跳到上一行/末行，标记插进去人就找不着它了
-            e.preventDefault()
-            wrapScript(kind)
-          }}
-          onDoubleClick={() => useUiStore.getState().setEditingText(one.id)}
-          placeholder={tx('placeholder')}
-          // 画布文字用文档字体预览；框本身与其它可编辑框同一副（fieldBox）。底边留出角上那排钮的高度
-          className="pb-6"
-          style={{ fontFamily: 'var(--font-doc)' }}
-        />
-          <div className="absolute bottom-1 right-1 flex items-center gap-0.5">
-            {/* 按下不抢焦点：textarea 的编辑事务不该因为点了钮就提交 */}
-            <Button
-              size="icon-xs"
-              data-text-action="sup"
-              className="text-ink-2"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => wrapScript('sup')}
-              aria-label={tx('superscript')}
-              title={tx('superscriptTitle', { key: modKey('↑') })}
-            >
-              <Superscript size={ICON_SIZE.xs} />
-            </Button>
-            <Button
-              size="icon-xs"
-              data-text-action="sub"
-              className="text-ink-2"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => wrapScript('sub')}
-              aria-label={tx('subscript')}
-              title={tx('subscriptTitle', { key: modKey('↓') })}
-            >
-              <Subscript size={ICON_SIZE.xs} />
-            </Button>
-            <Button
-              size="icon-xs"
-              data-text-action="newline"
-              className="text-ink-2"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={insertNewline}
-              aria-label={tx('insertNewline')}
-              title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
-            >
-              <CornerDownLeft size={ICON_SIZE.xs} />
-            </Button>
-          </div>
+        // 所见即所得（ADR 0152）：斜体 / 粗体 / 上下标在框里直接显示，角上那排钮作用在选区上。
+        // 存储仍是字符串：老标注按旧标记读，第一次在这里改动时写成 LaTeX 子集并标 textFormat
+        <div className="mb-2" data-text-content>
+          <RichTextField
+            // 公式块按字体族排：换了族就换一个编辑框（公式块的排版结果跟着换）
+            key={effectiveCanvasFamily(one)}
+            // 名字 = 分区标题那句可见文字，同一个表达式（此前这格没有可达名）
+            aria-label={tx('title')}
+            value={one.text}
+            codec={annotationCodec(one.textFormat)}
+            onChange={(text) =>
+              patch(hist('editText'), (o) => {
+                o.text = text
+                o.textFormat = 'latex'
+              })
+            }
+            onFocus={beginTxn}
+            onBlur={endTxn}
+            placeholder={tx('placeholder')}
+            sizePx={13}
+            mathFamily={effectiveCanvasFamily(one)}
+            // 画布文字用文档字体预览；框本身与其它可编辑框同一副（fieldBox）
+            style={{ fontFamily: 'var(--font-doc)' }}
+            testId="text-object-content"
+          />
         </div>
       )}
 
@@ -460,7 +363,7 @@ function ScientificText({
   const missing: string[] = []
   const substituted: string[] = []
   for (const o of objs) {
-    const d = textDiagnostics(o.text, o.interpretation)
+    const d = textDiagnostics(o.text, o.interpretation, o.textFormat)
     for (const c of d.missing) if (!missing.includes(c)) missing.push(c)
     for (const c of d.substituted) if (!substituted.includes(c)) substituted.push(c)
   }

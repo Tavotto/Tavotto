@@ -1427,13 +1427,15 @@ def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
         assert _field_value(man, cb_b["gid"], "cmap") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) is None
 
-        # 只改兄弟自己的（窄 override 从没动过 A）：A 与它的色条**不**报「脚本原样」——
-        # 否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B（#474 评审第五轮）
+        # 只改兄弟自己的（窄 override）：**整组一起换**（用户裁决 2026-10-18，ADR 0135 修订：
+        # 色阶组任一成员改 cmap = 整组改）。每个成员仍各报**自己**的脚本原样——A 与它的色条报
+        # paper_b、B 与它的色条报 paper_c，谁也不拿对方的当自己的（#474 评审第五轮的初衷保留）
         narrow = [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}]
         man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": narrow})["manifest"]
-        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
-        assert _cmap_original_name(man, "axes_0.collections_0") is None
-        assert _cmap_original_name(man, cb_a["gid"]) is None
+        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb_a["gid"], cb_b["gid"]):
+            assert _field_value(man, gid, "cmap") == "cividis", gid
+        assert _cmap_original_name(man, "axes_0.collections_0") == "paper_b"
+        assert _cmap_original_name(man, cb_a["gid"]) == "paper_b"
         assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) == "paper_c"
     finally:
@@ -3016,6 +3018,84 @@ def _run_write_back(client, figs, paired_preview=False):
     return body, patches
 
 
+def test_drag_font_and_figure_size_write_back_and_reopen(write_back, tmp_path):
+    """Compare the edited session, the actual written PDF, and a reopened session."""
+    from tavotto import pdfbackend
+
+    m, client, figs = write_back
+    original = figs / "TestFig_a.pdf"
+    original_bytes = original.read_bytes()
+    script_bytes = (figs / "fig_test.py").read_bytes()
+    edits = [
+        {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.3, 0.4]},
+        {"gid": "axes_0.xlabel", "prop": "fontsize", "value": 18},
+        {"gid": "axes_0.ylabel", "prop": "fontsize", "value": 18},
+        {"gid": "figure", "prop": "size_mm", "value": [120, 80]},
+    ]
+    base = client.post("/api/engine/render", json={"id": original.name, "patches": []})
+    assert base.status_code == 200, base.get_json()
+    for end in (1, 3, 4):
+        rendered = client.post(
+            "/api/engine/render", json={"id": original.name, "patches": edits[:end]}
+        )
+        assert rendered.status_code == 200, rendered.get_json()
+        assert not rendered.get_json().get("warnings"), rendered.get_json()
+    hot = rendered.get_json()["manifest"]
+    assert hot["size_mm"] == pytest.approx([120, 80], abs=0.01)
+    assert _bbox_of(hot, "axes_0.legend") != pytest.approx(
+        _bbox_of(base.get_json()["manifest"], "axes_0.legend"), abs=0.005
+    )
+
+    worker, stem = m._engine_worker(original.name, safe_only=True)
+    hot_png = worker.render_png(stem, 800).read_bytes()
+    hot_pdf = tmp_path / "hot.pdf"
+    assert not worker.export(stem, edits, str(hot_pdf), fmt="pdf", dpi=600).get("warnings")
+    response = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": original.name,
+            "patches": edits,
+            "expected_mtime": int(original.stat().st_mtime),
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+    receipt = response.get_json()
+    assert receipt["verification"]["replay"] == "ok"
+    assert receipt["verification"]["pixels"] == "ok"
+    assert receipt["verification"]["elements"] > 0
+    assert receipt["warnings"] == [] and "post_check" not in receipt
+    assert original.read_bytes() != original_bytes
+    assert (Path(receipt["backup_dir"]) / original.name).read_bytes() == original_bytes
+    assert (figs / "fig_test.py").read_bytes() == script_bytes
+
+    # PDFium independently reopens the written PDF and the hot export at the same resolution.
+    hot_pdf_png, written_png = tmp_path / "hot-pdf.png", tmp_path / "written-pdf.png"
+    pdfbackend.render_preview_png(hot_pdf, 800, hot_pdf_png)
+    pdfbackend.render_preview_png(original, 800, written_png)
+    extent = pdfbackend.compare_png_extent(hot_pdf_png, written_png)
+    assert extent["ok"] and extent["total_pixels"] > 0 and extent["differing_pixels"] == 0
+    size = pdfbackend.probe_asset(original, "pdf")
+    assert [size["w_pt"] * 25.4 / 72, size["h_pt"] * 25.4 / 72] == pytest.approx(
+        [120, 80], abs=0.05
+    )
+
+    # A new project and worker inherit the saved baseline from the written file.
+    pool.shutdown_all(figures_dir=str(figs), wait=True)
+    m.reset_projects()
+    m.open_project(str(figs))
+    panels = client.get("/api/panels").get_json()["panels"]
+    reopened = next(p for p in panels if p["id"] == original.name)
+    assert reopened["baked_current"] is True and reopened["baked_overrides"] == edits
+    again = client.post(
+        "/api/engine/render", json={"id": original.name, "patches": reopened["baked_overrides"]}
+    )
+    assert again.status_code == 200, again.get_json()
+    diffs, compared = m._compare_manifests(hot, again.get_json()["manifest"])
+    assert compared > 0 and not diffs, diffs
+    cold, stem = m._engine_worker(original.name, safe_only=True)
+    assert cold.render_png(stem, 800).read_bytes() == hot_png
+
+
 @pytest.mark.parametrize("paired_preview", [False, True])
 def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(
     write_back, replay_bases, paired_preview
@@ -4222,3 +4302,43 @@ def test_export_eps_and_tiff_are_real_matplotlib_files(worker):
     assert tags[282] == 200 and tags[283] == 200 and tags[296] == 2, "dpi 标签"
     # 第一条 strip 真的能用 zlib 解开（压缩方式说的是真话）
     assert zlib.decompress(raw[tags[273] : tags[273] + tags[279]])
+
+
+DOTTED_NAME_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+def main():
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.plot([0, 1], [1, 0])
+    ax.set_title(__name__)
+    fig.savefig("DottedFig.pdf")
+"""
+
+
+@pytest.mark.parametrize("name", ["4-51.example_slope_20261101.py", "fig.v2.final.py"])
+def test_build_dotted_script_filename(tmp_path, name):
+    """文件名里带点号（`4-51.名称.py` / `fig.v2.final.py`）的脚本照常导入出图（TVD-6ZMX）。
+
+    `importlib.import_module(stem)` 把点号当包分隔符，先去找名为 `4-51` 的包 → ModuleNotFoundError；
+    这类名字 `python 脚本.py` 跑得好好的，入口函数形态（entry != "__main__"）也必须能跑。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    script = figs / name
+    script.write_text(DOTTED_NAME_SCRIPT, encoding="utf-8")
+    proc = _spawn(script, figs, tmp_path)
+    try:
+        resp = _rpc(proc, {"cmd": "build"})
+        assert "DottedFig" in resp["stems"]
+        man = json.loads(preview_file(tmp_path / "out", "DottedFig", ".json").read_text("utf-8"))
+        titles = [
+            f["value"]
+            for el in man["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text"
+        ]
+        assert Path(name).stem in titles  # `__name__` 与无点号的入口脚本同一口径：就是 stem
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)

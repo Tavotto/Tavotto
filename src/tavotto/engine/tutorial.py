@@ -47,6 +47,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -310,18 +311,71 @@ def _write_state(version_dir: Path, meta: dict, digest: str, manifest: dict[str,
     )
 
 
+def saved_layouts(dest: Path, meta: dict) -> list[str] | None:
+    """副本里用户另存的画布名（不含教程画布本身）。只读，永不抛；**清点不全回 None**。
+
+    重置会把整份副本目录换掉，所以这里列的正是重置会一并删除的：项目收纳目录
+    `tavottofile/` + 旧位置 `canvases/`（与 `api_layouts` 对该项目的取法一致）。
+    数据目录 `layouts/` 不在副本里、重置不删它，故不列。
+
+    任何一处遍历 / stat 失败都回 None 而不是少列一项：调用方（重置确认）拿「不知道」当
+    「没有」，就会删掉没告诉用户的排版。所以**不用** `Path.glob()` / `Path.is_file()`——
+    它们（Python 3.14 起 glob 也是）会把权限 / I/O 错误吞成「没有」或 False。用 `os.scandir`
+    与 `os.stat`，只有「不存在」（目录本来就没有、条目在列举与 stat 之间被删）算正常。"""
+    own = str(meta.get("document_name") or "")
+    names: set[str] = set()
+    for d in (config.project_store_dir(dest), dest / "canvases"):
+        try:
+            entries = list(os.scandir(d))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        for entry in entries:
+            stem, ext = os.path.splitext(entry.name)
+            if ext != ".json" or stem == own or not documents.is_user_document_stem(stem):
+                continue
+            try:
+                st = os.stat(entry.path)
+            except FileNotFoundError:
+                continue  # 刚被删掉 / 断开的链接：重置也删不掉什么
+            except OSError:
+                return None
+            if stat.S_ISREG(st.st_mode):
+                names.add(stem)
+    return sorted(names)
+
+
 def copy_status(meta: dict | None = None) -> dict:
     """副本此刻的状态：在不在、全不全、缺什么。只读。"""
     meta = meta if meta is not None else tutorial_metadata()
     manifest = resource_manifest()
     digest = resource_digest(manifest)
     dest = tutorial_destination(meta, digest)
-    if not dest.is_dir():
+    # 不用 `Path.is_dir()`：它把权限 / I/O 错误吞成 False，「看不见」就成了「不存在」——
+    # 重置确认会据此说「没有另存排版」，错误一过去，重置照样换掉整份副本。只有 FileNotFoundError
+    # 才是真的不在；其余错误报「在、但清点不了」（layouts = None），前端按失败中止重置
+    try:
+        is_dir = stat.S_ISDIR(os.stat(dest).st_mode)
+    except FileNotFoundError:
+        is_dir = False
+    except OSError:
+        return {
+            "exists": True,
+            "complete": False,
+            "missing": sorted(manifest),
+            "registry_ok": False,
+            "layouts": None,
+            "version": int(meta["tutorial_version"]),
+            "resource_digest": digest,
+        }
+    if not is_dir:
         return {
             "exists": False,
             "complete": False,
             "missing": sorted(manifest),
             "registry_ok": False,
+            "layouts": [],
             "version": int(meta["tutorial_version"]),
             "resource_digest": digest,
         }
@@ -332,6 +386,7 @@ def copy_status(meta: dict | None = None) -> dict:
         "complete": not missing and registry_ok,
         "missing": missing,
         "registry_ok": registry_ok,
+        "layouts": saved_layouts(dest, meta),
         "version": int(meta["tutorial_version"]),
         "resource_digest": digest,
     }
@@ -399,7 +454,9 @@ def tutorial_lock_path() -> Path:
     return layoutsession.canonical_state_dir() / "tutorial.lock"
 
 
-def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
+def ensure_tutorial_copy(
+    *, reset: bool = False, expected_layouts: list[str] | None = None
+) -> TutorialProject:
     """`_ensure_tutorial_copy_locked`，在**跨进程**教程锁里跑。
 
     共用一个数据目录的两个后端进程同时首次打开 / 重置教程时，副本发布（rename）与清理意图标记
@@ -416,13 +473,15 @@ def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
             "tutorial_locked", f"另一个 Tavotto 正在准备教程副本，稍后再试：{exc}"
         ) from exc
     try:
-        return _ensure_tutorial_copy_locked(reset=reset)
+        return _ensure_tutorial_copy_locked(reset=reset, expected_layouts=expected_layouts)
     finally:
         if fd is not None:
             layoutsession.release_file_lock(fd)
 
 
-def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
+def _ensure_tutorial_copy_locked(
+    *, reset: bool = False, expected_layouts: list[str] | None = None
+) -> TutorialProject:
     """确保数据目录里有一份可用的教程副本，返回它的位置。
 
     * 没有 → 复制一份（`created=True`）；
@@ -430,6 +489,9 @@ def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
     * 有但缺文件 / 注册表读不了 → **只补缺的那几个文件**（`repaired=[...]`），
       其余仍是用户的；
     * `reset=True` → 原子换成干净副本（`reset=True`），旧副本整个丢掉。
+      `expected_layouts` 给了就是用户在确认框里看到的另存排版清单：**持锁后、替换前**重新清点，
+      清点不了或与清单不同（确认之后别的标签页 / 进程又另存了一份）→ `tutorial_layouts_changed`，
+      什么都不动。None = 没有清单可核（老前端 / 内部调用），照旧重置。
 
     从不删除版本目录之外的任何东西；旧版本目录（资源升级之后）留着不动。
     """
@@ -443,6 +505,14 @@ def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
     version_dir = tutorial_version_dir(meta, digest)
     dest = version_dir / PROJECT_DIRNAME
     _sweep_leftovers(version_dir)
+
+    if reset and expected_layouts is not None:
+        # 与下面的 rename 在同一把教程锁里：确认之后到换副本之前新出现的排版不会被静默删掉
+        now = saved_layouts(dest, meta)
+        if now is None or now != sorted(expected_layouts):
+            raise TutorialError(
+                "tutorial_layouts_changed", "示例项目里的另存排版在确认之后有变化，重置未执行"
+            )
 
     result = TutorialProject(path=dest, version=version, resource_digest=digest, metadata=meta)
 

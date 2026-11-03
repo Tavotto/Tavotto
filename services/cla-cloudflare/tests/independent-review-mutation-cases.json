@@ -18,8 +18,8 @@
   {
     "name": "audit-subject-hold",
     "file": "src/native/delegation.ts",
-    "before": "const state=blocked?'blocked':",
-    "after": "const state=",
+    "before": "const state=e.action==='revoke'?'revoked':blocked?'blocked':",
+    "after": "const state=e.action==='revoke'?'revoked':",
     "pattern": "independent audit marks subject-wide hold inactive without deleting historical receipt",
     "testFile": "tests/independent-review-boundaries.test.mjs"
   },

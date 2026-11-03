@@ -15,9 +15,9 @@
 //! `drop_paths::classify` 分派并发 `tavotto:file-drop` 事件，然后**原样调用原实现**——
 //! WKWebView 照常把 drop 交给页面，编辑器里的拖放行为一个字节不变。
 //!
-//! 视图分派在前端：只有主页在挂着时订阅这个事件（编辑器不订阅，事件落空）；而且
-//! WebKit 只在页面的 dragover 接受了这次拖动（`preventDefault`）时才会走到
-//! `performDragOperation:`——编辑器画布不接受外部文件，旁听点根本不会被调到。
+//! 视图分派在前端：主页、以及编辑器的画布订阅这个事件（画布只认与自己 DOM `drop` 配上对的那一条，
+//! ADR 0092 修订 2026-10-27）；而且 WebKit 只在页面的 dragover 接受了这次拖动（`preventDefault`）时
+//! 才会走到 `performDragOperation:`——编辑器里只有画布接受系统文件。
 //!
 //! 改的是 wry 的 `WryWebView` 类上这一个方法的实现（整个进程只有主窗口这一个 webview），
 //! 装一次、装不上就老实报 `false`，前端退回「选择器」那条降级路。

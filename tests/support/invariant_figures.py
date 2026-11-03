@@ -7,7 +7,7 @@ from __future__ import annotations
 
 SCRIPT_NAME = "fig_invariants.py"
 ENTRY = "main"
-STEMS = ("InvMix", "InvCont", "InvCbar", "InvPar")
+STEMS = ("InvMix", "InvCont", "InvCbar", "InvPar", "Inv3D", "Inv3DP", "Inv3DS")
 
 #: 一个脚本出三张图，一次 build 全捕获（build 是这套用例里唯一慢的一步）。
 #: 每张图都刻意做得**元素互相重叠**——`zorder` 想被验出效果就得有东西挡；
@@ -206,6 +206,43 @@ def main():
     par.set_ylabel("parasite y")
     host.set_title("host + parasite")
     fig.savefig("InvPar.pdf")
+
+    # ---- Inv3D：曲面 + 3D contourf 底投影 + 独立 ScalarMappable 色条（ADR 0135） ----
+    # 用户的「三维连续场云图」：三者**共用同一个 Colormap 实例与同一个 Norm 实例**，
+    # 色条是 `ScalarMappable(norm=, cmap=)`（图上没有对应的图元）。色图是**没注册**的自定义
+    # 色图——改色条 cmap 要三者一起变，撤销要回到这张自定义色图的原样。
+    g3 = np.linspace(-1.0, 1.0, 16)
+    gx3, gy3 = np.meshgrid(g3, g3)
+    gz3 = np.exp(-(gx3 ** 2 + gy3 ** 2) * 2.0)
+    cm3 = LinearSegmentedColormap.from_list("coolwarm_preview", ["#2b4c9b", "#f2f2f2", "#b3282d"])
+    nm3 = Normalize(0.0, 1.0)
+    fig = plt.figure(figsize=(4.4, 3.4))
+    a3 = fig.add_subplot(projection="3d")
+    a3.plot_surface(gx3, gy3, gz3, cmap=cm3, norm=nm3, linewidth=0, antialiased=False, alpha=0.9)
+    a3.contourf(gx3, gy3, gz3, zdir="z", offset=-0.3, levels=8, cmap=cm3, norm=nm3, alpha=0.8)
+    fig.colorbar(ScalarMappable(norm=nm3, cmap=cm3), ax=a3, shrink=0.6)
+    fig.savefig("Inv3D.pdf")
+
+    # ---- Inv3DP：线 / 点 / 线框（Line3D、Path3DCollection、Line3DCollection）+ 图例 ----
+    # 散点带 depthshade（默认开）；映射散点的颜色走色图；线框是 Line3DCollection
+    fig = plt.figure(figsize=(4.4, 3.4))
+    a3 = fig.add_subplot(projection="3d")
+    t3 = np.linspace(0.0, 6.0, 40)
+    a3.plot(np.cos(t3), np.sin(t3), t3 / 6.0, color="#b34700", marker="o", markersize=3, label="helix")
+    a3.scatter(rng.rand(30), rng.rand(30), rng.rand(30), s=50, marker="^", color="#2a6f3c", label="pts")
+    a3.scatter(rng.rand(30) - 1.0, rng.rand(30), rng.rand(30), s=50, marker="s", c=rng.rand(30), cmap="viridis")
+    a3.plot_wireframe(gx3, gy3, gz3 * 0.5, color="#555555", rstride=2, cstride=2)
+    a3.legend(loc="upper left")
+    fig.savefig("Inv3DP.pdf")
+
+    # ---- Inv3DS：柱 / 三角曲面 / 等值线 / 单色曲面（Poly3DCollection 的几种来路） ----
+    fig = plt.figure(figsize=(4.4, 3.4))
+    a3 = fig.add_subplot(projection="3d")
+    a3.bar3d([0.0, 0.4, 0.8], [0.0, 0.4, 0.8], [0.0, 0.0, 0.0], 0.3, 0.3, [0.8, 1.2, 0.5], color="#4477aa")
+    a3.plot_trisurf(rng.rand(40) + 1.5, rng.rand(40), rng.rand(40), cmap="plasma")
+    a3.contour(gx3, gy3, gz3, zdir="z", offset=-0.3, levels=6, cmap="viridis")
+    a3.plot_surface(gx3 - 1.0, gy3 - 1.5, gz3, color="#aa7744", linewidth=0)
+    fig.savefig("Inv3DS.pdf")
 
     # ---- InvTight：**持久 tight 布局**（issue #162） ----
     # `layout="tight"` 会在图上挂一个常驻的 TightLayoutEngine，它每次绘制都把

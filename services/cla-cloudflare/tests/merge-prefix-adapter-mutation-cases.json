@@ -1,0 +1,162 @@
+[
+  {
+    "name": "merge prefix adapter GraphQL repository identity",
+    "file": "src/native/merge-prefix.ts",
+    "before": "if(repo.databaseId!==repositoryId)throw new Rejected('repository_mismatch');",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ validates\\ GraphQL\\ repository\\ ID\\ before\\ using\\ queue\\ members",
+    "selectedTitle": "merge prefix adapter validates GraphQL repository ID before using queue members",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter stable pagination total",
+    "file": "src/native/merge-prefix.ts",
+    "before": "total!==undefined && total!==connection.totalCount || ",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ changing\\ middle\\-page\\ total\\ refuses\\ before\\ any\\ PR\\ read",
+    "selectedTitle": "merge prefix adapter changing middle-page total refuses before any PR read",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter repeated pagination cursor",
+    "file": "src/native/merge-prefix.ts",
+    "before": " || cursors.has(info.endCursor)",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ repeated\\ cursor\\ is\\ rejected\\ at\\ the\\ first\\ repeated\\ cursor",
+    "selectedTitle": "merge prefix adapter repeated cursor is rejected at the first repeated cursor",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter unique entry ID",
+    "file": "src/native/merge-prefix.ts",
+    "before": "new Set(entries.map(e=>e.id)).size!==entries.length || ",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ rejects\\ duplicate\\ or\\ incomplete\\ queue\\ entry\\ ID",
+    "selectedTitle": "merge prefix adapter rejects duplicate or incomplete queue entry ID",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter unique PR number",
+    "file": "src/native/merge-prefix.ts",
+    "before": "new Set(entries.map(e=>e.pullRequest.number)).size!==entries.length ||",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ rejects\\ duplicate\\ or\\ incomplete\\ queue\\ PR\\ number",
+    "selectedTitle": "merge prefix adapter rejects duplicate or incomplete queue PR number",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter complete queue positions",
+    "file": "src/native/merge-prefix.ts",
+    "before": "entries.some((e,i)=>e.position!==i+1)",
+    "after": "false",
+    "pattern": "merge\\ prefix\\ adapter\\ rejects\\ duplicate\\ or\\ incomplete\\ queue\\ position\\ gap",
+    "selectedTitle": "merge prefix adapter rejects duplicate or incomplete queue position gap",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter complete approved prefix",
+    "file": "src/native/merge-prefix.ts",
+    "before": "const prefix=entries.slice(0,matches[0]!.position);",
+    "after": "const prefix=entries.slice(matches[0]!.position-1,matches[0]!.position);",
+    "pattern": "merge\\ prefix\\ adapter\\ full\\ prefix\\ includes\\ earlier\\ PRs\\ and\\ excludes\\ later\\ queue\\ members",
+    "selectedTitle": "merge prefix adapter full prefix includes earlier PRs and excludes later queue members",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter candidate base SHA",
+    "file": "src/native/merge-prefix.ts",
+    "before": " && e.baseCommit?.oid===target.baseSha",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ candidate\\ requires\\ exact\\ baseSha\\ AND\\ its\\ other\\ SHA",
+    "selectedTitle": "merge prefix adapter candidate requires exact baseSha AND its other SHA",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter unambiguous candidate",
+    "file": "src/native/merge-prefix.ts",
+    "before": "matches.length!==1",
+    "after": "matches.length<1",
+    "pattern": "merge\\ prefix\\ adapter\\ ambiguous\\ head\\-and\\-base\\ candidate\\ refuses\\ rather\\ than\\ selecting\\ the\\ first",
+    "selectedTitle": "merge prefix adapter ambiguous head-and-base candidate refuses rather than selecting the first",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter full second queue comparison",
+    "file": "src/native/github.ts",
+    "before": "canonical(entries)!==canonical(await queue())",
+    "after": "(await queue(),false)",
+    "pattern": "merge\\ prefix\\ adapter\\ second\\ queue\\ read\\ detects\\ entry\\ identity\\ change",
+    "selectedTitle": "merge prefix adapter second queue read detects entry identity change",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter queued PR head pin",
+    "file": "src/native/github.ts",
+    "before": "if(pr.headSha!==entry.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ queued\\ PR\\ head\\ must\\ match\\ the\\ full\\ current\\ PR\\ snapshot",
+    "selectedTitle": "merge prefix adapter queued PR head must match the full current PR snapshot",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter own PR base comparison",
+    "file": "src/native/github.ts",
+    "before": "${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=100&page=${page}",
+    "after": "${repo}/compare/${this.c.referenceSha}...${pr.head.sha}?per_page=100&page=${page}",
+    "pattern": "merge\\ prefix\\ adapter\\ comparisons\\ use\\ each\\ PR\\ own\\ base\\ and\\ head\\ rather\\ than\\ queue\\ SHAs",
+    "selectedTitle": "merge prefix adapter comparisons use each PR own base and head rather than queue SHAs",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter unchanged token permission list",
+    "file": "src/native/github.ts",
+    "before": "Object.keys(data.permissions ?? {}).some(k => k !== 'metadata' && !(k in permissions)) ||",
+    "after": "",
+    "pattern": "merge\\ prefix\\ adapter\\ real\\ token\\ handshake\\ rejects\\ added\\ merge\\-queues\\ permission",
+    "selectedTitle": "merge prefix adapter real token handshake rejects added merge-queues permission",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter opaque visible ASCII identity",
+    "file": "src/native/merge-prefix.ts",
+    "before": "/[^\\x21-\\x7e]/.test(e.id)",
+    "after": "/[^A-Za-z0-9_-]/.test(e.id)",
+    "pattern": "merge\\ prefix\\ adapter\\ accepts\\ opaque\\ visible\\-ASCII\\ entry\\ IDs\\ without\\ guessing\\ their\\ encoding",
+    "selectedTitle": "merge prefix adapter accepts opaque visible-ASCII entry IDs without guessing their encoding",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter unchanged external work cap",
+    "file": "src/native/budget.ts",
+    "before": "externalWork:35",
+    "after": "externalWork:40",
+    "pattern": "merge\\ prefix\\ adapter\\ three\\-member\\ assessment\\ refuses\\ unchanged35\\ external\\ budget\\ without\\ a\\ report\\ or\\ write",
+    "selectedTitle": "merge prefix adapter three-member assessment refuses unchanged35 external budget without a report or write",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "merge prefix adapter actual external cost accounting",
+    "file": "src/native/service.ts",
+    "before": "    const last=await mergePrefixBinding",
+    "after": "    await this.github.stagedRead(\"/repos/\"+this.c.repository);\n    const last=await mergePrefixBinding",
+    "pattern": "merge\\ prefix\\ adapter\\ actual\\ two\\-member\\ assessment\\ costs32\\ external\\ and6\\ SQL\\ with\\ unchanged\\ read\\-only\\ state",
+    "selectedTitle": "merge prefix adapter actual two-member assessment costs32 external and6 SQL with unchanged read-only state",
+    "testFile": "tests/merge-prefix.test.mjs",
+    "assertionError": true
+  }
+]

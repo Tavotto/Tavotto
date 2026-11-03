@@ -1,0 +1,35 @@
+✖ activation replay is an exact read only noop (37.09454ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 228.805762
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:119:1
+✖ activation replay is an exact read only noop (37.09454ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted rejection.
+  Actual message: "activation_predecessor_changed"
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-exact-repeat-is-no-operation/tests/agreement-activation.test.mjs:121:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-exact-repeat-is-no-operation/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: activation_predecessor_changed
+        at applyAgreementActivation (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-exact-repeat-is-no-operation/src/native/agreement-activation.ts:65:99)
+        at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-exact-repeat-is-no-operation/tests/agreement-activation.test.mjs:121:47
+        at async waitForActual (node:assert:646:5)
+        at async strict.doesNotReject (node:assert:789:33)
+        at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-exact-repeat-is-no-operation/tests/agreement-activation.test.mjs:121:3
+        at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-exact-repeat-is-no-operation/tests/activation-fixture.mjs:44:66)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3),
+    expected: undefined,
+    operator: 'doesNotReject',
+    diff: 'simple'
+  }

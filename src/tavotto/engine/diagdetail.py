@@ -34,6 +34,7 @@ import platform
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -44,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config, diagnostics, layoutsession, logsafe, perfprobe, pool, runtime, updater
+from .diagnostictext import _SECRET_VALUE, _install_id
 
 LOG = logging.getLogger("tavotto.diagdetail")
 
@@ -170,18 +172,40 @@ def parse_options(raw: object) -> DetailOptions:
     return DetailOptions(**{k: raw.get(k) is True for k in OPTION_KEYS})
 
 
+@dataclasses.dataclass(frozen=True)
+class ConvertAttempt:
+    """一次「生成可编辑版本」任务（`ai_history` 里 `task_type=convert_to_editable` 的会话）涉及的东西：原脚本（项目相对写法，
+    可能是 `.R` / `.m`）、这次有没有失败，以及候选目录里**还留着**的候选脚本（`ai_convert.recent_attempts` 已按项目 / 任务
+    校验过；这里收之前再核一遍是普通文件而不是符号链接）。"""
+
+    sid: str
+    script: str
+    failed: bool
+    candidate: Path | None = None
+
+
 @dataclasses.dataclass
 class Sources:
     """app 层递进来的、本模块不该自己去找的东西（保持本模块不依赖 Flask 与「当前项目」）。"""
 
     project: dict | None = None  # `_diagnostics_project_status()`
     scripts: list[str] = dataclasses.field(default_factory=list)  # 项目登记的脚本（项目相对路径）
+    #: 最近尝试过的脚本 `[(脚本, 是否有失败的尝试)]`（`taskdiag.Store.attempted_scripts`：运行 / 依赖准备 / 依赖修复），
+    #: 不要求在登记表里——出错的那个脚本常常没登记（桌面当项目、直接拖进来的脚本）
+    attempted: list[tuple[str, bool]] = dataclasses.field(default_factory=list)
+    #: 本项目最近的转换任务（`ai_convert.recent_attempts`）：原脚本（R / MATLAB 不会出现在 `attempted`，那里只有 Tavotto 跑过的
+    #: Python）与候选目录里留着的候选脚本（在项目外，只此一条途径进包）
+    converts: list[ConvertAttempt] = dataclasses.field(default_factory=list)
     baked: dict | None = None  # `load_baked(ctx)`：{stem: {"versions": [...]}}
     task_section: dict | None = None  # `taskdiag.bundle_section(..., limit=24)`
     frontend: dict | None = None  # 经 `diagnostics_frontend.sanitize_detail` 的前端 detail 子对象
     registry: object | None = (
         None  # 项目的脚本注册表（把焦点面板的 runtime 素材 id 解析成 script / stem）
     )
+    #: 智能修复的「修复经过」（`prepsession.SESSIONS.fix_journeys`，ADR 0148）：每个会话走过的修法、结局码、最后的报错
+    fix_journey: list[dict] | None = None
+    #: AI 修复的本地审计尾部（`fixsession.audit_tail`，ADR 0149 §四）：哪个工具、什么档、谁批准、结果码；不含内容
+    fix_audit: list[dict] | None = None
 
 
 @dataclasses.dataclass
@@ -279,6 +303,17 @@ _KV_SECRET = re.compile(
     (?<![\w.\-\\])\\*["']?(?P<key>[\w.\-]+)\\*["']?
     (?P<sep>{_SEP_SPACE}*[:=：＝]{_SEP_SPACE}*)
     """
+)
+#: R 源码的赋值：`password <- "…"` / `key <<- "…"`。只给 R 源码附件用（`scrub_script`），不进通用日志 / 结构化脱敏的分隔符集合
+_KV_SECRET_R = re.compile(
+    rf"""(?x)
+    (?<![\w.\-\\])\\*["']?(?P<key>[\w.\-]+)\\*["']?
+    (?P<sep>{_SEP_SPACE}*(?:<<?-|[:=：＝]){_SEP_SPACE}*)
+    """
+)
+#: R 的右向赋值 `"value" -> password` / `->>`：值在左、键在右
+_R_RIGHT_ASSIGN = re.compile(
+    rf"""(?P<val>"[^"\n]{{4,}}"|'[^'\n]{{4,}}'){_SEP_SPACE}*->>?{_SEP_SPACE}*(?P<key>[A-Za-z_.][\w.]*)"""
 )
 # Cookie / Authorization / Proxy-Authorization 头行不再另走行正则：它们的键名在 `_SECRET_WORDS` 里，值同样交给 `_scan_value`
 # （值可以是跨行的三引号串，行正则只抹第一行）
@@ -684,7 +719,7 @@ class Scrubber:
             if names
             else None
         )
-        self._install_id = diagnostics._install_id()
+        self._install_id = _install_id()
 
     # ---- 文本 ----
     def json_or_text(self, text: str) -> str:
@@ -698,13 +733,13 @@ class Scrubber:
             return self.text(text)
         return json.dumps(self.obj(parsed), ensure_ascii=False, indent=1)
 
-    def _kv_all(self, text: str) -> str:
+    def _kv_all(self, text: str, pattern: re.Pattern[str] = _KV_SECRET) -> str:
         """`_KV_SECRET`（秘密键 + 分隔符）命中之后的值替换。默认收集的自由文本一律 **fail-closed**：替换单位是
         「从值起点到行尾」，行尾时括号 / 引号还没配平就继续抹（`_scan_value`）；确定无信息的值（短数字、布尔、null、
         `<redacted>`、全是数字的括号段）原样保留。源码模式（代码区）只换带引号的字面量 / Bearer 形状 / 带引号的括号段。"""
         out: list[str] = []
         pos = 0
-        for m in _KV_SECRET.finditer(text):
+        for m in pattern.finditer(text):
             if m.start() < pos:
                 continue  # 落在前一个已换掉的区间里
             vs = m.end()
@@ -775,7 +810,7 @@ class Scrubber:
         text = _JWT.sub(_REDACTED, text)
         text = _redact_pem(text)
         text = _PROVIDER_TOKEN.sub(_REDACTED, text)
-        text = diagnostics._SECRET_VALUE.sub("***", text)
+        text = _SECRET_VALUE.sub("***", text)
         if self._install_id:
             text = text.replace(self._install_id, "***")
         if self._home is not None:
@@ -921,6 +956,21 @@ _KEEP_EXTS = frozenset(
 def _name_id(raw: str) -> str:
     """原名的不可逆短标识（sha1 前 10 位）：index 里的名字被清理后，维护者靠它把多份对应起来。"""
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:10]
+
+
+def _audit_row(row: dict) -> dict:
+    """AI 修复审计的一行：路径类参数（`path` / `root`）不原样进包——目录名、文件名可能就是患者 / 课题名。
+    与其余文件名同一规矩：只留不可逆短标识（`_name_id`）加常见扩展名（`_KEEP_EXTS`）。"""
+    out = dict(row)
+    args = dict(out.get("args") or {}) if isinstance(out.get("args"), dict) else {}
+    for key in ("path", "root"):
+        v = args.get(key)
+        if isinstance(v, str):
+            ext = Path(v).suffix.lower()
+            args[key] = f"<path {_name_id(v)}{ext if ext in _KEEP_EXTS else ''}>"
+    if "args" in out:
+        out["args"] = args
+    return out
 
 
 def _clean_name(scrub: "Scrubber", raw: str) -> str:
@@ -1915,7 +1965,7 @@ def shadowing_candidates(dirs: list[str], names: set[str]) -> list[str]:
 
 
 def _focused_script_dir(src: Sources, figures_dir: object) -> str | None:
-    """焦点面板脚本所在目录（safe worker 会把它也插到 `sys.path` 最前，见 `worker.py` 的 `sys.path.insert`）。
+    """焦点面板脚本所在目录（safe worker 把它放在 `sys.path[0]`，见 `worker._put_project_on_path`）。
     只拼路径、看是不是目录，不读文件。"""
     if not isinstance(figures_dir, (str, Path)):
         return None
@@ -2118,11 +2168,11 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_in_render_cwd(src, python, source == pool.SOURCE_BUNDLED, doc)
-        # safe worker 的导入根：项目根、焦点脚本所在目录（`worker.py` 的 `sys.path.insert`），加渲染 cwd
+        # safe worker 里排在 site-packages **之前**、真能遮挡它们的导入根：焦点脚本所在目录（`sys.path[0]`），加渲染 cwd。
+        # 项目根被 `worker._put_project_on_path` 追加在 `sys.path` 末尾（site-packages 之后），遮挡不了已装的包，所以不列
         _annotate_isolated_probe(
             doc,
             (
-                figures_dir,
                 _focused_script_dir(src, figures_dir),
                 (doc.get("probe_cwd") or {}).get("cwd"),
             ),
@@ -2155,6 +2205,10 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
             "note": "task snapshots are the frozen terminal projections (same as task-diagnostics.json); "
             "log_events are raw engine log records about renders / exports / script runs",
             "task_snapshots": snapshots,
+            # 修复经过（ADR 0148）：每种修法 · 结果 · 最后的报错；与其余字段同一遍 `scrub.obj`
+            "fix_journey": list(src.fix_journey or []),
+            # AI 修复的审计（工具调用的名字 / 档 / 批准方 / 结果码；内容本来就不落盘）
+            "fix_audit": [_audit_row(r) for r in src.fix_audit or ()],
             "log_events": recs,
         }
         doc = scrub.obj(doc)
@@ -2454,16 +2508,33 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 # ---------------------------------------------------------------------------
 # A 脚本源码（勾选）
 # ---------------------------------------------------------------------------
+SOURCE_REASON_FAILING = "failing_attempt"
+SOURCE_REASON_PANEL = "panel"
+SOURCE_REASON_RECENT = "recent"
+#: 转换任务留在候选目录里的候选脚本（AI 写的、没被采用的那份）
+SOURCE_REASON_CANDIDATE = "convert_candidate"
+#: 转换入口接受的来源脚本后缀（`sourcelang`：`.py` / `.R` / `.r` / `.m`）；会话记录里的 `script` 不信，再按它过滤一遍
+CONVERT_SOURCE_EXTS = (".py", ".r", ".m")
+CONVERT_CANDIDATE_DIR = "convert-candidate"
+#: 声明文件（参与依赖计划的 requirements / constraints / pyproject）最多收几份
+DECLARED_FILES = 20
+#: 用来定「从哪个脚本所在目录往上找声明文件」的脚本数上限
+DECLARED_HINT_SCRIPTS = 3
+
+
 def source_candidates(
     src: Sources,
     failed: list[str] | None = None,
     ids: dict[str, FileId] | None = None,
     over_cap: list[str] | None = None,
+    reasons: dict[str, str] | None = None,
 ) -> list[tuple[str, Path]]:
-    """要收的脚本：判据 = 当前项目**登记的脚本**（项目相对路径），正在编辑 / 选中的面板的脚本排最前，
-    其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。
+    """要收的脚本，顺序 = ① 最近**失败**尝试涉及的脚本（不要求登记过）② 其余最近尝试过的 ③ 正在编辑 / 选中的面板的脚本
+    ④ 项目登记的其余脚本（按修改时间新的在前）。`reasons` 给了就记每个脚本为什么在里面：
+    `failing_attempt` > `panel` > `recent`（其余一律 recent）。
+    路径规则不变：只收解析后仍在项目目录内的文件（登记表与尝试记录都是用户侧的输入，不信它；符号链接指到项目外的不收）。
     **每个候选单独 stat**：一个无关脚本在枚举与排序之间被删 / 不可读，只让它自己进 `failed`（调用方标 read_failed），
-    不拖垮整个源码类别。"""
+    不拖垮整个源码类别。同一个文件被几种写法点名（登记表一种、尝试记录一种）只收一次。"""
     fig = (src.project or {}).get("figures_dir")
     if not fig:
         return []
@@ -2473,17 +2544,31 @@ def source_candidates(
         for p in ((src.frontend or {}).get("overrides") or [])
         if p.get("script")
     ]
+    # 转换任务的原脚本（R / MATLAB 走这里进来）与 Tavotto 跑过的脚本同一套路径规则：解析后必须仍在项目目录内
+    converts = [c for c in src.converts if c.script.lower().endswith(CONVERT_SOURCE_EXTS)]
+    failing = [*(s for s, bad in src.attempted if bad), *(c.script for c in converts if c.failed)]
+    attempted_ok = [
+        *(s for s, bad in src.attempted if not bad),
+        *(c.script for c in converts if not c.failed),
+    ]
     seen: dict[str, Path] = {}
     fids: dict[str, FileId] = {}
     tried: set[str] = set()
-    for rel in [*focus, *src.scripts]:
-        if rel in tried:
+    by_path: dict[Path, str] = {}  # 解析后的路径 → 先到者的写法
+    alias: dict[str, str] = {}  # 后到的写法 → 先到者
+    for raw in [*failing, *attempted_ok, *focus, *src.scripts]:
+        if raw in tried:
             continue
-        tried.add(rel)
+        tried.add(raw)
         try:
-            path = (root / rel).resolve()
-            path.relative_to(root)
+            path = (root / raw).resolve()
+            rel_path = path.relative_to(root)
         except (OSError, ValueError):
+            continue
+        # 记录里是绝对路径时落成项目相对的 POSIX 写法：zip 成员名与 index 不带出绝对路径
+        rel = rel_path.as_posix() if Path(raw).is_absolute() else raw
+        if path in by_path:
+            alias[raw] = by_path[path]
             continue
         try:
             if not path.is_file():
@@ -2493,8 +2578,47 @@ def source_candidates(
             if failed is not None:
                 failed.append(rel)
             continue
+        by_path[path] = rel
+        alias[raw] = rel
         seen[rel] = path
-    ordered = list(dict.fromkeys(r for r in focus if r in seen))  # 多张面板同一脚本：按首次出现去重
+
+    # 候选脚本在项目外（`cache/ai_convert/<sid>/`），不走项目目录的包含判据：路径由 `ai_convert.recent_attempts` 按
+    # 「该项目、该任务自己的候选目录里的常规文件」给出，这里只再拒符号链接 / 非常规文件，成员名用不带绝对路径的虚拟写法
+    cand_failing: list[str] = []
+    cand_ok: list[str] = []
+    cand_rels: set[str] = set()
+    for c in src.converts:
+        if c.candidate is None:
+            continue
+        rel = f"{CONVERT_CANDIDATE_DIR}/{c.sid}/{c.candidate.name}"
+        if rel in seen:
+            continue
+        try:
+            st = c.candidate.lstat()
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            fids[rel] = FileId.of(st)
+        except OSError:
+            if failed is not None:
+                failed.append(rel)
+            continue
+        seen[rel] = c.candidate
+        cand_rels.add(rel)
+        (cand_failing if c.failed else cand_ok).append(rel)
+
+    def canon(names) -> list[str]:
+        return list(dict.fromkeys(alias[r] for r in names if r in alias and alias[r] in seen))
+
+    ordered_failing = canon(failing)
+    ordered_attempted = [r for r in canon(attempted_ok) if r not in ordered_failing]
+    ordered_focus = [r for r in canon(focus) if r not in ordered_failing + ordered_attempted]
+    ordered = [
+        *ordered_failing,
+        *cand_failing,
+        *ordered_attempted,
+        *cand_ok,
+        *ordered_focus,
+    ]  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
     rest.sort(
         key=lambda r: -fids[r].mtime_ns
@@ -2502,9 +2626,69 @@ def source_candidates(
     if ids is not None:
         ids.update(fids)
     chosen = [*ordered, *rest]
+    if reasons is not None:
+        panel_set = set(canon(focus))
+        for r in chosen:
+            reasons[r] = (
+                SOURCE_REASON_CANDIDATE
+                if r in cand_rels
+                else SOURCE_REASON_FAILING
+                if r in ordered_failing
+                else SOURCE_REASON_PANEL
+                if r in panel_set
+                else SOURCE_REASON_RECENT
+            )
     if over_cap is not None:  # 数量上限之外的：调用方在 index 与 truncated 里记账
         over_cap.extend(chosen[SOURCE_FILES:])
     return [(r, seen[r]) for r in chosen][:SOURCE_FILES]
+
+
+def declared_candidates(
+    src: Sources,
+    scripts: list[str],
+    failed: list[str] | None = None,
+    ids: dict[str, FileId] | None = None,
+) -> list[tuple[str, Path]]:
+    """参与依赖计划的**声明文件**（requirements*.txt / constraints.txt / pyproject.toml，含 `-r` / `-c` 跟进到的）：
+    就是 `depresolve.declared_intents` 实际读到的那几份——不另立一套枚举。从出错 / 面板脚本所在目录往上到项目根，
+    再加项目根自己的一份。`no_follow=True`：声明文件不跟随符号链接 / 路径替身；之后同样要求解析后仍在项目目录内。
+    脚本自己的 PEP 723（已在源码里）与管理器锁文件（`uv.lock` 等：体积大且依赖计划不读它的内容）不收。"""
+    fig = (src.project or {}).get("figures_dir")
+    if not fig:
+        return []
+    from . import depresolve
+
+    root = Path(fig).resolve()
+    names: list[str] = []
+    for hint in [*scripts[:DECLARED_HINT_SCRIPTS], None]:
+        seen: list[str] = []
+        try:
+            # 取遍历**真正读成功**的文件清单，而不是从 intent 的 source 反推：空文件 / 只有 `-r` 的父文件没有 intent
+            # 也要附；被 no_follow 拒读（符号链接 / 替身）的根本不在清单里，不会被下面的 resolve 再跟随一遍
+            depresolve.declared_intents(root, hint, no_follow=True, visited=seen)
+        except Exception:  # noqa: BLE001 —— 声明读不出来只让这一类别少一块，不拖垮源码
+            continue
+        names.extend(seen)
+    out: list[tuple[str, Path]] = []
+    for rel in dict.fromkeys(names):
+        if len(out) >= DECLARED_FILES:
+            break
+        try:
+            path = (root / rel).resolve()
+            path.relative_to(root)
+            if not path.is_file():
+                continue
+            fid = FileId.of(path.stat())
+        except ValueError:
+            continue
+        except OSError:
+            if failed is not None:
+                failed.append(rel)
+            continue
+        if ids is not None:
+            ids[rel] = fid
+        out.append((rel, path))
+    return out
 
 
 def _prose_spans(text: str) -> list[tuple[int, int]] | None:
@@ -2687,12 +2871,37 @@ def _secret_string_spans(text: str) -> list[tuple[int, int, str]]:
     return spans
 
 
+#: R / MATLAB 源码里的邮箱 `local@domain.tld`（`.R` / `.r` / `.m` 专用；Python 不做，装饰器 `@app.route` 之类要原样）。
+#: 线性：起点不许紧跟在本地部分字符后（逐词只试一次），本地部分 ≤ 64、域名至多 9 段、每段 ≤ 64；域名必须含点、
+#: 末段是 2–24 个字母。R 的 `obj@slot` / MATLAB 的 `@(x) x.^2`、`@myfun` 没有「本地部分 + 带点域名」，不命中
+_EMAIL = re.compile(
+    r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9][A-Za-z0-9._%+\-]{0,63}@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,62}[A-Za-z0-9])?\.){1,8}[A-Za-z]{2,24}(?![A-Za-z0-9@\-])"
+)
+_EMAIL_EXTS = (".r", ".m")
+
+
+_R_EXTS = (".r",)
+
+
 def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
-    非 .py 一律 `full`；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
+    非 .py 一律 `full`（`.R` / `.r` / `.m` 先把邮箱换成 `<email>`）；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
     text = _nl(text)
     if not rel.lower().endswith(".py"):
+        if rel.lower().endswith(_EMAIL_EXTS):
+            text = _EMAIL.sub("<email>", text)  # 先于完整模式：`<user>@host` 不能留下
+        if rel.lower().endswith(_R_EXTS):
+            text = _R_RIGHT_ASSIGN.sub(
+                lambda m: (
+                    f'"{_REDACTED}" -> {m.group("key")}'
+                    if is_secret_key(m.group("key"))
+                    else m.group(0)
+                ),
+                text,
+            )
+            text = full._kv_all(text, _KV_SECRET_R)  # `password <- "…"`：完整模式只认 `:` / `=`
         return full.text(text)
     text = _redact_pem(text)  # 多行的块先整体换掉：注释里的 PEM 每行是一个独立的 COMMENT token
     spans = _prose_spans(text)
@@ -2757,18 +2966,25 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     stat_failed: list[str] = []
     ids: dict[str, FileId] = {}
     over_cap: list[str] = []
-    candidates = source_candidates(src, stat_failed, ids, over_cap)
+    reasons: dict[str, str] = {}
+    candidates = source_candidates(src, stat_failed, ids, over_cap, reasons)
     index.extend(
-        {"script": _clean_name(scrub, r), "bytes": ids[r].size, "skipped_over_count_cap": True}
+        {
+            "script": _clean_name(scrub, r),
+            "bytes": ids[r].size,
+            "reason": reasons.get(r, SOURCE_REASON_RECENT),
+            "skipped_over_count_cap": True,
+        }
         for r in over_cap
     )
     index.extend({"script": _clean_name(scrub, rel), "read_failed": True} for rel in stat_failed)
-    for n, (rel, path) in enumerate(candidates):
-        raw, why = _read_capped(path, ids[rel], SOURCE_FILE_CAP)
+
+    def add(rel: str, path: Path, zip_name: str, row: dict, ids_: dict[str, FileId]) -> None:
+        raw, why = _read_capped(path, ids_[rel], SOURCE_FILE_CAP)
         if raw is None:
-            index.append({"script": _clean_name(scrub, rel), why: True})
-            continue
-        size = ids[rel].size
+            index.append({**row, why: True})
+            return
+        size = ids_[rel].size
         text, encoding, fell_back = _decode_script(raw, rel)
         out_text = scrub_script(text, rel, full_scrub, code_scrub)
         if rel.lower().endswith(".py"):
@@ -2776,14 +2992,7 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         data = out_text.encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
-        zip_name = f"{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
-        row = {
-            "script": _clean_name(scrub, rel),
-            "id": _name_id(rel),
-            "file": zip_name,
-            "bytes": size,
-            "encoding": encoding,
-        }
+        row = {**row, "file": zip_name, "bytes": size, "encoding": encoding}
         if fell_back:
             row["encoding_fallback"] = (
                 True  # 声明的编码不合法 / 不认识：按 UTF-8 + replace 解的（文件里的字节不保证准）
@@ -2798,6 +3007,34 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
                 original_bytes=size if size > SOURCE_FILE_CAP else None,
             )
         )
+
+    for n, (rel, path) in enumerate(candidates):
+        zip_name = f"{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
+        row = {
+            "script": _clean_name(scrub, rel),
+            "id": _name_id(rel),
+            "reason": reasons.get(rel, SOURCE_REASON_RECENT),
+        }
+        add(rel, path, zip_name, row, ids)
+    # 依赖计划的声明文件：同一个勾选项，同一套清理与上限
+    decl_failed: list[str] = []
+    decl_ids: dict[str, FileId] = {}
+    declared = declared_candidates(src, [r for r, _p in candidates], decl_failed, decl_ids)
+    declarations: list[dict] = [
+        {"declared": _clean_name(scrub, rel), "read_failed": True} for rel in decl_failed
+    ]
+    index_before = len(index)
+    for n, (rel, path) in enumerate(declared):
+        zip_name = f"declared-{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
+        add(
+            rel,
+            path,
+            zip_name,
+            {"declared": _clean_name(scrub, rel), "id": _name_id(rel)},
+            decl_ids,
+        )
+    declarations.extend(index[index_before:])
+    del index[index_before:]
     items.insert(
         0,
         Item(
@@ -2806,8 +3043,15 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
             _dumps(
                 {
                     "schema": DETAIL_SCHEMA,
-                    "criterion": "scripts registered in the open project (panel scripts first, then newest first)",
+                    "criterion": "scripts from recent failed / attempted runs first (even if not registered in the "
+                    "project; only files inside the project folder), then scripts registered in the open project "
+                    "(panel scripts first, then newest first); each script carries a reason "
+                    "(failing_attempt / panel / recent / convert_candidate). Scripts of recent 'generate editable "
+                    "version' (R / MATLAB / Python) conversion tasks are included, together with the candidate "
+                    "script such a task left in its own candidate folder (convert_candidate). `declarations` are the dependency declaration files "
+                    "(requirements*.txt / constraints.txt / pyproject.toml) the dependency planner reads",
                     "scripts": index,
+                    "declarations": declarations,
                 }
             ),
             dropped_bytes=sum(ids[r].size for r in over_cap),

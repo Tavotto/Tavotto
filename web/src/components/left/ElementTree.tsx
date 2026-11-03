@@ -40,12 +40,15 @@ import {
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { pngRefusalOf, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { rebuildEditableFromScript } from '@/store/pngRebuild'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { IconButton } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
+import { EmptyState } from '../ui/EmptyState'
 import { BackgroundChoice } from '../inspector/ElementInspector'
 import { MenuItem } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
@@ -290,15 +293,18 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
       )
     }
     return (
-      <EmptyLine
+      // 与改图面板「选中一张可编辑的图」是同一句话、同一幅线稿：抽屉够高，放得下 EmptyState（手帐线稿 2026-10-28）；
+      // 列表里其余的空态（需要渲染 / 无匹配 / 被拒）仍是一行灰字——那些是列表顶部的状态，不是整屏的空
+      <EmptyState
+        art="select"
+        data-element-tree-no-panel
+        title={et('noPanelTitle')}
         action={{
           label: et('locateEditable'),
           // 选中即够：这棵树的目标面板就是「选中的那张可编辑的图」，不必先进编辑态
           onClick: () => useSelectionStore.getState().set([editable[0].id]),
         }}
-      >
-        {et('noPanelTitle')}
-      </EmptyLine>
+      />
     )
   }
 
@@ -318,6 +324,26 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
 /** 计时只更新空态叶子；已经有元素的树不订阅进度或每秒重画。 */
 function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: boolean }) {
   const progress = useRenderProgress(panel.fileId, rendering, et('building'))
+  // 这张 PNG 本次会话已被后端明确拒绝采用：说同一句话、给同一条出路，不再跑一次脚本（ADR 0139 PR1）
+  const byFile = usePngAdmissionMemory((s) => s.byFile)
+  const refusal = pngRefusalOf(panel.fileId, byFile)
+  if (refusal && !progress.active) {
+    return (
+      <EmptyLine
+        data-png-refusal={refusal.failure.reason}
+        action={
+          panel.script && refusal.failure.reason !== 'not_untouched'
+            ? {
+                label: translate('artifact.rebuildEditable', { ns: 'errors' }),
+                onClick: () => void rebuildEditableFromScript(panel.id),
+              }
+            : undefined
+        }
+      >
+        {translate(refusal.failure.messageKey, { ns: 'errors' })}
+      </EmptyLine>
+    )
+  }
   return (
     <EmptyLine
       data-render-progress={progress.active ? progress.phase : undefined}
@@ -604,7 +630,7 @@ function TreeView({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
           不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
-      {(showSearch || isolated) && (
+      {(showSearch || isolated || manifest.modified_after_save) && (
       <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
         {showSearch && (
         <SearchInput
@@ -625,11 +651,25 @@ function TreeView({
             data-element-isolate
             className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
           >
-            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+            <Crosshair size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />
             <span className="min-w-0 truncate">{isolatedLabel}</span>
             <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
               <X size={ICON_SIZE.xs} />
             </IconButton>
+          </span>
+        )}
+        {/* 存盘后脚本又改过这张图（ADR 0139 §八）：一枚胶囊、一句话，细节在悬停提示里——不另起横幅 */}
+        {manifest.modified_after_save && (
+          <span
+            data-modified-after-save
+            data-save-moment={manifest.save_moment}
+            role="note"
+            title={et(manifest.save_moment === 'restored' ? 'savedMomentHint' : 'modifiedAfterSaveHint')}
+            className="flex h-7 min-w-0 shrink items-center rounded-full bg-surface-hover px-2 text-xs text-ink-2"
+          >
+            <span className="min-w-0 truncate">
+              {et(manifest.save_moment === 'restored' ? 'savedMoment' : 'modifiedAfterSave')}
+            </span>
           </span>
         )}
       </div>
@@ -787,7 +827,9 @@ const ElementRow = memo(function ElementRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
-  const { prefix, name: rest } = splitTypePrefix(name)
+  const { prefix, name: restRaw } = splitTypePrefix(name)
+  // 类型词与内容同一种灰（前缀自带一个空格分隔），内容不再包中文弯引号（可达名 / title 仍用原串）
+  const rest = prefix ? restRaw.replace(/^[“"‘']/, '').replace(/[”"’']$/, '') : restRaw
 
   return (
     <li
@@ -856,7 +898,7 @@ const ElementRow = memo(function ElementRow({
       <TreeIcon icon={roleIcon(role)} />
 
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
-        {prefix && <span className={cn('font-normal', selected ? 'text-ink-2' : 'text-ink-3')}>{prefix}</span>}
+        {prefix}
         {rest}
       </span>
 
@@ -876,7 +918,7 @@ const ElementRow = memo(function ElementRow({
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
       {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
-      {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
+      {hidden && <EyeOff size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
       {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}
       <span className="flex shrink-0" onPointerDown={(e) => e.stopPropagation()}>

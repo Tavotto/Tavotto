@@ -106,6 +106,12 @@ datas = [
     (str(PKG / "profiles"), "tavotto/profiles"),
     (str(PKG / "resources"), "tavotto/resources"),
     (str(PKG / "pdfbackend" / "canvas_coverage.json"), "tavotto/pdfbackend"),
+    #   engine/autoinstall_dists.txt  「生成可编辑版本」自动安装名单（engine/convertdeps.py 读它；
+    #               缺了桌面版里 R / MATLAB 转写的新脚本缺包时没有名单可对照，只会一律出卡片）
+    (str(PKG / "engine" / "autoinstall_dists.txt"), "tavotto/engine"),
+    #   engine/ai_catalog.json  改图助手厂商目录（ai_providers.PRESETS 的唯一数据源，import 时就读；
+    #               缺了桌面版一启动就 CatalogError）
+    (str(PKG / "engine" / "ai_catalog.json"), "tavotto/engine"),
     #   rendercore/fonts_allowlist.json  批准字体 allowlist（fonts.load_allowlist 读它：字体注册表按它的 sha256 收脸，
     #               ADR 0060）。U10 切默认后冻结产物第一次真导出就是在这里 ENOENT 的——源码树 / wheel 里它自然在
     (str(PKG / "rendercore" / "fonts_allowlist.json"), "tavotto/rendercore"),
@@ -113,13 +119,14 @@ datas = [
 # 执行侧子进程要用的源码（见文件头说明 1）。两条入口：
 #   safe worker      —— worker.py 及它平铺 import 的传递闭包；
 #   native bridge    —— bridge_runner.py（用户自己的 Python 按绝对路径起它）
-#                       + bridgeboot.py（私有命名空间装载器）。
+#                       + bridgeboot.py（私有命名空间装载器）；
+#   公式排版         —— mathtext_child.py（内置 runtime 按绝对路径起它，ADR 0152 PR 4）。
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
-for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py",
+for name in ("worker.py", "executionfact.py", "manifest.py", "overrides.py", "patchspec.py",
+             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
-             "bridge_runner.py", "bridgeboot.py"):
+             "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
 # 内置渲染 runtime（见文件头说明 3）。
@@ -248,9 +255,32 @@ if "truststore" not in TRUSTSTORE_MODULES:
         "干净 Windows 上私有 Python 下载会因缺根证书失败")
 print(f"[tavotto.spec] truststore 子模块: {', '.join(TRUSTSTORE_MODULES)}")
 
+# 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
+# 宿主配置写这条命令，只装桌面版的用户不必再装 Python。服务端包在 `codex-plugin/mcp/tavotto_mcp/`（不在 src/ 下，
+# wheel 也不带它）；mcpserve 只在运行时按名字 import 它，静态分析看不见这条边——整包子模块点名收进 PYZ，
+# 没收到就在这里失败。tests/test_desktop_mcp_serve.py 看护。
+sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
+MCP_SERVER_MODULES = collect_submodules("tavotto_mcp")
+if "tavotto_mcp.server" not in MCP_SERVER_MODULES:
+    raise SystemExit("codex-plugin/mcp/tavotto_mcp 没被收进来——`tavotto-cli mcp` 会报 mcp_server_not_bundled")
+print(f"[tavotto.spec] MCP 服务端子模块: {', '.join(MCP_SERVER_MODULES)}")
+
+# 画布（MCP App UI，`codex-plugin/mcp/widget/canvas.html`）：服务端按 `tavotto_mcp/widget.py` 的默认路径
+# `<tavotto_mcp 的上一级>/widget/canvas.html` 找它，冻结后那一级就是 _MEIPASS，所以落点是 `widget/`。它是构建物、
+# **不进版本库**（ADR 0043：进库会让每个改 web/src 的 PR 都带一份、并行 PR 必撞），这里只收打包前现建的那一份，
+# 而且必须与本次源码一致——缺了或过期就拒绝打包（与字体同一种拦法；先跑 python scripts/build_mcp_widget.py）。
+# 漏了的表现是桌面版 `tavotto-cli mcp` 体检报「canvas widget file is missing」（Windows Lab，v0.19.0）。
+from build_mcp_widget import OUT as MCP_WIDGET  # noqa: E402
+from build_mcp_widget import current_fingerprint, source_fingerprint  # noqa: E402
+
+if not MCP_WIDGET.is_file() or current_fingerprint(MCP_WIDGET) != source_fingerprint():
+    raise SystemExit(
+        f"画布产物缺失或与源码不一致：{MCP_WIDGET}（先跑 python scripts/build_mcp_widget.py）")
+datas.append((str(MCP_WIDGET), "widget"))
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
-    pathex=[str(ROOT / "src")],
+    pathex=[str(ROOT / "src"), str(ROOT / "codex-plugin" / "mcp")],
     binaries=binaries,
     datas=datas,
     hiddenimports=[
@@ -264,6 +294,8 @@ a = Analysis(
         *_pk_hidden,
         # 平台原生证书校验（见上；tlstrust 延后 import）
         *TRUSTSTORE_MODULES,
+        # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）
+        *MCP_SERVER_MODULES,
     ],
     hookspath=[],
     runtime_hooks=[],

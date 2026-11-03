@@ -14,7 +14,7 @@ import pytest
 from PIL import Image, ImageChops
 
 from support import foundation_app as fa
-from tavotto.engine import figcapture, pool
+from tavotto.engine import figcapture, patchspec, pool, svgstore
 
 ROOT = Path(__file__).resolve().parent.parent
 try:
@@ -198,8 +198,13 @@ def test_single_script_box_resize_survives_document_save_cold_restart_and_export
             "createdAt": 0,
             "updatedAt": 1,
         }
-        status, _ = app.call("/api/autosave/resize-doc", doc, method="PUT")
+        status, stored = app.call("/api/autosave/resize-doc", doc, method="PUT")
         assert status == 200
+        reference = svgstore.validate_reference(stored["figure_snapshots"]["panel"])
+        assert reference["sourceId"] == asset_id
+        assert reference["patchHash"] == patchspec.patch_hash(patches)
+        assert reference["executionOwner"] == {"script": "flow.py", "run_config": None}
+        doc["canvases"][0]["objects"][0]["figureSnapshot"] = reference
         status, _ = app.call(
             "/api/layout-session/last", {"doc_id": "resize-doc", "name": "Flowchart"}, method="PUT"
         )

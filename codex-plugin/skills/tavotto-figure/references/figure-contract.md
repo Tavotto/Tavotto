@@ -72,6 +72,11 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
   其他环境可能要用户授权安装。`tests/test_codex_plugin.py` 看护两处与出处一致。
 * **默认环境里没有的包**（如 ROOT）：用户在 Tavotto 里选了装有它的 Python，就照常 import 做计算、
   Matplotlib 出图，别删用户环境里能用的计算；否则把重计算拆成**单独脚本**先导出 CSV，画图脚本只读 CSV。
+* **缺包别自己建依赖文件夹**：脚本缺 Python 包时，走 Tavotto 的依赖准备（`tavotto_open_figure`
+  回 `dependency_preparation_required` 后，用户授权再带 `prepare_dependencies` 重开，细则见
+  `compatibility.md`），或告诉用户缺什么包、让 Tavotto 安装。**不要** `pip install --target`、
+  `PYTHONPATH`、`sys.path.insert` 指向自建的临时依赖文件夹，也不要往用户项目外写依赖——这类
+  文件夹由 AI 沙箱账户创建，用户和 Tavotto 可能读不了（import 报 Errno 13）。
 * **改造用户已有脚本**：保留原有计算与配色，只换掉上面这些独立运行的部分，不顺手重写。
 
 ## 模板

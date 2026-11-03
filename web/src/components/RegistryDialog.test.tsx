@@ -12,6 +12,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 「在 Finder 中显示」走桌面壳的 IPC；只有那组用例把 `__TAURI_INTERNALS__` 装上
+const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchReadiness: vi.fn(),
@@ -51,6 +55,8 @@ import {
   useProjectReadinessStore,
 } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
+import { useProjectStore } from '@/store/projectStore'
+import type { ProjectStatus } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
@@ -1210,5 +1216,90 @@ describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动
     expect(dialog().textContent).toContain('b_only.py')
     expect(addButtons(), 'A 迟到的描述符落进了 B').toHaveLength(0)
     expect(showsA()).toBe(false)
+  })
+})
+
+describe('脚本删了、图还在：在文件管理器中显示（用户反馈 2026-10-24）', () => {
+  const w = window as unknown as Record<string, unknown>
+  const asset = (id: string) => ({
+    id, name: id.replace(/\.pdf$/, ''), folder: '.', kind: 'pdf' as const,
+    native_w_mm: 80, native_h_mm: 60, mtime: 1,
+  })
+  const withAssets = (...ids: string[]) =>
+    useAssetStore.setState({
+      panels: [], byId: Object.fromEntries(ids.map((id) => [id, asset(id)])), loaded: true,
+    })
+
+  beforeEach(() => {
+    w.__TAURI_INTERNALS__ = {}
+    tauriInvoke.mockReset()
+    tauriInvoke.mockResolvedValue(undefined)
+    useProjectStore.setState({ project: { figures_dir: '/p' } as ProjectStatus })
+  })
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    useProjectStore.setState({ project: null })
+  })
+
+  it('主按钮从「重新扫描」换成在文件管理器中显示', async () => {
+    withAssets('Gone.pdf')
+    await open(reportOf(SIX))
+    const row = rowOf('Gone.pdf')!
+    expect(buttonsIn(row)).toContain('在文件管理器中显示')
+    // 扫多少次都还是这一档：行里不再摆它（对话框顶部那颗照旧在）
+    expect(buttonsIn(row)).not.toContain('重新扫描')
+    await clickIn(row, '在文件管理器中显示')
+    // 选中，不删：Tavotto 自己不碰用户的文件
+    expect(tauriInvoke).toHaveBeenCalledWith('reveal_export', { dir: '/p', name: 'Gone.pdf' })
+    expect(tauriInvoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('子文件夹里的图：目录拼到它所在的那一层，文件名不带分隔符（壳只收纯文件名）', async () => {
+    const sub = P({
+      id: 'figs/Gone.pdf', stem: 'Gone', status: 'source_missing',
+      reason_code: 'registered_script_missing', script: 'gone.py',
+    })
+    withAssets('figs/Gone.pdf')
+    await open(reportOf([sub]))
+    await clickIn(rowOf('figs/Gone.pdf'), '在文件管理器中显示')
+    expect(tauriInvoke).toHaveBeenCalledWith('reveal_export', { dir: '/p/figs', name: 'Gone.pdf' })
+  })
+
+  it('其余状态收在 ⋯ 里', async () => {
+    withAssets('Ok.pdf')
+    await open(reportOf(SIX))
+    const menu = await openMore(rowOf('Ok.pdf')!)
+    expect(menu.textContent).toContain('在文件管理器中显示')
+  })
+
+  it('打不开就把完整路径说出来，不静默', async () => {
+    tauriInvoke.mockRejectedValueOnce(new Error('denied'))
+    withAssets('Gone.pdf')
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Gone.pdf'), '在文件管理器中显示')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const ui = useUiStore.getState()
+    expect(ui.statusTone).toBe('error')
+    expect(JSON.stringify(ui.status)).toContain('/p/Gone.pdf')
+  })
+
+  it('素材清单里没有它（文件此刻不在）：不摆，回落到重新扫描', async () => {
+    withAssets()
+    await open(reportOf(SIX))
+    const row = rowOf('Gone.pdf')!
+    expect(buttonsIn(row)).toContain('重新扫描')
+    expect(buttonsIn(row)).not.toContain('在文件管理器中显示')
+  })
+
+  it('浏览器模式没有文件管理器：不摆入口', async () => {
+    delete w.__TAURI_INTERNALS__
+    withAssets('Gone.pdf', 'Ok.pdf')
+    await open(reportOf(SIX))
+    const row = rowOf('Gone.pdf')!
+    expect(buttonsIn(row)).toContain('重新扫描')
+    const menu = await openMore(rowOf('Ok.pdf')!)
+    expect(menu.textContent).not.toContain('文件管理器')
   })
 })
