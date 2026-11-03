@@ -144,6 +144,17 @@ describe('⌘C：图内编辑里选着元素', () => {
     const idle = copyEvent(editor)
     expect(handleCopyEvent(idle.e)).toBe(true)
     expect(JSON.parse(idle.setData.mock.calls[0][1]).objects[0].type).toBe('text')
+    // 源码模式的文字框是 textarea：document 选区只露出外层容器，事件目标是那个没有焦点的 textarea
+    const wrap = document.createElement('div')
+    const ta = document.createElement('textarea')
+    ta.value = 'Reaction'
+    wrap.append(ta)
+    document.body.append(wrap)
+    sel.selectAllChildren(wrap)
+    const src = copyEvent(ta)
+    expect(handleCopyEvent(src.e)).toBe(true)
+    expect(JSON.parse(src.setData.mock.calls[0][1]).objects[0].type).toBe('text')
+    wrap.remove()
     sel.selectAllChildren(plain)
     const real = copyEvent(plain)
     expect(handleCopyEvent(real.e)).toBe(false) // toast 里选的文字：让位给原生文本复制

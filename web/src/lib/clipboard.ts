@@ -198,7 +198,9 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
   // 例外：图内编辑里选着元素时，属性页的文字框会在选中那一刻抢焦点并全选、随后焦点还给页面——框里留着一段**没有焦点**的
   // 残留选区（选中标题后立刻按 ⌘C 就撞上它）。那不是用户在复制的东西：用户复制的是选中的元素
   const sel = document.getSelection?.()
-  if (sel && !sel.isCollapsed && !(selectedElements() && inIdleEditor(sel.anchorNode))) return false
+  // （源码模式的文字框是 textarea：它里面的选区在 document 选区里只露出外层容器，所以事件目标也要看一眼）
+  const idleEditor = selectedElements() !== null && (inIdleEditor(sel?.anchorNode ?? null) || inIdleEditor(e.target as Node | null))
+  if (sel && !sel.isCollapsed && !idleEditor) return false
   const data = e.clipboardData
   if (!data) return false
   // 离散动作闸门（输入框 / 对话框里让位、不收手势）：不让位时先落定开着的连续编辑，
