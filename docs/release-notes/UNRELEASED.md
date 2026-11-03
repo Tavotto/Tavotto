@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## The assistant shows what it is doing with small animated dot orbs
+
+In the figure assistant, the line that says what the AI is doing now starts with a small animated dot orb instead of a static icon. The orb changes with the step: one shape while it thinks, another while it runs your script, another while it reads or edits it, and another between sending your request and the first reply. Finished steps keep a dimmer, slower orb: a breathing ring when the AI only thought, a rolling sphere when it also did something. The empty assistant panel shows a larger orb above "How should this figure change?". Orbs stop drawing while they are scrolled out of view, and with "Reduce motion" turned on in your system settings they stay still. Nothing else about the assistant changes.
+
 ## Installing a missing package no longer leaves the figure missing another one
 
 When a script ran in Tavotto's built-in Python and stopped on a package it doesn't include (for example scikit-learn), installing it created a fresh environment for the project that could lack packages the script had been using all along from the built-in one, such as pandas. The next run then stopped again with "pandas is missing", one package per round. This happened mostly when the script imports its own helper module from a folder it adds to `sys.path` (including `Path(__file__).parents[1]` and folders above the project). Tavotto now reads helper modules in those folders when it plans the install, a few levels above the project at most and never your home folder or anything above it. When it still can't see all of the script's imports, the new environment also gets the built-in packages (pandas, SciPy, seaborn, Pillow). The confirmation lists every package before anything is installed.

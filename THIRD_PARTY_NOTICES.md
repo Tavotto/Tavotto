@@ -45,3 +45,33 @@ SOFTWARE.
 
 `web/src/components/settings/AgentIcon.tsx` 里的 OpenAI 标志取自
 [Simple Icons](https://github.com/simple-icons/simple-icons)（CC0 1.0，公共领域贡献）。
+
+## 思考小球几何（thinking-orbs，MIT）
+
+`web/src/components/ui/thinkingOrb/engine/` 的点阵几何（各形态的帧计算，不含上游的 canvas 画笔与 React 组件）取自
+[Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) 提交 de85557（0.3.2）的 `src/engine/`；
+`thinkingOrb/presets.ts` 里 64 / 20 两档的调参数值同出于该仓库 `src/presets.ts`。Tavotto 的画法与尺寸派生见 ADR 0164。
+
+```
+MIT License
+
+Copyright (c) 2026 Jakub Antalik
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

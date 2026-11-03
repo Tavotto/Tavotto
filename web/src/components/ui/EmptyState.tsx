@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Sketch, type SketchName } from './Sketch'
 import { Button } from './Button'
 import type { Variant } from './buttonClass'
@@ -13,6 +14,7 @@ import type { Variant } from './buttonClass'
  */
 export function EmptyState({
   art,
+  figure,
   title,
   hint,
   action,
@@ -20,6 +22,8 @@ export function EmptyState({
   ...rest
 }: {
   art: SketchName
+  /** 代替线稿画的图形。唯一的用处是改图助手的空白面板：64px 思考小球（ADR 0164，`ui-visual-discipline` ④） */
+  figure?: ReactNode
   title: string
   hint?: string
   action?: { label: string; onClick: () => void; variant?: Extract<Variant, 'primary' | 'secondary'> }
@@ -34,7 +38,7 @@ export function EmptyState({
     >
       {/* 线稿是这一屏唯一的图形线索：与标题同一条竖中线（容器 items-center，svg 宽 54 → 无半像素） */}
       <span aria-hidden className="mb-2 flex text-ink-faint">
-        <Sketch name={art} className="block" />
+        {figure ?? <Sketch name={art} className="block" />}
       </span>
       <p className="type-title">{title}</p>
       {hint && <p className="type-caption max-w-[42ch]">{hint}</p>}
