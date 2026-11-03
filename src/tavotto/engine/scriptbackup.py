@@ -151,19 +151,26 @@ def resolve(root: str | os.PathLike, script: str) -> Path:
 _GIT_TIMEOUT_S = 3.0
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
-    """只杀自己起的 git 及其子孙：POSIX 用它自己的进程组，Windows 用 `taskkill /T /PID <自己的 pid>`。"""
+def _kill_tree(proc: subprocess.Popen, job=None) -> None:
+    """只杀自己起的 git 及其子孙：POSIX 用它自己的进程组；Windows 用 Job Object（`TerminateJobObject`）。
+
+    Windows 不靠 `taskkill /T`：它顺父进程 PID 链找后代，venv 启动器 → 真解释器 → 孙进程这类链一断就漏；
+    Job 成员关系由内核维护，与父子链无关。没有 Job（建不起来）才退到 `taskkill /T`。
+    """
     try:
         if os.name == "nt":
-            subprocess.run(  # noqa: S603, S607 — 固定 argv，pid 是自己 Popen 出来的
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=3,
-                check=False,
-                creationflags=CREATE_NO_WINDOW,
-            )
+            if job is not None:
+                job.kill()
+            else:
+                subprocess.run(  # noqa: S603, S607 — 固定 argv，pid 是自己 Popen 出来的
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                    check=False,
+                    creationflags=CREATE_NO_WINDOW,
+                )
         else:
             import signal
 
@@ -205,15 +212,28 @@ def _run_git_bounded(args: list[str], timeout: float = _GIT_TIMEOUT_S) -> tuple[
                 env=env,
                 **kwargs,
             )
-            try:
-                code = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _kill_tree(proc)
+            job = None
+            if os.name == "nt":
                 try:
-                    proc.wait(timeout=1)
+                    from tavotto.engine import desktopproc
+
+                    # 复用桌面进程所有者的 Job 封装（KILL_ON_JOB_CLOSE）；起进程到入 Job 之间的瞬间窗口与它相同
+                    job = desktopproc._windows_job_for(proc)  # noqa: SLF001
+                except Exception:  # noqa: BLE001 — 退到 taskkill /T
+                    job = None
+            try:
+                try:
+                    code = proc.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
-                    pass  # 杀不掉也不等：预览照常出
-                return None
+                    _kill_tree(proc, job)
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass  # 杀不掉也不等：预览照常出
+                    return None
+            finally:
+                if job is not None:
+                    job.close()  # KILL_ON_JOB_CLOSE：正常退出后遗留的后台孙进程也一并收掉
             out_f.seek(0)
             return code, out_f.read().decode("utf-8", errors="replace")
     except (OSError, ValueError):
