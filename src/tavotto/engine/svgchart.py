@@ -208,3 +208,51 @@ def _tick_facts(ax) -> dict:
         return {"ticks": ticks, "minor": minor, "offset_text": axis.get_offset_text().get_text()}
 
     return {"x": one(ax.xaxis, True), "y": one(ax.yaxis, False)}
+
+
+def main() -> None:
+    """独立子进程入口：stdin 单个 JSON 请求 → stdout 单个 JSON 响应。
+
+    父进程用项目 worker 解释器 spawn（``python -m tavotto.engine.svgchart``），
+    不经 worker 会话、不 import 用户脚本。stderr 只写日志，协议走 stdout。
+    """
+    import base64
+    import json
+    import sys
+
+    raw = sys.stdin.buffer.read()
+    try:
+        import matplotlib
+        import numpy
+
+        from tavotto import __version__
+
+        engine = {
+            "matplotlib": matplotlib.__version__,
+            "numpy": numpy.__version__,
+            "tavotto": __version__,
+        }
+        req = json.loads(raw.decode("utf-8"))
+        if req.get("probe"):
+            out = {"ok": True, "engine": engine}
+        else:
+            result = scaffold_fragment(
+                req.get("model", {}), req.get("frame", {}), salt=str(req.get("salt", "tavotto"))
+            )
+            out = {
+                "ok": True,
+                "fragment_b64": base64.b64encode(result["fragment"]).decode("ascii"),
+                "facts": result["facts"],
+                "engine": engine,
+            }
+    except Exception as exc:  # noqa: BLE001 — 协议层兜底，错误以稳定 JSON 表达
+        out = {
+            "ok": False,
+            "code": getattr(exc, "code", None) or "svg_scaffold_invalid",
+            "error": str(exc),
+        }
+    sys.stdout.write(json.dumps(out))
+
+
+if __name__ == "__main__":
+    main()

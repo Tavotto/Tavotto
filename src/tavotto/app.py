@@ -1299,6 +1299,194 @@ def api_svg_chart_inspect():
     return jsonify(inventory)
 
 
+_CHART_SPAWN_TIMEOUT_S = 90
+
+
+def _chart_scaffold_via_worker(model: dict, frame: dict) -> dict:
+    """用项目 worker 解释器跑一次脚手架子进程（无脚本、无会话、用完即弃）。
+
+    解释器解析走 `pool.resolve_worker_python` 的既有优先级（项目环境决定论）；
+    matplotlib 缺失/坏环境时错误以稳定码上抛，不静默换内置 runtime。
+    """
+    import base64
+    import subprocess
+
+    import tavotto
+
+    root = require_project()
+    python, _source = engine_pool.resolve_worker_python(root)
+    req = {"model": model, "frame": frame, "salt": "tavotto"}
+    try:
+        proc = subprocess.run(
+            [python, "-m", "tavotto.engine.svgchart"],
+            input=json.dumps(req).encode("utf-8"),
+            capture_output=True,
+            timeout=_CHART_SPAWN_TIMEOUT_S,
+            cwd=str(Path(tavotto.__file__).resolve().parent.parent),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise engine_pool.WorkerError("svg_scaffold_timeout", "chart scaffold timed out") from exc
+    except OSError as exc:
+        raise engine_pool.WorkerError(
+            "chart_engine_unavailable", f"worker python failed: {exc}"
+        ) from exc
+    try:
+        payload = json.loads(proc.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        raise engine_pool.WorkerError(
+            "svg_scaffold_invalid", f"bad scaffold output: {proc.stderr[-200:]}"
+        ) from exc
+    if not payload.get("ok"):
+        raise engine_pool.WorkerError(
+            payload.get("code") or "svg_scaffold_invalid", payload.get("error", "")
+        )
+    return {
+        "fragment": base64.b64decode(payload["fragment_b64"]),
+        "facts": payload.get("facts", {}),
+        "engine": payload.get("engine", {}),
+    }
+
+
+def _chart_engine_identity() -> dict:
+    """worker 解释器里的计算环境身份（probe 子进程，零渲染）。"""
+    import subprocess
+
+    import tavotto
+
+    root = require_project()
+    python, _source = engine_pool.resolve_worker_python(root)
+    try:
+        proc = subprocess.run(
+            [python, "-m", "tavotto.engine.svgchart"],
+            input=json.dumps({"probe": True}).encode("utf-8"),
+            capture_output=True,
+            timeout=_CHART_SPAWN_TIMEOUT_S,
+            cwd=str(Path(tavotto.__file__).resolve().parent.parent),
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise engine_pool.WorkerError(
+            "chart_engine_unavailable", f"worker python probe failed: {exc}"
+        ) from exc
+    try:
+        payload = json.loads(proc.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        raise engine_pool.WorkerError(
+            "chart_engine_unavailable", f"probe failed: {proc.stderr[-200:]}"
+        ) from exc
+    if not payload.get("ok"):
+        raise engine_pool.WorkerError(
+            payload.get("code") or "chart_engine_unavailable", payload.get("error", "")
+        )
+    return payload["engine"]
+
+
+@app.post("/api/svg/chart/bind")
+def api_svg_chart_bind():
+    """显式建模确认（ADR 0166，SG06/10）：校准证据 + 系列选择 → 模型 + 绑定。
+
+    只做判据与产物，不落盘、不执行任何代码；确认预览由 /compute 承担。
+    """
+
+    from . import svgscene
+    from .engine import chartbind
+
+    body = request.get_json(silent=True) or {}
+    file_id = body.get("file", "")
+    if not isinstance(file_id, str) or not file_id:
+        return jsonify({"code": "svg_scene_invalid", "error": "file is required"}), 422
+    path = safe_resolve(file_id)
+    if path.suffix.lower() not in SVG_EXT:
+        return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
+    try:
+        scene = svgscene.read_scene(path)
+    except svgscene.SceneError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    try:
+        engine = _chart_engine_identity()
+        result = chartbind.build_model_and_binding(
+            {
+                **{k: v for k, v in body.items() if k != "file"},
+                "scene_digest": scene["scene_digest"],
+                "nodes": scene["nodes"],
+            },
+            engine_identity=engine,
+        )
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    except chartbind.BindError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    return jsonify(result)
+
+
+@app.post("/api/svg/chart/compute")
+def api_svg_chart_compute():
+    """按模型重算绑定区域（ADR 0166，SG07/10）：场景核对 → 脚手架 → 组合。
+
+    场景字节变了（`chart_source_mismatch`/`chart_node_missing`）一律拒绝；
+    引擎身份与模型合同不符报 `chart_engine_mismatch`；原文件零改动。
+    """
+    from . import svgcompose, svgscene
+    from .engine import chartmodel
+
+    body = request.get_json(silent=True) or {}
+    file_id = body.get("file", "")
+    model = body.get("model")
+    binding = body.get("binding")
+    if (
+        not isinstance(file_id, str)
+        or not file_id
+        or not isinstance(model, dict)
+        or not isinstance(binding, dict)
+    ):
+        return jsonify(
+            {"code": "svg_scene_invalid", "error": "file/model/binding are required"}
+        ), 422
+    path = safe_resolve(file_id)
+    if path.suffix.lower() not in SVG_EXT:
+        return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
+    try:
+        scene = svgscene.read_scene(path)
+        chartmodel.validate_model(model)
+        chartmodel.validate_binding(binding, model)
+        chartmodel.verify_scene(binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]})
+    except svgscene.SceneError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    except chartmodel.ChartModelError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    frame = {
+        "view_box": scene["view_box"],
+        "w_pt": scene["w_pt"],
+        "h_pt": scene["h_pt"],
+        "preserve": None,
+    }
+    try:
+        scaffold = _chart_scaffold_via_worker(model, frame)
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    engine_facts = scaffold.get("engine") or {}
+    declared = model.get("engine") or {}
+    for key in ("matplotlib", "numpy"):
+        if declared.get(key) and engine_facts.get(key) and declared[key] != engine_facts[key]:
+            return jsonify(
+                {
+                    "code": "chart_engine_mismatch",
+                    "error": f"engine {key} {engine_facts[key]} != model {declared[key]}",
+                }
+            ), 409
+    scene_bytes = path.read_bytes()
+    try:
+        composed = svgcompose.compose_scene(scene_bytes, binding, scaffold["fragment"], model)
+    except svgcompose.ComposeError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    return jsonify(
+        {
+            "svg": composed.decode("utf-8"),
+            "facts": scaffold["facts"],
+            "scene_digest": scene["scene_digest"],
+        }
+    )
+
+
 def _original_rerender(formats) -> bool:
     """原图范围：所选格式要不要让 `_resolve_panel_source` 有脚本就重渲染（哪怕没有 override）。
 

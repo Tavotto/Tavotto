@@ -21,6 +21,17 @@ import xml.etree.ElementTree as ET
 SVG_NS = "http://www.w3.org/2000/svg"
 NS = {"s": SVG_NS}
 
+# 序列化的前缀注册（缺省时 ElementTree 会写成 ns0:/ns1:，浏览器能吃但难看且
+# 与原场景字节形态漂移）。matplotlib 场景还会带 dc/rdf/creativecommons/xlink。
+for _prefix, _uri in (
+    ("", SVG_NS),
+    ("xlink", "http://www.w3.org/1999/xlink"),
+    ("dc", "http://purl.org/dc/elements/1.1/"),
+    ("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#"),
+    ("cc", "http://creativecommons.org/ns#"),
+):
+    ET.register_namespace(_prefix, _uri)
+
 
 class ComposeError(ValueError):
     def __init__(self, code: str, detail: str = "") -> None:
