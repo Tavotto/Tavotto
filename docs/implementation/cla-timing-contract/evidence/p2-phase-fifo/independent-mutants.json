@@ -1,0 +1,57 @@
+[
+  {
+    "name": "timing dispatch work phase",
+    "source": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare/scripts/timing-plan.mjs",
+    "source_sha256": "5b1ac135d576b8998acca4c1c5bfc923bf38f60adf2bc555d2556eab9a38ff29",
+    "mutated_sha256": "80dee65372d336171e623c296d836fbbe36bb3c31c7bbea743ca6b5911d6b751",
+    "validated_unique_replacement": true,
+    "pattern": "timing dispatch work",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-timing-final-independent-mutants/timing-dispatch-work-phase/result.tap"
+  },
+  {
+    "name": "timing FIFO nonblocking open",
+    "source": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare/scripts/timing-plan.mjs",
+    "source_sha256": "5b1ac135d576b8998acca4c1c5bfc923bf38f60adf2bc555d2556eab9a38ff29",
+    "mutated_sha256": "bcd4555c5e2cbe9b5108e88572356a45c6a4523c62a9e4879b6289eda646ed56",
+    "validated_unique_replacement": true,
+    "pattern": "timing CLI refuses a FIFO before reading without blocking",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-timing-final-independent-mutants/timing-FIFO-nonblocking-open/result.tap"
+  },
+  {
+    "name": "confirmation exact work deadline",
+    "source": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare/scripts/timing-plan.mjs",
+    "source_sha256": "5b1ac135d576b8998acca4c1c5bfc923bf38f60adf2bc555d2556eab9a38ff29",
+    "mutated_sha256": "bde45d705f2d81ed304427feb8a2b0b62308eaaf736c9329ee678da3f3bc6949",
+    "validated_unique_replacement": true,
+    "pattern": "timing phase rejects the exact deadline confirmation_ms",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-timing-final-independent-mutants/confirmation-exact-work-deadline/result.tap"
+  },
+  {
+    "name": "settlement exact cleanup deadline",
+    "source": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare/scripts/timing-plan.mjs",
+    "source_sha256": "5b1ac135d576b8998acca4c1c5bfc923bf38f60adf2bc555d2556eab9a38ff29",
+    "mutated_sha256": "25e03861786f24b87c50ef3595f80435480924d87c4d73191b7b8d0c1a8cff9e",
+    "validated_unique_replacement": true,
+    "pattern": "timing phase rejects the exact deadline send_settle_ms",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-timing-final-independent-mutants/settlement-exact-cleanup-deadline/result.tap"
+  },
+  {
+    "name": "withdrawal exact cleanup deadline",
+    "source": "/workspace/Tavotto-cla-timing-contract/services/cla-cloudflare/scripts/timing-plan.mjs",
+    "source_sha256": "5b1ac135d576b8998acca4c1c5bfc923bf38f60adf2bc555d2556eab9a38ff29",
+    "mutated_sha256": "9d6cdbaf4aed6ca2497d242eb705cb70d64f4f7e2de2f9c80786ff9301d9fbd3",
+    "validated_unique_replacement": true,
+    "pattern": "timing withdrawal pass rejects its exact cleanup deadline",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-timing-final-independent-mutants/withdrawal-exact-cleanup-deadline/result.tap"
+  }
+]

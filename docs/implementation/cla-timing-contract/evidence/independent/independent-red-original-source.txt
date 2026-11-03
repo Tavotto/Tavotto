@@ -1,0 +1,39 @@
+✖ independent single-shot earliest read exactly at readiness refuses ordering race (3.073893ms)
+✔ independent CI wait enabled cannot bypass strict readiness boundary at its first poll (0.714107ms)
+✔ independent latest pending schedule includes pauses after every pending result (0.390475ms)
+✔ independent proof deadline uses fractional dispatch milliseconds (0.524728ms)
+✔ independent authority ceiling is inclusive for proof but expiry is strict for completion (0.539973ms)
+✔ independent withdrawal ahead contributes actual queue time and demand (0.460267ms)
+✔ independent SQL phases and correction requests preserve both ceilings (0.540614ms)
+✔ independent model feasibility never grants platform or runtime acceptance (0.337713ms)
+✔ independent shared parser rejects proof longer than existing protocol TTL (0.636264ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 8
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 148.430508
+
+✖ failing tests:
+
+test at tests/timing-independent.test.mjs:6:1
+✖ independent single-shot earliest read exactly at readiness refuses ordering race (3.073893ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at refused (file:///tmp/cla-timing-independent-review-830bd89c/initial-snapshot/tests/timing-independent.test.mjs:5:57)
+      at TestContext.<anonymous> (file:///tmp/cla-timing-independent-review-830bd89c/initial-snapshot/tests/timing-independent.test.mjs:10:2)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

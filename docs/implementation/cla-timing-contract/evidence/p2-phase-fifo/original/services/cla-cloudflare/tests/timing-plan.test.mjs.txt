@@ -1,0 +1,120 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {spawnSync} from 'node:child_process';
+import {timingPlan} from '../scripts/timing-plan.mjs';import {assumptions} from './timing-plan-fixture.mjs';
+import {canonical} from '../src/core/crypto.ts';import {createHash} from 'node:crypto';
+let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('OUTBOUND_FORBIDDEN');};
+const rejected=(input,reason)=>{const plan=timingPlan(input);assert.equal(plan.model_feasible,false);assert.ok(plan.reasons.includes(reason),JSON.stringify(plan.reasons));return plan;};
+const changeProof=(input,changes)=>{input.proof_text='tavotto-cla-v1\n'+canonical({...JSON.parse(input.proof_text.slice(15)),...changes});};
+test('timing planner only models fixed assumptions and never grants runtime eligibility',()=>{
+  const input=assumptions(),original=structuredClone(input),plan=timingPlan(input);assert.equal(plan.model_feasible,true);assert.deepEqual(plan.reasons,[]);
+  for(const k of ['ready_to_deploy','live_accepted','execution_supported','runtime_eligibility'])assert.equal(plan[k],false);
+  assert.equal(plan.network_operations,0);assert.equal(plan.assumptions_assurance,'caller_supplied_not_platform_verified');assert.deepEqual(input,original);
+  assert.deepEqual(plan.budget.non_exempt_contributors,1);assert.equal(plan.budget.dispatch_work_sql,16);assert.equal(plan.budget.dispatch_total_sql,20);assert.equal(plan.budget.confirmation_work_with_withdrawal_sql,19);
+  assert.equal(plan.time_ms.remaining_proof,110000);assert.equal(plan.time_ms.critical_path_with_margin,5000);
+  const {plan_sha256,...body}=plan;assert.equal(plan_sha256,createHash('sha256').update(canonical(body)).digest('hex'));
+  const changed=structuredClone(input);changed.bounds.margin_ms++;assert.notEqual(timingPlan(changed).assumptions_sha256,plan.assumptions_sha256);
+});
+for(const field of ['wakeup_ms','backlog_ms'])test('timing unknown independent bound refuses '+field,()=>{
+  const c=assumptions();c.bounds[field]=null;rejected(c,'independent_wakeup_or_backlog_bound_unknown');
+});
+test('timing current cron proposal cannot meet proof or early CI envelope',()=>{
+  const c=assumptions();c.bounds.dispatch_after_event_ms=15*60000;c.bounds.wakeup_ms=2*60000;
+  const p=rejected(c,'proof_remaining_time_insufficient');assert.ok(p.reasons.includes('ci_attempts_exhaust_before_readiness'));
+});
+test('timing proof remaining lifetime uses original dispatch clock instead of a fresh 120 seconds',()=>{
+  const c=assumptions();c.dispatch_at_ms=1800000116000;rejected(c,'proof_remaining_time_insufficient');
+});
+test('timing proof exact expiry is rejected by the shared proof parser',()=>{
+  const c=assumptions();c.dispatch_at_ms=1800000120000;assert.throws(()=>timingPlan(c),e=>e.code==='proof_invalid');
+});
+test('timing critical path equality at original expiry refuses',()=>{
+  const c=assumptions();c.bounds.wakeup_ms=106000;rejected(c,'proof_remaining_time_insufficient');
+});
+test('timing authorization shorter than encoded proof refuses instead of extending authority',()=>{
+  const c=assumptions();c.authority_expires_at=1800000060;rejected(c,'proof_exceeds_authority_expiry');
+});
+test('timing correctly capped short authorization still needs enough real remaining time',()=>{
+  const c=assumptions();changeProof(c,{expires_at:1800000014});c.authority_expires_at=1800000014;rejected(c,'proof_remaining_time_insufficient');
+});
+test('timing wait attempts can exhaust before its longer timeout',()=>{
+  const c=assumptions();c.bounds.wakeup_ms=6000;rejected(c,'ci_attempts_exhaust_before_readiness');
+});
+test('timing readiness at the final earliest poll refuses boundary races',()=>{
+  const c=assumptions();c.bounds.wakeup_ms=5000;rejected(c,'ci_attempts_exhaust_before_readiness');
+});
+test('timing slow pending reads are included in the entire CI timeout',()=>{
+  const c=assumptions();c.bounds.pending_read_ms=8000;rejected(c,'ci_wait_deadline_insufficient');
+});
+test('timing last CI read plus safety margin must precede proof expiry',()=>{
+  const c=assumptions();c.ci.start_after_event_ms=108000;c.ci.wait={enabled:false};
+  rejected(c,'ci_finishes_at_or_after_proof_deadline');
+});
+test('timing single-shot early CI refuses while already-confirmed scheduling remains a model',()=>{
+  const c=assumptions();c.ci.wait={enabled:false};rejected(c,'single_shot_ci_starts_before_confirmation');
+  c.ci.start_after_event_ms=4000;assert.equal(timingPlan(c).model_feasible,true);
+});
+test('timing single-shot CI at exact confirmation completion cannot assume commit ordering',()=>{
+  const c=assumptions();c.ci.start_after_event_ms=3000;c.ci.wait={enabled:false};
+  rejected(c,'single_shot_ci_starts_before_confirmation');
+});
+test('timing confirmation backlog includes priority withdrawals ahead',()=>{
+  const c=assumptions();c.load.withdrawals_ahead=1;c.load.withdrawal_pass_ms=4000;
+  rejected(c,'ci_attempts_exhaust_before_readiness');
+});
+test('timing recovery window reserves withdrawals and new confirmation demand',()=>{
+  const c=assumptions();c.load.window_ms=2000;rejected(c,'recovery_window_overcommitted');
+});
+test('timing incomplete recovery load or zero confirmations refuses',()=>{
+  const c=assumptions();c.load.withdrawals_ahead=2;rejected(c,'recovery_load_incomplete');
+  c.load.withdrawals_ahead=0;c.load.confirmations_in_window=0;rejected(c,'recovery_load_incomplete');
+});
+test('timing occupied confirmation slot refuses without releasing it',()=>{
+  const c=assumptions();c.load.occupied_slots=1;rejected(c,'confirmation_slot_occupied');assert.equal(c.load.occupied_slots,1);
+});
+test('timing extra coordination SQL must fit both invocation phases',()=>{
+  const c=assumptions();c.sql_overhead.dispatch_work=5;rejected(c,'sql_budget_exceeded');
+  c.sql_overhead.dispatch_work=0;c.sql_overhead.settlement=21;rejected(c,'sql_budget_exceeded');
+  c.sql_overhead.settlement=0;c.sql_overhead.confirmation_work=2;rejected(c,'sql_budget_exceeded');
+});
+test('timing one extra confirmation SQL fits but does not implement atomic reservation',()=>{
+  const c=assumptions();c.sql_overhead.confirmation_work=1;const plan=timingPlan(c);assert.equal(plan.model_feasible,true);
+  assert.equal(plan.budget.confirmation_work_with_withdrawal_sql,20);assert.equal(plan.execution_supported,false);
+});
+test('timing contributor union cannot silently use the read-only four-person capacity',()=>{
+  const c=assumptions();changeProof(c,{contributors:[{id:2,login:'synthetic-contributor'},{id:3,login:'other'}]});rejected(c,'single_contributor_model_exceeded');
+});
+for(const field of ['dispatch_work','dispatch_total','confirmation_work','confirmation_total'])test('timing unknown external count refuses '+field,()=>{
+  const c=assumptions();c.external[field]=null;rejected(c,'external_bounds_unknown');
+});
+test('timing external counts reserve correction requests without raising limits',()=>{
+  const c=assumptions();c.external.confirmation_total=14;rejected(c,'external_budget_or_withdrawal_reserve_invalid');
+  c.external.confirmation_total=41;rejected(c,'external_budget_or_withdrawal_reserve_invalid');
+  c.external.confirmation_total=40;c.external.dispatch_work=36;rejected(c,'external_budget_or_withdrawal_reserve_invalid');
+});
+test('timing individual invocation time budgets remain unchanged',()=>{
+  const c=assumptions();c.bounds.confirmation_ms=60001;rejected(c,'invocation_time_budget_exceeded');
+});
+for(const mutate of [c=>c.bounds.margin_ms=0,c=>c.bounds.wakeup_ms=-1,c=>c.bounds.backlog_ms=NaN,c=>c.bounds.confirmation_ms=0,
+  c=>c.bounds.margin_ms='1000',c=>c.sql_overhead.dispatch_work=-1,c=>c.external.dispatch_work=Infinity,
+  c=>c.load.slots=2,c=>c.load.withdrawal_reserve_ms=0,c=>c.load.occupied_slots=2,
+  c=>c.exemption_ids=[2,2],c=>c.exemption_ids=[99],c=>c.ci.wait.timeoutMs=60001,c=>c.ci.wait.maxAttempts=9,
+  c=>c.ci.wait.extra=true,c=>c.dispatch_at_ms=Number.MAX_SAFE_INTEGER,c=>c.extra='private key would not be accepted',
+  c=>c.proof_text='not proof',c=>delete c.bounds.wakeup_ms,c=>c.authority_expires_at='never'])
+  test('timing malformed or overbroad assumptions refuse '+String(mutate),()=>{const c=assumptions();mutate(c);assert.throws(()=>timingPlan(c));});
+test('timing CLI prints an offline model and refused models exit 2 without side effects',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cla-timing-plan-'));try{
+    const file=path.join(dir,'assumptions.json'),c=assumptions();fs.writeFileSync(file,JSON.stringify(c));
+    const run=()=>spawnSync(process.execPath,['scripts/timing-plan.mjs',file],{cwd:new URL('../',import.meta.url),encoding:'utf8'});
+    let r=run();assert.equal(r.status,0);assert.equal(JSON.parse(r.stdout).execution_supported,false);
+    c.bounds.wakeup_ms=null;fs.writeFileSync(file,JSON.stringify(c));const before=fs.readFileSync(file);r=run();assert.equal(r.status,2);assert.equal(JSON.parse(r.stdout).model_feasible,false);assert.deepEqual(fs.readFileSync(file),before);
+    fs.writeFileSync(file,' '.repeat(65537));r=run();assert.equal(r.status,1);assert.match(r.stderr,/input_too_large/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('timing plan never requests HTTP or publication',()=>assert.equal(outbound,0));
+test('timing CLI reads the complete bounded file even when regular reads are short',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cla-timing-short-read-'));try{
+    const input=path.join(dir,'assumptions.json'),loader=path.join(dir,'short-read.mjs');fs.writeFileSync(input,JSON.stringify(assumptions()));
+    fs.writeFileSync(loader,"import fs from 'node:fs';const original=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>original(fd,buffer,offset,Math.min(length,7),position);\n");
+    const r=spawnSync(process.execPath,['--import',loader,'scripts/timing-plan.mjs',input],{cwd:new URL('../',import.meta.url),encoding:'utf8'});
+    assert.equal(r.status,0,r.stderr);assert.equal(JSON.parse(r.stdout).model_feasible,true);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

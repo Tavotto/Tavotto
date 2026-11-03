@@ -26,6 +26,7 @@ const cases=[
  ...JSON.parse(readFileSync(new URL('./slot-config-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./agreement-activation-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./historical-revocation-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./timing-plan-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./independent-review-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./inflight-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./ci-wait-mutation-cases.json',import.meta.url),'utf8')),

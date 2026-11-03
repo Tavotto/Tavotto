@@ -12,6 +12,13 @@ export const QUALIFICATION_SQL_PER_PERSON = 2;
 export const MAX_SUCCESS_CONTRIBUTORS = Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/QUALIFICATION_SQL_PER_PERSON);
 // Three actual SELECTs: candidate + signatures, grant + bounded signed controls, exact receipt.
 // Each invocation still verifies all raw cryptographic evidence; no qualification cache.
+// New-head path (automatic.ts verifyHeadOne): readiness, expired-lease sweep, claim batch,
+// revision and database time precede evaluate(); evaluate() then reserves q*N+1+reserved.
+export const NEW_HEAD_PRE_EVALUATE_SQL = 5;
+export const newHeadReservedSQL=(c:{automaticPublishingEnabled?:boolean;confirmationSlotEnabled?:boolean})=>
+  c.automaticPublishingEnabled ? (c.confirmationSlotEnabled===true ? 8 : 7) : 5;
+// Independent confirmation: fourteen fixed work statements plus two reserved withdrawal reads.
+export const CONFIRMATION_FIXED_SQL = 16;
 export const qualificationSQL=(c:{delegatedCountersigningEnabled?:boolean})=>c.delegatedCountersigningEnabled===true?3:QUALIFICATION_SQL_PER_PERSON;
 export const successCapacity=(c:{delegatedCountersigningEnabled?:boolean})=>Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/qualificationSQL(c));
 export class BudgetDeferred extends Rejected {

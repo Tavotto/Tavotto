@@ -268,3 +268,9 @@ rehearses the exact main77 v2 namespace to #1168 with synthetic SQLite only.
 Its CLI emits a disabled in-memory schema plan and has no file-target writer or
 production execution option. It does not replace real D1 schema/backup/cutover
 acceptance, enable capabilities or resolve the single-slot availability limit.
+
+The [offline timing/capacity contract](../../docs/implementation/cla-timing-contract/README.md)
+adds a data-only planner for remaining proof lifetime, independent confirmation,
+CI attempts and declared recovery load. Its output never grants eligibility or
+activation. The persistent confirmation slot has since landed default-off;
+independent wakeup and live acceptance remain pending.

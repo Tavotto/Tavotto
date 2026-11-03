@@ -1,0 +1,53 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {timingPlan} from '../scripts/timing-plan.mjs';import {assumptions} from './timing-plan-fixture.mjs';
+import {canonical} from '../src/core/crypto.ts';
+globalThis.fetch=async()=>{throw Error('OUTBOUND_FORBIDDEN');};
+const refused=(c,reason)=>{const p=timingPlan(c);assert.equal(p.model_feasible,false);assert.ok(p.reasons.includes(reason),JSON.stringify(p.reasons));};
+test('independent single-shot earliest read exactly at readiness refuses ordering race',()=>{
+ const c=assumptions();c.ci.wait={enabled:false};c.ci.start_after_event_ms=3000;
+ // At the same millisecond an initial authority read can linearize before the
+ // independent confirmation commit. No wait is available in this branch.
+ refused(c,'single_shot_ci_starts_before_confirmation');
+});
+test('independent CI wait enabled cannot bypass strict readiness boundary at its first poll',()=>{
+ const c=assumptions();c.ci.start_after_event_ms=3000;c.ci.wait={enabled:true,maxAttempts:2,intervalMs:1000,timeoutMs:1000};
+ // First read may see pending at the tie. The mandatory 1000ms pause cannot
+ // finish strictly before this overall deadline.
+ refused(c,'ci_wait_deadline_insufficient');
+});
+test('independent latest pending schedule includes pauses after every pending result',()=>{
+ const c=assumptions();c.ci.wait={enabled:true,maxAttempts:3,intervalMs:1000,timeoutMs:7000};
+ c.bounds.send_settle_ms=1;c.bounds.wakeup_ms=1;c.bounds.confirmation_ms=1;
+ c.bounds.pending_read_ms=2000;c.bounds.final_read_ms=1000;
+ refused(c,'ci_wait_deadline_insufficient');
+});
+test('independent proof deadline uses fractional dispatch milliseconds',()=>{
+ const c=assumptions();c.dispatch_at_ms=1800000115001;c.bounds.wakeup_ms=999;
+ assert.equal(timingPlan(c).time_ms.remaining_proof,4999);
+ refused(c,'proof_remaining_time_insufficient');
+});
+test('independent authority ceiling is inclusive for proof but expiry is strict for completion',()=>{
+ const c=assumptions();c.authority_expires_at=1800000120;
+ assert.ok(!timingPlan(c).reasons.includes('proof_exceeds_authority_expiry'));
+ c.authority_expires_at--;refused(c,'proof_exceeds_authority_expiry');
+});
+test('independent withdrawal ahead contributes actual queue time and demand',()=>{
+ const c=assumptions();c.load.withdrawals_ahead=1;c.load.withdrawals_in_window=1;c.load.withdrawal_pass_ms=1000;
+ const p=timingPlan(c);assert.equal(p.time_ms.ready_after_dispatch,4000);assert.equal(p.budget.recovery_window_demand_ms,3000);
+ c.load.window_ms=2999;refused(c,'recovery_window_overcommitted');
+});
+test('independent SQL phases and correction requests preserve both ceilings',()=>{
+ const c=assumptions();c.sql_overhead.dispatch_work=4;c.sql_overhead.confirmation_work=1;
+ const p=timingPlan(c);assert.equal(p.budget.dispatch_work_sql,20);assert.equal(p.budget.dispatch_total_sql,24);
+ assert.equal(p.budget.confirmation_work_with_withdrawal_sql,20);assert.equal(p.model_feasible,true);
+ c.external.confirmation_work=35;c.external.confirmation_total=39;refused(c,'external_budget_or_withdrawal_reserve_invalid');
+});
+test('independent model feasibility never grants platform or runtime acceptance',()=>{
+ const p=timingPlan(assumptions());assert.equal(p.model_feasible,true);
+ for(const key of ['ready_to_deploy','live_accepted','execution_supported','runtime_eligibility'])assert.equal(p[key],false);
+ assert.equal(p.network_operations,0);
+});
+test('independent shared parser rejects proof longer than existing protocol TTL',()=>{
+ const c=assumptions();const proof=JSON.parse(c.proof_text.slice(15));proof.expires_at++;
+ c.proof_text='tavotto-cla-v1\n'+canonical(proof);assert.throws(()=>timingPlan(c),e=>e.code==='proof_invalid');
+});
