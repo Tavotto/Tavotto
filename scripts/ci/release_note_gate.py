@@ -29,7 +29,10 @@ PR 里往 UNRELEASED.md 加一个 `## ` 段落（见 docs/RELEASING.md）——�
   3. 没改任何「用户可见路径」→ 通过（不需要条目）。
   4. 新增了 `docs/release-notes/vX.Y.Z.md` → 通过（这是发版 PR 本身：它把待发条目
      搬进正式说明，同时会改 `__version__`，不能要求它再新增一条待发条目）。
-  5. 否则 UNRELEASED.md 的 diff 里必须**新增至少一行 `## `**（二级标题）。
+  5. 否则必须满足下面**任一种**写法（双轨，2026-11-03 起）：
+     a. **推荐**：在 `docs/release-notes/unreleased/` 下新增一个片段文件
+        `<主题>.md`，内容含至少一行 `## ` 标题（每个 PR 一个文件，永不互相冲突）；
+     b. 旧写法：UNRELEASED.md 的 diff 里**新增至少一行 `## `**（二级标题）。
      只改了顶部注释、只删段落、只改错别字，都不算——约定是「加一个段落」。
      已知边界：不解析 HTML 注释，把 `## ` 写进注释里也会被数到；这是人审该
      挡的事，不值得为它在脚本里写一个 Markdown 解析器。
@@ -88,6 +91,10 @@ EXEMPT_LABEL = "no-release-note"
 EXEMPT_AUTHORS = ("dependabot[bot]",)
 
 UNRELEASED_PATH = "docs/release-notes/UNRELEASED.md"
+#: 片段目录：每个 PR 一个 `<主题>.md`，避免并行 PR 在 UNRELEASED.md 同一处互相冲突。
+FRAGMENT_DIR = "docs/release-notes/unreleased"
+#: 目录里的说明文件，不算片段。
+FRAGMENT_IGNORED = frozenset({"README.md"})
 #: 正式发行说明：`docs/release-notes/v0.19.2.md`（含 -beta 之类后缀）。
 RELEASE_NOTE_RE = re.compile(r"^docs/release-notes/v\d+\.\d+\.\d+[^/]*\.md$")
 
@@ -113,7 +120,8 @@ INTERNAL_DOC_NAMES = frozenset({"AGENTS.md"})
 
 FAIL_MESSAGE = (
     "这个 PR 改了用户可见的代码（{examples}），却没往 {unreleased} 新增 `## ` 待发条目。"
-    "补一个 `## ` 段落（按症状和触发条件写，见 docs/RELEASING.md）；"
+    "新增一个片段文件 {fragments}/<主题>.md（以 `## ` 标题开头；旧写法：往 UNRELEASED.md 加 `## ` 段落也行），"
+    "按症状和触发条件写，见 docs/RELEASING.md；"
     "如果这是纯内部改动，给 PR 打 `{label}` 标签。"
 )
 
@@ -144,6 +152,12 @@ def _touched_paths(entry: dict) -> list[str]:
     if prev:
         paths.append(prev)
     return paths
+
+
+def is_fragment_path(path: str) -> bool:
+    """`docs/release-notes/unreleased/<名>.md`（只认直接子文件，README.md 除外）。"""
+    p = PurePosixPath(path)
+    return str(p.parent) == FRAGMENT_DIR and p.suffix == ".md" and p.name not in FRAGMENT_IGNORED
 
 
 def adds_section_heading(patch: str) -> bool:
@@ -189,22 +203,24 @@ def decide(
         return {"status": "success", "message": "新增了正式发行说明（发版 PR），不再要求待发条目。"}
 
     for f in files:
-        if f["filename"] != UNRELEASED_PATH:
+        if f["filename"] != UNRELEASED_PATH and not (
+            is_fragment_path(f["filename"]) and f.get("status") != "removed"
+        ):
             continue
         patch = f.get("patch")
         if patch is None:
-            raise ConfigError(
-                f"{UNRELEASED_PATH} 有改动但 API 没给 diff（太大被省略？）——无法核对。"
-            )
+            raise ConfigError(f"{f['filename']} 有改动但 API 没给 diff（太大被省略？）——无法核对。")
         if adds_section_heading(patch):
-            return {"status": "success", "message": f"{UNRELEASED_PATH} 新增了 `## ` 条目。"}
-        break
+            return {"status": "success", "message": f"{f['filename']} 新增了 `## ` 条目。"}
 
     examples = "、".join(visible[:3]) + (" 等" if len(visible) > 3 else "")
     return {
         "status": "failure",
         "message": FAIL_MESSAGE.format(
-            examples=examples, unreleased=UNRELEASED_PATH, label=EXEMPT_LABEL
+            examples=examples,
+            unreleased=UNRELEASED_PATH,
+            fragments=FRAGMENT_DIR,
+            label=EXEMPT_LABEL,
         ),
     }
 

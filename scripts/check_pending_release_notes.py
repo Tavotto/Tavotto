@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""发布闸：`docs/release-notes/UNRELEASED.md` 里的待发条目必须先并进这一版。
+"""发布闸：`docs/release-notes/UNRELEASED.md` 与 `unreleased/` 片段里的待发条目必须先并进这一版。
+
+2026-11-03 起新条目写成 `docs/release-notes/unreleased/<主题>.md` 片段（每个 PR 一个
+文件，并行 PR 不再在 UNRELEASED.md 同一处冲突）；旧的 UNRELEASED.md 仍然检查。
+片段判据：目录里除 README.md 外的每个 `*.md` 都是一条待发条目——**并入 = 把内容搬进
+`<tag>.md` 并删掉这个文件**；片段里没有 `## ` 标题（写坏了）、读不出来、目录不见了，
+都红（与下面三个方向同一条纪律：判据要读的东西不在时不许绿）。
 
 存在的理由（issue #244）：#215 修好了标注旋转的导出方向，存量文档里手工补偿
 过角度的用户升级后会拿到反向的导出。这条迁移提示当时写在 PR 正文的「遗留」段
@@ -36,6 +42,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PENDING = ROOT / "docs" / "release-notes" / "UNRELEASED.md"
+FRAGMENT_DIRNAME = "unreleased"
+FRAGMENT_IGNORED = frozenset({"README.md"})
 
 
 def _pin_stdio_utf8() -> None:
@@ -72,10 +80,44 @@ def pending_sections(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.startswith("## ")]
 
 
+def collect_fragments(frag_dir: Path, base: Path) -> tuple[list[str], list[str]]:
+    """扫片段目录，返回 (待发标题行, 问题说明)。问题 = 目录不见 / 读不了 / 片段没有 `## `。"""
+    problems: list[str] = []
+    sections: list[str] = []
+    if not frag_dir.is_dir():
+        return [], [
+            f"找不到片段目录 {_rel(frag_dir, base)} —— 它被删掉的话，里面还没发出去的"
+            "说明会跟着消失，而这道闸永远不会再红。请恢复它（至少留 README.md）。"
+        ]
+    for f in sorted(frag_dir.glob("*.md")):
+        if f.name in FRAGMENT_IGNORED:
+            continue
+        try:
+            heads = pending_sections(f.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            problems.append(f"读不了 {_rel(f, base)}（{type(exc).__name__}: {exc}）")
+            continue
+        if not heads:
+            problems.append(f"{_rel(f, base)} 里没有 `## ` 标题 —— 片段必须以 `## ` 标题开头")
+            continue
+        sections.extend(f"{h}  [{f.name}]" for h in heads)
+    return sections, problems
+
+
+def _rel(path: Path, base: Path) -> Path:
+    return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+
+
 def main(argv: list[str] | None = None) -> int:
     _pin_stdio_utf8()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pending", type=Path, default=DEFAULT_PENDING)
+    ap.add_argument(
+        "--fragments-dir",
+        type=Path,
+        default=None,
+        help="待发片段目录，默认是 --pending 同级的 unreleased/",
+    )
     ap.add_argument("--tag", default=None, help="这一版的 tag，只用于错误信息")
     args = ap.parse_args(argv)
 
@@ -100,11 +142,21 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     sections = pending_sections(text)
+    frag_dir = args.fragments_dir or args.pending.parent / FRAGMENT_DIRNAME
+    frag_sections, problems = collect_fragments(frag_dir, ROOT)
+    if problems:
+        for p in problems:
+            print(p, file=sys.stderr)
+        return 1
+    sections = sections + frag_sections
     if not sections:
         return 0
 
     target = f"docs/release-notes/{args.tag}.md" if args.tag else "docs/release-notes/<tag>.md"
-    print(f"{rel} 里还有 {len(sections)} 条待发条目没有并进 {target}：", file=sys.stderr)
+    print(
+        f"{rel} 与 unreleased/ 片段里还有 {len(sections)} 条待发条目没有并进 {target}：",
+        file=sys.stderr,
+    )
     for s in sections:
         print(f"  {s}", file=sys.stderr)
     print(

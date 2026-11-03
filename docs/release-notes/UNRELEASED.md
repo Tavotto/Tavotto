@@ -9,6 +9,9 @@
 release.yml 的「拼 release body」当场红（scripts/check_pending_release_notes.py）。
 这段注释留在原处。
 
+**新条目请写到 `docs/release-notes/unreleased/<主题>.md`（每个 PR 一个文件，避免并行 PR 在这里冲突）；
+下面已有的段落发版时一并搬走。**
+
 
 v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.0 的 plugin-stable promote
 成功并核验后走独立文档 PR；技能源码的安装说明只随后续插件产物分发，不得重打包或替换

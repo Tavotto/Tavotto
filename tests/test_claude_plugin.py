@@ -30,6 +30,14 @@ MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 
 
+def _pending_notes_text() -> str:
+    """待发说明全文：UNRELEASED.md + unreleased/ 片段（2026-11-03 起新条目写成片段）。"""
+    rn = ROOT / "docs" / "release-notes"
+    parts = [(rn / "UNRELEASED.md").read_text(encoding="utf-8")]
+    parts += [p.read_text(encoding="utf-8") for p in sorted((rn / "unreleased").glob("*.md"))]
+    return "\n\n".join(parts)
+
+
 def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -197,7 +205,7 @@ def test_install_lines_are_published_where_the_matrix_says():
         )
     ]
     assert early == [], f"渠道还没 promote，插件里却已经在教 Claude Code 的装法：{early}"
-    pending = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
+    pending = _pending_notes_text()
     pending = re.sub(r"\s+", " ", pending)
     for line in expected:
         assert f"`{line}`" in pending, f"待发说明里没有 {line!r}：发版时 README 拿什么加回去"
@@ -218,7 +226,7 @@ def test_workbuddy_section_installs_the_same_plugin_from_brand():
         text = guide
     else:
         assert "## Using Tavotto with WorkBuddy" not in guide
-        text = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
+        text = _pending_notes_text()
     # 按整行找标题：待发说明的恢复步骤里也会提到这个标题
     assert f"\n{heading}\n" in text, "这一节既不在指南也不在待发说明里"
     section = text.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0].split("\n-->", 1)[0]
