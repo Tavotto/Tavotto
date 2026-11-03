@@ -176,3 +176,105 @@ def test_no_host_address_or_credentials_in_the_executor():
         assert not ips, (path, ips)  # 主机地址只在维护者本机 ~/.ssh/config
         for word in ("GITHUB_TOKEN", "GH_TOKEN", "ghp_", "secrets.", "webhook", "cos.", "SecretId"):
             assert word not in text, (path, word)
+
+
+# --------------------------------------------------------------------------- 失败要看得见（Codex #1682）
+def test_research_matrix_runs_the_script_with_its_own_directory_importable(monkeypatch, tmp_path):
+    """`-I` 隐含 `-P`：脚本目录不进 sys.path，同目录的 compat_corpus 导入失败（P1）。"""
+    seen = []
+    monkeypatch.setattr(B, "checkout", lambda sha: tmp_path)
+    monkeypatch.setattr(
+        B,
+        "sh",
+        lambda argv, **kw: seen.append(argv) or type("R", (), {"stdout": '{"include": []}'})(),
+    )
+    assert B.research_matrix(SHA) == []
+    assert "-I" not in seen[0] and "-P" not in seen[0]
+
+
+def test_research_matrix_really_imports_its_sibling_modules():
+    """不打桩：照 box.py 的同一条 argv 在本仓库上真跑一次 matrix。"""
+    import subprocess
+
+    out = subprocess.run(
+        [sys.executable, "scripts/ci/compat_guardian_research.py", "matrix"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    assert B.json.loads(out.stdout)["include"]
+
+
+def test_guarded_records_any_failure_instead_of_raising():
+    import subprocess
+
+    def boom():
+        raise subprocess.CalledProcessError(1, ["python", "x"])
+
+    assert B.guarded(boom).startswith("error: CalledProcessError")
+    assert B.guarded(lambda: (_ for _ in ()).throw(SystemExit("prep failed"))).startswith(
+        "error: SystemExit"
+    )
+
+
+def test_nightly_survives_a_failing_s0_matrix_and_still_cleans_and_reports(monkeypatch, tmp_path):
+    import subprocess
+
+    calls = []
+    monkeypatch.setattr(B, "RUNS", tmp_path)
+    monkeypatch.setattr(B, "resolve_main_commit", lambda sha: SHA)
+    monkeypatch.setattr(B, "task_guardian_suites", lambda sha: 0)
+    monkeypatch.setattr(B, "task_guardian_explore", lambda *a: 1)
+
+    def bad_matrix(sha):
+        raise subprocess.CalledProcessError(1, ["python", "matrix"])
+
+    monkeypatch.setattr(B, "research_matrix", bad_matrix)
+    monkeypatch.setattr(B, "task_novice_u2404", lambda: calls.append("novice") or 0)
+    monkeypatch.setattr(B, "clean", lambda keep: calls.append("clean") or 0)
+    assert B.nightly() == 0
+    assert "clean" in calls
+    reports = list(tmp_path.glob("*-nightly.json"))
+    assert len(reports) == 1
+    data = B.json.loads(reports[0].read_text())
+    assert data["research-s0"].startswith("error: CalledProcessError")
+
+
+def _run_merge(tmp_path, triage_rc: int, summarize_rc: int) -> int:
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if not bash or sys.platform == "win32":
+        pytest.skip("needs a POSIX bash")
+    out = tmp_path / "out"
+    rep = out / "shard1" / "run" / "reports"
+    rep.mkdir(parents=True)
+    (rep / "explore-report.json").write_text("{}")
+    stub = (
+        'python() { case "$2" in triage) return %d;; summarize) return %d;; esac; return 0; }\n'
+        % (triage_rc, summarize_rc)
+    )
+    script = stub + B.explore_merge_script(1).replace("/out", str(out))
+    return subprocess.run(
+        [bash, "-c", "set -uo pipefail; " + script], capture_output=True
+    ).returncode
+
+
+@pytest.mark.parametrize(
+    ("triage_rc", "summarize_rc", "expected"), [(2, 0, 2), (2, 2, 2), (0, 2, 0), (0, 0, 0)]
+)
+def test_explore_merge_exit_code_is_triage_exit_code(tmp_path, triage_rc, summarize_rc, expected):
+    """triage 拒绝合并（报告损坏 / 混 seed / 重复片）= 这次长跑没有有效证据，不许记成 0（P2）。"""
+    assert _run_merge(tmp_path, triage_rc, summarize_rc) == expected
+
+
+def test_novice_required_steps_fail_the_run():
+    """必需步骤一律 need（失败计入退出码）；裸 step 只留给两处预期会失败的探测（P2）。"""
+    text = (BOX_DIR / "novice_u2404.sh").read_text(encoding="utf-8")
+    bare = re.findall(r"^\s*(?:if ! )?step ([a-z0-9-]+) ", text, re.M)
+    assert sorted(bare) == ["pip-direct-pep668", "pipx-install-readme"]
+    assert re.findall(r"^\s*need ([a-z0-9-]+) ", text, re.M), "no required steps found"
+    tail = text[text.rindex("FAILED[@]") :]
+    assert "exit 1" in tail and tail.index("exit 1") < tail.index("echo DONE")

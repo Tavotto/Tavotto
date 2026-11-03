@@ -392,27 +392,36 @@ def task_guardian_explore(sha: str, seed: int, shards: int, max_seconds: int) ->
         )
         procs.append((k, subprocess.Popen(argv)))
     codes = {k: p.wait() for k, p in procs}
-    # 合并：同 seed / 同 HEAD / 片号齐全由 triage 自己校验；有片未出报告就显式标 partial
-    merge = (
+    merge_rc = run_container(tag, out, explore_merge_script(shards))
+    worst = max([c for c in codes.values() if c not in (0, 1, 4)] or [0])
+    return finish(out, worst or merge_rc, {"seed": seed, "shards": shards, "shard_codes": codes})
+
+
+def explore_merge_script(shards: int) -> str:
+    """合并 N 片报告：同 seed / 同 HEAD / 片号齐全由 triage 自己校验，缺片显式标 partial。
+    triage 失败（报告损坏、混 seed、混 HEAD、重复片）就是这次长跑没有有效证据：退出码原样带出来，
+    不许被后面的 summarize 盖掉（Codex #1682 P2）。summarize 只是给人看的汇总，失败不改结论。"""
+    return (
         """
 shopt -s nullglob
 reports=(/out/shard*/*/reports/explore-report.json)
 [[ ${#reports[@]} -gt 0 ]] || { echo "no explore report" > /out/merge.txt; exit 1; }
 flag=""; [[ ${#reports[@]} -eq %d ]] || flag="--allow-partial-shards"
 python scripts/ci/compat_guardian.py triage "${reports[@]}" $flag --out /out/triage.json --markdown-out /out/triage.md
-python scripts/ci/compat_guardian.py summarize "${reports[@]}" $flag --markdown-out /out/summary.md --json-out /out/summary.json > /dev/null || true
+triage=$?
+python scripts/ci/compat_guardian.py summarize "${reports[@]}" $flag --markdown-out /out/summary.md --json-out /out/summary.json > /dev/null
+exit $triage
 """
         % shards
     )
-    merge_rc = run_container(tag, out, merge)
-    worst = max([c for c in codes.values() if c not in (0, 1, 4)] or [0])
-    return finish(out, worst or merge_rc, {"seed": seed, "shards": shards, "shard_codes": codes})
 
 
 def research_matrix(sha: str) -> list[dict]:
     src = checkout(sha)
+    # 不加 -I：它隐含 -P，脚本目录不进 sys.path，同目录的 compat_corpus 就导入失败（Codex #1682 P1）。
+    # 跑的是刚判过可信的 main 检出里的脚本，与 workflow 的 prepare job 同一条命令。
     raw = sh(
-        [sys.executable, "-I", "scripts/ci/compat_guardian_research.py", "matrix"],
+        [sys.executable, "scripts/ci/compat_guardian_research.py", "matrix"],
         capture=True,
         cwd=src,
     ).stdout
@@ -559,11 +568,19 @@ def install_cron() -> int:
 
 
 def guarded(fn, *args) -> int | str:
-    """一个任务的准备失败（SystemExit）不拖垮整晚：记下原因，接着跑下一个。"""
+    """一个任务失败不拖垮整晚：准备失败（SystemExit）、子命令失败（CalledProcessError）、
+    读不出 JSON 等都记下原因，接着跑下一个，最后照样清理并写 nightly 汇总。"""
     try:
         return fn(*args)
-    except SystemExit as exc:
-        return f"error: {exc}"
+    except (SystemExit, Exception) as exc:  # noqa: BLE001 — 夜跑的边界：任何失败都记录，不中断
+        return f"error: {type(exc).__name__}: {exc}"
+
+
+def nightly_s0(sha: str, today: _dt.date) -> tuple[str, int | str]:
+    """按日期轮换一个 S0 case；读矩阵本身也在 guarded 里，读不出来不影响后面的任务。"""
+    cases = [r["case_id"] for r in research_matrix(sha)]
+    case = cases[today.toordinal() % len(cases)]
+    return case, task_research_s0(sha, case)
 
 
 def nightly() -> int:
@@ -574,9 +591,11 @@ def nightly() -> int:
     # 每天换 seed：hosted 的周扫按 ISO 周号取 seed，这里按日期取，七天覆盖七组派生候选
     seed = int(today.strftime("%Y%m%d"))
     results["guardian-explore"] = guarded(task_guardian_explore, sha, seed, 3, 3 * 3600)
-    cases = [r["case_id"] for r in research_matrix(sha)]
-    case = cases[today.toordinal() % len(cases)]
-    results[f"research-s0:{case}"] = guarded(task_research_s0, sha, case)
+    s0 = guarded(nightly_s0, sha, today)
+    if isinstance(s0, tuple):
+        results[f"research-s0:{s0[0]}"] = s0[1]
+    else:
+        results["research-s0"] = s0
     if today.weekday() == 6:
         results["novice-u2404"] = guarded(task_novice_u2404)
     clean(keep=60)
