@@ -25,9 +25,25 @@
 | SG05 | passed | ced09ecc | svgcoord 变换链（preserveAspectRatio 全语义/累积矩阵含 use 深度语义）+ clip/opacity 事实 |
 | SG06 | passed | 133d2bf7 | chartdata 类型化数据入口 + chartbind 校准/确认产物（经 chartmodel 同一合同） |
 | SG07 | passed(M1) | f505c216 | 脚手架+组合+worker 分发；热=冷字节一致；注释锚定/NaN 间断入口未完成（SG08+） |
-| SG08–SG17 | pending | — | — |
+| SG08 | passed | 834c0053+f74757f5 | 类别轴/bar/errorbar/图例同步；vectors 14 条双侧同判 |
+| SG09 | running | — | — |
+| SG10–SG17 | pending | — | — |
 
 ## Checkpoint 追加
+
+### 2026-11-04 SG08 通过（时间：UTC 03:5x）
+
+- `834c0053`+`f74757f5`：chartmodel（AXIS_KINDS categorical、SERIES_KINDS +bar/errorbar、
+  样式键 +facecolor/edgecolor/bar_width/label、series.yerr 字段、dataset 允许非空字符串列、
+  log 轴正值范围约束）；chartdata（text_columns 保留 + issues 带 column 字段，文本列的
+  not_numeric 不阻塞确认）；chartbind（类别轴校准 [−0.5, n−0.5]、yerr 列、数据摘要覆盖合并列）；
+  svgchart（bar/errorbar 渲染、类别刻度、位置=序号且 x 文本值必须与 categories 逐位一致）；
+  svgcompose（按模型角色区分数据节点/图例手柄：手柄 retint 不替换；未知角色报
+  compose_node_role_unknown）；前端镜像全量同步 + vectors 14 条双侧同判 + pnpm build 绿。
+- 教训（本轮反复踩）：对已 ruff format 的文件跑 heredoc 字符串替换会静默失配——**改动已格式化
+  文件必须用 Edit 工具或先 Read 再改**；每次变异/补丁后核对「补丁真的打上了」（L-030）。
+- web node_modules 曾被一次中止的 pnpm 清理弄残（31 项）；`rm -rf node_modules && pnpm install` 重建。
+- 下一步：SG09（色阶/heatmap/cmap 绑定 + 复杂图能力对等盘点）→ SG10 前端集成。
 
 ### 2026-11-04 SG05–SG07 通过（时间：UTC 02:5x）
 
