@@ -695,6 +695,45 @@ def cases() -> list[dict]:
         }
     )
 
+    # 13e''. 原图字体（ADR 0164）：事实由 spec 的 `source_font_missing` / `source_font_in_use` 带进来——
+    #        ① 用不了 → source-font-unavailable（按原因选文案 key，名字保留）；② 能用（in_use）→ 不报它，
+    #        且批准字体的覆盖表不适用：一个批准集合里没有的字符不报 glyph-missing；③ 隐藏的文字照常被
+    #        跳过；④ 未知原因 → 落到 unreadable 的文案（不抛）。
+    out.append(
+        {
+            "name": "canvas-text-source-font",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[
+                    _text(
+                        "t-gone",
+                        9.0,
+                        "Hello",
+                        source_font_missing={"family": "Arial", "reason": "not_found"},
+                    ),
+                    _text(
+                        "t-restricted",
+                        9.0,
+                        "Hello",
+                        source_font_missing={
+                            "family": "Vendor Sans",
+                            "reason": "embedding_restricted",
+                        },
+                    ),
+                    _text(
+                        "t-odd",
+                        9.0,
+                        "Hello",
+                        source_font_missing={"family": "X", "reason": "something_new"},
+                    ),
+                    _text("t-in-use", 9.0, "\U0001d538", source_font_in_use=True),
+                    _text("t-approved", 9.0, "\U0001d538"),
+                ],
+            ),
+        }
+    )
+
     # 13f. 字形覆盖（Prompt 14）。四条各盯一个具体的错法：
     #      ① 画布文字里有谁都画不出的字符 → glyph-missing（导出上是方框）；
     #      ② 画布文字里的 `⁵`：U10 之前它退到 PyMuPDF 自己挑的回退脸 → glyph-substituted；批准字体集合

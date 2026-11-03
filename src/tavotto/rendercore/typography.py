@@ -99,15 +99,27 @@ class FaceProvider(Protocol):
     def cjk_face(self) -> Face | None: ...
 
 
-def faces_for(provider: FaceProvider, family: object, bold: bool, italic: bool) -> FaceSet:
+def faces_for(
+    provider: FaceProvider,
+    family: object,
+    bold: bool,
+    italic: bool,
+    *,
+    user_primary: Face | None = None,
+    user_cjk: Face | None = None,
+) -> FaceSet:
+    """族 / 粗 / 斜 → 一套脸。`user_primary` / `user_cjk`（ADR 0164）是已经核过的用户本机脸：
+    给了就**替换**正文脸 / CJK 脸；`family` 仍决定**回退族**——行内样式要的粗 / 斜变体不是原图那张脸
+    （用户字体是单个文件，没有可换的兄弟；不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。"""
     fam = latin_family(family)
-    primary = provider.face_for(fam, bool(bold), bool(italic))
+    approved = provider.face_for(fam, bool(bold), bool(italic))
+    primary = user_primary if user_primary is not None else approved
 
     def variant(run_italic: bool, run_bold: bool) -> Face:
         b, i = bool(bold) or run_bold, bool(italic) or run_italic
         return primary if (b, i) == (bool(bold), bool(italic)) else provider.face_for(fam, b, i)
 
-    return FaceSet(primary, provider.cjk_face(), variant)
+    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(), variant)
 
 
 # ---------------------------------------------------------------------------

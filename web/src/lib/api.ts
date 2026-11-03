@@ -5,7 +5,12 @@ import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
 import type { Remedy } from '@/lib/fixRemedy'
-import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
+import type {
+  FigureDocument,
+  FigureSnapshot,
+  ProjectDocument,
+  SourceFont,
+} from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -1902,6 +1907,8 @@ export type ExportObject =
       align: string
       /** 三个通用族之一；缺席 = 继承默认（衬线），后端缺省与它一致 */
       font_family?: 'serif' | 'sans-serif' | 'monospace'
+      /** 原图字体的身份（ADR 0164）；缺席 = 用 font_family 的批准族 */
+      source_font?: SourceFont
       /** 科学文本解释；缺席 = auto，后端缺省与它一致 */
       interpretation?: 'auto' | 'scientific'
       /** 文字写法；缺席 = 旧标记，后端缺省与它一致（ADR 0152） */
@@ -2238,6 +2245,26 @@ export interface MathBox {
 /** 一次最多排几条（与后端 `MATHTEXT_MAX_ITEMS` 同值） */
 export const MATHTEXT_MAX_ITEMS = 64
 
+/* ----------------------- 原图字体在本机的状态（ADR 0164） ----------------------- */
+
+/** `state`：`ok` 或 `lib/sourceFont.SOURCE_FONT_REASONS` 里的一个（后端 `sourcefont.REASONS`） */
+export const fetchSourceFontStatus = (fonts: { sha256: string; face: number }[]) =>
+  jsonFetch<{ ok: boolean; results: { sha256: string; face: number; state: string }[] }>(
+    '/api/source-fonts/status',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fonts }),
+    },
+  )
+
+/** 本机上这张脸的字节（单脸 sfnt）；只给预览加载用，不供禁止嵌入的脸。失败抛错（调用方退回批准族）。 */
+export const fetchSourceFontBytes = async (sha256: string, face: number): Promise<ArrayBuffer> => {
+  const res = await fetch(apiUrl(`/api/source-fonts/${sha256}/${face}`), withProject())
+  if (!res.ok) throw new Error(`source font HTTP ${res.status}`)
+  return res.arrayBuffer()
+}
+
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
     method: 'POST',
@@ -2507,6 +2534,15 @@ export interface ColormapFacts {
   discrete: boolean
 }
 
+/** manifest 里一张脸的文件级身份（`engine/manifest._face_source`） */
+export interface ManifestFaceSource {
+  family: string
+  sha256: string
+  face: number
+  bold: boolean
+  italic: boolean
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2575,6 +2611,14 @@ export interface ManifestElement {
    * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。
    */
   cjk_family?: string
+  /**
+   * 正文真正由哪张**文件级**的脸画出来（ADR 0164）：名字 + 文件 sha256 + 面序号 + 粗斜，**没有路径**。
+   * 产生者只有 `engine/manifest.face_sources` 一处；「复制为画布文字标注」据此写 `TextObject.sourceFont`
+   * （换算只在 `lib/sourceFont.sourceFontFromElement`）。解析不出 / 读不了文件时缺席。
+   */
+  face_src?: ManifestFaceSource
+  /** 汉字由回退链上哪张文件级脸画的（同上）；正文脸自己画得出汉字 / 没有汉字时缺席。 */
+  cjk_src?: ManifestFaceSource
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。

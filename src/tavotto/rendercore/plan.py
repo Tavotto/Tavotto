@@ -56,6 +56,7 @@ from .ir import (
     unsupported_for,
     validate,
 )
+from .sourcefont import SourceFont, UserFontUnavailable, parse_source_font
 from .sources import FrozenSource, SourceError, SourceResolver
 from .typography import FaceProvider, FaceSet, faces_for
 
@@ -323,6 +324,48 @@ def _shape_node(o: dict, page_h: float) -> Node:
     )
 
 
+def _user_faces(o: dict, provider: FaceProvider, problems: list[dict]):
+    """对象带 `source_font`（ADR 0164）时，把它点名的本机脸请出来：(正文脸, CJK 脸)，各自可为 None。
+
+    **任何一环不过都不是错误**：保留文档里的名字、这一张脸回退成 `font_family` 的批准脸（CJK 回批准的
+    Noto），并往 `problems` 记一条 `source_font_unavailable`（reason 是 `sourcefont.REASONS` 的闭集）。
+    绝不改写文档、绝不换一张「名字像」的脸。provider 不认识用户脸（测试替身 / 没有本机字体能力的
+    宿主）时等同 `not_found`。"""
+    raw = o.get("source_font")
+    sf, bad = parse_source_font(raw)
+    oid = str(o.get("id", ""))
+    if bad is not None:
+        problems.append(_source_font_problem(oid, "", bad))
+        return None, None
+    if sf is None:
+        return None, None
+    return _admit(provider, sf, sf.primary, oid, problems), (
+        _admit(provider, sf, sf.cjk, oid, problems) if sf.cjk is not None else None
+    )
+
+
+def _admit(provider, sf: SourceFont, ref, oid: str, problems: list[dict]):
+    loader = getattr(provider, "user_face", None)
+    try:
+        if loader is None:
+            raise UserFontUnavailable("not_found")
+        return loader(ref)
+    except UserFontUnavailable as exc:
+        problems.append(_source_font_problem(oid, ref.family, exc.reason))
+        return None
+
+
+def _source_font_problem(oid: str, family: str, reason: str) -> dict:
+    shown = f"{family} ({reason})" if family else reason
+    return {
+        "code": "source_font_unavailable",
+        "object_id": oid,
+        "reason": reason,
+        "font": family,
+        "chars": [shown],
+    }
+
+
 def compile_page(
     page_w_mm: float,
     page_h_mm: float,
@@ -355,8 +398,14 @@ def compile_page(
             node = _panel_node(o, page_h, sources, resources, frozen)
         elif kind == "text":
             try:
+                user_primary, user_cjk = _user_faces(o, faces, problems)
                 fs = faces_for(
-                    faces, o.get("font_family"), o.get("bold", False), o.get("italic", False)
+                    faces,
+                    o.get("font_family"),
+                    o.get("bold", False),
+                    o.get("italic", False),
+                    user_primary=user_primary,
+                    user_cjk=user_cjk,
                 )
             except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
                 raise PlanError(

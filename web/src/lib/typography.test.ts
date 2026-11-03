@@ -26,6 +26,7 @@ import {
   styleIsItalic,
   supportsTypography,
   weightIsBold,
+  resetCanvasText,
   writeCanvasText,
   type TypographyKind,
 } from './typography'
@@ -210,5 +211,71 @@ describe('weightIsBold / styleIsItalic：非规范字重 / 字形的归一（与
   it('字形不是 normal 就算斜体（oblique 算）', () => {
     for (const v of ['italic', 'oblique', 'Oblique']) expect(styleIsItalic(v), v).toBe(true)
     for (const v of ['normal', ' Normal ', '', undefined, null, true]) expect(styleIsItalic(v), String(v)).toBe(false)
+  })
+})
+
+describe('原图字体 sourceFont（ADR 0164）与写入层', () => {
+  const sf = { family: 'DejaVu Sans', sha256: '0f'.repeat(32), face: 0 }
+
+  it('选它自己的名字 = 不改；换了族 / 粗细 / 斜体 = 换脸，身份清掉', () => {
+    const keep = text({ sourceFont: sf, fontFamily: 'sans-serif' })
+    writeCanvasText(keep, 'fontFamily', 'DejaVu Sans')
+    expect(keep.sourceFont).toEqual(sf)
+    expect(keep.fontFamily).toBe('sans-serif') // 回退族不被动
+
+    const fam = text({ sourceFont: sf })
+    writeCanvasText(fam, 'fontFamily', 'monospace')
+    expect(fam.sourceFont).toBeUndefined()
+    expect(fam.fontFamily).toBe('monospace')
+
+    const bold = text({ sourceFont: sf })
+    writeCanvasText(bold, 'weight', 'bold')
+    expect(bold.sourceFont).toBeUndefined()
+
+    const ital = text({ sourceFont: sf })
+    writeCanvasText(ital, 'style', 'italic')
+    expect(ital.sourceFont).toBeUndefined()
+  })
+
+  it('「恢复」与写入同一套失效规则：恢复斜体 = 斜体没了，斜体的原图字体跟着作废（Codex #1671 P2）', () => {
+    const italicFace = { ...sf, italic: true }
+    const o = text({ sourceFont: italicFace, italic: true })
+    resetCanvasText(o, 'style')
+    expect('italic' in o).toBe(false)
+    expect(o.sourceFont).toBeUndefined()
+    // 粗体的原图字体：粗细没有「恢复」，但写入层改回正常同样清（同一个 helper）
+    const b = text({ sourceFont: { ...sf, bold: true }, bold: true })
+    writeCanvasText(b, 'weight', 'normal')
+    expect(b.sourceFont).toBeUndefined()
+    // 恢复族 = 回默认族
+    const f = text({ sourceFont: sf, fontFamily: 'sans-serif' })
+    resetCanvasText(f, 'fontFamily')
+    expect(f.sourceFont).toBeUndefined()
+    expect('fontFamily' in f).toBe(false)
+    // 斜体的对象本来就没设过 italic（false / 缺席）时，恢复斜体不是换脸：原图字体留着
+    const plain = text({ sourceFont: sf })
+    resetCanvasText(plain, 'style')
+    expect(plain.sourceFont).toEqual(sf)
+    // 与字体无关的恢复不碰身份
+    const lh = text({ sourceFont: italicFace, italic: true, lineHeight: 2, rotationDeg: 30 })
+    resetCanvasText(lh, 'lineHeight')
+    resetCanvasText(lh, 'rotationDeg')
+    expect(lh.sourceFont).toEqual(italicFace)
+    expect('lineHeight' in lh || 'rotationDeg' in lh).toBe(false)
+  })
+
+  it('写成它现在已有的粗细 / 斜体不算换脸', () => {
+    const o = text({ sourceFont: sf, bold: false })
+    writeCanvasText(o, 'weight', 'normal')
+    writeCanvasText(o, 'style', 'normal')
+    expect(o.sourceFont).toEqual(sf)
+  })
+
+  it('改字号 / 颜色 / 对齐不动身份', () => {
+    const o = text({ sourceFont: sf })
+    writeCanvasText(o, 'sizePt', 12)
+    writeCanvasText(o, 'color', '#ff0000')
+    writeCanvasText(o, 'halign', 'center')
+    expect(o.sourceFont).toEqual(sf)
   })
 })

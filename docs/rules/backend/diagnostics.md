@@ -468,3 +468,6 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 - **随信附带的诊断包不另开关联来信，回信走那封信**：`diagsend.start(reply=False)`（`POST /api/diagnostics/send/<id>/send` 的 `reply: false`，缺省 true；联系作者窗口那条路径传 false）不带 `want_reply`、不登记、不出现 `reply_inbox`，并计入 `client_request_id` 复用条件（`SendSession.reply_allowed`）。
 - `contactinbox`：记录多 `kind` / `report_id`（`kind=report` 必填 `TVD-…`）；`kind=report` 且无回信 30 天（`REPORT_NO_REPLY_DAYS`）后删，有回信同来信 365 天；没有记录仍一次网络都不发。
 - 看护：`tests/test_diag_report_reply.py`（带 / 不带、旧服务端回退、坏形状、done / 重放 / 对账三路登记、开关关闭、令牌不外泄；模拟端 `diag_fakes.accepts_want_reply`）、`tests/test_contact_inbox_report.py`（kind 迁移、30 天 vs 365 天、字段）。
+- **原图字体的本机路径不进诊断包**（ADR 0164）：`rendercore/userfonts` 的定位索引 `data_dir()/font-locator.json` 只存本机路径，诊断包不收它；
+  manifest / problems / 导出警告 / `/api/source-fonts/*` 响应里只有字体身份（名字 + sha256 + 面序号 + 粗斜），没有路径；`UserFontUnavailable.detail`
+  （含路径）不写日志。新增读这个文件或把 `detail` 写进报告的代码，先改这条。
