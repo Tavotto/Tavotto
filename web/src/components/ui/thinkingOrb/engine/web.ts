@@ -1,5 +1,5 @@
 // Vendored from thinking-orbs (MIT, (c) Jakub Antalik) @ de85557, src/engine/web.ts — geometry only.
-// See THIRD_PARTY_NOTICES.md and ADR 0164. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
+// See THIRD_PARTY_NOTICES.md and ADR 0165. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
 
 // Web: a constellation wires itself — the "connecting" state. Nodes drift
 // on the sphere under slow value noise; any pair closer than `thr` grows an

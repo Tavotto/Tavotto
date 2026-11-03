@@ -290,7 +290,7 @@ export function Turn({
           换字原位换（第二十三节）：`data-ai-status` 跟着字走——用例与诊断认它。
           执行器与总耗时是这一行的前后缀，不进 SwapText */}
       <p data-ai-turn-meta className="flex min-w-0 items-baseline gap-1 text-sm text-ink-3">
-        {/* 发出后到第一个字之间：状态行前面一颗 16px 的 connecting 小球（ADR 0164）；一有过程输出，小球交给过程行 */}
+        {/* 发出后到第一个字之间：状态行前面一颗 16px 的 connecting 小球（ADR 0165）；一有过程输出，小球交给过程行 */}
         {running && groups.length === 0 && (
           <RowIconSlot className="mr-1 self-start" data-ai-awaiting-first>
             <ThinkingOrb form="connecting" />
@@ -500,7 +500,7 @@ function ProcessGroup({ items, live, defaultOpen }: { items: Step[]; live: boole
     if (actions) parts.push(ai('panel.processSteps', { count: actions }))
     summary = parts.join(' · ')
   }
-  // 组首是思考小球（ADR 0164）：进行中按最新一步换形态；结束后 ink-3、半速，仍在动——纯思考是呼吸的环，动过手是 listening
+  // 组首是思考小球（ADR 0165）：进行中按最新一步换形态；结束后 ink-3、半速，仍在动——纯思考是呼吸的环，动过手是 listening
   const lead = live ? (
     <ThinkingOrb form={liveForm(items.at(-1)!)} />
   ) : (

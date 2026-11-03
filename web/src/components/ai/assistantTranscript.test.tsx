@@ -926,7 +926,7 @@ describe('任务历史是弹层（§6.6）', () => {
   })
 })
 
-describe('思考小球（ADR 0164）', () => {
+describe('思考小球（ADR 0165）', () => {
   const orbOf = (sel: string) => q(sel)!.querySelector<HTMLCanvasElement>('canvas[data-thinking-orb]')!
   const running = (entries: AiSession['entries']) => session({ status: 'running', finishedAt: undefined, entries })
 

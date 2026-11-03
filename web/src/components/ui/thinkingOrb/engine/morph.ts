@@ -1,5 +1,5 @@
 // Vendored from thinking-orbs (MIT, (c) Jakub Antalik) @ de85557, src/engine/morph.ts — geometry only.
-// See THIRD_PARTY_NOTICES.md and ADR 0164. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
+// See THIRD_PARTY_NOTICES.md and ADR 0165. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
 
 // Morph: a dotted outline cycling circle → triangle → square → circle —
 // the "shaping" state. Each shape is a continuous closed path

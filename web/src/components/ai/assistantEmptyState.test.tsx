@@ -115,7 +115,7 @@ describe('还没发过任务时的信息布局', () => {
     expect(empty!.contains(q('[data-ai-input]'))).toBe(false)
   })
 
-  it('空态的图形是 64px 的 searching 思考小球（ADR 0164），不是线稿', async () => {
+  it('空态的图形是 64px 的 searching 思考小球（ADR 0165），不是线稿', async () => {
     await mount({ withPanel: true })
     const state = q('[data-ai-empty] [data-empty-state]')!
     const orb = state.querySelector<HTMLCanvasElement>('canvas[data-thinking-orb]')

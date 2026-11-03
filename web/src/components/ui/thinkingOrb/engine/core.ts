@@ -1,5 +1,5 @@
 // Vendored from thinking-orbs (MIT, (c) Jakub Antalik) @ de85557, src/engine/core.ts — geometry only
-// (upstream canvas painters paint / paintLines / paintFrame removed). See THIRD_PARTY_NOTICES.md and ADR 0164. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
+// (upstream canvas painters paint / paintLines / paintFrame removed). See THIRD_PARTY_NOTICES.md and ADR 0165. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
 
 // Shared primitives for the dotted 3D thought-orbs. Ported from inkform
 // (PlotterLab's HalftoneSphere lineage): honestly 3D — rotated,

@@ -1,5 +1,5 @@
 // Vendored from thinking-orbs (MIT, (c) Jakub Antalik) @ de85557, src/engine/lattice.ts — geometry only.
-// See THIRD_PARTY_NOTICES.md and ADR 0164. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
+// See THIRD_PARTY_NOTICES.md and ADR 0165. Keep changes here minimal; Tavotto-specific painting lives in ../paint.ts.
 
 // The sphere-lattice modes: globe (searching), rubik (solving) and
 // wave (listening). All draw a lat/long dot field with mode-specific

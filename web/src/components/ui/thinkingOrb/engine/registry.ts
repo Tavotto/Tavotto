@@ -1,5 +1,5 @@
 // Vendored from thinking-orbs (MIT, (c) Jakub Antalik) @ de85557, src/engine/registry.ts — geometry only.
-// See THIRD_PARTY_NOTICES.md and ADR 0164. The upstream canvas painters (MODE_DRAWS) are dropped:
+// See THIRD_PARTY_NOTICES.md and ADR 0165. The upstream canvas painters (MODE_DRAWS) are dropped:
 // Tavotto paints with its own ink tokens in ../paint.ts.
 
 import type { ModeFrame } from './types'

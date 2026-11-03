@@ -1,4 +1,4 @@
-# ADR 0164：改图助手的思考小球（点阵小球代替转圈 / 线稿图标）
+# ADR 0165：改图助手的思考小球（点阵小球代替转圈 / 线稿图标）
 
 日期：2026-11-03 · 状态：**Accepted**（用户 2026-11-03 在演示页上逐项拍板，「按推荐的来，开 PR」）
 相关：`docs/rules/frontend/ui-visual-discipline.md`（加载、图标 ②④）；`docs/ux/DESIGN_CONSTITUTION.md` 第七节「加载」；

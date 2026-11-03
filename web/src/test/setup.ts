@@ -68,11 +68,11 @@ afterEach(() => {
   __resetOutboxForTests()
 })
 
-// jsdom 没装 canvas 包：`getContext` 本来就返回 null，只是每次都往控制台打一行「Not implemented」。思考小球（ADR 0164）
+// jsdom 没装 canvas 包：`getContext` 本来就返回 null，只是每次都往控制台打一行「Not implemented」。思考小球（ADR 0165）
 // 让助手面板的每个用例都会调到它——换成同语义的静默版本（返回 null）；要量画布的用例照旧自己换上假 context
 HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
 
-// 思考小球（ADR 0164）共用一个模块级循环（rAF + 兜底定时器）与一个 IntersectionObserver：不许活过用例（L-087）
+// 思考小球（ADR 0165）共用一个模块级循环（rAF + 兜底定时器）与一个 IntersectionObserver：不许活过用例（L-087）
 afterEach(() => {
   __stopThinkingOrbsForTests()
 })

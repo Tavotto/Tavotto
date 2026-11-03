@@ -10,7 +10,7 @@ export type OrbScale = 'row' | 'hero'
 const ORB_PX: Record<OrbScale, OrbSize> = { row: 16, hero: 64 }
 
 /**
- * 思考小球（ADR 0164；改自 thinking-orbs，MIT）：AI「正在想 / 正在做 / 想过了」的点阵小球。
+ * 思考小球（ADR 0165；改自 thinking-orbs，MIT）：AI「正在想 / 正在做 / 想过了」的点阵小球。
  *
  * - 只出现在改图助手（`components/ai/`）里：过程行的 16px 图标槽、发出后等第一个字的那一行、
  *   还没开始对话的空白面板（64px）。文件读写、导出、安装这类「加载」照旧是 `Spinner`。

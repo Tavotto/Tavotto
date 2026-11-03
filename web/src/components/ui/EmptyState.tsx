@@ -22,7 +22,7 @@ export function EmptyState({
   ...rest
 }: {
   art: SketchName
-  /** 代替线稿画的图形。唯一的用处是改图助手的空白面板：64px 思考小球（ADR 0164，`ui-visual-discipline` ④） */
+  /** 代替线稿画的图形。唯一的用处是改图助手的空白面板：64px 思考小球（ADR 0165，`ui-visual-discipline` ④） */
   figure?: ReactNode
   title: string
   hint?: string

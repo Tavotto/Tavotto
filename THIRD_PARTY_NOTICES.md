@@ -50,7 +50,7 @@ SOFTWARE.
 
 `web/src/components/ui/thinkingOrb/engine/` 的点阵几何（各形态的帧计算，不含上游的 canvas 画笔与 React 组件）取自
 [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) 提交 de85557（0.3.2）的 `src/engine/`；
-`thinkingOrb/presets.ts` 里 64 / 20 两档的调参数值同出于该仓库 `src/presets.ts`。Tavotto 的画法与尺寸派生见 ADR 0164。
+`thinkingOrb/presets.ts` 里 64 / 20 两档的调参数值同出于该仓库 `src/presets.ts`。Tavotto 的画法与尺寸派生见 ADR 0165。
 
 ```
 MIT License
