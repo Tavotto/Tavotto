@@ -19,6 +19,7 @@ export function MmField({
   historyLabel,
   min,
   title,
+  dataProp,
 }: {
   label: string
   value: number | undefined
@@ -30,6 +31,8 @@ export function MmField({
   historyLabel: UiMessage
   min?: number
   title?: string
+  /** 稳定钩子（`data-inspector-prop`），给 e2e 定位用 */
+  dataProp?: string
 }) {
   return (
     <NumberField
@@ -43,6 +46,7 @@ export function MmField({
       min={min}
       disabled={disabled}
       title={title}
+      dataProp={dataProp}
       onChange={onChange}
       onScrubStart={() => useDocumentStore.getState().beginTxn(historyLabel)}
       onScrubEnd={() => useDocumentStore.getState().endTxn()}
