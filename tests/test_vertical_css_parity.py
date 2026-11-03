@@ -121,14 +121,14 @@ def test_columns_fold_the_same_in_the_browser_and_in_rendercore(tmp_path):
         pytest.skip(f"not_run：{reason}")
     pytest.importorskip("uharfbuzz")
     from tavotto.rendercore.hbshaper import HbFaceProvider
-    from tavotto.rendercore.typography import faces_for, layout_text
+    from tavotto.rendercore.typography import faces_for
 
     browser = _browser_columns(tmp_path)["cols"]
     provider = HbFaceProvider(fonts.FontRegistry.discover())
     assert vertical  # 被测对象
     for (text, size, lh, h), cols in zip(CASES, browser):
         faces = faces_for(provider, "serif", False, False)
-        block = layout_text(
+        block = vertical.layout_text(
             {
                 "text": text,
                 "x_mm": 0,
@@ -160,7 +160,7 @@ def test_formulas_lie_sideways_in_the_column_the_same_in_the_browser_and_in_rend
         pytest.skip(f"not_run：{reason}")
     pytest.importorskip("uharfbuzz")
     from tavotto.rendercore.hbshaper import HbFaceProvider
-    from tavotto.rendercore.typography import faces_for, layout_text, math_key
+    from tavotto.rendercore.typography import faces_for, math_key
 
     browser = _browser_columns(tmp_path)["formulas"]
     provider = HbFaceProvider(fonts.FontRegistry.discover())
@@ -185,7 +185,7 @@ def test_formulas_lie_sideways_in_the_column_the_same_in_the_browser_and_in_rend
                     ],
                 }
         faces = faces_for(provider, "serif", False, False)
-        block = layout_text(
+        block = vertical.layout_text(
             {
                 "text": text,
                 "text_format": "latex",

@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..engine import exportreq
-from . import geometry, typography
+from . import geometry, typography, vertical
 from .ir import (
     IDENTITY,
     RGB,
@@ -317,7 +317,13 @@ def _text_node(
     math: dict | None = None,
 ) -> Node | None:
     bx, by, bw, bh = _box_pt(t)  # 先校验框（缺字段 / 非有限数在这里就拒），再排版
-    block = typography.layout_text(t, faces, math)
+    # 排向分派只在这里（ADR 0163）：typography 只排横排、不依赖 vertical，避免 import 环
+    lay = (
+        vertical.layout_text
+        if t.get("writing_mode") == typography.WRITING_VERTICAL
+        else typography.layout_text
+    )
+    block = lay(t, faces, math)
     if block is None:
         return None
     oid = str(t.get("id", ""))

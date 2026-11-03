@@ -516,30 +516,38 @@ def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> Shap
     return ShapedPiece(face, "primary", text, tuple(glyphs), size, 0.0, text, invisible=True)
 
 
-def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
-    """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。
-    空白文字回 None（什么都不画）。
-
-    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
-    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
-    text = t.get("text", "")
-    if not text.strip():
-        return None
+def text_params(
+    t: dict, math: dict | None = None
+) -> tuple[MathSlots | None, float, float, float, str, str | None]:
+    """横排 / 竖排共用的字段解析（唯一一份）：`(slots, size, line_h, pad, interp, fmt)`。
+    竖排（`vertical.layout_text`）与横排（`layout_text`）都从这里取，二者对字段的理解不会分叉。"""
     size = float(t.get("size_pt", 9))
     line_h = float(t.get("line_height") or 1.25)
     pad = mm2pt(float(t.get("padding_mm") or 0))
     interp = str(t.get("interpretation") or richtext.DEFAULT_INTERPRETATION)
     fmt = t.get("text_format") if t.get("text_format") in richtext.TEXT_FORMATS else None
+    fam = latin_family(t.get("font_family"))
+    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
+    return slots, size, line_h, pad, interp, fmt
+
+
+def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
+    """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。**只排横排**；
+    竖排（ADR 0163）走 `vertical.layout_text`，由调用方（`plan`）按 `writing_mode` 分派——本模块不依赖
+    `vertical`（它依赖本模块），避免 import 环。空白文字回 None（什么都不画）。
+
+    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
+    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
+    if t.get("writing_mode") == WRITING_VERTICAL:
+        # 宁可当场报错，也不把竖排对象悄悄按横排排出来（错图比报错更糟）
+        raise ValueError("竖排文字请走 vertical.layout_text（plan 按 writing_mode 分派）")
+    text = t.get("text", "")
+    if not text.strip():
+        return None
+    slots, size, line_h, pad, interp, fmt = text_params(t, math)
     x0, y0 = mm2pt(t["x_mm"]) + pad, mm2pt(t["y_mm"]) + pad
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")
-
-    fam = latin_family(t.get("font_family"))
-    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
-    if t.get("writing_mode") == WRITING_VERTICAL:
-        from . import vertical  # 竖排（ADR 0163）：同一套折行算法，换一把沿列方向的尺
-
-        return vertical.layout(t, faces, slots, size, line_h, pad, interp, fmt)
     units_lines = break_lines(text, faces, size, box_w, interp, fmt, slots)
     asc, desc = faces.primary.ascender, faces.primary.descender
     baseline0 = y0 + size * ((line_h - (asc - desc)) / 2 + asc)

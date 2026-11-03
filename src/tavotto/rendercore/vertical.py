@@ -44,6 +44,7 @@ from .typography import (
     break_lines,
     coverage,
     shape_segment,
+    text_params,
     text_plan,
 )
 
@@ -158,6 +159,15 @@ def _side_len(text: str, styled: FaceSet, size: float) -> float:
     return sum(p.width for p in shape_segment(text, styled, size))
 
 
+def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
+    """竖排入口（ADR 0163），与 `typography.layout_text`（只排横排）对称：字段解析共用
+    `typography.text_params`，由 `plan` 按 `writing_mode` 二选一。空白文字回 None。"""
+    if not t.get("text", "").strip():
+        return None
+    slots, size, line_h, pad, interp, fmt = text_params(t, math)
+    return layout(t, faces, slots, size, line_h, pad, interp, fmt)
+
+
 def layout(
     t: dict,
     faces: FaceSet,
@@ -168,7 +178,7 @@ def layout(
     interp: str,
     fmt: str | None,
 ) -> TextBlock | None:
-    """竖排版面。参数是 `typography.layout_text` 已经解析好的那一套（横排 / 竖排共用同一份字段解析）。"""
+    """竖排版面。参数是 `typography.text_params` 解析好的那一套（横排 / 竖排共用同一份字段解析）。"""
     text = t.get("text", "")
     bx, by = mm2pt(t["x_mm"]), mm2pt(t["y_mm"])
     bw, bh = mm2pt(t["w_mm"]), mm2pt(t["h_mm"])

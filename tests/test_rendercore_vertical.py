@@ -75,7 +75,7 @@ def test_the_orientation_table_matches_the_css_mixed_rule():
 def test_columns_fold_by_box_height_and_run_right_to_left():
     faces = _fake_faces()
     # 字号 10 pt：一个直立字 10 pt 长；框高 30 mm = 85.04 pt、内边距 0 → 每列放 8 个字（80 pt），第 9 个折行
-    block = typography.layout_text(_obj(HAN + HAN + HAN, h_mm=30.0), faces)
+    block = vertical.layout_text(_obj(HAN + HAN + HAN, h_mm=30.0), faces)
     assert block is not None and block.lines == ()
     assert [len(c.logical) for c in block.columns] == [8, 8, 8]
     bx, bw = 10.0 * MM, 40.0 * MM
@@ -90,7 +90,7 @@ def test_columns_fold_by_box_height_and_run_right_to_left():
 
 def test_padding_shrinks_the_column_length_and_insets_the_first_column():
     faces = _fake_faces()
-    block = typography.layout_text(_obj(HAN, h_mm=30.0, padding_mm=10.0), faces)
+    block = vertical.layout_text(_obj(HAN, h_mm=30.0, padding_mm=10.0), faces)
     pad = 10.0 * MM
     length = 30.0 * MM - 2 * pad  # 25.5 pt → 2 个字一列
     assert max(c.length for c in block.columns) <= length + 1e-6
@@ -102,7 +102,7 @@ def test_padding_shrinks_the_column_length_and_insets_the_first_column():
 def test_align_means_top_middle_bottom_inside_the_column(align, frac):
     """`align` 在竖排里解释为列内的 上 / 中 / 下（CSS vertical-rl 的 line-left 就是上边）。"""
     faces = _fake_faces()
-    block = typography.layout_text(_obj(HAN[:3], align=align), faces)
+    block = vertical.layout_text(_obj(HAN[:3], align=align), faces)
     col = block.columns[0]
     length = 30.0 * MM
     assert col.top == pytest.approx(10.0 * MM + (length - col.length) * frac)
@@ -111,7 +111,7 @@ def test_align_means_top_middle_bottom_inside_the_column(align, frac):
 def test_a_blank_line_keeps_its_column_slot():
     """与横排一致：空行占一个行位（这里是一列），后面的列不往前挤。"""
     faces = _fake_faces()
-    block = typography.layout_text(_obj("AB\n\nCD"), faces)
+    block = vertical.layout_text(_obj("AB\n\nCD"), faces)
     pitch = 10.0 * 1.25
     xs = [c.cx for c in block.columns]
     assert len(xs) == 2
@@ -146,7 +146,7 @@ def test_horizontal_layout_has_no_columns_and_is_untouched():
 def test_sideways_runs_are_one_item_and_upright_chars_are_separate_cells():
     """没有 `shape_vertical` 的脸（测试替身 / 将来的别种脸）按 HarfBuzz 合成度量的形状兜底：进退 = 上升 − 下降。"""
     faces = _fake_faces(vertical_metrics=False)
-    block = typography.layout_text(_obj("ab弹c"), faces)
+    block = vertical.layout_text(_obj("ab弹c"), faces)
     kinds = [(i.kind, round(i.pos, 3)) for i in block.columns[0].items]
     assert [k for k, _ in kinds] == ["side", "upright", "side"]
     # 侧躺段长度 = 横排字宽（假脸拉丁 600/1000 em）；直立字 = 竖排进退（假脸：上升 − 下降 = 1.107 em）
