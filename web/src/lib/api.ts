@@ -2357,6 +2357,7 @@ export interface EditableField {
   /**
    * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
    * number_list：一串数（固定刻度位置），value 为 number[]。
+   * gradient：渐变色带的两端颜色，value 为 `{stops: [起端, 止端], direction, screen_start, legend?}`（`overrides.gradient_detect`，ADR 0167）。
    */
   type:
     | 'text'
@@ -2368,6 +2369,7 @@ export interface EditableField {
     | 'rect'
     | 'order'
     | 'number_list'
+    | 'gradient'
   value: unknown
   min?: number
   max?: number
@@ -2543,6 +2545,31 @@ export interface ManifestFaceSource {
   italic: boolean
 }
 
+/** `ManifestElement.text_block`：文字块的位置、尺寸与样式。见该字段的说明。 */
+export interface ManifestTextBlock {
+  /** 文字块中心（figure 分数，y 向下）；转了的文字也是它自己那个矩形的中心 */
+  center: [number, number]
+  /** 块宽（沿阅读方向，图宽分数）与块高（含最后一行下行，图高分数） */
+  w: number
+  h: number
+  /** 块顶到第一行基线（图高分数） */
+  asc: number
+  /** 多行时相邻基线的平均间距（图高分数）；单行缺席 */
+  step?: number
+  text: string
+  /** 文字里有 mathtext（`$…$`）并且 matplotlib 真会当公式排 */
+  math: boolean
+  /** 脚本 pt（换到页面 pt 走 `pagePtLens`） */
+  size: number
+  color: string
+  /** 字重 / 字形原样（名字或数字）；粗不粗、斜不斜的判据在 `weightIsBold` / `styleIsItalic` */
+  weight: string | number
+  style: string
+  /** 度，逆时针为正 */
+  rotation: number
+  ha: 'left' | 'center' | 'right'
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2619,6 +2646,13 @@ export interface ManifestElement {
   face_src?: ManifestFaceSource
   /** 汉字由回退链上哪张文件级脸画的（同上）；正文脸自己画得出汉字 / 没有汉字时缺席。 */
   cjk_src?: ManifestFaceSource
+  /**
+   * 这段文字排出来的**块**与此刻画出来的样子（ADR 0163「图内文字复制为标注」）。产生者只有
+   * `engine/manifest.text_block` 一处；换算成画布文字标注只在 `lib/figureTextCopy.ts`。
+   * 有它 = 这是一段单独的文字（刻度**组**没有；排不出 / wrap / usetex 的文字缺席 = 不可复制）。
+   * 长度都是 figure 分数：`center` 与 `w` 按图宽、`h` / `asc` / `step` 按图高；`rotation` 逆时针为正（matplotlib 语义）。
+   */
+  text_block?: ManifestTextBlock
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
@@ -6975,7 +7009,7 @@ export type PreparationRequirement =
       payload: Record<string, unknown> | null
     }
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
-  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
+  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string; missing?: string[] } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
   /**
    * 沙盒里 glob / listdir / exists / C++ 读取器落空、脚本目录里找得到（#1254）：上一次尝试留下的不阻塞引导，
@@ -7185,6 +7219,8 @@ export interface PreparationReport {
   failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 脚本用 `PdfPages` 写进多页 PDF 的图的账（与 `ProbeResult.pdf_pages` 同一份；导出的「合并为多页 PDF」靠它，#1370）；没有 / 老后端不出现 */
+  pdf_pages?: PdfPagesCapture[]
   /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
   remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
@@ -7229,6 +7265,10 @@ export interface PreparationResultError {
     ignore_token?: string
     /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
     switch?: 'global' | 'project' | 'both' | string
+    /** `tex_*`（TeX 工具链，`texdiag.params_of`）：缺的命令 / 宏包文件名 / LaTeX 报错那一行，有才带 */
+    command?: string
+    file?: string
+    line?: string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

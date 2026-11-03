@@ -515,7 +515,9 @@
     "deleteCount": "删除 {{count}} 个对象",
     "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
     "copy": "复制",
-    "paste": "粘贴"
+    "paste": "粘贴",
+    "copyAsAnnotation": "复制为标注",
+    "pasteAsAnnotation": "粘贴为标注"
   },
   "rail": {
     "assets": "素材",
@@ -804,6 +806,8 @@
     "nothingToRedo": "没有可重做的操作",
     "nothingToUndo": "没有可撤销的操作",
     "nudgeNotMovable": "选中的图内元素不能移动",
+    "elementNotCopyable": "{{name}}还不能复制",
+    "elementNotCopyableGeneric": "这个元素还不能复制",
     "objectCopied": "已复制 {{name}}",
     "objectsCopied": "已复制 {{count}} 个对象",
     "overridesCleared": "已清空这张图的图内修改",
@@ -980,6 +984,9 @@
       "notRegistered": "图没能登记",
       "cancelled": "已停止",
       "envLocked": "设置里固定的 Python 缺组件",
+      "envLockedMissing": "设置里固定的 Python 缺 {{names}}",
+      "texCommand": "没找到 {{command}}。装好 TeX 后重启 Tavotto 再试。",
+      "texPackage": "缺 LaTeX 宏包 {{file}}，装好后再试。",
       "envChoice": "用项目里自带的那套运行？",
       "envChoiceOpen": "要先选用哪一套运行",
       "workdir": "在哪个目录运行？",

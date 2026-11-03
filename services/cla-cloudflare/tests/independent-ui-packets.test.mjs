@@ -19,7 +19,7 @@ function status(id=ID(1),changes={}){
   return {packet:{id,subject:2,valid_until:100},actor,now:100,completed:false,blocked:false,current:false,
     signatures:[],canSign:false,canHold:true,...changes};
 }
-async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],states={[ID(1)]:status()},signingEnabled=true,stored='',urlPacket='',createID=ID(99),failPage=false}={}){
+async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],states={[ID(1)]:status()},signingEnabled=true,signedPdf=undefined,stored='',urlPacket='',createID=ID(99),failPage=false,language='zh-CN',agreementContent='SYNTHETIC AGREEMENT'}={}){
   const elements=new Map([...uiHTML.matchAll(/\bid="([^"]+)"/g)].map(match=>[match[1],new Element(match[1]==='packets'?'select':'div')]));
   const inputs=()=>{
     const walk=node=>[...(node.tagName==='input'?[node]:[]),...(node.children??[]).flatMap(walk)];
@@ -29,12 +29,12 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
     createTextNode:text=>({textContent:text}),querySelectorAll:selector=>selector==='#attestations input'?inputs():[]};
   const location={href:'https://cla.invalid/'+(urlPacket?'?packet='+encodeURIComponent(urlPacket):''),assign(){throw Error('NAVIGATION_FORBIDDEN');}};
   const storage=new Map(stored?[['cla.packet',stored]]:[]),calls=[];
-  const context={document,URL,Blob,location,Option:class {constructor(label,value){this.textContent=label;this.value=value;}},
+  const context={document,URL,Blob,location,navigator:{language},Option:class {constructor(label,value){this.textContent=label;this.value=value;}},
     sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
     history:{replaceState:(_state,_title,url)=>{location.href=new URL(url,location.href).href;}},
     fetch:async(url,options)=>{
       calls.push({url,options});let result;
-      if(url==='/capabilities')result={signingEnabled,oauthEnabled:false};
+      if(url==='/capabilities')result={signingEnabled,oauthEnabled:false,...(signedPdf===undefined?{}:{signedPdf})};
       else if(url==='/session'){result=pages[0];if(result.error)return {ok:false,json:async()=>structuredClone(result)};}
       else if(url.startsWith('/session?cursor=')){
         if(failPage)return {ok:false,json:async()=>({error:'request_unavailable'})};
@@ -43,7 +43,7 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
       }else if(url.startsWith('/status?packet=')){
         const id=decodeURIComponent(url.split('=')[1]);assert.ok(states[id],'unknown status packet');result=states[id];
         if(result.error)return {ok:false,json:async()=>structuredClone(result)};
-      }else if(url.startsWith('/agreement'))result={version:'1.0',digest:'a'.repeat(64),content:'SYNTHETIC AGREEMENT'};
+      }else if(url.startsWith('/agreement'))result={version:'1.0',digest:'a'.repeat(64),content:agreementContent};
       else if(url==='/packets'){
         result={id:createID};states[createID]=status(createID,{packet:{id:createID,subject:2,valid_until:1000},current:true,canSign:true});
         pages[0]={actor,packets:[{id:createID},...pages[0].packets],nextCursor:pages[0].nextCursor};
@@ -219,4 +219,82 @@ test('unverifiable delegated material remains manual with audit download unavail
   const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[{role:'contributor'}],delegated:{recorded:true,current:false,state:'unverifiable',canAudit:false}})}});
   assert.match(b.elements.get('holder-state').textContent,/暂不可验证/);assert.equal(b.elements.get('download-audit').disabled,true);
   assert.equal(b.elements.get('sign').disabled,false);assert.ok(b.calls.every(call=>call.options.method==='GET'));
+});
+
+const tags=node=>(node.children??[]).map(child=>child.tagName);
+const textOf=node=>node.textContent || (node.children??[]).map(textOf).join('');
+test('English is the default outside Chinese browsers and keeps the original attestations',async()=>{
+  const b=await browser({language:'en-GB',states:{[ID(1)]:status(ID(1),{current:true,canSign:true})}});
+  assert.equal(b.elements.get('contributor-state').textContent,'Not signed yet');
+  assert.equal(b.elements.get('sign').textContent,'Sign the agreement');
+  assert.deepEqual(b.inputs().map(input=>input.name),['personal','electronic','read','identity','adult','own_rights','independent']);
+});
+test('switching language relabels without clearing ticks or typed fields',async()=>{
+  const b=await browser({language:'en-GB',states:{[ID(1)]:status(ID(1),{current:true,canSign:true})}});
+  for(const input of b.inputs())input.checked=true;b.elements.get('name').value='SYNTHETIC NAME';
+  b.elements.get('lang').onclick();await b.settle();
+  assert.ok(b.inputs().every(input=>input.checked));assert.equal(b.elements.get('name').value,'SYNTHETIC NAME');
+  assert.equal(b.elements.get('contributor-state').textContent,'尚未签署');
+  assert.equal(b.elements.get('sign').textContent,'由我本人签署（贡献者）');
+  assert.ok(b.calls.every(call=>call.options.method==='GET'));
+});
+test('agreement Markdown becomes structured nodes and only https links are links',async()=>{
+  const md='# Title\n\n**CLA_VERSION: 1.0**\n\n> Quoted note\n\n## Section\n\n| A | B |\n|---|---|\n| x | [safe](https://example.org) |\n\n- one\n- [unsafe](javascript:alert(1))\n\nPlain <b>text</b>.';
+  const b=await browser({agreementContent:md});
+  const doc=b.elements.get('agreement');
+  assert.deepEqual(tags(doc),['h1','p','blockquote','h2','div','ul','p']);
+  const anchors=[];const walk=node=>{if(node.tagName==='a')anchors.push(node);(node.children??[]).forEach(walk);};walk(doc);
+  assert.deepEqual(anchors.map(a=>a.href),['https://example.org']);
+  assert.match(textOf(doc.children[6]),/Plain <b>text<\/b>\./);
+});
+test('the rights holder sees the exact registered name before signing',async()=>{
+  const holder={id:1,login:'synthetic-holder',role:'holder',holderName:'Synthetic Holder'};
+  const b=await browser({pages:[{actor:holder,packets:[{id:ID(1)}],nextCursor:null}],states:{[ID(1)]:status(ID(1),{actor:holder,signatures:[{role:'contributor'}],canSign:true,current:true})}});
+  assert.equal(b.elements.get('holder-hint').hidden,false);assert.match(b.elements.get('holder-hint').textContent,/Synthetic Holder/);
+  assert.equal(b.elements.get('name').value,'');
+});
+test('a contributor never sees the holder name hint',async()=>{
+  const b=await browser();assert.equal(b.elements.get('holder-hint').hidden,true);
+});
+const both=(extra={})=>({states:{[ID(1)]:status(ID(1),{current:true,completed:true,signatures:[{role:'contributor'},{role:'holder'}],...extra})}});
+test('both signatures show the thank-you state; the PDF button is hidden and disabled while signedPdf is absent',async()=>{
+  const b=await browser(both());
+  assert.equal(b.elements.get('thanks').hidden,false);assert.equal(b.elements.get('hero').hidden,true);
+  assert.equal(b.elements.get('personal-signature').hidden,true);
+  assert.equal(b.elements.get('download-pdf').hidden,true);assert.equal(b.elements.get('download-pdf').disabled,true);
+});
+test('with signedPdf true the PDF button is visible and enabled once both have signed',async()=>{
+  const b=await browser({...both(),signedPdf:true});
+  assert.equal(b.elements.get('download-pdf').hidden,false);assert.equal(b.elements.get('download-pdf').disabled,false);
+});
+test('the address hint mentions the PDF copy only when signedPdf is available',async()=>{
+  let b=await browser();assert.doesNotMatch(b.elements.get('t-address-hint').textContent,/PDF/);
+  b=await browser({signedPdf:true});assert.match(b.elements.get('t-address-hint').textContent,/PDF/);
+});
+test('a completed record that is no longer current does not claim the contributor is all set',async()=>{
+  const b=await browser(both({current:false}));
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('hero').hidden,false);
+  assert.equal(b.elements.get('eligibility').textContent,'这条记录已过期，或对应的是旧版本协议。');
+});
+test('a blocked completed record does not show the thank-you state',async()=>{
+  const b=await browser(both({blocked:true}));
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('hero').hidden,false);
+});
+test('the PDF download stays disabled until both parties have signed',async()=>{
+  const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[{role:'contributor'}]})}});
+  assert.equal(b.elements.get('download-pdf').disabled,true);assert.equal(b.elements.get('thanks').hidden,true);
+});
+test('withdrawal is offered only when the server allows a hold and asks first',async()=>{
+  let b=await browser({states:{[ID(1)]:status(ID(1),{canHold:false})}});assert.equal(b.elements.get('withdraw-open').hidden,true);
+  b=await browser();assert.equal(b.elements.get('withdraw-open').hidden,false);assert.equal(b.elements.get('withdraw-panel').hidden,true);
+  b.elements.get('withdraw-open').onclick();assert.equal(b.elements.get('withdraw-panel').hidden,false);
+  b.elements.get('hold-confirm').checked=true;b.elements.get('withdraw-cancel').onclick();
+  assert.equal(b.elements.get('hold-confirm').checked,false);assert.equal(b.elements.get('withdraw-panel').hidden,true);
+});
+test('switching language keeps the rendered agreement (and the reader position) untouched',async()=>{
+  const b=await browser({language:'en-GB',agreementContent:'# Title\n\nBody text.'});
+  const before=b.elements.get('agreement').children;
+  b.elements.get('lang').onclick();await b.settle();
+  assert.equal(b.elements.get('agreement').children,before);
+  assert.equal(b.elements.get('contributor-state').textContent,'尚未签署');
 });

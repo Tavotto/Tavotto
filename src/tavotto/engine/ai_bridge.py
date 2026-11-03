@@ -41,6 +41,7 @@ from . import (
     ai_providers,
     cli_failure,
     config,
+    convertwrite,
     exectrace,
     logsafe,
     managedcli,
@@ -150,6 +151,7 @@ def _finish_session(
     ):  # 被意图取消的由执行入口记 `ok`（两者会竞态）；这里只收"意图到得太晚"的
         ai_history.record_cancel_result(sess["id"], "finished")  # 结果与终态一致，不悬挂
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
+    convertwrite.close(str(sess.get("id") or ""))  # 代写工具的令牌随会话终态失效
     sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
     _trace_settle_session(sess, task_result)
@@ -187,6 +189,7 @@ _CLI_FACT_ATTRS = {
             "target_touched",
             "target_on_disk",
             "target_bytes",
+            "target_tool_ok",
             "first_event_ms",
             "max_gap_ms",
             "idle_end_ms",
@@ -340,13 +343,13 @@ def _run_facts(agent: str, cwd: str, cand, script: str):
 
 
 def _cli_log_facts(sess: dict) -> tuple:
-    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 19 项）。
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 20 项）。
     数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
     没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
     f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
     if f is None:
         dash = _code("", _NO_FACT)
-        return (None,) * 13 + (dash, dash, None, None, None, dash)
+        return (None,) * 13 + (dash, dash, None, None, None, dash, None)
     return (
         f["events"],
         f["commands"],
@@ -367,6 +370,7 @@ def _cli_log_facts(sess: dict) -> tuple:
         f["max_gap_ms"],
         f["idle_end_ms"],
         _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
+        f.get("target_tool_ok"),  # 仅转换会话的 Codex 有；其余 None
     )
 
 
@@ -430,6 +434,7 @@ def _trace_settle_session(sess: dict, task_result: dict | None) -> None:
 
 def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
     """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志（TAF：连同候选目录），不留半成品。"""
+    convertwrite.close(sid)
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
         try:
             leftover.unlink()
@@ -1418,6 +1423,7 @@ def _cmd(
     resume_output_sha256: str = "",
     checks_used: int = 0,
     check_ipc: bool = False,
+    convert_mcp: ai_agents.ConvertMcp | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1461,9 +1467,41 @@ def _cmd(
             effort=effort,
             endpoint_args=list(extra_args),
             endpoint_env=dict(extra_env),
+            convert_mcp=convert_mcp,
         )
     )
     return list(spec.argv), dict(spec.env)
+
+
+def _convert_write_grant(agent: str, sid: str, cand):
+    """转换会话里由 Tavotto 代写目标文件（`convertwrite`）：适配器声明支持（`convert_write_tool`）才开。
+    → (`ConvertMcp` 或 None, 令牌或 "")。令牌只放进子进程环境（调用方），不进 argv、不进日志。"""
+    adapter = ai_agents.get_agent(agent)
+    if adapter is None or not adapter.convert_write_tool or cand is None:
+        return None, ""
+    if not hasattr(cand, "target") or not hasattr(cand, "extras"):
+        return None, ""
+    grant = convertwrite.open_grant(sid, cand.target, cand.extras)
+    mcp = ai_agents.ConvertMcp(
+        command=[
+            *ai_agents.tavotto_launcher(),
+            "fix-mcp",
+            "--url",
+            convertwrite.callback_url(),
+            "--convert-id",
+            sid,
+        ],
+        name=convertwrite.CONVERT_SERVER_NAME,
+        token_env=convertwrite.CONVERT_TOKEN_ENV,
+        tool_timeout_s=120,
+    )
+    return mcp, grant.token
+
+
+def _mark_write_tool(agent: str, cand) -> None:
+    """提示词要不要讲 Tavotto 的代写工具：由适配器声明（`prompt_for` 读 `cand.extras["write_tool"]`）。"""
+    adapter = ai_agents.get_agent(agent)
+    cand.extras["write_tool"] = bool(adapter is not None and adapter.convert_write_tool)
 
 
 def fix_cli_agent() -> str | None:
@@ -1737,6 +1775,7 @@ def run(
             try:
                 ai_convert.ensure_registered()
                 cand = resumed["cand"]
+                _mark_write_tool(agent, cand)
                 convert_prompt = ai_convert.prompt_for(cand) + "\n\n" + resumed["note"]
                 envelope = ai_convert.envelope_for(
                     agent=agent,
@@ -1784,6 +1823,7 @@ def run(
                     "effort": effort,
                     "endpoint_id": endpoint_id,
                 }
+                _mark_write_tool(agent, cand)
                 convert_prompt = ai_convert.prompt_for(cand)
                 envelope = ai_convert.envelope_for(
                     agent=agent,
@@ -1877,6 +1917,12 @@ def run(
             return json.dumps({"prompt": text}) + "\n" if builtin_ipc else text
 
         stdin_text = stdin_for(prompt)
+        # 转换会话：目标文件由 Tavotto 经 MCP 工具代写（Codex，所有平台；`convertwrite.py`）。令牌只进子进程环境
+        convert_mcp, convert_token = (
+            _convert_write_grant(agent, sid, cand) if convert is not None else (None, "")
+        )
+        if convert_mcp is not None:
+            cmd_kw["convert_mcp"] = convert_mcp
         cmd, extra_env = _cmd(
             agent, prompt, agent_cwd, model=model, effort=effort, endpoint=endpoint, **cmd_kw
         )
@@ -1890,6 +1936,8 @@ def run(
         )
         # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
         env = _spawn_env(cmd[0], extra_env)
+        if convert_token:
+            env[convertwrite.CONVERT_TOKEN_ENV] = convert_token
         # **先把幂等记录写进库、再启动进程**：写库失败（SQLite 被锁 / 满 / 损坏）就根本不 spawn，
         # 调用方拿到的是「明确没执行」。反过来先 spawn 再写库，写库一抛，CLI 已经在改脚本、前端却当它
         # 被拒绝而换新 id 重试——同一条修改执行两次（Codex #1098）。
@@ -2138,6 +2186,10 @@ def run(
             if run_facts is not None:
                 try:
                     snapshot = run_facts.snapshot(_is_relay(endpoint))
+                    if (
+                        convert_mcp is not None
+                    ):  # Tavotto 代写目标的工具是否成功写过（权威事实在 `convertwrite`，不看事件）
+                        snapshot["target_tool_ok"] = convertwrite.ok(sid)
                     sess.setdefault("cli_runs", []).append(snapshot)
                     if cand is not None and hasattr(cand, "extras"):
                         # 写入被拒的失败码要读它（`ai_convert.write_denied`）：提交前检查在进程结束之后才跑
@@ -2184,7 +2236,10 @@ def run(
             sess["proc"] = _popen(
                 cmd2,
                 agent_cwd,
-                _spawn_env(cmd2[0], extra2),
+                {
+                    **_spawn_env(cmd2[0], extra2),
+                    **({convertwrite.CONVERT_TOKEN_ENV: convert_token} if convert_token else {}),
+                },
                 log_state["log"],
                 stdin_for(again),
                 builtin_ipc,
@@ -2253,7 +2308,7 @@ def run(
                 "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
                 "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s cli_target_on_disk=%s cli_target_bytes=%s "
                 "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
-                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s",
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s",
                 agent,
                 script,
                 sess["status"],

@@ -53,6 +53,7 @@
     "ai_candidate_unavailable": "This pending edit is no longer available. Send the edit request again.",
     "ai_revert_not_applicable": "This was a “make editable version” run. The original script was never changed, so there is nothing to undo.",
     "convert_disabled": "“Make editable version” is turned off.",
+    "convert_tool_forbidden": "The conversion write request didn’t belong to the current conversion and was refused.",
     "convert_not_found": "That new version can’t be found (it may have been discarded, expired, or belong to another project).",
     "convert_not_ready": "The new version isn’t ready yet, or it didn’t pass the checks.",
     "convert_source_changed": "The original script changed after this was generated, so the new version was written for an older script. Generate it again.",

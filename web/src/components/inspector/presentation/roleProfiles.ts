@@ -151,7 +151,8 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   // （审计 T21）。以前纹理夹在描边色与透明度之间——它是填充的一部分，
   // 该挨着填充色。线型从「更多」提上来，与画布图形的描边组一致。
   fill: {
-    primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    // 渐变色带出 `gradient`（两端颜色）而不出 facecolor，占的是同一个位置
+    primary: ['facecolor', 'gradient', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
     more: ['label', 'visible'],
   },
   // 纹理三项（图案 · 颜色 · 线宽）挨在一起；颜色与线宽只在有花纹时出现。

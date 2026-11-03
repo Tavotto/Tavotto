@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { i18n, literal } from '@/i18n'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -91,5 +92,26 @@ describe('引擎状态提示保留布局足迹', () => {
     expect(visible()).toHaveLength(0)
     await act(async () => { flip.click() })
     expect((useDocumentStore.getState().doc.objects[0] as PanelObject).flipH).toBe(true)
+  })
+
+  it('图源脚本缺失时 stale 提示说缺源，不说「脚本已更新」（QA-WIN-48）', async () => {
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    await state(false, true)
+    expect(visible()[0].textContent).toContain('脚本已更新')
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { capability: { status: 'source_missing', reason_code: 'registered_script_missing', script: 'fig1.py', candidates: [] } } },
+    } as never)
+    await state(false, true)
+    expect(visible()[0].textContent).toContain('fig1.py')
+    expect(visible()[0].textContent).not.toContain('脚本已更新')
+    useAssetStore.setState({ byId: {} } as never)
+  })
+
+  it('重建报 script_not_found（能力还没刷新）也不说「脚本已更新」', async () => {
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    await act(async () => {
+      useRenderStore.getState().patch(renderKeyOf(panel), { status: 'error', stale: true, code: 'script_not_found' })
+    })
+    expect(visible()[0].textContent).toContain('找不到脚本 fig1.py')
   })
 })

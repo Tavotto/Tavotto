@@ -1,0 +1,3 @@
+## Fixed: the full-layout export preview now draws arrows and shapes the way they are exported
+
+In the export dialog's full-layout preview, arrows were drawn along the corner-to-corner diagonal of their box, so an up-right arrow showed as down-right, horizontal reversible-reaction arrows turned into slanted lines, and arrowheads were missing. Filled rectangles and ellipses showed only grey outlines, so you could not see their colour or which one covered the other, dashed lines (such as the magnifier preset) looked solid, and the scale bar's line cut through its label. The preview now uses each object's real endpoints, arrowheads, fill, stroke, dash pattern, rotation and stacking order. The exported PDF and PNG files were already correct.

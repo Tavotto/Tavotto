@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from . import fixmcp
+
 SCHEMA_VERSION = 1
 
 #: 模板 → 它允许的占位符。字段名本身就是白名单：`load()` 只认这里列出的
@@ -319,6 +321,13 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset(),
         "如果写入目标文件失败（权限被拒等），直接说明失败原因并停止，不要换到别的位置写。",
     ),
+    # Codex 的转换会话（所有平台）：目标文件由 Tavotto 经 MCP 工具代写——Windows unelevated 沙盒里 Codex 自带的写文件工具一律
+    # `Failed to write file`（Lab run 20261102T055146Z-8fc66e）。替换上一条：失败同样“说明并停止”，只是针对这个工具
+    "rule_write_tool": (
+        frozenset({"tool"}),
+        "写目标文件只能调用 MCP 工具 {tool}（参数 content 是整份脚本，一次写入）；不要用文件编辑工具、apply_patch 或命令写目标文件。"
+        "如果这个工具返回失败，直接说明它给出的失败原因并停止，不要换别的方式或位置写。",
+    ),
     # Windows：Codex 的命令在 cmd.exe 里执行，unelevated 沙盒里 PowerShell（pwsh.exe）起不来（0xC0000142）——
     # Lab 真机 run 20261101T092304Z-9f26be 里约一半命令是模型写 Get-Content / Get-ChildItem 撞墙（TVD-BCZ0）
     "rule_windows_shell": (
@@ -540,11 +549,19 @@ def convert_prompt(
     reference: str | None,
     project_root,
     source_language: str = "python",
+    write_tool: bool = False,
 ) -> str:
     """「生成可编辑版本」提示词：引言 → 目标 → 参考图（有才写）→ 硬性要求 → 工作副本说明。
 
     `source_language` 为 `r` / `matlab` 时同一节换成“逐步搬运 + 对照表 + 没有可靠对应就停下”的变体（目标 / 参考图 / 图幅 /
-    范围 / 工作副本说明是同一份模板，不复制）。"""
+    范围 / 工作副本说明是同一份模板，不复制）。
+
+    `write_tool`：本次会话提供 Tavotto 代写目标文件的 MCP 工具（Codex，`convertwrite.py`）——“写失败就停”那一条换成针对该工具的版本。"""
+    write_rule = (
+        _convert_render("rule_write_tool", tool=fixmcp.CONVERT_TOOL_NAME)
+        if write_tool
+        else _convert_render("rule_write_fail")
+    )
     foreign = _FOREIGN_NAMES.get(source_language)
     if source_language != "python" and foreign is None:
         raise PackError(f"未知的来源语言：{source_language!r}")
@@ -567,7 +584,7 @@ def convert_prompt(
             _renumbered(_convert_render("rule_size"), 3, 5),
             _renumbered(_convert_render("rule_scope"), 4, 6),
             "7. " + _convert_render("rule_foreign_no_search", language=foreign),
-            "8. " + _convert_render("rule_write_fail"),
+            "8. " + write_rule,
         ]
         if _on_windows():
             lines.append("9. " + _convert_render("rule_windows_shell"))
@@ -575,7 +592,7 @@ def convert_prompt(
         lines += [
             *convert_requirements(),
             _convert_render("rule_scope"),
-            "5. " + _convert_render("rule_write_fail"),
+            "5. " + write_rule,
         ]
         if _on_windows():
             lines.append("6. " + _convert_render("rule_windows_shell"))

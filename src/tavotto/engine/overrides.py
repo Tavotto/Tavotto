@@ -26,7 +26,14 @@ import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.axes._base import _AxesBase
-from matplotlib.collections import Collection, LineCollection, PathCollection, QuadMesh, TriMesh
+from matplotlib.collections import (
+    Collection,
+    LineCollection,
+    PathCollection,
+    PolyCollection,
+    QuadMesh,
+    TriMesh,
+)
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
@@ -4066,6 +4073,170 @@ HATCHES = [
     *("///", "\\\\\\", "xxx", "+++"),
 ]
 
+# ---------------------------------------------------------------------------
+# 渐变色带填充（2026-11-03，用户同门的 XPS 分峰图）
+#
+# 科研图里的「渐变填充峰」常见写法是一个 `PolyCollection`：几十到几百条**轴对齐**的长条（横条叠成
+# 竖向渐变、竖条排成横向渐变），每条一个颜色，再 `set_clip_path` 裁成峰形。逐条颜色对检查器来说是
+# 一个「填充颜色」字段只说得出第一条——改它就把整个渐变压成纯色。这里把它当成**一个渐变**来编辑：
+#
+# * `gradient_detect`：是不是渐变色带（≥ `_GRAD_MIN_STRIPES` 条、同向排列的轴对齐矩形、逐条一个颜色、
+#   颜色真的在变），方向与「起端」（屏幕上的上 / 左）。
+# * `gradient_stops`：此刻起端、止端的颜色。
+# * `_gradient_apply`：保留原渐变的**深浅节奏**换两端颜色——每一条在原两端连线上的位置 `s`（sRGB 投影，
+#   夹到 [0, 1]）不变，新颜色 = 新起端 + s·(新止端 − 新起端)。三段以上的多色渐变改完是两色渐变；
+#   「恢复脚本原样」回到原来那一份逐条颜色。
+#
+# 原始逐条颜色第一次改之前记在 artist 上（`_GRAD_BASE`），之后每次都从它算，不在改过的颜色上叠加
+# ——热态与全量重放逐位相同。alpha 列原样保留。
+# ---------------------------------------------------------------------------
+#: 少于这么多条不算渐变（两三块并排的色块是分组填充，不是渐变）
+_GRAD_MIN_STRIPES = 8
+#: 原始逐条颜色（N×4 RGBA）与条带在起端→止端方向上的次序
+_GRAD_BASE = "_mm_gradient_base"
+
+
+def _gradient_stripe_boxes(coll) -> np.ndarray | None:
+    """每条路径的外包框（数据坐标，N×4：x0 y0 x1 y1）；任何一条不是轴对齐矩形就回 None。"""
+    boxes = []
+    for p in coll.get_paths():
+        v = np.asarray(p.vertices, dtype=float)
+        if len(v) < 4 or not np.isfinite(v).all():
+            return None
+        lo, hi = v.min(axis=0), v.max(axis=0)
+        on_x = np.isclose(v[:, 0], lo[0]) | np.isclose(v[:, 0], hi[0])
+        on_y = np.isclose(v[:, 1], lo[1]) | np.isclose(v[:, 1], hi[1])
+        if not bool(np.all(on_x & on_y)):
+            return None
+        boxes.append((lo[0], lo[1], hi[0], hi[1]))
+    return np.asarray(boxes, dtype=float) if boxes else None
+
+
+def gradient_detect(coll) -> dict | None:
+    """渐变色带的形状事实；不是就回 None。
+
+    返回 `{"direction": "vertical"|"horizontal", "order": 起端→止端的条带下标}`。「起端」按
+    **屏幕**定：竖向渐变是上端、横向是左端（y 轴反转 / x 轴反转的图照样对）。
+    """
+    if (
+        not isinstance(coll, PolyCollection)
+        or getattr(coll, "get_array", lambda: None)() is not None
+    ):
+        return None
+    paths = coll.get_paths()
+    if len(paths) < _GRAD_MIN_STRIPES:
+        return None
+    fc = _gradient_base_colors(coll)
+    if fc.ndim != 2 or len(fc) != len(paths):
+        return None
+    if np.ptp(fc[:, :3], axis=0).max() < 1e-3:
+        return None  # 逐条颜色都一样：那是纯色，不是渐变
+    boxes = _gradient_stripe_boxes(coll)
+    if boxes is None:
+        return None
+    # 横条（各条同宽、按 y 叠）= 竖向渐变；竖条（同高、按 x 排）= 横向渐变
+    same_x = np.allclose(boxes[:, 0], boxes[0, 0]) and np.allclose(boxes[:, 2], boxes[0, 2])
+    same_y = np.allclose(boxes[:, 1], boxes[0, 1]) and np.allclose(boxes[:, 3], boxes[0, 3])
+    if same_x and not same_y:
+        direction, axis = "vertical", 1
+    elif same_y and not same_x:
+        direction, axis = "horizontal", 0
+    else:
+        return None
+    centers = np.column_stack([(boxes[:, 0] + boxes[:, 2]) / 2, (boxes[:, 1] + boxes[:, 3]) / 2])
+    try:
+        disp = coll.get_transform().transform(centers)
+    except Exception:  # noqa: BLE001 — 变换不可用（还没进 axes）就按数据坐标
+        disp = centers
+    key = disp[:, axis]
+    # display 的 y 向上：竖向渐变的「上端」是 y 最大的那条；横向的「左端」是 x 最小的
+    order = np.argsort(-key if axis == 1 else key, kind="stable")
+    # 屏幕起端对应数据坐标的哪一头——写回 override 时一起记下，重放不再依赖当时的坐标变换
+    dkey = centers[:, axis]
+    screen_start = "high" if dkey[order[0]] > dkey[order[-1]] else "low"
+    return {
+        "direction": direction,
+        "order": order,
+        "screen_start": screen_start,
+        "data_order": np.argsort(dkey, kind="stable"),  # 数据坐标升序，与任何变换无关
+    }
+
+
+def _gradient_base_colors(coll) -> np.ndarray:
+    """脚本原样的逐条颜色（N×4）：取**源设定**而不是 `get_facecolor()`——后者已经和 Artist 级 alpha
+    合成过，把「透明度」滑块的值烤进基准，之后单独清掉 alpha 也回不去（热态 ≠ 重放）。"""
+    base = getattr(coll, _GRAD_BASE, None)
+    if base is not None:
+        return base
+    return _gradient_source_colors(coll)
+
+
+def _gradient_source_colors(coll) -> np.ndarray:
+    spec = _get_coll_facecolor(coll)
+    try:
+        arr = np.array(mcolors.to_rgba_array(spec), dtype=float)
+    except (TypeError, ValueError):
+        arr = np.array(coll.get_facecolor(), dtype=float)
+    return arr
+
+
+def gradient_stops(coll, info: dict | None = None) -> tuple[str, str] | None:
+    """此刻起端、止端的颜色（`#rrggbb`）。"""
+    info = info or gradient_detect(coll)
+    if info is None:
+        return None
+    fc = np.asarray(coll.get_facecolor(), dtype=float)
+    order = info["order"]
+    if len(fc) <= int(order.max()):
+        return None
+    return mcolors.to_hex(fc[order[0]][:3]), mcolors.to_hex(fc[order[-1]][:3])
+
+
+def _gradient_current(coll):
+    """override 的原样（还原用）：逐条颜色的**源设定**（拷贝），不是合成了 Artist alpha 的数组。"""
+    spec = _get_coll_facecolor(coll)
+    if isinstance(spec, np.ndarray):
+        return np.array(spec, copy=True)
+    if isinstance(spec, (list, tuple)):
+        try:
+            return np.array(mcolors.to_rgba_array(spec), dtype=float)
+        except (TypeError, ValueError):
+            pass
+    return spec
+
+
+def _gradient_apply(coll, value) -> None:
+    """`value` = `{"stops": [起端, 止端]}`：保留深浅节奏换两端颜色；数组（还原）原样写回。"""
+    if not isinstance(value, dict):
+        coll.set_facecolor(value)
+        return
+    info = gradient_detect(coll)
+    pair = value.get("stops")
+    if info is None or not isinstance(pair, (list, tuple)) or len(pair) != 2:
+        return
+    if getattr(coll, _GRAD_BASE, None) is None:
+        setattr(coll, _GRAD_BASE, _gradient_source_colors(coll))
+    base = getattr(coll, _GRAD_BASE)
+    ss = value.get("screen_start")
+    if ss in ("high", "low"):
+        # 与此刻的坐标变换无关：按数据坐标升序，「high」= 屏幕起端在数据大的那头
+        asc = info["data_order"]
+        order = asc[::-1] if ss == "high" else asc
+    else:
+        order = info["order"]  # 旧形状 override：退回此刻变换下的屏幕次序
+    a0, a1 = base[order[0], :3], base[order[-1], :3]
+    span = a1 - a0
+    denom = float(np.dot(span, span))
+    if denom < 1e-12:
+        s = np.linspace(0.0, 1.0, len(base))[np.argsort(order)]
+    else:
+        s = np.clip(((base[:, :3] - a0) @ span) / denom, 0.0, 1.0)
+    n0 = np.asarray(mcolors.to_rgba(pair[0]), dtype=float)[:3]
+    n1 = np.asarray(mcolors.to_rgba(pair[1]), dtype=float)[:3]
+    rgb = n0 + s[:, None] * (n1 - n0)
+    coll.set_facecolor(np.column_stack([np.clip(rgb, 0.0, 1.0), base[:, 3]]))
+
+
 #: Collection family（PathCollection / PolyCollection / LineCollection /
 #: QuadMesh / ContourSet / EventCollection / Quiver …）。颜色与线宽都是
 #: **逐元素数组**，原生值必须 `.copy()`——不拷贝的话 restore 拿到的是同一个
@@ -4077,6 +4248,8 @@ _COLLECTION_CAPS: dict[str, tuple] = {
     # 回灌数组会把映射永久关掉（详见 `_get_coll_edgecolor`）。
     "facecolor": (_get_coll_facecolor, lambda a, v: _set_coll_color(a, "set_facecolor", v)),
     "edgecolor": (_get_coll_edgecolor, lambda a, v: _set_coll_color(a, "set_edgecolor", v)),
+    # 渐变色带的两端颜色（只在 `gradient_detect` 认出来的集合上出字段）；还原值是逐条颜色数组
+    "gradient": (_gradient_current, _gradient_apply),
     "linewidth": (collection_linewidths, _set_collection_lw),
     # 线型的 getter 走**未缩放**规格（`_us_linestyles`）而不是
     # `get_linestyle()`：后者回的是按线宽缩放过的 dash，`set_linestyle()` 会

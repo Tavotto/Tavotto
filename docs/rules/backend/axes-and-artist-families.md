@@ -157,6 +157,10 @@ order: 80
     PolyCollection 都是 PolyCollection 的子类却永远映射——按类名开放就是
     「界面说改了、画面没动」。反过来 **stroke 对任何 Collection 都开放**：
     此刻没有边不代表加不上边（给 pcolormesh 加网格线是常见需求）。
+  * **渐变色带出 `gradient` 而不出 facecolor**（ADR 0167）：`gradient_detect` 认出「≥ 8 条同向轴对齐、逐条一色、颜色在变」的
+    PolyCollection 时，manifest 发两端颜色（起端 / 止端按屏幕方向）；`_gradient_apply` 按原两端连线上的位置重新配色、从
+    `_mm_gradient_base`（第一次改之前的逐条颜色）算，热态 == 重放；基准与还原值取**源颜色设定**（`_original_facecolor`），不取合成了 Artist alpha 的 `get_facecolor()`。
+    override 值带 `screen_start`（"high"/"low"，manifest 发出），引擎按数据坐标顺序配色、不依赖 setter 运行时的坐标变换（`invert_y` 与它同序）；缺失时才退回当时变换。没认出的填充一个字节不变。
   * **gid 一个都没变**：`axes_i.scatter_j` / `axes_i.fill_j` / `axes_i.patches_j`
     的序号取的一直是所属列表（`ax.collections` / `ax.patches`）的下标，不是
     「第几个散点」，所以把从前没登记的那些补登记进来不挪动任何已有名字。

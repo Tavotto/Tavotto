@@ -4075,6 +4075,38 @@ def test_codex_on_windows_runs_with_unelevated_sandbox(monkeypatch):
         assert 'windows.sandbox="unelevated"' in argv
 
 
+def test_codex_convert_on_windows_has_unelevated_sandbox_and_tavotto_write_tool(monkeypatch):
+    """TVD-BCZ0（Lab run 20261102T055146Z-8fc66e）：unelevated 沙盒里 Codex 自带的写文件工具一律 `Failed to write file`，
+    所以 Windows 上的转换 argv 必须同时带 `windows.sandbox="unelevated"`（命令能跑）与 Tavotto 代写目标的 MCP 注入
+    （目标文件由沙盒外的 Tavotto 写）；令牌只以环境变量名出现。"""
+    from tavotto.engine import ai_agents, convertwrite
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+    mcp = ai_agents.ConvertMcp(
+        command=[
+            "C:\\T\\tavotto-cli.exe",
+            "fix-mcp",
+            "--url",
+            "http://127.0.0.1:5089",
+            "--convert-id",
+            "s1",
+        ],
+        name=convertwrite.CONVERT_SERVER_NAME,
+        token_env=convertwrite.CONVERT_TOKEN_ENV,
+    )
+    argv = (
+        ai_agents.CodexAgent()
+        .build_command(
+            ai_agents.RunContext(argv=["codex"], prompt="p", cwd="C:\\w", convert_mcp=mcp)
+        )
+        .argv
+    )
+    assert 'windows.sandbox="unelevated"' in argv
+    assert any(a.startswith("mcp_servers.tavotto_convert.command=") for a in argv)
+    assert 'mcp_servers.tavotto_convert.env_vars=["TAVOTTO_CONVERT_TOKEN"]' in argv
+    assert 'mcp_servers.tavotto_convert.default_tools_approval_mode="approve"' in argv
+
+
 def _pip_says(env, target):
     """真起一个 pip 进程，让它在输出里报出带中文的路径；按 Tavotto 的口径（UTF-8、坏字节替换）解码。"""
     argv = [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", str(target)]

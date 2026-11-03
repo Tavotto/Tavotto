@@ -1,0 +1,3 @@
+## Progress bars are now drawn as dot grids
+
+Progress bars (installing packages, preparing a project, downloading an update or Python, exporting, sending a report) now show a row of small dots: the part still to go is sparse dots, the finished part is the same dots packed closer together. When the app can't tell how far along it is, a short stretch of dense dots slides back and forth. The dots are drawn on whole screen pixels, so they stay sharp on Windows at 125% and 175% display scaling, where the old striped bar looked blurry. With "Reduce motion" turned on in your system settings the bar doesn't animate. Nothing else about when progress appears or what it says changes.

@@ -534,7 +534,9 @@
     "deleteCount": "Delete {{count}} objects",
     "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
     "copy": "Copy",
-    "paste": "Paste"
+    "paste": "Paste",
+    "copyAsAnnotation": "Copy as annotation",
+    "pasteAsAnnotation": "Paste as annotation"
   },
   "rail": {
     "assets": "Assets",
@@ -842,6 +844,8 @@
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
     "nudgeNotMovable": "The selected element can't be moved",
+    "elementNotCopyable": "{{name}} can't be copied yet",
+    "elementNotCopyableGeneric": "This element can't be copied yet",
     "objectCopied": "Copied {{name}}",
     "objectsCopied": "Copied {{count}} objects",
     "overridesCleared": "Cleared this figure’s edits",
@@ -1032,6 +1036,9 @@
       "notRegistered": "The figure couldn't be registered",
       "cancelled": "Stopped",
       "envLocked": "The Python fixed in Settings is missing components",
+      "envLockedMissing": "The Python fixed in Settings is missing {{names}}",
+      "texCommand": "{{command}} not found. Install TeX, restart Tavotto, then try again.",
+      "texPackage": "Missing LaTeX package {{file}}. Install it, then try again.",
       "envChoice": "Run with the one in this project?",
       "envChoiceOpen": "Choose what to run with first",
       "workdir": "Run in which folder?",
