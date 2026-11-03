@@ -7,6 +7,7 @@ cron 执行 main 上的副本、仓库里没有主机地址与凭据。
 
 from __future__ import annotations
 
+import datetime as _dt
 import os
 import re
 import shutil
@@ -136,6 +137,15 @@ def test_cron_runs_the_copy_from_origin_main(monkeypatch, tmp_path):
     # 不许直接 > 本机副本（取一半失败会把它截成空文件）；crontab 里的 % 必须转义
     assert f"> {B.ROOT}/box.py " not in text
     assert "%" not in text.replace("\\%", "")
+
+
+@pytest.mark.parametrize(
+    ("offset_h", "expected"),
+    [(8, "30 2 * * *"), (0, "30 18 * * *"), (-5, "30 13 * * *")],
+)
+def test_cron_schedule_is_18_30_utc_in_the_hosts_local_time(offset_h, expected):
+    """cron 按本机时区解释时刻；证据机是 Asia/Shanghai，直接写 `30 18` 会在 UTC 10:30 跑。"""
+    assert B.cron_schedule(_dt.timedelta(hours=offset_h)) == expected
 
 
 def _run_cron(tmp_path, monkeypatch, show_failures: int):

@@ -581,12 +581,24 @@ def cron_command() -> str:
     )
 
 
+NIGHTLY_UTC = (18, 30)  # 02:30 CST
+
+
+def cron_schedule(utc_offset: _dt.timedelta | None = None) -> str:
+    """cron 按**本机时区**解释时刻（这台机器是 Asia/Shanghai），所以把 NIGHTLY_UTC 换成本地时刻再写。"""
+    if utc_offset is None:
+        utc_offset = _dt.datetime.now().astimezone().utcoffset() or _dt.timedelta(0)
+    hour, minute = NIGHTLY_UTC
+    local = _dt.datetime(2000, 1, 1, hour, minute) + utc_offset
+    return f"{local.minute} {local.hour} * * *"
+
+
 def install_cron() -> int:
     """02:30 CST 夜跑。cron 先把控制检出对齐 main，再执行**main 上的** box.py（不跑本机任何旧副本）。"""
     cmd = cron_command().replace("%", "\\%")  # crontab 里 % 是换行，要转义
     line = (
         "SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
-        f"30 18 * * * root {cmd}\n"
+        f"{cron_schedule()} root {cmd}\n"
     )
     Path(CRON_FILE).write_text(line)
     os.chmod(CRON_FILE, 0o644)
