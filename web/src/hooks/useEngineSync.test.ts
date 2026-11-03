@@ -2,7 +2,9 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { crossFigureNeighbours, renderTargets, syncEngine, useEngineSync } from './useEngineSync'
+import { crossFigureNeighbours, renderPurposeOf, renderTargets, syncEngine, useEngineSync } from './useEngineSync'
+import * as renderScheduler from '@/store/renderScheduler'
+import * as viewport from '@/store/viewportStore'
 import { flushRender, requestRender } from '@/store/renderScheduler'
 import { seedExactRender } from '@/test/renderFixtures'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -1447,5 +1449,72 @@ describe('跨图邻居补渲染（ADR 0128 §二）', () => {
       expect(calls.map((c) => c.fileId).sort()).toEqual([...expected])
     }
     useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+  })
+})
+
+describe('渲染意图：纯邻居补渲染标 neighbour，其余一律 foreground', () => {
+  const objs = () => [panel('a', 'Fig1.pdf', 0), panel('b', 'Fig2.pdf', 0)] as CanvasObject[]
+  const nb = new Set(['b'])
+  const purpose = (p: PanelObject, edit: string | null, tracked = {}, styleBound = false) =>
+    renderPurposeOf(p, edit, nb, tracked, styleBound, {})
+
+  it('纯邻居（没有别的渲染理由）= neighbour', () => {
+    expect(purpose(objs()[1] as PanelObject, 'a')).toBe('neighbour')
+  })
+
+  it('正在编辑的 / 不在邻居集的 / 绑了样式的 / 脚本领先磁盘的 / 有真实图内修改的 = foreground', () => {
+    const [a, b] = objs() as PanelObject[]
+    expect(purpose(a, 'a')).toBe('foreground')
+    expect(purpose(b, 'b')).toBe('foreground')
+    expect(renderPurposeOf(a, 'b', new Set(), {}, false, {})).toBe('foreground')
+    expect(purpose(b, 'a', {}, true)).toBe('foreground')
+    expect(purpose(b, 'a', { 'Fig2.pdf': true })).toBe('foreground')
+    expect(purpose(panel('b', 'Fig2.pdf', 1), 'a')).toBe('foreground')
+  })
+
+  it('syncEngine：邻居的请求带 neighbour，被暂缓后同一版不再重发；改值 / 进编辑后放行', () => {
+    const spy = vi.spyOn(renderScheduler, 'requestRender').mockImplementation(() => {})
+    try {
+      const o = objs()
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: o } }))
+      const visible = { x: -100, y: -100, w: 400, h: 400 }
+      vi.spyOn(viewport, 'currentVisibleRectMm').mockReturnValue(visible)
+      syncEngine(o, 'a')
+      const calls = spy.mock.calls.map(([p, , purpose]) => [p.id, purpose ?? 'foreground'])
+      expect(calls).toEqual([
+        ['a', 'foreground'],
+        ['b', 'neighbour'],
+      ])
+      // 后端暂缓 b：记下这一版
+      const key = renderKeyOf(o[1] as PanelObject)
+      useRenderStore.getState().patch(key, { fileId: 'Fig2.pdf', deferredPatches: '[]', wantPatches: null })
+      spy.mockClear()
+      syncEngine(o, 'a')
+      expect(spy.mock.calls.map(([p]) => p.id)).not.toContain('b')
+      // 用户把编辑切到 b：它不再是纯邻居，照常以前台发
+      spy.mockClear()
+      syncEngine(o, 'b')
+      expect(spy.mock.calls.find(([p]) => p.id === 'b')?.[2]).toBeUndefined()
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('同文件同 overrides 的两张面板被去重成一次渲染：编辑的是后一张时按前台发，暂缓记号不卡死', () => {
+    const spy = vi.spyOn(renderScheduler, 'requestRender').mockImplementation(() => {})
+    try {
+      const o = [panel('first', 'Fig1.pdf', 0), panel('second', 'Fig1.pdf', 0)] as CanvasObject[]
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: o } }))
+      vi.spyOn(viewport, 'currentVisibleRectMm').mockReturnValue({ x: -100, y: -100, w: 400, h: 400 })
+      // 编辑 second；first 是视口里的邻居，去重后 first 是那次共享渲染的代表
+      const key = renderKeyOf(o[0] as PanelObject)
+      useRenderStore.getState().patch(key, { fileId: 'Fig1.pdf', deferredPatches: '[]', wantPatches: null })
+      syncEngine(o, 'second')
+      const sent = spy.mock.calls.filter(([p]) => (p as PanelObject).fileId === 'Fig1.pdf')
+      expect(sent).toHaveLength(1)
+      expect(sent[0][2]).toBeUndefined() // foreground：不带 neighbour
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })

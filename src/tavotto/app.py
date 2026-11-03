@@ -2374,11 +2374,13 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
 
     req = job.request
     src = req.original
+    # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
+    pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
         "type": "panel",
         "id": src.figure_id,
-        "x_mm": 0,
-        "y_mm": 0,
+        "x_mm": pad_l,
+        "y_mm": pad_t,
         "w_mm": src.w_mm,
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
@@ -2431,7 +2433,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         extra = {"raster_target": target} if target else {}
         return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
 
-    w_mm, h_mm = float(src.w_mm), float(src.h_mm)
+    w_mm, h_mm = src.page_mm  # 页面尺寸（无留白 = 图幅）
     if vector_formats:
         produced += run(
             vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
@@ -2440,15 +2442,25 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         ppi = req.ppi
         target = None
         if src.source_kind == "raster" and src.px_w:
-            dpi_x = float(src.px_w) * 25.4 / w_mm
-            ppi = dpi_x  # 页面 w_mm 对应 px_w 个像素
+            # 密度按**图幅**（面板）算：源的像素网格与图幅一一对应；留白只是在四周多出的页面
+            fig_w, fig_h = float(src.w_mm), float(src.h_mm)
+            dpi_x = float(src.px_w) * 25.4 / fig_w
+            ppi = dpi_x  # 图幅 w_mm 对应 px_w 个像素
             if src.px_h:
-                dpi_y = float(src.px_h) * 25.4 / h_mm
+                dpi_y = float(src.px_h) * 25.4 / fig_h
                 if abs(dpi_y - dpi_x) > 0.005 * dpi_x:
                     # 横纵密度不同：先按逻辑图幅各向同性画对（取两轴中较大的密度，两轴都不小于源像素），
-                    # 再整张面积平均缩到恰好 px_w × px_h；元数据写源的 x / y 密度
+                    # 再整张面积平均缩到恰好 px_w × px_h（带留白时是整个页面的像素数）；元数据写源的 x / y 密度
                     ppi = max(dpi_x, dpi_y)
-                    target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+                    if src.pad_mm:
+                        target = (
+                            max(1, round(w_mm * dpi_x / 25.4)),
+                            max(1, round(h_mm * dpi_y / 25.4)),
+                            dpi_x,
+                            dpi_y,
+                        )
+                    else:
+                        target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
         produced += run(
             raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
         )
@@ -2497,8 +2509,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             parts[key] = ("", None)
             continue
         compiled = rc_plan.compile_page(
-            float(src.w_mm),
-            float(src.h_mm),
+            *src.page_mm,
             objs,
             sources=_NoPanels(),
             faces=provider,
@@ -2522,14 +2533,31 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             )
         parts[key] = (text, compiled.page)
     page = parts["above"][1] or parts["below"][1]
+    page_w_mm, page_h_mm = src.page_mm
+    if page is not None:
+        page_w_pt, page_h_pt = page.width_pt, page.height_pt
+    else:  # 只有留白、没有标注：页面尺寸直接由图幅 + 留白算
+        page_w_pt, page_h_pt = page_w_mm * 72.0 / 25.4, page_h_mm * 72.0 / 25.4
+    pad_extra = {}
+    if src.pad_mm:
+        # 内嵌原图 EPS 的落点：左 = l、上 = t（PostScript 原点在左下，所以 y = 页高 − 上 − 图高）
+        pad_l, pad_t, _r, _b = src.pad_mm
+        pad_extra = {
+            "offset_pt": (
+                pad_l * 72.0 / 25.4,
+                page_h_pt - (pad_t + float(src.h_mm)) * 72.0 / 25.4,
+            ),
+            "clip_page": True,
+        }
     out = tmp_dir / "out_annotated.eps"
     out.write_bytes(
         engine_epsoverlay.compose(
             Path(inner.tmp_path).read_bytes(),
             parts["above"][0],
-            page.width_pt,
-            page.height_pt,
+            page_w_pt,
+            page_h_pt,
             underlay=parts["below"][0],
+            **pad_extra,
         )
     )
     bbox = engine_epsfile.bounding_box_pt(out)
@@ -2554,7 +2582,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
-    if src.objects:
+    if src.objects or src.pad_mm:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
@@ -6351,13 +6379,15 @@ def api_registry_probe():
             # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
             # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
             # 清单与预览，那时 cache 里得已经有东西。
-            _materialize_runtime(
-                script,
-                result.get("entry") or "",
-                result.get("descriptors") or [],
-                remap_generation=result.get("remap_generation"),
-                run=run,
-            )
+            # 刚分开登记的图（ADR 0162）：这次执行里还叫原名，不物化（第一次打开时按登记图名重跑）
+            if not result.get("stem_aliases_added"):
+                _materialize_runtime(
+                    script,
+                    result.get("entry") or "",
+                    result.get("descriptors") or [],
+                    remap_generation=result.get("remap_generation"),
+                    run=run,
+                )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
             # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
             # B 再经这里成功，旧记录 A 会冒充「最近成功」
@@ -8073,6 +8103,22 @@ def api_engine_render():
     rev 一样不少。老 worker 不返回它时字段整个不出现。
     """
     body = request.get_json(force=True)
+    # 可选 `purpose`（闭集）：`foreground`（缺省 = 老前端）/ `neighbour`（跨图对齐的顺手补渲染，ADR 0159）。
+    # neighbour 不刷新池的 LRU 时间；需要冷启动而池已满时不做（409 + `background_render_deferred`，前端保留旧画面）。
+    purpose = body.get("purpose", engine_pool.PURPOSE_FOREGROUND)
+    if purpose not in engine_pool.PURPOSES:
+        return jsonify(
+            {
+                "error": f"purpose 必须是 {' / '.join(engine_pool.PURPOSES)}: {purpose!r}",
+                "code": "invalid_purpose",
+                "params": {"value": repr(purpose)},
+            }
+        ), 400
+    with engine_pool.acquire_purpose(purpose):
+        return _api_engine_render_body(body)
+
+
+def _api_engine_render_body(body):
     rel_id = body.get("id", "")
     try:
         artifact_source = _artifact_source(
@@ -8114,7 +8160,9 @@ def api_engine_render():
     # 取会话会起解释器 / 准备环境，必须在这段静默等待之前给界面进度。
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
-    sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    # 后台补渲染可能被暂缓（不起会话）：没有人在等它，不报「准备中」，免得暂缓时还要补一个终局事件
+    if engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND:
+        sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     acquire_mark = engine_pool.acquire_mark()
     try:
         worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
@@ -8125,6 +8173,11 @@ def api_engine_render():
         info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
+        if isinstance(exc, engine_pool.WorkerError) and exc.code == engine_pool.BACKGROUND_DEFERRED:
+            # 不是失败：没有 render.* 事件、不进交接结论，前端保留旧画面
+            return jsonify(
+                {"error": str(exc), "code": engine_pool.BACKGROUND_DEFERRED, "deferred": True}
+            ), 409
         # worker 启动 / 环境解析失败（WorkerError、原件核对不上）也是「那一次渲染」的失败结论：
         # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
         # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
@@ -8159,7 +8212,18 @@ def api_engine_render():
             observe_worker=observe_render_worker,
         )
     except engine_pool.WorkerError as exc:
-        LOG.error("引擎渲染失败: %s: %s", stem, exc)
+        if exc.code == engine_pool.BACKGROUND_DEFERRED:
+            # 被淘汰后的那次重取撞上「池已满」：这次补渲染作罢。render.started 已发过，补一个中性终局收掉「构建中」
+            sse_publish("render.done", {"pj": pj, "id": rel_id})
+            return jsonify(
+                {"error": str(exc), "code": engine_pool.BACKGROUND_DEFERRED, "deferred": True}
+            ), 409
+        if exc.code == "queue_superseded":
+            # 拖动 / 连续调参时排队里的旧请求被同一张图的新请求顶掉是常态，不是故障：记 ERROR 会刷满
+            # 诊断包的报错清单、把真报错挤出去（反馈包 TVD-MDBH 一分钟 38 条）。响应与事件照旧。
+            LOG.info("引擎渲染被同图新请求顶替: %s", stem)
+        else:
+            LOG.error("引擎渲染失败: %s: %s", stem, exc)
         _note_handoff_render(stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
@@ -11654,7 +11718,14 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
     native = None
-    if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+    if registered.get("stem_aliases_added"):
+        # 这次刚分开登记的图（ADR 0162）：这次执行里的图还叫原名，物化出来就是登记表里没有的身份。不物化、
+        # 不沿用这条活会话（池按别名表判它过期），用户第一次打开时按登记图名重跑
+        if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+            for sess in engine_nativesession.REGISTRY.list(str(ctx.path)):
+                if sess.launch_id == plan.plan_id and sess.owned is not None:
+                    _end_native_session(sess)
+    elif getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
         # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
         native = next(
             (
@@ -11694,8 +11765,9 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
+    added = registered.get("stem_aliases_added") or {}
     failed = [
-        {"stem": f.get("stem"), "code": f.get("code")}
+        {"stem": added.get(f.get("stem"), f.get("stem")), "code": f.get("code")}
         for f in (captured.get("failed_figures") or ())
         if isinstance(f, dict)
     ]

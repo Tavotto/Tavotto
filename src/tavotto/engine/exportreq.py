@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -149,6 +150,7 @@ ERROR_CODES = (
     "name_exhausted",
     "bad_inspection",
     "bad_merge",
+    "bad_pad",
 )
 
 
@@ -298,6 +300,18 @@ class OriginalSource:
     objects: tuple[dict, ...] = ()
     #: `objects` 里前几个画在图的**下面**（图层树里放到图之下的标注）；其余在图上。`objects` 本身按 z 序（底 → 顶）。
     objects_below: int = 0
+    #: 单图留白（ADR 0161 §3）：`(l, t, r, b)` mm，可为负（负值由页面裁掉）。缺席或全 0 = `()`，请求与输出与从前逐字节相同。
+    #: 非零时页面 = `w_mm + l + r` × `h_mm + t + b`、面板落在 `(l, t)`，走带标注的合成路径（没有标注也走）；
+    #: `objects` 的坐标已由前端换算到页面坐标（以页面左上为原点）。非零时 `w_mm` / `h_mm` 必填。
+    pad_mm: tuple[float, float, float, float] | tuple[()] = ()
+
+    @property
+    def page_mm(self) -> tuple[float, float] | None:
+        """页面尺寸（mm）：图幅 + 留白；没有图幅时 `None`。无留白时就是图幅。"""
+        if not (self.w_mm and self.h_mm):
+            return None
+        left, top, right, bottom = self.pad_mm or (0.0, 0.0, 0.0, 0.0)
+        return float(self.w_mm) + left + right, float(self.h_mm) + top + bottom
 
 
 #: 多页 PDF 一次最多合几页。上限不是审美：每页各走一次单页导出，几百页的作业是在卡住 worker。
@@ -478,6 +492,7 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 if req.original.objects and req.original.objects_below
                 else {}
             ),
+            **({"pad_mm": list(req.original.pad_mm)} if req.original.pad_mm else {}),
             **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
@@ -633,6 +648,39 @@ def _original_objects(source: dict) -> tuple[dict, ...]:
     return tuple(objects)
 
 
+def _pad_mm(source: dict) -> tuple[float, float, float, float] | tuple[()]:
+    """`original.pad_mm: [l, t, r, b]`（mm，可为负）→ 元组；缺席或全 0 → `()`（与没有这个键逐字节相同）。
+
+    页面（图幅 + 留白）必须是正的有限数，否则 `bad_pad`：碰磁盘之前拒绝。
+    """
+    raw = source.get("pad_mm")
+    if raw is None:
+        return ()
+    bad = ExportRequestError(
+        "bad_pad", "original.pad_mm 必须是四个有限数 [左, 上, 右, 下]（mm）", {}
+    )
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        raise bad
+    vals = []
+    for v in raw:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            raise bad
+        vals.append(float(v))
+    if not any(vals):
+        return ()
+    if not (source.get("w_mm") and source.get("h_mm")):
+        raise ExportRequestError("bad_pad", "带留白的原图导出必须给出原图图幅 w_mm / h_mm", {})
+    page_w = float(source["w_mm"]) + vals[0] + vals[2]
+    page_h = float(source["h_mm"]) + vals[1] + vals[3]
+    if not (page_w > 0 and page_h > 0):
+        raise ExportRequestError(
+            "bad_pad",
+            "留白（负值为裁切）让页面尺寸不再是正数",
+            {},
+        )
+    return tuple(vals)
+
+
 def _objects_below(source: dict, count: int) -> int:
     raw = source.get("objects_below")
     if raw is None:
@@ -656,6 +704,7 @@ def _original_source(source: Any) -> OriginalSource:
     return OriginalSource(
         objects=objects,
         objects_below=_objects_below(source, len(objects)),
+        pad_mm=_pad_mm(source),
         figure_id=figure_id,
         source_policy=source.get("source_policy"),
         expected_source=_source_basis(source, overrides),

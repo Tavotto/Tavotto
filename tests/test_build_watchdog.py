@@ -423,5 +423,8 @@ def test_render_route_passes_progress_pj_to_the_attempt():
 
     from tavotto import app as app_mod
 
-    src = inspect.getsource(app_mod.api_engine_render)
+    # 路由入口只设好请求意图（`purpose`，ADR 0159）就交给 `_api_engine_render_body`；取会话与
+    # `_engine_attempt` 都在后者里——判据的主语是「真正发起尝试的那一段」
+    assert "_api_engine_render_body(" in inspect.getsource(app_mod.api_engine_render)
+    src = inspect.getsource(app_mod._api_engine_render_body)
     assert "progress_pj=pj" in src

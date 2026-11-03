@@ -17,7 +17,7 @@
   （复用助手历史里的「撤销这次修改」，`ai_bridge.revert`；ADR 0148 修订 2026-11-01，TVD-H1M5）；
 * `feedback`：发送问题反馈（ADR 0118，每次确认、不记住）。
 
-顺序即优先级（取第一条成立的）：safe 守卫拦下 → 缺依赖 → 解释器写不了缓存 / Python 版本类 → 转写 → 撤销刚才的 AI 修改 →
+顺序即优先级（取第一条成立的）：图名归属冲突（`multiple_stem_conflict`）直接 `feedback` → safe 守卫拦下 → 缺依赖 → 解释器写不了缓存 / Python 版本类 → 转写 → 撤销刚才的 AI 修改 →
 其余按「AI 连没连」。
 **一次「运行」最多走 3 种修法**（读 `attempt_history`），第 4 次直接 `feedback`；同一种修法一次运行只走一回。
 
@@ -58,6 +58,9 @@ CODE_BLOCKED = "safe_file_operation_blocked"
 CODE_MISSING_DEPENDENCY = "missing_dependency"
 #: 脚本自己抛错收场（用户代码里的异常，不是 Tavotto 的守卫 / 环境）
 CODE_SCRIPT_ERROR = "script_error"
+#: 跑完了、图也捕获到了，只是图名已登记给另一份仍在磁盘上的脚本（`probe.ERROR_STEM_CONFLICT`，TVD-TZQ9）：
+#: 冲突不在脚本里，AI / 转写 / 换环境都修不了——直接 `feedback`，不让用户白跑一轮 AI
+CODE_STEM_CONFLICT = "multiple_stem_conflict"
 #: Python 版本类失败码：项目环境的 Python 不在支持范围 / 叠加的 ROOT 与 Python 小版本对不上 / 运行配置的版本不被支持
 PYTHON_VERSION_CODES = frozenset(
     {
@@ -143,7 +146,7 @@ def choose(failure: str, ctx: Ctx) -> dict:
     """失败码 + 事实 -> remedy（`REMEDY_KINDS` 里的一种，形状见 ADR 0148）。纯函数。"""
     code = str(failure or "")
     tried = tried_in_run(ctx)
-    if len(tried) >= MAX_REMEDIES_PER_RUN:
+    if len(tried) >= MAX_REMEDIES_PER_RUN or code == CODE_STEM_CONFLICT:
         return {"kind": KIND_FEEDBACK, "tried": list(tried)}
     if code == CODE_BLOCKED and ctx.native_allowed and KIND_SWITCH_NATIVE not in tried:
         return {"kind": KIND_SWITCH_NATIVE, "silent": True}

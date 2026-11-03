@@ -215,6 +215,16 @@ def _offline_api_root_probe(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pinned_pool_cap(monkeypatch):
+    """worker 池上限按本机可用内存自适应（`pool.max_alive()`，ADR 0159）：测试机内存不同，淘汰 / 容量用例的
+    结果就不同。默认钉成下限 3；测自适应本身的用例自己把 `pool.MAX_ALIVE` 置回 None。"""
+    from tavotto.engine import pool
+
+    monkeypatch.setattr(pool, "MAX_ALIVE", pool.MIN_ALIVE)
+    monkeypatch.setattr(pool, "_cap_cache", None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_windows_registry(monkeypatch):
     """PEP 514 注册表是 Windows 机器级来源（`userenvs._windows_registry_pythons`）：CI 的 Windows runner 上真有
     `PythonCore\\3.x`，「候选应为空 / 机器线索只有两条」的用例会多出五条。默认读空注册表；需要内容的用例自己注入 `reader`。"""

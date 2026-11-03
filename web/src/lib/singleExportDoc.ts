@@ -15,8 +15,11 @@ import type { OriginalOutputSpec } from './originalSpec'
  * * 页面 = 原图图幅（`OriginalOutputSpec` 的 mm，即请求里的 `w_mm` / `h_mm`；没有规格不合成），面板落在 (0, 0)，
  *   且**不套用**画布上的缩放 / 裁剪 / 旋转 / 翻转 / 透明度——与不带标注的原图导出是同一张图；
  * * 标注位置从画布映射到原图坐标：以「图内容原点」为原点、按 图幅 / 画布上图的完整显示尺寸 的比例缩放 x / y / w / h；
- *   字号、线宽等 pt 量**不缩**（共享规则 §8：不因画布缩放缩字号）。单图编辑里图幅被静默校正为真实图幅，
- *   比例通常恰为 1，此时只是平移；
+ *   字号、线宽、内边距、圆角这些长度量**同比缩放**（两轴不等比时取均值，与 `lib/writeBackAnnotations.toFigureMm`
+ *   同一口径）：标注是用户对着画布上那张图摆的，导出后它与图的相对大小必须和画布上一样。图被缩小显示时
+ *   （例如 figsize=(12,8) 的大图缩进页面），对齐图内文字设的 8 pt 文字框在原图里就是 16 pt——不缩的话导出后
+ *   只剩图内文字的一半大，框里空出一大片。ADR 0028 / 共享规则 §8「不因面板缩小而缩字号」管的是**图自己的**
+ *   字号，原图导出照旧不碰；比例恰为 1 时（单图编辑里图幅多被静默校正为真实图幅）只是平移；
  * * 图幅之外的标注被页面裁掉（页面就是图幅），不扩大页面。
  *
  * 没有可见标注（或不是恰好一张可见的图）返回 `null`：调用方照旧发纯原图请求，载荷与从前逐字节一致。
@@ -54,9 +57,34 @@ export function singleAnnotatedDocument(
       delete rest.flipV
       return rest
     }
-    return { ...o, x: (o.x - ox) * sx, y: (o.y - oy) * sy, w: o.w * sx, h: o.h * sy }
+    return scaleLengths({ ...o, x: (o.x - ox) * sx, y: (o.y - oy) * sy, w: o.w * sx, h: o.h * sy }, (sx + sy) / 2)
   })
   return { ...doc, page: { ...doc.page, w: frame.w, h: frame.h }, objects: mapped }
+}
+
+/** 标注里与框一起缩放的各向同性长度量（pt / mm）：字号、线宽、内边距、描边、圆角 */
+function scaleLengths(o: CanvasObject, k: number): CanvasObject {
+  if (k === 1) return o
+  switch (o.type) {
+    case 'text':
+      return {
+        ...o,
+        sizePt: o.sizePt * k,
+        ...(o.padding != null ? { padding: o.padding * k } : {}),
+        // 有描边却没写 borderPt = 缺省 0.75 pt（`exportPayload` / `TextView` 同一缺省）：缺省值也要跟着缩
+        ...(o.borderColor ? { borderPt: (o.borderPt ?? 0.75) * k } : o.borderPt != null ? { borderPt: o.borderPt * k } : {}),
+      }
+    case 'arrow':
+      return { ...o, strokePt: o.strokePt * k }
+    case 'shape':
+      return {
+        ...o,
+        strokePt: o.strokePt * k,
+        ...(o.cornerRadius != null ? { cornerRadius: o.cornerRadius * k } : {}),
+      }
+    default:
+      return o
+  }
 }
 
 /** 合成文档里的标注部分（非面板、可见）——就是请求里 `original.objects` 要带的那些，坐标已在原图图幅里 */

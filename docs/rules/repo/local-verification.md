@@ -22,3 +22,8 @@
   见 `docs/rules/ci/verification-chain.md`（`.github/AGENTS.md` 是速查表）。指导文档自身的门禁：`tests/test_agents_rules_index.py`
   （速查表 ↔ 细则一一对应、引用都在、每份指令的棘轮上限、速查表每格 ≤ 300 B），
   体积：`python scripts/dev/agents_budget.py --check`。
+- **验证结论取自命令本身的退出码（错题本 L-002 升级，2026-11-03）。** 不靠管道末端、`grep -c`、
+  `cmd || echo 0` 或分号串联得出「过了」；要串联就 `cmd; echo rc=$?` 单独看，管道里开 `set -o pipefail`；
+  提交 / 推送只接在退出码判过的那一步后面。为什么：ruff 改了输出格式后 `grep -c` 恒为 0，六个分支报绿；
+  `cmd || echo 0` 是追加不是替换；`测试 | grep … && git commit` 在测试红时照样提交推送
+  （#454、#528、#539、#820、#1255、#1325）。

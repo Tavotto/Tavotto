@@ -1236,6 +1236,38 @@ def _stop_output_drainer(proc) -> None:
         proc.wait(timeout=2)
 
 
+def _sync_win32_std_handles(*pairs: tuple[int, int]) -> None:
+    """Point Win32 standard handles at the CRT fds just ``dup2``'d (no-op off Windows).
+
+    CRT descriptors and Win32 standard handles are separate; ``Popen`` (stdout=None)
+    and native libraries inherit/use the latter directly.
+    """
+    if os.name != "nt":
+        return
+    import ctypes  # noqa: PLC0415
+    import msvcrt  # noqa: PLC0415
+
+    set_handle = ctypes.windll.kernel32.SetStdHandle
+    set_handle.argtypes = [ctypes.c_ulong, ctypes.c_void_p]
+    set_handle.restype = ctypes.c_int
+    for kind, fd in pairs:
+        if not set_handle(kind, msvcrt.get_osfhandle(fd)):
+            raise OSError("Cannot redirect a standard handle")
+
+
+def _detach_public_stdout() -> None:
+    """公开的 fd 1 / Win32 标准输出改指 stderr（worker.log）；协议此前已 dup 到私有不可继承 fd。
+
+    TVD-5J0Y：`sys.stdout` 在 build 期间只是 Python 层被 `redirect_stdout` 换掉，OS 层的 fd 1 仍是
+    协议管道——脚本 `subprocess.run(...)`（不 capture）起的子进程、C 扩展直接写 fd 1，内容都落进
+    协议管道，父进程读到一行非 JSON → protocol_mismatch。敏感运行早已这样处理（见
+    `_suppress_sensitive_output`），普通运行同一条纪律，只是去向是 worker.log 而不是丢弃管道。
+    """
+    sys.stdout.flush()
+    os.dup2(2, 1)
+    _sync_win32_std_handles((-11, 1))
+
+
 def _suppress_sensitive_output():
     """Discard fd 1/2 in bounded chunks, preserving content-free output activity.
 
@@ -1256,18 +1288,7 @@ def _suppress_sensitive_output():
     try:
         os.dup2(proc.stdin.fileno(), 1)
         os.dup2(proc.stdin.fileno(), 2)
-        if os.name == "nt":
-            # CRT descriptors and Win32 standard handles are separate; Popen and
-            # native libraries can inherit/use the latter directly.
-            import ctypes  # noqa: PLC0415
-            import msvcrt  # noqa: PLC0415
-
-            set_handle = ctypes.windll.kernel32.SetStdHandle
-            set_handle.argtypes = [ctypes.c_ulong, ctypes.c_void_p]
-            set_handle.restype = ctypes.c_int
-            for kind, fd in ((-11, 1), (-12, 2)):
-                if not set_handle(kind, msvcrt.get_osfhandle(fd)):
-                    raise OSError("Cannot protect sensitive script output")
+        _sync_win32_std_handles((-11, 1), (-12, 2))
     except BaseException:
         _stop_output_drainer(proc)
         raise
@@ -1323,6 +1344,11 @@ class Worker(wireproto.V1Handler):
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
         #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
         self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
+        #: 图名别名表（`--stem-aliases`，ADR 0162；父进程按注册表给）：收图之后把原图名换成登记图名
+        try:
+            self.stem_aliases = figcapture.parse_stem_aliases(getattr(args, "stem_aliases", None))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
         #: 用户在失败卡上选了「跳过这个文件夹」的目录（`--ignore-paths`，ADR 0154；父进程按项目给）：
         #: 顶层导入不再去那里找。与 native bridge 同一个装配点；没有名单什么都不装。
         bridgeboot.install_ignored_import_paths(
@@ -1909,6 +1935,18 @@ class Worker(wireproto.V1Handler):
                     file=sys.stderr,
                 )
                 self.dropped_figures = dropped
+        # 同名不同脚本、分开登记过的图（ADR 0162）：名字定下来之后、进编辑会话之前换成登记图名，三条入口同一个函数
+        renames: dict = {}
+        figcapture.apply_stem_aliases(
+            self.stem_aliases,
+            self.session.capture,
+            self.session.capture_source,
+            self.session.savefig_calls,
+            self.session.savefig_extras,
+            self.session.savefig_file_stem,
+            renames=renames,
+        )
+        self.session.rename_stems(renames)
 
         # 存盘后又被改过的图：能还原保存那一刻的 Figure 就用它当编辑基础（ADR 0139 §九）
         self.session.adopt_save_moments()
@@ -2352,6 +2390,8 @@ def main() -> None:
     ap.add_argument("--write-roots", default=None)
     # ADR 0154：用户选择「跳过这个文件夹」的目录（JSON 数组，绝对路径）；没有决定时不出现
     ap.add_argument("--ignore-paths", default=None)
+    # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
+    ap.add_argument("--stem-aliases", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 
@@ -2386,6 +2426,7 @@ def main() -> None:
     protocol_fd = os.dup(sys.stdout.fileno())
     os.set_inheritable(protocol_fd, False)
     protocol_out = os.fdopen(protocol_fd, "w", encoding="utf-8", errors="replace")
+    _detach_public_stdout()
     try:
         for line in protocol_in:
             line = line.strip()

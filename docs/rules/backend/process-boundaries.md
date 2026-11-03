@@ -17,7 +17,7 @@ order: 20
   **没有 matplotlib**）。
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、
   `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
-  `engine/project_watch.py`、`engine/readiness.py`、`engine/workdir.py`、
+  `engine/project_watch.py`、`engine/readiness.py`、`engine/sysmem.py`（池上限读可用内存，ctypes / vm_stat / `/proc/meminfo`，读不到回 None）、`engine/workdir.py`、
   `engine/databinding.py`、`engine/preparation.py` 被 Flask import，
   **必须保持纯标准库**。「纯标准库」挡的是科学栈（matplotlib / numpy 由 worker 解释器提供）；
   `pyproject.toml` 声明的运行时依赖（flask / packaging + RenderCore 的五个包，U10 起；ADR 0072）是父进程自己的

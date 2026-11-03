@@ -17,9 +17,21 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Installing a missing package no longer leaves the figure missing another one
+
+When a script ran in Tavotto's built-in Python and stopped on a package it doesn't include (for example scikit-learn), installing it created a fresh environment for the project that could lack packages the script had been using all along from the built-in one, such as pandas. The next run then stopped again with "pandas is missing", one package per round. This happened mostly when the script imports its own helper module from a folder it adds to `sys.path` (including `Path(__file__).parents[1]` and folders above the project). Tavotto now reads helper modules in those folders when it plans the install, a few levels above the project at most and never your home folder or anything above it. When it still can't see all of the script's imports, the new environment also gets the built-in packages (pandas, SciPy, seaborn, Pillow). The confirmation lists every package before anything is installed.
+
 ## The first-run setup log is redacted, and a failed install says where it stopped
 
 When Tavotto sets up its own rendering environment (creating it, then installing matplotlib), everything written to the setup log is now redacted before it is kept: credentials and query strings in package-index URLs, personal paths and other secrets are removed, and the data folder appears as `<data>`. That log can end up in a feedback bundle, and previously pip's output went in verbatim. If a step fails, the log now ends with one line naming the step (environment, install or import check) and whether it timed out or exited with an error. A timed-out install keeps what pip printed before it was stopped, and a failed import check keeps its error. Nothing changes when setup succeeds. Thanks to @mvanhorn for this contribution (#807).
+
+## A copied script that saves figures with the same names now gets its own figures
+
+If you copied a script to rerun it on new data and it saves figures with the same file names as the original (for example into a different output folder), preparing the copy used to stop with "these figure names already belong to other scripts", and the only way out took the figures away from the original script. Tavotto now links the copy's figures separately, so both scripts' figures can be opened and edited on their own; the asset panel still shows the original file names. The first time you open the copy's figures, Tavotto runs it once more. Only when both scripts write the very same file in the project folder is it still reported as a clash. Your scripts are never changed.
+
+## A figure-name clash no longer sends you to the AI fix
+
+When a script ran fine but the figures it saved have the same names as figures already linked to another script in the project, the card offered "Use your AI to fix it", and the assistant could not change anything, because the clash is not in the script. The card now offers sending feedback instead, and its message still says where to choose which script a figure belongs to. Your scripts are never changed.
 
 ## Resolution is shown as dpi everywhere, matching journals and matplotlib
 
@@ -45,9 +57,17 @@ On Windows without long-path support, "Make editable version" for an R / MATLAB 
 
 On Windows, the first attempt to prepare the private Python for a single-package fix could stop with a "write failed" error when antivirus software or a search indexer briefly held the freshly unpacked files, and only a second click worked. Tavotto now retries that step for a few seconds before giving up, and when it still fails the log records which step failed and the Windows error code.
 
+## Scripts that start another script which prints text no longer fail with a protocol error
+
+If your script started a second Python script with `subprocess.run(...)` (or used a library that writes straight to the console) and that program printed anything, the run failed with `protocol_mismatch` and no figure was captured. That output now goes to Tavotto's render log like the rest of your script's output, and the run completes normally. Your scripts are not changed.
+
 ## The fix assistant waits for a running install before switching Python
 
 When the in-app fix assistant tried to create a new Python environment while a package installation for the same project was still running, it failed immediately with "dependency install busy" and often gave up. It now waits for that installation to finish, however long it takes on a slow network or with large packages, and then continues; the preparation card says "Waiting for another installation to finish…" meanwhile, and Stop still works. Only if the installation shows no progress at all for 10 minutes is the assistant told the problem is temporary and can try again, instead of treating it as a dead end. A script that is still running in the environment is still reported as needing you to stop it first.
+
+## Rendering no longer gets slower as more figures are open
+
+With four or more scripted figures on the canvas, editing one figure could re-render the others in the background one after another. Tavotto kept only three render sessions alive, so every one of those renders restarted a script from scratch (about 15 times slower than a warm render, and 20 to 40 seconds on some Windows machines). Tavotto now keeps up to eight sessions alive when your computer has the free memory (three otherwise), and background re-renders of neighbouring figures no longer push out the figure you are editing. A neighbouring figure that would need a fresh start while the sessions are full simply keeps its previous picture.
 
 ## The maker's reply to a problem report now shows up in the app
 
@@ -56,3 +76,15 @@ When you send a problem report and *Contact the maker* is on, the app now also k
 ## The first picture after launch appears a little sooner
 
 The first time you render after starting Tavotto, the app checks your Python environment with several small probes. Probes that don't depend on each other now run side by side instead of one after another, which trims a fraction of a second from that first render on a typical setup. Later renders are unchanged, and Tavotto still never picks a different Python on its own.
+
+## Scripts that `import pymupdf` can install it in one click
+
+PyMuPDF's current documentation imports it as `import pymupdf` instead of the older `import fitz`. Tavotto only recognised the older name, so a script written the new way that ran in an environment without PyMuPDF got a "missing pymupdf" card with no install button, and the "Specify package…" box was not even filled in. Both names now lead to the same install of PyMuPDF into an environment Tavotto manages, exactly as `import fitz` already did. Your own Python environments are not changed unless you choose them.
+
+## Text boxes added over a figure keep their size when you export that figure
+
+In single-figure editing, a text box, arrow or shape drawn over the figure came out much smaller relative to the figure when it was exported, whenever the figure was shown scaled down on the canvas (for example a large Matplotlib figure fitted into the page). A label set to match the figure's own text looked right on the canvas but ended up about half as large in the exported file, inside a box that was too big for it. Export now scales font size, line width, padding, border and corner radius by the same ratio as the figure, so the annotation looks the same relative to the figure as it did on the canvas. The figure's own text is unchanged, and nothing changes when the figure was shown at its original size.
+
+## In a multi-figure layout, dragging a figure's edge crops it instead of stretching it
+
+Dragging one of the four side handles of a figure in a multi-figure layout used to stretch the figure in one direction, which squashed its text and markers. It now crops that side: the figure stays where it is and at the same scale, the handle stops at the figure edge and again at the edge of the plotted content, and you hold ⌥ (Alt on Windows) to cut into the content. Corner handles still scale the whole figure proportionally; while you drag, a small capsule shows the scale and the resulting text size in pt, and turns amber when the text falls below your journal's minimum. Annotations that sit on the figure (panel letters, arrows, text boxes) now scale with it; turn this off with **With annotations** in the figure's toolbar. Crops already in your layouts are unchanged; **Reset crop** in the toolbar puts a figure back to its full size.

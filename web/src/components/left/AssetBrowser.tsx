@@ -21,6 +21,7 @@ import {
   extOf,
   renderUrl,
   fileUrl,
+  runtimeAssetName,
   runtimePreviewUrl,
   type PanelInfo,
   type RuntimeAssetInfo,
@@ -361,7 +362,7 @@ export function AssetBrowser() {
   const activeActionable = !!activeItem && (activeItem.kind === 'file' || !!activeItem.asset.descriptor)
   const activeCap = activeItem?.kind === 'file' ? activeItem.panel.capability : undefined
   const activeForeign = activeCap?.foreign_source ?? null
-  const activeName = activeItem ? (activeItem.kind === 'file' ? fileName(activeItem.panel.id) : activeItem.asset.stem) : ''
+  const activeName = activeItem ? (activeItem.kind === 'file' ? fileName(activeItem.panel.id) : runtimeAssetName(activeItem.asset)) : ''
 
   const focusId = items.some((it) => itemId(it) === activeId)
     ? activeId
@@ -679,7 +680,7 @@ export function AssetBrowser() {
       <Dialog
         open={!!zoomed}
         onOpenChange={(v) => !v && setZoomed(null)}
-        title={zoomed ? (zoomed.kind === 'file' ? fileName(zoomed.panel.id) : zoomed.kind === 'runtime' ? zoomed.asset.stem : '') : ''}
+        title={zoomed ? (zoomed.kind === 'file' ? fileName(zoomed.panel.id) : zoomed.kind === 'runtime' ? runtimeAssetName(zoomed.asset) : '') : ''}
         description={
           zoomed?.kind === 'file'
             ? `${formatOf(zoomed.panel)} · ${translate('measure.cmSize', { w: formatCm(zoomed.panel.native_w_mm), h: formatCm(zoomed.panel.native_h_mm) })}`
@@ -1141,7 +1142,7 @@ function RuntimeAssetCard({
           onMove(step[e.key])
         }
       }}
-      title={ab('runtimeCardTitle', { stem: asset.stem, script: asset.script })}
+      title={ab('runtimeCardTitle', { stem: runtimeAssetName(asset), script: asset.script })}
       className={CARD_ITEM}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
@@ -1165,7 +1166,7 @@ function RuntimeAssetCard({
         {/* 就近入口（与文件卡同款，非嵌套控件）：有描述符 = 编辑原图 + 添加到
             画布；没有 = 只有「运行并发现图」 */}
         {asset.descriptor ? (
-          <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name: asset.stem })} onClick={add} />
+          <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name: runtimeAssetName(asset) })} onClick={add} />
         ) : (
           <CardAdd
             icon={Play}
@@ -1179,7 +1180,7 @@ function RuntimeAssetCard({
       {/* 第二行：「运行时图」是它的格式名；之后有同源磁盘图先说关系（脚本路径在
           title 与可达名里仍然有），否则尺寸（跑过）或脚本路径（没跑过） */}
       <CardMeta
-        name={asset.stem}
+        name={runtimeAssetName(asset)}
         selected={selected}
         marker={
           <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
@@ -1408,7 +1409,7 @@ function AssetCardMenu({
     item?.kind === 'runtime' ? s.byScript[item.asset.script] : undefined,
   )
   if (!item) return null
-  const name = item.kind === 'file' ? fileName(item.panel.id) : item.asset.stem
+  const name = item.kind === 'file' ? fileName(item.panel.id) : runtimeAssetName(item.asset)
   const actionable = item.kind === 'file' || !!item.asset.descriptor
   const busy = !!run && isBusyPhase(run.phase)
   const stale = item.kind === 'runtime' && actionable && !!runtimeStaleKey(item.asset)
@@ -1496,7 +1497,7 @@ function RuntimeZoom({ asset }: { asset: RuntimeAssetInfo }) {
         <div className="flex items-center justify-center bg-paper p-2">
           <img
             src={runtimePreviewUrl(asset.id, nonce)}
-            alt={ab('zoomAlt', { name: asset.stem })}
+            alt={ab('zoomAlt', { name: runtimeAssetName(asset) })}
             className="max-h-[50vh] max-w-full object-contain"
           />
         </div>

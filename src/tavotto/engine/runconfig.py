@@ -603,6 +603,15 @@ def configured_only_stems(project_root: str | Path, script: str) -> set[str]:
     )
 
 
+def configs_capturing(project_root: str | Path, script: str, stem: str) -> list[str]:
+    """记录里捕获过这个 stem 的运行配置引用（不含无参数的 `""`，按记录顺序）；没有记录 = 空。"""
+    with _LOCK:
+        history = _read(project_root)["captures"].get(script)
+    if history is None:
+        return []
+    return [cid for cid, stems in history["runs"].items() if cid and stem in stems]
+
+
 # ---------------------------------------------------------------------------
 # 磁盘面板的默认配置
 # ---------------------------------------------------------------------------
