@@ -1,0 +1,10 @@
+✔ timing dispatch work must finish strictly before the work deadline (3.394419ms)
+✔ timing dispatch work cannot exceed aggregate send and settlement time (0.448551ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 138.368596

@@ -1,0 +1,67 @@
+import hashlib,json,pathlib,shutil,subprocess
+
+out=pathlib.Path('/tmp/cla-timing-independent-review-830bd89c')
+snapshot=out/'snapshot'; source=snapshot/'scripts/timing-plan.mjs'; commands=[]
+def run(argv,cwd,log):
+    r=subprocess.run(argv,cwd=cwd,text=True,capture_output=True,timeout=15)
+    (out/log).write_text(r.stdout+r.stderr)
+    commands.append({'argv':argv,'cwd':str(cwd),'exit':r.returncode,'log':log})
+    return r
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+
+# Restore the exact initial source from the two independently observed edits;
+# assert its full hash before attributing an old-source failure to that snapshot.
+initial=out/'initial-snapshot';shutil.copytree(snapshot,initial,dirs_exist_ok=True)
+old=(initial/'scripts/timing-plan.mjs').read_text().replace('if(readyAfterEvent<start)','if(readyAfterEvent<=start)')
+cli_new="""    fd=fs.openSync(process.argv[2],'r');const stat=fs.fstatSync(fd);
+    if(!stat.isFile())throw Error('regular_input_file_required');if(stat.size>65536)throw Error('input_too_large');
+    const buffer=Buffer.alloc(65537);let length=0,count;
+    do{count=fs.readSync(fd,buffer,length,buffer.length-length,null);length+=count;}while(count>0 && length<buffer.length);
+    if(length>65536)throw Error('input_too_large');"""
+cli_old="""    fd=fs.openSync(process.argv[2],'r');if(!fs.fstatSync(fd).isFile())throw Error('regular_input_file_required');
+    const buffer=Buffer.alloc(65537),length=fs.readSync(fd,buffer,0,buffer.length,null);if(length>65536)throw Error('input_too_large');"""
+assert old.count(cli_new)==1
+old=old.replace(cli_new,cli_old);(initial/'scripts/timing-plan.mjs').write_text(old)
+assert sha(initial/'scripts/timing-plan.mjs')=='0b562df2210853c1bd89d5e032fd92830da3c045d8f1ed4299f3111a832af22a'
+red=run(['node','--test','tests/timing-independent.test.mjs'],initial,'independent-red-original-source.txt')
+green=run(['node','--test','tests/timing-independent.test.mjs'],snapshot,'independent-green-final-source.txt')
+assert red.returncode==1 and green.returncode==0
+
+mutations=[
+ ('remaining-clock','const remaining=proof.expires_at*1000-input.dispatch_at_ms;','const remaining=120000;','timing-independent.test.mjs','fractional dispatch'),
+ ('authority-cap','proof.expires_at>input.authority_expires_at','false','timing-independent.test.mjs','authority ceiling'),
+ ('proof-strict-expiry','if(criticalPath>=remaining)','if(criticalPath>remaining)','timing-plan.test.mjs','critical path equality'),
+ ('first-poll-readiness','if(readyAfterEvent<start)','if(readyAfterEvent<=start)','timing-independent.test.mjs','single-shot earliest read'),
+ ('last-poll-readiness','if(readyAfterEvent>=start+(wait.maxAttempts-1)*wait.intervalMs)','if(readyAfterEvent>start+(wait.maxAttempts-1)*wait.intervalMs)','timing-plan.test.mjs','readiness at the final earliest poll'),
+ ('pending-duration','(wait.maxAttempts-1)*(wait.intervalMs+b.pending_read_ms)','(wait.maxAttempts-1)*wait.intervalMs','timing-independent.test.mjs','latest pending schedule'),
+ ('withdrawal-load','+l.withdrawals_in_window*l.withdrawal_pass_ms','+0','timing-independent.test.mjs','withdrawal ahead'),
+ ('confirmation-sql','confirmationWork=16+q*n+s.confirmation_work','confirmationWork=16+q*n','timing-independent.test.mjs','SQL phases'),
+ ('correction-requests','e.confirmation_total<e.confirmation_work+5','e.confirmation_total<e.confirmation_work','timing-independent.test.mjs','SQL phases'),
+ ('runtime-acceptance','runtime_eligibility:false','runtime_eligibility:true','timing-independent.test.mjs','model feasibility never grants'),
+]
+results=[]
+for name,before,after,test,pattern in mutations:
+    assert source.read_text().count(before)==1,name
+    base=run(['node','--test',f'--test-name-pattern={pattern}',f'tests/{test}'],snapshot,f'mutation-{name}-baseline.txt')
+    assert base.returncode==0,name
+    mutant=out/'mutants'/name;shutil.copytree(snapshot,mutant,dirs_exist_ok=True)
+    p=mutant/'scripts/timing-plan.mjs';p.write_text(p.read_text().replace(before,after))
+    witness=run(['node','--test',f'--test-name-pattern={pattern}',f'tests/{test}'],mutant,f'mutation-{name}-red.txt')
+    results.append({'name':name,'unique_landing_count':1,'before':before,'after':after,'baseline_exit':base.returncode,'mutant_exit':witness.returncode,'mutant_sha256':sha(p),'test':test,'pattern':pattern})
+    assert witness.returncode==1,name
+
+# CLI only; a real child preloader limits each readSync call to 7 bytes.
+fixture=run(['node','--input-type=module','-e',"import {assumptions} from './tests/timing-plan-fixture.mjs';process.stdout.write(JSON.stringify(assumptions()));"],snapshot,'cli-fixture-generation.txt')
+case=out/'cli-assumptions.json';case.write_text(fixture.stdout)
+preload=out/'short-read.mjs';preload.write_text("import fs from 'node:fs';const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,Math.min(length,7),position);\n")
+short=run(['node','--import',str(preload),'scripts/timing-plan.mjs',str(case)],snapshot,'cli-short-read.txt')
+assert short.returncode==0 and json.loads(short.stdout)['model_feasible'] is True
+oversize=out/'oversize.json';oversize.write_text(case.read_text()+' '*65537)
+too_big=run(['node','scripts/timing-plan.mjs',str(oversize)],snapshot,'cli-oversize.txt');assert too_big.returncode==1 and 'input_too_large' in too_big.stderr
+directory=run(['node','scripts/timing-plan.mjs',str(out)],snapshot,'cli-directory.txt');assert directory.returncode==1 and 'regular_input_file_required' in directory.stderr
+unknown=json.loads(case.read_text());unknown['bounds']['wakeup_ms']=None;unknown_file=out/'cli-refused.json';unknown_file.write_text(json.dumps(unknown))
+refused=run(['node','scripts/timing-plan.mjs',str(unknown_file)],snapshot,'cli-refused.txt');assert refused.returncode==2
+(out/'mutations.json').write_text(json.dumps(results,indent=2)+'\n')
+(out/'independent-commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+manifest={'base':'830bd89cc905d28b41f690c7aa6c0236a06aec84','initial_script_sha256':sha(initial/'scripts/timing-plan.mjs'),'final_script_sha256':sha(source),'same_independent_test_sha256':sha(snapshot/'tests/timing-independent.test.mjs'),'red_exit':red.returncode,'green_exit':green.returncode,'mutations':len(results),'all_mutant_exits':[r['mutant_exit'] for r in results],'cli_exits':{'short_read':short.returncode,'oversize':too_big.returncode,'directory':directory.returncode,'model_refusal':refused.returncode},'no_http_or_runtime_execution':True}
+(out/'final-independent-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n');print(json.dumps(manifest))

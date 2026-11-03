@@ -1,0 +1,87 @@
+// Offline assumptions only: no transport, database, signature or publication API.
+import fs from 'node:fs';import {fileURLToPath} from 'node:url';import {createHash} from 'node:crypto';
+import {canonical} from '../src/core/crypto.ts';import {parseProof} from '../src/core/proof.ts';
+import {waiting} from '../src/ci/wait.ts';import {FREE_BUDGET,qualificationSQL} from '../src/native/budget.ts';
+const object=(v,keys)=>v && typeof v==='object' && !Array.isArray(v) && Object.keys(v).sort().join(',')===[...keys].sort().join(',');
+const integer=(v,min=0,max=604800000)=>Number.isSafeInteger(v) && v>=min && v<=max;
+const hash=v=>createHash('sha256').update(canonical(v)).digest('hex');
+export function timingPlan(input){
+  if(!object(input,['protocol','proof_text','dispatch_at_ms','authority_expires_at','delegated','exemption_ids','bounds','ci','load','sql_overhead','external']) ||
+    input.protocol!=='cla-offline-timing-assumptions-v1' || !integer(input.dispatch_at_ms,0,8e12) || typeof input.delegated!=='boolean')throw Error('timing_input_invalid');
+  const proof=parseProof(input.proof_text,Math.floor(input.dispatch_at_ms/1000));
+  if(!Number.isSafeInteger(proof.expires_at*1000))throw Error('timestamp_overflow');
+  if(input.authority_expires_at!==null && !integer(input.authority_expires_at,0,8e9))throw Error('authority_expiry_invalid');
+  if(!Array.isArray(input.exemption_ids) || input.exemption_ids.length>proof.contributors.length ||
+    input.exemption_ids.some(id=>!integer(id,1,Number.MAX_SAFE_INTEGER) || !proof.contributors.some(p=>p.id===id)) ||
+    new Set(input.exemption_ids).size!==input.exemption_ids.length)throw Error('exemption_assumptions_invalid');
+  const b=input.bounds,l=input.load,s=input.sql_overhead,e=input.external;
+  const boundKeys=['dispatch_after_event_ms','send_settle_ms','wakeup_ms','backlog_ms','confirmation_ms','pending_read_ms','final_read_ms','margin_ms'];
+  if(!object(b,boundKeys) || boundKeys.some(k=>!(['wakeup_ms','backlog_ms'].includes(k) && b[k]===null) &&
+    !integer(b[k],['send_settle_ms','confirmation_ms','pending_read_ms','final_read_ms','margin_ms'].includes(k)?1:0)))throw Error('timing_bounds_invalid');
+  const loadKeys=['slots','occupied_slots','withdrawals_ahead','withdrawal_pass_ms','withdrawal_reserve_ms','window_ms','confirmations_in_window','withdrawals_in_window'];
+  if(!object(l,loadKeys) || loadKeys.some(k=>!integer(l[k],['withdrawal_pass_ms','withdrawal_reserve_ms','window_ms'].includes(k)?1:0)) ||
+    l.slots!==1 || l.occupied_slots>l.slots || l.confirmations_in_window>1000 || l.withdrawals_in_window>1000 || l.withdrawals_ahead>1000)throw Error('single_slot_load_invalid');
+  if(!object(s,['dispatch_work','settlement','confirmation_work']) || Object.values(s).some(v=>!integer(v,0,40)))throw Error('sql_overhead_invalid');
+  if(!object(e,['dispatch_work','dispatch_total','confirmation_work','confirmation_total']) || Object.values(e).some(v=>v!==null && !integer(v,0,100)))throw Error('external_assumptions_invalid');
+  if(!object(input.ci,['start_after_event_ms','wait']) || !integer(input.ci.start_after_event_ms))throw Error('ci_assumptions_invalid');
+  const wait=waiting({wait:input.ci.wait}),n=proof.contributors.filter(p=>!input.exemption_ids.includes(p.id)).length;
+  // Existing source accounting: automatic new-head work 13+q*N, settlement 4;
+  // independent confirmation 14+q*N plus two reserved withdrawal SQL reads.
+  const q=qualificationSQL({delegatedCountersigningEnabled:input.delegated}),dispatchWork=13+q*n+s.dispatch_work;
+  const dispatchTotal=dispatchWork+4+s.settlement,confirmationWork=16+q*n+s.confirmation_work;
+  const reasons=[],reject=reason=>reasons.push(reason);
+  if(n>1)reject('single_contributor_model_exceeded');
+  if(dispatchWork>FREE_BUDGET.sqlWork || dispatchTotal>FREE_BUDGET.sql || confirmationWork>FREE_BUDGET.sqlWork)reject('sql_budget_exceeded');
+  if(l.occupied_slots!==0)reject('confirmation_slot_occupied');
+  if(b.confirmation_ms>FREE_BUDGET.workMs || b.send_settle_ms>FREE_BUDGET.cleanupMs || l.withdrawal_pass_ms>FREE_BUDGET.cleanupMs)reject('invocation_time_budget_exceeded');
+  if(Object.values(e).some(v=>v===null))reject('external_bounds_unknown');
+  else if(e.dispatch_work>FREE_BUDGET.externalWork || e.confirmation_work>FREE_BUDGET.externalWork ||
+    e.dispatch_total>FREE_BUDGET.external || e.confirmation_total>FREE_BUDGET.external ||
+    e.dispatch_total<e.dispatch_work || e.confirmation_total<e.confirmation_work+5)reject('external_budget_or_withdrawal_reserve_invalid');
+  const loadMs=l.confirmations_in_window*b.confirmation_ms+l.withdrawals_in_window*l.withdrawal_pass_ms+l.withdrawal_reserve_ms;
+  if(loadMs>l.window_ms)reject('recovery_window_overcommitted');
+  if(l.confirmations_in_window<1 || l.withdrawals_ahead>l.withdrawals_in_window)reject('recovery_load_incomplete');
+  const remaining=proof.expires_at*1000-input.dispatch_at_ms;
+  if(input.authority_expires_at!==null && proof.expires_at>input.authority_expires_at)reject('proof_exceeds_authority_expiry');
+  let readyAfterDispatch=null,worstCIFinishAfterEvent=null,criticalPath=null;
+  if(b.wakeup_ms===null || b.backlog_ms===null)reject('independent_wakeup_or_backlog_bound_unknown');
+  else {
+    readyAfterDispatch=b.send_settle_ms+b.wakeup_ms+b.backlog_ms+l.withdrawals_ahead*l.withdrawal_pass_ms+b.confirmation_ms;
+    criticalPath=readyAfterDispatch+b.final_read_ms+b.margin_ms;
+    if(criticalPath>=remaining)reject('proof_remaining_time_insufficient');
+    const readyAfterEvent=b.dispatch_after_event_ms+readyAfterDispatch,start=input.ci.start_after_event_ms;
+    if(readyAfterEvent<=start)worstCIFinishAfterEvent=start+b.final_read_ms;
+    else if(!wait)reject('single_shot_ci_starts_before_confirmation');
+    else {
+      // Pending reads may finish instantly. Even the earliest final attempt must
+      // start strictly after readiness; a 60s timeout alone does not grant 60s polling.
+      if(readyAfterEvent>=start+(wait.maxAttempts-1)*wait.intervalMs)reject('ci_attempts_exhaust_before_readiness');
+      worstCIFinishAfterEvent=start+(wait.maxAttempts-1)*(wait.intervalMs+b.pending_read_ms)+b.final_read_ms;
+    }
+    if(worstCIFinishAfterEvent!==null){
+      if(wait && worstCIFinishAfterEvent-start>=wait.timeoutMs)reject('ci_wait_deadline_insufficient');
+      if(worstCIFinishAfterEvent+b.margin_ms>=b.dispatch_after_event_ms+remaining)reject('ci_finishes_at_or_after_proof_deadline');
+    }
+  }
+  const plan={protocol:'cla-offline-timing-plan-v1',assumptions_sha256:hash(input),model_feasible:reasons.length===0,reasons,
+    ready_to_deploy:false,live_accepted:false,execution_supported:false,runtime_eligibility:false,network_operations:0,
+    assumptions_assurance:'caller_supplied_not_platform_verified',
+    time_ms:{remaining_proof:remaining,ready_after_dispatch:readyAfterDispatch,critical_path_with_margin:criticalPath,worst_ci_finish_after_event:worstCIFinishAfterEvent},
+    budget:{non_exempt_contributors:n,qualification_sql_per_person:q,dispatch_work_sql:dispatchWork,dispatch_total_sql:dispatchTotal,
+      confirmation_work_with_withdrawal_sql:confirmationWork,recovery_window_demand_ms:loadMs,limits:FREE_BUDGET},
+    required_runtime_work:['atomic slot reservation with issued journal and revision/head/attempt guards',
+      'independent invocation wakeup after sender settlement; durable outbox remains authoritative',
+      'fresh independent observation and qualification; no replay, manual release or proof extension'],
+    required_live_acceptance:['actual tail latency and backlog bounds','resource permissions, quotas, costs and withdrawal fairness','trusted-main CI and live platform checks']};
+  return {...plan,plan_sha256:hash(plan)};
+}
+if(process.argv[1]===fileURLToPath(import.meta.url)){
+  let fd;
+  try{
+    if(process.argv.length!==3)throw Error('usage: node scripts/timing-plan.mjs ASSUMPTIONS.json');
+    fd=fs.openSync(process.argv[2],'r');if(!fs.fstatSync(fd).isFile())throw Error('regular_input_file_required');
+    const buffer=Buffer.alloc(65537),length=fs.readSync(fd,buffer,0,buffer.length,null);if(length>65536)throw Error('input_too_large');
+    const result=timingPlan(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(buffer.subarray(0,length))));
+    process.stdout.write(JSON.stringify(result,null,2)+'\n');if(!result.model_feasible)process.exitCode=2;
+  }catch(error){console.error(error.message);process.exitCode=1;}finally{if(fd!==undefined)fs.closeSync(fd);}
+}

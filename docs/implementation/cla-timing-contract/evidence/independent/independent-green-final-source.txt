@@ -1,0 +1,17 @@
+✔ independent single-shot earliest read exactly at readiness refuses ordering race (3.928489ms)
+✔ independent CI wait enabled cannot bypass strict readiness boundary at its first poll (0.560625ms)
+✔ independent latest pending schedule includes pauses after every pending result (0.319943ms)
+✔ independent proof deadline uses fractional dispatch milliseconds (0.612809ms)
+✔ independent authority ceiling is inclusive for proof but expiry is strict for completion (0.560735ms)
+✔ independent withdrawal ahead contributes actual queue time and demand (0.530079ms)
+✔ independent SQL phases and correction requests preserve both ceilings (0.457922ms)
+✔ independent model feasibility never grants platform or runtime acceptance (0.405001ms)
+✔ independent shared parser rejects proof longer than existing protocol TTL (0.743311ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 189.131091

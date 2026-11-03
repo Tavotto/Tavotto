@@ -1,0 +1,55 @@
+✖ timing CLI refuses a FIFO before reading without blocking (1013.296705ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1146.519395
+
+✖ failing tests:
+
+test at tests/timing-plan.test.mjs:136:1
+✖ timing CLI refuses a FIFO before reading without blocking (1013.296705ms)
+  AssertionError [ERR_ASSERTION]: FIFO input must reject before the child timeout
+  + actual - expected
+
+  + Error: spawnSync /opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node ETIMEDOUT
+  +     at Object.spawnSync (node:internal/child_process:1160:20)
+  +     at spawnSync (node:child_process:928:24)
+  +     at TestContext.<anonymous> (file:///tmp/cla-timing-p2-6e12bd49/mutants/2/tests/timing-plan.test.mjs:140:13)
+  +     at Test.runInAsyncScope (node:async_hooks:227:14)
+  +     at Test.run (node:internal/test_runner/test:1382:25)
+  +     at Test.start (node:internal/test_runner/test:1242:17)
+  +     at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+  +   code: 'ETIMEDOUT',
+  +   errno: -110,
+  +   path: '/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node',
+  +   spawnargs: [
+  +     'scripts/timing-plan.mjs',
+  +     '/tmp/cla-timing-fifo-nIiMf9/assumptions.fifo'
+  +   ],
+  +   syscall: 'spawnSync /opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node'
+  + }
+  - undefined
+
+      at TestContext.<anonymous> (file:///tmp/cla-timing-p2-6e12bd49/mutants/2/tests/timing-plan.test.mjs:141:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: spawnSync /opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node ETIMEDOUT
+        at Object.spawnSync (node:internal/child_process:1160:20)
+        at spawnSync (node:child_process:928:24)
+        at TestContext.<anonymous> (file:///tmp/cla-timing-p2-6e12bd49/mutants/2/tests/timing-plan.test.mjs:140:13)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1382:25)
+        at Test.start (node:internal/test_runner/test:1242:17)
+        at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17),
+    expected: undefined,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
