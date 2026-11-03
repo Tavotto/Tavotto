@@ -1269,6 +1269,10 @@
     "bottom": "下端",
     "left": "左端",
     "right": "右端",
-    "stopLabel": "{{field}} · {{end}}颜色"
+    "stopLabel": "{{field}} · {{end}}颜色",
+    "legend": "图例色块",
+    "legendAria": "{{field}} · 跟着改的图例色块",
+    "swatchN": "色块 {{n}}",
+    "followSwatch": "让「{{name}}」的图例色块跟着改"
   }
 }

@@ -1300,6 +1300,10 @@
     "bottom": "bottom",
     "left": "left",
     "right": "right",
-    "stopLabel": "{{field}} – {{end}} colour"
+    "stopLabel": "{{field}} – {{end}} colour",
+    "legend": "Legend",
+    "legendAria": "{{field}} – legend swatch that follows",
+    "swatchN": "Swatch {{n}}",
+    "followSwatch": "Recolour the “{{name}}” legend swatch too"
   }
 }

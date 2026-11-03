@@ -116,7 +116,10 @@ from overrides import (
     font_installed,
     gradient_base_hex,
     gradient_detect,
+    gradient_legend_candidates,
+    gradient_legend_linked,
     gradient_stops,
+    gradient_swatch_groups,
     image_pixels_skipped,
     is_linecoll_family,
     legend_handle_props,
@@ -2333,6 +2336,92 @@ def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
     ]
 
 
+def _screen_ends(coll, rows) -> tuple[int, int]:
+    """一摞色块（数据 y 升序的条带下标）在**屏幕**上的上端、下端那一条（只用于显示）。"""
+    import numpy as np  # noqa: PLC0415
+
+    ends = [int(rows[0]), int(rows[-1])]
+    try:
+        ys = [
+            float(
+                coll.get_transform().transform(
+                    np.asarray(coll.get_paths()[i].vertices).mean(axis=0)
+                )[1]
+            )
+            for i in ends
+        ]
+    except Exception:  # noqa: BLE001
+        return ends[-1], ends[0]
+    return (ends[0], ends[1]) if ys[0] > ys[1] else (ends[1], ends[0])
+
+
+def _swatch_caption(ax, coll, rows) -> str | None:
+    """图例色块旁边那段字（同一个子图里、紧挨在色块右边、竖向与它重叠的文字）：界面拿它说「TiO₂ 的色块」。
+
+    颜色相同的几块只能靠它分清；找不到就不给（界面退回「色块 1 / 2」）。"""
+    import numpy as np  # noqa: PLC0415
+
+    try:
+        verts = np.vstack([coll.get_paths()[int(i)].vertices for i in rows])
+        pts = coll.get_transform().transform(verts)
+    except Exception:  # noqa: BLE001
+        return None
+    x1 = float(pts[:, 0].max())
+    y0, y1 = float(pts[:, 1].min()), float(pts[:, 1].max())
+    width = max(float(pts[:, 0].max() - pts[:, 0].min()), 1.0)
+    best = None
+    for t in ax.texts:
+        txt = t.get_text().strip()
+        if not txt or not t.get_visible():
+            continue
+        try:
+            bb = t.get_window_extent()
+        except Exception:  # noqa: BLE001
+            continue
+        gap = float(bb.x0) - x1
+        if gap < -width or gap > 4 * width or bb.y1 < y0 or bb.y0 > y1:
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, txt)
+    return best[1] if best else None
+
+
+def _gradient_legend_value(coll, gid: str) -> dict:
+    """渐变峰的「图例色块跟着改」事实（ADR 0167 修订）：候选色块（gid + 序号 + 此刻两端颜色）与此刻跟着改的那块。
+
+    没有候选就不发这个键。候选的 gid 与元素表同一个口径：同一个子图前缀 + `fill_<ax.collections 下标>`。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    info = gradient_legend_candidates(coll)
+    if not info or not info["candidates"]:
+        return {}
+    prefix = gid.rsplit(".", 1)[0]
+    ax = coll.axes
+    cands = []
+    for ci, gi in info["candidates"]:
+        other = ax.collections[ci]
+        rows = gradient_swatch_groups(other)[gi]
+        fc = np.asarray(other.get_facecolor(), dtype=float)
+        top, bottom = _screen_ends(other, rows)
+        entry = {
+            "ref": [ci, gi],
+            "gid": f"{prefix}.fill_{ci}",
+            "stops": [to_hex(fc[top][:3]), to_hex(fc[bottom][:3])],
+        }
+        name = _swatch_caption(ax, other, rows)
+        if name:
+            entry["caption"] = name
+        cands.append(entry)
+    linked = gradient_legend_linked(coll)
+    return {
+        "legend": {
+            "candidates": cands,
+            "linked": list(linked) if linked is not None else None,
+            "auto": list(info["auto"]) if info["auto"] is not None else None,
+        }
+    }
+
+
 def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[dict]:
     """Collection family 的字段表——**由能力探针驱动，不由类名驱动**。
 
@@ -2376,6 +2465,7 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
                         "stops": list(ends),
                         "direction": grad["direction"],
                         "screen_start": grad["screen_start"],
+                        **_gradient_legend_value(coll, gid),
                     },
                     "group": "渐变填充",
                 }

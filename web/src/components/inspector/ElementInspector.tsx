@@ -2646,6 +2646,8 @@ function FieldRow({
           value={grad}
           label={label}
           onChange={(stops) => write(gradientPayload(stops, grad), true)}
+          // 换图例色块是一次离散的选择：一条历史，不开取色那种连续事务
+          onLink={(ref) => writeOnce(gradientPayload(grad.stops, grad, ref))}
           onGestureEnd={gesture.end}
         />,
       )

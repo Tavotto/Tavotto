@@ -4682,9 +4682,13 @@ export default interface Resources {
     },
     "gradientStops": {
       "bottom": "下端",
+      "followSwatch": "让「{{name}}」的图例色块跟着改",
       "left": "左端",
+      "legend": "图例色块",
+      "legendAria": "{{field}} · 跟着改的图例色块",
       "right": "右端",
       "stopLabel": "{{field}} · {{end}}颜色",
+      "swatchN": "色块 {{n}}",
       "top": "上端"
     },
     "group": {
