@@ -827,7 +827,7 @@ class _BridgeStdin(io.TextIOBase):
         return out
 
     def readlines(self, hint=-1):  # noqa: D102
-        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度达到 hint 就停（读够即止，不再提问）
+        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度「超过」hint 才停（CPython iobase.c：length > hint）
         out = []
         total = 0
         while True:
@@ -836,7 +836,7 @@ class _BridgeStdin(io.TextIOBase):
                 return out
             out.append(line)
             total += len(line)
-            if hint is not None and hint > 0 and total >= hint:
+            if hint is not None and hint > 0 and total > hint:
                 return out
 
 
