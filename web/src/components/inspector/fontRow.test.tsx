@@ -19,6 +19,7 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography, type TypographyAdapter } from './typographyAdapter'
 import { TypographyControls } from './controls/TypographyControls'
+import { propertyPathOf } from '@/lib/typography'
 import { TooltipProvider } from '../ui/Tooltip'
 
 /** 写入会触发一次渲染：像真引擎那样把同一份 manifest（含本机表）再发回来 */
@@ -146,8 +147,30 @@ const withFallback = (el: ManifestElement, extra: Record<string, unknown> = {}) 
     ),
   }) as ManifestElement
 
-const triggers = () => [...host.querySelectorAll<HTMLButtonElement>('[data-select-trigger]')]
-const byLabel = (label: string) => triggers().find((t) => t.getAttribute('aria-label') === label)
+/** 经 `data-prop` 锚点（`propertyPathOf` 给的路径）找那一格的下拉触发器；不认 aria-label，不取第一个匹配 */
+const cell = (prop: 'fontFamily' | 'fontFallback') => {
+  const anchors = host.querySelectorAll(`[data-prop="${propertyPathOf('figureText', prop)}"]`)
+  if (anchors.length === 0) return undefined
+  expect(anchors, `${prop} 的锚点必须唯一`).toHaveLength(1)
+  const triggers = anchors[0].querySelectorAll<HTMLButtonElement>('[data-select-trigger]')
+  expect(triggers, `${prop} 的锚点里恰有一个下拉`).toHaveLength(1)
+  return triggers[0]
+}
+const resetChips = () => host.querySelectorAll<HTMLButtonElement>('[data-row-status] [data-reset-prop]')
+/** Radix 的触发器认 pointerdown，`click()` 不开菜单 */
+const openResetMenu = async () => {
+  const chips = resetChips()
+  expect(chips).toHaveLength(1)
+  await act(async () => {
+    chips[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+}
+const resetItem = (field: string) => document.querySelector<HTMLElement>(`[role="menuitem"][data-reset-field="${field}"]`)
+const clickEl = async (el: Element | null | undefined) => {
+  if (!el) throw new Error('没有这个按钮')
+  await act(async () => { el.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+}
 const fontManifest = (el: ManifestElement, extra: Partial<Manifest> = {}) =>
   ({ ...manifestOf(MACHINE, undefined, [el]), font_latin_only_families: ['Arial', 'Avenir'], ...extra }) as Manifest
 
@@ -158,14 +181,14 @@ describe('属性页字体合成一行（英文 | 中文）', () => {
     await mount(fontManifest(el))
     const labels = [...host.querySelectorAll('[data-row-label]')].map((n) => n.textContent)
     expect(labels.filter((l) => l?.includes('字体'))).toEqual(['字体'])
-    expect(triggers().map((t) => t.getAttribute('aria-label'))).toEqual(
-      expect.arrayContaining(['英文字体', '中文字体']),
-    )
-    expect(byLabel('英文字体')!.parentElement!.className).toContain('flex-1')
-    expect(byLabel('中文字体')!.parentElement!.className).toContain('w-[66px]')
-    expect(byLabel('英文字体')!.closest('[data-row-grid]')).toBe(byLabel('中文字体')!.closest('[data-row-grid]'))
+    expect(cell('fontFamily')).toBeDefined()
+    expect(cell('fontFallback')).toBeDefined()
+    expect(cell('fontFamily')).not.toBe(cell('fontFallback'))
+    expect(cell('fontFamily')!.parentElement!.className).toContain('flex-1')
+    expect(cell('fontFallback')!.parentElement!.className).toContain('w-[66px]')
+    expect(cell('fontFamily')!.closest('[data-row-grid]')).toBe(cell('fontFallback')!.closest('[data-row-grid]'))
     expect(host.querySelector('[data-font-fallback-hint]')).toBeNull()
-    expect(byLabel('中文字体')!.textContent).toContain('自动')
+    expect(cell('fontFallback')!.textContent).toContain('自动')
   })
 
   it('中文格收起时只显示短名（完整名在列表与悬停里）', async () => {
@@ -178,19 +201,19 @@ describe('属性页字体合成一行（英文 | 中文）', () => {
       p.overrides = [{ gid: el.gid, prop: 'fontfamily', value: { primary: 'Arial', fallback: 'Songti SC' } }] as PanelObject['overrides']
     })
     await act(async () => root.render(<Harness />))
-    expect(byLabel('中文字体')!.textContent).toBe('中宋体')
-    expect(byLabel('中文字体')!.getAttribute('title')).toBe('宋体-简')
+    expect(cell('fontFallback')!.textContent).toBe('中宋体')
+    expect(cell('fontFallback')!.getAttribute('title')).toBe('宋体-简')
   })
 
   it('只有中文格有灰色前缀「中」，英文格没有（aria-hidden，可访问名称不变）；单格时没有前缀', async () => {
     const el = withFallback(titleEl)
     selected = [el]
     await mount(fontManifest(el))
-    const prefixOf = (label: string) => byLabel(label)!.querySelector('[data-select-prefix]')
-    expect(prefixOf('英文字体')).toBeNull()
-    expect(prefixOf('中文字体')?.textContent).toBe('中')
-    expect(prefixOf('中文字体')?.getAttribute('aria-hidden')).toBe('true')
-    expect(prefixOf('中文字体')?.className).toContain('text-ink-3')
+    const prefixOf = (which: 'fontFamily' | 'fontFallback') => cell(which)!.querySelector('[data-select-prefix]')
+    expect(prefixOf('fontFamily')).toBeNull()
+    expect(prefixOf('fontFallback')?.textContent).toBe('中')
+    expect(prefixOf('fontFallback')?.getAttribute('aria-hidden')).toBe('true')
+    expect(prefixOf('fontFallback')?.className).toContain('text-ink-3')
     await act(async () => root.unmount())
     host.remove()
     useRenderStore.getState().clear()
@@ -202,32 +225,31 @@ describe('属性页字体合成一行（英文 | 中文）', () => {
   it('没有中文回退能力：这一行只有一个英文下拉，沿用原来的「字体」标签', async () => {
     selected = [titleEl]
     await mount(manifestOf(MACHINE))
-    expect(byLabel('中文字体')).toBeUndefined()
-    expect(byLabel('英文字体')).toBeUndefined()
-    expect(byLabel('字体')).toBeDefined()
+    expect(cell('fontFallback')).toBeUndefined()
+    expect(cell('fontFamily')).toBeDefined()
   })
 
   it('截断悬停：英文格 title 是完整名，中文格 title 是所选字体名', async () => {
     const el = withFallback(titleEl)
     selected = [el]
     await mount(fontManifest(el))
-    expect(byLabel('英文字体')!.getAttribute('title')).toBeTruthy()
+    expect(cell('fontFamily')!.getAttribute('title')).toBeTruthy()
     await act(async () => adapter.writeOnce('fontFamily', 'Arial'))
     await act(async () => adapter.writeOnce('fontFallback', '思源黑体'))
-    expect(byLabel('中文字体')!.getAttribute('title')).toBe('思源黑体')
+    expect(cell('fontFallback')!.getAttribute('title')).toBe('思源黑体')
   })
 
   it('英文字体带中文字形：中文那格置灰，悬停说明沿用 cjkFallbackShadowed', async () => {
     const el = withFallback(titleEl)
     selected = [el]
     await mount(fontManifest(el))
-    expect(byLabel('中文字体')!.disabled).toBe(false)
+    expect(cell('fontFallback')!.disabled).toBe(false)
     await act(async () => adapter.writeOnce('fontFallback', '思源黑体'))
     // 主字体此刻是 serif（不在 latin_only）→ 带中文字形 → 置灰
-    expect(byLabel('中文字体')!.disabled).toBe(true)
-    expect(byLabel('中文字体')!.getAttribute('title')).toBe('请改选不含中文字符的英文字体。')
+    expect(cell('fontFallback')!.disabled).toBe(true)
+    expect(cell('fontFallback')!.getAttribute('title')).toBe('请改选不含中文字符的英文字体。')
     await act(async () => adapter.writeOnce('fontFamily', 'Arial'))
-    expect(byLabel('中文字体')!.disabled).toBe(false)
+    expect(cell('fontFallback')!.disabled).toBe(false)
   })
 
   it('混合值：多选且中文字体不一致，中文格显示「多个值」，英文格不受影响', async () => {
@@ -239,25 +261,69 @@ describe('属性页字体合成一行（英文 | 中文）', () => {
     await act(async () => adapter.writeOnce('fontFallback', '思源黑体'))
     selected = [el, other]
     await act(async () => root.render(<Harness />))
-    expect(byLabel('中文字体')!.textContent).toContain('多个值')
-    expect(byLabel('英文字体')!.textContent).not.toContain('多个值')
+    expect(cell('fontFallback')!.textContent).toContain('多个值')
+    expect(cell('fontFamily')!.textContent).not.toContain('多个值')
   })
 
-  it('改过：任一项改过就有恢复钮；点一下两项一起恢复，只加一条历史', async () => {
+  it('改过：只改一项时恢复钮只清那一项（各自可恢复，注册表规则）', async () => {
     const el = withFallback(titleEl)
     selected = [el]
     await mount(fontManifest(el))
-    expect(host.querySelector('[data-reset-prop]')).toBeNull()
+    expect(resetChips()).toHaveLength(0)
     await act(async () => adapter.writeOnce('fontFallback', '思源黑体')) // 只改了中文
-    expect(host.querySelectorAll('[data-reset-prop]')).toHaveLength(1)
+    expect(resetChips()).toHaveLength(1)
+    expect(host.querySelector('[data-reset-menu]')).toBeNull() // 一项：直接是 ResetChip，不是菜单
     await act(async () => adapter.writeOnce('fontFamily', 'Arial'))
-    const before = useDocumentStore.getState().past.length
-    await act(async () => host.querySelector<HTMLButtonElement>('[data-reset-prop]')!.click())
+    await act(async () => adapter.reset('fontFamily')) // 只恢复英文
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    await clickEl(resetChips()[0]) // 此刻只剩中文改过：钮就是中文的
     expect(overrideOf(el.gid, 'fontfamily')).toBeUndefined()
-    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+    expect(resetChips()).toHaveLength(0)
+  })
+
+  it('两项都改过：恢复英文后中文还在、恢复中文后英文还在；各一条历史；撤销各自还原；「两项都恢复」一条历史', async () => {
+    const el = withFallback(titleEl)
+    selected = [el]
+    await mount(fontManifest(el))
+    const both = { primary: 'Arial', fallback: '思源黑体' }
+    const past = () => useDocumentStore.getState().past.length
+    await act(async () => adapter.writeOnce('fontFamily', 'Arial'))
+    await act(async () => adapter.writeOnce('fontFallback', '思源黑体'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual(both)
+    expect(host.querySelector('[data-reset-menu]')).not.toBeNull()
+
+    // 适配器层：恢复英文，中文还在，一条历史，撤销还原
+    let before = past()
+    await act(async () => adapter.reset('fontFamily'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    expect(past()).toBe(before + 1)
     await act(async () => { useDocumentStore.getState().undo() })
-    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: 'Arial', fallback: '思源黑体' })
-    expect(host.querySelector('[data-reset-prop]')).not.toBeNull()
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual(both)
+    // 恢复中文，英文还在
+    before = past()
+    await act(async () => adapter.reset('fontFallback'))
+    expect(overrideOf(el.gid, 'fontfamily')).toBe('Arial')
+    expect(past()).toBe(before + 1)
+    await act(async () => { useDocumentStore.getState().undo() })
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual(both)
+
+    // 界面层：小菜单三项，各清各的
+    await openResetMenu()
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((m) => m.getAttribute('data-reset-field'))).toEqual(['fontFamily', 'fontFallback', '*'])
+    await clickEl(resetItem('fontFamily'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    await act(async () => { useDocumentStore.getState().undo() })
+    await openResetMenu()
+    await clickEl(resetItem('fontFallback'))
+    expect(overrideOf(el.gid, 'fontfamily')).toBe('Arial')
+    await act(async () => { useDocumentStore.getState().undo() })
+    await openResetMenu()
+    before = past()
+    await clickEl(resetItem('*'))
+    expect(overrideOf(el.gid, 'fontfamily')).toBeUndefined()
+    expect(past()).toBe(before + 1)
+    await act(async () => { useDocumentStore.getState().undo() })
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual(both)
   })
 
   it('问题面板跳转：两个锚点各自指向自己那一格', async () => {
@@ -266,9 +332,10 @@ describe('属性页字体合成一行（英文 | 中文）', () => {
     await mount(fontManifest(el))
     const en = host.querySelector('[data-prop="fontfamily"]')!
     const cjk = host.querySelector('[data-prop="fontfamily.fallback"]')!
-    expect(en.querySelector('[aria-label="英文字体"]')).not.toBeNull()
-    expect(cjk.querySelector('[aria-label="中文字体"]')).not.toBeNull()
-    expect(cjk.querySelector('[aria-label="英文字体"]')).toBeNull()
+    expect(en.querySelector('[data-select-trigger]')).toBe(cell('fontFamily'))
+    expect(cjk.querySelector('[data-select-trigger]')).toBe(cell('fontFallback'))
+    expect(en.contains(cell('fontFallback')!)).toBe(false)
+    expect(cjk.contains(cell('fontFamily')!)).toBe(false)
   })
 
   it('字体缺失提示：英文与中文两种缺失都显示在这一行下面', async () => {

@@ -20,7 +20,6 @@ import {
   FontSizeRow,
   StyleToggle,
   TextColorRow,
-  type ModifiedState,
 } from './textRows'
 
 /**
@@ -40,12 +39,6 @@ import {
 
 const tb = (key: string, values?: Record<string, unknown>) =>
   translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
-
-function mergeDirty(a: ModifiedState, b: ModifiedState): ModifiedState {
-  if (a === 'all' || b === 'all') return 'all'
-  if (a === 'some' || b === 'some') return 'some'
-  return 'none'
-}
 
 export function TypographyControls({
   adapter,
@@ -89,8 +82,6 @@ export function TypographyControls({
   // 修改状态四档不压扁（typography-capability-layer）：多选里只改了几个 = 'some'，标签旁是空心环
   const dirty = (prop: TypographyProp) => adapter.overrideStateOf(prop)
   const reset = (prop: TypographyProp) => () => adapter.reset(prop)
-  // 字体与中文字体合成一行：任一项改过就算改过，恢复一并清掉两项
-  const fontDirty = mergeDirty(dirty('fontFamily'), fallback ? dirty('fontFallback') : 'none')
 
   /*
    * 一组四行（2026-10-07 设计审计 §9.2 拍板①，宪法第二十节当日修订）：
@@ -155,9 +146,10 @@ export function TypographyControls({
             optionLabels={family.option_labels}
             optionLabelOf={(o) => fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])}
             optionFaces={family.option_faces}
-            overridden={fontDirty}
+            overridden={dirty('fontFamily')}
             onReset={reset('fontFamily')}
             anchor={fallback ? adapter.pathOf('fontFamily') : undefined}
+            onResetBoth={fallback ? () => adapter.resetFonts?.() : undefined}
             fallback={fallback ? {
               value: fallbackCurrent,
               mixed: fallbackVal.kind === 'mixed',
@@ -167,6 +159,8 @@ export function TypographyControls({
               shadowed: !!adapter.fontFallbackShadowed,
               missing: !!fallbackCurrent && adapter.unavailableOptions('fontFallback').includes(fallbackCurrent),
               anchor: adapter.pathOf('fontFallback'),
+              overridden: dirty('fontFallback'),
+              onReset: reset('fontFallback'),
               onChange: (v) => adapter.writeOnce('fontFallback', v),
             } : undefined}
           />

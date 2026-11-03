@@ -2453,7 +2453,29 @@ function FieldRow({
       const cjkTitle = shadowed
         ? translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })
         : selection ? fontFamilyOptionLabel(selection.fallback, merged?.option_labels, fallbackNames) : translate('textBar.cjkFallbackAuto', { ns: 'inspector' })
-      return wrap(<>
+      // 两格各自可恢复（注册表「并成一行的两条字段仍各自可恢复」）：状态槽放 ResetPairChip，
+      // 只清自己那一项；两项都改了给小菜单，「两项都恢复」清整条 override、一条历史
+      const rawFont = effectiveOverride(panel.overrides, element.gid, 'fontfamily')?.value
+      const latinLabel = translate('textBar.latinFont', { ns: 'inspector' })
+      const dirtyFonts = [
+        ...(rawFont !== undefined && (selection ? selection.primary !== null : true) ? [{ prop: 'primary', label: latinLabel }] : []),
+        ...(selection ? [{ prop: 'fallback', label: cjkLabel }] : []),
+      ]
+      return <Row
+        label={labelNode}
+        labelWidth={LABEL_W}
+        align="center"
+        status={
+          <ResetPairChip
+            label={label}
+            fields={dirtyFonts}
+            onReset={(props, resetLabel) => {
+              if (props.length > 1) return clearOverride(panel.id, element.gid, 'fontfamily')
+              setFigureFontChoice(panel.id, [element.gid], props[0] === 'primary' ? 'primary' : 'fallback', null, elMsg('resetProp', { label: resetLabel }))
+            }}
+          />
+        }
+      ><>
         <div className="min-w-0 flex-1">
           <Select className="gap-0.5 px-1" value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title ?? (fm.value ? fontFamilyOptionLabel(fm.value, merged?.option_labels, fontOpts) : undefined)} ariaLabel={translate('textBar.latinFont', { ns: 'inspector' })} />
         </div>
@@ -2475,7 +2497,7 @@ function FieldRow({
             />
           </div>
         </span>
-      </>)
+      </></Row>
     }
     case 'aspect':
       // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。

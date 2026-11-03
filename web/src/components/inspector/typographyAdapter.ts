@@ -48,6 +48,8 @@ export interface TypographyAdapter {
   count: number
   /** A selected primary is not proven safe for the requested Chinese font. */
   fontFallbackShadowed?: boolean
+  /** 字体与中文字体两项一起恢复到脚本（一条历史）；单项恢复走 `reset` */
+  resetFonts?: () => void
   /** 目标涉及的对象类别（排序去重后）；property path 按它取 */
   kinds: TypographyKind[]
   /** 这条属性此刻的值域；`undefined` = 不可用，理由问 `unsupportedReason` */
@@ -249,13 +251,14 @@ export function useFigureTypography(
     },
     reset: (prop) => {
       const m = mp(prop)
-      // 字体与中文字体共用一条 override（`fontfamily`）：恢复 = 整条清掉，两项一起回到脚本、一条历史
-      if (m && (prop === 'fontFamily' || prop === 'fontFallback')) {
-        inner.reset('fontfamily')
+      // 字体与中文字体共用一条 override（`fontfamily`），但各自可恢复：只清自己那一项，另一项保留
+      if (prop === 'fontFamily' || prop === 'fontFallback') {
+        writeFont(prop === 'fontFamily' ? 'primary' : 'fallback', null)
         return
       }
       if (m) inner.reset(m)
     },
+    resetFonts: () => inner.reset('fontfamily'),
     pathOf: (prop) => propertyPathOf('figureText', prop),
     unsupportedReason: (prop) => {
       const m = mp(prop)

@@ -254,7 +254,18 @@ export type FontFallbackCell = {
   missing?: boolean
   /** 问题面板定位的锚点路径（`propertyPathOf`） */
   anchor?: string | null
+  /** 中文字体这一项自己是否改过（独立于英文字体：见注册表「并成一行的两条字段仍各自可恢复」） */
+  overridden?: ModifiedState
+  /** 只把中文字体恢复到脚本，英文字体不动 */
+  onReset?: () => void
   onChange: (v: string | null) => void
+}
+
+/** 合并一行两项的改过状态：任一项改过就算改过 */
+export function mergeDirty(a: ModifiedState, b: ModifiedState): ModifiedState {
+  if (a === 'all' || b === 'all') return 'all'
+  if (a === 'some' || b === 'some') return 'some'
+  return 'none'
 }
 
 function FontFamilyRowView({
@@ -272,6 +283,7 @@ function FontFamilyRowView({
   unavailable = [],
   fallback,
   anchor,
+  onResetBoth,
 }: {
   /** 只用来让语言切换时重画（选项标签随语言变）；memo 比较它，组件体不读 */
   lang?: string
@@ -309,6 +321,8 @@ function FontFamilyRowView({
   fallback?: FontFallbackCell
   /** 一行两格时英文那一格自己挂的定位锚点（单格时由调用方在整行外挂） */
   anchor?: string | null
+  /** 两项都改过时菜单里的「两项都恢复」（一条历史） */
+  onResetBoth?: () => void
 }) {
   // 性能探针（ADR 0075）：它下面挂着本机字体并表的几百个选项，重画一次很贵
   perfCount('render.FontFamilyRow')
@@ -375,12 +389,31 @@ function FontFamilyRowView({
       </div>
     </span>
   )
+  const isDirty = (m?: ModifiedState) => !!m && m !== 'none'
+  // 一行两格、状态槽只有一格：两项各自可恢复（注册表规则）——只改一项就是那一项的 ResetChip，
+  // 两项都改了是 ResetPairChip 小菜单（恢复英文 / 恢复中文 / 两项都恢复）
+  const status = fallback ? (
+    <ResetPairChip
+      label={label}
+      fields={[
+        ...(isDirty(overridden) && onReset ? [{ prop: 'fontFamily', label: tb('latinFont') }] : []),
+        ...(isDirty(fallback.overridden) && fallback.onReset ? [{ prop: 'fontFallback', label: tb('cjkFallback') }] : []),
+      ]}
+      onReset={(props) => {
+        if (props.length > 1) onResetBoth?.()
+        else if (props[0] === 'fontFamily') onReset?.()
+        else fallback.onReset?.()
+      }}
+    />
+  ) : isDirty(overridden) && onReset ? (
+    <ResetChip label={label} onReset={onReset} />
+  ) : undefined
   return (
     <>
       <Row
-        label={labeledWithState(label, overridden)}
+        label={labeledWithState(label, fallback ? mergeDirty(overridden ?? 'none', fallback.overridden ?? 'none') : overridden)}
         labelWidth={labelWidth}
-        status={overridden && overridden !== 'none' && onReset ? <ResetChip label={label} onReset={onReset} /> : undefined}
+        status={status}
       >
         {fallback ? (
           <span className="contents" data-prop={anchor ?? undefined}>
@@ -431,6 +464,8 @@ const sameFallback = (a?: FontFallbackCell, b?: FontFallbackCell) =>
     !!a.shadowed === !!b.shadowed &&
     !!a.missing === !!b.missing &&
     a.anchor === b.anchor &&
+    a.overridden === b.overridden &&
+    !!a.onReset === !!b.onReset &&
     sameList(a.options, b.options) &&
     sameLabels(a.optionLabels, b.optionLabels))
 
@@ -467,10 +502,13 @@ export function FontFamilyRow(props: FontFamilyRowProps) {
   const onChange = useCallback((v: string) => latest.current.onChange(v), [])
   const onReset = useCallback(() => latest.current.onReset?.(), [])
   const onFallback = useCallback((v: string | null) => latest.current.fallback?.onChange(v), [])
+  const onFallbackReset = useCallback(() => latest.current.fallback?.onReset?.(), [])
+  const onResetBoth = useCallback(() => latest.current.onResetBoth?.(), [])
   return (
     <FontFamilyRowMemo
       {...props}
-      fallback={props.fallback ? { ...props.fallback, onChange: onFallback } : undefined}
+      fallback={props.fallback ? { ...props.fallback, onChange: onFallback, onReset: props.fallback.onReset ? onFallbackReset : undefined } : undefined}
+      onResetBoth={props.onResetBoth ? onResetBoth : undefined}
       lang={i18n.language}
       onChange={onChange}
       onReset={props.onReset ? onReset : undefined}
