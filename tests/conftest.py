@@ -727,18 +727,3 @@ def _no_real_dns_for_plain_http_policy(monkeypatch):
     netpolicy.clear_cache()
     yield
     netpolicy.clear_cache()
-
-
-@pytest.fixture(autouse=True)
-def _stop_ai_owner_loop_started_by_this_test():
-    """`ai_bridge.run()` 会起一条常驻的属主心跳线程（`ai-owner-loop`，每 2 秒 `ai_history.owner_tick()`），
-    用例不停它就一直活到进程结束，并且每个 tick 都按**当时的** `ai_history.DB_PATH` 开库。后面某条用例把
-    `DB_PATH` 指到新位置、测「库不存在时先补迁」（`test_msix_migrate`），这条幽灵线程恰好在窗口里先开库：
-    要么新建出空库、要么抢走补迁——单跑绿、成组偶发红（`no such table: t`，Windows / macOS 分片各见一次）。
-    **只对这条用例起的负责**：进来时已在跑的心跳（模块级 fixture 起的）不碰。"""
-    bridge = sys.modules.get("tavotto.engine.ai_bridge")
-    was_alive = bool(bridge and bridge._OWNER_LOOP is not None and bridge._OWNER_LOOP.is_alive())
-    yield
-    bridge = sys.modules.get("tavotto.engine.ai_bridge")
-    if bridge is not None and not was_alive:
-        bridge.stop_owner_loop()
