@@ -8,6 +8,7 @@
  * T07 验收原话：**对象数、问题数和修改数不会混淆**。此前「22」孤零零挂在
  * 「编辑图内元素」按钮旁边，与左栏元素树标题上的数字长得一模一样。
  */
+import { ancestorsOf, structuralParent } from './roles/hierarchy'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -280,20 +281,34 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
   })
 })
 
-describe('身份块的 DOM 顺序就是视觉顺序（2026-09-30 重设计，Codex #756）', () => {
-  it('路径行（可点的祖先）在名字之前：键盘 Tab 先到路径、再到名字行里的隐藏钮', async () => {
+const ancestors = (gid: string) => ancestorsOf(structuralParent(manifest as never), gid)
+
+describe('身份块：选了元素时没有面包屑（2026-11-03 维护者撤掉，往上一级走左侧元素树）', () => {
+  it('没有祖先按钮、没有路径行；名字行带着「n 项已修改」恢复菜单，且在名字之后', async () => {
     await seed([panel], ['p1'])
     seedExactRender(panel, manifest as never)
     useUiStore.getState().setElementPanel('p1')
     useUiStore.setState({ selectedGids: ['axes_0.title'] })
     await mount()
     const header = document.querySelector('header[data-identity]')!
-    const crumb = header.querySelector('[data-crumb]')!
+    expect(header.querySelector('[data-crumb]')).toBeNull()
+    expect(header.querySelector('[data-identity-path]')).toBeNull()
     const h2 = header.querySelector('h2')!
-    expect(crumb, '选了子图里的元素时要有可点的祖先').toBeTruthy()
-    expect(crumb.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(h2).toBeTruthy()
     // 不靠 CSS 反排制造视觉顺序（那样 Tab 顺序与看到的相反）
     expect(header.className).not.toContain('flex-col-reverse')
+    const badge = header.querySelector('[data-override-badge]')
+    if (badge) expect(h2.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('没选元素（整张图）时路径行仍在，只放类型小字', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: [] })
+    await mount()
+    const path = document.querySelector('header[data-identity] [data-identity-path]')
+    expect(path?.textContent).toContain('整张图')
   })
 })
 
@@ -343,11 +358,10 @@ describe('图内修改数说清是修改数（T07）', () => {
 })
 
 /**
- * 2026-09-13 审计 B48 / B50 / B51：归属进面包屑（图例项 → 图例、刻度文字 → X 轴刻度），
+ * 2026-09-13 审计 B48 / B50 / B51：归属（元素树里的祖先链）（图例项 → 图例、刻度文字 → X 轴刻度），
  * 标题只显示可读文本（mathtext 源码留在名称框里）。
  */
 describe('归属与可读标题', () => {
-  const crumbs = () => document.querySelector('header p span[title]')?.getAttribute('title') ?? ''
 
   it('刻度文字：面包屑是「图 / 子图 / X 轴刻度」，标题是那一个刻度', async () => {
     await seed([panel], ['p1'])
@@ -355,7 +369,8 @@ describe('归属与可读标题', () => {
     useUiStore.getState().setElementPanel('p1')
     useUiStore.setState({ selectedGids: ['axes_0.xticklabels_1'] })
     await mount()
-    expect(crumbs()).toBe('Fig1_kinetics.pdf / 子图 1 / X 轴刻度 / 刻度 “10”')
+    expect(document.querySelector('[data-crumb]')).toBeNull()
+    expect(ancestors('axes_0.xticklabels_1')).toEqual(['figure', 'axes_0', 'axes_0.xticks'])
     expect(title()).toBe('刻度 “10”')
   })
 
@@ -365,7 +380,7 @@ describe('归属与可读标题', () => {
     useUiStore.getState().setElementPanel('p1')
     useUiStore.setState({ selectedGids: ['axes_0.legend.texts_0'] })
     await mount()
-    expect(crumbs()).toContain('/ 图例 /')
+    expect(ancestors('axes_0.legend.texts_0')).toContain('axes_0.legend')
     expect(title()).toBe('图例项 “Catalyst (k = 0.125 min⁻¹)”')
     expect(title()).not.toContain('$')
   })
@@ -378,33 +393,24 @@ describe('归属与可读标题', () => {
     await mount()
     expect(title()).toBe('曲线 “Catalyst (k = 0.125 min⁻¹)”')
     // 子图直属的元素没有中间那一级
-    expect(crumbs()).toBe('Fig1_kinetics.pdf / 子图 1 / 曲线 “Catalyst (k = 0.125 min⁻¹)”')
+    expect(ancestors('axes_0.lines_0')).toEqual(['figure', 'axes_0'])
   })
 })
 
 /**
- * 2026-09-14 审计 A4：面包屑每一级祖先都能点，往上走的路就是它本身——
- * 「所属子图」「所属系列」那种再写一行的链接删掉（同一枚回转箭头曾同时表示上到子图、
- * 下到 X / Y 刻度）。
+ * 2026-09-14 审计 A4 曾让面包屑每一级可点；2026-11-03 维护者撤掉面包屑，往上一级的导航由左侧图内元素树承担
+ * （树与头部读同一条 `ancestorsOf(structuralParent)` 祖先链）。「所属子图」那种再写一行的链接仍然没有。
  */
-describe('面包屑可点', () => {
-  const crumbButtons = () =>
-    [...document.querySelectorAll<HTMLButtonElement>('header p button[data-crumb]')]
-
-  it('刻度文字：三级祖先各是一颗按钮，点「子图 1」选中它；「所属子图」那一行不再出现', async () => {
+describe('往上一级的导航在元素树', () => {
+  it('刻度文字：头部没有祖先按钮，「所属子图」那一行不出现；祖先链仍是 图 / 子图 / X 轴刻度', async () => {
     await seed([panel], ['p1'])
     seedExactRender(panel, manifest as never)
     useUiStore.getState().setElementPanel('p1')
     useUiStore.setState({ selectedGids: ['axes_0.xticklabels_1'] })
     await mount()
-    expect(crumbButtons().map((b) => b.getAttribute('data-crumb'))).toEqual([
-      'figure',
-      'axes_0',
-      'axes_0.xticks',
-    ])
+    expect(document.querySelectorAll('header button[data-crumb]')).toHaveLength(0)
     expect(document.body.textContent).not.toContain('所属子图')
-    await act(async () => crumbButtons()[1].click())
-    expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+    expect(ancestors('axes_0.xticklabels_1')).toEqual(['figure', 'axes_0', 'axes_0.xticks'])
   })
 })
 

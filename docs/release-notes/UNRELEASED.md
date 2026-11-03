@@ -108,3 +108,11 @@ In the Quick Edit card and the properties panel, the text box used to carry a pe
 ## Text annotations can be rotated to any angle
 
 Select a text annotation and drag the round handle above its frame to rotate it; hold Shift to snap to 15 degree steps. You can also type an angle in the Properties panel. Alignment, snapping and the multi-selection frame now follow the rotated outline instead of the unrotated frame, so a rotated label lines up by what you see. Exports draw the rotated text exactly where the canvas shows it. Existing projects are unchanged until you rotate something.
+
+## The Font row of a figure's text is now one row with two dropdowns
+
+Editing the font of a text element in a figure used to take two rows, "Chinese font" and "English font". They are now a single "Font" row: the English font on the left and the Chinese font on the right. Each dropdown keeps its own name for screen readers, and hovering shows the full font name when it is cut short. When the English font you picked already draws Chinese characters, the Chinese dropdown is greyed out instead of showing an extra info button, and hovering it says why. Either font can be restored on its own: with only one changed, the restore button resets just that one; with both changed, it opens a small menu to restore the English font, the Chinese font, or both at once (one undo step). The Chinese dropdown is narrow and shows a short name (for example "宋体" instead of "宋体-简"); the list and the hover text still give the full name. Nothing about how fonts are saved has changed.
+
+## The properties panel no longer shows the "Figure › Subplot" trail at the top
+
+Selecting something inside a figure used to put a clickable trail of its parents (figure, subplot, group) above the name. It is gone; to go up a level, click the parent in the Figure elements tree on the left. The "n changes" button with its restore menu now sits on the name line, to the right of the name.
