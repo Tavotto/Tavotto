@@ -815,3 +815,33 @@ def test_module_is_stdlib_only_for_flask_parent():
         errors="replace",
     )
     assert r.returncode == 0, r.stderr
+
+
+def test_concurrent_consumers_wait_for_the_first_adoption_instead_of_creating_an_empty_db(
+    world, monkeypatch
+):
+    """两个线程同时首次开库（如属主心跳线程与启动线程）：先到的在搬，后到的不能因为「已查过」就返回、新建空库
+    ——那样先到者的改名会因目标已存在而放弃，旧历史永远回不来。后到的要等先到的搬完。"""
+    import threading
+
+    _r, local = world.pkg(PFN_A)
+    _make_history(local, 7)
+    db = world.data / "cache" / "ai_history.sqlite3"
+    real = msixmigrate._copy_sqlite
+    started = threading.Event()
+
+    def slow(src, dst, tally, deadline):
+        started.set()
+        time.sleep(0.4)
+        return real(src, dst, tally, deadline)
+
+    monkeypatch.setattr(msixmigrate, "_copy_sqlite", slow)
+    first = threading.Thread(target=msixmigrate.adopt_sqlite, args=("cache", "ai_history.sqlite3"))
+    first.start()
+    assert started.wait(5)
+    msixmigrate.adopt_sqlite("cache", "ai_history.sqlite3")  # 后到：必须等到先到的搬完才返回
+    assert db.exists()
+    first.join(5)
+    con = sqlite3.connect(db)
+    assert con.execute("select x from t").fetchall() == [(7,)]
+    con.close()
