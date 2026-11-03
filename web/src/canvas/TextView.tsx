@@ -19,6 +19,7 @@ import { RichTextField } from '@/components/ui/RichTextField'
 import { MM_PER_PT } from '@/lib/units'
 import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
 import { useDocumentStore } from '@/store/documentStore'
+import { writeMeasured } from './measuredWriteback'
 import { registerGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
@@ -45,7 +46,8 @@ const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
 /**
  * 文字对象：字体族由对象自己选（`CANVAS_TEXT_FAMILIES` 三选一），没设过就是
  * 文档默认族（衬线 = `--font-doc`），与 UI 字体分离。
- * 高度由内容撑开后回写到文档，但不进 undo —— 它是渲染派生值。
+ * 高度（竖排是宽度）由内容撑开后回写到文档：并进触发它的那条历史，没有触发者才静默——
+ * 全路径一套规则见 `measuredWriteback.ts`（ADR 0163）。
  */
 export function TextView({
   obj,
@@ -85,21 +87,17 @@ export function TextView({
         // 至少一列宽：空文字不让框缩成一条线
         const wMm = worldToMm(Math.max(el.offsetWidth, columnPx))
         if (wMm > 0 && Math.abs(wMm - widthRef.current) > 0.05) {
-          useDocumentStore.getState().silent((d) => {
-            const o = d.objects.find((x) => x.id === obj.id)
-            if (o) {
-              o.x += o.w - wMm
-              o.w = wMm
-            }
+          writeMeasured(obj.id, (o) => {
+            o.x += o.w - wMm
+            o.w = wMm
           })
         }
         return
       }
       const hMm = worldToMm(el.offsetHeight)
       if (hMm > 0 && Math.abs(hMm - heightRef.current) > 0.05) {
-        useDocumentStore.getState().silent((d) => {
-          const o = d.objects.find((x) => x.id === obj.id)
-          if (o) o.h = hMm
+        writeMeasured(obj.id, (o) => {
+          o.h = hMm
         })
       }
     }
@@ -233,6 +231,7 @@ export function TextView({
           interpretation={obj.interpretation}
           format={obj.textFormat}
           family={effectiveCanvasFamily(obj)}
+          vertical={vertical ? { columnPx, stack: previewStack } : undefined}
         />
       )}
     </div>
@@ -256,12 +255,15 @@ function RenderedText({
   interpretation,
   format,
   family,
+  vertical,
 }: {
   text: string
   sizePx: number
   interpretation?: TextInterpretation
   format?: TextFormat
   family: string
+  /** 竖排：公式整块侧躺（`MathFormula` 的竖排形态） */
+  vertical?: { columnPx: number; stack: string }
 }) {
   // 与导出读同一份判据：`layerOf` 的覆盖表就是 PDF 后端那三张脸的能力。
   // **浏览器自己的字体栈不参与这个判断**——它画得出 `⁵` 不代表导出画得出，
@@ -276,7 +278,7 @@ function RenderedText({
   return (
     <>
       {runs.map((r, i) => {
-        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} />
+        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} vertical={vertical} />
         // 行内样式只在**打开**时写：对象自己是粗 / 斜体时，片段不写 normal 去覆盖它（与导出的「或」一致）
         const style: CSSProperties = {}
         if (r.italic) style.fontStyle = 'italic'

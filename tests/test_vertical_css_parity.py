@@ -54,6 +54,7 @@ def _browser_columns(tmp_path: Path):
     payload = {
         "fonts": {"serif": serif.as_uri(), "cjk": cjk.as_uri()},
         "cases": [{"text": t, "size_pt": s, "line_height": lh, "h_mm": h} for t, s, lh, h in CASES],
+        "formula_cases": _formula_payload(),
     }
     inp = tmp_path / "cases.json"
     inp.write_text(json.dumps(payload), encoding="utf-8")
@@ -67,6 +68,49 @@ def _browser_columns(tmp_path: Path):
     return json.loads(proc.stdout)
 
 
+# (各段: 文字 | 公式盒, 字号 pt, 行距, 框高 mm)：公式 em 尺寸取 matplotlib mathtext 的典型量级
+FORMULA_BOXES = {
+    "frac": {"width": 1.1, "ascent": 0.95, "descent": 0.55},
+    "sq": {"width": 0.62, "ascent": 0.72, "descent": 0.06},
+}
+FORMULA_CASES = [
+    # 公式在列中、不折行
+    (["弹性段 ", "frac", " 与塑性段"], 12, 1.25, 80),
+    # 公式靠近折点：前面的字把列填到只剩放不下公式 → 整个公式换到下一列
+    (["材料屈服强度比较试验的结果为 ", "frac", " 数值", "sq", " 之差"], 12, 1.25, 30),
+    # 拉丁文字混排、行距不同
+    (["Stress ", "sq", " and ", "frac", " ratio"], 10, 1.4, 35),
+]
+
+
+def _metric_gap_em(provider) -> float:
+    """侧躺基线的两种取法之差（em）：hhea（浏览器）vs OS/2 sTypo（导出）的 (上升 + 下降) / 2。"""
+    from fontTools.ttLib import TTFont
+
+    rec = fonts.FontRegistry.discover().record_for("serif", False, False)
+    t = TTFont(rec.path)
+    upem = t["head"].unitsPerEm
+    hhea = (t["hhea"].ascent + t["hhea"].descent) / 2 / upem
+    typo = (t["OS/2"].sTypoAscender + t["OS/2"].sTypoDescender) / 2 / upem
+    return abs(hhea - typo)
+
+
+def _formula_payload():
+    cases = []
+    for parts, size, lh, h in FORMULA_CASES:
+        cases.append(
+            {
+                "parts": [
+                    {"m": FORMULA_BOXES[p]} if p in FORMULA_BOXES else {"t": p} for p in parts
+                ],
+                "size_pt": size,
+                "line_height": lh,
+                "h_mm": h,
+            }
+        )
+    return cases
+
+
 def test_columns_fold_the_same_in_the_browser_and_in_rendercore(tmp_path):
     reason = _skip_reason()
     if reason:
@@ -75,7 +119,7 @@ def test_columns_fold_the_same_in_the_browser_and_in_rendercore(tmp_path):
     from tavotto.rendercore.hbshaper import HbFaceProvider
     from tavotto.rendercore.typography import faces_for, layout_text
 
-    browser = _browser_columns(tmp_path)
+    browser = _browser_columns(tmp_path)["cols"]
     provider = HbFaceProvider(fonts.FontRegistry.discover())
     assert vertical  # 被测对象
     for (text, size, lh, h), cols in zip(CASES, browser):
@@ -96,3 +140,91 @@ def test_columns_fold_the_same_in_the_browser_and_in_rendercore(tmp_path):
         mine = [c.logical for c in block.columns]
         # 浏览器：列文字的行尾空格留在原列里（white-space: pre-wrap 的悬挂空格），RenderCore 的折行已 rstrip
         assert [c.rstrip() for c in cols] == mine, (text, cols, mine)
+
+
+def test_formulas_lie_sideways_in_the_column_the_same_in_the_browser_and_in_rendercore(tmp_path):
+    """公式（ADR 0163）：预览里整块侧躺，所在列、沿列的位置、占的列长、横向落点都与导出 `_vertical_nodes` 逐项对账。
+
+    导出一侧：`vertical.layout` 给出每个公式的列、`pos`、`length`，侧躺基线 `side_x`，公式盒（上升 / 下降）→ 墨迹横向范围
+    `side_x − 下降…side_x + 上升`（顺时针转 90°，上升朝右），相对列中线；公式后第一个字的位置 = 公式的 `pos + length`。
+    浏览器一侧：`MathFormula` 的竖排摆法（同一份源码 `verticalFormula.ts`）挂进真 Chromium，量 SVG 轮廓的包围盒。
+    比的是**位置与占位**：沿列方向（列、pos、len、公式后第一个字）容差 0.6 pt；横向（相对列中线）另加一条已知差——
+    浏览器用 hhea 度量定侧躺字的基线，导出用 OS/2 sTypo 度量（Liberation 的两组不同：见 `_metric_gap_em`），
+    侧躺的拉丁字本来就带这一差（横向 ≈ 1 pt @12 pt）；公式跟同列的侧躺字走浏览器那条基线，所以横向容差 = 这一差 + 0.4 pt。"""
+    reason = _skip_reason()
+    if reason:
+        pytest.skip(f"not_run：{reason}")
+    pytest.importorskip("uharfbuzz")
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+    from tavotto.rendercore.typography import faces_for, layout_text, math_key
+
+    browser = _browser_columns(tmp_path)["formulas"]
+    provider = HbFaceProvider(fonts.FontRegistry.discover())
+    tol = 0.6
+    gap_pt = _metric_gap_em(provider)
+    for (parts, size, lh, h), got in zip(FORMULA_CASES, browser):
+        text = "".join(f"${p}$" if p in FORMULA_BOXES else p for p in parts)
+        math = {}
+        for p in parts:
+            if p in FORMULA_BOXES:
+                b = FORMULA_BOXES[p]
+                math[math_key(p, "serif")] = {
+                    "ok": True,
+                    "width": b["width"],
+                    "ascent": b["ascent"],
+                    "descent": b["descent"],
+                    "segments": [
+                        ["M", 0.0, 0.0],
+                        ["L", b["width"], 0.0],
+                        ["L", b["width"], b["ascent"]],
+                        ["Z"],
+                    ],
+                }
+        faces = faces_for(provider, "serif", False, False)
+        block = layout_text(
+            {
+                "text": text,
+                "text_format": "latex",
+                "x_mm": 0,
+                "y_mm": 0,
+                "w_mm": 80,
+                "h_mm": h,
+                "size_pt": size,
+                "line_height": lh,
+                "writing_mode": "vertical",
+            },
+            faces,
+            math,
+        )
+        mine = []
+        size = float(size)
+        for ci, col in enumerate(block.columns):
+            for k, item in enumerate(col.items):
+                if item.kind != "math":
+                    continue
+                box = item.math[0]
+                nxt = col.items[k + 1].pos if k + 1 < len(col.items) else None
+                mine.append(
+                    {
+                        "col": ci,
+                        "pos": item.pos,
+                        "len": item.length,
+                        "left": col.side_x - col.cx - (box["descent"]) * block.size,
+                        "right": col.side_x - col.cx + (box["ascent"]) * block.size,
+                        "next": nxt,
+                    }
+                )
+        assert len(mine) == len(got) == sum(p in FORMULA_BOXES for p in parts), (parts, mine, got)
+        for want, have in zip(mine, got):
+            ctx = (parts, want, have)
+            assert have["col"] == want["col"], ctx
+            for key in ("pos", "len"):
+                assert have[key] == pytest.approx(want[key], abs=tol), (key, ctx)
+            for key in ("left", "right"):
+                assert have[key] == pytest.approx(want[key], abs=gap_pt * size + 0.4), (key, ctx)
+            # 宽度（右 − 左）不受基线差影响：必须逐点相同——侧躺的整块公式，上升 + 下降 = 横向厚度
+            assert have["right"] - have["left"] == pytest.approx(
+                want["right"] - want["left"], abs=0.3
+            ), ctx
+            if want["next"] is not None and have["next"] is not None:
+                assert have["next"] == pytest.approx(want["next"], abs=tol), ("next", ctx)

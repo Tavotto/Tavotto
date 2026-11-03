@@ -33,6 +33,11 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, migrateToProject, type TextObject } from '@/types/document'
 import { TextView } from './TextView'
 import { fitBeforeRotate } from './textFit'
+import { startResizeDrag } from './interactions'
+import { dirsFor } from '@/lib/geometry'
+import { FRESH_MS } from './measuredWriteback'
+import { useInteractionStore } from '@/store/interactionStore'
+import { useSelectionStore } from '@/store/selectionStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -46,6 +51,11 @@ vi.mock('@/lib/sourceFontCache', () => ({
   useSourceFonts: () => 0,
   subscribeSourceFonts: () => () => {},
   previewFamilyOf: () => undefined,
+}))
+
+vi.mock('@/lib/mathtext', () => ({
+  useMathBox: () => ({ ok: true, width: 2, ascent: 0.8, descent: 0.2, segments: [] }),
+  mathPathData: () => 'M0 0',
 }))
 
 const textObj = (over: Partial<TextObject> = {}): TextObject => ({
@@ -321,6 +331,32 @@ describe('TextView 预览：竖排 = CSS vertical-rl，框高是行长、框宽�
   })
 })
 
+describe('TextView 预览：公式在竖排里整块侧躺、沿列占公式宽度（ADR 0163）', () => {
+  const formula = () => container.querySelector<HTMLElement>('[data-math-src]')!
+  const sizePx = mmToWorld(10 * (25.4 / 72))
+
+  it('竖排：公式盒 = 列宽 × 公式宽，SVG 顺时针转 90°，上升线在基线右侧', () => {
+    act(() => root.render(<TextView obj={textObj({ writingMode: 'vertical', text: '弹性 $x^2$ 段', textFormat: 'latex' })} />))
+    const box = formula()
+    expect(box.hasAttribute('data-math-vertical')).toBe(true)
+    expect(box.style.width).toBe(`${sizePx * 1.25}px`) // 占满一整列
+    expect(parseFloat(box.style.height)).toBeCloseTo(2 * sizePx, 3) // 沿列方向 = 公式宽
+    const svg = box.querySelector('svg')!
+    expect(svg.style.transform).toBe('rotate(90deg)')
+    expect(svg.style.transformOrigin).toBe('0 0')
+    // 基线 x = 列中线 − 偏移（jsdom 无 canvas：退路 0.35 em）；左上角 = 基线 + 上升
+    expect(parseFloat(svg.style.left)).toBeCloseTo((sizePx * 1.25) / 2 - 0.35 * sizePx + 0.8 * sizePx, 3)
+  })
+
+  it('横排：仍是零高、基线上的原样（旧文档预览逐字不变）', () => {
+    act(() => root.render(<TextView obj={textObj({ text: '弹性 $x^2$ 段', textFormat: 'latex' })} />))
+    const box = formula()
+    expect(box.hasAttribute('data-math-vertical')).toBe(false)
+    expect(box.style.height).toBe('0px')
+    expect(box.querySelector('svg')!.style.transform).toBe('')
+  })
+})
+
 /* ------------------------------------------------------------------ 选框 / 命中 */
 describe('命中与选框：x/y/w/h 仍是未旋转框，旋转叠加在它之上', () => {
   it('竖排 + 旋转 90°：visualBounds 是 w/h 对调后的外接盒；0° 就是自己', () => {
@@ -384,5 +420,178 @@ describe('竖排单行开始旋转时收的是高度（贴字高），同一公�
     const fit = fitBeforeRotate(o) as { x: number; w: number }
     expect('y' in fit).toBe(false)
     expect(fit.w).toBeLessThan(40)
+  })
+})
+
+
+/* ------------------------------------------------------------------ 量完写回的历史规则 */
+describe('量完写回：并进触发它的那条历史（measuredWriteback）', () => {
+  const COL_MM = 10 * (25.4 / 72) * 1.25
+  const stubColumns = (n: () => number) =>
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => mmToWorld(COL_MM * n()),
+    })
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth
+    vi.restoreAllMocks()
+  })
+
+  /** 订阅文档的活 TextView：文档变了它跟着重渲染（真画布里的样子） */
+  function Live({ id = 't1' }: { id?: string }) {
+    const o = useDocumentStore((st) => st.doc.objects.find((x) => x.id === id)) as TextObject | undefined
+    return o ? <TextView obj={o} /> : null
+  }
+  const geo = (id = 't1') => {
+    const o = byId(id)
+    return { x: o.x, y: o.y, w: o.w, h: o.h, wm: o.writingMode, sizePt: o.sizePt }
+  }
+  const commitSwitch = () =>
+    s().commit(literal('排向'), (d) => {
+      writeCanvasText(d.objects.find((x) => x.id === 't1') as TextObject, 'writingMode', 'vertical')
+    })
+
+  it('切竖排 → 量出列宽（x 随右边缘挪）→ 撤销：x / y / w / h 与切换前逐值相等；重做：与撤销前逐值相等', async () => {
+    stubColumns(() => 1)
+    put(textObj({ x: 20, y: 10, w: 60, h: 8 }))
+    await act(async () => root.render(<Live />))
+    const before = geo()
+    const depth = s().past.length
+    await act(async () => commitSwitch())
+    const vertical = geo()
+    expect(vertical.wm).toBe('vertical')
+    expect(vertical.w).toBeCloseTo(COL_MM, 2) // 量出来的一列
+    expect(vertical.x).toBeCloseTo(20 + 8 - COL_MM, 2) // 右边缘（20 + 8）不动，x 随之挪
+    expect(vertical.h).toBe(60)
+    expect(s().past.length).toBe(depth + 1) // 写回并进切换这一条，不另起历史
+
+    act(() => void s().undo())
+    expect(geo()).toEqual(before) // 逐值相等（包括 x，旧实现停在 23.59）
+    expect('writingMode' in byId()).toBe(false)
+    act(() => void s().redo())
+    expect(geo()).toEqual(vertical)
+  })
+
+  it('竖排里改字号导致列数变化 → 量出的 w 与 x 并进这条历史：撤销 / 重做逐值相等', async () => {
+    // 字号 12 时折成 3 列（桩按当前字号给）；10 时 1 列
+    stubColumns(() => (byId().sizePt >= 12 ? 3 : 1))
+    put(textObj({ writingMode: 'vertical', x: 20, y: 10, w: 8, h: 60 }))
+    await act(async () => root.render(<Live />))
+    const before = geo()
+    const depth = s().past.length
+    await act(async () =>
+      s().commit(literal('字号'), (d) => {
+        ;(d.objects.find((x) => x.id === 't1') as TextObject).sizePt = 12
+      }),
+    )
+    const after = geo()
+    expect(after.sizePt).toBe(12)
+    expect(after.w).not.toBeCloseTo(before.w, 1)
+    expect(s().past.length).toBe(depth + 1)
+    act(() => void s().undo())
+    expect(geo()).toEqual(before)
+    act(() => void s().redo())
+    expect(geo()).toEqual(after)
+  })
+
+  it('没有触发它的历史（打开项目、字体晚到）：静默写回，不进历史', async () => {
+    stubColumns(() => 3)
+    put(textObj({ writingMode: 'vertical', x: 20, y: 10, w: 8, h: 60 }))
+    // 那条放入的历史是很久以前的了
+    const t0 = performance.now()
+    vi.spyOn(performance, 'now').mockReturnValue(t0 + FRESH_MS + 1000)
+    const last = s().past.at(-1)
+    const patches = last?.patches.length
+    await act(async () => root.render(<Live />))
+    expect(byId().w).toBeCloseTo(COL_MM * 3, 2) // 写回了
+    expect(s().past.at(-1)).toBe(last) // 但没动任何历史
+    expect(s().past.at(-1)?.patches.length).toBe(patches)
+  })
+
+  it('手势事务开着：写回并进这条事务（一次撤销退回按下前）', async () => {
+    stubColumns(() => 1)
+    put(textObj({ writingMode: 'vertical', x: 20, y: 10, w: 8, h: 60 }))
+    await act(async () => root.render(<Live />))
+    const before = geo()
+    const depth = s().past.length
+    stubColumns(() => 2)
+    s().beginTxn(literal('拖柄'))
+    s().txnUpdate((d) => {
+      ;(d.objects.find((x) => x.id === 't1') as TextObject).h = 30
+    })
+    // 行长变了 → 列数变（桩）→ 重新量（用列宽变化触发 effect 重跑）
+    await act(async () => root.render(<TextView obj={{ ...byId(), lineHeight: 1.3 }} />))
+    expect(byId().w).not.toBeCloseTo(before.w, 1) // 确实写回了
+    s().endTxn()
+    expect(s().past.length).toBe(depth + 1)
+    act(() => void s().undo())
+    expect(geo()).toEqual(before)
+  })
+})
+
+/* ------------------------------------------------------------------ 竖排的拖柄 */
+describe('竖排文字的缩放柄：北 / 南改列长（h），东 / 西不给', () => {
+  const down = () => ({ clientX: 0, clientY: 0, button: 0, stopPropagation() {} }) as unknown as React.PointerEvent
+  const fire = (type: 'pointermove' | 'pointerup', mm: [number, number]) =>
+    window.dispatchEvent(
+      new MouseEvent(type, { clientX: mmToWorld(mm[0]), clientY: mmToWorld(mm[1]), bubbles: true }),
+    )
+  beforeEach(() => {
+    useUiStore.setState({ tool: 'select', snapEnabled: false })
+    useSelectionStore.getState().clear()
+  })
+  afterEach(() => useInteractionStore.getState().end())
+
+  it('柄的方向：横排 w / e；竖排 n / s', () => {
+    expect(dirsFor(textObj())).toEqual(['w', 'e'])
+    expect(dirsFor(textObj({ writingMode: 'vertical' }))).toEqual(['n', 's'])
+  })
+
+  it('竖排拖南柄：h 随指针变、y 不动、x / w 不被碰；一条历史，撤销回原样', () => {
+    put(textObj({ writingMode: 'vertical', x: 20, y: 10, w: 8, h: 60 }))
+    const before = { ...byId() }
+    const depth = s().past.length
+    startResizeDrag(down(), 't1', 's')
+    fire('pointermove', [5, 12])
+    fire('pointermove', [10, 25])
+    // 拖动中 TextView 写回的宽度（桩一个）不被拖动覆盖
+    s().txnUpdate((d) => {
+      const o = d.objects.find((x) => x.id === 't1') as TextObject
+      o.x = 22
+      o.w = 6
+    })
+    fire('pointermove', [10, 30])
+    fire('pointerup', [10, 30])
+    const o = byId()
+    expect(o.h).toBeCloseTo(60 + 30, 3)
+    expect(o.y).toBe(10)
+    expect([o.x, o.w]).toEqual([22, 6]) // 拖动没把量出的 x / w 盖回按下时的值
+    expect(s().past.length).toBe(depth + 1)
+    act(() => void s().undo())
+    expect(byId()).toEqual(before)
+  })
+
+  it('竖排拖北柄：y 与 h 一起变（下沿不动）', () => {
+    put(textObj({ writingMode: 'vertical', x: 20, y: 10, w: 8, h: 60 }))
+    startResizeDrag(down(), 't1', 'n')
+    fire('pointermove', [0, -5])
+    fire('pointermove', [0, -10])
+    fire('pointerup', [0, -10])
+    const o = byId()
+    expect(o.y).toBeCloseTo(0, 3)
+    expect(o.h).toBeCloseTo(70, 3)
+    expect(o.y + o.h).toBeCloseTo(70, 3)
+    expect([o.x, o.w]).toEqual([20, 8])
+  })
+
+  it('横排仍是 x / w 变、y / h 还原（不被竖排改动连累）', () => {
+    put(textObj({ x: 20, y: 10, w: 60, h: 8 }))
+    startResizeDrag(down(), 't1', 'e')
+    fire('pointermove', [5, 9])
+    fire('pointermove', [10, 9])
+    fire('pointerup', [10, 9])
+    const o = byId()
+    expect(o.w).toBeCloseTo(70, 3)
+    expect([o.x, o.y, o.h]).toEqual([20, 10, 8])
   })
 })

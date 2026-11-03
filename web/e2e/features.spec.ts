@@ -1510,6 +1510,31 @@ test(
     const body = (await saved).request().postDataJSON() as { canvases: { objects: { type: string; writingMode?: string }[] }[] }
     expect(body.canvases.flatMap((c) => c.objects).some((o) => o.type === 'text' && o.writingMode === 'vertical')).toBe(true)
 
+    // 竖排的缩放柄是北 / 南（改列长），不是东 / 西；拖下边柄，列长真的变长（画面断言）
+    await expect(page.locator('[data-canvas-stage] [data-handle="s"]')).toHaveCount(1)
+    await expect(page.locator('[data-canvas-stage] [data-handle="n"]')).toHaveCount(1)
+    await expect(page.locator('[data-canvas-stage] [data-handle="e"]')).toHaveCount(0)
+    await expect(page.locator('[data-canvas-stage] [data-handle="w"]')).toHaveCount(0)
+    const tall = (await label.boundingBox())!
+    const south = (await page.locator('[data-canvas-stage] [data-handle="s"]').boundingBox())!
+    const sx = south.x + south.width / 2
+    const sy = south.y + south.height / 2
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+    await page.mouse.move(sx, sy + 30, { steps: 4 })
+    await page.mouse.move(sx, sy + 60, { steps: 4 })
+    await page.mouse.up()
+    await expect
+      .poll(async () => (await label.boundingBox())!.height, { message: '拖南柄后竖排标注的屏幕高度应当变长' })
+      .toBeGreaterThan(tall.height + 40)
+    // 宽度（列数）不被拖动改写：仍是 TextView 量出来的那一列
+    expect((await label.boundingBox())!.width).toBeCloseTo(tall.width, 0)
+    // 一步撤销就退回拖之前的列长
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect
+      .poll(async () => (await label.boundingBox())!.height, { message: '撤销拖柄回到原列长' })
+      .toBeCloseTo(tall.height, 0)
+
     // 切回横排：外接框变回宽大于高
     await seg.nth(0).click()
     await expect
