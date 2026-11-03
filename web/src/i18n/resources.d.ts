@@ -5051,6 +5051,7 @@ export default interface Resources {
       "boldTitle": "粗体：作用于选中的字（{{key}}）",
       "errorBrace": "第 {{at}} 个字符：花括号没有配对，改正后才能切回所见即所得",
       "errorDollar": "第 {{at}} 个字符：$ 没有配对，改正后才能切回所见即所得",
+      "formatBar": "文字格式",
       "italic": "斜体（选中的字）",
       "italicTitle": "斜体：作用于选中的字（{{key}}）",
       "modeLatex": "LaTeX 源码",

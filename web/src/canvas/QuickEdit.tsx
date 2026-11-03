@@ -178,6 +178,8 @@ function ElementPopover({
     const onKey = (e: KeyboardEvent) => {
       // 焦点陷阱（2026-10-07 设计审计 §10.1）：Tab 在弹层里转圈，不掉回画布 / 页面后面那一串控件——
       // 它是一个对话框（role=dialog），Tab 出去了用户就找不回来，Esc 也没人接
+      // 文字框的浮动格式条挂在 body 的 portal 里（不被弹层裁掉）：它自己管 Tab / Esc（Esc 先回框），这里不插手
+      if ((e.target as Element | null)?.closest?.('[data-rich-pill]')) return
       if (e.key === 'Tab') {
         trapTab(e, ref.current)
         return
@@ -192,7 +194,7 @@ function ElementPopover({
       if (ref.current?.contains(node)) return
       // 下拉菜单（Select）挂在自己的 portal 里，点它不算点在弹层外面，
       // 否则选一次图例位置就会把弹层连同未提交的选择一起关掉
-      if (node?.closest?.('[data-radix-popper-content-wrapper]')) return
+      if (node?.closest?.('[data-radix-popper-content-wrapper], [data-rich-pill]')) return
       close()
     }
     window.addEventListener('keydown', onKey, true)
@@ -349,7 +351,7 @@ function ElementQuick({
 
   return (
     <>
-      <Head>{engineLabel(el.label)}</Head>
+      <Head>{field('text') ? engineCategory(el.label) : engineLabel(el.label)}</Head>
 
       {field('text') && (
         <TextContentRow
@@ -400,6 +402,16 @@ function ElementQuick({
       </MenuButton>
     </>
   )
+}
+
+/**
+ * 元素类别名：引擎名 `标题 “Reaction kinetics”` → 「标题」。文字类元素的头部只写类别——引号里的文字
+ * 就在下面的文字框里，头部再写一遍是重复（过 `engineLabel` 取当前语言，认不出的原样透出）。
+ */
+function engineCategory(label: string): string {
+  const m = /^(.*?)\s*“.*”$/s.exec(label)
+  if (!m) return engineLabel(label)
+  return engineLabel(`${m[1]} “”`).replace(/\s*“”$/, '')
 }
 
 /**

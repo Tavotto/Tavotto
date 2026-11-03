@@ -7,6 +7,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Button, IconButton } from '../../ui/Button'
+import { PRESSED_GLYPH } from '../../ui/buttonClass'
 import { Row, type RowLabelWidth } from '../../ui/Field'
 import { Menu, MenuItem } from '../../ui/Menu'
 import { ColorField, NumberField } from '../../ui/Input'
@@ -208,7 +209,7 @@ export function StyleToggle({
           // 图标就是它所描述的那件事，低对比屏与色觉差异下也读得出来。
           // 文字子节点走 font-bold，lucide 图标走 stroke-width（CSS 覆盖
           // SVG 的表现属性），按钮尺寸由 icon-sm 固定，不会因此位移。
-          state === 'on' && 'font-bold [&_svg]:[stroke-width:2.5]',
+          state === 'on' && PRESSED_GLYPH,
         )}
       >
         {children}

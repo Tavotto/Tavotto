@@ -92,8 +92,12 @@ const select = (from: number, to: number) =>
     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, from, to)))
   })
 
-const click = (action: string) =>
-  act(() => container.querySelector<HTMLButtonElement>(`[data-rich-action="${action}"]`)!.click())
+// 格式按钮在编辑中才出现、挂在 body 的浮动条里（portal）：先把焦点放进框，再从 document 找
+const click = (action: string) => {
+  if (action === 'mode') return act(() => container.querySelector<HTMLButtonElement>('[data-rich-action="mode"]')!.click())
+  act(() => (editorDom() as HTMLElement).focus())
+  act(() => document.querySelector<HTMLButtonElement>(`[data-rich-pill] [data-rich-action="${action}"]`)!.click())
+}
 
 const press = (key: string, init: KeyboardEventInit = {}) =>
   act(() => {
@@ -115,7 +119,7 @@ describe('所见即所得的标注文字框', () => {
     expect(current().text).toBe('\\textit{H}2O')
     expect(current().textFormat).toBe('latex')
     expect(editorDom().querySelector('em')?.textContent).toBe('H')
-    expect(container.querySelector('[data-rich-action="italic"]')!.getAttribute('aria-pressed')).toBe('true')
+    expect(document.querySelector('[data-rich-pill] [data-rich-action="italic"]')!.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('⌘I / ⌘B / ⌘↑ / ⌘↓ 与按钮同一条路', () => {
