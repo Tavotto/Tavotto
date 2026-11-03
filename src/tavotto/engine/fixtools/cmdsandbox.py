@@ -24,7 +24,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -232,7 +231,7 @@ def _probe(kind: str, tool: str) -> bool:
             return False
         try:
             r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
-                [*_args(kind, tool, probe_dir, (), ()), sys.executable, "-c", "pass"],
+                [*_args(kind, tool, probe_dir, (), ()), *trial.probe_command()],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=20,

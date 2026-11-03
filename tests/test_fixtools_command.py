@@ -1135,3 +1135,64 @@ def test_reap_tree_returns_once_only_zombies_remain(monkeypatch):
     t = time.monotonic()
     assert command._reap_tree(P(), None) is True
     assert time.monotonic() - t < 1.0 and calls == [4242]
+
+
+# --------------------------------------------------------------------------- 冻结包里的沙盒探测（TVD-1FCJ）
+def _fake_frozen_exe(tmp_path: Path) -> str:
+    """冻结包里的 `sys.executable`：Tavotto 本体，不认 `-c`（实测 rc=2）。"""
+    exe = tmp_path / "Tavotto"
+    exe.write_text("#!/bin/sh\necho 'Tavotto: error: unrecognized arguments' >&2\nexit 2\n")
+    exe.chmod(0o755)
+    return str(exe)
+
+
+@pytest.mark.parametrize("module", ["trial", "cmdsandbox"])
+def test_frozen_probe_never_runs_dash_c_on_the_app_executable(box, monkeypatch, module):
+    from tavotto.engine import runtime
+
+    exe = _fake_frozen_exe(box.tmp)
+    monkeypatch.undo()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", exe)
+    monkeypatch.setattr(runtime, "bundled_python", lambda: None)
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kw):
+        seen.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    mod = trial if module == "trial" else cmdsandbox
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(mod, "_PROBE" if module == "cmdsandbox" else "_PROBE_CACHE", {})
+    assert mod._probe("macos-sandbox-exec", "/usr/bin/sandbox-exec") is True
+    assert seen and exe not in seen[0] and seen[0][-1] in ("/usr/bin/true", "/bin/true")
+
+
+def test_frozen_probe_prefers_the_bundled_python(box, monkeypatch):
+    from tavotto.engine import runtime
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", _fake_frozen_exe(box.tmp))
+    monkeypatch.setattr(runtime, "bundled_python", lambda: "/opt/rt/bin/python3")
+    cmd = trial.probe_command()
+    assert cmd[0] == "/opt/rt/bin/python3" and cmd[-2:] == ["-c", "pass"]
+
+
+def test_source_mode_probe_is_unchanged(monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert trial.probe_command() == [sys.executable, "-c", "pass"]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="需要真实 sandbox-exec")
+def test_frozen_probe_really_starts_the_macos_sandbox(box, monkeypatch):
+    from tavotto.engine import runtime
+
+    monkeypatch.undo()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", _fake_frozen_exe(box.tmp))
+    monkeypatch.setattr(runtime, "bundled_python", lambda: None)
+    monkeypatch.setattr(cmdsandbox, "_PROBE", {})
+    monkeypatch.setattr(trial, "_PROBE_CACHE", {})
+    tool = trial._find_tool("macos-sandbox-exec")
+    assert tool and cmdsandbox._probe("macos-sandbox-exec", tool)
+    assert trial._probe("macos-sandbox-exec", tool)
