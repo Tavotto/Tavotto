@@ -43,6 +43,7 @@ from . import (
     patchspec,
     pathignore,
     projectenv,
+    registry,
     rootenv,
     runtime,
     scanbudget,
@@ -3705,6 +3706,7 @@ def _spawn_spec(
     run=None,
     write_roots=None,
     ignored_paths=None,
+    stem_aliases=None,
 ) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
@@ -3728,6 +3730,8 @@ def _spawn_spec(
         write_roots=write_roots,
         # 会话自己那份（与 input_remap 同纪律：重开会话不许换成另一份名单）；不给才现取
         ignored_paths=pathignore.paths_for(figures_dir) if ignored_paths is None else ignored_paths,
+        # ADR 0162：会话自己那份别名表（重开会话不许换成另一份）；不给才从注册表现取
+        stem_aliases=stem_aliases,
         **execspec.run_kwargs(run),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
@@ -3940,6 +3944,7 @@ class WorkerdWorker:
             run=self.run,
             write_roots=self.write_roots,
             ignored_paths=self.spec.ignored_paths,
+            stem_aliases=self.spec.stem_aliases,
         )
 
     def _open(self) -> None:
@@ -5109,6 +5114,10 @@ def _acquire(
                 ):
                     # 叠加环境（ROOT）变了：同一个解释器路径，带不带 / 带哪个 ROOT 起的进程不是同一个环境
                     why = "叠加环境已变"
+                elif not _aliases_current(w, figures_dir, script_name):
+                    # 会话是按旧图名别名表起的（ADR 0162）：同名不同脚本刚被分开登记，这条会话里的图还叫原名，
+                    # 编辑请求按登记图名找不到它——重起一条按新别名收图的
+                    why = "图名别名已变"
                 elif not _remap_current(w, figures_dir):
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
@@ -5306,6 +5315,14 @@ def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
             and not generation_stale(w)
             and _remap_current(w, key[0])
         )
+
+
+def _aliases_current(worker, figures_dir, script_name: str) -> bool:
+    """会话起的时候带的图名别名表还是不是注册表此刻的（ADR 0162；没有 spec 的替身不拦）。"""
+    spec = getattr(worker, "spec", None)
+    if spec is None:
+        return True
+    return tuple(spec.stem_aliases) == registry.stem_aliases_for(figures_dir, script_name)
 
 
 def _remap_current(worker, figures_dir) -> bool:
