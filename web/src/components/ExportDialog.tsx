@@ -143,6 +143,7 @@ import {
   beginExportBatch,
   recordBatchFrozen,
   cancelCurrentExport,
+  dropFinishedBatch,
   recordBatchJob,
   recordBatchStartFailure,
   refreshExportStatus,
@@ -1156,6 +1157,7 @@ export function ExportDialog() {
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
+      dropFinishedBatch();
       writeExportDefaults({
         formats,
         dpi: String(ppi),
@@ -1205,7 +1207,7 @@ export function ExportDialog() {
   };
 
   /* ------------------------ 一批作业的驱动（先冻结、再依次发） ------------------------ */
-  const launched = useRef<{ ids: string[] | null; index: number }>({ ids: null, index: -1 });
+  const launched = useRef<{ ids: string[] | null; index: number; prior?: unknown }>({ ids: null, index: -1 });
   const lastRecorded = useRef<unknown>(null);
   // 发（send）：只按冻结的输入依次发
   useEffect(() => {
@@ -1213,7 +1215,9 @@ export function ExportDialog() {
     if (launched.current.ids === batch.ids && launched.current.index === batch.index) return; // 已发出：等终局或撞名决定
     const cur = batch.prepared[batch.index];
     if (!cur) return;
-    launched.current = { ids: batch.ids, index: batch.index };
+    // 发之前 store 里留着的是**上一回**的终局：收尾 effect 在同一次提交里读到的还是它，
+    // 不记下来就会把它当成这一张的结果记进汇总（QA-WIN-24：回执混入上次文件、这一张被顶掉）
+    launched.current = { ids: batch.ids, index: batch.index, prior: storeJob };
     setSettledJobId(null);
     setRevealError(null);
     void runExport(cur.input);
@@ -1231,6 +1235,7 @@ export function ExportDialog() {
       return;
     }
     // 认快照对象而不是 job_id：同一个终局只记一次，不依赖 id 在两张之间一定不同
+    if (storeJob === launched.current.prior) return; // 发出这一张之前就在 store 里的旧终局
     if (storeJob.status === "conflict" || storeJob === lastRecorded.current) return;
     lastRecorded.current = storeJob;
     recordBatchJob(storeJob);
