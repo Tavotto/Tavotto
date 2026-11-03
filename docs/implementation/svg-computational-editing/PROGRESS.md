@@ -19,10 +19,49 @@
 | --- | --- | --- | --- |
 | SG00 | passed | a046b799（计划）、9a271f9f | SG00-CAPABILITY-MAP.md；基线 331+41+94 绿 / skip 全定性 |
 | SG01 | passed | 见下方 SG01 提交 | SG01-EXPERIMENTS.md + ADR 0166；实验 exit 0 ×4 |
-| SG02 | pending | — | — |
-| SG03–SG17 | pending | — | — |
+| SG02 | passed | 2fa9841b | 契约+golden vectors 双侧同判；两处变异反证红（scene/data 摘要校验移除） |
+| SG03 | passed | f1406038+fmt | svgscene 盘点 + inspect 端点；反证红（绕过 svgcheck）；svg_assets 回归绿 |
+| SG04 | passed | d0c0d898 | svgadopt 采用判定；反证红（移除回执核对）；svgstore/export_svg 回归绿 |
+| SG05 | passed | ced09ecc | svgcoord 变换链（preserveAspectRatio 全语义/累积矩阵含 use 深度语义）+ clip/opacity 事实 |
+| SG06 | passed | 133d2bf7 | chartdata 类型化数据入口 + chartbind 校准/确认产物（经 chartmodel 同一合同） |
+| SG07 | passed(M1) | f505c216 | 脚手架+组合+worker 分发；热=冷字节一致；注释锚定/NaN 间断入口未完成（SG08+） |
+| SG08–SG17 | pending | — | — |
 
 ## Checkpoint 追加
+
+### 2026-11-04 SG05–SG07 通过（时间：UTC 02:5x）
+
+- SG05 `ced09ecc`：svgcoord.py（viewBox→pt 全语义、变换累积含 use x/y 深度语义——行向量下
+  内层先作用，prepend 累积；与 ir.compose 逐位一致的对拍用例）；svgscene 增补 clip/opacity/转曲判据。
+- SG06 `133d2bf7`：chartdata.py（格级类型化错误：非数值/缺失/日期/千分位/列长，不静默填零）；
+  chartbind.py（校准证据→轴范围：线性外推/log 域内插/倒轴识别/log 非正值拒绝；系列选择限图形节点；
+  确认产物直接过 chartmodel.validate——确认与消费同一合同；preview_deviation 几何偏差报告）。
+- SG07 `f505c216`（M1）：engine/svgchart.py 脚手架（模型+场景框→1:1 对齐片段+轴分数事实；
+  matplotlib locator/formatter 复用；salt 固定确定性）；worker 新命令 svg_scaffold（会话无关，
+  真实子进程不建会话、不跑用户脚本，输出与进程内逐字节同）；svgcompose.py 组合
+  （系列替换/轴区域退役/defs 上提——修了「同一 def 内外双引用」的差集缺陷；产物过 svgcheck）；
+  chartmodel 新增 log 轴正值范围约束。test_worker_roundtrip 回归 exit 0。
+- 诚实缺口（SG07 标 M1）：数据锚定注释、NaN 间断数据入口（chartdata 现拒绝 NaN 列——
+  间断语义待 SG08+ 的数据清洗入口）、版本提交顺序的产品接线（SG10/11）。
+- 下一步：SG08（柱/误差/图例联动）→ SG09（色阶/能力对等）→ SG10（编辑器集成）。
+
+### 2026-11-04 SG02–SG04 通过（时间：UTC 01:5x）
+
+- SG02 `2fa9841b`：engine/chartmodel.py + web/src/types/chartModel.ts 严格同源；
+  golden vectors 12 条两侧同判；跨语言摘要用类型标记+IEEE754 位模式（1 与 1.0 同值），
+  TS 侧同步 sha256（修了 w 数组 16→64 的实现 bug）。
+  反证：一次性 worktree 变异 scene_digest / data_digest 校验各一处 → 对应用例红（exit 1）。
+- SG03 `f1406038`+`03b7be20`+`5c8c3392`：svgscene.py（场景盘点/稳定节点 id/gzip 拒绝/预算）
+  + GET /api/svg/chart/inspect（safe_resolve 内，422 稳定码，零写入）。
+  反证：绕过 svgcheck → 恶意语料被端点放行 → 两用例红。test_svg_assets 回归绿。
+- SG04 `d0c0d898`：engine/svgadopt.py（figure/declarative/refused 纯事实判定；
+  快照字节绑定+回执身份=授权；native 离线不 fallback；冷态显式引用可采用；
+  portable_model 如实声明）。反证：移除回执核对 → 伪造元数据用例红。
+  svgstore/export_svg 回归绿（exit 0）。
+- 前端 vitest 全量 12407 绿 / 3 处失败为 Windows CRLF 检出伪影（designMd frontmatter、
+  playground 封面 sha、onboarding 闭包扫描；本机改动为纯新增文件、tracked diff 为空，
+  CI Linux 检出 LF 不发作——已按 L-026 定性为环境缺失非产品失败）。
+- workerd：cargo build + cargo test exit 0。
 
 ### 2026-11-04 SG01 通过（时间：UTC 00:3x）
 
