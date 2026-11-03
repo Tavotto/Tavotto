@@ -102,8 +102,10 @@ carry the pinned digest. Record the observed responses before S4.
 ## S4 — automatic results on sandbox PRs (needs the cron PR)
 
 App settings: webhook active, URL `https://cla-staging.tavotto.com/webhooks/github`,
-secret from `~/.cla-staging-webhook-secret`, subscribe to **Pull request**
-(merge group is not available in a personal-account repository).
+secret from `~/.cla-staging-webhook-secret` copied **without** its trailing
+newline (`tr -d '\n' < ~/.cla-staging-webhook-secret | pbcopy`), and tick
+**Pull request** under *Subscribe to events* (without it GitHub sends only
+`ping`). Merge group is not available in a personal-account repository.
 
     $W deploy $C --var CLA_GITHUB_ENABLED:true --var CLA_OAUTH_ENABLED:true --var CLA_UI_ENABLED:true --var CLA_SIGNING_ENABLED:true \
       --var CLA_CHECK_PUBLISHING_ENABLED:true --var CLA_BACKGROUND_ENABLED:true --var CLA_AUTOMATIC_VERIFICATION_ENABLED:true \
@@ -118,10 +120,28 @@ record each invocation's platform CPU time (and the dashboard's CPU
 percentiles). Free allows 10 ms per invocation. Exceeding it means moving to
 Workers Paid; no code change and no limit bypass.
 
+Observed on 2026-11-03 (free plan): PR signed → `success`, hold + new commit
+→ `failure`; 275 invocations all `ok`. CPU peaks above the 10 ms figure
+without being stopped: new-head cron 75 ms, recovery confirmation 44 ms,
+webhook admission 33–50 ms.
+
+## S5 — CI consumer in the sandbox
+
+`ci.json` is the consumer configuration. The sandbox workflow checks out this
+repository at a pinned commit into its own directory
+(`persist-credentials: false`), never the PR checkout, and runs:
+
+    node trusted/services/cla-cloudflare/scripts/ci-candidate.mjs \
+      --config trusted/services/cla-cloudflare/deployment/staging/ci.json \
+      --event-file "$GITHUB_EVENT_PATH" --event pull_request
+
+with `GH_TOKEN` set to the workflow's read-only token. Deploy with the S4 flags
+plus `--var CLA_CI_VERIFICATION_ENABLED:true`. The exit code is the verdict.
+
 ## Later steps
 
-S5 (CI consumer in the sandbox) and S6 (merge queue, which needs an
-organization-owned sandbox) are planned in the rehearsal plan and get their
-own PRs. Production cut-over is a separate approval: production resources,
+S6 (merge queue, which needs an
+organization-owned sandbox) is planned in the rehearsal plan and gets its
+own PR. Production cut-over is a separate approval: production resources,
 moving the paper signature in `offline_signatures` into the service in the
 same PR that sets `provider.configured=true`, then `ci.yml` wiring (risk:high).
