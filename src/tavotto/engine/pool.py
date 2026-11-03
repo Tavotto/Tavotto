@@ -133,6 +133,13 @@ def max_alive() -> int:
 PURPOSE_FOREGROUND = "foreground"
 PURPOSE_NEIGHBOUR = "neighbour"
 PURPOSES = (PURPOSE_FOREGROUND, PURPOSE_NEIGHBOUR)
+#: 内部意图（不在 `PURPOSES` 里：`/api/engine/render` 的 `purpose` 字段不接受它）：打开项目后的后台预热（ADR 0160）。
+#: 与 neighbour 同样不刷新 LRU、池满不挤别人；另外**绝不跑环境决定**（见 `PrewarmDeferred`）。
+PURPOSE_PREWARM = "prewarm"
+_INTERNAL_PURPOSES = (PURPOSE_PREWARM,)
+#: 预热需要真去决定 / 探测环境时抛它：`acquire()` 在跑 `ENVIRONMENT_DECIDERS` 之前就停下，一个子进程都没起、
+#: 一条记录都没写；预热吞掉它，第一次真渲染走原路径。
+PREWARM_NEEDS_DECISION = "prewarm_environment_needs_decision"
 #: 后台补渲染这次没做（冷启动会淘汰别的会话）。**不是失败**：调用方保留旧画面、不报错。
 BACKGROUND_DEFERRED = "background_render_deferred"
 _purpose: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -152,7 +159,7 @@ def _note_dispatch(worker) -> None:
 @contextlib.contextmanager
 def acquire_purpose(purpose: str):
     """在这个上下文里的 `acquire()` 按 `purpose` 取会话（线程 / 请求局部）。未知取值抛 ValueError。"""
-    if purpose not in PURPOSES:
+    if purpose not in PURPOSES and purpose not in _INTERNAL_PURPOSES:
         raise ValueError(f"unknown acquire purpose: {purpose!r}")
     token = _purpose.set(purpose)
     try:
@@ -2134,7 +2141,7 @@ def select_worker_python() -> tuple[str, str]:
             continue
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         try:
-            has_mpl = _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED)
+            has_mpl = _has_matplotlib_once(cand, bundled=source == SOURCE_BUNDLED)
         except launcher_mod.CaptureDeferred:
             raise  # 持锁时缓存没命中：不是“这个候选不行”，不许跳到下一个候选（那会静默换解释器）
         except launcher_mod.LauncherUnavailable as exc:
@@ -2163,6 +2170,60 @@ def find_worker_python() -> str:
 
 
 #: 项目记住的解释器**这次进程里**验过没有（避免每次 get() 都起一个 Python）：
+class _ProbeFlight:
+    """一次正在进行的 `import matplotlib` 探测；同一键上的后来者等它，而不是各起一个子进程。"""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: bool | None = None  # None = 领头者失败，没有可共享的结论
+
+
+#: 在飞的探测，键 = (解释器, 启动上下文, bundled)。**刻意不共用 `_lock`**（同 `_project_python_ok` 的理由：
+#: 调用方可能已持有 `_lock`）。
+_probe_flights: dict[tuple[str, str, bool], _ProbeFlight] = {}
+_probe_flights_lock = threading.Lock()
+#: 后来者最多陪领头者等这么久（领头者自己的预算是 `_HAS_MPL_BUDGET_S`），超了就自己探测，不无限等
+_PROBE_FOLLOW_TIMEOUT_S = _HAS_MPL_BUDGET_S + 5.0
+
+
+def _has_matplotlib_once(python: str, *, bundled: bool = False) -> bool:
+    """`_has_matplotlib` 的单飞版：同一条解释器**同时**的多个探测合并成一个子进程。
+
+    冷启动时渲染、准备会话、预热会同时解析解释器，每一路都先 `python -c "import matplotlib"`
+    （体检结论要等第一个探测落地才进缓存）。慢盘 / 商店版 Python 上一次探测十几秒，N 路并发 =
+    N 倍 CPU 与磁盘争用，前台那一路被后台拖慢（TVD-ZWV6）。只共享**成功得出的结论**：领头者抛异常
+    （Conda 激活失败、`CaptureDeferred` 取决于调用线程的锁状态）时后来者各自重来，不继承别人的异常。
+    """
+    key = (python, launcher_mod.context_key(python), bundled)
+
+    def probe(py: str) -> bool:
+        # 调用形状与原来一致：只有内置 runtime 才带 `bundled`
+        return _has_matplotlib(py, bundled=True) if bundled else _has_matplotlib(py)
+
+    with _probe_flights_lock:
+        flight = _probe_flights.get(key)
+        leader = flight is None
+        if leader:
+            flight = _probe_flights[key] = _ProbeFlight()
+    if not leader:
+        if flight.done.wait(_PROBE_FOLLOW_TIMEOUT_S) and flight.result is not None:
+            return flight.result
+        return probe(python)
+    try:
+        flight.result = probe(python)
+        return flight.result
+    finally:
+        with _probe_flights_lock:
+            _probe_flights.pop(key, None)
+        flight.done.set()
+
+
+def alive_count() -> int:
+    """池里此刻活着的会话数（只读）。后台预热据此给前台留位置（`prewarm.py`）。"""
+    with _lock:
+        return sum(1 for w in _workers.values() if w.alive())
+
+
 #: 路径 → (结论, 验的那一刻的 `projectenv.interpreter_fingerprint`)。指纹对不上 = 同一路径上
 #: 已经不是那个环境了（venv 被删了重建），结论作废重验（QA ENV-04-B1）。
 #: **刻意不共用 `_lock`**：worker 构造函数在 `get()` 已持有 `_lock` 时调用
@@ -2343,9 +2404,9 @@ def resolve_worker_python(
                 try:
                     # 记着的是内置 runtime（带叠加环境的组合）时按内置的那套量；其余调用形状不变
                     if same_python(remembered, runtime.bundled_python()):
-                        ok = _has_matplotlib(remembered, bundled=True)
+                        ok = _has_matplotlib_once(remembered, bundled=True)
                     else:
-                        ok = _has_matplotlib(remembered)
+                        ok = _has_matplotlib_once(remembered)
                 except launcher_mod.LauncherUnavailable as exc:
                     # 项目已选定 / 记住的环境：稳定码直接交给用户。不记体检结论、不作废记住的解释器、不静默换别的
                     raise _launcher_error(exc) from exc
@@ -4580,6 +4641,22 @@ def _resolve_for_worker(
     return resolve_worker_python(figures_dir, script=script_name)
 
 
+#: 「这个项目此刻的环境决定是纯空操作」的只读判据：`(figures_dir, script_name) -> bool`，只读设置与 `stat`，
+#: 不起子进程、不写记录。今天只有 `deprepair.environment_decision_is_noop`。没人登记 = 不是空操作（预热不做）。
+ENVIRONMENT_NOOP_CHECKS: list = []
+
+
+def register_environment_noop_check(check) -> None:
+    if check not in ENVIRONMENT_NOOP_CHECKS:
+        ENVIRONMENT_NOOP_CHECKS.append(check)
+
+
+def environment_decision_is_noop(figures_dir: str | Path, script_name: str) -> bool:
+    return bool(ENVIRONMENT_NOOP_CHECKS) and all(
+        check(str(figures_dir), script_name) for check in ENVIRONMENT_NOOP_CHECKS
+    )
+
+
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
         ENVIRONMENT_DECIDERS.append(decider)
@@ -5059,6 +5136,14 @@ def _acquire(
             # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
             # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
             # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
+            if current_purpose() == PURPOSE_PREWARM and not environment_decision_is_noop(
+                figures_dir, script_name
+            ):
+                # 后台预热只许走「决定是纯空操作」的路：真决定会体检候选、跑项目自带的解释器、写项目记录——
+                # 用户什么都没点，不做。留给第一次真渲染（前台路径一行不变）
+                raise WorkerError(
+                    "environment decision needed; prewarm skipped", code=PREWARM_NEEDS_DECISION
+                )
             with _seg("env_decide_ms"):
                 for decide in ENVIRONMENT_DECIDERS:
                     got = decide(figures_dir, script_name)

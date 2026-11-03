@@ -136,6 +136,7 @@ from .engine import (
     pool as engine_pool,
     preparation as engine_preparation,
     prepsession as engine_prepsession,
+    prewarm as engine_prewarm,
     probe as engine_probe,
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
@@ -8080,6 +8081,60 @@ def api_handoff_display_ack():
     return jsonify({"ok": True})
 
 
+@app.post("/api/engine/prewarm")
+def api_engine_prewarm():
+    """项目打开后为一张图**提前取渲染会话**（ADR 0160）：只起会话，不 build、不出图、不写盘、不发事件。
+
+    与 `/api/engine/render` 开头同一扇门（`_engine_worker`），所以「谁来渲染」的判据仍只有
+    `enginesession.resolve()`；native 档的 runtime 图不预热（native 会话不进池）。
+    判定同步做（只读、不起进程），取会话在后台线程里；任何失败静默。恒 200，body 说明结果。
+    """
+    body = request.get_json(silent=True) or {}
+    rel_id = body.get("id", "")
+    if not isinstance(rel_id, str) or not rel_id:
+        return jsonify({"status": "skipped", "reason": "no_id"})
+    ctx = current_ctx()
+    try:
+        # 项目的解释器还没定下来时不预热：取会话会先走「换不换解释器」的决定（体检候选、记住 / 采用项目环境），
+        # 那是写用户配置的动作，不该发生在用户什么都没点的时候。已定的项目取会话只复用这个决定。
+        if engine_pool.peek_project_resolution(str(ctx.path)) is None:
+            return jsonify({"status": "skipped", "reason": "environment_undecided"})
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = _resolve_runtime_asset(rel_id)
+            if info is None:
+                return jsonify({"status": "skipped", "reason": "unknown"})
+            if (
+                engine_enginesession.profile_of(str(ctx.path), rel_id)
+                != engine_enginesession.PROFILE_SAFE
+            ):
+                return jsonify({"status": "skipped", "reason": "native"})
+            script = info["script"]
+        else:
+            panel = _disk_panel(safe_resolve(rel_id))[1]
+            if panel is None:
+                return jsonify({"status": "skipped", "reason": "not_script"})
+            script = panel["script"]
+        # 环境决定必须是纯空操作（只读判据）：真决定会体检候选、跑项目自带的解释器、写项目记录。
+        # 池里 `PURPOSE_PREWARM` 在跑 deciders 之前还有一道同判据的硬挡，这里只是让响应早点说明
+        if not engine_pool.environment_decision_is_noop(str(ctx.path), script):
+            return jsonify({"status": "skipped", "reason": "environment_needs_decision"})
+    except Exception:  # noqa: BLE001 —— 预热是旁路，解析不了就不预热
+        return jsonify({"status": "skipped", "reason": "unresolvable"})
+
+    def work():
+        with bound_project(ctx), engine_pool.acquire_purpose(engine_pool.PURPOSE_PREWARM):
+            _engine_worker(rel_id)  # 只取会话：build 仍由第一次真渲染惰性触发
+
+    status = engine_prewarm.PREWARM.request(
+        (str(ctx.path), rel_id),
+        work,
+        alive=engine_pool.alive_count(),
+        # 上限唯一出处 `max_alive()`（ADR 0159，按内存自适应）；它不能在持 `_lock` 时调——这里在锁外
+        cap=engine_pool.max_alive() - 1,
+    )
+    return jsonify({"status": status})
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -8165,7 +8220,9 @@ def _api_engine_render_body(body):
         sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     acquire_mark = engine_pool.acquire_mark()
     try:
-        worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
+        # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
+        with engine_prewarm.PREWARM.foreground():
+            worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
         # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
         get_ms = round((time.perf_counter() - t_get) * 1000, 3)
         # `worker_get_ms` 的分段（池 acquire 里量的；没经过池的原生会话为空）

@@ -43,6 +43,7 @@ import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
+import { PrewarmSync } from '@/hooks/usePrewarm'
 import { startStyleBindingSync } from '@/store/styleBinding'
 import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
@@ -382,6 +383,8 @@ function Workspace() {
         {/* 三步原生新手教程（ADR 0136）：盖在工作台上的一整层，只在打开时出现 */}
         <NativeTutorial />
         <EngineRenderSync />
+        {/* 打开项目后为第一张带脚本的图在后台预热渲染会话（ADR 0160）；叶子，不让 Workspace 订阅文档 */}
+        <PrewarmSync />
       </div>
     </TooltipProvider>
   )
