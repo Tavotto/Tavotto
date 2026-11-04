@@ -165,7 +165,7 @@
         },
         {
           "stage": "U06",
-          "test": "tests/test_rendercore_fonts.py::test_allowlist_is_the_thirteen_ofl_faces_with_sha256_identity"
+          "test": "tests/test_rendercore_fonts.py::test_allowlist_is_the_fourteen_ofl_faces_with_sha256_identity"
         },
         {
           "stage": "U08",

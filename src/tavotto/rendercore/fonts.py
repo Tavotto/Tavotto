@@ -13,6 +13,8 @@
 3. **集合外明示限制。** 找不到某族 / 某样式 → `FontsUnavailable`（结构化 code），
    **不**去摸系统字体、**不**用另一张脸冒充；没有 CJK 脸时 `cjk_face()` 回 None，
    分层把汉字判成 `missing` 进问题系统（RC-037）。
+4. **CJK 脸随族**（2026-11-04 修订）：批准集合有两张 CJK 脸——Noto Serif SC（`cjk-serif`，配 serif）与
+   Noto Sans SC（`cjk`，配 sans-serif / monospace）。`cjk_face(family)` 按画布文字族取，不再「换族不换 CJK」。
 
 ## 用户本机字体（ADR 0164）
 
@@ -154,6 +156,16 @@ def load_allowlist(path: Path | None = None) -> Allowlist:
 # 字体目录
 # ---------------------------------------------------------------------------
 ENV_FONTS_DIR = "TAVOTTO_FONTS_DIR"
+
+#: 画布文字族 → 批准集合里承担中日韩字形的那一族（ADR 0060 2026-11-04 修订）：衬线配 Noto Serif SC
+#: （`cjk-serif`），其余（sans-serif / monospace）配 Noto Sans SC（`cjk`；等宽配黑体是常规做法）。
+#: 画布上衬线标注的中文是宋体，导出必须同样是衬线脸。
+_CJK_FAMILY_OF = {"serif": "cjk-serif"}
+
+
+def cjk_family_of(family: str) -> str:
+    """画布文字族 → allowlist 里的 CJK 族名（`cjk` 或 `cjk-serif`）。认不出的族按黑体。"""
+    return _CJK_FAMILY_OF.get(family, "cjk")
 
 
 def fonts_dir() -> Path:
@@ -457,9 +469,12 @@ class FontRegistry:
             f"（目录 {self.root}；缺 {self.missing}）",
         )
 
-    def cjk_record(self) -> FaceRecord | None:
+    def cjk_record(self, family: str) -> FaceRecord | None:
+        """该画布文字族配的 CJK 脸（ADR 0060 2026-11-04 修订：CJK 脸随族）。批准集合里没有就回 None——
+        **不**拿另一族的 CJK 脸顶（衬线标注的中文落到黑体，就是被修掉的那个画布 ≠ 导出）。"""
+        want = cjk_family_of(family)
         for rec in self.faces.values():
-            if rec.approved.family == "cjk":
+            if rec.approved.family == want:
                 return rec
         return None
 

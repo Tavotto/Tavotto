@@ -226,7 +226,7 @@ export interface SourceFont extends SourceFace {
   /** 这张脸自己的粗斜（来自原图），不是对象的粗斜开关 */
   bold?: boolean
   italic?: boolean
-  /** 原图里中日韩字符实际由哪张脸画；缺席 = 批准的 Noto Sans SC */
+  /** 原图里中日韩字符实际由哪张脸画；缺席 = 批准的 CJK 脸（随族：衬线 Noto Serif SC，其余 Noto Sans SC） */
   cjk?: SourceFace
 }
 
