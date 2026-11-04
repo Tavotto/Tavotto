@@ -142,12 +142,15 @@ class Store:
             if known.fetchone() is None:
                 con.execute("ROLLBACK")
                 return "unknown", 0
+            # 令牌有效就记一次「这台设备在这个出口出现过」——放在任何提前返回（重复读、限额拒绝）之前，
+            # 否则出口被限额卡住时，背后真实的设备数会被低估，`top` 区分共享出口与刷量的判据就失真。
+            _note_device(con, ip_key, dev_tag, now)
             seen = con.execute(
                 "SELECT 1 FROM reads WHERE token_hash=? AND journal_id=?",
                 (token_hash, journal_id),
             )
             if seen.fetchone() is not None:
-                con.execute("ROLLBACK")
+                con.execute("COMMIT")
                 return "repeat", 0
             for code, window, cap in (
                 ("quota_hour", HOUR, limits.reads_per_hour),
@@ -169,7 +172,6 @@ class Store:
                 _note_denial(con, ip_key, "ip_day", now)
                 con.execute("COMMIT")
                 return "ip_day", _retry(min(r[0] for r in rows), DAY, now)
-            _note_device(con, ip_key, dev_tag, now)
             con.execute(
                 "INSERT INTO reads (token_hash, journal_id, first_read_at, client) VALUES (?,?,?,?)",
                 (token_hash, journal_id, now, client),

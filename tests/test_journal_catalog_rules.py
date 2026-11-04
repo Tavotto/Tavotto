@@ -255,3 +255,28 @@ def test_schema_adds_only_portable_syntax():
     code = "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--")).upper()
     for banned in ("PRAGMA", "WITHOUT ROWID", "AUTOINCREMENT"):
         assert banned not in code
+
+
+def test_devices_behind_a_capped_exit_are_still_counted(tmp_path):
+    """出口已被读取限额卡住时，背后每台持有效令牌的设备照样记进当天设备数（重复读、被拒都算出现过）。"""
+    d = tmp_path / "data"
+    (d / "r5" / "journals").mkdir(parents=True)
+    for i in range(3):
+        (d / "r5" / "journals" / f"k{i}.json").write_bytes(b"{}")
+    (d / "index.signed.json").write_bytes(b"{}")
+    clk = Clock()
+    s = Service(Config(d, tmp_path / "db.sqlite", b"k" * 16, Limits(ip_reads_per_day=1)), clock=clk)
+    toks = [json.loads(device(s, f"192.0.2.{i}")[2])["token"] for i in range(1, 4)]
+    exit_ip = "198.51.100.9"
+
+    def read(tok, j):
+        return s.handle("GET", P + f"/journals/{j}", "rev=5", {"x-tavotto-device": tok}, exit_ip)[0]
+
+    assert read(toks[0], "k0") == 200
+    assert read(toks[0], "k0") == 200  # 重复读
+    assert read(toks[1], "k1") == 429
+    assert read(toks[2], "k2") == 429
+    rc, text = run_admin(tmp_path / "db.sqlite", "top", "--n", "1", clock=clk)
+    key = core.ip_key(b"k" * 16, exit_ip)
+    line = text.strip().splitlines()[0]
+    assert rc == 0 and line.startswith(key[:8]) and "设备 3" in line and "ip_day=2" in line
