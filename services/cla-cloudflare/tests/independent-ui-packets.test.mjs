@@ -391,3 +391,10 @@ test('a contributor whose withdrawal was released sees Sign again; an unreleased
   }
   const lapsed=await browser();assert.match(lapsed.elements.get('t-restart-hint').textContent,/7 天/);
 });
+test('on a withdrawn record the holder sees the release panel, not a countersigning form',async()=>{
+  const holder={id:1,login:'synthetic-holder',role:'holder',holderName:'Synthetic Holder'};
+  const b=await browser({pages:[{actor:holder,packets:[{id:ID(1)}],nextCursor:null}],states:{[ID(1)]:status(ID(1),{actor:holder,current:false,blocked:true,released:false,canRelease:true,completed:true,
+    block:{packet:ID(1),heldAt:1793700000},signatures:[{role:'contributor'},{role:'holder'}]})}});
+  assert.equal(b.elements.get('personal-signature').hidden,true);assert.equal(b.elements.get('release-panel').hidden,false);
+  assert.equal(b.elements.get('eligibility').textContent,'贡献者撤回了这份签署。');
+});

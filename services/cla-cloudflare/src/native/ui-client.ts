@@ -30,7 +30,7 @@ export function client():void {
     contributor:'Contributor',holder:'Rights holder',notSigned:'Not signed yet',signed:'Signed',holderSigned:'Countersigned',holderWaiting:'Waiting for countersignature',
     delegatedCurrent:'Countersigned automatically under a limited authorisation',delegatedHistory:'Automatic countersignature on record · {0}',
     d_disabled:'switched off',d_expired:'authorisation expired',d_revoked:'authorisation revoked',d_suspended:'authorisation suspended',d_superseded:'needs countersigning again',d_blocked:'eligibility stopped',d_unverifiable:'material cannot be verified right now',d_not_started:'authorisation not yet in force',d_other:'needs manual review',
-    eBlocked:'This record has been withdrawn. A maintainer will review it with you.',eExpired:'This record has expired or applies to an older version.',
+    eBlocked:'This record has been withdrawn. A maintainer will review it with you.',eBlockedHolder:'The contributor withdrew this signature.',eExpired:'This record has expired or applies to an older version.',
     eComplete:'Both parties have signed. Pull requests are checked separately.',eDelegated:'Signed and countersigned under a limited authorisation. Each pull request is still checked.',
     eWaiting:'Waiting for the rights holder to countersign.',eChoose:'Choose one of your signing records.',eCreate:'Getting your signing form ready…',
     eGone:'The record you had open is not available to this account. Choose one of your own records.',eGoneCreate:'The record you had open is not available to this account. You can start your own.',
@@ -78,7 +78,7 @@ export function client():void {
     contributor:'贡献者',holder:'权利人',notSigned:'尚未签署',signed:'已签署',holderSigned:'本人已签署',holderWaiting:'等待权利人联署',
     delegatedCurrent:'已按限定授权自动会签',delegatedHistory:'自动会签历史记录 · {0}',
     d_disabled:'入口已关闭',d_expired:'授权已到期',d_revoked:'授权已撤销',d_suspended:'授权已暂停',d_superseded:'需重新会签',d_blocked:'资格已停止',d_unverifiable:'材料暂不可验证',d_not_started:'授权尚未生效',d_other:'需人工核对',
-    eBlocked:'这条记录已撤回，维护者会和你一起核对。',eExpired:'这条记录已过期，或对应的是旧版本协议。',
+    eBlocked:'这条记录已撤回，维护者会和你一起核对。',eBlockedHolder:'贡献者撤回了这份签署。',eExpired:'这条记录已过期，或对应的是旧版本协议。',
     eComplete:'双方都已签署。每个 Pull Request 另行检查。',eDelegated:'已签署，并已按限定授权会签。每个 Pull Request 仍会另行检查。',
     eWaiting:'等待权利人联署。',eChoose:'请选择你的一条签署记录。',eCreate:'正在准备签署表单…',
     eGone:'之前打开的记录不属于当前账号。请选择你自己的记录。',eGoneCreate:'之前打开的记录不属于当前账号。你可以新建自己的记录。',
@@ -256,7 +256,7 @@ export function client():void {
     const waiting=!holder && !done && signedBy('contributor') && !signedBy('holder') && state?.current===true && state?.blocked!==true;
     const own=state?.signatures?.find((row:any)=>row.role==='contributor');
     const signedAt=Number.isSafeInteger(own?.created)?new Date(own.created*1000).toLocaleString(lang==='zh'?'zh-CN':'en-GB',{dateStyle:'long',timeStyle:'short'}):'';
-    show('download-pdf',done && hasPdf());show('thanks',done || waiting);show('hero',!done && !waiting);show('personal-signature',!done && !waiting);
+    show('download-pdf',done && hasPdf());show('thanks',done || waiting);show('hero',!done && !waiting);show('personal-signature',!done && !waiting && !(holder && state?.blocked===true));
     const seal=$('thanks-seal');if(seal)seal.className=waiting?'seal wait':'seal';
     text('thanks-eyebrow',waiting?(signedAt?t('waitEyebrow',signedAt):t('signed')):t('thanksEyebrow'));
     text('thanks-title',waiting?t('waitTitle'):holder?t('thanksHolderTitle'):t('thanksTitle'));
@@ -273,13 +273,13 @@ export function client():void {
     show('release-panel',!!block && Number.isSafeInteger(block.heldAt));show('release-form',!!state?.canRelease);
     if(block && Number.isSafeInteger(block.heldAt))text('release-note',Number.isSafeInteger(block.releasedAt)?t('releasedNote',day(block.releasedAt)):t('releaseNote',day(block.heldAt)));
     if(canCreate() && state?.blocked===true)text('t-restart-hint',t('restartReleasedHint'));
-    show('restart',canCreate());show('sign-form',!canCreate());show('record-picker',holder || (!state && hasPackets) || $<HTMLSelectElement>('packets').options.length>2 || !!nextCursor);
+    show('restart',canCreate());show('sign-form',!canCreate() && state?.blocked!==true);show('record-picker',holder || (!state && hasPackets) || $<HTMLSelectElement>('packets').options.length>2 || !!nextCursor);
     if(state){
       text('contributor-state',signedBy('contributor')?t('signed'):t('notSigned'));
       const delegated=state.delegated;
       text('holder-state',signedBy('holder')?t('holderSigned'):delegated?.current?t('delegatedCurrent'):
         delegated?.recorded?t('delegatedHistory',t('d_'+(['disabled','expired','revoked','suspended','superseded','blocked','unverifiable','not_started'].includes(delegated.state)?delegated.state:'other'))):t('holderWaiting'));
-      text('eligibility',state.blocked?t('eBlocked'):!state.current?t('eExpired'):
+      text('eligibility',state.blocked?t(holder?'eBlockedHolder':'eBlocked'):!state.current?t('eExpired'):
         state.signatures.length===2?t('eComplete'):delegated?.current?t('eDelegated'):t('eWaiting'));
       text('record-time',state.signatures.length===2?'':delegated?.current?
         t('tDelegated',new Date(delegated.expiresAt*1000).toLocaleString(lang==='zh'?'zh-CN':'en-GB')):t('tDeadline',new Date(state.packet.valid_until*1000).toLocaleString(lang==='zh'?'zh-CN':'en-GB')));
