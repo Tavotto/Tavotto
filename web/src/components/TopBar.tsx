@@ -19,7 +19,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   newBlankDocument,
   openLayoutDocument,
-  openRecentDocument,
+  openRecentEntry,
   setDocumentName,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
@@ -775,7 +775,7 @@ export function DocumentMenu() {
         recent.map((r) => (
           <MenuItem
             key={r.id}
-            onSelect={() => openRecentDocument(r.id)}
+            onSelect={() => void openRecentEntry(r)}
             shortcut={formatTime(r.savedAt)}
           >
             {/* 文档名是用户内容，作为插值原样透出 */}

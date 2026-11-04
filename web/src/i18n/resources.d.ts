@@ -7116,6 +7116,12 @@ export default interface Resources {
       "exportPackage": "导出项目包",
       "exportTip": "导出 PNG / PDF",
       "fitCanvas": "适应画布",
+      "foreignOpen": {
+        "body": "这份排版属于项目「{{name}}」，在这里打开，里面用到的脚本图会找不到。",
+        "bodyUnnamed": "这份排版属于另一个项目，在这里打开，里面用到的脚本图会找不到。",
+        "confirm": "仍然打开",
+        "title": "打开别的项目的排版"
+      },
       "fromOtherProject": "· 其他项目",
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",

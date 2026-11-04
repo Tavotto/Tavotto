@@ -697,6 +697,29 @@ export async function openRecentDocument(id: string): Promise<void> {
   status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
 }
 
+/**
+ * 「最近的排版」菜单点一行：别的项目的排版先问一句再开（QA-WIN-33）。
+ * 打开仍走 `openRecentDocument`（#773：允许显式打开别的项目的排版），只是装进当前项目后里面的
+ * 运行时图（脚本产物）找不到脚本，所以先让用户知道。归属没记的旧条目是「不知道」，不弹。
+ */
+export async function openRecentEntry(entry: {
+  id: string
+  projectId?: string
+  projectName?: string
+}): Promise<void> {
+  if (entry.projectId && entry.projectId !== currentProjectId()) {
+    const ok = await askConfirm({
+      title: msg('topbar.foreignOpen.title', undefined, 'workspace'),
+      body: entry.projectName
+        ? msg('topbar.foreignOpen.body', { name: entry.projectName }, 'workspace')
+        : msg('topbar.foreignOpen.bodyUnnamed', undefined, 'workspace'),
+      confirmLabel: msg('topbar.foreignOpen.confirm', undefined, 'workspace'),
+    })
+    if (!ok) return
+  }
+  await openRecentDocument(entry.id)
+}
+
 /* --------------------------------- 页面 ----------------------------------- */
 
 export { PAGE_MM_MAX, PAGE_MM_MIN }
