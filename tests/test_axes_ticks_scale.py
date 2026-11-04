@@ -901,7 +901,7 @@ def test_log_axis_nonpositive_limit_independent_of_installed_tick_locator(tmp_pa
     ]
     hot = _worker(tmp_path)
     try:
-        hot.override(STEM, ticks)
+        hot.override(STEM, [final[1], *ticks])  # 先 log + 固定刻度，再补 xlim
         hot_man = hot.override(STEM, final)["manifest"]
     finally:
         pool.discard(hot)
