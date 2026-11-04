@@ -449,7 +449,8 @@ Codex 的 **404** 归 `agent_model_unavailable`（只有 CLI 适配器产出的�
 同一家族的 CLI 共用一份目录缓存（Codex 桌面版 / IDE 插件 / 命令行都写 `models_cache.json`），桌面版先升级会把新型号写进去，Tavotto 启动的旧 CLI 选到就 404。
 判据：适配器 `catalog_client_version()`（Codex = 缓存顶层 `client_version`；默认 None = 不提示）严格新于已解析 CLI 的 `--version`（`ai_agents.older_than`，任一判不出就不提示）；第三方接口接管时不算。
 capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, source, action}`，`action` 闭集 `ai_bridge.CLI_UPDATE_ACTIONS`：
-`switch` = 候选里另有一份版本 ≥ 清单的（当前来源是 `custom` 时不替用户换）；`install` = 托管锁版本 ≥ 清单（锁追不上清单就不给，装了也没用）；`manual` = 都没有，前端按 `source` 说怎么更新。
+`switch` = 候选里另有一份版本 ≥ 清单的；`install` = 托管锁版本 ≥ 清单（锁追不上清单就不给，装了也没用）；`manual` = 都没有，前端按 `source` 说怎么更新。
+来源是 `custom`（用户自己指定的路径）一律 `manual`：不替用户换掉他选的那份，托管安装在候选里排在 custom 后面、装了也顶不掉，下次照样 404。
 `POST /api/ai/agents/<id>/update` 现算同一份计划：switch 经 `set_agent_path_override`（同一套 `--version` 验证）、install 走 `start_install`、其余 409 `ai_cli_update_unavailable`；请求体不接受路径或包名。看护 `tests/test_ai_cli_update.py`、`web/e2e/ai-cli-update.spec.ts`。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）

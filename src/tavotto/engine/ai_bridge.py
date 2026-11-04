@@ -855,11 +855,13 @@ def _cli_update_target(
     cur = ai_agents.version_key(res.version)
     assert seen is not None and cur is not None
     plan = {"current": ".".join(map(str, cur)), "seen": seen, "source": res.source}
-    # 用户自己指定了路径（custom）：那是他选的那份，不替他换成别的文件
-    if res.source != "custom":
-        newer = _newer_candidate(agent, res, seen)
-        if newer:
-            return {**plan, "action": "switch"}, newer
+    # 用户自己指定了路径（custom）：那是他选的那份，不替他换成别的文件；候选里 custom 排在托管安装前面，
+    # 装托管版也顶不掉它，下一次还是 404——所以只给 manual
+    if res.source == "custom":
+        return {**plan, "action": "manual"}, None
+    newer = _newer_candidate(agent, res, seen)
+    if newer:
+        return {**plan, "action": "switch"}, newer
     lock = _managed_lock_version(agent.id)
     # 锁版本要追得上模型清单：装一份比清单还旧的，新型号照样用不了
     if agent.install_spec and lock and not ai_agents.older_than(lock, seen):

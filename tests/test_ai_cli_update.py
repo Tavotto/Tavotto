@@ -143,6 +143,15 @@ def test_custom_path_is_never_switched(tmp_path, monkeypatch, lock):
     assert plan and plan["action"] == "manual"
 
 
+def test_custom_path_never_gets_install_even_if_lock_is_new_enough(
+    tmp_path, monkeypatch, no_other_candidates, lock
+):
+    _cache(tmp_path, monkeypatch, "0.166.0")
+    lock("0.166.0")  # 托管版够新，但 custom 排在托管前面：装了也顶不掉
+    plan = ai_bridge.cli_update_plan(CODEX, _res("codex-cli 0.150.0", source="custom"))
+    assert plan and plan["action"] == "manual" and plan["source"] == "custom"
+
+
 def test_start_cli_update_switch_goes_through_path_override(tmp_path, monkeypatch, lock):
     _cache(tmp_path, monkeypatch, "0.166.0")
     monkeypatch.setattr(

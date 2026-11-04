@@ -21,7 +21,7 @@ import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
 import { TraceDetails } from './TraceDetails'
-import { manualHow, startCliUpdate, updatableInApp, useCliUpdateRunning } from './cliUpdate'
+import { manualHow, startCliUpdate, updatableInApp, useCliUpdateError, useCliUpdateRunning } from './cliUpdate'
 import { agentErrorKey, AGENT_ERROR_ACTION, fixedByConnection, formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
 
 /**
@@ -189,8 +189,11 @@ export function Turn({
   const agentError = agentErrorKey(session.error)
   // 「型号要新版」且只能自己更新：怎么更新放进「详情」（正文只留一句）
   const cliUpdate = useSubscriptionOf(session.agent)?.cli_update
+  const updateFailed = useCliUpdateError(session.agent)
   const manualDetail =
-    agentError === 'agent_model_unavailable' && cliUpdate?.action === 'manual' ? manualHow(cliUpdate) : null
+    agentError === 'agent_model_unavailable'
+      ? (updateFailed ?? (cliUpdate?.action === 'manual' ? manualHow(cliUpdate) : null))
+      : null
   const rejected =
     !agentError && session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
   const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)

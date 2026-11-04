@@ -10,7 +10,7 @@ import { t as translate } from '@/i18n'
 import { connectionAgent, type AiAgentCaps, type AiConnection } from '@/lib/api'
 import { connectionInfo, modelDetail, useAiStore } from '@/store/aiStore'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { manualHow, startCliUpdate, updatableInApp, useCliUpdateRunning } from './cliUpdate'
+import { manualHow, startCliUpdate, updatableInApp, useCliUpdateError, useCliUpdateRunning } from './cliUpdate'
 
 /**
  * 「执行器与模型」两级选择器（beta 0.19 反馈）。
@@ -170,6 +170,7 @@ function connectionModels(c: AiConnection, current: string | null): string[] {
 function CliUpdateItem({ conn }: { conn: AiConnection }) {
   const agent = connectionAgent(conn)
   const running = useCliUpdateRunning(agent)
+  const failed = useCliUpdateError(agent)
   const name = useAiStore((s) => s.caps?.agents.find((a) => a.id === agent)?.display_name) ?? agent
   const u = conn.cli_update
   if (!u || !agent) return null
@@ -181,7 +182,7 @@ function CliUpdateItem({ conn }: { conn: AiConnection }) {
         icon={Download}
         data-ai-cli-update={u.action}
         disabled={running || !inApp}
-        reason={running ? undefined : inApp ? ai('cliUpdate.menuHint') : manualHow(u)}
+        reason={running ? undefined : failed ? failed : inApp ? ai('cliUpdate.menuHint') : manualHow(u)}
         onSelect={() => startCliUpdate(agent)}
       >
         {ai(running ? 'cliUpdate.running' : inApp ? 'cliUpdate.action' : 'cliUpdate.menuManual', { agent: name })}

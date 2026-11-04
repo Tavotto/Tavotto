@@ -2,6 +2,7 @@ import { t as translate } from '@/i18n'
 import type { AiAgentId, AiCliUpdate } from '@/lib/api'
 import { useAgentInstallStore } from '@/store/agentInstallStore'
 import { useAiStore } from '@/store/aiStore'
+import { installErrorText } from '@/components/settings/connectAi/useAgentInstall'
 
 /**
  * 「CLI 比模型清单旧」（2026-11-04：Codex 桌面版先升级、刷新了共用的模型目录，Tavotto 启动的旧 CLI 选到新型号 404）。
@@ -34,3 +35,11 @@ export function startCliUpdate(agent: AiAgentId): void {
 /** 这个 Agent 的更新进行到哪了（与安装共用一份进度：应用内装新版就是一次托管安装） */
 export const useCliUpdateRunning = (agent: AiAgentId | null | undefined): boolean =>
   useAgentInstallStore((s) => (agent ? s.byAgent[agent]?.status === 'running' : false))
+
+/** 最近一次更新 / 安装以失败收场时的一句话（与设置页同一份翻译 `installErrorText`；开始下一次、或成功后消失）。
+ *  注意：设置页发起的安装写同一份进度，失败也会在这儿露出，可以接受。 */
+export function useCliUpdateError(agent: AiAgentId | null | undefined): string | null {
+  const entry = useAgentInstallStore((s) => (agent ? s.byAgent[agent] : undefined))
+  const product = useAiStore((s) => s.caps?.agents.find((a) => a.id === agent)?.display_name) ?? agent ?? ''
+  return entry?.status === 'error' ? (entry.message ?? installErrorText(entry.code, product)) : null
+}
