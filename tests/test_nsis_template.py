@@ -285,7 +285,7 @@ def test_update_installed_on_quit_does_not_relaunch_the_app():
     guard = body.index('${If} $R1 != "1"', read)
     run = body.index("nsis_tauri_utils::RunAsUser", guard)
     assert body.index("${EndIf}", guard) > run, "RunAsUser 必须在环境变量的判断里面"
-    assert "install_ready_on_exit" in rust and f"set_var(NO_RELAUNCH_ENV" in rust
+    assert "install_ready_on_exit" in rust and "set_var(NO_RELAUNCH_ENV" in rust
 
 
 def test_user_facing_text_is_localized_for_every_language():
