@@ -82,7 +82,7 @@ def _settled_rect(win32, hwnd, timeout=15.0):
 def test_main_window_fits_the_work_area_and_its_minimum_does_too(desktop_app, window_state, win32):
     win32.make_dpi_aware()
     window_state(None)  # 没有保存的状态：走建窗时的 1280×860 / 1024×680
-    desktop_app.launch()
+    desktop_app.launch(expect="home")  # 全新配置目录、不带 --open：落在主页
     hwnd = desktop_app.hwnd()
     work = win32.work_area_of(hwnd)
     assert not win32.is_maximized(hwnd), "新装状态下主窗口不该是最大化的"
@@ -116,7 +116,7 @@ def test_oversized_saved_window_state_is_clamped_to_the_work_area(desktop_app, w
             "fullscreen": False,
         }
     )
-    desktop_app.launch()
+    desktop_app.launch(expect="home")  # 全新配置目录、不带 --open：落在主页
     hwnd = desktop_app.hwnd()
     work = win32.work_area_of(hwnd)
     assert not win32.is_maximized(hwnd)
