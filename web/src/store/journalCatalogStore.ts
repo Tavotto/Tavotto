@@ -15,7 +15,7 @@ export const JOURNAL_CATALOG_CACHE_KEY = 'tavotto.journalCatalog'
  * 「目录资产根」：快照图的 `file`（`snapshots/<sha256>.webp`）相对它解析。内置种子 = 随前端打进包里的
  * 目录；远程目录由拉取它的 PR 给出那一版的资产根（ADR 0155 §6）。末尾带 `/`。
  */
-export const BUNDLED_ASSET_BASE = '/journal-catalog/'
+export const BUNDLED_ASSET_BASE = '/assets/journal-catalog/'
 
 /** 快照图的完整地址；`file` 已由目录校验保证是 `snapshots/<sha256>.webp`（不含路径与 URL）。 */
 export const snapshotUrl = (base: string, file: string): string => base + file

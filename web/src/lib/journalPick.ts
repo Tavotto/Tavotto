@@ -177,8 +177,22 @@ export function valueText(path: string, s: JournalFieldSource): string {
     const list = v.map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(' / ')
     return unit && v.every((x) => typeof x === 'number') ? `${list} ${unit}` : list
   }
-  if (v && typeof v === 'object') return JSON.stringify(v)
+  if (v && typeof v === 'object') return objectText(v as Record<string, unknown>, unit)
   return v == null ? '' : String(v)
+}
+
+/** 展示项里的对象值：文件格式 `{preferred, accepted}` 说成「推荐 … ；可接受 …」，其余「名 值」一项一项列（不给人看 JSON）。 */
+function objectText(o: Record<string, unknown>, unit: string): string {
+  const list = (x: unknown) => (Array.isArray(x) ? x.map(String).join(' / ') : String(x))
+  if ('preferred' in o || 'accepted' in o) {
+    const parts: string[] = []
+    if (Array.isArray(o.preferred) && o.preferred.length) parts.push(jt('formatsPreferred', { list: list(o.preferred) }))
+    if (Array.isArray(o.accepted) && o.accepted.length) parts.push(jt('formatsAccepted', { list: list(o.accepted) }))
+    return parts.join('；')
+  }
+  return Object.entries(o)
+    .map(([k, x]) => `${k} ${list(x)}${unit && (typeof x === 'number' || (Array.isArray(x) && x.every((y) => typeof y === 'number'))) ? ` ${unit}` : ''}`)
+    .join(' / ')
 }
 
 /** 出处卡的结论（底栏第一行）：「字段 值」，如「位图分辨率 ≥ 300 dpi」。栏位的值自带名字，不再加字段名。 */

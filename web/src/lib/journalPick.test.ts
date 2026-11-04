@@ -124,6 +124,18 @@ describe('出处卡：一句话与高亮', () => {
     expect(valueText('page_columns', wide)).toContain('90 mm')
   })
 
+  it('展示项里的对象值不露 JSON：文件格式说成「推荐 … ；可接受 …」，按图类的 dpi 逐项列', () => {
+    const base = { qualifier: 'exact', stage: 'any', affects: 'info' } as unknown as JournalFieldSource
+    const fmt = { ...base, value: { preferred: ['EPS', 'PDF'], accepted: ['TIFF'] } } as JournalFieldSource
+    expect(valueText('info.formats_raw', fmt)).toBe('推荐 EPS / PDF；可接受 TIFF')
+    const only = { ...base, value: { preferred: [], accepted: ['AI', 'EPS'] } } as JournalFieldSource
+    expect(valueText('info.formats_raw', only)).toBe('可接受 AI / EPS')
+    const dpi = { ...base, value: { halftone: 300, 'line art': 1000 } } as JournalFieldSource
+    expect(valueText('info.dpi_by_kind', dpi)).toBe('halftone 300 dpi / line art 1000 dpi')
+    const fonts = { ...base, value: { 中文: '幼圆', 英文: 'Arial' } } as JournalFieldSource
+    expect(valueText('info.font_names_raw', fonts)).toBe('中文 幼圆 / 英文 Arial')
+  })
+
   it('min / max 带方向记号；栏位列出全部「名字 + 宽度」', () => {
     expect(valueText('max_font_size_pt', src('fx-zeta', 'max_font_size_pt'))).toBe('≥ 5 pt')
     const cols = src('fx-cols-inherit', 'page_columns')

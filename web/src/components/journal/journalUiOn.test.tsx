@@ -1,6 +1,7 @@
 /**
- * 期刊入口默认关闭（`lib/journalUi`，用户 2026-11-01 决定）：关着时界面与期刊 PR 之前一样，下面这些入口一个都不渲染。
- * 开关打开（`JOURNAL_UI_DEV_KEY`）时它们才出现——那一半由 `journal.test.tsx` 与 e2e 覆盖。
+ * 期刊入口随种子数据一起打开（`lib/journalUi` 的 `JOURNAL_CATALOG_UI = true`，ADR 0155 §8）：不设任何开发开关，
+ * 设置 › 期刊规范里的「期刊」行、问题面板行尾的「出处」、设置搜索里的 `spec.journal` 都出现；
+ * 带期刊绑定的旧文档照旧按绑定预检。入口后面的功能由 `journal.test.tsx` 与 e2e 覆盖。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -34,7 +35,7 @@ let host: HTMLElement
 let root: Root
 
 beforeEach(async () => {
-  localStorage.clear() // 不设开发开关 = 生产状态
+  localStorage.clear() // 不设开发开关 = 生产状态（入口由常量打开）
   useJournalCatalogStore.setState({ catalog: loadCatalog(vectors.catalog) })
   useProfileStore.setState({
     specs: builtinCatalog().map((e) => ({
@@ -60,17 +61,15 @@ afterEach(async () => {
   useJournalCatalogStore.setState({ catalog: loadCatalog() })
 })
 
-describe('期刊入口默认关闭', () => {
-  it('常量是 false；没有开发开关时入口就是关的，设了开关才开', () => {
-    expect(JOURNAL_CATALOG_UI).toBe(false)
-    expect(journalCatalogUi()).toBe(false)
-    localStorage.setItem(JOURNAL_UI_DEV_KEY, '1')
+describe('期刊入口已打开', () => {
+  it('常量是 true；没有开发开关时入口也是开的，开发键不再起作用', () => {
+    expect(JOURNAL_CATALOG_UI).toBe(true)
     expect(journalCatalogUi()).toBe(true)
-    localStorage.setItem(JOURNAL_UI_DEV_KEY, 'true') // 只认 '1'
-    expect(journalCatalogUi()).toBe(false)
+    localStorage.setItem(JOURNAL_UI_DEV_KEY, 'true')
+    expect(journalCatalogUi()).toBe(true)
   })
 
-  it('设置 › 期刊规范：没有「期刊」行与「期刊要求」，原来的「正在使用」那一行照旧在', async () => {
+  it('设置 › 期刊规范：有「期刊」行；绑了期刊的文档有「期刊要求」，「正在使用」那一行让位给它', async () => {
     await act(async () => {
       root.render(
         <TooltipProvider>
@@ -78,16 +77,13 @@ describe('期刊入口默认关闭', () => {
         </TooltipProvider>,
       )
     })
-    expect(document.body.querySelector('[data-journal-picker]')).toBeNull()
-    expect(document.body.querySelector('[data-journal-requirements]')).toBeNull()
-    expect(document.body.querySelector('[data-settings-anchor="spec.journal"]')).toBeNull()
-    expect(document.body.textContent).not.toContain('期刊要求')
-    // 与此 PR 之前一样：「当前项目使用」组的第一行（规范名 + 来源）还在
-    expect(document.body.querySelector('[data-spec-binding]')?.textContent).toContain('选择时的快照')
+    expect(document.body.querySelector('[data-journal-picker]')).not.toBeNull()
+    expect(document.body.querySelector('[data-settings-anchor="spec.journal"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-journal-disclosure]')).not.toBeNull()
     expect(document.body.querySelector('[data-spec-key-rules]')).not.toBeNull()
   })
 
-  it('问题面板行尾没有「出处」图标（即使文档带着期刊绑定）', async () => {
+  it('问题面板行尾有「出处」图标（文档带着期刊绑定）', async () => {
     const issue = {
       ruleCode: 'raster-dpi',
       message: literal('x'),
@@ -100,26 +96,14 @@ describe('期刊入口默认关闭', () => {
         </TooltipProvider>,
       )
     })
-    expect(document.body.querySelector('[data-journal-source]')).toBeNull()
-    // 对照：开关一开就出现
-    localStorage.setItem(JOURNAL_UI_DEV_KEY, '1')
-    await act(async () => {
-      root.render(
-        <TooltipProvider>
-          <IssueJournalSource issue={{ ...issue }} />
-        </TooltipProvider>,
-      )
-    })
     expect(document.body.querySelector('[data-journal-source]')).not.toBeNull()
   })
 
-  it('设置搜索找不到 spec.journal', () => {
+  it('设置搜索找得到 spec.journal', () => {
     const order = ['spec'] as never
     const hit = (q: string) =>
       searchSettings(q, order, () => '期刊规范').flatMap((r) => r.entries.map((e) => e.id))
-    expect(hit('期刊')).not.toContain('spec.journal')
-    expect(SETTINGS_REGISTRY.some((e) => e.id === 'spec.journal')).toBe(true) // 条目在，只是关着不参与搜索
-    localStorage.setItem(JOURNAL_UI_DEV_KEY, '1')
+    expect(SETTINGS_REGISTRY.some((e) => e.id === 'spec.journal')).toBe(true)
     expect(hit('期刊')).toContain('spec.journal')
   })
 })

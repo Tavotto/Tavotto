@@ -114,7 +114,7 @@ function groupFields(fields: NumField[]): { group: string; fields: NumField[] }[
 
 /** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
 function formatValue(raw: unknown, unit?: string): string {
-  if (raw === undefined) return st('unset')
+  if (raw === undefined || raw === null) return st('unset') // null = 该规范没规定这一项（如期刊没写栏宽），不说成 "null"
   // 认不出的值照原值说，不说成「未设置」（与样式页同一条，`rawValueText`）
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return rawValueText(raw)
   return unit ? `${raw} ${unit}` : String(raw)

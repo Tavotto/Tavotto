@@ -946,6 +946,8 @@ export default interface Resources {
         "widths_mm_single": "单栏",
         "widths_mm_tolerance_mm": "栏宽容差"
       },
+      "formatsAccepted": "可接受 {{list}}",
+      "formatsPreferred": "推荐 {{list}}",
       "listAria": "期刊列表",
       "no": "否",
       "noJournal": "不按期刊",
@@ -3991,6 +3993,7 @@ export default interface Resources {
       },
       "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
+        "column": "改成{{name}}宽 {{mm}} mm",
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },

@@ -2458,6 +2458,8 @@
     "yes": "Yes",
     "no": "No",
     "noLimit": "No limit",
+    "formatsPreferred": "Preferred: {{list}}",
+    "formatsAccepted": "Accepted: {{list}}",
     "source": "Source",
     "sourceOf": "Source of {{name}}",
     "picked": "Now checking against {{name}}",

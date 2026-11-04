@@ -2435,6 +2435,8 @@
     "yes": "是",
     "no": "否",
     "noLimit": "不限",
+    "formatsPreferred": "推荐 {{list}}",
+    "formatsAccepted": "可接受 {{list}}",
     "source": "出处",
     "sourceOf": "{{name}}的出处",
     "picked": "已按「{{name}}」检查",

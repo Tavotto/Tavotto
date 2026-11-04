@@ -31,6 +31,9 @@ globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof f
 let host: HTMLElement
 let root: Root
 
+/** 空目录（种子已经不是空库，「没有期刊」的界面用它造） */
+const EMPTY_CATALOG = { schema: 1, catalog_rev: 1, publishers: {}, journals: {} }
+
 const mount = async (node: React.ReactNode) => {
   await act(async () => {
     root.render(<TooltipProvider>{node}</TooltipProvider>)
@@ -102,7 +105,7 @@ describe('期刊选择器', () => {
 
   it('项目已按某本期刊检查、但本机目录是空的：仍给「不按期刊」，且不依赖目录', async () => {
     selectJournal('fx-beta')
-    useJournalCatalogStore.setState({ catalog: loadCatalog() }) // 目录不可用
+    useJournalCatalogStore.setState({ catalog: loadCatalog(EMPTY_CATALOG) }) // 目录不可用
     await mount(<JournalPicker />)
     await click(q('[data-journal-picker]'))
     expect(q('[data-journal-none]')).not.toBeNull()
@@ -113,7 +116,7 @@ describe('期刊选择器', () => {
   })
 
   it('目录为空：只有一行中性的话，没有搜索框，也没有解释', async () => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: loadCatalog(EMPTY_CATALOG) })
     await mount(<JournalPicker />)
     await click(q('[data-journal-picker]'))
     const empty = document.body.querySelectorAll('[data-journal-empty]')
@@ -162,7 +165,7 @@ describe('出处卡', () => {
     expect(box!.className).toContain('max-h-[210px]')
     expect(box!.className).toContain('bg-paper')
     const img = box!.querySelector('img') as HTMLImageElement
-    expect(img.getAttribute('src')).toMatch(/^\/journal-catalog\/snapshots\/[0-9a-f]{64}\.webp$/)
+    expect(img.getAttribute('src')).toMatch(/^\/assets\/journal-catalog\/snapshots\/[0-9a-f]{64}\.webp$/)
     expect(img.getAttribute('width')).toBe('1080')
     expect(box!.querySelector('[aria-hidden]')).not.toBeNull() // 渐隐层
     expect(q('[data-journal-quote]')).toBeNull()
@@ -178,7 +181,7 @@ describe('出处卡', () => {
     expect(q('[data-journal-snapshot] img')!.getAttribute('src')).toMatch(
       /^https:\/\/assets\.example\.invalid\/rev1\/snapshots\/[0-9a-f]{64}\.webp$/,
     )
-    useJournalCatalogStore.setState({ assetBase: '/journal-catalog/' })
+    useJournalCatalogStore.setState({ assetBase: '/assets/journal-catalog/' })
   })
 
   it('图加载失败：退回白纸摘录（命中的数仍标 mark），不出错误态', async () => {
