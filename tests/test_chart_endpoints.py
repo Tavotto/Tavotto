@@ -107,3 +107,97 @@ def test_compute_endpoint_refuses_engine_mismatch(project):
     )
     assert response.status_code == 409
     assert response.json["code"] == "chart_engine_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# R03：不可变来源快照 + 完整渲染身份
+# ---------------------------------------------------------------------------
+
+
+def test_compute_source_changed_during_subprocess_returns_conflict(project, monkeypatch):
+    """计算期间来源文件被改 → 409 `chart_source_changed`，不混合新旧字节。"""
+    client, root = project
+    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    model, binding = bound.json["model"], bound.json["binding"]
+    from tavotto import app as m
+
+    def exploding_scaffold(model, frame):
+        # 子进程「运行中」改写来源文件（模拟并发修改）
+        (root / "chart.svg").write_bytes(
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>'
+        )
+        return {
+            "fragment": b'<svg xmlns="http://www.w3.org/2000/svg"><g id="tv-axes-ax1"/></svg>',
+            "facts": {},
+            "engine": model["engine"],
+        }
+
+    monkeypatch.setattr(m, "_chart_scaffold_via_worker", exploding_scaffold)
+    response = client.post(
+        "/api/svg/chart/compute",
+        json={"file": "chart.svg", "model": model, "binding": binding},
+    )
+    assert response.status_code == 409
+    assert response.json["code"] == "chart_source_changed"
+
+
+def test_compute_returns_full_render_identity(project):
+    """响应带 render_revision + model/binding digest + engine（R03 完整渲染身份）。"""
+    client, _root = project
+    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    model, binding = bound.json["model"], bound.json["binding"]
+    response = client.post(
+        "/api/svg/chart/compute",
+        json={"file": "chart.svg", "model": model, "binding": binding},
+    )
+    assert response.status_code == 200
+    body = response.json
+
+    from tavotto.engine import chartmodel
+
+    want = chartmodel.panel_identity(chartmodel.SOURCE_DECLARATIVE, body["scene_digest"], model)
+    assert body["render_revision"] == want
+    assert body["model_digest"] == chartmodel.digest_of(model)
+    assert body["binding_digest"] == chartmodel.digest_of(binding)
+    assert body["engine"]["matplotlib"] == model["engine"]["matplotlib"]
+    # 同一模型/来源的重算身份稳定；换范围身份不同
+    again = client.post(
+        "/api/svg/chart/compute",
+        json={"file": "chart.svg", "model": model, "binding": binding},
+    )
+    assert again.json["render_revision"] == body["render_revision"]
+
+
+def test_compute_same_data_different_range_is_a_different_revision(project):
+    client, _root = project
+    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    model, binding = bound.json["model"], bound.json["binding"]
+    r1 = client.post(
+        "/api/svg/chart/compute", json={"file": "chart.svg", "model": model, "binding": binding}
+    )
+    model2 = JSON_DEEPCOPY(model)
+    model2["axes"][0]["xlim"] = [2.0, 6.0]
+    r2 = client.post(
+        "/api/svg/chart/compute", json={"file": "chart.svg", "model": model2, "binding": binding}
+    )
+    assert r1.json["render_revision"] != r2.json["render_revision"]
+
+
+def test_compute_rejects_missing_scene_digest_mismatch_in_model(project):
+    client, _root = project
+    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    model = JSON_DEEPCOPY(bound.json["model"])
+    binding = bound.json["binding"]
+    # 模型里钉的场景摘要与实际文件不一致 → verify_scene 拒绝
+    model["scene_digest"] = "0" * 64
+    response = client.post(
+        "/api/svg/chart/compute", json={"file": "chart.svg", "model": model, "binding": binding}
+    )
+    assert response.status_code == 422
+    assert response.json["code"] == "chart_source_mismatch"
+
+
+def JSON_DEEPCOPY(obj):
+    import copy
+
+    return copy.deepcopy(obj)

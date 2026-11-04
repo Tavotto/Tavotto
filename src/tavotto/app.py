@@ -1444,8 +1444,12 @@ def api_svg_chart_compute():
     path = safe_resolve(file_id)
     if path.suffix.lower() not in SVG_EXT:
         return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
+    # 不可变来源快照（R03）：整个校验/脚手架/组合只用**这一次**读入的字节；
+    # 子进程返回后复核来源 digest，计算期间被改动 → 409 `chart_source_changed`，
+    # 不混合新旧字节。
+    scene_bytes = path.read_bytes()
     try:
-        scene = svgscene.read_scene(path)
+        scene = svgscene.scene_inventory(scene_bytes)
         chartmodel.validate_model(model)
         chartmodel.validate_binding(binding, model)
         chartmodel.verify_scene(binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]})
@@ -1473,16 +1477,28 @@ def api_svg_chart_compute():
                     "error": f"engine {key} {engine_facts[key]} != model {declared[key]}",
                 }
             ), 409
-    scene_bytes = path.read_bytes()
+    if hashlib.sha256(path.read_bytes()).hexdigest() != scene["scene_digest"]:
+        return jsonify(
+            {"code": "chart_source_changed", "error": "source changed during compute"}
+        ), 409
+    scene_bytes = scene_bytes
     try:
         composed = svgcompose.compose_scene(scene_bytes, binding, scaffold["fragment"], model)
     except svgcompose.ComposeError as exc:
         return jsonify({"code": exc.code, "error": exc.detail}), 422
+    # 完整渲染身份（R03）：来源 + 模型 + 绑定 + 引擎事实——预览/保存/导出消费同一身份
+    render_revision = chartmodel.panel_identity(
+        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model
+    )
     return jsonify(
         {
             "svg": composed.decode("utf-8"),
             "facts": scaffold["facts"],
             "scene_digest": scene["scene_digest"],
+            "render_revision": render_revision,
+            "model_digest": chartmodel.digest_of(model),
+            "binding_digest": chartmodel.digest_of(binding),
+            "engine": engine_facts,
         }
     )
 
