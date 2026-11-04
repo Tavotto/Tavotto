@@ -90,7 +90,12 @@ import {
   snapScaleNearest,
 } from '@/lib/scaleSnap'
 import { scaleDragStatus } from '@/lib/dragStatus'
-import { applyAnnotationScale, annotationsOver, captureOrigins } from '@/lib/annotationScale'
+import {
+  applyAnnotationScale,
+  annotationsInside,
+  captureOrigins,
+  withFollowers,
+} from '@/lib/annotationScale'
 import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
@@ -308,10 +313,17 @@ function contentAxisLock(
 /**
  * 拖动时排除锁定对象；成组对象整组跟着走，**组内有锁定成员则整组都不动**
  * （规则唯一出处是 actions 的 movableTargets，方向键微调走的是同一个）。
+ * 移动的面板带上整个落在它里面的标注（`lib/annotationScale.withFollowers`，ADR 0161 修订 2026-11-04）。
  */
-export function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
+export function draggableSelection(): {
+  targets: CanvasObject[]
+  blockedGroups: number
+  /** 用户自己选中、能动的个数（不含跟着面板走的标注）：历史标签按它说 */
+  picked: number
+} {
   const { objects, blockedGroups } = movableTargets(useSelectionStore.getState().ids)
-  return { targets: objects.filter((o) => !o.hidden), blockedGroups }
+  const moving = objects.filter((o) => !o.hidden)
+  return { targets: withFollowers(doc().objects, moving), blockedGroups, picked: moving.length }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -320,7 +332,7 @@ export function draggableSelection(): { targets: CanvasObject[]; blockedGroups: 
 
 export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const store = useDocumentStore.getState()
-  const { targets, blockedGroups } = draggableSelection()
+  const { targets, blockedGroups, picked } = draggableSelection()
   warnBlockedGroups(blockedGroups, targets.length > 0)
   if (!targets.length) return
   const primary = targets.find((o) => o.id === objectId) ?? targets[0]
@@ -330,7 +342,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const cands = candidatesFor(excluded)
 
   interaction().begin('move')
-  store.beginTxn(moveLabel(targets.length))
+  store.beginTxn(moveLabel(picked))
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -440,15 +452,14 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const target = doc().objects.find((o) => o.id === objectId)
   if (!target || target.locked) return
   const orig: Rect = { x: target.x, y: target.y, w: target.w, h: target.h }
-  // 多图排版里拖面板的角：「连同标注」（ADR 0161）——叠在它上面的标注按同一固定点、同一比例一起缩。
+  // 多图排版里拖面板的角：整个落在图里的标注（ADR 0161 修订 2026-11-04）按同一固定点、同一比例一起缩。
   // 起手定下跟随的集合与它们的起手快照（整个手势里不变）；它们随面板一起动，所以不当吸附候选
   const layoutCorner =
     target.type === 'panel' &&
     isCornerDir(dir) &&
     useWorkspaceStore.getState().mode === 'layout'
-  const followEnabled = layoutCorner && useUiStore.getState().scaleWithAnnotations
-  const followOrigins = followEnabled
-    ? captureOrigins(annotationsOver(doc().objects, target as PanelObject))
+  const followOrigins = layoutCorner
+    ? captureOrigins(annotationsInside(doc().objects, target as PanelObject))
     : []
   const excluded = new Set([objectId, ...followOrigins.map((f) => f.id)])
   const cands = candidatesFor(excluded)
@@ -488,7 +499,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       : null
   if (layoutCorner) {
     interaction().setDragStatus(
-      scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length, minSrcPt),
+      scaleReadout(target as PanelObject, orig, true, followOrigins.length, minSrcPt),
     )
   }
   store.beginTxn(hist('resizeObjects'))
@@ -585,7 +596,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
 
       const placed = anchoredRect(orig, next, dir, rot)
       // 标注只在等比缩放时跟着走（一个比例才说得清）；这一帧非等比（面板解锁比例）就留在原处
-      const following = followEnabled && proportional && orig.w > 0
+      const following = followOrigins.length > 0 && proportional && orig.w > 0
       const factor = following ? placed.w / orig.w : 1
       if (layoutCorner) {
         interaction().setDragStatus(

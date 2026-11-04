@@ -164,8 +164,6 @@
     "layoutFollow_one": "{{count}} annotation scales with it",
     "layoutFollow_other": "{{count}} annotations scale with it",
     "layoutFollowNone": "Annotations stay put",
-    "layoutFollowToggle": "With annotations",
-    "layoutFollowToggleTip": "When you scale a figure, the annotations on top of it (text, arrows, shapes) scale by the same ratio",
     "layoutResetCrop": "Reset crop",
     "layoutResetCropTip": "Restore the full figure frame and remove the crop",
     "layoutScale": "Scale {{from}}% → {{to}}%",
