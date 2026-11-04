@@ -14,4 +14,4 @@ uharfbuzz==0.56.1
 pypdfium2==5.13.0
 pillow==12.3.0
 truststore==0.10.4
-cryptography==47.0.0
+cryptography==48.0.1
