@@ -1,9 +1,12 @@
 # CLA staging rehearsal
 
 STAGING ONLY. These inputs deploy the native service to
-`https://cla-staging.tavotto.com` against the private sandbox
-`erwanjun/cla-e2e-sandbox-20261026` and App `erwanjun-cla-e2e-20261026`
-(id 5480322, installation 175465132). The agreements it serves are staging
+`https://cla-staging.tavotto.com` against the public organization sandbox
+`tavotto-cla-sandbox/cla-mq-sandbox` (repository 1445721664, merge queue on
+`main`) and App `erwanjun-cla-e2e-20261026` (id 5480322, installation 178570638;
+permissions checks:write, contents/pull_requests/merge_queues:read; events
+Pull request and Merge group). S1–S5 ran against the personal sandbox
+`erwanjun/cla-e2e-sandbox-20261026`, which is no longer configured. The agreements it serves are staging
 test texts: a staging signature has no legal effect. Nothing here touches the
 Tavotto repository's `cla-policy.json`, `provider.configured`, CI or required
 checks.
@@ -166,8 +169,14 @@ plus `--var CLA_CI_VERIFICATION_ENABLED:true`. The exit code is the verdict.
 
 ## Later steps
 
-S6 (merge queue, which needs an
-organization-owned sandbox) is planned in the rehearsal plan and gets its
-own PR. Production cut-over is a separate approval: production resources,
+S6 (merge queue). Deploy with the S5 flags plus
+`--var CLA_MERGE_PREFIX_ASSESSMENT_ENABLED:true`: on a `merge_group`
+`checks_requested` webhook the service records the group, assesses every PR in
+the queue prefix (each member's author must be eligible) and publishes the check
+on the group head. Repointing to a new sandbox repository changes
+`repositoryId`, so rebuild the database (`--rebuild`) first. In the sandbox:
+a ruleset on `main` with the merge queue and the required check
+`Tavotto CLA (staging)` restricted to the App; the workflow also runs on
+`merge_group` (`--event merge_group`). Production cut-over is a separate approval: production resources,
 moving the paper signature in `offline_signatures` into the service in the
 same PR that sets `provider.configured=true`, then `ci.yml` wiring (risk:high).
