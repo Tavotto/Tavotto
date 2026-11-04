@@ -62,7 +62,7 @@ async function mount() {
 
 beforeEach(() => {
   capMock.mockReset()
-  useDiagSendStore.setState({ capability: null })
+  useDiagSendStore.setState({ capability: null, open: false })
   useContactStore.setState({ capability: null, open: false })
   vi.mocked(prepareDiagSend).mockReset()
   vi.mocked(startDiagSend).mockReset()
@@ -106,11 +106,23 @@ describe('发送问题反馈入口', () => {
   })
 })
 
-describe('联系作者开着时：设置里的「发送问题反馈」就是顶栏那个对话框（2026-10 审计 A2）', () => {
+describe('联系作者开着时：设置里的「发送问题反馈」（2026-10 审计 A2；2026-11-04 改回自己的确认框）', () => {
   const contactCap = { enabled: true, body_max: 5000 } as never
 
-  it('点它关设置、打开联系作者对话框；不打开诊断发送对话框', async () => {
+  it('诊断发送开着：点它打开「发送问题反馈」确认框（有额外内容勾选框），不跳去联系作者', async () => {
     capMock.mockResolvedValue({ enabled: true, note_max_chars: 1000, retention_days: 30, categories: ['other'] })
+    useContactStore.setState({ capability: contactCap })
+    useUiStore.setState({ settingsOpen: true })
+    await mount()
+    const open = document.body.querySelector<HTMLElement>('[data-diagnostics-send-open]')!
+    await act(async () => open.click())
+    expect(useDiagSendStore.getState().open).toBe(true)
+    expect(useContactStore.getState().open).toBe(false)
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+  })
+
+  it('诊断发送关着：退回联系作者对话框（关设置）', async () => {
+    capMock.mockResolvedValue({ enabled: false })
     useContactStore.setState({ capability: contactCap })
     useUiStore.setState({ settingsOpen: true })
     await mount()

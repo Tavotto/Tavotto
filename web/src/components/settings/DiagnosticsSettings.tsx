@@ -305,7 +305,11 @@ function DiagnosticsReportSection() {
   /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。前端侧失败即关（没取到 / 关着）：没有就不画那一行。 */
   const sendCap = useDiagSendStore((s) => s.capability)
   const showContact = useWeComContactVisible()
-  /** 顶栏「联系作者」开着（引擎说开）：设置里的「发送问题反馈」就是它——同一个对话框，企业微信也在那里面（审计 A2） */
+  /**
+   * 顶栏「联系作者」开着（引擎说开）：企业微信行收进那个对话框（审计 A2）。「发送问题反馈」**仍开自己的确认框**——
+   * 只有它有「额外内容」（源文件 / 崩溃报告 / 损坏的会话）的勾选框，联系作者附带的诊断包永远不带这些（0.20.0 用户反馈
+   * 2026-11-04）；回信照样进「我的来信」（#1640）。诊断发送关着、联系作者开着时才退回联系作者对话框。
+   */
   const contactOn = useContactStore((s) => s.capability !== null)
   useEffect(() => {
     void useDiagSendStore.getState().load()
@@ -340,11 +344,11 @@ function DiagnosticsReportSection() {
               variant="secondary"
               size="sm"
               onClick={() => {
-                if (contactOn) {
+                if (sendCap) {
+                  useDiagSendStore.getState().setOpen(true)
+                } else {
                   useUiStore.getState().setSettingsOpen(false)
                   useContactStore.getState().setOpen(true)
-                } else {
-                  useDiagSendStore.getState().setOpen(true)
                 }
               }}
               data-diagnostics-send-open
