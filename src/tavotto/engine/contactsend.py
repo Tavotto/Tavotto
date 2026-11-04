@@ -17,7 +17,7 @@
 * **选路**：大陆环境先 `tavotto.cn` 后 `api.tavotto.com`，否则反之；传输失败（连不上 / 超时 / 证书）或 5xx 换另一条，
   init 与 complete 都可安全重放（`client_message_id` / `complete_token` 幂等）。「大陆环境」的判据只有一处——
   桌面壳 `src-tauri/src/app_update.rs::source_order`（ADR 0121）；壳在拉起引擎时把它的结论写进环境变量
-  `TAVOTTO_NETWORK_REGION=cn|global`，这里读它（`region_is_cn`），**不在 Python 里再抄一份时区 / 语言表**。
+  `TAVOTTO_NETWORK_REGION=cn|global`，这里经 `netregion.region_is_cn` 读它，**不在 Python 里再抄一份时区 / 语言表**。
   没有壳的安装（pip / 源码）没有这个信号，界面语言是简体中文（`zh-CN`，ADR 0121 判据 3）也算大陆；其余先走海外线路，
   不通自然换国内线路。
 * **秘密不落地**：`reply_token` / `complete_token` / 上传表单、用户写的主题 / 正文 / 邮箱只活在内存里的会话私有字段
@@ -46,6 +46,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from . import brand, contactinbox, diagsend, logsafe, telemetry
+from .netregion import ENV_REGION, region_is_cn  # noqa: F401 - 判据读法的唯一出处（`netregion`）
 
 LOG = logging.getLogger("tavotto.contactsend")
 
@@ -56,7 +57,6 @@ ENV_HARD_OFF = "TAVOTTO_NO_CONTACT"
 #: 开发 / 验收用：逗号分隔的端点（按顺序当作线路）。必须过 `CONTACT_HOSTS` 或回环开发模式，不合规 = 功能关闭。
 ENV_ENDPOINT = "TAVOTTO_CONTACT_ENDPOINT"
 #: 桌面壳写给引擎的“大陆环境”结论（`app_update::detect_order` 的第一项是不是镜像）。
-ENV_REGION = "TAVOTTO_NETWORK_REGION"
 
 #: 线路 → 主机。**白名单就是这两个主机**（`api.tavotto.com` 是 Cloudflare Worker，只转发到 `tavotto.cn`）。
 ROUTE_HOSTS: dict[str, str] = {"cn": "tavotto.cn", "global": "api.tavotto.com"}
@@ -195,14 +195,6 @@ _Cancelled = diagsend._Cancelled
 # ---------------------------------------------------------------------------
 def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip() == "1"
-
-
-def region_is_cn(ui_locale: str | None = None) -> bool:
-    """大陆环境？壳的结论（`TAVOTTO_NETWORK_REGION=cn`）或界面语言是简体中文（ADR 0121 判据 3）。
-    `global` 不否决界面语言：壳算它时还不知道界面语言。"""
-    if os.environ.get(ENV_REGION, "").strip().lower() == "cn":
-        return True
-    return ui_locale == "zh-CN"
 
 
 def route_label(target: diagsend.Target) -> str:

@@ -26,7 +26,14 @@
 
 ## 来源顺序
 
-registry.npmjs.org 主 → registry.npmmirror.com 镜像。「慢了换镜像」与私有 Python 同一套判据（ADR 0112）：开始收
+锁里声明的顺序（codex：registry.npmjs.org → registry.npmmirror.com）是海外的顺序；**大陆环境把镜像来源整体挪到前面**
+（`cli_for` 里稳定重排，其余相对顺序不变；#1744）。「大陆环境」不在这里判：唯一出处是壳的 `app_update::source_order`
+（ADR 0121），壳拉起引擎时写进 `TAVOTTO_NETWORK_REGION`，这里只经 `netregion.region_is_cn` 读它——与应用更新、联系作者
+选线路同一个结论。为什么不是只靠「慢了换源」：大陆直连 npmjs 实测约 2 MB/s（Windows Lab 2026-11-04，codex 174 MB
+84.6 s，npmmirror 21.8 s），按 ETA 估剩余约一分钟，够不到 `SLOW_ETA_S`，判据不会触发，每次一键装都白等一分钟；
+首次测速 / 并行探测要多发请求、多一套缓存，而这个结论壳早就算好了。没有壳的安装（pip / 源码）没有这个信号，按锁的顺序。
+
+「慢了换源」与私有 Python 同一套判据（ADR 0112），照旧兜底（镜像在前时它慢就换回官方源）：开始收
 字节后至少量 `SLOW_GRACE_S`，按全程平均速度估的剩余时间超过 `SLOW_ETA_S` 就换下一个来源；被放弃的
 来源排到队尾、不再测速地再试一次。
 
@@ -77,7 +84,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import atomicio, brand, config, logsafe, msixmigrate, tlstrust
+from . import atomicio, brand, config, logsafe, msixmigrate, netregion, tlstrust
 from .runtime import CREATE_NO_WINDOW
 
 LOG = logging.getLogger("tavotto.managedcli")
@@ -133,6 +140,8 @@ STALE_STAGING_S = 3600
 
 #: 已发行的来源主机（固定常量，不从调用方传进来的 URL 现推——现推的判据恒真）：只有它们进日志时明文。
 SOURCE_HOSTS = frozenset({"registry.npmjs.org", "registry.npmmirror.com", "downloads.claude.ai"})
+#: 国内镜像主机：大陆环境（`netregion.region_is_cn`）下这些来源排到最前（模块头「来源顺序」）。
+MIRROR_HOSTS = frozenset({"registry.npmmirror.com"})
 #: 锁里 URL 模板允许的前缀；`validate_lock` 钉着。
 NPM_PREFIX = "https://registry.npmjs.org/@openai/codex/-/"
 MIRROR_PREFIX = "https://registry.npmmirror.com/@openai/codex/-/"
@@ -397,8 +406,15 @@ def cli_for(
         tree_sha256=p["tree_sha256"],
         unpacked_size=p["unpacked_size"],
         file_count=p["file_count"],
-        sources=_sources(name, cli, key, p),
+        sources=_region_order(_sources(name, cli, key, p)),
     )
+
+
+def _region_order(sources: tuple[ArchiveSource, ...]) -> tuple[ArchiveSource, ...]:
+    """大陆环境：镜像来源稳定地挪到最前；否则原样（锁的顺序）。判据只读壳的结论，不在这里另判（模块头）。"""
+    if not netregion.region_is_cn():
+        return sources
+    return tuple(sorted(sources, key=lambda s: s.host not in MIRROR_HOSTS))
 
 
 def offered(name: str) -> bool:
@@ -715,7 +731,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _download(cli: ManagedCli, job: _Job) -> tuple[Path, ArchiveSource]:
-    """校验过的归档路径与它对应的来源。按顺序试 GitHub → 镜像；换源的理由与私有 Python 同：传输层失败用完
+    """校验过的归档路径与它对应的来源。按 `cli.sources` 的顺序试（锁的顺序，大陆环境镜像在前）；换源的理由与私有 Python 同：传输层失败用完
     `DOWNLOAD_ATTEMPTS`、HTTP 4xx/5xx、太慢。**hash 不符不换源、不重试。**每个来源从零开始下（不续传）。"""
     dl = root_dir(cli.name) / DOWNLOADS_DIRNAME
     queue: list[tuple[ArchiveSource, bool]] = [(s, False) for s in cli.sources]
