@@ -29,6 +29,7 @@ mod screen_ppi;
 mod shell_report;
 mod sidecar;
 mod window_chrome;
+mod window_fit;
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -972,14 +973,16 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let slot = state.remote.clone();
     let nav_handle = app.clone();
     let new_window_handle = app.clone();
+    let (remote_size, remote_min) =
+        window_fit::fit_to_primary(app, (1280.0, 860.0), (1024.0, 680.0));
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
         tauri::WebviewUrl::App(connect_page_url(locale).into()),
     )
     .title(i18n::text(locale).remote_window_title)
-    .inner_size(1280.0, 860.0)
-    .min_inner_size(1024.0, 680.0)
+    .inner_size(remote_size.0, remote_size.1)
+    .min_inner_size(remote_min.0, remote_min.1)
     .incognito(true)
     .initialization_script(REMOTE_WINDOW_MARKER)
     // 与主窗口同理：把 HTML5 拖放还给页面（素材拖进画布）
@@ -1408,6 +1411,8 @@ fn restore_main_window_state(win: &tauri::WebviewWindow) {
     if let Err(e) = win.restore_state(window_state_flags()) {
         eprintln!("restore main window state: {e}");
     }
+    // 插件把保存过的物理尺寸原样设回、不看工作区：换了屏幕 / 缩放后可能比屏幕还大（window_fit.rs）
+    window_fit::clamp_restored_window(win, (1024.0, 680.0));
 }
 
 /// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键
@@ -2156,6 +2161,9 @@ fn main() {
                 marker.mark_running();
                 let _ = state.marker.set(marker);
             }
+            // 小屏 / 高缩放下窗口不得大于工作区（window_fit.rs）
+            let (main_size, main_min) =
+                window_fit::fit_to_primary(&handle, (1280.0, 860.0), (1024.0, 680.0));
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 MAIN_WINDOW,
@@ -2163,9 +2171,10 @@ fn main() {
                 tauri::WebviewUrl::App(format!("splash.html?lang={}", boot_locale.tag()).into()),
             )
             .title("Tavotto")
-            .inner_size(1280.0, 860.0)
-            // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
-            .min_inner_size(1024.0, 680.0)
+            .inner_size(main_size.0, main_size.1)
+            // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）；
+            // 屏幕装不下时由 window_fit 收到工作区以内
+            .min_inner_size(main_min.0, main_min.1)
             // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏，
             // Windows 去掉系统窗框、窗口按钮由页面画；并注入窗框标记，页面据它让出红绿灯 /
             // 摆出「菜单」与窗口按钮
