@@ -737,10 +737,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const [next, patches, inverse] = produceStamped(state.doc, recipe)
     if (!patches.length) return true
     // 撤销按 inverse 的顺序打回：后补的那笔先退，再退原来那条
+    // 补的这笔若也改了面板 w/h（重排的统一宽高会改到别的成员），它们的原生图幅基准要
+    // 一并记进条目，否则撤销 / 重做时这些面板的缩放比没法按条目那一侧换算。
+    // 同一面板两边都有：before 取条目原来的，after 与页面包围盒 after 取补的这笔
+    const extra = sizeBasisOf(state.doc, next, patches)
+    let sizeBasis = entry.sizeBasis
+    if (extra.length) {
+      const list = [...(entry.sizeBasis ?? [])]
+      for (const e of extra) {
+        const i = list.findIndex((b) => b.id === e.id)
+        if (i < 0) {
+          list.push(e)
+          continue
+        }
+        const b = list[i]
+        list[i] = {
+          id: b.id,
+          before: b.before,
+          after: e.after,
+          box: { before: b.box.before, after: e.box.after },
+          dims: { w: b.dims.w || e.dims.w, h: b.dims.h || e.dims.h },
+        }
+      }
+      sizeBasis = list
+    }
     const merged: HistoryEntry = {
       ...entry,
       patches: [...entry.patches, ...patches],
       inverse: [...inverse, ...entry.inverse],
+      ...(sizeBasis ? { sizeBasis } : {}),
     }
     set({ doc: next, past: [...state.past.slice(0, -1), merged] })
     noteCommit(entry.label, state, next, patches, false)
