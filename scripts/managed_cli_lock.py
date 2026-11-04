@@ -2,15 +2,17 @@
 """生成 / 校验 `src/tavotto/resources/managed_cli_lock.json`（受控 CLI 的锁，`engine/managedcli.py` 读它）。
 
     python scripts/managed_cli_lock.py --check                  # 离线：锁文件形状与规范化（CI 跑这个）
-    python scripts/managed_cli_lock.py --check --online         # 联网：与 GitHub release / npmmirror 的元数据对账（不下载大文件）
+    python scripts/managed_cli_lock.py --check --online         # 联网：与 npm registry / npmmirror / GCS 的元数据对账（不下载大文件）
+    python scripts/managed_cli_lock.py --latest                 # 联网：锁里的 codex 落后 npm 上 @openai/codex 的 latest 就红（发版清单那一步）
     python scripts/managed_cli_lock.py --update 0.166.0 [--cli codex] [--cache DIR]   # 维护者：下载全部平台、两来源逐文件比对后写锁
     python scripts/managed_cli_lock.py --update 2.1.308 --cli claude [--cache DIR]    # 同上，Claude Code（只改这一个 CLI 的条目）
 
 ## 更新流程（升版本）
 
-1. `--update <版本>`：对每个平台下载 GitHub `codex-package-<triple>.tar.gz` 与 npmmirror
-   `@openai/codex@<版本>-<平台>` 的 tgz；核 npm 元数据里的 sha512 integrity；两边各自解开，**整棵树摘要必须相同**
-   （不同 = 来源不一致，拒绝写锁）；写入每个来源自己的 size / sha256，以及共用的 tree_sha256 / unpacked_size。
+1. `--update <版本>`：对每个平台从 registry.npmjs.org 与 npmmirror 各下载一次 `@openai/codex@<版本>-<平台>` 的 tgz；
+   两边元数据的 sha512 integrity 必须相同、下载物必须与之相符且逐字节相同（镜像 = 同一个文件）；解开算整棵树摘要，
+   写入每个来源的 size / sha256 / integrity 与 tree_sha256 / unpacked_size。
+   （0.166.0 起不再用 GitHub 的 `codex-package-<triple>.tar.gz`：它多一个 `bin/codex-exec-server`，与 npm 包不是同一棵树，#1716。）
 2. `--check --online` 再对一次账；`pytest tests/test_managed_cli.py`。
 3. 发版前在 mac / Windows 真机各点一次「安装」（真探测 `--version`）。
 `--cache DIR`：已下载过的归档按 URL 文件名放在 DIR 里就不重下（大小对得上才用）。
@@ -49,7 +51,11 @@ CODEX_PLATFORMS = {
     "linux-x64": ("x86_64-unknown-linux-musl", "bin/codex"),
 }
 CODEX_SOURCES = [
-    {"key": "github", "url": mc.GITHUB_PREFIX + "rust-v{version}/codex-package-{triple}.tar.gz"},
+    {
+        "key": "npmjs",
+        "url": mc.NPM_PREFIX + "codex-{version}-{npm}.tgz",
+        "strip": "package/vendor/{triple}/",
+    },
     {
         "key": "mirror",
         "url": mc.MIRROR_PREFIX + "codex-{version}-{npm}.tgz",
@@ -73,6 +79,8 @@ CLAUDE_SOURCES = [
     {"key": "gcs", "url": mc.CLAUDE_GCS_PREFIX + "{version}/{npm}/{entry}", "raw": True},
 ]
 GCS_MANIFEST = mc.CLAUDE_GCS_PREFIX + "{version}/manifest.json"
+#: npm 官方 registry 上 codex 平台子包的元数据（与 npmmirror 的 `NPM_META["codex"]` 必须给出同一个 integrity）
+NPM_OFFICIAL_META = "https://registry.npmjs.org/@openai/codex/{version}-{npm}"
 NPM_META = {
     "codex": "https://registry.npmmirror.com/@openai/codex/{version}-{npm}",
     "claude": "https://registry.npmmirror.com/@anthropic-ai/claude-code-{npm}/{version}",
@@ -146,32 +154,35 @@ def _plat_common(key: str, triple: str, entry: str, tree: tuple[str, int, int]) 
 
 
 def _update_codex(version: str, cache: Path | None) -> dict:
-    tag = f"rust-v{version}"
-    rel = _get_json(f"https://api.github.com/repos/openai/codex/releases/tags/{tag}")
-    assets = {a["name"]: a for a in rel["assets"]}
     plats: dict = {}
-    gh_src, mi_src = CODEX_SOURCES
+    np_src, mi_src = CODEX_SOURCES
     for key, (triple, entry) in CODEX_PLATFORMS.items():
-        a = assets[f"codex-package-{triple}.tar.gz"]
-        gh_sha = str(a["digest"]).removeprefix("sha256:")
+        official = _get_json(NPM_OFFICIAL_META.format(version=version, npm=key))["dist"]
         dist = _get_json(NPM_META["codex"].format(version=version, npm=key))["dist"]
-        gh_file = _download(gh_src["url"].format(version=version, triple=triple), cache, a["size"])
-        mi_file = _download(mi_src["url"].format(version=version, npm=key), cache, dist["size"])
-        assert mc._sha256_file(gh_file) == gh_sha, f"{key}: GitHub 归档与 release 摘要不符"  # noqa: SLF001
-        assert _sri512(mi_file) == dist["integrity"], f"{key}: npm 归档与 registry integrity 不符"
-        t1 = _tree("codex", gh_file, version, entry)
-        t2 = _tree("codex", mi_file, version, entry, mi_src["strip"].format(triple=triple))
-        if t1 != t2:
-            raise SystemExit(f"{key}: 两个来源解开的树不同，拒绝写锁")
-        plats[key] = {
-            **_plat_common(key, triple, entry, t1),
-            "github": {"size": a["size"], "sha256": gh_sha},
-            "mirror": {
-                "size": dist["size"],
-                "sha256": mc._sha256_file(mi_file),  # noqa: SLF001
-                "integrity": dist["integrity"],
-            },
-        }
+        # 官方 registry 的版本元数据不带 tarball 大小（npmmirror 带）：同一个文件只认 sha512 integrity
+        if official["integrity"] != dist["integrity"]:
+            raise SystemExit(f"{key}: npm 官方与 npmmirror 的元数据不是同一个文件，拒绝写锁")
+        # 两份下载按来源分目录缓存（URL 末段同名）
+        np_file = _download(
+            np_src["url"].format(version=version, npm=key),
+            (cache / "npm") if cache else None,
+            dist["size"],
+        )
+        mi_file = _download(
+            mi_src["url"].format(version=version, npm=key),
+            (cache / "mirror") if cache else None,
+            dist["size"],
+        )
+        assert _sri512(np_file) == official["integrity"], (
+            f"{key}: npm 归档与 registry integrity 不符"
+        )
+        assert _sri512(mi_file) == dist["integrity"], f"{key}: 镜像归档与 registry integrity 不符"
+        sha = mc._sha256_file(np_file)  # noqa: SLF001
+        if mc._sha256_file(mi_file) != sha:  # noqa: SLF001
+            raise SystemExit(f"{key}: 两个来源下载到的不是同一份字节，拒绝写锁")
+        t1 = _tree("codex", np_file, version, entry, np_src["strip"].format(triple=triple))
+        meta = {"size": dist["size"], "sha256": sha, "integrity": dist["integrity"]}
+        plats[key] = {**_plat_common(key, triple, entry, t1), "npmjs": dict(meta), "mirror": meta}
         print(f"{key}: ok tree={t1[0][:12]} files={t1[1]}", file=sys.stderr)
     return {"version": version, "sources": CODEX_SOURCES, "platforms": plats}
 
@@ -225,20 +236,13 @@ def check_online(lock: dict) -> list[str]:
     problems: list[str] = []
     for name, cli in lock["clis"].items():
         v = cli["version"]
-        if name == "codex":
-            rel = _get_json(f"https://api.github.com/repos/openai/codex/releases/tags/rust-v{v}")
-            assets = {a["name"]: a for a in rel["assets"]}
-        else:
+        if name != "codex":
             manifest = _get_json(GCS_MANIFEST.format(version=v))
         for key, p in cli["platforms"].items():
             if name == "codex":
-                a = assets.get(f"codex-package-{p['triple']}.tar.gz")
-                if (
-                    a is None
-                    or str(a["digest"]) != f"sha256:{p['github']['sha256']}"
-                    or a["size"] != p["github"]["size"]
-                ):
-                    problems.append(f"{name}/{key}: GitHub 资产与锁不符")
+                off = _get_json(NPM_OFFICIAL_META.format(version=v, npm=p["npm"]))["dist"]
+                if off["integrity"] != p["npmjs"]["integrity"]:
+                    problems.append(f"{name}/{key}: npm 官方元数据与锁不符")
             else:
                 m = manifest["platforms"].get(key)
                 if (
@@ -253,12 +257,40 @@ def check_online(lock: dict) -> list[str]:
     return problems
 
 
+#: npm 上 `@openai/codex` 的 latest（npmmirror 与官方 registry 同步，国内也连得上）
+CODEX_LATEST_URL = "https://registry.npmmirror.com/@openai/codex/latest"
+
+
+def latest_problem(lock: dict, latest: str) -> str | None:
+    """锁里的 codex 比 npm latest 旧 → 一句话（含升版命令）；不旧 / 判不出 → None。
+
+    为什么要追最新（#1716）：Codex 桌面版先升级会把新型号写进共用的 models_cache.json，锁住的旧 codex 选到就 404，
+    界面只能让用户自己更新（`ai_bridge.cli_update_plan` 给「应用内装」要求锁版本追得上那份清单）。"""
+    cur = str(((lock.get("clis") or {}).get("codex") or {}).get("version") or "")
+
+    def key(v: str) -> tuple[int, ...] | None:
+        parts = v.split(".")
+        ok = len(parts) == 3 and all(x.isdigit() for x in parts)
+        return tuple(int(x) for x in parts) if ok else None
+
+    a, b = key(cur), key(latest)
+    if a is None or b is None or a >= b:
+        return None
+    return (
+        f"托管 codex 锁在 {cur}，npm latest 是 {latest}：发版前先 "
+        f"`python scripts/managed_cli_lock.py --update {latest}`（再 --check --online）"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--online", action="store_true")
+    ap.add_argument(
+        "--latest", action="store_true", help="锁里的 codex 落后 npm latest 就失败（发版清单）"
+    )
     ap.add_argument("--update", metavar="VERSION")
     ap.add_argument(
         "--cli", choices=sorted(UPDATERS), default="codex", help="--update 针对哪个 CLI"
@@ -283,6 +315,11 @@ def main(argv: list[str] | None = None) -> int:
     if text != dumps(lock):
         print("锁文件不是规范格式（请用 --update 生成，不要手改）", file=sys.stderr)
         return 1
+    if args.latest:
+        problem = latest_problem(lock, str(_get_json(CODEX_LATEST_URL)["version"]))
+        if problem:
+            print(problem, file=sys.stderr)
+            return 1
     if args.online:
         problems = check_online(lock)
         for p in problems:

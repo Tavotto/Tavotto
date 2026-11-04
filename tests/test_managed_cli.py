@@ -475,16 +475,17 @@ def test_shipped_lock_is_valid_pinned_and_urls_derive_from_the_template():
     assert set(cli["platforms"]) == {"darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"}
     for key in cli["platforms"]:
         c = managedcli.cli_for("codex", key, lock)
-        gh, mirror = c.sources
-        assert gh.url == (
-            f"https://github.com/openai/codex/releases/download/rust-v{c.version}/codex-package-{c.triple}.tar.gz"
+        npmjs, mirror = c.sources
+        assert (
+            npmjs.url == f"https://registry.npmjs.org/@openai/codex/-/codex-{c.version}-{key}.tgz"
         )
         assert (
             mirror.url
             == f"https://registry.npmmirror.com/@openai/codex/-/codex-{c.version}-{key}.tgz"
         )
-        assert mirror.strip == f"package/vendor/{c.triple}/" and gh.strip == ""
-        assert gh.sha256 != mirror.sha256  # 两份不同的归档，各锁各的
+        assert mirror.strip == npmjs.strip == f"package/vendor/{c.triple}/"
+        # 镜像 = 同一个 tgz（#1716：GitHub 包从 0.166.0 起多一个文件，不再当来源）
+        assert npmjs.sha256 == mirror.sha256 and npmjs.size == mirror.size
         assert c.id == f"{c.version}-{c.tree_sha256[:12]}"
 
 
@@ -514,7 +515,8 @@ def test_validate_lock_rejects_loose_locks():
     mutate(lambda c: c["sources"][0].update(key="gitlab"))
     mutate(lambda c: c["sources"][1].update(strip="/abs/"))
     mutate(lambda c: c["platforms"]["darwin-arm64"].update(tree_sha256="abc"))
-    mutate(lambda c: c["platforms"]["darwin-arm64"]["github"].update(sha256="G" * 64))
+    mutate(lambda c: c["platforms"]["darwin-arm64"]["npmjs"].update(sha256="G" * 64))
+    mutate(lambda c: c["platforms"]["darwin-arm64"]["npmjs"].update(integrity="md5-x"))
     mutate(lambda c: c["platforms"]["darwin-arm64"].update(entrypoint="../x"))
     mutate(lambda c: c["platforms"]["darwin-arm64"]["mirror"].update(integrity="md5-x"))
 
@@ -527,6 +529,22 @@ def test_lock_script_check_passes_on_the_shipped_lock():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert mod.main(["--check"]) == 0
+
+
+def test_lock_script_latest_flags_a_lock_behind_npm():
+    """发版清单那一步（#1716）：锁里的 codex 比 npm latest 旧就给出升版命令；一样新 / 判不出不报。"""
+    import importlib.util
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "managed_cli_lock.py"
+    spec = importlib.util.spec_from_file_location("managed_cli_lock_script", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    lock = {"clis": {"codex": {"version": "0.165.0"}}}
+    msg = mod.latest_problem(lock, "0.166.0")
+    assert msg and "--update 0.166.0" in msg
+    assert mod.latest_problem(lock, "0.165.0") is None
+    assert mod.latest_problem(lock, "0.164.9") is None
+    assert mod.latest_problem(lock, "0.166.0-alpha.1") is None
     assert gzip  # 保持 import 被使用（归档助手以后可能直接用）
 
 
