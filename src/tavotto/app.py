@@ -9218,14 +9218,19 @@ class FileLockedError(RuntimeError):
         updated: list[str],
         rolled_back: list[str] | None = None,
         rollback_failed: list[str] | None = None,
+        kept_external: list[str] | None = None,
     ):
         self.rolled_back = list(rolled_back or [])
         self.rollback_failed = list(rollback_failed or [])
+        #: 替换之后又被外部改过、因此没有回滚的目标（保留的是外部版本）
+        self.kept_external = list(kept_external or [])
         tail = ""
         if self.rolled_back and not self.rollback_failed:
             tail = f"（已回滚 {'、'.join(self.rolled_back)}，原文件未变）"
         elif self.rollback_failed:
             tail = f"（{'、'.join(self.rollback_failed)} 回滚失败，仍是新内容）"
+        if self.kept_external:
+            tail += f"（{'、'.join(self.kept_external)} 在替换之后又被外部修改，已保留外部版本、未回滚）"
         super().__init__(f"{name} 正被其它程序占用，无法覆盖：{detail}{tail}")
         self.name = name
         #: 仍处于「已被换掉」状态的文件（回滚成功后为空）
@@ -9242,6 +9247,8 @@ class SourceChangedError(RuntimeError):
     def __init__(self, name: str, expected: int, actual: int):
         super().__init__(f"{name} 已被外部修改")
         self.name = name
+        #: 本次已替换、但替换之后又被外部改过因而没有回滚的目标（保留外部版本）
+        self.kept_external: list[str] = []
         self.expected = expected
         self.actual = actual
 
@@ -9504,6 +9511,35 @@ def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
         raise ScriptChangedError(script_name, spawned, now)
 
 
+def _source_fingerprint(paths) -> dict[Path, tuple[int, int] | None]:
+    """目标文件此刻的身份：`(mtime_ns, size)`；读不到（被删 / 被占）记 None。"""
+    out: dict[Path, tuple[int, int] | None] = {}
+    for p in paths:
+        try:
+            st = p.stat()
+            out[p] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            out[p] = None
+    return out
+
+
+def _assert_sources_unchanged(base: dict, paths) -> None:
+    """复核：`paths` 里每个目标仍是 prepare 时看到的那一版，否则 `SourceChangedError`（409）。
+
+    prepare 只在请求入口比一次；之后的全量重放 / 导出可能分钟级，备份与替换之前
+    必须再问一遍，否则会先备份别人刚写的新版、再把它盖掉（QA-WIN-51）。
+    """
+    for p in paths:
+        want = base.get(p)
+        if want is None:
+            continue  # prepare 时就不存在 / 读不到：没有可比的基准
+        now = _source_fingerprint([p])[p]
+        if now != want:
+            raise SourceChangedError(
+                p.name, int(want[0] // 1_000_000_000), int((now or (0, 0))[0] // 1_000_000_000)
+            )
+
+
 def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
     """热会话当前的 manifest；拿不到（或热态压根不是这组 patches）回 None。
 
@@ -9531,17 +9567,31 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
         return None
 
 
-def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]:
-    """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败) 两份文件名。"""
-    rolled, failed = [], []
+def _rollback(
+    done: list[Path],
+    backup_dir: Path,
+    published: dict[Path, tuple[int, int] | None] | None = None,
+) -> tuple[list[str], list[str], list[str]]:
+    """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败, 外部改过未回滚) 三份文件名。
+
+    恢复前先核目标仍是**我们发布的那一版**（`published` 里记的 `(mtime_ns, size)`，
+    与 `_source_fingerprint` 同一判据）：替换之后又被外部改过的目标，备份是更早的原件，
+    盖上去就吞掉外部那份新改动——保留外部版本、不回滚、如实报告（Codex #1697 P1）。
+    """
+    rolled, failed, kept = [], [], []
     for target in done:
+        if published is not None and target in published:
+            if _source_fingerprint([target])[target] != published[target]:
+                LOG.warning("写回回滚跳过: %s 在替换之后被外部修改，保留外部版本", target.name)
+                kept.append(target.name)
+                continue
         try:
             shutil.copy2(backup_dir / target.name, target)
             rolled.append(target.name)
         except OSError:
             LOG.error("写回回滚失败: %s（备份在 %s）", target.name, backup_dir, exc_info=True)
             failed.append(target.name)
-    return rolled, failed
+    return rolled, failed, kept
 
 
 def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
@@ -9666,6 +9716,8 @@ def _write_source_files(
     _refuse_pdf_pages_source(worker, src)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
+    # 与 prepare 同一刻的身份基线：重放结束后、备份与每次替换之前拿它复核（QA-WIN-51）
+    source_base = _source_fingerprint(targets)
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -9680,6 +9732,10 @@ def _write_source_files(
         # T03：重放跑的是**热会话自己冻结的那份运行配置**（argv），与热态一致才谈得上"重放 == 热态"；
         # 不读项目此刻的默认配置——之后用户换了参数也不能让这次验证拿另一组参数去比
         **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
+        # 重放对写回目标（项目里的原件）的写换到一次性 worker 自己目录里的暂存副本：脚本经文件对象
+        # `savefig(handle)` / open("wb") / os.replace 写回这些 PNG 时原件逐字节不动，prepare 时的指纹基线
+        # 因此始终有效，重放窗口里的外部改动不会被吞（QA-WIN-51）
+        isolate_writes=[str(t) for t in targets],
     )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
@@ -9756,18 +9812,49 @@ def _write_source_files(
     )
     updated: list[str] = []
     done: list[Path] = []
+    published: dict[Path, tuple[int, int] | None] = {}  # 各目标发布的那一版的身份（暂存文件替换前）
     try:
         with remap_guard:
+            # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
+            try:
+                _assert_sources_unchanged(source_base, [t for t, _ in tmps])
+            except SourceChangedError:
+                _discard_updating(tmps)
+                raise
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
-            for target, tmp in tmps:
+            for i, (target, tmp) in enumerate(tmps):
+                # 备份之后、每次替换之前再核尚未替换的目标：备份必须就是将被覆盖的那一版；
+                # 已替换的目标按事务规矩从备份回滚
+                try:
+                    _assert_sources_unchanged(source_base, [t for t, _ in tmps[i:]])
+                except SourceChangedError as exc:
+                    _discard_updating(tmps)
+                    if not done:
+                        shutil.rmtree(
+                            backup_dir, ignore_errors=True
+                        )  # 本次独占，且可能含新版的半截拷贝
+                        raise
+                    rolled, failed, kept = _rollback(done, backup_dir, published)
+                    if failed:
+                        raise FileLockedError(
+                            exc.name, str(exc), failed + kept, rolled, failed, kept
+                        ) from exc
+                    exc.kept_external = kept
+                    raise
+                # 发布身份取自 replace **之前**的暂存文件：rename 保留 mtime / size，而 replace 之后再 stat
+                # 目标，中间若有外部写入，记下的就是外部那一版，回滚核对会放行、拿备份盖掉它（Codex #1697 P1）
+                staged = _source_fingerprint([tmp])[tmp]
                 try:
                     tmp.replace(target)
                 except OSError as exc:
                     _discard_updating(tmps)  # 不给图库留下半成品
                     LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
-                    rolled, failed = _rollback(done, backup_dir)
-                    raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
+                    rolled, failed, kept = _rollback(done, backup_dir, published)
+                    raise FileLockedError(
+                        target.name, str(exc), failed + kept, rolled, failed, kept
+                    ) from exc
                 done.append(target)
+                published[target] = staged
                 updated.append(target.name)
     except engine_inputremap.RemapChanged:
         _discard_updating(tmps)
@@ -9875,16 +9962,22 @@ def _write_back_response(result: dict, **extra) -> dict:
 def _write_back_error_response(exc):
     """写回事务任一环失败（prepare / verify / commit）→ 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
-        return jsonify(
-            {
-                "error": f"{exc.name} 已被外部修改（本工具之外），写回已取消，"
-                "原文件未做任何改动。请刷新素材面板后重新确认再写回。",
-                "code": "source_changed",
-                "file": exc.name,
-                "expected": exc.expected,
-                "actual": exc.actual,
-            }
-        ), 409
+        body = {
+            "error": f"{exc.name} 已被外部修改（本工具之外），写回已取消，"
+            "原文件未做任何改动。请刷新素材面板后重新确认再写回。",
+            "code": "source_changed",
+            "file": exc.name,
+            "expected": exc.expected,
+            "actual": exc.actual,
+        }
+        if exc.kept_external:
+            body["error"] = (
+                f"{exc.name} 已被外部修改（本工具之外），写回已取消。"
+                f"{'、'.join(exc.kept_external)} 在本次替换之后也被外部修改过，"
+                "已保留外部那一版、没有用备份覆盖。请刷新素材面板后重新确认再写回。"
+            )
+            body["kept_external"] = exc.kept_external
+        return jsonify(body), 409
     if isinstance(exc, ScriptChangedError):
         return jsonify(
             {
@@ -9924,16 +10017,17 @@ def _write_back_error_response(exc):
     if isinstance(exc, FileLockedError):
         # 可操作的错误：告诉用户是哪个文件、该去关掉谁；回滚结果一并报出来，
         # 免得用户以为「什么都没发生」或者反过来以为「已经写进去了」
-        return jsonify(
-            {
-                "error": f"{exc}。请关闭正在打开它的程序（PDF 阅读器 / 看图工具）后重试。",
-                "code": "file_locked",
-                "file": exc.name,
-                "updated": exc.updated,
-                "rolled_back": exc.rolled_back,
-                "rollback_failed": exc.rollback_failed,
-            }
-        ), 409
+        body = {
+            "error": f"{exc}。请关闭正在打开它的程序（PDF 阅读器 / 看图工具）后重试。",
+            "code": "file_locked",
+            "file": exc.name,
+            "updated": exc.updated,
+            "rolled_back": exc.rolled_back,
+            "rollback_failed": exc.rollback_failed,
+        }
+        if exc.kept_external:
+            body["kept_external"] = exc.kept_external
+        return jsonify(body), 409
     if isinstance(exc, WriteBackMultipagePdfError):
         return jsonify(
             {

@@ -37,6 +37,12 @@ order: 300
     `one_shot()` 建出来的 base** 负责，不许再用 `ENGINE_CACHE.glob("_replay-*")`
     断言全局为空——ENGINE_CACHE 全进程共用，那样会把别的测试文件的残留算到
     自己头上（run 32937999297 就是这么误报的）。
+    **重放不碰原件**（QA-WIN-51，Codex #1697）：`one_shot(isolate_writes=写回目标们)` 让重放脚本对这些目标的**写**
+    （`open` 写模式 / `savefig(handle)` / `os.open` / `Path.write_*` / `os.replace|rename|shutil.move|copy*` 到目标）被
+    `writetripwire.install_isolation` 换到该一次性 worker 目录里的暂存副本（随 `discard()` 一起删），脚本读回仍看到自己写的；
+    只认这几个精确路径，别的写与授权根绊线都不装。不能忠实模拟的写（`os.truncate|symlink|link`、目录级改动）在审计事件里
+    失败（写回整体失败，原件不动）。所以复核基线永远是 prepare 时的 `(mtime_ns, size)`，**不 rebase、不豁免**：重放窗口里的
+    外部改动一律 409 `source_changed`。已知盲区（同绊线）：C 层写 / 外部进程 / 硬链接别名。
     同一次写回只 build 一次（override + PDF + PNG 共用）。
     热会话最后应用的正是这组 patches 时（`worker.last_patch_hash`），把两份
     manifest 逐元素比 bbox/anchor（容差 0.5% figure 分数）与 size_mm（0.01mm），

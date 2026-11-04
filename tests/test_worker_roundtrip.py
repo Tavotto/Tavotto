@@ -4342,3 +4342,210 @@ def test_build_dotted_script_filename(tmp_path, name):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+# ---------------- 隔离重放：脚本对写回目标的写不落到原件（Codex #1697 P1 ×2） ----------------
+_SELF_WRITE_HEAD = """\
+import os
+import pathlib
+import time
+import matplotlib.pyplot as plt
+
+HERE = pathlib.Path(__file__).parent
+
+def main():
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.plot([0, 1, 2], [1, 0, 2])
+    ax.set_title("Original Title")
+    fig.savefig("TestFig_a.pdf")  # 路径式保存：被拦截捕获，不落盘
+"""
+
+#: 文件对象式保存直通真写；句柄指向项目里的写回目标——每次脚本执行（含一次性重放）都会重写它
+SAVE_VIA_HANDLE = """\
+    with open(HERE / "TestFig_a.png", "wb") as handle:
+        fig.savefig(handle, format="png")
+"""
+SAVE_VIA_OS_REPLACE = """\
+    part = HERE / "TestFig_a.png.part"
+    with open(part, "wb") as handle:
+        fig.savefig(handle, format="png")
+    os.replace(part, HERE / "TestFig_a.png")
+"""
+SAVE_VIA_OS_OPEN = """\
+    fd = os.open(str(HERE / "TestFig_a.png"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666)
+    with os.fdopen(fd, "wb") as handle:
+        fig.savefig(handle, format="png")
+"""
+SAVE_VIA_PATH_WRITE = """\
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    (HERE / "TestFig_a.png").write_bytes(buf.getvalue())
+"""
+OLD_PNG = b"\x89PNG\r\n\x1a\nOLD"
+
+
+def _install_script(figs: Path, save_body: str, tail: str = "") -> None:
+    (figs / "fig_test.py").write_text(_SELF_WRITE_HEAD + save_body + tail, encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig_test.py": {
+                        "entry": "main",
+                        "cost": "light",
+                        "notes": "",
+                        "stems": ["TestFig_a"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _run_self_writing_write_back(client, figs: Path, on_rendered=None):
+    base = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
+    assert base.status_code == 200, base.get_json()
+    if on_rendered is not None:
+        on_rendered()  # 热态 build 自己已经跑过一遍脚本（它不隔离）；重放前的原件以此刻为准
+    return client.post(
+        "/api/engine/update_source",
+        json={
+            "id": "TestFig_a.pdf",
+            "patches": [],
+            "expected_mtime": int((figs / "TestFig_a.pdf").stat().st_mtime),
+        },
+    )
+
+
+def _snapshot_png_after_replay(monkeypatch, png: Path) -> list[bytes]:
+    """重放（一次性 worker）导出完成时原 PNG 的字节：此刻重放脚本早已跑完，替换也还没开始。"""
+    seen: list[bytes] = []
+
+    def wrap(real_export):
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            r = real_export(self, stem, patches, path, fmt=fmt, dpi=dpi)
+            if fmt == "pdf":
+                seen.append(png.read_bytes())
+            return r
+
+        return export
+
+    for cls in (pool.EngineWorker, pool.WorkerdWorker):
+        monkeypatch.setattr(cls, "export", wrap(cls.export))
+    return seen
+
+
+@pytest.mark.parametrize(
+    "save_body",
+    [SAVE_VIA_HANDLE, SAVE_VIA_OS_REPLACE, SAVE_VIA_OS_OPEN, SAVE_VIA_PATH_WRITE],
+    ids=["file_handle", "os_replace", "os_open", "path_write_bytes"],
+)
+def test_replay_writes_to_a_target_are_isolated_from_the_original(
+    write_back, monkeypatch, save_body
+):
+    """脚本无论经文件句柄 / os.replace / os.open / Path.write_bytes 写项目里的写回目标：
+    无外部改动时写回 200；重放结束（替换之前）原 PNG 逐字节没变；最终内容是写回结果。"""
+    _m, client, figs = write_back
+    _install_script(figs, save_body)
+    png = figs / "TestFig_a.png"
+    png.write_bytes(OLD_PNG)
+    seen = _snapshot_png_after_replay(monkeypatch, png)
+    before: list[bytes] = []
+    resp = _run_self_writing_write_back(
+        client, figs, on_rendered=lambda: before.append(png.read_bytes())
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert sorted(resp.get_json()["updated"]) == ["TestFig_a.pdf", "TestFig_a.png"]
+    assert before and before[0].startswith(b"\x89PNG")
+    assert seen == before, "重放期间原件被脚本改写了"
+    assert png.read_bytes().startswith(b"\x89PNG")
+    assert [p.name for p in figs.iterdir() if ".tavotto" in p.name or p.suffix == ".tmp"] == []
+
+
+def test_external_swap_after_the_script_wrote_the_target_still_409s(write_back):
+    """Codex #1697 P1（rebase 方案的洞）：脚本写完该目标之后、重放返回之前外部换了原件。
+    基线始终是 prepare 时的指纹，所以 409 source_changed，原件保持外部那一版，无 tmp 残留。"""
+    import threading
+
+    _m, client, figs = write_back
+    marker = figs.parent / "script-wrote-target.flag"
+    go = figs.parent / "go.flag"
+    tail = (
+        f"    pathlib.Path({str(marker)!r}).write_text('x')\n"
+        f"    for _ in range(300):\n"
+        f"        if pathlib.Path({str(go)!r}).exists():\n"
+        f"            break\n"
+        f"        time.sleep(0.05)\n"
+    )
+    _install_script(figs, SAVE_VIA_HANDLE, tail)
+    png = figs / "TestFig_a.png"
+    png.write_bytes(OLD_PNG)
+    external = b"EXTERNAL-NEW-PNG"
+
+    # 热态 build（render）：先放行 go，让它不卡；重放时 go 被清掉，swapper 在脚本写完目标后换原件再放行
+    go.write_text("go")
+    base = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
+    assert base.status_code == 200, base.get_json()
+    go.unlink()
+    marker.unlink(missing_ok=True)
+    mtime = int((figs / "TestFig_a.pdf").stat().st_mtime)
+    png_mtime_before = png.stat().st_mtime_ns
+
+    def swap_during_replay():
+        for _ in range(600):
+            if marker.exists():
+                break
+            time.sleep(0.05)
+        else:
+            return
+        st = png.stat()
+        png.write_bytes(external)
+        os.utime(png, ns=(st.st_atime_ns, png_mtime_before + 5_000_000_000))
+        go.write_text("go")
+
+    t = threading.Thread(target=swap_during_replay, daemon=True)
+    t.start()
+    resp = client.post(
+        "/api/engine/update_source",
+        json={"id": "TestFig_a.pdf", "patches": [], "expected_mtime": mtime},
+    )
+    t.join(timeout=30)
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "source_changed"
+    assert png.read_bytes() == external
+    assert [p.name for p in figs.iterdir() if ".tavotto" in p.name or p.suffix == ".tmp"] == []
+
+
+def test_external_swap_of_an_untouched_target_still_409s_when_the_replay_self_writes(
+    write_back, monkeypatch
+):
+    """脚本不碰的那份（PDF）被外部换了仍然 409、零改动。"""
+    _m, client, figs = write_back
+    _install_script(figs, SAVE_VIA_HANDLE)
+    png = figs / "TestFig_a.png"
+    png.write_bytes(OLD_PNG)
+    pdf_path = figs / "TestFig_a.pdf"
+    swapped: list[bool] = []
+
+    def swap_after_pdf_export(real_export):
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            r = real_export(self, stem, patches, path, fmt=fmt, dpi=dpi)
+            if fmt == "pdf" and not swapped:
+                swapped.append(True)
+                st = pdf_path.stat()
+                pdf_path.write_bytes(b"EXTERNAL")
+                os.utime(pdf_path, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+            return r
+
+        return export
+
+    for cls in (pool.EngineWorker, pool.WorkerdWorker):
+        monkeypatch.setattr(cls, "export", swap_after_pdf_export(cls.export))
+    resp = _run_self_writing_write_back(client, figs)
+    assert swapped, "重放的导出没被走到"
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "source_changed"
+    assert pdf_path.read_bytes() == b"EXTERNAL"
