@@ -225,7 +225,19 @@ pip install --index-url https://test.pypi.org/simple/ \
    这一步此前只写了 `__version__` 一处，照着做在 v0.13.0 上会红五条。漏一处的
    表现是「装完显示的版本和发布页对不上」，而发布链没有任何一步会失败。
 
-2. 写 `docs/release-notes/vX.Y.Z.md`（体例见下）：**先把
+2. 把应用内一键安装的 Codex（`src/tavotto/resources/managed_cli_lock.json`）升到 npm 上的最新版。
+   落后了它会给出要跑的命令：
+
+   ```sh
+   python scripts/managed_cli_lock.py --latest
+   # 落后时：python scripts/managed_cli_lock.py --update <版本> --cli codex
+   #         python scripts/managed_cli_lock.py --check --online && python -m pytest tests/test_managed_cli.py
+   ```
+
+   为什么每版都要追（#1716）：Codex 桌面版先升级会把新型号写进共用的型号清单，锁住的旧 codex
+   一选就 404，改图助手只能让用户自己去更新。升版走 PR（锁文件不手改），合进 main 再打 tag。
+
+3. 写 `docs/release-notes/vX.Y.Z.md`（体例见下）：**先把
    `docs/release-notes/unreleased/*.md` 片段（以及 `UNRELEASED.md` 里残留的 `## ` 段落）
    里的待发条目搬进来并删掉片段文件**
    ——那里放的是已经合进 main、但还没有任何一版告诉用户的行为变更与迁移提示
@@ -239,7 +251,7 @@ pip install --index-url https://test.pypi.org/simple/ \
    带着没搬走的段落打 tag，`release.yml` 的「拼 release body」会当场红——
    这道闸就是这个脚本。
 
-3. 提交、打 tag、推送：
+4. 提交、打 tag、推送：
 
    ```sh
    git commit -am "0.2.0"
@@ -247,7 +259,7 @@ pip install --index-url https://test.pypi.org/simple/ \
    git push origin main v0.2.0
    ```
 
-4. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
+5. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
 
    ```sh
    # web/dist-playground/ 不进版本库（.gitignore），发布树必须先自己建一份

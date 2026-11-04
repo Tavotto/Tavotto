@@ -804,12 +804,13 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 看护 `test_image_header.py`、`test_agent_runner_media.py`；后者直接断言接收端后续请求仍带源码和图像。
 
 - **应用内托管安装 Codex（`engine/managedcli.py`，锁 `resources/managed_cli_lock.json`，2026-10-29）**：`start_install("codex")` 在锁里有
-  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：GitHub `codex-package-<triple>` 主 → registry.npmmirror.com
-  的 `@openai/codex@<版本>-<平台>` 镜像（两份归档字节不同、**各锁各的 sha256**；解开后整棵树 `tree_sha256` 共用，
-  逐文件相同）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
+  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：registry.npmjs.org 的 `@openai/codex@<版本>-<平台>` 主 → registry.npmmirror.com
+  上同一个 tgz（字节相同、同一个 sha256 / integrity；解开后整棵树 `tree_sha256`）。2026-11-04 起不再用 GitHub 的
+  `codex-package-<triple>`：0.166.0 起它比 npm 包多一个 `bin/codex-exec-server`，两来源解不出同一棵树（#1716）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
   `current.json` 原子切换；`search_locations` 首位 / `candidates` 在 PATH 之前，source=`managed`。**装好不登录**
   （登录由前端在 done 后调既有 login 接口）。其余平台与其它 Agent 回落 npm。升版本用 `scripts/managed_cli_lock.py`
-  （`--update` / `--check [--online]`）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
+  （`--update` / `--check [--online]` / `--latest`）；**每次发版都升到 npm latest**（`docs/RELEASING.md`「发一个新版本」第 2 步，
+  用户 2026-11-04 拍板：锁落后于桌面版写进共用型号清单的版本时，`cli_update` 给不出「应用内装」，用户选到新型号只能自己更新）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
   文案在 `errors.json` 的 `engine.managedCliError.*`。传输层与 privatepython 同判据但独立实现（理由见模块头）。
 - **应用内托管安装 Claude Code（同一套机制，2026-10-29）**：锁里 `clis.claude.sources` 逐项声明来源（`SOURCE_PREFIXES` 登记每个 CLI 允许的
   来源键与 URL 前缀）：registry.npmmirror.com 的 `@anthropic-ai/claude-code-<平台>`（tgz，`only` 只取 `package/<二进制>`，
