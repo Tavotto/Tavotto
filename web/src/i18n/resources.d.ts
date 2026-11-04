@@ -5807,8 +5807,6 @@ export default interface Resources {
       "layoutFitContentNone": "这张图还没有内容边缘信息（需要更新的渲染服务），暂时不能贴合内容",
       "layoutFitContentTip": "把四边一次裁到内容边缘，去掉四周留白",
       "layoutFollowNone": "标注不动",
-      "layoutFollowToggle": "连同标注",
-      "layoutFollowToggleTip": "缩放图时，叠在它上面的标注（文字、箭头、形状）按同一个比例一起缩放",
       "layoutFollow_other": "标注 {{count}} 个一起缩放",
       "layoutResetCrop": "取消裁剪",
       "layoutResetCropTip": "恢复完整图幅，不再裁剪",

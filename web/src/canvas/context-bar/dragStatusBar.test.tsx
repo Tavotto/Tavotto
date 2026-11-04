@@ -1,7 +1,7 @@
 /**
  * 拖动状态胶囊（`DragStatusBar`，读 `interaction.dragStatus`，ADR 0161）：有状态就显示、不受
  * 「拖动即藏」影响；没有状态时一切照旧（移动、框选、普通缩放……仍然拖动即藏）；不拖时选中面板，胶囊里有
- * 「贴合内容 / 取消裁剪 / 连同标注」。
+ * 「贴合内容 / 取消裁剪」。
  */
 import { formatMessage, literal } from '@/i18n'
 import { act } from 'react'
@@ -67,7 +67,6 @@ async function mountBar(opts: { ink?: boolean; extra?: Partial<PanelObject> } = 
     layout: 'wide',
     leftOpen: false,
     rightOpen: false,
-    scaleWithAnnotations: true,
   })
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   useRenderStore.getState().clear()
@@ -211,7 +210,7 @@ describe('状态构造（手势侧：语气与句子）', () => {
   })
 })
 
-describe('不拖时选中面板：贴合内容 / 取消裁剪 / 连同标注', () => {
+describe('不拖时选中面板：贴合内容 / 取消裁剪', () => {
   const action = (name: string) =>
     bar()!.querySelector(`[data-layout-action="${name}"]`) as HTMLButtonElement | null
 
@@ -244,23 +243,18 @@ describe('不拖时选中面板：贴合内容 / 取消裁剪 / 连同标注', (
     expect(action('fit-content')!.disabled).toBe(true)
   })
 
-  it('连同标注开关：默认开，点一下关，状态在 uiStore', async () => {
+  it('没有「连同标注」开关：图里的标注跟不跟按位置自动定（ADR 0161 修订 2026-11-04）', async () => {
     await mountBar({ ink: true })
-    const btn = action('follow-annotations')!
-    expect(btn.getAttribute('aria-pressed')).toBe('true')
-    await act(async () => {
-      btn.click()
-    })
-    expect(useUiStore.getState().scaleWithAnnotations).toBe(false)
-    expect(action('follow-annotations')!.getAttribute('aria-pressed')).toBe('false')
+    expect(action('reset-crop')).not.toBeNull()
+    expect(action('follow-annotations')).toBeNull()
   })
 
-  it('单图编辑里不出这三个', async () => {
+  it('单图编辑里不出这两个', async () => {
     await mountBar({ ink: true })
     await act(async () => {
       useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'pa' })
     })
     expect(action('fit-content')).toBeNull()
-    expect(action('follow-annotations')).toBeNull()
+    expect(action('reset-crop')).toBeNull()
   })
 })

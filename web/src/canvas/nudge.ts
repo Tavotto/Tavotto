@@ -251,10 +251,10 @@ function beginBurst(key: string): boolean {
     }
   } else {
     // 与鼠标拖动同一套可移动判据：锁定跳过、组内有锁定成员整组不动、隐藏的不动
-    const { targets, blockedGroups } = draggableSelection()
+    const { targets, blockedGroups, picked } = draggableSelection()
     warnBlockedGroups(blockedGroups, targets.length > 0)
     if (!targets.length) return false
-    useDocumentStore.getState().beginTxn(moveLabel(targets.length))
+    useDocumentStore.getState().beginTxn(moveLabel(picked))
     b = {
       ...common,
       kind: 'layout',

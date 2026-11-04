@@ -304,8 +304,8 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "多图排版里拖面板的角 = 整张图等比缩放（可连同叠在图上的标注一起缩，胶囊实时显示缩放比与图内字号）；拖边 = 裁剪，停在图边 / 内容边缘，按住 ⌥ 才裁进内容",
-        "en-US": "In a multi-figure layout, drag a figure's corner to scale it proportionally (optionally with the annotations on it, with the scale and in-figure text size shown live); drag an edge to crop, stopping at the figure edge and the content edge unless you hold ⌥"
+        "zh-CN": "多图排版里拖面板的角 = 整张图等比缩放（整个在图里的标注一起缩、拖动 / 方向键移动时一起走，胶囊实时显示缩放比与图内字号）；拖边 = 裁剪，停在图边 / 内容边缘，按住 ⌥ 才裁进内容",
+        "en-US": "In a multi-figure layout, drag a figure's corner to scale it proportionally (annotations entirely inside it scale with it and also move with it when the figure is dragged or nudged; the scale and in-figure text size are shown live); drag an edge to crop, stopping at the figure edge and the content edge unless you hold ⌥"
       },
       "entry": "多图排版 → 选中一张图 → 拖四个角 / 四条边",
       "e2e": [

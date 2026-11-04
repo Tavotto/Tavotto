@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-26
+Last updated: 2026-11-04
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -69,7 +69,9 @@ in mainland China or the system or interface language is Simplified Chinese
 mirror second. The first source that answers decides: it is asked once per check, and
 the other one is contacted only when the first cannot answer, or when a download from
 it fails after you pressed *Download and install* (then the installer is fetched again
-from the other source). Either source sees what any HTTPS request reveals (IP address,
+from the other source), or when that download is slow (then the other source is
+checked and its installer downloaded for a few seconds to compare speed; the faster
+one finishes the download and the other is dropped). Either source sees what any HTTPS request reveals (IP address,
 time, the updater's user agent) and nothing else: no identifier, no telemetry, no
 project content. Which source the installer came from does not affect trust — the
 installer's signature is always verified with the public key built into the app, and

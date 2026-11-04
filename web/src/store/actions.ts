@@ -68,10 +68,12 @@ import type {
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
-import type { ProjectFileBinding } from '@/lib/projectFile'
+import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
+import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
+  adoptSlotBaseline,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -656,7 +658,45 @@ export async function openLayoutDocument(
   doc: FigureDocument | ProjectDocument,
   projectFile?: ProjectFileBinding,
 ): Promise<boolean> {
-  if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return false
+  // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
+  // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
+  const ctx = captureSaveContext()
+  const skipped = (): false => {
+    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
+    return false
+  }
+  // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
+  let reuse: string | null = null
+  if (projectFile) {
+    const cur = useDocumentStore.getState().documentId
+    for (const id of findDocumentsForProjectFile(projectFile.projectId, projectFile.file)) {
+      // 在别的窗口 / 标签开着的不沿用：同一个文件开两次仍是两个会话（ADR 0096）
+      if (id === cur || !(await isDocHeldElsewhere(id))) {
+        reuse = id
+        break
+      }
+    }
+    if (!stillCurrent(ctx)) return skipped()
+  }
+  if (reuse) {
+    // 复核：探测期间别的窗口可能又改过这份（绑定被置 dirty），那就不盖它的槽位、给新身份
+    if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
+    else {
+      await adoptSlotBaseline(reuse)
+      if (!stillCurrent(ctx)) return skipped()
+      if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
+    }
+  }
+  let aborted = false
+  const beforeInstall = async (): Promise<boolean> => {
+    if (stillCurrent(ctx)) return true
+    aborted = true
+    return false
+  }
+  const installed = await useDocumentStore
+    .getState()
+    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall })
+  if (!installed) return aborted ? skipped() : false
   if (projectFile) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()
@@ -1705,6 +1745,15 @@ function reportAdmissionFailure(panel: PanelObject, error: unknown): void {
   showAdmissionFailure(panel, classifyArtifactFailure(error))
 }
 
+/** 采用请求被明确拒绝，而 `current()` 因文档无关变动失效时，这句拒绝说明是否仍该给用户 */
+function refusalStillWorthShowing(attempt: number, panel: PanelObject, error: unknown, ownsContext: boolean): boolean {
+  if (!ownsContext || !artifactEntryCurrent(attempt) || isAdoptedPanel(panel)) return false
+  if (!(error instanceof EngineError) || error.code !== 'artifact_source_unavailable') return false
+  if (!isDefiniteRefusal(classifyArtifactFailure(error).recoverability)) return false
+  const now = findObject(panel.id)
+  return now?.type === 'panel' && now.fileId === panel.fileId && !isAdoptedPanel(now)
+}
+
 function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): void {
   const ui = useUiStore.getState()
   const owner = pngAdmitOwner(panel.id)
@@ -1905,6 +1954,12 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
       usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
     }
     if (current()) reportAdmissionFailure(panel, error)
+    else if (refusalStillWorthShowing(attempt, panel, error, ownsRenderContext())) {
+      // 等回应期间文档发生了与这次进入无关的变动（冷重开后的补渲染、派生更新等）：采用本身不能再提交，
+      // 但「被明确拒绝」这句话和出路仍然成立。记忆已写，不补这一句就是第一次点只剩 SSE 的通用报错、
+      // 第二次点才见到原因与「重建为可编辑图」（QA-WIN-53）
+      showAdmissionFailure(panel, classifyArtifactFailure(error))
+    }
     return false
   } finally {
     if (artifactEntryCurrent(attempt) && !awaitingEnvironment) cancelArtifactEntry()
@@ -2372,8 +2427,15 @@ export function startLayoutAutoReflow(): () => void {
   // 也没有一条重排可以重做。锚在最新一条而不是排上重排的那条：防抖窗口里可能又落了
   // 不改尺寸的编辑，只重做到前一条就补排的话，这次 commit 会把还在 future 里的新条目冲掉
   let cancelled: { anchor: HistoryEntry; groups: string[] } | null = null
+  // 引发待发重排的那条用户编辑（改尺寸那一条）。到点时它仍是最后一条历史就把重排
+  // 并进它：用户的一次改动与它触发的自动重排是一个撤销步，一次 ⌘Z 同时退回尺寸与
+  // 位置（否则只退重排，尺寸还在，成员重叠，QA-WIN-38）。窗口里又落了别的编辑就不并
+  let trigger: HistoryEntry | null = null
+  // 并入重排时 amendLast 会让订阅回调再跑一遍：那是自己写的，不当用户编辑
+  let amending = false
 
   const unsub = store.subscribe((state, prev) => {
+    if (amending) return
     const move = historyMove(state, prev)
     if (move === 'none') return
     // 事务进行中不记尺寸：松手那一下（edit）要拿事务前的尺寸比
@@ -2411,8 +2473,11 @@ export function startLayoutAutoReflow(): () => void {
     if (!dirty.length) return
     window.clearTimeout(timer)
     pendingGroups = dirty.map((g) => g.id)
+    trigger = move === 'edit' ? (state.past.at(-1) ?? null) : null
     timer = window.setTimeout(() => {
       pendingGroups = null
+      const host = trigger
+      trigger = null
       // 自动重排是「文档自己动了」，不是用户在拖——不给动效的话相邻面板会
       // 凭空跳一下，看不出跟刚才那次改动的因果。**只播没被选中/悬停的那些**：
       // 选择框与手柄由 OverlaySvg 按文档坐标画，它不参与这段补间，
@@ -2426,12 +2491,25 @@ export function startLayoutAutoReflow(): () => void {
       const play = flipCapture(els)
 
       let moved = 0
-      commit(hist('autoReflow'), (d) => {
+      const recipe = (d: FigureDocument) => {
         for (const g of dirty) {
           const gg = d.layoutGroups?.find((x) => x.id === g.id)
           if (gg) moved += applyReflowDraft(d, gg)
         }
-      })
+      }
+      let merged = false
+      if (host) {
+        amending = true
+        try {
+          merged = store.getState().amendLast(host, recipe)
+        } finally {
+          amending = false
+        }
+      }
+      if (!merged) {
+        moved = 0
+        commit(hist('autoReflow'), recipe)
+      }
       snapshot(useDocumentStore.getState().doc)
       if (moved) {
         play()

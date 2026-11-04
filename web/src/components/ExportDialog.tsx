@@ -136,7 +136,7 @@ import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
-import { useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
+import { renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
@@ -2084,7 +2084,10 @@ function useFigureThumbSource(
   const panel = figure.panel;
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
-  const svg = needsEngine ? (render?.svg ?? null) : null;
+  // runtime 图只认**自己这一版**的 SVG（QA-WIN-30）：`usePanelRender` 在自己这版没画过时退回同文件 `latest`
+  // 的另一版（恢复的草稿、刚关掉的排版），那是别的状态的图——预览不许拿它冒充；没有就走下面按状态取的 cache 预览
+  const ownSvg = useRenderStore((s) => (panel ? (s.byKey[renderKeyOf(panel)]?.svg ?? null) : null));
+  const svg = needsEngine ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
@@ -2133,7 +2136,9 @@ function showsEdits(panel: PanelObject): boolean {
 /** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */
 function editedPanelOf(o: ThumbObject): PanelObject | null {
   const obj = o as CanvasObject;
-  return obj.type === "panel" && showsEdits(obj) ? obj : null;
+  // runtime 面板即使没有图内修改也走这条：它没有磁盘原图，后端 GET 版给的是「最近一次渲染」（可能是别的排版 /
+  // 草稿的状态，QA-WIN-30），按此刻的 overrides（含空）取才是「这个状态的图」
+  return obj.type === "panel" && (showsEdits(obj) || (obj.fileKind === "runtime" && !engineTransport())) ? obj : null;
 }
 
 /** 整版预览里的文字按导出出来的样子画：字体、字号、粗细都取对象自己的（喂给 `CanvasThumb` 的 `exportedText`） */

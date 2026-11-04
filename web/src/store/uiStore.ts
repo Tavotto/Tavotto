@@ -156,11 +156,6 @@ interface Persisted {
    * 以及色条轴、twinx 的孪生轴。关掉就只动子图本身。
    */
   dragAxesWithCompanions: boolean
-  /**
-   * 多图排版里等比缩放面板时，叠在它上面的标注一起缩放（ADR 0161「连同标注」）。
-   * 默认开；浮动胶囊里的按钮切换。本机偏好，不进文档。
-   */
-  scaleWithAnnotations: boolean
   rightOpen: boolean
   leftTab: LeftTab
   rightTab: RightTab
@@ -192,7 +187,6 @@ const DEFAULTS: Persisted = {
   showSafeArea: false,
   recentCommands: [],
   dragAxesWithCompanions: true,
-  scaleWithAnnotations: true,
   rightOpen: true,
   leftTab: 'assets',
   rightTab: 'properties',
@@ -588,7 +582,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'scaleWithAnnotations', 'recentCommands', 'theme',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands', 'theme',
   ]
   try {
     localStorage.setItem(

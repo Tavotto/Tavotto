@@ -2,7 +2,9 @@
 
 ## 两个 CLI 的来源（锁里 `clis.<名>.sources` 逐项声明，顺序即尝试顺序）
 
-* `codex`：GitHub release（`.tar.gz`）→ npmmirror 平台子包（`.tgz`，树根前缀 `package/vendor/<triple>/`）。
+* `codex`：npm 官方 registry 平台子包 `@openai/codex@<版本>-<平台>`（`.tgz`，树根前缀 `package/vendor/<triple>/`）→
+  npmmirror 上的同一个 tgz（字节相同）。2026-11-04 起不再用 GitHub release：从 0.166.0 起 GitHub 的
+  `codex-package-<triple>.tar.gz` 比 npm 包多一个 `bin/codex-exec-server`（清单也多一行），两来源解不出同一棵树（#1716）。
 * `claude`：npmmirror 平台子包 `@anthropic-ai/claude-code-<平台>`（`.tgz`，只取里面的原生二进制 `only`）→
   官方 `downloads.claude.ai` 的**裸二进制**（`raw`：下载物本身就是入口文件，不是归档）。
   两个来源落盘必须是同一份字节：npm 包里的 `claude` 与 GCS 上的 `claude` 逐字节相同（`--update` 时核过）。
@@ -24,7 +26,7 @@
 
 ## 来源顺序
 
-GitHub 主 → registry.npmmirror.com 镜像。「慢了换镜像」与私有 Python 同一套判据（ADR 0112）：开始收
+registry.npmjs.org 主 → registry.npmmirror.com 镜像。「慢了换镜像」与私有 Python 同一套判据（ADR 0112）：开始收
 字节后至少量 `SLOW_GRACE_S`，按全程平均速度估的剩余时间超过 `SLOW_ETA_S` 就换下一个来源；被放弃的
 来源排到队尾、不再测速地再试一次。
 
@@ -130,15 +132,15 @@ DISK_MARGIN_BYTES = 64 * 1024 * 1024
 STALE_STAGING_S = 3600
 
 #: 已发行的来源主机（固定常量，不从调用方传进来的 URL 现推——现推的判据恒真）：只有它们进日志时明文。
-SOURCE_HOSTS = frozenset({"github.com", "registry.npmmirror.com", "downloads.claude.ai"})
+SOURCE_HOSTS = frozenset({"registry.npmjs.org", "registry.npmmirror.com", "downloads.claude.ai"})
 #: 锁里 URL 模板允许的前缀；`validate_lock` 钉着。
-GITHUB_PREFIX = "https://github.com/openai/codex/releases/download/"
+NPM_PREFIX = "https://registry.npmjs.org/@openai/codex/-/"
 MIRROR_PREFIX = "https://registry.npmmirror.com/@openai/codex/-/"
 CLAUDE_MIRROR_PREFIX = "https://registry.npmmirror.com/@anthropic-ai/claude-code-"
 CLAUDE_GCS_PREFIX = "https://downloads.claude.ai/claude-code-releases/"
 #: 每个受控 CLI 的每个来源键允许的 URL 前缀（`validate_lock` 钉着；锁里出现表外的 CLI / 来源键 = 拒绝）
 SOURCE_PREFIXES: dict[str, dict[str, str]] = {
-    "codex": {"github": GITHUB_PREFIX, "mirror": MIRROR_PREFIX},
+    "codex": {"npmjs": NPM_PREFIX, "mirror": MIRROR_PREFIX},
     "claude": {"mirror": CLAUDE_MIRROR_PREFIX, "gcs": CLAUDE_GCS_PREFIX},
 }
 #: 托管 CLI 子进程要带的环境变量（版本只由我们的锁控制：不许 CLI 自己升级）
@@ -312,10 +314,10 @@ def validate_lock(lock: dict) -> None:
                     raise ValueError(f"{pw}.{key}.sha256 必须是 64 位小写 hex")
                 if not isinstance(s.get("size"), int) or s["size"] <= 0:
                     raise ValueError(f"{pw}.{key}.size 必须是正整数")
-                if key == "mirror" and not _SRI512.fullmatch(str(s.get("integrity", ""))):
-                    raise ValueError(
-                        f"{pw}.mirror.integrity 必须是 npm 的 sha512 SRI（在线核对用）"
-                    )
+                if key in ("npmjs", "mirror") and not _SRI512.fullmatch(
+                    str(s.get("integrity", ""))
+                ):
+                    raise ValueError(f"{pw}.{key}.integrity 必须是 npm 的 sha512 SRI（在线核对用）")
             try:
                 srcs = _sources(name, cli, plat, p)
             except (KeyError, IndexError, ValueError) as exc:

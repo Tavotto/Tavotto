@@ -25,6 +25,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   // 准备会话（默认的「准备并运行」）：多页 PDF 合并项的集成用例从它的完成回报出发
   createPreparationSession: vi.fn(),
   fetchRuntimeAssets: vi.fn(),
+  // runtime 图按此刻的 overrides 取 cache 预览（QA-WIN-21 / 30）；默认「没有」
+  fetchRuntimePreviewForState: vi.fn(() => Promise.resolve(null)),
 }))
 
 // 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
@@ -41,7 +43,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 import { ExportDialog, diskSizeDiffSignificant } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { createPreparationSession, enginePreviewPng, fetchRuntimeAssets, fetchExportDefaultsRemote, postTelemetryEvent, type PreparationReport } from '@/lib/api'
+import { createPreparationSession, enginePreviewPng, fetchRuntimeAssets, fetchRuntimePreviewForState, fetchExportDefaultsRemote, postTelemetryEvent, type PreparationReport } from '@/lib/api'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
@@ -2190,6 +2192,74 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
       w.mockRestore()
       h.mockRestore()
     }
+  })
+
+  it('整版预览里没有图内修改的 runtime 面板也按此刻的 overrides 取 cache 预览，不挂「最近一次渲染」（QA-WIN-30）', async () => {
+    clearVariantPngCache()
+    URL.createObjectURL = vi.fn(() => 'blob:state-rt')
+    URL.revokeObjectURL = vi.fn()
+    vi.mocked(fetchRuntimePreviewForState).mockResolvedValue({ blob: new Blob(['<svg/>']), exact: true } as never)
+    const RT = 'runtime:fig.py#F'
+    // 已存排版里的面板是零 overrides；后端 GET 版的「最近一次」此刻是恢复的草稿画的那一版
+    const saved: PanelObject = { ...panel, fileId: RT, fileKind: 'runtime', overrides: [] } as PanelObject
+    await stage({ panels: [saved], renders: { [RT]: manifestWithTicks(1, 9) } })
+    useRuntimeAssetStore.setState({
+      byId: { [RT]: { status: 'fresh', cached: true, registered: true, profile: 'safe', checked: true } },
+    } as never)
+    await mountDialogs()
+    await openDialog()
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 30))
+    })
+    const imgs = [...document.body.querySelectorAll(`[data-canvas-thumb] [data-thumb-panel="${RT}"]`)]
+    expect(imgs.length).toBeGreaterThan(0)
+    for (const n of imgs) expect(n.getAttribute('href')).toBe('blob:state-rt')
+    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.anything())
+  })
+})
+
+describe('整版预览里的画布文字按富文本画（QA-WIN-16）', () => {
+  const TEXT = {
+    id: 't1',
+    type: 'text',
+    x: 5,
+    y: 5,
+    w: 40,
+    h: 8,
+    sizePt: 9,
+    color: '#000000',
+    text: '',
+  }
+
+  async function openWith(texts: Record<string, unknown>[]) {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useDocumentStore.getState().commit(literal('加文字'), (d) => {
+      d.objects.push(...(texts as never[]))
+    })
+    await mountDialogs()
+    await openDialog()
+  }
+  const stageText = () =>
+    [...document.body.querySelectorAll('[data-export-preview-stage] [data-thumb-text]')].map((n) => n.innerHTML).join('|')
+
+  it('旧标记：上标 m^{2} 画成抬高的小号 2，记号不画出来；下标同理', async () => {
+    await openWith([
+      { ...TEXT, text: 'Area m^{2}' },
+      { ...TEXT, id: 't2', y: 20, text: 'H_{2}O' },
+    ])
+    const stageEl = document.body.querySelector('[data-export-preview-stage]')!
+    const raised = [...stageEl.querySelectorAll('[data-thumb-text] tspan tspan')]
+    expect(raised.map((n) => n.textContent)).toEqual(['2', '2'])
+    expect(Number(raised[0].getAttribute('baseline-shift'))).toBeGreaterThan(0)
+    expect(Number(raised[1].getAttribute('baseline-shift'))).toBeLessThan(0)
+    expect(stageText()).not.toMatch(/\^\{|_\{/)
+  })
+
+  it('LaTeX 写法：上标与加粗同样不露出源码', async () => {
+    await openWith([{ ...TEXT, textFormat: 'latex', text: 'Area m^{2} \\textbf{bold}' }])
+    const stageEl = document.body.querySelector('[data-export-preview-stage]')!
+    expect(stageEl.textContent).toContain('Area m')
+    expect(stageText()).not.toMatch(/\^\{|\\textbf/)
   })
 })
 

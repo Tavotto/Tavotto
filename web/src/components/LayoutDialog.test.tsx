@@ -344,6 +344,7 @@ describe('存进项目与绑定', () => {
       file: 'tavottofile/我的排版.json',
       revision: 'rev-p',
       dirty: false,
+      at: expect.any(Number), // 本机绑定盖的写入时间（QA-WIN-46 选最近候选用）
     })
     expect(formatMessage(useUiStore.getState().status)).toContain('tavottofile/我的排版.json')
   })
@@ -377,6 +378,7 @@ describe('存进项目与绑定', () => {
       file: 'tavottofile/Fig 1.json',
       revision: 'rev-disk',
       dirty: false,
+      at: expect.any(Number), // 本机绑定盖的写入时间（QA-WIN-46 选最近候选用）
     })
   })
 

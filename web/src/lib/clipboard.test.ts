@@ -180,6 +180,56 @@ describe('pasteObjects 正常路径不受影响', () => {
     expect(frameOf(pristine)).toEqual([1, []])
   })
 
+  describe('运行时图的素材身份（QA-WIN-31）', () => {
+    const RT = 'runtime:panels/fig1.py#Fig1_kinetics'
+    const rtPanel = () => ({
+      id: 'rt1', type: 'panel', fileId: RT, fileKind: 'runtime', nativeW: 80, nativeH: 57.6,
+      x: 10, y: 10, w: 60, h: 43.2, script: 'panels/fig1.py', figureFrame: 1,
+      overrides: [{ gid: 'title', prop: 'text', value: 'MenuExitLive' }],
+    })
+    const payload = () =>
+      JSON.stringify({
+        magic: CLIPBOARD_FORMAT, sourceDocId: 'd_elsewhere', objects: [rtPanel()], layoutGroups: [],
+      })
+
+    it('素材库清单里有这张运行时图：直接粘贴，保留图内修改，不弹重链接', async () => {
+      setClipboard({ readText: vi.fn().mockResolvedValue(payload()) })
+      const l = await load()
+      const { useRuntimeAssetStore } = await import('@/store/runtimeAssetStore')
+      useRuntimeAssetStore.setState({ assets: [{ id: RT, script: 'panels/fig1.py', stem: 'Fig1_kinetics' }] } as never)
+
+      expect(await l.clipboard.pasteObjects()).toBe(true)
+      expect(l.clipboard.useClipboardStore.getState().pending).toBeNull()
+      const [copy] = l.useDocumentStore.getState().doc.objects as unknown as ReturnType<typeof rtPanel>[]
+      expect(copy.fileId).toBe(RT)
+      expect(copy.overrides).toEqual(rtPanel().overrides)
+    })
+
+    it('清单为 null（未知）：保守走重链接，并在后台触发一次 loadAssets，不等它', async () => {
+      setClipboard({ readText: vi.fn().mockResolvedValue(payload()) })
+      const l = await load()
+      const { useRuntimeAssetStore } = await import('@/store/runtimeAssetStore')
+      const loadAssets = vi.fn(() => new Promise<void>(() => {}))
+      useRuntimeAssetStore.setState({ assets: null, loadAssets } as never)
+
+      expect(await l.clipboard.pasteObjects()).toBe(true)
+      expect(l.clipboard.useClipboardStore.getState().pending?.mode).toBe('paste')
+      expect(l.useDocumentStore.getState().doc.objects).toHaveLength(0)
+      expect(loadAssets).toHaveBeenCalledTimes(1)
+    })
+
+    it('清单已取回但没有这张图：仍走重链接（真缺失的行为不变）', async () => {
+      setClipboard({ readText: vi.fn().mockResolvedValue(payload()) })
+      const l = await load()
+      const { useRuntimeAssetStore } = await import('@/store/runtimeAssetStore')
+      useRuntimeAssetStore.setState({ assets: [] } as never)
+
+      expect(await l.clipboard.pasteObjects()).toBe(true)
+      expect(l.clipboard.useClipboardStore.getState().pending?.mode).toBe('paste')
+      expect(l.useDocumentStore.getState().doc.objects).toHaveLength(0)
+    })
+  })
+
   it('读到普通文本：不消费这次粘贴，也不弹任何提示', async () => {
     setClipboard({ readText: vi.fn().mockResolvedValue('随便一段文字') })
     const l = await load()

@@ -36,6 +36,7 @@ progress(job_id)  → 断线之后补拉当前状态
 from __future__ import annotations
 
 import contextlib
+import json
 import shutil
 import threading
 import time
@@ -45,7 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ContextManager
 
-from . import atomicio, exectrace, exportreq, taskdiag, trace as tracemod
+from . import atomicio, brand, exectrace, exportreq, taskdiag, trace as tracemod
 from .exportreq import ExportRequest, ExportRequestError
 
 #: 作业状态。`partial` 是独立一档 —— 把它并进 `done` 或 `failed` 都会说谎。
@@ -818,6 +819,8 @@ def run(
             job.step += 1
 
         ok = [o for o in outputs if o.status == STATUS_DONE]
+        if ok and (job.report is None or job.report.status != STATUS_DONE):
+            _drop_stale_report(job, names)
         if not ok:
             terminal = STATUS_FAILED
             job.error_code = outputs[0].error_code if outputs else "no_output"
@@ -874,6 +877,36 @@ def run(
 def _last_phase(job: ExportJob) -> str:
     """轨迹上最后记的那一步（坏在哪一步）；一步都没记时是 `prepare`。"""
     return job.trace.current_phase or "prepare"
+
+
+def _drop_stale_report(job: ExportJob, names: dict[str, str]) -> None:
+    """覆盖导出了同名的图、而本次没有写出同名报告：删掉上一次留下的那份（QA-WIN-19）。
+
+    旧报告记的是旧图的字节数和时间，紧挨着新图会被当成本次的检查证明。
+    **只动三种都成立的文件**：本次 `replace` 覆盖（`rename` 的新名不属于旧图，旧图也没动；
+    旧契约带时间戳，撞不了车）、名字恰是 `<filename>_style-check.json`、内容 `kind` 是
+    `tavotto-proof`。读不出来、kind 不对的一律不碰——那不是我们写的。
+    """
+    req = job.request
+    if req.legacy_naming or req.overwrite != exportreq.OVERWRITE_REPLACE:
+        return
+    path = job.export_dir / f"{req.filename}{REPORT_SUFFIX}"
+    with _LOCK:
+        if str(path) in _RESERVED:  # 另一个在跑的作业正要写它
+            return
+        try:
+            if not path.is_file():
+                return
+            with path.open("rb") as fh:
+                head = json.loads(fh.read(1 << 20).decode("utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(head, dict) or head.get("kind") != brand.PROOF_KIND:
+            return
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def _write_report(
