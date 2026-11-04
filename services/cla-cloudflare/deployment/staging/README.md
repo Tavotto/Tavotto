@@ -58,6 +58,18 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 
    Rehearsed on local D1 (`--local`) on 2026-11-03: `1 / 88193520 / 2 / 39`.
 
+   **Rebuild** (wipes every staging signature, cannot be undone): needed
+   after changing `holderName` or the agreement text, or to clear a test
+   account's withdrawal (withdrawals are immutable by design). Same
+   database ID; config and secrets stay. Then rerun the readiness query
+   above and expect the same result.
+
+       node scripts/staging-d1.mjs --rebuild deployment/staging/config.json > /tmp/cla-staging-rebuild.sql
+       $W d1 execute tavotto-cla-staging --remote $C --file /tmp/cla-staging-rebuild.sql
+
+   Used on 2026-11-04 to clear a held test account: 104 statements, readiness
+   `1 / 88193520 / 2 / 39`, no withdrawals left.
+
 2. First deploy, every flag off:
 
        $W deploy $C
@@ -96,6 +108,9 @@ who cannot see a private repository.
 The holder countersigns with name and signature exactly equal to
 `holderName` in `config.json` (`Jiaqi Wan`); anything else is
 `personal_evidence_required`.
+Stored holder signatures are re-checked against the current `holderName`
+on every read, so changing it makes earlier staging countersignatures
+unreadable: rebuild the database (below) whenever it changes.
 
     $W deploy $C --var CLA_GITHUB_ENABLED:true --var CLA_OAUTH_ENABLED:true --var CLA_UI_ENABLED:true --var CLA_SIGNING_ENABLED:true
 
