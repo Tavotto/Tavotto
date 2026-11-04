@@ -6584,8 +6584,6 @@ export interface ContactCapability {
   email_max?: number
   max_attachments?: number
   max_total_bytes?: number
-  /** 附件允许的扩展名（带点、小写） */
-  extensions?: string[]
   /** 未读回信数（本机记录，不联网） */
   unread?: number
   retention_days?: number

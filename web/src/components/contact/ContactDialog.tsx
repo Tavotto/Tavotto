@@ -55,6 +55,9 @@ function failureText(f: ContactFailure): string {
   return cs(`failure.${f.code}`, { defaultValue: cs('failure.unexpected_response') })
 }
 
+/** 诊断包的三项额外内容，顺序同「发送问题反馈」确认框（`DiagnosticsSendDialog.EXTRA_KEYS`）。 */
+const DIAG_EXTRA_KEYS = ['source', 'crash_reports', 'corrupt_sessions'] as const
+
 /** 附件方块边长（px）。 */
 const TILE = 88
 
@@ -443,7 +446,6 @@ export function ContactDialog() {
           type="file"
           multiple
           hidden
-          accept={(capability.extensions ?? []).join(',')}
           onChange={(e) => {
             s.addFiles([...(e.target.files ?? [])])
             e.target.value = ''
@@ -465,7 +467,54 @@ export function ContactDialog() {
             <span>{cs('diagLabel')}</span>
           </label>
           {draft.attachDiag && (
-            <p data-contact-diag-hint className="type-caption pl-6">{cs('diagHint')}</p>
+            <p data-contact-diag-hint className="type-caption pl-6">
+              {cs(DIAG_EXTRA_KEYS.some((k) => draft.diagOptions[k]) ? 'diagHintExtras' : 'diagHint')}
+            </p>
+          )}
+          {/* 额外内容（同「发送问题反馈」确认框的三项）：勾了诊断信息才展开；默认全不勾；勾上崩溃报告 / 损坏会话才在下面出隐私提示；
+              脚本源码不出提示（用户 2026-11-04 裁决）。勾选变化 = 换包（store 里防抖）。 */}
+          {draft.attachDiag && (
+            <section aria-label={cs('diagExtrasTitle')} className="flex flex-col gap-1.5 pl-6" data-contact-diag-extras>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="type-section">{cs('diagExtrasTitle')}</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!editable}
+                  onClick={() => {
+                    const on = !DIAG_EXTRA_KEYS.every((k) => draft.diagOptions[k])
+                    for (const k of DIAG_EXTRA_KEYS) if (draft.diagOptions[k] !== on) s.setDiagOption(k, on)
+                  }}
+                  data-contact-diag-extras-all
+                >
+                  {DIAG_EXTRA_KEYS.every((k) => draft.diagOptions[k])
+                    ? translate('settings.diagnostics.send.extrasSelectNone', { ns: 'dialogs' })
+                    : translate('settings.diagnostics.send.extrasSelectAll', { ns: 'dialogs' })}
+                </Button>
+              </div>
+              <p className="type-caption" data-contact-diag-extras-prompt>
+                {cs('diagExtrasPrompt')}
+              </p>
+              {DIAG_EXTRA_KEYS.map((key) => (
+                <label key={key} className="flex items-start gap-2 text-sm text-ink">
+                  <Checkbox
+                    checked={draft.diagOptions[key]}
+                    disabled={!editable}
+                    onChange={(e) => s.setDiagOption(key, e.target.checked)}
+                    data-contact-diag-extra={key}
+                    className="mt-0.5"
+                  />
+                  <span className="flex min-w-0 flex-col">
+                    <span>{translate(`settings.diagnostics.send.extra.${key}`, { ns: 'dialogs' })}</span>
+                    {key !== 'source' && draft.diagOptions[key] && (
+                      <span className="type-caption" data-contact-diag-extra-hint={key}>
+                        {translate(`settings.diagnostics.send.extraHint.${key}`, { ns: 'dialogs' })}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </section>
           )}
           {draft.attachDiag && (
             <Details data-contact-diag-details className="pl-6 text-sm">

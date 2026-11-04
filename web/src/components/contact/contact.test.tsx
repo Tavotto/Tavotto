@@ -62,6 +62,7 @@ import { NotificationRail } from '@/components/StatusBar'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { TopBar } from '@/components/TopBar'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { NO_DETAIL_OPTIONS } from '@/diagnostics/detail'
 import { EMPTY_DRAFT, useContactStore } from '@/store/contactStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { emptyProject } from '@/types/document'
@@ -87,8 +88,7 @@ const CAP: ContactCapability = {
   body_max: 5000,
   email_max: 254,
   max_attachments: 5,
-  max_total_bytes: 20 * 1024 * 1024,
-  extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.pdf', '.docx', '.xlsx', '.pptx'],
+  max_total_bytes: 50 * 1024 * 1024,
   unread: 0,
   retention_days: 365,
 }
@@ -505,15 +505,18 @@ describe('对话框的四个状态', () => {
     expect(q<HTMLTextAreaElement>('[data-contact-text]')!.value).toBe('')
   })
 
-  it('附件：类型 / 数量 / 合计大小在本机先挡', async () => {
+  it('附件：不限格式（2026-11-04）；数量 / 合计大小在本机先挡', async () => {
     await openDialog()
-    await act(async () => useContactStore.getState().addFiles([new File(['x'], 'a.exe')]))
-    expect(q('[data-contact-file-error="type"]')).not.toBeNull()
+    await act(async () => useContactStore.getState().addFiles([new File(['t,v\n0,1\n'], 'xps_raw.csv'), new File(['x'], 'run.mat')]))
+    expect(q('[data-contact-file-error]')).toBeNull()
+    expect(useContactStore.getState().draft.files.map((f) => f.name)).toEqual(['xps_raw.csv', 'run.mat'])
+    expect(q('input[data-contact-file-input]')!.hasAttribute('accept')).toBe(false)
+    await act(async () => useContactStore.getState().setDraft({ files: [] }))
     await act(async () => useContactStore.getState().addFiles(Array.from({ length: 6 }, (_, i) => png(`p${i}.png`, 10 + i))))
     expect(useContactStore.getState().draft.files).toHaveLength(5)
     expect(q('[data-contact-file-error="count"]')).not.toBeNull()
     await act(async () => useContactStore.getState().removeFile(0))
-    await act(async () => useContactStore.getState().addFiles([png('big.png', 20 * 1024 * 1024)]))
+    await act(async () => useContactStore.getState().addFiles([png('big.png', 50 * 1024 * 1024)]))
     expect(q('[data-contact-file-error="total"]')).not.toBeNull()
   })
 
@@ -696,6 +699,45 @@ describe('附上诊断信息：prepare → 预览 → start → 带编号发信'
     expect(useContactStore.getState().diag).toEqual({ state: 'off', prepared: null })
     expect(q('[data-contact-diag-details]')).toBeNull()
     expect(q('[data-contact-diag-hint]')).toBeNull()
+  })
+})
+
+describe('附上诊断信息：额外内容（2026-11-04，同发送问题反馈的三项）', () => {
+  it('勾了诊断信息才展开三项，默认全不勾，有一句提示；脚本源码不出隐私提示，崩溃报告勾上才出', async () => {
+    resetStore()
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true))
+    expect(q('[data-contact-diag-extras]')).toBeNull()
+    await click(q('input[data-contact-diag]'))
+    await settle(10)
+    expect(q('[data-contact-diag-extras-prompt]')!.textContent).toContain('一起勾上')
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) {
+      expect(q<HTMLInputElement>(`input[data-contact-diag-extra="${k}"]`)!.checked).toBe(false)
+    }
+    expect(vi.mocked(prepareDiagSend).mock.calls[0][1]).toEqual(NO_DETAIL_OPTIONS)
+    await click(q('input[data-contact-diag-extra="source"]'))
+    expect(q('[data-contact-diag-extra-hint]')).toBeNull()
+    expect(q('[data-contact-diag-hint]')!.textContent).toContain('另附下面勾选的内容')
+    await click(q('input[data-contact-diag-extra="crash_reports"]'))
+    expect(q('[data-contact-diag-extra-hint="crash_reports"]')).not.toBeNull()
+    await settle(400)
+    // 连点两下只重新备一次包，带上勾选；旧包被丢掉
+    expect(prepareDiagSend).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(prepareDiagSend).mock.calls[1][1]).toEqual({ source: true, crash_reports: true, corrupt_sessions: false })
+    expect(discardDiagSend).toHaveBeenCalled()
+  })
+
+  it('取消「附上诊断信息」清空勾选；再勾上从全不勾开始', async () => {
+    resetStore()
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true))
+    await click(q('input[data-contact-diag]'))
+    await settle(10)
+    await click(q('input[data-contact-diag-extra="source"]'))
+    await click(q('input[data-contact-diag]'))
+    expect(useContactStore.getState().draft.diagOptions).toEqual(NO_DETAIL_OPTIONS)
+    await click(q('input[data-contact-diag]'))
+    expect(q<HTMLInputElement>('input[data-contact-diag-extra="source"]')!.checked).toBe(false)
   })
 })
 
@@ -941,12 +983,11 @@ describe('文案与引擎同源', () => {
     }
   })
 
-  it('附件类型与上限取自引擎能力说明；前端的扩展名表与契约白名单同源', () => {
-    const exts = [...py.slice(py.indexOf('TYPE_BY_EXT'), py.indexOf('ALLOWED_TYPES')).matchAll(/"(\.[a-z]+)":/g)].map(
-      (m) => m[1],
-    )
-    expect(exts.sort()).toEqual([...CAP.extensions!].sort())
+  it('附件上限取自引擎能力说明且同源；不限格式：引擎对不认识的扩展名按 octet-stream 发，能力说明里没有扩展名表', () => {
     expect(py).toContain('MAX_ATTACHMENTS = 5')
-    expect(py).toContain('MAX_TOTAL_BYTES = 20 * 1024 * 1024')
+    expect(py).toContain('MAX_TOTAL_BYTES = 50 * 1024 * 1024')
+    expect(CAP.max_total_bytes).toBe(50 * 1024 * 1024)
+    expect(py).toContain('TYPE_BY_EXT.get(ext, OPAQUE_TYPE)')
+    expect(py).not.toMatch(/"extensions":/)
   })
 })
