@@ -701,6 +701,44 @@ def test_ledger_probe_depth_and_busy_are_per_thread(tmp_path, monkeypatch):
         uninstall()
 
 
+def test_ledger_mkdir_context_is_per_thread(tmp_path, monkeypatch):
+    """另一个线程正卡在 `os.makedirs(..., exist_ok=True)` 里（mkdir 上下文已入栈），本线程裸 `os.mkdir`
+    撞上被拦删除留下的旧目录，照样要按「撞名」记账，不能借用别人的 `exist_ok` 豁免。
+
+    `mk_ctx` 栈和钩子一样是进程全局的：共享时本线程读到的是别人的 (exist_ok=True)，撞名被当成
+    「`exist_ok` 的重建」放过，退出码 0 的分叉漏报。"""
+    import os
+    import threading
+
+    inside, release = threading.Event(), threading.Event()
+    slow_dir = str(tmp_path / "slow_new")
+    real_mkdir = os.mkdir
+
+    def slow_mkdir(path, *args, **kwargs):
+        if str(path) == slow_dir:
+            inside.set()
+            release.wait(10)
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", slow_mkdir)  # 装钩时被捕获为「真」mkdir
+    old = tmp_path / "old_dir"
+    old.mkdir()
+    ledger = _ledger(tmp_path)
+    uninstall = ledger.install()
+    other = threading.Thread(target=lambda: os.makedirs(slow_dir, exist_ok=True), daemon=True)
+    try:
+        ledger.blocked("shutil.rmtree", "delete_dir", str(old))
+        other.start()
+        assert inside.wait(10)  # 另一个线程此刻正在 makedirs(exist_ok=True) 里
+        with pytest.raises(FileExistsError):
+            os.mkdir(str(old))
+        assert [o["op"] for o in ledger.material()] == ["shutil.rmtree"]
+    finally:
+        release.set()
+        other.join(10)
+        uninstall()
+
+
 def test_ledger_exists_hooks_exempt_savefig_targets_and_restore_originals(tmp_path):
     import os
 

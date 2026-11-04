@@ -5136,7 +5136,14 @@ class BlockedFileOps:
         real_path_mkdir = pathlib.Path.mkdir
         #: 正在进行的 `makedirs` / `Path.mkdir` 的 (exist_ok, parents)：内部的 `os.mkdir` 撞上还在的目录时
         #: 由外层自己吞掉（`exist_ok`），不是脚本看到的异常
-        mk_ctx: list[tuple[bool, bool]] = []
+        #: 逐线程：钩子是进程全局的，别的线程正在 `makedirs(exist_ok=True)` 里时，本线程裸 `os.mkdir` 不能借用它的豁免
+        mk_tls = threading.local()
+
+        def _mk_ctx() -> list[tuple[bool, bool]]:
+            stack = getattr(mk_tls, "stack", None)
+            if stack is None:
+                stack = mk_tls.stack = []
+            return stack
 
         def _open_through(original, file, mode, args, kwargs):
             # 自带 `opener`（常见用法是 `os.open(p, f, dir_fd=fd)`）：路径怎么解析由 opener 说了算，不当 cwd 相对路径记账
@@ -5209,14 +5216,14 @@ class BlockedFileOps:
             def counted(*args, **kwargs):
                 # `Path.mkdir(exist_ok=True)` 内部自己会 `is_dir()`（3.10 / 3.11 在撞上旧目录之后、
                 # 豁免记账之前）：那是 mkdir 的实现，不是脚本的观察
-                if not ledger._check_depth and not mk_ctx and args:
+                if not ledger._check_depth and not _mk_ctx() and args:
                     ledger.observe_stat(args[0])
                 ledger._check_depth += 1
                 try:
                     result = original(*args, **kwargs)
                 finally:
                     ledger._check_depth -= 1
-                if args and not result and not mk_ctx:
+                if args and not result and not _mk_ctx():
                     ledger.note_missing_path(args[0])
                 return result
 
@@ -5264,6 +5271,7 @@ class BlockedFileOps:
         os.scandir = watched_scandir
 
         def watched_mkdir(path, *args, **kwargs):
+            mk_ctx = _mk_ctx()
             tolerant, parents = mk_ctx[-1] if mk_ctx else (False, False)
             try:
                 result = real_mkdir(path, *args, **kwargs)
@@ -5277,6 +5285,7 @@ class BlockedFileOps:
             return result
 
         def watched_makedirs(name, mode=0o777, exist_ok=False):
+            mk_ctx = _mk_ctx()
             mk_ctx.append((bool(exist_ok), True))
             try:
                 return real_makedirs(name, mode, exist_ok)
@@ -5286,6 +5295,7 @@ class BlockedFileOps:
         def watched_path_mkdir(self_path, mode=0o777, parents=False, exist_ok=False):
             # 3.10 的 `Path.mkdir` 走导入时绑定的 `self._accessor.mkdir`，看不到上面的 `os.mkdir` 包装——
             # 这里自己按结果记账（3.11+ 内层 `os.mkdir` 包装也会记一次，重复记账无害）
+            mk_ctx = _mk_ctx()
             mk_ctx.append((bool(exist_ok), bool(parents)))
             try:
                 result = real_path_mkdir(self_path, mode, parents, exist_ok)
