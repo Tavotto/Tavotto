@@ -158,12 +158,13 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100)
 const QUOTED_QUALIFIERS = ['typical', 'recommended', 'range']
 
 /**
- * 一个值给人看的样子。`typical` / `recommended` / `range` 显示**原话**（`mark`，没有就整条 `quote`）——
+ * 一个值给人看的样子。`typical` / `recommended` / `range` 显示**原话里的数**（`mark`；没有 mark 就写「有要求」，整句留给出处卡）——
  * 不显示成一个像硬判据的数；`min` / `max` 前面带 ≥ / ≤；栏位 `page_columns` 列出全部「名字 + 宽度」。
  */
 export function valueText(path: string, s: JournalFieldSource): string {
   if (s.unset) return jt('unset')
-  if (QUOTED_QUALIFIERS.includes(s.qualifier)) return s.mark || s.quote
+  // 只有原句、没有可标的数（色彩模式、字体名、1.5 栏这类）：值这一栏只说「有要求」，原话留给「出处」卡
+  if (QUOTED_QUALIFIERS.includes(s.qualifier)) return s.mark || jt('hasRequirement')
   const v = s.value
   if (path === 'page_columns' && Array.isArray(v)) {
     return (v as PageColumnSpec[]).map((c) => `${labelOf(c)} ${fmt(c.width_mm)} mm`).join(' / ')

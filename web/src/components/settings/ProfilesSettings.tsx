@@ -114,7 +114,8 @@ function groupFields(fields: NumField[]): { group: string; fields: NumField[] }[
 
 /** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
 function formatValue(raw: unknown, unit?: string): string {
-  if (raw === undefined || raw === null) return st('unset') // null = 该规范没规定这一项（如期刊没写栏宽），不说成 "null"
+  if (raw === null) return st('unspecified') // null = 该规范没规定这一项（如期刊没写栏宽），不说成 "null"
+  if (raw === undefined) return st('unset')
   // 认不出的值照原值说，不说成「未设置」（与样式页同一条，`rawValueText`）
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return rawValueText(raw)
   return unit ? `${raw} ${unit}` : String(raw)
@@ -145,11 +146,20 @@ function KeyRules({ profile }: { profile: Record<string, unknown> }) {
     <dl data-spec-key-rules className="grid grid-cols-4 gap-x-4 gap-y-2">
       {KEY_RULES.map((key) => {
         const f = SPEC_FIELDS.find((x) => x.labelKey === key)!
+        const raw = readPath(profile, f.path)
+        // 最小字号 0 = 底规范（期刊底）没有硬性下限：说「未规定」，不露出底层的 0；期刊只给了建议值时在名字后小字提示
+        const noFloor = key === 'minFont' && typeof raw === 'number' && raw <= 0
+        const advice = noFloor
+          ? (profile.advisories as { role?: string; value_pt?: number }[] | undefined)?.find((a) => a.role === 'body_min')
+          : undefined
         return (
           <div key={key} className="flex min-w-0 flex-col-reverse gap-0.5">
-            <dt className="type-caption truncate">{st(`field.${f.labelKey}`)}</dt>
+            <dt className="type-caption truncate">
+              {st(`field.${f.labelKey}`)}
+              {advice?.value_pt != null && <span data-key-rule-advice> · {st('adviceHint', { pt: advice.value_pt })}</span>}
+            </dt>
             <dd className="type-heading truncate tabular-nums">
-              {formatValue(readPath(profile, f.path), f.unit)}
+              {noFloor ? st('unspecified') : formatValue(raw, f.unit)}
             </dd>
           </div>
         )

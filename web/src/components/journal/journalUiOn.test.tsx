@@ -83,6 +83,25 @@ describe('期刊入口已打开', () => {
     expect(document.body.querySelector('[data-spec-key-rules]')).not.toBeNull()
   })
 
+  it('期刊只给了建议字号（没有硬性最小字号）：规范页大数字写「未规定」，建议值在名字后小字，不露出底层的 0', async () => {
+    useDocumentStore.getState().commit(literal('换期刊'), (d) => {
+      d.profile = pickJournal('fx-zeta', loadCatalog(vectors.catalog), { pageW: 150 }).binding
+    })
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ProfilesSettings kind="spec" />
+        </TooltipProvider>,
+      )
+    })
+    const rules = document.body.querySelector('[data-spec-key-rules]')!
+    const first = rules.querySelector('div')!
+    expect(first.querySelector('dd')?.textContent).toBe('未规定')
+    expect(first.querySelector('[data-key-rule-advice]')?.textContent).toMatch(/建议 [\d.]+ pt/)
+    // 期刊没写栏宽：显示「未规定」，不是 null
+    expect(rules.textContent).not.toContain('null')
+  })
+
   it('问题面板行尾有「出处」图标（文档带着期刊绑定）', async () => {
     const issue = {
       ruleCode: 'raster-dpi',

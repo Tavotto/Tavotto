@@ -151,6 +151,40 @@
      "src": "s1",
      "quote": "Minimal size 30 mm",
      "anchor": "#:~:text=Minimal%20size%2030%20mm"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "zh": "单栏",
+        "en": "Single column"
+       },
+       "width_mm": 90,
+       "qualifier": "exact"
+      },
+      {
+       "id": "1-5-column",
+       "label": {
+        "zh": "1.5 栏",
+        "en": "1.5 column"
+       },
+       "width_mm": 140,
+       "qualifier": "exact"
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "zh": "双栏",
+        "en": "Double column"
+       },
+       "width_mm": 190,
+       "qualifier": "exact"
+      }
+     ],
+     "mark": "90 mm",
+     "src": "s1",
+     "quote": "Single column 90 mm 255 pt 1063 1772 3543 1.5 column 140 mm 397 pt 1654 2756 5512 Double column (full width) 190 mm"
     }
    }
   },
@@ -1392,6 +1426,42 @@
      "stage": "submission",
      "src": "s1",
      "quote": "It is best to create your figures as vector-based files, such as those produced by Adobe Illustrator."
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "1-column",
+       "label": {
+        "zh": "1 栏",
+        "en": "1 column"
+       },
+       "width_mm": 57,
+       "qualifier": "typical"
+      },
+      {
+       "id": "2-columns",
+       "label": {
+        "zh": "2 栏",
+        "en": "2 columns"
+       },
+       "width_mm": 121,
+       "qualifier": "typical"
+      },
+      {
+       "id": "3-columns",
+       "label": {
+        "zh": "3 栏",
+        "en": "3 columns"
+       },
+       "width_mm": 184,
+       "qualifier": "typical"
+      }
+     ],
+     "stage": "submission",
+     "mark": "5.7 cm",
+     "derivation": "5.7 cm → 57 mm",
+     "src": "s1",
+     "quote": "The width of figures, when printed, will usually be 5.7 cm (2.24 inches or 1 column), 12.1 cm (4.76 inches or 2 columns), or 18.4 cm (7.24 inches or 3 columns)."
     }
    }
   },

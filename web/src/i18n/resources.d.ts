@@ -948,6 +948,7 @@ export default interface Resources {
       },
       "formatsAccepted": "可接受 {{list}}",
       "formatsPreferred": "推荐 {{list}}",
+      "hasRequirement": "有要求",
       "listAria": "期刊列表",
       "no": "否",
       "noJournal": "不按期刊",
@@ -1499,6 +1500,7 @@ export default interface Resources {
       "title": "科研预设"
     },
     "profiles": {
+      "adviceHint": "建议 {{pt}} pt",
       "binding": {
         "builtinDefault": "默认规范",
         "current": "当前项目使用",
@@ -1609,6 +1611,7 @@ export default interface Resources {
       "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",
       "snapshotTitle": "本项目实际检查的规则",
       "unset": "未设置",
+      "unspecified": "未规定",
       "useForCanvas": "用于当前画布",
       "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
       "useForProject": "本项目用这套规范",

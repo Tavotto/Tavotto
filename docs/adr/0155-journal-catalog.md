@@ -154,12 +154,12 @@
 
 ## 10. 修订记录：PR 3 种子数据 + 打开入口（2026-11-04）
 
-* **种子**：`journals.json` 现在是 56 本头部期刊 + 9 个出版社的通用标准（154 条规则、43 张快照图），每一条都带原文出处与短摘录。把关方式（用户 2026-11-04 选定）：Codex 逐条对照原文复核 → 出一张核对页给用户抽看、拍板 → 通过的才进种子；**Codex 判「驳回」的与改不动的一律不进**，没核过的不进。种子由私有仓库的 `tools/seed/build_seed.py` 从整理结果生成、可重跑；完整目录与采集产物仍不进本仓库（§4b）。PR 1 复审遗留的 7 本 `-sample` 假期刊已不在库里（测试看护）。
+* **种子**：`journals.json` 现在是 56 本头部期刊 + 9 个出版社的通用标准（156 条规则、43 张快照图），每一条都带原文出处与短摘录。把关方式（用户 2026-11-04 选定）：Codex 逐条对照原文复核 → 出一张核对页给用户抽看、拍板 → 通过的才进种子；**Codex 判「驳回」的与改不动的一律不进**，没核过的不进；**唯一例外**：用户 2026-11-04 看过核对页后裁决恢复两条被 Codex 驳回的栏位表——Science（自家栏名 2 栏 121 mm / 3 栏 184 mm，栏位限定词 typical）与 Elsevier（单栏 90 / 1.5 栏 140 / 双栏 190 mm，exact；摘录换成原文表格里从「Single column 90 mm」到「190 mm」的连续一段），核对页上标「用户裁决恢复，覆盖 Codex 驳回」。JACS / ES&T 栏位、Springer Nature 出版社级栏宽、Nature 7 pt 上限保持剔除。种子由私有仓库的 `tools/seed/build_seed.py` 从整理结果生成、可重跑；完整目录与采集产物仍不进本仓库（§4b）。PR 1 复审遗留的 7 本 `-sample` 假期刊已不在库里（测试看护）。
 * **id = 整理结果的 key**：期刊 id、出版社 id 直接用私有整理结果里的 key（即远程完整目录将来用的 id），项目绑在种子 id 上，远程目录一到才对得上。整理结果里没有 slug 形 publisher 的几本（科学通报、化学学报、中国激光）用稳定的 slug，将来远程目录若换 id 要在那一侧加别名。
 * **映射约定的补充**（细化 §3b「字段映射约定」）：① 同一来源页的栏位合成**一条** `page_columns` 规则（摘录是各栏记录的原话按页内顺序连接，每栏自带 `qualifier`）；没有栏名的「宽度上限」与区间进 `info.width_*`，不冒充栏位；Springer 的 174 mm 栏位按 `typical` 只展示。② `min_raster_dpi` 取各图类里最低的一档（原文写「达到 / 必须」的 `exact` 记为 `min`），按图类的值进 `info.dpi_by_kind`；其余图类的档不单独成规则。③ `font_family.latin_accepted` 只收一眼能认的真实字体名，泛称、带说明的句子进 `info.font_names_raw`。④ 字号 `range`（如「5–7 pt」）两端各记一条、限定词 `range`（不进判据，只展示）；Elsevier 7 pt / 6 pt 走建议级、Science 5 pt 是 `min`、Nature 7 pt 是 `max_font_size_pt`、科学通报「字高 7 pt」按字号计并保留原话（`derivation`「字高按字号计」）。AIP 不在本批种子里；将来收入时它的 264 dpi 只能是兜底（`recommended`），不进 `min_raster_dpi` 的判据。
 * **入口打开**：`web/src/lib/journalUi.ts` 的 `JOURNAL_CATALOG_UI = true`（§8 的开关到此为止；开发期 localStorage 键保留但不再起作用）。「关着时」的测试改成「开着时」的，关着的情形不再单测。
 * **快照资产根改为 `/assets/journal-catalog/`**（§6 原写 `/journal-catalog/`）：后端只服务 `/assets/<path>`（公开前缀、不可变缓存），种子快照放在 `web/public/assets/journal-catalog/snapshots/`，由既有路由送出，不另开路由、不动 `security._PUBLIC_PREFIXES`。随包测试看护：引用到的每张快照都在、是 webp、文件名即内容 sha256、没有无人引用的快照。
 * **一键修复读栏位表**：`issueFix.fixOptions / planFix` 改读 `derivePageColumns`——选项是判据认的（`exact`）栏位，单栏 / 双栏沿用原措辞，期刊自有栏（如 Elsevier 的 1.5 栏）用它自己的栏名。
 * **`pageColumnsOf` 的回退（登记）**：规范里没有任何可用栏位（期刊底没规定栏宽，或栏宽都不在 `PAGE_MM_MIN`–`PAGE_MM_MAX` 内）时，画布页预设与拖边吸附退回**内置默认规范**的单栏 / 双栏（`FALLBACK_WIDTHS`）。这只是显示 / 吸附的回退，**不是判据**：预检 `page-width` 只读 `exact` 栏位，期刊没有 `exact` 栏位就不报 `page-width`；`resolvePageColumns().journal` 只在期刊自己写了可用栏位时为真。
-* **展示细节**：要求清单里展示项的对象值不露 JSON（文件格式说成「推荐 … ；可接受 …」，按图类 dpi 逐项列）；规范页四个关键数里 `null`（该规范没规定）显示「未设置」，不显示 `null`。
+* **展示细节**：要求清单里展示项的对象值不露 JSON（文件格式说成「推荐 … ；可接受 …」，按图类 dpi 逐项列）；规范页四个关键数里 `null`（该规范没规定）显示「未规定」，不显示 `null`；最小字号 ≤ 0（底规范没有硬性下限，期刊只给建议值或没写）也显示「未规定」，有建议字号时在名字后小字「· 建议 N pt」；要求清单里只有原句、没有可标的数的行（色彩模式、字体名、1.5 栏等）值这一栏统一写「有要求」，原话留给出处卡。
 * **发行说明**：入口打开，补 `docs/release-notes/unreleased/journal-catalog.md`（§8 的约定）。

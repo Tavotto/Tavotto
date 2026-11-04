@@ -75,6 +75,20 @@ def test_shipped_seed_keeps_the_agreed_special_rulings():
     # 科学通报「字高 7 pt」按字号计，原话保留
     kt = journals.journal_sources("kexue-tongbao")["min_effective_font_size_pt"]
     assert kt["value"] == 7 and kt["derivation"] == "字高按字号计" and "字高" in kt["quote"]
+    # 用户裁决恢复（覆盖 Codex 驳回）：Science 用自家栏名「2 栏 121 mm / 3 栏 184 mm」，栏位限定词按原文 usually 是 typical
+    sci = {
+        c["label"]["en"]: (c["width_mm"], c["qualifier"])
+        for c in journals.journal_profile("science")["page_columns"]
+    }
+    assert sci["2 columns"] == (121, "typical") and sci["3 columns"] == (184, "typical")
+    # Elsevier 的栏位表在出版社上，系内期刊都继承到：单栏 90 / 1.5 栏 140 / 双栏 190（exact），摘录是原文里连续的一段
+    for jid in ("chemical-engineering-journal", "water-research", "acta-materialia"):
+        ec = {
+            c["label"]["en"]: c["width_mm"] for c in journals.journal_profile(jid)["page_columns"]
+        }
+        assert ec == {"Single column": 90, "1.5 column": 140, "Double column": 190}
+    quote = journals.journal_sources("chemical-engineering-journal")["page_columns"]["quote"]
+    assert quote.startswith("Single column 90 mm") and quote.endswith("190 mm")
     # Nature 自己的栏位表：89 / 183 mm 都是 exact，页宽判据读得到
     cols = {
         c["label"]["en"]: c["width_mm"] for c in journals.journal_profile("nature")["page_columns"]

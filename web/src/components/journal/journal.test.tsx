@@ -229,10 +229,11 @@ describe('要求清单', () => {
     expect(row('page_columns').textContent).toContain('该期刊未规定')
   })
 
-  it('typical 显示原话，不显示成「5 pt」；有出处钮', async () => {
+  it('typical 且没有可标的数：只写「有要求」，不显示成「5 pt」，原话在出处卡；有出处钮', async () => {
     selectJournal('fx-zeta')
     await mount(<JournalRequirements />)
-    expect(row('min_effective_font_size_pt').textContent).toContain('FIXTURE about 7 pt, not smaller than 5')
+    expect(row('min_effective_font_size_pt').textContent).toContain('有要求')
+    expect(row('min_effective_font_size_pt').textContent).not.toContain('FIXTURE')
     expect(row('min_effective_font_size_pt').querySelector('[data-journal-source]')).not.toBeNull()
   })
 })

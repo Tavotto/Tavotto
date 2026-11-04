@@ -119,7 +119,9 @@ describe('出处卡：一句话与高亮', () => {
   it('typical / recommended / range 显示原话，不显示成一个像判据的数', () => {
     const zeta = src('fx-zeta', 'min_effective_font_size_pt')
     expect(zeta.qualifier).toBe('typical')
-    expect(valueText('min_effective_font_size_pt', zeta)).toBe(zeta.mark || zeta.quote)
+    expect(valueText('min_effective_font_size_pt', zeta)).toBe(zeta.mark || '有要求')
+    // 只有原句、没有可标的数：值这一栏统一「有要求」，原话留给出处卡
+    expect(valueText('info.color_mode', { ...zeta, value: 'RGB recommended', mark: '' })).toBe('有要求')
     const wide = src('fx-cols', 'page_columns')
     expect(valueText('page_columns', wide)).toContain('90 mm')
   })
@@ -178,6 +180,17 @@ describe('「该期刊未规定」', () => {
     const rows = requirementRows(journalSources('fx-beta', CAT))
     expect(rows.find((r) => r.path === 'widths_mm.double')!.source).not.toBeNull()
     expect(rows.at(-1)!.path.startsWith('info.')).toBe(true)
+  })
+})
+
+describe('随包种子：Elsevier 系继承到栏位表，切过去页宽跟到最近的一栏', () => {
+  it('chemical-engineering-journal：90 / 140 / 190，页宽 150 → 140', () => {
+    const shipped = loadCatalog()
+    expect(pickJournal('chemical-engineering-journal', shipped, { pageW: 150 }).pageW).toBe(140)
+    expect(
+      derivePageColumns(journalProfile('chemical-engineering-journal', shipped)).map((c) => c.width_mm),
+    ).toEqual([90, 140, 190])
+    expect(pickJournal('water-research', shipped, { pageW: 100 }).pageW).toBe(90)
   })
 })
 
