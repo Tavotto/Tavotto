@@ -578,6 +578,8 @@ export default interface Resources {
       "copyAddress": "复制地址",
       "copyContent": "复制内容",
       "diagContents": "查看会发送的内容",
+      "diagExtrasPrompt": "作者排查时常要用到下面这些，方便的话一起勾上。",
+      "diagExtrasTitle": "额外内容",
       "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",
       "diagFailure": "诊断信息没发出去：{{reason}}",
       "diagFailureCode": {
@@ -585,6 +587,7 @@ export default interface Resources {
         "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
       },
       "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
+      "diagHintExtras": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；另附下面勾选的内容。",
       "diagKindsTitle": "包含",
       "diagLabel": "附上诊断信息",
       "diagPreparing": "正在准备诊断包…",
@@ -641,8 +644,7 @@ export default interface Resources {
       "fileError": {
         "count": "最多 {{max}} 个附件。",
         "empty": "空文件不能作为附件。",
-        "total": "附件合计不能超过 {{size}}。",
-        "type": "只支持图片、PDF、Word、Excel、PowerPoint。"
+        "total": "附件合计不能超过 {{size}}。"
       },
       "letters": "我的来信",
       "lettersAttachments": "附件：{{names}}",

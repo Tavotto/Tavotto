@@ -141,6 +141,7 @@ order: 170
 - **四个状态**：编辑 → 发送中（可取消、上传进度）→ 已发送（`TVM-…` 编号 + 回信去向）/ 失败（草稿保留；「再试一次」「复制内容」「复制地址」）。**没有邮件协议链接**（失败卡里只有复制；全页 HTML 不含该协议字样，`contact.test.tsx` 钉；源码由 `tests/test_contact_no_mailto.py` 扫）。
   状态区住在 `Dialog status` 槽里，不推挤表单；发送中 `blockDismiss`、Esc = 取消。草稿（主题 / 正文 / 邮箱 / 附件 `File` / 勾选）在 store 里，关窗不丢，发送成功后关窗才清空；回信邮箱「上次填写」只记在本机 localStorage（try/catch 包着，可在窗里忘记），不进引擎、诊断、遥测。
 - **附上诊断信息** = 现有诊断发送的 prepare → 预览 → start：勾选即 `prepareDiagSend`（本机、零远程）并在窗里列出内容类别（`kind.*` 沿用诊断发送的译文），点「发送」才 `startDiagSend`，轮询到 `report_id` 后才 `sendContact({report_id})`；诊断包失败则信不发、失败说清是诊断包的事。
+  勾了诊断信息才展开「额外内容」三项（同发送问题反馈确认框，`draft.diagOptions`；默认全不勾、取消诊断信息清零；一句提示请用户勾上；勾选变化防抖 300 ms 换包、旧包 discard；崩溃报告 / 损坏会话勾上出隐私提示，脚本源码不出——用户 2026-11-04 裁决；ADR 0145 修订 2026-11-04）。附件不限格式、合计 50 MiB，前端不按扩展名挡、文件框无 `accept`。
 - **回信提醒只用小圆点 + 通知轨胶囊**（`StatusBar.NotificationRail` 里的 `data-contact-capsule`，最多三条的让位规则里与操作提示同档；× 收起后只有未读数再增加才重现），**不加横条 / BannerStack**。「我的来信」是同一窗里的另一页，列出信与回信，进页即已读（本趟仍标「新」）；未读数每 5 分钟读一次本机记录（引擎自己每 6 小时问服务器）。
 - **信纸（第二期）**：「我的来信」每封信先画用户自己写的主题 / 正文（长正文折前 4 行）/ 附件名（旧记录没有就不画），回信 `has_html` 为真用 `ReplyPaper`（沙盒 iframe `srcDoc`，文档来自 `fetchContactReplyDoc`，**sandbox 不含 `allow-scripts`**、白纸 `bg-paper` 深色模式也是白的），取不到文档退回纯文字；没有 HTML 的回信照旧显示文字（`contact.test.tsx`）。
 - 文案 `dialogs:contact.*`；`contact.failure.*` 的键集 = `contactsend.FAILURES`、`contact.error.*` ⊇ 引擎 `ContactError` 的码（`contact.test.tsx` 读 Python 源码对拍）；`settings.about.privacyContact` 是隐私摘要里的一句（能力开着才出现）。

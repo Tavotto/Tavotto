@@ -17,13 +17,15 @@
     "attachPick": "添加截图/文件",
     "attachRemove": "移除 {{name}}",
     "fileError": {
-      "type": "只支持图片、PDF、Word、Excel、PowerPoint。",
       "empty": "空文件不能作为附件。",
       "count": "最多 {{max}} 个附件。",
       "total": "附件合计不能超过 {{size}}。"
     },
     "diagLabel": "附上诊断信息",
     "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
+    "diagHintExtras": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；另附下面勾选的内容。",
+    "diagExtrasTitle": "额外内容",
+    "diagExtrasPrompt": "作者排查时常要用到下面这些，方便的话一起勾上。",
     "diagPreparing": "正在准备诊断包…",
     "diagReady": "诊断包 · {{size}}",
     "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",

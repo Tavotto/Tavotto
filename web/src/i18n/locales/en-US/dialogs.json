@@ -17,13 +17,15 @@
     "attachPick": "Add screenshot / file",
     "attachRemove": "Remove {{name}}",
     "fileError": {
-      "type": "Only images, PDF, Word, Excel and PowerPoint are supported.",
       "empty": "An empty file can't be attached.",
       "count": "Up to {{max}} attachments.",
       "total": "Attachments can't exceed {{size}} in total."
     },
     "diagLabel": "Attach diagnostic info",
     "diagHint": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, but not your script or data files.",
+    "diagHintExtras": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, plus what you tick below.",
+    "diagExtrasTitle": "Extra content",
+    "diagExtrasPrompt": "The maker often needs these to track a problem down. Tick them if you can.",
     "diagPreparing": "Preparing the diagnostics bundle...",
     "diagReady": "Diagnostics bundle · {{size}}",
     "diagFailedPrepare": "The diagnostics bundle isn't ready. Untick this or try again later.",

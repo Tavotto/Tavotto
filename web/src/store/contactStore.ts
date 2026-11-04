@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { buildSendPayload, NO_DETAIL_OPTIONS } from '@/diagnostics/detail'
+import { buildSendPayload, NO_DETAIL_OPTIONS, type DetailOptions } from '@/diagnostics/detail'
 import { currentLocale } from '@/i18n'
 import {
   ApiError,
@@ -46,6 +46,8 @@ export interface ContactDraft {
   replyEmail: string
   files: File[]
   attachDiag: boolean
+  /** 诊断包的三项额外内容（与「发送问题反馈」确认框同一组）：默认全不勾；取消「附上诊断信息」即清零，不跨草稿记忆 */
+  diagOptions: DetailOptions
 }
 
 export interface ContactFailure {
@@ -61,7 +63,16 @@ const POLL_MS = 350
 /** 未读数的本机刷新间隔（只读本机记录，不联网；引擎自己每 6 小时问一次服务器） */
 const UNREAD_REFRESH_MS = 5 * 60 * 1000
 
-export const EMPTY_DRAFT: ContactDraft = { subject: '', body: '', replyEmail: '', files: [], attachDiag: false }
+export const EMPTY_DRAFT: ContactDraft = {
+  subject: '',
+  body: '',
+  replyEmail: '',
+  files: [],
+  attachDiag: false,
+  diagOptions: NO_DETAIL_OPTIONS,
+}
+/** 勾选变化后等多久才重新备包：连点几个框只备一次（同 DiagnosticsSendDialog） */
+const DIAG_REFRESH_MS = 300
 
 /** 与引擎 `contactsend.valid_email` 同一条规则：可打印 ASCII、一个 @、域名含「.」、无引号 / 分号 / 逗号 / 括号 */
 export function validEmail(v: string): boolean {
@@ -128,6 +139,7 @@ interface ContactState {
   addFiles: (files: File[]) => void
   removeFile: (index: number) => void
   setAttachDiag: (on: boolean) => void
+  setDiagOption: (key: keyof DetailOptions, on: boolean) => void
   send: () => Promise<void>
   cancel: () => Promise<void>
   /** 发送成功之后「再写一封」 */
@@ -144,6 +156,7 @@ let diagToken = 0
 let diagPj: string | null = null
 /** 诊断包已传完时记下 (备好的包 id → report_id)：之后信发失败再重试，不能再 `startDiagSend`（引擎对已完成的会话回 not_found） */
 let diagDone: { id: string; reportId: string } | null = null
+let diagRefresh: ReturnType<typeof setTimeout> | null = null
 let unreadTimer: number | undefined
 
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
@@ -151,6 +164,8 @@ const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
 export const useContactStore = create<ContactState>((set, get) => {
   /** 丢弃引擎里备好的诊断包（关窗 / 取消勾选 / 发完）。 */
   const discardDiag = () => {
+    if (diagRefresh) clearTimeout(diagRefresh)
+    diagRefresh = null
     diagToken++
     diagDone = null
     const id = get().diag.prepared?.id
@@ -161,13 +176,16 @@ export const useContactStore = create<ContactState>((set, get) => {
   const prepareDiag = async () => {
     const mine = ++diagToken
     diagDone = null
+    const old = get().diag.prepared?.id
+    if (old) void discardDiagSend(old, diagPj).catch(() => {}) // 换包（勾选变化）：旧的那份不留在引擎里
     const pj = currentProjectId()
     diagPj = pj
+    const opts = get().draft.diagOptions
     set({ diag: { state: 'preparing', prepared: null } })
     try {
-      const payload = await buildSendPayload(NO_DETAIL_OPTIONS)
+      const payload = await buildSendPayload(opts)
       if (diagToken !== mine) return
-      const p = await prepareDiagSend(payload, NO_DETAIL_OPTIONS, pj)
+      const p = await prepareDiagSend(payload, opts, pj)
       if (diagToken !== mine) {
         if (p.id) void discardDiagSend(p.id, pj).catch(() => {})
         return
@@ -318,13 +336,12 @@ export const useContactStore = create<ContactState>((set, get) => {
     addFiles: (incoming) => {
       const cap = get().capability
       const maxCount = cap?.max_attachments ?? 5
-      const maxTotal = cap?.max_total_bytes ?? 20 * 1024 * 1024
-      const exts = new Set(cap?.extensions ?? [])
+      const maxTotal = cap?.max_total_bytes ?? 50 * 1024 * 1024
       const files = [...get().draft.files]
       let error: string | null = null
       for (const f of incoming) {
-        if (exts.size > 0 && !exts.has(extOf(f.name))) error = 'type'
-        else if (f.size === 0) error = 'empty'
+        // 不限格式（2026-11-04 用户裁决）：引擎对不认识的扩展名按 application/octet-stream 发
+        if (f.size === 0) error = 'empty'
         else if (files.length >= maxCount) error = 'count'
         else if (files.reduce((n, x) => n + x.size, 0) + f.size > maxTotal) error = 'total'
         else if (files.some((x) => x.name === f.name && x.size === f.size)) continue
@@ -337,9 +354,22 @@ export const useContactStore = create<ContactState>((set, get) => {
       set((s) => ({ draft: { ...s.draft, files: s.draft.files.filter((_, i) => i !== index) }, fileError: null })),
 
     setAttachDiag: (on) => {
-      set((s) => ({ draft: { ...s.draft, attachDiag: on } }))
+      set((s) => ({ draft: { ...s.draft, attachDiag: on, diagOptions: NO_DETAIL_OPTIONS } }))
       if (on) void prepareDiag()
       else discardDiag()
+    },
+
+    setDiagOption: (key, on) => {
+      set((s) => ({ draft: { ...s.draft, diagOptions: { ...s.draft.diagOptions, [key]: on } } }))
+      if (!get().draft.attachDiag) return
+      // 点击即时生效，备包防抖；备好之前「发送」是灰的（diag.state === 'preparing'）
+      diagToken++
+      set((s) => ({ diag: { state: 'preparing', prepared: s.diag.prepared } }))
+      if (diagRefresh) clearTimeout(diagRefresh)
+      diagRefresh = setTimeout(() => {
+        diagRefresh = null
+        void prepareDiag()
+      }, DIAG_REFRESH_MS)
     },
 
     send: async () => {

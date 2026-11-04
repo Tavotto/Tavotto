@@ -388,12 +388,12 @@ cancelled, closed or failed send is never resumed on its own.
 
 * **What is sent.** The subject (optional) and message you wrote; the app
   version, operating system, CPU architecture, how Tavotto was installed and your
-  interface language; the attachments you chose (images, PDF, Word, Excel or
-  PowerPoint files, at most 5 and 20 MiB in total — only what you added, never
-  anything from your projects on its own); the reply email address *only if you
+  interface language; the attachments you chose (any file type, at most 5 and 50 MiB in total —
+  only what you added, never anything from your projects on its own); the reply email address *only if you
   typed one*; and, *only if you tick Attach diagnostic info*, a redacted
   diagnostics bundle sent through the same *Send problem report* flow described
-  above (you see what it contains first, and only its report number travels with
+  above, including any of its extra items (script source, crash reports,
+  damaged-session contents) that you tick there — all unticked by default (you see what it contains first, and only its report number travels with
   the letter).
 * **Who receives it.** A service operated by the Tavotto maintainers on
   `tavotto.cn` (mainland China; attachments are stored on Tencent Cloud COS,
