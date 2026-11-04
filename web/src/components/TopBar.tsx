@@ -182,7 +182,7 @@ function importPackage() {
     try {
       const res = await openPackage(file)
       await openLayoutDocument(res.doc)
-      const missing = requestRelinkMissing()
+      const missing = await requestRelinkMissing()
       const drift = res.drifted.length
       if (!missing && !drift) {
         ui.setStatus(

@@ -295,18 +295,28 @@ export const useClipboardStore = create<ClipboardState>((set) => ({
 
 /**
  * 面板引用的素材在当前项目里找得到吗。静态素材看 assetStore；运行时图（`runtime:` fileId）不在
- * assetStore 里，身份在 runtimeAssetStore 的清单（后端注册表）。清单还没取回 = 未知，不能判缺失
- * （未知 ≠ 假）；只有清单取回且没有这张图才算真缺失。
+ * assetStore 里，身份在 runtimeAssetStore 的清单（后端注册表）。调用前清单要已取回
+ * （`ensureRuntimeList`）：未知不放行，等取回再判；取不回来的才按缺失处理。
  */
 function panelSourceKnown(p: PanelObject): boolean {
   if (useAssetStore.getState().byId[p.fileId]) return true
   if (!isRuntimePanel(p)) return false
   const list = useRuntimeAssetStore.getState().assets
-  return list === null || list.some((a) => a.id === p.fileId)
+  return !!list && list.some((a) => a.id === p.fileId)
+}
+
+/** 有运行时图要判、而清单还没取回：先取（只读端点，不跑脚本）。返回是否发起了等待。 */
+function runtimeListPending(objects: readonly CanvasObject[]): boolean {
+  if (useRuntimeAssetStore.getState().assets !== null) return false
+  const byId = useAssetStore.getState().byId
+  return objects.some((o) => o.type === 'panel' && isRuntimePanel(o as PanelObject) && !byId[(o as PanelObject).fileId])
 }
 
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
-export function requestRelinkMissing(): number {
+export async function requestRelinkMissing(): Promise<number> {
+  if (runtimeListPending(useDocumentStore.getState().doc.objects)) {
+    await useRuntimeAssetStore.getState().loadAssets()
+  }
   const { doc } = useDocumentStore.getState()
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
@@ -431,9 +441,15 @@ export async function pasteObjects(): Promise<boolean> {
  * 粘出一张图 = 第二张图，模式订阅切到多图排版；粘标注就留在单图编辑。图内文字编辑器 / 输入框里的粘贴在
  * `handlePasteEvent` 的离散动作闸门那一步就让位给浏览器了，到不了这里。
  */
-function consumePayload(payload: ClipPayload): boolean {
+function consumePayload(payload: ClipPayload, listLoaded = false): boolean {
   // 上次的排版还在恢复：这次粘贴排队到文档就绪再落（一次）；需要用户先处理恢复问题时拒掉并说一句。都算消费了这次粘贴
-  if (deferUserEntry(() => void consumePayload(payload)) !== 'run') return true
+  if (deferUserEntry(() => void consumePayload(payload, listLoaded)) !== 'run') return true
+  // 运行时图的身份在清单里：清单还没取回就先取，取回后再判一次（未知不当「在」）
+  if (!listLoaded && runtimeListPending(payload.objects)) {
+    // 取回后只重判一次；取不回（切了项目等）就按缺失处理，不会无限等
+    void useRuntimeAssetStore.getState().loadAssets().then(() => consumePayload(payload, true))
+    return true
+  }
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {
     if (o.type !== 'panel') continue
