@@ -1,9 +1,11 @@
 # SVG 计算图表编辑 — 实施进度（稳定 checkpoint）
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
-> 计划全文：`IMPLEMENTATION_PLAN.md`。证据目录（仓库外）：`/tmp/svgplan-evidence/`（本机）。
+> 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
+> **当前结论（2026-11-04 复核，代码 `7cbb0e6e`）：核心模块已部分实现，产品闭环尚未完成；最终 SVG 的五类缺陷及前端状态机三条反例已复现。**
+> 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
-## 环境（SG00 建立后冻结，变化时更新）
+## 环境（SG00 建立记录及本次复核）
 
 - 实施 worktree：`E:\0 - Project\Tavotto-svg-computational-editing`，分支 `zixu.wang/svg-computational-editing`。
 - 基线：`git fetch origin` 于 2026-11-03T15:09:56Z 成功；origin/main = `2bc94f7fd9b13276f92d100fcd1b0e7075f49a93`（与计划基线一致）。本地 main（`69bcafae`）落后 origin/main 118 个提交，未被使用。
@@ -12,25 +14,37 @@
 - 字体：`scripts/fetch_fonts.py` 已跑（liberation 12 个 + NotoSansSC-Regular.otf，sha256 校验过）。
 - 测试环境变量：`TAVOTTO_NO_TELEMETRY=1`。
 - 原工作区 `E:\0 - Project\Tavotto`（main@69bcafae，clean）未被触碰；计划 worktree `Tavotto-svg-computational-plan`（分支 zixu.wang/svg-computational-editing-plan@06d07acc）保持只读。
+- 本轮复核对象：实施分支 `7cbb0e6ed6746441fbf0d867b941a0fe79f7fa6f`，相对已缓存 `2bc94f7f` 共 24 个提交；工作树 clean。2026-11-04 两次 fetch 失败（连接关闭、SSH 公钥认证失败），远端最新状态未验证。
+- 本轮文档工作树：`E:\0 - Project\Tavotto-svg-next-phase`，分支 `zixu.wang/svg-computational-next-phase`，从上述实施快照创建；本轮不修改产品代码。
+- 本轮新证据目录：`E:\0 - Project\svg-review-20261104`。专项测试与独立反例均导入实施工作树源码；不是完整回归或发布资格。
 
-## 批次状态
+## 批次状态（2026-11-04 复核后；按原计划退出条件）
 
 | 批次 | 状态 | commits | 证据 |
 | --- | --- | --- | --- |
-| SG00 | passed | a046b799（计划）、9a271f9f | SG00-CAPABILITY-MAP.md；基线 331+41+94 绿 / skip 全定性 |
-| SG01 | passed | 见下方 SG01 提交 | SG01-EXPERIMENTS.md + ADR 0166；实验 exit 0 ×4 |
-| SG02 | passed | 2fa9841b | 契约+golden vectors 双侧同判；两处变异反证红（scene/data 摘要校验移除） |
-| SG03 | passed | f1406038+fmt | svgscene 盘点 + inspect 端点；反证红（绕过 svgcheck）；svg_assets 回归绿 |
-| SG04 | passed | d0c0d898 | svgadopt 采用判定；反证红（移除回执核对）；svgstore/export_svg 回归绿 |
-| SG05 | passed | ced09ecc | svgcoord 变换链（preserveAspectRatio 全语义/累积矩阵含 use 深度语义）+ clip/opacity 事实 |
-| SG06 | passed | 133d2bf7 | chartdata 类型化数据入口 + chartbind 校准/确认产物（经 chartmodel 同一合同） |
-| SG07 | passed(M1) | f505c216 | 脚手架+组合+worker 分发；热=冷字节一致；注释锚定/NaN 间断入口未完成（SG08+） |
-| SG08 | passed | 834c0053+f74757f5 | 类别轴/bar/errorbar/图例同步；vectors 14 条双侧同判 |
-| SG09 | passed(core) | d962ecae | 网格/热图绑定全链 + vectors 16 条双侧同判；极坐标/3D 等以信息前提登记（不冒充） |
-| SG10 | running(2/3) | 00de628a+c95bdb03+b4d229ab+c3d15aaf+b2688a39 | 端点/契约/api client/store 完成；Dialog 组件、PanelView 渲染接线、e2e 待做 |
+| SG00 | baseline_recorded | a046b799（计划）、9a271f9f | 能力清单和历史基线已有；远端新鲜度及最终候选回归需补证 |
+| SG01 | reopened | 见历史 SG01 提交 | 最终组合反例否定部分保真假设；并发/导出实验及 ADR 0166 边界需复核 |
+| SG02 | partial | 2fa9841b | 模型与 golden 已有；完整渲染身份、来源资源、兼容与持久化合同未闭合 |
+| SG03 | core_partial | f1406038+fmt | 场景盘点与 inspect 已有；资源生命周期及所有入口未接通 |
+| SG04 | core_partial | d0c0d898 | 采用判定 helper 已有；生产来源采用、语义元数据往返未接通 |
+| SG05 | partial / acceptance_failed | ced09ecc | 坐标工具已有；最终 pt/px 组合错位、无 id 节点失败，图元交互未实现 |
+| SG06 | core_partial | 133d2bf7 | 数据与绑定构造已有；真浏览器向导、多系列及独立轴表单未完成 |
+| SG07 | acceptance_failed | f505c216 | 专项绿；最终 SVG 旧刻度未更新、散点组合失败；不具备计算闭环资格 |
+| SG08 | partial / acceptance_failed | 834c0053+f74757f5 | bar/errorbar 脚手架已有；柱组合失败、误差棒丢失；完整族仍缺实现 |
+| SG09 | partial / acceptance_failed | d962ecae | 热图核心已有；最终色条未更新；极坐标/3D/双轴/inset 是产品待实现 |
+| SG10 | partial / not_integrated | 00de628a+c95bdb03+b4d229ab+c3d15aaf+b2688a39 | HTTP/client/store 已有；状态机反例未修，UI、渲染、命中、撤销接线与 E2E 未完成 |
 | SG11–SG17 | pending | — | — |
 
-## Checkpoint 追加
+## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-04 执行效果复核与下一阶段重排
+
+- 本轮实际运行：新增后端 10 个文件共 **112 passed / 0 skipped**；前端 store/golden **23 passed**；`pnpm --dir web build` exit 0。JUnit 与构建日志在本轮证据目录。未重跑完整现有套件、真实 SVG 编辑 E2E、桌面产物和跨平台验收。
+- 后端五类反例：范围变化后旧刻度保留；px/pt 的最终路径缩小至 75%；bar/scatter 组合失败、errorbar 丢误差；热图保留旧色条；无 XML id 的节点绑定成功后计算失败。复现脚本 exit 0 的含义是**五类缺陷均被观察到**，不是产品通过。
+- 前端三条独立反例：A 的迟到响应覆盖 B 场景；表单变化保留旧确认产物；预览失败仍满足当前 ready 判据。Vitest exit 1、3 条目标断言失败；store 尚无生产 UI 消费者，属于接线前缺陷。
+- 替换旧接续建议：不能仅增加 `ChartBindDialog` 就宣告 SG10 完成；不能把 `renderKeyOf + data_digest` 作为完整渲染身份；不能把“旧程序忽略 chart 字段”当成兼容证明。
+- 下一阶段先完成 R00–R04 的最终产物正确性和版本防串，再以 R05–R07 打通 B 路径实际保存/重开/导出；后续补齐 A/C、场景交互、全部适用图表族、写回、预检、入口和资格。详细依赖见 `NEXT_PHASE.md`。
+- 本轮仅修改评估与计划文档，未修复上述产品缺陷，未推送/合并/发布。历史 checkpoint 中的“通过”“已可用”只代表当时判断，不覆盖本次实际结果。
 
 ### 2026-11-04 SG09 核心通过（时间：UTC 04:4x）
 
