@@ -219,6 +219,10 @@ SHOT_PAGES: dict[str, str] = {
 }
 
 
+#: managed-cli：只收锁里的来源键（各走一次）或 all（依次全部）
+MANAGED_CLI_MODES = ("all", "npmjs", "mirror")
+
+
 TASKS: dict[str, Task] = {
     t.id: t
     for t in (
@@ -280,6 +284,22 @@ TASKS: dict[str, Task] = {
                 "MCP 由 venv 里的仓库 server.py 直接拉起，未经过插件的 mcp/launch 与插件安装路径",
                 "L4/L5 需要登录与真实模型调用：未获授权时一律 blocked，不推定",
                 "只覆盖 CLI，不覆盖桌面版 / IDE 宿主",
+            ),
+        ),
+        Task(
+            id="managed-cli",
+            kind="managed-cli",
+            summary="应用内托管安装 Codex 真机验收：按锁从指定来源下载、校验、解包、--version（不登录、不调模型）",
+            timeout_s=2400,
+            modes=MANAGED_CLI_MODES,
+            claim=(
+                "对每个来源：产品的 managedcli.provision 在 Lab（zh-CN、Defender 开、直连国内网络）上装出锁里那棵树"
+                "（独立复算 tree_sha256 一致）且 `--version` 报锁里的版本"
+            ),
+            unverified=(
+                "只验 codex 的托管安装；不经过界面里的「安装」按钮与进度条",
+                "直连一次的耗时不是速度结论；慢了换源的判据在单来源模式下不触发",
+                "Server 2025 不是 Windows 10 / 11 客户端",
             ),
         ),
         Task(
@@ -6429,6 +6449,47 @@ def run_page_shot_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
     }
 
 
+def run_managed_cli_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
+    """调仓库里的 `scripts/verify_managed_cli.py --source <mode>`（一次性数据目录、验完即删），读它最后一行 JSON。"""
+    if mode not in MANAGED_CLI_MODES:
+        return {"result": "error", "summary": f"unknown mode {mode!r}"}
+    script = lab.repo / "scripts" / "verify_managed_cli.py"
+    if not script.is_file():
+        return {
+            "result": "not_run",
+            "summary": "scripts/verify_managed_cli.py not in the prepared checkout",
+        }
+    ev = run_dir / "evidence"
+    work = run_dir / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    env = dict(env, TEMP=str(work), TMP=str(work))
+    argv = [str(lab.venv_python()), str(script), "--source", mode]
+    step = _run_logged(argv, lab.repo, env, ev / "verify", TASKS["managed-cli"].timeout_s - 60)
+    if step.get("spawn_error"):
+        return {"result": "environment_unavailable", "summary": step["spawn_error"], "step": step}
+    try:
+        lines = Path(f"{ev / 'verify'}.stdout.log").read_text(encoding="utf-8").strip().splitlines()
+        report = json.loads(lines[-1])
+    except (OSError, ValueError, IndexError):
+        return {
+            "result": "error",
+            "summary": f"no JSON from verifier (exit={step.get('exit_code')})",
+            "step": step,
+        }
+    results = report.get("results") or []
+    brief = "; ".join(
+        f"{r.get('source')}: {'ok' if r.get('ok') else r.get('error') or 'mismatch'} ({r.get('seconds')}s)"
+        for r in results
+    )
+    return {
+        "result": "passed" if report.get("ok") and step.get("exit_code") == 0 else "failed",
+        "summary": f"codex {report.get('version')} — {brief}",
+        "mode": mode,
+        "managed_cli": report,
+        "step": step,
+    }
+
+
 def _run_body(
     lab: Lab,
     task: Task,
@@ -6503,6 +6564,8 @@ def _run_body(
             model_conf or {},
             (pkg or {}).get("mode") or DESKTOP_LIVE_MODES[0],
         )
+    if task.kind == "managed-cli":
+        return run_managed_cli_task(lab, run_dir, env, (pkg or {}).get("mode") or "all")
     if task.kind == "installer":
         return run_installer_task(
             lab, run_dir, env, (pkg or {}).get("package", ""), (pkg or {}).get("from")
