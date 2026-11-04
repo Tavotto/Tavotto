@@ -643,7 +643,13 @@ def test_importing_the_flask_app_does_not_load_cryptography():
     )
     env = {**__import__("os").environ, "PYTHONPATH": str(ROOT / "src")}
     r = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=ROOT
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        cwd=ROOT,
     )
     assert r.returncode == 0, r.stdout + r.stderr
 
