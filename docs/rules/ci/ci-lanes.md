@@ -83,16 +83,23 @@ workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercor
 `cancel-in-progress` 恒为 `false`；同 PR 旧 SHA 的 run 由 job `cancel-superseded` 取消。
 事实：旧写法按 PR 号分组、PR 事件取消在跑的 run，同一 SHA 上出现第二个事件（推提交后补打 `full-ci`；
 `gh pr create --label a --label b` 的 opened + labeled；连打两个标签）就把已起 job 的第一个 run 整套取消，
-被取消 run 里 `if: always()` 的 CI fast gate / CI integration gate 以 FAILURE / CANCELLED 留在该 SHA 上，
-第二个 run 全绿后 required rollup 仍是 FAILURE + SUCCESS，PR 永久 BLOCKED，重跑翻不绿，只能推空提交换
-head。实证 5 个 PR：#1664 #1714 #1745 #1748 #1751；#1745 在 72b52b2c9 上 13:42:25 的 run 41840570035
-（29 job cancelled、gate FAILURE）被 13:43:15 labeled 的 run 41840677929 取消。Gate 侧修法（#1666，已关）
+被取消 run 里 `if: always()` 的 CI fast gate / CI integration gate 会以 FAILURE / CANCELLED 留在该 SHA
+上，check 列表里出现误导性的红，容易被当成真失败，进而触发误判、无谓的空提交与重跑。GitHub 最终按哪一次判定
+并未坐实（#1745 在 72b52b2c9 上第二个 run 的 gate 后完成、成功，PR 变 CLEAN；#1714 / #1748 当时卡住是在成功
+run 跑完前就动了手，不作证据）。实证：#1664 #1714 #1745 #1748 #1751 都出现过这种红；#1745 在 72b52b2c9 上
+13:44 的 run 41840570035（29 job cancelled、gate FAILURE）被 13:43:15 labeled 的 run 41840677929 取消。
+Gate 侧修法（#1666，已关）
 无效：被取消 run 里的 Gate 被记为 CANCELLED 而非 skipped。为什么现在的写法成立：同 SHA 的事件进同一个组，
 在跑的跑完，后来的至多一个 pending，更新的 pending 顶掉旧 pending；被顶掉的 run 从没起过 job，不产生
-check run，SHA 上不留红（草稿 PR 实证见该 PR 描述）。不同 SHA 不同组，新 push 立刻起跑。代价与补偿：
+check run，SHA 上不留红。不同 SHA 不同组，新 push 立刻起跑。代价与补偿：
 旧 SHA 的 run 不再被 concurrency 取消，由 `cancel-superseded`（只 pull_request、同仓库 PR、
 `continue-on-error`、不进任何 Gate 的 needs）取消同 PR 里 `head_sha` 不同的未完成 run；它失败只是旧 run
-多跑一会儿。merge_group / push 行为不变（本来就不取消）；`codeql.yml` 未改（默认三种 PR 事件类型，同 SHA
+多跑一会儿。
+探针实证（草稿 PR #1753，已关）：开 PR 带两个标签再补打 `full-ci`，同一 SHA 3ccb1fe 上共 4 个 CI run：
+2 个被顶掉的 pending（41845526864、41845527390）cancelled、0 个 job、没有 check run；run 41845526908 全绿
+（integration gate 14:24:21、fast gate 14:56:41 success，CodeQL gate success）；SHA 上没有任何失败的 gate。
+之后推新提交 ac808f167：新 run 里的 `cancel-superseded` success，旧 SHA 上已起 job 的 run 41845535389 被取消
+（旧 SHA 的 gate 15:02 failure，只落在被取代的旧 SHA 上，不影响新 head）。merge_group / push 行为不变（本来就不取消）；`codeql.yml` 未改（默认三种 PR 事件类型，同 SHA
 不会有第二个事件）。看护：`tests/test_merge_queue_workflows.py::TestPullRequestEventTypes::
 test_same_sha_events_queue_and_never_cancel_each_other`、`TestConcurrency`。
 
