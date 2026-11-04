@@ -68,10 +68,12 @@ import type {
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
-import type { ProjectFileBinding } from '@/lib/projectFile'
+import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
+import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
+  adoptSlotBaseline,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -656,7 +658,45 @@ export async function openLayoutDocument(
   doc: FigureDocument | ProjectDocument,
   projectFile?: ProjectFileBinding,
 ): Promise<boolean> {
-  if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return false
+  // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
+  // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
+  const ctx = captureSaveContext()
+  const skipped = (): false => {
+    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
+    return false
+  }
+  // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
+  let reuse: string | null = null
+  if (projectFile) {
+    const cur = useDocumentStore.getState().documentId
+    for (const id of findDocumentsForProjectFile(projectFile.projectId, projectFile.file)) {
+      // 在别的窗口 / 标签开着的不沿用：同一个文件开两次仍是两个会话（ADR 0096）
+      if (id === cur || !(await isDocHeldElsewhere(id))) {
+        reuse = id
+        break
+      }
+    }
+    if (!stillCurrent(ctx)) return skipped()
+  }
+  if (reuse) {
+    // 复核：探测期间别的窗口可能又改过这份（绑定被置 dirty），那就不盖它的槽位、给新身份
+    if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
+    else {
+      await adoptSlotBaseline(reuse)
+      if (!stillCurrent(ctx)) return skipped()
+      if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
+    }
+  }
+  let aborted = false
+  const beforeInstall = async (): Promise<boolean> => {
+    if (stillCurrent(ctx)) return true
+    aborted = true
+    return false
+  }
+  const installed = await useDocumentStore
+    .getState()
+    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall })
+  if (!installed) return aborted ? skipped() : false
   if (projectFile) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()
