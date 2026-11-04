@@ -1,3 +1,5 @@
+import {isSignatureStyle,styleOf} from './styles.ts';
+import type {SignatureStyle} from './styles.ts';
 // Input contract of TavottoClaPdf.build and its validation. Everything here is checked
 // before a single page is drawn: a PDF is never produced from inconsistent records.
 export interface AgreementInfo {kind:string;version:string;sha256:string;publishedUrl?:string;attribution?:string}
@@ -10,7 +12,7 @@ export interface Evidence {
 export interface BuildInput {
   agreement:AgreementInfo;contributor:Evidence;holder:Evidence;contributorSha256?:string;holderSha256?:string;
   /** Offline/test hooks. The signing page does not pass these. */
-  overrides?:{agreementPdf?:Uint8Array;font?:Uint8Array;rasterizer?:import('./raster.ts').Rasterizer;now?:Date;serviceHost?:string;timeoutMs?:number};
+  overrides?:{agreementPdf?:Uint8Array;font?:Uint8Array;fonts?:Partial<Record<SignatureStyle,Uint8Array>>;rasterizer?:import('./raster.ts').Rasterizer;now?:Date;serviceHost?:string;timeoutMs?:number};
 }
 export const KINDS:Record<string,{title:string;short:string;you:string}>={
   individual:{title:'Individual Contributor License Agreement',short:'Individual CLA',you:'You (Individual)'},
@@ -26,7 +28,7 @@ const fail=(code:string):never=>{throw new Error(code);};
 const text=(v:unknown,max:number)=>typeof v==='string' && v.trim()!=='' && v.length<=max;
 export interface Party {
   role:'contributor'|'holder';name:string;address:string;signature:string;login:string;githubId:number;signedAt:number;
-  confirmations:string[];fingerprint?:string;consent?:string;
+  confirmations:string[];fingerprint?:string;consent?:string;style:SignatureStyle;
 }
 /** Only these two optional fields may come from the (hash-verified) agreement PDF metadata. */
 export function validMeta(url:unknown,attribution:unknown):{publishedUrl?:string;attribution?:string} {
@@ -84,11 +86,12 @@ export function checkInput(input:BuildInput):{agreement:AgreementInfo;packet:str
     if(!att || typeof att!=='object' || Object.keys(att).length===0 || Object.values(att).some(v=>v!==true))fail('evidence_attestations_invalid');
     const fingerprint=e.evidence_sha256??extra;
     if(fingerprint!==undefined && (typeof fingerprint!=='string' || !HEX.test(fingerprint) || (e.evidence_sha256!==undefined && extra!==undefined && extra!==e.evidence_sha256)))fail('evidence_fingerprint_missing');
+    if(e.signature_style!==undefined && !isSignatureStyle(e.signature_style))fail('evidence_invalid');
     const consent=typeof e.consent_ui_version==='string' && /^[A-Za-z0-9._-]{1,20}$/.test(e.consent_ui_version)?e.consent_ui_version:undefined;
     const keys=Object.keys(att),known=Object.keys(CONFIRMATIONS);
     const ordered=[...known.filter(k=>keys.includes(k)),...keys.filter(k=>!known.includes(k)).sort()];
     return {role,name:e.name,address:e.address,signature:e.signature,login:e.github_login_at_signing,githubId:e.github_id,signedAt:e.signed_at_unix,
-      confirmations:ordered.map(k=>CONFIRMATIONS[k]??k),fingerprint,consent};
+      confirmations:ordered.map(k=>CONFIRMATIONS[k]??k),fingerprint,consent,style:styleOf(e.signature_style)};
   };
   const contributor=party('contributor',input.contributor,input.contributorSha256),holder=party('holder',input.holder,input.holderSha256);
   if(input.contributor.packet!==input.holder.packet)fail('evidence_packet_mismatch');
