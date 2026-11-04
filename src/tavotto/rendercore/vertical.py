@@ -42,10 +42,12 @@ from .typography import (
     _math_text_piece,
     _same_run,
     break_lines,
+    cjk_probe,
     coverage,
     shape_segment,
     text_params,
     text_plan,
+    user_text,
 )
 
 #: 直立（`Vertical_Orientation` = U / Tu / Tr）的码位区间，闭区间。UAX #50 的核心区段；
@@ -246,8 +248,9 @@ def layout(
                     else:
                         items.append(VItem("side", pos, piece.width, piece=piece))
                     pos += piece.width
-        logical = "".join(lg for _, sc, lg, _ in col if not (sc == MATH and slots is not None))
-        rendered += logical
+        body = [seg for seg in col if not (seg[1] == MATH and slots is not None)]
+        logical = user_text("".join(seg[2] for seg in body))
+        rendered += cjk_probe(body)
         offset = (
             (length - pos) / 2 if align == "center" else length - pos if align == "right" else 0.0
         )

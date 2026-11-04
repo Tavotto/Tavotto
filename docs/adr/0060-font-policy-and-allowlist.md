@@ -106,3 +106,18 @@ U06 的写入器只用到对象模型 / 流 / 序列化，这一半 pypdf 也做
 * `Image` / `ImportedPage` 的写入、透明组里的文字、栅格（PNG / TIFF）、`scope=original`：U07 / U08。
 * 多字形 cluster 里标记字形的 `y_offset` 不写（一个 Span 一个 `TJ` 的代价）；竖排 / bidi / 变量 / 彩色字体显式拒绝。
 * PDFium 把 CID 0 当空白：缺字在 PDFium 文字层里是空格——读取器规则，不在本轮修。
+
+---
+
+> **修订 2026-11-04（字母式符号展开）**：`℃`（U+2103）等字符 Liberation 12 张脸**都没有**，导出时按 §4 落到 cjk 层（Noto Sans SC，无衬线），
+> 而画布上浏览器用系统衬线字体画——衬线正文里的 `℃` 画布与导出不同族。在「受控科学文本解释」（`richtext.interpret_runs` ↔
+> `richText.ts interpretRuns`）里加第二类解释：**闭集** `LETTERLIKE_EXPANSION`（`℃`→`°C`、`℉`→`°F`、`K`(U+212A)→`K`、`Å`(U+212B)→`Å`(U+00C5)；
+> 依据是 fontTools 实测 12 张脸的 cmap：这四个码位全缺、展开后的 `° C F K Å` 全有；数学体字母 / 方块单位 / 全角拉丁语义会丢，不收）。
+> 字符不在正文脸、且展开后每个字符都在正文脸才展开，否则原样保留。**与合成上下标的区别**：上下标「auto 只救方框」是因为折叠改变了文本层字符、
+> 要用户明确选；这里 NFKC 等价、文本层仍经 `ShapedPiece.logical` → `GlyphRun.actual_text` 的**同一条** ActualText 路还成用户原文，所以 auto / scientific
+> **两档都生效**。raw text 永不改写；量宽 / 换行读展开后的字（`typography.interpreted_pieces` 在用户原文侧补 `ELIDED` 占位保持逐字符对齐，
+> 展开出来的字在逐字兜底换行时算一个字符、不被拆开）。**边界（照实）**：PDF 里认 ActualText 的读取器（PDFium / poppler / Acrobat）复制出 `℃`，
+> 不认的（macOS PDFKit）读字形文本 `°C`——与既有 `⁻²` → `-2` 同；SVG 的 `<text>` 取自字形簇，写 `°C`（既有合成上下标同样写 `-2`，SVG 不读 ActualText）。
+> 看护：`tests/test_glyph_plan.py::test_celsius_sign_in_serif_text_…`（导出页面上这几个字形用哪张脸 + 文本层）、
+> `test_rendercore_typography.py` 三条、`tests/golden/rich_text_vectors.json` 的 `interpret` 向量（pytest + vitest 各跑一遍）、表逐字对照
+> `test_the_letterlike_expansion_tables_are_identical_on_both_sides`。

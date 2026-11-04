@@ -412,6 +412,34 @@ SUBSCRIPT_BASE = {
     "\u209c": "t",
 }
 
+# ### 字母式符号展开（2026-11-04，ADR 0060 修订）
+#
+# 与上下标不同的第二类受控解释：有几个字符在 Unicode 里是「别的字符的兼容 /
+# 规范等价」，批准的正文脸却没有它们，导出时会落到 cjk 层（Noto Sans SC，无衬线）
+# 去画——衬线正文里夹一个无衬线的 `℃`，而画布上浏览器回退到系统衬线字体画，
+# 两边不一致。把它们**展开成正文脸里本来就有的字**（`℃` → `°C`）两边就一致了。
+#
+# 为什么两档（auto / scientific）都生效，与上下标「auto 只救方框」不同：上下标折成
+# 合成字形会让文本层的字符变样（`⁵` → `5`）所以要用户选；这里展开后文本层仍由
+# ActualText 还成用户原文（`℃`），语义不损、NFKC 等价，没有需要用户权衡的代价。
+#
+# **闭集 + 实测依据**（fontTools 读 Liberation Sans / Serif / Mono × Regular / Bold /
+# Italic / BoldItalic 共 12 张脸的 cmap）：下面四个码位 12 张脸**全都没有**，而展开后
+# 的每个字符（° C F K Å）12 张脸全都有。同类里**没收**的：
+#   * `ℝ ℂ ℕ ℤ ℏ ℓ…` 数学体字母：展开成 `R C N` 会丢掉「黑板粗体」这层含义；
+#   * `㎒ ㎏ ㎡ ㎜ ㏈…` 方块单位：是 CJK 全角格里的字，展开后 `m2` 之类会丢上标；
+#   * `Ｃ Ｆ` 全角拉丁：是 CJK 排版里有意占全角的字，不能擅自变半角；
+#   * `Ω`(U+2126)、`µ`(U+00B5)、`ℓ`(U+2113)、`№`、`™`：12 张脸都有，不需要。
+# 展开的字符不在正文脸、展开后每个字符都在正文脸才展开；否则原样保留。
+
+#: 字母式符号 → 展开。**闭集**，与 `richText.ts` 的 `LETTERLIKE_EXPANSION` 同源。
+LETTERLIKE_EXPANSION = {
+    "\u2103": "\u00b0C",  # ℃ → °C
+    "\u2109": "\u00b0F",  # ℉ → °F
+    "\u212a": "K",  # K（开尔文符号）→ K
+    "\u212b": "\u00c5",  # Å（埃符号）→ Å
+}
+
 #: 解释档位。**没有 `math` 这一档**：画布文字不经 matplotlib，摆一个不存在的
 #: 模式等于一句做不到的承诺（图内文字那侧的 `$…$` 才是 engine mathtext，
 #: 见 `web/src/lib/typography.ts` 的 `mathTextModeOf`）。
@@ -442,6 +470,9 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
     `is_primary(codepoint)`  正文那张脸自己画得出这个字吗
     `is_drawable(codepoint)` 任何一层画得出吗（False = 导出上是个方框）
     `mode`                   `auto`（只救方框）/ `scientific`（一律合成）
+
+    另有「字母式符号展开」（`℃` → `°C`）：不在正文脸、展开后全在正文脸的才展开，
+    两档都生效（理由见上方同名一节）。
 
     判据缺席（任一个是 `None`）时**一条都不折**——不猜一张默认覆盖表出来。
 
@@ -476,6 +507,15 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
         i = 0
         text = run.text
         while i < len(text):
+            expansion = LETTERLIKE_EXPANSION.get(text[i])
+            if (
+                expansion is not None
+                and not is_primary(ord(text[i]))
+                and all(is_primary(ord(c)) for c in expansion)
+            ):
+                emit(expansion, "", run)  # 两档都生效：见上方「字母式符号展开」
+                i += 1
+                continue
             script = _script_of(text[i])
             if not script:
                 emit(text[i], "", run)

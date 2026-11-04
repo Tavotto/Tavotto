@@ -40,7 +40,8 @@ order: 330
 - **文字只有一条路**：`typography` 用同一份 shaped plan 量宽与落笔（RC-030）；分层只剩
   primary / cjk / missing——**没有 fallback 脸**，画不出的字进问题系统（`CompiledPage.problems`
   的 `glyph_missing`），不暗中回退系统脸；合成上下标（`⁵` → 上标 `5`）的用户原文随
-  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓。
+  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓；字母式符号展开（`℃` → `°C`，`richtext.LETTERLIKE_EXPANSION`，ADR 0060 修订 2026-11-04）走同一条 ActualText 路、两档都生效，
+  换行单元里用户原文侧补 `typography.ELIDED` 占位保持逐字符对齐（交给 `ShapedPiece.logical` 前 `user_text()` 去掉）。
   换行 / 对齐 / 行高 / 上下标 /
   下划线的用户合同逐句来自旧 `_draw_text`，改这些先改前端 TextView 那一侧的同一语义。
 - **源产物冻结一次、核两次**：`sources.StaticSourceResolver` 只认「磁盘原件 + 无 override」，
