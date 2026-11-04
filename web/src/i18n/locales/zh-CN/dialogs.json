@@ -797,7 +797,7 @@
     "snapshotTitle": "本项目实际检查的规则",
     "unspecified": "未规定",
     "adviceHint": "建议 {{pt}} pt",
-    "defaultHint": "按默认 {{value}} {{unit}} 检查",
+    "defaultHint": "默认 {{value}} {{unit}}",
     "unset": "未设置",
     "useForProject": "本项目用这套规范",
     "usedForProject": "本项目改按「{{name}}」检查",

@@ -1521,7 +1521,7 @@ export default interface Resources {
       "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
       "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
       "copyOf": "{{name}} 副本",
-      "defaultHint": "按默认 {{value}} {{unit}} 检查",
+      "defaultHint": "默认 {{value}} {{unit}}",
       "delete": "删除",
       "deleteBody": "已使用它的项目不受影响，各自保留独立副本。",
       "deleteTitle": "删除「{{name}}」？",

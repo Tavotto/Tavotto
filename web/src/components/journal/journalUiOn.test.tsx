@@ -102,7 +102,7 @@ describe('期刊入口已打开', () => {
     expect(rules.textContent).not.toContain('null')
   })
 
-  it('期刊有自己的栏位表：栏宽一格列出它自己的栏位；分辨率由底兜底时写「未规定」+ 小字「按默认 300 dpi 检查」', async () => {
+  it('期刊有自己的栏位表：栏宽一格列出它自己的栏位；分辨率由底兜底时写「未规定」+ 小字「默认 300 dpi」', async () => {
     useDocumentStore.getState().commit(literal('换期刊'), (d) => {
       d.profile = pickJournal('fx-cols-inherit', loadCatalog(vectors.catalog), { pageW: 150 }).binding
     })
@@ -121,7 +121,7 @@ describe('期刊入口已打开', () => {
     expect(rules.querySelectorAll('dd')).toHaveLength(3)
     const dpi = [...rules.querySelectorAll('div')].find((d) => d.textContent?.includes('最低分辨率'))!
     expect(dpi.querySelector('dd')?.textContent).toBe('未规定')
-    expect(dpi.querySelector('[data-key-rule-default]')?.textContent).toMatch(/按默认 300 dpi 检查/)
+    expect(dpi.querySelector('[data-key-rule-default]')?.textContent).toMatch(/默认 300 dpi/)
   })
 
   it('期刊只有单栏 / 双栏：四个数照旧（栏宽两格）', async () => {
