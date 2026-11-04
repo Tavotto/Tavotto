@@ -280,6 +280,14 @@ def test_a_file_reached_through_a_directory_link_into_ssh_is_refused(home):
     )
 
 
+_POSIX_DOTDOT = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 的 Win32 路径在打开前先按字面折叠 `..` 再跟链接：`keys\\..\\x` 真的读 `x` 旁边那个，"
+    "桥对 NT 路径同样先折叠，两边一致；「链接后再 ..」的落点差只在 POSIX 上存在",
+)
+
+
+@_POSIX_DOTDOT
 def test_dotdot_after_a_directory_link_is_resolved_where_the_script_lands(home):
     """`keys -> ~/.ssh/subdir` 时 `keys/../notes.txt` 实际读 `~/.ssh/notes.txt`：真实路径不能先折叠 `..`
     再解析（Codex #1757 r4473502316）。相对、绝对两支都拦。"""
@@ -296,6 +304,7 @@ def test_dotdot_after_a_directory_link_is_resolved_where_the_script_lands(home):
     assert bridge._argv_path_escapes(str(keys) + "/../notes.txt", roots_now, cwds)
 
 
+@_POSIX_DOTDOT
 def test_dotdot_after_a_directory_link_cannot_leave_explicit_roots(home, tmp_path, monkeypatch):
     project = home / "papers" / "figs"
     outside = tmp_path / "elsewhere" / "deep"
