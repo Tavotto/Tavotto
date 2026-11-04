@@ -148,3 +148,19 @@ Noto Sans SC（`cjk`；等宽配黑体是常规做法）。认不出的族走默
 引用的字体程序，三族各一）、`test_typography_families.py::test_the_cjk_face_follows_the_family`、
 `test_rendercore_fonts.py::test_the_two_cjk_faces_differ_only_in_a_few_rare_codepoints`。反证：把 `_CJK_FAMILY_OF` 清空（衬线也取 Sans）
 上面几条变红。
+
+---
+
+> **修订 2026-11-04（字母式符号展开）**：`℃`（U+2103）等字符 Liberation 12 张脸**都没有**，导出时按 §4 落到 cjk 层（当时只有 Noto Sans SC，无衬线；§7 之后衬线族是 Noto Serif SC），
+> 而画布上浏览器用系统字体画——`℃` 的字形画布与导出不同，宽度也跟着变。在「受控科学文本解释」（`richtext.interpret_runs` ↔
+> `richText.ts interpretRuns`）里加第二类解释：**闭集** `LETTERLIKE_EXPANSION`（`℃`→`°C`、`℉`→`°F`、`K`(U+212A)→`K`、`Å`(U+212B)→`Å`(U+00C5)；
+> 依据是 fontTools 实测 12 张脸的 cmap：这四个码位全缺、展开后的 `° C F K Å` 全有；数学体字母 / 方块单位 / 全角拉丁语义会丢，不收）。
+> 字符不在正文脸、且展开后每个字符都在正文脸才展开，否则原样保留；「正文脸」按批准字体的**静态覆盖表**（`canvas_coverage.json`，与画布 `layerOf` 同一份）判，
+> 原图字体（ADR 0164）自带 `℃` 时也照表展开——画布不知道用户字体的 cmap，两边要做同一个决定。**与合成上下标的区别**：上下标「auto 只救方框」是因为折叠改变了文本层字符、
+> 要用户明确选；这里 NFKC 等价、文本层仍经 `ShapedPiece.logical` → `GlyphRun.actual_text` 的**同一条** ActualText 路还成用户原文，所以 auto / scientific
+> **两档都生效**。raw text 永不改写；量宽 / 换行读展开后的字（`typography.interpreted_pieces` 在用户原文侧补 `ELIDED` 占位保持逐字符对齐，
+> 展开出来的字在逐字兜底换行时算一个字符、不被拆开）。**边界（照实）**：PDF 里认 ActualText 的读取器（PDFium / poppler / Acrobat）复制出 `℃`，
+> 不认的（macOS PDFKit）读字形文本 `°C`——与既有 `⁻²` → `-2` 同；SVG 的 `<text>` 取自字形簇，写 `°C`（既有合成上下标同样写 `-2`，SVG 不读 ActualText）。
+> 看护：`tests/test_glyph_plan.py::test_celsius_sign_in_serif_text_…`（导出页面上这几个字形用哪张脸 + 文本层）、
+> `test_rendercore_typography.py` 三条、`tests/golden/rich_text_vectors.json` 的 `interpret` 向量（pytest + vitest 各跑一遍）、表逐字对照
+> `test_the_letterlike_expansion_tables_are_identical_on_both_sides`。
