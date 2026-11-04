@@ -344,3 +344,9 @@ test('the signature style is a choice of four, previews the typed name, and is s
   const sign=b.calls.find(call=>call.url==='/sign');assert.ok(sign,'sign must be called');
   const evidence=JSON.parse(sign.options.body).evidence;assert.equal(evidence.signature_style,'pen');assert.equal(evidence.signature,'Shang Moqi');
 });
+
+test('when an unavailable record was open, the picker stays visible so the contributor can choose their one record',async()=>{
+  const b=await browser({stored:ID(7),states:{[ID(1)]:status(),[ID(7)]:{error:'packet_unavailable'}}});
+  assert.equal(b.elements.get('packets').value,'');assert.equal(b.elements.get('record-picker').hidden,false);
+  assert.ok([...b.elements.get('packets').options].some(o=>o.value===ID(1)));
+});

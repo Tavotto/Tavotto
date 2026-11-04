@@ -261,9 +261,9 @@ export function client():void {
     if(legendEl)legendEl.textContent=t('legend');for(const {words,key} of consentLabels)words.textContent=t('a_'+key);
     text('sign',holder?t('signHolder'):t('signContributor'));
     show('withdraw-open',!!state?.canHold);
-    // A contributor only ever deals with "sign again" when their last signing lapsed; the record list is for the holder
-    // and for accounts with more than one record.
-    show('restart',canCreate());show('sign-form',!canCreate());show('record-picker',holder || $<HTMLSelectElement>('packets').options.length>2 || !!nextCursor);
+    // A contributor only ever deals with "sign again" when their last signing lapsed; the record list is for the holder,
+    // for accounts with more than one record, and whenever records exist but none is selected (so "choose" is possible).
+    show('restart',canCreate());show('sign-form',!canCreate());show('record-picker',holder || (!state && hasPackets) || $<HTMLSelectElement>('packets').options.length>2 || !!nextCursor);
     if(state){
       text('contributor-state',signedBy('contributor')?t('signed'):t('notSigned'));
       const delegated=state.delegated;
