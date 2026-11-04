@@ -640,6 +640,30 @@ def test_external_edit_of_both_after_first_replace_keeps_external_versions(
     _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": b"EXTERNAL-NEW-PNG"})
 
 
+def test_external_edit_right_after_replace_is_not_taken_as_ours(client, tmp_path, monkeypatch):
+    """PDF 刚 replace 完、记发布身份之前外部就改了它，接着 PNG 复核失败要回滚：发布身份必须是暂存文件
+    的那一版，外部 PDF 保留，不拿备份覆盖（Codex #1697 P1：替换之后才取指纹会把外部版本当成自己的）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = Path.replace
+
+    def replace(self, target):
+        r = real(self, target)
+        if Path(target).name == "Fig1.pdf":
+            _bump(figs / "Fig1.pdf", b"EXTERNAL-NEW-PDF")
+            _bump(figs / "Fig1.png", b"EXTERNAL-NEW-PNG")
+        return r
+
+    monkeypatch.setattr(Path, "replace", replace)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "source_changed"
+    assert body["kept_external"] == ["Fig1.pdf"]
+    _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": b"EXTERNAL-NEW-PNG"})
+
+
 def test_untouched_sources_still_write_back_normally(client, tmp_path, monkeypatch):
     figs = _figs(tmp_path)
     hot, fresh = _pair(figs, tmp_path)

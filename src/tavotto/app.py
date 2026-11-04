@@ -9812,7 +9812,7 @@ def _write_source_files(
     )
     updated: list[str] = []
     done: list[Path] = []
-    published: dict[Path, tuple[int, int] | None] = {}  # 各目标替换成功那一刻的身份
+    published: dict[Path, tuple[int, int] | None] = {}  # 各目标发布的那一版的身份（暂存文件替换前）
     try:
         with remap_guard:
             # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
@@ -9841,6 +9841,9 @@ def _write_source_files(
                         ) from exc
                     exc.kept_external = kept
                     raise
+                # 发布身份取自 replace **之前**的暂存文件：rename 保留 mtime / size，而 replace 之后再 stat
+                # 目标，中间若有外部写入，记下的就是外部那一版，回滚核对会放行、拿备份盖掉它（Codex #1697 P1）
+                staged = _source_fingerprint([tmp])[tmp]
                 try:
                     tmp.replace(target)
                 except OSError as exc:
@@ -9851,7 +9854,7 @@ def _write_source_files(
                         target.name, str(exc), failed + kept, rolled, failed, kept
                     ) from exc
                 done.append(target)
-                published[target] = _source_fingerprint([target])[target]
+                published[target] = staged
                 updated.append(target.name)
     except engine_inputremap.RemapChanged:
         _discard_updating(tmps)
