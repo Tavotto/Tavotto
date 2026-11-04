@@ -22,6 +22,13 @@ rl = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = rl  # dataclass 要按模块名找回自己
 spec.loader.exec_module(rl)
 
+#: 这些用例在 tmp_path 里造 macOS 式的相对符号链接（含跨目录、经目录链接的链）。Windows 跑器上
+#: `os.symlink` 对这类链接报 EINVAL / 缺权限——而被测的还原本来只在 macOS 的 .app 上跑，接线看护照常全平台跑。
+needs_posix_symlinks = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="还原符号链接只发生在 macOS 的 .app 上；Windows 跑器造不出这类链接",
+)
+
 BIG = os.urandom(300 * 1024)  # 随机字节：既过 256 KB 门槛，也不会被误当成「全零同内容」
 
 
@@ -67,6 +74,7 @@ def _links(root: Path) -> list[str]:
     )
 
 
+@needs_posix_symlinks
 def test_fixture_reproduces_the_duplicates(trees):
     """反证的另一半：没还原时，check 必须红（否则下面的绿什么都证明不了）。"""
     _src, app, sidecar = trees
@@ -75,6 +83,7 @@ def test_fixture_reproduces_the_duplicates(trees):
     assert rl.main(["check", "--app", str(app)]) == 1
 
 
+@needs_posix_symlinks
 def test_relink_restores_pyinstaller_layout_and_removes_duplicates(trees):
     src, app, sidecar = trees
     rep = rl.relink(src, sidecar)
@@ -90,6 +99,7 @@ def test_relink_restores_pyinstaller_layout_and_removes_duplicates(trees):
     assert rl.main(["check", "--app", str(app)]) == 0
 
 
+@needs_posix_symlinks
 def test_relink_is_idempotent(trees):
     src, _app, sidecar = trees
     rl.relink(src, sidecar)
@@ -97,6 +107,7 @@ def test_relink_is_idempotent(trees):
     assert again.relinked == [] and again.created == [] and again.saved_bytes == 0
 
 
+@needs_posix_symlinks
 def test_relink_never_replaces_a_file_whose_content_differs(trees):
     src, _app, sidecar = trees
     victim = sidecar / "_internal" / "libqpdf.dylib"
@@ -106,6 +117,7 @@ def test_relink_never_replaces_a_file_whose_content_differs(trees):
     assert not victim.is_symlink() and victim.read_bytes().startswith(b"xxxxxxxxxx")
 
 
+@needs_posix_symlinks
 def test_runtime_subtree_is_not_judged(trees):
     """runtime/ 与 sidecar 自带库同名同内容是有意分离：check 不看这棵树。"""
     src, app, sidecar = trees
@@ -116,6 +128,7 @@ def test_runtime_subtree_is_not_judged(trees):
     assert rl.main(["check", "--app", str(app)]) == 0
 
 
+@needs_posix_symlinks
 def test_hardlinks_count_as_one_copy(trees):
     src, _app, sidecar = trees
     rl.relink(src, sidecar)
@@ -125,6 +138,7 @@ def test_hardlinks_count_as_one_copy(trees):
     assert rl.find_duplicates(sidecar) == []
 
 
+@needs_posix_symlinks
 def test_links_pointing_outside_the_tree_are_skipped(tmp_path):
     src = tmp_path / "dist" / "Tavotto"
     (src / "_internal").mkdir(parents=True)
