@@ -35,6 +35,41 @@ export function validMeta(url:unknown,attribution:unknown):{publishedUrl?:string
   if(text(attribution,200))out.attribution=attribution as string;
   return out;
 }
+/** One underlined line of the agreement's own signature block, in PDF points (origin bottom-left); y is the line's upper edge. */
+export interface FieldBox {page:number;x:number;y:number;w:number;printed?:true}
+export interface PartyFields {signature:FieldBox;name:FieldBox;date:FieldBox;address:FieldBox[];title?:FieldBox;github?:FieldBox}
+export interface SignatureFields {contributor:PartyFields;holder:PartyFields}
+const REQUIRED:Record<'contributor'|'holder',string[]>={contributor:['signature','name','address','date','github'],holder:['signature','name','title','address','date']};
+/**
+ * `fields` of the (hash-verified) agreement PDF meta, strictly checked against the real page sizes. Anything off
+ * (missing key, unknown key, non-finite or out-of-page number, bad page index) returns undefined and the caller
+ * falls back to the separate Signatures page: a position is never guessed or clamped.
+ */
+export function validFields(raw:unknown,pages:{width:number;height:number}[]):SignatureFields|undefined {
+  const obj=(v:unknown):Record<string,unknown>|undefined=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:undefined;
+  const box=(v:unknown):FieldBox|undefined=>{
+    const o=obj(v);if(!o)return undefined;
+    if(Object.keys(o).some(k=>!['page','x','y','w','printed'].includes(k)) || (o.printed!==undefined && o.printed!==true))return undefined;
+    const {page,x,y,w}=o;
+    if(typeof page!=='number' || typeof x!=='number' || typeof y!=='number' || typeof w!=='number' || !Number.isInteger(page) || ![x,y,w].every(Number.isFinite))return undefined;
+    const pg=pages[page];
+    if(!pg || x<0 || y<=0 || w<20 || x+w>pg.width || y>=pg.height)return undefined;
+    return o.printed?{page,x,y,w,printed:true}:{page,x,y,w};
+  };
+  const party=(role:'contributor'|'holder'):PartyFields|undefined=>{
+    const o=obj(obj(raw)?.[role]);if(!o)return undefined;
+    const need=REQUIRED[role];if(Object.keys(o).length!==need.length || need.some(k=>!(k in o)))return undefined;
+    const out:Record<string,unknown>={};
+    for(const k of need){
+      if(k==='address'){const a=o.address;if(!Array.isArray(a) || a.length<1 || a.length>3)return undefined;const boxes=a.map(box);if(boxes.some(b=>!b))return undefined;out.address=boxes;}
+      else{const b=box(o[k]);if(!b)return undefined;out[k]=b;}
+    }
+    return out as unknown as PartyFields;
+  };
+  const o=obj(raw);if(!o || Object.keys(o).length!==2)return undefined;
+  const contributor=party('contributor'),holder=party('holder');
+  return contributor && holder?{contributor,holder}:undefined;
+}
 export function checkInput(input:BuildInput):{agreement:AgreementInfo;packet:string;contributor:Party;holder:Party} {
   const a=input?.agreement;
   if(!a || typeof a!=='object' || !KINDS[a.kind] || !text(a.version,40) || !HEX.test(a.sha256) || (a.publishedUrl!==undefined && (!text(a.publishedUrl,500) || !/^https:\/\//.test(a.publishedUrl))) ||
