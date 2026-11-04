@@ -49,11 +49,13 @@ export async function syncJournalCatalog(force = false): Promise<void> {
   try {
     const have = store.catalog.catalog_rev
     const reply = (await post('/api/journal-catalog/sync', { have, force, locale: currentLocale() })) as SyncReply
-    if (Array.isArray(reply.loaded)) store.setLoaded(reply.loaded.filter((x): x is string => typeof x === 'string'))
+    const loaded = Array.isArray(reply.loaded) ? reply.loaded.filter((x): x is string => typeof x === 'string') : null
     // 倒退（后端的缓存比本机已有的旧）不采信；没有目录本体 = 无更新
     if (reply.catalog && typeof reply.rev === 'number' && reply.rev >= have) {
-      store.setCatalog(reply.catalog, REMOTE_ASSET_BASE)
+      // `loaded` 只在目录本体也被采信时才记：它报的刊必须是本机手里有内容的刊（目录没被采信 = 手里还是旧的）
+      if (store.setCatalog(reply.catalog, REMOTE_ASSET_BASE)) return
     }
+    if (loaded) store.setLoaded(loaded)
   } catch {
     /* 离线 / 后端没响应：保持现状 */
   }
@@ -76,7 +78,8 @@ export async function ensureJournalReady(journalId: string): Promise<EnsureOutco
     if (reply.state === 'ready') {
       const b = reply.bundle
       if (b) {
-        const cur: JournalCatalog = store.catalog
+        // await 之后重新读当前目录再并入：两次下载重叠时，先完成的那本不能被后完成的用旧快照盖掉
+        const cur: JournalCatalog = useJournalCatalogStore.getState().catalog
         const merged = {
           ...cur,
           publishers: { ...cur.publishers, [b.publisher_id]: b.publisher },

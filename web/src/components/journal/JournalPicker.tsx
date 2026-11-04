@@ -21,6 +21,13 @@ const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
+ * 选择序号（模块级，选择器卸载后也还在）：每次点选 / 点「不按期刊」加一。下载要等网络，等的时候选择器仍可交互、
+ * 设置也能关掉、项目也能换——回来时序号变了（被新选择取代）或文档变了，这次结果丢弃，不去改别人的绑定与页宽
+ * （web/AGENTS.md「会在项目之间存活的 store 都有项目代际」：请求序号挡旧响应、发请求那一刻的归属挡串项目）。
+ */
+let pickSeq = 0
+
+/**
  * 期刊选择器：可搜索（名称 / 缩写 / ISSN），按出版社分组。选中 = `selectJournal`（一次提交：绑定 + 页宽跟栏，
  * 撤销一步全回去）。目录空（种子为空且没有缓存）时只有一行中性的话，不写任何解释。
  */
@@ -37,7 +44,11 @@ export function JournalPicker() {
   const choose = async (id: string) => {
     // 远程目录里还没下载的刊：先向服务端取这一本的标准（种子 / 已下载的不发请求）。
     // 额度用完 → 这本刊暂时按「不按期刊」；没网又没缓存 → 保持现状。两种都只用一条胶囊提示。
+    const seq = ++pickSeq
+    const docId = useDocumentStore.getState().documentId
     const ready = await ensureJournalReady(id)
+    // 等下载时被新选择取代，或文档已经换了：丢弃（下载下来的刊包已并入目录，那是目录的事，与绑定无关）
+    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
     if (ready.state !== 'ready') {
       if (ready.state === 'quota') clearJournal()
       useUiStore
@@ -110,6 +121,7 @@ export function JournalPicker() {
                 aria-selected={!ref}
                 data-journal-none
                 onClick={() => {
+                  pickSeq++
                   clearJournal()
                   setOpen(false)
                 }}

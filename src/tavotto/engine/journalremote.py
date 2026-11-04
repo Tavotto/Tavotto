@@ -562,8 +562,10 @@ def _result(fetch: str, have: int, code: str | None = None, *, cache: Cached | N
         "fetch": fetch,
         "code": code,
         "rev": rev,
-        # 目录本体只在缓存比调用方手里的新时才随回复发出（前端空缓存 have=0 时取回缓存）
-        "catalog": cache.catalog if cache and rev > have else None,
+        # 目录本体在缓存比调用方手里的新时随回复发出（前端空缓存 have=0 时取回缓存）；缓存里有已下载的刊包时也带——
+        # 刊包是 Agent / 另一个标签页随时可能下载的，`catalog_rev` 不变而内容变了，调用方凭 `have` 看不出来，
+        # 而 `loaded` 只许报调用方已拿到内容的刊（否则前端会把骨架当成可用的标准）
+        "catalog": cache.catalog if cache and (rev > have or cache.bundles) else None,
         "loaded": cache.loaded_ids() if cache else [],
     }
 
@@ -700,6 +702,7 @@ def _download_bundle(base: str, index: dict, jid: str) -> dict:
     url = f"{base}journals/{quote(jid, safe='')}?rev={rev}"
     renewed = False
     resynced = False
+    fresh_index_raw: bytes | None = None
     while True:
         tok = _token(base)
         status, body = _call("GET", url, entry["bytes"], {"X-Tavotto-Device": tok})
@@ -713,11 +716,11 @@ def _download_bundle(base: str, index: dict, jid: str) -> dict:
             )  # 服务端不认旧令牌：换一枚新的再试一次（对方已换过则直接用）
             continue
         if err.code == "stale_rev" and not resynced:
-            # 服务端已换了版本：重取索引（不计数），刊包哈希可能变了，用新索引再试一次
+            # 服务端已换了版本：重取索引（不计数），刊包哈希可能变了，用新索引再试一次。
+            # 新索引只暂存：整份候选目录（含这次的刊包）校验通过后才替换旧缓存，不过则旧缓存原样
             resynced = True
             raw, index = _fetch_index(base)
-            cache_dir().mkdir(parents=True, exist_ok=True)
-            atomicio.write_bytes(cache_dir() / INDEX_NAME, raw)
+            fresh_index_raw = raw
             rev, entry = index["catalog_rev"], index["journals"].get(jid, {}).get("bundle")
             if entry is None:
                 raise RemoteCatalogError("unknown_journal") from err
@@ -728,6 +731,11 @@ def _download_bundle(base: str, index: dict, jid: str) -> dict:
     assemble(
         index, {**bundles_on_disk(index), jid: bundle}
     )  # 拼进整份目录再校验一遍；不过则整包作废、不落盘
+    if fresh_index_raw is not None:
+        # 候选目录校验已过：现在才替换旧索引（并清掉新索引不再引用的旧刊包）
+        cache_dir().mkdir(parents=True, exist_ok=True)
+        atomicio.write_bytes(cache_dir() / INDEX_NAME, fresh_index_raw)
+        _prune(index)
     d = cache_dir() / "bundles"
     d.mkdir(parents=True, exist_ok=True)
     atomicio.write_bytes(d / f"{entry['sha256']}.json", body)

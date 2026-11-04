@@ -671,3 +671,38 @@ def test_cryptography_is_imported_only_inside_the_verify_function():
                 mods = [a.name for a in n.names] if isinstance(n, ast.Import) else [n.module or ""]
                 assert not any(m.split(".")[0] == "cryptography" for m in mods), path
     assert set(offenders) == {("src/tavotto/engine/journalremote.py", "_ed25519_verify")}, offenders
+
+
+# ---------------------------------------------------------------- Codex 评审 PR #1756 的两条后端意见
+
+
+def test_stale_rev_with_an_uncheckable_new_catalog_keeps_the_old_cache(env):
+    """新索引签名对、结构过关，但整份候选目录校验不过（另一本刊的 aliases 非法）：旧缓存必须原样，离线照样可用。"""
+    jr.sync(force=True)
+    jr.ensure_journal("fx-alpha")
+    before = (jr.cache_dir() / jr.INDEX_NAME).read_bytes()
+    bad = _catalog(6)
+    bad["journals"]["fx-gamma"]["aliases"] = "not-a-list"
+    env.files = build_site(bad, rev=6)
+    env.rev = 6
+    out = jr.ensure_journal("fx-beta")
+    assert out["state"] == "rejected"
+    assert (jr.cache_dir() / jr.INDEX_NAME).read_bytes() == before
+    cached = jr.load_cached()
+    assert cached is not None and cached.rev == 5
+    assert "fx-alpha" in cached.bundles  # 已下载的刊包也没被清掉
+    env.offline = True
+    assert jr.ensure_journal("fx-alpha")["state"] == "ready"
+
+
+def test_sync_reply_carries_the_catalog_when_downloaded_bundles_exist_even_at_the_same_rev(env):
+    """浏览器手里是 rev 5 的骨架；Agent 随后下载了某刊。下次浏览器带 have=5 同步：rev 没变，但回复必须带目录，
+    否则 `loaded` 报了这本刊、前端手里却是没有规则的骨架。"""
+    jr.sync(force=True)
+    skeleton_only = jr.sync(force=True, have=5)
+    assert skeleton_only["catalog"] is None and skeleton_only["loaded"] == []
+    assert jr.ensure_journal("fx-beta")["state"] == "ready"  # Agent / 另一个标签页下载
+    out = jr.sync(force=True, have=5)
+    assert "fx-beta" in out["loaded"]
+    assert out["catalog"] is not None
+    assert "rules" in out["catalog"]["journals"]["fx-beta"]

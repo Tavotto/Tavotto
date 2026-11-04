@@ -108,6 +108,16 @@ describe('syncJournalCatalog', () => {
   })
 })
 
+describe('syncJournalCatalog 与 loaded', () => {
+  it('目录本体没被采信（校验不过）时，不记 loaded：手里还是旧的，不能说某刊已可用', async () => {
+    const bad = skeleton(5)
+    ;(bad.journals as Json)['fx-beta'] = { label: '', publisher: 'nope' }
+    reply = () => ({ fetch: 'updated', rev: 5, catalog: bad, loaded: ['fx-beta'] })
+    await syncJournalCatalog()
+    expect(useJournalCatalogStore.getState().loaded).toBeNull()
+  })
+})
+
 describe('ensureJournalReady', () => {
   const remote = () => {
     useJournalCatalogStore.getState().setCatalog(skeleton(5), REMOTE_ASSET_BASE)
@@ -179,5 +189,35 @@ describe('ensureJournalReady', () => {
     reply = () => ({ state: 'ready', bundle: b })
     expect((await ensureJournalReady('fx-beta')).state).toBe('rejected')
     expect((useJournalCatalogStore.getState().catalog.journals['fx-beta'] as unknown as Json).rules).toBeUndefined()
+  })
+
+  it('两次下载重叠：后完成的并入的是最新目录，先完成的那本不丢', async () => {
+    remote()
+    const full = cat(5) as unknown as { publishers: Record<string, unknown>; journals: Record<string, Json> }
+    const bundleFor = (id: string) => ({
+      journal_id: id,
+      journal: full.journals[id],
+      publisher_id: full.journals[id].publisher as string,
+      publisher: full.publishers[full.journals[id].publisher as string],
+    })
+    const releases = new Map<string, () => void>()
+    vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+      const id = (JSON.parse(String(init.body)) as Json).id as string
+      return new Promise<Response>((resolve) => {
+        releases.set(id, () => resolve(new Response(JSON.stringify({ state: 'ready', bundle: bundleFor(id) }), { status: 200 })))
+      })
+    })
+    const a = ensureJournalReady('fx-zeta')
+    const b = ensureJournalReady('fx-beta')
+    await vi.waitFor(() => expect(releases.size).toBe(2))
+    releases.get('fx-zeta')!()
+    await a
+    releases.get('fx-beta')!()
+    await b
+    const s = useJournalCatalogStore.getState()
+    const hasRules = (id: string) => Object.keys(((s.catalog.journals[id] as unknown as Json).rules ?? {}) as Json).length > 0
+    expect(hasRules('fx-zeta')).toBe(true)
+    expect(hasRules('fx-beta')).toBe(true)
+    expect(s.loaded?.has('fx-zeta') && s.loaded?.has('fx-beta')).toBe(true)
   })
 })
