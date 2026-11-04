@@ -49,6 +49,8 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
         pages[0]={actor,packets:[{id:createID},...pages[0].packets],nextCursor:pages[0].nextCursor};
       }else if(url==='/intents')result={intent:'SYNTHETIC-INTENT'};
       else if(url==='/sign')result={revision:1};
+      else if(url==='/release'){const id=JSON.parse(options.body).packet;result={revision:2};
+        states[id]={...states[id],released:true,canRelease:false,block:{...states[id].block,releasedAt:1800000000}};}
       else throw Error('UNEXPECTED_API '+url);
       return {ok:true,json:async()=>structuredClone(result)};
     }};
@@ -349,4 +351,43 @@ test('when an unavailable record was open, the picker stays visible so the contr
   const b=await browser({stored:ID(7),states:{[ID(1)]:status(),[ID(7)]:{error:'packet_unavailable'}}});
   assert.equal(b.elements.get('packets').value,'');assert.equal(b.elements.get('record-picker').hidden,false);
   assert.ok([...b.elements.get('packets').options].some(o=>o.value===ID(1)));
+});
+
+const holder={id:1,login:'synthetic-holder',role:'holder'},DAY0=1700000000;
+const withdrawn=(extra={})=>status(ID(1),{blocked:true,released:false,canHold:false,canRelease:true,block:{packet:ID(1),heldAt:DAY0,releasedAt:null},...extra});
+test('the rights holder can release a withdrawn record only after ticking the review box',async()=>{
+  const b=await browser({pages:[{actor:holder,packets:[{id:ID(1)}],nextCursor:null}],states:{[ID(1)]:withdrawn({actor:holder})}});
+  assert.equal(b.elements.get('release-panel').hidden,false);assert.equal(b.elements.get('release-form').hidden,false);
+  assert.match(b.elements.get('release-note').textContent,/^已于 .*2023.* 撤回。和对方核对过之后，可以允许对方重新签署。$/);
+  assert.equal(b.elements.get('release').textContent,'允许重新签署');assert.equal(b.elements.get('t-release-confirm').textContent,'我已和贡献者核对过');
+  await b.click('release');assert.ok(b.calls.every(call=>call.url!=='/release'),'no request without the confirmation');assert.match(b.elements.get('message').textContent,/personal_confirmation_required/);await b.click('refresh');
+  b.elements.get('release-confirm').checked=true;await b.click('release');
+  const call=b.calls.find(x=>x.url==='/release');assert.deepEqual(JSON.parse(call.options.body),{packet:ID(1)});
+  assert.equal(b.elements.get('release-form').hidden,true);assert.equal(b.elements.get('release-confirm').checked,false);
+  assert.match(b.elements.get('release-note').textContent,/^已于 .* 解除，对方现在可以重新签一份。$/);
+  assert.equal(b.elements.get('create').disabled,true);
+});
+test('the release panel reads in English and appears for nobody but the holder on a withdrawn record',async()=>{
+  const h=await browser({language:'en-GB',pages:[{actor:holder,packets:[{id:ID(1)}],nextCursor:null}],states:{[ID(1)]:withdrawn({actor:holder})}});
+  assert.match(h.elements.get('release-note').textContent,/^Withdrawn on .*2023.*\. After you have talked it through with them, you can let them sign again\.$/);
+  assert.equal(h.elements.get('release').textContent,'Allow signing again');assert.equal(h.elements.get('t-release-confirm').textContent,'I have reviewed this with the contributor');
+  assert.match(h.elements.get('t-withdraw-body').textContent,/until a maintainer has talked it through with you\.$/);
+  const c=await browser({states:{[ID(1)]:withdrawn()}});assert.equal(c.elements.get('release-panel').hidden,true);assert.equal(c.elements.get('restart').hidden,true);
+  const fine=await browser({pages:[{actor:holder,packets:[{id:ID(1)}],nextCursor:null}],states:{[ID(1)]:status(ID(1),{actor:holder})}});assert.equal(fine.elements.get('release-panel').hidden,true);
+  const done=await browser({language:'en-GB',pages:[{actor:holder,packets:[{id:ID(1)}],nextCursor:null}],states:{[ID(1)]:withdrawn({actor:holder,released:true,canRelease:false,block:{packet:ID(1),heldAt:DAY0,releasedAt:DAY0+86400}})}});
+  assert.match(done.elements.get('release-note').textContent,/^Released on .*2023.*\. They can now sign a new agreement\.$/);assert.equal(done.elements.get('release-form').hidden,true);
+});
+test('a contributor whose withdrawal was released sees Sign again; an unreleased or unknown hold does not allow it',async()=>{
+  const b=await browser({states:{[ID(1)]:withdrawn({released:true,canRelease:false,block:{packet:ID(1),heldAt:DAY0,releasedAt:DAY0+1},completed:true,current:true,signatures:[{role:'contributor'},{role:'holder'}]})}});
+  assert.equal(b.elements.get('restart').hidden,false);assert.equal(b.elements.get('sign-form').hidden,true);assert.equal(b.elements.get('create').disabled,false);
+  assert.equal(b.elements.get('t-restart-hint').textContent,'维护者已和你核对过撤回的事。点下面重新签一次，需要重新阅读和确认。');
+  assert.equal(b.elements.get('release-panel').hidden,true);
+  await b.click('create');assert.equal(b.calls.filter(call=>call.url==='/packets').length,1);assert.equal(b.elements.get('packets').value,ID(99));
+  assert.equal(b.elements.get('t-restart-hint').textContent.includes('维护者'),false);
+  const en=await browser({language:'en-GB',states:{[ID(1)]:withdrawn({released:true,canRelease:false})}});
+  assert.equal(en.elements.get('t-restart-hint').textContent,'The maintainer has reviewed your withdrawal with you. Sign again here; you will read and confirm everything afresh.');
+  for(const extra of [{released:false},{released:undefined},{blocked:undefined,released:true}]){
+    const x=await browser({states:{[ID(1)]:withdrawn(extra)}});assert.equal(x.elements.get('create').disabled,true);assert.equal(x.elements.get('restart').hidden,true);
+  }
+  const lapsed=await browser();assert.match(lapsed.elements.get('t-restart-hint').textContent,/7 天/);
 });

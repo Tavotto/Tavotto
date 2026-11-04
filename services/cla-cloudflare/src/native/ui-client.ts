@@ -40,8 +40,10 @@ export function client():void {
     thanksHolderTitle:'Countersigned. Thank you.',thanksHolderLede:'Both signatures are on the record. The contributor can now download their signed PDF, and their next push will pass the CLA check.',thanksHolderLedeNoPdf:'Both signatures are on the record. The contributor’s next push will pass the CLA check.',
     pdf:'Download signed PDF',records:'Technical records',recordsHint:'Machine-readable evidence for this record: the exact agreement text, its fingerprint and the chosen party’s signature. Only the two parties can download it.',
     dlContributor:'Contributor evidence',dlHolder:'Rights holder evidence',dlAudit:'Delegation audit',
-    withdrawOpen:'Withdraw my signature…',withdrawTitle:'Withdraw your signature?',withdrawBody:'Your pull requests will stop passing the CLA check. You will not be able to sign again yourself afterwards: a maintainer has to review it with you first.',
+    withdrawOpen:'Withdraw my signature…',withdrawTitle:'Withdraw your signature?',withdrawBody:'Your pull requests will stop passing the CLA check. You will not be able to sign again until a maintainer has talked it through with you.',
     withdrawNote:'This does not undo the licence already granted for contributions you made before today.',withdrawConfirm:'I understand, and I want to withdraw.',withdrawCancel:'Keep my signature',withdraw:'Withdraw',
+    releaseNote:'Withdrawn on {0}. After you have talked it through with them, you can let them sign again.',releaseConfirm:'I have reviewed this with the contributor',release:'Allow signing again',
+    releasedNote:'Released on {0}. They can now sign a new agreement.',restartReleasedHint:'The maintainer has reviewed your withdrawal with you. Sign again here; you will read and confirm everything afresh.',mReleased:'They can sign again now.',
     foot:'Questions about the agreement? Write to contact@tavotto.com. A real person reads every message.',foot2:'If a step seems stuck, choose Refresh first. Nothing is ever signed or sent again automatically.',
     mFailed:'That did not go through ({0}). Choose Refresh to check what was saved; if you have not signed yet, read, tick and submit again yourself. Nothing is resent automatically.',
     mLoadFailed:'The agreement or your identity could not be loaded ({0}). Sign in again or refresh later; signing stays unavailable until then.',
@@ -86,8 +88,10 @@ export function client():void {
     thanksHolderTitle:'已联署，谢谢。',thanksHolderLede:'双方签名都已记录。贡献者现在可以下载签署好的 PDF，下一次推送就会通过 CLA 检查。',thanksHolderLedeNoPdf:'双方签名都已记录。贡献者的下一次推送就会通过 CLA 检查。',
     pdf:'下载签署 PDF',records:'技术记录',recordsHint:'这条记录的机器可读证据：精确的协议全文、指纹和所选一方的签署。只有双方可以下载。',
     dlContributor:'贡献者证据',dlHolder:'权利人证据',dlAudit:'限定授权审计',
-    withdrawOpen:'撤回我的签署…',withdrawTitle:'确定撤回签署吗？',withdrawBody:'撤回后，你的 Pull Request 将不再通过 CLA 检查，而且你之后不能自己重新签署，需要维护者先和你一起核对。',
+    withdrawOpen:'撤回我的签署…',withdrawTitle:'确定撤回签署吗？',withdrawBody:'撤回后，你的 Pull Request 将不再通过 CLA 检查。撤回后，需要维护者和你核对过，你才能重新签署。',
     withdrawNote:'撤回不会收回你此前贡献已经授予的许可。',withdrawConfirm:'我明白后果，确定撤回。',withdrawCancel:'保留签署',withdraw:'撤回',
+    releaseNote:'已于 {0} 撤回。和对方核对过之后，可以允许对方重新签署。',releaseConfirm:'我已和贡献者核对过',release:'允许重新签署',
+    releasedNote:'已于 {0} 解除，对方现在可以重新签一份。',restartReleasedHint:'维护者已和你核对过撤回的事。点下面重新签一次，需要重新阅读和确认。',mReleased:'对方现在可以重新签署了。',
     foot:'对协议有疑问？请写信到 contact@tavotto.com，每一封都有人亲自阅读。',foot2:'如果某一步像是卡住了，先点「刷新」。系统从不自动重签或重复提交。',
     mFailed:'操作没有确认完成（{0}）。请先点「刷新」核对已保存的内容；确认尚未签署后，再自己重新阅读、勾选并提交。系统不会自动重发。',
     mLoadFailed:'无法读取协议或你的身份（{0}）。请重新登录或稍后刷新；在此之前签署保持不可用。',
@@ -107,7 +111,7 @@ export function client():void {
     't-style-signature':'style_signature','t-style-formal':'style_formal','t-style-pen':'style_pen','t-style-hand':'style_hand','t-record-title':'recordTitle','t-restart-hint':'restartHint','t-packets':'packets',create:'create','packets-more':'more',
     't-contributor':'contributor','t-holder':'holder','download-pdf':'pdf','t-records':'records','t-records-hint':'recordsHint','download-contributor':'dlContributor',
     'download-holder':'dlHolder','download-audit':'dlAudit','withdraw-open':'withdrawOpen','t-withdraw-title':'withdrawTitle','t-withdraw-body':'withdrawBody',
-    't-withdraw-note':'withdrawNote','t-withdraw-confirm':'withdrawConfirm','withdraw-cancel':'withdrawCancel',hold:'withdraw','t-foot':'foot','t-foot-2':'foot2'};
+    't-withdraw-note':'withdrawNote','t-withdraw-confirm':'withdrawConfirm','withdraw-cancel':'withdrawCancel',hold:'withdraw',release:'release','t-release-confirm':'releaseConfirm','t-foot':'foot','t-foot-2':'foot2'};
   let consentLabels:Array<{input:HTMLInputElement;words:HTMLElement;key:string}>=[],legendEl:HTMLElement|null=null,docInfo:any=null;
   const csrf=()=>document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('__Host-cla-csrf='))?.split('=')[1] ?? '';
   async function api(path:string,body?:unknown){
@@ -120,11 +124,12 @@ export function client():void {
   const hasPdf=()=>cap?.signedPdf===true;
   const bothSigned=()=>signedBy('contributor') && signedBy('holder');
   const canCreate=()=>cap.signingEnabled && cap.actor?.role==='contributor' && (!state?!hasPackets:
-    state.actor?.id===cap.actor.id && state.packet?.subject===cap.actor.id && state.completed===false && state.blocked===false &&
-    Number.isSafeInteger(state.now) && Number.isSafeInteger(state.packet.valid_until) && state.packet.valid_until<=state.now);
+    state.actor?.id===cap.actor.id && state.packet?.subject===cap.actor.id && (state.blocked===true && state.released===true ||
+    state.completed===false && state.blocked===false && Number.isSafeInteger(state.now) && Number.isSafeInteger(state.packet.valid_until) && state.packet.valid_until<=state.now));
   function controls(){
     ($('sign') as HTMLButtonElement).disabled=busy || uncertain || !state?.canSign;
     ($('hold') as HTMLButtonElement).disabled=busy || uncertain || !state?.canHold;
+    ($('release') as HTMLButtonElement).disabled=busy || uncertain || !state?.canRelease;
     ($('create') as HTMLButtonElement).disabled=busy || uncertain || !canCreate();
     ($('packets-more') as HTMLButtonElement).disabled=busy || uncertain || !nextCursor;
     ($('login') as HTMLButtonElement).disabled=busy || !cap.oauthEnabled;
@@ -212,7 +217,7 @@ export function client():void {
   function clearConsent(){($('signature') as HTMLInputElement).value='';renderStyles();
     document.querySelectorAll<HTMLInputElement>('#attestations input').forEach(x=>{x.checked=false;});}
   function clearPersonalFields(){
-    $<HTMLInputElement>('name').value='';$<HTMLTextAreaElement>('address').value='';$<HTMLInputElement>('hold-confirm').checked=false;show('withdraw-panel',false);
+    $<HTMLInputElement>('name').value='';$<HTMLTextAreaElement>('address').value='';$<HTMLInputElement>('hold-confirm').checked=false;$<HTMLInputElement>('release-confirm').checked=false;show('withdraw-panel',false);
   }
   function discardPacket(){
     packet='';state=null;clearConsent();sessionStorage.removeItem('cla.packet');history.replaceState(null,'','/');
@@ -263,6 +268,11 @@ export function client():void {
     show('withdraw-open',!!state?.canHold);
     // A contributor only ever deals with "sign again" when their last signing lapsed; the record list is for the holder,
     // for accounts with more than one record, and whenever records exist but none is selected (so "choose" is possible).
+    // Only the rights holder is offered the release; the contributor just sees "Sign again" once it has happened.
+    const block=holder && state?.blocked===true?state.block:null,day=(sec:number)=>new Date(sec*1000).toLocaleDateString(lang==='zh'?'zh-CN':'en-GB',{dateStyle:'long'});
+    show('release-panel',!!block && Number.isSafeInteger(block.heldAt));show('release-form',!!state?.canRelease);
+    if(block && Number.isSafeInteger(block.heldAt))text('release-note',Number.isSafeInteger(block.releasedAt)?t('releasedNote',day(block.releasedAt)):t('releaseNote',day(block.heldAt)));
+    if(canCreate() && state?.blocked===true)text('t-restart-hint',t('restartReleasedHint'));
     show('restart',canCreate());show('sign-form',!canCreate());show('record-picker',holder || (!state && hasPackets) || $<HTMLSelectElement>('packets').options.length>2 || !!nextCursor);
     if(state){
       text('contributor-state',signedBy('contributor')?t('signed'):t('notSigned'));
@@ -343,6 +353,9 @@ export function client():void {
     const result=await api('/sign',{packet,intent,role,evidence:input});clearConsent();$<HTMLFormElement>('sign-form').reset();await refresh();
     message(result.countersignature==='recorded'?'mSignedDelegated':result.countersignature==='pending_manual_review'?'mSignedManual':'mSigned');
   });};
+  $('release').onclick=()=>void action(async()=>{if(!$<HTMLInputElement>('release-confirm').checked)throw new Error('personal_confirmation_required');
+    if(!state?.canRelease || typeof state.block?.packet!=='string')throw new Error('release_unavailable');
+    await api('/release',{packet:state.block.packet});$<HTMLInputElement>('release-confirm').checked=false;await refresh();message('mReleased');});
   $('hold').onclick=()=>void action(async()=>{if(!$<HTMLInputElement>('hold-confirm').checked)throw new Error('personal_confirmation_required');
     const intent=(await api('/intents',{packet,role:'hold'})).intent;await api('/hold',{packet,intent});clearConsent();clearPersonalFields();await refresh();
     message('mHeld');});

@@ -190,3 +190,11 @@ CREATE TRIGGER head_request_identity BEFORE UPDATE ON head_requests WHEN NEW.req
 CREATE TRIGGER head_revision AFTER UPDATE OF revision ON state BEGIN
  UPDATE head_requests SET status='pending',attempt='',lease_until=0,result='' WHERE status IN ('done','running');
 END;
+
+-- Append-only, holder-only release of one hold. The block and every signature stay untouched; a release only
+-- stops that block counting against packets created strictly after it (see blockedSQL in store.ts).
+CREATE TABLE eligibility_releases (
+ packet TEXT PRIMARY KEY REFERENCES eligibility_blocks(packet), actor INTEGER NOT NULL CHECK(actor>0), created INTEGER NOT NULL
+);
+CREATE TRIGGER releases_update BEFORE UPDATE ON eligibility_releases BEGIN SELECT RAISE(ABORT,'immutable'); END;
+CREATE TRIGGER releases_delete BEFORE DELETE ON eligibility_releases BEGIN SELECT RAISE(ABORT,'immutable'); END;

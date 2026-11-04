@@ -125,6 +125,14 @@ export class LiveService {
     await this.store.assertReady();
     return {revision:await this.store.holdAtomic(s,p,await sha256(nonce),await this.store.revision(),await this.store.databaseNow())};
   }
+  async release(token:string,csrf:string,origin:string|null,packet:string):Promise<{revision:number}> {
+    this.signing(); const s=await this.authorize(token,csrf,origin),p=await this.packetFor(s,packet);
+    if(s.actor!==this.c.holderId)throw new Rejected('release_rejected');
+    await this.store.assertReady(); const held=await this.store.holdState(p.id);
+    if(!held || held.released_at!==null)throw new Rejected('release_not_held');
+    // A release is not a signature: nothing becomes eligible until the contributor signs a new packet.
+    return {revision:await this.store.releaseAtomic(s,p,await this.store.revision(),await this.store.databaseNow())};
+  }
   private async evidenceRecord(p:Packet,row:SignatureRow):Promise<Record<string,unknown>> {
     // Completion can qualify after the deadline, but both signatures must have
     // actually been recorded within that packet's original signing interval.
@@ -157,7 +165,7 @@ export class LiveService {
     const rows=await this.store.signatures(p.id),personal=[];
     for(const row of rows)personal.push(await this.evidenceRecord(p,row));
     const contributor=rows.find(row=>row.role==='contributor' && row.actor===p.subject);
-    const delegated=contributor?await this.delegation.audit(p,contributor,await this.store.subjectBlocked(p.subject)):null;
+    const delegated=contributor?await this.delegation.audit(p,contributor,!!await this.store.packetBlock(p)):null;
     // Expiry/account changes during the bounded export cannot retain an old authorization to read.
     await this.packetFor(await this.session(token),id);
     if(await this.store.revision()!==revision)throw new Rejected('state_changed');
@@ -172,7 +180,7 @@ export class LiveService {
   }
   async status(token:string,id:string):Promise<unknown> {
     const s=await this.session(token),p=await this.packetFor(s,id);
-    const revision=await this.store.revision(),rows=await this.store.signatures(p.id),blocked=await this.store.subjectBlocked(p.subject);
+    const revision=await this.store.revision(),rows=await this.store.signatures(p.id),block=await this.store.packetBlock(p),blocked=!!block;
     for(const row of rows)await this.evidenceRecord(p,row);
     const personalCompleted=await this.store.completed(p.id),contributor=rows.find(row=>row.role==='contributor' && row.actor===p.subject);
     let delegated={recorded:false,current:false,state:'none',canAudit:false,executedAt:0,expiresAt:0};
@@ -184,10 +192,11 @@ export class LiveService {
     if(delegated.current && observed>=delegated.expiresAt)delegated={...delegated,current:false,state:'expired'};
     if(await this.store.revision()!==revision)throw new Rejected('state_changed');
     const completed=personalCompleted || delegated.current,current=packetAgreementMatches(this.c,p) && (completed || currentPacket(this.c,p,observed)),role=s.actor===this.c.holderId?'holder':'contributor';
-    return {packet:p,completed,personalCompleted,delegated,signingDeadline:p.valid_until,actor:{id:s.actor,login:s.login,role},revision,now:observed,blocked,current,
+    return {packet:p,completed,personalCompleted,delegated,signingDeadline:p.valid_until,actor:{id:s.actor,login:s.login,role},revision,now:observed,blocked,
+      released:blocked && block!.released_at!==null,block:block?{packet:block.packet,heldAt:block.held_at,releasedAt:block.released_at}:null,current,
       signatures:rows.map(r=>({role:r.role,actor:r.actor,created:r.created})),
       canSign:this.c.signingEnabled && currentPacket(this.c,p,observed) && !personalCompleted && !blocked && !rows.some(r=>r.role===role) && (role==='contributor' || rows.some(r=>r.role==='contributor')),
-      canHold:this.c.signingEnabled && !blocked};
+      canHold:this.c.signingEnabled && !blocked,canRelease:this.c.signingEnabled && role==='holder' && block?.released_at===null};
   }
   async packets(token:string,cursor?:string):Promise<unknown> {
     const s=await this.session(token);
