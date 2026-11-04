@@ -48,9 +48,28 @@ def verify_one(name: str, key: str, base: Path) -> dict:
     data = base / f"data-{key}"
     os.environ["TAVOTTO_DATA_DIR"] = str(data)
     out: dict = {"source": key, "host": one.sources[0].host, "expected_id": cli.id}
+    # root_dir 在 `cli/<名>/` 不存在时会去 MSIX 宿主私有区搬已有安装（Windows），那样 provision 不下载就回「已装」，
+    # 不通的来源也会被报成通过。先建好这个目录（路径与 root_dir 同源：data_dir()/DIRNAME/名）挡住搬迁。
+    (mc.config.data_dir() / mc.DIRNAME / name).mkdir(parents=True, exist_ok=True)
+    downloads = 0
+    real_download = mc._download
+
+    def counting_download(*a, **kw):
+        nonlocal downloads
+        downloads += 1
+        return real_download(*a, **kw)
+
     t0 = time.monotonic()
     try:
-        entry = Path(mc.provision(name, cli=one))
+        mc._download = counting_download
+        try:
+            entry = Path(mc.provision(name, cli=one))
+        finally:
+            mc._download = real_download
+        out["downloads"] = downloads
+        if downloads < 1:
+            out.update(ok=False, error="no_download", seconds=round(time.monotonic() - t0, 1))
+            return out
         out["seconds"] = round(time.monotonic() - t0, 1)
         installed = entry.parent
         while installed.parent.name != name:  # entry = <root>/<name>/<id>/<entrypoint 的相对路径>
