@@ -397,4 +397,6 @@ def stamp(profile: dict) -> dict:
     if profile.get("journal"):
         out["journal"] = profile["journal"]
         out["derived_from"] = profile.get("derived_from")
+    if profile.get("journal_ref"):
+        out["journal_ref"] = profile["journal_ref"]
     return out

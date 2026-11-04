@@ -151,6 +151,7 @@ OPTIONAL_ENGINE_MODULES = (
     "envadvice",
     "envlease",
     "execspec",
+    "journals",
     "runconfig",
     "scriptargs",
 )
@@ -164,6 +165,63 @@ def _optional_engine(name: str):
         return importlib.import_module(f"tavotto.engine.{name}")
     except ImportError:
         return None
+
+
+#: Agent 入口用到的引擎 API。旧引擎可能已有 `journals` 模块（桌面期刊库）却没有这几个——缺任何一个都当「关」
+JOURNAL_AGENT_API = ("agents_enabled", "select_for_agent", "search_journals")
+
+
+def _journal_agent_module():
+    """开着且新 API 齐全的 `journals` 模块；旧引擎（没模块 / 缺 API）或开关关着 → None。绝不抛 AttributeError。"""
+    journals = _optional_engine("journals")
+    if journals is None:
+        return None
+    if not all(callable(getattr(journals, name, None)) for name in JOURNAL_AGENT_API):
+        return None
+    return journals if journals.agents_enabled() else None
+
+
+def journal_catalog_enabled() -> bool:
+    """Agent 侧能不能用内置期刊库：引擎里的总开关（与桌面 `JOURNAL_CATALOG_UI` 同值，ADR 0155 §9）。
+    旧引擎没有 `journals` 模块、或有模块却缺新 API = 关。"""
+    return _journal_agent_module() is not None
+
+
+def list_journals(query: str | None = None) -> dict:
+    """只读：期刊库的期刊（`id/label/publisher/aliases`）与 `catalog_rev`；`query` 模糊过滤。"""
+    journals = _journal_module()
+    try:
+        return journals.search_journals(query)
+    except engine_profiles.ProfileError as exc:  # JournalCatalogError 是它的子类
+        raise BridgeError(str(exc), code=getattr(exc, "code", "journal_catalog_schema")) from exc
+
+
+def _journal_module():
+    journals = _journal_agent_module()
+    if journals is None:
+        raise BridgeError(
+            "期刊标准库对 Agent 的入口尚未开放；这次没有改动任何设置。",
+            code="journal_catalog_disabled",
+        )
+    return journals
+
+
+def journal_selection(
+    profile_id: str | None, journal: dict | None, journal_id: str | None
+) -> tuple[str | None, dict | None, dict | None]:
+    """`journal_id` → `(journal-base-v1, 折出的覆盖, journal_ref)`；没给就原样放行。解析全在引擎。"""
+    if journal_id is None:
+        return profile_id, journal, None
+    journals = _journal_agent_module()
+    if journals is None:
+        raise BridgeError(
+            "期刊标准库对 Agent 的入口尚未开放；这次没有改动任何设置。",
+            code="journal_catalog_disabled",
+        )
+    try:
+        return journals.select_for_agent(journal_id, profile_id, journal)
+    except engine_profiles.ProfileError as exc:  # JournalCatalogError 是它的子类
+        raise BridgeError(str(exc), code=getattr(exc, "code", "unknown_profile")) from exc
 
 
 def engine_features() -> list[str]:
@@ -1492,6 +1550,7 @@ def open_figure(
     stem: str | None = None,
     profile_id: str | None = None,
     journal: dict | None = None,
+    journal_id: str | None = None,
     include_png: bool = False,
     workdir: str | None = None,
     prepare_dependencies: str | None = None,
@@ -1550,10 +1609,13 @@ def open_figure(
     # internal error（调用方分诊不了），从 preflight 进来才是可读的 code。
     # 用户自建的规范也要认得（`profilestore.resolve_spec` 是「任意 id → 规范」
     # 的唯一入口；`engine_profiles.load` 只读内置那份 canonical JSON）。
+    profile_id, journal, journal_ref = journal_selection(profile_id, journal, journal_id)
     try:
         profile = engine_profilestore.resolve_spec(profile_id, journal)
     except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
+    if journal_ref:
+        profile = {**profile, "journal_ref": journal_ref}
 
     session = _live_session_for(project, chosen, getattr(run, "config_id", None))
     reused = session is not None
@@ -1611,6 +1673,8 @@ def open_figure(
         "profile": engine_profiles.stamp(profile),
         **render,
     }
+    if profile.get("journal_ref"):
+        out["journal_ref"] = profile["journal_ref"]
     if session.run_info is not None:
         out["run_config"] = session.run_info
     if adopted is not None:
@@ -1697,6 +1761,7 @@ def open_figures(
     discover: bool = False,
     profile_id: str | None = None,
     journal: dict | None = None,
+    journal_id: str | None = None,
     workdir: str | None = None,
 ) -> dict:
     """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
@@ -1709,6 +1774,8 @@ def open_figures(
     继续 `tavotto_apply_overrides` / `tavotto_export`，与单开出来的会话没有任何
     区别。失败那张带着稳定 code 与它自己的 stem 名回来。
     """
+    # journal_id 的错（关着 / 冲突 / 未知）是整次调用的错：在开任何一张之前报，不逐张重复
+    journal_selection(profile_id, journal, journal_id)
     ctx = _resolve_project(target, None)
     if workdir is not None:
         # 首开那一次回答是**项目级**的：批量与单张同一处记账，在开任何一张之前落地
@@ -1752,7 +1819,13 @@ def open_figures(
             )
             continue
         try:
-            one = open_figure(ctx.project, stem=stem, profile_id=profile_id, journal=journal)
+            one = open_figure(
+                ctx.project,
+                stem=stem,
+                profile_id=profile_id,
+                journal=journal,
+                journal_id=journal_id,
+            )
         except BridgeError as exc:
             failed.append(_failure_entry(stem, exc))
             continue
@@ -2306,15 +2379,22 @@ def preview_png(session: Session, patches: list, width_px: int) -> str:
 
 
 # -------------------------------- 预检 --------------------------------------
-def resolve_profile(session: Session, profile_id: str | None, journal: dict | None) -> dict:
+def resolve_profile(
+    session: Session,
+    profile_id: str | None,
+    journal: dict | None,
+    journal_id: str | None = None,
+) -> dict:
+    profile_id, journal, ref = journal_selection(profile_id, journal, journal_id)
     if profile_id is None and journal is None:
         return session.profile
     try:
-        return engine_profilestore.resolve_spec(
+        profile = engine_profilestore.resolve_spec(
             profile_id or session.profile["profile_id"], journal
         )
     except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
+    return {**profile, "journal_ref": ref} if ref else profile
 
 
 def export_raster_issues(profile: dict, formats: list[str] | None, dpi: int | None) -> list[dict]:
@@ -2363,6 +2443,7 @@ def run_preflight(
     *,
     profile_id: str | None = None,
     journal: dict | None = None,
+    journal_id: str | None = None,
     export_formats: list[str] | None = None,
     export_dpi: int | None = None,
 ) -> dict:
@@ -2371,7 +2452,7 @@ def run_preflight(
         raise BridgeError(
             "会话还没有 manifest（先 apply 一次 override 或重新 open）", code="no_manifest"
         )
-    profile = resolve_profile(session, profile_id, journal)
+    profile = resolve_profile(session, profile_id, journal, journal_id)
     spec = engine_preflight.spec_from_manifest(
         session.manifest, panel_id=session.stem, kind="pdf", scale=1.0
     )
@@ -2417,7 +2498,15 @@ def run_preflight(
         "needs_confirm": bool(summary["blocking"] or summary["not_verifiable"]),
         "report": format_preflight(session, profile, issues, summary),
     }
-    if profile_id is None and journal is None and not export_formats and export_dpi is None:
+    if profile.get("journal_ref"):
+        out["journal_ref"] = profile["journal_ref"]
+    if (
+        profile_id is None
+        and journal is None
+        and journal_id is None
+        and not export_formats
+        and export_dpi is None
+    ):
         # 默认参数那一档缓存到会话上：open 刚算过一遍，画布随后经
         # `session_state()` 取快照时不必再等一次（大图的预检是十秒级）。
         # 键 = patch_hash + profile 印章，两者任一变了就作废（见 Session 注释）。
@@ -2482,6 +2571,7 @@ def export(
     out_dir: str | None = None,
     profile_id: str | None = None,
     journal: dict | None = None,
+    journal_id: str | None = None,
     explicit_confirm: bool = False,
     proof: bool = True,
     acceptance: dict | None = None,
@@ -2528,7 +2618,7 @@ def export(
     # 默认格式取**这次调用的** profile，不是会话打开时那份：调用方带了
     # `profile_id` 或期刊覆盖时，预检与 proof 盖的都是新 profile 的章，
     # 而格式却还按旧的来——一份说「默认出 SVG」的覆盖会静默出成 PDF+PNG。
-    call_profile = resolve_profile(session, profile_id, journal)
+    call_profile = resolve_profile(session, profile_id, journal, journal_id)
     if not fmts:
         fmts = list(call_profile["preferred_formats"]["export_default"])
     try:
@@ -2539,7 +2629,12 @@ def export(
         raise BridgeError(f"dpi 必须为正: {dpi}", code="bad_dpi")
 
     checks = run_preflight(
-        session.id, profile_id=profile_id, journal=journal, export_formats=fmts, export_dpi=dpi
+        session.id,
+        profile_id=profile_id,
+        journal=journal,
+        journal_id=journal_id,
+        export_formats=fmts,
+        export_dpi=dpi,
     )
     if checks["needs_confirm"] and not explicit_confirm:
         raise BridgeError(
@@ -2836,6 +2931,7 @@ def export(
         "files": files,
         "patch_hash": session.patch_hash(),
         "profile": checks["profile"],
+        **({"journal_ref": checks["journal_ref"]} if checks.get("journal_ref") else {}),
         "warnings": list(job.warnings),
         "preflight": {
             k: checks[k]
@@ -2966,6 +3062,8 @@ def _proof_bytes(
         "files": paths,
         "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    if checks.get("journal_ref"):
+        payload["journal_ref"] = checks["journal_ref"]
     if normalize is not None:
         payload["normalize"] = normalize
     return json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
@@ -3042,6 +3140,7 @@ def _normalize_figure(
     out_dir: str | None = None,
     profile_id: str | None = None,
     journal: dict | None = None,
+    journal_id: str | None = None,
     replay_check: bool = False,
     evidence: bool = False,
 ) -> dict:
@@ -3063,7 +3162,7 @@ def _normalize_figure(
         want = engine_normalize.normalize_targets(targets)
     except engine_normalize.NormalizeError as exc:
         raise BridgeError(str(exc), code=exc.code, **exc.extra) from exc
-    profile = resolve_profile(session, profile_id, journal)
+    profile = resolve_profile(session, profile_id, journal, journal_id)
     fmts = [f.lower().strip() for f in (formats or []) if str(f).strip()]
     bad = [f for f in fmts if f not in EXPORT_FORMATS]
     if bad:
@@ -3336,6 +3435,7 @@ def _normalize_figure(
             out_dir=out_dir,
             profile_id=profile_id,
             journal=journal,
+            journal_id=journal_id,
             # 事务自己已经按「新增 / 加重才挡」裁过；原有的阻断项保留并记进留档
             explicit_confirm=True,
             proof=True,

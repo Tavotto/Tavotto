@@ -132,6 +132,20 @@
 
 选期刊时绑定里记 `journalPrev {profile, pageW}`（选之前的规范绑定与页宽；从一本期刊换到另一本沿用最初那份）。选择器列表最上面的「不按期刊」一次提交退回它（撤销一步回到期刊）；没有记录就退回默认规范、页宽不动。不另设按钮。
 
+### 9. MCP 侧（开关同源；用户 2026-11-04 拍板）
+
+* **同一个开关**：Python 常量 `engine/journals.py` 的 `JOURNAL_CATALOG_AGENTS` 与 `web/src/lib/journalUi.ts` 的 `JOURNAL_CATALOG_UI` 字面值必须相同（严格同源对，`tests/test_journal_agents.py::test_agent_switch_is_the_desktop_switch_literally`
+  从 TS 源文件读字面值对拍，读不出就失败）。生产里没有任何用户入口能设它（不读环境变量）；测试 monkeypatch 常量。数据就绪那个 PR 把两边一起改成 true。
+* **关着时 Agent 看不到期刊库**：`tavotto_list_journals` 不在 tools/list，各工具 schema 里没有 `journal_id`；带 `journal_id` 调用（含直接调 `tavotto_list_journals`）回结构化错误 `journal_catalog_disabled`，不静默忽略。
+  旧引擎没有 `journals` 模块等同于关（桥只经 `_optional_engine("journals")` 取它，不抬高插件最低引擎版本）。
+* **开着时**：新只读工具 `tavotto_list_journals({query?})` → `{catalog_rev, journals[{id, label, publisher, aliases}]}`（`query` 按 id / 名称 / 出版社 / 别名做 NFKC + 小写的子串过滤；空库如实返回空列表）；
+  `tavotto_open_figure` / `tavotto_normalize_figure` / `tavotto_preflight` / `tavotto_export` 加 `journal_id`：解析为 `profile_id = journal-base-v1` + `journal = journal_override(id)`（语义同 §4 桌面 `selectJournal`，存覆盖不存 id）。
+  与手写 `profile_id` / `journal` 同时给 → `journal_id_conflict`（不猜谁赢）；未知 id → `journal_unknown`；批量 open 的 `journal_id` 错是整次调用的错，不逐张重复。
+  解析逻辑全在引擎（`journals.select_for_agent` / `journal_ref` / `search_journals`），插件只翻译。`journal_catalog_disabled` / `journal_id_conflict` 是 Agent 入口自己的码，不进库校验的闭集 `ERROR_CODES`（TS 侧没有对应物）。
+* **`journal_ref`**：`{id, catalog_rev, retrieved}`（口径同桌面 `journalRef`：`retrieved` 取该期刊全部出处里最晚的取回日期；snake_case）。进 `profile` 的印章（`profiles.stamp`）与会话里的 profile，
+  所以 open / preflight / export 的结果顶层各有一份 `journal_ref`，proof report 顶层与 `profile` 里也有；之后不带参数的调用沿用会话里的期刊与 `journal_ref`。
+* 技能文本（SKILL.md / references）此时不写；开关打开那个 PR 再加。开关关着期间不写发行说明（同 §8）。
+
 ## 后果
 
 * 加一本期刊 = 在目录（种子 `journals.json` 或服务端目录）里加一条，求值器、预检、proof report 都不用动。
