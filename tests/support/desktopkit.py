@@ -92,6 +92,20 @@ def wait_until(predicate, timeout: float = 60.0, what: str = "条件") -> None:
     raise AssertionError(f"{timeout}s 内没等到 {what}")
 
 
+def assert_owned_process_identity(session, script_pid: int, script_ppid: int) -> None:
+    """桌面纳管的进程 = 跑脚本的那个解释器进程（或它的 launcher 直接父进程）。
+
+    握手里自报的 pid 必须是脚本自己的 `os.getpid()`（同一个进程在说话）；`owned.pid`
+    是我们 Popen 出来的那个，POSIX 上就是解释器本身，Windows 的 venv launcher 会多一层
+    （owned.pid 是 launcher，解释器是它的子进程）——所以允许它等于脚本 pid 或脚本的 ppid，
+    不允许是无关进程。
+    """
+    assert session.process_pid == script_pid, "握手自报的 pid 不是跑脚本的那个进程"
+    assert session.owned.pid in (script_pid, script_ppid), (
+        f"纳管的 pid {session.owned.pid} 既不是脚本进程 {script_pid} 也不是它的 launcher 父进程 {script_ppid}"
+    )
+
+
 def read_json(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
