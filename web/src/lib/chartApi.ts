@@ -50,6 +50,11 @@ export interface ChartComputeResult {
     ticks?: unknown
   }
   scene_digest: string
+  /** 完整渲染身份（来源+模型；后端 panel_identity） */
+  render_revision: string
+  model_digest: string
+  binding_digest: string
+  engine: { matplotlib: string, numpy: string, tavotto: string }
 }
 
 /** 稳定错误码从响应体透传（后端 ERROR_CODES / BindError / SceneError 闭集）。 */

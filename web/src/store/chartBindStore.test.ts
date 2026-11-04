@@ -108,6 +108,10 @@ describe('chartBindStore', () => {
       svg: '<svg/>',
       facts: {},
       scene_digest: CHART.model.scene_digest,
+      render_revision: 'rev-1',
+      model_digest: 'md',
+      binding_digest: 'bd',
+      engine: { matplotlib: '3.11.2', numpy: '2.1.0', tavotto: '0.20.0' },
     })
     const store = useChartBindStore.getState()
     useChartBindStore.setState({
