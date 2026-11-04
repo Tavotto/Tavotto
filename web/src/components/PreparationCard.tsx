@@ -2206,6 +2206,12 @@ function EmbeddedInput({ requestId, answer }: { requestId: string; answer: Scrip
         answer.submit()
       }}
     >
+      {/* 读取没有新提示（readline / read）：上面那段是脚本已有的输出，标出来，别让它看着像又问了一遍 */}
+      {!secret && !head.prompt && tail && (
+        <h3 className="type-section" data-script-input-output-label="">
+          {si('outputLabel')}
+        </h3>
+      )}
       {!secret && (head.stdout_tail || head.prompt) && (
         <pre
           data-script-input-output=""

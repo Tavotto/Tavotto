@@ -2702,6 +2702,22 @@ describe('运行时 input：同一请求只有一个展示面', () => {
     expect(panel().querySelector('[data-script-input-output]')!.textContent).toBe('0) raw\n1) smooth\nmode?')
   })
 
+  it('没有新提示的读取（readline）：上方那段标成脚本已有的输出；有提示的那问', async () => {
+    await mount(true)
+    useScriptInputStore.getState().onRequested({ ...req, input_kind: 'readline', prompt: '', stdout_tail: 'Your name? ' })
+    await openWith(report(STATES.input))
+    const label = panel().querySelector('[data-script-input-output-label]')
+    expect(label?.textContent).toBe('脚本到目前为止的输出')
+    expect(panel().querySelector('[data-script-input-output]')!.textContent).toBe('Your name?')
+  })
+
+  it('有提示的那一问不加「已有输出」标签', async () => {
+    await mount(true)
+    useScriptInputStore.getState().onRequested(req)
+    await openWith(report(STATES.input))
+    expect(panel().querySelector('[data-script-input-output-label]')).toBeNull()
+  })
+
   it('在答题框里填的就是交出去的那一个（「回答」与框共用同一份）', async () => {
     await mount(true)
     useScriptInputStore.getState().onRequested(req)

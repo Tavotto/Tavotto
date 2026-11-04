@@ -2370,6 +2370,8 @@ def _original_svg_result(path, artifact, receipt):
                 # 如实：matplotlib 出的 companion 是 `svg.fonttype='path'`（它同时是 #1185 的等价证人），
                 # 这里只按文件里到底有没有 <text> 记，不预设。
                 "text_policy": "text" if checked["has_text"] else "outlines",
+                # 图里的文字确实被画成了轮廓（QA-WIN-08）：回执据此说一句「不能再当文字编辑」
+                "text_outlined": bool(checked["text_outlined"]),
                 "vector": vector,
                 "page_pt": [w_mm * 72 / 25.4, h_mm * 72 / 25.4],
                 "sources": [artifact.to_payload()],

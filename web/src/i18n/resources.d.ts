@@ -570,7 +570,7 @@ export default interface Resources {
   },
   "dialogs": {
     "closeGuard": {
-      "body": "这份排版还有未保存的修改。关闭前要保存吗？",
+      "body": "关闭前要保存吗？不保存的话，本机草稿也会留着，下次打开可以恢复。",
       "discard": "不保存",
       "save": "保存并关闭",
       "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
@@ -877,6 +877,7 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "svgHint": "矢量 · 文字默认保留为文字",
+      "svgTextOutlined": "SVG 里的文字已转成路径，不能再当文字编辑。",
       "targetNoFigure": "当前没有图",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
