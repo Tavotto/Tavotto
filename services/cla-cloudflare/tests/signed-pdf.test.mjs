@@ -157,7 +157,7 @@ test('multi-word signatures keep a visible word gap (Great Vibes space is too na
 test('agreement/publishedUrl come from the hash-verified PDF metadata unless the caller passes them',async()=>{
   const base=await input(),a={...base.agreement};delete a.publishedUrl;
   const [,,cert]=await pages(await build({...base,agreement:a}));   // staging PDF carries the sandbox URL
-  assert.ok(cert.flat.includes('github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md'));
+  assert.ok(cert.flat.includes('github.com/tavotto-cla-sandbox/cla-mq-sandbox/blob/main/docs/legal/CLA_INDIVIDUAL.md'));
   const [,,own]=await pages(await build(base));assert.ok(own.flat.includes('github.com/example/example'));assert.ok(!own.flat.includes('cla-e2e-sandbox'));
   // attribution: from metadata when the PDF has one, caller wins.
   const {PDFDocument:D}=await import('pdf-lib');
