@@ -8,7 +8,7 @@
   glyph / cluster / advance / offset）、度量（`advance` / `ascender` / `descender`）。
   真实实现在 `hbshaper`（uharfbuzz + fontTools，native 适配层）；测试用一张合成的
   假脸就能把本模块跑完（纯模型不需要候选包）。
-* `FaceSet`：正文脸 + 唯一一张 CJK 脸。**没有 fallback 脸**——旧后端的第 3 层
+* `FaceSet`：正文脸 + 一张 CJK 脸（随族：serif → Noto Serif SC，其余 → Noto Sans SC，ADR 0060 2026-11-04 修订）。**没有 fallback 脸**——旧后端的第 3 层
   （渲染器自己挑一张 Noto Serif）在这条路上不存在，`coverage()` 的 fallback oracle 恒 False，
   于是 `glyphplan.layer_of` 只会给出 primary / cjk / missing 三档：画不出的字就是
   `missing`，进问题系统，**不暗中回退系统脸**（RC-037、任务书「本轮集合外明示限制」）。
@@ -16,7 +16,7 @@
 换行 / 对齐 / 行高 / 上下标 / 下划线的**用户合同**逐条从 `_draw_text` 搬过来（贪心按
 单元换行、CJK 逐字、拉丁按词、单词超宽逐字兜底、CSS 行盒基线、下划线画在正文基线、
 上下标比例走 `richtext`），前端 TextView 与它是同一套语义。会变的只有 D07 批准的那几项：
-脸换了（Liberation / Noto Sans SC），asc / desc 换成新脸的 OS/2 typo 度量。
+脸换了（Liberation / Noto Sans SC / Noto Serif SC），asc / desc 换成新脸的 OS/2 typo 度量。
 
 坐标：本模块在**页面 y 向下的 pt 空间**里算（与画布语义同向，公式照抄不用翻），
 `plan.compile_page()` 把每个基线点翻到 y 向上时只翻一次。
@@ -100,7 +100,7 @@ class FaceProvider(Protocol):
 
     def face_for(self, family: str, bold: bool, italic: bool) -> Face: ...
 
-    def cjk_face(self) -> Face | None: ...
+    def cjk_face(self, family: str) -> Face | None: ...
 
 
 def faces_for(
@@ -123,7 +123,7 @@ def faces_for(
         b, i = bool(bold) or run_bold, bool(italic) or run_italic
         return primary if (b, i) == (bool(bold), bool(italic)) else provider.face_for(fam, b, i)
 
-    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(), variant)
+    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(fam), variant)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,13 @@ def shape_segment(
         face = faces.face_of(layer)
         out.append(
             ShapedPiece(
-                face, layer, seg, face.shape(seg), size, rise, logical[pos : pos + len(seg)]
+                face,
+                layer,
+                seg,
+                face.shape(seg),
+                size,
+                rise,
+                user_text(logical[pos : pos + len(seg)]),
             )
         )
         pos += len(seg)
@@ -244,7 +250,7 @@ class TextBlock:
     underline: bool
     #: 这段文字里画不出来的字符（去重、原文顺序）——按**渲染表示**量（合成过上下标之后）。
     missing: tuple[str, ...]
-    #: 落在 cjk 层的字符（换族不换它；不算换脸）。
+    #: 落在 cjk 层的字符（CJK 脸随族，但不算换脸）。
     cjk_chars: tuple[str, ...]
     #: 排不出来的公式：(源码, 原因)。这些公式按源码原样画了（`$…$`），调用方把它们报成问题
     math_failures: tuple[tuple[str, str], ...] = ()
@@ -286,8 +292,49 @@ Style = tuple[bool, bool]
 _PLAIN: Style = (False, False)
 
 #: 换行单元里的一片：(渲染文字, script, 用户原文, 行内样式)。渲染文字与用户原文**逐字符对齐**
-#: （`richtext.interpret_runs` 的合成是单字符 → 单字符的表查，长度不变）。
+#: （合成上下标是单字符 → 单字符的表查，长度不变）。字母式符号展开（`℃` → `°C`，
+#: `richtext.LETTERLIKE_EXPANSION`）是一个字符 → 多个字符：用户原文那一侧在展开出来的
+#: 第 2 个起的位置补 `ELIDED`，对齐不破，换行 / 量宽 / 合并那些按下标走的代码一行不用改；
+#: 真正交给 `ShapedPiece.logical` / `LaidOutLine.logical` 之前由 `user_text()` 去掉。
 Unit = list[tuple[str, str, str, Style]]
+
+#: 展开占位：Unicode 非字符（U+FDD0），正常文字里不会出现
+ELIDED = "\ufdd0"
+
+
+def user_text(logical: str) -> str:
+    """去掉展开占位后的用户原文（`℃` 展开成 `°C` 时，`logical` 是 `℃` + 占位）。"""
+    return logical.replace(ELIDED, "")
+
+
+def cjk_probe(units: Unit) -> str:
+    """一行 / 一列里要拿去问「有没有落到 cjk 层」的字：用户原文，但字母式符号展开成功的
+    （`℃` → `°C`、`K` → `K`）按它**实际画的字**问——不然 `℃` 会被误报成画在 cjk 脸上。"""
+    out: list[str] = []
+    for text, sc, logical, _ in units:
+        for ch, lch in zip(text, logical):
+            if lch == ELIDED:
+                continue
+            out.append(ch if lch in richtext.LETTERLIKE_EXPANSION and ch != lch else lch)
+    return "".join(out)
+
+
+def _align_logical(src: str, rendered: str) -> str:
+    """片段的源文字 + 它的渲染文字 → 与渲染文字逐字符对齐的用户原文（展开处补 `ELIDED`）。"""
+    out: list[str] = []
+    k = 0
+    i = 0
+    while i < len(rendered):
+        ch = src[k]
+        exp = richtext.LETTERLIKE_EXPANSION.get(ch)
+        if exp is not None and rendered.startswith(exp, i):
+            out.append(ch + ELIDED * (len(exp) - 1))
+            i += len(exp)
+        else:
+            out.append(ch)
+            i += 1
+        k += 1
+    return "".join(out)
 
 
 #: 公式在换行单元里的 script 标记；占位字符见 `MathSlots`
@@ -352,8 +399,16 @@ def _rstrip(u: Unit) -> Unit:
 
 
 def _chars_of(u: Unit) -> list[Unit]:
-    """把一个换行单元拆成逐字符的单元；script / 样式标记与原文跟着每个字符走。"""
-    return [[(ch, sc, lch, st)] for seg, sc, logical, st in u for ch, lch in zip(seg, logical)]
+    """把一个换行单元拆成逐字符的单元；script / 样式标记与原文跟着每个字符走。
+    字母式符号展开出来的字（`℃` → `°C`）算**一个**用户字符，不在它中间断开。"""
+    out: list[Unit] = []
+    for seg, sc, logical, st in u:
+        for ch, lch in zip(seg, logical):
+            if lch == ELIDED and out:
+                out[-1].append((ch, sc, lch, st))
+            else:
+                out.append([(ch, sc, lch, st)])
+    return out
 
 
 def interpreted_pieces(
@@ -386,11 +441,17 @@ def interpreted_pieces(
             is_primary=cov.primary,
             is_drawable=lambda cp: glyphplan.layer_of(cp, cov) != "missing",
             mode=interpretation,
+            # 展开与否按批准字体的静态覆盖表定（与画布 `layerOf` 同一份）：原图字体自带 `℃` 时
+            # 画布不知道，导出也不能自己另作决定（见 `richtext.interpret_runs`）
+            letterlike_primary=glyphplan.canvas_coverage().primary,
         ):
-            logical = run.text[pos : pos + len(r.text)] if not run.script else r.text
+            if run.script:
+                logical = r.text
+            else:
+                logical = _align_logical(run.text[pos:], r.text)
+                pos += len(user_text(logical))
             assert len(logical) == len(r.text), (run, r)
             out.append((r.text, r.script, logical, style))
-            pos += len(r.text)
     return out
 
 
@@ -611,10 +672,9 @@ def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock 
                     pieces.append(piece)
                     piece_x.append(start)
                 after_math = False
-        logical = "".join(
-            seg_logical for _, sc, seg_logical, _ in line if not (sc == MATH and slots is not None)
-        )
-        rendered += logical
+        body = [seg for seg in line if not (seg[1] == MATH and slots is not None)]
+        logical = user_text("".join(seg[2] for seg in body))
+        rendered += cjk_probe(body)
         out.append(
             LaidOutLine(
                 x,

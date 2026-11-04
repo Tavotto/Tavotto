@@ -613,7 +613,53 @@ def _tools() -> list[dict]:
         by_name["tavotto_apply_overrides"]["_meta"] = widget.tool_meta(
             invoking="正在重渲染…", invoked="已更新"
         )
+    if bridge.journal_catalog_enabled():
+        _add_journal_catalog_tools(tools, by_name)
     return tools
+
+
+#: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 JOURNAL_HANDLERS，关着时调用回 `journal_catalog_disabled`）
+JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals",)
+#: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
+JOURNAL_ID_TOOLS = (
+    "tavotto_open_figure",
+    "tavotto_normalize_figure",
+    "tavotto_preflight",
+    "tavotto_export",
+)
+
+
+def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
+    """内置期刊库的 Agent 入口（ADR 0155 §9）。**只在总开关打开时调用**：关着时 tools/list 里既没有
+    `tavotto_list_journals`，各工具的 schema 里也没有 `journal_id`。"""
+    for name in JOURNAL_ID_TOOLS:
+        by_name[name]["inputSchema"]["properties"]["journal_id"] = {
+            "type": "string",
+            "description": (
+                "内置期刊库的期刊 id（先 tavotto_list_journals 查）：等于中性底规范 + 该期刊的覆盖。"
+                "不能与 profile_id / journal 同时给。"
+            ),
+        }
+    tools.append(
+        {
+            "name": "tavotto_list_journals",
+            "title": "内置期刊库",
+            "description": (
+                "只读：列出内置期刊标准库里的期刊（id / 名称 / 出版社 / 别名）与库版本 catalog_rev。"
+                "query 按名称、出版社、别名模糊过滤。库里没有的期刊不要凭记忆编规范，如实告诉用户。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "名称 / 出版社 / 别名的一段文字（不分大小写与全半角）",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        }
+    )
 
 
 # ------------------------------- 工具实现 -----------------------------------
@@ -681,6 +727,7 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
         discover=plan["discover"],
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         workdir=workdir,
     )
     detailed = bool(args.get("preflight"))
@@ -828,6 +875,7 @@ def _call_open(args: dict) -> dict:
         stem=args.get("stem"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         include_png=bool(args.get("include_png")),
         workdir=workdir,
         prepare_dependencies=prepare,
@@ -1100,8 +1148,22 @@ def _call_preflight(args: dict) -> dict:
         str(args.get("session_id") or ""),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
     )
     return {"content": _text(out["report"]), "structuredContent": out}
+
+
+def _call_list_journals(args: dict) -> dict:
+    query = args.get("query")
+    if query is not None and not isinstance(query, str):
+        raise RpcError(INVALID_PARAMS, "query 必须是字符串")
+    out = bridge.list_journals(query)
+    names = "、".join(j["label"] for j in out["journals"][:20])
+    head = f"内置期刊库（catalog_rev {out['catalog_rev']}）共 {len(out['journals'])} 本"
+    return {
+        "content": _text(head + (f"：{names}" if names else "；库里暂时没有期刊。")),
+        "structuredContent": out,
+    }
 
 
 def _call_export(args: dict) -> dict:
@@ -1116,6 +1178,7 @@ def _call_export(args: dict) -> dict:
         out_dir=args.get("out_dir"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         explicit_confirm=bool(args.get("explicit_confirm")),
         proof=args.get("proof") is not False,
     )
@@ -1176,6 +1239,7 @@ def _call_normalize(args: dict) -> dict:
         out_dir=args.get("out_dir"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         replay_check=bool(args.get("replay_check")),
         evidence=bool(args.get("evidence")),
     )
@@ -1464,6 +1528,10 @@ HANDLERS = {
     "tavotto_close_session": _call_close,
 }
 
+#: 受期刊库总开关管的工具处理器：**不放进 HANDLERS**——HANDLERS 与遥测的工具名闭集（`usage.TOOLS`）一一对应，
+#: 开关关着期间不改遥测枚举（ADR 0155 §9）；打开那个 PR 再把它并进去并同步遥测枚举。关着时直接调用回 `journal_catalog_disabled`。
+JOURNAL_HANDLERS = {"tavotto_list_journals": _call_list_journals}
+
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
 UI_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides")
 
@@ -1591,7 +1659,7 @@ def _fit_error_budget(result: dict, budget: int = ERROR_RESULT_BUDGET_BYTES) -> 
 
 
 def call_tool(name: str, args: dict) -> dict:
-    handler = HANDLERS.get(name)
+    handler = HANDLERS.get(name) or JOURNAL_HANDLERS.get(name)
     if handler is None:
         raise RpcError(METHOD_NOT_FOUND, f"没有这个工具: {name}")
     if not isinstance(args, dict):

@@ -476,6 +476,17 @@ describe('first-adoption refusals: one sentence, one way out, remembered (ADR 01
   expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
   expect(useRenderStore.getState().tracked['plot.png']).toBeUndefined()
  })
+ it.each(['destination_unresolved','unsupported_render_state'])('QA-WIN-53: %s refused while the document moved on (cold reopen) still shows the card the second click would',async reason=>{
+  let reject!:(e:unknown)=>void;render.mockImplementationOnce(()=>new Promise((_,r)=>{reject=r}))
+  const entering=enterElementEdit('p');await vi.waitFor(()=>expect(render).toHaveBeenCalledTimes(1))
+  S().commit(literal('unrelated'),d=>{d.name='other'}) // reopen-time doc churn that does not touch the panel
+  reject(refused(reason));expect(await entering).toBe(false)
+  expect(ui().statusOwner).toBe('png.admit:p');expect(ui().statusTone).toBe('info')
+  expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
+  const shown=ui().status;ui().setStatus(null)
+  expect(await enterElementEdit('p')).toBe(false) // second click: same card
+  expect(ui().status).toEqual(shown);expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
+ })
  it('a permanent refusal is remembered: the second click re-shows it without running the script again',async()=>{
   render.mockRejectedValueOnce(refused('unsupported_render_state'))
   expect(await enterElementEdit('p')).toBe(false)

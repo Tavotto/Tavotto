@@ -375,6 +375,8 @@ USER_VISIBLE_CODES = {
     "ai_agent_needs_auth": {"agent"},
     "ai_agent_not_usable": {"agent"},
     "ai_agent_install_unsupported": {"agent"},
+    # 「更新 Codex」：CLI 已经不比模型清单旧，或本机没有能一键换上的新版
+    "ai_cli_update_unavailable": {"agent"},
     # 官方登录按钮：该 Agent 没有官方登录命令 / 命令没能启动（终端没打开、spawn 失败）
     "ai_agent_login_unsupported": {"agent"},
     "ai_agent_login_failed": {"agent"},

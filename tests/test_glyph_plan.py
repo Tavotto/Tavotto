@@ -145,8 +145,8 @@ def test_box_drawing_is_rescued_by_the_fourth_step():
 def test_cjk_is_not_reported_as_a_substitution():
     """中日韩落在 `cjk` 层，但**不进「换了脸」那张单子**。
 
-    它只有一张脸（能力限制），不随用户的任何选择变化——为一个恒定的、改不动
-    的限制在每一条中文标注上挂一条建议，只会训练用户忽略整个问题面板。
+    它由批准的 CJK 脸承担（随族：衬线配宋体、其余配黑体，用户没得选）——为一个
+    恒定的、改不动的限制在每一条中文标注上挂一条建议，只会训练用户忽略整个问题面板。
     真正值得说的是 `fallback`：那张脸是渲染器自己挑的，与族和字重都无关。
     """
     cov = glyphplan.canvas_coverage()
@@ -263,6 +263,11 @@ def test_the_script_character_tables_are_identical_on_both_sides():
     src = _ts("richText.ts")
     assert _ts_table(src, "SUPERSCRIPT_BASE") == richtext.SUPERSCRIPT_BASE
     assert _ts_table(src, "SUBSCRIPT_BASE") == richtext.SUBSCRIPT_BASE
+
+
+def test_the_letterlike_expansion_tables_are_identical_on_both_sides():
+    """字母式符号展开表（`℃` → `°C`）两侧逐字相同；手写表，向量只覆盖其中几项。"""
+    assert _ts_table(_ts("richText.ts"), "LETTERLIKE_EXPANSION") == richtext.LETTERLIKE_EXPANSION
 
 
 def test_the_interpretation_modes_are_the_same_closed_set():
@@ -394,3 +399,26 @@ def test_missing_glyph_is_folded_even_in_auto_mode():
         mode="auto",
     )
     assert "".join(r.text for r in kept) == "×10⁵"
+
+
+# --------------------------------------------------------------------------
+# 字母式符号展开（2026-11-04，ADR 0060 修订）：衬线画布文字里的 ℃ 不再落到无衬线的 cjk 层
+# --------------------------------------------------------------------------
+def test_celsius_sign_in_serif_text_is_drawn_by_the_serif_face_and_copies_back_as_celsius():
+    """主语：**导出页面上 `25℃` 这几个字形用的是哪张脸**。Liberation 12 张脸都没有 U+2103，
+    以前它落到 cjk 层（Noto Sans SC，无衬线），而画布上浏览器用衬线字体画——两边不一致。
+    展开成 `°C` 之后整段只剩 LiberationSerif 一张脸；文本层仍是用户写的 `℃`（ActualText）。"""
+    pdf = _place("25℃", font_family="serif", interpretation="auto")
+    assert _fonts_used(pdf) == {"LiberationSerif"}
+    assert _text_of(pdf) == "25℃"
+    # 两档都生效（NFKC 等价、文本层不损，与上下标「auto 只救方框」不同）
+    pdf = _place("77℉", font_family="serif", interpretation="scientific")
+    assert _fonts_used(pdf) == {"LiberationSerif"}
+    assert _text_of(pdf) == "77℉"
+    # 全角 Ｃ 不在闭集里：仍走 cjk 层（那是有意占全角的字，不擅自变半角）
+    assert _fonts_used(_place("25Ｃ", font_family="serif")) != {"LiberationSerif"}
+    # 开尔文符号 / 埃符号：同一条路，文本层仍是用户原文
+    for ch in ("\u212a", "\u212b"):
+        pdf = _place(f"5{ch}", font_family="serif")
+        assert _fonts_used(pdf) == {"LiberationSerif"}
+        assert _text_of(pdf) == f"5{ch}"

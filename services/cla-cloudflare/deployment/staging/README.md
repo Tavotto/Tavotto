@@ -12,9 +12,11 @@ checks.
 |---|---|
 | `config.json` | The reviewed `CLA_CONFIG`. Identity pins only, no secrets. `referenceSha` is the sandbox `main` commit carrying the policy. |
 | `wrangler.staging.json` | Manifest with real resource IDs. Every capability flag is `false` in the file. `CLA_CONFIG` is `config.json` as a string (a test keeps them equal). |
-| `assets/CLA_INDIVIDUAL.md` | Byte copy of the sandbox's `docs/legal/CLA_INDIVIDUAL.md`; its SHA-256 is the pinned individual digest. |
+| `assets/CLA_INDIVIDUAL.md` | Byte copy of the sandbox's `docs/legal/CLA_INDIVIDUAL.md`: a one-paragraph STAGING COPY / no-legal-effect notice followed by the real `docs/legal/CLA_INDIVIDUAL.md`, byte for byte (a test checks both). Its SHA-256 is the pinned individual digest. When the real text changes, update the sandbox copy, `referenceSha`, both digests, re-render the PDF and rebuild the staging database. |
 | `assets/CLA_INDIVIDUAL.pdf` | US Letter rendering of that exact Markdown, with its SHA-256 in the PDF keywords. Regenerate with `npm run render:agreement-pdf` (headless Chrome, offline) whenever the Markdown changes; a test fails on a stale copy. |
 | `assets/cla-pdf-font-OFL.txt` | Licence (SIL OFL 1.1) of the Great Vibes signature typeface; committed, served unchanged. |
+| `assets/cla-sig-{signature,hand}-OFL.txt`, `assets/cla-sig-pen-LICENSE.txt` | Licences of the other signature styles (Mrs Saint Delafield, Patrick Hand: OFL 1.1; Homemade Apple: Apache 2.0); committed. |
+| `assets/cla-sig-{signature,pen,hand}.ttf` | Not committed, like `cla-pdf-font.ttf`; fetched by the same command. |
 | `assets/cla-pdf-font.ttf` | Not committed (git-ignored; the repository ships no font binaries). `npm run fetch:pdf-font` downloads it from a commit-pinned google/fonts URL and verifies its SHA-256 (`.part`, rename only on success, delete and fail on mismatch). `npm run build:pdf-client` runs it first; CI has a separate fetch step before `npm run check`. Failures use the codes `pdf_font_network_unreachable`, `pdf_font_http_status`, `pdf_font_hash_mismatch` and exit non-zero. |
 | `assets/cla-pdf.js` | Not committed (git-ignored). The browser-side PDF builder; produce it with `npm run build:pdf-client` before `wrangler deploy`. |
 
@@ -58,6 +60,18 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 
    Rehearsed on local D1 (`--local`) on 2026-11-03: `1 / 88193520 / 2 / 39`.
 
+   **Rebuild** (wipes every staging signature, cannot be undone): needed
+   after changing `holderName` or the agreement text, or to clear a test
+   account's withdrawal (withdrawals are immutable by design). Same
+   database ID; config and secrets stay. Then rerun the readiness query
+   above and expect the same result.
+
+       node scripts/staging-d1.mjs --rebuild deployment/staging/config.json > /tmp/cla-staging-rebuild.sql
+       $W d1 execute tavotto-cla-staging --remote $C --file /tmp/cla-staging-rebuild.sql
+
+   Used on 2026-11-04 to clear a held test account: 104 statements, readiness
+   `1 / 88193520 / 2 / 39`, no withdrawals left.
+
 2. First deploy, every flag off:
 
        $W deploy $C
@@ -94,12 +108,15 @@ sandbox repository must be public too: the token exchange is scoped with
 who cannot see a private repository.
 
 The holder countersigns with name and signature exactly equal to
-`holderName` in `config.json` (`Jiaqi Wan (staging)`); anything else is
+`holderName` in `config.json` (`Jiaqi Wan`); anything else is
 `personal_evidence_required`.
+Stored holder signatures are re-checked against the current `holderName`
+on every read, so changing it makes earlier staging countersignatures
+unreadable: rebuild the database (below) whenever it changes.
 
     $W deploy $C --var CLA_GITHUB_ENABLED:true --var CLA_OAUTH_ENABLED:true --var CLA_UI_ENABLED:true --var CLA_SIGNING_ENABLED:true
 
-Expect: the non-exempt test account signs in, sees the staging text, signs the
+Expect: the non-exempt test account signs in, sees the staging copy of the agreement, signs the
 individual agreement; `erwanjun` countersigns as holder; the signature rows
 carry the pinned digest. Record the observed responses before S4.
 

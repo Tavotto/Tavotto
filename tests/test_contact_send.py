@@ -221,14 +221,13 @@ def test_local_validation_rejects_before_any_network(on, over, code):
 @pytest.mark.parametrize(
     ("files", "code"),
     [
-        ([("a.exe", PNG)], "attachment_type"),
         ([("a.png", b"not a png at all")], "attachment_mismatch"),
         ([("a.pdf", PNG)], "attachment_mismatch"),  # 扩展名说 pdf，魔数是 png
         ([("a.png", b"")], "attachment_empty"),
         ([(f"{i}.png", PNG) for i in range(6)], "attachments_limit"),
-        ([("a.png", PNG + b"\0" * (21 * 1024 * 1024))], "attachments_too_large"),
+        ([("a.png", PNG + b"\0" * (51 * 1024 * 1024))], "attachments_too_large"),
         (
-            [(f"{i}.png", PNG + b"\0" * (5 * 1024 * 1024)) for i in range(5)],
+            [(f"{i}.png", PNG + b"\0" * (10 * 1024 * 1024)) for i in range(5)],
             "attachments_too_large",
         ),
     ],
@@ -257,6 +256,35 @@ def test_every_whitelisted_extension_with_its_magic_is_accepted():
         att = contactsend.clean_attachment(name, data)
         assert att.content_type == contactsend.TYPE_BY_EXT["." + name.rsplit(".", 1)[1]]
     assert len(set(contactsend.TYPE_BY_EXT.values())) == 8  # 契约白名单恰好八种
+
+
+@pytest.mark.parametrize(
+    "name", ["xps_raw.csv", "run_0412.mat", "spectra.h5", "data.zip", "README", "tool.exe"]
+)
+def test_any_other_format_goes_as_opaque_bytes_without_a_magic_check(name):
+    """不限格式（用户 2026-11-04 裁决）：不认识的扩展名按 octet-stream 发，任何字节都收；认识的格式照旧核魔数。"""
+    att = contactsend.clean_attachment(name, b"t,v\n0,1\n")
+    assert att.content_type == contactsend.OPAQUE_TYPE == "application/octet-stream"
+    assert att.name == name
+    assert att.wire_name == "attachment"  # 不认识的扩展名不进 multipart 头
+
+
+def test_opaque_type_never_passes_the_sniffer_used_for_reply_images():
+    # 回信附图同用 `_sniff_ok`：它对 octet-stream 必须恒为假，放行只在 clean_attachment 里
+    assert contactsend._sniff_ok(contactsend.OPAQUE_TYPE, PNG) is False
+
+
+def test_send_roundtrip_with_an_arbitrary_data_file(on):
+    csv = b"t,v\n0,1\n"
+    contactsend.start(meta(), [("xps_raw.csv", csv), ("shot.png", PNG)])
+    st = wait_for({"done", "failed"})
+    assert st["state"] == "done", st
+    req = on.calls[0]["json"]
+    assert [(a["name"], a["content_type"]) for a in req["attachments"]] == [
+        ("xps_raw.csv", "application/octet-stream"),
+        ("shot.png", "image/png"),
+    ]
+    assert on.only_message().uploads[0] == csv
 
 
 def test_attachment_name_loses_path_and_dangerous_characters():

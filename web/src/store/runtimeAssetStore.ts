@@ -71,6 +71,29 @@ const bump = (id: string) => {
   inflight.delete(id) // 下一次 ensure() 要能重新发请求
 }
 
+/**
+ * 清单（素材卡）与逐面板状态（画布角标）是同一份磁盘事实的两个投影：清单刚重取回来，已经问过的面板状态
+ * 要跟着它走，否则素材卡的「缺源」标记没了、画布仍挂着「脚本已不在磁盘上」（QA-WIN-43）。
+ * 只改 `status` / `cached`；`rerun_failed` 是用户那次重跑的结果，磁盘清单判不出，不覆盖。
+ */
+function reconcileStatus(
+  byId: Record<string, RuntimeAssetState>,
+  assets: RuntimeAssetInfo[],
+  gens: ReadonlyMap<string, number>,
+): Record<string, RuntimeAssetState> {
+  let next = byId
+  for (const a of assets) {
+    const cur = byId[a.id]
+    if (!cur?.checked || cur.status === 'rerun_failed') continue
+    if (genOf(a.id) !== (gens.get(a.id) ?? 0)) continue // 请求在途期间这个 id 被刷新 / 失效过
+    if (cur.status === a.status && cur.cached === a.cached) continue
+    bump(a.id) // 在飞的旧查询别再盖回来
+    if (next === byId) next = { ...byId }
+    next[a.id] = { ...cur, status: a.status, cached: a.cached }
+  }
+  return next
+}
+
 export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   byId: {},
   assets: null,
@@ -81,11 +104,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   loadAssets: () => {
     if (assetsInflight) return assetsInflight
     const started = epoch
+    // 请求发出那一刻各 id 的代次：期间 markFresh / invalidate 过的，清单里的判定比它旧，不许覆盖
+    const gens = new Map(generation)
     set({ assetsLoading: true })
     assetsInflight = fetchRuntimeAssets()
       .then((r) => {
         if (epoch !== started) return // 切过项目：旧项目的清单作废
-        set({ assets: r.assets, assetsError: null })
+        set((s) => ({ assets: r.assets, assetsError: null, byId: reconcileStatus(s.byId, r.assets, gens) }))
       })
       .catch((e) => {
         if (epoch !== started) return

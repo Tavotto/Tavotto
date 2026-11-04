@@ -32,8 +32,9 @@ test('independent two worker threads and separate WAL connections race real crea
 for(const version of ['1','2','3'])test('independent evidence consent wording version '+version+(version==='3'?' is rejected':' stays readable'),()=>iso(async f=>{const p=await f.create();for(const [role,actor]of [['contributor',2],['holder',1]]){const name=role==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR';const stamp=f.now();const raw=canonical({name,address:'SYNTHETIC ADDRESS',signature:name,attestations:Object.fromEntries(attestations(role).map(k=>[k,true])),protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,agreement_sha256:p.digest,role,github_id:actor,github_login_at_signing:role==='holder'?'erwanjun':'contributor',signed_at_unix:stamp,consent_ui_version:version});const cipher=await seal(f.key,raw,`signature:${p.id}:${role}:${p.digest}`);await f.store.stmt('INSERT INTO signatures VALUES(?,?,?,?,?,?,?)',p.id,role,actor,cipher,await sha256(raw),null,stamp).run();}
   if(version==='3')await deny(()=>f.svc.evaluate(9));else assert.equal((await f.svc.evaluate(9)).conclusion,'success');}));
 test('independent new signatures record consent wording version 2',()=>iso(async f=>{const p=await f.complete();const [token]=f.args('contributor');const ev=await f.svc.readEvidence(token,p.id,'contributor');assert.equal(ev.consent_ui_version,'2');}));
-test('independent session names the registered holder only to the holder',()=>iso(async f=>{const holder=await f.svc.packets(f.args('holder')[0]),contributor=await f.svc.packets(f.args('contributor')[0]);
-  assert.equal(holder.actor.role,'holder');assert.equal(holder.actor.holderName,f.c.holderName);assert.equal(contributor.actor.role,'contributor');assert.equal('holderName' in contributor.actor,false);}));
+test('independent session gives the exact signing name only to the holder, the counterparty name to both',()=>iso(async f=>{const holder=await f.svc.packets(f.args('holder')[0]),contributor=await f.svc.packets(f.args('contributor')[0]);
+  assert.equal(holder.actor.role,'holder');assert.equal(holder.actor.holderName,f.c.holderName);assert.equal(contributor.actor.role,'contributor');assert.equal('holderName' in contributor.actor,false);
+  assert.equal(holder.holderName,f.c.holderName);assert.equal(contributor.holderName,f.c.holderName);}));
 test('independent readEvidence returns the verified record plus its stored fingerprint',()=>iso(async f=>{
   const p=await f.complete();
   for(const role of ['contributor','holder']){
@@ -47,4 +48,20 @@ test('independent readEvidence has no fingerprint for a role that has not signed
   const p=await f.create();await f.sign(p,'contributor');
   await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'holder'),e=>e.code==='evidence_unavailable');
   await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'nobody'),e=>e.code==='role_rejected');
+}));
+const styled=(f,r,style)=>({name:r==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR',signature:r==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR',address:'SYNTHETIC ADDRESS',
+  attestations:Object.fromEntries(attestations(r).map(k=>[k,true])),...(style===undefined?{}:{signature_style:style})});
+for(const style of ['signature','formal','pen','hand'])test('independent signature style '+style+' is stored in the evidence and qualifies',()=>iso(async f=>{
+  const p=await f.create();
+  for(const r of ['contributor','holder'])await f.svc.sign(...f.args(r),p.id,await f.intent(p,r),r,styled(f,r,style));
+  for(const r of ['contributor','holder'])assert.equal((await f.svc.readEvidence(f.args(r)[0],p.id,r)).signature_style,style);
+  assert.equal((await f.svc.evaluate(9)).conclusion,'success');
+}));
+for(const style of ['comic','',5,null,'Formal'])test('independent signature style '+JSON.stringify(style)+' is rejected without recording anything',()=>iso(async f=>{
+  const p=await f.create();
+  await assert.rejects(f.svc.sign(...f.args('contributor'),p.id,await f.intent(p,'contributor'),'contributor',styled(f,'contributor',style)),e=>e.code==='personal_evidence_required');
+  assert.deepEqual(await f.store.signatures(p.id),[]);
+}));
+test('independent evidence without a signature style stays readable and has none',()=>iso(async f=>{
+  const p=await f.complete();assert.equal('signature_style' in await f.svc.readEvidence(f.args('contributor')[0],p.id,'contributor'),false);
 }));

@@ -18,7 +18,11 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 // records which wording the signer saw; every version ever written stays readable.
 export const CONSENT_UI_VERSION = '2';
 export const CONSENT_UI_VERSIONS:readonly string[] = ['1','2'];
-export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
+// Signature styles the signing page offers. Kept here (not imported from src/pdf, which must stay out of the Worker
+// bundle); tests/signed-pdf-styles.test.mjs keeps this list, the page's and src/pdf/styles.ts identical.
+export const SIGNATURE_STYLE_IDS=['signature','formal','pen','hand'] as const;
+const isSignatureStyle=(v:unknown)=>typeof v==='string' && (SIGNATURE_STYLE_IDS as readonly string[]).includes(v);
+export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean>; signature_style?:string }
 export class LiveService {
   readonly c:LiveConfig; readonly store:LiveStore; readonly github:GitHub; private readonly key:CryptoKey;
   readonly delegation:Delegation;
@@ -84,7 +88,10 @@ export class LiveService {
     const nonce=randomToken(); await this.store.addAuthenticatedIntent(await sha256(nonce),s,p,role as Role|'hold',now+300); return nonce;
   }
   private validateEvidence(input:EvidenceInput,role:Role):void {
-    if (!input || canonical(Object.keys(input).sort()) !== canonical(['address','attestations','name','signature']) ||
+    // signature_style is optional (only how the typed signature looks); records without it draw in the default style.
+    const keys=input && typeof input==='object'?Object.keys(input).sort():[];
+    if (!input || canonical(keys.filter(k=>k!=='signature_style')) !== canonical(['address','attestations','name','signature']) ||
+        ('signature_style' in input && !isSignatureStyle(input.signature_style)) ||
         [input.name,input.address,input.signature].some(v=>typeof v!=='string' || !v.trim() || v.length>1000) ||
         input.signature!==input.name || role==='holder' && input.name!==this.c.holderName ||
         !input.attestations || canonical(Object.keys(input.attestations).sort()) !== canonical(attestations(role).sort()) ||
@@ -131,7 +138,7 @@ export class LiveService {
     if (Object.entries(fields).some(([k,v])=>data?.[k]!==v) || !CONSENT_UI_VERSIONS.includes(data?.consent_ui_version as string) || typeof data.github_login_at_signing!=='string' ||
         !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(data.github_login_at_signing)) throw new Rejected('evidence_binding_mismatch');
     this.validateEvidence({name:data.name as string,address:data.address as string,signature:data.signature as string,
-      attestations:data.attestations as Record<string,boolean>},row.role); return data;
+      attestations:data.attestations as Record<string,boolean>,...('signature_style' in data?{signature_style:data.signature_style as string}:{})},row.role); return data;
   }
   // Evidence plaintext remains local; checkpoints retain only the verified row identity.
   async stagedVerifyEvidence(p:Packet,row:SignatureRow):Promise<void> {await this.evidenceRecord(p,row);}
@@ -194,7 +201,9 @@ export class LiveService {
     const packets=rows.slice(0,20);
     return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor',
       // The holder must sign with exactly this name (validateEvidence); show it instead of failing late.
-      ...(s.actor===this.c.holderId?{holderName:this.c.holderName}:{})},packets,
+      ...(s.actor===this.c.holderId?{holderName:this.c.holderName}:{})},
+      // The counterparty's name is printed in the published agreement ("Us"); a contributor sees who countersigns.
+      holderName:this.c.holderName,packets,
       nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
   private async qualified(subject:number,ceiling?:{expires:number},now?:number):Promise<boolean> {

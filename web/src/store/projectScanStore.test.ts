@@ -350,3 +350,37 @@ describe('补拉失败后轮询不能就此停掉', () => {
     expect(useProjectScanStore.getState()).toMatchObject({ scan: null, pollLost: false })
   })
 })
+
+describe('refresh 重扫（QA-WIN-44）', () => {
+  it('新一轮没有那个待准备脚本：快照整份换成新的，旧路径不再留着', async () => {
+    const pending = scan({ scan_id: 's1', evidence_revision: 'r1', default_target: 'tmp_name.py' })
+    mockStart.mockResolvedValueOnce(pending)
+    await useProjectScanStore.getState().start()
+    mockStart.mockResolvedValueOnce(scan({ scan_id: 's2', reason: 'refresh', evidence_revision: 'r2' }))
+    await useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
+    expect(mockStart).toHaveBeenLastCalledWith({ force: true, reason: 'refresh' })
+    expect(useProjectScanStore.getState().scan?.default_target).toBeUndefined()
+  })
+
+  it('证据没变：用户选过「稍后」的条不因刷新再弹；证据变了才回来', async () => {
+    mockStart.mockResolvedValueOnce(scan({ scan_id: 's1', evidence_revision: 'r1' }))
+    await useProjectScanStore.getState().start()
+    useProjectScanStore.getState().hide()
+    mockStart.mockResolvedValueOnce(scan({ scan_id: 's2', reason: 'refresh', evidence_revision: 'r1' }))
+    await useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
+    expect(useProjectScanStore.getState().dismissedScanId).toBe('s2')
+
+    mockStart.mockResolvedValueOnce(scan({ scan_id: 's3', reason: 'refresh', evidence_revision: 'r2' }))
+    await useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
+    expect(useProjectScanStore.getState().dismissedScanId).toBe('s2') // 不是 s3：新证据，条回来
+  })
+
+  it('手动「重新检查」仍然让关掉的条回来', async () => {
+    mockStart.mockResolvedValueOnce(scan({ scan_id: 's1', evidence_revision: 'r1' }))
+    await useProjectScanStore.getState().start()
+    useProjectScanStore.getState().hide()
+    mockStart.mockResolvedValueOnce(scan({ scan_id: 's2', reason: 'manual', evidence_revision: 'r1' }))
+    await useProjectScanStore.getState().start({ force: true, reason: 'manual' })
+    expect(useProjectScanStore.getState().dismissedScanId).toBeNull()
+  })
+})

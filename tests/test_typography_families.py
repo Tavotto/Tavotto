@@ -152,17 +152,29 @@ def test_measuring_uses_the_same_family_as_writing():
     assert pdfbackend.text_width("Export", 10.0, family="nonsense") == serif
 
 
-def test_the_cjk_face_does_not_change_with_the_family(provider):
-    """中日韩那一半**不跟着族走**——三个族 × 粗斜的 FaceSet 里 cjk 都是同一张脸（批准集合里唯一的
-    Noto Sans SC）。这条用例是那句注释的看护：注释是断言，没量过的断言迟早变成
-    「界面说换了、字形没换」。"""
+def test_the_cjk_face_follows_the_family(provider):
+    """中日韩那一半**随族走**（ADR 0060 2026-11-04 修订，取代原来的「换族不换 CJK」）：serif → Noto Serif SC，
+    sans-serif / monospace → Noto Sans SC，与粗斜无关。画布上衬线标注的中文是宋体，导出若还是黑体，
+    就是画布 ≠ 导出。这条用例是那句注释的看护：没量过的断言迟早变成「界面说换了、字形没换」。"""
     from tavotto.rendercore import typography
 
-    faces = {
-        typography.faces_for(provider, fam, b, i).cjk.resource.sha256
+    by_family = {
+        fam: {
+            typography.faces_for(provider, fam, b, i).cjk.resource.face_id
+            for b in (False, True)
+            for i in (False, True)
+        }
         for fam in pdfbackend.CANVAS_TEXT_FAMILIES
-        for b in (False, True)
-        for i in (False, True)
     }
-    assert len(faces) == 1
-    assert provider.cjk_face().resource.sha256 in faces
+    assert by_family == {
+        "serif": {"NotoSerifSC-Regular"},
+        "sans-serif": {"NotoSansSC-Regular"},
+        "monospace": {"NotoSansSC-Regular"},
+    }
+    assert (
+        provider.cjk_face("serif").resource.sha256
+        != provider.cjk_face("sans-serif").resource.sha256
+    )
+    # 认不出的族走默认族（serif），CJK 脸也跟着是衬线那张
+    fallback = typography.faces_for(provider, "nonsense", False, False)
+    assert fallback.cjk.resource.face_id == "NotoSerifSC-Regular"

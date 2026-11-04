@@ -40,7 +40,8 @@ order: 330
 - **文字只有一条路**：`typography` 用同一份 shaped plan 量宽与落笔（RC-030）；分层只剩
   primary / cjk / missing——**没有 fallback 脸**，画不出的字进问题系统（`CompiledPage.problems`
   的 `glyph_missing`），不暗中回退系统脸；合成上下标（`⁵` → 上标 `5`）的用户原文随
-  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓。
+  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓；字母式符号展开（`℃` → `°C`，`richtext.LETTERLIKE_EXPANSION`，ADR 0060 修订 2026-11-04）走同一条 ActualText 路、两档都生效，
+  换行单元里用户原文侧补 `typography.ELIDED` 占位保持逐字符对齐（交给 `ShapedPiece.logical` 前 `user_text()` 去掉）。
   换行 / 对齐 / 行高 / 上下标 /
   下划线的用户合同逐句来自旧 `_draw_text`，改这些先改前端 TextView 那一侧的同一语义。
 - **源产物冻结一次、核两次**：`sources.StaticSourceResolver` 只认「磁盘原件 + 无 override」，
@@ -57,8 +58,8 @@ order: 330
   （`docs/rules/repo/same-origin-pairs.md`），由共享向量 `tests/golden/shape_geometry_vectors.json` 接住
   （退役前从旧 facade 记下；`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts`
   各跑一遍），两边都改的时候一起改、重录那份向量。
-- **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（13 张 OFL 脸：
-  Liberation 2.1.5 × 12 + Noto Sans SC 子集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
+- **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（14 张 OFL 脸：
+  Liberation 2.1.5 × 12 + Noto Sans SC / Noto Serif SC 子集各一张；**CJK 脸随族**：serif → Noto Serif SC，sans-serif / monospace → Noto Sans SC，`fonts.cjk_family_of` / `FaceProvider.cjk_face(family)`，ADR 0060 2026-11-04 修订；覆盖表 `cjk` 层取两张脸的交集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
   不在表里的进 `rejected`、绝不当字体用；找不到脸抛 `FontsUnavailable(code)`，**不摸系统字体、不用别的脸冒充**。
   字体文件不进 git：`scripts/fetch_fonts.py` 按 sha256 取到 `src/tavotto/resources/fonts/`（`.gitignore` 挡、wheel
   `artifacts` 收回、PyInstaller `resources/` datas 带走、许可证全文同目录）；`TAVOTTO_FONTS_DIR` 是排他覆盖。

@@ -13,17 +13,19 @@ const staging=name=>new URL('../deployment/staging/'+name,import.meta.url);
 const config=JSON.parse(JSON.parse(fs.readFileSync(staging('wrangler.staging.json'),'utf8')).vars.CLA_CONFIG);
 let dbCalls=0;const deniedDB={prepare(){dbCalls++;throw Error('DB_FORBIDDEN');},batch(){dbCalls++;throw Error('DB_FORBIDDEN');}};
 const JS='console.log("synthetic bundle")',PDF='%PDF-1.7 synthetic',TTF='synthetic-font',OFL='SIL Open Font License synthetic';
-const FIXED={'/cla-pdf.js':[JS,'text/javascript'],'/CLA_INDIVIDUAL.pdf':[PDF,'application/pdf'],'/cla-pdf-font.ttf':[TTF,'font/ttf'],'/cla-pdf-font-OFL.txt':[OFL,'text/plain; charset=utf-8']};
+const FIXED={'/cla-pdf.js':[JS,'text/javascript'],'/CLA_INDIVIDUAL.pdf':[PDF,'application/pdf'],'/cla-pdf-font.ttf':[TTF,'font/ttf'],'/cla-pdf-font-OFL.txt':[OFL,'text/plain; charset=utf-8'],
+  ...Object.fromEntries(['signature','pen','hand'].flatMap(s=>[[`/cla-sig-${s}.ttf`,[TTF+s,'font/ttf']],[`/cla-sig-${s}-${s==='pen'?'LICENSE':'OFL'}.txt`,[OFL+s,'text/plain; charset=utf-8']]]))};
 function assets(table=FIXED){const seen=[];return {seen,fetch:async req=>{
   seen.push([new URL(req.url).pathname,req.redirect,req.method]);const hit=table[new URL(req.url).pathname];
   return hit?new Response(hit[0],{headers:{'content-type':hit[1]}}):new Response('missing',{status:404});}};}
 const env=(binding,extra={})=>({DB:deniedDB,CLA_CONFIG:JSON.stringify(config),CLA_UI_ENABLED:'true',CLA_EVIDENCE_KEY:'INVALID',CLA_PUBLIC_AGREEMENT:binding,...extra});
 const get=(p,e,init)=>worker.fetch(new Request(config.origin+p,init),e);
 
-test('signed-pdf routes serve exactly the four fixed assets with the right types and the standard security headers',async()=>{
+test('signed-pdf routes serve exactly the fixed assets with the right types and the standard security headers',async()=>{
   const a=assets();
   const expected=[['/cla-pdf.js','text/javascript; charset=utf-8',JS,'/cla-pdf.js'],['/agreement.pdf','application/pdf',PDF,'/CLA_INDIVIDUAL.pdf'],
-    ['/cla-pdf-font.ttf','font/ttf',TTF,'/cla-pdf-font.ttf'],['/cla-pdf-font-OFL.txt','text/plain; charset=utf-8',OFL,'/cla-pdf-font-OFL.txt']];
+    ['/cla-pdf-font.ttf','font/ttf',TTF,'/cla-pdf-font.ttf'],['/cla-pdf-font-OFL.txt','text/plain; charset=utf-8',OFL,'/cla-pdf-font-OFL.txt'],
+    ...['signature','pen','hand'].flatMap(s=>{const l=`/cla-sig-${s}-${s==='pen'?'LICENSE':'OFL'}.txt`;return [[`/cla-sig-${s}.ttf`,'font/ttf',TTF+s,`/cla-sig-${s}.ttf`],[l,'text/plain; charset=utf-8',OFL+s,l]];})];
   for(const [route,type,body,asset] of expected){
     a.seen.length=0;const r=await get(route,env(a));
     assert.equal(r.status,200,route);assert.equal(r.headers.get('content-type'),type);assert.equal(await r.text(),body);
@@ -61,7 +63,10 @@ test('staging deployment still routes the worker first and the committed PDF ass
   assert.equal(sha(md),config.policy.agreements.individual.sha256);
   const bytes=fs.readFileSync(staging('assets/CLA_INDIVIDUAL.pdf')),doc=await PDFDocument.load(bytes);
   assert.deepEqual((doc.getKeywords()??'').split(/\s+/).filter(x=>x.startsWith(HASH_KEYWORD)),[HASH_KEYWORD+sha(md)],'PDF is stale: rerun npm run render:agreement-pdf');
-  assert.equal(doc.getSubject(),'tavotto-agreement-meta:'+JSON.stringify({publishedUrl:'https://github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md'}),'staging metadata');
+  const meta=JSON.parse((doc.getSubject()??'').replace(/^tavotto-agreement-meta:/,''));
+  assert.equal(meta.publishedUrl,'https://github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md','staging metadata');
+  assert.deepEqual(Object.keys(meta).sort(),['fields','publishedUrl'],'staging metadata');
+  assert.deepEqual(Object.keys(meta.fields).sort(),['contributor','holder'],'the real text carries its own signature block');
   assert.ok(doc.getPageCount()>=1);for(const p of doc.getPages())assert.deepEqual([p.getWidth(),p.getHeight()],[612,792],'US Letter');
   assert.ok(bytes.length<8*1024*1024);
 });

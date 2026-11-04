@@ -88,6 +88,11 @@ const PDF_ASSETS=new Map<string,{asset:string;type:string;upstream:string[];max:
   ['/agreement.pdf',{asset:'/CLA_INDIVIDUAL.pdf',type:'application/pdf',upstream:['application/pdf'],max:8388608}],
   ['/cla-pdf-font.ttf',{asset:'/cla-pdf-font.ttf',type:'font/ttf',upstream:['font/ttf','font/sfnt','application/x-font-ttf'],max:2097152}],
   ['/cla-pdf-font-OFL.txt',{asset:'/cla-pdf-font-OFL.txt',type:'text/plain; charset=utf-8',upstream:['text/plain'],max:65536}],
+  // The other signature styles (src/pdf/styles.ts): one font and its licence each. The signing page previews with them too.
+  ...(['signature','pen','hand'] as const).flatMap(style=>[
+    [`/cla-sig-${style}.ttf`,{asset:`/cla-sig-${style}.ttf`,type:'font/ttf',upstream:['font/ttf','font/sfnt','application/x-font-ttf'],max:2097152}],
+    [`/cla-sig-${style}-${style==='pen'?'LICENSE':'OFL'}.txt`,{asset:`/cla-sig-${style}-${style==='pen'?'LICENSE':'OFL'}.txt`,type:'text/plain; charset=utf-8',upstream:['text/plain'],max:65536}],
+  ] as Array<[string,{asset:string;type:string;upstream:string[];max:number}]>),
 ]);
 async function pdfAssetResponse(env:Env,spec:{asset:string;type:string;upstream:string[];max:number}):Promise<Response> {
   const response=await env.CLA_PUBLIC_AGREEMENT!.fetch(new Request('https://cla-assets.invalid'+spec.asset,{redirect:'manual'}));
@@ -154,7 +159,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
     if(env.CLA_UI_ENABLED==='true' && req.method==='GET') {
       const assets:Record<string,[string,string]>={'/':[uiHTML,'text/html; charset=utf-8'],'/ui.css':[uiCSS,'text/css; charset=utf-8'],'/ui.js':[uiScript(),'application/javascript; charset=utf-8']};
       const asset=assets[url.pathname];if(asset && (url.pathname==='/' || !url.search))return new Response(asset[0],{headers:{...headers,'content-type':asset[1],
-        'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
+        'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     }
     if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled,
       ...(await signedPdfAvailable(env)?{signedPdf:true}:{})});

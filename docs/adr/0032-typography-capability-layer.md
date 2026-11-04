@@ -110,6 +110,7 @@ PyMuPDF 自带的 base-14——它恰好就是这三个族（Times / Helvetica /
 **中日韩那一半不跟着族走**：实测 PyMuPDF 1.28.2 的 `china-ss` / `china-s` /
 `china-ssb` / `china-sb` 四个别名回的是同一个 `Droid Sans Fallback Regular`。
 旧注释写的「CJK 走宋体」是一句没量过的断言，本轮按实测改掉了。
+（2026-11-04：RenderCore 的批准字体集合里有了宋体脸，CJK 脸改为随族走，见 [ADR 0060](0060-font-policy-and-allowlist.md) 修订。）
 
 **新增一条能违反规范的路，就要把检查的范围一起扩过去**：标注能设字体之后，
 `font-family-substituted` 这条规则必须看得见它们，两侧求值器同时加、golden

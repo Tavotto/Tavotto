@@ -23,6 +23,21 @@ export default interface Resources {
       "unifyLineWidth": "统一线宽",
       "unifyTickFormat": "统一刻度格式"
     },
+    "cliUpdate": {
+      "action": "更新 {{agent}}",
+      "how": {
+        "chatgpt": "更新 ChatGPT 桌面版",
+        "desktop": "更新 Codex 桌面版",
+        "homebrew": "终端里运行 brew upgrade codex",
+        "managed": "Tavotto 下个版本会带上",
+        "npm": "终端里运行 npm i -g @openai/codex",
+        "other": "按官方方式更新"
+      },
+      "menuHint": "新型号要新版才能用",
+      "menuManual": "新型号要新版 {{agent}}",
+      "running": "正在更新 {{agent}}…",
+      "switchBack": "换回 {{model}}"
+    },
     "code": {
       "copied": "已复制",
       "copy": "复制代码",
@@ -237,6 +252,7 @@ export default interface Resources {
       "agent_html_response": "连接地址打开的是网页，不是接口。",
       "agent_internal": "AI 这次运行出错了。",
       "agent_max_turns": "这次修改步骤过多，已停止。",
+      "agent_model_unavailable": "这个型号要新版 Codex 才能用。",
       "agent_network": "连不上模型服务。",
       "agent_output_truncated": "模型单次回复达到上限，没能写完。",
       "agent_quota": "模型服务额度不足或正在限流，稍后再试。",
@@ -578,6 +594,8 @@ export default interface Resources {
       "copyAddress": "复制地址",
       "copyContent": "复制内容",
       "diagContents": "查看会发送的内容",
+      "diagExtrasPrompt": "作者排查时常要用到下面这些，方便的话一起勾上。",
+      "diagExtrasTitle": "额外内容",
       "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",
       "diagFailure": "诊断信息没发出去：{{reason}}",
       "diagFailureCode": {
@@ -585,6 +603,7 @@ export default interface Resources {
         "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
       },
       "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
+      "diagHintExtras": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；另附下面勾选的内容。",
       "diagKindsTitle": "包含",
       "diagLabel": "附上诊断信息",
       "diagPreparing": "正在准备诊断包…",
@@ -641,8 +660,7 @@ export default interface Resources {
       "fileError": {
         "count": "最多 {{max}} 个附件。",
         "empty": "空文件不能作为附件。",
-        "total": "附件合计不能超过 {{size}}。",
-        "type": "只支持图片、PDF、Word、Excel、PowerPoint。"
+        "total": "附件合计不能超过 {{size}}。"
       },
       "letters": "我的来信",
       "lettersAttachments": "附件：{{names}}",
@@ -2296,8 +2314,7 @@ export default interface Resources {
           },
           "extraHint": {
             "corrupt_sessions": "默认只有名字和大小；勾选附上内容。",
-            "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。",
-            "source": "原样附上脚本和依赖文件，密钥可能抹不干净，有密钥别勾。"
+            "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。"
           },
           "extrasSelectAll": "全选",
           "extrasSelectNone": "全不选",
@@ -3087,6 +3104,7 @@ export default interface Resources {
       "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_candidate_changed": "脚本或待提交的修改在检查后发生了变化。请重新发送改图指令。",
       "ai_candidate_unavailable": "这次待提交的修改已不可用。请重新发送改图指令。",
+      "ai_cli_update_unavailable": "{{agent}} 没法在这里更新，请按官方方式更新后重启 Tavotto。",
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
       "ai_endpoint_needs_login": "“{{endpoint}}”的账号登录已失效。到设置里重新登录。",

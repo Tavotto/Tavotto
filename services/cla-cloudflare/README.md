@@ -173,8 +173,9 @@ asset fixtures, no real agreement asset upload or deployment configuration.
 
 ### Signed PDF copy (generated in the browser)
 
-After both parties have signed, the signing page can offer a PDF copy: the agreement text, a
-**Signatures** page and an **Electronic signature certificate** page, with "Page N of M" footers.
+After both parties have signed, the signing page can offer a PDF copy: the agreement text with its own
+signature block filled in place (or, when the agreement PDF carries no usable block positions, a separate **Signatures**
+page) and an **Electronic signature certificate** page, with "Page N of M" footers.
 The PDF is assembled entirely in the visitor's browser, so the Worker spends no CPU on it; the Worker
 only streams four fixed static files, always through explicit routes (no caller-derived path, no
 bypass; `assets.run_worker_first` stays `true`) and with the same security headers as every other
@@ -186,6 +187,8 @@ response:
 | `GET /agreement.pdf` | `/CLA_INDIVIDUAL.pdf` | `application/pdf` |
 | `GET /cla-pdf-font.ttf` | `/cla-pdf-font.ttf` | `font/ttf` |
 | `GET /cla-pdf-font-OFL.txt` | `/cla-pdf-font-OFL.txt` | `text/plain` |
+| `GET /cla-sig-{signature,pen,hand}.ttf` | same path | `font/ttf` |
+| `GET /cla-sig-signature-OFL.txt`, `/cla-sig-pen-LICENSE.txt`, `/cla-sig-hand-OFL.txt` | same path | `text/plain` |
 
 `GET /capabilities` gains `signedPdf: true` only while all four assets are actually retrievable from the binding with the expected types (probed on each call, nothing cached); otherwise the key is absent.
 
@@ -195,7 +198,7 @@ another type or too large gives 503 `pdf_asset_unavailable`.
 Preparing the assets (operator step, offline, never at request time):
 
     npm run render:agreement-pdf   # staging: CLA_INDIVIDUAL.md -> CLA_INDIVIDUAL.pdf (headless Chrome)
-    npm run fetch:pdf-font         # Great Vibes TTF -> assets/ (commit-pinned URL + SHA-256; not committed)
+    npm run fetch:pdf-font         # the four signature TTFs -> assets/ (commit-pinned URLs + SHA-256; not committed)
     npm run build:pdf-client       # fetches the font if missing, then esbuild bundle of src/pdf -> assets/cla-pdf.js
 
 For production run, on the exact reviewed bytes,
@@ -205,15 +208,40 @@ For production run, on the exact reviewed bytes,
       --published-url https://github.com/Tavotto/Tavotto/blob/main/docs/legal/CLA_INDIVIDUAL.md \
       --attribution "Derived from the Harmony Individual CLA 1.0, © 2011 Project Harmony, CC BY 3.0"
 
-and put `cla-pdf.js`, the font and its licence next to them. Staging passes only `--published-url`
-(the sandbox repository's text) and no attribution, because the staging text is not Harmony-derived.
+and put `cla-pdf.js`, the font and its licence next to them. Staging passes `--published-url`
+(the sandbox repository's copy) and `--banner "STAGING COPY - NO LEGAL EFFECT - cla-staging.tavotto.com"`, drawn at
+the top of every page; the staging Markdown is the real agreement preceded by a staging notice, so its digest differs
+from the real one and a staging signature can never carry the real agreement's fingerprint.
 `--published-url` and `--attribution` are stored in the PDF Subject as `tavotto-agreement-meta:{json}`; the
 builder reads them only after the hash check passes, ignores anything malformed or non-https, and lets
-values passed in `build()` input win. The signing page therefore does not need to know either. The renderer writes the Markdown's SHA-256 into the PDF keywords
+values passed in `build()` input win.
+
+**In-place signing (`fields`).** When the Markdown contains the usual `**You (...)**` / `**Us**` signature blocks (a fenced
+block of `Signature:` / `Name:` / `Address:` / `Date:` / `GitHub:` lines for the contributor; `Signature:` / `Name:` /
+`Title:` / `Address:` / `Date:` for the holder; anything else is rendered as plain Markdown), the renderer prints them as
+a form (monospace labels, one underlined line per field, the contributor address on as many lines as the block has) and adds
+`fields` to the same Subject JSON: `{contributor:{signature,name,address:[…],date,github},holder:{signature,name,title,address:[…],date}}`,
+each box `{page,x,y,w,printed?}` in PDF points (page index from 0, origin bottom-left, `y` = upper edge of the underline,
+`printed:true` for a value already in the Markdown, such as the holder's name, which the builder leaves alone). The positions
+are read back from the produced file with pdfjs-dist (dev dependency): the underlines Chrome painted and invisible marker words
+from a first pass; the shipped file is a second pass without markers whose underlines must be identical (otherwise the
+renderer fails). Nothing is computed from CSS. The builder reads `fields` only after the hash check and validates it
+strictly (exact key set, integer page index inside the document, finite numbers inside the page, 1 to 3 address lines);
+anything else, or any value that cannot fit its line (signature below 12 pt, text or address below 7 pt), leaves the
+agreement pages untouched and appends the Signatures page as before. In place, the signature is drawn on the line in the
+signature typeface, name, address (wrapped over the lines), long date, `@login` and "Rights holder" in a serif; the last
+agreement page's footer says the copy is signed electronically; the certificate page is last and ends with the thanks line. The signing page therefore does not need to know either. The renderer writes the Markdown's SHA-256 into the PDF keywords
 (`tavotto-agreement-sha256:<hex>`); the builder refuses to run unless that equals the agreement hash being
 signed. This ties the PDF to the pinned text by the renderer's claim, not by re-reading the pages: a PDF
 rendered from different text but stamped with the pinned hash would pass, so review the PDF like the
 Markdown. The signature typeface is Great Vibes (SIL OFL 1.1, licence committed beside it); the TTF itself is never committed (repository invariant) and is fetched by `scripts/fetch-pdf-font.mjs` from a pinned google/fonts commit and checked against a pinned SHA-256. Tests need network once to obtain it and fail loudly without it (stable codes `pdf_font_network_unreachable`, `pdf_font_http_status`, `pdf_font_hash_mismatch`); they never skip. CI fetches it in its own step, "Fetch signed-PDF font (sha256-pinned)", before `npm run check`. For production, `node scripts/fetch-pdf-font.mjs --dest assets-reviewed`. Text a standard
+
+Signature styles (`src/pdf/styles.ts`). The signing page offers four looks for the typed signature and stores the
+choice as `signature_style` in the signed evidence (optional; validated against the same list in `service.ts`):
+`signature` Mrs Saint Delafield, `formal` Great Vibes, `pen` Homemade Apple (Apache 2.0), `hand` Patrick Hand —
+all but `pen` SIL OFL 1.1, licences committed beside the fonts. Evidence without a style (everything signed before
+styles existed) draws in `formal`, exactly as before. The style is only appearance: the typed name is what signs. The
+page previews with the same fonts (`font-src 'self'`); the PDF builder fetches only the fonts of the styles in use.
 PDF font cannot encode (for example a Chinese name or address) is drawn by the browser onto a canvas at
 4x and embedded as an image, so nothing is dropped or replaced; without a canvas the builder fails
 instead of printing placeholders. The `devDependencies` pdf-lib, @pdf-lib/fontkit and marked exist only
@@ -234,7 +262,7 @@ fingerprint.
       contributorSha256?, holderSha256?,   // optional; evidence_sha256 inside the evidence is used first; row omitted if neither
     });                                    // -> Promise<Uint8Array> (a PDF); save with a Blob + download link
 
-`build` fetches `/agreement.pdf` and `/cla-pdf-font.ttf` itself (same origin, `redirect:'error'`) and throws an
+`build` fetches `/agreement.pdf` and the font of each party's signature style itself (same origin, `redirect:'error'`) and throws an
 `Error` whose `message` is a stable code: `agreement_input_invalid`, `evidence_role_mismatch`,
 `evidence_agreement_mismatch` (evidence hash/kind/version differ from `agreement`), `evidence_packet_mismatch`,
 `evidence_invalid`, `evidence_attestations_invalid`, `evidence_fingerprint_missing` (a fingerprint was given but malformed or contradictory),

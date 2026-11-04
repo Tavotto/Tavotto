@@ -99,6 +99,63 @@ CASES: list[tuple[str, str | None, str]] = [
 ]
 
 
+#: `interpret_runs` 的向量用显式的覆盖区间（不读字体、不读 canvas_coverage.json），两侧判据一致：
+#: `latin` = ASCII + Latin-1 + Latin Extended-A/B（正文脸有 `° Å`），另加 `drawable` 里 cjk 脸才有的 `℃ ⁷`；
+#: `no-degree` = 同上但正文脸没有 `°`（展开后有字符画不出 → 不展开）。
+INTERPRET_COVERAGE = {
+    "latin": {
+        "primary": [[0x20, 0x7E], [0xA0, 0x24F]],
+        "drawable": [[0x20, 0x7E], [0xA0, 0x24F], [0x2077, 0x2077], [0x2103, 0x2103]],
+    },
+    "no-degree": {
+        "primary": [[0x20, 0xAF], [0xB1, 0x24F]],
+        "drawable": [[0x20, 0x24F], [0x2103, 0x2103]],
+    },
+}
+
+#: (名字, 写法, 原文, 覆盖, 档位)。字母式符号展开两档都生效；上下标的 auto / scientific 区别也各留一条。
+INTERPRET_CASES: list[tuple[str, str | None, str, str, str]] = [
+    ("celsius-auto", None, "25℃", "latin", "auto"),
+    ("celsius-scientific", None, "25℃", "latin", "scientific"),
+    ("fahrenheit", None, "77℉ 与 25℃", "latin", "auto"),
+    ("kelvin-sign", None, "T/\u212a", "latin", "auto"),
+    ("angstrom-sign", None, "5 \u212b", "latin", "scientific"),
+    ("celsius-no-degree-kept", None, "25℃", "no-degree", "auto"),  # 展开后的 ° 画不出 → 原样
+    ("celsius-in-sup-run-kept", None, "x^{℃}", "latin", "auto"),  # 用户显式上标里的不再展开
+    ("celsius-in-italic", "latex", r"\textit{25℃} 与 \textbf{℉}", "latin", "auto"),  # 样式跟着走
+    ("fullwidth-c-kept", None, "Ｃ", "latin", "auto"),  # 不在闭集里：全角字母原样
+    ("sup-auto-drawable-kept", None, "10⁷", "latin", "auto"),  # 上下标的 auto：画得出就不折
+    ("sup-scientific-folds", None, "10⁷", "latin", "scientific"),
+]
+
+
+def _ranges_in(ranges: list[list[int]]):
+    return lambda cp: any(lo <= cp <= hi for lo, hi in ranges)
+
+
+def _interpret_vectors() -> list[dict]:
+    out = []
+    for name, fmt, text, cov, mode in INTERPRET_CASES:
+        c = INTERPRET_COVERAGE[cov]
+        rendered = richtext.interpret_runs(
+            richtext.parse_runs(text, fmt),
+            is_primary=_ranges_in(c["primary"]),
+            is_drawable=_ranges_in(c["drawable"]),
+            mode=mode,
+        )
+        out.append(
+            {
+                "name": name,
+                "format": fmt,
+                "text": text,
+                "coverage": cov,
+                "mode": mode,
+                "runs": [_run(r) for r in rendered],
+            }
+        )
+    return out
+
+
 def _run(r: richtext.TextRun) -> dict:
     """TS 侧的形状：可选字段只有为真时才出现。"""
     d: dict = {"text": r.text, "script": r.script}
@@ -137,6 +194,8 @@ def build() -> dict:
             "（web/src/lib/richText.golden.test.ts）各跑一遍同一份。"
         ),
         "vectors": vectors,
+        # `interpret_runs`（受控科学文本解释：上下标折叠 + 字母式符号展开）
+        "interpret": {"coverages": INTERPRET_COVERAGE, "vectors": _interpret_vectors()},
         # `glance_text` 的几张表：向量只覆盖其中几项，表本身逐项对照
         "glance": {
             "symbols": richtext.GLANCE_SYMBOLS,

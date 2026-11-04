@@ -230,7 +230,7 @@ def test_text_and_geometry_match_canonical_pdf_in_an_independent_renderer(
     from tavotto.rendercore.pdfwriter import write_pdf
 
     latin = provider.face_for("sans-serif", False, False)
-    chinese = provider.cjk_face()
+    chinese = provider.cjk_face("sans-serif")
     text = ir.ShapedText(
         10,
         50,
@@ -512,7 +512,7 @@ def _text_nodes(root):
 
 
 def test_default_policy_is_text_and_cjk_runs_use_the_cjk_family(tmp_path, provider):
-    cjk = provider.cjk_face()
+    cjk = provider.cjk_face("sans-serif")
     if cjk is None:
         pytest.skip("not_run: CJK face unavailable")
     node = ir.ShapedText(10, 20, (ir.GlyphRun("c", 12, cjk.shape("中文")),), ir.Paint((0, 0, 0)))
@@ -550,7 +550,7 @@ def test_text_run_has_unicode_family_size_style_and_baseline(tmp_path, provider)
 
 def test_no_text_element_ever_carries_a_per_glyph_x_list(tmp_path, provider):
     sans = provider.face_for("sans-serif", False, False)
-    cjk = provider.cjk_face()
+    cjk = provider.cjk_face("sans-serif")
     nodes = [
         ir.ShapedText(
             5,
@@ -756,3 +756,16 @@ def test_imported_text_svg_replaces_path_baseline_but_identity_stays_pinned(tmp_
         page, tmp_path / "d.svg", None, {"p": data},
         imported_svgs={"p": base}, imported_text_svgs={"p": text}, text_policy="outlines",
     )  # fmt: skip
+
+
+def test_serif_cjk_run_uses_the_serif_cjk_family_chain(tmp_path, provider):
+    """CJK 脸随族（ADR 0060 2026-11-04 修订）：衬线 CJK 脸写成 Noto Serif SC + 宋体回退链 + `serif`，不是黑体链。"""
+    cjk = provider.cjk_face("serif")
+    if cjk is None:
+        pytest.skip("not_run: CJK face unavailable")
+    node = ir.ShapedText(10, 20, (ir.GlyphRun("c", 12, cjk.shape("中文")),), ir.Paint((0, 0, 0)))
+    _, root, _ = _write(tmp_path, [node], resources={"c": cjk.resource}, provider=provider)
+    (text,) = _text_nodes(root)
+    family = text.get("font-family")
+    assert "Noto Serif SC" in family and "'Songti SC'" in family and family.endswith("serif")
+    assert "Noto Sans SC" not in family

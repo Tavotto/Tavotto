@@ -442,6 +442,16 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 非零退出默认写 `agent_exit_nonzero`；适配器的 `classify_event` 只凭**结构化字段**把失败归到 `RUNNER_ERRORS` 里的 `agent_auth` / `agent_quota` / `agent_network`，写进 `state["runner_error"]`（`ai_bridge` 对所有 Agent 取它）。
 Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpected status <三位码>`（真机 0.163.0 无结构化码字段；401/403 auth、429 quota、502/503/504 network）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
 **不匹配任何自由文本、不保留原文**；字段没有或不认识就不判。失败卡「错误码 → 主按钮」的闭集表是前端 `AGENT_ERROR_ACTION`，与 `tests/golden/ai_error_action_vectors.json` 前后端对拍（`tests/test_ai_cli_error_classes.py`、`transcriptModel.test.ts`）。
+Codex 的 **404** 归 `agent_model_unavailable`（只有 CLI 适配器产出的码在 `ai_agents.CLI_RUNNER_ERRORS`，不进与 `DONE_REASONS` 对齐的 `RUNNER_ERRORS`）：旧版 codex 被选了它不认识的新型号。**只在走 CLI 自己的登录时采纳**——桥在 `_consume` 起点把 `endpoint_backed`（`spawn_overrides` 真的产出了注入，与 `_agent_caps` 同一判据）放进分类状态，第三方接口下的 404 多半是地址错，不归这一类。没走 TAF 的会话失败时同样把 `runner_error` 写进会话 `error`（否则失败卡只剩「失败」、主按钮对不上）。失败卡主按钮 `update_cli`：能一键更新 →「更新 Codex」；不能 →「换回默认型号」，怎么更新进「详情」；都没有 →「重试」。
+
+## CLI 比模型清单旧（`cli_update`，2026-11-04 用户反馈）
+
+同一家族的 CLI 共用一份目录缓存（Codex 桌面版 / IDE 插件 / 命令行都写 `models_cache.json`），桌面版先升级会把新型号写进去，Tavotto 启动的旧 CLI 选到就 404。
+判据：适配器 `catalog_client_version()`（Codex = 缓存顶层 `client_version`；默认 None = 不提示）严格新于已解析 CLI 的 `--version`（`ai_agents.older_than`，任一判不出就不提示）；第三方接口接管时不算。
+capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, source, action}`，`action` 闭集 `ai_bridge.CLI_UPDATE_ACTIONS`：
+`switch` = 候选里另有一份版本 ≥ 清单的；`install` = 托管锁版本 ≥ 清单（锁追不上清单就不给，装了也没用）；`manual` = 都没有，前端按 `source` 说怎么更新。
+来源是 `custom`（用户自己指定的路径）一律 `manual`：不替用户换掉他选的那份，托管安装在候选里排在 custom 后面、装了也顶不掉，下次照样 404。
+`POST /api/ai/agents/<id>/update` 现算同一份计划：switch 经 `set_agent_path_override`（同一套 `--version` 验证）、install 走 `start_install`、其余 409 `ai_cli_update_unavailable`；请求体不接受路径或包名。看护 `tests/test_ai_cli_update.py`、`web/e2e/ai-cli-update.spec.ts`。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
 
@@ -794,12 +804,13 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 看护 `test_image_header.py`、`test_agent_runner_media.py`；后者直接断言接收端后续请求仍带源码和图像。
 
 - **应用内托管安装 Codex（`engine/managedcli.py`，锁 `resources/managed_cli_lock.json`，2026-10-29）**：`start_install("codex")` 在锁里有
-  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：GitHub `codex-package-<triple>` 主 → registry.npmmirror.com
-  的 `@openai/codex@<版本>-<平台>` 镜像（两份归档字节不同、**各锁各的 sha256**；解开后整棵树 `tree_sha256` 共用，
-  逐文件相同）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
+  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：registry.npmjs.org 的 `@openai/codex@<版本>-<平台>` 主 → registry.npmmirror.com
+  上同一个 tgz（字节相同、同一个 sha256 / integrity；解开后整棵树 `tree_sha256`）。2026-11-04 起不再用 GitHub 的
+  `codex-package-<triple>`：0.166.0 起它比 npm 包多一个 `bin/codex-exec-server`，两来源解不出同一棵树（#1716）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
   `current.json` 原子切换；`search_locations` 首位 / `candidates` 在 PATH 之前，source=`managed`。**装好不登录**
   （登录由前端在 done 后调既有 login 接口）。其余平台与其它 Agent 回落 npm。升版本用 `scripts/managed_cli_lock.py`
-  （`--update` / `--check [--online]`）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
+  （`--update` / `--check [--online]` / `--latest`）；**每次发版都升到 npm latest**（`docs/RELEASING.md`「发一个新版本」第 2 步，
+  用户 2026-11-04 拍板：锁落后于桌面版写进共用型号清单的版本时，`cli_update` 给不出「应用内装」，用户选到新型号只能自己更新）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
   文案在 `errors.json` 的 `engine.managedCliError.*`。传输层与 privatepython 同判据但独立实现（理由见模块头）。
 - **应用内托管安装 Claude Code（同一套机制，2026-10-29）**：锁里 `clis.claude.sources` 逐项声明来源（`SOURCE_PREFIXES` 登记每个 CLI 允许的
   来源键与 URL 前缀）：registry.npmmirror.com 的 `@anthropic-ai/claude-code-<平台>`（tgz，`only` 只取 `package/<二进制>`，

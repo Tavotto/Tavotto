@@ -4,7 +4,7 @@
 // The page is driven over the DevTools protocol in REAL time (Runtime.evaluate with awaitPromise), so the build is awaited
 // until it settles. --runs N repeats each sample N times and prints result + milliseconds per run (nothing is written);
 // --virtual uses the old --virtual-time-budget/--dump-dom mode, kept only to reproduce its false 'pending' results.
-// Writes <out-dir>/sample-latin.pdf and <out-dir>/sample-chinese.pdf. Chrome runs with a throw-away profile.
+// Writes <out-dir>/sample-latin.pdf, sample-style-{signature,pen,hand}.pdf and sample-chinese.pdf. Chrome runs with a throw-away profile.
 import {createHash,randomBytes} from 'node:crypto';
 import {execFile,spawn} from 'node:child_process';
 import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
@@ -48,13 +48,14 @@ async function viaDevTools(file,tag){
 }
 try{
   await mkdir(outDir,{recursive:true});
-  const agreementPdf=path.join(work,'agreement.pdf');await renderAgreementPdf(md,agreementPdf,{title:'Tavotto Individual Contributor License Agreement',publishedUrl:'https://github.com/example/example/blob/main/docs/legal/CLA_INDIVIDUAL.md',attribution:'Derived from the Harmony Individual CLA 1.0, \u00a9 2011 Project Harmony, CC BY 3.0'});
+  const agreementPdf=path.join(work,'agreement.pdf');await renderAgreementPdf(md,agreementPdf,{title:'Tavotto Individual Contributor License Agreement',banner:process.env.SAMPLE_BANNER,publishedUrl:'https://github.com/example/example/blob/main/docs/legal/CLA_INDIVIDUAL.md',attribution:'Derived from the Harmony Individual CLA 1.0, \u00a9 2011 Project Harmony, CC BY 3.0'});
   const b64=async f=>(await readFile(f)).toString('base64');
   const hex=n=>randomBytes(n).toString('hex'),packet='pkt_'+randomBytes(24).toString('base64url');
   const ev=(role,o)=>({protocol:'cla-signature-v1',packet,role,agreement_kind:'individual',agreement_version:'1.0',agreement_sha256:sha,consent_ui_version:'1',evidence_sha256:hex(32),
     attestations:Object.fromEntries((role==='contributor'?['personal','electronic','read','identity','adult','own_rights','independent']:['personal','electronic','read','identity','reviewed']).map(k=>[k,true])),...o});
   const holder=ev('holder',{name:'Jiaqi Wan',signature:'Jiaqi Wan',address:'1 Example Holder Street, Example City',github_id:88193520,github_login_at_signing:'synthetic-holder',signed_at_unix:1793798407});
   const samples={latin:ev('contributor',{name:'Wan Jiaqi',signature:'Wan Jiaqi',address:'12 Example Road, Fuzhou, Fujian, China',github_id:261183172,github_login_at_signing:'synthetic-contributor',signed_at_unix:1793797361}),
+    ...Object.fromEntries(['signature','pen','hand'].map(style=>['style-'+style,ev('contributor',{name:'Shang Moqi',signature:'Shang Moqi',signature_style:style,address:'Fuzhou University, No. 2 Xueyuan Road, Fuzhou, Fujian 350108, China',github_id:261183172,github_login_at_signing:'synthetic-contributor',signed_at_unix:1793797361})])),
     chinese:ev('contributor',{name:'王嘉琪',signature:'王嘉琪',address:'福建省福州市仓山区示例路 12 号 3 单元 501 室',github_id:261183172,github_login_at_signing:'synthetic-contributor',signed_at_unix:1793797361})};
   const bundle=(await buildPdfClient()).code.replaceAll('</script','<\\/script');
   for(const [name,contributor] of Object.entries(samples)){
@@ -62,7 +63,7 @@ try{
 const bytes=b=>Uint8Array.from(atob(b),c=>c.charCodeAt(0));
 TavottoClaPdf.build({agreement:{kind:'individual',version:'1.0',sha256:${JSON.stringify(sha)}},
  contributor:${JSON.stringify(contributor)},holder:${JSON.stringify(holder)},
- overrides:{agreementPdf:bytes(${JSON.stringify(await b64(agreementPdf))}),font:bytes(${JSON.stringify(await b64(path.join(root,'deployment/staging/assets/cla-pdf-font.ttf')))}),serviceHost:'cla.example.test'}})
+ overrides:{agreementPdf:bytes(${JSON.stringify(await b64(agreementPdf))}),font:bytes(${JSON.stringify(await b64(path.join(root,'deployment/staging/assets/cla-pdf-font.ttf')))}),fonts:{${(await Promise.all(['signature','pen','hand'].map(async st=>`${st}:bytes(${JSON.stringify(await b64(path.join(root,`deployment/staging/assets/cla-sig-${st}.ttf`)))})`))).join(',')}},serviceHost:'cla.example.test'}})
  .then(r=>{let s='';for(let i=0;i<r.length;i+=8192)s+=String.fromCharCode(...r.subarray(i,i+8192));document.getElementById('out').textContent='DONE:'+btoa(s);})
  .catch(e=>{document.getElementById('out').textContent='ERROR:'+e.message;});</script>`;
     const file=path.join(work,name+'.html');await writeFile(file,page);

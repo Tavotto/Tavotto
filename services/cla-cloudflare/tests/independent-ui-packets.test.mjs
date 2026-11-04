@@ -47,7 +47,9 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
       else if(url==='/packets'){
         result={id:createID};states[createID]=status(createID,{packet:{id:createID,subject:2,valid_until:1000},current:true,canSign:true});
         pages[0]={actor,packets:[{id:createID},...pages[0].packets],nextCursor:pages[0].nextCursor};
-      }else throw Error('UNEXPECTED_API '+url);
+      }else if(url==='/intents')result={intent:'SYNTHETIC-INTENT'};
+      else if(url==='/sign')result={revision:1};
+      else throw Error('UNEXPECTED_API '+url);
       return {ok:true,json:async()=>structuredClone(result)};
     }};
   vm.runInNewContext(uiScript(),context);
@@ -282,7 +284,29 @@ test('a blocked completed record does not show the thank-you state',async()=>{
 });
 test('the PDF download stays disabled until both parties have signed',async()=>{
   const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[{role:'contributor'}]})}});
-  assert.equal(b.elements.get('download-pdf').disabled,true);assert.equal(b.elements.get('thanks').hidden,true);
+  assert.equal(b.elements.get('download-pdf').disabled,true);
+});
+const contributorOnly=(extra={})=>({states:{[ID(1)]:status(ID(1),{current:true,signatures:[{role:'contributor',actor:actor.id,created:1793770000}],...extra})}});
+test('a contributor who has signed sees that their part is done, never the signing form again',async()=>{
+  const b=await browser({...contributorOnly(),signedPdf:true,pages:[{actor,holderName:'Synthetic Holder',packets:[{id:ID(1)}],nextCursor:null}]});
+  assert.equal(b.elements.get('thanks').hidden,false);assert.equal(b.elements.get('hero').hidden,true);
+  assert.equal(b.elements.get('personal-signature').hidden,true);assert.equal(b.elements.get('download-pdf').hidden,true);
+  assert.equal(b.elements.get('thanks-title').textContent,'谢谢你，你这边已经完成。');
+  assert.match(b.elements.get('thanks-lede').textContent,/Synthetic Holder 会来联署/);assert.match(b.elements.get('thanks-lede').textContent,/PDF/);
+  assert.match(b.elements.get('thanks-eyebrow').textContent,/^你已签署 · /);assert.equal(b.elements.get('thanks-seal').className,'seal wait');
+});
+test('the waiting state names the rights holder generically when the session does not',async()=>{
+  const b=await browser(contributorOnly());
+  assert.match(b.elements.get('thanks-lede').textContent,/^Tavotto 的维护者 权利人 /);assert.doesNotMatch(b.elements.get('thanks-lede').textContent,/PDF/);
+});
+for(const [label,extra] of [['expired',{current:false}],['withdrawn',{blocked:true}]])test('a contributor-only record that is '+label+' does not claim the contributor is done',async()=>{
+  const b=await browser(contributorOnly(extra));
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('hero').hidden,false);
+});
+test('the rights holder still sees the countersigning form on a contributor-only record',async()=>{
+  const holder={id:1,login:'synthetic-holder',role:'holder',holderName:'Synthetic Holder'};
+  const b=await browser({...contributorOnly(),pages:[{actor:holder,holderName:'Synthetic Holder',packets:[{id:ID(1)}],nextCursor:null}]});
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('personal-signature').hidden,false);
 });
 test('withdrawal is offered only when the server allows a hold and asks first',async()=>{
   let b=await browser({states:{[ID(1)]:status(ID(1),{canHold:false})}});assert.equal(b.elements.get('withdraw-open').hidden,true);
@@ -297,4 +321,16 @@ test('switching language keeps the rendered agreement (and the reader position) 
   b.elements.get('lang').onclick();await b.settle();
   assert.equal(b.elements.get('agreement').children,before);
   assert.equal(b.elements.get('contributor-state').textContent,'尚未签署');
+});
+
+test('the signature style is a choice of four, previews the typed name, and is sent with the evidence',async()=>{
+  const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[]})}});
+  assert.equal(b.elements.get('style-signature').className,'sty on');assert.equal(b.elements.get('sample-pen').textContent,'你的姓名');
+  b.elements.get('name').value='Shang Moqi';b.elements.get('name').oninput();
+  for(const s of ['signature','formal','pen','hand'])assert.equal(b.elements.get('sample-'+s).textContent,'Shang Moqi');
+  await b.click('style-pen');assert.equal(b.elements.get('style-pen').className,'sty on');assert.equal(b.elements.get('style-signature').className,'sty');
+  b.elements.get('signature').value='Shang Moqi';b.elements.get('address').value='SYNTHETIC ADDRESS';
+  b.elements.get('sign-form').onsubmit({preventDefault(){}});for(let i=0;i<5;i++)await b.settle();
+  const sign=b.calls.find(call=>call.url==='/sign');assert.ok(sign,'sign must be called');
+  const evidence=JSON.parse(sign.options.body).evidence;assert.equal(evidence.signature_style,'pen');assert.equal(evidence.signature,'Shang Moqi');
 });

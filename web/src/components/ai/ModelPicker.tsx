@@ -2,14 +2,15 @@ import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AgentIcon } from '@/components/settings/AgentIcon'
 import { VendorIcon } from '@/components/settings/VendorIcon'
-import { ChevronDown, Plus } from '@/components/ui/icons'
+import { ChevronDown, Download, Plus } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuSub } from '@/components/ui/Menu'
 import { BrandLogo } from '@/components/settings/BrandLogo'
 import { t as translate } from '@/i18n'
-import type { AiAgentCaps, AiConnection } from '@/lib/api'
+import { connectionAgent, type AiAgentCaps, type AiConnection } from '@/lib/api'
 import { connectionInfo, modelDetail, useAiStore } from '@/store/aiStore'
 import { requestConnectAi } from '@/store/connectAiStore'
+import { manualHow, startCliUpdate, updatableInApp, useCliUpdateError, useCliUpdateRunning } from './cliUpdate'
 
 /**
  * 「执行器与模型」两级选择器（beta 0.19 反馈）。
@@ -163,6 +164,34 @@ function connectionModels(c: AiConnection, current: string | null): string[] {
 }
 
 /**
+ * 型号子菜单的末行：背后那份 CLI 比型号清单旧（`cli_update`）时，新型号可能用不了——点一下更新；
+ * 点不了（只能自己更新）时置灰、第二行说怎么做。没这回事就什么都不画。
+ */
+function CliUpdateItem({ conn }: { conn: AiConnection }) {
+  const agent = connectionAgent(conn)
+  const running = useCliUpdateRunning(agent)
+  const failed = useCliUpdateError(agent)
+  const name = useAiStore((s) => s.caps?.agents.find((a) => a.id === agent)?.display_name) ?? agent
+  const u = conn.cli_update
+  if (!u || !agent) return null
+  const inApp = updatableInApp(u)
+  return (
+    <>
+      <MenuSeparator />
+      <MenuItem
+        icon={Download}
+        data-ai-cli-update={u.action}
+        disabled={running || !inApp}
+        reason={running ? undefined : failed ? failed : inApp ? ai('cliUpdate.menuHint') : manualHow(u)}
+        onSelect={() => startCliUpdate(agent)}
+      >
+        {ai(running ? 'cliUpdate.running' : inApp ? 'cliUpdate.action' : 'cliUpdate.menuManual', { agent: name })}
+      </MenuItem>
+    </>
+  )
+}
+
+/**
  * 「连接 AI」视图下的两级选择器：一级 = 已连接的 AI（彩色 logo + 厂商名），二级 = 该连接的型号；
  * 底部「＋ 连接更多 AI…」打开连接小弹窗。**只是呈现**：选中一项写 aiStore 的 `connection` 与
  * `models[连接 id]`（与旧选择器同一套记忆机制，切回另一个连接时它自己的型号记忆还在）。
@@ -237,6 +266,7 @@ export function ConnectionModelPicker({
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>
+              <CliUpdateItem conn={c} />
             </MenuSub>
           )
         })}

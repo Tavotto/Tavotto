@@ -21,6 +21,7 @@ export const AGENT_ERRORS = [
   'agent_auth',
   'agent_quota',
   'agent_network',
+  'agent_model_unavailable',
   'agent_html_response',
   'agent_refused',
   'agent_budget',
@@ -43,12 +44,14 @@ export function agentErrorKey(error: string | null | undefined): AgentErrorKey |
  * `check_connection`：重试也是同样结果（凭据无效 / 地址是网页 / 额度用完 / 连不上 / 归不了的 CLI 非零退出），主按钮去改连接；
  * `retry`：换一次可能就好（超时、步数、预算……）。`Record<AgentErrorKey, …>` 让新增错误码时编译期强制补一行。
  */
-export type AgentErrorAction = 'check_connection' | 'retry'
+export type AgentErrorAction = 'check_connection' | 'retry' | 'update_cli'
 export const AGENT_ERROR_ACTION: Record<AgentErrorKey, AgentErrorAction> = {
   agent_auth: 'check_connection',
   agent_html_response: 'check_connection',
   agent_quota: 'check_connection',
   agent_network: 'check_connection',
+  // 旧 CLI 不认识新型号（Codex 404）：主按钮是「更新 Codex」，点不了时退到「换回默认型号」（`ModelUnavailableAction`）
+  agent_model_unavailable: 'update_cli',
   agent_exit_nonzero: 'check_connection',
   agent_refused: 'retry',
   agent_budget: 'retry',

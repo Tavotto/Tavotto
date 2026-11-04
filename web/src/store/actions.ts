@@ -1705,6 +1705,15 @@ function reportAdmissionFailure(panel: PanelObject, error: unknown): void {
   showAdmissionFailure(panel, classifyArtifactFailure(error))
 }
 
+/** 采用请求被明确拒绝，而 `current()` 因文档无关变动失效时，这句拒绝说明是否仍该给用户 */
+function refusalStillWorthShowing(attempt: number, panel: PanelObject, error: unknown, ownsContext: boolean): boolean {
+  if (!ownsContext || !artifactEntryCurrent(attempt) || isAdoptedPanel(panel)) return false
+  if (!(error instanceof EngineError) || error.code !== 'artifact_source_unavailable') return false
+  if (!isDefiniteRefusal(classifyArtifactFailure(error).recoverability)) return false
+  const now = findObject(panel.id)
+  return now?.type === 'panel' && now.fileId === panel.fileId && !isAdoptedPanel(now)
+}
+
 function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): void {
   const ui = useUiStore.getState()
   const owner = pngAdmitOwner(panel.id)
@@ -1905,6 +1914,12 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
       usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
     }
     if (current()) reportAdmissionFailure(panel, error)
+    else if (refusalStillWorthShowing(attempt, panel, error, ownsRenderContext())) {
+      // 等回应期间文档发生了与这次进入无关的变动（冷重开后的补渲染、派生更新等）：采用本身不能再提交，
+      // 但「被明确拒绝」这句话和出路仍然成立。记忆已写，不补这一句就是第一次点只剩 SSE 的通用报错、
+      // 第二次点才见到原因与「重建为可编辑图」（QA-WIN-53）
+      showAdmissionFailure(panel, classifyArtifactFailure(error))
+    }
     return false
   } finally {
     if (artifactEntryCurrent(attempt) && !awaitingEnvironment) cancelArtifactEntry()

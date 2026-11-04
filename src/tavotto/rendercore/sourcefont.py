@@ -55,7 +55,7 @@ class FaceRef:
 class SourceFont:
     """`TextObject.sourceFont`（导出载荷里是 `source_font`）。`bold` / `italic` 是这张脸**自己的**
     粗斜（来自原图那张脸），不是对象的粗斜开关。`cjk` 是原图里中日韩字符实际由哪张脸画的（可缺席：
-    缺席就是批准的 Noto Sans SC 画汉字）。"""
+    缺席就是批准的 CJK 脸（随族：衬线 Noto Serif SC、其余 Noto Sans SC）画汉字）。"""
 
     primary: FaceRef
     bold: bool = False

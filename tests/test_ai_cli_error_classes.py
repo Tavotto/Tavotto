@@ -21,7 +21,7 @@ def test_cli_failure_event_is_classified_from_structured_fields(v):
     ai_bridge._classify(v["agent"], json.dumps(v["event"]), st)
     assert st.get("runner_error") == v["expect"]
     if v["expect"]:
-        assert v["expect"] in ai_agents.RUNNER_ERRORS
+        assert v["expect"] in ai_agents.RUNNER_ERRORS | ai_agents.CLI_RUNNER_ERRORS
 
 
 def test_free_text_never_decides():
@@ -36,6 +36,10 @@ def test_free_text_never_decides():
 
 def test_action_table_covers_every_code_the_failure_card_can_show():
     actions = GOLDEN["actions"]
-    assert set(actions.values()) <= {"check_connection", "retry"}
-    shown = (ai_agents.RUNNER_ERRORS - {"no_done_event"}) | {"agent_exit_nonzero", "timeout"}
+    assert set(actions.values()) <= {"check_connection", "retry", "update_cli"}
+    shown = (
+        (ai_agents.RUNNER_ERRORS - {"no_done_event"})
+        | ai_agents.CLI_RUNNER_ERRORS
+        | {"agent_exit_nonzero", "timeout"}
+    )
     assert shown <= set(actions), shown - set(actions)
