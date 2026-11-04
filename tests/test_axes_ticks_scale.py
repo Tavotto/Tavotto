@@ -908,3 +908,35 @@ def test_log_axis_nonpositive_limit_independent_of_installed_tick_locator(tmp_pa
     replay_man = _render(tmp_path, final)
     assert _lims(hot_man, "x") == pytest.approx(_lims(replay_man, "x"))
     assert _lims(replay_man, "x")[0] > 0
+
+
+SHARED = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, (top, bottom) = plt.subplots(2, 1, sharex=True, figsize=(4.0, 4.0))
+    top.plot(np.linspace(0.001, 0.01, 5), np.arange(5.0))
+    fig.savefig("AxesFig.pdf")
+"""
+
+
+def test_log_axis_nonpositive_limit_uses_shared_axis_siblings_data(tmp_path):
+    """sharex：下面子图是空的，数据在上面子图（0.001..0.01）。规范化只看自己的
+    dataLim 会把下限换成 1，[1,40] 经共享传到两个子图，数据全被藏掉。"""
+    (tmp_path / SCRIPT_NAME).write_text(SHARED, encoding="utf-8")
+    final = [
+        {"gid": "axes_1", "prop": "xlim", "value": [0.0, 40.0]},
+        {"gid": "axes_1", "prop": "xscale", "value": "log"},
+    ]
+    hot = _worker(tmp_path)
+    try:
+        hot.override(STEM, [final[1]])
+        hot_man = hot.override(STEM, final)["manifest"]
+    finally:
+        pool.discard(hot)
+    replay_man = _render(tmp_path, final)
+    lo = _field(replay_man, "axes_1", "xlim")[0]
+    assert 0 < lo <= 0.001
+    assert _field(hot_man, "axes_1", "xlim") == pytest.approx(_field(replay_man, "axes_1", "xlim"))

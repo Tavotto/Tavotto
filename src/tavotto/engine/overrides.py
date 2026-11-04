@@ -2442,11 +2442,20 @@ def _positive_log_range(ax, axis: str, lo: float, hi: float) -> tuple[float, flo
     import numpy as np  # noqa: PLC0415
     from matplotlib.ticker import LogLocator  # noqa: PLC0415
 
-    lim = ax.dataLim
-    d0, d1 = lim.intervalx if axis == "x" else lim.intervaly
-    minpos = lim.minposx if axis == "x" else lim.minposy
-    lo_d = float(minpos) if np.isfinite(minpos) and minpos > 0 else 1.0
-    hi_d = float(max(d0, d1)) if np.isfinite(d0) and np.isfinite(d1) else 0.0
+    # 共享轴（sharex / sharey）的范围是兄弟子图一起定的：数据要合起来看
+    sibs = ax._shared_axes[axis].get_siblings(ax)  # noqa: SLF001
+    highs: list[float] = []
+    poss: list[float] = []
+    for sib in sibs:
+        lim = sib.dataLim
+        d0, d1 = lim.intervalx if axis == "x" else lim.intervaly
+        mp = lim.minposx if axis == "x" else lim.minposy
+        if np.isfinite(d0) and np.isfinite(d1):
+            highs.append(float(max(d0, d1)))
+        if np.isfinite(mp) and mp > 0:
+            poss.append(float(mp))
+    lo_d = min(poss) if poss else 1.0
+    hi_d = max(highs) if highs else 0.0
     if hi_d <= 0:
         hi_d = lo_d * 10.0
     fresh = LogLocator()  # 全新的，不碰轴上装着的那个
