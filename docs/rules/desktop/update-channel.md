@@ -28,6 +28,7 @@ order: 60
   `capabilities/main.json` **没有** `updater:*`（webview 绕不过编排）。镜像地址是该文件里唯一的常量
   `MIRROR_MANIFEST_URL`，`tauri.conf.json` 的 endpoints 仍只有 GitHub 一条（发布链读它）。三条别改坏：
   ① 第一个**答上来**的来源说「无更新」就是最终答案，不再问另一个；② 下载失败（网络 / 非 2xx / 验签 / 停滞）
-  换来源**重新 check + 重新下**，且回退来源必须报同一个版本；③ 验签永远用内置公钥，来源不影响信任。
+  换来源**重新 check + 重新下**，且回退来源必须报同一个版本；下载**慢**（`SLOW_RULE`）时先边下边试探下一个来源（同版本），
+  实测更快（`should_switch`）才换、否则丢掉试探那一路留在原来源，每次更新只试探一次；③ 验签永远用内置公钥，来源不影响信任。
   e2e 触发口 `TAVOTTO_E2E_UPDATE_SOURCE=mirror|github` 钉死单来源且不回退。
   看护：`app_update.rs` 的顺序单测 + `app_update_flow_tests.rs`（本地假 HTTP 服务 + 测试密钥签名的包，从不调用 `apply`）。

@@ -214,6 +214,16 @@ fn limits() -> Limits {
         check: Duration::from_millis(600),
         connect: Duration::from_millis(600),
         stall: Duration::from_millis(500),
+        // 用例里的包只有几十字节：默认判不出「慢」，专测慢的用例自己换一套
+        slow: SlowRule {
+            // 比 Drip 用例的段间隔（250 ms）长：第二段到之前量不出速度
+            grace: Duration::from_millis(600),
+            // 比 Drip 用例的段间隔（250 ms）宽，不把两段之间的空档量成 0 速
+            window: Duration::from_millis(600),
+            eta: Duration::from_secs(5),
+            min_rate: 1,
+            probe: Duration::from_millis(300),
+        },
     }
 }
 
@@ -286,13 +296,20 @@ impl Rig {
         .await
     }
     async fn fetch(&self, pending: &Pending) -> (Result<Fetched, Failure>, Vec<DownloadEvent>) {
+        self.fetch_with(pending, &limits()).await
+    }
+    async fn fetch_with(
+        &self,
+        pending: &Pending,
+        limits: &Limits,
+    ) -> (Result<Fetched, Failure>, Vec<DownloadEvent>) {
         let log: Arc<Mutex<Vec<DownloadEvent>>> = Default::default();
         let l2 = log.clone();
         let emit = move |e: DownloadEvent| l2.lock().unwrap().push(e);
         let r = fetch(
             &self.make(),
             &self.endpoints(),
-            &limits(),
+            limits,
             pending,
             &emit,
             &self.cool,
@@ -954,5 +971,185 @@ async fn a_download_longer_than_the_check_timeout_still_succeeds_while_bytes_kee
         "用例本身要比 check 超时长才有意义：{:?}",
         t.elapsed()
     );
+    assert_eq!(rig.github.hits("/latest.json"), 0);
+}
+
+/* ---------------------------- 下载慢：试探另一个来源 ---------------------------- */
+
+/// 慢用例的包：几 KB，按 `Drip` 发要好几秒
+fn big_pkg() -> Vec<u8> {
+    (0..6000u32).map(|i| (i % 251) as u8).collect()
+}
+
+/// 3 s 发完（150 段 × 20 ms）：按 1 s 的 `eta` 判是慢的；段要细，比速才不被段的颗粒度带偏
+fn slow_drip(body: &[u8]) -> Route {
+    Route::Drip {
+        body: body.to_vec(),
+        chunks: 150,
+        gap: Duration::from_millis(20),
+    }
+}
+
+fn slow_limits() -> Limits {
+    Limits {
+        slow: SlowRule {
+            eta: Duration::from_secs(1),
+            probe: Duration::from_millis(800),
+            ..limits().slow
+        },
+        ..limits()
+    }
+}
+
+fn source_with(base: &str, version: &str, sig: &str, pkg: Route) -> Vec<(&'static str, Route)> {
+    vec![
+        (
+            "/latest.json",
+            manifest(version, &format!("{base}/releases/{version}/pkg"), sig),
+        ),
+        (
+            Box::leak(format!("/releases/{version}/pkg").into_boxed_str()),
+            pkg,
+        ),
+    ]
+}
+
+fn starts(events: &[DownloadEvent]) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, DownloadEvent::Started { .. }))
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_download_switches_to_the_other_source_when_it_is_measurably_faster() {
+    // 镜像在发、只是慢（3 s）；GitHub 快三倍多（0.9 s，比 0.8 s 的试探窗口长）：判慢后试探 GitHub，
+    // 量满一个窗口比速 → 换过去，镜像那一路丢掉
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), slow_drip(&p1)),
+        move |b, k| {
+            let fast = Route::Drip {
+                body: p2.clone(),
+                chunks: 60,
+                gap: Duration::from_millis(15),
+            };
+            source_with(b, "9.9.9", &k.sign_b64(&p2), fast)
+        },
+    )
+    .await;
+    let p = rig.check(&CN).await.unwrap().unwrap();
+    assert_eq!(p.source, Source::Mirror);
+    let t = Instant::now();
+    let (r, events) = rig.fetch_with(&p, &slow_limits()).await;
+    let f = r.unwrap_or_else(|e| panic!("该换到 GitHub 下完：{e:?}"));
+    assert_eq!(
+        (f.source, f.bytes.as_slice()),
+        (Source::Github, pkg.as_slice())
+    );
+    assert!(
+        // 镜像自己要 3 s 才下完
+        t.elapsed() < Duration::from_millis(2600),
+        "没等慢来源下完：{:?}",
+        t.elapsed()
+    );
+    assert_eq!(
+        rig.github.hits("/latest.json"),
+        1,
+        "换之前重新 check 一次（同版本）"
+    );
+    assert_eq!(starts(&events), 2, "换来源时前端进度归零一次");
+    assert!(
+        matches!(events.last(), Some(DownloadEvent::Finished)),
+        "最后交给前端的是 Finished：{events:?}"
+    );
+    assert!(!rig.cool.active(), "慢不是故障，不让镜像进冷却");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_download_takes_the_other_source_if_it_finishes_within_the_probe() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), slow_drip(&p1)),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), Route::Ok(p2.clone())),
+    )
+    .await;
+    let p = rig.check(&CN).await.unwrap().unwrap();
+    let (r, events) = rig.fetch_with(&p, &slow_limits()).await;
+    let f = r.unwrap_or_else(|e| panic!("该用 GitHub 下完的包：{e:?}"));
+    assert_eq!(
+        (f.source, f.bytes.as_slice()),
+        (Source::Github, pkg.as_slice())
+    );
+    assert_eq!(starts(&events), 2);
+    assert!(
+        matches!(events.last(), Some(DownloadEvent::Finished)),
+        "{events:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_download_stays_put_when_the_other_source_is_no_faster() {
+    // 两边一样慢：试探过 GitHub，但从头下不比镜像剩下的快 → 丢掉试探那一路，镜像下完
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), slow_drip(&p1)),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let p = rig.check(&CN).await.unwrap().unwrap();
+    let (r, events) = rig.fetch_with(&p, &slow_limits()).await;
+    let f = r.unwrap_or_else(|e| panic!("该留在镜像下完：{e:?}"));
+    assert_eq!(
+        (f.source, f.bytes.as_slice()),
+        (Source::Mirror, pkg.as_slice())
+    );
+    assert_eq!(
+        rig.github.hits("/releases/9.9.9/pkg"),
+        1,
+        "试探过 GitHub 一次，之后不再试探"
+    );
+    assert_eq!(starts(&events), 1, "没换来源，进度不归零");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_download_never_switches_to_a_source_offering_another_version() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), slow_drip(&p1)),
+        move |b, k| source_with(b, "9.9.10", &k.sign_b64(&p2), Route::Ok(p2.clone())),
+    )
+    .await;
+    let p = rig.check(&CN).await.unwrap().unwrap();
+    let (r, _) = rig.fetch_with(&p, &slow_limits()).await;
+    let f = r.unwrap_or_else(|e| panic!("该留在镜像下完：{e:?}"));
+    assert_eq!(
+        (f.source, f.update.version.as_str()),
+        (Source::Mirror, "9.9.9")
+    );
+    assert_eq!(rig.github.hits("/releases/9.9.10/pkg"), 0, "别的版本不下载");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pinned_single_source_is_never_probed_even_when_slow() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), slow_drip(&p1)),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), Route::Ok(p2.clone())),
+    )
+    .await;
+    let p = rig.check(&[Source::Mirror]).await.unwrap().unwrap();
+    let (r, _) = rig.fetch_with(&p, &slow_limits()).await;
+    assert_eq!(r.unwrap().source, Source::Mirror);
     assert_eq!(rig.github.hits("/latest.json"), 0);
 }

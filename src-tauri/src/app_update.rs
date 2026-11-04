@@ -12,8 +12,6 @@
 //! 「无更新」不回退：第一个**答上来**的来源说没有，就是没有（ADR 0121 §3）。只有答不上来
 //! （超时 / 非 2xx / 清单坏 / 缺本平台）才换下一个来源。
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -46,6 +44,8 @@ pub struct Limits {
     pub check: Duration,
     pub connect: Duration,
     pub stall: Duration,
+    /// 下载慢时试探另一个来源的判据（`SLOW_RULE`）
+    pub slow: SlowRule,
 }
 
 impl Default for Limits {
@@ -54,6 +54,7 @@ impl Default for Limits {
             check: CHECK_TIMEOUT,
             connect: CONNECT_TIMEOUT,
             stall: STALL_TIMEOUT,
+            slow: SLOW_RULE,
         }
     }
 }
@@ -495,44 +496,429 @@ pub enum DownloadEvent {
 
 pub type Emit<'a> = &'a (dyn Fn(DownloadEvent) + Send + Sync);
 
-async fn stalled(last: Arc<AtomicU64>, start: Instant, limit: Duration) {
-    let tick = (limit / 4).clamp(Duration::from_millis(10), Duration::from_secs(1));
-    loop {
-        tokio::time::sleep(tick).await;
-        let now = start.elapsed().as_millis() as u64;
-        if now.saturating_sub(last.load(Ordering::Relaxed)) >= limit.as_millis() as u64 {
-            return;
-        }
+/// 「下载慢」只决定要不要**试探**另一个来源；换不换由实测比速决定（`should_switch`），
+/// 所以换来源永远不会让这次下载比不换更慢——最多多花一段 `probe` 的流量。
+#[derive(Debug, Clone, Copy)]
+pub struct SlowRule {
+    /// 第一个字节到了以后先等这么久再判（连接起速）
+    pub grace: Duration,
+    /// 量当前速度的滑动窗口
+    pub window: Duration,
+    /// 总长已知：按当前速度剩余时间超过它算慢
+    pub eta: Duration,
+    /// 总长未知：低于这个速度（字节/秒）算慢
+    pub min_rate: u64,
+    /// 另一个来源从它的第一个字节起量这么久，再比速
+    pub probe: Duration,
+}
+
+pub const SLOW_RULE: SlowRule = SlowRule {
+    grace: Duration::from_secs(15),
+    window: Duration::from_secs(10),
+    eta: Duration::from_secs(3 * 60),
+    min_rate: 256 * 1024,
+    probe: Duration::from_secs(8),
+};
+
+/// 按 `rule` 现在算不算慢。`rate` 字节/秒。
+pub fn is_slow(rule: &SlowRule, total: Option<u64>, done: u64, rate: f64) -> bool {
+    match total {
+        Some(t) => rate <= 0.0 || t.saturating_sub(done) as f64 / rate > rule.eta.as_secs_f64(),
+        None => rate < rule.min_rate as f64,
     }
 }
 
-/// 下载并**验签**（插件的 `download` 在返回前用内置公钥验签），停滞超过 `limits.stall` 放弃。
-async fn download_one(update: &Update, limits: &Limits, emit: Emit<'_>) -> Result<Vec<u8>, Kind> {
-    let start = Instant::now();
-    let last = Arc::new(AtomicU64::new(0));
-    let last_in_chunk = last.clone();
-    let first = AtomicBool::new(true);
-    let download = update.download(
-        |n, total| {
-            last_in_chunk.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
-            if first.swap(false, Ordering::Relaxed) {
-                emit(DownloadEvent::Started {
-                    content_length: total,
+/// 比速：当前来源已下 `a_done`、速度 `a_rate`；试探的来源已下 `b_done`、速度 `b_rate`。
+/// 只有试探来源**从它现在的进度**下完比当前来源下完剩下的明显更快（少两成以上）才换；
+/// 总长未知时要求快一半以上。
+pub fn should_switch(
+    total: Option<u64>,
+    a_done: u64,
+    a_rate: f64,
+    b_done: u64,
+    b_rate: f64,
+) -> bool {
+    if b_rate <= 0.0 {
+        return false;
+    }
+    if a_rate <= 0.0 {
+        return true;
+    }
+    match total {
+        Some(t) => {
+            let eta_a = t.saturating_sub(a_done) as f64 / a_rate;
+            let eta_b = t.saturating_sub(b_done) as f64 / b_rate;
+            eta_b < eta_a * 0.8
+        }
+        None => b_rate > a_rate * 1.5,
+    }
+}
+
+/// 一路下载的计数（毫秒都相对 `Relay::start`）。
+#[derive(Debug, Clone, Copy, Default)]
+struct Lane {
+    bytes: u64,
+    total: Option<u64>,
+    first_ms: Option<u64>,
+    /// 第一个 chunk 的字节数：量速从它之后算，不把它当成在窗口里收到的
+    first_chunk: u64,
+    last_ms: Option<u64>,
+    started: bool,
+    finished: bool,
+}
+
+struct Relay<'a> {
+    start: Instant,
+    emit: Emit<'a>,
+    /// `lanes[0]` 当前来源，`lanes[1]` 试探来源；`.2` 是哪一路的进度交给前端
+    inner: std::sync::Mutex<([Lane; 2], usize)>,
+}
+
+impl<'a> Relay<'a> {
+    fn new(emit: Emit<'a>) -> Self {
+        Self {
+            start: Instant::now(),
+            emit,
+            inner: std::sync::Mutex::new(([Lane::default(); 2], 0)),
+        }
+    }
+    fn now(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, ([Lane; 2], usize)> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn chunk(&self, lane: usize, n: usize, total: Option<u64>) {
+        let now = self.now();
+        let mut g = self.lock();
+        let active = g.1;
+        let l = &mut g.0[lane];
+        l.bytes += n as u64;
+        l.total = total.or(l.total);
+        if l.first_ms.is_none() {
+            l.first_ms = Some(now);
+            l.first_chunk = n as u64;
+        }
+        l.last_ms = Some(now);
+        if active == lane {
+            if !l.started {
+                l.started = true;
+                (self.emit)(DownloadEvent::Started {
+                    content_length: l.total,
                 });
             }
-            emit(DownloadEvent::Progress { chunk_length: n });
-        },
-        || emit(DownloadEvent::Finished),
-    );
-    tokio::select! {
-        r = download => r.map_err(|e| {
-            eprintln!("[updater] 下载失败: {e}");
-            classify(&e)
-        }),
-        _ = stalled(last, start, limits.stall) => {
-            eprintln!("[updater] 下载停滞超过 {:?}", limits.stall);
-            Err(Kind::Stalled)
+            (self.emit)(DownloadEvent::Progress { chunk_length: n });
         }
+    }
+    fn finished(&self, lane: usize) {
+        let mut g = self.lock();
+        g.0[lane].finished = true;
+        if g.1 == lane {
+            (self.emit)(DownloadEvent::Finished);
+        }
+    }
+    /// 把前端的进度换成 `lane` 那一路：再来一次 `Started`（前端据此归零），补上它已经收到的字节。
+    fn promote(&self, lane: usize) {
+        let mut g = self.lock();
+        if g.1 == lane {
+            // 已经是它在交进度（接手后下完时会再调一次）
+            return;
+        }
+        g.1 = lane;
+        let l = &mut g.0[lane];
+        if l.first_ms.is_none() {
+            // 还没收到字节：等它的第一个 chunk 再发 `Started`
+            return;
+        }
+        l.started = true;
+        (self.emit)(DownloadEvent::Started {
+            content_length: l.total,
+        });
+        if l.bytes > 0 {
+            (self.emit)(DownloadEvent::Progress {
+                chunk_length: l.bytes as usize,
+            });
+        }
+        if l.finished {
+            (self.emit)(DownloadEvent::Finished);
+        }
+    }
+    fn lane(&self, lane: usize) -> Lane {
+        self.lock().0[lane]
+    }
+}
+
+/// 某一路在 `since_ms` 之后的平均速度（字节/秒）；`samples` 是 `(毫秒, 当时已下字节)`，按时间递增。
+fn rate_since(
+    samples: &std::collections::VecDeque<(u64, u64)>,
+    since_ms: u64,
+    now: (u64, u64),
+) -> f64 {
+    let base = samples
+        .iter()
+        .rev()
+        .find(|(t, _)| *t <= since_ms)
+        .or(samples.front())
+        .copied()
+        .unwrap_or((since_ms, 0));
+    let dt = now.0.saturating_sub(base.0);
+    if dt == 0 {
+        return 0.0;
+    }
+    now.1.saturating_sub(base.1) as f64 * 1000.0 / dt as f64
+}
+
+/// 试探来源：重新 check（必须同一个版本）再下载。自带 `Update`，下完连同它一起交回。
+enum Challenge {
+    Done(Box<Update>, Result<Vec<u8>, Kind>),
+    Refused(Kind),
+}
+
+async fn challenge<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    limits: &Limits,
+    source: Source,
+    version: &str,
+    relay: &Relay<'_>,
+) -> Challenge
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    let mut update = match check_one(make, endpoints, source, limits).await {
+        Ok(Some(u)) if u.version == version => u,
+        Ok(_) => return Challenge::Refused(Kind::VersionMismatch),
+        Err(kind) => return Challenge::Refused(kind),
+    };
+    update.timeout = None;
+    let r = update
+        .download(|n, t| relay.chunk(1, n, t), || relay.finished(1))
+        .await
+        .map_err(|e| {
+            eprintln!("[updater] {source:?} 下载失败: {e}");
+            classify(&e)
+        });
+    Challenge::Done(Box::new(update), r)
+}
+
+/// 一次下载的结局：赢家（已验签的包），或失败；`attempts` 记下这期间失败的来源，
+/// `spent` 是这次已经用掉、外层不该再试的来源。
+struct Watched {
+    won: Option<(Source, Update, Vec<u8>)>,
+    attempts: Vec<Attempt>,
+    spent: Vec<Source>,
+}
+
+/// 下载 `update`（来自 `source`）并**验签**（插件的 `download` 在返回前用内置公钥验签）。
+/// 停滞超过 `limits.stall` 放弃；**慢**（`is_slow`）且有 `challenger` 时，一边继续下，一边重新 check
+/// 试探来源并同时下载它，量够 `probe` 后比速：`should_switch` 才换过去（丢掉原来那一路），
+/// 否则丢掉试探那一路、原来源继续，这次更新不再试探。原来源在试探期间失败 / 停滞，直接换到试探那一路。
+#[allow(clippy::too_many_arguments)] // 来源编排的四件上下文 + 这一路的来源 / 包 / 试探对象 / 进度出口
+async fn download_watched<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    limits: &Limits,
+    source: Source,
+    update: Update,
+    challenger: Option<Source>,
+    emit: Emit<'_>,
+    cool: &Cooldown,
+) -> Watched
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    use std::collections::VecDeque;
+
+    let rule = limits.slow;
+    let relay = Relay::new(emit);
+    let version = update.version.clone();
+    let tick =
+        (limits.stall.min(rule.probe) / 4).clamp(Duration::from_millis(10), Duration::from_secs(1));
+    let keep_ms = (rule.window.max(rule.probe) * 3).as_millis() as u64;
+    let trip = |s: Source| {
+        if s == Source::Mirror {
+            cool.trip();
+        }
+    };
+
+    let mut attempts = Vec::new();
+    let mut spent = vec![source];
+    let mut a_fut = Some(Box::pin(
+        update.download(|n, t| relay.chunk(0, n, t), || relay.finished(0)),
+    ));
+    let start_b =
+        |next: Source| Box::pin(challenge(make, endpoints, limits, next, &version, &relay));
+    // 只为让编译器知道试探那一路 future 的类型：async fn 的类型写不出名字
+    fn none_of<T>(_: impl FnOnce() -> T) -> Option<T> {
+        None
+    }
+    let mut b_fut = none_of(|| start_b(Source::Github));
+    let mut b_source = None;
+    let mut probe_from = 0u64;
+    let mut probed = false;
+    let mut samples: [VecDeque<(u64, u64)>; 2] = Default::default();
+
+    enum End {
+        A(Result<Vec<u8>, Kind>),
+        B(Option<Box<Update>>, Result<Vec<u8>, Kind>),
+    }
+    let end = loop {
+        // 交给前端的那一路就是「当前」那一路；它的停滞看门狗才算数
+        let active = if a_fut.is_some() { 0 } else { 1 };
+        tokio::select! {
+            r = async { a_fut.as_mut().unwrap().as_mut().await }, if a_fut.is_some() => {
+                a_fut = None;
+                match r {
+                    Ok(bytes) => break End::A(Ok(bytes)),
+                    Err(e) => {
+                        eprintln!("[updater] {source:?} 下载失败: {e}");
+                        let kind = classify(&e);
+                        if b_fut.is_none() {
+                            break End::A(Err(kind));
+                        }
+                        trip(source);
+                        attempts.push(Attempt { source, stage: Stage::Download, kind });
+                        spent.extend(b_source);
+                        relay.promote(1);
+                    }
+                }
+            }
+            c = async { b_fut.as_mut().unwrap().as_mut().await }, if b_fut.is_some() => {
+                b_fut = None;
+                let b = b_source.expect("试探来源");
+                let (upd, kind) = match c {
+                    Challenge::Done(u, Ok(bytes)) => {
+                        // 试探期间就下完了：它更快，直接用
+                        a_fut = None;
+                        spent.push(b);
+                        relay.promote(1);
+                        break End::B(Some(u), Ok(bytes));
+                    }
+                    Challenge::Done(u, Err(k)) => (Some(u), k),
+                    Challenge::Refused(k) => (None, k),
+                };
+                trip(b);
+                spent.push(b);
+                let stage = if upd.is_some() { Stage::Download } else { Stage::Check };
+                if a_fut.is_none() {
+                    attempts.push(Attempt { source: b, stage, kind });
+                    break End::B(upd, Err(kind));
+                }
+                // 原来源还在下：试探失败不碍事，记一笔（原来源也失败时一起报），继续
+                attempts.push(Attempt { source: b, stage, kind });
+            }
+            _ = tokio::time::sleep(tick) => {
+                let now = relay.now();
+                for (i, s) in samples.iter_mut().enumerate() {
+                    let l = relay.lane(i);
+                    // 从第一个字节起量：窗口比已下时长还长时，不拿半截窗口当速度
+                    if let (true, Some(first)) = (s.is_empty(), l.first_ms) {
+                        s.push_back((first, l.first_chunk));
+                    }
+                    s.push_back((now, l.bytes));
+                    while s.front().is_some_and(|(t, _)| now.saturating_sub(*t) > keep_ms) {
+                        s.pop_front();
+                    }
+                }
+                let a = relay.lane(active);
+                let quiet_since = a.last_ms.unwrap_or(if active == 0 { 0 } else { probe_from });
+                if now.saturating_sub(quiet_since) >= limits.stall.as_millis() as u64 {
+                    eprintln!("[updater] 下载停滞超过 {:?}", limits.stall);
+                    if active == 0 && b_fut.is_some() {
+                        a_fut = None;
+                        trip(source);
+                        attempts.push(Attempt { source, stage: Stage::Download, kind: Kind::Stalled });
+                        spent.extend(b_source);
+                        relay.promote(1);
+                        continue;
+                    }
+                    break if active == 0 {
+                        End::A(Err(Kind::Stalled))
+                    } else {
+                        // 试探那一路已经接手又停了：它的 Update 在 future 里，跟着丢掉
+                        b_fut = None;
+                        let b = b_source.expect("试探来源");
+                        trip(b);
+                        attempts.push(Attempt { source: b, stage: Stage::Download, kind: Kind::Stalled });
+                        End::B(None, Err(Kind::Stalled))
+                    };
+                }
+                if active != 0 {
+                    continue;
+                }
+                if b_fut.is_some() {
+                    let b = relay.lane(1);
+                    let Some(b_first) = b.first_ms else {
+                        // 试探来源迟迟不出字节：check 超时 + 一个 probe 之后放弃它
+                        if now.saturating_sub(probe_from)
+                            >= (limits.check + limits.connect + rule.probe).as_millis() as u64
+                        {
+                            b_fut = None;
+                        }
+                        continue;
+                    };
+                    if now.saturating_sub(b_first) < rule.probe.as_millis() as u64 {
+                        continue;
+                    }
+                    let a_rate = rate_since(&samples[0], b_first, (now, a.bytes));
+                    let b_rate = rate_since(&samples[1], b_first, (now, b.bytes));
+                    let total = a.total.or(b.total);
+                    if should_switch(total, a.bytes, a_rate, b.bytes, b_rate) {
+                        eprintln!(
+                            "[updater] {source:?} {a_rate:.0} B/s 太慢，换到 {:?}（{b_rate:.0} B/s）",
+                            b_source
+                        );
+                        a_fut = None;
+                        spent.extend(b_source);
+                        relay.promote(1);
+                    } else {
+                        eprintln!(
+                            "[updater] 试探 {:?}（{b_rate:.0} B/s）不比 {source:?}（{a_rate:.0} B/s）快，留在原来源",
+                            b_source
+                        );
+                        b_fut = None;
+                    }
+                    continue;
+                }
+                let (Some(next), false, Some(a_first)) = (challenger, probed, a.first_ms) else {
+                    continue;
+                };
+                if now.saturating_sub(a_first) < rule.grace.as_millis() as u64 {
+                    continue;
+                }
+                let since = now.saturating_sub(rule.window.as_millis() as u64);
+                let rate = rate_since(&samples[0], since, (now, a.bytes));
+                if is_slow(&rule, a.total, a.bytes, rate) {
+                    eprintln!("[updater] {source:?} 下载慢（{rate:.0} B/s），试探 {next:?}");
+                    probed = true;
+                    probe_from = now;
+                    b_source = Some(next);
+                    samples[1].clear();
+                    b_fut = Some(start_b(next));
+                }
+            }
+        }
+    };
+    drop(a_fut);
+    drop(b_fut);
+    let won = match end {
+        End::A(Ok(bytes)) => Some((source, update, bytes)),
+        End::B(Some(u), Ok(bytes)) => Some((b_source.expect("试探来源"), *u, bytes)),
+        End::A(Err(kind)) => {
+            trip(source);
+            attempts.push(Attempt {
+                source,
+                stage: Stage::Download,
+                kind,
+            });
+            None
+        }
+        End::B(_, _) => None,
+    };
+    Watched {
+        won,
+        attempts,
+        spent,
     }
 }
 
@@ -561,7 +947,8 @@ pub fn apply(f: Fetched) -> Result<Source, Failure> {
 
 /// 下载 `pending`。先用 check 时拿到的来源；它下载失败（网络 / 非 2xx / 验签 / 停滞）
 /// 就换下一个来源**重新 check + 重新下载**，且回退来源必须报出**同一个版本**——用户看到的版本号与
-/// 真正装上去的必须是同一版。返回的包已用内置公钥验过签。
+/// 真正装上去的必须是同一版。下载**慢**时先试探下一个来源、实测更快才换（`download_watched`）。
+/// 返回的包已用内置公钥验过签。
 pub async fn fetch<F>(
     make: &F,
     endpoints: &Endpoints,
@@ -582,9 +969,13 @@ where
             .copied()
             .filter(|s| *s != pending.source),
     );
+    let mut spent: Vec<Source> = Vec::new();
+    // 契约 §6.3：镜像已经出过问题，这一次更新不回头再试它；这次已经用掉的来源也不再试
+    let skip = |i: usize, s: Source, spent: &[Source]| {
+        spent.contains(&s) || (i > 0 && s == Source::Mirror && cool.active())
+    };
     for (i, &source) in seq.iter().enumerate() {
-        // 契约 §6.3：镜像已经出过问题，这一次更新不回头再试它
-        if i > 0 && source == Source::Mirror && cool.active() {
+        if skip(i, source, &spent) {
             continue;
         }
         let mut update = if i == 0 {
@@ -592,21 +983,15 @@ where
         } else {
             match check_one(make, endpoints, source, limits).await {
                 Ok(Some(u)) if u.version == pending.update.version => u,
-                Ok(_) => {
+                other => {
+                    let kind = match other {
+                        Err(kind) => kind,
+                        Ok(_) => Kind::VersionMismatch,
+                    };
                     if source == Source::Mirror {
                         cool.trip();
                     }
-                    attempts.push(Attempt {
-                        source,
-                        stage: Stage::Check,
-                        kind: Kind::VersionMismatch,
-                    });
-                    continue;
-                }
-                Err(kind) => {
-                    if source == Source::Mirror {
-                        cool.trip();
-                    }
+                    spent.push(source);
                     attempts.push(Attempt {
                         source,
                         stage: Stage::Check,
@@ -619,24 +1004,24 @@ where
         // check 的 10 s 总超时（`UpdaterBuilder::timeout`）不许带进下载：大包持续在传也会被掐断。
         // 下载只受连接超时与停滞看门狗约束；插件现版本不会把它带进 `Update`，这里显式清掉防升级后回归。
         update.timeout = None;
-        match download_one(&update, limits, emit).await {
-            Ok(bytes) => {
-                return Ok(Fetched {
-                    source,
-                    update,
-                    bytes,
-                })
-            }
-            Err(kind) => {
-                if source == Source::Mirror {
-                    cool.trip();
-                }
-                attempts.push(Attempt {
-                    source,
-                    stage: Stage::Download,
-                    kind,
-                })
-            }
+        let challenger = seq
+            .iter()
+            .enumerate()
+            .skip(i + 1)
+            .find(|(j, s)| !skip(*j, **s, &spent))
+            .map(|(_, s)| *s);
+        let w = download_watched(
+            make, endpoints, limits, source, update, challenger, emit, cool,
+        )
+        .await;
+        attempts.extend(w.attempts);
+        spent.extend(w.spent);
+        if let Some((source, update, bytes)) = w.won {
+            return Ok(Fetched {
+                source,
+                update,
+                bytes,
+            });
         }
     }
     Err(Failure {
@@ -904,6 +1289,37 @@ mod tests {
             assert_eq!(o.len(), 2);
             assert!(o.contains(&Source::Mirror) && o.contains(&Source::Github));
         }
+    }
+
+    #[test]
+    fn slow_means_a_long_remaining_time_or_a_low_rate_when_the_size_is_unknown() {
+        let r = SLOW_RULE;
+        // 190 MB 剩 180 MB：1 MB/s = 3 分钟整，不算慢；500 KB/s 算慢
+        let (total, done) = (Some(190_000_000), 10_000_000);
+        assert!(!is_slow(&r, total, done, 1_000_000.0));
+        assert!(is_slow(&r, total, done, 500_000.0));
+        assert!(is_slow(&r, total, done, 0.0));
+        assert!(!is_slow(&r, total, 189_999_000, 10_000.0), "快下完了不算慢");
+        assert!(is_slow(&r, None, done, 100_000.0));
+        assert!(!is_slow(&r, None, done, 1_000_000.0));
+    }
+
+    #[test]
+    fn switching_requires_the_other_source_to_finish_clearly_sooner_from_scratch() {
+        let t = Some(100_000_000);
+        // 当前 100 KB/s 下了一半（剩 500 s）；对方 1 MB/s 从头（100 s）→ 换
+        assert!(should_switch(t, 50_000_000, 100_000.0, 0, 1_000_000.0));
+        // 对方快一倍、但要从头下（500 s 对剩下的 500 s）→ 不换
+        assert!(!should_switch(t, 50_000_000, 100_000.0, 0, 200_000.0));
+        // 只快一点（不到两成）→ 不换
+        assert!(!should_switch(t, 0, 100_000.0, 0, 110_000.0));
+        assert!(should_switch(t, 0, 100_000.0, 0, 130_000.0));
+        // 对方没出字节 → 不换；当前 0 速、对方有速 → 换
+        assert!(!should_switch(t, 0, 100_000.0, 0, 0.0));
+        assert!(should_switch(t, 0, 0.0, 0, 1.0));
+        // 总长未知：要快一半以上
+        assert!(!should_switch(None, 0, 100.0, 0, 140.0));
+        assert!(should_switch(None, 0, 100.0, 0, 160.0));
     }
 
     #[test]
